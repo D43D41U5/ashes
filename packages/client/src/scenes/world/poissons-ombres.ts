@@ -20,12 +20,15 @@
  * Un sillage d'écume (fx-traine, le langage des feuilles) trouble la surface du dard.
  * 100 % client, seedé par hash (zéro `Math.random`).
  *
- * ══ LA FRONTIÈRE, écrite ici pour ne pas l'oublier (règle « objets de jeu réels ») ══
- * Tant que la PÊCHE n'existe pas, ces poissons sont du DÉCOR assumé — aucun état sim,
- * aucune interaction de jeu. LE JOUR où la pêche existe, les spawns montent dans /sim
- * (des nœuds récoltables, déterministes, snapshotés) et ce module devient leur RENDU.
- * (Ce jour-là : exp/cos/sin/atan2 d'ici sont INTERDITS dans /sim — LUT quantifiée et
- * décroissance géométrique par tick, c'est consigné.)
+ * ══ LA FRONTIÈRE — FRANCHIE LE 2026-08-22 (spec `peche.md` D1/R5) ══
+ * La pêche existe. Ce qui est monté dans /sim, c'est le COIN DE PÊCHE (un nœud : stock,
+ * repousse, dérive — déterministe, snapshoté), PAS le poisson : décision d'Alexis, le poisson
+ * reste un rendu. Ce module est donc devenu le rendu des coins : les ombres NAISSENT DENSES
+ * autour d'un coin VIVANT (`stock > 0`, jusqu'au plafond) et CLAIRSEMÉES ailleurs (`MAX_AMBIANT`)
+ * — on voit où ça mord, et un coin vide est une eau qui n'a plus que son ambiant. Aucune
+ * ombre n'est jamais « prise » : la prise est un événement sim, le ferrage un FX à part
+ * (`peche-fx.ts`). Le poisson ne remonte PAS dans /sim (exp/cos/sin/atan2 d'ici y sont
+ * interdits — s'il devait un jour y monter, LUT quantifiée et décroissance géométrique).
  */
 import Phaser from 'phaser'
 import type { WorldMap } from '@ashes/sim'
@@ -43,6 +46,11 @@ const POISSON_DEPTH = GROUND_MAP_DEPTH + 0.27
 const SILLAGE_DEPTH = GROUND_MAP_DEPTH + 0.275
 /** 6 → 8 : absorbe les compagnons (naissances appariées) sans diluer les solitaires. */
 const MAX_POISSONS = 8
+/** HORS d'un coin de pêche vivant, la population plafonne ici (peche.md R5) : l'eau vit encore,
+ *  mais c'est le COIN qui grouille. La différence de densité est le signal. */
+const MAX_AMBIANT = 3
+/** Rayon (tuiles) autour d'un coin vivant où ses ombres naissent — le coin se voit de loin. */
+const RAYON_COIN = 3.5
 /** Rayon (tuiles) autour de la caméra où un poisson peut vivre (cull à ×1,6). Le tirage
  *  de naissance se fait à ×1,2 — resserré : « par écran » se juge à l'écran (~28×18 t). */
 const RAYON = 26
@@ -292,6 +300,14 @@ export class PoissonsOmbres {
     }
   }
 
+  /** Les coins de pêche VIVANTS (stock > 0), posés par la scène à chaque snapshot de nœuds. */
+  private coins: { tx: number; ty: number }[] = []
+
+  /** R5 : la scène donne les coins ; seuls ceux qui ont du stock attirent les ombres. */
+  setCoins(coins: readonly { tx: number; ty: number; stock: number }[]): void {
+    this.coins = coins.filter((c) => c.stock > 0).map((c) => ({ tx: c.tx + 0.5, ty: c.ty + 0.5 }))
+  }
+
   private eau(tx: number, ty: number): boolean {
     if (tx < 1 || ty < 1 || tx >= this.map.width - 1 || ty >= this.map.height - 1) return false
     const t = this.map.terrain[Math.floor(ty) * this.map.width + Math.floor(tx)]
@@ -348,14 +364,28 @@ export class PoissonsOmbres {
     camTy: number,
     entites: { x: number; y: number }[],
   ): void {
-    // ── Naissances : une tuile d'eau LARGE tirée près de la caméra ; parfois un COMPAGNON
-    // à 0,6-1,2 t (appariement à la naissance seulement — jamais un banc parfait). ──
-    if (this.poissons.length < MAX_POISSONS && nowMs >= this.prochaine) {
+    // ── Naissances : DENSES autour d'un coin de pêche VIVANT proche de la caméra (peche.md R5),
+    // CLAIRSEMÉES ailleurs (une tuile d'eau LARGE tirée près de la caméra, plafond `MAX_AMBIANT`) ;
+    // parfois un COMPAGNON à 0,6-1,2 t (appariement à la naissance seulement — jamais un banc). ──
+    const coinsProches = this.coins.filter((c) => Math.abs(c.tx - camTx) <= RAYON && Math.abs(c.ty - camTy) <= RAYON)
+    const plafond = coinsProches.length > 0 ? MAX_POISSONS : MAX_AMBIANT
+    if (this.poissons.length < plafond && nowMs >= this.prochaine) {
       this.prochaine = nowMs + 900
       for (let essai = 0; essai < 5; essai++) {
         const g = this.graine++
-        const tx = camTx + (hache(g, essai, 3) - 0.5) * RAYON * 1.2
-        const ty = camTy + (hache(essai, g, 5) - 0.5) * RAYON * 1.2
+        let tx: number
+        let ty: number
+        // Les premiers essais visent le coin (le grouillement) ; le dernier reste ambiant, pour
+        // que l'eau hors coin ne soit jamais tout à fait morte.
+        if (coinsProches.length > 0 && essai < 4) {
+          const c = coinsProches[(hache(g, essai, 41) * coinsProches.length) | 0]!
+          tx = c.tx + (hache(g, essai, 3) - 0.5) * RAYON_COIN * 2
+          ty = c.ty + (hache(essai, g, 5) - 0.5) * RAYON_COIN * 2
+        } else {
+          if (this.poissons.length >= MAX_AMBIANT) continue
+          tx = camTx + (hache(g, essai, 3) - 0.5) * RAYON * 1.2
+          ty = camTy + (hache(essai, g, 5) - 0.5) * RAYON * 1.2
+        }
         if (!this.eau(tx, ty) || riveAt(this.rive, tx, ty) < 0.8) continue
         this.nait(nowMs, tx, ty, g)
         if (this.poissons.length < MAX_POISSONS && hache(g, essai, 27) < P_COMPAGNON) {

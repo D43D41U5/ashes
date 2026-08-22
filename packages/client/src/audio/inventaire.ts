@@ -111,6 +111,13 @@ export const INVENTAIRE: Record<SimEvent['type'], Fait> = {
 
   // ── BÂTIR, CRAFTER, MANGER — 4 voix : poser, perdre, finir, cuire ────────────────
   resource_harvested: { voix: 'voix', famille: 'batir', quoi: 'un coup de récolte rapporte (moi seul)' },
+  // LA PÊCHE (spec peche.md R3/R4) : la TOUCHE sonne — c'est LE télégraphe, il doit se lire en un
+  // dixième de seconde, et l'oreille est plus vite que l'œil sur un flotteur ; la FUITE sonne —
+  // un plouf mou, le raté qui se voit doit s'entendre ; la PRISE est MUETTE parce qu'elle tombe
+  // sur `resource_harvested`, qui parle déjà au même tick (le patron de `refugee_rumeur`).
+  fish_bite: { voix: 'voix', famille: 'batir', quoi: 'ça mord — le flotteur plonge (moi seul)' },
+  fish_caught: { voix: 'muet', famille: 'batir', quoi: 'le poisson sort de l’eau (la récolte parle déjà)' },
+  fish_escaped: { voix: 'voix', famille: 'batir', quoi: 'le poisson file — ferré trop tard (moi seul)' },
   structure_built: { voix: 'voix', famille: 'batir', quoi: 'une pièce est posée' },
   structure_upgraded: { voix: 'muet', famille: 'batir', quoi: 'un mur passe au matériau suivant' },
   // LE PALIER DE BÂTI d'un village PNJ (spec village-pnj-evolution R6) : rare, et c'est LE
@@ -163,6 +170,9 @@ export const INVENTAIRE: Record<SimEvent['type'], Fait> = {
   node_depleted: { voix: 'voix', famille: 'batir', quoi: 'un nœud meurt : l’arbre craque et tombe, la pierre s’éboule, le végétal froisse' },
   item_dropped: { voix: 'muet', famille: 'plomberie', quoi: 'un objet est jeté au sol' },
   corpse_looted: { voix: 'muet', famille: 'plomberie', quoi: 'une dépouille est fouillée' },
+  // LE DÉPEÇAGE (spec depecage.md G2) : la coupe qui porte SONNE, comme le coup de récolte dont
+  // elle est la sœur — c'est le seul retour du maintien (pas de jauge), l'oreille confirme le geste.
+  carcass_cut: { voix: 'voix', famille: 'batir', quoi: 'une part sort de la carcasse (moi seul)' },
   prey_escaped: { voix: 'muet', famille: 'plomberie', quoi: 'la proie regagne son terrier' },
   craft_queued: { voix: 'muet', famille: 'plomberie', quoi: 'un craft entre dans la file (l’objet a sa voix)' },
   craft_cancelled: { voix: 'muet', famille: 'plomberie', quoi: 'un craft est annulé' },

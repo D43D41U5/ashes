@@ -218,6 +218,8 @@ const PROPS: LitProp[] = [
   // Le nœud CHAMPIGNON — cubique (arêtes franches, `passes:1`/`k:3.5`), silhouette partagée avec BootScene.
   { key: 'nd-champignon', w: 16, h: 16, passes: 1, k: 3.5, draw: drawChampignon },
   { key: 'nd-leaf_pile', w: 16, h: 16, passes: 1, k: 3.5, draw: drawLeafPile },
+  // (Les COINS DE PÊCHE n'ont pas de `_lit` : un remous sur l'eau n'a rien à éclairer — leur art
+  // flat vit dans `BootScene.makeNodes`, comme tout nœud hors `LIT_NODE_TYPES`.)
 ]
 
 /** LES VARIÉTÉS DE FLEUR (demande d'Alexis 2026-07-24 : « un peu de variation, forme ET couleur —

@@ -46,7 +46,7 @@ import {
   type MonsterType,
 } from './balance'
 import { isBlockedAt, makeIndexedIsBlockedAt } from './collision'
-import { applyDamage, die, startAttack, weaponKind } from './combat'
+import { applyDamage, die, startAttack, weaponKind, type Corpse } from './combat'
 import { emitEvent } from './events'
 import { fireState } from './fire'
 import { distSq } from './geometry'
@@ -91,11 +91,21 @@ export function predatorBias(state: SimState, tx: number, ty: number): number {
  * d'une carcasse FRAÎCHE ou d'une entité qui SAIGNE. Il se cumule au gradient de
  * danger (`predatorBias`) : tuer, c'est armer un minuteur.
  */
+/**
+ * UN CADAVRE PORTE-T-IL DE LA VIANDE ? La viande crue — ET LE QUARTIER (spec `depecage.md` R4) :
+ * le cerf rend des quartiers, et tant que seul `raw_meat` comptait, le gros gibier n'attirait ni
+ * ne nourrissait un loup — son minuteur C12 n'existait pas. C'est la seule lecture, partagée par
+ * le flair (`bloodBias`), la recherche de repas et la bouchée.
+ */
+export function porteDeLaViande(c: Corpse): boolean {
+  return countOf(c.inventory, 'raw_meat') > 0 || countOf(c.inventory, 'quartier') > 0
+}
+
 export function bloodBias(state: SimState, x: number, y: number): number {
   const r = HUNT.BLOOD_SCENT_RADIUS * HUNT.BLOOD_SCENT_RADIUS
   for (const c of state.corpses) {
     if (state.tick - c.diedAt >= HUNT.CARCASS_FRESH_TICKS) continue
-    if (countOf(c.inventory, 'raw_meat') <= 0) continue
+    if (!porteDeLaViande(c)) continue
     if (distSq(x, y, c.x, c.y) <= r) return HUNT.BLOOD_PREDATOR_BIAS
   }
   for (const e of state.entities) {
@@ -1686,8 +1696,9 @@ function graze(
 /** Ce que le GIBIER vient manger au sol (l'appât du chasseur). Les VERS (forêts-vivantes
  *  §1) sont le premier appât DÉDIÉ : appâter cesse de coûter des points de faim. */
 const BAIT_ITEMS: readonly ItemId[] = ['berries', 'raw_meat', 'cooked_meat', 'stew', 'worms']
-/** Ce qu'un PRÉDATEUR vient manger au sol — la viande, et rien d'autre. */
-const CARRION_ITEMS: readonly ItemId[] = ['raw_meat', 'cooked_meat']
+/** Ce qu'un PRÉDATEUR vient manger au sol — la viande, et rien d'autre (le quartier EST de la
+ *  viande, `depecage.md` R4 : un quartier jeté détourne un loup comme une pièce crue). */
+const CARRION_ITEMS: readonly ItemId[] = ['raw_meat', 'cooked_meat', 'quartier']
 
 /** La pile au sol la plus proche qui porte un de ces items. */
 /** Une pile est-elle POSÉE SUR UNE COULÉE (à ≤ 2 tuiles d'une tuile de chemin) ? Balayage
@@ -2747,7 +2758,7 @@ function feedStep(state: SimState, monster: Monster, entity: Entity): boolean {
       // n'efface la carcasse que si elle ne porte plus RIEN — sinon elle demeure
       // comme conteneur lootable (le bois et les outils d'un mort mixte ne sont
       // pas mangés, donc pas détruits : critère de conservation A21).
-      removeItems(meal.inventory, { raw_meat: 1 })
+      if (!removeItems(meal.inventory, { raw_meat: 1 })) removeItems(meal.inventory, { quartier: 1 })
       if (isEmpty(meal.inventory)) {
         state.corpses = state.corpses.filter((c) => c.id !== meal.id)
       }
@@ -2777,7 +2788,7 @@ function feedStep(state: SimState, monster: Monster, entity: Entity): boolean {
   let best: { id: number; x: number; y: number; pile: boolean } | undefined
   let bestD = Infinity
   for (const c of state.corpses) {
-    if (countOf(c.inventory, 'raw_meat') <= 0) continue
+    if (!porteDeLaViande(c)) continue
     const fresh = state.tick - c.diedAt < HUNT.CARCASS_FRESH_TICKS
     const reach = fresh ? HUNT.CARCASS_SEEK_FRESH : FAUNA.CARCASS_SEEK
     const d = distSq(entity.x, entity.y, c.x, c.y)

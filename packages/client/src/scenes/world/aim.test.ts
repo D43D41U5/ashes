@@ -26,6 +26,7 @@ describe('aimAt', () => {
   it('le cadavre PRIME sur le nœud (on ouvre ce qu’on vient de tuer)', () => {
     const t = aimAt(10, 10, PLAYER, [node(7, 10, 10)], [corpse(3, 10.2, 10.9)], RANGE)
     expect(t.corpseId).toBe(3)
+    expect(t.carcass).toBe(false)
     expect(clickToAction(t, null)).toEqual({ type: 'loot_corpse', corpseId: 3 })
   })
 
@@ -259,12 +260,12 @@ describe('viser un feu → fireId (pour ouvrir le modal à E, spec feu-station S
 })
 
 describe('la main décide du clic', () => {
-  const vide = { tx: 5, ty: 5, nodeId: null, nodeTool: null, corpseId: null, entityId: null, entityWounded: false, onFire: false, fireId: null, repairableId: null, plantableId: null, harvestableId: null,
+  const vide = { tx: 5, ty: 5, nodeId: null, nodeTool: null, corpseId: null, carcass: false, entityId: null, entityWounded: false, onFire: false, fireId: null, repairableId: null, plantableId: null, harvestableId: null,
   pileId: null, inRange: true }
   // `nodeTool` porte la FAMILLE d'outil du nœud visé (lue de `NODE_DEFS[type].tool`) : un
   // arbre appelle la hache, un filon la pioche, un buisson personne. C'est ce qui permet à la
   // hache d'être une arme SANS cesser d'abattre (décision d'Alexis 2026-08-20).
-  const surUnArbre = { tx: 5, ty: 5, nodeId: 42, nodeTool: 'axe' as const, corpseId: null, entityId: null, entityWounded: false, onFire: false, fireId: null, repairableId: null, plantableId: null, harvestableId: null,
+  const surUnArbre = { tx: 5, ty: 5, nodeId: 42, nodeTool: 'axe' as const, corpseId: null, carcass: false, entityId: null, entityWounded: false, onFire: false, fireId: null, repairableId: null, plantableId: null, harvestableId: null,
   pileId: null, inRange: true }
   const versLest = { dx: 1, dy: 0 }
 
@@ -316,7 +317,7 @@ describe('la main décide du clic', () => {
  */
 describe('la hache est une arme, et elle abat quand même', () => {
   const versLest = { dx: 1, dy: 0 }
-  const vide = { tx: 5, ty: 5, nodeId: null, nodeTool: null, corpseId: null, entityId: null, entityWounded: false, onFire: false, fireId: null, repairableId: null, plantableId: null, harvestableId: null, pileId: null, inRange: true }
+  const vide = { tx: 5, ty: 5, nodeId: null, nodeTool: null, corpseId: null, carcass: false, entityId: null, entityWounded: false, onFire: false, fireId: null, repairableId: null, plantableId: null, harvestableId: null, pileId: null, inRange: true }
   const surUnArbre = { ...vide, nodeId: 42, nodeTool: 'axe' as const }
   const surUnFilon = { ...vide, nodeId: 43, nodeTool: 'pickaxe' as const }
 
@@ -357,7 +358,7 @@ describe('la hache est une arme, et elle abat quand même', () => {
  */
 describe('le maintien ne défait pas le clic', () => {
   const versLest = { dx: 1, dy: 0 }
-  const base = { tx: 5, ty: 5, nodeId: null, nodeTool: null, corpseId: null, entityId: null, entityWounded: false, onFire: false, fireId: null, repairableId: null, plantableId: null, harvestableId: null, pileId: null, inRange: true }
+  const base = { tx: 5, ty: 5, nodeId: null, nodeTool: null, corpseId: null, carcass: false, entityId: null, entityWounded: false, onFire: false, fireId: null, repairableId: null, plantableId: null, harvestableId: null, pileId: null, inRange: true }
   const surUnArbre = { ...base, nodeId: 42, nodeTool: 'axe' as const }
 
   it('ARC en main : le clic est muet — et le MAINTIEN doit l’être aussi', () => {
@@ -736,5 +737,45 @@ describe('clickToAction — le marteau bâtit TOUT ce que le registre lui donne 
       const surArete = 'edges' in (a as object)
       expect([type, surArete]).toEqual([type, piece(type).arete !== 'interdite'])
     }
+  })
+})
+
+// ── LE DÉPEÇAGE (spec `depecage.md` G6/R3) ───────────────────────────────────
+describe('la carcasse : couteau en main on dépèce, sinon rien — jamais le coffre', () => {
+  const carcasse = (id: number, x: number, y: number): Corpse => ({ id, x, y, carcass: { species: 'deer', parts: 5 } }) as Corpse
+  const versLest = { dx: 1, dy: 0 }
+
+  it('aimAt lit la nature du cadavre : une bête est une carcasse', () => {
+    const t = aimAt(10, 10, PLAYER, [], [carcasse(3, 10.2, 10.9)], RANGE)
+    expect(t.corpseId).toBe(3)
+    expect(t.carcass).toBe(true)
+  })
+
+  it('COUTEAU EN MAIN sur une carcasse → `butcher_start` (le maintien fera le reste)', () => {
+    const t = aimAt(10, 10, PLAYER, [], [carcasse(3, 10.2, 10.9)], RANGE)
+    expect(clickToAction(t, null, { held: 'crude_knife', ...versLest })).toEqual({ type: 'butcher_start', corpseId: 3 })
+  })
+
+  it('MAINS NUES ou OUTIL D’UNE AUTRE FAMILLE sur une carcasse → RIEN (pas de coffre, pas de refus gratuit)', () => {
+    const t = aimAt(10, 10, PLAYER, [], [carcasse(3, 10.2, 10.9)], RANGE)
+    expect(clickToAction(t, null, { held: null, ...versLest })).toBeNull()
+    expect(clickToAction(t, null, { held: 'crude_axe', ...versLest })).toBeNull()
+    expect(clickToAction(t, null)).toBeNull()
+  })
+
+  it('UNE ARME EN MAIN frappe, même sur une carcasse — le couteau, lui, n’est pas une arme', () => {
+    const t = aimAt(10, 10, PLAYER, [], [carcasse(3, 10.2, 10.9)], RANGE)
+    expect(clickToAction(t, null, { held: 'spear', ...versLest })).toEqual({ type: 'attack', dx: 1, dy: 0 })
+  })
+
+  it('HORS PORTÉE, le couteau ne dépèce pas (la sim refuserait) — le clic retombe sur la défense du pauvre', () => {
+    const t = aimAt(20, 20, PLAYER, [], [carcasse(3, 20.5, 20.5)], RANGE)
+    expect(t.carcass).toBe(true)
+    expect(clickToAction(t, null, { held: 'crude_knife', ...versLest })).toEqual({ type: 'attack', dx: 1, dy: 0 })
+  })
+
+  it('le couteau sur un ARBRE : un outil en main ne frappe pas, il récolte (le geste nu, comme la hache sur un buisson)', () => {
+    const t = aimAt(10, 10, PLAYER, [node(7, 10, 10)], [], RANGE)
+    expect(clickToAction(t, null, { held: 'crude_knife', ...versLest })).toEqual({ type: 'harvest', nodeId: 7 })
   })
 })

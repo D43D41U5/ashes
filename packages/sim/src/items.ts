@@ -102,6 +102,28 @@ export type ItemId =
   /** Le MARTEAU DE CONSTRUCTION : sans lui EN MAIN, on ne bâtit rien (spec recolte.md G12). */
   | 'hammer'
   | 'raw_meat'
+  /** ── LA PÊCHE (spec `peche.md` D5) — trois espèces, rareté par l'EAU et par la FENÊTRE de
+   *  ferrage. Le goujon mord partout et se laisse ferrer ; la truite ne vit qu'en rivière ;
+   *  le brochet ne vit qu'au lac et se débat (fenêtre courte). Crus, ils pourrissent comme la
+   *  viande ; cuits au Feu (`COOK_SLOT`), ils nourrissent par paliers. ── */
+  | 'gudgeon'
+  | 'trout'
+  | 'pike'
+  | 'cooked_gudgeon'
+  | 'cooked_trout'
+  | 'cooked_pike'
+  /** LA CANNE DE FORTUNE (spec `peche.md` D4) : une branche, de la corde — sans poste, dès
+   *  la première nuit. Obligatoire EN MAIN pour lancer : le geste EST la ligne. Une seule
+   *  marche de canne pour l'instant ; elle s'use d'un cran par ferrage réussi. */
+  | 'crude_rod'
+  /** LE COUTEAU DE FORTUNE (spec `depecage.md` D4) : une pierre, un bout de bois — sans poste.
+   *  Obligatoire EN MAIN pour dépecer, viande comprise : le geste EST la lame. Une seule marche
+   *  de couteau pour l'instant ; il s'use d'un cran par coupe. Un OUTIL, pas une arme. */
+  | 'crude_knife'
+  /** L'OS (spec `depecage.md` D5/D6) : la couche que seul le chasseur aguerri sait tirer d'une
+   *  carcasse (`BUTCHER.BONE_LEVEL`). Livré SANS recette (décision d'Alexis, dette actée) :
+   *  son évier viendra avec la Couture. */
+  | 'bone'
   /** LE QUARTIER (spec portage/chasse) : ce que rend le GROS gibier. Un gros morceau,
    *  LOURD — rentrer un cerf devient un vrai dilemme de charge (le portage retrouve ses
    *  dents que le doublement de CARRY lui avait ôtées). Se mange (gros repas cru) ou se cuit. */
@@ -189,8 +211,10 @@ export type { StructureType, BarrierType, ComponentType, FunctionId, PieceDef, F
 /** Qui a le droit d'ouvrir, de déposer, de retirer (spec village R10). */
 export type AccessLevel = 'private' | 'village' | 'public'
 
-/** Les quatre métiers V4 (spec économie R12). */
-export type SkillId = 'woodcutting' | 'mining' | 'foraging' | 'crafting'
+/** Les quatre métiers V4 (spec économie R12) — et `hunting`, la branche CHASSE/PÊCHE du
+ *  GDD (l.687), ouverte par la pêche (spec `peche.md` D6) : la chasse s'y branchera le jour
+ *  où elle aura son geste, au lieu d'un cinquième métier. */
+export type SkillId = 'woodcutting' | 'mining' | 'foraging' | 'crafting' | 'hunting'
 
 export function makeInventory(size: number): Inventory {
   return Array.from({ length: size }, () => null)

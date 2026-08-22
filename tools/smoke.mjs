@@ -10608,6 +10608,316 @@ const SCENARIOS = {
   },
 
   /**
+   * LA PÊCHE SE VOIT-ELLE ? (spec `peche.md` R1-R4) — lancer, attendre, ferrer.
+   *
+   * On se plante contre un COIN DE PÊCHE du vrai monde (un nœud `fishing_spot_*`, posé par le
+   * worldgen), canne en main et des vers au sac, et on joue le geste ENTIER en lisant l'état :
+   *  ① le lancer tend une ligne (`Entity.fishing` dans le snapshot ; `scene.pecheFx` a une
+   *    ligne à peindre) — capture PENDANT L'ATTENTE, boucle gelée : le fil pend, le flotteur
+   *    est sur l'eau, aucune jauge ;
+   *  ② la TOUCHE arrive (`fishing.windowEnd` posé) — capture du flotteur PLONGÉ ;
+   *  ③ on FERRE dans la fenêtre (`harvest_release` sitôt la touche lue) : un poisson au sac,
+   *    `fish_caught` dans le flux — capture du ferrage (canne cambrée, poisson en l'air).
+   * Le jugement (espèce, fenêtre) est prouvé au tick près par `peche.test.ts` ; ici on prouve
+   * que le client SAIT montrer le geste, et que le geste complet ramène un poisson.
+   *
+   * PIÈGE PAYÉ : le Worker ne dort PAS quand `game.loop.sleep()` fige le rendu pour la capture —
+   * avec un ver au bout, la touche venait à 3 s et le goujon FILAIT pendant la photo (fenêtre de
+   * 600 ms). Le premier lancer se fait donc SANS appât (8-15 s de marge) ; l'appât se prouve sur un
+   * second lancer, rentré avant la touche (le ver est parti — c'est le seul coût du raté, D4).
+   *
+   * Exige `--dev` (TP et `debug_grant`).
+   */
+  async peche(page) {
+    await page.goto(URL)
+    await page.waitForFunction(() => Boolean(window.__BRAISES__?.scene?.registry?.get('worldReady')), null, { timeout: 150000 })
+    await page.evaluate(() => window.__BRAISES__.scene.sendAction({ type: 'debug_set_hour', hour: 11 }))
+    await page.waitForTimeout(400)
+    const agir = async (action, ms = 320) => {
+      await page.evaluate((a) => { window.__BRAISES__.scene.sendAction(a) }, action)
+      await page.waitForTimeout(ms)
+    }
+    const slotDe = (item) => page.evaluate((it) => (window.__BRAISES__.scene.registry.get('inv') ?? [])
+      .findIndex((s) => s?.item === it), item)
+    const moi = () => page.evaluate(() => {
+      const s = window.__BRAISES__.scene
+      const me = (s.lastEntities ?? []).find((e) => e.id === s.playerId)
+      const compte = (it) => (me?.inventory ?? []).reduce((n, sl) => n + (sl?.item === it ? sl.count : 0), 0)
+      return { fishing: me?.fishing ?? null, poissons: compte('gudgeon') + compte('trout') + compte('pike'), vers: compte('worms') }
+    })
+
+    // LE COIN : le plus proche de nous n'importe pas — on prend le premier coin de LAC (le
+    // brochet y vit) sinon de rivière, et on se plante sur le gué à côté, à 1 tuile du centre.
+    const coin = await page.evaluate(() => {
+      const s = window.__BRAISES__.scene
+      const coins = (s.view.nodes ?? []).filter((n) => (n.type === 'fishing_spot_lake' || n.type === 'fishing_spot_river') && n.stock > 0)
+      const c = coins.find((n) => n.type === 'fishing_spot_lake') ?? coins[0]
+      if (!c) return null
+      // Une tuile voisine MARCHABLE (herbe ou gué) : on cherche à l'ouest, puis autour.
+      const m = s.map
+      const t = (x, y) => m.terrain[y * m.width + x]
+      const ok = (x, y) => t(x, y) !== 6 && t(x, y) !== 5 // ni profond, ni roche — le gué (4) se marche
+      const cand = [[-1, 0], [1, 0], [0, -1], [0, 1]].map(([dx, dy]) => [c.tx + dx, c.ty + dy]).find(([x, y]) => ok(x, y))
+      return { id: c.id, type: c.type, tx: c.tx, ty: c.ty, stock: c.stock, pied: cand ? { x: cand[0] + 0.5, y: cand[1] + 0.5 } : null, total: coins.length }
+    })
+    if (!coin || !coin.pied) { console.error('!! aucun coin de pêche joignable sur cette carte'); return {} }
+    console.log(`\n${coin.total} coins de pêche sur la carte ; on vise ${coin.type} #${coin.id} en (${coin.tx}, ${coin.ty}), stock ${coin.stock}.`)
+    await agir({ type: 'debug_teleport', x: coin.pied.x, y: coin.pied.y }, 900)
+    await agir({ type: 'debug_grant', item: 'crude_rod' }, 160)
+    const rslot = await slotDe('crude_rod')
+    if (rslot < 0 || rslot >= 6) { console.error(`!! la canne n'est pas à la ceinture (case ${rslot})`); return {} }
+    await agir({ type: 'set_active_slot', slot: rslot }, 300)
+    await page.waitForTimeout(900) // la caméra rejoint l'avatar
+    const avant = await moi()
+
+    // ① LE LANCER — la ligne se tend. LES GUETTEURS SONT POSÉS AVANT TOUT : (a) le ferrage part
+    //    DANS LA PAGE dès que le snapshot porte `windowEnd` (`host.onMessage`, 20 Hz — le rAF headless
+    //    est bridé à ~1 Hz, et la fenêtre du goujon (600 ms) tient entière entre deux frames ; un
+    //    aller-retour Playwright est encore plus lent) ; (b) le FX lui-même (`pecheFx.caught`/
+    //    `escaped`) FIGE la boucle et avance d'UN `game.step` de 160 ms : la phase de ferrage dure
+    //    460 ms et MOURRAIT entre deux frames — on pose la frame à la main (« figer et stepper »).
+    await page.evaluate(() => {
+      const s = window.__BRAISES__.scene
+      const fx = s.pecheFx
+      window.__PECHE__ = { touche: null, fait: null, ferreA: -1 }
+      s.host.onMessage((msg) => {
+        if (window.__PECHE__.touche || msg.type !== 'snapshot') return
+        const f = (msg.entities ?? []).find((e) => e.id === s.playerId)?.fishing
+        if (f?.windowEnd !== undefined) {
+          window.__PECHE__.touche = { species: f.species, fenetre: f.windowEnd - f.biteAt }
+          window.__PECHE__.ferreA = performance.now()
+          s.sendAction({ type: 'harvest_release' })
+        }
+      })
+      for (const m of ['caught', 'escaped']) {
+        const orig = fx[m].bind(fx)
+        fx[m] = (...a) => {
+          orig(...a)
+          if (a[0] !== s.playerId || window.__PECHE__.fait) return
+          window.__PECHE__.fait = m === 'caught' ? 'fish_caught' : 'fish_escaped'
+          window.__PECHE__.latence = Math.round(performance.now() - window.__PECHE__.ferreA)
+          s.game.loop.sleep()
+          s.game.step(s.game.loop.time + 160, 160)
+        }
+      }
+    })
+    await agir({ type: 'harvest_charge_start', nodeId: coin.id }, 120)
+    let etat = await moi()
+    for (let i = 0; i < 15 && !etat.fishing; i++) { await page.waitForTimeout(60); etat = await moi() }
+    if (!etat.fishing) { console.error(`!! le lancer n'a pas tendu de ligne (refus ${JSON.stringify(await page.evaluate(() => window.__BRAISES__.scene.registry.get('error') ?? null))})`); return {} }
+    console.log(`   ✓ ligne tendue (sans appât) : touche dans ${etat.fishing.biteAt - etat.fishing.castTick} ticks`)
+    // Le flotteur a fini son vol (380 ms) et la corde a eu le temps de PENDRE : la physique du fil
+    // avance à pas fixe, jusqu'à 1 s de simulation par frame — à 1 fps headless, 2,5 s = trois
+    // frames, assez pour qu'elle se pose (en jeu, à 60 fps, c'est 150 frames).
+    await page.waitForTimeout(2500)
+    const rendu = await page.evaluate(() => window.__BRAISES__.scene.pecheFx?.lignesEnCours?.() ?? -1)
+    console.log(rendu > 0 ? `   ✓ le rendu a ${rendu} ligne(s) à peindre (canne, fil, flotteur)` : `   ✗ pecheFx n'a rien à peindre (${rendu})`)
+    await page.evaluate(() => window.__BRAISES__.scene.game.loop.sleep())
+    await page.screenshot({ path: `${OUT}/peche-attente.png` })
+    await page.evaluate(() => { if (!window.__PECHE__.fait) window.__BRAISES__.scene.game.loop.wake() })
+
+    // ② LA TOUCHE, ③ LE FERRAGE — on attend le fait rendu (jusqu'à 16 s d'attente + 3 s de rendu).
+    const bilan = await page.evaluate(async () => {
+      const t0 = performance.now()
+      return await new Promise((resolve) => {
+        const guetter = () => {
+          const P = window.__PECHE__
+          if (P.fait) { resolve({ fait: P.fait, touche: P.touche, latence: P.latence }); return }
+          if (P.touche && performance.now() - P.ferreA > 3000) { resolve({ fait: null, touche: P.touche }); return }
+          if (!P.touche && performance.now() - t0 > 17000) { resolve({ fait: 'pas-de-touche', touche: null }); return }
+          setTimeout(guetter, 20) // pas rAF : une fois la boucle figée, il ne tournerait plus
+        }
+        guetter()
+      })
+    })
+    if (!bilan.touche) { console.error(`!! ${bilan.fait} (pas de touche lue en 17 s, ou ligne rentrée avant)`); return {} }
+    console.log(`   ✓ touche lue (espèce ${bilan.touche.species}, fenêtre ${bilan.touche.fenetre} ticks) — ferré ; fait rendu en ${bilan.latence} ms`)
+    const fait = bilan.fait
+    await page.screenshot({ path: `${OUT}/peche-ferrage.png` })
+    await page.evaluate(() => window.__BRAISES__.scene.game.loop.wake())
+    await page.waitForTimeout(600)
+    const apres = await moi()
+    if (fait === 'fish_caught' && apres.poissons > avant.poissons) console.log(`   ✓ PRISE : poissons ${avant.poissons} → ${apres.poissons} — le ferrage est rendu (peche-ferrage.png)`)
+    else if (fait === 'fish_escaped') console.log(`   ✓ le poisson a FILÉ — la fuite est rendue (peche-ferrage.png) ; ferré ${bilan.latence} ms après la touche lue (fenêtre ${bilan.touche.fenetre * 50} ms)`)
+    else console.error(`!! ni prise ni fuite lisible (fait ${fait}, poissons ${avant.poissons} → ${apres.poissons}, ligne ${JSON.stringify(apres.fishing)}, refus ${JSON.stringify(await page.evaluate(() => window.__BRAISES__.scene.registry.get('error') ?? null))}, moi ${await page.evaluate(() => { const s = window.__BRAISES__.scene; const me = s.lastEntities.find((e) => e.id === s.playerId); return JSON.stringify({ slot: me.activeSlot, inv: me.inventory, hp: me.hp, x: me.x, y: me.y, skills: me.skills }) })})`)
+
+    // ④ L'APPÂT (D4) : des vers au sac, le lancer en consomme UN et presse la touche ; rentrer la
+    //    ligne avant la touche ne rend pas le ver.
+    for (let i = 0; i < 3; i++) await agir({ type: 'debug_grant', item: 'worms' }, 70)
+    await agir({ type: 'set_active_slot', slot: rslot }, 300) // `debug_grant` EMPOIGNE ce qu'il donne : on reprend la canne
+    const avecVers = await moi()
+    await agir({ type: 'harvest_charge_start', nodeId: coin.id }, 120)
+    let appat = await moi()
+    for (let i = 0; i < 15 && !appat.fishing; i++) { await page.waitForTimeout(60); appat = await moi() }
+    if (!appat.fishing) console.error(`!! le second lancer (avec vers) n’a pas tendu de ligne (refus ${JSON.stringify(await page.evaluate(() => window.__BRAISES__.scene.registry.get('error') ?? null))}, état ${JSON.stringify(appat)}, moi ${await page.evaluate(() => { const s = window.__BRAISES__.scene; const me = s.lastEntities.find((e) => e.id === s.playerId); return JSON.stringify({ slot: me.activeSlot, inv: me.inventory.filter(Boolean), x: me.x, y: me.y }) })})`)
+    else {
+      const attente = appat.fishing.biteAt - appat.fishing.castTick
+      console.log(appat.fishing.bait && appat.vers === avecVers.vers - 1 && attente <= 160
+        ? `   ✓ appât : un ver parti (${avecVers.vers} → ${appat.vers}), touche pressée (${attente} ticks ≤ 160)`
+        : `   ✗ appât : bait ${appat.fishing.bait}, vers ${avecVers.vers} → ${appat.vers}, attente ${attente} ticks`)
+      await agir({ type: 'harvest_release' }, 300)
+      const rentree = await moi()
+      console.log(!rentree.fishing && rentree.vers === appat.vers
+        ? '   ✓ rentrée avant la touche : ligne rentrée, le ver ne revient pas'
+        : `   ✗ rentrée : ligne ${JSON.stringify(rentree.fishing)}, vers ${rentree.vers}`)
+    }
+    return { coin: coin.type, fait, poissons: apres.poissons - avant.poissons, appat: appat.fishing?.bait ?? null }
+  },
+
+  /**
+   * LE DÉPEÇAGE SE VOIT-IL ? (spec `depecage.md` R1c-R3c) — la carcasse est un réservoir qu'on
+   * ouvre en restant dessus.
+   *
+   * On POSE une vraie carcasse de cerf (`debug_carcass`, coup propre : quartiers, os, peau — la
+   * chaîne réelle de `die()`), couteau de fortune en main, et on joue le geste en lisant l'état :
+   *  ① le clic de coffre est REFUSÉ (« il faut le dépecer ») — une bête ne se fouille pas ;
+   *  ② l'appui ouvre la découpe (`Entity.butchering` dans le snapshot), l'avatar se PENCHE
+   *    (la silhouette tassée) — capture de la carcasse PLEINE ;
+   *  ③ le maintien découpe à la cadence : des `carcass_cut` tombent, le sac se remplit, l'art
+   *    de la carcasse passe à ENTAMÉE — capture ;
+   *  ④ lâcher garde l'acquis ; reprendre va au bout : la viande et la peau sortent, l'OS reste
+   *    (niveau 0) — capture de la carcasse DÉPOUILLÉE.
+   * Le jugement (tirage, cadence, palier) est prouvé au tick près par `depecage.test.ts` ; ici on
+   * prouve que le client SAIT tenir le geste et le montrer.
+   *
+   * LE MAINTIEN EST PILOTÉ DANS LA PAGE, BOUCLE FIGÉE : le rAF headless tourne à ~1 Hz et chaque
+   * frame SwiftShader bloque le fil principal ~800 ms — un `setInterval` à 100 ms n'y tire qu'un
+   * coup par frame, et la sim lâche une découpe non rafraîchie depuis `HOLD_GRACE_TICKS` (1 s).
+   * On ENDORT donc la boucle Phaser pendant le maintien (le Worker, lui, ne dort pas ; les
+   * snapshots arrivent et `syncCorpses` change l'art sur message, pas sur frame), on envoie le
+   * `hold` à 100 ms comme `tickHold` à 60 fps, et on pose UNE frame à la main (`game.step`) avant
+   * chaque capture — « figer et stepper ».
+   *
+   * Exige `--dev` (TP, `debug_grant`, `debug_carcass`).
+   */
+  async depecage(page) {
+    await page.goto(URL)
+    await page.waitForFunction(() => Boolean(window.__BRAISES__?.scene?.registry?.get('worldReady')), null, { timeout: 150000 })
+    await page.evaluate(() => window.__BRAISES__.scene.sendAction({ type: 'debug_set_hour', hour: 11 }))
+    await page.waitForTimeout(400)
+    const agir = async (action, ms = 320) => {
+      await page.evaluate((a) => { window.__BRAISES__.scene.sendAction(a) }, action)
+      await page.waitForTimeout(ms)
+    }
+    const slotDe = (item) => page.evaluate((it) => (window.__BRAISES__.scene.registry.get('inv') ?? [])
+      .findIndex((s) => s?.item === it), item)
+    const moi = () => page.evaluate(() => {
+      const s = window.__BRAISES__.scene
+      const me = (s.lastEntities ?? []).find((e) => e.id === s.playerId)
+      const compte = (it) => (me?.inventory ?? []).reduce((n, sl) => n + (sl?.item === it ? sl.count : 0), 0)
+      const c = (s.view?.corpses ?? []).find((k) => k.carcass)
+      const reste = c ? c.inventory.reduce((n, sl) => n + (sl ? sl.count : 0), 0) : -1
+      return {
+        butchering: me?.butchering ?? null, quartier: compte('quartier'), peau: compte('raw_hide'), os: compte('bone'), xp: me?.skills?.hunting ?? 0,
+        carcasse: c ? { id: c.id, species: c.carcass.species, reste, texture: s.view.corpseTexture?.(c.id) ?? null } : null,
+        refus: s.registry.get('error')?.reason ?? null,
+      }
+    })
+
+    /** Une frame posée à la main, boucle endormie — la capture montre l'état DU MOMENT. */
+    const poserUneFrame = () => page.evaluate(() => { const g = window.__BRAISES__.scene.game; g.step(g.loop.time + 16, 16) })
+
+    // Une clairière : on se tient là où on est, la bête naît à deux tuiles à l'est.
+    await agir({ type: 'debug_carcass', species: 'deer', clean: true }, 500)
+    await agir({ type: 'debug_grant', item: 'crude_knife' }, 160)
+    const kslot = await slotDe('crude_knife')
+    if (kslot < 0 || kslot >= 6) { console.error(`!! le couteau n'est pas à la ceinture (case ${kslot})`); return {} }
+    await agir({ type: 'set_active_slot', slot: kslot }, 300)
+    let etat = await moi()
+    if (!etat.carcasse) { console.error('!! aucune carcasse dans le snapshot après debug_carcass'); return {} }
+    console.log(`\ncarcasse de ${etat.carcasse.species} #${etat.carcasse.id} : ${etat.carcasse.reste} parts, art ${etat.carcasse.texture}`)
+    // La bête est à deux tuiles : on se rapproche à portée (1,5 t) par un TP d'une tuile.
+    const pos = await page.evaluate(() => { const s = window.__BRAISES__.scene; const me = s.lastEntities.find((e) => e.id === s.playerId); return { x: me.x, y: me.y } })
+    await agir({ type: 'debug_teleport', x: pos.x + 1, y: pos.y }, 900)
+    const scaleDebout = await page.evaluate(() => window.__BRAISES__.scene.avatarScaleY?.() ?? null)
+
+    // ① LE CLIC DE COFFRE EST REFUSÉ.
+    await agir({ type: 'loot_corpse', corpseId: etat.carcasse.id }, 400)
+    etat = await moi()
+    console.log(etat.refus === 'il faut le dépecer' && etat.quartier === 0
+      ? '   ✓ une bête ne se fouille pas : « il faut le dépecer », rien au sac'
+      : `   ✗ loot_corpse : refus ${JSON.stringify(etat.refus)}, quartiers ${etat.quartier}`)
+
+    // La bête PLEINE, avant le premier coup de lame (la capture coûte des secondes : prise
+    // après l'appui, elle montrerait déjà une coupe).
+    await page.evaluate(() => window.__BRAISES__.scene.game.loop.sleep())
+    await poserUneFrame()
+    await page.screenshot({ path: `${OUT}/depecage-pleine.png` })
+
+    // ② L'APPUI, ET LE MAINTIEN PILOTÉ DANS LA PAGE.
+    await page.evaluate((corpseId) => {
+      const s = window.__BRAISES__.scene
+      window.__DEPECAGE__ = { coupes: [], timer: null }
+      s.host.onMessage((msg) => {
+        if (msg.type !== 'snapshot') return
+        for (const e of msg.events ?? []) if (e.type === 'carcass_cut' && e.entityId === s.playerId) window.__DEPECAGE__.coupes.push(e.item)
+      })
+      s.game.loop.sleep()
+      s.sendAction({ type: 'butcher_start', corpseId })
+      window.__DEPECAGE__.timer = setInterval(() => s.sendAction({ type: 'butcher_start', corpseId, hold: true }), 100)
+    }, etat.carcasse.id)
+    await page.waitForTimeout(500)
+    etat = await moi()
+    const ouvert = Boolean(etat.butchering)
+    console.log(ouvert ? `   ✓ la découpe est ouverte (prochaine coupe au tick ${etat.butchering.nextCutAt})` : `   ✗ pas de butchering dans le snapshot (refus ${JSON.stringify(etat.refus)})`)
+    await poserUneFrame()
+    const penche = await page.evaluate(() => {
+      const s = window.__BRAISES__.scene
+      const me = s.lastEntities.find((e) => e.id === s.playerId)
+      return { scaleY: s.avatarScaleY?.() ?? null, butchering: me?.butchering !== undefined }
+    })
+    console.log(penche.scaleY !== null && scaleDebout !== null && penche.scaleY < scaleDebout - 0.01
+      ? `   ✓ l'avatar se PENCHE (scaleY ${scaleDebout.toFixed(2)} → ${penche.scaleY.toFixed(2)})`
+      : `   ✗ l'avatar ne se penche pas (scaleY ${scaleDebout} → ${penche.scaleY})`)
+
+    // ③ LE MAINTIEN DÉCOUPE : on GUETTE la première coupe (1,5 s à niveau 0) et on lit l'état
+    //    aussitôt — pas après une attente murale (une capture SwiftShader coûte des secondes, et
+    //    trois coupes seraient passées) : la bête doit être lue ENTAMÉE avant d'être dépouillée.
+    const coupes = await page.evaluate(async () => {
+      const t0 = performance.now()
+      while (window.__DEPECAGE__.coupes.length < 1 && performance.now() - t0 < 6000) await new Promise((r) => setTimeout(r, 40))
+      return [...window.__DEPECAGE__.coupes]
+    })
+    etat = await moi()
+    console.log(coupes.length >= 1 && etat.quartier + etat.peau === coupes.length
+      ? `   ✓ ${coupes.length} coupes tenues (${coupes.join(', ')}) — au sac : ${etat.quartier} quartier(s), ${etat.peau} peau ; XP chasse ${etat.xp}`
+      : `   ✗ coupes ${JSON.stringify(coupes)}, sac ${etat.quartier}/${etat.peau}, refus ${JSON.stringify(etat.refus)}`)
+    console.log(etat.carcasse && /-1$/.test(etat.carcasse.texture ?? '')
+      ? `   ✓ la carcasse est ENTAMÉE à l'écran (${etat.carcasse.texture}, ${etat.carcasse.reste} parts restantes)`
+      : `   ✗ art de carcasse : ${etat.carcasse?.texture} (${etat.carcasse?.reste} restantes)`)
+    await poserUneFrame()
+    await page.screenshot({ path: `${OUT}/depecage-entamee.png` })
+
+    // ④ LÂCHER GARDE L'ACQUIS ; REPRENDRE VA AU BOUT — l'os reste (niveau 0).
+    await page.evaluate(() => { clearInterval(window.__DEPECAGE__.timer); window.__BRAISES__.scene.sendAction({ type: 'butcher_stop' }) })
+    await page.waitForTimeout(400)
+    const lache = await moi()
+    const coupesAuLacher = await page.evaluate(() => window.__DEPECAGE__.coupes.length)
+    console.log(!lache.butchering && lache.quartier + lache.peau === coupesAuLacher
+      ? `   ✓ lâché : la découpe s’arrête, le sac garde ses ${coupesAuLacher} part(s)`
+      : `   ✗ lâché : butchering ${JSON.stringify(lache.butchering)}, sac ${lache.quartier}/${lache.peau}, ${coupesAuLacher} coupes`)
+    await page.evaluate((corpseId) => {
+      const s = window.__BRAISES__.scene
+      s.sendAction({ type: 'butcher_start', corpseId })
+      window.__DEPECAGE__.timer = setInterval(() => s.sendAction({ type: 'butcher_start', corpseId, hold: true }), 100)
+    }, etat.carcasse.id)
+    await page.waitForTimeout(5200)
+    await page.evaluate(() => clearInterval(window.__DEPECAGE__.timer))
+    const fin = await moi()
+    const total = await page.evaluate(() => window.__DEPECAGE__.coupes.length)
+    console.log(fin.quartier === 2 && fin.peau === 1 && fin.os === 0 && fin.carcasse && fin.carcasse.reste === 2 && !fin.butchering
+      ? `   ✓ au bout : 2 quartiers + 1 peau au sac, l'OS reste sur la bête (niveau 0), la découpe s'est arrêtée d'elle-même (${total} coupes)`
+      : `   ✗ fin : sac ${fin.quartier}/${fin.peau}/${fin.os}, carcasse ${JSON.stringify(fin.carcasse)}, butchering ${JSON.stringify(fin.butchering)}, ${total} coupes`)
+    console.log(fin.carcasse && /-2$/.test(fin.carcasse.texture ?? '')
+      ? `   ✓ la carcasse est DÉPOUILLÉE à l'écran (${fin.carcasse.texture})`
+      : `   ✗ art final : ${fin.carcasse?.texture}`)
+    await poserUneFrame()
+    await page.screenshot({ path: `${OUT}/depecage-depouillee.png` })
+    await page.evaluate(() => window.__BRAISES__.scene.game.loop.wake())
+    return { coupes: total, quartier: fin.quartier, peau: fin.peau, os: fin.os, reste: fin.carcasse?.reste ?? null }
+  },
+
+  /**
    * LE MINAGE À MAÎTRISE MARCHE-T-IL ? (spec recolte-maitrise, verbe 2)
    *
    * On se pose contre un rocher et on vérifie DEUX faits : (1) la LUEUR DU BON FLANC se

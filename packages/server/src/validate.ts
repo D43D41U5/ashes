@@ -246,6 +246,9 @@ const FORMES: { [T in ActionJouable]: FormeDe<Extract<PlayerAction, { type: T }>
   harvest: { nodeId: req(ID), aimX: opt(VISEE), aimY: opt(VISEE), whole: opt({ g: 'booleen' }) },
   harvest_charge_start: { nodeId: req(ID), hold: opt({ g: 'booleen' }) },
   harvest_release: {},
+  // LE DÉPEÇAGE (spec `depecage.md` G1/G4) : le maintien porte `hold`, comme la jauge.
+  butcher_start: { corpseId: req(ID), hold: opt({ g: 'booleen' }) },
+  butcher_stop: {},
   craft: { recipeId: req(clef(RECIPES)) },
   cancel_craft: { index: req(CASE) },
   eat: { item: req(clef(ITEM_WEIGHT)), slot: opt(CASE) },

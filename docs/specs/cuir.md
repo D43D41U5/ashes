@@ -58,7 +58,11 @@ de gamme : la difficulté devient une **porte**, pas un multiplicateur optionnel
   carcasse**, à côté de la viande — sa qualité est déjà décidée. Le dilemme « je
   m'expose sur le corps » existe déjà (on fouille à découvert, le sang attire les
   nez, C12). Une action de dépeçage chronométrée au couteau est un second knob,
-  gardé pour plus tard.
+  gardé pour plus tard. *(AMENDÉ 2026-08-22 : ce « plus tard » est arrivé — spec
+  `depecage.md`. La peau reste dans le réservoir de la carcasse, sa qualité toujours
+  décidée par le coup ; mais on ne la prend plus d'un clic : couteau en main, clic
+  MAINTENU, une part par coupe, tirée au hasard parmi ce qui reste. Le dilemme
+  « je m'expose » a désormais une DURÉE.)*
 - **L4 — Le tannage propage le palier.** `hide` → `leather`, `hide_prime` →
   `leather_prime`, au `workshop` (pas de nouvelle station). ⚠ **Ouvert** : l'entrée
   du tannage (le cuir nu suffit, ou un tannin/écorce qui — par la doctrine de

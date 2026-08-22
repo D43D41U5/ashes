@@ -40,6 +40,15 @@ export const ITEM_LABELS: Record<ItemId, string> = {
   arrow: 'Flèche',
   hammer: 'Marteau de construction',
   raw_meat: 'Viande crue',
+  gudgeon: 'Goujon',
+  trout: 'Truite',
+  pike: 'Brochet',
+  cooked_gudgeon: 'Goujon grillé',
+  cooked_trout: 'Truite grillée',
+  cooked_pike: 'Brochet grillé',
+  crude_rod: 'Canne de fortune',
+  crude_knife: 'Couteau de fortune',
+  bone: 'Os',
   quartier: 'Quartier',
   cooked_meat: 'Viande cuite',
   raw_hide: 'Peau brute',
@@ -477,6 +486,85 @@ export const ITEM_PAINTS: Record<ItemId, ItemPaint> = {
     g.fillStyle(0xc25a50).fillEllipse(6, 7, 6, 4) // gras / reflet NO
     g.fillStyle(0xe6ddc8).fillRect(11, 2, 2, 5) // l'os
     g.fillStyle(0xe6ddc8).fillCircle(12, 2, 2)
+  },
+
+  // ── LA PÊCHE (spec peche.md G8) — trois poissons, trois TAILLES, couchés tête à gauche. ──
+  // Cru : le dos sombre, le ventre clair, l'œil ; grillé : le même corps bruni, sans l'œil, une
+  // strie de grill. Rectiligne comme tout l'art (des marches, pas des courbes) ; la taille fait
+  // l'espèce : le goujon tient dans 9 px, le brochet déborde presque de la case.
+  gudgeon: (g) => {
+    g.fillStyle(0x6f7f6a).fillRect(3, 7, 8, 3) // le corps, gris-vert
+    g.fillStyle(0xd8d4bf).fillRect(4, 9, 6, 1) // le ventre
+    g.fillStyle(0x6f7f6a).fillRect(11, 6, 2, 5) // la queue
+    g.fillStyle(0x1d1d1a).fillRect(4, 7, 1, 1) // l'œil
+  },
+  trout: (g) => {
+    g.fillStyle(0x4f6a5a).fillRect(2, 6, 10, 4) // le dos, vert sombre
+    g.fillStyle(0xc9a56a).fillRect(3, 9, 8, 1) // le flanc doré
+    g.fillStyle(0xe3ddc8).fillRect(3, 10, 8, 1) // le ventre
+    g.fillStyle(0x4f6a5a).fillRect(12, 5, 2, 6) // la queue
+    g.fillStyle(0xa8352e).fillRect(5, 7, 1, 1).fillRect(8, 8, 1, 1) // deux points rouges — la truite
+    g.fillStyle(0x1d1d1a).fillRect(3, 7, 1, 1) // l'œil
+  },
+  pike: (g) => {
+    g.fillStyle(0x3f5a3a).fillRect(1, 6, 12, 4) // un corps LONG, olive
+    g.fillStyle(0x8fa060).fillRect(2, 7, 10, 1) // la ligne claire du flanc
+    g.fillStyle(0xd8d4bf).fillRect(2, 9, 10, 1) // le ventre
+    g.fillStyle(0x3f5a3a).fillRect(0, 6, 2, 2) // le bec plat, tête à gauche
+    g.fillStyle(0x3f5a3a).fillRect(13, 5, 3, 6) // la queue, large
+    g.fillStyle(0x1d1d1a).fillRect(2, 6, 1, 1) // l'œil
+  },
+  cooked_gudgeon: (g) => {
+    g.fillStyle(0x7a4a26).fillRect(3, 7, 8, 3)
+    g.fillStyle(0xa9743a).fillRect(4, 7, 6, 1) // la dorure
+    g.fillStyle(0x7a4a26).fillRect(11, 6, 2, 5)
+    g.fillStyle(0x3a2512).fillRect(6, 7, 1, 3) // la strie du grill
+  },
+  cooked_trout: (g) => {
+    g.fillStyle(0x7a4a26).fillRect(2, 6, 10, 4)
+    g.fillStyle(0xa9743a).fillRect(3, 6, 8, 1)
+    g.fillStyle(0x7a4a26).fillRect(12, 5, 2, 6)
+    g.fillStyle(0x3a2512).fillRect(5, 6, 1, 4).fillRect(8, 6, 1, 4)
+  },
+  cooked_pike: (g) => {
+    g.fillStyle(0x7a4a26).fillRect(1, 6, 12, 4)
+    g.fillStyle(0xa9743a).fillRect(2, 6, 10, 1)
+    g.fillStyle(0x7a4a26).fillRect(0, 6, 2, 2).fillRect(13, 5, 3, 6)
+    g.fillStyle(0x3a2512).fillRect(4, 6, 1, 4).fillRect(7, 6, 1, 4).fillRect(10, 6, 1, 4)
+  },
+  // LA CANNE DE FORTUNE : une branche en diagonale (des marches), une corde qui pend de la
+  // pointe, un crochet de deux pixels. Le bois de l'arc de fortune, la corde de la corde.
+  crude_rod: (g) => {
+    g.fillStyle(0x6a4c2c)
+    g.fillRect(2, 12, 3, 2) // le manche, en bas à gauche
+    g.fillRect(4, 10, 3, 2)
+    g.fillRect(6, 8, 3, 2)
+    g.fillRect(8, 6, 3, 2)
+    g.fillRect(10, 4, 3, 2)
+    g.fillRect(12, 2, 2, 2) // la pointe
+    g.fillStyle(0x8d6b40).fillRect(2, 12, 1, 1).fillRect(6, 8, 1, 1).fillRect(10, 4, 1, 1) // la face claire
+    g.fillStyle(0xcfc4a4).fillRect(13, 4, 1, 7) // la ligne, qui pend de la pointe
+    g.fillStyle(0xb9b2a0).fillRect(12, 11, 2, 1).fillRect(12, 10, 1, 1) // l'hameçon
+  },
+
+  // LE COUTEAU DE FORTUNE (depecage.md D4) : un éclat de pierre grise emmanché sur un bout de
+  // bois, en diagonale comme la canne — le manche en bas à gauche, la lame vers le haut à
+  // droite, un fil clair sur le tranchant. Un outil, pas une arme : il n'a pas la garde de l'épieu.
+  crude_knife: (g) => {
+    g.fillStyle(0x6a4c2c).fillRect(2, 11, 3, 3).fillRect(4, 9, 3, 3) // le manche en bois
+    g.fillStyle(0x8d6b40).fillRect(2, 11, 1, 1).fillRect(4, 9, 1, 1) // sa face claire
+    g.fillStyle(0xcfc4a4).fillRect(6, 8, 2, 2) // la ligature
+    g.fillStyle(0x7d7f82).fillRect(7, 5, 3, 3).fillRect(9, 3, 3, 3).fillRect(11, 2, 2, 2) // l'éclat de pierre
+    g.fillStyle(0xb4b7ba).fillRect(9, 3, 1, 1).fillRect(11, 2, 1, 1) // le fil du tranchant, clair
+    g.fillStyle(0x4f5154).fillRect(8, 7, 2, 1).fillRect(10, 5, 2, 1) // le dos de la lame, dans l'ombre
+  },
+
+  // L'OS (depecage.md D5) : un long os blanc-crème, deux têtes, une ombre sur le dessous.
+  bone: (g) => {
+    g.fillStyle(0xe6ddc8).fillRect(4, 7, 8, 3) // le fût
+    g.fillStyle(0xe6ddc8).fillCircle(3, 6, 2).fillCircle(3, 10, 2).fillCircle(13, 6, 2).fillCircle(13, 10, 2) // les têtes
+    g.fillStyle(0xf4eee0).fillRect(4, 7, 8, 1) // le dessus éclairé
+    g.fillStyle(0xb8ad95).fillRect(4, 9, 8, 1) // le dessous
   },
 
   // Quartier : un GROS morceau de viande sur l'os — plus imposant que la pièce crue.

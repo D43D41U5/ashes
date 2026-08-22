@@ -223,3 +223,27 @@ describe('debug — tamponner le palier de bâti (spec village-pnj-evolution)', 
     expect(village.buildTier).toBe(1)
   })
 })
+
+describe('debug — la carcasse posée (spec depecage.md)', () => {
+  it('fait naître une vraie bête et la tue : une carcasse marquée, avec os et peau (clean), à deux tuiles', () => {
+    const { sim, player } = makeSim(true)
+    drainEvents(sim)
+    act(sim, player, { type: 'debug_carcass', species: 'deer', clean: true })
+    const evs = drainEvents(sim)
+    expect(evs.some((e) => e.type === 'monster_slain' && e.monsterType === 'deer' && e.clean)).toBe(true)
+    expect(sim.monsters).toHaveLength(0) // la bête n'a pas survécu à sa naissance
+    const c = sim.corpses[0]!
+    expect(c.carcass?.species).toBe('deer')
+    expect(Math.abs(c.x - 12)).toBeLessThan(0.01)
+    const compte = (item: string): number => c.inventory.reduce((n, s) => n + (s?.item === item ? s.count : 0), 0)
+    expect(compte('quartier')).toBe(2)
+    expect(compte('bone')).toBe(2)
+    expect(compte('raw_hide')).toBe(1)
+  })
+
+  it('ne fait RIEN si la sim n’est pas en debug', () => {
+    const { sim, player } = makeSim(false)
+    act(sim, player, { type: 'debug_carcass', species: 'boar' })
+    expect(sim.corpses).toHaveLength(0)
+  })
+})

@@ -37,6 +37,8 @@ import {
   TERRAIN_SCREE,
   TERRAIN_WET_MEADOW,
   TERRAIN_WILLOW,
+  TERRAIN_SHALLOW_WATER,
+  TERRAIN_DEEP_WATER,
   TERRAINS,
   type NodeType,
 } from './balance'
@@ -48,6 +50,7 @@ import { fbm2, hash2 } from './noise'
 import { estCoeur, estLisiere, TERRAINS_BOISES_MASSIF, TERRAINS_FEUILLUS } from './profondeur'
 import { CREUX } from './racine-relief'
 import { RELIEF, type CarteZonee } from './zonegen'
+import { EAU, estUnCoude } from './zonegen-water'
 import { MONDE } from './zonegraph'
 
 export const CONTENU = {
@@ -202,6 +205,24 @@ export const CONTENU = {
    * ses baies, le cœur ses champignons). Chance par tuile libre, passe appendue en queue.
    */
   TAS_FEUILLES: 0.02,
+
+  /**
+   * LES COINS DE PÊCHE (spec `peche.md` P3/P4 — sel 'PECH'). Réglage de GÉNÉRATEUR : il se
+   * calibre en regardant une carte (combien de coins sur la rivière, combien par lac), pas en
+   * jouant — c'est la ligne de partage de `balance.ts`.
+   */
+  /** Rivière : deux coudes retenus sont séparés d'au moins ce nombre de PAS DE FIL. Une poignée
+   *  de coins sur toute la rivière, pas un par méandre. */
+  PECHE_ESPACEMENT_FIL: 40,
+  /** Lac : un coin, plus un par tranche de ce nombre de tuiles de BERGE candidates (haut-fond
+   *  touchant le profond, hors rivière) — un lac de 45×45 a ~180 tuiles de berge, donc deux… */
+  PECHE_BERGE_PAR_COIN: 150,
+  /** …plafonné à ce nombre par lac, … */
+  PECHE_MAX_PAR_LAC: 3,
+  /** …et deux coins d'un même lac sont écartés d'au moins ce Chebyshev. */
+  PECHE_ESPACEMENT_LAC: 24,
+  /** Une tuile profonde à moins de ce rayon Chebyshev du fil appartient à la RIVIÈRE (pas au lac). */
+  PECHE_RAYON_RIVIERE: 2,
 
   /**
    * UN EMPLACEMENT DE VILLAGE : ce qu'il lui faut sous la main, et sur quel rayon.
@@ -509,7 +530,170 @@ export function placeZoneNodes(c: CarteZonee): ResourceNode[] {
   id += carrieres.length
   const futs = vieuxFutsDesCoeurs(c, occupeesPlus(), id)
   for (const f of futs) nodes.push(f)
+  id += futs.length
+
+  // ── LES COINS DE PÊCHE (spec `peche.md` P3-P5) — en QUEUE : aucun nœud d'avant ne bouge ──
+  const coins = coinsDePeche(c, occupeesPlus(), id)
+  for (const k of coins) nodes.push(k)
   return nodes
+}
+
+/**
+ * ═══ LES COINS DE PÊCHE (spec `peche.md` P2-P5 — sel 'PECH') ═══
+ *
+ * Un coin est une tuile de HAUT-FOND qui TOUCHE le PROFOND (4-voisinage) : joignable depuis la
+ * berge ou le gué (portée 1,5 t), et lisible — on pêche VERS le profond. Deux eaux, deux types :
+ *
+ * - **La rivière, aux coudes** : `estUnCoude` (l'unique définition) désigne les pivots du fil ; à
+ *   chaque coude retenu, la tuile candidate de plus petit `hash2` gagne ; un coude n'est retenu
+ *   que si le précédent retenu est à ≥ `PECHE_ESPACEMENT_FIL` pas de fil.
+ * - **Les lacs, contre leur cœur** : chaque LAC est une composante 4-connexe de profond (BFS) ; ses
+ *   candidates sont les tuiles P2 de sa berge dont le profond touché n'est PAS de la rivière (à
+ *   plus de `PECHE_RAYON_RIVIERE` Chebyshev de tout point du fil — un lac que la rivière traverse
+ *   a ses coudes ET ses coins de lac, loin du fil). Il reçoit `1 + floor(berge / PECHE_BERGE_PAR_COIN)`
+ *   coins, plafonnés à `PECHE_MAX_PAR_LAC`, choisis par `hash2` croissant et écartés de
+ *   `PECHE_ESPACEMENT_LAC`. En Racine, hors `lac_mort`. Déterministe, sans PRNG.
+ *
+ * Patron 'FIBR' : passe appendue en queue, tirage positionnel, aucun nœud existant ne bouge.
+ * Racine seule (D3) : les eaux des autres zones attendent leur contenu T2.
+ */
+function coinsDePeche(c: CarteZonee, occupees: Set<number>, idStart: number): ResourceNode[] {
+  const { width, height, terrain } = c.map
+  const out: ResourceNode[] = []
+  let id = idStart
+  const salt = (c.graphe.seed ^ 0x50454348) | 0 // 'PECH'
+  const fil = c.map.fil ?? []
+  const estEnRacine = (i: number): boolean => c.zone[i] === c.graphe.racine
+  const slugDe = (i: number): string => c.graphe.zones[c.zone[i]!]?.def.slug ?? ''
+  const profondVoisin = (tx: number, ty: number): number => {
+    const v = [
+      [1, 0],
+      [-1, 0],
+      [0, 1],
+      [0, -1],
+    ] as const
+    for (const [dx, dy] of v) {
+      const x = tx + dx
+      const y = ty + dy
+      if (x < 0 || y < 0 || x >= width || y >= height) continue
+      const j = y * width + x
+      if (terrain[j] === TERRAIN_DEEP_WATER) return j
+    }
+    return -1
+  }
+  /** Candidat P2 : haut-fond libre, hors seuil, touchant le profond. Rend l'index du profond ou −1. */
+  const candidat = (tx: number, ty: number): number => {
+    const i = ty * width + tx
+    if (c.rampe[i] || occupees.has(i)) return -1
+    if (terrain[i] !== TERRAIN_SHALLOW_WATER) return -1
+    return profondVoisin(tx, ty)
+  }
+
+  // ── LA RIVIÈRE, AUX COUDES ──
+  const R = EAU.RIVIERE_DEMI_LIT
+  let dernierCoude = -Infinity
+  for (let k = 1; k + 1 < fil.length; k++) {
+    if (!estUnCoude(fil, k, width)) continue
+    if (k - dernierCoude < CONTENU.PECHE_ESPACEMENT_FIL) continue
+    const cx = fil[k]! % width
+    const cy = (fil[k]! - cx) / width
+    let meilleur = -1
+    let meilleurH = 2
+    for (let ty = cy - R; ty <= cy + R; ty++) {
+      for (let tx = cx - R; tx <= cx + R; tx++) {
+        if (tx < 0 || ty < 0 || tx >= width || ty >= height) continue
+        if (candidat(tx, ty) < 0) continue
+        const h = hash2(tx, ty, salt)
+        if (h < meilleurH) {
+          meilleurH = h
+          meilleur = ty * width + tx
+        }
+      }
+    }
+    if (meilleur < 0) continue
+    const tx = meilleur % width
+    const ty = (meilleur - tx) / width
+    out.push({ id, type: 'fishing_spot_river', tx, ty, stock: NODE_DEFS.fishing_spot_river.stock, regrowAt: 0 })
+    occupees.add(meilleur)
+    id += 1
+    dernierCoude = k
+  }
+
+  // ── LES LACS, CONTRE LEUR CŒUR ──
+  // Le voisinage du fil : une tuile profonde à moins de PECHE_RAYON_RIVIERE Chebyshev du fil est
+  // de la rivière, pas d'un lac. Un Set, construit une fois : O(fil × rayon²).
+  const pres = new Set<number>()
+  const RR = CONTENU.PECHE_RAYON_RIVIERE
+  for (const i of fil) {
+    const fx = i % width
+    const fy = (i - fx) / width
+    for (let y = fy - RR; y <= fy + RR; y++) {
+      for (let x = fx - RR; x <= fx + RR; x++) {
+        if (x < 0 || y < 0 || x >= width || y >= height) continue
+        pres.add(y * width + x)
+      }
+    }
+  }
+  // Les LACS : composantes 4-connexes de profond, en Racine, hors Lac Mort — balayage row-major,
+  // donc l'ordre des lacs (et des ids) est stable pour une carte donnée.
+  const compDe = new Int32Array(width * height).fill(-1)
+  let nbLacs = 0
+  const berges: number[][] = [] // par lac : les index des tuiles candidates de sa berge
+  for (let i = 0; i < width * height; i++) {
+    if (compDe[i] !== -1 || terrain[i] !== TERRAIN_DEEP_WATER) continue
+    if (!estEnRacine(i) || slugDe(i) === 'lac_mort') continue
+    const lac = nbLacs
+    nbLacs += 1
+    const berge: number[] = []
+    const vuBerge = new Set<number>()
+    const pile = [i]
+    compDe[i] = lac
+    while (pile.length > 0) {
+      const j = pile.pop()!
+      const jx = j % width
+      const jy = (j - jx) / width
+      for (const [dx, dy] of [[1, 0], [-1, 0], [0, 1], [0, -1]] as const) {
+        const x = jx + dx
+        const y = jy + dy
+        if (x < 0 || y < 0 || x >= width || y >= height) continue
+        const k = y * width + x
+        if (terrain[k] === TERRAIN_DEEP_WATER) {
+          if (compDe[k] === -1) {
+            compDe[k] = lac
+            pile.push(k)
+          }
+          continue
+        }
+        // Une tuile de berge candidate (P2) dont LE profond touché ici n'est pas de la rivière.
+        if (vuBerge.has(k) || pres.has(j)) continue
+        if (candidat(x, y) < 0) continue
+        vuBerge.add(k)
+        berge.push(k)
+      }
+    }
+    berges.push(berge)
+  }
+  const E = CONTENU.PECHE_ESPACEMENT_LAC
+  for (const berge of berges) {
+    if (berge.length === 0) continue
+    const quota = Math.min(CONTENU.PECHE_MAX_PAR_LAC, 1 + Math.floor(berge.length / CONTENU.PECHE_BERGE_PAR_COIN))
+    const tries = berge
+      .map((k) => ({ k, h: hash2(k % width, (k - (k % width)) / width, salt) }))
+      .sort((a, b) => a.h - b.h || a.k - b.k)
+    const choisis: { tx: number; ty: number }[] = []
+    for (const { k } of tries) {
+      if (choisis.length >= quota) break
+      const tx = k % width
+      const ty = (k - tx) / width
+      if (choisis.some((l) => Math.max(Math.abs(l.tx - tx), Math.abs(l.ty - ty)) < E)) continue
+      if (occupees.has(k)) continue // un coin de rivière a pu prendre cette tuile
+      out.push({ id, type: 'fishing_spot_lake', tx, ty, stock: NODE_DEFS.fishing_spot_lake.stock, regrowAt: 0 })
+      occupees.add(k)
+      choisis.push({ tx, ty })
+      id += 1
+    }
+  }
+  return out
 }
 
 /**

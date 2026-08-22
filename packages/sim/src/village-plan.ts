@@ -18,7 +18,7 @@
  *
  * Déterministe : aucun tirage, que de la géométrie sur l'état.
  */
-import { COMPONENTS, STRUCTURE_COSTS, VILLAGE_GROWTH, WALL_TIERS, type ComponentType } from './balance'
+import { COMPONENTS, NODE_DEFS, STRUCTURE_COSTS, VILLAGE_GROWTH, WALL_TIERS, type ComponentType } from './balance'
 import { edgeBarrierAt, fullTileAt, terrainConstructible } from './construction'
 import { noeudDefriche, poseLibre } from './defriche'
 import { EDGE_E, EDGE_N, EDGE_O, EDGE_S } from './geometry'
@@ -295,6 +295,11 @@ export function desiredOrders(state: SimState, village: Village): BuildOrder[] {
     if (Math.max(Math.abs(n.tx - fx), Math.abs(n.ty - fy)) > r) continue
     if (!onMap(n.tx, n.ty)) continue
     if (noeudDefriche(state.villages, n)) continue // déjà une souche : rien à couper
+    // ON NE DÉFRICHE PAS L'EAU (spec peche.md) : un coin de pêche dans la cour ne se coupe pas,
+    // et le PNJ ne sait pas pêcher — l'ordre serait refusé à chaque tick et, comme une seule
+    // corvée `build` existe à la fois, TOUT le chantier s'arrêterait (5 929 refus mesurés en
+    // 6 000 ticks, relecture déterminisme 2026-08-22).
+    if (NODE_DEFS[n.type].tool === 'rod') continue
     aDefricher.push({ tx: n.tx, ty: n.ty })
   }
   aDefricher.sort((a, b) => a.ty - b.ty || a.tx - b.tx)

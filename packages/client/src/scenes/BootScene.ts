@@ -11,6 +11,7 @@ import { generateLitStructures } from '../render/lit-structures'
 import { generateBatiArt } from '../render/bati-art'
 import { generateFireProp, generateLitProps, FLOWERS, FLOWER_STEM_COLOR, PEBBLES, PEBBLE_TONES, PEBBLE_SHADOW, pebbleShadowRects, variantBase, CHAMPIGNON_RECTS, LEAF_PILE_RECTS, CHICOT_RECTS, POUSSIERE_RECTS, BLOC_RECTS } from '../render/lit-props'
 import { makeCliffTextures } from '../render/cliff-art'
+import { makeCarcasseTextures } from '../render/carcasse-art'
 import { makePoiTextures } from './world/poi-art'
 import { makeBorneTextures } from './world/borne-layer'
 import { makeGueStoneTexture } from './world/gue-stones'
@@ -44,6 +45,10 @@ export class BootScene extends Phaser.Scene {
     g.fillRect(5, 4, 2, 8)
     g.fillRect(9, 4, 2, 8)
     g.generateTexture('spr-corpse', 16, 16)
+    g.clear()
+    // LES CARCASSES (spec `depecage.md` R1c) : une bête morte reste la bête — couchée, par
+    // espèce, et son art suit ce qui lui reste (pleine, entamée, dépouillée).
+    makeCarcasseTextures(g)
     g.destroy()
 
     // LE REGARD (audit UI/UX P3-11) : un pion sombre qu'on POSE au bord de l'avatar,
@@ -406,6 +411,18 @@ export class BootScene extends Phaser.Scene {
     // `LEAF_PILE_RECTS` (même contrat que le champignon : flat et `_lit` ne peuvent pas diverger).
     for (const [x, y, w, h, col] of LEAF_PILE_RECTS) g.fillStyle(parseInt(col.slice(1), 16)).fillRect(x, y, w, h)
     g.generateTexture('nd-leaf_pile', 16, 16)
+    g.clear()
+
+    // LES COINS DE PÊCHE (spec peche.md) : un nœud SUR L'EAU, presque rien à dessiner — trois
+    // touches d'écume à fleur d'eau (le remous d'un trou à poissons), sans relief : l'eau n'a pas de
+    // volume, ce sont les ombres de poissons qui disent le coin (R5). Un art pour les deux eaux —
+    // rivière et lac se lisent au sol. Pas de variante `_lit` (rien à éclairer sur une surface).
+    g.fillStyle(0xe9e7da, 0.55)
+    g.fillRect(3, 10, 3, 1)
+    g.fillRect(9, 12, 4, 1)
+    g.fillRect(6, 14, 2, 1)
+    g.generateTexture('nd-fishing_spot_river', 16, 16)
+    g.generateTexture('nd-fishing_spot_lake', 16, 16)
     g.clear()
 
     // BUISSON À BAIES — MÊME silhouette que le buisson normal (`cl-bush`), au vert de feuillage

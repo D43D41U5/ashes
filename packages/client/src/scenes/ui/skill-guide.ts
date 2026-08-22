@@ -19,9 +19,13 @@ import { keymapEffectif } from '../world/keymap-perso'
 import { libelleTouches } from '../world/touches'
 import {
   BALANCE,
+  BUTCHER,
+  FISH_SPECIES,
+  FISHING,
   TOOL_RANK,
   TOOL_YIELD,
   fellGreenWidth,
+  fishingWindowTicks,
   maxTierByLevel,
   mineTolerance,
   type SkillId,
@@ -181,9 +185,57 @@ function craftingGuide(): SkillGuide {
   }
 }
 
-/** Les quatre fiches, dans l'ordre du paperdoll. Reconstruites à l'appel (pures, bon marché). */
+/** Le premier niveau où la fenêtre de ferrage de cette espèce atteint son PLAFOND (`WINDOW_CAP`) —
+ *  sondé sur `fishingWindowTicks`, jamais recopié. `Infinity` si jamais (garde du test). */
+export function fishingCapLevel(speciesId: 'gudgeon' | 'trout' | 'pike'): number {
+  const sp = FISH_SPECIES.find((s) => s.id === speciesId)!
+  const cap = Math.floor(sp.windowTicks * FISHING.WINDOW_CAP)
+  for (let l = 0; l <= 64; l++) if (fishingWindowTicks(sp, l) >= cap) return l
+  return Infinity
+}
+
+/** Le premier niveau où la cadence de coupe touche son PLANCHER — sondé sur la formule de G3, jamais recopié. */
+export function cutFloorLevel(): number {
+  for (let l = 0; l <= 64; l++) if (BUTCHER.CUT_TICKS - l * BUTCHER.SPEED_PER_LEVEL <= BUTCHER.CUT_TICKS_MIN) return l
+  return Infinity
+}
+
+/** Chasseur : la branche Chasse/pêche du GDD — ouverte par la PÊCHE (spec peche.md D6) et par le
+ *  DÉPEÇAGE (spec depecage.md D5/D7 : c'est la coupe qui instruit, pas la mise à mort). Deux pentes
+ *  (la fenêtre de ferrage s'élargit, la coupe s'accélère) et deux paliers nets : l'os s'ouvre au
+ *  chasseur aguerri, le brochet devient tenable au plafond. Trié par niveau, comme l'exige la fiche. */
+function huntingGuide(): SkillGuide {
+  const ms = (ticks: number): string => `${Math.round((ticks / BALANCE.TICK_RATE_HZ) * 1000)} ms`
+  const s10 = (ticks: number): string => `${Math.round(ticks / BALANCE.TICK_RATE_HZ * 10) / 10} s`
+  const pike = FISH_SPECIES.find((s) => s.id === 'pike')!
+  const gudgeon = FISH_SPECIES.find((s) => s.id === 'gudgeon')!
+  const paliers = [
+    {
+      level: BUTCHER.BONE_LEVEL,
+      text: "DÉPEÇAGE EFFICACE : l'OS entre dans ce que tu tires d'une carcasse — avant, il reste sur la bête",
+    },
+    {
+      level: fishingCapLevel('pike'),
+      text: `Le BROCHET du lac se ferre à ${ms(fishingWindowTicks(pike, fishingCapLevel('pike')))} au lieu de ${ms(pike.windowTicks)} — la fenêtre est au plafond`,
+    },
+  ].sort((a, b) => a.level - b.level)
+  return {
+    id: 'hunting',
+    label: SKILL_LABELS.hunting,
+    gesture:
+      'Couteau en main, MAINTIENS le clic sur une bête morte : une part sort à chaque coupe, acquise aussitôt — lâche quand tu veux. Canne en main, clique sur un coin de pêche pour LANCER, relâche pour FERRER quand le flotteur plonge.',
+    paliers,
+    passifs: [
+      `Chaque niveau raccourcit la coupe de ${s10(BUTCHER.SPEED_PER_LEVEL)} (${s10(BUTCHER.CUT_TICKS)} au départ, plancher ${s10(BUTCHER.CUT_TICKS_MIN)} au niveau ${cutFloorLevel()})`,
+      `Chaque niveau élargit la fenêtre de ferrage de ${pct(FISHING.WINDOW_PER_LEVEL)} (le goujon : ${ms(gudgeon.windowTicks)} au départ), jusqu'à ×${FISHING.WINDOW_CAP}`,
+    ],
+    outilNote: 'Il faut un COUTEAU en main pour dépecer (bois + pierre, à la main) et une CANNE pour pêcher (bois + corde). Une touche = un poisson, une coupe = une part, quel que soit l\'outil.',
+  }
+}
+
+/** Les cinq fiches, dans l'ordre du paperdoll. Reconstruites à l'appel (pures, bon marché). */
 export function skillGuides(): SkillGuide[] {
-  return [woodcuttingGuide(), miningGuide(), foragingGuide(), craftingGuide()]
+  return [woodcuttingGuide(), miningGuide(), foragingGuide(), craftingGuide(), huntingGuide()]
 }
 
 export function skillGuideOf(id: SkillId): SkillGuide {

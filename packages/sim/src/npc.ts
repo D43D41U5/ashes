@@ -28,6 +28,7 @@ import {
   WORLD_EVENTS,
   type NodeType,
   type RecipeId,
+  type ToolFamily,
 } from './balance'
 import { isBlockedAt, moveAvatar, type MoveWorld } from './collision'
 import { engageRange, startAttack, weaponProfile } from './combat'
@@ -286,7 +287,7 @@ function equipBest(entity: Entity, score: (item: ItemId) => number): void {
  * tous deux ×2 : au rendement, le PNJ aurait pu empoigner le caillou ficelé et
  * laisser la vraie hache au sac — pour la casser cinq fois plus vite.
  */
-export function equipBestTool(entity: Entity, family: 'axe' | 'pickaxe' | null): void {
+export function equipBestTool(entity: Entity, family: ToolFamily | null): void {
   equipBest(entity, (item) => toolRank(item, family)) // 0 = ce n'est pas un outil d'ici
 }
 

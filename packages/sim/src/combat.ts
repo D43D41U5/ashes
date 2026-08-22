@@ -20,6 +20,7 @@ import {
   WEAPON_DAMAGE,
   WEAPON_PROFILES,
   isRangedWeapon,
+  type MonsterType,
   type Strike,
   type WeaponKind,
   type WeaponProfile,
@@ -52,6 +53,15 @@ export interface Corpse {
    * est lent, exprès), et on entend le hurlement.
    */
   diedAt: number
+  /**
+   * LA CARCASSE (spec `depecage.md` D1/R1). Posé à la mort d'une BÊTE, jamais sur une dépouille
+   * humaine ni un coffre renversé : c'est ce qui dit au dépeçage « ici on découpe » — et au
+   * client « dessine un cerf mort, pas des ossements ». Une carcasse ne se fouille pas
+   * (`loot_corpse`/`transfer` refusés) : son inventaire est le RÉSERVOIR que les coupes vident.
+   * `parts` : ce que le réservoir portait à la mort — le client en tire l'état d'art (pleine,
+   * entamée, dépouillée) sans deviner si la peau y était.
+   */
+  carcass?: { species: MonsterType; parts: number }
 }
 
 export type CombatAction =
@@ -366,6 +376,9 @@ export function applyCombatAction(state: SimState, actorId: number, action: Comb
       const corpse = state.corpses.find((c) => c.id === action.corpseId)
       if (!corpse) return reject('rien ici')
       if (distSq(actor.x, actor.y, corpse.x, corpse.y) > BALANCE.INTERACT_RANGE * BALANCE.INTERACT_RANGE) return reject('trop loin')
+      // UNE BÊTE NE SE FOUILLE PAS, ELLE SE DÉPÈCE (spec `depecage.md` R3) : le clic de coffre
+      // est réservé aux dépouilles humaines. Le raider PNJ passe ici aussi — il rentre bredouille.
+      if (corpse.carcass !== undefined) return reject('il faut le dépecer')
       // Sac BORNÉ (spec inventaire R11, critère A21) : on prend ce qui rentre,
       // case à case — l'usure voyage avec la case (R6), une hache usée trouvée
       // sur un cadavre reste une hache usée. Le cadavre GARDE le reste : rien ne
@@ -940,6 +953,19 @@ export function applyDamage(state: SimState, target: Entity, damage: number, byE
   if (target.hp <= 0) die(state, target, byEntityId)
 }
 
+/** Le compte d'unités d'un sac — ce qu'une carcasse porte à sa naissance. */
+function totalOf(inv: Entity['inventory']): number {
+  let n = 0
+  for (const slot of inv) if (slot !== null) n += slot.count
+  return n
+}
+
+/** Une espèce dont la table de loot n'est pas vide : sa mort laisse une CARCASSE à dépecer. */
+function rendDesParts(type: MonsterType): boolean {
+  for (const n of Object.values(MONSTER_DEFS[type].loot)) if ((n ?? 0) > 0) return true
+  return false
+}
+
 export function die(state: SimState, entity: Entity, byEntityId: number, cause?: 'cold' | 'hunger' | 'lightning'): void {
   const monster = state.monsters.find((m) => m.entityId === entity.id)
   emitEvent(state, {
@@ -996,6 +1022,10 @@ export function die(state: SimState, entity: Entity, byEntityId: number, cause?:
       inventory: loot,
       decayAt: state.tick + COMBAT.CORPSE_TICKS,
       diedAt: state.tick,
+      // LA CARCASSE (spec `depecage.md` R1) : une bête qui REND des parts laisse un réservoir à
+      // dépecer, pas un coffre. Le Cendreux (table vide) ne porte que ce qu'il a hérité d'un
+      // mort — ça, ça se fouille.
+      ...(monster && rendDesParts(monster.type) ? { carcass: { species: monster.type, parts: totalOf(loot) } } : {}),
     })
     state.nextCorpseId += 1
   }
@@ -1039,6 +1069,12 @@ export function die(state: SimState, entity: Entity, byEntityId: number, cause?:
   entity.wounds = {}
   delete entity.windup
   delete entity.charge
+  // La mort lâche aussi la jauge d'abattage et LA LIGNE (peche.md) : `hp` repasse > 0 dans ce
+  // même appel, la garde `hp <= 0` d'`advanceFishing` ne verrait jamais le mort — et un respawné
+  // au Feu recevrait la touche d'un lac à l'autre bout de la vallée.
+  delete entity.harvestCharge
+  delete entity.fishing
+  delete entity.butchering
   entity.hp = COMBAT.RESPAWN_HP
   entity.hunger = COMBAT.RESPAWN_HUNGER
   entity.stamina = COMBAT.RESPAWN_STAMINA

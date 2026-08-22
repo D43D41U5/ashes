@@ -96,13 +96,21 @@ describe('la table de routage audio (soundForEvent)', () => {
     // 80 → 81 le 2026-08-21 : `refugee_rumeur` (annales.md R12), silence DÉCIDÉ — le geste
     // (refugees_fed) parle déjà ; deux sons sur une action seraient un doublé.
     // 81 → 82 le 2026-08-21 : `cendre_prend` (P5a), silence décidé — souvent lointain.
-    expect(total).toBe(82)
+    // 82 → 85 le 2026-08-22 : LA PÊCHE (spec peche.md) — `fish_bite` SONNE (triangle qui
+    // DESCEND, 70 ms : le flotteur plonge — le télégraphe d'une fenêtre de 250-600 ms, l'oreille
+    // devance l'œil), `fish_escaped` SONNE (un plouf mou, plus bas et plus long : « trop tard »),
+    // `fish_caught` MUET — il tombe sur `resource_harvested`, qui parle déjà au même tick.
+    // 85 → 86 le 2026-08-22 : `carcass_cut` (spec depecage.md) SONNE — la sœur du coup de récolte,
+    // plus basse et plus mate (une lame dans la chair) ; le seul retour du maintien, sans jauge.
+    expect(total).toBe(86)
     // 34 → 35 le 2026-07-29 : `node_depleted` a gagné sa voix (trois, selon la matière).
     // 61 → 62 faits et 35 → 36 voix le 2026-07-30 : `door_toggled` naît (spec construction R26).
     // 62 → 63 faits et 36 → 37 voix le 2026-07-31 : `cendreux_prowl` naît (spec cendreux R11bis) —
     // le pendant du hurlement pour les morts, quand la nuit bascule d'espèce avec les actes.
     // 44 → 47 le 2026-08-21 : `cendreux_cri`, `presage_horde`, `charnier_brule` — trois voix.
-    expect(voix).toBe(47)
+    // 47 → 49 le 2026-08-22 : `fish_bite`, `fish_escaped` — deux voix (voir ci-dessus).
+    // 49 → 50 le 2026-08-22 : `carcass_cut` — une voix (voir ci-dessus).
+    expect(voix).toBe(50)
   })
 
   it('L’AXE D’ALIGNEMENT S’ENTEND : les verbes chauds montent, les froids tombent', () => {

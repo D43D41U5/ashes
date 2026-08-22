@@ -10,7 +10,7 @@
  * que snapshot = JSON.stringify et que le transport Worker/réseau soit
  * trivial.
  */
-import { BALANCE, CARRY, COMBAT, HUNT, SLOTS, TERRAIN_GRASS, TICK_DT_S, type RecipeId, type Strike } from './balance'
+import { BALANCE, CARRY, COMBAT, HUNT, SLOTS, TERRAIN_GRASS, TICK_DT_S, type FishSpecies, type RecipeId, type Strike } from './balance'
 import { moveAvatar } from './collision'
 import { advanceDegel } from './gel'
 import { advanceEnvols } from './faune'
@@ -166,6 +166,23 @@ export interface Entity {
    * jauge monter. Absent hors abattage — le minage et la cueillette n'en ont pas.
    */
   harvestCharge?: { nodeId: number; ticks: number }
+  /**
+   * LA LIGNE TENDUE (spec `peche.md` C3). Posée au lancer, effacée à la prise, au raté ou au
+   * premier pas. La sim DATE tout : `biteAt` est tiré au lancer (l'attente), `species` et
+   * `windowEnd` sont posés À LA TOUCHE — pas avant, pour que le snapshot ne trahisse pas ce qui
+   * mord (pendant la fenêtre, quelques ticks, peu importe). Le client en tire le fil, le
+   * flotteur, la plongée, le ferrage ; il ne rapporte jamais un résultat. `bait` : un ver est
+   * parti au lancer (et ne revient pas). Absent hors pêche.
+   */
+  fishing?: { nodeId: number; castTick: number; biteAt: number; bait: boolean; species?: FishSpecies['id']; windowEnd?: number }
+  /**
+   * LE DÉPEÇAGE EN COURS (spec `depecage.md` C3). Posé par `butcher_start`, couteau en main, sur
+   * une carcasse ; effacé au relâchement, au pas, à la mort, au sac plein, au réservoir vide ou
+   * quand le maintien cesse d'être rafraîchi (`heldAt` + `HOLD_GRACE_TICKS`). La sim DATE la
+   * prochaine coupe (`nextCutAt`) ; le client dessine le geste penché et le coup de lame, il ne
+   * rapporte jamais ce qui sort. Absent hors dépeçage.
+   */
+  butchering?: { corpseId: number; since: number; nextCutAt: number; heldAt: number }
   /** Le pied du prochain coup : +1 / −1 / +1… (les poings dansent, spec R4bis). */
   swingSide: 1 | -1
   /** Point de respawn hors village (position d'apparition). */
@@ -737,6 +754,8 @@ export function step(state: SimState, inputs: MoveInput[]): void {
         action.type === 'harvest' ||
         action.type === 'harvest_charge_start' ||
         action.type === 'harvest_release' ||
+        action.type === 'butcher_start' ||
+        action.type === 'butcher_stop' ||
         action.type === 'craft' ||
         action.type === 'cancel_craft' ||
         action.type === 'eat'
