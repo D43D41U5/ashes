@@ -27,6 +27,10 @@ import { PAVE, PAVE_PX, cuireChunk } from '../../render/paves'
 
 /** Sous le bake ? Non : AU-DESSUS du bake (−1), SOUS l'eau (+0,25) et tout ce qui vit dessus. */
 const PAVE_DEPTH = GROUND_MAP_DEPTH + 0.05
+/** LE SURPLOMB de la berge (frange de terre, ombre, ressac sur l'eau) : AU-DESSUS du shader
+ *  d'eau (+0,25), des ombres de poissons (+0,27) et des reflets (+0,28) — une berge cache ce qui
+ *  passe dessous — mais SOUS le gel (+0,30), la falaise et les feuilles qui dérivent (+0,32). */
+const SURPLOMB_DEPTH = GROUND_MAP_DEPTH + 0.29
 
 /** Combien de chunks de COURONNE (hors écran) se cuisent par frame. Le visible n'est pas borné. */
 const CUISSONS_COURONNE_PAR_FRAME = 2
@@ -48,6 +52,8 @@ const MAX_VIVANTS = 96
 interface Chunk {
   image: Phaser.GameObjects.Image
   cle: string
+  /** Le surplomb de berge, s'il y a de l'eau dans le chunk. */
+  surplomb?: { image: Phaser.GameObjects.Image; cle: string }
   /** Dernière frame où le chunk était dans la vue ou sa couronne. */
   vu: number
 }
@@ -170,28 +176,52 @@ export class PaveLayer {
     const t0 = performance.now()
     const S = PAVE.CHUNK * PAVE_PX
     const cle = `pave-${this.seed >>> 0}-${cx}-${cy}`
-    const rgba = cuireChunk({ cx, cy, terrainAt: this.terrainAt, couleurAt: this.couleurAt, trameDe: this.trameDe })
+    const cuit = cuireChunk({ cx, cy, terrainAt: this.terrainAt, couleurAt: this.couleurAt, trameDe: this.trameDe })
+    const image = this.poser(cle, cuit.sol, cx * S, cy * S, PAVE_DEPTH)
+    if (!image) return
+    const chunk: Chunk = { image, cle, vu: this.frame }
+    if (cuit.surplomb) {
+      const cleSur = cle + '-surplomb'
+      const sur = this.poser(cleSur, cuit.surplomb, cx * S, cy * S, SURPLOMB_DEPTH)
+      if (sur) chunk.surplomb = { image: sur, cle: cleSur }
+    }
+    this.chunks.set(k, chunk)
+    this.cuits++
+    this.derniereCuissonMs = performance.now() - t0
+  }
+
+  /** Verse un tampon RGBA dans une CanvasTexture NEAREST et pose son image. */
+  private poser(cle: string, rgba: Uint8ClampedArray, x: number, y: number, depth: number): Phaser.GameObjects.Image | null {
+    const S = PAVE.CHUNK * PAVE_PX
     // Une clé déjà prise (une scène rechargée à chaud sans passer par `destroy`) ne doit PAS
     // laisser un trou permanent recuit à chaque frame : on la rend, puis on recrée.
     if (this.scene.textures.exists(cle)) this.scene.textures.remove(cle)
     const tex = this.scene.textures.createCanvas(cle, S, S)
-    if (!tex) return
+    if (!tex) return null
     const ctx = tex.getContext()
     const img = ctx.createImageData(S, S)
     img.data.set(rgba)
     ctx.putImageData(img, 0, 0)
     tex.refresh()
     tex.setFilter(Phaser.Textures.FilterMode.NEAREST)
-    const image = this.scene.add.image(cx * S, cy * S, cle).setOrigin(0, 0).setDepth(PAVE_DEPTH)
-    this.chunks.set(k, { image, cle, vu: this.frame })
-    this.cuits++
-    this.derniereCuissonMs = performance.now() - t0
+    return this.scene.add.image(x, y, cle).setOrigin(0, 0).setDepth(depth)
   }
 
   private rendre(k: number, c: Chunk): void {
     c.image.destroy()
     this.scene.textures.remove(c.cle)
+    if (c.surplomb) {
+      c.surplomb.image.destroy()
+      this.scene.textures.remove(c.surplomb.cle)
+    }
     this.chunks.delete(k)
+  }
+
+  /** Combien de chunks portent un surplomb de berge — la sonde du smoke. */
+  surplombsVivants(): number {
+    let n = 0
+    for (const c of this.chunks.values()) if (c.surplomb) n++
+    return n
   }
 
   /** Combien de chunks sont cuits et posés — la sonde du smoke (`matiere`). */

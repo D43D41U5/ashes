@@ -2661,6 +2661,34 @@ const SCENARIOS = {
    * l'écran entier, et que la carte tient dans sa BOÎTE — la marge au-dessus de la ceinture,
    * mesurée au pixel du renderer, y compris AU ZOOM (où elle débordait avant les bandes).
    */
+  /**
+   * LA BERGE (décision d'Alexis 2026-08-22, « très bien la reco ») — la terre déborde sur l'eau
+   * avec frange, liseré, ombre et ressac, DANS le surplomb posé au-dessus du shader d'eau.
+   *
+   * On se téléporte sur la rivière des Prés Bas (seed 2026, le cadrage de la maquette validée),
+   * on relève que des surplombs vivent, et on tire la capture à regarder. Exige `--dev`.
+   */
+  async berge(page) {
+    await page.goto(URL)
+    await page.waitForFunction(() => Boolean(window.__BRAISES__?.scene?.registry?.get('mapData')), null, { timeout: 150000 })
+    await page.waitForTimeout(1200)
+    await page.evaluate(() => window.__BRAISES__.scene.sendAction({ type: 'debug_set_hour', hour: 11 }))
+    await page.evaluate(() => window.__BRAISES__.scene.sendAction({ type: 'debug_teleport', x: 590.5, y: 428.5 }))
+    await page.waitForTimeout(1500)
+    const etat = await page.evaluate(() => {
+      const sc = window.__BRAISES__.scene
+      const p = sc.paves
+      const cles = sc.textures.getTextureKeys().filter((k) => k.endsWith('-surplomb'))
+      return { chunks: p.chunksVivants(), surplombs: p.surplombsVivants(), cles: cles.length, trous: p.trousVisibles(sc.cameras.main) }
+    })
+    console.log(`berge : ${JSON.stringify(etat)}`)
+    if (etat.surplombs <= 0) console.error('!! aucun surplomb de berge vivant au bord de la rivière')
+    if (etat.cles !== etat.surplombs) console.error(`!! ${etat.cles} textures de surplomb pour ${etat.surplombs} surplombs`)
+    if (etat.trous > 0) console.error(`!! ${etat.trous} trous visibles`)
+    if (etat.surplombs > 0 && etat.cles === etat.surplombs && etat.trous === 0) console.log(`   ✓ ${etat.surplombs} surplombs sur ${etat.chunks} chunks`)
+    await page.screenshot({ path: `${OUT}/berge.png` })
+  },
+
   async carte(page) {
     await page.goto(URL)
     await page.waitForFunction(() => Boolean(window.__BRAISES__?.scene?.registry?.get('worldReady')), null, { timeout: 150000 })

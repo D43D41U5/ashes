@@ -26,15 +26,27 @@
  * rentrants (union) sortent tout seuls, pour n'importe quel couple de terrains — et l'ordre de
  * recouvrement est UNE table, pas quinze planches.
  *
+ * ═══ LA BERGE EST UN PAVÉ DE TERRE SUR L'EAU (décision d'Alexis, 2026-08-22, « très bien la reco ») ═══
+ *
+ * L'eau CÈDE à toute terre : elle est dans l'ordre de recouvrement, tout en bas (priorité 0). La
+ * terre déborde donc sur elle avec sa frange, son liseré et son ombre portée — exactement comme
+ * la prairie sur la litière — plus UNE marque neuve : le RESSAC, 1 px clair sur l'eau sous la
+ * pénombre, l'eau qui mouille le pied de la berge. Le haut-fond reste une SURFACE : aucun
+ * pavé entre haut-fond et profond (refusé sur planche).
+ *
+ * Mais le shader d'eau dessine PAR-DESSUS le sol. Tout ce qui tombe sur une tuile d'eau sort
+ * donc dans une SECONDE image, le SURPLOMB, que la couche pose au-dessus du shader : la frange
+ * de terre (opaque), l'ombre et la pénombre (noir à l'alpha du facteur), le ressac (blanc à
+ * l'alpha). Le reste de l'eau y est transparent — le shader garde sa surface.
+ *
  * ═══ LES STRUCTURELS GARDENT LEURS COUCHES (R10) ═══
  *
- * L'eau, la falaise, le mur, le vide ne sont jamais propriétaires par débordement et ne reçoivent
- * aucune frange : leurs pixels restent TRANSPARENTS dans le chunk, le bake (et le shader d'eau
- * au-dessus) y restent seuls maîtres. Le pavé voisin garde son liseré contre eux : une berge se
- * lit comme un bord.
+ * La falaise, le mur, le vide ne sont jamais propriétaires par débordement et ne reçoivent
+ * aucune frange : leurs pixels restent TRANSPARENTS, le bake y reste seul maître. Le pavé voisin
+ * garde son liseré contre eux.
  *
- * PUR : aucun import Phaser. La cuisson rend un tampon RGBA que `scenes/world/pave-layer.ts`
- * verse dans une `CanvasTexture`. Testé en Node (`paves.test.ts`).
+ * PUR : aucun import Phaser. La cuisson rend deux tampons RGBA (sol, surplomb) que
+ * `scenes/world/pave-layer.ts` verse dans des `CanvasTexture`. Testé en Node (`paves.test.ts`).
  */
 import { hash2 } from '@ashes/sim'
 import { TILE_PX } from './framing'
@@ -67,6 +79,8 @@ export const PAVE = {
   BRIN_CLAIR: 1.2,
   BRIN_SOMBRE: 0.8,
   BRINS_PAR_TUILE: 2,
+  /** Le ressac : 1 px clair sur l'eau, sous la pénombre d'une berge (4 px sous son bord bas). */
+  RESSAC: 1.22,
 } as const
 
 /**
@@ -104,13 +118,19 @@ export const PRIORITE_PAVE: Record<number, number> = {
 }
 
 /** Les terrains STRUCTURELS : jamais propriétaires par débordement, transparents dans le chunk. */
-const STRUCTURELS = new Set<number>([0, 4, 6, 7, 23]) // void, shallow_water, deep_water, wall, cliff
+const STRUCTURELS = new Set<number>([0, 7, 23]) // void, wall, cliff
 
 export function estStructurel(t: number): boolean {
   return STRUCTURELS.has(t)
 }
 
-/** La priorité d'un terrain : −1 pour un structurel, 0 pour un terrain sans rang, sinon la table. */
+/** L'eau — elle cède à toute terre, et ce qui tombe sur elle va au SURPLOMB. */
+export function estEau(t: number): boolean {
+  return t === 4 || t === 6 // shallow_water, deep_water
+}
+
+/** La priorité d'un terrain : −1 pour un structurel, 0 pour l'eau et pour un terrain sans rang
+ *  (ils ne recouvrent rien), sinon la table. */
 export function prioriteDe(t: number): number {
   if (STRUCTURELS.has(t)) return -1
   return PRIORITE_PAVE[t] ?? 0
@@ -142,8 +162,16 @@ export interface CuissonChunk {
   trameDe: (t: number) => Float32Array | null
 }
 
+export interface ChunkCuit {
+  /** Le sol, SOUS le shader d'eau : opaque sur la terre, transparent sur l'eau et les structurels. */
+  sol: Uint8ClampedArray
+  /** Le surplomb, AU-DESSUS du shader d'eau : ce qui tombe sur une tuile d'eau — frange de terre,
+   *  ombre, ressac. `null` si le chunk n'a pas d'eau (aucune texture à poser). */
+  surplomb: Uint8ClampedArray | null
+}
+
 /**
- * CUIT UN CHUNK : rend le tampon RGBA de `(CHUNK × 16)²` pixels, ligne par ligne, haut en bas.
+ * CUIT UN CHUNK : rend les tampons RGBA de `(CHUNK × 16)²` pixels, ligne par ligne, haut en bas.
  *
  * Deux passes. ① Les PROPRIÉTAIRES : chaque pixel appartient d'abord à sa tuile ; puis chaque
  * tuile étend sa frange sur ses voisines de priorité inférieure (côtés, puis chanfreins de
@@ -155,7 +183,7 @@ export interface CuissonChunk {
  * la marge est recuite à l'identique par le chunk voisin, par construction (tout est
  * positionnel).
  */
-export function cuireChunk(p: CuissonChunk): Uint8ClampedArray {
+export function cuireChunk(p: CuissonChunk): ChunkCuit {
   const N = PAVE.CHUNK
   const P = PAVE_PX
   const L = N + 2 // tuiles locales, marge comprise
@@ -274,19 +302,27 @@ export function cuireChunk(p: CuissonChunk): Uint8ClampedArray {
   }
   const S = N * P
   const out = new Uint8ClampedArray(S * S * 4)
+  // Le surplomb n'est alloué que si le chunk (marge comprise) touche l'eau.
+  let eauVue = false
+  for (let k = 0; k < L * L && !eauVue; k++) eauVue = estEau(terr[k]!)
+  const sur = eauVue ? new Uint8ClampedArray(S * S * 4) : null
   const B = PAVE.BRINS_PAR_TUILE
   for (let y = 0; y < S; y++) {
     const py = y + P
     // La ligne de cellules de grain (GRAIN_CELLS est une puissance de deux : le masque tuile).
     const cyG = (((ty0 * P + py) / GRAIN_CELL_PX) | 0) & (GRAIN_CELLS - 1)
+    const ly = (py / P) | 0
     for (let x = 0; x < S; x++) {
       const px = x + P
       const i = py * LP + px
       const pk = ownP[i]!
-      if (pk < 0) continue // structurel : transparent, le bake et l'eau restent maîtres
+      if (pk < 0) continue // structurel : transparent, le bake reste maître
       const k = owner[i]!
       const t = ownT[i]!
       const o = (y * S + x) * 4
+      // Le pixel est-il SUR une tuile d'eau ? (sa propre tuile, pas son propriétaire)
+      const surEau = estEau(terr[ly * L + ((px / P) | 0)]!)
+      const tEau = estEau(t)
       // Le pavé du DESSOUS se lit au terrain (deux tuiles de même terrain ne font pas de bord),
       // celui du DESSUS aussi.
       const iU = i - LP, iD = i + LP, iL = i - 1, iR = i + 1
@@ -295,12 +331,16 @@ export function cuireChunk(p: CuissonChunk): Uint8ClampedArray {
       const basL = ownT[iL] !== t && ownP[iL]! < pk
       const basR = ownT[iR] !== t && ownP[iR]! < pk
       let f: number
-      if (basD || basL || basR) f = PAVE.LISERE
-      else if (basU) f = PAVE.ARETE_HAUTE
-      else if (ownT[iD + LP] !== t && ownP[iD + LP]! < pk) f = PAVE.TRANCHE
+      // L'eau n'a ni liseré ni arête ni tranche (une surface n'a pas d'épaisseur) ; elle reçoit
+      // l'ombre de la berge, puis le ressac.
+      if (!tEau && (basD || basL || basR)) f = PAVE.LISERE
+      else if (!tEau && basU) f = PAVE.ARETE_HAUTE
+      else if (!tEau && ownT[iD + LP] !== t && ownP[iD + LP]! < pk) f = PAVE.TRANCHE
       else if ((ownT[iU] !== t && ownP[iU]! > pk) || (ownT[iU - LP] !== t && ownP[iU - LP]! > pk)) f = PAVE.OMBRE
       else if (ownT[iU - 2 * LP] !== t && ownP[iU - 2 * LP]! > pk) f = PAVE.PENOMBRE
+      else if (tEau && !estEau(ownT[iU - 3 * LP]!) && ownP[iU - 3 * LP]! > pk) f = PAVE.RESSAC
       else if ((ownT[iL] !== t && ownP[iL]! > pk) || (ownT[iR] !== t && ownP[iR]! > pk)) f = PAVE.OMBRE_LATERALE
+      else if (tEau) continue // l'eau nue : le shader dessine sa surface
       else {
         f = 1
         // Les brins, dans le repère de la tuile PROPRIÉTAIRE (un brin peut vivre dans la frange).
@@ -315,16 +355,29 @@ export function cuireChunk(p: CuissonChunk): Uint8ClampedArray {
           else if (ox === bx + 1 && oy === by + 2) f = PAVE.BRIN_SOMBRE
         }
       }
+      if (tEau) {
+        // L'EAU OMBRÉE OU MOUILLÉE va au surplomb, en voile : noir à l'alpha (1 − f) pour
+        // assombrir, blanc à l'alpha (f − 1) pour éclaircir — le shader dessous garde son clapot.
+        if (!sur) continue
+        const voile = f < 1 ? 0 : 255
+        sur[o] = voile
+        sur[o + 1] = voile
+        sur[o + 2] = voile
+        sur[o + 3] = Math.round(255 * Math.min(1, Math.abs(1 - f)))
+        continue
+      }
       const c = coul[k]!
       // Le grain est POSITIONNEL (cellule de 4 px monde), pas relatif au propriétaire : deux
       // tuiles voisines de même famille partagent leur trame sans couture.
       const trame = trames[k]
       const g = trame ? f * trame[cyG * GRAIN_CELLS + ((((tx0 * P + px) / GRAIN_CELL_PX) | 0) & (GRAIN_CELLS - 1))]! : f
-      out[o] = ((c >> 16) & 0xff) * g
-      out[o + 1] = ((c >> 8) & 0xff) * g
-      out[o + 2] = (c & 0xff) * g
-      out[o + 3] = 255
+      // La terre SUR une tuile d'eau (la frange de la berge) passe au-dessus du shader.
+      const cible = surEau && sur ? sur : out
+      cible[o] = ((c >> 16) & 0xff) * g
+      cible[o + 1] = ((c >> 8) & 0xff) * g
+      cible[o + 2] = (c & 0xff) * g
+      cible[o + 3] = 255
     }
   }
-  return out
+  return { sol: out, surplomb: sur }
 }

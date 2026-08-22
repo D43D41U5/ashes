@@ -5,14 +5,14 @@
  * propriété affirmée à chaque fois est UNE propriété de l'image cuite — jamais un pixel choisi.
  */
 import { describe, expect, it } from 'vitest'
-import { PAVE, PAVE_PX, PRIORITE_PAVE, cuireChunk, estStructurel, frange, prioriteDe } from './paves'
+import { PAVE, PAVE_PX, PRIORITE_PAVE, cuireChunk, estEau, estStructurel, frange, prioriteDe } from './paves'
 
 const N = PAVE.CHUNK
 const S = N * PAVE_PX
 
-/** Un chunk (0,0) dont le terrain est donné par une fonction ; couleur unie, grain plat. */
+/** Un chunk (0,0) dont le terrain est donné par une fonction ; couleur unie, grain plat. Le SOL. */
 function cuire(terrainAt: (tx: number, ty: number) => number, couleur = 0x808080): Uint8ClampedArray {
-  return cuireChunk({ cx: 0, cy: 0, terrainAt, couleurAt: () => couleur, trameDe: () => null })
+  return cuireChunk({ cx: 0, cy: 0, terrainAt, couleurAt: () => couleur, trameDe: () => null }).sol
 }
 const px = (img: Uint8ClampedArray, x: number, y: number): [number, number, number, number] => {
   const o = (y * S + x) * 4
@@ -20,10 +20,15 @@ const px = (img: Uint8ClampedArray, x: number, y: number): [number, number, numb
 }
 
 describe('l’ordre de recouvrement', () => {
-  it('un structurel vaut −1, un terrain inconnu 0, les autres leur rang', () => {
-    for (const t of [0, 4, 6, 7, 23]) {
+  it('un structurel vaut −1, l’eau et un terrain inconnu 0, les autres leur rang', () => {
+    for (const t of [0, 7, 23]) {
       expect(estStructurel(t)).toBe(true)
       expect(prioriteDe(t)).toBe(-1)
+    }
+    for (const t of [4, 6]) {
+      expect(estEau(t)).toBe(true)
+      expect(estStructurel(t)).toBe(false)
+      expect(prioriteDe(t)).toBe(0) // l'eau cède à toute terre, et ne recouvre rien
     }
     expect(prioriteDe(99)).toBe(0)
     expect(prioriteDe(17)).toBe(PRIORITE_PAVE[17])
@@ -64,18 +69,64 @@ describe('la cuisson d’un chunk', () => {
     expect(plats).toBeLessThan(S * S) // et il y a bien des brins
   })
 
-  it('R10 — l’eau reste transparente, et aucune frange ne déborde dessus', () => {
-    // Moitié gauche herbe, moitié droite eau peu profonde.
-    const img = cuire((tx) => (tx < N / 2 ? 1 : 4))
-    let eauOpaque = 0
+  it('R10 — la falaise reste transparente dans le sol, et aucune frange ne déborde dessus', () => {
+    // Moitié gauche herbe, moitié droite falaise.
+    const cuit = cuireChunk({ cx: 0, cy: 0, terrainAt: (tx) => (tx < N / 2 ? 1 : 23), couleurAt: () => 0x808080, trameDe: () => null })
+    const img = cuit.sol
+    let falaiseOpaque = 0
     let herbeTransparente = 0
     for (let y = 0; y < S; y++) {
-      for (let x = (N / 2) * PAVE_PX; x < S; x++) if (px(img, x, y)[3] !== 0) eauOpaque++
+      for (let x = (N / 2) * PAVE_PX; x < S; x++) if (px(img, x, y)[3] !== 0) falaiseOpaque++
       // Et l'herbe, elle, est opaque jusqu'à son bord.
       if (px(img, (N / 2) * PAVE_PX - 1, y)[3] !== 255) herbeTransparente++
     }
-    expect(eauOpaque).toBe(0)
+    expect(falaiseOpaque).toBe(0)
     expect(herbeTransparente).toBe(0)
+    expect(cuit.surplomb).toBeNull() // pas d'eau : pas de surplomb
+  })
+
+  it('LA BERGE — la terre déborde sur l’eau dans le SURPLOMB, l’eau nue reste au shader', () => {
+    // Haut : herbe. Bas : eau peu profonde. Bord à y = S/2.
+    const bord = (N / 2) * PAVE_PX
+    const cuit = cuireChunk({ cx: 0, cy: 0, terrainAt: (_tx, ty) => (ty < N / 2 ? 1 : 4), couleurAt: () => 0x808080, trameDe: () => null })
+    const sur = cuit.surplomb
+    expect(sur).not.toBeNull()
+    // Dans le SOL, l'eau est transparente partout (la frange n'y est pas : elle passe au-dessus du shader).
+    let solSurEau = 0
+    for (let y = bord; y < S; y++) for (let x = 0; x < S; x++) if (px(cuit.sol, x, y)[3] !== 0) solSurEau++
+    expect(solSurEau).toBe(0)
+    // Dans le SURPLOMB : rien sur la terre ; sur l'eau, une frange OPAQUE de 2-5 px (gris 0x80 ×
+    // liseré/plat, donc un pixel GRIS, pas un voile), puis un voile d'ombre (noir, alpha < 255),
+    // puis à 4 px le ressac (blanc, alpha < 255), puis plus rien.
+    let surTerre = 0
+    for (let y = 0; y < bord; y++) for (let x = 0; x < S; x++) if (px(sur!, x, y)[3] !== 0) surTerre++
+    expect(surTerre).toBe(0)
+    let frangeMin = 99, frangeMax = 0, ombres = 0, ressacs = 0, nus = 0
+    for (let x = 0; x < S; x++) {
+      let d = 0
+      while (d < 8 && px(sur!, x, bord + d)[3] === 255) d++
+      frangeMin = Math.min(frangeMin, d)
+      frangeMax = Math.max(frangeMax, d)
+      // Sous la frange : ombre (noir translucide) sur 3 px, ressac (blanc translucide) au 4e.
+      const [r1, , , a1] = px(sur!, x, bord + d)
+      if (a1 > 0 && a1 < 255 && r1 === 0) ombres++
+      const [r4, , , a4] = px(sur!, x, bord + d + 3)
+      if (a4 > 0 && a4 < 255 && r4 === 255) ressacs++
+      if (px(sur!, x, bord + d + 6)[3] === 0) nus++
+    }
+    expect(frangeMin).toBeGreaterThanOrEqual(PAVE.FRANGE_MIN)
+    expect(frangeMax).toBeLessThanOrEqual(PAVE.FRANGE_MAX)
+    expect(ombres).toBe(S)
+    expect(ressacs).toBe(S)
+    expect(nus).toBe(S)
+  })
+
+  it('LE HAUT-FOND RESTE UNE SURFACE — rien ne déborde entre haut-fond et profond', () => {
+    const cuit = cuireChunk({ cx: 0, cy: 0, terrainAt: (_tx, ty) => (ty < N / 2 ? 4 : 6), couleurAt: () => 0x808080, trameDe: () => null })
+    let marques = 0
+    for (let i = 3; i < cuit.sol.length; i += 4) if (cuit.sol[i] !== 0) marques++
+    if (cuit.surplomb) for (let i = 3; i < cuit.surplomb.length; i += 4) if (cuit.surplomb[i] !== 0) marques++
+    expect(marques).toBe(0)
   })
 
   it('R9 — le pavé du dessus déborde sur le dessous d’une frange de 2 à 5 px, jamais l’inverse', () => {
@@ -87,7 +138,7 @@ describe('la cuisson d’un chunk', () => {
       terrainAt: (tx) => (tx < N / 2 ? 17 : 1),
       couleurAt: (tx) => (tx < N / 2 ? FLEUR : HERBE),
       trameDe: () => null,
-    })
+    }).sol
     const rouge = (x: number, y: number): boolean => { const [r, g] = px(img, x, y); return r > g }
     let debordMin = 99, debordMax = 0
     let herbeSurFleuraie = 0
@@ -129,8 +180,8 @@ describe('la cuisson d’un chunk', () => {
   it('la cuisson est déterministe et indifférente au chunk voisin (pas de couture)', () => {
     // Un monde en damier de 8 tuiles ; le chunk (1,0) recuit → identique.
     const monde = (tx: number, ty: number): number => ((Math.floor(tx / 8) + Math.floor(ty / 8)) % 2 ? 17 : 1)
-    const a = cuireChunk({ cx: 1, cy: 0, terrainAt: monde, couleurAt: () => 0x808080, trameDe: () => null })
-    const b = cuireChunk({ cx: 1, cy: 0, terrainAt: monde, couleurAt: () => 0x808080, trameDe: () => null })
+    const a = cuireChunk({ cx: 1, cy: 0, terrainAt: monde, couleurAt: () => 0x808080, trameDe: () => null }).sol
+    const b = cuireChunk({ cx: 1, cy: 0, terrainAt: monde, couleurAt: () => 0x808080, trameDe: () => null }).sol
     let diff = 0
     for (let i = 0; i < a.length; i++) if (a[i] !== b[i]) diff++
     expect(diff).toBe(0)
