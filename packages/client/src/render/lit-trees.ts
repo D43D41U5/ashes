@@ -18,13 +18,12 @@
 import type Phaser from 'phaser'
 import { newCanvas, normalFromCanvas, registerLit as register } from './normal-map'
 import {
-  assiseDe, cleHouppier, colonneX, houppierLargeur, houppierOpaqueDe, CIMES_PAR_ARBRE,
+  cleHouppier, colonneX, houppierLargeur, CIMES_PAR_ARBRE,
   TOUTES_VARIANTES, TONS_HOUPPIER_VIEUX, VARIANTES_CADUQUES,
   type MesuresArbre, type TonsFut,
 } from './arbre-art'
-import { grainDenude } from './feuillage-nu'
 import { champDeHauteur, ecorceDe, facteurPied, type Ecorce, type GrainFut } from './ecorce'
-import { champDeFeuillage, feuillageDe, type GrainHouppier } from './feuillage'
+import { FORME_PAR_VARIANTE, PORT_PAR_VARIANTE, cimeEnGrappes, cimeNue, type GrainHouppier } from './houppier-grappes'
 
 /* LES COULEURS NE SONT PLUS RÉÉCRITES ICI NON PLUS. Elles étaient recopiées de l'art peint —
  * la garde de palette a fini par le voir (trois fichiers pour un même brun sans nom). C'est
@@ -129,27 +128,29 @@ export function generateLitTrees(scene: Phaser.Scene): void {
     // futaie pure ne montre plus douze fois la même cime au pixel près. Les graines sont
     // espacées d'un nombre premier : deux graines voisines donneraient deux cimes cousines, et
     // on aurait payé cinq textures pour une seule variation perceptible.
+    // LA CIME EN GRAPPES (décision d'Alexis 2026-08-22, `houppier-grappes.ts`) : des pavés
+    // chanfreinés empilés, la grammaire du sol dessiné. Le relief passé à la normale est celui
+    // des pavés (plein au corps, creusé au liseré) : la lumière du jeu sculpte chaque pavé comme
+    // elle sculpte un pavé du sol. Trois passes de lissage (six arrondissaient les pavés en
+    // coussins ; une seule facettait chaque pixel de frange) : les arêtes restent des arêtes.
     const W = houppierLargeur(m)
     const caduc = VARIANTES_CADUQUES.includes(v.slug)
+    const forme = FORME_PAR_VARIANTE[v.slug] ?? 'rond'
     for (let cime = 0; cime < CIMES_PAR_ARBRE; cime++) {
       const graine = 11 + cime * 7919
-      const feuilles = champDeFeuillage(
-        feuillageDe(v.slug), W, m.houppierS, houppierOpaqueDe(v), assiseDe(v),
-        v.tons.corps, v.tons.lumiere, graine,
-      )
+      const feuilles = cimeEnGrappes(W, m.houppierS, forme, v.tons, graine)
       const crown = crownAlbedo(W, m.houppierS, feuilles)
       register(
         scene, cleHouppier(v.slug, true, cime), crown,
-        normalFromCanvas(crown, 6, 3.2, 4, false, [], feuilles.relief),
+        normalFromCanvas(crown, 3, 3.2, 4, false, [], feuilles.relief),
       )
-      // ── LA CIME NUE (spec `gel.md` G6) — le même champ, déshabillé. ──
-      // Elle se cuit ICI et pas dans une seconde boucle parce que la partie CHÈRE
-      // (`champDeFeuillage`) est déjà faite : on ne repaie que l'albédo et la normale. Et
-      // seulement pour les feuillus — un conifère nu n'existe pas, c'est la promesse de G6.
-      // La normale prend 2 passes au lieu de 6 : une branche est fine, la lisser six fois en
-      // ferait une masse molle (c'est le réglage du fût, pas celui de la canopée).
+      // ── LA CIME NUE (spec `gel.md` G6) — DÉRIVÉE de la feuillue : une branche par grappe. ──
+      // Seulement pour les feuillus — un conifère nu n'existe pas, c'est la promesse de G6.
+      // La normale prend 2 passes : une branche est fine, la lisser six fois en ferait une
+      // masse molle (c'est le réglage du fût, pas celui de la canopée).
       if (!caduc) continue
-      const nues = grainDenude(feuilles, W, m.houppierS, v.fut, graine)
+      const port = PORT_PAR_VARIANTE[v.slug] ?? { axe: 'sympodial', tortueux: 0.18 }
+      const nues = cimeNue(W, m.houppierS, forme, v.fut, port, m.recouvrementPx, m.colonneW, graine)
       const nu = crownAlbedo(W, m.houppierS, nues)
       register(
         scene, cleHouppier(v.slug, true, cime, true), nu,

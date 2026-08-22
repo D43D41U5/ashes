@@ -12249,37 +12249,46 @@ const SCENARIOS = {
         .sort()
       const Z = 3, GAP = 6
       // Chaque arbre occupe la largeur de son houppier ; la planche fait la hauteur du plus haut.
+      // Cinq cimes par variante depuis le 2026-07-30 : la cime 0 porte le suffixe `-0`. Et
+      // depuis le 2026-08-22, la cime NUE (`_crown_nu_lit-0`) des feuillus — on la pose sur une
+      // seconde rangée, sous l'été : l'hiver se dérive de l'été, ça doit se voir côte à côte.
       const tailles = slugs.map((s) => {
         const t = tm.get(`nd-${s}_trunk_lit`).getSourceImage()
-        const c = tm.get(`nd-${s}_crown_lit`).getSourceImage()
-        return { s, tw: t.width, th: t.height, cw: c.width, ch: c.height }
+        const c = tm.get(`nd-${s}_crown_lit-0`).getSourceImage()
+        const nue = tm.exists(`nd-${s}_crown_nu_lit-0`)
+        return { s, tw: t.width, th: t.height, cw: c.width, ch: c.height, nue }
       })
       const H = Math.max(...tailles.map((t) => t.ch + t.th))
       const W = tailles.reduce((a, t) => a + Math.max(t.cw, t.tw) + GAP, GAP)
       const cv = document.createElement('canvas')
       cv.width = W * Z
-      cv.height = (H + 10) * Z
+      cv.height = (2 * (H + 10)) * Z
       const ctx = cv.getContext('2d')
       ctx.imageSmoothingEnabled = false
-      ctx.fillStyle = '#2a2e26'
-      ctx.fillRect(0, 0, cv.width, cv.height)
+      ctx.fillStyle = '#5a9a48'
+      ctx.fillRect(0, 0, cv.width, (H + 10) * Z)
+      ctx.fillStyle = '#8c9a86'
+      ctx.fillRect(0, (H + 10) * Z, cv.width, (H + 10) * Z)
       let x = GAP
       const posés = []
       for (const t of tailles) {
         const larg = Math.max(t.cw, t.tw)
-        const sol = H + 4
         // LE RECOUVREMENT SE DÉDUIT, il n'a pas à être exposé : la garde E1 impose que la
         // hauteur totale (fût + houppier − recouvrement) soit un compte ENTIER de tuiles, et
         // le recouvrement vaut 8 à 14 px — il est donc l'unique reste de (fût + houppier) mod 16.
         const recouvrement = (t.th + t.ch) % 16
         const ancrage = t.th - recouvrement // hauteur du BAS du houppier au-dessus des pieds
-        ctx.drawImage(tm.get(`nd-${t.s}_trunk_lit`).getSourceImage(),
-          (x + (larg - t.tw) / 2) * Z, (sol - t.th) * Z, t.tw * Z, t.th * Z)
-        ctx.drawImage(tm.get(`nd-${t.s}_crown_lit`).getSourceImage(),
-          (x + (larg - t.cw) / 2) * Z, (sol - ancrage - t.ch) * Z, t.cw * Z, t.ch * Z)
+        for (const [rang, cle] of [[0, `nd-${t.s}_crown_lit-0`], [1, `nd-${t.s}_crown_nu_lit-0`]]) {
+          if (rang === 1 && !t.nue) continue
+          const sol = H + 4 + rang * (H + 10)
+          ctx.drawImage(tm.get(`nd-${t.s}_trunk_lit`).getSourceImage(),
+            (x + (larg - t.tw) / 2) * Z, (sol - t.th) * Z, t.tw * Z, t.th * Z)
+          ctx.drawImage(tm.get(cle).getSourceImage(),
+            (x + (larg - t.cw) / 2) * Z, (sol - ancrage - t.ch) * Z, t.cw * Z, t.ch * Z)
+        }
         posés.push({
           slug: t.s, crown: `${t.cw}×${t.ch}`, trunk: `${t.tw}×${t.th}`,
-          hauteur: ancrage + t.ch, tuiles: (ancrage + t.ch) / 16,
+          hauteur: ancrage + t.ch, tuiles: (ancrage + t.ch) / 16, nue: t.nue,
         })
         x += larg + GAP
       }
@@ -12287,7 +12296,7 @@ const SCENARIOS = {
     })
     const { writeFileSync } = await import('node:fs')
     writeFileSync(`${OUT}/planche-arbres.png`, Buffer.from(planche.png.split(',')[1], 'base64'))
-    for (const p of planche.posés) console.log(`  ${p.slug.padEnd(11)} houppier ${p.crown.padEnd(7)} fût ${p.trunk.padEnd(6)} → ${p.hauteur} px (${p.tuiles} tuiles)`)
+    for (const p of planche.posés) console.log(`  ${p.slug.padEnd(11)} houppier ${p.crown.padEnd(7)} fût ${p.trunk.padEnd(6)} → ${p.hauteur} px (${p.tuiles} tuiles)${p.nue ? ' · cime nue' : ''}`)
     console.log(`\n✓ ${planche.nombre} variantes → ${OUT}/planche-arbres.png`)
     return { variantes: planche.nombre }
   },
