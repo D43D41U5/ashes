@@ -157,6 +157,10 @@ export const TON_DE_REPLI: Record<Famille, number> = {
 /** L'éventail : demi-angle de la gerbe autour de la direction de projection. Large — un
  *  coup de hache ne projette pas dans un tube. */
 const DEMI_EVENTAIL = 1.15 // rad, ≈ 66°
+
+/** Les tons du givre (blanc-bleu) et de la sève qui repart (verts) — voir `givre`. */
+const TONS_GIVRE: readonly number[] = [0xeaf4ff, 0xc9dff5, 0xffffff, 0xa8cde4]
+const TONS_SEVE: readonly number[] = [0x7fbf5a, 0xb8e08a, 0xe8f5c0, 0x4f7a35]
 /** Plafond d'éclats vivants. La récolte tourne à ~1 coup/s toute une partie : sans ce
  *  plafond, une session entière de minage finirait en champ de gravier. */
 const MAX_ECLATS = 96
@@ -442,10 +446,35 @@ export class RecolteFx {
    * et dans `force` ; tout le reste — couleur lue sur la texture, loi de la matière,
    * écrasement de la profondeur — leur est commun, et doit le rester.
    */
+  /**
+   * LE GIVRE QUI PREND, LA SÈVE QUI REPART (spec `flore-froid.md` F8 révisée) : la gerbe d'une
+   * plante qui disparaît sous le gel (des éclats blanc-bleu qui flottent) ou qui repousse au
+   * dégel (des éclats verts). Famille `feuille` : légers, ils flottent — ce n'est pas un choc.
+   * Les tons sont DONNÉS, pas lus sur une texture : le givre n'a pas la couleur de la plante.
+   */
+  givre(x: number, y: number, hauteur: number, now: number, graine: number, degel: boolean): void {
+    this.gerbe({
+      graine,
+      famille: 'feuille',
+      texture: '',
+      tons: degel ? TONS_SEVE : TONS_GIVRE,
+      now,
+      x,
+      y,
+      z: Math.max(2, hauteur * 0.4),
+      angle: 0,
+      demiEventail: Math.PI,
+      surplus: 0,
+      force: 0.8,
+    })
+  }
+
   private gerbe(o: {
     graine: number
     famille: Famille
     texture: string
+    /** Des tons imposés : la gerbe ne lit pas la texture. */
+    tons?: readonly number[]
     now: number
     x: number
     y: number
@@ -464,7 +493,7 @@ export class RecolteFx {
     rayon?: number
   }): void {
     const loi = LOIS[o.famille]
-    const tons = this.tonsDe(o.texture)
+    const tons = o.tons ?? this.tonsDe(o.texture)
     const rnd = semis(o.graine)
     const combien = Math.min(Math.round(loi.n * o.force) + o.surplus, MAX_PAR_GERBE)
     for (let i = 0; i < combien; i++) {

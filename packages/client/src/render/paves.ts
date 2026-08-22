@@ -95,6 +95,28 @@ export const PAVE = {
 } as const
 
 /**
+ * LES TERRAINS VIRTUELS DU MANTEAU (`render/manteau.ts`) — la neige au sol et la glace se
+ * cuisent avec CETTE grammaire, dans une seconde couche posée au-dessus du sol. Ils n'existent
+ * pas sur la carte : la couche les fabrique tuile par tuile depuis `neigeAuSol` / `estGele`.
+ *
+ *   • `DESSOUS` — « le sol qu'on ne repeint pas » : une SURFACE de rang 0, transparente. La
+ *     neige déborde dessus (frange opaque) et y porte son ombre (voile noir) — exactement le
+ *     chemin de l'eau sous la berge, SANS ressac (un pré sous une congère ne clapote pas).
+ *   • `GLACE_GUE`, `GLACE_LAC` — la glace : une surface opaque (pas d'épaisseur, donc ni liseré
+ *     ni arête ni brin), dessinée dans le SOL de la couche, et qui reçoit la frange et l'ombre
+ *     de la neige dans son SURPLOMB. Même rang que `DESSOUS` : entre la terre nue et la glace,
+ *     c'est la BERGE du sol (R13) qui trace le bord, pas le manteau.
+ *   • `MANTEAU` — la neige : un pavé à épaisseur, au-dessus de tout ; `MANTEAU_PROFOND`, la
+ *     neige jusqu'aux genoux, un pavé de plus sur la poudreuse (gel.md G9).
+ */
+export const DESSOUS = 100
+export const GLACE_GUE = 101
+export const GLACE_LAC = 102
+export const MANTEAU = 103
+/** La neige JUSQU'AUX GENOUX (gel.md G9) : un pavé sur la poudreuse — même frontière. */
+export const MANTEAU_PROFOND = 104
+
+/**
  * L'ORDRE DE RECOUVREMENT — qui déborde sur qui. Plus haut = dessus. Un terrain absent vaut 0
  * (il ne recouvre rien). Les STRUCTURELS ne sont pas dans la table : `prioriteDe` leur rend −1.
  *
@@ -126,6 +148,8 @@ export const PRIORITE_PAVE: Record<number, number> = {
   12: 8, // alpine_meadow
   17: 9, // flower_meadow
   20: 9, // alpine_flowers
+  [MANTEAU]: 20, // la neige au sol (`render/manteau.ts`) : par-dessus tout ce qui pousse
+  [MANTEAU_PROFOND]: 21, // la neige profonde, sur la poudreuse
 }
 
 /**
@@ -139,6 +163,9 @@ export const SURFACES: Record<number, number> = {
   6: 0, // deep_water
   8: 1, // marsh
   18: 1, // peat_bog
+  [DESSOUS]: 0,
+  [GLACE_GUE]: 0,
+  [GLACE_LAC]: 0,
 }
 
 /** Les terrains STRUCTURELS : jamais propriétaires par débordement, transparents dans le chunk. */
@@ -151,6 +178,23 @@ export function estStructurel(t: number): boolean {
 /** L'eau — elle cède à toute terre, et ce qui tombe sur elle va au SURPLOMB. */
 export function estEau(t: number): boolean {
   return t === 4 || t === 6 // shallow_water, deep_water
+}
+
+/** La glace du manteau — une surface opaque, dans le sol de la couche. */
+export function estGlace(t: number): boolean {
+  return t === GLACE_GUE || t === GLACE_LAC
+}
+
+/** Un VOILE : ce qui, propriétaire d'un pixel, n'y dessine rien d'opaque — l'eau (le shader
+ *  est dessous) et le dessous transparent du manteau. Son ombre et son ressac vont au surplomb. */
+export function estVoile(t: number): boolean {
+  return estEau(t) || t === DESSOUS
+}
+
+/** Une tuile SURPLOMBÉE : ce qu'un pavé à épaisseur y pose (sa frange) sort dans la seconde
+ *  image, au-dessus de ce qui se dessine sur la tuile — le shader d'eau, ou la glace. */
+export function estSurplombee(t: number): boolean {
+  return estVoile(t) || estGlace(t)
 }
 
 /** Une surface : l'eau ou le marais — sans épaisseur (voir `SURFACES`). */
@@ -333,9 +377,9 @@ export function cuireChunk(p: CuissonChunk): ChunkCuit {
   }
   const S = N * P
   const out = new Uint8ClampedArray(S * S * 4)
-  // Le surplomb n'est alloué que si le chunk (marge comprise) touche l'eau.
+  // Le surplomb n'est alloué que si le chunk (marge comprise) touche une tuile surplombée.
   let eauVue = false
-  for (let k = 0; k < L * L && !eauVue; k++) eauVue = estEau(terr[k]!)
+  for (let k = 0; k < L * L && !eauVue; k++) eauVue = estSurplombee(terr[k]!)
   const sur = eauVue ? new Uint8ClampedArray(S * S * 4) : null
   const B = PAVE.BRINS_PAR_TUILE
   for (let y = 0; y < S; y++) {
@@ -351,8 +395,9 @@ export function cuireChunk(p: CuissonChunk): ChunkCuit {
       const k = owner[i]!
       const t = ownT[i]!
       const o = (y * S + x) * 4
-      // Le pixel est-il SUR une tuile d'eau ? (sa propre tuile, pas son propriétaire)
-      const surEau = estEau(terr[ly * L + ((px / P) | 0)]!)
+      // Le pixel est-il SUR une tuile surplombée (eau, dessous, glace) ? (sa propre tuile, pas
+      // son propriétaire)
+      const surEau = estSurplombee(terr[ly * L + ((px / P) | 0)]!)
       // Le propriétaire est-il une SURFACE (eau, marais) ? Pas d'épaisseur : ni liseré, ni arête,
       // ni tranche, ni brin — et l'ombre et le ressac ne viennent que d'un pavé à épaisseur.
       const tSurf = estSurface(t)
@@ -373,10 +418,11 @@ export function cuireChunk(p: CuissonChunk): ChunkCuit {
       else if (!tSurf && ownT[iD + LP] !== t && ownP[iD + LP]! < pk) f = PAVE.TRANCHE
       else if (domine(iU) || domine(iU - LP)) f = PAVE.OMBRE
       else if (domine(iU - 2 * LP)) f = PAVE.PENOMBRE
-      else if (tSurf && domine(iU - 3 * LP)) f = PAVE.RESSAC
+      // Le ressac : sur l'eau et la boue — jamais sur le dessous ni sur la glace (ça ne clapote pas).
+      else if (tSurf && t !== DESSOUS && !estGlace(t) && domine(iU - 3 * LP)) f = PAVE.RESSAC
       else if (domine(iL) || domine(iR)) f = PAVE.OMBRE_LATERALE
-      else if (estEau(t)) continue // l'eau nue : le shader dessine sa surface
-      else if (tSurf) f = 1 // le marais nu : plat, sans brin
+      else if (estVoile(t)) continue // l'eau nue, le dessous nu : rien à peindre ici
+      else if (tSurf) f = 1 // le marais nu, la glace nue : plat, sans brin
       else {
         f = 1
         // Les brins, dans le repère de la tuile PROPRIÉTAIRE (un brin peut vivre dans la frange).
@@ -391,9 +437,10 @@ export function cuireChunk(p: CuissonChunk): ChunkCuit {
           else if (ox === bx + 1 && oy === by + 2) f = PAVE.BRIN_SOMBRE
         }
       }
-      if (estEau(t)) {
-        // L'EAU OMBRÉE OU MOUILLÉE va au surplomb, en voile : noir à l'alpha (1 − f) pour
-        // assombrir, blanc à l'alpha (f − 1) pour éclaircir — le shader dessous garde son clapot.
+      if (estVoile(t)) {
+        // L'EAU OMBRÉE OU MOUILLÉE (et le dessous ombré par la neige) va au surplomb, en voile :
+        // noir à l'alpha (1 − f) pour assombrir, blanc à l'alpha (f − 1) pour éclaircir — ce qui
+        // est dessous (le shader, le sol) garde sa matière.
         if (!sur) continue
         const voile = f < 1 ? 0 : 255
         sur[o] = voile
@@ -407,8 +454,10 @@ export function cuireChunk(p: CuissonChunk): ChunkCuit {
       // tuiles voisines de même famille partagent leur trame sans couture.
       const trame = trames[k]
       const g = trame ? f * trame[cyG * GRAIN_CELLS + ((((tx0 * P + px) / GRAIN_CELL_PX) | 0) & (GRAIN_CELLS - 1))]! : f
-      // La terre SUR une tuile d'eau (la frange de la berge) passe au-dessus du shader.
-      const cible = surEau && sur ? sur : out
+      // La terre SUR une tuile d'eau (la frange de la berge), la neige sur la glace ou le dessous :
+      // au-dessus de ce que la tuile dessine. La GLACE, elle, est opaque : elle reste dans le sol
+      // de sa couche (elle est la matière de sa tuile, pas un débordement).
+      const cible = surEau && sur && !estGlace(t) ? sur : out
       cible[o] = ((c >> 16) & 0xff) * g
       cible[o + 1] = ((c >> 8) & 0xff) * g
       cible[o + 2] = (c & 0xff) * g

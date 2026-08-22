@@ -31,7 +31,8 @@ import {
   type NodeDelta,
   type SnapshotMessage,
 } from '@ashes/sim'
-import { estUnCoinDePeche, feuillageDenude, fireStateAt, floreGelee, hash2, tailleDeBloc, TERRAIN_CLIFF, terrainAt, type SimState, type WorldMap } from '@ashes/sim'
+import { estUnCoinDePeche, feuillageDenude, fireStateAt, hash2, tailleDeBloc, TERRAIN_CLIFF, terrainAt, type SimState, type WorldMap } from '@ashes/sim'
+import { TransitionsFlore, retardDe } from '../../render/flore-gel'
 import { cliffKey } from '../../render/cliff-art'
 import { cleCarcasse, etatCarcasse } from '../../render/carcasse-art'
 import Phaser from 'phaser'
@@ -98,31 +99,25 @@ import { riveAt, type RiveField } from '../../render/water-field'
 const AIM_TINT = 0xffe9a8
 const AIM_TINT_FAR = 0x8a8a92
 /**
- * ⚠ PROVISOIRE, ASSUMÉ — la teinte de la PLANTE GELÉE (spec `flore-froid.md` F3).
+ * LA PLANTE GELÉE (spec `flore-froid.md` F8, RÉVISÉE le 2026-08-22 — Alexis a tranché la DA
+ * que le marqueur provisoire en aplat bleu attendait : « les fleurs, champignons, brins
+ * d'herbe devraient disparaître lorsqu'il gèle, avec un effet juicy, et respawn lorsque la
+ * température le permet »).
  *
- * Le jeu refuse déjà la cueillette d'un buisson gelé ; sans un signe à l'écran, c'est un
- * refus qui tombe du ciel — le contraire de « annoncé, pas surprise » (`gel.md` G5). Cette
- * teinte tient le contrat EN ATTENDANT la vraie direction artistique, qui est une décision
- * d'Alexis : givre pixellisé sur la grille de l'art, variante de texture `_givre`, ou autre.
- *
- * ═══ POURQUOI UN APLAT (`setTintFill`) ET PAS UNE TEINTE ═══
- *
- * Une teinte Phaser MULTIPLIE les canaux : elle ne peut que RETIRER de la couleur. Sur un
- * buisson dont le vert domine largement le bleu, aucun bleu multiplié ne fera jamais passer
- * le bleu devant le vert — mesuré le 2026-08-20 : `bleu − rouge` remontait de −20 à −2 avec
- * un cyan franc, chiffre bien réel au smoke et illisible à l'œil, le buisson lisant
- * simplement « un peu plus vert ». Le givre est justement CLAIR et FROID, exactement ce
- * qu'un multiply ne sait pas faire.
- *
- * L'aplat, lui, remplace : la plante gelée devient une silhouette bleu pâle. C'est
- * grossier, et c'est le but — **un MARQUEUR D'ÉTAT, pas un look.** On voit d'un coup d'œil
- * quelles plantes sont hors service, personne ne peut le confondre avec une intention de
- * DA, et le jour où Alexis tranche, c'est cette constante et les trois lignes qui la posent
- * qui disparaissent — pas une couche de plus à démêler.
- *
- * (Perdre les baies dessinées est cohérent avec la règle : un buisson gelé ne rend rien.)
+ *   • Le CHAMPIGNON et le TAS DE FEUILLES DISPARAISSENT — geste d'effondrement, gerbe de givre
+ *     (`render/flore-gel.ts`, `RecolteFx.givre`) — et repoussent au dégel (pop, gerbe verte).
+ *     La sim ne perd rien (F6) : le nœud attend, invisible ; un clic dessus est un refus que
+ *     l'absence annonce mieux qu'un aplat.
+ *   • Le BUISSON À BAIES reste : c'est un arbuste, l'hiver ne l'efface pas. Il est DORMANT —
+ *     sans ses baies (la texture à 0 point : un buisson gelé ne rend rien, F3) et sous une
+ *     teinte froide et terne (un multiply peut assombrir et désaturer, c'est ce qu'on lui
+ *     demande ici — pas de rendre du givre clair, ce qu'il ne sait pas faire).
  */
-const GIVRE_TINT = 0xa8e8ff
+const DORMANT_TINT = 0xb4bfcc
+/** LA PLANTE À FIBRES reste aussi — et se cueille toujours (F7 : sa fibre est sèche, le gel ne la
+ *  prend pas). Elle passe à la PAILLE : un vert sous la neige lirait « herbe », or l'herbe est
+ *  partie ; jaunie, elle dit « tige sèche qu'on peut encore prendre ». */
+const SEC_TINT = 0xd9cfa6
 /**
  * LE ROUGE DE LA DÉMOLITION — plus CHAUD que le rouge d'interface du fantôme refusé (#d9614f),
  * et il le faut : il se pose sur du BOIS, qui est déjà orange.
@@ -472,6 +467,15 @@ export class SnapshotView {
   rive: RiveField | null = null
   /** Les événements d'eau (gerbe, empreintes — R3/R7), posés par WorldScene avec la couche. */
   eau: import('./eau-events').EauEvents | null = null
+  /** La tuile est-elle de la GLACE (eau gelée, praticable) ? Posé par WorldScene sur la couche
+   *  du gel — une lecture de signature, jamais un appel à la sim par acteur et par image. */
+  glaceAt: ((tx: number, ty: number) => boolean) | null = null
+  /** L'enfoncement dans la neige profonde en un point, [0, 1] (`GelLayer.immersionNeige`). */
+  neigeProfondeAt: ((x: number, y: number) => number) | null = null
+  /** La flore de la tuile est-elle gelée ? Même source (`GelLayer.floreGeleeAt`). */
+  floreGeleeAt: ((tx: number, ty: number) => boolean | null) | null = null
+  /** Les bascules gel/dégel des nœuds gélifs (voir `render/flore-gel.ts`). */
+  private readonly transitionsFlore = new TransitionsFlore()
   /** Les reflets du monde (R13) — pool par frame, posé par WorldScene avec la couche d'eau. */
   reflets: import('./reflets').RefletsLayer | null = null
 
@@ -1002,6 +1006,12 @@ export class SnapshotView {
     let dRive = -99
     if (this.rive) {
       dRive = riveAt(this.rive, x, feetY)
+      // SUR LA GLACE, ON MARCHE (spec gel.md G5) : une eau gelée n'immerge pas — ni coupe aux
+      // genoux, ni ombre éteinte, ni reflet, ni gerbe, ni pas mouillés. Le prédicat est celui
+      // du manteau (`GelLayer.etatAt`, la même lecture d'`estGele` que la glace peinte) :
+      // l'acteur « plongeait » dans un lac pris parce que seule la rive était lue (grief
+      // d'Alexis, 2026-08-22). `dRive` passe NÉGATIF pour que la semelle compte comme sèche.
+      if (dRive > 0 && this.glaceAt?.(Math.floor(x), Math.floor(feetY)) === true) dRive = -dRive
       if (dRive > 0) immersion = Math.min(1, dRive / 0.6)
     }
     const displayH = crouch ? p.displayH * CROUCH_FACTOR : p.displayH
@@ -1010,6 +1020,12 @@ export class SnapshotView {
     // la taille de chacun raconte la profondeur. L'eau est rendue SOUS les acteurs
     // (WATER_DEPTH < 0) : la découpe RÉVÈLE la nappe, aucun raccord à faire.
     const coupeEau = immersion > 0.02 ? Math.min(7 * immersion, displayH * 0.45) : 0
+    // ═══ JUSQU'AUX GENOUX DANS LA NEIGE (gel.md G9) — la même coupe que l'eau, sans l'eau ═══
+    // Le manteau profond est rendu SOUS les acteurs : la découpe RÉVÈLE la neige. Ni gerbe, ni
+    // reflet, ni flottaison ; l'ombre de contact se fond, comme dans l'eau. Continue sur le bord
+    // de la plaque (`immersionNeige`).
+    const neige = immersion > 0.02 ? 0 : (this.neigeProfondeAt?.(x, feetY) ?? 0)
+    const coupeNeige = neige > 0.02 ? Math.min(7 * neige, displayH * 0.45) : 0
     // ═══ ET LE CORPS QUI SORT DE TERRE (spec `cendreux.md` R21/R22) ═══
     // Le MAX, jamais la somme : l'eau et la terre décrivent toutes deux « à partir d'où le
     // corps est caché », pas deux enfouissements à cumuler. Les additionner aurait fait
@@ -1017,9 +1033,9 @@ export class SnapshotView {
     // Et la coupe de terre est une FRACTION de la hauteur, pas des pixels constants comme
     // l'eau : l'eau a UNE profondeur (chaque bête y trempe selon sa taille), la terre les
     // recouvre TOUS entièrement — c'est ce qui doit rester vrai du lapin au cerf.
-    const coupe = Math.max(coupeEau, displayH * enfoui)
+    const coupe = Math.max(coupeEau, coupeNeige, displayH * enfoui)
     // Le corps descend de la coupe (+2 px d'enfoncement) : la ligne de flottaison est aux pieds.
-    sprite.setPosition(p.px, p.py - lift + coupe + 2 * immersion)
+    sprite.setPosition(p.px, p.py - lift + coupe + 2 * Math.max(immersion, neige))
     sprite.setDepth(p.depth)
     sprite.setDisplaySize(p.displayW, displayH)
     if (coupe > 0) {
@@ -1041,7 +1057,7 @@ export class SnapshotView {
       // ELLE SE FOND AUSSI SOUS TERRE. Sans `enfoui` ici, un corps encore aux trois quarts
       // enfoui projetait l'ombre de contact d'un CORPS ENTIER autour du tertre — une ombre
       // pleine sous une tête qui perce, et le trou perdait toute sa profondeur.
-      shadow.setAlpha(SHADOW_ALPHA * (1 - Math.max(immersion, enfoui)))
+      shadow.setAlpha(SHADOW_ALPHA * (1 - Math.max(immersion, neige, enfoui)))
     }
     // LE REGARD DU CENDREUX (demande d'Alexis, 2026-08-21 — spec `cendreux.md` R27) : le même
     // pion d'orientation que l'avatar (`fx-gaze`), posé au bord de la tête du côté du `facing`
@@ -1863,6 +1879,7 @@ export class SnapshotView {
     const feetY = playerY + BALANCE.AVATAR_HITBOX_DEPTH_TILES / 2
     let used = 0
     let crownsUsed = 0
+    this.transitionsFlore.image()
     // LE NŒUD SURVOLÉ N'A PAS ENCORE DE SPRITE À CETTE FRAME : le pool se réattribue ici. On
     // repart donc de rien — sinon un nœud sorti de l'écran laisserait son contour posé sur le
     // sprite qui a hérité de son slot, c'est-à-dire sur un autre nœud.
@@ -1892,6 +1909,24 @@ export class SnapshotView {
         // aux autres plantes). Il reste dessiné à taille pleine (échelle 1), et c'est le NOMBRE DE
         // BAIES qui suit le stock — `min(BERRY_TEX_MAX, stock)` points, 0 quand il est vidé.
         const isBerry = n.type === 'berry_bush'
+        // LA FLORE GÉLIVE (voir `DORMANT_TINT`) : gelée d'après la couche du gel (une lecture de
+        // signature, la même que le fouillis — jamais `floreGelee` par nœud et par image).
+        const gelif = NODE_DEFS[n.type].gelif === true
+        // `null` : tuile pas encore relevée par la couche du gel — on dessine tel quel, sans bascule.
+        const geleOuInconnu = (gelif || n.type === 'fiber_plant') && this.floreGeleeAt !== null ? this.floreGeleeAt(n.tx, n.ty) : false
+        const gele = geleOuInconnu === true
+        let echX = 1
+        let echY = 1
+        if (gelif && !isBerry && geleOuInconnu !== null) {
+          const pose = this.transitionsFlore.pose(n.id, gele, now, retardDe(n.tx, n.ty))
+          if (pose.eclat) {
+            const a0 = tileFeetAnchor(tx, ty, TILE_PX)
+            this.recolteFx?.givre(a0.px, a0.py - (this.warp?.lift(tx + 0.5, ty + 1) ?? 0), TILE_PX * 0.6, now, n.id * 7919, !gele)
+          }
+          if (!pose.visible) continue
+          echX = pose.sx
+          echY = pose.sy
+        }
         const g = isBerry || dep === undefined
           ? 1
           : Math.min(1, Math.max(GROWTH_MIN, (this.tick - dep.since) / Math.max(1, dep.until - dep.since)))
@@ -1906,7 +1941,7 @@ export class SnapshotView {
           ? varianteArbre(this.carte, n.tx, n.ty, this.worldSeed, n.type === 'old_tree')
           : VARIANTES[n.type === 'old_tree' ? 'old_tree' : 'tree']!
         const texture = isBerry
-          ? `nd-berry_bush-${berryDots(n)}${this.lighting ? '_lit' : ''}`
+          ? `nd-berry_bush-${gele ? 0 : berryDots(n)}${this.lighting ? '_lit' : ''}`
           : growing && isTree
             ? (this.lighting ? 'nd-sapling_lit' : 'nd-sapling')
             : isTree
@@ -1949,23 +1984,16 @@ export class SnapshotView {
         // teinte le sprite plutôt que de dessiner un cadre au sol : la teinte suit
         // le billboard, donc elle reste juste quel que soit le relief. Les sprites
         // sont POOLÉS — d'où le `clearTint` systématique sur les autres.
-        // LA PLANTE GELÉE SE VOIT (spec `flore-froid.md` F3 ; teinte PROVISOIRE, voir
-        // `GIVRE_TINT`). La visée PRIME : elle est transitoire et répond au geste en cours,
-        // alors que le givre est un état du monde qu'on retrouvera au relâchement.
-        // Le MODE se remet À CHAQUE BRANCHE, jamais une seule fois : les sprites sont POOLÉS,
-        // et `clearTint()` ne touche pas au mode — un slot qui a peint une plante gelée en
-        // aplat repeindrait la suivante de la même façon (le piège du `clearTint` systématique
-        // deux lignes plus bas, un cran plus profond).
+        // LE BUISSON DORMANT (voir `DORMANT_TINT`). La visée PRIME : elle est transitoire et
+        // répond au geste en cours, alors que le gel est un état du monde qu'on retrouvera au
+        // relâchement. Le MODE se remet À CHAQUE BRANCHE, jamais une seule fois : les sprites
+        // sont POOLÉS, et `clearTint()` ne touche pas au mode (le piège d'un slot qui a peint en
+        // aplat et repeindrait la suivante de la même façon).
         if (n.id === this.aimedNodeId) {
           sprite.setTint(this.aimedInRange ? AIM_TINT : AIM_TINT_FAR).setTintMode(Phaser.TintModes.MULTIPLY)
         }
-        // `floreGelee` porte SON PROPRE court-circuit O(1) (`floreEntierementGelee`), donc
-        // rien à hoister ici : quand toute la vallée gèle — l'acte III entier, les nuits dès
-        // l'acte II —, l'appel ne lit ni la carte, ni la Brume, ni le front. Et il n'est posé
-        // que sur les nœuds `gelif` : les arbres et la pierre ne le paient jamais.
-        else if (this.etatGel !== null && NODE_DEFS[n.type].gelif && floreGelee(this.etatGel, n.tx, n.ty)) {
-          sprite.setTint(GIVRE_TINT).setTintMode(Phaser.TintModes.FILL)
-        } else sprite.clearTint().setTintMode(Phaser.TintModes.MULTIPLY)
+        else if (gele) sprite.setTint(isBerry ? DORMANT_TINT : SEC_TINT).setTintMode(Phaser.TintModes.MULTIPLY)
+        else sprite.clearTint().setTintMode(Phaser.TintModes.MULTIPLY)
         // LE SPRITE DU NŒUD QUE `F` PRENDRAIT — relevé ici, où l'on sait à quel nœud ce slot de
         // pool appartient CETTE frame. La teinte ci-dessus et le contour sont deux affordances
         // distinctes : la teinte dit « c'est ce que je vise » (tout nœud, arbre compris), le
@@ -1975,7 +2003,7 @@ export class SnapshotView {
         // Plus de fantôme à 25 % (spec recolte-vivante D2) : un nœud est TOUJOURS opaque.
         // Épuisé, il n'est pas « à moitié là » — il REPOUSSE, et c'est son échelle qui le dit.
         sprite.setAlpha(1)
-        sprite.setScale(g) // plein = 1 ; repousse = fraction (grandit depuis le pied, origine basse)
+        sprite.setScale(g * echX, g * echY) // plein = 1 ; repousse = fraction ; gel = le geste (origine basse)
         // LA MATIÈRE QUITTE LE NŒUD (spec recolte.md G10, 3e signe). Ici et pas ailleurs :
         // `px/py-lift` est le pied RÉEL du sprite, `displayHeight` sa hauteur APRÈS
         // `setScale` (une pousse qui repousse gicle donc à sa taille), et `texture` est

@@ -147,7 +147,7 @@ import {
   type Brouillard,
   type IdentiteMonde,
 } from '../render/fog'
-import { estUnCoinDePeche, fireStateAt, MONSTER_DEFS, POI_CHARGES, TERRAIN_DEEP_WATER, TERRAIN_SHALLOW_WATER, CREUX, TERRAINS_BOISES_MASSIF } from '@ashes/sim'
+import { estUnCoinDePeche, fireStateAt, meteoIntensityAt, MONSTER_DEFS, POI_CHARGES, TERRAIN_DEEP_WATER, TERRAIN_SHALLOW_WATER, CREUX, TERRAINS_BOISES_MASSIF } from '@ashes/sim'
 
 /** L'assombrissement du sol au plafond de profondeur (§2quater R42) : au cœur d'un massif,
  *  le sol perd jusqu'à 14 % de luminance — en PENTE CONTINUE, jamais par bande. */
@@ -173,6 +173,7 @@ import { AmbientLife } from './world/ambient-life'
 import { FoudreFx } from './world/foudre-fx'
 import { MeteoLayer } from './world/meteo-layer'
 import { GelLayer } from './world/gel-layer'
+import { TUILE_GLACE_GUE, estNeige } from '../render/manteau'
 import { creerEtatGel, majEtatGel, type EtatGel } from './world/etat-gel'
 import { SoleilLayer } from './world/soleil-layer'
 import type { ArbreCouvert } from './world/soleil-masque'
@@ -1047,7 +1048,22 @@ export class WorldScene extends Phaser.Scene {
         // LE GEL (spec gel.md) : la neige qui tient au sol et la glace praticable. Comme la
         // cendre, RIEN n'est transmis — le client relit les fonctions pures de /sim sur un
         // état reconstitué du snapshot.
-        this.gelLayer = new GelLayer(this, this.map, String(this.map.width))
+        this.gelLayer = new GelLayer(this, this.map, String(this.map.width), this.worldSeed)
+        // SUR LA GLACE, ON MARCHE : l'immersion des acteurs lit la glace peinte (même signature).
+        const gel = this.gelLayer
+        this.view.glaceAt = (tx, ty) => gel.etatAt(tx, ty) >= TUILE_GLACE_GUE
+        // LA FLORE QUI GÈLE (flore-froid.md F8 révisée) : le fouillis et les nœuds gélifs lisent
+        // le gel de la flore sur la même signature ; la gerbe de givre est celle de la récolte.
+        const floreGeleeAt = (tx: number, ty: number): boolean | null => gel.floreGeleeAt(tx, ty)
+        this.view.floreGeleeAt = floreGeleeAt
+        if (this.clutter) {
+          this.clutter.floreGeleeAt = floreGeleeAt
+          this.clutter.onGivre = (x, y, h, now, graine, degel) => this.recolteFx?.givre(x, y, h, now, graine, degel)
+        }
+        // LES EMPREINTES DANS LA NEIGE : la semelle lit le manteau (même signature).
+        if (this.eauEvents) this.eauEvents.neigeAt = (tx, ty) => estNeige(gel.etatAt(tx, ty))
+        // JUSQU'AUX GENOUX (gel.md G9) : le corps s'enfonce dans la neige profonde.
+        this.view.neigeProfondeAt = (x, y) => gel.immersionNeige(x, y)
         this.cameras.main.setBounds(0, 0, worldW, worldH)
         this.prediction = createPrediction(msg.playerSpawn.x, msg.playerSpawn.y)
         this.view.syncActor(this.playerSprite, this.predicted.x, this.predicted.y, 'spr-player')
@@ -1726,6 +1742,14 @@ export class WorldScene extends Phaser.Scene {
       if (this.etatGel) majEtatGel(this.etatGel, source)
       else this.etatGel = creerEtatGel(source)
       this.gelLayer?.update(this.etatGel, this.lastTime.tick, this.cameras.main)
+      // LES EMPREINTES DANS LA NEIGE se recouvrent vite quand il neige ICI (au joueur) : la
+      // chute est une bande qui traverse la carte, on lit son intensité au point, pas son type.
+      if (this.eauEvents) {
+        const p = this.predicted
+        this.eauEvents.neigeQuiTombe = meteoFront !== null
+          && (meteoFront.type === 'neige' || meteoFront.type === 'blizzard')
+          && meteoIntensityAt(meteoFront, this.lastTime.tick, this.map.width, this.map.height, p.x, p.y) > 0
+      }
       // Les FEUILLUS SE DÉNUDENT (G6) — la vue des nœuds choisit la cime nue ou feuillue en
       // interrogeant `feuillageDenude` tuile par tuile, sur cette même façade.
       this.view.setEtatGel(this.etatGel)
@@ -2772,13 +2796,18 @@ export class WorldScene extends Phaser.Scene {
     structures: SnapshotMessage['structures']
     nodes: ResourceNode[]
     moverVillageId: number | null
+    etat?: EtatGel
   } {
-    return {
+    // LE GEL SOUS LES PIEDS (gel.md G2, G9) : la glace et la neige changent le pas, et la
+    // prédiction doit le savoir — sinon chaque tuile enneigée est un rollback. La façade est
+    // celle du rendu (`etat-gel.ts`) : mêmes fonctions, même snapshot.
+    const monde = {
       map: this.map,
       structures: this.view.structures,
       nodes: this.view.nodes,
       moverVillageId: this.myVillageId,
     }
+    return this.etatGel ? { ...monde, etat: this.etatGel } : monde
   }
 
   /**

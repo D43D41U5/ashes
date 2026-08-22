@@ -1,5 +1,5 @@
 /**
- * LE PAYSAGE GELÉ — la neige au sol (G7) et la glace (G5), peintes.
+ * LE PAYSAGE GELÉ — la neige au sol (G7) et la glace (G5), peintes EN PAVÉS.
  *
  * La spec `gel.md` a été livrée côté sim et **rien ne se voyait** : un monde qui change
  * d'état sans qu'on le voie ne change pas d'état. Voici ce qui se voit.
@@ -8,245 +8,127 @@
  *
  * `neigeAuSol(state, tx, ty)` et `estGele(state, tx, ty)` sont les fonctions de `/sim`,
  * appelées telles quelles. Il n'y a PAS de seconde loi ici : pas de « et si la température
- * est basse alors », pas de mémoire client, pas un octet d'état. Ce que la glace autorise
- * (marcher dessus) et ce que cette couche peint sont **le même appel**. Le `SimState` que
- * les fonctions attendent est reconstitué par `etat-gel.ts`, qui nomme aussi les champs que
- * le snapshot ne porte pas (`brume` — un trou déclaré, pas un oubli).
+ * est basse alors », pas de mémoire client d'état de jeu. Ce que la glace autorise (marcher
+ * dessus) et ce que cette couche peint sont **le même appel**. Le `SimState` que les fonctions
+ * attendent est reconstitué par `etat-gel.ts`, qui nomme aussi les champs que le snapshot ne
+ * porte pas (`brume` — un trou déclaré, pas un oubli).
  *
- * ═══ POURQUOI UNE COUCHE À PART, ET PAS LE SHADER DE L'EAU ═══
+ * ═══ DES PAVÉS, PLUS UNE TRAME (2026-08-22) ═══
  *
- * L'eau est un shader plein-monde dont les quatre samplers sont cuits UNE fois au boot et
- * jamais reconstruits. Y injecter le gel demanderait soit un uniforme par tuile (impossible),
- * soit de recuire `uField` (une texture de la taille de la carte, sous swiftshader). Et
- * surtout : ce shader est la pièce la plus fragile du rendu sur cette machine — un post-FX
- * rend blanc ici, et personne ne veut découvrir ce qu'un cinquième sampler fait. On peint
- * donc PAR-DESSUS, ce qui a l'avantage de rendre la glace et la neige d'un seul geste : ce
- * sont deux états d'une même tuile, ils se disputeraient le même pixel de toute façon.
+ * La première écriture tramait la neige en cellules de 4 px à 91 % d'opacité — on voyait le
+ * sol au travers, et elle n'avait pas d'épaisseur. Alexis : « complètement opaque », « un peu
+ * de hauteur, comme entre prairie et flower_meadow ». La neige est donc un PAVÉ de
+ * `render/paves.ts` (frange, liseré, arête, ombre portée), cuit par `render/manteau.ts` à la
+ * même maille et dans les mêmes chunks de 16 tuiles que le sol (`pave-layer.ts`). La
+ * continuité de `neigeAuSol` devient un seuil positionnel par tuile : des plaques à la tuile,
+ * qui se ferment quand la neige monte et s'ouvrent quand elle fond.
  *
- * ═══ COMMENT C'EST QUANTIFIÉ (et pourquoi pas un aplat par tuile) ═══
+ * ═══ DEUX IMAGES PAR CHUNK, DE PART ET D'AUTRE DE LA BERGE ═══
  *
- * On cuit une texture à **`SUB` = 4 pixels par tuile** — soit exactement la grille de 4 px
- * MONDE, le grain de l'art —, posée sur la FENÊTRE VISIBLE et étirée en NEAREST. Chaque
- * pixel de cette texture est donc une cellule de 4 px du monde, et il est PLEIN ou VIDE :
- * bords francs, jamais un dégradé.
- *
- * Un aplat par tuile aurait été plus simple et aurait lu comme un damier : la couverture est
- * un nombre continu dans [0,1], et une tuile à 0,4 doit se lire « à moitié blanche », pas
- * « blanche à 40 % d'opacité ». On TRAME donc : la couverture décide COMBIEN des 16 cellules
- * de la tuile sont blanches, et un hash stable par cellule décide LESQUELLES. D'où trois
- * propriétés qu'un aplat n'aurait pas :
- *
- *   • la silhouette du terrain reste lisible dessous — l'herbe, la roche et la route passent
- *     par les trous, et on voit encore SUR QUOI la neige est tombée (c'est la demande) ;
- *   • la lisière du front se lit comme une vraie lisière, mouchetée, et pas comme une marche ;
- *   • ça reste du pixel art : des carrés de 4 px, pleins, sur la grille de l'art.
- *
- * L'ordre de remplissage vient d'un hash par cellule (`ordreDeCellule`), stable dans le
- * temps et dans l'espace : une tuile ne re-tire jamais son motif, donc la neige ne
- * scintille pas d'une recuisson à l'autre — le piège classique d'une trame aléatoire.
- *
- * ═══ LA GLACE SE VOIT D'UN COUP D'ŒIL (G5) ═══
- *
- * C'est une promesse de la spec, pas un ornement : « on ne s'engage jamais sur la glace par
- * surprise ». La glace est donc PLEINE (les 16 cellules), pas tramée — on ne voit pas l'eau
- * à travers —, et les deux profondeurs ne portent pas la même teinte :
- *
- *   • le GUÉ gelé est blanc-bleuté clair : sous lui, il y avait un fond qu'on voyait ;
- *   • le LAC gelé est plus SOMBRE et plus bleu : c'est de la glace sur du noir, et c'est
- *     elle qui vaut une décision (elle rend praticable ce qui bloquait).
- *
- * Les deux portent une MOUCHETURE claire (givre, fractures) tirée du même hash : sans elle,
- * un aplat parfait lit « trou dans le rendu » plutôt que « surface gelée ».
+ * Le SOL du manteau (corps de neige, glace) se pose à +0,285 : au-dessus de l'eau (+0,25), des
+ * poissons (+0,27) et des reflets (+0,28) — la glace cache ce qui passe dessous —, mais SOUS
+ * le surplomb de la berge (+0,29) : la terre garde sa frange, son liseré, son ombre et son
+ * ressac sur la glace — la côte et le lac gelé ont leur frontière (grief d'Alexis). Le
+ * SURPLOMB du manteau (la frange de neige et son ombre sur le sol nu ou sur la glace) se pose
+ * à +0,30, au-dessus de la berge : la neige est sur la terre, qui est sur l'eau.
  *
  * ═══ CE QUE ÇA COÛTE, ET COMMENT ON LE SAIT ═══
  *
  * `estGele` appelle `baselineTemperature`, qui appelle `isSheltered`, qui BALAIE
- * `state.structures` — O(structures) par tuile. Et `neigeAuSol` rembobine trois cycles.
- * On ne recuit donc pas à chaque image : seulement quand la caméra a bougé d'au moins une
- * tuile, ou quand assez de ticks ont passé. Le chronomètre est DANS la couche
- * (`sonde.msRecuisson`), comme celui de `meteo-layer` — sur cette machine le compte d'images
- * ne mesure pas le rendu (un ciel NU relevé à 937 ms/image), seul le temps passé ici est
- * lisible sous charge.
+ * `state.structures` — O(structures) par tuile. Et `neigeAuSol` rembobine trois cycles. On
+ * ne relit donc pas le monde à chaque image : chaque chunk porte une SIGNATURE (l'état de ses
+ * 18 × 18 tuiles, marge comprise) relevée à sa naissance, puis re-relevée quand `PAS_TICKS`
+ * ont passé (un chunk par image, le plus ancien d'abord) ou quand la phase du cycle saute
+ * (`debug_set_hour`) ; il ne se RECUIT que si la signature a changé. Une marche ne recuit que
+ * les chunks neufs ; le temps qui passe ne recuit que ce qui a vraiment fondu ou pris. Les
+ * chronomètres sont DANS la couche (`sonde.msRecuisson`, `msSignature`) : sur cette machine
+ * le compte d'images ne mesure pas le rendu, seul le temps passé ici est lisible sous charge.
  *
- * `gelPossible(state)` est la porte d'entrée : fausse (tout l'acte I, l'essentiel de
- * l'acte II), il n'y a pas une tuile à interroger — on éteint la couche et on sort en O(1).
- * Mais elle ne garde QUE la glace : la neige au sol, elle, peut survivre à un redoux, donc
- * `neigeAuSol` est interrogée même quand plus rien ne gèle.
+ * `gelPossible(state)` est la porte d'entrée bon marché : fausse (tout l'acte I, l'essentiel de
+ * l'acte II), pas une tuile d'eau n'est interrogée. Mais elle ne garde QUE la glace : la neige
+ * au sol, elle, peut survivre à un redoux, donc `neigeAuSol` est interrogée même quand plus
+ * rien ne gèle.
+ *
+ * ═══ LE GEL DE LA FLORE, RELEVÉ AU PASSAGE ═══
+ *
+ * Le fouillis (brins, fleurs) et les nœuds gélifs disparaissent quand il gèle (spec
+ * `flore-froid.md` F8, révisée) ; le prédicat est `floreGelee`, par tuile, aussi coûteux que
+ * le reste. La couche le relève dans la même signature et l'expose (`floreGeleeAt`) : un seul
+ * balayage, un seul rythme, et le fouillis ne paie rien de plus qu'une lecture de tableau.
  */
 import Phaser from 'phaser'
 import {
   TERRAIN_DEEP_WATER,
   TERRAIN_SHALLOW_WATER,
   estGele,
+  floreGelee,
   gelPossible,
   neigeAuSol,
+  niveauPourCouverture,
   terrainAt,
   type SimState,
   type WorldMap,
 } from '@ashes/sim'
 import { GROUND_MAP_DEPTH, TILE_PX } from '../../render/framing'
+import { GRAIN_CELLS, grainFacteur } from '../../render/grain-sol'
+import {
+  TUILE_GLACE_GUE, TUILE_GLACE_LAC, TUILE_NEIGE, TUILE_NEIGE_PROFONDE, TUILE_NUE, TUILE_STRUCTURELLE,
+  cuireManteau, trameDeGlace, tuileDeNiveau, type EtatTuile,
+} from '../../render/manteau'
+import { PAVE, PAVE_PX, estStructurel } from '../../render/paves'
+import { poserChunk } from './pave-layer'
 
-/**
- * LE GRAIN — 4 px monde, la grille des FX de l'art. `SUB` en découle : combien de cellules
- * par côté de tuile, donc la résolution de la texture cuite.
- */
-export const GRAIN_PX = 4
-export const SUB = TILE_PX / GRAIN_PX // 4
-
-/**
- * AU-DESSUS DE L'EAU ET DE LA CENDRE, sous les feuilles à la dérive.
- *
- * Le créneau est encombré : l'eau ET la cendre sont toutes deux à `GROUND_MAP_DEPTH + 0,25`,
- * départagées par leur seul ordre de création — on ne rajoute pas un troisième client à cette
- * ambiguïté. `+0,3` est donc franc, et il porte DEUX conséquences voulues :
- *   • la neige recouvre la cendre (un pré brûlé sous la neige est blanc, pas noir) ;
- *   • la glace recouvre l'eau, donc l'eau gelée ne miroite plus — c'est ce qui la nomme.
- * Les feuilles à la dérive (+0,32) restent au-dessus : elles flottent sur l'eau LIBRE, et
- * là où la glace a pris, elles se posent dessus sans que ça choque.
- */
+/** Le sol du manteau : sous le surplomb de la berge (+0,29), au-dessus des reflets (+0,28). */
+export const GEL_SOL_DEPTH = GROUND_MAP_DEPTH + 0.285
+/** Le surplomb du manteau : au-dessus de la berge, sous la falaise et les feuilles (+0,32). */
 export const GEL_DEPTH = GROUND_MAP_DEPTH + 0.3
 
 /**
- * LA MARGE DE LA FENÊTRE CUITE, en tuiles. Le monde bouge sous la caméra entre deux
- * recuissons : sans marge, un bord de neige apparaîtrait au ras de l'écran à chaque pas.
- * Deux tuiles couvrent le seuil de recuisson (une tuile) avec de quoi ne pas clignoter.
- */
-const MARGE_TUILES = 2
-
-/** On ne recuit pas pour un pixel : la caméra doit avoir franchi au moins ça, en tuiles. */
-const PAS_CAMERA_TUILES = 1
-
-/**
- * … OU assez de ticks : la neige fond et la glace prend AVEC LE TEMPS, caméra immobile.
- * `FONTE_CYCLES` vaut 3 cycles (172 800 ticks) pour passer de 1 à 0 : 400 ticks font donc
- * au pire 0,23 % de couverture, très en dessous d'une marche de trame (1/16 = 6 %). On ne
- * peut pas voir la neige sauter, et on recuit vingt fois par minute de jeu au lieu de
- * soixante fois par seconde.
+ * AU BOUT DE COMBIEN DE TICKS UN CHUNK RELIT LE MONDE. La neige fond et la glace prend AVEC
+ * LE TEMPS, caméra immobile. `FONTE_CYCLES` vaut 3 cycles (172 800 ticks) pour passer de 1 à
+ * 0 : 400 ticks font au pire 0,23 % de couverture, très en dessous de l'écart entre deux
+ * seuils de tuiles voisines. On ne peut pas voir la neige sauter, et on relit vingt fois par
+ * minute de jeu au lieu de soixante fois par seconde.
  */
 const PAS_TICKS = 400
+/** Combien de chunks RELISENT leur signature par image (le plus ancien d'abord). */
+const SIGNATURES_PAR_FRAME = 1
+/** Combien de chunks de COURONNE se cuisent par image. Le visible n'est pas borné. */
+const CUISSONS_COURONNE_PAR_FRAME = 1
+const COURONNE = 1
+const MARGE_VISIBLE_PX = (PAVE.CHUNK * PAVE_PX) / 2
+const OUBLI_FRAMES = 120
+const MAX_VIVANTS = 96
 
-/** Les crans de couverture — la trame en a `SUB²` + 1 par construction (0 à 16 cellules). */
-const CELLULES_PAR_TUILE = SUB * SUB
+/** Un chunk de 16 tuiles, marge d'une tuile comprise : 18 × 18 états. */
+const L = PAVE.CHUNK + 2
 
-/** En dessous, on ne peint rien : une cellule sur seize n'est pas de la neige, c'est du bruit. */
-const COUVERTURE_MIN = 1 / CELLULES_PAR_TUILE
-
-/**
- * COMBIEN DE CELLULES LA NEIGE PEUT PRENDRE **SUR DE LA GLACE**, au plus.
- *
- * ═══ C'EST UNE RÈGLE DE LISIBILITÉ, ET ELLE A UNE CONSÉQUENCE DE JEU ═══
- *
- * MESURÉ, et c'est ce qui l'a imposée : de nuit en acte III (jour 59, `smoke --scenario
- * enneige`), la couverture de neige monte à **0,93 de moyenne** — 15 cellules sur 16. Le lac
- * gelé disparaissait donc SOUS la neige et devenait rigoureusement indiscernable du pré : on
- * ne voyait plus où était l'eau. Or c'est exactement l'heure où le lac est PRATICABLE
- * (`SEUIL_PROFOND` ne mord que la nuit), donc l'heure où il faut le voir.
- *
- * G5 est une promesse de la spec — « on ne s'engage jamais sur la glace par surprise » —, et
- * elle vaut dans les DEUX sens : ne pas marcher sur la glace sans le savoir, et ne pas rater
- * le raccourci qu'elle ouvre. La neige ne prend donc jamais plus de la moitié d'une tuile de
- * glace. Le prétexte physique existe (la glace est balayée par le vent, elle garde mal la
- * neige) mais ce n'est pas la raison : la raison est qu'on doit LIRE la carte.
- *
- * CE QU'IL FAUT DIRE À ALEXIS : c'est un choix de rendu qui change ce qu'on voit venir. Une
- * rivière gelée reste dessinée comme une rivière au lieu de se fondre dans la plaine — la
- * vallée garde donc son relief lisible même sous le Grand Froid, alors qu'un manteau uniforme
- * l'aurait effacé. Si l'effacement était voulu (une vallée que la neige rend méconnaissable),
- * c'est ce plafond qu'il faut lever, et lui seul.
- */
-/**
- * LA COUVERTURE À LAQUELLE LE MANTEAU SE REFERME.
- *
- * La trame sert la TRANSITION — la première poudre, la lisière mouchetée, la fonte qui
- * découvre. Elle ne doit PAS survivre au plein manteau : à 0,90, seize cellules moins deux
- * laissaient encore 12 % de la surface découverte, réparties UNIFORMÉMENT — vu de haut ça
- * lit comme du confetti vert, pas comme de la neige (relevé d'Alexis sur la planche du
- * jour 59 : « toute la surface n'est pas complètement recouverte »). Un vrai champ à 90 %
- * s'est refermé ; il n'y perce plus que quelques touffes.
- *
- * On remappe donc : la couverture atteint les seize cellules dès `COUVERTURE_PLEINE`, et
- * la trame garde tout son domaine en dessous — là où elle raconte quelque chose.
- */
-const COUVERTURE_PLEINE = 0.8
-
-const NEIGE_SUR_GLACE_MAX = CELLULES_PAR_TUILE / 2
-
-/**
- * L'ORDRE DE REMPLISSAGE D'UNE CELLULE dans sa tuile — un rang stable dans `[0, 16)`.
- *
- * C'est ce qui fait que la neige TIENT en place : la cellule de rang 3 blanchit dès que la
- * couverture dépasse 3/16 et ne re-noircit qu'en repassant dessous. Rien ne scintille, parce
- * que rien n'est tiré au sort à l'exécution — c'est un hash de la position, pas un PRNG.
- *
- * Le hash est celui de la maison (entier, `Math.imul`, pas de transcendante) ; il vit ICI et
- * pas dans `/sim` parce qu'il ne décide d'aucune règle : c'est du grain, pas de la loi.
- */
-export function ordreDeCellule(cx: number, cy: number): number {
-  let h = Math.imul(cx | 0, 0x27d4_eb2d) ^ Math.imul(cy | 0, 0x1656_67b1)
-  h = Math.imul(h ^ (h >>> 15), 0x2545_f491)
-  h ^= h >>> 13
-  return (h >>> 0) % CELLULES_PAR_TUILE
+interface ChunkGel {
+  sol: { image: Phaser.GameObjects.Image; cle: string } | null
+  surplomb: { image: Phaser.GameObjects.Image; cle: string } | null
+  /** La signature : l'état de chaque tuile locale (marge comprise). */
+  etats: Int8Array
+  /** Le gel de la flore, tuile par tuile (marge comprise) : 1 gelé, 0 non. */
+  flore: Uint8Array
+  /** Le tick de la dernière relecture, et l'offset de cycle qu'elle a vu. */
+  tickSigne: number
+  offsetSigne: number
+  /** Ce que le chunk compte sur ses 16 × 16 tuiles propres (pour la sonde). */
+  neige: number
+  glace: number
+  glaceProfonde: number
+  sommeCouverture: number
+  couvertureMax: number
+  vu: number
 }
-
-/** Le motif de givre de la glace : une cellule sur cinq, stable, tirée du même hash. */
-function givre(cx: number, cy: number): boolean {
-  return ordreDeCellule(cx + 7919, cy + 104_729) < 3
-}
-
-/** Une couleur RGBA, en canaux 0-255. */
-type Teinte = readonly [number, number, number, number]
-
-/**
- * LES QUATRE MATIÈRES. Elles sont ici, en clair, parce que c'est de la DA — pas de
- * l'équilibrage : on les règle en REGARDANT, jamais en jouant (la ligne de partage de
- * l'en-tête de `balance.ts`).
- */
-/**
- * La neige : blanche à peine bleutée, opaque à 91 %.
- *
- * ELLE A ÉTÉ MONTÉE DE 82 À 91 % SUR PHOTO. À 82 % sur de l'herbe d'acte III, le sol rendait
- * (211, 225, 220) — pâle, mais pas blanc : ça lisait « pré givré », pas « pré sous la neige ».
- * Ce qui reste de transparence n'est PAS ce qui laisse voir le terrain — c'est la TRAME qui
- * s'en charge, et elle le fait mieux (des trous francs plutôt qu'un voile). L'opacité peut
- * donc monter sans rien perdre de la lisibilité du sol.
- */
-const NEIGE: Teinte = [244, 248, 255, 232]
-/** Le gué gelé : bleu clair — nettement plus BLEU que la neige, qui est à côté et par-dessus.
- *  Un blanc-bleuté trop pâle se confondait avec elle sur la berge, et c'est justement là
- *  qu'il faut distinguer « on marche » de « on glisse ». */
-const GLACE_GUE: Teinte = [168, 205, 228, 244]
-/** Le lac gelé : nettement plus sombre et plus bleu — de la glace sur du noir. C'est CELLE-CI
- *  qui vaut une décision de jeu (elle rend praticable ce qui bloquait) : elle doit se
- *  distinguer du gué autant que de l'eau libre. */
-const GLACE_LAC: Teinte = [112, 152, 190, 250]
-/** Le givre / la fracture : le rehaut clair posé sur les deux glaces. */
-const GIVRE: Teinte = [232, 245, 252, 255]
 
 export class GelLayer {
-  private img: Phaser.GameObjects.Image | null = null
-  private readonly cle: string
-  private canvas: HTMLCanvasElement | null = null
-  private ctx: CanvasRenderingContext2D | null = null
-  private data: ImageData | null = null
-  /** La fenêtre CUITE, en tuiles (bornes incluses côté bas, exclues côté haut). */
-  private tx0 = 0
-  private ty0 = 0
-  private tw = 0
-  private th = 0
-  private dernierTick = -Infinity
-  private dernierCamTx = Infinity
-  private dernierCamTy = Infinity
-  /**
-   * LA PHASE DU CYCLE de la dernière recuisson.
-   *
-   * ELLE EST INDISPENSABLE, ET ÇA S'EST VU : `debug_set_hour` déplace `cycleOffset` SANS
-   * toucher au tick — c'est tout son intérêt (viser une heure sans bouger le calendrier).
-   * Un seuil qui ne regarde que le tick et la caméra ne voit donc RIEN passer, et la couche
-   * a rendu deux relevés rigoureusement identiques à midi et à une heure du matin, alors que
-   * le lac gèle entre les deux (`SEUIL_PROFOND` ne mord que la nuit en acte III). Ce n'est
-   * pas un artefact de debug : le passage de l'heure est ce qui fait geler la vallée.
-   */
-  private dernierOffset = Number.NaN
+  private chunks = new Map<number, ChunkGel>()
+  private frame = 0
+  private readonly trameNeige: Float32Array
+  private readonly trameGlace = trameDeGlace()
+  private etat: SimState | null = null
+  private glacePossible = false
 
   /**
    * LA SONDE — lue par le smoke, par rien d'autre. `tuilesNeige` et `tuilesGlace` disent ce
@@ -262,184 +144,300 @@ export class GelLayer {
     tuilesGlaceProfonde: 0,
     couvertureMax: 0,
     couvertureMoyenne: 0,
+    /** Cuissons de chunks depuis la naissance. */
     recuissons: 0,
-    /** Ce que la dernière recuisson a pris sur le fil principal, en ms. */
+    /** La dernière cuisson d'un chunk (cuisson seule, sans la signature), en ms. */
     msRecuisson: 0,
+    /** La dernière relecture de signature d'un chunk (les appels à la sim), en ms. */
+    msSignature: 0,
+    chunksVivants: 0,
   }
 
   constructor(
     private readonly scene: Phaser.Scene,
     private readonly map: WorldMap,
-    suffixe = '',
+    private readonly suffixe = '',
+    seed = 0,
   ) {
-    this.cle = `gel-${map.width}-${suffixe}`
+    this.trameNeige = new Float32Array(GRAIN_CELLS * GRAIN_CELLS)
+    for (let cy = 0; cy < GRAIN_CELLS; cy++) {
+      for (let cx = 0; cx < GRAIN_CELLS; cx++) this.trameNeige[cy * GRAIN_CELLS + cx] = grainFacteur(cx, cy, 'neige', seed)
+    }
+  }
+
+  /** La flore de cette tuile est-elle gelée, d'après la dernière signature relevée ici ?
+   *  `null` hors de tout chunk vivant : ON NE SAIT PAS ENCORE — et le fouillis ne doit pas
+   *  prendre ce silence pour « libre » puis jouer un gel une image plus tard (au premier rendu,
+   *  la couche du gel n'a pas encore cuit : elle passe APRÈS le fouillis dans la frame). */
+  floreGeleeAt(tx: number, ty: number): boolean | null {
+    const N = PAVE.CHUNK
+    const c = this.chunks.get(Math.floor(ty / N) * 65536 + Math.floor(tx / N))
+    if (!c) return null
+    const lx = tx - Math.floor(tx / N) * N + 1
+    const ly = ty - Math.floor(ty / N) * N + 1
+    return c.flore[ly * L + lx] === 1
+  }
+
+  /** L'état d'une tuile d'après la dernière signature (neige, glace, nue) — pour les empreintes. */
+  etatAt(tx: number, ty: number): EtatTuile {
+    const N = PAVE.CHUNK
+    const c = this.chunks.get(Math.floor(ty / N) * 65536 + Math.floor(tx / N))
+    if (!c) return TUILE_NUE
+    const lx = tx - Math.floor(tx / N) * N + 1
+    const ly = ty - Math.floor(ty / N) * N + 1
+    return c.etats[ly * L + lx] as EtatTuile
   }
 
   /**
-   * Chaque frame — mais ne recuit que si la caméra a bougé d'une tuile ou si `PAS_TICKS`
-   * ticks ont passé. `etat` est la façade de `etat-gel.ts` ; `tick` en vient aussi, il est
-   * passé à part pour que le seuil de recuisson ne dépende pas d'un champ caché.
+   * L'ENFONCEMENT DANS LA NEIGE PROFONDE en un point (tuiles), dans [0, 1] — « la neige arrive
+   * à hauteur de genou » (gel.md G9). CONTINU (« feel = pente continue ») : 0 pile au bord d'une
+   * tuile profonde qui touche une tuile qui ne l'est pas, plein à `RAMPE` tuile à l'intérieur ;
+   * au cœur d'une plaque, plein partout. Lu sur la signature — quatre voisins, pas la sim.
    */
-  update(etat: SimState | null, tick: number, camera: Phaser.Cameras.Scene2D.Camera): void {
-    if (!etat) { this.eteindre(); return }
-    const vue = camera.worldView
-    const camTx = Math.floor(vue.x / TILE_PX)
-    const camTy = Math.floor(vue.y / TILE_PX)
-    const bougee = Math.abs(camTx - this.dernierCamTx) >= PAS_CAMERA_TUILES
-      || Math.abs(camTy - this.dernierCamTy) >= PAS_CAMERA_TUILES
-    const vieilli = Math.abs(tick - this.dernierTick) >= PAS_TICKS
-    const offset = (etat as unknown as { cycleOffset: number }).cycleOffset
-    const rephasee = offset !== this.dernierOffset
-    if (!bougee && !vieilli && !rephasee) return
-    this.dernierCamTx = camTx
-    this.dernierCamTy = camTy
-    this.dernierTick = tick
-    this.dernierOffset = offset
-    this.recuire(etat, vue)
+  immersionNeige(x: number, y: number): number {
+    const tx = Math.floor(x)
+    const ty = Math.floor(y)
+    if (this.etatAt(tx, ty) !== TUILE_NEIGE_PROFONDE) return 0
+    const RAMPE = 0.35
+    let d = 1
+    if (this.etatAt(tx - 1, ty) !== TUILE_NEIGE_PROFONDE) d = Math.min(d, x - tx)
+    if (this.etatAt(tx + 1, ty) !== TUILE_NEIGE_PROFONDE) d = Math.min(d, tx + 1 - x)
+    if (this.etatAt(tx, ty - 1) !== TUILE_NEIGE_PROFONDE) d = Math.min(d, y - ty)
+    if (this.etatAt(tx, ty + 1) !== TUILE_NEIGE_PROFONDE) d = Math.min(d, ty + 1 - y)
+    return Math.min(1, d / RAMPE)
   }
 
-  private recuire(etat: SimState, vue: Phaser.Geom.Rectangle): void {
-    const t0 = performance.now()
-    const tx0 = Math.max(0, Math.floor(vue.x / TILE_PX) - MARGE_TUILES)
-    const ty0 = Math.max(0, Math.floor(vue.y / TILE_PX) - MARGE_TUILES)
-    const tx1 = Math.min(this.map.width, Math.ceil((vue.x + vue.width) / TILE_PX) + MARGE_TUILES)
-    const ty1 = Math.min(this.map.height, Math.ceil((vue.y + vue.height) / TILE_PX) + MARGE_TUILES)
-    const tw = tx1 - tx0
-    const th = ty1 - ty0
-    if (tw <= 0 || th <= 0) { this.eteindre(); return }
+  /**
+   * Chaque frame. `etat` est la façade de `etat-gel.ts` ; `tick` en vient aussi, il est passé
+   * à part pour que le seuil de relecture ne dépende pas d'un champ caché.
+   */
+  update(etat: SimState | null, tick: number, camera: Phaser.Cameras.Scene2D.Camera): void {
+    this.etat = etat
+    if (!etat) { this.eteindre(); return }
+    this.frame++
+    this.glacePossible = gelPossible(etat)
+    const offset = (etat as unknown as { cycleOffset: number }).cycleOffset
 
-    const glacePossible = gelPossible(etat)
-    this.assurerCanvas(tw, th)
-    const data = this.data!
-    const px = data.data
-    px.fill(0)
+    const cotePx = PAVE.CHUNK * PAVE_PX
+    const v = camera.worldView
+    const cx0 = Math.max(0, Math.floor(v.x / cotePx) - COURONNE)
+    const cy0 = Math.max(0, Math.floor(v.y / cotePx) - COURONNE)
+    const cxMax = Math.ceil((this.map.width * TILE_PX) / cotePx) - 1
+    const cyMax = Math.ceil((this.map.height * TILE_PX) / cotePx) - 1
+    const cx1 = Math.min(cxMax, Math.floor((v.x + v.width) / cotePx) + COURONNE)
+    const cy1 = Math.min(cyMax, Math.floor((v.y + v.height) / cotePx) + COURONNE)
+    const m = MARGE_VISIBLE_PX
+    const visible = (cx: number, cy: number): boolean =>
+      cx * cotePx < v.x + v.width + m && (cx + 1) * cotePx > v.x - m
+      && cy * cotePx < v.y + v.height + m && (cy + 1) * cotePx > v.y - m
 
-    let tuilesNeige = 0
-    let tuilesGlace = 0
-    let tuilesGlaceProfonde = 0
-    let couvertureMax = 0
-    let sommeCouverture = 0
-    const largeurPx = tw * SUB
-
-    for (let ty = ty0; ty < ty1; ty++) {
-      for (let tx = tx0; tx < tx1; tx++) {
-        const terrain = terrainAt(this.map, tx, ty)
-        const eau = terrain === TERRAIN_SHALLOW_WATER || terrain === TERRAIN_DEEP_WATER
-        // LA GLACE D'ABORD : une eau gelée est de la glace, pas de l'eau enneigée — et la
-        // neige, elle, se pose DESSUS (voir plus bas). Une eau LIBRE ne porte jamais de
-        // neige : un flocon qui tombe dedans fond, c'est tout ce que ça veut dire.
-        const gelee = eau && glacePossible && estGele(etat, tx, ty)
-        if (eau && !gelee) continue
-
-        const couverture = neigeAuSol(etat, tx, ty)
-        if (couverture > couvertureMax) couvertureMax = couverture
-        sommeCouverture += couverture
-        if (!gelee && couverture < COUVERTURE_MIN) continue
-
-        if (gelee) {
-          tuilesGlace++
-          if (terrain === TERRAIN_DEEP_WATER) tuilesGlaceProfonde++
-        }
-        if (couverture >= COUVERTURE_MIN) tuilesNeige++
-
-        // Combien de cellules blanchissent : la couverture, quantifiée sur les 16 crans de
-        // la trame. Jamais une opacité continue — c'est la règle, et c'est ce qui laisse la
-        // silhouette du terrain lisible dessous.
-        // Le manteau se REFERME à `COUVERTURE_PLEINE` : au-delà, plus un trou. En dessous,
-        // la trame garde tout son domaine — c'est là qu'elle dit la poudre et la lisière.
-        const pleine = Math.min(1, couverture / COUVERTURE_PLEINE)
-        const cellules = gelee
-          ? Math.min(NEIGE_SUR_GLACE_MAX, Math.round(pleine * CELLULES_PAR_TUILE))
-          : Math.round(pleine * CELLULES_PAR_TUILE)
-        const glace = terrain === TERRAIN_DEEP_WATER ? GLACE_LAC : GLACE_GUE
-        const bx = (tx - tx0) * SUB
-        const by = (ty - ty0) * SUB
-        for (let sy = 0; sy < SUB; sy++) {
-          for (let sx = 0; sx < SUB; sx++) {
-            const cx = tx * SUB + sx
-            const cy = ty * SUB + sy
-            let teinte: Teinte | null = null
-            if (gelee) teinte = givre(cx, cy) ? GIVRE : glace
-            // La neige se pose SUR la glace comme sur la terre : la trame la recouvre là où
-            // elle a des cellules. Une berge gelée sous la neige est blanche au bord et
-            // bleue au milieu — c'est exactement ce qu'on veut voir.
-            if (ordreDeCellule(cx, cy) < cellules) teinte = NEIGE
-            if (!teinte) continue
-            const o = ((by + sy) * largeurPx + bx + sx) * 4
-            px[o] = teinte[0]
-            px[o + 1] = teinte[1]
-            px[o + 2] = teinte[2]
-            px[o + 3] = teinte[3]
+    // ① Les chunks qui MANQUENT : le visible tout de suite, la couronne au compte-gouttes.
+    let budgetCouronne = CUISSONS_COURONNE_PAR_FRAME
+    for (const passeVisible of [true, false]) {
+      for (let cy = cy0; cy <= cy1; cy++) {
+        for (let cx = cx0; cx <= cx1; cx++) {
+          if (visible(cx, cy) !== passeVisible) continue
+          const k = cy * 65536 + cx
+          const c = this.chunks.get(k)
+          if (c) { c.vu = this.frame; continue }
+          if (!passeVisible) {
+            if (budgetCouronne <= 0) continue
+            budgetCouronne--
           }
+          this.naitre(cx, cy, k, tick, offset)
         }
       }
     }
 
-    this.ctx!.putImageData(data, 0, 0)
-    this.poser(tx0, ty0, tw, th)
+    // ② La RELECTURE : le chunk VISIBLE le plus anciennement signé, s'il est périmé — ou
+    //    tout chunk dont la phase du cycle a sauté (`debug_set_hour` déplace `cycleOffset`
+    //    sans toucher au tick : c'est le passage de l'heure qui fait geler la vallée, et un
+    //    seuil qui ne regarderait que le tick ne le verrait pas).
+    for (let n = 0; n < SIGNATURES_PAR_FRAME; n++) {
+      let candidat: [number, ChunkGel] | null = null
+      for (const [k, c] of this.chunks) {
+        if (c.offsetSigne !== offset) { candidat = [k, c]; break }
+        if (Math.abs(tick - c.tickSigne) < PAS_TICKS) continue
+        if (!visible(k % 65536, Math.floor(k / 65536))) continue
+        if (!candidat || c.tickSigne < candidat[1].tickSigne) candidat = [k, c]
+      }
+      if (!candidat) break
+      const [k, c] = candidat
+      const cx = k % 65536
+      const cy = Math.floor(k / 65536)
+      // Aucun changement : la signature relue remplace l'ancienne, rien à redessiner.
+      if (this.signer(c, cx, cy, tick, offset)) this.cuire(c, cx, cy)
+    }
 
-    this.sonde.actif = tuilesNeige > 0 || tuilesGlace > 0
-    this.sonde.gelPossible = glacePossible
-    this.sonde.tuilesBalayees = tw * th
-    this.sonde.tuilesNeige = tuilesNeige
-    this.sonde.tuilesGlace = tuilesGlace
-    this.sonde.tuilesGlaceProfonde = tuilesGlaceProfonde
-    this.sonde.couvertureMax = couvertureMax
-    this.sonde.couvertureMoyenne = sommeCouverture / Math.max(1, tw * th)
+    // ③ L'oubli : ce qui n'a pas été vu depuis longtemps se rend ; trop de vivants, les plus
+    //    anciens partent d'abord — jamais un chunk vu cette frame.
+    for (const [k, c] of this.chunks) {
+      if (this.frame - c.vu > OUBLI_FRAMES) this.rendre(k, c)
+    }
+    if (this.chunks.size > MAX_VIVANTS) {
+      const parAge = [...this.chunks.entries()].sort((a, b) => a[1].vu - b[1].vu)
+      for (const [k, c] of parAge) {
+        if (this.chunks.size <= MAX_VIVANTS || c.vu === this.frame) break
+        this.rendre(k, c)
+      }
+    }
+    this.relever()
+  }
+
+  /** Un chunk neuf : signé, cuit, posé. */
+  private naitre(cx: number, cy: number, k: number, tick: number, offset: number): void {
+    const c: ChunkGel = {
+      sol: null, surplomb: null,
+      etats: new Int8Array(L * L), flore: new Uint8Array(L * L),
+      tickSigne: tick, offsetSigne: offset,
+      neige: 0, glace: 0, glaceProfonde: 0, sommeCouverture: 0, couvertureMax: 0,
+      vu: this.frame,
+    }
+    this.chunks.set(k, c)
+    this.signer(c, cx, cy, tick, offset)
+    this.cuire(c, cx, cy)
+  }
+
+  /** Relit l'état des 18 × 18 tuiles du chunk (marge comprise). Rend vrai si le manteau a
+   *  changé (la flore ne compte pas : elle ne se cuit pas). */
+  private signer(c: ChunkGel, cx: number, cy: number, tick: number, offset: number): boolean {
+    const t0 = performance.now()
+    const etat = this.etat!
+    const N = PAVE.CHUNK
+    const tx0 = cx * N - 1
+    const ty0 = cy * N - 1
+    let change = false
+    let neige = 0, glace = 0, glaceProfonde = 0, somme = 0, max = 0
+    for (let ly = 0; ly < L; ly++) {
+      for (let lx = 0; lx < L; lx++) {
+        const tx = tx0 + lx
+        const ty = ty0 + ly
+        const i = ly * L + lx
+        let e: EtatTuile = TUILE_STRUCTURELLE
+        let gele = 0
+        let couverture = 0
+        if (tx >= 0 && ty >= 0 && tx < this.map.width && ty < this.map.height) {
+          const terrain = terrainAt(this.map, tx, ty)
+          const eau = terrain === TERRAIN_SHALLOW_WATER || terrain === TERRAIN_DEEP_WATER
+          if (estStructurel(terrain)) e = TUILE_STRUCTURELLE
+          else if (eau) {
+            // LA GLACE : une eau gelée est de la glace, pas de l'eau enneigée — et la neige ne
+            // la couvre jamais (G5 : la glace doit se VOIR, voir `render/manteau.ts`).
+            e = this.glacePossible && estGele(etat, tx, ty)
+              ? (terrain === TERRAIN_DEEP_WATER ? TUILE_GLACE_LAC : TUILE_GLACE_GUE)
+              : TUILE_NUE
+          } else {
+            couverture = neigeAuSol(etat, tx, ty)
+            // LE NIVEAU est la loi de la sim (gel.md G9) : ce qu'on peint est ce qui ralentit.
+            e = tuileDeNiveau(niveauPourCouverture(couverture, tx, ty))
+            gele = floreGelee(etat, tx, ty) ? 1 : 0
+          }
+        }
+        if (c.etats[i] !== e) { c.etats[i] = e; change = true }
+        c.flore[i] = gele
+        // Les comptes, sur les tuiles PROPRES du chunk (pas la marge, que le voisin compte).
+        if (lx >= 1 && ly >= 1 && lx <= N && ly <= N) {
+          if (e === TUILE_NEIGE || e === TUILE_NEIGE_PROFONDE) neige++
+          if (e === TUILE_GLACE_GUE || e === TUILE_GLACE_LAC) glace++
+          if (e === TUILE_GLACE_LAC) glaceProfonde++
+          somme += couverture
+          if (couverture > max) max = couverture
+        }
+      }
+    }
+    c.neige = neige
+    c.glace = glace
+    c.glaceProfonde = glaceProfonde
+    c.sommeCouverture = somme
+    c.couvertureMax = max
+    c.tickSigne = tick
+    c.offsetSigne = offset
+    this.sonde.msSignature = performance.now() - t0
+    return change
+  }
+
+  /** Cuit le chunk depuis sa signature et pose (ou remplace) ses deux images. */
+  private cuire(c: ChunkGel, cx: number, cy: number): void {
+    const t0 = performance.now()
+    const N = PAVE.CHUNK
+    const S = N * PAVE_PX
+    const tx0 = cx * N - 1
+    const ty0 = cy * N - 1
+    const etatAt = (tx: number, ty: number): EtatTuile => {
+      const lx = tx - tx0
+      const ly = ty - ty0
+      if (lx < 0 || ly < 0 || lx >= L || ly >= L) return TUILE_STRUCTURELLE
+      return c.etats[ly * L + lx] as EtatTuile
+    }
+    this.detruire(c)
+    // Rien à peindre (ni neige ni glace, marge comprise) : pas une texture.
+    let vide = true
+    for (let i = 0; i < L * L && vide; i++) vide = c.etats[i]! <= TUILE_NUE
+    if (vide) { this.sonde.recuissons++; this.sonde.msRecuisson = performance.now() - t0; return }
+    const cuit = cuireManteau({ cx, cy, etatAt, trameNeige: this.trameNeige, trameGlace: this.trameGlace })
+    const cle = `gel-${this.suffixe}-${cx}-${cy}`
+    const sol = poserChunk(this.scene, cle, cuit.sol, cx * S, cy * S, GEL_SOL_DEPTH)
+    if (sol) c.sol = { image: sol, cle }
+    if (cuit.surplomb) {
+      const cleSur = cle + '-surplomb'
+      const sur = poserChunk(this.scene, cleSur, cuit.surplomb, cx * S, cy * S, GEL_DEPTH)
+      if (sur) c.surplomb = { image: sur, cle: cleSur }
+    }
     this.sonde.recuissons++
     this.sonde.msRecuisson = performance.now() - t0
   }
 
-  /** (Re)fabrique le canvas et sa texture quand la fenêtre change de TAILLE seulement. */
-  private assurerCanvas(tw: number, th: number): void {
-    if (this.canvas && this.tw === tw && this.th === th) return
-    this.tw = tw
-    this.th = th
-    if (this.scene.textures.exists(this.cle)) this.scene.textures.remove(this.cle)
-    const tex = this.scene.textures.createCanvas(this.cle, tw * SUB, th * SUB)
-    if (!tex) return
-    this.canvas = tex.getSourceImage() as HTMLCanvasElement
-    this.ctx = tex.getContext()
-    this.data = this.ctx.createImageData(tw * SUB, th * SUB)
-    this.img?.destroy()
-    this.img = null
+  private detruire(c: ChunkGel): void {
+    if (c.sol) {
+      c.sol.image.destroy()
+      this.scene.textures.remove(c.sol.cle)
+      c.sol = null
+    }
+    if (c.surplomb) {
+      c.surplomb.image.destroy()
+      this.scene.textures.remove(c.surplomb.cle)
+      c.surplomb = null
+    }
   }
 
-  private poser(tx0: number, ty0: number, tw: number, th: number): void {
-    this.tx0 = tx0
-    this.ty0 = ty0
-    if (!this.img) {
-      this.img = this.scene.add.image(0, 0, this.cle).setOrigin(0, 0).setDepth(GEL_DEPTH)
+  private rendre(k: number, c: ChunkGel): void {
+    this.detruire(c)
+    this.chunks.delete(k)
+  }
+
+  /** Les totaux de la sonde, sommés sur les chunks vivants. */
+  private relever(): void {
+    const N = PAVE.CHUNK
+    let neige = 0, glace = 0, profonde = 0, somme = 0, max = 0
+    for (const c of this.chunks.values()) {
+      neige += c.neige
+      glace += c.glace
+      profonde += c.glaceProfonde
+      somme += c.sommeCouverture
+      if (c.couvertureMax > max) max = c.couvertureMax
     }
-    this.img
-      .setPosition(tx0 * TILE_PX, ty0 * TILE_PX)
-      .setDisplaySize(tw * TILE_PX, th * TILE_PX)
-      .setVisible(true)
-    const tex = this.scene.textures.get(this.cle)
-    if ('refresh' in tex && typeof tex.refresh === 'function') tex.refresh()
-    // ── NEAREST, ET APRÈS LE `refresh`, PAS AVANT ──────────────────────────────────────
-    //
-    // La neige a une ARÊTE. Un filtrage bilinéaire fait de la trame un dégradé, c'est-à-dire
-    // exactement ce que la DA interdit — et il l'avait fait : au plan rapproché (zoom 6), les
-    // cellules de 4 px sortaient FLOUES, avec des transitions douces entre la neige, la glace
-    // et l'eau. Le filtre était pourtant posé… à la CRÉATION du canvas. `refresh()` réenvoie
-    // la source à la GPU et lui rend son mode d'échelle par défaut, si bien que chaque
-    // recuisson défaisait le réglage. On le repose donc APRÈS, à chaque fois : c'est une
-    // ligne, et c'est la différence entre du pixel art et une aquarelle.
-    tex.setFilter(Phaser.Textures.FilterMode.NEAREST)
+    const s = this.sonde
+    s.actif = neige > 0 || glace > 0
+    s.gelPossible = this.glacePossible
+    s.tuilesBalayees = this.chunks.size * N * N
+    s.tuilesNeige = neige
+    s.tuilesGlace = glace
+    s.tuilesGlaceProfonde = profonde
+    s.couvertureMax = max
+    s.couvertureMoyenne = somme / Math.max(1, s.tuilesBalayees)
+    s.chunksVivants = this.chunks.size
   }
 
   private eteindre(): void {
-    this.img?.setVisible(false)
+    for (const [k, c] of this.chunks) this.rendre(k, c)
     this.sonde.actif = false
     this.sonde.tuilesNeige = 0
     this.sonde.tuilesGlace = 0
     this.sonde.tuilesGlaceProfonde = 0
+    this.sonde.chunksVivants = 0
   }
 
   destroy(): void {
-    this.img?.destroy()
-    this.img = null
-    if (this.scene.textures.exists(this.cle)) this.scene.textures.remove(this.cle)
+    for (const [k, c] of this.chunks) this.rendre(k, c)
   }
 }

@@ -28,9 +28,10 @@ import { PAVE, PAVE_PX, cuireChunk } from '../../render/paves'
 /** Sous le bake ? Non : AU-DESSUS du bake (−1), SOUS l'eau (+0,25) et tout ce qui vit dessus. */
 const PAVE_DEPTH = GROUND_MAP_DEPTH + 0.05
 /** LE SURPLOMB de la berge (frange de terre, ombre, ressac sur l'eau) : AU-DESSUS du shader
- *  d'eau (+0,25), des ombres de poissons (+0,27) et des reflets (+0,28) — une berge cache ce qui
- *  passe dessous — mais SOUS le gel (+0,30), la falaise et les feuilles qui dérivent (+0,32). */
-const SURPLOMB_DEPTH = GROUND_MAP_DEPTH + 0.29
+ *  d'eau (+0,25), des ombres de poissons (+0,27), des reflets (+0,28) et de la GLACE (+0,285 :
+ *  la berge garde son bord sur le lac gelé) — une berge cache ce qui passe dessous — mais SOUS
+ *  la neige (+0,30), la falaise et les feuilles qui dérivent (+0,32). */
+export const SURPLOMB_DEPTH = GROUND_MAP_DEPTH + 0.29
 
 /** Combien de chunks de COURONNE (hors écran) se cuisent par frame. Le visible n'est pas borné. */
 const CUISSONS_COURONNE_PAR_FRAME = 2
@@ -48,6 +49,26 @@ const OUBLI_FRAMES = 120
 /** Plafond de chunks vivants (256² × 4 o = 256 Ko chacun → 24 Mo) : au-delà, les plus anciens
  *  se rendent, même vus récemment. */
 const MAX_VIVANTS = 96
+
+/** Verse un tampon RGBA de `(CHUNK × 16)²` px dans une CanvasTexture NEAREST et pose son image —
+ *  partagé avec le manteau (`gel-layer.ts`), qui cuit à la même maille. */
+export function poserChunk(
+  scene: Phaser.Scene, cle: string, rgba: Uint8ClampedArray, x: number, y: number, depth: number,
+): Phaser.GameObjects.Image | null {
+  const S = PAVE.CHUNK * PAVE_PX
+  // Une clé déjà prise (une scène rechargée à chaud sans passer par `destroy`) ne doit PAS
+  // laisser un trou permanent recuit à chaque frame : on la rend, puis on recrée.
+  if (scene.textures.exists(cle)) scene.textures.remove(cle)
+  const tex = scene.textures.createCanvas(cle, S, S)
+  if (!tex) return null
+  const ctx = tex.getContext()
+  const img = ctx.createImageData(S, S)
+  img.data.set(rgba)
+  ctx.putImageData(img, 0, 0)
+  tex.refresh()
+  tex.setFilter(Phaser.Textures.FilterMode.NEAREST)
+  return scene.add.image(x, y, cle).setOrigin(0, 0).setDepth(depth)
+}
 
 interface Chunk {
   image: Phaser.GameObjects.Image
@@ -192,19 +213,7 @@ export class PaveLayer {
 
   /** Verse un tampon RGBA dans une CanvasTexture NEAREST et pose son image. */
   private poser(cle: string, rgba: Uint8ClampedArray, x: number, y: number, depth: number): Phaser.GameObjects.Image | null {
-    const S = PAVE.CHUNK * PAVE_PX
-    // Une clé déjà prise (une scène rechargée à chaud sans passer par `destroy`) ne doit PAS
-    // laisser un trou permanent recuit à chaque frame : on la rend, puis on recrée.
-    if (this.scene.textures.exists(cle)) this.scene.textures.remove(cle)
-    const tex = this.scene.textures.createCanvas(cle, S, S)
-    if (!tex) return null
-    const ctx = tex.getContext()
-    const img = ctx.createImageData(S, S)
-    img.data.set(rgba)
-    ctx.putImageData(img, 0, 0)
-    tex.refresh()
-    tex.setFilter(Phaser.Textures.FilterMode.NEAREST)
-    return this.scene.add.image(x, y, cle).setOrigin(0, 0).setDepth(depth)
+    return poserChunk(this.scene, cle, rgba, x, y, depth)
   }
 
   private rendre(k: number, c: Chunk): void {

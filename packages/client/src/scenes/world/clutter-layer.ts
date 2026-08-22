@@ -14,6 +14,7 @@ import { TERRAIN_COLORS } from '../../render/terrain-colors'
 import { LIT_CLUTTER_KINDS, litClutterTextureKey, VARIANT_COUNTS, variantBase } from '../../render/lit-props'
 import { SHADOW_PROPS, SHADOW_PROP_GAP, SHADOW_PROP_GAP_LIT, SHADOW_PROP_WIDTH } from '../../render/prop-shadows'
 import { windSway, WIND_TAKE } from '../../render/wind'
+import { TransitionsFlore, retardDe } from '../../render/flore-gel'
 import type { Warp } from '../../render/warp'
 import { createContactShadow, positionShadow } from './contact-shadow'
 
@@ -41,6 +42,10 @@ function teinteDeLaTouffe(terrain: number): number {
   return t
 }
 const MARGIN_TILES = 2 // marge de culling pour éviter le pop en bordure d'écran
+/** CE QUI DISPARAÎT SOUS LE GEL (spec `flore-froid.md` F8 révisée, demande d'Alexis 2026-08-22) :
+ *  l'herbacé — brins et fleurs. Le roseau sec, le lichen, la sphaigne, le buisson ligneux et la
+ *  pierre restent : l'hiver ne les efface pas. */
+const FLORE_GELIVE = new Set<PropKind>(['grass_tuft', 'flower'])
 const MAX_SPRITES = 4000 // borne dure de perf (cap silencieux : on log si dépassé)
 
 export class ClutterLayer {
@@ -108,9 +113,18 @@ export class ClutterLayer {
     }
   }
 
+  /** La flore de cette tuile est-elle gelée ? Posé par WorldScene sur la couche du gel
+   *  (`GelLayer.floreGeleeAt` : une lecture de signature). Absent : rien ne gèle. */
+  floreGeleeAt: ((tx: number, ty: number) => boolean | null) | null = null
+  /** La gerbe de givre (ou de sève au dégel) — `RecolteFx.givre`, posée par WorldScene. */
+  onGivre: ((x: number, y: number, hauteur: number, now: number, graine: number, degel: boolean) => void) | null = null
+  /** Les bascules gel/dégel du fouillis, par tuile (voir `render/flore-gel.ts`). */
+  private readonly transitions = new TransitionsFlore()
+
   update(camera: Phaser.Cameras.Scene2D.Camera, now: number): void {
     let used = 0
     let shadowsUsed = 0
+    this.transitions.image()
     if (camera.zoom >= CLUTTER_MIN_ZOOM) {
       const v = camera.worldView
       const x0 = Math.max(0, Math.floor(v.x / TILE_PX) - MARGIN_TILES)
@@ -129,8 +143,27 @@ export class ClutterLayer {
           if (this.coulees.has(idx)) continue // la terre battue d'une coulée : le pas a tout usé
           const terrain = this.map.terrain[idx] ?? -1
           const props = clutterAt(tx, ty, terrain, this.seed, this.sample, this.map.profondeur?.[idx] ?? 0, this.buttes.get(idx))
+          // LE GEL DE LA FLORE, relevé une fois par tuile (la couche du gel l'a déjà calculé).
+          // `null` : la couche du gel n'a pas encore relevé cette tuile — on dessine tel quel, sans
+          // inscrire de bascule (sinon chaque arrivée jouerait un gel sur un pré déjà gelé).
+          const gele = this.floreGeleeAt === null ? null : this.floreGeleeAt(tx, ty)
+          let rang = 0
           for (const p of props) {
             if (used >= MAX_SPRITES) break
+            // L'HERBACÉ DISPARAÎT SOUS LE GEL — et repousse au dégel. La pose (échelle, visibilité)
+            // vient de la mémoire des bascules ; la gerbe part sur l'image où le geste commence.
+            let echX = 1
+            let echY = 1
+            if (gele !== null && FLORE_GELIVE.has(p.kind)) {
+              const pose = this.transitions.pose(idx * 4 + rang++, gele, now, retardDe(tx, ty, rang))
+              if (pose.eclat) {
+                this.onGivre?.((tx + 0.5 + p.ox) * TILE_PX, (ty + 1 + p.oy) * TILE_PX - this.warp.lift(tx + 0.5 + p.ox, ty + 1 + p.oy),
+                  TILE_PX * p.scale, now, idx * 31 + rang, !gele)
+              }
+              if (!pose.visible) continue
+              echX = pose.sx
+              echY = pose.sy
+            }
             const slot = used++
             const sprite = this.acquire(slot)
             // LA GAMME DU BIOME (demande d'Alexis, 2026-07-29) : la touffe se teinte du sol qui la
@@ -163,7 +196,7 @@ export class ClutterLayer {
             sprite.setPosition(feetX * TILE_PX, sy)
             // Les textures hautes (le chicot : 16×32) déclarent leur aspect — sans lui, le
             // carré par défaut ÉCRASERAIT l'aiguille en moellon.
-            sprite.setDisplaySize(TILE_PX * p.scale, TILE_PX * p.scale * (PROP_ASPECT[p.kind] ?? 1))
+            sprite.setDisplaySize(TILE_PX * p.scale * echX, TILE_PX * p.scale * (PROP_ASPECT[p.kind] ?? 1) * echY)
             // Un flip Phaser N'inverse PAS la composante X de la normal map (il tourne les normales,
             // pas le miroir) → un prop `_lit` miroité par flip s'éclairerait à l'ENVERS sur X. La
             // variété par miroir passe donc par une texture `_lit_m` PRÉ-RETOURNÉE (normale juste par

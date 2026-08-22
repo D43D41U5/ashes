@@ -98,4 +98,21 @@ export function ensureEauFxTextures(scene: Phaser.Scene): void {
     ctx.fillRect(0, 4, 4, 2)
     nearest(scene, 'fx-empreinte', cv)
   }
+
+  // ── L'EMPREINTE DANS LA NEIGE : un creux 4×6 — bord haut sombre, fond bleuté, arête basse
+  //    claire (la grammaire du pavé, en négatif : un trou a son ombre en haut et sa lumière en
+  //    bas). L'alpha vit sur l'Image.
+  {
+    const cv = document.createElement('canvas')
+    cv.width = 4
+    cv.height = 6
+    const ctx = cv.getContext('2d', { willReadFrequently: true })!
+    ctx.fillStyle = 'rgba(96,118,150,0.85)'
+    ctx.fillRect(0, 0, 4, 1)
+    ctx.fillStyle = 'rgba(160,182,210,0.8)'
+    ctx.fillRect(0, 1, 4, 3)
+    ctx.fillStyle = 'rgba(255,255,255,0.9)'
+    ctx.fillRect(0, 4, 4, 1)
+    nearest(scene, 'fx-empreinte-neige', cv)
+  }
 }

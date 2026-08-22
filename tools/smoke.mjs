@@ -15014,6 +15014,145 @@ const SCENARIOS = {
   },
 
   /**
+   * LA NEIGE A DEUX HAUTEURS, ON S'Y ENFONCE, ON Y LAISSE DES PAS (gel.md G9, flore-froid F8
+   * révisée — décisions d'Alexis du 2026-08-22). Sur le vrai monde au jour 59 :
+   *   • on trouve une tuile POUDREUSE à côté d'une PROFONDE (lues sur la signature du
+   *     manteau, la même que le pas) ;
+   *   • posé sur la poudreuse : pas de coupe. On marche vers la profonde : le sprite se COUPE
+   *     aux genoux (crop) et des EMPREINTES de neige naissent (`tracesNeigeVivantes`) ;
+   *   • la flore : autour du joueur, aucun brin ni fleur de fouillis n'est visible, et aucun
+   *     champignon n'a de sprite (ils sont partis) ;
+   *   • capture zoom 4 : la frontière poudreuse / profonde, les empreintes, le corps enfoncé.
+   */
+  async neige(page) {
+    if (!dev) { console.log('\n(la neige exige --dev : le jour de saison, l’heure et le TP)'); return {} }
+    const JOUR = Number(process.env.SMOKE_JOUR ?? 59)
+    await page.waitForFunction(() => Boolean(window.__BRAISES__?.scene?.registry?.get('worldReady')), null, { timeout: 150000 })
+    await page.waitForTimeout(1200)
+    const agir = async (action, ms = 300) => {
+      await page.evaluate((a) => { window.__BRAISES__.scene.sendAction(a) }, action)
+      await page.waitForTimeout(ms)
+    }
+    await agir({ type: 'debug_god', on: true }, 200)
+    await agir({ type: 'debug_set_season_day', day: JOUR }, 400)
+    await page.waitForFunction((j) => (window.__BRAISES__.scene.lastTime?.seasonDay ?? 0) >= j, JOUR, { timeout: 30000, polling: 200 }).catch(() => {})
+    await agir({ type: 'debug_set_hour', hour: 12 }, 600)
+
+    // ① Un sol ouvert, loin de l'eau : on y cherchera la poudreuse et la profonde.
+    const site = await page.evaluate(() => {
+      const s = window.__BRAISES__.scene
+      const { width: W, height: H, terrain } = s.map
+      const OUVERT = new Set([1, 11, 17, 12, 20, 26])
+      let best = null
+      for (let cy = 12; cy < H - 12; cy += 4) {
+        for (let cx = 20; cx < W - 20; cx += 4) {
+          let ouvert = 0
+          for (let y = cy - 8; y < cy + 8; y += 2) for (let x = cx - 12; x < cx + 12; x += 2) if (OUVERT.has(terrain[y * W + x])) ouvert++
+          if (!best || ouvert > best.ouvert) best = { x: cx, y: cy, ouvert }
+        }
+      }
+      return best
+    })
+    await agir({ type: 'debug_teleport', x: site.x + 0.5, y: site.y + 0.5 }, 1500)
+    await page.waitForFunction(() => (window.__BRAISES__.scene.gelLayer?.sonde?.recuissons ?? 0) > 0, null, { timeout: 20000, polling: 150 }).catch(() => {})
+    await page.waitForTimeout(800)
+
+    // ② La paire poudreuse → profonde, lue sur la signature (TUILE_NEIGE 1, PROFONDE 2).
+    const paire = await page.evaluate(({ x, y }) => {
+      const sc = window.__BRAISES__.scene
+      const gl = sc.gelLayer
+      // Ce qui BLOQUE le pas : un arbre, un rocher — le chemin de la marche doit en être vide
+      // (un premier run s'est arrêté net contre un tronc, à 77,0 pile).
+      const bloquants = new Set()
+      for (const n of (sc.view?.nodes ?? [])) if (/tree|rock|bloc|boulder|quarry|vein|seam/.test(n.type)) bloquants.add(`${n.tx},${n.ty}`)
+      for (const st of (sc.view?.structures ?? [])) bloquants.add(`${st.tx},${st.ty}`)
+      let best = null
+      for (let ty = y - 9; ty <= y + 9; ty++) {
+        for (let tx = x - 16; tx <= x + 16; tx++) {
+          if (gl.etatAt(tx, ty) !== 1) continue
+          // Une profonde à 3 tuiles à l'est, avec de la profonde sur au moins 3 tuiles de large.
+          if (gl.etatAt(tx + 3, ty) !== 2 || gl.etatAt(tx + 4, ty) !== 2 || gl.etatAt(tx + 5, ty) !== 2) continue
+          if (gl.etatAt(tx + 1, ty) !== 1) continue
+          let libre = true
+          for (let k = 0; k <= 6 && libre; k++) for (let dy = -1; dy <= 1; dy++) if (bloquants.has(`${tx + k},${ty + dy}`)) libre = false
+          if (!libre) continue
+          const d = Math.abs(tx - x) + Math.abs(ty - y)
+          if (!best || d < best.d) best = { tx, ty, d }
+        }
+      }
+      return best
+    }, site)
+    const sonde = await page.evaluate(() => ({ ...window.__BRAISES__.scene.gelLayer.sonde }))
+    console.log(`  site (${site.x}, ${site.y}) — neige ${sonde.tuilesNeige} tuiles sur ${sonde.tuilesBalayees} · couverture moyenne ${(sonde.couvertureMoyenne ?? 0).toFixed(2)}`)
+    if (!paire) { console.error('!! aucune paire poudreuse → profonde dans le cadre (pas assez de neige ici ?)'); return { site, sonde } }
+    console.log(`  poudreuse (${paire.tx}, ${paire.ty}) → profonde 3 tuiles à l'est`)
+
+    // ③ Posé sur la poudreuse : pas de coupe, pas d'empreinte encore.
+    await agir({ type: 'debug_teleport', x: paire.tx + 0.5, y: paire.ty + 0.5 }, 1200)
+    const avant = await page.evaluate(() => {
+      const sc = window.__BRAISES__.scene
+      return { crop: sc.playerSprite.isCropped, traces: sc.eauEvents?.tracesNeigeVivantes ?? -1 }
+    })
+    console.log(`  sur la poudreuse : coupe ${avant.crop ? '✗ (coupé)' : '✓ (entier)'} · empreintes ${avant.traces}`)
+    if (avant.crop) console.error('!! le sprite est coupé sur la POUDREUSE')
+
+    // ④ On marche vers l'est, dans la profonde : la coupe vient, les empreintes naissent.
+    let cropVu = false
+    let tracesMax = 0
+    await page.keyboard.down('KeyD')
+    for (let k = 0; k < 24; k++) {
+      await page.waitForTimeout(500)
+      const r = await page.evaluate(() => {
+        const sc = window.__BRAISES__.scene
+        const p = sc.registry.get('playerPos')
+        return { crop: sc.playerSprite.isCropped, traces: sc.eauEvents?.tracesNeigeVivantes ?? 0, etat: sc.gelLayer.etatAt(Math.floor(p.x), Math.floor(p.y)), x: p.x }
+      })
+      if (r.crop && r.etat === 2) cropVu = true
+      tracesMax = Math.max(tracesMax, r.traces)
+      if (r.x > paire.tx + 4.4) break
+    }
+    await page.keyboard.up('KeyD')
+    await page.waitForTimeout(600)
+    const apres = await page.evaluate(() => {
+      const sc = window.__BRAISES__.scene
+      const p = sc.registry.get('playerPos')
+      return { crop: sc.playerSprite.isCropped, traces: sc.eauEvents?.tracesNeigeVivantes ?? 0, etat: sc.gelLayer.etatAt(Math.floor(p.x), Math.floor(p.y)), pos: p }
+    })
+    console.log(`  dans la profonde (état ${apres.etat} en ${apres.pos.x.toFixed(1)}, ${apres.pos.y.toFixed(1)}) :`
+      + ` coupe aux genoux ${apres.crop || cropVu ? '✓' : '✗'} · empreintes ${tracesMax} ${tracesMax >= 2 ? '✓' : '✗'}`)
+    if (!(apres.crop || cropVu)) console.error('!! aucune coupe aux genoux dans la neige profonde')
+    if (tracesMax < 2) console.error('!! moins de deux empreintes après quatre tuiles de marche')
+
+    // ⑤ La flore autour : ni brin ni fleur de fouillis, aucun champignon dessiné.
+    const flore = await page.evaluate(() => {
+      const sc = window.__BRAISES__.scene
+      const comptes = {}
+      for (const sp of (sc.clutter?.pool ?? [])) { if (!sp.visible) continue; const k = sp.texture.key.replace(/_lit(_m)?$/, ''); comptes[k] = (comptes[k] ?? 0) + 1 }
+      const herbacees = Object.entries(comptes).filter(([k]) => /grass_tuft|flower/.test(k)).reduce((a, [, n]) => a + n, 0)
+      const champignons = (sc.view?.nodes ?? []).filter((n) => n.type === 'champignon').length
+      const dessines = (sc.view?.nodePool ?? []).filter((sp) => sp.visible && /champignon/.test(sp.texture.key)).length
+      return { herbacees, champignons, dessines, gele: sc.gelLayer.floreGeleeAt(Math.floor(sc.registry.get('playerPos').x), Math.floor(sc.registry.get('playerPos').y)) }
+    })
+    console.log(`  flore gelée ici ${flore.gele} : brins/fleurs de fouillis visibles ${flore.herbacees} ${flore.herbacees === 0 ? '✓' : '✗'}`
+      + ` · champignons ${flore.champignons} dont dessinés ${flore.dessines} ${flore.dessines === 0 ? '✓' : '✗'}`)
+    if (flore.gele && flore.herbacees > 0) console.error('!! des brins/fleurs restent visibles sur une flore gelée')
+    if (flore.gele && flore.dessines > 0) console.error('!! des champignons restent dessinés sur une flore gelée')
+
+    // ⑥ La capture : zoom 4, centrée sur le joueur — la frontière, les pas, le corps enfoncé.
+    await page.evaluate(() => {
+      const sc = window.__BRAISES__.scene
+      const cam = sc.cameras.main
+      cam.stopFollow()
+      cam.setZoom(4)
+      cam.centerOn(sc.playerSprite.x, sc.playerSprite.y)
+    })
+    await page.waitForTimeout(1500)
+    await page.screenshot({ path: `${OUT}/neige-genoux.png`, timeout: 180000 })
+    console.log(`  capture neige-genoux.png (zoom 4)`)
+    return { site, paire, avant, apres, tracesMax, flore }
+  },
+
+  /**
    * LES TACHES DE SOLEIL SUIVENT LA CANOPÉE RÉELLE (2026-08-16, R6 amendée) — la preuve
    * se lit dans le MASQUE lui-même (`soleil-mask`, un canvas 2D : il se relit, lui),
    * pas dans une luminance d'écran : les taches sont subtiles (alpha ≤ 0,30) et le

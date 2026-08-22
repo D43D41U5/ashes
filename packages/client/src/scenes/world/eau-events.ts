@@ -14,6 +14,27 @@
 import Phaser from 'phaser'
 import { corpseDepth, TILE_PX } from '../../render/framing'
 
+/**
+ * ═══ LES EMPREINTES DANS LA NEIGE (demande d'Alexis, 2026-08-22) ═══
+ *
+ * Le même tampon que la semelle humide — un pas tous les `PAS_PX`, alternés gauche/droite,
+ * pilotés en niveau — mais une autre MATIÈRE et une autre MÉMOIRE :
+ *   • sur une tuile sous la neige (`neigeAt`, la signature du manteau), chaque pas CREUSE
+ *     (`fx-empreinte-neige` : un bord haut sombre, un fond bleuté, une arête basse claire — la
+ *     grammaire du pavé, en négatif) ; pas de plafond de pas par sortie, la neige ne sèche pas ;
+ *   • la trace TIENT : `VIE_NEIGE_MS` sans chute (un long cooldown — assez pour suivre une piste),
+ *     `VIE_NEIGE_CHUTE_MS` quand il neige (`neigeQuiTombe`, posé chaque image par WorldScene :
+ *     la chute recouvre). La durée se relit à chaque image : une chute qui commence efface vite
+ *     ce qui était là, une chute qui cesse laisse tenir ce qui reste.
+ * Les traces sont CLIENT : un poursuivant ne voit que ce qui s'est posé dans son écran.
+ */
+/** La vie d'une empreinte dans la neige, ciel sec (ms). */
+const VIE_NEIGE_MS = 120_000
+/** … et quand il neige : la chute la recouvre. */
+const VIE_NEIGE_CHUTE_MS = 6_000
+/** Plafond de traces de neige à l'écran — une longue piste (512 pas ≈ 290 tuiles). */
+const MAX_TRACES_NEIGE = 512
+
 /** Pénétration (tuiles) qui bascule l'état dans-l'eau / hors-de-l'eau. */
 const HYSTERESIS = 0.2
 /** La semelle reste humide (ms) après la sortie. */
@@ -39,8 +60,13 @@ export class EauEvents {
   private readonly etats = new WeakMap<Phaser.GameObjects.Image, EtatEau>()
   private readonly ploufs: { img: Phaser.GameObjects.Image; bornAt: number }[] = []
   private readonly traces: { img: Phaser.GameObjects.Image; bornAt: number }[] = []
+  private readonly tracesNeige: { img: Phaser.GameObjects.Image; bornAt: number }[] = []
   /** Le sprite du joueur — ses événements sonnent plus fort (posé par WorldScene). */
   joueur: Phaser.GameObjects.Image | null = null
+  /** La tuile est-elle sous la neige ? Posé par WorldScene sur la couche du gel. */
+  neigeAt: ((tx: number, ty: number) => boolean) | null = null
+  /** Il neige ici (au joueur) : les traces se recouvrent vite. Posé chaque image par WorldScene. */
+  neigeQuiTombe = false
 
   constructor(
     private readonly scene: Phaser.Scene,
@@ -77,17 +103,28 @@ export class EauEvents {
       e.sx = px
       e.sy = py
     }
+    // LES PAS DANS LA NEIGE : sur une tuile enneigée, chaque pas creuse — sans plafond ni séchage.
+    const surNeige = dRive < 0 && this.neigeAt !== null && this.neigeAt(Math.floor(px / TILE_PX), Math.floor(py / TILE_PX))
     // LES PAS MOUILLÉS : sur terre, semelle humide → une empreinte tous les ~9 px de marche.
-    if (dRive < 0 && now < e.wetUntil && e.pasRestants > 0) {
+    const semelleHumide = dRive < 0 && now < e.wetUntil && e.pasRestants > 0
+    if (surNeige || semelleHumide) {
       const dx = px - e.sx
       const dy = py - e.sy
       if (dx * dx + dy * dy >= PAS_PX * PAS_PX) {
         e.sx = px
         e.sy = py
         e.pied = 1 - e.pied
-        e.pasRestants--
-        this.trace(px + (e.pied === 0 ? -2 : 2), py, now)
+        if (surNeige) this.traceNeige(px + (e.pied === 0 ? -2 : 2), py, now)
+        else {
+          e.pasRestants--
+          this.trace(px + (e.pied === 0 ? -2 : 2), py, now)
+        }
       }
+    } else {
+      // Hors neige et semelle sèche : le compteur de marche suit l'acteur, pour qu'un premier
+      // pas dans la neige ne tamponne pas à une position d'il y a dix tuiles.
+      e.sx = px
+      e.sy = py
     }
   }
 
@@ -113,8 +150,33 @@ export class EauEvents {
     this.traces.push({ img, bornAt: now })
   }
 
+  private traceNeige(px: number, py: number, now: number): void {
+    if (this.tracesNeige.length >= MAX_TRACES_NEIGE) {
+      this.tracesNeige.shift()?.img.destroy()
+    }
+    const img = this.scene.add
+      .image(Math.round(px), Math.round(py), 'fx-empreinte-neige')
+      .setOrigin(0.5, 1)
+      .setAlpha(1)
+      .setDepth(corpseDepth(py / TILE_PX, TILE_PX) - 1)
+    this.tracesNeige.push({ img, bornAt: now })
+  }
+
   /** Chaque frame : la gerbe avance ses frames (12 im/s), les traces sèchent par paliers. */
   update(now: number): void {
+    // Les empreintes dans la neige : la vie se relit à chaque image (il neige, ou pas).
+    const vieNeige = this.neigeQuiTombe ? VIE_NEIGE_CHUTE_MS : VIE_NEIGE_MS
+    for (let i = this.tracesNeige.length - 1; i >= 0; i--) {
+      const tr = this.tracesNeige[i]!
+      const age = now - tr.bornAt
+      if (age >= vieNeige) {
+        tr.img.destroy()
+        this.tracesNeige.splice(i, 1)
+        continue
+      }
+      // Quatre paliers : la trace se comble, jamais un fondu lissé.
+      tr.img.setAlpha(1 - Math.floor((4 * age) / vieNeige) / 4)
+    }
     for (let i = this.ploufs.length - 1; i >= 0; i--) {
       const p = this.ploufs[i]!
       const frame = Math.floor((now - p.bornAt) / 85)
@@ -145,11 +207,16 @@ export class EauEvents {
   get tracesVivantes(): number {
     return this.traces.length
   }
+  get tracesNeigeVivantes(): number {
+    return this.tracesNeige.length
+  }
 
   destroy(): void {
     for (const p of this.ploufs) p.img.destroy()
     for (const tr of this.traces) tr.img.destroy()
+    for (const tr of this.tracesNeige) tr.img.destroy()
     this.ploufs.length = 0
     this.traces.length = 0
+    this.tracesNeige.length = 0
   }
 }

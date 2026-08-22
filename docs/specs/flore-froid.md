@@ -119,7 +119,17 @@ Plus un front de neige (−25), un blizzard ou la Brume (−55), en rampe sur la
   `NodeDef.gelif` marque les trois dont le RENDEMENT gèle aussi : `berry_bush`, `champignon`,
   `leaf_pile`. La pierre, le fer, le charbon, la tourbe et les gravats ignorent tout du gel.
 
-## Le rendu : un MARQUEUR provisoire, en attendant la DA
+## Le rendu : la plante gelée DISPARAÎT (F8 révisé le 2026-08-22)
+
+*Alexis a tranché la DA que le marqueur provisoire attendait : « les fleurs, champignons, brins d'herbe devraient disparaître lorsqu'il gèle, avec un effet juicy, et respawn lorsque la température le permet ». Ce qui suit REMPLACE le F8 d'origine (gardé plus bas pour l'histoire).*
+
+- **F8 (révisé) — CE QUI GÈLE S'EN VA, ET REVIENT.** Du RENDU seul : F6 tient (le nœud reste, la sim ne perd rien, la cueillette reste refusée par F3). Le prédicat est `floreGelee`, relevé par tuile par la couche du gel (`gel-layer.ts`, `floreGeleeAt` : une lecture de signature, jamais un appel à la sim par sprite et par image).
+  - **Le fouillis herbacé** (`grass_tuft`, `flower` — `clutter-layer.ts`) et **les nœuds éphémères** (`champignon`, `leaf_pile` — `snapshot-view.ts`) jouent un geste d'EFFONDREMENT (anticipation vers le haut, puis écrasement au sol — `render/flore-gel.ts`) avec une gerbe de givre (`RecolteFx.givre`), puis ne sont plus dessinés ; au dégel, un POP (jaillit, dépasse, se pose) avec une gerbe verte. Les départs s'étalent sur `FLORE_GEL.ETALEMENT_MS` par un retard positionnel : un pré ne s'éteint pas en une image quand `floreEntierementGelee` bascule la vallée. Une clé vue pour la première fois prend son état SANS geste (un monde déjà gelé au spawn est nu, pas mourant) ; une tuile que la couche n'a pas encore relevée se dessine telle quelle (pas de bascule inscrite).
+  - **Le buisson à baies RESTE** (c'est un arbuste) : DORMANT — texture sans baies (un buisson gelé ne rend rien) et teinte froide terne (`DORMANT_TINT`, multiply). **La plante à fibres RESTE** et se cueille toujours (F7) : passée à la PAILLE (`SEC_TINT`) — un vert sous la neige lirait « herbe », or l'herbe est partie.
+  - Le roseau sec, le lichen, la sphaigne, les buissons ligneux et la pierre ne bougent pas.
+  - Gardes : `flore-gel.test.ts` (le geste, la mémoire des bascules, une seule gerbe, l'oubli) ; smoke `neige` (--dev) : 0 brin/fleur visible et 0 champignon dessiné sur une flore gelée.
+
+## L'ancien rendu : un MARQUEUR provisoire, en attendant la DA (remplacé)
 
 - **F8 — LA PLANTE GELÉE SE VOIT, tout de suite.** Un refus de cueillette qu'aucun signe
   n'annonce est le contraire du contrat maison (`gel.md` G5, « annoncé, pas surprise »). En
