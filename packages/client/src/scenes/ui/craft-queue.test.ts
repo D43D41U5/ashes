@@ -1,6 +1,6 @@
 import type { CraftOrder } from '@ashes/sim'
 import { describe, expect, it } from 'vitest'
-import { DEPOP_MS, FINI_HOLD_MS, finishedPhase, reconcile, type TileModel } from './craft-queue'
+import { DEPOP_MS, FINI_HOLD_MS, PICKUP_FADE_MS, PICKUP_HOLD_MS, finishedPhase, pickupOpacity, reconcile, type TileModel } from './craft-queue'
 
 /**
  * LA PILE D'ARTISANAT — la mécanique pure (maquette « Pile d'artisanat », 2026-08-22).
@@ -119,5 +119,14 @@ describe('la sortie d’une tuile finie, en niveau sur l’horloge', () => {
     const a = reconcile([], [order('rope')], [], 0, nk).live
     const t: TileModel = reconcile(a, [], ['rope'], 5, nk).finished[0]!
     expect(t.key).toBe(a[0]!.key)
+  })
+})
+
+describe('la tuile de récolte, dans la même pile', () => {
+  it('tenue pleine, puis fondu, puis partie — les valeurs des anciens toasts', () => {
+    expect(pickupOpacity(1000, 1000)).toBe(1)
+    expect(pickupOpacity(1000, 1000 + PICKUP_HOLD_MS)).toBe(1)
+    expect(pickupOpacity(1000, 1000 + PICKUP_HOLD_MS + PICKUP_FADE_MS / 2)).toBeCloseTo(0.5)
+    expect(pickupOpacity(1000, 1000 + PICKUP_HOLD_MS + PICKUP_FADE_MS)).toBe(0)
   })
 })

@@ -2,7 +2,7 @@
  * LE HUD DE BASE (maquette Turn 2A), en DOM — « HUD posé sur le monde ».
  *
  * La bande toujours à l'écran : la ligne du jour + le lieu + le Feu du village
- * (haut-gauche), les toasts de récolte (haut-droite), les MÉDAILLONS de vitale et la
+ * (haut-gauche), le bandeau de palier (au centre), les MÉDAILLONS de vitale et la
  * ligne poids/blessures/métiers (bas-gauche), la CEINTURE façon Rust (bas-centre).
  * Rendu ISO à la maquette, par-dessus le canvas (voir `hud-dom.ts`) : médaillons-
  * liquide, contour d'encre sur le texte, encre + 2 accents.
@@ -31,11 +31,10 @@ import {
   type CarryTier,
   type Entity,
   type Inventory,
-  type ItemId,
   type SkillId,
 } from '@ashes/sim'
 import type Phaser from 'phaser'
-import { ITEM_LABELS, itemIconKey } from '../../render/item-art'
+import { itemIconKey } from '../../render/item-art'
 import { vitalIconKey, type VitalId } from '../../render/vital-art'
 import { INK_OUTLINE, INK_OUTLINE_STRONG, INK_OUTLINE_LIST } from './hud-dom'
 import { HEX, VITAL_HEX } from './palette'
@@ -103,10 +102,8 @@ export interface HudCoreState {
 
 export interface HudCore {
   update(s: HudCoreState): void
-  /** Un butin récolté vient d'entrer : on l'empile en toast (haut-droite). */
-  pushToast(item: ItemId, count: number): void
-  /** Une FABRICATION s'est achevée : un bandeau ambre, plus lourd qu'une récolte. */
-  /** Un MÉTIER a monté d'un cran : le plus gros retour des trois, un palier se franchit. */
+  /** Un MÉTIER a monté d'un cran : le plus gros retour du jeu, un palier se franchit.
+   *  (Récolte et fabrication vivent dans la pile d'artisanat, bas-droite — `craft-queue.ts`.) */
   pushLevelUp(skill: SkillId, level: number): void
   setVisible(v: boolean): void
 }
@@ -138,7 +135,6 @@ export function createHudCore(
   const villageEl = $('.hc-village')
   const boardEl = $('.hc-board')
   const saveEl = $('.hc-save')
-  const toastsEl = $('.hc-toasts')
   const centreEl = $('.hc-centre')
   const woundsEl = $('.hc-wounds')
   const weightEl = $('.hc-weight')
@@ -191,7 +187,9 @@ export function createHudCore(
     })
   }
 
-  // ── Les toasts de récolte (haut-droite) : fusion par item, fondu après un délai ──
+  // ── Le bandeau de niveau (au centre) : fondu après un délai. (Les toasts de récolte ont
+  // rejoint la pile d'artisanat, bas-droite — `craft-queue.ts`, 2026-08-22 : le coin haut-droit
+  // est réservé.) ──
   const TOAST_MS = 2600
   const FADE_MS = 500
   /** L'indicateur de sauvegarde tient un peu plus qu'un toast (on lève rarement les yeux
@@ -199,11 +197,6 @@ export function createHudCore(
   const SAVE_MS = 3200
   const SAVE_FADE_MS = 700
   interface Toast {
-    // Absent pour le bandeau de niveau : lui ne fusionne avec rien, il
-    // n'est donc jamais retrouvé par `find(t => t.item === item)`. Seule la récolte
-    // s'agrège (un « +2 bois » qui se recharge), et elle porte toujours son `item`.
-    item?: ItemId
-    total: number
     at: number
     el: HTMLElement
   }
@@ -212,23 +205,6 @@ export function createHudCore(
   return {
     setVisible(v) {
       root.style.display = v ? '' : 'none'
-    },
-
-    pushToast(item, count) {
-      const now = performanceNow()
-      const existing = toasts.find((t) => t.item === item)
-      if (existing) {
-        existing.total += count
-        existing.at = now
-        existing.el.style.opacity = '1'
-        existing.el.querySelector<HTMLElement>('.hc-tval')!.textContent = `+${existing.total} ${label(item)}`
-        return
-      }
-      const el = document.createElement('div')
-      el.className = 'hc-toast'
-      el.innerHTML = `<span class="hc-tval">+${count} ${label(item)}</span> <span class="hc-ttot"></span>`
-      toastsEl.prepend(el)
-      toasts.push({ item, total: count, at: now, el })
     },
 
     // NIVEAU est la boucle la plus gratifiante du jeu — il doit se LIRE plus lourd qu'une
@@ -258,11 +234,11 @@ export function createHudCore(
       el.className = 'hc-toast hc-levelup'
       el.innerHTML = `<span class="hc-lvl-skill">${SKILL_LABELS[skill]}</span><span class="hc-lvl-num">NIVEAU ${level}</span>`
       centreEl.prepend(el)
-      toasts.push({ total: 0, at: performanceNow(), el })
+      toasts.push({ at: performanceNow(), el })
     },
 
     update(s) {
-      lastNow = s.now // l'horloge que `pushToast` réutilise entre deux frames
+      lastNow = s.now // l'horloge que `pushLevelUp` réutilise entre deux frames
       dayEl.textContent = s.dayLine
       zoneEl.textContent = s.zone ? s.zone.toUpperCase() : ''
       zoneEl.style.display = s.zone ? '' : 'none'
@@ -372,10 +348,7 @@ export function createHudCore(
     },
   }
 
-  function label(item: ItemId): string {
-    return (ITEM_LABELS[item] ?? item).toUpperCase()
-  }
-  // L'horloge des toasts suit le `now` que `update` reçoit ; `pushToast` peut arriver
+  // L'horloge du bandeau suit le `now` que `update` reçoit ; `pushLevelUp` peut arriver
   // hors update, on y prend donc le dernier `now` connu.
   function performanceNow(): number {
     return lastNow
@@ -438,15 +411,12 @@ function markup(): string {
        ailleurs, est une question de palette réservée à Alexis.) */
     .hc-save{font-size:11px;color:#9a8f78;letter-spacing:2px;margin-top:8px;${INK_OUTLINE}transition:opacity .4s ease;}
     .hc-save.hc-save-ko{color:#e05a4a;}
-    /* haut-droite : toasts */
-    .hc-toasts{position:absolute;top:24px;right:26px;display:flex;flex-direction:column;align-items:flex-end;gap:6px;}
     /* LE CENTRE — réservé à ce qui MÉRITE le regard. Posé au-dessus de l'avatar (qui vit au
        milieu du cadre), jamais dessus : on ne cache pas le personnage au moment où il progresse.
        Transparent au clic, comme tout le HUD. */
     .hc-centre{position:absolute;left:50%;top:38%;transform:translate(-50%,-50%);display:flex;
       flex-direction:column;align-items:center;gap:6px;pointer-events:none;}
     .hc-toast{font-size:14px;color:#e8e0c8;letter-spacing:1px;${INK_OUTLINE_STRONG}transition:opacity .3s ease;}
-    .hc-toast .hc-tval{color:#c98b3a;}
     /* NIVEAU — le plus gros des trois : deux lignes, or vif, et une lueur qui s'éteint (hors réduction). */
     .hc-toast.hc-levelup{display:flex;flex-direction:column;align-items:center;gap:2px;padding:10px 22px;
       background:linear-gradient(180deg,rgba(232,198,106,.05),rgba(232,198,106,.18));
@@ -499,7 +469,6 @@ function markup(): string {
     <div class="hc-board"></div>
     <div class="hc-save"></div>
   </div>
-  <div class="hc-toasts"></div>
   <div class="hc-centre"></div>
   <div class="hc-bl">
     <div class="hc-vitals"></div>

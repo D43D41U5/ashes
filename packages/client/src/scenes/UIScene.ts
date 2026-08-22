@@ -717,8 +717,9 @@ export class UIScene extends Phaser.Scene {
     const inv = getHud(this.registry, 'inv') ?? []
     const activeSlot = getHud(this.registry, 'activeSlot') ?? -1
 
-    // Le butin récolté : WorldScene POSE, on draine, hud-core empile (fusion par item).
-    for (const p of drainPickups(this.registry)) this.hudCore.pushToast(p.item, p.count)
+    // Le butin récolté : WorldScene POSE, on draine, la pile d'artisanat (bas-droite) empile —
+    // fusion par objet. Le coin haut-droit est réservé (décision d'Alexis, 2026-08-22).
+    for (const p of drainPickups(this.registry)) this.craftQueueView.pushPickup(p.item, p.count, this.time.now)
     // NIVEAU : la boucle la plus gratifiante, un bandeau au centre. FABRIQUÉ, lui, ne passe plus
     // par les toasts : c'est la tuile de la pile d'artisanat qui passe au vert et sort (plus bas).
     for (const l of drainLevelUps(this.registry)) this.hudCore.pushLevelUp(l.skill, l.level)

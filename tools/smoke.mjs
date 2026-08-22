@@ -5532,7 +5532,7 @@ const SCENARIOS = {
       })
       await page.waitForTimeout(40)
       frozen = await page.evaluate(() => {
-        if (document.querySelector('.hc-toast.hc-levelup')) {
+        if (document.querySelector('.hc-toast.hc-levelup') && document.querySelector('.cq-t.cq-pick')) {
           window.__BRAISES__.scene.game.loop.sleep()
           return true
         }
@@ -5543,16 +5543,31 @@ const SCENARIOS = {
     const lvl = await page.evaluate(() => {
       const el = document.querySelector('.hc-toast.hc-levelup')
       const cs = el && getComputedStyle(el)
+      // LA RÉCOLTE vit dans la pile bas-droite (2026-08-22), en tuile : plus rien en haut à droite.
+      const pick = document.querySelector('.cq-t.cq-pick')
+      const pr = pick && pick.getBoundingClientRect()
       return {
         toasts: document.querySelectorAll('.hc-toast').length,
         lvlSkill: document.querySelector('.hc-lvl-skill')?.textContent ?? '',
         lvlNum: document.querySelector('.hc-lvl-num')?.textContent ?? '',
         lvlVisible: Boolean(cs && cs.display !== 'none' && Number(cs.opacity) > 0),
+        recolte: pick ? {
+          nom: pick.querySelector('.cq-name')?.textContent ?? '',
+          n: pick.querySelector('.cq-n')?.textContent ?? '',
+          rail: getComputedStyle(pick).borderLeftColor,
+          bas: Math.round(window.innerHeight - pr.bottom),
+          droite: Math.round(window.innerWidth - pr.right),
+          hautDroiteVide: document.querySelectorAll('.hc-toasts, .hc-tval').length === 0,
+        } : null,
       }
     })
-    console.log(`palier : ${JSON.stringify(lvl)}`)
+    console.log(`palier + récolte : ${JSON.stringify(lvl)}`)
     if (!(lvl.lvlSkill === 'Bûcheron' && lvl.lvlNum === 'NIVEAU 3' && lvl.lvlVisible)) {
       console.error(`!! LE BANDEAU NIVEAU NE S'AFFICHE PAS : ${JSON.stringify(lvl)}`)
+    }
+    const r = lvl.recolte
+    if (!(r && r.nom === 'Bois' && r.n === '+2' && r.rail === 'rgb(201, 139, 58)' && r.bas > 0 && r.droite > 0 && r.hautDroiteVide)) {
+      console.error(`!! LA RÉCOLTE N'EST PAS EN TUILE DANS LA PILE : ${JSON.stringify(r)}`)
     }
     await page.evaluate(() => window.__BRAISES__.scene.game.loop.wake())
 

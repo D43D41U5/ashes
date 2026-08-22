@@ -9,6 +9,13 @@
  * HAUT à droite. Le regard devait traverser l'écran pour suivre une seule chose. Désormais une
  * SEULE colonne, ancrée au coin, porte tout : ce qui est PRÈS du coin est MAINTENANT.
  *
+ * LA RÉCOLTE AUSSI (décision d'Alexis, 2026-08-22, « ok pour ta reco ») : le coin haut-droit est
+ * réservé à autre chose, et tout ce qui ENTRE dans le sac vit ici — le « +2 Bois » est la MÊME
+ * tuile que le craft (plaque, case d'icône, nom), sans barre ni ✕, le « +N » ambre à la place
+ * des secondes. Elle fusionne par objet (+2 → +5, comme avant) et se fond après `PICKUP_HOLD_MS`.
+ * Ordre de la colonne, du coin vers le haut : l'ordre en cours, la file, le compte, la récolte
+ * (le plus récent le plus bas).
+ *
  * ─── UNE TUILE, QUI VIT ───
  *
  * Une tuile par ordre de la sim (`CraftOrder`). La MÊME tuile traverse ses phases — elle ne se
@@ -45,6 +52,9 @@ import { HEX, VITAL_HEX } from './palette'
 export const FINI_HOLD_MS = 900
 /** DÉPOP : glissé + fondu (55 %), puis la hauteur se referme (45 %). */
 export const DEPOP_MS = 320
+/** LA RÉCOLTE : tenue puis fondu — les valeurs qu'avaient les toasts de hud-core. */
+export const PICKUP_HOLD_MS = 2600
+export const PICKUP_FADE_MS = 500
 
 export type TilePhase = 'wait' | 'run' | 'paused' | 'blocked' | 'done' | 'depop'
 
@@ -125,7 +135,17 @@ export interface CraftQueueView {
    * peuvent être vides), `now` l'horloge Phaser.
    */
   update(queue: readonly CraftOrder[], crafted: readonly ItemId[], now: number): void
+  /** Un butin vient d'entrer : une tuile de récolte (fusionnée par objet si elle est encore là). */
+  pushPickup(item: ItemId, count: number, now: number): void
   setVisible(v: boolean): void
+}
+
+/** L'opacité d'une tuile de récolte à l'instant `now` — pleine encre, puis fondu. */
+export function pickupOpacity(at: number, now: number): number {
+  const age = now - at
+  if (age <= PICKUP_HOLD_MS) return 1
+  if (age >= PICKUP_HOLD_MS + PICKUP_FADE_MS) return 0
+  return 1 - (age - PICKUP_HOLD_MS) / PICKUP_FADE_MS
 }
 
 interface TileDom {
@@ -187,6 +207,11 @@ export function createCraftQueueView(
     .cq-blocked{border-left-color:${HEX.alert};}
     .cq-blocked .cq-state,.cq-blocked .cq-x{color:${HEX.alert};}
     .cq-blocked .cq-bar{background:${HEX.alert};}
+    /* LA RÉCOLTE : la même tuile, rail ambre, sans barre — le « +N » à la place des secondes. */
+    .cq-pick{border-left-color:${HEX.ember};transition:opacity .1s linear;}
+    .cq-pick .cq-ic{background:${HEX.armed};opacity:1;}
+    .cq-pick .cq-name{color:${HEX.body};}
+    .cq-pick .cq-n{font-size:14px;font-weight:700;color:${HEX.ember};letter-spacing:1px;white-space:nowrap;text-shadow:none;}
     /* FINI : vert ; le ✕ s'éteint, la coche arrive. Plus rien à cliquer. */
     .cq-done,.cq-depop{border-left-color:${green.fill};pointer-events:none;}
     .cq-done .cq-state,.cq-depop .cq-state{color:${green.rim};font-weight:700;}
@@ -230,6 +255,18 @@ export function createCraftQueueView(
   let finished: TileModel[] = []
   const doms = new Map<number, TileDom>()
   let lastOrder = ''
+  interface Pickup {
+    item: ItemId
+    total: number
+    at: number
+    el: HTMLElement
+    n: HTMLElement
+  }
+  const pickups: Pickup[] = []
+  const pickupsEl = document.createElement('div')
+  pickupsEl.className = 'cq-picks'
+  pickupsEl.style.cssText = 'display:flex;flex-direction:column;gap:6px;'
+  root.insertBefore(pickupsEl, countEl.parentElement)
 
   const build = (t: TileModel): TileDom => {
     const el = document.createElement('div')
@@ -297,6 +334,24 @@ export function createCraftQueueView(
       gated = v
       if (!v) root.style.display = 'none'
     },
+    pushPickup(item, count, now) {
+      // FUSION PAR OBJET : un « +2 Bois » qui se recharge, jamais deux lignes pour le même butin.
+      const existing = pickups.find((p) => p.item === item)
+      if (existing) {
+        existing.total += count
+        existing.at = now
+        existing.el.style.opacity = '1'
+        existing.n.textContent = `+${existing.total}`
+        return
+      }
+      const el = document.createElement('div')
+      el.className = 'cq-t cq-pick'
+      el.innerHTML =
+        `<div class="cq-ic"><img alt="" src="${iconUrl(itemIconKey(item))}"></div>` +
+        `<div class="cq-line" style="flex-grow:1;min-width:0"><span class="cq-name">${ITEM_LABELS[item] ?? item}</span><span class="cq-n">+${count}</span></div>`
+      pickupsEl.appendChild(el) // le plus récent en bas : près du coin, c'est maintenant
+      pickups.push({ item, total: count, at: now, el, n: el.querySelector<HTMLElement>('.cq-n')! })
+    },
     update(queue, crafted, now) {
       const r = reconcile(live, queue, crafted, now, nextKey)
       live = r.live
@@ -309,12 +364,22 @@ export function createCraftQueueView(
         still.push(p === t.phase ? t : { ...t, phase: p })
       }
       finished = still
+      // La récolte se fond en niveau sur la même horloge — échue, elle s'en va.
+      for (let k = pickups.length - 1; k >= 0; k--) {
+        const p = pickups[k]!
+        const o = pickupOpacity(p.at, now)
+        if (o <= 0) {
+          p.el.remove()
+          pickups.splice(k, 1)
+        } else p.el.style.opacity = String(o)
+      }
 
       // Cachée si l'attente est cachée (chargement) OU s'il n'y a plus rien : une pile vide
       // n'est pas un état à montrer. Les tuiles finies comptent — elles sont en train de sortir.
-      if (!gated || (live.length === 0 && finished.length === 0)) {
+      const vide = live.length === 0 && finished.length === 0
+      if (!gated || (vide && pickups.length === 0)) {
         root.style.display = 'none'
-        if (live.length === 0 && finished.length === 0) {
+        if (vide) {
           for (const d of doms.values()) d.el.remove()
           doms.clear()
           lastOrder = ''
@@ -322,6 +387,14 @@ export function createCraftQueueView(
         return
       }
       root.style.display = 'flex'
+      if (vide) {
+        // Rien que de la récolte : pas de compte, pas de tuile d'ordre — on nettoie et on s'en tient là.
+        for (const d of doms.values()) d.el.remove()
+        doms.clear()
+        lastOrder = ''
+        countEl.textContent = ''
+        return
+      }
       const n = live.length
       countEl.textContent = n === 0 ? '' : `${n} ORDRE${n > 1 ? 'S' : ''}`
 
