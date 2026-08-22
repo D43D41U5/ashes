@@ -408,6 +408,18 @@ export class BootScene extends Phaser.Scene {
     g.generateTexture('nd-leaf_pile', 16, 16)
     g.clear()
 
+    // LES COINS DE PÊCHE (spec peche.md) : un nœud SUR L'EAU, presque rien à dessiner — trois
+    // touches d'écume à fleur d'eau (le remous d'un trou à poissons), sans relief : l'eau n'a pas de
+    // volume, ce sont les ombres de poissons qui disent le coin (R5). Un art pour les deux eaux —
+    // rivière et lac se lisent au sol. Pas de variante `_lit` (rien à éclairer sur une surface).
+    g.fillStyle(0xe9e7da, 0.55)
+    g.fillRect(3, 10, 3, 1)
+    g.fillRect(9, 12, 4, 1)
+    g.fillRect(6, 14, 2, 1)
+    g.generateTexture('nd-fishing_spot_river', 16, 16)
+    g.generateTexture('nd-fishing_spot_lake', 16, 16)
+    g.clear()
+
     // BUISSON À BAIES — MÊME silhouette que le buisson normal (`cl-bush`), au vert de feuillage
     // LÉGÈREMENT décalé (un poil plus clair/chaud) pour qu'on le distingue (demande d'Alexis
     // 2026-07-19). Les BAIES sont dessinées SÉPARÉMENT : on génère `nd-berry_bush-0` (le buisson

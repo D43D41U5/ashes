@@ -146,7 +146,7 @@ import {
   type Brouillard,
   type IdentiteMonde,
 } from '../render/fog'
-import { fireStateAt, MONSTER_DEFS, POI_CHARGES, TERRAIN_DEEP_WATER, TERRAIN_SHALLOW_WATER, CREUX, TERRAINS_BOISES_MASSIF } from '@ashes/sim'
+import { estUnCoinDePeche, fireStateAt, MONSTER_DEFS, POI_CHARGES, TERRAIN_DEEP_WATER, TERRAIN_SHALLOW_WATER, CREUX, TERRAINS_BOISES_MASSIF } from '@ashes/sim'
 
 /** L'assombrissement du sol au plafond de profondeur (§2quater R42) : au cœur d'un massif,
  *  le sol perd jusqu'à 14 % de luminance — en PENTE CONTINUE, jamais par bande. */
@@ -183,6 +183,7 @@ import { syncDebug } from './world/debug-overlay'
 import { BuildGhost } from './world/build-ghost'
 import { CarreVillage } from './world/carre-village'
 import { FellGauge, type FellCharge } from './world/fell-gauge'
+import { PecheFx, type LigneRendue } from './world/peche-fx'
 import { FlankGlow } from './world/flank-glow'
 import { HitFx } from './world/hit-fx'
 import { RecolteFx } from './world/recolte-fx'
@@ -576,6 +577,8 @@ export class WorldScene extends Phaser.Scene {
   private carreVillage!: CarreVillage
   /** La jauge d'abattage au-dessus de l'arbre qu'on charge (spec recolte-maitrise). */
   private fellGauge!: FellGauge
+  /** LA LIGNE TENDUE (spec peche.md R1-R4) : canne, fil, flotteur, ferrage — le rendu de la pêche. */
+  private pecheFx!: PecheFx
   /** La lueur du bon flanc sur les rochers à portée (spec recolte-maitrise, verbe 2). */
   private flankGlow!: FlankGlow
   /** Instant (horloge client) du dernier coup de récolte porté — le tempo que la lueur reforme. */
@@ -634,6 +637,8 @@ export class WorldScene extends Phaser.Scene {
    *  le savoir, sinon mon avatar file plus vite que l'autorité et se fait rappeler à
    *  chaque snapshot. La formule reste celle de /sim (`speedScaleFor`). */
   private myCharging = false
+  /** MA ligne est-elle tendue (le dernier snapshot) ? Le clic suivant FERRE au lieu de lancer. */
+  private myFishing = false
   /** Les WIND-UPS du dernier snapshot : qui arme un coup, vers où, avec QUELLE FORME.
    *  C'est le TÉLÉGRAPHE du GDD §7 — on doit voir venir le coup, le sien comme
    *  celui d'en face. Il vient du snapshot, jamais du clic (invariant §3). */
@@ -750,6 +755,7 @@ export class WorldScene extends Phaser.Scene {
     // carré, le tapis de constructibilité et l'extinction du dehors — marteau en main.
     this.carreVillage = new CarreVillage(this)
     this.fellGauge = new FellGauge(this)
+    this.pecheFx = new PecheFx(this)
     this.flankGlow = new FlankGlow(this)
 
     const zoom = zoomForFraming(VISIBLE_TILES_TALL, TILE_PX, this.scale.height)
@@ -787,6 +793,7 @@ export class WorldScene extends Phaser.Scene {
       // connaît. Tant qu'elle est là, la sim n'a pas vu l'`attack_release` — et rebander
       // l'écraserait (une seule action par tick).
       chargeEnCours: () => this.myCharging,
+      ligneTendue: () => this.myFishing,
       // Les autres ENTITÉS vivantes pour le DON — SANS soi ni les monstres (la sim les
       // refuse de toute façon). Position LOGIQUE (tuiles), depuis le dernier snapshot.
       others: () => {
@@ -1215,6 +1222,24 @@ export class WorldScene extends Phaser.Scene {
     })
     // La jauge d'abattage flotte au-dessus de l'arbre qu'on charge (spec recolte-maitrise).
     this.fellGauge.update(this.fells, this.view.nodes, this.warp)
+    // LA LIGNE TENDUE de quiconque pêche (spec peche.md) : la canne part de la position RENDUE
+    // de l'avatar (son sprite, cette frame), le flotteur du coin visé. Le snapshot date tout.
+    const lignes: LigneRendue[] = []
+    for (const e of this.lastEntities) {
+      if (e.fishing === undefined) continue
+      const sprite = e.id === this.playerId ? this.playerSprite : (this.view.others.get(e.id)?.sprite ?? null)
+      if (!sprite) continue
+      lignes.push({
+        entityId: e.id,
+        nodeId: e.fishing.nodeId,
+        castTick: e.fishing.castTick,
+        biteAt: e.fishing.biteAt,
+        ...(e.fishing.windowEnd !== undefined ? { windowEnd: e.fishing.windowEnd } : {}),
+        px: sprite.x,
+        py: sprite.y - ANCRE_SOL_PX,
+      })
+    }
+    this.pecheFx.update(lignes, this.view.nodes, time, deltaMs, this.warp)
     // La lueur du bon flanc sur les rochers à portée — dimensionnée à MON niveau de minage,
     // et REFORMÉE au rythme du rechargement (le tempo se voit : terne au coup, brillante prête).
     const meNow = this.lastEntities.find((e) => e.id === this.playerId)
@@ -1569,8 +1594,10 @@ export class WorldScene extends Phaser.Scene {
       // LES ÉVÉNEMENTS ET SONS DE L'EAU (eau-vivante R7-R8) : gerbes qui s'animent, traces
       // qui sèchent, patauge et clapotis pilotés par la position du joueur (champ de rive).
       this.eauEvents?.update(time)
-      // LES POISSONS-OMBRES (R14) : ils errent sous la surface et fuient les entités.
+      // LES POISSONS-OMBRES (R14) : ils errent sous la surface et fuient les entités — et depuis
+      // la pêche (peche.md R5) ils GROUILLENT autour des coins vivants : on voit où ça mord.
       if (this.poissons) {
+        this.poissons.setCoins(this.view.nodes.filter((n) => estUnCoinDePeche(n.type)))
         const entites = this.lastEntities.map((e) =>
           e.id === this.playerId && this.predicted ? { x: this.predicted.x, y: this.predicted.y } : { x: e.x, y: e.y },
         )
@@ -2122,6 +2149,7 @@ export class WorldScene extends Phaser.Scene {
       this.myTemperature = me.temperature
       this.myWindup = me.windup !== undefined
       this.myCharging = me.charge !== undefined
+      this.myFishing = me.fishing !== undefined
       this.myWeapon = weaponKind(me)
       this.reconcile(me, msg.lastProcessedInput)
       // UN VOISIN À PORTÉE D'UN DON : un PNJ d'un AUTRE village (ou de nul village mien),
@@ -2334,6 +2362,15 @@ export class WorldScene extends Phaser.Scene {
         this.ambientLife?.envol(event.x + 0.5, event.y + 0.5)
       } else if (event.type === 'action_rejected' && event.entityId === this.playerId) {
         publishError(this.registry, event.reason, this.time.now)
+      } else if (event.type === 'fish_bite') {
+        // LA TOUCHE (peche.md R3) : le flotteur plonge — pour quiconque pêche à l'écran.
+        this.pecheFx.bite(event.entityId, this.time.now)
+      } else if (event.type === 'fish_caught') {
+        // LA PRISE (R4) : la canne se cambre, le poisson sort. Le butin, lui, passe par
+        // `resource_harvested` (ci-dessous), comme toute récolte.
+        this.pecheFx.caught(event.entityId, event.item, this.time.now)
+      } else if (event.type === 'fish_escaped') {
+        this.pecheFx.escaped(event.entityId, this.time.now)
       } else if (event.type === 'resource_harvested' && event.entityId === this.playerId) {
         // LE COUP A PORTÉ — et on ne le sait QUE parce que la sim le dit (G9). Rien
         // n'est affiché au clic : un « +1 bois » qui monte avant le refus de la sim
@@ -2342,14 +2379,19 @@ export class WorldScene extends Phaser.Scene {
         // qui me fait FACE, d'où la position du récolteur (`playerSprite`, en px monde).
         // C'est `snapshot-view` qui l'émet : elle seule sait où le sprite du nœud est
         // réellement posé cette frame. Ici on ne fait que consigner le coup.
-        this.hitFx.hit(
-          event.nodeId,
-          this.time.now,
-          this.playerSprite.x,
-          this.playerSprite.y,
-          event.count,
-          event.clean === true,
-        )
+        // UN COIN DE PÊCHE ne tressaille pas (rien n'est frappé) : sa prise a son rendu
+        // (`pecheFx.caught`), le coup de récolte commun n'y a rien à peindre.
+        const noeudPeche = this.view.nodes.some((n) => n.id === event.nodeId && estUnCoinDePeche(n.type))
+        if (!noeudPeche) {
+          this.hitFx.hit(
+            event.nodeId,
+            this.time.now,
+            this.playerSprite.x,
+            this.playerSprite.y,
+            event.count,
+            event.clean === true,
+          )
+        }
         publishPickup(this.registry, event.item, event.count) // et le butin s'inscrit au HUD
         // LE TEMPO du minage : le dernier coup relance le rechargement, que la lueur du
         // bon flanc REFORME visiblement (verbe 2 — la cadence se voit, pas de timer caché).

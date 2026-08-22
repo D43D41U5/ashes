@@ -17,7 +17,7 @@
  * nœuds, cadavres et position prédite changent à chaque snapshot ou frame —
  * chaque handler lit l'état AU MOMENT de la frappe.
  */
-import { BALANCE, COMPONENT_TYPES, EDGE_BITS, NODE_DEFS, SLOTS, edgeBarrierAt, isRangedWeapon, type Corpse, type PlayerAction, type ResourceNode, type Structure } from '@ashes/sim'
+import { BALANCE, COMPONENT_TYPES, EDGE_BITS, NODE_DEFS, estUnCoinDePeche, SLOTS, edgeBarrierAt, isRangedWeapon, type Corpse, type PlayerAction, type ResourceNode, type Structure } from '@ashes/sim'
 import Phaser from 'phaser'
 import { getHud, setHud, type Placeable } from '../../hud-state'
 import { TILE_PX } from '../../render/framing'
@@ -39,6 +39,9 @@ export interface InputDeps {
   /** MA charge, telle que le DERNIER SNAPSHOT la connaît — l'accusé de réception du
    *  décochage. Voir `decocher` : on ne rebande pas tant que la sim n'a pas pris le tir. */
   chargeEnCours(): boolean
+  /** MA LIGNE est-elle tendue (dernier snapshot) ? Tant qu'elle l'est, le clic gauche FERRE
+   *  (`harvest_release`) au lieu de viser quoi que ce soit (spec peche.md G4). */
+  ligneTendue(): boolean
   /** Les autres ENTITÉS (PNJ/joueurs) — SANS soi ni les monstres : les cibles d'un DON.
    *  Position LOGIQUE (tuiles), pour viser dans le même repère que les nœuds. */
   others(): { id: number; x: number; y: number }[]
@@ -482,6 +485,12 @@ export function bindInputs(scene: Phaser.Scene, deps: InputDeps): MovementBindin
     return node !== undefined && NODE_DEFS[node.type].skill === 'woodcutting'
   }
 
+  /** Le nœud visé est-il un COIN DE PÊCHE (spec peche.md) ? Le clic y LANCE la ligne. */
+  const isFishNode = (nodeId: number): boolean => {
+    const node = deps.nodes().find((n) => n.id === nodeId)
+    return node !== undefined && estUnCoinDePeche(node.type)
+  }
+
   /** Le nœud visé est-il un FILON/rocher (minage à maîtrise, verbe 2) ? Ils passent par
    *  le VERROU-nœud : on frappe le bon flanc, le curseur indiquant le côté autour du
    *  centre du nœud — même famille lue du métier. */
@@ -753,6 +762,20 @@ export function bindInputs(scene: Phaser.Scene, deps: InputDeps): MovementBindin
       charging = true
       lastAimAt = scene.time.now
       deps.sendAction({ type: 'attack_charge', dx: action.dx, dy: action.dy })
+      return
+    }
+    // LA PÊCHE (spec peche.md G1/G4) : deux CLICS, pas un maintien — on ne tient pas un
+    // bouton quinze secondes. Le premier, sur un coin, LANCE (`harvest_charge_start`) ; tant que
+    // la ligne est tendue, le suivant FERRE (`harvest_release`) — avant la touche il rentre
+    // simplement la ligne, la sim tranche. Le maintien ne relance rien (`holding = false`).
+    if (deps.ligneTendue()) {
+      holding = false
+      deps.sendAction({ type: 'harvest_release' })
+      return
+    }
+    if (action?.type === 'harvest' && isFishNode(action.nodeId)) {
+      holding = false
+      deps.sendAction({ type: 'harvest_charge_start', nodeId: action.nodeId })
       return
     }
     // ABATTRE, c'est CHARGER. Un clic sur un arbre n'émet pas `harvest` : il arme la

@@ -26,7 +26,10 @@ import { countOf, type ItemId } from './items'
 import { createEmptyMap, setTile, type WorldMap } from './map'
 import { createSim, snapshot, spawnEntity, step, type MoveInput, type SimState } from './sim'
 import { calendarScaleForSeasonCycles, DAY_TICKS_PER_CYCLE, TICKS_PER_CYCLE } from './time'
-import { grantItems } from './village'
+import { createVillage, grantItems } from './village'
+import { foundNpcVillage } from './worldgen'
+import { desiredOrders } from './village-plan'
+import { die } from './combat'
 import { placeZoneNodes } from './zone-content'
 import { generateZonedTerrain } from './zonegen'
 import { MONDE_JOUE } from './zonegraph'
@@ -463,5 +466,58 @@ describe('A14 — le coin vidé dérive sur l’eau, jamais sur la terre', () =>
     // Et le coin vide refuse la ligne, avec ses mots à lui.
     lancer(b)
     expect((des(drainEvents(b.sim), 'action_rejected')[0] as { reason: string }).reason).toBe('rien ne mord ici')
+  })
+})
+
+// ── LES DEUX DÉFAUTS DE LA RELECTURE DÉTERMINISME (2026-08-22) ───────────────
+describe('la cour d’un village PNJ ne défriche pas l’eau', () => {
+  it('un coin de pêche à portée du Feu ne produit AUCUN ordre de défriche — le chantier ne se bloque pas', () => {
+    // Le PNJ exécute une défriche par `harvest`, refusé sur un coin (il faut lancer la ligne) sans
+    // lâcher la corvée : 5 929 refus en 6 000 ticks mesurés, et tout le chantier à l'arrêt.
+    const map = createEmptyMap(28, 28, TERRAIN_GRASS)
+    setTile(map, 15, 12, TERRAIN_SHALLOW_WATER)
+    setTile(map, 16, 12, TERRAIN_DEEP_WATER)
+    const sim = createSim(11, {
+      map,
+      nodes: [
+        { id: 1, type: 'tree', tx: 14, ty: 14, stock: 5, regrowAt: 0 },
+        { id: 2, type: 'fishing_spot_lake', tx: 15, ty: 12, stock: FISHING.STOCK, regrowAt: 0 },
+      ],
+      worldEvents: false,
+      faunaCap: 0,
+    })
+    foundNpcVillage(sim, 12, 12, 3)
+    const v = sim.villages[0]!
+    v.buildTier = 3
+    const defriches = desiredOrders(sim, v).filter((o) => o.action === 'defriche') as { tx: number; ty: number }[]
+    expect(defriches.some((o) => o.tx === 14 && o.ty === 14), 'la prémisse : l’arbre de la cour, lui, se défriche').toBe(true)
+    expect(defriches.some((o) => o.tx === 15 && o.ty === 12), 'le coin de pêche, jamais').toBe(false)
+  })
+})
+
+describe('la mort lâche la ligne', () => {
+  it('un pêcheur qui meurt respawne sans ligne ni jauge : aucune touche ne lui arrive au Feu', () => {
+    const b = banc()
+    // Un village pour le respawn (sinon `die` respawne au point d'apparition, ce qui revient au même).
+    createVillage(b.sim, { chiefId: b.id, tx: 40, ty: 5, npcsArrived: true })
+    lancer(b)
+    expect(entity(b).fishing).toBeDefined()
+    die(b.sim, entity(b), 0, 'cold')
+    expect(entity(b).fishing).toBeUndefined()
+    expect(entity(b).harvestCharge).toBeUndefined()
+    drainEvents(b.sim)
+    attendre(b, FISHING.WAIT_NOBAIT_MAX_TICKS + 5)
+    expect(drainEvents(b.sim).filter((e) => e.type.startsWith('fish_'))).toHaveLength(0)
+  })
+})
+
+describe('la touche n’annonce pas un coin vide', () => {
+  it('le coin vidé entre le lancer et la touche : la ligne rentre, sans fish_bite', () => {
+    const b = banc()
+    lancer(b)
+    b.node.stock = 0 // un autre pêcheur a pris le dernier (multi)
+    attendre(b, FISHING.WAIT_NOBAIT_MAX_TICKS + 5)
+    expect(entity(b).fishing).toBeUndefined()
+    expect(drainEvents(b.sim).filter((e) => e.type === 'fish_bite')).toHaveLength(0)
   })
 })

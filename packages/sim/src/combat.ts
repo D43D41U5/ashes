@@ -1039,6 +1039,11 @@ export function die(state: SimState, entity: Entity, byEntityId: number, cause?:
   entity.wounds = {}
   delete entity.windup
   delete entity.charge
+  // La mort lâche aussi la jauge d'abattage et LA LIGNE (peche.md) : `hp` repasse > 0 dans ce
+  // même appel, la garde `hp <= 0` d'`advanceFishing` ne verrait jamais le mort — et un respawné
+  // au Feu recevrait la touche d'un lac à l'autre bout de la vallée.
+  delete entity.harvestCharge
+  delete entity.fishing
   entity.hp = COMBAT.RESPAWN_HP
   entity.hunger = COMBAT.RESPAWN_HUNGER
   entity.stamina = COMBAT.RESPAWN_STAMINA

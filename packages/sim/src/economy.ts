@@ -680,6 +680,12 @@ function advanceFishing(state: SimState, entity: Entity): void {
     return
   }
   if (f.windowEnd === undefined) {
+    // Un coin VIDÉ entre le lancer et la touche (un autre pêcheur, en multi) : la ligne rentre
+    // sans touche — on n'annonce pas un poisson qu'on ne pourra pas ferrer.
+    if (node.stock <= 0) {
+      delete entity.fishing
+      return
+    }
     if (state.tick >= f.biteAt) biteLine(state, entity, node)
     return
   }

@@ -31,7 +31,7 @@ import {
   type NodeDelta,
   type SnapshotMessage,
 } from '@ashes/sim'
-import { feuillageDenude, fireStateAt, floreGelee, hash2, tailleDeBloc, TERRAIN_CLIFF, terrainAt, type SimState, type WorldMap } from '@ashes/sim'
+import { estUnCoinDePeche, feuillageDenude, fireStateAt, floreGelee, hash2, tailleDeBloc, TERRAIN_CLIFF, terrainAt, type SimState, type WorldMap } from '@ashes/sim'
 import { cliffKey } from '../../render/cliff-art'
 import Phaser from 'phaser'
 import { FONT } from '../ui/typography'
@@ -2027,6 +2027,9 @@ export class SnapshotView {
         // creux) ne s'aligneraient pas — bug vu par Alexis (ombres d'arbres/fibre trop hautes).
         const gapWorld = nodeArtGap(texture) * sprite.scaleY
         positionShadow(nodeShadow, px, py, sprite.displayWidth, sprite.depth, gapWorld)
+        // UN COIN DE PÊCHE est SUR l'eau : rien n'y projette d'ombre de contact (peche.md) — la
+        // flaque sombre d'un nœud posé sur une surface qui n'en porte pas se verrait comme une tache.
+        if (estUnCoinDePeche(n.type)) nodeShadow.setVisible(false)
         used++
         // Une POUSSE n'a pas encore de houppier — il reviendra avec l'arbre adulte.
         if (!isTree || growing) continue
