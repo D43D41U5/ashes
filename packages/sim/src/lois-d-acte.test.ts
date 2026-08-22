@@ -129,7 +129,10 @@ describe('les tables totales — ce qui n’est pas une pente REVIENT avec les s
     }
     expect(METEO.TYPES(4)).toBe(METEO.TYPES(3)) // l'hiver profond garde le ciel de la Cendre
     expect(METEO.TYPES(5)).toBe(METEO.TYPES(1)) // identité : le même objet, pas une copie
-    expect('blizzard' in METEO.TYPES(1)).toBe(false) // l'acte I ne tire pas de blizzard
+    // Depuis R11 (2026-08-22) le blizzard ne s'ÉLIT plus — il se dérive du froid : la table
+    // ne porte que des CLASSES, et l'acte I n'en a aucune de neigeuse par construction.
+    expect('blizzard' in METEO.TYPES(1)).toBe(false)
+    expect('neige' in METEO.TYPES(1)).toBe(false)
   })
 })
 

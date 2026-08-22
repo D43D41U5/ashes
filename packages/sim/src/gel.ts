@@ -457,9 +457,16 @@ export function neigeAuSol(state: SimState, tx: number, ty: number): number {
       let fondu = 0
       for (let t0 = sortie; t0 < state.tick; t0 += PAS) {
         const t1 = Math.min(state.tick, t0 + PAS)
-        // La température AU MILIEU de la tranche : le point le plus représentatif d'un
-        // intervalle, et le seul qui ne penche ni vers son début ni vers sa fin.
-        const t = baselineTemperatureAt(state, tx, ty, (t0 + t1) / 2)
+        // La température AU MILIEU DE LA TRANCHE PLEINE — `t0 + PAS/2`, un point FIXE de la
+        // grille, et non `(t0 + t1)/2`, qui BOUGE avec `state.tick` sur la dernière tranche.
+        //
+        // ⚠ C'EST CE QUI REND LA COUVERTURE MONOTONE, et le défaut était MESURÉ : avec le
+        // milieu mobile, la dernière tranche changeait de température d'un relevé à l'autre,
+        // si bien que la neige oscillait (0,5474 → 0,5377 → 0,5490 sur trois pas de 900 ticks,
+        // relevé au cycle 634). Sur la grille fixe, chaque tranche n'ajoute qu'une quantité
+        // positive dont le coefficient ne dépend plus du tick : la somme est croissante par
+        // CONSTRUCTION — la neige ne peut plus remonter, quoi que fasse le thermomètre.
+        const t = baselineTemperatureAt(state, tx, ty, t0 + PAS / 2)
         const u = Math.max(0, Math.min(1, (t - GEL.SEUIL_PROFOND) / (TEMPERATURE.COMFORT - GEL.SEUIL_PROFOND)))
         const cycles = GEL.FONTE_CYCLES + (GEL.FONTE_CYCLES_CHAUD - GEL.FONTE_CYCLES) * u
         fondu += (t1 - t0) / (cycles * TICKS_PER_CYCLE)
