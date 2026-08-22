@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 import {
   BALANCE,
   FLORE,
+  METEO,
   NODE_DEFS,
   TEMPERATURE,
   TERRAIN_FOREST,
@@ -18,6 +19,7 @@ import { foundNpcVillage } from './worldgen'
 import { floreGelee, gelMortel } from './gel'
 import { countOf } from './items'
 import { createEmptyMap } from './map'
+import { meteoIntensityAt } from './meteo'
 import { baselineTemperatureAt, climatFlore } from './temperature'
 import { createSim, spawnEntity, step, type PlayerAction, type SimState } from './sim'
 import { addStructure, getVillageOf, grantItems, type Structure } from './village'
@@ -40,6 +42,22 @@ function act(sim: SimState, id: number, action: PlayerAction): void {
 function rejections(sim: SimState): string[] {
   return drainEvents(sim).flatMap((e) => (e.type === 'action_rejected' ? [e.reason] : []))
 }
+
+/**
+ * LE TICK OÙ LE MONDE EST JUSTE AU-DESSUS D'UN SEUIL — celui où un front FAIT BASCULER la
+ * flore, et le seul qui prouve quelque chose. Depuis R11-R12, le froid d'un front dépend du
+ * froid qu'il trouve : on ne choisit donc plus « un blizzard », on cherche le RÉGIME où la
+ * marge existe (`marge` = ce que le front peut retrancher). Cherché à ciel CLAIR, sans
+ * front : c'est `T₀`, l'entrée de la loi.
+ */
+function tickJusteAuDessus(sim: SimState, seuil: number, marge: number): number {
+  for (let t = 0; t < 80 * TICKS_PER_CYCLE; t += 200) {
+    const c = climatFlore(sim, 12, 12, t)
+    if (c >= seuil && c < seuil + marge) return t
+  }
+  throw new Error(`aucun tick où le climat tient dans [${seuil}, ${seuil + marge}) — recalibrer`)
+}
+
 
 describe('A1 — le climat de la flore EST le froid du monde, l’abri en moins', () => {
   it('rend `baselineTemperatureAt` au bit près sur toute tuile non abritée, à tout tick', () => {
@@ -175,40 +193,35 @@ describe('A5/A7/A8 — la cueillette gèle, le bois non ; la géographie et le b
     expect(floreGelee(sim, 20, 20)).toBe(false) // l'herbe d'à côté, non
   })
 
-  it('A8 — le blizzard fige son sillage, et le relâche une fois passé', () => {
+  it('A8 — le front fige son sillage, et le relâche une fois passé', () => {
     const sim = createSim(7, {
       map: createEmptyMap(40, 40, TERRAIN_GRASS),
       calendarScale: FAST,
       meteoActive: true,
     })
-    sim.tick = 30 * TICKS_PER_CYCLE + 10 // acte II, de JOUR : sans front, rien ne gèle
-    expect(floreGelee(sim, 12, 12)).toBe(false)
+    // On CHERCHE le régime où une pluie bascule la flore : le monde au-dessus du seuil (rien
+    // ne gèle) et à moins de `COLD.pluie` au-dessus (la pluie l'y fait passer). Sur la plaine
+    // c'est la nuit d'acte I — 60, contre 50 sous l'averse.
+    const debut = tickJusteAuDessus(sim, FLORE.SEUIL_GEL, METEO.COLD.pluie)
+    sim.tick = debut
+    expect(floreGelee(sim, 12, 12)).toBe(false) // à ciel clair, rien ne gèle À CE TICK MÊME
+
     // La bande TRAVERSE : elle n'est pas encore sur (12,12) au tick où elle est élue. On
-    // cherche le moment où elle y passe, sans jamais sortir du JOUR — sinon c'est la nuit
-    // qui gèlerait, et le test ne prouverait rien du blizzard.
-    const debut = sim.tick
-    const finDuJour = 30 * TICKS_PER_CYCLE + DAY_TICKS_PER_CYCLE - 5
+    // cherche le moment où elle y passe, SANS bouger l'horloge du régime trouvé — la fenêtre
+    // est donc CENTRÉE sur `debut`, et c'est bien le front qu'on mesure, pas l'heure.
     sim.meteo = {
-      type: 'blizzard',
+      type: 'pluie',
       cycle: Math.floor(debut / TICKS_PER_CYCLE),
       day: getGameTime(sim).seasonDay,
       edge: 0,
-      startTick: debut,
-      endTick: debut + TICKS_PER_CYCLE,
+      startTick: debut - Math.floor(METEO.TRAVERSEE_TICKS / 2),
+      endTick: debut - Math.floor(METEO.TRAVERSEE_TICKS / 2) + METEO.TRAVERSEE_TICKS,
     }
-    let passage = -1
-    for (let t = debut; t < finDuJour; t++) {
-      if (climatFlore(sim, 12, 12, t) < FLORE.SEUIL_GEL) {
-        passage = t
-        break
-      }
-    }
-    expect(passage).toBeGreaterThan(-1) // la bande a bien couvert le point
-    sim.tick = passage
-    expect(getGameTime(sim).isNight).toBe(false) // c'est le blizzard, pas la nuit
+    expect(meteoIntensityAt(sim.meteo, debut, sim.map.width, sim.map.height, 12, 12)).toBeGreaterThan(0)
+    expect(climatFlore(sim, 12, 12, debut)).toBeLessThan(FLORE.SEUIL_GEL) // le front a mordu
     expect(floreGelee(sim, 12, 12)).toBe(true)
     delete sim.meteo // la bande est passée
-    expect(floreGelee(sim, 12, 12)).toBe(false)
+    expect(floreGelee(sim, 12, 12)).toBe(false) // …et le point est RENDU, au même tick
   })
 })
 
@@ -274,43 +287,42 @@ describe('A9/A10 — le potager : on ne sème pas une terre gelée, et le gel tu
   it('A10ter — LE CHEMIN RÉEL : semé légalement en acte II, un blizzard tue la récolte', () => {
     // Les deux tests précédents posent `plantedAt` à la main — ils mesurent la RÈGLE, pas sa
     // joignabilité. Celui-ci ne touche à rien : on sème par l'action `plant` là où la sim
-    // l'autorise (acte II, de jour, 65), puis on laisse venir le seul événement qui tue à
-    // cette heure-là — le blizzard (65 − 55 = 10, sous les 22 du gel mortel). C'est le
-    // scénario que la spec promet au joueur : « bâtir des serres AVANT l'hiver ».
+    // l'autorise (le jour, au chaud), puis on laisse venir ce qui tue.
+    //
+    // CE QUI A CHANGÉ AVEC R12 : un front ne mord de `ORAGE_FROID.COLD` que là où le monde est
+    // DÉJÀ sous la limite de neige (45) — or on ne sème qu'au-dessus de 52. **Aucun front ne
+    // peut donc tuer une culture le jour même où elle a été semée** : la marge n'existe pas.
+    // Ce qui tue, c'est la NUIT venue, et l'orage qui la double : 35 au clair (la culture
+    // tient, > 22), 0 sous la bande. C'est très exactement le scénario que la spec promet —
+    // « bâtir des serres AVANT l'hiver » —, et il est maintenant raconté par le froid.
     const sim = createSim(7, {
       map: createEmptyMap(40, 40, TERRAIN_GRASS),
       calendarScale: FAST,
       meteoActive: true,
     })
-    const debut = 30 * TICKS_PER_CYCLE + 10 // acte II, de JOUR
-    sim.tick = debut
+    const jour = tickJusteAuDessus(sim, FLORE.SEUIL_GEL, 90) // n'importe quel régime semable
+    sim.tick = jour
     const { id, parcelle } = withFerme(sim)
     grantItems(sim, id, { graine: 1 })
     act(sim, id, { type: 'plant', structureId: parcelle })
     expect(rejections(sim)).not.toContain('la terre est gelée — il faut une serre')
     expect(typeof st(sim, parcelle).plantedAt).toBe('number') // semée pour de vrai
 
-    // Le blizzard traverse. On cherche (sans stepper : c'est pur) le tick où sa bande couvre
-    // la parcelle, pour ne pas jouer une demi-journée de sim dans un test unitaire.
+    // La NUIT froide, où la culture tient encore — et l'orage qui va l'achever.
+    const nuit = tickJusteAuDessus(sim, FLORE.SEUIL_MORTEL, 20)
+    expect(nuit).toBeGreaterThan(jour)
+    sim.tick = nuit
+    expect(climatFlore(sim, 13, 12, nuit)).toBeGreaterThanOrEqual(FLORE.SEUIL_MORTEL) // la nuit seule ne tue pas
     sim.meteo = {
-      type: 'blizzard',
-      cycle: Math.floor(debut / TICKS_PER_CYCLE),
+      type: 'orage',
+      cycle: Math.floor(nuit / TICKS_PER_CYCLE),
       day: getGameTime(sim).seasonDay,
       edge: 0,
-      startTick: debut,
-      endTick: debut + TICKS_PER_CYCLE,
+      startTick: nuit - Math.floor(METEO.TRAVERSEE_TICKS / 2),
+      endTick: nuit - Math.floor(METEO.TRAVERSEE_TICKS / 2) + METEO.TRAVERSEE_TICKS,
     }
-    let passage = -1
-    for (let t = sim.tick; t < 30 * TICKS_PER_CYCLE + DAY_TICKS_PER_CYCLE - 5; t++) {
-      if (climatFlore(sim, 13, 12, t) < FLORE.SEUIL_MORTEL) {
-        passage = t
-        break
-      }
-    }
-    expect(passage).toBeGreaterThan(-1)
-    sim.tick = passage - 1
-    expect(getGameTime(sim).isNight).toBe(false) // c'est le blizzard qui tue, pas la nuit
-    expect(typeof st(sim, parcelle).plantedAt).toBe('number') // encore vivante au tick d'avant
+    expect(climatFlore(sim, 13, 12, nuit)).toBeLessThan(FLORE.SEUIL_MORTEL) // c'est l'orage qui tue
+    expect(typeof st(sim, parcelle).plantedAt).toBe('number') // encore vivante avant le tick joué
     drainEvents(sim)
 
     step(sim, [])

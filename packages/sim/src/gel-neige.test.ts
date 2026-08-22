@@ -11,7 +11,8 @@ import {
   NEIGE_GENOUX, NEIGE_NUE, NEIGE_POUDREUSE, neigeAuSol, niveauDeNeige, niveauPourCouverture, seuilDeNeige, vitesseSurNeige,
 } from './gel'
 import { createEmptyMap, setTile } from './map'
-import { frontDuCycle } from './meteo'
+import { frontDuCycle, neigeA } from './meteo'
+import { dehorsSansMeteo } from './temperature'
 import { createSim, type SimState } from './sim'
 import { calendarScaleForSeasonCycles, TICKS_PER_CYCLE } from './time'
 
@@ -75,11 +76,18 @@ describe('le seuil et le niveau', () => {
   })
 })
 
-/** Le premier cycle neigeux de la saison — le rembobinage retrouve les VRAIES élections. */
-function cycleNeigeux(): number {
-  for (let c = GEL.MEMOIRE_CYCLES; c < 400; c++) {
+/**
+ * Le premier cycle qui DÉPOSE VRAIMENT de la neige — le rembobinage retrouve les VRAIES
+ * élections. Depuis R11 « neigeux » n'est plus une propriété du TYPE (`neige` et `blizzard`
+ * ne s'élisent plus) : il faut que le front PRÉCIPITE **et** que le monde soit sous la limite
+ * de neige d'un bout à l'autre de sa fenêtre — sinon la bande dépose de l'eau sur la moitié
+ * de sa course, et la couverture qu'on mesure serait celle de l'heure, pas celle du front.
+ */
+function cycleNeigeux(sonde: SimState): number {
+  for (let c = GEL.MEMOIRE_CYCLES; c < 4000; c++) {
     const f = frontDuCycle(c, SCALE)
-    if (f && (f.type === 'neige' || f.type === 'blizzard')) return c
+    if (!f || (f.type !== 'pluie' && f.type !== 'orage')) continue
+    if (neigeA(dehorsSansMeteo(sonde, 5, 5, f.startTick)) && neigeA(dehorsSansMeteo(sonde, 5, 5, f.endTick))) return c
   }
   throw new Error('aucun cycle neigeux')
 }
@@ -96,9 +104,9 @@ function carte(): ReturnType<typeof createEmptyMap> {
 }
 
 function simEnneige(): { sim: SimState; tx: number } {
-  const c = cycleNeigeux()
-  const front = frontDuCycle(c, SCALE)!
   const sim = createSim(2026, { map: carte(), calendarScale: SCALE, meteoActive: true })
+  const c = cycleNeigeux(sim)
+  const front = frontDuCycle(c, SCALE)!
   sim.tick = front.endTick
   // Une colonne que la bande a bien traversée : au bout de la traversée.
   const tx = front.edge === 0 || front.edge === 2 ? 2 : sim.map.width - 3
