@@ -18,8 +18,8 @@ import { foundNpcVillage } from './worldgen'
 import { floreGelee, gelMortel } from './gel'
 import { countOf } from './items'
 import { createEmptyMap } from './map'
-import { meteoIntensityAt } from './meteo'
-import { AMBIANT_HYPOTHERMIE, baselineTemperatureAt, climatFlore } from './temperature'
+import { frontDuCycle, meteoIntensityAt } from './meteo'
+import { AMBIANT_HYPOTHERMIE, baselineTemperatureAt, climatFlore, dehorsSansMeteo } from './temperature'
 import { createSim, spawnEntity, step, type PlayerAction, type SimState } from './sim'
 import { addStructure, getVillageOf, grantItems, type Structure } from './village'
 import { DAY_TICKS_PER_CYCLE, getGameTime, TICKS_PER_CYCLE, TICKS_PER_SEASON_DAY } from './time'
@@ -292,17 +292,17 @@ describe('A9/A10 — le potager : on ne sème pas une terre gelée, et le gel tu
     // l'autorise (le jour, au chaud), puis on laisse venir ce qui tue.
     //
     // CE QUI A CHANGÉ AVEC R12 : un front ne mord de `ORAGE_FROID.COLD` que là où le monde est
-    // DÉJÀ sous la limite de neige (45) — or on ne sème qu'au-dessus de 52. **Aucun front ne
-    // peut donc tuer une culture le jour même où elle a été semée** : la marge n'existe pas.
-    // Ce qui tue, c'est la NUIT venue, et l'orage qui la double : 35 au clair (la culture
-    // tient, > 22), 0 sous la bande. C'est très exactement le scénario que la spec promet —
-    // « bâtir des serres AVANT l'hiver » —, et il est maintenant raconté par le froid.
+    // DÉJÀ sous la limite de neige (0 °C) — or on ne sème qu'au-dessus de `SEUIL_GEL` (+2,8 °C).
+    // **Aucun front ne peut donc tuer une culture le jour même où elle a été semée** : la marge
+    // n'existe pas. Ce qui tue, c'est la NUIT venue, et l'orage qui la double : −4 °C au clair
+    // (la culture tient, > `SEUIL_MORTEL` = −9,2), le fond du monde sous la bande. C'est très
+    // exactement le scénario que la spec promet — « bâtir des serres AVANT l'hiver ».
     const sim = createSim(7, {
       map: createEmptyMap(40, 40, TERRAIN_GRASS),
       calendarScale: FAST,
       meteoActive: true,
     })
-    const jour = tickJusteAuDessus(sim, FLORE.SEUIL_GEL, 90) // n'importe quel régime semable
+    const jour = tickJusteAuDessus(sim, FLORE.SEUIL_GEL, 36) // n'importe quel régime semable (ex-jauge 90)
     sim.tick = jour
     const { id, parcelle } = withFerme(sim)
     grantItems(sim, id, { graine: 1 })
@@ -310,19 +310,25 @@ describe('A9/A10 — le potager : on ne sème pas une terre gelée, et le gel tu
     expect(rejections(sim)).not.toContain('la terre est gelée — il faut une serre')
     expect(typeof st(sim, parcelle).plantedAt).toBe('number') // semée pour de vrai
 
-    // La NUIT froide, où la culture tient encore — et l'orage qui va l'achever.
-    const nuit = tickJusteAuDessus(sim, FLORE.SEUIL_MORTEL, 20)
-    expect(nuit).toBeGreaterThan(jour)
-    sim.tick = nuit
-    expect(climatFlore(sim, 13, 12, nuit)).toBeGreaterThanOrEqual(FLORE.SEUIL_MORTEL) // la nuit seule ne tue pas
-    sim.meteo = {
-      type: 'orage',
-      cycle: Math.floor(nuit / TICKS_PER_CYCLE),
-      day: getGameTime(sim).seasonDay,
-      edge: 0,
-      startTick: nuit - Math.floor(METEO.TRAVERSEE_TICKS / 2),
-      endTick: nuit - Math.floor(METEO.TRAVERSEE_TICKS / 2) + METEO.TRAVERSEE_TICKS,
+    // L'ORAGE QU'ON CHERCHE EST UN VRAI — celui que le CYCLE élit, pas un front fabriqué.
+    // Un front posé à la main est ÉCRASÉ par `advanceMeteo` au tick suivant (il réélit le front
+    // du cycle) : le montage d'avant ne tenait que parce que le tick tiré tombait, par chance,
+    // dans un cycle d'orage. On cherche donc le premier orage du calendrier dont le milieu de
+    // fenêtre laisse encore vivre la culture À CIEL CLAIR — la nuit seule ne doit pas tuer,
+    // sinon ce n'est pas l'orage qu'on mesure.
+    let nuit = -1
+    for (let c = 0; c < 400 && nuit < 0; c++) {
+      const f = frontDuCycle(c, FAST)
+      if (!f || f.type !== 'orage') continue
+      const t = Math.floor((f.startTick + f.endTick) / 2)
+      if (t <= jour) continue
+      if (dehorsSansMeteo(sim, 13, 12, t) < FLORE.SEUIL_MORTEL) continue // le ciel clair tue déjà
+      sim.tick = t
+      sim.meteo = f
+      if (climatFlore(sim, 13, 12, t) < FLORE.SEUIL_MORTEL) nuit = t
     }
+    expect(nuit, 'aucun orage du calendrier ne bascule une culture que le ciel clair épargne').toBeGreaterThan(jour)
+    expect(dehorsSansMeteo(sim, 13, 12, nuit)).toBeGreaterThanOrEqual(FLORE.SEUIL_MORTEL) // le ciel clair ne tue pas
     expect(climatFlore(sim, 13, 12, nuit)).toBeLessThan(FLORE.SEUIL_MORTEL) // c'est l'orage qui tue
     expect(typeof st(sim, parcelle).plantedAt).toBe('number') // encore vivante avant le tick joué
     drainEvents(sim)

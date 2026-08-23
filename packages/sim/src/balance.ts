@@ -715,9 +715,10 @@ export const BALANCE = {
   /** Sous ce seuil d'énergie, la nuit, un PNJ va dormir. */
   NPC_ENERGY_SLEEP_THRESHOLD: 40,
 
-  /** Sous ce seuil de température, un PNJ lâche sa tâche et rentre au feu (spec IA chaleur).
-   *  Sous l'ambiant vallée acte III (50) → la vie normale ne le déclenche pas ; au-dessus de
-   *  l'hypothermie (20) avec marge (dérive lente). */
+  /** Sous ce seuil de température CORPORELLE (°C), un PNJ lâche sa tâche et rentre au feu
+   *  (spec IA chaleur). Pile à la cible que donne la vallée d'acte III de JOUR (−2 °C d'air →
+   *  33 °C de corps) → la vie normale ne le déclenche pas ; au-dessus de `CORPS_HYPOTHERMIE`
+   *  (29 °C) avec marge (la dérive est lente). Ex-jauge 40. */
   NPC_COLD_SEEK: 33,
   /** Hystérésis : arrêt de la recherche au retour au confort. */
   NPC_COLD_RESUME: 37,
@@ -3744,7 +3745,8 @@ export const BRUME = {
   BANDE: 6,
   /**
    * Le froid de la nappe — une EXPOSITION (amortie par l'abri, planchée par feu et tenue).
-   * Calibré pour tuer la plaine de JOUR dès l'acte II : 90 − 25 − 55 = 10 < HYPOTHERMIA (20).
+   * Calibré pour tuer la plaine de JOUR dès l'acte II : 18 − 10 − 22 = −14 °C, sous
+   * `AMBIANT_HYPOTHERMIE` (−10 °C). (Ex-jauge 55 ; un ÉCART se convertit ×0,4, sans décalage.)
    */
   COLD_MALUS: 22,
   /** Marge entre le bord de la nappe et un Feu de village (R3 : elle ne mange pas les villages). */
@@ -3851,8 +3853,9 @@ export const METEO = {
   /**
    * R12 — L'ORAGE PAR GRAND FROID : la ligne « blizzard » d'avant, atteinte par la pente du
    * refroidissement éolien (`u = 1`) et interpolée depuis la ligne douce de l'orage entre les
-   * deux. Calibré létal en plaine de jour dès l'acte III (90 − 50 − 55 < HYPOTHERMIA) et dès
-   * la nuit d'acte II (90 − 25 − 30 = 35 → `u = 1` → 35 − 55 < 0).
+   * deux. Calibré létal en plaine de jour dès l'acte III (18 − 20 − 22 = −24, borné à
+   * `AMBIANT_MIN`, sous `AMBIANT_HYPOTHERMIE`) et dès la nuit d'acte II (18 − 10 − 12 = −4 °C
+   * → `u = 1` → −4 − 22 = −26, borné lui aussi). Ex-jauge 55.
    */
   ORAGE_FROID: { COLD: 22, FEU_CONSO: 2, SPEED: 0.8, VISION: 0.6 },
   /** R5 — multiplicateur de consommation des feux sous l'empreinte d'un front mouillé.
@@ -4052,18 +4055,19 @@ export const GEL = {
  * Ces deux seuils le lisent — via `climatFlore`, le froid du monde À DÉCOUVERT (ni abri, ni
  * feu : le feu réchauffe les hommes, pas la terre, sinon il devient une serre gratuite).
  *
- * ═══ CE QUE LA TABLE DONNE (climat de JOUR = 90 − ACT_COLD + biome ; la nuit ôte 30) ═══
+ * ═══ CE QUE LA TABLE DONNE, EN °C (jour = BASE − ACT_COLD + biome ; la nuit ôte NIGHT_COLD,
+ *     et tout est borné à `AMBIANT_MIN` = −18) ═══
  *
- *              acte I     acte II    acte III
- *   forêt      95 / 65    70 / 40    45 / 15
- *   plaine     90 / 60    65 / 35    40 / 10
- *   marais     85 / 55    60 / 30    35 /  5
- *   Névé       50 / 20    25 /  0     0 /  0
- *   Glacier    15 /  0     0 /  0     0 /  0
+ *              acte I      acte II     acte III
+ *   forêt      +20 / +8    +10 / −2      0 / −12
+ *   plaine     +18 / +6     +8 / −4     −2 / −14
+ *   marais     +16 / +4     +6 / −6     −4 / −16
+ *   Névé        +2 / −10    −8 / −18   −18 / −18
+ *   Glacier    −12 / −18   −18 / −18   −18 / −18
  *
- * ═══ AUCUN DES DEUX N'EST UN MULTIPLE DE 5 ═══
+ * ═══ AUCUN DES DEUX SEUILS N'EST UN NOMBRE PAIR ═══
  *
- * Hors front, la table n'atteint QUE des multiples de 5 (les trois termes le sont) : un seuil
+ * Hors front, la table n'atteint QUE des valeurs PAIRES (les trois termes le sont) : un seuil
  * posé pile sur une valeur atteinte se déciderait au bit de flottant près — le raisonnement
  * exact des seuils de `GEL`. Sous un front la rampe est continue et traverse le seuil : c'est
  * un franchissement normal, pas un aléa de précision.
@@ -4073,23 +4077,27 @@ export const FLORE = {
    * LA PLANTE EST GELÉE : sa repousse n'aboutit pas (F2), la cueillette ne lui prend rien
    * (F3), et on ne sème pas la terre qu'elle occupe (F4).
    *
-   * 52 se lit dans la table ci-dessus, et il tient à trois bornes :
+   * +2,8 °C se lit dans la table ci-dessus (ex-jauge 52), et il tient à trois bornes :
    *  - **l'acte I reste entièrement libre, nuit comprise** — le plus froid des trois biomes
-   *    de vallée y est à 55 la nuit. Le jeu d'aujourd'hui ne change pas d'un pouce (A4) ;
-   *  - **la nuit fige dès l'acte II** (35) : « cueille de jour » devient une règle ;
-   *  - **la vallée entière s'arrête en acte III** (45 au mieux, en forêt et de jour).
-   * Et il stérilise le Névé (50) et le Glacier dès le premier jour, sans une ligne de plus.
+   *    de vallée y est à +4 °C la nuit. Le jeu d'aujourd'hui ne change pas d'un pouce (A4) ;
+   *  - **la nuit fige dès l'acte II** (−2 °C en forêt, le plus doux) : « cueille de jour »
+   *    devient une règle ;
+   *  - **la vallée entière s'arrête en acte III** (0 °C au mieux, en forêt et de jour).
+   * Et il stérilise le Névé (+2 °C) et le Glacier dès le premier jour, sans une ligne de plus.
    */
   SEUIL_GEL: 2.8,
   /**
    * LE GEL TUE LA CULTURE À CIEL OUVERT (F5) — le seul endroit où le froid DÉTRUIT.
    *
-   * 22, soit juste au-dessus de `TEMPERATURE.HYPOTHERMIA` (20) : **la culture meurt là où
-   * l'homme meurt.** Ce que ça donne, lu dans la table : l'acte I ne tue JAMAIS (son pire
-   * point de vallée est 50, et aucun blizzard n'y est tiré) ; en acte II un blizzard (−55)
-   * tue de jour comme de nuit et un front de neige (−25) tue la nuit ; en acte III toute
-   * nuit tue. Le potager de plein air devient un pari, puis n'est plus jouable — et c'est
-   * ce qui donne enfin son prix à la serre (`agriculture.md` R7).
+   * −9,2 °C (ex-jauge 22), soit juste au-dessus d'`AMBIANT_HYPOTHERMIE` (−10 °C, dérivé dans
+   * `temperature.ts`) : **la culture meurt là où l'homme meurt.** Ce que ça donne, lu dans la
+   * table et sous R11-R12 : l'acte I ne tue JAMAIS (son pire point de vallée est +4 °C, et un
+   * orage n'y mord que de `COLD.orage`, le monde y étant au-dessus de la limite de neige) ;
+   * en acte II la nuit SEULE ne tue pas (−4 °C en plaine) — c'est l'orage qui s'y ajoute qui
+   * tue, parce que le monde y est alors sous la limite de neige et qu'il mord donc de
+   * `ORAGE_FROID.COLD` ; en acte III toute nuit tue. Le potager de plein air devient un pari,
+   * puis n'est plus jouable — et c'est ce qui donne enfin son prix à la serre
+   * (`agriculture.md` R7).
    */
   SEUIL_MORTEL: -9.2,
 } as const

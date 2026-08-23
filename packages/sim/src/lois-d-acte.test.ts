@@ -25,7 +25,7 @@ const ACTES_BALAYES = 200
 
 /** Les huit lois numériques, avec leurs paliers ÉPINGLÉS (les valeurs du 2026-08-21). */
 const LOIS: { nom: string; loi: ActLaw; paliers: readonly [number, number, number] }[] = [
-  { nom: 'TEMPERATURE.ACT_COLD', loi: TEMPERATURE.ACT_COLD, paliers: [0, 25, 50] },
+  { nom: 'TEMPERATURE.ACT_COLD', loi: TEMPERATURE.ACT_COLD, paliers: [0, 10, 20] },
   { nom: 'BALANCE.ACT_HUNGER_FACTOR', loi: BALANCE.ACT_HUNGER_FACTOR, paliers: [1, 2, 3] },
   { nom: 'SEASON.REGROW_ACT_FACTOR', loi: SEASON.REGROW_ACT_FACTOR, paliers: [1, 1.5, 2] },
   { nom: 'ALIGNMENT.ACT_FACTOR', loi: ALIGNMENT.ACT_FACTOR, paliers: [1, 2, 3] }, // le don vaut double au Grand Froid, triple à la Cendre

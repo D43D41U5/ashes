@@ -418,7 +418,11 @@ export function frontEstBlizzard(state: SimState, front: Pick<MeteoFront, 'type'
   // `time.nuit` et non `isNight` : la même pente que `expositionSansMeteo`, sinon l'annonce
   // de la veille et l'entrée du lendemain cesseraient de lire le même froid (la promesse de R9).
   const t0 = TEMPERATURE.BASE - TEMPERATURE.ACT_COLD(time.act) - TEMPERATURE.NIGHT_COLD * time.nuit
-  return neigeA(t0 < 0 ? 0 : t0)
+  // Borné au FOND DU MONDE, comme `dehorsSansMeteo` : le `0` d'avant était le fond de l'ancienne
+  // jauge 0-100 ; depuis le passage en °C il est le gel du gué, en plein milieu du domaine.
+  // (Résultat inchangé au bit près — tout T₀ négatif est déjà sous `LIMITE_NEIGE` — mais la
+  // borne dit maintenant ce qu'elle veut dire.)
+  return neigeA(t0 < TEMPERATURE.AMBIANT_MIN ? TEMPERATURE.AMBIANT_MIN : t0)
 }
 
 /**

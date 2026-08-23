@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { BALANCE, COMBAT, SLOTS, TERRAIN_GRASS, TERRAIN_ROCK } from './balance'
+import { BALANCE, COMBAT, SLOTS, TEMPERATURE, TERRAIN_GRASS, TERRAIN_ROCK } from './balance'
 import { drainEvents } from './events'
 import { countOf, freeRoomFor, inventoryOf, makeInventory } from './items'
 import { createEmptyMap } from './map'
@@ -399,19 +399,19 @@ describe('recherche de chaleur (handleCold)', () => {
     expect(npc.path.length).toBe(0)
   })
 
-  it('hystérésis : reste en recherche entre 40 et 60, s\'arrête à 60', () => {
+  it('hystérésis : reste en recherche entre SEEK et RESUME, s\'arrête au corps sain', () => {
     const { sim, npc, entity, village } = setup()
     entity.x = 3; entity.y = 3; npc.path = []; npc.seekingWarmth = true
-    entity.temperature = 50
+    entity.temperature = 35 // entre NPC_COLD_SEEK (33 °C) et NPC_COLD_RESUME (37 °C)
     expect(handleCold(sim, village, npc, entity)).toBe(true) // continue à chercher
-    entity.temperature = 60
+    entity.temperature = BALANCE.NPC_COLD_RESUME
     expect(handleCold(sim, village, npc, entity)).toBe(false)
     expect(npc.seekingWarmth).toBe(false)
   })
 
-  it('pas de déclenchement au chaud (≥40, jamais en recherche)', () => {
+  it('pas de déclenchement au chaud (≥ NPC_COLD_SEEK, jamais en recherche)', () => {
     const { sim, npc, entity, village } = setup()
-    entity.x = 3; entity.y = 3; entity.temperature = 45; npc.path = []
+    entity.x = 3; entity.y = 3; entity.temperature = TEMPERATURE.CORPS_SAIN; npc.path = []
     expect(handleCold(sim, village, npc, entity)).toBe(false)
   })
 

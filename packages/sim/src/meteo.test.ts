@@ -495,15 +495,18 @@ describe('R4 — le froid des fronts (A3)', () => {
 
   it('A3 — au cœur du blizzard, la plaine de JOUR devient létale en acte III ; en sortir laisse fuir', () => {
     const { sim, coeur, hors } = simSousBlizzard()
-    // 90 − 50 − 55 < 0 → 0 < HYPOTHERMIA (l'arithmétique de la spec R4, lue par R12) ; à
-    // côté, la plaine d'acte III n'est plus DOUCE — la saison l'a refroidie à 40 — mais elle
-    // reste au-dessus de l'hypothermie : c'est ce qui fait du refuge un refuge.
+    // 18 − 20 − 22 = −24, borné à AMBIANT_MIN, sous AMBIANT_HYPOTHERMIE (l'arithmétique de la
+    // spec R4, lue par R12) ; à côté, la plaine d'acte III n'est plus DOUCE — la saison l'a
+    // refroidie à −2 °C — mais elle reste au-dessus de l'hypothermie de l'AIR : c'est ce qui
+    // fait du refuge un refuge.
     expect(baselineTemperature(sim, coeur, 20.5)).toBeLessThan(AMBIANT_HYPOTHERMIE)
     expect(baselineTemperature(sim, hors, 20.5)).toBeGreaterThan(AMBIANT_HYPOTHERMIE)
 
     const id = spawnEntity(sim, coeur, 20.5)
     const e = sim.entities.find((en) => en.id === id)!
-    e.temperature = 25
+    // ⚠ UN CORPS, EN °C : 30, déjà refroidi. L'ancien 25 était une jauge — en degrés c'est
+    // `CORPS_MORTEL`, l'homme mourait au premier tick et c'est le RESPAWN qu'on mesurait.
+    e.temperature = 30
     for (let i = 0; i < 2600; i++) advanceTemperature(sim)
     expect(e.temperature).toBeLessThan(TEMPERATURE.CORPS_HYPOTHERMIE) // la dérive l'a mené sous le seuil…
     expect(e.hp).toBeLessThan(100) // …et les PV baissent
@@ -1154,7 +1157,7 @@ describe('R5 — le Feu sous la pluie (A4)', () => {
 describe('R7 — vitesse et perception (A7)', () => {
   /**
    * Un monde au MIDI DU JOUR 5 — acte I, plein jour, plaine `grass` (patron `simSousFront`
-   * de R4) : sous la pluie, COLD (10) laisse la température au-dessus de COMFORT — AUCUN
+   * de R4) : sous la pluie, `COLD.pluie` (4 °C) laisse le corps au CONFORT — AUCUN
    * ralentissement de froid ne se mélange aux mesures de vitesse. Le front se pose À LA
    * MAIN à mi-traversée : bande pleinement sur la carte, cœur large, deux régimes à la fois.
    */
@@ -1239,7 +1242,7 @@ describe('R7 — vitesse et perception (A7)', () => {
     const ePluie = pluie.entities[0]!
     const eBrouillard = brouillard.entities[0]!
     // Prémisses : le marcheur mouillé est resté AU CŒUR du départ à l'arrivée, et le froid
-    // n'a rien mordu (COLD.pluie = 10, midi d'acte I : les deux restent au-dessus de COMFORT).
+    // n'a rien mordu (COLD.pluie = 4 °C, midi d'acte I : les deux corps restent au CONFORT).
     expect(meteoIntensity(pluie, 185.5, 20.5)).toBe(1)
     expect(meteoIntensity(pluie, ePluie.x, ePluie.y)).toBe(1)
     expect(eSec.temperature).toBeGreaterThanOrEqual(TEMPERATURE.CORPS_CONFORT)
@@ -1862,10 +1865,16 @@ describe('la météo est vivante dans TOUS les calendriers (le défaut de cadenc
 // et monotone, la largeur d'un orage suit la saison.
 
 describe('A12 — l’ASPECT se dérive du froid, il ne s’élit pas (R11)', () => {
-  /** Une carte où la plaine et le NÉVÉ (biome −40) se touchent : deux climats, un seul ciel. */
+  /** Une carte où la plaine et le NÉVÉ se touchent : deux climats, un seul ciel.
+   *  LARGEUR 40 ET NON 120, ET C'EST LA PRÉMISSE : la bande d'une pluie fait `LARGEUR.pluie`
+   *  (60 tuiles) — sur une carte plus large, les bords ne sont PAS couverts et l'aspect y est
+   *  `null`. Le montage affirme cette prémisse plus bas (aucun point du balayage n'est hors
+   *  bande), au lieu de la supposer. */
+  const LARGE_DEUX_CLIMATS = 40
   function simDeuxClimats(jour: number, nuit: boolean): SimState {
-    const map = createEmptyMap(120, 40, TERRAIN_GRASS)
-    for (let ty = 0; ty < 40; ty++) for (let tx = 60; tx < 120; tx++) setTile(map, tx, ty, TERRAIN_SNOW)
+    const L = LARGE_DEUX_CLIMATS
+    const map = createEmptyMap(L, 40, TERRAIN_GRASS)
+    for (let ty = 0; ty < 40; ty++) for (let tx = L / 2; tx < L; tx++) setTile(map, tx, ty, TERRAIN_SNOW)
     const sim = createSim(11, { map, calendarScale: SCALE, meteoActive: true })
     const aube = tickAubeDuJour(jour)
     sim.tick = aube + (nuit
@@ -1882,16 +1891,19 @@ describe('A12 — l’ASPECT se dérive du froid, il ne s’élit pas (R11)', ()
   })
 
   it('un MÊME front de pluie tombe en pluie sur la plaine et en NEIGE sur le Névé, dès l’acte I', () => {
-    const sim = simDeuxClimats(5, false) // acte I, midi : plaine 90, Névé 90 − 40 = 50 < 55
-    expect(dehorsSansMeteo(sim, 20.5, 20.5, sim.tick)).toBe(90)
-    expect(dehorsSansMeteo(sim, 90.5, 20.5, sim.tick)).toBe(50)
-    expect(meteoAspectAt(sim, 20.5, 20.5)).toBe('pluie')
-    expect(meteoAspectAt(sim, 90.5, 20.5)).toBe('neige')
+    // acte I, midi : plaine +18 °C, Névé +18 + BIOME_OFFSET[neige] = +2, sous la limite de neige.
+    const sim = simDeuxClimats(5, false)
+    expect(dehorsSansMeteo(sim, 9.5, 20.5, sim.tick)).toBe(TEMPERATURE.BASE)
+    const neve = TEMPERATURE.BIOME_OFFSET[TERRAIN_SNOW]
+    expect(neve, 'le Névé doit AVOIR un offset de biome, sinon la garde ne compare rien').toBeLessThan(0)
+    expect(dehorsSansMeteo(sim, 29.5, 20.5, sim.tick)).toBe(TEMPERATURE.BASE + neve!)
+    expect(meteoAspectAt(sim, 9.5, 20.5)).toBe('pluie')
+    expect(meteoAspectAt(sim, 29.5, 20.5)).toBe('neige')
   })
 
   it('sur la MÊME plaine d’acte II : pluie de jour, neige de nuit — l’heure suffit', () => {
-    expect(meteoAspectAt(simDeuxClimats(30, false), 20.5, 20.5)).toBe('pluie') // 65 ≥ 55
-    expect(meteoAspectAt(simDeuxClimats(30, true), 20.5, 20.5)).toBe('neige') // 35 < 55
+    expect(meteoAspectAt(simDeuxClimats(30, false), 9.5, 20.5)).toBe('pluie') // +8 °C ≥ la limite
+    expect(meteoAspectAt(simDeuxClimats(30, true), 9.5, 20.5)).toBe('neige') // −4 °C, sous la limite
   })
 
   it('BALAYAGE — l’aspect est `neige` exactement là où `neigeA(T₀)`, sur toute la carte et tout l’acte', () => {
@@ -1900,7 +1912,11 @@ describe('A12 — l’ASPECT se dérive du froid, il ne s’élit pas (R11)', ()
     for (const jour of [5, 30, 50]) {
       for (const nuit of [false, true]) {
         const sim = simDeuxClimats(jour, nuit)
-        for (let tx = 0.5; tx < 120; tx += 3) {
+        for (let tx = 0.5; tx < LARGE_DEUX_CLIMATS; tx += 0.5) {
+          // LA PRÉMISSE, AFFIRMÉE POINT PAR POINT : le balayage ne saute aucun bord parce que
+          // la bande les couvre tous — sans quoi l'aspect y serait `null` et la garde se
+          // dégraderait en silence (le pire mode d'échec d'un balayage).
+          expect(meteoIntensity(sim, tx, 20.5), `hors bande, x=${tx}`).toBeGreaterThan(0)
           const t0 = dehorsSansMeteo(sim, tx, 20.5, sim.tick)
           const attendu = neigeA(t0) ? 'neige' : 'pluie'
           expect(meteoAspectAt(sim, tx, 20.5), `jour ${jour}, nuit ${nuit}, x=${tx}`).toBe(attendu)
@@ -1937,14 +1953,14 @@ describe('A12 — l’ASPECT se dérive du froid, il ne s’élit pas (R11)', ()
 
 describe('A13 — le refroidissement éolien est une PENTE bornée et monotone (R12)', () => {
   it('BALAYAGE de tout le domaine de `T₀` : 1 sous la limite, 0 au-dessus, monotone entre', () => {
-    const haut = METEO.SEUIL_NEIGE + METEO.COLD.pluie // 55 : au-dessus, un orage est une pluie violente
-    const bas = haut - METEO.FROID_EOLIEN_RAMPE // 45 : en dessous, c'est le blizzard d'avant
+    const haut = METEO.SEUIL_NEIGE + METEO.COLD.pluie // au-dessus, un orage est une pluie violente
+    const bas = haut - METEO.FROID_EOLIEN_RAMPE // en dessous, c'est le blizzard d'avant
     expect(froidEolien(haut)).toBe(0)
     expect(froidEolien(bas)).toBe(1)
-    let prec = froidEolien(0)
+    let prec = froidEolien(TEMPERATURE.AMBIANT_MIN)
     expect(prec).toBe(1)
     let vuIntermediaire = 0
-    for (let t = 0; t <= 100; t += 0.25) {
+    for (let t = TEMPERATURE.AMBIANT_MIN; t <= TEMPERATURE.AMBIANT_MAX; t += 0.1) {
       const u = froidEolien(t)
       expect(u).toBeGreaterThanOrEqual(0)
       expect(u).toBeLessThanOrEqual(1)
@@ -1958,12 +1974,12 @@ describe('A13 — le refroidissement éolien est une PENTE bornée et monotone (
   it('un ORAGE D’ÉTÉ ne mord pas plus qu’une averse — même la nuit d’acte I (la borne « 50 » tient)', () => {
     const sim = createSim(3, { map: createEmptyMap(400, 40, TERRAIN_GRASS), calendarScale: SCALE, meteoActive: true })
     const aube = tickAubeDuJour(5)
-    sim.tick = aube + DAY_TICKS_PER_CYCLE + Math.floor((TICKS_PER_CYCLE - DAY_TICKS_PER_CYCLE) / 2) // nuit d'acte I : 60
+    sim.tick = aube + DAY_TICKS_PER_CYCLE + Math.floor((TICKS_PER_CYCLE - DAY_TICKS_PER_CYCLE) / 2) // nuit d'acte I : +6 °C
     const D = METEO.TRAVERSEE_TICKS
     sim.meteo = { type: 'orage', cycle: 4, day: 5, edge: 0, startTick: sim.tick - Math.floor(D / 2), endTick: sim.tick + Math.ceil(D / 2) }
     expect(meteoIntensity(sim, 200.5, 20.5)).toBe(1) // au cœur
-    expect(dehorsSansMeteo(sim, 200.5, 20.5, sim.tick)).toBe(60)
-    expect(baselineTemperature(sim, 200.5, 20.5)).toBe(50) // 60 − COLD.orage : la borne d'acte I, intacte
+    expect(dehorsSansMeteo(sim, 200.5, 20.5, sim.tick)).toBe(6) // ex-jauge 60
+    expect(baselineTemperature(sim, 200.5, 20.5)).toBe(6 - METEO.COLD.orage) // la borne d'acte I, intacte
     expect(meteoColdAt(sim, 200.5, 20.5, sim.tick)).toBe(METEO.COLD.orage)
   })
 
@@ -1973,7 +1989,7 @@ describe('A13 — le refroidissement éolien est une PENTE bornée et monotone (
     const D = METEO.TRAVERSEE_TICKS
     sim.meteo = { type: 'orage', cycle: 45, day: 46, edge: 0, startTick: sim.tick - Math.floor(D / 2), endTick: sim.tick + Math.ceil(D / 2) }
     expect(meteoIntensity(sim, 200.5, 20.5)).toBe(1)
-    expect(dehorsSansMeteo(sim, 200.5, 20.5, sim.tick)).toBe(40)
+    expect(dehorsSansMeteo(sim, 200.5, 20.5, sim.tick)).toBe(-2) // ex-jauge 40
     expect(meteoColdAt(sim, 200.5, 20.5, sim.tick)).toBe(METEO.ORAGE_FROID.COLD)
     expect(baselineTemperature(sim, 200.5, 20.5)).toBeLessThan(AMBIANT_HYPOTHERMIE)
   })

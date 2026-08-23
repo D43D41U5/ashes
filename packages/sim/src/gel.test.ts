@@ -102,12 +102,15 @@ describe('G2 — deux seuils, deux promesses (la table des six régimes)', () =>
    * c'est ICI que ça doit rougir — pas six mois plus tard dans un playtest.
    */
   const attendu: { jour: number; nuit: boolean; t: number; gue: boolean; lac: boolean }[] = [
-    { jour: JOUR_ACTE[0], nuit: false, t: 90, gue: false, lac: false }, // acte I, jour
-    { jour: JOUR_ACTE[0], nuit: true, t: 60, gue: false, lac: false }, // acte I, nuit : RIEN ne gèle
-    { jour: JOUR_ACTE[1], nuit: false, t: 65, gue: false, lac: false }, // acte II, jour
-    { jour: JOUR_ACTE[1], nuit: true, t: 35, gue: true, lac: false }, // acte II, NUIT : les gués prennent
-    { jour: JOUR_ACTE[2], nuit: false, t: 40, gue: true, lac: false }, // acte III, jour
-    { jour: JOUR_ACTE[2], nuit: true, t: 10, gue: true, lac: true }, // acte III, NUIT : la vallée s'ouvre
+    // ⚠ EN DEGRÉS CELSIUS depuis le 2026-08-22. Les littéraux SONT le calibrage — ils restent
+    // écrits, sinon la garde ne garde plus rien —, et chacun vaut
+    // `BASE − ACT_COLD(acte) − NIGHT_COLD × nuit` (biome 0). L'ancienne jauge en regard.
+    { jour: JOUR_ACTE[0], nuit: false, t: 18, gue: false, lac: false }, // acte I, jour (ex-90)
+    { jour: JOUR_ACTE[0], nuit: true, t: 6, gue: false, lac: false }, // acte I, nuit (ex-60) : RIEN ne gèle
+    { jour: JOUR_ACTE[1], nuit: false, t: 8, gue: false, lac: false }, // acte II, jour (ex-65)
+    { jour: JOUR_ACTE[1], nuit: true, t: -4, gue: true, lac: false }, // acte II, NUIT (ex-35) : les gués prennent
+    { jour: JOUR_ACTE[2], nuit: false, t: -2, gue: true, lac: false }, // acte III, jour (ex-40)
+    { jour: JOUR_ACTE[2], nuit: true, t: -14, gue: true, lac: true }, // acte III, NUIT (ex-10) : la vallée s'ouvre
   ]
 
   it('la température de chaque régime est bien celle du calcul, et les seuils y mordent comme promis', () => {
@@ -115,6 +118,9 @@ describe('G2 — deux seuils, deux promesses (la table des six régimes)', () =>
     for (const cas of attendu) {
       sim.tick = tickDe(cas.jour, cas.nuit)
       const nom = `jour ${cas.jour} (acte ${actForDay(cas.jour)}) ${cas.nuit ? 'nuit' : 'jour'}`
+      // LA PRÉMISSE DE LA TABLE : le littéral est bien la formule, pas un nombre recopié.
+      const parLaFormule = TEMPERATURE.BASE - TEMPERATURE.ACT_COLD(actForDay(cas.jour)) - (cas.nuit ? TEMPERATURE.NIGHT_COLD : 0)
+      expect(cas.t, `la table dit ${nom}`).toBe(parLaFormule)
       expect(baselineTemperature(sim, GUE_X, 5), `température ${nom}`).toBe(cas.t)
       expect(estGele(sim, GUE_X, 5), `gué ${nom}`).toBe(cas.gue)
       expect(estGele(sim, RIVIERE_X0, 5), `lac ${nom}`).toBe(cas.lac)
@@ -502,35 +508,36 @@ describe('A8 — un blizzard gèle ce qu’il traverse', () => {
     // ⚠ LA FENÊTRE D'UN FRONT DURE EXACTEMENT UNE PHASE DE JOUR (`TRAVERSEE_TICKS` =
     // `DAY_TICKS_PER_CYCLE`) : suivre une traversée entière à l'horloge, c'est TOUJOURS
     // traverser un crépuscule, et l'on mesurerait alors la nuit au lieu du front. On fige
-    // donc le tick — acte III, plein jour, 40 — et l'on fait bouger LA BANDE : la même
+    // donc le tick — acte III, plein jour, −2 °C — et l'on fait bouger LA BANDE : la même
     // question (« la bande couvre-t-elle ce point à ce tick ? »), sans variable parasite.
     //
     // POURQUOI L'ACTE III ET NON LE II (R11-R12) : un orage ne mord de `ORAGE_FROID.COLD` que
     // là où le monde est DÉJÀ sous la limite de neige — c'est le refroidissement éolien. En
-    // acte II de jour (65) il ne retranche que 10 : plus de blizzard à observer. En acte III
-    // de jour (40) il sature, et le LAC bascule. Le GUÉ, lui, est pris par la SAISON à cet
-    // acte (40 < 45) : c'est ce qu'on affirme séparément — la marge du front se lit sur le lac.
+    // acte II de jour (+8 °C) il ne retranche que `COLD.orage` : plus de blizzard à observer.
+    // En acte III de jour (−2 °C) il sature, et le LAC bascule. Le GUÉ, lui, est pris par la
+    // SAISON à cet acte (−2 < SEUIL_GUE = 0) : affirmé séparément — la marge se lit sur le lac.
     const sim = simGel({ meteoActive: true })
     const t = tickDe(JOUR_ACTE[2], false)
     sim.tick = t
-    expect(baselineTemperature(sim, RIVIERE_X0, 6)).toBe(40) // le ciel clair de référence
+    expect(baselineTemperature(sim, RIVIERE_X0, 6)).toBe(-2) // le ciel clair de référence (ex-jauge 40)
     expect(estGele(sim, RIVIERE_X0, 6)).toBe(false)
     expect(estGele(sim, GUE_X, 6)).toBe(true) // le gué d'acte III est pris par la saison, pas par un front
 
     // AVANT l'entrée : la fenêtre s'ouvre plus tard, la bande est encore dehors.
     poserFront(sim, 'orage', 0, t + 5000)
-    expect(baselineTemperature(sim, RIVIERE_X0, 6)).toBe(40)
+    expect(baselineTemperature(sim, RIVIERE_X0, 6)).toBe(-2)
     expect(estGele(sim, RIVIERE_X0, 6)).toBe(false)
 
-    // PENDANT, au cœur de la fenêtre : le froid plein (40 − 55 → 0 < SEUIL_PROFOND).
+    // PENDANT, au cœur de la fenêtre : le froid plein (−2 − ORAGE_FROID.COLD, borné à
+    // AMBIANT_MIN → sous SEUIL_PROFOND).
     poserFront(sim, 'orage', 0, t - Math.floor(METEO.TRAVERSEE_TICKS / 2))
     expect(baselineTemperature(sim, RIVIERE_X0, 6)).toBeLessThan(GEL.SEUIL_PROFOND)
     expect(estGele(sim, RIVIERE_X0, 6)).toBe(true)
     expect(estGele(sim, GUE_X, 6)).toBe(true)
 
-    // APRÈS la sortie : la fenêtre est close, la vallée retrouve ses 40 — et rend le LAC.
+    // APRÈS la sortie : la fenêtre est close, la vallée retrouve ses −2 — et rend le LAC.
     poserFront(sim, 'orage', 0, t - METEO.TRAVERSEE_TICKS - 5000)
-    expect(baselineTemperature(sim, RIVIERE_X0, 6)).toBe(40)
+    expect(baselineTemperature(sim, RIVIERE_X0, 6)).toBe(-2)
     expect(estGele(sim, RIVIERE_X0, 6)).toBe(false)
   })
 
@@ -540,12 +547,12 @@ describe('A8 — un blizzard gèle ce qu’il traverse', () => {
      *
      * Avant, une bande de NEIGE (70 tuiles) discriminait sur une carte de 400. Elle ne le peut
      * plus, et c'est structurel : un front ne mord vraiment (`ORAGE_FROID.COLD`) que là où le
-     * monde est DÉJÀ sous la limite de neige (45) — or 45 est aussi le seuil du gué. Là où un
-     * front pourrait faire basculer un gué, la saison l'a déjà pris ; et une pluie (COLD 10)
-     * ne descend jamais un lac d'acte III (40 − 10 = 30) sous son seuil (20).
+     * monde est DÉJÀ sous la limite de neige (0 °C) — or 0 est aussi le seuil du gué. Là où un
+     * front pourrait faire basculer un gué, la saison l'a déjà pris ; et une pluie (COLD 4)
+     * ne descend jamais un lac d'acte III (−2 − 4 = −6) sous son seuil (−10).
      *
-     * Le seul contraste qui subsiste est celui de l'ORAGE : nuit d'acte II, la plaine est à 35
-     * — le lac tient (35 ≥ 20), et sous la bande il tombe à 0. Mais un orage d'acte II fait
+     * Le seul contraste qui subsiste est celui de l'ORAGE : nuit d'acte II, la plaine est à −4
+     * — le lac tient (−4 ≥ −10), et sous la bande il plonge. Mais un orage d'acte II fait
      * ~830 tuiles de large (R13) : pour qu'un « ailleurs » EXISTE, c'est la CARTE qu'il faut
      * agrandir, pas la bande qu'il faut rétrécir. On la prend à 2 000 — et l'on PROUVE au
      * montage que la bande n'y tient pas toute.
@@ -554,7 +561,7 @@ describe('A8 — un blizzard gèle ce qu’il traverse', () => {
     const map = createEmptyMap(LARGE, 12, TERRAIN_GRASS)
     for (let tx = 0; tx < LARGE; tx++) setTile(map, tx, 5, TERRAIN_DEEP_WATER)
     const sim = simGel({ map, meteoActive: true })
-    sim.tick = tickDe(JOUR_ACTE[1], true) // acte II, NUIT : la plaine est à 35, le lac tient
+    sim.tick = tickDe(JOUR_ACTE[1], true) // acte II, NUIT : la plaine est à −4 °C, le lac tient
     const front = poserFront(sim, 'orage', 0, sim.tick - Math.floor(METEO.TRAVERSEE_TICKS / 2))
     expect(largeurDe(front)).toBeLessThan(LARGE) // la prémisse : il Y A un ailleurs
 

@@ -260,10 +260,23 @@ export function climatMaximal(state: SimState, tick: number): number {
   return clampTemp(T.BASE - T.ACT_COLD(time.act) + BIOME_MAX - T.NIGHT_COLD * time.nuit)
 }
 
-/** Température ambiante cible (0-100) au lieu (x,y) : le froid de base, PLANCHERÉ par un feu / une source chaude. */
+/** Température ambiante cible (°C) au lieu (x,y) : le froid de base, PLANCHERÉ par un feu /
+ *  une source chaude. */
 export function ambientTemperature(state: SimState, x: number, y: number): number {
   // Ni le feu ni la source chaude ne peuvent refroidir : ils ne font que plancher.
-  return Math.max(baselineTemperature(state, x, y), fireBubble(state, x, y), naturalWarmth(state, x, y))
+  //
+  // ⚠ LE ZÉRO DE CES DEUX-LÀ EST UNE ABSENCE, PAS UNE TEMPÉRATURE. `fireBubble` et
+  // `naturalWarmth` rendent 0 quand il n'y a NI feu NI source à portée ; sous l'ancienne
+  // jauge 0-100, un `max` à trois termes était inoffensif — 0 était le fond de l'échelle.
+  // Depuis le passage en °C (2026-08-22), 0 est le gel du gué, en plein milieu du domaine :
+  // le même `max` planchait TOUT le monde à 0 °C, et plus rien ne pouvait tuer de froid.
+  // On ne plancher donc que sur une source RÉELLE.
+  let t = baselineTemperature(state, x, y)
+  const feu = fireBubble(state, x, y)
+  if (feu > 0 && feu > t) t = feu
+  const source = naturalWarmth(state, x, y)
+  if (source > 0 && source > t) t = source
+  return t
 }
 
 /** Un pas de dérive vers une cible, freiné par l'isolation. Pur. Une dérive proportionnelle

@@ -4,7 +4,7 @@
  * objet scrollFactor 0 dans une caméra zoomée serait projeté hors écran).
  * Communication par le registry : WorldScene écrit, UIScene lit.
  */
-import { formatChronicleLine, zoneAt, type VillageTask, type WorldMap } from '@ashes/sim'
+import { formatChronicleLine, TEMPERATURE, zoneAt, type VillageTask, type WorldMap } from '@ashes/sim'
 import Phaser from 'phaser'
 import { getHud, setHud } from '../hud-state'
 import { drainAlertes, drainConseils, drainCrafts, drainLevelUps, drainPickups, queueAction } from './world/hud-bridge'
@@ -799,7 +799,7 @@ export class UIScene extends Phaser.Scene {
       hp: getHud(this.registry, 'hp') ?? 100,
       stamina: getHud(this.registry, 'stamina') ?? 100,
       hunger: getHud(this.registry, 'hunger') ?? 100,
-      temperature: getHud(this.registry, 'temperature') ?? 100,
+      temperature: getHud(this.registry, 'temperature') ?? TEMPERATURE.CORPS_SAIN, // °C, pas une jauge 0-100
       wounds: getHud(this.registry, 'wounds') ?? {},
       skills: getHud(this.registry, 'skills') ?? {},
       inv,

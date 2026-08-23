@@ -31,30 +31,32 @@ function flatMap(state: SimState, terrain: number): void {
 }
 
 describe('jauge temperature', () => {
-  it('un nouvel avatar naît à température 100', () => {
+  it('un nouvel avatar naît au CORPS SAIN (37 °C)', () => {
     const state = createSim(1)
-    expect(spawn(state, 5, 5).temperature).toBe(100)
+    expect(spawn(state, 5, 5).temperature).toBe(TEMPERATURE.CORPS_SAIN)
   })
 })
 
 describe('ambientTemperature', () => {
-  it('fond de vallée, jour, acte I = confort (≥60)', () => {
-    const state = createSim(1) // tick 0 = aube (jour), acte I
+  it('fond de vallée, MIDI, acte I = air doux (≥ AMBIANT_DOUX)', () => {
+    // MIDI, pas le tick 0 : depuis la rampe de nuit (`partDeNuit`), l'aube porte le plein
+    // `NIGHT_COLD`. Ce cas dit « il fait doux de jour » — il lui faut une heure de jour.
+    const state = createSim(1, { cycleOffset: cycleOffsetForStartHour(12) })
     flatMap(state, 1 /* grass */)
-    expect(ambientTemperature(state, 5, 5)).toBeGreaterThanOrEqual(60)
+    expect(ambientTemperature(state, 5, 5)).toBeGreaterThanOrEqual(TEMPERATURE.AMBIANT_DOUX)
   })
 
-  it('glacier = glacial (≤20) — le froid vient du BIOME, plus de l\'altitude', () => {
+  it('glacier = un air qui TUE (≤ AMBIANT_HYPOTHERMIE) — le froid vient du BIOME, plus de l\'altitude', () => {
     const state = createSim(1)
     flatMap(state, 15 /* glacier */)
-    expect(ambientTemperature(state, 5, 5)).toBeLessThanOrEqual(20)
+    expect(ambientTemperature(state, 5, 5)).toBeLessThanOrEqual(AMBIANT_HYPOTHERMIE)
   })
 
-  it("près d'un feu, la cible remonte au chaud (>60)", () => {
+  it("près d'un feu, la cible remonte au chaud (> AMBIANT_DOUX)", () => {
     const state = createSim(1)
     flatMap(state, 15) // sinon glacial
     state.structures.push({ type: 'fire', tx: 5, ty: 5 } as never)
-    expect(ambientTemperature(state, 5, 5)).toBeGreaterThan(60)
+    expect(ambientTemperature(state, 5, 5)).toBeGreaterThan(TEMPERATURE.AMBIANT_DOUX)
   })
 
   it('sous abri, le froid nocturne est amorti (~moitié)', () => {
@@ -64,9 +66,9 @@ describe('ambientTemperature', () => {
     state.structures.push({ type: 'house', tx: 5, ty: 5 } as never)
     const sheltered = ambientTemperature(state, 5, 5)
     expect(sheltered).toBeGreaterThan(exposed)
-    // La nuit MORD depuis le chantier tension (NIGHT_COLD 20 → 30) : sous abri,
-    // elle est amortie de moitié — 30 → 15.
-    expect(sheltered - exposed).toBeCloseTo(15, 5)
+    // La nuit MORD depuis le chantier tension : sous abri, elle est amortie de moitié —
+    // DÉRIVÉ de `SHELTER_FACTOR`, jamais recopié (12 °C → 6 °C rendus).
+    expect(sheltered - exposed).toBeCloseTo(TEMPERATURE.NIGHT_COLD * (1 - TEMPERATURE.SHELTER_FACTOR), 5)
   })
 })
 
@@ -87,12 +89,12 @@ describe('dérive thermostat', () => {
     expect(e.temperature).toBeLessThan(before)
   })
 
-  it('reste au confort (≥60) sur un ambiant doux, indéfiniment', () => {
+  it('reste au CONFORT du corps sur un ambiant doux, indéfiniment', () => {
     const state = createSim(1, { calendarScale: 1 }) // reste en acte I
     flatMap(state, 1)
     const e = spawn(state, 5, 5)
     for (let i = 0; i < 5000; i++) advanceTemperature(state)
-    expect(e.temperature).toBeGreaterThanOrEqual(60)
+    expect(e.temperature).toBeGreaterThanOrEqual(TEMPERATURE.CORPS_CONFORT)
   })
 
   it('les monstres sont ignorés (pas de température)', () => {
@@ -108,17 +110,18 @@ describe('dérive thermostat', () => {
 
 describe('hypothermie', () => {
   it('aucun dégât au-dessus du seuil, dégât croissant en dessous', () => {
-    expect(coldDamagePerTick(60)).toBe(0)
-    expect(coldDamagePerTick(20)).toBe(0)
-    expect(coldDamagePerTick(10)).toBeGreaterThan(0)
-    expect(coldDamagePerTick(0)).toBeGreaterThan(coldDamagePerTick(10))
+    // ⚠ CES NOMBRES SONT DES CORPS, pas des airs (deux échelles depuis le 2026-08-22).
+    expect(coldDamagePerTick(TEMPERATURE.CORPS_SAIN)).toBe(0)
+    expect(coldDamagePerTick(TEMPERATURE.CORPS_HYPOTHERMIE)).toBe(0) // AU seuil : rien encore
+    expect(coldDamagePerTick(TEMPERATURE.CORPS_HYPOTHERMIE - 2)).toBeGreaterThan(0)
+    expect(coldDamagePerTick(TEMPERATURE.CORPS_MORTEL)).toBeGreaterThan(coldDamagePerTick(TEMPERATURE.CORPS_HYPOTHERMIE - 2))
   })
 
   it('mourir de froid émet entity_died cause=cold', () => {
     const state = createSim(1)
     flatMap(state, 15)
     const e = spawn(state, 5, 5)
-    e.temperature = 0
+    e.temperature = TEMPERATURE.CORPS_MORTEL
     // hp sous le dégât max d'un tick (HYPOTHERMIA_DAMAGE_MAX ≈ 0.3) pour mourir dès ce tick.
     e.hp = 0.2
     state.events.length = 0
@@ -138,7 +141,7 @@ describe('hypothermie', () => {
 
     let ticks = 0
     const maxTicks = 20000
-    while (e.temperature >= 20 && ticks < maxTicks) {
+    while (e.temperature >= TEMPERATURE.CORPS_HYPOTHERMIE && ticks < maxTicks) {
       advanceTemperature(state)
       ticks += 1
     }
@@ -153,7 +156,7 @@ describe('hypothermie', () => {
   it('le respawn au Feu dégèle la température (fix #1)', () => {
     const state = createSim(1)
     const e = spawn(state, 5, 5)
-    e.temperature = 0
+    e.temperature = TEMPERATURE.CORPS_MORTEL
     e.hp = 0.2
     advanceTemperature(state)
     expect(e.temperature).toBe(COMBAT.RESPAWN_TEMPERATURE)
@@ -180,15 +183,15 @@ describe("tyrannie de l'acte", () => {
 
 describe('engourdissement (malus)', () => {
   it("rampe : 0 au confort, 1 à l'hypothermie, linéaire", () => {
-    expect(coldEffectRamp(60)).toBe(0)
-    expect(coldEffectRamp(20)).toBe(1)
-    expect(coldEffectRamp(40)).toBeCloseTo(0.5, 5)
+    expect(coldEffectRamp(TEMPERATURE.CORPS_CONFORT)).toBe(0)
+    expect(coldEffectRamp(TEMPERATURE.CORPS_HYPOTHERMIE)).toBe(1)
+    expect(coldEffectRamp((TEMPERATURE.CORPS_CONFORT + TEMPERATURE.CORPS_HYPOTHERMIE) / 2)).toBeCloseTo(0.5, 5)
   })
   it("facteurs = 1 au confort, < 1 dès l'engourdissement", () => {
-    expect(coldSpeedFactor(70)).toBe(1)
-    expect(coldStaminaRegenFactor(70)).toBe(1)
-    expect(coldSpeedFactor(20)).toBeLessThan(1)
-    expect(coldStaminaRegenFactor(20)).toBeLessThan(1)
+    expect(coldSpeedFactor(TEMPERATURE.CORPS_SAIN)).toBe(1)
+    expect(coldStaminaRegenFactor(TEMPERATURE.CORPS_SAIN)).toBe(1)
+    expect(coldSpeedFactor(TEMPERATURE.CORPS_HYPOTHERMIE)).toBeLessThan(1)
+    expect(coldStaminaRegenFactor(TEMPERATURE.CORPS_HYPOTHERMIE)).toBeLessThan(1)
   })
 })
 

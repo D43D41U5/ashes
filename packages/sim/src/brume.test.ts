@@ -226,10 +226,13 @@ describe('le froid de la nappe (A4, A5)', () => {
     const { sim } = simSousNappe()
     const id = spawnEntity(sim, 40.5, 20.5)
     const e = sim.entities.find((en) => en.id === id)!
-    e.temperature = 25
+    // ⚠ UN CORPS, EN °C (2026-08-22) : 30 °C, déjà refroidi mais au-dessus de l'hypothermie.
+    // L'ancien littéral 25 était une JAUGE ; en degrés il vaut `CORPS_MORTEL`, donc le corps
+    // partait mort et l'assertion passait par le respawn — le bon vert pour la mauvaise raison.
+    e.temperature = 30
     for (let i = 0; i < 50; i++) advanceTemperature(sim)
-    expect(e.temperature).toBeLessThan(25) // ça descend…
-    expect(e.temperature).toBeGreaterThan(20) // …mais pas d'un coup
+    expect(e.temperature).toBeLessThan(30) // ça descend…
+    expect(e.temperature).toBeGreaterThan(TEMPERATURE.CORPS_HYPOTHERMIE) // …mais pas d'un coup
   })
 
   it('A5 — la tenue d’hiver PLANCHE : sous la nappe, on remonte vers TENUE_FLOOR', () => {

@@ -7,7 +7,7 @@ import { describe, expect, it } from 'vitest'
 import { applyDamage } from './combat'
 import { createEmptyMap } from './map'
 import { createSim, spawnEntity, step, type PlayerAction, type SimState } from './sim'
-import { CENDREUX, MORTS, NIGHT_HUNT, TERRAIN_GRASS } from './balance'
+import { CENDREUX, MORTS, NIGHT_HUNT, TEMPERATURE, TERRAIN_GRASS } from './balance'
 import { drainEvents } from './events'
 import { getGameTime } from './time'
 import { foundNpcVillage } from './worldgen'
@@ -85,7 +85,7 @@ describe('debug — invulnérabilité', () => {
     act(sim, player, { type: 'debug_god', on: true })
     for (let i = 0; i < 200; i++) step(sim, [{ entityId: player, dx: 0, dy: 0 }])
     expect(e.hunger).toBe(100)
-    expect(e.temperature).toBe(100)
+    expect(e.temperature).toBe(TEMPERATURE.CORPS_SAIN)
   })
 
   it('se coupe : l’avatar redevient mortel', () => {
