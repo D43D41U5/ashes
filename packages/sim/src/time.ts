@@ -7,12 +7,14 @@
  * - Le CALENDRIER (jour de saison, actes) : accéléré par `calendarScale`
  *   (1 en multi ; grand en Veillée et en test pour jouer une saison vite).
  */
-import { BALANCE, phaseOf, tourOf } from './balance'
+import { BALANCE, TEMPERATURE, phaseOf, tourOf } from './balance'
 import { emitEvent } from './events'
 import type { SimState } from './sim'
 
 export const TICKS_PER_CYCLE = BALANCE.CYCLE_REAL_MINUTES * 60 * BALANCE.TICK_RATE_HZ
 export const DAY_TICKS_PER_CYCLE = Math.round(TICKS_PER_CYCLE * BALANCE.CYCLE_DAY_FRACTION)
+/** Durée de la pente du froid nocturne, en ticks — dérivée de `NIGHT_RAMP_HOURS`, jamais écrite. */
+export const NIGHT_RAMP_TICKS = Math.round((TEMPERATURE.NIGHT_RAMP_HOURS / 24) * TICKS_PER_CYCLE)
 /** Ticks par jour de saison à l'échelle 1 (un jour réel). */
 export const TICKS_PER_SEASON_DAY = 86400 * BALANCE.TICK_RATE_HZ
 
@@ -34,6 +36,13 @@ export interface GameTime {
    */
   hourOfCycle: number
   isNight: boolean
+  /**
+   * LA PART DE NUIT, dans [0, 1] — le froid nocturne en PENTE (voir `partDeNuit`). Vaut 1
+   * partout où `isNight` est vrai ; ce sont les lisières du JOUR qui la portent entre 0 et 1.
+   * `isNight` reste le booléen des COMPORTEMENTS (la chasse nocturne, le brûlage, le ralliement
+   * au feu ne se font pas « à 40 % ») ; `nuit` est celui du FROID, qui, lui, a une pente.
+   */
+  nuit: number
   /** Jour de saison, à partir de 1. Peut dépasser SEASON_DAYS (la Cendre finale). */
   seasonDay: number
   act: Act
@@ -117,6 +126,47 @@ export function cycleOffsetForStartHour(startHour: number): number {
 }
 
 /**
+ * LA PART DE NUIT À CE POINT DU CYCLE — le multiplicateur de `NIGHT_COLD` (décision d'Alexis
+ * 2026-08-23 ; le pourquoi et le prix sont en tête de `NIGHT_RAMP_HOURS`, `balance.ts`).
+ *
+ * 0 en plein jour, 1 sur TOUTE la nuit, et une PENTE LINÉAIRE de `NIGHT_RAMP_TICKS` sur les
+ * deux lisières du JOUR : le froid monte dans la dernière heure et demie de jour (le soir se
+ * sent venir) et se retire dans la première (l'aube est le fond du froid, il lâche au soleil).
+ *
+ * ═══ LES DEUX PENTES SONT DU CÔTÉ DU JOUR, ET C'EST STRUCTUREL ═══
+ *
+ * `cycleTick >= DAY_TICKS_PER_CYCLE ⟹ 1`, sans exception : **la nuit est bit-exacte avec
+ * l'avant-rampe.** C'est ce qui compte, et deux mesures du 2026-08-23 le disent :
+ *   · AU TICK DU CRÉPUSCULE, `planifierHorde` lit l'éveil pour dimensionner la marche du soir
+ *     (`porteeDeNuit`). Une rampe centrée sur 21h y aurait mis 0,5 : toutes les hordes du jeu
+ *     auraient rétréci, en silence.
+ *   · SUR LA NUIT ENTIÈRE, `nighthunt` tire l'espèce contre l'éveil. Faire retomber le froid
+ *     avant l'aube renvoie des loups dans les nuits d'acte III — or « le vivant a quitté la
+ *     vallée » est une PROMESSE de la spec (R11), testée à zéro. Une pente côté nuit la rompt,
+ *     quelle que soit sa largeur.
+ *
+ * Le prix, assumé : le tick de l'aube (`cycleTick` 0) porte désormais le plein froid de la
+ * nuit — c'est physiquement juste (l'aube est le fond du froid), mais c'est le tick 0 de
+ * `createSim`, donc de presque tout montage de test. Sept d'entre eux disaient « de jour, il
+ * fait doux » en se posant pile sur l'aube : ils ont été déplacés à midi, ce que la règle
+ * maison prescrivait déjà (« jamais poser un état pile sur l'aube »). AUCUNE partie réelle
+ * n'y touche : la Veillée comme le LAN démarrent à 9 h.
+ *
+ * Continue partout — le pas maximal vaut `NIGHT_COLD / NIGHT_RAMP_TICKS` (0,0033 °C mesuré,
+ * contre 12 avant), gardé par un balayage dans `time.test.ts`. Le `max` des deux lisières
+ * plutôt qu'un `if` : une rampe plus longue que la demi-journée dégrade proprement au lieu de
+ * trouer la fonction. Pur : / et comparaisons (invariant #2).
+ */
+export function partDeNuit(cycleTick: number): number {
+  if (cycleTick >= DAY_TICKS_PER_CYCLE) return 1
+  const aube = 1 - cycleTick / NIGHT_RAMP_TICKS
+  const crepuscule = 1 - (DAY_TICKS_PER_CYCLE - cycleTick) / NIGHT_RAMP_TICKS
+  const v = aube > crepuscule ? aube : crepuscule
+  return v < 0 ? 0 : v > 1 ? 1 : v
+}
+
+
+/**
  * L'HEURE DU MONDE À UN TICK QUELCONQUE — la même loi que `getGameTime`, prise sur un tick
  * fourni plutôt que sur celui de l'état.
  *
@@ -135,6 +185,7 @@ export function gameTimeAt(state: SimState, tick: number): GameTime {
     tick,
     hourOfCycle: wallHour % 24,
     isNight: cycleTick >= DAY_TICKS_PER_CYCLE,
+    nuit: partDeNuit(cycleTick),
     seasonDay,
     act: actForDay(seasonDay),
     tour: tourForDay(seasonDay),

@@ -146,21 +146,83 @@ const ticksForCycles = (cycles: number): number => Math.round(cycles * CYCLE_REA
 const FIRE_RADIUS_BY_TIER = [10, 13, 16] as const
 
 /** Jauge Température (spec 2026-07-08). Ordres de grandeur, à calibrer en playtest. */
+/**
+ * ═══ LA TEMPÉRATURE EST EN DEGRÉS CELSIUS (décision d'Alexis, 2026-08-22) ═══
+ *
+ * « Passe l'échelle de température à l'échelle métrique : 37 température corporelle, 0 gèle. »
+ * L'ancienne jauge 0-100 a été REMPLACÉE par deux échelles en °C — la même unité, deux
+ * domaines, parce qu'un corps n'est pas de l'air :
+ *
+ *   · L'AMBIANT (le monde) vit dans **[−18, +22] °C**. `AMBIANT_MIN`/`AMBIANT_MAX` le bornent.
+ *   · LE CORPS vit dans **[25, 37] °C** — 37 sain, 29 hypothermie, 25 le fond, où le froid
+ *     tue au plus vite. Ce sont des ordres de grandeur MÉDICAUX : sous 28 °C l'hypothermie
+ *     est sévère, l'arrêt cardiaque tombe vers 24-25.
+ *
+ * Le corps ne DÉRIVE plus vers l'air lui-même — il dérive vers `cibleCorporelle(ambiant)`
+ * (`temperature.ts`), la température à laquelle un corps nu se STABILISE dans cet air : 37
+ * tant qu'il fait plus doux que `AMBIANT_DOUX`, puis une pente de `PENTE_CORPS` par degré
+ * perdu. C'est physiquement plus honnête que l'ancien modèle (où l'on finissait à la
+ * température de l'air) — et c'est exactement la même dynamique, relue.
+ *
+ * ═══ LA CONVERSION EST UNE APPLICATION AFFINE — l'équilibrage n'a PAS bougé ═══
+ *
+ * Chaque nombre vient de l'ancienne jauge par `°C = (jauge − 45) × 0,4` pour l'ambiant
+ * (d'où : 45 → 0, le gel du gué ; 20 → −10, le gel du lac) et `°C = 25 + jauge × 0,2` pour
+ * le corps (100 → 37... plafonné, 60 → 37, 20 → 29, 0 → 25). Une application affine ne change
+ * NI un ordre, NI un franchissement de seuil, NI une pente : la simulation est celle d'avant,
+ * au bit près, avec des étiquettes qu'un humain peut lire. Les deltas se convertissent par le
+ * seul facteur (× 0,4 ambiant, × 0,2 corps) — pas d'origine à décaler.
+ *
+ * Ce qui a VRAIMENT changé : on peut enfin dire « il fait −14 la nuit d'acte III » au lieu
+ * de « la jauge tombe à 10 », et un seuil de gel se relit sans table de conversion.
+ */
 export const TEMPERATURE = {
-  BASE: 90, // cible d'un bas de vallée, jour, acte I
+  /** Les bornes de l'AMBIANT — l'ancienne jauge 0-100, en degrés. Rien de plus doux qu'un
+   *  midi d'acte I au fond de la vallée, rien de plus froid qu'une nuit de glacier sous
+   *  blizzard : le monde ne sort pas de cette fenêtre, et c'est ce plancher qui borne aussi
+   *  le froid que le corps peut atteindre. */
+  AMBIANT_MIN: -18,
+  AMBIANT_MAX: 22,
+  BASE: 18, // cible d'un bas de vallée, jour, acte I (ex-jauge 90)
   // LA NUIT MORD, DÈS L'ACTE I (était 20). Sans elle, le Feu n'était qu'un
   // établi : on pouvait passer la nuit dehors sans y penser. Rentrer avant la
   // nuit — ou emporter de quoi faire du feu — devient une décision.
-  NIGHT_COLD: 30,
+  NIGHT_COLD: 12, // ex-jauge 30 — douze degrés entre midi et minuit
+  /**
+   * LA NUIT TOMBE EN PENTE, elle ne claque pas (décision d'Alexis, 2026-08-23) — durée, en
+   * HEURES de cycle, que met `NIGHT_COLD` à s'installer au crépuscule et à se retirer à l'aube.
+   *
+   * Le froid était le dernier terme du modèle à basculer sur un booléen : douze degrés en UN
+   * tick à 21h, douze de moins en un tick à 6h. Invisible sur la jauge TEMP (le corps dérive
+   * lentement, `K_DRIFT`), mais pas sur ce qui lit le froid SANS dérive devant lui — l'éveil
+   * des Cendreux (60 % de la plage `TORPEUR` d'un coup), le gel de la flore, le panneau debug.
+   *
+   * ═══ LA RAMPE EST TOUTE ENTIÈRE DU CÔTÉ DU JOUR, ET C'EST STRUCTUREL ═══
+   *
+   * `partDeNuit` vaut 1 sur TOUT l'intervalle de nuit (`isNight`), sans exception : la pente
+   * monte pendant la dernière heure et demie du jour et redescend pendant la première. Une
+   * rampe CENTRÉE sur 21h aurait été plus élégante (elle conserve le froid moyen du cycle),
+   * mais elle aurait mis 0,5 au tick du crépuscule — or c'est EXACTEMENT le tick que
+   * `planifierHorde` lit à l'aube pour dimensionner la marche du soir (`porteeDeNuit`). Toutes
+   * les hordes du jeu auraient rétréci en silence. Côté jour, la nuit est au bit près celle
+   * d'avant : même éveil, mêmes tirages, mêmes tests.
+   *
+   * Le prix, assumé : le cycle porte ~17 % de degrés-heures de froid en plus, tous posés sur
+   * le crépuscule et l'aube — là où on VEUT qu'on sente le soir venir.
+   *
+   * 1,5 h de cycle = 3 min réelles (48 min pour 24 h), du même ordre que la constante de
+   * dérive du corps (~4 min) : la pente est assez longue pour que le corps la suive.
+   */
+  NIGHT_RAMP_HOURS: 1.5,
   // Par acte (I, Grand Froid, Cendre), soustrait de BASE. L'acte III passe 40→50 (fork
   // tranché cette session, GDD « froid létal en acte III ») : plaine de nuit en acte III
-  // = 90 − 50 − 30 = 10 < HYPOTHERMIA(20) → le froid TUE la plaine, comme le discours le
+  // = 18 − 20 − 12 = −14 °C < AMBIANT_HYPOTHERMIE(−10) → le froid TUE la plaine, comme le discours le
   // promet. La réponse est la TENUE D'HIVER (elle plafonne l'exposition, voir temperature.ts).
   /** LA LOI MAÎTRESSE depuis que « le froid est le cadran » (pression-croissante, 2026-08-21) :
    *  l'éveil, la torpeur et l'attraction des Cendreux dérivent de la température, qui dérive
    *  de l'acte par elle. Refroidir sans fin escalade tout le reste — c'est elle que la saison
    *  sans fin fera monter par tour (T2). Loi totale : tient 50 au-delà de l'acte III. */
-  ACT_COLD: actLaw([0, 25, 50]),
+  ACT_COLD: actLaw([0, 10, 20]), // ex-jauge [0, 25, 50] : la saison retranche vingt degrés
   /**
    * Décalage signé par terrain (id de TERRAINS). Absent = 0.
    *
@@ -170,27 +232,46 @@ export const TEMPERATURE = {
    * et le Glacier mortellement froids sans aucune hauteur. Ordres de grandeur, à calibrer en playtest.
    */
   BIOME_OFFSET: {
-    3: 5, 13: 5, 14: 5, 22: 5, 24: 5, // forêts (couvert — la saulaie aussi)
-    8: -5, 18: -5, 19: -5, 25: -5, // marais/tourbière/roselière/prairie humide (mouillé)
-    10: -40, // neige — un seuil qu'on paie en froid (le Névé)
-    15: -75, // glacier — glacial, une gate de froid (le Glacier)
+    3: 2, 13: 2, 14: 2, 22: 2, 24: 2, // forêts (couvert — la saulaie aussi) : +2 °C
+    8: -2, 18: -2, 19: -2, 25: -2, // marais/tourbière/roselière/prairie humide (mouillé)
+    10: -16, // neige — seize degrés de moins, un seuil qu'on paie en froid (le Névé)
+    15: -30, // glacier — trente de moins : glacial, une gate de froid (le Glacier)
   } as Record<number, number>,
-  FIRE_WARMTH: 80, // cible au contact d'un feu
+  FIRE_WARMTH: 14, // cible au contact d'un feu : +14 °C (ex-jauge 80)
   FIRE_RANGE: 6, // tuiles
   SHELTER_FACTOR: 0.5, // sous toit : nuit+biome × 0.5
-  /** Fraction de l'écart à l'ambiant comblée par tick (÷ isolation). Calibrage :
-   *  ~2 min réelles vers l'engourdissement, ~6 min vers l'hypothermie à ambiant 0. */
+  /** Fraction de l'écart à la CIBLE CORPORELLE comblée par tick (÷ isolation). Calibrage
+   *  inchangé par le passage en °C — une dérive proportionnelle à l'écart est invariante par
+   *  application affine : ~2 min réelles vers l'engourdissement, ~6 min vers l'hypothermie
+   *  quand l'air est au plus froid. */
   K_DRIFT: 0.0002,
   /** Isolation du corps nu (stub ; la Couture la fera monter plus tard). */
   INSULATION_BODY: 1,
   /** LA TENUE D'HIVER PLAFONNE LE FROID (spec cuir/température, V2-16). Porter une
    *  `tenue_hiver` plancher l'ambiant ressenti à cette valeur — au-dessus de
-   *  HYPOTHERMIA, donc le froid ne tue plus : c'est ce qui rend la plaine survivable en
+   *  AMBIANT_HYPOTHERMIE, donc le froid ne tue plus : c'est ce qui rend la plaine survivable en
    *  acte III. Vraie protection (un plancher), pas un simple ralentissement de dérive. */
-  TENUE_FLOOR: 32,
-  COMFORT: 60, // au-dessus : aucun effet
-  HYPOTHERMIA: 20, // en dessous : dégâts
-  HYPOTHERMIA_DAMAGE_MAX: 0.3, // PV/tick à température 0
+  TENUE_FLOOR: -5.2,
+  /**
+   * L'AIR DOUX — au-dessus, un corps nu tient ses 37 et ne subit RIEN (ex-`COMFORT`, jauge 60).
+   * C'est le genou de `cibleCorporelle` ET la borne chaude de la fonte des neiges (`gel.ts`) :
+   * une seule idée, « l'air à partir duquel le froid ne compte plus », deux lecteurs.
+   */
+  AMBIANT_DOUX: 6,
+  /** La PENTE du corps : chaque degré d'air perdu SOUS `AMBIANT_DOUX` coûte un demi-degré de
+   *  température corporelle. D'où le fond exact : air −18 → corps 25. */
+  PENTE_CORPS: 0.5,
+  // ── LE CORPS (°C) : 37 sain, 29 hypothermie, 25 le fond ──────────────────────────────
+  /** Un corps sain, et le PLAFOND de la dérive : on ne surchauffe pas (pas encore). */
+  CORPS_SAIN: 37,
+  /** En dessous : l'engourdissement RAMPE (vitesse, endurance). Vaut `CORPS_SAIN` — tout
+   *  écart au corps sain se paie, comme dans l'ancienne jauge (COMFORT 60 = l'air doux). */
+  CORPS_CONFORT: 37,
+  /** En dessous : le froid FAIT DES DÉGÂTS. 29 °C est l'hypothermie sévère, en médecine. */
+  CORPS_HYPOTHERMIE: 29,
+  /** Le fond du corps — les dégâts y sont maximaux. 25 °C : la zone de l'arrêt cardiaque. */
+  CORPS_MORTEL: 25,
+  HYPOTHERMIA_DAMAGE_MAX: 0.3, // PV/tick à CORPS_MORTEL
   SPEED_FLOOR: 0.6, // vitesse au plus froid
   STAMINA_FLOOR: 0.5, // régén d'endurance au plus froid
 }
@@ -221,7 +302,7 @@ export const POI = {
    */
   REVEAL_ARCHE_TILES: 300,
   /** La Source chaude est un feu qu'on n'a pas allumé (mêmes unités que FIRE_WARMTH/FIRE_RANGE). */
-  HOTSPRING_WARMTH: 75,
+  HOTSPRING_WARMTH: 12,
   HOTSPRING_RANGE_TILES: 4,
   /** Le Tarn est une halte : régén d'endurance multipliée sur son empreinte. */
   TARN_STAMINA_FACTOR: 1.5,
@@ -637,9 +718,9 @@ export const BALANCE = {
   /** Sous ce seuil de température, un PNJ lâche sa tâche et rentre au feu (spec IA chaleur).
    *  Sous l'ambiant vallée acte III (50) → la vie normale ne le déclenche pas ; au-dessus de
    *  l'hypothermie (20) avec marge (dérive lente). */
-  NPC_COLD_SEEK: 40,
+  NPC_COLD_SEEK: 33,
   /** Hystérésis : arrêt de la recherche au retour au confort. */
-  NPC_COLD_RESUME: 60,
+  NPC_COLD_RESUME: 37,
 
   /** Énergie perdue par heure de cycle, éveillé. */
   ENERGY_AWAKE_PER_CYCLE_HOUR: 4,
@@ -3117,8 +3198,8 @@ export const CENDREUX = {
    * — le Névé est dangereux dès le jour 1, et c'est voulu).
    */
   TORPEUR: {
-    CHAUD: 60, // à cette température et au-dessus : éveil 0 (amorphe — il mord encore au contact)
-    FROID: 10, // à cette température et en dessous : éveil 1 (plein régime)
+    CHAUD: 6, // à cette température et au-dessus : éveil 0 (amorphe — il mord encore au contact)
+    FROID: -14, // à cette température et en dessous : éveil 1 (plein régime)
     /** La vue ne tombe jamais à zéro : aggroRange × max(éveil, ceci). Marcher SUR une carcasse
      *  réveille la carcasse — le nettoyage de jour reste risqué, jamais gratuit. */
     VUE_PLANCHER: 0.2,
@@ -3129,12 +3210,12 @@ export const CENDREUX = {
     /** Sous ce froid de base, il CHERCHE la chaleur (l'ancien COLD_ATTRACT_THRESHOLD, 55, ne
      *  couvrait pas la nuit d'acte I à 60 — or le levé d'acte I converge à 20 tuiles, statu quo
      *  acté). 65 : toute nuit de plaine, les biomes froids de jour, la plaine d'acte III à midi. */
-    CONVERGE_SOUS: 65,
+    CONVERGE_SOUS: 8,
     /** LE CRAN DE FUREUR (décisions ④⑤) : à ce froid EFFECTIF (base + satiété déduite) ou en
      *  dessous, un cendreux qui voit une proie S'APPELLE — le cri réveille le sol. ≤ 12 et non
      *  < 10 : la plaine de nuit d'acte III vaut EXACTEMENT 10, un strict ne tirait jamais dans
      *  le cas-phare (constat du panel). */
-    FUREUR: 12,
+    FUREUR: -13.2,
   },
   /**
    * ═══ LES SENS HONNÊTES (décision d'Alexis, 2026-08-21 — spec R24-R25) ═══
@@ -3224,7 +3305,7 @@ export const CENDREUX = {
     /** La bûche en cours vieillit de N ticks par tick et par buveur (patron `meteoFeuConso`). */
     CONSO: 3,
     /** Température volée à la victime par coup qui porte (l'aval : engourdi < 60, PV < 20). */
-    COUP_TEMP: 12,
+    COUP_TEMP: 2.4, // en degrés CORPORELS (ex-jauge 12 × 0,2)
     /** Satiété gagnée par coup porté sur un vivant (bête comprise — la chair est chaude). */
     SATIETE_COUP: 25,
     /** Satiété gagnée par tick passé à boire un feu. */
@@ -3468,7 +3549,7 @@ export const COMBAT = {
   RESPAWN_HP: 50,
   RESPAWN_HUNGER: 50,
   RESPAWN_STAMINA: 20,
-  RESPAWN_TEMPERATURE: 100,
+  RESPAWN_TEMPERATURE: 37, // un corps sain (ex-jauge 100)
   /** Épuisement post-mort de BASE : régén d'endurance ÷2 (~5 min). Le coût CROÎT avec
    *  les morts rapprochées (V2-21) — voir DEATH_EXHAUSTION_*. */
   EXHAUSTION_TICKS: ticksFor(300),
@@ -3665,7 +3746,7 @@ export const BRUME = {
    * Le froid de la nappe — une EXPOSITION (amortie par l'abri, planchée par feu et tenue).
    * Calibré pour tuer la plaine de JOUR dès l'acte II : 90 − 25 − 55 = 10 < HYPOTHERMIA (20).
    */
-  COLD_MALUS: 55,
+  COLD_MALUS: 22,
   /** Marge entre le bord de la nappe et un Feu de village (R3 : elle ne mange pas les villages). */
   GARDE_FEU: 6,
   /** Essais d'élection de corridor avant que la Brume ne renonce pour ce jour. */
@@ -3744,7 +3825,7 @@ export const METEO = {
    * déclare plus bas ; la garde A12 affirme l'égalité. Une seule loi : le pavé de neige sous
    * les pieds et le flocon à l'écran disent la même chose que le gué qui prend.
    */
-  SEUIL_NEIGE: 45,
+  SEUIL_NEIGE: 0,
   /**
    * R12 — LE REFROIDISSEMENT ÉOLIEN : le froid d'un orage dépend du froid qu'il trouve. Le
    * facteur `u` vaut 0 à la limite de neige (`SEUIL_NEIGE + COLD.pluie` = 55 : un orage par
@@ -3753,7 +3834,7 @@ export const METEO = {
    * la température sous le front — aucune circularité. Plaine d'acte I la nuit = 60 : `u = 0`,
    * un orage d'été ne mord pas, même de nuit — l'ancienne borne « 50 » de l'acte I tient.
    */
-  FROID_EOLIEN_RAMPE: 10,
+  FROID_EOLIEN_RAMPE: 4,
   /** La traversée complète (le bord AVANT entre → le bord ARRIÈRE sort), ~une demi-journée.
    *  STRICTEMENT sous un cycle : la fenêtre élue tient dans son cycle, donc au plus un front
    *  actif à la fois — par construction, pas par garde (voir `meteo.ts`). */
@@ -3766,14 +3847,14 @@ export const METEO = {
   /** R4 — le froid sous l'empreinte : une EXPOSITION de plus (patron Brume — amortie par
    *  l'abri, planchée par le Feu et la tenue). Pour l'ORAGE c'est sa valeur DOUCE : il monte
    *  à `ORAGE_FROID.COLD` par la pente R12. Le brouillard ne refroidit pas. */
-  COLD: { pluie: 10, brouillard: 0, orage: 10, vent_de_cendre: 8 },
+  COLD: { pluie: 4, brouillard: 0, orage: 4, vent_de_cendre: 3.2 },
   /**
    * R12 — L'ORAGE PAR GRAND FROID : la ligne « blizzard » d'avant, atteinte par la pente du
    * refroidissement éolien (`u = 1`) et interpolée depuis la ligne douce de l'orage entre les
    * deux. Calibré létal en plaine de jour dès l'acte III (90 − 50 − 55 < HYPOTHERMIA) et dès
    * la nuit d'acte II (90 − 25 − 30 = 35 → `u = 1` → 35 − 55 < 0).
    */
-  ORAGE_FROID: { COLD: 55, FEU_CONSO: 2, SPEED: 0.8, VISION: 0.6 },
+  ORAGE_FROID: { COLD: 22, FEU_CONSO: 2, SPEED: 0.8, VISION: 0.6 },
   /** R5 — multiplicateur de consommation des feux sous l'empreinte d'un front mouillé.
    *  JAMAIS d'extinction : la pression, pas la spirale de mort. */
   FEU_CONSO: { pluie: 1.5, orage: 1.5, brouillard: 1, vent_de_cendre: 1.8 },
@@ -3812,44 +3893,46 @@ export const METEO = {
  *
  * ═══ CES NOMBRES SONT CALCULÉS, PAS CHOISIS ═══
  *
- * `baselineTemperature` sur une tuile d'EAU à découvert vaut, exactement :
+ * `baselineTemperature` sur une tuile d'EAU à découvert vaut, exactement (en °C — l'échelle
+ * est métrique depuis le 2026-08-22) :
  *
  *     T = BASE − ACT_COLD[acte] − (nuit ? NIGHT_COLD : 0) − brume − météo
- *       = 90 − {0, 25, 50} − {0, 30} − {0, 55} − METEO.COLD[type]
+ *       = 18 − {0, 10, 20} − {0, 12} − {0, 22} − METEO.COLD[type]
  *
  * (l'eau — terrains 4 et 6 — n'a AUCUNE entrée dans `BIOME_OFFSET`, donc biome = 0 ; et
  * une tuile d'eau n'est jamais sous un toit, donc `SHELTER_FACTOR` ne joue pas). La table
  * complète du ciel clair, à découvert :
  *
  *              acte I    acte II   acte III
- *     jour       90        65        40
- *     nuit       60        35        10
+ *     jour      +18 °C    +8 °C     −2 °C
+ *     nuit       +6 °C    −4 °C    −14 °C
  *
- * Et les fronts retranchent en plus : pluie 10, orage 10 → 55 selon le froid qu'il trouve
- * (R12 : `u = 0` tant que `T₀ ≥ 55`, donc un orage d'acte I ne mord jamais plus qu'une
- * pluie, même la nuit — plaine de nuit 60), Brume 55 — sachant que l'acte I ne tire JAMAIS
- * de Brume (`BRUME.CHANCE_PER_DAY[0] = 0`). Le point le plus froid possible de l'acte I en
- * plaine est donc une nuit sous l'averse : 60 − 10 = **50**. (Depuis le 2026-08-22 la
- * neige et le blizzard ne sont plus des types : « sous tout blizzard » se lit « sous un
- * orage là où `T₀ ≤ 45` » — mêmes nombres.)
+ * Et les fronts retranchent en plus : pluie 4 °C, orage 4 → 22 °C selon le froid qu'il
+ * trouve (R12 : `u = 0` tant que `T₀ ≥ +4 °C`, donc un orage d'acte I ne mord jamais plus
+ * qu'une pluie, même la nuit — plaine de nuit +6), Brume 22 — sachant que l'acte I ne tire
+ * JAMAIS de Brume (`BRUME.CHANCE_PER_DAY[0] = 0`). Le point le plus froid possible de
+ * l'acte I en plaine est donc une nuit sous l'averse : 6 − 4 = **+2 °C**. (Depuis le
+ * 2026-08-22 la neige et le blizzard ne sont plus des types : « sous tout blizzard » se lit
+ * « sous un orage là où `T₀ ≤ 0 °C` ».)
  *
  * De là, la promesse G2 (« les gués prennent dès les nuits froides d'acte II, les lacs
  * attendent l'acte III et les blizzards ») borne chaque seuil des DEUX côtés, et on prend
  * le MILIEU de la fenêtre — la marge est ce qui fait survivre le calibrage à une retouche
  * de `ACT_COLD` ou de `NIGHT_COLD` :
  *
- *     SEUIL_GUE     > 40 (le gué prend en acte III de JOUR)
- *                   ≤ 50 (rien ne gèle en acte I, même la nuit sous l'averse)   → 45
- *     SEUIL_PROFOND > 10 (le lac prend en acte III de nuit ET sous tout blizzard :
- *                         65 − 55 = 10 dès l'acte II, 0 ensuite)
- *                   ≤ 35 (le lac NE prend PAS aux nuits d'acte II à ciel clair)  → 20
+ *     SEUIL_GUE     > −2 (le gué prend en acte III de JOUR)
+ *                   ≤ +2 (rien ne gèle en acte I, même la nuit sous l'averse)   → 0 °C
+ *     SEUIL_PROFOND > −14 (le lac prend en acte III de nuit ET sous tout blizzard :
+ *                          8 − 22 = −14 dès l'acte II, −24 ensuite)
+ *                   ≤ −4 (le lac NE prend PAS aux nuits d'acte II à ciel clair) → −10 °C
  *
- * Ni l'un ni l'autre ne tombe sur une égalité de la table (10, 35, 40, 50, 60, 65) : un
+ * Ni l'un ni l'autre ne tombe sur une égalité de la table (−14, −4, −2, +2, +6, +8) : un
  * seuil posé PILE sur une valeur atteinte se déciderait au bit de flottant près.
  *
- * `SEUIL_PROFOND` tombe par ailleurs exactement sur `TEMPERATURE.HYPOTHERMIA` (20), et
- * ce n'est pas un hasard qu'on garde : **le lac devient un chemin là où l'homme nu
- * commence à mourir de froid.** C'est la lisibilité de « tard et lisible ».
+ * `SEUIL_PROFOND` tombe par ailleurs exactement sur `AMBIANT_HYPOTHERMIE` (−10 °C, dérivé
+ * dans `temperature.ts`), et ce n'est pas un hasard qu'on garde : **le lac devient un
+ * chemin là où l'homme nu commence à mourir de froid.** C'est la lisibilité de « tard et
+ * lisible » — et c'est désormais AFFIRMÉ, pas seulement écrit (garde de `temperature.test`).
  *
  * ═══ ET L'HYSTÉRÉSIS SE DÉDUIT DES MÊMES MARGES (G8) ═══
  *
@@ -3862,17 +3945,20 @@ export const METEO = {
  *                              bande morte)                              → H ≤ 5
  *     SEUIL_PROFOND + H ≤ 35  (sinon le lac tiendrait les nuits d'acte II) → H ≤ 15
  *
- * La contrainte du gué est la plus serrée : **H = 5**.
+ * La contrainte du gué est la plus serrée : **H = 2 °C**.
  */
 export const GEL = {
   /** L'eau PEU PROFONDE (gué, terrain 4) gèle sous ce seuil : on ne patauge plus
    *  (`speedFactor` 0,5), on glisse (`VITESSE_GLACE`). Elle était DÉJÀ praticable —
    *  le gel ne change ici que la façon d'y marcher. */
-  SEUIL_GUE: 45, // = METEO.SEUIL_NEIGE (R11) : la neige tombe là où un gué prend — garde A12
+  /** ZÉRO DEGRÉ — l'ancre de toute l'échelle (décision d'Alexis 2026-08-22), et
+   *  = `METEO.SEUIL_NEIGE` (R11) : la neige tombe là où un gué prend (garde A12). */
+  SEUIL_GUE: 0,
   /** L'eau PROFONDE (lac, rivière, terrain 6) gèle sous ce seuil et devient PRATICABLE :
    *  la carte change de forme, un village protégé par une boucle d'eau perd ses douves
-   *  (G4 — la horde traverse aussi). « Nettement plus froid » : 25 points sous le gué. */
-  SEUIL_PROFOND: 20,
+   *  (G4 — la horde traverse aussi). « Nettement plus froid » : DIX DEGRÉS sous le gué —
+   *  un lac a de l'inertie, il ne prend pas à zéro. */
+  SEUIL_PROFOND: -10,
   /**
    * G8 — LA MARGE DU DÉGEL, en points de température. L'eau PREND sous son seuil ; elle ne
    * DÉGÈLE qu'au-dessus de `seuil + HYSTERESIS`. Entre les deux s'étend une BANDE MORTE où
@@ -3881,7 +3967,7 @@ export const GEL = {
    * d'un tick à l'autre. Conséquence de jeu VOULUE : **la vallée se referme derrière ceux
    * qui l'ont traversée.** Valeur : la plus grande qui ne casse aucune promesse de G2 (5).
    */
-  HYSTERESIS: 5,
+  HYSTERESIS: 2, // deux degrés de bande morte (ex-jauge 5)
   /**
    * G8 — LA PORTÉE DE MÉMOIRE de l'hystérésis, en ticks. Rien n'étant stocké, l'état
    * « c'était gelé » se relit en RECALCULANT la température de ce point il y a `RETARD`
@@ -3994,7 +4080,7 @@ export const FLORE = {
    *  - **la vallée entière s'arrête en acte III** (45 au mieux, en forêt et de jour).
    * Et il stérilise le Névé (50) et le Glacier dès le premier jour, sans une ligne de plus.
    */
-  SEUIL_GEL: 52,
+  SEUIL_GEL: 2.8,
   /**
    * LE GEL TUE LA CULTURE À CIEL OUVERT (F5) — le seul endroit où le froid DÉTRUIT.
    *
@@ -4005,7 +4091,7 @@ export const FLORE = {
    * nuit tue. Le potager de plein air devient un pari, puis n'est plus jouable — et c'est
    * ce qui donne enfin son prix à la serre (`agriculture.md` R7).
    */
-  SEUIL_MORTEL: 22,
+  SEUIL_MORTEL: -9.2,
 } as const
 
 /**

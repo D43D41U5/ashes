@@ -10,7 +10,7 @@
  * que snapshot = JSON.stringify et que le transport Worker/réseau soit
  * trivial.
  */
-import { BALANCE, CARRY, COMBAT, HUNT, SLOTS, TERRAIN_GRASS, TICK_DT_S, type FishSpecies, type RecipeId, type Strike } from './balance'
+import { BALANCE, CARRY, COMBAT, HUNT, SLOTS, TEMPERATURE, TERRAIN_GRASS, TICK_DT_S, type FishSpecies, type RecipeId, type Strike } from './balance'
 import { moveAvatar } from './collision'
 import { advanceDegel } from './gel'
 import { advanceEnvols } from './faune'
@@ -562,7 +562,7 @@ export function spawnEntity(state: SimState, x: number, y: number, slots: number
     y,
     inventory: makeInventory(slots),
     hunger: 100,
-    temperature: 100,
+    temperature: TEMPERATURE.CORPS_SAIN,
     skills: {},
     /**
      * UN AVATAR NAÎT AVEC SA PREMIÈRE CASE ARMÉE (décision d'Alexis, 2026-08-20, question ⑨).

@@ -5,7 +5,7 @@
  * propriété affirmée à chaque fois est UNE propriété de l'image cuite — jamais un pixel choisi.
  */
 import { describe, expect, it } from 'vitest'
-import { PAVE, PAVE_PX, PRIORITE_PAVE, SURFACES, cuireChunk, estEau, estStructurel, estSurface, frange, prioriteDe } from './paves'
+import { PAVE, PAVE_COTE, PAVE_COTE_BAVE, PAVE_PX, PRIORITE_PAVE, SURFACES, cuireChunk, estEau, estStructurel, estSurface, frange, prioriteDe } from './paves'
 
 const N = PAVE.CHUNK
 const S = N * PAVE_PX
@@ -14,8 +14,11 @@ const S = N * PAVE_PX
 function cuire(terrainAt: (tx: number, ty: number) => number, couleur = 0x808080): Uint8ClampedArray {
   return cuireChunk({ cx: 0, cy: 0, terrainAt, couleurAt: () => couleur, trameDe: () => null }).sol
 }
+/** Le pixel (x, y) DU CHUNK — le tampon, lui, porte le débord (`PAVE.BAVE`) tout autour, donc
+ *  ses coordonnées sont décalées d'autant. Toutes les gardes se lisent en coordonnées de chunk :
+ *  le débord est une affaire de pose, pas de contenu. */
 const px = (img: Uint8ClampedArray, x: number, y: number): [number, number, number, number] => {
-  const o = (y * S + x) * 4
+  const o = ((y + PAVE.BAVE) * PAVE_COTE_BAVE + (x + PAVE.BAVE)) * 4
   return [img[o]!, img[o + 1]!, img[o + 2]!, img[o + 3]!]
 }
 
@@ -79,6 +82,28 @@ describe('la cuisson d’un chunk', () => {
     // Deux brins de 3 px par tuile : au plus 6 × N² pixels marqués, le reste à plat.
     expect(plats).toBeGreaterThanOrEqual(S * S - 6 * N * N)
     expect(plats).toBeLessThan(S * S) // et il y a bien des brins
+  })
+
+  it('LE DÉBORD (PAVE.BAVE) — l’image dépasse d’un pixel, et ce pixel est CELUI DU VOISIN', () => {
+    // La couture d'un pixel qu'Alexis voyait venait du bord de deux images qui se TOUCHENT à un
+    // demi-pixel d'écran. Le débord les fait se RECOUVRIR — mais il ne vaut que si le pixel
+    // déborde à l'identique de ce que le voisin y peint : sinon on aurait échangé un trait
+    // sombre contre un décalage d'un pixel, ce qui est pire (mesuré une fois, jamais deux).
+    const terrainAt = (tx: number, ty: number): number => ((tx * 7 + ty * 13) % 5 === 0 ? 17 : (tx + ty) % 3 === 0 ? 1 : 3)
+    const monde = { terrainAt, couleurAt: (tx: number, ty: number) => 0x406080 + ((tx * 3 + ty) % 7), trameDe: () => null }
+    const a = cuireChunk({ cx: 0, cy: 0, ...monde }).sol
+    const b = cuireChunk({ cx: 1, cy: 0, ...monde }).sol
+    expect(a.length).toBe(PAVE_COTE_BAVE * PAVE_COTE_BAVE * 4)
+    // La colonne DÉBORDÉE de A (x = S, hors de son chunk) est la colonne 0 du chunk B.
+    let compares = 0
+    for (let y = 0; y < S; y++) {
+      for (let d = 0; d < PAVE.BAVE; d++) {
+        expect(px(a, PAVE_COTE + d, y), `débord droit de A en y=${y}`).toEqual(px(b, d, y))
+        expect(px(b, -1 - d, y), `débord gauche de B en y=${y}`).toEqual(px(a, PAVE_COTE - 1 - d, y))
+        compares += 2
+      }
+    }
+    expect(compares).toBe(2 * S * PAVE.BAVE)
   })
 
   it('R10 — la falaise reste transparente dans le sol, et aucune frange ne déborde dessus', () => {

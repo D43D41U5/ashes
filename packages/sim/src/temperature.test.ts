@@ -6,14 +6,16 @@ import { createEmptyMap } from './map'
 import { createSim, spawnEntity, type Entity, type SimState } from './sim'
 import {
   advanceTemperature,
+  AMBIANT_HYPOTHERMIE,
   ambientTemperature,
+  cibleCorporelle,
   coldDamagePerTick,
   coldEffectRamp,
   coldSpeedFactor,
   coldStaminaRegenFactor,
   driftStep,
 } from './temperature'
-import { DAY_TICKS_PER_CYCLE, TICKS_PER_SEASON_DAY } from './time'
+import { cycleOffsetForStartHour, DAY_TICKS_PER_CYCLE, TICKS_PER_SEASON_DAY } from './time'
 
 /** spawnEntity retourne un id → on récupère l'objet entité. */
 function spawn(state: SimState, x: number, y: number): Entity {
@@ -161,7 +163,9 @@ describe('hypothermie', () => {
 describe("tyrannie de l'acte", () => {
   it('même lieu/heure : ambiant strictement décroissant I → II → III', () => {
     const ambientAtDay = (day: number): number => {
-      const state = createSim(1, { calendarScale: 1 })
+      // MIDI : depuis la rampe de nuit (`partDeNuit`), le tick 0 est l'aube et porte le plein
+      // `NIGHT_COLD`. Ce cas isole l'ACTE — il lui faut une heure sans froid nocturne.
+      const state = createSim(1, { calendarScale: 1, cycleOffset: cycleOffsetForStartHour(12) })
       flatMap(state, 9 /* scree, offset biome 0 */)
       state.tick = (day - 1) * TICKS_PER_SEASON_DAY
       return ambientTemperature(state, 5, 5)
@@ -194,13 +198,17 @@ describe('le froid létal & la tenue d’hiver (V2-15/16, fork froid tranché)',
   it('LE FORK : la plaine est LÉTALE en acte III de nuit (le discours devient vrai)', () => {
     // Ambiant plaine (biome 0), acte III, nuit = BASE − ACT_COLD[2] − NIGHT_COLD.
     const plaineActIIINuit = T.BASE - T.ACT_COLD(3) - T.NIGHT_COLD
-    expect(plaineActIIINuit).toBeLessThan(T.HYPOTHERMIA) // sous le seuil : ça TUE
-    expect(coldDamagePerTick(plaineActIIINuit)).toBeGreaterThan(0)
+    // ⚠ DEUX ÉCHELLES DEPUIS LE 2026-08-22 : `plaineActIIINuit` est un AIR (−14 °C), et les
+    // dégâts se lisent sur un CORPS. On passe donc par `cibleCorporelle` — l'endroit exact où
+    // l'air devient une température de corps. L'ancienne jauge unique laissait comparer les
+    // deux sans le voir ; ici la conversion est écrite, donc vérifiable.
+    expect(plaineActIIINuit).toBeLessThan(AMBIANT_HYPOTHERMIE) // sous le seuil : cet air TUE
+    expect(coldDamagePerTick(cibleCorporelle(plaineActIIINuit))).toBeGreaterThan(0)
   })
 
   it('la tenue d’hiver plancher AU-DESSUS de l’hypothermie → zéro dégât de froid', () => {
-    expect(T.TENUE_FLOOR).toBeGreaterThan(T.HYPOTHERMIA)
-    expect(coldDamagePerTick(T.TENUE_FLOOR)).toBe(0)
+    expect(T.TENUE_FLOOR).toBeGreaterThan(AMBIANT_HYPOTHERMIE)
+    expect(coldDamagePerTick(cibleCorporelle(T.TENUE_FLOOR))).toBe(0)
   })
 
   it('sur glacier de nuit, la tenue d’hiver SAUVE : le nu MEURT de froid, le vêtu non', () => {
@@ -212,8 +220,10 @@ describe('le froid létal & la tenue d’hiver (V2-15/16, fork froid tranché)',
     const chaud = createSim(1, cold())
     const vetu = spawn(chaud, 5, 5)
     addItems(vetu.inventory, { tenue_hiver: 1 }) // on l'habille
-    nu.temperature = 25
-    vetu.temperature = 25
+    // Un corps DÉJÀ refroidi (30 °C : sous le confort, au-dessus de l'hypothermie) — assez
+    // bas pour que la chute soit courte, assez haut pour que la tenue ait quelque chose à tenir.
+    nu.temperature = 30
+    vetu.temperature = 30
     for (let t = 0; t < 8000; t++) {
       advanceTemperature(froid)
       advanceTemperature(chaud)
@@ -225,6 +235,6 @@ describe('le froid létal & la tenue d’hiver (V2-15/16, fork froid tranché)',
     expect(geleNu).toBe(true) // le nu a gelé
     expect(geleVetu).toBe(false) // le vêtu, jamais
     expect(vetu.hp).toBe(100) // et il n'a pas pris un seul PV de froid
-    expect(vetu.temperature).toBeGreaterThan(T.HYPOTHERMIA) // il reste au-dessus du seuil
+    expect(vetu.temperature).toBeGreaterThan(T.CORPS_HYPOTHERMIE) // il reste au-dessus du seuil
   })
 })

@@ -415,7 +415,9 @@ export function frontEstBlizzard(state: SimState, front: Pick<MeteoFront, 'type'
   if (front.type !== 'orage') return false
   const milieu = Math.floor((front.startTick + front.endTick) / 2)
   const time = gameTimeAt(state, milieu)
-  const t0 = TEMPERATURE.BASE - TEMPERATURE.ACT_COLD(time.act) - (time.isNight ? TEMPERATURE.NIGHT_COLD : 0)
+  // `time.nuit` et non `isNight` : la même pente que `expositionSansMeteo`, sinon l'annonce
+  // de la veille et l'entrée du lendemain cesseraient de lire le même froid (la promesse de R9).
+  const t0 = TEMPERATURE.BASE - TEMPERATURE.ACT_COLD(time.act) - TEMPERATURE.NIGHT_COLD * time.nuit
   return neigeA(t0 < 0 ? 0 : t0)
 }
 

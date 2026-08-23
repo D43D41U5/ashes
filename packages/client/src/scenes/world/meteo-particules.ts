@@ -50,6 +50,18 @@
  * locale (donc dense au cœur, épars au bord — le gradient spatial, pas seulement le total).
  * Une pente continue de bout en bout, jamais un interrupteur.
  *
+ * ═══ RIEN NE SE PEINT AU SOL — L'ÉCLABOUSSURE EST RETIRÉE (demande d'Alexis, 2026-08-23) ═══
+ *
+ * Une goutte a longtemps rendu, en touchant, deux pixels de 4 px à alpha 0,34 (0,38 sous
+ * l'orage) : sa GERBE. C'était un CHOIX assumé — « une gerbe d'impact est de l'eau projetée,
+ * plus large et plus dense que le trait qui l'a faite » — et c'est précisément ce choix qui
+ * l'a rendue TROP PRONONCÉE une fois la goutte descendue à 1 px monde et à alpha 0,11/0,22 :
+ * l'impact pesait trois fois la goutte et quatre fois sa surface, si bien que le sol pétillait
+ * plus que le ciel ne pleuvait. Le mécanisme est SUPPRIMÉ, pas mis à zéro — pool, âge,
+ * compteurs et champs de profil compris. La hauteur de chute (`Particule.chute`) RESTE : elle
+ * n'existait pas pour la gerbe mais pour la dispersion (sans elle, tout toucherait sur le bord
+ * bas du cadre, en une rangée) ; une goutte qui a touché renaît simplement en silence.
+ *
  * ═══ L'INTENSITÉ SE RELIT INLINE, ET UN TEST LE PROUVE ═══
  *
  * `meteoIntensityAt` de `/sim` reste L'AUTORITÉ — mais elle recalcule la bande et alloue son
@@ -81,11 +93,6 @@ export const GRAIN_PX = 4
  * plafond redevient ce qu'il doit être — un filet, jamais le peintre.
  */
 export const BUDGET_PARTICULES = 650
-
-/** Les éclaboussures vivantes au même instant — un pool à part, minuscule. */
-export const BUDGET_ECLABOUSSURES = 96
-/** Ce que dure une éclaboussure, en ms d'horloge de scène : deux ou trois images, pas plus. */
-export const ECLABOUSSURE_MS = 90
 
 /** Le profil de chute d'un ciel. Tout ce qui distingue une goutte d'un flocon est ici. */
 export interface ProfilChute {
@@ -127,15 +134,6 @@ export interface ProfilChute {
   readonly teinte: readonly [number, number, number]
   /** L'opacité par cran [lointain, proche] — deux CRANS, jamais une rampe (patron brume). */
   readonly alpha: readonly [number, number]
-  /** La goutte éclabousse en touchant le sol ; le flocon se pose sans bruit. */
-  readonly eclabousse: boolean
-  /**
-   * L'OPACITÉ DE L'ÉCLABOUSSURE — la sienne, pas celle de la goutte. Une gerbe d'impact est
-   * plus LARGE et plus DENSE que le trait qui l'a faite (c'est de l'eau projetée, pas de
-   * l'eau qui tombe) : elle garde le grain de 4 px et son propre poids. Sans ça, l'affiner
-   * avec la goutte l'aurait effacée — deux pixels de 1 px à alpha 0,12 ne se voient pas.
-   */
-  readonly alphaEclab: number
   /** La hauteur de chute tirée à la naissance, en tuiles [min, max] — voir `Particule.chute`. */
   readonly hauteur: readonly [number, number]
 }
@@ -172,7 +170,7 @@ export const PROFILS: Record<MeteoAspect, ProfilChute | null> = {
   pluie: {
     vLimite: 9, g: 30, vent: 0.8, flotte: 0, flottePuls: 0,
     trainee: 0.16, grainPx: 1, taille: [1, 1], densite: 0.69,
-    teinte: [178, 199, 235], alpha: [0.11, 0.22], eclabousse: true, alphaEclab: 0.34,
+    teinte: [178, 199, 235], alpha: [0.11, 0.22],
     hauteur: [5, 20],
   },
   brouillard: null,
@@ -182,7 +180,7 @@ export const PROFILS: Record<MeteoAspect, ProfilChute | null> = {
   neige: {
     vLimite: 1.2, g: 6, vent: 0.35, flotte: 0.8, flottePuls: 1.7,
     trainee: 0, grainPx: GRAIN_PX, taille: [1, 2], densite: 0.55,
-    teinte: [250, 252, 255], alpha: [0.42, 0.82], eclabousse: false, alphaEclab: 0,
+    teinte: [250, 252, 255], alpha: [0.42, 0.82],
     hauteur: [8, 26],
   },
   // L'ORAGE : la pluie en plus rapide et PENCHÉE — le vent monte à trois tuiles/s, la
@@ -198,7 +196,7 @@ export const PROFILS: Record<MeteoAspect, ProfilChute | null> = {
   orage: {
     vLimite: 10.5, g: 34, vent: 3.2, flotte: 0, flottePuls: 0,
     trainee: 0.11, grainPx: 1, taille: [1, 1], densite: 0.60,
-    teinte: [170, 192, 232], alpha: [0.13, 0.26], eclabousse: true, alphaEclab: 0.38,
+    teinte: [170, 192, 232], alpha: [0.13, 0.26],
     hauteur: [5, 18],
   },
   // LE BLIZZARD RASE : son vent (11) dépasse sa chute (2,1) — la trajectoire est PLUS
@@ -209,7 +207,7 @@ export const PROFILS: Record<MeteoAspect, ProfilChute | null> = {
   blizzard: {
     vLimite: 2.1, g: 9, vent: 11, flotte: 0.5, flottePuls: 2.4,
     trainee: 0.06, grainPx: GRAIN_PX, taille: [1, 2], densite: 0.66,
-    teinte: [252, 253, 255], alpha: [0.44, 0.86], eclabousse: false, alphaEclab: 0,
+    teinte: [252, 253, 255], alpha: [0.44, 0.86],
     hauteur: [10, 30],
   },
   // ═══ LE VENT DE CENDRE : ÇA NE TOMBE PAS, ÇA PASSE ═══
@@ -222,9 +220,6 @@ export const PROFILS: Record<MeteoAspect, ProfilChute | null> = {
   //     le blizzard (11 contre 2,1). On lit une matière CHASSÉE, pas une matière qui descend.
   //   • LA FLOTTE (1,1) EST LA PLUS HAUTE DE LA TABLE — une escarbille ne file pas droit,
   //     elle tourbillonne. C'est ce qui la sépare du flocon de blizzard, à silhouette égale.
-  //   • PAS D'ÉCLABOUSSURE — c'est sec. Une particule de cendre qui ferait une gerbe en
-  //     touchant le sol raconterait de l'eau, et `MOUILLE.vent_de_cendre` est faux : les
-  //     deux tables doivent dire la même chose (le feu consomme PLUS sous ce vent, 1,8).
   //
   // Grain de 4 px (`GRAIN_PX`), comme la neige et le blizzard : les FX de ce jeu sont
   // quantifiés sur la grille de l'art, jamais lissés. Densité tenue à 0,58 — sous la neige,
@@ -232,7 +227,7 @@ export const PROFILS: Record<MeteoAspect, ProfilChute | null> = {
   vent_de_cendre: {
     vLimite: 1.4, g: 7, vent: 9, flotte: 1.1, flottePuls: 2.9,
     trainee: 0.09, grainPx: GRAIN_PX, taille: [1, 2], densite: 0.58,
-    teinte: [166, 148, 132], alpha: [0.30, 0.62], eclabousse: false, alphaEclab: 0,
+    teinte: [166, 148, 132], alpha: [0.30, 0.62],
     hauteur: [6, 24],
   },
 }
@@ -282,21 +277,24 @@ export interface Particule {
   phase: number
   /** 0 = lointain (pâle, fin) · 1 = proche (franc, gros). Deux crans, jamais une rampe. */
   cran: 0 | 1
-  /** Ce qu'il reste à tomber avant de toucher, en tuiles. À zéro : éclaboussure et renaissance.
+  /** Ce qu'il reste à tomber avant de toucher, en tuiles. À zéro : renaissance, en silence.
    *  C'est une FICTION DE PROFONDEUR assumée — la vue est du dessus, il n'y a pas d'altitude :
    *  sans elle, toutes les gouttes toucheraient sur le bord bas du cadre, en une rangée. */
   chute: number
   vive: boolean
 }
 
-/** Une éclaboussure : deux pixels, deux ou trois images. */
-export interface Eclaboussure {
-  x: number
-  y: number
-  /** Âge en ms d'horloge de scène. */
-  age: number
-  vive: boolean
-}
+/**
+ * PAR OÙ UNE PARTICULE ENTRE. Ce n'est pas un détail de plomberie : c'est ce qui rend le
+ * rideau uniforme là où la loi d'intensité l'est.
+ *   • `volume` — n'importe où dans l'aire d'émission. Une goutte qui a TOUCHÉ (sa hauteur de
+ *     chute épuisée) renaît ainsi, et c'est aussi ainsi qu'on sème un rideau pas encore établi.
+ *   • `flux` — sur un bord tiré au débit (haut contre côté). Pour une naissance NETTE, quand
+ *     rien ne dit d'où elle viendrait.
+ *   • `haut` · `bas` · `ouest` · `est` — sur CE bord-là. Une particule qui sort du cadre
+ *     rentre par le bord OPPOSÉ à celui par lequel elle est sortie.
+ */
+export type Entree = 'volume' | 'flux' | 'haut' | 'bas' | 'ouest' | 'est'
 
 /** Un segment de traînée à peindre, en CELLULES de 4 px monde (bords francs, jamais lissés). */
 export interface Run {
@@ -389,22 +387,10 @@ function poser(hors: Run[], i: number, cx: number, cy: number, w: number, h: num
  */
 export class ChampParticules {
   readonly particules: Particule[] = []
-  readonly eclaboussures: Eclaboussure[] = []
   /** Combien de particules sont vivantes — LU PAR LE SMOKE. */
   vivantes = 0
   /** Le compte visé ce frame (budget × intensité moyenne du cadre) — LU PAR LE SMOKE. */
   cible = 0
-  /** Éclaboussures vivantes — LU PAR LE SMOKE (une gerbe de 2 images ne se photographie pas). */
-  eclabsVivantes = 0
-  /**
-   * ÉCLABOUSSURES ÉCLOSES DEPUIS TOUJOURS — le compteur qui, lui, prouve qu'elles existent.
-   *
-   * MESURÉ : sous swiftshader la boucle tourne à quelques images par seconde, si bien qu'une
-   * gerbe de 90 ms naît et meurt DANS LE MÊME INTERVALLE — `eclabsVivantes` relève 0 alors
-   * que des centaines sont tombées. Un compteur cumulatif ne ment pas là où l'instantané ne
-   * voit rien : c'est le patron « une gerbe ne se photographie pas, elle se compte ».
-   */
-  eclabsTotal = 0
   private readonly rng: () => number
   private t = 0
 
@@ -413,26 +399,21 @@ export class ChampParticules {
     for (let i = 0; i < BUDGET_PARTICULES; i++) {
       this.particules.push({ x: 0, y: 0, vx: 0, vy: 0, phase: 0, cran: 0, chute: 0, vive: false })
     }
-    for (let i = 0; i < BUDGET_ECLABOUSSURES; i++) {
-      this.eclaboussures.push({ x: 0, y: 0, age: 0, vive: false })
-    }
   }
 
   /** Tout meurt — le front est sorti, ou le type n'a pas de grain (brouillard). */
   vider(): void {
     for (const p of this.particules) p.vive = false
-    for (const e of this.eclaboussures) e.vive = false
     this.vivantes = 0
-    this.eclabsVivantes = 0
     this.cible = 0
   }
 
   /**
-   * UNE IMAGE. `dt` en secondes (borné par l'appelant), `dtMs` pour l'âge des éclaboussures.
-   * `vue` est le cadre visible en tuiles, `bande` et `rampe` disent où il pleut.
+   * UNE IMAGE. `dt` en secondes (borné par l'appelant) ; `vue` est le cadre visible en
+   * tuiles, `bande` et `rampe` disent où il pleut.
    */
   update(
-    dt: number, dtMs: number, profil: ProfilChute, vue: Vue, bande: Bande, rampe: number,
+    dt: number, profil: ProfilChute, vue: Vue, bande: Bande, rampe: number,
     /** Ce que d'AUTRES particules occupent déjà du budget partagé (la gerbe de la foudre) :
      *  le plafond du rideau descend d'autant. Les 650 sont un budget de MACHINE — il se
      *  partage, il ne s'empile pas par système. */
@@ -472,17 +453,28 @@ export class ChampParticules {
       p.x += (p.vx + osc) * dt
       p.y += p.vy * dt
       p.chute -= p.vy * dt
-      // Touché : la goutte éclabousse, puis renaît. Le flocon se pose sans bruit.
+      // Touché : sa hauteur de chute est épuisée, elle renaît ailleurs dans l'aire. RIEN NE
+      // SE PEINT AU SOL — l'éclaboussure a été retirée le 2026-08-23 (voir l'en-tête).
       if (p.chute <= 0) {
-        if (profil.eclabousse) this.eclabousser(p.x, p.y)
-        this.naitre(p, profil, vue, bande, rampe, false)
+        this.naitre(p, profil, vue, bande, rampe, 'volume')
         vivantes++
         continue
       }
-      // Sorti du cadre, ou sorti de la bande : on recycle sur le bord d'AMONT.
+      // Sortie du cadre : elle rentre PAR LE BORD OPPOSÉ, celui d'où elle vient — pas par un
+      // bord tiré au flux. Ce qui sort par le bas rentre par le haut, ce qui sort à l'est
+      // rentre à l'ouest : l'entrée d'un côté ÉGALE la sortie de l'autre, par construction.
+      // (Le tirage au flux, lui, donnait au bord ouest une part de TOUTES les sorties, y
+      // compris celles du bas — d'où un excès à gauche que rien ne compensait.)
+      // Sortie de la BANDE sans sortir du cadre : on ne sait pas d'où elle vient, c'est le
+      // flux qui tranche.
       if (p.x < vue.x0 || p.x > vue.x1 || p.y < vue.y0 || p.y > vue.y1
         || intensiteDansBande(bande, rampe, p.x, p.y) <= 0) {
-        this.naitre(p, profil, vue, bande, rampe, true)
+        const par: Entree = p.y > vue.y1 ? 'haut'
+          : p.y < vue.y0 ? 'bas'
+            : p.x > vue.x1 ? 'ouest'
+              : p.x < vue.x0 ? 'est'
+                : 'flux'
+        this.naitre(p, profil, vue, bande, rampe, par)
       }
       vivantes++
     }
@@ -496,6 +488,7 @@ export class ChampParticules {
       // Une fois établi, elle ne renaît que par un bord et par petites bouffées : la lisière
       // s'éclaircit en fondu, jamais par à-coups.
       const etabli = vivantes * 2 >= this.cible
+      const par: Entree = etabli ? 'flux' : 'volume'
       const quota = etabli ? Math.max(4, Math.ceil(this.cible * 0.12)) : this.cible - vivantes
       let nes = 0
       let essais = 0
@@ -503,7 +496,7 @@ export class ChampParticules {
         if (nes >= quota || essais > quota * 4 + 16) break
         if (p.vive) continue
         essais++
-        this.naitre(p, profil, vue, bande, rampe, etabli)
+        this.naitre(p, profil, vue, bande, rampe, par)
         if (!p.vive) continue
         nes++
         vivantes++
@@ -520,27 +513,6 @@ export class ChampParticules {
     }
     this.vivantes = vivantes
 
-    // ── LES ÉCLABOUSSURES : sur l'horloge de la SCÈNE, jamais un timer mural. ──
-    let ne = 0
-    for (const e of this.eclaboussures) {
-      if (!e.vive) continue
-      e.age += dtMs
-      if (e.age >= ECLABOUSSURE_MS) e.vive = false
-      else ne++
-    }
-    this.eclabsVivantes = ne
-  }
-
-  private eclabousser(x: number, y: number): void {
-    for (const e of this.eclaboussures) {
-      if (e.vive) continue
-      e.x = x
-      e.y = y
-      e.age = 0
-      e.vive = true
-      this.eclabsTotal++
-      return
-    }
   }
 
   /**
@@ -548,10 +520,37 @@ export class ChampParticules {
    * front (dense au cœur, éparse au bord), et pas seulement le total. Six essais, puis on
    * renonce pour cette image : mieux vaut une particule de moins qu'une boucle qui rame
    * quand le cadre n'a presque pas de bande.
+   *
+   * ═══ UN BORD D'AMONT HORS BANDE N'EST PAS UN BORD D'AMONT ═══
+   *
+   * DÉFAUT MESURÉ (rapport d'Alexis, 2026-08-23 ; garde `le rideau ne penche pas d'un côté`) :
+   * sous un front d'axe `y` dont la lisière tombe DANS le cadre, le haut du cadre est HORS
+   * bande — donc toute naissance tirée sur le bord haut sortait à I = 0 et mourait, tandis
+   * que celles du bord OUEST (`vent > 0` ⇒ `x = vue.x0`) passaient. Le rideau se recomposait
+   * par la gauche, et il y RESTAIT : à 9 tuiles/s de chute pour 0,8 de vent, une goutte ne
+   * traverse pas le cadre avant de toucher. **Relevé : gauche 254 / droite 13 sous la pluie,
+   * 217 / 20 sous l'orage** — pour une loi d'intensité qui ne dépend même pas de x.
+   *
+   * LE REMÈDE EST GÉOMÉTRIQUE, PAS UN QUOTA D'ESSAIS : si le point tiré sur le bord est hors
+   * bande, ce bord ne laisse rien entrer, et la source qui reste est VOLUMIQUE (la bande
+   * avance sur le sol : le rideau s'y remplit par le dedans, il n'y coule pas par un bord).
+   * On retire donc ce même essai dans le cadre. C'est INERTE quand le cadre est tout entier
+   * dans la bande — le repli ne tire pas, le flux d'aléa ne bouge pas, les gardes d'avant
+   * ne bronchent pas — et le REJET qui suit garde la rampe : rien ne fuit au-delà de `lo`.
    */
-  private naitre(p: Particule, profil: ProfilChute, vue: Vue, bande: Bande, rampe: number, parLeBord: boolean): void {
-    const w = vue.x1 - vue.x0
-    const h = vue.y1 - vue.y0
+  private naitre(p: Particule, profil: ProfilChute, vue: Vue, bande: Bande, rampe: number, par: Entree): void {
+    // ── L'AIRE D'ÉMISSION : LE CADRE INTERSECTÉ AVEC LA BANDE, jamais le cadre nu. ──
+    // Identité quand le cadre est immergé (le cas courant) ; sous une lisière, elle DÉCOUPE.
+    // Ses bords sont ceux qui comptent, et sa hauteur est celle qui pèse dans le flux : à
+    // 15 tuiles de bande visible sur 25 de cadre, le débit latéral vaut 15, pas 25 — sans
+    // quoi le bord ouest reçoit deux fois trop, et ça se voit (le décile de gauche double).
+    const ax0 = bande.axis === 'x' ? Math.max(vue.x0, bande.lo) : vue.x0
+    const ax1 = bande.axis === 'x' ? Math.min(vue.x1, bande.hi) : vue.x1
+    const ay0 = bande.axis === 'y' ? Math.max(vue.y0, bande.lo) : vue.y0
+    const ay1 = bande.axis === 'y' ? Math.min(vue.y1, bande.hi) : vue.y1
+    const w = ax1 - ax0
+    const h = ay1 - ay0
+    if (w <= 0 || h <= 0) { p.vive = false; return }
     // Par quel bord ? PAR LE FLUX : la proportion qui entre par le haut vaut le débit
     // vertical (vLimite × largeur) contre le débit latéral (|vent| × hauteur). Le blizzard
     // entre donc surtout par l'ouest, la pluie par le haut — sans qu'on ait à le dire.
@@ -560,15 +559,24 @@ export class ChampParticules {
     for (let essai = 0; essai < 6; essai++) {
       let x: number
       let y: number
-      if (!parLeBord) {
-        x = vue.x0 + this.rng() * w
-        y = vue.y0 + this.rng() * h
-      } else if (this.rng() * (fluxHaut + fluxCote) < fluxHaut) {
-        x = vue.x0 + this.rng() * w
-        y = vue.y0
+      // Le tirage au flux ne tranche QUE le cas `flux` : ailleurs le bord est nommé.
+      const bord: Entree = par !== 'flux' ? par
+        : this.rng() * (fluxHaut + fluxCote) < fluxHaut ? 'haut'
+          : profil.vent >= 0 ? 'ouest' : 'est'
+      if (bord === 'volume') {
+        x = ax0 + this.rng() * w
+        y = ay0 + this.rng() * h
+      } else if (bord === 'haut' || bord === 'bas') {
+        x = ax0 + this.rng() * w
+        y = bord === 'haut' ? ay0 : ay1
       } else {
-        x = profil.vent >= 0 ? vue.x0 : vue.x1
-        y = vue.y0 + this.rng() * h
+        x = bord === 'ouest' ? ax0 : ax1
+        y = ay0 + this.rng() * h
+      }
+      // Ce bord-là ne laisse rien entrer : on se replie sur la source VOLUMIQUE, dans l'aire.
+      if (bord !== 'volume' && intensiteDansBande(bande, rampe, x, y) <= 0) {
+        x = ax0 + this.rng() * w
+        y = ay0 + this.rng() * h
       }
       const I = intensiteDansBande(bande, rampe, x, y)
       if (I <= 0 || this.rng() > I) continue

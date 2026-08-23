@@ -4,7 +4,6 @@ import {
   FLORE,
   METEO,
   NODE_DEFS,
-  TEMPERATURE,
   TERRAIN_FOREST,
   TERRAIN_GRASS,
   TERRAIN_MARSH,
@@ -20,7 +19,7 @@ import { floreGelee, gelMortel } from './gel'
 import { countOf } from './items'
 import { createEmptyMap } from './map'
 import { meteoIntensityAt } from './meteo'
-import { baselineTemperatureAt, climatFlore } from './temperature'
+import { AMBIANT_HYPOTHERMIE, baselineTemperatureAt, climatFlore } from './temperature'
 import { createSim, spawnEntity, step, type PlayerAction, type SimState } from './sim'
 import { addStructure, getVillageOf, grantItems, type Structure } from './village'
 import { DAY_TICKS_PER_CYCLE, getGameTime, TICKS_PER_CYCLE, TICKS_PER_SEASON_DAY } from './time'
@@ -32,9 +31,12 @@ const FAST = TICKS_PER_SEASON_DAY / TICKS_PER_CYCLE
 function makeSim(terrain = TERRAIN_GRASS, nodes: ResourceNode[] = []): SimState {
   return createSim(7, { map: createEmptyMap(40, 40, terrain), calendarScale: FAST, nodes })
 }
-/** Le tick du jour de saison `jour`, de jour ou de nuit. Vérifié par `getGameTime` sur place. */
+/** Le tick du jour de saison `jour`, de jour ou de nuit. Vérifié par `getGameTime` sur place.
+ *  LE JOUR, C'EST MIDI et non l'aube : depuis la rampe de nuit (`partDeNuit`), le tick 0 d'un
+ *  cycle porte encore le plein `NIGHT_COLD` — un « de jour » posé là mesurerait la nuit. */
+const MIDI = Math.round(DAY_TICKS_PER_CYCLE / 2)
 function auJour(sim: SimState, jour: number, nuit = false): number {
-  return jour * TICKS_PER_CYCLE + (nuit ? DAY_TICKS_PER_CYCLE + 10 : 10)
+  return jour * TICKS_PER_CYCLE + (nuit ? DAY_TICKS_PER_CYCLE + 10 : MIDI)
 }
 function act(sim: SimState, id: number, action: PlayerAction): void {
   step(sim, [{ entityId: id, dx: 0, dy: 0, action }])
@@ -332,7 +334,7 @@ describe('A9/A10 — le potager : on ne sème pas une terre gelée, et le gel tu
 
   it('A10bis — le gel simple ne tue PAS : une parcelle gelée de jour en acte III garde sa culture', () => {
     const sim = makeSim()
-    sim.tick = 50 * TICKS_PER_CYCLE + 10 // acte III, de JOUR : 40 — gelé (< 52), pas mortel (> 22)
+    sim.tick = 50 * TICKS_PER_CYCLE + MIDI // acte III, de JOUR : 40 — gelé (< 52), pas mortel (> 22)
     const { parcelle } = withFerme(sim)
     expect(floreGelee(sim, 13, 12)).toBe(true)
     expect(gelMortel(sim, 13, 12)).toBe(false)
@@ -348,8 +350,10 @@ describe('les seuils tiennent leurs promesses', () => {
   })
 
   it('le seuil mortel est juste au-dessus de l’hypothermie humaine : la culture meurt où l’homme meurt', () => {
-    expect(FLORE.SEUIL_MORTEL).toBeGreaterThan(TEMPERATURE.HYPOTHERMIA)
-    expect(FLORE.SEUIL_MORTEL - TEMPERATURE.HYPOTHERMIA).toBeLessThan(5)
+    // Les DEUX sont des seuils d'AIR (la culture et l'homme subissent le même froid) : le
+    // repère est `AMBIANT_HYPOTHERMIE`, l'air où un corps nu se stabilise à l'hypothermie.
+    expect(FLORE.SEUIL_MORTEL).toBeGreaterThan(AMBIANT_HYPOTHERMIE)
+    expect(FLORE.SEUIL_MORTEL - AMBIANT_HYPOTHERMIE).toBeLessThan(2)
     expect(FLORE.SEUIL_MORTEL).toBeLessThan(FLORE.SEUIL_GEL) // suspendre AVANT de tuer
   })
 

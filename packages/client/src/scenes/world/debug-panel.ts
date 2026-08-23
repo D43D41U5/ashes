@@ -9,15 +9,35 @@
  * DOM et non Phaser : un bouton se clique sans ambiguïté, et le canvas upscalé
  * (Scale.FIT) rendrait des libellés flous. Comme tout le debug, ce module n'est
  * importé que sous `import.meta.env.DEV` : Rollup l'élimine du bundle de prod.
+ *
+ * ═══ LE RELEVÉ THERMIQUE (2026-08-22) ═══
+ *
+ * Le panneau porte aussi un CADRAN : les quatre températures de la tuile sous les pieds,
+ * plus ce que le ciel y fait. Elles ne sont pas décoratives — depuis que la neige se dérive
+ * du froid (spec `meteo.md` R11-R13), c'est `T₀` qui décide si un front tombe en pluie ou en
+ * neige, si un orage est un blizzard, si un gué prend. Sans cadran, ces lois sont invisibles
+ * en jouant, et un calibrage se ferait à l'aveugle.
+ *
+ * Le panneau ne CALCULE rien : `WorldScene` lui pousse un relevé déjà lu par les fonctions
+ * de `/sim` (`majThermo`). C'est la même règle que partout — le client est bête, et deux
+ * lectures d'une même loi finiraient par diverger.
  */
 import type Phaser from 'phaser'
-import type { PlayerAction } from '@ashes/sim'
+import { GEL, TEMPERATURE, type PlayerAction } from '@ashes/sim'
 import { getHud, setHud } from '../../hud-state'
 import { ensureGameFont, GAME_FONT } from '../ui/game-font'
 
 const SPEEDS = [1, 2, 4, 8] as const
 const HOUR_DAY = 12
 const HOUR_NIGHT = 0
+// Les deux bornes du teint — LUES sur la sim, jamais recopiées : c'est la même échelle
+// que la jauge du HUD et que les malus de froid.
+// ⚠ Le cadran montre DEUX échelles : l'ambiant (°C du monde) et le corps (°C, 25→37). Le
+// teint se lit donc sur des seuils différents — les confondre peindrait tout en rouge.
+const CORPS_CONFORT = TEMPERATURE.CORPS_CONFORT
+const CORPS_HYPOTHERMIE = TEMPERATURE.CORPS_HYPOTHERMIE
+const AIR_DOUX = TEMPERATURE.AMBIANT_DOUX
+const AIR_MORDANT = GEL.SEUIL_GUE // sous zéro, l'air mord : l'eau prend
 
 export interface DebugPanelDeps {
   sendAction(action: PlayerAction): void
@@ -25,7 +45,44 @@ export interface DebugPanelDeps {
   isNight(): boolean
 }
 
-export function createDebugPanel(scene: Phaser.Scene, deps: DebugPanelDeps): void {
+/**
+ * CE QUE LE CADRAN MONTRE — quatre températures, dans l'ordre où la sim les compose, plus
+ * l'état du ciel et du sol. Les noms sont ceux des fonctions de `/sim`, pour qu'on puisse
+ * aller lire la loi derrière chaque nombre.
+ */
+export interface ReleveThermique {
+  /** `dehorsSansMeteo` — le froid du MONDE sans le front : biome, heure, acte, Brume, cendre.
+   *  C'est l'entrée de R11/R12 : la neige et le blizzard se décident LÀ-DESSUS. */
+  monde: number
+  /** `baselineTemperature` — le front compris, l'abri compris ; NI le feu ni la source chaude.
+   *  C'est ce que lisent le gel, la flore et l'éveil des Cendreux. */
+  lieu: number
+  /** `ambientTemperature` — la cible du corps : le lieu, PLANCHÉ par le feu et la source chaude. */
+  ressenti: number
+  /** La jauge de l'avatar, qui DÉRIVE vers l'ambiant (elle est en retard, c'est normal). */
+  corps: number
+  /** L'aspect du ciel au point (`meteoAspectAt`) — `null` hors de toute bande. */
+  ciel: string | null
+  /** L'intensité de la bande ici, 0 → 1 (la rampe bord → cœur). */
+  intensite: number
+  /** Les degrés que le front retranche ICI (`meteoColdAt`) — pour un orage, la pente R12. */
+  froidDuFront: number
+  /** La couverture de neige au sol, 0 → 1, et le niveau qui commande le pas. */
+  neige: number
+  niveauNeige: number
+  /** `cibleCorporelle(ressenti)` — la température où le corps se STABILISERAIT ici. Le
+   *  corps y dérive ; comparer les deux dit si l'on se réchauffe ou si l'on s'éteint. */
+  cibleCorps: number
+  /** La tuile est-elle gelée (`estGele`) ? */
+  glace: boolean
+}
+
+export interface DebugPanel {
+  /** Pousse un relevé (ou `null` : rien à montrer). Appelé par `WorldScene`, throttlé. */
+  majThermo(r: ReleveThermique | null): void
+}
+
+export function createDebugPanel(scene: Phaser.Scene, deps: DebugPanelDeps): DebugPanel {
   const reg = scene.registry
 
   ensureGameFont()
@@ -64,6 +121,45 @@ export function createDebugPanel(scene: Phaser.Scene, deps: DebugPanelDeps): voi
   const bNight = mkBtn()
   const bReveil = mkBtn()
 
+  // ── LE CADRAN THERMIQUE ── une grille libellé/valeur, monospace pour que les nombres
+  // ne dansent pas d'une image à l'autre (un cadran qui gigote ne se lit pas).
+  const thermo = document.createElement('div')
+  thermo.style.cssText = [
+    'margin-top:4px', 'padding-top:7px', 'border-top:1px solid #33291f',
+    'display:grid', 'grid-template-columns:1fr auto', 'gap:1px 8px',
+    'font:11px/1.45 ui-monospace,SFMono-Regular,Menlo,monospace', 'color:#9a8b76',
+  ].join(';')
+  root.appendChild(thermo)
+
+  /** Une ligne du cadran, allouée UNE fois : on ne réécrit que les valeurs. */
+  const ligne = (label: string): HTMLSpanElement => {
+    const l = document.createElement('span')
+    l.textContent = label
+    l.style.color = '#6b5f50'
+    const v = document.createElement('span')
+    v.style.cssText = 'color:#e6d9c4;text-align:right;font-variant-numeric:tabular-nums'
+    thermo.append(l, v)
+    return v
+  }
+  const vMonde = ligne('monde T₀')
+  const vLieu = ligne('lieu')
+  const vRessenti = ligne('ressenti')
+  const vCorps = ligne('corps')
+  const vCible = ligne('cible corps')
+  const vCiel = ligne('ciel')
+  const vSol = ligne('sol')
+
+  /** Le teint d'un AIR : ambre sous l'air doux, rouge sous zéro (là où l'eau prend). */
+  const teinteAir = (t: number): string => (t < AIR_MORDANT ? '#e2603f' : t < AIR_DOUX ? '#f6a94a' : '#e6d9c4')
+  /** Le teint d'un CORPS : ambre dès qu'il quitte les 37, rouge à l'hypothermie — la même
+   *  lecture que la jauge du HUD, pour qu'un coup d'œil suffise. */
+  const teinteCorps = (t: number): string => (t < CORPS_HYPOTHERMIE ? '#e2603f' : t < CORPS_CONFORT ? '#f6a94a' : '#e6d9c4')
+  /** Un degré, toujours signé de son unité : le cadran est en °C et ne doit pas se relire
+   *  comme une jauge. Une décimale — le dixième bouge, le centième danserait. */
+  const un = (t: number): string => (Number.isFinite(t) ? `${t.toFixed(1)}°` : '—')
+
+  let dernier: ReleveThermique | null = null
+
   // Un toggle actif s'allume en ambre ; inactif, il reste terne.
   const paint = (b: HTMLButtonElement, label: string, active: boolean): void => {
     b.textContent = label
@@ -82,6 +178,40 @@ export function createDebugPanel(scene: Phaser.Scene, deps: DebugPanelDeps): voi
     paint(bSpeed, `Cadence ×${sp}`, sp !== 1)
     paint(bNight, deps.isNight() ? 'Passer au JOUR' : 'Passer à la NUIT', false)
     paint(bReveil, 'Réveiller le sol  ·F6', false)
+    peindreThermo()
+  }
+
+  function peindreThermo(): void {
+    const r = dernier
+    if (!r) {
+      thermo.style.display = 'none'
+      return
+    }
+    thermo.style.display = 'grid'
+    vMonde.textContent = un(r.monde)
+    vMonde.style.color = teinteAir(r.monde)
+    vLieu.textContent = un(r.lieu)
+    vLieu.style.color = teinteAir(r.lieu)
+    vRessenti.textContent = un(r.ressenti)
+    vRessenti.style.color = teinteAir(r.ressenti)
+    vCorps.textContent = un(r.corps)
+    vCorps.style.color = teinteCorps(r.corps)
+    // LA CIBLE : où le corps FINIRAIT s'il restait là. Elle dit si l'on est en train de
+    // gagner ou de perdre — un corps à 34 qui vise 36 se réchauffe, à 34 qui vise 27 il meurt.
+    vCible.textContent = un(r.cibleCorps)
+    vCible.style.color = teinteCorps(r.cibleCorps)
+    // LE CIEL : l'aspect DÉRIVÉ (pluie ou neige, orage ou blizzard — R11), son emprise ici,
+    // et ce qu'il retranche. « −0 » se dit « clair » : un front hors bande n'est pas un ciel.
+    vCiel.textContent = r.ciel === null
+      ? 'clair'
+      : `${r.ciel} ${(r.intensite * 100).toFixed(0)}% −${r.froidDuFront.toFixed(0)}`
+    vCiel.style.color = r.ciel === null ? '#6b5f50' : '#8fb0bc'
+    // LE SOL : la couverture continue, le NIVEAU qui commande le pas (0/1/2), et la glace.
+    const niveaux = ['nue', 'poudreuse', 'genoux']
+    vSol.textContent = r.glace
+      ? 'glace'
+      : r.neige > 0 ? `${niveaux[r.niveauNeige] ?? '?'} ${r.neige.toFixed(2)}` : 'nu'
+    vSol.style.color = r.glace ? '#8fb0bc' : r.neige > 0 ? '#e6d9c4' : '#6b5f50'
   }
 
   bGod.onclick = () => {
@@ -123,4 +253,12 @@ export function createDebugPanel(scene: Phaser.Scene, deps: DebugPanelDeps): voi
     reg.events.off('changedata', onChange)
     root.remove()
   })
+
+  return {
+    majThermo(r: ReleveThermique | null): void {
+      dernier = r
+      // Repeindre SEULEMENT quand le panneau est ouvert : fermé, il ne coûte rien.
+      if (getHud(reg, 'debugOn')) peindreThermo()
+    },
+  }
 }

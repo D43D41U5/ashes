@@ -14,7 +14,7 @@
  *   sont capturées par le replay log : une partie où l'on a triché se rejoue
  *   quand même à l'identique.
  */
-import { WORLD_EVENTS, METEO, MORTS, NIGHT_HUNT, WALL_TIERS } from './balance'
+import { WORLD_EVENTS, METEO, MORTS, NIGHT_HUNT, TEMPERATURE, WALL_TIERS } from './balance'
 import { emitEvent } from './events'
 import { spawnHorde } from './worldevents'
 import { addItems, type ItemId } from './items'
@@ -292,7 +292,7 @@ export function refreshGodMode(state: SimState): void {
     entity.hp = 100
     entity.stamina = 100
     entity.hunger = 100
-    entity.temperature = 100
+    entity.temperature = TEMPERATURE.CORPS_SAIN
     entity.wounds = {}
     entity.exhaustedUntil = 0
   }

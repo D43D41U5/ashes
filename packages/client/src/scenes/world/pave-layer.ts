@@ -23,7 +23,7 @@ import Phaser from 'phaser'
 import type { WorldMap } from '@ashes/sim'
 import { GROUND_MAP_DEPTH, TILE_PX } from '../../render/framing'
 import { GRAIN_CELLS, familleDe, grainFacteur, type Famille } from '../../render/grain-sol'
-import { PAVE, PAVE_PX, cuireChunk } from '../../render/paves'
+import { PAVE, PAVE_COTE, PAVE_PX, cuireChunk } from '../../render/paves'
 
 /** Sous le bake ? Non : AU-DESSUS du bake (−1), SOUS l'eau (+0,25) et tout ce qui vit dessus. */
 const PAVE_DEPTH = GROUND_MAP_DEPTH + 0.05
@@ -46,16 +46,24 @@ const MARGE_VISIBLE_PX = (PAVE.CHUNK * PAVE_PX) / 2
 /** Un chunk non vu depuis tant de frames se rend. Long : revenir sur ses pas ne doit pas recuire
  *  (2 s à 60 fps) ; le plafond `MAX_VIVANTS` borne la mémoire quoi qu'il arrive. */
 const OUBLI_FRAMES = 120
-/** Plafond de chunks vivants (256² × 4 o = 256 Ko chacun → 24 Mo) : au-delà, les plus anciens
- *  se rendent, même vus récemment. */
+/** Plafond de chunks vivants : au-delà, les plus anciens se rendent, même vus récemment.
+ *  258² × 4 o = **266 Ko** par image depuis le débord (`PAVE.BAVE`, 2026-08-23) → ~25 Mo, et
+ *  jusqu'au double sur une côte, où chaque chunk porte AUSSI son surplomb. */
 const MAX_VIVANTS = 96
 
-/** Verse un tampon RGBA de `(CHUNK × 16)²` px dans une CanvasTexture NEAREST et pose son image —
- *  partagé avec le manteau (`gel-layer.ts`), qui cuit à la même maille. */
+/**
+ * Verse un tampon RGBA carré dans une CanvasTexture NEAREST et pose son image — partagé avec le
+ * manteau (`gel-layer.ts`), qui cuit à la même maille.
+ *
+ * `x, y` sont ceux du PREMIER PIXEL DU TAMPON, débord compris (`PAVE.BAVE`) : l'appelant décale
+ * de `−BAVE` le coin du chunk. Le côté se DÉDUIT du tampon (√(n/4)) plutôt que d'être supposé :
+ * une couche qui cuirait à une autre taille resterait juste, et le jour où le débord change,
+ * rien ici ne ment.
+ */
 export function poserChunk(
   scene: Phaser.Scene, cle: string, rgba: Uint8ClampedArray, x: number, y: number, depth: number,
 ): Phaser.GameObjects.Image | null {
-  const S = PAVE.CHUNK * PAVE_PX
+  const S = Math.round(Math.sqrt(rgba.length / 4))
   // Une clé déjà prise (une scène rechargée à chaud sans passer par `destroy`) ne doit PAS
   // laisser un trou permanent recuit à chaque frame : on la rend, puis on recrée.
   if (scene.textures.exists(cle)) scene.textures.remove(cle)
@@ -195,15 +203,19 @@ export class PaveLayer {
 
   private cuire(cx: number, cy: number, k: number): void {
     const t0 = performance.now()
-    const S = PAVE.CHUNK * PAVE_PX
+    const S = PAVE_COTE
+    // Le tampon commence UN PIXEL AVANT le chunk (`PAVE.BAVE`) : l'image se pose d'autant en
+    // arrière, et deux voisines se recouvrent au lieu de se toucher (voir `PAVE.BAVE`).
+    const x0 = cx * S - PAVE.BAVE
+    const y0 = cy * S - PAVE.BAVE
     const cle = `pave-${this.seed >>> 0}-${cx}-${cy}`
     const cuit = cuireChunk({ cx, cy, terrainAt: this.terrainAt, couleurAt: this.couleurAt, trameDe: this.trameDe })
-    const image = this.poser(cle, cuit.sol, cx * S, cy * S, PAVE_DEPTH)
+    const image = this.poser(cle, cuit.sol, x0, y0, PAVE_DEPTH)
     if (!image) return
     const chunk: Chunk = { image, cle, vu: this.frame }
     if (cuit.surplomb) {
       const cleSur = cle + '-surplomb'
-      const sur = this.poser(cleSur, cuit.surplomb, cx * S, cy * S, SURPLOMB_DEPTH)
+      const sur = this.poser(cleSur, cuit.surplomb, x0, y0, SURPLOMB_DEPTH)
       if (sur) chunk.surplomb = { image: sur, cle: cleSur }
     }
     this.chunks.set(k, chunk)

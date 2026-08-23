@@ -826,6 +826,54 @@ describe('A11/A12 — la composition des Prés Bas suit UNE variable d’ordre',
     }
   })
 
+  it('A18ter (R34ter) — un biome n\'est pas un magasin : PLAFONDS de fibre, champignon et pierre là où ils saturaient', () => {
+    // A18/A18bis gardent des PLANCHERS et des RAPPORTS : ni l'un ni l'autre ne peut rougir quand
+    // un biome se pave. Ces quatre plafonds sont ce qui manquait — et ils sont écrits en DENSITÉ
+    // (nœuds pour 100 tuiles du terrain), pas en compte : la garde survit à un monde qui change
+    // de taille, ce qui a précisément périmé le « un tous les ~31 pas » de `CONTENU`.
+    //
+    // Seuils LITTÉRAUX (une garde écrite avec la constante qu'elle teste ne garde rien), posés
+    // sur la mesure du 2026-08-23 (3 seeds, vallée) avec la marge d'un tiers. Ce qu'ils auraient
+    // rougi la veille est entre parenthèses : la garde MORD.
+    for (const { c, nodes } of mondes) {
+      const seed = c.graphe.seed
+      const { width, height, terrain } = c.map
+      const slugDe = (i: number): string => {
+        const z = c.zone[i]
+        return z === undefined || z < 0 ? '' : (c.graphe.zones[z]?.def.slug ?? '')
+      }
+      const nomDe = (i: number): string => TERRAINS[terrain[i]!]?.name ?? ''
+      const densite = (type: string, quoi: (i: number) => boolean): number => {
+        let tuiles = 0
+        for (let i = 0; i < width * height; i++) if (quoi(i)) tuiles += 1
+        // La prémisse d'abord : sans le terrain, une densité de 0 serait verte pour rien.
+        expect(tuiles, `seed ${seed} : le terrain visé n'existe pas — la garde ne prouve rien`).toBeGreaterThan(1000)
+        const n = nodes.filter((x) => x.type === type && quoi(x.ty * width + x.tx)).length
+        return (100 * n) / tuiles
+      }
+      const prairie = (i: number): boolean => nomDe(i) === 'wet_meadow'
+      const chaos = (i: number): boolean => slugDe(i) === 'cendriere' && nomDe(i) === 'boulders'
+      const brulee = (i: number): boolean => slugDe(i) === 'cendriere' && nomDe(i) === 'burnt_forest'
+
+      const fibre = densite('fiber_plant', prairie)
+      const champi = densite('champignon', prairie)
+      const pierreChaos = densite('rock', chaos)
+      const pierreBrulee = densite('rock', brulee)
+
+      // PLAFONDS — ce qui saturait (mesuré la veille : 8,42 · 5,88 · 3,09 · 1,95).
+      expect(fibre, `seed ${seed} : ${fibre.toFixed(2)} plants de fibre pour 100 tuiles de prairie humide`).toBeLessThanOrEqual(5.5)
+      expect(champi, `seed ${seed} : ${champi.toFixed(2)} champignons pour 100 tuiles de prairie humide`).toBeLessThanOrEqual(2)
+      expect(pierreChaos, `seed ${seed} : ${pierreChaos.toFixed(2)} rochers pour 100 tuiles du chaos de blocs`).toBeLessThanOrEqual(2)
+      expect(pierreBrulee, `seed ${seed} : ${pierreBrulee.toFixed(2)} rochers pour 100 tuiles de forêt brûlée`).toBeLessThanOrEqual(1.3)
+
+      // PLANCHERS — « j'ai tout supprimé » doit rougir aussi : chaque biome garde ce qui le dit.
+      expect(fibre, `seed ${seed} : la prairie humide reste LA place à fibre`).toBeGreaterThan(2)
+      expect(champi, `seed ${seed} : la prairie humide porte encore des champignons`).toBeGreaterThan(0.4)
+      expect(pierreChaos, `seed ${seed} : un chaos de blocs porte de la pierre`).toBeGreaterThan(0.5)
+      expect(pierreBrulee, `seed ${seed} : la forêt brûlée porte de la pierre`).toBeGreaterThan(0.3)
+    }
+  })
+
 })
 
 describe('A19 (§2quater) — la profondeur intra-massif se dérive et se mérite', () => {

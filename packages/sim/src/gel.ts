@@ -96,7 +96,7 @@ import { coldMaximal, frontDuCycle, frontMeteoPos, largeurDe, neigeA, type Bande
 import { fbm2, hash2 } from './noise'
 import type { SimState } from './sim'
 import { baselineTemperature, baselineTemperatureAt, climatFlore, climatMaximal, dehorsSansMeteo } from './temperature'
-import { actForDay, DAY_TICKS_PER_CYCLE, seasonDayAtTick, TICKS_PER_CYCLE } from './time'
+import { actForDay, partDeNuit, seasonDayAtTick, TICKS_PER_CYCLE } from './time'
 
 /**
  * LE PLANCHER DE TEMPÉRATURE DE LA VALLÉE à ce tick — une borne INFÉRIEURE prouvée du
@@ -106,7 +106,8 @@ import { actForDay, DAY_TICKS_PER_CYCLE, seasonDayAtTick, TICKS_PER_CYCLE } from
  * Sur une tuile d'eau, `biome` vaut 0 (ni 4 ni 6 n'ont d'entrée dans `BIOME_OFFSET`), et
  * `abri` vaut 1 au pire (l'abri ne fait que RÉDUIRE une exposition négative). Il reste à
  * majorer chaque exposition, ce qu'on fait par PRÉSENCE et non par intensité :
- *   · la nuit est globale — exacte, pas majorée ;
+ *   · la nuit est globale — exacte, pas majorée, et depuis la rampe (`partDeNuit`) elle vaut
+ *     sa PENTE plutôt qu'un booléen ;
  *   · une Brume dans l'état vaut `COLD_MALUS` partout (elle ne mord en vrai que sous sa nappe) ;
  *   · un front vaut son PLEIN froid partout (`coldMaximal` — la ligne `ORAGE_FROID` pour un
  *     orage, qui ne l'atteint en vrai que par grand froid, R12 ; et seulement dans sa bande).
@@ -121,7 +122,9 @@ function plancherDeLaVallee(state: SimState): number {
   const jour = seasonDayAtTick(state.tick, state.calendarScale)
   const cycleTick = (state.tick + state.cycleOffset) % TICKS_PER_CYCLE
   let t = TEMPERATURE.BASE - TEMPERATURE.ACT_COLD(actForDay(jour))
-  if (cycleTick >= DAY_TICKS_PER_CYCLE) t -= TEMPERATURE.NIGHT_COLD
+  // La nuit est une PENTE (`partDeNuit`) : on la lit ICI plutôt que via `GameTime`, pour la
+  // même raison MESURÉE qui fait recalculer `cycleTick` à la main — zéro allocation.
+  t -= TEMPERATURE.NIGHT_COLD * partDeNuit(cycleTick)
   if (state.brume) t -= BRUME.COLD_MALUS
   if (state.meteo) t -= coldMaximal(state.meteo.type)
   return t
@@ -142,6 +145,8 @@ export function gelPossible(state: SimState): boolean {
   // de l'acte I vaut 50, et `SEUIL_GUE + HYSTERESIS` vaut 50 : la borne ne tient que parce
   // que `estGele` compare par `<` STRICT (à 50, elle rend faux, et ici aussi). Relâcher l'une
   // des deux comparaisons en `<=` sans l'autre rendrait cette borne UNSOUND — en silence.
+  // (La rampe de nuit ne la touche pas : `partDeNuit` vaut 1 sur toute la nuit, donc le point
+  //  le plus froid de chaque acte est CELUI D'AVANT, au bit près. Vérifié le 2026-08-23.)
   return plancherDeLaVallee(state) < GEL.SEUIL_GUE + GEL.HYSTERESIS
 }
 
@@ -467,7 +472,10 @@ export function neigeAuSol(state: SimState, tx: number, ty: number): number {
         // positive dont le coefficient ne dépend plus du tick : la somme est croissante par
         // CONSTRUCTION — la neige ne peut plus remonter, quoi que fasse le thermomètre.
         const t = baselineTemperatureAt(state, tx, ty, t0 + PAS / 2)
-        const u = Math.max(0, Math.min(1, (t - GEL.SEUIL_PROFOND) / (TEMPERATURE.COMFORT - GEL.SEUIL_PROFOND)))
+        // Du gel du lac (−10 °C : la fonte est la plus lente) à l'air doux (+6 °C : elle est
+        // la plus rapide) — `AMBIANT_DOUX` a remplacé l'ex-`COMFORT`, qui est devenu un seuil
+        // du CORPS quand l'échelle est passée en degrés (2026-08-22).
+        const u = Math.max(0, Math.min(1, (t - GEL.SEUIL_PROFOND) / (TEMPERATURE.AMBIANT_DOUX - GEL.SEUIL_PROFOND)))
         const cycles = GEL.FONTE_CYCLES + (GEL.FONTE_CYCLES_CHAUD - GEL.FONTE_CYCLES) * u
         fondu += (t1 - t0) / (cycles * TICKS_PER_CYCLE)
         if (fondu >= 1) break // tout est fondu : inutile de continuer à sommer

@@ -92,7 +92,44 @@ export const PAVE = {
   BRINS_PAR_TUILE: 2,
   /** Le ressac : 1 px clair sur l'eau, sous la pénombre d'une berge (4 px sous son bord bas). */
   RESSAC: 1.22,
+  /**
+   * LE MOUILLÉ DE LA FRANGE — la terre qui déborde sur l'eau est MOUILLÉE.
+   *
+   * Le voile de sol humide (`water-layer.ts`, spec eau-vivante R10') ne peint que les tuiles de
+   * TERRE : la frange de la berge, elle, vit sur une tuile d'EAU, et restait donc sèche et claire.
+   * Le mouillé se lisait alors comme un TRAIT décollé du bord (MESURÉ sur berge de rivière,
+   * midi : herbe sèche 95, mouillé 88, frange sèche 108, ressac 123, eau 111 — un creux entre
+   * deux clairs). Même voile, même teinte, au cran PLEIN : la frange est dans l'eau, c'est la
+   * partie la plus mouillée de la berge.
+   */
+  MOUILLE: 0.26,
+  /**
+   * LE DÉBORD DU CHUNK, en px d'art (2026-08-23, Alexis : « je vois toujours des traits en
+   * forme de carré d'un pixel »).
+   *
+   * MESURÉ : le trait tombait sur un bord de chunk, à un DEMI-pixel d'écran (chunk 44, bord
+   * monde 11264, `worldView.x` 11078,79, zoom 3,3125 → écran 613,5). Le pixel de la couture
+   * est alors couvert à 50 % par chaque image : écrit deux fois en alpha partiel, il laisse
+   * passer un quart de fond — un trait sombre d'un pixel, Δ 23 de luminance. L'image cuite,
+   * elle, est PROPRE (relevée texel par texel : Δ ≤ 1,3, le pas de couleur normal d'une
+   * tuile à l'autre) : la couture naît à la composition, pas à la cuisson.
+   *
+   * ET `roundPixels` NE PEUT PAS LA RATTRAPER : Phaser 4 le désactive dès que le zoom n'est
+   * pas entier (`Camera.js` : `renderRoundPixels = roundPixels && Number.isInteger(zoomX)`),
+   * or le nôtre se dérive de la hauteur de fenêtre (`zoomForFraming` — 2,25 au banc, 3,3125
+   * sur l'écran d'Alexis). Le drapeau de `main.ts` est inerte en jeu.
+   *
+   * D'où le débord : chaque chunk se cuit UN PIXEL PLUS GRAND de chaque côté et se pose
+   * décalé d'autant. Les images se RECOUVRENT, le pixel du bord est toujours couvert par de
+   * l'art opaque, et le fond ne passe plus. Le recouvrement ne double rien : tout le calcul
+   * est positionnel (`hash2` sur les coordonnées MONDE), donc le voisin recuit ce pixel à
+   * l'identique — c'est déjà ce que promettait la marge d'une tuile de `cuireChunk`.
+   */
+  BAVE: 1,
 } as const
+
+/** La teinte du voile humide — la MÊME que celle du shader (`water-layer.ts`), en 0-255. */
+const MOUILLE_TEINTE = [0.16 * 255, 0.14 * 255, 0.09 * 255] as const
 
 /**
  * LES TERRAINS VIRTUELS DU MANTEAU (`render/manteau.ts`) — la neige au sol et la glace se
@@ -237,6 +274,11 @@ export interface CuissonChunk {
   trameDe: (t: number) => Float32Array | null
 }
 
+/** Le côté d'un chunk en px d'art, SANS le débord — la maille du monde (16 tuiles × 16 px). */
+export const PAVE_COTE = PAVE.CHUNK * PAVE_PX
+/** Le côté de l'IMAGE cuite, débord compris : ce que mesurent les textures posées. */
+export const PAVE_COTE_BAVE = PAVE_COTE + 2 * PAVE.BAVE
+
 export interface ChunkCuit {
   /** Le sol, SOUS le shader d'eau : opaque sur la terre, transparent sur l'eau et les structurels. */
   sol: Uint8ClampedArray
@@ -246,7 +288,9 @@ export interface ChunkCuit {
 }
 
 /**
- * CUIT UN CHUNK : rend les tampons RGBA de `(CHUNK × 16)²` pixels, ligne par ligne, haut en bas.
+ * CUIT UN CHUNK : rend les tampons RGBA de `PAVE_COTE_BAVE²` pixels (le chunk PLUS son débord
+ * d'un pixel tout autour, voir `PAVE.BAVE`), ligne par ligne, haut en bas. Le pixel (0, 0) du
+ * tampon est donc le pixel monde `(cx × CHUNK × 16) − 1` : qui pose l'image la décale d'autant.
  *
  * Deux passes. ① Les PROPRIÉTAIRES : chaque pixel appartient d'abord à sa tuile ; puis chaque
  * tuile étend sa frange sur ses voisines de priorité inférieure (côtés, puis chanfreins de
@@ -375,29 +419,33 @@ export function cuireChunk(p: CuissonChunk): ChunkCuit {
     ownT[i] = terr[k]!
     ownP[i] = prio[k]!
   }
-  const S = N * P
-  const out = new Uint8ClampedArray(S * S * 4)
+  // Le tampon rendu porte le DÉBORD (`PAVE.BAVE`) tout autour : il commence un pixel AVANT le
+  // chunk et finit un pixel après, pour que deux images voisines se recouvrent au lieu de se
+  // toucher. La marge locale fait une TUILE — lire un pixel de plus reste largement dedans.
+  const SB = PAVE_COTE_BAVE
+  const out = new Uint8ClampedArray(SB * SB * 4)
   // Le surplomb n'est alloué que si le chunk (marge comprise) touche une tuile surplombée.
   let eauVue = false
   for (let k = 0; k < L * L && !eauVue; k++) eauVue = estSurplombee(terr[k]!)
-  const sur = eauVue ? new Uint8ClampedArray(S * S * 4) : null
+  const sur = eauVue ? new Uint8ClampedArray(SB * SB * 4) : null
   const B = PAVE.BRINS_PAR_TUILE
-  for (let y = 0; y < S; y++) {
-    const py = y + P
+  for (let y = 0; y < SB; y++) {
+    const py = y + P - PAVE.BAVE
     // La ligne de cellules de grain (GRAIN_CELLS est une puissance de deux : le masque tuile).
     const cyG = (((ty0 * P + py) / GRAIN_CELL_PX) | 0) & (GRAIN_CELLS - 1)
     const ly = (py / P) | 0
-    for (let x = 0; x < S; x++) {
-      const px = x + P
+    for (let x = 0; x < SB; x++) {
+      const px = x + P - PAVE.BAVE
       const i = py * LP + px
       const pk = ownP[i]!
       if (pk < 0) continue // structurel : transparent, le bake reste maître
       const k = owner[i]!
       const t = ownT[i]!
-      const o = (y * S + x) * 4
+      const o = (y * SB + x) * 4
       // Le pixel est-il SUR une tuile surplombée (eau, dessous, glace) ? (sa propre tuile, pas
       // son propriétaire)
-      const surEau = estSurplombee(terr[ly * L + ((px / P) | 0)]!)
+      const tSol = terr[ly * L + ((px / P) | 0)]!
+      const surEau = estSurplombee(tSol)
       // Le propriétaire est-il une SURFACE (eau, marais) ? Pas d'épaisseur : ni liseré, ni arête,
       // ni tranche, ni brin — et l'ombre et le ressac ne viennent que d'un pavé à épaisseur.
       const tSurf = estSurface(t)
@@ -458,9 +506,13 @@ export function cuireChunk(p: CuissonChunk): ChunkCuit {
       // au-dessus de ce que la tuile dessine. La GLACE, elle, est opaque : elle reste dans le sol
       // de sa couche (elle est la matière de sa tuile, pas un débordement).
       const cible = surEau && sur && !estGlace(t) ? sur : out
-      cible[o] = ((c >> 16) & 0xff) * g
-      cible[o + 1] = ((c >> 8) & 0xff) * g
-      cible[o + 2] = (c & 0xff) * g
+      // Sur l'EAU (pas sur le dessous ni la glace), la frange prend le voile humide : la berge
+      // mouillée ne s'arrête plus au trait de rive, elle y entre. Voir PAVE.MOUILLE.
+      const m = estEau(tSol) ? PAVE.MOUILLE : 0
+      const sec = 1 - m
+      cible[o] = ((c >> 16) & 0xff) * g * sec + MOUILLE_TEINTE[0] * m
+      cible[o + 1] = ((c >> 8) & 0xff) * g * sec + MOUILLE_TEINTE[1] * m
+      cible[o + 2] = (c & 0xff) * g * sec + MOUILLE_TEINTE[2] * m
       cible[o + 3] = 255
     }
   }

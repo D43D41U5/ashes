@@ -6,7 +6,7 @@
  * pixel choisi.
  */
 import { describe, expect, it } from 'vitest'
-import { PAVE, PAVE_PX, prioriteDe } from './paves'
+import { PAVE, PAVE_COTE_BAVE, PAVE_PX, prioriteDe } from './paves'
 import {
   NEIGE_PAVE, TUILE_GLACE_GUE, TUILE_GLACE_LAC, TUILE_NEIGE, TUILE_NEIGE_PROFONDE, TUILE_NUE, TUILE_STRUCTURELLE,
   cuireManteau, trameDeGlace, tuileDeNiveau, type EtatTuile,
@@ -20,9 +20,11 @@ const P = PAVE_PX
 function cuire(etatAt: (tx: number, ty: number) => EtatTuile) {
   return cuireManteau({ cx: 0, cy: 0, etatAt, trameNeige: null, trameGlace: trameDeGlace() })
 }
+/** Le pixel (x, y) DU CHUNK : le tampon porte le débord (`PAVE.BAVE`) tout autour — les gardes
+ *  se lisent en coordonnées de chunk, le débord est une affaire de pose. */
 const px = (img: Uint8ClampedArray | null, x: number, y: number): [number, number, number, number] => {
   if (!img) return [0, 0, 0, 0]
-  const o = (y * S + x) * 4
+  const o = ((y + PAVE.BAVE) * PAVE_COTE_BAVE + (x + PAVE.BAVE)) * 4
   return [img[o]!, img[o + 1]!, img[o + 2]!, img[o + 3]!]
 }
 const R = (c: number) => (c >> 16) & 0xff

@@ -8,7 +8,7 @@ import { applyInventoryAction } from './inventory-actions'
 import { createEmptyMap } from './map'
 import { advanceMonsters, spawnMonster } from './monsters'
 import { createSim, spawnEntity, type SimState } from './sim'
-import { DAY_TICKS_PER_CYCLE } from './time'
+import { cycleOffsetForStartHour, DAY_TICKS_PER_CYCLE } from './time'
 import { fireBubble } from './temperature'
 import { addStructure, applyStructureDamage, applyVillageAction, grantItems, type Structure } from './village'
 
@@ -327,7 +327,9 @@ describe('Le Feu-station : le feu ATTIRE les Cendreux quand il fait froid (spec 
   })
 
   it('A4 — de JOUR en zone TEMPÉRÉE (pas froid), aucun appel vers le feu', () => {
-    const sim = createSim(1, { map: createEmptyMap(96, 96, TERRAIN_GRASS) }) // jour, herbe, acte I → base 90
+    // MIDI et non le tick 0 : depuis la rampe de nuit (`partDeNuit`), l'aube porte encore le
+    // plein `NIGHT_COLD` — 6 °C, sous `TORPEUR.CONVERGE_SOUS`. Ce cas veut le jour TEMPÉRÉ.
+    const sim = createSim(1, { map: createEmptyMap(96, 96, TERRAIN_GRASS), cycleOffset: cycleOffsetForStartHour(12) })
     const id = spawnMonster(sim, 'cendreux', 5, 5)
     const monster = sim.monsters.find((m) => m.entityId === id)!
     addStructure(sim, 'fire', 15, 5, 0, 0) // allumé, mais il fait chaud → pas de phare

@@ -32,6 +32,29 @@ const DENSITE_MAX = 0.38
 /** Vitesse de dérive des nappes (tuiles/s) appliquée au vent lissé unitaire. */
 const DERIVE = 0.32
 
+/** LE FROISSEMENT DE LA FRONTIÈRE, en tuiles — choix d'Alexis du 2026-08-22 (« j'aimerais voir
+ *  une frontière de brume plus organique et pas simplement droite »), planche F3 retenue.
+ *
+ *  LE DÉFAUT, MESURÉ (`pnpm smoke --scenario frontiere --dev`, le Gué à 6h12, marée étale à ses
+ *  9 tuiles) : le front est une ISO-DISTANCE de la berge, donc au Gué — où la rivière descend au
+ *  cordeau — c'était une DROITE au sens mathématique. Sur 248 lignes balayées de la carte de
+ *  couverture, le contour déviait de 0 px et son étendue valait 0. Pas « discret » : zéro.
+ *
+ *      frange   |Δ| moyen   étendue   (part de la largeur du cadre)
+ *        0        0,00         0            0 %      ← l'escalier d'angles droits
+ *        1,5      0,52       112         17,5 %
+ *        3        0,57       112         17,5 %
+ *        5        0,67        85         13,3 %      ← ICI
+ *
+ *  L'étendue de F3 est PLUS BASSE que celle de F2 sans que le contour serpente moins : à 5
+ *  tuiles la nappe sort du cadre par endroits, et la mesure ne compte que ce qui reste visible.
+ *  La colonne « étendue » cesse d'être comparable au-delà de 3 — dit autrement, à ce réglage on
+ *  voit souvent de la brume partout plutôt qu'une frontière. Signalé, tranché, assumé.
+ *
+ *  La COMBE ne le reçoit PAS : son halo est un rectangle adouci et c'est une autre décision,
+ *  encore ouverte — elle garde le défaut 0 de `MistLayer`. */
+const FRANGE = 5
+
 /** LES CRANS DE LA MARÉE — plus transparents en HAUT de l'échelle que ceux de la maquette
  *  (0,34 / 0,66 / 0,90, plafond 0,72), sur DEUX retours d'Alexis du 2026-07-26 : « augmente la
  *  transparence des parties les plus blanches », puis « encore plus transparent ».
@@ -137,6 +160,7 @@ export class MorningMist {
     scene.textures.get(this.key).setFilter(Phaser.Textures.FilterMode.NEAREST)
 
     this.layer = new MistLayer(scene, this.key, width, height, MIST_DEPTH, CRANS_MAREE)
+    this.layer.frange = FRANGE
   }
 
   /** Chaque frame : la MARÉE décide de tout (pente continue), le vent LISSÉ du monde

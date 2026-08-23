@@ -66,6 +66,17 @@ export const CONTENU = {
    *
    * (La modulation par bosquets — `ECHELLE_BOSQUET` — les GROUPE : la densité moyenne ne dit pas
    * ce qu'on voit. On voit des bouquets d'arbres et des prés nus, pas un tapis régulier.)
+   *
+   * **CE BOUTON NE COMMANDE QU'UN TIERS DE LA CARTE, et « ~31 pas » est faux depuis le monde
+   * réduit** (relevé du 2026-08-23, monde joué, 3 seeds) : **61 668 nœuds, un tous les 16,9 pas**
+   * — et le semis commun n'en pose que **30 %**. Le reste vient des passes appendues, dont
+   * la seule passe des ARBRES fait **48 %**. *(Après les coupes du même jour — R34ter, fibre,
+   * champignons, pierre : **51 339 nœuds, un tous les 20,2 pas**. Ces deux chiffres se re-mesurent
+   * en un tour de sonde ; qui lit ce bloc doit le refaire plutôt que le croire.)*
+   *
+   * Rabaisser `PAS_SEMIS` en croyant tenir la densité du monde, c'est ne toucher qu'un nœud sur
+   * trois : la vérité par passe est dans le tableau de `docs/decisions.md` (2026-08-23), et
+   * chaque passe se règle à SA constante.
    */
   PAS_SEMIS: 36,
   /** Échelle des bosquets : les nœuds se GROUPENT (une forêt, un filon), ils ne se saupoudrent
@@ -136,8 +147,19 @@ export const CONTENU = {
    * vieille sylve) ; TRÈS RARE sur le sol des forêts ordinaires (demande d'Alexis : quelques-uns
    * dans les bois de la zone T0, une curiosité qu'on croise tôt). Posés en PASSE SÉPARÉE, appendue,
    * positionnelle — la table `CONTENUS` n'est pas touchée, aucun nœud existant ne bouge. Calibration.
+   *
+   * **LA PRAIRIE HUMIDE N'EST PAS UN MARAIS** (mesuré le 2026-08-23, décision d'Alexis : « il faut
+   * diminuer la pierre, la fibre et les champignons, ils sont trop nombreux sur certains biomes »).
+   * `wet_meadow` est arrivé APRÈS (§2ter R34) et a été rangé au régime des marais : 6 % de ses
+   * tuiles, sur 45 400 tuiles de pré — **2 671 champignons, 46 % de tous ceux de la carte, au même
+   * endroit que 65 % de la fibre**. Le régime de l'humide était calibré sur de PETITS marais
+   * (`marsh` en fait 4 235) ; appliqué à un biome de pré, il pave. La prairie garde donc son
+   * champignon — c'est un mot mouillé, il y pousse — mais à SON régime, dix fois plus maigre que
+   * le marais franc et deux fois le sous-bois ordinaire.
    */
   CHAMPIGNON_HUMIDE: 0.06,
+  /** La prairie humide : un pré, pas une tourbière. `terrainAdmet` continue de l'admettre. */
+  CHAMPIGNON_PRAIRIE: 0.012,
   CHAMPIGNON_FORET: 0.006,
 
   /**
@@ -147,8 +169,16 @@ export const CONTENU = {
    * table `CONTENUS` n'est pas touchée, aucun nœud existant ne bouge. Chance par tuile libre.
    * 0.03 → 0.08 avec R34bis : l'affinité éclaircit la fibre du pré sec, la prairie CONCENTRE
    * en face — le total reste du même ordre, l'endroit devient lisible.
+   *
+   * **PUIS 0.08 → 0.034 (2026-08-23, décision d'Alexis).** R34bis avait raison sur la FORME et
+   * tort sur le VOLUME : « le total reste du même ordre » voulait dire que la prairie devenait
+   * un CHAMP de fibre — mesuré, 8,42 plants pour 100 tuiles, soit **un tous les douze pas** sur
+   * 45 400 tuiles, 65 % de toute la fibre du monde joué. On ne cherche pas une ressource qu'on
+   * piétine. La concentration est CONSERVÉE parce que l'éclaircie du pré sec baisse avec elle
+   * (`AFFINITE_FIBRE_SEC`) : c'est le RAPPORT qui dit où est la fibre, pas le nombre — et A18bis
+   * garde ce rapport, pas ce nombre.
    */
-  FIBRE_PRAIRIE: 0.08,
+  FIBRE_PRAIRIE: 0.034,
 
   /**
    * L'AFFINITÉ DU SEMIS COMMUN DE LA RACINE (spec t0-exploration §2ter R34bis, demande
@@ -166,12 +196,18 @@ export const CONTENU = {
    */
   /** Rayon (Chebyshev) du « au contact de » : bois, eau, rocheux. 2 = la portée d'un regard. */
   AFFINITE_RAYON: 2,
-  /** La fibre du pré sec, loin de toute eau : ce qui reste du saupoudrage. */
-  AFFINITE_FIBRE_SEC: 0.25,
+  /** La fibre du pré sec, loin de toute eau : ce qui reste du saupoudrage.
+   *  0.25 → 0.09 (2026-08-23) : elle DESCEND AVEC `FIBRE_PRAIRIE`. Couper la concentration
+   *  seule aurait rendu la fibre du pré sec majoritaire — le saupoudrage serait revenu par la
+   *  porte de derrière, et A18bis (« ≥ 55 % de fibre à l'humide ») serait tombée à raison. */
+  AFFINITE_FIBRE_SEC: 0.09,
   /** La baie de plein champ, loin des bois et hors lande. */
   AFFINITE_BAIE_OUVERT: 0.25,
-  /** La pierre de plaine, hors pierrier et loin de tout relief. */
-  AFFINITE_PIERRE_OUVERT: 0.15,
+  /** La pierre de plaine, hors pierrier et loin de tout relief.
+   *  0.15 → 0.08 (2026-08-23) : même mouvement que la fibre, pour la même raison — elle descend
+   *  avec `PIERRIER_CHANCE` pour que le rapport d'A18bis (« ≥ 75 % de pierre au relief/lande/
+   *  pierrier ») tienne pendant que le NOMBRE baisse. */
+  AFFINITE_PIERRE_OUVERT: 0.08,
   /**
    * LES PIERRIERS DU PRÉ — le pré n'a presque pas de relief à toucher : l'éclaircie seule ne
    * dessinerait rien (mesuré : 28 % de pierre « logique », le reste en bruit). La vérité
@@ -182,19 +218,26 @@ export const CONTENU = {
   PIERRIER_ECHELLE: 30,
   PIERRIER_SEUIL: 0.66,
   /** La chance par tuile libre D'UN PIERRIER (passe appendue 'PIRR') : le champ de blocs est
-   *  plus dense que ne l'était le saupoudrage — on le voit de loin, on y va, on le vide. */
-  PIERRIER_CHANCE: 0.025,
+   *  plus dense que ne l'était le saupoudrage — on le voit de loin, on y va, on le vide.
+   *  0.025 → 0.018 (2026-08-23) : le pierrier reste plus dense que tout ce qui l'entoure, mais
+   *  il pesait 3 146 rochers — 28 % de toute la pierre de la carte, dans la zone de départ. */
+  PIERRIER_CHANCE: 0.018,
 
   /**
    * LA PROFONDEUR PORTE DU JEU (spec t0-exploration §2quater R40). Le VIEUX FÛT : facteur de
    * stock des arbres du cœur (`stockDArbre` — fonction pure de la position, appliquée au
    * semis ET réappliquée à la repousse). Les CHAMPIGNONS DU CŒUR ('COEU') et les BAIES DE
    * LISIÈRE ('LISI') : chance par tuile libre, passes appendues en queue — patron 'FIBR'.
-   * CHAMPIGNON_COEUR se lit contre CHAMPIGNON_FORET (0.006) : le cœur est ×5 le régime
+   * CHAMPIGNON_COEUR se lit contre CHAMPIGNON_FORET (0.006) : le cœur est ×2 le régime
    * commun, sans atteindre l'humide franc (0.06).
+   *
+   * 0.03 → 0.012 (2026-08-23) : à ×5, le cœur TRIPLAIT le champignon de la forêt ordinaire
+   * (mesuré : 1,65 pour 100 tuiles de `forest`, quand le régime annoncé — « très rare » — en
+   * promet 0,6). La bande du cœur reste le meilleur endroit à champignons des bois ; elle
+   * cesse d'être ce qui les définit.
    */
   VIEUX_FUT_FACTEUR: 1.5,
-  CHAMPIGNON_COEUR: 0.03,
+  CHAMPIGNON_COEUR: 0.012,
   /** 0.015 → 0.03 avec R34bis : la lisière est LE bord à baies — elle concentre ce que
    *  l'affinité retire au plein champ. */
   BAIES_LISIERE: 0.03,
@@ -284,6 +327,21 @@ interface ContenuZone {
   liaison?: { type: NodeType; part: number }[]
   /** Le fond de subsistance : bois, pierre, fibre, baies. Des parts, normalisées. */
   commun: Partial<Record<NodeType, number>>
+  /**
+   * L'ÉCLAIRCIE PAR TYPE DE LA ZONE (2026-08-23, sel 'ECLA') — facteur < 1 : la part de tirages
+   * de ce type qui SURVIT ici. C'est le seul levier qui RETIRE un nœud d'une zone.
+   *
+   * Pourquoi il fallait un levier de plus : les parts de `commun` sont **renormalisées** (voir
+   * `tirerType`), donc baisser la part d'un type ne le retire pas — il se CONVERTIT en un autre.
+   * Sur la Cendrière, la moitié de la pierre du monde joué : baisser `rock: 0.6` l'aurait
+   * transformée en bois, ce qu'Alexis n'a pas demandé. Et un facteur de densité de ZONE aurait
+   * emporté ses arbres avec ses cailloux, ce qu'il n'a pas demandé non plus.
+   *
+   * Tirage POSITIONNEL, comme l'affinité de la racine — fonction pure de la tuile, pas de PRNG :
+   * le flux de génération n'est pas décalé. Distinct de `affiniteDuCommun`, qui lit le TERRAIN et
+   * ne vaut que pour la racine (R34bis l'a épinglé là pour ne pas déplacer les nœuds T1/T2).
+   */
+  eclaircie?: Partial<Record<NodeType, number>>
 }
 
 export const CONTENUS: Record<string, ContenuZone> = {
@@ -312,7 +370,12 @@ export const CONTENUS: Record<string, ContenuZone> = {
 
   // ── T2 : LES MARGES. Le contenu se décidera ; la carte lui MÉNAGE LA PLACE (spec §11).
   //    En attendant, elles portent de quoi survivre en expédition — et rien de plus.
-  cendriere: { commun: { tree: 0.4, rock: 0.6 } },
+  // La Cendrière portait **52 % de toute la pierre du monde joué** (mesuré le 2026-08-23 :
+  // 3 841 rochers dans sa forêt brûlée + 1 950 dans son chaos de blocs). Le chaos, surtout,
+  // n'admet QUE la pierre (`terrainAdmet` refuse l'arbre) : sa table s'y renormalise à 100 %
+  // de cailloux, un tous les 32 pas. L'éclaircie retire ; elle ne convertit pas — le bois mort
+  // de la Cendrière, qu'Alexis n'a pas mis en cause, reste au nœud près.
+  cendriere: { commun: { tree: 0.4, rock: 0.6 }, eclaircie: { rock: 0.45 } },
   glacier: { commun: { rock: 1 } },
   aiguilles: { commun: { rock: 1 } },
   gouffre: { commun: { rock: 1 } },
@@ -462,6 +525,11 @@ export function placeZoneNodes(c: CarteZonee): ResourceNode[] {
         const a = affiniteDuCommun(c, type, t, tx, ty)
         if (a < 1 && hash2(tx, ty, (seed ^ 0x4146494e) | 0) >= a) continue
       }
+      // L'ÉCLAIRCIE DE LA ZONE (2026-08-23, sel 'ECLA') : ce que la table déclare de trop chez
+      // elle. Elle RETIRE le nœud — elle ne le convertit pas en un autre type (ce que ferait
+      // une part rabaissée, la table étant renormalisée).
+      const ecl = CONTENUS[c.graphe.zones[c.zone[i]!]!.def.slug]?.eclaircie?.[type]
+      if (ecl !== undefined && ecl < 1 && hash2(tx, ty, (seed ^ 0x45434c41) | 0) >= ecl) continue
       // Le stock d'un ARBRE passe par `stockDArbre` (§2quater R40) : au cœur d'un massif,
       // le vieux fût — partout ailleurs, le défaut du type, à l'identique d'avant.
       nodes.push({ id, type, tx, ty, stock: type === 'tree' ? stockDArbre(c.map, tx, ty) : NODE_DEFS[type].stock, regrowAt: 0 })
@@ -1180,11 +1248,13 @@ function champignonsRares(c: CarteZonee, occupees: Set<number>, idStart: number)
       const n = def.name
       const prob =
         n === 'marsh' || n === 'peat_bog' || n === 'reed_marsh' || n === 'old_growth'
-          || n === 'willow' || n === 'wet_meadow' // les mots mouillés du pré (spec §2ter R34)
+          || n === 'willow' // la saulaie : un bosquet, pas un biome — sa densité reste localisée
           ? CONTENU.CHAMPIGNON_HUMIDE
-          : n === 'forest'
-            ? CONTENU.CHAMPIGNON_FORET
-            : -1 // tout autre terrain : jamais de champignon
+          : n === 'wet_meadow' // le mot mouillé du PRÉ (§2ter R34) : son propre régime, 2026-08-23
+            ? CONTENU.CHAMPIGNON_PRAIRIE
+            : n === 'forest'
+              ? CONTENU.CHAMPIGNON_FORET
+              : -1 // tout autre terrain : jamais de champignon
       if (prob < 0 || hash2(tx, ty, salt) >= prob) continue
       out.push({ id, type: 'champignon', tx, ty, stock: NODE_DEFS.champignon.stock, regrowAt: 0 })
       occupees.add(i)
@@ -1329,8 +1399,9 @@ function arbresDeLaRacine(c: CarteZonee, occupees: Set<number>, idStart: number)
  * fondent en clairières plus grandes, irrégulières.
  *
  * Deux consommateurs, un seul calcul (comme `poiClearings`) : le semis d'arbres l'ÉVIDE (`> 0` →
- * bloc nu) ; le rendu du sol y VERDIT (`arbresDeLaRacine` boise, la clairière verdit — il ne faut
- * surtout pas que les deux se contredisent). Pur et déterministe (`fbm2`, `+ - * /`).
+ * bloc nu) ; le rendu l'exempte de la pénombre du couvert et de l'assombrissement de cœur (la
+ * trouée est une chambre de lumière DANS la masse). Le carré est donc PORTEUR : il est celui du
+ * semis, et la lumière ne peut pas contredire les arbres. Pur et déterministe (`fbm2`, `+ - * /`).
  */
 export function clairiereForet(seed: number, tx: number, ty: number): number {
   const M = RELIEF.MOTIF

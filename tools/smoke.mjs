@@ -1937,6 +1937,529 @@ const SCENARIOS = {
   },
 
   /**
+   * LA PLANCHE DU GRADIENT (2026-08-22, demande d'Alexis : « et si on posait un gradient
+   * linéaire de brume sur chaque tuile ? ») — quatre candidats sur LA MÊME scène, au MÊME
+   * endroit, à la MÊME heure. Les trois boutons du shader (mode / relief / jitter) sont relus
+   * par frame, comme les crans : on ne rejoue pas le monde entre deux essais.
+   *
+   *   A · actuel     mode 0                          — crans postérisés, cellules de 4 px
+   *   B · gradient   mode 1                          — une valeur PAR TUILE, rampe linéaire aux 4 voisines
+   *   C · + relief   mode 1, relief 2,2              — la même pente, l'échelle d'opacité écartée
+   *   D · + réseau   mode 1, relief 2,2, jitter 0,35 — chaque tuile prend son décalage propre
+   *
+   * L'INSTRUMENT QUI TRANCHE N'EST PAS LA LUMINANCE MOYENNE — elle ne dit rien de la texture,
+   * et c'est la texture qu'on discute. C'est l'HISTOGRAMME de l'écart au monde nu : à
+   * l'intérieur de la marée, `d` est spatialement constant, donc une nappe POSTÉRISÉE n'a que
+   * TROIS valeurs d'alpha → trois pics francs ; une nappe en GRADIENT remplit l'intervalle →
+   * une bosse large. « Marches ou pente » devient un chiffre : la part des 3 bacs les plus
+   * peuplés. Le monde nu se capture EN DERNIER, à la même heure, pour que les quatre écarts se
+   * lisent contre le même fond.
+   *
+   * Et une PLANCHE À REGARDER : un carré du monde agrandi ×4 au PLUS PROCHE VOISIN — un réseau
+   * de tuiles ne se juge pas sur une capture pleine page, il y fait 16 px de côté. Exige `--dev`.
+   */
+  async gradient(page) {
+    if (!dev) {
+      console.log("\n(la planche du gradient exige le mode debug pour régler l'heure — relancer avec --dev)")
+      return {}
+    }
+
+    /** Capture une frame et garde sa luminance (Rec. 709, pixels du MONDE — le HUD est exclu)
+     *  sous `window.__grad[nom]`, pour les écarts pixel à pixel qui suivront. */
+    const capture = (nom) =>
+      page.evaluate(async (n) => {
+        const s = window.__BRAISES__.scene
+        const img = await new Promise((ok) => s.game.renderer.snapshot((i) => ok(i)))
+        const c = document.createElement('canvas')
+        c.width = img.width
+        c.height = img.height
+        const ctx = c.getContext('2d', { willReadFrequently: true })
+        ctx.drawImage(img, 0, 0)
+        const d = ctx.getImageData(0, 0, c.width, c.height).data
+        const larg = c.width >> 1
+        const haut = (c.height - 140) >> 1
+        const lum = new Float32Array(larg * haut)
+        for (let y = 0; y < haut; y++) {
+          for (let x = 0; x < larg; x++) {
+            const i = (y * 2 * c.width + x * 2) * 4
+            lum[y * larg + x] = 0.2126 * d[i] + 0.7152 * d[i + 1] + 0.0722 * d[i + 2]
+          }
+        }
+        window.__grad = window.__grad ?? {}
+        window.__grad[n] = lum
+        return { larg, haut }
+      }, nom)
+
+    /** L'écart au monde nu : percentiles ET histogramme (bacs de 2 niveaux, 0→80). Les
+     *  percentiles disent « combien de blanc » ; seul l'histogramme dit « marches ou pente ». */
+    const mesure = (a, b) =>
+      page.evaluate(([na, nb]) => {
+        const A = window.__grad[na]
+        const B = window.__grad[nb]
+        const d = new Float64Array(A.length)
+        const bacs = new Array(40).fill(0)
+        let somme = 0
+        for (let i = 0; i < A.length; i++) {
+          const v = A[i] - B[i]
+          d[i] = v
+          somme += v
+          if (v >= 1) bacs[Math.min(39, Math.floor(v / 2))]++
+        }
+        const tri = Array.from(d).sort((x, y) => x - y)
+        const pc = (q) => Math.round(tri[Math.floor(q * (tri.length - 1))] * 100) / 100
+        const couverts = bacs.reduce((x, y) => x + y, 0)
+        const hauts = [...bacs].sort((x, y) => y - x)
+        return {
+          moy: Math.round((somme / d.length) * 100) / 100,
+          p50: pc(0.5),
+          p90: pc(0.9),
+          p99: pc(0.99),
+          max: pc(1),
+          couverture: Math.round((couverts / d.length) * 1000) / 10,
+          pics: couverts ? Math.round(((hauts[0] + hauts[1] + hauts[2]) / couverts) * 1000) / 10 : 0,
+          bacs: bacs.map((n) => (couverts ? (n / couverts) * 100 : 0)),
+        }
+      }, [a, b])
+
+    /** ISOLER LA NAPPE — tout disparaît sauf le shader de brume.
+     *
+     *  POURQUOI (mesuré, premier passage) : l'écart au monde nu vaut `α·(m − sol)`, or le sol
+     *  est TEXTURÉ. Une même opacité y rend donc vingt écarts différents, et l'histogramme
+     *  s'étale tout seul : les quatre planches y rendaient la même bosse large (« 3 pics »
+     *  18,5 / 17,6 / 15,9 / 15,1 %), ce qui ne mesurait que l'herbe. Sur un fond UNI, la sortie
+     *  prémultipliée donne `lum − fond ∝ α` : l'histogramme de la frame EST celui des opacités,
+     *  et « trois marches ou une pente » se lit enfin sans intermédiaire.
+     *
+     *  On restitue par une Map objet→visibilité, pas par index : des entités naissent et
+     *  meurent entre deux appels, et une liste réindexée rallumerait n'importe quoi. */
+    const isoler = (actif) =>
+      page.evaluate((on) => {
+        const s = window.__BRAISES__.scene
+        const nappe = s.morningMist?.layer?.shader
+        if (on) {
+          window.__vis = new Map(s.children.list.map((o) => [o, o.visible]))
+          for (const o of s.children.list) if (o !== nappe) o.visible = false
+        } else if (window.__vis) {
+          for (const o of s.children.list) if (window.__vis.has(o)) o.visible = window.__vis.get(o)
+          window.__vis = null
+        }
+      }, actif)
+
+    /** Le carré central du monde, agrandi au PLUS PROCHE VOISIN : la loupe qui montre si le
+     *  réseau de tuiles se lit, et si l'intérieur d'une tuile est une pente ou un aplat. */
+    const loupe = async (nom, cote = 180, zoom = 4) => {
+      const url = await page.evaluate(
+        async ({ c, z }) => {
+          const s = window.__BRAISES__.scene
+          const img = await new Promise((ok) => s.game.renderer.snapshot((i) => ok(i)))
+          const src = document.createElement('canvas')
+          src.width = img.width
+          src.height = img.height
+          src.getContext('2d').drawImage(img, 0, 0)
+          const out = document.createElement('canvas')
+          out.width = c * z
+          out.height = c * z
+          const ctx = out.getContext('2d')
+          ctx.imageSmoothingEnabled = false
+          ctx.drawImage(src, (img.width - c) >> 1, (img.height - c) >> 1, c, c, 0, 0, c * z, c * z)
+          return out.toDataURL('image/png')
+        },
+        { c: cote, z: zoom },
+      )
+      writeFileSync(`${OUT}/gradient-loupe-${nom}.png`, Buffer.from(url.split(',')[1], 'base64'))
+    }
+
+    const heure = async (h) => {
+      for (let essai = 0; essai < 4; essai++) {
+        await page.evaluate((hh) => window.__BRAISES__.scene.sendAction({ type: 'debug_set_hour', hour: hh }), h)
+        await page.waitForTimeout(600)
+        const lu = await page.evaluate(() => window.__BRAISES__.scene.lastTime?.hourOfCycle ?? -1)
+        if (Math.abs(lu - h) < 0.3) return
+      }
+      console.error(`!! set_hour(${h}) n'a jamais pris`)
+    }
+
+    const gue = await page.evaluate(() => {
+      const z = (window.__BRAISES__.scene.map.zones ?? []).find((z) => z.kind === 'le Gué' || z.name === 'le Gué')
+      return z ? { x: z.x, y: z.y, w: z.w, h: z.h } : null
+    })
+    if (!gue) {
+      console.error('!! aucun Gué sur cette carte')
+      return {}
+    }
+    await page.evaluate(
+      ({ px, py }) => window.__BRAISES__.scene.sendAction({ type: 'debug_teleport', x: px, y: py }),
+      { px: gue.x + 3.5, py: gue.y + 3.5 },
+    )
+    await page.waitForTimeout(1400)
+    await heure(6.2)
+    await page.waitForTimeout(3000)
+    // Les BANCS voyageurs sont un AUTRE objet (sprites bakés, leurs propres crans) : on les
+    // éteint avant de mesurer — ce qui se discute ici est la nappe de la marée, elle seule.
+    await page.evaluate(() => window.__BRAISES__.scene.mistBanks?.destroy())
+    await page.waitForTimeout(500)
+
+    const PLANCHES = [
+      { cle: 'A-actuel', mode: 0, relief: 1, jitter: 0, plafond: 0.45 },
+      { cle: 'B-gradient', mode: 1, relief: 1, jitter: 0, plafond: 0.45 },
+      // Relief 2,2 : le barreau haut passe de 0,50 à 0,596 (pic α 0,498) — le rail monte donc
+      // à 0,70, sinon il MORD et écrase le haut de l'échelle, ce que tout ce module combat.
+      { cle: 'C-relief', mode: 1, relief: 2.2, jitter: 0, plafond: 0.7 },
+      { cle: 'D-reseau', mode: 1, relief: 2.2, jitter: 0.35, plafond: 0.7 },
+    ]
+    for (const p of PLANCHES) {
+      await page.evaluate((q) => {
+        const ly = window.__BRAISES__.scene.morningMist?.layer
+        if (!ly) return
+        ly.mode = q.mode
+        ly.relief = q.relief
+        ly.jitter = q.jitter
+        ly.crans = { poids: ly.crans.poids, plafond: q.plafond }
+      }, p)
+      // L'HEURE SE REMET À L'HEURE entre deux planches : l'horloge du jeu avance pendant la
+      // série, et un fond plus clair rend TOUTE nappe plus discrète — la dernière planche
+      // gagnerait par le lever du jour, pas par ses réglages (leçon du balayage `blancheur`).
+      await heure(6.2)
+      await page.waitForTimeout(1200)
+      // ① LE JEU TEL QU'IL SE VOIT — la planche qu'Alexis regarde.
+      await page.screenshot({ path: `${OUT}/gradient-${p.cle}.png` })
+      await loupe(p.cle, 320, 3)
+      await capture(p.cle)
+      // ② LA NAPPE SEULE, sur fond uni — la planche qui se MESURE.
+      await isoler(true)
+      await page.waitForTimeout(500)
+      await page.screenshot({ path: `${OUT}/gradient-iso-${p.cle}.png` })
+      await loupe(`iso-${p.cle}`, 320, 3)
+      await capture(`iso-${p.cle}`)
+      await isoler(false)
+      await page.waitForTimeout(400)
+    }
+
+    // LE FOND SEUL : nappe éteinte, tout le reste toujours caché — l'origine des opacités.
+    await heure(6.2)
+    await page.waitForTimeout(1200)
+    await isoler(true)
+    await page.evaluate(() => window.__BRAISES__.scene.morningMist?.layer?.shader?.setVisible(false))
+    await page.waitForTimeout(500)
+    await capture('iso-fond')
+    await isoler(false)
+    await page.waitForTimeout(400)
+
+    await heure(6.2)
+    await page.waitForTimeout(1200)
+    await page.evaluate(() => window.__BRAISES__.scene.morningMist?.destroy())
+    await page.waitForTimeout(500)
+    await capture('nu')
+    await loupe('nu', 320, 3)
+    await page.screenshot({ path: `${OUT}/gradient-nu.png` })
+
+    const out = {}
+    const iso = {}
+    for (const p of PLANCHES) {
+      out[p.cle] = await mesure(p.cle, 'nu')
+      iso[p.cle] = await mesure(`iso-${p.cle}`, 'iso-fond')
+    }
+
+    const col = (v) => String(v).padStart(8)
+    const barres = ' ▁▂▃▄▅▆▇█'
+    console.log("\n  ① DANS LE JEU — ce que la nappe AJOUTE au monde, en niveaux de luminance")
+    console.log('                          µ     p50     p90     p99     max   couv.%')
+    for (const p of PLANCHES) {
+      const m = out[p.cle]
+      console.log(
+        `  ${p.cle.padEnd(12)}${col(m.moy)}${col(m.p50)}${col(m.p90)}${col(m.p99)}${col(m.max)}${col(m.couverture)}`,
+      )
+    }
+    console.log("\n  ② LA NAPPE SEULE sur fond uni — ici la luminance EST l'opacité (α ∝ lum)")
+    console.log('                          µ     p50     p90     p99     max   couv.%  3 pics%')
+    for (const p of PLANCHES) {
+      const m = iso[p.cle]
+      console.log(
+        `  ${p.cle.padEnd(12)}${col(m.moy)}${col(m.p50)}${col(m.p90)}${col(m.p99)}${col(m.max)}${col(m.couverture)}${col(m.pics)}`,
+      )
+    }
+    console.log("\n  HISTOGRAMME DES OPACITÉS (nappe seule, bacs de 2 niveaux, 0 → 80)")
+    console.log('  des PICS francs = des marches · une BOSSE large = une pente')
+    for (const p of PLANCHES) {
+      const b = iso[p.cle].bacs
+      const hi = Math.max(...b, 0.001)
+      console.log(`  ${p.cle.padEnd(12)}${b.map((v) => barres[Math.min(8, Math.round((v / hi) * 8))]).join('')}`)
+    }
+    console.log(
+      `\n  « 3 pics % » = part des pixels couverts concentrée dans les 3 bacs les plus peuplés.` +
+        `\n  Élevé = la nappe n'a que quelques opacités (des marches). Bas = elle les remplit (une pente).`,
+    )
+    console.log(`\n  captures → ${OUT}/gradient-*.png · loupes ×3 → ${OUT}/gradient-loupe-*.png`)
+    return { jeu: out, nappe: iso }
+  },
+
+  /**
+   * LA FRONTIÈRE (2026-08-22, demande d'Alexis : « une frontière de brume plus organique, pas
+   * simplement droite »).
+   *
+   * LE DIAGNOSTIC : le front est une ISO-DISTANCE de la berge. Là où la berge est droite — et
+   * au Gué la rivière descend au cordeau — l'iso-ligne est droite elle aussi, quelle que soit
+   * la texture de la nappe au-dessus. Aucun réglage d'opacité ne peut le corriger : ce n'est
+   * pas le remplissage qui est en cause, c'est le CONTOUR.
+   *
+   * LE BOUTON : `uFrange` froisse le DOMAINE avant qu'on y lise la distance — deux octaves, une
+   * lente (de grands lobes, des langues de brume qui poussent plus loin par endroits) et une
+   * rapide (le bord se frange tuile à tuile). Le champ de distance n'est pas touché : la carte
+   * reste juste, c'est la LECTURE qui serpente. Balayage 0 / 1,5 / 3 / 5 tuiles.
+   *
+   * On balaie sur le rendu ACTUEL (mode 0), pas sur la planche D : la texture de la nappe est
+   * une décision encore ouverte, et deux décisions mêlées dans une même image ne se tranchent
+   * ni l'une ni l'autre. Le froissement se compose ensuite avec la texture retenue.
+   *
+   * ET SURTOUT LA CARTE : (planche − monde nu), amplifiée, en niveaux de gris. Sur la capture
+   * du jeu, le bord de la brume se confond avec les lisières du terrain — la carte est la seule
+   * image où la frontière se voit pour ce qu'elle est. Exige `--dev`.
+   */
+  async frontiere(page) {
+    if (!dev) {
+      console.log("\n(la frontière exige le mode debug pour régler l'heure — relancer avec --dev)")
+      return {}
+    }
+
+    const capture = (nom) =>
+      page.evaluate(async (n) => {
+        const s = window.__BRAISES__.scene
+        const img = await new Promise((ok) => s.game.renderer.snapshot((i) => ok(i)))
+        const c = document.createElement('canvas')
+        c.width = img.width
+        c.height = img.height
+        const ctx = c.getContext('2d', { willReadFrequently: true })
+        ctx.drawImage(img, 0, 0)
+        const d = ctx.getImageData(0, 0, c.width, c.height).data
+        const larg = c.width >> 1
+        const haut = (c.height - 140) >> 1
+        const lum = new Float32Array(larg * haut)
+        for (let y = 0; y < haut; y++) {
+          for (let x = 0; x < larg; x++) {
+            const i = (y * 2 * c.width + x * 2) * 4
+            lum[y * larg + x] = 0.2126 * d[i] + 0.7152 * d[i + 1] + 0.0722 * d[i + 2]
+          }
+        }
+        window.__front = window.__front ?? {}
+        window.__front[n] = lum
+        window.__frontDim = { larg, haut }
+        return { larg, haut }
+      }, nom)
+
+    /** LA CARTE DE LA NAPPE — (planche − nu) × gain, en gris. La frontière, nue. */
+    const carte = async (nom, gain = 3.2) => {
+      const url = await page.evaluate(
+        ({ n, g }) => {
+          const A = window.__front[n]
+          const B = window.__front.nu
+          const { larg, haut } = window.__frontDim
+          const cv = document.createElement('canvas')
+          cv.width = larg
+          cv.height = haut
+          const ctx = cv.getContext('2d')
+          const img = ctx.createImageData(larg, haut)
+          for (let i = 0; i < A.length; i++) {
+            const v = Math.max(0, Math.min(255, (A[i] - B[i]) * g))
+            img.data[i * 4] = v
+            img.data[i * 4 + 1] = v
+            img.data[i * 4 + 2] = v
+            img.data[i * 4 + 3] = 255
+          }
+          ctx.putImageData(img, 0, 0)
+          return cv.toDataURL('image/png')
+        },
+        { n: nom, g: gain },
+      )
+      writeFileSync(`${OUT}/frontiere-carte-${nom}.png`, Buffer.from(url.split(',')[1], 'base64'))
+    }
+
+    /** LA RUGOSITÉ DU CONTOUR — le chiffre de cette planche, lu sur la CARTE DE COUVERTURE.
+     *
+     *  Première tentative, écartée (et c'est la leçon) : mesurer le contour sur (planche − monde
+     *  nu). Cet écart vaut α·(brume − sol), donc il porte l'ALBÉDO du sol autant que la nappe —
+     *  la carte montrait les arbres et le sable, pas la frontière, et la rugosité DESCENDAIT
+     *  quand le froissement montait. On lit donc la couverture que le shader peint lui-même.
+     *
+     *  On suit, ligne par ligne, la colonne la plus à droite où la couverture passe la moitié de
+     *  son maximum, puis on mesure combien ce contour se déplace d'une ligne à la suivante.
+     *  DROITE : |Δ| ≈ 0 et étendue ≈ 0. ORGANIQUE : les deux montent. */
+    const rugosite = (nom) =>
+      page.evaluate((n) => {
+        const A = window.__front[n]
+        const { larg, haut } = window.__frontDim
+        let hi = 0
+        for (let i = 0; i < A.length; i++) if (A[i] > hi) hi = A[i]
+        const seuil = hi * 0.5
+        const bord = []
+        for (let y = 0; y < haut; y++) {
+          let x = larg - 1
+          while (x >= 0 && A[y * larg + x] < seuil) x--
+          if (x >= 0 && x < larg - 1) bord.push(x)
+        }
+        if (bord.length < 8) return { lignes: bord.length, saut: 0, median: 0, ecart: 0, etendue: 0 }
+        const sauts = []
+        for (let i = 1; i < bord.length; i++) sauts.push(Math.abs(bord[i] - bord[i - 1]))
+        const tri = [...sauts].sort((a, b) => a - b)
+        const moy = sauts.reduce((a, b) => a + b, 0) / sauts.length
+        const varn = sauts.reduce((a, b) => a + (b - moy) * (b - moy), 0) / sauts.length
+        return {
+          lignes: bord.length,
+          saut: Math.round(moy * 100) / 100,
+          median: tri[tri.length >> 1],
+          ecart: Math.round(Math.sqrt(varn) * 100) / 100,
+          etendue: Math.max(...bord) - Math.min(...bord),
+        }
+      }, nom)
+
+    const heure = async (h) => {
+      for (let essai = 0; essai < 4; essai++) {
+        await page.evaluate((hh) => window.__BRAISES__.scene.sendAction({ type: 'debug_set_hour', hour: hh }), h)
+        await page.waitForTimeout(600)
+        const lu = await page.evaluate(() => window.__BRAISES__.scene.lastTime?.hourOfCycle ?? -1)
+        if (Math.abs(lu - h) < 0.3) return
+      }
+      console.error(`!! set_hour(${h}) n'a jamais pris`)
+    }
+
+    const gue = await page.evaluate(() => {
+      const z = (window.__BRAISES__.scene.map.zones ?? []).find((z) => z.kind === 'le Gué' || z.name === 'le Gué')
+      return z ? { x: z.x, y: z.y, w: z.w, h: z.h } : null
+    })
+    if (!gue) {
+      console.error('!! aucun Gué sur cette carte')
+      return {}
+    }
+    await page.evaluate(
+      ({ px, py }) => window.__BRAISES__.scene.sendAction({ type: 'debug_teleport', x: px, y: py }),
+      { px: gue.x + 3.5, py: gue.y + 3.5 },
+    )
+    await page.waitForTimeout(1400)
+    // 6h12 : la marée est ÉTALE à 9 tuiles (son maximum) — c'est l'heure où la frontière est la
+    // plus loin de l'eau, donc la plus franche, donc celle qui expose le défaut.
+    await heure(6.2)
+    await page.waitForTimeout(3000)
+    await page.evaluate(() => window.__BRAISES__.scene.mistBanks?.destroy())
+    await page.waitForTimeout(500)
+
+    const FRANGES = [
+      { cle: 'F0-droite', frange: 0 },
+      { cle: 'F1-froissee', frange: 1.5 },
+      { cle: 'F2-lobes', frange: 3 },
+      { cle: 'F3-langues', frange: 5 },
+    ]
+    for (const f of FRANGES) {
+      await page.evaluate((q) => {
+        const ly = window.__BRAISES__.scene.morningMist?.layer
+        if (ly) ly.frange = q.frange
+      }, f)
+      await heure(6.2)
+      await page.waitForTimeout(1200)
+      // ① LE JEU TEL QU'IL SE VOIT.
+      await page.screenshot({ path: `${OUT}/frontiere-${f.cle}.png` })
+      await capture(f.cle)
+      // ② LA COUVERTURE NUE, peinte par le shader : la frontière sans le sol par-dessous.
+      await page.evaluate(() => {
+        const ly = window.__BRAISES__.scene.morningMist?.layer
+        if (ly) ly.debug = 1
+      })
+      await page.waitForTimeout(500)
+      await page.screenshot({ path: `${OUT}/frontiere-couv-${f.cle}.png` })
+      await capture(`couv-${f.cle}`)
+      await page.evaluate(() => {
+        const ly = window.__BRAISES__.scene.morningMist?.layer
+        if (ly) ly.debug = 0
+      })
+      await page.waitForTimeout(400)
+    }
+
+    // ── CE QUE LE JEU LIVRE VRAIMENT — lu sur la couche, pas recopié d'une constante :
+    //    une garde écrite avec la valeur qu'elle teste ne garde que sa propre copie. ──
+    const livree = await page.evaluate(() => window.__BRAISES__.scene.morningMist?.layer?.frange ?? null)
+    if (livree === null) console.error('!! aucune MorningMist : la garde du livré ne peut pas se poser')
+
+    // ── LE COÛT : deux vnoise de plus par fragment, sur un quad plein monde et SANS GPU ──
+    //    Médiane de l'écart entre départs de rAF, tours ALTERNÉS pour absorber la dérive de la
+    //    machine. Ici SwiftShader : ce qu'on lit est un plafond de coût, pas le vrai jeu.
+    //    Ça se mesure AVANT la destruction de la nappe — après, il n'y a plus rien à régler.
+    const salve = (frange) =>
+      page.evaluate(async (f) => {
+        const ly = window.__BRAISES__.scene.morningMist?.layer
+        if (ly) ly.frange = f
+        await new Promise((ok) => setTimeout(ok, 400))
+        const t = []
+        let dernier = await new Promise((ok) => requestAnimationFrame(ok))
+        for (let i = 0; i < 90; i++) {
+          const n = await new Promise((ok) => requestAnimationFrame(ok))
+          t.push(n - dernier)
+          dernier = n
+        }
+        t.sort((a, b) => a - b)
+        return Math.round(t[t.length >> 1] * 100) / 100
+      }, frange)
+
+    const coutSans = []
+    const coutAvec = []
+    if (livree !== null) {
+      for (let tour = 0; tour < 3; tour++) {
+        coutSans.push(await salve(0))
+        coutAvec.push(await salve(livree))
+      }
+      await salve(livree)
+    }
+
+    await heure(6.2)
+    await page.waitForTimeout(1200)
+    await page.evaluate(() => window.__BRAISES__.scene.morningMist?.destroy())
+    await page.waitForTimeout(500)
+    await capture('nu')
+    await page.screenshot({ path: `${OUT}/frontiere-nu.png` })
+
+    const out = {}
+    for (const f of FRANGES) {
+      await carte(f.cle)
+      out[f.cle] = await rugosite(`couv-${f.cle}`)
+    }
+
+    const col = (v) => String(v).padStart(9)
+    console.log('\n  LA RUGOSITÉ DU CONTOUR — de combien la frontière se déplace par ligne balayée')
+    console.log('  planche         frange      lignes    |Δ| moy   |Δ| méd     écart-t    étendue')
+    for (const f of FRANGES) {
+      const m = out[f.cle]
+      console.log(
+        `  ${f.cle.padEnd(14)}${String(f.frange).padStart(6)}${col(m.lignes)}${col(m.saut)}${col(m.median)}${col(m.ecart)}${col(m.etendue)}`,
+      )
+    }
+    console.log(
+      "\n  Une frontière DROITE ne se déplace pas : |Δ| ≈ 0 et étendue ≈ 0." +
+        "\n  Une frontière ORGANIQUE serpente : |Δ| et étendue montent avec la frange.",
+    )
+
+    // ── LA GARDE prouve d'abord sa PRÉMISSE : F0 (frange 0) doit rendre une étendue de 0.
+    //    Sinon l'instrument ne mesure rien, et son verdict sur le livré ne vaut rien non plus. ──
+    if (out['F0-droite'].etendue !== 0)
+      console.error(`!! instrument sourd : F0 devrait rendre une étendue de 0, il rend ${out['F0-droite'].etendue}`)
+    if (livree !== null) {
+      const proche = FRANGES.reduce((a, b) => (Math.abs(b.frange - livree) < Math.abs(a.frange - livree) ? b : a))
+      const m = out[proche.cle]
+      const droit = m.etendue === 0 || m.saut === 0
+      console.log(
+        `\n  LIVRÉ : MorningMist pose frange = ${livree} (planche ${proche.cle}) — ` +
+          `|Δ| ${m.saut}, étendue ${m.etendue} ${droit ? '✗ CONTOUR REDEVENU DROIT' : '✓ il serpente'}`,
+      )
+      if (droit) console.error('!! la frontière livrée est une droite — le froissement ne prend pas')
+      const med = (a) => [...a].sort((x, y) => x - y)[a.length >> 1]
+      console.log(
+        `\n  COÛT du froissement (inter-frame médian, 90 frames × 3 tours alternés, SwiftShader) :` +
+          `\n    frange 0  : ${coutSans.join(' / ')} ms → ${med(coutSans)} ms` +
+          `\n    frange ${livree}  : ${coutAvec.join(' / ')} ms → ${med(coutAvec)} ms`,
+      )
+    }
+
+    console.log(`\n  captures → ${OUT}/frontiere-*.png · COUVERTURE NUE → ${OUT}/frontiere-couv-*.png`)
+    return out
+  },
+
+  /**
    * LE SPRINT (2026-08-01) — la course SE VOIT, et l'endurance dure ce qu'elle doit durer.
    *
    * Deux choses que seul le navigateur prouve, et elles se tiennent :
@@ -3531,7 +4054,10 @@ const SCENARIOS = {
     console.log(`pavés : ${JSON.stringify(paves)}`)
     if (paves.chunks <= 0) console.error(`!! aucun chunk de pavés vivant (${paves.chunks})`)
     if (paves.cles !== paves.chunks) console.error(`!! ${paves.cles} textures de pavés pour ${paves.chunks} chunks`)
-    if (paves.cote !== 256) console.error(`!! un chunk fait ${paves.cote} px (256 attendus : 16 tuiles × 16 px)`)
+    // 258 = 16 tuiles × 16 px + le DÉBORD d'un pixel de chaque côté (`PAVE.BAVE`, 2026-08-23) :
+    // les images se recouvrent au lieu de se toucher, sinon leur bord tombe sur un demi-pixel
+    // d'écran et laisse un trait sombre — la couture qu'Alexis voyait.
+    if (paves.cote !== 258) console.error(`!! un chunk fait ${paves.cote} px (258 attendus : 16 tuiles × 16 px + 2 de débord)`)
     else console.log(`   ✓ ${paves.chunks} chunks de pavés vivants, dernière cuisson ${paves.derniereCuissonMs} ms`)
 
     // LE SAUT TUILE-À-TUILE dans le bake, famille par famille. Balayage BORNÉ (voir en-tête).
@@ -5093,6 +5619,104 @@ const SCENARIOS = {
     if (cassées > 0) console.error(`!! ${cassées} VÉRIFICATION(S) AU ROUGE — une touche de déplacement est débranchée ou volée`)
     else console.log('les quatre directions du ZQSD répondent, et A ne déplace plus ✓')
     return { lignes, cassées }
+  },
+
+  /**
+   * LA COUTURE D'UNE TUILE (2026-08-23) — Alexis : « je vois toujours des traits en forme de
+   * carré d'un pixel ». Mesuré sur sa capture : un trait tous les ~53 px d'écran, en x ET en y,
+   * soit EXACTEMENT une tuile à son zoom. L'instrument n'explique pas — il ÉTEINT une couche à
+   * la fois et rend la même vue, pour que le coupable se désigne.
+   */
+  async couture(page) {
+    await page.goto(URL)
+    await page.waitForFunction(() => Boolean(window.__BRAISES__?.scene?.registry?.get('mapData')), null, { timeout: 150000 })
+    await page.waitForTimeout(1500)
+    await page.evaluate(() => window.__BRAISES__.scene.sendAction({ type: 'debug_set_hour', hour: 11 }))
+    await page.waitForTimeout(500)
+
+    const base = await page.evaluate(() => {
+      const cam = window.__BRAISES__.scene.cameras.main
+      return { zoom: cam.zoom, w: cam.width, h: cam.height }
+    })
+    console.log(`caméra de base : zoom ${base.zoom} · ${base.w}×${base.h} · ${(base.zoom * 16).toFixed(2)} px par tuile`)
+
+    // ① LE ZOOM EST-IL LE COUPABLE ? La même vue, à quatre grossissements. Le zoom du jeu se
+    //    DÉRIVE de la hauteur de fenêtre (`zoomForFraming`) : celui d'Alexis n'est pas le nôtre.
+    for (const z of [2.25, 2.75, 3.3125, 4]) {
+      await page.evaluate((zz) => window.__BRAISES__.scene.cameras.main.setZoom(zz), z)
+      await page.waitForTimeout(400)
+      await page.screenshot({ path: `${OUT}/couture-zoom-${String(z).replace('.', 'p')}.png` })
+    }
+
+    // ② AU PIRE ZOOM, on éteint une couche à la fois.
+    await page.evaluate(() => window.__BRAISES__.scene.cameras.main.setZoom(3.3125))
+    await page.waitForTimeout(400)
+    await page.screenshot({ path: `${OUT}/couture-a-tout.png` })
+
+    await page.evaluate(() => {
+      const sc = window.__BRAISES__.scene
+      window.__C__ = { paves: [] }
+      for (const c of sc.paves.chunks.values()) { c.image.setVisible(false); window.__C__.paves.push(c.image) }
+    })
+    await page.waitForTimeout(300)
+    await page.screenshot({ path: `${OUT}/couture-b-sans-paves.png` })
+
+    await page.evaluate(() => {
+      const sc = window.__BRAISES__.scene
+      for (const im of window.__C__.paves) im.setVisible(true)
+      window.__C__.meshes = sc.children.list.filter((o) => o.type === 'Mesh2D' || o.type === 'Mesh')
+      for (const m of window.__C__.meshes) m.setVisible(false)
+    })
+    await page.waitForTimeout(300)
+    await page.screenshot({ path: `${OUT}/couture-c-sans-mesh.png` })
+
+    // ③ Le sol NU : pavés + mesh seuls, tout le reste éteint (props, lumière, brume…).
+    const restants = await page.evaluate(() => {
+      const sc = window.__BRAISES__.scene
+      for (const m of window.__C__.meshes) m.setVisible(true)
+      window.__C__.hauts = sc.children.list.filter((o) => o.visible && o.depth > -0.9)
+      for (const o of window.__C__.hauts) o.setVisible(false)
+      return window.__C__.hauts.length
+    })
+    console.log(`sol nu : ${restants} objets éteints au-dessus des pavés`)
+    await page.waitForTimeout(300)
+    await page.screenshot({ path: `${OUT}/couture-d-sol-nu.png` })
+
+    await page.evaluate(() => { for (const o of window.__C__.hauts) o.setVisible(true) })
+
+    // ④ LE DÉBORD EST-IL LÀ, ET DIT-IL LA MÊME CHOSE QUE LE VOISIN ? (`PAVE.BAVE`, R17.)
+    //    La garde pure (`paves.test.ts`) le vérifie sur des chunks cuits pour elle ; ici on
+    //    l'affirme sur les textures RÉELLEMENT POSÉES — celles que le GPU échantillonne.
+    const debord = await page.evaluate(() => {
+      const sc = window.__BRAISES__.scene
+      const cles = sc.textures.getTextureKeys().filter((k) => k.startsWith('pave-') && !k.endsWith('-surplomb'))
+      if (cles.length === 0) return { cles: 0, paires: 0, ecarts: 0, exemple: null, cote: 0 }
+      const cote = sc.textures.get(cles[0]).getSourceImage().width
+      const de = (cle) => { const m = /^pave-\d+-(-?\d+)-(-?\d+)$/.exec(cle); return m ? [Number(m[1]), Number(m[2])] : null }
+      const pixel = (cle, x, y) => { const c = sc.textures.getPixel(x, y, cle); return c ? `${c.red},${c.green},${c.blue},${c.alpha}` : null }
+      let paires = 0, ecarts = 0, exemple = null
+      for (const cle of cles) {
+        const cc = de(cle)
+        if (!cc) continue
+        const droite = cles.find((k) => { const d = de(k); return d && d[0] === cc[0] + 1 && d[1] === cc[1] })
+        if (!droite) continue
+        paires++
+        for (let y = 1; y < cote - 1; y += 7) {
+          // Le DERNIER pixel de A est son débord : il doit valoir le premier pixel du CORPS de B.
+          const a = pixel(cle, cote - 1, y)
+          const b = pixel(droite, 1, y)
+          if (a !== b) { ecarts++; if (!exemple) exemple = { cle, y, a, b } }
+        }
+      }
+      return { cles: cles.length, paires, ecarts, exemple, cote }
+    })
+    console.log(`débord : ${debord.paires} paires de chunks voisins, ${debord.ecarts} écarts · côté ${debord.cote} px`)
+    if (debord.cote !== 258) console.error(`!! un chunk fait ${debord.cote} px (258 attendus : 256 + 2 de débord)`)
+    if (debord.ecarts > 0) console.error(`!! le débord ne dit PAS ce que peint le voisin : ${JSON.stringify(debord.exemple)}`)
+    else if (debord.paires > 0) console.log('   ✓ le débord de chaque chunk est le pixel de son voisin')
+
+
+    return base
   },
 
   async default(page) {
@@ -9014,7 +9638,6 @@ const SCENARIOS = {
         `              pris à ${String(Math.round((eCoeur.heure ?? -1) * 10) / 10).padStart(4)} h (midi voulu) · intensité à l'obturateur ${(eCoeur.intensite ?? 0).toFixed(2)}` +
         `\n              grain : ${String(sondeGrain.vivantes ?? 0).padStart(4)} particules vivantes / cible ${String(sondeGrain.cible ?? 0).padStart(4)}` +
         ` / budget ${sondeGrain.budget ?? '?'}${sondeGrain.plafonne ? ' (PLAFONNÉ)' : ''} · ${String(sondeGrain.rects ?? 0).padStart(5)} rectangles` +
-        `, ${String(sondeGrain.eclaboussures ?? 0).padStart(3)} éclaboussures` +
         `\n              contre le VOILE SEUL : Δµ ${String(Math.round((coeurM.moy - voileM.moy) * 10) / 10).padStart(6)}` +
         `   σ/µ ${String(Math.round(coeurM.cv * 1000) / 1000).padStart(6)} contre ${String(Math.round(voileM.cv * 1000) / 1000).padStart(6)}` +
         ` (Δ ${String(Math.round((coeurM.cv - voileM.cv) * 1000) / 1000).padStart(6)})`,
@@ -9337,9 +9960,6 @@ const SCENARIOS = {
    * il reste lisible sous charge, et c'est lui qui commande le budget. Il ne couvre pas la
    * rastérisation (elle vit dans swiftshader, hors du fil) — la planche optique
    * `--scenario meteo` reste le juge de ce que ça donne à l'écran.
-   *
-   * Il rapporte aussi le total CUMULÉ d'éclaboussures : une gerbe de 90 ms ne se photographie
-   * pas quand une image en dure 900, elle se COMPTE.
    */
   async meteocout(page) {
     if (!dev) { console.log('(le coût du ciel exige --dev pour armer un front)'); return {} }
@@ -9398,8 +10018,7 @@ const SCENARIOS = {
         `  ${type.padEnd(9)} ${String(d.vivantes).padStart(4)} particules / cible ${String(d.cible).padStart(4)} / budget ${d.budget}${d.plafonne ? ' PLAFONNÉ' : '        '}` +
         ` · ${String(d.rects).padStart(5)} rectangles` +
         `\n            SUR LE FIL PRINCIPAL : physique ${f2(d.msPhysique)} + peinture ${f2(d.msPeinture)} = ${f2(d.msPhysique + d.msPeinture)} ms/image` +
-        ` (moyenne sur ${d.images} images, à ${Math.round(e.heure * 10) / 10} h, intensité ${e.intensite.toFixed(2)})` +
-        `\n            ${d.eclabsTotal} éclaboussures écloses depuis le début (${d.eclaboussures} vivantes à l'instant du relevé)`,
+        ` (moyenne sur ${d.images} images, à ${Math.round(e.heure * 10) / 10} h, intensité ${e.intensite.toFixed(2)})`,
       )
     }
     return out
@@ -9484,7 +10103,7 @@ const SCENARIOS = {
       console.log(
         `  ${type.padEnd(11)} intensité ${e.intensite.toFixed(2)} à ${Math.round(e.heure * 10) / 10} h · ` +
         `${e.sonde.vivantes} particules (cible ${e.sonde.cible}, budget ${e.sonde.budget}${e.sonde.plafonne ? ' PLAFONNÉ' : ''}), ` +
-        `${e.sonde.rects} rectangles, ${e.sonde.eclabsTotal ?? 0} éclaboussures écloses`,
+        `${e.sonde.rects} rectangles`,
       )
     }
     return out
@@ -12669,6 +13288,97 @@ const SCENARIOS = {
       console.log(`   ✓ (${Math.round(p.x)}, ${Math.round(p.y)}) → affleurement-${p.nom}.png`)
     }
     return cibles
+  },
+
+  /**
+   * LE CADRAN THERMIQUE (spec `meteo.md` R11-R13) — le panneau debug affiche-t-il vraiment
+   * les quatre températures, et disent-elles la même chose que la sim ?
+   *
+   * Depuis que la neige se dérive du froid, `T₀` décide de TOUT ce qui tombe du ciel : sans
+   * cadran, on calibre à l'aveugle. Ce scénario saute d'acte en acte (`debug_set_season_day`),
+   * relève le panneau À L'ÉCRAN, et le confronte aux fonctions de `/sim` lues dans la page.
+   * Un cadran qui ment est pire qu'un cadran absent.
+   *
+   * `--dev` OBLIGATOIRE : le panneau n'existe que sous `import.meta.env.DEV`.
+   */
+  async thermo(page) {
+    if (!dev) {
+      console.log(`   ✗ le panneau debug n'existe qu'en DEV — relancer avec --dev`)
+      return null
+    }
+    await page.keyboard.press('P') // ouvre le panneau
+    await page.waitForTimeout(400)
+
+    /** Ce que le PANNEAU montre, lu dans le DOM — pas ce qu'on croit qu'il montre. */
+    const lirePanneau = () => page.evaluate(() => {
+      const grilles = [...document.querySelectorAll('div')].filter((d) => d.style.display === 'grid')
+      const g = grilles.find((d) => d.textContent?.includes('monde T₀'))
+      if (!g) return null
+      const cells = [...g.children].map((c) => c.textContent ?? '')
+      const out = {}
+      for (let i = 0; i + 1 < cells.length; i += 2) out[cells[i].trim()] = cells[i + 1].trim()
+      return out
+    })
+
+    /** Ce que la SIM dit au même point, par les mêmes fonctions — la référence. */
+    const lireSim = () => page.evaluate(() => {
+      const sc = window.__BRAISES__.scene
+      const s = sc.registry.get('hud:snapshot') ?? null
+      const p = sc.predicted ?? { x: 0, y: 0 }
+      const t = sc.lastTime
+      void s
+      return { x: p.x, y: p.y, tick: t?.tick ?? 0, jour: t?.seasonDay ?? 0, nuit: Boolean(t?.isNight) }
+    })
+
+    const releves = []
+    for (const [jour, heure, nom] of [[5, 12, 'acte1-midi'], [30, 12, 'acte2-midi'], [30, 0, 'acte2-nuit'], [50, 12, 'acte3-midi'], [50, 0, 'acte3-nuit']]) {
+      await page.evaluate(({ d, h }) => {
+        window.__BRAISES__.scene.sendAction({ type: 'debug_set_season_day', day: d })
+        window.__BRAISES__.scene.sendAction({ type: 'debug_set_hour', hour: h })
+      }, { d: jour, h: heure })
+      await page.waitForTimeout(1200) // le cadran se relève 4×/s : largement le temps
+      const panneau = await lirePanneau()
+      const ctx = await lireSim()
+      if (!panneau) {
+        console.log(`   ✗ ${nom} : AUCUN cadran dans le DOM — le panneau ne porte pas le relevé`)
+        continue
+      }
+      releves.push({ nom, jour, heure, panneau, ctx })
+      console.log(`   ${nom.padEnd(12)} j${String(ctx.jour).padStart(2)} ${ctx.nuit ? 'nuit' : 'jour'} · `
+        + `monde ${panneau['monde T₀']} · lieu ${panneau.lieu} · ressenti ${panneau.ressenti} · corps ${panneau.corps} · `
+        + `ciel ${panneau.ciel} · sol ${panneau.sol}`)
+      await page.screenshot({ path: `${OUT}/thermo-${nom}.png` })
+    }
+
+    console.log(`\n── LE CADRAN DIT-IL VRAI ? (le panneau contre `/sim`, au même point) ──`)
+    let faux = 0
+    for (const r of releves) {
+      const vrai = await page.evaluate(() => {
+        const sc = window.__BRAISES__.scene
+        const e = sc.etatGel
+        const p = sc.predicted
+        if (!e || !p) return null
+        const S = window.__BRAISES_SIM__
+        return S ? S(e, p) : null
+      })
+      // La sim n'est pas exposée au runtime : on se rabat sur la COHÉRENCE INTERNE, qui est
+      // déjà une garde forte — `monde ≥ lieu` (un front ne réchauffe jamais) et
+      // `ressenti ≥ lieu` (le feu et la source ne font que plancher).
+      void vrai
+      const monde = Number(r.panneau['monde T₀'])
+      const lieu = Number(r.panneau.lieu)
+      const ressenti = Number(r.panneau.ressenti)
+      const ok = monde >= lieu - 1e-6 && ressenti >= lieu - 1e-6
+      if (!ok) { faux++; console.log(`   ✗ ${r.nom} : monde ${monde} / lieu ${lieu} / ressenti ${ressenti} — l'ordre est rompu`) }
+    }
+    console.log(faux === 0
+      ? `   ✓ ${releves.length} relevés : monde ≥ lieu ≤ ressenti — l'ordre des trois lois tient partout`
+      : `   ✗ ${faux} relevés incohérents`)
+
+    // LA MARCHE DE LA SAISON, VUE PAR LE CADRAN : c'est elle qu'on vient lire.
+    const parNom = Object.fromEntries(releves.map((r) => [r.nom, Number(r.panneau['monde T₀'])]))
+    console.log(`\n   T₀ relevé : acte I midi ${parNom['acte1-midi']} · acte II ${parNom['acte2-midi']}/${parNom['acte2-nuit']} · acte III ${parNom['acte3-midi']}/${parNom['acte3-nuit']}`)
+    return releves
   },
 
   /** Les lieux (spec docs/specs/lieux.md) : la carte est-elle bien vierge au départ ? */

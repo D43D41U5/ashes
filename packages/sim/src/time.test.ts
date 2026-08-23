@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { BALANCE } from './balance'
+import { BALANCE, TEMPERATURE } from './balance'
 import { drainEvents, type SimEvent } from './events'
 import { createSim, step } from './sim'
 import {
@@ -8,6 +8,8 @@ import {
   cycleOffsetForStartHour,
   DAY_TICKS_PER_CYCLE,
   getGameTime,
+  NIGHT_RAMP_TICKS,
+  partDeNuit,
   seasonDayAtTick,
   TICKS_PER_CYCLE,
   TICKS_PER_SEASON_DAY,
@@ -21,6 +23,8 @@ describe('temps (A1 — fonction pure du tick)', () => {
       tick: 0,
       hourOfCycle: BALANCE.CYCLE_DAWN_HOUR,
       isNight: false,
+      nuit: 1, // l'aube est le FOND du froid : la pente ne le rend qu'au fil de la matinée
+
       seasonDay: 1,
       act: 1,
       tour: 1, // l'an 1 (saison-sans-fin T2)
@@ -153,5 +157,48 @@ describe('couplage cycle↔calendrier (V0-9 — l’endgame observable en solo)'
     // couplage, lui, exige un `< seasonEndTick` strict). L'endgame est inobservable.
     const offset = cycleOffsetForStartHour(9)
     expect(firstAct3Nightfall(720, offset)).toBeGreaterThanOrEqual(seasonEndTick(720))
+  })
+})
+
+describe('la nuit tombe en PENTE (`partDeNuit`, décision 2026-08-23)', () => {
+  const MARCHE_MAX = TEMPERATURE.NIGHT_COLD / NIGHT_RAMP_TICKS
+
+  it('GARDE EXHAUSTIVE — aucun saut de froid sur tout le cycle, tick par tick', () => {
+    // Le défaut réparé : `isNight` était un booléen, donc `NIGHT_COLD` tombait de douze degrés
+    // en UN tick à 21 h et remontait de douze à 6 h. On balaie le cycle ENTIER (pas des points
+    // choisis) et on affirme UNE propriété : le froid ne bouge jamais de plus d'un pas de rampe.
+    let pire = 0
+    let ou = -1
+    let precedent = partDeNuit(TICKS_PER_CYCLE - 1) // la couture du cycle est un tick comme un autre
+    for (let t = 0; t < TICKS_PER_CYCLE; t++) {
+      const v = partDeNuit(t)
+      const saut = Math.abs(v - precedent) * TEMPERATURE.NIGHT_COLD
+      if (saut > pire) { pire = saut; ou = t }
+      precedent = v
+    }
+    expect(pire, `plus grand saut au cycleTick ${ou}`).toBeLessThanOrEqual(MARCHE_MAX + 1e-9)
+  })
+
+  it('LA NUIT EST BIT-EXACTE : `isNight` ⟹ part de nuit PLEINE, sur toute la nuit', () => {
+    // Ce que cette garde PIN : les deux pentes vivent du côté du JOUR. Les faire déborder sur
+    // la nuit renverrait des loups dans les nuits d'acte III (`nighthunt` tire contre l'éveil,
+    // « le vivant a quitté la vallée » est une promesse testée à zéro) et rétrécirait toutes
+    // les hordes (`planifierHorde` lit l'éveil AU TICK DU CRÉPUSCULE). Voir `partDeNuit`.
+    for (let t = DAY_TICKS_PER_CYCLE; t < TICKS_PER_CYCLE; t++) expect(partDeNuit(t)).toBe(1)
+  })
+
+  it('le plein jour ne porte aucun froid de nuit, et les lisières sont des pentes bornées', () => {
+    // Entre les deux rampes : zéro, franc. Sur les rampes : monotone et dans [0, 1].
+    for (let t = NIGHT_RAMP_TICKS; t <= DAY_TICKS_PER_CYCLE - NIGHT_RAMP_TICKS; t += 137) {
+      expect(partDeNuit(t)).toBe(0)
+    }
+    expect(partDeNuit(0)).toBe(1) // l'aube : le fond du froid
+    expect(partDeNuit(NIGHT_RAMP_TICKS / 2)).toBeCloseTo(0.5, 9)
+    expect(partDeNuit(DAY_TICKS_PER_CYCLE - NIGHT_RAMP_TICKS / 2)).toBeCloseTo(0.5, 9)
+    for (let t = 0; t < TICKS_PER_CYCLE; t += 7) {
+      const v = partDeNuit(t)
+      expect(v).toBeGreaterThanOrEqual(0)
+      expect(v).toBeLessThanOrEqual(1)
+    }
   })
 })

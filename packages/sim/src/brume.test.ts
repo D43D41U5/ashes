@@ -14,7 +14,7 @@ import { distSq } from './geometry'
 import { createEmptyMap, type WorldMap } from './map'
 import { rngNext } from './rng'
 import { createSim, snapshot, spawnEntity, step, type SimState } from './sim'
-import { advanceTemperature, ambientTemperature, baselineTemperature } from './temperature'
+import { advanceTemperature, AMBIANT_HYPOTHERMIE, ambientTemperature, baselineTemperature } from './temperature'
 import { calendarScaleForSeasonCycles, DAY_TICKS_PER_CYCLE, TICKS_PER_CYCLE } from './time'
 import { grantItems } from './village'
 import { foundNpcVillage } from './worldgen'
@@ -218,8 +218,8 @@ describe('le froid de la nappe (A4, A5)', () => {
 
   it('A4 — la plaine de JOUR devient létale sous la nappe, et reste douce à côté', () => {
     const { sim } = simSousNappe()
-    expect(baselineTemperature(sim, 40.5, 20.5)).toBeLessThan(TEMPERATURE.HYPOTHERMIA)
-    expect(baselineTemperature(sim, 10.5, 20.5)).toBeGreaterThan(TEMPERATURE.COMFORT)
+    expect(baselineTemperature(sim, 40.5, 20.5)).toBeLessThan(AMBIANT_HYPOTHERMIE)
+    expect(baselineTemperature(sim, 10.5, 20.5)).toBeGreaterThan(TEMPERATURE.AMBIANT_DOUX)
   })
 
   it('A4 — on y refroidit par DÉRIVE : le temps de fuir, pas un couperet', () => {
@@ -245,7 +245,7 @@ describe('le froid de la nappe (A4, A5)', () => {
   it('A5 — la bulle d’un Feu de village tient la nappe dehors', () => {
     const { sim } = simSousNappe()
     foundNpcVillage(sim, 40, 20, 0)
-    expect(ambientTemperature(sim, 40.5, 20.5)).toBeGreaterThan(TEMPERATURE.HYPOTHERMIA)
+    expect(ambientTemperature(sim, 40.5, 20.5)).toBeGreaterThan(AMBIANT_HYPOTHERMIE)
   })
 
   it('R5 — le gate d’attraction des Cendreux s’ALLUME de jour sous la nappe (assumé : la Brume est hantée)', () => {

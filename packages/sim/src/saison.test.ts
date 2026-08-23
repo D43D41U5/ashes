@@ -6,7 +6,7 @@ import { inventoryOf } from './items'
 import { createEmptyMap } from './map'
 import { foundNpcVillage } from './worldgen'
 import { createSim, snapshot, spawnEntity, step, type SimState } from './sim'
-import { DAY_TICKS_PER_CYCLE, TICKS_PER_CYCLE, TICKS_PER_SEASON_DAY, getGameTime } from './time'
+import { cycleOffsetForStartHour, DAY_TICKS_PER_CYCLE, TICKS_PER_CYCLE, TICKS_PER_SEASON_DAY, getGameTime } from './time'
 import type { ResourceNode } from './economy'
 
 /** 1 cycle jour/nuit = 1 jour de saison : la saison entière tient en 60 cycles. */
@@ -28,7 +28,14 @@ function runTo(sim: SimState, tick: number, collect?: SimEvent[]): void {
 describe('la pression (A1)', () => {
   it('la repousse ralentit ×1.5 en acte II', () => {
     const node: ResourceNode = { id: 1, type: 'berry_bush', tx: 10, ty: 10, stock: 1, regrowAt: 0 }
-    const sim = createSim(41, { map: createEmptyMap(40, 40, TERRAIN_GRASS), calendarScale: FAST, nodes: [node] })
+    // MIDI aux DEUX mesures : depuis la rampe de nuit (`partDeNuit`), le tick 0 est l'aube et
+    // porte le plein froid nocturne. Ce cas mesure le facteur d'ACTE — pas celui de l'heure.
+    const sim = createSim(41, {
+      map: createEmptyMap(40, 40, TERRAIN_GRASS),
+      calendarScale: FAST,
+      nodes: [node],
+      cycleOffset: cycleOffsetForStartHour(12),
+    })
     const a = spawnEntity(sim, 10.3, 10.5)
     // Le buisson DÉRIVE à l'épuisement (spec recolte-vivante) : on se replante dessus
     // avant chaque coup, sinon le second passe hors de portée et ne rase rien.

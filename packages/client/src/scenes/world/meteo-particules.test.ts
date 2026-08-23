@@ -38,7 +38,7 @@ const VUE: Vue = { x0: 110, y0: 40, x1: 150, y1: 64 }
 /** Faire tourner le champ N images à 60 Hz, comme le fait la couche. */
 function avancer(c: ChampParticules, type: 'pluie' | 'neige' | 'orage' | 'blizzard', n: number, vue = VUE, bande = BANDE): void {
   const profil = PROFILS[type]!
-  for (let i = 0; i < n; i++) c.update(1 / 60, 1000 / 60, profil, vue, bande, rampeDe(frontDe(type)))
+  for (let i = 0; i < n; i++) c.update(1 / 60, profil, vue, bande, rampeDe(frontDe(type)))
 }
 
 describe("l'intensité relue inline est celle de la sim", () => {
@@ -283,7 +283,7 @@ describe("l'émission suit la bande", () => {
     const bande: Bande = { axis: 'x', lo: 200, hi: 240 }
     const vue: Vue = { x0: 170, y0: 40, x1: 270, y1: 64 }
     const c = new ChampParticules(4242)
-    for (let i = 0; i < 400; i++) c.update(1 / 60, 1000 / 60, PROFILS.pluie!, vue, bande, RAMPE_PLUIE)
+    for (let i = 0; i < 400; i++) c.update(1 / 60, PROFILS.pluie!, vue, bande, RAMPE_PLUIE)
     for (const p of c.particules) {
       if (!p.vive) continue
       expect(p.x, `x=${p.x} hors bande`).toBeGreaterThan(bande.lo)
@@ -303,7 +303,7 @@ describe("l'émission suit la bande", () => {
     for (let centre = -4; centre <= rampe; centre += rampe / 24) {
       const c = new ChampParticules(11)
       const vue: Vue = { x0: centre, y0: 40, x1: centre + 4, y1: 64 }
-      for (let i = 0; i < 3; i++) c.update(1 / 60, 1000 / 60, PROFILS.pluie!, vue, bande, rampe)
+      for (let i = 0; i < 3; i++) c.update(1 / 60, PROFILS.pluie!, vue, bande, rampe)
       comptes.push(c.cible)
     }
     expect(comptes[0]).toBe(0) // dehors : rien
@@ -324,7 +324,7 @@ describe("l'émission suit la bande", () => {
     const rampe = RAMPE_PLUIE
     const vue: Vue = { x0: 100, y0: 40, x1: 100 + 2 * rampe, y1: 64 }
     const c = new ChampParticules(2026)
-    for (let i = 0; i < 240; i++) c.update(1 / 60, 1000 / 60, PROFILS.pluie!, vue, bande, rampe)
+    for (let i = 0; i < 240; i++) c.update(1 / 60, PROFILS.pluie!, vue, bande, rampe)
     let bord = 0
     let coeur = 0
     for (const p of c.particules) {
@@ -339,7 +339,7 @@ describe("l'émission suit la bande", () => {
     const bande: Bande = { axis: 'x', lo: -1e4, hi: 1e4 }
     const vue: Vue = { x0: 0, y0: 0, x1: 400, y1: 300 } // 120 000 tuiles² : 100 000 gouttes sans plafond
     const c = new ChampParticules(5)
-    for (let i = 0; i < 40; i++) c.update(1 / 60, 1000 / 60, PROFILS.blizzard!, vue, bande, rampeDe(frontDe('blizzard')))
+    for (let i = 0; i < 40; i++) c.update(1 / 60, PROFILS.blizzard!, vue, bande, rampeDe(frontDe('blizzard')))
     expect(c.cible).toBe(BUDGET_PARTICULES)
     expect(c.particules.filter((p) => p.vive).length).toBeLessThanOrEqual(BUDGET_PARTICULES)
   })
@@ -351,34 +351,6 @@ describe("l'émission suit la bande", () => {
     c.vider()
     expect(c.vivantes).toBe(0)
     expect(c.particules.every((p) => !p.vive)).toBe(true)
-  })
-})
-
-describe("l'éclaboussure", () => {
-  it('la PLUIE éclabousse et la NEIGE non — et jamais au-delà de son pool', () => {
-    const c = new ChampParticules(17)
-    avancer(c, 'pluie', 400)
-    expect(c.eclabsVivantes, 'aucune éclaboussure sous la pluie').toBeGreaterThan(0)
-    expect(c.eclabsVivantes).toBeLessThanOrEqual(c.eclaboussures.length)
-    const n = new ChampParticules(17)
-    avancer(n, 'neige', 400)
-    expect(n.eclabsVivantes, 'la neige ne devrait pas éclabousser').toBe(0)
-  })
-
-  it('les gouttes touchent SUR TOUT LE CADRE, pas sur le bord bas', () => {
-    // Le piège du recyclage naïf : si une goutte ne « touche » qu'en sortant du cadre,
-    // toutes les éclaboussures s'alignent sur une rangée en bas de l'écran. La hauteur
-    // de chute tirée à la naissance les disperse — on l'affirme en comptant les bandes.
-    const c = new ChampParticules(31)
-    const bandes = new Set<number>()
-    for (let i = 0; i < 600; i++) {
-      c.update(1 / 60, 1000 / 60, PROFILS.pluie!, VUE, BANDE, RAMPE_PLUIE)
-      for (const e of c.eclaboussures) {
-        // Fraîchement née : son âge n'a encaissé qu'une seule image.
-        if (e.vive && e.age <= 1000 / 60 + 1e-9) bandes.add(Math.floor(((e.y - VUE.y0) / (VUE.y1 - VUE.y0)) * 5))
-      }
-    }
-    expect(bandes.size, `bandes touchées : ${[...bandes].join(',')}`).toBeGreaterThanOrEqual(3)
   })
 })
 
@@ -403,4 +375,95 @@ describe('le brouillard', () => {
   it("n'a AUCUN profil de chute — il ne tombe rien, c'est son signalement", () => {
     expect(PROFILS.brouillard).toBeNull()
   })
+})
+
+describe("le rideau ne penche pas d'un côté", () => {
+  /**
+   * LE DÉFAUT MESURÉ (rapport d'Alexis, 2026-08-23) : « un front d'orage qui arrivait depuis
+   * le sud, à sa frontière nord, il y avait bien plus de particules à gauche de l'écran ».
+   *
+   * L'INVARIANT QUI LE TRANCHE, et il est EXACT plutôt qu'une tolérance choisie : sur une
+   * bande d'axe `y`, `intensiteDansBande` NE DÉPEND PAS DE x. La densité du rideau doit donc
+   * être UNIFORME EN x sur tout le cadre — où que tombe la lisière. On balaie les dix déciles
+   * de largeur et non les deux moitiés : le défaut se logeait tout entier dans le premier.
+   *
+   * DEUX CAUSES, toutes deux dans `naitre` :
+   *   ① le haut du cadre est HORS bande sous une lisière d'amont, donc toute naissance tirée
+   *     là sortait à I = 0 et mourait, tandis que celles du bord OUEST (`vent > 0`) passaient ;
+   *   ② une particule sortie PAR LE BAS rentrait par un bord tiré AU FLUX — donc parfois à
+   *     l'ouest, alors qu'elle vient du haut. Le bord ouest recevait une part de TOUTES les
+   *     sorties au lieu des seules sorties à l'est.
+   *
+   * RELEVÉ, même montage, 6 graines × 300 images, décile le plus chargé RAPPORTÉ À LA MOYENNE
+   * (et le plus creux au-dessous) — avant → après :
+   *     pluie          8,89 → 1,13   (creux 0,08 → 0,91)
+   *     neige          9,48 → 1,17   (creux 0,03 → 0,90)
+   *     orage          8,79 → 1,16   (creux 0,08 → 0,87)
+   *     blizzard       1,75 → 1,10   (creux 0,44 → 0,90)
+   *     vent de cendre 1,52 → 1,16   (creux 0,61 → 0,84)
+   * Les deux ciels qui RASENT (blizzard, cendre) penchaient moins parce que leur vent traînait
+   * le rideau à travers le cadre — le défaut y était masqué, pas absent.
+   */
+  const VUE_ECRAN: Vue = { x0: 0, y0: 0, x1: 38, y1: 25 }
+  const DECILES = 10
+  /**
+   * UNE RAMPE LISIBLE, LA MÊME POUR LES CINQ — et c'est un choix d'INSTRUMENT, pas un oubli
+   * de `rampeDe`. Ce qu'on teste ici est la GÉOMÉTRIE de `naitre` sous une lisière, or les
+   * largeurs réelles ne la rendent pas toutes lisible : l'orage d'acte III et le vent de
+   * cendre portent des rampes de 240 et 63 tuiles pour un cadre de 25, si bien que leur
+   * rideau tombe à quelques dizaines de particules — on ne lit pas un penchant sur un
+   * échantillon que le bruit de tirage emporte. 9 tuiles est la rampe de la pluie (celle que
+   * `rampeDe` rend au front le plus courant) ; `l'intensité relue inline` garde la loi de
+   * largeur elle-même, ailleurs dans ce fichier.
+   */
+  const RAMPE_LISIBLE = 9
+
+  /** Le rideau établi sous une lisière d'amont d'axe `y`, en déciles de LARGEUR d'écran. */
+  function decilesSousLisiere(aspect: MeteoAspect): { hist: number[]; vivantes: number; cible: number } {
+    const profil = PROFILS[aspect]!
+    // La lisière d'AMONT tombe à 40 % de la hauteur du cadre : le haut est HORS bande.
+    const bande: Bande = { axis: 'y', lo: VUE_ECRAN.y0 + 10, hi: VUE_ECRAN.y0 + 410 }
+    const hist = new Array<number>(DECILES).fill(0)
+    let vivantes = 0
+    let cible = 0
+    // PLUSIEURS GRAINES : une seule rend un bruit de tirage qu'on prendrait pour un penchant
+    // (relevé 182/126 sur une graine contre 1153/1051 sur huit, au même code).
+    for (let graine = 0; graine < 6; graine++) {
+      const c = new ChampParticules(1000 + graine * 7919)
+      for (let i = 0; i < 300; i++) c.update(1 / 30, profil, VUE_ECRAN, bande, RAMPE_LISIBLE)
+      vivantes += c.vivantes
+      cible += c.cible
+      const w = VUE_ECRAN.x1 - VUE_ECRAN.x0
+      for (const p of c.particules) {
+        if (!p.vive) continue
+        const d = Math.floor(((p.x - VUE_ECRAN.x0) / w) * DECILES)
+        hist[Math.min(DECILES - 1, Math.max(0, d))]! += 1
+      }
+    }
+    return { hist, vivantes, cible }
+  }
+
+  // LES CINQ QUI TOMBENT — le brouillard n'a pas de grain. Et surtout PAS les seuls quatre
+  // « classiques » : `vent_de_cendre` porte le plus haut rapport vent/chute de la table
+  // (6,43 contre 5,24 au blizzard), c'est-à-dire le profil le PLUS exposé à ce défaut.
+  for (const aspect of ['pluie', 'neige', 'orage', 'blizzard', 'vent_de_cendre'] as const) {
+    it(`${aspect} — la densité est UNIFORME en x sous une lisière d'axe y`, () => {
+      const { hist } = decilesSousLisiere(aspect)
+      const total = hist.reduce((a, b) => a + b, 0)
+      const moyenne = total / DECILES
+      const dit = `déciles ${hist.join(' ')} (moyenne ${moyenne.toFixed(0)})`
+      expect(total, dit).toBeGreaterThan(600)
+      // Aucun décile ne porte moitié plus que la moyenne, ni moitié moins. Le défaut mettait
+      // le premier à NEUF fois la moyenne (et les autres à un douzième) sous la pluie.
+      for (let d = 0; d < DECILES; d++) {
+        expect(hist[d]!, `décile ${d} — ${dit}`).toBeLessThan(moyenne * 1.5)
+        expect(hist[d]!, `décile ${d} — ${dit}`).toBeGreaterThan(moyenne * 0.55)
+      }
+    })
+
+    it(`${aspect} — la population REJOINT sa cible sous une lisière d'axe y`, () => {
+      const { vivantes, cible } = decilesSousLisiere(aspect)
+      expect(vivantes, `vivantes ${vivantes} / cible ${cible}`).toBeGreaterThan(cible * 0.8)
+    })
+  }
 })

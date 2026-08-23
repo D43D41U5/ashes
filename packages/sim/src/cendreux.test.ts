@@ -174,7 +174,9 @@ describe('IA cendreux (jour/nuit)', () => {
     // chaud ») : à 90 de froid de base, l'éveil vaut 0 et la vue tombe à son plancher
     // (aggroRange × 0,2 = 1 tuile). On peut passer à trois tuiles d'une carcasse en plein
     // midi — mais marcher DESSUS la réveille toujours (le plancher existe pour ça).
-    const state = createSim(1) // tick 0 = jour, acte I : plaine à 90
+    // MIDI, pas le tick 0 : depuis la rampe de nuit (`partDeNuit`), l'aube porte encore le
+    // plein froid nocturne — c'est le fond du froid, pas « le chaud » que ce cas veut poser.
+    const state = createSim(1, { cycleOffset: cycleOffsetForStartHour(12) })
     const id = spawnMonster(state, 'cendreux', 5, 5)
     const monster = state.monsters.find((m) => m.entityId === id)!
     humanAt(state, 8, 5) // à 3 tuiles : dans l'ancienne vue (5), hors de la vue engourdie (1)
@@ -753,12 +755,13 @@ describe('les sens honnêtes (R24-R25)', () => {
   })
 
   it('A38 — le contact ne se négocie pas : immobile, sous la pluie, sur un Cendreux amorphe — détecté', () => {
-    // Tick 0, plaine à 90 : éveil 0, vue engourdie 1 tuile. Sans le plancher `SENS.CONTACT`,
+    // MIDI (l'aube porte le froid de la nuit depuis `partDeNuit`), plaine à 90 : éveil 0,
+    // vue engourdie 1 tuile. Sans le plancher `SENS.CONTACT`,
     // le stimulus de l'immobile (0,25) ET la pluie (0,85) la réduiraient à 0,21 tuile — et
     // le nettoyage de jour deviendrait un pillage furtif gratuit (décision ⑮). Avant ce
     // chantier, la pluie seule la trouait déjà à 0,85 : le plancher s'applique APRÈS tout.
     const chaud = (dist: number): number | null => {
-      const state = createSim(1, { map: createEmptyMap(160, 160, TERRAIN_GRASS) })
+      const state = createSim(1, { map: createEmptyMap(160, 160, TERRAIN_GRASS), cycleOffset: cycleOffsetForStartHour(12) })
       const id = spawnMonster(state, 'cendreux', 80, 15)
       const monster = state.monsters.find((m) => m.entityId === id)!
       const e = humanAt(state, 80 + dist, 15)

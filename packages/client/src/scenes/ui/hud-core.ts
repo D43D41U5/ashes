@@ -71,11 +71,14 @@ const CARRY_CONSEQUENCE: Record<CarryTier, string> = {
 }
 
 /** Les 4 vitales en médaillon (le poids, lui, passe en ligne secondaire — maquette 2A). */
-const VITALS: { id: Exclude<VitalId, 'carry'>; label: string; max: number; warn?: number }[] = [
+const VITALS: { id: Exclude<VitalId, 'carry'>; label: string; min?: number; max: number; warn?: number; unite?: string }[] = [
   { id: 'hp', label: 'PV', max: 100 },
   { id: 'stamina', label: 'ENDURANCE', max: 100 },
   { id: 'hunger', label: 'FAIM', max: 100, warn: 0 },
-  { id: 'temperature', label: 'TEMP', max: 100, warn: TEMPERATURE.HYPOTHERMIA },
+  // LA TEMPÉRATURE EST EN DEGRÉS (2026-08-22) et son domaine n'est PAS [0, max] : un corps
+  // vit entre 25 et 37 °C. D'où `min` — sans lui, la jauge serait pleine aux deux tiers en
+  // permanence et ne bougerait plus qu'à peine avant la mort.
+  { id: 'temperature', label: 'TEMP', min: TEMPERATURE.CORPS_MORTEL, max: TEMPERATURE.CORPS_SAIN, warn: TEMPERATURE.CORPS_HYPOTHERMIE, unite: '°C' },
 ]
 
 export interface HudCoreState {
@@ -280,13 +283,18 @@ export function createHudCore(
       }
       for (const v of VITALS) {
         const cur = vals[v.id]!
-        const frac = Math.min(1, Math.max(0, cur / v.max))
+        const lo = v.min ?? 0
+        const frac = Math.min(1, Math.max(0, (cur - lo) / (v.max - lo)))
         const warn = v.warn !== undefined && cur <= v.warn
         const fill = fills.get(v.id)!
         fill.style.height = `${(frac * 100).toFixed(1)}%`
         fill.style.background = warn ? HEX.alert : VITAL_HEX[v.id].fill
         fill.style.borderTopColor = warn ? HEX.alert : VITAL_HEX[v.id].rim
-        tips.get(v.id)!.textContent = `${v.label} ${Math.ceil(cur)} / ${v.max}`
+        // Une jauge à unité se lit en VALEUR (« TEMP 34 °C »), pas en fraction : « 34 / 37 »
+        // ne veut rien dire d'une température. Les autres gardent leur « x / max ».
+        tips.get(v.id)!.textContent = v.unite
+          ? `${v.label} ${Math.round(cur)} ${v.unite}`
+          : `${v.label} ${Math.ceil(cur)} / ${v.max}`
       }
 
       // Ligne secondaire : poids (couleur par palier), blessures (libellé, rouge), métiers.

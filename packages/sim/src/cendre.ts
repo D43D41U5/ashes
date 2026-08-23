@@ -184,7 +184,7 @@ export const CENDRE = {
    * de gel ne se joue au bit de flottant près. Un terme de cendre multiple de 5 remettrait toutes
    * les sommes sur cette grille et rouvrirait exactement le défaut qu'ils avaient fermé.
    */
-  FROID_MAX: 18,
+  FROID_MAX: 7.2,
 
   /**
    * LA POUSSÉE DU VENT DE CENDRE (spec `cortege-cendre.md` R6) — en part de la course du front,

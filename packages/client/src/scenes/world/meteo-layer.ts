@@ -84,13 +84,25 @@
  * deux ordres de grandeur de moins) est de l'ARITHMÉTIQUE, pas un relevé. Le budget
  * (`BUDGET_PARTICULES`) reste la constante qu'on baisse si le chiffre mesuré remonte.
  *
+ * ═══ L'ÉCLABOUSSURE A ÉTÉ RETIRÉE (2026-08-23) — ET ELLE NE DÉPLACE AUCUN CHIFFRE ═══
+ *
+ * Une goutte qui touchait rendait deux pixels de 4 px à alpha 0,34 : Alexis l'a jugée « trop
+ * prononcée » et le mécanisme est supprimé (raison et détail dans l'en-tête de
+ * `meteo-particules.ts`). LES RELEVÉS CI-DESSUS TIENNENT TELS QUELS, et ce n'est pas une
+ * commodité — c'est MESURÉ : la gerbe pesait **3,0 % des rectangles sous la pluie et 1,8 %
+ * sous l'orage** (2 011 contre 1 950 par image au cœur, 60 Hz, headless). Mieux : le relevé
+ * du smoke (« 1 827 pour 609 », soit 3,00) est DÉJÀ celui de la traînée seule — sous
+ * swiftshader une image dure ~900 ms quand une gerbe vit 90, si bien que l'obturateur n'en
+ * attrapait presque jamais. C'est le même fait qui avait obligé à compter les gerbes plutôt
+ * qu'à les photographier ; il rend ici le retrait gratuit.
+ *
  * ═══ CE QUI RESTE DE LA RECETTE DE LA MAISON ═══
  *
  *   • pas de post-FX (il rendrait blanc sous swiftshader, et coûterait le seul juge visuel
  *     du projet) — ni pour le voile ni pour le grain ;
  *   • TOUT est quantifié sur UNE GRILLE DE PIXELS D'ART — mais elle n'est plus la même pour
- *     tous. Les flocons, le blizzard, les éclaboussures et le voile restent sur les 4 px des
- *     FX de lumière ; **la goutte est descendue à 1 px monde**, la grille de l'art elle-même
+ *     tous. Les flocons, le blizzard et le voile restent sur les 4 px des FX de lumière ;
+ *     **la goutte est descendue à 1 px monde**, la grille de l'art elle-même
  *     (`ProfilChute.grainPx`), et c'est ce qui fait sa finesse. Dans les deux cas ce sont des
  *     CARRÉS DURS, jamais un dégradé lissé, jamais un rectangle tourné (qui baverait en bords
  *     lissés : la traînée inclinée se peint en ESCALIER, voir `traineeEnRuns`). CE QUE ÇA
@@ -140,8 +152,6 @@ import { TILE_PX } from '../../render/framing'
 import {
   BUDGET_PARTICULES,
   ChampParticules,
-  ECLABOUSSURE_MS,
-  GRAIN_PX,
   PROFILS,
   rampeDe,
   traineeEnRuns,
@@ -352,13 +362,12 @@ export class MeteoLayer {
    *  ce qu'elle peint : le harnais n'a pas à recalculer une géométrie qu'il ne dessine pas. */
   bande: { axis: 'x' | 'y'; lo: number; hi: number } | null = null
   /**
-   * LA SONDE DU GRAIN — lue par le smoke, par rien d'autre. Une gerbe de deux images ne se
-   * photographie pas : elle se COMPTE. `budget` est rappelé pour qu'un relevé dise contre
-   * quoi il se juge, et `plafonne` dit si la cible a tapé le plafond (auquel cas le rideau
-   * n'est plus proportionnel à l'intensité : c'est le budget qui parle).
+   * LA SONDE DU GRAIN — lue par le smoke, par rien d'autre. `budget` est rappelé pour qu'un
+   * relevé dise contre quoi il se juge, et `plafonne` dit si la cible a tapé le plafond
+   * (auquel cas le rideau n'est plus proportionnel à l'intensité : c'est le budget qui parle).
    */
   readonly sonde = {
-    vivantes: 0, cible: 0, rects: 0, eclaboussures: 0, eclabsTotal: 0,
+    vivantes: 0, cible: 0, rects: 0,
     budget: BUDGET_PARTICULES, plafonne: false,
     /**
      * CE QUE LA COUCHE PREND SUR LE FIL PRINCIPAL, en ms par image — moyenne glissante sur
@@ -492,7 +501,7 @@ export class MeteoLayer {
       y1: (vue.y + vue.height) / TILE_PX + MARGE_TUILES,
     }
     const t0 = performance.now()
-    this.champ.update(dt, dtMs, profil, cadre, bande, this.rampe, reservees)
+    this.champ.update(dt, profil, cadre, bande, this.rampe, reservees)
     const t1 = performance.now()
     this.peindre(profil, day)
     this.chronometrer(t1 - t0, performance.now() - t1, dtMs)
@@ -520,13 +529,12 @@ export class MeteoLayer {
   }
 
   private eteindreLeGrain(): void {
-    if (this.sonde.vivantes === 0 && this.sonde.eclaboussures === 0 && !this.grain.visible) return
+    if (this.sonde.vivantes === 0 && !this.grain.visible) return
     this.champ.vider()
     this.grain.clear().setVisible(false)
     this.sonde.vivantes = 0
     this.sonde.cible = 0
     this.sonde.rects = 0
-    this.sonde.eclaboussures = 0
     this.sonde.plafonne = false
     this.sonde.msPhysique = 0
     this.sonde.msPeinture = 0
@@ -572,39 +580,9 @@ export class MeteoLayer {
       }
     }
 
-    // ── L'ÉCLABOUSSURE : deux pixels qui repartent À L'OPPOSÉ du point de chute (vers lui,
-    //    ils se tasseraient sur la goutte), pendant deux ou trois images. Deux crans d'âge,
-    //    jamais un fondu : c'est la DA, et à 90 ms un fondu ne se verrait pas de toute façon.
-    //
-    //    ELLE GARDE LE GRAIN DE 4 px ET SON PROPRE POIDS, quand la goutte est descendue à
-    //    1 px : une gerbe d'impact est de l'eau PROJETÉE, plus large et plus dense que le
-    //    trait qui l'a faite. L'affiner avec la goutte l'aurait effacée — deux pixels de
-    //    1 px à alpha 0,11 ne se voient pas. C'est un CHOIX, pas un oubli : `alphaEclab`
-    //    porte l'un et `GRAIN_PX` l'autre.
-    const parTuileEclab = TILE_PX / GRAIN_PX
-    for (const pas of [0, 1]) {
-      g.fillStyle(couleur, pas === 0 ? profil.alphaEclab : profil.alphaEclab * 0.55)
-      for (const e of this.champ.eclaboussures) {
-        if (!e.vive) continue
-        const jeune = e.age * 2 < ECLABOUSSURE_MS
-        if ((pas === 0) !== jeune) continue
-        const cx = Math.floor(e.x * parTuileEclab)
-        const cy = Math.floor(e.y * parTuileEclab)
-        // Jeune : deux gouttelettes serrées. Vieille : plus écartées et remontées — la
-        // couronne s'ouvre. Deux états, pas une interpolation.
-        const d = jeune ? 1 : 2
-        const h = jeune ? 0 : 1
-        g.fillRect((cx - d) * GRAIN_PX, (cy - h) * GRAIN_PX, GRAIN_PX, GRAIN_PX)
-        g.fillRect((cx + d) * GRAIN_PX, (cy - h) * GRAIN_PX, GRAIN_PX, GRAIN_PX)
-        rects += 2
-      }
-    }
-
     this.sonde.vivantes = this.champ.vivantes
     this.sonde.cible = this.champ.cible
     this.sonde.rects = rects
-    this.sonde.eclaboussures = this.champ.eclabsVivantes
-    this.sonde.eclabsTotal = this.champ.eclabsTotal
     this.sonde.plafonne = this.champ.cible >= BUDGET_PARTICULES
   }
 

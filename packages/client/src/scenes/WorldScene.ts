@@ -28,7 +28,16 @@ import {
   isRangedWeapon,
   meteoSpeedFactorAt,
   meteoAspectAt,
+  meteoColdAt,
+  meteoIntensityAt,
   aspectAuPoint,
+  ambientTemperature,
+  baselineTemperature,
+  cibleCorporelle,
+  dehorsSansMeteo,
+  estGele,
+  neigeAuSol,
+  niveauPourCouverture,
   predictFrame,
   reconcile as reconcilePrediction,
   renderPosition,
@@ -182,7 +191,7 @@ import type { ArbreCouvert } from './world/soleil-masque'
 import { varianteArbre } from '../render/arbre-peuplement'
 import { houppierLargeur } from '../render/arbre-art'
 import { bindDebugKeys } from './world/debug-bindings'
-import { createDebugPanel } from './world/debug-panel'
+import { createDebugPanel, type DebugPanel } from './world/debug-panel'
 import { syncDebug } from './world/debug-overlay'
 import { BuildGhost } from './world/build-ghost'
 import { CarreVillage } from './world/carre-village'
@@ -271,6 +280,15 @@ const BUILD_PHASES = ['relief', 'bake', 'ground', 'water', 'pois', 'clutter', 'w
 type BuildPhase = (typeof BUILD_PHASES)[number]
 const BUILD_STEPS = BUILD_PHASES.length
 
+/** LE PAS DU CADRAN THERMIQUE (DEV) — quatre relevés par seconde de jeu. Un thermomètre se
+ *  lit, il ne se filme pas ; et chaque relevé coûte un `baselineTemperature`, qui balaie les
+ *  structures pour savoir si l'on est sous un toit. */
+const THERMO_PAS_TICKS = Math.max(1, Math.round(BALANCE.TICK_RATE_HZ / 4))
+
+/** LE SEUIL DU FRISSON (°C corporels) — mi-chemin de la rampe d'engourdissement, là où le
+ *  bandeau « Le froid vous prend » se lève. Dérivé, jamais écrit : il suit les deux bornes. */
+const SEUIL_FRISSON = (TEMPERATURE.CORPS_CONFORT + TEMPERATURE.CORPS_HYPOTHERMIE) / 2
+
 /** Fenêtre de la sonde de coût (un échantillon par seconde de jeu) — ~10 min, puis on oublie. */
 const PERF_ECHANTILLONS_MAX = 600
 
@@ -295,20 +313,23 @@ function shade(color: number, factor: number): number {
 }
 
 // ── LE TAPIS DE LA FORÊT DE LA RACINE (demande d'Alexis, 2026-07-18) ──────────────────────────
-// Le sol de la forêt n'est plus un aplat vert : c'est une LITIÈRE de feuilles PLUS OU MOINS MORTES
-// (brun ↔ olive, selon un bruit fin), qui VERDIT vers le CŒUR des clairières. Le vert suit le même
-// champ `clairiereForet` que le semis d'arbres ÉVIDE — sol et arbres ne peuvent donc pas se
-// contredire : là où l'arbre manque (la clairière), l'herbe reprend.
+// Le sol de la forêt est une LITIÈRE de feuilles PLUS OU MOINS MORTES (brun ↔ olive, selon un
+// bruit fin) — et RIEN D'AUTRE : on reste sur du brun dans tout le biome.
+//
+// LE VERT DE CLAIRIÈRE EST RETIRÉ (Alexis, 2026-08-23). Il verdissait le sol au cœur des
+// trouées, sur le champ `clairiereForet` que le semis d'arbres évide. Deux défauts, l'un
+// mesuré, l'autre tranché : (a) ce champ décide par MOTIF de 8 tuiles — porteur pour le SEMIS
+// (un bloc est dégagé ou il ne l'est pas), mais peint en CARRÉS quand on en tire une couleur
+// (MESURÉ sur le sol cuit : aplat à ±5 RGB dans le bloc, marches de 44 à 56 RGB pile aux
+// multiples de 8, soit 432 px à l'écran) ; (b) même adouci en pente continue, le résultat
+// reste des taches de couleur dans un biome qui doit se lire d'une seule matière.
 const LITIERE_BRUN = 0x6b5730 // feuille bien morte
 const LITIERE_OLIVE = 0x5c5e38 // feuille à demi morte (il reste du vert)
-const CLAIRIERE_VERT = 0x477e3c // l'herbe qui reprend au cœur d'une trouée
 
-/** La couleur du sol forestier d'une tuile : litière variée, verdissant dans les clairières. */
+/** La couleur du sol forestier d'une tuile : la litière, du brun mort au brun-olive. */
 function solForet(tx: number, ty: number, seed: number): number {
   const litter = fbm2(tx, ty, 6, (seed ^ 0x1eaf) | 0) // grain de litière, fin
-  const base = lerpColor(LITIERE_BRUN, LITIERE_OLIVE, litter)
-  const clair = clairiereForet(seed, tx, ty) // 0 sous le couvert, croît vers le cœur d'une clairière
-  return clair > 0 ? lerpColor(base, CLAIRIERE_VERT, Math.min(1, clair * 3.5)) : base
+  return lerpColor(LITIERE_BRUN, LITIERE_OLIVE, litter)
 }
 
 /**
@@ -644,6 +665,13 @@ export class WorldScene extends Phaser.Scene {
   /** À bout de souffle (R1ter) — absent tant qu'on ne l'est pas. */
   private myExhausted: true | undefined = undefined
   private myTemperature = 100
+
+  /** Le panneau debug (DEV seulement) — porte le cadran thermique, qu'on alimente. */
+  private debugPanel: DebugPanel | null = null
+
+  /** Dernier tick où le cadran a été relevé : quatre lectures par seconde suffisent à lire
+   *  un thermomètre, et chacune coûte un `baselineTemperature` (qui balaie les structures). */
+  private thermoAuTick = -1
   /** Mon avatar télégraphie : la sim l'immobilise — la prédiction aussi. */
   private myWindup = false
   /** Je CHARGE : la sim me ralentit (COMBAT.CHARGE_MOVE_FACTOR) — la prédiction doit
@@ -848,7 +876,8 @@ export class WorldScene extends Phaser.Scene {
         isNight: () => this.lastTime?.isNight ?? false,
       }
       bindDebugKeys(this, debugDeps)
-      createDebugPanel(this, debugDeps) // les toggles cliquables (P) — remplacent F5, doublent F2-F4
+      // les toggles cliquables (P) — remplacent F5, doublent F2-F4 ; et le CADRAN thermique
+      this.debugPanel = createDebugPanel(this, debugDeps)
     }
 
     // Hook de debug/pilotage (pattern __MANIF__) : smoke tests et futurs bots.
@@ -1748,6 +1777,31 @@ export class WorldScene extends Phaser.Scene {
       const aspect = meteoFront
         ? aspectAuPoint(this.etatGel, meteoFront, this.predicted.x, this.predicted.y, this.lastTime.tick)
         : null
+
+      // ── LE CADRAN THERMIQUE (DEV) ── quatre fois par seconde de jeu, et par les fonctions
+      // de `/sim` sur la MÊME façade que le gel : le panneau montre ce que la sim calcule,
+      // il ne le refait pas. Depuis R11-R13 c'est la seule façon de VOIR pourquoi il neige.
+      if (this.debugPanel && this.lastTime.tick - this.thermoAuTick >= THERMO_PAS_TICKS) {
+        this.thermoAuTick = this.lastTime.tick
+        const etat = this.etatGel
+        const { x, y } = this.predicted
+        const tx = Math.floor(x)
+        const ty = Math.floor(y)
+        const couverture = neigeAuSol(etat, tx, ty)
+        this.debugPanel.majThermo({
+          monde: dehorsSansMeteo(etat, x, y, this.lastTime.tick),
+          lieu: baselineTemperature(etat, x, y),
+          ressenti: ambientTemperature(etat, x, y),
+          corps: this.myTemperature,
+          cibleCorps: cibleCorporelle(ambientTemperature(etat, x, y)),
+          ciel: meteoAspectAt(etat, x, y, this.lastTime.tick),
+          intensite: meteoFront ? meteoIntensityAt(meteoFront, this.lastTime.tick, this.map.width, this.map.height, x, y) : 0,
+          froidDuFront: meteoColdAt(etat, x, y, this.lastTime.tick),
+          neige: couverture,
+          niveauNeige: niveauPourCouverture(couverture, tx, ty),
+          glace: estGele(etat, tx, ty),
+        })
+      }
       // LA GERBE S'IMPUTE SUR LE BUDGET DE PARTICULES, elle ne s'empile pas à côté : le
       // rideau retranche de sa cible ce que les éclats occupent (au plus 48, ~7 %, 0,3 s).
       this.meteoLayer?.update(
@@ -2371,8 +2425,11 @@ export class WorldScene extends Phaser.Scene {
     if (this.myHunger <= 0) this.warn('famine', 'VOUS MOUREZ DE FAIM.', 6000)
     else if (this.myHunger < 25) this.warn('faim', 'La faim vous tenaille — il faut manger.', 45000)
     // Le froid tue aussi, et il tue plus vite qu'on ne le croit.
-    if (this.myTemperature <= TEMPERATURE.HYPOTHERMIA) this.warn('gel', 'VOUS GELEZ. Trouvez un feu.', 6000)
-    else if (this.myTemperature < 45) this.warn('froid', 'Le froid vous prend.', 45000)
+    // Les deux seuils sont ceux du CORPS, en °C (l'échelle est métrique depuis le
+    // 2026-08-22) : 29 = hypothermie (les PV partent), 33 = on commence à trembler — la
+    // moitié de la rampe d'engourdissement, là où l'ex-jauge disait 45.
+    if (this.myTemperature <= TEMPERATURE.CORPS_HYPOTHERMIE) this.warn('gel', 'VOUS GELEZ. Trouvez un feu.', 6000)
+    else if (this.myTemperature < SEUIL_FRISSON) this.warn('froid', 'Le froid vous prend.', 45000)
   }
 
   /** Ce fait me concerne-t-il DIRECTEMENT (le « sur moi » du son) ? D'après le champ d'entité

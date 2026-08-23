@@ -1,7 +1,15 @@
 /**
- * Jauge Température (spec 2026-07-08) — modèle thermostat, pur et déterministe.
- * La cible = BASE − altitude − acte + (nuit+biome amortis par l'abri), plancherée
+ * La TEMPÉRATURE (spec 2026-07-08) — modèle thermostat, pur et déterministe.
+ * L'ambiant = BASE − acte + (nuit + biome + fronts, amortis par l'abri), planché
  * par la bulle d'un feu. Aucune fonction transcendante (seul `sqrt`, autorisé).
+ *
+ * ═══ DEUX ÉCHELLES, UNE UNITÉ : LE DEGRÉ CELSIUS (décision d'Alexis, 2026-08-22) ═══
+ *
+ * L'AMBIANT vit dans [−18, +22] °C ; LE CORPS dans [25, 37] °C. Ils ne se confondent pas —
+ * un corps n'est pas de l'air — et c'est `cibleCorporelle` qui fait le pont : la température
+ * à laquelle un corps nu se STABILISE dans cet air-là. Voir l'en-tête de `TEMPERATURE` dans
+ * `balance.ts` pour la conversion depuis l'ancienne jauge 0-100 (une application affine :
+ * l'équilibrage n'a pas bougé d'un bit, seules les étiquettes ont changé).
  */
 import { CENDREUX, POI, TEMPERATURE } from './balance'
 import { froidDeCendre, frontAuTick } from './cendre'
@@ -17,8 +25,40 @@ import type { SimState } from './sim'
 
 const T = TEMPERATURE
 
+/** Borne l'AMBIANT dans la fenêtre du monde (°C). C'est ce plancher qui borne, en cascade,
+ *  le froid que le corps peut atteindre : air à `AMBIANT_MIN` ⇒ corps à `CORPS_MORTEL`. */
 function clampTemp(v: number): number {
-  return Math.max(0, Math.min(100, v))
+  return Math.max(T.AMBIANT_MIN, Math.min(T.AMBIANT_MAX, v))
+}
+
+/**
+ * L'AIR QUI TUE — l'ambiant où un corps nu se stabilise PILE à l'hypothermie (−10 °C).
+ *
+ * DÉRIVÉ des deux échelles, jamais écrit : il suit toute retouche de `PENTE_CORPS`, de
+ * `AMBIANT_DOUX` ou des seuils du corps. C'est le repère dont les tests et les specs ont
+ * besoin pour dire « cet air-là est mortel » sans confondre un seuil d'AIR et un seuil de
+ * CORPS — la confusion que l'ancienne jauge unique rendait invisible.
+ *
+ * Il tombe exactement sur `GEL.SEUIL_PROFOND`, et ce n'est pas un hasard qu'on garde :
+ * **le lac devient un chemin là où l'homme nu commence à mourir de froid.**
+ */
+export const AMBIANT_HYPOTHERMIE = T.AMBIANT_DOUX - (T.CORPS_SAIN - T.CORPS_HYPOTHERMIE) / T.PENTE_CORPS
+
+/**
+ * LA TEMPÉRATURE OÙ UN CORPS SE STABILISE DANS CET AIR — le pont entre les deux échelles.
+ *
+ * Tant que l'air est plus doux que `AMBIANT_DOUX`, le corps tient ses 37 : le métabolisme
+ * suffit. En dessous, il perd `PENTE_CORPS` degré par degré d'air manquant — et comme l'air
+ * ne descend jamais sous `AMBIANT_MIN`, la cible ne descend jamais sous `CORPS_MORTEL`.
+ *
+ * ⚠ C'est un ÉQUILIBRE, pas une température atteinte : `advanceTemperature` y fait DÉRIVER
+ * le corps (`driftStep`), il n'y saute pas. Un homme qui traverse une bande de blizzard n'a
+ * pas le temps d'y arriver — c'est très exactement ce qui rend la traversée jouable.
+ */
+export function cibleCorporelle(ambiant: number): number {
+  const manque = T.AMBIANT_DOUX - ambiant
+  if (manque <= 0) return T.CORPS_SAIN
+  return T.CORPS_SAIN - manque * T.PENTE_CORPS
 }
 
 /**
@@ -168,7 +208,10 @@ function expositionSansMeteo(state: SimState, x: number, y: number, tick: number
   const frontFroid =
     frontAuTick(state.map, state.calendarScale, tick) + pousseeDeCendre(state, x, y, tick)
   const cendre = froidDeCendre(state.map, tx, ty, frontFroid)
-  return biome - (time.isNight ? T.NIGHT_COLD : 0) - brumeColdAt(state, x, y, tick) - cendre // amorti par l'abri
+  // LA NUIT EST UNE PENTE (`partDeNuit`, décision d'Alexis 2026-08-23) : `time.nuit` vaut 1 sur
+  // toute la nuit et redescend sur les lisières du jour — le froid du soir se SENT venir, il ne
+  // claque plus de douze degrés en un tick. La nuit pleine est inchangée au bit près.
+  return biome - T.NIGHT_COLD * time.nuit - brumeColdAt(state, x, y, tick) - cendre // amorti par l'abri
 }
 
 /**
@@ -206,13 +249,15 @@ export function climatFlore(state: SimState, x: number, y: number, tick: number)
  * la Brume, ni le front. C'est exactement le cas coûteux (l'acte III entier, et toutes les
  * nuits dès l'acte II) : celui où des milliers de nœuds sont à échéance et gelés à la fois.
  *
- * `+5` est le biome le plus DOUX de la table (`BIOME_OFFSET`, le couvert forestier) ; la
+ * `+2 °C` est le biome le plus DOUX de la table (`BIOME_OFFSET`, le couvert forestier) ; la
  * Brume et le front ne peuvent que refroidir, donc les ignorer ne fait que surestimer la
  * douceur. La borne est prouvablement optimiste, jamais approchée.
  */
 export function climatMaximal(state: SimState, tick: number): number {
   const time = gameTimeAt(state, tick)
-  return clampTemp(T.BASE - T.ACT_COLD(time.act) + BIOME_MAX - (time.isNight ? T.NIGHT_COLD : 0))
+  // Le terme de nuit est le MÊME que celui d'`expositionSansMeteo` — la pente exacte, pas le
+  // booléen : global au monde, il n'a pas à être majoré, et la borne reste prouvablement douce.
+  return clampTemp(T.BASE - T.ACT_COLD(time.act) + BIOME_MAX - T.NIGHT_COLD * time.nuit)
 }
 
 /** Température ambiante cible (0-100) au lieu (x,y) : le froid de base, PLANCHERÉ par un feu / une source chaude. */
@@ -221,7 +266,9 @@ export function ambientTemperature(state: SimState, x: number, y: number): numbe
   return Math.max(baselineTemperature(state, x, y), fireBubble(state, x, y), naturalWarmth(state, x, y))
 }
 
-/** Un pas de dérive vers l'ambiant, freiné par l'isolation. Pur. */
+/** Un pas de dérive vers une cible, freiné par l'isolation. Pur. Une dérive proportionnelle
+ *  à l'écart est INVARIANTE par changement d'échelle affine : `K_DRIFT` n'a pas eu à bouger
+ *  quand la jauge est passée en degrés. */
 export function driftStep(current: number, ambient: number, insulation: number): number {
   return current + ((ambient - current) * T.K_DRIFT) / insulation
 }
@@ -255,17 +302,20 @@ export function eveilPourTemperature(T: number): number {
   return e < 0 ? 0 : e > 1 ? 1 : e
 }
 
-/** Dégâts PV/tick dus au froid : 0 au-dessus de HYPOTHERMIA, linéaire jusqu'à 0. */
+/** Dégâts PV/tick dus au froid, sur la température du CORPS : 0 au-dessus de
+ *  `CORPS_HYPOTHERMIE` (29 °C), linéaire jusqu'au maximum à `CORPS_MORTEL` (25 °C). */
 export function coldDamagePerTick(temp: number): number {
-  if (temp >= T.HYPOTHERMIA) return 0
-  return ((T.HYPOTHERMIA - temp) / T.HYPOTHERMIA) * T.HYPOTHERMIA_DAMAGE_MAX
+  if (temp >= T.CORPS_HYPOTHERMIE) return 0
+  const u = (T.CORPS_HYPOTHERMIE - temp) / (T.CORPS_HYPOTHERMIE - T.CORPS_MORTEL)
+  return (u > 1 ? 1 : u) * T.HYPOTHERMIA_DAMAGE_MAX
 }
 
-/** 0 au confort (≥60), 1 à l'hypothermie (≤20), linéaire entre les deux. */
+/** L'ENGOURDISSEMENT, sur la température du CORPS : 0 à `CORPS_CONFORT` (37 °C), 1 à
+ *  `CORPS_HYPOTHERMIE` (29 °C), linéaire entre les deux. */
 export function coldEffectRamp(temp: number): number {
-  if (temp >= T.COMFORT) return 0
-  if (temp <= T.HYPOTHERMIA) return 1
-  return (T.COMFORT - temp) / (T.COMFORT - T.HYPOTHERMIA)
+  if (temp >= T.CORPS_CONFORT) return 0
+  if (temp <= T.CORPS_HYPOTHERMIE) return 1
+  return (T.CORPS_CONFORT - temp) / (T.CORPS_CONFORT - T.CORPS_HYPOTHERMIE)
 }
 
 /** Malus de vitesse dû à l'engourdissement : 1 au confort, plancher SPEED_FLOOR à l'hypothermie. */
@@ -290,7 +340,13 @@ export function advanceTemperature(state: SimState): void {
     // donne une raison à toute la chaîne chasse→cuir→couture, et rend la plaine
     // franchissable en acte III. Vraie protection, pas un simple ralentissement de dérive.
     if (countOf(entity.inventory, 'tenue_hiver') > 0) ambient = Math.max(ambient, T.TENUE_FLOOR)
-    entity.temperature = clampTemp(driftStep(entity.temperature, ambient, T.INSULATION_BODY))
+    // LA DÉRIVE SE FAIT SUR L'ÉCHELLE DU CORPS : on vise `cibleCorporelle(ambiant)`, jamais
+    // l'air lui-même — un corps ne finit pas à la température de l'air, il se stabilise plus
+    // haut. Le clamp est celui du corps : `CORPS_MORTEL` est le fond, atteint quand l'air est
+    // à `AMBIANT_MIN`.
+    const cible = cibleCorporelle(ambient)
+    const derive = driftStep(entity.temperature, cible, T.INSULATION_BODY)
+    entity.temperature = Math.max(T.CORPS_MORTEL, Math.min(T.CORPS_SAIN, derive))
 
     const dmg = coldDamagePerTick(entity.temperature)
     if (dmg > 0) {

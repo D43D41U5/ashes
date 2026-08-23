@@ -382,11 +382,15 @@ export class GelLayer {
     if (vide) { this.sonde.recuissons++; this.sonde.msRecuisson = performance.now() - t0; return }
     const cuit = cuireManteau({ cx, cy, etatAt, trameNeige: this.trameNeige, trameGlace: this.trameGlace })
     const cle = `gel-${this.suffixe}-${cx}-${cy}`
-    const sol = poserChunk(this.scene, cle, cuit.sol, cx * S, cy * S, GEL_SOL_DEPTH)
+    // Le manteau cuit par `cuireChunk` : ses tampons portent le même DÉBORD d'un pixel, et ses
+    // images se posent donc du même décalage. Sans ça, la neige serait décalée d'un pixel du sol.
+    const x0 = cx * S - PAVE.BAVE
+    const y0 = cy * S - PAVE.BAVE
+    const sol = poserChunk(this.scene, cle, cuit.sol, x0, y0, GEL_SOL_DEPTH)
     if (sol) c.sol = { image: sol, cle }
     if (cuit.surplomb) {
       const cleSur = cle + '-surplomb'
-      const sur = poserChunk(this.scene, cleSur, cuit.surplomb, cx * S, cy * S, GEL_DEPTH)
+      const sur = poserChunk(this.scene, cleSur, cuit.surplomb, x0, y0, GEL_DEPTH)
       if (sur) c.surplomb = { image: sur, cle: cleSur }
     }
     this.sonde.recuissons++
