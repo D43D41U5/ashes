@@ -4332,6 +4332,123 @@ const SCENARIOS = {
    *
    * Exige `--dev` : le jour de saison et le TP sont inertes en build de production.
    */
+  /**
+   * LA PLANCHE DE LA MÉTÉO ET DES SAISONS — le SYSTÈME entier, en une série de prises.
+   *
+   * Alexis, 2026-08-24 : « je n'ai toujours pas vu de panel d'images qui prouvent le potentiel
+   * du système météo avec les variations les plus dramatiques… crue comprise ». Ce scénario
+   * n'a pas de verdict : c'est un INSTRUMENT DE MONSTRATION. Il prend le MÊME point de vue
+   * — un gué, sa rive, sa forêt, son large — et lui fait traverser tous les régimes que le
+   * monde sait produire. Le cadre fixe est tout l'intérêt : ce qui change entre deux images
+   * est le SYSTÈME, pas la caméra.
+   *
+   * ═══ CHAQUE ÉTAT EST ATTEINT PAR LA VRAIE CHAÎNE ═══
+   *
+   * Rien n'est truqué : les saisons par le calendrier, les ciels par `debug_meteo` (qui pose
+   * un VRAI record d'élection — toute la chaîne d'effets suit), la crue par le JOUR OÙ ELLE
+   * TOMBE. Aucune couleur n'est posée à la main.
+   *
+   * ═══ LES JOURS SONT MESURÉS, PAS ESPÉRÉS ═══
+   *
+   * `SMOKE_JOUR_CRUE` = **1219**, et il a fallu le chercher : la Crue n'est tirée qu'à
+   * l'Éclosion, une saison sur 22, et sa première occurrence après l'ouverture tombe à l'an 11.
+   * Balayage headless du 2026-08-24 sur quatre-vingts ans, au gué (906, 426) : les seuls jours
+   * où le gué est FERMÉ PAR LA CRUE sans être ni gelé ni enneigé sont **1219-1222, 1699-1702,
+   * 1939-1942** — quatre jours par occurrence. Et dans cette fenêtre, un front arrive dès le
+   * 1222 (la couche y rend de la glace et de la neige profonde, relevé à l'écran). D'où 1219.
+   *
+   * Exige `--dev`. Les captures partent dans `scratchpad/smoke/planche-*.png`.
+   */
+  async planche(page) {
+    if (!dev) { console.log('\n(la planche exige --dev : calendrier, heure, ciel et TP)'); return {} }
+    await page.waitForFunction(() => Boolean(window.__BRAISES__?.scene?.registry?.get('worldReady')), null, { timeout: 150000 })
+    await page.waitForTimeout(2500)
+    const agir = async (a, ms = 700) => { await page.evaluate((x) => window.__BRAISES__.scene.sendAction(x), a); await page.waitForTimeout(ms) }
+
+    // LE POINT DE VUE : un gué au cœur d'une nappe — de l'eau peu profonde, sa rive, sa terre
+    // et son large dans le même cadre. C'est le seul endroit qui montre les DEUX bouts du
+    // niveau d'eau ET la neige ET la glace ET le ciel.
+    const vue = await page.evaluate(() => {
+      const s = window.__BRAISES__.scene
+      const m = s.map
+      const me = s.view?.me ?? { x: m.width / 2, y: m.height / 2 }
+      const eau = (x, y) => { const t = m.terrain[y * m.width + x]; return t === 4 || t === 6 }
+      let best = null, bestD = Infinity
+      for (let ty = 2; ty < m.height - 2; ty++) {
+        for (let tx = 2; tx < m.width - 2; tx++) {
+          if (m.terrain[ty * m.width + tx] !== 4) continue
+          let n = 0
+          for (let oy = -2; oy <= 2; oy++) for (let ox = -2; ox <= 2; ox++) if (eau(tx + ox, ty + oy)) n++
+          if (n < 25) continue
+          const d = (tx - me.x) ** 2 + (ty - me.y) ** 2
+          if (d < bestD) { bestD = d; best = { tx, ty } }
+        }
+      }
+      return best
+    })
+    if (!vue) { console.error('!! aucun gué : pas de point de vue pour la planche'); return {} }
+    console.log(`  point de vue : le gué (${vue.tx}, ${vue.ty})`)
+    // INVULNÉRABILITÉ — pas par confort : le froid POSE UN VOILE sur l'écran quand il mord
+    // (« Le froid vous prend »), et une planche du Grand Froid photographiée à travers ce
+    // voile mesurerait l'agonie de l'avatar au lieu du monde. On veut le climat, pas la mort.
+    await agir({ type: 'debug_god', on: true }, 600)
+    await agir({ type: 'debug_teleport', x: vue.tx + 0.5, y: vue.ty + 4.5 }, 1800)
+
+    /** Ce que la COUCHE a décidé pour une tuile — le vrai état, pas une lecture de pixels. */
+    const etatDe = (tx, ty) => page.evaluate(({ x, y }) => {
+      const gl = window.__BRAISES__.scene.gelLayer
+      return gl?.etatAt ? gl.etatAt(x, y) : null
+    }, { x: tx, y: ty })
+    const NOM_ETAT = ['sol nu', 'poudreuse', 'neige profonde', 'glace de gué', 'glace de lac', 'ASSEC', 'GUÉ FERMÉ', 'CRUE']
+
+    const prise = async (nom, quoi, { jour, heure, ciel = null, phase = 0.5 }) => {
+      if (jour !== undefined) {
+        await agir({ type: 'debug_set_season_day', day: jour }, 500)
+        await page.waitForFunction((d) => window.__BRAISES__.scene.lastTime?.seasonDay === d, jour, { timeout: 40000 })
+          .catch(() => console.log(`   (${nom} : le calendrier n'a pas atteint le jour ${jour})`))
+      }
+      if (heure !== undefined) {
+        await agir({ type: 'debug_set_hour', hour: heure }, 500)
+        await page.waitForFunction((h) => {
+          const x = window.__BRAISES__.scene.lastTime?.hourOfCycle ?? -1
+          return Math.abs(x - h) < 1.5 || Math.abs(x - h) > 22.5
+        }, heure, { timeout: 30000 }).catch(() => {})
+      }
+      await agir({ type: 'debug_meteo', meteo: ciel, phase }, 900)
+      // LA SIGNATURE SE RATTRAPE UN CHUNK PAR IMAGE (~900 ms en headless) : on lui laisse le
+      // temps de couvrir le cadre, sans quoi on photographierait le monde d'AVANT le saut.
+      await page.waitForTimeout(26000)
+      const [eGue, eTerre] = await Promise.all([etatDe(vue.tx, vue.ty), etatDe(vue.tx - 3, vue.ty - 3)])
+      const t = await page.evaluate(() => {
+        const s = window.__BRAISES__.scene, lt = s.lastTime
+        return { j: lt?.seasonDay, h: Math.round(lt?.hourOfCycle ?? 0), nuit: Boolean(lt?.isNight) }
+      })
+      await page.screenshot({ path: `${OUT}/planche-${nom}.png` })
+      console.log(`  ${nom.padEnd(18)} jour ${String(t.j).padStart(4)} ${String(t.h).padStart(2)} h${t.nuit ? ' nuit' : '    '}`
+        + ` · ciel ${String(ciel ?? 'clair').padEnd(14)} · gué ${NOM_ETAT[eGue] ?? eGue} · terre ${NOM_ETAT[eTerre] ?? eTerre}   — ${quoi}`)
+      return { nom, quoi, jour: t.j, heure: t.h, nuit: t.nuit, ciel, eGue, eTerre }
+    }
+
+    // ── LA SÉRIE. Elle monte le calendrier DANS L'ORDRE : `debug_set_season_day` ne rembobine
+    //    pas (mesuré le 2026-08-24), et le monde ouvre au jour 51.
+    const prises = []
+    prises.push(await prise('1-secheresse', 'l’ouverture : la vallée naît à sec, le gué en vase', { jour: 51, heure: 12 }))
+    prises.push(await prise('2-ardeur-orage', 'l’orage sec de l’Ardeur, à midi', { jour: 60, heure: 12, ciel: 'orage' }))
+    prises.push(await prise('3-pluies-jour', 'les Pluies : la pluie traverse, la vallée reverdit', { jour: 75, heure: 12, ciel: 'pluie' }))
+    prises.push(await prise('4-pluies-brouillard', 'le brouillard des Pluies, au petit matin', { jour: 78, heure: 7, ciel: 'brouillard' }))
+    prises.push(await prise('5-froid-midi', 'le Grand Froid à midi : la neige tient, le gué prend', { jour: 105, heure: 12 }))
+    prises.push(await prise('6-froid-blizzard', 'le blizzard : un orage sous la limite de neige', { jour: 106, heure: 12, ciel: 'orage' }))
+    prises.push(await prise('7-froid-nuit', 'la nuit du Grand Froid — −16 °C, le lac pris', { jour: 107, heure: 1 }))
+    prises.push(await prise('8-cendre', 'le vent de cendre : le froid vient d’où plus rien ne pousse', { jour: 110, heure: 12, ciel: 'vent_de_cendre' }))
+    // LA CRUE — le seul régime qui demande de traverser onze années pour se montrer.
+    const JOUR_CRUE = Number(process.env.SMOKE_JOUR_CRUE ?? 1219)
+    prises.push(await prise('9-crue', 'LA CRUE : le gué se ferme, la rive passe sous l’eau', { jour: JOUR_CRUE, heure: 12 }))
+    prises.push(await prise('10-crue-orage', 'la Crue sous l’orage — les deux eaux à la fois', { jour: JOUR_CRUE, heure: 12, ciel: 'orage' }))
+
+    console.log(`\n  ${prises.length} prises → ${OUT}/planche-*.png`)
+    return { vue, prises }
+  },
+
   async crue(page) {
     if (!dev) { console.log('\n(le niveau d’eau exige --dev : le jour de saison et le TP)'); return {} }
     await page.waitForFunction(() => Boolean(window.__BRAISES__?.scene?.registry?.get('worldReady')), null, { timeout: 150000 })
