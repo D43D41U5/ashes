@@ -86,8 +86,23 @@ const ANIM_MS = 220
  */
 const ZONE_PX_SEUL = 14
 const ZONE_PX_SURTITRE = 11
-const LIEU_PX = 17
-export const LIEU_RANG_H = 26
+const LIEU_PX = 21
+/** L'interligne du surtitre — il compte dans la hauteur du bloc, donc dans la garde du sol. */
+const ZONE_LH = 15
+export const LIEU_RANG_H = 30
+/**
+ * La largeur des deux colonnes de bord. ÉGALES : la colonne du milieu est un `flex-grow`
+ * centré sur ce qui RESTE, donc deux bords inégaux la décalent. 340 px laissent au nom du lieu
+ * de quoi grandir (« LE REPAIRE DE CENDRÉS », le plus long du catalogue, tient à 21 px) sans
+ * rien voler au ruban : la barre avait 240 px de mou.
+ *
+ * ⚠ Cela centre le GROUPE du milieu, pas la fenêtre du ruban : le groupe est
+ * `[AN][fenêtre][caractère]`, et ses deux flancs ne font pas la même largeur — mesuré, la
+ * fenêtre reste 44 px à gauche du centre de la barre. Les égaliser coûterait soit du vide à
+ * gauche, soit un nom de caractère tronqué à droite ; et la tête de lecture, elle, est au
+ * TIERS de la fenêtre par décision — le centre exact n'est de toute façon pas le repère.
+ */
+const COL_BORD = 340
 
 /**
  * LE SOL DE LA BARRE — et sa garde.
@@ -121,10 +136,10 @@ export const BARRE_SOL_ARRETS: readonly (readonly [number, number])[] = [
  *
  * C'est la LIGNE DE LA TEMPÉRATURE, en bas du coin du ciel : 20 px d'heure + 3 de gouttière +
  * 16 de température font 39 px, centrés dans les 72 de la barre. La colonne de gauche descend
- * moins bas (15 + 26 = 41 px centrés), et la plaque « JOUR N » ne compte pas — elle porte son
- * propre fond opaque.
+ * un peu plus bas depuis que le nom du lieu a grandi (15 + 30 = 45 px centrés, soit 58,5), et
+ * c'est donc ELLE qu'on prend. La plaque « JOUR N » ne compte pas — elle porte son propre fond.
  */
-const BAS_DU_TEXTE = ((BARRE_H + 39) / 2) / BARRE_H
+const BAS_DU_TEXTE = ((BARRE_H + (ZONE_LH + LIEU_RANG_H)) / 2) / BARRE_H
 
 /** L'opacité du sol à une hauteur donnée — l'interpolation même du dégradé CSS. */
 export function opaciteDuSol(part: number): number {
@@ -468,12 +483,12 @@ function markup(): string {
     .bh-rang{position:absolute;inset:0;display:flex;align-items:center;gap:28px;padding:0 26px;}
 
     /* ── OÙ JE SUIS ── */
-    .bh-ou{width:310px;display:flex;flex-direction:column;justify-content:center;}
+    .bh-ou{width:${COL_BORD}px;display:flex;flex-direction:column;justify-content:center;}
     /* Le passage d'un état à l'autre est une ANIMATION, pas une bascule : le lieu se déplace
        VERS LA DROITE en apparaissant et son rang s'ouvre ; la zone se RÉDUIT VERS LE HAUT.
        Les trois rangs restent MONTÉS en permanence — un rang démonté ne s'anime pas en
        partant, il disparaît. */
-    .bh-zone{line-height:15px;${INK_OUTLINE}transition:font-size ${ANIM_MS}ms cubic-bezier(.2,.7,.3,1),
+    .bh-zone{line-height:${ZONE_LH}px;${INK_OUTLINE}transition:font-size ${ANIM_MS}ms cubic-bezier(.2,.7,.3,1),
       letter-spacing ${ANIM_MS}ms cubic-bezier(.2,.7,.3,1),color ${ANIM_MS}ms ease;}
     .bh-lieu{overflow:hidden;display:flex;align-items:center;gap:8px;
       transition:height ${ANIM_MS}ms cubic-bezier(.2,.7,.3,1),opacity 160ms ease,
@@ -524,7 +539,7 @@ function markup(): string {
        pourtant la même chose : ce qu'il fait DEHORS, maintenant. Réunies en deux lignes contre
        le pictogramme du temps, elles se lisent d'un seul regard — et la colonne de gauche
        redevient ce qu'elle est, un lieu et rien d'autre. */
-    .bh-droite{width:340px;display:flex;align-items:center;justify-content:flex-end;gap:12px;}
+    .bh-droite{width:${COL_BORD}px;display:flex;align-items:center;justify-content:flex-end;gap:12px;}
     .bh-meteo{display:flex;align-items:center;flex-shrink:0;}
     .bh-lecture{display:flex;flex-direction:column;align-items:flex-start;gap:3px;min-width:78px;}
     .bh-air-txt{font-size:14px;font-weight:700;letter-spacing:1px;line-height:16px;${INK_OUTLINE}}
@@ -542,8 +557,8 @@ function markup(): string {
     <div class="bh-ou">
       <div class="bh-zone"></div>
       <div class="bh-lieu">
-        <svg class="bh-lieu-los" width="11" height="11" viewBox="0 0 12 12" fill="none"
-          stroke="${HEX.bodyBright}" stroke-width="1.6"><path d="M6 1.4 10.6 6 6 10.6 1.4 6Z" stroke-linejoin="round"/></svg>
+        <svg class="bh-lieu-los" width="13" height="13" viewBox="0 0 12 12" fill="none"
+          stroke="${HEX.bodyBright}" stroke-width="1.5"><path d="M6 1.4 10.6 6 6 10.6 1.4 6Z" stroke-linejoin="round"/></svg>
         <div class="bh-lieu-nom"></div>
       </div>
     </div>
