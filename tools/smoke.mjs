@@ -3303,13 +3303,13 @@ const SCENARIOS = {
 
     const dedans = await lire()
     console.log(`barre (dans « ${cible.nom} ») : ${JSON.stringify(dedans)}`)
-    if (dedans.lieuH !== '24px') console.error(`!! le rang du lieu ne s'est pas ouvert (${dedans.lieuH})`)
+    if (dedans.lieuH === '0px') console.error(`!! le rang du lieu ne s'est pas ouvert (${dedans.lieuH})`)
     if (dedans.lieu !== cible.nom.toUpperCase()) console.error(`!! la barre dit « ${dedans.lieu} », la carte dit « ${cible.nom} »`)
     if (dedans.zone === dedans.lieu) console.error('!! la région et le lieu disent la même chose — les deux lectures se confondent')
     if (parseFloat(dedans.zoneTaille) >= parseFloat(dehors.zoneTaille)) {
       console.error(`!! la zone ne s'est pas réduite (${dehors.zoneTaille} → ${dedans.zoneTaille})`)
     }
-    if (dedans.lieuH === '24px' && dedans.lieu === cible.nom.toUpperCase() && dedans.zone !== dedans.lieu) {
+    if (dedans.lieuH !== '0px' && dedans.lieu === cible.nom.toUpperCase() && dedans.zone !== dedans.lieu) {
       console.log(`   ✓ « ${dedans.zone} » puis « ${dedans.lieu} », zone ${dehors.zoneTaille} → ${dedans.zoneTaille}, air ${dedans.air}`)
     }
     await page.screenshot({ path: `${OUT}/barre.png` })

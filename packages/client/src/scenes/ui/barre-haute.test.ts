@@ -5,6 +5,7 @@ import {
   BARRE_SOL_ARRETS,
   BARRE_SOL_ENCRE,
   LIEU_GRACE_MS,
+  LIEU_RANG_H,
   MEMOIRE_VIERGE,
   opaciteDuSol,
   vueDeLaBarre,
@@ -59,7 +60,7 @@ describe('la barre haute — où je suis', () => {
 
     const dedans = jouer(etat({ lieu: 'la Mine pillée' })).vue
     expect(dedans.lieuNom).toBe('LA MINE PILLÉE')
-    expect(dedans.lieuH).toBe('24px')
+    expect(dedans.lieuH).toBe(`${LIEU_RANG_H}px`)
   })
 
   /**
@@ -83,7 +84,7 @@ describe('la barre haute — où je suis', () => {
   it('LA GRÂCE : le lieu tient 500 ms après la sortie, puis s’en va', () => {
     const dedans = etat({ lieu: 'la Tanière', now: 1000 })
     const juste = jouer(dedans, etat({ now: 1000 + LIEU_GRACE_MS - 1 })).vue
-    expect(juste.lieuH).toBe('24px') // c'est le bord de l'empreinte, la barre ne bronche pas
+    expect(juste.lieuH).toBe(`${LIEU_RANG_H}px`) // c'est le bord de l'empreinte, la barre ne bronche pas
     expect(juste.lieuNom).toBe('LA TANIÈRE')
 
     const apres = jouer(dedans, etat({ now: 1000 + LIEU_GRACE_MS })).vue
@@ -99,7 +100,7 @@ describe('la barre haute — où je suis', () => {
       etat({ lieu: 'la Tanière', now: 400 }),
       etat({ now: 600 }), // 200 ms après la SECONDE entrée : toujours tenu
     ).vue
-    expect(vue.lieuH).toBe('24px')
+    expect(vue.lieuH).toBe(`${LIEU_RANG_H}px`)
   })
 
   it('entrer dans un AUTRE lieu montre le nouveau tout de suite, sans passer par le vide', () => {
@@ -108,7 +109,7 @@ describe('la barre haute — où je suis', () => {
       etat({ lieu: 'la Tanière', now: 50 }),
     ).vue
     expect(vue.lieuNom).toBe('LA TANIÈRE')
-    expect(vue.lieuH).toBe('24px')
+    expect(vue.lieuH).toBe(`${LIEU_RANG_H}px`)
   })
 
   it('l’air se dit en degrés SIGNÉS, et se tait tant que le monde n’a rien dit', () => {

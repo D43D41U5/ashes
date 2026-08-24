@@ -70,6 +70,26 @@ export const LIEU_GRACE_MS = 500
 const ANIM_MS = 220
 
 /**
+ * ═══ LES TROIS RANGS DE GAUCHE, ET LEUR RYTHME ═══
+ *
+ * Trois informations empilées ne se lisent que si leurs POIDS sont francs. Le premier jet les
+ * avait trop proches — 11 / 14 / 12 px — et l'œil ne savait plus laquelle était le sujet.
+ * Elles se répartissent donc en trois rôles, avec une interligne écrite plutôt que subie :
+ *
+ *   LE CONTEXTE — la région, en surtitre : petit, espacé, éteint.
+ *   LE SUJET — le lieu qu'on foule : le plus gros de la barre, gras, encre vive. C'est lui
+ *     qu'on cherche du regard, et c'est lui qu'Alexis a demandé d'agrandir (2026-08-24).
+ *   LA DONNÉE — l'air qu'il fait, en degrés : la taille du corps de texte, pas plus.
+ *
+ * `LIEU_RANG_H` est la hauteur OUVERTE du rang du lieu : elle sert au CSS et à l'animation,
+ * et c'est la seule façon d'animer une hauteur (`auto` ne s'interpole pas).
+ */
+const ZONE_PX_SEUL = 14
+const ZONE_PX_SURTITRE = 11
+const LIEU_PX = 17
+export const LIEU_RANG_H = 26
+
+/**
  * LE SOL DE LA BARRE — et sa garde.
  *
  * La barre pose du texte sur le monde, comme le coin haut-gauche avant elle : elle a donc
@@ -260,11 +280,11 @@ export function vueDeLaBarre(
       zone: (s.toponyme ?? '').toUpperCase(),
       // La zone se RÉDUIT VERS LE HAUT quand un lieu s'ouvre sous elle : elle passe d'un titre
       // à une ligne de contexte, et remonte d'elle-même (le bloc est centré dans la barre).
-      zoneTaille: tenu ? '11px' : '13px',
+      zoneTaille: tenu ? `${ZONE_PX_SURTITRE}px` : `${ZONE_PX_SEUL}px`,
       zoneLs: tenu ? '3px' : '2px',
       zoneEncre: tenu ? HEX.faint : HEX.dim,
       lieuNom: (memoire.nom ?? '').toUpperCase(),
-      lieuH: tenu ? '24px' : '0px',
+      lieuH: tenu ? `${LIEU_RANG_H}px` : '0px',
       lieuOp: tenu ? '1' : '0',
       // Il ENTRE PAR LA GAUCHE en se déplaçant vers la droite, et repart par où il est venu.
       lieuX: tenu ? 'translateX(0)' : 'translateX(-16px)',
@@ -434,14 +454,21 @@ function markup(): string {
        VERS LA DROITE en apparaissant et son rang s'ouvre ; la zone se RÉDUIT VERS LE HAUT.
        Les trois rangs restent MONTÉS en permanence — un rang démonté ne s'anime pas en
        partant, il disparaît. */
-    .bh-zone{${INK_OUTLINE}transition:font-size ${ANIM_MS}ms cubic-bezier(.2,.7,.3,1),
+    .bh-zone{line-height:15px;${INK_OUTLINE}transition:font-size ${ANIM_MS}ms cubic-bezier(.2,.7,.3,1),
       letter-spacing ${ANIM_MS}ms cubic-bezier(.2,.7,.3,1),color ${ANIM_MS}ms ease;}
-    .bh-lieu{overflow:hidden;display:flex;align-items:center;gap:7px;
+    .bh-lieu{overflow:hidden;display:flex;align-items:center;gap:8px;
       transition:height ${ANIM_MS}ms cubic-bezier(.2,.7,.3,1),opacity 160ms ease,
       transform ${ANIM_MS}ms cubic-bezier(.2,.7,.3,1);}
-    .bh-lieu-nom{font-size:14px;font-weight:700;letter-spacing:1px;color:${HEX.bodyBright};white-space:nowrap;${INK_OUTLINE_STRONG}}
-    .bh-lieu-los{width:9px;height:9px;border:1.6px solid ${HEX.bodyBright};transform:rotate(45deg);flex-shrink:0;}
-    .bh-air{display:flex;align-items:center;gap:7px;margin-top:4px;}
+    /* Un nom trop long s'ABRÈGE au lieu de déborder sur le ruban : la colonne est fixe, et
+       le catalogue des lieux n'est pas clos (« la Cabane de berger », « le Repaire de
+       Cendrés »… et ce qui s'ajoutera). */
+    .bh-lieu-nom{font-size:${LIEU_PX}px;line-height:${LIEU_RANG_H - 5}px;font-weight:700;letter-spacing:1px;
+      color:${HEX.bodyBright};white-space:nowrap;min-width:0;overflow:hidden;text-overflow:ellipsis;${INK_OUTLINE_STRONG}}
+    /* Le losange est un TRAIT, pas une boîte tournée : un carré en rotation déborde sa propre
+       boîte de deux pixels par coin, et le overflow:hidden du rang — indispensable à
+       l'animation de hauteur — lui coupait la pointe gauche. Un SVG dessine DANS son cadre. */
+    .bh-lieu-los{flex-shrink:0;}
+    .bh-air{display:flex;align-items:center;gap:7px;margin-top:5px;line-height:14px;}
     .bh-air-txt{font-size:12px;letter-spacing:1px;${INK_OUTLINE}}
     .bh-air-ico{flex-shrink:0;}
     /* Un HUD ne s'impose pas à qui a demandé le calme : le changement reste, le mouvement part. */
@@ -490,7 +517,11 @@ function markup(): string {
   <div class="bh-rang">
     <div class="bh-ou">
       <div class="bh-zone"></div>
-      <div class="bh-lieu"><i class="bh-lieu-los"></i><div class="bh-lieu-nom"></div></div>
+      <div class="bh-lieu">
+        <svg class="bh-lieu-los" width="11" height="11" viewBox="0 0 12 12" fill="none"
+          stroke="${HEX.bodyBright}" stroke-width="1.6"><path d="M6 1.4 10.6 6 6 10.6 1.4 6Z" stroke-linejoin="round"/></svg>
+        <div class="bh-lieu-nom"></div>
+      </div>
       <div class="bh-air">
         <svg class="bh-air-ico" width="9" height="12" viewBox="0 0 8 12" fill="none" stroke-width="1.3">
           <path d="M4 1.6v5.2" stroke-linecap="round"/>
