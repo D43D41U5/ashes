@@ -83,11 +83,17 @@ const ANIM_MS = 220
  * d'eux (`solDeLaBarre`), donc une retouche « pour faire moins lourd » déplace la garde avec.
  */
 export const BARRE_SOL_ENCRE = '12,9,7'
-/** `[position dans la hauteur, opacité]` — du haut de la barre à son bas. */
+/**
+ * `[position dans la hauteur, opacité]` — du haut de la barre à son bas.
+ *
+ * PRESQUE PLAT, et c'est voulu (2026-08-24) : la barre est sombre d'un bord à l'autre et de
+ * haut en bas. La première version tombait à 0,62 sur son dernier cinquième — le rang des
+ * numéros de jour y perdait son sol. Ce qui doit fondre, c'est ce qui vient APRÈS la barre :
+ * `.bh-ombre` s'en charge, sous le filet.
+ */
 export const BARRE_SOL_ARRETS: readonly (readonly [number, number])[] = [
-  [0, 0.94],
-  [0.82, 0.9],
-  [1, 0.62],
+  [0, 0.96],
+  [1, 0.92],
 ]
 /** Le bas du rang de texte le plus bas de la barre (les numéros de jour du ruban), en part de
  *  la hauteur : c'est là que le sol est le plus mince sous une lettre. */
@@ -292,8 +298,7 @@ export function createBarreHaute(board: HTMLElement): BarreHaute {
   const lieuNomEl = $('.bh-lieu-nom')
   const airEl = $('.bh-air')
   const airTexteEl = $('.bh-air-txt')
-  const airTubeEl = $('.bh-air-tube')
-  const airBulbeEl = $('.bh-air-bulbe')
+  const airIcoEl = $('.bh-air-ico')
   const anEl = $('.bh-an')
   const tapisEl = $('.bh-tapis')
   const jourEl = $('.bh-jour')
@@ -337,8 +342,9 @@ export function createBarreHaute(board: HTMLElement): BarreHaute {
       airEl.style.display = vue.airVisible ? '' : 'none'
       airTexteEl.textContent = vue.airTxt
       airTexteEl.style.color = vue.airEncre
-      airTubeEl.style.background = vue.airEncre
-      airBulbeEl.style.borderColor = vue.airEncre
+      // Le thermomètre est un TRAIT, comme les icônes de ciel : deux boîtes CSS posées côte à
+      // côte par le flex ne s'empilent jamais en thermomètre — elles ne dessinaient rien.
+      airIcoEl.setAttribute('stroke', vue.airEncre)
 
       anEl.textContent = vue.an
       jourEl.textContent = vue.jour
@@ -408,11 +414,16 @@ function masque(a: number, b: number): string {
 function markup(): string {
   return `
   <style>
-    /* LE SOL DE LA BARRE — un voile qui s'éteint sur les bords, jamais une dalle : le HUD
-       flotte sur un monde qui change de couleur sous lui (voir la plaque de hud-core). */
     .bh{position:absolute;left:0;right:0;top:0;height:${BARRE_H}px;pointer-events:none;}
-    .bh-fond{position:absolute;inset:0;background:${solDeLaBarre()};${masque(5, 95)}}
-    .bh-filet{position:absolute;left:0;right:0;top:${BARRE_H}px;height:1px;background:rgba(107,90,58,.55);${masque(8, 92)}}
+    /* PLEIN D'UN BORD À L'AUTRE (2026-08-24, Alexis : « toute la barre doit avoir un fond
+       sombre »). Le voile s'éteignait à 5 % et 95 % : le lieu à gauche et l'heure à droite
+       reposaient sur un fond qui s'efface — les deux bouts de la barre étaient les moins
+       lisibles. La retenue du HUD (un voile qui s'éteint, pas une dalle) vaut pour une plaque
+       DE COIN, qui ferait un rectangle noir dans un angle ; une barre va d'un bord à l'autre,
+       elle n'a pas d'angle à trahir. Ce qui fond, c'est ce qui vient APRÈS elle : l'ombre
+       sous le filet. */
+    .bh-fond{position:absolute;inset:0;background:${solDeLaBarre()};}
+    .bh-filet{position:absolute;left:0;right:0;top:${BARRE_H}px;height:1px;background:rgba(107,90,58,.55);}
     .bh-ombre{position:absolute;left:0;right:0;top:${BARRE_H + 1}px;height:22px;
       background:linear-gradient(180deg,rgba(12,9,7,.42),rgba(12,9,7,0));}
     .bh-rang{position:absolute;inset:0;display:flex;align-items:center;gap:28px;padding:0 26px;}
@@ -432,8 +443,7 @@ function markup(): string {
     .bh-lieu-los{width:9px;height:9px;border:1.6px solid ${HEX.bodyBright};transform:rotate(45deg);flex-shrink:0;}
     .bh-air{display:flex;align-items:center;gap:7px;margin-top:4px;}
     .bh-air-txt{font-size:12px;letter-spacing:1px;${INK_OUTLINE}}
-    .bh-air-tube{width:1.4px;height:6px;margin-left:3px;}
-    .bh-air-bulbe{width:6px;height:6px;border-radius:50%;border:1.4px solid ${HEX.body};margin-left:1px;}
+    .bh-air-ico{flex-shrink:0;}
     /* Un HUD ne s'impose pas à qui a demandé le calme : le changement reste, le mouvement part. */
     @media (prefers-reduced-motion: reduce){
       .bh-zone,.bh-lieu{transition:none;}
@@ -481,7 +491,13 @@ function markup(): string {
     <div class="bh-ou">
       <div class="bh-zone"></div>
       <div class="bh-lieu"><i class="bh-lieu-los"></i><div class="bh-lieu-nom"></div></div>
-      <div class="bh-air"><i class="bh-air-tube"></i><i class="bh-air-bulbe"></i><span class="bh-air-txt"></span></div>
+      <div class="bh-air">
+        <svg class="bh-air-ico" width="9" height="12" viewBox="0 0 8 12" fill="none" stroke-width="1.3">
+          <path d="M4 1.6v5.2" stroke-linecap="round"/>
+          <circle cx="4" cy="9.2" r="2.2"/>
+        </svg>
+        <span class="bh-air-txt"></span>
+      </div>
     </div>
 
     <div class="bh-centre">
