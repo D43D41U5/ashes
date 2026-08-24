@@ -135,21 +135,47 @@ function d2(a: { tx: number; ty: number }, b: { tx: number; ty: number }): numbe
 function troisVillages(emplacements: Emplacement[], premier: Emplacement | undefined): Emplacement[] {
   if (!premier) return []
   const choisis = [premier]
-  while (choisis.length < 3) {
+  // Le DEUXIÈME au max-min : le plus loin possible du premier.
+  const plusLoin = (deja: Emplacement[]): Emplacement | undefined => {
     let meilleur: Emplacement | undefined
     let meilleureDist = -1
     for (const e of emplacements) {
-      if (choisis.some((c) => c.tx === e.tx && c.ty === e.ty)) continue
-      // Distance au plus proche des DÉJÀ choisis : on maximise le minimum.
-      const proche = Math.min(...choisis.map((c) => d2(c, e)))
-      if (proche > meilleureDist) {
-        meilleureDist = proche
-        meilleur = e
-      }
+      if (deja.some((c) => c.tx === e.tx && c.ty === e.ty)) continue
+      const proche = Math.min(...deja.map((c) => d2(c, e)))
+      if (proche > meilleureDist) { meilleureDist = proche; meilleur = e }
     }
-    if (!meilleur) break
-    choisis.push(meilleur)
+    return meilleur
   }
+  const second = plusLoin(choisis)
+  if (!second) return choisis
+  choisis.push(second)
+
+  /**
+   * ═══ LE TROISIÈME SE CHOISIT SUR LA MARGE, PAS SUR LA DISTANCE ═══
+   *
+   * Maximiser le minimum ne suffit pas, et ce n'est pas une intuition : **le 2026-08-24, l'écart
+   * de spawn imposé aux naissances (spec `cendre.md` R10) a déplacé le premier site, et la marge
+   * est tombée de plus de 5 % à 1,9 %** — le banc allait mesurer une guerre. C'est exactement le
+   * cas que le garde-fou annonçait (« sur une vallée à quatre joueurs, la marge tombe à 4,4 % »).
+   *
+   * On ne déplace toujours AUCUNE coordonnée : on classe les candidats par éloignement, on garde
+   * les meilleurs, et parmi eux on prend celui qui ÉCARTE LE PLUS les deux cibles possibles de la
+   * Meute. Le banc devient robuste à la carte qui bouge, au lieu d'être recalé à la main.
+   */
+  const restants = emplacements
+    .filter((e) => !choisis.some((c) => c.tx === e.tx && c.ty === e.ty))
+    .map((e) => ({ e, loin: Math.min(...choisis.map((c) => d2(c, e))) }))
+    .sort((a, b) => b.loin - a.loin)
+    .slice(0, 24) // les deux douzaines les plus éloignées : au-delà, on rapprocherait les villages
+  let meilleur: Emplacement | undefined
+  let meilleureMarge = -1
+  for (const { e } of restants) {
+    const dFoyer = Math.sqrt(d2(second, premier))
+    const dNeutre = Math.sqrt(d2(second, e))
+    const marge = (Math.abs(dFoyer - dNeutre) / Math.min(dFoyer, dNeutre)) * 100
+    if (marge > meilleureMarge) { meilleureMarge = marge; meilleur = e }
+  }
+  if (meilleur) choisis.push(meilleur)
   return choisis
 }
 
@@ -167,7 +193,7 @@ export interface MondeDuBanc {
  * laissé ce banc calibrer la faim sur une carte sans gibier.
  */
 export function construireMondeDuBanc(seed: number, joueurs: number = BANC_JOUEURS): MondeDuBanc {
-  // Le banc joue LE MONDE JOUÉ (MONDE_JOUE — racine + Cendrière depuis le 2026-08-18) : un banc
+  // Le banc joue LE MONDE JOUÉ (MONDE_JOUE — le T0 SEUL depuis le 2026-08-24) : un banc
   // qui calibrerait la vallée entière mesurerait un jeu que personne ne joue.
   const carte = generateZonedTerrain(seed, joueurs, MONDE_JOUE)
   const map = carte.map

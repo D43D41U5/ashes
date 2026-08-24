@@ -45,6 +45,7 @@ import {
   type SlotRef,
 } from '@ashes/sim'
 import type Phaser from 'phaser'
+import { FISH_SPECIES } from '@ashes/sim'
 import type { Exigence, RecipeId as RecipeIdType } from '@ashes/sim'
 import type { CapacitesEnPortee, CharacterTab, OpenContainerView } from '../../hud-state'
 import { ITEM_LABELS, itemIconKey } from '../../render/item-art'
@@ -75,6 +76,10 @@ const ouFaire = (besoin: Exigence | null): string =>
 
 /** Les 4 métiers, à gauche : emblème (une icône d'objet du métier), libellé, niveau, barre.
  *  Le niveau vient de `skillLevel` (/sim) — l'écran montre la règle, il ne la refait pas. */
+/** Les quatre saisons, en court — pour la colonne « où et quand » du bestiaire (R11).
+ *  Courtes délibérément : la ligne porte déjà l'eau et l'heure, elle doit tenir. */
+const SAISON_COURTE = ['éclosion', 'ardeur', 'pluies', 'grand froid'] as const
+
 const SKILL_META: { id: SkillId; label: string; item: ItemId }[] = [
   { id: 'woodcutting', label: SKILL_LABELS.woodcutting, item: 'axe' },
   { id: 'mining', label: SKILL_LABELS.mining, item: 'pickaxe' },
@@ -109,6 +114,8 @@ export interface HudCharacter {
     seen: readonly RecipeIdType[]
     container: OpenContainerView | null
     skills: Partial<Record<SkillId, number>>
+    /** LE BESTIAIRE (peche.md B5/R11) — le carnet de MON avatar, tel que le snapshot le porte. */
+    pecheCarnet: readonly { sp: string; mm: number; prises: number }[]
   }): void
 }
 
@@ -150,6 +157,9 @@ export function createHudCharacter(
   const persoWrap = $('.hch-perso')
   const sacWrap = $('.hch-sac')
   const metWrap = $('.hch-met')
+  const bestWrap = $('.hch-best')
+  const bestList = $('.hch-best-list')
+  const bestSomme = $('.hch-best-somme')
   const tabBtns = Array.from(root.querySelectorAll<HTMLElement>('.hch-tab'))
 
   // ── L'avatar : le VRAI sprite du monde (`spr-player`), à ses proportions (carré, pixel) —
@@ -238,6 +248,7 @@ export function createHudCharacter(
     persoWrap.style.display = perso ? '' : 'none'
     sacWrap.style.display = perso ? '' : 'none'
     metWrap.style.display = activeTab === 'metiers' ? 'flex' : 'none'
+    bestWrap.style.display = activeTab === 'bestiaire' ? 'flex' : 'none'
     // Hors PERSONNAGE, le butin et les métiers-à-gauche disparaissent ; sur PERSONNAGE, leur
     // affichage fin (butin vs stats) reste tranché dans `update`, au vu du conteneur.
     if (!perso) {
@@ -251,6 +262,55 @@ export function createHudCharacter(
       // écrivain, une seule vérité (c'est lui qui décide aussi si la carte est à l'écran).
       hooks.setTab((b.dataset.tab ?? 'perso') as CharacterTab)
     })
+  }
+
+  /**
+   * ═══ LE BESTIAIRE (spec `peche.md` R11/B5) ═══
+   *
+   * Une ligne par espèce du catalogue — **y compris celles qu'on n'a jamais prises**, éteintes.
+   * C'est délibéré : la liste doit donner envie d'aller voir ailleurs, et une espèce qu'on
+   * ignore n'apprend rien. Ce qu'elle montre alors, c'est OÙ et QUAND elle mord, jamais sa
+   * taille — le record se mérite.
+   *
+   * Le carnet vient du SNAPSHOT (`Entity.peche`), jamais d'un compte tenu ici : l'écran montre
+   * la sim, il ne la refait pas.
+   */
+  const paintBestiaire = (carnet: readonly { sp: string; mm: number; prises: number }[]): void => {
+    const parEspece = new Map(carnet.map((l) => [l.sp, l]))
+    const prises = carnet.reduce((t, l) => t + l.prises, 0)
+    bestSomme.textContent = `${parEspece.size} / ${FISH_SPECIES.length} espèces · ${prises} prise${prises > 1 ? 's' : ''}`
+    bestList.replaceChildren(
+      ...FISH_SPECIES.map((sp) => {
+        const l = parEspece.get(sp.id)
+        const ligne = document.createElement('div')
+        ligne.className = l ? 'hch-best-l' : 'hch-best-l is-vide'
+        const img = document.createElement('img')
+        img.className = 'hch-best-ic'
+        img.src = iconUrl(sp.id as ItemId)
+        const nom = document.createElement('div')
+        nom.className = 'hch-best-nom'
+        nom.textContent = sp.label.charAt(0).toUpperCase() + sp.label.slice(1)
+        const ou = document.createElement('div')
+        ou.className = 'hch-best-ou'
+        // OÙ et QUAND — ce que la table déclare, en français. La saison et le créneau ne
+        // s'affichent que s'ils sont RESTREINTS : « toute l'année, à toute heure » est du bruit.
+        ou.textContent = [
+          sp.eaux.join('/'),
+          sp.saisons ? sp.saisons.map((n) => SAISON_COURTE[n - 1] ?? '').join('/') : '',
+          sp.creneaux ? sp.creneaux.join('/') : '',
+        ]
+          .filter((t) => t.length > 0)
+          .join(' · ')
+        const rec = document.createElement('div')
+        rec.className = 'hch-best-rec'
+        rec.textContent = l ? `${(l.mm / 10).toFixed(1)} cm` : '—'
+        const n = document.createElement('div')
+        n.className = 'hch-best-n'
+        n.textContent = l ? `×${l.prises}` : ''
+        ligne.append(img, nom, ou, rec, n)
+        return ligne
+      }),
+    )
   }
 
   /** Repeint les colonnes MÉTIERS : niveau, barre, et statut ✓/▶/verrouillé de chaque
@@ -531,6 +591,9 @@ export function createHudCharacter(
       if (activeTab !== s.tab) hooks.setTab(activeTab)
       applyTab()
       paintMet(s.skills)
+      // Le bestiaire ne se repeint QUE quand on le regarde : il bâtit 18 lignes de DOM, et
+      // l'écran de personnage se met à jour à chaque image tant qu'il est ouvert.
+      if (activeTab === 'bestiaire') paintBestiaire(s.pecheCarnet)
 
       for (let i = 0; i < bagCells.length; i++) paintCell(bagCells[i]!, inv[BAG_LO + i] ?? null, false)
       for (let i = 0; i < beltCells.length; i++) paintCell(beltCells[i]!, inv[i] ?? null, i === activeSlot)
@@ -716,6 +779,20 @@ function markup(): string {
     /* ONGLET METIERS : quatre colonnes pleine largeur, centrées, entre la barre d'onglets et
        la ceinture. Chaque colonne = une fiche : geste, echelle de paliers, passifs, note outil. */
     .hch-met{position:absolute;left:0;right:0;top:96px;bottom:120px;display:none;justify-content:center;align-items:flex-start;}
+    /* LE BESTIAIRE (peche.md R11) : une ligne par espèce, sur deux colonnes. Les espèces
+       JAMAIS prises restent visibles mais éteintes — c'est la liste qui donne envie d'aller
+       voir ailleurs (une eau, une saison, une heure qu'on n'a pas encore essayées). */
+    .hch-best{position:absolute;left:0;right:0;top:96px;bottom:120px;display:none;flex-direction:column;padding:0 40px;}
+    .hch-best-h{display:flex;justify-content:space-between;font-size:13px;letter-spacing:.14em;color:#c98b3a;padding:0 4px 10px;border-bottom:1px solid #2a2a34;}
+    .hch-best-somme{color:#9a8f78;letter-spacing:.06em;}
+    .hch-best-list{flex:1;overflow-y:auto;display:grid;grid-template-columns:1fr 1fr;gap:2px 24px;padding:10px 4px;align-content:start;}
+    .hch-best-l{display:flex;align-items:center;gap:10px;padding:5px 6px;border-bottom:1px solid #1e1e26;}
+    .hch-best-l.is-vide{opacity:.38;}
+    .hch-best-ic{width:24px;height:24px;image-rendering:pixelated;flex:0 0 24px;}
+    .hch-best-nom{flex:1;font-size:14px;color:#e6dfcc;}
+    .hch-best-ou{font-size:11px;color:#8a8272;letter-spacing:.04em;}
+    .hch-best-rec{font-size:14px;color:#c9a24a;min-width:74px;text-align:right;}
+    .hch-best-n{font-size:11px;color:#8a8272;min-width:42px;text-align:right;}
     .hch-met-row{display:flex;gap:26px;justify-content:center;padding:0 40px;}
     .hch-met-col{width:396px;background:#16120d;border:3px solid #14141a;padding:22px 22px 24px;display:flex;flex-direction:column;}
     .hch-met-head{display:grid;grid-template-columns:48px 1fr auto;grid-template-rows:auto auto;column-gap:14px;align-items:center;margin-bottom:16px;}
@@ -751,9 +828,14 @@ function markup(): string {
   <div class="hch-tabs">
     <button class="hch-tab hud-click" data-tab="perso">PERSONNAGE</button>
     <button class="hch-tab hud-click" data-tab="metiers">MÉTIERS</button>
+    <button class="hch-tab hud-click" data-tab="bestiaire">BESTIAIRE</button>
     <button class="hch-tab hud-click" data-tab="carte">CARTE</button>
   </div>
   <div class="hch-met"><div class="hch-met-row"></div></div>
+  <div class="hch-best">
+    <div class="hch-best-h"><span>LE BESTIAIRE — CE QUE J’AI SORTI DE L’EAU</span><span class="hch-best-somme"></span></div>
+    <div class="hch-best-list"></div>
+  </div>
   <div class="hch-art">
     <div class="hch-art-h"><span class="hch-art-t">ARTISANAT</span><span class="hch-art-hint">MOLETTE POUR DÉFILER</span></div>
     <input class="hch-search" type="text" placeholder="rechercher une recette…" spellcheck="false">

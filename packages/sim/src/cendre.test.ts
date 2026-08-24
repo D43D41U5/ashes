@@ -1,319 +1,413 @@
 /**
- * LES GARDES DU FRONT DE CENDRE — spec `worldgen.md` R27-R31.
+ * LES GARDES DE LA CENDRE (spec `cendre.md` A1-A14).
  *
- * Ce qu'elles protègent n'est pas un détail d'équilibrage : c'est la promesse centrale de la
- * saison. Si le front ne part pas, la vallée ne se perd pas. S'il va trop loin, il ne reste plus
- * un endroit où naître, et celui qui rejoint en plein Grand Froid ne joue pas au même jeu que
- * les autres.
- *
- * LES JOURS SONT CEUX DE L'ANNÉE (spec `saisons.md` S1/S11) : quatre saisons de trente jours, et
- * la morsure de la Cendre s'est recalée sur le Grand Froid — elle dort du jour 1 au jour 90 et
- * dévore du jour 91 au tour de l'an.
+ * Elles tournent sur le VRAI monde partout où la propriété est géographique : une carte de test
+ * uniforme ne dirait rien de l'eau qui détourne ni de la roche qui freine, et ce sont justement
+ * les deux choses qui rendent la frange organique.
  */
 import { describe, expect, it } from 'vitest'
-import { BALANCE, TERRAIN_GRASS, TERRAIN_ROCK } from './balance'
-import { createEmptyMap } from './map'
-import { foundNpcVillage } from './worldgen'
-import { avanceeDuFront, CENDRE, estCendre, partSousLaCendre } from './cendre'
-import { generateZonedTerrain } from './zonegen'
+import {
+  CENDRE, agonise, ancienneteDeCendre, avanceeDeCendre, avanceesDepuisAges, avancerLaCendre,
+  calculeChampDeCendre, cendrePeutPrendre, coutDentree, estCendre, estSolCendre, foyersDeLaCarte,
+  grainDeCendre, coutDe, foyerDe, terrainCendre, tomberLesMortsDeLaCendre,
+  auCoeurDeLaCendre, profondeurDeCendre,
+} from './cendre'
+import { BALANCE, NODE_DEFS, TERRAINS, TERRAIN_BURNT_FOREST, TERRAIN_CENDRE_BOIS, TERRAIN_CENDRE_MIN, TERRAIN_CENDRE_PRE,
+  TERRAIN_CLIFF, TERRAIN_DEEP_WATER, TERRAIN_FOREST, TERRAIN_GRASS, TERRAIN_ROCK,
+  TERRAIN_BOULDERS, TERRAIN_OLD_GROWTH, TERRAIN_SCREE, TERRAIN_SHALLOW_WATER, type NodeType } from './balance'
 import { emplacementsDeVillage, placeZoneNodes, pointsDeSpawn } from './zone-content'
 import { placeHuntingGrounds } from './faune'
-import { nidsAMonstre } from './poi'
-import { MONDE } from './zonegraph'
-import { createSim, spawnEntity, step } from './sim'
-import { drainEvents } from './events'
-import { phaseForDay, YEAR_DAYS } from './time'
+import { nidsAMonstre, POI_TYPES } from './poi'
+import { generateZonedTerrain, RELIEF } from './zonegen'
+import { MONDE, MONDE_JOUE } from './zonegraph'
 
-const carte = generateZonedTerrain(2026)
-const racine = carte.graphe.racine
-const cendriere = carte.graphe.zones.find((z) => z.def.slug === 'cendriere')!
-/** L'avancée maximale du front — CALIBRÉE POUR CETTE CARTE, pas une constante. */
-const MAX = carte.map.cendreMax!
-const frontAu = (jour: number): number => avanceeDuFront(jour, MAX)
+const SEED = 2026
+const monde = generateZonedTerrain(SEED, MONDE.JOUEURS_CIBLE, MONDE_JOUE)
+const map = monde.map
+const foyers = foyersDeLaCarte(map)
+const REVEIL = (CENDRE.ACTE_DEPART - 1) * BALANCE.ACT_DAYS + 1
 
-/**
- * La part des Prés Bas sous la cendre, au jour donné — **les seuils exclus**.
- *
- * Un couloir de seuil n'appartient à AUCUNE des deux zones qu'il relie : le percement le
- * réaffecte à l'une d'elles pour son sol, mais géométriquement il est DANS la falaise. La gorge
- * qui mène à la Cendrière est donc déjà dans le feu au jour 1 — et c'est juste : c'est une gorge
- * de cendre, pas un pré. On ne la compte pas parmi les Prés Bas.
- */
-const partDeLaRacine = (jour: number): number =>
-  partSousLaCendre(carte.map, frontAu(jour), (i) => carte.zone[i] === racine && !carte.rampe[i])
+/** Les avancées au jour donné, personne ne touchant aux fosses. */
+const auJour = (jour: number): number[] =>
+  avanceesDepuisAges(foyers.map(() => Math.max(0, jour - REVEIL)), foyers.length)
 
-describe('le front de cendre', () => {
-  it('R27 — la CENDRIÈRE brûle depuis le premier jour, et elle seule', () => {
-    // Une tuile de la Cendrière a une distance NÉGATIVE : elle est dedans. Le front à zéro la
-    // brûle donc déjà — c'est chez elle que la cendre tombe, c'est le sens du nom.
-    // On ne compte QUE le sol : les marges de VIDE se rattachent à la région la plus proche (il faut
-    // bien qu'un échantillon réponde), mais une masse de roche n'a rien à brûler (le vide est devenu
-    // de la ROCHE plate sur la carte aplatie).
-    const dedans = partSousLaCendre(
-      carte.map,
-      0,
-      (i) => carte.zone[i] === cendriere.id && carte.map.terrain[i] !== TERRAIN_ROCK,
-    )
-    expect(dedans, 'la Cendrière ne brûle pas').toBeGreaterThan(0.9)
-    // Et les Prés Bas, eux, sont INTACTS au jour 1. On y meurt de faim, pas de cendre.
-    expect(partDeLaRacine(1), 'les Prés Bas brûlent déjà au jour 1').toBe(0)
-  })
-
-  it('R27 — LES TROIS PREMIÈRES SAISONS sont un répit : le front ne bouge pas', () => {
-    // Le joueur a le temps de bâtir, de s'attacher, et de croire que ça durera. C'est ce qui rend
-    // la suite cruelle. Depuis S11 le répit ne dure plus un acte mais trois saisons : la Cendre
-    // « mord l'hiver, tient l'été », donc elle dort de l'Éclosion à la fin des Pluies.
-    //
-    // On compte les trois saisons qui PRÉCÈDENT le Grand Froid, et non `CENDRE.ACTE_DEPART` :
-    // une garde écrite avec le cadran qu'elle teste suivrait ce cadran partout et ne garderait
-    // rien. C'est la SAISON qui est affirmée, et `phaseForDay` le dit.
-    const finDuRepit = 3 * BALANCE.ACT_DAYS
-    expect(phaseForDay(finDuRepit + 1), 'le répit ne s\'arrête pas au seuil du Grand Froid').toBe(4)
-    for (let jour = 1; jour <= finDuRepit; jour++) {
-      expect(frontAu(jour), `le front bouge au jour ${jour}, hors du Grand Froid`).toBe(0)
+/** La part de la vallée cendrée, échantillonnée au pas de 2 (la carte fait 1,3 M de tuiles). */
+function partCendree(jour: number): number {
+  const av = auJour(jour)
+  let n = 0
+  let tot = 0
+  for (let ty = 0; ty < map.height; ty += 2) {
+    for (let tx = 0; tx < map.width; tx += 2) {
+      tot++
+      if (estCendre(map, tx, ty, av, SEED)) n++
     }
-    expect(frontAu(finDuRepit + 1)).toBeGreaterThan(0)
+  }
+  return n / tot
+}
+
+describe('A1/A2 — le champ est statique et complet, et tout se dérive du tick', () => {
+  it('la carte de production porte les deux champs, et ils couvrent toute la carte', () => {
+    expect(foyers.length).toBeGreaterThan(0)
+    expect(map.cendreCout?.length).toBe(map.width * map.height)
   })
 
-  it('R27 — le front ACCÉLÈRE : la moitié du temps n\'a mangé qu\'un quart du chemin', () => {
-    // La morsure court du seuil du Grand Froid au tour de l'an (S11) : c'est SUR CETTE FENÊTRE
-    // que « la moitié du temps » se lit, pas sur la saison de wipe.
-    const debut = 3 * BALANCE.ACT_DAYS
-    const milieu = debut + Math.round((YEAR_DAYS - debut) / 2)
-    const aMiChemin = frontAu(milieu) / MAX
-    // Une progression linéaire donnerait 0,5. Une menace qu'on s'habitue à voir bouger n'en est
-    // plus une : celle-ci, on croit la maîtriser — jusqu'au jour où elle traverse le village.
-    expect(aMiChemin).toBeGreaterThan(0.2)
-    expect(aMiChemin).toBeLessThan(0.33)
-    expect(frontAu(YEAR_DAYS)).toBeCloseTo(MAX, 0)
+  it("l'eau et le vide sont hors d'atteinte, la terre ne l'est jamais", () => {
+    let terre = 0
+    let atteinte = 0
+    for (let i = 0; i < map.width * map.height; i += 7) {
+      const t = map.terrain[i]!
+      const d = coutDe(map.cendreCout, i)
+      if (!cendrePeutPrendre(t)) {
+        expect(d, `l'eau/le vide ne se chemine pas (i=${i})`).toBe(-1)
+        continue
+      }
+      terre++
+      if (d >= 0) atteinte++
+    }
+    expect(terre).toBeGreaterThan(1000)
+    // Une poche de terre isolée par l'eau serait légitime ; sur cette carte il n'y en a pas.
+    expect(atteinte / terre).toBeGreaterThan(0.99)
   })
 
-  it('R29 — la cendre mange une GROSSE PART des Prés Bas, sans les effacer', () => {
-    // Décision d'Alexis : « elle en mange une grosse part ». Les villages du sud doivent partir,
-    // ceux du nord tiennent. **La vallée rétrécit sans disparaître** — et c'est ce qui garantit
-    // qu'il reste toujours un endroit où naître (R30).
-    // ET C'EST EXACT, PAS APPROCHÉ. Le front est calibré PAR CARTE (dichotomie à la génération) :
-    // à distance fixe, la même valeur couvrait 48 % des Prés Bas sur une seed et 81 % sur une
-    // autre. Une saison = une carte : on ne tire pas au sort si la vallée brûle à moitié ou aux
-    // quatre cinquièmes.
-    const fin = partDeLaRacine(YEAR_DAYS)
-    expect(fin, `la cendre couvre ${(fin * 100).toFixed(1)} % des Prés Bas`).toBeCloseTo(CENDRE.PART_CIBLE, 2)
+  it('le pliage tient le PIRE cas, pas seulement le monde joué', () => {
+    // ⚠ LA GARDE QUI A ATTRAPÉ LE DÉFAUT : `FOYERS_MAX` valait 16, dimensionné sur le monde JOUÉ
+    //   (9,3 fosses) — or le plan complet en porte **51**, et les index se seraient écrasés en
+    //   silence : des tuiles auraient obéi à la mauvaise fosse. On confronte donc le pliage au
+    //   PLAFOND DU REGISTRE, pas au compte d'une carte.
+    const complet = generateZonedTerrain(SEED)
+    const f = foyersDeLaCarte(complet.map)
+    expect(f.length, 'le plan complet en porte bien plus que le monde joué').toBeGreaterThan(16)
+    const cap = POI_TYPES.find((t) => t.slug === 'charnier')?.cap ?? 0
+    expect(cap, 'le registre plafonne les charniers').toBeGreaterThan(0)
+    expect(CENDRE.FOYERS_MAX, 'et le pliage doit tenir ce plafond').toBeGreaterThan(cap)
+  }, 120_000)
+
+  it('chaque tuile atteinte est revendiquée par une fosse EXISTANTE', () => {
+    for (let i = 0; i < map.width * map.height; i += 13) {
+      if (coutDe(map.cendreCout, i) < 0) continue
+      const k = foyerDe(map.cendreCout, i)
+      expect(k).toBeGreaterThanOrEqual(0)
+      expect(k).toBeLessThan(foyers.length)
+    }
   })
 
-  it('R30 — IL RESTE TOUJOURS UN ENDROIT OÙ NAÎTRE, même au dernier jour de l\'année', () => {
-    // Sans cette garantie, celui qui rejoint le serveur en plein Grand Froid naîtrait dans le
-    // feu — il ne jouerait pas au même jeu que les autres. La contrepartie indispensable de R29.
-    const front = frontAu(YEAR_DAYS)
-    const { width, height } = carte.map
-    let refuges = 0
-    for (let y = 0; y < height; y += 4) {
-      for (let x = 0; x < width; x += 4) {
-        const i = y * width + x
-        if (carte.zone[i] !== racine) continue
-        if (!estCendre(carte.map, x, y, front)) refuges += 1
+  it('deux calculs du même champ sont identiques au bit près (A2)', () => {
+    const a = calculeChampDeCendre(map.width, map.height, map.terrain, foyers)
+    const b = calculeChampDeCendre(map.width, map.height, map.terrain, foyers)
+    expect(a).toEqual(b)
+    expect(a).toEqual(map.cendreCout)
+  }, 60_000)
+})
+
+describe('A3/A4 — le calendrier tient, et la cendre ne recule jamais', () => {
+  it('rien ne bouge avant le réveil : la tache initiale est celle du jour 1', () => {
+    expect(avanceeDeCendre(0)).toBe(CENDRE.R0)
+    expect(partCendree(1)).toBe(partCendree(REVEIL))
+  })
+
+  it('A12 — la tache initiale se voit et ne coûte presque rien', () => {
+    const p = partCendree(1)
+    expect(p, 'elle existe').toBeGreaterThan(0)
+    expect(p, 'et elle reste un lieu, pas une amputation').toBeLessThan(0.005)
+  })
+
+  it('A3 — à la fin du 2ᵉ hiver, la moitié de la vallée et la moitié des sites', () => {
+    const part = partCendree(240)
+    expect(part).toBeGreaterThan(0.4)
+    expect(part).toBeLessThan(0.52)
+    const nodes = placeZoneNodes(monde)
+    const empl = emplacementsDeVillage(monde, nodes, {
+      coinsDeChasse: placeHuntingGrounds(map, SEED), nids: nidsAMonstre(map),
+    })
+    const av = auJour(240)
+    const pris = empl.filter((e) => estCendre(map, e.tx, e.ty, av, SEED)).length
+    expect(pris / empl.length, 'la contrainte d’Alexis, en sites').toBeGreaterThan(0.45)
+  }, 120_000)
+
+  it('A4 — monotone non décroissante, balayée jour par jour sur vingt ans', () => {
+    let precedent = -1
+    for (let jour = 1; jour <= 20 * 120; jour += 1) {
+      const a = avanceeDeCendre(Math.max(0, jour - REVEIL))
+      expect(a, `jour ${jour}`).toBeGreaterThanOrEqual(precedent)
+      precedent = a
+    }
+  })
+
+  it('la décroissance EXISTE : la vitesse du jour 240 est bien moindre que celle du réveil', () => {
+    const v = (t: number) => avanceeDeCendre(t + 1) - avanceeDeCendre(t)
+    expect(v(1)).toBeCloseTo(CENDRE.PLAFOND_JOUR, 5) // le plafond mord au début
+    expect(v(149)).toBeLessThan(1) // …et plus du tout au jour 240
+    expect(v(509)).toBeLessThan(v(149)) // …et de moins en moins
+  })
+
+  it('le plafond ne DÉPLACE pas la courbe : il ne fait que lisser son entrée', () => {
+    // Passé `t = (A/3)²`, la loi plafonnée EST la racine nue, au flottant près.
+    const r = CENDRE.A / CENDRE.PLAFOND_JOUR
+    const t = Math.ceil(r * r) + 5
+    expect(avanceeDeCendre(t)).toBeCloseTo(CENDRE.R0 + CENDRE.A * Math.sqrt(t), 6)
+  })
+
+  it('A14 — le cumul ne dépend pas de l’ordre des demandes', () => {
+    const desordre = [900, 3, 120, 47, 1, 600, 12]
+    const vus = desordre.map((t) => avanceeDeCendre(t))
+    const relus = desordre.map((t) => avanceeDeCendre(t))
+    expect(relus).toEqual(vus)
+    // …et une lecture croissante rend exactement les mêmes nombres.
+    expect(desordre.slice().sort((a, b) => a - b).map((t) => avanceeDeCendre(t)))
+      .toEqual(desordre.slice().sort((a, b) => a - b).map((t) => vus[desordre.indexOf(t)]))
+  })
+})
+
+describe('A6/A7 — le terrain freine, l’eau détourne : le champ n’est pas un cercle', () => {
+  it('A6 — le minéral coûte trois fois le vivant', () => {
+    expect(coutDentree(TERRAIN_ROCK)).toBe(CENDRE.COUT_MINERAL)
+    expect(coutDentree(TERRAIN_CLIFF)).toBe(CENDRE.COUT_MINERAL)
+    expect(coutDentree(TERRAIN_GRASS)).toBe(1)
+    expect(coutDentree(TERRAIN_FOREST)).toBe(1)
+  })
+
+  it('A7 — il existe des tuiles dont le coût dépasse LARGEMENT leur distance à vol d’oiseau', () => {
+    // La preuve que le champ chemine au lieu de rayonner. On compare, sur les tuiles atteintes,
+    // le coût réel à ce que coûterait une ligne droite en terrain vivant.
+    let vues = 0
+    let detournees = 0
+    for (let i = 0; i < map.width * map.height; i += 101) {
+      const d = coutDe(map.cendreCout, i)
+      if (d <= 0) continue
+      const tx = i % map.width
+      const ty = (i - tx) / map.width
+      const f = foyers[foyerDe(map.cendreCout, i)]!
+      const ex = tx - f.tx
+      const ey = ty - f.ty
+      const vol = Math.sqrt(ex * ex + ey * ey) * CENDRE.ORTHO
+      if (vol <= 0) continue
+      vues++
+      if (d > vol * 1.5) detournees++
+    }
+    expect(vues).toBeGreaterThan(100)
+    expect(detournees, 'des tuiles payées 1,5× la ligne droite : le champ CHEMINE').toBeGreaterThan(0)
+  })
+
+  it('le grain est borné, quantifié au motif, et constant DANS un bloc', () => {
+    expect(CENDRE.MOTIF, 'il doit suivre le motif du terrain').toBe(RELIEF.MOTIF)
+    const M = CENDRE.MOTIF
+    for (let k = 0; k < 200; k++) {
+      const tx = 40 + k * 7
+      const ty = 300 + k * 3
+      const g = grainDeCendre(SEED, tx, ty)
+      expect(Math.abs(g)).toBeLessThanOrEqual(CENDRE.WARP_PART)
+      // Deux tuiles du MÊME bloc rendent le même grain — sinon la frange grésille.
+      const bx = Math.floor(tx / M) * M
+      const by = Math.floor(ty / M) * M
+      expect(grainDeCendre(SEED, bx, by)).toBe(g)
+      expect(grainDeCendre(SEED, bx + M - 1, by + M - 1)).toBe(g)
+    }
+  })
+
+  it('le grain DÉFORME vraiment la frange — sans lui elle serait une isoligne nue', () => {
+    // À un jour donné, on cherche deux tuiles de coût quasi égal dont l'une brûle et l'autre non.
+    const av = auJour(240)
+    const seuil = av[0]! * CENDRE.ORTHO
+    let contreExemple = false
+    for (let i = 0; i < map.width * map.height && !contreExemple; i += 37) {
+      const d = coutDe(map.cendreCout, i)
+      if (d < 0) continue
+      if (Math.abs(d - seuil) > seuil * 0.05) continue
+      const tx = i % map.width
+      const ty = (i - tx) / map.width
+      if (foyerDe(map.cendreCout, i) !== 0) continue
+      if (estCendre(map, tx, ty, av, SEED) !== (d <= seuil)) contreExemple = true
+    }
+    expect(contreExemple, 'une tuile au moins échappe à l’isoligne : le grain agit').toBe(true)
+  })
+})
+
+describe('A8 — les trois cendres, et le monde reste fermé', () => {
+  it('LA FRANGE : chaque famille prend sa cendre, et l’eau n’en prend pas', () => {
+    expect(terrainCendre(TERRAIN_GRASS)).toBe(TERRAIN_CENDRE_PRE)
+    expect(terrainCendre(TERRAIN_FOREST)).toBe(TERRAIN_CENDRE_BOIS)
+    expect(terrainCendre(TERRAIN_ROCK)).toBe(TERRAIN_CENDRE_MIN)
+    expect(terrainCendre(TERRAIN_CLIFF)).toBe(TERRAIN_CENDRE_MIN)
+    expect(terrainCendre(TERRAIN_DEEP_WATER)).toBeUndefined()
+    expect(terrainCendre(TERRAIN_SHALLOW_WATER)).toBeUndefined()
+  })
+
+  it('LE CŒUR recycle la Cendrière — et le pré reste de la cendre', () => {
+    // La corruption EST la Cendrière qui s'étend : au-delà de la frange, elle en a la peau.
+    expect(terrainCendre(TERRAIN_FOREST, true), 'le bois devient le SOL de la Cendrière').toBe(TERRAIN_BURNT_FOREST)
+    expect(terrainCendre(TERRAIN_OLD_GROWTH, true)).toBe(TERRAIN_BURNT_FOREST)
+    // Les minéraux qu'elle portait déjà ne changent pas d'un pixel.
+    expect(terrainCendre(TERRAIN_ROCK, true)).toBe(TERRAIN_ROCK)
+    expect(terrainCendre(TERRAIN_CLIFF, true)).toBe(TERRAIN_CLIFF)
+    // …et le caillouteux MARCHABLE prend le chaos de blocs, l'autre tache de la Cendrière.
+    expect(terrainCendre(TERRAIN_SCREE, true)).toBe(TERRAIN_BOULDERS)
+    // Décision d'Alexis : la Cendrière n'a AUCUN sol ouvert — le pré reste de la cendre.
+    expect(terrainCendre(TERRAIN_GRASS, true)).toBe(TERRAIN_CENDRE_PRE)
+    expect(terrainCendre(TERRAIN_DEEP_WATER, true)).toBeUndefined()
+  })
+
+  it('le cœur ne rend JAMAIS marchable ce qui ne l’était pas', () => {
+    // Le même mode d'échec qu'à la frange (A8), sur l'autre bande : `wall` et `glacier` passent
+    // par `estMineral` et ne doivent pas ressortir traversables.
+    for (const t of Object.keys(TERRAINS).map(Number)) {
+      const c = terrainCendre(t, true)
+      if (c === undefined || TERRAINS[t]?.walkable !== false) continue
+      expect(TERRAINS[c]?.walkable, `${TERRAINS[t]?.name} → ${TERRAINS[c]?.name}`).toBe(false)
+    }
+  })
+
+  it('la frange fait bien 3 tuiles sur le vivant, et se compte en COÛT', () => {
+    const av = auJour(240)
+    let frange = 0
+    let coeur = 0
+    for (let i = 0; i < map.width * map.height; i += 149) {
+      const tx = i % map.width
+      const ty = (i - tx) / map.width
+      const p = profondeurDeCendre(map, tx, ty, av, SEED)
+      if (p < 0) continue
+      if (p <= CENDRE.FRANGE_TUILES) frange++
+      else coeur++
+      expect(auCoeurDeLaCendre(map, tx, ty, av, SEED)).toBe(p > CENDRE.FRANGE_TUILES)
+    }
+    // Les deux bandes EXISTENT : une frange sans cœur (ou l'inverse) voudrait dire que la
+    // largeur est absurde et que la moitié de la règle ne s'exerce jamais.
+    expect(frange, 'il y a une frange').toBeGreaterThan(0)
+    expect(coeur, 'et un cœur').toBeGreaterThan(frange)
+  })
+
+  it('A8 — la cendre MINÉRALE ne se traverse pas : sinon la cendre ouvre les bords du monde', () => {
+    expect(TERRAINS[TERRAIN_CENDRE_MIN]?.walkable).toBe(false)
+    // …et la conversion PRÉSERVE la traversabilité de tout ce qui ne l'était pas.
+    for (const t of Object.keys(TERRAINS).map(Number)) {
+      const c = terrainCendre(t)
+      if (c === undefined) continue
+      if (TERRAINS[t]?.walkable === false) {
+        expect(TERRAINS[c]?.walkable, `${TERRAINS[t]?.name} → ${TERRAINS[c]?.name}`).toBe(false)
       }
     }
-    expect(refuges, 'plus une seule tuile vivante dans les Prés Bas au dernier jour').toBeGreaterThan(500)
   })
 
-  it('la cendre AVANCE, monotone : ce qui a brûlé ne repousse pas', () => {
-    const { width } = carte.map
-    // Une tuile qui brûle au jour J brûle encore au jour J+1. C'est une propriété du modèle (le
-    // front ne fait que croître), et la tester la protège d'une courbe mal écrite.
-    const echantillons: number[] = []
-    for (let k = 0; k < 400; k++) echantillons.push((k * 6197) % (carte.map.terrain.length))
-    let precedent = 0
-    for (let jour = 1; jour <= YEAR_DAYS; jour += 3) {
-      const front = frontAu(jour)
-      expect(front).toBeGreaterThanOrEqual(precedent)
-      precedent = front
-      for (const i of echantillons) {
-        const x = i % width
-        const y = (i - x) / width
-        if (estCendre(carte.map, x, y, frontAu(jour - 3))) {
-          expect(estCendre(carte.map, x, y, front), 'une tuile brûlée a repoussé').toBe(true)
-        }
-      }
+  it('un sol cendré se reconnaît, et n’est jamais un sol vivant', () => {
+    expect(estSolCendre(TERRAIN_CENDRE_PRE)).toBe(true)
+    expect(estSolCendre(TERRAIN_CENDRE_BOIS)).toBe(true)
+    expect(estSolCendre(TERRAIN_CENDRE_MIN)).toBe(true)
+    expect(estSolCendre(TERRAIN_GRASS)).toBe(false)
+    expect(estSolCendre(TERRAIN_FOREST)).toBe(false)
+  })
+})
+
+describe('A9 — le vivant meurt lentement, le minéral reste', () => {
+  const vivant = (t: string): boolean => NODE_DEFS[t as NodeType]?.vivant === true
+
+  it('un arbre pris reste RÉCOLTABLE pendant son agonie, puis tombe', () => {
+    // On cherche une tuile prise tôt, et on regarde son nœud vivre puis mourir.
+    const av = auJour(240)
+    let cible: { tx: number; ty: number } | null = null
+    for (let i = 0; i < map.width * map.height && !cible; i += 11) {
+      const tx = i % map.width
+      const ty = (i - tx) / map.width
+      if (estCendre(map, tx, ty, av, SEED)) cible = { tx, ty }
     }
-  })
-}, 120_000)
+    expect(cible).not.toBeNull()
+    const ages = foyers.map(() => 240 - REVEIL)
+    const anciennete = ancienneteDeCendre(map, cible!.tx, cible!.ty, ages, SEED)
+    expect(anciennete, 'une tuile prise a un âge de cendre').toBeGreaterThanOrEqual(0)
 
-describe('ce que la cendre DÉTRUIT', () => {
-  it('R30 — le SPAWN RECULE devant le feu : personne ne naît dans la cendre', () => {
-    const nodes = placeZoneNodes(carte)
-    const emplacements = emplacementsDeVillage(carte, nodes, {
-      coinsDeChasse: placeHuntingGrounds(carte.map, carte.graphe.seed),
-      nids: nidsAMonstre(carte.map),
+    // Un arbre posé LÀ : debout tant que l'agonie dure, tombé après.
+    const arbre = { id: 1, type: 'tree' as NodeType, tx: cible!.tx, ty: cible!.ty, stock: 10, regrowAt: 0 }
+    const filon = { id: 2, type: 'iron_vein' as NodeType, tx: cible!.tx, ty: cible!.ty, stock: 8, regrowAt: 0 }
+    const proprio = foyerDe(map.cendreCout, cible!.ty * map.width + cible!.tx)
+    const jeunes = foyers.map((_, k) => (k === proprio && anciennete >= 0 ? 240 - REVEIL - anciennete + 1 : 0))
+    const tot = tomberLesMortsDeLaCendre([arbre, filon], map, jeunes, SEED, vivant)
+    expect(tot.restants, 'un jour après la prise, il est encore debout').toHaveLength(2)
+
+    const vieux = tomberLesMortsDeLaCendre([arbre, filon], map, ages, SEED, vivant)
+    expect(vieux.restants.map((n) => n.id), 'le minéral RESTE, toujours').toContain(2)
+  }, 120_000)
+
+  it('le minéral n’est jamais emporté, quel que soit l’âge', () => {
+    const ages = foyers.map(() => 5000)
+    const av = avanceesDepuisAges(ages, foyers.length)
+    let pose: { tx: number; ty: number } | null = null
+    for (let i = 0; i < map.width * map.height && !pose; i += 11) {
+      const tx = i % map.width
+      const ty = (i - tx) / map.width
+      if (estCendre(map, tx, ty, av, SEED)) pose = { tx, ty }
+    }
+    const filon = { id: 7, type: 'iron_vein' as NodeType, tx: pose!.tx, ty: pose!.ty, stock: 8, regrowAt: 0 }
+    const r = tomberLesMortsDeLaCendre([filon], map, ages, SEED, vivant)
+    expect(r.tombes).toBe(0)
+  })
+
+  it('agonise() ne dit vrai que dans la fenêtre', () => {
+    const ages = foyers.map(() => 0)
+    // Sur une tuile jamais prise, jamais d'agonie.
+    expect(agonise(map, 0, 0, ages, SEED)).toBe(false)
+    expect(ancienneteDeCendre(map, -5, -5, ages, SEED)).toBe(-1)
+  })
+})
+
+describe('A5 — personne ne naît sur le pas d’une fosse', () => {
+  it('aucun spawn à moins de l’écart, et le semis n’est pas affamé', () => {
+    const nodes = placeZoneNodes(monde)
+    const empl = emplacementsDeVillage(monde, nodes, {
+      coinsDeChasse: placeHuntingGrounds(map, SEED), nids: nidsAMonstre(map),
     })
     const combien = Math.ceil(MONDE.JOUEURS_CIBLE / MONDE.JOUEURS_PAR_VILLAGE)
-
-    const auJour1 = pointsDeSpawn(carte, emplacements, combien, frontAu(1))
-    const auDernier = pointsDeSpawn(carte, emplacements, combien, frontAu(YEAR_DAYS))
-
-    // Le serveur tourne des semaines. Si les Prés Bas brûlent pendant le Grand Froid, celui qui
-    // rejoint ce jour-là ne doit PAS naître dans le feu — il ne jouerait pas au même jeu.
-    expect(auDernier.length, 'plus un seul point de spawn au dernier jour').toBeGreaterThan(0)
-    for (const s of auDernier) {
-      expect(
-        estCendre(carte.map, s.tx, s.ty, frontAu(YEAR_DAYS)),
-        `on naît dans la cendre en (${s.tx}, ${s.ty})`,
-      ).toBe(false)
-    }
-    // Et le refuge s'est DÉPLACÉ : la vallée a reculé, le point de naissance avec elle.
-    // (On affirmait « la liste MAIGRIT » — mais ce compte ne prouvait la règle que par
-    // accident de rareté : depuis le vocabulaire du pré (2026-08-15), la Racine porte assez
-    // d'emplacements pour servir les 17 spawns même amputée de 60 %. La règle R30, c'est le
-    // DÉPLACEMENT : le front mange le SUD, les naissances remontent au NORD — on mesure ça.)
-    const moyY = (pts: readonly { ty: number }[]): number => pts.reduce((s, p) => s + p.ty, 0) / pts.length
-    expect(moyY(auDernier), 'les naissances remontent au nord devant le feu').toBeLessThan(moyY(auJour1))
-  }, 120_000)
-
-  it('la cendre BRÛLE LES NŒUDS — et le village s\'appauvrit avant de mourir', () => {
-    // C'est ce qui fait que la migration n'est pas une consigne mais une FUITE : le village qui
-    // reste ne meurt pas d'un coup, il s'appauvrit jour après jour, jusqu'à ce que rester coûte
-    // plus cher que partir. Le mécanisme le plus doux qu'on puisse infliger, et le plus cruel.
-    const front = frontAu(YEAR_DAYS)
-    const nodes = placeZoneNodes(carte)
-    const width = carte.map.width
-    const survivants = nodes.filter((n) => !estCendre(carte.map, n.tx, n.ty, front))
-    const brules = nodes.length - survivants.length
-    expect(brules, 'la cendre ne brûle aucun nœud').toBeGreaterThan(1000)
-    // …mais elle n'efface pas la vallée : il reste de quoi vivre ailleurs.
-    expect(survivants.length).toBeGreaterThan(nodes.length * 0.5)
-    // Et aucun survivant n'est dans le feu.
-    for (const n of survivants.slice(0, 500)) {
-      expect(carte.map.cendre![n.ty * width + n.tx]!).toBeGreaterThanOrEqual(front)
+    const spawns = pointsDeSpawn(monde, empl, combien)
+    expect(spawns.length, 'le filtre ne doit pas affamer le semis').toBe(combien)
+    for (const s of spawns) {
+      const d = coutDe(map.cendreCout, s.ty * map.width + s.tx)
+      expect(d < 0 || d >= CENDRE.ECART_SPAWN * CENDRE.ORTHO, `spawn (${s.tx},${s.ty}) à ${d}`).toBe(true)
     }
   }, 120_000)
 })
 
-describe('le front en ESCALIER (saison-sans-fin T3) — il mord l’hiver, tient l’été, ne recule jamais', () => {
-  const MAX = 100 // une course d'an 1 ronde : les parts se lisent en tuiles
+describe('A11 — brûler une fosse FIGE son foyer', () => {
+  it('un foyer gelé ne vieillit pas, et reprend où il en était', () => {
+    const ages = [0, 0]
+    const deux = [{ zone: 10 }, { zone: 20 }]
+    avancerLaCendre(ages, deux, () => false, 1)
+    expect(ages).toEqual([1, 1])
+    // La zone 10 brûle : elle ne vieillit pas, l'autre continue.
+    avancerLaCendre(ages, deux, (z) => z === 10, 1)
+    expect(ages).toEqual([1, 2])
+    // Le gel se lève : elle reprend EXACTEMENT où elle en était — jamais un rattrapage.
+    avancerLaCendre(ages, deux, () => false, 1)
+    expect(ages).toEqual([2, 3])
+  })
 
-  /**
-   * L'ANNÉE ET LA MORSURE, EN LITTÉRAUX — c'est délibéré, et c'est ce qui fait de ce bloc une
-   * garde. Les recalculer depuis `BALANCE.ACT_DAYS` ou `CENDRE.ACTE_DEPART` reviendrait à
-   * réécrire la fonction testée à côté d'elle-même : elle suivrait le cadran partout, et un
-   * cadran déplacé par erreur passerait au vert. Ces trois nombres viennent de `saisons.md`
-   * S1 (quatre saisons de trente jours, l'année en fait 120) et S11 (la Cendre mord le Grand
-   * Froid, du jour 91 au tour de l'an). Les bouger DOIT rendre ce bloc rouge.
-   */
-  const AN = 120
-  const MORSURE_DEBUT = 90 //  le seuil du Grand Froid : t = 0
-  const MORSURE_FIN = 120 //   le tour de l'an : t = 1
+  it('le caractère de la saison module ce que vaut un jour (R18)', () => {
+    const ages = [0]
+    const un = [{ zone: 3 }]
+    avancerLaCendre(ages, un, () => false, 1.6) // `reveil`
+    expect(ages[0]).toBeCloseTo(1.6, 10)
+    avancerLaCendre(ages, un, () => false, 0.4) // `deluge`
+    expect(ages[0]).toBeCloseTo(2.0, 10)
+    // …mais un foyer GELÉ ne vieillit pas, quel que soit le caractère.
+    avancerLaCendre(ages, un, () => true, 1.6)
+    expect(ages[0]).toBeCloseTo(2.0, 10)
+  })
 
-  /** La course de l'AN 1, recopiée en littéraux : t² sur les jours 91..120, figée à max après. */
-  const courseDeLAn1 = (jour: number): number => {
-    const t = (jour - MORSURE_DEBUT) / (MORSURE_FIN - MORSURE_DEBUT)
-    const b = t < 0 ? 0 : t > 1 ? 1 : t
-    return MAX * (b * b) // l’association d’origine, au bit près — MAX * b * b différerait au dernier bit
-  }
-
-  it('l’an 1 est BIT-EXACT : les jours 1..120 suivent la courbe du Grand Froid, tuile pour tuile', () => {
-    for (let jour = 1; jour <= AN; jour++) {
-      expect(avanceeDuFront(jour, MAX), `jour ${jour}`).toBe(courseDeLAn1(jour))
+  it('A13 — le caractère module SANS jamais inverser la monotonie', () => {
+    const ages = [0]
+    const un = [{ zone: 0 }]
+    let precedent = avanceeDeCendre(0)
+    for (let j = 0; j < 20 * 120; j++) {
+      avancerLaCendre(ages, un, () => j % 37 === 0, j % 3 === 0 ? 0.4 : 1.6)
+      const a = avanceeDeCendre(ages[0]!)
+      expect(a, `jour ${j}`).toBeGreaterThanOrEqual(precedent)
+      precedent = a
     }
-  })
-
-  it('monotone non décroissant sur vingt ans, et il ne recule JAMAIS — balayé jour par jour', () => {
-    let precedent = -1
-    for (let jour = 1; jour <= 20 * AN; jour++) {
-      const f = avanceeDuFront(jour, MAX)
-      expect(f, `le front recule au jour ${jour}`).toBeGreaterThanOrEqual(precedent)
-      precedent = f
-    }
-  })
-
-  it('chaque hiver suivant mord EXACTEMENT une bouchée — BOUCHEE_HIVER × la course de l’an 1', () => {
-    for (let tour = 2; tour <= 6; tour++) {
-      const seuilHiver = (tour - 1) * AN + MORSURE_DEBUT
-      const tourDeLAn = (tour - 1) * AN + MORSURE_FIN
-      const bouchee = avanceeDuFront(tourDeLAn, MAX) - avanceeDuFront(seuilHiver, MAX)
-      expect(bouchee, `la bouchée de l'an ${tour}`).toBeCloseTo(MAX * CENDRE.BOUCHEE_HIVER, 9)
-      // Et la course acquise au début du tour est la somme de tout ce qui précède.
-      expect(avanceeDuFront(seuilHiver, MAX)).toBeCloseTo(MAX * (1 + (tour - 2) * CENDRE.BOUCHEE_HIVER), 9)
-    }
-  })
-
-  it('il TIENT hors de la morsure : du tour de l’an au Grand Froid suivant, pas une tuile', () => {
-    for (let tour = 1; tour <= 5; tour++) {
-      // La morsure finit AU tour de l'an (S11) : le plateau court donc du dernier jour de
-      // l'année au seuil du Grand Froid suivant — l'Éclosion, l'Ardeur et les Pluies entières.
-      const plateau = avanceeDuFront(tour * AN, MAX)
-      for (let j = tour * AN; j <= tour * AN + MORSURE_DEBUT; j++) {
-        expect(avanceeDuFront(j, MAX), `le front bouge hors hiver, jour ${j}`).toBe(plateau)
-      }
-    }
-  })
-
-  it('sans borne : au dixième hiver, le front a dépassé la course de l’an 1 — la vallée se referme', () => {
-    expect(avanceeDuFront(10 * AN, MAX)).toBeGreaterThan(MAX)
-    expect(avanceeDuFront(10 * AN, MAX)).toBeCloseTo(MAX * (1 + 9 * CENDRE.BOUCHEE_HIVER), 9)
-  })
-
-  it('la bouchée est une PART, dans ]0;1[ — ni morte, ni une seconde course entière', () => {
-    expect(CENDRE.BOUCHEE_HIVER).toBeGreaterThan(0)
-    expect(CENDRE.BOUCHEE_HIVER).toBeLessThan(1)
   })
 })
 
-describe('le front, dans la BOUCLE (et non plus sur le papier)', () => {
-  it('sauter au GRAND FROID fait AVANCER la cendre et BRÛLER les nœuds', () => {
-    // Sans le saut de jour, personne ne verrait jamais ce mécanisme : en Veillée, le Grand Froid
-    // arrive au bout d'une trentaine d'heures de jeu. Une mécanique qu'on ne peut pas ATTEINDRE
-    // est une mécanique morte, et ce projet en a déjà enterré cinq.
-    const nodes = placeZoneNodes(carte)
-    const sim = createSim(2026, { map: carte.map, nodes, calendarScale: 720, debug: true })
-    const joueur = spawnEntity(sim, 100, 100)
-    const avant = sim.nodes.length
-
-    // Jour 10 (l'Éclosion) : le front dort, rien ne brûle.
-    step(sim, [{ entityId: joueur, dx: 0, dy: 0, action: { type: 'debug_set_season_day', day: 10 } }])
-    step(sim, [{ entityId: joueur, dx: 0, dy: 0 }])
-    expect(sim.nodes.length, 'la cendre a mangé hors du Grand Froid').toBe(avant)
-
-    // Le tour de l'an, au bout du Grand Froid : la vallée a reculé.
-    drainEvents(sim)
-    step(sim, [{ entityId: joueur, dx: 0, dy: 0, action: { type: 'debug_set_season_day', day: YEAR_DAYS } }])
-    step(sim, [{ entityId: joueur, dx: 0, dy: 0 }])
-    expect(sim.nodes.length, 'aucun nœud n\'a brûlé au tour de l\'an').toBeLessThan(avant)
-
-    // Et le monde l'a DIT : un événement de domaine par jour, pas un par buisson.
-    const events = drainEvents(sim)
-    const avances = events.filter((e) => e.type === 'cendre_avance')
-    expect(avances.length, 'la cendre a avancé en silence').toBeGreaterThanOrEqual(1)
-    expect(avances[0]).toMatchObject({ type: 'cendre_avance' })
-    expect((avances[0] as { noeudsBrules: number }).noeudsBrules).toBeGreaterThan(0)
-  }, 120_000)
-
-  it('la Cendre PREND les ouvrages d\u2019un village quand le front les passe — une fois, jamais le feu de camp', () => {
-    // Carte-banc : champ de cendre = x, course calibrée à 8 tuiles. Le village est fondé à
-    // x = 4 : le front (t² sur les jours 91..120, S11) y arrive entre le jour 111 (3,92) et le
-    // jour 112 (4,30) — la fenêtre exacte que « nouvellement derrière » doit voir.
-    const map = createEmptyMap(70, 40, TERRAIN_GRASS)
-    map.cendre = []
-    for (let y = 0; y < 40; y++) for (let x = 0; x < 70; x++) map.cendre.push(x)
-    map.cendreMax = 8
-    const sim = createSim(7, { map, calendarScale: 720, debug: true, worldEvents: false })
-    const v = foundNpcVillage(sim, 4, 20, 2, 'foyer')
-    // Le TÉMOIN NÉGATIF : un feu de camp (villageId 0) à la même distance de cendre — la
-    // halte d'un homme n'est pas un foyer, elle ne mérite pas de ligne.
-    sim.structures.push({ ...sim.structures.find((s) => s.type === 'fire')!, id: 9999, villageId: 0, tx: 4, ty: 30 })
-    const joueur = spawnEntity(sim, 60.5, 20.5)
-
-    drainEvents(sim)
-    step(sim, [{ entityId: joueur, dx: 0, dy: 0, action: { type: 'debug_set_season_day', day: 112 } }])
-    step(sim, [{ entityId: joueur, dx: 0, dy: 0 }])
-    const prises = drainEvents(sim).filter((e) => e.type === 'cendre_prend')
-    expect(prises.length, 'le front a passé les murs en silence').toBeGreaterThanOrEqual(1)
-    for (const e of prises) expect(e).toMatchObject({ villageId: v.id })
-    const compte = prises.reduce((t, e) => t + (e as { count: number }).count, 0)
-    // Toutes les structures du village à x=4 sont prises ce jour-là ; le feu de camp, jamais.
-    expect(compte).toBe(sim.structures.filter((s) => s.villageId === v.id && s.tx === 4).length)
-
-    // Le lendemain : rien de neuf — « nouvellement derrière » ne se redit pas.
-    step(sim, [{ entityId: joueur, dx: 0, dy: 0, action: { type: 'debug_set_season_day', day: 113 } }])
-    step(sim, [{ entityId: joueur, dx: 0, dy: 0 }])
-    expect(drainEvents(sim).filter((e) => e.type === 'cendre_prend' && e.villageId === v.id)).toHaveLength(0)
-  }, 120_000)
+describe('une carte sans fosse ne brûle jamais — le repli est explicite', () => {
+  it('le champ est vide, et rien n’est cendré', () => {
+    const vide = calculeChampDeCendre(4, 4, new Array(16).fill(TERRAIN_GRASS), [])
+    expect(vide.every((d) => d === -1)).toBe(true)
+    const faux = { width: 4, height: 4, terrain: new Array(16).fill(TERRAIN_GRASS), zones: [] }
+    expect(estCendre(faux as never, 1, 1, [999], SEED)).toBe(false)
+    expect(foyersDeLaCarte(faux as never)).toHaveLength(0)
+  })
 })

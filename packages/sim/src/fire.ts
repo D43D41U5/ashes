@@ -10,7 +10,7 @@
  * L'upkeep du FOYER (village.fuel) reste dans `village.ts` — migration différée (S16) ; il n'a donc
  * PAS de zone combustible (`fireZoneInventory` rend `undefined`), mais garde entrées/sorties.
  */
-import { CENDREUX, COOK_SLOT, FIRE } from './balance'
+import { CENDREUX, COOK_SLOT, DRY_SLOT, FIRE } from './balance'
 import { emitEvent } from './events'
 import { distSq } from './geometry'
 import { addItems, countOf, makeInventory, type Inventory, type ItemId } from './items'
@@ -170,6 +170,15 @@ export function advanceFire(state: SimState): void {
     // Cuisson passive (S7-S9) — sur TOUT feu (libre ou Foyer), le travail de la STATION.
     advanceCook(state, s)
   }
+  // ═══ LES POSTES QUI TRAVAILLENT SANS FLAMME (spec `peche.md` S2/S4, 2026-08-24) ═══
+  //
+  // Le SÉCHOIR sèche sans combustible et sans surveillance — donc sans `fireState`. Le FOUR,
+  // lui, cuit maintenant aussi (S5). Un seul balayage de plus, la même `advanceCook` : deux
+  // boucles qui feraient la même chose finiraient par diverger sur le verrou ou les sorties.
+  for (const s of state.structures) {
+    if (s.type !== 'sechoir' && s.type !== 'furnace') continue
+    advanceCook(state, s)
+  }
 }
 
 /**
@@ -181,7 +190,11 @@ export function advanceFire(state: SimState): void {
  * (compteur à 0) et réessaie (rien ne se perd). Passif, sans le joueur — le travail de la station.
  */
 function advanceCook(state: SimState, s: Structure): void {
-  if (!s.cookIn || fireState(state, s) !== 'lit') return
+  if (!s.cookIn) return
+  // LE FEU, LUI, EXIGE LA FLAMME (S8) : en braises ou éteint, la cuisson se FIGE et reprend au
+  // rallumage. Les postes sans flamme (séchoir, four) n'ont rien à figer — le séchoir sèche
+  // même sous la pluie (D13), et c'est une décision, pas un oubli.
+  if (s.type === 'fire' && fireState(state, s) !== 'lit') return
   if (!s.cookRemaining) s.cookRemaining = s.cookIn.map(() => null)
   for (let i = 0; i < s.cookIn.length; i++) {
     const slot = s.cookIn[i]
@@ -189,7 +202,7 @@ function advanceCook(state: SimState, s: Structure): void {
       s.cookRemaining[i] = null // rien dans la case → rien d'engagé
       continue
     }
-    const rule = COOK_SLOT[s.type]?.[slot.item]
+    const rule = recettesDuPoste(s.type)?.[slot.item]
     if (!rule) continue // aliment non cuisinable ici (ne devrait pas arriver via le filtre) : on le LAISSE
     // Engager l'unité en tête si aucune ne l'est, sinon descendre son compteur.
     let rem = s.cookRemaining[i]
@@ -219,8 +232,12 @@ function advanceCook(state: SimState, s: Structure): void {
  * le Foyer tient sur `village.fuel` (migration S16), donc glisser dans SON combustible n'a pas lieu.
  */
 export function fireZoneInventory(s: Structure, zone: FireZone): Inventory | undefined {
-  if (s.type !== 'fire') return undefined
+  // ⚠ TROIS POSTES DEPUIS LE 2026-08-24, plus un seul : le feu, le four et le séchoir. Les
+  // deux nouveaux n'ont PAS de zone combustible — le four tient sur le bois du village, le
+  // séchoir ne brûle rien. La garde d'entrée est donc « ce poste a-t-il des recettes ? ».
+  if (recettesDuPoste(s.type) === undefined) return undefined
   if (zone === 'fuel') {
+    if (s.type !== 'fire') return undefined
     if (s.villageId !== 0) return undefined // Foyer : pas de zone combustible (S16)
     if (!s.fuel) s.fuel = makeInventory(FIRE.FUEL_SLOTS)
     return s.fuel
@@ -238,15 +255,26 @@ export function fireZoneInventory(s: Structure, zone: FireZone): Inventory | und
  * qui se cuit ici (`COOK_SLOT`) ; SORTIES : les produits cuits de ce feu (résultats + sous-produits).
  */
 export function fireZoneAccepts(s: Structure, zone: FireZone, item: ItemId): boolean {
-  if (zone === 'fuel') return item === 'wood'
-  if (zone === 'cookIn') return COOK_SLOT[s.type]?.[item] !== undefined
-  const rules = COOK_SLOT[s.type]
+  if (zone === 'fuel') return s.type === 'fire' && item === 'wood'
+  if (zone === 'cookIn') return recettesDuPoste(s.type)?.[item] !== undefined
+  const rules = recettesDuPoste(s.type)
   if (!rules) return false
   for (const rule of Object.values(rules)) {
     if (rule.output === item) return true
     for (const bp of rule.byproducts ?? []) if (bp.item === item) return true
   }
   return false
+}
+
+/**
+ * LES RECETTES D'UN POSTE — la cuisson (`COOK_SLOT`) ou le séchage (`DRY_SLOT`), jamais les
+ * deux : un poste transforme d'UNE façon. L'écrivain unique de cette question, pour que le
+ * verrou de consommation, le filtre des cases et l'avancement lisent tous la même table.
+ */
+export function recettesDuPoste(
+  type: Structure['type'],
+): Partial<Record<ItemId, { output: ItemId; byproducts?: { item: ItemId; count: number }[]; ticks: number }>> | undefined {
+  return COOK_SLOT[type] ?? DRY_SLOT[type]
 }
 
 /**

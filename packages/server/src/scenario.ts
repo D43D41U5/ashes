@@ -9,12 +9,10 @@
  */
 import {
   BALANCE,
-  avanceeDuFront,
   buildPoiStructures,
   createSim,
   cycleOffsetForStartHour,
   emplacementsDeVillage,
-  estCendre,
   FAUNA,
   generateZonedTerrain,
   isBlockingTile,
@@ -24,7 +22,6 @@ import {
   placeHuntingGrounds,
   pointsDeSpawn,
   placeZoneNodes,
-  jourDeSaison,
   spawnPoiMonsters,
   type SimState,
   type WorldMap,
@@ -109,42 +106,20 @@ export function createZone(): LanWorld {
 }
 
 /**
- * OÙ NAÎT CELUI QUI ARRIVE AUJOURD'HUI — la règle R30, enfin appliquée.
+ * OÙ NAÎT CELUI QUI ARRIVE AUJOURD'HUI.
  *
- * `pointsDeSpawn` porte un paramètre `front` dont la justification écrite nomme CE
- * serveur : *« le serveur tourne des semaines. Si les Prés Bas sont sous la cendre au
- * jour 30, celui qui rejoint au jour 31 naîtrait DANS LE FEU — il ne jouerait pas au même
- * jeu que les autres. »* La règle était décidée et le serveur ne l'appelait jamais : il
- * faisait naître tout le monde autour d'un site calculé au jour 0, pour toujours.
+ * ⚠ ELLE NE SUIT PLUS LE FRONT (2026-08-24). Elle appliquait R30 — *« si les Prés Bas sont sous
+ * la cendre au jour 30, celui qui rejoint au jour 31 naîtrait DANS LE FEU »* — en redemandant le
+ * semis avec le front du jour dès que la base d'origine avait brûlé. Le front est retiré : plus
+ * rien ne brûle, la base d'origine tient toujours, et la fonction rend ce qu'elle rendait déjà
+ * tant que rien ne brûlait. Elle SURVIT (au lieu d'être inlinée chez l'appelant) parce que la
+ * question « la base tient-elle encore ? » se reposera avec la nouvelle mécanique.
  *
- * DEUX INTENTIONS ÉCRITES À CONCILIER, et elles ne se contredisent qu'en apparence :
- *   • `nextSpawnNear` veut les arrivants SERRÉS — « le critère de sortie de L1 est
- *     se voir/suivre/battre, pas s'éparpiller » ;
- *   • R30 veut qu'on ne naisse pas dans ce qui a brûlé.
- * On garde donc l'anneau serré, et c'est son CENTRE qui suit le front. Personne ne naît
- * dans la cendre, et les nouveaux se retrouvent toujours entre eux.
- *
- * Tant que rien ne brûle (acte I, `front = 0`), cette fonction rend exactement la base
- * d'origine : le comportement de L1 est inchangé jusqu'au jour où il devait l'être.
+ * L'autre intention est intacte : `nextSpawnNear` veut les arrivants SERRÉS — « le critère de
+ * sortie de L1 est se voir/suivre/battre, pas s'éparpiller ».
  */
 export function baseDeNaissance(world: LanWorld): { tx: number; ty: number } {
-  // UNE SEULE CARTE, ET C'EST CELLE DU SEMIS. `createSim` COPIE PROFONDÉMENT ses options
-  // (leçon du 2026-07-05, `docs/decisions.md`) : `sim.map` et `carte.map` sont deux objets
-  // distincts qui portent aujourd'hui la même cendre — un champ statique, posé au worldgen.
-  // Juger « la base a-t-elle brûlé ? » sur l'une et reloger via l'autre marcherait donc par
-  // COÏNCIDENCE, et se retournerait le jour où l'une des deux bougerait. On lit celle que
-  // `pointsDeSpawn` consultera : la question et sa réponse regardent alors le même monde.
-  const carteMap = world.carte.map
-  const cendreMax = carteMap.cendreMax
-  if (cendreMax === undefined) return world.base // une carte sans Cendrière : rien ne brûle
-  const front = avanceeDuFront(jourDeSaison(world.sim), cendreMax)
-  if (front <= 0) return world.base // l'acte I : la Cendrière reste chez elle
-  // La base d'origine tient-elle encore ? On ne déménage personne pour rien.
-  if (!estCendre(carteMap, world.base.tx, world.base.ty, front)) return world.base
-  // Elle a brûlé : on redemande le semis AVEC le front du jour. `pointsDeSpawn` écarte
-  // lui-même ce qui est sous la cendre — c'est sa raison d'être.
-  const frais = pointsDeSpawn(world.carte, world.emplacements, SPAWN_SITES, front)
-  return frais[0] ?? world.base
+  return world.base
 }
 
 /**

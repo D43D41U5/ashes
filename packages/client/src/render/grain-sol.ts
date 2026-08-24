@@ -38,7 +38,7 @@ export const GRAIN_TILES = 16
 export const GRAIN_CELLS = (GRAIN_TILES * 16) / GRAIN_CELL_PX // 64
 
 /** Les cinq familles, dans l'ORDRE DES BLOCS de l'atlas — l'index sert d'UV. */
-export const FAMILLES = ['mineral', 'litiere', 'herbe', 'neige', 'humide'] as const
+export const FAMILLES = ['mineral', 'litiere', 'herbe', 'neige', 'humide', 'cendre'] as const
 export type Famille = (typeof FAMILLES)[number]
 
 interface Profil {
@@ -87,6 +87,22 @@ const PROFILS: Record<Famille, Profil> = {
   neige: { echelle: 7.0, crans: [1, 0.98, 0.962], seuils: [0.3, 0.5], damier: 0.012 },
   // Marais, tourbière, roselière : moucheté, irrégulier, sourd — le sec et le détrempé.
   humide: { echelle: 2.7, crans: [1, 0.945, 0.895], seuils: [0.38, 0.58], damier: 0.05 },
+  /**
+   * LA CENDRE — une POUSSIÈRE, et c'est tout le sujet de sa matière.
+   *
+   * Elle ne peut ressembler à aucune des cinq autres, sinon les trois terrains de cendre
+   * n'auraient pas valu la peine d'exister. Deux partis, opposés à ceux de la litière :
+   *
+   *   • ÉCHELLE FINE (1,8, la plus fine de la table) — la cendre est un grain de poudre, pas des
+   *     feuilles. Aucun motif ne doit se reconnaître : ce qui a brûlé n'a plus de structure.
+   *   • CRANS SERRÉS et damier MODÉRÉ (0,045) — presque pas de variation de VALEUR (le sol est
+   *     uniformément mort), juste ce qu'il faut de bruit par tuile pour que ce ne soit pas un
+   *     aplat de peinture. ⚠ Il valait 0,085 au premier jet, et c'était trop : la cendre est la
+   *     SEULE famille peinte sans la matière sous-tuile de l'atlas (sa couche est à une tuile par
+   *     pixel), donc son damier ne se fond dans rien — il se lisait en DALLES franches. Une même
+   *     valeur ne veut pas dire la même chose selon la résolution où on la peint.
+   */
+  cendre: { echelle: 1.8, crans: [1, 0.965, 0.93], seuils: [0.35, 0.55], damier: 0.045 },
 }
 
 /**
@@ -126,6 +142,11 @@ export const FAMILLE_PAR_TERRAIN: Record<number, Famille | null> = {
   24: 'litiere', // willow — un sous-bois de berge
   25: 'humide', // wet_meadow — le moucheté du détrempé
   26: 'herbe', // juniper_heath — une lande rase, sœur de heath
+  // Les trois cendres (spec `cendre.md` R11) : la poussière, y compris sur le minéral — une roche
+  // qui a brûlé n'est plus de la roche, c'est de la cendre posée dessus.
+  27: 'cendre', // cendre_pre
+  28: 'cendre', // cendre_bois
+  29: 'cendre', // cendre_min
 }
 
 /** L'index de bloc d'une famille dans l'atlas (son UV horizontal). */

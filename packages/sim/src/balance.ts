@@ -1128,6 +1128,24 @@ export const TERRAINS: Record<number, TerrainDef> = {
   24: { name: 'willow', walkable: true, speedFactor: 1, cover: 0.7 },
   25: { name: 'wet_meadow', walkable: true, speedFactor: 0.9, cover: 0.9 },
   26: { name: 'juniper_heath', walkable: true, speedFactor: 1, cover: 0.85 },
+  /**
+   * ═══ LES TROIS CENDRES (spec `cendre.md` R11, décision d'Alexis 2026-08-24) ═══
+   *
+   * Chaque sol prend l'équivalent cendré de sa FAMILLE, et trois suffisent : on garde la seule
+   * lecture qui compte — *étais-je dans un bois ou dans un pré ?*, donc ce qu'on a perdu, et si les
+   * troncs morts encore debout valent le détour. L'humide (0,5 % de la vallée) se rabat sur la
+   * cendre de pré : un id et son art pour cinq tuiles sur mille ne se justifient pas.
+   *
+   * `cover` s'effondre partout : **la cendre ne cache plus rien**, et c'est la conséquence de jeu
+   * la plus directe de la conversion — on traverse à découvert ce qui était un bois. La vitesse
+   * baisse un peu (on marche dans de la poussière), mais la cendre n'est pas un marais.
+   *
+   * ⚠ **LA CENDRE MINÉRALE HÉRITE DE `walkable: false`** : `rock` et `cliff` sont l'anneau qui
+   * FERME la vallée. Une cendre minérale traversable ouvrirait littéralement les bords du monde.
+   */
+  27: { name: 'cendre_pre', walkable: true, speedFactor: 0.95, cover: 1 },
+  28: { name: 'cendre_bois', walkable: true, speedFactor: 0.95, cover: 0.95 },
+  29: { name: 'cendre_min', walkable: false, speedFactor: 0, cover: 1 },
 }
 
 export const TERRAIN_VOID = 0
@@ -1158,6 +1176,10 @@ export const TERRAIN_CLIFF = 23
 export const TERRAIN_WILLOW = 24
 export const TERRAIN_WET_MEADOW = 25
 export const TERRAIN_JUNIPER_HEATH = 26
+/** Les trois cendres (spec `cendre.md` R11) — le sol converti, par famille. */
+export const TERRAIN_CENDRE_PRE = 27
+export const TERRAIN_CENDRE_BOIS = 28
+export const TERRAIN_CENDRE_MIN = 29
 
 /**
  * VUE DÉRIVÉE du registre (`pieces.ts`) — ce que coûte chaque pièce : pose au marteau,
@@ -1326,6 +1348,69 @@ export const FISHING = {
   WINDOW_PER_LEVEL: 0.15,
   /** …plafonné à ce multiple de la fenêtre de l'espèce : le brochet reste un réflexe. */
   WINDOW_CAP: 2,
+  /**
+   * ═══ ON PÊCHE DE LOIN — 4 TUILES (décision d'Alexis, 2026-08-24) ═══ (était le bras, 1,5)
+   *
+   * Le coin se prenait à `BALANCE.INTERACT_RANGE` comme un buisson : il fallait se coller à
+   * la tuile d'eau, souvent les pieds dedans. C'est faux au geste (une ligne se LANCE) et
+   * pénible à jouer — le coin est déjà à peine visible, viser sa tuile PUIS s'y coller à un
+   * bras faisait deux épreuves d'adresse avant le mini-jeu qui, lui, est le sujet.
+   *
+   * ⚠ Ce nombre est aussi la BORNE DE LA SPEC : `peche.md` P2 exigeait un coin joignable à
+   * 1,5 t — « le centre d'un cœur de rivière large de 3 ne l'est pas ». À 4, ce cœur-là le
+   * devient : la règle de placement (haut-fond touchant le profond) n'a pas bougé, mais sa
+   * JUSTIFICATION de joignabilité est désormais large. Ne pas resserrer le placement sur ce
+   * prétexte sans rejouer `diag-peche` — c'est la lisibilité (« on pêche VERS le profond »)
+   * qui la porte maintenant, plus l'allonge du bras.
+   */
+  RANGE: 4,
+
+  // ═══ LE CHANTIER DU 2026-08-24 (D9-D12) — on pêche l'eau, la table peut ne rien donner ═══
+
+  /** Combien de fois ça peut mordiller avant que la ligne rentre d'elle-même (D11/T8). Sans ce
+   *  plafond, une eau pauvre laisse le joueur PLANTÉ : le « rien » coûte du temps, pas la partie. */
+  NIBBLES_MAX: 5,
+  /** L'attente sur un COIN (E3), en fraction de l'attente d'eau nue : deux tiers. Le coin fait
+   *  mordre plus vite — sensible, jamais décisif (c'est le poids du « rien » qui décide). */
+  COIN_ATTENTE_NUM: 2,
+  COIN_ATTENTE_DEN: 3,
+  /** LE VRAI CADEAU DU COIN : le poids du « rien » y est divisé par ce facteur. Sur un coin, ça
+   *  MORD ; sur l'eau nue, ça mordille. C'est ce nombre qui garde un sens aux coins depuis que
+   *  toute l'eau se pêche (D9) — le baisser rend les coins décoratifs. */
+  COIN_RIEN_DIV: 4,
+  /**
+   * LE POIDS DU « RIEN », PAR NATURE D'EAU (T3) — le frein qui REMPLACE le `stock` du coin.
+   *
+   * ⚠ C'est le nombre le plus important de tout le chantier : sur l'eau nue il n'y a pas de
+   * stock, donc rien d'autre ne borne la nourriture qui sort de la vallée. Une mare croupie
+   * mordille beaucoup (14 contre ~30 de poids d'espèces) ; un lac mord souvent ; la crue est
+   * une eau d'emprunt où presque rien ne vit encore.
+   */
+  //
+  // ⚠ **RECALIBRÉ LE 2026-08-24, SUR MESURE.** La première écriture (6/5/14/10/18) donnait
+  // P(rien) = 16 % sur un lac nu — **108 de nourriture cuite par minute**, soit près de deux
+  // ragoûts, quand la faim maximale d'un homme est 100. Le frein ne freinait pas : la table
+  // des espèces pèse 21 à 24 contre 5, et D12 multiplie encore par les portions. Les valeurs
+  // ci-dessous mettent le « rien » au-dessus du poids des espèces sur l'eau nue — un lancer
+  // sur deux ne donne rien — et le coin reste le raccourci (il divise par 4).
+  //
+  // Ce sont des ORDRES DE GRANDEUR à sentir en jouant, pas un verdict : le nombre à tourner
+  // quand la pêche paraît trop riche (ou trop avare) est celui-ci, avant tout autre.
+  RIEN_PAR_EAU: { riviere: 26, lac: 24, mare: 34, crue: 40 } as Record<NomDeNature, number>,
+  /** La fenêtre de ferrage d'une TROUVAILLE (T4) : large — une botte d'algues ne se débat pas. */
+  TROUVAILLE_WINDOW_TICKS: 18,
+  /** La chance de tirer la taille vers le HAUT à niveau 0 (B3) : une grosse prise sur vingt. */
+  GROSSE_BASE: 0.05,
+  /** Ce que chaque niveau de `hunting` y ajoute — au niveau 5, une sur quatre. */
+  GROSSE_PAR_NIVEAU: 0.04,
+  /** …plafonné : le record reste un événement, même pour un expert. */
+  GROSSE_CAP: 0.35,
+  /** Les portions d'une prise MAXIMALE, par classe (B4). Un goujon n'est jamais un repas. */
+  PORTIONS_MAX: { petit: 1, moyen: 2, gros: 4 } as Record<ClasseDePrise, number>,
+  /** La part du JOUR que prennent l'aube et le crépuscule (T5) — un huitième chacun. Comme la
+   *  longueur du jour est saisonnière (`dayTicksAt`), les deux créneaux d'or le sont aussi. */
+  CRENEAU_PART_NUM: 1,
+  CRENEAU_PART_DEN: 8,
 } as const
 
 /**
@@ -1353,34 +1438,150 @@ export const BUTCHER = {
   KNIFE_CUTS: BUTCHER_KNIFE_CUTS,
 } as const
 
-/** Une espèce : son eau, son poids de tirage, sa fenêtre de ferrage (ticks), ce qu'elle donne. */
+/**
+ * ═══ LES PRISES — UNE TABLE DÉCLARATIVE (spec `peche.md` D10/T2, 2026-08-24) ═══
+ *
+ * L'ancienne table tenait en trois lignes et un champ (`water: 'river' | 'lake' | 'both'`).
+ * Quatre axes plus tard (nature de l'eau × zone × saison × créneau), la tentation était une
+ * matrice à quatre entrées : elle aurait rendu l'ajout d'une espèce impossible sans toucher
+ * quinze cases. **Ici, chaque espèce DÉCLARE ses conditions** — un champ absent veut dire
+ * « sans condition ». Bombarder la variété, c'est ajouter des LIGNES.
+ *
+ * Le filtre est une conjonction, le tirage une somme de poids ENTIERS : exactement le tirage
+ * cumulatif d'avant, avec un filtre plus riche. L'ordre du tableau EST l'ordre du tirage — ne
+ * pas le réordonner sans savoir qu'on change les prises de tous les replays enregistrés.
+ */
+
+/** La CLASSE d'une espèce (D12) : elle décide du cuit, du séché et du plafond de portions. */
+export type ClasseDePrise = 'petit' | 'moyen' | 'gros'
+
+/** Les quatre créneaux du cycle (T5). Bornés sur `dayTicksAt`, donc saisonniers par construction. */
+export type CreneauDePeche = 'aube' | 'jour' | 'crepuscule' | 'nuit'
+
+/** Les natures d'eau, par leur NOM (les entiers vivent dans `peche-nature.ts`). */
+/** ⚠ `marais` N'EN EST PAS (décision d'Alexis, 2026-08-24) : c'est un SOL MOU où l'on s'enlise,
+ *  pas une eau de pêche. La carte immuable le classe toujours (`NATURE_MARAIS` — c'est une
+ *  vérité de terrain) ; il n'est simplement pas un axe de la TABLE, et l'en retirer ici est ce
+ *  qui garantit qu'aucune ligne ne peut le déclarer par erreur : le compilateur refuse. */
+export type NomDeNature = 'riviere' | 'lac' | 'mare' | 'crue'
+
+/** Les dix-huit espèces, par leur id — qui EST l'id de leur item cru (D12 : l'espèce voyage). */
+export type FishId =
+  | 'gudgeon' | 'vairon' | 'gardon' | 'loche' | 'ecrevisse'
+  | 'trout' | 'ombre' | 'chevesne' | 'tanche' | 'perche' | 'anguille' | 'coregone'
+  | 'pike' | 'barbeau' | 'saumon' | 'sandre' | 'carpe' | 'silure'
+
 export interface FishSpecies {
-  id: 'gudgeon' | 'trout' | 'pike'
-  item: import('./items').ItemId
-  /** Où elle mord. `both` = rivière et lac. */
-  water: 'river' | 'lake' | 'both'
-  /** Poids ENTIER du tirage à la touche, parmi les espèces de l'eau du coin. */
+  /** L'id de l'espèce EST l'id de son item cru : une truite au sac est une `trout`. */
+  id: FishId
+  classe: ClasseDePrise
+  /** Les eaux où elle mord. Au moins une — une espèce sans eau ne mordrait nulle part. */
+  eaux: readonly NomDeNature[]
+  /** Les zones où elle vit. Absent = partout (la géographie module, elle n'autorise jamais). */
+  zones?: readonly string[]
+  /** Les saisons (1 Éclosion · 2 Ardeur · 3 Pluies · 4 Grand Froid). Absent = toute l'année. */
+  saisons?: readonly number[]
+  /** Les créneaux du cycle. Absent = à toute heure. */
+  creneaux?: readonly CreneauDePeche[]
+  /** Elle ne mord QUE sur un coin de pêche (E3) : la récompense d'avoir trouvé le coin. */
+  coinSeul?: boolean
+  /** Poids ENTIER du tirage, parmi les lignes que le filtre a retenues. */
   weight: number
-  /** La fenêtre de ferrage à niveau 0, en ticks — c'est LÀ que vit la rareté (D5). */
+  /** La fenêtre de ferrage à niveau 0, en ticks — c'est là que vit une part de la rareté (D5). */
   windowTicks: number
+  /** La taille tirée, en MILLIMÈTRES entiers (D12) : elle fait la quantité et le record. */
+  tailleMinMm: number
+  tailleMaxMm: number
+  /** Le nom qu'on lit — bandeau de prise, bestiaire. */
+  label: string
 }
 
-/**
- * LES TROIS ESPÈCES (D5) — rareté par l'EAU et par la FENÊTRE, jamais par un tirage aveugle :
- * le novice RATE les brochets (5 ticks), l'expert les sort (D6). La touche ne dit pas ce qui
- * mord ; le ferrage réussi révèle. L'ordre du tableau est l'ordre du tirage cumulatif : ne pas
- * le réordonner sans savoir qu'on change les prises d'un replay.
- */
 export const FISH_SPECIES: readonly FishSpecies[] = [
-  { id: 'gudgeon', item: 'gudgeon', water: 'both', weight: 7, windowTicks: 12 }, // 600 ms — l'en-cas
-  { id: 'trout', item: 'trout', water: 'river', weight: 3, windowTicks: 8 }, // 400 ms — la belle prise de rivière
-  // Au lac, le goujon pèse 7 contre 1 pour le brochet… en poids de TABLE ; or la truite n'y mord
-  // pas, donc le tirage ne porte que sur {goujon 7, brochet 1} — le brochet sort une fois sur huit,
-  // et encore faut-il le ferrer en 250 ms. C'est rare deux fois, comme décidé.
-  { id: 'pike', item: 'pike', water: 'lake', weight: 1, windowTicks: 5 }, // 250 ms — il se débat
+  // ── LES PETITS — l'en-cas : une portion, une fenêtre large, ils mordent partout et souvent.
+  //    C'est le plancher de la pêche : même une mare pauvre finit par en donner un.
+  { id: 'gudgeon', classe: 'petit', eaux: ['riviere', 'mare', 'lac'], weight: 7, windowTicks: 12, tailleMinMm: 60, tailleMaxMm: 140, label: 'goujon' },
+  { id: 'vairon', classe: 'petit', eaux: ['riviere', 'mare'], creneaux: ['aube', 'jour'], weight: 6, windowTicks: 14, tailleMinMm: 40, tailleMaxMm: 90, label: 'vairon' },
+  { id: 'gardon', classe: 'petit', eaux: ['lac', 'mare', 'riviere'], weight: 6, windowTicks: 12, tailleMinMm: 80, tailleMaxMm: 200, label: 'gardon' },
+  // ⚠ LES QUATRE ESPÈCES DE MARAIS ONT DÉMÉNAGÉ le 2026-08-24 : le marais est devenu un SOL
+  //    MOU (décision d'Alexis), il ne se pêche plus. Elles gardent leur caractère — le fond
+  //    vaseux, la nuit — en eau ouverte : la mare et les bras calmes de la rivière.
+  { id: 'loche', classe: 'petit', eaux: ['mare', 'riviere'], creneaux: ['crepuscule', 'nuit'], weight: 5, windowTicks: 13, tailleMinMm: 70, tailleMaxMm: 150, label: 'loche' },
+  { id: 'ecrevisse', classe: 'petit', eaux: ['riviere', 'mare'], saisons: [2, 3], creneaux: ['nuit'], weight: 4, windowTicks: 16, tailleMinMm: 50, tailleMaxMm: 120, label: 'écrevisse' },
+
+  // ── LES MOYENS — le repas : deux portions, une fenêtre qui demande de regarder.
+  { id: 'trout', classe: 'moyen', eaux: ['riviere'], saisons: [1, 3, 4], creneaux: ['aube', 'crepuscule'], weight: 3, windowTicks: 8, tailleMinMm: 200, tailleMaxMm: 450, label: 'truite' },
+  { id: 'ombre', classe: 'moyen', eaux: ['riviere'], zones: ['alpages', 'sylve'], saisons: [2, 3], creneaux: ['jour'], weight: 2, windowTicks: 7, tailleMinMm: 250, tailleMaxMm: 450, label: 'ombre' },
+  { id: 'chevesne', classe: 'moyen', eaux: ['riviere', 'lac'], weight: 3, windowTicks: 9, tailleMinMm: 200, tailleMaxMm: 500, label: 'chevesne' },
+  { id: 'tanche', classe: 'moyen', eaux: ['lac', 'mare'], saisons: [2], creneaux: ['aube', 'crepuscule'], weight: 2, windowTicks: 9, tailleMinMm: 250, tailleMaxMm: 450, label: 'tanche' },
+  { id: 'perche', classe: 'moyen', eaux: ['lac', 'mare'], creneaux: ['jour'], weight: 4, windowTicks: 8, tailleMinMm: 150, tailleMaxMm: 400, label: 'perche' },
+  { id: 'anguille', classe: 'moyen', eaux: ['riviere', 'mare'], creneaux: ['nuit'], weight: 2, windowTicks: 6, tailleMinMm: 300, tailleMaxMm: 800, label: 'anguille' },
+  // LE POISSON D'HIVER : il ouvre la seule saison où la rivière se ferme par le gel (D7). La
+  // pêche a donc encore quelque chose à donner au Grand Froid — au lac, qui reste ouvert le plus longtemps.
+  { id: 'coregone', classe: 'moyen', eaux: ['lac'], zones: ['alpages', 'sylve', 'pres_bas'], saisons: [4], weight: 2, windowTicks: 8, tailleMinMm: 250, tailleMaxMm: 500, label: 'corégone' },
+
+  // ── LES GROS — la prise dont on parle : fenêtre courte (ils se débattent), poids 1 (ils sont
+  //    rares deux fois), et 4 portions. C'est là que la maîtrise de `hunting` se voit (D6/B3).
+  { id: 'pike', classe: 'gros', eaux: ['lac', 'mare'], creneaux: ['crepuscule', 'nuit'], weight: 1, windowTicks: 5, tailleMinMm: 400, tailleMaxMm: 1100, label: 'brochet' },
+  { id: 'barbeau', classe: 'gros', eaux: ['riviere'], saisons: [2], creneaux: ['nuit'], weight: 1, windowTicks: 6, tailleMinMm: 350, tailleMaxMm: 900, label: 'barbeau' },
+  // LA REMONTÉE : le saumon n'existe qu'aux Pluies, et à toute heure. C'est un ÉVÉNEMENT de
+  // calendrier, pas une ligne de table — la saison qui ouvre le monde (S2) a sa prise à elle.
+  { id: 'saumon', classe: 'gros', eaux: ['riviere'], saisons: [3], weight: 1, windowTicks: 5, tailleMinMm: 500, tailleMaxMm: 1200, label: 'saumon' },
+  { id: 'sandre', classe: 'gros', eaux: ['lac'], creneaux: ['nuit'], coinSeul: true, weight: 1, windowTicks: 5, tailleMinMm: 400, tailleMaxMm: 1000, label: 'sandre' },
+  { id: 'carpe', classe: 'gros', eaux: ['lac', 'mare'], saisons: [2, 3], creneaux: ['aube', 'jour'], weight: 1, windowTicks: 7, tailleMinMm: 400, tailleMaxMm: 900, label: 'carpe' },
+  // LE MONSTRE : au coin, la nuit, au marais ou au lac. Deux mètres possibles — le record que
+  // le bestiaire attend, et la seule ligne du jeu qui puisse remplir un sac d'un coup.
+  // LE MONSTRE reste au pays de la tourbe, mais dans SON EAU : les mares et les lacs qu'elle
+  // porte. Sans `mare`, une zone sans grand lac l'aurait rendu injoignable — le défaut qu'on
+  // vient de payer sur le marais, recréé d'un cran plus bas.
+  { id: 'silure', classe: 'gros', eaux: ['lac', 'mare'], zones: ['tourbiere', 'ruines'], creneaux: ['nuit'], coinSeul: true, weight: 1, windowTicks: 5, tailleMinMm: 700, tailleMaxMm: 2000, label: 'silure' },
 ]
 
+/**
+ * LES TROUVAILLES (T4) — ce qui n'est pas un poisson et qui sort quand même de l'eau.
+ *
+ * Elles sont des lignes de la MÊME table (donc en concurrence avec les espèces), elles
+ * dépendent de l'eau (du bois flotté en rivière, une pierre au haut-fond, des algues au
+ * marais), et elles se ferrent avec une fenêtre large : une botte d'algues ne se débat pas.
+ * Elles n'entrent PAS au bestiaire et n'émettent jamais `fish_caught` — ce ne sont pas des
+ * prises, ce sont des choses qu'on remonte.
+ */
+export interface Trouvaille {
+  item: import('./items').ItemId
+  eaux: readonly NomDeNature[]
+  weight: number
+  label: string
+}
+
+export const TROUVAILLES: readonly Trouvaille[] = [
+  { item: 'wood', eaux: ['riviere', 'crue'], weight: 3, label: 'du bois flotté' },
+  { item: 'stone', eaux: ['riviere', 'lac'], weight: 2, label: 'un caillou' },
+  { item: 'fiber', eaux: ['mare', 'lac'], weight: 3, label: 'une botte d\'algues' },
+  { item: 'bone', eaux: ['lac'], weight: 1, label: 'un vieil os' },
+  // LE VER REMONTE AVEC LA VASE : la pêche se réapprovisionne en appât, à la marge. C'est la
+  // seule trouvaille qui RENTRE dans la boucle au lieu d'en sortir.
+  { item: 'worms', eaux: ['mare'], weight: 1, label: 'un ver de vase' },
+]
+
+/**
+ * LA VALEUR D'UNE PRISE SE LIT SUR SA CLASSE, JAMAIS SUR SON ESPÈCE (D12).
+ *
+ * Ce petit générateur remplit les quatre tables d'items (nourriture, péremption, poids,
+ * empilement) pour les dix-huit espèces d'un coup. Sans lui, ajouter une espèce voudrait dire
+ * quatre lignes de plus dans quatre tables éloignées — et une seule oubliée passe en silence,
+ * parce que ces tables sont partielles. Ici, une espèce neuve est servie par construction.
+ */
+export function parClasseDePrise<T>(petit: T, moyen: T, gros: T): Record<FishId, T> {
+  const out: Partial<Record<FishId, T>> = {}
+  for (const sp of FISH_SPECIES) out[sp.id] = sp.classe === 'petit' ? petit : sp.classe === 'moyen' ? moyen : gros
+  // TOTAL par construction : le balayage couvre `FISH_SPECIES`, dont les ids SONT `FishId`. La
+  // conversion le dit au compilateur — sans elle, les tables TOTALES (`Record<ItemId, number>`,
+  // le poids et l'empilement) rejetteraient le spread, tous leurs champs devenant optionnels.
+  return out as Record<FishId, T>
+}
+
 export type NodeType =
+  /** LA FUMEROLLE (spec `cendre.md`) — le trou qui fume froid, et le sel sur ses bords. */
+  | 'fumerolle'
   | 'tree'
   | 'rock'
   | 'fiber_plant'
@@ -1509,6 +1710,15 @@ export interface NodeDef {
    * gèle comme les autres (F2). C'est son RENDEMENT qui ne gèle pas.
    */
   gelif?: true
+  /**
+   * LA PORTÉE DU GESTE, en tuiles — absent = `BALANCE.INTERACT_RANGE` (1,5), le bras.
+   *
+   * Un seul nœud la déclare aujourd'hui : LE COIN DE PÊCHE. Une ligne se LANCE, elle ne
+   * s'atteint pas au bras — on pêche depuis la berge, pas les pieds dans le trou. C'est ici
+   * et pas dans un `if` d'`economy.ts` parce que la portée est une propriété du NŒUD, au même
+   * titre que `minTool` : `porteeDuNoeud` la lit, et sim comme client passent par elle.
+   */
+  range?: number
 }
 
 export const NODE_DEFS: Record<NodeType, NodeDef> = {
@@ -1521,6 +1731,14 @@ export const NODE_DEFS: Record<NodeType, NodeDef> = {
   bloc: { item: 'stone', stock: 12, blockHalfSub: 4, skill: 'mining', tool: 'pickaxe', minTool: 'none' },
   fiber_plant: { item: 'fiber', stock: 6, blockHalfSub: 0, skill: 'foraging', tool: null, minTool: 'none', renewable: true, vivant: true },
   berry_bush: { item: 'berries', stock: 8, blockHalfSub: 0, skill: 'foraging', tool: null, minTool: 'none', renewable: true, vivant: true, gelif: true },
+  /**
+   * LA FUMEROLLE (décision d'Alexis, 2026-08-24) — un trou qui fume froid, et dont les bords se
+   * couvrent de SEL. `renewable` : elle se recharge, on y REVIENT ; ce n'est pas un gisement qu'on
+   * vide, c'est une tournée. Cueillie à mains nues comme les baies — le geste n'est pas le sujet,
+   * c'est d'AVOIR OSÉ VENIR qui l'est. Pas `vivant` : rien n'y vit, donc le gel n'a pas de prise
+   * et la cendre ne la fait pas tomber (R13 ne prend que le vivant).
+   */
+  fumerolle: { item: 'salt', stock: 4, blockHalfSub: 0, skill: 'foraging', tool: null, minTool: 'none', renewable: true },
   // LE PATCH DE CHAMPIGNONS : cueilli à mains nues (E), mais gaté par le SAVOIR — on ne récolte
   // les bons qu'à `FORAGE_QUALITY_LEVEL` (le novice les voit sans savoir les prendre). Humide/ombre.
   champignon: { item: 'champignons', stock: 6, blockHalfSub: 0, skill: 'foraging', tool: null, minTool: 'none', minForageLevel: BALANCE.FORAGE_QUALITY_LEVEL, renewable: true, vivant: true, gelif: true },
@@ -1529,8 +1747,8 @@ export const NODE_DEFS: Record<NodeType, NodeDef> = {
   // réelle se tire dans `FISH_SPECIES` à la touche ; `item` sert aux lecteurs génériques (client,
   // tableau). `minTool: 'crude'` + `tool: 'rod'` = il faut une canne EN MAIN (D4). Renouvelable :
   // le coin se vide et rouvre (dérive sur l'eau, P6). Pas `vivant` : le gel a sa propre règle (G1).
-  fishing_spot_river: { item: 'gudgeon', stock: FISHING_STOCK, blockHalfSub: 0, skill: 'hunting', tool: 'rod', minTool: 'crude', renewable: true },
-  fishing_spot_lake: { item: 'gudgeon', stock: FISHING_STOCK, blockHalfSub: 0, skill: 'hunting', tool: 'rod', minTool: 'crude', renewable: true },
+  fishing_spot_river: { item: 'gudgeon', stock: FISHING_STOCK, blockHalfSub: 0, skill: 'hunting', tool: 'rod', minTool: 'crude', renewable: true, range: FISHING.RANGE },
+  fishing_spot_lake: { item: 'gudgeon', stock: FISHING_STOCK, blockHalfSub: 0, skill: 'hunting', tool: 'rod', minTool: 'crude', renewable: true, range: FISHING.RANGE },
   iron_vein: { item: 'iron_ore', stock: 8, blockHalfSub: 4, skill: 'mining', tool: 'pickaxe', minTool: 'basic' },
   coal_seam: { item: 'coal', stock: 8, blockHalfSub: 4, skill: 'mining', tool: 'pickaxe', minTool: 'basic' },
 
@@ -1616,12 +1834,22 @@ export const FOOD_VALUES: Partial<Record<import('./items').ItemId, number>> = {
   // LES POISSONS (spec `peche.md` G8) — crus, un en-cas ; cuits, par paliers d'espèce : le goujon
   // cuit vaut la moitié de la viande cuite, la truite la viande, le brochet le ragoût. C'est la
   // rareté de D5 qui se mange. Ordres de grandeur, à calibrer en jouant.
-  gudgeon: 4,
-  trout: 8,
-  pike: 12,
-  cooked_gudgeon: 20,
-  cooked_trout: 40,
-  cooked_pike: 60,
+  ...parClasseDePrise(4, 8, 12),
+  // ⚠ **PAR PORTION, PAS PAR POISSON** (D12, recalibré le 2026-08-24). Ces valeurs dataient du
+  // temps où une prise = UN objet : le brochet cuit valait un ragoût. Depuis que la taille fait
+  // la QUANTITÉ, un gros brochet en rend jusqu'à quatre — soit 240 avec l'ancienne échelle,
+  // quatre ragoûts d'un seul ferrage. C'est la portion qui porte la valeur maintenant, et le
+  // gros poisson garde son avantage par le NOMBRE : 4 × 30 = 120, deux ragoûts, pour la prise
+  // la plus rare du jeu. Mesuré, pas supposé (voir `RIEN_PAR_EAU`).
+  cooked_fish_petit: 12,
+  cooked_fish_moyen: 20,
+  cooked_fish_gros: 30,
+  // LE SÉCHÉ (D13/S3) — conserver en PERDANT : il vaut ~70 % du cuit. C'est le prix de
+  // l'hiver, et c'est ce qui empêche le séchoir d'être strictement meilleur que le feu.
+  dried_fish_petit: 8,
+  dried_fish_moyen: 14,
+  dried_fish_gros: 21,
+  dried_meat: 28,
 }
 
 /**
@@ -1702,12 +1930,16 @@ export const SPOIL_CYCLES: Partial<Record<import('./items').ItemId, number>> = {
   cooked_meat: 4,
   stew: 5,
   // Le poisson cru tourne comme la viande crue ; cuit, il tient un peu moins qu'elle (peche.md G8).
-  gudgeon: 1.5,
-  trout: 1.5,
-  pike: 1.5,
-  cooked_gudgeon: 3,
-  cooked_trout: 3,
-  cooked_pike: 3,
+  ...parClasseDePrise(1.5, 1.5, 1.5),
+  cooked_fish_petit: 3,
+  cooked_fish_moyen: 3,
+  cooked_fish_gros: 3,
+  // LE SÉCHÉ TRAVERSE L'HIVER — c'est tout son intérêt, et la promesse « conserves » du GDD
+  // enfin tenue (sans sel, D13). Vingt cycles : une saison entière et de la marge.
+  dried_fish_petit: 20,
+  dried_fish_moyen: 20,
+  dried_fish_gros: 20,
+  dried_meat: 20,
 }
 
 /** Les crans de fraîcheur, et ce qu'ils font à la valeur nutritive. */
@@ -1728,6 +1960,7 @@ export type RecipeId =
   | 'crude_spear'
   | 'crude_bow'
   | 'crude_rod'
+  | 'sechoir'
   | 'crude_knife'
   | 'bow'
   | 'arrow'
@@ -1825,6 +2058,10 @@ export const RECIPES: Record<RecipeId, Recipe> = {
   // LE COFFRE EN OBJET (décision d'Alexis) : fabriqué à la main, posé comme un
   // composant — plus jamais au marteau. Coût inchangé (`STRUCTURE_COSTS.chest`).
   chest: { requiert: null, inputs: { wood: 4 }, output: 'chest', seconds: 6 },
+  // LE SÉCHOIR (spec `peche.md` D13/S1) — à la MAIN, comme la canne : conserver sa pêche ne
+  // demande pas d'atelier, ça demande d'y penser la veille. Bois et corde, les deux matières
+  // de la première nuit.
+  sechoir: { requiert: null, inputs: { wood: 6, rope: 2 }, output: 'sechoir', seconds: 8 },
 
   // ── La couche 1 : à mains nues, sans poste, dès la minute 0 (spec craft-fortune).
   // Tout y passe par la CORDE : le goulot est volontaire (C8) — la fibre cesse
@@ -3453,6 +3690,34 @@ export const HUNT = {
   GROUND_TTL: ticksFor(600),
 } as const
 
+/**
+ * LE VENT (spec `vent.md`, décision d'Alexis 2026-08-24 : « le front est le vent, unifie »).
+ *
+ * Le jeu portait DEUX vents qui s'ignoraient — le relèvement de `state.wind` et le front météo,
+ * qui EST déjà une direction. Ils n'en font plus qu'un : le cap se dérive de `front.edge`, et la
+ * force du souffle du front lu EN AVANCE DE PHASE — c'est ce qui fait que le vent se lève avant
+ * la pluie. Le relèvement d'ambiance (`HUNT.WIND_SHIFT_TICKS`) tient entre deux fronts.
+ *
+ * Ces deux nombres se règlent EN JOUANT (combien de temps d'avance a-t-on pour rentrer le bois,
+ * et à quel point le monde respire au calme) — donc ici, et pas dans un bloc de worldgen.
+ */
+export const VENT = {
+  /**
+   * DE COMBIEN LE VENT PRÉCÈDE LA PLUIE. Le souffle est l'intensité du front lue à
+   * `tick + AVANCE_TICKS` : aucune géométrie nouvelle, la même bande en avance de phase.
+   * Trois minutes sur une traversée de 15 à 30 : de quoi voir venir et rentrer, pas de quoi
+   * oublier ce qu'on a vu.
+   */
+  AVANCE_TICKS: ticksFor(180),
+  /**
+   * LE PLANCHER — ce que souffle un monde venté SANS front. Jamais zéro : une brume immobile
+   * est une image plate (jugé et rejeté le 2026-07-26). ⚠ Ce n'est PAS la porte du calme plat :
+   * celle-là reste `wind = {0,0}`, la sentinelle d'hôte, qui éteint `windForce` à 0 tout court.
+   * Deux zéros différents, et il ne faut jamais « réparer » le second en le plaçant à AMBIANT.
+   */
+  AMBIANT: 0.55,
+} as const
+
 /** La levée des Cendreux (spec 2026-07-08). Ordres de grandeur, calibrage playtest. */
 export const CENDREUX = {
   WITNESS_RADIUS: 8, // « seul » : aucun allié vivant dans ce rayon à la mort
@@ -3924,6 +4189,46 @@ export const FIRE = {
  * Fumoir déclarera les siennes, le modal se rend à partir d'ici. Ce passage : le feu cuit
  * la VIANDE, rien d'autre (S10) ; `stew`/`graine`/cuir/outils restent au panneau de craft.
  */
+/**
+ * LA CUISSON DES PRISES, DÉRIVÉE DE LA TABLE DES ESPÈCES (D12) — dix-huit entrées, trois
+ * sorties. Le cuit se regroupe par CLASSE : c'est ce qui tient le catalogue d'items à 25 au
+ * lieu de 60, et c'est le prix assumé de la décision (une truite et un chevesne grillés sont
+ * le même plat). Le TEMPS, lui, suit la classe aussi : un gros poisson cuit plus longtemps.
+ *
+ * Dérivée, jamais écrite : une espèce ajoutée à `FISH_SPECIES` devient cuisinable le jour même.
+ */
+export function cuissonDesPrises(): Partial<
+  Record<import('./items').ItemId, { output: import('./items').ItemId; ticks: number }>
+> {
+  const out: Partial<Record<import('./items').ItemId, { output: import('./items').ItemId; ticks: number }>> = {}
+  for (const sp of FISH_SPECIES) {
+    out[sp.id] =
+      sp.classe === 'petit'
+        ? { output: 'cooked_fish_petit', ticks: ticksFor(4) }
+        : sp.classe === 'moyen'
+          ? { output: 'cooked_fish_moyen', ticks: ticksFor(5) }
+          : { output: 'cooked_fish_gros', ticks: ticksFor(6) }
+  }
+  return out
+}
+
+/** Les durées du séchage (S2) — d'un autre ORDRE que la cuisson (4-6 s) : on sèche en minutes. */
+export const DRYING = {
+  TICKS_POISSON: ticksFor(6 * 60),
+  TICKS_VIANDE: ticksFor(10 * 60),
+} as const
+
+/** Le séchage des prises, dérivé de la table des espèces — comme la cuisson (D12, par CLASSE). */
+export function sechageDesPrises(): Partial<
+  Record<import('./items').ItemId, { output: import('./items').ItemId; ticks: number }>
+> {
+  const out: Partial<Record<import('./items').ItemId, { output: import('./items').ItemId; ticks: number }>> = {}
+  for (const sp of FISH_SPECIES) {
+    out[sp.id] = { output: `dried_fish_${sp.classe}` as import('./items').ItemId, ticks: DRYING.TICKS_POISSON }
+  }
+  return out
+}
+
 export const COOK_SLOT: Partial<
   Record<
     import('./items').StructureType,
@@ -3937,13 +4242,43 @@ export const COOK_SLOT: Partial<
 > = {
   // Le feu cuit la VIANDE (S10). `byproducts` déclare d'éventuels SOUS-PRODUITS (graisse, os… —
   // items à définir par Alexis) qui tombent dans les 3 slots de SORTIE avec le résultat.
+  // LE FOUR CUIT AUSSI (spec `peche.md` S5, item 4 d'Alexis) — il fondait le minerai et ne
+  // savait pas griller un poisson. Mêmes recettes que le feu : c'est le POSTE qui change, pas
+  // la cuisine. (Le « foyer » n'est pas une pièce à part : c'est un `fire` de village.)
+  furnace: {
+    raw_meat: { output: 'cooked_meat', ticks: ticksFor(5) },
+    ...cuissonDesPrises(),
+  },
   fire: {
     raw_meat: { output: 'cooked_meat', ticks: ticksFor(5) },
     // LES POISSONS (spec `peche.md` G8/A13) : le feu grille ce que la ligne ramène, espèce par
     // espèce — le cuit garde son identité (la rareté de D5 se mange, elle ne se fond pas).
-    gudgeon: { output: 'cooked_gudgeon', ticks: ticksFor(4) },
-    trout: { output: 'cooked_trout', ticks: ticksFor(5) },
-    pike: { output: 'cooked_pike', ticks: ticksFor(6) },
+    ...cuissonDesPrises(),
+  },
+}
+
+/**
+ * ═══ LE SÉCHOIR (spec `peche.md` D13/S2-S4) — la jumelle de `COOK_SLOT` ═══
+ *
+ * Même machinerie (entrées, compteur, sorties), trois différences qui font tout le poste :
+ * **aucun combustible**, **aucune surveillance** (la météo et le froid ne l'interrompent pas,
+ * D13), et des durées d'un autre ordre — on cuit en secondes, on sèche en MINUTES. Sécher est
+ * une décision qu'on prend la veille ; c'est ce qui en fait un geste de préparation d'hiver.
+ *
+ * CE QU'ON GAGNE, CE QU'ON PERD : le séché tient `SPOIL_CYCLES` 20 (le cuit, 4) et nourrit
+ * ~70 % du cuit. Conserver en perdant — sans quoi le séchoir serait strictement meilleur que
+ * le feu, et le feu ne servirait plus qu'à avoir chaud.
+ */
+export const DRY_SLOT: Partial<
+  Record<
+    import('./items').StructureType,
+    Partial<Record<import('./items').ItemId, { output: import('./items').ItemId; ticks: number }>>
+  >
+> = {
+  sechoir: {
+    ...sechageDesPrises(),
+    raw_meat: { output: 'dried_meat', ticks: DRYING.TICKS_VIANDE },
+    quartier: { output: 'dried_meat', ticks: DRYING.TICKS_VIANDE },
   },
 }
 
@@ -4197,7 +4532,7 @@ export const METEO = {
    * la température sous le front — aucune circularité. Plaine d'acte I la nuit = 60 : `u = 0`,
    * un orage d'été ne mord pas, même de nuit — l'ancienne borne « 50 » de l'acte I tient.
    */
-  FROID_EOLIEN_RAMPE: 4,
+  BLIZZARD_RAMPE: 4,
   /**
    * LA FENÊTRE DOUCE — une demi-journée, celle des saisons courtes.
    *
@@ -5073,6 +5408,8 @@ export const NPC_AI = {
  * transpirer, pas la promenade en forêt.
  */
 export const ITEM_WEIGHT: Record<import('./items').ItemId, number> = {
+  // Le SÉCHOIR en objet : une claie encombrante, comme le coffre (`peche.md` S1).
+  sechoir: 5,
   wood: 1,
   stone: 2,
   fiber: 0.2,
@@ -5091,12 +5428,14 @@ export const ITEM_WEIGHT: Record<import('./items').ItemId, number> = {
   raw_meat: 1,
   // Les poissons (peche.md) : le goujon est une poignée, le brochet un vrai poids — léger
   // quand même à côté d'un quartier : on rentre sa pêche sans dilemme de portage.
-  gudgeon: 0.3,
-  trout: 0.6,
-  pike: 1.2,
-  cooked_gudgeon: 0.25,
-  cooked_trout: 0.5,
-  cooked_pike: 1,
+  ...parClasseDePrise(0.3, 0.6, 1.2),
+  cooked_fish_petit: 0.25,
+  cooked_fish_moyen: 0.5,
+  cooked_fish_gros: 1,
+  dried_fish_petit: 0.2,
+  dried_fish_moyen: 0.4,
+  dried_fish_gros: 0.8,
+  dried_meat: 0.6,
   crude_rod: 1,
   crude_knife: 0.5,
   bone: 0.8, // un os pèse — deux par cerf, ça compte dans le retour de chasse
@@ -5126,6 +5465,7 @@ export const ITEM_WEIGHT: Record<import('./items').ItemId, number> = {
   iron_ingot: 4,
   steel_ingot: 4.5, // l'acier pèse un peu plus que le fer
   components: 1.5,
+  salt: 0.5, // le sel est léger, et on n'en porte jamais des sacs
   crude_axe: 2,
   crude_pickaxe: 2.5,
   crude_spear: 1.5,
@@ -5245,12 +5585,14 @@ export const STACK_SIZES: Partial<Record<import('./items').ItemId, number>> = {
   raw_hide: 5,
   bone: 10,
   // Les poissons s'empilent comme la viande (peche.md).
-  gudgeon: 5,
-  trout: 5,
-  pike: 5,
-  cooked_gudgeon: 5,
-  cooked_trout: 5,
-  cooked_pike: 5,
+  ...parClasseDePrise(5, 5, 5),
+  cooked_fish_petit: 5,
+  cooked_fish_moyen: 5,
+  cooked_fish_gros: 5,
+  dried_fish_petit: 5,
+  dried_fish_moyen: 5,
+  dried_fish_gros: 5,
+  dried_meat: 5,
   // Outils et armes : un par case (l'usure est portée par la case).
   crude_axe: 1,
   crude_pickaxe: 1,

@@ -308,6 +308,11 @@ Karst. Au retour du graphe, le récit tient sans retouche : en T0 la roche PERCE
   ne dessine JAMAIS du solide (INV-1/INV-2 du rendu). **La tuile du SOMMET reste nue de tout
   nœud** — le client y dresse le chicot du fer (deux codes, une règle : la tuile de pierrier
   la plus proche du centre du rect).
+> ⛔ **LA CLAUSE « HORS D'ATTEINTE DU FRONT » DE R48/R49 EST TOMBÉE LE 2026-08-24** avec le
+> front : plus rien n'avale un gisement, donc plus rien à mettre hors d'atteinte. ⚠ Elle avait
+> laissé un piège — `carrieresDeLEnceinte` rendait `[]` quand `cendreMax` était absent, soit
+> **zéro carrière sur toute la carte, en silence**. Corrigé le même jour.
+
 - **R49 — La pierre de taille se taille À LA PAROI.** Les nœuds `quarry` se posent au pied de
   l'enceinte de roche, sur des postes écartés entre eux, hors des couloirs de seuil, et là où le
   front de cendre n'arrive JAMAIS (champ de cendre > `cendreMax`) : une carrière est une paroi
@@ -355,6 +360,11 @@ Un « Verger sauvage » de 3×3 tuiles ne peut pas produire d'émotion : on n'en
 ## §4 — Le sud brûle à vue : l'enfer au pas de la porte
 
 La décision fondatrice dit : la T2 collée à la Racine existe « *pour qu'on VOIE l'enfer depuis son pas de porte* ». Aujourd'hui le sud du pré est le même vert que le nord jusqu'à la dernière tuile, puis une ligne grise d'une tuile. C'est la seule frontière qui AVANCE (le front de cendre la franchira au jour 1) — elle a droit à un traitement que les autres n'ont pas.
+
+> ⛔ **R13-R15 CADUQUES LE 2026-08-24** : la Cendrière est retirée du monde joué (décision
+> d'Alexis, `docs/decisions.md`). `peindreLisiereSud` n'est plus appelée quand il n'y a pas de
+> Cendrière à annoncer — sans elle, la bande posait 40 tuiles de calciné le long du bord bas de
+> la carte, qui n'annonçaient plus rien. Le code SURVIT intact pour le plan complet.
 
 - **R13 — Une bande de GRADIENT le long de la frontière Cendrière, ~40 tuiles.** Herbe → lande (`heath`) → lisière calcinée (`burnt_forest`), décidée par MOTIF (8 tuiles) avec un dithering positionnel : des marches irrégulières de blocs, jamais une ligne droite. Les terrains existent déjà — aucun id nouveau.
 - **R14 — Le gradient ne change AUCUNE règle.** Les nœuds suivent les admissions existantes (le calciné admet l'arbre : du bois noirci se coupe ; la lande admet baies et fibre). Les emplacements de village suivent les règles existantes. La garde A17 reste verte — c'est un critère, pas un espoir.

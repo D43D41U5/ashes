@@ -51,4 +51,27 @@ export const TERRAIN_COLORS: Record<number, number> = {
   24: 0x4f7d55, // saulaie (willow) — vert argenté de berge
   25: 0x3a7154, // prairie humide (wet_meadow) — l'herbe qui a les pieds dans l'eau
   26: 0x8f8a58, // lande à genévriers (juniper_heath) — le dos sec
+  /**
+   * ═══ LES TROIS CENDRES (spec `cendre.md` R11) ═══
+   *
+   * Elles doivent dire DEUX choses à la fois, et c'est ce qui fixe leurs valeurs : « ceci est
+   * mort » — donc désaturé, sans un vert — et « ceci ÉTAIT un pré / un bois / de la roche »,
+   * sinon la conversion par famille ne sert à rien et autant n'en avoir qu'une.
+   *
+   * On garde donc le CLAIR-OBSCUR d'origine : le pré cendré reste le plus clair des trois comme
+   * l'herbe était plus claire que la forêt, le bois cendré le plus sombre, le minéral le plus
+   * froid et le plus pâle. La hiérarchie de valeur survit à la mort de la couleur — c'est ce qui
+   * permet de lire d'un coup d'œil ce qu'on a perdu.
+   *
+   * ⚠ L'ÉCART A ÉTÉ CREUSÉ après une première capture : à 0x6a6154 / 0x453f39 / 0x74736f, les
+   * trois se confondaient sous la lumière du jour, et la conversion par famille ne servait à rien
+   * — autant n'avoir qu'une cendre. Les valeurs sont maintenant à un cran franc les unes des
+   * autres, et le pré garde son avance de clarté sur le bois, comme l'herbe l'avait sur la forêt.
+   *
+   * ⚠ Teintes de TRAVAIL malgré tout : le sol dessiné (organique + pavés) leur donnera leur vraie
+   * matière — c'est le reste du chantier d'art de cette mécanique.
+   */
+  27: 0x71695a, // cendre de pré — la plus claire, un ocre éteint
+  28: 0x3b3630, // cendre de bois — la plus sombre, sous les troncs debout
+  29: 0x7b7a76, // cendre minérale — froide et pâle : la roche n'a jamais eu de couleur
 }

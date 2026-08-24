@@ -27,9 +27,9 @@
  * Pur et déterministe : `+ - * /`, `min`, `max`, `floor`, `sqrt` (invariant n°2).
  */
 import { CENDREUX, MORTS, NIGHT_HUNT } from './balance'
-import { bandeDeCendre, frontActuel, margeDeCendre } from './cendre'
 import { isBlockedAt } from './collision'
 import { emitEvent } from './events'
+import { effetsDuJour } from './modificateur'
 import { fireActive, fireState } from './fire'
 import { distSq } from './geometry'
 import { zoneTierAt, type WorldMap } from './map'
@@ -37,7 +37,7 @@ import { placeSousPlafondGlobal, spawnMonster } from './monsters'
 import { hash2 } from './noise'
 import { pathToward, solidesEternels } from './pathfinding'
 import type { SimState } from './sim'
-import { getGameTime, TICKS_PER_SEASON_DAY } from './time'
+import { getGameTime, TICKS_PER_SEASON_DAY, jourDeSaison } from './time'
 
 /**
  * UN SOL QUI TRAVAILLE — le Cendreux n'est pas encore là, mais il arrive.
@@ -85,7 +85,7 @@ export function partRampante(densite: number): number {
 }
 
 export function densiteDesMorts(state: SimState, tx: number, ty: number): number {
-  let d = densiteDeBase(state.map, tx, ty) + hantiseDeCendre(state.map, tx, ty, frontActuel(state))
+  let d = densiteDeBase(state.map, tx, ty)
   // ON A BRÛLÉ ICI (décision ⑧, 2026-08-21) : autour d'un charnier ou d'un repaire assaini,
   // le sol rend moins de morts — pour un temps. La liste est minuscule (quelques lieux au
   // plus), la lecture reste O(petit) sur un chemin chaud.
@@ -131,7 +131,11 @@ export function advanceLieuxBrules(state: SimState): void {
       const cy = z.y + z.h / 2
       if (distSq(cx, cy, s.tx + 0.5, s.ty + 0.5) > r2) continue
       if (state.lieuxBrules.some((lb) => lb.zone === zi && state.tick < lb.until)) continue
-      const duree = Math.round((MORTS.BRULE_DUREE_JOURS * TICKS_PER_SEASON_DAY) / state.calendarScale)
+      // LA DURÉE SUIT LE CARACTÈRE DE LA SAISON (spec `cendre.md` R18) : `orages_secs` la double
+      // (le feu prend partout — la saison des expéditions d'assainissement), `deluge` la divise
+      // par deux (on n'allume pas un feu sous quatre jours de pluie).
+      const jours = MORTS.BRULE_DUREE_JOURS * (effetsDuJour(jourDeSaison(state)).cendreGel ?? 1)
+      const duree = Math.round((jours * TICKS_PER_SEASON_DAY) / state.calendarScale)
       state.lieuxBrules.push({ zone: zi, until: state.tick + duree })
       emitEvent(state, { type: 'charnier_brule', tick: state.tick, zone: zi, x: cx, y: cy })
     }
@@ -139,34 +143,15 @@ export function advanceLieuxBrules(state: SimState): void {
 }
 
 /**
- * LA HANTISE (spec `cortege-cendre.md` R4) — le terme de cendre, en DÉGRADÉ et non plus à plat.
+ * ⚠ LA HANTISE DE CENDRE EST RETIRÉE (2026-08-24), avec le front qui la datait.
  *
- * Il vaut `MORTS.PART_CENDRE` sur le brûlé DE L'INSTANT et monte jusqu'à `MORTS.HANTISE_MAX` sur
- * le vieux brûlé — profondeur que la marge de cendre donne gratuitement (elle est négative dans
- * le brûlé, et d'autant plus que le front l'a dépassée depuis longtemps).
- *
- * ⚠ IL VIT ICI, ET SURTOUT PAS DANS `densiteDeBase` (R4bis) : celle-ci est appelée par
- * `placeCharniers` à la GÉNÉRATION, sans tick ni front. Une `densiteDeBase` devenue fonction du
- * temps déplacerait les charniers entre un monde neuf et une sauvegarde rechargée — et ce défaut
- * ne se verrait qu'au rechargement, c'est-à-dire tard.
- *
- * Le repli est le comportement d'avant : hors du brûlé, zéro. Sur un banc sans Cendrière,
- * `margeDeCendre` rend `MARGE_HORS_CENDRE` — grand et positif — donc zéro aussi, et le champ y
- * vaut son plancher uniformément, au bit près comme avant (R17).
+ * Elle ajoutait au champ des morts un terme en DÉGRADÉ — `MORTS.PART_CENDRE` sur le brûlé de
+ * l'instant, jusqu'à `MORTS.HANTISE_MAX` sur le vieux brûlé — lu sur la marge de cendre. Sans
+ * front, aucune tuile n'a d'âge de brûlure : le champ des morts ne connaît plus que son plancher
+ * et le tier de la zone (`densiteDeBase`), ce qui est EXACTEMENT le repli qu'il avait déjà sur un
+ * banc sans Cendrière. `MORTS.PART_CENDRE` / `HANTISE_MAX` / `HANTISE_PART` n'ont plus de lecteur
+ * — à reprendre avec la nouvelle mécanique.
  */
-export function hantiseDeCendre(map: WorldMap, tx: number, ty: number, front: number): number {
-  const marge = margeDeCendre(map, tx, ty, front)
-  if (marge >= 0) return 0 // pas brûlé : la cendre n'a rien à dire
-  // La profondeur de plafond est une PART de la course du front, jamais une distance écrite —
-  // `cendreMax` vaut 74 tuiles sur la carte de production, une profondeur en dur n'y voudrait
-  // rien dire (même correction que `CENDRE.STERILE_PART`).
-  const profondeurPlafond = bandeDeCendre(map, MORTS.HANTISE_PART)
-  if (profondeurPlafond <= 0) return MORTS.PART_CENDRE // pas de course calibrée : l'ancien terme à plat
-  const profondeur = -marge
-  if (profondeur >= profondeurPlafond) return MORTS.HANTISE_MAX
-  // Rampe linéaire du brûlé de l'instant au vieux brûlé. Division seule (invariant n°2).
-  return MORTS.PART_CENDRE + ((MORTS.HANTISE_MAX - MORTS.PART_CENDRE) * profondeur) / profondeurPlafond
-}
 
 /**
  * LA PART DU CHAMP QUI NE DÉPEND PAS DU TEMPS — plancher + tier, sans la cendre.

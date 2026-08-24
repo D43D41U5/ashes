@@ -30,9 +30,8 @@ import { placeHuntingGrounds } from './faune'
 import { nidsAMonstre } from './poi'
 import { createSim, spawnEntity, step, type PlayerAction, type SimState } from './sim'
 import { drainEvents } from './events'
-import { frontActuel } from './cendre'
 import { grantItems } from './village'
-import { TICKS_PER_CYCLE, TICKS_PER_SEASON_DAY, jourDeSaison } from './time'
+import { TICKS_PER_CYCLE, TICKS_PER_SEASON_DAY } from './time'
 import type { WorldMap } from './map'
 import { serializeCarte, serializePartie, serializeSim } from './persistence'
 import { baseDepuisNoeuds } from './node-baseline'
@@ -46,10 +45,18 @@ import { baseDepuisNoeuds } from './node-baseline'
 // `distEau` (`saisons.md` S10) rejoint la liste pour la même raison : la CRUE fait porter de
 // l'eau à une tuile de terre par simple comparaison `d ≤ niveau`, elle ne mute rien — c'est
 // très exactement le genre de mécanisme dont ce fichier existe pour surveiller la promesse.
-const CHAMPS_HACHES = ['terrain', 'cendre', 'profondeur', 'distEau'] as const
+// `natureEau` (`peche.md` T1) entre ici le 2026-08-24, et A0 l'a EXIGÉ à la seconde où le
+// champ est né — c'est le mode d'échec pour lequel ce fichier existe : un champ neuf de
+// `WorldMap` qu'une empreinte écrite à la main aurait ignoré en silence. Il est par tuile, et
+// gelé à l'amorce comme les autres : la table de prises le LIT, elle ne le peint jamais.
+// ⚠ `cendreCout` (spec `cendre.md` R4) N'EST PAS DANS CETTE LISTE, et il faut dire pourquoi : ce
+// fichier fait vivre le plan COMPLET (`generateZonedTerrain(2026)` sans monde), qui ne porte pas le
+// champ — la passe est réservée au monde joué, son coût sur 3,75 M de tuiles faisant sauter le
+// budget A13. C'est `cendre.test.ts` qui garde son immuabilité, sur la carte qui le porte.
+const CHAMPS_HACHES = ['terrain', 'cendre', 'profondeur', 'distEau', 'natureEau'] as const
 /** Le reste de la carte — quelques dizaines de ko, couverts par leur JSON. */
 const CHAMPS_JSON = [
-  'width', 'height', 'zones', 'cendreMax', 'zoneGrid', 'zonePas', 'zoneDefs', 'seuils', 'fil',
+  'width', 'height', 'zones', 'zoneGrid', 'zonePas', 'zoneDefs', 'seuils', 'fil',
   'annales', // l'état civil du monde d'avant (stratigraphie S-R16) — immuable comme le reste
   'coulees', // les chemins du gibier (forêts-vivantes §4) — gelés à l'amorce, comme le fil
 ] as const
@@ -81,7 +88,9 @@ function empreinte(map: WorldMap): string {
     let h = 0x811c9dc5
     for (let i = 0; i < arr.length; i++) h = melange(h, i, Math.round(arr[i]! * 1024))
     return `${h >>> 0}/${arr.length}`
-  })
+  }, 120_000) // ⚠ le monde de PRODUCTION : quatre passes de 25-30 s. Le défaut de 30 s
+  //             le frôlait déjà, et `cendreCout` (spec cendre.md) l’a poussé dehors —
+  //             ce sont des assertions de TAILLE et d’ÉGALITÉ, jamais de vitesse.
 
   const petit = map as unknown as Record<string, unknown>
   const petits = JSON.stringify(CHAMPS_JSON.map((nom) => petit[nom]))
@@ -146,7 +155,9 @@ describe('la carte est immuable pendant la partie', () => {
         sim.map.width * sim.map.height,
       )
     }
-  })
+  }, 120_000) // ⚠ le monde de PRODUCTION : quatre passes de 25-30 s. Le défaut de 30 s
+  //             le frôlait déjà, et `cendreCout` (spec cendre.md) l’a poussé dehors —
+  //             ce sont des assertions de TAILLE et d’ÉGALITÉ, jamais de vitesse.
 
   it("A1 — mille ticks de monde vivant ne changent pas un bit de `map`", () => {
     const { sim, joueur } = mondeReel()
@@ -162,50 +173,13 @@ describe('la carte est immuable pendant la partie', () => {
     }
 
     expect(empreinte(sim.map)).toBe(avant)
-  })
+  }, 120_000) // ⚠ le monde de PRODUCTION : quatre passes de 25-30 s. Le défaut de 30 s
+  //             le frôlait déjà, et `cendreCout` (spec cendre.md) l’a poussé dehors —
+  //             ce sont des assertions de TAILLE et d’ÉGALITÉ, jamais de vitesse.
 
-  it("A2 — le FRONT DE CENDRE dévore la vallée sans réécrire une tuile", () => {
-    // Le suspect n°1, et de loin : c'est le système qui « brûle » la carte. Il ne le fait
-    // pas en peignant le sol — il déplace un SEUIL (`cendreFront`, un seul nombre) et compare
-    // (`map.cendre[i] < front`). C'est ce qui rend le front bon marché, et c'est très
-    // exactement ce que cette garde protège : le jour où quelqu'un le fera « pour de vrai »
-    // en repeignant le terrain, l'autosave allégée mentirait.
-    const { sim, joueur } = mondeReel()
-    const avant = empreinte(sim.map)
-    const noeudsAvant = sim.nodes.length
-
-    expect(sim.map.cendreMax ?? 0).toBeGreaterThan(0)
-    // Le front ne se POSE pas : il se DÉDUIT du tick (`frontActuel` → `seasonDayAtTick`). Pour
-    // l'amener au bout de la saison, on avance donc l'horloge du monde — il n'existe aucun
-    // champ d'état à écrire, et c'est justement pour ça que la cendre ne coûte rien.
-    // Et la cendre ne MORD qu'au BASCULEMENT d'un jour de saison (le reste des ticks, elle ne
-    // coûte qu'un test) : on se pose donc juste AVANT la frontière, pour que le premier `step`
-    // la franchisse. Un tick plus loin et le test serait passé sans que rien ne brûle.
-    //
-    // LE JOUR SE CHOISIT DANS LE GRAND FROID (`saisons.md` S11) : la Cendre ne mord plus que
-    // l'hiver, et un jour de l'Ardeur — l'ancien 59 — laisserait le front à zéro, donc rien à
-    // garder. Le cœur du Grand Froid tombe encore DANS la saison de ce monde-là, qui se ferme
-    // à `JOUR_DE_DEPART + SEASON_DAYS − 1`, soit le jour 120 : on prouve la cendre sans jamais
-    // déborder sur la fin de saison.
-    const JOUR = 3 * BALANCE.ACT_DAYS + Math.floor(BALANCE.ACT_DAYS / 2) // le cœur du Grand Froid
-    // `JOUR − jourDeDepart` et non `JOUR − 1` : le tick compte DEPUIS l'ouverture du monde (S2).
-    sim.tick = Math.ceil(((JOUR - sim.jourDeDepart) * TICKS_PER_SEASON_DAY) / sim.calendarScale) - 1
-    expect(jourDeSaison(sim)).toBe(JOUR - 1)
-    expect(frontActuel({ ...sim, tick: sim.tick + 1 })).toBeGreaterThan(0) // sans ça, rien à garder
-
-    // Dix ticks suffisent : le basculement tombe au premier, et le cœur du Grand Froid est le
-    // moment le plus cher de l'année — méga-horde, évacuation, champ de flux… chaque tick y
-    // coûte cher. On prouve la cendre, pas l'endgame.
-    for (let t = 0; t < 10; t++) {
-      step(sim, [{ entityId: joueur, dx: 0, dy: 0 }])
-      drainEvents(sim)
-    }
-
-    // La preuve que la cendre a bien MORDU : elle dévore les nœuds qu'elle recouvre.
-    expect(jourDeSaison(sim)).toBe(JOUR)
-    expect(sim.nodes.length).toBeLessThan(noeudsAvant)
-    expect(empreinte(sim.map)).toBe(avant)
-  })
+  // (A2 — « le FRONT DE CENDRE dévore la vallée sans réécrire une tuile » : retiré le
+  //  2026-08-24 avec le front. Il gardait le fait que la cendre déplaçait un SEUIL au lieu de
+  //  repeindre le sol ; la garde qui compte — A1, A3 — couvre toujours la carte.)
 
   it("A3 — RÉCOLTER, ABATTRE, BÂTIR et FONDER ne touchent pas la carte", () => {
     // Les gestes qui MODIFIENT le monde pour de bon. Ils écrivent tous ailleurs — dans
@@ -286,7 +260,9 @@ describe('la carte est immuable pendant la partie', () => {
     // La preuve que le monde a VRAIMENT changé — sans quoi la garde ne prouverait rien.
     expect(sim.structures.length, `refus : ${refus.join(', ')}`).toBeGreaterThan(structuresAvant)
     expect(empreinte(sim.map)).toBe(avant)
-  })
+  }, 120_000) // ⚠ le monde de PRODUCTION : quatre passes de 25-30 s. Le défaut de 30 s
+  //             le frôlait déjà, et `cendreCout` (spec cendre.md) l’a poussé dehors —
+  //             ce sont des assertions de TAILLE et d’ÉGALITÉ, jamais de vitesse.
 })
 
 /**
@@ -324,5 +300,7 @@ describe('le poids de la sauvegarde périodique', () => {
     const texte = serializePartie(sim, base)
     expect(texte).not.toContain('"terrain":[')
     expect(texte).not.toContain('"berry_bush"')
-  })
+  }, 120_000) // ⚠ le monde de PRODUCTION : quatre passes de 25-30 s. Le défaut de 30 s
+  //             le frôlait déjà, et `cendreCout` (spec cendre.md) l’a poussé dehors —
+  //             ce sont des assertions de TAILLE et d’ÉGALITÉ, jamais de vitesse.
 })

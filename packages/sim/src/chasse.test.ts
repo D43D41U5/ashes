@@ -16,6 +16,9 @@ import { cycleOffsetForStartHour } from './time'
 import { spawnMonster, type Monster } from './monsters'
 import { grantItems } from './village'
 import { applyDamage } from './combat'
+import { ventGain } from './vent'
+import { meteoIntensityAt, type MeteoFront } from './meteo'
+import { VENT } from './balance'
 
 /** Prairie partout, un carré de forêt au nord-ouest (même monde que faune.test). */
 function makeMap(): WorldMap {
@@ -652,6 +655,22 @@ describe('le crochet et le terrier (A16-A17, C15-C16)', () => {
   })
 })
 
+/**
+ * UN FRONT POSÉ DONT LE CŒUR TOMBE SUR LA BÊTE pendant la mesure. On le CHERCHE au lieu de le
+ * poser au jugé : la largeur d'une bande est saisonnière, et un montage qui suppose sa géométrie
+ * mesure le montage. Lente (40 000 ticks de fenêtre) : elle ne dérive que d'un demi-pas pendant
+ * les six secondes du banc.
+ */
+function frontSurLaBete(sim: SimState, x = 80.5, y = 60.5): MeteoFront {
+  const F = 40000
+  const t = 3 * BALANCE.TICK_RATE_HZ + VENT.AVANCE_TICKS
+  for (let startTick = -F; startTick <= 0; startTick += 50) {
+    const f: MeteoFront = { type: 'pluie', cycle: 0, day: 1, edge: 0, startTick, endTick: startTick + F }
+    if (meteoIntensityAt(f, t, sim.map.width, sim.map.height, x, y) === 1) return f
+  }
+  throw new Error('aucune bande ne couvre la bête — la géométrie a changé')
+}
+
 describe('le vent (A18, C17)', () => {
   it('A18 — SOUS LE VENT, la bête ne sent rien ; AU VENT, elle sent tout', () => {
     // Le vent souffle vers l'EST (+x) : l'odeur d'un homme placé à l'OUEST du
@@ -668,6 +687,33 @@ describe('le vent (A18, C17)', () => {
     const sousLeVent = essai(1) // à l'est : le vent emporte son odeur AILLEURS
     expect(auVent).toBeGreaterThanOrEqual(HUNT.SUSPICION_CURIOUS)
     expect(sousLeVent).toBeLessThan(0.05)
+  })
+
+  it('V7 — et SOUS UN FRONT le nez porte plus loin : le vent porte ce qu’il porte', () => {
+    // `vent.md` V7. Le CÔNE ne bouge pas (la parade reste un côté) ; c'est la PORTÉE du canal
+    // qui suit la force du vent. Hors front le gain vaut exactement 1 — c'est ce qui a rendu
+    // cette loi livrable sans rien recalibrer — et il monte jusqu'à 1/AMBIANT sous une bande.
+    const essai = (avecFront: boolean): number => {
+      const sim = makeSim(12, { x: 1, y: 0 })
+      if (avecFront) {
+        sim.meteoActive = true
+        sim.meteo = frontSurLaBete(sim)
+      }
+      const { m } = pinBeast(sim, 'deer', 80.5, 60.5, { x: 0, y: -1 })
+      const a = spawnEntity(sim, 80.5 - 18, 60.5) // AU VENT, mais LOIN — hors de portée au calme
+      for (let t = 0; t < 6 * BALANCE.TICK_RATE_HZ; t++) tick(sim, [{ entityId: a, dx: 0, dy: 0, sneak: true }])
+      return m.suspicion
+    }
+    const calme = essai(false)
+    const souffle = essai(true)
+    // LA PRÉMISSE D'ABORD : sans souffle réel au point de la bête, la comparaison ne dirait
+    // rien — une garde qui ne prouve pas ses conditions passe par accident.
+    const temoin = makeSim(12, { x: 1, y: 0 })
+    temoin.meteoActive = true
+    temoin.meteo = frontSurLaBete(temoin)
+    temoin.tick = 3 * BALANCE.TICK_RATE_HZ
+    expect(ventGain(temoin, 80.5, 60.5), 'le front souffle VRAIMENT sur la bête').toBeGreaterThan(1)
+    expect(souffle, 'le nez porte plus loin sous le front').toBeGreaterThan(calme)
   })
 
   it('A18 — le vent TOURNE, et sans consommer un seul tirage du PRNG', () => {

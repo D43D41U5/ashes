@@ -66,21 +66,30 @@ export interface WorldMap {
    * LE CHAMP DE CENDRE — distance de chaque tuile à la frontière de la Cendrière, en tuiles.
    * Négative DEDANS, positive dehors. **Donnée STATIQUE** : calculée une fois, jamais modifiée.
    *
-   * Ce qui bouge est ailleurs : `SimState.cendreFront`, **un seul nombre**. Une tuile brûle quand
-   * `cendre[i] < front`. C'est ce qui rend le front de saison bon marché — on ne mute pas la
-   * carte, on déplace un seuil (spec `worldgen.md` R31).
+   * ⚠ IL N'EST PLUS UN MOTEUR (2026-08-24). Le FRONT est retiré — plus de seuil qui avance, plus
+   * de tuile qui « brûle » à une date. Ce champ ne date plus que la reprise du versant Brûlé sur
+   * le plan complet (`peindreLesStadesDuBrule`), qui dort. **Absent du monde joué**, qui n'a plus
+   * de Cendrière : tout lecteur doit écrire ce qu'il fait sans lui.
    */
   cendre?: number[]
   /**
-   * L'AVANCÉE DU FRONT au dernier jour de la saison, EN TUILES — **calibrée pour CETTE carte**.
-   * Sous la saison sans fin (T3), c'est la COURSE DE L'AN 1 : l'échelle de tout ce qui suit —
-   * les bouchées des hivers suivants et les bandes du cortège s'expriment en parts d'elle.
+   * ═══ LE CHAMP DE CHEMINEMENT DE LA CENDRE (spec `cendre.md` R4) ═══
    *
-   * Elle n'est pas une constante : la forme des zones change tout. Mesuré, à distance fixe, la
-   * cendre couvrait 48 % des Prés Bas sur une seed et 81 % sur une autre. On vise donc une PART
-   * (`CENDRE.PART_CIBLE`) et on en déduit la distance, par dichotomie, à la génération.
+   * `cendreCout[i]` porte DEUX choses dans un seul entier : le coût de CHEMINEMENT de la tuile
+   * jusqu'à sa fosse (Dijkstra 8-connexe — l'eau ne se traverse pas, le minéral coûte trois fois,
+   * coûts entiers ×100) et l'INDEX de cette fosse, dans les quatre bits bas
+   * (`coût × CENDRE.FOYERS_MAX + foyer`). `-1` = hors d'atteinte. On les lit par `coutDe` et
+   * `foyerDe`, jamais à la main. ⚠ Deux tableaux séparés pesaient **10,5 Mo de JSON — la moitié
+   * de la carte** ; replié, c'est moitié moins à copier, à hacher et à sauvegarder.
+   *
+   * **Donnée STATIQUE, gelée à l'amorce**, comme `distEau` et `profondeur` : ce qui bouge est
+   * l'ÂGE de chaque foyer (`SimState.cendreAge`, dix nombres), et l'appartenance d'une tuile s'en
+   * dérive par une comparaison. La carte n'est jamais mutée — c'est ce qui rend la mécanique bon
+   * marché, et c'est le seul héritage qu'on garde de l'ancien front.
+   *
+   * Additifs : une carte d'avant se relit sans (rien ne brûle alors, et rien d'autre ne change).
    */
-  cendreMax?: number
+  cendreCout?: number[]
 
   /**
    * ═══ LA ZONE, POUR LE CLIENT — et pourquoi elle est GROSSIÈRE ═══
@@ -137,6 +146,20 @@ export interface WorldMap {
    * relit sans (la crue n'inonde alors rien, et rien d'autre ne change).
    */
   distEau?: number[]
+  /**
+   * LA NATURE DE L'EAU (spec `peche.md` T1) : par tuile, ce QU'EST cette eau — rivière, lac,
+   * mare, marais — ou rien. Constantes et dérivation dans `peche-nature.ts`. **Donnée
+   * STATIQUE, gelée à l'amorce**, comme `distEau` et `profondeur`.
+   *
+   * Elle existe parce que le terrain ne connaît que deux eaux (haut-fond, profond) alors que
+   * la table de prises dépend de la nature de l'eau pêchée (D10) : sans elle, il faudrait
+   * relire le fil de la rivière et refaire un BFS de composante à chaque lancer de ligne.
+   * La CRUE n'y est pas — c'est un état du jour (`estInonde`), lu au tick.
+   *
+   * Additive : une carte d'avant se relit sans, et `natureDeLEau` se rabat alors sur le
+   * terrain (toute eau permanente y passe pour une mare).
+   */
+  natureEau?: number[]
   /**
    * LES COULÉES (forêts-vivantes §4 R5) : les chemins de terre du gibier, couche → eau.
    * Index de tuile DANS L'ORDRE du tracé, chemins séparés par -1. Donnée STATIQUE, gelée à

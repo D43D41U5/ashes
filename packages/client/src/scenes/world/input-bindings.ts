@@ -17,7 +17,7 @@
  * nœuds, cadavres et position prédite changent à chaque snapshot ou frame —
  * chaque handler lit l'état AU MOMENT de la frappe.
  */
-import { BALANCE, COMPONENT_TYPES, EDGE_BITS, NODE_DEFS, estUnCoinDePeche, SLOTS, edgeBarrierAt, isRangedWeapon, type Corpse, type PlayerAction, type ResourceNode, type Structure } from '@ashes/sim'
+import { BALANCE, COMPONENT_TYPES, EDGE_BITS, NODE_DEFS, SLOTS, edgeBarrierAt, isRangedWeapon, type Corpse, type PlayerAction, type ResourceNode, type Structure } from '@ashes/sim'
 import Phaser from 'phaser'
 import { getHud, setHud, type Placeable } from '../../hud-state'
 import { TILE_PX } from '../../render/framing'
@@ -42,6 +42,15 @@ export interface InputDeps {
   /** MA LIGNE est-elle tendue (dernier snapshot) ? Tant qu'elle l'est, le clic gauche FERRE
    *  (`harvest_release`) au lieu de viser quoi que ce soit (spec peche.md G4). */
   ligneTendue(): boolean
+  /**
+   * CETTE TUILE PORTE-T-ELLE DE L'EAU, AUJOURD'HUI ? (spec `peche.md` D9/E6)
+   *
+   * Depuis qu'on pêche l'EAU et non un nœud, la visée doit savoir où il y en a — et « où il y
+   * a de l'eau » dépend du JOUR (une mare part à la sécheresse, la crue en ajoute). La scène
+   * la lit avec `porteDeLEau` de /sim, la MÊME loi que la sim revalidera au lancer ; `aim.ts`
+   * reste pur et n'ouvre jamais la carte.
+   */
+  porteDeLEau(tx: number, ty: number): boolean
   /** Les autres ENTITÉS (PNJ/joueurs) — SANS soi ni les monstres : les cibles d'un DON.
    *  Position LOGIQUE (tuiles), pour viser dans le même repère que les nœuds. */
   others(): { id: number; x: number; y: number }[]
@@ -385,6 +394,7 @@ export function bindInputs(scene: Phaser.Scene, deps: InputDeps): MovementBindin
       deps.structures(), // Feu (feed_fire), structure abîmée (repair), parcelle (agriculture) visés
       deps.simTick(), // pour juger la maturité d'une parcelle
       deps.piles(), // les tas au sol : flèches retombées, appâts, charge larguée
+      deps.porteDeLEau, // l'eau du jour (peche.md D9) : où la ligne peut tomber
     )
   }
   /** L'overlay (carte, sac, menu pause) mange le clic : il ne doit pas agir dans le monde. */
@@ -490,11 +500,9 @@ export function bindInputs(scene: Phaser.Scene, deps: InputDeps): MovementBindin
     return node !== undefined && NODE_DEFS[node.type].skill === 'woodcutting'
   }
 
-  /** Le nœud visé est-il un COIN DE PÊCHE (spec peche.md) ? Le clic y LANCE la ligne. */
-  const isFishNode = (nodeId: number): boolean => {
-    const node = deps.nodes().find((n) => n.id === nodeId)
-    return node !== undefined && estUnCoinDePeche(node.type)
-  }
+  // ⚠ `isFishNode` A ÉTÉ RETIRÉ le 2026-08-24 (peche.md D9) : le clic ne route plus le lancer
+  // sur le TYPE DU NŒUD visé — il vise une TUILE D'EAU, et `aim.ts` a déjà résolu `cast_line`.
+  // Le coin sous la tuile ne change rien au geste, seulement à ce qui mord.
 
   /** Le nœud visé est-il un FILON/rocher (minage à maîtrise, verbe 2) ? Ils passent par
    *  le VERROU-nœud : on frappe le bon flanc, le curseur indiquant le côté autour du
@@ -795,9 +803,11 @@ export function bindInputs(scene: Phaser.Scene, deps: InputDeps): MovementBindin
       deps.sendAction({ type: 'harvest_release' })
       return
     }
-    if (action?.type === 'harvest' && isFishNode(action.nodeId)) {
+    // ⚠ LE LANCER A SA PROPRE ACTION depuis D9 (`cast_line`, une TUILE) : il ne passe plus par
+    // la jauge d'abattage. `aim.ts` l'a déjà résolu — on ne fait que l'envoyer, sans maintien.
+    if (action?.type === 'cast_line') {
       holding = false
-      deps.sendAction({ type: 'harvest_charge_start', nodeId: action.nodeId })
+      deps.sendAction(action)
       return
     }
     // DÉPECER, c'est TENIR (spec `depecage.md` D2) : l'appui ouvre la découpe, le maintien la

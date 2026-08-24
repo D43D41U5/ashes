@@ -66,7 +66,7 @@ describe('la table de routage audio (soundForEvent)', () => {
     expect(desaccords).toEqual([])
   })
 
-  it("l'inventaire tranché de GATE 1 : 77 faits, 44 voix", () => {
+  it("l'inventaire tranché de GATE 1 : 90 faits, 53 voix", () => {
     // Un compte, pas un jugement. S'il bouge, c'est qu'un fait de domaine est né ou qu'une
     // voix a changé — dans les deux cas, quelqu'un doit le savoir.
     const total = Object.keys(VOIX).length
@@ -102,7 +102,13 @@ describe('la table de routage audio (soundForEvent)', () => {
     // `fish_caught` MUET — il tombe sur `resource_harvested`, qui parle déjà au même tick.
     // 85 → 86 le 2026-08-22 : `carcass_cut` (spec depecage.md) SONNE — la sœur du coup de récolte,
     // plus basse et plus mate (une lame dans la chair) ; le seul retour du maintien, sans jauge.
-    expect(total).toBe(86)
+    // 86 → 90 le 2026-08-24 : la refonte de la pêche (peche.md D9-D12) — `fish_nibble` SONNE
+    // (un clapotis minuscule qui monte : « il y a quelque chose, mais ce n'est pas ça » — sans
+    // lui, D11 n'a aucun retour d'information), `fishing_cancelled` SONNE (la ligne rentre
+    // faute d'eau, et une ligne qui disparaît sans un mot est un bug aux yeux du joueur),
+    // `fish_record` SONNE et s'entend de LOIN (la plus grosse prise d'une vie est un fait de
+    // village), `fishing_junk` MUET (il tombe sur `resource_harvested`, comme `fish_caught`).
+    expect(total).toBe(90)
     // 34 → 35 le 2026-07-29 : `node_depleted` a gagné sa voix (trois, selon la matière).
     // 61 → 62 faits et 35 → 36 voix le 2026-07-30 : `door_toggled` naît (spec construction R26).
     // 62 → 63 faits et 36 → 37 voix le 2026-07-31 : `cendreux_prowl` naît (spec cendreux R11bis) —
@@ -110,7 +116,8 @@ describe('la table de routage audio (soundForEvent)', () => {
     // 44 → 47 le 2026-08-21 : `cendreux_cri`, `presage_horde`, `charnier_brule` — trois voix.
     // 47 → 49 le 2026-08-22 : `fish_bite`, `fish_escaped` — deux voix (voir ci-dessus).
     // 49 → 50 le 2026-08-22 : `carcass_cut` — une voix (voir ci-dessus).
-    expect(voix).toBe(50)
+    // 50 → 53 le 2026-08-24 : `fish_nibble`, `fishing_cancelled`, `fish_record` (voir ci-dessus).
+    expect(voix).toBe(53)
   })
 
   it('L’AXE D’ALIGNEMENT S’ENTEND : les verbes chauds montent, les froids tombent', () => {

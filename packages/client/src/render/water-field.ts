@@ -32,6 +32,14 @@
 /** Les deux terrains d'eau (ids de `TERRAINS`, sim/balance.ts). */
 const SHALLOW = 4
 const DEEP = 6
+/** Les deux terrains de MARAIS — le sol mou (`peche.md`, décision d'Alexis 2026-08-24). Ils ont
+ *  droit au même SDF que l'eau : l'acteur s'y enfonce, et « s'enfoncer » est une PENTE. */
+const MARSH = 8
+const REED_MARSH = 19
+/** Le masque d'eau — le milieu par défaut du champ de rive. */
+export const MILIEU_EAU: readonly number[] = [SHALLOW, DEEP]
+/** Le masque de VASE : ce dans quoi on s'enlise sans nager. */
+export const MILIEU_VASE: readonly number[] = [MARSH, REED_MARSH]
 
 /** LE PROFIL DE LA RAMPE (geste 01, élargi sur demande d'Alexis « lerp encore plus ») :
  *  cinq anneaux autour de l'arête shallow|deep — deux côté haut-fond, trois côté
@@ -75,15 +83,31 @@ export interface RiveField {
   height: number
 }
 
-export function buildRiveField(terrain: ArrayLike<number>, width: number, height: number): RiveField {
+/**
+ * ⚠ LE MILIEU EST UN PARAMÈTRE depuis le 2026-08-24 — la fonction ne connaît plus « l'eau »,
+ * elle connaît « un dedans et un dehors ». C'est ce qui donne au MARAIS la même transition
+ * continue qu'à l'eau (demande d'Alexis : « la même chose pour le marais ») sans dupliquer
+ * cinquante lignes de chanfrein : un second champ, le même code, un autre masque.
+ *
+ * `avecTexture` : le RGBA n'est utile qu'au SHADER de l'eau. Le champ de vase ne sert qu'au
+ * CPU (l'immersion des acteurs) — lui cuire une texture de 15 Mo serait payer pour rien.
+ */
+export function buildRiveField(
+  terrain: ArrayLike<number>,
+  width: number,
+  height: number,
+  milieu: readonly number[] = MILIEU_EAU,
+  avecTexture = true,
+): RiveField {
   const N = width * height
-  // Le masque d'eau APLATI d'abord (revue, MESURÉ : appeler une closure des millions de
-  // fois dominait le coût du chanfrein plein-cadre — 520-610 ms de boot).
+  // Le masque APLATI d'abord (revue, MESURÉ : appeler une closure des millions de
+  // fois dominait le coût du chanfrein plein-cadre — 520-610 ms de boot). Le milieu passe
+  // par une TABLE indexée par id de terrain, pas par un prédicat : une lecture de tableau
+  // par tuile, exactement comme avant, quel que soit le nombre d'ids.
+  const dedans = new Uint8Array(256)
+  for (const t of milieu) dedans[t] = 1
   const eauMask = new Uint8Array(N)
-  for (let i = 0; i < N; i++) {
-    const t = terrain[i]
-    if (t === SHALLOW || t === DEEP) eauMask[i] = 1
-  }
+  for (let i = 0; i < N; i++) eauMask[i] = dedans[terrain[i] ?? 0]!
   // LA BANDE, PAS LA CARTE (2e passe de la revue : même en tableau plat, deux chanfreins
   // pleins-cadres coûtaient ~250-380 ms sur 3,75 M de tuiles). Le champ ne sert que sous
   // ±8 tuiles du rivage : une expansion de DIAL (poids 3/4, seaux 0..CAP) depuis les
@@ -154,8 +178,11 @@ export function buildRiveField(terrain: ArrayLike<number>, width: number, height
   // L'encodage en UNE passe, écritures 32 bits, chemins RAPIDES pour le loin (l'écrasante
   // majorité des cellules est à d = CAP : deux constantes préchiffrées, zéro arithmétique).
   const sd = new Float32Array(N)
-  const data = new Uint8ClampedArray(N * 4)
+  // Sans texture (le champ de vase), on n'alloue pas 4 octets par tuile pour rien — 15 Mo
+  // sur une carte de production. Un tampon d'UNE cellule reçoit alors les écritures u32.
+  const data = new Uint8ClampedArray(avecTexture ? N * 4 : 4)
   const u32 = new Uint32Array(data.buffer) // little-endian : R au poids faible, A au fort
+  const iu = (i: number): number => (avecTexture ? i : 0)
   // G = B = 128 PARTOUT par défaut : ces canaux portent le COURANT (flow-field.ts,
   // encodé 128 + dir×112 par water-layer) et 128 pile décode « pas de courant » —
   // un zéro y ferait dériver TOUTE l'eau en diagonale (revue adversariale, bloquant).
@@ -168,10 +195,10 @@ export function buildRiveField(terrain: ArrayLike<number>, width: number, height
     if (di >= CAP) {
       if (eauMask[i] === 1) {
         sd[i] = RIVE_MAX_TILES
-        u32[i] = U_EAU_LOIN
+        u32[iu(i)] = U_EAU_LOIN
       } else {
         sd[i] = -RIVE_MAX_TILES
-        u32[i] = U_TERRE_LOIN
+        u32[iu(i)] = U_TERRE_LOIN
       }
       continue
     }
@@ -179,7 +206,7 @@ export function buildRiveField(terrain: ArrayLike<number>, width: number, height
     const brut = eauMask[i] === 1 ? di / 3 - 0.5 : -(di / 3 - 0.5)
     const borne = Math.max(-RIVE_MAX_TILES, Math.min(RIVE_MAX_TILES, brut))
     sd[i] = borne
-    u32[i] = 0xff808000 | Math.round(128 + borne * 16)
+    u32[iu(i)] = 0xff808000 | Math.round(128 + borne * 16)
   }
   return { sd, data, width, height }
 }

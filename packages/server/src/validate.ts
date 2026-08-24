@@ -246,6 +246,9 @@ const FORMES: { [T in ActionJouable]: FormeDe<Extract<PlayerAction, { type: T }>
   harvest: { nodeId: req(ID), aimX: opt(VISEE), aimY: opt(VISEE), whole: opt({ g: 'booleen' }) },
   harvest_charge_start: { nodeId: req(ID), hold: opt({ g: 'booleen' }) },
   harvest_release: {},
+  // LE LANCER DE LIGNE (spec `peche.md` D9/E1) : une TUILE, pas un nœud — on pêche l'eau.
+  // Bornée comme toute coordonnée reçue du réseau : `TUILE` refuse le hors-carte.
+  cast_line: { tx: req(TUILE), ty: req(TUILE) },
   // LE DÉPEÇAGE (spec `depecage.md` G1/G4) : le maintien porte `hold`, comme la jauge.
   butcher_start: { corpseId: req(ID), hold: opt({ g: 'booleen' }) },
   butcher_stop: {},

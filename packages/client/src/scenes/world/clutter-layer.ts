@@ -8,6 +8,7 @@ import Phaser from 'phaser'
 import { poiClearings, type Structure, type WorldMap } from '@ashes/sim'
 import { clutterDepth, GROUND_PROP_DEPTH, TILE_PX } from '../../render/framing'
 import { clutterAt, PROP_ASPECT, type PropKind, type SampleTerrain } from '../../render/clutter'
+import { terrainCendre } from '@ashes/sim'
 import { contexteDesButtes, type ButteContexte } from '../../render/buttes'
 import { teinteTouffe } from '../../render/clutter-teinte'
 import { TERRAIN_COLORS } from '../../render/terrain-colors'
@@ -141,6 +142,12 @@ export class ClutterLayer {
    *  d'avoir reçu son premier snapshot. */
   jourDeLAnnee = 1
 
+  /** Posé par `WorldScene` : « cette tuile est-elle cendrée ? », la fonction de /sim, pas une
+   *  copie. Absente tant que la carte n'a pas de champ de cendre — rien ne se tait alors. */
+  tuileCendree: ((tx: number, ty: number) => boolean) | null = null
+  /** « Y a-t-il une fumerolle sur CETTE tuile ? » — la fonction de /sim, pas une copie. */
+  fumerolleIci: ((tx: number, ty: number) => boolean) | null = null
+
   update(camera: Phaser.Cameras.Scene2D.Camera, now: number): void {
     let used = 0
     let shadowsUsed = 0
@@ -161,7 +168,22 @@ export class ClutterLayer {
           if (this.cleared.has(idx)) continue // la clairière d'un lieu : rien n'y pousse
           if (this.barriers.has(idx)) continue // un mur/sol posé ici : la tuile est nette
           if (this.coulees.has(idx)) continue // la terre battue d'une coulée : le pas a tout usé
-          const terrain = this.map.terrain[idx] ?? -1
+          // ═══ LA CENDRE CHANGE LE DÉCOR, ELLE NE L'EFFACE PAS (spec `cendre.md` R11/R15) ═══
+          //
+          // Le sol n'est PAS muté (tout se dérive) : on convertit donc l'id ici, pour cette
+          // lecture seulement, et `clutterAt` fait le reste avec la table des cendres. Ce qui
+          // pousse s'en va — plus une touffe, plus un buisson —, ce qui a brûlé reste : chicots,
+          // fûts calcinés, poussière.
+          //
+          // ⚠ La première version TAISAIT tout : le sol devenait parfaitement lisse au milieu d'un
+          //   monde dense, ce qui se lit comme un bug d'affichage, pas comme une terre morte.
+          const brut = this.map.terrain[idx] ?? -1
+          const cendree = this.tuileCendree?.(tx, ty) === true
+          const terrain = cendree ? (terrainCendre(brut) ?? brut) : brut
+          // ⚠ LA FUMEROLLE N'EST PAS DU DÉCOR : c'est un NŒUD (on y récolte du sel), donc
+          //   `SnapshotView` la dessine. On se contente de TAIRE le décor de sa tuile — un chicot
+          //   planté dans le trou n'aurait aucun sens, et les deux sprites se superposaient.
+          if (cendree && this.fumerolleIci?.(tx, ty)) continue
           const props = clutterAt(tx, ty, terrain, this.seed, this.sample, this.map.profondeur?.[idx] ?? 0, this.buttes.get(idx))
           // LE GEL DE LA FLORE, relevé une fois par tuile (la couche du gel l'a déjà calculé).
           // `null` : la couche du gel n'a pas encore relevé cette tuile — on dessine tel quel, sans

@@ -4,9 +4,10 @@
  * Deux fermes ruinées ne sont plus le même prop : l'une raconte l'incendie, l'autre l'exode.
  * Le sort n'est PAS tiré — il est DÉRIVÉ de deux champs que la carte possède déjà :
  *
- *     brûlé    la Cendre est passée par là (le champ `map.cendre`, sous une part de l'avancée
- *              finale calibrée `cendreMax` : le sud de la vallée a déjà connu le feu — et c'est
- *              précisément la part qui REbrûlera en cours de saison, la cosmologie est une)
+ *     brûlé    la Cendre est passée par là. ⚠ **PLUS AUCUN LIEU NE NAÎT BRÛLÉ depuis le
+ *              2026-08-24** : ce verdict se dérivait de `map.cendre` sous une part de l'avancée
+ *              finale `cendreMax`, et les deux sont partis avec le front. Le sort reste un type à
+ *              trois valeurs — la nouvelle mécanique n'aura qu'à redonner une source au premier.
  *     pillé    une sente passe à portée : ceux qui ont fui ont fouillé ce qui bordait la route
  *     intact   loin du feu, loin des routes — personne n'est revenu, tout y est encore
  *
@@ -24,11 +25,8 @@ export type SortDuLieu = 'brule' | 'pille' | 'intact'
 
 /** Réglage du sort — calibré en REGARDANT une carte, comme les autres blocs du worldgen. */
 export const SORT_DES_LIEUX = {
-  /**
-   * La part de l'avancée finale du front sous laquelle un lieu est né BRÛLÉ. À 1, tout ce que
-   * la Cendre mangera en fin de saison est déjà marqué par le premier passage du feu — on
-   * garde une marge : le cœur seulement, pour que la frange garde des ruines à piller.
-   */
+  /** ⚠ SANS LECTEUR depuis le 2026-08-24 (voir l'en-tête) : c'était la part de l'avancée finale
+   *  du front sous laquelle un lieu naissait BRÛLÉ. Gardée pour la mécanique qui vient. */
   PART_BRULEE: 0.55,
   /** Le rayon (Chebyshev, en tuiles) où une sente fait d'une ruine une ruine PILLÉE. */
   RAYON_ROUTE: 28,
@@ -42,15 +40,13 @@ export const SORT_DES_LIEUX = {
 
 /**
  * LE SORT D'UN LIEU, dérivé de sa position. L'ordre des verdicts est une hiérarchie de
- * causes : le feu d'abord (il ne laisse rien à piller), la route ensuite, l'oubli enfin.
- * Une carte sans Cendrière (tests, bancs) ne brûle rien ; une carte sans sente ne pille rien.
+ * causes : le feu d'abord (il ne laisse rien à piller — plus de source aujourd'hui), la route
+ * ensuite, l'oubli enfin.
+ * Plus rien ne brûle (le front est retiré) ; une carte sans sente ne pille rien.
  */
 export function sortDuLieu(map: WorldMap, zx: number, zy: number, w: number, h: number): SortDuLieu {
   const cx = Math.floor(zx + w / 2)
   const cy = Math.floor(zy + h / 2)
-  const d = map.cendre?.[cy * map.width + cx]
-  const max = map.cendreMax ?? 0
-  if (d !== undefined && max > 0 && d < max * SORT_DES_LIEUX.PART_BRULEE) return 'brule'
 
   const r = SORT_DES_LIEUX.RAYON_ROUTE
   const x0 = Math.max(0, cx - r)

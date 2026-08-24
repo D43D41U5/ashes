@@ -223,7 +223,12 @@ function huntingGuide(): SkillGuide {
     id: 'hunting',
     label: SKILL_LABELS.hunting,
     gesture:
-      'Couteau en main, MAINTIENS le clic sur une bête morte : une part sort à chaque coupe, acquise aussitôt — lâche quand tu veux. Canne en main, clique sur un coin de pêche pour LANCER, relâche pour FERRER quand le flotteur plonge.',
+      // ⚠ LE GESTE DE PÊCHE EST À DEUX CLICS (spec `peche.md` R7, `input-bindings`) — ce texte
+      // disait « relâche pour FERRER », or `pointerup` n'a AUCUNE branche de pêche : qui suivait
+      // la consigne lançait, tenait, voyait le flotteur plonger, relâchait… et regardait le
+      // poisson filer, en boucle. Un texte d'aide qui décrit un geste que le code n'implémente
+      // pas est un défaut, pas une approximation.
+      'Couteau en main, MAINTIENS le clic sur une bête morte : une part sort à chaque coupe, acquise aussitôt — lâche quand tu veux. Canne en main, clique sur un coin de pêche pour LANCER, puis CLIQUE À NOUVEAU pour ferrer dès que le flotteur plonge.',
     paliers,
     passifs: [
       `Chaque niveau raccourcit la coupe de ${s10(BUTCHER.SPEED_PER_LEVEL)} (${s10(BUTCHER.CUT_TICKS)} au départ, plancher ${s10(BUTCHER.CUT_TICKS_MIN)} au niveau ${cutFloorLevel()})`,

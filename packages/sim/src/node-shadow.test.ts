@@ -6,12 +6,16 @@ import type { NodeDelta } from './protocol'
 const noeud = (id: number, stock: number, tx = id, ty = 0): ResourceNode =>
   ({ id, type: 'berry_bush', tx, ty, stock, regrowAt: 0 }) as ResourceNode
 
+/** Ce qu'une PREMIÈRE VUE doit porter : de quoi FABRIQUER le nœud, pas seulement le corriger. */
+const premiereVue = (n: ResourceNode): NodeDelta =>
+  ({ id: n.id, stock: n.stock, tx: n.tx, ty: n.ty, regrowAt: n.regrowAt, neuf: n.type })
+
 describe('ombre des nœuds — le diff de stocks partagé par les deux hôtes', () => {
   it("n'émet que les stocks qui ont bougé, et avance l'ombre", () => {
     const nodes = [noeud(1, 10), noeud(2, 5)]
     const ombre = createNodeShadow(nodes)
-    // Ombre vierge : tout est nouveau pour le destinataire.
-    expect(collectNodeDeltas(nodes, ombre)).toEqual([{ id: 1, stock: 10 }, { id: 2, stock: 5 }])
+    // Ombre vierge : tout est INÉDIT, donc chacun part avec de quoi être fabriqué (cf. `neuf`).
+    expect(collectNodeDeltas(nodes, ombre)).toEqual([premiereVue(nodes[0]!), premiereVue(nodes[1]!)])
     // Rien n'a bougé : aucun delta.
     expect(collectNodeDeltas(nodes, ombre)).toEqual([])
     nodes[0]!.stock = 8
@@ -43,7 +47,7 @@ describe('ombre des nœuds — le diff de stocks partagé par les deux hôtes', 
     // Le piège du sentinelle : si « jamais vu » valait 0, un nœud né vide serait muet.
     const nodes = [noeud(1, 0, 4, 4)]
     const ombre = createNodeShadow(nodes)
-    expect(collectNodeDeltas(nodes, ombre)).toEqual([{ id: 1, stock: 0, tx: 4, ty: 4, regrowAt: 0 }])
+    expect(collectNodeDeltas(nodes, ombre)).toEqual([premiereVue(nodes[0]!)])
     expect(collectNodeDeltas(nodes, ombre)).toEqual([])
   })
 
@@ -63,12 +67,18 @@ describe('ombre des nœuds — le diff de stocks partagé par les deux hôtes', 
     expect(ombre.stocks.length).toBe(avant) // l'empreinte est FIXE
   })
 
-  it('voit un nœud SEMÉ en cours de partie, et grandit pour lui', () => {
+  it('voit un nœud SEMÉ en cours de partie, et lui donne DE QUOI NAÎTRE', () => {
+    // ⚠ LE DÉFAUT QUE CE TEST COUVRAIT AUTREFOIS. Il exigeait `{ id, stock }` — un delta qui
+    //   CORRIGE un nœud que le client possède déjà. Or le client ne reçoit la liste complète
+    //   qu'au `ready` : un nœud né après n'existe chez lui NULLE PART, et un delta de stock seul
+    //   ne peut pas le faire naître. Le filon de la Brume portait ce défaut depuis son premier
+    //   jour, invisible, et la fumerolle allait le porter à son tour (`nFum: 0` au navigateur).
+    //   Une première vue transporte donc position, repousse ET type.
     const nodes = [noeud(1, 5)]
     const ombre = createNodeShadow(nodes)
     seedNodeShadow(ombre, nodes)
     nodes.push(noeud(9_000, 7))
-    expect(collectNodeDeltas(nodes, ombre)).toEqual([{ id: 9_000, stock: 7 }])
+    expect(collectNodeDeltas(nodes, ombre)).toEqual([premiereVue(nodes[1]!)])
     expect(ombre.stocks.length).toBeGreaterThan(9_000)
     expect(collectNodeDeltas(nodes, ombre)).toEqual([]) // et il est connu ensuite
   })
@@ -82,24 +92,30 @@ describe('ombre des nœuds — le diff de stocks partagé par les deux hôtes', 
 })
 
 /**
- * LE TEST DIFFÉRENTIEL — le seul qui prouve qu'on n'a rien changé au COMPORTEMENT en
- * changeant la structure de données. On rejoue l'ANCIENNE implémentation (la `Map`, telle
- * qu'elle était écrite dans les deux hôtes) à côté de la nouvelle, sur le même monde et
- * les mêmes ticks, et on exige le même flux de deltas, tick par tick.
+ * LE TEST DIFFÉRENTIEL — il prouve qu'on n'a rien changé au COMPORTEMENT en changeant la
+ * structure de données. On rejoue l'ancienne implémentation à côté de la nouvelle, sur le même
+ * monde et les mêmes ticks, et on exige le même flux de deltas, tick par tick.
+ *
+ * ⚠ LA RÉFÉRENCE A BOUGÉ UNE FOIS, LE 2026-08-24, et il faut le dire au lieu de le subir : la
+ *   `Map` des deux hôtes émettait `{ id, stock }` sur une PREMIÈRE VUE, donc un nœud né en cours
+ *   de partie n'arrivait jamais. La référence ci-dessous porte la correction ; l'écart lui-même
+ *   est affirmé à part, juste au-dessus, pour qu'il reste un CHOIX lisible et pas une dérive.
  */
 describe('ombre des nœuds — équivalence stricte avec l\'implémentation `Map` remplacée', () => {
-  /** L'ancienne, mot pour mot (server/tick-driver.ts et client/worker/sim-worker.ts). */
+  /** La `Map` des deux hôtes, avec la règle de première vue (cf. le bandeau ci-dessus). */
   function ancienne(nodes: readonly ResourceNode[], shadow: Map<number, number>): NodeDelta[] {
     const deltas: NodeDelta[] = []
     for (const n of nodes) {
-      if (shadow.get(n.id) !== n.stock) {
-        shadow.set(n.id, n.stock)
-        deltas.push(
-          n.stock === 0
+      const inedit = !shadow.has(n.id)
+      if (!inedit && shadow.get(n.id) === n.stock) continue
+      shadow.set(n.id, n.stock)
+      deltas.push(
+        inedit
+          ? { id: n.id, stock: n.stock, tx: n.tx, ty: n.ty, regrowAt: n.regrowAt, neuf: n.type }
+          : n.stock === 0
             ? { id: n.id, stock: 0, tx: n.tx, ty: n.ty, regrowAt: n.regrowAt }
             : { id: n.id, stock: n.stock },
-        )
-      }
+      )
     }
     return deltas
   }

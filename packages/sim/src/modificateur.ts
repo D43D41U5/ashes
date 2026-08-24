@@ -166,6 +166,16 @@ export interface EffetsModificateur {
   faunePlafond?: number
   /** Multiplie la durée de fonte des neiges (> 1 = la neige tient). */
   fonte?: number
+  /**
+   * ═══ LES DEUX CADRANS DE LA CENDRE (spec `cendre.md` R17) ═══
+   *
+   * `cendre` multiplie ce que vaut UN JOUR pour un foyer : à 1,6 il vieillit d'un jour et demi, à
+   * 0,4 il traîne. `cendreGel` multiplie la durée du gel quand on brûle une fosse
+   * (`MORTS.BRULE_DUREE_JOURS`). Deux cadrans, pas un de plus — la doctrine de ce fichier est
+   * qu'un modificateur SURCHARGE, il n'invente pas.
+   */
+  cendre?: number
+  cendreGel?: number
   /** Force la fourchette de longueur d'épisode météo (S9). */
   episode?: readonly [number, number]
   /** Emprunte la mixture météo d'une AUTRE phase (l'Été pourri prend celle des Pluies). */
@@ -185,20 +195,28 @@ const EFFETS: Readonly<Record<ModificateurId, EffetsModificateur>> = {
   crue: { crue: true },
   /** Repousse doublée, l'année où l'on refait ses stocks. */
   grande_levee: { repousse: 0.5 },
-  /** Ce qui a dormi sous la neige se lève : la menace ne redescend pas au printemps. */
-  reveil: { plancherMenace: 0.45 },
+  /** Ce qui a dormi sous la neige se lève : la menace ne redescend pas au printemps — ET la
+   *  cendre sort des fosses avec eux. La phrase parlait déjà des morts (spec `cendre.md` R18). */
+  reveil: { plancherMenace: 0.45, cendre: 1.6 },
   // ── l'Ardeur ────────────────────────────────────────────────────────────────────────
   /** Quatre degrés de plus, et la terre sèche deux fois plus vite. */
   canicule: { socleDegres: 4, aridite: 2 },
-  /** Le ciel cogne et la sécheresse ne casse jamais : aucun front mouillé de la saison. */
-  orages_secs: { jamaisMouille: true, foudre: 3 },
+  /** Le ciel cogne et la sécheresse ne casse jamais : aucun front mouillé de la saison. Le feu
+   *  prend partout — brûler une fosse la tient TRENTE jours : la saison des expéditions
+   *  d'assainissement (spec `cendre.md` R18). */
+  orages_secs: { jamaisMouille: true, foudre: 3, cendreGel: 2 },
   /** Il pleut, il ne fait pas chaud : la mixture des Pluies, en plein été. */
   ete_pourri: { cielDeLaPhase: 3, socleDegres: -4 },
   /** Plus rien ne se garde frais : on fume, on sale, on cuit — ou on jette. */
   nuee: { peremption: 0.5 },
   // ── les Pluies ──────────────────────────────────────────────────────────────────────
-  /** Quatre à six jours d'affilée : la saison se passe à l'abri. */
-  deluge: { episode: [4, 6] },
+  /**
+   * Quatre à six jours d'affilée : la saison se passe à l'abri. **ET ELLE SE CONTREDIT, c'est le
+   * point** (spec `cendre.md` R18) : la pluie noie la cendre — elle n'avance presque plus — mais
+   * elle empêche aussi d'allumer un feu, donc tenir un foyer devient deux fois moins efficace.
+   * Un répit qu'on SUBIT au lieu d'en profiter.
+   */
+  deluge: { episode: [4, 6], cendre: 0.4, cendreGel: 0.5 },
   /** Quinze jours de douceur en plus — la fenêtre de semis s'allonge, la gelée recule. */
   ete_indien: { socleJours: -15 },
   /** Les réserves tournent et la cueillette rend moins. */
@@ -206,8 +224,9 @@ const EFFETS: Readonly<Record<ModificateurId, EffetsModificateur>> = {
   /** Les cerfs s'appellent : repérables de loin, et les mâles CHARGENT au lieu de fuir. */
   brame: { brame: 2 },
   // ── le Grand Froid ──────────────────────────────────────────────────────────────────
-  /** Quatre degrés de moins : les lacs prennent tôt, la carte change de forme. */
-  hiver_noir: { socleDegres: -4 },
+  /** Quatre degrés de moins : les lacs prennent tôt, la carte change de forme. Et le froid lève
+   *  les morts (`CENDREUX.TORPEUR`) : le grand froid les lève plus fort (spec `cendre.md` R18). */
+  hiver_noir: { socleDegres: -4, cendre: 1.4 },
   /** La neige ne fond plus : on marche au ralenti, la chasse devient du pistage. */
   grandes_neiges: { fonte: 3 },
   /** Le gibier a manqué : c'est l'hiver qui punit l'automne. */

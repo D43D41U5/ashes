@@ -32,6 +32,7 @@ export { POI,
   FOOD_VALUES,
   HUNT,
   LOOT_VALUES,
+  VENT,
   MONSTER_DEFS,
   MORTS,
   NIGHT_HUNT,
@@ -78,6 +79,9 @@ export { POI,
   TERRAIN_WILLOW,
   TERRAIN_WET_MEADOW,
   TERRAIN_JUNIPER_HEATH,
+  TERRAIN_CENDRE_PRE,
+  TERRAIN_CENDRE_BOIS,
+  TERRAIN_CENDRE_MIN,
   TICK_DT_S,
   VILLAGE_NAMES,
   WEAPON_DAMAGE,
@@ -95,6 +99,11 @@ export type {
   ToolTier,
   ToolFamily,
   FishSpecies,
+  FishId,
+  ClasseDePrise,
+  CreneauDePeche,
+  NomDeNature,
+  Trouvaille,
   MonsterDef,
   MonsterType,
   NodeDef,
@@ -137,9 +146,14 @@ export {
   FOUDRE_CRENEAU_TICKS, foudreImpactAt, foudreTelegrapheAt, frontMeteoPos, meteoCold, meteoFeuConso,
   meteoIntensity, meteoIntensityAt, meteoCycleEligible, meteoMouille, meteoQuiet, meteoSpeedFactor,
   meteoSpeedFactorAt, meteoTypeBrut, meteoTypeDuCycle, meteoVisionFactor, frontDuCycle, meteoColdAt,
-  largeurDe, neigeA, froidEolien, coldMaximal, meteoAspectAt, aspectSousFront, aspectAuPoint, frontEstBlizzard, meteoColdSousFront,
+  largeurDe, neigeA, partDeBlizzard, coldMaximal, meteoAspectAt, aspectSousFront, aspectAuPoint, frontEstBlizzard, meteoColdSousFront,
 } from './meteo'
 export type { MeteoFront, MeteoType, MeteoAspect, BandeMeteo, FoudreImpact } from './meteo'
+
+// LE VENT (spec vent.md) — le front EST le vent. Le client LIT le cap et la force, et
+// recalcule la force LOCALE des mêmes fonctions pures que la sim (écrivain unique).
+export { BEARINGS, capAt, capDuFront, frontQuiSouffle, indexDuFront, souffleAt, ventForceAt, ventGain } from './vent'
+export type { EtatVent } from './vent'
 
 // LE GEL (spec gel.md) — le monde change d'état avec sa température, sans qu'une tuile ne
 // bouge. Tout est DÉRIVÉ : le client lira EXACTEMENT ces fonctions pour peindre la glace
@@ -171,7 +185,9 @@ export { EAU } from './balance'
 export { METEO } from './balance'
 // LE FEU-STATION (spec feu-station) : l'état dérivable du snapshot côté client, et la donnée des slots.
 export { fireState, fireStateAt, fireActive, fireWarmthFactor, advanceFire, fuelTicksRemaining, fuelBurnProgress } from './fire'
-export { fireZoneInventory, fireZoneAccepts, fireSlotLocked } from './fire'
+export { fireZoneInventory, fireZoneAccepts, fireSlotLocked, recettesDuPoste } from './fire'
+export { estTerrainDeMarais, estTerrainDEau, deriverNatureDeLEau, NATURE_MARAIS, NATURE_RIEN } from './peche-nature'
+export { eauPechable, natureDeLEau, creneauAt, tableDePrises, poidsDuRien, especeRetenue, conditionsAt } from './peche-table'
 export type { FireState, FireZone } from './fire'
 export { FIRE, COOK_SLOT } from './balance'
 export { resolveMove, moveAvatar, moveAvatarStepped, overlapsBlocking, isBlockedAt } from './collision'
@@ -196,7 +212,7 @@ export { chebyshev } from './geometry'
 // est une arme (décision d'Alexis 2026-08-20), il doit savoir si l'objet en main est l'outil de
 // la famille du nœud visé. Il ne RECOPIE pas la règle — il appelle celle-ci, qui reste « LA règle,
 // en un seul endroit » dont `TOOL_YIELD` et `TOOL_RANK` dérivent tous les deux.
-export { applyEconomyAction, advanceEconomy, advanceCraft, advanceSpoilage, nodeAt, skillLevel, recipeState, fellGreenWidth, isCleanFell, flankOfAim, mineGoodFlank, mineTolerance, isCleanMine, forageRichness, forageBounty, maxTierByLevel, effectiveTier, toolTier, estUnCoinDePeche, especesDuCoin, fishingWindowTicks, coinPris, butcherRejection, cutTicks, partsEligibles } from './economy'
+export { applyEconomyAction, advanceEconomy, advanceCraft, advanceSpoilage, nodeAt, skillLevel, recipeState, fellGreenWidth, isCleanFell, flankOfAim, mineGoodFlank, mineTolerance, isCleanMine, forageRichness, forageBounty, maxTierByLevel, effectiveTier, toolTier, estUnCoinDePeche, porteeDuNoeud, fishingWindowTicks, coinPris, coinIndisponible, eauIndisponible, castRejection, portionsDe, butcherRejection, cutTicks, partsEligibles } from './economy'
 export type { ResourceNode, EconomyAction, CraftOrder, RecipeState } from './economy'
 export { treeJitter } from './economy' // Tick-critique : collision, rendu, prédiction chaque frame
 // LE DÉFRICHEMENT (`defriche.ts`) : le client applique le MÊME prédicat que la sim — c'est
@@ -335,8 +351,23 @@ export {
   type GrapheZones, type MondeGen, type Seuil, type Tier, type Zone as ZoneDef,
 } from './zonegraph'
 export { generateZonedTerrain, RELIEF, type CarteZonee } from './zonegen'
-// LE FRONT DE CENDRE — la saison est une vallée qu'on perd (spec `worldgen.md` §7).
-export { avanceeDuFront, calibreLeFront, CENDRE, estCendre, partSousLaCendre } from './cendre'
+// LA CENDRE (spec `cendre.md`) — elle sourd des fosses et elle COULE. Tout est DÉRIVÉ : le client
+// repeint le sol cendré en relisant EXACTEMENT ces fonctions (écrivain unique, patron du gel et du
+// niveau d'eau), sans qu'une seule tuile ne transite.
+export {
+  CENDRE, agonise, ancienneteDeCendre, avanceeDeCendre, avanceesDepuisAges, avancerLaCendre,
+  calculeChampDeCendre, cendrePeutPrendre, coutDe, coutDentree, estCendre, estSolCendre,
+  foyerDe, foyersDeLaCarte,
+  auCoeurDeLaCendre, grainDeCendre, jourDuReveilDeLaCendre, noeudTombeParLaCendre,
+  profondeurDeCendre, terrainCendre,
+  tomberLesMortsDeLaCendre, tuileCendree,
+} from './cendre'
+// LES FUMEROLLES (spec `cendre.md`) — dérivées comme la cendre elle-même : le client les
+// retrouve en appelant ces fonctions, aucune position ne transite.
+export {
+  FUMEROLLE, froidDeFumerolle, fumerolleIci, fumerollesAutour, idDeFumerolle,
+  ouvrirLesFumerolles, toutesLesFumerolles,
+} from './fumerolle'
 export { zoneSlugAt, zoneIdAt } from './map'
 export {
   clairiereForet, CONTENU, CONTENUS, emplacementsDeVillage, placeZoneNodes, pointsDeSpawn, tailleDeBloc, type DangersDePlacement, type Emplacement,

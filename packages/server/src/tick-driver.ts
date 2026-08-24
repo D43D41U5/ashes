@@ -123,6 +123,7 @@ export function buildSnapshotBase(sim: SimState, nodeDeltas: NodeDelta[]): Omit<
     villages: sim.villages,
     functions: sim.functions,
     nodeDeltas,
+    cendreAge: sim.cendreAge,
     npcs: sim.npcs,
     monsters: sim.monsters,
     corpses: sim.corpses,
@@ -130,6 +131,7 @@ export function buildSnapshotBase(sim: SimState, nodeDeltas: NodeDelta[]): Omit<
     refugeeGroups: sim.refugeeGroups,
     blood: sim.blood,
     wind: sim.wind,
+    windForce: sim.windForce,
     groundItems: sim.groundItems,
     // LE FRONT MÉTÉO (spec meteo.md) : le record d'élection, cinq champs — le client en
     // recalcule la bande, le gradient et jusqu'aux éclairs. Rien d'autre ne transite.

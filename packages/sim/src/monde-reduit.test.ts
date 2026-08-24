@@ -21,7 +21,7 @@ import { nidsAMonstre } from './poi'
 import { BANC_JOUEURS, construireMondeDuBanc } from './scenario'
 import { emplacementsDeVillage, placeZoneNodes, pointsDeSpawn } from './zone-content'
 import { generateZonedTerrain } from './zonegen'
-import { deriveGrapheZones, distAuRect, MONDE, MONDE_JOUE, tailleCarte } from './zonegraph'
+import { deriveGrapheZones, MONDE, MONDE_JOUE, tailleCarte } from './zonegraph'
 
 /** Les graines de production des autres gardes — le monde qu'on jouera vraiment. */
 const SEEDS = [2026, 7]
@@ -29,10 +29,10 @@ const SEEDS = [2026, 7]
 const reduits = SEEDS.map((s) => ({ s, c: generateZonedTerrain(s, MONDE.JOUEURS_CIBLE, 'racine') }))
 
 describe('A-MR1 — le monde réduit tient : la boucle de saison a tous ses organes', () => {
-  it('deux zones exactement — les Prés Bas et la Cendrière, et la carte est COUPÉE au nord', () => {
+  it('UNE zone exactement — les Prés Bas seuls (2026-08-24), et la carte est COUPÉE au nord', () => {
     for (const { s, c } of reduits) {
       const slugs = c.graphe.zones.map((z) => z.def.slug).sort()
-      expect(slugs, `seed ${s}`).toEqual(['cendriere', 'pres_bas'])
+      expect(slugs, `seed ${s}`).toEqual(['pres_bas'])
       expect(c.graphe.monde, `seed ${s}`).toBe('racine')
       expect(c.graphe.zones[c.graphe.racine]!.def.slug, `seed ${s}`).toBe('pres_bas')
       // La carte rétrécit VRAIMENT (sinon on paie 78 % de roche morte en mémoire et en sauvegarde).
@@ -42,55 +42,48 @@ describe('A-MR1 — le monde réduit tient : la boucle de saison a tous ses orga
     }
   })
 
-  it('deux seuils sur l\'unique frontière, dont UN de secours — la règle des impasses joue', () => {
+  // ⚠ CONSTAT, PAS PROMESSE (2026-08-24) : à une seule zone il n'y a plus de frontière, donc plus
+  //   AUCUN seuil — et sans seuil, plus de sente ni de route entre zones. Ce que ça prive (convoi,
+  //   réfugié, poste d'Arche) est écrit dans `docs/decisions.md` et attend la nouvelle mécanique.
+  //   La garde reste ARMÉE pour que le jour où une seconde zone revient, elle le dise.
+  it("aucun seuil — le monde joué n'a plus de frontière", () => {
     for (const { s, c } of reduits) {
-      const seuils = c.map.seuils ?? []
-      expect(seuils.length, `seed ${s}`).toBe(2)
-      expect(seuils.filter((x) => x.secours).length, `seed ${s}`).toBe(1)
+      expect((c.map.seuils ?? []).length, `seed ${s}`).toBe(0)
     }
   })
 
-  it('des sentes et AU MOINS deux gués : sans route, ni convoi, ni réfugié, ni poste d\'Arche', () => {
+  // ⚠ CE QUI EST TOMBÉ AVEC LA CENDRIÈRE (2026-08-24), et il faut le regarder en face : les
+  //   sentes se tracent ENTRE LES SEUILS (`zonegen-sentes`, `for (const s of g.seuils)`). À une
+  //   seule zone il n'y a plus de seuil, donc **plus une seule tuile de route sur la carte**.
+  //   Conséquences en chaîne, toutes constatées ici : plus de convoi, de réfugié ni de poste
+  //   d'Arche ; `sortDuLieu` ne rend plus jamais 'pille' (la route en est la cause) — tout lieu
+  //   bâti naît INTACT ; et la règle de lecture « loin des routes = intact = riche » n'a plus
+  //   d'axe. La garde est RETOURNÉE pour dire l'état réel — le jour où les sentes reviennent
+  //   (dans la zone, ou avec une seconde région), elle échouera et il faudra la réécrire.
+  it("aucune route, et c'est la conséquence du T0 seul — à rouvrir", () => {
     for (const { s, c } of reduits) {
       let routes = 0
       for (const t of c.map.terrain) if (t === TERRAIN_ROAD) routes++
-      expect(routes, `seed ${s} : aucune tuile de route — les sentes sont mortes`).toBeGreaterThan(0)
+      expect(routes, `seed ${s}`).toBe(0)
+      // Les gués, eux, survivent : ils naissent de la RIVIÈRE, pas des sentes.
       const gues = c.map.zones.filter((z) => z.name === 'le Gué')
       expect(gues.length, `seed ${s}`).toBeGreaterThanOrEqual(2)
     }
   })
 
-  it('le front de cendre est ARMÉ — la Cendrière reste le moteur de la saison', () => {
+  it("le monde joué n'a NI Cendrière NI champ de cendre — le front est retiré (2026-08-24)", () => {
     for (const { s, c } of reduits) {
-      expect(c.map.cendreMax, `seed ${s}`).toBeDefined()
-      expect(c.map.cendreMax!, `seed ${s}`).toBeGreaterThan(0)
+      expect(c.graphe.zones.some((z) => z.def.slug === 'cendriere'), `seed ${s}`).toBe(false)
+      expect(c.map.cendre, `seed ${s}`).toBeUndefined()
+      // Une seule région, et c'est le T0 : elle a pris toute la place du sud.
+      expect(c.graphe.zones.length, `seed ${s}`).toBe(1)
+      expect(c.graphe.zones[0]!.def.slug, `seed ${s}`).toBe('pres_bas')
     }
   })
 
-  it('A-MR5 — le front est une marée SUD→NORD : rien ne brûle loin au nord de la Cendrière', () => {
-    // LE BUG QUE CETTE GARDE ÉPINGLE (trouvé par la dérivation des carrières, 2026-08-18) : à
-    // deux zones, « la région d'en face » est TOUJOURS la Cendrière — le champ de cendre valait
-    // la distance à SON PROPRE bord sur tout le pourtour, et 37 % de la racine « brûlait » à
-    // plus de 200 tuiles au NORD du feu. Le front avançait depuis toutes les enceintes.
-    // Depuis : la distance au front EST la distance au rect de la Cendrière (± le grain du bloc).
-    for (const { s, c } of reduits) {
-      const { width, height, cendre, cendreMax, terrain } = c.map
-      const rc = c.graphe.zones.find((z) => z.def.slug === 'cendriere')!.rect!
-      let faux = 0
-      for (let y = 0; y < height; y++) {
-        for (let x = 0; x < width; x++) {
-          const i = y * width + x
-          if (c.zone[i] !== c.graphe.racine) continue
-          // Les tuiles MARCHABLES seulement : le vide (la roche) se RATTACHE à la racine pour
-          // l'ambiance, et son champ vaut |m|+1 par conception — « le vide ne brûle pas ».
-          // C'est là où le jeu se joue que la marée doit être vraie.
-          if (!TERRAINS[terrain[i]!]?.walkable) continue
-          if (cendre![i]! <= cendreMax! && distAuRect(x, y, rc) > cendreMax! + 32) faux++
-        }
-      }
-      expect(faux, `seed ${s} : des tuiles brûlent HORS DE PORTÉE du feu — le front n'est pas une marée sud→nord`).toBe(0)
-    }
-  })
+  // (A-MR5 — « le front est une marée SUD→NORD » : retiré le 2026-08-24 avec le front et la
+  //  Cendrière. Elle épinglait le champ mesuré au VOISIN plutôt qu'au rect ; il n'y a plus ni
+  //  champ ni voisin dans le monde joué.)
 
   it('villages et spawns existent, et TOUS dans la racine — le jeu a où naître', () => {
     for (const { s, c } of reduits) {
@@ -112,32 +105,36 @@ describe('A-MR1 — le monde réduit tient : la boucle de saison a tous ses orga
     for (let k = 1; k <= 8; k++) {
       const seed = k * 7919
       const c = generateZonedTerrain(seed, 8, 'racine')
-      expect(c.graphe.zones.length, `seed ${seed}`).toBe(2)
-      expect((c.map.seuils ?? []).length, `seed ${seed}`).toBe(2)
-      let routes = 0
-      for (const t of c.map.terrain) if (t === TERRAIN_ROAD) routes++
-      expect(routes, `seed ${seed}`).toBeGreaterThan(0)
+      expect(c.graphe.zones.length, `seed ${seed}`).toBe(1)
+      expect((c.map.seuils ?? []).length, `seed ${seed}`).toBe(0)
+      // La carte SORT, à toutes les échelles : c'est ce que ce balayage garde. On vérifie donc
+      // qu'elle a du sol marchable, et non plus qu'elle a des routes (il n'y en a plus).
+      let marchables = 0
+      for (const t of c.map.terrain) if (TERRAINS[t]?.walkable) marchables++
+      expect(marchables, `seed ${seed}`).toBeGreaterThan(0)
     }
   }, 120_000)
 })
 
-describe('A-MR2 — le T0 réduit est LE MÊME T0 : la géométrie absolue survit', () => {
-  it('les rects racine et Cendrière ont les mêmes dimensions que dans la vallée complète', () => {
+describe("A-MR2 — le T0 réduit est le T0 complet ÉTIRÉ sur le sud (2026-08-24)", () => {
+  it('même largeur et même x que dans la vallée complète, mais étiré jusqu\'au bord sud', () => {
     for (const s of SEEDS) {
       const complet = deriveGrapheZones(s)
       const reduit = deriveGrapheZones(s, MONDE.JOUEURS_CIBLE, 'racine')
-      for (const slug of ['pres_bas', 'cendriere']) {
-        const a = complet.zones.find((z) => z.def.slug === slug)!.rect!
-        const b = reduit.zones.find((z) => z.def.slug === slug)!.rect!
-        expect({ w: b.w, h: b.h }, `seed ${s}, ${slug}`).toEqual({ w: a.w, h: a.h })
-        expect(b.x, `seed ${s}, ${slug} : x intact (on ne translate qu'en y)`).toBe(a.x)
-      }
-      // Et l'EMBOÎTEMENT survit : l'écart vertical racine→Cendrière est le même (translation pure).
-      const dyC = complet.zones.find((z) => z.def.slug === 'cendriere')!.rect!.y
-        - complet.zones.find((z) => z.def.slug === 'pres_bas')!.rect!.y
-      const dyR = reduit.zones.find((z) => z.def.slug === 'cendriere')!.rect!.y
-        - reduit.zones.find((z) => z.def.slug === 'pres_bas')!.rect!.y
-      expect(dyR, `seed ${s}`).toBe(dyC)
+      const a = complet.zones.find((z) => z.def.slug === 'pres_bas')!.rect!
+      const b = reduit.zones.find((z) => z.def.slug === 'pres_bas')!.rect!
+      // La LARGEUR ne bouge pas : la calibration horizontale (espacement des villages, semis,
+      // rivière) est celle de la vallée complète, au bit près.
+      expect(b.w, `seed ${s}`).toBe(a.w)
+      expect(b.x, `seed ${s} : x intact (on ne translate qu'en y)`).toBe(a.x)
+      // La HAUTEUR grandit : le T0 a pris la place de la Cendrière (y1 0,915 → 0,985).
+      expect(b.h, `seed ${s}`).toBeGreaterThan(a.h)
+      // …et il descend jusqu'au bas de la carte, à la marge de bloc près.
+      // Il descend jusqu'au bas de la carte, au jitter de rail près (±0,8 % de la hauteur).
+      const bas = reduit.height - (b.y + b.h)
+      expect(bas, `seed ${s} : le T0 touche le bord sud`).toBeLessThanOrEqual(MONDE.BLOC * 5)
+      // La Cendrière n'est plus du plan.
+      expect(reduit.zones.some((z) => z.def.slug === 'cendriere'), `seed ${s}`).toBe(false)
     }
   })
 })

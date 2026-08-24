@@ -1,222 +1,489 @@
 /**
- * LE FRONT DE CENDRE — la saison n'est plus un compteur qui durcit, c'est une VALLÉE QU'ON PERD.
+ * ═══ LA CENDRE — elle sourd des fosses, et elle COULE (spec `cendre.md`) ═══
  *
- * *Décision d'Alexis, 2026-07-14 : « on a une zone T2 à côté de la zone de départ — est-ce qu'on
- * n'en ferait pas notre zone de propagation de la difficulté ? Comme on pousse les joueurs à
- * migrer au fur et à mesure vers des zones plus haut niveau. »*
+ * *Décisions d'Alexis du 2026-08-24, prises une à une.* Remplace le FRONT retiré le même jour : il
+ * n'y a plus de ligne qui traverse la vallée du sud au nord, il y a **un foyer par charnier**. La
+ * cendre en sort, très lentement, dans toutes les directions, en **cheminant à travers le terrain**
+ * — l'eau la détourne, la roche la freine — et la case atteinte prend la version cendrée de sa
+ * famille de sol.
  *
- * ═══ CE QUE ÇA REQUALIFIE ═══
+ * ═══ TOUT EST DÉRIVÉ, ET C'EST CE QUI LE REND BON MARCHÉ ═══
  *
- * La Cendrière était une zone T2 posée au pas de la porte pour le FRISSON (spec R13 : « de chez
- * toi, tu vois l'enfer »). Elle devient un **MOTEUR** : l'enfer que tu vois est celui qui viendra
- * te chercher. Un compte à rebours planté dans ton jardin.
+ *     map.cendreCout[i]     coût de CHEMINEMENT de la tuile à sa fosse — STATIQUE, posé au worldgen
+ *     map.cendreFoyer[i]    quelle fosse la revendique (son index)     — STATIQUE
+ *     avancee(jour, gel)    une fonction PURE du jour de saison        — R8/R9
+ *     une tuile est cendrée ⟺ cendreCout[i] ≤ avancee(...) · (1 + grain(i))
  *
- * Et les trois actes du GDD trouvent enfin un LIEU. Le troisième **s'appelle déjà « Cendre »** —
- * mais ce n'était qu'un multiplicateur de faim, un nombre qui monte. Désormais il a une
- * géographie. Personne ne dit au joueur de migrer : **le sol brûle derrière lui.**
+ * Zéro octet dans le `SimState` : les replays retrouvent l'état exact sans qu'on ait rien
+ * sérialisé, le client repeint en recalculant, et `carte-immuable` reste verte. C'est le meilleur
+ * du modèle de l'ancien front, et la seule chose qu'on lui garde.
  *
- * ═══ ZÉRO OCTET DANS L'ÉTAT ═══
+ * ═══ LA LOI : ELLE DIFFUSE, ELLE NE MARCHE PAS (R9) ═══
  *
- * On ne MUTE pas la carte. Et on ne stocke même pas le front : **il ne coûte RIEN au `SimState`.**
+ *     avancee(t) = min( R0 + A·√t ,  avancee(t−1) + PLAFOND_JOUR )
  *
- * On avait prévu d'y ranger un scalaire (l'avancée du front, en tuiles) — c'était déjà bon marché.
- * Mais un scalaire dérivable du tick est de **l'état REDONDANT**, et l'invariant du monde l'interdit
- * en toutes lettres : *« le tick est la seule horloge ; toute notion dérivée est une fonction pure
- * du numéro de tick »* (spec `monde.md` R1). L'état redondant finit toujours par diverger de sa
- * source. Le front est donc **calculé, jamais rangé**.
+ * Une RACINE, parce qu'un front qui diffuse avance en √t — et `Math.sqrt` est dans les opérations
+ * autorisées à /sim (l'invariant n°2 interdit `pow`, `exp` et `log`, pas `sqrt`). La décroissance
+ * n'est pas un ornement : sous une loi linéaire, la vallée était ENTIÈREMENT prise à l'an 5, l'an 1
+ * était muet (3,7 %) et tenir des foyers ne changeait plus rien passé l'an 3. La racine règle les
+ * trois d'un coup.
  *
- * Tout se dérive de deux choses statiques, posées à la génération :
- *
- *     map.cendre[i]   la distance de la tuile à la frontière de la Cendrière (négative dedans)
- *     map.cendreMax   l'avancée finale du front, CALIBRÉE pour cette carte
- *
- *     une tuile brûle  ⟺  map.cendre[i] < front(tick)
- *
- * Les replays retrouvent le front exactement sans qu'on l'ait sérialisé ; le client le recalcule
- * du tick, sans qu'on lui transmette une seule tuile.
- *
- * Pur et déterministe : `+ - * /` et `sqrt` (invariant n°2).
+ * Pur et déterministe : `+ - * /`, `min`, `sqrt`, `floor` (invariant n°2).
  */
-import { BALANCE } from './balance'
-import { emitEvent } from './events'
+import { fbm2 } from './noise'
+import {
+  BALANCE, TERRAINS,
+  TERRAIN_BOULDERS, TERRAIN_BURNT_FOREST, TERRAIN_CENDRE_BOIS, TERRAIN_CENDRE_MIN,
+  TERRAIN_CENDRE_PRE, TERRAIN_CLIFF, TERRAIN_ROCK, TERRAIN_SCREE,
+  TERRAIN_DEEP_WATER, TERRAIN_LARCH, TERRAIN_OLD_GROWTH, TERRAIN_FOREST, TERRAIN_PINE,
+  TERRAIN_SHALLOW_WATER, TERRAIN_VOID, TERRAIN_WILLOW,
+} from './balance'
 import type { WorldMap } from './map'
-import type { SimState } from './sim'
-import { jourDeSaison, seasonDayAtTick, YEAR_DAYS } from './time'
+import type { ResourceNode } from './economy'
 
+/**
+ * ═══ LE RÉGLAGE (spec `cendre.md`) ═══
+ *
+ * Il vit ICI et non dans `balance.ts` : c'est du réglage de GÉNÉRATION et de géographie — il se
+ * calibre en REGARDANT une carte, pas en jouant (règle de partage, en-tête de `balance.ts`). Les
+ * deux exceptions sont déjà ailleurs : la durée du gel d'un foyer est `MORTS.BRULE_DUREE_JOURS`
+ * (le verbe existait), et le caractère de la saison le module depuis `modificateur.ts`.
+ */
 export const CENDRE = {
   /**
-   * L'ACTE OÙ LE FRONT S'ÉBRANLE. Avant, la Cendrière reste chez elle — le joueur a le temps de
-   * bâtir, de s'attacher, et de croire que ça durera.
-   *
-   * Acte I : rien. Acte II : la cendre se met en marche. Acte III : elle dévore.
-   * (C'est le calendrier du GDD, à la lettre — son troisième acte s'appelle « Cendre ».)
+   * LA TACHE INITIALE, en unités de coût. Chaque fosse porte sa cendre DÈS LE PREMIER JOUR — c'est
+   * elle qui apprend la mécanique au joueur (*« que le joueur comprenne rapidement ce qu'il se
+   * passe »*). Taille fixée par comparaison, *« relativement petite, taille biome minéral »* :
+   * **229 tuiles mesurées**, contre 320 pour une tache minérale de la Racine.
    */
-  /** LA SAISON OÙ LA CENDRE S'ÉBRANLE — **4, le Grand Froid** (spec `saisons.md` S11 ;
-   *  était 2, quand l'acte II était le Grand Froid). `saison-sans-fin.md` R8 le disait déjà :
-   *  « il mord l'hiver, tient l'été » — la fenêtre suit donc la saison, pas un numéro. */
+  R0: 10,
+
+  /**
+   * LE JOUR OÙ ELLE S'ÉBRANLE — l'ouverture du premier Grand Froid, trente jours après l'ouverture
+   * du monde. Ce n'est pas une date arbitraire : le jeu fait DÉJÀ lever les morts avec le froid
+   * (`CENDREUX.TORPEUR`). La cendre qui sort des fosses quand l'hiver mord est LA MÊME LOI.
+   * Dérivé de la phase, jamais écrit en dur — il suivrait un changement de `ACT_DAYS`.
+   */
   ACTE_DEPART: 4,
 
   /**
-   * LA PART DES PRÉS BAS QUE LA CENDRE AURA MANGÉE au dernier jour — **la cible, pas la distance**.
+   * LE COEFFICIENT DE LA RACINE — **DÉRIVÉ D'UNE CONTRAINTE, PAS CHOISI.** Alexis : *« il faudrait
+   * que la cendre commence à appliquer une pression réelle à la fin du second hiver »*, traduit en
+   * mesurable : **la moitié des sites de village pris**, ce qui vaut un coût de ~178 sur la carte
+   * de production. La fin du 2ᵉ hiver est le jour 240, le réveil le jour 91 : `A·√149 = 178 − 10`.
    *
-   * *Décision d'Alexis : « elle en mange une grosse part ».* Les villages du sud doivent partir ;
-   * ceux du nord tiennent. **La vallée rétrécit sans disparaître** — il reste toujours un endroit
-   * où naître, et c'est ce qui rend le jeu jouable pour qui rejoint au jour 40.
-   *
-   * ET C'EST UNE PART, PAS UNE DISTANCE — la correction est là, et elle vaut d'être dite. On avait
-   * d'abord fixé l'avancée maximale du front à un nombre de tuiles (340). Mesuré : la même valeur
-   * couvrait **48 % des Prés Bas sur une seed et 81 % sur une autre** — la forme des zones change
-   * tout. C'était une LOTERIE, et sur un jeu où **une saison = une carte = une seed pendant des
-   * semaines**, une loterie qui décide si la vallée brûle à moitié ou aux quatre cinquièmes n'est
-   * pas acceptable.
-   *
-   * On vise donc la PART, et on calibre la distance **par carte**, à la génération (`calibreLeFront`
-   * — une dichotomie, quelques passes sur les tuiles de la racine). La promesse est alors tenue sur
-   * TOUTE seed, par construction.
+   * ⚠ IL A DÉJÀ ÉTÉ REDÉRIVÉ UNE FOIS (16,479 → 13,769), quand le champ est passé en 8-connexe et
+   * a reçu son grain : la même contrainte sur une échelle de coûts qui avait changé. **C'est la
+   * contrainte qui est stable, jamais le nombre** — si la géométrie du champ bouge, on refait la
+   * dichotomie, on ne garde pas le chiffre.
    */
-  PART_CIBLE: 0.6,
-
-  /** Bornes de la dichotomie de calibrage, en tuiles. Large : la forme des zones varie beaucoup. */
-  AVANCEE_MIN: 0,
-  AVANCEE_PLAFOND: 2000,
+  A: 13.769,
 
   /**
-   * LA COURBE. Le front n'avance pas linéairement : il ACCÉLÈRE.
-   *
-   * Une progression linéaire donne une menace qu'on s'habitue à voir bouger. Une progression qui
-   * accélère donne une menace qu'on croit maîtriser — jusqu'au jour où elle traverse le village
-   * en une nuit. L'exposant vaut 2 : la moitié de la saison n'a mangé qu'un quart du chemin.
-   *
-   * (`t × t`, pas `t ** 2` : l'opérateur de puissance est interdit dans /sim — il n'est pas exact
-   * entre moteurs JS, invariant n°2.)
+   * LE PLAFOND D'AVANCÉE PAR JOUR, et il est GRATUIT. Sans lui le réveil serait une BOUFFÉE : la
+   * tache initiale plus que doublée en un jour. Avec lui il s'étale sur trois semaines — et la
+   * droite `3·t` REJOINT exactement la courbe `A·√t` en `t = (A/3)² ≈ 21`. Passé ce point il ne
+   * mord plus jamais : il ne déplace pas la courbe, il lisse son entrée.
    */
-  COURBE: (t: number): number => t * t,
+  PLAFOND_JOUR: 3,
+
+  /** Le coût d'entrée d'une tuile MINÉRALE, en multiples d'une tuile vivante — *le sol nu n'a rien
+   *  à brûler*. La roche devient un frein qui se LIT sur la carte (R5). */
+  COUT_MINERAL: 3,
+
+  /** Les coûts du champ sont des ENTIERS mis à l'échelle : orthogonale 100, diagonale 141. Le
+   *  Dijkstra est donc à seaux (O(N)) et le champ reste JSON-sérialisable sans flottant. */
+  ORTHO: 100,
+  DIAG: 141,
 
   /**
-   * ═══ LE FRONT EN ESCALIER (saison-sans-fin T3 — décision d'Alexis 2026-08-21 : « le front mord
-   * l'hiver, tient l'été, ne recule jamais ») ═══
+   * LE GRAIN, ET IL EST RELATIF — PAS ABSOLU (R6, demande d'Alexis : *« plus organique en terme de
+   * progression »*). Une tuile brûle quand `coût ≤ avancée · (1 + WARP_PART · bruit)`.
    *
-   * L'an 1 garde sa morsure CALIBRÉE : `PART_CIBLE` de la vallée sur les jours 21-60, au bit
-   * près — les soixante jours que tout le monde a joués ne bougent pas. Puis le front TIENT
-   * (jours 61-84, et le printemps suivant). Chaque hiver SUIVANT mord une BOUCHÉE de plus,
-   * sur la même fenêtre de l'année (jours 21-60 du tour), avec la même courbe qui accélère —
-   * et ne rend jamais rien : ce qui a brûlé reste brûlé. « Tout est condamné » survit sans
-   * amender le GDD : la condamnation est une PENTE, pas une échéance. La seule chose qui
-   * l'arrête est la parade (chantier à part ; elle repoussera le SEUIL, jamais le climat).
-   *
-   * LA BOUCHÉE EST UNE PART DE LA COURSE DE L'AN 1 (`cendreMax`), jamais une distance écrite —
-   * la leçon du cortège, une troisième fois : une distance en dur ne veut rien dire d'une seed
-   * à l'autre, la course calibrée est la seule échelle de cette carte. À 0,25, l'hiver 2 avance
-   * d'un quart de ce que l'hiver 1 a mangé (MESURÉ sur la carte de production : 74 t → ~18 t) ;
-   * sans parade, la vallée n'est plus qu'un refuge vers le cinquième hiver — « on peut survivre
-   * à plusieurs hivers », à la lettre. C'est un bouton de calibrage : il se règle en regardant
-   * une carte (quelle part reste à l'hiver N ?), pas en jouant — d'où sa place ici.
+   * ⚠ UNE AMPLITUDE ABSOLUE NE MARCHE PAS, et ça ne se voit qu'en rendant la carte : à ±26 unités
+   * de coût sur une tache de rayon 10, **certains foyers n'avaient aucune cendre visible au jour
+   * 1** — le bruit avalait la tache. En part de l'avancée, la tache naît irrégulière mais ENTIÈRE,
+   * et la déformation CROÎT avec le front (±3 tuiles au départ, ±130 à l'an 5) : ce n'est pas
+   * seulement la forme qui est organique, c'est la PROGRESSION.
    */
-  BOUCHEE_HIVER: 0.25,
+  WARP_PART: 0.35,
+  WARP_ECHELLE: 44,
 
-  // ═══════════════════════════════════════════════════════════════════════════════════════════
-  // LE CORTÈGE (spec `cortege-cendre.md`) — le front n'est pas une ligne, c'est un CORTÈGE.
-  //
-  // Ces largeurs sont la GÉOMÉTRIE DU FRONT : elles se calibrent en regardant une carte (quelle
-  // part des Prés Bas est stérile à mi-course ?), pas en jouant — d'où leur place ici, à côté de
-  // `PART_CIBLE`, et non dans `balance.ts` (règle de partage, en-tête de `balance.ts`).
-  // ═══════════════════════════════════════════════════════════════════════════════════════════
+  /** L'ÉCART MINIMAL entre un point de NAISSANCE et une fosse, en coût (R10). Un site de village,
+   *  on le choisit ; son point de naissance, non — naître à neuf jours de la cendre n'est pas une
+   *  leçon, c'est une mauvaise main. ~jour 195 sur la carte de production. */
+  ECART_SPAWN: 150,
 
   /**
-   * LA VALEUR RENDUE HORS CARTE, ou sur une carte sans Cendrière — grande, et **FINIE**.
+   * L'AGONIE, en jours de saison (R13, décision d'Alexis : *« le vivant meurt lentement et le
+   * minéral reste »* + *« il laisse du bois mort à récolter pendant quelques jours »*).
    *
-   * Toute borne du cortège retombe alors sur sa valeur neutre par simple comparaison, sans un `if`
-   * de plus chez chaque consommateur. Finie et non `Infinity` : une valeur qui ne survit pas à un
-   * aller-retour JSON n'a rien à faire dans un paquet dont l'état doit être sérialisable, même
-   * quand elle ne transite que par un retour de fonction — on ne garde pas deux règles.
+   * La cendre prend la case ; l'arbre s'y **dessèche** pendant ce temps — houppier dénudé, stock
+   * INTACT, encore coupable — puis il tombe et le nœud disparaît. C'est ce qui fait que la cendre
+   * TIRE autant qu'elle pousse : la frange qui approche est une échéance à exploiter, pas une
+   * perte sèche. Cinq jours, soit deux heures et demie de jeu : le temps d'une expédition, pas
+   * celui d'une saison.
    */
-  MARGE_HORS_CENDRE: 1e9,
+  AGONIE_JOURS: 5,
 
   /**
-   * ═══ LES BANDES SONT DES PARTS DE LA COURSE DU FRONT, JAMAIS DES DISTANCES ═══
+   * LE NOMBRE DE FOSSES QU'UN CHAMP PEUT PORTER. Le coût et le propriétaire d'une tuile vivent
+   * dans le MÊME entier (`coût × FOYERS_MAX + foyer`) : deux tableaux d'un million et demi
+   * d'entrées pesaient 10,5 Mo de JSON — la moitié de la carte — pour une information qui tient
+   * dans un seul.
    *
-   * **C'est la correction que ce fichier avait DÉJÀ faite un cran plus haut**, et je l'ai refaite
-   * à l'identique un cran plus bas avant que la mesure ne me reprenne — voir `PART_CIBLE` :
-   * *« ET C'EST UNE PART, PAS UNE DISTANCE… la même valeur couvrait 48 % des Prés Bas sur une seed
-   * et 81 % sur une autre »*. Une largeur en tuiles écrite en dur ne veut rien dire : la course du
-   * front est calibrée PAR CARTE, par dichotomie.
-   *
-   * MESURÉ (`tools/mesure-cortege.mts`, seed 2026) : `cendreMax` vaut **74 tuiles** — la course
-   * TOTALE du front sur toute la saison. Une bande de 70 tuiles en aurait donc couvert 95 %, et
-   * **62 % de la vallée habitable aurait été stérile au jour 1**, avant que le front n'ait bougé
-   * d'une tuile. Le réglage se lit donc en part de `cendreMax`, et la sonde le rend en tuiles.
-   *
-   * LA BANDE STÉRILE — la plus large des deux, et le cœur du réglage. C'est le sens le plus DOUX
-   * du cortège, donc celui qui doit prévenir le plus TÔT : il ne confisque rien, il annonce. Le
-   * joueur voit sa tournée du sud rendre de moins en moins pendant qu'il a encore le temps de la
-   * déplacer. « Le monde prévient, il ne guide pas » (`worldgen.md` R21), à la lettre.
-   *
-   * ⚠ Doit rester STRICTEMENT SUPÉRIEURE à `FROID_PART` (R5, testé) : en marchant vers le sud on
-   * rencontre le stérile AVANT le froid. Deux bandes qui se croisent rendent le cortège illisible,
-   * et ça ne se voit pas à l'œil — d'où la garde.
+   * ⚠ **128, ET PAS 16.** Le monde JOUÉ n'a que 9,3 fosses en moyenne, et j'avais dimensionné
+   * là-dessus — mais **le plan complet en porte 51** (mesuré), et les index se seraient écrasés
+   * en silence : des tuiles auraient obéi à la mauvaise fosse. Le plafond du registre est 80
+   * (`POI_TYPES.charnier.cap`), donc 128 le couvre avec de la marge. La garde A1 confronte les
+   * deux plans, pas seulement celui qu'on joue.
    */
-  STERILE_PART: 0.2,
+  FOYERS_MAX: 128,
 
   /**
-   * LE PLAFOND DU MULTIPLICATEUR DE REPOUSSE — et il n'est PAS décoratif.
+   * LA FRANGE, en tuiles — la bande où la cendre est FRAÎCHE (décision d'Alexis, 2026-08-24 :
+   * *« depuis l'extérieur vers le centre de la zone de corruption, sur 2-3 cases tu mets de la
+   * cendre, sinon tu utilises les mêmes terrains que la cendrière »*).
    *
-   * Un délai non borné franchirait `Number.MAX_SAFE_INTEGER` et `Math.floor` rendrait n'importe
-   * quoi (R2bis). À 12, un nœud collé au front met douze fois le temps normal à revenir : à
-   * l'échelle d'une tournée, il ne revient plus — sans qu'on ait eu besoin d'inventer un état
-   * « stérile » à persister.
+   * ⚠ ELLE EST EN COÛT, DONC PLUS COURTE SUR LA ROCHE — trois tuiles de pré, une seule de roche
+   * (le minéral coûte trois fois). C'est juste : la cendre ne s'attarde pas où il n'y a rien à
+   * brûler. Et c'est GRATUIT : on sait déjà de combien le front a dépassé chaque tuile.
    */
-  STERILE_FACTEUR_MAX: 12,
+  FRANGE_TUILES: 3,
 
-  /**
-   * LA BANDE FROIDE, EN PART DE LA COURSE DU FRONT. Plus étroite que la stérile (R5) : le froid
-   * est le sens qui MORD, il arrive après l'avertissement.
-   */
-  FROID_PART: 0.08,
+  /** LE MOTIF de quantification du grain, en tuiles. **Doit valoir `RELIEF.MOTIF`** — il est
+   *  recopié ici et non importé pour ne pas créer de cycle avec `zonegen`, et une garde le
+   *  confronte à la source (`cendre.test.ts`). */
+  MOTIF: 8,
+} as const
 
-  /**
-   * LE FROID MAXIMAL DE LA CENDRE, en degrés de la jauge Température (0-100), atteint sur le
-   * brûlé lui-même.
-   *
-   * L'ordre de grandeur se lit contre la table de `flore-froid` : la nuit ôte 30, l'acte II ôte
-   * 25. À 18, la bande de cendre pèse moins qu'une nuit — elle ne décide jamais seule, elle fait
-   * BASCULER ce qui était déjà limite. C'est ce qu'on veut : le sud devient invivable *la nuit*,
-   * puis invivable tout court quand l'acte descend à son tour.
-   *
-   * ⚠ Non multiple de 5, DÉLIBÉRÉMENT (R3quater) : hors front, la table de `FLORE` n'atteint que
-   * des multiples de 5, et ses deux seuils sont posés hors de ces valeurs pour qu'aucune décision
-   * de gel ne se joue au bit de flottant près. Un terme de cendre multiple de 5 remettrait toutes
-   * les sommes sur cette grille et rouvrirait exactement le défaut qu'ils avaient fermé.
-   */
-  FROID_MAX: 7.2,
+/** Les sols qui prennent la CENDRE DE BOIS. Tout le reste du vivant prend la cendre de pré. */
+const BOISE = [TERRAIN_FOREST, TERRAIN_OLD_GROWTH, TERRAIN_PINE, TERRAIN_LARCH, TERRAIN_WILLOW]
 
-  /**
-   * LA POUSSÉE DU VENT DE CENDRE (spec `cortege-cendre.md` R6) — en part de la course du front,
-   * comme les bandes, et pour la même raison.
-   *
-   * ═══ LA POUSSÉE, PAS L'AVANCÉE ═══
-   *
-   * P1-P3 sont des PENTES : elles montent, sans à-coup, et une pente seule finit par ne plus se
-   * sentir. Le vent est le BATTEMENT — il vient du sud, il pousse la bande froide devant lui
-   * quelques heures, il passe, **et le front de cendre n'a pas bougé d'une tuile**. Rien n'est
-   * perdu ; le joueur a seulement dû lâcher quelque chose le temps d'une nuit.
-   *
-   * C'est aussi le seul des quatre sens qui puisse se répéter chaque année sans s'user : la pente
-   * s'habitue, le coup de vent non — et il porte plus loin à mesure que la course du front
-   * s'allonge, donc il durcit tout seul, sans un multiplicateur d'acte.
-   *
-   * À 0,45, un vent de cendre porte le froid à peu près trois fois plus loin que la bande froide
-   * de repos (`FROID_PART` 0,08) — assez pour qu'une tournée du sud devienne intenable pendant
-   * qu'il souffle, pas assez pour atteindre un village du nord.
-   */
-  POUSSEE_PART: 0.45,
+/**
+ * LE CAILLOUTEUX QUI SE MARCHE — éboulis, chaos de blocs. ⚠ Il n'est PAS « minéral » au sens de
+ * `estMineral`, qui dérive de `walkable` : un chaos de blocs se traverse (0,6). Les deux notions
+ * se ressemblent assez pour qu'on les confonde, et la garde du cœur a attrapé exactement ça —
+ * `wall` ressortait en `boulders`, donc TRAVERSABLE. On les sépare donc explicitement.
+ */
+const CAILLOUTEUX = [TERRAIN_SCREE, TERRAIN_BOULDERS]
+
+/**
+ * EST-CE DU MINÉRAL ? — **dérivé de `walkable`, jamais d'une liste**, et la garde A8 est là pour
+ * l'avoir appris à mes dépens : `wall` et `glacier` sont infranchissables sans être dans aucune
+ * liste de roche, et une liste écrite à la main les convertissait en cendre de PRÉ — traversable.
+ * **La cendre aurait ouvert les murs et les bords du monde.**
+ *
+ * La règle dérivée ferme la classe entière : ce qui ne se marche pas n'a rien à brûler (coût ×3)
+ * et reste infranchissable une fois cendré. Un terrain ajouté demain y tombera tout seul.
+ */
+function estMineral(t: number): boolean {
+  return TERRAINS[t]?.walkable === false
+}
+
+/** L'eau ne brûle pas, et le vide non plus : la cendre les CONTOURNE (R4/R12). */
+export function cendrePeutPrendre(t: number): boolean {
+  return t !== TERRAIN_DEEP_WATER && t !== TERRAIN_SHALLOW_WATER && t !== TERRAIN_VOID
+}
+
+/** Le coût d'ENTRÉE d'une tuile, en unités du champ. Le sol nu n'a rien à brûler (R5). */
+export function coutDentree(t: number): number {
+  return estMineral(t) ? CENDRE.COUT_MINERAL : 1
 }
 
 /**
- * LE CHAMP DE CENDRE — la distance de chaque tuile à la frontière de la Cendrière.
+ * ═══ LE SOL CENDRÉ — DEUX BANDES, ET LA SECONDE RECYCLE LA CENDRIÈRE ═══
  *
- * Négative DEDANS (la Cendrière brûle depuis le premier jour), positive dehors, en tuiles. C'est
- * de la donnée STATIQUE de carte : calculée une fois, jamais modifiée. Ce qui bouge, c'est le
- * seuil qu'on lui compare.
+ * *Décision d'Alexis, 2026-08-24 : « recycle les terrains de la cendrière… sur 2-3 cases tu mets
+ * de la cendre, sinon tu utilises les mêmes terrains que la cendrière en trouvant une
+ * correspondance avec le terrain de t0 précédent ».*
+ *
+ * **LA CORRUPTION EST LA CENDRIÈRE QUI S'ÉTEND** — elle doit donc en avoir la peau, et non trois
+ * terrains inventés. La Cendrière n'avait que QUATRE sols (mesuré, seed 2026 : forêt brûlée
+ * 52,9 %, roche 23,0 %, chaos de blocs 17,1 %, falaise 7,1 %), et c'est ce qui fixe la table :
+ *
+ *   FRANGE (`profond = false`, les 2-3 premières tuiles) → les trois cendres, par famille. C'est
+ *     là que la lecture « qu'est-ce que je perds ? » compte, puisque c'est là qu'on va couper
+ *     avant que ça brûle.
+ *   CŒUR (`profond = true`) :
+ *     bois          → forêt brûlée  (le sol de la Cendrière)
+ *     roche/falaise → inchangés     (la Cendrière a exactement les mêmes)
+ *     éboulis/blocs → chaos de blocs
+ *     **pré         → cendre**      (décision d'Alexis : la Cendrière n'a aucun sol OUVERT, et
+ *                                    lui donner du chaos de blocs aurait été lent et mensonger)
+ *
+ * Rend `undefined` pour ce qui ne brûle pas : l'appelant garde alors le terrain d'origine — une
+ * rivière sous la cendre reste une rivière.
+ */
+export function terrainCendre(t: number, profond = false): number | undefined {
+  if (!cendrePeutPrendre(t)) return undefined
+  if (estMineral(t)) {
+    // CE QUI NE SE MARCHE PAS. ⚠ `wall` et `glacier` passent ici aussi (voir `estMineral`) : ils
+    //   ne doivent JAMAIS ressortir traversables, sinon la cendre ouvre les murs et les bords du
+    //   monde. Au cœur, ils prennent donc la ROCHE de la Cendrière — infranchissable comme eux.
+    if (!profond) return TERRAIN_CENDRE_MIN
+    return t === TERRAIN_CLIFF ? TERRAIN_CLIFF : TERRAIN_ROCK
+  }
+  // LE CAILLOUTEUX MARCHABLE : au cœur, le chaos de blocs de la Cendrière (elle en avait 17,1 %).
+  if (CAILLOUTEUX.includes(t)) return profond ? TERRAIN_BOULDERS : TERRAIN_CENDRE_MIN
+  if (BOISE.includes(t)) return profond ? TERRAIN_BURNT_FOREST : TERRAIN_CENDRE_BOIS
+  return TERRAIN_CENDRE_PRE // le pré : de la cendre, au cœur comme à la frange
+}
+
+/**
+ * DE COMBIEN CETTE TUILE EST-ELLE ENFONCÉE DANS LA CENDRE, en tuiles — `-1` si elle ne l'est pas.
+ * C'est ce qui sépare la frange du cœur, et ça ne coûte rien : on connaissait déjà le seuil.
+ */
+export function profondeurDeCendre(
+  map: WorldMap,
+  tx: number,
+  ty: number,
+  avancees: readonly number[],
+  seed: number,
+): number {
+  if (tx < 0 || ty < 0 || tx >= map.width || ty >= map.height) return -1
+  const champ = map.cendreCout
+  if (!champ) return -1
+  const i = ty * map.width + tx
+  const c = coutDe(champ, i)
+  if (c < 0) return -1
+  const a = avancees[foyerDe(champ, i)]
+  if (a === undefined) return -1
+  const seuil = a * CENDRE.ORTHO * (1 + grainDeCendre(seed, tx, ty))
+  if (c > seuil) return -1
+  return (seuil - c) / CENDRE.ORTHO
+}
+
+/** Au CŒUR de la corruption ? (au-delà de la frange — voir `CENDRE.FRANGE_TUILES`) */
+export function auCoeurDeLaCendre(
+  map: WorldMap,
+  tx: number,
+  ty: number,
+  avancees: readonly number[],
+  seed: number,
+): boolean {
+  return profondeurDeCendre(map, tx, ty, avancees, seed) > CENDRE.FRANGE_TUILES
+}
+
+/** Un sol DÉJÀ cendré ? (le rendu et les règles de nœud le demandent souvent) */
+export function estSolCendre(t: number): boolean {
+  return t === TERRAIN_CENDRE_PRE || t === TERRAIN_CENDRE_BOIS || t === TERRAIN_CENDRE_MIN
+}
+
+/**
+ * ═══ L'AVANCÉE D'UN FOYER, `t` jours après son réveil (R9) ═══
+ *
+ *     avancee(t) = min( R0 + A·√t ,  avancee(t−1) + PLAFOND_JOUR )
+ *
+ * Le plafond impose un CUMUL : on ne peut pas l'écrire en forme fermée. On le calcule donc par
+ * somme préfixe MÉMOÏSÉE — et ce cache n'est pas de l'état de simulation, c'est la mémoïsation
+ * d'une fonction pure keyée sur son unique argument (même patron que le cache d'un jour de
+ * `modificateur.ts`). Le déterminisme n'y perd rien : deux appels de même `t` rendaient déjà le
+ * même nombre, dans n'importe quel ordre.
+ *
+ * ⚠ `t` est TRONQUÉ à l'entier : l'avancée est un fait du JOUR, pas du tick — sinon la frange
+ * respirerait vingt fois par seconde et le rendu se recuirait sans cesse.
+ */
+const CUMUL: number[] = [CENDRE.R0]
+export function avanceeDeCendre(t: number): number {
+  const j = Math.floor(t)
+  if (j <= 0) return CENDRE.R0
+  // ⚠ BORNE DE SÉCURITÉ : un `t` absurde (debug, replay tordu) ne doit pas faire boucler la sim
+  //   sur des millions d'itérations. Au-delà, la courbe est plate à l'échelle du jeu.
+  const cible = j > 100_000 ? 100_000 : j
+  for (let k = CUMUL.length; k <= cible; k++) {
+    const racine = CENDRE.R0 + CENDRE.A * Math.sqrt(k)
+    const plafonne = CUMUL[k - 1]! + CENDRE.PLAFOND_JOUR
+    CUMUL[k] = racine < plafonne ? racine : plafonne
+  }
+  return CUMUL[cible]!
+}
+
+/**
+ * LE GRAIN D'UNE TUILE (R6) — dans `[−WARP_PART, +WARP_PART]`, décidé au MOTIF de 8 tuiles.
+ *
+ * Positionnel et pur : le même patron que `clairiereForet`, qui échantillonne au CENTRE du bloc.
+ * Un bruit lu tuile par tuile ferait une frange grésillante ; lu par bloc, il fait des marches
+ * d'escalier — le grain de tout le terrain du jeu.
+ */
+export function grainDeCendre(seed: number, tx: number, ty: number): number {
+  const M = CENDRE.MOTIF
+  const bx = Math.floor(tx / M) * M + M / 2
+  const by = Math.floor(ty / M) * M + M / 2
+  const sel = (seed ^ 0x43454e44) | 0 /* 'CEND' */
+  // DEUX OCTAVES, et la seconde n'est pas cosmétique. À une seule (échelle 44), le grain est
+  // constant sur des bandes de quarante tuiles : la lisière sortait en ARÊTES DROITES de trente
+  // tuiles de long — un mur, pas une frange (constaté au navigateur). L'octave fine (échelle 11,
+  // un tiers de l'amplitude) les ronge sans toucher à la forme d'ensemble.
+  const large = fbm2(bx, by, CENDRE.WARP_ECHELLE, sel) - 0.5
+  const fine = fbm2(bx, by, CENDRE.WARP_ECHELLE / 4, (sel ^ 0x9e37) | 0) - 0.5
+  return (large * 0.75 + fine * 0.25) * 2 * CENDRE.WARP_PART
+}
+
+
+
+/**
+ * ═══ LE CHAMP DE CHEMINEMENT (R4/R5) — calculé UNE FOIS, au worldgen ═══
+ *
+ * Dijkstra multi-source depuis les fosses, **8-CONNEXE** (orthogonale 100, diagonale 141), l'eau
+ * infranchissable, le minéral à trois fois le prix. Il rend DEUX champs :
+ *
+ *   • `cout[i]`  — le coût de cheminement jusqu'à la fosse la plus proche (`-1` = hors d'atteinte)
+ *   • `foyer[i]` — l'index de CETTE fosse
+ *
+ * ⚠ **POURQUOI DEUX CHAMPS ET PAS UN.** Sans `foyer`, on ne peut pas geler un foyer (R16) : il
+ * faudrait un champ PAR fosse — dix tableaux d'un million et demi d'entrées, ~500 Mo. Le couple
+ * (coût, propriétaire) tient dans deux tableaux et dit tout ce dont la règle a besoin.
+ *
+ * ⚠ **CE QUE CETTE ÉCONOMIE COÛTE, ET IL FAUT LE DIRE** : geler une fosse protège TOUTE sa cellule,
+ * y compris les tuiles qu'un foyer voisin aurait fini par atteindre en la contournant. Le verbe du
+ * joueur est donc un peu plus fort que dans la simulation exacte (mesurée sur dix champs séparés).
+ * C'est un choix assumé — et le sens du jeu est le bon : *on défend un secteur, celui de la fosse
+ * qu'on tient.*
+ *
+ * ⚠ **8-CONNEXE, ET CE N'EST PAS UN DÉTAIL** : un Dijkstra 4-connexe rend des LOSANGES — sur un
+ * terrain uniforme ses isolignes sont des carrés posés sur la pointe, ce qui est PLUS artificiel
+ * qu'un cercle. Le défaut est invisible dans le code et saute aux yeux sur une carte rendue.
+ *
+ * Coûts ENTIERS, donc un Dijkstra à SEAUX : O(N), pas de tas, pas de flottant dans la carte.
+ * Pur : aucune horloge, aucun tirage, `+ - *` et des comparaisons.
+ */
+export function calculeChampDeCendre(
+  width: number,
+  height: number,
+  terrain: readonly number[],
+  fosses: readonly { tx: number; ty: number }[],
+): number[] {
+  const N = width * height
+  if (fosses.length === 0) return new Array<number>(N).fill(-1)
+  // ⚠ TYPÉS EN INTERNE, `number[]` seulement à la sortie. Sur le plan complet (3,75 M de tuiles)
+  // la passe coûtait 2,3 s en tableaux ordinaires et faisait sauter le budget A13 (15 s pour une
+  // carte de production). L'état de sim reste JSON-sérialisable : c'est la SORTIE qui compte.
+  const cout = new Int32Array(N).fill(-1)
+  const foyer = new Int32Array(N).fill(-1)
+
+  // ⚠ Une fosse au-delà du plafond n'aurait pas d'index lisible : on ne la sème pas plutôt que de
+  //   la replier sur une autre. Le worldgen n'en pose jamais autant (cap 80), c'est un garde-fou.
+  // ⚠ Une fosse au-delà du plafond n'aurait pas d'index lisible : on ne la sème pas plutôt que de
+  //   la replier sur une autre. Le worldgen n'en pose jamais autant (cap 80), c'est un garde-fou.
+  const combien = fosses.length > CENDRE.FOYERS_MAX ? CENDRE.FOYERS_MAX : fosses.length
+
+  /**
+   * ═══ UN ANNEAU DE SEAUX, PAS UN TABLEAU INDEXÉ PAR LE COÛT (algorithme de Dial) ═══
+   *
+   * Les poids d'arête sont bornés (`DIAG × COUT_MINERAL` = 423), donc toutes les entrées en
+   * attente tiennent dans une fenêtre de cette largeur : un anneau de 424 seaux suffit, et on
+   * n'alloue jamais plus.
+   *
+   * ⚠ LA PREMIÈRE ÉCRITURE INDEXAIT LES SEAUX PAR LE COÛT LUI-MÊME. Sur le plan complet, le coût
+   * maximal frôle les cinq millions : c'était un tableau creux de cinq millions d'entrées, dont
+   * la boucle extérieure parcourait chaque case vide. **Mesuré : 2,3 à 3 s, et le budget A13 de
+   * la génération (15 s) sautait.** L'anneau ramène la passe à une fraction de ça, sans changer
+   * un seul résultat — le champ sort identique au bit près (garde A2).
+   */
+  const LARGEUR = CENDRE.DIAG * CENDRE.COUT_MINERAL + 1
+  const anneau: number[][] = []
+  for (let k = 0; k < LARGEUR; k++) anneau[k] = []
+  let enAttente = 0
+  const pousser = (i: number, d: number): void => {
+    anneau[d % LARGEUR]!.push(i)
+    enAttente++
+  }
+
+  for (let k = 0; k < combien; k++) {
+    const f = fosses[k]!
+    if (f.tx < 0 || f.ty < 0 || f.tx >= width || f.ty >= height) continue
+    const i = f.ty * width + f.tx
+    if (!cendrePeutPrendre(terrain[i]!)) continue
+    if (cout[i]! >= 0) continue // deux fosses sur la même tuile : la première gagne, sans tirage
+    cout[i] = 0
+    foyer[i] = k
+    pousser(i, 0)
+  }
+
+  let d = 0
+  while (enAttente > 0) {
+    const b = anneau[d % LARGEUR]!
+    if (b.length === 0) { d++; continue }
+    const i = b.pop()!
+    enAttente--
+    if (cout[i] !== d) continue // entrée périmée : une meilleure est passée depuis
+    const x = i % width
+    const y = (i - x) / width
+    for (let dy = -1; dy <= 1; dy++) {
+      for (let dx = -1; dx <= 1; dx++) {
+        if (dx === 0 && dy === 0) continue
+        const nx = x + dx
+        const ny = y + dy
+        if (nx < 0 || ny < 0 || nx >= width || ny >= height) continue
+        const j = ny * width + nx
+        const t = terrain[j]!
+        if (!cendrePeutPrendre(t)) continue
+        const pas = (dx !== 0 && dy !== 0 ? CENDRE.DIAG : CENDRE.ORTHO) * coutDentree(t)
+        const nd = d + pas
+        const dj = cout[j]!
+        if (dj >= 0 && dj <= nd) continue
+        cout[j] = nd
+        foyer[j] = foyer[i]!
+        pousser(j, nd)
+      }
+    }
+  }
+
+  // ON REPLIE LES DEUX EN UN (voir `FOYERS_MAX`) — c'est ce qui sort de la fonction, et le seul
+  // tableau que la carte porte.
+  const champ = new Array<number>(N)
+  for (let i = 0; i < N; i++) {
+    const c = cout[i]!
+    champ[i] = c < 0 ? -1 : c * CENDRE.FOYERS_MAX + foyer[i]!
+  }
+  return champ
+}
+
+/** Le COÛT d'une tuile, replié dans le champ — `-1` hors d'atteinte. */
+export function coutDe(champ: readonly number[] | undefined, i: number): number {
+  const v = champ?.[i]
+  return v === undefined || v < 0 ? -1 : Math.floor(v / CENDRE.FOYERS_MAX)
+}
+
+/** LA FOSSE qui revendique cette tuile — `-1` hors d'atteinte. */
+export function foyerDe(champ: readonly number[] | undefined, i: number): number {
+  const v = champ?.[i]
+  return v === undefined || v < 0 ? -1 : v % CENDRE.FOYERS_MAX
+}
+
+/**
+ * CETTE TUILE EST-ELLE CENDRÉE ? — une comparaison, et c'est tout l'intérêt du modèle (R4/R6).
+ *
+ * `avancees` donne, par index de fosse, jusqu'où SON foyer est allé (en unités de coût) — c'est ce
+ * que `avanceesDesFoyers` calcule à partir du jour et des fosses gelées. Le grain déforme le SEUIL,
+ * pas le coût : `coût ≤ avancée · (1 + grain)`.
+ */
+export function estCendre(
+  map: WorldMap,
+  tx: number,
+  ty: number,
+  avancees: readonly number[],
+  seed: number,
+): boolean {
+  if (tx < 0 || ty < 0 || tx >= map.width || ty >= map.height) return false
+  const champ = map.cendreCout
+  if (!champ) return false
+  const i = ty * map.width + tx
+  const c = coutDe(champ, i)
+  if (c < 0) return false
+  const a = avancees[foyerDe(champ, i)]
+  if (a === undefined) return false
+  return c <= a * CENDRE.ORTHO * (1 + grainDeCendre(seed, tx, ty))
+}
+
+/**
+ * LE CHAMP DE CENDRE DU PLAN COMPLET — la distance de chaque tuile à la frontière de la Cendrière.
+ * ⚠ SANS RAPPORT avec la mécanique ci-dessus : le monde JOUÉ n'a plus de Cendrière, et ce champ ne
+ * sert plus qu'à DATER la reprise du versant Brûlé sur le plan `'vallee'`, qui dort.
+ *
+ * Négative DEDANS, positive dehors, en tuiles. C'est de la donnée STATIQUE de carte : calculée une
+ * fois, jamais modifiée — et plus rien ne s'y compare depuis que le front est retiré.
  *
  * On le dérive du diagramme de puissance, exactement comme la marge des frontières : la
  * « puissance » d'un site est `distance² − poids`, et l'écart de puissance entre deux sites,
@@ -238,205 +505,6 @@ export function computeCendreField(
     }
   }
   return out
-}
-
-/**
- * L'AVANCÉE DU FRONT au jour de saison donné, en tuiles — L'ESCALIER (T3).
- *
- * Chaque année, la même fenêtre : rien pendant l'acte I (le joueur a le temps de bâtir et de
- * s'attacher), puis la morsure accélère des jours 21 à 60 du tour, puis le front TIENT jusqu'au
- * printemps suivant. L'an 1 mord la course calibrée entière (`avanceeMax` = `cendreMax`, la part
- * `PART_CIBLE`) ; chaque hiver suivant mord `BOUCHEE_HIVER × avanceeMax`. Monotone non décroissant
- * PAR CONSTRUCTION : la course d'avant est acquise, la bouchée s'y ajoute, rien ne recule.
- *
- *     front(jour) = course(tour − 1) + taille(tour) × COURBE(t)
- *       course(0) = 0 ; course(1) = max ; course(k) = max × (1 + (k − 1) × BOUCHEE)
- *       taille(1) = max ; taille(k ≥ 2) = max × BOUCHEE
- *       t = clamp((jourDansLAnnee − 21) / (60 − 21), 0, 1)
- *
- * Sur les jours 1-84 de l'an 1, c'est EXACTEMENT la fonction d'avant (T1/T2 : comportement
- * identique sur l'arc nominal). Pur : `+ − × /`, `floor`, des comparaisons.
- */
-export function avanceeDuFront(jourDeSaison: number, avanceeMax: number): number {
-  const jour = jourDeSaison < 1 ? 1 : Math.floor(jourDeSaison)
-  const tour = Math.floor((jour - 1) / YEAR_DAYS) + 1
-  const jourDansLAnnee = ((jour - 1) % YEAR_DAYS) + 1
-  // La fin de l'acte I : c'est là que la cendre s'ébranle — chaque année.
-  const debut = (CENDRE.ACTE_DEPART - 1) * BALANCE.ACT_DAYS
-  const fin = YEAR_DAYS // la morsure court sur TOUT le Grand Froid, et s'arrête au tour de l'an (S11)
-  const t = (jourDansLAnnee - debut) / (fin - debut)
-  const borne = t < 0 ? 0 : t > 1 ? 1 : t
-  // La course ACQUISE avant ce tour, et la taille de la bouchée de ce tour.
-  const acquise = tour === 1 ? 0 : avanceeMax * (1 + (tour - 2) * CENDRE.BOUCHEE_HIVER)
-  const taille = tour === 1 ? avanceeMax : avanceeMax * CENDRE.BOUCHEE_HIVER
-  return acquise + taille * CENDRE.COURBE(borne)
-}
-
-/**
- * LE CALIBRAGE DU FRONT — on vise une PART, on en déduit une DISTANCE.
- *
- * Dichotomie sur l'avancée : quelle distance brûle exactement `PART_CIBLE` des tuiles de la racine ?
- * Trente itérations suffisent à cadrer au dixième de tuile — et c'est calculé UNE FOIS, à la
- * génération. Le résultat vit dans la carte (`map.cendreMax`), pas dans l'état.
- *
- * `estRacine` exclut les couloirs de seuil : un seuil n'appartient à aucune des zones qu'il relie,
- * et la gorge qui mène à la Cendrière est dans le feu depuis le premier jour — c'est une gorge de
- * cendre, pas un pré.
- */
-export function calibreLeFront(champ: readonly number[], estRacine: (i: number) => boolean): number {
-  const tuiles: number[] = []
-  for (let i = 0; i < champ.length; i++) if (estRacine(i)) tuiles.push(champ[i]!)
-  if (tuiles.length === 0) return 0
-  const vise = Math.round(tuiles.length * CENDRE.PART_CIBLE)
-
-  let lo = CENDRE.AVANCEE_MIN
-  let hi = CENDRE.AVANCEE_PLAFOND
-  for (let it = 0; it < 30; it++) {
-    const m = (lo + hi) / 2
-    let n = 0
-    for (const d of tuiles) if (d < m) n += 1
-    if (n < vise) lo = m
-    else hi = m
-  }
-  return (lo + hi) / 2
-}
-
-/**
- * LE FRONT, À CET INSTANT — et il n'est PAS dans l'état.
- *
- * C'est la meilleure trouvaille du chantier, et elle vient d'un invariant plutôt que d'une idée :
- * *« le tick est la seule horloge ; toute notion dérivée est une fonction pure du numéro de tick.
- * Aucun état temporel redondant »* (spec `monde.md` R1).
- *
- * On avait prévu de stocker l'avancée du front dans le `SimState` — un scalaire, c'était déjà
- * bon marché. Mais un scalaire dérivable du tick est **de l'état redondant**, et l'état redondant
- * finit toujours par diverger de sa source. Le front est donc calculé, jamais rangé : **zéro
- * octet ajouté au `SimState`**, zéro risque de désynchronisation, et les replays le retrouvent
- * exactement sans qu'on ait à le sérialiser.
- */
-export function frontActuel(state: {
-  tick: number
-  calendarScale: number
-  jourDeDepart: number
-  map: WorldMap
-}): number {
-  return frontAuTick(state.map, state.calendarScale, state.tick, state.jourDeDepart)
-}
-
-/**
- * LE MÊME FRONT, À UN TICK QUELCONQUE — et il n'est pas un confort.
- *
- * `baselineTemperatureAt` existe pour L'HYSTÉRÉSIS DU DÉGEL (`gel.md` G8) : elle relit le froid
- * du monde à un tick PASSÉ. Depuis que le froid de cendre entre dans `froidDuMonde` (R3), lire
- * `state.tick` là-dedans rendrait le front d'AUJOURD'HUI pour une question portant sur HIER — un
- * décalage silencieux, qui ne se verrait que sur une glace qui dégèle trop tôt ou trop tard.
- *
- * Sans allocation (surtout pas un objet littéral par appel) : `froidDuMonde` est sur le chemin
- * chaud de la passe économique, appelé par nœud.
- */
-export function frontAuTick(map: WorldMap, calendarScale: number, tick: number, jourDeDepart: number): number {
-  const max = map.cendreMax
-  if (max === undefined) return 0 // une carte sans Cendrière : rien ne brûle
-  return avanceeDuFront(seasonDayAtTick(tick, calendarScale, jourDeDepart), max)
-}
-
-/** Cette tuile brûle-t-elle ? Une comparaison, rien de plus — c'est tout l'intérêt du modèle. */
-export function estCendre(map: WorldMap, tx: number, ty: number, front: number): boolean {
-  if (tx < 0 || ty < 0 || tx >= map.width || ty >= map.height) return false
-  const d = map.cendre?.[ty * map.width + tx]
-  if (d === undefined) return false
-  return d < front
-}
-
-/**
- * ═══ LE CORTÈGE — LA MARGE DE CENDRE, ET C'EST LA SEULE LECTURE DU CHAMP ═══
- * *(spec `cortege-cendre.md` R1 ; décision d'Alexis 2026-08-21 « la pression doit être appliquée
- * par l'environnement ».)*
- *
- * `map.cendre` est une distance PAR TUILE, précalculée — et jusqu'ici **une seule question la
- * lisait** : « est-ce brûlé ? ». Un champ entier, un seul sens. Le cortège en tire les autres :
- * la stérilité qui marche devant le feu, le froid qui le précède, la hantise qui le suit. Aucun
- * n'ajoute un octet à l'état : ce sont des comparaisons sur un champ qui existe déjà.
- *
- * LA CONVENTION DE SIGNE EST POSÉE ICI, UNE FOIS, ET NULLE PART AILLEURS :
- * - **`marge < 0`** — la tuile est **dans le brûlé**. Plus c'est négatif, plus elle a brûlé TÔT.
- * - **`marge ≥ 0`** — la tuile est **devant le front**, à autant de tuiles.
- *
- * Quatre sites d'appel qui recalculeraient `d − front` chacun de leur côté, c'est le même défaut
- * de signe débogué trois fois (R1bis). Les consommateurs appellent CECI, jamais `map.cendre`.
- *
- * Hors carte, ou carte sans Cendrière : `CENDRE.MARGE_HORS_CENDRE`, grande valeur **finie** — tout
- * seuil du cortège retombe alors sur sa valeur neutre par simple comparaison, sans un `if` de plus
- * chez le consommateur (et sans `Infinity`, qui ne survit pas à un aller-retour JSON).
- */
-export function margeDeCendre(map: WorldMap, tx: number, ty: number, front: number): number {
-  if (tx < 0 || ty < 0 || tx >= map.width || ty >= map.height) return CENDRE.MARGE_HORS_CENDRE
-  const d = map.cendre?.[ty * map.width + tx]
-  if (d === undefined) return CENDRE.MARGE_HORS_CENDRE
-  return d - front
-}
-
-/**
- * LE FROID DE LA CENDRE (spec `cortege-cendre.md` R3) — une EXPOSITION de plus, pas une loi.
- *
- * Rendu POSITIF, comme `brumeColdAt` et `meteoColdAt` : c'est le nombre de degrés qu'on RETIRE.
- * Le consommateur unique est `froidDuMonde`, qui le soustrait dans `exposed` — donc l'abri
- * l'amortit et le feu le planche (l'ambiant est un `max`). On n'écrit pas une mécanique neuve,
- * on ajoute une exposition à celles qui existent déjà.
- *
- * **La fiction est gratuite** : une terre brûlée n'a plus de couvert. *Le froid vient d'où plus
- * rien ne pousse.* Aucune explication à écrire — c'est un fait physique, et c'est exactement
- * l'espèce de lore que ce jeu peut porter.
- *
- * RAMPE, jamais marche : nul à la limite de la bande, maximal dès qu'on entre dans le brûlé. Un
- * mur de froid à franchir d'un pas ne se sent pas venir ; une rampe, si (c'est le raisonnement
- * du front météo, `meteo.md` R4).
- */
-export function froidDeCendre(map: WorldMap, tx: number, ty: number, front: number): number {
-  const bande = bandeDeCendre(map, CENDRE.FROID_PART)
-  if (bande <= 0) return 0 // carte sans Cendrière : le cortège n'existe pas
-  const marge = margeDeCendre(map, tx, ty, front)
-  if (marge >= bande) return 0 // hors de la bande : rien
-  if (marge <= 0) return CENDRE.FROID_MAX // dans le brûlé : plein pot
-  // Rampe linéaire sur la bande. Division seule — aucune transcendante (invariant #2).
-  return (CENDRE.FROID_MAX * (bande - marge)) / bande
-}
-
-/**
- * LA LARGEUR D'UNE BANDE DU CORTÈGE, EN TUILES — dérivée de la course calibrée du front.
- *
- * Une carte sans Cendrière (banc headless) rend 0 : **tous les sens du cortège y sont neutres**,
- * et le comportement du banc est préservé au bit près, comme le promet R17 de `cendreux.md`.
- */
-export function bandeDeCendre(map: WorldMap, part: number): number {
-  const max = map.cendreMax
-  if (max === undefined) return 0
-  return max * part
-}
-
-/**
- * LA STÉRILITÉ (spec `cortege-cendre.md` R2) — le MULTIPLICATEUR du délai de repousse.
- *
- * Le sens qui marche LE PLUS LOIN devant le feu, et c'est délibéré : c'est le plus doux, donc
- * celui qui doit prévenir le plus tôt. Le sol est **encore là, encore vert, encore marchable** —
- * et il ne redonne plus. Le joueur **abandonne sa tournée avant d'abandonner son terrain**.
- *
- * Rend un facteur ≥ 1 : 1 hors bande (rien ne change), jusqu'à `STERILE_FACTEUR_MAX` collé au
- * front. **Plafonné, et le plafond n'est pas décoratif** : un délai non borné franchirait
- * `Number.MAX_SAFE_INTEGER` et `Math.floor` rendrait n'importe quoi (R2bis).
- *
- * Ce qu'il ne fait JAMAIS : produire `regrowAt === 0`. C'est une signature portante de
- * `economy.ts` (`stock 0` + `regrowAt 0` = défriché, ne revient pas ; `setNodes` teste
- * `regrowAt > 0`). **La stérilité allonge un délai, elle ne pose pas une marque.**
- */
-export function facteurSterilite(map: WorldMap, tx: number, ty: number, front: number): number {
-  const bande = bandeDeCendre(map, CENDRE.STERILE_PART)
-  if (bande <= 0) return 1 // carte sans Cendrière : la repousse normale, au bit près
-  const marge = margeDeCendre(map, tx, ty, front)
-  if (marge >= bande) return 1 // hors bande : la repousse normale
-  if (marge <= 0) return CENDRE.STERILE_FACTEUR_MAX // brûlé : le nœud n'existe déjà plus, mais la borne tient
-  // Rampe de 1 (bord de bande) à MAX (collé au front).
-  return 1 + ((CENDRE.STERILE_FACTEUR_MAX - 1) * (bande - marge)) / bande
 }
 
 /**
@@ -477,92 +545,186 @@ export function directionOpposee(d: 'nord' | 'sud' | 'est' | 'ouest'): 'nord' | 
   return d === 'nord' ? 'sud' : d === 'sud' ? 'nord' : d === 'est' ? 'ouest' : 'est'
 }
 
+// ═══════════════════════════════════════════════════════════════════════════════════════════════
+// LES FOYERS, LEUR ÂGE, ET CE QU'ILS ONT MANGÉ
+// ═══════════════════════════════════════════════════════════════════════════════════════════════
+
 /**
- * LA PART DE LA VALLÉE SOUS LA CENDRE, au jour donné. Un outil de MESURE, pour les gardes et
- * l'équilibrage — on ne devine pas un chiffre pareil, on le compte.
+ * LE JOUR OÙ LA CENDRE S'ÉBRANLE, dans l'année de CE monde (R8).
+ *
+ * Dérivé de la phase (`ACTE_DEPART` = 4, le Grand Froid) et jamais écrit en dur : le jour où
+ * `ACT_DAYS` bougera, le réveil suivra. Le monde ouvre au jour `jourDeDepart` ; la cendre dort
+ * jusqu'à l'ouverture du premier Grand Froid, quel que soit ce jour de départ.
  */
-export function partSousLaCendre(map: WorldMap, front: number, filtre?: (i: number) => boolean): number {
-  const champ = map.cendre
-  if (!champ) return 0
-  let dedans = 0
-  let total = 0
-  for (let i = 0; i < champ.length; i++) {
-    if (filtre && !filtre(i)) continue
-    total += 1
-    if (champ[i]! < front) dedans += 1
-  }
-  return total === 0 ? 0 : dedans / total
+export function jourDuReveilDeLaCendre(state: { jourDeDepart: number }): number {
+  const debut = (CENDRE.ACTE_DEPART - 1) * BALANCE.ACT_DAYS + 1
+  return debut > state.jourDeDepart ? debut : state.jourDeDepart
 }
 
 /**
- * LA CENDRE AVANCE, ET CE QU'ELLE ATTEINT MEURT.
- *
- * Appelé au BASCULEMENT d'un jour de saison, jamais à chaque tick : le front ne bouge qu'une fois
- * par jour, et balayer les nœuds vingt fois par seconde pour rien serait une faute de goût autant
- * que de perf.
- *
- * CE QUI MEURT : les nœuds de récolte. Un pré brûlé n'a plus de baies, une forêt cendrée n'a plus
- * de bois. C'est ce qui fait que la migration n'est pas une consigne mais une **fuite** — le
- * village qui reste ne meurt pas d'un coup, il s'appauvrit, jour après jour, jusqu'à ce que rester
- * coûte plus que partir. C'est le mécanisme le plus doux qu'on puisse infliger, et le plus cruel.
- *
- * (Ce que la cendre fait à la FAUNE — les Cendreux y naissent-ils ? de jour ? — reste une décision
- * de design, non prise. Elle n'est pas ici.)
- *
- * Émet UN événement par jour (`cendre_avance`), pas un par nœud : la chronique veut savoir que la
- * vallée a reculé, pas qu'un buisson a grillé. Haute fréquence n'est pas domaine.
+ * LES FOSSES DE LA CARTE, dans l'ordre des toponymes — c'est CET ordre qui indexe `cendreFoyer`,
+ * `state.cendreAge` et tout ce qui suit. Il est stable par construction (les zones sont posées à
+ * la génération et ne bougent jamais), donc aucun tri n'est nécessaire et aucun n'est fait.
  */
-export function avancerLaCendre(state: SimState): void {
-  const champ = state.map.cendre
-  if (!champ) return
-  const front = frontActuel(state)
-  if (front <= 0) return // l'acte I : la Cendrière reste chez elle
-
-  const width = state.map.width
-  const avant = state.nodes.length
-  state.nodes = state.nodes.filter((n) => {
-    const d = champ[n.ty * width + n.tx]
-    return d === undefined || d >= front
-  })
-  const brules = avant - state.nodes.length
-  if (brules > 0) emitEvent(state, {
-    type: 'cendre_avance',
-    tick: state.tick,
-    jour: jourDeSaison(state),
-    front: Math.round(front),
-    noeudsBrules: brules,
-  })
-
-  // ═══ LA CENDRE PREND (P5a — la strate du joueur, décision 2026-08-21) ═══
-  //
-  // Les nœuds meurent au filtre ci-dessus ; les STRUCTURES restent — debout dans le brûlé.
-  // Le jeu produisait donc des ruines du joueur à côté de celles d'avant, MUETTES : aucun
-  // événement ne marquait le jour où le front passait tes murs. On compare la distance de
-  // cendre de chaque structure de VILLAGE à la course du front entre hier et aujourd'hui —
-  // « nouvellement derrière » se DÉRIVE, rien n'est stocké (le patron du fichier entier).
-  //
-  // `villageId !== 0` : les ouvrages d'un village, joueur ou PNJ — jamais le feu de camp
-  // (une halte n'est pas un foyer) ni les murs du pays d'avant (poi-batis, villageId 0 :
-  // leurs ruines ont DÉJÀ leurs annales, elles n'ont pas besoin d'une seconde voix).
-  //
-  // ⚠ Cadence nominale supposée : `fHier = front(jour − 1)`. Un saut de plusieurs jours
-  // (debug_set_season_day) sous-rapporte les structures enjambées — le chemin debug n'est
-  // pas un chemin de récit, on l'assume.
-  const max = state.map.cendreMax
-  if (max === undefined) return
-  const jour = jourDeSaison(state)
-  const fHier = avanceeDuFront(jour - 1, max)
-  if (front <= fHier) return
-  const prises = new Map<number, number>()
-  for (const s of state.structures) {
-    if (s.villageId === 0) continue
-    const d = champ[s.ty * width + s.tx]
-    if (d === undefined || d >= front || d < fHier) continue
-    prises.set(s.villageId, (prises.get(s.villageId) ?? 0) + 1)
+export function foyersDeLaCarte(map: WorldMap): { tx: number; ty: number; zone: number }[] {
+  const out: { tx: number; ty: number; zone: number }[] = []
+  for (let zi = 0; zi < map.zones.length; zi++) {
+    const z = map.zones[zi]!
+    if (z.kind !== 'charnier') continue
+    out.push({ tx: Math.floor(z.x + z.w / 2), ty: Math.floor(z.y + z.h / 2), zone: zi })
   }
-  // Ordre d'émission : villageId croissant — déterministe par construction, jamais par
-  // l'ordre d'insertion d'une Map.
-  for (const [villageId, count] of [...prises.entries()].sort((a, b) => a[0] - b[0])) {
-    emitEvent(state, { type: 'cendre_prend', tick: state.tick, jour, villageId, count })
+  return out
+}
+
+/**
+ * ═══ L'ÂGE D'UN FOYER, ET POURQUOI C'EST LE SEUL ÉTAT DE CETTE MÉCANIQUE ═══
+ *
+ * Tout le reste se dérive du tick. Pas ça : **le joueur peut geler un foyer** (R16), et un gel est
+ * un acte, pas une fonction du temps. On range donc, par fosse, son ÂGE EFFECTIF en jours — ce
+ * qu'elle a réellement vécu depuis son réveil.
+ *
+ * Un tableau de dix nombres. Il porte DEUX choses à la fois, et c'est ce qui le justifie :
+ *   • le GEL (R16) — une fosse brûlée ne vieillit pas ce jour-là ;
+ *   • le CARACTÈRE DE LA SAISON (R18) — `deluge` la fait vieillir de 0,4 jour, `reveil` de 1,6.
+ *
+ * Avancé UNE FOIS par bascule de jour de saison, jamais au tick.
+ */
+export function avancerLaCendre(
+  ages: number[],
+  foyers: readonly { zone: number }[],
+  estGelee: (zone: number) => boolean,
+  facteurDuJour: number,
+): void {
+  for (let k = 0; k < foyers.length; k++) {
+    const age = ages[k] ?? 0
+    ages[k] = age
+    if (estGelee(foyers[k]!.zone)) continue // brûlée aujourd'hui : elle ne vieillit pas
+    ages[k] = age + facteurDuJour
   }
+}
+
+/** L'avancée de chaque foyer, en unités de coût — ce que `estCendre` compare. */
+export function avanceesDepuisAges(ages: readonly number[], combien: number): number[] {
+  const out = new Array<number>(combien)
+  for (let k = 0; k < combien; k++) out[k] = avanceeDeCendre(ages[k] ?? 0)
+  return out
+}
+
+/**
+ * ═══ DEPUIS COMBIEN DE TEMPS CETTE TUILE EST-ELLE CENDRÉE ? (R13) ═══
+ *
+ * En jours EFFECTIFS de son foyer, ou `-1` si elle ne l'est pas encore.
+ *
+ * ⚠ **ET ELLE NE COÛTE AUCUN ÉTAT**, ce qui était l'inquiétude de la spec. On sait à quelle
+ * AVANCÉE la tuile tombe (`coût / (1 + grain)`) ; `avanceeDeCendre` est monotone, donc on
+ * l'inverse par une recherche dichotomique sur le cumul déjà mémoïsé, ce qui donne l'âge du foyer
+ * au moment de la prise. L'ancienneté est la différence avec son âge d'aujourd'hui. Le monde
+ * n'a donc pas à se souvenir de ce qu'il a brûlé : il le RECALCULE.
+ */
+export function ancienneteDeCendre(
+  map: WorldMap,
+  tx: number,
+  ty: number,
+  ages: readonly number[],
+  seed: number,
+): number {
+  if (tx < 0 || ty < 0 || tx >= map.width || ty >= map.height) return -1
+  const champ = map.cendreCout
+  if (!champ) return -1
+  const i = ty * map.width + tx
+  const c = coutDe(champ, i)
+  if (c < 0) return -1
+  const age = ages[foyerDe(champ, i)]
+  if (age === undefined) return -1
+  const seuil = c / CENDRE.ORTHO / (1 + grainDeCendre(seed, tx, ty))
+  if (avanceeDeCendre(age) < seuil) return -1 // pas encore prise
+  // L'âge auquel l'avancée a franchi le seuil — dichotomie sur une suite croissante.
+  let lo = 0
+  let hi = Math.floor(age)
+  while (lo < hi) {
+    const m = (lo + hi) >> 1
+    if (avanceeDeCendre(m) < seuil) lo = m + 1
+    else hi = m
+  }
+  return age - lo
+}
+
+/**
+ * ═══ LA CENDRE FAIT TOMBER CE QU'ELLE A TUÉ (R13) ═══
+ *
+ * Une fois par bascule de jour : tout nœud VIVANT dont la tuile est cendrée depuis plus de
+ * `AGONIE_JOURS` disparaît. Le minéral (pierre, filon, carrière, gravats) n'est jamais touché —
+ * *« le vivant meurt lentement, le minéral reste »*.
+ *
+ * ⚠ **CE N'EST PAS L'ANCIEN `avancerLaCendre`**, et la différence est tout le sujet. Celui-là
+ * supprimait TOUT nœud passé derrière le front, au tick même, sans préavis : au jour 285, 69 % des
+ * nœuds de la Racine effacés, et rien ne les rendait jamais. Ici l'arbre a été visible, dénudé et
+ * RÉCOLTABLE pendant cinq jours avant de tomber — le joueur a eu le temps d'aller le chercher.
+ *
+ * Émet UN événement par jour, jamais un par nœud : la chronique veut savoir que la vallée a
+ * reculé, pas qu'un buisson est tombé.
+ */
+export function tomberLesMortsDeLaCendre(
+  nodes: ResourceNode[],
+  map: WorldMap,
+  ages: readonly number[],
+  seed: number,
+  estVivant: (type: string) => boolean,
+): { restants: ResourceNode[]; tombes: number } {
+  if (!map.cendreCout) return { restants: nodes, tombes: 0 }
+  const restants = nodes.filter((n) => {
+    if (!estVivant(n.type)) return true
+    const age = ancienneteDeCendre(map, n.tx, n.ty, ages, seed)
+    return age < 0 || age < CENDRE.AGONIE_JOURS
+  })
+  return { restants, tombes: nodes.length - restants.length }
+}
+
+/** L'arbre est-il EN TRAIN de mourir ici ? (le rendu le dénude, la récolte le laisse passer) */
+export function agonise(map: WorldMap, tx: number, ty: number, ages: readonly number[], seed: number): boolean {
+  const age = ancienneteDeCendre(map, tx, ty, ages, seed)
+  return age >= 0 && age < CENDRE.AGONIE_JOURS
+}
+
+/**
+ * LA LECTURE DE JEU — « cette tuile est-elle cendrée, MAINTENANT ? »
+ *
+ * Sans allocation : elle lit directement l'âge du foyer propriétaire au lieu de reconstruire le
+ * tableau des avancées. C'est la forme qu'appellent les chemins chauds (dérive, repousse, rendu).
+ */
+export function tuileCendree(
+  state: { map: WorldMap; cendreAge: readonly number[]; seed: number },
+  tx: number,
+  ty: number,
+): boolean {
+  const map = state.map
+  if (tx < 0 || ty < 0 || tx >= map.width || ty >= map.height) return false
+  const champ = map.cendreCout
+  if (!champ) return false
+  const i = ty * map.width + tx
+  const c = coutDe(champ, i)
+  if (c < 0) return false
+  const a = avanceeDeCendre(state.cendreAge[foyerDe(champ, i)] ?? 0)
+  return c <= a * CENDRE.ORTHO * (1 + grainDeCendre(state.seed, tx, ty))
+}
+
+/**
+ * CE NŒUD EST-IL TOMBÉ AVEC LA CENDRE ? — la règle R13, sous la forme dont le RENDU a besoin.
+ *
+ * ⚠ **ELLE EXISTE PARCE QUE LE PROTOCOLE N'ENVOIE JAMAIS LA DISPARITION D'UN NŒUD** : les deltas
+ * ne portent que des stocks. Le client APPLIQUE donc la règle au lieu de la recevoir — exactement
+ * ce qu'il fait déjà pour le défrichage (`noeudDefriche`), et pour la même raison : sans ça il
+ * resterait un arbre FANTÔME sur la cendre, contre lequel la prédiction locale irait se cogner.
+ * (Constaté au navigateur avant cette ligne : au jour 240, la futaie morte était encore debout.)
+ */
+export function noeudTombeParLaCendre(
+  map: WorldMap,
+  ages: readonly number[],
+  seed: number,
+  node: { tx: number; ty: number },
+  vivant: boolean,
+): boolean {
+  if (!vivant) return false // le minéral RESTE, toujours
+  const age = ancienneteDeCendre(map, node.tx, node.ty, ages, seed)
+  return age >= CENDRE.AGONIE_JOURS
 }

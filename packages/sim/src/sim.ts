@@ -10,12 +10,15 @@
  * que snapshot = JSON.stringify et que le transport Worker/réseau soit
  * trivial.
  */
-import { BALANCE, CARRY, COMBAT, HUNT, SLOTS, TEMPERATURE, TERRAIN_GRASS, TICK_DT_S, type FishSpecies, type RecipeId, type Strike } from './balance'
+import { BALANCE, CARRY, COMBAT, HUNT, NODE_DEFS, SLOTS, TEMPERATURE, TERRAIN_GRASS, TICK_DT_S, VENT, type FishId, type NodeType, type RecipeId, type Strike } from './balance'
 import { moveAvatar } from './collision'
 import { advanceDegel } from './gel'
 import { advanceEnvols } from './faune'
 import { advanceCombat, applyCombatAction, tientUnArc, type CombatAction, type Corpse } from './combat'
 import { advanceCendreux } from './cendreux'
+import { avanceesDepuisAges, avancerLaCendre, foyersDeLaCarte, jourDuReveilDeLaCendre, tomberLesMortsDeLaCendre } from './cendre'
+import { FUMEROLLE, ouvrirLesFumerolles } from './fumerolle'
+import { effetsDuJour } from './modificateur'
 import { advanceLieuxBrules, advanceReveils, type Reveil } from './morts'
 import { advanceDecouverte } from './decouverte'
 import { advanceFire } from './fire'
@@ -40,13 +43,13 @@ import { advanceRefugees } from './refugees'
 import { advanceBrume } from './brume'
 import { advanceFoudre } from './foudre'
 import { advanceMeteo, meteoSpeedFactor } from './meteo'
+import { advanceVent } from './vent'
 import { rngNext } from './rng'
 import { advanceNightHunt } from './nighthunt'
 import { advanceNpcs, type Npc } from './npc'
 import { advanceVillageGrowth } from './village-growth'
 import { advancePois } from './poi-discovery'
 import { advanceDens } from './poi'
-import { avancerLaCendre } from './cendre'
 import { actForDay, dayTicksAt, TICKS_PER_CYCLE, advanceTime, jourDeSaison } from './time'
 import { advanceCultures } from './agriculture'
 import { advanceTemperature, coldSpeedFactor } from './temperature'
@@ -174,7 +177,31 @@ export interface Entity {
    * flotteur, la plongée, le ferrage ; il ne rapporte jamais un résultat. `bait` : un ver est
    * parti au lancer (et ne revient pas). Absent hors pêche.
    */
-  fishing?: { nodeId: number; castTick: number; biteAt: number; bait: boolean; species?: FishSpecies['id']; windowEnd?: number }
+  fishing?: {
+    /** LA TUILE PÊCHÉE — depuis D9 (2026-08-24), la cible est l'EAU, pas un nœud. */
+    tx: number
+    ty: number
+    /** Le coin, s'il y en avait un sous la tuile : il MODIFIE la table, il ne l'autorise pas. */
+    nodeId?: number
+    castTick: number
+    biteAt: number
+    bait: boolean
+    /** Combien de fois ça a mordillé sans mordre (D11) — la ligne rentre à `NIBBLES_MAX`. */
+    nibbles: number
+    species?: FishId
+    /** Une TROUVAILLE au bout de la ligne (T4) : ce qui n'est pas un poisson. */
+    trouvaille?: import('./items').ItemId
+    windowEnd?: number
+  }
+  /**
+   * LE BESTIAIRE (spec `peche.md` B5) — une ligne par espèce déjà prise : combien de fois, et
+   * le RECORD de taille en millimètres. Un TABLEAU (invariant §3 : ni `Map` ni `Set`, il voyage
+   * dans le snapshot), poussé dans l'ordre de `FISH_SPECIES`.
+   *
+   * **Il survit à la mort** (décision posée le 2026-08-24) : la mort prend le sac, pas la
+   * mémoire. C'est un carnet, pas un bien.
+   */
+  peche?: { sp: FishId; mm: number; tick: number; prises: number }[]
   /**
    * LE DÉPEÇAGE EN COURS (spec `depecage.md` C3). Posé par `butcher_start`, couteau en main, sur
    * une carcasse ; effacé au relâchement, au pas, à la mort, au sac plein, au réservoir vide ou
@@ -289,6 +316,23 @@ export interface SimState {
    *  densité des morts tombe autour, la respiration se suspend, jusqu'à `until`. */
   lieuxBrules: { zone: number; until: number }[]
   /**
+   * L'ÂGE EFFECTIF DE CHAQUE FOYER DE CENDRE, en jours, indexé comme `foyersDeLaCarte(map)`
+   * (spec `cendre.md`). **Le seul état de toute la mécanique** — tout le reste se dérive du tick.
+   * Il existe parce qu'un GEL (brûler la fosse, R16) est un ACTE et non une fonction du temps, et
+   * il porte du même coup le caractère de la saison (R18 : `deluge` fait vieillir de 0,4 jour,
+   * `reveil` de 1,6). Dix nombres. Avancé une fois par bascule de jour de saison.
+   */
+  cendreAge: number[]
+  /**
+   * LE DERNIER JOUR DE SAISON OÙ LA CENDRE A VIEILLI. **Un nombre, et il n'est pas redondant** :
+   * `debug_set_season_day` RÉÉCRIT le tick, donc `jourDeSaison(tick − 1)` est déjà la veille du
+   * jour visé et ne dit RIEN des centaines de jours enjambés. Sans cette mémoire, un saut de
+   * saison laissait la cendre à sa tache initiale (CONSTATÉ au navigateur : âge 1 au jour 240) —
+   * un outil de debug qui ment sur l'état du monde, et le même piège pour un serveur qui rattrape
+   * du retard.
+   */
+  cendreJour: number
+  /**
    * LES ENVOLS RÉCENTS (forêts-vivantes §3 R4bis) : les perchoirs se reposent — un envol
    * par zone tous les `ENVOL_COOLDOWN_TICKS`. Liste BORNÉE (purgée à chaque déclenchement),
    * JSON-sérialisable. Optionnelle : une sauvegarde d'avant reprend sans, et se la crée.
@@ -362,12 +406,25 @@ export interface SimState {
    */
   blood: { x: number; y: number; tick: number }[]
   /**
-   * LE VENT (spec chasse C17), un des huit relèvements — il tourne lentement, au
-   * PRNG de l'état. L'odeur DESCEND le vent : une menace au vent d'une bête la
-   * trahit, quels que soient son allure, son couvert et le dos tourné. La parade
-   * n'est pas un facteur de plus : c'est un CÔTÉ.
+   * LE CAP DU VENT (spec `vent.md` V1/V4 ; l'odorat, chasse C17), un des huit relèvements —
+   * DÉRIVÉ du front météo qui traverse, ou du relèvement d'ambiance entre deux fronts. L'odeur
+   * DESCEND le vent : une menace au vent d'une bête la trahit, quels que soient son allure, son
+   * couvert et le dos tourné. La parade n'est pas un facteur de plus : c'est un CÔTÉ.
+   *
+   * ⚠ `{0, 0}` est une SENTINELLE, pas une valeur : « ce monde n'a pas de vent, et n'en aura
+   * jamais » — une décision d'HÔTE (comme `faunaCap`) dont les bancs se servent pour mesurer
+   * l'odorat en canal isolé. La loi ne la produit jamais, et ne l'écrase jamais.
    */
   wind: { x: number; y: number }
+  /**
+   * LA FORCE DU VENT AU CENTRE DE LA CARTE (spec `vent.md` V3), de `VENT.AMBIANT` à 1 — et 0
+   * tout court sous la sentinelle ci-dessus. Elle ne vit PAS dans la norme de `wind` : une norme
+   * qui pourrait légitimement valoir 0 au calme entrerait en collision avec la sentinelle.
+   *
+   * C'est la valeur GLOBALE, pour le HUD et les lecteurs grossiers. Ce qui a besoin de la force
+   * LÀ OÙ IL SE TROUVE appelle `ventForceAt(state, x, y)` : la bande est spatiale.
+   */
+  windForce: number
   /**
    * LES PILES D'ITEMS AU SOL (spec chasse C18, décision utilisateur n°4). Ce
    * qu'on JETTE : appât pour le gibier, viande pour détourner une meute, charge
@@ -519,6 +576,8 @@ export function createSim(seed: number, options: SimOptions = {}): SimState {
     corpses: [],
     reveils: [],
     lieuxBrules: [],
+    cendreAge: [],
+    cendreJour: 0,
     nextCorpseId: 1,
     hordes: [],
     refugeeGroups: [],
@@ -546,8 +605,10 @@ export function createSim(seed: number, options: SimOptions = {}): SimState {
     dens: [],
     denRespawns: [],
     blood: [],
-    // Le vent de départ : le premier des huit relèvements. Il tournera (C17).
+    // Le vent de départ : le premier des huit relèvements. Il tournera (C17, `vent.md` V4).
     wind: { x: 1, y: 0 },
+    // La force de départ : l'ambiance. La première phase la recalcule (`vent.md` V3).
+    windForce: VENT.AMBIANT,
     groundItems: [],
     nextGroundItemId: 1,
   }
@@ -771,6 +832,7 @@ export function step(state: SimState, inputs: MoveInput[]): void {
         action.type === 'harvest' ||
         action.type === 'harvest_charge_start' ||
         action.type === 'harvest_release' ||
+        action.type === 'cast_line' ||
         action.type === 'butcher_start' ||
         action.type === 'butcher_stop' ||
         action.type === 'craft' ||
@@ -863,6 +925,10 @@ export function step(state: SimState, inputs: MoveInput[]): void {
   // `worldEvents` — un banc peut mesurer l'économie sous la pluie sans convois ni hordes.
   // Élection au bord de cycle par hash2 (aucun tirage), bande purgée sitôt sortie.
   advanceMeteo(state)
+  // LE VENT (spec `vent.md`) — juste après la météo, parce qu'il en est DÉRIVÉ : le front du
+  // tick doit être connu. Et avant la faune, qui lit le cap pour l'odorat — l'ordre qu'avait
+  // déjà l'ancien `advanceWind` en tête d'`advanceFauna`.
+  advanceVent(state)
   // LA FOUDRE (spec meteo.md R8) : la résolution de l'impact élu — phase dédiée au même
   // endroit (`foudre.ts` : meteo.ts reste sans import de combat). Impacts par hash2,
   // zéro tirage ; l'abri supprime ou épargne, jamais de report.
@@ -894,10 +960,48 @@ export function step(state: SimState, inputs: MoveInput[]): void {
   // pour la structure feu hors village. À sec, il passe en braises puis s'éteint.
   advanceFire(state)
   advanceTime(state)
-  // LA CENDRE AVANCE — après le temps, puisque c'est le temps qui la pousse. Elle ne fait quelque
-  // chose qu'au BASCULEMENT d'un jour de saison : le reste des ticks, elle ne coûte qu'un test.
+  // LA CENDRE VIEILLIT — une fois par bascule de jour de saison, jamais au tick (spec `cendre.md`
+  // R9/R16/R18). Elle ne mute aucune tuile : elle avance l'ÂGE de chaque foyer, et l'appartenance
+  // d'une tuile s'en dérive par une comparaison. Un foyer dont la fosse brûle aujourd'hui ne
+  // vieillit pas ; le caractère de la saison module ce que vaut un jour.
   if (jourDeSaison(state) !== jourDeSaison(state, state.tick - 1)) {
-    avancerLaCendre(state)
+    const jour = jourDeSaison(state)
+    const reveil = jourDuReveilDeLaCendre(state)
+    if (jour > reveil) {
+      const foyers = foyersDeLaCarte(state.map)
+      const brulees = state.lieuxBrules
+      const gelee = (zone: number): boolean =>
+        brulees.some((lb) => lb.zone === zone && state.tick < lb.until)
+      // ⚠ ON AVANCE DU NOMBRE DE JOURS FRANCHIS, PAS D'UN. Un tick n'enjambe qu'un jour en marche
+      // normale — mais `debug_set_season_day` en saute des centaines, et un serveur qui rattrape
+      // du retard peut en franchir plusieurs. Avancer de 1 rendait alors un âge de 1 au jour 240
+      // (CONSTATÉ au navigateur : la cendre restait à sa tache initiale après un saut de saison),
+      // c'est-à-dire un outil de debug qui MENT sur l'état du monde.
+      //
+      // La boucle est bornée : au-delà, la courbe est plate à l'échelle du jeu, et on ne veut pas
+      // qu'un tick pathologique fasse tourner la sim sur des millions d'itérations.
+      const depuis = state.cendreJour > reveil ? state.cendreJour : reveil
+      const franchis = Math.min(400, Math.max(1, jour - depuis))
+      for (let n = 0; n < franchis; n++) {
+        avancerLaCendre(state.cendreAge, foyers, gelee, effetsDuJour(jour - n).cendre ?? 1)
+      }
+      state.cendreJour = jour
+      // …ET CE QU'ELLE A TUÉ TOMBE (R13). L'arbre est resté debout et récoltable pendant son
+      // agonie : ce n'est pas l'ancien front, qui effaçait au passage et sans préavis.
+      const { restants, tombes } = tomberLesMortsDeLaCendre(
+        state.nodes, state.map, state.cendreAge, state.seed, (t) => NODE_DEFS[t as NodeType]?.vivant === true,
+      )
+      if (tombes > 0) {
+        state.nodes = restants
+        emitEvent(state, { type: 'cendre_avance', tick: state.tick, jour, front: 0, noeudsBrules: tombes })
+      }
+      // LES FUMEROLLES S'OUVRENT — celles que le cœur de la corruption vient d'atteindre. Après
+      // la chute des morts, et pas avant : une bouche sous un arbre attendait que l'arbre tombe.
+      ouvrirLesFumerolles(
+        state.nodes, state.map, avanceesDepuisAges(state.cendreAge, state.cendreAge.length),
+        state.seed, FUMEROLLE.SEL_STOCK,
+      )
+    }
   }
   advanceCraft(state)
   // LA DÉCOUVERTE (D2) après le craft : ce qu'on vient de fabriquer révèle la suite au

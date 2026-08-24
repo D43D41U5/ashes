@@ -19,7 +19,7 @@
  * Aucune règle de jeu n'est décidée ici — la sim revalide tout (invariant §3).
  * On ne fait qu'éviter d'ÉMETTRE une action qu'on sait perdue d'avance.
  */
-import { COMPONENT_TYPES, EDGE_E, EDGE_N, EDGE_O, EDGE_S, FOOD_VALUES, NODE_DEFS, STRUCTURE_HP, WEAPON_DAMAGE, edgeBarrierAt, isCropMature, isPlot, isRangedWeapon, piece, toolTier, type ItemId, type StructureType, type WallMaterial } from '@ashes/sim'
+import { COMPONENT_TYPES, EDGE_E, FISHING, EDGE_N, EDGE_O, EDGE_S, FOOD_VALUES, NODE_DEFS, STRUCTURE_HP, WEAPON_DAMAGE, edgeBarrierAt, isCropMature, isPlot, isRangedWeapon, piece, porteeDuNoeud, toolTier, type ItemId, type StructureType, type WallMaterial } from '@ashes/sim'
 import type { Placeable } from '../../hud-state'
 import type { ComponentType, Corpse, PlayerAction, ResourceNode, ToolFamily } from '@ashes/sim'
 
@@ -214,6 +214,27 @@ export interface AimTarget {
   pileId: number | null
   /** Distance ≤ `range` entre le joueur et le CENTRE de la tuile visée. */
   inRange: boolean
+  /**
+   * LE NŒUD de la tuile est-il à SA propre portée (`porteeDuNoeud`) ?
+   *
+   * Identique à `inRange` pour tout nœud qui n'en déclare pas — c'est-à-dire tous sauf le
+   * COIN DE PÊCHE, qu'on prend à `FISHING.RANGE` (on lance une ligne, on ne l'atteint pas au
+   * bras). Un champ SÉPARÉ, et pas un `inRange` élargi : `inRange` gouverne aussi le cadavre,
+   * la structure et l'entité de la même tuile — l'élargir ferait donner à manger, panser et
+   * réparer à quatre tuiles parce qu'un poisson mord à côté.
+   *
+   * `false` si la tuile ne porte aucun nœud.
+   */
+  nodeInRange: boolean
+  /**
+   * CETTE TUILE PORTE-T-ELLE DE L'EAU PÊCHABLE, à `FISHING.RANGE` ? (peche.md E6/R9)
+   *
+   * Un TROISIÈME champ de portée, à côté d'`inRange` et de `nodeInRange`, et pour la même
+   * raison qu'eux : élargir `inRange` ferait donner à manger ou réparer à quatre tuiles.
+   * L'eau du jour vient de l'appelant (`porteDeLEau` de /sim, qui connaît l'assec et la crue) :
+   * `aim.ts` reste pur, il ne lit pas la carte.
+   */
+  waterInRange: boolean
 }
 
 /** Ce dont `aimAt` a besoin d'une structure pour trancher feed_fire/repair (sous-ensemble de `Structure`). */
@@ -250,6 +271,10 @@ export function aimAt(
   /** Les piles au sol (spec chasse C18) — la cible de `pick_up`. Vide par défaut : un
    *  appelant qui ne vise que le don n'a pas à les fournir. */
   piles: readonly { id: number; x: number; y: number }[] = [],
+  /** L'EAU DU JOUR (peche.md D9) : la tuile porte-t-elle de l'eau MAINTENANT ? Injectée par
+   *  l'appelant — `aim.ts` ne lit pas la carte, et l'assec comme la crue sont des états du
+   *  jour. Par défaut « pas d'eau » : un appelant qui ne vise pas la pêche n'a rien à fournir. */
+  porteEau: (tx: number, ty: number) => boolean = () => false,
 ): AimTarget {
   const corpse = corpses.find((c) => Math.floor(c.x) === tx && Math.floor(c.y) === ty)
   // LA PILE de la tuile visée. Comme le cadavre : on la cherche à la TUILE, parce qu'une
@@ -271,6 +296,11 @@ export function aimAt(
       fireId = s.id
       continue
     }
+    // ⚠ LE FOUR ET LE SÉCHOIR S'OUVRENT COMME LE FEU (peche.md S2/S5, 2026-08-24) : ce sont
+    // des POSTES, ils ont des entrées et des sorties, et E doit les ouvrir. `onFire` reste
+    // FAUX pour eux — c'est lui qui autorise `feed_fire` (on ne nourrit pas une claie).
+    // Ils tombent quand même dans les tests de réparation plus bas : ils s'abîment.
+    if (s.type === 'sechoir' || s.type === 'furnace') fireId = s.id
     if (s.hp < STRUCTURE_HP[s.type]) damaged = s // toute structure hors Feu, abîmée, se répare
     if (isPlot(s.type)) {
       // Parcelle (plein air) / serre (hiver) / terroir (le meilleur) se sèment/récoltent pareil ;
@@ -282,6 +312,7 @@ export function aimAt(
   }
   const dx = tx + 0.5 - player.x
   const dy = ty + 0.5 - player.y
+  const porteeNoeud = node ? Math.max(range, porteeDuNoeud(node.type)) : range
 
   // L'ENTITÉ visée : la plus proche du CURSEUR (tuile visée), à condition d'être sous le
   // curseur (≤ AIM_ENTITY_TILES) ET à portée de bras du JOUEUR (la sim revalide la portée).
@@ -320,6 +351,11 @@ export function aimAt(
     harvestableId: harvestable?.id ?? null,
     pileId: pile?.id ?? null,
     inRange: dx * dx + dy * dy <= range * range,
+    // La portée du NŒUD vient de /sim (`porteeDuNoeud`), jamais recopiée : c'est la même
+    // règle que la sim revalidera. `Math.max` parce qu'un nœud allonge le bras, ne le coupe pas.
+    nodeInRange: node !== undefined && dx * dx + dy * dy <= porteeNoeud * porteeNoeud,
+    // ON PÊCHE L'EAU, PAS LE COIN (D9) : la portée de la pêche est la sienne, jamais le bras.
+    waterInRange: dx * dx + dy * dy <= FISHING.RANGE * FISHING.RANGE && porteEau(tx, ty),
   }
 }
 
@@ -574,7 +610,17 @@ export function clickToAction(
   // Rien à câbler en aval : `input-bindings` route sur le TYPE rendu ici, donc un `harvest`
   // sur un arbre arme la jauge d'abattage (`harvest_charge_start`) exactement comme avec une
   // hache d'atelier, et sur un filon il verrouille le rocher.
-  if (hand && target.inRange && target.nodeId !== null && estLOutilDuNoeud(hand.held, target.nodeTool))
+  // ═══ LA CANNE SUR DE L'EAU LANCE LA LIGNE (peche.md D9/E1, 2026-08-24) ═══
+  //
+  // AVANT LA BRANCHE OUTIL-SUR-NŒUD, et il le faut : un coin de pêche EST un nœud dont l'outil
+  // est la canne, donc la branche suivante l'aurait pris et émis un `harvest` — que la sim
+  // refuse désormais (« il faut lancer la ligne »). La pêche a sa cible à elle : une TUILE.
+  //
+  // Le coin sous la tuile ne change RIEN ici : la sim le retrouvera toute seule et en fera un
+  // bonus (E3). Le client n'a pas à savoir qu'il y en a un — c'est tout l'intérêt de D9.
+  if (hand && target.waterInRange && estLOutilDuNoeud(hand.held, 'rod'))
+    return { type: 'cast_line', tx: target.tx, ty: target.ty }
+  if (hand && target.nodeInRange && target.nodeId !== null && estLOutilDuNoeud(hand.held, target.nodeTool))
     return { type: 'harvest', nodeId: target.nodeId }
   // LE COUTEAU SUR UNE CARCASSE DÉPÈCE (spec `depecage.md` G6) — même logique que l'outil sur son
   // nœud : la CIBLE tranche. Le couteau n'est pas une arme (`WEAPON_DAMAGE` l'ignore), il ne
@@ -587,6 +633,33 @@ export function clickToAction(
   // lance, et surtout on ne veut pas qu'un clic de panique parte récolter un buisson
   // pendant qu'un loup arrive.
   if (hand && isWeapon(hand.held)) return { type: 'attack', dx: hand.dx, dy: hand.dy }
+
+  // ⚠ LE NŒUD ALLONGÉ, MAIS SANS SON OUTIL — et c'est le cas qu'il ne faut PAS taire.
+  //
+  // Le coin de pêche se prend à 4 tuiles (`NodeDef.range`) ; le bras, lui, en fait 1,5. Entre
+  // les deux, la cascade tombait dans le trou : la branche outil ci-dessus ne mord pas (pas de
+  // canne en main), `isWeapon` non plus les mains vides, et le repli à nœud vit SOUS
+  // `target.inRange` — donc le clic finissait en `attack`, un moulinet MUET dans l'eau. Le
+  // joueur qui a oublié de sélectionner sa canne n'aurait rien eu : pas de ligne, pas de
+  // refus, rien. C'est exactement le défaut qu'on venait de corriger, recréé par l'allonge.
+  //
+  // On émet donc le `harvest` : `input-bindings` le route en lancer (coin + canne), et la sim
+  // répond « il faut une canne en main » quand il n'y en a pas. Un refus vaut mieux qu'un
+  // silence. Placé APRÈS `isWeapon` (une arme en main frappe toujours) et AVANT le bloc
+  // `inRange` (qu'on ne réordonne pas : il juge le cadavre avant le nœud).
+  if (target.nodeInRange && !target.inRange && target.nodeId !== null)
+    return { type: 'harvest', nodeId: target.nodeId }
+
+  // ⚠ ET DE L'EAU À PORTÉE SANS CANNE EN MAIN — le même piège, pour la pêche (P7).
+  //
+  // La branche de lancer plus haut exige la canne EN MAIN ; sans elle, un clic sur l'eau
+  // tombait dans le vide : ni ligne, ni refus, RIEN. Le joueur qui a oublié de sélectionner sa
+  // canne ne comprend pas pourquoi « on ne pêche pas ici ». On émet donc le `cast_line` : la
+  // sim répond « il faut une canne en main ». Un refus vaut mieux qu'un silence.
+  //
+  // Placé APRÈS `isWeapon` (une arme frappe toujours) et sous `!inRange` (à bout de bras, la
+  // tuile a d'autres prétendants : un cadavre, un nœud, une pile).
+  if (target.waterInRange && !target.inRange) return { type: 'cast_line', tx: target.tx, ty: target.ty }
 
   // Hors portée, on n'émet rien : la sim refuserait, et un refus n'est pas
   // gratuit (c'est un SimEvent que la chronique consomme — spec recolte.md G7).
@@ -658,7 +731,8 @@ export function holdHarvest(
   // Le MAINTIEN nourrit : c'est le geste que l'utilisateur a demandé pour le bandage
   // (« sélectionner dans la ceinture, maintenir le clic »), et il vaut pour ce qui se mange.
   if (hand && isFood(hand.held)) return eatHeld(hand)
-  if (!target.inRange || target.nodeId === null) return null
+  // `nodeInRange`, pas `inRange` : le maintien martèle le nœud à SA portée (voir `aimAt`).
+  if (!target.nodeInRange || target.nodeId === null) return null
   return { type: 'harvest', nodeId: target.nodeId }
 }
 

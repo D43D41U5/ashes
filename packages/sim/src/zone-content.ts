@@ -42,7 +42,7 @@ import {
   TERRAINS,
   type NodeType,
 } from './balance'
-import { estCendre } from './cendre'
+import { CENDRE, coutDe } from './cendre'
 import type { ResourceNode } from './economy'
 import { distSq } from './geometry'
 import { profondeurAt, terrainAt, type WorldMap } from './map'
@@ -911,15 +911,17 @@ function blocsDesAffleurements(c: CarteZonee, occupees: Set<number>, id: number)
  * ═══ LES CARRIÈRES DE L'ENCEINTE — on taille la montagne, pas le pré (§2sexies R49) ═══
  *
  * Candidates : les tuiles marchables de la racine au CONTACT ORTHOGONAL de la roche, hors
- * seuils et routes, et là où le front n'arrive JAMAIS (`cendre > cendreMax` — ce qui exclut
- * d'office le mur de la frontière Cendrière : ses abords brûlent). Les postes s'écartent au
- * MAX-MIN (le patron des points de spawn), départ salé ('CARR') ; autour de chaque poste,
- * quelques nœuds `quarry` sur les candidates voisines.
+ * seuils et routes. Les postes s'écartent au MAX-MIN (le patron des points de spawn), départ
+ * salé ('CARR') ; autour de chaque poste, quelques nœuds `quarry` sur les candidates voisines.
+ *
+ * ⚠ LA CLAUSE « LÀ OÙ LE FRONT N'ARRIVE JAMAIS » EST TOMBÉE (2026-08-24) avec le front. Elle
+ * excluait d'office le mur de la frontière Cendrière, dont les abords brûlaient ; il n'y a plus
+ * ni Cendrière ni front, et la garde `cendreMax === undefined` rendait `[]` — **zéro carrière
+ * sur toute la carte**, en silence. Le pied de l'enceinte suffit à les porter.
  */
 function carrieresDeLEnceinte(c: CarteZonee, occupees: Set<number>, id: number): ResourceNode[] {
   if ((c.graphe.monde ?? 'vallee') !== 'racine') return []
-  const { width, height, terrain, cendre, cendreMax } = c.map
-  if (!cendre || cendreMax === undefined) return []
+  const { width, height, terrain } = c.map
   const candidates: number[] = []
   for (let ty = 1; ty < height - 1; ty++) {
     for (let tx = 1; tx < width - 1; tx++) {
@@ -928,7 +930,6 @@ function carrieresDeLEnceinte(c: CarteZonee, occupees: Set<number>, id: number):
       if (c.rampe[i] || occupees.has(i)) continue
       const t = terrain[i]!
       if (t === TERRAIN_ROAD || !TERRAINS[t]?.walkable) continue
-      if (cendre[i]! <= cendreMax) continue
       if (terrain[i - 1] !== TERRAIN_ROCK && terrain[i + 1] !== TERRAIN_ROCK
         && terrain[i - width] !== TERRAIN_ROCK && terrain[i + width] !== TERRAIN_ROCK) continue
       if (!terrainAdmet('quarry', t)) continue
@@ -1645,21 +1646,35 @@ export function pointsDeSpawn(
   c: CarteZonee,
   emplacements: Emplacement[],
   combien: number,
-  front = 0,
 ): Emplacement[] {
   /**
-   * LE SPAWN SUIT LE FRONT (spec R30, décision d'Alexis).
+   * ═══ ON NE NAÎT PAS SUR LE PAS D'UNE FOSSE (spec `cendre.md` R10) ═══
    *
-   * Le serveur tourne des semaines. Si les Prés Bas sont sous la cendre au jour 30, celui qui
-   * rejoint au jour 31 naîtrait **dans le feu** — il ne jouerait pas au même jeu que les autres.
-   * On ne fait donc naître personne dans ce qui a brûlé.
+   * L'ancienne règle (R30) écartait ce qui avait DÉJÀ brûlé, en suivant le front. Le front est
+   * retiré ; celle-ci écarte ce qui brûlera BIENTÔT, et elle ne s'applique qu'aux points de
+   * NAISSANCE — pas aux sites de village.
    *
-   * Et ça RACONTE quelque chose, ce qui ne gâche rien : les nouveaux arrivent par la bouche de la
-   * vallée, en fuyant déjà.
+   * **La distinction est le cœur de la règle.** Un site de village, on le CHOISIT : que le
+   * charnier soit à la fois un lieu de danger et l'origine de la cendre est alors la meilleure
+   * sorte de leçon, celle que le monde enseigne tout seul — *on ne bâtit pas à côté d'une fosse.*
+   * Un point de naissance, non : `pointsDeSpawn` le pose. **Mesuré avant la règle : le premier
+   * spawn tombait sous la cendre à un coût de 11 sur la seed 7** — un joueur pouvait naître à neuf
+   * jours du feu. Ce n'est pas une leçon, c'est une mauvaise main distribuée.
+   *
+   * Le filtre est LARGE (12 à 15 sites sur ~50 le franchissent) : il reste 35+ candidats pour 17
+   * spawns, et le semis max-min n'est jamais affamé — vérifié par A5.
    */
-  const dans = emplacements.filter(
-    (e) => e.zone === c.graphe.racine && !estCendre(c.map, e.tx, e.ty, front),
-  )
+  const cout = c.map.cendreCout
+  const assezLoin = (e: Emplacement): boolean => {
+    if (!cout) return true // pas de fosse sur cette carte : rien à écarter
+    const d = coutDe(cout, e.ty * c.map.width + e.tx)
+    return d < 0 || d >= CENDRE.ECART_SPAWN * CENDRE.ORTHO
+  }
+  const dansLaRacine = emplacements.filter((e) => e.zone === c.graphe.racine)
+  const loin = dansLaRacine.filter(assezLoin)
+  // ⚠ REPLI EXPLICITE : si l'écart ne laisse rien (carte dégénérée, monde minuscule), on rend les
+  // sites de la racine plutôt que RIEN — mieux vaut naître près d'une fosse que ne pas naître.
+  const dans = loin.length > 0 ? loin : dansLaRacine
   if (dans.length === 0) return []
 
   const r = c.graphe.zones[c.graphe.racine]!

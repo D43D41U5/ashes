@@ -23,7 +23,7 @@ import { TERRAIN_DEEP_WATER, TERRAIN_SHALLOW_WATER, zoneSlugAt, type WorldMap } 
 import { buildFlowField, COURANT_VITESSE, TAPER_RIVE_MAX, TAPER_RIVE_MIN, type FlowField } from '../../render/flow-field'
 import { GROUND_MAP_DEPTH, TILE_PX } from '../../render/framing'
 import { sunDirection } from '../../render/lighting'
-import { buildFondField, buildRiveField, buildWaterField, REGIME_LAC_MORT, type RiveField } from '../../render/water-field'
+import { buildFondField, buildRiveField, buildWaterField, MILIEU_VASE, REGIME_LAC_MORT, type RiveField } from '../../render/water-field'
 
 /** Période du cycle d'advection dual-phase (s). Courte À DESSEIN : sur la rampe du taper
  *  de berge, les deux couches divergent d'au plus 0,25·T·vitesse — à 3 s l'écart (0,41
@@ -743,6 +743,8 @@ export class WaterLayer {
    *  CPU (`riveAt`) : immersion des acteurs, événements de franchissement, volume du
    *  clapotis. Nul si la carte est sèche. */
   readonly rive: RiveField | null = null
+  /** LE SDF DU MARAIS (peche.md R13) — la même distance signée, pour le sol mou. */
+  readonly vase: RiveField | null = null
   /** Le champ de courant (« l'eau suit le flow ») — la MÊME donnée que le shader, lisible
    *  CPU : les feuilles dérivent dessus. Nul si la carte n'a pas de rivière. */
   readonly flow: FlowField | null = null
@@ -797,6 +799,11 @@ export class WaterLayer {
     // d'eau garde son masque binaire (le trait) et son canal G (réservé au relief).
     const rive = buildRiveField(map.terrain, width, height)
     ;(this as { rive: RiveField | null }).rive = rive
+    // ═══ LE CHAMP DE VASE (peche.md R13, 2026-08-24) — le MÊME SDF, un autre milieu ═══
+    // Le marais est un sol mou où l'on s'enfonce, et « s'enfoncer » est une PENTE, pas une
+    // marche : sans ce champ, franchir l'arête d'une tuile faisait descendre le corps d'un
+    // coup. Sans texture — il ne sert qu'au CPU (l'immersion des acteurs), pas au shader.
+    ;(this as { vase: RiveField | null }).vase = buildRiveField(map.terrain, width, height, MILIEU_VASE, false)
     // LE COURANT (« l'eau suit le flow ») : le champ de flow-field.ts, cuit dans les
     // canaux G/B de la MÊME texture (128 + dir×112 ; 128 pile = pas de courant — le
     // défaut que buildRiveField pose déjà partout). Le shader advecte le clapot avec.

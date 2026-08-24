@@ -41,7 +41,9 @@ export type CapacitesEnPortee = Partial<Record<StationFonction, number>>
 
 /** Les onglets de l'écran personnage : ce qu'on PORTE (sac, artisanat, paperdoll), ce
  *  qu'on MAÎTRISE (métiers), et où l'on EST (la carte, qui s'ouvre aussi à M). */
-export type CharacterTab = 'perso' | 'metiers' | 'carte'
+// `bestiaire` (peche.md R11, 2026-08-24) : le carnet des espèces pêchées et leurs records.
+// Un ONGLET de la fiche, pas un écran de plus — c'est du savoir sur son personnage.
+export type CharacterTab = 'perso' | 'metiers' | 'bestiaire' | 'carte'
 
 /** Le conteneur ouvert, RÉSOLU depuis le snapshot (WorldScene) pour que UIScene
  *  n'ait pas à fouiller structures/cadavres. `null` dès qu'il disparaît (dépouille
@@ -72,6 +74,18 @@ export interface FireView {
   /** COMBUSTIBLE : 3 slots de bois, le TEMPS restant (ticks) avant extinction, la progression de
    *  consommation de la bûche EN COURS (0..1) et l'index de la case qui brûle (l'indicateur). */
   fuel: ({ item: import('@ashes/sim').ItemId; count: number } | null)[]
+  /**
+   * CE POSTE BRÛLE-T-IL QUELQUE CHOSE ? (spec `peche.md` S2/S4, 2026-08-24)
+   *
+   * Le panneau sert maintenant TROIS postes : le Feu, le Four et le SÉCHOIR. Le séchoir n'a
+   * pas de combustible — et montrer trois cases vides intitulées « COMBUSTIBLE » sur une claie
+   * qui n'en veut pas serait un mensonge d'interface : le joueur chercherait du bois à y
+   * mettre. La section entière disparaît.
+   */
+  fuelZone: boolean
+  /** LE VERBE DU POSTE : on CUIT au feu et au four, on SÈCHE au séchoir. Les libellés des
+   *  sections en découlent — « ENTRÉE — à cuire » sur une claie était un contresens. */
+  verbe: 'cuire' | 'secher'
   fuelTimeRemaining: number
   fuelBurnProgress: number
   fuelBurnSlot: number
@@ -128,6 +142,10 @@ export interface HudState {
   /** L'aspect du ciel à l'œil du joueur (`aspectAuPoint`) — `null` hors de toute bande.
    *  La barre en fait son icône ; le ciel s'en sert déjà pour peindre pluie ou neige. */
   cielIci: MeteoAspect | null
+  /** LE VENT (spec `vent.md` V10) : le cap de la sim et sa force AU POINT DU JOUEUR — relayé
+   *  tel quel, jamais recomposé (`vent.ts` est l'écrivain unique du cap, A8). Le cadran de la
+   *  barre haute en fait une aiguille. `undefined` tant que le monde n'a rien dit. */
+  vent: { x: number; y: number; force: number } | undefined
   /** Nombre de membres de mon village (0 = pas de village). */
   village: number
   /** Tableau des tâches de mon village. */
@@ -157,6 +175,10 @@ export interface HudState {
   /** Température du corps de l'avatar (0-100 ; sous 20, le froid mord). */
   temperature: number
   skills: Partial<Record<SkillId, number>>
+  /** LE BESTIAIRE DE PÊCHE (spec `peche.md` B5/R11) — une ligne par espèce déjà prise :
+   *  combien de fois, et le RECORD en millimètres. Vient du snapshot (`Entity.peche`), comme
+   *  tout le reste : le client ne tient aucun compte à lui. */
+  pecheCarnet: { sp: string; mm: number; tick: number; prises: number }[]
   hp: number
   stamina: number
   wounds: Entity['wounds']
@@ -422,9 +444,9 @@ export function getHud<K extends keyof HudState>(registry: Registry, key: K): Hu
  */
 export const CLES_HUD: Record<keyof HudState, true> = {
   worldReady: true, loadProgress: true, time: true, zone: true, village: true,
-  toponyme: true, lieu: true, ambiant: true, cielIci: true,
+  toponyme: true, lieu: true, ambiant: true, cielIci: true, vent: true,
   tasks: true, archetype: true, villageWarmth: true, inv: true, activeSlot: true,
-  craftQueue: true, stationsInRange: true, seen: true, hunger: true, temperature: true, skills: true,
+  craftQueue: true, stationsInRange: true, seen: true, hunger: true, temperature: true, skills: true, pecheCarnet: true,
   hp: true, stamina: true, wounds: true, selected: true, buildMaterial: true, buildEdge: true, demolir: true,
   marteau: true,
   foundableFire: true, refugeesNearby: true, upgradableFire: true, deathMoment: true, deathVeilOpen: true, corpseHint: true,

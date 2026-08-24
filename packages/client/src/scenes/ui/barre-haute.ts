@@ -29,7 +29,7 @@
  * ciel de `lighting.ts`. Les recopier ici, c'est la dérive que `palette.ts` raconte déjà
  * (« trois rouges pour un seul accent »).
  */
-import { BALANCE, type GameTime, type MeteoAspect } from '@ashes/sim'
+import { BALANCE, VENT, type GameTime, type MeteoAspect } from '@ashes/sim'
 import { AMBIENT_KEYS } from '../../render/lighting'
 import { CARDINAUX as CARDINAUX_SAISON } from '../../render/teinte-saison'
 import { INK_OUTLINE, INK_OUTLINE_STRONG } from './hud-dom'
@@ -230,6 +230,19 @@ export interface BarreHauteState {
   ciel: MeteoAspect | null
   /** Le caractère de la saison, déjà nommé — undefined deux saisons sur trois. */
   caractere: string | undefined
+  /**
+   * LE VENT (spec `vent.md` V10, décision d'Alexis 2026-08-24) — le cap et la force, LUS de la
+   * sim (`state.wind` / `state.windForce`), jamais recomposés ici : `vent.ts` est l'écrivain
+   * unique du cap, le HUD compris (A8).
+   *
+   * ⚠ CE CADRAN ROUVRE UN POINT DÉCIDÉ. `chasse.md` C19 disait : « le vent : lisible en
+   * permanence, DIÉGÉTIQUE (herbes, particules) — pas une flèche d'UI ». Il avait raison tant
+   * que le vent ne commandait qu'un canal de perception. Depuis l'unification, il commande
+   * l'odorat ET annonce le front : c'est devenu une mécanique qu'on doit pouvoir lire sans
+   * l'interpréter — comme la girouette de Wind Waker, qui ne dessine pourtant presque jamais
+   * le vent. Les herbes restent la lecture PREMIÈRE ; le cadran est le recours.
+   */
+  vent: { x: number; y: number; force: number } | undefined
   /** L'horloge Phaser : c'est elle qui mesure la grâce de sortie. */
   now: number
 }
@@ -274,15 +287,32 @@ export interface VueBarre {
   heureTxt: string
   cielX: number
   ico: string
+  ventVisible: boolean
+  /** L'angle de l'aiguille, DÉROULÉ (il peut dépasser ±360°) — voir `MemoireDuLieu.ventDeg`. */
+  ventDeg: number
+  ventOp: string
+  ventEchelle: string
 }
 
-/** Le dernier lieu traversé, et quand — l'état minuscule que la grâce demande. */
+/**
+ * Le dernier lieu traversé et quand — l'état minuscule que la grâce demande — PLUS l'angle
+ * déroulé de l'aiguille du vent.
+ *
+ * POURQUOI L'ANGLE VIT ICI. La rotation est confiée à une transition CSS (le DOM la lisse
+ * gratuitement, et l'horloge de la barre n'a pas à la porter). Mais une transition de 350° à
+ * 10° prend le CHEMIN LONG : l'aiguille ferait un tour complet à l'envers. On garde donc
+ * l'angle DÉROULÉ, en ajoutant à chaque frame le plus court écart signé — ce qui le fait
+ * volontairement sortir de [0, 360). C'est du calcul, donc c'est ici, dans la moitié testable,
+ * et pas dans le module qui peint.
+ */
 export interface MemoireDuLieu {
   nom: string | undefined
   vuA: number
+  /** L'angle de l'aiguille tel qu'il a été rendu la fois d'avant — déroulé, jamais modulo. */
+  ventDeg: number
 }
 
-export const MEMOIRE_VIERGE: MemoireDuLieu = { nom: undefined, vuA: -Infinity }
+export const MEMOIRE_VIERGE: MemoireDuLieu = { nom: undefined, vuA: -Infinity, ventDeg: 0 }
 
 /** La vue, et la mémoire qui va avec — pure, sans effet de bord. */
 export function vueDeLaBarre(
@@ -292,7 +322,7 @@ export function vueDeLaBarre(
   const { time } = s
   // Le nom du dernier lieu SURVIT à la sortie : sans lui, le rang se viderait au premier tick
   // dehors et s'éteindrait d'un coup au lieu de repartir en glissant.
-  const memoire: MemoireDuLieu = s.lieu !== undefined ? { nom: s.lieu, vuA: s.now } : avant
+  const memoire: MemoireDuLieu = s.lieu !== undefined ? { nom: s.lieu, vuA: s.now, ventDeg: avant.ventDeg } : avant
   // LA GRÂCE : on tient le lieu un instant après en être sorti (voir LIEU_GRACE_MS).
   const tenu = s.lieu !== undefined || (memoire.nom !== undefined && s.now - memoire.vuA < LIEU_GRACE_MS)
   const c = s.ambiant === undefined ? 0 : Math.round(s.ambiant)
@@ -305,8 +335,27 @@ export function vueDeLaBarre(
   // leur milieu, pour que « la tête est sur le trait » veuille dire « le jour bascule ».
   const centre = (time.seasonDay - 1 + time.jourFrac) * PX_PAR_JOUR
   const heure = Math.floor(time.hourOfCycle)
+  // ═══ L'AIGUILLE DU VENT ═══
+  // Elle pointe LÀ OÙ LE VENT VA — le même sens que les herbes couchées et la fumée, jamais la
+  // convention météo « vent d'ouest » (d'où il vient) : deux conventions opposées côte à côte
+  // se lisent à l'envers une fois sur deux. Le monde se rend en projection directe
+  // (`x * TILE_PX, y * TILE_PX`), donc l'angle écran EST l'angle monde : rien à reprojeter.
+  const v = s.vent
+  const ventVisible = v !== undefined && (v.x !== 0 || v.y !== 0)
+  let ventDeg = avant.ventDeg
+  if (ventVisible) {
+    const brut = (Math.atan2(v!.y, v!.x) * 180) / Math.PI
+    // Le plus court écart signé vers la cible — c'est lui qui DÉROULE l'angle (voir la
+    // mémoire) : sans ça, la transition CSS ferait le tour à l'envers en passant par 0.
+    const ecart = (((brut - avant.ventDeg + 180) % 360) + 360) % 360 - 180
+    ventDeg = avant.ventDeg + ecart
+  }
+  // LA FORCE se lit en INTENSITÉ, pas en longueur seule : l'aiguille s'affirme quand le front
+  // approche. `u` la rapporte à sa plage utile — 0 à l'ambiance, 1 au cœur d'une bande — et la
+  // sentinelle du calme plat (force 0) tombe naturellement à 0 par le clamp.
+  const u = v === undefined ? 0 : Math.min(1, Math.max(0, (v.force - VENT.AMBIANT) / (1 - VENT.AMBIANT)))
   return {
-    memoire,
+    memoire: { ...memoire, ventDeg },
     vue: {
       zone: (s.toponyme ?? '').toUpperCase(),
       // La zone se RÉDUIT VERS LE HAUT quand un lieu s'ouvre sous elle : elle passe d'un titre
@@ -336,6 +385,10 @@ export function vueDeLaBarre(
       // de 22 px toutes les deux minutes réelles.
       cielX: Math.round(TETE_H - (time.hourOfCycle + 24) * PX_PAR_HEURE),
       ico: s.ciel ?? (time.isNight ? 'lune' : 'soleil'),
+      ventVisible,
+      ventDeg,
+      ventOp: (0.5 + 0.5 * u).toFixed(3),
+      ventEchelle: (1 + 0.28 * u).toFixed(3),
     },
   }
 }
@@ -359,6 +412,8 @@ export function createBarreHaute(board: HTMLElement): BarreHaute {
   const caractereFiletEl = $('.bh-caractere-filet')
   const cielEl = $('.bh-ciel')
   const heureEl = $('.bh-heure')
+  const ventEl = $('.bh-vent')
+  const ventAigEl = $('.bh-vent-aig')
   const icones = new Map<string, HTMLElement>()
   for (const el of root.querySelectorAll<HTMLElement>('.bh-ico')) icones.set(el.dataset.ico!, el)
 
@@ -414,6 +469,11 @@ export function createBarreHaute(board: HTMLElement): BarreHaute {
       caractereFiletEl.style.background = vue.caractereEncre
 
       heureEl.textContent = vue.heureTxt
+      ventEl.style.visibility = vue.ventVisible ? '' : 'hidden'
+      // Une SEULE écriture porte la rotation ET l'échelle : deux transforms concurrents sur le
+      // même nœud s'écrasent, et c'est l'échelle qui aurait gagné en silence.
+      ventAigEl.style.transform = `rotate(${vue.ventDeg}deg) scale(${vue.ventEchelle})`
+      ventAigEl.style.opacity = vue.ventOp
       cielEl.style.backgroundPosition = `${vue.cielX}px 3px`
       for (const [nom, el] of icones) el.style.display = nom === vue.ico ? '' : 'none'
     },
@@ -549,6 +609,19 @@ function markup(): string {
       box-shadow:0 0 6px rgba(232,198,106,.55);}
     .bh-heure{font-size:18px;font-weight:700;letter-spacing:1px;line-height:20px;color:${HEX.title};${INK_OUTLINE_STRONG}}
     .bh-ico{flex-shrink:0;}
+    /* ── LE CADRAN DU VENT (spec vent.md V10) ──
+       Discret par construction : les HERBES restent la lecture première, l'aiguille est le
+       recours quand on veut savoir SANS interpréter. Elle vit contre le pictogramme du ciel
+       parce que le vent EST le front désormais — les séparer les ferait mentir l'un sur
+       l'autre. La rotation est confiée à une transition : la donnée vient de la sim par crans
+       de 45°, et c'est le DOM qui rend la pente continue (jamais un timer client). */
+    .bh-vent{position:relative;width:26px;height:26px;flex-shrink:0;display:flex;
+      align-items:center;justify-content:center;color:${HEX.title};}
+    .bh-vent-cercle{position:absolute;inset:2px;border-radius:50%;
+      border:1px solid ${HEX.faint};opacity:.45;}
+    .bh-vent-aig{transition:transform 900ms cubic-bezier(.25,.9,.3,1),opacity 900ms linear;
+      transform-origin:50% 50%;filter:drop-shadow(0 1px 0 rgba(0,0,0,.55));}
+    @media (prefers-reduced-motion: reduce){ .bh-vent-aig{transition:none;} }
   </style>
   <div class="bh-fond"></div>
   <div class="bh-filet"></div>
@@ -583,6 +656,13 @@ function markup(): string {
     <div class="bh-droite">
       <div class="bh-ciel-fen"><div class="bh-ciel"></div><i class="bh-ciel-tete"></i></div>
       <div class="bh-meteo">${icones()}</div>
+      <div class="bh-vent" title="Le vent — l'aiguille pointe où il souffle">
+        <i class="bh-vent-cercle"></i>
+        <svg class="bh-vent-aig" width="22" height="22" viewBox="0 0 22 22" fill="none" aria-hidden="true">
+          <path d="M4 11h11" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+          <path d="M14 7l4.5 4-4.5 4z" fill="currentColor"/>
+        </svg>
+      </div>
       <div class="bh-lecture">
         <div class="bh-heure"></div>
         <div class="bh-air-txt"></div>

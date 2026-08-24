@@ -309,6 +309,21 @@ export const PIECES = {
     bloque: 'oui', pv: 100, cout: { wood: 4 }, acces: 'private', eau: false, usurable: false,
     capacite: 24,
   },
+  /**
+   * LE SÉCHOIR (spec `peche.md` D13/S1, décision d'Alexis 2026-08-24) — une claie de bois et de
+   * corde, posée dehors. Il prend le poisson ET la viande, et rend du séché qui traverse
+   * l'hiver (`DRY_SLOT`) : c'est la promesse « conserves » du GDD, tenue SANS SEL.
+   *
+   * Du MOBILIER, pas un composant : il ne fait émerger aucune fonction et n'appartient à aucun
+   * amas — on le pose où l'on veut, on y accroche, on part. **Aucun combustible, aucune
+   * surveillance, et la météo ne l'interrompt pas** (D13, contre ma recommandation d'un
+   * séchage suspendu par la pluie : le couplage ajoutait une surveillance pour une décision
+   * que le joueur ne prend qu'une fois).
+   */
+  sechoir: {
+    label: 'Séchoir', fam: 'mobilier', pose: 'objet', occupe: 'tuile', arete: 'interdite',
+    bloque: 'oui', pv: 80, cout: { wood: 6, rope: 2 }, acces: 'village', eau: false, usurable: true,
+  },
   workshop: {
     label: 'Établi', fam: 'composant', pose: 'objet', occupe: 'tuile', arete: 'interdite',
     bloque: 'oui', pv: 100, cout: { wood: 6, stone: 4 }, acces: 'village', eau: false, usurable: false,

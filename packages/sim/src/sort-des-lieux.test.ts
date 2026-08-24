@@ -16,29 +16,19 @@ import { POI_TYPES } from './poi'
 const fp = POI_TYPES.find((t) => t.slug === 'ferme_ruinee')!.footprint
 
 describe('sortDuLieu — le verdict et ses causes', () => {
+  // ⚠ LE VERDICT 'brule' N'A PLUS DE SOURCE depuis le 2026-08-24 (le front est retiré, et avec
+  //   lui `map.cendre`/`cendreMax` du monde joué). Les cas qui le produisaient par le champ de
+  //   cendre sont retirés ici ; la MACHINERIE du sort brûlé (usure, pièces qui brûlent, toponyme)
+  //   reste en place et testée en direct sur la valeur — elle attend sa nouvelle source.
   it('une carte sans Cendrière ni route rend un lieu INTACT', () => {
     const map = createEmptyMap(64, 64, TERRAIN_GRASS)
     expect(sortDuLieu(map, 10, 10, fp, fp)).toBe('intact')
   })
 
-  it('la proximité du front (sous la part calibrée) rend le lieu BRÛLÉ', () => {
-    const map = createEmptyMap(64, 64, TERRAIN_GRASS)
-    map.cendreMax = 100
-    map.cendre = new Array(64 * 64).fill(1000)
-    // Le centre du lieu (19,19) sous la part brûlée : le feu est passé là.
-    map.cendre[19 * 64 + 19] = 100 * SORT_DES_LIEUX.PART_BRULEE - 1
-    expect(sortDuLieu(map, 10, 10, fp, fp)).toBe('brule')
-  })
-
-  it('une sente à portée rend le lieu PILLÉ — et le feu GAGNE sur la route', () => {
+  it('une sente à portée rend le lieu PILLÉ', () => {
     const map = createEmptyMap(64, 64, TERRAIN_GRASS)
     map.terrain[30 * 64 + 30] = TERRAIN_ROAD
     expect(sortDuLieu(map, 10, 10, fp, fp)).toBe('pille')
-    // La même carte, mais le feu est passé : brûlé, la route n'y change rien.
-    map.cendreMax = 100
-    map.cendre = new Array(64 * 64).fill(1000)
-    map.cendre[19 * 64 + 19] = 0
-    expect(sortDuLieu(map, 10, 10, fp, fp)).toBe('brule')
   })
 
   it('la route au-delà du rayon ne pille pas', () => {
@@ -59,38 +49,13 @@ describe('ce que le sort fait au bâti', () => {
     buildPoiStructures(sim, 7)
     return sim
   }
-  const brulee = () => simAvec((map) => {
-    map.cendreMax = 100
-    map.cendre = new Array(64 * 64).fill(1000).fill(0, 0, 64 * 40)
-  })
   const intacte = () => simAvec(() => {})
   const pillee = () => simAvec((map) => { map.terrain[19 * 64 + 40] = TERRAIN_ROAD })
 
-  it('le feu ne laisse que la pierre : plus une table, plus un toit — l’âtre reste', () => {
-    const s = brulee()
-    const types = new Set(s.structures.map((st) => st.type))
-    expect(types.has('atre')).toBe(true)
-    for (const t of ['table', 'banc', 'paillasse', 'etagere', 'tonneau', 'chest', 'roof']) {
-      expect(types.has(t as never), `${t} devrait avoir brûlé`).toBe(false)
-    }
-  })
-
-  it('le feu ne prend pas la pierre des petits lieux : l’autel et le mur bas restent, la charrette brûle', () => {
-    const map = createEmptyMap(64, 64, TERRAIN_GRASS)
-    const fpO = POI_TYPES.find((t) => t.slug === 'oratoire')!.footprint
-    const fpC = POI_TYPES.find((t) => t.slug === 'charrette')!.footprint
-    map.zones.push({ name: 'o', x: 10, y: 10, w: fpO, h: fpO, kind: 'oratoire' })
-    map.zones.push({ name: 'c', x: 40, y: 40, w: fpC, h: fpC, kind: 'charrette' })
-    map.cendreMax = 100
-    map.cendre = new Array(64 * 64).fill(0) // tout le monde a brûlé
-    const sim = createSim(7, { map })
-    buildPoiStructures(sim, 7)
-    const types = new Set(sim.structures.map((st) => st.type))
-    expect(types.has('autel'), 'un autel de pierre ne brûle pas').toBe(true)
-    expect(types.has('mur_bas'), 'un mur bas de pierre ne brûle pas').toBe(true)
-    expect(types.has('charrette'), 'une charrette de bois brûle').toBe(false)
-    expect(types.has('tonneau')).toBe(false)
-  })
+  // (« le feu ne laisse que la pierre » et « le feu ne prend pas la pierre des petits lieux » :
+  //  retirés le 2026-08-24 — ils fabriquaient un champ de cendre à la main pour forcer le verdict
+  //  'brule', qui n'a plus de source. Les règles qu'ils gardaient vivent toujours dans
+  //  `poi-batis`, et le toponyme comme l'usure restent testés en direct plus bas.)
 
   it('les pillards prennent les contenants, pas les meubles', () => {
     const s = pillee()
@@ -101,9 +66,8 @@ describe('ce que le sort fait au bâti', () => {
     expect(types.has('etagere')).toBe(false)
   })
 
-  it('brûlé < pillé < intact : l’usure des murs suit le sort', () => {
+  it('pillé < intact : l’usure des murs suit le sort', () => {
     const hp = (s: ReturnType<typeof intacte>) => s.structures.find((st) => st.type === 'wall')!.hp
-    expect(hp(brulee())).toBeLessThan(hp(pillee()))
     expect(hp(pillee())).toBeLessThan(hp(intacte()))
   })
 
@@ -116,14 +80,13 @@ describe('ce que le sort fait au bâti', () => {
       expect(st).toBeLessThan(base)
     }
     for (const st of stock(intacte())) expect(st).toBe(base * SORT_DES_LIEUX.STOCK_INTACT)
-    for (const st of stock(brulee())) expect(st).toBe(base)
   })
 
   it('le verdict reste déterministe : deux générations, mêmes pièces, mêmes stocks', () => {
     const cle = (s: ReturnType<typeof intacte>) =>
       [...s.structures.map((st) => `${st.type}@${st.tx},${st.ty}:${st.hp}`),
         ...s.nodes.map((n) => `${n.type}@${n.tx},${n.ty}:${n.stock}`)]
-    expect(cle(brulee())).toEqual(cle(brulee()))
+    expect(cle(pillee())).toEqual(cle(pillee()))
   })
 })
 

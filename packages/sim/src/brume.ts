@@ -22,7 +22,8 @@
  * Cendrière est son origine, pas un décor.
  */
 import { BRUME, type NodeType } from './balance'
-import { frontActuel } from './cendre'
+import { avanceesDepuisAges, foyersDeLaCarte, tuileCendree } from './cendre'
+import { toutesLesFumerolles } from './fumerolle'
 import { emitEvent } from './events'
 import { distSq } from './geometry'
 import { isBlockingTile } from './map'
@@ -130,49 +131,67 @@ function distSqPointSegment(px: number, py: number, ax: number, ay: number, bx: 
  * des `ESSAIS` candidats ne convient — ce jour-là, la Brume renonce.
  */
 function elireCorridor(state: SimState, day: number): { x0: number; y0: number; x1: number; y1: number } | null {
-  const champ = state.map.cendre
-  if (!champ) return null
-  const { width } = state.map
-  const front = frontActuel(state)
+  /**
+   * ═══ LA BRUME SORT D'UNE FUMEROLLE (décision d'Alexis, 2026-08-24) ═══
+   *
+   * Elle était ancrée sur le FRONT : son corridor s'élisait sur la bande qui le précédait. Le
+   * front retiré, `elireCorridor` rendait `null` chaque jour éligible et **la Brume ne se levait
+   * plus** — un système entier mort par effet de bord.
+   *
+   * Sa propre spec disait pourtant l'ancre à voix haute : *« une nappe de froid létal SORT DE LA
+   * CENDRIÈRE, roule sur T0 pendant un jour, puis se retire »*. Les fumerolles sont littéralement
+   * les trous par où elle sort. Le corridor part donc d'une bouche et **roule vers le VIVANT** —
+   * ce qui est le sens du mécanisme : un déni de zone SUR le pays qu'on habite, pas sur une terre
+   * déjà morte que personne ne traverse.
+   *
+   * ⚠ …MAIS LA FUMEROLLE DIT OÙ, JAMAIS SI. Les bouches ne s'ouvrent qu'au cœur de la cendre,
+   *   donc pas avant l'acte IV : ancrée sur elles SEULES, la Brume redevenait muette pendant
+   *   trois actes — le même mort-par-effet-de-bord que le front, à peine déplacé. Le CHARNIER est
+   *   donc l'ancre de repli, et c'est la bonne : c'est de lui que sortira plus tard la cendre, et
+   *   de la cendre les bouches. Le froid remonte la même généalogie, en avance.
+   */
+  const avancees = avanceesDepuisAges(state.cendreAge, state.cendreAge.length)
+  const bouches = toutesLesFumerolles(state.map, avancees, state.seed)
+  const ancres: readonly { tx: number; ty: number }[] =
+    bouches.length > 0 ? bouches : foyersDeLaCarte(state.map)
+  if (ancres.length === 0) return null
 
+  const { width } = state.map
   const occupes = new Set<number>()
   for (const n of state.nodes) occupes.add(n.ty * width + n.tx)
 
-  const entree: number[] = []
-  const profond: number[] = []
-  for (let i = 0; i < champ.length; i++) {
-    const d = champ[i]!
-    if (d >= front + 1 && d < front + 1 + BRUME.BANDE) {
-      entree.push(i)
-    } else if (d >= front + BRUME.PROFONDEUR && d < front + BRUME.PROFONDEUR + BRUME.BANDE) {
-      const tx = i % width
-      const ty = Math.floor(i / width)
-      if (isBlockingTile(state.map, tx, ty)) continue
-      if (occupes.has(i)) continue
-      if (structureAt(state.structures, tx, ty)) continue
-      profond.push(i)
-    }
-  }
-  if (entree.length === 0 || profond.length === 0) return null
-
   const garde = BRUME.RAYON + BRUME.GARDE_FEU
   for (let essai = 0; essai < BRUME.ESSAIS; essai++) {
-    const e = entree[Math.floor(hash2(day, essai + 1, BRUME_SALT) * entree.length)]!
-    const x0 = (e % width) + 0.5
-    const y0 = Math.floor(e / width) + 0.5
+    const b = ancres[Math.floor(hash2(day, essai + 1, BRUME_SALT) * ancres.length)]!
+    const x0 = b.tx + 0.5
+    const y0 = b.ty + 0.5
+
+    // LE POINT PROFOND : à `PROFONDEUR` tuiles de la bouche, sur une tuile VIVANTE (hors cendre) —
+    // c'est là que le filon se découvrira au retrait, et un filon dans la cendre ne se visite pas.
+    // On échantillonne huit directions, dans un ordre décidé par le jour : aucun tirage consommé.
     let x1 = x0
     let y1 = y0
-    let best = Infinity
-    for (const p of profond) {
-      const px = (p % width) + 0.5
-      const py = Math.floor(p / width) + 0.5
-      const dd = distSq(x0, y0, px, py)
-      if (dd < best) {
-        best = dd
-        x1 = px
-        y1 = py
-      }
+    let trouve = false
+    for (let k = 0; k < 8 && !trouve; k++) {
+      const tour = (k + Math.floor(hash2(day, essai + 9, BRUME_SALT) * 8)) % 8
+      // Huit directions ÉCRITES À LA MAIN : `cos`/`sin` sont interdits dans /sim (invariant n°2,
+      // ils ne sont pas exacts d'un moteur JS à l'autre). La diagonale porte sa normalisation.
+      const dirs = [[1, 0], [1, 1], [0, 1], [-1, 1], [-1, 0], [-1, -1], [0, -1], [1, -1]]
+      const d = dirs[tour]!
+      const norme = d[0] !== 0 && d[1] !== 0 ? 0.7071 : 1
+      const px = Math.floor(x0 + d[0]! * norme * BRUME.PROFONDEUR)
+      const py = Math.floor(y0 + d[1]! * norme * BRUME.PROFONDEUR)
+      if (px < 0 || py < 0 || px >= width || py >= state.map.height) continue
+      if (isBlockingTile(state.map, px, py)) continue
+      if (occupes.has(py * width + px)) continue
+      if (structureAt(state.structures, px, py)) continue
+      if (tuileCendree(state, px, py)) continue // elle doit ROULER SUR LE VIVANT
+      x1 = px + 0.5
+      y1 = py + 0.5
+      trouve = true
     }
+    if (!trouve) continue
+
     const ok = state.villages.every(
       (v) => distSqPointSegment(v.fireTx + 0.5, v.fireTy + 0.5, x0, y0, x1, y1) >= garde * garde,
     )
@@ -267,7 +286,11 @@ export function advanceBrume(state: SimState): void {
   // `estCrepuscule` est l'écrivain unique du crépuscule (S6) : saisonnier, ET conscient de
   // `cycleOffset` — le modulo brut d'avant tombait à minuit dans une Veillée démarrée à 9 h.
   if (!estCrepuscule(state, state.tick)) return
-  if (!state.map.cendre) return
+  // ⚠ IL Y AVAIT ICI `if (!state.map.cendre) return` — une garde sur le champ de FRONT, qui
+  //   n'existe plus sur le monde joué depuis son retrait (2026-08-24). Elle rendait l'annonce
+  //   IMPOSSIBLE dans toute partie réelle, en silence, et seul le banc restait vert parce qu'il
+  //   se fabriquait le champ à la main. On ne remplace par RIEN : la seule vraie condition est
+  //   qu'il existe une ancre, et `elireCorridor` la vérifie déjà en rendant `null`.
   const day = jourDeSaison(state)
   if (state.lastBrumeDay === day) return
   if (BRUME.CHANCE_PER_DAY(actForDay(day)) <= 0) return

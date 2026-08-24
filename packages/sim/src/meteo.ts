@@ -27,7 +27,7 @@
  * chaque point et à chaque tick, **il neige là où la pluie ferait geler un gué**
  * (`neigeA(t0)` : `T₀ − COLD.pluie < SEUIL_NEIGE`, `T₀` = le monde SANS le front), et un
  * orage y est un blizzard (`meteoAspectAt`). Le froid d'un orage DÉPEND DU FROID QU'IL
- * TROUVE (`froidEolien` : 10 → 55 en pente continue sur `T₀`, jamais sur la température sous
+ * TROUVE (`partDeBlizzard` : 10 → 55 en pente continue sur `T₀`, jamais sur la température sous
  * le front — aucune circularité), et chaque effet de l'orage (pas, vision, feu) s'interpole
  * vers sa ligne `ORAGE_FROID` par le même facteur. Sa LARGEUR est SAISONNIÈRE depuis S7
  * (`largeurDe` lit `METEO.PAR_SAISON` ; R13 — la largeur commandée par `ACT_COLD` — est
@@ -68,7 +68,6 @@
  */
 import { BALANCE, METEO, TEMPERATURE, type MeteoTypeId } from './balance'
 import { brumeJourEligible } from './brume'
-import { CENDRE, bandeDeCendre } from './cendre'
 import { emitEvent } from './events'
 import { effetsDuJour } from './modificateur'
 import { hash2 } from './noise'
@@ -381,13 +380,20 @@ export function neigeA(t0: number): boolean {
 }
 
 /**
- * R12 — LE REFROIDISSEMENT ÉOLIEN : la part de « blizzard » d'un orage, de 0 (le monde sous
- * lui est au-dessus de la limite de neige : une pluie violente) à 1 (il est `FROID_EOLIEN_
- * RAMPE` plus bas : le blizzard d'avant, au bit près), en PENTE CONTINUE — jamais un seuil.
- * Lu sur `T₀`, la température SANS le front : aucune circularité possible.
+ * R12 — LA PART DE BLIZZARD D'UN ORAGE : 0 (le monde sous lui est au-dessus de la limite de
+ * neige : une pluie violente) à 1 (il est `BLIZZARD_RAMPE` plus bas : le blizzard d'avant, au
+ * bit près), en PENTE CONTINUE — jamais un seuil. Lue sur `T₀`, la température SANS le front :
+ * aucune circularité possible.
+ *
+ * ⚠ ELLE S'APPELAIT `froidEolien`, ET CE NOM MENTAIT (relevé au chantier du vent, 2026-08-24).
+ * Elle ne lit AUCUN vent : c'est une rampe sur `T₀`, et le « refroidissement éolien » que le
+ * nom promettait n'a jamais existé dans le jeu — un cas de loi lue à l'envers, qu'on ne
+ * remarque pas parce qu'elle a un appelant et des tests verts. Le vrai vent existe désormais
+ * (`vent.md`) : brancher la morsure sur `windForce` est POSSIBLE, et reste ouvert — ce serait
+ * un changement d'équilibrage du froid, donc son propre chantier, pas une note de bas de page.
  */
-export function froidEolien(t0: number): number {
-  const u = (LIMITE_NEIGE - t0) / METEO.FROID_EOLIEN_RAMPE
+export function partDeBlizzard(t0: number): number {
+  const u = (LIMITE_NEIGE - t0) / METEO.BLIZZARD_RAMPE
   return u < 0 ? 0 : u > 1 ? 1 : u
 }
 
@@ -395,7 +401,7 @@ export function froidEolien(t0: number): number {
  *  orage ; les autres classes n'ont qu'une ligne. */
 function effetOrage(front: MeteoFront, doux: number, froid: number, t0: number): number {
   if (front.type !== 'orage') return doux
-  return doux + (froid - doux) * froidEolien(t0)
+  return doux + (froid - doux) * partDeBlizzard(t0)
 }
 
 /** LE PLEIN FROID d'une classe — le pire qu'elle puisse retrancher, pour les bornes
@@ -412,7 +418,7 @@ export function coldMaximal(type: MeteoType): number {
  * abri (`SHELTER_FACTOR`) et la PLANCHE au feu, à la source chaude et à la tenue — toute
  * la chaîne vitale (dérive, hypothermie, vitesse, endurance) suit par construction, zéro
  * code neuf côté vitals. Le brouillard a COLD 0 : il ne refroidit pas, au bit près. Pour
- * l'ORAGE, le froid dépend du froid qu'il trouve (R12, `froidEolien`).
+ * l'ORAGE, le froid dépend du froid qu'il trouve (R12, `partDeBlizzard`).
  */
 export function meteoCold(state: SimState, x: number, y: number): number {
   return meteoColdAt(state, x, y, state.tick)
@@ -519,33 +525,16 @@ export function frontEstBlizzard(state: SimState, front: Pick<MeteoFront, 'type'
  * pas front mouillé.
  */
 /**
- * R6 — LA POUSSÉE DU VENT DE CENDRE, en tuiles de front, au point donné.
- * *(spec `cortege-cendre.md` R6 — décision d'Alexis 2026-08-21.)*
+ * ⚠ LA POUSSÉE DU VENT DE CENDRE EST RETIRÉE (2026-08-24), avec le front qu'elle poussait.
  *
- * ═══ CE QU'ELLE POUSSE, ET CE QU'ELLE NE POUSSE PAS ═══
+ * Elle ne rendait pas du froid : elle rendait des TUILES DE FRONT, que `froidDuMonde` ajoutait au
+ * front avant de demander au cortège s'il faisait froid ici — *la poussée, pas l'avancée*. Sans
+ * cortège, il n'y a plus de bande à pousser.
  *
- * Elle ne rend PAS du froid : elle rend **des tuiles de front**, que `froidDuMonde` ajoute au
- * front avant de demander au cortège s'il fait froid ici. Le vent avance donc la bande froide
- * devant lui — et **rien d'autre**. Le front réel n'a pas bougé : rien ne brûle de plus, aucun
- * nœud ne devient stérile, aucun sol ne devient plus hanté. Quand le vent est passé, le monde
- * est exactement où il était. *La poussée, pas l'avancée.*
- *
- * C'est ce qui autorise ce type à revenir chaque année sans user la carte, là où une avancée
- * supplémentaire serait un vol définitif de terrain.
- *
- * Nulle pour tout autre type de front, et sur une carte sans Cendrière (`bandeDeCendre` rend 0) :
- * un banc headless ne connaît donc aucun vent de cendre, au bit près.
- *
- * Elle suit `meteoIntensityAt` — donc la même RAMPE bord → cœur que le froid du front lui-même :
- * le vent se sent venir, il ne tombe pas d'un coup (patron `meteo.md` R4).
+ * LE TYPE DE FRONT `vent_de_cendre` SURVIT, lui, et c'est délibéré : il a sa propre colonne dans
+ * les tables météo (froid 3,2, conso de feu 1,8, largeur 420) — c'est une météo qui se tient
+ * toute seule, et la retirer déplacerait le tirage seedé de toute la météo pour rien.
  */
-export function pousseeDeCendre(state: SimState, x: number, y: number, tick: number): number {
-  const front = state.meteo
-  if (!front || front.type !== 'vent_de_cendre') return 0
-  const portee = bandeDeCendre(state.map, CENDRE.POUSSEE_PART)
-  if (portee <= 0) return 0
-  return portee * meteoIntensityAt(front, tick, state.map.width, state.map.height, x, y)
-}
 
 export function meteoQuiet(state: SimState, x: number, y: number): boolean {
   const front = state.meteo

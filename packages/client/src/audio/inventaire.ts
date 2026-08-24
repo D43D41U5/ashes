@@ -118,6 +118,13 @@ export const INVENTAIRE: Record<SimEvent['type'], Fait> = {
   fish_bite: { voix: 'voix', famille: 'batir', quoi: 'ça mord — le flotteur plonge (moi seul)' },
   fish_caught: { voix: 'muet', famille: 'batir', quoi: 'le poisson sort de l’eau (la récolte parle déjà)' },
   fish_escaped: { voix: 'voix', famille: 'batir', quoi: 'le poisson file — ferré trop tard (moi seul)' },
+  // ── LES QUATRE FAITS DU 2026-08-24 (peche.md D9-D12) ──
+  // LE MORDILLAGE a une voix, et il la faut : c'est le SIGNAL d'une eau pauvre (« ça mordille
+  // sans jamais mordre, va voir ailleurs »). Muet, D11 n'aurait aucun retour d'information.
+  fish_nibble: { voix: 'voix', famille: 'batir', quoi: 'ça mordille — l’eau est pauvre, ça ne mordra pas ici (moi seul)' },
+  fishing_cancelled: { voix: 'voix', famille: 'batir', quoi: 'la ligne rentre : l’eau s’est retirée, a pris, ou ne donne rien' },
+  fishing_junk: { voix: 'muet', famille: 'batir', quoi: 'on remonte un caillou — la récolte parle déjà' },
+  fish_record: { voix: 'voix', famille: 'progres', quoi: 'la plus grosse prise de cette espèce — le bestiaire s’écrit' },
   structure_built: { voix: 'voix', famille: 'batir', quoi: 'une pièce est posée' },
   structure_upgraded: { voix: 'muet', famille: 'batir', quoi: 'un mur passe au matériau suivant' },
   // LE PALIER DE BÂTI d'un village PNJ (spec village-pnj-evolution R6) : rare, et c'est LE

@@ -41,9 +41,14 @@ describe('l’ordre de recouvrement', () => {
       expect(estSurface(t)).toBe(true)
       expect(prioriteDe(t)).toBeGreaterThan(prioriteDe(4))
     }
+    // LES RANGS SE COMPARENT PAR COUCHE. La carte (terrains < 100) et le manteau (terrains
+    // virtuels ≥ 100, `render/manteau.ts`) ne se cuisent JAMAIS ensemble : comparer au travers
+    // ferait rougir la crue contre la sente, qui ne se rencontrent nulle part.
+    const plafondDeCouche = (virtuel: boolean): number =>
+      Math.max(...Object.keys(SURFACES).map(Number).filter((t) => t >= 100 === virtuel).map((t) => SURFACES[t]!))
     for (const [t, rang] of Object.entries(PRIORITE_PAVE)) {
       expect(estSurface(Number(t))).toBe(false)
-      expect(rang, `la terre ${t} domine toute surface`).toBeGreaterThan(Math.max(...Object.values(SURFACES)))
+      expect(rang, `la terre ${t} domine toute surface de sa couche`).toBeGreaterThan(plafondDeCouche(Number(t) >= 100))
     }
     expect(prioriteDe(19)).toBeGreaterThan(prioriteDe(8)) // roselière sur marais
     expect(prioriteDe(25)).toBeGreaterThan(prioriteDe(19)) // prairie humide sur roselière (A11)

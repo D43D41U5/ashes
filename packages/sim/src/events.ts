@@ -15,7 +15,7 @@
  * - Haute fréquence ≠ domaine : un déplacement n'est pas un événement (le
  *   replay log des inputs couvre ça) ; un premier sang, un don, un spawn, oui.
  */
-import type { FishSpecies, NodeType, RecipeId } from './balance'
+import type { FishId, NodeType, RecipeId } from './balance'
 import type { ItemId, SkillId, StructureType } from './items'
 import type { SimState } from './sim'
 
@@ -121,9 +121,24 @@ export type SimEvent =
   // que la chronique et le tableau lisent déjà) en y ajoutant l'ESPÈCE — « le premier brochet »
   // se raconte sans instrumenter après coup. `fish_escaped` est le raté qui se voit : le
   // flotteur remonte, la ligne rentre. ──
-  | { type: 'fish_bite'; tick: number; entityId: number; nodeId: number }
-  | { type: 'fish_caught'; tick: number; entityId: number; nodeId: number; species: FishSpecies['id']; item: ItemId }
-  | { type: 'fish_escaped'; tick: number; entityId: number; nodeId: number }
+  // ⚠ `nodeId` EST DEVENU OPTIONNEL le 2026-08-24 (D9) : on pêche l'EAU, pas le coin — une
+  // ligne tendue sur une tuile nue n'a pas de nœud à nommer. Les événements portent donc la
+  // TUILE (`tx`,`ty`), qui existe toujours, et le nœud quand il y en a un.
+  | { type: 'fish_bite'; tick: number; entityId: number; tx: number; ty: number; nodeId?: number }
+  | { type: 'fish_caught'; tick: number; entityId: number; tx: number; ty: number; nodeId?: number; species: FishId; item: ItemId; mm: number; count: number }
+  | { type: 'fish_escaped'; tick: number; entityId: number; tx: number; ty: number; nodeId?: number }
+  /** ÇA MORDILLE (D11/T8) : le tirage n'a rien donné — pas de fenêtre, pas de réflexe à rater,
+   *  une nouvelle attente. C'est le SIGNAL d'une eau pauvre : ça mordille sans jamais mordre. */
+  | { type: 'fish_nibble'; tick: number; entityId: number; tx: number; ty: number }
+  /** LA LIGNE RENTRE ET ON DIT POURQUOI (E4) : l'eau s'est retirée, l'eau est prise, ou ça ne
+   *  mord pas ici. Une ligne qui disparaît sans un mot est un bug aux yeux du joueur. */
+  | { type: 'fishing_cancelled'; tick: number; entityId: number; reason: string }
+  /** UNE TROUVAILLE (T4) : ce qui sort de l'eau sans être un poisson. Jamais `fish_caught` —
+   *  le bestiaire n'en veut pas, et la chronique ne raconte pas qu'on a remonté un caillou. */
+  | { type: 'fishing_junk'; tick: number; entityId: number; tx: number; ty: number; item: ItemId }
+  /** UN RECORD (B6) : cette espèce n'a jamais été prise plus grosse par cette entité. Un FAIT,
+   *  donc un événement — la chronique et le bandeau s'en nourrissent sans instrumenter après coup. */
+  | { type: 'fish_record'; tick: number; entityId: number; species: FishId; mm: number }
   // Le craft a un DÉBUT et une FIN distincts depuis la file (spec craft-file) :
   // `craft_queued` est l'intention (les intrants partent), `item_crafted` reste
   // l'objet qui SORT — et il ne s'émet qu'à la livraison réelle, jamais quand la

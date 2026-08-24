@@ -136,9 +136,12 @@ const MOUILLE_TEINTE = [0.16 * 255, 0.14 * 255, 0.09 * 255] as const
  * cuisent avec CETTE grammaire, dans une seconde couche posée au-dessus du sol. Ils n'existent
  * pas sur la carte : la couche les fabrique tuile par tuile depuis `neigeAuSol` / `estGele`.
  *
- *   • `DESSOUS` — « le sol qu'on ne repeint pas » : une SURFACE de rang 0, transparente. La
+ *   • `DESSOUS` — « le sol qu'on ne repeint pas » : une SURFACE transparente, la TERRE nue. La
  *     neige déborde dessus (frange opaque) et y porte son ombre (voile noir) — exactement le
  *     chemin de l'eau sous la berge, SANS ressac (un pré sous une congère ne clapote pas).
+ *   • `DESSOUS_EAU` — le même, sur une tuile qui est de l'EAU à la carte et que rien n'a
+ *     couverte : l'EAU LIBRE. Transparente elle aussi (le shader est dessous), mais c'est le
+ *     SEUL rang 0 du manteau — voir `SURFACES`, c'est elle qui reçoit les franges.
  *   • `GLACE_GUE`, `GLACE_LAC` — la glace : une surface opaque (pas d'épaisseur, donc ni liseré
  *     ni arête ni brin), dessinée dans le SOL de la couche, et qui reçoit la frange et l'ombre
  *     de la neige dans son SURPLOMB. Même rang que `DESSOUS` : entre la terre nue et la glace,
@@ -152,6 +155,8 @@ export const GLACE_LAC = 102
 export const MANTEAU = 103
 /** La neige JUSQU'AUX GENOUX (gel.md G9) : un pavé sur la poudreuse — même frontière. */
 export const MANTEAU_PROFOND = 104
+/** L'EAU LIBRE sous le manteau — voir `SURFACES` : le seul rang 0 de la couche. */
+export const DESSOUS_EAU = 108
 
 /**
  * ═══ LES TROIS VISAGES DU NIVEAU D'EAU (spec `saisons.md` S10) ═══
@@ -162,14 +167,18 @@ export const MANTEAU_PROFOND = 104
  * non plus.
  *
  *   • `ASSEC` — la mare partie, le gué en poussière (`estAsseche`). Le fond d'eau mis à nu :
- *     une vase claire, craquelée. Rang 0 comme la glace : la tuile EST de l'eau sur la carte,
- *     donc la BERGE du sol a déjà tracé son bord — le manteau n'a qu'à couvrir la surface.
+ *     une vase claire, craquelée. Du côté de la TERRE, la berge du sol a déjà tracé son bord
+ *     (R13) — mais du côté de l'EAU PROFONDE qui reste, rien ne le traçait : la vase et l'eau
+ *     libre étaient à égalité, et c'était la COUTURE NUE du marais, à l'autre bout de l'année
+ *     (Alexis, 2026-08-24 : « une frontière propre entre la vase et l'eau profonde, la même
+ *     que celle entre les marécages et l'eau peu profonde »). Rang 1, comme le marais : la
+ *     vase glisse dans l'eau profonde d'une FRANGE SEULE — ni liseré, ni ombre.
  *   • `GUE_FERME` — l'eau peu profonde devenue infranchissable sous la crue (`estGueBloque`).
  *     **C'est le seul des trois qui BLOQUE**, donc le seul que G5 rend obligatoire : « on ne
  *     s'engage jamais sur la glace par surprise » vaut à l'identique pour un gué qui se ferme.
  *     Une eau trouble et SOMBRE — le contraire du haut-fond clair qu'on traversait hier.
  *   • `CRUE` — la terre passée sous l'eau (`estInonde`). Elle, elle est sur du MARCHABLE : rien
- *     n'a tracé son bord, elle porte donc son propre débord. Rang 1, au-dessus du dessous.
+ *     n'a tracé son bord, elle porte donc son propre débord — au-dessus du dessous de terre.
  */
 export const ASSEC = 105
 export const GUE_FERME = 106
@@ -205,6 +214,16 @@ export const PRIORITE_PAVE: Record<number, number> = {
   10: 7, // snow
   15: 7, // glacier
   12: 8, // alpine_meadow
+  // ═══ LES TROIS CENDRES (spec `cendre.md` R11) ═══
+  //
+  // Elles recouvrent CE QU'ELLES ONT TUÉ : la cendre est posée SUR le pré, sur la litière, sur la
+  // roche — donc au-dessus d'eux tous. C'est ce rang qui lui donne sa FRANGE, son liseré et son
+  // ombre portée sur le vivant : la lisière cesse d'être une découpe et devient une avancée.
+  //
+  // Elles restent SOUS le manteau de neige (20-21) : l'hiver recouvre la cendre comme le reste.
+  27: 10, // cendre_pre
+  28: 10, // cendre_bois
+  29: 10, // cendre_min
   17: 9, // flower_meadow
   20: 9, // alpine_flowers
   [MANTEAU]: 20, // la neige au sol (`render/manteau.ts`) : par-dessus tout ce qui pousse
@@ -218,21 +237,31 @@ export const PRIORITE_PAVE: Record<number, number> = {
  * ni tranche, ni brin, et elle ne porte aucune ombre.
  */
 export const SURFACES: Record<number, number> = {
+  // ── LA CARTE (couche du sol) ──
   4: 0, // shallow_water
   6: 0, // deep_water
   8: 1, // marsh
   18: 1, // peat_bog
-  [DESSOUS]: 0,
-  [GLACE_GUE]: 0,
-  [GLACE_LAC]: 0,
-  // L'ASSEC et le GUÉ FERMÉ tombent sur des tuiles qui SONT de l'eau à la carte : la berge du
-  // sol a déjà tracé leur bord (R13), ils n'ont qu'à couvrir. Rang 0, comme la glace.
-  [ASSEC]: 0,
-  [GUE_FERME]: 0,
-  // LA CRUE, elle, tombe sur de la TERRE — rien ne l'y borde. Rang 1 : elle déborde sur le
-  // dessous d'une frange, comme le marais glisse sur l'eau. Une surface : frange seule, ni
+  // ── LE MANTEAU (couche du gel, terrains virtuels ≥ 100) ── Les deux couches ne se cuisent
+  // JAMAIS ensemble : ces rangs ne se comparent qu'entre eux. Et ils disent la même loi que
+  // ceux de la carte, d'où la même échelle — 0 est à l'EAU LIBRE, 1 à ce qui la couvre.
+  //
+  // RANG 0 — l'eau libre : la seule chose sur quoi le manteau déborde.
+  [DESSOUS_EAU]: 0,
+  // RANG 1 — CE QUI COUVRE L'EAU, et la terre nue avec. Ils sont à ÉGALITÉ, et c'est tout le
+  // dessin : entre la vase (ou la glace) et la TERRE, la berge du sol a déjà tracé le bord
+  // (R13) — une frange de plus y ferait un double trait, et la vase mangerait la rive. Entre
+  // la vase et l'EAU PROFONDE qui reste, rien ne le traçait : elles ne sont plus à égalité, et
+  // la vase y glisse d'une frange, exactement comme le marais glisse dans le haut-fond.
+  [DESSOUS]: 1,
+  [GLACE_GUE]: 1,
+  [GLACE_LAC]: 1,
+  [ASSEC]: 1,
+  [GUE_FERME]: 1,
+  // RANG 2 — LA CRUE, qui tombe sur de la TERRE : rien ne l'y borde, elle porte son propre
+  // débord. Elle passe donc au-dessus du dessous de terre. Une surface : frange seule, ni
   // liseré ni ombre — une nappe d'eau n'a pas d'épaisseur.
-  [CRUE]: 1,
+  [CRUE]: 2,
 }
 
 /** Les terrains STRUCTURELS : jamais propriétaires par débordement, transparents dans le chunk. */
@@ -252,10 +281,15 @@ export function estGlace(t: number): boolean {
   return t === GLACE_GUE || t === GLACE_LAC
 }
 
+/** Le DESSOUS du manteau : la tuile qu'il ne repeint pas — la terre nue, ou l'eau libre. */
+export function estDessous(t: number): boolean {
+  return t === DESSOUS || t === DESSOUS_EAU
+}
+
 /** Un VOILE : ce qui, propriétaire d'un pixel, n'y dessine rien d'opaque — l'eau (le shader
  *  est dessous) et le dessous transparent du manteau. Son ombre et son ressac vont au surplomb. */
 export function estVoile(t: number): boolean {
-  return estEau(t) || t === DESSOUS
+  return estEau(t) || estDessous(t)
 }
 
 /** Une tuile SURPLOMBÉE : ce qu'un pavé à épaisseur y pose (sa frange) sort dans la seconde
@@ -497,7 +531,7 @@ export function cuireChunk(p: CuissonChunk): ChunkCuit {
       else if (domine(iU) || domine(iU - LP)) f = PAVE.OMBRE
       else if (domine(iU - 2 * LP)) f = PAVE.PENOMBRE
       // Le ressac : sur l'eau et la boue — jamais sur le dessous ni sur la glace (ça ne clapote pas).
-      else if (tSurf && t !== DESSOUS && !estGlace(t) && domine(iU - 3 * LP)) f = PAVE.RESSAC
+      else if (tSurf && !estDessous(t) && !estGlace(t) && domine(iU - 3 * LP)) f = PAVE.RESSAC
       else if (domine(iL) || domine(iR)) f = PAVE.OMBRE_LATERALE
       else if (estVoile(t)) continue // l'eau nue, le dessous nu : rien à peindre ici
       else if (tSurf) f = 1 // le marais nu, la glace nue : plat, sans brin

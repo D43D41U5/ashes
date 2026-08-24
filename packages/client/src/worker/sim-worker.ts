@@ -208,6 +208,7 @@ function tick(): void {
     villages: sim.villages,
     functions: sim.functions,
     nodeDeltas: collectNodeDeltas(sim.nodes, nodeStockShadow),
+    cendreAge: sim.cendreAge,
     npcs: sim.npcs,
     monsters: sim.monsters,
     corpses: sim.corpses,
@@ -217,6 +218,7 @@ function tick(): void {
     // (BLOOD_CAP, un vecteur, des piles qui périssent) : le snapshot ne grossit pas.
     blood: sim.blood,
     wind: sim.wind,
+    windForce: sim.windForce,
     groundItems: sim.groundItems,
     // LE FRONT MÉTÉO (spec meteo.md) : le record d'élection, cinq champs — le client en
     // recalcule la bande, le gradient et jusqu'aux éclairs. Rien d'autre ne transite.

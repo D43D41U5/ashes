@@ -7,7 +7,7 @@
  */
 import { describe, expect, it } from 'vitest'
 import { createEmptyMap } from './map'
-import { TERRAIN_GRASS } from './balance'
+import { TERRAIN_GRASS, VENT } from './balance'
 import { createSim, snapshot, spawnEntity, step, type SimState } from './sim'
 import {
   deserializeSim,
@@ -107,6 +107,17 @@ describe('persistance de la Veillée', () => {
     const sansFin = JSON.parse(serializeSim(sim)) as { v: number; sim: Record<string, unknown> }
     delete sansFin.sim.finDeSaison
     expect(deserializeSim(JSON.stringify(sansFin)).finDeSaison).toBeNull()
+
+    // LA FORCE DU VENT (`vent.md` V3, 2026-08-24) : DÉRIVÉE — le premier tick la recalcule du
+    // front. Une vallée d'avant l'unification se relit donc, au lieu d'être orpheline pour un
+    // champ qui se reconstitue en cinquante millisecondes.
+    const sansVent = JSON.parse(serializeSim(sim)) as { v: number; sim: Record<string, unknown> }
+    delete sansVent.sim.windForce
+    const reluVent = deserializeSim(JSON.stringify(sansVent))
+    expect(reluVent.windForce).toBe(VENT.AMBIANT)
+    // …ET ELLE SE REFAIT VRAIMENT : le repli n'est pas un pansement, c'est une amorce.
+    step(reluVent, [])
+    expect(reluVent.windForce).toBeGreaterThan(0)
 
     // …et la porte ne s'est pas ouverte pour autant : un champ NON éphémère manque toujours.
     const sansMonstres = JSON.parse(serializeSim(sim)) as { v: number; sim: Record<string, unknown> }

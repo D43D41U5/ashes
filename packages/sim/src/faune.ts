@@ -66,6 +66,7 @@ import { niveauDEau, porteDeLEau } from './eau'
 import { effetsDuJour } from './modificateur'
 import { getGameTime, jourDeSaison } from './time'
 import type { Entity, SimState } from './sim'
+import { BEARINGS, ventGain } from './vent'
 
 /**
  * COMBIEN LE COIN AIME-T-IL LES PRÉDATEURS ? (spec tension.md, GDD §8bis)
@@ -624,7 +625,12 @@ function nearestThreat(
       // « Au vent de moi » : le vecteur bête→menace pointe DANS le vent (l'odeur
       // voyage de la menace vers la bête, donc à contre-sens du vecteur).
       const upwind = -(tx * wind.x + ty * wind.y)
-      if (upwind >= HUNT.SCENT_COS) scent = HUNT.SCENT_STRENGTH
+      // V7 (`vent.md`) — LE NEZ PORTE CE QUE LE VENT PORTE. La force au point de la BÊTE (c'est
+      // elle qui sent) module la portée du canal ; le CÔNE, lui, ne bouge pas : la parade reste
+      // UN CÔTÉ, pas un facteur. Le gain vaut EXACTEMENT 1 hors front — un monde sans météo
+      // renifle donc au bit près comme avant l'unification — et jusqu'à 1/AMBIANT sous une
+      // bande : sous la pluie battante, l'odeur vous précède de bien plus loin.
+      if (upwind >= HUNT.SCENT_COS) scent = HUNT.SCENT_STRENGTH * ventGain(state, entity.x, entity.y)
     }
     // Trois canaux, le plus fort gagne : l'OUÏE n'a ni couvert ni secteur
     // aveugle, et le NEZ n'a rien du tout — il a juste besoin du bon côté.
@@ -1298,31 +1304,13 @@ function bedStep(state: SimState, monster: Monster, entity: Entity, threatened: 
   return true
 }
 
-/**
- * LE VENT (spec chasse C17). Il tourne — lentement, par relèvements entiers, au
- * PRNG de l'état (donc dans le flux déterministe). L'odeur descend le vent : ce
- * vecteur décide, à chaque instant, de quel CÔTÉ l'on peut approcher.
- *
- * Le client doit le VOIR (herbes couchées) : une règle invisible est une
- * injustice, pas une profondeur.
+/*
+ * LE VENT a quitté ce module (spec `vent.md`, 2026-08-24 : « le front est le vent, unifie »).
+ * `advanceWind` vivait ici parce que l'odorat était son unique lecteur ; il est désormais DÉRIVÉ
+ * du front météo, dans `vent.ts`, et posé par `advanceVent` juste après `advanceMeteo` — donc
+ * toujours AVANT la faune, qui le lit. Hors météo, sa valeur est identique au bit près à celle
+ * d'avant l'unification : même clé de hash, même cadence.
  */
-function advanceWind(state: SimState): void {
-  // LE CALME PLAT est une décision d'HÔTE (comme `faunaCap`) : un monde dont le
-  // vent est le vecteur nul n'a pas de vent, et n'en aura jamais. Les bancs de
-  // test s'en servent — l'odorat est un canal à part, on le mesure séparément —
-  // et le monde réel, lui, naît venté.
-  if (state.wind.x === 0 && state.wind.y === 0) return
-  // Le vent du DÉPART tient : il vient de l'hôte (ou du banc), et le monde ne le
-  // rebat pas au tick 0. Il tournera au premier relais, comme tous les suivants.
-  if (state.tick === 0 || state.tick % HUNT.WIND_SHIFT_TICKS !== 0) return
-  // Dérivé par `hash2`, PAS par le PRNG de l'état : le vent ne doit consommer
-  // aucun tirage — sans quoi un monde sans faune paierait quand même le vent
-  // (« un banc de test ne tire RIEN », test A1), et l'ordre des tirages, dont
-  // dépend tout le reste, changerait avec la météo.
-  const slice = Math.floor(state.tick / HUNT.WIND_SHIFT_TICKS)
-  const b = BEARINGS[Math.floor(hash2(state.seed, slice, 0x57494e44) * BEARINGS.length) % BEARINGS.length]!
-  state.wind = { x: b[0], y: b[1] }
-}
 
 /** Les piles au sol PÉRISSENT (C18) : le monde ne se jonche pas. */
 function advanceGroundItems(state: SimState): void {
@@ -1335,7 +1323,6 @@ export function advanceFauna(state: SimState, avatars: Entity[], byId: Map<numbe
   // LE SANG (C8-C11) : il draine, il sème, il tue. Avant toute décision de bête —
   // une bête qui succombe à sa plaie ce tick ne joue pas ce tick.
   advanceBlood(state, byId)
-  advanceWind(state)
   advanceGroundItems(state)
 
   // La déroute d’une meute décapitée ne dépend d'aucun peuplement : elle vaut
@@ -3161,16 +3148,11 @@ function packInPlace(pack: Monster[] | undefined, target: Entity, byId: Map<numb
   return alive > 0
 }
 
-/**
- * Les huit relèvements d'un encerclement. Des LITTÉRAUX, pas des `cos`/`sin` :
- * une valeur qui décide d'un déplacement est dans le flux déterministe, et la
- * spec ECMAScript ne garantit pas la trigonométrie d'un moteur à l'autre
- * (invariant 2). 0.7071 ≈ √2/2, à la précision où l'on place un loup.
+/*
+ * Les huit relèvements (`BEARINGS`) habitent `vent.ts` depuis l'unification : le vent en est le
+ * premier lecteur, l'encerclement et le balayage de sentinelle les réimportent. Mêmes valeurs,
+ * même ordre, au bit près — c'est un déplacement, pas une réécriture.
  */
-const BEARINGS: readonly (readonly [number, number])[] = [
-  [1, 0], [0.7071, 0.7071], [0, 1], [-0.7071, 0.7071],
-  [-1, 0], [-0.7071, -0.7071], [0, -1], [0.7071, -0.7071],
-]
 
 /**
  * LE POSTE d'un loup dans l'encerclement : un point sur le cercle autour de la

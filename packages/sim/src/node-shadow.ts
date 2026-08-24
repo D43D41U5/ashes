@@ -116,12 +116,21 @@ export function collectNodeDeltas(nodes: readonly ResourceNode[], shadow: NodeSh
       agrandir(shadow, n.id)
       stocks = shadow.stocks
     }
-    if (stocks[n.id] === n.stock) continue
+    // ⚠ UN NŒUD QUE L'OMBRE N'A JAMAIS VU EST **NEUF** — il est né en cours de partie (une
+    //   fumerolle qui s'ouvre, un filon que la Brume découvre). Il doit partir ENTIER : le client
+    //   jette tout id inconnu (`applyDeltas`), et la liste complète ne part qu'une fois, au
+    //   message `ready`. Sans cette branche, un nœud né après l'amorce n'existe pour PERSONNE —
+    //   le filon de la Brume portait ce défaut depuis sa naissance.
+    //   L'ombre porte DÉJÀ la sentinelle qu'il faut : `JAMAIS_VU`. Rien à ranger de plus.
+    const inedit = stocks[n.id] === JAMAIS_VU
+    if (!inedit && stocks[n.id] === n.stock) continue
     stocks[n.id] = n.stock
     deltas.push(
-      n.stock === 0
-        ? { id: n.id, stock: 0, tx: n.tx, ty: n.ty, regrowAt: n.regrowAt }
-        : { id: n.id, stock: n.stock },
+      inedit
+        ? { id: n.id, stock: n.stock, tx: n.tx, ty: n.ty, regrowAt: n.regrowAt, neuf: n.type }
+        : n.stock === 0
+          ? { id: n.id, stock: 0, tx: n.tx, ty: n.ty, regrowAt: n.regrowAt }
+          : { id: n.id, stock: n.stock },
     )
   }
   return deltas

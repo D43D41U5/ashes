@@ -1,10 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import {
-  avanceeDuFront,
   buildPoiStructures,
   createSim,
-  estCendre,
-  jourDeSaison,
   spawnPoiMonsters,
   TICKS_PER_SEASON_DAY,
   zoneSlugAt,
@@ -92,59 +89,19 @@ describe('la vallée LAN — le monde de production', () => {
   const jour = (d: number): number => d * TICKS_PER_SEASON_DAY * monde.sim.calendarScale
 
   // RÉANCRÉ (S1/S11) : la Cendre mord au GRAND FROID (j91-120 de l'année), plus à partir de
-  // l'acte II. ⚠ `jour(d)` compte DEPUIS L'OUVERTURE du monde, qui tombe au jour 51 (S2) : le
-  // front dort donc tant que `51 + d < 91`, c'est-à-dire jusqu'à d = 39. Au-delà on mesurerait
-  // un front qui a mordu — ce que le test suivant, lui, couvre exprès.
-  it('hors du Grand Froid, la Cendre ne déplace personne — le comportement de L1 est intact', () => {
-    for (const d of [0, 5, 15, 21, 39]) {
+  // ⚠ Depuis le 2026-08-24 la Cendre ne déplace plus personne À AUCUN jour : le front est
+  // retiré. La fenêtre balayée court donc sur toute la saison, et non plus jusqu'à d = 39.
+  it('la Cendre ne déplace personne — le comportement de L1 est intact', () => {
+    for (const d of [0, 5, 15, 21, 39, 45, 60]) {
       monde.sim.tick = jour(d)
       expect(baseDeNaissance(monde), `jour ${d}`).toEqual(monde.base)
     }
   })
 
-  it('personne ne naît jamais dans la cendre, quel que soit le jour de la saison', () => {
-    const cendreMax = monde.sim.map.cendreMax!
-    expect(cendreMax).toBeGreaterThan(0) // la carte porte bien une Cendrière
-    for (let d = 0; d <= 60; d += 2) {
-      monde.sim.tick = jour(d)
-      const front = avanceeDuFront(jourDeSaison(monde.sim), cendreMax)
-      const b = baseDeNaissance(monde)
-      expect(estCendre(monde.sim.map, b.tx, b.ty, front), `jour ${d} : né dans la cendre en (${b.tx},${b.ty})`).toBe(false)
-      // …et l'anneau serré autour d'elle reste marchable : on ne naît pas dans un mur.
-      const s = nextSpawnNear(monde.sim.map, b, 0)
-      expect(Number.isFinite(s.x) && Number.isFinite(s.y), `jour ${d}`).toBe(true)
-    }
-    monde.sim.tick = 0
-  })
+  // (« personne ne naît jamais dans la cendre » et « RELOGE vraiment quand la base brûle » :
+  //  retirés le 2026-08-24 avec le front. Ils gardaient R30 — le centre de l'anneau de naissance
+  //  suivait le front, et le second forçait la tuile de base à distance 0 pour exercer vraiment
+  //  la branche de relogement. Plus rien ne brûle : `baseDeNaissance` rend la base, toujours, ce
+  //  que le test précédent vérifie déjà sur toute la fenêtre.)
 
-  /**
-   * LE TEST PRÉCÉDENT NE SUFFIT PAS, ET IL FAUT LE DIRE : sur la seed 2026, MESURÉ, la base
-   * des Prés Bas n'est JAMAIS atteinte par le front, même à son maximum (247 au jour 60).
-   * Il vérifie donc une propriété vraie… sans jamais emprunter la branche qu'il prétend
-   * garder. Un test qui ne peut pas échouer ne garde rien.
-   *
-   * On force donc la condition sur la VRAIE carte : on marque la tuile de la base comme
-   * appartenant au tout premier anneau de cendre (distance 0), ce qui la fait brûler dès
-   * que le front s'ébranle. C'est le seul moyen d'exercer réellement le relogement.
-   */
-  it('RELOGE vraiment quand la base brûle — la branche R30, exercée', () => {
-    // On mute la carte DU SEMIS (`carte.map`), pas la copie de la sim : `createSim` copie
-    // profondément ses options, et c'est `carte.map` que `pointsDeSpawn` consulte.
-    const champ = monde.carte.map.cendre as unknown as number[]
-    const i = monde.base.ty * monde.carte.map.width + monde.base.tx
-    const avant = champ[i]!
-    try {
-      champ[i] = 0 // cette tuile part au premier souffle
-      monde.sim.tick = jour(40) // acte III : le front est largement ouvert
-      const front = avanceeDuFront(jourDeSaison(monde.sim), monde.carte.map.cendreMax!)
-      expect(estCendre(monde.carte.map, monde.base.tx, monde.base.ty, front)).toBe(true) // la base a bien brûlé
-      const b = baseDeNaissance(monde)
-      expect(b, 'la base aurait dû être abandonnée').not.toEqual(monde.base)
-      expect(estCendre(monde.carte.map, b.tx, b.ty, front), 'relogé dans la cendre').toBe(false)
-      expect(zoneSlugAt(monde.sim.map, b.tx, b.ty)).toBe('pres_bas') // et toujours dans la zone nourricière
-    } finally {
-      champ[i] = avant
-      monde.sim.tick = 0
-    }
-  })
 }, 60_000)

@@ -15,6 +15,7 @@
  * jour/acte se dérivent de l'état pur (`seasonDayAtTick`/`actForDay`), et le temps de
  * jeu comme la « dernière fois vue » sont de l'horloge murale — donc de l'hôte (§2).
  */
+import { VENT } from './balance'
 import type { SimState } from './sim'
 import type { ResourceNode } from './economy'
 import { appliqueDiffNoeuds, baseDepuisNoeuds, diffNoeuds, type BaseNoeuds, type DiffNoeuds } from './node-baseline'
@@ -53,6 +54,13 @@ const REPLIS_EPHEMERES: Readonly<Record<string, () => unknown>> = {
   // lui, est SORTI de l'état avec la méga-horde scriptée — décision ⑲ ; la clé excédentaire
   // d'une vieille sauvegarde est inerte, la garde ne cherche que les manquants.)
   presage: () => null,
+  // LA FORCE DU VENT (`vent.md` V3, 2026-08-24) : elle est DÉRIVÉE — `advanceVent` la
+  // recalcule du front à chaque tick, et la sauvegarde n'en porte qu'une photo. Une vallée
+  // d'avant l'unification n'a donc rien perdu en ne l'ayant pas : le premier tick lui rend sa
+  // valeur exacte. Bosser la version pour un champ qui se reconstitue en 50 ms aurait rendu
+  // toutes les vallées en cours illisibles — c'est précisément ce que cette table existe pour
+  // éviter. Le repli dit l'ambiance, la valeur d'un monde sans front.
+  windForce: () => VENT.AMBIANT,
   // LES LIEUX BRÛLÉS (2026-08-21) : une vieille vallée n'a jamais rien brûlé — [] est sa
   // vérité. Les sauvegardes NEUVES, elles, portent la clé : rien ne s'y oublie.
   lieuxBrules: () => [],
@@ -100,13 +108,16 @@ function comblerEphemeres(brut: Record<string, unknown>): string[] {
  * de repli. C'est la décision qui manquait ; elle n'est plus contournable en silence.
  */
 export const SAVE_REQUIRED_KEYS: readonly string[] = [
-  'aggressions', 'arkDeparted', 'blood', 'calendarScale', 'corpses', 'cycleOffset', 'debug', 'denRespawns',
+  // `cendreAge` / `cendreJour` (spec `cendre.md`) : les dix âges de foyer et le dernier jour
+  // traité. **Ils DOIVENT être sauvés** — ce sont les seuls octets de la mécanique, et une reprise
+  // qui les perdrait rendrait au joueur une vallée revenue à sa tache initiale.
+  'aggressions', 'arkDeparted', 'blood', 'calendarScale', 'cendreAge', 'cendreJour', 'corpses', 'cycleOffset', 'debug', 'denRespawns',
   'dens', 'entities', 'evacuatedIds', 'evacuation', 'events', 'faunaCap', 'faunaQuiet', 'finDeSaison',
   'functions', 'groundItems', 'grounds', 'home', 'hordes', 'lastConvoyDay', 'lastRefugeeDay',
   'jourDeDepart', 'map', 'monsters', 'nextCorpseId', 'nextEntityId', 'nextGroundItemId',
   'nextHerdId', 'nextHordeId', 'nextRefugeeGroupId', 'nextStructureId', 'nextVillageId',
   'lieuxBrules', 'nodes', 'npcs', 'presage', 'refugeeGroups', 'reveils', 'rngState', 'seasonEnded', 'seed', 'structures', 'tick',
-  'villages', 'visitedPois', 'wind', 'worldEvents',
+  'villages', 'visitedPois', 'wind', 'windForce', 'worldEvents',
 ]
 
 interface SaveEnvelope {

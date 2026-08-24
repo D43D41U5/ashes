@@ -63,6 +63,8 @@ export type Famille = 'bois' | 'pierre' | 'feuille' | 'poussiere'
  * table exhaustive par construction, jamais par relecture (règle maison).
  */
 export const FAMILLE_DE_NOEUD: Record<NodeType, Famille> = {
+  // LA FUMEROLLE : on gratte du SEL sur sa lèvre — de la matière minérale qui s'écaille.
+  fumerolle: 'pierre',
   tree: 'bois',
   old_tree: 'bois',
   rock: 'pierre',

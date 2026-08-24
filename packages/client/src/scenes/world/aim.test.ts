@@ -262,12 +262,12 @@ describe('viser un feu → fireId (pour ouvrir le modal à E, spec feu-station S
 
 describe('la main décide du clic', () => {
   const vide = { tx: 5, ty: 5, nodeId: null, nodeTool: null, corpseId: null, carcass: false, entityId: null, entityWounded: false, onFire: false, fireId: null, repairableId: null, plantableId: null, harvestableId: null,
-  pileId: null, inRange: true }
+  pileId: null, inRange: true, nodeInRange: false, waterInRange: false }
   // `nodeTool` porte la FAMILLE d'outil du nœud visé (lue de `NODE_DEFS[type].tool`) : un
   // arbre appelle la hache, un filon la pioche, un buisson personne. C'est ce qui permet à la
   // hache d'être une arme SANS cesser d'abattre (décision d'Alexis 2026-08-20).
   const surUnArbre = { tx: 5, ty: 5, nodeId: 42, nodeTool: 'axe' as const, corpseId: null, carcass: false, entityId: null, entityWounded: false, onFire: false, fireId: null, repairableId: null, plantableId: null, harvestableId: null,
-  pileId: null, inRange: true }
+  pileId: null, inRange: true, nodeInRange: true, waterInRange: false }
   const versLest = { dx: 1, dy: 0 }
 
   it('DE LA NOURRITURE EN MAIN → on mange (et le maintien répète)', () => {
@@ -318,9 +318,9 @@ describe('la main décide du clic', () => {
  */
 describe('la hache est une arme, et elle abat quand même', () => {
   const versLest = { dx: 1, dy: 0 }
-  const vide = { tx: 5, ty: 5, nodeId: null, nodeTool: null, corpseId: null, carcass: false, entityId: null, entityWounded: false, onFire: false, fireId: null, repairableId: null, plantableId: null, harvestableId: null, pileId: null, inRange: true }
-  const surUnArbre = { ...vide, nodeId: 42, nodeTool: 'axe' as const }
-  const surUnFilon = { ...vide, nodeId: 43, nodeTool: 'pickaxe' as const }
+  const vide = { tx: 5, ty: 5, nodeId: null, nodeTool: null, corpseId: null, carcass: false, entityId: null, entityWounded: false, onFire: false, fireId: null, repairableId: null, plantableId: null, harvestableId: null, pileId: null, inRange: true, nodeInRange: false, waterInRange: false }
+  const surUnArbre = { ...vide, nodeId: 42, nodeTool: 'axe' as const, nodeInRange: true }
+  const surUnFilon = { ...vide, nodeId: 43, nodeTool: 'pickaxe' as const, nodeInRange: true }
 
   it('HACHE DE FER sur un ARBRE → elle ABAT (le défaut : elle frappait dans le vide)', () => {
     expect(clickToAction(surUnArbre, null, { held: 'iron_axe', ...versLest })).toEqual({ type: 'harvest', nodeId: 42 })
@@ -343,7 +343,7 @@ describe('la hache est une arme, et elle abat quand même', () => {
     expect(clickToAction(surUnArbre, null, { held: 'spear', ...versLest })).toEqual({ type: 'attack', dx: 1, dy: 0 })
   })
   it('HACHE DE FER sur un arbre HORS DE PORTÉE → elle frappe, elle ne récolte pas à distance', () => {
-    const loin = { ...surUnArbre, inRange: false }
+    const loin = { ...surUnArbre, inRange: false, nodeInRange: false }
     expect(clickToAction(loin, null, { held: 'iron_axe', ...versLest })).toEqual({ type: 'attack', dx: 1, dy: 0 })
   })
 })
@@ -357,10 +357,49 @@ describe('la hache est une arme, et elle abat quand même', () => {
  * l'appui (`:739`), avant toute branche de sortie, si bien qu'un clic dont `clickToAction`
  * ne veut rien faire retombe quand même dans le maintien. (Audit UX 2026-08-20, D4-2 et D4-4.)
  */
+/**
+ * LE CLIC QUI LANCE LA LIGNE (spec `peche.md` D9/E1, 2026-08-24) — et pourquoi ces gardes-ci.
+ *
+ * Le scénario smoke prouvait le geste en envoyant `cast_line` À LA MAIN (`sendAction`) : il
+ * n'a JAMAIS traversé la résolution du clic. Résultat, le seul chemin que le joueur emprunte
+ * n'était couvert par rien — et il ne marchait pas partout (le marais, et le clic muet sans
+ * canne). Ces trois gardes couvrent la RÉSOLUTION, pas la sim.
+ */
+describe('le clic lance la ligne (peche.md D9)', () => {
+  const versLest = { dx: 1, dy: 0 }
+  const sec = { tx: 9, ty: 4, nodeId: null, nodeTool: null, corpseId: null, carcass: false, entityId: null, entityWounded: false, onFire: false, fireId: null, repairableId: null, plantableId: null, harvestableId: null, pileId: null, inRange: false, nodeInRange: false, waterInRange: false }
+  const surLEau = { ...sec, waterInRange: true }
+
+  it('CANNE EN MAIN + de l’eau à portée : on LANCE, sur la TUILE (pas sur un nœud)', () => {
+    const main = { held: 'crude_rod' as const, ...versLest }
+    expect(clickToAction(surLEau, null, main)).toEqual({ type: 'cast_line', tx: 9, ty: 4 })
+    // …et sur la terre, la même canne ne lance rien : c'est l'EAU qui décide.
+    expect(clickToAction(sec, null, main)).not.toMatchObject({ type: 'cast_line' })
+  })
+
+  it('LE COIN NE CHANGE RIEN AU GESTE : canne en main sur un coin de pêche, c’est le même lancer', () => {
+    // Le coin est un nœud dont l'outil est la canne — sans la priorité donnée à l'eau, la
+    // branche outil-sur-nœud l'aurait pris et émis un `harvest`, que la sim refuse désormais.
+    const surUnCoin = { ...surLEau, nodeId: 7, nodeTool: 'rod' as const, nodeInRange: true }
+    expect(clickToAction(surUnCoin, null, { held: 'crude_rod' as const, ...versLest })).toEqual({ type: 'cast_line', tx: 9, ty: 4 })
+  })
+
+  it('SANS CANNE, le clic reste BAVARD : il part quand même, la sim dit « il faut une canne »', () => {
+    // Un clic sur l'eau qui ne fait RIEN est le pire des retours : le joueur croit que la
+    // pêche est cassée. On préfère un refus parlé (P7, le même piège que le nœud allongé).
+    expect(clickToAction(surLEau, null, { held: null, ...versLest })).toEqual({ type: 'cast_line', tx: 9, ty: 4 })
+  })
+
+  it('UNE ARME EN MAIN FRAPPE, même au bord de l’eau — on ne pêche pas à la lance', () => {
+    const main = { held: 'crude_spear' as const, ...versLest }
+    expect(clickToAction(surLEau, null, main)).toMatchObject({ type: 'attack' })
+  })
+})
+
 describe('le maintien ne défait pas le clic', () => {
   const versLest = { dx: 1, dy: 0 }
-  const base = { tx: 5, ty: 5, nodeId: null, nodeTool: null, corpseId: null, carcass: false, entityId: null, entityWounded: false, onFire: false, fireId: null, repairableId: null, plantableId: null, harvestableId: null, pileId: null, inRange: true }
-  const surUnArbre = { ...base, nodeId: 42, nodeTool: 'axe' as const }
+  const base = { tx: 5, ty: 5, nodeId: null, nodeTool: null, corpseId: null, carcass: false, entityId: null, entityWounded: false, onFire: false, fireId: null, repairableId: null, plantableId: null, harvestableId: null, pileId: null, inRange: true, nodeInRange: false, waterInRange: false }
+  const surUnArbre = { ...base, nodeId: 42, nodeTool: 'axe' as const, nodeInRange: true }
 
   it('ARC en main : le clic est muet — et le MAINTIEN doit l’être aussi', () => {
     const main = { held: 'bow' as const, ...versLest }
@@ -780,5 +819,52 @@ describe('la carcasse : couteau en main on dépèce, sinon rien — jamais le co
   it('le couteau sur un ARBRE : un outil en main ne frappe pas, il récolte (le geste nu, comme la hache sur un buisson)', () => {
     const t = aimAt(10, 10, PLAYER, [node(7, 10, 10)], [], RANGE)
     expect(clickToAction(t, null, { held: 'crude_knife', ...versLest })).toEqual({ type: 'harvest', nodeId: 7 })
+  })
+})
+
+/**
+ * ON PÊCHE DE LOIN — LE CLIENT SUIT LE NŒUD (décision d'Alexis, 2026-08-24).
+ *
+ * `inRange` reste le BRAS (il gouverne le cadavre, la structure et l'entité de la tuile) ;
+ * `nodeInRange` porte la portée déclarée du nœud. Le coin de pêche est le seul à en déclarer
+ * une, et la portée vient de /sim (`porteeDuNoeud`) — jamais recopiée ici.
+ */
+describe('le coin de pêche se prend de loin (nodeInRange)', () => {
+  const coin = (id: number, tx: number, ty: number): ResourceNode =>
+    ({ id, tx, ty, stock: 6, type: 'fishing_spot_lake', regrowAt: 0 }) as ResourceNode
+  /** Le joueur est à 3 tuiles pile du centre de (10,10) : au-delà du bras, dans la portée du coin. */
+  const LOIN = { x: 10.5, y: 13.5 }
+  const versLest = { dx: 1, dy: 0 }
+
+  it('à 3 tuiles : hors du BRAS, mais le NŒUD est à portée', () => {
+    const t = aimAt(10, 10, LOIN, [coin(7, 10, 10)], [], RANGE)
+    expect(t.inRange).toBe(false)
+    expect(t.nodeInRange).toBe(true)
+  })
+
+  it('CANNE en main : le clic LANCE (`harvest`, que input-bindings route en lancer)', () => {
+    const t = aimAt(10, 10, LOIN, [coin(7, 10, 10)], [], RANGE)
+    expect(clickToAction(t, null, { held: 'crude_rod', ...versLest })).toEqual({ type: 'harvest', nodeId: 7 })
+  })
+
+  it('MAINS VIDES à 3 tuiles : le clic émet quand même — la sim doit pouvoir dire « il faut une canne »', () => {
+    // ⚠ LE DÉFAUT QUE CETTE GARDE TIENT : sans la branche `nodeInRange && !inRange`, la
+    // cascade tombait dans le trou entre les deux portées et rendait `attack` — un moulinet
+    // MUET dans l'eau. Le joueur qui a oublié de sélectionner sa canne n'aurait eu AUCUN
+    // retour. Un refus vaut mieux qu'un silence.
+    const t = aimAt(10, 10, LOIN, [coin(7, 10, 10)], [], RANGE)
+    expect(clickToAction(t, null, { held: null, ...versLest })).toEqual({ type: 'harvest', nodeId: 7 })
+  })
+
+  it('UNE ARME en main reste une arme : elle FRAPPE, elle ne pêche pas', () => {
+    const t = aimAt(10, 10, LOIN, [coin(7, 10, 10)], [], RANGE)
+    expect(clickToAction(t, null, { held: 'spear', ...versLest })).toEqual({ type: 'attack', dx: 1, dy: 0 })
+  })
+
+  it('UN ARBRE à 3 tuiles n’a pas bougé : hors de portée des deux façons, le clic ne récolte pas', () => {
+    const t = aimAt(10, 10, LOIN, [node(7, 10, 10)], [], RANGE)
+    expect(t.inRange).toBe(false)
+    expect(t.nodeInRange).toBe(false)
+    expect(clickToAction(t, null, { held: null, ...versLest })).toEqual({ type: 'attack', dx: 1, dy: 0 })
   })
 })
