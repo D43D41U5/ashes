@@ -34,6 +34,7 @@
  * Le conseil ENSEIGNE, l'alerte CRIE (audit UI/UX P2-7) : places distinctes (haut / bas),
  * encres distinctes, durées distinctes. On répare le canal, on ne fusionne pas les registres.
  */
+import { BARRE_H } from './barre-haute'
 import { GAME_FONT, ensureGameFont } from './game-font'
 import { INK_OUTLINE_STRONG } from './hud-dom'
 
@@ -113,7 +114,9 @@ export function createBandeaux(): Bandeaux {
       text-align:center;line-height:1.5;letter-spacing:.5px;${INK_OUTLINE_STRONG}
       transition:opacity .15s linear;}
     /* LE CONSEIL, en haut : encre chaude neutre. On apprend à jouer, on n'échoue pas. */
-    .bnd-conseil{top:72px;font-size:15px;color:#e8c66a;}
+    /* DESCENDU SOUS LA BARRE HAUTE (2026-08-24) : il vivait à 72 px, très exactement la
+       hauteur de la barre — il se serait peint derrière elle, à cheval sur son filet. */
+    .bnd-conseil{top:${BARRE_H + 32}px;font-size:15px;color:#e8c66a;}
     /* L'ALERTE, en bas : le rouge du refus et du danger. */
     .bnd-alerte{bottom:110px;font-size:15px;color:#ff7a6b;}
     /* Un SOL, comme celui du HUD : ces deux lignes se peignent sur le monde, à toute heure.

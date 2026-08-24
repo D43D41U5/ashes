@@ -44,13 +44,20 @@ export interface TeinteSaison {
   force: number
 }
 
-interface Cardinal {
+export interface Cardinal {
   jour: number
   teinte: TeinteSaison
 }
 
-/** Les quatre cardinaux, au cœur de chaque saison — l'équinoxe vaut la moyenne de ses voisins. */
-const CARDINAUX: readonly Cardinal[] = [
+/**
+ * Les quatre cardinaux, au cœur de chaque saison — l'équinoxe vaut la moyenne de ses voisins.
+ *
+ * EXPORTÉS le 2026-08-24 pour les bandes du ruban de saison (barre haute) : la bande d'une
+ * saison porte la couleur que le SOL portera, pas un accent de HUD choisi à côté. Quatre
+ * teintes recopiées ailleurs auraient dérivé au premier réglage — c'est l'histoire que
+ * `palette.ts` raconte déjà.
+ */
+export const CARDINAUX: readonly Cardinal[] = [
   // mi-Éclosion : vert tendre, presque acide — la sève monte, tout est neuf.
   { jour: 15, teinte: { cible: 0x8ac54a, force: 0.3 } },
   // mi-Ardeur : l'or de l'herbe qui cuit — le vert tient encore dessous.

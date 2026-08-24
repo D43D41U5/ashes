@@ -165,8 +165,14 @@ const NIGHT_COLOR = 0x080e5c // bleu froid
 const GOLDEN_COLOR = 0xc8702a // ambre chaud (heure dorée)
 const NEUTRAL_COLOR = 0x101018
 
-/** Keyframes de la teinte d'ambiance sur 24 h (bornes 0 h et 24 h identiques). */
-const AMBIENT_KEYS: TintKey[] = [
+/**
+ * Keyframes de la teinte d'ambiance sur 24 h (bornes 0 h et 24 h identiques).
+ *
+ * EXPORTÉES le 2026-08-24 pour le ruban de l'heure de la barre haute : il compose ces mêmes
+ * clefs sur un sol étalon pour montrer, heure par heure, la teinte que le monde PORTERA. Les
+ * recopier là-bas aurait fait deux aubes — celle qu'on voit et celle qu'on lit.
+ */
+export const AMBIENT_KEYS: TintKey[] = [
   { hour: 0, color: NIGHT_COLOR, alpha: NIGHT_ALPHA_MAX },
   { hour: 5, color: NIGHT_COLOR, alpha: 0.62 },
   { hour: 6, color: GOLDEN_COLOR, alpha: 0.32 },

@@ -4,12 +4,13 @@
  * objet scrollFactor 0 dans une caméra zoomée serait projeté hors écran).
  * Communication par le registry : WorldScene écrit, UIScene lit.
  */
-import { formatChronicleLine, TEMPERATURE, zoneAt, type VillageTask, type WorldMap } from '@ashes/sim'
+import { formatChronicleLine, modificateurDeSaison, NOMS_MODIFICATEUR, TEMPERATURE, zoneAt, type VillageTask, type WorldMap } from '@ashes/sim'
 import Phaser from 'phaser'
 import { getHud, setHud } from '../hud-state'
 import { drainAlertes, drainConseils, drainCrafts, drainLevelUps, drainPickups, queueAction } from './world/hud-bridge'
 import { TILE_PX } from '../render/framing'
 import { createHudCore, type HudCore } from './ui/hud-core'
+import { createBarreHaute, type BarreHaute } from './ui/barre-haute'
 import { createFatalPanel, type FatalPanel } from './ui/fatal'
 import { createHudCharacter, type HudCharacter } from './ui/hud-character'
 import { createBuildMenu, type BuildMenu } from './ui/build-menu'
@@ -30,7 +31,12 @@ import { FONT } from './ui/typography'
 import { reopenFreshVeillee } from './ui/reopen-veillee'
 import { VEILLEE_SEED } from '../worker/mondes'
 
-const TASK_LABELS: Record<VillageTask['kind'], string> = {
+/**
+ * LE VOCABULAIRE DU TABLEAU DES TÂCHES — plus affiché depuis que le village a quitté le coin
+ * haut-gauche (2026-08-24), et EXPORTÉ pour cela : la barre du village qui vient le reprendra
+ * tel quel. Neuf libellés réécrits de mémoire auraient dit autre chose que ceux d'hier.
+ */
+export const TASK_LABELS: Record<VillageTask['kind'], string> = {
   gather_berries: 'récolter des baies',
   gather_wood: 'couper du bois',
   gather_fiber: 'ramasser des fibres',
@@ -117,6 +123,7 @@ export class UIScene extends Phaser.Scene {
   private vignette!: Vignette
   /** La bande toujours à l'écran (maquette 2A) : jour/lieu, toasts, vitales, ceinture. */
   private hudCore!: HudCore
+  private barreHaute!: BarreHaute
 
   // ─── L'attente ───
   /** L'écran de chargement : seul à l'écran tant que la vallée n'est pas générée.
@@ -213,6 +220,10 @@ export class UIScene extends Phaser.Scene {
       queueAction(this.registry, { type: 'set_active_slot', slot }),
     )
     this.hudCore.setVisible(false)
+    // LA BARRE HAUTE (2026-08-24) : où je suis · le ruban de l'année · le ciel et l'heure.
+    // Elle a pris la place de la ligne « JOUR 51 — ACTE II — 14H » du coin haut-gauche.
+    this.barreHaute = createBarreHaute(this.hudRoot.board)
+    this.barreHaute.setVisible(false)
     // L'ÉCRAN PERSONNAGE (maquette 3A), en DOM : le SAC (grille + ceinture rappelée,
     // glisser-déposer + clic droit) et l'ARTISANAT (recherche, recettes, un clic FAIT),
     // ouverts au TAB. Il ne parle pas à l'hôte — il POSE ses actions, WorldScene les
@@ -621,6 +632,7 @@ export class UIScene extends Phaser.Scene {
     // Le HUD paraît DERRIÈRE le voile encore opaque : il apparaîtra avec le monde,
     // dans le même fondu, au lieu de se poser dessus après coup.
     this.hudCore.setVisible(true)
+    this.barreHaute.setVisible(true)
     this.loading?.fadeOut(this.time.now)
   }
 
@@ -689,28 +701,28 @@ export class UIScene extends Phaser.Scene {
     // quand il ne reste plus rien (l'écran s'est détruit).
     if (this.loading?.fadeStep(this.time.now)) this.loading = undefined
 
-    const zone = getHud(this.registry, 'zone')
-    const members = getHud(this.registry, 'village') ?? 0
-    const tasks = getHud(this.registry, 'tasks') ?? []
-    const archetype = getHud(this.registry, 'archetype') ?? null
-    const villageWarmth = getHud(this.registry, 'villageWarmth') ?? 0
-    const hour = String(Math.floor(time.hourOfCycle)).padStart(2, '0')
-    const board = tasks
-      .slice(0, 4)
-      .map((t) => `${TASK_LABELS[t.kind]}${t.claimedBy !== null ? ' •' : ''}`)
-      .join(', ')
-    // Prévisible dans le sens, flou dans la magnitude : des mots, pas la formule.
-    const feuLabel =
-      archetype === 'foyer' ? 'Foyer' : archetype === 'meute' ? 'Meute' : villageWarmth > 10 ? 'tiède' : villageWarmth < -10 ? 'sombre' : 'neutre'
-    // Les libellés de la maquette 2A — composés ici, peints par hud-core (DOM).
-    // L'ACTE se dit en PHASE (I..IV) et l'AN à partir du deuxième (saison-sans-fin T2) —
-    // « ACTE IIIIIII » n'est pas un chiffre romain, c'est un compteur qui déborde.
-    const acteRomain = ['I', 'II', 'III', 'IV'][time.phase - 1] ?? String(time.phase)
-    const an = time.tour > 1 ? `AN ${time.tour} · ` : ''
-    const dayLine = `JOUR ${time.seasonDay} — ${an}ACTE ${acteRomain} — ${hour}H${time.isNight ? ' · NUIT' : ''}`
-    const villageLine =
-      members > 0 ? `VILLAGE : ${members} MEMBRE${members > 1 ? 'S' : ''} — FEU : ${feuLabel.toUpperCase()}` : ''
-    const boardLine = board ? `TABLEAU : ${board}` : ''
+    // ═══ LA BARRE HAUTE a pris la ligne du jour, le lieu et le village ═══
+    // Elle écrivait « JOUR 51 — ACTE II — 14H » : l'acte en chiffres romains alors que les
+    // saisons ont des NOMS, et pas un mot du défilé.
+    //
+    // ⚠ LE VILLAGE N'EST PLUS AFFICHÉ NULLE PART. Il part dans une barre à lui (décision
+    // d'Alexis, 2026-08-24), qui n'existe pas encore : d'ici là, le nombre de membres, la
+    // couleur du Feu et le tableau des tâches ne se lisent plus en jeu. Les clés du HUD
+    // (`village`, `archetype`, `villageWarmth`, `tasks`) restent écrites et intactes — c'est
+    // l'affichage qui manque, pas la donnée.
+    // LE CARACTÈRE DE LA SAISON (`saisons.md` S18) : fonction PURE du tour et de la phase,
+    // donc rien à faire transiter. Le HUD ne le disait pas — Alexis a tranché l'inverse le
+    // 2026-08-24 : le PRÉSENT se nomme, seul le FUTUR se tait.
+    const idCaractere = modificateurDeSaison(time.tour, time.phase)
+    this.barreHaute.update({
+      time,
+      toponyme: getHud(this.registry, 'toponyme'),
+      lieu: getHud(this.registry, 'lieu'),
+      ambiant: getHud(this.registry, 'ambiant'),
+      ciel: getHud(this.registry, 'cielIci') ?? null,
+      caractere: idCaractere === null ? undefined : NOMS_MODIFICATEUR[idCaractere],
+      now: this.time.now,
+    })
 
     // La ceinture et les vitales : on ne fait que RELAYER le snapshot (aucune règle
     // d'inventaire côté client — spec R22).
@@ -790,12 +802,9 @@ export class UIScene extends Phaser.Scene {
     // (station quittée) doit se remarquer sans aller ouvrir un menu (spec F15).
     this.craftQueueView.setVisible(true)
     this.craftQueueView.update(getHud(this.registry, 'craftQueue') ?? [], crafted, this.time.now)
-    // LA BANDE 2A d'un seul geste (jour/lieu, toasts déjà empilés, vitales, ceinture).
+    // LA BANDE 2A d'un seul geste (vitales, ceinture, sauvegarde). Le jour, le lieu et le
+    // village ont quitté ce module : la barre haute les dit (2026-08-24).
     this.hudCore.update({
-      dayLine,
-      zone,
-      villageLine,
-      boardLine,
       hp: getHud(this.registry, 'hp') ?? 100,
       stamina: getHud(this.registry, 'stamina') ?? 100,
       hunger: getHud(this.registry, 'hunger') ?? 100,

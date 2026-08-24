@@ -3212,6 +3212,109 @@ const SCENARIOS = {
     await page.screenshot({ path: `${OUT}/berge.png` })
   },
 
+  /**
+   * LA BARRE HAUTE (2026-08-24) — elle DIT le lieu, l'année et le ciel, ou elle ment.
+   *
+   * Le scénario ne juge pas des pixels : il lit ce que la barre a écrit, dans le DOM, aux deux
+   * états qui comptent — DEHORS, puis DANS UN LIEU (on se téléporte au centre d'une empreinte
+   * relevée sur la vraie carte, jamais une coordonnée écrite à la main). Ce qui se garde :
+   * la région et le lieu ne se confondent plus, le lieu OUVRE son rang, la zone se réduit, et
+   * l'air se dit en degrés.
+   *
+   * Exige `--dev` : la téléportation passe par `debug_teleport`, inerte en production.
+   */
+  async barre(page) {
+    await page.goto(URL)
+    await page.waitForFunction(() => Boolean(window.__BRAISES__?.scene?.registry?.get('mapData')), null, { timeout: 150000 })
+    await page.waitForTimeout(1500)
+    await page.evaluate(() => window.__BRAISES__.scene.sendAction({ type: 'debug_set_hour', hour: 11 }))
+    await page.waitForTimeout(400)
+
+    const lire = () =>
+      page.evaluate(() => {
+        const t = (s) => document.querySelector(s)?.textContent ?? ''
+        const st = (s, p) => document.querySelector(s)?.style?.[p] ?? ''
+        return {
+          zone: t('.bh-zone'),
+          zoneTaille: st('.bh-zone', 'fontSize'),
+          lieu: t('.bh-lieu-nom'),
+          lieuH: st('.bh-lieu', 'height'),
+          air: t('.bh-air-txt'),
+          an: t('.bh-an'),
+          jour: t('.bh-jour'),
+          heure: t('.bh-heure'),
+          saisons: [...document.querySelectorAll('.bh-nom')].map((e) => e.textContent),
+          ico: [...document.querySelectorAll('.bh-ico')].filter((e) => e.style.display !== 'none').map((e) => e.dataset.ico),
+        }
+      })
+
+    const dehors = await lire()
+    console.log(`barre (dehors) : ${JSON.stringify(dehors)}`)
+    if (!dehors.jour.startsWith('JOUR ')) console.error('!! la barre ne dit pas le jour')
+    if (!/^\d\dH$/.test(dehors.heure)) console.error(`!! l'heure est illisible : « ${dehors.heure} »`)
+    if (!dehors.saisons.length) console.error('!! aucune bande de saison nommée dans le ruban')
+    if (dehors.ico.length !== 1) console.error(`!! ${dehors.ico.length} icônes de ciel allumées à la fois`)
+    if (!/-?\d+ °C/.test(dehors.air)) console.error(`!! l'air ne se dit pas en degrés : « ${dehors.air} »`)
+
+    // LE LIEU LE PLUS PROCHE DE L'AVATAR, relevé sur la vraie carte : c'est la carte qui dit
+    // où sont les lieux, pas nous.
+    const cible = await page.evaluate(() => {
+      const sc = window.__BRAISES__.scene
+      const map = sc.registry.get('mapData')
+      const moi = sc.registry.get('playerPos') ?? { x: 0, y: 0 }
+      let best = null
+      let d2 = Infinity
+      for (const z of map.zones) {
+        if (z.kind === undefined) continue
+        const x = z.x + z.w / 2
+        const y = z.y + z.h / 2
+        const d = (x - moi.x) ** 2 + (y - moi.y) ** 2
+        if (d < d2) { d2 = d; best = { x, y, nom: z.name, kind: z.kind } }
+      }
+      return best
+    })
+    if (!cible) {
+      console.error('!! aucun lieu sur la carte — le scénario ne peut rien prouver')
+      await page.screenshot({ path: `${OUT}/barre.png` })
+      return
+    }
+    // On RÉPÈTE le saut jusqu'à ce que l'avatar y soit : l'action fait un aller-retour par
+    // l'hôte, et le premier envoi peut tomber avant que la Veillée n'ait la main.
+    for (let essai = 0; essai < 6; essai += 1) {
+      await page.evaluate((c) => window.__BRAISES__.scene.sendAction({ type: 'debug_teleport', x: c.x, y: c.y }), cible)
+      await page.waitForTimeout(700)
+      const arrive = await page.evaluate((c) => {
+        const p = window.__BRAISES__.scene.registry.get('playerPos')
+        return p ? Math.abs(p.x - c.x) < 2 && Math.abs(p.y - c.y) < 2 : false
+      }, cible)
+      if (arrive) break
+    }
+    await page.waitForTimeout(600)
+    const ou = await page.evaluate(() => {
+      const sc = window.__BRAISES__.scene
+      return {
+        pos: sc.registry.get('playerPos'),
+        toponyme: sc.registry.get('toponyme'),
+        lieu: sc.registry.get('lieu'),
+        ambiant: sc.registry.get('ambiant'),
+      }
+    })
+    console.log(`barre : visé ${JSON.stringify(cible)} → ${JSON.stringify(ou)}`)
+
+    const dedans = await lire()
+    console.log(`barre (dans « ${cible.nom} ») : ${JSON.stringify(dedans)}`)
+    if (dedans.lieuH !== '24px') console.error(`!! le rang du lieu ne s'est pas ouvert (${dedans.lieuH})`)
+    if (dedans.lieu !== cible.nom.toUpperCase()) console.error(`!! la barre dit « ${dedans.lieu} », la carte dit « ${cible.nom} »`)
+    if (dedans.zone === dedans.lieu) console.error('!! la région et le lieu disent la même chose — les deux lectures se confondent')
+    if (parseFloat(dedans.zoneTaille) >= parseFloat(dehors.zoneTaille)) {
+      console.error(`!! la zone ne s'est pas réduite (${dehors.zoneTaille} → ${dedans.zoneTaille})`)
+    }
+    if (dedans.lieuH === '24px' && dedans.lieu === cible.nom.toUpperCase() && dedans.zone !== dedans.lieu) {
+      console.log(`   ✓ « ${dedans.zone} » puis « ${dedans.lieu} », zone ${dehors.zoneTaille} → ${dedans.zoneTaille}, air ${dedans.air}`)
+    }
+    await page.screenshot({ path: `${OUT}/barre.png` })
+  },
+
   async carte(page) {
     await page.goto(URL)
     await page.waitForFunction(() => Boolean(window.__BRAISES__?.scene?.registry?.get('worldReady')), null, { timeout: 150000 })

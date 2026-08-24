@@ -47,6 +47,8 @@ import {
   weaponKind,
   weaponProfile,
   zoneAt,
+  toponymeAt,
+  lieuAt,
   type Entity,
   type GameTime,
   type ItemId,
@@ -284,6 +286,14 @@ const BUILD_STEPS = BUILD_PHASES.length
  *  lit, il ne se filme pas ; et chaque relevé coûte un `baselineTemperature`, qui balaie les
  *  structures pour savoir si l'on est sous un toit. */
 const THERMO_PAS_TICKS = Math.max(1, Math.round(BALANCE.TICK_RATE_HZ / 4))
+/**
+ * LE PAS DU RELEVÉ D'AIR de la barre haute — même cadence que le cadran thermique du debug,
+ * et pour la même raison : `ambientTemperature` balaie les structures (les feux) et les zones
+ * (les sources chaudes). Quatre fois par seconde de jeu suffisent largement à un nombre qui
+ * bouge de moins d'un degré par jour — et qui doit malgré tout réagir vite quand on entre
+ * dans la bulle d'un feu.
+ */
+const AIR_PAS_TICKS = THERMO_PAS_TICKS
 
 /** LE SEUIL DU FRISSON (°C corporels) — mi-chemin de la rampe d'engourdissement, là où le
  *  bandeau « Le froid vous prend » se lève. Dérivé, jamais écrit : il suit les deux bornes. */
@@ -385,6 +395,8 @@ export class WorldScene extends Phaser.Scene {
   /** LA FAÇADE D'ÉTAT que les fonctions de gel de /sim attendent — allouée une fois, remise
    *  à jour en place (voir `etat-gel.ts`, qui nomme aussi ce que le snapshot ne porte pas). */
   private etatGel: EtatGel | null = null
+  /** Dernier tick où l'air de la barre haute a été relevé (voir `AIR_PAS_TICKS`). */
+  private airAuTick = -Infinity
   /** La version de canopée déjà PEINTE dans le masque des taches, et quand — le throttle. */
   private couvertPeint = -1
   private couvertPeintAt = -Infinity
@@ -1783,6 +1795,9 @@ export class WorldScene extends Phaser.Scene {
       const aspect = meteoFront
         ? aspectAuPoint(this.etatGel, meteoFront, this.predicted.x, this.predicted.y, this.lastTime.tick)
         : null
+      // …et il part tel quel à la barre haute, qui en fait son icône : une seule lecture
+      // par image, partagée par le ciel qu'on peint et par le pictogramme qui le nomme.
+      setHud(this.registry, 'cielIci', aspect)
 
       // ── LE CADRAN THERMIQUE (DEV) ── quatre fois par seconde de jeu, et par les fonctions
       // de `/sim` sur la MÊME façade que le gel : le panneau montre ce que la sim calcule,
@@ -2016,6 +2031,21 @@ export class WorldScene extends Phaser.Scene {
     this.attackFx.peindreBande()
 
     setHud(this.registry, 'zone', zoneAt(this.map, this.predicted.x, this.predicted.y)?.name)
+    // ═══ CE QUE LA BARRE HAUTE DIT DU LIEU (2026-08-24) ═══
+    // DEUX lectures, jamais `zoneAt` : `map.zones` mélange les toponymes et les lieux, et
+    // `zoneAt` rend la première des deux selon l'ordre du tableau — la barre en fait deux
+    // rangs, ils ne peuvent pas partager une lecture ambiguë. `zone` reste écrite telle
+    // quelle : la carte plein écran et le survol s'en servent encore.
+    setHud(this.registry, 'toponyme', toponymeAt(this.map, this.predicted.x, this.predicted.y))
+    setHud(this.registry, 'lieu', lieuAt(this.map, this.predicted.x, this.predicted.y)?.name)
+    // L'AIR QU'IL FAIT ICI, sur la MÊME façade que le gel et la neige (`etatGel`) : le nombre
+    // ne peut donc jamais contredire la glace qu'on voit au sol. La façade ignore la Brume
+    // (trou nommé dans `etat-gel.ts`) — le monde peint l'ignore aussi, les deux restent
+    // d'accord, et c'est ce qui compte pour un HUD.
+    if (this.etatGel && this.lastTime !== null && this.lastTime.tick - this.airAuTick >= AIR_PAS_TICKS) {
+      this.airAuTick = this.lastTime.tick
+      setHud(this.registry, 'ambiant', ambientTemperature(this.etatGel, this.predicted.x, this.predicted.y))
+    }
     // Le marqueur « tu es ici » de la carte plein écran suit l'ancre autorité.
     setHud(this.registry, 'playerPos', { x: this.predicted.x, y: this.predicted.y })
 

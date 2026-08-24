@@ -112,7 +112,7 @@ export type {
 
 // ─── Monde : carte, temps, collision, navigation ──────────────────────────
 export {
-  createEmptyMap, terrainAt, isBlockingTile, zoneAt, poisAt, poiCenter, poiClearings,
+  createEmptyMap, terrainAt, isBlockingTile, zoneAt, toponymeAt, lieuAt, poisAt, poiCenter, poiClearings,
   profondeurAt,
 } from './map'
 export { deriverProfondeur, estCoeur, estLisiere, TERRAINS_BOISES_MASSIF } from './profondeur'
@@ -276,6 +276,9 @@ export type { InventoryAction, SlotRef } from './inventory-actions'
 
 // ─── Consommateurs du flux d'événements ───────────────────────────────────
 export { chronicleFromEvents, formatChronicleLine, CHRONICLE_EVENT_TYPES, volumesDeChronique, scellerLaChronique, registreDuLieu } from './chronicle'
+export { nomDeSaison } from './chronicle'
+export { modificateurDeSaison, modificateurDuJour, effetsDuJour, effetsDe, NOMS_MODIFICATEUR } from './modificateur'
+export type { ModificateurId } from './modificateur'
 export type { ChronicleEntry, ChronicleWeight, ChronicleVolume } from './chronicle'
 
 // ─── Persistance : sérialiser/reprendre une Veillée (l'hôte écrit dans IndexedDB) ─
