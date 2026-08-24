@@ -45,12 +45,12 @@ import {
   type SlotRef,
 } from '@ashes/sim'
 import type Phaser from 'phaser'
-import { FISH_SPECIES } from '@ashes/sim'
 import type { Exigence, RecipeId as RecipeIdType } from '@ashes/sim'
 import type { CapacitesEnPortee, CharacterTab, OpenContainerView } from '../../hud-state'
 import { ITEM_LABELS, itemIconKey } from '../../render/item-art'
 import { coutJetons, craftRows, etatRecette, fonctionsAbsentes, type CraftRow } from './craft-panel'
 import { dragIntentFrom, dragToAction, quickMoveToAction } from './inventory-panel'
+import { BEST_COLS, rangeesDuBestiaire, sommeDuBestiaire, type CaseBestiaire, type FicheEspece } from './bestiaire'
 import { SKILL_LABELS } from './skill-labels'
 import { skillGuides, type SkillGuide } from './skill-guide'
 
@@ -76,10 +76,6 @@ const ouFaire = (besoin: Exigence | null): string =>
 
 /** Les 4 métiers, à gauche : emblème (une icône d'objet du métier), libellé, niveau, barre.
  *  Le niveau vient de `skillLevel` (/sim) — l'écran montre la règle, il ne la refait pas. */
-/** Les quatre saisons, en court — pour la colonne « où et quand » du bestiaire (R11).
- *  Courtes délibérément : la ligne porte déjà l'eau et l'heure, elle doit tenir. */
-const SAISON_COURTE = ['éclosion', 'ardeur', 'pluies', 'grand froid'] as const
-
 const SKILL_META: { id: SkillId; label: string; item: ItemId }[] = [
   { id: 'woodcutting', label: SKILL_LABELS.woodcutting, item: 'axe' },
   { id: 'mining', label: SKILL_LABELS.mining, item: 'pickaxe' },
@@ -275,40 +271,116 @@ export function createHudCharacter(
    * Le carnet vient du SNAPSHOT (`Entity.peche`), jamais d'un compte tenu ici : l'écran montre
    * la sim, il ne la refait pas.
    */
+  /** LA FICHE au survol. Elle n'est appelée QUE pour une case dont `bestiaire.ts` a rendu une
+   *  `fiche` : le rendu ne décide de rien, il pose ce que le module pur l'autorise à dire. */
+  const ficheDom = (f: FicheEspece): HTMLElement => {
+    const fi = document.createElement('div')
+    fi.className = 'hch-fi'
+    const crans = (n: number, tot: number): string =>
+      `<span class="hch-fi-j">${Array.from({ length: tot }, (_, i) => (i < n ? '<i class="on"></i>' : '<i></i>')).join('')}</span>`
+    fi.innerHTML =
+      `<div class="hch-fi-h"><span class="hch-fi-nom"></span><span class="hch-fi-cl"></span></div>` +
+      `<div class="hch-fi-rec"><div><span class="hch-fi-sk">record</span><b class="hch-fi-recv"></b></div>` +
+      `<div class="hch-fi-n"><span class="hch-fi-sk">prises</span><b class="hch-fi-nv"></b></div></div>` +
+      `<div class="hch-fi-bloc hch-fi-conds">` +
+      f.conditions.map(() => `<div class="hch-fi-r"><span class="hch-fi-k"></span><span class="hch-fi-v"></span></div>`).join('') +
+      // ⚑ LE COIN DE PÊCHE (E3) : il porte le GEL — la grammaire du CONDITIONNEL (palette.ts).
+      (f.coinSeul ? `<div class="hch-fi-coin">◈ seulement sur un coin de pêche</div>` : '') +
+      `</div>` +
+      `<div class="hch-fi-bloc hch-fi-last">` +
+      `<div class="hch-fi-r"><span class="hch-fi-k">ferrage</span>${crans(f.ferrage.crans, f.ferrage.total)}` +
+      `<span class="hch-fi-v hch-fi-vs hch-fi-ferr"></span></div>` +
+      `<div class="hch-fi-r"><span class="hch-fi-k">rareté</span>${crans(f.rarete.crans, f.rarete.total)}` +
+      `<span class="hch-fi-v hch-fi-vs hch-fi-rar"></span></div>` +
+      `<div class="hch-fi-r"><span class="hch-fi-k">taille</span><span class="hch-fi-v hch-fi-tai"></span></div>` +
+      `</div>` +
+      // La fenêtre affichée est celle du niveau 0 : la Chasse l'élargit (D5/D6). Sans ce pied,
+      // le chiffre mentirait à moitié — un joueur maîtrisé n'y retrouverait pas sa fenêtre.
+      `<div class="hch-fi-pied">fenêtre au niveau 0 — elle s’élargit avec la Chasse</div>`
+    // TOUT texte venu de la table se pose par `textContent` : un libellé d'espèce ou un nom de
+    // zone ne doit jamais pouvoir se lire comme du balisage.
+    const t = (sel: string, v: string): void => { fi.querySelector<HTMLElement>(sel)!.textContent = v }
+    t('.hch-fi-nom', f.nom)
+    t('.hch-fi-cl', f.classe)
+    t('.hch-fi-recv', f.record)
+    t('.hch-fi-nv', f.prises)
+    t('.hch-fi-ferr', `${f.ferrage.mot} · ${f.ferrageSecondes}`)
+    t('.hch-fi-rar', f.rarete.mot)
+    t('.hch-fi-tai', f.taille)
+    const rows = Array.from(fi.querySelectorAll<HTMLElement>('.hch-fi-conds .hch-fi-r'))
+    f.conditions.forEach(([k, v], i) => {
+      const row = rows[i]
+      if (!row) return
+      row.querySelector<HTMLElement>('.hch-fi-k')!.textContent = k
+      row.querySelector<HTMLElement>('.hch-fi-v')!.textContent = v
+    })
+    return fi
+  }
+
+  /** UNE CASE. Tout ce qu'elle a le droit de montrer est déjà tranché par `bestiaire.ts` — une
+   *  case muette arrive sans icône, sans nom et sans fiche, et il n'y a donc rien à cacher ici. */
+  const caseDom = (c: CaseBestiaire, rang: number, col: number): HTMLElement => {
+    const el = document.createElement('div')
+    // Le RETOURNEMENT est décidé ici, pas au survol : une fiche de ~300 px ne tient sous une
+    // case qu'à la première rangée, et les deux dernières colonnes la feraient sortir à droite.
+    el.className = ['hch-bc', c.fiche ? '' : 'is-vide', rang >= 1 ? 'fl-y' : '', col >= BEST_COLS - 2 ? 'fl-x' : '']
+      .filter((k) => k)
+      .join(' ')
+    const cadre = document.createElement('div')
+    cadre.className = 'hch-bc-cadre'
+    if (c.coinSeul) {
+      const coin = document.createElement('span')
+      coin.className = 'hch-bc-coin'
+      coin.textContent = '◈'
+      cadre.append(coin)
+    }
+    if (c.icone !== null) {
+      const img = document.createElement('img')
+      img.className = 'hch-bc-ic'
+      img.src = iconUrl(c.icone as ItemId)
+      cadre.append(img)
+    } else {
+      const q = document.createElement('span')
+      q.className = 'hch-bc-q'
+      q.textContent = '?'
+      cadre.append(q)
+    }
+    const nom = document.createElement('div')
+    nom.className = 'hch-bc-nom'
+    nom.textContent = c.nom
+    const rec = document.createElement('div')
+    rec.className = c.fiche ? 'hch-bc-rec' : 'hch-bc-rec is-vide'
+    rec.textContent = c.record
+    const n = document.createElement('div')
+    n.className = 'hch-bc-n'
+    n.textContent = c.prises
+    el.append(cadre, nom, rec, n)
+    if (c.fiche) el.append(ficheDom(c.fiche))
+    return el
+  }
+
+  /** La signature du carnet — le bestiaire est repeint à CHAQUE image tant qu'on le regarde, et
+   *  il bâtit dix-huit cases plus leurs fiches. Il ne rebâtit que quand le carnet a bougé. */
+  let bestSig = ' '
   const paintBestiaire = (carnet: readonly { sp: string; mm: number; prises: number }[]): void => {
-    const parEspece = new Map(carnet.map((l) => [l.sp, l]))
-    const prises = carnet.reduce((t, l) => t + l.prises, 0)
-    bestSomme.textContent = `${parEspece.size} / ${FISH_SPECIES.length} espèces · ${prises} prise${prises > 1 ? 's' : ''}`
+    const sig = carnet.map((l) => `${l.sp}:${l.mm}:${l.prises}`).join('|')
+    if (sig === bestSig) return
+    bestSig = sig
+    bestSomme.textContent = sommeDuBestiaire(carnet)
     bestList.replaceChildren(
-      ...FISH_SPECIES.map((sp) => {
-        const l = parEspece.get(sp.id)
-        const ligne = document.createElement('div')
-        ligne.className = l ? 'hch-best-l' : 'hch-best-l is-vide'
-        const img = document.createElement('img')
-        img.className = 'hch-best-ic'
-        img.src = iconUrl(sp.id as ItemId)
-        const nom = document.createElement('div')
-        nom.className = 'hch-best-nom'
-        nom.textContent = sp.label.charAt(0).toUpperCase() + sp.label.slice(1)
-        const ou = document.createElement('div')
-        ou.className = 'hch-best-ou'
-        // OÙ et QUAND — ce que la table déclare, en français. La saison et le créneau ne
-        // s'affichent que s'ils sont RESTREINTS : « toute l'année, à toute heure » est du bruit.
-        ou.textContent = [
-          sp.eaux.join('/'),
-          sp.saisons ? sp.saisons.map((n) => SAISON_COURTE[n - 1] ?? '').join('/') : '',
-          sp.creneaux ? sp.creneaux.join('/') : '',
-        ]
-          .filter((t) => t.length > 0)
-          .join(' · ')
-        const rec = document.createElement('div')
-        rec.className = 'hch-best-rec'
-        rec.textContent = l ? `${(l.mm / 10).toFixed(1)} cm` : '—'
-        const n = document.createElement('div')
-        n.className = 'hch-best-n'
-        n.textContent = l ? `×${l.prises}` : ''
-        ligne.append(img, nom, ou, rec, n)
-        return ligne
+      ...rangeesDuBestiaire(carnet).map((r, rang) => {
+        const bloc = document.createElement('div')
+        bloc.className = 'hch-brangee'
+        const tete = document.createElement('div')
+        tete.className = 'hch-brang'
+        tete.innerHTML = `<span class="hch-brang-t"></span><span class="hch-brang-fil"></span><span class="hch-brang-s"></span>`
+        tete.querySelector<HTMLElement>('.hch-brang-t')!.textContent = r.titre
+        tete.querySelector<HTMLElement>('.hch-brang-s')!.textContent = r.sous
+        const grille = document.createElement('div')
+        grille.className = 'hch-bgrid'
+        grille.append(...r.cases.map((c, col) => caseDom(c, rang, col)))
+        bloc.append(tete, grille)
+        return bloc
       }),
     )
   }
@@ -779,20 +851,76 @@ function markup(): string {
     /* ONGLET METIERS : quatre colonnes pleine largeur, centrées, entre la barre d'onglets et
        la ceinture. Chaque colonne = une fiche : geste, echelle de paliers, passifs, note outil. */
     .hch-met{position:absolute;left:0;right:0;top:96px;bottom:120px;display:none;justify-content:center;align-items:flex-start;}
-    /* LE BESTIAIRE (peche.md R11) : une ligne par espèce, sur deux colonnes. Les espèces
-       JAMAIS prises restent visibles mais éteintes — c'est la liste qui donne envie d'aller
-       voir ailleurs (une eau, une saison, une heure qu'on n'a pas encore essayées). */
+    /* LE BESTIAIRE (peche.md R11) — UNE GRILLE D'ICÔNES, EN TROIS RANGÉES DE CLASSE.
+       La rangée enseigne ce qu'une case ne peut pas dire : la classe décide des portions, du
+       cuit et du séché. Une espèce JAMAIS PRISE est MUETTE (décision d'Alexis, 2026-08-24) :
+       un « ? », pas de nom, pas de silhouette, et AUCUNE fiche n'est posée dessus — le survol
+       ne peut donc rien fuiter. Seul le compteur avoue qu'il reste des espèces à trouver. */
     .hch-best{position:absolute;left:0;right:0;top:96px;bottom:120px;display:none;flex-direction:column;padding:0 40px;}
     .hch-best-h{display:flex;justify-content:space-between;font-size:13px;letter-spacing:.14em;color:#c98b3a;padding:0 4px 10px;border-bottom:1px solid #2a2a34;}
     .hch-best-somme{color:#9a8f78;letter-spacing:.06em;}
-    .hch-best-list{flex:1;overflow-y:auto;display:grid;grid-template-columns:1fr 1fr;gap:2px 24px;padding:10px 4px;align-content:start;}
-    .hch-best-l{display:flex;align-items:center;gap:10px;padding:5px 6px;border-bottom:1px solid #1e1e26;}
-    .hch-best-l.is-vide{opacity:.38;}
-    .hch-best-ic{width:24px;height:24px;image-rendering:pixelated;flex:0 0 24px;}
-    .hch-best-nom{flex:1;font-size:14px;color:#e6dfcc;}
-    .hch-best-ou{font-size:11px;color:#8a8272;letter-spacing:.04em;}
-    .hch-best-rec{font-size:14px;color:#c9a24a;min-width:74px;text-align:right;}
-    .hch-best-n{font-size:11px;color:#8a8272;min-width:42px;text-align:right;}
+    .hch-best-list{flex:1;min-height:0;display:flex;flex-direction:column;gap:10px;padding:8px 0 2px;}
+    .hch-brangee{display:flex;flex-direction:column;flex:1;min-height:0;}
+    .hch-brang{display:flex;align-items:baseline;gap:12px;margin-bottom:6px;}
+    .hch-brang-t{font-size:11px;letter-spacing:.20em;color:#c98b3a;}
+    .hch-brang-fil{flex:1;height:1px;background:#22222a;}
+    .hch-brang-s{font-size:10px;letter-spacing:.06em;color:#6b6455;}
+    .hch-bgrid{flex:1;min-height:0;display:grid;grid-template-columns:repeat(${BEST_COLS},minmax(0,1fr));
+      grid-auto-rows:minmax(0,1fr);gap:10px;}
+
+    /* LA CASE. L'icône est celle du SAC — la même effigie, pour qu'une prise se reconnaisse. */
+    .hch-bc{position:relative;background:#1b1b22;border:2px solid #2a2a34;padding:9px 6px 7px;
+      display:flex;flex-direction:column;align-items:center;justify-content:center;gap:2px;cursor:default;}
+    .hch-bc:hover{border-color:#6b5a3a;background:#211c17;z-index:30;}
+    .hch-bc-cadre{position:relative;width:112px;height:112px;flex:0 0 auto;background:#14100c;border:2px solid #22222a;
+      display:grid;place-items:center;margin-bottom:6px;}
+    .hch-bc-ic{width:100px;height:100px;image-rendering:pixelated;}
+    .hch-bc-nom{font-size:13px;color:#e8e0c8;letter-spacing:.03em;}
+    .hch-bc-rec{font-size:15px;color:#c98b3a;margin-top:3px;letter-spacing:.02em;}
+    .hch-bc-rec.is-vide{color:#4a4740;}
+    .hch-bc-n{font-size:10px;color:#8b8474;height:13px;}
+    .hch-bc-coin{position:absolute;top:-4px;left:-4px;font-size:15px;color:#6f93a0;line-height:1;}
+    /* La case MUETTE ne réagit pas au survol : le curseur apprend tout de suite qu'il n'y a
+       rien dessous, au lieu de promettre une fiche qui ne viendra jamais. */
+    .hch-bc.is-vide{background:#17151a;border-style:dashed;border-color:#26262f;}
+    .hch-bc.is-vide:hover{border-color:#26262f;background:#17151a;}
+    .hch-bc.is-vide .hch-bc-cadre{border-style:dashed;border-color:#22222a;}
+    .hch-bc.is-vide .hch-bc-nom{color:#5c574d;letter-spacing:.14em;}
+    .hch-bc-q{font-size:56px;font-weight:700;color:#6b5a3a;line-height:1;}
+
+    /* LA FICHE au survol — TRAVERSANTE (pointer-events:none) : posée sous le curseur elle
+       lui volerait le survol de sa propre case et clignoterait. Elle se retourne EN HAUT hors
+       de la première rangée et À GAUCHE sur les deux dernières colonnes : à 1280×720 elle
+       sortirait du cadre autrement (les classes fl-y / fl-x sont posées à la construction). */
+    .hch-fi{position:absolute;left:50%;top:calc(100% + 8px);transform:translateX(-50%);width:274px;
+      background:#16120d;border:2px solid #2a2a34;box-shadow:0 8px 0 rgba(0,0,0,.45),0 0 0 1px #0c0a07;
+      padding:12px 14px 10px;text-align:left;opacity:0;pointer-events:none;z-index:30;
+      transition:opacity .09s linear;}
+    .hch-bc:hover .hch-fi{opacity:1;}
+    .fl-x .hch-fi{left:auto;right:0;transform:none;}
+    .fl-y .hch-fi{top:auto;bottom:calc(100% + 8px);}
+    .hch-fi-h{display:flex;justify-content:space-between;align-items:baseline;
+      border-bottom:1px solid #2a2a34;padding-bottom:7px;margin-bottom:9px;}
+    .hch-fi-nom{font-size:15px;font-weight:700;color:#f4ecd2;letter-spacing:.10em;}
+    .hch-fi-cl{font-size:11px;color:#8b8474;letter-spacing:.14em;}
+    .hch-fi-rec{display:flex;justify-content:space-between;align-items:flex-end;margin-bottom:11px;
+      white-space:nowrap;gap:12px;}
+    .hch-fi-sk{display:block;font-size:10px;color:#8b8474;letter-spacing:.10em;margin-bottom:1px;}
+    .hch-fi-n{text-align:right;}
+    .hch-fi-rec b{font-size:19px;color:#c98b3a;font-weight:700;line-height:1;}
+    .hch-fi-n b{font-size:15px;color:#e8e0c8;}
+    .hch-fi-bloc{display:flex;flex-direction:column;gap:5px;padding-bottom:9px;margin-bottom:9px;
+      border-bottom:1px solid #1e1e26;}
+    .hch-fi-last{border-bottom:none;padding-bottom:2px;margin-bottom:6px;}
+    .hch-fi-r{display:flex;align-items:center;gap:8px;font-size:12px;}
+    .hch-fi-k{color:#8b8474;letter-spacing:.08em;width:56px;flex:0 0 56px;}
+    .hch-fi-v{color:#e8e0c8;flex:1;}
+    .hch-fi-vs{font-size:11px;color:#b9b09a;}
+    .hch-fi-j{display:flex;gap:2px;flex:0 0 auto;}
+    .hch-fi-j i{width:6px;height:10px;background:#2a2a34;display:block;}
+    .hch-fi-j i.on{background:#c98b3a;}
+    .hch-fi-coin{font-size:11px;color:#6f93a0;letter-spacing:.04em;margin-top:2px;}
+    .hch-fi-pied{font-size:10px;color:#6b6455;letter-spacing:.05em;border-top:1px solid #1e1e26;padding-top:7px;}
     .hch-met-row{display:flex;gap:26px;justify-content:center;padding:0 40px;}
     .hch-met-col{width:396px;background:#16120d;border:3px solid #14141a;padding:22px 22px 24px;display:flex;flex-direction:column;}
     .hch-met-head{display:grid;grid-template-columns:48px 1fr auto;grid-template-rows:auto auto;column-gap:14px;align-items:center;margin-bottom:16px;}
