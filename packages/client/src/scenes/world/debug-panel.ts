@@ -23,7 +23,7 @@
  * lectures d'une même loi finiraient par diverger.
  */
 import type Phaser from 'phaser'
-import { GEL, TEMPERATURE, type PlayerAction } from '@ashes/sim'
+import { coeurDeLaSaisonSuivante, GEL, nomDeSaison, phaseForDay, TEMPERATURE, type PlayerAction } from '@ashes/sim'
 import { getHud, setHud } from '../../hud-state'
 import { ensureGameFont, GAME_FONT } from '../ui/game-font'
 
@@ -43,6 +43,9 @@ export interface DebugPanelDeps {
   sendAction(action: PlayerAction): void
   setSpeed(factor: number): void
   isNight(): boolean
+  /** Le jour de saison courant — vient du dernier snapshot, comme `isNight`. Le saut de
+   *  calendrier en a besoin pour savoir OÙ il est avant de dire où il va. */
+  seasonDay(): number
 }
 
 /**
@@ -120,6 +123,26 @@ export function createDebugPanel(scene: Phaser.Scene, deps: DebugPanelDeps): Deb
   const bSpeed = mkBtn()
   const bNight = mkBtn()
   const bReveil = mkBtn()
+  const bSaison = mkBtn()
+
+  // ── LE SAUT DE CALENDRIER ── un CHAMP à la place du jour affiché : il MONTRE le jour courant
+  // en repli et le remplace dès qu'on tape. Sans lui, seul le bouton « saison suivante » existe,
+  // et viser un jour précis (une garde à reproduire, un relevé de banc) demanderait quatre clics
+  // et un calcul mental.
+  const saut = document.createElement('div')
+  saut.style.cssText = 'display:flex;gap:6px;align-items:stretch'
+  const champ = document.createElement('input')
+  champ.type = 'number'
+  champ.min = '1'
+  champ.style.cssText = [
+    'flex:1', 'min-width:0', 'appearance:textfield',
+    'padding:7px 9px', 'border-radius:8px', 'border:1px solid #33291f',
+    'font:inherit', 'color:#e6d9c4', 'background:#241a13', 'outline:none',
+  ].join(';')
+  const bJour = mkBtn()
+  bJour.style.flex = '0 0 auto'
+  saut.append(champ, bJour)
+  root.appendChild(saut)
 
   // ── LE CADRAN THERMIQUE ── une grille libellé/valeur, monospace pour que les nombres
   // ne dansent pas d'une image à l'autre (un cadran qui gigote ne se lit pas).
@@ -178,6 +201,14 @@ export function createDebugPanel(scene: Phaser.Scene, deps: DebugPanelDeps): Deb
     paint(bSpeed, `Cadence ×${sp}`, sp !== 1)
     paint(bNight, deps.isNight() ? 'Passer au JOUR' : 'Passer à la NUIT', false)
     paint(bReveil, 'Réveiller le sol  ·F6', false)
+    // Le bouton DIT OÙ IL VA — « saison suivante » sans nom obligerait à compter les saisons de
+    // tête, et le panneau est fait pour qu'on n'ait pas à le faire.
+    const cible = coeurDeLaSaisonSuivante(deps.seasonDay())
+    paint(bSaison, `Saut → ${nomDeSaison(phaseForDay(cible))}`, false)
+    paint(bJour, 'Aller', false)
+    // LE CHAMP MONTRE LE JOUR COURANT EN REPLI : c'est le relevé qu'il remplace. On n'écrase
+    // jamais ce qui est en train d'être tapé — `value` reste au joueur, `placeholder` au monde.
+    champ.placeholder = `jour ${deps.seasonDay()}`
     peindreThermo()
   }
 
@@ -241,6 +272,44 @@ export function createDebugPanel(scene: Phaser.Scene, deps: DebugPanelDeps): Deb
     deps.sendAction({ type: 'debug_reveil' })
     render()
   }
+
+  /**
+   * LE SAUT DE CALENDRIER (`debug_set_season_day`) — l'action existait dans /sim depuis V0-9 et
+   * n'avait AUCUNE surface : personne ne pouvait l'atteindre en jouant.
+   *
+   * Ce qu'elle débloque, mesuré le 2026-08-24 : le monde ouvre aux Pluies (S2), et l'aridité
+   * demande de la CHALEUR autant que de la sécheresse — le premier jour où la vallée est
+   * vraiment à sec est le jour 154, soit **h 46,5 de jeu**. Les trois régimes du niveau d'eau
+   * (S10 : la mare partie, la terre noyée, le gué que la crue ferme) et l'art qui les peint
+   * étaient donc invisibles dans toute séance de playtest raisonnable. Trois clics y mènent.
+   *
+   * Le jour VISÉ se calcule dans /sim (`coeurDeLaSaisonSuivante`) : c'est du calendrier, pas du
+   * rendu, et le client est bête. Il vise le CŒUR de la saison — ses cardinaux y sont posés,
+   * donc son bord ne la montre pas (voir la docstring côté sim).
+   */
+  const sauterAu = (jour: number): void => {
+    deps.sendAction({ type: 'debug_set_season_day', day: jour })
+    champ.value = ''
+    render()
+  }
+  bSaison.onclick = () => sauterAu(coeurDeLaSaisonSuivante(deps.seasonDay()))
+  const sautDemande = (): void => {
+    // Le champ VIDE veut dire « rien de saisi », pas « jour 0 » : on ne saute qu'à un jour lu.
+    const jour = Number.parseInt(champ.value, 10)
+    if (Number.isFinite(jour) && jour >= 1) sauterAu(jour)
+  }
+  bJour.onclick = sautDemande
+  champ.onkeydown = (e) => {
+    if (e.key === 'Enter') sautDemande()
+  }
+  // LE CHAMP PREND LE CLAVIER, PAR LE PATRON DE LA MAISON — `debugTyping`, lu par
+  // `input-bindings` et par `WorldScene` au même titre qu'`uiTyping` et `chatTyping`. Un
+  // `stopPropagation` sur le champ aurait été un PARI : Phaser écoute le clavier sur la fenêtre,
+  // et rien ne garantit qu'on soit sur son chemin de bouillonnement. Le drapeau, lui, est déjà
+  // honoré partout où une touche part au jeu. Et c'est un TROISIÈME drapeau, pas `uiTyping` :
+  // UIScene remet celui-là à faux à chaque image quand l'écran personnage est fermé.
+  champ.onfocus = () => setHud(reg, 'debugTyping', true)
+  champ.onblur = () => setHud(reg, 'debugTyping', false)
 
   document.body.appendChild(root)
   render()

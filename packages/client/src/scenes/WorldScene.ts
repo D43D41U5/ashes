@@ -887,6 +887,7 @@ export class WorldScene extends Phaser.Scene {
         sendAction: (action: PlayerAction) => this.sendAction(action),
         setSpeed: (factor: number) => this.send({ type: 'debug_speed', factor }),
         isNight: () => this.lastTime?.isNight ?? false,
+        seasonDay: () => this.lastTime?.seasonDay ?? 1,
       }
       bindDebugKeys(this, debugDeps)
       // les toggles cliquables (P) — remplacent F5, doublent F2-F4 ; et le CADRAN thermique
@@ -1855,7 +1856,10 @@ export class WorldScene extends Phaser.Scene {
     // ON NE MARCHE PAS EN TAPANT. Le champ de recherche du panneau de craft prend
     // le clavier ; sans cette garde, écrire « hache » enverrait Z-A-H-E au
     // déplacement — le personnage partirait en courant pendant qu'on cherche.
-    const typing = Boolean(getHud(this.registry, 'uiTyping')) || Boolean(getHud(this.registry, 'chatTyping'))
+    const typing =
+      Boolean(getHud(this.registry, 'uiTyping')) ||
+      Boolean(getHud(this.registry, 'chatTyping')) ||
+      Boolean(getHud(this.registry, 'debugTyping'))
     // ON NE MARCHE PAS NON PLUS MORT, NI LE MENU OUVERT — deux trous du même mur.
     //
     // LA MORT : `tickHold` était déjà gardé par `this.dying` (dix lignes plus haut), le PAS
@@ -2097,7 +2101,7 @@ export class WorldScene extends Phaser.Scene {
       }
       return
     }
-    if (event.key === 'Enter' && !getHud(this.registry, 'uiTyping')) {
+    if (event.key === 'Enter' && !getHud(this.registry, 'uiTyping') && !getHud(this.registry, 'debugTyping')) {
       this.setChatDraft('') // ouvre la ligne de saisie
       setHud(this.registry, 'chatTyping', true)
     }

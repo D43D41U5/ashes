@@ -1,10 +1,11 @@
 import { describe, expect, it } from 'vitest'
-import { BALANCE, TEMPERATURE } from './balance'
+import { ACTS_PER_YEAR, BALANCE, TEMPERATURE } from './balance'
 import { drainEvents, type SimEvent } from './events'
 import { createSim, step, type SimState } from './sim'
 import {
   actForDay,
   calendarScaleForSeasonCycles,
+  coeurDeLaSaisonSuivante,
   cycleOffsetForStartHour,
   fractionDuJourAtTick,
   dayTicksAt,
@@ -19,6 +20,7 @@ import {
   TICKS_PER_CYCLE,
   TICKS_PER_SEASON_DAY,
   YEAR_DAYS,
+  jourDeLAnnee,
 } from './time'
 
 describe('temps (A1 — fonction pure du tick)', () => {
@@ -71,7 +73,8 @@ describe('temps (A1 — fonction pure du tick)', () => {
       // La longueur du JOUR est saisonnière (S6) : au 1er de l'Éclosion l'année sort tout juste
       // de l'hiver, le jour n'occupe encore que 0,557 du cycle et il s'allongera jusqu'à
       // l'Ardeur. Épinglé en littéral — une garde relue à la courbe qu'elle teste ne garde rien.
-      dayTicks: 30_096,
+      // (0,557 × 36 000 ; c'était 30 096 quand le cycle durait 45 min.)
+      dayTicks: 20_064,
       seasonDay: 1,
       jourFrac: 0, // le jour vient de commencer — la part écoulée est nulle
 
@@ -91,7 +94,7 @@ describe('temps (A1 — fonction pure du tick)', () => {
     sim.tick = aube
     expect(jourDeSaison(sim)).toBe(15)
     const jour = dayTicksAt(sim, aube)
-    expect(jour).toBe(33_750) // 0,625 × 54 000
+    expect(jour).toBe(22_500) // 0,625 × 36 000
 
     sim.tick = aube + jour - 1
     expect(getGameTime(sim).isNight).toBe(false)
@@ -105,8 +108,61 @@ describe('temps (A1 — fonction pure du tick)', () => {
     // Et la longueur du jour SUIT la saison : entre le cœur de l'Ardeur et celui du Grand
     // Froid, le crépuscule recule de près de six heures murales. C'est le mécanisme de S6 —
     // la nuit est la fenêtre de danger, elle s'allonge quand le froid mord.
-    expect(dayTicksPourJour(45)).toBe(38_880) // 0,72 du cycle : 12,6 min de nuit réelle
-    expect(dayTicksPourJour(105)).toBe(25_920) // 0,48 : 23,4 min de nuit réelle
+    expect(dayTicksPourJour(45)).toBe(25_920) // 0,72 du cycle : 8,4 min de nuit réelle
+    expect(dayTicksPourJour(105)).toBe(17_280) // 0,48 : 15,6 min de nuit réelle
+  })
+
+  /**
+   * LE SAUT DE CALENDRIER DU DEBUG (`debug_set_season_day`, surface dans le panneau P depuis le
+   * 2026-08-24) — sans lui, la moitié de l'année est INATTEIGNABLE en jouant : le monde ouvre
+   * aux Pluies (S2) et la sécheresse de l'Ardeur ne mord qu'au jour 154, soit h 46,5 de jeu.
+   */
+  it('le saut de saison se pose sur les CARDINAUX, pas sur les bords', () => {
+    // ⚠ LA GARDE SE LIT SUR LA COURBE, PAS SUR LA FORMULE : on affirme que le saut atterrit là
+    // où `TEMPERATURE.SOCLE` a son point posé, sans recopier les jours 15/45/75/105. Écrite
+    // contre `ACT_DAYS`, elle ne garderait que l'arithmétique, et les deux pourraient dériver.
+    const cardinaux = TEMPERATURE.SOCLE.cardinaux.map((c) => c.jour).sort((a, b) => a - b)
+    // Depuis n'importe quel jour de l'année, quatre sauts font le tour et ne touchent QUE des
+    // cardinaux — un balayage, pas quatre cas choisis.
+    for (let depart = 1; depart <= YEAR_DAYS; depart++) {
+      let j = depart
+      for (let k = 0; k < 5; k++) {
+        const suivant = coeurDeLaSaisonSuivante(j)
+        expect(suivant, `depuis le jour ${depart}, saut ${k + 1}`).toBeGreaterThan(j)
+        expect(cardinaux, `depuis le jour ${depart}, saut ${k + 1}`).toContain(jourDeLAnnee(suivant))
+        // …et il change bien de saison, jamais deux fois la même.
+        expect(phaseForDay(suivant)).not.toBe(phaseForDay(j))
+        j = suivant
+      }
+      // UNE FOIS POSÉ SUR UN CŒUR, chaque saut avance d'exactement une saison — donc quatre
+      // sauts font l'année pile, sans en sauter ni en revisiter une. (Le PREMIER saut, lui, part
+      // d'un jour quelconque : il ne fait pas `ACT_DAYS`, il RECALE sur le cœur suivant.)
+      const premier = coeurDeLaSaisonSuivante(depart)
+      expect(j, `depuis le jour ${depart}`).toBe(premier + YEAR_DAYS)
+    }
+  })
+
+  it('le saut de saison ATTEINT la sécheresse, que le jeu normal met 46 h à montrer', () => {
+    // LA RAISON D'ÊTRE DE L'OUTIL, affirmée et non racontée : depuis l'ouverture du vrai jeu, on
+    // clique jusqu'à l'Ardeur — là où le socle culmine et où la vallée s'assèche. Sans le saut,
+    // il faut h 46,5.
+    //
+    // ⚠ ON CLIQUE JUSQU'À, ON NE COMPTE PAS LES CLICS. « Trois sauts » n'est pas une propriété
+    // du saut : c'est la distance entre la PHASE du jour d'ouverture et l'Ardeur, et
+    // `JOUR_DE_DEPART` a bougé deux fois le 2026-08-24. Une garde qui l'épingle rougirait au
+    // prochain déplacement, pour une raison étrangère à ce qu'elle garde — c'est très
+    // exactement le défaut qu'on vient de retirer à la régression du couplage, dans ce fichier.
+    // `BALANCE` est `as const` : le jour d'ouverture est un type LITTÉRAL, d'où l'élargissement.
+    let j: number = BALANCE.JOUR_DE_DEPART
+    let clics = 0
+    while (phaseForDay(j) !== 2 && clics < ACTS_PER_YEAR) {
+      j = coeurDeLaSaisonSuivante(j)
+      clics += 1
+    }
+    // La borne est la garde du chemin : depuis n'importe quelle phase, l'Ardeur suivante est à
+    // `ACTS_PER_YEAR` sauts au plus — le pire cas étant de partir de l'Ardeur elle-même.
+    expect(phaseForDay(j), `${clics} sauts depuis le jour ${BALANCE.JOUR_DE_DEPART}`).toBe(2)
+    expect(TEMPERATURE.SOCLE(j)).toBe(26) // son cardinal : le point le plus chaud de l'année
   })
 
   it('cycleOffsetForStartHour : démarrer à minuit met le cycle en nuit, calendrier intact', () => {
@@ -146,11 +202,11 @@ describe('temps (A1 — fonction pure du tick)', () => {
     expect(seasonDayAtTick(TICKS_PER_SEASON_DAY, 1, 1)).toBe(2)
     // À l'échelle 720, un jour de saison passe 720 fois plus vite.
     expect(seasonDayAtTick(TICKS_PER_SEASON_DAY / 720, 720, 1)).toBe(2)
-    // LE JOUR DE DÉPART décale le calendrier tout entier (S2 : le vrai jeu ouvre au 51ᵉ, à la
-    // fin de l'Ardeur ; les montages de test ouvrent au 1er). Il est REQUIS, et c'est ce qui a
-    // empêché les appels d'avant de recevoir le jour 1 en silence.
-    expect(seasonDayAtTick(0, 1, BALANCE.JOUR_DE_DEPART)).toBe(51)
-    expect(seasonDayAtTick(TICKS_PER_SEASON_DAY, 1, BALANCE.JOUR_DE_DEPART)).toBe(52)
+    // LE JOUR DE DÉPART décale le calendrier tout entier (S2 : le vrai jeu ouvre au 61ᵉ, à
+    // l'ouverture des Pluies ; les montages de test ouvrent au 1er). Il est REQUIS, et c'est ce
+    // qui a empêché les appels d'avant de recevoir le jour 1 en silence.
+    expect(seasonDayAtTick(0, 1, BALANCE.JOUR_DE_DEPART)).toBe(61)
+    expect(seasonDayAtTick(TICKS_PER_SEASON_DAY, 1, BALANCE.JOUR_DE_DEPART)).toBe(62)
   })
 
   it('les saisons changent aux jours 31, 61, 91 et 121 (quatre saisons de trente jours, S1)', () => {
@@ -165,9 +221,10 @@ describe('temps (A1 — fonction pure du tick)', () => {
     expect(actForDay(120)).toBe(4)
     expect(actForDay(121)).toBe(5) // l'an 2 commence — et c'est une Éclosion
     expect(phaseForDay(121)).toBe(1)
-    // Le monde ouvre à la fin de l'Ardeur (S2) et la saison de wipe multi s'achève en plein
-    // Grand Froid : c'est le pacing que le jour 51 a été choisi pour tenir.
-    expect(actForDay(BALANCE.JOUR_DE_DEPART)).toBe(2)
+    // Le monde ouvre à l'ouverture des PLUIES (S2, jour 61 depuis le 2026-08-24) et la saison
+    // de wipe multi s'achève au CŒUR du Grand Froid (jour 120) : c'est le pacing que le jour 61
+    // a été choisi pour tenir — une saison entière pour s'installer, puis l'hiver.
+    expect(actForDay(BALANCE.JOUR_DE_DEPART)).toBe(3)
     expect(actForDay(BALANCE.JOUR_DE_DEPART + BALANCE.SEASON_DAYS - 1)).toBe(4)
   })
 })
@@ -209,7 +266,7 @@ describe('couplage cycle↔calendrier (V0-9 — l’endgame observable en solo)'
   // Le tick où finit la saison : `seasonDayAtTick` bascule à `jourDeDepart + SEASON_DAYS`.
   const finDeSaison = (scale: number): number => (BALANCE.SEASON_DAYS * TICKS_PER_SEASON_DAY) / scale
 
-  /** Un monde ouvert AU JOUR DU VRAI JEU (S2 : le 51ᵉ, fin de l'Ardeur), à l'heure murale
+  /** Un monde ouvert AU JOUR DU VRAI JEU (S2 : le 61ᵉ, ouverture des Pluies), à l'heure murale
    *  voulue. C'est ce jour de départ qui place le Grand Froid dans le dernier tiers de la
    *  saison — au jour 1, une saison de 60 jours ne l'atteindrait jamais. */
   const monde = (scale: number, heure: number): SimState =>
@@ -270,10 +327,10 @@ describe('couplage cycle↔calendrier (V0-9 — l’endgame observable en solo)'
     }
   })
 
-  it('RÉGRESSION : une échelle codée en dur (720) réduit tout l’endgame à UNE nuit', () => {
-    // Le défaut que le couplage règle : à 720, les 60 jours de saison tiennent en 2,7 cycles.
+  it('RÉGRESSION : une échelle codée en dur (720) réduit tout l’endgame à DEUX OU TROIS nuits', () => {
+    // Le défaut que le couplage règle : à 720, les 60 jours de saison tiennent en 4 cycles.
     // La saison ENTIÈRE ne compte alors que deux ou trois nuits, et la fenêtre du Grand Froid —
-    // le dernier tiers, puisque le monde ouvre au 51ᵉ — est plus étroite que l'intervalle entre
+    // la moitié arrière, puisque le monde ouvre au 61ᵉ — est plus étroite que l'intervalle entre
     // deux crépuscules. Quelle que soit l'heure de départ, l'hiver se joue en UNE nuit : ce
     // n'est plus une saison qui monte, c'est un soir. C'est l'inverse de la promesse du
     // couplage (test ci-dessus : la même fenêtre en porte vingt).
@@ -283,36 +340,56 @@ describe('couplage cycle↔calendrier (V0-9 — l’endgame observable en solo)'
     // recule en hiver (S6), donc les nuits se resserrent juste assez pour qu'il en tombe
     // toujours une. Le défaut n'a pas bougé — il se dit maintenant en COMPTE, et pour TOUTE
     // heure de départ au lieu de quelques-unes.
+    //
+    // ⚠ LES COMPTES SUIVENT DEUX RÉGLAGES, et c'est le seul endroit du fichier où ça se voit.
+    // `720` est un nombre de ticks-par-jour FIGÉ : raccourcir le cycle (45 → 30 min le
+    // 2026-08-24) lui donne mécaniquement plus de cycles pour la même saison — 4 au lieu de
+    // 2,7 — et avancer l'ouverture (jour 51 → 61 le même jour) élargit la part d'hiver de la
+    // saison, donc sa fenêtre : 2 cycles pile, contre 0,89 avant les deux changements. Le
+    // défaut ne disparaît pas, il s'atténue : deux ou trois nuits d'hiver, contre les vingt
+    // que le couplage rend. C'est ce RAPPORT qu'on garde, pas le mot « une ».
+    // ⚠ ON BORNE, ON N'ÉPINGLE PLUS. Ces comptes ont été re-relevés DEUX FOIS dans la journée du
+    // 2026-08-24 (cycle 45 → 30 min, puis ouverture 51 → 61), et la fenêtre d'hiver tombe
+    // aujourd'hui sur 2 cycles PILE : une égalité exacte ferait basculer la garde au prochain
+    // coup de `JOUR_DE_DEPART`, d'`ACT_DAYS` ou du cycle — pour une raison qui n'a rien à voir
+    // avec ce qu'elle garde. Deux re-pins en un jour, sur une régression dont le code n'existe
+    // plus : le signal est clair. Ce qui compte est le RAPPORT, et il est d'un ordre de grandeur.
     const debutDuGrandFroid = (91 - BALANCE.JOUR_DE_DEPART) * (TICKS_PER_SEASON_DAY / 720)
-    expect(finDeSaison(720) - debutDuGrandFroid).toBeLessThan(TICKS_PER_CYCLE) // moins d'un cycle
+    const fenetreHiver = finDeSaison(720) - debutDuGrandFroid
+    expect(fenetreHiver).toBeLessThan(3 * TICKS_PER_CYCLE) // une poignée de cycles, pas une saison
 
-    // Balayé au quart d'heure sur les 24 h de départ possibles. On pin les DEUX comptes : la
-    // saison entière ne porte que deux ou trois nuits (la géométrie du découplage), dont
-    // exactement UNE d'hiver (l'endgame). Le second seul laisserait passer un helper qui
-    // trouve un crépuscule de travers.
-    const saison = new Set<number>()
-    const hiver = new Set<number>()
+    // Balayé au quart d'heure sur les 24 h de départ possibles. On borne les DEUX comptes : la
+    // saison entière ne porte qu'une poignée de nuits (la géométrie du découplage), dont une
+    // poignée d'hiver (l'endgame). Le second seul laisserait passer un helper qui trouve un
+    // crépuscule de travers ; le `≥ 1` attrape celui qui n'en trouve aucun.
+    const saison: number[] = []
+    const hiver: number[] = []
     for (let h = 0; h < 24; h += 0.25) {
       const nuits = nuitsDeLaSaison(monde(720, h), finDeSaison(720))
-      saison.add(nuits.toutes.length)
-      hiver.add(nuits.grandFroid.length)
+      saison.push(nuits.toutes.length)
+      hiver.push(nuits.grandFroid.length)
     }
-    expect([...saison].sort((a, b) => a - b)).toEqual([2, 3])
-    expect([...hiver]).toEqual([1])
+    expect(Math.min(...saison)).toBeGreaterThanOrEqual(1)
+    expect(Math.max(...saison)).toBeLessThanOrEqual(6)
+    expect(Math.min(...hiver)).toBeGreaterThanOrEqual(1)
+    // L'ÉCART AVEC LE COUPLAGE EST LA GARDE : le test précédent exige ≥ 20 nuits d'hiver à la
+    // cadence qui sort ; l'échelle figée en donne moins d'un quart. C'est ça, « l'endgame est un
+    // soir » — et ça ne dépend d'aucun réglage de calendrier.
+    expect(Math.max(...hiver)).toBeLessThan(20 / 4)
   })
 })
 
-describe('un JOUR est un CYCLE, et il dure 45 minutes (décision 2026-08-23)', () => {
-  it('le cycle jour/nuit dure 45 minutes réelles', () => {
+describe('un JOUR est un CYCLE, et il dure 30 minutes (décision 2026-08-24)', () => {
+  it('le cycle jour/nuit dure 30 minutes réelles', () => {
     // Le NOMBRE, pas sa dérivation : `TICKS_PER_CYCLE / (Hz × 60)` recalculé depuis
     // `CYCLE_REAL_MINUTES` ne garderait rien (il vaudrait toujours `CYCLE_REAL_MINUTES`).
-    // 45 est la décision — c'est elle qu'on affirme, et c'est elle que casserait un retour
-    // à 48. La durée du jour AFFICHÉ suit, puisque le jour est le cycle (test suivant).
-    expect(TICKS_PER_CYCLE / (BALANCE.TICK_RATE_HZ * 60)).toBe(45)
+    // 30 est la décision — c'est elle qu'on affirme, et c'est elle que casserait un retour
+    // à 45. La durée du jour AFFICHÉ suit, puisque le jour est le cycle (test suivant).
+    expect(TICKS_PER_CYCLE / (BALANCE.TICK_RATE_HZ * 60)).toBe(30)
   })
 
   it('le calendrier est VERROUILLÉ sur le cycle : le rapport est un entier, donc sans dérive', () => {
-    // 1 728 000 / 54 000 = 32. C'est ce qui rend le couplage « un jour = un cycle » STABLE :
+    // 1 728 000 / 36 000 = 48. C'est ce qui rend le couplage « un jour = un cycle » STABLE :
     // le basculement du jour retombe sur la MÊME phase du cycle, indéfiniment. Une durée de
     // cycle qui ne diviserait pas la journée de 24 h (46 min, p. ex.) le ferait glisser d'un
     // cycle à l'autre, et le compteur du HUD redeviendrait faux — lentement.
@@ -325,7 +402,7 @@ describe('un JOUR est un CYCLE, et il dure 45 minutes (décision 2026-08-23)', (
     // ENTIÈRE, tick par tick, et on exige deux choses : le bon NOMBRE de basculements, et
     // toujours la même PHASE du cycle (pas de dérive).
     const scale = calendarScaleForSeasonCycles(BALANCE.SEASON_DAYS)
-    expect(scale).toBe(32) // le rapport épinglé du test précédent, en littéral
+    expect(scale).toBe(48) // le rapport épinglé du test précédent, en littéral
 
     const cycles = 8 // huit cycles suffisent à voir une dérive : elle serait déjà de 8 × le pas
     const phases = new Set<number>()

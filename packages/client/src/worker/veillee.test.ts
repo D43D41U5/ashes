@@ -3,7 +3,7 @@ import { BALANCE, TICKS_PER_CYCLE, TICKS_PER_SEASON_DAY, seasonDayAtTick } from 
 import { createVeillee, VEILLEE_CALENDAR_SCALE, VEILLEE_SEASON_CYCLES } from './veillee'
 
 /**
- * L'HORLOGE DE LA VEILLÉE (décision d'Alexis 2026-08-23 : « un jour dure 45 minutes »).
+ * L'HORLOGE DE LA VEILLÉE (décision d'Alexis 2026-08-23, cycle porté à 30 min le 2026-08-24).
  *
  * Ce que garde ce bloc, c'est la CONSTANTE EXPORTÉE — pas la formule qui la calcule. Le
  * défaut vivait très exactement là : `calendarScaleForSeasonCycles` était juste, et la
@@ -35,8 +35,9 @@ describe('createVeillee — peupler la Veillée (V1-10)', () => {
     // Deux villages voisins (le joueur n'a PAS encore de foyer — il naît survivant).
     expect(sim.villages.length).toBe(2)
 
-    // LE MONDE OUVRE À LA FIN DE L'ARDEUR (spec `saisons.md` S2) : dix jours d'été pour
-    // s'installer, les Pluies qui annoncent, le Grand Froid à h 30. C'est ICI que ça se
+    // LE MONDE OUVRE À L'OUVERTURE DES PLUIES (spec `saisons.md` S2, jour 61 depuis le
+    // 2026-08-24) : une saison entière pour s'installer, qui annonce toute seule ce qui vient,
+    // et le Grand Froid à h 15 de jeu réel (à 30 min par jour). C'est ICI que ça se
     // garde — `createVeillee` est la seule ligne du jeu qui pose ce jour d'ouverture, et un
     // monde reparti au jour 1 offrirait le printemps en tutoriel, l'exact contraire de S2.
     expect(sim.jourDeDepart).toBe(BALANCE.JOUR_DE_DEPART)

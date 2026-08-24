@@ -7,9 +7,10 @@ import { describe, expect, it } from 'vitest'
 import { applyDamage } from './combat'
 import { createEmptyMap } from './map'
 import { createSim, spawnEntity, step, type PlayerAction, type SimState } from './sim'
-import { CENDREUX, MORTS, NIGHT_HUNT, TEMPERATURE, TERRAIN_GRASS } from './balance'
+import { ACTS_PER_YEAR, BALANCE, CENDREUX, EAU, MORTS, NIGHT_HUNT, TEMPERATURE, TERRAIN_GRASS } from './balance'
+import { niveauDEau } from './eau'
 import { drainEvents } from './events'
-import { getGameTime } from './time'
+import { coeurDeLaSaisonSuivante, getGameTime, jourDeSaison, phaseForDay, TICKS_PER_CYCLE, TICKS_PER_SEASON_DAY } from './time'
 import { foundNpcVillage } from './worldgen'
 
 function makeSim(debug: boolean): { sim: SimState; player: number } {
@@ -65,6 +66,53 @@ describe('debug — heure forcée', () => {
     const before = sim.cycleOffset
     act(sim, player, { type: 'debug_set_hour', hour: 23 })
     expect(sim.cycleOffset).toBe(before)
+  })
+})
+
+/**
+ * LE SAUT DE CALENDRIER, DE BOUT EN BOUT — la promesse qu'on vend au joueur qui clique.
+ *
+ * Le bouton du panneau (P) enchaîne `coeurDeLaSaisonSuivante` puis `debug_set_season_day` ;
+ * ce banc rejoue exactement cet enchaînement, sur la sim, et exige le RÉSULTAT VISIBLE — pas
+ * le tick, pas le jour : la vallée à sec. C'est la garde qui manquait au moment où l'action
+ * existait dans /sim sans surface : personne ne pouvait constater qu'elle menait quelque part.
+ */
+describe('debug — le saut de calendrier mène VRAIMENT à la saison', () => {
+  it('cliquer jusqu’à l’Ardeur pose le monde dans une vallée à SEC', () => {
+    const sim = createSim(1, {
+      map: createEmptyMap(64, 64, TERRAIN_GRASS),
+      debug: true,
+      calendarScale: TICKS_PER_SEASON_DAY / TICKS_PER_CYCLE,
+      jourDeDepart: BALANCE.JOUR_DE_DEPART,
+      finDeSaison: null,
+    })
+    const player = spawnEntity(sim, 10, 10)
+
+    // À L'OUVERTURE, LE MONDE EST HUMIDE — c'est le problème que l'outil règle. L'aridité veut
+    // de la chaleur autant que de la sécheresse, et les Pluies n'en ont pas (`saisons.md` S10).
+    expect(niveauDEau(sim)).toBeGreaterThan(-EAU.SEUIL_ASSECHEMENT)
+
+    // ON CLIQUE JUSQU'À L'ARDEUR, on ne compte pas les clics : leur nombre est la distance
+    // entre la phase d'ouverture et l'été, pas une propriété du saut — et `JOUR_DE_DEPART` a
+    // bougé deux fois le 2026-08-24. On passe par la MÊME fonction que le panneau, donc si elle
+    // change de loi ce banc suit sans qu'on le retouche.
+    let clics = 0
+    while (phaseForDay(jourDeSaison(sim)) !== 2 && clics < ACTS_PER_YEAR) {
+      act(sim, player, { type: 'debug_set_season_day', day: coeurDeLaSaisonSuivante(jourDeSaison(sim)) })
+      clics += 1
+    }
+
+    expect(phaseForDay(jourDeSaison(sim)), `${clics} clics`).toBe(2) // l'Ardeur
+    // ET LA VALLÉE EST À SEC : le régime que le jeu normal met h 46,5 à montrer.
+    expect(niveauDEau(sim)).toBeLessThanOrEqual(-EAU.SEUIL_ASSECHEMENT)
+  })
+
+  it('et il reste INERTE sans `debug` armé — comme tous les autres', () => {
+    const { sim, player } = makeSim(false)
+    const avant = sim.tick
+    act(sim, player, { type: 'debug_set_season_day', day: 300 })
+    // Un tick a passé (c'est `step`), mais le calendrier n'a pas sauté.
+    expect(sim.tick).toBe(avant + 1)
   })
 })
 

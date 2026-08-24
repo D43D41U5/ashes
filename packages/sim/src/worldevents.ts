@@ -429,7 +429,7 @@ export function advanceWorldEvents(state: SimState): void {
   if (fin === null) return
   // L'ÉVACUATION SE COMPTE DEPUIS LA FIN, PAS DEPUIS UN JOUR ABSOLU (S2) : `EVAC_DAY` était
   // le jour 55 d'une saison qui finissait au 60 — cinq jours avant la fin. Un monde né au
-  // jour 51 (le vrai jeu) ouvrait sinon son évacuation à son quatrième cycle.
+  // jour 61 (le vrai jeu) ouvrait sinon son évacuation à son quatrième cycle.
   const jourEvac = fin - (BALANCE.SEASON_DAYS - SEASON.EVAC_DAY)
 
   // L'évacuation s'ouvre (spec saison R3) — une fois par saison : partie, l'Arche ne

@@ -258,6 +258,12 @@ export interface HudState {
    *  aucune touche ne part au jeu. Séparée d'`uiTyping` car UIScene écrase ce dernier
    *  depuis le champ de craft — les deux drapeaux se lisent côte à côte. */
   chatTyping: boolean
+  /** LE CHAMP DU PANNEAU DEBUG A LE CLAVIER (le saut de calendrier, DEV seulement). Troisième
+   *  drapeau pour la MÊME raison que `chatTyping` est le deuxième : `uiTyping` est REMIS À FAUX
+   *  chaque image par UIScene dès que l'écran personnage est fermé (`UIScene`, « il rend la main
+   *  au déplacement »). Un champ monté ailleurs qui s'y accrocherait verrait son drapeau effacé
+   *  sous les doigts — et taper un jour enverrait les touches au jeu. */
+  debugTyping: boolean
   /** L'HISTORIQUE du chat de proximité (façon WoW) — WorldScene POSE, le panneau
    *  d'UIScene LIT et affiche. Borné (les vieux messages tombent). */
   chatLog: ChatLine[]
@@ -423,7 +429,7 @@ export const CLES_HUD: Record<keyof HudState, true> = {
   marteau: true,
   foundableFire: true, refugeesNearby: true, upgradableFire: true, deathMoment: true, deathVeilOpen: true, corpseHint: true,
   alertes: true, conseils: true,
-  characterMenuOpen: true, characterTab: true, uiTyping: true, chatTyping: true, chatLog: true,
+  characterMenuOpen: true, characterTab: true, uiTyping: true, chatTyping: true, debugTyping: true, chatLog: true,
   chatDraft: true, openContainer: true, openContainerView: true, openFire: true, openFireView: true,
   pickups: true, crafts: true, levelUps: true, fogVersion: true, fog: true,
   saveState: true, pendingActions: true, journalOpen: true, mapOpen: true, menuOpen: true,

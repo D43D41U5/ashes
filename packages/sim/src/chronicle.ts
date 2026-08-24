@@ -151,7 +151,7 @@ export function chronicleFromEvents(
         // baptisées depuis le 2026-08-23 (S3). À partir du deuxième tour, l'an se dit : c'est
         // la seule information que le joueur n'a pas sous les yeux.
         // « Ce n'est pas l'acte de NAISSANCE » — et non « ce n'est pas l'acte 1 » : depuis
-        // que le monde ouvre au jour 51 (S2), son acte de naissance est le 2, et l'ancienne
+        // que le monde ouvre au jour 61 (S2), son acte de naissance est le 3, et l'ancienne
         // garde laissait passer une ligne parasite au premier instant du monde.
         if (e.tick > 0) {
           const nom = nomDeSaison(phaseOf(e.act))

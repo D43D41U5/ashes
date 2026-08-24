@@ -17,7 +17,7 @@ export const TICKS_PER_CYCLE = BALANCE.CYCLE_REAL_MINUTES * 60 * BALANCE.TICK_RA
  * LA LONGUEUR DU JOUR, EN TICKS — **une fonction du jour de l'année depuis le 2026-08-23**
  * (spec `saisons.md` S6 ; c'était la constante `DAY_TICKS_PER_CYCLE`).
  *
- * La nuit dure 12,6 min réelles au cœur de l'Ardeur et 23,4 au cœur du Grand Froid, et vaut
+ * La nuit dure 8,4 min réelles au cœur de l'Ardeur et 15,6 au cœur du Grand Froid, et vaut
  * pile la valeur d'avant aux équinoxes — la moyenne annuelle ne bouge donc pas, rien n'est
  * recalibré par accident. La nuit étant la fenêtre de danger (chasse nocturne, hordes, le
  * froid qui mord), les deux pressions s'additionnent là où c'est voulu.
@@ -71,7 +71,7 @@ export interface GameTime {
    *
    * Elle existe pour ce qui doit COULER au lieu de sauter. `seasonDay` est un entier : tout
    * ce qui s'y accroche avance d'un cran une fois par jour, et un ruban de calendrier qui
-   * saute de vingt-trois pixels toutes les quarante-cinq minutes ne DÉFILE pas, il claque.
+   * saute de vingt-trois pixels une fois par cycle (trente minutes) ne DÉFILE pas, il claque.
    * Dérivée du tick comme le jour lui-même, par la même division — les deux ne peuvent donc
    * pas se contredire.
    */
@@ -85,7 +85,7 @@ export interface GameTime {
 
 /**
  * LE JOUR DE SAISON À UN TICK — `jourDeDepart` est le jour où le monde COMMENCE (spec
- * `saisons.md` S2 : le vrai jeu ouvre au **jour 51**, à la fin de l'Ardeur ; les montages de
+ * `saisons.md` S2 : le vrai jeu ouvre au **jour 61**, à l'ouverture des Pluies ; les montages de
  * test ouvrent au jour 1, à l'Éclosion).
  *
  * Le troisième paramètre est REQUIS, et c'est délibéré : le rendre optionnel aurait laissé
@@ -135,6 +135,31 @@ export function estCrepuscule(state: SimState, tick: number): boolean {
 export function actForDay(day: number): Act {
   const d = day < 1 ? 1 : Math.floor(day)
   return Math.floor((d - 1) / BALANCE.ACT_DAYS) + 1
+}
+
+/**
+ * LE CŒUR DE LA SAISON SUIVANTE, en jour de saison — où le saut de calendrier du debug se pose.
+ *
+ * ═══ POURQUOI LE CŒUR, ET PAS LE PREMIER JOUR ═══
+ *
+ * Ce qui caractérise une saison ne se voit PAS à son bord : les courbes annuelles (`SOCLE`,
+ * `ECART_NUIT`, `PART_DE_JOUR`) sont définies par leurs CARDINAUX, un par saison, posés en son
+ * milieu, et interpolées entre eux — le premier jour d'une saison est donc à mi-chemin de la
+ * précédente. Sauter au jour 121 pour « voir l'Éclosion » montre un hiver qui finit ; sauter au
+ * 135 montre le printemps.
+ *
+ * Le décalage vaut `(ACT_DAYS − 1) / 2`, ce qui pose le saut EXACTEMENT sur les cardinaux
+ * (j15 · j45 · j75 · j105) sans les recopier : les cardinaux SONT les cœurs. Une garde le
+ * vérifie contre `TEMPERATURE.SOCLE`, sinon les deux dériveraient en silence.
+ *
+ * VERS L'AVANT SEULEMENT, et c'est délibéré : `debug_set_season_day` déplace le TICK, qui est
+ * la seule horloge (`monde.md` R1). Reculer laisserait tous les minuteurs de l'état (repousse,
+ * péremption, chantiers) dans un futur qu'on ne rattraperait qu'en rejouant — un outil de debug
+ * qui ment est pire que pas d'outil.
+ */
+export function coeurDeLaSaisonSuivante(jour: number): number {
+  const debut = actForDay(jour) * BALANCE.ACT_DAYS + 1
+  return debut + Math.floor((BALANCE.ACT_DAYS - 1) / 2)
 }
 
 /** L'année du jour, à partir de 1 (le TOUR `k` des lois). */

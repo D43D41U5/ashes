@@ -73,12 +73,17 @@ describe('1. LA FAIM TUE (et le cru ne nourrit pas un homme)', () => {
   })
 
   it('un buisson entier ne fait plus une journée : la cueillette ne suffit PLUS', () => {
-    // 8 baies × 6 = 48 points. La faim descend de 2 pts/minute réelle en acte I.
+    // 8 baies × 6 = 48 points. La faim se compte en HEURES DE CYCLE, donc son débit par minute
+    // réelle suit la durée du jour : 3,2 pts/min à 30 min de cycle (2,1 à 45).
     const buisson = 8 * (FOOD_VALUES.berries ?? 0)
     const parMinute = BALANCE.HUNGER_PER_CYCLE_HOUR / (BALANCE.CYCLE_REAL_MINUTES / 24)
     const minutes = buisson / parMinute
 
-    expect(minutes).toBeLessThan(30) // ~24 min — contre 171 avant
+    // CE QU'ON AFFIRME EST « PLUS UNE JOURNÉE », donc une PART DE JOURNÉE — pas un nombre de
+    // minutes. « < 30 min » tenait par accident tant que le cycle en durait 45 ; à 30 min il
+    // serait passé avec un facteur deux de marge, en mesurant la durée du jour. Un buisson
+    // couvre à peine la moitié d'un cycle : 0,53 à 45 min, 0,50 à 30 — contre 3,8 CYCLES avant.
+    expect(minutes / BALANCE.CYCLE_REAL_MINUTES).toBeLessThan(0.6)
     // …alors que le ragoût, lui, tient un homme : c'est la CUISINE qui nourrit, donc
     // le Feu, donc le bois, donc le retour au camp. C'est la boucle qui manquait.
     expect(FOOD_VALUES.stew! / FOOD_VALUES.berries!).toBeGreaterThan(5)
@@ -156,9 +161,14 @@ describe('2. LA NOURRITURE POURRIT (on ne stocke pas, on fait tourner)', () => {
 })
 
 describe('3. LE MONDE NE SE REMPLIT PLUS TOUT SEUL', () => {
-  it('la repousse est passée de 5 minutes à trois quarts d’heure', () => {
-    const minutes = BALANCE.NODE_REGROW_TICKS / BALANCE.TICK_RATE_HZ / 60
-    expect(minutes).toBeGreaterThanOrEqual(40)
+  it('la repousse est passée de 5 minutes à UN CYCLE — une clairière rasée reste vide pour la journée', () => {
+    // LA QUANTITÉ CALIBRÉE EST UNE JOURNÉE, PAS UN NOMBRE DE MINUTES (T9, reformulée le
+    // 2026-08-24 quand le cycle est passé de 45 à 30 min). La garde d'avant exigeait « ≥ 40
+    // minutes réelles » : elle serait passée AU VERT sur une repousse d'un cycle et demi,
+    // c'est-à-dire sur la rupture même de la promesse (« vide pour la journée »). Ce qu'on
+    // affirme est donc le RAPPORT au cycle, et il n'est pas vacuous : `NODE_REGROW_TICKS`
+    // pourrait valoir n'importe quoi d'autre.
+    expect(BALANCE.NODE_REGROW_TICKS).toBe(TICKS_PER_CYCLE)
   })
 
   it('ÉPUISEMENT LOCAL : un coin qu’on rase met de plus en plus de temps à revenir', () => {

@@ -52,6 +52,16 @@ function jourDeCrue(depuis: number): number {
   throw new Error('la Crue n’est jamais tirée en quarante ans — l’élection est cassée')
 }
 
+/** LE PREMIER JOUR OÙ LA VALLÉE EST VRAIMENT À SEC, cherché dans la loi — jamais écrit en dur,
+ *  même doctrine que `jourDeCrue`. L'aridité demande de la chaleur : elle ne mord qu'au cœur de
+ *  l'Ardeur, et le monde n'y ouvre plus (S2). Un an de balayage suffit — l'été revient. */
+function jourDeSecheresse(sim: SimState): number {
+  for (let j = sim.jourDeDepart; j < sim.jourDeDepart + YEAR_DAYS; j++) {
+    if (niveauDEau(sim, tickDuJour(sim, j)) <= -EAU.SEUIL_ASSECHEMENT) return j
+  }
+  throw new Error('la vallée n’est à sec aucun jour de l’année — l’aridité est cassée')
+}
+
 describe('S10 — la prémisse du rendu de l’eau', () => {
   it('la carte de production porte un champ de distance à l’eau COMPLET', () => {
     const { map } = vallee()
@@ -69,12 +79,15 @@ describe('S10 — la prémisse du rendu de l’eau', () => {
     expect(plafond, 'des tuiles loin de toute eau').toBeGreaterThan(0)
   })
 
-  it('à l’ouverture du monde, la vallée est à SEC — et il y a des mares à vider', () => {
+  it('au cœur de l’été, la vallée est à SEC — et il y a des mares à vider', () => {
     const sim = vallee()
-    // Le monde NAÎT en aridité maximale : rien n'a plu avant le premier tick, et
-    // `cyclesDepuisPluie` plafonne à `MEMOIRE_CYCLES`. C'est le régime le plus facile à
-    // atteindre du jeu — aucun saut de calendrier, aucun caractère à espérer.
-    const t = tickDuJour(sim, sim.jourDeDepart)
+    // L'ARIDITÉ VEUT DE LA CHALEUR AUTANT QUE DE LA SÉCHERESSE (`ariditeGlobale` = chaleur ×
+    // temps). Rien n'a plu avant le premier tick, donc le TEMPS est au maximum dès la
+    // naissance — mais la CHALEUR, elle, suit la courbe du socle, et le monde ouvre désormais
+    // à l'ouverture des Pluies (S2, jour 61 depuis le 2026-08-24) : à +16,4 °C le facteur de
+    // chaleur ne vaut que 0,2, et la vallée naît HUMIDE. C'est juste, et c'est pour ça que le
+    // jour se DÉRIVE comme celui de la Crue au lieu d'être « l'ouverture ».
+    const t = tickDuJour(sim, jourDeSecheresse(sim))
     expect(niveauDEau(sim, t)).toBeLessThanOrEqual(-EAU.SEUIL_ASSECHEMENT)
 
     const niveau = niveauDEau(sim, t)

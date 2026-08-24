@@ -154,7 +154,10 @@ export function bindInputs(scene: Phaser.Scene, deps: InputDeps): MovementBindin
    * au jeu : taper « hache » dans le panneau de craft ferait sinon marcher le
    * personnage (Z, Q, S, D sont des lettres) et « journal » ouvrirait le journal.
    */
-  const typing = (): boolean => Boolean(getHud(scene.registry, 'uiTyping')) || Boolean(getHud(scene.registry, 'chatTyping'))
+  const typing = (): boolean =>
+    Boolean(getHud(scene.registry, 'uiTyping')) ||
+    Boolean(getHud(scene.registry, 'chatTyping')) ||
+    Boolean(getHud(scene.registry, 'debugTyping'))
 
   /** Câble un handler `down` sur chaque alias d'une action (KEYMAP). MUET tant que
    *  le champ de recherche a le clavier — ET tant qu'un panneau plein écran est ouvert.

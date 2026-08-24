@@ -83,7 +83,7 @@ describe('A1 — le calendrier : quatre saisons de trente jours qui tournent', (
     }
     // Les quatre bornes qui NOMMENT l'année, et le jour d'ouverture du vrai jeu.
     expect(phaseForDay(1)).toBe(1) // l'Éclosion
-    expect(phaseForDay(BALANCE.JOUR_DE_DEPART)).toBe(2) // l'Ardeur — le monde ouvre là (S2)
+    expect(phaseForDay(BALANCE.JOUR_DE_DEPART)).toBe(3) // les Pluies — le monde ouvre là (S2)
     expect(phaseForDay(61)).toBe(3) // les Pluies
     expect(phaseForDay(91)).toBe(4) // le Grand Froid
     expect(phaseForDay(121)).toBe(1) // l'Éclosion de l'an 2…
@@ -212,7 +212,7 @@ describe('A5/A6 — les épisodes, et la journée de pluie qui dure une journée
     }
   })
 
-  it('une pluie des Pluies couvre un point plus de trente minutes réelles', () => {
+  it('une pluie des Pluies couvre un point LES DEUX TIERS D’UN CYCLE (« une journée de pluie »)', () => {
     const W = 1581
     const H = 868
     const front: MeteoFront = {
@@ -227,15 +227,19 @@ describe('A5/A6 — les épisodes, et la journée de pluie qui dure une journée
     for (let t = 0; t < front.endTick; t += 20) {
       if (meteoIntensityAt(front, t, W, H, W / 2, H / 2) > 0) couvert += 20
     }
-    const minutes = couvert / (BALANCE.TICK_RATE_HZ * 60)
-    expect(minutes).toBeGreaterThan(30)
+    // A6 SE DIT EN PART DE CYCLE, PAS EN MINUTES (reformulé le 2026-08-24, quand le cycle est
+    // passé de 45 à 30 min). La promesse de S5 est « une journée de pluie est une journée » :
+    // écrite « > 30 min réelles », la garde passait au rouge alors que la pluie couvrait
+    // exactement la même PART du cycle qu'avant (74 %) — elle mesurait la durée du jour, pas
+    // la météo. Ce qu'on affirme est donc la couverture relative.
+    expect(couvert / TICKS_PER_CYCLE).toBeGreaterThan(2 / 3)
     // …et une averse d'Ardeur, elle, ne dure qu'un instant : c'est la MÊME loi, deux saisons.
     const ete: MeteoFront = { ...front, day: 45, endTick: fenetreDe({ type: 'pluie', day: 45 }) }
     let bref = 0
     for (let t = 0; t < ete.endTick; t += 20) {
       if (meteoIntensityAt(ete, t, W, H, W / 2, H / 2) > 0) bref += 20
     }
-    expect(bref / (BALANCE.TICK_RATE_HZ * 60)).toBeLessThan(3)
+    expect(bref / TICKS_PER_CYCLE).toBeLessThan(1 / 15)
   })
 
   it('la largeur et la fenêtre se lisent PAR SAISON, jamais par type seul', () => {
@@ -556,19 +560,19 @@ describe('A7bis — le niveau d’eau va dans les deux sens', () => {
   })
 })
 
-describe('S2 — le monde ouvre à la fin de l’Ardeur', () => {
-  it('un monde né au jour 51 date son premier jour au 51, et son acte est l’Ardeur', () => {
+describe('S2 — le monde ouvre à l’ouverture des Pluies', () => {
+  it('un monde né au jour 61 date son premier jour au 61, et sa saison est les Pluies', () => {
     const sim = createSim(3, {
       map: createEmptyMap(32, 32, TERRAIN_GRASS),
       calendarScale: TICKS_PER_SEASON_DAY / TICKS_PER_CYCLE,
       jourDeDepart: BALANCE.JOUR_DE_DEPART,
       finDeSaison: null,
     })
-    expect(jourDeSaison(sim)).toBe(51)
-    expect(phaseForDay(jourDeSaison(sim))).toBe(2)
+    expect(jourDeSaison(sim)).toBe(61)
+    expect(phaseForDay(jourDeSaison(sim))).toBe(3)
     const naissance = drainEvents(sim).filter((e) => e.type === 'season_day_started' || e.type === 'act_started')
-    expect(naissance.some((e) => e.type === 'season_day_started' && e.day === 51)).toBe(true)
-    expect(naissance.some((e) => e.type === 'act_started' && e.act === actForDay(51))).toBe(true)
+    expect(naissance.some((e) => e.type === 'season_day_started' && e.day === 61)).toBe(true)
+    expect(naissance.some((e) => e.type === 'act_started' && e.act === actForDay(61))).toBe(true)
   })
 
   it('la saison ne finit pas dix cycles après l’ouverture', () => {

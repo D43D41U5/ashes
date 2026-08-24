@@ -219,18 +219,38 @@ const TICK_RATE_HZ = 20
 /**
  * Durée du cycle jour/nuit diégétique, en minutes réelles (non accéléré).
  *
- * ═══ UN JOUR DURE 45 MINUTES (décision d'Alexis, 2026-08-23) ═══ (était 48)
+ * ═══ UN JOUR DURE 30 MINUTES (décision d'Alexis, 2026-08-24) ═══ (était 45, et 48 avant)
  *
  * Ce nombre n'est plus seulement le rythme d'un cycle : depuis que le calendrier est
  * VERROUILLÉ SUR LE CYCLE (un jour de saison = un cycle, voir `VEILLEE_CALENDAR_SCALE`),
- * c'est la durée d'un JOUR tout court — celui que le HUD compte. 45 est choisi pour ça,
- * et 45 divise 1440 : `TICKS_PER_SEASON_DAY / TICKS_PER_CYCLE` vaut exactement 32, donc le
- * basculement du jour reste calé sur la même phase du cycle À VIE. Une durée qui ne
- * diviserait pas la journée de 24 h ferait DÉRIVER le passage de jour d'un cycle à
- * l'autre — le défaut reviendrait, lentement (garde : `time.test.ts`, « le calendrier est
- * verrouillé sur le cycle »).
+ * c'est la durée d'un JOUR tout court — celui que le HUD compte. **Il faut donc qu'il
+ * divise 1440**, sans quoi `TICKS_PER_SEASON_DAY / TICKS_PER_CYCLE` cesse d'être entier et
+ * le basculement du jour DÉRIVE d'un cycle à l'autre — le défaut du 2026-08-23 reviendrait,
+ * lentement (garde : `time.test.ts`, « le calendrier est verrouillé sur le cycle »). 30
+ * divise : le rapport vaut exactement 48 (il valait 32 à 45 min).
+ *
+ * ═══ POURQUOI 30, ET CE QUE ÇA DÉPLACE (mesuré avant de trancher) ═══
+ *
+ * Tout le calendrier EN JOURS DE JEU est intact — c'est la conversion jour → temps réel qui
+ * se contracte de ×0,667. Une saison passe de 22,5 h à **15 h**, l'année de 90 h à **60 h**,
+ * et depuis le jour d'ouverture (51) le Grand Froid tombe à **h 20** au lieu de h 30, la
+ * forêt se dépouille à h 16, les gués prennent à h 11. La nuit va de **9 min** au cœur de
+ * l'Ardeur à **15,6 min** au cœur du Grand Froid (c'était 13,5 et 23,4).
+ *
+ * LE PRIX, ET C'EST LA VRAIE QUESTION DE JEU : la DETTE d'une journée ne bouge pas (la faim
+ * se compte en heures de CYCLE, le combustible en cycles), mais on a un tiers de temps en
+ * moins pour la payer, et la récolte comme le combat sont ancrés à la SECONDE. Il faut donc
+ * nourrir et chauffer au même prix dans deux tiers du temps : **+50 % de cadence de récolte
+ * exigée**. C'est voulu — c'est la journée serrée qu'on cherche.
+ *
+ * ⚠ CE QUI DOIT SUIVRE LE CYCLE SE DÉCLARE EN CYCLES, JAMAIS EN SECONDES. Trois constantes
+ * calibrées PAR CYCLE étaient écrites en secondes réelles et auraient décroché en silence
+ * (`NODE_REGROW_TICKS`, `VILLAGE_GROWTH.BUILD_PACE_TICKS` et sa jumelle de l'enceinte) :
+ * elles sont passées à `ticksForCycles` à valeur constante. Avant d'écrire `ticksFor(...)`
+ * pour une durée de plus d'une minute, se demander si la quantité calibrée est un nombre de
+ * SECONDES (un wind-up, un geste) ou une part de JOURNÉE (une repousse, une cadence).
  */
-const CYCLE_REAL_MINUTES = 45
+const CYCLE_REAL_MINUTES = 30
 
 /** Convertit une durée réelle (secondes) en nombre de ticks, à la fréquence courante. */
 const ticksFor = (seconds: number): number => Math.round(seconds * TICK_RATE_HZ)
@@ -548,16 +568,39 @@ export const BALANCE = {
     { jour: 105, valeur: 0.48 },
   ]),
   /**
-   * LE JOUR OÙ LE MONDE COMMENCE (spec `saisons.md` S2) — le 51ᵉ, à la fin de l'Ardeur.
+   * LE JOUR OÙ LE MONDE COMMENCE (spec `saisons.md` S2) — **le 61ᵉ, à l'ouverture des
+   * Pluies** (décision d'Alexis, 2026-08-24 ; c'était le 51ᵉ, à la fin de l'Ardeur).
    *
-   * Dix jours d'été finissant pour s'installer, trente jours de Pluies qui annoncent tout
-   * seuls ce qui vient, et **le Grand Froid à h 30 de jeu réel** : le pacing calibré d'avant
-   * la refonte (le Grand Froid tombait à h 31), préservé sous un calendrier quatre fois plus
-   * long. L'Éclosion arrive à h 52 — le printemps est la récompense d'avoir tenu, pas le
-   * tutoriel. Ce n'est PAS le défaut de `createSim` (les montages de test ouvrent au jour 1,
-   * à l'Éclosion) : les hôtes du vrai jeu le passent, comme ils passent l'heure de départ.
+   * UNE SAISON ENTIÈRE POUR S'INSTALLER, et elle annonce ce qui vient toute seule : trente
+   * jours de Pluies, puis le Grand Froid. Le monde ouvre sur une nuit à +8,3 °C, une horde de
+   * 7 têtes à 42 % par nuit, 28 Cendreux vivants — et **six heures de jeu réel avant que les
+   * nuits gèlent** (le premier gué prend au jour 73). L'Éclosion arrive à h 30 : le printemps
+   * reste la récompense d'avoir tenu, jamais le tutoriel.
+   *
+   * ═══ LE CHIFFRE QUI A TRANCHÉ : LE TEMPS D'INSTALLATION ═══
+   *
+   * Le cycle passé à 30 min (2026-08-24), le Grand Froid tombait à h 20 depuis le jour 51 —
+   * dix séances de deux heures, quand GATE 1 en demande cinq. Trois ouvertures chiffrées, et
+   * c'est LE TEMPS AVANT QUE LES NUITS GÈLENT qui les sépare, pas la date de l'hiver :
+   *
+   *   · jour 51 (fin de l'Ardeur) : Grand Froid h 20 · **11 h** avant le gel · nuit +15,6 °C
+   *   · jour 61 (les Pluies)      : Grand Froid h 15 · **6 h**  avant le gel · nuit  +8,3 °C
+   *   · jour 71 (mi-Pluies)       : Grand Froid h 10 · **1 h**  avant le gel · nuit  +0,9 °C
+   *
+   * Le jour 71 tenait le format et supprimait l'installation : le joueur y naît sans feu, sans
+   * mur et sans outil dans un monde déjà à 60 % de chance de horde par nuit, neuf têtes, 39
+   * Cendreux — et les dix heures gagnées sont exactement celles où l'on apprend le jeu. Le
+   * jour 61 prend la moitié du gain pour aucun de ces coûts.
+   *
+   * Ce n'est PAS le défaut de `createSim` (les montages de test ouvrent au jour 1, à
+   * l'Éclosion) : les hôtes du vrai jeu le passent, comme ils passent l'heure de départ.
+   *
+   * ⚠ IL DÉCALE LE CALENDRIER TOUT ENTIER — donc l'ACTE DE NAISSANCE du monde, la fenêtre
+   * d'évacuation (comptée depuis la fin, `worldevents.ts`), la saison de wipe multi
+   * (`JOUR_DE_DEPART + SEASON_DAYS − 1` = 120, le cœur du Grand Froid) et le climat de tout
+   * relevé de banc ouvert à l'ouverture réelle.
    */
-  JOUR_DE_DEPART: 51,
+  JOUR_DE_DEPART: 61,
 
   /** Heure murale de l'aube — le cycle démarre au lever du jour, mais l'horloge
    * affichée est une horloge murale : minuit (0h) au cœur de la nuit, midi en plein
@@ -683,12 +726,17 @@ export const BALANCE = {
    * Ticks avant qu'un nœud épuisé repousse à plein.
    *
    * ÉTAIT 5 MINUTES. Un seul buisson de baies nourrissait alors 34 joueurs en
-   * continu : le monde se remplissait plus vite qu'on ne le vidait. À 45 minutes
-   * (≈ un cycle), une clairière qu'on rase reste vide pour la journée — on va donc
-   * VOIR AILLEURS, et c'est là que tout commence (GDD §8bis : la collecte est le
-   * tissu conjonctif ; elle met les joueurs sur les routes, donc dans les
-   * rencontres). Modulé par l'acte (SEASON.REGROW_ACT_FACTOR) : le Grand Froid
-   * contracte les sources.
+   * continu : le monde se remplissait plus vite qu'on ne le vidait. **À UN CYCLE**, une
+   * clairière qu'on rase reste vide POUR LA JOURNÉE — on va donc VOIR AILLEURS, et c'est là
+   * que tout commence (GDD §8bis : la collecte est le tissu conjonctif ; elle met les
+   * joueurs sur les routes, donc dans les rencontres). Modulé par l'acte
+   * (SEASON.REGROW_ACT_FACTOR) : le Grand Froid contracte les sources.
+   *
+   * ⚠ LA QUANTITÉ CALIBRÉE EST « UNE JOURNÉE », PAS « 45 MINUTES ». C'était `ticksFor(45*60)`
+   * — juste tant que le cycle durait 45 min, et faux le jour où il a changé : à 30 min, une
+   * repousse de 45 min réelles vaut UN CYCLE ET DEMI, et la promesse de `tension.md` T9
+   * (« vide pour la journée ») serait tombée en silence. Elle se déclare donc en CYCLES.
+   * Vaut `DEPLETION_FORGET_TICKS` (un cycle aussi) — c'était déjà le cas à 45 min.
    *
    * ⚠ CE FACTEUR S'APPLIQUE AUSSI AU MINÉRAL, et ce n'est pas une distraction : c'est un
    * cadran d'ABONDANCE, pas une affirmation de biologie. Un filon de fer ne « pousse » pas
@@ -696,7 +744,7 @@ export const BALANCE = {
    * saison serre, et le fer en fait partie. Le froid VRAI, celui qui lit la température du
    * lieu, ne mord que sur ce qui vit (`flore-froid.md` F7) et ne passe jamais par ici.
    */
-  NODE_REGROW_TICKS: ticksFor(45 * 60),
+  NODE_REGROW_TICKS: ticksForCycles(1),
 
   /**
    * L'ÉPUISEMENT LOCAL (GDD §8bis : « les filons s'épuisent localement et rouvrent
@@ -977,8 +1025,15 @@ export const VILLAGE_GROWTH = {
    * jours : un ARC DE SAISON, qui est exactement le rythme voulu (« qu'ils
    * évoluent au fur et à mesure du temps »). Multiple de BOARD_REFRESH_TICKS
    * (la fenêtre se teste au rafraîchissement).
+   *
+   * ⚠ LA QUANTITÉ CALIBRÉE EST « PIÈCES PAR CYCLE » — tout le raisonnement ci-dessus se
+   * mesure contre LE DÉBIT DE LA ZONE, qui repousse par cycle (`NODE_REGROW_TICKS`). C'était
+   * `ticksFor(420)` : à 30 min de cycle, les mêmes 420 s seraient tombées à 4,3 pièces par
+   * cycle et le hameau aurait mis moitié plus de saison à se monter, sans qu'une ligne le
+   * dise. `7 / 45` = sept minutes par tranche de quarante-cinq, soit **6,43 pièces par
+   * cycle** — exactement la cadence mesurée, quelle que soit la durée du cycle.
    */
-  BUILD_PACE_TICKS: ticksFor(420),
+  BUILD_PACE_TICKS: ticksForCycles(7 / 45),
   /** LA CADENCE DE L'ENCEINTE (spec R15) — la palissade n'est pas de l'esthétique, c'est
    *  la DÉFENSE : à la cadence commune (420 s), l'anneau de 66 rondins prenait ~10 jours
    *  de plafond théorique et n'était JAMAIS fermé du vivant du village (sonde de siège,
@@ -986,8 +1041,10 @@ export const VILLAGE_GROWTH = {
    *  CALIBRÉ AU BANC : 120 s asphyxiait l'économie du départ (le chantier dévorait ~130
    *  bois en 3 jours, évinçait la cueillette — Feu affamé au j6, famine, graine 7) ;
    *  240 s laisse l'anneau fermer avant la fenêtre des sièges meurtriers (j13-19) sans
-   *  étrangler le bois. Multiple de BOARD_REFRESH_TICKS, comme la cadence commune. */
-  BUILD_PACE_TICKS_ENCEINTE: ticksFor(240),
+   *  étrangler le bois. Multiple de BOARD_REFRESH_TICKS, comme la cadence commune.
+   *  EN CYCLES pour la même raison que sa jumelle : la fenêtre des sièges se compte en
+   *  JOURS. `4 / 45` = 11,25 pièces par cycle, la cadence des 240 s d'alors. */
+  BUILD_PACE_TICKS_ENCEINTE: ticksForCycles(4 / 45),
 } as const
 
 export interface TerrainDef {

@@ -35,7 +35,7 @@ import { VEILLEE_SEED } from './mondes'
 export { VEILLEE_SEED }
 /**
  * ⚙ LA DURÉE D'UNE VEILLÉE, en cycles jour/nuit — et depuis le 2026-08-23, **UN JOUR EST
- * UN CYCLE** (décision d'Alexis : « un jour dure 45 minutes »).
+ * UN CYCLE** (décision d'Alexis ; le cycle dure **30 minutes** depuis le 2026-08-24).
  *
  * ═══ CE QUI ÉTAIT CASSÉ ═══
  *
@@ -49,18 +49,27 @@ export { VEILLEE_SEED }
  * ═══ CE QU'ON POSE ═══
  *
  * `SEASON_DAYS` cycles pour `SEASON_DAYS` jours : `calendarScale` vaut alors exactement
- * `TICKS_PER_SEASON_DAY / TICKS_PER_CYCLE` = 32, le jour de saison bascule une fois par
- * cycle, et le compteur du HUD redevient lisible. C'est déjà l'échelle du BANC
- * (`sim/scenario.ts`) : le solo était le seul à ne pas la tenir.
+ * `TICKS_PER_SEASON_DAY / TICKS_PER_CYCLE` = **48** (32 quand le cycle durait 45 min), le
+ * jour de saison bascule une fois par cycle, et le compteur du HUD redevient lisible. C'est
+ * déjà l'échelle du BANC (`sim/scenario.ts`) : le solo était le seul à ne pas la tenir.
  *
- * Le prix, assumé : une saison dure `SEASON_DAYS` × `CYCLE_REAL_MINUTES` ≈ 45 h de jeu (au
- * lieu de ~5 h), l'acte III s'ouvrant vers la 31ᵉ. La persistance (P1-6) la découpe en
- * séances ; si le format « 5 sessions » de GATE 1 doit tenir, les boutons à tourner sont
+ * Le prix, assumé : une saison de 30 jours dure `ACT_DAYS` × `CYCLE_REAL_MINUTES` = **15 h**
+ * de jeu (22,5 h quand le cycle durait 45 min), et depuis l'ouverture au jour 61 le Grand
+ * Froid tombe à **h 15** (h 30 avant les deux décisions du 2026-08-24). La persistance (P1-6)
+ * découpe en séances : à 30 min par jour, une séance de 2 h vaut quatre jours de jeu, donc les
+ * 5 séances de GATE 1 mènent au jour 81 (h 10) — les Pluies bien entamées, dix jours avant
+ * l'hiver, qui demande 7,5 séances. C'est le compromis assumé du jour 61 : on gagne cinq heures
+ * sur les dix qui séparaient l'ouverture du Grand Froid, et on garde une saison entière pour
+ * s'installer (le jour 71, chiffré le même jour, mettait l'hiver à h 10 mais ne laissait
+ * qu'UNE heure avant que les nuits gèlent). Si c'est encore trop long, les boutons restants sont
  * `SEASON_DAYS` **et `ACT_DAYS` ENSEMBLE** — PAS ce couplage (le rendre ≠ 1 remettrait le
- * compteur en défaut). Ensemble, parce que les actes se comptent par `ACT_DAYS` : baisser
- * `SEASON_DAYS` à 12 en laissant `ACT_DAYS` à 21 rendrait la saison ENTIÈRE en acte I —
- * pas d'acte II, pas de méga-horde, pas de défeuillaison. La garde de forme, si l'on y
- * touche : `actForDay(SEASON_DAYS) >= 3`.
+ * compteur en défaut), et pas `ACT_DAYS` seul : les cardinaux des courbes annuelles sont
+ * écrits en jours ABSOLUS de l'année, une année de 80 jours les fait sortir du domaine
+ * (mesuré le 2026-08-24 : plus d'hiver du tout, +6,3 °C au minimum, et une falaise de
+ * 15,7 °C/jour au tour de l'an). Ensemble, parce que les actes se comptent par `ACT_DAYS` :
+ * baisser `SEASON_DAYS` à 12 en laissant `ACT_DAYS` à 30 rendrait la saison ENTIÈRE en
+ * acte I — pas d'acte II, pas de méga-horde, pas de défeuillaison. La garde de forme, si
+ * l'on y touche : `actForDay(SEASON_DAYS) >= 3`.
  */
 export const VEILLEE_SEASON_CYCLES = BALANCE.SEASON_DAYS
 /** L'échelle du calendrier, DÉRIVÉE du nombre de cycles voulu (couplage cycle↔calendrier).
@@ -138,11 +147,12 @@ export function createVeillee(
   const sim = createSim(seed, {
     map,
     calendarScale: VEILLEE_CALENDAR_SCALE,
-    // LE MONDE OUVRE À LA FIN DE L'ARDEUR (spec `saisons.md` S2) : dix jours d'été pour
-    // s'installer, trente jours de Pluies qui annoncent, le Grand Froid à h 30 de jeu.
+    // LE MONDE OUVRE À L'OUVERTURE DES PLUIES (spec `saisons.md` S2, jour 61 depuis le
+    // 2026-08-24) : une saison ENTIÈRE pour s'installer, qui annonce toute seule ce qui vient,
+    // et le Grand Froid à h 15 de jeu réel.
     jourDeDepart: BALANCE.JOUR_DE_DEPART,
     // LA SAISON NE FINIT PAS (saison-sans-fin R4, décision d'Alexis 2026-08-21) : ni verdict ni
-    // Arche en solo — l'année tourne, l'hiver revient. Le jour 61 n'est plus qu'un jour.
+    // Arche en solo — l'année tourne, l'hiver revient. La fin de saison n'est plus qu'un jour.
     finDeSaison: null,
     nodes,
     cycleOffset: cycleOffsetForStartHour(VEILLEE_START_HOUR),

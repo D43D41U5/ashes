@@ -45,8 +45,8 @@ function recolter(sim: SimState, id: number, nodeId: number, item: 'wood' | 'ber
 /**
  * Le monde du banc : de quoi vivre à portée de main — le reste est au joueur.
  *
- * ET IL OUVRE AU JOUR 51, comme le vrai jeu (spec `saisons.md` S2) : la première session
- * d'un joueur se joue à la fin de l'Ardeur, jamais au premier matin de l'Éclosion — qui,
+ * ET IL OUVRE AU JOUR 61, comme le vrai jeu (spec `saisons.md` S2) : la première session
+ * d'un joueur se joue à l'ouverture des Pluies, jamais au premier matin de l'Éclosion — qui,
  * depuis que le socle est une courbe (S4), s'ouvre ENCORE GELÉ (+3 °C le jour, −8 la nuit).
  * Mesuré au jour 1, ce banc ne mesurait plus la boucle de survie mais l'hypothermie : le
  * cueilleur finissait à 16 PV avec trois repas au compteur, contre 26 à l'ouverture réelle.
@@ -210,9 +210,12 @@ describe('LA SESSION SOLO — le jeu est-il jouable ?', () => {
     // porte vraiment la démonstration — il mange en boucle, il n'est jamais rassasié, et il
     // a RASÉ ses buissons pour en arriver là.
     //
-    // RELEVÉ À L'OUVERTURE RÉELLE (jour 51, fin de l'Ardeur — S2) : 26 repas, 100 → 50 PV,
-    // les trois buissons à sec. La saison est ORDINAIRE (l'Ardeur de l'an 1 ne tire aucun
-    // caractère de S18) : ce banc mesure la calibration nue, pas une Canicule.
+    // RELEVÉ À L'OUVERTURE RÉELLE : 26 repas, 100 → 50 PV, les trois buissons à sec. *(Chiffres
+    // relevés quand le monde ouvrait au jour 51 ; l'ouverture est passée au 61 le 2026-08-24 —
+    // les assertions ci-dessous portent sur la FORME (il mange en boucle, il rase ses buissons)
+    // et non sur le compte, précisément pour survivre à ce genre de déplacement.)* La saison est
+    // ORDINAIRE (les Pluies de l'an 1 ne tirent aucun caractère de S18) : ce banc mesure la
+    // calibration nue, pas un Déluge.
     expect(baiesMangees).toBeGreaterThan(3)
     expect(me(sim).hunger).toBeLessThan(60) // il vit sur le fil, jamais rassasié
     expect(sim.nodes.filter((n) => n.type === 'berry_bush').reduce((s, n) => s + n.stock, 0)).toBe(0)

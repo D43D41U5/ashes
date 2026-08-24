@@ -44,8 +44,9 @@ function makeNode(type: ResourceNode['type'], tx: number, ty: number): ResourceN
 }
 
 /**
- * LE MONDE OUVRE LÀ OÙ LE VRAI JEU OUVRE (spec `saisons.md` S2) : la fin de l'Ardeur, seule
- * saison où rien ne gèle — ni le jour (+22 °C), ni la nuit (+16).
+ * LE MONDE OUVRE LÀ OÙ LE VRAI JEU OUVRE (spec `saisons.md` S2) : l'ouverture des Pluies, où
+ * rien ne gèle encore — ni le jour (+16,4 °C), ni la nuit (+8,3). *(La fin de l'Ardeur jusqu'au
+ * 2026-08-24 : +22,4 et +15,6.)*
  *
  * Le jour 1 du calendrier n'est plus un printemps doux mais une **Éclosion encore prise**
  * (+3 °C le jour, −8 la nuit, S4) : un buisson y refuse la cueillette (« la plante est

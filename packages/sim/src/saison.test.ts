@@ -13,10 +13,10 @@ import type { ResourceNode } from './economy'
 const FAST = TICKS_PER_SEASON_DAY / TICKS_PER_CYCLE
 
 /**
- * LE MONDE OUVRE AU JOUR 51 (spec `saisons.md` S2) — comme le vrai jeu, et pas au jour 1.
+ * LE MONDE OUVRE AU JOUR 61 (spec `saisons.md` S2) — comme le vrai jeu, et pas au jour 1.
  *
- * Ce banc mesure L'ARC D'UNE SAISON JOUÉE : ses soixante cycles vont donc du jour 51 au jour
- * 111, et ils traversent les Pluies (j61) puis le Grand Froid (j91) — les deux saisons dont
+ * Ce banc mesure L'ARC D'UNE SAISON JOUÉE : ses soixante cycles vont donc du jour 61 au jour
+ * 121, et ils vont des Pluies (où le monde naît) au Grand Froid (j91) — les deux saisons dont
  * l'endgame parle. Ouvert au jour 1, il ne verrait que l'Éclosion et l'Ardeur, et « la
  * chronique raconte le Grand Froid » deviendrait invérifiable.
  *
@@ -121,7 +121,7 @@ describe('la Cendre (A2)', () => {
 describe('l’évacuation (A3)', () => {
   // LES JOURS SE COMPTENT DEPUIS L'OUVERTURE, plus depuis un jour absolu (S2) : l'arche
   // s'ouvre `SEASON_DAYS − EVAC_DAY` jours avant la fin, quel que soit le jour où le monde a
-  // commencé — un monde né au jour 51 ouvrait sinon son évacuation à son quatrième cycle.
+  // commencé — un monde né au jour 61 ouvrait sinon son évacuation à son quatrième cycle.
   // `(EVAC_DAY − 1)` cycles après le premier matin : c'est ce décalage-là, pas la date.
   it('s’ouvre cinq jours avant la fin de saison, sur la route', () => {
     const sim = makeSim()
@@ -234,7 +234,7 @@ describe('la saison SANS fin (saison-sans-fin R4, T4) — ni verdict ni Arche en
   }, 60_000)
 
   it('le DÉFAUT reste la saison nominale — SEASON_DAYS jours À PARTIR de l’ouverture', () => {
-    // La saison se compte DEPUIS le premier matin (S2) : le monde né au jour 51 rendait
+    // La saison se compte DEPUIS le premier matin (S2) : le monde né au jour 61 rendait
     // sinon ses verdicts dix cycles trop tôt. C'est la DURÉE qu'on affirme, pas la date.
     const sim = makeSim()
     expect(sim.finDeSaison! - sim.jourDeDepart + 1).toBe(BALANCE.SEASON_DAYS)
@@ -266,10 +266,14 @@ describe('la chronique (A5)', () => {
 
     expect(chronicle.length).toBeGreaterThan(4)
     expect(chronicle.some((l) => l.includes('Feu s\'est allumé'))).toBe(true)
-    // La saison jouée s'ouvre à la fin de l'Ardeur et va jusqu'au cœur de l'hiver : la
-    // chronique dit donc les DEUX bascules de saison qu'elle a traversées (S1-S3).
-    expect(chronicle.some((l) => l.includes('les Pluies'))).toBe(true)
+    // La saison jouée s'ouvre à l'ouverture des PLUIES (S2, jour 61 depuis le 2026-08-24) et va
+    // jusqu'au cœur de l'hiver : elle ne traverse donc qu'UNE bascule, celle du Grand Froid.
     expect(chronicle.some((l) => l.includes('Grand Froid'))).toBe(true)
+    // …et « les Pluies » n'est PAS annoncé, parce qu'on y NAÎT : c'est très exactement la garde
+    // que `chronicle.ts` documente (`e.tick > 0`) — l'acte de naissance du monde ne fait pas une
+    // ligne de chronique. Le jour où le jour d'ouverture retombera sur un bord de saison, cette
+    // assertion attrapera la ligne parasite au premier instant du monde.
+    expect(chronicle.some((l) => l.includes('les Pluies'))).toBe(false)
     // Plus de méga-horde nommée (décision ⑲) : le grand mot du récit est « a déferlé »,
     // et il n'est plus GARANTI un jour fixe — la pente le rend probable, pas scripté.
     expect(chronicle.some((l) => l.includes('méga-horde'))).toBe(false)

@@ -185,7 +185,7 @@ describe('la carte est immuable pendant la partie', () => {
     // LE JOUR SE CHOISIT DANS LE GRAND FROID (`saisons.md` S11) : la Cendre ne mord plus que
     // l'hiver, et un jour de l'Ardeur — l'ancien 59 — laisserait le front à zéro, donc rien à
     // garder. Le cœur du Grand Froid tombe encore DANS la saison de ce monde-là, qui se ferme
-    // à `JOUR_DE_DEPART + SEASON_DAYS − 1`, soit le jour 110 : on prouve la cendre sans jamais
+    // à `JOUR_DE_DEPART + SEASON_DAYS − 1`, soit le jour 120 : on prouve la cendre sans jamais
     // déborder sur la fin de saison.
     const JOUR = 3 * BALANCE.ACT_DAYS + Math.floor(BALANCE.ACT_DAYS / 2) // le cœur du Grand Froid
     // `JOUR − jourDeDepart` et non `JOUR − 1` : le tick compte DEPUIS l'ouverture du monde (S2).

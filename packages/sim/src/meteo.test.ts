@@ -1968,7 +1968,7 @@ describe('R9 — l’annonce (blizzard)', () => {
     const entrees = chronicleFromEvents(
       [{ type: 'blizzard_annonce', tick: tickAubeDuJour(d) - nuitDuJour(d - 1), day: d }],
       SCALE,
-      1, // le jour d'ouverture du monde des montages (S2 : le vrai jeu, lui, ouvre au jour 51)
+      1, // le jour d'ouverture du monde des montages (S2 : le vrai jeu, lui, ouvre au jour 61)
       {},
     )
     expect(entrees).toHaveLength(1)
