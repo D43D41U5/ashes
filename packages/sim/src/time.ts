@@ -66,6 +66,16 @@ export interface GameTime {
   dayTicks: number
   /** Jour de saison, à partir de 1. Peut dépasser SEASON_DAYS (la Cendre finale). */
   seasonDay: number
+  /**
+   * LA PART DU JOUR DÉJÀ ÉCOULÉE, dans [0, 1) — `seasonDay` avec ses décimales.
+   *
+   * Elle existe pour ce qui doit COULER au lieu de sauter. `seasonDay` est un entier : tout
+   * ce qui s'y accroche avance d'un cran une fois par jour, et un ruban de calendrier qui
+   * saute de vingt-trois pixels toutes les quarante-cinq minutes ne DÉFILE pas, il claque.
+   * Dérivée du tick comme le jour lui-même, par la même division — les deux ne peuvent donc
+   * pas se contredire.
+   */
+  jourFrac: number
   act: Act
   /** L'année, à partir de 1 — le TOUR des lois (T2). */
   tour: number
@@ -84,6 +94,14 @@ export interface GameTime {
  */
 export function seasonDayAtTick(tick: number, calendarScale: number, jourDeDepart: number): number {
   return Math.floor((tick * calendarScale) / TICKS_PER_SEASON_DAY) + jourDeDepart
+}
+
+/** La part du jour écoulée à ce tick, dans [0, 1) — la MÊME division que `seasonDayAtTick`,
+ *  privée de son plancher. Pure, sans branche : ce qui coule et ce qui compte sortent du même
+ *  calcul, donc le franchissement d'un jour tombe exactement où la fraction repasse à zéro. */
+export function fractionDuJourAtTick(tick: number, calendarScale: number): number {
+  const jours = (tick * calendarScale) / TICKS_PER_SEASON_DAY
+  return jours - Math.floor(jours)
 }
 
 /** LE JOUR DE SAISON DE L'ÉTAT — la lecture courante, celle que presque tout le monde veut. */
@@ -253,6 +271,7 @@ export function gameTimeAt(state: SimState, tick: number): GameTime {
     nuit: partDeNuit(cycleTick, dayTicks),
     dayTicks,
     seasonDay,
+    jourFrac: fractionDuJourAtTick(tick, state.calendarScale),
     act: actForDay(seasonDay),
     tour: tourForDay(seasonDay),
     phase: phaseForDay(seasonDay),

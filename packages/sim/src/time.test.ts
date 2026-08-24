@@ -6,6 +6,7 @@ import {
   actForDay,
   calendarScaleForSeasonCycles,
   cycleOffsetForStartHour,
+  fractionDuJourAtTick,
   dayTicksAt,
   dayTicksPourJour,
   estCrepuscule,
@@ -21,6 +22,43 @@ import {
 } from './time'
 
 describe('temps (A1 — fonction pure du tick)', () => {
+  /**
+   * LE JOUR ET SA FRACTION NE PEUVENT PAS SE CONTREDIRE — ils sortent de la MÊME division.
+   *
+   * `jourFrac` existe pour ce qui doit couler (le ruban de la barre haute) plutôt que sauter.
+   * Le piège serait qu'elle dérive du jour entier : à la bascule, le compteur avancerait d'un
+   * cran pendant que la fraction serait encore à 0,999, et l'affichage reculerait d'un jour le
+   * temps d'une image. On balaie donc la bascule tick par tick et on affirme que la position
+   * CONTINUE — jour + fraction — est strictement croissante et sans marche.
+   */
+  it('la fraction du jour recolle exactement au compteur, à la bascule comme ailleurs', () => {
+    const echelle = 32 // le calendrier verrouillé sur le cycle (S2)
+    const parJour = TICKS_PER_SEASON_DAY / echelle
+    // Un balayage CONTIGU de part et d'autre de chaque bascule — pas trois cas épars, sans
+    // quoi l'écart mesuré serait celui entre deux jours éloignés et ne prouverait rien.
+    for (const bascule of [parJour, 2 * parJour, 7 * parJour]) {
+      let precedent = -Infinity
+      for (let k = -3; k <= 3; k += 1) {
+        const tick = bascule + k
+        const jour = seasonDayAtTick(tick, echelle, 1)
+        const frac = fractionDuJourAtTick(tick, echelle)
+        expect(frac).toBeGreaterThanOrEqual(0)
+        expect(frac).toBeLessThan(1)
+        // La position continue avance toujours, et jamais d'un jour d'un coup.
+        const position = jour + frac
+        if (precedent > -Infinity) {
+          expect(position, `au tick ${tick}`).toBeGreaterThan(precedent)
+          expect(position - precedent, `au tick ${tick}`).toBeLessThan(0.001)
+        }
+        precedent = position
+      }
+    }
+    // Le premier tick d'un jour porte une fraction NULLE : c'est ce qui fait que le ruban
+    // touche le filet du jour au moment exact où le compteur change.
+    expect(fractionDuJourAtTick(parJour, echelle)).toBe(0)
+    expect(seasonDayAtTick(parJour, echelle, 1)).toBe(2)
+  })
+
   it('début de partie : jour 1, acte I, à l’aube (horloge murale), de jour', () => {
     const sim = createSim(1)
     // Le cycle démarre à l'aube ; l'horloge murale la place à CYCLE_DAWN_HOUR.
@@ -35,6 +73,8 @@ describe('temps (A1 — fonction pure du tick)', () => {
       // l'Ardeur. Épinglé en littéral — une garde relue à la courbe qu'elle teste ne garde rien.
       dayTicks: 30_096,
       seasonDay: 1,
+      jourFrac: 0, // le jour vient de commencer — la part écoulée est nulle
+
       act: 1,
       tour: 1, // l'an 1 (saison-sans-fin T2)
       phase: 1, // l'Éclosion

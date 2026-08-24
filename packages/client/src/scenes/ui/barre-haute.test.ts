@@ -22,6 +22,7 @@ function temps(p: Partial<GameTime> = {}): GameTime {
     nuit: 0,
     dayTicks: 0,
     seasonDay: 52,
+    jourFrac: 0,
     act: 2,
     tour: 1,
     phase: 2,
@@ -142,6 +143,59 @@ describe('la barre haute — le ruban et le ciel', () => {
     expect(a - b).toBe(23)
   })
 
+  /**
+   * IL COULE, IL NE CLAQUE PAS. Accroché au jour ENTIER, le tapis sautait de 23 px une fois
+   * par jour de jeu — un cran toutes les 45 min, et rien entre les deux. La garde tient la
+   * propriété qui manquait : la position bouge À L'INTÉRIEUR d'un jour, proportionnellement.
+   */
+  it('le tapis avance AVEC la journée, pas d’un cran au changement de jour', () => {
+    const x = (frac: number): number => jouer(etat({ time: temps({ seasonDay: 52, jourFrac: frac }) })).vue.tapisX
+    expect(x(0)).toBeGreaterThan(x(0.25))
+    expect(x(0.25)).toBeGreaterThan(x(0.5))
+    expect(x(0.5)).toBeGreaterThan(x(0.75))
+    // Une demi-journée vaut la moitié d'un jour (11,5 px), à l'arrondi du pixel près — le
+    // tapis se pose sur des pixels entiers pour que le texte du ruban reste net.
+    expect(Math.abs(x(0) - x(0.5) - 11.5)).toBeLessThanOrEqual(0.5)
+    // …et la fin d'un jour rejoint EXACTEMENT le début du suivant : aucun saut à la bascule.
+    expect(x(1)).toBe(jouer(etat({ time: temps({ seasonDay: 53, jourFrac: 0 }) })).vue.tapisX)
+  })
+
+  /**
+   * AUCUN SAUT À LA BASCULE DU JOUR — la garde qu'Alexis a demandée nommément.
+   *
+   * Le risque est réel et il est double : `seasonDay` s'incrémente pendant que `jourFrac`
+   * retombe à zéro (deux champs qui bougent ensemble, une occasion de se décaler d'un jour
+   * entier), et le TAPIS est reconstruit à ce moment-là (nouvelle fenêtre de graduations).
+   * On balaie donc la bascule pas à pas et on affirme la seule propriété qui compte : entre
+   * deux relevés voisins, le ruban n'avance jamais de plus qu'un pas — jamais d'un cran de
+   * 23 px. Un balayage, pas trois cas choisis : c'est au bord que les défauts vivent.
+   */
+  it('la bascule d’un jour au suivant ne fait AUCUN saut', () => {
+    const echantillons: number[] = []
+    for (let i = 0; i <= 20; i += 1) {
+      const t = 0.9 + i * 0.01 // de 0,90 à 1,10 — la bascule est à 1,00
+      const jour = 52 + Math.floor(t)
+      const frac = t - Math.floor(t)
+      echantillons.push(jouer(etat({ time: temps({ seasonDay: jour, jourFrac: frac }) })).vue.tapisX)
+    }
+    // Le pas nominal entre deux relevés vaut 0,23 px ; l'arrondi au pixel le borne à 1.
+    for (let i = 1; i < echantillons.length; i += 1) {
+      const pas = echantillons[i - 1]! - echantillons[i]!
+      expect(pas, `entre les relevés ${i - 1} et ${i}`).toBeGreaterThanOrEqual(0)
+      expect(pas, `entre les relevés ${i - 1} et ${i}`).toBeLessThanOrEqual(1)
+    }
+    // Et sur toute la traversée, le ruban a bien avancé d'un cinquième de jour — 4,6 px,
+    // donc 4 ou 5 selon où tombent les deux arrondis d'extrémité.
+    const course = echantillons[0]! - echantillons[echantillons.length - 1]!
+    expect(course).toBeGreaterThanOrEqual(4)
+    expect(course).toBeLessThanOrEqual(5)
+  })
+
+  it('le voile du passé suit la tête, il ne s’arrête pas au jour entier', () => {
+    const w = (frac: number): number => jouer(etat({ time: temps({ jourFrac: frac }) })).vue.passeW
+    expect(w(0.75)).toBeGreaterThan(w(0.25))
+  })
+
   it('le caractère de la saison paraît quand il y en a un, et se tait sinon', () => {
     expect(jouer(etat({ caractere: undefined })).vue.caractere).toBeNull()
     expect(jouer(etat({ caractere: 'la Canicule' })).vue.caractere).toBe('LA CANICULE')
@@ -161,6 +215,9 @@ describe('la barre haute — le ruban et le ciel', () => {
     const a = jouer(etat({ time: temps({ hourOfCycle: 10 }) })).vue.cielX
     const b = jouer(etat({ time: temps({ hourOfCycle: 11 }) })).vue.cielX
     expect(a - b).toBe(22)
+    // …et il coule DANS l'heure, comme le ruban dans le jour.
+    const demi = jouer(etat({ time: temps({ hourOfCycle: 10.5 }) })).vue.cielX
+    expect(a - demi).toBe(11)
   })
 
   it('l’icône dit le temps qu’il fait ici — soleil ou lune quand le ciel est dégagé', () => {
@@ -209,7 +266,7 @@ describe('le sol de la barre haute', () => {
     'l’heure (titre)': [255, 255, 255],
     'le nom du lieu': [242, 234, 208],
     'le toponyme (encre atténuée)': [154, 143, 120],
-    'les numéros de jour (encre effacée)': [139, 132, 116],
+    'le toponyme en surtitre et l’an (encre effacée)': [139, 132, 116],
   }
 
   it('LA PRÉMISSE : sans sol, ces encres seraient illisibles sur le monde de midi', () => {

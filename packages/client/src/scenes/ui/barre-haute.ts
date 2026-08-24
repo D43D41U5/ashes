@@ -107,17 +107,24 @@ export const BARRE_SOL_ENCRE = '12,9,7'
  * `[position dans la hauteur, opacité]` — du haut de la barre à son bas.
  *
  * PRESQUE PLAT, et c'est voulu (2026-08-24) : la barre est sombre d'un bord à l'autre et de
- * haut en bas. La première version tombait à 0,62 sur son dernier cinquième — le rang des
- * numéros de jour y perdait son sol. Ce qui doit fondre, c'est ce qui vient APRÈS la barre :
- * `.bh-ombre` s'en charge, sous le filet.
+ * haut en bas. La première version tombait à 0,62 sur son dernier cinquième — le rang du bas
+ * y perdait son sol. Ce qui doit fondre, c'est ce qui vient APRÈS la barre : l'ombre sous le
+ * filet s'en charge.
  */
 export const BARRE_SOL_ARRETS: readonly (readonly [number, number])[] = [
   [0, 0.96],
   [1, 0.92],
 ]
-/** Le bas du rang de texte le plus bas de la barre (les numéros de jour du ruban), en part de
- *  la hauteur : c'est là que le sol est le plus mince sous une lettre. */
-const BAS_DU_TEXTE = (10 + 37 + 10) / BARRE_H
+/**
+ * Le bas du rang de texte le plus bas de la barre, en part de la hauteur : c'est là que le sol
+ * est le plus mince sous une lettre.
+ *
+ * C'est la LIGNE DE LA TEMPÉRATURE, en bas du coin du ciel : 20 px d'heure + 3 de gouttière +
+ * 16 de température font 39 px, centrés dans les 72 de la barre. La colonne de gauche descend
+ * moins bas (15 + 26 = 41 px centrés), et la plaque « JOUR N » ne compte pas — elle porte son
+ * propre fond opaque.
+ */
+const BAS_DU_TEXTE = ((BARRE_H + 39) / 2) / BARRE_H
 
 /** L'opacité du sol à une hauteur donnée — l'interpolation même du dégradé CSS. */
 export function opaciteDuSol(part: number): number {
@@ -245,6 +252,8 @@ export interface VueBarre {
   an: string
   jour: string
   tapisX: number
+  /** La largeur du voile du passé, en espace TAPIS — elle coule avec la tête. */
+  passeW: number
   caractere: string | null
   caractereEncre: string
   heureTxt: string
@@ -272,7 +281,14 @@ export function vueDeLaBarre(
   // LA GRÂCE : on tient le lieu un instant après en être sorti (voir LIEU_GRACE_MS).
   const tenu = s.lieu !== undefined || (memoire.nom !== undefined && s.now - memoire.vuA < LIEU_GRACE_MS)
   const c = s.ambiant === undefined ? 0 : Math.round(s.ambiant)
-  const centre = (time.seasonDay - 1) * PX_PAR_JOUR + PX_PAR_JOUR / 2
+  // ═══ LE RUBAN COULE, IL NE CLAQUE PAS (Alexis, 2026-08-24) ═══
+  // Accroché au jour ENTIER, le tapis sautait de 23 px une fois par jour de jeu — soit un cran
+  // toutes les 45 min, et rien entre les deux : ce n'était pas un défilé, c'était une horloge à
+  // aiguille sautante. Il suit désormais `jourFrac`, la part du jour écoulée, dérivée du tick
+  // par la même division que le jour lui-même. La tête se pose donc au BORD GAUCHE du jour et
+  // le traverse d'un bout à l'autre — et les graduations marquent les bornes des jours, pas
+  // leur milieu, pour que « la tête est sur le trait » veuille dire « le jour bascule ».
+  const centre = (time.seasonDay - 1 + time.jourFrac) * PX_PAR_JOUR
   const heure = Math.floor(time.hourOfCycle)
   return {
     memoire,
@@ -295,12 +311,15 @@ export function vueDeLaBarre(
       jour: `JOUR ${time.seasonDay}`,
       // Le tapis glisse d'un jour à l'autre ; la tête, elle, ne bouge jamais.
       tapisX: Math.round(TETE - centre),
+      passeW: Math.round(centre),
       caractere: s.caractere === undefined ? null : s.caractere.toUpperCase(),
       caractereEncre: teinteDeSaison(time.phase),
       heureTxt: `${String(heure).padStart(2, '0')}H`,
       // Le ciel est une TUILE de 24 h répétée : on ne fait que la faire glisser. `+24` garde
-      // l'origine positive quand la fenêtre déborde avant minuit.
-      cielX: Math.round(TETE_H - ((heure + 24) * PX_PAR_HEURE + PX_PAR_HEURE / 2)),
+      // l'origine positive quand la fenêtre déborde avant minuit. Il coule à l'heure PLEINE
+      // (décimales comprises) pour la même raison que le ruban de saison — sinon il sautait
+      // de 22 px toutes les deux minutes réelles.
+      cielX: Math.round(TETE_H - (time.hourOfCycle + 24) * PX_PAR_HEURE),
       ico: s.ciel ?? (time.isNight ? 'lune' : 'soleil'),
     },
   }
@@ -316,9 +335,7 @@ export function createBarreHaute(board: HTMLElement): BarreHaute {
   const zoneEl = $('.bh-zone')
   const lieuRang = $('.bh-lieu')
   const lieuNomEl = $('.bh-lieu-nom')
-  const airEl = $('.bh-air')
   const airTexteEl = $('.bh-air-txt')
-  const airIcoEl = $('.bh-air-ico')
   const anEl = $('.bh-an')
   const tapisEl = $('.bh-tapis')
   const jourEl = $('.bh-jour')
@@ -359,12 +376,9 @@ export function createBarreHaute(board: HTMLElement): BarreHaute {
       lieuRang.style.opacity = vue.lieuOp
       lieuRang.style.transform = vue.lieuX
 
-      airEl.style.display = vue.airVisible ? '' : 'none'
+      airTexteEl.style.visibility = vue.airVisible ? '' : 'hidden'
       airTexteEl.textContent = vue.airTxt
       airTexteEl.style.color = vue.airEncre
-      // Le thermomètre est un TRAIT, comme les icônes de ciel : deux boîtes CSS posées côte à
-      // côte par le flex ne s'empilent jamais en thermomètre — elles ne dessinaient rien.
-      airIcoEl.setAttribute('stroke', vue.airEncre)
 
       anEl.textContent = vue.an
       jourEl.textContent = vue.jour
@@ -375,6 +389,9 @@ export function createBarreHaute(board: HTMLElement): BarreHaute {
         tapisEl.innerHTML = tapis(s.time)
       }
       tapisEl.style.transform = `translateX(${vue.tapisX}px)`
+      // Le voile du passé passe par une VARIABLE portée par le tapis : il est reconstruit
+      // avec lui au changement de jour, une poignée directe pointerait sur un élément mort.
+      tapisEl.style.setProperty('--passe', `${vue.passeW}px`)
 
       caractereEl.style.visibility = vue.caractere === null ? 'hidden' : ''
       caractereNomEl.textContent = vue.caractere ?? ''
@@ -410,14 +427,16 @@ export function createBarreHaute(board: HTMLElement): BarreHaute {
     }
     // Un filet par jour, plus fort tous les dix — où se pose le numéro du jour de l'an.
     const d0 = Math.max(1, time.seasonDay - 22)
+    // TOUS LES JOURS SE VALENT (Alexis, 2026-08-24). Un filet plus fort tous les dix jours et
+    // son numéro faisaient une SECONDE graduation par-dessus la première : deux rythmes dans
+    // un ruban qui n'en a qu'un — la saison. Le jour se lit sur la plaque de la tête ; la
+    // règle, elle, ne fait que compter. Le filet marque le DÉBUT du jour, donc la tête qui
+    // touche un filet est exactement le jour qui bascule.
     for (let d = d0; d <= time.seasonDay + 34; d += 1) {
-      const x = (d - 1) * PX_PAR_JOUR + PX_PAR_JOUR / 2
-      const fort = d % 10 === 0
-      parts.push(`<i class="bh-tick${fort ? ' bh-tick-fort' : ''}" style="left:${x}px"></i>`)
-      if (fort) parts.push(`<div class="bh-num" style="left:${x}px">${d}</div>`)
+      parts.push(`<i class="bh-tick" style="left:${(d - 1) * PX_PAR_JOUR}px"></i>`)
     }
     // CE QUI EST PASSÉ S'ÉTEINT : un voile du premier jour jusqu'à la tête.
-    parts.push(`<div class="bh-passe" style="width:${Math.round((time.seasonDay - 1) * PX_PAR_JOUR + PX_PAR_JOUR / 2)}px"></div>`)
+    parts.push(`<div class="bh-passe"></div>`)
     return parts.join('')
   }
 }
@@ -468,9 +487,6 @@ function markup(): string {
        boîte de deux pixels par coin, et le overflow:hidden du rang — indispensable à
        l'animation de hauteur — lui coupait la pointe gauche. Un SVG dessine DANS son cadre. */
     .bh-lieu-los{flex-shrink:0;}
-    .bh-air{display:flex;align-items:center;gap:7px;margin-top:5px;line-height:14px;}
-    .bh-air-txt{font-size:12px;letter-spacing:1px;${INK_OUTLINE}}
-    .bh-air-ico{flex-shrink:0;}
     /* Un HUD ne s'impose pas à qui a demandé le calme : le changement reste, le mouvement part. */
     @media (prefers-reduced-motion: reduce){
       .bh-zone,.bh-lieu{transition:none;}
@@ -480,15 +496,16 @@ function markup(): string {
     .bh-centre{flex-grow:1;display:flex;align-items:center;gap:14px;justify-content:center;}
     .bh-an{width:58px;flex-shrink:0;text-align:right;font-size:11px;letter-spacing:3px;color:${HEX.faint};${INK_OUTLINE}}
     .bh-fenetre{position:relative;width:${FENETRE}px;height:52px;overflow:hidden;flex-shrink:0;${masque(6, 94)}}
-    .bh-tapis{position:absolute;left:0;top:0;height:52px;width:12000px;transition:transform .3s ease;}
+    /* AUCUNE TRANSITION sur le tapis ni sur le ciel : leur position change à chaque image
+       depuis qu'elle suit la fraction du jour. Interpoler une valeur déjà continue ne la
+       lisserait pas — elle la ferait TRAÎNER d'un tiers de seconde en permanence. */
+    .bh-tapis{position:absolute;left:0;top:0;height:52px;width:12000px;}
     .bh-bande{position:absolute;top:6px;height:26px;border-top:2px solid;border-left:2px solid;}
     .bh-nom{position:absolute;top:12px;font-size:10px;letter-spacing:3px;opacity:.88;white-space:nowrap;
       text-shadow:0 0 4px rgba(12,9,7,.95),0 0 2px rgba(12,9,7,.95);}
     .bh-tick{position:absolute;top:25px;width:1px;height:9px;background:rgba(139,132,116,.42);}
-    .bh-tick-fort{top:20px;height:14px;background:${HEX.faint};}
-    .bh-num{position:absolute;top:37px;transform:translateX(-50%);font-size:10px;letter-spacing:1px;color:${HEX.faint};}
     .bh-couture{position:absolute;top:4px;width:2px;height:30px;background:${HEX.borderWarm};}
-    .bh-passe{position:absolute;left:0;top:6px;height:26px;background:rgba(10,8,6,.60);}
+    .bh-passe{position:absolute;left:0;top:6px;height:26px;width:var(--passe,0);background:rgba(10,8,6,.60);}
     /* LA TÊTE DE LECTURE, au tiers — elle ne bouge jamais, c'est le monde qui défile. */
     .bh-tete{position:absolute;left:${TETE - 1}px;top:2px;width:2px;height:34px;background:${HEX.emberBright};
       box-shadow:0 0 8px rgba(232,198,106,.6);}
@@ -502,13 +519,20 @@ function markup(): string {
     .bh-caractere-nom{font-size:11px;font-weight:700;letter-spacing:1px;white-space:nowrap;${INK_OUTLINE}}
 
     /* ── LE CIEL ET L'HEURE ── */
-    .bh-droite{width:310px;display:flex;align-items:center;justify-content:flex-end;gap:12px;}
+    /* ═══ LE COIN DU CIEL — une icône, deux lignes (Alexis, 2026-08-24) ═══
+       L'heure vivait seule à droite et la température à gauche, sous le lieu. Elles disent
+       pourtant la même chose : ce qu'il fait DEHORS, maintenant. Réunies en deux lignes contre
+       le pictogramme du temps, elles se lisent d'un seul regard — et la colonne de gauche
+       redevient ce qu'elle est, un lieu et rien d'autre. */
+    .bh-droite{width:340px;display:flex;align-items:center;justify-content:flex-end;gap:12px;}
+    .bh-meteo{display:flex;align-items:center;flex-shrink:0;}
+    .bh-lecture{display:flex;flex-direction:column;align-items:flex-start;gap:3px;min-width:78px;}
+    .bh-air-txt{font-size:14px;font-weight:700;letter-spacing:1px;line-height:16px;${INK_OUTLINE}}
     .bh-ciel-fen{position:relative;width:${FENETRE_H}px;height:34px;overflow:hidden;${masque(12, 88)}}
-    .bh-ciel{position:absolute;inset:0;background-size:${24 * PX_PAR_HEURE}px 16px;background-repeat:repeat-x;
-      transition:background-position .3s ease;}
+    .bh-ciel{position:absolute;inset:0;background-size:${24 * PX_PAR_HEURE}px 16px;background-repeat:repeat-x;}
     .bh-ciel-tete{position:absolute;left:${TETE_H - 1}px;top:1px;width:2px;height:20px;background:${HEX.emberBright};
       box-shadow:0 0 6px rgba(232,198,106,.55);}
-    .bh-heure{font-size:15px;font-weight:700;letter-spacing:1px;color:${HEX.title};${INK_OUTLINE_STRONG}}
+    .bh-heure{font-size:18px;font-weight:700;letter-spacing:1px;line-height:20px;color:${HEX.title};${INK_OUTLINE_STRONG}}
     .bh-ico{flex-shrink:0;}
   </style>
   <div class="bh-fond"></div>
@@ -521,13 +545,6 @@ function markup(): string {
         <svg class="bh-lieu-los" width="11" height="11" viewBox="0 0 12 12" fill="none"
           stroke="${HEX.bodyBright}" stroke-width="1.6"><path d="M6 1.4 10.6 6 6 10.6 1.4 6Z" stroke-linejoin="round"/></svg>
         <div class="bh-lieu-nom"></div>
-      </div>
-      <div class="bh-air">
-        <svg class="bh-air-ico" width="9" height="12" viewBox="0 0 8 12" fill="none" stroke-width="1.3">
-          <path d="M4 1.6v5.2" stroke-linecap="round"/>
-          <circle cx="4" cy="9.2" r="2.2"/>
-        </svg>
-        <span class="bh-air-txt"></span>
       </div>
     </div>
 
@@ -550,8 +567,11 @@ function markup(): string {
 
     <div class="bh-droite">
       <div class="bh-ciel-fen"><div class="bh-ciel"></div><i class="bh-ciel-tete"></i></div>
-      ${icones()}
-      <div class="bh-heure"></div>
+      <div class="bh-meteo">${icones()}</div>
+      <div class="bh-lecture">
+        <div class="bh-heure"></div>
+        <div class="bh-air-txt"></div>
+      </div>
     </div>
   </div>`
 }
@@ -564,7 +584,7 @@ function markup(): string {
  */
 function icones(): string {
   const svg = (nom: string, teinte: string, corps: string): string =>
-    `<svg class="bh-ico" data-ico="${nom}" width="17" height="17" viewBox="0 0 16 16" fill="none" ` +
+    `<svg class="bh-ico" data-ico="${nom}" width="24" height="24" viewBox="0 0 16 16" fill="none" ` +
     `stroke="${teinte}" stroke-width="1.4" style="display:none">${corps}</svg>`
   const nuage = `<path d="M4.5 10.5h7a2.5 2.5 0 0 0 0-5 3.5 3.5 0 0 0-6.8-.8 2.9 2.9 0 0 0-.2 5.8Z" stroke-linejoin="round"/>`
   const neigeux = '#9fbcc6'
