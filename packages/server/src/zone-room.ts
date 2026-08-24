@@ -184,6 +184,7 @@ export class ZoneRoom extends Room {
       nodes: this.world.sim.nodes,
       grounds: this.world.sim.grounds,
       calendarScale: this.world.sim.calendarScale,
+      jourDeDepart: this.world.sim.jourDeDepart,
       playerSpawn: spawn,
     }
     client.send('ready', ready)

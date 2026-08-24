@@ -11,12 +11,18 @@
  * Une graine ne dit donc rien. Ce qu'il faut comparer, c'est le TAUX de réussite avant et
  * après : si le raid aboutit aussi souvent, le rouge est un décalage du flux RNG ; s'il
  * s'effondre, la nuit est devenue trop dure et c'est une vraie régression de jeu.
+ *
+ * 24 GRAINES depuis le 2026-08-23 (c'était 12). Le passage du cycle à 45 min a donné
+ * 6/12 contre 8/12 — un écart qu'on ne peut ni croire ni écarter à douze tirages (σ ≈ 1,4
+ * sur un taux de ~50 %). À 24, le même relevé a rendu 7/24 contre 11/24 : toujours pas
+ * significatif (z ≈ 1,2), mais on le sait maintenant, au lieu de le supposer.
  */
 import {
   ALIGNMENT,
+  BALANCE,
   TERRAIN_GRASS,
   TICKS_PER_CYCLE,
-  DAY_TICKS_PER_CYCLE,
+  dayTicksPourJour,
   countOf,
   createEmptyMap,
   createSim,
@@ -45,7 +51,7 @@ function jouerLeRaid(graine: number): Issue {
   const meuteChest = sim.structures.find((s) => s.type === 'chest' && s.villageId === meute.id)!
   const boisAvant = countOf(meuteChest.inventory ?? [], 'wood')
 
-  sim.tick = DAY_TICKS_PER_CYCLE - 10
+  sim.tick = dayTicksPourJour(BALANCE.JOUR_DE_DEPART) - 10
   drainEvents(sim)
   let alarme = false
   let grenierCassé = false
@@ -66,7 +72,7 @@ function jouerLeRaid(graine: number): Issue {
   return { graine, alarme, grenierCassé, butin: après + porté > boisAvant - 1, raidersVivants: raiders.length }
 }
 
-const graines = Array.from({ length: 12 }, (_, i) => 20 + i)
+const graines = Array.from({ length: 24 }, (_, i) => 20 + i)
 let alarmes = 0
 let cassés = 0
 let butins = 0

@@ -1,12 +1,13 @@
 /**
- * LE CRI DE FUREUR ET LE PLAFOND GLOBAL (décisions d'Alexis ④⑤⑥ + hypothèse ⑳, 2026-08-21).
+ * LE CRI DE FUREUR ET LE PLAFOND GLOBAL (décisions d'Alexis ④⑤⑥ + hypothèse ⑳, 2026-08-21 ;
+ * ré-ancré sur l'année qui tourne le 2026-08-23, `docs/specs/saisons.md` S4-S5 et S15).
  *
  * Sous le froid extrême, un cendreux qui voit une proie appelle — et l'appel réveille LE SOL.
- * La borne est double : le plafond du cri monte en continu avec le jour, et tout passe sous le
+ * La borne est double : le plafond du cri suit le froid de l'année, et tout passe sous le
  * plafond GLOBAL — qui compte ce qu'il borne (jamais le sédiment déjà borné ailleurs).
  */
 import { describe, it, expect } from 'vitest'
-import { CENDREUX, TERRAIN_GRASS } from './balance'
+import { BALANCE, CENDREUX, TERRAIN_GRASS } from './balance'
 import { createSim, spawnEntity, type SimState } from './sim'
 import { createEmptyMap } from './map'
 import { cendreuxSousPression, plafondGlobal, placeSousPlafondGlobal, spawnMonster } from './monsters'
@@ -14,6 +15,17 @@ import { cendreuxStep, willRiseAsCendreux } from './cendreux'
 import { advanceReveils } from './morts'
 import { drainEvents } from './events'
 import { cycleOffsetForStartHour, seasonRamp, TICKS_PER_CYCLE, TICKS_PER_SEASON_DAY } from './time'
+
+/**
+ * LE CŒUR D'UNE SAISON, en jour de l'année — dérivé d'`ACT_DAYS`, jamais écrit : 15, 45, 75,
+ * 105. La fureur est un cran de FROID : elle se cherche au cœur du Grand Froid (la plaine y
+ * tombe à −16 °C la nuit, sous `TORPEUR.FUREUR`) et jamais au cœur de l'Ardeur (+20).
+ */
+const coeurDeSaison = (phase: number): number => (phase - 1) * BALANCE.ACT_DAYS + BALANCE.ACT_DAYS / 2
+const ECLOSION = coeurDeSaison(1)
+const ARDEUR = coeurDeSaison(2)
+const PLUIES = coeurDeSaison(3)
+const GRAND_FROID = coeurDeSaison(4)
 
 function nuitDuJour(jour: number): SimState {
   const state = createSim(1, {
@@ -39,7 +51,7 @@ function stepCendreux(state: SimState, id: number, ticks: number): void {
 
 describe('un crieur par proie à la fois (décision sur mesure, 2026-08-21)', () => {
   it('deux cendreux voient la même proie : UN seul cri — le second attend la fin du cooldown du premier', () => {
-    const state = nuitDuJour(55)
+    const state = nuitDuJour(GRAND_FROID)
     const proie = spawnEntity(state, 51.5, 33.5)
     const a = spawnMonster(state, 'cendreux', 47.5, 32.5) // tous deux du même côté, à ~4 tuiles
     const b = spawnMonster(state, 'cendreux', 47.5, 34.5)
@@ -73,8 +85,8 @@ describe('un crieur par proie à la fois (décision sur mesure, 2026-08-21)', ()
 })
 
 describe('le cri de fureur (④⑤)', () => {
-  it('nuit d\'acte III (T=10 ≤ FUREUR), une proie en vue : il crie, et le SOL se lève en salve', () => {
-    const state = nuitDuJour(55)
+  it('nuit du Grand Froid (T = −16 °C ≤ FUREUR), une proie en vue : il crie, et le SOL se lève en salve', () => {
+    const state = nuitDuJour(GRAND_FROID)
     spawnEntity(state, 50.5, 32.5) // la proie
     const id = spawnMonster(state, 'cendreux', 47.5, 32.5) // à 3 tuiles : vue pleine la nuit
     drainEvents(state)
@@ -84,8 +96,8 @@ describe('le cri de fureur (④⑤)', () => {
     expect(cris).toHaveLength(1)
     expect(cris[0]).toMatchObject({ x: 50.5, y: 32.5 })
     // La salve plante UN site par tick de décision — au fil des pensées, pas d'un coup.
-    const k = Math.round(seasonRamp(0, CENDREUX.CRI.PLAFOND_FIN, 55))
-    expect(k).toBeGreaterThanOrEqual(2) // 6 → 2 le 2026-08-21 (mesure) : deux réveils par cri en fin de saison
+    const k = Math.round(seasonRamp(0, CENDREUX.CRI.PLAFOND_FIN, GRAND_FROID))
+    expect(k).toBeGreaterThanOrEqual(2) // 6 → 2 le 2026-08-21 (mesure) : deux réveils par cri au cœur de l'hiver
     // LA PROIE SE DÉROBE (kite de banc) : sans quoi il l'atteint, arme son coup, et le
     // harnais — qui n'appelle pas advanceCombat — le laisse en wind-up éternel, salve gelée
     // (mémoire « une phase seule n'est pas un tick »). Elle reste à 4 tuiles : vue, jamais prise.
@@ -112,7 +124,7 @@ describe('le cri de fureur (④⑤)', () => {
   })
 
   it('le cooldown tient : pas deux cris dans la même demi-minute', () => {
-    const state = nuitDuJour(55)
+    const state = nuitDuJour(GRAND_FROID)
     spawnEntity(state, 50.5, 32.5)
     const id = spawnMonster(state, 'cendreux', 47.5, 32.5)
     drainEvents(state)
@@ -121,7 +133,7 @@ describe('le cri de fureur (④⑤)', () => {
   })
 
   it('la nuit TIÈDE ne crie jamais (la fureur est un cran de froid, pas un réflexe)', () => {
-    const state = nuitDuJour(5) // acte I : plaine de nuit à 60, très au-dessus de FUREUR
+    const state = nuitDuJour(ARDEUR) // cœur de l'été : plaine de nuit à +20 °C, très au-dessus de FUREUR
     spawnEntity(state, 50.5, 32.5)
     const id = spawnMonster(state, 'cendreux', 49.5, 32.5) // à 1 tuile : même la vue plancher le voit
     drainEvents(state)
@@ -129,11 +141,14 @@ describe('le cri de fureur (④⑤)', () => {
     expect(drainEvents(state).some((e) => e.type === 'cendreux_cri')).toBe(false)
   })
 
-  it('le plafond du cri MONTE en continu : 0 au tout début, PLAFOND_FIN au jour 60', () => {
-    expect(Math.round(seasonRamp(0, CENDREUX.CRI.PLAFOND_FIN, 1))).toBe(0)
-    expect(Math.round(seasonRamp(0, CENDREUX.CRI.PLAFOND_FIN, 60))).toBe(CENDREUX.CRI.PLAFOND_FIN)
+  it('le plafond du cri SUIT LE FROID : 0 au cœur de l\'Ardeur, PLAFOND_FIN au cœur du Grand Froid', () => {
+    // La salve n'a plus de « début de saison » ni de « fin » : elle respire avec l'année
+    // (S15). Ce qui reste vrai, et qui est le contrat, c'est qu'elle monte SANS REDESCENDRE de
+    // l'été à l'hiver — le cri est le crescendo de la marche vers le Grand Froid.
+    expect(Math.round(seasonRamp(0, CENDREUX.CRI.PLAFOND_FIN, ARDEUR))).toBe(0)
+    expect(Math.round(seasonRamp(0, CENDREUX.CRI.PLAFOND_FIN, GRAND_FROID))).toBe(CENDREUX.CRI.PLAFOND_FIN)
     let prev = 0
-    for (let jour = 1; jour <= 60; jour++) {
+    for (let jour = ARDEUR; jour <= GRAND_FROID; jour++) {
       const k = Math.round(seasonRamp(0, CENDREUX.CRI.PLAFOND_FIN, jour))
       expect(k).toBeGreaterThanOrEqual(prev)
       prev = k
@@ -142,17 +157,21 @@ describe('le cri de fureur (④⑤)', () => {
 })
 
 describe('le plafond global (⑳ — hypothèse de travail)', () => {
-  it('il monte avec le jour, et il est clampé après la fin de saison', () => {
-    const j1 = nuitDuJour(1)
-    const j60 = nuitDuJour(60)
-    const j80 = nuitDuJour(80)
-    expect(plafondGlobal(j1)).toBe(Math.round(CENDREUX.GLOBAL.DEBUT + (CENDREUX.GLOBAL.FIN - CENDREUX.GLOBAL.DEBUT) / 60))
-    expect(plafondGlobal(j60)).toBe(CENDREUX.GLOBAL.FIN)
-    expect(plafondGlobal(j80)).toBe(CENDREUX.GLOBAL.FIN) // la Cendre finale n'extrapole pas
+  it('il respire avec l\'année : au plancher au cœur de l\'Ardeur, au plafond au cœur du Grand Froid', () => {
+    // Il ne « monte plus avec le jour », et il ne se clampe plus après une fin de saison qui
+    // n'existe pas : la vallée se remplit vers l'hiver et se vide vers l'été (S15). Les deux
+    // bornes se lisent EXACTEMENT aux cardinaux de la courbe, pas à des jours choisis.
+    expect(plafondGlobal(nuitDuJour(ARDEUR))).toBe(CENDREUX.GLOBAL.DEBUT)
+    expect(plafondGlobal(nuitDuJour(GRAND_FROID))).toBe(CENDREUX.GLOBAL.FIN)
+    // Les deux saisons de transition sont STRICTEMENT entre les deux, des deux côtés de l'été.
+    for (const entredeux of [ECLOSION, PLUIES]) {
+      expect(plafondGlobal(nuitDuJour(entredeux))).toBeGreaterThan(CENDREUX.GLOBAL.DEBUT)
+      expect(plafondGlobal(nuitDuJour(entredeux))).toBeLessThan(CENDREUX.GLOBAL.FIN)
+    }
   })
 
   it('PLEIN, la vallée ne relève plus personne — et abattre rouvre la porte', () => {
-    const state = nuitDuJour(1)
+    const state = nuitDuJour(ECLOSION)
     const toit = plafondGlobal(state)
     for (let i = 0; i < toit; i++) spawnMonster(state, 'cendreux', 10.5 + (i % 8), 10.5 + Math.floor(i / 8))
     expect(placeSousPlafondGlobal(state)).toBe(false)
@@ -172,7 +191,7 @@ describe('le plafond global (⑳ — hypothèse de travail)', () => {
   })
 
   it('IL COMPTE CE QU\'IL BORNE : ni les résidents de Repaire, ni les gardes de convoi — mais les reliques, oui', () => {
-    const state = nuitDuJour(1)
+    const state = nuitDuJour(ECLOSION)
     const resident = spawnMonster(state, 'cendreux', 10.5, 10.5)
     state.monsters.find((m) => m.entityId === resident)!.homePoi = 3 // borné par le cap de son lieu
     const garde = spawnMonster(state, 'cendreux', 12.5, 10.5)

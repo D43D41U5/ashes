@@ -12,7 +12,7 @@ import { distSq } from './geometry'
 import { countOf, itemsIn } from './items'
 import { deposit, dropTask, equipBestWeapon, followPath, near, setPathTo, withdraw, type Npc } from './npc'
 import type { Entity, SimState } from './sim'
-import { DAY_TICKS_PER_CYCLE, TICKS_PER_CYCLE } from './time'
+import { estCrepuscule, TICKS_PER_CYCLE } from './time'
 import type { Structure, Village } from './village'
 import { granaries } from './village-board'
 import { estGrenier } from './village-plan'
@@ -46,8 +46,10 @@ function nearestOtherVillage(state: SimState, village: Village): Village | undef
 
 /** Assigne les expéditions : raids de Meute à la nuit, dons de Foyer au matin. */
 export function assignErrands(state: SimState): void {
-  const cycleTick = state.tick % TICKS_PER_CYCLE
-  if (cycleTick === DAY_TICKS_PER_CYCLE) {
+  // LE CRÉPUSCULE PASSE PAR `estCrepuscule` — un seul écrivain (spec `saisons.md` S6), et il
+  // tient compte de `cycleOffset`, ce que le modulo brut d'avant ignorait : dans une Veillée
+  // qui démarre à 9 h, ce test tombait à MINUIT, pas au crépuscule.
+  if (estCrepuscule(state, state.tick)) {
     for (const village of state.villages) {
       if (village.archetype !== 'meute') continue
       // On ne raide pas quand la meute est exsangue (< 3 vivants).
@@ -63,7 +65,7 @@ export function assignErrands(state: SimState): void {
       }
     }
   }
-  if (cycleTick === 0 && state.tick > 0) {
+  if (state.tick % TICKS_PER_CYCLE === 0 && state.tick > 0) {
     for (const village of state.villages) {
       // À l'aube, les raiders décrochent.
       for (const npc of state.npcs) {

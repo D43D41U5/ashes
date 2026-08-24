@@ -82,6 +82,10 @@ export const RECIPE_CATEGORY: Record<RecipeId, CraftCategory> = {
   cooked_meat: 'survie',
   tenue_hiver: 'survie', // la tenue d'hiver : de la survie pure (le froid tue en acte III)
   graine: 'survie', // la graine du potager (agriculture) : de la nourriture à venir
+  // Les trois graines de saison (S16) — même famille, même rayon.
+  graine_verte: 'survie',
+  graine_fruit: 'survie',
+  graine_tubercule: 'survie',
   rope: 'materiaux',
   leather: 'materiaux', // le cuir : un matériau tanné
   iron_ingot: 'materiaux',

@@ -132,6 +132,9 @@ export interface ReadyMessage {
    */
   grounds: { x: number; y: number }[]
   calendarScale: number
+  /** Le jour de saison où le monde a ouvert (spec `saisons.md` S2). Le client en a besoin
+   *  pour DATER : sans lui, son gel, sa neige et sa défeuillaison lisent le mauvais jour. */
+  jourDeDepart: number
   playerSpawn: { x: number; y: number }
   /**
    * LA CHRONIQUE REPRISE (persistance Veillée, P1-6) — présente UNIQUEMENT quand l'hôte

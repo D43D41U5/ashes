@@ -22,7 +22,7 @@ import { hantiseDeCendre, densiteDeBase, densiteDesMorts } from './morts'
 import { createEmptyMap, type WorldMap } from './map'
 import { createSim, type SimState } from './sim'
 import { baselineTemperature } from './temperature'
-import { TICKS_PER_CYCLE } from './time'
+import { TICKS_PER_CYCLE, TICKS_PER_SEASON_DAY } from './time'
 
 /** La meme rampe, mais en carte utilisable par `createSim` (terrain reel, zones vides). */
 function carteSimARampe(width = 120, height = 40): WorldMap {
@@ -238,15 +238,20 @@ describe('R6bis — R2-R4 ne touchent pas au flux du PRNG', () => {
 describe('le front lu à un tick quelconque (l’hystérésis du dégel)', () => {
   it('frontAuTick rend le front DU TICK DEMANDÉ, et frontActuel n’en est que le cas courant', () => {
     const map = carteRampe()
-    // Deux ticks distincts doivent rendre deux fronts distincts dès que la cendre s'ébranle.
+    // Deux ticks distincts doivent rendre deux fronts DISTINCTS — et l'affirmer demande de se
+    // poser DANS la morsure. Depuis S11 la Cendre ne mord que le Grand Froid : un monde ouvert
+    // au jour 1 y aurait rendu deux zéros, et un `≤` aurait déclaré la garde verte sans que la
+    // fonction ait bougé d'un bit. On ouvre donc le monde au seuil du Grand Froid, et dix jours
+    // de saison plus tard le front DOIT avoir avancé.
     const scale = 1
-    const a = frontAuTick(map, scale, 0)
-    const b = frontAuTick(map, scale, 100_000)
-    expect(a).toBeLessThanOrEqual(b)
+    const SEUIL_GRAND_FROID = 3 * BALANCE.ACT_DAYS + 1
+    const a = frontAuTick(map, scale, 0, SEUIL_GRAND_FROID)
+    const b = frontAuTick(map, scale, 10 * TICKS_PER_SEASON_DAY, SEUIL_GRAND_FROID)
+    expect(a).toBeLessThan(b)
     // Et sur une carte sans Cendrière, le front est nul à tout tick.
     const nu = carteSansCendre()
-    expect(frontAuTick(nu, scale, 0)).toBe(0)
-    expect(frontAuTick(nu, scale, 999_999)).toBe(0)
+    expect(frontAuTick(nu, scale, 0, SEUIL_GRAND_FROID)).toBe(0)
+    expect(frontAuTick(nu, scale, 999_999, SEUIL_GRAND_FROID)).toBe(0)
   })
 
   it('l’avancée du front reste monotone non décroissante, balayée', () => {

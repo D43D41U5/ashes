@@ -8,12 +8,16 @@ import { spawnMonster } from './monsters'
 import { foundNpcVillage } from './worldgen'
 import { createReplayLog, recordAndStep, runReplay } from './replay'
 import { createSim, snapshot, spawnEntity, step, type MoveInput, type SimState } from './sim'
-import { DAY_TICKS_PER_CYCLE, TICKS_PER_CYCLE, TICKS_PER_SEASON_DAY } from './time'
+import { dayTicksAt, gameTimeAt, TICKS_PER_CYCLE, TICKS_PER_SEASON_DAY } from './time'
 import { grantItems } from './village'
 
 function makeSim(): SimState {
   return createSim(5, { map: createEmptyMap(40, 40, TERRAIN_GRASS) })
 }
+
+/** Le cœur d'une saison, en jour de l'année — DÉRIVÉ d'`ACT_DAYS` (`saisons.md` S1 : quatre
+ *  saisons de trente jours), jamais écrit. Un montage se pose sur une saison, pas sur un jour. */
+const coeurDeSaison = (phase: number): number => (phase - 1) * BALANCE.ACT_DAYS + BALANCE.ACT_DAYS / 2
 
 const entity = (sim: SimState, id: number) => sim.entities.find((e) => e.id === id)!
 
@@ -594,12 +598,16 @@ describe('la mort (A5)', () => {
 describe('les monstres (A6)', () => {
   it('le Cendreux aggro, télégraphe, frappe — et meurt à la lance', () => {
     const sim = makeSim()
-    // LA NUIT FROIDE (jour 55) : depuis le cadran de température (2026-08-21), un cendreux
-    // en plein jour tiède est presque amorphe (vue au plancher) — l'aggro se teste au régime
-    // où il chasse. Le cycle démarre à l'aube : on ajoute la fraction de jour pour la nuit.
-    sim.tick = 54 * TICKS_PER_SEASON_DAY
+    // LA NUIT FROIDE, AU CŒUR DU GRAND FROID : depuis le cadran de température (2026-08-21),
+    // un cendreux en plein jour tiède est presque amorphe (vue au plancher) — l'aggro se teste
+    // au régime où il chasse. Ce régime se cherchait « au jour 55 » quand l'acte III était
+    // l'hiver ; sous les quatre saisons qui tournent (`saisons.md` S4), le jour 55 est le plein
+    // été à +20 °C et l'éveil y tombe à zéro. Le cycle démarre à l'aube : on ajoute la longueur
+    // du JOUR — saisonnière depuis S6, donc LUE sur le cycle et non plus constante.
+    sim.tick = (coeurDeSaison(4) - 1) * TICKS_PER_SEASON_DAY
     sim.tick -= sim.tick % TICKS_PER_CYCLE
-    sim.tick += DAY_TICKS_PER_CYCLE + 1
+    sim.tick += dayTicksAt(sim, sim.tick) + 1
+    expect(gameTimeAt(sim, sim.tick).isNight).toBe(true) // le décalage est un calibrage : il se prouve
     const a = spawnEntity(sim, 10, 10)
     grantHeld(sim, a, 'spear')
     const z = spawnMonster(sim, 'cendreux', 14, 10)

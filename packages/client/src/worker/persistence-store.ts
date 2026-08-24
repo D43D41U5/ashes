@@ -260,7 +260,9 @@ export function metaDepuisSauvegarde(record: SaveRecord): SlotMeta {
   }
   if (typeof parsed !== 'object' || parsed === null) return inconnu
   const env = parsed as { partie?: unknown; sim?: unknown }
-  const etat = (env.partie ?? env.sim) as { seed?: unknown; tick?: unknown; calendarScale?: unknown } | undefined
+  const etat = (env.partie ?? env.sim) as
+    | { seed?: unknown; tick?: unknown; calendarScale?: unknown; jourDeDepart?: unknown }
+    | undefined
   if (typeof etat !== 'object' || etat === null) return inconnu
   const nombre = (v: unknown): number => (typeof v === 'number' && Number.isFinite(v) ? v : 0)
   const tick = nombre(etat.tick)
@@ -270,7 +272,11 @@ export function metaDepuisSauvegarde(record: SaveRecord): SlotMeta {
     seed: nombre(etat.seed),
     // Sans échelle de calendrier, le jour ne se calcule pas : on dit « inconnu » plutôt que
     // d'inventer un jour 1 sur une saison bien avancée.
-    seasonDay: echelle > 0 ? seasonDayAtTick(tick, echelle) : 0,
+    // LE JOUR DE DÉPART EST SÉRIALISÉ (S2) : la vignette de reprise le LIT plutôt que de
+    // supposer 1 — sinon elle annoncerait « jour 12 » sur une vallée ouverte au 51ᵉ, et
+    // l'écran des mondes mentirait de cinquante jours. Repli à 1 pour une sauvegarde d'avant
+    // la refonte, qui ne pouvait ouvrir qu'au jour 1.
+    seasonDay: echelle > 0 ? seasonDayAtTick(tick, echelle, nombre(etat.jourDeDepart) || 1) : 0,
     savedAt: record.savedAt ?? 0,
     createdAt: record.savedAt ?? 0,
   }

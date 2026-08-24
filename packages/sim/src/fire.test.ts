@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { COOK_SLOT, FIRE, TERRAIN_GRASS } from './balance'
+import { BALANCE, CENDREUX, COOK_SLOT, FIRE, TERRAIN_GRASS } from './balance'
 import { addItems, countOf, inventoryOf, makeInventory, stackSize } from './items'
 import { willRiseAsCendreux } from './cendreux'
 import { drainEvents } from './events'
@@ -8,8 +8,8 @@ import { applyInventoryAction } from './inventory-actions'
 import { createEmptyMap } from './map'
 import { advanceMonsters, spawnMonster } from './monsters'
 import { createSim, spawnEntity, type SimState } from './sim'
-import { cycleOffsetForStartHour, DAY_TICKS_PER_CYCLE } from './time'
-import { fireBubble } from './temperature'
+import { cycleOffsetForStartHour, getGameTime } from './time'
+import { baselineTemperature, fireBubble } from './temperature'
 import { addStructure, applyStructureDamage, applyVillageAction, grantItems, type Structure } from './village'
 
 /**
@@ -305,10 +305,26 @@ describe('Le Feu-station : les cases sont de vrais CONTENEURS + verrou de consom
 })
 
 describe('Le Feu-station : le feu ATTIRE les Cendreux quand il fait froid (spec feu-station, A4)', () => {
-  const nightSim = (): SimState => createSim(1, { cycleOffset: DAY_TICKS_PER_CYCLE, map: createEmptyMap(96, 96, TERRAIN_GRASS) })
+  /**
+   * LE CADRAN DU CENDREUX EST LA TEMPÉRATURE, PAS L'HORLOGE — et depuis que le socle est une
+   * COURBE du jour de l'année (`saisons.md` S4), l'heure seule ne dit plus s'il fait froid : la
+   * nuit du cœur de l'Ardeur est à +20 °C, très au-dessus de `CONVERGE_SOUS`, tandis que le
+   * cœur du Grand Froid mord même à midi. Les trois montages nomment donc leur JOUR ET leur
+   * heure, et chacun PROUVE son climat avant de juger le chemin.
+   */
+  const coeurDe = (phase: number): number => (phase - 1) * BALANCE.ACT_DAYS + Math.round(BALANCE.ACT_DAYS / 2)
+  /** Minuit au cœur du Grand Froid : la nuit la plus franche de l'année. */
+  const nightSim = (): SimState =>
+    createSim(1, {
+      map: createEmptyMap(96, 96, TERRAIN_GRASS),
+      jourDeDepart: coeurDe(4),
+      cycleOffset: cycleOffsetForStartHour(0),
+    })
 
-  it('A4 — la NUIT (froid), un Cendreux chemine vers un feu ALLUMÉ à portée', () => {
+  it('A4 — la NUIT du Grand Froid, un Cendreux chemine vers un feu ALLUMÉ à portée', () => {
     const sim = nightSim()
+    expect(getGameTime(sim).isNight).toBe(true)
+    expect(baselineTemperature(sim, 5, 5)).toBeLessThan(CENDREUX.TORPEUR.CONVERGE_SOUS) // le froid mord
     const id = spawnMonster(sim, 'cendreux', 5, 5)
     const monster = sim.monsters.find((m) => m.entityId === id)!
     addStructure(sim, 'fire', 15, 5, 0, 0) // feu libre avec bois (allumé), dans WARMTH_SEEK_RANGE (20)
@@ -318,6 +334,7 @@ describe('Le Feu-station : le feu ATTIRE les Cendreux quand il fait froid (spec 
 
   it('A4 — un feu ÉTEINT n’est PAS un phare : il n’attire pas', () => {
     const sim = nightSim()
+    expect(baselineTemperature(sim, 5, 5)).toBeLessThan(CENDREUX.TORPEUR.CONVERGE_SOUS) // même froid, seul le feu change
     const id = spawnMonster(sim, 'cendreux', 5, 5)
     const monster = sim.monsters.find((m) => m.entityId === id)!
     const fire = addStructure(sim, 'fire', 15, 5, 0, 0)
@@ -327,9 +344,16 @@ describe('Le Feu-station : le feu ATTIRE les Cendreux quand il fait froid (spec 
   })
 
   it('A4 — de JOUR en zone TEMPÉRÉE (pas froid), aucun appel vers le feu', () => {
-    // MIDI et non le tick 0 : depuis la rampe de nuit (`partDeNuit`), l'aube porte encore le
-    // plein `NIGHT_COLD` — 6 °C, sous `TORPEUR.CONVERGE_SOUS`. Ce cas veut le jour TEMPÉRÉ.
-    const sim = createSim(1, { map: createEmptyMap(96, 96, TERRAIN_GRASS), cycleOffset: cycleOffsetForStartHour(12) })
+    // MIDI AU CŒUR DE L'ARDEUR : l'heure ne suffit plus. Le tick 0 porte le plein écart de
+    // nuit (`partDeNuit` : l'aube est le fond du froid), et un midi d'Éclosion est encore à
+    // +8 °C, pile sur le seuil. Ce cas veut le jour franchement TEMPÉRÉ — l'été à +26.
+    const sim = createSim(1, {
+      map: createEmptyMap(96, 96, TERRAIN_GRASS),
+      jourDeDepart: coeurDe(2),
+      cycleOffset: cycleOffsetForStartHour(12),
+    })
+    expect(getGameTime(sim).isNight).toBe(false)
+    expect(baselineTemperature(sim, 5, 5)).toBeGreaterThan(CENDREUX.TORPEUR.CONVERGE_SOUS) // il fait doux
     const id = spawnMonster(sim, 'cendreux', 5, 5)
     const monster = sim.monsters.find((m) => m.entityId === id)!
     addStructure(sim, 'fire', 15, 5, 0, 0) // allumé, mais il fait chaud → pas de phare

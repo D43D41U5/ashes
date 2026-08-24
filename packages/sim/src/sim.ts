@@ -47,7 +47,7 @@ import { advanceVillageGrowth } from './village-growth'
 import { advancePois } from './poi-discovery'
 import { advanceDens } from './poi'
 import { avancerLaCendre } from './cendre'
-import { advanceTime, DAY_TICKS_PER_CYCLE, seasonDayAtTick, TICKS_PER_CYCLE } from './time'
+import { actForDay, dayTicksAt, TICKS_PER_CYCLE, advanceTime, jourDeSaison } from './time'
 import { advanceCultures } from './agriculture'
 import { advanceTemperature, coldSpeedFactor } from './temperature'
 import { advanceUpkeep, applyVillageAction, getVillageOf, type VillageAction, type Structure, type Village } from './village'
@@ -238,6 +238,13 @@ export interface SimState {
   /** Jours de saison écoulés par jour réel (1 en multi, libre en Veillée/test). */
   calendarScale: number
   /**
+   * LE JOUR OÙ CE MONDE A COMMENCÉ (spec `saisons.md` S2). Le vrai jeu ouvre au jour 51, à la
+   * fin de l'Ardeur ; un montage de test ouvre au jour 1, à l'Éclosion. Dans l'ÉTAT et non
+   * dans une option volatile : le replay et la sauvegarde doivent le retrouver, sinon une
+   * partie reprise change de saison — patron de `finDeSaison`.
+   */
+  jourDeDepart: number
+  /**
    * LE RESET (spec `saison-sans-fin.md` R3b, T4) — le jour de saison après lequel la saison
    * FINIT (verdicts, évacuation avant), ou `null` : JAMAIS. **En solo, jamais** (R4 — décision
    * d'Alexis 2026-08-21 : ni verdict ni Arche en Veillée, la saison ne finit pas, elle tourne) ;
@@ -414,6 +421,9 @@ export interface SimState {
 export interface SimOptions {
   map?: WorldMap
   calendarScale?: number
+  /** Le jour de saison où le monde ouvre (spec `saisons.md` S2) — 51 dans le vrai jeu,
+   *  1 par défaut (les montages de test ouvrent à l'Éclosion). */
+  jourDeDepart?: number
   /** Le jour après lequel la saison finit, ou `null` : jamais (le solo). Défaut : le jour 60 —
    *  la saison nominale des bancs, des tests et du multi d'aujourd'hui. */
   finDeSaison?: number | null
@@ -485,7 +495,13 @@ export function createSim(seed: number, options: SimOptions = {}): SimState {
     seed,
     rngState: seed >>> 0,
     calendarScale: options.calendarScale ?? BALANCE.DEFAULT_CALENDAR_SCALE,
-    finDeSaison: options.finDeSaison === undefined ? BALANCE.SEASON_DAYS : options.finDeSaison,
+    jourDeDepart: options.jourDeDepart ?? 1,
+    // RELATIF AU JOUR DE DÉPART (S2) : une saison dure `SEASON_DAYS` jours À PARTIR de
+    // l'ouverture. En absolu, un monde né au jour 51 rendait ses verdicts dix cycles plus tard.
+    finDeSaison:
+      options.finDeSaison === undefined
+        ? (options.jourDeDepart ?? 1) + BALANCE.SEASON_DAYS - 1
+        : options.finDeSaison,
     cycleOffset: ((options.cycleOffset ?? 0) % TICKS_PER_CYCLE + TICKS_PER_CYCLE) % TICKS_PER_CYCLE,
     // Copies profondes (JSON — l'état est JSON-sérialisable par design) :
     // les options sont des ENTRÉES immuables. Les partager par référence
@@ -539,11 +555,12 @@ export function createSim(seed: number, options: SimOptions = {}): SimState {
   // champs optionnels de la Brume) : une partie sans météo garde l'empreinte d'état — donc
   // le snapshot ET la forme attendue par la persistance — d'avant le système, au bit près.
   if (options.meteoActive) state.meteoActive = true
-  // Le tick 0 débute le jour 1 et l'acte I ; la phase du cycle dépend de
-  // cycleOffset (0 = aube), donc on émet le bon franchissement jour/nuit.
-  const startsAtNight = state.cycleOffset >= DAY_TICKS_PER_CYCLE
-  emitEvent(state, { type: 'season_day_started', tick: 0, day: 1 })
-  emitEvent(state, { type: 'act_started', tick: 0, act: 1 })
+  // LE JOUR ET L'ACTE DE NAISSANCE SE DÉRIVENT (S2) — ils étaient écrits en dur, `1` et `1`,
+  // et aucun compilateur ne l'aurait dit : un monde né au jour 51 se serait cru à l'Éclosion
+  // pendant que l'Ardeur finissait. La phase du cycle dépend de `cycleOffset` (0 = aube).
+  const startsAtNight = state.cycleOffset >= dayTicksAt(state, 0)
+  emitEvent(state, { type: 'season_day_started', tick: 0, day: state.jourDeDepart })
+  emitEvent(state, { type: 'act_started', tick: 0, act: actForDay(state.jourDeDepart) })
   emitEvent(state, startsAtNight ? { type: 'night_started', tick: 0 } : { type: 'day_started', tick: 0 })
   return state
 }
@@ -879,7 +896,7 @@ export function step(state: SimState, inputs: MoveInput[]): void {
   advanceTime(state)
   // LA CENDRE AVANCE — après le temps, puisque c'est le temps qui la pousse. Elle ne fait quelque
   // chose qu'au BASCULEMENT d'un jour de saison : le reste des ticks, elle ne coûte qu'un test.
-  if (seasonDayAtTick(state.tick, state.calendarScale) !== seasonDayAtTick(state.tick - 1, state.calendarScale)) {
+  if (jourDeSaison(state) !== jourDeSaison(state, state.tick - 1)) {
     avancerLaCendre(state)
   }
   advanceCraft(state)

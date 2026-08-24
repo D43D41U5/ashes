@@ -28,14 +28,14 @@
  * déterministe, jamais que le MONDE VIVANT au-dessus l'est. C'est ce trou-ci qu'on ferme.
  */
 import { describe, expect, it } from 'vitest'
-import { FAUNA } from './balance'
-import { drainEvents } from './events'
+import { BALANCE, FAUNA } from './balance'
+import { drainEvents, type SimEvent } from './events'
 import { placeHuntingGrounds } from './faune'
 import { buildPoiStructures } from './poi-batis'
 import { spawnPoiMonsters } from './poi'
 import { createReplayLog, recordAndStep, runReplay } from './replay'
 import { createSim, snapshot, spawnEntity, step, type MoveInput, type SimOptions, type SimState } from './sim'
-import { cycleOffsetForStartHour, seasonDayAtTick, TICKS_PER_SEASON_DAY } from './time'
+import { cycleOffsetForStartHour, jourDeSaison, TICKS_PER_SEASON_DAY } from './time'
 import { MONDE_JOUE } from './zonegraph'
 import { generateZonedTerrain } from './zonegen'
 import { placeZoneNodes } from './zone-content'
@@ -72,6 +72,13 @@ function mondeJoue(): { options: SimOptions; peupler: (s: SimState) => void } {
     // essai à 720 : aucun jour franchi, et c'est la garde de prémisse de T3bis qui l'a dit —
     // pas moi.)
     calendarScale: Math.ceil((3 * TICKS_PER_SEASON_DAY) / TICKS),
+    // ⚠ ET LE MONDE OUVRE AU GRAND FROID, POUR LA MÊME RAISON. La Cendre ne s'ébranle que
+    // pendant la quatrième saison (`CENDRE.ACTE_DEPART`, spec `saisons.md` S11 : « il mord
+    // l'hiver, tient l'été ») : ouvert au jour 1 comme le fait `createSim` par défaut, le
+    // front reste à zéro, `avancerLaCendre` sort à sa deuxième ligne, et le seul système qui
+    // change la composition de `state.nodes` ne serait toujours pas rejoué. Le jour se dérive
+    // de la cadence des saisons, jamais écrit : premier jour de la quatrième.
+    jourDeDepart: 3 * BALANCE.ACT_DAYS + 1,
   }
   // CE QUE L'HÔTE POSE APRÈS `createSim` doit vivre dans le `setup` du rejeu : ces deux
   // passes MUTENT l'état et lisent la graine. Les oublier ferait diverger le rejeu pour une
@@ -110,14 +117,23 @@ describe('le rejeu sur le monde de production', () => {
     const s = createSim(SEED, options)
     peupler(s)
     drainEvents(s)
-    for (let t = 0; t < TICKS; t++) step(s, [{ entityId: 1, dx: 1, dy: 0 }])
+    const vecu: SimEvent[] = []
+    for (let t = 0; t < TICKS; t++) {
+      step(s, [{ entityId: 1, dx: 1, dy: 0 }])
+      vecu.push(...drainEvents(s))
+    }
 
     expect(s.map.cendre?.length ?? 0, 'la carte porte le champ de cendre').toBeGreaterThan(0)
-    expect(seasonDayAtTick(s.tick, s.calendarScale), 'des JOURS DE SAISON ont basculé (sinon la Cendre dort)')
-      .toBeGreaterThan(seasonDayAtTick(0, s.calendarScale))
+    expect(jourDeSaison(s), 'des JOURS DE SAISON ont basculé (sinon la Cendre dort)')
+      .toBeGreaterThan(jourDeSaison(s, 0))
+    // …ET LE FRONT A MORDU. Porter le champ de cendre ne prouve que sa PRÉSENCE : tant que le
+    // monde ouvrait à l'Éclosion, le front valait zéro et `avancerLaCendre` ressortait aussitôt.
+    // La garde ne voyait donc pas ce qu'elle annonce en tête de fichier ; elle le voit ici.
+    expect(vecu.filter((e) => e.type === 'cendre_avance').length, 'la Cendre a mangé des nœuds')
+      .toBeGreaterThan(0)
     expect(s.nodes.length, 'des nœuds par zone').toBeGreaterThan(1000)
     expect(s.structures.length, 'des lieux BÂTIS').toBeGreaterThan(50)
     expect(s.monsters.length, 'de la faune vivante').toBeGreaterThan(0)
-    expect(drainEvents(s).length, 'et le monde a produit des événements').toBeGreaterThan(0)
+    expect(vecu.length, 'et le monde a produit des événements').toBeGreaterThan(0)
   }, 300_000)
 })

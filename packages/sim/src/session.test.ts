@@ -42,7 +42,16 @@ function recolter(sim: SimState, id: number, nodeId: number, item: 'wood' | 'ber
   }
 }
 
-/** Le monde du banc : de quoi vivre à portée de main — le reste est au joueur. */
+/**
+ * Le monde du banc : de quoi vivre à portée de main — le reste est au joueur.
+ *
+ * ET IL OUVRE AU JOUR 51, comme le vrai jeu (spec `saisons.md` S2) : la première session
+ * d'un joueur se joue à la fin de l'Ardeur, jamais au premier matin de l'Éclosion — qui,
+ * depuis que le socle est une courbe (S4), s'ouvre ENCORE GELÉ (+3 °C le jour, −8 la nuit).
+ * Mesuré au jour 1, ce banc ne mesurait plus la boucle de survie mais l'hypothermie : le
+ * cueilleur finissait à 16 PV avec trois repas au compteur, contre 26 à l'ouverture réelle.
+ * Le froid a son propre banc ; celui-ci demande si le jeu est JOUABLE.
+ */
 function mondeSolo(): { sim: SimState; id: number } {
   const nodes: ResourceNode[] = [
     { id: 1, type: 'berry_bush', tx: 11, ty: 10, stock: 8, regrowAt: 0 },
@@ -52,7 +61,11 @@ function mondeSolo(): { sim: SimState; id: number } {
     { id: 5, type: 'tree', tx: 12, ty: 11, stock: 10, regrowAt: 0 },
     { id: 6, type: 'fiber_plant', tx: 9, ty: 11, stock: 6, regrowAt: 0 },
   ]
-  const sim = createSim(21, { map: createEmptyMap(32, 32, TERRAIN_GRASS), nodes })
+  const sim = createSim(21, {
+    map: createEmptyMap(32, 32, TERRAIN_GRASS),
+    nodes,
+    jourDeDepart: BALANCE.JOUR_DE_DEPART,
+  })
   const id = spawnEntity(sim, 10.5, 10.2)
   return { sim, id }
 }
@@ -156,10 +169,11 @@ describe('LA SESSION SOLO — le jeu est-il jouable ?', () => {
 
   // TIMEOUT EXPLICITE (2026-07-24) : ce banc est le SEUL à devoir rester DEHORS — sa prémisse
   // est « sans jamais faire de feu », on ne peut donc pas l'abriter comme les autres. Depuis que
-  // la nuit mord, son sujet est chassé, meurt et renaît : la simulation fait trois fois plus de
-  // travail (mesuré ~14 s contre le défaut de 5 s de vitest). L'ASSERTION est inchangée — c'est
-  // le chronomètre qu'on corrige, pas la règle. Et le fait qu'il soit désormais chassé sert
-  // plutôt son propos : cueillir sans feu ne tient pas un homme, la nuit encore moins.
+  // la nuit mord, son sujet est CHASSÉ : la simulation fait plus de travail que les autres
+  // bancs. L'ASSERTION est inchangée — c'est le chronomètre qu'on corrige, pas la règle. Et le
+  // fait qu'il soit chassé sert plutôt son propos : cueillir sans feu ne tient pas un homme,
+  // la nuit encore moins. (À l'ouverture réelle du monde il en réchappe, la moitié des PV en
+  // moins ; c'est au premier matin de l'Éclosion, gelé, qu'il y laissait la peau.)
   it('LA CUEILLETTE SEULE NE SUFFIT PAS : manger des baies crues ne tient pas un homme', { timeout: 60_000 }, () => {
     const { sim, id } = mondeSolo()
 
@@ -195,6 +209,10 @@ describe('LA SESSION SOLO — le jeu est-il jouable ?', () => {
     // n'a jamais été la règle ; on l'assouplit d'un cran et on affirme à la place ce qui
     // porte vraiment la démonstration — il mange en boucle, il n'est jamais rassasié, et il
     // a RASÉ ses buissons pour en arriver là.
+    //
+    // RELEVÉ À L'OUVERTURE RÉELLE (jour 51, fin de l'Ardeur — S2) : 26 repas, 100 → 50 PV,
+    // les trois buissons à sec. La saison est ORDINAIRE (l'Ardeur de l'an 1 ne tire aucun
+    // caractère de S18) : ce banc mesure la calibration nue, pas une Canicule.
     expect(baiesMangees).toBeGreaterThan(3)
     expect(me(sim).hunger).toBeLessThan(60) // il vit sur le fil, jamais rassasié
     expect(sim.nodes.filter((n) => n.type === 'berry_bush').reduce((s, n) => s + n.stock, 0)).toBe(0)

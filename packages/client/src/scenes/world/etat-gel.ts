@@ -66,6 +66,9 @@ export interface SourceDuGel {
   readonly map: WorldMap
   readonly temps: GameTime
   readonly calendarScale: number
+  /** Le jour où le monde a ouvert (spec `saisons.md` S2) — sans lui, le jour de saison de la
+   *  façade serait NaN et TOUT le gel disparaîtrait du rendu, en silence. */
+  readonly jourDeDepart: number
   readonly structures: readonly Structure[]
   readonly meteo: MeteoFront | null
 }
@@ -89,6 +92,7 @@ export function cycleOffsetDepuis(tick: number, hourOfCycle: number): number {
 interface ChampsDuGel {
   tick: number
   calendarScale: number
+  jourDeDepart: number
   cycleOffset: number
   map: WorldMap
   structures: readonly Structure[]
@@ -109,6 +113,10 @@ export function creerEtatGel(src: SourceDuGel): EtatGel {
   const champs: ChampsDuGel = {
     tick: src.temps.tick,
     calendarScale: src.calendarScale,
+    // ⚠ SANS LUI, `jourDeSaison` REND NaN — et `Math.floor(NaN)` ne jette pas : la glace, la
+    // neige et la défeuillaison disparaîtraient du rendu sans un mot. Le cast en fin de
+    // fonction désarme le compilateur, c'est donc ici que ça se garde (spec `saisons.md` S2).
+    jourDeDepart: src.jourDeDepart,
     cycleOffset: cycleOffsetDepuis(src.temps.tick, src.temps.hourOfCycle),
     map: src.map,
     structures: src.structures,
@@ -126,6 +134,7 @@ export function majEtatGel(cible: EtatGel, src: SourceDuGel): void {
   const e = cible as unknown as ChampsDuGel
   e.tick = src.temps.tick
   e.calendarScale = src.calendarScale
+  e.jourDeDepart = src.jourDeDepart
   e.cycleOffset = cycleOffsetDepuis(src.temps.tick, src.temps.hourOfCycle)
   e.map = src.map
   e.structures = src.structures

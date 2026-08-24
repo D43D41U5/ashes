@@ -19,7 +19,8 @@ Une tâche d'implémentation bien posée ressemble à : « implémente l'enduran
 | `inventaire.md` — sac à cases, ceinture, objet en main (chantier 1/3 « façon Rust ») | §7, §8 | Veillée — chantier UX 1 |
 | `combat.md` — endurance, télégraphes, blessures, mort | §7 | Veillée |
 | `alignement.md` — deux axes, agrégation, MVP Foyer/Meute | §3 | Veillée |
-| `saison.md` — 3 actes, pression par acte, saisons accélérées | §2 | Veillée |
+| `saison.md` — 3 actes, pression par acte, saisons accélérées *(cadre supersédé — voir `saison-sans-fin.md` puis `saisons.md`)* | §2 | Veillée |
+| `saisons.md` — 4 saisons de 30 j qui cyclent, courbe de température, un ciel par saison (supersède `saison.md` R1) | §2, §8 | Veillée — **décidé, non implémenté** |
 | `raid.md` — 4 phases, offline, alarme | §7 | Vallée |
 
 ## Gabarit

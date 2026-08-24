@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { COMBAT, TEMPERATURE } from './balance'
+import { BALANCE, COMBAT, TEMPERATURE } from './balance'
 import { drainEvents } from './events'
 import { addItems } from './items'
 import { createEmptyMap } from './map'
@@ -15,7 +15,7 @@ import {
   coldStaminaRegenFactor,
   driftStep,
 } from './temperature'
-import { cycleOffsetForStartHour, DAY_TICKS_PER_CYCLE, TICKS_PER_SEASON_DAY } from './time'
+import { cycleOffsetForStartHour, jourDeSaison, TICKS_PER_SEASON_DAY, YEAR_DAYS } from './time'
 
 /** spawnEntity retourne un id → on récupère l'objet entité. */
 function spawn(state: SimState, x: number, y: number): Entity {
@@ -30,6 +30,21 @@ function flatMap(state: SimState, terrain: number): void {
   state.map.terrain = new Array(n).fill(terrain)
 }
 
+/**
+ * LE CŒUR D'UNE SAISON, en jour de l'année — DÉRIVÉ d'`ACT_DAYS`, jamais écrit (`saisons.md`
+ * S1 : quatre saisons de trente jours, 1 l'Éclosion · 2 l'Ardeur · 3 les Pluies · 4 le Grand
+ * Froid). Le socle est une COURBE du jour de l'année depuis le 2026-08-23 (S4) : ses quatre
+ * cardinaux tombent au cœur des saisons, donc c'est là — et seulement là — qu'un climat se
+ * lit sans être mélangé à celui de sa voisine.
+ */
+const coeurDe = (phase: number): number => (phase - 1) * BALANCE.ACT_DAYS + BALANCE.ACT_DAYS / 2
+
+/** Pose l'état au jour de saison voulu. Le montage ouvre au jour 1 (défaut de `createSim`) et
+ *  tourne à l'échelle 1, donc un jour de saison vaut `TICKS_PER_SEASON_DAY` ticks pile. */
+function auJour(state: SimState, jour: number): void {
+  state.tick = (jour - 1) * TICKS_PER_SEASON_DAY
+}
+
 describe('jauge temperature', () => {
   it('un nouvel avatar naît au CORPS SAIN (37 °C)', () => {
     const state = createSim(1)
@@ -38,11 +53,16 @@ describe('jauge temperature', () => {
 })
 
 describe('ambientTemperature', () => {
-  it('fond de vallée, MIDI, acte I = air doux (≥ AMBIANT_DOUX)', () => {
+  it("fond de vallée, MIDI, au cœur de l'Éclosion = air doux (≥ AMBIANT_DOUX)", () => {
     // MIDI, pas le tick 0 : depuis la rampe de nuit (`partDeNuit`), l'aube porte le plein
-    // `NIGHT_COLD`. Ce cas dit « il fait doux de jour » — il lui faut une heure de jour.
+    // écart nocturne. Ce cas dit « il fait doux de jour » — il lui faut une heure de jour.
+    // Et le CŒUR du printemps, pas son premier jour : l'Éclosion S'OUVRE ENCORE GELÉE (+3 °C
+    // au jour 1) et dégèle sur ses trente jours — le dégel EST le contenu du printemps
+    // (`saisons.md` S4, O1 close). Au cardinal, +8 °C : deux degrés au-dessus du seuil, la
+    // garde reste vivante.
     const state = createSim(1, { cycleOffset: cycleOffsetForStartHour(12) })
     flatMap(state, 1 /* grass */)
+    auJour(state, coeurDe(1))
     expect(ambientTemperature(state, 5, 5)).toBeGreaterThanOrEqual(TEMPERATURE.AMBIANT_DOUX)
   })
 
@@ -60,15 +80,23 @@ describe('ambientTemperature', () => {
   })
 
   it('sous abri, le froid nocturne est amorti (~moitié)', () => {
-    const state = createSim(1, { cycleOffset: DAY_TICKS_PER_CYCLE }) // nuit dès le tick 0
+    // MINUIT, et non « le tick de crépuscule » : la longueur du jour est SAISONNIÈRE depuis
+    // `saisons.md` S6 (la nuit passe de 12,6 min l'été à 23,4 min l'hiver), donc seule une
+    // heure murale désigne encore la pleine nuit à toute saison.
+    const state = createSim(1, { cycleOffset: cycleOffsetForStartHour(0) })
     flatMap(state, 1 /* grass */)
     const exposed = ambientTemperature(state, 5, 5)
     state.structures.push({ type: 'house', tx: 5, ty: 5 } as never)
     const sheltered = ambientTemperature(state, 5, 5)
     expect(sheltered).toBeGreaterThan(exposed)
-    // La nuit MORD depuis le chantier tension : sous abri, elle est amortie de moitié —
-    // DÉRIVÉ de `SHELTER_FACTOR`, jamais recopié (12 °C → 6 °C rendus).
-    expect(sheltered - exposed).toBeCloseTo(TEMPERATURE.NIGHT_COLD * (1 - TEMPERATURE.SHELTER_FACTOR), 5)
+    // La nuit MORD depuis le chantier tension : sous abri, elle est amortie de moitié — DÉRIVÉ
+    // de `SHELTER_FACTOR` ET de l'écart DU JOUR, jamais recopié. `ECART_NUIT` est une courbe
+    // depuis `saisons.md` S5 (six degrés au cœur de l'Ardeur, quatorze à celui du Grand Froid) :
+    // un chiffre écrit ici ne vaudrait que pour un jour de l'année, et mentirait les 119 autres.
+    expect(sheltered - exposed).toBeCloseTo(
+      TEMPERATURE.ECART_NUIT(jourDeSaison(state)) * (1 - TEMPERATURE.SHELTER_FACTOR),
+      5,
+    )
   })
 })
 
@@ -90,9 +118,17 @@ describe('dérive thermostat', () => {
   })
 
   it('reste au CONFORT du corps sur un ambiant doux, indéfiniment', () => {
-    const state = createSim(1, { calendarScale: 1 }) // reste en acte I
+    // MIDI au cœur de l'Ardeur : le socle y culmine à +26 °C (`saisons.md` S4). L'ambiant doux
+    // est la PRÉMISSE de ce cas, pas sa garde — on la veut donc large, pas serrée. L'échelle 1
+    // tient le jour en place, et `advanceTemperature` n'avance pas le tick : l'air ne bouge pas
+    // des 5 000 pas de dérive.
+    const state = createSim(1, { calendarScale: 1, cycleOffset: cycleOffsetForStartHour(12) })
     flatMap(state, 1)
+    auJour(state, coeurDe(2))
     const e = spawn(state, 5, 5)
+    expect(ambientTemperature(state, 5, 5), 'la prémisse : cet air-là est doux').toBeGreaterThanOrEqual(
+      TEMPERATURE.AMBIANT_DOUX,
+    )
     for (let i = 0; i < 5000; i++) advanceTemperature(state)
     expect(e.temperature).toBeGreaterThanOrEqual(TEMPERATURE.CORPS_CONFORT)
   })
@@ -163,21 +199,28 @@ describe('hypothermie', () => {
   })
 })
 
-describe("tyrannie de l'acte", () => {
-  it('même lieu/heure : ambiant strictement décroissant I → II → III', () => {
+describe('la tyrannie de la saison', () => {
+  it("même lieu/heure : l'Ardeur brûle, les Pluies tiédissent, le Grand Froid mord", () => {
     const ambientAtDay = (day: number): number => {
       // MIDI : depuis la rampe de nuit (`partDeNuit`), le tick 0 est l'aube et porte le plein
-      // `NIGHT_COLD`. Ce cas isole l'ACTE — il lui faut une heure sans froid nocturne.
+      // écart nocturne. Ce cas isole la SAISON — il lui faut une heure sans froid nocturne.
       const state = createSim(1, { calendarScale: 1, cycleOffset: cycleOffsetForStartHour(12) })
       flatMap(state, 9 /* scree, offset biome 0 */)
-      state.tick = (day - 1) * TICKS_PER_SEASON_DAY
+      auJour(state, day)
       return ambientTemperature(state, 5, 5)
     }
-    const a1 = ambientAtDay(10) // acte I  (≤ 21)
-    const a2 = ambientAtDay(30) // acte II (Grand Froid, 22-42)
-    const a3 = ambientAtDay(50) // acte III (Cendre, > 42)
-    expect(a2).toBeLessThan(a1)
-    expect(a3).toBeLessThan(a2)
+    // L'acte n'est plus un palier qui monte et ne redescend jamais : c'est une SAISON, et le
+    // socle est une courbe du jour de l'année (`saisons.md` S1/S4). On lit les trois cardinaux
+    // du versant descendant — le seul endroit où « strictement décroissant » a encore un sens.
+    const ardeur = ambientAtDay(coeurDe(2))
+    const pluies = ambientAtDay(coeurDe(3))
+    const grandFroid = ambientAtDay(coeurDe(4))
+    expect(pluies).toBeLessThan(ardeur)
+    expect(grandFroid).toBeLessThan(pluies)
+    // ET L'ANNÉE TOURNE (S1) : l'Éclosion qui SUIT cet hiver est déjà remontée au-dessus de lui.
+    // La garde qui interdit de retomber dans l'escalier — la pression de long terme vient du
+    // TOUR et du front de Cendre, plus de l'avancée dans l'arc.
+    expect(ambientAtDay(coeurDe(1) + YEAR_DAYS)).toBeGreaterThan(grandFroid)
   })
 })
 
@@ -198,15 +241,22 @@ describe('engourdissement (malus)', () => {
 describe('le froid létal & la tenue d’hiver (V2-15/16, fork froid tranché)', () => {
   const T = TEMPERATURE
 
-  it('LE FORK : la plaine est LÉTALE en acte III de nuit (le discours devient vrai)', () => {
-    // Ambiant plaine (biome 0), acte III, nuit = BASE − ACT_COLD[2] − NIGHT_COLD.
-    const plaineActIIINuit = T.BASE - T.ACT_COLD(3) - T.NIGHT_COLD
-    // ⚠ DEUX ÉCHELLES DEPUIS LE 2026-08-22 : `plaineActIIINuit` est un AIR (−14 °C), et les
-    // dégâts se lisent sur un CORPS. On passe donc par `cibleCorporelle` — l'endroit exact où
-    // l'air devient une température de corps. L'ancienne jauge unique laissait comparer les
-    // deux sans le voir ; ici la conversion est écrite, donc vérifiable.
-    expect(plaineActIIINuit).toBeLessThan(AMBIANT_HYPOTHERMIE) // sous le seuil : cet air TUE
-    expect(coldDamagePerTick(cibleCorporelle(plaineActIIINuit))).toBeGreaterThan(0)
+  it('LE FORK : la plaine est LÉTALE au cœur du Grand Froid, de nuit (le discours devient vrai)', () => {
+    // Ambiant plaine (biome 0), minuit, cœur du Grand Froid. LU SUR LE VRAI MONDE et non
+    // recomposé de constantes : `ACT_COLD` n'existe plus (`saisons.md` S4 l'a remplacé par la
+    // courbe `SOCLE`, et la valeur EST le degré au lieu d'être un froid soustrait de `BASE`).
+    // La Brume, le front et la Cendre ne peuvent qu'enfoncer ce chiffre plus bas.
+    const state = createSim(1, { cycleOffset: cycleOffsetForStartHour(0) })
+    flatMap(state, 1 /* grass — la plaine, aucun offset de biome */)
+    auJour(state, coeurDe(4))
+    const plaineHiverNuit = ambientTemperature(state, 5, 5)
+    // ⚠ DEUX ÉCHELLES DEPUIS LE 2026-08-22 : `plaineHiverNuit` est un AIR (−16 °C : socle −2,
+    // écart de nuit 14), et les dégâts se lisent sur un CORPS. On passe donc par
+    // `cibleCorporelle` — l'endroit exact où l'air devient une température de corps.
+    // L'ancienne jauge unique laissait comparer les deux sans le voir ; ici la conversion est
+    // écrite, donc vérifiable.
+    expect(plaineHiverNuit).toBeLessThan(AMBIANT_HYPOTHERMIE) // sous le seuil : cet air TUE
+    expect(coldDamagePerTick(cibleCorporelle(plaineHiverNuit))).toBeGreaterThan(0)
   })
 
   it('la tenue d’hiver plancher AU-DESSUS de l’hypothermie → zéro dégât de froid', () => {
@@ -215,9 +265,10 @@ describe('le froid létal & la tenue d’hiver (V2-15/16, fork froid tranché)',
   })
 
   it('sur glacier de nuit, la tenue d’hiver SAUVE : le nu MEURT de froid, le vêtu non', () => {
-    // Carte VIDE en glacier (aucune source chaude parasite) + nuit : un ambiant
-    // franchement mortel (0), où seule la tenue sauve.
-    const cold = (): Parameters<typeof createSim>[1] => ({ map: createEmptyMap(96, 96, 15 /* glacier */), cycleOffset: DAY_TICKS_PER_CYCLE })
+    // Carte VIDE en glacier (aucune source chaude parasite) + MINUIT : un ambiant franchement
+    // mortel (le plancher `AMBIANT_MIN`), où seule la tenue sauve. L'heure murale, et non un
+    // tick de crépuscule : la longueur du jour est saisonnière depuis `saisons.md` S6.
+    const cold = (): Parameters<typeof createSim>[1] => ({ map: createEmptyMap(96, 96, 15 /* glacier */), cycleOffset: cycleOffsetForStartHour(0) })
     const froid = createSim(1, cold())
     const nu = spawn(froid, 5, 5)
     const chaud = createSim(1, cold())

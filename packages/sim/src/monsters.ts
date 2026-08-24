@@ -25,7 +25,8 @@ import { cendreuxStep } from './cendreux'
 import { meteoVisionFactor } from './meteo'
 import { eveilCendreuxAt } from './temperature'
 import { advanceFauna, avatarDetectability, avatarThreat, coverAt, faunaStep, isPredator, isPrey, wolfStep, type Threat } from './faune'
-import { actForDay, getGameTime, seasonDayAtTick, seasonRamp } from './time'
+import { effetsDuJour } from './modificateur'
+import { actForDay, getGameTime, jourDeSaison, seasonRamp } from './time'
 
 export interface Monster {
   entityId: number
@@ -644,7 +645,11 @@ export function cendreuxSousPression(state: SimState): number {
 
 /** Le toit du jour J — il MONTE avec la saison (12 → 60), clampé au jour 60. */
 export function plafondGlobal(state: SimState): number {
-  return Math.round(seasonRamp(CENDREUX.GLOBAL.DEBUT, CENDREUX.GLOBAL.FIN, seasonDayAtTick(state.tick, state.calendarScale)))
+  const jour = jourDeSaison(state)
+  // LA DISETTE (S18) rabat le plafond de moitié : le gibier a manqué, et c'est l'hiver qui
+  // punit l'automne. Elle multiplie le toit de la saison, elle ne le remplace pas.
+  const facteur = effetsDuJour(jour).faunePlafond ?? 1
+  return Math.round(seasonRamp(CENDREUX.GLOBAL.DEBUT, CENDREUX.GLOBAL.FIN, jour) * facteur)
 }
 
 /** Vrai s'il reste une place sous le plafond global — TOUTE source de pression le demande. */
@@ -693,7 +698,7 @@ const CONVERGE_FEU_LIBRE = 150
  * où on le calcule, la reprise d'une sauvegarde rend exactement la partie ininterrompue.
  */
 export function champDesFeux(state: SimState): Int32Array | null {
-  const acte = actForDay(seasonDayAtTick(state.tick, state.calendarScale))
+  const acte = actForDay(jourDeSaison(state))
   const width = state.map.width
   let sigVillages: number = acte
   let sigLibres: number = acte

@@ -22,10 +22,11 @@ import {
 } from './balance'
 import { coinPris, especesDuCoin, fishingWindowTicks, type ResourceNode } from './economy'
 import { drainEvents, type SimEvent } from './events'
+import { estGele } from './gel'
 import { countOf, type ItemId } from './items'
 import { createEmptyMap, setTile, type WorldMap } from './map'
 import { createSim, snapshot, spawnEntity, step, type MoveInput, type SimState } from './sim'
-import { calendarScaleForSeasonCycles, DAY_TICKS_PER_CYCLE, TICKS_PER_CYCLE } from './time'
+import { calendarScaleForSeasonCycles, dayTicksPourJour, TICKS_PER_CYCLE } from './time'
 import { createVillage, grantItems } from './village'
 import { foundNpcVillage } from './worldgen'
 import { desiredOrders } from './village-plan'
@@ -51,11 +52,32 @@ function carteDEssai(): WorldMap {
 }
 
 const SCALE = calendarScaleForSeasonCycles(BALANCE.SEASON_DAYS)
-/** Le tick d'un jour de saison, de jour ou en pleine nuit (même montage que gel.test). */
+/**
+ * Le tick d'un jour de saison, de jour ou en pleine nuit (même montage que gel.test).
+ *
+ * ⚠ LA LONGUEUR DU JOUR EST SAISONNIÈRE (`saisons.md` S6, `dayTicksPourJour` — c'était la
+ * constante `DAY_TICKS_PER_CYCLE`) : la nuit passe de 12,6 min au cœur de l'Ardeur à 23,4 min
+ * à celui du Grand Froid. Le milieu de la nuit se RECALCULE donc à chaque jour — une
+ * constante aurait visé le plein jour là où la glace se juge.
+ */
 function tickDe(jour: number, nuit = false): number {
   const base = (jour - 1) * TICKS_PER_CYCLE
-  return base + (nuit ? DAY_TICKS_PER_CYCLE + Math.floor((TICKS_PER_CYCLE - DAY_TICKS_PER_CYCLE) / 2) : Math.floor(DAY_TICKS_PER_CYCLE / 2))
+  const jourTicks = dayTicksPourJour(jour)
+  return base + (nuit ? jourTicks + Math.floor((TICKS_PER_CYCLE - jourTicks) / 2) : Math.floor(jourTicks / 2))
 }
+
+/**
+ * LE CŒUR D'UNE SAISON, en jour de l'année — DÉRIVÉ d'`ACT_DAYS`, jamais écrit (`saisons.md`
+ * S1 : quatre saisons de trente jours, 1 l'Éclosion · 2 l'Ardeur · 3 les Pluies · 4 le Grand
+ * Froid).
+ */
+const coeurDe = (phase: number): number => (phase - 1) * BALANCE.ACT_DAYS + BALANCE.ACT_DAYS / 2
+/** LA SEULE FENÊTRE OÙ LE PROFOND PREND : le cœur du Grand Froid (`saisons.md` A4, « les lacs
+ *  seulement en son cœur, ~j93 → j117 »). La nuit y descend à −16 °C. */
+const COEUR_DU_GRAND_FROID = coeurDe(4)
+/** LE DERNIER TIERS DES PLUIES : le gué a déjà pris la nuit (fenêtre ~j73 → j17) et le profond
+ *  pas encore — c'est là, et seulement là, que « le lac ferme en dernier » se voit. */
+const NUITS_DES_PLUIES = coeurDe(3) + BALANCE.ACT_DAYS / 5
 
 interface Banc {
   sim: SimState
@@ -349,9 +371,9 @@ describe('A9 — la maîtrise élargit la fenêtre, plafonnée', () => {
 
 // ── A10 — LA GLACE FERME ─────────────────────────────────────────────────────
 describe('A10 — la glace ferme, le lac en dernier, et le stock repousse dessous', () => {
-  it('acte III nuit (le profond est pris) : lancer refusé « l’eau est prise »', () => {
+  it('cœur du Grand Froid, de nuit (le profond est pris) : lancer refusé « l’eau est prise »', () => {
     const b = banc('fishing_spot_lake', { gel: true })
-    b.sim.tick = tickDe(50, true)
+    b.sim.tick = tickDe(COEUR_DU_GRAND_FROID, true)
     expect(coinPris(b.sim, b.node)).toBe(true)
     lancer(b)
     const rejets = des(drainEvents(b.sim), 'action_rejected')
@@ -359,16 +381,20 @@ describe('A10 — la glace ferme, le lac en dernier, et le stock repousse dessou
     expect((rejets[0] as { reason: string }).reason).toBe("l'eau est prise")
     expect(entity(b).fishing).toBeUndefined()
   })
-  it('acte II nuit (le gué prend, le profond non) : le coin se pêche encore — c’est le PROFOND qui compte', () => {
+  it('fin des Pluies, de nuit (le gué prend, le profond non) : le coin se pêche encore — c’est le PROFOND qui compte', () => {
     const b = banc('fishing_spot_lake', { gel: true })
-    b.sim.tick = tickDe(30, true)
+    b.sim.tick = tickDe(NUITS_DES_PLUIES, true)
+    // LA PRÉMISSE D'ABORD : sans un gué RÉELLEMENT pris, ce cas passerait au vert sur une nuit
+    // tiède et ne dirait plus rien du « lac en dernier ». Le socle est une courbe (`saisons.md`
+    // S4) : la fenêtre où le gué gèle sans le profond n'est plus un numéro d'acte, elle se prouve.
+    expect(estGele(b.sim, COIN.tx, COIN.ty), 'le gué du coin, lui, a bien pris').toBe(true)
     expect(coinPris(b.sim, b.node)).toBe(false)
     lancer(b)
     expect(entity(b).fishing).toBeDefined()
   })
   it('un coin vidé repousse SOUS la glace : au dégel, il rouvre plein', () => {
     const b = banc('fishing_spot_lake', { gel: true, stock: 0 })
-    b.sim.tick = tickDe(50, true)
+    b.sim.tick = tickDe(COEUR_DU_GRAND_FROID, true)
     b.node.regrowAt = b.sim.tick + 5
     attendre(b, 6)
     expect(b.node.stock).toBe(FISHING.STOCK)

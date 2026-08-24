@@ -1,6 +1,6 @@
 # Le client — rendu, Worker, protocole
 
-*Source : GDD §11 (stack, client « bête »), roadmap V2. Statut : **implémenté** (2026-07-05 — A1-A3 vérifiés en headless Playwright, A4 vérifié en code, le cycle de 48 min n'a pas été attendu). Jalon : V2.*
+*Source : GDD §11 (stack, client « bête »), roadmap V2. Statut : **implémenté** (2026-07-05 — A1-A3 vérifiés en headless Playwright, A4 vérifié en code, le cycle (45 min) n'a pas été attendu). Jalon : V2.*
 
 > **La couche UI est en DOM, pas en Phaser** (maquette « Ashes UI »). HUD, menu et chargement sont rendus en DOM par-dessus le canvas (`hud-dom.ts`, `menu-dom.ts`) — un canvas Phaser upscalé crénelle le texte et ne rejoue pas `border`/`box-shadow`/gradients. Planche 1920×1080 en FIT, alignée sur le canvas ; `pointer-events:none` sauf sur les contrôles, pour que le clic-monde traverse.
 
@@ -33,7 +33,7 @@ Afficher la simulation sans jamais la posséder. La sim tourne dans un **Web Wor
 - **A1** — `pnpm check`, `pnpm lint` et `vite build` passent ; le bundle isole Phaser en chunk séparé.
 - **A2** — En jeu : on se déplace au clavier (ZQSD/WASD/flèches) dans la vallée de démo, collisions et glissement identiques à la sim (c'est le même code), caméra qui suit, ~60 fps rendu / 12 Hz sim.
 - **A3** — Des PNJ marcheurs bougent, interpolés sans à-coups (le rendu ne saute pas au rythme des ticks).
-- **A4** — La nuit tombe visuellement en ~48 min de cycle ; le HUD affiche jour de saison et acte qui avancent (échelle de démo accélérée).
+- **A4** — La nuit tombe visuellement en ~45 min de cycle ; le HUD affiche jour de saison et acte qui avancent (échelle de démo accélérée).
 
 ## Cadrage & proportions (façon V Rising) — cadre découplé
 

@@ -191,6 +191,8 @@ export function construireMondeDuBanc(seed: number, joueurs: number = BANC_JOUEU
     map,
     nodes,
     calendarScale: TICKS_PER_SEASON_DAY / TICKS_PER_CYCLE,
+    // Le banc joue le monde qu'on JOUE : il ouvre au même jour que la Veillée (S2).
+    jourDeDepart: BALANCE.JOUR_DE_DEPART,
     faunaCap: FAUNA.CAP,
     grounds,
     home: { x: base.tx + 0.5, y: base.ty + 0.5 },
@@ -293,6 +295,6 @@ export function runScenario(seed: number, days: number, joueurs: number = BANC_J
     starvationSamples,
     deaths,
     hordesSpawned,
-    chronicle: chronicleFromEvents(events, sim.calendarScale, names).map(formatChronicleLine),
+    chronicle: chronicleFromEvents(events, sim.calendarScale, sim.jourDeDepart, names).map(formatChronicleLine),
   }
 }

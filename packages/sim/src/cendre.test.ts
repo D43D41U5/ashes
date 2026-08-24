@@ -3,7 +3,12 @@
  *
  * Ce qu'elles protègent n'est pas un détail d'équilibrage : c'est la promesse centrale de la
  * saison. Si le front ne part pas, la vallée ne se perd pas. S'il va trop loin, il ne reste plus
- * un endroit où naître, et celui qui rejoint au jour 40 ne joue pas au même jeu que les autres.
+ * un endroit où naître, et celui qui rejoint en plein Grand Froid ne joue pas au même jeu que
+ * les autres.
+ *
+ * LES JOURS SONT CEUX DE L'ANNÉE (spec `saisons.md` S1/S11) : quatre saisons de trente jours, et
+ * la morsure de la Cendre s'est recalée sur le Grand Froid — elle dort du jour 1 au jour 90 et
+ * dévore du jour 91 au tour de l'an.
  */
 import { describe, expect, it } from 'vitest'
 import { BALANCE, TERRAIN_GRASS, TERRAIN_ROCK } from './balance'
@@ -17,6 +22,7 @@ import { nidsAMonstre } from './poi'
 import { MONDE } from './zonegraph'
 import { createSim, spawnEntity, step } from './sim'
 import { drainEvents } from './events'
+import { phaseForDay, YEAR_DAYS } from './time'
 
 const carte = generateZonedTerrain(2026)
 const racine = carte.graphe.racine
@@ -53,25 +59,33 @@ describe('le front de cendre', () => {
     expect(partDeLaRacine(1), 'les Prés Bas brûlent déjà au jour 1').toBe(0)
   })
 
-  it('R27 — l\'ACTE I est un répit : le front ne bouge pas', () => {
+  it('R27 — LES TROIS PREMIÈRES SAISONS sont un répit : le front ne bouge pas', () => {
     // Le joueur a le temps de bâtir, de s'attacher, et de croire que ça durera. C'est ce qui rend
-    // la suite cruelle — et c'est le calendrier du GDD, à la lettre.
-    const finActeI = BALANCE.ACT_DAYS
-    for (let jour = 1; jour <= finActeI; jour++) {
-      expect(frontAu(jour), `le front bouge au jour ${jour} (acte I)`).toBe(0)
+    // la suite cruelle. Depuis S11 le répit ne dure plus un acte mais trois saisons : la Cendre
+    // « mord l'hiver, tient l'été », donc elle dort de l'Éclosion à la fin des Pluies.
+    //
+    // On compte les trois saisons qui PRÉCÈDENT le Grand Froid, et non `CENDRE.ACTE_DEPART` :
+    // une garde écrite avec le cadran qu'elle teste suivrait ce cadran partout et ne garderait
+    // rien. C'est la SAISON qui est affirmée, et `phaseForDay` le dit.
+    const finDuRepit = 3 * BALANCE.ACT_DAYS
+    expect(phaseForDay(finDuRepit + 1), 'le répit ne s\'arrête pas au seuil du Grand Froid').toBe(4)
+    for (let jour = 1; jour <= finDuRepit; jour++) {
+      expect(frontAu(jour), `le front bouge au jour ${jour}, hors du Grand Froid`).toBe(0)
     }
-    expect(frontAu(finActeI + 1)).toBeGreaterThan(0)
+    expect(frontAu(finDuRepit + 1)).toBeGreaterThan(0)
   })
 
   it('R27 — le front ACCÉLÈRE : la moitié du temps n\'a mangé qu\'un quart du chemin', () => {
-    const debut = BALANCE.ACT_DAYS
-    const milieu = debut + Math.round((BALANCE.SEASON_DAYS - debut) / 2)
+    // La morsure court du seuil du Grand Froid au tour de l'an (S11) : c'est SUR CETTE FENÊTRE
+    // que « la moitié du temps » se lit, pas sur la saison de wipe.
+    const debut = 3 * BALANCE.ACT_DAYS
+    const milieu = debut + Math.round((YEAR_DAYS - debut) / 2)
     const aMiChemin = frontAu(milieu) / MAX
     // Une progression linéaire donnerait 0,5. Une menace qu'on s'habitue à voir bouger n'en est
     // plus une : celle-ci, on croit la maîtriser — jusqu'au jour où elle traverse le village.
     expect(aMiChemin).toBeGreaterThan(0.2)
     expect(aMiChemin).toBeLessThan(0.33)
-    expect(frontAu(BALANCE.SEASON_DAYS)).toBeCloseTo(MAX, 0)
+    expect(frontAu(YEAR_DAYS)).toBeCloseTo(MAX, 0)
   })
 
   it('R29 — la cendre mange une GROSSE PART des Prés Bas, sans les effacer', () => {
@@ -82,14 +96,14 @@ describe('le front de cendre', () => {
     // à distance fixe, la même valeur couvrait 48 % des Prés Bas sur une seed et 81 % sur une
     // autre. Une saison = une carte : on ne tire pas au sort si la vallée brûle à moitié ou aux
     // quatre cinquièmes.
-    const fin = partDeLaRacine(BALANCE.SEASON_DAYS)
+    const fin = partDeLaRacine(YEAR_DAYS)
     expect(fin, `la cendre couvre ${(fin * 100).toFixed(1)} % des Prés Bas`).toBeCloseTo(CENDRE.PART_CIBLE, 2)
   })
 
-  it('R30 — IL RESTE TOUJOURS UN ENDROIT OÙ NAÎTRE, même au dernier jour', () => {
-    // Sans cette garantie, celui qui rejoint le serveur au jour 40 naîtrait dans le feu — il ne
-    // jouerait pas au même jeu que les autres. C'est la contrepartie indispensable de R29.
-    const front = frontAu(BALANCE.SEASON_DAYS)
+  it('R30 — IL RESTE TOUJOURS UN ENDROIT OÙ NAÎTRE, même au dernier jour de l\'année', () => {
+    // Sans cette garantie, celui qui rejoint le serveur en plein Grand Froid naîtrait dans le
+    // feu — il ne jouerait pas au même jeu que les autres. La contrepartie indispensable de R29.
+    const front = frontAu(YEAR_DAYS)
     const { width, height } = carte.map
     let refuges = 0
     for (let y = 0; y < height; y += 4) {
@@ -109,7 +123,7 @@ describe('le front de cendre', () => {
     const echantillons: number[] = []
     for (let k = 0; k < 400; k++) echantillons.push((k * 6197) % (carte.map.terrain.length))
     let precedent = 0
-    for (let jour = 1; jour <= BALANCE.SEASON_DAYS; jour += 3) {
+    for (let jour = 1; jour <= YEAR_DAYS; jour += 3) {
       const front = frontAu(jour)
       expect(front).toBeGreaterThanOrEqual(precedent)
       precedent = front
@@ -134,14 +148,14 @@ describe('ce que la cendre DÉTRUIT', () => {
     const combien = Math.ceil(MONDE.JOUEURS_CIBLE / MONDE.JOUEURS_PAR_VILLAGE)
 
     const auJour1 = pointsDeSpawn(carte, emplacements, combien, frontAu(1))
-    const auDernier = pointsDeSpawn(carte, emplacements, combien, frontAu(BALANCE.SEASON_DAYS))
+    const auDernier = pointsDeSpawn(carte, emplacements, combien, frontAu(YEAR_DAYS))
 
-    // Le serveur tourne des semaines. Si les Prés Bas brûlent au jour 30, celui qui rejoint au
-    // jour 31 ne doit PAS naître dans le feu — il ne jouerait pas au même jeu que les autres.
+    // Le serveur tourne des semaines. Si les Prés Bas brûlent pendant le Grand Froid, celui qui
+    // rejoint ce jour-là ne doit PAS naître dans le feu — il ne jouerait pas au même jeu.
     expect(auDernier.length, 'plus un seul point de spawn au dernier jour').toBeGreaterThan(0)
     for (const s of auDernier) {
       expect(
-        estCendre(carte.map, s.tx, s.ty, frontAu(BALANCE.SEASON_DAYS)),
+        estCendre(carte.map, s.tx, s.ty, frontAu(YEAR_DAYS)),
         `on naît dans la cendre en (${s.tx}, ${s.ty})`,
       ).toBe(false)
     }
@@ -158,7 +172,7 @@ describe('ce que la cendre DÉTRUIT', () => {
     // C'est ce qui fait que la migration n'est pas une consigne mais une FUITE : le village qui
     // reste ne meurt pas d'un coup, il s'appauvrit jour après jour, jusqu'à ce que rester coûte
     // plus cher que partir. Le mécanisme le plus doux qu'on puisse infliger, et le plus cruel.
-    const front = frontAu(BALANCE.SEASON_DAYS)
+    const front = frontAu(YEAR_DAYS)
     const nodes = placeZoneNodes(carte)
     const width = carte.map.width
     const survivants = nodes.filter((n) => !estCendre(carte.map, n.tx, n.ty, front))
@@ -176,23 +190,34 @@ describe('ce que la cendre DÉTRUIT', () => {
 describe('le front en ESCALIER (saison-sans-fin T3) — il mord l’hiver, tient l’été, ne recule jamais', () => {
   const MAX = 100 // une course d'an 1 ronde : les parts se lisent en tuiles
 
-  /** L'ANCIENNE fonction, recopiée en LITTÉRAUX : t² sur les jours 21..60, figée à max après. */
-  const ancienne = (jour: number): number => {
-    if (jour <= 21) return 0
-    const t = (jour - 21) / (60 - 21)
+  /**
+   * L'ANNÉE ET LA MORSURE, EN LITTÉRAUX — c'est délibéré, et c'est ce qui fait de ce bloc une
+   * garde. Les recalculer depuis `BALANCE.ACT_DAYS` ou `CENDRE.ACTE_DEPART` reviendrait à
+   * réécrire la fonction testée à côté d'elle-même : elle suivrait le cadran partout, et un
+   * cadran déplacé par erreur passerait au vert. Ces trois nombres viennent de `saisons.md`
+   * S1 (quatre saisons de trente jours, l'année en fait 120) et S11 (la Cendre mord le Grand
+   * Froid, du jour 91 au tour de l'an). Les bouger DOIT rendre ce bloc rouge.
+   */
+  const AN = 120
+  const MORSURE_DEBUT = 90 //  le seuil du Grand Froid : t = 0
+  const MORSURE_FIN = 120 //   le tour de l'an : t = 1
+
+  /** La course de l'AN 1, recopiée en littéraux : t² sur les jours 91..120, figée à max après. */
+  const courseDeLAn1 = (jour: number): number => {
+    const t = (jour - MORSURE_DEBUT) / (MORSURE_FIN - MORSURE_DEBUT)
     const b = t < 0 ? 0 : t > 1 ? 1 : t
     return MAX * (b * b) // l’association d’origine, au bit près — MAX * b * b différerait au dernier bit
   }
 
-  it('l’an 1 est BIT-EXACT : les jours 1..84 rendent l’ancienne courbe, tuile pour tuile', () => {
-    for (let jour = 1; jour <= 84; jour++) {
-      expect(avanceeDuFront(jour, MAX), `jour ${jour}`).toBe(ancienne(jour))
+  it('l’an 1 est BIT-EXACT : les jours 1..120 suivent la courbe du Grand Froid, tuile pour tuile', () => {
+    for (let jour = 1; jour <= AN; jour++) {
+      expect(avanceeDuFront(jour, MAX), `jour ${jour}`).toBe(courseDeLAn1(jour))
     }
   })
 
   it('monotone non décroissant sur vingt ans, et il ne recule JAMAIS — balayé jour par jour', () => {
     let precedent = -1
-    for (let jour = 1; jour <= 20 * 84; jour++) {
+    for (let jour = 1; jour <= 20 * AN; jour++) {
       const f = avanceeDuFront(jour, MAX)
       expect(f, `le front recule au jour ${jour}`).toBeGreaterThanOrEqual(precedent)
       precedent = f
@@ -201,27 +226,29 @@ describe('le front en ESCALIER (saison-sans-fin T3) — il mord l’hiver, tient
 
   it('chaque hiver suivant mord EXACTEMENT une bouchée — BOUCHEE_HIVER × la course de l’an 1', () => {
     for (let tour = 2; tour <= 6; tour++) {
-      const j21 = (tour - 1) * 84 + 21
-      const j60 = (tour - 1) * 84 + 60
-      const bouchee = avanceeDuFront(j60, MAX) - avanceeDuFront(j21, MAX)
+      const seuilHiver = (tour - 1) * AN + MORSURE_DEBUT
+      const tourDeLAn = (tour - 1) * AN + MORSURE_FIN
+      const bouchee = avanceeDuFront(tourDeLAn, MAX) - avanceeDuFront(seuilHiver, MAX)
       expect(bouchee, `la bouchée de l'an ${tour}`).toBeCloseTo(MAX * CENDRE.BOUCHEE_HIVER, 9)
       // Et la course acquise au début du tour est la somme de tout ce qui précède.
-      expect(avanceeDuFront(j21, MAX)).toBeCloseTo(MAX * (1 + (tour - 2) * CENDRE.BOUCHEE_HIVER), 9)
+      expect(avanceeDuFront(seuilHiver, MAX)).toBeCloseTo(MAX * (1 + (tour - 2) * CENDRE.BOUCHEE_HIVER), 9)
     }
   })
 
-  it('il TIENT hors de la morsure : du jour 61 au jour 20 de l’année suivante, pas une tuile', () => {
+  it('il TIENT hors de la morsure : du tour de l’an au Grand Froid suivant, pas une tuile', () => {
     for (let tour = 1; tour <= 5; tour++) {
-      const plateau = avanceeDuFront((tour - 1) * 84 + 61, MAX)
-      for (let j = (tour - 1) * 84 + 61; j <= tour * 84 + 21; j++) {
+      // La morsure finit AU tour de l'an (S11) : le plateau court donc du dernier jour de
+      // l'année au seuil du Grand Froid suivant — l'Éclosion, l'Ardeur et les Pluies entières.
+      const plateau = avanceeDuFront(tour * AN, MAX)
+      for (let j = tour * AN; j <= tour * AN + MORSURE_DEBUT; j++) {
         expect(avanceeDuFront(j, MAX), `le front bouge hors hiver, jour ${j}`).toBe(plateau)
       }
     }
   })
 
   it('sans borne : au dixième hiver, le front a dépassé la course de l’an 1 — la vallée se referme', () => {
-    expect(avanceeDuFront(10 * 84, MAX)).toBeGreaterThan(MAX)
-    expect(avanceeDuFront(10 * 84, MAX)).toBeCloseTo(MAX * (1 + 9 * CENDRE.BOUCHEE_HIVER), 9)
+    expect(avanceeDuFront(10 * AN, MAX)).toBeGreaterThan(MAX)
+    expect(avanceeDuFront(10 * AN, MAX)).toBeCloseTo(MAX * (1 + 9 * CENDRE.BOUCHEE_HIVER), 9)
   })
 
   it('la bouchée est une PART, dans ]0;1[ — ni morte, ni une seconde course entière', () => {
@@ -231,25 +258,25 @@ describe('le front en ESCALIER (saison-sans-fin T3) — il mord l’hiver, tient
 })
 
 describe('le front, dans la BOUCLE (et non plus sur le papier)', () => {
-  it('sauter à l\'acte III fait AVANCER la cendre et BRÛLER les nœuds', () => {
-    // Sans le saut de jour, personne ne verrait jamais ce mécanisme : en Veillée, l'acte III
-    // arrive au bout d'une heure et demie de jeu. Une mécanique qu'on ne peut pas ATTEINDRE est
-    // une mécanique morte, et ce projet en a déjà enterré cinq.
+  it('sauter au GRAND FROID fait AVANCER la cendre et BRÛLER les nœuds', () => {
+    // Sans le saut de jour, personne ne verrait jamais ce mécanisme : en Veillée, le Grand Froid
+    // arrive au bout d'une trentaine d'heures de jeu. Une mécanique qu'on ne peut pas ATTEINDRE
+    // est une mécanique morte, et ce projet en a déjà enterré cinq.
     const nodes = placeZoneNodes(carte)
     const sim = createSim(2026, { map: carte.map, nodes, calendarScale: 720, debug: true })
     const joueur = spawnEntity(sim, 100, 100)
     const avant = sim.nodes.length
 
-    // Jour 10 (acte I) : le front dort, rien ne brûle.
+    // Jour 10 (l'Éclosion) : le front dort, rien ne brûle.
     step(sim, [{ entityId: joueur, dx: 0, dy: 0, action: { type: 'debug_set_season_day', day: 10 } }])
     step(sim, [{ entityId: joueur, dx: 0, dy: 0 }])
-    expect(sim.nodes.length, 'la cendre a mangé pendant l\'acte I').toBe(avant)
+    expect(sim.nodes.length, 'la cendre a mangé hors du Grand Froid').toBe(avant)
 
-    // Jour 60 (le dernier) : la vallée a reculé.
+    // Le tour de l'an, au bout du Grand Froid : la vallée a reculé.
     drainEvents(sim)
-    step(sim, [{ entityId: joueur, dx: 0, dy: 0, action: { type: 'debug_set_season_day', day: 60 } }])
+    step(sim, [{ entityId: joueur, dx: 0, dy: 0, action: { type: 'debug_set_season_day', day: YEAR_DAYS } }])
     step(sim, [{ entityId: joueur, dx: 0, dy: 0 }])
-    expect(sim.nodes.length, 'aucun nœud n\'a brûlé au dernier jour').toBeLessThan(avant)
+    expect(sim.nodes.length, 'aucun nœud n\'a brûlé au tour de l\'an').toBeLessThan(avant)
 
     // Et le monde l'a DIT : un événement de domaine par jour, pas un par buisson.
     const events = drainEvents(sim)
@@ -261,8 +288,8 @@ describe('le front, dans la BOUCLE (et non plus sur le papier)', () => {
 
   it('la Cendre PREND les ouvrages d\u2019un village quand le front les passe — une fois, jamais le feu de camp', () => {
     // Carte-banc : champ de cendre = x, course calibrée à 8 tuiles. Le village est fondé à
-    // x = 4 : le front (t² sur les jours 21..60) y arrive entre le jour 48 (3,83) et le
-    // jour 49 (4,12) — la fenêtre exacte que « nouvellement derrière » doit voir.
+    // x = 4 : le front (t² sur les jours 91..120, S11) y arrive entre le jour 111 (3,92) et le
+    // jour 112 (4,30) — la fenêtre exacte que « nouvellement derrière » doit voir.
     const map = createEmptyMap(70, 40, TERRAIN_GRASS)
     map.cendre = []
     for (let y = 0; y < 40; y++) for (let x = 0; x < 70; x++) map.cendre.push(x)
@@ -275,7 +302,7 @@ describe('le front, dans la BOUCLE (et non plus sur le papier)', () => {
     const joueur = spawnEntity(sim, 60.5, 20.5)
 
     drainEvents(sim)
-    step(sim, [{ entityId: joueur, dx: 0, dy: 0, action: { type: 'debug_set_season_day', day: 49 } }])
+    step(sim, [{ entityId: joueur, dx: 0, dy: 0, action: { type: 'debug_set_season_day', day: 112 } }])
     step(sim, [{ entityId: joueur, dx: 0, dy: 0 }])
     const prises = drainEvents(sim).filter((e) => e.type === 'cendre_prend')
     expect(prises.length, 'le front a passé les murs en silence').toBeGreaterThanOrEqual(1)
@@ -285,7 +312,7 @@ describe('le front, dans la BOUCLE (et non plus sur le papier)', () => {
     expect(compte).toBe(sim.structures.filter((s) => s.villageId === v.id && s.tx === 4).length)
 
     // Le lendemain : rien de neuf — « nouvellement derrière » ne se redit pas.
-    step(sim, [{ entityId: joueur, dx: 0, dy: 0, action: { type: 'debug_set_season_day', day: 50 } }])
+    step(sim, [{ entityId: joueur, dx: 0, dy: 0, action: { type: 'debug_set_season_day', day: 113 } }])
     step(sim, [{ entityId: joueur, dx: 0, dy: 0 }])
     expect(drainEvents(sim).filter((e) => e.type === 'cendre_prend' && e.villageId === v.id)).toHaveLength(0)
   }, 120_000)

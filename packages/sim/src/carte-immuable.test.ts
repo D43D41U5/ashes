@@ -23,7 +23,7 @@
  * rouge, ce n'est PAS elle qu'il faut changer : c'est `serializePartie` qu'il faut retirer.
  */
 import { describe, expect, it } from 'vitest'
-import { NODE_DEFS, TERRAINS } from './balance'
+import { BALANCE, NODE_DEFS, TERRAINS } from './balance'
 import { generateZonedTerrain } from './zonegen'
 import { placeZoneNodes, emplacementsDeVillage } from './zone-content'
 import { placeHuntingGrounds } from './faune'
@@ -32,7 +32,7 @@ import { createSim, spawnEntity, step, type PlayerAction, type SimState } from '
 import { drainEvents } from './events'
 import { frontActuel } from './cendre'
 import { grantItems } from './village'
-import { TICKS_PER_SEASON_DAY, TICKS_PER_CYCLE, seasonDayAtTick } from './time'
+import { TICKS_PER_CYCLE, TICKS_PER_SEASON_DAY, jourDeSaison } from './time'
 import type { WorldMap } from './map'
 import { serializeCarte, serializePartie, serializeSim } from './persistence'
 import { baseDepuisNoeuds } from './node-baseline'
@@ -43,7 +43,10 @@ import { baseDepuisNoeuds } from './node-baseline'
  */
 // `profondeur` (§2quater R38) est par tuile comme eux — et la hacher ici PROUVE R38 :
 // le champ est gelé à l'amorce, mille ticks de monde vivant n'en bougent pas un bit.
-const CHAMPS_HACHES = ['terrain', 'cendre', 'profondeur'] as const
+// `distEau` (`saisons.md` S10) rejoint la liste pour la même raison : la CRUE fait porter de
+// l'eau à une tuile de terre par simple comparaison `d ≤ niveau`, elle ne mute rien — c'est
+// très exactement le genre de mécanisme dont ce fichier existe pour surveiller la promesse.
+const CHAMPS_HACHES = ['terrain', 'cendre', 'profondeur', 'distEau'] as const
 /** Le reste de la carte — quelques dizaines de ko, couverts par leur JSON. */
 const CHAMPS_JSON = [
   'width', 'height', 'zones', 'cendreMax', 'zoneGrid', 'zonePas', 'zoneDefs', 'seuils', 'fil',
@@ -88,7 +91,12 @@ function empreinte(map: WorldMap): string {
   return `${haches.join(':')}:${hP >>> 0}`
 }
 
-/** Le monde de PRODUCTION, comme `worker/veillee.ts` et le banc le bâtissent. */
+/**
+ * Le monde de PRODUCTION, comme `worker/veillee.ts` et le banc le bâtissent — **jour de départ
+ * compris** (`saisons.md` S2 : le monde ouvre au jour 51, à la fin de l'Ardeur). Le laisser au
+ * défaut 1 ouvrait la partie dans une Éclosion encore gelée, où la cueillette ne prend rien
+ * (F3) : A3 mesurait alors le gel au lieu de mesurer la carte.
+ */
 function mondeReel(): { sim: SimState; joueur: number } {
   const carte = generateZonedTerrain(2026)
   const nodes = placeZoneNodes(carte)
@@ -101,6 +109,7 @@ function mondeReel(): { sim: SimState; joueur: number } {
     map: carte.map,
     nodes,
     calendarScale: TICKS_PER_SEASON_DAY / TICKS_PER_CYCLE,
+    jourDeDepart: BALANCE.JOUR_DE_DEPART,
     home: { x: base.tx + 0.5, y: base.ty + 0.5 },
   })
   const joueur = spawnEntity(sim, base.tx + 0.5, base.ty + 0.5)
@@ -124,6 +133,19 @@ describe('la carte est immuable pendant la partie', () => {
     const { sim } = mondeReel()
     const couverts = [...CHAMPS_HACHES, ...CHAMPS_JSON].sort()
     expect(Object.keys(sim.map).sort()).toEqual(couverts)
+
+    // ET CHAQUE CHAMP HACHÉ DOIT L'ÊTRE POUR DE VRAI. `empreinte` boucle sur `arr.length` : un
+    // champ par tuile rangé en tableau TYPÉ ressortirait du `JSON.parse(JSON.stringify)` de
+    // `createSim` en objet indexé — truthy, donc accepté, mais de longueur `undefined`, donc
+    // haché sur zéro élément. La liste serait complète, l'empreinte constante, et la garde
+    // verte en ne couvrant rien (« une garde qui dégrade cache le défaut »).
+    for (const nom of CHAMPS_HACHES) {
+      const champ = (sim.map as unknown as Record<string, unknown>)[nom]
+      expect(Array.isArray(champ), `${nom} n'est pas un tableau : l'empreinte ne le hache pas`).toBe(true)
+      expect((champ as unknown[]).length, `${nom} n'a pas une valeur par tuile`).toBe(
+        sim.map.width * sim.map.height,
+      )
+    }
   })
 
   it("A1 — mille ticks de monde vivant ne changent pas un bit de `map`", () => {
@@ -159,21 +181,28 @@ describe('la carte est immuable pendant la partie', () => {
     // Et la cendre ne MORD qu'au BASCULEMENT d'un jour de saison (le reste des ticks, elle ne
     // coûte qu'un test) : on se pose donc juste AVANT la frontière, pour que le premier `step`
     // la franchisse. Un tick plus loin et le test serait passé sans que rien ne brûle.
-    const JOUR = 59
-    sim.tick = Math.ceil(((JOUR - 1) * TICKS_PER_SEASON_DAY) / sim.calendarScale) - 1
-    expect(seasonDayAtTick(sim.tick, sim.calendarScale)).toBe(JOUR - 1)
+    //
+    // LE JOUR SE CHOISIT DANS LE GRAND FROID (`saisons.md` S11) : la Cendre ne mord plus que
+    // l'hiver, et un jour de l'Ardeur — l'ancien 59 — laisserait le front à zéro, donc rien à
+    // garder. Le cœur du Grand Froid tombe encore DANS la saison de ce monde-là, qui se ferme
+    // à `JOUR_DE_DEPART + SEASON_DAYS − 1`, soit le jour 110 : on prouve la cendre sans jamais
+    // déborder sur la fin de saison.
+    const JOUR = 3 * BALANCE.ACT_DAYS + Math.floor(BALANCE.ACT_DAYS / 2) // le cœur du Grand Froid
+    // `JOUR − jourDeDepart` et non `JOUR − 1` : le tick compte DEPUIS l'ouverture du monde (S2).
+    sim.tick = Math.ceil(((JOUR - sim.jourDeDepart) * TICKS_PER_SEASON_DAY) / sim.calendarScale) - 1
+    expect(jourDeSaison(sim)).toBe(JOUR - 1)
     expect(frontActuel({ ...sim, tick: sim.tick + 1 })).toBeGreaterThan(0) // sans ça, rien à garder
 
-    // Dix ticks suffisent : le basculement tombe au premier, et le jour 59 est l'acte III —
-    // méga-horde, évacuation, champ de flux… chaque tick y coûte cher. On prouve la cendre,
-    // pas l'endgame.
+    // Dix ticks suffisent : le basculement tombe au premier, et le cœur du Grand Froid est le
+    // moment le plus cher de l'année — méga-horde, évacuation, champ de flux… chaque tick y
+    // coûte cher. On prouve la cendre, pas l'endgame.
     for (let t = 0; t < 10; t++) {
       step(sim, [{ entityId: joueur, dx: 0, dy: 0 }])
       drainEvents(sim)
     }
 
     // La preuve que la cendre a bien MORDU : elle dévore les nœuds qu'elle recouvre.
-    expect(seasonDayAtTick(sim.tick, sim.calendarScale)).toBe(JOUR)
+    expect(jourDeSaison(sim)).toBe(JOUR)
     expect(sim.nodes.length).toBeLessThan(noeudsAvant)
     expect(empreinte(sim.map)).toBe(avant)
   })

@@ -2,7 +2,9 @@ import { describe, expect, it } from 'vitest'
 import { BALANCE, YEAR_DAYS } from '@ashes/sim'
 import { cendreTelegraphForDay } from './cendre-telegraph'
 
-const CENDRE_DAY = 2 * BALANCE.ACT_DAYS + 1 // premier jour de l'acte III
+// L'OUVERTURE DU GRAND FROID (S11) : c'est là que la Cendre s'ébranle, plus à l'acte III.
+// Dérivé d'`ACT_DAYS` comme la source, pour que le test suive une refonte de cadence.
+const CENDRE_DAY = 3 * BALANCE.ACT_DAYS + 1
 
 describe('le télégraphe de la Cendre (GDD §536)', () => {
   it('annonce la Cendre TROIS jours avant', () => {
@@ -16,7 +18,7 @@ describe('le télégraphe de la Cendre (GDD §536)', () => {
   })
 
   it('reste MUET les autres jours (pas de bruit d’alerte quotidien)', () => {
-    for (const day of [1, 10, CENDRE_DAY - 2, CENDRE_DAY, CENDRE_DAY + 5, BALANCE.SEASON_DAYS]) {
+    for (const day of [1, 10, CENDRE_DAY - 2, CENDRE_DAY, CENDRE_DAY + 5, YEAR_DAYS]) {
       expect(cendreTelegraphForDay(day)).toBeNull()
     }
   })

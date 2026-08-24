@@ -7,7 +7,7 @@ import { countOf, inventoryOf, nutritionFactor, spoilTier } from './items'
 import { createEmptyMap } from './map'
 import { predatorBias } from './faune'
 import { createSim, spawnEntity, step, type SimState } from './sim'
-import { TICKS_PER_CYCLE, cycleOffsetForStartHour } from './time'
+import { TICKS_PER_CYCLE, cycleOffsetForStartHour, dayTicksAt, getGameTime } from './time'
 import { grantItems } from './village'
 
 /**
@@ -22,8 +22,24 @@ import { grantItems } from './village'
  *   4. la nuit CHASSE, loin d'un feu — mais elle s'annonce, et elle a une parade.
  */
 const me = (sim: SimState) => sim.entities[0]!
-const monde = (nodes: ResourceNode[] = []): SimState =>
-  createSim(7, { map: createEmptyMap(64, 64, TERRAIN_GRASS), nodes })
+
+/**
+ * LE CŒUR DE L'ARDEUR — le seul moment de l'année où la plaine ne gèle jamais (spec
+ * `saisons.md` S4 : la courbe du socle culmine à +26 °C, la nuit à +20). Dérivé de la cadence
+ * des saisons, jamais écrit.
+ *
+ * Ce banc mesure la FAIM, le POURRISSEMENT, la REPOUSSE et le LOUP. Depuis que le socle est
+ * une courbe, le jour 1 par défaut est une Éclosion encore gelée : la cueillette y est
+ * refusée (« la plante est gelée ») et la nuit y envoie des morts au lieu de loups
+ * (`eveilCendreuxAt`). Les deux sont de vraies règles — mais ce ne sont pas CELLES-CI, et
+ * un banc qui les traverse mesure le froid en croyant mesurer la tension.
+ */
+const MI_ARDEUR = Math.round(BALANCE.ACT_DAYS * 1.5)
+
+// `jourDeDepart` vaut 1 par défaut, comme `createSim` — un banc ouvre à l'Éclosion sauf
+// s'il a une raison de dire laquelle.
+const monde = (nodes: ResourceNode[] = [], jourDeDepart = 1): SimState =>
+  createSim(7, { map: createEmptyMap(64, 64, TERRAIN_GRASS), nodes, jourDeDepart })
 
 describe('1. LA FAIM TUE (et le cru ne nourrit pas un homme)', () => {
   it('à 0, les PV fondent — et on en meurt', () => {
@@ -147,7 +163,10 @@ describe('3. LE MONDE NE SE REMPLIT PLUS TOUT SEUL', () => {
 
   it('ÉPUISEMENT LOCAL : un coin qu’on rase met de plus en plus de temps à revenir', () => {
     const buisson: ResourceNode = { id: 1, type: 'berry_bush', tx: 11, ty: 10, stock: 1, regrowAt: 0 }
-    const sim = monde([buisson])
+    // AU CŒUR DE L'ARDEUR : le tick 0 est une AUBE, le fond du froid de son cycle, et sous la
+    // courbe du socle (S4) l'aube d'Éclosion refuse la cueillette — « la plante est gelée ».
+    // Ce qu'on chronomètre ici est la PÉNALITÉ D'ÉPUISEMENT, pas le gel.
+    const sim = monde([buisson], MI_ARDEUR)
     const id = spawnEntity(sim, 10.3, 10.5)
 
     // On se plante SUR le nœud : à l'épuisement il DÉRIVE ailleurs (spec recolte-vivante),
@@ -217,11 +236,20 @@ describe('3. LE MONDE NE SE REMPLIT PLUS TOUT SEUL', () => {
 })
 
 describe('4. LA NUIT CHASSE (mais elle s’annonce, et elle a une parade)', () => {
-  /** Un monde de nuit, sans feu : la proie est seule dans le noir. */
+  /**
+   * Un monde de nuit, sans feu : la proie est seule dans le noir — AU CŒUR DE L'ARDEUR.
+   *
+   * QUI vient est décidé par le FROID DU LIEU (`eveilCendreuxAt`, décision 2026-08-21) : sous
+   * la courbe de S4, une nuit d'hiver — ou l'Éclosion encore gelée du jour 1 — ne lève que des
+   * morts, et « le vivant a quitté la vallée » est une PROMESSE, pas un défaut. Les quatre
+   * gardes qui suivent parlent du LOUP : elles se jouent donc dans la seule saison où il
+   * chasse encore.
+   */
   const nuit = (): SimState =>
     createSim(5, {
       map: createEmptyMap(64, 64, TERRAIN_GRASS),
       cycleOffset: cycleOffsetForStartHour(0), // minuit
+      jourDeDepart: MI_ARDEUR,
     })
 
   it('loin d’un feu, les loups viennent — et ILS HURLENT AVANT', () => {
@@ -286,13 +314,18 @@ describe('4. LA NUIT CHASSE (mais elle s’annonce, et elle a une parade)', () =
     const sim = createSim(5, {
       map: createEmptyMap(64, 64, TERRAIN_GRASS),
       cycleOffset: cycleOffsetForStartHour(12), // plein midi
+      jourDeDepart: MI_ARDEUR,
     })
     spawnEntity(sim, 32.5, 32.5)
 
-    // 15 minutes réelles : on reste DANS le jour (une heure de jeu = 2 min réelles,
-    // et la nuit tombe à 21h — soit 18 min après midi). Au-delà, on testerait la
-    // nuit en croyant tester le jour.
-    for (let t = 0; t < 15 * 60 * BALANCE.TICK_RATE_HZ; t++) step(sim, [])
+    // TOUT L'APRÈS-MIDI, JUSQU'AU CRÉPUSCULE — et pas une durée écrite. La longueur du jour
+    // est SAISONNIÈRE depuis S6 (13,5 h de jour au Grand Froid, 17,3 h à l'Ardeur) : « 15
+    // minutes réelles » débordait dans la nuit une saison sur deux, et le test aurait mesuré
+    // la nuit en croyant mesurer le jour — au vert, puisque la nuit d'hiver n'envoie pas de
+    // loups. On court donc jusqu'au tick d'avant la tombée, et on prouve qu'on y est resté.
+    const crepuscule = dayTicksAt(sim, sim.tick) - ((sim.tick + sim.cycleOffset) % TICKS_PER_CYCLE)
+    for (let t = 0; t < crepuscule - 1; t++) step(sim, [])
+    expect(getGameTime(sim).isNight, 'la prémisse : on a passé la journée entière DANS le jour').toBe(false)
 
     expect(sim.monsters.filter((m) => m.type === 'wolf')).toHaveLength(0)
   })

@@ -1,6 +1,7 @@
 # La saison — trois actes, la Cendre, la chronique
 
 > **⚠ CADRE SUPERSÉDÉ le 2026-07-31 — lire `saison-sans-fin.md` avant les chiffres de ce document.**
+> **Et depuis le 2026-08-23, lire aussi `saisons.md`** : l'acte n'est plus un palier de pression mais une SAISON de trente jours qui revient chaque année (l'Éclosion · l'Ardeur · les Pluies · le Grand Froid), la température est une courbe du jour de l'année, et le monde commence au jour 51.
 > Décision d'Alexis : le jeu ne se termine plus au bout de soixante jours, la pression monte
 > indéfiniment, et la saison devient un *réglage* (jamais en solo, une période de wipe en jours
 > IRL en multi). **R1** (courbe en trois actes), **R3** (évacuation au jour 55) et **R4** (fin au

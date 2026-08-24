@@ -50,6 +50,22 @@ export type ItemId =
   /** LA GRAINE à semer (agriculture voie A) — non comestible, se met en terre dans une
    *  parcelle. Craftée au Feu depuis des baies (l'investissement d'amorçage du potager). */
   | 'graine'
+  /** ── LES CULTURES DE SAISON (spec `saisons.md` S16) ──
+   *  Une plante par saison, chacune avec sa FENÊTRE DE SEMIS : le potager cesse d'être une
+   *  seule culture qu'on répète à l'infini, il devient un métier qui tourne. La graine hors
+   *  fenêtre n'est pas perdue — elle attend son heure. */
+  /** LA POUSSE VERTE de l'Éclosion : rapide, généreuse, et elle ne se garde pas. */
+  | 'pousse_verte'
+  | 'graine_verte'
+  /** LE FRUIT SEC de l'Ardeur : il tient la sécheresse, c'est LUI qui fait du potager la
+   *  parade de l'été — quand la cueillette sauvage s'arrête, lui pousse encore. */
+  | 'fruit_sec'
+  | 'graine_fruit'
+  /** LE TUBERCULE des Pluies : lent, et **le seul qui ne pourrisse jamais**. Ce qu'on sème à
+   *  l'automne est ce qu'on mangera au cœur du Grand Froid — la péremption fait toute la
+   *  tension, sans une règle de plus. */
+  | 'tubercule'
+  | 'graine_tubercule'
   | 'stew'
   | 'iron_ore'
   | 'coal'

@@ -16,6 +16,7 @@
  * n'emploie que `+ - * /` et des comparaisons (invariant 2).
  */
 import {
+  EAU,
   BALANCE,
   CENDREUX,
   CIRCLES,
@@ -61,7 +62,9 @@ import { pathToward } from './pathfinding'
 import { hash2 } from './noise'
 import { poissonPoints } from './poisson'
 import { rngRoll } from './rng'
-import { getGameTime } from './time'
+import { niveauDEau, porteDeLEau } from './eau'
+import { effetsDuJour } from './modificateur'
+import { getGameTime, jourDeSaison } from './time'
 import type { Entity, SimState } from './sim'
 
 /**
@@ -856,6 +859,13 @@ function trySpawnNear(
     // Rien ne naît ici tant que les bois n'ont pas retrouvé leur calme — c'est ce
     // qui force à lever le camp au lieu de récolter sur place.
     if (isQuiet(state, tx + 0.5, ty + 0.5)) continue
+    // LA SÉCHERESSE REPLIE LE GIBIER SUR CE QUI RESTE D'EAU (spec `saisons.md` S10). Le coin
+    // de chasse a été placé au worldgen près d'une rive ; si cette rive était une MARE et que
+    // l'Ardeur l'a bue, plus rien ne naît ici — la vie se concentre là où l'eau tient. Le
+    // balayage ne se paie QUE pendant une sécheresse : hors de là, le test s'arrête au premier
+    // `if`, et l'eau de la carte n'a pas bougé.
+    const niveauEau = niveauDEau(state)
+    if (niveauEau <= -EAU.SEUIL_ASSECHEMENT && !eauVivanteAutour(state, tx, ty, niveauEau)) continue
 
     // LES COINS DE CHASSE (R17). Le gibier a des ADRESSES : il ne naît QUE dans
     // un coin de chasse. Entre eux, la vallée est vide — et c'est ce vide qui
@@ -1113,6 +1123,19 @@ function disperseLeaderless(state: SimState, byId: Map<number, Entity>): void {
  * (`meteoQuiet`), jamais par points `faunaQuiet` : une bande MOBILE en sèmerait à
  * chaque tick. Les deux silences coexistent par construction (critère A5 météo).
  */
+/** Reste-t-il de l'eau AUJOURD'HUI dans le rayon d'abreuvement de ce point (S10) ? Une mare
+ *  asséchée n'en est plus ; un lac, si. */
+function eauVivanteAutour(state: SimState, tx: number, ty: number, niveau: number): boolean {
+  const r = FAUNA.GROUND_WATER_NEAR
+  for (let oy = -r; oy <= r; oy++) {
+    for (let ox = -r; ox <= r; ox++) {
+      // Le niveau est GLOBAL : on le lit une fois pour le rayon entier, jamais par tuile.
+      if (porteDeLEau(state, tx + ox, ty + oy, niveau)) return true
+    }
+  }
+  return false
+}
+
 function isQuiet(state: SimState, x: number, y: number): boolean {
   for (const q of state.faunaQuiet) {
     if (q.until <= state.tick) continue
@@ -1951,7 +1974,11 @@ export function faunaStep(
   // la chasse. Le lapin et le cerf ont `chargeChance: 0` — ils fuient toujours.
   if (hunted && state.tick >= monster.thinkAt) {
     monster.thinkAt = state.tick + def.thinkEveryTicks
-    monster.fleeing = roll(state) >= def.chargeChance
+    // LE BRAME (S18) : au cœur des Pluies, le cerf s'appelle et CHARGE au lieu de fuir. Le
+    // cadran existait déjà pour le sanglier — on l'accorde au cerf, le temps de la saison.
+    const brame = monster.type === 'deer' ? (effetsDuJour(jourDeSaison(state)).brame ?? 0) : 0
+    const charge = brame > 0 ? Math.min(1, FAUNA.BRAME_CHARGE * brame) : def.chargeChance
+    monster.fleeing = roll(state) >= charge
   }
   if (hunted && !monster.fleeing) {
     monster.fleeSince = -1

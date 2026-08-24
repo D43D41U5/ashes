@@ -1,9 +1,9 @@
 /**
- * LES LOIS D'ACTE (spec `saison-sans-fin.md` A1/A2/A3/A5, tranches T1-T2) — totales, cycliques,
- * plafonnées.
+ * LES LOIS D'ACTE (spec `saison-sans-fin.md` A1/A2/A3/A5, tranches T1-T2 ; **rephasées par
+ * `saisons.md` S1 et S13**) — totales, cycliques, plafonnées.
  *
- * Balayées sur 200 actes (50 ans), jamais sur trois cas choisis. Les paliers 1..3 sont épinglés à
- * des LITTÉRAUX, pas aux tables qu'on teste : « une garde écrite avec la constante qu'elle teste
+ * Balayées sur 200 actes (50 ans), jamais sur trois cas choisis. Les QUATRE paliers sont épinglés
+ * à des LITTÉRAUX, pas aux tables qu'on teste : « une garde écrite avec la constante qu'elle teste
  * ne garde rien » — et c'est ce qui a attrapé une inversion dans le plan (ALIGNMENT/FIRE_UPKEEP).
  *
  * A2 S'ÉNONCE SUR LE TOUR `k`, PAS SUR L'ACTE : l'arc oscille (décision d'Alexis 2026-08-21), une
@@ -11,10 +11,15 @@
  * fixée, elle monte d'année en année, atteint son plafond et n'en bouge plus.
  *
  * A3 n'est PAS testé ici : il se tient par le compilateur (une loi n'est pas indexable).
+ *
+ * ⚠ **L'ACTE EST UNE SAISON DEPUIS S1**, et S13 a réordonné tous les paliers : LA PRESSION SUIT
+ * LE FROID — minimum à l'Ardeur, maximum au Grand Froid. Un palier resté dans l'ordre d'avant
+ * décalerait toute la pression d'un cran sans que rien ne le dise (35 % de Brume glaciale en
+ * plein été) : c'est le piège principal de la refonte, et c'est ce que le tableau ci-dessous garde.
  */
 import { describe, expect, it } from 'vitest'
 import {
-  ACTS_PER_YEAR, ALIGNMENT, BALANCE, BRUME, CENDREUX, FIRE_UPKEEP, METEO, NIGHT_HUNT, SEASON, TEMPERATURE,
+  ACTS_PER_YEAR, ALIGNMENT, BALANCE, BRUME, CENDREUX, FIRE_UPKEEP, METEO, NIGHT_HUNT, SEASON,
   actLaw, actTable, phaseOf, tourOf, type ActLaw,
 } from './balance'
 import { createEmptyMap } from './map'
@@ -23,30 +28,44 @@ import { actForDay, phaseForDay, tourForDay, YEAR_DAYS } from './time'
 
 const ACTES_BALAYES = 200
 
-/** Les huit lois numériques, avec leurs paliers ÉPINGLÉS (les valeurs du 2026-08-21). */
-const LOIS: { nom: string; loi: ActLaw; paliers: readonly [number, number, number] }[] = [
-  { nom: 'TEMPERATURE.ACT_COLD', loi: TEMPERATURE.ACT_COLD, paliers: [0, 10, 20] },
-  { nom: 'BALANCE.ACT_HUNGER_FACTOR', loi: BALANCE.ACT_HUNGER_FACTOR, paliers: [1, 2, 3] },
-  { nom: 'SEASON.REGROW_ACT_FACTOR', loi: SEASON.REGROW_ACT_FACTOR, paliers: [1, 1.5, 2] },
-  { nom: 'ALIGNMENT.ACT_FACTOR', loi: ALIGNMENT.ACT_FACTOR, paliers: [1, 2, 3] }, // le don vaut double au Grand Froid, triple à la Cendre
-  { nom: 'FIRE_UPKEEP.ACT_FACTOR', loi: FIRE_UPKEEP.ACT_FACTOR, paliers: [1, 1.5, 2] },
-  { nom: 'NIGHT_HUNT.CHANCE_PER_MIN', loi: NIGHT_HUNT.CHANCE_PER_MIN, paliers: [0.12, 0.3, 0.55] },
-  { nom: 'BRUME.CHANCE_PER_DAY', loi: BRUME.CHANCE_PER_DAY, paliers: [0, 0.35, 0.5] },
-  { nom: 'METEO.CHANCE_PER_CYCLE', loi: METEO.CHANCE_PER_CYCLE, paliers: [0.5, 0.65, 0.8] },
+/**
+ * Les six lois numériques, avec leurs QUATRE paliers ÉPINGLÉS — l'Éclosion · l'Ardeur · les
+ * Pluies · le Grand Froid (les valeurs de S13, 2026-08-23).
+ *
+ * Elles étaient huit. Deux sont parties, et ni l'une ni l'autre n'est un oubli :
+ * · `TEMPERATURE.ACT_COLD` — S4 la remplace par la COURBE `SOCLE`, une valeur par JOUR de
+ *   l'année et non plus une marche par saison. Ce n'est plus une `actLaw` du tout ; sa garde
+ *   vit dans `saisons.test.ts` (A2, A12).
+ * · `METEO.CHANCE_PER_CYCLE` — S7/S9 la remplacent par `PAR_SAISON` et l'élection par ÉPISODES :
+ *   la densité de mauvais temps se lit sur la longueur des épisodes, plus sur une chance par
+ *   cycle. La table saisonnière qui lui succède est gardée plus bas.
+ */
+const LOIS: { nom: string; loi: ActLaw; paliers: readonly [number, number, number, number] }[] = [
+  { nom: 'BALANCE.ACT_HUNGER_FACTOR', loi: BALANCE.ACT_HUNGER_FACTOR, paliers: [1, 1, 2, 3] },
+  // La repousse est LA seule ligne qui s'écarte de « la pression suit le froid », et S10 l'impose :
+  // aussi lente à l'Ardeur qu'aux Pluies, parce que la sécheresse arrête ce que le froid arrêtera.
+  { nom: 'SEASON.REGROW_ACT_FACTOR', loi: SEASON.REGROW_ACT_FACTOR, paliers: [1, 2, 1.5, 3] },
+  { nom: 'ALIGNMENT.ACT_FACTOR', loi: ALIGNMENT.ACT_FACTOR, paliers: [1, 1, 2, 3] }, // le don vaut double aux Pluies, triple au Grand Froid
+  { nom: 'FIRE_UPKEEP.ACT_FACTOR', loi: FIRE_UPKEEP.ACT_FACTOR, paliers: [1, 1, 1.5, 2] },
+  { nom: 'NIGHT_HUNT.CHANCE_PER_MIN', loi: NIGHT_HUNT.CHANCE_PER_MIN, paliers: [0.12, 0.12, 0.3, 0.55] },
+  // La Brume est un mécanisme de FROID : elle doit lire 0 sur les trente jours de l'Ardeur.
+  { nom: 'BRUME.CHANCE_PER_DAY', loi: BRUME.CHANCE_PER_DAY, paliers: [0, 0, 0.35, 0.5] },
 ]
 
-describe('l’année : quatre actes de 21 jours (décision d’Alexis, 2026-08-21)', () => {
-  it('ACTS_PER_YEAR = 4, ACT_DAYS = 21, YEAR_DAYS = 84 — épinglés en littéraux', () => {
+describe('l’année : quatre saisons de trente jours (décision d’Alexis, 2026-08-23)', () => {
+  it('ACTS_PER_YEAR = 4, ACT_DAYS = 30, YEAR_DAYS = 120 — épinglés en littéraux', () => {
     expect(ACTS_PER_YEAR).toBe(4)
-    expect(BALANCE.ACT_DAYS).toBe(21)
-    expect(YEAR_DAYS).toBe(84)
+    expect(BALANCE.ACT_DAYS).toBe(30)
+    expect(YEAR_DAYS).toBe(120)
   })
 
   it('tour et phase se dérivent de l’acte, totalement', () => {
     expect([tourOf(1), tourOf(4), tourOf(5), tourOf(8), tourOf(9)]).toEqual([1, 1, 2, 2, 3])
     expect([phaseOf(1), phaseOf(2), phaseOf(3), phaseOf(4), phaseOf(5), phaseOf(8)]).toEqual([1, 2, 3, 4, 1, 4])
     expect([tourOf(0), tourOf(-3), phaseOf(0)]).toEqual([1, 1, 1])
-    expect([tourForDay(84), tourForDay(85), phaseForDay(85), phaseForDay(168), phaseForDay(169)]).toEqual([1, 2, 1, 4, 1])
+    // Le tour de l'an tombe au jour 121 : l'an 2 s'ouvre sur une Éclosion, et le jour 240 est
+    // encore le Grand Froid de l'an 2.
+    expect([tourForDay(120), tourForDay(121), phaseForDay(121), phaseForDay(240), phaseForDay(241)]).toEqual([1, 2, 1, 4, 1])
   })
 })
 
@@ -59,9 +78,10 @@ describe('A1 — actForDay est TOTAL, monotone, non borné', () => {
       expect(a, `l'acte recule au jour ${jour}`).toBeGreaterThanOrEqual(precedent)
       precedent = a
     }
-    expect(actForDay(10_000)).toBe(Math.floor(9_999 / 21) + 1)
-    // Les bornes de l'arc nominal, INCHANGÉES : 21 / 42 / 63.
-    expect([actForDay(21), actForDay(22), actForDay(42), actForDay(43), actForDay(63), actForDay(64)]).toEqual([1, 2, 2, 3, 3, 4])
+    expect(actForDay(10_000)).toBe(Math.floor(9_999 / 30) + 1)
+    // Les bornes de l'année : 30 / 60 / 90 / 120, puis l'Éclosion de l'an 2.
+    expect([actForDay(30), actForDay(31), actForDay(60), actForDay(61)]).toEqual([1, 2, 2, 3])
+    expect([actForDay(90), actForDay(91), actForDay(120), actForDay(121)]).toEqual([3, 4, 4, 5])
     // Et un jour < 1 répond encore.
     expect(actForDay(0)).toBe(1)
   })
@@ -70,11 +90,16 @@ describe('A1 — actForDay est TOTAL, monotone, non borné', () => {
 describe('A2 — à PHASE fixée, chaque loi monte par tour, atteint son plafond, et le TIENT', () => {
   for (const { nom, loi, paliers } of LOIS) {
     it(nom, () => {
-      // L'arc nominal, AU BIT PRÈS : les actes 1..3 rendent leurs paliers, le 4e tient le 3e.
-      expect(loi(1)).toBe(paliers[0])
-      expect(loi(2)).toBe(paliers[1])
-      expect(loi(3)).toBe(paliers[2])
-      expect(loi(4)).toBe(paliers[2]) // le cœur de l'hiver garde la valeur de la Cendre
+      // A11 : plus AUCUNE loi ne laisse le quatrième palier hériter du troisième.
+      expect(loi.paliers.length, `${nom} ne déclare pas quatre paliers`).toBe(ACTS_PER_YEAR)
+      // LA PRESSION SUIT LE FROID (S13) : le maximum tombe au Grand Froid, jamais ailleurs.
+      expect(Math.max(...paliers), `${nom} ne culmine pas au Grand Froid`).toBe(paliers[3])
+
+      // L'année nominale, AU BIT PRÈS : les quatre saisons rendent leurs quatre paliers.
+      expect(loi(1)).toBe(paliers[0]) // l'Éclosion
+      expect(loi(2)).toBe(paliers[1]) // l'Ardeur
+      expect(loi(3)).toBe(paliers[2]) // les Pluies
+      expect(loi(4)).toBe(paliers[3]) // le Grand Froid
       // Le printemps REVIENT : l'an 2 commence là où l'an 1 commençait (pas = 0 tant que les
       // pentes ne sont pas décidées — l'an 2 rejoue l'an 1).
       expect(loi(5)).toBe(paliers[0] + loi.pas)
@@ -94,10 +119,12 @@ describe('A2 — à PHASE fixée, chaque loi monte par tour, atteint son plafond
           if (plafondAtteintAuTour >= 0) expect(v, `${nom} quitte son plafond à l'acte ${act}`).toBe(loi.plafond)
           precedent = v
         }
-        // Les phases les plus dures (3 et 4) atteignent le plafond dès l'an 1 ; les autres
-        // l'atteignent SI une pente existe — sinon elles restent sous lui à jamais, et c'est
-        // la forme de l'année.
-        if (phase >= 3 || loi.pas > 0) expect(plafondAtteintAuTour, `${nom} (phase ${phase}) n'atteint jamais son plafond`).toBeGreaterThan(0)
+        // LE GRAND FROID atteint le plafond dès l'an 1 — c'est là que la pression culmine (S13).
+        // Les trois autres saisons ne l'atteignent QUE si une pente existe ; sinon elles restent
+        // sous lui à jamais, et c'est la forme de l'année.
+        if (phase === ACTS_PER_YEAR || loi.pas > 0) {
+          expect(plafondAtteintAuTour, `${nom} (phase ${phase}) n'atteint jamais son plafond`).toBeGreaterThan(0)
+        }
       }
     })
   }
@@ -113,30 +140,41 @@ describe('A2 — à PHASE fixée, chaque loi monte par tour, atteint son plafond
 })
 
 describe('les tables totales — ce qui n’est pas une pente REVIENT avec les saisons', () => {
-  it('CENDREUX.CONVERGE_TILES reste une TABLE assumée (20 / 80 / 10000), cyclique', () => {
+  it('CENDREUX.CONVERGE_TILES reste une TABLE assumée (20 / 20 / 80 / 10000), cyclique', () => {
     // Une PORTÉE de perception, pas une intensité (plan pression-croissante) : T1 l'a rendue
-    // totale sans la continuifier — la continuifier serait une décision d'Alexis.
-    expect([1, 2, 3, 4].map((a) => CENDREUX.CONVERGE_TILES(a))).toEqual([20, 80, 10000, 10000])
-    expect(CENDREUX.CONVERGE_TILES(5)).toBe(20) // le printemps de l'an 2 : la portée de printemps
+    // totale sans la continuifier — la continuifier serait une décision d'Alexis. S13 lui a
+    // donné son quatrième palier : les Cendreux ne convergent pas sur toute la carte dès l'été.
+    expect([1, 2, 3, 4].map((a) => CENDREUX.CONVERGE_TILES(a))).toEqual([20, 20, 80, 10000])
+    expect(CENDREUX.CONVERGE_TILES(5)).toBe(20) // l'Éclosion de l'an 2 : la portée du printemps
     for (let act = 1; act <= ACTES_BALAYES; act++) expect([20, 80, 10000]).toContain(CENDREUX.CONVERGE_TILES(act))
   })
 
-  it('METEO.TYPES rend une mixture à tout acte, dont les poids somment à 1, et le printemps revient', () => {
+  it('METEO.PAR_SAISON rend une identité à tout acte, dont la mixture somme à 1, et le printemps revient', () => {
     for (let act = 1; act <= ACTES_BALAYES; act++) {
-      const table = METEO.TYPES(act)
-      const somme = Object.values(table).reduce((t, p) => t + p, 0)
+      const saison = METEO.PAR_SAISON(act)
+      const somme = Object.values(saison.types).reduce((t, p) => t + (p ?? 0), 0)
       expect(Math.abs(somme - 1), `la mixture de l'acte ${act} ne somme pas à 1`).toBeLessThan(1e-9)
+      // Depuis R11 (2026-08-22) le blizzard ne s'ÉLIT plus — il se dérive du froid au point,
+      // et S7 en fait un ASPECT : la table ne porte que des CLASSES, à TOUTE saison, y compris
+      // au Grand Froid où la neige tombe pourtant tous les jours.
+      expect('blizzard' in saison.types, `acte ${act}`).toBe(false)
+      expect('neige' in saison.types, `acte ${act}`).toBe(false)
+      // Une bande, une fenêtre : la géométrie du front est un réglage SAISONNIER (S7), donc
+      // elle répond à tout acte elle aussi.
+      expect(saison.largeur.pluie, `acte ${act}`).toBeGreaterThan(0)
+      expect(saison.fenetre, `acte ${act}`).toBeGreaterThan(0)
     }
-    expect(METEO.TYPES(4)).toBe(METEO.TYPES(3)) // l'hiver profond garde le ciel de la Cendre
-    expect(METEO.TYPES(5)).toBe(METEO.TYPES(1)) // identité : le même objet, pas une copie
-    // Depuis R11 (2026-08-22) le blizzard ne s'ÉLIT plus — il se dérive du froid : la table
-    // ne porte que des CLASSES, et l'acte I n'en a aucune de neigeuse par construction.
-    expect('blizzard' in METEO.TYPES(1)).toBe(false)
-    expect('neige' in METEO.TYPES(1)).toBe(false)
+    // Les QUATRE saisons ont chacune son ciel : depuis S13, plus aucune table ne laisse le
+    // quatrième palier hériter du troisième.
+    expect(new Set([1, 2, 3, 4].map((a) => METEO.PAR_SAISON(a))).size).toBe(ACTS_PER_YEAR)
+    expect(METEO.PAR_SAISON(5)).toBe(METEO.PAR_SAISON(1)) // identité : le même objet, pas une copie
   })
 })
 
 describe('le bâtisseur lui-même — la formule de l’arc oscillant', () => {
+  // Ces trois-là testent le BÂTISSEUR, pas les lois du jeu : les paliers y sont fictifs, et le
+  // cas « trois paliers pour quatre phases » reste son contrat de totalité — même si, depuis
+  // S13, plus aucune loi du jeu ne s'y appuie.
   it('actLaw : min(plafond, paliers[phase] + pas × (tour − 1))', () => {
     const loi = actLaw([3, 5, 8], 2, 13)
     expect(loi.paliers).toEqual([3, 5, 8])
@@ -161,7 +199,7 @@ describe('le bâtisseur lui-même — la formule de l’arc oscillant', () => {
 })
 
 describe('A5 — le solo ne se réinitialise jamais', () => {
-  it('à 10 × 60 jours, la sim tourne encore, et l’acte y est strictement au-dessus de celui du jour 60', () => {
+  it('à 600 jours (cinq années de 120), la sim tourne encore, et l’acte y est loin au-dessus de celui du jour 60', () => {
     const map = createEmptyMap(40, 40, 0)
     const sim = createSim(11, { map, calendarScale: 720, debug: true, worldEvents: false })
     const joueur = spawnEntity(sim, 20.5, 20.5)
@@ -169,6 +207,7 @@ describe('A5 — le solo ne se réinitialise jamais', () => {
     for (let i = 0; i < 40; i++) step(sim, [{ entityId: joueur, dx: 0, dy: 0 }])
     expect(sim.entities.some((e) => e.id === joueur)).toBe(true)
     expect(actForDay(600)).toBeGreaterThan(actForDay(60))
-    expect(tourForDay(600)).toBe(8) // la huitième année
+    expect(tourForDay(600)).toBe(5) // 600 = 5 × 120 : le dernier jour du Grand Froid de l'an 5
+    expect(phaseForDay(600)).toBe(4)
   }, 60_000)
 })

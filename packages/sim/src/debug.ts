@@ -14,7 +14,8 @@
  *   sont capturées par le replay log : une partie où l'on a triché se rejoue
  *   quand même à l'identique.
  */
-import { WORLD_EVENTS, METEO, MORTS, NIGHT_HUNT, TEMPERATURE, WALL_TIERS } from './balance'
+import { fenetreDe } from './meteo'
+import { WORLD_EVENTS, MORTS, NIGHT_HUNT, TEMPERATURE, WALL_TIERS } from './balance'
 import { emitEvent } from './events'
 import { spawnHorde } from './worldevents'
 import { addItems, type ItemId } from './items'
@@ -22,7 +23,7 @@ import { spawnMonster } from './monsters'
 import { die } from './combat'
 import { densiteDesMorts, siteDansLaCouronne } from './morts'
 import type { Entity, SimState } from './sim'
-import { seasonRamp, cycleOffsetForStartHour, getGameTime, seasonDayAtTick, TICKS_PER_CYCLE, TICKS_PER_SEASON_DAY } from './time'
+import { TICKS_PER_CYCLE, TICKS_PER_SEASON_DAY, cycleOffsetForStartHour, getGameTime, jourDeSaison, seasonRamp } from './time'
 import { addStructure } from './village'
 import { desiredOrders } from './village-plan'
 
@@ -168,7 +169,9 @@ export function applyDebugAction(state: SimState, entityId: number, action: Debu
     // sa machinerie normale : les événements sortent, la cendre avance, l'acte change. **Le debug
     // ne simule pas le temps — il le laisse passer.**
     const jour = Math.max(1, Math.round(action.day))
-    const premierTick = Math.round(((jour - 1) * TICKS_PER_SEASON_DAY) / state.calendarScale)
+    // `jour - jourDeDepart` et non `jour - 1` : la formule inverse de `seasonDayAtTick`, qui
+    // compte DEPUIS l'ouverture du monde (S2). Sans ça, le debug ment de cinquante jours.
+    const premierTick = Math.round(((jour - state.jourDeDepart) * TICKS_PER_SEASON_DAY) / state.calendarScale)
     state.tick = Math.max(0, premierTick - 1)
   } else if (action.type === 'debug_reveil') {
     // Le site se cherche EXACTEMENT comme la nuit le cherche (`nighthunt.ts`) : la couronne
@@ -196,7 +199,7 @@ export function applyDebugAction(state: SimState, entityId: number, action: Debu
     })
   } else if (action.type === 'debug_horde') {
     // La taille du JOUR (la rampe ⑭), le chemin réel de spawn — seul le dé est court-circuité.
-    const jour = seasonDayAtTick(state.tick, state.calendarScale)
+    const jour = jourDeSaison(state)
     const taille = Math.max(1, Math.round(seasonRamp(WORLD_EVENTS.HORDE_TAILLE.DEBUT, WORLD_EVENTS.HORDE_TAILLE.FIN, jour)))
     // Le pseudo-tirage vient du TICK (patron debug_reveil) : appuyer sur une touche de dev
     // ne consomme pas un pas du PRNG — le contrat écrit plus haut est tenu à la lettre.
@@ -258,14 +261,17 @@ export function applyDebugAction(state: SimState, entityId: number, action: Debu
     // temps de `phase` traversées : à `phase` = 0,5 la bande est pile au milieu de la carte
     // au tick courant, et elle continue sa route ensuite comme n'importe quel front élu.
     const phase = clamp(action.phase ?? 0.5, 0, 1)
-    const startTick = state.tick - Math.round(phase * METEO.TRAVERSEE_TICKS)
+    // LA FENÊTRE EST SAISONNIÈRE (S8) : un front de debug posé sur une demi-journée fixe ne
+    // ressemblerait plus à ce que le monde élit — aux Pluies elle vaut un cycle entier.
+    const fenetre = fenetreDe({ type: action.meteo, day: jourDeSaison(state) })
+    const startTick = state.tick - Math.round(phase * fenetre)
     state.meteo = {
       type: action.meteo,
       cycle: Math.floor(state.tick / TICKS_PER_CYCLE),
-      day: seasonDayAtTick(state.tick, state.calendarScale),
+      day: jourDeSaison(state),
       edge: action.edge ?? 0,
       startTick,
-      endTick: startTick + METEO.TRAVERSEE_TICKS,
+      endTick: startTick + fenetre,
     }
   } else if (action.type === 'debug_grant') {
     // On le met EN MAIN, pas juste dans le sac : c'est la main qui décide de tout

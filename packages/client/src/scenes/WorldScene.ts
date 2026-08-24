@@ -470,6 +470,7 @@ export class WorldScene extends Phaser.Scene {
   /** Marcheurs à remous poussés cette frame — la sonde du critère A5 (lue par le smoke). */
   lastWaderCount = 0
   private calendarScale = 1
+  private jourDeDepart = 1
   /** Dernier tick de snapshot appliqué — rejette les snapshots périmés/hors ordre. */
   private lastSnapshotTick = 0
   private playerId = 0
@@ -971,6 +972,7 @@ export class WorldScene extends Phaser.Scene {
     // partie multi : le monde vit sur le serveur, pas sur ce disque (voir `derniere-partie.ts`).
     if (this.serverUrl) noteMulti(this.serverUrl, this.serverNom, Date.now())
     this.calendarScale = msg.calendarScale
+    this.jourDeDepart = msg.jourDeDepart
     this.map = msg.map
 
     // LE BROUILLARD DE GUERRE (spec worldgen R19) : on relit ce que ce joueur a déjà arpenté DANS
@@ -1470,6 +1472,9 @@ export class WorldScene extends Phaser.Scene {
     // LE BÂTI GOMME LE DÉCOR (décision d'Alexis) : mur/sol effacent le décor de leur
     // tuile. On rafraîchit à chaque frame — pose et démolition rouvrent la tuile.
     this.clutter?.setBarriers(this.view.structures)
+    // LA TEINTE DE LA SAISON (S17) : la touffe prend la couleur de son année. Posée ici, à
+    // chaque image, parce que la couche mémoïse par cran de dix jours — le coût est nul.
+    if (this.clutter && this.lastTime) this.clutter.jourDeLAnnee = this.lastTime.seasonDay
     this.clutter?.update(this.cameras.main, time) // le vent : le décor plie
     this.view.renderNodes(this.cameras.main, this.predicted.x, this.predicted.y, time)
     // LE CONTOUR DE L'INTERACTION — APRÈS la boucle de nœuds, et c'est un ORDRE : le pool des
@@ -1765,6 +1770,7 @@ export class WorldScene extends Phaser.Scene {
         map: this.map,
         temps: this.lastTime,
         calendarScale: this.calendarScale,
+        jourDeDepart: this.jourDeDepart,
         structures: this.view.structures,
         meteo: meteoFront,
       }
@@ -2711,7 +2717,7 @@ export class WorldScene extends Phaser.Scene {
       }
     }
     if (chronicleDirty) {
-      publishChronicle(this.registry, this.eventLog, this.calendarScale, msg.villages)
+      publishChronicle(this.registry, this.eventLog, this.calendarScale, this.jourDeDepart, msg.villages)
     }
   }
 

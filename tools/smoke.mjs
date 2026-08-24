@@ -4287,9 +4287,36 @@ const SCENARIOS = {
     await agir({ type: 'debug_set_hour', hour: 12 }, 900)
     const tiede = await releve('1-tiede')
 
-    // L'ACTE III : la vallée entière passe sous le seuil de gel (45 au mieux, contre 52).
-    await agir({ type: 'debug_set_season_day', day: 50 }, 1500)
+    // LE GRAND FROID : la vallée entière passe sous le seuil de gel. Le jour 105 est le CŒUR de
+    // l'hiver (S1 : quatre saisons de 30 jours) — l'ancien « jour 50 » y tombait, il tombe
+    // désormais en pleine Ardeur, la saison la plus chaude de l'année.
+    await agir({ type: 'debug_set_season_day', day: 105 }, 1500)
     await agir({ type: 'debug_set_hour', hour: 12 }, 900) // le saut de tick a bougé la phase du cycle
+
+    // ═══ ON ATTEND LA SIGNATURE, PAS UNE DURÉE (mesuré le 2026-08-24) ═══
+    //
+    // `GelLayer` ne relève qu'UN chunk par frame (`SIGNATURES_PAR_FRAME = 1`, jusqu'à 96
+    // vivants) : le gel de la flore n'est pas un état lu à la volée, c'est une signature qui
+    // rattrape le monde chunk par chunk. Sous swiftshader une frame dure ~900 ms — les 2,4 s
+    // d'attente ci-dessus valent DEUX chunks, et celui du buisson n'en fait pas partie. On
+    // mesurait donc la couleur d'un buisson encore signé au jour 51 et on concluait « le givre
+    // ne se voit pas » : le verdict accusait l'instrument. MESURÉ : `floreGeleeAt` bascule à
+    // vrai entre 10 et 20 s après le saut, et le reste ensuite.
+    //
+    // On attend donc la CONDITION — la sim a déjà tranché, on guette que la couche l'ait relu.
+    const geleSelonLaCouche = () => page.evaluate(({ x, y }) => {
+      const f = window.__BRAISES__.scene.view?.floreGeleeAt
+      return f ? f(x, y) : null
+    }, { x: buisson.tx, y: buisson.ty })
+    let signe = false
+    for (let n = 0; n < 60 && !signe; n++) {
+      signe = (await geleSelonLaCouche()) === true
+      if (!signe) await page.waitForTimeout(1000)
+    }
+    if (!signe) {
+      console.error('!! la couche du gel n’a jamais signé le buisson comme gelé (60 s) — ' +
+        'la sim dit-elle encore que le Grand Froid gèle la vallée ? (`FLORE.SEUIL_GEL`)')
+    }
     const gele = await releve('2-gele')
 
     const derive = Math.round((gele.ecart - tiede.ecart) * 100) / 100
@@ -4318,9 +4345,10 @@ const SCENARIOS = {
 
     const avant = await page.evaluate(lire)
 
-    // On saute au jour 58 — l'acte III, la Cendre. Le debug n'est armé qu'en `--dev`.
+    // On saute au jour 105 — le cœur du Grand Froid (réancré : l'ancien jour 58 est une Ardeur).
+    // Le debug n'est armé qu'en `--dev`.
     await page.evaluate(() => {
-      window.__BRAISES__.scene.sendAction({ type: 'debug_set_season_day', day: 58 })
+      window.__BRAISES__.scene.sendAction({ type: 'debug_set_season_day', day: 105 })
     })
     await page.waitForTimeout(4000)
     const apres = await page.evaluate(lire)
@@ -6519,10 +6547,11 @@ const SCENARIOS = {
     const monVillageId = feu ? feu.village : null
     console.log(`fondation : ${feu ? `Feu en (${feu.bx + 1}, ${feu.by}) → village ${monVillageId}` : 'ABSENTE — la stèle ne couronnera personne'}`)
 
-    // ── ON POUSSE LE CALENDRIER, PAS L'ÉCRAN. `SEASON_DAYS` vaut 60 ; la fin tombe à `day > 60`.
+    // ── ON POUSSE LE CALENDRIER, PAS L'ÉCRAN. La fin de saison est RELATIVE au jour d'ouverture
+    //    depuis S2 (`jourDeDepart + SEASON_DAYS − 1`, soit 110 pour un monde né au jour 51).
     const avant = await page.evaluate(() => window.__BRAISES__.scene.registry.get('seasonVerdicts') ?? null)
     if (avant !== null) console.error('!! la saison était DÉJÀ finie avant le saut — le scénario ne prouverait rien')
-    await doAction({ type: 'debug_set_season_day', day: 61 }, 300)
+    await doAction({ type: 'debug_set_season_day', day: 111 }, 300)
 
     // La stèle se lève sur le SNAPSHOT qui porte l'événement : on l'attend, on ne la pose pas.
     let levee = false
@@ -6596,7 +6625,7 @@ const SCENARIOS = {
     await page.evaluate(() => {
       const s = window.__BRAISES__.scene
       s.sendAction({ type: 'debug_god', on: true }) // sinon on meurt avant de mesurer
-      s.sendAction({ type: 'debug_set_season_day', day: 45 }) // acte III : le froid arme la marche
+      s.sendAction({ type: 'debug_set_season_day', day: 105 }) // le cœur du Grand Froid : le froid arme la marche
       s.perfSamples.length = 0
     })
     await page.waitForTimeout(500)
@@ -9269,13 +9298,17 @@ const SCENARIOS = {
    *
    * ═══ POURQUOI IL FAUT ARMER LES FRONTS À LA MAIN ═══
    *
-   * Pas par commodité : par NÉCESSITÉ, et c'est mesuré. En Veillée (`VEILLEE_SEASON_CYCLES`
-   * = 6, `TICKS_PER_CYCLE` = 57 600), l'élection ne tombe qu'aux bords de cycle — les jours
-   * de saison 1, 11, 21, 31, 41, 51… Balayés sur 40 cycles, ces jours-là n'élisent JAMAIS
-   * `pluie` ni `orage` : la table de l'acte III ne porte pas la pluie du tout, et l'orage y
-   * pèse 0,05. Deux des cinq ciels sont donc INOBSERVABLES en jouant. D'où `debug_meteo`,
-   * qui pose un VRAI record d'élection (toute la chaîne d'effets suit) à une PHASE choisie
-   * de sa traversée — sans quoi il faudrait regarder passer 24 minutes de bande.
+   * Pas par commodité : par NÉCESSITÉ. L'élection ne tombe qu'aux BORDS DE CYCLE — donc,
+   * depuis que le calendrier est verrouillé sur le cycle (2026-08-23 : un jour = un cycle
+   * de 45 min, `calendarScale` 32), une fois par jour de saison, à l'heure de naissance du
+   * monde. Attendre le ciel qu'on veut photographier, c'est attendre le bon JOUR, puis les
+   * minutes que la bande met à traverser. D'où `debug_meteo`, qui pose un VRAI record
+   * d'élection (toute la chaîne d'effets suit) à une PHASE choisie de sa traversée.
+   *
+   * *(Avant le verrouillage — 60 jours compressés sur 6 cycles — c'était pire qu'une
+   * attente : l'élection ne voyait que les jours 1, 11, 21, 31, 41, 51, et sur 40 cycles
+   * ces jours-là n'élisaient JAMAIS `pluie` ni `orage`. Deux des cinq ciels étaient
+   * littéralement inatteignables en jouant. Ils ne le sont plus.)*
    *
    * ═══ CE QU'IL RELÈVE ═══
    *
@@ -13331,12 +13364,37 @@ const SCENARIOS = {
     })
 
     const releves = []
-    for (const [jour, heure, nom] of [[5, 12, 'acte1-midi'], [30, 12, 'acte2-midi'], [30, 0, 'acte2-nuit'], [50, 12, 'acte3-midi'], [50, 0, 'acte3-nuit']]) {
-      await page.evaluate(({ d, h }) => {
-        window.__BRAISES__.scene.sendAction({ type: 'debug_set_season_day', day: d })
-        window.__BRAISES__.scene.sendAction({ type: 'debug_set_hour', hour: h })
-      }, { d: jour, h: heure })
-      await page.waitForTimeout(1200) // le cadran se relève 4×/s : largement le temps
+    // LES QUATRE SAISONS, EN AVANT — jamais en arrière. `debug_set_season_day` pose
+    // `tick = (jour − jourDeDepart) × …`, planché à 0 : un jour ANTÉRIEUR à l'ouverture du monde
+    // (51, spec `saisons.md` S2) retombe sur le jour 51. Les cardinaux 15 et 45 rendaient donc
+    // « j51 » sans qu'aucun ✗ ne le dise. On vise les mêmes cardinaux DE L'ANNÉE SUIVANTE
+    // (+ `YEAR_DAYS` = 120) : la courbe du socle est annuelle, mi-Éclosion 135 EST mi-Éclosion.
+    // ET DANS L'ORDRE CROISSANT — `debug_set_season_day` ne REMBOBINE PAS (mesuré) : après un
+    // saut au jour 165, redemander le 75 laisse le monde au 165. On traverse donc l'année une
+    // seule fois, de l'ouverture (51) vers l'avant : Pluies, Grand Froid, puis l'Éclosion et
+    // l'Ardeur DE L'ANNÉE SUIVANTE (135, 165) — celles de l'an 1 sont derrière l'ouverture.
+    const CARDINAUX = [[75, 0, 'pluies-nuit'], [105, 12, 'grandfroid-midi'], [105, 0, 'grandfroid-nuit'], [135, 12, 'eclosion-midi'], [165, 12, 'ardeur-midi']]
+    for (const [jour, heure, nom] of CARDINAUX) {
+      // UNE ACTION PAR ENVOI. Les deux tirées dans le même `evaluate` ne portaient QUE la
+      // seconde : l'heure basculait bien (les lignes `nuit` sont justes), le jour ne bougeait
+      // jamais. On les sépare, et on pose le JOUR d'abord — `debug_set_hour` calcule sa phase
+      // depuis `state.tick`, donc l'heure doit se régler APRÈS que le calendrier a sauté.
+      await page.evaluate((d) => window.__BRAISES__.scene.sendAction({ type: 'debug_set_season_day', day: d }), jour)
+      await page.waitForTimeout(400)
+      await page.evaluate((h) => window.__BRAISES__.scene.sendAction({ type: 'debug_set_hour', hour: h }), heure)
+      // ET ON ATTEND LA PHASE, pour la même raison : `grandfroid-nuit` se relevait « jour »
+      // parce que le jour visé était DÉJÀ le bon (105) — l'attente du calendrier rendait la
+      // main aussitôt, et la lecture précédait le basculement de l'heure.
+      await page.waitForFunction((n) => Boolean(window.__BRAISES__.scene.lastTime?.isNight) === n,
+        heure < 6 || heure >= 21, { timeout: 20000 })
+        .catch(() => console.log(`   ✗ ${nom} : la phase du cycle n'est jamais passée à ${heure} h`))
+      // ON ATTEND LE CALENDRIER, PAS UNE DURÉE (2026-08-24). Le cadran se relève 4×/s, mais
+      // le JOUR arrive par le SNAPSHOT du Worker : sous swiftshader une frame dure ~900 ms, et
+      // l'attente fixe de 1,2 s relevait cinq fois le jour d'ouverture — les cinq lignes du
+      // rapport disaient `j51`, quelle que soit la saison demandée. On guette donc `seasonDay`.
+      await page.waitForFunction((d) => window.__BRAISES__.scene.lastTime?.seasonDay === d, jour, { timeout: 30000 })
+        .catch(() => console.log(`   ✗ ${nom} : le calendrier n'est jamais arrivé au jour ${jour}`))
+      await page.waitForTimeout(600) // le cadran se relève 4×/s : il a le temps de relire
       const panneau = await lirePanneau()
       const ctx = await lireSim()
       if (!panneau) {
@@ -13350,7 +13408,7 @@ const SCENARIOS = {
       await page.screenshot({ path: `${OUT}/thermo-${nom}.png` })
     }
 
-    console.log(`\n── LE CADRAN DIT-IL VRAI ? (le panneau contre `/sim`, au même point) ──`)
+    console.log('\n── LE CADRAN DIT-IL VRAI ? (le panneau contre `/sim`, au même point) ──')
     let faux = 0
     for (const r of releves) {
       const vrai = await page.evaluate(() => {
@@ -13365,9 +13423,12 @@ const SCENARIOS = {
       // déjà une garde forte — `monde ≥ lieu` (un front ne réchauffe jamais) et
       // `ressenti ≥ lieu` (le feu et la source ne font que plancher).
       void vrai
-      const monde = Number(r.panneau['monde T₀'])
-      const lieu = Number(r.panneau.lieu)
-      const ressenti = Number(r.panneau.ressenti)
+      // `Number('22.4°')` vaut NaN — le panneau écrit son unité, et les cinq relevés
+      // ressortaient donc « l'ordre est rompu » sans qu'aucun ordre ne soit rompu (2026-08-24).
+      const degres = (v) => parseFloat(String(v ?? '').replace(',', '.'))
+      const monde = degres(r.panneau['monde T₀'])
+      const lieu = degres(r.panneau.lieu)
+      const ressenti = degres(r.panneau.ressenti)
       const ok = monde >= lieu - 1e-6 && ressenti >= lieu - 1e-6
       if (!ok) { faux++; console.log(`   ✗ ${r.nom} : monde ${monde} / lieu ${lieu} / ressenti ${ressenti} — l'ordre est rompu`) }
     }
@@ -13376,8 +13437,11 @@ const SCENARIOS = {
       : `   ✗ ${faux} relevés incohérents`)
 
     // LA MARCHE DE LA SAISON, VUE PAR LE CADRAN : c'est elle qu'on vient lire.
-    const parNom = Object.fromEntries(releves.map((r) => [r.nom, Number(r.panneau['monde T₀'])]))
-    console.log(`\n   T₀ relevé : acte I midi ${parNom['acte1-midi']} · acte II ${parNom['acte2-midi']}/${parNom['acte2-nuit']} · acte III ${parNom['acte3-midi']}/${parNom['acte3-nuit']}`)
+    const parNom = Object.fromEntries(releves.map((r) => [r.nom, parseFloat(String(r.panneau['monde T₀'] ?? '').replace(',', '.'))]))
+    // Les relevés portent des noms de SAISONS depuis S1 — la synthèse cherchait encore
+    // `acte1-midi` et rendait cinq `undefined`.
+    console.log(`\n   T₀ relevé : Éclosion midi ${parNom['eclosion-midi']} · Ardeur midi ${parNom['ardeur-midi']}`
+      + ` · Pluies nuit ${parNom['pluies-nuit']} · Grand Froid ${parNom['grandfroid-midi']}/${parNom['grandfroid-nuit']}`)
     return releves
   },
 
@@ -14323,16 +14387,16 @@ const SCENARIOS = {
       // éclairer la scène au crépuscule pendant que la sim, elle, est en pleine nuit d'acte III
       // avec sa horde debout. Le monde n'est pas truqué : c'est le même instant, regardé sous
       // la lumière qui le montre.
-      { nom: 'horde-village', jour: 47, heure: 20.2, horde: true, arme: 'iron_axe', figer: true, couvert: false, tuiles: 22,
+      { nom: 'horde-village', jour: 100, heure: 20.2, horde: true, arme: 'iron_axe', figer: true, couvert: false, tuiles: 22,
         quoi: 'la horde de la rampe (~12 goules au jour 47) sur le feu le plus proche' },
       // ═══ L'HIVER — jours 51-60, le front neigeux du cycle 5 ═══
       // ARC EN MAIN, PAS BANDÉ. Tenir l'arc, c'est le personnage ; le BANDER peint sa ligne
       // de tir au sol — un télégraphe, donc du HUD, donc hors cadre. Même règle que l'anneau
       // de survol ci-dessus et que le tourbillon de la hache, qui barrait l'image d'un
       // anneau blanc plein cadre.
-      { nom: 'chasse-neige', jour: 57, heure: 8.5, chasse: true, arme: 'bow', figer: true, neige: true,
+      { nom: 'chasse-neige', jour: 105, heure: 8.5, chasse: true, arme: 'bow', figer: true, neige: true,
         quoi: 'la chasse dans la neige, arc bandé' },
-      { nom: 'lac-gele', jour: 57, heure: 6.4, berge: true, tuiles: 26, quoi: 'le lac pris par la glace, au lever du jour' },
+      { nom: 'lac-gele', jour: 105, heure: 6.4, berge: true, tuiles: 26, quoi: 'le lac pris par la glace, au lever du jour' },
       // PAS DE FUTAIE D'HIVER — ESSAYÉE, RETIRÉE. Au jour 57, la même fenêtre qui rendait une
       // futaie à trois essences (146 relevés boisés) revient en champ de neige quasi VIDE : la
       // défeuillaison d'acte III (`jourDeDefeuillaison`) plus la couverture de neige ne
@@ -15467,11 +15531,14 @@ const SCENARIOS = {
    * invisible à ce rembobinage — on peut donc rester une heure sous un blizzard de debug sans
    * qu'un seul pixel blanchisse. Il faut ATTERRIR SUR UN VRAI CYCLE NEIGEUX.
    *
-   * Lesquels ? L'élection étant pure, elle se lit à l'avance sans jouer. En Veillée
-   * (`VEILLEE_SEASON_CYCLES = 6`, `calendarScale` 300), le balayage donne :
-   *   cycle 0 → orage (jours 1-6) · 4 → pluie (44-49) · **5 → NEIGE (jours 53-58)** · 6 → neige…
-   * D'où le jour visé par défaut : **59**, le lendemain de la sortie du front. La couverture
-   * y vaut encore ~0,96 (la fonte prend `FONTE_CYCLES` = 3 cycles par grand froid).
+   * Lesquels ? L'élection étant pure, elle se lit à l'avance sans jouer. Balayage refait le
+   * 2026-08-23, à l'échelle verrouillée (un jour = un cycle, `calendarScale` 32) — les
+   * cycles PRÉCIPITANTS (`pluie`/`orage`, les seuls que `neigeAuSol` accumule) de l'acte III :
+   *   cycle 53 → orage (jour 54) · 54 → pluie (55) · **57 → orage (jour 58)** · 59 → orage (60)
+   * D'où le jour visé par défaut, INCHANGÉ : **59** — le lendemain de l'orage du cycle 57,
+   * qui est dans la mémoire de `neigeAuSol` (`MEMOIRE_CYCLES` = 3) et tombe en BLIZZARD là
+   * où il fait assez froid (la neige n'est plus un type élu : elle se dérive du froid,
+   * `neigeA`). La fonte prend `FONTE_CYCLES` = 3 cycles par grand froid.
    *
    * ═══ DEUX HEURES, PARCE QUE LES DEUX SEUILS NE MORDENT PAS ENSEMBLE ═══
    *
@@ -15493,7 +15560,7 @@ const SCENARIOS = {
    */
   async enneige(page) {
     if (!dev) { console.log('\n(le paysage gelé exige --dev : le jour de saison, l’heure et le TP)'); return {} }
-    const JOUR = Number(process.env.SMOKE_JOUR ?? 59)
+    const JOUR = Number(process.env.SMOKE_JOUR ?? 105)
     const HEURE = Number(process.env.SMOKE_HEURE ?? 12)
     await page.waitForFunction(() => Boolean(window.__BRAISES__?.scene?.registry?.get('worldReady')), null, { timeout: 150000 })
     await page.waitForTimeout(1200)
@@ -15736,7 +15803,7 @@ const SCENARIOS = {
    */
   async neige(page) {
     if (!dev) { console.log('\n(la neige exige --dev : le jour de saison, l’heure et le TP)'); return {} }
-    const JOUR = Number(process.env.SMOKE_JOUR ?? 59)
+    const JOUR = Number(process.env.SMOKE_JOUR ?? 105)
     await page.waitForFunction(() => Boolean(window.__BRAISES__?.scene?.registry?.get('worldReady')), null, { timeout: 150000 })
     await page.waitForTimeout(1200)
     const agir = async (action, ms = 300) => {

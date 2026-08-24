@@ -16,10 +16,13 @@
  * chambres DANS la masse, pas des trouées de lisière.
  */
 import {
+  EAU,
+  TERRAIN_DEEP_WATER,
   TERRAIN_FOREST,
   TERRAIN_LARCH,
   TERRAIN_OLD_GROWTH,
   TERRAIN_PINE,
+  TERRAIN_SHALLOW_WATER,
   TERRAIN_WILLOW,
 } from './balance'
 import { CREUX } from './racine-relief'
@@ -150,6 +153,31 @@ export function composantesDeMasque(masque: Uint8Array, width: number, height: n
     tailles.push(taille)
   }
   return { label, tailles }
+}
+
+/**
+ * LA DISTANCE À L'EAU (spec `saisons.md` S10) — par tuile de TERRE, la distance en tuiles à
+ * l'eau la plus proche, plafonnée à `EAU.PORTEE_CRUE + 1`. C'est `eroderMasque` appliqué au
+ * masque de la TERRE : une tuile de terre dont un voisin est de l'eau est à 1, et on propage
+ * vers l'intérieur — donc déterministe par construction, comme la profondeur des massifs.
+ *
+ * **Le plafond est `PORTEE_CRUE + 1`, pas `PORTEE_CRUE`, et c'est ce qui rend le champ
+ * utilisable** : `eroderMasque` donne le PLAFOND (jamais 0) à toute tuile plus profonde,
+ * si bien qu'un plafond égal à la portée aurait fait monter la crue sur la vallée ENTIÈRE au
+ * niveau maximal. Un cran au-dessus, le « loin de l'eau » reste hors de portée, toujours.
+ *
+ * Le bord de carte compte comme non-masque (`eroderMasque` : « hors-carte compris ») : les
+ * tuiles du pourtour lisent donc 1 sans être au bord d'une eau. Sans conséquence — la vallée
+ * est ceinte de roche, et la crue n'inonde que du MARCHABLE.
+ */
+export function deriverDistanceEau(terrain: readonly number[], width: number, height: number): number[] {
+  const N = width * height
+  const terre = new Uint8Array(N)
+  for (let i = 0; i < N; i++) {
+    const t = terrain[i]!
+    if (t !== TERRAIN_SHALLOW_WATER && t !== TERRAIN_DEEP_WATER) terre[i] = 1
+  }
+  return eroderMasque(terre, width, height, EAU.PORTEE_CRUE + 1)
 }
 
 /** L'érosion du masque BOISÉ de la Racine — le champ `map.profondeur` (§2quater R38). */

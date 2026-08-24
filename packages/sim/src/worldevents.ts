@@ -13,7 +13,7 @@ import { inventoryOf, toBag } from './items'
 import { rngRoll } from './rng'
 import { cendreuxSousPression, plafondGlobal, spawnMonster } from './monsters'
 import type { SimState } from './sim'
-import { DAY_TICKS_PER_CYCLE, seasonDayAtTick, seasonRamp, TICKS_PER_CYCLE } from './time'
+import { dayTicksAt, estCrepuscule, TICKS_PER_CYCLE, jourDeSaison, seasonRamp } from './time'
 import { emitEvent, type SimEvent } from './events'
 import { fireStateAt } from './fire'
 import { densiteDesMorts } from './morts'
@@ -91,7 +91,14 @@ function porteeDeNuit(state: SimState, fx: number, fy: number, atDusk: number): 
   const eveil = eveilCendreuxAt(state, fx + 0.5, fy + 0.5, atDusk)
   const allure = Math.max(eveil, CENDREUX.TORPEUR.GAIT_MIN)
   return Math.round(
-    MONSTER_DEFS.cendreux.speed * allure * 60 * BALANCE.CYCLE_REAL_MINUTES * (1 - BALANCE.CYCLE_DAY_FRACTION) * WORLD_EVENTS.HORDE_APPROACH_FRACTION,
+    MONSTER_DEFS.cendreux.speed *
+      allure *
+      60 *
+      BALANCE.CYCLE_REAL_MINUTES *
+      // LA NUIT EST SAISONNIÈRE (S6) : la marche du soir se dimensionne sur la nuit QU'ON AURA,
+      // pas sur une fraction fixe — une horde d'hiver a deux fois plus de nuit pour arriver.
+      (1 - BALANCE.PART_DE_JOUR(jourDeSaison(state, atDusk))) *
+      WORLD_EVENTS.HORDE_APPROACH_FRACTION,
   )
 }
 
@@ -167,7 +174,7 @@ export function planifierHorde(
       feuCible = feu
     }
   }
-  const jour = seasonDayAtTick(state.tick, state.calendarScale)
+  const jour = jourDeSaison(state)
   const size = Math.round(seasonRamp(WORLD_EVENTS.HORDE_TAILLE.DEBUT, WORLD_EVENTS.HORDE_TAILLE.FIN, jour))
   const presage: Presage = { at: atDusk, x: elu.x, y: elu.y, fireTx: feuCible.tx, fireTy: feuCible.ty, size }
   if (feuCible.villageId !== undefined) presage.villageId = feuCible.villageId
@@ -302,7 +309,7 @@ export function advanceWorldEvents(state: SimState): void {
   // L'HORLOGE DU CYCLE, cycleOffset compris (le patron de gel.ts — constat C16b du panel :
   // le tick brut mentait dès qu'une partie ne commençait pas à l'aube).
   const cycleTick = (state.tick + state.cycleOffset) % TICKS_PER_CYCLE
-  const jour = seasonDayAtTick(state.tick, state.calendarScale)
+  const jour = jourDeSaison(state)
 
   // ═══ L'AUBE (décisions ⑮ et ⑱, 2026-08-21) ═══
   if (cycleTick === 0 && state.tick > 0) {
@@ -330,7 +337,7 @@ export function advanceWorldEvents(state: SimState): void {
     //    des feux ou non — le nombre de pas de PRNG par jour ne dépend pas de l'état du monde.
     const presage =
       roll(state) < seasonRamp(WORLD_EVENTS.HORDE_CHANCE.DEBUT, WORLD_EVENTS.HORDE_CHANCE.FIN, jour)
-        ? planifierHorde(state, state.tick + DAY_TICKS_PER_CYCLE)
+        ? planifierHorde(state, state.tick + dayTicksAt(state, state.tick))
         : null
     if (presage) {
       state.presage = presage
@@ -351,7 +358,7 @@ export function advanceWorldEvents(state: SimState): void {
   }
 
   // ═══ LE CRÉPUSCULE : l'exécution du présage ═══
-  if (cycleTick === DAY_TICKS_PER_CYCLE && state.presage !== null) {
+  if (estCrepuscule(state, state.tick) && state.presage !== null) {
     spawnHorde(state, state.presage.size, state.presage)
     state.presage = null
   }
@@ -384,7 +391,7 @@ export function advanceWorldEvents(state: SimState): void {
   }
 
   // La carcasse de convoi, tous les N jours de saison (spec R6).
-  const day = seasonDayAtTick(state.tick, state.calendarScale)
+  const day = jourDeSaison(state)
   if (
     day !== state.lastConvoyDay &&
     day % WORLD_EVENTS.CONVOY_PERIOD_DAYS === 0 &&
@@ -420,11 +427,15 @@ export function advanceWorldEvents(state: SimState): void {
   // test, lu une fois ; une vieille sauvegarde sans le champ vaut « jamais ».
   const fin = state.finDeSaison ?? null
   if (fin === null) return
+  // L'ÉVACUATION SE COMPTE DEPUIS LA FIN, PAS DEPUIS UN JOUR ABSOLU (S2) : `EVAC_DAY` était
+  // le jour 55 d'une saison qui finissait au 60 — cinq jours avant la fin. Un monde né au
+  // jour 51 (le vrai jeu) ouvrait sinon son évacuation à son quatrième cycle.
+  const jourEvac = fin - (BALANCE.SEASON_DAYS - SEASON.EVAC_DAY)
 
   // L'évacuation s'ouvre (spec saison R3) — une fois par saison : partie, l'Arche ne
   // revient pas (`arkDeparted`), sinon ce bloc rouvrait l'évacuation au tick suivant
   // le départ et la boucle ouvre→part inondait le flux (mesuré au banc de saison).
-  if (state.evacuation === null && !state.arkDeparted && day >= SEASON.EVAC_DAY) {
+  if (state.evacuation === null && !state.arkDeparted && day >= jourEvac) {
     const roadTiles: number[] = []
     for (let i = 0; i < state.map.terrain.length; i++) {
       if (state.map.terrain[i] === TERRAIN_ROAD) roadTiles.push(i)
@@ -440,7 +451,7 @@ export function advanceWorldEvents(state: SimState): void {
   // HEURE. Au jour EVAC_DAY + EVAC_DEPART_DAYS, qui est À BORD (dans le rayon) part sauvé ;
   // le reste est laissé. C'est le « tenir jusqu'au départ » que le GDD promet, et le verdict
   // Foyer ne compte plus que les EMBARQUÉS, pas ceux qui traînent à proximité à la fin.
-  if (state.evacuation !== null && day >= SEASON.EVAC_DAY + SEASON.EVAC_DEPART_DAYS) {
+  if (state.evacuation !== null && day >= jourEvac + SEASON.EVAC_DEPART_DAYS) {
     const evac = state.evacuation
     for (const e of state.entities) {
       if (e.hp <= 0) continue

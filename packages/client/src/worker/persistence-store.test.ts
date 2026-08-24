@@ -18,13 +18,21 @@ const enveloppe = (partie: Record<string, unknown>): string => JSON.stringify({ 
 
 const record = (sim: string, savedAt = 1_700_000_000_000): SaveRecord => ({ sim, playerId: 7, chronicle: [], savedAt })
 
+/**
+ * LE JOUR D'OUVERTURE DE L'APERÇU (spec `saisons.md` S2). `seasonDayAtTick` exige un jour de
+ * départ depuis que le vrai jeu ouvre au jour 51 ; la déduction du menu, elle, le pose à 1 —
+ * elle compte des jours ÉCOULÉS sur une enveloppe qu'elle n'ouvre pas. Aucune de ces
+ * sauvegardes n'en porte, donc 1 est ce qu'une lecture correcte rendrait aussi.
+ */
+const DEPART_APERCU = 1
+
 describe('metaDepuisSauvegarde — ce que le menu dit d’une case sans l’ouvrir', () => {
   it('lit la seed et le jour de saison dans l’enveloppe carte/partie', () => {
     const rec = record(enveloppe({ seed: 4242, tick: 36_000, calendarScale: 120 }))
     const meta = metaDepuisSauvegarde(rec)
 
     expect(meta.seed).toBe(4242)
-    expect(meta.seasonDay).toBe(seasonDayAtTick(36_000, 120))
+    expect(meta.seasonDay).toBe(seasonDayAtTick(36_000, 120, DEPART_APERCU))
     expect(meta.savedAt).toBe(rec.savedAt)
     // Rien ne dit quand ce monde a été FONDÉ : sa dernière sauvegarde fait foi, faute de mieux.
     expect(meta.createdAt).toBe(rec.savedAt)
@@ -38,7 +46,7 @@ describe('metaDepuisSauvegarde — ce que le menu dit d’une case sans l’ouvr
     const meta = metaDepuisSauvegarde(record(vieux))
 
     expect(meta.seed).toBe(99)
-    expect(meta.seasonDay).toBe(seasonDayAtTick(20_000, 120))
+    expect(meta.seasonDay).toBe(seasonDayAtTick(20_000, 120, DEPART_APERCU))
   })
 
   it('un tick de 0 reste le JOUR 1 — une vallée fondée n’est pas une vallée inconnue', () => {

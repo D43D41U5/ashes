@@ -76,6 +76,18 @@ export type ActLaw = ActTable<number> & { readonly plafond: number; readonly pas
  */
 export const ACTS_PER_YEAR = 4
 
+/**
+ * LA CADENCE DES SAISONS, en jours de jeu (spec `saisons.md` S1, décision d'Alexis
+ * 2026-08-23) — **30, était 21**. L'acte n'est plus un palier de pression qui monte : c'est
+ * une SAISON, et les saisons tournent. Quatre de trente jours font une année de 120.
+ *
+ * Déclaré ici, avant `TEMPERATURE`, parce que les courbes annuelles s'en servent au moment
+ * où elles se construisent (patron de `TICK_RATE_HZ`) ; `BALANCE.ACT_DAYS` le republie.
+ */
+const ACT_DAYS = 30
+/** La longueur d'une année, en jours de jeu — dérivée, jamais écrite. */
+export const YEAR_DAYS = ACT_DAYS * ACTS_PER_YEAR
+
 /** Le numéro de l'année, à partir de 1. Total : un acte < 1 est l'an 1. */
 export function tourOf(act: number): number {
   const a = act < 1 ? 1 : Math.floor(act)
@@ -126,11 +138,99 @@ export function actLaw(paliers: readonly number[], pas = 0, plafond?: number): A
   return Object.assign(f, { paliers, plafond: top, pas })
 }
 
+/**
+ * ═══ LA COURBE ANNUELLE — une pente continue là où l'acte posait une marche ═══
+ *
+ * (spec `saisons.md` S4/S5/S6, décisions d'Alexis 2026-08-23.)
+ *
+ * `actLaw` répond à la question « quelle valeur pour CETTE saison ? » — une marche par
+ * saison. Il fallait l'autre question : « quelle valeur pour CE JOUR ? ». Une courbe est
+ * définie par ses CARDINAUX — un point par saison, posé en son cœur — et interpole
+ * LINÉAIREMENT entre eux, en refermant l'année sur elle-même (le cœur de l'hiver se raccorde
+ * au cœur du printemps suivant). Il fait donc plus froid en fin d'automne qu'à son début, et
+ * plus chaud au milieu de l'été qu'à ses bords, sans qu'aucune table ne le dise.
+ *
+ * ═══ LINÉAIRE, ET C'EST UN INVARIANT, PAS UNE PARESSE ═══
+ *
+ * `sin`/`cos` donneraient la vraie sinusoïde saisonnière — et ne sont pas garantis au bit
+ * près d'un moteur JS à l'autre (invariant n°2). Un replay enregistré au navigateur doit
+ * rejouer sur Node : la courbe s'écrit en `+ − × ÷` et en rien d'autre.
+ *
+ * ═══ LE GLISSEMENT : L'HIVER S'ÉLARGIT, IL NE S'ENFONCE PAS (S12) ═══
+ *
+ * Chaque cardinal peut GLISSER d'un tour à l'autre, avec sa propre borne. Ce sont les
+ * cardinaux VOISINS de l'hiver qui glissent vers lui ; son cœur, lui, ne bouge pas — mesuré
+ * (`saisons.md` S12) : trois planchers rendent « plus froid » inerte, dont `TENUE_FLOOR` qui
+ * plafonne le ressenti d'un joueur habillé à −5,2 °C quoi qu'il fasse dehors. Ce qui monte
+ * d'une année sur l'autre, c'est donc le NOMBRE DE JOURS sous les seuils, jamais le fond.
+ */
+export interface Cardinal {
+  /** Le jour DE L'ANNÉE où la valeur est atteinte (1..`YEAR_DAYS`), au cœur de sa saison. */
+  readonly jour: number
+  readonly valeur: number
+  /** Ce que ce cardinal gagne PAR TOUR (négatif = il glisse vers l'hiver). 0 ou absent = fixe. */
+  readonly glissement?: number
+  /** La borne du glissement — jamais franchie, quel que soit le tour. */
+  readonly borne?: number
+}
+export type CourbeAnnuelle = ((jour: number, tour?: number) => number) & {
+  readonly cardinaux: readonly Cardinal[]
+}
+
+/** Le jour DE L'ANNÉE (1..`YEAR_DAYS`) d'un jour de saison non borné. Total : un jour < 1
+ *  retombe dans l'année par le même modulo. */
+export function jourDeLAnnee(jour: number): number {
+  const j = Math.floor(jour) - 1
+  return (((j % YEAR_DAYS) + YEAR_DAYS) % YEAR_DAYS) + 1
+}
+
+export function courbeAnnuelle(cardinaux: readonly Cardinal[]): CourbeAnnuelle {
+  const n = cardinaux.length
+  const valeurAu = (i: number, tour: number): number => {
+    const c = cardinaux[((i % n) + n) % n]!
+    const g = c.glissement ?? 0
+    if (g === 0) return c.valeur
+    const v = c.valeur + g * (tour - 1)
+    if (c.borne === undefined) return v
+    return g < 0 ? Math.max(c.borne, v) : Math.min(c.borne, v)
+  }
+  const f = (jour: number, tour = 1): number => {
+    const j = jourDeLAnnee(jour)
+    const t = tour < 1 ? 1 : Math.floor(tour)
+    // Le segment par défaut est celui qui ENJAMBE le tour de l'an (du dernier cardinal au
+    // premier) : c'est aussi celui où tombent les jours d'avant le premier cardinal.
+    let i = n - 1
+    for (let k = 0; k < n - 1; k++) {
+      if (j >= cardinaux[k]!.jour && j < cardinaux[k + 1]!.jour) i = k
+    }
+    const a = cardinaux[i]!.jour
+    const b = i === n - 1 ? cardinaux[0]!.jour + YEAR_DAYS : cardinaux[i + 1]!.jour
+    const jj = j < a ? j + YEAR_DAYS : j
+    const va = valeurAu(i, t)
+    const vb = valeurAu(i + 1, t)
+    return va + (vb - va) * ((jj - a) / (b - a))
+  }
+  return Object.assign(f, { cardinaux })
+}
+
 /** Fréquence de la simulation, en ticks par seconde (GDD §11 : 10-15 Hz ;
  * dérogation actée à 20 Hz le 2026-07-05, voir docs/decisions.md). */
 const TICK_RATE_HZ = 20
-/** Durée du cycle jour/nuit diégétique, en minutes réelles (non accéléré). */
-const CYCLE_REAL_MINUTES = 48
+/**
+ * Durée du cycle jour/nuit diégétique, en minutes réelles (non accéléré).
+ *
+ * ═══ UN JOUR DURE 45 MINUTES (décision d'Alexis, 2026-08-23) ═══ (était 48)
+ *
+ * Ce nombre n'est plus seulement le rythme d'un cycle : depuis que le calendrier est
+ * VERROUILLÉ SUR LE CYCLE (un jour de saison = un cycle, voir `VEILLEE_CALENDAR_SCALE`),
+ * c'est la durée d'un JOUR tout court — celui que le HUD compte. 45 est choisi pour ça,
+ * et 45 divise 1440 : `TICKS_PER_SEASON_DAY / TICKS_PER_CYCLE` vaut exactement 32, donc le
+ * basculement du jour reste calé sur la même phase du cycle À VIE. Une durée qui ne
+ * diviserait pas la journée de 24 h ferait DÉRIVER le passage de jour d'un cycle à
+ * l'autre — le défaut reviendrait, lentement (garde : `time.test.ts`, « le calendrier est
+ * verrouillé sur le cycle »).
+ */
+const CYCLE_REAL_MINUTES = 45
 
 /** Convertit une durée réelle (secondes) en nombre de ticks, à la fréquence courante. */
 const ticksFor = (seconds: number): number => Math.round(seconds * TICK_RATE_HZ)
@@ -153,7 +253,8 @@ const FIRE_RADIUS_BY_TIER = [10, 13, 16] as const
  * L'ancienne jauge 0-100 a été REMPLACÉE par deux échelles en °C — la même unité, deux
  * domaines, parce qu'un corps n'est pas de l'air :
  *
- *   · L'AMBIANT (le monde) vit dans **[−18, +22] °C**. `AMBIANT_MIN`/`AMBIANT_MAX` le bornent.
+ *   · L'AMBIANT (le monde) vit dans **[−18, +30] °C** (le plafond est monté de 22 le 2026-08-23 :
+ *     l'Ardeur atteint +26, et un plafond à 22 l'aurait rogné en silence). `AMBIANT_MIN`/`AMBIANT_MAX` le bornent.
  *   · LE CORPS vit dans **[25, 37] °C** — 37 sain, 29 hypothermie, 25 le fond, où le froid
  *     tue au plus vite. Ce sont des ordres de grandeur MÉDICAUX : sous 28 °C l'hypothermie
  *     est sévère, l'arrêt cardiaque tombe vers 24-25.
@@ -182,15 +283,32 @@ export const TEMPERATURE = {
    *  blizzard : le monde ne sort pas de cette fenêtre, et c'est ce plancher qui borne aussi
    *  le froid que le corps peut atteindre. */
   AMBIANT_MIN: -18,
-  AMBIANT_MAX: 22,
-  BASE: 18, // cible d'un bas de vallée, jour, acte I (ex-jauge 90)
+  /** LE PLAFOND DE L'AMBIANT — **+30 depuis le 2026-08-23** (était 22). Il ne bornait rien
+   *  tant que le plus chaud du monde valait `BASE` = 18 ; l'Ardeur monte à +26 (`SOCLE`), et
+   *  un plafond à 22 l'aurait **rogné en silence** — la décision « été chaud » serait restée
+   *  inerte. `clampTemp` en est le seul lecteur (spec `saisons.md` S4). */
+  AMBIANT_MAX: 30,
   // LA NUIT MORD, DÈS L'ACTE I (était 20). Sans elle, le Feu n'était qu'un
   // établi : on pouvait passer la nuit dehors sans y penser. Rentrer avant la
   // nuit — ou emporter de quoi faire du feu — devient une décision.
-  NIGHT_COLD: 12, // ex-jauge 30 — douze degrés entre midi et minuit
+  /**
+   * L'ÉCART JOUR/NUIT — **une courbe depuis le 2026-08-23** (était la constante 12).
+   *
+   * Six degrés au cœur de l'Ardeur, quatorze au cœur du Grand Froid : les nuits d'été sont
+   * douces et courtes, celles d'hiver mordent. **Ce n'est pas un raffinement, c'est un
+   * mécanisme** (spec `saisons.md` S5) : mesuré sur la courbe `SOCLE` avec un écart FIXE à
+   * 12, il neigerait **107 nuits sur 120, en plein été compris** — le seuil de neige est à
+   * +4 °C et une nuit d'Ardeur retomberait à +14. Avec la courbe, l'Ardeur ne voit pas un
+   * flocon. Les équinoxes valent 10 par interpolation.
+   */
+  ECART_NUIT: courbeAnnuelle([
+    { jour: 45, valeur: 6 },
+    { jour: 105, valeur: 14 },
+  ]),
   /**
    * LA NUIT TOMBE EN PENTE, elle ne claque pas (décision d'Alexis, 2026-08-23) — durée, en
-   * HEURES de cycle, que met `NIGHT_COLD` à s'installer au crépuscule et à se retirer à l'aube.
+   * HEURES de cycle, que met l'écart de nuit (`ECART_NUIT` depuis S5) à s'installer au
+   * crépuscule et à se retirer à l'aube.
    *
    * Le froid était le dernier terme du modèle à basculer sur un booléen : douze degrés en UN
    * tick à 21h, douze de moins en un tick à 6h. Invisible sur la jauge TEMP (le corps dérive
@@ -214,15 +332,38 @@ export const TEMPERATURE = {
    * dérive du corps (~4 min) : la pente est assez longue pour que le corps la suive.
    */
   NIGHT_RAMP_HOURS: 1.5,
-  // Par acte (I, Grand Froid, Cendre), soustrait de BASE. L'acte III passe 40→50 (fork
-  // tranché cette session, GDD « froid létal en acte III ») : plaine de nuit en acte III
-  // = 18 − 20 − 12 = −14 °C < AMBIANT_HYPOTHERMIE(−10) → le froid TUE la plaine, comme le discours le
-  // promet. La réponse est la TENUE D'HIVER (elle plafonne l'exposition, voir temperature.ts).
-  /** LA LOI MAÎTRESSE depuis que « le froid est le cadran » (pression-croissante, 2026-08-21) :
-   *  l'éveil, la torpeur et l'attraction des Cendreux dérivent de la température, qui dérive
-   *  de l'acte par elle. Refroidir sans fin escalade tout le reste — c'est elle que la saison
-   *  sans fin fera monter par tour (T2). Loi totale : tient 50 au-delà de l'acte III. */
-  ACT_COLD: actLaw([0, 10, 20]), // ex-jauge [0, 25, 50] : la saison retranche vingt degrés
+  /**
+   * LE SOCLE DE L'ANNÉE — la température de jour, en plaine à découvert, par jour de
+   * l'année (spec `saisons.md` S4). **Remplace `ACT_COLD`**, qui était une marche par acte :
+   * quatre cardinaux, une pente continue entre eux, et l'année se referme sur elle-même.
+   *
+   *     mi-Éclosion +8 · mi-Ardeur +26 · mi-Pluies +8 · mi-Grand Froid −2
+   *
+   * La pente maximale entre deux jours vaut 0,6 °C : le monde se réchauffe et se refroidit
+   * sans marche d'escalier, et « il fait plus froid en fin d'automne qu'au début » tombe de
+   * la courbe, jamais d'une table. La nuit retranche `ECART_NUIT` par-dessus.
+   *
+   * ⚠ **C'est une TEMPÉRATURE, pas un froid soustrait.** `ACT_COLD` valait ce qu'on RETIRAIT
+   * à `BASE` ; ici la valeur EST le degré. Tout lecteur qui la traiterait comme une quantité
+   * positive à soustraire se tromperait de signe dès l'Ardeur, qui passe au-dessus de `BASE`.
+   *
+   * ⚠ **LE GLISSEMENT (S12) : l'hiver s'élargit, il ne s'enfonce pas.** Les deux cardinaux
+   * VOISINS de l'hiver perdent deux degrés par tour ; son cœur ne bouge JAMAIS. Bornes : les
+   * Pluies s'arrêtent au CŒUR DE L'HIVER lui-même (−2) et l'Éclosion à −1 (elle ne doit jamais passer sous le cœur du
+   * Grand Froid, sinon la forme de l'année s'inverse). **La borne des Pluies est le cœur de
+   * l'hiver lui-même (−2)** : un degré plus bas, le point le plus froid de l'année quitterait
+   * l'hiver pour la fin de l'automne — l'année s'enfoncerait au lieu de s'élargir, ce que S12
+   * interdit. La pente du tronçon mi-Ardeur → mi-Pluies plafonne alors à 0,93 °C/jour, sous la
+   * limite de 1 que la garde teste. À deux degrés par an, l'escalade
+   * climatique sature vers l'an 6 ; après quoi les lois vivantes et le front de Cendre
+   * portent seuls la montée — c'est le rôle du `plafond` d'`actLaw`, transposé.
+   */
+  SOCLE: courbeAnnuelle([
+    { jour: 15, valeur: 8, glissement: -2, borne: -1 },
+    { jour: 45, valeur: 26 },
+    { jour: 75, valeur: 8, glissement: -2, borne: -2 },
+    { jour: 105, valeur: -2 },
+  ]),
   /**
    * Décalage signé par terrain (id de TERRAINS). Absent = 0.
    *
@@ -391,8 +532,32 @@ export const BALANCE = {
   /** Durée du cycle jour/nuit diégétique, en minutes réelles (non accéléré). */
   CYCLE_REAL_MINUTES,
 
-  /** Part du cycle qui est de jour (0.625 → 30 min de jour, 18 min de nuit). */
-  CYCLE_DAY_FRACTION: 0.625,
+  /**
+   * LA PART DU CYCLE QUI EST DE JOUR — **une courbe depuis le 2026-08-23** (spec
+   * `saisons.md` S6 ; c'était la constante 0,625).
+   *
+   * 0,72 au cœur de l'Ardeur, 0,48 au cœur du Grand Froid, **et pile 0,625 aux équinoxes** —
+   * la valeur d'avant, au milieu : la moyenne annuelle ne bouge pas, donc rien de ce qui se
+   * compte en cycles n'est recalibré par accident. En temps réel, la nuit passe de 12,6 min
+   * l'été à 23,4 min l'hiver.
+   */
+  PART_DE_JOUR: courbeAnnuelle([
+    { jour: 15, valeur: 0.625 },
+    { jour: 45, valeur: 0.72 },
+    { jour: 75, valeur: 0.625 },
+    { jour: 105, valeur: 0.48 },
+  ]),
+  /**
+   * LE JOUR OÙ LE MONDE COMMENCE (spec `saisons.md` S2) — le 51ᵉ, à la fin de l'Ardeur.
+   *
+   * Dix jours d'été finissant pour s'installer, trente jours de Pluies qui annoncent tout
+   * seuls ce qui vient, et **le Grand Froid à h 30 de jeu réel** : le pacing calibré d'avant
+   * la refonte (le Grand Froid tombait à h 31), préservé sous un calendrier quatre fois plus
+   * long. L'Éclosion arrive à h 52 — le printemps est la récompense d'avoir tenu, pas le
+   * tutoriel. Ce n'est PAS le défaut de `createSim` (les montages de test ouvrent au jour 1,
+   * à l'Éclosion) : les hôtes du vrai jeu le passent, comme ils passent l'heure de départ.
+   */
+  JOUR_DE_DEPART: 51,
 
   /** Heure murale de l'aube — le cycle démarre au lever du jour, mais l'horloge
    * affichée est une horloge murale : minuit (0h) au cœur de la nuit, midi en plein
@@ -405,7 +570,7 @@ export const BALANCE = {
    * cadence écrite en dur pour trois actes, et plafonnait le calendrier à vie. Les bornes des
    * trois premiers actes sont INCHANGÉES (21 / 42 / 63) ; le quatrième est neuf (64-84).
    */
-  ACT_DAYS: 21,
+  ACT_DAYS,
   ACTS_PER_YEAR,
 
   /**
@@ -637,7 +802,7 @@ export const BALANCE = {
   STARVE_HP_PER_MIN: 6,
 
   /** Multiplicateur de faim par acte — le Grand Froid mord (GDD §2). */
-  ACT_HUNGER_FACTOR: actLaw([1, 2, 3]), // loi totale (saison-sans-fin T1) : tient 3 au-delà
+  ACT_HUNGER_FACTOR: actLaw([1, 1, 2, 3]), // S13 : quatre paliers, réordonnés sur l'Éclosion · l'Ardeur · les Pluies · le Grand Froid
 
   /** Facteur de vitesse le ventre vide (faim à 0). */
   HUNGER_SPEED_MALUS: 0.5,
@@ -1382,6 +1547,11 @@ export const FOOD_VALUES: Partial<Record<import('./items').ItemId, number>> = {
   berries: 6,
   champignons: 12, // la trouvaille de l'herboriste (cueillette à maîtrise) : 2× les baies, mais bien sous le cuit
   legume: 6, // le potager (agriculture) : « nourriture de base » (GDD §8), au niveau des baies
+  // LES CULTURES DE SAISON (S16) — même famille que le légume, mais chacune paie sa lenteur :
+  // la pousse verte est rapide et maigre, le tubercule est lent et nourrit un hiver.
+  pousse_verte: 5,
+  fruit_sec: 8,
+  tubercule: 10,
   raw_meat: 8,
   quartier: 20, // V0-5 : un gros repas cru (plus que raw_meat) — le gros gibier nourrit longtemps
   cooked_meat: 40,
@@ -1408,14 +1578,42 @@ export const FOOD_VALUES: Partial<Record<import('./items').ItemId, number>> = {
  * entité, aucun PRNG) — voir `agriculture.ts`.
  */
 export const AGRICULTURE = {
-  /** Temps de pousse d'une parcelle (semée → mûre). Long à dessein (médiocre = lent). */
-  GROW_TICKS: ticksForCycles(0.5),
-  /** Récolte d'une parcelle/serre mûre — modeste, mais au-dessus du coût en graine (un vrai filet). */
-  YIELD: 5,
-  /** Récolte d'un TERROIR (le meilleur palier de la ferme) : plus généreux, sans être un jackpot. */
-  YIELD_TERROIR: 9,
+  /**
+   * CE QUE LE TERROIR AJOUTE au rendement de la culture (S16) — le meilleur palier de la ferme
+   * reste meilleur, quelle que soit la plante. *Il a remplacé le couple `YIELD` / `YIELD_TERROIR`
+   * (5 et 9) : depuis que chaque culture porte SON rendement, deux totaux absolus n'avaient plus
+   * de sens — seul l'écart en avait un, et il était écrit en creux (`9 − 5`).* Le temps de pousse
+   * a suivi le même chemin : il vit dans `CULTURES[c].pousse`, plus dans un `GROW_TICKS` unique.
+   */
+  BONUS_TERROIR: 4,
   /** Baies → 1 graine (au Feu) : l'investissement d'amorçage. Forer une fois, semer ensuite. */
   SEED_FROM_BERRIES: 3,
+  /**
+   * ═══ UNE PLANTE PAR SAISON, ET UNE FENÊTRE DE SEMIS (spec `saisons.md` S16) ═══
+   *
+   * Le potager ne souffre PAS de la sécheresse : c'est **la parade constructible** de l'Ardeur,
+   * quand la cueillette sauvage s'arrête, que les mares partent et que le gibier se replie. Ce
+   * qui change, c'est ce qu'on peut SEMER. Chaque graine ne germe que dans sa fenêtre ; semée
+   * hors fenêtre elle **reste en main** — jamais perdue, elle attend son heure. Lisible sans
+   * être punitif, et ça force à garder des graines d'une saison sur l'autre.
+   *
+   * **La serre affranchit de la fenêtre** — c'est enfin ce qui la justifie (elle n'était qu'un
+   * abri contre le gel). Le garde-fou du GDD §8bis tient : le potager reste « sûr, renouvelable,
+   * MÉDIOCRE », il nourrit une saison, il ne remplace jamais la chasse.
+   *
+   * `pousse` est en CYCLES (le patron de tout ce qui se compte en jours) ; `rendement` sort tel
+   * quel, et une récolte rend en plus UNE graine de sa culture — la boucle se referme.
+   */
+  CULTURES: {
+    /** L'Éclosion : rapide, généreuse, et elle ne se garde pas. */
+    vert: { phase: 1, graine: 'graine_verte', recolte: 'pousse_verte', pousse: 0.35, rendement: 5 },
+    /** L'Ardeur : il tient la sécheresse — c'est lui qui fait du potager la parade de l'été. */
+    fruit: { phase: 2, graine: 'graine_fruit', recolte: 'fruit_sec', pousse: 0.6, rendement: 5 },
+    /** Les Pluies : lent, et le seul qui traverse l'hiver sans pourrir. */
+    tubercule: { phase: 3, graine: 'graine_tubercule', recolte: 'tubercule', pousse: 0.9, rendement: 6 },
+    /** Le Grand Froid, sous serre : lente et maigre — la culture d'avant, à sa vraie place. */
+    hiver: { phase: 4, graine: 'graine', recolte: 'legume', pousse: 1, rendement: 4 },
+  },
 } as const
 
 /**
@@ -1437,6 +1635,11 @@ export const SPOIL_CYCLES: Partial<Record<import('./items').ItemId, number>> = {
   worms: 1, // l'appât se pose FRAIS — plus périssable que tout ce qui se mange
   berries: 2,
   champignons: 2, // périssable comme les baies — la trouvaille ne se thésaurise pas
+  // LES CULTURES DE SAISON (S16) : la pousse verte de l'Éclosion ne se garde pas, le fruit sec
+  // de l'Ardeur tient une semaine — et **le tubercule des Pluies n'est PAS dans cette table** :
+  // il traverse le Grand Froid sans pourrir, et c'est tout son intérêt.
+  pousse_verte: 2,
+  fruit_sec: 6,
   raw_meat: 1.5, // la viande crue est une bombe à retardement : on la cuit, ou on la perd
   quartier: 1.5, // V0-5 : périme comme la viande crue (le dilemme du retour : poids ET péremption)
   cooked_meat: 4,
@@ -1473,6 +1676,9 @@ export type RecipeId =
   | 'arrow'
   | 'stew'
   | 'graine'
+  | 'graine_verte'
+  | 'graine_fruit'
+  | 'graine_tubercule'
   | 'axe'
   | 'pickaxe'
   | 'iron_ingot'
@@ -1593,6 +1799,17 @@ export const RECIPES: Record<RecipeId, Recipe> = {
   // LA GRAINE (agriculture voie A) : des baies deviennent une semence, au Feu. L'amorçage du
   // potager — cueillir une fois, semer ensuite. Se pose ensuite dans une parcelle (`plant`).
   graine: { requiert: FEU, inputs: { berries: AGRICULTURE.SEED_FROM_BERRIES }, output: 'graine', seconds: 4 },
+  // LES TROIS AUTRES GRAINES (S16) — même amorçage, une par saison. Ensuite la boucle se
+  // referme d'elle-même : **une récolte rend sa propre graine**, donc on GARDE ses graines
+  // d'une saison sur l'autre au lieu de refaire le détour par les baies.
+  graine_verte: { requiert: FEU, inputs: { berries: AGRICULTURE.SEED_FROM_BERRIES }, output: 'graine_verte', seconds: 4 },
+  graine_fruit: { requiert: FEU, inputs: { berries: AGRICULTURE.SEED_FROM_BERRIES }, output: 'graine_fruit', seconds: 4 },
+  graine_tubercule: {
+    requiert: FEU,
+    inputs: { berries: AGRICULTURE.SEED_FROM_BERRIES },
+    output: 'graine_tubercule',
+    seconds: 4,
+  },
   axe: { requiert: ATELIER_N1, inputs: { wood: 5, stone: 3, fiber: 2 }, output: 'axe', seconds: 8 },
   pickaxe: { requiert: ATELIER_N1, inputs: { wood: 5, stone: 3, fiber: 2 }, output: 'pickaxe', seconds: 8 },
   iron_ingot: { requiert: FORGE_N2, inputs: { iron_ore: 2, coal: 1 }, output: 'iron_ingot', seconds: 10 },
@@ -2722,6 +2939,10 @@ export const FAUNA = {
    * fuit pas et vous voit venir. Un sanglier qui fouille est un sanglier qu'on
    * peut atteindre ; c'est le geste que le GDD §8bis appelle « l'approche ».
    */
+  /** LE BRAME (spec `saisons.md` S18) : la chance de charge d'un cerf pendant sa saison —
+   *  multipliée par la force du caractère. Hors Brame, le cerf garde son `chargeChance` de
+   *  table, qui vaut zéro : il fuit toujours. */
+  BRAME_CHARGE: 0.35,
   ROOT_CHANCE: 0.4, // probabilité de se mettre à fouir, à chaque réflexion
   ROOT_TICKS: ticksFor(4),
   ROOT_ALERTNESS: 0.4, // × ses portées de détection pendant qu'il fouge
@@ -3191,12 +3412,22 @@ export const CENDREUX = {
    * historique de S5). Il module la VUE, l'ALLURE et la cadence de décision — jamais de seuil qui
    * commande un mouvement (ce dépôt a payé quatre fois l'hystérésis manquante d'un seuil).
    *
-   * CHAUD=60 / FROID=10 ne sont pas choisis au doigt : la nuit de plaine vaut 60 / 35 / 10 selon
-   * l'acte (BASE 90 − ACT_COLD − NIGHT_COLD), donc l'éveil nocturne y vaut 0 / 0,5 / 1 — LA TABLE
-   * EXACTE de feu `UNDEAD_SHARE` [0, 0.5, 1], retrouvée par la température au lieu d'être posée
-   * par l'acte. La montée de la saison n'est plus décrétée : elle TOMBE de la table du froid, et
-   * la géographie vient gratuitement (neige −40, glacier −75, brume, front météo, froid de cendre
-   * — le Névé est dangereux dès le jour 1, et c'est voulu).
+   * ⚠ **LA DÉRIVATION D'ORIGINE RAISONNAIT SUR TROIS ACTES ET UNE JAUGE 0-100** : « la nuit de
+   * plaine vaut 60 / 35 / 10 selon l'acte (BASE 90 − ACT_COLD − NIGHT_COLD), donc l'éveil
+   * nocturne y vaut 0 / 0,5 / 1 — la table exacte de feu `UNDEAD_SHARE` ». Elle est CADUQUE
+   * deux fois : l'échelle est en °C depuis le 2026-08-22, et le socle est une COURBE du jour de
+   * l'année depuis le 2026-08-23 (`saisons.md` S4). Ce qui survit — et qui était le point — c'est
+   * que **la montée n'est pas décrétée : elle tombe du froid**. Ce qui a changé : les deux bouts
+   * seuls sont exacts (éveil nul au cœur de l'Ardeur, plein au cœur du Grand Froid), le milieu
+   * est désormais un CONTINU et non plus trois paliers, et l'année RETOMBE au printemps au lieu
+   * de rester en haut. La géographie vient toujours gratuitement (neige, glacier, brume, front
+   * météo, froid de cendre) — mais « le Névé est dangereux dès le jour 1 » se relit : le jour 1
+   * est maintenant une Éclosion encore gelée, donc c'est la PLAINE qui l'est aussi.
+   *
+   * ⚠ **CALIBRAGE À REGARDER** (relevé à la migration des suites, 2026-08-23) : au cœur de
+   * l'Ardeur, la nuit de plaine est à +20 °C — bien au-dessus de `CHAUD`. L'éveil y est donc nul
+   * et un cendreux n'a plus aucun but : la saison entière pourrait être vide de leur pression.
+   * C'est peut-être exactement le répit voulu ; c'est peut-être un trou. À mesurer au banc.
    */
   TORPEUR: {
     CHAUD: 6, // à cette température et au-dessus : éveil 0 (amorphe — il mord encore au contact)
@@ -3285,7 +3516,7 @@ export const CENDREUX = {
    *  pas une intensité — le continu vit dans l'éveil »). Rendue TOTALE (le dernier palier tenu
    *  au-delà de l'acte III) pour ne jamais rendre `undefined` sous la saison sans fin — la
    *  continuifier serait une décision d'Alexis, pas un effet de bord de T1. */
-  CONVERGE_TILES: actTable([20, 80, 10000] as const),
+  CONVERGE_TILES: actTable([20, 20, 80, 10000] as const), // S13 : quatre paliers, réordonnés sur l'Éclosion · l'Ardeur · les Pluies · le Grand Froid
   /**
    * ═══ « ILS BOIVENT LA CHALEUR » (décision d'Alexis, 2026-08-21) ═══
    *
@@ -3600,7 +3831,7 @@ export const FIRE_UPKEEP = {
    *  tienne ~3,5 cycles à l'acte I (spec « 3-4 jours »). */
   DRAIN_PER_TICK: 240 / ticksForCycles(3.5),
   /** Le Grand Froid brûle plus (même montée que la faim, §2). */
-  ACT_FACTOR: actLaw([1, 1.5, 2]), // loi totale (saison-sans-fin T1) : tient 2 au-delà
+  ACT_FACTOR: actLaw([1, 1, 1.5, 2]), // S13 : quatre paliers, réordonnés sur l'Éclosion · l'Ardeur · les Pluies · le Grand Froid
   /** À SEC, un mur/barrière perd tant de PV/tick — un mur neuf (200) tombe en ~1,5 cycle. */
   WALL_DECAY_PER_TICK: 200 / ticksForCycles(1.5),
   /** Sous ce stock, le tableau poste « nourrir le Feu » (la tâche communautaire zéro, R16). */
@@ -3736,7 +3967,9 @@ export const WORLD_EVENTS = {
  */
 export const BRUME = {
   /** Chance qu'une Brume se lève, par jour de saison et par acte (acte I : jamais). */
-  CHANCE_PER_DAY: actLaw([0, 0.35, 0.5]), // loi totale (saison-sans-fin T1) : tient 0,5 au-delà
+  // LA BRUME EST UN MÉCANISME DE FROID : **zéro en l'Ardeur** (S13). Posée telle quelle,
+  // l'ancienne table donnait 35 % par jour d'une nappe à −22 °C en plein été.
+  CHANCE_PER_DAY: actLaw([0, 0, 0.35, 0.5]), // S13 : quatre paliers, réordonnés sur l'Éclosion · l'Ardeur · les Pluies · le Grand Froid
   /** Rayon de la nappe, en tuiles. */
   RAYON: 8,
   /** Profondeur de l'incursion dans T0, depuis le front de Cendre (tuiles). */
@@ -3777,49 +4010,120 @@ export const BRUME = {
  * de toute sauvegarde et de tout replay EN VOL — la bande d'hier ne rejoue plus au même
  * endroit. On les change ENTRE les saisons, pas dedans.
  */
+/**
+ * ═══ LA DURETÉ DE L'ANNÉE — « la pression suit le froid » (spec `saisons.md` S13/S15) ═══
+ *
+ * Une seule quantité, dans [0, 1] : **0 au cœur de l'Ardeur, 1 au cœur du Grand Froid**, et
+ * la pente de la courbe de température entre les deux. Les sept RAMPES de menace (taille et
+ * chance de horde, population de Cendreux, leur cri, les morts-vivants de la chasse nocturne,
+ * le cap de fréquentation des lieux) la lisent au lieu de monter d'un bout à l'autre d'une
+ * saison de soixante jours — c'était un arc à SENS UNIQUE, et sous une année qui boucle il
+ * saturait au milieu de l'Ardeur de l'an 1 et n'en redescendait plus jamais.
+ *
+ * ═══ LE CREUX REMONTE, LA FORME TIENT (S15) ═══
+ *
+ * `PAS_PAR_TOUR` relève le PLANCHER d'une année sur l'autre : l'été de l'an 3 est plus dur
+ * que celui de l'an 1, mais reste un été. C'est l'arc oscillant d'`actLaw`, appliqué aux
+ * rampes — et il compose avec S12 : l'hiver qui s'élargit tire déjà les épaules de l'année
+ * vers le haut, le pas relève le fond.
+ *
+ * Pure : `+ − × ÷`, `min`, `max`. Aucun état, aucun tirage.
+ */
+export const PRESSION = {
+  /** Ce que le CREUX de l'année gagne par tour — l'été de l'an 6 vaut la mi-saison de l'an 1. */
+  PAS_PAR_TOUR: 0.08,
+} as const
+
+/** Le tour (l'année, à partir de 1) d'un jour de saison non borné. */
+export function tourDuJour(jour: number): number {
+  const j = jour < 1 ? 1 : Math.floor(jour)
+  return Math.floor((j - 1) / YEAR_DAYS) + 1
+}
+
+export function dureteDeLAnnee(jour: number): number {
+  const tour = tourDuJour(jour)
+  // Les deux bornes sont les CARDINAUX de l'an 1 — jamais recalculées d'après le tour : la
+  // dureté doit rester une PART de l'amplitude d'origine, sinon l'hiver qui s'élargit se
+  // renormaliserait lui-même et la pression ne monterait jamais.
+  const chaud = TEMPERATURE.SOCLE(45, 1)
+  const froid = TEMPERATURE.SOCLE(105, 1)
+  const u = (chaud - TEMPERATURE.SOCLE(jour, tour)) / (chaud - froid)
+  const v = u + PRESSION.PAS_PAR_TOUR * (tour - 1)
+  return v < 0 ? 0 : v > 1 ? 1 : v
+}
+
+/** LES QUATRE CLASSES DE FRONT — déclarées ici parce que `PAR_SAISON` en est indexée ;
+ *  `meteo.ts` les republie sous le nom `MeteoType` (pas d'import circulaire). */
+export type MeteoTypeId = 'pluie' | 'brouillard' | 'orage' | 'vent_de_cendre'
+
 export const METEO = {
   /**
-   * Chance qu'un front se lève, par CYCLE et par acte.
+   * ═══ UNE IDENTITÉ MÉTÉO PAR SAISON (spec `saisons.md` S7, décisions d'Alexis 2026-08-23) ═══
    *
-   * LA CADENCE EST RÉELLE, LA MIXTURE EST SAISONNIÈRE. Un front est un phénomène de temps
-   * RÉEL : il dure `TRAVERSEE_TICKS` (~une demi-heure de jeu), on le voit venir, on le
-   * traverse, il s'éloigne. Sa cadence se compte donc en CYCLES — sinon elle dépend du
-   * `calendarScale` de l'hôte, et c'est très exactement le défaut qu'on a corrigé : élire
-   * par jour de saison ne faisait ÉVALUER que 6 jours sur 60 en Veillée (qui compresse la
-   * saison en 6 cycles), toujours les mêmes, dans tous les mondes — deux fronts de neige
-   * pour une saison solo entière, et jamais un éclair ni une annonce.
+   * La mixture par acte et la géométrie par type ont fusionné : **la saison commande tout** —
+   * combien de jours il fait ce temps-là, quel ciel, quelle largeur de bande et quelle fenêtre
+   * de traversée. Une entrée par phase, indexée par `actTable` (donc l'Éclosion de l'an 2 est
+   * une Éclosion).
    *
-   * L'ACTE, lui, vient toujours du JOUR DE SAISON : c'est la saison qui commande la
-   * FRÉQUENCE (ici) et la MIXTURE (`TYPES`) — la courbe de pression du §8 est intacte.
+   * - `episode` — la longueur d'un épisode en cycles, `[min, max]`. **C'est le réglage de
+   *   densité** (S9) : un bloc de `BLOC_EPISODE` cycles porte exactement un épisode, donc la
+   *   part de jours de mauvais temps vaut `moyenne(episode) / BLOC_EPISODE`. Les Pluies : 4/6,
+   *   deux jours sur trois. L'Ardeur : 2/6, un sur trois.
+   * - `types` — la mixture de la saison, tirée UNE FOIS PAR ÉPISODE (un ciel par épisode : « il
+   *   pleut trois jours, ça passe »). `neige` et `blizzard` n'y sont pas — ce sont des ASPECTS,
+   *   dérivés du froid au point (`meteo.md` R11).
+   * - `largeur` — en tuiles. **Remplace `LARGEUR` et retire R13** (la largeur de l'orage
+   *   commandée par `ACT_COLD`) : la géométrie est saisonnière, il n'y a plus de division par
+   *   un plafond de froid à protéger. La carte jouée fait ~1580 de large : une bande de 4500
+   *   la couvre entière, en pente.
+   * - `fenetre` — la traversée, en cycles. **Un cycle entier aux Pluies** : la bande est
+   *   énorme et lente, donc elle couvre un point 33 à 38 min sur 45 — « il pleut toute la
+   *   journée ». L'invariant « un seul front actif » tient toujours : la fenêtre tient DANS le
+   *   cycle (à 1, elle finit pile au cycle suivant, où la purge précède l'élection).
    */
-  CHANCE_PER_CYCLE: actLaw([0.5, 0.65, 0.8]), // loi totale (saison-sans-fin T1) : tient 0,8 au-delà
-  /**
-   * La table des CLASSES par acte (poids sommant à 1). DEPUIS LE 2026-08-22 (spec R11),
-   * `neige` et `blizzard` N'EN FONT PLUS PARTIE : il neige là où il fait froid, un orage y
-   * est un blizzard — l'aspect se dérive au point (`meteoAspectAt`), il ne s'élit pas. Les
-   * masses des anciennes tables sont CONSERVÉES par classe (acte II : pluie 0,3 + neige 0,35
-   * = 0,65 de précipitation, orage 0,02 + blizzard 0,1 = 0,12 d'orage ; acte III : 0,5 et
-   * 0,31) : la « saison des neiges » tombe désormais d'`ACT_COLD`, plus d'une table.
-   * L'ORDRE des clés est le découpage du tirage cumulatif — le changer rebat les élections
-   * (contrat de replay).
-   */
-  // Une MIXTURE par acte, rendue TOTALE (saison-sans-fin T1) : la troisième est tenue au-delà
-  // de l'acte III. Une mixture n'est pas une pente — ce que l'hiver N changera dans ces poids
-  // est une décision de T2, pas une extrapolation.
-  TYPES: actTable([
-    { pluie: 0.5, brouillard: 0.25, orage: 0.25 },
-    { pluie: 0.65, brouillard: 0.15, orage: 0.12, vent_de_cendre: 0.08 },
-    { pluie: 0.5, brouillard: 0.15, orage: 0.31, vent_de_cendre: 0.04 },
+  PAR_SAISON: actTable([
+    // l'Éclosion — averses courtes et fréquentes, brouillards du matin, giboulées.
+    {
+      episode: [2, 4] as const,
+      types: { pluie: 0.55, brouillard: 0.3, orage: 0.15 } as Partial<Record<MeteoTypeId, number>>,
+      largeur: { pluie: 120, brouillard: 70, orage: 120, vent_de_cendre: 420 },
+      fenetre: 0.5,
+    },
+    // l'Ardeur — le ciel est vide, et quand il ne l'est pas c'est un ORAGE SEC.
+    {
+      episode: [1, 3] as const,
+      types: { pluie: 0.3, brouillard: 0.2, orage: 0.5 } as Partial<Record<MeteoTypeId, number>>,
+      largeur: { pluie: 60, brouillard: 50, orage: 60, vent_de_cendre: 420 },
+      fenetre: 0.5,
+    },
+    // les Pluies — la saison qui porte son nom : deux jours sur trois, du matin au soir.
+    {
+      episode: [3, 5] as const,
+      types: { pluie: 0.7, brouillard: 0.2, orage: 0.1 } as Partial<Record<MeteoTypeId, number>>,
+      largeur: { pluie: 4500, brouillard: 2000, orage: 2500, vent_de_cendre: 420 },
+      fenetre: 1,
+    },
+    // le Grand Froid — la pluie EST la neige, l'orage EST le blizzard (dérivés, R11).
+    {
+      episode: [4, 5] as const,
+      types: { pluie: 0.6, brouillard: 0.1, orage: 0.3 } as Partial<Record<MeteoTypeId, number>>,
+      largeur: { pluie: 800, brouillard: 400, orage: 1600, vent_de_cendre: 420 },
+      fenetre: 0.75,
+    },
   ]),
-  /** Largeur de la bande, en tuiles — celle de l'ORAGE est sa largeur DOUCE (acte I) : elle
-   *  monte avec le froid de la saison jusqu'à `LARGEUR_ORAGE_FROID` (R13, `largeurDe`). */
-  LARGEUR: { pluie: 60, brouillard: 50, orage: 55, vent_de_cendre: 420 },
-  /** R13 — LA LARGEUR D'UN ORAGE SUIT LE FROID DE LA SAISON : `LARGEUR.orage` au froid
-   *  d'acte nul → cette valeur (≈ la carte jouée, ~1 580 de large) au plafond d'`ACT_COLD`,
-   *  en pente continue sur `ACT_COLD(acte) / plafond` — acte I 55, acte II ≈ 830, acte III
-   *  la carte. « Carte entière » reste un CALIBRAGE (celui de l'acte III), pas un mécanisme :
-   *  c'est ce qui garde à R9 son sens (« trop large pour être esquivé — PRÉPARER »). */
-  LARGEUR_ORAGE_FROID: 1600,
+  /**
+   * S9 — LA TAILLE DU BLOC D'ÉPISODE, en cycles. Un bloc porte exactement UN épisode, dont la
+   * longueur et la position sont tirées par `hash2` sur l'index du bloc — début et fin nets,
+   * durée bornée, **zéro état et zéro tirage sur le PRNG**. Deux épisodes de blocs voisins
+   * peuvent se toucher : une longue tempête émerge parfois, personne ne l'a écrite.
+   */
+  BLOC_EPISODE: 6,
+  /**
+   * S7 — LA SAISON DE L'ORAGE SEC. Un orage de cette phase ne MOUILLE pas : il tonne, il
+   * frappe, il n'éteint rien et il ne casse pas la sécheresse. C'est ce qui fait de l'Ardeur
+   * une saison où le ciel cogne pendant que la terre sèche.
+   */
+  ORAGE_SEC_PHASE: 2,
   /**
    * R11 — LA LIMITE DE NEIGE : il neige là où la pluie ferait geler un gué, c'est-à-dire là
    * où `T₀ − COLD.pluie < SEUIL_NEIGE`, avec `T₀` la température du monde SANS le front. Ce
@@ -3837,9 +4141,14 @@ export const METEO = {
    * un orage d'été ne mord pas, même de nuit — l'ancienne borne « 50 » de l'acte I tient.
    */
   FROID_EOLIEN_RAMPE: 4,
-  /** La traversée complète (le bord AVANT entre → le bord ARRIÈRE sort), ~une demi-journée.
-   *  STRICTEMENT sous un cycle : la fenêtre élue tient dans son cycle, donc au plus un front
-   *  actif à la fois — par construction, pas par garde (voir `meteo.ts`). */
+  /**
+   * LA FENÊTRE DOUCE — une demi-journée, celle des saisons courtes.
+   *
+   * ⚠ **ELLE NE COMMANDE PLUS L'ÉLECTION depuis S7** : la fenêtre d'un front est saisonnière
+   * (`PAR_SAISON(...).fenetre`, lue par `fenetreDe`), et vaut un CYCLE ENTIER aux Pluies. Cette
+   * constante ne sert plus qu'aux montages qui posent un front à la main — un banc, un test, un
+   * panneau de debug — où « une demi-journée » est une valeur de commodité, pas une loi.
+   */
   TRAVERSEE_TICKS: ticksForCycles(0.5),
   /** Fraction de la LARGEUR en rampe d'intensité à CHAQUE bord de bande — un gradient
    *  bord → cœur (`meteoIntensity` : 0 dehors, 1 au cœur), jamais un mur. */
@@ -3868,12 +4177,25 @@ export const METEO = {
    *  MOUILLE dit l'EAU qui tombe (physique du feu) ; un futur type peut mouiller sans
    *  faire taire, ou l'inverse — on calibre chaque axe sans toucher l'autre. */
   MOUILLE: { pluie: true, brouillard: false, orage: true, vent_de_cendre: false },
+  /**
+   * ⚠ **CE QUI FAIT TAIRE LE GIBIER, C'EST LA VIOLENCE, PAS L'HUMIDITÉ** (décision d'Alexis,
+   * 2026-08-23, spec `saisons.md` S7). `pluie` est passé à FAUX : seuls l'orage — donc le
+   * blizzard, qui en est l'aspect froid — et le vent de cendre terrent la faune.
+   *
+   * *Mesuré : un front des Pluies couvre la carte ENTIÈRE (bande de 4500 sur une carte de
+   * 1580) ~35 min sur 45 ; à deux jours sur trois, c'était **52 % de la saison sans une seule
+   * naissance ambiante, partout, juste avant l'hiver**. Le silence du gibier avait été calibré
+   * pour une averse de 90 s balayant 60 tuiles — sous un ciel qui couvre la vallée douze
+   * heures, il ne dit plus la même chose. Et comme la neige est la classe `pluie` (elle se
+   * dérive au point, R11), le même booléen commande les deux saisons : le basculer libère
+   * l'automne ET l'hiver, ce qui est exactement voulu.*
+   */
   /** R6 — la faune se terre : les types qui FONT TAIRE les naissances ambiantes sous leur
    *  empreinte (prédicat pur `meteoQuiet` — un front MOBILE ne sème pas de points
    *  `faunaQuiet`, on interroge sa bande du tick). Le BROUILLARD ne fait pas taire le
    *  gibier : c'est le front tactique (visibilité, R7), pas un front mouillé — la table
    *  d'effets décidée avec Alexis lui donne « faune : néant ». */
-  QUIET: { pluie: true, brouillard: false, orage: true, vent_de_cendre: true },
+  QUIET: { pluie: false, brouillard: false, orage: true, vent_de_cendre: true },
   /** R7 — multiplicateur de vitesse sous l'empreinte (pendant le front, pas après). */
   SPEED: { pluie: 0.95, brouillard: 1, orage: 0.95, vent_de_cendre: 0.9 },
   /** R7 — multiplicateur de perception des IA, évalué au point de la CIBLE (on se cache
@@ -3890,13 +4212,51 @@ export const METEO = {
 } as const
 
 /**
+ * L'EAU QUI RESPIRE (spec `saisons.md` S10, décision d'Alexis 2026-08-23) — un niveau SIGNÉ
+ * dont la sécheresse et la crue sont les deux bouts. Ces nombres sont des ordres de grandeur,
+ * à calibrer en jouant : ce qui compte ici est la FORME (il faut du temps sec ET de la
+ * chaleur pour sécher ; l'eau profonde ne part jamais).
+ */
+export const EAU = {
+  /** Jusqu'où on rembobine pour trouver le dernier ciel mouillé, en cycles. */
+  MEMOIRE_CYCLES: 8,
+  /** Le nombre de cycles secs qui mène à l'aridité pleine, par temps de plein été. */
+  SECHERESSE_CYCLES: 5,
+  /** Sous cette température de socle, rien ne sèche ; au-dessus, la chaleur monte
+   *  linéairement jusqu'à `CHALEUR_PLEINE` (le cœur de l'Ardeur). */
+  CHALEUR_SEUIL: 14,
+  CHALEUR_PLEINE: 26,
+  /** L'aridité à partir de laquelle une eau PEU PROFONDE devient de la terre. À 0,6 avec
+   *  cinq cycles de sécheresse pleine : les mares partent au deuxième tiers d'un été sec,
+   *  jamais dès le premier jour de chaud. */
+  SEUIL_ASSECHEMENT: 0.6,
+  /** Le niveau de crue à partir duquel les gués deviennent infranchissables. */
+  SEUIL_GUE_BLOQUE: 0.3,
+  /** La portée maximale de la crue depuis la rive, en tuiles — **et le plafond du champ
+   *  `map.distEau`** : les deux DOIVENT rester égaux, sinon l'eau monterait jusqu'à un mur
+   *  invisible (le plafond du champ) au lieu de sa borne. */
+  PORTEE_CRUE: 8,
+} as const
+
+/**
  * LE GEL (spec `gel.md`, décision Alexis 2026-08-19) — le monde change d'état avec sa
  * température, sans qu'une tuile ne bouge. Tout est dérivé de `baselineTemperature` : ces
  * quatre seuils sont des TEMPÉRATURES, lues sur la même échelle 0-100 que `TEMPERATURE`.
  *
  * ═══ CES NOMBRES SONT CALCULÉS, PAS CHOISIS ═══
  *
- * `baselineTemperature` sur une tuile d'EAU à découvert vaut, exactement (en °C — l'échelle
+ * ⚠ **CETTE DÉRIVATION EST CELLE D'AVANT LES SAISONS** (2026-08-23, `saisons.md` S4/S5) : elle
+ * raisonnait sur une table de trois actes, or le socle est maintenant une COURBE du jour de
+ * l'année et l'écart jour/nuit une autre. Les deux seuils qu'elle justifie n'ont pas bougé —
+ * ils sont même mieux tenus qu'avant —, mais **leur preuve se réénonce en MOMENTS de l'année,
+ * plus en valeurs d'une table** : une courbe continue atteint TOUTES les valeurs de son
+ * domaine, donc l'argument « aucun seuil ne tombe sur une valeur atteinte » est caduc par
+ * construction. La garde vivante est désormais A4 de `saisons.test.ts` : les gués prennent la
+ * nuit autour de l'hiver et jamais pendant l'Ardeur, les lacs seulement au cœur du Grand Froid.
+ * Le raisonnement d'origine est conservé ci-dessous parce qu'il dit POURQUOI ces deux nombres,
+ * et que ce pourquoi n'a pas changé.
+ *
+ * `baselineTemperature` sur une tuile d'EAU à découvert valait, exactement (en °C — l'échelle
  * est métrique depuis le 2026-08-22) :
  *
  *     T = BASE − ACT_COLD[acte] − (nuit ? NIGHT_COLD : 0) − brume − météo
@@ -3995,7 +4355,18 @@ export const GEL = {
    * du Grand Froid**, sur une semaine, tuile par tuile (un décalage par `hash2` : les arbres
    * ne tombent pas tous le même matin).
    */
-  JOUR_DEFEUILLAISON: BALANCE.ACT_DAYS, // la fin de l'acte I — inchangé (21), dérivé de la cadence
+  /**
+   * ⚠ **DEUX FENÊTRES, ET DES JOURS DE L'ANNÉE** (spec `saisons.md` S14, 2026-08-23) — la
+   * défeuillaison n'est plus un SEUIL franchi une fois pour toutes.
+   *
+   * Sous une année qui boucle, `jour >= JOUR_DEFEUILLAISON` laissait la forêt nue **à jamais**
+   * dès le jour 83 : an 2, an 5, an 10. Les feuilles tombent maintenant à la fin des Pluies et
+   * **repoussent** à l'Éclosion. La clé reste le JOUR (jamais la température — c'est le défaut
+   * que cette fonction documente avoir refusé : keyée sur le froid, la forêt repoussait ses
+   * feuilles à chaque aube et les reperdait à chaque crépuscule).
+   */
+  JOUR_DEFEUILLAISON: 83, // fin des Pluies (j61-90) : la forêt se dépouille à l'entrée de l'hiver
+  JOUR_REFEUILLAISON: 10, // l'Éclosion (j1-30) : la sève remonte, la feuille revient
   DEFEUILLAISON_JOURS: 7,
   /** On glisse un peu plus vite que sur l'herbe (le `speedFactor` d'une eau gelée,
    *  quelle que soit sa profondeur). Il remplace 0,5 sur le gué et 0 (infranchissable)
@@ -4055,7 +4426,17 @@ export const GEL = {
  * Ces deux seuils le lisent — via `climatFlore`, le froid du monde À DÉCOUVERT (ni abri, ni
  * feu : le feu réchauffe les hommes, pas la terre, sinon il devient une serre gratuite).
  *
- * ═══ CE QUE LA TABLE DONNE, EN °C (jour = BASE − ACT_COLD + biome ; la nuit ôte NIGHT_COLD,
+ * ⚠ **LA TABLE CI-DESSOUS EST CELLE D'AVANT LES SAISONS** (2026-08-23, `saisons.md` S4/S5) :
+ * elle lisait `BASE − ACT_COLD[acte]` et un écart de nuit constant. Le socle est désormais une
+ * COURBE du jour de l'année (+8 / +26 / +8 / −2 aux quatre cœurs de saison) et l'écart de nuit
+ * en est une autre (6 l'été, 14 l'hiver) : les trois colonnes n'ont plus de correspondant, et
+ * **la borne « l'acte I reste entièrement libre, nuit comprise » est caduque** — l'Éclosion
+ * s'ouvre à +3 °C le jour et −8 la nuit, donc elle gèle. Ce que les deux seuils veulent dire
+ * n'a pas changé, leur PREUVE se réénonce en moments de l'année : la garde vivante est
+ * `flore-froid.test.ts` réancrée, plus cette table. Conservée parce qu'elle dit d'où viennent
+ * les deux nombres.
+ *
+ * ═══ CE QUE LA TABLE DONNAIT, EN °C (jour = BASE − ACT_COLD + biome ; la nuit ôte NIGHT_COLD,
  *     et tout est borné à `AMBIANT_MIN` = −18) ═══
  *
  *              acte I      acte II     acte III
@@ -4144,7 +4525,10 @@ export const CONVOY_LOOT: import('./items').ItemBag = {
 /** La saison (GDD §2, spec saison) : la pression, la Cendre, la fin. */
 export const SEASON = {
   /** Les sources se contractent : repousse des nœuds ralentie par acte. */
-  REGROW_ACT_FACTOR: actLaw([1, 1.5, 2]), // loi totale (saison-sans-fin T1) : tient 2 au-delà
+  // ⚠ LA SEULE LIGNE QUI S'ÉCARTE DE « la pression suit le froid », et S10 l'impose : la
+  // repousse est aussi lente à l'Ardeur qu'aux Pluies — **la sécheresse arrête ce que le froid
+  // arrêtera**. L'Éclosion devient le seul vrai répit de l'année.
+  REGROW_ACT_FACTOR: actLaw([1, 2, 1.5, 3]), // S13 : quatre paliers, réordonnés sur l'Éclosion · l'Ardeur · les Pluies · le Grand Froid
   /* (la méga-horde scriptée du premier crépuscule de la Cendre est SUPPRIMÉE — décision ⑲,
    *  2026-08-21 : la horde est une pente continue, la dernière nuit est naturellement la pire.) */
   /** Le jour où l'évacuation s'ouvre, et son rayon de « sauvetage ». */
@@ -4206,7 +4590,7 @@ export const ALIGNMENT = {
   SEED_WARMTH: 60,
   SEED_ENGAGEMENT: 60,
   /** Multiplicateur par acte de la saison (le Grand Froid vaut cher). */
-  ACT_FACTOR: actLaw([1, 2, 3]), // loi totale (saison-sans-fin T1) : tient 3 au-delà
+  ACT_FACTOR: actLaw([1, 1, 2, 3]), // S13 : quatre paliers, réordonnés sur l'Éclosion · l'Ardeur · les Pluies · le Grand Froid
   /** Dépôt de nourriture au grenier d'autrui : chaleur par point de valeur. */
   FOREIGN_DEPOSIT_WARMTH_PER_FOOD: 0.3,
   HEAL_OUTSIDER_WARMTH: 15,
@@ -4267,7 +4651,7 @@ export const NIGHT_HUNT = {
    * nuit doit être un DANGER, pas une exécution. Le Grand Froid, lui, serre la vis —
    * mais à ce moment-là le joueur a un épieu, un feu, et il sait pourquoi.
    */
-  CHANCE_PER_MIN: actLaw([0.12, 0.3, 0.55]), // loi totale (saison-sans-fin T1) : tient 0,55 au-delà
+  CHANCE_PER_MIN: actLaw([0.12, 0.12, 0.3, 0.55]), // S13 : quatre paliers, réordonnés sur l'Éclosion · l'Ardeur · les Pluies · le Grand Froid
   /** Rôdeurs simultanés sur une même proie. On peut perdre ; on ne doit pas être noyé. */
   MAX_ALIVE: 2,
   /** Ils naissent à cette distance : hors de vue, mais on les voit VENIR. */
@@ -4289,7 +4673,9 @@ export const NIGHT_HUNT = {
 
   /**
    * Plafond de Cendreux rôdeurs simultanés sur une même proie — EN FIN de saison. Le plafond
-   * du jour J est round(1 + (FIN − 1) × jour/60) : la montée est CONTINUE, jour après jour,
+   * du jour J suit l'ANNÉE depuis S15 (`seasonRamp` lit la dureté : creux au cœur de l'Ardeur,
+   * plein au cœur du Grand Froid, plancher qui monte par tour) — c'était `round(1 + (FIN − 1) ×
+   * jour/60)`, une montée à sens unique clampée au jour 60,
    * plus une table de trois valeurs (le défaut chiffré d'A13 : ×1,6 mesuré quand le taux
    * quadruple — « une table de trois valeurs, et une table est plate »).
    *
@@ -4637,7 +5023,13 @@ export const ITEM_WEIGHT: Record<import('./items').ItemId, number> = {
   champignons: 0.2, // léger comme les baies
   worms: 0.1, // une poignée de vers dans la mousse, presque rien
   legume: 0.2, // le potager : léger comme les baies
+  pousse_verte: 0.2,
+  fruit_sec: 0.2,
+  tubercule: 0.4, // le plus lourd des quatre : on porte l'hiver sur son dos
   graine: 0.1, // une poignée de graines, presque rien
+  graine_verte: 0.1,
+  graine_fruit: 0.1,
+  graine_tubercule: 0.1,
   stew: 0.5,
   raw_meat: 1,
   // Les poissons (peche.md) : le goujon est une poignée, le brochet un vrai poids — léger

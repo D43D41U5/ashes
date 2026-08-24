@@ -126,6 +126,18 @@ export interface WorldMap {
    */
   profondeur?: number[]
   /**
+   * LA DISTANCE À L'EAU (spec `saisons.md` S10) : par tuile de TERRE, la distance en tuiles
+   * à l'eau la plus proche (BFS 8-connexe multi-source, plafonnée à `EAU.PORTEE_CRUE`), 0 sur
+   * l'eau elle-même et au-delà du plafond. **Donnée STATIQUE, gelée à l'amorce** — comme
+   * `cendre` et `profondeur`.
+   *
+   * C'est ce qui permet à la CRUE de monter pour de vrai : les tuiles à `d ≤ niveau` portent
+   * de l'eau peu profonde, donc l'eau s'étale depuis les rives et redescend quand la crue
+   * passe, sans qu'une seule tuile de la carte ne soit mutée. Additive : une carte d'avant se
+   * relit sans (la crue n'inonde alors rien, et rien d'autre ne change).
+   */
+  distEau?: number[]
+  /**
    * LES COULÉES (forêts-vivantes §4 R5) : les chemins de terre du gibier, couche → eau.
    * Index de tuile DANS L'ORDRE du tracé, chemins séparés par -1. Donnée STATIQUE, gelée à
    * l'amorce (hachée par `carte-immuable`), additive : une carte d'avant se relit sans. Le

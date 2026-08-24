@@ -15,7 +15,11 @@ import { createSim, spawnEntity, step, type SimState } from './sim'
 import { drainEvents } from './events'
 import { die } from './combat'
 import { advanceCendreux } from './cendreux'
-import { cycleOffsetForStartHour, TICKS_PER_CYCLE, TICKS_PER_SEASON_DAY } from './time'
+import { cycleOffsetForStartHour, gameTimeAt, TICKS_PER_CYCLE, TICKS_PER_SEASON_DAY } from './time'
+
+/** Le cœur d'une saison, en jour de l'année — DÉRIVÉ d'`ACT_DAYS` (`saisons.md` S1 : quatre
+ *  saisons de trente jours), jamais écrit. Un montage se pose sur une saison, pas sur un jour. */
+const coeurDeSaison = (phase: number): number => (phase - 1) * BALANCE.ACT_DAYS + BALANCE.ACT_DAYS / 2
 
 /** Une carte à zones, montée à la main : trois tiers, en bandes horizontales. */
 function carteAZones(): SimState {
@@ -76,7 +80,7 @@ describe('le champ des morts (R15-R17)', () => {
 
   it('A20 — le champ MODULE le nombre de rôdeurs, il ne le supprime jamais', () => {
     const state = carteAZones()
-    const plafond = NIGHT_HUNT.UNDEAD_MAX_FIN // le plafond continu, à son sommet (jour 60)
+    const plafond = NIGHT_HUNT.UNDEAD_MAX_FIN // le plafond continu, à son sommet (le cœur du Grand Froid)
     const chezSoi = rodeursPortes(state, 60, 10, plafond)
     const marges = rodeursPortes(state, 60, 110, plafond)
     expect(chezSoi).toBeGreaterThanOrEqual(MORTS.MIN_RODEURS) // jamais zéro : il module (R16)
@@ -209,8 +213,13 @@ describe('le réveil : le sol travaille, puis il rend son mort (R14, R21)', () =
       cycleOffset: cycleOffsetForStartHour(0), // minuit
       calendarScale: 1,
     })
-    state.tick = 54 * TICKS_PER_SEASON_DAY // acte III : la nuit n'envoie QUE des morts
+    // AU CŒUR DU GRAND FROID : c'est l'éveil qui décide si la nuit envoie un mort ou un loup,
+    // et il ne tient qu'au froid (`eveilCendreuxAt`). Ce montage visait « l'acte III » quand
+    // l'acte III était l'hiver ; sous les quatre saisons qui tournent (`saisons.md` S1, S4) le
+    // même jour 55 est le plein été, où l'éveil vaut zéro — la nuit n'y enverrait que des loups.
+    state.tick = (coeurDeSaison(4) - 1) * TICKS_PER_SEASON_DAY // l'éveil est à 1 : QUE des morts
     state.tick -= state.tick % TICKS_PER_CYCLE
+    expect(gameTimeAt(state, state.tick).isNight).toBe(true) // minuit, et on le prouve
     const id = spawnEntity(state, 60.5, 60.5)
     return { state, proie: id }
   }
@@ -258,7 +267,7 @@ describe('le réveil : le sol travaille, puis il rend son mort (R14, R21)', () =
 
   it('A27 (RENVERSÉE le 2026-08-21, décision ⑦) — LE FEU REPOUSSE LE RÉVEIL, il ne l\'annule plus', () => {
     // L'ANCIENNE A27 (« le feu étouffe, rien n'en sort ») est morte SCIEMMENT : le feu qui
-    // annulait était le germe d'un ward magique — le camp au feu ne voyait jamais l'acte III.
+    // annulait était le germe d'un ward magique — le camp au feu ne voyait jamais le Grand Froid.
     // La nouvelle règle : le tertre s'effondre ici (`reveil_etouffe`, même geste à l'écran),
     // et le sol REPREND son travail hors de la bulle, timer remis à neuf. Le feu achète de
     // la DISTANCE et du TEMPS — chaque bulle se paie en bois — jamais l'immunité.

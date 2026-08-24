@@ -54,7 +54,7 @@ import { distSq } from './geometry'
 import { placeCharniers, placePois, placeSteles } from './poi'
 import { densiteDeBase } from './morts'
 import { fbm2, hash2 } from './noise'
-import { deriverProfondeur } from './profondeur'
+import { deriverDistanceEau, deriverProfondeur } from './profondeur'
 import { tracerLesCoulees } from './zonegen-coulees'
 import { masqueDesSeuils, paintWaterRacine, type Riviere } from './zonegen-water'
 import { assainirLeProfondHorsRacine, peindreLesEauxDesZones } from './zonegen-eaux-zones'
@@ -713,6 +713,8 @@ export function generateZonedTerrain(
     // LA PROFONDEUR INTRA-MASSIF (spec §2quater R38) — dérivée du terrain FINAL (les sentes
     // qui coupent un bois y creusent leur lisière), gelée à l'amorce, statique ensuite.
     profondeur: deriverProfondeur(terrain, zone, g.racine, width, height),
+    // LA DISTANCE À L'EAU (S10) : ce qui permet à la crue de monter depuis les rives.
+    distEau: deriverDistanceEau(terrain, width, height),
   }
   // LES COULÉES (forêts-vivantes §4) — dérivées après la profondeur (elles lisent le pic) :
   // couche → eau, pour chaque massif à cœur qui boit. Champ additif, patron `fil`.

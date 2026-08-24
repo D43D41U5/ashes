@@ -10,9 +10,41 @@ import { advanceReveils, partRampante } from './morts'
 import { spawnMonster, advanceMonsters } from './monsters'
 import { createEmptyMap } from './map'
 import { drainEvents } from './events'
-import { cycleOffsetForStartHour, DAY_TICKS_PER_CYCLE, seasonRamp, TICKS_PER_CYCLE, TICKS_PER_SEASON_DAY } from './time'
+import { cycleOffsetForStartHour, dayTicksPourJour, gameTimeAt, TICKS_PER_CYCLE, TICKS_PER_SEASON_DAY } from './time'
 import { grantItems } from './village'
 import { foundNpcVillage } from './worldgen'
+
+/**
+ * LE CŒUR D'UNE SAISON, en jour de l'année — dérivé d'`ACT_DAYS`, jamais écrit : 15, 45, 75,
+ * 105 (`docs/specs/saisons.md` S1). Le Cendreux est une créature de FROID : tout ce qui le
+ * réveille se cherche au cœur du Grand Froid, tout ce qui l'endort au cœur de l'Ardeur — les
+ * deux seuls jours où la courbe du socle (S4) vaut ses cardinaux EXACTEMENT.
+ */
+const coeurDeSaison = (phase: number): number => (phase - 1) * BALANCE.ACT_DAYS + BALANCE.ACT_DAYS / 2
+const ARDEUR = coeurDeSaison(2)
+const GRAND_FROID = coeurDeSaison(4)
+/** Le tick du DÉBUT DE CYCLE du jour de saison voulu (patron du banc `nuits`) — l'heure qu'il
+ *  y est, elle, se règle par `cycleOffset` : minuit à `cycleOffsetForStartHour(0)`, midi à 12. */
+const debutDuJour = (jour: number): number => {
+  const t = (jour - 1) * TICKS_PER_SEASON_DAY
+  return t - (t % TICKS_PER_CYCLE)
+}
+/**
+ * UN ÉTAT DONT LA NUIT EST DÉJÀ TOMBÉE AU TICK 0 — et qui le PROUVE.
+ *
+ * Le décalage se dimensionne sur la longueur du jour 1 (`dayTicksPourJour`), mais le cycle qui
+ * contient le tick 0 commence la VEILLE — jour 120 de l'année, dont la nuit est plus longue :
+ * on retombe donc une poignée de secondes APRÈS le crépuscule, jamais avant. Cette marge tient
+ * à un calibrage (`PART_DE_JOUR`, S6), pas à une loi, d'où l'assertion — sans elle, un
+ * recalibrage transformerait en silence trois montages de nuit en montages de jour, et A46
+ * (« pas un mur touché ») passerait au vert sans rien mesurer.
+ * La constante `DAY_TICKS_PER_CYCLE` qui portait ce décalage a disparu avec l'année qui tourne.
+ */
+function nuitTombee(): SimState {
+  const state = createSim(1, { cycleOffset: dayTicksPourJour(1) })
+  expect(gameTimeAt(state, state.tick).isNight).toBe(true)
+  return state
+}
 
 function tick(state: SimState, inputs: MoveInput[] = []): void {
   step(state, inputs)
@@ -66,8 +98,8 @@ describe('la levée — critère à la mort', () => {
    * A6 — LA CAUSE NE COMPTE PLUS (spec `cendreux.md` R6, décision 2026-07-31).
    *
    * Ce test affirmait l'inverse (« mort non-cold → pas de marquage ») et il avait raison de
-   * son époque. Le froid s'est révélé un GOULOT et non une règle : il ne mord la plaine qu'en
-   * acte III, et sur une saison Veillée entière mesurée au banc il n'a tué qu'UNE fois — la
+   * son époque. Le froid s'est révélé un GOULOT et non une règle : il ne mord la plaine qu'au
+   * Grand Froid, et sur une saison Veillée entière mesurée au banc il n'a tué qu'UNE fois — la
    * levée ne partait donc jamais. Ce qui fait un Cendreux, c'est mourir SEUL et LOIN D'UN FEU.
    */
   it('A6 — une mort par arme, seule et loin d\'un feu, marque le cadavre', () => {
@@ -169,14 +201,15 @@ describe('IA cendreux (jour/nuit)', () => {
     for (let i = 0; i < 40; i++) advanceMonsters(state)
     expect(ent.x).toBe(x0); expect(ent.y).toBe(y0) // dormant
   })
-  it('LE CADRAN : au chaud (jour d\'acte I), la même proie à 3 tuiles est INVISIBLE — presque amorphe', () => {
+  it('LE CADRAN : au chaud (midi de l\'Ardeur), la même proie à 3 tuiles est INVISIBLE — presque amorphe', () => {
     // Décision d'Alexis 2026-08-21 (« un cendreux doit être presque amorphe lorsqu'il fait
-    // chaud ») : à 90 de froid de base, l'éveil vaut 0 et la vue tombe à son plancher
+    // chaud ») : au-dessus de `TORPEUR.CHAUD`, l'éveil vaut 0 et la vue tombe à son plancher
     // (aggroRange × 0,2 = 1 tuile). On peut passer à trois tuiles d'une carcasse en plein
     // midi — mais marcher DESSUS la réveille toujours (le plancher existe pour ça).
-    // MIDI, pas le tick 0 : depuis la rampe de nuit (`partDeNuit`), l'aube porte encore le
-    // plein froid nocturne — c'est le fond du froid, pas « le chaud » que ce cas veut poser.
-    const state = createSim(1, { cycleOffset: cycleOffsetForStartHour(12) })
+    // MIDI DE L'ARDEUR, et rien d'autre : l'aube porte encore le plein froid nocturne
+    // (`partDeNuit`), et l'Éclosion s'ouvre GELÉE (S4) — le seul vrai chaud est celui de l'été.
+    const state = createSim(1, { cycleOffset: cycleOffsetForStartHour(12), calendarScale: 1 })
+    state.tick = debutDuJour(ARDEUR) // le cycle est calé sur midi : ce tick EST midi
     const id = spawnMonster(state, 'cendreux', 5, 5)
     const monster = state.monsters.find((m) => m.entityId === id)!
     humanAt(state, 8, 5) // à 3 tuiles : dans l'ancienne vue (5), hors de la vue engourdie (1)
@@ -184,10 +217,9 @@ describe('IA cendreux (jour/nuit)', () => {
     expect(monster.path?.length ?? 0).toBe(0)
     expect(monster.targetId).toBeNull()
   })
-  it('…et dans le froid qui mord (nuit d\'acte III), il chasse à pleine vue (chemin posé)', () => {
+  it('…et dans le froid qui mord (nuit du Grand Froid), il chasse à pleine vue (chemin posé)', () => {
     const state = createSim(1, { cycleOffset: cycleOffsetForStartHour(0), calendarScale: 1 })
-    state.tick = 54 * TICKS_PER_SEASON_DAY // jour 55 : plaine de nuit à 10 → éveil 1
-    state.tick -= state.tick % TICKS_PER_CYCLE // minuit
+    state.tick = debutDuJour(GRAND_FROID) // plaine de nuit à −16 °C → éveil 1
     const id = spawnMonster(state, 'cendreux', 5, 5)
     const monster = state.monsters.find((m) => m.entityId === id)!
     humanAt(state, 8, 5) // proie dans aggroRange 5, vue pleine
@@ -195,7 +227,7 @@ describe('IA cendreux (jour/nuit)', () => {
     expect((monster.path?.length ?? 0)).toBeGreaterThan(0)
   })
   it('nuit → dérive vers une source de chaleur (feu) dans le rayon', () => {
-    const state = createSim(1, { cycleOffset: DAY_TICKS_PER_CYCLE }) // nuit
+    const state = nuitTombee()
     const id = spawnMonster(state, 'cendreux', 5, 5)
     const monster = state.monsters.find((m) => m.entityId === id)!
     state.structures.push({ type: 'fire', tx: 15, ty: 5, villageId: 0 } as never) // dans WARMTH_SEEK_RANGE 20
@@ -214,13 +246,12 @@ describe('IA cendreux (jour/nuit)', () => {
    */
   it('A5 — arrivé au feu, il mord quand même l\'homme assis à côté (S5/S6)', () => {
     // Depuis le cadran (2026-08-21), la garde se joue LÀ OÙ LE MONSTRE EST ÉVEILLÉ : la
-    // nuit d'acte III (plaine à 10, éveil 1, vue pleine) — le cas nominal du siège. Une
-    // nuit TIÈDE d'acte I laisse désormais l'homme tranquille à trois tuiles : ce n'est
+    // nuit du Grand Froid (plaine à −16 °C, éveil 1, vue pleine) — le cas nominal du siège.
+    // Une nuit TIÈDE d'Ardeur laisse désormais l'homme tranquille à trois tuiles : ce n'est
     // plus le bug du bouclier (nearestWarmth battait l'homme), c'est la torpeur — et le
     // monstre paiera sa venue autrement (il boira le feu, décision ⑯).
     const state = createSim(1, { cycleOffset: cycleOffsetForStartHour(0), calendarScale: 1 })
-    state.tick = 54 * TICKS_PER_SEASON_DAY // acte III
-    state.tick -= state.tick % TICKS_PER_CYCLE // aligné à minuit (patron du banc `nuits`)
+    state.tick = debutDuJour(GRAND_FROID) // cœur du Grand Froid, à minuit (patron du banc `nuits`)
     state.structures.push({ type: 'fire', tx: 15, ty: 15, villageId: 0 } as never)
     const proie = humanAt(state, 17.5, 15.5) // DERRIÈRE le feu, vu du Cendreux
     spawnMonster(state, 'cendreux', 5.5, 15.5) // il vient de l'ouest
@@ -237,7 +268,7 @@ describe('IA cendreux (jour/nuit)', () => {
    * venait même pas frapper à la porte.
    */
   it('A4 — proie enclose : il frappe l\'enceinte au lieu de rester planté', () => {
-    const state = createSim(1, { cycleOffset: DAY_TICKS_PER_CYCLE }) // nuit
+    const state = nuitTombee()
     const proie = humanAt(state, 17.5, 15.5)
     // Un anneau de murs autour d'elle : injoignable à pied, l'A* ne rend aucun chemin.
     // Les murs portent un `id` — un coup se résout par `structureId`, donc une structure
@@ -287,9 +318,8 @@ describe('la nuit bascule d\'espèce (R11) — la tension croissante', () => {
         cycleOffset: cycleOffsetForStartHour(0), // minuit
         calendarScale: 1,
       })
-      // On se place au jour de saison voulu sans jouer 55 jours : le calendrier dérive du tick.
-      state.tick = (jourDeSaison - 1) * TICKS_PER_SEASON_DAY
-      state.tick -= state.tick % TICKS_PER_CYCLE // aligner sur le début du cycle (minuit)
+      // On se place au jour de saison voulu sans le jouer : le calendrier dérive du tick.
+      state.tick = debutDuJour(jourDeSaison) // aligné sur le début du cycle (ici minuit)
       const proie = humanAt(state, 32.5, 32.5)
       drainEvents(state)
       for (let t = 0; t < 18 * 60 * BALANCE.TICK_RATE_HZ; t++) {
@@ -305,31 +335,31 @@ describe('la nuit bascule d\'espèce (R11) — la tension croissante', () => {
     return cumul
   }
 
-  it('A13 — acte I : la vallée est encore vivante, elle n\'envoie que des loups', () => {
-    const n = nuits(5)
+  it('A13 — l\'Ardeur : la vallée est encore vivante, elle n\'envoie que des loups', () => {
+    const n = nuits(ARDEUR)
     expect(n.hurlements).toBeGreaterThan(0)
     expect(n.raclements).toBe(0)
     expect(n.morts).toBe(0)
   })
 
-  it('A13 — acte III : le vivant a quitté la vallée, elle n\'envoie que des morts', { timeout: 120_000 }, () => {
-    // 3 nuits et non 8 : depuis le CRESCENDO (cris → salves, 2026-08-21), une nuit d'acte III
-    // porte des dizaines de marcheurs — 8 nuits explosaient le budget du banc pour la même
-    // vérité. Le « si » qu'on mesure (espèce) se voit dès la première salve.
-    const n = nuits(55, 3)
+  it('A13 — le Grand Froid : le vivant a quitté la vallée, elle n\'envoie que des morts', { timeout: 120_000 }, () => {
+    // 3 nuits et non 8 : depuis le CRESCENDO (cris → salves, 2026-08-21), une nuit du Grand
+    // Froid porte des dizaines de marcheurs — 8 nuits explosaient le budget du banc pour la
+    // même vérité. Le « si » qu'on mesure (espèce) se voit dès la première salve.
+    const n = nuits(GRAND_FROID, 3)
     expect(n.raclements).toBeGreaterThan(0)
     expect(n.hurlements).toBe(0)
     expect(n.loups).toBe(0)
   })
 
-  it('A13 — et la nuit d\'acte III pèse PLUS que celle d\'acte I (la montée se mesure)', { timeout: 120_000 }, () => {
+  it('A13 — et la nuit du Grand Froid pèse PLUS que celle de l\'Ardeur (la montée se mesure)', { timeout: 120_000 }, () => {
     // ON COMPARE CE QUI SE COMPARE : le nombre de CHASSEURS que la nuit envoie.
     //
-    // L'assertion d'origine opposait les *raclements* d'acte III aux *hurlements* d'acte I —
+    // L'assertion d'origine opposait les *raclements* de l'hiver aux *hurlements* de l'été —
     // deux événements que deux espèces n'émettent pas au même rythme, donc un rapport qui ne
     // dit rien. Elle passait (38 > 19) grâce à la fontaine à cadavres du montage mortel : le
     // champ des morts qu'elle creusait appelait plus de rôdeurs. Témoin maintenu en vie, elle
-    // s'inverse (16 < 22) alors que la nuit d'acte III envoie bel et bien PLUS de monde.
+    // s'inverse (16 < 22) alors que la nuit du Grand Froid envoie bel et bien PLUS de monde.
     //
     // CE QUE ÇA LAISSE OUVERT, ET QUI EST UNE QUESTION DE CALIBRAGE (Alexis) : la montée
     // mesurée sur les chasseurs envoyés est de 10 → 16, soit ×1,6, quand le taux par minute,
@@ -342,13 +372,13 @@ describe('la nuit bascule d\'espèce (R11) — la tension croissante', () => {
     // Le raccourci « 3 nuits de crescendo pèsent plus que 8 nuits tièdes » vivait sur cette
     // fontaine (16-38 chasseurs en 3 nuits ; 9 désormais) ; le titre, lui, dit LA nuit — on
     // compare donc ce qu'une nuit envoie, et la montée reste nette (≈ 3 contre ≈ 1,2).
-    const acteI = nuits(5)
-    const acteIII = nuits(55, 3)
-    expect((acteIII.loups + acteIII.morts) / 3).toBeGreaterThan((acteI.loups + acteI.morts) / NUITS)
+    const ardeur = nuits(ARDEUR)
+    const grandFroid = nuits(GRAND_FROID, 3)
+    expect((grandFroid.loups + grandFroid.morts) / 3).toBeGreaterThan((ardeur.loups + ardeur.morts) / NUITS)
   })
 
   it('A14 — un rôdeur mort ne HURLE pas : il a son propre signe', { timeout: 120_000 }, () => {
-    const n = nuits(55, 1) // une seule nuit d'acte III : ~18 tirages à 55 %, le signe est sûr
+    const n = nuits(GRAND_FROID, 1) // une seule nuit d'hiver : ~18 tirages à 55 %, le signe est sûr
     // Un Cendreux qui émettrait `wolf_howl` ferait préparer au joueur la mauvaise parade :
     // on distance un Cendreux (1,3 t/s contre 4), jamais un loup.
     expect(n.hurlements).toBe(0)
@@ -356,16 +386,18 @@ describe('la nuit bascule d\'espèce (R11) — la tension croissante', () => {
   })
 
   it('A13 — borné par espèce : jamais plus que le plafond GLOBAL du jour', { timeout: 120_000 }, () => {
-    // Depuis le crescendo (2026-08-21), la nuit d'acte III n'est plus le seul canal : le cri
+    // Depuis le crescendo (2026-08-21), la nuit du Grand Froid n'est plus le seul canal : le cri
     // lève le sol par salves. La borne qui tient TOUT — et qu'on affirme ici — est le plafond
     // GLOBAL du jour (rampe 12 → 60) : les morts comptés VIVANTS en fin de nuit ne peuvent
     // jamais le dépasser. Le plafond par proie de la nuit qui chasse garde ses gardes propres
     // (morts.test A20) ; celle-ci est la borne de T15 sur la somme.
-    const n = nuits(55, 3)
-    const jour55 = Math.round(seasonRamp(CENDREUX.GLOBAL.DEBUT, CENDREUX.GLOBAL.FIN, 55))
+    const n = nuits(GRAND_FROID, 3)
+    // AU CŒUR DU GRAND FROID LE TOIT EST `GLOBAL.FIN` TOUT ROND : on l'affirme donc contre la
+    // constante, jamais en rejouant `seasonRamp` — une garde écrite avec la loi qu'elle teste
+    // suivrait le défaut au lieu de l'attraper.
     // `nuits` CUMULE trois états indépendants : la borne de T15 vaut PAR NUIT — et elle est
-    // SERRÉE (mesuré : chaque nuit de crescendo finit le plafond PILE, 56/56).
-    expect(n.morts).toBeLessThanOrEqual(jour55 * 3)
+    // SERRÉE (mesuré : chaque nuit de crescendo finit le plafond PILE).
+    expect(n.morts).toBeLessThanOrEqual(CENDREUX.GLOBAL.FIN * 3)
   })
 })
 
@@ -384,10 +416,10 @@ describe('la contagion et son plafond (R7-R8)', () => {
 
   it('A8 — au plafond, plus rien ne se relève ; en abattre un rouvre la porte', () => {
     const state = createSim(1, { calendarScale: 1 })
-    // AU JOUR 55 : le plafond GLOBAL (2026-08-21, en rampe 12 → 60) vaut 56 — c'est bien
-    // MAX_ALIVE (24, la borne INTERNE de la contagion, R8) que ce banc doit voir mordre.
-    // Au jour 1, le global (13) mordait AVANT lui et le test mesurait l'autre plafond.
-    state.tick = 54 * TICKS_PER_SEASON_DAY
+    // AU CŒUR DU GRAND FROID : le plafond GLOBAL (2026-08-21, en rampe 12 → 60) y vaut son
+    // maximum — c'est bien MAX_ALIVE (24, la borne INTERNE de la contagion, R8) que ce banc
+    // doit voir mordre. À l'Ardeur, le global (12) mordrait AVANT lui et on mesurerait l'autre.
+    state.tick = debutDuJour(GRAND_FROID)
     for (let i = 0; i < CENDREUX.MAX_ALIVE; i++) {
       const id = spawnMonster(state, 'cendreux', 100 + i * 2, 100)
       state.monsters.find((m) => m.entityId === id)!.risen = true // nés d'un cadavre
@@ -414,7 +446,7 @@ describe('la contagion et son plafond (R7-R8)', () => {
    */
   it('A8bis — Repaires, hordes et convois ne consomment pas le plafond', () => {
     const state = createSim(1, { calendarScale: 1 })
-    state.tick = 54 * TICKS_PER_SEASON_DAY // jour 55 : le plafond global (56) laisse la place
+    state.tick = debutDuJour(GRAND_FROID) // le plafond global y est au plus haut : la place existe
     for (let i = 0; i < CENDREUX.MAX_ALIVE + 5; i++) spawnMonster(state, 'cendreux', 100 + i * 2, 100)
     expect(risenAlive(state)).toBe(0) // aucun n'est né d'un cadavre
     const e = humanAt(state, 40, 40)
@@ -689,19 +721,19 @@ describe('A35 — l\'alliance des Cendreux : par espèce, et rien de plus', () =
  * Le Cendreux cesse d'être un rayon nu : sa vue lit le stimulus de la chasse (allure,
  * couvert — `stimulusPourLesMorts`), et le sol lui porte les impacts (`secouerLeSol`).
  * Montages sur carte VIDE d'herbe (terrain déterministe : couvert nominal, litière inerte)
- * et sur le cadran réel — acte III à minuit pour l'éveil plein, tick 0 pour l'amorphe
- * (patron du banc `nuits`, mémoire « cadran température »).
+ * et sur le cadran réel — le Grand Froid à minuit pour l'éveil plein, le midi de l'Ardeur pour
+ * l'amorphe (patron du banc `nuits`, mémoire « cadran température »). L'Éclosion, elle,
+ * s'ouvre GELÉE (S4) : son jour 1 ne dit plus « chaud », et plus aucun montage ne s'y pose.
  */
 describe('les sens honnêtes (R24-R25)', () => {
-  /** Acte III, minuit, plaine d'herbe : température 10, éveil 1 — la vue est pleine. */
-  function nuitActeIII(): SimState {
+  /** Cœur du Grand Froid, minuit, plaine d'herbe : −16 °C, éveil 1 — la vue est pleine. */
+  function nuitDuGrandFroid(): SimState {
     const state = createSim(1, {
       map: createEmptyMap(160, 160, TERRAIN_GRASS),
       cycleOffset: cycleOffsetForStartHour(0),
       calendarScale: 1,
     })
-    state.tick = 54 * TICKS_PER_SEASON_DAY
-    state.tick -= state.tick % TICKS_PER_CYCLE // aligné à minuit
+    state.tick = debutDuJour(GRAND_FROID) // aligné à minuit
     return state
   }
 
@@ -709,7 +741,7 @@ describe('les sens honnêtes (R24-R25)', () => {
     // Un feu PLUS PROCHE que l'homme ancre la dérive de chaleur (`nearestWarmth` choisit le
     // feu, donc `targetId` ne peut venir QUE des yeux) : le test isole le canal de la vue.
     const acquis = (gait: 'walk' | 'sneak'): number | null => {
-      const state = nuitActeIII()
+      const state = nuitDuGrandFroid()
       state.structures.push({ type: 'fire', tx: 5, ty: 17, villageId: 0 } as never)
       const id = spawnMonster(state, 'cendreux', 5, 15)
       const monster = state.monsters.find((m) => m.entityId === id)!
@@ -724,21 +756,30 @@ describe('les sens honnêtes (R24-R25)', () => {
 
   /**
    * Un front météo PLEIN sur la colonne x = 80 d'une carte de 160 : le front va d'ouest en
-   * est, et à mi-traversée sa bande couvre [50, 110] (pluie) ou [55, 105] (brouillard) —
+   * est, et à mi-traversée sa bande couvre [20, 140] (pluie) ou [45, 115] (brouillard) —
    * la rampe de bord (15 % de la largeur) laisse le cœur à pleine intensité autour de 80.
    * Le montage PROUVE sa prémisse : le facteur de vue au point des acteurs est bien celui
    * du type de front, pas 1.
+   *
+   * ⚠ SON `day` EST SA GÉOMÉTRIE, PAS SA DATE. Depuis que la largeur et la fenêtre sont
+   * saisonnières (`saisons.md` S7, lues par `largeurDe`/`fenetreDe` sur `front.day`), un front
+   * posé à la main choisit sa bande en choisissant sa saison. On emprunte celle de l'Éclosion
+   * — 120 tuiles de large sur une carte de 160, donc un cœur à pleine intensité —, quand les
+   * 800 à 1600 du Grand Froid déborderaient la carte et laisseraient le point dans la rampe :
+   * la garde ne mesurerait plus le voile du front mais la pente de son bord. C'est la
+   * prémisse que la ligne ci-dessous affirme, et c'est elle qui le dira si ça change.
    */
   function frontPlein(state: SimState, type: 'pluie' | 'brouillard', x: number, y: number): void {
     const T = METEO.TRAVERSEE_TICKS
-    state.meteo = { type, cycle: 0, day: 30, edge: 0, startTick: state.tick - T, endTick: state.tick + T }
+    const geometrie = coeurDeSaison(1) // l'Éclosion : 120 tuiles, un cœur plein sur une carte de 160
+    state.meteo = { type, cycle: 0, day: geometrie, edge: 0, startTick: state.tick - T, endTick: state.tick + T }
     expect(meteoVisionFactor(state, x, y)).toBe(METEO.VISION[type])
   }
 
   it('A37 — le sprint porte au-delà de la vue : acquis à 7 tuiles, où le marcheur passe — brouillard compris', () => {
     // Le canal VIBRATION (bruit d'allure, sans couvert ni météo) : sprint 1,6 → 5 × 1,6 = 8.
     const acquis = (gait: 'walk' | 'sprint', brouillard = false): number | null => {
-      const state = nuitActeIII()
+      const state = nuitDuGrandFroid()
       state.structures.push({ type: 'fire', tx: 80, ty: 17, villageId: 0 } as never)
       const id = spawnMonster(state, 'cendreux', 80, 15)
       const monster = state.monsters.find((m) => m.entityId === id)!
@@ -755,13 +796,18 @@ describe('les sens honnêtes (R24-R25)', () => {
   })
 
   it('A38 — le contact ne se négocie pas : immobile, sous la pluie, sur un Cendreux amorphe — détecté', () => {
-    // MIDI (l'aube porte le froid de la nuit depuis `partDeNuit`), plaine à 90 : éveil 0,
-    // vue engourdie 1 tuile. Sans le plancher `SENS.CONTACT`,
-    // le stimulus de l'immobile (0,25) ET la pluie (0,85) la réduiraient à 0,21 tuile — et
-    // le nettoyage de jour deviendrait un pillage furtif gratuit (décision ⑮). Avant ce
-    // chantier, la pluie seule la trouait déjà à 0,85 : le plancher s'applique APRÈS tout.
+    // MIDI DE L'ARDEUR (l'aube porte le froid de la nuit depuis `partDeNuit`, et l'Éclosion
+    // s'ouvre gelée) : plaine à +26 °C, éveil 0, vue engourdie 1 tuile. Sans le plancher
+    // `SENS.CONTACT`, le stimulus de l'immobile (0,25) ET la pluie (0,85) la réduiraient à
+    // 0,21 tuile — et le nettoyage de jour deviendrait un pillage furtif gratuit (décision ⑮).
+    // Avant ce chantier, la pluie seule la trouait déjà à 0,85 : le plancher s'applique APRÈS tout.
     const chaud = (dist: number): number | null => {
-      const state = createSim(1, { map: createEmptyMap(160, 160, TERRAIN_GRASS), cycleOffset: cycleOffsetForStartHour(12) })
+      const state = createSim(1, {
+        map: createEmptyMap(160, 160, TERRAIN_GRASS),
+        cycleOffset: cycleOffsetForStartHour(12),
+        calendarScale: 1,
+      })
+      state.tick = debutDuJour(ARDEUR) // le cycle est calé sur midi : ce tick EST midi
       const id = spawnMonster(state, 'cendreux', 80, 15)
       const monster = state.monsters.find((m) => m.entityId === id)!
       const e = humanAt(state, 80 + dist, 15)
@@ -775,7 +821,7 @@ describe('les sens honnêtes (R24-R25)', () => {
   })
 
   it("A39 — le coup d'outil ameute : la hache à 6 tuiles donne le point d'impact pour dernier lieu vu", () => {
-    const state = nuitActeIII()
+    const state = nuitDuGrandFroid()
     const id = spawnMonster(state, 'cendreux', 26.5, 15.5)
     const monster = state.monsters.find((m) => m.entityId === id)!
     const bucheron = humanAt(state, 20.5, 16.5)
@@ -785,8 +831,15 @@ describe('les sens honnêtes (R24-R25)', () => {
     expect(monster.lastSeenY).toBe(15.5)
     expect(monster.path?.length ?? 0).toBeGreaterThan(0) // et il marche dessus
 
-    // Le même coup, de jour au chaud : l'éveil module la portée — personne ne sent rien.
-    const jour = createSim(1, { map: createEmptyMap(160, 160, TERRAIN_GRASS) })
+    // Le même coup, à midi au cœur de l'Ardeur : l'éveil module la portée — personne ne sent
+    // rien. Le tick 0 d'un jour 1 ne dit plus « chaud » : l'Éclosion s'ouvre gelée (S4) et
+    // l'aube y porte tout le froid de la nuit.
+    const jour = createSim(1, {
+      map: createEmptyMap(160, 160, TERRAIN_GRASS),
+      cycleOffset: cycleOffsetForStartHour(12),
+      calendarScale: 1,
+    })
+    jour.tick = debutDuJour(ARDEUR)
     const id2 = spawnMonster(jour, 'cendreux', 26.5, 15.5)
     const monster2 = jour.monsters.find((m) => m.entityId === id2)!
     const b2 = humanAt(jour, 20.5, 16.5)
@@ -796,7 +849,7 @@ describe('les sens honnêtes (R24-R25)', () => {
   })
 
   it('A40 — la corde ne vibre pas le sol : un tir bandé résolu ne plante aucun dernier lieu', () => {
-    const state = nuitActeIII()
+    const state = nuitDuGrandFroid()
     // La chaleur la plus proche du mort est un feu : il dérive vers lui, pas vers les corps.
     state.structures.push({ type: 'fire', tx: 20, ty: 18, villageId: 0 } as never)
     const id = spawnMonster(state, 'cendreux', 20.5, 15.5)
@@ -815,7 +868,7 @@ describe('les sens honnêtes (R24-R25)', () => {
   })
 
   it('A40bis — la pose de pièce ébranle plus loin que le coup (SENS.BATIR)', () => {
-    const state = nuitActeIII()
+    const state = nuitDuGrandFroid()
     const village = foundNpcVillage(state, 12, 12, 2)
     const id = spawnMonster(state, 'cendreux', 24.5, 12.5) // à 10 tuiles de la pose : hors COUP (8), sous BATIR (12)
     const monster = state.monsters.find((m) => m.entityId === id)!
@@ -829,7 +882,7 @@ describe('les sens honnêtes (R24-R25)', () => {
   })
 
   it("A41 — la horde n'écoute pas le sol, et la secousse ne consomme aucun tirage", () => {
-    const state = nuitActeIII()
+    const state = nuitDuGrandFroid()
     const enHorde = spawnMonster(state, 'cendreux', 8.5, 15.5)
     const seul = spawnMonster(state, 'cendreux', 8.5, 18.5)
     state.hordes.push({ memberEntityIds: [enHorde] } as never)
@@ -846,17 +899,16 @@ describe('les sens honnêtes (R24-R25)', () => {
  *
  * Ce que le sol rend n'a pas toujours ses jambes : une part des RÉVEILS — lue dans le champ
  * des morts, élue par hash du réveil — sort rampante, à vie : allure × 0,2, vue × 0,6, pas de
- * siège, même morsure. Montages sur carte vide d'herbe, acte III à minuit (éveil 1).
+ * siège, même morsure. Montages sur carte vide d'herbe, Grand Froid à minuit (éveil 1).
  */
 describe('le rampant (R26)', () => {
-  function nuitActeIII(): SimState {
+  function nuitDuGrandFroid(): SimState {
     const state = createSim(1, {
       map: createEmptyMap(160, 160, TERRAIN_GRASS),
       cycleOffset: cycleOffsetForStartHour(0),
       calendarScale: 1,
     })
-    state.tick = 54 * TICKS_PER_SEASON_DAY
-    state.tick -= state.tick % TICKS_PER_CYCLE
+    state.tick = debutDuJour(GRAND_FROID)
     return state
   }
 
@@ -874,16 +926,16 @@ describe('le rampant (R26)', () => {
     expect(partRampante(1)).toBe(CENDREUX.RAMPANT.PART_MAX)
     expect(partRampante(0.5)).toBeGreaterThan(partRampante(0.25))
     expect(partRampante(2)).toBe(CENDREUX.RAMPANT.PART_MAX) // borné
-    const sortis = emerger(nuitActeIII(), 50)
-    expect(sortis.length).toBe(50) // sous le plafond du jour 55 : tous sortent
+    const sortis = emerger(nuitDuGrandFroid(), 50)
+    expect(sortis.length).toBe(50) // sous le plafond du cœur de l'hiver (60) : tous sortent
     const rampants = sortis.filter((m) => m.rampant === true).length
     expect(rampants).toBeGreaterThan(0) // le sol en rend, même au plancher du champ
     expect(rampants).toBeLessThan(25) // …mais jamais la majorité
   })
 
   it("A43 — même réveil, même corps, et l'élection n'ajoute aucun tirage", () => {
-    const a = nuitActeIII()
-    const b = nuitActeIII()
+    const a = nuitDuGrandFroid()
+    const b = nuitDuGrandFroid()
     const pa = humanAt(a, 150.5, 150.5).id // la proie d'abord : c'est l'ÉMERGENCE qu'on mesure
     const pb = humanAt(b, 150.5, 150.5).id
     const ra = emerger(a, 30, pa).map((m) => m.rampant === true)
@@ -893,14 +945,14 @@ describe('le rampant (R26)', () => {
     // LE FLUX SEEDÉ NE BOUGE QUE DE CE QUE LES NAISSANCES TIRENT DÉJÀ. `spawnMonster` consomme
     // un pas par corps (préexistant) ; trente émergences, rampants compris, laissent le PRNG
     // EXACTEMENT là où trente naissances nues le laissent : l'élection est un hash, pas un tirage.
-    const c = nuitActeIII()
+    const c = nuitDuGrandFroid()
     humanAt(c, 150.5, 150.5)
     for (let i = 0; i < 30; i++) spawnMonster(c, 'cendreux', 10.5 + 3 * (i % 10), 10.5 + 3 * Math.floor(i / 10))
     expect(a.rngState).toBe(c.rngState)
   })
 
   it('A44 — les réveils seuls : un cadavre levé a ses jambes', () => {
-    const state = nuitActeIII()
+    const state = nuitDuGrandFroid()
     const e = humanAt(state, 40.5, 40.5)
     die(state, e, 0)
     const corpse = state.corpses.find((c) => c.risesAt !== undefined)!
@@ -914,7 +966,7 @@ describe('le rampant (R26)', () => {
   it('A45 — il rampe, il ne court pas — et il voit à ras du sol', () => {
     // Même montage, même but (un dernier lieu vu à 30 tuiles) : le chemin couvert en 200 ticks.
     const parcouru = (rampant: boolean): number => {
-      const state = nuitActeIII()
+      const state = nuitDuGrandFroid()
       const id = spawnMonster(state, 'cendreux', 20.5, 20.5)
       const monster = state.monsters.find((m) => m.entityId === id)!
       if (rampant) monster.rampant = true
@@ -933,7 +985,7 @@ describe('le rampant (R26)', () => {
 
     // LA VUE RASE : une proie à 4 tuiles, vue par le marcheur (5), pas par le rampant (3).
     const voit = (rampant: boolean): number | null => {
-      const state = nuitActeIII()
+      const state = nuitDuGrandFroid()
       state.structures.push({ type: 'fire', tx: 20, ty: 22, villageId: 0 } as never) // ancre la chaleur
       const id = spawnMonster(state, 'cendreux', 20, 20)
       const monster = state.monsters.find((m) => m.entityId === id)!
@@ -948,7 +1000,7 @@ describe('le rampant (R26)', () => {
 
   it("A46 — il n'assiège pas : proie enclose, pas un mur touché", () => {
     // Le montage d'A4, le monstre couché.
-    const state = createSim(1, { cycleOffset: DAY_TICKS_PER_CYCLE })
+    const state = nuitTombee()
     const proie = humanAt(state, 17.5, 15.5)
     let id = 1000
     for (let dx = -2; dx <= 2; dx++) {
@@ -969,14 +1021,13 @@ describe('le rampant (R26)', () => {
 
 /** ═══ LA MÉMOIRE EXTRAPOLE (spec R28, 2026-08-21) ═══ */
 describe('la mémoire extrapole (R28)', () => {
-  function nuitActeIII(): SimState {
+  function nuitDuGrandFroid(): SimState {
     const state = createSim(1, {
       map: createEmptyMap(160, 160, TERRAIN_GRASS),
       cycleOffset: cycleOffsetForStartHour(0),
       calendarScale: 1,
     })
-    state.tick = 54 * TICKS_PER_SEASON_DAY
-    state.tick -= state.tick % TICKS_PER_CYCLE
+    state.tick = debutDuJour(GRAND_FROID)
     return state
   }
   /** Une pensée du Cendreux : on avance l'horloge d'un intervalle de décision, puis on le fait penser. */
@@ -986,7 +1037,7 @@ describe('la mémoire extrapole (R28)', () => {
   }
 
   it('A47 — vue deux fois en marche vers l\'est puis perdue : le lieu à vérifier est devant, borné', () => {
-    const state = nuitActeIII()
+    const state = nuitDuGrandFroid()
     const id = spawnMonster(state, 'cendreux', 20.5, 20.5)
     const monster = state.monsters.find((m) => m.entityId === id)!
     const proie = humanAt(state, 23.5, 20.5) // à 3 tuiles : vue
@@ -1008,7 +1059,7 @@ describe('la mémoire extrapole (R28)', () => {
   })
 
   it('…une proie vue IMMOBILE puis perdue : le lieu ne bouge pas', () => {
-    const state = nuitActeIII()
+    const state = nuitDuGrandFroid()
     const id = spawnMonster(state, 'cendreux', 20.5, 20.5)
     const monster = state.monsters.find((m) => m.entityId === id)!
     const proie = humanAt(state, 24.5, 20.5)
@@ -1023,7 +1074,7 @@ describe('la mémoire extrapole (R28)', () => {
   })
 
   it('…et une secousse efface la vitesse retenue : un impact n\'a pas de direction', () => {
-    const state = nuitActeIII()
+    const state = nuitDuGrandFroid()
     const id = spawnMonster(state, 'cendreux', 20.5, 20.5)
     const monster = state.monsters.find((m) => m.entityId === id)!
     const proie = humanAt(state, 23.5, 20.5)

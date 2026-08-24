@@ -1,5 +1,7 @@
 # Le Gel — le monde change d'état avec sa température, sans qu'une tuile ne bouge
 
+> **⚠ AMENDÉ le 2026-08-23 par `saisons.md` (S4/S5/S10/S14) — lire cette spec-là avant les nombres d'ici.** Le socle de température est une COURBE du jour de l'année (plus une table de trois actes) et l'écart jour/nuit une autre : les seuils G2 n'ont pas bougé mais leur PREUVE se réénonce en moments de l'année. La défeuillaison (G6) a désormais DEUX fenêtres — les feuilles repoussent. Et l'eau a un niveau SIGNÉ : ce que le gel durcit, la sécheresse le retire à l'autre bout de l'année.
+
 *Source : demande d'Alexis 2026-08-19 (« nous avons une température locale en tout point ? si oui, je veux que ça impacte le sol et l'environnement, l'eau gèle, la végétation perd ses feuilles sauf les pins, ça fait persister la neige au sol »), décision actée le même jour (gel profond PRATICABLE, tard et lisible). Statut : **décidé, à implémenter**. S'appuie sur `temperature.md` et `meteo.md`.*
 
 ## Objectif de design

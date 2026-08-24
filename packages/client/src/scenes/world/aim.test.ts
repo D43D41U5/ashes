@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import type { Corpse, ResourceNode } from '@ashes/sim'
-import { AGRICULTURE, BARRIER_TYPES, EDGE_N, EDGE_O, EDGE_S, STRUCTURE_HP, piece } from '@ashes/sim'
+import { pousseDe } from '@ashes/sim'
+import { BARRIER_TYPES, EDGE_N, EDGE_O, EDGE_S, STRUCTURE_HP, piece } from '@ashes/sim'
 import { aimAt, clickToAction, demolishTargetAt, holdHarvest, interactTargetAt, type AimStructure, type DemolishStructure } from './aim'
 
 const RANGE = 1.5
@@ -479,7 +480,9 @@ describe('clickToAction — le potager : semer & récolter (agriculture voie A)'
     hp: STRUCTURE_HP.parcelle,
     ...(plantedAt !== undefined ? { plantedAt } : {}),
   })
-  const RIPE = AGRICULTURE.GROW_TICKS // parcelle semée au tick 0, mûre à ce tick
+  // S16 : la pousse vit dans la CULTURE, plus dans un temps unique. Une parcelle sans culture
+  // se lit comme celle d'hiver (le repli des parcelles d'avant la refonte) — c'est sa durée.
+  const RIPE = pousseDe('hiver') // parcelle semée au tick 0, mûre à ce tick
 
   it('graine en main + parcelle VIDE à portée → plant', () => {
     const t = aimAt(10, 10, PLAYER, [], [], RANGE, [], [parcelle()], 0)

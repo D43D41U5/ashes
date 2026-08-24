@@ -93,16 +93,24 @@ import {
 } from './balance'
 import { terrainAt } from './map'
 import { coldMaximal, frontDuCycle, frontMeteoPos, largeurDe, neigeA, type BandeMeteo } from './meteo'
+import { effetsDuJour } from './modificateur'
 import { fbm2, hash2 } from './noise'
 import type { SimState } from './sim'
-import { baselineTemperature, baselineTemperatureAt, climatFlore, climatMaximal, dehorsSansMeteo } from './temperature'
-import { actForDay, partDeNuit, seasonDayAtTick, TICKS_PER_CYCLE } from './time'
+import {
+  baselineTemperature,
+  baselineTemperatureAt,
+  climatFlore,
+  climatMaximal,
+  dehorsSansMeteo,
+  socleDuJour,
+} from './temperature'
+import { dayTicksAt, jourDeLAnnee, jourDeSaison, partDeNuit, TICKS_PER_CYCLE, tourForDay } from './time'
 
 /**
  * LE PLANCHER DE TEMPÉRATURE DE LA VALLÉE à ce tick — une borne INFÉRIEURE prouvée du
  * `baselineTemperature` de n'importe quelle tuile d'EAU, calculée en O(1).
  *
- * La formule complète est `clamp(BASE − ACT_COLD − abri × (biome − nuit − brume − météo))`.
+ * La formule complète est `clamp(SOCLE(jour, tour) + abri × (biome − nuit − brume − météo))`.
  * Sur une tuile d'eau, `biome` vaut 0 (ni 4 ni 6 n'ont d'entrée dans `BIOME_OFFSET`), et
  * `abri` vaut 1 au pire (l'abri ne fait que RÉDUIRE une exposition négative). Il reste à
  * majorer chaque exposition, ce qu'on fait par PRÉSENCE et non par intensité :
@@ -119,12 +127,13 @@ function plancherDeLaVallee(state: SimState): number {
   // il ALLOUE son résultat (un objet de cinq champs). Cette borne est interrogée une fois
   // par tuile bloquante — des centaines de milliers de fois par champ de flux —, or on n'a
   // besoin que de deux de ses cinq champs. Mêmes expressions, même ordre, zéro allocation.
-  const jour = seasonDayAtTick(state.tick, state.calendarScale)
+  const jour = jourDeSaison(state)
   const cycleTick = (state.tick + state.cycleOffset) % TICKS_PER_CYCLE
-  let t = TEMPERATURE.BASE - TEMPERATURE.ACT_COLD(actForDay(jour))
+  let t = socleDuJour(jour, tourForDay(jour))
   // La nuit est une PENTE (`partDeNuit`) : on la lit ICI plutôt que via `GameTime`, pour la
-  // même raison MESURÉE qui fait recalculer `cycleTick` à la main — zéro allocation.
-  t -= TEMPERATURE.NIGHT_COLD * partDeNuit(cycleTick)
+  // même raison MESURÉE qui fait recalculer `cycleTick` à la main — zéro allocation. Sa
+  // LONGUEUR est saisonnière (S6) et se lit sur le jour du début de cycle, comme partout.
+  t -= TEMPERATURE.ECART_NUIT(jour) * partDeNuit(cycleTick, dayTicksAt(state, state.tick))
   if (state.brume) t -= BRUME.COLD_MALUS
   if (state.meteo) t -= coldMaximal(state.meteo.type)
   return t
@@ -288,6 +297,12 @@ export function jourDeDefeuillaison(tx: number, ty: number): number {
   return GEL.JOUR_DEFEUILLAISON + hash2(tx, ty, DEFEUILLAISON_SALT) * GEL.DEFEUILLAISON_JOURS
 }
 
+/** G6bis (S14) — LE JOUR DE L'ANNÉE OÙ **CETTE** TUILE REVERDIT. Même décalage par `hash2`,
+ *  même sel : l'arbre qui s'est dépouillé le premier reverdit le premier. */
+export function jourDeRefeuillaison(tx: number, ty: number): number {
+  return GEL.JOUR_REFEUILLAISON + hash2(tx, ty, DEFEUILLAISON_SALT) * GEL.DEFEUILLAISON_JOURS
+}
+
 /**
  * G6 — CETTE TUILE BOISÉE EST-ELLE DÉNUDÉE ? Faux sur tout ce qui n'est pas un feuillu :
  * `pine` et `larch` ne changent JAMAIS.
@@ -311,7 +326,11 @@ export function jourDeDefeuillaison(tx: number, ty: number): number {
  */
 export function feuillageDenude(state: SimState, tx: number, ty: number): boolean {
   if (!CADUCS.includes(terrainAt(state.map, tx, ty))) return false
-  return seasonDayAtTick(state.tick, state.calendarScale) >= jourDeDefeuillaison(tx, ty)
+  // L'INTERVALLE NU ENJAMBE LE TOUR DE L'AN : de la fin des Pluies (~j83) au printemps
+  // suivant (~j17). Fonction du seul JOUR DE L'ANNÉE, donc monotone à l'intérieur d'une
+  // saison et sans clignotement possible — et la forêt reverdit, chaque année (S14).
+  const j = jourDeLAnnee(jourDeSaison(state))
+  return j >= jourDeDefeuillaison(tx, ty) || j < jourDeRefeuillaison(tx, ty)
 }
 
 /**
@@ -411,7 +430,7 @@ export function neigeAuSol(state: SimState, tx: number, ty: number): number {
   for (let k = 0; k < GEL.MEMOIRE_CYCLES; k++) {
     const c = cycle - k
     if (c < 0) break
-    const front = frontDuCycle(c, state.calendarScale)
+    const front = frontDuCycle(c, state.calendarScale, state.jourDeDepart)
     if (!front || !PRECIPITANTS.includes(front.type)) continue
 
     // L'ENTRÉE et la SORTIE de la bande sur ce point — l'inverse analytique de
@@ -476,7 +495,10 @@ export function neigeAuSol(state: SimState, tx: number, ty: number): number {
         // la plus rapide) — `AMBIANT_DOUX` a remplacé l'ex-`COMFORT`, qui est devenu un seuil
         // du CORPS quand l'échelle est passée en degrés (2026-08-22).
         const u = Math.max(0, Math.min(1, (t - GEL.SEUIL_PROFOND) / (TEMPERATURE.AMBIANT_DOUX - GEL.SEUIL_PROFOND)))
-        const cycles = GEL.FONTE_CYCLES + (GEL.FONTE_CYCLES_CHAUD - GEL.FONTE_CYCLES) * u
+        // LES GRANDES NEIGES (S18) triplent la durée de fonte : le manteau tient, on marche
+        // au ralenti, et la chasse devient du pistage.
+        const fonteMod = effetsDuJour(jourDeSaison(state)).fonte ?? 1
+        const cycles = (GEL.FONTE_CYCLES + (GEL.FONTE_CYCLES_CHAUD - GEL.FONTE_CYCLES) * u) * fonteMod
         fondu += (t1 - t0) / (cycles * TICKS_PER_CYCLE)
         if (fondu >= 1) break // tout est fondu : inutile de continuer à sommer
       }
@@ -493,14 +515,14 @@ export function neigeAuSol(state: SimState, tx: number, ty: number): number {
  * garde qui recopierait la géométrie de la bande pour se juger ne garderait rien.
  */
 export function bandeDuCycle(state: SimState, cycle: number, tick: number): BandeMeteo | null {
-  const front = frontDuCycle(cycle, state.calendarScale)
+  const front = frontDuCycle(cycle, state.calendarScale, state.jourDeDepart)
   if (!front) return null
   return frontMeteoPos(front, tick, state.map.width, state.map.height)
 }
 
 /** Le jour de saison d'un cycle — le raccourci que les gardes et les bancs redemandent. */
-export function jourDuCycle(cycle: number, calendarScale: number): number {
-  return seasonDayAtTick(cycle * TICKS_PER_CYCLE, calendarScale)
+export function jourDuCycle(state: SimState, cycle: number): number {
+  return jourDeSaison(state, cycle * TICKS_PER_CYCLE)
 }
 
 /**

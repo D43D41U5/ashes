@@ -52,6 +52,7 @@ import { facteurSterilite, frontActuel } from './cendre'
 import { emitEvent } from './events'
 import { secouerLeSol } from './sens'
 import { estGele, floreEntierementGelee, floreGelee } from './gel'
+import { effetsDuJour } from './modificateur'
 import { distSq } from './geometry'
 import { heldSlot, wearHeld } from './inventory-actions'
 import {
@@ -72,7 +73,7 @@ import { libelleExigence, sertExigence } from './pieces'
 import { stockDArbre } from './zone-content'
 import { fbm2, hash2 } from './noise'
 import type { Entity, SimState } from './sim'
-import { actForDay, seasonDayAtTick, TICKS_PER_CYCLE } from './time'
+import { TICKS_PER_CYCLE, actForDay, jourDeSaison } from './time'
 import { hasAccess, structureAt, type Structure } from './village'
 import { dansEmprise, noeudDefrichable } from './defriche'
 
@@ -820,7 +821,7 @@ function advanceButchering(state: SimState, entity: Entity): void {
  */
 function depleteNode(state: SimState, node: ResourceNode): void {
   const def = NODE_DEFS[node.type]
-  const day = actForDay(seasonDayAtTick(state.tick, state.calendarScale))
+  const day = actForDay(jourDeSaison(state))
   // LE DÉFRICHEMENT (`defriche.ts`, décision d'Alexis 2026-08-06) : chez soi, ce qui
   // s'extrait ne revient pas. `stock 0` + `regrowAt 0` est la MARQUE, et elle est
   // PERSISTANTE — le client la lit pour ne pas animer une repousse qui n'arrivera jamais
@@ -850,7 +851,20 @@ function depleteNode(state: SimState, node: ResourceNode): void {
     const sterile = facteurSterilite(state.map, node.tx, node.ty, frontActuel(state))
     node.regrowAt =
       state.tick +
-      Math.floor(BALANCE.NODE_REGROW_TICKS * SEASON.REGROW_ACT_FACTOR(day) * usure * sterile)
+      // LE CARACTÈRE DE LA SAISON (S18) : la Grande Levée double la repousse, la Rouille la
+      // ralentit. Il MULTIPLIE le facteur de saison, il ne le remplace pas.
+      //
+      // ⚠ `day` porte l'ACTE (c'est ce que veut la loi d'acte juste au-dessus) ; le caractère,
+      // lui, se lit sur le JOUR. Les deux se ressemblaient assez pour que la première écriture
+      // passe `day` aux deux — un modificateur d'une saison choisie au hasard. Le nom ment,
+      // la variable reste : on relit le jour explicitement.
+      Math.floor(
+        BALANCE.NODE_REGROW_TICKS *
+          SEASON.REGROW_ACT_FACTOR(day) *
+          (effetsDuJour(jourDeSaison(state)).repousse ?? 1) *
+          usure *
+          sterile,
+      )
     // LA DÉRIVE (spec recolte-vivante D1/R1) : un nœud de bois/fibre meurt sur sa tuile
     // et rouvre AILLEURS, dans le même bosquet. La pierre/le minéral reste sur place.
     // À `stock = 0` : le client peint la souche à l'ancien coin et fait grandir la pousse
@@ -1258,8 +1272,10 @@ export function advanceSpoilage(state: SimState): void {
     for (let i = 0; i < inv.length; i++) {
       const slot = inv[i]
       if (slot === null || slot === undefined || slot.fresh === undefined) continue
-      const cycles = SPOIL_CYCLES[slot.item]
-      if (cycles === undefined) continue
+      const brut = SPOIL_CYCLES[slot.item]
+      if (brut === undefined) continue
+      // LA NUÉE fait tout tourner deux fois plus vite, la Rouille de peu (S18).
+      const cycles = brut * (effetsDuJour(jourDeSaison(state)).peremption ?? 1)
       slot.fresh -= 1 / (cycles * preservation * TICKS_PER_CYCLE)
       if (slot.fresh <= 0) inv[i] = null // POURRI : la pile s'en va
     }
@@ -1286,7 +1302,7 @@ export function advanceSpoilage(state: SimState): void {
 
 /** Passe économique du tick : faim (modulée par l'acte) et repousse des nœuds. */
 export function advanceEconomy(state: SimState): void {
-  const act = actForDay(seasonDayAtTick(state.tick, state.calendarScale))
+  const act = actForDay(jourDeSaison(state))
   const perTick =
     (BALANCE.HUNGER_PER_CYCLE_HOUR / (TICKS_PER_CYCLE / 24)) * BALANCE.ACT_HUNGER_FACTOR(act)
   const starvePerTick = BALANCE.STARVE_HP_PER_MIN / (60 * BALANCE.TICK_RATE_HZ)

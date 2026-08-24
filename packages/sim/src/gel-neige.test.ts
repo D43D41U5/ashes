@@ -85,7 +85,7 @@ describe('le seuil et le niveau', () => {
  */
 function cycleNeigeux(sonde: SimState): number {
   for (let c = GEL.MEMOIRE_CYCLES; c < 4000; c++) {
-    const f = frontDuCycle(c, SCALE)
+    const f = frontDuCycle(c, SCALE, sonde.jourDeDepart)
     if (!f || (f.type !== 'pluie' && f.type !== 'orage')) continue
     if (neigeA(dehorsSansMeteo(sonde, 5, 5, f.startTick)) && neigeA(dehorsSansMeteo(sonde, 5, 5, f.endTick))) return c
   }
@@ -106,7 +106,7 @@ function carte(): ReturnType<typeof createEmptyMap> {
 function simEnneige(): { sim: SimState; tx: number } {
   const sim = createSim(2026, { map: carte(), calendarScale: SCALE, meteoActive: true })
   const c = cycleNeigeux(sim)
-  const front = frontDuCycle(c, SCALE)!
+  const front = frontDuCycle(c, SCALE, sim.jourDeDepart)!
   sim.tick = front.endTick
   // Une colonne que la bande a bien traversée : au bout de la traversée.
   const tx = front.edge === 0 || front.edge === 2 ? 2 : sim.map.width - 3

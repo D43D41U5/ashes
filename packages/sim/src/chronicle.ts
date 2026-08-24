@@ -17,10 +17,17 @@ import { WORLD_EVENTS, phaseOf, tourOf } from './balance'
 import type { SimEvent } from './events'
 import { faitsDuLieu } from './annales'
 import type { FaitDeGeneration, WorldMap } from './map'
+import { modificateurDeSaison, NOMS_MODIFICATEUR } from './modificateur'
 import { POI_CHARGES } from './poi-discovery'
-import { TICKS_PER_SEASON_DAY, tourForDay } from './time'
+import { seasonDayAtTick, tourForDay } from './time'
 
-const ACT_NAMES = ['l’Éclosion', 'le Grand Froid', 'la Cendre'] as const
+/**
+ * LES QUATRE SAISONS, PAR PHASE (spec `saisons.md` S3, décision d'Alexis 2026-08-23).
+ * `l'Éclosion` et `le Grand Froid` ne bougent pas ; `l'Ardeur` et `les Pluies` sont neuves et
+ * disent leur météo dominante — le bandeau informe au lieu de décorer. **« la Cendre » a quitté
+ * cette table** : elle nomme le FRONT, pas une saison.
+ */
+const ACT_NAMES = ['l’Éclosion', 'l’Ardeur', 'les Pluies', 'le Grand Froid'] as const
 const ROMAIN = ['I', 'II', 'III', 'IV'] as const
 
 /** Les trois registres de la chronique (voir en-tête). */
@@ -88,9 +95,12 @@ export const CHRONICLE_EVENT_TYPES: ReadonlySet<SimEvent['type']> = new Set([
 export function chronicleFromEvents(
   events: SimEvent[],
   calendarScale: number,
+  jourDeDepart: number,
   villageNames: Record<number, string>,
 ): ChronicleEntry[] {
-  const day = (tick: number): number => Math.floor((tick * calendarScale) / TICKS_PER_SEASON_DAY) + 1
+  // Le `+ jourDeDepart` EST le jour d'ouverture du monde (S2) : recopier `+ 1` en dur datait
+  // toute la chronique de cinquante jours trop tôt et scellait les volumes sur la mauvaise année.
+  const day = (tick: number): number => seasonDayAtTick(tick, calendarScale, jourDeDepart)
   const name = (villageId: number): string => villageNames[villageId] ?? `le village ${villageId}`
   const entries: ChronicleEntry[] = []
   const giftPairs = new Set<string>()
@@ -124,14 +134,27 @@ export function chronicleFromEvents(
         break
       case 'act_started':
         // L'ARC OSCILLE (T2) : les saisons REVIENNENT, et avec leur nom — l'Éclosion de l'an 2
-        // est une Éclosion. On nomme donc la PHASE, pas le numéro global ; le quatrième acte
-        // (le cœur de l'hiver) attend son baptême — décision ouverte, bible §5 — et se dit
-        // « l'acte IV » en attendant. À partir du deuxième tour, l'an se dit : c'est la seule
-        // information que le joueur n'a pas sous les yeux.
-        if (e.act > 1) {
+        // est une Éclosion. On nomme donc la PHASE, pas le numéro global ; les quatre sont
+        // baptisées depuis le 2026-08-23 (S3). À partir du deuxième tour, l'an se dit : c'est
+        // la seule information que le joueur n'a pas sous les yeux.
+        // « Ce n'est pas l'acte de NAISSANCE » — et non « ce n'est pas l'acte 1 » : depuis
+        // que le monde ouvre au jour 51 (S2), son acte de naissance est le 2, et l'ancienne
+        // garde laissait passer une ligne parasite au premier instant du monde.
+        if (e.tick > 0) {
           const nom = ACT_NAMES[phaseOf(e.act) - 1] ?? `l’acte ${ROMAIN[phaseOf(e.act) - 1] ?? phaseOf(e.act)}`
           const tour = tourOf(e.act)
-          push(tour > 1 ? `L’an ${tour} — ${nom} a commencé.` : `${nom} a commencé.`, 'battement')
+          // LE CARACTÈRE DE LA SAISON (S18) se dit ICI et nulle part ailleurs : la chronique le
+          // nomme au premier jour, le HUD ne le dit pas. Une saison sur trois n'en a pas — et
+          // c'est ce silence-là qui rend les autres remarquables.
+          const caractere = modificateurDeSaison(tour, phaseOf(e.act))
+          const suffixe = caractere === null ? '' : ` — ${NOMS_MODIFICATEUR[caractere]}.`
+          // L'ACCORD SUIT LE NOM : « les Pluies ONT commencé ». Trois des quatre saisons sont
+          // au singulier, une au pluriel — et un gabarit unique disait « les Pluies a commencé ».
+          const verbe = nom.startsWith('les ') ? 'ont' : 'a'
+          push(
+            (tour > 1 ? `L’an ${tour} — ${nom} ${verbe} commencé.` : `${nom} ${verbe} commencé.`) + suffixe,
+            'battement',
+          )
         }
         break
       case 'village_archetype_changed':
@@ -299,8 +322,8 @@ export function chronicleFromEvents(
 // ═══════════════════════════════════════════════════════════════════════════════════════════
 
 /** L'année d'un événement, depuis son tick — la même horloge que le reste. */
-function anDe(e: SimEvent, calendarScale: number): number {
-  return tourForDay(Math.floor((e.tick * calendarScale) / TICKS_PER_SEASON_DAY) + 1)
+function anDe(e: SimEvent, calendarScale: number, jourDeDepart: number): number {
+  return tourForDay(seasonDayAtTick(e.tick, calendarScale, jourDeDepart))
 }
 
 /**
@@ -317,18 +340,19 @@ function anDe(e: SimEvent, calendarScale: number): number {
 export function volumesDeChronique(
   events: SimEvent[],
   calendarScale: number,
+  jourDeDepart: number,
   villageNames: Record<number, string>,
 ): ChronicleVolume[] {
   const parAn = new Map<number, SimEvent[]>()
   for (const e of events) {
-    const an = anDe(e, calendarScale)
+    const an = anDe(e, calendarScale, jourDeDepart)
     const liste = parAn.get(an)
     if (liste) liste.push(e)
     else parAn.set(an, [e])
   }
   return [...parAn.entries()]
     .sort((a, b) => a[0] - b[0])
-    .map(([an, liste]) => ({ an, entrees: chronicleFromEvents(liste, calendarScale, villageNames) }))
+    .map(([an, liste]) => ({ an, entrees: chronicleFromEvents(liste, calendarScale, jourDeDepart, villageNames) }))
 }
 
 /**
@@ -341,12 +365,13 @@ export function volumesDeChronique(
 export function scellerLaChronique(
   events: SimEvent[],
   calendarScale: number,
+  jourDeDepart: number,
   villageNames: Record<number, string>,
   tourCourant: number,
 ): { volumes: ChronicleVolume[]; courant: SimEvent[] } {
-  const revolus = events.filter((e) => anDe(e, calendarScale) < tourCourant)
-  const courant = events.filter((e) => anDe(e, calendarScale) >= tourCourant)
-  return { volumes: volumesDeChronique(revolus, calendarScale, villageNames), courant }
+  const revolus = events.filter((e) => anDe(e, calendarScale, jourDeDepart) < tourCourant)
+  const courant = events.filter((e) => anDe(e, calendarScale, jourDeDepart) >= tourCourant)
+  return { volumes: volumesDeChronique(revolus, calendarScale, jourDeDepart, villageNames), courant }
 }
 
 /**

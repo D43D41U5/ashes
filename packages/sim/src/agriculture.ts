@@ -6,16 +6,51 @@
  * flux RNG n'est jamais touché (mémoire projet : « RNG fragile au décompte d'entités »). Le
  * rendu client lit le MÊME `cropStage` : une seule source de la maturité.
  */
-import { AGRICULTURE } from './balance'
+import { AGRICULTURE, phaseOf } from './balance'
 import { emitEvent } from './events'
 import { gelMortel } from './gel'
-import type { StructureType } from './items'
+import type { ItemId, StructureType } from './items'
 import type { SimState } from './sim'
+import { actForDay, TICKS_PER_CYCLE } from './time'
 
 /** Le minimum dont dépend la maturité : le tick de mise en terre (parcelle vide = absent). La
  *  `Structure` du /sim ET l'`AimStructure` du client le satisfont — une seule source du calcul. */
 interface Plot {
   plantedAt?: number
+  /** LA CULTURE en terre (S16) — absente sur une parcelle d'avant la refonte des saisons :
+   *  on la lit alors comme la culture d'hiver, celle qui existait seule. */
+  culture?: CultureId
+}
+
+/** Les quatre cultures, une par saison (spec `saisons.md` S16). */
+export type CultureId = keyof typeof AGRICULTURE.CULTURES
+
+/** La culture qu'une graine met en terre — `null` si l'objet n'est pas une graine. */
+export function cultureDeLaGraine(item: ItemId): CultureId | null {
+  for (const [id, def] of Object.entries(AGRICULTURE.CULTURES) as [CultureId, { graine: string }][]) {
+    if (def.graine === item) return id
+  }
+  return null
+}
+
+/** La culture d'une parcelle — celle d'hiver par défaut (une parcelle d'avant S16). */
+export function cultureDe(plot: Plot): CultureId {
+  return plot.culture ?? 'hiver'
+}
+
+/** Le temps de pousse d'une culture, en ticks. */
+export function pousseDe(culture: CultureId): number {
+  return Math.round(AGRICULTURE.CULTURES[culture].pousse * TICKS_PER_CYCLE)
+}
+
+/**
+ * S16 — LA FENÊTRE DE SEMIS EST-ELLE OUVERTE ? Chaque graine ne germe que dans SA saison ;
+ * **la serre (et le terroir) affranchissent de la fenêtre**, et c'est enfin ce qui les
+ * justifie. Hors fenêtre, la graine n'est pas consommée : elle attend son heure.
+ */
+export function fenetreOuverte(culture: CultureId, jour: number, type: StructureType): boolean {
+  if (type !== 'parcelle') return true // sous verre, la saison n'a plus cours
+  return phaseOf(actForDay(jour)) === AGRICULTURE.CULTURES[culture].phase
 }
 
 /** Les structures où l'on CULTIVE (agriculture) : parcelle (plein air) → serre (hiver) → terroir
@@ -31,12 +66,12 @@ export function isPlot(type: StructureType): boolean {
  */
 export function cropStage(plot: Plot, tick: number): number {
   if (plot.plantedAt === undefined) return -1
-  return Math.min(1, (tick - plot.plantedAt) / AGRICULTURE.GROW_TICKS)
+  return Math.min(1, (tick - plot.plantedAt) / pousseDe(cultureDe(plot)))
 }
 
 /** Une parcelle est-elle MÛRE (récoltable) ? Pur — le seul juge de « on peut récolter ». */
 export function isCropMature(plot: Plot, tick: number): boolean {
-  return plot.plantedAt !== undefined && tick - plot.plantedAt >= AGRICULTURE.GROW_TICKS
+  return plot.plantedAt !== undefined && tick - plot.plantedAt >= pousseDe(cultureDe(plot))
 }
 
 /**
@@ -73,6 +108,7 @@ export function advanceCultures(state: SimState): void {
     if (s.type !== 'parcelle') continue
     if (!gelMortel(state, s.tx, s.ty)) continue
     delete s.plantedAt
+    delete s.culture
     emitEvent(state, { type: 'crop_frozen', tick: state.tick, structureId: s.id })
   }
 }

@@ -41,7 +41,7 @@ import { BALANCE } from './balance'
 import { emitEvent } from './events'
 import type { WorldMap } from './map'
 import type { SimState } from './sim'
-import { seasonDayAtTick, YEAR_DAYS } from './time'
+import { jourDeSaison, seasonDayAtTick, YEAR_DAYS } from './time'
 
 export const CENDRE = {
   /**
@@ -51,7 +51,10 @@ export const CENDRE = {
    * Acte I : rien. Acte II : la cendre se met en marche. Acte III : elle dévore.
    * (C'est le calendrier du GDD, à la lettre — son troisième acte s'appelle « Cendre ».)
    */
-  ACTE_DEPART: 2,
+  /** LA SAISON OÙ LA CENDRE S'ÉBRANLE — **4, le Grand Froid** (spec `saisons.md` S11 ;
+   *  était 2, quand l'acte II était le Grand Froid). `saison-sans-fin.md` R8 le disait déjà :
+   *  « il mord l'hiver, tient l'été » — la fenêtre suit donc la saison, pas un numéro. */
+  ACTE_DEPART: 4,
 
   /**
    * LA PART DES PRÉS BAS QUE LA CENDRE AURA MANGÉE au dernier jour — **la cible, pas la distance**.
@@ -260,7 +263,7 @@ export function avanceeDuFront(jourDeSaison: number, avanceeMax: number): number
   const jourDansLAnnee = ((jour - 1) % YEAR_DAYS) + 1
   // La fin de l'acte I : c'est là que la cendre s'ébranle — chaque année.
   const debut = (CENDRE.ACTE_DEPART - 1) * BALANCE.ACT_DAYS
-  const fin = BALANCE.SEASON_DAYS // la fin de la morsure, dans l'année (le jour 60 de l'arc nominal)
+  const fin = YEAR_DAYS // la morsure court sur TOUT le Grand Froid, et s'arrête au tour de l'an (S11)
   const t = (jourDansLAnnee - debut) / (fin - debut)
   const borne = t < 0 ? 0 : t > 1 ? 1 : t
   // La course ACQUISE avant ce tour, et la taille de la bouchée de ce tour.
@@ -311,8 +314,13 @@ export function calibreLeFront(champ: readonly number[], estRacine: (i: number) 
  * octet ajouté au `SimState`**, zéro risque de désynchronisation, et les replays le retrouvent
  * exactement sans qu'on ait à le sérialiser.
  */
-export function frontActuel(state: { tick: number; calendarScale: number; map: WorldMap }): number {
-  return frontAuTick(state.map, state.calendarScale, state.tick)
+export function frontActuel(state: {
+  tick: number
+  calendarScale: number
+  jourDeDepart: number
+  map: WorldMap
+}): number {
+  return frontAuTick(state.map, state.calendarScale, state.tick, state.jourDeDepart)
 }
 
 /**
@@ -326,10 +334,10 @@ export function frontActuel(state: { tick: number; calendarScale: number; map: W
  * Sans allocation (surtout pas un objet littéral par appel) : `froidDuMonde` est sur le chemin
  * chaud de la passe économique, appelé par nœud.
  */
-export function frontAuTick(map: WorldMap, calendarScale: number, tick: number): number {
+export function frontAuTick(map: WorldMap, calendarScale: number, tick: number, jourDeDepart: number): number {
   const max = map.cendreMax
   if (max === undefined) return 0 // une carte sans Cendrière : rien ne brûle
-  return avanceeDuFront(seasonDayAtTick(tick, calendarScale), max)
+  return avanceeDuFront(seasonDayAtTick(tick, calendarScale, jourDeDepart), max)
 }
 
 /** Cette tuile brûle-t-elle ? Une comparaison, rien de plus — c'est tout l'intérêt du modèle. */
@@ -520,7 +528,7 @@ export function avancerLaCendre(state: SimState): void {
   if (brules > 0) emitEvent(state, {
     type: 'cendre_avance',
     tick: state.tick,
-    jour: seasonDayAtTick(state.tick, state.calendarScale),
+    jour: jourDeSaison(state),
     front: Math.round(front),
     noeudsBrules: brules,
   })
@@ -542,7 +550,7 @@ export function avancerLaCendre(state: SimState): void {
   // pas un chemin de récit, on l'assume.
   const max = state.map.cendreMax
   if (max === undefined) return
-  const jour = seasonDayAtTick(state.tick, state.calendarScale)
+  const jour = jourDeSaison(state)
   const fHier = avanceeDuFront(jour - 1, max)
   if (front <= fHier) return
   const prises = new Map<number, number>()

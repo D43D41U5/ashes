@@ -20,7 +20,7 @@ import { VILLAGE_GROWTH } from './balance'
 import { emitEvent } from './events'
 import { spawnNpcsAround } from './npc'
 import type { SimState } from './sim'
-import { DAY_TICKS_PER_CYCLE, TICKS_PER_CYCLE } from './time'
+import { estCrepuscule, TICKS_PER_CYCLE } from './time'
 import { addStructure } from './village'
 import { buildTierOf, foodScoreOf, freeBedSpot, granaryStocks } from './village-plan'
 
@@ -32,7 +32,7 @@ export function advanceVillageGrowth(state: SimState): void {
   if (state.tick === 0) return
   const cycleTick = (state.tick + state.cycleOffset) % TICKS_PER_CYCLE
   const dawn = cycleTick === 0
-  const dusk = cycleTick === DAY_TICKS_PER_CYCLE
+  const dusk = estCrepuscule(state, state.tick)
   if (!dawn && !dusk) return
 
   for (const village of state.villages) {

@@ -118,7 +118,7 @@ export {
 export { deriverProfondeur, estCoeur, estLisiere, TERRAINS_BOISES_MASSIF } from './profondeur'
 export { CREUX } from './racine-relief'
 export type { WorldMap, Zone } from './map'
-export { getGameTime, seasonDayAtTick, actForDay, tourForDay, phaseForDay, YEAR_DAYS, cycleOffsetForStartHour, calendarScaleForSeasonCycles, TICKS_PER_CYCLE, DAY_TICKS_PER_CYCLE, TICKS_PER_SEASON_DAY } from './time'
+export { getGameTime, seasonDayAtTick, actForDay, tourForDay, phaseForDay, YEAR_DAYS, cycleOffsetForStartHour, calendarScaleForSeasonCycles, TICKS_PER_CYCLE, dayTicksAt, dayTicksPourJour, estCrepuscule, jourDeSaison, jourDeLAnnee, TICKS_PER_SEASON_DAY } from './time'
 export type { GameTime, Act } from './time'
 export { AMBIANT_HYPOTHERMIE, ambientTemperature, baselineTemperature, baselineTemperatureAt, cibleCorporelle, climatFlore, climatMaximal, dehorsSansMeteo, advanceTemperature } from './temperature'
 // LA BRUME (spec brume.md) : le client rendra la nappe en la RECALCULANT du tick (patron front
@@ -192,7 +192,16 @@ export { treeJitter } from './economy' // Tick-critique : collision, rendu, pré
 // LE DÉFRICHEMENT (`defriche.ts`) : le client applique le MÊME prédicat que la sim — c'est
 // ce qui lui évite de dessiner un arbre que la sim a déjà rendu à l'état de souche.
 export { dansEmprise, noeudDefrichable, noeudDefriche, poseLibre, rayonEmprise } from './defriche'
-export { cropStage, isCropMature, isPlot } from './agriculture' // le potager (voie A) : maturité PURE, lue par le rendu
+export {
+  cropStage,
+  cultureDe,
+  cultureDeLaGraine,
+  fenetreOuverte,
+  isCropMature,
+  isPlot,
+  pousseDe,
+  type CultureId,
+} from './agriculture' // le potager (voie A) : maturité PURE, lue par le rendu
 export { applyCombatAction, advanceCombat, weaponDamage, weaponKind, weaponProfile, pendingStrike } from './combat'
 export type { CombatAction, Corpse } from './combat'
 export { advanceNpcs } from './npc'

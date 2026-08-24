@@ -1,47 +1,76 @@
 /**
- * LE GEL (spec `gel.md`) — les critères A1 à A13, un `describe` par critère.
+ * LE GEL (spec `gel.md`) — les critères A1 à A13, un `describe` par critère (plus A17 de
+ * `saisons.md`, qui a repris à sa charge la feuillaison quand l'année s'est mise à tourner).
  *
  * Le calendrier est couplé 1 jour de saison = 1 cycle (`calendarScaleForSeasonCycles`,
- * patron `meteo.test.ts`) : le tick dit à la fois l'ACTE et l'HEURE, et c'est tout ce dont
+ * patron `meteo.test.ts`) : le tick dit à la fois la SAISON et l'HEURE, et c'est tout ce dont
  * le gel a besoin. Les fronts sont FABRIQUÉS à la main quand la garde a besoin d'un froid
  * précis — le record de `state.meteo` est de la donnée plate, et sa géométrie est une
  * fonction pure du tick : on peut donc poser exactement le froid qu'on veut mesurer, au lieu
  * d'attendre qu'une saison veuille bien en tirer un.
+ *
+ * ═══ L'ANNÉE TOURNE (spec `saisons.md`, 2026-08-23) ═══
+ *
+ * Les trois actes en escalier ont laissé la place à quatre SAISONS de trente jours et à une
+ * COURBE continue de température. Les jours-témoins ne sont donc plus « le milieu de l'acte
+ * n » mais le CŒUR de chaque saison, et ils se dérivent d'`ACT_DAYS` — les jours écrits en
+ * dur du calendrier d'avant auraient désigné, sous la nouvelle cadence, tout autre chose.
+ * Les trois régimes de froid que le gel traverse sont : l'Ardeur (rien ne gèle), les Pluies
+ * (les gués prennent la nuit), le Grand Froid (la vallée s'ouvre).
  */
 import { describe, expect, it } from 'vitest'
 import {
-  BALANCE, GEL, METEO, TEMPERATURE, TERRAINS,
+  BALANCE, GEL, TEMPERATURE, TERRAINS,
   TERRAIN_DEEP_WATER, TERRAIN_FOREST, TERRAIN_GRASS, TERRAIN_LARCH,
-  TERRAIN_OLD_GROWTH, TERRAIN_PINE, TERRAIN_SHALLOW_WATER, TERRAIN_WILLOW,
+  TERRAIN_OLD_GROWTH, TERRAIN_PINE, TERRAIN_SHALLOW_WATER, TERRAIN_SNOW, TERRAIN_WILLOW,
+  YEAR_DAYS,
 } from './balance'
 import { drainEvents } from './events'
 import { placeHuntingGrounds } from './faune'
 import {
-  advanceDegel, estGele, feuillageDenude, gelPossible, jourDeDefeuillaison, neigeAuSol,
-  vitesseSurGlace,
+  advanceDegel, bandeDuCycle, estGele, feuillageDenude, gelPossible, jourDeDefeuillaison,
+  jourDeRefeuillaison, neigeAuSol, vitesseSurGlace,
 } from './gel'
 import { createEmptyMap, isBlockingTile, isWater, MARCHABLE, setTile, terrainAt, type WorldMap } from './map'
-import { frontDuCycle, largeurDe, neigeA, type MeteoFront } from './meteo'
+import { modificateurDeSaison } from './modificateur'
+import { fenetreDe, frontDuCycle, largeurDe, neigeA, type MeteoFront } from './meteo'
 import { spawnMonster } from './monsters'
 import { computeFlowField, findPath } from './pathfinding'
 import { createSim, snapshot, spawnEntity, step, type SimState } from './sim'
-import { ambientTemperature, baselineTemperature, climatFlore, climatMaximal, dehorsSansMeteo } from './temperature'
-import { actForDay, calendarScaleForSeasonCycles, DAY_TICKS_PER_CYCLE, NIGHT_RAMP_TICKS, TICKS_PER_CYCLE, seasonDayAtTick } from './time'
+import {
+  ambientTemperature, baselineTemperature, climatFlore, climatMaximal, dehorsSansMeteo, socleDuJour,
+} from './temperature'
+import {
+  calendarScaleForSeasonCycles, dayTicksPourJour, gameTimeAt, jourDeSaison, NIGHT_RAMP_TICKS,
+  phaseForDay, TICKS_PER_CYCLE, tourForDay,
+} from './time'
 import { addStructure } from './village'
 
-/** 1 jour de saison = 1 cycle : le tick porte l'acte ET l'heure. */
+/** 1 jour de saison = 1 cycle : le tick porte la saison ET l'heure. */
 const SCALE = calendarScaleForSeasonCycles(BALANCE.SEASON_DAYS)
 
-/** Le tick d'un jour de saison, de jour ou en pleine nuit. */
+/** Le tick d'un jour de saison, de jour ou en pleine nuit. La LONGUEUR DU JOUR est
+ *  saisonnière depuis S6 (`dayTicksPourJour`) : le crépuscule bouge avec l'année, et un
+ *  montage qui le figerait mesurerait la nuit là où il croit voir le jour. */
 function tickDe(jour: number, nuit = false): number {
   const base = (jour - 1) * TICKS_PER_CYCLE
+  const jourTicks = dayTicksPourJour(jour)
   // Au CŒUR de la phase, jamais à sa frontière : l'hystérésis relit `RETARD_TICKS` en
   // arrière, et une pose au ras de l'aube lirait la nuit d'avant (ou l'inverse).
-  return base + (nuit ? DAY_TICKS_PER_CYCLE + Math.floor((TICKS_PER_CYCLE - DAY_TICKS_PER_CYCLE) / 2) : Math.floor(DAY_TICKS_PER_CYCLE / 2))
+  return base + (nuit ? jourTicks + Math.floor((TICKS_PER_CYCLE - jourTicks) / 2) : Math.floor(jourTicks / 2))
 }
 
-/** Les jours-témoins de chaque acte : le milieu de l'acte, loin de ses bornes. */
-const JOUR_ACTE = [10, 30, 50] as const
+/** Le cœur d'une saison, DÉRIVÉ de la cadence des actes — 15 / 45 / 75 / 105 aujourd'hui. */
+const coeurDe = (phase: number): number => Math.round((phase - 0.5) * BALANCE.ACT_DAYS)
+/** Les quatre jours-témoins. `ARDEUR` est le plus chaud de l'année, `GRAND_FROID` le plus froid. */
+const ECLOSION = coeurDe(1)
+const ARDEUR = coeurDe(2)
+const PLUIES = coeurDe(3)
+const GRAND_FROID = coeurDe(4)
+/** Les trois régimes que le gel traverse, du plus doux au plus dur — l'ordre compte. */
+const JOUR_SAISON = [ARDEUR, PLUIES, GRAND_FROID] as const
+/** L'aube du cycle d'un jour de saison (le calendrier est couplé : 1 jour = 1 cycle). */
+const aubeDe = (jour: number): number => (jour - 1) * TICKS_PER_CYCLE
 
 /**
  * LA CARTE D'ESSAI : de l'herbe, une RIVIÈRE d'eau profonde qui coupe la carte en deux du
@@ -69,26 +98,30 @@ function simGel(options: { map?: WorldMap; meteoActive?: boolean } = {}): SimSta
   })
 }
 
-/** Un front FABRIQUÉ, actif de `state.tick − avance` à `+ TRAVERSEE_TICKS`. */
 /**
- * Pose un front. LE JOUR SE DÉRIVE DU TICK D'ENTRÉE, il ne vaut plus 1 : depuis R13 c'est
- * `front.day` qui porte l'acte, donc la LARGEUR d'un orage (55 tuiles en acte I, la carte en
- * acte III). Un front daté du jour 1 mais joué au jour 50 aurait la bande de l'un et le froid
- * de l'autre — le test mesurerait alors son propre montage. (Calendrier couplé : 1 jour de
- * saison = 1 cycle, d'où `day = cycle + 1`.)
+ * Pose un front FABRIQUÉ. LE JOUR SE DÉRIVE DU TICK D'ENTRÉE : c'est `front.day` qui porte la
+ * SAISON, donc la largeur de la bande ET la durée de sa fenêtre (S7-S8 : les deux sont
+ * saisonnières, `largeurDe`/`fenetreDe` en sont les seuls écrivains). Un front daté d'un jour
+ * mais joué à un autre aurait la bande de l'un et le froid de l'autre — le test mesurerait
+ * alors son propre montage.
+ *
+ * ⚠ La fenêtre se LIT (`fenetreDe`), elle ne se pose pas : une durée écrite à la main ferait
+ * traverser la carte à une bande d'automne en une demi-journée, et la géométrie qu'on mesure
+ * ne serait plus celle du jeu.
  */
 function poserFront(state: SimState, type: MeteoFront['type'], edge: MeteoFront['edge'], startTick: number): MeteoFront {
   const cycle = Math.floor(startTick / TICKS_PER_CYCLE)
-  const front: MeteoFront = {
-    type,
-    cycle,
-    day: cycle + 1,
-    edge,
-    startTick,
-    endTick: startTick + METEO.TRAVERSEE_TICKS,
-  }
+  const day = jourDeSaison(state, startTick)
+  const front: MeteoFront = { type, cycle, day, edge, startTick, endTick: startTick + fenetreDe({ type, day }) }
   state.meteo = front
   return front
+}
+
+/** Le même front, calé pour que `state.tick` tombe au CŒUR de sa fenêtre — là où la bande
+ *  couvre la carte et où le froid du front est plein. */
+function frontSurLeTick(state: SimState, type: MeteoFront['type'], edge: MeteoFront['edge']): MeteoFront {
+  const fenetre = fenetreDe({ type, day: jourDeSaison(state, state.tick) })
+  return poserFront(state, type, edge, state.tick - Math.floor(fenetre / 2))
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════════════
@@ -98,43 +131,87 @@ function poserFront(state: SimState, type: MeteoFront['type'], edge: MeteoFront[
 describe('G2 — deux seuils, deux promesses (la table des six régimes)', () => {
   /**
    * C'EST LA GARDE QUI PROTÈGE LE CALIBRAGE. Les seuils ont été calculés contre cette table
-   * exacte (voir l'en-tête du bloc `GEL`) : si quelqu'un retouche `ACT_COLD` ou `NIGHT_COLD`,
-   * c'est ICI que ça doit rougir — pas six mois plus tard dans un playtest.
+   * exacte (voir l'en-tête du bloc `GEL`) : si quelqu'un retouche la courbe `SOCLE` ou
+   * `ECART_NUIT`, c'est ICI que ça doit rougir — pas six mois plus tard dans un playtest.
+   *
+   * ⚠ **LES SIX RÉGIMES SE LISENT SUR LA COURBE, plus sur une table par acte** (spec
+   * `saisons.md` S4-S5). Le point de mesure n'est donc plus « l'acte n » mais le CŒUR d'une
+   * saison, là où la courbe est à son extrême et où deux jours voisins disent la même chose.
    */
   const attendu: { jour: number; nuit: boolean; t: number; gue: boolean; lac: boolean }[] = [
-    // ⚠ EN DEGRÉS CELSIUS depuis le 2026-08-22. Les littéraux SONT le calibrage — ils restent
-    // écrits, sinon la garde ne garde plus rien —, et chacun vaut
-    // `BASE − ACT_COLD(acte) − NIGHT_COLD × nuit` (biome 0). L'ancienne jauge en regard.
-    { jour: JOUR_ACTE[0], nuit: false, t: 18, gue: false, lac: false }, // acte I, jour (ex-90)
-    { jour: JOUR_ACTE[0], nuit: true, t: 6, gue: false, lac: false }, // acte I, nuit (ex-60) : RIEN ne gèle
-    { jour: JOUR_ACTE[1], nuit: false, t: 8, gue: false, lac: false }, // acte II, jour (ex-65)
-    { jour: JOUR_ACTE[1], nuit: true, t: -4, gue: true, lac: false }, // acte II, NUIT (ex-35) : les gués prennent
-    { jour: JOUR_ACTE[2], nuit: false, t: -2, gue: true, lac: false }, // acte III, jour (ex-40)
-    { jour: JOUR_ACTE[2], nuit: true, t: -14, gue: true, lac: true }, // acte III, NUIT (ex-10) : la vallée s'ouvre
+    // ⚠ EN DEGRÉS CELSIUS. Les littéraux SONT le calibrage — ils restent écrits, sinon la
+    // garde ne garde plus rien —, et chacun vaut `SOCLE(jour, tour) − ECART_NUIT(jour) × nuit`
+    // (biome 0 : l'eau n'a pas d'entrée dans `BIOME_OFFSET`).
+    { jour: ARDEUR, nuit: false, t: 26, gue: false, lac: false }, // l'Ardeur, jour : le sommet de l'année
+    { jour: ARDEUR, nuit: true, t: 20, gue: false, lac: false }, // l'Ardeur, nuit : RIEN ne gèle, pas un flocon
+    { jour: PLUIES, nuit: false, t: 8, gue: false, lac: false }, // les Pluies, jour : l'eau tient encore
+    { jour: PLUIES, nuit: true, t: -2, gue: true, lac: false }, // les Pluies, NUIT : les gués prennent
+    { jour: GRAND_FROID, nuit: false, t: -2, gue: true, lac: false }, // le Grand Froid, jour
+    { jour: GRAND_FROID, nuit: true, t: -16, gue: true, lac: true }, // le Grand Froid, NUIT : la vallée s'ouvre
   ]
+
+  it('LA PRÉMISSE DE TOUT LE FICHIER : les trois saisons-témoins n’ont aucun caractère à l’an 1', () => {
+    /**
+     * Chaque littéral de température de ce fichier — la table ci-dessous, le −2 °C d'A8, la
+     * bande morte d'A11, la marge de l'Ardeur — lit `socleDuJour`, et `socleDuJour` applique
+     * le CARACTÈRE DE LA SAISON (S18) : `T.SOCLE(jour + socleJours, tour) + socleDegres`. Un
+     * Été pourri (−4 °C) ou des Gelées tardives (−15 jours) déplaceraient tous ces nombres
+     * d'un coup, et le fichier rougirait sans dire pourquoi. On l'affirme donc une fois, ici.
+     *
+     * L'Éclosion, elle, tire bien un caractère à l'an 1 — la Crue. Elle ne touche PAS la
+     * courbe (S10 : c'est le niveau d'EAU qu'elle pousse), donc `ECLOSION` reste un témoin
+     * honnête pour les balayages qui l'emploient.
+     */
+    for (const phase of [2, 3, 4]) {
+      expect(modificateurDeSaison(1, phase), `phase ${phase} à l'an 1`).toBeNull()
+    }
+    for (const jour of [ARDEUR, PLUIES, GRAND_FROID]) {
+      expect(socleDuJour(jour, tourForDay(jour))).toBe(TEMPERATURE.SOCLE(jour, tourForDay(jour)))
+    }
+  })
 
   it('la température de chaque régime est bien celle du calcul, et les seuils y mordent comme promis', () => {
     const sim = simGel()
     for (const cas of attendu) {
       sim.tick = tickDe(cas.jour, cas.nuit)
-      const nom = `jour ${cas.jour} (acte ${actForDay(cas.jour)}) ${cas.nuit ? 'nuit' : 'jour'}`
-      // LA PRÉMISSE DE LA TABLE : le littéral est bien la formule, pas un nombre recopié.
-      const parLaFormule = TEMPERATURE.BASE - TEMPERATURE.ACT_COLD(actForDay(cas.jour)) - (cas.nuit ? TEMPERATURE.NIGHT_COLD : 0)
-      expect(cas.t, `la table dit ${nom}`).toBe(parLaFormule)
+      const nom = `jour ${cas.jour} (phase ${phaseForDay(cas.jour)}) ${cas.nuit ? 'nuit' : 'jour'}`
+      // LA PRÉMISSE DE LA TABLE : le littéral est bien la courbe, pas un nombre recopié.
+      const parLaCourbe = socleDuJour(cas.jour, tourForDay(cas.jour))
+        - (cas.nuit ? TEMPERATURE.ECART_NUIT(cas.jour) : 0)
+      expect(cas.t, `la table dit ${nom}`).toBe(parLaCourbe)
       expect(baselineTemperature(sim, GUE_X, 5), `température ${nom}`).toBe(cas.t)
       expect(estGele(sim, GUE_X, 5), `gué ${nom}`).toBe(cas.gue)
       expect(estGele(sim, RIVIERE_X0, 5), `lac ${nom}`).toBe(cas.lac)
     }
   })
 
-  it("l'acte I ne gèle JAMAIS, même la nuit sous l'averse — la marge de calibrage est réelle", () => {
+  it("l'Ardeur ne gèle JAMAIS, pas une nuit, pas sous l'averse — la marge de calibrage est réelle", () => {
+    // A3 le promet (« l'Ardeur ne voit pas un flocon ») : on balaie donc la saison ENTIÈRE,
+    // pas son seul cœur — c'est aux BORDS que la courbe s'approche du seuil.
     const sim = simGel({ meteoActive: true })
-    sim.tick = tickDe(JOUR_ACTE[0], true)
-    // La pluie et l'orage sont les seuls fronts froids de l'acte I (METEO.TYPES[0]), à 10.
-    poserFront(sim, 'pluie', 0, sim.tick - Math.floor(METEO.TRAVERSEE_TICKS / 2))
-    expect(baselineTemperature(sim, GUE_X, 5)).toBeLessThanOrEqual(50)
-    expect(estGele(sim, GUE_X, 5)).toBe(false)
-    expect(estGele(sim, RIVIERE_X0, 5)).toBe(false)
+    let vu = 0
+    let mordu = 0
+    for (let jour = BALANCE.ACT_DAYS + 1; jour <= 2 * BALANCE.ACT_DAYS; jour++) {
+      for (const nuit of [false, true]) {
+        for (const type of ['pluie', 'orage', 'brouillard'] as const) {
+          sim.tick = tickDe(jour, nuit)
+          sim.meteo = null
+          const clair = baselineTemperature(sim, GUE_X, 5)
+          frontSurLeTick(sim, type, 0)
+          const sousLeFront = baselineTemperature(sim, GUE_X, 5)
+          if (sousLeFront < clair) mordu++ // la prémisse : le front couvre bien le point
+          // +2 °C au-dessus du dégel franc du gué : la marge est ÉCRITE, pas dérivée du seuil
+          // qu'elle protège — sinon déplacer `SEUIL_GUE` déplacerait la garde avec lui.
+          expect(sousLeFront, `jour ${jour} ${nuit ? 'nuit' : 'jour'} ${type}`).toBeGreaterThanOrEqual(4)
+          expect(estGele(sim, GUE_X, 5)).toBe(false)
+          expect(estGele(sim, RIVIERE_X0, 5)).toBe(false)
+          vu++
+        }
+      }
+    }
+    expect(vu).toBe(BALANCE.ACT_DAYS * 2 * 3)
+    // Les deux tiers des passes portent un front FROID (pluie, orage) : il a mordu partout.
+    expect(mordu).toBe(BALANCE.ACT_DAYS * 2 * 2)
   })
 })
 
@@ -171,7 +248,7 @@ describe('le point unique du gel repose sur `MARCHABLE` — et cette équivalenc
 describe('A1 — `estGele` est PURE', () => {
   it('deux appels, même réponse ; et un balayage complet ne bouge pas un bit du snapshot', () => {
     const sim = simGel({ meteoActive: true })
-    sim.tick = tickDe(JOUR_ACTE[2], true)
+    sim.tick = tickDe(GRAND_FROID, true)
     spawnEntity(sim, 5.5, 5.5)
     const avant = snapshot(sim)
 
@@ -194,7 +271,7 @@ describe('A1 — `estGele` est PURE', () => {
 })
 
 // ═══════════════════════════════════════════════════════════════════════════════════════
-// A2 — la carte reste immuable, gel actif, sur une saison entière
+// A2 — la carte reste immuable, gel actif, sur une ANNÉE entière
 // ═══════════════════════════════════════════════════════════════════════════════════════
 
 describe('A2 — la carte reste immuable, gel actif', () => {
@@ -207,15 +284,17 @@ describe('A2 — la carte reste immuable, gel actif', () => {
     return `${h >>> 0}/${map.terrain.length}`
   }
 
-  it('une saison entière jouée nuit et jour ne réécrit pas une tuile', () => {
+  it('une année entière jouée nuit et jour ne réécrit pas une tuile', () => {
     const sim = simGel({ meteoActive: true })
     const joueur = spawnEntity(sim, 5.5, 5.5)
     const avant = empreinte(sim.map)
 
-    // On PARCOURT la saison : chaque jour, un peu de jour et un peu de nuit, et le joueur
-    // marche vers la rivière (donc il finit par la traverser quand elle prend).
+    // On PARCOURT L'ANNÉE, pas une demi-saison : depuis que l'année boucle (S1), le lac ne
+    // prend qu'au Grand Froid — un balayage borné à `SEASON_DAYS` s'arrêterait à l'Ardeur et
+    // ne verrait pas une seule glace. Chaque jour, un peu de jour et un peu de nuit, et le
+    // joueur marche vers la rivière (donc il finit par la traverser quand elle prend).
     let geleAuMoinsUneFois = false
-    for (let d = 1; d <= BALANCE.SEASON_DAYS; d++) {
+    for (let d = 1; d <= YEAR_DAYS; d++) {
       for (const nuit of [false, true]) {
         sim.tick = tickDe(d, nuit)
         for (let t = 0; t < 4; t++) {
@@ -232,8 +311,8 @@ describe('A2 — la carte reste immuable, gel actif', () => {
   it('`isWater` et `terrainAt` rendent la même chose gelé ou non — le gel ne RECLASSE rien (G3)', () => {
     const chaud = simGel()
     const froid = simGel()
-    chaud.tick = tickDe(JOUR_ACTE[0], false)
-    froid.tick = tickDe(JOUR_ACTE[2], true)
+    chaud.tick = tickDe(ARDEUR, false)
+    froid.tick = tickDe(GRAND_FROID, true)
     expect(estGele(froid, RIVIERE_X0, 5)).toBe(true) // la prémisse
 
     for (let ty = 0; ty < froid.map.height; ty++) {
@@ -252,7 +331,7 @@ describe('A2 — la carte reste immuable, gel actif', () => {
 describe('A3 — zéro tirage sur le PRNG, zéro octet dans l’état', () => {
   it('les prédicats ne touchent NI `rngState` NI aucun champ', () => {
     const sim = simGel({ meteoActive: true })
-    sim.tick = tickDe(JOUR_ACTE[2], true)
+    sim.tick = tickDe(GRAND_FROID, true)
     const rngAvant = sim.rngState
     const clefsAvant = Object.keys(sim).sort()
     const avant = snapshot(sim)
@@ -270,7 +349,7 @@ describe('A3 — zéro tirage sur le PRNG, zéro octet dans l’état', () => {
 
   it('la passe de dégel est INERTE quand personne ne se tient sur de l’eau profonde', () => {
     const sim = simGel()
-    sim.tick = tickDe(JOUR_ACTE[1], false)
+    sim.tick = tickDe(PLUIES, false)
     spawnEntity(sim, 5.5, 5.5)
     const avant = snapshot(sim)
     advanceDegel(sim)
@@ -281,7 +360,7 @@ describe('A3 — zéro tirage sur le PRNG, zéro octet dans l’état', () => {
     const jouer = (): SimState => {
       const sim = simGel({ meteoActive: true })
       const joueur = spawnEntity(sim, 5.5, 5.5)
-      sim.tick = tickDe(JOUR_ACTE[2], true)
+      sim.tick = tickDe(GRAND_FROID, true)
       for (let t = 0; t < 1000; t++) {
         step(sim, [{ entityId: joueur, dx: t % 3 === 0 ? 1 : 0, dy: t % 3 === 1 ? 1 : 0 }])
         drainEvents(sim)
@@ -315,13 +394,13 @@ describe('A4 — les deux seuils mordent DANS L’ORDRE', () => {
     let vuAucun = 0
     let echantillons = 0
 
-    for (const jour of JOUR_ACTE) {
+    for (const jour of [ECLOSION, ...JOUR_SAISON]) {
       for (const nuit of [false, true]) {
         // LES QUATRE CLASSES (R11) — `neige` et `blizzard` ne s'élisent plus : c'est le
-        // FROID au point qui en décide, et le balayage acte × nuit ci-dessus les traverse.
+        // FROID au point qui en décide, et le balayage saison × nuit ci-dessus les traverse.
         for (const type of ['brouillard', 'pluie', 'orage', 'vent_de_cendre'] as const) {
           sim.tick = tickDe(jour, nuit)
-          const front = poserFront(sim, type, 0, sim.tick - Math.floor(METEO.TRAVERSEE_TICKS / 2))
+          const front = frontSurLeTick(sim, type, 0)
           void front
           // On balaie TOUTE la largeur de la carte au pas de la tuile : le point traverse la
           // bande, ses deux rampes et le ciel clair de part et d'autre — le domaine complet.
@@ -350,26 +429,55 @@ describe('A4 — les deux seuils mordent DANS L’ORDRE', () => {
   })
 
   it('balayage FIN de la rampe d’un front : la loi tient à chaque pas d’intensité', () => {
-    const sim = simGel({ meteoActive: true })
-    sim.tick = tickDe(JOUR_ACTE[1], false) // acte II, jour : base 65
-    poserFront(sim, 'orage', 0, sim.tick - Math.floor(METEO.TRAVERSEE_TICKS / 2))
-    const map = sim.map
-    for (let tx = 0; tx < map.width; tx++) {
-      map.terrain[3 * map.width + tx] = TERRAIN_DEEP_WATER
-      map.terrain[4 * map.width + tx] = TERRAIN_SHALLOW_WATER
-    }
-    let temperaturesVues = 0
-    for (let tx = 0; tx < map.width; tx++) {
-      const t = baselineTemperature(sim, tx, 3)
-      temperaturesVues += 1
-      if (estGele(sim, tx, 3)) {
-        expect(estGele(sim, tx, 4)).toBe(true) // l'ordre
-        expect(t).toBeLessThan(GEL.SEUIL_PROFOND + GEL.HYSTERESIS) // jamais au-delà du dégel franc
+    /**
+     * DEUX SAISONS, ET IL EN FAUT DEUX. La rampe d'un orage ne balaie plus les mêmes
+     * températures selon la saison où il tombe (S7 : la géométrie est saisonnière, et R12
+     * fait mordre l'orage à proportion du froid qu'il TROUVE) :
+     *  · aux Pluies de jour (+8 °C), l'orage est une pluie violente — il retranche 4 °C au
+     *    plus, et c'est la promesse « au-dessus du dégel franc, le gué rend la main » qui se
+     *    vérifie sur toute la largeur ;
+     *  · au Grand Froid de jour (−2 °C), il sature (22 °C) — la rampe traverse alors le seuil
+     *    du lac, et ce sont les deux autres implications qui mordent.
+     * La carte est LARGE (2 000) parce que les bandes le sont devenues : sur 60 tuiles, le
+     * cœur du front écrase tout et il n'y a plus de rampe à balayer.
+     */
+    const LARGE = 2000
+    let vuGueRendu = 0
+    let vuLacGele = 0
+    let vuSousLeSeuil = 0
+    for (const jour of [PLUIES, GRAND_FROID]) {
+      const sim = simGel({ map: carteDEssai(LARGE, 12), meteoActive: true })
+      sim.tick = tickDe(jour, false)
+      frontSurLeTick(sim, 'orage', 0)
+      const map = sim.map
+      for (let tx = 0; tx < map.width; tx++) {
+        map.terrain[3 * map.width + tx] = TERRAIN_DEEP_WATER
+        map.terrain[4 * map.width + tx] = TERRAIN_SHALLOW_WATER
       }
-      if (t >= GEL.SEUIL_GUE + GEL.HYSTERESIS) expect(estGele(sim, tx, 4)).toBe(false)
-      if (t < GEL.SEUIL_PROFOND) expect(estGele(sim, tx, 3)).toBe(true)
+      let temperaturesVues = 0
+      for (let tx = 0; tx < map.width; tx++) {
+        const t = baselineTemperature(sim, tx, 3)
+        temperaturesVues += 1
+        if (estGele(sim, tx, 3)) {
+          expect(estGele(sim, tx, 4)).toBe(true) // l'ordre
+          expect(t).toBeLessThan(GEL.SEUIL_PROFOND + GEL.HYSTERESIS) // jamais au-delà du dégel franc
+          vuLacGele += 1
+        }
+        if (t >= GEL.SEUIL_GUE + GEL.HYSTERESIS) {
+          expect(estGele(sim, tx, 4)).toBe(false)
+          vuGueRendu += 1
+        }
+        if (t < GEL.SEUIL_PROFOND) {
+          expect(estGele(sim, tx, 3)).toBe(true)
+          vuSousLeSeuil += 1
+        }
+      }
+      expect(temperaturesVues).toBe(map.width)
     }
-    expect(temperaturesVues).toBe(map.width)
+    // LES TROIS IMPLICATIONS ONT MORDU — sans quoi le balayage serait vrai par vacuité.
+    expect(vuGueRendu).toBeGreaterThan(0)
+    expect(vuLacGele).toBeGreaterThan(0)
+    expect(vuSousLeSeuil).toBeGreaterThan(0)
   })
 })
 
@@ -392,12 +500,12 @@ describe('A5 — ce qui traverse, traverse pour tout le monde (G4)', () => {
       return sim.entities.find((e) => e.id === joueur)!.x
     }
 
-    sim.tick = tickDe(JOUR_ACTE[1], false) // acte II, jour : la rivière est libre
+    sim.tick = tickDe(PLUIES, false) // les Pluies, jour (+8 °C) : la rivière est libre
     const bloque = marcher(200)
     expect(estGele(sim, RIVIERE_X0, 6)).toBe(false)
     expect(bloque).toBeLessThan(RIVIERE_X0) // il bute sur la rive
 
-    sim.tick = tickDe(JOUR_ACTE[2], true) // acte III, nuit : elle a pris
+    sim.tick = tickDe(GRAND_FROID, true) // le Grand Froid, nuit (−16 °C) : elle a pris
     expect(estGele(sim, RIVIERE_X0, 6)).toBe(true)
     const passe = marcher(400)
     expect(passe).toBeGreaterThan(RIVIERE_X1) // il est de l'autre côté
@@ -410,12 +518,12 @@ describe('A5 — ce qui traverse, traverse pour tout le monde (G4)', () => {
     const clef = arrivee.ty * sim.map.width + arrivee.tx
 
     // Libre : la rivière coupe la carte du nord au sud — aucun chemin, aucun gradient.
-    sim.tick = tickDe(JOUR_ACTE[1], false)
+    sim.tick = tickDe(PLUIES, false)
     expect(findPath(monde(sim), depart, arrivee, 8192)).toBeNull()
     expect(computeFlowField(sim.map, [], [], depart.tx, depart.ty, sim)[clef]).toBe(-1)
 
     // Gelée : les DEUX passent, et l'avatar aussi (garde du dessus). Une seule loi.
-    sim.tick = tickDe(JOUR_ACTE[2], true)
+    sim.tick = tickDe(GRAND_FROID, true)
     const chemin = findPath(monde(sim), depart, arrivee, 8192)
     expect(chemin).not.toBeNull()
     expect(chemin!.some((p) => p.tx >= RIVIERE_X0 && p.tx < RIVIERE_X1)).toBe(true) // il passe SUR la glace
@@ -424,7 +532,7 @@ describe('A5 — ce qui traverse, traverse pour tout le monde (G4)', () => {
 
   it('sans l’état, le monde est HORS DU TEMPS : la carte seule décide (worldgen, bancs)', () => {
     const sim = simGel()
-    sim.tick = tickDe(JOUR_ACTE[2], true)
+    sim.tick = tickDe(GRAND_FROID, true)
     const sansEtat = { map: sim.map, structures: sim.structures, nodes: sim.nodes, moverVillageId: null }
     const arrivee = { tx: RIVIERE_X1 + 3, ty: 6 }
     expect(findPath(sansEtat, { tx: RIVIERE_X0 - 3, ty: 6 }, arrivee, 8192)).toBeNull()
@@ -434,9 +542,9 @@ describe('A5 — ce qui traverse, traverse pour tout le monde (G4)', () => {
   it('on GLISSE sur la glace : le gué passe de 0,5 à VITESSE_GLACE', () => {
     const sim = simGel()
     expect(TERRAINS[TERRAIN_SHALLOW_WATER]!.speedFactor).toBe(0.5) // la prémisse
-    sim.tick = tickDe(JOUR_ACTE[0], false)
+    sim.tick = tickDe(ARDEUR, false)
     expect(vitesseSurGlace(sim, GUE_X, 5)).toBeUndefined()
-    sim.tick = tickDe(JOUR_ACTE[2], true)
+    sim.tick = tickDe(GRAND_FROID, true)
     expect(vitesseSurGlace(sim, GUE_X, 5)).toBe(GEL.VITESSE_GLACE)
     expect(vitesseSurGlace(sim, RIVIERE_X0, 5)).toBe(GEL.VITESSE_GLACE)
     expect(GEL.VITESSE_GLACE).toBeGreaterThan(1) // on glisse plus vite que sur l'herbe
@@ -452,7 +560,7 @@ describe('A6 — un lac gelé reste un point d’eau (G3)', () => {
     const map = carteDEssai(120, 80)
     const chaud = createSim(2026, { map, calendarScale: SCALE })
     const froid = createSim(2026, { map, calendarScale: SCALE })
-    froid.tick = tickDe(JOUR_ACTE[2], true)
+    froid.tick = tickDe(GRAND_FROID, true)
     expect(estGele(froid, RIVIERE_X0, 5)).toBe(true) // la prémisse : la vallée a bien gelé
 
     // `placeHuntingGrounds` ne prend QUE la carte — la garde est structurelle autant que
@@ -476,7 +584,7 @@ describe('A6 — un lac gelé reste un point d’eau (G3)', () => {
 describe('A7 — un Feu ne dégèle rien (G1)', () => {
   it('la glace sous un feu ardent est dans le même état qu’à dix tuiles', () => {
     const sim = simGel()
-    sim.tick = tickDe(JOUR_ACTE[2], true)
+    sim.tick = tickDe(GRAND_FROID, true)
     // Le feu se pose sur la RIVE, juste à côté de la rivière — dans son rayon de chaleur —
     // et il BRÛLE VRAIMENT : sans bûche, `fireWarmthFactor` rend 0 et la garde serait verte
     // pour la mauvaise raison (leçon « une garde prouve sa prémisse »).
@@ -505,23 +613,26 @@ describe('A7 — un Feu ne dégèle rien (G1)', () => {
 
 describe('A8 — un blizzard gèle ce qu’il traverse', () => {
   it('avant, pendant, après : la glace suit la BANDE, pas le calendrier', () => {
-    // ⚠ LA FENÊTRE D'UN FRONT DURE EXACTEMENT UNE PHASE DE JOUR (`TRAVERSEE_TICKS` =
-    // `DAY_TICKS_PER_CYCLE`) : suivre une traversée entière à l'horloge, c'est TOUJOURS
-    // traverser un crépuscule, et l'on mesurerait alors la nuit au lieu du front. On fige
-    // donc le tick — acte III, plein jour, −2 °C — et l'on fait bouger LA BANDE : la même
-    // question (« la bande couvre-t-elle ce point à ce tick ? »), sans variable parasite.
+    // ⚠ LA FENÊTRE D'UN FRONT DÉBORDE LA PHASE DE JOUR (S8 : elle vaut les trois quarts du
+    // cycle au Grand Froid, le cycle ENTIER aux Pluies) : suivre une traversée à l'horloge,
+    // c'est TOUJOURS traverser un crépuscule, et l'on mesurerait alors la nuit au lieu du
+    // front. On fige donc le tick — Grand Froid, plein jour, −2 °C — et l'on fait bouger LA
+    // BANDE : la même question (« la bande couvre-t-elle ce point à ce tick ? »), sans
+    // variable parasite.
     //
-    // POURQUOI L'ACTE III ET NON LE II (R11-R12) : un orage ne mord de `ORAGE_FROID.COLD` que
-    // là où le monde est DÉJÀ sous la limite de neige — c'est le refroidissement éolien. En
-    // acte II de jour (+8 °C) il ne retranche que `COLD.orage` : plus de blizzard à observer.
-    // En acte III de jour (−2 °C) il sature, et le LAC bascule. Le GUÉ, lui, est pris par la
-    // SAISON à cet acte (−2 < SEUIL_GUE = 0) : affirmé séparément — la marge se lit sur le lac.
+    // POURQUOI LE GRAND FROID ET NON LES PLUIES (R11-R12) : un orage ne mord de
+    // `ORAGE_FROID.COLD` que là où le monde est DÉJÀ sous la limite de neige — c'est le
+    // refroidissement éolien. Aux Pluies de jour (+8 °C) il ne retranche que `COLD.orage` :
+    // plus de blizzard à observer. Au Grand Froid de jour (−2 °C) il sature, et le LAC
+    // bascule. Le GUÉ, lui, est pris par la SAISON à cette date (−2 < SEUIL_GUE = 0) :
+    // affirmé séparément — la marge se lit sur le lac.
     const sim = simGel({ meteoActive: true })
-    const t = tickDe(JOUR_ACTE[2], false)
+    const t = tickDe(GRAND_FROID, false)
+    const fenetre = fenetreDe({ type: 'orage', day: GRAND_FROID })
     sim.tick = t
-    expect(baselineTemperature(sim, RIVIERE_X0, 6)).toBe(-2) // le ciel clair de référence (ex-jauge 40)
+    expect(baselineTemperature(sim, RIVIERE_X0, 6)).toBe(-2) // le ciel clair de référence
     expect(estGele(sim, RIVIERE_X0, 6)).toBe(false)
-    expect(estGele(sim, GUE_X, 6)).toBe(true) // le gué d'acte III est pris par la saison, pas par un front
+    expect(estGele(sim, GUE_X, 6)).toBe(true) // le gué du Grand Froid est pris par la SAISON, pas par un front
 
     // AVANT l'entrée : la fenêtre s'ouvre plus tard, la bande est encore dehors.
     poserFront(sim, 'orage', 0, t + 5000)
@@ -530,39 +641,40 @@ describe('A8 — un blizzard gèle ce qu’il traverse', () => {
 
     // PENDANT, au cœur de la fenêtre : le froid plein (−2 − ORAGE_FROID.COLD, borné à
     // AMBIANT_MIN → sous SEUIL_PROFOND).
-    poserFront(sim, 'orage', 0, t - Math.floor(METEO.TRAVERSEE_TICKS / 2))
+    poserFront(sim, 'orage', 0, t - Math.floor(fenetre / 2))
     expect(baselineTemperature(sim, RIVIERE_X0, 6)).toBeLessThan(GEL.SEUIL_PROFOND)
     expect(estGele(sim, RIVIERE_X0, 6)).toBe(true)
     expect(estGele(sim, GUE_X, 6)).toBe(true)
 
     // APRÈS la sortie : la fenêtre est close, la vallée retrouve ses −2 — et rend le LAC.
-    poserFront(sim, 'orage', 0, t - METEO.TRAVERSEE_TICKS - 5000)
+    poserFront(sim, 'orage', 0, t - fenetre - 5000)
     expect(baselineTemperature(sim, RIVIERE_X0, 6)).toBe(-2)
     expect(estGele(sim, RIVIERE_X0, 6)).toBe(false)
   })
 
   it('un front gèle SA BANDE et rien d’autre — la glace suit la bande dans l’ESPACE', () => {
     /**
-     * CE QUI A CHANGÉ AVEC R11-R13, ET POURQUOI LA CARTE EST SI LARGE.
+     * POURQUOI LA CARTE EST SI LARGE.
      *
      * Avant, une bande de NEIGE (70 tuiles) discriminait sur une carte de 400. Elle ne le peut
      * plus, et c'est structurel : un front ne mord vraiment (`ORAGE_FROID.COLD`) que là où le
      * monde est DÉJÀ sous la limite de neige (0 °C) — or 0 est aussi le seuil du gué. Là où un
      * front pourrait faire basculer un gué, la saison l'a déjà pris ; et une pluie (COLD 4)
-     * ne descend jamais un lac d'acte III (−2 − 4 = −6) sous son seuil (−10).
+     * ne descend jamais un lac du Grand Froid (−2 − 4 = −6) sous son seuil (−10).
      *
-     * Le seul contraste qui subsiste est celui de l'ORAGE : nuit d'acte II, la plaine est à −4
-     * — le lac tient (−4 ≥ −10), et sous la bande il plonge. Mais un orage d'acte II fait
-     * ~830 tuiles de large (R13) : pour qu'un « ailleurs » EXISTE, c'est la CARTE qu'il faut
-     * agrandir, pas la bande qu'il faut rétrécir. On la prend à 2 000 — et l'on PROUVE au
-     * montage que la bande n'y tient pas toute.
+     * Le seul contraste qui subsiste est celui de l'ORAGE : au Grand Froid DE JOUR, la plaine
+     * est à −2 — le lac tient (−2 ≥ −10), et sous la bande il plonge (−24, borné à
+     * AMBIANT_MIN). Mais la géométrie est saisonnière depuis S7 et l'orage d'hiver fait
+     * 1 600 tuiles : pour qu'un « ailleurs » EXISTE, c'est la CARTE qu'il faut agrandir, pas
+     * la bande qu'il faut rétrécir. On la prend à 2 000 — et l'on PROUVE au montage que la
+     * bande n'y tient pas toute.
      */
     const LARGE = 2000
     const map = createEmptyMap(LARGE, 12, TERRAIN_GRASS)
     for (let tx = 0; tx < LARGE; tx++) setTile(map, tx, 5, TERRAIN_DEEP_WATER)
     const sim = simGel({ map, meteoActive: true })
-    sim.tick = tickDe(JOUR_ACTE[1], true) // acte II, NUIT : la plaine est à −4 °C, le lac tient
-    const front = poserFront(sim, 'orage', 0, sim.tick - Math.floor(METEO.TRAVERSEE_TICKS / 2))
+    sim.tick = tickDe(GRAND_FROID, false) // le Grand Froid, JOUR : la plaine est à −2 °C, le lac tient
+    const front = frontSurLeTick(sim, 'orage', 0)
     expect(largeurDe(front)).toBeLessThan(LARGE) // la prémisse : il Y A un ailleurs
 
     let dedans = 0
@@ -584,7 +696,7 @@ describe('A8 — un blizzard gèle ce qu’il traverse', () => {
 // A9 / A13 — la feuillaison
 // ═══════════════════════════════════════════════════════════════════════════════════════
 
-describe('A9 / A13 — les feuillus se dénudent, les conifères tiennent (G6)', () => {
+describe('A9 / A13 / A17 — les feuillus se dénudent, REVERDISSENT, les conifères tiennent (G6)', () => {
   function carteBoisee(): WorldMap {
     const map = createEmptyMap(40, 12, TERRAIN_GRASS)
     const bandes = [TERRAIN_FOREST, TERRAIN_WILLOW, TERRAIN_OLD_GROWTH, TERRAIN_PINE, TERRAIN_LARCH]
@@ -599,8 +711,11 @@ describe('A9 / A13 — les feuillus se dénudent, les conifères tiennent (G6)',
     const coverAvant = [TERRAIN_FOREST, TERRAIN_WILLOW, TERRAIN_OLD_GROWTH, TERRAIN_PINE, TERRAIN_LARCH]
       .map((t) => TERRAINS[t]!.cover)
 
-    sim.tick = tickDe(1, false)
-    for (let ty = 1; ty <= 5; ty++) expect(feuillageDenude(sim, 5, ty), `ty=${ty} au jour 1`).toBe(false)
+    // AU CŒUR DE L'ARDEUR la forêt est pleine — et ce n'est plus « au jour 1 » : depuis S14 la
+    // fenêtre nue ENJAMBE LE TOUR DE L'AN (fin des Pluies → printemps), donc le premier jour de
+    // l'année est un jour d'arbres nus, pas de bourgeons.
+    sim.tick = tickDe(ARDEUR, false)
+    for (let ty = 1; ty <= 5; ty++) expect(feuillageDenude(sim, 5, ty), `ty=${ty} à l'Ardeur`).toBe(false)
 
     // Bien après la fenêtre de défeuillaison : les trois feuillus y sont TOUS passés.
     sim.tick = tickDe(GEL.JOUR_DEFEUILLAISON + GEL.DEFEUILLAISON_JOURS + 2, false)
@@ -616,12 +731,12 @@ describe('A9 / A13 — les feuillus se dénudent, les conifères tiennent (G6)',
     const clair = simGel({ map: carteBoisee(), meteoActive: true })
     const gele = simGel({ map: carteBoisee(), meteoActive: true })
     let mordu = 0
-    for (const jour of [1, GEL.JOUR_DEFEUILLAISON + 3, JOUR_ACTE[2]]) {
+    for (const jour of [ARDEUR, GEL.JOUR_DEFEUILLAISON + 3, GRAND_FROID]) {
       const tk = tickDe(jour, true)
       clair.tick = tk
       gele.tick = tk
       gele.meteo = null
-      poserFront(gele, 'orage', 0, tk - Math.floor(METEO.TRAVERSEE_TICKS / 2))
+      frontSurLeTick(gele, 'orage', 0)
       clair.meteo = null
       for (let ty = 1; ty <= 5; ty++) {
         for (const tx of [5, 20, 39]) {
@@ -637,36 +752,78 @@ describe('A9 / A13 — les feuillus se dénudent, les conifères tiennent (G6)',
       .map((t) => TERRAINS[t]!.cover)).toEqual(coverAvant)
   })
 
-  it('A13 — MONOTONE sur une saison jouée nuit et jour : jamais de retour au vert', () => {
+  it('A17 — DEUX BASCULES PAR AN, jamais plus : la forêt se dépouille et reverdit, sur trois ans', () => {
+    /**
+     * ⚠ CE QUE CETTE GARDE PROMETTAIT, ET CE QU'ELLE PROMET MAINTENANT (spec `saisons.md`
+     * S14). Elle affirmait la MONOTONIE — « une feuille qui tombe ne remonte pas » —, ce qui
+     * était vrai d'un arc à sens unique et FAUX sous une année qui boucle : la forêt serait
+     * restée nue à partir du jour 83, an 2, an 5, an 10. Ce qui reste vrai, et qui est la vraie
+     * promesse, c'est qu'un feuillu ne change d'état que DEUX FOIS PAR AN — nu à la fin des
+     * Pluies, vert à l'Éclosion — et **jamais deux fois dans un même cycle** : c'est le
+     * clignotement que `feuillageDenude` documente avoir refusé en se keyant sur le jour et
+     * non sur le thermomètre.
+     */
     const sim = simGel({ map: carteBoisee(), meteoActive: true })
     const suivies = [[5, 1], [17, 1], [33, 2], [8, 3], [21, 3], [39, 4], [12, 5]] as const
+    const ANS = 3
+    const bascules = new Map<string, number>()
     const dernier = new Map<string, boolean>()
-    let bascules = 0
-    for (let d = 1; d <= BALANCE.SEASON_DAYS; d++) {
+    for (let d = 1; d <= ANS * YEAR_DAYS; d++) {
       for (const nuit of [false, true]) {
         sim.tick = tickDe(d, nuit)
         for (const [tx, ty] of suivies) {
           const clef = `${tx},${ty}`
           const nu = feuillageDenude(sim, tx, ty)
           const avant = dernier.get(clef)
-          if (avant !== undefined && avant !== nu) {
-            expect(nu, `retour au vert en ${clef} au jour ${d}`).toBe(true) // false → true seulement
-            bascules += 1
+          // JAMAIS DEUX FOIS DANS UN MÊME CYCLE : l'état du soir est celui du matin.
+          if (nuit && avant !== undefined) {
+            expect(nu, `clignotement en ${clef} au jour ${d}`).toBe(avant)
           }
+          if (avant !== undefined && avant !== nu) bascules.set(clef, (bascules.get(clef) ?? 0) + 1)
           dernier.set(clef, nu)
         }
       }
     }
-    expect(bascules).toBeGreaterThan(0) // la garde prouve sa prémisse : ça a bien basculé
+    for (const [tx, ty] of suivies) {
+      const clef = `${tx},${ty}`
+      const caduc = [TERRAIN_FOREST, TERRAIN_WILLOW, TERRAIN_OLD_GROWTH].includes(terrainAt(sim.map, tx, ty))
+      // Un feuillu bascule deux fois l'an (nu, puis vert) ; un conifère ne bascule jamais.
+      expect(bascules.get(clef) ?? 0, `bascules en ${clef}`).toBe(caduc ? 2 * ANS : 0)
+    }
+    // ET LA FORÊT EST BIEN VERTE L'ÉTÉ, NUE L'HIVER — chaque année, pas seulement la première.
+    for (let an = 1; an <= ANS; an++) {
+      const decalage = (an - 1) * YEAR_DAYS
+      for (const [tx, ty] of suivies) {
+        const caduc = [TERRAIN_FOREST, TERRAIN_WILLOW, TERRAIN_OLD_GROWTH].includes(terrainAt(sim.map, tx, ty))
+        if (!caduc) continue
+        sim.tick = tickDe(decalage + ARDEUR, false)
+        expect(feuillageDenude(sim, tx, ty), `an ${an}, l'Ardeur, ${tx},${ty}`).toBe(false)
+        sim.tick = tickDe(decalage + GRAND_FROID, false)
+        expect(feuillageDenude(sim, tx, ty), `an ${an}, le Grand Froid, ${tx},${ty}`).toBe(true)
+      }
+    }
   })
 
-  it('la forêt se dépouille PROGRESSIVEMENT — pas toute le même matin', () => {
-    const jours = new Set<number>()
-    for (let tx = 0; tx < 60; tx++) for (let ty = 0; ty < 6; ty++) jours.add(Math.floor(jourDeDefeuillaison(tx, ty)))
-    expect(jours.size).toBeGreaterThan(2)
-    for (const j of jours) {
-      expect(j).toBeGreaterThanOrEqual(GEL.JOUR_DEFEUILLAISON)
-      expect(j).toBeLessThanOrEqual(GEL.JOUR_DEFEUILLAISON + GEL.DEFEUILLAISON_JOURS)
+  it('la forêt se dépouille — et reverdit — PROGRESSIVEMENT, pas toute le même matin', () => {
+    for (const [loi, debut] of [
+      [jourDeDefeuillaison, GEL.JOUR_DEFEUILLAISON],
+      [jourDeRefeuillaison, GEL.JOUR_REFEUILLAISON],
+    ] as const) {
+      const jours = new Set<number>()
+      for (let tx = 0; tx < 60; tx++) for (let ty = 0; ty < 6; ty++) jours.add(Math.floor(loi(tx, ty)))
+      expect(jours.size).toBeGreaterThan(2)
+      for (const j of jours) {
+        expect(j).toBeGreaterThanOrEqual(debut)
+        expect(j).toBeLessThanOrEqual(debut + GEL.DEFEUILLAISON_JOURS)
+      }
+    }
+    // ET LE MÊME ARBRE MÈNE LES DEUX : celui qui s'est dépouillé le premier reverdit le premier
+    // (même `hash2`, même sel) — sans quoi la forêt se désynchroniserait d'une saison à l'autre.
+    for (let tx = 0; tx < 20; tx++) {
+      for (let ty = 0; ty < 6; ty++) {
+        expect(jourDeDefeuillaison(tx, ty) - GEL.JOUR_DEFEUILLAISON)
+          .toBeCloseTo(jourDeRefeuillaison(tx, ty) - GEL.JOUR_REFEUILLAISON, 12)
+      }
     }
   })
 })
@@ -676,54 +833,68 @@ describe('A9 / A13 — les feuillus se dénudent, les conifères tiennent (G6)',
 // ═══════════════════════════════════════════════════════════════════════════════════════
 
 describe('A10 — la neige tient après le front, puis fond (G7)', () => {
-  /**
-   * UN CYCLE QUI DÉPOSE VRAIMENT DE LA NEIGE — pas de front inventé ici : on veut prouver que
-   * le rembobinage retrouve les VRAIES élections. Depuis R11 « neigeux » n'est plus une
-   * propriété du TYPE : il faut que le front PRÉCIPITE (pluie ou orage) **et** que le monde
-   * soit sous la limite de neige pendant sa traversée. `PREMIER_CYCLE_FROID` borne la
-   * recherche à l'acte III, où la plaine est à 40 le jour et 10 la nuit — sous la limite (55)
-   * à toute heure, donc toute précipitation y tombe en neige.
-   */
   const sonde = simGel({ meteoActive: true })
-  function estNeigeux(c: number, scale: number): boolean {
-    const f = frontDuCycle(c, scale)
-    if (!f || (f.type !== 'pluie' && f.type !== 'orage')) return false
-    // …ET le monde sous la limite de neige d'un bout à l'autre de sa fenêtre : sinon la bande
-    // dépose de l'EAU sur la moitié de sa traversée, et la couverture qu'on mesure ne serait
-    // plus celle du front mais celle de l'heure. (La saison TOURNE — `actForDay` n'est pas
-    // borné — donc un cycle lointain peut retomber sur une phase douce : c'est le froid qu'on
-    // interroge, jamais le numéro d'acte.)
-    return neigeA(dehorsSansMeteo(sonde, 4, 5, f.startTick)) && neigeA(dehorsSansMeteo(sonde, 4, 5, f.endTick))
+
+  /** Le point d'observation d'un front : celui que sa bande QUITTE en premier — la neige y
+   *  fond le plus longtemps sous nos yeux. (Il se dérive du bord d'entrée, comme le dépôt.) */
+  const pointDe = (f: MeteoFront): number => (f.edge === 0 || f.edge === 2 ? 2 : sonde.map.width - 3)
+  const TY = 5
+
+  /** La bande de ce cycle couvre-t-elle ce point à ce tick ? On LIT la géométrie du jeu
+   *  (`bandeDuCycle`), on ne la recopie pas : une garde qui refait la bande ne garde rien. */
+  function sousLaBande(state: SimState, c: number, tick: number, tx: number, ty: number): boolean {
+    const b = bandeDuCycle(state, c, tick)
+    if (!b) return false
+    const k = b.axis === 'x' ? tx : ty
+    return k >= b.lo && k < b.hi
   }
 
   /**
-   * L'ISOLEMENT SE JUGE PLUS LARGE QUE LE DÉPÔT — et il le faut. Un cycle voisin qui précipite
-   * SANS être froid à ses deux bouts peut tout de même enneiger la fin de sa traversée (il fait
-   * nuit au milieu), et reposerait de la neige sur celle qu'on regarde fondre. On écarte donc
-   * tout voisin qui PRÉCIPITE, froid ou non : la garde de décroissance mesure la fonte, jamais
-   * le calendrier.
+   * CE CYCLE DÉPOSE-T-IL DE LA NEIGE EN CE POINT ? — le seul critère qui compte, et il a
+   * changé avec les saisons (S7-S9).
+   *
+   * L'ancien critère jugeait la CLASSE du front (« il précipite »), parce qu'un front tombait
+   * un jour sur deux et qu'un cycle neigeux isolé se trouvait tout seul. Sous les épisodes
+   * (S9), les Pluies et le Grand Froid portent des séries de quatre à cinq cycles mouillés
+   * d'affilée : **aucun cycle précipitant n'est plus jamais isolé**, et la recherche d'avant
+   * ne rend rien du tout — mesuré, sur quatre mille cycles.
+   *
+   * Ce qui SALIT une mesure de fonte, ce n'est pas qu'il pleuve à côté : c'est qu'il NEIGE
+   * ici. On demande donc à chaque voisin la seule question utile — sa bande a-t-elle couvert
+   * ce point à un instant où il neigeait ? C'est plus large que l'ancien test (un front tiède
+   * à ses deux bouts peut neiger en son milieu, et cela compte) et plus étroit là où il
+   * fallait (une averse d'été qui balaie le point ne dépose rien).
    */
-  function precipite(c: number, scale: number): boolean {
-    const f = frontDuCycle(c, scale)
-    return f !== null && (f.type === 'pluie' || f.type === 'orage')
+  function depose(state: SimState, c: number, scale: number, tx: number, ty: number): boolean {
+    const f = frontDuCycle(c, scale, state.jourDeDepart)
+    if (!f || (f.type !== 'pluie' && f.type !== 'orage')) return false
+    const pas = Math.max(1, Math.floor((f.endTick - f.startTick) / 64))
+    for (let t = f.startTick; t < f.endTick; t += pas) {
+      if (sousLaBande(state, c, t, tx, ty) && neigeA(dehorsSansMeteo(state, tx, ty, t))) return true
+    }
+    return false
   }
 
   /**
-   * Un cycle neigeux SUIVI d'assez de cycles SECS pour que la couverture ait le temps de
-   * fondre sans qu'une nouvelle neige ne vienne la reposer. Sans cette condition, la garde
-   * de décroissance mesurerait la MÉTÉO, pas la fonte — et rougirait pour rien.
+   * Un cycle qui enneige son point d'observation, PRÉCÉDÉ d'une mémoire vide (pour partir de
+   * zéro) et SUIVI d'assez de cycles sans dépôt pour que la couverture ait le temps de fondre
+   * sans qu'une nouvelle neige ne la repose. Sans ça, la garde de décroissance mesurerait la
+   * MÉTÉO, pas la fonte — et rougirait pour rien.
    */
   function cycleNeigeuxIsole(scale: number, secsAutour: number): number | null {
     // La fenêtre de recherche est LARGE (l'année tourne : les saisons froides et douces
-    // alternent, et un cycle neigeux ISOLÉ vit au bord d'une saison froide — il s'en présente
-    // quelques-uns par an, pas un par acte).
+    // alternent, et un dépôt ISOLÉ vit au bord d'une saison froide — il s'en présente
+    // quelques-uns par an, pas un par saison).
     for (let c = GEL.MEMOIRE_CYCLES; c < 4000; c++) {
-      if (!estNeigeux(c, scale)) continue
+      const f = frontDuCycle(c, scale, sonde.jourDeDepart)
+      if (!f) continue
+      const tx = pointDe(f)
+      if (!depose(sonde, c, scale, tx, TY)) continue
       let seul = true
       // APRÈS : personne ne repose de la neige pendant qu'on regarde celle-ci fondre.
-      for (let k = 1; k <= secsAutour; k++) if (precipite(c + k, scale)) seul = false
+      for (let k = 1; k <= secsAutour; k++) if (depose(sonde, c + k, scale, tx, TY)) seul = false
       // AVANT : et personne n'en a laissé qui traînerait encore au moment où l'on part de 0.
-      for (let k = 1; k <= GEL.MEMOIRE_CYCLES; k++) if (precipite(c - k, scale)) seul = false
+      for (let k = 1; k <= GEL.MEMOIRE_CYCLES; k++) if (depose(sonde, c - k, scale, tx, TY)) seul = false
       if (seul) return c
     }
     return null
@@ -736,14 +907,16 @@ describe('A10 — la neige tient après le front, puis fond (G7)', () => {
     // écoulé, la neige REMONTAIT au crépuscule — 0,709 le jour contre 0,842 la nuit, un saut
     // de 0,133 quand 1 200 ticks n'en déplacent que 0,007. Dix-neuf fois. Le crépuscule est
     // le pire cas exprès : c'est LÀ que la marche du thermomètre est la plus franche.
-    const c = cycleNeigeuxIsole(SCALE, 2)
+    // TROIS cycles sans dépôt derrière, et pas deux : le balayage court deux cycles PLEINS
+    // à partir de `endTick`, qui vit déjà au bout du sien — il mord donc sur le troisième.
+    const c = cycleNeigeuxIsole(SCALE, 3)
     expect(c).not.toBeNull()
-    const front = frontDuCycle(c!, SCALE)!
+    const front = frontDuCycle(c!, SCALE, sonde.jourDeDepart)!
     const sim = simGel({ meteoActive: true })
     // Le point au BOUT de la traversée, comme le test voisin : la bande l'a quitté tôt, il
     // reste de la neige à regarder fondre.
-    const tx = front.edge === 0 || front.edge === 2 ? 2 : sim.map.width - 3
-    const ty = 5
+    const tx = pointDe(front)
+    const ty = TY
     const depart = front.endTick
     // On balaie DEUX cycles pleins au pas fin : le pas jour/nuit y passe deux fois.
     const PAS = Math.floor(TICKS_PER_CYCLE / 64)
@@ -763,24 +936,24 @@ describe('A10 — la neige tient après le front, puis fond (G7)', () => {
     const c = cycleNeigeux(SCALE)
     expect(c).not.toBeNull()
     const sim = simGel({ meteoActive: false })
-    sim.tick = c! * TICKS_PER_CYCLE + METEO.TRAVERSEE_TICKS
+    sim.tick = frontDuCycle(c!, SCALE, sim.jourDeDepart)!.endTick
     expect(neigeAuSol(sim, 5, 5)).toBe(0)
   })
 
   it('après le passage du front : la couverture existe, puis décroît', () => {
-    // ⚠ ON NE CHOISIT PAS LA MÉTÉO : en acte III, un cycle sur deux élit une neige ou un
-    // blizzard (`METEO.TYPES[2]`), si bien qu'une longue accalmie n'existe tout simplement
+    // ⚠ ON NE CHOISIT PAS LA MÉTÉO : le Grand Froid porte des ÉPISODES de quatre à cinq
+    // cycles mouillés d'affilée (S9), si bien qu'une longue accalmie n'existe tout simplement
     // pas. On cherche donc le seul montage qui mesure la FONTE et non le calendrier : un
-    // front neigeux précédé d'une mémoire vide (pour partir de zéro) et suivi de deux
-    // cycles secs (pour voir décroître sans qu'on en repose).
+    // dépôt précédé d'une mémoire vide (pour partir de zéro) et suivi de deux cycles sans
+    // dépôt EN CE POINT (pour voir décroître sans qu'on en repose).
     const c = cycleNeigeuxIsole(SCALE, 2)
     expect(c).not.toBeNull()
-    const front = frontDuCycle(c!, SCALE)!
+    const front = frontDuCycle(c!, SCALE, sonde.jourDeDepart)!
     const sim = simGel({ meteoActive: true })
 
     // Le point est choisi au bout de la traversée : la bande l'a quitté tôt, on a de la marge.
-    const tx = front.edge === 0 || front.edge === 2 ? 2 : sim.map.width - 3
-    const ty = 5
+    const tx = pointDe(front)
+    const ty = TY
 
     sim.tick = front.startTick - 1
     expect(neigeAuSol(sim, tx, ty)).toBe(0) // rien n'est encore tombé
@@ -809,24 +982,32 @@ describe('A10 — la neige tient après le front, puis fond (G7)', () => {
     }
   })
 
-  it('elle DISPARAÎT : une mémoire sans le moindre front neigeux rend exactement zéro', () => {
-    // Une fenêtre de `MEMOIRE_CYCLES` cycles secs d'affilée — au-delà, la neige d'avant est
+  it('elle DISPARAÎT : une mémoire sans le moindre dépôt rend exactement zéro', () => {
+    // Une fenêtre de `MEMOIRE_CYCLES` cycles sans dépôt — au-delà, la neige d'avant est
     // hors de portée du rembobinage, et la couverture est nulle AU BIT PRÈS.
+    //
+    // ⚠ L'ABSENCE SE JUGE EN CHAQUE POINT BALAYÉ, jamais sur la classe du front : une averse
+    // d'été traverse la carte sans rien laisser, et l'écarter ferait chercher une accalmie
+    // qui, sous les épisodes (S9), n'existe presque plus.
+    const points: number[] = []
+    for (let tx = 0; tx < sonde.map.width; tx += 7) points.push(tx)
     let sec: number | null = null
     for (let c = GEL.MEMOIRE_CYCLES; c < 400 && sec === null; c++) {
       let vide = true
-      for (let k = 0; k < GEL.MEMOIRE_CYCLES; k++) if (estNeigeux(c - k, SCALE)) vide = false
+      for (let k = 0; k < GEL.MEMOIRE_CYCLES; k++) {
+        for (const tx of points) if (depose(sonde, c - k, SCALE, tx, TY)) vide = false
+      }
       if (vide) sec = c
     }
     expect(sec).not.toBeNull()
     const sim = simGel({ meteoActive: true })
     sim.tick = sec! * TICKS_PER_CYCLE + Math.floor(TICKS_PER_CYCLE / 2)
-    for (let tx = 0; tx < sim.map.width; tx += 7) expect(neigeAuSol(sim, tx, 5)).toBe(0)
+    for (const tx of points) expect(neigeAuSol(sim, tx, TY), `tx=${tx}`).toBe(0)
   })
 
   it('elle est PURE : deux appels, même réponse, et l’état ne bouge pas', () => {
     const c = cycleNeigeux(SCALE)!
-    const front = frontDuCycle(c, SCALE)!
+    const front = frontDuCycle(c, SCALE, sonde.jourDeDepart)!
     const sim = simGel({ meteoActive: true })
     sim.tick = front.endTick + 100
     const avant = snapshot(sim)
@@ -836,48 +1017,67 @@ describe('A10 — la neige tient après le front, puis fond (G7)', () => {
   })
 
   it('elle FOND plus vite au chaud qu’au froid — la fonte paie le temps ET la température', () => {
-    const c = cycleNeigeux(SCALE)!
-    const front = frontDuCycle(c, SCALE)!
-    // Deux mondes identiques, à deux actes différents : le même front, deux fontes.
-    const froid = simGel({ meteoActive: true })
-    const chaud = simGel({ meteoActive: true })
-    const ecart = Math.floor(TICKS_PER_CYCLE / 2)
-    froid.tick = front.endTick + ecart
-    chaud.tick = front.endTick + ecart
-    // On force les températures par l'ACTE : `frontDuCycle` ne dépend que du cycle, pas de
-    // `calendarScale`… si : on change donc la seule chose qui compte, le jour de saison vu.
-    //
-    // ON VISE L'ACTE, PAS UN MULTIPLICATEUR : « × 8 » tombait jadis « bien plus tard dans la
-    // saison », donc en acte III pour toujours. Depuis que l'année tourne (saison-sans-fin T2 —
-    // 84 jours, quatre actes), × 8 dépasse le jour 84 et atterrit AU PRINTEMPS DE L'AN 2, où il
-    // fait doux : le montage mesurait un monde qui n'existe plus. On cherche donc le plus petit
-    // facteur qui pose le même tick dans la Cendre (acte III) — et on l'AFFIRME.
-    //
-    // ⚠ LA RECHERCHE EST BORNÉE, et elle doit l'être : un `while` nu bouclait sans fin dès que
-    // le tick de départ changeait d'ordre de grandeur — les facteurs ENTIERS enjambent alors
-    // l'acte III d'un bond (un cycle tardif × un facteur entier saute d'un acte à l'autre).
-    // On balaie donc un continuum FIN, et l'on AFFIRME qu'on a trouvé.
-    // LES DEUX BOUTS SE CHOISISSENT, et c'est neuf : le cycle neigeux est désormais cherché
-    // sur le FROID (il tombe donc lui-même dans une saison froide), si bien que laisser
-    // `chaud` au calendrier nominal donnait DEUX mondes d'acte III — 40 contre 40, et la
-    // garde comparait un monde à lui-même. On pose donc explicitement l'acte de chacun.
-    // Balayage GÉOMÉTRIQUE : l'acte I d'un tick tardif demande un calendrier BEAUCOUP plus
-    // lent (facteur ≪ 1), l'acte III un peu plus rapide — un pas additif partant de 1 ne
-    // couvrirait jamais le premier.
-    const calendrierPourActe = (tick: number, acte: number): number => {
-      for (let f = 0.0005; f <= 500; f *= 1.002) {
-        if (actForDay(seasonDayAtTick(tick, SCALE * f)) === acte) return SCALE * f
+    /**
+     * DEUX POINTS, UN SEUL MONDE — et c'est ce qui rend la comparaison honnête.
+     *
+     * Le montage d'avant tordait le CALENDRIER pour poser le même tick à deux saisons
+     * différentes. Il ne le peut plus, pour deux raisons : l'élection des fronts dépend elle
+     * aussi de `calendarScale` (les épisodes se lisent sur le jour du bloc, S9), donc les deux
+     * mondes n'auraient plus la même météo — on comparerait deux ciels, pas deux fontes ; et la
+     * courbe du socle est SYMÉTRIQUE (S4 : mi-Éclosion et mi-Pluies valent toutes deux +8 °C),
+     * si bien que « l'acte I contre l'acte III » ne dit plus rien du froid.
+     *
+     * On fait donc varier le seul terme qui ne touche à rien d'autre : le BIOME. Les deux
+     * points sont pris SUR LA MÊME COORDONNÉE DE TRAVERSÉE — la bande les couvre au même tick
+     * et à la même intensité. C'est exactement ce que `FONTE_CYCLES` promet : « la même neige
+     * tient un jour sur le Névé et une heure au bord de l'eau ».
+     */
+    const sim = simGel({ meteoActive: true })
+    let choisi: MeteoFront | null = null
+    let doux = { tx: 0, ty: TY }
+    let gel = { tx: 0, ty: TY }
+    for (let c = GEL.MEMOIRE_CYCLES; c < 4000 && choisi === null; c++) {
+      const f = frontDuCycle(c, SCALE, sim.jourDeDepart)
+      if (!f) continue
+      const d = { tx: pointDe(f), ty: TY }
+      // Le second point se décale PERPENDICULAIREMENT à la traversée : la bande ne fait pas la
+      // différence entre les deux, seul le terrain la fait.
+      const g = f.edge <= 1
+        ? { tx: d.tx, ty: d.ty + 3 }
+        : { tx: d.tx * 2 > sim.map.width ? d.tx - 3 : d.tx + 3, ty: d.ty }
+      // LE NÉVÉ SE POSE AVANT DE JUGER : il est seize degrés plus froid, donc il retient de la
+      // neige que la plaine n'aurait pas gardée — l'isolement se juge sur les DEUX points.
+      const avant = terrainAt(sim.map, g.tx, g.ty)
+      setTile(sim.map, g.tx, g.ty, TERRAIN_SNOW) // BIOME_OFFSET −16 °C
+      let ok = depose(sim, c, SCALE, d.tx, d.ty) && depose(sim, c, SCALE, g.tx, g.ty)
+      for (let k = 1; k <= GEL.MEMOIRE_CYCLES && ok; k++) {
+        if (depose(sim, c - k, SCALE, d.tx, d.ty) || depose(sim, c - k, SCALE, g.tx, g.ty)) ok = false
       }
-      return 0
+      if (ok) {
+        choisi = f
+        doux = d
+        gel = g
+      } else setTile(sim.map, g.tx, g.ty, avant)
     }
-    froid.calendarScale = calendrierPourActe(froid.tick, 3)
-    chaud.calendarScale = calendrierPourActe(chaud.tick, 1)
-    expect(froid.calendarScale, 'aucun calendrier ne place ce tick en acte III').toBeGreaterThan(0)
-    expect(chaud.calendarScale, 'aucun calendrier ne place ce tick en acte I').toBeGreaterThan(0)
-    expect(actForDay(seasonDayAtTick(froid.tick, froid.calendarScale))).toBe(3)
-    expect(actForDay(seasonDayAtTick(chaud.tick, chaud.calendarScale))).toBe(1)
-    expect(baselineTemperature(froid, 4, 5)).toBeLessThan(baselineTemperature(chaud, 4, 5))
-    expect(neigeAuSol(froid, 4, 5)).toBeGreaterThanOrEqual(neigeAuSol(chaud, 4, 5))
+    expect(choisi, 'aucun cycle ne dépose de la neige sur les deux points à la fois').not.toBeNull()
+    const front = choisi!
+
+    // LE DÉPÔT DE RÉFÉRENCE, à la sortie de la bande.
+    sim.tick = front.endTick
+    const depotDoux = neigeAuSol(sim, doux.tx, doux.ty)
+    const depotGel = neigeAuSol(sim, gel.tx, gel.ty)
+    expect(depotDoux).toBeGreaterThan(0)
+    expect(depotGel).toBeGreaterThan(0)
+
+    // UN DEMI-CYCLE PLUS TARD. On compare la PART FONDUE et non ce qui reste : les deux points
+    // n'ont pas reçu le même dépôt (le Névé est sous la limite de neige quand la plaine ne
+    // l'est pas encore), et comparer des restes confondrait la chute avec la fonte.
+    sim.tick = front.endTick + Math.floor(TICKS_PER_CYCLE / 2)
+    expect(baselineTemperature(sim, gel.tx, gel.ty))
+      .toBeLessThan(baselineTemperature(sim, doux.tx, doux.ty))
+    const fonduDoux = (depotDoux - neigeAuSol(sim, doux.tx, doux.ty)) / depotDoux
+    const fonduGel = (depotGel - neigeAuSol(sim, gel.tx, gel.ty)) / depotGel
+    expect(fonduGel).toBeLessThan(fonduDoux)
   })
 })
 
@@ -889,31 +1089,49 @@ describe('A11 — le dégel a de l’hystérésis, et la glace ne clignote pas (
   it('BANDE MORTE : au-dessus du seuil mais sous seuil+HYSTERESIS, la glace TIENT', () => {
     /**
      * LE MONTAGE, ET POURQUOI IL EST COMME ÇA. Il faut un point dont la température MONTE
-     * continûment à travers la bande morte du lac — donc la queue d'un front qui s'éloigne.
+     * continûment à travers la bande morte du lac — donc LA QUEUE d'un front qui s'éloigne.
      * Trois contraintes se combinent :
-     *  · un ORAGE sur un acte III de JOUR (40) : le monde y est sous la limite de neige, donc
-     *    le refroidissement éolien SATURE (R12) et le front mord de 55 — T = 40 − 55 × intensité
-     *    franchit `[20, 25)` pour une intensité dans `(0,27 ; 0,36]`, en pleine RAMPE. Une
-     *    pluie (COLD 10) ne descend qu'à 30 et ne toucherait jamais la bande morte ;
-     *  · une carte LARGE (400) : la rampe d'un orage d'acte III fait 240 tuiles, et c'est
-     *    elle qu'on balaie — le cœur, lui, écrase tout à 0 ;
-     *  · on n'observe QUE la phase de jour — `TRAVERSEE_TICKS` vaut exactement une phase, si
-     *    bien qu'une fenêtre entière traverse toujours un crépuscule (on mesurerait la nuit).
+     *  · un ORAGE au GRAND FROID, DE JOUR (−2 °C) : le monde y est sous la limite de neige,
+     *    donc le refroidissement éolien SATURE (R12) et le front mord de 22 — T = −2 − 22 ×
+     *    intensité franchit `[−10, −8)` pour une intensité dans `(0,27 ; 0,36]`, en pleine
+     *    RAMPE. Une pluie (COLD 4) ne descend qu'à −6 et ne toucherait jamais la bande morte ;
+     *  · une carte LARGE (400) : la rampe d'un orage d'hiver fait 240 tuiles, et c'est elle
+     *    qu'on balaie — le cœur, lui, écrase tout au plancher ;
+     *  · on n'observe QUE le PLEIN JOUR. La fenêtre d'un front d'hiver (les trois quarts du
+     *    cycle, S8) est désormais PLUS LONGUE que la journée (25 920 ticks) : elle ne peut plus
+     *    tenir dedans. On CALE donc le front pour que sa queue quitte le point à la fin de la
+     *    fenêtre d'observation — son entrée dans le cycle d'avant, ce que le calendrier permet
+     *    (la veille est un jour de Grand Froid, même géométrie) — au lieu de suivre passivement
+     *    une traversée qui déborderait sur la nuit.
      */
     const map = createEmptyMap(400, 12, TERRAIN_GRASS)
     for (let tx = 0; tx < 400; tx++) setTile(map, tx, 5, TERRAIN_DEEP_WATER)
     const sim = simGel({ map, meteoActive: true })
-    const aube = (JOUR_ACTE[2] - 1) * TICKS_PER_CYCLE
-    const front = poserFront(sim, 'orage', 0, aube)
-    void front
+    const aube = aubeDe(GRAND_FROID)
+    const jourTicks = dayTicksPourJour(GRAND_FROID)
+    // On saute les deux LISIÈRES du jour : depuis la rampe (`partDeNuit`), l'écart de nuit y
+    // monte et descend, et le froid cesse d'être monotone — on veut le PLEIN jour, pas ses
+    // bords nocturnes.
+    const debut = aube + NIGHT_RAMP_TICKS + 200
+    const fin = aube + jourTicks - NIGHT_RAMP_TICKS - 200
 
     const POINT = 100
+    const fenetre = fenetreDe({ type: 'orage', day: GRAND_FROID })
+    const largeur = largeurDe({ type: 'orage', day: GRAND_FROID })
+    // La QUEUE (`lo`) atteint POINT quand l'avancée vaut `POINT + largeur` — on pose ce
+    // moment-là à la FIN du balayage, si bien que la température y monte tout du long.
+    const uSortie = (POINT + largeur) / (map.width + largeur)
+    const front = poserFront(sim, 'orage', 0, Math.round(fin - uSortie * fenetre))
+    // LES PRÉMISSES DU CALAGE : la géométrie posée est bien celle du Grand Froid (la veille en
+    // est un jour, donc `poserFront` lit la même saison), et le balayage tient en plein jour.
+    expect(front.endTick - front.startTick).toBe(fenetre)
+    expect(largeurDe(front)).toBe(largeur)
+    expect(gameTimeAt(sim, debut).nuit).toBe(0)
+    expect(gameTimeAt(sim, fin).nuit).toBe(0)
+
     let vuDecisif = 0
     let vuBandeMorte = 0
-    // On saute les deux LISIÈRES du jour : depuis la rampe (`partDeNuit`), `NIGHT_COLD` y
-    // monte et descend, et le froid cesse d'être monotone — la promesse de la note ci-dessus
-    // (« on n'observe QUE la phase de jour ») veut le PLEIN jour, pas ses bords nocturnes.
-    for (let t = aube + NIGHT_RAMP_TICKS + 200; t < aube + DAY_TICKS_PER_CYCLE - NIGHT_RAMP_TICKS - 200; t += 10) {
+    for (let t = debut; t < fin; t += 10) {
       sim.tick = t
       const temp = baselineTemperature(sim, POINT, 5)
       if (temp < GEL.SEUIL_PROFOND) {
@@ -935,7 +1153,7 @@ describe('A11 — le dégel a de l’hystérésis, et la glace ne clignote pas (
     // Le domaine EXHAUSTIF de la traversée : chaque tick de la fenêtre, du premier au
     // dernier — la température monte puis descend, et la glace n'a droit qu'à un aller-retour.
     const sim = simGel({ meteoActive: true })
-    const front = poserFront(sim, 'orage', 0, tickDe(JOUR_ACTE[1], false))
+    const front = poserFront(sim, 'orage', 0, tickDe(PLUIES, false))
     for (const [tx, ty] of [[RIVIERE_X0, 6], [RIVIERE_X0 + 1, 2], [GUE_X, 9]] as const) {
       let bascules = 0
       let precedent: boolean | null = null
@@ -952,12 +1170,16 @@ describe('A11 — le dégel a de l’hystérésis, et la glace ne clignote pas (
 
   it('la borne bon marché est CONSERVATRICE : `gelPossible` faux ⇒ rien n’est gelé', () => {
     const sim = simGel({ meteoActive: true })
-    for (const jour of [1, 10, 21, 22, 30, 42, 43, 50, 60]) {
+    // LES BORNES ET LES CŒURS DES QUATRE SAISONS — l'ancien balayage listait les frontières
+    // d'actes de 21 jours, qui ne désignent plus rien sous la cadence de 30 (S1).
+    for (const jour of [1, ECLOSION, BALANCE.ACT_DAYS, BALANCE.ACT_DAYS + 1, ARDEUR,
+      2 * BALANCE.ACT_DAYS, 2 * BALANCE.ACT_DAYS + 1, PLUIES, 3 * BALANCE.ACT_DAYS,
+      3 * BALANCE.ACT_DAYS + 1, GRAND_FROID, YEAR_DAYS]) {
       for (const nuit of [false, true]) {
         for (const type of [null, 'pluie', 'orage', 'brouillard'] as const) {
           sim.tick = tickDe(jour, nuit)
           if (type === null) sim.meteo = null
-          else poserFront(sim, type, 0, sim.tick - Math.floor(METEO.TRAVERSEE_TICKS / 2))
+          else frontSurLeTick(sim, type, 0)
           // Les régimes où le gel EST possible ne sont pas jugés ici — c'est la table de G2
           // et le balayage de A4 qui les couvrent. Ce `continue` ne cache donc rien : la
           // seule chose affirmée ici est l'implication « borne fausse ⇒ rien de gelé ».
@@ -984,7 +1206,7 @@ describe('A12 — le dégel ne laisse personne emmuré (G8bis)', () => {
 
   it('avatar, PNJ et monstre pris au milieu du lac se retrouvent sur du marchable', () => {
     const sim = simGel()
-    sim.tick = tickDe(JOUR_ACTE[2], true) // la rivière a pris
+    sim.tick = tickDe(GRAND_FROID, true) // la rivière a pris
     const milieu = { x: RIVIERE_X0 + 1.5, y: 6.5 }
     expect(estGele(sim, RIVIERE_X0 + 1, 6)).toBe(true)
 
@@ -992,8 +1214,8 @@ describe('A12 — le dégel ne laisse personne emmuré (G8bis)', () => {
     const bete = spawnMonster(sim, 'wolf', milieu.x, milieu.y + 1)
     const corps = [joueur, bete]
 
-    // LE DÉGEL : le jour se lève sur l'acte III (40 ≥ SEUIL_PROFOND + HYSTERESIS).
-    sim.tick = tickDe(JOUR_ACTE[2], false)
+    // LE DÉGEL : le jour se lève sur le Grand Froid (−2 ≥ SEUIL_PROFOND + HYSTERESIS = −8).
+    sim.tick = tickDe(GRAND_FROID, false)
     expect(estGele(sim, RIVIERE_X0 + 1, 6)).toBe(false) // la prémisse : la glace a bien fondu
     step(sim, [])
     drainEvents(sim)
@@ -1007,8 +1229,8 @@ describe('A12 — le dégel ne laisse personne emmuré (G8bis)', () => {
 
   it('idem quand un front tiède efface le gel qu’un blizzard avait posé', () => {
     const sim = simGel({ meteoActive: true })
-    sim.tick = tickDe(JOUR_ACTE[1], true) // acte II nuit : 35 — le lac ne prend PAS seul
-    const front = poserFront(sim, 'orage', 0, sim.tick - Math.floor(METEO.TRAVERSEE_TICKS / 2))
+    sim.tick = tickDe(PLUIES, true) // les Pluies, nuit : −2 °C — le lac ne prend PAS seul
+    const front = frontSurLeTick(sim, 'orage', 0)
     expect(estGele(sim, RIVIERE_X0 + 1, 6)).toBe(true) // le blizzard l'a posé
 
     const joueur = spawnEntity(sim, RIVIERE_X0 + 1.5, 6.5)
@@ -1032,9 +1254,9 @@ describe('A12 — le dégel ne laisse personne emmuré (G8bis)', () => {
      */
     const monde = (surLaGlace: boolean): SimState => {
       const sim = simGel()
-      sim.tick = tickDe(JOUR_ACTE[2], true)
+      sim.tick = tickDe(GRAND_FROID, true)
       spawnEntity(sim, surLaGlace ? RIVIERE_X0 + 1.5 : 5.5, 6.5)
-      sim.tick = tickDe(JOUR_ACTE[2], false) // le dégel
+      sim.tick = tickDe(GRAND_FROID, false) // le dégel
       step(sim, [])
       drainEvents(sim)
       return sim
@@ -1048,10 +1270,10 @@ describe('A12 — le dégel ne laisse personne emmuré (G8bis)', () => {
 
   it('la glace ne CÈDE pas : personne ne perd de PV à en sortir', () => {
     const sim = simGel()
-    sim.tick = tickDe(JOUR_ACTE[2], true)
+    sim.tick = tickDe(GRAND_FROID, true)
     const joueur = spawnEntity(sim, RIVIERE_X0 + 1.5, 6.5)
     const pvAvant = sim.entities.find((e) => e.id === joueur)!.hp
-    sim.tick = tickDe(JOUR_ACTE[2], false)
+    sim.tick = tickDe(GRAND_FROID, false)
     step(sim, [])
     drainEvents(sim)
     expect(sim.entities.find((e) => e.id === joueur)!.hp).toBe(pvAvant)
@@ -1066,7 +1288,7 @@ describe('`climatMaximal` est CONSERVATRICE (la borne O(1) du gel de la flore)',
   /**
    * `floreEntierementGelee` est un COURT-CIRCUIT DUR : vrai, `floreGelee` rend vrai sans même
    * lire la carte. Il commande la cueillette, la repousse et le semis — c'est-à-dire, en
-   * acte III, l'économie entière.
+   * au Grand Froid, l'économie entière.
    *
    * Or sa borne recopie la formule de `froidDuMonde` en majorant le biome, et la marge est
    * EXACTEMENT ZÉRO : sur une tuile de forêt sans front ni nappe, `climatMaximal` vaut très
@@ -1107,13 +1329,16 @@ describe('`climatMaximal` est CONSERVATRICE (la borne O(1) du gel de la flore)',
     const fautes: string[] = []
     for (const terrain of terrains) {
       setTile(sim.map, PROBE_X, PROBE_Y, terrain)
-      for (const jour of [1, 21, 22, 42, 43, 60]) {
+      // Les quatre cœurs de saison et les quatre bords : la courbe y prend ses extrêmes ET
+      // ses valeurs de raccord (les frontières d'actes de 21 jours d'avant ne disent plus rien).
+      for (const jour of [1, ECLOSION, BALANCE.ACT_DAYS + 1, ARDEUR,
+        2 * BALANCE.ACT_DAYS + 1, PLUIES, 3 * BALANCE.ACT_DAYS + 1, GRAND_FROID, YEAR_DAYS]) {
         for (const nuit of [false, true]) {
           for (const meteo of [null, 'pluie', 'orage', 'brouillard'] as const) {
             for (const brume of [false, true]) {
               sim.tick = tickDe(jour, nuit)
               if (meteo === null) sim.meteo = null
-              else poserFront(sim, meteo, 0, sim.tick - Math.floor(METEO.TRAVERSEE_TICKS / 2))
+              else frontSurLeTick(sim, meteo, 0)
               if (brume) nappePartout(sim)
               else sim.brume = null
               const borne = climatMaximal(sim, sim.tick)
@@ -1138,7 +1363,7 @@ describe('`climatMaximal` est CONSERVATRICE (la borne O(1) du gel de la flore)',
     setTile(sim.map, PROBE_X, PROBE_Y, 3) // forêt : le biome le plus doux (BIOME_MAX)
     sim.meteo = null
     sim.brume = null
-    sim.tick = tickDe(1, false)
+    sim.tick = tickDe(ARDEUR, false)
     expect(climatMaximal(sim, sim.tick)).toBe(climatFlore(sim, PROBE_X, PROBE_Y, sim.tick))
   })
 })

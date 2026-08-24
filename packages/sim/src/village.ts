@@ -31,7 +31,14 @@ import {
   type ComponentType,
   type WallMaterial,
 } from './balance'
-import { isCropMature, isPlot } from './agriculture'
+import {
+  cultureDe,
+  cultureDeLaGraine,
+  fenetreOuverte,
+  isCropMature,
+  isPlot,
+  type CultureId,
+} from './agriculture'
 import { poseLibre, rayonEmprise } from './defriche'
 import { secouerLeSol } from './sens'
 import {
@@ -69,7 +76,7 @@ import { estIncassable, matiereChiffre, matieresDe, parPiece, piece } from './pi
 import { terrainAt, zoneAt } from './map'
 import { isSheltered } from './temperature'
 import { floreGelee } from './gel'
-import { actForDay, seasonDayAtTick } from './time'
+import { actForDay, jourDeSaison } from './time'
 import type { SimState } from './sim'
 
 /** Sentinelle « jamais » pour les champs en ticks (finie : JSON-sérialisable). */
@@ -146,6 +153,9 @@ export interface Structure {
    *  Absent = parcelle vide. La maturité se DÉRIVE par arithmétique (`tick − plantedAt`), sans
    *  entité ni PRNG (voir `agriculture.ts`). `number` → JSON-sérialisable comme le reste. */
   plantedAt?: number
+  /** LA CULTURE en terre (spec `saisons.md` S16) — une par saison. Absente = la culture
+   *  d'hiver (celle qui existait seule avant la refonte) : une vieille parcelle se relit. */
+  culture?: CultureId
   /** COMBUSTIBLE d'un feu LIBRE (spec feu-station) — un inventaire de BÛCHES (3 cases), géré comme
    *  un coffre : dépôt/retrait/déplacement libres (`transfer` zone `fuel`). Le feu en brûle UNE à la
    *  fois, tirée de la case `burnSlot` (`burnAt` = tick d'allumage). Feu libre (villageId 0)
@@ -781,7 +791,7 @@ function fallToRuin(state: SimState, villageId: number): void {
  * `feed_fire`) et ne se dégrade jamais. Déterministe : aucun tirage, mêmes opérations.
  */
 export function advanceUpkeep(state: SimState): void {
-  const act = actForDay(seasonDayAtTick(state.tick, state.calendarScale))
+  const act = actForDay(jourDeSaison(state))
   const drain = FIRE_UPKEEP.DRAIN_PER_TICK * FIRE_UPKEEP.ACT_FACTOR(act)
   // LES BUVEURS DU FOYER (décision ⑯) — relevés une fois si un cendreux existe. Le siège
   // du Feu de village a enfin des dents : une horde arrivée au Foyer en DRAINE le stock,
@@ -1275,7 +1285,23 @@ export function applyVillageAction(state: SimState, actorId: number, action: Vil
       }
       const range = BALANCE.INTERACT_RANGE
       if (distSq(actor.x, actor.y, s.tx + 0.5, s.ty + 0.5) > range * range) return reject('trop loin')
-      if (!removeItems(actor.inventory, { graine: 1 })) return reject('il faut une graine')
+      // S16 — UNE PLANTE PAR SAISON : on sème la graine qu'on a, si sa FENÊTRE est ouverte.
+      // Hors fenêtre, la graine n'est PAS consommée — elle attend son heure, et c'est ce qui
+      // rend la règle lisible sans être punitive. La serre affranchit de la fenêtre.
+      const jour = jourDeSaison(state)
+      let semee: CultureId | null = null
+      for (const slot of actor.inventory) {
+        if (slot === null || slot === undefined) continue
+        const c = cultureDeLaGraine(slot.item)
+        if (c !== null && fenetreOuverte(c, jour, s.type)) {
+          semee = c
+          break
+        }
+      }
+      if (semee === null) return reject('aucune graine de saison — il faut sa fenêtre, ou une serre')
+      // Le retrait ne peut pas échouer : `semee` sort de l'inventaire qu'on vient de balayer.
+      removeItems(actor.inventory, { [AGRICULTURE.CULTURES[semee].graine]: 1 })
+      s.culture = semee
       s.plantedAt = state.tick
       emitEvent(state, { type: 'crop_planted', tick: state.tick, structureId: s.id, byEntityId: actorId })
       return
@@ -1283,7 +1309,8 @@ export function applyVillageAction(state: SimState, actorId: number, action: Vil
 
     /**
      * RÉCOLTER (agriculture voie A) : une parcelle MÛRE (dérivée du tick) de son village, à
-     * portée → verse `AGRICULTURE.YIELD` légumes et efface `plantedAt` (replantable).
+     * portée → verse le rendement de SA CULTURE (S16), plus une graine de la même espèce, et
+     * efface `plantedAt` (replantable).
      */
     case 'harvest_crop': {
       if (state.tick < actor.cooldownUntil) return reject('trop tôt')
@@ -1294,9 +1321,16 @@ export function applyVillageAction(state: SimState, actorId: number, action: Vil
       if (distSq(actor.x, actor.y, s.tx + 0.5, s.ty + 0.5) > range * range) return reject('trop loin')
       if (!isCropMature(s, state.tick)) return reject('pas encore mûr')
       // Le TERROIR (meilleur palier) rend plus que la parcelle/serre.
-      const gain = s.type === 'terroir' ? AGRICULTURE.YIELD_TERROIR : AGRICULTURE.YIELD
-      addItems(actor.inventory, { legume: gain })
+      // S16 — chaque culture rend SON fruit, et **une graine de sa propre espèce** : la boucle
+      // se referme sans repasser par les baies, et l'on GARDE ses graines d'une saison sur
+      // l'autre. Le terroir reste le meilleur palier (il majore le rendement de la culture).
+      const culture = cultureDe(s)
+      const def = AGRICULTURE.CULTURES[culture]
+      const bonus = s.type === 'terroir' ? AGRICULTURE.BONUS_TERROIR : 0
+      const gain = def.rendement + bonus
+      addItems(actor.inventory, { [def.recolte]: gain, [def.graine]: 1 })
       delete s.plantedAt // parcelle de nouveau vide (replantable)
+      delete s.culture
       actor.cooldownUntil = state.tick + BALANCE.GATHER_COOLDOWN_TICKS
       emitEvent(state, { type: 'crop_harvested', tick: state.tick, structureId: s.id, byEntityId: actorId, yield: gain })
       return

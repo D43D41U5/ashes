@@ -55,9 +55,10 @@
  *     --lib ES2022,DOM tools/empreinte-sim.mts
  */
 import {
+  BALANCE,
   MONDE, MONDE_JOUE, createSim, step, snapshot, drainEvents, placeZoneNodes, placeHuntingGrounds,
   spawnPoiMonsters, spawnEntity, emplacementsDeVillage, pointsDeSpawn, generateZonedTerrain, nidsAMonstre,
-  foundNpcVillage, FAUNA, SLOTS, DAY_TICKS_PER_CYCLE, addItems,
+  foundNpcVillage, FAUNA, SLOTS, dayTicksPourJour, addItems,
   type SimState, type MoveInput,
 } from '../packages/sim/src/index'
 import { writeFileSync } from 'fs'
@@ -153,9 +154,9 @@ const REGIMES = [
   { nom: 'jour', offset: 0, ticks: 4000, agressif: false },
   // 300 ticks avant le crépuscule : le run FRANCHIT la nuit (night_started, chasse nocturne,
   // prédateurs, hordes) au lieu de mourir avant de l'atteindre.
-  { nom: 'nuit', offset: DAY_TICKS_PER_CYCLE - 300, ticks: 4000, agressif: false },
+  { nom: 'nuit', offset: dayTicksPourJour(BALANCE.JOUR_DE_DEPART) - 300, ticks: 4000, agressif: false },
   { nom: 'combat', offset: 0, ticks: 4000, agressif: true },
-  { nom: 'combat-nuit', offset: DAY_TICKS_PER_CYCLE - 300, ticks: 4000, agressif: true },
+  { nom: 'combat-nuit', offset: dayTicksPourJour(BALANCE.JOUR_DE_DEPART) - 300, ticks: 4000, agressif: true },
 ]
 const SEEDS = [2026, 7, 11]
 const JALONS = [500, 1500, 2500, 4000]

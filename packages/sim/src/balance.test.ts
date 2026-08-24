@@ -95,7 +95,11 @@ describe('les tables de balance se répondent (pas de trou silencieux)', () => {
    * tranche pas : je le NOMME ici pour qu'il cesse d'être invisible. Retirer `legume` de
    * cette liste dès qu'il a sa valeur est le geste qui referme le trou.
    */
-  const IMPERISSABLES_ASSUMES: readonly ItemId[] = ['legume']
+  // `legume` : la culture d'hiver, sèche et dure — elle se garde, c'est son métier.
+  // `tubercule` (spec `saisons.md` S16) : **le seul des quatre à traverser le Grand Froid**, et
+  // c'est tout son intérêt — ce qu'on sème aux Pluies est ce qu'on mangera en plein hiver. La
+  // tension vient de là et de nulle part ailleurs : aucune règle de conservation n'a été écrite.
+  const IMPERISSABLES_ASSUMES: readonly ItemId[] = ['legume', 'tubercule']
 
   it('tout aliment a une durée de péremption (hors exemption nommée)', () => {
     const sansPeremption = (Object.keys(FOOD_VALUES) as ItemId[]).filter((i) => SPOIL_CYCLES[i] === undefined)

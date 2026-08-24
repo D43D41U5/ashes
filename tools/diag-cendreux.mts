@@ -30,7 +30,7 @@ import { construireMondeDuBanc } from '../packages/sim/src/scenario'
 import { spawnEntity, step, type MoveInput, type PlayerAction, type SimState } from '../packages/sim/src/sim'
 import { walkableSpawn } from '../packages/sim/src/connectivity'
 import { BALANCE } from '../packages/sim/src/balance'
-import { cycleOffsetForStartHour, DAY_TICKS_PER_CYCLE, getGameTime, TICKS_PER_CYCLE, TICKS_PER_SEASON_DAY } from '../packages/sim/src/time'
+import { cycleOffsetForStartHour, dayTicksPourJour, getGameTime, TICKS_PER_CYCLE, TICKS_PER_SEASON_DAY } from '../packages/sim/src/time'
 import { densiteDesMorts } from '../packages/sim/src/morts'
 import { plafondGlobal } from '../packages/sim/src/monsters'
 import { deserializeSim, serializeSim } from '../packages/sim/src/persistence'
@@ -47,7 +47,7 @@ const SEEDS = arg('seeds', '2026,77').split(',').map(Number)
 const JOURS = arg('jours', '10,30,50').split(',').map(Number)
 const MINUTES = Number(arg('minutes', '18'))
 const COMPORTEMENTS = arg('comportements', TOUS.join(',')).split(',') as Comportement[]
-const NUIT_TICKS = Math.min(TICKS_PER_CYCLE - DAY_TICKS_PER_CYCLE, Math.round(MINUTES * 60 * BALANCE.TICK_RATE_HZ))
+const NUIT_TICKS = Math.min(TICKS_PER_CYCLE - dayTicksPourJour(BALANCE.JOUR_DE_DEPART), Math.round(MINUTES * 60 * BALANCE.TICK_RATE_HZ))
 const PV_INFINIS = 1000
 const EVENTS = process.argv.includes('--events')
 

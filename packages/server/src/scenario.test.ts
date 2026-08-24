@@ -4,7 +4,7 @@ import {
   buildPoiStructures,
   createSim,
   estCendre,
-  seasonDayAtTick,
+  jourDeSaison,
   spawnPoiMonsters,
   TICKS_PER_SEASON_DAY,
   zoneSlugAt,
@@ -91,8 +91,12 @@ describe('la vallée LAN — le monde de production', () => {
    */
   const jour = (d: number): number => d * TICKS_PER_SEASON_DAY * monde.sim.calendarScale
 
-  it("l'acte I ne déplace personne — le comportement de L1 est intact", () => {
-    for (const d of [0, 5, 15, 21]) {
+  // RÉANCRÉ (S1/S11) : la Cendre mord au GRAND FROID (j91-120 de l'année), plus à partir de
+  // l'acte II. ⚠ `jour(d)` compte DEPUIS L'OUVERTURE du monde, qui tombe au jour 51 (S2) : le
+  // front dort donc tant que `51 + d < 91`, c'est-à-dire jusqu'à d = 39. Au-delà on mesurerait
+  // un front qui a mordu — ce que le test suivant, lui, couvre exprès.
+  it('hors du Grand Froid, la Cendre ne déplace personne — le comportement de L1 est intact', () => {
+    for (const d of [0, 5, 15, 21, 39]) {
       monde.sim.tick = jour(d)
       expect(baseDeNaissance(monde), `jour ${d}`).toEqual(monde.base)
     }
@@ -103,7 +107,7 @@ describe('la vallée LAN — le monde de production', () => {
     expect(cendreMax).toBeGreaterThan(0) // la carte porte bien une Cendrière
     for (let d = 0; d <= 60; d += 2) {
       monde.sim.tick = jour(d)
-      const front = avanceeDuFront(seasonDayAtTick(monde.sim.tick, monde.sim.calendarScale), cendreMax)
+      const front = avanceeDuFront(jourDeSaison(monde.sim), cendreMax)
       const b = baseDeNaissance(monde)
       expect(estCendre(monde.sim.map, b.tx, b.ty, front), `jour ${d} : né dans la cendre en (${b.tx},${b.ty})`).toBe(false)
       // …et l'anneau serré autour d'elle reste marchable : on ne naît pas dans un mur.
@@ -132,7 +136,7 @@ describe('la vallée LAN — le monde de production', () => {
     try {
       champ[i] = 0 // cette tuile part au premier souffle
       monde.sim.tick = jour(40) // acte III : le front est largement ouvert
-      const front = avanceeDuFront(seasonDayAtTick(monde.sim.tick, monde.sim.calendarScale), monde.carte.map.cendreMax!)
+      const front = avanceeDuFront(jourDeSaison(monde.sim), monde.carte.map.cendreMax!)
       expect(estCendre(monde.carte.map, monde.base.tx, monde.base.ty, front)).toBe(true) // la base a bien brûlé
       const b = baseDeNaissance(monde)
       expect(b, 'la base aurait dû être abandonnée').not.toEqual(monde.base)

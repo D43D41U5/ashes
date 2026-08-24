@@ -17,7 +17,7 @@
 import { construireMondeDuBanc } from '../packages/sim/src/scenario'
 import { drainEvents } from '../packages/sim/src/events'
 import { step } from '../packages/sim/src/sim'
-import { seasonDayAtTick, TICKS_PER_CYCLE } from '../packages/sim/src/time'
+import { jourDeSaison, TICKS_PER_CYCLE } from '../packages/sim/src/time'
 
 const joueurs = Number(process.argv[2] ?? 8)
 const jours = Number(process.argv[3] ?? 1)
@@ -54,6 +54,6 @@ for (let k = 0; k < tranches; k++) {
       `${String(sim.entities.length).padStart(10)}${String(sim.monsters.length).padStart(10)}` +
       `${String(corps).padStart(7)}${String(sim.structures.length).padStart(12)}` +
       `${String(events.length).padStart(10)}` +
-      `${String(seasonDayAtTick(sim.tick, sim.calendarScale)).padStart(17)}`,
+      `${String(jourDeSaison(sim)).padStart(17)}`,
   )
 }

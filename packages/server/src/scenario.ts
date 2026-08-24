@@ -8,6 +8,7 @@
  * point. Duplication mineure et assumée : le scénario appartient à l'hôte.
  */
 import {
+  BALANCE,
   avanceeDuFront,
   buildPoiStructures,
   createSim,
@@ -23,7 +24,7 @@ import {
   placeHuntingGrounds,
   pointsDeSpawn,
   placeZoneNodes,
-  seasonDayAtTick,
+  jourDeSaison,
   spawnPoiMonsters,
   type SimState,
   type WorldMap,
@@ -88,6 +89,7 @@ export function createZone(): LanWorld {
   const sim = createSim(LAN_SEED, {
     map,
     calendarScale: LAN_CALENDAR_SCALE,
+    jourDeDepart: BALANCE.JOUR_DE_DEPART, // le monde ouvre à la fin de l'Ardeur (S2)
     nodes,
     cycleOffset: cycleOffsetForStartHour(LAN_START_HOUR),
     faunaCap: FAUNA.CAP,
@@ -135,7 +137,7 @@ export function baseDeNaissance(world: LanWorld): { tx: number; ty: number } {
   const carteMap = world.carte.map
   const cendreMax = carteMap.cendreMax
   if (cendreMax === undefined) return world.base // une carte sans Cendrière : rien ne brûle
-  const front = avanceeDuFront(seasonDayAtTick(world.sim.tick, world.sim.calendarScale), cendreMax)
+  const front = avanceeDuFront(jourDeSaison(world.sim), cendreMax)
   if (front <= 0) return world.base // l'acte I : la Cendrière reste chez elle
   // La base d'origine tient-elle encore ? On ne déménage personne pour rien.
   if (!estCendre(carteMap, world.base.tx, world.base.ty, front)) return world.base

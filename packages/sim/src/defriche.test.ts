@@ -13,7 +13,7 @@
  * pas celui du palier courant (D4).
  */
 import { describe, expect, it } from 'vitest'
-import { BALANCE, NODE_DEFS, TERRAIN_GRASS } from './balance'
+import { BALANCE, NODE_DEFS, SEASON, TERRAIN_GRASS } from './balance'
 import { advanceEconomy, nodeAt, type ResourceNode } from './economy'
 import { dansEmprise, noeudDefriche, poseLibre, rayonEmprise } from './defriche'
 import { countOf } from './items'
@@ -25,8 +25,17 @@ let idc = 900
 function gabarit(type: ResourceNode['type'], tx: number, ty: number): ResourceNode {
   return { id: ++idc, type, tx, ty, stock: NODE_DEFS[type].stock, regrowAt: 0 }
 }
+/** LE MONDE OUVRE LÀ OÙ LE VRAI JEU OUVRE (spec `saisons.md` S2) : la fin de l'Ardeur, la
+ *  seule saison où rien ne gèle — ni le jour ni la nuit. Le jour 1 est désormais une Éclosion
+ *  ENCORE PRISE (S4), où un buisson refuse la cueillette (« la plante est gelée ») et où la
+ *  repousse d'un nœud vivant n'aboutit pas : le défrichement s'y serait mesuré sur le froid,
+ *  qui a sa propre suite (`flore-froid.test.ts`). */
 function makeSim(nodes: ResourceNode[]): SimState {
-  return createSim(11, { map: createEmptyMap(120, 120, TERRAIN_GRASS), nodes })
+  return createSim(11, {
+    map: createEmptyMap(120, 120, TERRAIN_GRASS),
+    nodes,
+    jourDeDepart: BALANCE.JOUR_DE_DEPART,
+  })
 }
 /** `createSim` COPIE les nœuds (l'état est JSON-sérialisable) : le littéral du test n'est
  *  qu'un GABARIT. Tout ce qu'on inspecte doit être le nœud VIVANT de l'état — sans ça on
@@ -59,9 +68,12 @@ function vider(s: SimState, id: number, n: ResourceNode): number {
   }
   return coups
 }
-/** Avance l'économie bien au-delà de la plus longue repousse possible. */
+/** Avance l'économie bien au-delà de la plus longue repousse possible. Le facteur de saison
+ *  se lit sur le PLAFOND de sa loi (S13 lui a donné quatre paliers : la pire saison n'est plus
+ *  celle qu'on croit) — l'écrire en dur, c'était s'engager à le suivre à la main. */
 function laisserLeTempsDeRepousser(s: SimState): void {
-  const max = Math.ceil(BALANCE.NODE_REGROW_TICKS * 3 * (1 + BALANCE.DEPLETION_REGROW_PENALTY * BALANCE.DEPLETION_MAX))
+  const pire = SEASON.REGROW_ACT_FACTOR.plafond
+  const max = Math.ceil(BALANCE.NODE_REGROW_TICKS * pire * (1 + BALANCE.DEPLETION_REGROW_PENALTY * BALANCE.DEPLETION_MAX))
   for (let i = 0; i <= max; i++) {
     s.tick += 1
     advanceEconomy(s)

@@ -15,8 +15,9 @@
  * déplacement, `overlapsBlocking`) répondent « ce point est-il dans un
  * obstacle ? ». Un arbre bloque sa tuile pour l'A* et son seul tronc pour l'avatar.
  */
-import { BALANCE, NODE_DEFS, TERRAIN_DEEP_WATER, TERRAINS, TICK_DT_S } from './balance'
+import { BALANCE, NODE_DEFS, TERRAIN_DEEP_WATER, TERRAIN_SHALLOW_WATER, TERRAINS, TICK_DT_S } from './balance'
 import { nodeAt, treeJitter, type ResourceNode } from './economy'
+import { estGueBloque } from './eau'
 import { estGele, gelPossible, vitesseSurGlace, vitesseSurNeige } from './gel'
 import { EDGE_E, EDGE_N, EDGE_O, EDGE_S } from './geometry'
 import { MARCHABLE, terrainAt, type WorldMap } from './map'
@@ -157,7 +158,14 @@ function terrainBloque(world: MoveWorld, tx: number, ty: number): boolean {
   // chemin est le plus chaud de la collision : `blockedSubAt` l'emprunte une fois par
   // SOUS-TUILE balayée.
   const t = terrainAt(world.map, tx, ty)
-  if (MARCHABLE[t] === 1) return false
+  if (MARCHABLE[t] === 1) {
+    // LA CRUE FERME LES GUÉS (spec `saisons.md` S10) — le miroir exact du lac gelé qui
+    // devient un chemin : la vallée change de forme deux fois par an, dans les deux sens.
+    // Seule l'eau PEU PROFONDE est concernée ; la terre inondée reste marchable (on patauge).
+    if (t !== TERRAIN_SHALLOW_WATER) return false
+    const etatCrue = world.etat
+    return etatCrue !== undefined && estGueBloque(etatCrue, tx, ty)
+  }
   // SEULE L'EAU PROFONDE peut cesser de bloquer. La roche, la falaise, le mur et le vide
   // sont hors du temps : la carte tranche, et le gel n'est même pas interrogé.
   if (t !== TERRAIN_DEEP_WATER) return true

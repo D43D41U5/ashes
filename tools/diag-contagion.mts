@@ -49,7 +49,7 @@
 import { construireMondeDuBanc } from '../packages/sim/src/scenario'
 import { drainEvents } from '../packages/sim/src/events'
 import { spawnEntity, step, type MoveInput } from '../packages/sim/src/sim'
-import { calendarScaleForSeasonCycles, getGameTime, seasonDayAtTick, TICKS_PER_CYCLE } from '../packages/sim/src/time'
+import { calendarScaleForSeasonCycles, getGameTime, jourDeSaison, TICKS_PER_CYCLE } from '../packages/sim/src/time'
 import { walkableSpawn } from '../packages/sim/src/connectivity'
 import { risenAlive } from '../packages/sim/src/cendreux'
 import { CENDREUX } from '../packages/sim/src/balance'
@@ -106,7 +106,7 @@ pousser({ type: 'debug_set_hour', hour: 21.5 })
 if (temoin === 'dieu') pousser({ type: 'debug_god', on: true })
 drainEvents(sim) // on jette tout ce que le saut a produit : la nuit commence maintenant
 console.log(
-  `  départ : jour ${seasonDayAtTick(sim.tick, sim.calendarScale)}, ${getGameTime(sim).hourOfCycle.toFixed(1)} h,` +
+  `  départ : jour ${jourDeSaison(sim)}, ${getGameTime(sim).hourOfCycle.toFixed(1)} h,` +
     ` nuit ${getGameTime(sim).isNight}, ${sim.entities.length} entités dont ${sim.monsters.length} monstres`,
 )
 
@@ -264,7 +264,7 @@ while (ticks < PLAFOND) {
 const secondes = (performance.now() - t0) / 1000
 console.log(
   `\n  ── ${ticks} ticks joués (${secondes.toFixed(0)} s) — monde ${monde.width}×${monde.height},` +
-    ` fin à ${getGameTime(sim).hourOfCycle.toFixed(1)} h, jour ${seasonDayAtTick(sim.tick, sim.calendarScale)}`,
+    ` fin à ${getGameTime(sim).hourOfCycle.toFixed(1)} h, jour ${jourDeSaison(sim)}`,
 )
 console.log(`\n  MORTS : ${mortsMonstres + mortsNonMonstres} au total`)
 console.log(`     monstres (wasMonster=true) : ${mortsMonstres}`)

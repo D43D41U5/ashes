@@ -12,9 +12,18 @@ import { handleCold, handleHunger, handleSleep } from './npc-needs'
 import { findPath } from './pathfinding'
 import { createReplayLog, recordAndStep, runReplay } from './replay'
 import { createSim, snapshot, spawnEntity, step, type SimState } from './sim'
-import { DAY_TICKS_PER_CYCLE, TICKS_PER_CYCLE } from './time'
+import { dayTicksPourJour, getGameTime, TICKS_PER_CYCLE, TICKS_PER_SEASON_DAY } from './time'
 import { grantItems, structureAt } from './village'
 import type { ResourceNode } from './economy'
+
+/**
+ * LA LONGUEUR DU JOUR DE CES MONTAGES — la constante `DAY_TICKS_PER_CYCLE` a disparu avec
+ * l'année qui tourne (`saisons.md` S6 : la nuit s'allonge en hiver). Les sites qui la lisent
+ * vivent tous dans le PREMIER cycle du village, donc au jour 1 : c'est SA durée de jour qu'on
+ * lit, une fois. (Le banc de la récolte, lui, se transporte au jour où le monde ouvre et ne
+ * la lit pas — voir son commentaire.)
+ */
+const JOUR_TICKS = dayTicksPourJour(1)
 
 /**
  * Village PNJ de test : Feu en (12,12), grenier, maisons, ressources autour.
@@ -104,7 +113,7 @@ describe('les besoins (A2, A3)', () => {
     )
     b.homeId = null
     // Avancer jusqu'à la nuit, fatigués.
-    sim.tick = DAY_TICKS_PER_CYCLE - 1
+    sim.tick = JOUR_TICKS - 1
     a.energy = 20
     b.energy = 20
     run(sim, 1200) // 100 s : le temps d'aller se coucher et dormir un peu
@@ -180,7 +189,8 @@ describe('la nuit rassemble (R14, village-pnj-evolution)', () => {
   it('un oisif de nuit à 8 tuiles du Feu converge vers lui', () => {
     const sim = npcVillageSim(1)
     const entity = oisifA8Tuiles(sim)
-    sim.tick = DAY_TICKS_PER_CYCLE + 200 // la nuit vient de tomber
+    sim.tick = JOUR_TICKS + 200 // la nuit vient de tomber
+    expect(getGameTime(sim).isNight).toBe(true) // dix secondes après le crépuscule : marge mince, donc affirmée
     const avant = dFeu(entity)
     run(sim, 40) // 2 s : le repli démarre tout de suite
     expect(dFeu(entity)).toBeLessThan(avant - 1)
@@ -189,7 +199,7 @@ describe('la nuit rassemble (R14, village-pnj-evolution)', () => {
   it('le même oisif à MIDI ne bouge pas', () => {
     const sim = npcVillageSim(1)
     const entity = oisifA8Tuiles(sim)
-    sim.tick = Math.floor(DAY_TICKS_PER_CYCLE / 2) // plein jour
+    sim.tick = Math.floor(JOUR_TICKS / 2) // plein jour
     const avant = dFeu(entity)
     run(sim, 40)
     expect(Math.abs(dFeu(entity) - avant)).toBeLessThan(0.5)
@@ -243,6 +253,13 @@ describe('la locomotion des PNJ', () => {
 describe('le travail (A5)', () => {
   it('récolter baies : le PNJ y va, récolte, dépose — le grenier monte', () => {
     const sim = npcVillageSim(1)
+    // AU JOUR OÙ LE MONDE OUVRE (`saisons.md` S2 : le jour 51, la fin de l'Ardeur). Le tick 0
+    // est l'aube du jour 1, et l'Éclosion s'ouvre encore gelée (S4) : à −8 °C la flore est
+    // suspendue (`FLORE.SEUIL_GEL`), la corvée reste au tableau et le buisson ne rend rien.
+    // Ce test mesure une ÉCONOMIE de village, pas une saison — il se pose donc là où la
+    // vraie partie commence, avec douze degrés de marge sur le gel.
+    sim.tick = (BALANCE.JOUR_DE_DEPART - 1) * TICKS_PER_SEASON_DAY
+    sim.tick -= sim.tick % TICKS_PER_CYCLE
     granary(sim).inventory = inventoryOf(SLOTS.CHEST, { wood: 30, fiber: 5 }) // il ne manque que la nourriture
     const before = 0
     run(sim, 2400) // 200 s simulées
@@ -419,7 +436,8 @@ describe('recherche de chaleur (handleCold)', () => {
     const { sim, npc, entity } = setup()
     entity.x = 3
     entity.y = 3 // hors bulle du Feu : réellement exposé au froid
-    sim.cycleOffset = DAY_TICKS_PER_CYCLE // nuit dès le tick 0
+    sim.cycleOffset = JOUR_TICKS // nuit dès le tick 0
+    expect(getGameTime(sim).isNight).toBe(true) // le décalage est un CALIBRAGE, pas une loi : il se prouve
     npc.sleeping = true
     entity.temperature = 30 // froid
     npc.path = []
@@ -804,7 +822,8 @@ describe('anti-livelock des besoins : la cible est inatteignable', () => {
     const npc = sim.npcs[0]!
     const e = npcEntity(sim)
     const home = sim.structures.find((s) => s.id === npc.homeId)!
-    sim.cycleOffset = DAY_TICKS_PER_CYCLE // nuit
+    sim.cycleOffset = JOUR_TICKS // nuit
+    expect(getGameTime(sim).isNight).toBe(true) // idem : la nuit s'affirme avant qu'on la teste
     npc.energy = 20 // sous NPC_ENERGY_SLEEP_THRESHOLD
     e.x = 6.5
     e.y = 6.5

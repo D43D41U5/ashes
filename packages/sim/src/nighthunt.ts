@@ -30,7 +30,7 @@ import { densiteDesMorts, rodeursPortes, siteDansLaCouronne } from './morts'
 import { rngRoll } from './rng'
 import type { Entity, SimState } from './sim'
 import { eveilCendreuxAt, fireBubble } from './temperature'
-import { actForDay, getGameTime, seasonDayAtTick, seasonRamp } from './time'
+import { actForDay, getGameTime, jourDeSaison, seasonRamp } from './time'
 
 /** Un tirage par minute réelle : la peur monte, elle ne mitraille pas. */
 const ROLL_EVERY = BALANCE.TICK_RATE_HZ * 60
@@ -56,7 +56,7 @@ export function advanceNightHunt(state: SimState): void {
   if (state.tick % ROLL_EVERY !== 0) return
   if (!getGameTime(state).isNight) return
 
-  const act = actForDay(seasonDayAtTick(state.tick, state.calendarScale))
+  const act = actForDay(jourDeSaison(state))
   const chance = NIGHT_HUNT.CHANCE_PER_MIN(act)
 
   for (const prey of preys(state)) {
@@ -86,7 +86,7 @@ export function advanceNightHunt(state: SimState): void {
 
     // BORNÉ, ET PAR ESPÈCE : on compte les rôdeurs déjà lancés sur CETTE proie. On peut
     // perdre ; on ne doit pas être submergé — une meute infinie n'est pas de la tension,
-    // c'est une porte fermée. Le plafond des morts MONTE EN CONTINU avec le jour de saison
+    // c'est une porte fermée. Le plafond des morts SUIT L'ANNÉE (S15 : il monte vers le Grand Froid et redescend au printemps, avec un plancher qui monte par tour)
     // (`UNDEAD_MAX_FIN` — la table de trois valeurs mangeait la montée, mesuré ×1,6 quand
     // le taux quadruple). Le recensement passe par `huntTargetId` et non `targetId` : l'IA
     // du Cendreux réécrit la sienne deux fois par seconde.
@@ -98,7 +98,7 @@ export function advanceNightHunt(state: SimState): void {
     const plafond = undead
       ? rodeursPortes(
           state, Math.floor(prey.x), Math.floor(prey.y),
-          Math.round(seasonRamp(1, NIGHT_HUNT.UNDEAD_MAX_FIN, seasonDayAtTick(state.tick, state.calendarScale))),
+          Math.round(seasonRamp(1, NIGHT_HUNT.UNDEAD_MAX_FIN, jourDeSaison(state))),
         )
       : NIGHT_HUNT.MAX_ALIVE
     const rodeurs = state.monsters.filter(

@@ -29,7 +29,7 @@ import { isBlockingTile } from './map'
 import { spawnMonster } from './monsters'
 import { hash2 } from './noise'
 import type { SimState } from './sim'
-import { actForDay, DAY_TICKS_PER_CYCLE, seasonDayAtTick, TICKS_PER_CYCLE } from './time'
+import { actForDay, dayTicksAt, estCrepuscule, jourDeSaison, TICKS_PER_CYCLE } from './time'
 import { structureAt } from './village'
 
 const BRUME_SALT = 0x51a7b3d9
@@ -202,7 +202,7 @@ function retirerLaBrume(state: SimState): void {
   const type: NodeType = hash2(brume.day, 100, BRUME_SALT) < BRUME.FILON_PART_CHARBON ? 'coal_seam' : 'iron_vein'
   const id = FILON_ID_BASE + brume.day
   state.nodes.push({ id, type, tx, ty, stock: BRUME.FILON_STOCK, regrowAt: 0 })
-  state.brumeFilon = { nodeId: id, expiresDay: seasonDayAtTick(state.tick, state.calendarScale) + BRUME.FILON_JOURS }
+  state.brumeFilon = { nodeId: id, expiresDay: jourDeSaison(state) + BRUME.FILON_JOURS }
   emitEvent(state, { type: 'filon_decouvert', tick: state.tick, nodeId: id, nodeType: type, tx, ty })
 
   const expiresAt = state.tick + BRUME.TRAINARD_TTL
@@ -249,7 +249,7 @@ export function advanceBrume(state: SimState): void {
       retirerLeFilon(state, filon.nodeId, true) // la Cendre l'a mangé — que le client le sache
     } else if (node.stock <= 0) {
       retirerLeFilon(state, filon.nodeId, false) // vidé : node_depleted a déjà parlé
-    } else if (seasonDayAtTick(state.tick, state.calendarScale) > filon.expiresDay) {
+    } else if (jourDeSaison(state) > filon.expiresDay) {
       retirerLeFilon(state, filon.nodeId, true) // périmé : la fenêtre s'est refermée
     }
   }
@@ -264,9 +264,11 @@ export function advanceBrume(state: SimState): void {
     return // une nappe à la fois : pas d'annonce tant qu'elle vit
   }
 
-  if (state.tick % TICKS_PER_CYCLE !== DAY_TICKS_PER_CYCLE) return
+  // `estCrepuscule` est l'écrivain unique du crépuscule (S6) : saisonnier, ET conscient de
+  // `cycleOffset` — le modulo brut d'avant tombait à minuit dans une Veillée démarrée à 9 h.
+  if (!estCrepuscule(state, state.tick)) return
   if (!state.map.cendre) return
-  const day = seasonDayAtTick(state.tick, state.calendarScale)
+  const day = jourDeSaison(state)
   if (state.lastBrumeDay === day) return
   if (BRUME.CHANCE_PER_DAY(actForDay(day)) <= 0) return
   state.lastBrumeDay = day
@@ -274,8 +276,11 @@ export function advanceBrume(state: SimState): void {
   const corridor = elireCorridor(state, day)
   if (corridor === null) return
 
-  const riseTick = state.tick + (TICKS_PER_CYCLE - DAY_TICKS_PER_CYCLE)
-  state.brume = { phase: 'annoncee', day, riseTick, retreatTick: riseTick + DAY_TICKS_PER_CYCLE, ...corridor }
+  const riseTick = state.tick + (TICKS_PER_CYCLE - dayTicksAt(state, state.tick))
+  // Le retrait tombe au crépuscule SUIVANT — la longueur du jour de CE jour-là, pas de celui-ci
+  // (une nappe de fin d'automne se retire plus tôt que celle qui l'a précédée).
+  const retreatTick = riseTick + dayTicksAt(state, riseTick)
+  state.brume = { phase: 'annoncee', day, riseTick, retreatTick, ...corridor }
   // R6 — LE GIBIER SE TAIT sur le corridor dès l'annonce : le silence EST le signe lisible
   // in-world (QUIET_RADIUS couvre largement le segment avec trois points).
   state.faunaQuiet.push(

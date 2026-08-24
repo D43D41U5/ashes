@@ -13,6 +13,7 @@
  */
 import { CENDREUX, POI, TEMPERATURE } from './balance'
 import { froidDeCendre, frontAuTick } from './cendre'
+import { effetsDuJour } from './modificateur'
 import { brumeColdAt } from './brume'
 import { fireWarmthFactor } from './fire'
 import { die } from './combat'
@@ -170,12 +171,22 @@ export function dehorsSansMeteo(state: SimState, x: number, y: number, tick: num
   return clampTemp(baseDuMonde(state, tick) + expositionSansMeteo(state, x, y, tick))
 }
 
-/** `BASE − ACT_COLD` : la part du froid qu'aucun toit ne coupe — loi totale (saison-sans-fin T1). */
+/**
+ * LE SOCLE DU JOUR : la part du froid qu'aucun toit ne coupe — **une courbe du jour de
+ * l'année depuis le 2026-08-23** (spec `saisons.md` S4 ; c'était `BASE − ACT_COLD(acte)`,
+ * une marche par saison). Le tour entre dans la lecture : l'hiver s'élargit d'un an sur
+ * l'autre en tirant ses voisins vers lui (S12).
+ */
+export function socleDuJour(jour: number, tour: number): number {
+  const e = effetsDuJour(jour)
+  return T.SOCLE(jour + (e.socleJours ?? 0), tour) + (e.socleDegres ?? 0)
+}
+
 function baseDuMonde(state: SimState, tick: number): number {
   const time = gameTimeAt(state, tick)
   // La carte est plate : le froid ne vient plus de l'altitude, seulement du BIOME (la neige, le
   // glacier) et de l'heure. Le froid des zones hautes est porté par leur terrain, pas par une hauteur.
-  return T.BASE - T.ACT_COLD(time.act)
+  return socleDuJour(time.seasonDay, time.tour)
 }
 
 /** L'EXPOSITION hors front — biome, nuit, Brume, cendre — SIGNÉE (le biome peut réchauffer),
@@ -206,12 +217,12 @@ function expositionSansMeteo(state: SimState, x: number, y: number, tick: number
   // toujours `frontAuTick` — **le vent pousse, il n'avance pas** : rien ne brûle de plus, rien ne
   // devient stérile de plus, et quand il est passé le monde est exactement où il était.
   const frontFroid =
-    frontAuTick(state.map, state.calendarScale, tick) + pousseeDeCendre(state, x, y, tick)
+    frontAuTick(state.map, state.calendarScale, tick, state.jourDeDepart) + pousseeDeCendre(state, x, y, tick)
   const cendre = froidDeCendre(state.map, tx, ty, frontFroid)
   // LA NUIT EST UNE PENTE (`partDeNuit`, décision d'Alexis 2026-08-23) : `time.nuit` vaut 1 sur
   // toute la nuit et redescend sur les lisières du jour — le froid du soir se SENT venir, il ne
   // claque plus de douze degrés en un tick. La nuit pleine est inchangée au bit près.
-  return biome - T.NIGHT_COLD * time.nuit - brumeColdAt(state, x, y, tick) - cendre // amorti par l'abri
+  return biome - T.ECART_NUIT(time.seasonDay) * time.nuit - brumeColdAt(state, x, y, tick) - cendre // amorti par l'abri
 }
 
 /**
@@ -257,7 +268,7 @@ export function climatMaximal(state: SimState, tick: number): number {
   const time = gameTimeAt(state, tick)
   // Le terme de nuit est le MÊME que celui d'`expositionSansMeteo` — la pente exacte, pas le
   // booléen : global au monde, il n'a pas à être majoré, et la borne reste prouvablement douce.
-  return clampTemp(T.BASE - T.ACT_COLD(time.act) + BIOME_MAX - T.NIGHT_COLD * time.nuit)
+  return clampTemp(socleDuJour(time.seasonDay, time.tour) + BIOME_MAX - T.ECART_NUIT(time.seasonDay) * time.nuit)
 }
 
 /** Température ambiante cible (°C) au lieu (x,y) : le froid de base, PLANCHERÉ par un feu /

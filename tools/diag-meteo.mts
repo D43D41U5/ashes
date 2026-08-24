@@ -25,7 +25,7 @@ import { drainEvents } from '../packages/sim/src/events'
 import { meteoIntensity, meteoTypeDuCycle, type MeteoType } from '../packages/sim/src/meteo'
 import { construireMondeDuBanc } from '../packages/sim/src/scenario'
 import { step } from '../packages/sim/src/sim'
-import { seasonDayAtTick, TICKS_PER_CYCLE } from '../packages/sim/src/time'
+import { jourDeSaison, phaseForDay, TICKS_PER_CYCLE } from '../packages/sim/src/time'
 
 const SEEDS = (process.argv[2] ?? '1,7,2026').split(',').map(Number)
 const CYCLES = Number(process.argv[3] ?? 6)
@@ -117,12 +117,12 @@ function jouer(seed: number, cycles: number, meteo: boolean): Releve {
     if (fuelApres < fuelAvant) r.fuelBrule += fuelAvant - fuelApres
     else fuelDonne += fuelApres - fuelAvant
 
-    const jour = seasonDayAtTick(sim.tick, sim.calendarScale)
+    const jour = jourDeSaison(sim)
     // La texture se relève par CYCLE — c'est la cadence d'élection (un tirage par cycle).
     const cycle = Math.floor(sim.tick / TICKS_PER_CYCLE)
     if (cycle !== dernierJourVu) {
       dernierJourVu = cycle
-      const type = meteo ? meteoTypeDuCycle(cycle, jour) : null
+      const type = meteo ? meteoTypeDuCycle(cycle, sim.calendarScale, sim.jourDeDepart) : null
       r.texture.push(type)
       if (type) r.fronts[type] = (r.fronts[type] ?? 0) + 1
     }
@@ -158,7 +158,9 @@ function jouer(seed: number, cycles: number, meteo: boolean): Releve {
         if (meteoIntensity(sim, o.x, o.y) > 0) {
           r.echSousFront++
           if (type === 'orage') r.echSousOrage++
-          if (type === 'blizzard') r.echSousBlizzard++
+          // Le blizzard n'est plus une CLASSE (R11) : c'est l'aspect d'un orage là où il neige.
+          // La sonde compte donc les orages du Grand Froid, la saison où l'aspect bascule.
+          if (type === 'orage' && phaseForDay(jour) === 4) r.echSousBlizzard++
         }
       }
     }
@@ -182,7 +184,7 @@ function pourcent(a: number, b: number): string {
 
 console.log(`═══ LA MÉTÉO AU BANC — ${SEEDS.length} graine(s) × ${CYCLES} cycles ═══\n`)
 console.log(`calibrage courant : COLD ${JSON.stringify(METEO.COLD)}`)
-console.log(`                    CHANCE_PER_CYCLE ${JSON.stringify(METEO.CHANCE_PER_CYCLE)}\n`)
+console.log(`                    PAR_SAISON ${JSON.stringify(METEO.PAR_SAISON.paliers.map((p) => p.episode))}\n`)
 
 const tous: Releve[] = []
 for (const seed of SEEDS) {

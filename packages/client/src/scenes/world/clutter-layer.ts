@@ -11,6 +11,7 @@ import { clutterAt, PROP_ASPECT, type PropKind, type SampleTerrain } from '../..
 import { contexteDesButtes, type ButteContexte } from '../../render/buttes'
 import { teinteTouffe } from '../../render/clutter-teinte'
 import { TERRAIN_COLORS } from '../../render/terrain-colors'
+import { teinteDuTerrain, teinter } from '../../render/teinte-saison'
 import { LIT_CLUTTER_KINDS, litClutterTextureKey, VARIANT_COUNTS, variantBase } from '../../render/lit-props'
 import { SHADOW_PROPS, SHADOW_PROP_GAP, SHADOW_PROP_GAP_LIT, SHADOW_PROP_WIDTH } from '../../render/prop-shadows'
 import { windSway, WIND_TAKE } from '../../render/wind'
@@ -32,12 +33,25 @@ const CLUTTER_TINT = 0xbfc4bd // léger assombrissement/désaturation (INV-2)
  *  conversion TSV, on ne la rejoue pas 4 000 fois par frame. Un terrain sans couleur connue
  *  retombe sur la teinte commune. */
 const TEINTE_TOUFFE = new Map<number, number>()
-function teinteDeLaTouffe(terrain: number): number {
-  let t = TEINTE_TOUFFE.get(terrain)
+/**
+ * ⚠ LA CLÉ PORTE LA SAISON (spec `saisons.md` S17), par CRANS de dix jours. La teinte
+ * saisonnière est continue, mais la mémoïsation ne peut pas l'être : une clé au jour près
+ * ferait douze fois plus d'entrées pour un écart invisible, et une teinte recalculée par
+ * touffe et par frame paierait la conversion TSV quatre mille fois. Douze crans par an
+ * suffisent — l'œil ne lit pas un demi-point de rouge d'un jour à l'autre.
+ */
+const CRAN_SAISON = 10
+function teinteDeLaTouffe(terrain: number, jour: number): number {
+  const cran = Math.floor((((jour - 1) % 120) + 120) % 120 / CRAN_SAISON)
+  const cle = terrain * 16 + cran
+  let t = TEINTE_TOUFFE.get(cle)
   if (t === undefined) {
     const sol = TERRAIN_COLORS[terrain]
-    t = sol === undefined ? CLUTTER_TINT : teinteTouffe(sol)
-    TEINTE_TOUFFE.set(terrain, t)
+    const nue = sol === undefined ? CLUTTER_TINT : teinteTouffe(sol)
+    // Le vivant tourne avec l'année, le reste non — `teinteDuTerrain` rend l'identité sur la
+    // roche et l'eau, donc la touffe d'un éboulis garde sa couleur toute l'année.
+    t = teinter(nue, teinteDuTerrain(terrain, cran * CRAN_SAISON + 1))
+    TEINTE_TOUFFE.set(cle, t)
   }
   return t
 }
@@ -122,6 +136,10 @@ export class ClutterLayer {
   onGivre: ((x: number, y: number, hauteur: number, now: number, graine: number, degel: boolean) => void) | null = null
   /** Les bascules gel/dégel du fouillis, par tuile (voir `render/flore-gel.ts`). */
   private readonly transitions = new TransitionsFlore()
+  /** LE JOUR DE SAISON, posé par `WorldScene` — la touffe prend la couleur de son année
+   *  (S17). Un jour par défaut plutôt qu'un `null` : la couche doit savoir peindre avant
+   *  d'avoir reçu son premier snapshot. */
+  jourDeLAnnee = 1
 
   update(camera: Phaser.Cameras.Scene2D.Camera, now: number): void {
     let used = 0
@@ -176,7 +194,7 @@ export class ClutterLayer {
             // porte ; le reste du décor garde la teinte commune. Réarmé comme la texture — un
             // sprite poolé sert des tuiles de biomes différents d'une frame à l'autre. On n'appelle
             // `setTint` que si elle CHANGE : elle ne bouge pas pour la grande majorité des sprites.
-            const teinte = p.kind === 'grass_tuft' ? teinteDeLaTouffe(terrain) : CLUTTER_TINT
+            const teinte = p.kind === 'grass_tuft' ? teinteDeLaTouffe(terrain, this.jourDeLAnnee) : CLUTTER_TINT
             if (this.poolTint[slot] !== teinte) {
               sprite.setTint(teinte)
               this.poolTint[slot] = teinte

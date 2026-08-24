@@ -16,7 +16,7 @@
 import { construireMondeDuBanc } from '../packages/sim/src/scenario'
 import { drainEvents } from '../packages/sim/src/events'
 import { step } from '../packages/sim/src/sim'
-import { DAY_TICKS_PER_CYCLE, TICKS_PER_CYCLE } from '../packages/sim/src/time'
+import { dayTicksPourJour, TICKS_PER_CYCLE } from '../packages/sim/src/time'
 import { BALANCE } from '../packages/sim/src/balance'
 
 const SEED = Number(process.argv[2])
@@ -94,7 +94,7 @@ for (let t = 0; t < total; t++) {
     const rayon = v ? BALANCE.FIRE_RADIUS_BY_TIER[Math.min(v.tier, 3) - 1]! : 0
     const m: Mort = {
       jour,
-      nuit: cycleTick >= DAY_TICKS_PER_CYCLE,
+      nuit: cycleTick >= dayTicksPourJour,
       village: v?.nom ?? '?',
       tache: ombre?.tache ?? '?',
       dedans: Number.isFinite(dist) && dist <= rayon,

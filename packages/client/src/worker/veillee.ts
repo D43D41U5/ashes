@@ -6,6 +6,7 @@
  * client ne fera que `join`. Le client reçoit la carte dans `ready`.
  */
 import {
+  BALANCE,
   calendarScaleForSeasonCycles,
   createSim,
   cycleOffsetForStartHour,
@@ -33,20 +34,35 @@ import {
 import { VEILLEE_SEED } from './mondes'
 export { VEILLEE_SEED }
 /**
- * ⚙ CALIBRATION (V0-9) — LA DURÉE D'UNE VEILLÉE, en cycles jour/nuit observables.
+ * ⚙ LA DURÉE D'UNE VEILLÉE, en cycles jour/nuit — et depuis le 2026-08-23, **UN JOUR EST
+ * UN CYCLE** (décision d'Alexis : « un jour dure 45 minutes »).
  *
- * C'est LE bouton de rythme de la saison solo. La saison (60 jours, 3 actes) est compressée
- * sur exactement ce nombre de cycles ; l'acte III et sa méga-horde tombent donc DANS la
- * saison (sans ce couplage, à l'ancienne échelle fixe 720, ils arrivaient APRÈS la fin de
- * saison → l'endgame était invisible en solo — réserve de la spec saison).
+ * ═══ CE QUI ÉTAIT CASSÉ ═══
  *
- * 6 cycles → ~2 nuits d'escalade par acte, marge d'acte III robuste (~1,8 cycle), et une
- * saison d'environ 6 × CYCLE_REAL_MINUTES (≈ 5 h) à jouer EN PLUSIEURS SÉANCES grâce à la
- * persistance (P1-6) — le format « 5 sessions » de GATE 1. À AJUSTER en playtest : plus de
- * cycles = escalade plus étalée mais session plus longue ; moins = plus serré (garder ≥ 4
- * pour que l'acte III reste observable quel que soit l'heure de départ).
+ * Ce bouton valait 6 : les 60 jours de saison étaient compressés sur 6 cycles, donc le
+ * compteur du HUD avançait de DIX jours par cycle jour/nuit — « JOUR 3 · 09H », puis
+ * « JOUR 4 · 11H », un jour de plus toutes les 2,4 heures affichées. Les deux horloges du
+ * jeu (le cycle, réel et fixe ; le calendrier, accéléré par `calendarScale`) sont faites
+ * pour être découplées — mais le HUD les affiche CÔTE À CÔTE sur une seule ligne, et là,
+ * découplées, elles se contredisent.
+ *
+ * ═══ CE QU'ON POSE ═══
+ *
+ * `SEASON_DAYS` cycles pour `SEASON_DAYS` jours : `calendarScale` vaut alors exactement
+ * `TICKS_PER_SEASON_DAY / TICKS_PER_CYCLE` = 32, le jour de saison bascule une fois par
+ * cycle, et le compteur du HUD redevient lisible. C'est déjà l'échelle du BANC
+ * (`sim/scenario.ts`) : le solo était le seul à ne pas la tenir.
+ *
+ * Le prix, assumé : une saison dure `SEASON_DAYS` × `CYCLE_REAL_MINUTES` ≈ 45 h de jeu (au
+ * lieu de ~5 h), l'acte III s'ouvrant vers la 31ᵉ. La persistance (P1-6) la découpe en
+ * séances ; si le format « 5 sessions » de GATE 1 doit tenir, les boutons à tourner sont
+ * `SEASON_DAYS` **et `ACT_DAYS` ENSEMBLE** — PAS ce couplage (le rendre ≠ 1 remettrait le
+ * compteur en défaut). Ensemble, parce que les actes se comptent par `ACT_DAYS` : baisser
+ * `SEASON_DAYS` à 12 en laissant `ACT_DAYS` à 21 rendrait la saison ENTIÈRE en acte I —
+ * pas d'acte II, pas de méga-horde, pas de défeuillaison. La garde de forme, si l'on y
+ * touche : `actForDay(SEASON_DAYS) >= 3`.
  */
-export const VEILLEE_SEASON_CYCLES = 6
+export const VEILLEE_SEASON_CYCLES = BALANCE.SEASON_DAYS
 /** L'échelle du calendrier, DÉRIVÉE du nombre de cycles voulu (couplage cycle↔calendrier).
  *  Ne pas coder en dur : c'est ce codage en dur (720) qui découplait l'endgame. */
 export const VEILLEE_CALENDAR_SCALE = calendarScaleForSeasonCycles(VEILLEE_SEASON_CYCLES)
@@ -122,6 +138,9 @@ export function createVeillee(
   const sim = createSim(seed, {
     map,
     calendarScale: VEILLEE_CALENDAR_SCALE,
+    // LE MONDE OUVRE À LA FIN DE L'ARDEUR (spec `saisons.md` S2) : dix jours d'été pour
+    // s'installer, trente jours de Pluies qui annoncent, le Grand Froid à h 30 de jeu.
+    jourDeDepart: BALANCE.JOUR_DE_DEPART,
     // LA SAISON NE FINIT PAS (saison-sans-fin R4, décision d'Alexis 2026-08-21) : ni verdict ni
     // Arche en solo — l'année tourne, l'hiver revient. Le jour 61 n'est plus qu'un jour.
     finDeSaison: null,

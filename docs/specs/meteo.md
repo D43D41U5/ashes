@@ -1,5 +1,7 @@
 # La Météo — des fronts qui traversent la vallée, cinq ciels, la pression qui se voit venir
 
+> **⚠ AMENDÉ le 2026-08-23 par `saisons.md` (S7-S9) — lire cette spec-là avant les nombres d'ici.** La mixture par acte de R2, la géométrie par type de R1 et la largeur commandée par le froid (R13) sont REMPLACÉES par une identité par SAISON (`METEO.PAR_SAISON` : classes, largeur, fenêtre) ; l'élection se fait par ÉPISODES de 2 à 5 cycles (`episodeDuCycle`) et non plus par une chance par cycle ; une pluie d'automne occupe le CYCLE ENTIER ; `QUIET.pluie` est passé à faux (seuls l'orage et le blizzard font taire la faune) ; et l'orage de l'Ardeur ne mouille pas.
+
 *Source : GDD §9bis (« Blizzard — carte entière, la température s'effondre, raider pendant est le pari des audacieux »), GDD §8 (« au Grand Froid, le domestique s'appauvrit — neige, gel »), décisions Alexis 2026-08-18 (session contours météo, sept fourches tranchées une à une). Statut : **livré**, puis AMENDÉ le 2026-08-22 (décision « la neige se dérive du froid », voir R11-R13 et `docs/decisions.md`) : **`neige` et `blizzard` ne sont plus des types élus** — ils se dérivent au point et au tick du froid du monde. Les passages de R1-R9 qui nomment ces deux types se lisent désormais à travers R11-R13. Requalification actée : le Blizzard QUITTE le catalogue d'événements §9bis — il devient l'état extrême du continuum météo, même mécanisme que la pluie, calibré à l'extrême.*
 
 ## Objectif de design

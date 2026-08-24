@@ -43,8 +43,23 @@ function makeNode(type: ResourceNode['type'], tx: number, ty: number): ResourceN
   return { id: nextNodeId, type, tx, ty, stock: NODE_DEFS[type].stock, regrowAt: 0 }
 }
 
+/**
+ * LE MONDE OUVRE LÀ OÙ LE VRAI JEU OUVRE (spec `saisons.md` S2) : la fin de l'Ardeur, seule
+ * saison où rien ne gèle — ni le jour (+22 °C), ni la nuit (+16).
+ *
+ * Le jour 1 du calendrier n'est plus un printemps doux mais une **Éclosion encore prise**
+ * (+3 °C le jour, −8 la nuit, S4) : un buisson y refuse la cueillette (« la plante est
+ * gelée »), et la repousse d'un nœud vivant n'y aboutit pas. L'économie se serait mesurée
+ * sur le froid, qui a sa propre suite (`flore-froid.test.ts`). C'est aussi ce qui tient la
+ * garde à 1e-6 de la vitesse plus bas : au-dessus d'`AMBIANT_DOUX`, le corps se stabilise à
+ * 37 °C et `coldSpeedFactor` vaut exactement 1, tick après tick.
+ */
 function makeSim(nodes: ResourceNode[]): SimState {
-  return createSim(1, { map: createEmptyMap(32, 32, TERRAIN_GRASS), nodes })
+  return createSim(1, {
+    map: createEmptyMap(32, 32, TERRAIN_GRASS),
+    nodes,
+    jourDeDepart: BALANCE.JOUR_DE_DEPART,
+  })
 }
 
 function act(sim: SimState, entityId: number, action: PlayerAction): void {
@@ -842,21 +857,28 @@ describe('la file de craft (craft-file A1-A6)', () => {
 })
 
 describe('la faim (A4)', () => {
-  it('décroît, double en acte II, manger restaure', () => {
-    // Échelle extrême : 1 tick = ~1 jour de saison → l'acte II arrive au tick 21.
+  it('décroît, double aux Pluies, triple au Grand Froid, manger restaure', () => {
+    // Échelle extrême : 1 tick = ~1 jour de saison. LA FAIM SUIT LE FROID depuis S13
+    // (`ACT_HUNGER_FACTOR` = ×1 l'Éclosion, ×1 l'Ardeur, ×2 les Pluies, ×3 le Grand Froid) :
+    // le palier ne se lit plus à l'entrée de l'acte II mais au passage des saisons. On mesure
+    // donc trois fenêtres, chacune tout entière DANS sa saison — jour 1 ouvre à l'Éclosion.
     const sim = createSim(1, {
       map: createEmptyMap(32, 32, TERRAIN_GRASS),
       calendarScale: TICKS_PER_SEASON_DAY,
     })
     const id = spawnEntity(sim, 10.5, 10.5)
-    const h0 = me(sim).hunger
-    for (let t = 0; t < 10; t++) step(sim, [])
-    const decayAct1 = (h0 - me(sim).hunger) / 10
-    while (sim.tick < 30) step(sim, [])
-    const h1 = me(sim).hunger
-    for (let t = 0; t < 10; t++) step(sim, [])
-    const decayAct2 = (h1 - me(sim).hunger) / 10
-    expect(decayAct2 / decayAct1).toBeCloseTo(2, 5)
+    /** Décroissance moyenne par tick sur les dix jours qui suivent le jour `depuis`. */
+    const penteDepuis = (depuis: number): number => {
+      while (sim.tick < depuis - 1) step(sim, []) // tick t ⇒ jour t+1 (jourDeDepart = 1)
+      const h = me(sim).hunger
+      for (let t = 0; t < 10; t++) step(sim, [])
+      return (h - me(sim).hunger) / 10
+    }
+    const eclosion = penteDepuis(1) // jours 1-11
+    const pluies = penteDepuis(2 * BALANCE.ACT_DAYS + 1) // jours 61-71
+    const grandFroid = penteDepuis(3 * BALANCE.ACT_DAYS + 1) // jours 91-101
+    expect(pluies / eclosion).toBeCloseTo(2, 5)
+    expect(grandFroid / eclosion).toBeCloseTo(3, 5)
 
     // LE CRU NE NOURRIT PAS UN HOMME (chantier tension) : une baie vaut 6, un
     // ragoût 60. On ne vit plus de cueillette — on cuisine.

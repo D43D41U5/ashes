@@ -9,7 +9,7 @@ import { POI_TYPES } from './poi'
 import { spawnMonster } from './monsters'
 import { createSim, spawnEntity, step, type MoveInput, type SimState } from './sim'
 import { ambientTemperature, isSheltered, naturalWarmth } from './temperature'
-import { DAY_TICKS_PER_CYCLE } from './time'
+import { dayTicksPourJour } from './time'
 
 /** Carte de test : 3 zones, dont une SANS `kind` (un simple toponyme). */
 function mapWithZones() {
@@ -478,7 +478,7 @@ describe('le récit — la première fois seulement', () => {
     expect(state.visitedPois).toEqual([])
     expect(state.events.filter((e) => e.type === 'poi_first_visit')).toHaveLength(0)
     expect(
-      chronicleFromEvents(state.events, state.calendarScale, {})
+      chronicleFromEvents(state.events, state.calendarScale, state.jourDeDepart, {})
         .map(formatChronicleLine)
         .some((l) => l.includes('Sanctuaire')),
     ).toBe(false)
@@ -487,7 +487,7 @@ describe('le récit — la première fois seulement', () => {
   it('la chronique écrit une ligne pour le Sanctuaire (devise récit)', () => {
     const { state, playerId } = simWith([{ name: 'le Sanctuaire I', x: 10, y: 10, w: 2, h: 2, kind: 'sanctuaire' }])
     walkTo(state, playerId, 10.5, 10.5)
-    const lines = chronicleFromEvents(state.events, state.calendarScale, {}).map(formatChronicleLine)
+    const lines = chronicleFromEvents(state.events, state.calendarScale, state.jourDeDepart, {}).map(formatChronicleLine)
     expect(lines.some((l) => l.includes('le Sanctuaire I'))).toBe(true)
   })
 
@@ -499,7 +499,7 @@ describe('le récit — la première fois seulement', () => {
     walkTo(state, playerId, 10.5, 10.5)
     const eventsA = [...state.events]
     walkTo(state, playerId, 30.5, 30.5)
-    const lines = chronicleFromEvents([...eventsA, ...state.events], state.calendarScale, {}).map(formatChronicleLine)
+    const lines = chronicleFromEvents([...eventsA, ...state.events], state.calendarScale, state.jourDeDepart, {}).map(formatChronicleLine)
     expect(lines.some((l) => l.includes('Gisement'))).toBe(false)
     expect(lines.some((l) => l.includes('Cairn'))).toBe(false)
   })
@@ -527,7 +527,9 @@ describe('le récit — la première fois seulement', () => {
 function simDeNuit(zones: { name: string; x: number; y: number; w: number; h: number; kind?: string }[]) {
   const map = createEmptyMap(64, 64, TERRAIN_GRASS)
   map.zones.push(...zones)
-  const state = createSim(1, { map, cycleOffset: DAY_TICKS_PER_CYCLE }) // 0 = aube ; ici : tombée de nuit
+  // 0 = aube ; ici : la tombée de nuit du JOUR D'OUVERTURE (la longueur du jour est saisonnière
+  // depuis S6 — un montage doit dire DE QUEL jour il parle).
+  const state = createSim(1, { map, cycleOffset: dayTicksPourJour(1) })
   const playerId = spawnEntity(state, 0.5, 0.5)
   return { state, playerId }
 }

@@ -13,8 +13,15 @@
  */
 import { BALANCE, YEAR_DAYS } from '@ashes/sim'
 
-/** Le premier jour de l'acte III DANS L'ANNÉE — le jour où la Cendre déferle (borne GDD §2). */
-const CENDRE_DAY = 2 * BALANCE.ACT_DAYS + 1 // 43 — inchangé pour l'an 1
+/**
+ * LE PREMIER JOUR DU GRAND FROID, DANS L'ANNÉE — le jour où la Cendre s'ébranle (S11 : « elle
+ * mord l'hiver, tient l'été »). **91 depuis la refonte des saisons** ; c'était `2 × ACT_DAYS + 1`
+ * (le premier jour de l'acte III), une formule qui a silencieusement rendu 61 — les Pluies —
+ * le jour où `ACT_DAYS` est passé de 21 à 30. Le télégraphe annonçait donc une déferlante deux
+ * saisons trop tôt. Dérivé de la même phase que `CENDRE.ACTE_DEPART`, pour qu'ils ne puissent
+ * plus diverger.
+ */
+const CENDRE_DAY = 3 * BALANCE.ACT_DAYS + 1 // 91 — l'ouverture du Grand Froid
 
 /**
  * La ligne de télégraphe pour un jour de saison donné, ou `null` s'il n'y a rien à dire.

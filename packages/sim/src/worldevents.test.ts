@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { TERRAIN_GRASS, TERRAIN_ROAD, TERRAIN_ROCK, WORLD_EVENTS } from './balance'
+import { BALANCE, CENDREUX, TEMPERATURE, TERRAIN_GRASS, TERRAIN_ROAD, TERRAIN_ROCK, WORLD_EVENTS } from './balance'
 import { drainEvents, type SimEvent } from './events'
 import { countOf } from './items'
 import { createEmptyMap } from './map'
@@ -8,9 +8,39 @@ import { foundNpcVillage } from './worldgen'
 import { computeFlowField } from './pathfinding'
 import { createReplayLog, recordAndStep, runReplay } from './replay'
 import { createSim, snapshot, spawnEntity, step, type SimState } from './sim'
-import { cycleOffsetForStartHour, DAY_TICKS_PER_CYCLE, seasonDayAtTick, seasonRamp, TICKS_PER_CYCLE, TICKS_PER_SEASON_DAY } from './time'
+import { cycleOffsetForStartHour, dayTicksAt, seasonDayAtTick, seasonRamp, TICKS_PER_CYCLE, TICKS_PER_SEASON_DAY } from './time'
 import { grantItems, structureAt } from './village'
 import { spawnConvoy, spawnHorde } from './worldevents'
+
+/**
+ * LES JOURS-REPÈRES DE L'ANNÉE (spec `saisons.md` S1-S4) — dérivés de la cadence des saisons,
+ * jamais écrits : l'année compte quatre saisons de `ACT_DAYS` jours, et ce qui commande la
+ * pression n'est plus l'avancée dans un arc mais la place dans le TOUR. Le creux est au cœur
+ * de l'Ardeur (nuit à +20 °C, les morts sont amorphes), le plein régime au cœur du Grand
+ * Froid (nuit à −16 °C, sous le cran de fureur), et les Pluies sont la montée à mi-régime.
+ */
+const MI_ARDEUR = Math.round(BALANCE.ACT_DAYS * 1.5)
+const MI_GRAND_FROID = Math.round(BALANCE.ACT_DAYS * 3.5)
+
+/**
+ * LA NUIT QUI MET LES MORTS À MI-RÉGIME — CHERCHÉE SUR LA COURBE, JAMAIS ÉCRITE.
+ *
+ * Le contrat A7(a) ne vise pas un jour, il vise un RÉGIME : assez froid pour que les goules
+ * marchent (au cœur de l'Ardeur elles sont amorphes, `TORPEUR.CHAUD`), assez loin du cran de
+ * fureur pour qu'aucun cri ne parte. C'était « la nuit d'acte II » quand l'arc allait dans un
+ * seul sens ; sous l'année qui tourne, c'est un point de la MONTÉE des Pluies vers l'hiver —
+ * et il se déplacerait si les cardinaux glissaient (S12). On le cherche donc au lieu de le
+ * poser : le jour dont la nuit de plaine tombe au plus près du milieu de la plage de torpeur.
+ */
+const NUIT_A_MI_REGIME = ((): number => {
+  const cible = (CENDREUX.TORPEUR.CHAUD + CENDREUX.TORPEUR.FROID) / 2
+  const nuitDe = (j: number): number => TEMPERATURE.SOCLE(j, 1) - TEMPERATURE.ECART_NUIT(j)
+  let elu = 2 * BALANCE.ACT_DAYS + 1
+  for (let j = elu; j <= 3 * BALANCE.ACT_DAYS; j++) {
+    if (Math.abs(nuitDe(j) - cible) < Math.abs(nuitDe(elu) - cible)) elu = j
+  }
+  return elu
+})()
 
 function run(sim: SimState, ticks: number): void {
   for (let t = 0; t < ticks; t++) step(sim, [])
@@ -101,8 +131,10 @@ describe('l’alarme (A3)', () => {
   it('une seule alarme par vague ; les dormeurs se réveillent', () => {
     const sim = createSim(6, { map: createEmptyMap(30, 30, TERRAIN_GRASS) })
     foundNpcVillage(sim, 15, 15, 2)
-    // Nuit : tout le monde dort.
-    sim.tick = DAY_TICKS_PER_CYCLE
+    // Nuit : tout le monde dort. Le crépuscule est SAISONNIER (spec `saisons.md` S6) — on le
+    // lit sur le cycle en cours au lieu de la constante d'avant, sans quoi on se poserait
+    // en plein jour un jour sur deux.
+    sim.tick = dayTicksAt(sim, sim.tick)
     for (const npc of sim.npcs) {
       npc.energy = 10
       npc.sleeping = true
@@ -119,21 +151,26 @@ describe('l’alarme (A3)', () => {
 })
 
 describe('les hordes nocturnes (A4, A5)', () => {
-  it('spawn à la nuit, dissipation à l’aube ; plus grosses en acte II', { timeout: 30_000 }, () => {
-    // Échelle : 1 tick ≈ 1 jour — non : on teste en cycle réel, acte forcé.
-    const mkSim = (startDay: number) => {
+  it('spawn à la nuit, dissipation à l’aube ; plus grosses au Grand Froid qu’à l’Ardeur', { timeout: 30_000 }, () => {
+    // Échelle : 1 tick ≈ 1 jour — non : on teste en cycle réel, saison forcée.
+    const mkSim = (jour: number) => {
       const sim = createSim(8, {
         map: createEmptyMap(40, 40, TERRAIN_GRASS),
         calendarScale: TICKS_PER_SEASON_DAY / TICKS_PER_CYCLE, // 1 cycle = 1 jour de saison
       })
       foundNpcVillage(sim, 20, 20, 0)
-      sim.tick = startDay * TICKS_PER_CYCLE + DAY_TICKS_PER_CYCLE - 1
+      // Un tick avant le CRÉPUSCULE du cycle visé — saisonnier depuis S6, donc relu sur le
+      // cycle et non pris à une constante : la nuit d'hiver commence 3 h plus tôt que celle
+      // d'été, et se poser sur l'ancienne heure fixe raterait la moitié des levées.
+      const debut = (jour - 1) * TICKS_PER_CYCLE
+      sim.tick = debut + dayTicksAt(sim, debut) - 1
       return sim
     }
 
-    // DÉBUT DE SAISON : on force la chance en essayant plusieurs nuits. La taille est celle
+    // AU CŒUR DE L'ARDEUR — le CREUX de l'année (S15 : la rampe lit `dureteDeLAnnee`, nulle
+    // au cœur de l'été). On force la chance en essayant plusieurs nuits ; la taille est celle
     // de la RAMPE au jour joué (décision ⑭ — plus de table d'actes).
-    let sim = mkSim(0)
+    let sim = mkSim(MI_ARDEUR)
     let spawned: SimEvent[] = []
     let nuitsJouees = 0
     for (let night = 0; night < 12 && spawned.length === 0; night++) {
@@ -141,11 +178,13 @@ describe('les hordes nocturnes (A4, A5)', () => {
       nuitsJouees += 1
       spawned = [...spawned, ...collect(sim, ['horde_spawned'])]
     }
-    expect(spawned.length).toBeGreaterThan(0)
+    // DOUZE NUITS AU PLUS, et c'est aussi une borne de SENS : au-delà on aurait quitté
+    // l'Ardeur et mesuré la taille d'une autre saison. Mesuré : elle se lève à la 1re.
+    expect(spawned.length, 'aucune horde levée en douze nuits d’Ardeur').toBeGreaterThan(0)
     const size1 = (spawned[0] as { size: number }).size
     // Le jour se lit sur le tick de la DÉCISION (l'aube qui a planifié), pas sur l'horloge
     // d'arrivée du test — les nuits jouées ont fait avancer le calendrier.
-    const jour1 = seasonDayAtTick((spawned[0] as { tick: number }).tick, sim.calendarScale)
+    const jour1 = seasonDayAtTick((spawned[0] as { tick: number }).tick, sim.calendarScale, sim.jourDeDepart)
     expect(size1).toBe(Math.round(seasonRamp(WORLD_EVENTS.HORDE_TAILLE.DEBUT, WORLD_EVENTS.HORDE_TAILLE.FIN, jour1)))
     void nuitsJouees
     // L'aube ne DISSIPE plus (décision ⑮) : elle FIGE — la liste des hordes se vide, mais
@@ -153,13 +192,16 @@ describe('les hordes nocturnes (A4, A5)', () => {
     run(sim, TICKS_PER_CYCLE)
     expect(sim.hordes).toHaveLength(0)
 
-    // MI-SAISON (jour 25) : taille supérieure — la pente monte.
-    sim = mkSim(24)
+    // AU CŒUR DU GRAND FROID : taille supérieure. Ce n'est plus « plus tard dans l'arc »,
+    // c'est plus LOIN dans le tour — l'année qui boucle rendra l'Ardeur suivante douce à
+    // nouveau (S15), la garde se lit donc entre deux SAISONS, jamais entre deux jours.
+    sim = mkSim(MI_GRAND_FROID)
     spawned = []
     for (let night = 0; night < 12 && spawned.length === 0; night++) {
       run(sim, TICKS_PER_CYCLE)
       spawned = [...spawned, ...collect(sim, ['horde_spawned'])]
     }
+    expect(spawned.length, 'aucune horde levée au cœur du Grand Froid').toBeGreaterThan(0)
     const size2 = (spawned[0] as { size: number }).size
     expect(size2).toBeGreaterThan(size1)
   })
@@ -228,12 +270,15 @@ describe('la carcasse de convoi (A6)', () => {
 
 describe('LE scénario (A7) — tient ou casse', () => {
   it('(a) horde de 4 contre milice armée de 4 : le village tient (≤ 1 perte)', { timeout: 30_000 }, () => {
-    // NUIT D'ACTE II (jour 30) depuis le cadran de température (2026-08-21) : le contrat
-    // mesure la MILICE contre l'assaut nominal — froid (les goules courent à mi-régime),
-    // HORS fureur (T = 35 > FUREUR : pas de cris, pas de salves — le climax d'acte III a
-    // ses propres gardes). Vérifié sur 12 graines avec la troisième alliance : 12/12 tiennent.
+    // NUIT DES PLUIES FINISSANTES, prise au RÉGIME et non au numéro d'acte (l'acte II de
+    // 21 jours n'existe plus, S1-S3) : le contrat mesure la MILICE contre l'assaut nominal —
+    // froid (la courbe élit le jour 79, nuit de plaine à −3,9 °C : les goules courent à
+    // mi-régime), HORS fureur (−3,9 °C reste loin au-dessus de `TORPEUR.FUREUR` = −13,2 :
+    // pas de cris, pas de salves — le climax du Grand Froid a ses propres gardes).
+    // RE-MESURÉ sous le calendrier qui tourne, 12 graines : 12/12 tiennent, et le plateau
+    // s'étend sur toute la fin des Pluies (j77→j83) — ce n'est pas une graine chanceuse.
     const sim = createSim(14, { map: createEmptyMap(40, 40, TERRAIN_GRASS), cycleOffset: cycleOffsetForStartHour(0), calendarScale: 1 })
-    sim.tick = 29 * TICKS_PER_SEASON_DAY
+    sim.tick = (NUIT_A_MI_REGIME - 1) * TICKS_PER_SEASON_DAY
     sim.tick -= sim.tick % TICKS_PER_CYCLE
     sim.tick += 1
     foundNpcVillage(sim, 20, 20, 4)
@@ -251,11 +296,14 @@ describe('LE scénario (A7) — tient ou casse', () => {
     // propriété survit largement ; c'est bien la graine qui a tourné, pas la promesse —
     // à la différence du raid d'alignement A7(b), où le taux s'est effondré (5/12 → 1/12)
     // et où le commentaire le dit.
-    // NUIT D'ACTE III (jour 55) : « le village casse » est un contrat d'ENDGAME — au plein
-    // régime, le froid extrême arme aussi le CRI (le cran ⑤ EST cette zone de froid), et le
-    // crescendo fait partie de la promesse. Vérifié : 4/4 graines cassent en < 400 ticks.
+    // NUIT DU CŒUR DU GRAND FROID (jour 105) : « le village casse » est un contrat d'ENDGAME
+    // — au plein régime, le froid extrême arme aussi le CRI (le cran ⑤ EST cette zone de
+    // froid ; la nuit de plaine y vaut −16 °C, sous `TORPEUR.FUREUR`), et le crescendo fait
+    // partie de la promesse. L'ancien « acte III, jour 55 » visait cette zone-là ; sous
+    // l'année qui tourne (S1), le jour 55 est une fin d'Ardeur tiède où rien ne se lève.
+    // RE-MESURÉ au cœur du Grand Froid, 12 graines : 12/12 cassent, en 780 à 1 619 ticks.
     const sim = createSim(17, { map: createEmptyMap(40, 40, TERRAIN_GRASS), cycleOffset: cycleOffsetForStartHour(0), calendarScale: 1 })
-    sim.tick = 54 * TICKS_PER_SEASON_DAY
+    sim.tick = (MI_GRAND_FROID - 1) * TICKS_PER_SEASON_DAY
     sim.tick -= sim.tick % TICKS_PER_CYCLE
     sim.tick += 1
     foundNpcVillage(sim, 20, 20, 2)
@@ -314,10 +362,11 @@ describe('la horde s’ouvre en marchant (décision 2026-08-20)', () => {
   /** Un village sans milice armée : on vient regarder MARCHER, pas se battre. */
   function hordeEnMarche(taille: number, graine = 23): SimState {
     const sim = createSim(graine, { map: createEmptyMap(60, 60, TERRAIN_GRASS), cycleOffset: cycleOffsetForStartHour(0), calendarScale: 1 })
-    // LA NUIT FROIDE (jour 55, minuit) — depuis le cadran de température (2026-08-21), une
-    // horde de nuit tiède marche au quart de l'allure : l'écart se mesure au régime que la
-    // machine vise, la nuit d'assaut de fin de saison, pas dans une aube d'acte I.
-    sim.tick = 54 * TICKS_PER_SEASON_DAY
+    // LA NUIT FROIDE (cœur du Grand Froid, minuit) — depuis le cadran de température
+    // (2026-08-21), une horde de nuit tiède marche au quart de l'allure : l'écart se mesure
+    // au régime que la machine vise, la nuit d'assaut de l'hiver, pas dans une nuit
+    // d'Ardeur à +20 °C où les morts sont amorphes (S4).
+    sim.tick = (MI_GRAND_FROID - 1) * TICKS_PER_SEASON_DAY
     sim.tick -= sim.tick % TICKS_PER_CYCLE
     sim.tick += 1 // pas PILE sur la frontière du cycle : l'aube de worldevents y disperserait la horde au premier pas
     foundNpcVillage(sim, 30, 30, 1)

@@ -13,7 +13,7 @@ import { addItems, countOf } from './items'
 import { createEmptyMap } from './map'
 import type { ResourceNode } from './economy'
 import { createSim, spawnEntity, step, type SimState } from './sim'
-import { DAY_TICKS_PER_CYCLE, TICKS_PER_CYCLE } from './time'
+import { dayTicksAt, TICKS_PER_CYCLE } from './time'
 import { addStructure, createVillage, type BuildOrder } from './village'
 import { bedAnchor, desiredOrders, granaries, granaryStocks, HUT_SPOTS, HUT_W } from './village-plan'
 import { refreshBoard } from './village-board'
@@ -47,12 +47,32 @@ function run(sim: SimState, ticks: number, collect?: SimEvent[]): void {
   }
 }
 
-/** Saute juste AVANT une phase du cycle (0 = aube, DAY_TICKS = crépuscule), puis la franchit. */
+/** Saute juste AVANT une phase du cycle (0 = aube), puis la franchit. */
 function crossPhase(sim: SimState, phase: number, collect?: SimEvent[]): void {
   const cur = (sim.tick + sim.cycleOffset) % TICKS_PER_CYCLE
   let delta = (phase - cur + TICKS_PER_CYCLE) % TICKS_PER_CYCLE
   if (delta <= 3) delta += TICKS_PER_CYCLE
   sim.tick += delta - 3
+  run(sim, 6, collect)
+}
+
+/**
+ * Saute juste AVANT le CRÉPUSCULE et le franchit.
+ *
+ * Il ne se dit plus par une constante : la longueur du jour est saisonnière (spec
+ * `saisons.md` S6) et `estCrepuscule` la teste par ÉGALITÉ EXACTE — viser l'heure de tombée
+ * d'un AUTRE cycle que celui où l'on atterrit, c'est enjamber le tick de l'événement et
+ * perdre la fermeture des portes sans une erreur. On résout donc le cycle visé d'abord, et
+ * on lui demande SON crépuscule.
+ */
+function crossCrepuscule(sim: SimState, collect?: SimEvent[]): void {
+  const aube = sim.tick - ((sim.tick + sim.cycleOffset) % TICKS_PER_CYCLE)
+  let cible = aube + dayTicksAt(sim, aube)
+  if (cible - sim.tick <= 3) {
+    const suivante = aube + TICKS_PER_CYCLE
+    cible = suivante + dayTicksAt(sim, suivante)
+  }
+  sim.tick = cible - 3
   run(sim, 6, collect)
 }
 
@@ -180,7 +200,7 @@ describe('la porte rituelle (R7)', () => {
     crossPhase(sim, 0)
     expect(gate.open).toBe(true)
     expect(porteHumaine.open).toBeUndefined()
-    crossPhase(sim, DAY_TICKS_PER_CYCLE)
+    crossCrepuscule(sim)
     expect(gate.open).toBeUndefined() // `undefined` EST « close » : le snapshot reste léger
     expect(porteHumaine.open).toBeUndefined()
   })

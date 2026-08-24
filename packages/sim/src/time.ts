@@ -7,12 +7,31 @@
  * - Le CALENDRIER (jour de saison, actes) : accéléré par `calendarScale`
  *   (1 en multi ; grand en Veillée et en test pour jouer une saison vite).
  */
-import { BALANCE, TEMPERATURE, phaseOf, tourOf } from './balance'
+import { BALANCE, dureteDeLAnnee, TEMPERATURE, phaseOf, tourOf } from './balance'
 import { emitEvent } from './events'
+import { effetsDuJour } from './modificateur'
 import type { SimState } from './sim'
 
 export const TICKS_PER_CYCLE = BALANCE.CYCLE_REAL_MINUTES * 60 * BALANCE.TICK_RATE_HZ
-export const DAY_TICKS_PER_CYCLE = Math.round(TICKS_PER_CYCLE * BALANCE.CYCLE_DAY_FRACTION)
+/**
+ * LA LONGUEUR DU JOUR, EN TICKS — **une fonction du jour de l'année depuis le 2026-08-23**
+ * (spec `saisons.md` S6 ; c'était la constante `DAY_TICKS_PER_CYCLE`).
+ *
+ * La nuit dure 12,6 min réelles au cœur de l'Ardeur et 23,4 au cœur du Grand Froid, et vaut
+ * pile la valeur d'avant aux équinoxes — la moyenne annuelle ne bouge donc pas, rien n'est
+ * recalibré par accident. La nuit étant la fenêtre de danger (chasse nocturne, hordes, le
+ * froid qui mord), les deux pressions s'additionnent là où c'est voulu.
+ *
+ * ⚠ **ELLE SE LIT SUR LE JOUR DU DÉBUT DU CYCLE, jamais sur le jour courant.** Le calendrier
+ * bascule à l'heure de départ de la partie (9 h en Veillée), donc EN COURS de cycle : une
+ * lecture au jour courant ferait bouger le crépuscule au milieu de la journée, et le tick
+ * d'égalité qui porte l'annonce de la Brume, la planification des hordes et le crépuscule des
+ * villages PNJ pourrait être ENJAMBÉ — l'événement se perdrait en silence. `dayTicksAt` prend
+ * donc le tick, remonte à l'aube de son cycle, et rend une valeur constante sur tout le cycle.
+ */
+export function dayTicksPourJour(jour: number): number {
+  return Math.round(TICKS_PER_CYCLE * BALANCE.PART_DE_JOUR(jour))
+}
 /** Durée de la pente du froid nocturne, en ticks — dérivée de `NIGHT_RAMP_HOURS`, jamais écrite. */
 export const NIGHT_RAMP_TICKS = Math.round((TEMPERATURE.NIGHT_RAMP_HOURS / 24) * TICKS_PER_CYCLE)
 /** Ticks par jour de saison à l'échelle 1 (un jour réel). */
@@ -43,6 +62,8 @@ export interface GameTime {
    * au feu ne se font pas « à 40 % ») ; `nuit` est celui du FROID, qui, lui, a une pente.
    */
   nuit: number
+  /** La longueur du JOUR de ce cycle, en ticks — saisonnière (S6), constante sur le cycle. */
+  dayTicks: number
   /** Jour de saison, à partir de 1. Peut dépasser SEASON_DAYS (la Cendre finale). */
   seasonDay: number
   act: Act
@@ -52,8 +73,40 @@ export interface GameTime {
   phase: number
 }
 
-export function seasonDayAtTick(tick: number, calendarScale: number): number {
-  return Math.floor((tick * calendarScale) / TICKS_PER_SEASON_DAY) + 1
+/**
+ * LE JOUR DE SAISON À UN TICK — `jourDeDepart` est le jour où le monde COMMENCE (spec
+ * `saisons.md` S2 : le vrai jeu ouvre au **jour 51**, à la fin de l'Ardeur ; les montages de
+ * test ouvrent au jour 1, à l'Éclosion).
+ *
+ * Le troisième paramètre est REQUIS, et c'est délibéré : le rendre optionnel aurait laissé
+ * compiler tous les appels d'avant en leur donnant silencieusement le jour 1. C'est le
+ * compilateur qui a énuméré les sites à convertir, pas un grep.
+ */
+export function seasonDayAtTick(tick: number, calendarScale: number, jourDeDepart: number): number {
+  return Math.floor((tick * calendarScale) / TICKS_PER_SEASON_DAY) + jourDeDepart
+}
+
+/** LE JOUR DE SAISON DE L'ÉTAT — la lecture courante, celle que presque tout le monde veut. */
+export function jourDeSaison(state: SimState, tick?: number): number {
+  return seasonDayAtTick(tick ?? state.tick, state.calendarScale, state.jourDeDepart)
+}
+
+/** Le tick de l'AUBE du cycle où tombe `tick` (le cycle est décalé par `cycleOffset`). */
+export function debutDeCycle(state: SimState, tick: number): number {
+  return tick - (((tick + state.cycleOffset) % TICKS_PER_CYCLE) + TICKS_PER_CYCLE) % TICKS_PER_CYCLE
+}
+
+/** La longueur du jour du cycle où tombe `tick` — constante sur tout le cycle (voir
+ *  `dayTicksPourJour`). C'est le tick de crépuscule, en coordonnée de cycle. */
+export function dayTicksAt(state: SimState, tick: number): number {
+  return dayTicksPourJour(jourDeSaison(state, debutDeCycle(state, tick)))
+}
+
+/** LE CRÉPUSCULE TOMBE-T-IL À CE TICK ? L'écrivain unique de l'égalité — quatre systèmes
+ *  planifient dessus (annonce de la Brume, hordes, villages PNJ, annonce météo) et la rater,
+ *  c'est perdre l'événement sans une erreur. */
+export function estCrepuscule(state: SimState, tick: number): boolean {
+  return ((tick + state.cycleOffset) % TICKS_PER_CYCLE) === dayTicksAt(state, tick)
 }
 
 /**
@@ -76,24 +129,33 @@ export function phaseForDay(day: number): number {
   return phaseOf(actForDay(day))
 }
 
-/** La longueur d'une année en jours de jeu — dérivée, jamais écrite. */
-export const YEAR_DAYS = BALANCE.ACT_DAYS * BALANCE.ACTS_PER_YEAR
+/** La longueur d'une année en jours de jeu — dérivée dans `balance.ts` (les courbes annuelles
+ *  s'en servent à la construction), republiée ici où le calendrier se lit. */
+export { YEAR_DAYS, jourDeLAnnee } from './balance'
 
 /**
- * LA RAMPE DE SAISON — une pression qui monte JOUR APRÈS JOUR, pas par actes (décisions
- * d'Alexis 2026-08-21 : « une table de trois valeurs, et une table est plate »).
+ * LA RAMPE DE SAISON — **cyclique depuis le 2026-08-23** (spec `saisons.md` S15).
  *
- * CLAMPÉE au jour `SEASON_DAYS`, et ce n'est pas un détail : `seasonDayAtTick` est NON BORNÉ
- * (« peut dépasser SEASON_DAYS — la Cendre finale »), et `advanceWorldEvents` continue après
- * `seasonEnded`. Les tables d'actes étaient clampées par construction (`actForDay` rend 3 pour
- * toujours) ; une rampe nue aurait extrapolé — horde certaine chaque nuit du jour 75, plafonds
- * qui grimpent sans fin — très exactement là où T15 (« on ne doit pas être submergé ») compte
- * le plus. Le jour 60 est le sommet, la Cendre finale y RESTE.
+ * Elle montait jour après jour et se CLAMPAIT au jour `SEASON_DAYS` : un arc à sens unique.
+ * Sous une année qui boucle, les sept quantités qu'elle pilote — taille et chance de horde,
+ * population de Cendreux, leur cri, les morts-vivants de la chasse nocturne, le cap de
+ * fréquentation des lieux — atteignaient toutes leur maximum **au milieu de l'Ardeur de
+ * l'an 1** et n'en redescendaient plus jamais : hordes pleines chaque nuit, dès le premier
+ * été, pour toujours.
+ *
+ * Elle lit maintenant `dureteDeLAnnee` : 0 au cœur de l'Ardeur, 1 au cœur du Grand Froid, la
+ * pente du froid entre les deux, et un PLANCHER qui monte d'un tour à l'autre. La signature
+ * ne bouge pas — le jour de saison porte à lui seul le jour de l'année ET le tour — donc les
+ * sept sites changent sans un diff chez eux.
  */
 export function seasonRamp(debut: number, fin: number, day: number): number {
-  const frac = Math.min(day, BALANCE.SEASON_DAYS) / BALANCE.SEASON_DAYS
-  return debut + (fin - debut) * frac
+  // LE CARACTÈRE DE LA SAISON peut relever le PLANCHER (S18) : le Réveil sort les Cendreux dès
+  // le printemps, la Meute tient l'hiver au plafond. Il ne peut jamais l'abaisser.
+  const plancher = effetsDuJour(day).plancherMenace ?? 0
+  const durete = dureteDeLAnnee(day)
+  return debut + (fin - debut) * (durete > plancher ? durete : plancher)
 }
+
 
 /**
  * LE COUPLAGE VEILLÉE (V0-9) — dérive le `calendarScale` pour qu'une saison de `SEASON_DAYS`
@@ -126,7 +188,8 @@ export function cycleOffsetForStartHour(startHour: number): number {
 }
 
 /**
- * LA PART DE NUIT À CE POINT DU CYCLE — le multiplicateur de `NIGHT_COLD` (décision d'Alexis
+ * LA PART DE NUIT À CE POINT DU CYCLE — le multiplicateur de l'écart de nuit (`ECART_NUIT`,
+ * saisonnier depuis S5 ; c'était la constante `NIGHT_COLD`) (décision d'Alexis
  * 2026-08-23 ; le pourquoi et le prix sont en tête de `NIGHT_RAMP_HOURS`, `balance.ts`).
  *
  * 0 en plein jour, 1 sur TOUTE la nuit, et une PENTE LINÉAIRE de `NIGHT_RAMP_TICKS` sur les
@@ -152,15 +215,16 @@ export function cycleOffsetForStartHour(startHour: number): number {
  * maison prescrivait déjà (« jamais poser un état pile sur l'aube »). AUCUNE partie réelle
  * n'y touche : la Veillée comme le LAN démarrent à 9 h.
  *
- * Continue partout — le pas maximal vaut `NIGHT_COLD / NIGHT_RAMP_TICKS` (0,0033 °C mesuré,
+ * Continue partout — le pas maximal vaut `ECART_NUIT(jour) / NIGHT_RAMP_TICKS` (0,0033 °C
+ * mesuré à l'écart d'alors,
  * contre 12 avant), gardé par un balayage dans `time.test.ts`. Le `max` des deux lisières
  * plutôt qu'un `if` : une rampe plus longue que la demi-journée dégrade proprement au lieu de
  * trouer la fonction. Pur : / et comparaisons (invariant #2).
  */
-export function partDeNuit(cycleTick: number): number {
-  if (cycleTick >= DAY_TICKS_PER_CYCLE) return 1
+export function partDeNuit(cycleTick: number, dayTicks: number): number {
+  if (cycleTick >= dayTicks) return 1
   const aube = 1 - cycleTick / NIGHT_RAMP_TICKS
-  const crepuscule = 1 - (DAY_TICKS_PER_CYCLE - cycleTick) / NIGHT_RAMP_TICKS
+  const crepuscule = 1 - (dayTicks - cycleTick) / NIGHT_RAMP_TICKS
   const v = aube > crepuscule ? aube : crepuscule
   return v < 0 ? 0 : v > 1 ? 1 : v
 }
@@ -178,14 +242,16 @@ export function partDeNuit(cycleTick: number): number {
  */
 export function gameTimeAt(state: SimState, tick: number): GameTime {
   const cycleTick = (tick + state.cycleOffset) % TICKS_PER_CYCLE
-  const seasonDay = seasonDayAtTick(tick, state.calendarScale)
+  const seasonDay = jourDeSaison(state, tick)
+  const dayTicks = dayTicksAt(state, tick)
   // Le cycle démarre à l'aube ; on décale la phase vers une horloge murale.
   const wallHour = (cycleTick / TICKS_PER_CYCLE) * 24 + BALANCE.CYCLE_DAWN_HOUR
   return {
     tick,
     hourOfCycle: wallHour % 24,
-    isNight: cycleTick >= DAY_TICKS_PER_CYCLE,
-    nuit: partDeNuit(cycleTick),
+    isNight: cycleTick >= dayTicks,
+    nuit: partDeNuit(cycleTick, dayTicks),
+    dayTicks,
     seasonDay,
     act: actForDay(seasonDay),
     tour: tourForDay(seasonDay),
@@ -202,14 +268,14 @@ export function getGameTime(state: SimState): GameTime {
  * Appelé une fois par step(), en fin de tick.
  */
 export function advanceTime(state: SimState): void {
-  const dayBefore = seasonDayAtTick(state.tick, state.calendarScale)
+  const dayBefore = jourDeSaison(state)
   state.tick += 1
 
   const cycleTick = (state.tick + state.cycleOffset) % TICKS_PER_CYCLE
   if (cycleTick === 0) emitEvent(state, { type: 'day_started', tick: state.tick })
-  if (cycleTick === DAY_TICKS_PER_CYCLE) emitEvent(state, { type: 'night_started', tick: state.tick })
+  if (estCrepuscule(state, state.tick)) emitEvent(state, { type: 'night_started', tick: state.tick })
 
-  const dayAfter = seasonDayAtTick(state.tick, state.calendarScale)
+  const dayAfter = jourDeSaison(state)
   // À très grande échelle, un tick peut franchir plusieurs jours : on émet chacun.
   for (let day = dayBefore + 1; day <= dayAfter; day++) {
     emitEvent(state, { type: 'season_day_started', tick: state.tick, day })

@@ -12,18 +12,33 @@ import { advanceBrume, brumeCentre, brumeJourEligible, dansLaBrume } from './bru
 import { drainEvents, type SimEvent } from './events'
 import { distSq } from './geometry'
 import { createEmptyMap, type WorldMap } from './map'
+import { modificateurDuJour } from './modificateur'
 import { rngNext } from './rng'
 import { createSim, snapshot, spawnEntity, step, type SimState } from './sim'
 import { advanceTemperature, AMBIANT_HYPOTHERMIE, ambientTemperature, baselineTemperature } from './temperature'
-import { calendarScaleForSeasonCycles, DAY_TICKS_PER_CYCLE, TICKS_PER_CYCLE } from './time'
+import { calendarScaleForSeasonCycles, dayTicksPourJour, TICKS_PER_CYCLE } from './time'
 import { grantItems } from './village'
 import { foundNpcVillage } from './worldgen'
 
 /** 1 jour de saison = 1 cycle : le crépuscule du cycle c EST le jour c+1. */
 const SCALE = calendarScaleForSeasonCycles(BALANCE.SEASON_DAYS)
 
+/**
+ * LES DEUX SAISONS FROIDES — les seules où la Brume se lève (spec `saisons.md` S13 : la loi
+ * lit **0 à l'Éclosion ET à l'Ardeur**, une nappe à −22 °C en plein été n'ayant aucun sens).
+ * Les jours 61 à 120 : les Pluies, puis le Grand Froid.
+ */
+const PREMIER_JOUR_FROID = 2 * BALANCE.ACT_DAYS + 1
+const DERNIER_JOUR_FROID = 4 * BALANCE.ACT_DAYS
+
+/**
+ * LE CRÉPUSCULE DU JOUR `day`. La longueur du jour est SAISONNIÈRE depuis S6 (0,72 du cycle
+ * au cœur de l'Ardeur, 0,48 au cœur du Grand Froid) : elle se dérive donc du jour. Une
+ * constante raterait l'égalité exacte qui porte l'annonce — et l'événement se perdrait sans
+ * un mot, ce que `estCrepuscule` existe pour empêcher.
+ */
 function tickCrepusculeDuJour(day: number): number {
-  return (day - 1) * TICKS_PER_CYCLE + DAY_TICKS_PER_CYCLE
+  return (day - 1) * TICKS_PER_CYCLE + dayTicksPourJour(day)
 }
 
 /** Une carte AVEC Cendrière : champ de cendre = x (la Cendrière est le bord ouest). */
@@ -35,14 +50,21 @@ function carteACendre(width = 70, height = 40): WorldMap {
   return map
 }
 
-/** Le premier jour d'acte II-III (avant l'évacuation) que `hash2` élit — ou son contraire. */
-function jourDeBrume(eligible: boolean, depuis = 22): number {
-  for (let d = depuis; d <= 54; d++) if (brumeJourEligible(d) === eligible) return d
-  throw new Error('aucun jour ne convient — le hash aurait 33 tirages identiques')
+/** Le premier jour des saisons FROIDES que `hash2` élit — ou son contraire. */
+function jourDeBrume(eligible: boolean, depuis = PREMIER_JOUR_FROID): number {
+  for (let d = depuis; d <= DERNIER_JOUR_FROID; d++) if (brumeJourEligible(d) === eligible) return d
+  const tirages = DERNIER_JOUR_FROID - depuis + 1
+  throw new Error(`aucun jour de ${depuis} à ${DERNIER_JOUR_FROID} ne convient — le hash aurait ${tirages} tirages identiques`)
 }
 
+/**
+ * ⚠ `finDeSaison: null` — **la saison ne finit pas, elle tourne** (le réglage du solo, T4).
+ * La Brume vit désormais aux jours 61-120, au-delà des `SEASON_DAYS` = 60 de la fin de saison
+ * par défaut : sans ça, chaque montage jouerait l'évacuation, l'Arche et le verdict de fin de
+ * saison par-dessus la nappe qu'on mesure.
+ */
 function simBrume(seed = 2026): SimState {
-  return createSim(seed, { map: carteACendre(), calendarScale: SCALE })
+  return createSim(seed, { map: carteACendre(), calendarScale: SCALE, finDeSaison: null })
 }
 
 function types(events: SimEvent[]): SimEvent['type'][] {
@@ -61,7 +83,9 @@ describe('l’annonce (A3, A8)', () => {
     expect(types(drainEvents(sim))).toContain('brume_annonce')
     // La levée à l'aube suivante, le retrait au crépuscule d'après.
     expect(sim.brume!.riseTick).toBe(d * TICKS_PER_CYCLE)
-    expect(sim.brume!.retreatTick).toBe(d * TICKS_PER_CYCLE + DAY_TICKS_PER_CYCLE)
+    // Le retrait tombe au crépuscule du jour SUIVANT — donc sur SA longueur de jour (S6) :
+    // une nappe de fin d'automne se retire plus tôt que celle qui l'a précédée.
+    expect(sim.brume!.retreatTick).toBe(d * TICKS_PER_CYCLE + dayTicksPourJour(d + 1))
     // R6 — le silence EST le signe : le corridor est couvert jusqu'au retrait.
     const quiets = sim.faunaQuiet.filter((q) => q.until === sim.brume!.retreatTick)
     expect(quiets.length).toBeGreaterThanOrEqual(3)
@@ -80,7 +104,7 @@ describe('l’annonce (A3, A8)', () => {
   })
 
   it('A8 — worldEvents=false : aucune annonce, jamais', () => {
-    const sim = createSim(2026, { map: carteACendre(), calendarScale: SCALE, worldEvents: false })
+    const sim = createSim(2026, { map: carteACendre(), calendarScale: SCALE, worldEvents: false, finDeSaison: null })
     sim.tick = tickCrepusculeDuJour(jourDeBrume(true))
     drainEvents(sim)
     step(sim, [])
@@ -88,16 +112,20 @@ describe('l’annonce (A3, A8)', () => {
   })
 
   it('une carte SANS champ de Cendre (les bancs) ne voit jamais de Brume', () => {
-    const sim = createSim(2026, { calendarScale: SCALE })
+    const sim = createSim(2026, { calendarScale: SCALE, finDeSaison: null })
     sim.tick = tickCrepusculeDuJour(jourDeBrume(true))
     drainEvents(sim)
     step(sim, [])
     expect(sim.brume ?? null).toBeNull()
   })
 
-  it('l’acte I n’a pas de Brume (CHANCE_PER_DAY[0] = 0)', () => {
+  it('l’Éclosion et l’Ardeur n’ont pas de Brume (la loi y lit 0)', () => {
+    // S13 — LA BRUME EST UN MÉCANISME DE FROID, et la refonte des saisons lui a coûté un
+    // palier : posée telle quelle, l'ancienne table de trois valeurs donnait 35 % par jour
+    // d'une nappe à −22 °C au cœur de l'été. Les DEUX saisons douces lisent zéro.
     expect(BRUME.CHANCE_PER_DAY(1)).toBe(0)
-    for (let d = 1; d <= BALANCE.ACT_DAYS; d++) expect(brumeJourEligible(d)).toBe(false)
+    expect(BRUME.CHANCE_PER_DAY(2)).toBe(0)
+    for (let d = 1; d < PREMIER_JOUR_FROID; d++) expect(brumeJourEligible(d)).toBe(false)
   })
 })
 
@@ -197,15 +225,33 @@ describe('le retrait paie (A6)', () => {
   })
 })
 
+/**
+ * LE JOUR OÙ LA NAPPE SE MESURE — le onzième jour des Pluies, et il tient les DEUX bouts
+ * (mesuré) : la plaine de midi y est encore douce (+10,4 °C, au-dessus d'`AMBIANT_DOUX` comme
+ * du gate des Cendreux) et la nappe l'y rend létale (10,4 − 22 = −11,6, sous
+ * `AMBIANT_HYPOTHERMIE`). Le cœur des Pluies (j75, +8 °C) aurait posé le monde à découvert
+ * PILE sur `TORPEUR.CONVERGE_SOUS` = 8 : un verdict qui se serait joué au bit de flottant près.
+ */
+const JOUR_DE_NAPPE = 2 * BALANCE.ACT_DAYS + 11
+
 describe('le froid de la nappe (A4, A5)', () => {
-  /** Une nappe STATIQUE posée à la main au midi du jour 25 (acte II, plein jour). */
+  it('LA PRÉMISSE — aucun caractère de saison ne décale le jour où la nappe se mesure', () => {
+    // UNE GARDE PROUVE SA PRÉMISSE. Les deux marges ci-dessous (1,6 °C sous l'hypothermie,
+    // 2,4 au-dessus du gate des Cendreux) supposent une saison ORDINAIRE. Or S18 tire un
+    // caractère par saison, et celui des Pluies — l'Été indien — décale la lecture du socle
+    // de quinze jours : sous lui, ce jour lirait le 56ᵉ (+19 °C) et la nappe cesserait de
+    // tuer. Sans cette ligne, le test tomberait sur « la plaine n'est pas létale », muet.
+    expect(modificateurDuJour(JOUR_DE_NAPPE)).toBeNull()
+  })
+
+  /** Une nappe STATIQUE posée à la main au midi d'un jour des Pluies (plein jour). */
   function simSousNappe(): { sim: SimState; midi: number } {
     const sim = simBrume(7)
-    const midi = 24 * TICKS_PER_CYCLE + Math.floor(DAY_TICKS_PER_CYCLE / 2)
+    const midi = (JOUR_DE_NAPPE - 1) * TICKS_PER_CYCLE + Math.floor(dayTicksPourJour(JOUR_DE_NAPPE) / 2)
     sim.tick = midi
     sim.brume = {
       phase: 'nappe',
-      day: 25,
+      day: JOUR_DE_NAPPE,
       riseTick: midi - 10,
       retreatTick: midi + 100000,
       x0: 40.5,

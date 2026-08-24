@@ -21,7 +21,7 @@ import { revelerPoi } from './poi-discovery'
 import { inventoryOf, pourInto, removeItems } from './items'
 import { hash2 } from './noise'
 import { spawnNpcsAround } from './npc'
-import { seasonDayAtTick } from './time'
+import { jourDeSaison } from './time'
 import { foodScoreOf, granaryStocks } from './village-plan'
 import type { Entity, RefugeeGroup, SimState } from './sim'
 import type { Village } from './village'
@@ -34,7 +34,7 @@ const REFUGEE_SALT = 0x9e37f1c5
  */
 export function advanceRefugees(state: SimState): void {
   if (!state.worldEvents) return
-  const day = seasonDayAtTick(state.tick, state.calendarScale)
+  const day = jourDeSaison(state)
   if (day > 0 && day !== state.lastRefugeeDay && day % REFUGEES.PERIOD_DAYS === 0) {
     state.lastRefugeeDay = day
     spawnRefugees(state, day)

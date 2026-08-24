@@ -44,6 +44,10 @@ export const SAVE_FORMAT_VERSION = 1
  */
 const REPLIS_EPHEMERES: Readonly<Record<string, () => unknown>> = {
   reveils: () => [],
+  // LE JOUR DE DÉPART (S2, 2026-08-23) : une vallée d'AVANT la refonte des saisons a
+  // forcément ouvert au jour 1 — c'était le seul jour d'ouverture possible. Le repli dit
+  // donc la vérité de ces sauvegardes-là, et lui seul ; toute vallée née après porte le champ.
+  jourDeDepart: () => 1,
   // LE PRÉSAGE (2026-08-21) : une vieille vallée n'a jamais vu d'aube décider sa nuit —
   // null est sa vérité, et le prochain lever de jour en tirera un vrai. (`megaHordeSpawned`,
   // lui, est SORTI de l'état avec la méga-horde scriptée — décision ⑲ ; la clé excédentaire
@@ -99,7 +103,7 @@ export const SAVE_REQUIRED_KEYS: readonly string[] = [
   'aggressions', 'arkDeparted', 'blood', 'calendarScale', 'corpses', 'cycleOffset', 'debug', 'denRespawns',
   'dens', 'entities', 'evacuatedIds', 'evacuation', 'events', 'faunaCap', 'faunaQuiet', 'finDeSaison',
   'functions', 'groundItems', 'grounds', 'home', 'hordes', 'lastConvoyDay', 'lastRefugeeDay',
-  'map', 'monsters', 'nextCorpseId', 'nextEntityId', 'nextGroundItemId',
+  'jourDeDepart', 'map', 'monsters', 'nextCorpseId', 'nextEntityId', 'nextGroundItemId',
   'nextHerdId', 'nextHordeId', 'nextRefugeeGroupId', 'nextStructureId', 'nextVillageId',
   'lieuxBrules', 'nodes', 'npcs', 'presage', 'refugeeGroups', 'reveils', 'rngState', 'seasonEnded', 'seed', 'structures', 'tick',
   'villages', 'visitedPois', 'wind', 'worldEvents',

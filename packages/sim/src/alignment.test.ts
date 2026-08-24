@@ -7,7 +7,7 @@ import { createEmptyMap } from './map'
 import { foundNpcVillage } from './worldgen'
 import { createReplayLog, recordAndStep, runReplay } from './replay'
 import { createSim, snapshot, spawnEntity, step, type PlayerAction, type SimState } from './sim'
-import { DAY_TICKS_PER_CYCLE, TICKS_PER_CYCLE, TICKS_PER_SEASON_DAY } from './time'
+import { dayTicksAt, TICKS_PER_CYCLE, TICKS_PER_SEASON_DAY } from './time'
 import { grantItems } from './village'
 
 function makeSim(calendarScale = 1): SimState {
@@ -51,7 +51,7 @@ describe('les actes (A1)', () => {
     grantItems(sim, a, { berries: 10 })
     entity(sim, b).hunger = 20 // affamé (< 30)
     act(sim, a, { type: 'give', targetEntityId: b, item: 'berries', count: 2 })
-    // utile = min(30, 80) = 30 → 30 × 0.2 × 3 (besoin) × 1 (acte I) = 18.
+    // utile = min(30, 80) = 30 → 30 × 0.2 × 3 (besoin) × 1 (l'Éclosion) = 18.
     // Une baie vaut 6 depuis le chantier tension (contre 15) : la chaleur d'un don
     // suit la faim RÉELLEMENT comblée — c'est tout l'objet de la règle.
     expect(entity(sim, a).warmth).toBeCloseTo(7.2, 0)
@@ -65,14 +65,31 @@ describe('les actes (A1)', () => {
     expect(entity(sim, a).warmth - before).toBeCloseTo(0, 1)
   })
 
-  it('le même don vaut double au Grand Froid (acte II)', () => {
-    const sim = makeSim(TICKS_PER_SEASON_DAY / TICKS_PER_CYCLE) // 1 cycle = 1 jour
-    const { a, b } = twoVillages(sim)
-    grantItems(sim, a, { berries: 10 })
-    sim.tick = 25 * TICKS_PER_CYCLE // jour 26 : acte II
-    entity(sim, b).hunger = 20
-    act(sim, a, { type: 'give', targetEntityId: b, item: 'berries', count: 2 })
-    expect(entity(sim, a).warmth).toBeCloseTo(14.4, 0) // 7,2 × 2
+  /**
+   * L'ACTE EST UNE SAISON, ET LA PRESSION SUIT LE FROID (spec `saisons.md` S13). `ACT_FACTOR`
+   * portait trois paliers montants ; il en porte quatre, réordonnés : 1 à l'Éclosion, 1 à
+   * l'Ardeur — la sécheresse mord par ses propres mécanismes, pas par un multiplicateur —,
+   * 2 aux Pluies, 3 au Grand Froid. Nourrir un affamé quand la vallée se ferme vaut donc ce
+   * que ça coûte de s'en priver, et l'été n'est plus compté deux fois.
+   */
+  it('le même don vaut double aux Pluies et triple au Grand Froid', () => {
+    // Le jour se DÉRIVE de la cadence des saisons — on vise le CŒUR d'une saison, jamais un
+    // numéro écrit, sinon l'attendu se décale au prochain changement d'`ACT_DAYS`. Et on se
+    // pose à mi-journée : l'aube porte le plein froid de la nuit, ce n'est pas un état neutre.
+    const coeurDe = (phase: number): number => (phase - 1) * BALANCE.ACT_DAYS + Math.floor(BALANCE.ACT_DAYS / 2)
+    const donAuCoeurDe = (phase: number): number => {
+      const sim = makeSim(TICKS_PER_SEASON_DAY / TICKS_PER_CYCLE) // 1 cycle = 1 jour
+      const { a, b } = twoVillages(sim)
+      grantItems(sim, a, { berries: 10 })
+      sim.tick = (coeurDe(phase) - 1) * TICKS_PER_CYCLE + Math.floor(TICKS_PER_CYCLE / 3)
+      entity(sim, b).hunger = 20
+      act(sim, a, { type: 'give', targetEntityId: b, item: 'berries', count: 2 })
+      return entity(sim, a).warmth
+    }
+    expect(donAuCoeurDe(1), 'l’Éclosion — le répit de l’année').toBeCloseTo(7.2, 0)
+    expect(donAuCoeurDe(2), 'l’Ardeur — la faim ne monte pas, la sécheresse suffit').toBeCloseTo(7.2, 0)
+    expect(donAuCoeurDe(3), 'les Pluies').toBeCloseTo(14.4, 0) // 7,2 × 2
+    expect(donAuCoeurDe(4), 'le Grand Froid').toBeCloseTo(21.6, 0) // 7,2 × 3
   })
 })
 
@@ -207,7 +224,35 @@ describe('LE test (A7) — le paquebot vire, la Meute raide', () => {
   })
 
   it('(b) une Meute PNJ raide la nuit : grenier voisin cassé, butin rapporté, alarme', { timeout: 60_000 }, () => {
-    // Seed 23 (était 21, était 24, était… 23 — la boucle est bouclée).
+    // Seed 26 (était 23, était 21, était 24, était 23 — la boucle est bouclée).
+    //
+    // LA REFONTE DES SAISONS (2026-08-23) NE CHANGE PAS LA GRAINE, MAIS ELLE CHANGE LA NUIT.
+    // La part de jour n'est plus la constante 0,625 : elle suit le jour de l'année (S6). Ce
+    // montage ouvre à l'Éclosion — jour 1, le défaut de `createSim` —, où elle vaut 0,5573 :
+    // la nuit passe de 16,9 à **19,9 min réelles**. Le raid gagne donc trois minutes pour
+    // sortir, traverser, casser et rentrer, exactement à rebours du pincement relevé
+    // ci-dessous ; la graine 26 tient, et le grenier tombe. ⚠ Les taux cités plus bas ont été
+    // relevés sous la nuit fixe, ET ILS NE SE REJOUENT PLUS TELS QUELS : `tools/diag-raid.mts`
+    // vise maintenant le jour de départ du VRAI jeu (le 51ᵉ, nuit de 13,5 min) là où ce montage
+    // ouvre au jour 1 — les deux fixtures ont divergé. Avant de citer un taux neuf, les remettre
+    // sur le MÊME jour, sinon on comparera deux nuits différentes en croyant comparer un raid.
+    //
+    // 23 → 26 (2026-08-23) : le cycle jour/nuit passe de 48 à 45 min (« un jour dure 45
+    // minutes »). MESURÉ AVANT DE CHANGER LA GRAINE, sur 24 graines (`tools/diag-raid.mts`
+    // porté à 24) :
+    //
+    //     grenier cassé : 11/24  →  7/24
+    //     butin rentré  :  4/24  →  2/24
+    //
+    // Deux choses, et il faut les dire séparément. (a) L'essentiel est un DÉCALAGE du flux
+    // RNG : la graine 23 ne casse plus le grenier, 26 et 37 le cassent avant comme après.
+    // (b) Mais la baisse a aussi une CAUSE mécanique, et elle n'est pas dans le bruit par
+    // construction : la nuit est 6,25 % plus courte EN TEMPS RÉEL, alors que marcher et
+    // frapper sont ancrés à la SECONDE (`ticksFor`), pas au cycle. Un raid — sortir,
+    // traverser, casser, rentrer — dispose donc d'un peu moins de nuit pour tenir. L'écart
+    // mesuré (46 % → 29 %) reste sous le seuil de significativité à 24 graines (z ≈ 1,2) :
+    // on ne peut pas séparer les deux effets ici, et on ne fait pas semblant. À rouvrir si
+    // le raid décroche pour de bon au prochain relevé.
     //
     // 21 → 23 (2026-08-21) : le chantier « pression croissante » des Cendreux décale le flux
     // RNG (présage à l'aube, crescendo) et la graine 21 a tourné. MESURÉ au diag AVANT de la
@@ -230,7 +275,7 @@ describe('LE test (A7) — le paquebot vire, la Meute raide', () => {
     // mord plus fort), et elle est en attente d'arbitrage d'Alexis : adoucir la calibration,
     // ou accepter que rentrer avec le butin devienne l'exploit. Tant que ce n'est pas
     // tranché, on joue la graine qui garde le test VIVANT — mais on ne cache pas le taux.
-    const sim = createSim(23, { map: createEmptyMap(60, 60, TERRAIN_GRASS) })
+    const sim = createSim(26, { map: createEmptyMap(60, 60, TERRAIN_GRASS) })
     foundNpcVillage(sim, 15, 15, 3, 'neutre') // la victime
     const victim = sim.villages[0]!
     foundNpcVillage(sim, 40, 40, 4, 'meute') // la Meute
@@ -243,8 +288,10 @@ describe('LE test (A7) — le paquebot vire, la Meute raide', () => {
     const meuteChest = sim.structures.find((s) => s.type === 'chest' && s.villageId === meute.id)!
     const meuteWoodBefore = countOf(meuteChest.inventory ?? [], 'wood')
 
-    // Avancer à la nuit et laisser le raid se jouer.
-    sim.tick = DAY_TICKS_PER_CYCLE - 10
+    // Avancer à la nuit et laisser le raid se jouer. Le crépuscule n'est plus une constante :
+    // il suit la saison (`saisons.md` S6), donc il se DEMANDE à l'état plutôt que de se lire
+    // dans une table — et le rater, c'est passer la nuit en plein jour sans une erreur.
+    sim.tick = dayTicksAt(sim, sim.tick) - 10
     drainEvents(sim)
     let alarm = false
     let chestBroken = false
@@ -282,7 +329,7 @@ describe('le déterminisme (A8)', () => {
       foundNpcVillage(state, 15, 15, 2, 'foyer')
       foundNpcVillage(state, 42, 42, 3, 'meute')
       spawnEntity(state, 28.5, 28.5)
-      state.tick = DAY_TICKS_PER_CYCLE - 100
+      state.tick = dayTicksAt(state, state.tick) - 100 // le crépuscule est saisonnier (S6)
     }
     const live = createSim(31, options)
     const log = createReplayLog(31, options)

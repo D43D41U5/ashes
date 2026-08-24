@@ -18,25 +18,55 @@ import { foundNpcVillage } from './worldgen'
 import { floreGelee, gelMortel } from './gel'
 import { countOf } from './items'
 import { createEmptyMap } from './map'
-import { frontDuCycle, meteoIntensityAt } from './meteo'
+import { fenetreDe, frontDuCycle, meteoIntensityAt } from './meteo'
+import { modificateurDuJour } from './modificateur'
 import { AMBIANT_HYPOTHERMIE, baselineTemperatureAt, climatFlore, dehorsSansMeteo } from './temperature'
 import { createSim, spawnEntity, step, type PlayerAction, type SimState } from './sim'
 import { addStructure, getVillageOf, grantItems, type Structure } from './village'
-import { DAY_TICKS_PER_CYCLE, getGameTime, TICKS_PER_CYCLE, TICKS_PER_SEASON_DAY } from './time'
+import { cycleOffsetForStartHour, dayTicksPourJour, getGameTime, TICKS_PER_CYCLE, TICKS_PER_SEASON_DAY, YEAR_DAYS } from './time'
 import type { ResourceNode } from './economy'
 
-/** 1 cycle jour/nuit = 1 jour de saison : la saison entière tient en 60 cycles. */
+/** 1 cycle jour/nuit = 1 jour de saison : une saison de 30 jours tient en 30 cycles. */
 const FAST = TICKS_PER_SEASON_DAY / TICKS_PER_CYCLE
 
 function makeSim(terrain = TERRAIN_GRASS, nodes: ResourceNode[] = []): SimState {
   return createSim(7, { map: createEmptyMap(40, 40, terrain), calendarScale: FAST, nodes })
 }
-/** Le tick du jour de saison `jour`, de jour ou de nuit. Vérifié par `getGameTime` sur place.
- *  LE JOUR, C'EST MIDI et non l'aube : depuis la rampe de nuit (`partDeNuit`), le tick 0 d'un
- *  cycle porte encore le plein `NIGHT_COLD` — un « de jour » posé là mesurerait la nuit. */
-const MIDI = Math.round(DAY_TICKS_PER_CYCLE / 2)
-function auJour(sim: SimState, jour: number, nuit = false): number {
-  return jour * TICKS_PER_CYCLE + (nuit ? DAY_TICKS_PER_CYCLE + 10 : MIDI)
+
+/**
+ * LE CŒUR D'UNE SAISON, en jour de l'année — les quatre CARDINAUX de la courbe du socle
+ * (spec `saisons.md` S4) : mi-Éclosion 15, mi-Ardeur 45, mi-Pluies 75, mi-Grand Froid 105.
+ * Dérivé d'`ACT_DAYS`, jamais écrit : la cadence a déjà changé une fois (21 → 30).
+ */
+function coeurDe(phase: number): number {
+  return (phase - 1) * BALANCE.ACT_DAYS + Math.round(BALANCE.ACT_DAYS / 2)
+}
+/** 45 — le plus doux de l'année : +26 °C le jour, +20 la nuit. Rien n'y gèle, nulle part. */
+const MI_ARDEUR = coeurDe(2)
+/** 75 — la saison qui BASCULE dans la journée : +8 °C à midi, −2 la nuit. */
+const MI_PLUIES = coeurDe(3)
+/** 105 — la vallée est prise : −2 °C à midi (gelé), −16 la nuit (mortel). */
+const MI_GRAND_FROID = coeurDe(4)
+/**
+ * LE JOUR OÙ LA GÉOGRAPHIE SEULE DÉCIDE — le cinquième jour des Pluies. La vallée y est
+ * encore tiède à toute heure (+14 °C à midi, +5,3 la nuit : rien n'y gèle) et le Névé, seize
+ * degrés plus bas, est déjà pris (−2 / −10,7). C'est le seul régime qui isole le LIEU de la
+ * SAISON — et les Pluies de l'an 1 ne tirent aucun caractère (S18), donc rien ne le décale.
+ */
+const JOUR_TIEDE = 2 * BALANCE.ACT_DAYS + 5
+
+/**
+ * Le tick de MIDI (ou d'une heure de nuit) du jour de saison `jour` — `FAST` couple 1 cycle
+ * = 1 jour et les montages ouvrent au jour 1, donc le cycle `jour − 1` EST ce jour-là.
+ *
+ * LE JOUR, C'EST MIDI et non l'aube : depuis la rampe de nuit (`partDeNuit`), le tick 0 d'un
+ * cycle porte encore le plein écart nocturne — un « de jour » posé là mesurerait la nuit.
+ * Et la longueur du jour est SAISONNIÈRE (S6) : midi se dérive du jour, sans quoi un « midi »
+ * constant tomberait après le crépuscule au cœur du Grand Froid.
+ */
+function auJour(jour: number, nuit = false): number {
+  const dayTicks = dayTicksPourJour(jour)
+  return (jour - 1) * TICKS_PER_CYCLE + (nuit ? dayTicks + 10 : Math.round(dayTicks / 2))
 }
 function act(sim: SimState, id: number, action: PlayerAction): void {
   step(sim, [{ entityId: id, dx: 0, dy: 0, action }])
@@ -61,6 +91,20 @@ function tickJusteAuDessus(sim: SimState, seuil: number, marge: number): number 
 }
 
 
+describe('les ancres de saison de ce fichier', () => {
+  it('LA PRÉMISSE — aucun caractère ne décale les jours sur lesquels tout ce fichier est calé', () => {
+    // UNE GARDE PROUVE SA PRÉMISSE. Tous les régimes mesurés ici (les +14 °C du jour tiède,
+    // les −2 °C de la nuit des Pluies) supposent une saison ORDINAIRE. Or S18 tire un
+    // caractère par saison, et celui des Pluies — l'Été indien — décale la lecture du socle
+    // de quinze jours : sous lui, `JOUR_TIEDE` lirait le jour 50 (+23 °C, le Névé ne gèle
+    // plus) et `MI_PLUIES` le jour 60 (+9 la nuit, plus rien ne fige). Les tests tomberaient
+    // alors sur « la neige ne gèle pas », sans dire pourquoi. Ici, ils disent pourquoi.
+    for (const jour of [MI_ARDEUR, MI_PLUIES, MI_GRAND_FROID, JOUR_TIEDE]) {
+      expect(modificateurDuJour(jour)).toBeNull()
+    }
+  })
+})
+
 describe('A1 — le climat de la flore EST le froid du monde, l’abri en moins', () => {
   it('rend `baselineTemperatureAt` au bit près sur toute tuile non abritée, à tout tick', () => {
     // GARDE EXHAUSTIVE (pas des points choisis) : chaque terrain du registre × un balayage
@@ -69,9 +113,10 @@ describe('A1 — le climat de la flore EST le froid du monde, l’abri en moins'
     const terrains = Object.keys(TERRAINS).map(Number)
     for (const t of terrains) {
       sim.map.terrain[12 * 40 + 12] = t
-      for (let jour = 0; jour < 60; jour += 7) {
+      // L'ANNÉE ENTIÈRE, depuis qu'elle boucle (S1) : les 120 jours, pas les 60 d'une saison.
+      for (let jour = 1; jour <= YEAR_DAYS; jour += 7) {
         for (const nuit of [false, true]) {
-          const tick = auJour(sim, jour, nuit)
+          const tick = auJour(jour, nuit)
           expect(climatFlore(sim, 12, 12, tick)).toBe(baselineTemperatureAt(sim, 12, 12, tick))
         }
       }
@@ -85,11 +130,14 @@ describe('A2/A3/A6 — la repousse SUSPEND, elle ne meurt pas, et le minéral s�
     return { id: 1, type, tx: 12, ty: 12, stock: 0, regrowAt: Math.max(1, tick - 1) }
   }
 
-  it('A2 — en acte III, un buisson à échéance reste vide, et AUCUN nœud ne disparaît', () => {
-    const depart = 50 * TICKS_PER_CYCLE
+  it('A2 — au cœur du Grand Froid, un buisson à échéance reste vide, et AUCUN nœud ne disparaît', () => {
+    const depart = auJour(MI_GRAND_FROID)
     const sim = makeSim(TERRAIN_GRASS, [noeudAEcheance('berry_bush', depart)])
     sim.tick = depart
-    expect(getGameTime(sim).act).toBe(3)
+    // Le Grand Froid de l'AN 1 : le tour autant que la phase — `act` seul vaut 4 dans les
+    // deux cas et ne dirait pas lequel des deux a bougé si la cadence changeait encore.
+    expect(getGameTime(sim).tour).toBe(1)
+    expect(getGameTime(sim).phase).toBe(4)
     expect(floreGelee(sim, 12, 12)).toBe(true)
     for (let i = 0; i < 100; i++) step(sim, [])
     expect(sim.nodes).toHaveLength(1) // F6 — rien ne sort de la carte
@@ -98,8 +146,10 @@ describe('A2/A3/A6 — la repousse SUSPEND, elle ne meurt pas, et le minéral s�
   })
 
   it('A3 — et il se remplit au tick où le climat repasse au-dessus du seuil', () => {
-    // On part gelé (nuit d'acte II), on laisse venir l'aube : le climat remonte de 35 à 65.
-    const nuit = auJour(makeSim(), 30, true)
+    // LES PLUIES SONT LA SAISON QUI BASCULE DANS LA JOURNÉE : on part gelé (la nuit y tombe à
+    // −2 °C), on laisse venir l'aube, et le climat remonte à +8 — au-dessus du seuil. C'est
+    // le seul endroit de l'année où « cueille de jour » est une règle et non une fatalité.
+    const nuit = auJour(MI_PLUIES, true)
     const sim = makeSim(TERRAIN_GRASS, [noeudAEcheance('berry_bush', nuit)])
     sim.tick = nuit
     expect(getGameTime(sim).isNight).toBe(true)
@@ -111,8 +161,8 @@ describe('A2/A3/A6 — la repousse SUSPEND, elle ne meurt pas, et le minéral s�
     expect(climatFlore(sim, 12, 12, sim.tick - 1)).toBeLessThan(FLORE.SEUIL_GEL)
   })
 
-  it('A6 — un filon de fer repousse à sa date en acte III, de nuit : le minéral n’a pas de saison', () => {
-    const nuit = 50 * TICKS_PER_CYCLE + DAY_TICKS_PER_CYCLE + 10
+  it('A6 — un filon de fer repousse à sa date au cœur du Grand Froid, de nuit : le minéral n’a pas de saison', () => {
+    const nuit = auJour(MI_GRAND_FROID, true)
     const sim = makeSim(TERRAIN_GRASS, [noeudAEcheance('iron_vein', nuit)])
     sim.tick = nuit
     expect(NODE_DEFS.iron_vein.vivant).toBeUndefined()
@@ -122,7 +172,7 @@ describe('A2/A3/A6 — la repousse SUSPEND, elle ne meurt pas, et le minéral s�
   })
 
   it('le gel ne DESSINE aucun tirage : le flux RNG est le même avec et sans nœud gelé', () => {
-    const depart = 50 * TICKS_PER_CYCLE
+    const depart = auJour(MI_GRAND_FROID)
     const avec = makeSim(TERRAIN_GRASS, [noeudAEcheance('berry_bush', depart)])
     const sans = makeSim(TERRAIN_GRASS, [])
     avec.tick = depart
@@ -135,13 +185,18 @@ describe('A2/A3/A6 — la repousse SUSPEND, elle ne meurt pas, et le minéral s�
   })
 })
 
-describe('A4 — l’acte I reste entièrement libre, nuit comprise (non-régression)', () => {
-  it('sur herbe, forêt et marais, à toute heure de l’acte I, rien ne gèle', () => {
+describe('A4 — l’ARDEUR reste entièrement libre, nuit comprise', () => {
+  it('sur herbe, forêt et marais, à toute heure des trente jours de l’Ardeur, rien ne gèle', () => {
+    // LA SAISON LIBRE A CHANGÉ DE NOM ET DE PLACE (spec `saisons.md` S4) : ce n'est plus
+    // l'ouverture du monde mais l'ÉTÉ. « L'Éclosion s'ouvre encore gelée » est le contenu
+    // même du printemps — le dégel — et ses nuits tombent à −8,5 °C. La promesse « rien ne
+    // gèle, nuit comprise » se tient donc à l'Ardeur, et sur ses trente jours entiers : le
+    // point le plus froid mesuré est le marais à l'aube du dernier jour (+7 °C).
     for (const terrain of [TERRAIN_GRASS, TERRAIN_FOREST, TERRAIN_MARSH]) {
       const sim = makeSim(terrain)
-      for (let jour = 0; jour <= 20; jour++) {
+      for (let jour = BALANCE.ACT_DAYS + 1; jour <= 2 * BALANCE.ACT_DAYS; jour++) {
         for (let h = 0; h < TICKS_PER_CYCLE; h += TICKS_PER_CYCLE / 24) {
-          const tick = jour * TICKS_PER_CYCLE + h
+          const tick = (jour - 1) * TICKS_PER_CYCLE + h
           expect(climatFlore(sim, 12, 12, tick)).toBeGreaterThanOrEqual(FLORE.SEUIL_GEL)
         }
       }
@@ -160,7 +215,7 @@ describe('A5/A7/A8 — la cueillette gèle, le bois non ; la géographie et le b
   }
 
   it('A5 — sous le gel, le buisson est refusé ; l’arbre donne son bois et la fibre se ramasse', () => {
-    const tick = 50 * TICKS_PER_CYCLE
+    const tick = auJour(MI_GRAND_FROID)
     const nodes: ResourceNode[] = [
       { id: 1, type: 'berry_bush', tx: 12, ty: 12, stock: 8, regrowAt: 0 },
       { id: 2, type: 'tree', tx: 13, ty: 12, stock: 10, regrowAt: 0 },
@@ -186,12 +241,12 @@ describe('A5/A7/A8 — la cueillette gèle, le bois non ; la géographie et le b
     expect(countOf(sim.entities[0]!.inventory, 'fiber')).toBeGreaterThan(0)
   })
 
-  it('A7 — au MÊME tick d’acte I, la neige gèle et l’herbe non', () => {
+  it('A7 — au MÊME tick d’un jour tiède, la neige gèle et l’herbe non', () => {
     const sim = makeSim(TERRAIN_GRASS)
     sim.map.terrain[12 * 40 + 12] = TERRAIN_SNOW
-    sim.tick = 5 * TICKS_PER_CYCLE + 10
-    expect(getGameTime(sim).act).toBe(1)
-    expect(floreGelee(sim, 12, 12)).toBe(true) // le Névé est stérile dès le premier jour
+    sim.tick = auJour(JOUR_TIEDE)
+    expect(getGameTime(sim).phase).toBe(3) // le début des Pluies : la vallée n'a pas encore pris
+    expect(floreGelee(sim, 12, 12)).toBe(true) // le Névé, seize degrés plus bas, est déjà stérile
     expect(floreGelee(sim, 20, 20)).toBe(false) // l'herbe d'à côté, non
   })
 
@@ -202,8 +257,10 @@ describe('A5/A7/A8 — la cueillette gèle, le bois non ; la géographie et le b
       meteoActive: true,
     })
     // On CHERCHE le régime où une pluie bascule la flore : le monde au-dessus du seuil (rien
-    // ne gèle) et à moins de `COLD.pluie` au-dessus (la pluie l'y fait passer). Sur la plaine
-    // c'est la nuit d'acte I — 60, contre 50 sous l'averse.
+    // ne gèle) et à moins de `COLD.pluie` au-dessus (la pluie l'y fait passer). Depuis que
+    // « l'Éclosion s'ouvre encore gelée » (S4), c'est le MATIN DU PREMIER JOUR : la plaine
+    // repasse tout juste le seuil au sortir de la nuit — +3,3 °C à ciel clair, −0,7 sous
+    // l'averse. Le dégel du printemps se paie front par front.
     const debut = tickJusteAuDessus(sim, FLORE.SEUIL_GEL, METEO.COLD.pluie)
     sim.tick = debut
     expect(floreGelee(sim, 12, 12)).toBe(false) // à ciel clair, rien ne gèle À CE TICK MÊME
@@ -211,13 +268,18 @@ describe('A5/A7/A8 — la cueillette gèle, le bois non ; la géographie et le b
     // La bande TRAVERSE : elle n'est pas encore sur (12,12) au tick où elle est élue. On
     // cherche le moment où elle y passe, SANS bouger l'horloge du régime trouvé — la fenêtre
     // est donc CENTRÉE sur `debut`, et c'est bien le front qu'on mesure, pas l'heure.
+    // ⚠ LA FENÊTRE SE LIT PAR `fenetreDe`, JAMAIS DANS LA TABLE (S7) : elle est SAISONNIÈRE
+    // depuis la refonte (un demi-cycle ici, le cycle entier aux Pluies), et un front fabriqué
+    // sur l'ancienne constante ne serait plus la géométrie d'aucun front réel.
+    const day = getGameTime(sim).seasonDay
+    const fenetre = fenetreDe({ type: 'pluie', day })
     sim.meteo = {
       type: 'pluie',
       cycle: Math.floor(debut / TICKS_PER_CYCLE),
-      day: getGameTime(sim).seasonDay,
+      day,
       edge: 0,
-      startTick: debut - Math.floor(METEO.TRAVERSEE_TICKS / 2),
-      endTick: debut - Math.floor(METEO.TRAVERSEE_TICKS / 2) + METEO.TRAVERSEE_TICKS,
+      startTick: debut - Math.floor(fenetre / 2),
+      endTick: debut - Math.floor(fenetre / 2) + fenetre,
     }
     expect(meteoIntensityAt(sim.meteo, debut, sim.map.width, sim.map.height, 12, 12)).toBeGreaterThan(0)
     expect(climatFlore(sim, 12, 12, debut)).toBeLessThan(FLORE.SEUIL_GEL) // le front a mordu
@@ -244,7 +306,7 @@ describe('A9/A10 — le potager : on ne sème pas une terre gelée, et le gel tu
 
   it('A9 — gelé : la parcelle refuse, la serre et le terroir sèment ; au chaud, les trois sèment', () => {
     const sim = makeSim()
-    sim.tick = 50 * TICKS_PER_CYCLE // acte III : la vallée est gelée
+    sim.tick = auJour(MI_GRAND_FROID) // le cœur de l'hiver : la vallée est gelée, même à midi
     const { id, parcelle, serre, terroir } = withFerme(sim)
     expect(floreGelee(sim, 13, 12)).toBe(true)
 
@@ -257,19 +319,22 @@ describe('A9/A10 — le potager : on ne sème pas une terre gelée, et le gel tu
     expect(typeof st(sim, serre).plantedAt).toBe('number')
     expect(typeof st(sim, terroir).plantedAt).toBe('number')
 
-    // Au chaud (acte I de jour), la parcelle sème comme les autres.
+    // Au chaud (midi de l'Ardeur, +26 °C), la parcelle sème comme les autres — avec LA GRAINE
+    // DE LA SAISON : depuis S16 chaque culture a sa fenêtre, et le plein air ne l'ouvre qu'à
+    // sa phase. Le fruit est celle de l'Ardeur ; la `graine` d'hier est devenue la culture
+    // d'hiver, celle qu'on ne sème que sous verre.
     const doux = makeSim()
-    doux.tick = 5 * TICKS_PER_CYCLE
+    doux.tick = auJour(MI_ARDEUR)
     const ferme = withFerme(doux)
     expect(floreGelee(doux, 13, 12)).toBe(false)
-    grantItems(doux, ferme.id, { graine: 1 })
+    grantItems(doux, ferme.id, { graine_fruit: 1 })
     act(doux, ferme.id, { type: 'plant', structureId: ferme.parcelle })
     expect(typeof st(doux, ferme.parcelle).plantedAt).toBe('number')
   })
 
   it('A10 — sous le gel MORTEL, la parcelle perd sa culture et émet `crop_frozen` ; serre et terroir tiennent', () => {
     const sim = makeSim()
-    sim.tick = 50 * TICKS_PER_CYCLE + DAY_TICKS_PER_CYCLE + 10 // acte III, de NUIT : 10 < 22
+    sim.tick = auJour(MI_GRAND_FROID, true) // nuit du cœur de l'hiver : −16 °C, sous SEUIL_MORTEL
     const { parcelle, serre, terroir } = withFerme(sim)
     expect(gelMortel(sim, 13, 12)).toBe(true)
     // On sème « à la main » : le semis lui-même est refusé sur la parcelle (A9), or ce qu'on
@@ -286,26 +351,27 @@ describe('A9/A10 — le potager : on ne sème pas une terre gelée, et le gel tu
     expect(gelees[0]).toMatchObject({ type: 'crop_frozen', structureId: parcelle })
   })
 
-  it('A10ter — LE CHEMIN RÉEL : semé légalement en acte II, un blizzard tue la récolte', () => {
+  it('A10ter — LE CHEMIN RÉEL : semé légalement à l’Ardeur, un orage de saison froide tue la récolte', () => {
     // Les deux tests précédents posent `plantedAt` à la main — ils mesurent la RÈGLE, pas sa
     // joignabilité. Celui-ci ne touche à rien : on sème par l'action `plant` là où la sim
-    // l'autorise (le jour, au chaud), puis on laisse venir ce qui tue.
+    // l'autorise (midi de l'Ardeur, +26 °C), puis on laisse venir ce qui tue.
     //
     // CE QUI A CHANGÉ AVEC R12 : un front ne mord de `ORAGE_FROID.COLD` que là où le monde est
     // DÉJÀ sous la limite de neige (0 °C) — or on ne sème qu'au-dessus de `SEUIL_GEL` (+2,8 °C).
-    // **Aucun front ne peut donc tuer une culture le jour même où elle a été semée** : la marge
-    // n'existe pas. Ce qui tue, c'est la NUIT venue, et l'orage qui la double : −4 °C au clair
-    // (la culture tient, > `SEUIL_MORTEL` = −9,2), le fond du monde sous la bande. C'est très
+    // **Aucun front ne peut donc tuer une culture par un temps semable** : la marge n'existe
+    // pas. Ce qui tue, c'est la saison qui tourne (S1) — l'année avance jusqu'à un ciel où le
+    // monde à découvert épargne encore la culture et où l'orage, lui, l'emporte. C'est très
     // exactement le scénario que la spec promet — « bâtir des serres AVANT l'hiver ».
     const sim = createSim(7, {
       map: createEmptyMap(40, 40, TERRAIN_GRASS),
       calendarScale: FAST,
       meteoActive: true,
+      finDeSaison: null, // l'année tourne : la recherche du ciel qui tue traverse les saisons
     })
-    const jour = tickJusteAuDessus(sim, FLORE.SEUIL_GEL, 36) // n'importe quel régime semable (ex-jauge 90)
+    const jour = auJour(MI_ARDEUR) // le plein été : la fenêtre du fruit est ouverte (S16)
     sim.tick = jour
     const { id, parcelle } = withFerme(sim)
-    grantItems(sim, id, { graine: 1 })
+    grantItems(sim, id, { graine_fruit: 1 })
     act(sim, id, { type: 'plant', structureId: parcelle })
     expect(rejections(sim)).not.toContain('la terre est gelée — il faut une serre')
     expect(typeof st(sim, parcelle).plantedAt).toBe('number') // semée pour de vrai
@@ -314,22 +380,24 @@ describe('A9/A10 — le potager : on ne sème pas une terre gelée, et le gel tu
     // Un front posé à la main est ÉCRASÉ par `advanceMeteo` au tick suivant (il réélit le front
     // du cycle) : le montage d'avant ne tenait que parce que le tick tiré tombait, par chance,
     // dans un cycle d'orage. On cherche donc le premier orage du calendrier dont le milieu de
-    // fenêtre laisse encore vivre la culture À CIEL CLAIR — la nuit seule ne doit pas tuer,
-    // sinon ce n'est pas l'orage qu'on mesure.
-    let nuit = -1
-    for (let c = 0; c < 400 && nuit < 0; c++) {
-      const f = frontDuCycle(c, FAST)
+    // fenêtre laisse encore vivre la culture À CIEL CLAIR — le ciel seul ne doit pas tuer,
+    // sinon ce n'est pas l'orage qu'on mesure. (Mesuré : c'est un orage de MIDI, en plein
+    // Grand Froid. Les nuits d'hiver, elles, tuent toutes seules — elles sont donc écartées,
+    // et le tick retenu n'est plus « la nuit venue » comme sous l'ancienne table d'actes.)
+    let letal = -1
+    for (let c = 0; c < 400 && letal < 0; c++) {
+      const f = frontDuCycle(c, FAST, sim.jourDeDepart)
       if (!f || f.type !== 'orage') continue
       const t = Math.floor((f.startTick + f.endTick) / 2)
       if (t <= jour) continue
       if (dehorsSansMeteo(sim, 13, 12, t) < FLORE.SEUIL_MORTEL) continue // le ciel clair tue déjà
       sim.tick = t
       sim.meteo = f
-      if (climatFlore(sim, 13, 12, t) < FLORE.SEUIL_MORTEL) nuit = t
+      if (climatFlore(sim, 13, 12, t) < FLORE.SEUIL_MORTEL) letal = t
     }
-    expect(nuit, 'aucun orage du calendrier ne bascule une culture que le ciel clair épargne').toBeGreaterThan(jour)
-    expect(dehorsSansMeteo(sim, 13, 12, nuit)).toBeGreaterThanOrEqual(FLORE.SEUIL_MORTEL) // le ciel clair ne tue pas
-    expect(climatFlore(sim, 13, 12, nuit)).toBeLessThan(FLORE.SEUIL_MORTEL) // c'est l'orage qui tue
+    expect(letal, 'aucun orage du calendrier ne bascule une culture que le ciel clair épargne').toBeGreaterThan(jour)
+    expect(dehorsSansMeteo(sim, 13, 12, letal)).toBeGreaterThanOrEqual(FLORE.SEUIL_MORTEL) // le ciel clair ne tue pas
+    expect(climatFlore(sim, 13, 12, letal)).toBeLessThan(FLORE.SEUIL_MORTEL) // c'est l'orage qui tue
     expect(typeof st(sim, parcelle).plantedAt).toBe('number') // encore vivante avant le tick joué
     drainEvents(sim)
 
@@ -338,9 +406,9 @@ describe('A9/A10 — le potager : on ne sème pas une terre gelée, et le gel tu
     expect(drainEvents(sim).filter((e) => e.type === 'crop_frozen')).toHaveLength(1)
   })
 
-  it('A10bis — le gel simple ne tue PAS : une parcelle gelée de jour en acte III garde sa culture', () => {
+  it('A10bis — le gel simple ne tue PAS : une parcelle gelée de jour au Grand Froid garde sa culture', () => {
     const sim = makeSim()
-    sim.tick = 50 * TICKS_PER_CYCLE + MIDI // acte III, de JOUR : 40 — gelé (< 52), pas mortel (> 22)
+    sim.tick = auJour(MI_GRAND_FROID) // midi du cœur de l'hiver : −2 °C — gelé (< 2,8), pas mortel (> −9,2)
     const { parcelle } = withFerme(sim)
     expect(floreGelee(sim, 13, 12)).toBe(true)
     expect(gelMortel(sim, 13, 12)).toBe(false)
@@ -351,8 +419,23 @@ describe('A9/A10 — le potager : on ne sème pas une terre gelée, et le gel tu
 })
 
 describe('les seuils tiennent leurs promesses', () => {
-  it('aucun seuil ne tombe sur une valeur atteinte hors front (elles sont toutes multiples de 5)', () => {
-    for (const seuil of [FLORE.SEUIL_GEL, FLORE.SEUIL_MORTEL]) expect(seuil % 5).not.toBe(0)
+  /** La marge, en degrés, qu'un verdict de saison doit garder au seuil. Quatre : de quoi
+   *  encaisser un biome de vallée entier, donc bien plus qu'un bit de flottant. */
+  const MARGE = 4
+
+  it('A4 — le seuil se garde en MOMENT de l’année, jamais en valeur : l’Ardeur est libre, le Grand Froid est pris', () => {
+    // LA VIEILLE GARDE EST MORTE AVEC SA PRÉMISSE. Elle disait « aucun seuil ne tombe sur une
+    // valeur atteinte hors front (elles sont toutes multiples de 5) » : c'était vrai d'une
+    // TABLE par acte (`ACT_COLD`, quatre valeurs). Depuis S4 le socle est une COURBE, et une
+    // courbe continue atteint TOUTES les valeurs de son domaine — la spec le dit à la lettre
+    // (A4) : « la garde doit se réénoncer en “à quel MOMENT de l'année”, jamais en “à quelle
+    // valeur” ». Ce qui se garde, c'est donc que les deux verdicts de saison tombent LOIN du
+    // seuil, de jour comme de nuit : ils ne se jouent pas au bit près.
+    const sim = makeSim()
+    for (const nuit of [false, true]) {
+      expect(climatFlore(sim, 12, 12, auJour(MI_ARDEUR, nuit))).toBeGreaterThan(FLORE.SEUIL_GEL + MARGE)
+      expect(climatFlore(sim, 12, 12, auJour(MI_GRAND_FROID, nuit))).toBeLessThan(FLORE.SEUIL_GEL - MARGE)
+    }
   })
 
   it('le seuil mortel est juste au-dessus de l’hypothermie humaine : la culture meurt où l’homme meurt', () => {
@@ -388,10 +471,10 @@ describe('LE PNJ NE RESTE PAS COLLÉ À UN BUISSON GELÉ (régression)', () => {
    * mange plus et ne DESCEND JAMAIS jusqu'au bois qu'il pourrait couper. C'est la famine que
    * `npc.ts` avait déjà épinglée pour « aucun nœud de ce type », par une autre porte.
    *
-   * On l'isole en gelant LE LIEU plutôt que la saison : les buissons sont posés sur la NEIGE
-   * (biome −40 → climat 50 en acte I de jour, sous les 52 du gel), le reste de la carte est
-   * de l'herbe à 90. Aucune pression de froid sur le PNJ, aucune famine de saison — le seul
-   * fait mesuré est le gel du buisson.
+   * On l'isole en gelant LE LIEU plutôt que la saison : le monde ouvre à `JOUR_TIEDE`, à midi
+   * — la vallée y est à +14 °C (rien n'y gèle) et les buissons, posés sur la NEIGE (seize
+   * degrés de moins), sont à −2 °C, sous le seuil. Aucune pression de froid sur le PNJ,
+   * aucune famine de saison — le seul fait mesuré est le gel du buisson.
    */
   function villageDevantDesBuissonsGeles(): SimState {
     const map = createEmptyMap(28, 28, TERRAIN_GRASS)
@@ -401,7 +484,16 @@ describe('LE PNJ NE RESTE PAS COLLÉ À UN BUISSON GELÉ (régression)', () => {
       { id: 2, type: 'berry_bush', tx: 19, ty: 14, stock: 8, regrowAt: 0 },
       { id: 3, type: 'tree', tx: 10, ty: 12, stock: 10, regrowAt: 0 },
     ]
-    const sim = createSim(11, { map, nodes, worldEvents: false })
+    // Le calendrier n'est PAS accéléré ici (échelle 1) : le jour ne bouge pas de la mesure,
+    // et `cycleOffset` pose le tick 0 à midi — le tick 0 nu porte encore le plein froid de la
+    // nuit (`partDeNuit`), et le montage mesurerait alors une aube, pas un jour tiède.
+    const sim = createSim(11, {
+      map,
+      nodes,
+      worldEvents: false,
+      jourDeDepart: JOUR_TIEDE,
+      cycleOffset: cycleOffsetForStartHour(12),
+    })
     foundNpcVillage(sim, 12, 12, 1)
     sim.structures.find((st) => st.type === 'chest')!.inventory = makeInventory(SLOTS.CHEST)
     return sim

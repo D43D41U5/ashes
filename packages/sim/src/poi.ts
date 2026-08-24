@@ -10,7 +10,7 @@ import { spawnMonster } from './monsters'
 import type { SimState } from './sim'
 import { setTile } from './map'
 import { FAUNA, MORTS, TERRAIN_FOREST, TERRAIN_LARCH, TERRAIN_OLD_GROWTH, TERRAIN_PINE, TERRAIN_ROAD, TERRAIN_SCREE } from './balance'
-import { seasonDayAtTick, seasonRamp } from './time'
+import { jourDeSaison, seasonRamp } from './time'
 import { distSq } from './geometry'
 import { type CarveField, carveDistanceToMain, walkableComponents } from './connectivity'
 import { nomSelonSort, sortDuLieu } from './sort-des-lieux'
@@ -1167,7 +1167,7 @@ export function advanceDens(state: SimState, seed: number): void {
     if (m.homePoi === undefined) continue
     residents.set(m.homePoi, (residents.get(m.homePoi) ?? 0) + 1)
   }
-  const jour = seasonDayAtTick(state.tick, state.calendarScale)
+  const jour = jourDeSaison(state)
 
   for (const zone of state.dens) {
     const z = state.map.zones[zone]

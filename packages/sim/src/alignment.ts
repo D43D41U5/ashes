@@ -8,7 +8,7 @@
 import { ALIGNMENT } from './balance'
 import { emitEvent } from './events'
 import type { Entity, SimState } from './sim'
-import { actForDay, seasonDayAtTick, TICKS_PER_SEASON_DAY } from './time'
+import { TICKS_PER_SEASON_DAY, actForDay, jourDeSaison } from './time'
 import { getVillageOf, type Village } from './village'
 
 export type Archetype = 'foyer' | 'meute' | 'neutre'
@@ -43,7 +43,7 @@ export function recordAct(state: SimState, entityId: number, warmthDelta: number
 
 /** Facteur saisonnier : nourrir pendant le Grand Froid vaut cher. */
 export function seasonActFactor(state: SimState): number {
-  const act = actForDay(seasonDayAtTick(state.tick, state.calendarScale))
+  const act = actForDay(jourDeSaison(state))
   return ALIGNMENT.ACT_FACTOR(act)
 }
 

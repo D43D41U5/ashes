@@ -24,7 +24,7 @@ import { densiteDesMorts, siteDansLaCouronne } from './morts'
 import { isPrey, stimulusPourLesMorts } from './faune'
 import { hash2 } from './noise'
 import { pathToward } from './pathfinding'
-import { seasonDayAtTick, seasonRamp } from './time'
+import { jourDeSaison, seasonRamp } from './time'
 import type { Entity, SimState } from './sim'
 import { spillOnGround } from './village'
 
@@ -351,7 +351,7 @@ export function cendreuxStep(state: SimState, monster: Monster, entity: Entity, 
     if (seen) {
       const froidEffectif = T + ((monster.satiete ?? 0) / CENDREUX.BOIRE.SATIETE_MAX) * (CENDREUX.TORPEUR.CHAUD - CENDREUX.TORPEUR.FROID)
       if (froidEffectif <= CENDREUX.TORPEUR.FUREUR && state.tick >= (monster.criAt ?? 0)) {
-        const k = Math.round(seasonRamp(0, CENDREUX.CRI.PLAFOND_FIN, seasonDayAtTick(state.tick, state.calendarScale)))
+        const k = Math.round(seasonRamp(0, CENDREUX.CRI.PLAFOND_FIN, jourDeSaison(state)))
         // UN CRIEUR PAR PROIE À LA FOIS (décision d'Alexis sur mesure, 2026-08-21) : tant qu'un
         // autre cendreux TIENT cette proie (son cooldown de cri court encore, `criPreyId` porté
         // jusque-là), celui-ci ne crie pas — « celui qui m'a vu appelle, les autres viennent ».

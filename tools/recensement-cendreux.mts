@@ -34,7 +34,7 @@
 import { construireMondeDuBanc } from '../packages/sim/src/scenario'
 import { drainEvents } from '../packages/sim/src/events'
 import { spawnEntity, step, type SimState } from '../packages/sim/src/sim'
-import { calendarScaleForSeasonCycles, getGameTime, seasonDayAtTick, TICKS_PER_CYCLE } from '../packages/sim/src/time'
+import { calendarScaleForSeasonCycles, getGameTime, jourDeSaison, TICKS_PER_CYCLE } from '../packages/sim/src/time'
 import { generateZonedTerrain } from '../packages/sim/src/zonegen'
 import { MONDE_JOUE } from '../packages/sim/src/zonegraph'
 import { walkableSpawn } from '../packages/sim/src/connectivity'
@@ -97,7 +97,7 @@ function recenser(sim: SimState): Releve {
     total += 1
   }
   return {
-    jour: seasonDayAtTick(sim.tick, sim.calendarScale),
+    jour: jourDeSaison(sim),
     nuit: getGameTime(sim).isNight,
     parSource,
     total,

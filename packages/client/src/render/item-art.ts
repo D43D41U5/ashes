@@ -19,6 +19,13 @@ export const ITEM_LABELS: Record<ItemId, string> = {
   worms: 'Vers',
   legume: 'Légume',
   graine: 'Graine',
+  // LES CULTURES DE SAISON (spec `saisons.md` S16) — une plante par saison, et sa graine.
+  pousse_verte: 'Pousse verte',
+  graine_verte: 'Graine de pousse',
+  fruit_sec: 'Fruit sec',
+  graine_fruit: 'Graine de fruit',
+  tubercule: 'Tubercule',
+  graine_tubercule: 'Graine de tubercule',
   stew: 'Ragoût',
   iron_ore: 'Minerai de fer',
   coal: 'Charbon',
@@ -295,6 +302,33 @@ export const ITEM_PAINTS: Record<ItemId, ItemPaint> = {
   graine: (g) => {
     g.fillStyle(0x7a5c34).fillEllipse(8, 12, 12, 5) // la paume
     g.fillStyle(0xd8c48a).fillCircle(6, 10, 1).fillCircle(9, 9, 1).fillCircle(11, 11, 1).fillCircle(8, 11, 1)
+  },
+
+  // ── LES CULTURES DE SAISON (S16) : chacune se reconnaît à sa SILHOUETTE, pas à sa teinte —
+  // en case d'inventaire on ne lit qu'une forme. Feuille dressée, baie ronde, racine trapue.
+  pousse_verte: (g) => {
+    g.fillStyle(0x4f8f3a).fillEllipse(8, 8, 5, 13) // la feuille dressée
+    g.fillStyle(0x8fd06a).fillRect(7, 3, 1, 10) // la nervure claire
+  },
+  graine_verte: (g) => {
+    g.fillStyle(0x7a5c34).fillEllipse(8, 12, 12, 5)
+    g.fillStyle(0xb8d98a).fillCircle(6, 10, 1).fillCircle(9, 9, 1).fillCircle(11, 11, 1)
+  },
+  fruit_sec: (g) => {
+    g.fillStyle(0x8a4a22).fillCircle(6, 9, 3).fillCircle(10, 11, 3) // deux fruits ratatinés
+    g.fillStyle(0xc07a3a).fillCircle(5, 8, 1).fillCircle(9, 10, 1)
+  },
+  graine_fruit: (g) => {
+    g.fillStyle(0x7a5c34).fillEllipse(8, 12, 12, 5)
+    g.fillStyle(0xd8a06a).fillCircle(6, 10, 1).fillCircle(9, 9, 1).fillCircle(11, 11, 1)
+  },
+  tubercule: (g) => {
+    g.fillStyle(0x9a6a3a).fillEllipse(8, 9, 12, 9) // la racine trapue, celle qui passe l'hiver
+    g.fillStyle(0x6a4526).fillCircle(5, 8, 1).fillCircle(10, 11, 1) // les yeux
+  },
+  graine_tubercule: (g) => {
+    g.fillStyle(0x7a5c34).fillEllipse(8, 12, 12, 5)
+    g.fillStyle(0xa88a5a).fillCircle(6, 10, 1).fillCircle(9, 9, 1).fillCircle(11, 11, 1)
   },
 
   // Bol fumant : coupe brune, ragoût, deux volutes.

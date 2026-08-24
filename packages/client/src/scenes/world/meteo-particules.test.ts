@@ -7,7 +7,7 @@
  * trois cas choisis — patron « garde exhaustive plutôt que cas choisis ».
  */
 import { describe, expect, it } from 'vitest'
-import { largeurDe, meteoIntensityAt, type MeteoAspect, type MeteoFront } from '@ashes/sim'
+import { BALANCE, largeurDe, meteoIntensityAt, type MeteoAspect, type MeteoFront } from '@ashes/sim'
 import {
   BUDGET_PARTICULES,
   ChampParticules,
@@ -21,15 +21,27 @@ import {
   type Vue,
 } from './meteo-particules'
 
+/** Le cœur d'une saison, dérivé d'`ACT_DAYS` (spec `saisons.md` S1) — 1 l'Éclosion,
+ *  2 l'Ardeur, 3 les Pluies, 4 le Grand Froid. */
+const MI = (phase: number): number => Math.round(BALANCE.ACT_DAYS * (phase - 0.5))
+
 /**
- * LE FRONT QUI PORTE CHAQUE ASPECT (spec meteo.md R11) : la neige est une pluie là où il fait
- * froid, le blizzard un orage — et la rampe se lit sur le FRONT (`largeurDe`, R13 : l'orage
- * s'élargit avec la saison), jamais sur l'aspect. Jour 50 = acte III : l'orage y est large
- * comme la carte, comme l'était le blizzard d'avant.
+ * LE FRONT QUI PORTE CHAQUE ASPECT (spec `meteo.md` R11) : la neige est une pluie là où il
+ * fait froid, le blizzard un orage — et la rampe se lit sur le FRONT (`largeurDe`), jamais sur
+ * l'aspect. Le front ne sert ici QUE de porteur de GÉOMÉTRIE : c'est le profil, choisi par
+ * l'aspect, qui dit comment ça tombe.
+ *
+ * ⚠ LA SAISON EST UN CHOIX D'INSTRUMENT, pas une affirmation de calendrier — même raison que
+ * `RAMPE_LISIBLE` plus bas, et il faut le dire pour que personne ne lise « il neige en été ».
+ * Depuis S7 la largeur est saisonnière : l'Ardeur donne une bande de 60 tuiles, donc une rampe
+ * de 9, la seule qui se lise sur un cadre de 40 ; les Pluies en donnent 4 500 et le Grand Froid
+ * 1 600, si bien qu'un cadre d'écran y serait tout entier au plein et ne mesurerait plus rien
+ * de la rampe. La loi de largeur elle-même est gardée ailleurs, par `l'intensité relue inline`,
+ * et celle-là balaie les quatre saisons.
  */
 function frontDe(aspect: MeteoAspect): MeteoFront {
   const type = aspect === 'neige' ? 'pluie' : aspect === 'blizzard' ? 'orage' : aspect
-  return { type, cycle: 3, day: 50, edge: 0, startTick: 0, endTick: 1000 }
+  return { type, cycle: 3, day: MI(2), edge: 0, startTick: 0, endTick: 1000 }
 }
 const RAMPE_PLUIE = rampeDe(frontDe('pluie'))
 const BANDE: Bande = { axis: 'x', lo: 100, hi: 160 }
@@ -46,14 +58,22 @@ describe("l'intensité relue inline est celle de la sim", () => {
     // L'écrivain unique : la couche relit la loi sans recalculer la bande (900 fois par
     // image, ça compte), mais elle ne doit JAMAIS en diverger. On balaie l'axe entier —
     // dehors, sur les deux rampes, au cœur — plutôt que d'affirmer trois points.
-    // Les quatre CLASSES, et l'orage deux fois : étroit en acte I (jour 12), large comme la
-    // carte en acte III (jour 50) — R13, la largeur suit le froid de la saison.
+    //
+    // LES QUATRE CLASSES SUR LES QUATRE SAISONS (spec `saisons.md` S7 : la géométrie du front
+    // est saisonnière, et R13 — la largeur de l'orage interpolée sur le froid — est retirée).
+    // C'est ce balayage-là qui garde la loi de largeur : la même classe change d'ordre de
+    // grandeur d'une saison à l'autre — l'orage sec de l'Ardeur fait 60 tuiles, la pluie des
+    // Pluies 4 500 (plus large que la vallée : il pleut du matin au soir), le blizzard du
+    // Grand Froid 1 600. Une couche qui recopierait une largeur par TYPE se verrait ici.
+    const front = (type: MeteoFront['type'], day: number): MeteoFront =>
+      ({ type, cycle: 3, day, edge: 0, startTick: 0, endTick: 1000 })
     const fronts: MeteoFront[] = [
-      { type: 'pluie', cycle: 3, day: 12, edge: 0, startTick: 0, endTick: 1000 },
-      { type: 'brouillard', cycle: 3, day: 12, edge: 0, startTick: 0, endTick: 1000 },
-      { type: 'orage', cycle: 3, day: 12, edge: 0, startTick: 0, endTick: 1000 },
-      { type: 'orage', cycle: 3, day: 50, edge: 0, startTick: 0, endTick: 1000 },
-      { type: 'vent_de_cendre', cycle: 3, day: 50, edge: 0, startTick: 0, endTick: 1000 },
+      front('pluie', MI(1)), // l'Éclosion — l'averse qu'on traverse
+      front('brouillard', MI(1)),
+      front('orage', MI(2)), // l'Ardeur — l'orage sec, la bande la plus étroite de l'année
+      front('pluie', MI(3)), // les Pluies — la bande qui noie la carte entière
+      front('orage', MI(4)), // le Grand Froid — l'orage qui devient blizzard
+      front('vent_de_cendre', MI(4)),
     ]
     for (const front of fronts) {
       const mapW = 1600
@@ -409,12 +429,12 @@ describe("le rideau ne penche pas d'un côté", () => {
   /**
    * UNE RAMPE LISIBLE, LA MÊME POUR LES CINQ — et c'est un choix d'INSTRUMENT, pas un oubli
    * de `rampeDe`. Ce qu'on teste ici est la GÉOMÉTRIE de `naitre` sous une lisière, or les
-   * largeurs réelles ne la rendent pas toutes lisible : l'orage d'acte III et le vent de
-   * cendre portent des rampes de 240 et 63 tuiles pour un cadre de 25, si bien que leur
-   * rideau tombe à quelques dizaines de particules — on ne lit pas un penchant sur un
-   * échantillon que le bruit de tirage emporte. 9 tuiles est la rampe de la pluie (celle que
-   * `rampeDe` rend au front le plus courant) ; `l'intensité relue inline` garde la loi de
-   * largeur elle-même, ailleurs dans ce fichier.
+   * largeurs réelles ne la rendent pas toutes lisible : le blizzard du Grand Froid et le vent
+   * de cendre portent des rampes de 240 et 63 tuiles pour un cadre de 25 (et la pluie des
+   * Pluies, 675), si bien que leur rideau tombe à quelques dizaines de particules — on ne lit
+   * pas un penchant sur un échantillon que le bruit de tirage emporte. 9 tuiles est la rampe
+   * d'une averse d'Ardeur, la plus étroite de l'année ; `l'intensité relue inline` garde la
+   * loi de largeur elle-même, ailleurs dans ce fichier.
    */
   const RAMPE_LISIBLE = 9
 

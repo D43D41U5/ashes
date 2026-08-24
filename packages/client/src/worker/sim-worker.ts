@@ -10,7 +10,7 @@ import {
   BALANCE,
   CHRONICLE_EVENT_TYPES,
   scellerLaChronique,
-  seasonDayAtTick,
+  jourDeSaison,
   tourForDay,
   type ChronicleVolume,
   collectNodeDeltas,
@@ -112,7 +112,7 @@ function nomsDesVillages(state: SimState): Record<number, string> {
  */
 function scellerLesAnneesRevolues(state: SimState, tour: number): void {
   if (tour <= tourOuvert && volumes.length > 0) return
-  const r = scellerLaChronique(chronicleLog, state.calendarScale, nomsDesVillages(state), tour)
+  const r = scellerLaChronique(chronicleLog, state.calendarScale, state.jourDeDepart, nomsDesVillages(state), tour)
   if (r.volumes.length > 0) volumes.push(...r.volumes)
   chronicleLog = r.courant
   tourOuvert = tour
@@ -191,7 +191,7 @@ function tick(): void {
   for (const e of events) if (CHRONICLE_EVENT_TYPES.has(e.type)) chronicleLog.push(e)
   if (chronicleLog.length > CHRONICLE_CAP) chronicleLog.splice(0, chronicleLog.length - CHRONICLE_CAP)
   // AU TOUR DE L'ANNÉE, on scelle (T5) : une division par tick, et un formatage par an.
-  const tour = tourForDay(seasonDayAtTick(sim.tick, sim.calendarScale))
+  const tour = tourForDay(jourDeSaison(sim))
   if (tour > tourOuvert) scellerLesAnneesRevolues(sim, tour)
   // LA ZONE D'INTÉRÊT — le même filtre qu'en multi (voir `/sim/interest.ts`). En solo il n'y a
   // qu'un client, mais il est AU BOUT D'UN postMessage : tout ce qu'on n'envoie pas est un
@@ -423,7 +423,7 @@ async function boot(slot: number, seed: number, nom: string): Promise<void> {
       // Une sauvegarde d'AVANT le scellement porte tout son passé à plat dans `chronicle` : on
       // scelle au boot ce qui est révolu — la migration est le mécanisme lui-même.
       tourOuvert = 1
-      scellerLesAnneesRevolues(state, tourForDay(seasonDayAtTick(state.tick, state.calendarScale)))
+      scellerLesAnneesRevolues(state, tourForDay(jourDeSaison(state)))
       const me = state.entities.find((e) => e.id === playerId)
       if (me) spawn = { x: me.x, y: me.y }
       // LA DATE DE FONDATION SURVIT À LA REPRISE : sans ça, chaque sauvegarde ferait naître le
@@ -484,6 +484,7 @@ async function boot(slot: number, seed: number, nom: string): Promise<void> {
     // `VEILLEE_SEASON_CYCLES`, la sim garde son échelle figée — le client doit recevoir CELLE-LÀ
     // (sinon la chronique daterait ses lignes avec la mauvaise échelle). Neuf = les deux égales.
     calendarScale: sim.calendarScale,
+    jourDeDepart: sim.jourDeDepart,
     // Le spawn EST la position de l'avatar : à la reprise, on relit celle du /sim sauvé
     // (là où l'on s'est arrêté), pas le point de fondation. Repli sur (0,0)-évité : un
     // monde neuf a toujours son `world.spawn` ; une reprise a toujours son entité.

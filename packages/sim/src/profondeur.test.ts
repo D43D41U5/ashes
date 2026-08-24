@@ -8,6 +8,7 @@
  */
 import { describe, expect, it } from 'vitest'
 import {
+  BALANCE,
   NODE_DEFS,
   TERRAIN_BURNT_FOREST,
   TERRAIN_FOREST,
@@ -103,12 +104,21 @@ describe('R38 — la dérivation (érosion 8-connexe, exhaustive)', () => {
 })
 
 describe('R40/R41 — le jeu par bande (couvert, vieux fût, repousse)', () => {
+  /**
+   * LE CŒUR DE L'ARDEUR, en jour de l'année (`saisons.md` S3) — le montage s'y ouvre parce que
+   * la REPOUSSE se joue sur une flore vivante : sous le socle S4, l'Éclosion s'ouvre gelée
+   * (+3,3 °C au cardinal du jour 1, sous `FLORE.SEUIL_GEL`) et `advanceEconomy` suspend alors
+   * toute repousse (F2). Un montage laissé au jour 1 par défaut ne mesurait plus le vieux fût,
+   * il mesurait le gel. Dérivé d'`ACT_DAYS` : recaler la longueur d'une saison recale le montage.
+   */
+  const MI_ARDEUR = BALANCE.ACT_DAYS + Math.floor(BALANCE.ACT_DAYS / 2)
+
   /** Une sim sur carte synthétique : un massif 12×12 dont le cœur est en (15,15)-ish. */
   function simAvecMassif(): SimState {
     const map = createEmptyMap(64, 64, TERRAIN_GRASS)
     bloc(map, 10, 10, 12)
     map.profondeur = deriver(map)
-    return createSim(1234, { map, faunaCap: 0, worldEvents: false })
+    return createSim(1234, { map, faunaCap: 0, worldEvents: false, jourDeDepart: MI_ARDEUR })
   }
 
   it('A21 — le couvert du cœur est STRICTEMENT meilleur, la lisière garde le nominal', () => {

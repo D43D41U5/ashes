@@ -4,7 +4,7 @@
  * et l'aube suivante ne l'efface plus : elle la FIGE.
  */
 import { describe, it, expect } from 'vitest'
-import { TERRAIN_GRASS, WORLD_EVENTS } from './balance'
+import { BALANCE, TERRAIN_GRASS, WORLD_EVENTS } from './balance'
 import { createSim, spawnEntity, step, type SimState } from './sim'
 import { createEmptyMap } from './map'
 import { spawnMonster } from './monsters'
@@ -12,6 +12,18 @@ import { spawnHorde } from './worldevents'
 import { drainEvents, type SimEvent } from './events'
 import { cycleOffsetForStartHour, TICKS_PER_CYCLE, TICKS_PER_SEASON_DAY } from './time'
 import { foundNpcVillage } from './worldgen'
+
+/**
+ * LES DEUX JOURS-REPÈRES (spec `saisons.md` S1-S4) — dérivés de la cadence des saisons.
+ *
+ * Ce fichier visait « l'acte II » (jour 40) pour la loterie du présage et « l'acte III »
+ * (jour 55) pour la nuit d'assaut. L'arc à sens unique n'existe plus : la pression suit le
+ * TOUR (S13, S15), creuse au cœur de l'Ardeur et pleine au cœur du Grand Froid. La montée
+ * — là où la chance de horde est franche sans être acquise — est au cœur des Pluies ; la
+ * nuit d'assaut est le cœur de l'hiver.
+ */
+const MI_PLUIES = Math.round(BALANCE.ACT_DAYS * 2.5)
+const MI_GRAND_FROID = Math.round(BALANCE.ACT_DAYS * 3.5)
 
 /** Un état posé JUSTE AVANT une aube du jour ~voulu (l'aube au sens de worldevents :
  *  (tick + cycleOffset) % TICKS_PER_CYCLE === 0). */
@@ -33,7 +45,7 @@ const feuEn = (state: SimState, tx: number, ty: number): void => {
 
 describe('la cible est le feu le plus proche (⑬)', () => {
   it('SANS AUCUN VILLAGE, un feu de camp suffit : la horde naît, le vise, et marche', () => {
-    const state = veilleDAube(55)
+    const state = veilleDAube(MI_GRAND_FROID)
     state.tick += 10 // à distance de l'aube : la poser PILE dessus la gèlerait au premier pas
     feuEn(state, 64, 48)
     const h = spawnHorde(state, 6)
@@ -63,7 +75,7 @@ describe('la cible est le feu le plus proche (⑬)', () => {
 describe('le présage de la veille (⑱) et son exécution', () => {
   /** Joue jusqu'à trouver une aube qui présage (la chance est une rampe, pas une garantie). */
   function chercherPresage(seed: number): { state: SimState; presage: SimEvent & { type: 'presage_horde' } } | null {
-    const state = veilleDAube(40, seed)
+    const state = veilleDAube(MI_PLUIES, seed)
     foundNpcVillage(state, 64, 48, 0)
     drainEvents(state)
     for (let aube = 0; aube < 8; aube++) {
@@ -96,7 +108,7 @@ describe('le présage de la veille (⑱) et son exécution', () => {
 
   it('la faune DÉSERTE l\'origine au moment du présage (le signe qui se lit sans bandeau)', () => {
     // Une GRILLE de cerfs couvre la carte : où que l'origine tombe, il y en a près d'elle.
-    const state = veilleDAube(40, 3)
+    const state = veilleDAube(MI_PLUIES, 3)
     foundNpcVillage(state, 64, 48, 0)
     for (let gy = 8; gy < 96; gy += 16) for (let gx = 8; gx < 128; gx += 16) spawnMonster(state, 'deer', gx + 0.5, gy + 0.5)
     drainEvents(state)
@@ -129,7 +141,7 @@ describe('le présage de la veille (⑱) et son exécution', () => {
 
 describe('l\'aube FIGE, elle n\'efface plus (⑮)', () => {
   it('les membres survivants deviennent des RELIQUES — rien ne s\'évapore sous les yeux', () => {
-    const state = veilleDAube(55, 7)
+    const state = veilleDAube(MI_GRAND_FROID, 7)
     feuEn(state, 64, 48)
     state.tick += 10 // passé l'aube : on pose la horde en journée, pour la nuit à venir
     const h = spawnHorde(state, 5)
@@ -164,7 +176,7 @@ describe('l\'aube FIGE, elle n\'efface plus (⑮)', () => {
   })
 
   it('l\'avatar qui RESTE garde les reliques au monde — le décor n\'avoue jamais', () => {
-    const state = veilleDAube(55, 7)
+    const state = veilleDAube(MI_GRAND_FROID, 7)
     feuEn(state, 64, 48)
     state.tick += 10
     const h = spawnHorde(state, 5)!
@@ -183,7 +195,7 @@ describe('l\'aube FIGE, elle n\'efface plus (⑮)', () => {
 
 describe('debug_horde (le smoke a besoin d\'une horde SANS loterie)', () => {
   it('plante une vraie horde, tout de suite, par la vraie chaîne', () => {
-    const state = veilleDAube(40, 5)
+    const state = veilleDAube(MI_PLUIES, 5)
     state.tick += 10
     state.debug = true
     feuEn(state, 64, 48)
@@ -195,7 +207,7 @@ describe('debug_horde (le smoke a besoin d\'une horde SANS loterie)', () => {
   })
 
   it('inerte hors debug', () => {
-    const state = veilleDAube(40, 5)
+    const state = veilleDAube(MI_PLUIES, 5)
     state.tick += 10
     feuEn(state, 64, 48)
     const player = spawnEntity(state, 60.5, 48.5)
