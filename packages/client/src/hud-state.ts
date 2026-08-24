@@ -6,7 +6,7 @@
  * doivent JAMAIS appeler `registry.set/get` directement — uniquement
  * `setHud`/`getHud`.
  */
-import type { BarrierType, ChronicleEntry, ChronicleVolume, ComponentType, RecipeId, StationFonction, CraftOrder, Entity, GameTime, Inventory, ItemBag, ItemId, PlayerAction, SkillId, Village, VillageTask, WallMaterial, WorldMap } from '@ashes/sim'
+import type { BarrierType, ChronicleEntry, ChronicleVolume, ComponentType, RecipeId, StationFonction, CraftOrder, Entity, GameTime, Inventory, ItemBag, ItemId, MeteoAspect, PlayerAction, SkillId, Village, VillageTask, WallMaterial, WorldMap } from '@ashes/sim'
 import type Phaser from 'phaser'
 import type { Brouillard } from './render/fog'
 
@@ -111,6 +111,23 @@ export interface HudState {
   time: GameTime
   /** Nom de la zone où se trouve l'avatar (undefined hors zone nommée). */
   zone: string | undefined
+  /**
+   * CE QUE LA BARRE HAUTE DIT DU LIEU (2026-08-24) — trois clés, trois lectures distinctes.
+   *
+   * `zone` ci-dessus reste ce qu'il était : la PREMIÈRE zone du point, toponyme ou lieu
+   * indifféremment (`zoneAt`), dont la carte plein écran et le survol se servent encore. La
+   * barre, elle, en fait deux rangs, et deux rangs demandent deux lectures qui ne se
+   * confondent jamais : le TOPONYME est la région (`toponymeAt`), le LIEU est l'empreinte
+   * qu'on foule (`lieuAt`, la plus petite). Son nom porte déjà son sort — « la Mine pillée ».
+   */
+  toponyme: string | undefined
+  lieu: string | undefined
+  /** L'air qu'il fait ICI, en °C (`ambientTemperature` sur la façade du gel) — le monde, pas
+   *  le corps : le médaillon du bas dit le corps. Relevé quatre fois par seconde. */
+  ambiant: number | undefined
+  /** L'aspect du ciel à l'œil du joueur (`aspectAuPoint`) — `null` hors de toute bande.
+   *  La barre en fait son icône ; le ciel s'en sert déjà pour peindre pluie ou neige. */
+  cielIci: MeteoAspect | null
   /** Nombre de membres de mon village (0 = pas de village). */
   village: number
   /** Tableau des tâches de mon village. */
@@ -399,6 +416,7 @@ export function getHud<K extends keyof HudState>(registry: Registry, key: K): Hu
  */
 export const CLES_HUD: Record<keyof HudState, true> = {
   worldReady: true, loadProgress: true, time: true, zone: true, village: true,
+  toponyme: true, lieu: true, ambiant: true, cielIci: true,
   tasks: true, archetype: true, villageWarmth: true, inv: true, activeSlot: true,
   craftQueue: true, stationsInRange: true, seen: true, hunger: true, temperature: true, skills: true,
   hp: true, stamina: true, wounds: true, selected: true, buildMaterial: true, buildEdge: true, demolir: true,

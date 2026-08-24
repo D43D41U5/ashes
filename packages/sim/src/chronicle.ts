@@ -30,6 +30,19 @@ import { seasonDayAtTick, tourForDay } from './time'
 const ACT_NAMES = ['l’Éclosion', 'l’Ardeur', 'les Pluies', 'le Grand Froid'] as const
 const ROMAIN = ['I', 'II', 'III', 'IV'] as const
 
+/**
+ * LE NOM D'UNE SAISON, par sa PHASE (1..4) — la seule porte vers cette table.
+ *
+ * Exportée le 2026-08-24 pour la barre haute : le HUD nomme désormais la saison au lieu
+ * d'écrire « ACTE II » en chiffres romains. Quatre noms recopiés côté client auraient dérivé
+ * au premier renommage — et le quatrième acte a justement attendu son baptême jusqu'à `S3`.
+ * Le repli romain vaut pour tout entier hors domaine : la fonction est TOTALE, comme les lois
+ * d'acte qu'elle accompagne.
+ */
+export function nomDeSaison(phase: number): string {
+  return ACT_NAMES[phase - 1] ?? `l’acte ${ROMAIN[phase - 1] ?? phase}`
+}
+
 /** Les trois registres de la chronique (voir en-tête). */
 export type ChronicleWeight = 'battement' | 'recit' | 'intime'
 
@@ -141,7 +154,7 @@ export function chronicleFromEvents(
         // que le monde ouvre au jour 51 (S2), son acte de naissance est le 2, et l'ancienne
         // garde laissait passer une ligne parasite au premier instant du monde.
         if (e.tick > 0) {
-          const nom = ACT_NAMES[phaseOf(e.act) - 1] ?? `l’acte ${ROMAIN[phaseOf(e.act) - 1] ?? phaseOf(e.act)}`
+          const nom = nomDeSaison(phaseOf(e.act))
           const tour = tourOf(e.act)
           // LE CARACTÈRE DE LA SAISON (S18) se dit ICI et nulle part ailleurs : la chronique le
           // nomme au premier jour, le HUD ne le dit pas. Une saison sur trois n'en a pas — et

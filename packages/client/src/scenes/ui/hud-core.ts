@@ -36,6 +36,7 @@ import {
 import type Phaser from 'phaser'
 import { itemIconKey } from '../../render/item-art'
 import { vitalIconKey, type VitalId } from '../../render/vital-art'
+import { BARRE_H } from './barre-haute'
 import { INK_OUTLINE, INK_OUTLINE_STRONG, INK_OUTLINE_LIST } from './hud-dom'
 import { HEX, VITAL_HEX } from './palette'
 import { SKILL_LABELS } from './skill-labels'
@@ -82,10 +83,6 @@ const VITALS: { id: Exclude<VitalId, 'carry'>; label: string; min?: number; max:
 ]
 
 export interface HudCoreState {
-  dayLine: string
-  zone: string | undefined
-  villageLine: string
-  boardLine: string
   hp: number
   stamina: number
   hunger: number
@@ -133,10 +130,6 @@ export function createHudCore(
   board.appendChild(root)
 
   const $ = <T extends HTMLElement>(sel: string): T => root.querySelector<T>(sel)!
-  const dayEl = $('.hc-day')
-  const zoneEl = $('.hc-zone')
-  const villageEl = $('.hc-village')
-  const boardEl = $('.hc-board')
   const saveEl = $('.hc-save')
   const centreEl = $('.hc-centre')
   const woundsEl = $('.hc-wounds')
@@ -242,13 +235,6 @@ export function createHudCore(
 
     update(s) {
       lastNow = s.now // l'horloge que `pushLevelUp` réutilise entre deux frames
-      dayEl.textContent = s.dayLine
-      zoneEl.textContent = s.zone ? s.zone.toUpperCase() : ''
-      zoneEl.style.display = s.zone ? '' : 'none'
-      villageEl.textContent = s.villageLine
-      villageEl.style.display = s.villageLine ? '' : 'none'
-      boardEl.textContent = s.boardLine
-      boardEl.style.display = s.boardLine ? '' : 'none'
 
       // LA SAUVEGARDE, DITE puis effacée. Le succès est une réassurance FUGACE (on la montre
       // le temps d'être vue, puis elle s'en va — un HUD n'est pas un journal) ; l'ÉCHEC, lui,
@@ -400,15 +386,10 @@ function markup(): string {
        monde. Une plaque à bord franc ferait deux rectangles noirs dans les angles d'un jeu qui
        n'en a aucun. Transparent au clic (pointer-events:none) — un sol n'attrape rien ; les
        médaillons, eux, rallument le pointeur sur eux-mêmes via .hc-med. */
-    /* haut-gauche : jour, lieu, village, tableau */
-    .hc-tl{position:absolute;top:24px;left:26px;}
-    .hc-tl::before{content:'';position:absolute;pointer-events:none;z-index:-1;
-      inset:-18px -46px -22px -30px;
-      background:radial-gradient(ellipse at 18% 22%,rgba(${PLAQUE_ENCRE},${PLAQUE_ALPHA}),rgba(${PLAQUE_ENCRE},${(PLAQUE_ALPHA * 0.65).toFixed(2)}) 52%,rgba(${PLAQUE_ENCRE},0) 80%);}
-    .hc-day{font-size:15px;font-weight:700;color:#ffffff;letter-spacing:1px;${INK_OUTLINE_STRONG}}
-    .hc-zone{font-size:12px;color:#9a8f78;letter-spacing:2px;margin-top:3px;${INK_OUTLINE}}
-    .hc-village{font-size:12px;color:#c8b88a;letter-spacing:1px;margin-top:6px;${INK_OUTLINE}}
-    .hc-board{font-size:12px;color:#9a8f78;letter-spacing:1px;margin-top:3px;${INK_OUTLINE}}
+    /* HAUT-GAUCHE : il ne reste que la SAUVEGARDE. Le jour, le lieu et le village sont
+       partis dans la barre haute (2026-08-24) ; ce coin descend donc SOUS elle — sa plaque
+       ferait doublon avec le sol de la barre, qui couvre déjà toute la largeur. */
+    .hc-tl{position:absolute;top:${BARRE_H + 20}px;left:26px;}
     /* L'INDICATEUR DE SAUVEGARDE : discret par nature (une réassurance, pas une récompense) —
        d'où la teinte éteinte et la petite taille. En ÉCHEC il passe au rouge d'alerte : là,
        il faut qu'on le voie. */
@@ -471,10 +452,6 @@ function markup(): string {
     .hc-wear{height:100%;background:#c98b3a;}
   </style>
   <div class="hc-tl">
-    <div class="hc-day"></div>
-    <div class="hc-zone"></div>
-    <div class="hc-village"></div>
-    <div class="hc-board"></div>
     <div class="hc-save"></div>
   </div>
   <div class="hc-centre"></div>

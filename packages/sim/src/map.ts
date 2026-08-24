@@ -295,6 +295,68 @@ export function isWater(t: number): boolean {
   return t === TERRAIN_SHALLOW_WATER || t === TERRAIN_DEEP_WATER
 }
 
+/** Le point (x, y) est-il dans l'empreinte de cette zone ? La borne haute est EXCLUE — la
+ *  même convention que `poisAt`, qui l'écrivait déjà à la main. */
+function dansLZone(z: Zone, x: number, y: number): boolean {
+  return x >= z.x && x < z.x + z.w && y >= z.y && y < z.y + z.h
+}
+
+/**
+ * LE TOPONYME du point — la première zone SANS `kind`.
+ *
+ * ═══ POURQUOI CE N'EST PAS `zoneAt` ═══
+ *
+ * `map.zones` mélange les deux natures : une entrée sans `kind` est un toponyme (« la Vieille
+ * Sylve »), une entrée AVEC un `kind` est un lieu (« le Gisement ») — `poisAt` le dit déjà en
+ * toutes lettres. Or `zoneAt` rend la PREMIÈRE entrée qui contient le point, quelle que soit sa
+ * nature : selon l'ordre du tableau, il répond tantôt la région, tantôt le lieu posé dedans.
+ * C'était sans conséquence tant qu'une seule ligne du HUD les affichait indifféremment ; ça
+ * cesse de l'être dès que la barre haute en fait DEUX rangs, l'un sous l'autre.
+ *
+ * On n'a donc pas touché à `zoneAt` — le survol de la carte veut justement « la zone ou le POI
+ * sous le curseur », et lui changer sa règle sous les pieds aurait déplacé le défaut au lieu de
+ * le corriger. On ajoute une sœur qui dit ce qu'elle cherche.
+ */
+export function toponymeAt(map: WorldMap, x: number, y: number): string | undefined {
+  // ⚠ LA RÉGION N'EST PAS UN RECTANGLE. Relevé en jouant (2026-08-24) : la première version
+  // cherchait une entrée sans `kind` dans `map.zones` et ne trouvait presque jamais rien — le
+  // HUD affichait une ligne vide. Les régions du graphe de zones (« les Prés Bas », « la
+  // Vieille Sylve ») vivent dans `zoneDefs`, adressées par la GRILLE `zoneGrid` ; `map.zones`
+  // ne porte que les lieux et quelques rectangles nommés à la main.
+  const def = map.zoneDefs?.[zoneIdAt(map, x, y)]
+  if (def) return def.nom
+  // Le repli : un rectangle nommé SANS `kind` est un toponyme lui aussi (un décor de
+  // set-piece, une carte de test qui n'a pas de graphe).
+  return map.zones.find((z) => z.kind === undefined && dansLZone(z, x, y))?.name
+}
+
+/**
+ * LE LIEU du point — la plus petite empreinte parmi celles qui le contiennent.
+ *
+ * `poisAt` rend TOUTES les zones-POI du point, exprès (« deux empreintes de POI peuvent se
+ * recouvrir »). Un affichage, lui, n'en nomme qu'une : il faut une règle, et elle doit être
+ * déterministe. On prend la PLUS PETITE — c'est le lieu le plus spécifique, celui dont on
+ * foule vraiment le seuil ; à surface égale, le plus petit index tranche (l'ordre de
+ * `placePois`, stable pour une seed). Sans ce second critère, deux empreintes jumelles
+ * rendraient l'une ou l'autre au gré du parcours du tableau.
+ *
+ * Le nom rendu porte déjà le SORT du lieu (« la Mine pillée », « les Ruines brûlées ») :
+ * `poi.ts` le baptise à la génération via `nomSelonSort`. Rien à recomposer à l'affichage.
+ */
+export function lieuAt(map: WorldMap, x: number, y: number): Zone | undefined {
+  let best: Zone | undefined
+  let bestAire = Infinity
+  for (const z of map.zones) {
+    if (z.kind === undefined || !dansLZone(z, x, y)) continue
+    const aire = z.w * z.h
+    if (aire < bestAire) {
+      best = z
+      bestAire = aire
+    }
+  }
+  return best
+}
+
 /** Première zone nommée contenant le point (x, y), ou undefined. */
 export function zoneAt(map: WorldMap, x: number, y: number): Zone | undefined {
   return map.zones.find((z) => x >= z.x && x < z.x + z.w && y >= z.y && y < z.y + z.h)
