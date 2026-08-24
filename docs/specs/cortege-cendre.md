@@ -1,5 +1,14 @@
 # Le cortège de la Cendre — un seul champ, plusieurs sens
 
+> ⛔ **CADUQUE — LE FRONT DE CENDRE EST RETIRÉ (décision d'Alexis, 2026-08-24).** *« retire le
+> front de cendre, on va gérer cette mécanique de manière complètement différente. D'ailleurs
+> profites-en pour supprimer la zone des cendres en bas, agrandis la zone t0 pour la remplacer. »*
+> Le code correspondant n'existe plus (voir `docs/decisions.md`, 2026-08-24, et l'en-tête de
+> `packages/sim/src/cendre.ts`). Ce document reste comme **mémoire du raisonnement** — la
+> distinction poussée/avancée, « une part de la course, jamais une distance », « le monde prévient,
+> il ne guide pas » — pas comme description du jeu. La mécanique qui prendra sa place s'écrira
+> ailleurs.
+
 *Source : discussion de lore du 2026-08-21 (écrivain + scénariste invités), décision d'Alexis **« l'arc oscille »** (journal, 2026-08-21) puis **« la pression doit être appliquée par l'environnement »**. Prolonge la doctrine posée par Alexis le 2026-08-19 sur la flore (`balance.ts`, en-tête de `FLORE`) : « ce qui existait — `SEASON.REGROW_ACT_FACTOR` — est keyé sur l'ACTE : il ne peut dire ni OÙ ni À QUELLE HEURE ». Statut : **en cours**. Jalon : calibrage Veillée.*
 
 ## Objectif de design

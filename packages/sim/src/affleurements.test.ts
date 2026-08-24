@@ -76,15 +76,16 @@ describe('A29 — contenant/contenu : chaque nœud neuf est LÀ où sa dérivati
     }
   })
 
-  it('la carrière touche la roche, hors d\'atteinte du front — le feu ne la confisque pas', () => {
+  // (La clause « hors d'atteinte du front » est tombée le 2026-08-24 avec le front : il ne reste
+  //  que la paroi, qui est la vraie raison d'être d'une carrière.)
+  it('la carrière touche la roche', () => {
     for (const m of mondes) {
-      const { width, terrain, cendre, cendreMax } = m.c.map
+      const { width, terrain } = m.c.map
       for (const n of neufs(m, 'quarry')) {
         const i = n.ty * width + n.tx
         const contreLaRoche = terrain[i - 1] === TERRAIN_ROCK || terrain[i + 1] === TERRAIN_ROCK
           || terrain[i - width] === TERRAIN_ROCK || terrain[i + width] === TERRAIN_ROCK
         expect(contreLaRoche, `seed ${m.s} : quarry@${n.tx},${n.ty} sans paroi`).toBe(true)
-        expect(cendre![i]!, `seed ${m.s} : quarry@${n.tx},${n.ty} sous le front final`).toBeGreaterThan(cendreMax!)
       }
     }
   })
@@ -156,16 +157,8 @@ describe('A29 — contenant/contenu : chaque nœud neuf est LÀ où sa dérivati
     }
   })
 
-  it('et les buttes elles-mêmes sont hors d\'atteinte du front (R47)', () => {
-    for (const m of mondes) {
-      const { cendre, cendreMax, width } = m.c.map
-      for (const a of m.c.affleurements) {
-        const cx = Math.floor(a.rect.x + a.rect.w / 2)
-        const cy = Math.floor(a.rect.y + a.rect.h / 2)
-        expect(cendre![cy * width + cx]!, `seed ${m.s} : butte @${a.rect.x},${a.rect.y}`).toBeGreaterThan(cendreMax!)
-      }
-    }
-  })
+  // (« et les buttes elles-mêmes sont hors d'atteinte du front (R47) » : retiré le 2026-08-24 —
+  //  il n'y a plus de front à mettre hors d'atteinte.)
 })
 
 describe('A30 — une identité par butte, des buttes écartées, et personne n\'y fonde', () => {

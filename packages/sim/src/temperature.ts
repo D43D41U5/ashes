@@ -12,14 +12,15 @@
  * l'équilibrage n'a pas bougé d'un bit, seules les étiquettes ont changé).
  */
 import { CENDREUX, POI, TEMPERATURE } from './balance'
-import { froidDeCendre, frontAuTick } from './cendre'
 import { effetsDuJour } from './modificateur'
 import { brumeColdAt } from './brume'
 import { fireWarmthFactor } from './fire'
 import { die } from './combat'
 import { countOf } from './items'
 import { terrainAt } from './map'
-import { meteoColdAt, pousseeDeCendre } from './meteo'
+import { meteoColdAt } from './meteo'
+import { avanceesDepuisAges } from './cendre'
+import { froidDeFumerolle } from './fumerolle'
 import { isOnPoiKind } from './poi-discovery'
 import { gameTimeAt } from './time'
 import type { SimState } from './sim'
@@ -153,7 +154,7 @@ function froidDuMonde(state: SimState, x: number, y: number, tick: number, shelt
   const base = baseDuMonde(state, tick)
   const exposedSansMeteo = expositionSansMeteo(state, x, y, tick)
   // R11-R12 (`meteo.md`) : LE FRONT LIT LE FROID QU'IL TROUVE. `T₀` est le monde SANS lui, à
-  // découvert — c'est sur elle que l'orage décide de sa morsure (`froidEolien`) et que la pluie
+  // découvert — c'est sur elle que l'orage décide de sa morsure (`partDeBlizzard`) et que la pluie
   // décide d'être neige (`neigeA`). Calculée ICI, une fois, et passée : pas de seconde lecture.
   const t0 = clampTemp(base + exposedSansMeteo)
   const meteo = meteoColdAt(state, x, y, tick, t0)
@@ -189,7 +190,7 @@ function baseDuMonde(state: SimState, tick: number): number {
   return socleDuJour(time.seasonDay, time.tour)
 }
 
-/** L'EXPOSITION hors front — biome, nuit, Brume, cendre — SIGNÉE (le biome peut réchauffer),
+/** L'EXPOSITION hors front — biome, nuit, Brume — SIGNÉE (le biome peut réchauffer),
  *  celle que l'abri amortit. Le froid du front s'y ajoute dans `froidDuMonde`, après `T₀`. */
 function expositionSansMeteo(state: SimState, x: number, y: number, tick: number): number {
   const tx = Math.floor(x)
@@ -200,29 +201,27 @@ function expositionSansMeteo(state: SimState, x: number, y: number, tick: number
   // de plus : l'abri les amortit, et le feu comme la tenue les PLANCHENT (l'ambiant est un
   // max) — le déni de zone tombe de ces lois, pas d'une mécanique neuve. Le froid météo
   // arrive en RAMPE (gradient bord → cœur de bande) : le front qui approche se SENT venir.
-  // LE FROID DE LA CENDRE (spec `cortege-cendre.md` R3) est une EXPOSITION DE PLUS, au même
-  // titre que la brume et le front météo — pas une loi neuve. Il entre donc dans `exposed` :
-  // l'abri l'amortit, le feu et la tenue le PLANCHENT (l'ambiant est un `max`). La fiction est
-  // gratuite : une terre brûlée n'a plus de couvert, **le froid vient d'où plus rien ne pousse**.
+  // LE FROID DE LA CENDRE EST RETIRÉ (2026-08-24), avec le front dont il était la bande la plus
+  // étroite. CE QUI A PRIS SA PLACE EST LOCAL : les FUMEROLLES (décision d'Alexis) — des trous qui
+  // soufflent froid au cœur de la corruption. C'est une EXPOSITION de plus, au même titre que la
+  // brume et le front météo : l'abri l'amortit, le feu et la tenue la PLANCHENT (l'ambiant est un
+  // `max`). Et elle traverse `climatFlore` (`shelter = 1`), donc AUCUNE structure ne la lève —
+  // pas de serre gratuite (`flore-froid` F1bis).
   //
-  // Et il traverse `climatFlore` (même écrivain, `shelter = 1`), donc la flore l'encaisse en
-  // entier et AUCUNE structure ne le lève — la serre gratuite que `flore-froid` F1bis interdit
-  // reste interdite. C'est la contrainte que devra respecter la future parade anti-cendre : elle
-  // repoussera le SEUIL, jamais le CLIMAT.
-  // ⚠ Le front est lu AU TICK DEMANDÉ, jamais à `state.tick` : cette fonction sert l'hystérésis
-  // du dégel (`gel.md` G8), qui relit le froid du monde à un tick passé.
-  //
-  // LE VENT DE CENDRE (R6) entre ICI, et par la seule porte qui ne ment pas : il gonfle le front
-  // QUE LE FROID REGARDE, sans toucher au front réel. La stérilité et la hantise, elles, lisent
-  // toujours `frontAuTick` — **le vent pousse, il n'avance pas** : rien ne brûle de plus, rien ne
-  // devient stérile de plus, et quand il est passé le monde est exactement où il était.
-  const frontFroid =
-    frontAuTick(state.map, state.calendarScale, tick, state.jourDeDepart) + pousseeDeCendre(state, x, y, tick)
-  const cendre = froidDeCendre(state.map, tx, ty, frontFroid)
+  // ⚠ ELLE RÉVEILLE LES MORTS, et ce n'est pas un effet de bord : `CENDREUX.TORPEUR` lit ce même
+  //   froid de base. Une fumerolle rend donc les Cendreux actifs autour d'elle même en été. Assumé
+  //   (Alexis a pris la piste en connaissance de cause) ; le bouton est `FUMEROLLE.FROID`.
+  // ⚠ `?? []` N'EST PAS DE LA PRUDENCE : le client fabrique de FAUX `SimState` par double cast
+  //   pour ses façades (`etat-gel.ts` et consorts, qui relisent le froid du monde sans avoir de
+  //   sim). Un champ neuf y est donc `undefined`, et `.length` dessus JETTE — constaté au
+  //   navigateur, la scène entière tombait. Le même piège avait déjà donné un `NaN` silencieux
+  //   sur `jourDeSaison` à la refonte des saisons. Sans fumerolle, le froid vaut zéro.
+  const ages = state.cendreAge ?? []
+  const fumerolle = froidDeFumerolle(state.map, x, y, avanceesDepuisAges(ages, ages.length), state.seed)
   // LA NUIT EST UNE PENTE (`partDeNuit`, décision d'Alexis 2026-08-23) : `time.nuit` vaut 1 sur
   // toute la nuit et redescend sur les lisières du jour — le froid du soir se SENT venir, il ne
   // claque plus de douze degrés en un tick. La nuit pleine est inchangée au bit près.
-  return biome - T.ECART_NUIT(time.seasonDay) * time.nuit - brumeColdAt(state, x, y, tick) - cendre // amorti par l'abri
+  return biome - T.ECART_NUIT(time.seasonDay) * time.nuit - brumeColdAt(state, x, y, tick) - fumerolle // amorti par l'abri
 }
 
 /**

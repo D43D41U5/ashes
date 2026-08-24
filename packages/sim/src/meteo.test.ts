@@ -20,7 +20,7 @@
  * `orage`, `brouillard`, `vent_de_cendre`) et l'ASPECT se lit au point (`meteoAspectAt`) :
  * il neige là où la pluie ferait geler un gué, un orage y est un blizzard. Les montages
  * « sous blizzard » de ce fichier posent donc un ORAGE au cœur du GRAND FROID, de JOUR
- * (T₀ = −2 °C < la limite de neige → `froidEolien` = 1 → la ligne `ORAGE_FROID`, le
+ * (T₀ = −2 °C < la limite de neige → `partDeBlizzard` = 1 → la ligne `ORAGE_FROID`, le
  * blizzard d'avant au bit près) ; les montages « sous neige », une PLUIE là où T₀ < +4 °C.
  * La section « R11-R13 » en fin de fichier porte les gardes neuves A12-A15.
  *
@@ -58,7 +58,7 @@ import { advanceFoudre } from './foudre'
 import { distSq } from './geometry'
 import {
   advanceMeteo, aspectSousFront, episodeDuBloc, fenetreDe, FOUDRE_CRENEAU_TICKS, foudreImpactAt,
-  foudreTelegrapheAt, froidEolien, frontDuCycle, frontEstBlizzard, frontMeteoPos, frontMouille,
+  foudreTelegrapheAt, partDeBlizzard, frontDuCycle, frontEstBlizzard, frontMeteoPos, frontMouille,
   largeurDe, meteoAspectAt, meteoColdAt, meteoFeuConso, meteoIntensity, meteoIntensityAt,
   meteoCycleEligible, meteoMouille, meteoQuiet, meteoSpeedFactor, meteoSpeedFactorAt,
   meteoTypeBrut, meteoTypeDuCycle, meteoVisionFactor, neigeA,
@@ -529,7 +529,7 @@ describe('R4 — le froid des fronts (A3)', () => {
    * d'`advanceTemperature` : la bande non plus.
    *
    * Le JOUR n'est pas décoratif : c'est lui qui porte la SAISON, donc le froid du monde
-   * (`T₀`, la courbe S4 — dont dépend la morsure d'un orage, `froidEolien` R12) ET la
+   * (`T₀`, la courbe S4 — dont dépend la morsure d'un orage, `partDeBlizzard` R12) ET la
    * géométrie du front (`largeurDe`/`fenetreDe`, S7-S8). Le tick ET `front.day` bougent
    * ensemble : un front d'hiver daté d'un jour d'été aurait la largeur de l'un et le froid
    * de l'autre. Par défaut MI-ARDEUR — la seule saison dont la bande de pluie (60 tuiles)
@@ -546,7 +546,7 @@ describe('R4 — le froid des fronts (A3)', () => {
 
   /**
    * LE BLIZZARD, DÉRIVÉ (R11-R12) — un ORAGE au midi du CŒUR DU GRAND FROID : la plaine y est
-   * à `T₀` = −2 °C, sous la limite de neige (+4), donc `froidEolien` sature à 1 et l'orage
+   * à `T₀` = −2 °C, sous la limite de neige (+4), donc `partDeBlizzard` sature à 1 et l'orage
    * mord de `ORAGE_FROID.COLD` — le blizzard d'avant, au bit près, mais sans un type pour le
    * nommer. Sa bande fait 1 600 tuiles (S7 : le « carte entière » du blizzard) ; aux 16 % de
    * sa traversée son bord AVANT est à x≈320, si bien que son CŒUR couvre l'ouest et que l'est
@@ -564,7 +564,7 @@ describe('R4 — le froid des fronts (A3)', () => {
     // croirait mordre. Sans cette ligne, un recalibrage de `SEUIL_NEIGE` viderait en silence
     // les quatre gardes qui suivent.
     expect(aspectSousFront(sim, sim.meteo, coeur, 20.5, sim.tick)).toBe('blizzard')
-    expect(froidEolien(dehorsSansMeteo(sim, coeur, 20.5, sim.tick))).toBe(1)
+    expect(partDeBlizzard(dehorsSansMeteo(sim, coeur, 20.5, sim.tick))).toBe(1)
     return { sim, coeur, hors }
   }
 
@@ -816,12 +816,10 @@ describe('R6 — la faune se terre (A5)', () => {
   })
 
   it('A5 — Brume annoncée + pluie active : les points `faunaQuiet` tiennent PENDANT et APRÈS, advanceMeteo n’y touche jamais', () => {
-    // Une carte À CENDRIÈRE (champ synthétique : distance = x, patron brume.test.ts) — la
-    // Brume en a besoin ; la météo, non.
+    // Une carte AVEC CHARNIER (patron brume.test.ts) — la Brume s'y ancre ; la météo, non.
+    // Elle portait un champ de FRONT synthétique, devenu inerte à son retrait (2026-08-24).
     const map = createEmptyMap(70, 40, TERRAIN_GRASS)
-    map.cendre = []
-    for (let y = 0; y < 40; y++) for (let x = 0; x < 70; x++) map.cendre.push(x)
-    map.cendreMax = 8
+    map.zones.push({ name: 'Le Charnier', x: 2, y: 18, w: 5, h: 5, kind: 'charnier' })
     const sim = createSim(2026, { map, calendarScale: SCALE, meteoActive: true })
 
     // Le premier jour que la Brume élit ; son annonce tombe au crépuscule. On le CHERCHE à
@@ -1535,7 +1533,7 @@ describe('R7 — vitesse et perception (A7)', () => {
 describe('R8 — la foudre (A6)', () => {
   const [W, H] = [400, 40]
 
-  /** Un orage du CŒUR DE L'ARDEUR (+26 °C : `froidEolien` est à zéro, aucun froid létal ne se
+  /** Un orage du CŒUR DE L'ARDEUR (+26 °C : `partDeBlizzard` est à zéro, aucun froid létal ne se
    *  mêle aux mesures ; et c'est la saison dont la bande de 60 tuiles tombe franchement sur
    *  une carte de 400), sur le premier CYCLE dont les impacts sont tous espacés de plus de
    *  `FOUDRE_TELEGRAPHE_TICKS` — la prémisse du test de télégraphe exact (deux impacts
@@ -2214,14 +2212,14 @@ describe('A12 — l’ASPECT se dérive du froid, il ne s’élit pas (R11)', ()
 describe('A13 — le refroidissement éolien est une PENTE bornée et monotone (R12)', () => {
   it('BALAYAGE de tout le domaine de `T₀` : 1 sous la limite, 0 au-dessus, monotone entre', () => {
     const haut = METEO.SEUIL_NEIGE + METEO.COLD.pluie // au-dessus, un orage est une pluie violente
-    const bas = haut - METEO.FROID_EOLIEN_RAMPE // en dessous, c'est le blizzard d'avant
-    expect(froidEolien(haut)).toBe(0)
-    expect(froidEolien(bas)).toBe(1)
-    let prec = froidEolien(TEMPERATURE.AMBIANT_MIN)
+    const bas = haut - METEO.BLIZZARD_RAMPE // en dessous, c'est le blizzard d'avant
+    expect(partDeBlizzard(haut)).toBe(0)
+    expect(partDeBlizzard(bas)).toBe(1)
+    let prec = partDeBlizzard(TEMPERATURE.AMBIANT_MIN)
     expect(prec).toBe(1)
     let vuIntermediaire = 0
     for (let t = TEMPERATURE.AMBIANT_MIN; t <= TEMPERATURE.AMBIANT_MAX; t += 0.1) {
-      const u = froidEolien(t)
+      const u = partDeBlizzard(t)
       expect(u).toBeGreaterThanOrEqual(0)
       expect(u).toBeLessThanOrEqual(1)
       expect(u, `T₀=${t}`).toBeLessThanOrEqual(prec + 1e-12) // MONOTONE décroissante, partout
@@ -2234,7 +2232,7 @@ describe('A13 — le refroidissement éolien est une PENTE bornée et monotone (
   it('un ORAGE D’ÉTÉ ne mord pas plus qu’une averse — même la NUIT du cœur de l’Ardeur', () => {
     // La nuit d'été est le pire cas de la saison chaude, et c'est là que la garde compte : la
     // courbe pose la plaine à +26 le jour et l'écart de nuit saisonnier (S5) n'en retire que 6
-    // — +20 °C, très au-dessus de la limite de neige. `froidEolien` reste à zéro : l'orage ne
+    // — +20 °C, très au-dessus de la limite de neige. `partDeBlizzard` reste à zéro : l'orage ne
     // retranche que sa ligne DOUCE. Sans S5 (un écart fixe à 12), la nuit d'Ardeur tomberait
     // à +14 et la pente commencerait à mordre.
     const sim = createSim(3, { map: createEmptyMap(400, 40, TERRAIN_GRASS), calendarScale: SCALE, meteoActive: true })
@@ -2244,7 +2242,7 @@ describe('A13 — le refroidissement éolien est une PENTE bornée et monotone (
     expect(meteoIntensity(sim, 200.5, 20.5)).toBe(1) // au cœur
     const nuitDArdeur = socleDuJour(MI_ARDEUR, 1) - TEMPERATURE.ECART_NUIT(MI_ARDEUR)
     expect(dehorsSansMeteo(sim, 200.5, 20.5, sim.tick)).toBe(nuitDArdeur) // +20 °C
-    expect(froidEolien(nuitDArdeur)).toBe(0) // la pente R12 est à zéro : l'orage est une averse
+    expect(partDeBlizzard(nuitDArdeur)).toBe(0) // la pente R12 est à zéro : l'orage est une averse
     expect(baselineTemperature(sim, 200.5, 20.5)).toBe(nuitDArdeur - METEO.COLD.orage)
     expect(meteoColdAt(sim, 200.5, 20.5, sim.tick)).toBe(METEO.COLD.orage)
   })

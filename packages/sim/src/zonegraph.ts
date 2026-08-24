@@ -544,14 +544,26 @@ const LIENS: readonly (readonly [string, string])[] = [
  * ═══ LE MONDE RÉDUIT — décision d'Alexis, 2026-08-18 : « on ne garde que le t0 pour l'instant » ═══
  *
  * Le graphe complet n'est PAS supprimé : il DORT. Un plan est un sous-ensemble du squelette et de
- * ses liens — le monde joué devient racine + Cendrière, et rien d'autre ne change de nature :
- * mêmes rails, même jitter, mêmes passes. La Cendrière reste parce qu'elle est le MOTEUR de la
- * saison (le front part de sa frontière) et parce qu'un T0 sans voisin n'aurait ni seuil, ni
- * sente, ni route — donc ni convoi, ni réfugié, ni poste d'Arche.
+ * ses liens — et, depuis le 2026-08-24, le monde joué est **le T0 SEUL** : mêmes rails, même
+ * jitter, mêmes passes, une seule région.
  *
- * Dans ce plan, la racine est elle-même une « impasse » (une seule voisine) : c'est constaté,
- * pas choisi, et personne ne le consomme au runtime — la règle des deux portes y gagne même
- * ses deux seuils vers le feu.
+ * ═══ LA CENDRIÈRE EST PARTIE, ET LE T0 A PRIS SA PLACE (décision d'Alexis, 2026-08-24) ═══
+ *
+ * *« retire le front de cendre, on va gérer cette mécanique de manière complètement différente.
+ * D'ailleurs profites-en pour supprimer la zone des cendres en bas, agrandis la zone t0 pour la
+ * remplacer. »*
+ *
+ * Elle n'était là que pour DEUX raisons, et les deux sont caduques : elle était le moteur de la
+ * saison (le front partait de sa frontière — le front n'existe plus), et elle donnait au T0 un
+ * voisin, donc un seuil, une sente et une route. **Le second point n'est pas gratuit** : le monde
+ * joué n'a plus AUCUN seuil, donc plus de sente entre zones ni de route inter-pays. Ce qui les
+ * consomme (convois, poste d'Arche) se tait — c'est CONSTATÉ ici, à rouvrir avec la nouvelle
+ * mécanique.
+ *
+ * LA RACINE S'ÉTIRE JUSQU'AU BORD SUD (`y1` 0,915 → 0,985, la valeur qu'avait la Cendrière) :
+ * la carte garde EXACTEMENT sa hauteur — c'est le bord sud le plus bas qui la fixait, et il n'a
+ * pas bougé. On étire dans le PLAN et non dans `SQUELETTE` : le chemin `'vallee'` reste octet
+ * pour octet celui d'avant, jitter compris (le rail ne dépend que de la fraction écrite).
  */
 export type MondeGen = 'vallee' | 'racine'
 
@@ -573,8 +585,16 @@ interface PlanDuMonde {
   priorites: readonly number[]
 }
 
-function planReduit(roles: readonly string[]): PlanDuMonde {
-  const squelette = SQUELETTE.filter((c) => roles.includes(c.role))
+/**
+ * Un sous-ensemble du squelette, avec un ÉTIRAGE facultatif par rôle : une région d'un plan
+ * réduit peut reprendre l'emprise de celle qui n'y est plus. L'étirage ne touche QUE la copie
+ * du plan — `SQUELETTE` reste la vérité du monde complet.
+ */
+function planReduit(roles: readonly string[], etirage: Record<string, Partial<Case>> = {}): PlanDuMonde {
+  const squelette = SQUELETTE.filter((c) => roles.includes(c.role)).map((c) => {
+    const e = etirage[c.role]
+    return e ? { ...c, ...e } : c
+  })
   const garde = new Set(squelette.map((c) => c.role))
   return {
     squelette,
@@ -585,7 +605,8 @@ function planReduit(roles: readonly string[]): PlanDuMonde {
 
 const PLANS: Record<MondeGen, PlanDuMonde> = {
   vallee: { squelette: SQUELETTE, liens: LIENS, priorites: PRIORITE },
-  racine: planReduit(['cendre', 'racine']),
+  // Le T0 SEUL, étiré sur le bord sud que la Cendrière occupait (2026-08-24).
+  racine: planReduit(['racine'], { racine: { y1: 0.985 } }),
 }
 
 /**

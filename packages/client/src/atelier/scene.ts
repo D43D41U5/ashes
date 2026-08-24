@@ -27,7 +27,7 @@
  * reste le jeu (`pnpm smoke --scenario lieux-batis`).
  */
 import Phaser from 'phaser'
-import { getGameTime } from '@ashes/sim'
+import { getGameTime, VENT } from '@ashes/sim'
 import type { SimState, SnapshotMessage } from '@ashes/sim'
 import { SnapshotView } from '../scenes/world/snapshot-view'
 import { DynamicLighting } from '../scenes/world/dynamic-lighting'
@@ -271,6 +271,7 @@ export class AtelierScene extends Phaser.Scene {
       type: 'snapshot',
       tick: sim.tick,
       lastProcessedInput: 0,
+      cendreAge: sim.cendreAge, // l'Atelier ne joue pas la cendre, mais le message est complet
       time: getGameTime(sim),
       entities: sim.entities,
       // LE CALQUE « TOITS » EST UN FILTRE DU MONTRÉ, jamais un état de sim : on retire les
@@ -286,6 +287,7 @@ export class AtelierScene extends Phaser.Scene {
       refugeeGroups: [],
       blood: [],
       wind: { x: 1, y: 0 },
+      windForce: VENT.AMBIANT,
       groundItems: [],
       // L'Atelier n'a pas de ciel : on y regarde un PLAN, pas une vallée. Jamais de front.
       meteo: null,

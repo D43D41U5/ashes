@@ -13,6 +13,8 @@ import {
   TERRAIN_PINE,
   TERRAIN_LARCH,
   TERRAIN_BURNT_FOREST,
+  TERRAIN_CENDRE_BOIS,
+  TERRAIN_CENDRE_PRE,
   TERRAIN_GRASS,
   TERRAIN_FLOWER_MEADOW,
   TERRAIN_HEATH,
@@ -85,6 +87,29 @@ export const BIOME_CLUTTER: Record<number, BiomeClutter> = {
   [TERRAIN_PINE]: { density: 0.4, scale: 22, understory: false, props: ['pine', 'grass_tuft', 'pebbles'] },
   [TERRAIN_LARCH]: { density: 0.35, scale: 20, understory: false, props: ['larch', 'grass_tuft'] },
   [TERRAIN_BURNT_FOREST]: { density: 0.4, scale: 22, understory: false, props: ['burnt_trunk', 'grass_tuft'] },
+  /**
+   * ═══ LE DÉCOR DE LA CENDRE (spec `cendre.md` R11) ═══
+   *
+   * La première version TAISAIT tout décor sur la cendre — rien ne pousse, donc rien à dessiner.
+   * Juste, et faux à l'écran : le sol devenait un désert PARFAITEMENT lisse au milieu d'un monde
+   * dense, ce qui se lisait comme un bug d'affichage plutôt que comme une terre morte.
+   *
+   * Ce qui reste après le feu n'est pas RIEN, c'est autre chose : des chicots, des troncs
+   * calcinés encore debout, de la poussière que le vent pousse. Les props existent déjà tous — on
+   * ne dessine pas un art neuf, on rebat les cartes.
+   *
+   * Les densités sont BASSES et décroissent avec la famille : le bois garde ses fûts morts (c'est
+   * lui qui raconte le plus), le pré n'a plus que la poussière. Le minéral n'est pas là : il n'est
+   * pas traversable, et rien ne s'y pose.
+   */
+  [TERRAIN_CENDRE_BOIS]: {
+    density: 0.26, scale: 20, understory: false,
+    props: ['burnt_trunk', 'burnt_trunk', 'chicot', 'poussiere'],
+  },
+  [TERRAIN_CENDRE_PRE]: {
+    density: 0.12, scale: 18, understory: false,
+    props: ['poussiere', 'poussiere', 'chicot'],
+  },
   // Le PRÉ (l'herbe) : touffes + fleurs, ET des BOSQUETS DE BUISSONS DODUS en taillis épars
   //  (demande d'Alexis, 2026-07-18 — comme dans la forêt, mais groupés en taillis sur la plaine).
   [TERRAIN_GRASS]: {

@@ -123,14 +123,12 @@ describe('le rejeu sur le monde de production', () => {
       vecu.push(...drainEvents(s))
     }
 
-    expect(s.map.cendre?.length ?? 0, 'la carte porte le champ de cendre').toBeGreaterThan(0)
-    expect(jourDeSaison(s), 'des JOURS DE SAISON ont basculé (sinon la Cendre dort)')
+    // ⚠ LE VOLET « CENDRE » DE CETTE GARDE EST TOMBÉ LE 2026-08-24 avec le front : le monde joué
+    //   ne porte plus de champ de cendre et plus aucun `cendre_avance` n'est émis. Ce qu'elle
+    //   gardait — que le monde rejoué est VIVANT et non un décor figé — tient toujours par les
+    //   quatre lignes qui suivent, plus le basculement des jours.
+    expect(jourDeSaison(s), 'des JOURS DE SAISON ont basculé')
       .toBeGreaterThan(jourDeSaison(s, 0))
-    // …ET LE FRONT A MORDU. Porter le champ de cendre ne prouve que sa PRÉSENCE : tant que le
-    // monde ouvrait à l'Éclosion, le front valait zéro et `avancerLaCendre` ressortait aussitôt.
-    // La garde ne voyait donc pas ce qu'elle annonce en tête de fichier ; elle le voit ici.
-    expect(vecu.filter((e) => e.type === 'cendre_avance').length, 'la Cendre a mangé des nœuds')
-      .toBeGreaterThan(0)
     expect(s.nodes.length, 'des nœuds par zone').toBeGreaterThan(1000)
     expect(s.structures.length, 'des lieux BÂTIS').toBeGreaterThan(50)
     expect(s.monsters.length, 'de la faune vivante').toBeGreaterThan(0)

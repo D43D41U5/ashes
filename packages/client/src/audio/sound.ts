@@ -215,6 +215,21 @@ export function soundForEvent(event: SimEvent, onMe: boolean): SoundSpec | null 
     // « trop tard » sans punir : le raté ne coûte que l'appât. Posé sans l'entendre — au banc.
     case 'fish_escaped':
       return onMe ? { wave: 'triangle', freq: 260, freqEnd: 140, dur: 0.18, gain: 0.05, lowpass: 900 } : null
+    // ÇA MORDILLE (peche.md D11/R10) : un clapotis MINUSCULE — la moitié du gain de la touche,
+    // deux fois plus court, et il MONTE à peine au lieu de tomber. Il doit dire « il y a
+    // quelque chose, mais ce n'est pas ça » sans jamais se confondre avec le télégraphe : si
+    // l'oreille les mélange, le joueur ferre dans le vide et D11 est perdue.
+    case 'fish_nibble':
+      return onMe ? { wave: 'triangle', freq: 520, freqEnd: 600, dur: 0.04, gain: 0.035, lowpass: 2200 } : null
+    // LA LIGNE RENTRE FAUTE D'EAU (E4) : un raclement bas et court — l'eau s'est retirée, a
+    // pris, ou ne donne rien. Le bandeau dit la raison ; le son dit qu'il s'est passé quelque
+    // chose, sinon la ligne disparaîtrait sans un mot.
+    case 'fishing_cancelled':
+      return onMe ? { wave: 'triangle', freq: 200, freqEnd: 160, dur: 0.12, gain: 0.045, lowpass: 800 } : null
+    // UN RECORD (B6) : la seule voix qui MONTE de la pêche, et la seule qui s'entend de loin
+    // (pas `onMe`) — la plus grosse prise de sa vie est un fait de village, pas un secret.
+    case 'fish_record':
+      return { wave: 'triangle', freq: 440, freqEnd: 880, dur: 0.22, gain: 0.06, lowpass: 3200 }
 
     /**
      * LE NŒUD MEURT — ET IL A TROIS VOIX, PAS UNE (demande d'Alexis, 2026-07-29 :

@@ -118,16 +118,57 @@ export type ItemId =
   /** Le MARTEAU DE CONSTRUCTION : sans lui EN MAIN, on ne bâtit rien (spec recolte.md G12). */
   | 'hammer'
   | 'raw_meat'
-  /** ── LA PÊCHE (spec `peche.md` D5) — trois espèces, rareté par l'EAU et par la FENÊTRE de
-   *  ferrage. Le goujon mord partout et se laisse ferrer ; la truite ne vit qu'en rivière ;
-   *  le brochet ne vit qu'au lac et se débat (fenêtre courte). Crus, ils pourrissent comme la
-   *  viande ; cuits au Feu (`COOK_SLOT`), ils nourrissent par paliers. ── */
+  /** ══ LA PÊCHE (spec `peche.md` D5, ÉLARGIE par D10/D12 le 2026-08-24) ══
+   *
+   *  DIX-HUIT ESPÈCES, et chacune est UNE LIGNE de `FISH_SPECIES` — la rareté ne tient plus à
+   *  la seule eau mais à (nature de l'eau × zone) × saison × créneau horaire. Chaque espèce
+   *  garde son identité DANS LE SAC : c'est ce qu'Alexis a tranché contre le sac par classes,
+   *  parce qu'une variété qui disparaît dès qu'on ferme la fiche de prise n'est pas une variété.
+   *
+   *  ⚠ **LE CUIT ET LE SÉCHÉ, EUX, SE REGROUPENT PAR CLASSE** (`petit`/`moyen`/`gros`) — et
+   *  c'est tout ce qui tient le catalogue à 25 items au lieu de 60 : 18 crus, 3 cuits, 3
+   *  séchés, plus la viande séchée. Les trois `cooked_gudgeon`/`cooked_trout`/`cooked_pike`
+   *  d'avant sont REMPLACÉS par `cooked_fish_*` ; c'est le compilateur qui a énuméré leurs
+   *  sites d'appel, pas un grep.
+   *
+   *  La TAILLE d'une prise ne voyage PAS ici : un `Slot` ne peut pas la porter sans casser
+   *  l'empilement (comme `wear`). Elle devient une QUANTITÉ (D12 : un gros brochet donne 4
+   *  `pike`), et sa valeur exacte en millimètres va au bestiaire de l'entité. ── */
+  // ── Les PETITS : l'en-cas, une portion, une fenêtre large. ──
   | 'gudgeon'
+  | 'vairon'
+  | 'gardon'
+  | 'loche'
+  | 'ecrevisse'
+  // ── Les MOYENS : le repas. ──
   | 'trout'
+  | 'ombre'
+  | 'chevesne'
+  | 'tanche'
+  | 'perche'
+  | 'anguille'
+  | 'coregone'
+  // ── Les GROS : la prise dont on parle — fenêtre courte, ils se débattent. ──
   | 'pike'
-  | 'cooked_gudgeon'
-  | 'cooked_trout'
-  | 'cooked_pike'
+  | 'barbeau'
+  | 'saumon'
+  | 'sandre'
+  | 'carpe'
+  | 'silure'
+  // ── Le CUIT et le SÉCHÉ, par CLASSE (D12) — la rareté se mange, elle ne se fond pas dans
+  //    l'espèce, mais elle ne mérite pas dix-huit poêlées différentes. ──
+  | 'cooked_fish_petit'
+  | 'cooked_fish_moyen'
+  | 'cooked_fish_gros'
+  | 'dried_fish_petit'
+  | 'dried_fish_moyen'
+  | 'dried_fish_gros'
+  /** LA VIANDE SÉCHÉE (spec `peche.md` D13/S2) — le séchoir prend le poisson ET la viande.
+   *  Conserver en PERDANT : elle traverse l'hiver et nourrit moins que la viande cuite. */
+  | 'dried_meat'
+  /** LE SÉCHOIR EN OBJET (spec `peche.md` D13/S1) : on le fabrique, on le tient, on le pose
+   *  (`place_component`) — comme le coffre et l'établi. Bois et corde, sans poste. */
+  | 'sechoir'
   /** LA CANNE DE FORTUNE (spec `peche.md` D4) : une branche, de la corde — sans poste, dès
    *  la première nuit. Obligatoire EN MAIN pour lancer : le geste EST la ligne. Une seule
    *  marche de canne pour l'instant ; elle s'use d'un cran par ferrage réussi. */
@@ -157,6 +198,15 @@ export type ItemId =
    *  III. Une seule tenue, pas de slots (V2-16). */
   | 'tenue_hiver'
   | 'components'
+  /**
+   * LE SEL — **différé depuis le 2026-07-12, rendu au jeu le 2026-08-24 par les fumerolles.**
+   *
+   * `peche.md` le dit noir sur blanc : c'est le SÉCHAGE qui porte la conserve, *faute de sel*. Il
+   * revient par le seul endroit où il pouvait revenir sans qu'on invente une mine : les trous qui
+   * fument froid au cœur de la cendre en déposent sur leurs bords. **C'est la raison d'ALLER dans
+   * la corruption** — le prolongement direct du bois mort : la cendre TIRE autant qu'elle pousse.
+   */
+  | 'salt'
   /**
    * LE FEU DE CAMP, EN OBJET. On le fabrique (10 bois), on le PORTE, on le POSE au
    * sol : il devient alors une structure `fire` SANS village (villageId 0) — une

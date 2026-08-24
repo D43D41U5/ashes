@@ -47,7 +47,7 @@
  */
 import { NEIGE_GENOUX, NEIGE_POUDREUSE, hash2, type NiveauDeNeige } from '@ashes/sim'
 import { GRAIN_CELLS } from './grain-sol'
-import { ASSEC, CRUE, cuireChunk, DESSOUS, GLACE_GUE, GLACE_LAC, GUE_FERME, MANTEAU, MANTEAU_PROFOND, type ChunkCuit } from './paves'
+import { ASSEC, CRUE, cuireChunk, DESSOUS, DESSOUS_EAU, GLACE_GUE, GLACE_LAC, GUE_FERME, MANTEAU, MANTEAU_PROFOND, type ChunkCuit } from './paves'
 
 /** Réglages du manteau — ce qui se règle en REGARDANT (da-feeling), pas en jouant. Le SEUIL
  *  d'une tuile et sa distribution, eux, commandent le pas : ils vivent dans `GEL` (`balance.ts`,
@@ -113,7 +113,19 @@ export const TUILE_GUE_FERME = 6
 export const TUILE_CRUE = 7
 /** Falaise, mur, vide : le manteau ne s'y dessine pas et ne déborde pas dessus (R10). */
 export const TUILE_STRUCTURELLE = -1
-export type EtatTuile = -1 | 0 | 1 | 2 | 3 | 4 | 5 | 6 | 7
+/**
+ * L'EAU LIBRE — une tuile d'eau à la carte que rien n'a couverte : ni glace, ni vase, ni gué
+ * fermé. Le manteau n'y peint RIEN (le shader est dessous), mais elle ne se confond pas avec le
+ * sol nu : c'est le rang 0 de la couche, ce sur quoi la vase et la glace débordent (`paves.ts`,
+ * `SURFACES`). Sans elle, la mare partie et l'eau profonde étaient à égalité — couture nue.
+ *
+ * ⚠ SA VALEUR EST ≤ `TUILE_NUE`, et il le faut : le portillon de cuisson (`gel-layer.ts`) tient
+ * un chunk pour VIDE tant que tous ses états y sont — l'eau libre ne se peint pas plus que le sol
+ * nu, un lac entier ne doit pas coûter une texture. Elle est aussi < `TUILE_GLACE_GUE`, sur quoi
+ * l'immersion des acteurs se décide (`WorldScene`, `glaceAt`) : sur l'eau libre, on ne marche pas.
+ */
+export const TUILE_EAU_LIBRE = -2
+export type EtatTuile = -2 | -1 | 0 | 1 | 2 | 3 | 4 | 5 | 6 | 7
 
 /** L'état d'une tuile de terre depuis son niveau de neige (la sim). */
 export function tuileDeNiveau(niveau: NiveauDeNeige): EtatTuile {
@@ -135,6 +147,7 @@ export function terrainDuManteau(etat: EtatTuile): number {
     case TUILE_ASSEC: return ASSEC
     case TUILE_GUE_FERME: return GUE_FERME
     case TUILE_CRUE: return CRUE
+    case TUILE_EAU_LIBRE: return DESSOUS_EAU
     case TUILE_STRUCTURELLE: return 0 // void : structurel
     default: return DESSOUS
   }

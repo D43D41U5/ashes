@@ -282,6 +282,27 @@ const PIECES: readonly Piece[] = [
       return [ARETE(yf), { path: [[6, T], [6, yh]] }, { path: [[10, T], [10, yh]] }]
     },
   },
+  // ── LE SÉCHOIR : une claie, et ce qui pend dessous (spec `peche.md` R12) ─
+  // On doit lire de LOIN qu'il travaille : deux montants, une traverse, et des prises
+  // suspendues. Pas de boîte — c'est un cadre ajouré, donc la silhouette est faite de
+  // barres, et le sol se voit entre elles.
+  {
+    type: 'sechoir',
+    dessiner: (g) => {
+      const yf = 5 // la traverse, à mi-hauteur : la claie est basse, on y accroche à la main
+      rect(g, '#6a5232', 2, yf, T - 4, 2) //        la traverse
+      rect(g, '#8a6a42', 2, yf, T - 4, 1) //        son dessus éclairé
+      rect(g, '#5a4428', 2, yf + 2, 1, T - yf - 3) // le montant gauche
+      rect(g, '#5a4428', T - 3, yf + 2, 1, T - yf - 3) // le droit
+      rect(g, '#3a2c1a', 2, T - 2, T - 4, 1) //     les pieds, dans l'ombre
+      // CE QUI SÈCHE : deux prises pendues, décalées — la silhouette du poste EN TRAVAIL.
+      rect(g, '#9a8a6a', 5, yf + 2, 1, 1)
+      rect(g, '#7a5a3a', 4, yf + 3, 3, 5)
+      rect(g, '#9a8a6a', 10, yf + 2, 1, 1)
+      rect(g, '#8a6a46', 9, yf + 3, 3, 4)
+      return [ARETE(yf), { path: [[2, T], [2, yf]] }, { path: [[T - 2, T], [T - 2, yf]] }]
+    },
+  },
   // ── L'ÂTRE : la gueule noire, dans un manteau de pierre ─────────────────
   {
     type: 'atre',

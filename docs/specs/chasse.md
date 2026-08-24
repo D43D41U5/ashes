@@ -86,7 +86,12 @@ La fuite elle-même ne change pas : à saturation, la bête entre dans la machin
   - l'allure : la posture `gait` des avatars se voit (accroupi, marche, sprint) — la sienne et celle des autres ;
   - le sang : des gouttes au sol qui pâlissent avec l'âge ; la bête couchée : tapie, visiblement à bout ;
   - la sentinelle : tête haute au milieu des têtes baissées — le rythme des relèves doit se lire à dix tuiles ;
-  - le vent : lisible en permanence, diégétique (herbes, particules) — pas une flèche d'UI ;
+  - le vent : lisible en permanence, diégétique (herbes, particules) — ~~pas une flèche d'UI~~ ;
+    ⚠ **AMENDÉ le 2026-08-24** (`vent.md` V10, décision d'Alexis) : le vent est devenu une
+    MÉCANIQUE — il commande l'odorat et annonce le front depuis l'unification — donc il doit
+    se lire **sans interprétation**. Une aiguille vit dans la barre haute, contre le
+    pictogramme du ciel. La règle qui SURVIT, et qui était le vrai point de C19 : **les
+    herbes restent la lecture première**, le cadran n'est que le recours ;
   - la mise à mort propre : un feedback d'impact distinct (le client a déjà l'impact et les chiffres — commit « le combat SE VOIT »).
   - **Rien de flottant, rien de minimap** : la scène est la seule interface. Chaque palier livre son scénario smoke (`pnpm smoke --scenario chasse`, puis `chasse2`, `chasse3`) — le smoke **lit** `window.__BRAISES__.scene`, il ne fabrique rien.
 

@@ -77,7 +77,7 @@ import {
 import { GROUND_MAP_DEPTH, TILE_PX } from '../../render/framing'
 import { GRAIN_CELLS, grainFacteur } from '../../render/grain-sol'
 import {
-  TUILE_ASSEC, TUILE_CRUE, TUILE_GLACE_GUE, TUILE_GLACE_LAC, TUILE_GUE_FERME,
+  TUILE_ASSEC, TUILE_CRUE, TUILE_EAU_LIBRE, TUILE_GLACE_GUE, TUILE_GLACE_LAC, TUILE_GUE_FERME,
   TUILE_NEIGE, TUILE_NEIGE_PROFONDE, TUILE_NUE, TUILE_STRUCTURELLE,
   cuireManteau, trameDeCrue, trameDeGlace, trameDeVase, tuileDeNiveau, type EtatTuile,
 } from '../../render/manteau'
@@ -364,7 +364,10 @@ export class GelLayer {
               // sont d'ailleurs exclusifs (un niveau ne peut être à la fois ≥ +0,3 et ≤ −0,6).
               : peutFermerLesGues && estGueBloque(etat, tx, ty, niveauEau) ? TUILE_GUE_FERME
               : peutAssecher && estAsseche(etat, tx, ty, niveauEau) ? TUILE_ASSEC
-              : TUILE_NUE
+              // L'EAU LIBRE, et non le sol nu : le manteau n'y peint rien non plus, mais c'est
+              // sur ELLE que la vase et la glace débordent. Confondues, la mare partie et l'eau
+              // profonde étaient à égalité — une couture nue sur toute la rive du lac.
+              : TUILE_EAU_LIBRE
           } else {
             couverture = neigeAuSol(etat, tx, ty)
             // LE NIVEAU est la loi de la sim (gel.md G9) : ce qu'on peint est ce qui ralentit.
@@ -415,6 +418,7 @@ export class GelLayer {
     }
     this.detruire(c)
     // Rien à peindre (ni neige ni glace, marge comprise) : pas une texture.
+    // (l'eau libre et le structurel sont SOUS `TUILE_NUE` : ni l'un ni l'autre ne se peint)
     let vide = true
     for (let i = 0; i < L * L && vide; i++) vide = c.etats[i]! <= TUILE_NUE
     if (vide) { this.sonde.recuissons++; this.sonde.msRecuisson = performance.now() - t0; return }

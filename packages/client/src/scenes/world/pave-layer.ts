@@ -20,10 +20,19 @@
  * AUCUNE logique de jeu ici — rendu pur d'état reçu.
  */
 import Phaser from 'phaser'
-import type { WorldMap } from '@ashes/sim'
+import { ancienneteDeCendre, auCoeurDeLaCendre, avanceesDepuisAges, terrainCendre, type WorldMap } from '@ashes/sim'
 import { GROUND_MAP_DEPTH, TILE_PX } from '../../render/framing'
 import { GRAIN_CELLS, familleDe, grainFacteur, type Famille } from '../../render/grain-sol'
 import { PAVE, PAVE_COTE, PAVE_PX, cuireChunk } from '../../render/paves'
+import { TERRAIN_COLORS } from '../../render/terrain-colors'
+
+/**
+ * LA CENDRE FRAÎCHE EST CHAUDE, LA VIEILLE EST FROIDE (spec `cendre.md`). Sans ce dégradé, la
+ * frange ne se lisait pas : on ne savait ni d'où la cendre venait, ni quand elle était passée.
+ */
+const JEUNE = 0x6f5a44 // la cendre du mois : encore le brun du feu
+const TIRAGE_VIEUX = 0.55 // de combien on tire vers la teinte de famille quand elle a refroidi
+const REFROIDIT_JOURS = 30 // une saison : le temps qu'on la VOIE changer
 
 /** Sous le bake ? Non : AU-DESSUS du bake (−1), SOUS l'eau (+0,25) et tout ce qui vit dessus. */
 const PAVE_DEPTH = GROUND_MAP_DEPTH + 0.05
@@ -98,6 +107,23 @@ export class PaveLayer {
    *  l'atlas d'hier, `grain-sol.ts`) — lues par le pixel, jamais recalculées par chunk. */
   private trames = new Map<Famille, Float32Array>()
 
+  /**
+   * « Cette tuile est-elle cendrée ? » — posé par `WorldScene`, la fonction de /sim et non une
+   * copie. Absent tant que la carte n'a pas de champ de cendre : rien ne change alors.
+   */
+  cendreIci: ((tx: number, ty: number) => boolean) | null = null
+  /** Les âges des foyers du dernier snapshot — la cendre fraîche est plus chaude (voir
+   *  `couleurCendre`). */
+  cendreAge: readonly number[] = []
+  /** Les avancées dérivées des âges — mémoïsées : le bake les demande par pixel. */
+  private avancees: readonly number[] = []
+  /** À appeler quand `cendreAge` change (voir `cendreABouge`). */
+  private majAvancees(): void {
+    this.avancees = avanceesDepuisAges(this.cendreAge, this.cendreAge.length)
+  }
+  /** Les chunks déjà cuits qui contiennent de la cendre : à jeter quand elle avance. */
+  private chunksCendres = new Set<number>()
+
   constructor(
     private scene: Phaser.Scene,
     private map: WorldMap,
@@ -105,6 +131,45 @@ export class PaveLayer {
     private couleurs: Uint32Array,
     private seed: number,
   ) {}
+
+  /**
+   * LA COULEUR D'UNE TUILE CENDRÉE — la teinte de sa famille, tirée vers le brun du feu quand la
+   * cendre est FRAÎCHE (spec `cendre.md`). Elle refroidit sur `REFROIDIT_JOURS` vers le gris de la
+   * poussière lessivée : le joueur lit **où le front vient de passer** rien qu'au sol, à un écran
+   * de distance. Gratuit — l'ancienneté se recalcule, elle ne se range pas.
+   */
+  private couleurCendre(tx: number, ty: number, terrain: number): number {
+    const base = TERRAIN_COLORS[terrain] ?? 0x71695a
+    const jours = ancienneteDeCendre(this.map, tx, ty, this.cendreAge, this.seed)
+    const froid = jours < 0 || jours > REFROIDIT_JOURS ? 1 : jours / REFROIDIT_JOURS
+    const t = TIRAGE_VIEUX + (1 - TIRAGE_VIEUX) * froid
+    const r = ((JEUNE >> 16) & 255) + (((base >> 16) & 255) - ((JEUNE >> 16) & 255)) * t
+    const v = ((JEUNE >> 8) & 255) + (((base >> 8) & 255) - ((JEUNE >> 8) & 255)) * t
+    const b = (JEUNE & 255) + ((base & 255) - (JEUNE & 255)) * t
+    return (Math.round(r) << 16) | (Math.round(v) << 8) | Math.round(b)
+  }
+
+  /**
+   * LA CENDRE A AVANCÉ — on jette les chunks qu'elle touche, ils se recuiront à la demande.
+   *
+   * Appelé une fois par changement d'âge (donc au plus une fois par jour de saison, et pas du
+   * tout quand tous les foyers sont gelés). On ne jette QUE les chunks concernés : un chunk se
+   * recuit en ~6 ms, la vue en tient une douzaine — recuire toute la carte serait absurde, et ne
+   * rien jeter laisserait la cendre d'hier peinte pour toujours.
+   */
+  cendreABouge(): void {
+    this.majAvancees()
+    for (const k of this.chunksCendres) {
+      const c = this.chunks.get(k)
+      if (!c) continue
+      c.image.destroy()
+      c.surplomb?.image.destroy()
+      if (this.scene.textures.exists(c.cle)) this.scene.textures.remove(c.cle)
+      if (c.surplomb && this.scene.textures.exists(c.surplomb.cle)) this.scene.textures.remove(c.surplomb.cle)
+      this.chunks.delete(k)
+    }
+    this.chunksCendres.clear()
+  }
 
   /** La trame de grain d'un terrain — celle de sa famille, cuite une fois par seed. */
   private trameDe = (t: number): Float32Array | null => {
@@ -121,15 +186,41 @@ export class PaveLayer {
     return trame
   }
 
+  /**
+   * ═══ LE TERRAIN EFFECTIF — celui qu'on VOIT, cendre comprise (spec `cendre.md` R11) ═══
+   *
+   * La carte n'est JAMAIS mutée : c'est tout le principe de la cendre, qui se dérive de dix
+   * nombres. Le sol dessiné ne peut donc pas la voir dans `map.terrain` — on la lui apprend ici,
+   * au seul endroit où il lit le terrain.
+   *
+   * ⚠ C'EST CE QUI DONNE À LA CENDRE SES BORDS. Une couche séparée peignait un pixel par tuile :
+   * la bonne couleur, le bon grain, et **aucune frange** — la limite avec le vivant était une
+   * découpe nette au milieu d'un monde dont toutes les autres frontières débordent. En passant
+   * par le pavé, la cendre reçoit sa frange irrégulière, son liseré, son arête et son ombre
+   * portée comme n'importe quel terrain : elle cesse d'être posée SUR le monde.
+   */
   private terrainAt = (tx: number, ty: number): number => {
     const { width, height, terrain } = this.map
     if (tx < 0 || ty < 0 || tx >= width || ty >= height) return 0
-    return terrain[ty * width + tx] ?? 0
+    const brut = terrain[ty * width + tx] ?? 0
+    if (!this.cendreIci?.(tx, ty)) return brut
+    // DEUX BANDES (spec `cendre.md` R11) : la frange est de la cendre, le cœur recycle les
+    // terrains de la Cendrière. La corruption EST la Cendrière qui s'étend — elle en a la peau.
+    const profond = auCoeurDeLaCendre(this.map, tx, ty, this.avancees, this.seed)
+    return terrainCendre(brut, profond) ?? brut
   }
 
   private couleurAt = (tx: number, ty: number): number => {
     const { width, height } = this.map
     if (tx < 0 || ty < 0 || tx >= width || ty >= height) return 0
+    if (this.cendreIci?.(tx, ty)) {
+      const brut = this.map.terrain[ty * width + tx] ?? 0
+      const profond = auCoeurDeLaCendre(this.map, tx, ty, this.avancees, this.seed)
+      const c = terrainCendre(brut, profond)
+      // Au CŒUR, le terrain recyclé garde SA couleur d'origine (c'est la Cendrière, pas de la
+      // cendre fraîche) : seule la frange porte le dégradé de chaleur.
+      if (c !== undefined) return profond ? (TERRAIN_COLORS[c] ?? 0) : this.couleurCendre(tx, ty, c)
+    }
     return this.couleurs[ty * width + tx] ?? 0
   }
 
@@ -219,6 +310,19 @@ export class PaveLayer {
       if (sur) chunk.surplomb = { image: sur, cle: cleSur }
     }
     this.chunks.set(k, chunk)
+    // ON RETIENT LES CHUNKS QUI PORTENT DE LA CENDRE — ce sont les seuls à jeter quand elle
+    // avance. Le balayage est au pas de 4 tuiles : une tuile isolée de cendre ne changerait pas
+    // le dessin d'un chunk de 16, et rater le premier jour d'une frange qui met des semaines à
+    // traverser est sans conséquence — le chunk sera repris au jour suivant.
+    if (this.cendreIci) {
+      const t0x = cx * PAVE.CHUNK
+      const t0y = cy * PAVE.CHUNK
+      for (let dy = 0; dy < PAVE.CHUNK; dy += 4) {
+        for (let dx = 0; dx < PAVE.CHUNK; dx += 4) {
+          if (this.cendreIci(t0x + dx, t0y + dy)) { this.chunksCendres.add(k); dy = PAVE.CHUNK; break }
+        }
+      }
+    }
     this.cuits++
     this.derniereCuissonMs = performance.now() - t0
   }

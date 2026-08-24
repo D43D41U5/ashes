@@ -160,6 +160,9 @@ export const PART_DU_SOL: Record<GrainFamille, number> = {
   herbe: 0.2,
   litiere: 0.25,
   humide: 0.3,
+  // LA CENDRE passe presque entière, comme la neige et le minéral : ce qu'on déterre sous une
+  // couche de cendre, c'est de la cendre — il n'y a plus de terre vive dessous à mêler.
+  cendre: 0.85,
 }
 
 /** Un terrain sans famille déclarée (eau, falaise, mur, void) : terre nue. */

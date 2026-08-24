@@ -87,6 +87,32 @@ function drawLeafPile(ctx: CanvasRenderingContext2D): void {
  */
 /** LE CHICOT FERREUX (16×32) — l'aiguille rouillée du sommet : assez haute pour accrocher
  *  l'œil en marchant, SOUS la canopée (les repères du §1 gardent le monopole de l'horizon). */
+/**
+ * ═══ LA FUMEROLLE — un TROU, pas une bosse (décision d'Alexis, 2026-08-24) ═══
+ *
+ * Tout le décor du jeu se dresse ; celle-ci s'enfonce, et c'est ce qui doit se lire d'un coup
+ * d'œil. Trois anneaux concentriques qui vont du clair au NOIR vers le centre : la lèvre de sel
+ * (le plus clair — c'est elle qu'on récolte), la vasque, puis la gueule. Un croissant sombre au
+ * nord de la lèvre pose l'ombre interne : sans lui, l'œil lit un caillou plat.
+ *
+ * Les rects, pas un dégradé : c'est la grammaire cubique du reste (`CHICOT_RECTS`, `BLOC_RECTS`).
+ */
+export const FUMEROLLE_RECTS: readonly (readonly [number, number, number, number, string])[] = [
+  // ⚠ CONTRASTE POUSSÉ APRÈS CAPTURE : la première version tenait dans une bande de gris et se
+  //   perdait complètement dans le sol de cendre — on ne la voyait pas à trois tuiles, alors
+  //   qu'elle doit se repérer à un ÉCRAN. La lèvre de sel est donc presque blanche, la gueule
+  //   franchement noire : c'est l'écart de VALEUR qui la signale, pas sa taille.
+  [2, 5, 12, 9, '#cfcabb'],  // la couronne de sel — le point le plus clair de tout le biome
+  [3, 4, 10, 2, '#e4dfd0'],  // le bourrelet nord, en pleine lumière
+  [3, 6, 10, 7, '#7a7268'],  // la vasque
+  [4, 7, 8, 5, '#3a3631'],   // la paroi interne
+  [5, 8, 6, 4, '#0e0d0c'],   // la gueule : un vrai NOIR, sinon le trou n'en est pas un
+  [3, 5, 10, 1, '#5a544c'],  // l'ombre sous le bourrelet — c'est elle qui CREUSE
+  [1, 13, 4, 1, '#d6d1c2'],  // les dépôts de sel qui débordent sur le sol
+  [11, 13, 4, 1, '#d6d1c2'],
+  [6, 14, 4, 1, '#c2bcae'],
+]
+
 export const CHICOT_RECTS: readonly (readonly [number, number, number, number, string])[] = [
   [5, 27, 8, 3, '#6e6862'],   // l'assise élargie (bas rangée 29 → gap 2)
   [6, 22, 6, 5, '#7b746c'],   // le pied
@@ -170,6 +196,13 @@ const PROPS: LitProp[] = [
   // butte est peuplée par ses nœuds `bloc`, le décor ne garde que chicot et poussière.)
   { key: 'cl-chicot', w: 16, h: 32, draw: drawRects(CHICOT_RECTS), passes: 1, k: 3.5 },
   { key: 'cl-poussiere', w: 16, h: 16, draw: drawRects(POUSSIERE_RECTS) },
+  // LA FUMEROLLE — c'est un NŒUD (on y récolte du sel), donc `nd-` et non `cl-` : elle est
+  // dessinée par `SnapshotView` comme n'importe quel nœud, et pas par le décor. ⚠ Les deux à la
+  // fois auraient fait un DOUBLON sur la même tuile — et sans le `nd-`, le nœud demandait une
+  // texture inexistante : le carré vert de Phaser, en plein milieu de la cendre (vu au navigateur).
+  // `passes: 1` / `k: 3.5` comme les autres silhouettes cubiques franches : elle prend la lumière
+  // comme un objet TAILLÉ, pas comme une tache peinte.
+  { key: 'nd-fumerolle', w: 16, h: 16, draw: drawRects(FUMEROLLE_RECTS), passes: 1, k: 3.5 },
   // Le nœud roche (masse pâteuse côté SnapshotView) — pas de miroir (les nœuds ne se miroitent pas).
   { key: 'nd-rock', w: 16, h: 16, draw: (c) => { c.fillStyle = '#6a6a72'; c.fillRect(3, 6, 11, 8) } },
   // Les BLOCS d'affleurement, trois tailles pleine tuile (RECTS partagés) — cubes francs.
@@ -352,7 +385,7 @@ export const LIT_CLUTTER_KINDS: ReadonlySet<string> = new Set([
  *  types de nœud (`nd-tree_trunk`, `nd-tree_crown`, `nd-berry_bush-2`, `nd-rubble`, `nd-fiber_plant`…).
  *  Dériver de `nd-*` polluerait ce whitelist et ferait demander à SnapshotView un `nd-<type>_lit`
  *  inexistant. On ne met ici QUE des `n.type` réels (test : chacun a bien sa texture générée). */
-export const LIT_NODE_TYPES: ReadonlySet<string> = new Set(['rock', 'champignon', 'fiber_plant', 'rubble', 'leaf_pile'])
+export const LIT_NODE_TYPES: ReadonlySet<string> = new Set(['rock', 'champignon', 'fiber_plant', 'rubble', 'leaf_pile', 'fumerolle'])
 /** Toutes les clés de texture RÉELLEMENT générées par `generateLitProps` — surface testable du
  *  câblage (le clutter a `_lit` + `_lit_m` ; les nœuds, `_lit` seul ; chaque variété de fleur, les deux). */
 export const LIT_PROP_KEYS: ReadonlySet<string> = new Set([

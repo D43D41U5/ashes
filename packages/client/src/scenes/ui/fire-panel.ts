@@ -169,6 +169,11 @@ export function createFirePanel(
   const inCells = [0, 1, 2].map((i) => makeCell('cookIn', i))
   const outCells = [0, 1, 2].map((i) => makeCell('cookOut', i))
   row('.fpn-fuel-row', fuelCells)
+  const fuelLbl = $('.fpn-fuel-lbl')
+  const inLbl = $('.fpn-in-lbl')
+  const outLbl = $('.fpn-out-lbl')
+  const fuelRow = $('.fpn-fuel-row')
+  const fuelArrow = $('.fpn-fuel-arrow')
   row('.fpn-in-row', inCells)
   row('.fpn-out-row', outCells)
 
@@ -258,6 +263,17 @@ export function createFirePanel(
       stateEl.style.color = STATE_COLOR[view.state]
       timeEl.textContent =
         view.state === 'out' ? 'éteint' : view.state === 'ember' ? 'braises…' : `reste ${fmtTime(view.fuelTimeRemaining)}`
+      // UN POSTE SANS FLAMME (le séchoir, peche.md S4) : plus de section COMBUSTIBLE, plus
+      // d'état de feu. Montrer trois cases vides à remplir de bois sur une claie qui n'en veut
+      // pas serait un mensonge d'interface — le joueur chercherait ce qu'il faut y mettre.
+      // LE VERBE DU POSTE (peche.md S2) : « à sécher / séché » sur une claie, « à cuire / cuit »
+      // au feu et au four. Un poste qui annonce le mauvais geste apprend le mauvais geste.
+      inLbl.textContent = view.verbe === 'secher' ? 'ENTRÉE — à sécher' : 'ENTRÉE — à cuire'
+      outLbl.textContent = view.verbe === 'secher' ? 'SORTIE — séché' : 'SORTIE — cuit'
+      fuelLbl.style.display = view.fuelZone ? '' : 'none'
+      fuelRow.style.display = view.fuelZone ? '' : 'none'
+      fuelArrow.style.display = view.fuelZone ? '' : 'none'
+      stateEl.style.display = view.fuelZone ? '' : 'none'
 
       for (let i = 0; i < 3; i++) {
         // COMBUSTIBLE : bois + compte ; la case qui BRÛLE porte l'indicateur de consommation.
@@ -327,13 +343,13 @@ function markup(): string {
   <div class="fpn-card">
     <div class="fpn-h"><span class="fpn-title">FEU DE CAMP</span><span class="fpn-state"></span></div>
     <div class="fpn-flow">
-      <div class="fpn-sec-lbl"><span>COMBUSTIBLE</span><span class="fpn-fuel-time"></span></div>
+      <div class="fpn-sec-lbl fpn-fuel-lbl"><span>COMBUSTIBLE</span><span class="fpn-fuel-time"></span></div>
       <div class="fpn-row fpn-fuel-row"></div>
-      <div class="fpn-arrow">▼</div>
-      <div class="fpn-sec-lbl"><span>ENTRÉE — à cuire</span></div>
+      <div class="fpn-arrow fpn-fuel-arrow">▼</div>
+      <div class="fpn-sec-lbl fpn-in-lbl">ENTRÉE — à cuire</div>
       <div class="fpn-row fpn-in-row"></div>
       <div class="fpn-arrow">▼</div>
-      <div class="fpn-sec-lbl"><span>SORTIE — cuit</span></div>
+      <div class="fpn-sec-lbl fpn-out-lbl">SORTIE — cuit</div>
       <div class="fpn-row fpn-out-row"></div>
     </div>
     <button class="fpn-btn hud-click"></button>

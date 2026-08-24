@@ -27,7 +27,7 @@
  * AUCUNE barre de progression pendant l'attente (interdit GDD l.402) : un flotteur, c'est tout.
  */
 import type Phaser from 'phaser'
-import { FISH_SPECIES, type ItemId, type ResourceNode } from '@ashes/sim'
+import { type ItemId, type ResourceNode } from '@ashes/sim'
 import { OVERLAY_DEPTH, TILE_PX } from '../../render/framing'
 import { itemIconKey } from '../../render/item-art'
 import type { Warp } from '../../render/warp'
@@ -35,7 +35,10 @@ import type { Warp } from '../../render/warp'
 /** Une ligne tendue, lue du snapshot — position RENDUE (px monde) des pieds de celui qui pêche. */
 export interface LigneRendue {
   entityId: number
-  nodeId: number
+  /** LA TUILE PÊCHÉE (peche.md D9, 2026-08-24) — c'était `nodeId` : on pêche l'EAU, et une
+   *  ligne posée sur une tuile nue n'a aucun nœud à nommer. Le flotteur tombe ICI. */
+  tx: number
+  ty: number
   castTick: number
   biteAt: number
   windowEnd?: number
@@ -44,6 +47,8 @@ export interface LigneRendue {
   py: number
 }
 
+// ⚠ `mordille` N'EST PAS UNE PHASE (peche.md R10) — c'est un TRESSAUT posé sur l'attente, qui
+// continue. En faire une phase aurait rendu la ligne « occupée » alors qu'elle ne l'est pas.
 type Phase = 'lancer' | 'attente' | 'touche' | 'ferrage' | 'fuite' | 'rentree'
 
 interface Point {
@@ -54,7 +59,11 @@ interface Point {
 }
 
 interface Ligne {
-  nodeId: number
+  /** Quand ça a mordillé (ms, horloge Phaser) — absent hors tressaut (R10). */
+  mordilleA?: number
+  /** La TUILE pêchée (D9) — c'était le nœud ; on pêche l'eau, il n'y a pas toujours de coin. */
+  tx: number
+  ty: number
   phase: Phase
   /** Début de la phase courante (ms, horloge Phaser). */
   t0: number
@@ -94,6 +103,8 @@ const FERRAGE_MS = 460
 const RENTREE_MS = 260
 /** La plongée du flotteur à la touche, en px (franche — un télégraphe, pas une oscillation). */
 const PLONGEE_PX = 4
+/** LE TRESSAUT (R10) : court — un mordillage se voit, il ne s'attend pas. */
+const MORDILLE_MS = 220
 /** Le clapot d'attente : ±1 px, à cette période. */
 const CLAPOT_MS = 900
 /** La corde : points, gravité (px/s²), amortissement, itérations de contrainte, mou à l'attente. */
@@ -130,6 +141,21 @@ export class PecheFx {
 
   // ── Les trois faits de domaine (WorldScene les relaie depuis `processEvents`) ──
 
+  /**
+   * ÇA MORDILLE (peche.md D11/R10) — et ce n'est PAS la touche.
+   *
+   * Un tressaut : le flotteur sursaute d'un rien pendant un dixième de seconde, puis reprend
+   * son clapot. **Ni anneaux, ni plongée franche, ni son sec** — ce vocabulaire-là reste à la
+   * vraie touche (R3). Si les deux se confondent à l'œil, le joueur ferre dans le vide et
+   * toute la décision D11 (« le réflexe n'est jamais puni par la malchance ») tombe.
+   */
+  nibble(entityId: number, now: number): void {
+    const l = this.lignes.get(entityId)
+    if (!l) return
+    if (l.phase !== 'attente' && l.phase !== 'lancer') return
+    l.mordilleA = now
+  }
+
   /** La touche : le flotteur plonge, le fil se tend (R3). */
   bite(entityId: number, now: number): void {
     const l = this.lignes.get(entityId)
@@ -160,10 +186,12 @@ export class PecheFx {
       const vy = (uy + ux * e * 1.4) * (38 + 16 * ((i * 7) % 3)) - 42 // et ça saute
       l.gouttes.push({ x: l.flotX, y: l.flotY, vx, vy })
     }
-    const sp = FISH_SPECIES.find((s) => s.item === item)
-    if (sp && this.scene.textures.exists(itemIconKey(sp.item))) {
+    // L'ESPÈCE EST SON ITEM depuis D12 (`FishSpecies.id` est l'`ItemId` du cru) — et ce qui
+    // sort peut aussi être une TROUVAILLE (T4 : un caillou, du bois flotté), qui a son icône
+    // comme tout le reste. On dessine donc l'item remonté, quel qu'il soit.
+    if (this.scene.textures.exists(itemIconKey(item))) {
       l.poisson?.destroy()
-      l.poisson = this.scene.add.image(l.flotX, l.flotY, itemIconKey(sp.item)).setDepth(OVERLAY_DEPTH - 11)
+      l.poisson = this.scene.add.image(l.flotX, l.flotY, itemIconKey(item)).setDepth(OVERLAY_DEPTH - 11)
     }
   }
 
@@ -182,15 +210,14 @@ export class PecheFx {
     const vues = new Set<number>()
     for (const lr of lignes) {
       vues.add(lr.entityId)
-      const node = nodes.find((n) => n.id === lr.nodeId)
-      if (!node) continue
-      const cibleX = (node.tx + 0.5) * TILE_PX
-      const cibleY = (node.ty + 0.5) * TILE_PX - (warp?.lift(node.tx + 0.5, node.ty + 0.5) ?? 0)
+      const cibleX = (lr.tx + 0.5) * TILE_PX
+      const cibleY = (lr.ty + 0.5) * TILE_PX - (warp?.lift(lr.tx + 0.5, lr.ty + 0.5) ?? 0)
       let l = this.lignes.get(lr.entityId)
       if (!l) {
         const side: 1 | -1 = cibleX >= lr.px ? 1 : -1
         l = {
-          nodeId: lr.nodeId,
+          tx: lr.tx,
+          ty: lr.ty,
           phase: 'lancer',
           t0: now,
           handX: lr.px + side * 3,
@@ -299,6 +326,14 @@ export class PecheFx {
         const tri = ph < 0.5 ? ph * 2 : 2 - ph * 2
         l.flotX = l.cibleX
         l.flotY = l.cibleY + Math.round(tri * 2 - 1)
+        // LE TRESSAUT DU MORDILLAGE (R10), par-dessus le clapot : deux pixels vers le bas qui
+        // remontent en `MORDILLE_MS`. La moitié de la plongée de la touche, et sans anneaux —
+        // c'est la DIFFÉRENCE qui porte l'information, pas le mouvement lui-même.
+        if (l.mordilleA !== undefined) {
+          const t = now - l.mordilleA
+          if (t >= MORDILLE_MS) delete l.mordilleA
+          else l.flotY += Math.round((1 - t / MORDILLE_MS) * (PLONGEE_PX / 2))
+        }
         return
       }
       case 'touche':

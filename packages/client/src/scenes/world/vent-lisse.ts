@@ -1,22 +1,42 @@
 /**
  * LE VENT LISSÉ — la version RENDU du vent de la sim, pour tout ce qui dérive lentement
- * (brume, bancs). Diagnostic du 2026-07-26 (MESURÉ) : la sim publie un CAP unitaire qui
- * SAUTE d'un coup (45° à 180°) toutes les 5 minutes, sans force ; et l'ancienne brume n'en
- * dépendait qu'à ±6 % — une dérive quasi codée en dur.
+ * (brume, bancs).
  *
- * Ici : le cap est rallié en douceur (~15 s — un banc ne casse jamais sa route d'un coup),
- * la FORCE est inventée côté client (deux battements lents désynchronisés — la sim n'en
- * fournit pas), et le vecteur n'est JAMAIS nul : une brume immobile est une image plate,
- * c'est ce qui a été jugé et rejeté. Client pur : sin/pow autorisés (l'interdit est sim-only).
+ * ═══ CE QU'IL FAISAIT, ET POURQUOI IL NE LE FAIT PLUS ═══
+ *
+ * Diagnostic du 2026-07-26 (MESURÉ) : la sim publiait un CAP unitaire qui SAUTAIT d'un coup
+ * (45° à 180°) toutes les cinq minutes, et SANS FORCE — ce module inventait donc la force, à
+ * coups de deux battements lents. C'était une prothèse : le vent n'avait pas de force à publier.
+ *
+ * Depuis l'unification (`vent.md`, 2026-08-24 — « le front est le vent »), LA SIM A UNE FORCE
+ * et ce module la CONSOMME. Il ne lui reste qu'un seul métier, celui qu'elle ne peut pas faire :
+ * RALLIER LE CAP EN DOUCEUR. Le cap de la sim avance par crans de 45° — c'est le prix de la
+ * pureté (un lissage entré dans la sim lui coûterait le rembobinage, `vent.md` contrainte 1) —
+ * et c'est ici que la pente redevient continue.
+ *
+ * Client pur : `sin`/`pow` autorisés (l'interdit de l'invariant 2 est sim-only).
  */
+
+/** Le battement RÉSIDUEL — la respiration, posée AU-DESSUS de la force de la sim, jamais à sa
+ *  place. Deux périodes désynchronisées (~23 s et ~7 s) : des bouffées, pas un métronome. */
+const RESPIRATION = 0.08
+
+/** LE PLANCHER DE RENDU. La sim rend 0 sous la sentinelle du calme plat (`wind = {0,0}` : un
+ *  monde d'hôte ou de banc qui n'a pas de vent). Une brume immobile est une image plate — jugé
+ *  et rejeté le 2026-07-26 — donc le rendu garde un souffle minimal même là. Ce n'est PAS un
+ *  démenti de la sim : aucune règle ne s'y branche, seules des nappes dérivent. */
+const PLANCHER_RENDU = 0.4
 
 export class VentLisse {
   private dir = { x: 1, y: 0 }
   private cible = { x: 1, y: 0 }
 
-  /** À appeler chaque frame. `windSim` est le cap de la sim (norme 1, ou nul par calme plat).
-   *  Rend un vecteur direction × force, norme ~0,55..1,15 — l'appelant applique sa vitesse. */
-  update(nowMs: number, dtMs: number, windSim?: { x: number; y: number }): { x: number; y: number } {
+  /**
+   * À appeler chaque frame. `windSim` est le cap de la sim (norme 1, ou nul par calme plat),
+   * `forceSim` sa force au centre (`state.windForce` : de `VENT.AMBIANT` à 1, ou 0 par calme
+   * plat). Rend un vecteur direction × force — l'appelant applique sa vitesse.
+   */
+  update(nowMs: number, dtMs: number, windSim?: { x: number; y: number }, forceSim?: number): { x: number; y: number } {
     if (windSim && (windSim.x !== 0 || windSim.y !== 0)) {
       const n = Math.sqrt(windSim.x * windSim.x + windSim.y * windSim.y)
       this.cible = { x: windSim.x / n, y: windSim.y / n }
@@ -26,6 +46,10 @@ export class VentLisse {
     // « n < 0,05 » ne se déclenchait qu'après un gel de plusieurs secondes). On détecte
     // l'anti-parallélisme au produit scalaire et on pousse par le travers AVANT le lerp :
     // le virage se fait en arc, d'un côté déterminé (le travers gauche de la cible).
+    //
+    // ⚠ C'est ce ressort-là qui NE SE TRANSPOSE PAS à la sim : il marche parce que `this.dir`
+    // survit d'une frame à l'autre. Une fonction pure par tick n'a rien à pousser — d'où le
+    // parcours en index de `vent.ts` V4.
     if (this.cible.x * this.dir.x + this.cible.y * this.dir.y < -0.995) {
       this.dir.x -= this.cible.y * 0.15
       this.dir.y += this.cible.x * 0.15
@@ -37,9 +61,11 @@ export class VentLisse {
     const n = Math.sqrt(this.dir.x * this.dir.x + this.dir.y * this.dir.y)
     this.dir.x /= n
     this.dir.y /= n
-    // La force : deux battements lents (périodes ~145 s et ~45 s, désynchronisées) — des
-    // bouffées, pas un métronome. Bornée loin de zéro : le monde ne retient pas son souffle.
-    const force = 0.85 + 0.2 * Math.sin(nowMs / 23000) + 0.1 * Math.sin(nowMs / 7100 + 1.7)
+    // LA FORCE VIENT DE LA SIM (elle monte avant la pluie : `vent.md` V2), et le résidu ne fait
+    // que la faire respirer. Le monde ne retient jamais son souffle.
+    const base = Math.max(forceSim ?? PLANCHER_RENDU, PLANCHER_RENDU)
+    const respire = 1 + RESPIRATION * Math.sin(nowMs / 23000) + (RESPIRATION / 2) * Math.sin(nowMs / 7100 + 1.7)
+    const force = base * respire
     return { x: this.dir.x * force, y: this.dir.y * force }
   }
 }

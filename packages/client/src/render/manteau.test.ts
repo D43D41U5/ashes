@@ -8,12 +8,12 @@
 import { describe, expect, it } from 'vitest'
 import { PAVE, PAVE_COTE_BAVE, PAVE_PX, prioriteDe } from './paves'
 import {
-  EAU_PAVE, NEIGE_PAVE, TUILE_ASSEC, TUILE_CRUE, TUILE_GLACE_GUE, TUILE_GLACE_LAC, TUILE_GUE_FERME,
-  TUILE_NEIGE, TUILE_NEIGE_PROFONDE, TUILE_NUE, TUILE_STRUCTURELLE,
+  EAU_PAVE, NEIGE_PAVE, TUILE_ASSEC, TUILE_CRUE, TUILE_EAU_LIBRE, TUILE_GLACE_GUE, TUILE_GLACE_LAC,
+  TUILE_GUE_FERME, TUILE_NEIGE, TUILE_NEIGE_PROFONDE, TUILE_NUE, TUILE_STRUCTURELLE,
   couleurDuManteau, cuireManteau, terrainDuManteau,
   trameDeCrue, trameDeGlace, trameDeVase, tuileDeNiveau, type EtatTuile,
 } from './manteau'
-import { ASSEC, CRUE, DESSOUS, GLACE_GUE, GLACE_LAC, GUE_FERME, MANTEAU, MANTEAU_PROFOND } from './paves'
+import { ASSEC, CRUE, DESSOUS, DESSOUS_EAU, GLACE_GUE, GLACE_LAC, GUE_FERME, MANTEAU, MANTEAU_PROFOND } from './paves'
 
 const N = PAVE.CHUNK
 const S = N * PAVE_PX
@@ -35,16 +35,45 @@ const px = (img: Uint8ClampedArray | null, x: number, y: number): [number, numbe
 }
 const R = (c: number) => (c >> 16) & 0xff
 
+/**
+ * BALAYER TOUT L'ESPACE, N'AFFIRMER QU'UNE FOIS.
+ *
+ * La règle de la maison est la garde EXHAUSTIVE : on balaie toute l'image, jamais des pixels
+ * choisis. Mais `expect` par pixel se paie — un aplat de 256×256 en fait 65 000, et deux de ces
+ * gardes ont dépassé les 5 s de vitest **sous charge** le 2026-08-24, sans qu'une seule assertion
+ * soit fausse. Le balayage reste entier ; il rend le PREMIER pixel fautif, et l'appelant l'affirme
+ * une fois. Même propriété, même couverture, un `expect` au lieu de soixante-cinq mille.
+ */
+function premierDefaut(w: number, h: number, ok: (x: number, y: number) => boolean): string | null {
+  for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) if (!ok(x, y)) return `(${x}, ${y})`
+  return null
+}
+
 describe('les terrains virtuels', () => {
-  it('la neige domine tout, la profonde domine la poudreuse, le dessous et la glace sont des surfaces de rang 0', () => {
+  it('la neige domine tout, la profonde domine la poudreuse, et l’EAU LIBRE est le seul rang 0', () => {
     expect(prioriteDe(MANTEAU)).toBeGreaterThan(prioriteDe(17)) // plus haut que la fleuraie
     expect(prioriteDe(MANTEAU_PROFOND)).toBeGreaterThan(prioriteDe(MANTEAU))
     expect(tuileDeNiveau(0)).toBe(TUILE_NUE)
     expect(tuileDeNiveau(1)).toBe(TUILE_NEIGE)
     expect(tuileDeNiveau(2)).toBe(TUILE_NEIGE_PROFONDE)
-    expect(prioriteDe(DESSOUS)).toBe(0)
-    expect(prioriteDe(GLACE_GUE)).toBe(0)
-    expect(prioriteDe(GLACE_LAC)).toBe(0)
+    // L'eau libre est le PLANCHER de la couche : c'est elle, et elle seule, qui reçoit les
+    // franges. La terre nue et ce qui couvre l'eau sont un cran au-dessus, À ÉGALITÉ — leur
+    // bord commun est déjà tracé par la berge du sol (R13).
+    expect(prioriteDe(DESSOUS_EAU)).toBe(0)
+    expect(prioriteDe(DESSOUS)).toBeGreaterThan(prioriteDe(DESSOUS_EAU))
+    expect(prioriteDe(GLACE_GUE)).toBe(prioriteDe(DESSOUS))
+    expect(prioriteDe(GLACE_LAC)).toBe(prioriteDe(DESSOUS))
+  })
+
+  it('l’état EAU LIBRE se range SOUS le sol nu — le portillon de cuisson et l’immersion en dépendent', () => {
+    // Deux lectures ailleurs tiennent à cet ORDRE, et elles sont silencieuses si on le casse :
+    // `gel-layer` tient un chunk pour vide quand tous ses états sont `<= TUILE_NUE` (un lac
+    // entier ne doit pas coûter une texture), et `WorldScene.glaceAt` marche sur tout état
+    // `>= TUILE_GLACE_GUE` (sur l'eau libre, on ne marche pas — on s'y enfonce).
+    expect(TUILE_EAU_LIBRE).toBeLessThanOrEqual(TUILE_NUE)
+    expect(TUILE_EAU_LIBRE).toBeLessThan(TUILE_GLACE_GUE)
+    expect(terrainDuManteau(TUILE_EAU_LIBRE)).toBe(DESSOUS_EAU)
+    expect(couleurDuManteau(DESSOUS_EAU)).toBe(0) // transparente : le shader est dessous
   })
 })
 
@@ -89,18 +118,15 @@ describe('le manteau cuit', () => {
   it('la glace est une surface opaque dans le sol, plate, sans frange sur le sol nu', () => {
     const glaceAGauche = (tx: number): EtatTuile => (tx < 8 ? TUILE_GLACE_LAC : TUILE_NUE)
     const { sol, surplomb } = cuire(glaceAGauche)
-    for (let y = 0; y < S; y++) {
-      for (let x = 0; x < 8 * P; x++) expect(px(sol, x, y)[3]).toBe(255)
-      for (let x = 8 * P; x < S; x++) expect(px(sol, x, y)[3]).toBe(0)
-    }
+    expect(premierDefaut(S, S, (x, y) => px(sol, x, y)[3] === (x < 8 * P ? 255 : 0)),
+      'la glace est opaque sur son corps, le sol nu est transparent').toBeNull()
     // Aucun débordement : le surplomb, s'il existe, est vide.
-    if (surplomb) for (let i = 3; i < surplomb.length; i += 4) expect(surplomb[i]).toBe(0)
+    if (surplomb) expect(premierDefaut(S, S, (x, y) => px(surplomb, x, y)[3] === 0), 'surplomb vide').toBeNull()
     // Le givre : des cellules plus claires, mais la glace reste bleue (R < B).
     let claires = 0
+    expect(premierDefaut(8 * P, 8 * P, (x, y) => px(sol, x, y)[2] > px(sol, x, y)[0]), 'la glace reste bleue').toBeNull()
     for (let y = 0; y < 8 * P; y++) for (let x = 0; x < 8 * P; x++) {
-      const c = px(sol, x, y)
-      expect(c[2]).toBeGreaterThan(c[0])
-      if (c[0] > R(NEIGE_PAVE.GLACE_LAC) + 4) claires++
+      if (px(sol, x, y)[0] > R(NEIGE_PAVE.GLACE_LAC) + 4) claires++
     }
     expect(claires / (64 * P * P)).toBeGreaterThan(0.1)
     expect(claires / (64 * P * P)).toBeLessThan(0.35)
@@ -166,13 +192,14 @@ describe('le manteau cuit', () => {
     // dans /sim depuis le 2026-08-23 sans qu'un pixel en dépende). On énumère donc TOUS les
     // états — le compilateur tient la liste, pas moi.
     const TOUS: EtatTuile[] = [
-      TUILE_STRUCTURELLE, TUILE_NUE, TUILE_NEIGE, TUILE_NEIGE_PROFONDE,
+      TUILE_EAU_LIBRE, TUILE_STRUCTURELLE, TUILE_NUE, TUILE_NEIGE, TUILE_NEIGE_PROFONDE,
       TUILE_GLACE_GUE, TUILE_GLACE_LAC, TUILE_ASSEC, TUILE_GUE_FERME, TUILE_CRUE,
     ]
     for (const e of TOUS) {
       const t = terrainDuManteau(e)
-      // Seuls le nu (transparent) et le structurel (le bake reste maître) n'ont pas de couleur.
-      if (e === TUILE_NUE || e === TUILE_STRUCTURELLE) continue
+      // Seuls les deux DESSOUS (transparents) et le structurel (le bake reste maître) n'ont
+      // pas de couleur.
+      if (e === TUILE_NUE || e === TUILE_EAU_LIBRE || e === TUILE_STRUCTURELLE) continue
       expect(t, `l'état ${e} a un terrain virtuel`).not.toBe(DESSOUS)
       expect(couleurDuManteau(t), `l'état ${e} a une couleur`).toBeGreaterThan(0)
     }
@@ -181,13 +208,19 @@ describe('le manteau cuit', () => {
     expect(terrainDuManteau(TUILE_CRUE)).toBe(CRUE)
   })
 
-  it('l’assec et le gué fermé sont bordés par la BERGE du sol (rang 0) ; la crue porte son propre bord (rang 1)', () => {
-    // La ligne de partage est GÉOMÉTRIQUE, pas esthétique : l'assec et le gué fermé tombent sur
-    // des tuiles qui SONT de l'eau à la carte, donc la berge du sol a déjà tracé leur contour ;
-    // la crue tombe sur du MARCHABLE, où rien ne la borde. Se tromper de rang ici, c'est soit
-    // un double trait, soit une couture nue — le défaut qu'a connu le marais.
-    expect(prioriteDe(ASSEC)).toBe(prioriteDe(GLACE_GUE))
-    expect(prioriteDe(GUE_FERME)).toBe(prioriteDe(GLACE_GUE))
+  it('les régimes d’eau cèdent à la TERRE nue (la berge du sol borde déjà) et débordent sur l’EAU LIBRE', () => {
+    // La ligne de partage est GÉOMÉTRIQUE, pas esthétique, et elle a DEUX côtés :
+    //   • côté TERRE — l'assec, le gué fermé et la glace tombent sur des tuiles qui SONT de
+    //     l'eau à la carte, donc la berge du sol a déjà tracé ce contour : égalité, sinon
+    //     double trait (et la vase mangerait la rive, par-dessus le surplomb de la berge) ;
+    //   • côté EAU — rien ne le traçait, l'eau libre est un cran EN DESSOUS : la vase y glisse
+    //     d'une frange, comme le marais glisse dans le haut-fond. Une égalité ici, c'est la
+    //     couture nue — le défaut qu'a connu le marais, et qu'avait la mare partie.
+    // La crue, elle, tombe sur du MARCHABLE : elle passe au-dessus de la terre nue.
+    expect(prioriteDe(ASSEC)).toBe(prioriteDe(DESSOUS))
+    expect(prioriteDe(GUE_FERME)).toBe(prioriteDe(DESSOUS))
+    expect(prioriteDe(GLACE_GUE)).toBe(prioriteDe(DESSOUS))
+    expect(prioriteDe(ASSEC)).toBeGreaterThan(prioriteDe(DESSOUS_EAU))
     expect(prioriteDe(CRUE)).toBeGreaterThan(prioriteDe(DESSOUS))
   })
 
@@ -204,23 +237,58 @@ describe('le manteau cuit', () => {
     expect(EAU_PAVE.GUE_FERME & 0xff).toBeGreaterThan((EAU_PAVE.GUE_FERME >> 16) & 0xff)
   })
 
-  it('la mare partie est une surface opaque et craquelée, sans frange — la berge du sol l’encadre déjà', () => {
+  it('la vase NE DÉBORDE PAS sur la rive : côté terre, la berge du sol l’encadre déjà', () => {
+    // ⚠ CETTE GARDE EST L'AUTRE MOITIÉ DE CELLE D'APRÈS, et elle dit l'inverse : contre la
+    // TERRE (`TUILE_NUE`), la vase s'arrête net au bord de sa tuile. Un débord ici serait de
+    // la boue peinte PAR-DESSUS l'herbe de la berge — le surplomb du manteau se pose au-dessus
+    // de celui du sol. Contre l'EAU LIBRE, au contraire, elle DOIT déborder.
     const assecAGauche = (tx: number): EtatTuile => (tx < 8 ? TUILE_ASSEC : TUILE_NUE)
     const { sol, surplomb } = cuire(assecAGauche)
-    for (let y = 0; y < S; y++) {
-      for (let x = 0; x < 8 * P; x++) expect(px(sol, x, y)[3], `vase opaque en (${x},${y})`).toBe(255)
-      for (let x = 8 * P; x < S; x++) expect(px(sol, x, y)[3], `sol nu transparent en (${x},${y})`).toBe(0)
-    }
-    if (surplomb) for (let i = 3; i < surplomb.length; i += 4) expect(surplomb[i]).toBe(0)
+    expect(premierDefaut(S, S, (x, y) => px(sol, x, y)[3] === (x < 8 * P ? 255 : 0)),
+      'la vase est opaque sur son corps, le sol nu est transparent').toBeNull()
+    // ET RIEN DANS LE SURPLOMB : pas un pixel de boue sur la rive.
+    if (surplomb) expect(premierDefaut(S, S, (x, y) => px(surplomb, x, y)[3] === 0), 'aucun débord sur la rive').toBeNull()
     // LA CRAQUELURE : des cellules plus SOMBRES (l'inverse du givre), et la vase reste chaude.
     let sombres = 0
+    expect(premierDefaut(8 * P, 8 * P, (x, y) => px(sol, x, y)[0] > px(sol, x, y)[2]), 'la vase reste chaude').toBeNull()
     for (let y = 0; y < 8 * P; y++) for (let x = 0; x < 8 * P; x++) {
-      const c = px(sol, x, y)
-      expect(c[0], `la vase reste chaude en (${x},${y})`).toBeGreaterThan(c[2])
-      if (c[0] < R(EAU_PAVE.ASSEC) - 4) sombres++
+      if (px(sol, x, y)[0] < R(EAU_PAVE.ASSEC) - 4) sombres++
     }
     expect(sombres / (64 * P * P)).toBeGreaterThan(0.2)
     expect(sombres / (64 * P * P)).toBeLessThan(0.5)
+  })
+
+  it('la vase glisse dans l’EAU PROFONDE d’une frange SEULE — la même frontière que marais / haut-fond', () => {
+    // Alexis, 2026-08-24 : « une frontière propre entre la vase et l'eau profonde, la même que
+    // celle entre les marécages et l'eau peu profonde ». Cette frontière-là, c'est une SURFACE
+    // qui déborde : une frange irrégulière de 2 à 5 px, et RIEN d'autre — ni liseré (0,55), ni
+    // ombre portée (0,72), qu'une surface ne porte pas. Elle vit dans le SURPLOMB, au-dessus du
+    // shader d'eau, comme la frange de la berge.
+    const assecAGauche = (tx: number): EtatTuile => (tx < 8 ? TUILE_ASSEC : TUILE_EAU_LIBRE)
+    const { sol, surplomb } = cuire(assecAGauche)
+    expect(surplomb).not.toBeNull()
+    const bord = 8 * P
+    // Le corps de la vase est opaque dans le SOL de la couche ; l'eau libre n'y est PAS peinte
+    // (le shader garde sa surface).
+    expect(premierDefaut(S, S, (x, y) => px(sol, x, y)[3] === (x < bord ? 255 : 0)),
+      'vase opaque, eau libre nue').toBeNull()
+    // Et sur TOUTE la hauteur, la vase entre dans l'eau d'une frange bornée, puis PLUS RIEN :
+    // ni liseré, ni ombre — une surface ne pèse pas sur l'eau.
+    const franges: number[] = []
+    expect(premierDefaut(1, S, (_i, y) => {
+      let x = bord
+      while (x < S && px(surplomb, x, y)[3] === 255) x++
+      const frange = x - bord
+      franges.push(frange)
+      if (frange < PAVE.FRANGE_MIN || frange > PAVE.FRANGE_MAX) return false
+      for (; x < S; x++) if (px(surplomb, x, y)[3] !== 0) return false
+      return true
+    }), `frange bornée à ${PAVE.FRANGE_MIN}-${PAVE.FRANGE_MAX} px, et rien au large — première ligne fautive`).toBeNull()
+    // ELLE EST IRRÉGULIÈRE, pas un ourlet : c'est ce qui la distingue d'un bord droit.
+    expect(new Set(franges).size, 'la frange varie sur la hauteur').toBeGreaterThan(1)
+    // Et c'est de la VASE, pas un voile : elle garde sa teinte chaude (R > B).
+    expect(premierDefaut(1, S, (_i, y) => px(surplomb, bord, y)[0] > px(surplomb, bord, y)[2]),
+      'frange chaude').toBeNull()
   })
 
   it('la crue déborde sur la terre d’une frange SEULE : pas de liseré, pas d’ombre — une nappe n’a pas d’épaisseur', () => {

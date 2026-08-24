@@ -60,6 +60,7 @@ export const RECIPE_CATEGORY: Record<RecipeId, CraftCategory> = {
   campfire: 'campement',
   // LE COFFRE (décision d'Alexis) : fabriqué à la main, posé en objet tenu — plus au marteau.
   chest: 'campement',
+  sechoir: 'campement', // la claie du bord de l'eau : on la pose à son camp (peche.md S1)
   crude_axe: 'outils',
   crude_pickaxe: 'outils',
   // LE TIR (spec `tir.md`) : les arcs sont des ARMES, la flèche est leur munition —

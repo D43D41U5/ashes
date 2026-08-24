@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import type { GameTime } from '@ashes/sim'
+import { VENT, type GameTime } from '@ashes/sim'
 import {
   BARRE_ALPHA_MIN,
   BARRE_SOL_ARRETS,
@@ -38,6 +38,7 @@ function etat(p: Partial<BarreHauteState> = {}): BarreHauteState {
     ambiant: 14,
     ciel: null,
     caractere: undefined,
+    vent: undefined,
     now: 0,
     ...p,
   }
@@ -293,3 +294,69 @@ describe('le sol de la barre haute', () => {
     expect(BARRE_ALPHA_MIN).toBeGreaterThan(0.85)
   })
 })
+
+/**
+ * LE CADRAN DU VENT (spec `vent.md` V10, décision d'Alexis 2026-08-24).
+ *
+ * Deux choses s'y gardent, et une seule est évidente : l'aiguille pointe où le vent VA, et
+ * l'angle est DÉROULÉ — sans quoi la transition CSS ferait un tour complet à l'envers chaque
+ * fois que le cap franchit l'est.
+ */
+describe('le cadran du vent (V10)', () => {
+  const avecVent = (x: number, y: number, force: number = VENT.AMBIANT): BarreHauteState =>
+    etat({ vent: { x, y, force } })
+
+  it('l’aiguille pointe LÀ OÙ LE VENT VA — le même sens que les herbes couchées', () => {
+    // Le monde se rend en projection directe : l'angle écran EST l'angle monde. On affirme la
+    // DIRECTION, pas le nombre : l'angle est déroulé, donc 180° et −180° sont le même cap et
+    // comparer les degrés ferait rougir une garde pour une identité trigonométrique.
+    const pointe = (x: number, y: number): void => {
+      const deg = jouer(avecVent(x, y)).vue.ventDeg
+      // Tolérance 1e-4 : les diagonales de `BEARINGS` sont écrites `0.7071`, tronquées à la
+      // précision où l'on place un loup — pas à celle d'un `Math.sqrt`.
+      expect(Math.cos((deg * Math.PI) / 180), `x pour (${x},${y})`).toBeCloseTo(x, 4)
+      expect(Math.sin((deg * Math.PI) / 180), `y pour (${x},${y})`).toBeCloseTo(y, 4)
+    }
+    pointe(1, 0) // vers l'est
+    pointe(0, 1) // vers le sud (y croît vers le bas)
+    pointe(-1, 0)
+    pointe(0, -1)
+    // Et les diagonales, qui sont la moitié des huit relèvements de la sim.
+    pointe(0.7071, 0.7071)
+    pointe(-0.7071, 0.7071)
+  })
+
+  it('l’angle se DÉROULE : franchir l’est ne fait pas faire un tour à l’envers', () => {
+    // 170° → −170° est un pas de +20°, pas de −340°. C'est la propriété qui compte, et elle
+    // se lit sur l'ÉCART, jamais sur la valeur absolue.
+    const cap = (deg: number) => avecVent(Math.cos((deg * Math.PI) / 180), Math.sin((deg * Math.PI) / 180))
+    const suite = jouer(cap(170), cap(-170), cap(170), cap(-170))
+    expect(Math.abs(suite.vue.ventDeg)).toBeGreaterThan(180) // il a continué, il n'est pas revenu
+    // Et chaque pas reste court : on rejoue la suite en relevant les écarts.
+    let memoire: MemoireDuLieu = MEMOIRE_VIERGE
+    let precedent = 0
+    for (const deg of [170, -170, 170, -170, 170]) {
+      const out = vueDeLaBarre(cap(deg), memoire)
+      memoire = out.memoire
+      expect(Math.abs(out.vue.ventDeg - precedent), `pas vers ${deg}°`).toBeLessThanOrEqual(180)
+      precedent = out.vue.ventDeg
+    }
+  })
+
+  it('la FORCE se lit en intensité — et le calme plat éteint le cadran', () => {
+    expect(jouer(avecVent(1, 0, VENT.AMBIANT)).vue.ventOp).toBe('0.500')
+    expect(jouer(avecVent(1, 0, 1)).vue.ventOp).toBe('1.000')
+    expect(Number(jouer(avecVent(1, 0, 1)).vue.ventEchelle)).toBeGreaterThan(
+      Number(jouer(avecVent(1, 0, VENT.AMBIANT)).vue.ventEchelle),
+    )
+    // La sentinelle de l'hôte (`wind = {0,0}` → force 0) : rien à montrer, et le clamp la
+    // ramène au bas de la plage au lieu de rendre une opacité négative.
+    expect(jouer(avecVent(0, 0, 0)).vue.ventVisible).toBe(false)
+    expect(jouer(avecVent(1, 0, 0)).vue.ventOp).toBe('0.500')
+  })
+
+  it('sans vent transmis, le cadran se cache — il n’invente pas un cap', () => {
+    expect(jouer(etat()).vue.ventVisible).toBe(false)
+  })
+})
+

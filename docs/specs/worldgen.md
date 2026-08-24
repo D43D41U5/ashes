@@ -192,6 +192,13 @@ Le contenu T2 (matériaux, équipement) **est hors périmètre** : il se décide
 
 ## 7. LE MONDE AVANCE — la Cendrière est le FRONT, et la saison est une vallée qu'on perd
 
+> ⛔ **CADUQUE — RETIRÉ LE 2026-08-24** (décision d'Alexis : *« retire le front de cendre, on va
+> gérer cette mécanique de manière complètement différente »*). Le front, le cortège, la Cendrière
+> et `map.cendreMax` n'existent plus dans le code ; le **T0 occupe désormais toute la vallée jouée**
+> (`planReduit(['racine'], { racine: { y1: 0.985 } })`). Y compris **R31** ci-dessous, dont le
+> modèle — *on ne mute pas la carte, on déplace un seuil* — reste une bonne leçon d'architecture
+> mais n'a plus d'objet. Voir `docs/decisions.md` (2026-08-24).
+
 *Décision d'Alexis, 2026-07-14 : « on a une zone T2 à côté de la zone de départ — est-ce qu'on n'en ferait pas notre zone de propagation de la difficulté ? Comme on pousse les joueurs à migrer au fur et à mesure vers des zones plus haut niveau. »*
 
 C'est le chaînon qui manquait, et il fait tenir ensemble trois choses qui flottaient chacune de leur côté.
@@ -206,7 +213,7 @@ C'est le chaînon qui manquait, et il fait tenir ensemble trois choses qui flott
 
 - **R29 — La cendre mange ~60 % des Prés Bas** en fin de saison *(décision d'Alexis)*. Les villages du sud doivent partir ; ceux du nord tiennent. **La vallée rétrécit sans disparaître** — et il reste toujours un endroit où naître.
 
-- **R30 — LE SPAWN SUIT LE FRONT** *(décision d'Alexis)*. On naît toujours dans la part **vivante** des Prés Bas, la plus loin du feu. Sans quoi, celui qui rejoint le serveur au jour 40 naîtrait dans la cendre — il ne jouerait pas au même jeu que les autres. Et ça raconte quelque chose : *les nouveaux arrivent par la bouche de la vallée, en fuyant déjà.*
+- **R30 — ⛔ CADUQUE LE 2026-08-24** (plus de front à suivre : `pointsDeSpawn` perd son paramètre `front`, et `baseDeNaissance` côté serveur rend toujours la base). *Ce qui existait :* **LE SPAWN SUIT LE FRONT** *(décision d'Alexis)*. On naît toujours dans la part **vivante** des Prés Bas, la plus loin du feu. Sans quoi, celui qui rejoint le serveur au jour 40 naîtrait dans la cendre — il ne jouerait pas au même jeu que les autres. Et ça raconte quelque chose : *les nouveaux arrivent par la bouche de la vallée, en fuyant déjà.*
 
 - **R31 — On ne MUTE pas la carte : on stocke UN SEUL NOMBRE.** L'avancée du front vit dans le `SimState` comme un scalaire, et l'appartenance d'une tuile s'en **dérive**. L'état reste petit, JSON-sérialisable et déterministe ; les replays tiennent ; le client peint la cendre à partir du même nombre. *C'est ce qui rend le mécanisme bon marché — et c'est ce qui a emporté la décision.*
 
@@ -220,7 +227,14 @@ C'est le chaînon qui manquait, et il fait tenir ensemble trois choses qui flott
 
 ## 7bis. LE MONDE RÉDUIT — racine + Cendrière, « pour l'instant » (décision d'Alexis, 2026-08-18)
 
-Le monde JOUÉ se réduit au T0 et à son feu ; **le graphe complet DORT, il n'est pas supprimé** — toutes les règles et gardes de cette spec continuent de garder le plan `'vallee'`. Un *plan de monde* (`MondeGen`, `zonegraph.ts`) est un sous-ensemble du squelette et de ses liens ; le plan `'racine'` garde les cases `racine` et `cendre` et leur unique lien. La Cendrière reste parce qu'elle est le **moteur de la saison** (§7) et parce qu'un T0 sans voisin n'aurait ni seuil, ni sente, ni route — donc ni convoi, ni réfugié, ni poste d'Arche.
+Le monde JOUÉ se réduit au T0 ; **le graphe complet DORT, il n'est pas supprimé** — toutes les règles et gardes de cette spec continuent de garder le plan `'vallee'`. Un *plan de monde* (`MondeGen`, `zonegraph.ts`) est un sous-ensemble du squelette et de ses liens.
+
+> **⚑ AMENDÉ le 2026-08-24 :** le plan `'racine'` ne garde plus QUE la case `racine`, **étirée sur
+> le bord sud** que la Cendrière occupait (`y1: 0.985`) — la carte garde sa taille exacte. La
+> Cendrière était là pour deux raisons : moteur de la saison (le front, retiré) et voisin du T0. La
+> perte du voisin n'est pas gratuite et se constate : **le monde joué n'a plus AUCUN seuil**, donc
+> ni sente ni route entre zones — ce qui les consomme (convois, poste d'Arche) se tait. À rouvrir
+> avec la nouvelle mécanique.
 
 - **R-MR1 — Le monde joué est UNE CONSTANTE, `MONDE_JOUE`.** La Veillée, le banc de scénario, le LAN et les instruments la passent explicitement à `generateZonedTerrain` ; le défaut des fonctions reste `'vallee'` (les gardes du graphe complet gardent le chemin complet, octet pour octet). Rebasculer sur la vallée entière = changer cette ligne, une seule.
 - **R-MR2 — Le T0 réduit est LE MÊME T0.** Les rects gardent leur géométrie ABSOLUE du monde complet (mêmes rails, même jitter, mêmes dimensions) ; on TRANSLATE le pays vers le haut, sous une marge de roche, et la carte se coupe là. Toute la calibration du T0 (espacement des villages, semis, rivière, relief) survit tuile pour tuile.

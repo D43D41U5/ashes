@@ -8,7 +8,8 @@ import {
   BALANCE,
   chronicleFromEvents,
   volumesDeChronique,
-  COOK_SLOT,
+  piece,
+  recettesDuPoste,
   FIRE,
   FIRE_UPKEEP,
   fireStateAt,
@@ -50,6 +51,7 @@ export function publishPlayerVitals(registry: Registry, me: Entity): void {
   setHud(registry, 'hunger', me.hunger)
   setHud(registry, 'temperature', me.temperature)
   setHud(registry, 'skills', me.skills)
+  setHud(registry, 'pecheCarnet', me.peche ?? []) // le bestiaire (peche.md B5) — du snapshot, jamais compté ici
   setHud(registry, 'hp', me.hp)
   setHud(registry, 'stamina', me.stamina)
   setHud(registry, 'wounds', me.wounds)
@@ -292,7 +294,10 @@ export function publishOpenFire(
     return
   }
   const s = structures.find((x) => x.id === of.structureId)
-  if (!s || s.type !== 'fire' || !containerInRange(s.tx + 0.5, s.ty + 0.5, player)) {
+  // ⚠ TROIS POSTES DEPUIS LE 2026-08-24 (peche.md S2/S5) : le Feu, le Four et le Séchoir. La
+  // porte n'est plus le TYPE mais « ce poste transforme-t-il quelque chose ? » — sans quoi
+  // ajouter un poste demanderait d'éditer cette ligne, et on l'oublierait.
+  if (!s || recettesDuPoste(s.type) === undefined || !containerInRange(s.tx + 0.5, s.ty + 0.5, player)) {
     setHud(registry, 'openFire', null) // disparu ou hors de portée → le modal se referme seul
     setHud(registry, 'openFireView', null)
     return
@@ -303,7 +308,7 @@ export function publishOpenFire(
   const cookIn: FireView['cookIn'] = Array.from({ length: FIRE.COOK_INPUTS }, (_, i) => {
     const sl = s.cookIn?.[i]
     if (!sl) return null
-    const rule = COOK_SLOT[s.type]?.[sl.item]
+    const rule = recettesDuPoste(s.type)?.[sl.item]
     const rem = s.cookRemaining?.[i]
     const progress = rem == null ? 0 : rule ? Math.max(0, Math.min(1, 1 - rem / rule.ticks)) : 1
     return { item: sl.item, count: sl.count, ready: rem != null && rem <= 0, progress }
@@ -312,9 +317,16 @@ export function publishOpenFire(
     const sl = s.cookOut?.[i]
     return sl ? { item: sl.item, count: sl.count } : null
   })
+  // LE SÉCHOIR ET LE FOUR N'ONT PAS DE COMBUSTIBLE : `fireZoneInventory` le dit (elle rend
+  // `undefined` pour leur zone `fuel`), et le panneau efface la section entière.
+  const brule = s.type === 'fire'
   // Le bouton contextuel (S19), même logique de disponibilité que les fenêtres flottantes retirées.
   let action: FireView['action'] = null
-  if (foundableFireAt(player, structures, villages, playerId) === of.structureId) {
+  // ⚠ FONDER / AMÉLIORER NE CONCERNE QUE LE FEU. Sans cette porte, un séchoir proposait
+  // « Améliorer le Foyer (palier 2) » — l'action du village qui fuit dans un poste qui n'est
+  // pas le sien. Vu sur une capture, comme toujours.
+  if (!brule) action = null
+  else if (foundableFireAt(player, structures, villages, playerId) === of.structureId) {
     // On MONTRE le bouton même empêché — et on dit pourquoi. Le patron est celui d'`upgrade`
     // juste en dessous : « grise le bouton et fait APPRENDRE le coût, on le voit avant de
     // pouvoir payer ». Le faire disparaître serait un refus muet de plus.
@@ -333,7 +345,7 @@ export function publishOpenFire(
   // FOYER, encore sur le village (réserve, migration différée S16). On dérive dans les deux cas le
   // NOMBRE de bûches, le TEMPS restant avant extinction, et la progression de la bûche EN COURS.
   // COMBUSTIBLE : 3 slots de bois (feu libre) ; un FOYER (réserve village, S16) → un pseudo-slot.
-  const village = s.villageId !== 0 ? villages.find((v) => v.id === s.villageId) : undefined
+  const village = brule && s.villageId !== 0 ? villages.find((v) => v.id === s.villageId) : undefined
   const fuel: FireView['fuel'] = village
     ? [{ item: 'wood', count: Math.floor(village.fuel / FIRE_UPKEEP.FEED_PER_WOOD) }, null, null]
     : Array.from({ length: FIRE.FUEL_SLOTS }, (_, i) => {
@@ -342,9 +354,13 @@ export function publishOpenFire(
       })
   setHud(registry, 'openFireView', {
     structureId: s.id,
-    title: s.villageId === 0 ? 'FEU DE CAMP' : 'FOYER',
-    state: fireStateAt(tick, s),
+    title: s.type !== 'fire' ? piece(s.type).label.toUpperCase() : s.villageId === 0 ? 'FEU DE CAMP' : 'FOYER',
+    // UN POSTE SANS FLAMME TRAVAILLE TOUJOURS (S4) : il n'a pas d'état à afficher, et
+    // `fireStateAt` ne veut rien dire pour lui — on le dit « allumé », ce qu'il est.
+    state: brule ? fireStateAt(tick, s) : 'lit',
     fuel,
+    fuelZone: brule,
+    verbe: s.type === 'sechoir' ? 'secher' : 'cuire',
     fuelTimeRemaining: village ? Math.round(village.fuel / FIRE_UPKEEP.DRAIN_PER_TICK) : fuelTicksRemaining(tick, s),
     fuelBurnProgress: village ? 0 : fuelBurnProgress(tick, s),
     fuelBurnSlot: village ? -1 : s.burnSlot ?? -1, // la case ANCRÉE qui brûle (source unique : la sim)

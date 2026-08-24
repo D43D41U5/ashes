@@ -1,5 +1,12 @@
 # La Brume — froid mobile, déni de zone, la menace qui paie ceux qui la suivent
 
+> ⛔ **LA BRUME NE SE LÈVE PLUS DEPUIS LE 2026-08-24** — et ce n'est pas une décision sur la
+> Brume, c'est une conséquence. Son corridor s'élisait sur le **front de Cendre** (R1 : « point
+> d'entrée sur le front de Cendre → profondeur `BRUME.PROFONDEUR` tuiles dans T0 »), et le front
+> est retiré avec la Cendrière (décision d'Alexis, `docs/decisions.md`). `elireCorridor` rend
+> `null` à chaque jour éligible : tout le mécanisme est intact, il n'a plus d'ANCRE. Lui en
+> redonner une est un point de la nouvelle mécanique de cendre.
+
 *Source : GDD §9bis (« Brume irradiée — zone mobile, déni de zone, en se retirant elle découvre des ruines fraîches »), décisions Alexis 2026-08-18 (journal). Statut : **décidé, à implémenter**. Ouvre le chantier « catalogue §9bis » (deux événements construits sur onze promis avant elle — les menaces ont rattrapé le contrat, pas les opportunités).*
 
 ## Objectif de design

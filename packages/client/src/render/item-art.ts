@@ -6,12 +6,13 @@
  * pierre froide, fer bleuté).
  */
 import type Phaser from 'phaser'
-import type { ItemId } from '@ashes/sim'
+import { FISH_SPECIES, type FishId, type ItemId } from '@ashes/sim'
 
 export const ITEM_ICON_PX = 16
 
 export const ITEM_LABELS: Record<ItemId, string> = {
   wood: 'Bois',
+  salt: 'Sel',
   stone: 'Pierre',
   fiber: 'Fibre',
   berries: 'Baies',
@@ -47,12 +48,18 @@ export const ITEM_LABELS: Record<ItemId, string> = {
   arrow: 'Flèche',
   hammer: 'Marteau de construction',
   raw_meat: 'Viande crue',
-  gudgeon: 'Goujon',
-  trout: 'Truite',
-  pike: 'Brochet',
-  cooked_gudgeon: 'Goujon grillé',
-  cooked_trout: 'Truite grillée',
-  cooked_pike: 'Brochet grillé',
+  // ── LA PÊCHE (peche.md D12) : dix-huit espèces, chacune son item cru ; le cuit et le séché
+  //    se regroupent par CLASSE. Les libellés viennent de `FISH_SPECIES` — une espèce ajoutée
+  //    à la sim se nomme toute seule ici, au lieu d'apparaître comme une case sans nom.
+  ...libellesDesPrises(),
+  cooked_fish_petit: 'Petit poisson grillé',
+  cooked_fish_moyen: 'Poisson grillé',
+  cooked_fish_gros: 'Gros poisson grillé',
+  dried_fish_petit: 'Petit poisson séché',
+  dried_fish_moyen: 'Poisson séché',
+  dried_fish_gros: 'Gros poisson séché',
+  dried_meat: 'Viande séchée',
+  sechoir: 'Séchoir',
   crude_rod: 'Canne de fortune',
   crude_knife: 'Couteau de fortune',
   bone: 'Os',
@@ -93,6 +100,50 @@ export function itemIconKey(item: ItemId): string {
 type ItemPaint = (g: Phaser.GameObjects.Graphics) => void
 
 /**
+ * LA GRAMMAIRE D'UN POISSON (peche.md D12) — dos sombre, flanc, ventre clair, œil, queue ; la
+ * CLASSE fait la taille. Un accent optionnel (deux points sur le flanc) distingue les espèces
+ * tachetées. Rectiligne comme tout l'art de la maison : des marches, jamais des courbes.
+ */
+function poissonPeint(classe: 'petit' | 'moyen' | 'gros', dos: number, flanc: number, ventre: number, accent?: number): ItemPaint {
+  const x0 = classe === 'petit' ? 3 : classe === 'moyen' ? 2 : 1
+  const larg = classe === 'petit' ? 8 : classe === 'moyen' ? 10 : 12
+  const haut = classe === 'petit' ? 3 : 4
+  const y0 = classe === 'petit' ? 7 : 6
+  return (g) => {
+    g.fillStyle(dos).fillRect(x0, y0, larg, haut)
+    g.fillStyle(flanc).fillRect(x0 + 1, y0 + 1, larg - 2, 1)
+    g.fillStyle(ventre).fillRect(x0 + 1, y0 + haut - 1, larg - 2, 1)
+    g.fillStyle(dos).fillRect(x0 + larg, y0 - 1, 2, haut + 2) // la queue
+    if (accent !== undefined) {
+      g.fillStyle(accent).fillRect(x0 + 2, y0 + 1, 1, 1).fillRect(x0 + Math.floor(larg / 2), y0 + 1, 1, 1)
+    }
+    g.fillStyle(0x1d1d1a).fillRect(x0, y0, 1, 1) // l'œil, tête à gauche
+  }
+}
+
+/** UN POISSON QUI PEND (D13) : la ficelle, le corps sec et fendu. Il se lit vertical — le
+ *  grillé est couché, le séché est suspendu : deux silhouettes, aucune confusion possible. */
+function poissonSeche(x0: number, haut: number): ItemPaint {
+  return (g) => {
+    g.fillStyle(0x8a8272).fillRect(7, 1, 1, 3) // la ficelle
+    g.fillStyle(0x7a6a4a).fillRect(x0, 4, 16 - 2 * x0, haut)
+    g.fillStyle(0xa89870).fillRect(x0 + 1, 5, 16 - 2 * x0 - 2, 1)
+    g.fillStyle(0x3a3020).fillRect(7, 6, 1, haut - 3) // la fente du séchage
+    g.fillStyle(0x1d1d1a).fillRect(x0 + 1, 5, 1, 1)
+  }
+}
+
+/** Les libellés des dix-huit espèces, DÉRIVÉS de `FISH_SPECIES` : une espèce ajoutée à la sim
+ *  se nomme toute seule, au lieu d'apparaître dans un sac comme une case sans nom. */
+function libellesDesPrises(): Record<FishId, string> {
+  const out: Partial<Record<FishId, string>> = {}
+  for (const sp of FISH_SPECIES) out[sp.id] = sp.label.charAt(0).toUpperCase() + sp.label.slice(1)
+  // TOTAL par construction (le balayage couvre `FISH_SPECIES`) : sans cette conversion, la
+  // table des libellés — un `Record<ItemId, string>` exhaustif — refuserait le spread.
+  return out as Record<FishId, string>
+}
+
+/**
  * Un dessin PAR item — la clé `Record<ItemId, …>` est le garde-fou : ajouter un
  * item à la sim sans lui peindre d'icône ne compile plus (une case vide à
  * l'écran serait sinon silencieuse). `generateItemIcons` boucle là-dessus.
@@ -122,6 +173,18 @@ export const ITEM_PAINTS: Record<ItemId, ItemPaint> = {
   },
 
   // Une brique de tourbe : sombre, fibreuse, gorgée d'eau. Elle SUINTE.
+  /**
+   * LE SEL — des cristaux, donc du BLANC CASSÉ et des angles. Le seul objet presque blanc de
+   * l'inventaire : il doit se repérer dans une ceinture pleine de bruns et de gris, parce qu'on
+   * l'a payé cher (il vient du cœur de la cendre).
+   */
+  salt: (g) => {
+    g.fillStyle(0xd8d4c6).fillRect(4, 7, 8, 5)
+    g.fillStyle(0xeeeade).fillRect(4, 7, 8, 2) // la face éclairée du tas
+    g.fillStyle(0xffffff).fillRect(6, 5, 3, 3) // un gros cristal qui dépasse
+    g.fillStyle(0xb6b2a4).fillRect(4, 11, 8, 1) // l'assise, à l'ombre
+    g.fillStyle(0xffffff).fillRect(10, 8, 2, 2) // un second éclat, décalé
+  },
   peat: (g) => {
     g.fillStyle(0x3a2f22).fillRect(3, 5, 10, 8)
     g.fillStyle(0x4c3d2b).fillRect(3, 5, 10, 2)
@@ -548,23 +611,87 @@ export const ITEM_PAINTS: Record<ItemId, ItemPaint> = {
     g.fillStyle(0x3f5a3a).fillRect(13, 5, 3, 6) // la queue, large
     g.fillStyle(0x1d1d1a).fillRect(2, 6, 1, 1) // l'œil
   },
-  cooked_gudgeon: (g) => {
+  // ── LES QUINZE ESPÈCES DU 2026-08-24 — peintes par un GÉNÉRATEUR, pas à la main.
+  //
+  //    Dix-huit poissons dessinés un par un auraient été dix-huit occasions d'oublier une
+  //    espèce (la table est `Record<ItemId, …>`, elle l'aurait attrapé — mais en rendant une
+  //    case vide plausible). Le générateur tient la GRAMMAIRE (dos sombre, flanc, ventre clair,
+  //    œil, queue ; la CLASSE fait la taille) et chaque espèce n'apporte que sa palette et son
+  //    accent. Les trois d'origine gardent leur dessin à la main, plus détaillé.
+  vairon: poissonPeint('petit', 0x4f6a86, 0x9fb4c8, 0xe4e9ef),
+  gardon: poissonPeint('petit', 0x6a6f5a, 0xb9b48c, 0xe6e2cf, 0xa8352e),
+  loche: poissonPeint('petit', 0x6a5a3f, 0x9a8654, 0xd6cbae),
+  ecrevisse: (g) => {
+    // Pas un poisson : une carapace et deux pinces. La seule ligne de la table qui doit se
+    // reconnaître au premier coup d'œil dans un sac — sinon elle passe pour un petit poisson.
+    g.fillStyle(0x8a3a2a).fillRect(4, 6, 7, 4) // le corps
+    g.fillStyle(0xb15a3c).fillRect(5, 7, 5, 1) // le dos éclairé
+    g.fillStyle(0x8a3a2a).fillRect(2, 5, 2, 2).fillRect(2, 9, 2, 2) // les deux pinces
+    g.fillStyle(0x8a3a2a).fillRect(11, 7, 3, 2) // la queue en éventail
+    g.fillStyle(0x1d1d1a).fillRect(5, 6, 1, 1)
+  },
+  ombre: poissonPeint('moyen', 0x5a6a72, 0xa9b6bc, 0xe0e4e6, 0x6a4f86),
+  chevesne: poissonPeint('moyen', 0x5f6a52, 0xb0b28c, 0xe4e0cd),
+  tanche: poissonPeint('moyen', 0x4a5a30, 0x8a9a48, 0xc8ce92),
+  perche: poissonPeint('moyen', 0x4f6a3a, 0x9aa85a, 0xdcdcb4, 0xc06a2a),
+  anguille: (g) => {
+    // Un SERPENT : pas de queue en éventail, un corps qui traverse toute la case. C'est la
+    // silhouette qui la dit, pas la couleur — elle se pêche de nuit, on la reconnaît de loin.
+    g.fillStyle(0x3a4034).fillRect(1, 6, 14, 2)
+    g.fillStyle(0x3a4034).fillRect(2, 8, 12, 1)
+    g.fillStyle(0xc8c4a8).fillRect(3, 8, 10, 1)
+    g.fillStyle(0x1d1d1a).fillRect(2, 6, 1, 1)
+  },
+  coregone: poissonPeint('moyen', 0x6a7a86, 0xc0cbd4, 0xeef1f4),
+  barbeau: poissonPeint('gros', 0x6a5f3a, 0xb09a5a, 0xdcd3b0),
+  saumon: poissonPeint('gros', 0x7a4a4a, 0xc9705a, 0xe8d8cd, 0xc9705a),
+  sandre: poissonPeint('gros', 0x4a5240, 0x93a06a, 0xd6d6b4, 0x2a2a24),
+  carpe: poissonPeint('gros', 0x6a5a2a, 0xb99a48, 0xe0d09a),
+  silure: (g) => {
+    // LE MONSTRE : une masse noire qui déborde, deux barbillons. Deux mètres possibles.
+    g.fillStyle(0x2a2a26).fillRect(0, 5, 14, 6)
+    g.fillStyle(0x4a4a40).fillRect(1, 6, 12, 1)
+    g.fillStyle(0x8a8a72).fillRect(1, 10, 12, 1)
+    g.fillStyle(0x2a2a26).fillRect(14, 4, 2, 8)
+    g.fillStyle(0x6a6a56).fillRect(0, 3, 1, 3).fillRect(2, 2, 1, 3) // les barbillons
+    g.fillStyle(0xc9c07a).fillRect(1, 6, 1, 1) // l'œil, jaune
+  },
+  // ── LE CUIT, PAR CLASSE (D12) — le même corps bruni, la strie du grill, l'œil en moins. ──
+  cooked_fish_petit: (g) => {
     g.fillStyle(0x7a4a26).fillRect(3, 7, 8, 3)
     g.fillStyle(0xa9743a).fillRect(4, 7, 6, 1) // la dorure
     g.fillStyle(0x7a4a26).fillRect(11, 6, 2, 5)
     g.fillStyle(0x3a2512).fillRect(6, 7, 1, 3) // la strie du grill
   },
-  cooked_trout: (g) => {
+  cooked_fish_moyen: (g) => {
     g.fillStyle(0x7a4a26).fillRect(2, 6, 10, 4)
     g.fillStyle(0xa9743a).fillRect(3, 6, 8, 1)
     g.fillStyle(0x7a4a26).fillRect(12, 5, 2, 6)
     g.fillStyle(0x3a2512).fillRect(5, 6, 1, 4).fillRect(8, 6, 1, 4)
   },
-  cooked_pike: (g) => {
+  cooked_fish_gros: (g) => {
     g.fillStyle(0x7a4a26).fillRect(1, 6, 12, 4)
     g.fillStyle(0xa9743a).fillRect(2, 6, 10, 1)
     g.fillStyle(0x7a4a26).fillRect(0, 6, 2, 2).fillRect(13, 5, 3, 6)
     g.fillStyle(0x3a2512).fillRect(4, 6, 1, 4).fillRect(7, 6, 1, 4).fillRect(10, 6, 1, 4)
+  },
+  // ── LE SÉCHÉ (D13) — il PEND, et c'est ce qui le distingue du grillé d'un coup d'œil : une
+  //    ficelle en haut, un corps sec et fendu, plus mince que le même poisson frais. ──
+  dried_fish_petit: poissonSeche(4, 8),
+  dried_fish_moyen: poissonSeche(3, 10),
+  dried_fish_gros: poissonSeche(2, 12),
+  dried_meat: (g) => {
+    g.fillStyle(0x8a8272).fillRect(7, 1, 1, 3) // la ficelle
+    g.fillStyle(0x6a3a2a).fillRect(4, 4, 8, 9) // la lanière
+    g.fillStyle(0x8a4a34).fillRect(5, 5, 6, 2)
+    g.fillStyle(0x3a2018).fillRect(6, 8, 4, 1).fillRect(6, 11, 4, 1) // les fibres sèches
+  },
+  // LE SÉCHOIR EN OBJET (S1) : une claie — deux montants, une traverse, deux prises pendues.
+  sechoir: (g) => {
+    g.fillStyle(0x6a5232).fillRect(2, 4, 1, 10).fillRect(13, 4, 1, 10) // les montants
+    g.fillStyle(0x8a6a42).fillRect(2, 4, 12, 1) // la traverse
+    g.fillStyle(0x9a8a6a).fillRect(5, 5, 1, 2).fillRect(10, 5, 1, 2) // les ficelles
+    g.fillStyle(0x7a5a3a).fillRect(4, 7, 3, 5).fillRect(9, 7, 3, 5) // deux prises qui sèchent
   },
   // LA CANNE DE FORTUNE : une branche en diagonale (des marches), une corde qui pend de la
   // pointe, un crochet de deux pixels. Le bois de l'arc de fortune, la corde de la corde.

@@ -49,12 +49,13 @@ import {
   TERRAIN_JUNIPER_HEATH,
 } from './balance'
 import { isWater, MARCHABLE, type WorldMap, type Zone as ZoneRect } from './map'
-import { calibreLeFront, computeCendreField } from './cendre'
+import { calculeChampDeCendre, computeCendreField, foyersDeLaCarte } from './cendre'
 import { distSq } from './geometry'
 import { placeCharniers, placePois, placeSteles } from './poi'
 import { densiteDeBase } from './morts'
 import { fbm2, hash2 } from './noise'
 import { deriverDistanceEau, deriverProfondeur } from './profondeur'
+import { deriverNatureDeLEau } from './peche-nature'
 import { tracerLesCoulees } from './zonegen-coulees'
 import { masqueDesSeuils, paintWaterRacine, type Riviere } from './zonegen-water'
 import { assainirLeProfondHorsRacine, peindreLesEauxDesZones } from './zonegen-eaux-zones'
@@ -73,7 +74,6 @@ import { forcerLesGues, tracerLesSentes } from './zonegen-sentes'
 import { placerLesSetPieces } from './zonegen-setpieces'
 import {
   deriveGrapheZones,
-  distAuRect,
   echantillonAt,
   MONDE,
   voisinAt,
@@ -544,7 +544,14 @@ export function generateZonedTerrain(
   // d'origine — « la rivière qui s'y jette garde ses berges d'eau, pas de cendre » — est tenue
   // à l'identique par l'autre bout : `peindreLisiereSud` ne touche QUE le thème du pré et
   // laisse l'eau, le marais et la roche intacts.
-  peindreLisiereSud(terrain, zone, g, width, height, seed)
+  //
+  // ⚠ ELLE NE SE PEINT QUE S'IL Y A UNE CENDRIÈRE À ANNONCER (2026-08-24). Elle EST l'annonce
+  // du feu — « de ton pas de porte, tu vois l'enfer » ; sans Cendrière au sud, elle posait une
+  // bande calcinée de 40 tuiles le long du bord bas de la carte, qui n'annonce plus rien et qui
+  // mange le T0 là où il vient justement de s'étendre.
+  if (g.zones.some((z) => z.def.slug === 'cendriere')) {
+    peindreLisiereSud(terrain, zone, g, width, height, seed)
+  }
 
   // ── PASSE 1.59 : LES BOSQUETS DE CRÊTE — le bois SEC, et le repère du haut pays ───────────
   //
@@ -624,21 +631,16 @@ export function generateZonedTerrain(
   /**
    * LE CHAMP DE CENDRE — la distance de chaque tuile à la frontière de la Cendrière.
    *
-   * Dérivé du diagramme de puissance comme la marge des frontières, mais lu AU BLOC : le front
-   * épouse donc la forme réelle de la Cendrière, angles droits compris. Il avance comme une MARÉE
-   * — une marée rectiligne, qui prend la vallée bloc par bloc.
+   * Dérivé du diagramme de puissance comme la marge des frontières, mais lu AU BLOC : il épouse
+   * la forme réelle de la Cendrière, angles droits compris.
    *
-   * C'est de la donnée STATIQUE : ce qui bouge est un scalaire dans le `SimState` (spec R31).
+   * ⚠ CE N'EST PLUS UN MOTEUR (2026-08-24) : le front de cendre est retiré, la Cendrière ne fait
+   * plus partie du monde joué, et ce champ ne sert qu'à DATER la reprise du versant Brûlé
+   * (`peindreLesStadesDuBrule`) sur le plan complet, qui dort. Là où il n'y a pas de Cendrière,
+   * il n'y a pas de champ — et chaque lecteur écrit ce qu'il fait dans ce cas.
    */
-  const cendriere = g.zones.find((z) => z.def.slug === 'cendriere')!
-  // LE MONDE RÉDUIT MESURE AU RECT, PAS AU VOISIN. À deux zones, « la région d'en face » est
-  // TOUJOURS la Cendrière, quel que soit le bord le plus proche : l'heuristique `voisinAt`
-  // faisait avancer le front depuis TOUTES les enceintes (MESURÉ, seed 2026 : champ = 8 au bord
-  // NORD à 520 tuiles du feu, 37 % de la racine « brûlait » à > 200 tuiles au nord). La distance
-  // au RECT de la Cendrière est la géométrie même — et le plan complet garde son calcul, octet
-  // pour octet.
-  const champAuRect = g.monde === 'racine'
-  const champCendre = computeCendreField(width, height, (x, y) => {
+  const cendriere = g.zones.find((z) => z.def.slug === 'cendriere')
+  const champCendre = cendriere === undefined ? undefined : computeCendreField(width, height, (x, y) => {
     const k = blocDe(blocs, x, y)
     const zid = blocs.zone[k]!
     const m = blocs.marge[k]!
@@ -648,30 +650,25 @@ export function generateZonedTerrain(
     // de vide, comptées comme siennes.
     if (blocs.vide[k]) return Math.abs(m) + 1
     if (zid === cendriere.id) return -m // DEDANS : elle brûle depuis le premier jour
-    if (champAuRect) return distAuRect(x, y, cendriere.rect!)
     // Dehors : la distance à la frontière de la Cendrière. Si le bloc ne la touche pas, on prend la
-    // distance au site — une borne honnête, et le front s'arrête de toute façon bien avant.
+    // distance au site — une borne honnête.
     if (voisinAt(g, x, y) === cendriere.id) return m
     return Math.sqrt(distSq(x, y, cendriere.x, cendriere.y))
   })
-
-  // On vise une PART des Prés Bas (60 %), pas une distance : la forme des zones varie trop d'une
-  // seed à l'autre pour qu'un nombre de tuiles fixe tienne la promesse. On calibre donc ICI.
-  const cendreMax = calibreLeFront(champCendre, (i) => zone[i] === g.racine && rampe[i] === 0)
 
   // ── LES AFFLEUREMENTS — la géologie du monde réduit (t0-exploration §2sexies) ────────────
   //
   // MONDE RÉDUIT SEUL : sur le plan complet la passe rend [] sans toucher UNE tuile — le fer
   // reste l'exclusivité du Karst (worldgen R9/A14), et le chemin 'vallee' reste octet-identique.
-  // ICI et pas à la passe 1.59, parce qu'elle a besoin du champ de cendre : un gisement que le
-  // front avale à mi-saison est une économie confisquée — la roche ne perce que là où le feu
-  // n'arrive JAMAIS (même clause que les carrières, R49). Elle ne coiffe que le pré nu, donc
-  // aucune passe d'après (stades du Brûlé : hors racine) ne la repeint ni n'en dépend.
-  const affleurements = poserLesAffleurements(terrain, zone, g, width, height, creux, champCendre, cendreMax)
+  // ELLE NE LIT PLUS LE CHAMP DE CENDRE (2026-08-24) : sa clause « hors d'atteinte du front »
+  // (R48/R49 — un gisement que la cendre avale à mi-saison est une économie confisquée) n'a plus
+  // d'objet, puisque plus rien n'avale. Le pré nu suffit à la porter.
+  const affleurements = poserLesAffleurements(terrain, zone, g, width, height, creux)
 
   // ── LES STADES DU VERSANT BRÛLÉ (stratigraphie, couche IV) : la reprise, datée par le champ
   //    de cendre qu'on vient de poser. AVANT les lieux — le semis lit le terrain des stades.
-  peindreLesStadesDuBrule(terrain, zone, g, champCendre, width, height, seed)
+  //    Sans Cendrière il n'y a ni champ ni zone « brûlé » : la passe n'a rien à dater.
+  if (champCendre) peindreLesStadesDuBrule(terrain, zone, g, champCendre, width, height, seed)
 
   /**
    * LA ZONE, POUR LE CLIENT — et elle est désormais EXACTE, gratuitement.
@@ -690,7 +687,7 @@ export function generateZonedTerrain(
   for (let k = 0; k < zoneGrid.length; k++) zoneGrid[k] = blocs.zone[k]!
 
   const map: WorldMap = {
-    width, height, terrain, zones: toponymes(g), cendre: champCendre, cendreMax,
+    width, height, terrain, zones: toponymes(g), ...(champCendre ? { cendre: champCendre } : {}),
     zoneGrid,
     zonePas: ZONE_PAS,
     zoneDefs: g.zones.map((z) => ({ slug: z.def.slug, nom: z.def.nom, tier: z.def.tier })),
@@ -715,6 +712,10 @@ export function generateZonedTerrain(
     profondeur: deriverProfondeur(terrain, zone, g.racine, width, height),
     // LA DISTANCE À L'EAU (S10) : ce qui permet à la crue de monter depuis les rives.
     distEau: deriverDistanceEau(terrain, width, height),
+    // LA NATURE DE L'EAU (`peche.md` T1) : rivière / lac / mare / marais, par tuile. Dérivée du
+    // terrain FINAL et du fil — donc APRÈS que les gués et les set-pieces ont fini de creuser.
+    // Sans elle, la table de prises n'aurait aucun moyen de savoir ce qu'est l'eau qu'on pêche.
+    natureEau: deriverNatureDeLEau(terrain, riviere?.fil, width, height),
   }
   // LES COULÉES (forêts-vivantes §4) — dérivées après la profondeur (elles lisent le pic) :
   // couche → eau, pour chaque massif à cœur qui boit. Champ additif, patron `fil`.
@@ -775,6 +776,25 @@ export function generateZonedTerrain(
   // LES STÈLES (annales.md R8) : en DERNIER — elles se posent au bord des faits de l'ère 2 en
   // respectant les empreintes de tous les lieux déjà placés.
   placeSteles(map, champDeCreusement)
+
+  // ── LE CHAMP DE CHEMINEMENT DE LA CENDRE (spec `cendre.md` R4) ───────────────────────────
+  //
+  // APRÈS `placeCharniers`, forcément : les fosses SONT les sources. Une passe de plus au patron
+  // de `distEau` — un balayage, un champ statique, plus rien à calculer ensuite. Sur une carte
+  // sans charnier (bancs, tests) il rend deux tableaux de `-1` et rien ne brûle jamais.
+  //
+  // ⚠ MONDE RÉDUIT SEUL, et c'est le précédent de ce fichier (`poserLesAffleurements`,
+  //   `carrieresDeLEnceinte`) : les passes de CONTENU ne tournent que là où l'on joue. Ici la
+  //   raison est chiffrée — le plan complet porte **51 fosses sur 3,75 M de tuiles** et la passe y
+  //   coûte **2,2 s**, ce qui fait sauter le budget A13 (une carte de production naît en moins de
+  //   15 s). Le jour où la vallée entière se jouera, elle paiera ce prix avec le reste ; en
+  //   attendant, on ne le paie pas pour un plan qui dort.
+  if (g.monde === 'racine') {
+    const foyers = foyersDeLaCarte(map)
+    if (foyers.length > 0) {
+      map.cendreCout = calculeChampDeCendre(width, height, terrain, foyers)
+    }
+  }
 
   return carte
 }
@@ -1054,22 +1074,19 @@ function poserLesAffleurements(
   width: number,
   height: number,
   creux: Creux | null,
-  champCendre: readonly number[],
-  cendreMax: number,
 ): Affleurement[] {
   if (g.monde !== 'racine' || !creux) return []
   const M = RELIEF.MOTIF
   const n = creux.cols * creux.rows
 
   // La rocaille ne coiffe que le pré, la fleuraie et la lande (R47) — motif ENTIER, la leçon
-  // des bosquets : une miette de pierrier au milieu d'un pré se lit comme une erreur. Et HORS
-  // D'ATTEINTE DU FRONT : un gisement que la cendre avale à mi-saison est une économie
-  // confisquée — même clause que les carrières (R49), dérivée du même champ.
+  // des bosquets : une miette de pierrier au milieu d'un pré se lit comme une erreur.
+  // (La clause « hors d'atteinte du front » est tombée le 2026-08-24 avec le front lui-même :
+  // plus rien n'avale un gisement, donc plus rien à mettre hors d'atteinte.)
   const tuileLibre = (x: number, y: number): boolean => {
     if (x < 0 || y < 0 || x >= width || y >= height) return false
     const i = y * width + x
     if (zone[i] !== g.racine) return false
-    if (champCendre[i]! <= cendreMax) return false
     const t = terrain[i]!
     return t === TERRAIN_GRASS || t === TERRAIN_FLOWER_MEADOW || t === TERRAIN_JUNIPER_HEATH
   }

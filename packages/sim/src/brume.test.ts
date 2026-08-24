@@ -9,6 +9,11 @@
 import { describe, expect, it } from 'vitest'
 import { BALANCE, BRUME, CENDREUX, TEMPERATURE, TERRAIN_GRASS } from './balance'
 import { advanceBrume, brumeCentre, brumeJourEligible, dansLaBrume } from './brume'
+import { avanceesDepuisAges, foyersDeLaCarte } from './cendre'
+import { toutesLesFumerolles } from './fumerolle'
+import { MONDE_JOUE } from './zonegraph'
+import { generateZonedTerrain } from './zonegen'
+import { placeZoneNodes } from './zone-content'
 import { drainEvents, type SimEvent } from './events'
 import { distSq } from './geometry'
 import { createEmptyMap, type WorldMap } from './map'
@@ -19,6 +24,9 @@ import { advanceTemperature, AMBIANT_HYPOTHERMIE, ambientTemperature, baselineTe
 import { calendarScaleForSeasonCycles, dayTicksPourJour, TICKS_PER_CYCLE } from './time'
 import { grantItems } from './village'
 import { foundNpcVillage } from './worldgen'
+
+/** La graine du monde RÉEL rejoué en fin de fichier. */
+const SEED_REEL = 2026
 
 /** 1 jour de saison = 1 cycle : le crépuscule du cycle c EST le jour c+1. */
 const SCALE = calendarScaleForSeasonCycles(BALANCE.SEASON_DAYS)
@@ -41,12 +49,19 @@ function tickCrepusculeDuJour(day: number): number {
   return (day - 1) * TICKS_PER_CYCLE + dayTicksPourJour(day)
 }
 
-/** Une carte AVEC Cendrière : champ de cendre = x (la Cendrière est le bord ouest). */
+/**
+ * Une carte AVEC UN CHARNIER au bord ouest — l'ancre de la Brume.
+ *
+ * ⚠ ELLE PORTAIT UN CHAMP DE FRONT (`map.cendre` = x, « la Cendrière est à l'ouest »). Le front
+ *   retiré le 2026-08-24, ce champ ne commande plus rien : le montage restait vert à la
+ *   compilation et rendait `elireCorridor` MUET, donc neuf critères sur les huit de la spec
+ *   tombaient d'un coup. La prémisse du banc est désormais un CHARNIER — la vraie ancre — et
+ *   elle est AFFIRMÉE plus bas, pour qu'un prochain déplacement de l'ancre casse ici bruyamment
+ *   au lieu de rendre le banc silencieux.
+ */
 function carteACendre(width = 70, height = 40): WorldMap {
   const map = createEmptyMap(width, height, TERRAIN_GRASS)
-  map.cendre = []
-  for (let y = 0; y < height; y++) for (let x = 0; x < width; x++) map.cendre.push(x)
-  map.cendreMax = 8
+  map.zones.push({ name: 'Le Charnier', x: 2, y: Math.floor(height / 2) - 2, w: 5, h: 5, kind: 'charnier' })
   return map
 }
 
@@ -66,6 +81,14 @@ function jourDeBrume(eligible: boolean, depuis = PREMIER_JOUR_FROID): number {
 function simBrume(seed = 2026): SimState {
   return createSim(seed, { map: carteACendre(), calendarScale: SCALE, finDeSaison: null })
 }
+
+describe('la prémisse du banc', () => {
+  it('la carte porte bien une ancre de Brume — sinon tout ce fichier ne mesure RIEN', () => {
+    // Une garde prouve sa prémisse : sans ancre, `elireCorridor` rend `null` et chaque critère
+    // ci-dessous échoue pour une raison qui n'a rien à voir avec ce qu'il teste.
+    expect(foyersDeLaCarte(carteACendre()).length, 'aucun charnier sur la carte-banc').toBe(1)
+  })
+})
 
 function types(events: SimEvent[]): SimEvent['type'][] {
   return events.map((e) => e.type)
@@ -362,4 +385,84 @@ describe('déterminisme (A1, A2/R9)', () => {
     }
     expect(snapshot(joue())).toBe(snapshot(joue()))
   })
+})
+
+/**
+ * ═══ ET MAINTENANT SUR LE MONDE QU'ON JOUE ═══
+ *
+ * Tout ce qui précède tourne sur une prairie de 70 × 40 avec un charnier posé à la main. C'est
+ * exactement le montage qui a laissé la Brume MOURIR en silence (cf. le bandeau de `carteACendre`) :
+ * un banc peut satisfaire trivialement des conditions que le vrai monde ne satisfait pas. Or
+ * `elireCorridor` en pose cinq sur son point profond — marchable, sans nœud, sans structure, hors
+ * cendre — et une sur le segment entier (aucun Feu de village à `RAYON + GARDE_FEU`). Autour d'un
+ * charnier RÉEL, dense en nœuds et en pièces, rien ne garantit qu'elles tombent juste.
+ *
+ * On rejoue donc le vrai générateur sur le vrai plan, taille réduite (le même compromis assumé que
+ * `replay-monde-reel.test.ts` : ce qui fait échouer une élection, c'est la VARIÉTÉ du contenu, pas
+ * le nombre de tuiles).
+ */
+describe('la Brume se lève sur le MONDE RÉEL, pas seulement sur le banc', () => {
+  const carteReelle = generateZonedTerrain(SEED_REEL, 8, MONDE_JOUE)
+  const nodesReels = placeZoneNodes(carteReelle)
+
+  function simReelle(): SimState {
+    return createSim(SEED_REEL, {
+      map: carteReelle.map,
+      nodes: nodesReels,
+      calendarScale: SCALE,
+      finDeSaison: null,
+    })
+  }
+
+  it('la prémisse : le vrai monde porte des charniers ET son champ de cheminement', () => {
+    expect(foyersDeLaCarte(carteReelle.map).length, 'aucun charnier sur le monde joué').toBeGreaterThan(0)
+    expect(carteReelle.map.cendreCout, 'le champ de cheminement de la cendre manque').toBeDefined()
+  }, 120_000)
+
+  it('AU MOINS UN jour de la fenêtre froide annonce — la promesse, pas un jour choisi', () => {
+    // ⚠ ON BALAIE TOUTE LA FENÊTRE, et c'est la bonne forme. `elireCorridor` a le DROIT de rendre
+    //   `null` un jour donné (ses huit essais peuvent tous tomber sur un point profond occupé) :
+    //   exiger un jour précis ferait une garde plus serrée que la spec. Ce qu'on exige, c'est que
+    //   le mécanisme EXISTE dans une partie réelle — ce qui était faux, sans un rouge, ce matin.
+    let annonces = 0
+    let essayes = 0
+    for (let d = PREMIER_JOUR_FROID; d <= DERNIER_JOUR_FROID && annonces === 0; d++) {
+      if (!brumeJourEligible(d)) continue
+      essayes++
+      const sim = simReelle()
+      sim.tick = tickCrepusculeDuJour(d)
+      drainEvents(sim)
+      step(sim, [])
+      if (sim.brume?.phase === 'annoncee') annonces++
+    }
+    expect(essayes, 'la fenêtre froide n’a élu aucun jour — le banc mesure son décor').toBeGreaterThan(0)
+    expect(annonces, `aucune Brume sur ${essayes} jours éligibles du monde réel`).toBeGreaterThan(0)
+  }, 120_000)
+
+  it('LA BRANCHE FUMEROLLE : cendre mûre, le corridor part d’une BOUCHE', () => {
+    // Les bouches ne s'ouvrent qu'au cœur d'une cendre déjà profonde — bien après la première
+    // fenêtre froide. On VIEILLIT donc les foyers à la main : ce test porte sur la branche du
+    // code, pas sur le calendrier (que `cendre.test.ts` garde de son côté).
+    const foyers = foyersDeLaCarte(carteReelle.map)
+    const ages = foyers.map(() => 900)
+    const bouches = toutesLesFumerolles(carteReelle.map, avanceesDepuisAges(ages, foyers.length), SEED_REEL)
+    expect(bouches.length, 'prémisse : aucune fumerolle même à cendre mûre').toBeGreaterThan(0)
+
+    let vu = false
+    for (let d = PREMIER_JOUR_FROID; d <= DERNIER_JOUR_FROID && !vu; d++) {
+      if (!brumeJourEligible(d)) continue
+      const sim = simReelle()
+      sim.cendreAge = ages
+      sim.tick = tickCrepusculeDuJour(d)
+      drainEvents(sim)
+      step(sim, [])
+      if (!sim.brume) continue
+      vu = true
+      const surUneBouche = bouches.some(
+        (b) => b.tx + 0.5 === sim.brume!.x0 && b.ty + 0.5 === sim.brume!.y0,
+      )
+      expect(surUneBouche, `origine (${sim.brume.x0},${sim.brume.y0}) hors de toute bouche`).toBe(true)
+    }
+    expect(vu, 'aucune Brume levée : la branche fumerolle n’a jamais été exécutée').toBe(true)
+  }, 120_000)
 })

@@ -41,7 +41,7 @@ import { chromium } from 'playwright'
 import { inflateSync } from 'node:zlib'
 import { writeFile } from 'node:fs/promises'
 import { spawn } from 'node:child_process'
-import { mkdirSync, rmSync, writeFileSync } from 'node:fs'
+import { mkdirSync, rmSync, statSync, writeFileSync } from 'node:fs'
 import { dirname, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
@@ -3213,6 +3213,102 @@ const SCENARIOS = {
   },
 
   /**
+   * LES FUMEROLLES (2026-08-24) — les trous du cœur de la cendre, et leur fumée FROIDE.
+   *
+   * Deux choses à prouver, et elles ne se prouvent pas au même endroit :
+   *  ① la SIM les a bien ouvertes et le CLIENT les a bien reçues (le nœud existe, sa texture aussi) ;
+   *  ② la fumée se VOIT — quads vivants, dans le cadre, à la bonne profondeur.
+   *
+   * ⚠ DEUX PIÈGES, PAYÉS COMPTANT LE JOUR OÙ CE SCÉNARIO A ÉTÉ ÉCRIT :
+   *
+   *   • **La boucle headless tourne à ~1 image/s.** Une bouffée n'y a donc jamais que quelques
+   *     centièmes de seconde : toute capture la montrerait à peine née, sous 10 % d'alpha. On
+   *     endort la boucle, puis on fait vieillir le FX À LA MAIN par pas francs.
+   *   • **Une boucle endormie NE REDESSINE PLUS.** Muter les objets après `loop.sleep()` ne se voit
+   *     pas à l'image. Il faut forcer UNE image par `game.step()` — sans quoi on photographie
+   *     scrupuleusement l'état d'AVANT le vieillissement, et on conclut que le FX ne marche pas.
+   *
+   * `JOUR=290` par défaut : la cendre doit être mûre pour qu'un cœur existe (aucune bouche avant).
+   * Exige `--dev` : le saut de jour et la téléportation sont inertes en production.
+   */
+  async fumerolle(page) {
+    const JOUR = Number(process.env.JOUR ?? 290)
+    await page.goto(URL)
+    await page.waitForFunction(() => Boolean(window.__BRAISES__?.scene?.registry?.get('mapData')), null, { timeout: 150000 })
+    await page.waitForTimeout(1200)
+    await page.evaluate(() => window.__BRAISES__.scene.sendAction({ type: 'debug_set_hour', hour: 11 }))
+    await page.evaluate((d) => window.__BRAISES__.scene.sendAction({ type: 'debug_set_season_day', day: d }), JOUR)
+    await page.waitForTimeout(2500)
+
+    const bouches = await page.evaluate(() => {
+      const sc = window.__BRAISES__.scene
+      const n = sc.view.nodes ?? []
+      const fum = []
+      // `view.nodes` est un tableau ici et une Map ailleurs selon l'hôte : on encaisse les deux.
+      if (n.forEach && !n.size) n.forEach((x) => { if (x.type === 'fumerolle') fum.push({ tx: x.tx, ty: x.ty, stock: x.stock }) })
+      else for (const [, x] of n) if (x.type === 'fumerolle') fum.push({ tx: x.tx, ty: x.ty, stock: x.stock })
+      const p = sc.view.self ?? { x: 0, y: 0 }
+      fum.sort((a, b) => ((a.tx - p.x) ** 2 + (a.ty - p.y) ** 2) - ((b.tx - p.x) ** 2 + (b.ty - p.y) ** 2))
+      return { fum, texture: sc.textures?.exists?.('nd-fumerolle_lit') ?? null }
+    })
+    console.log(`bouches : ${bouches.fum.length} — texture nd-fumerolle_lit : ${bouches.texture}`)
+    if (bouches.fum.length === 0) console.error(`!! aucune fumerolle reçue par le client au jour ${JOUR}`)
+    if (bouches.texture !== true) console.error('!! la texture nd-fumerolle_lit manque — le nœud rendra un carré vert')
+    if (bouches.fum.length === 0) return
+
+    // ⚠ ON SE POSE 3 TUILES SOUS LA BOUCHE, pas dessus : centré dessus, l'avatar la masque.
+    const b = bouches.fum[0]
+    await page.evaluate(({ x, y }) => window.__BRAISES__.scene.sendAction({ type: 'debug_teleport', x, y }), { x: b.tx + 0.5, y: b.ty + 3.5 })
+    await page.waitForTimeout(8000)
+
+    const fx = await page.evaluate(() => {
+      const sc = window.__BRAISES__.scene
+      const f = sc.fumerolleFx
+      if (!f) return null
+      const cam = sc.cameras.main
+      const vue = { x: cam.worldView.x, y: cam.worldView.y, w: cam.worldView.width, h: cam.worldView.height }
+      const dedans = f.quads.filter((q) => q.visible
+        && q.x >= vue.x && q.x <= vue.x + vue.w && q.y >= vue.y && q.y <= vue.y + vue.h)
+      return { vivantes: f.vivantes, dansLeCadre: dedans.length, profondeur: dedans[0]?.depth ?? null }
+    })
+    console.log(`fx : ${JSON.stringify(fx)}`)
+    if (!fx) console.error('!! la scène n’a pas de fumerolleFx')
+    else {
+      if (fx.vivantes <= 0) console.error('!! aucune bouffée vivante à trois tuiles d’une bouche')
+      if (fx.dansLeCadre <= 0) console.error('!! des bouffées vivent, mais AUCUNE dans le cadre')
+      if (fx.vivantes > 0 && fx.dansLeCadre > 0) console.log(`   ✓ ${fx.dansLeCadre} bouffées à l’écran, profondeur ${fx.profondeur}`)
+    }
+
+    // ── LA PHOTO (cf. les deux pièges du bandeau) ────────────────────────────────────────────
+    await page.evaluate(() => { window.__BRAISES__.scene.game.loop.sleep() })
+    await page.waitForTimeout(300)
+    await page.evaluate(() => {
+      const sc = window.__BRAISES__.scene
+      const f = sc.fumerolleFx
+      for (let k = 0; k < 22; k++) f.update(f.dernieresBouches, 0.1)
+      sc.game.step(performance.now(), 16)
+    })
+    await page.waitForTimeout(300)
+    await page.screenshot({ path: `${OUT}/fumerolle.png`, timeout: 150000 })
+
+    // …ET LA MÊME DE PRÈS. Pas de recadrage possible sur cette machine (ni PIL ni ImageMagick) :
+    // on zoome la CAMÉRA et on refait une image — plus honnête, de toute façon, qu'un
+    // agrandissement après coup : le rendu repasse par le vrai pipeline.
+    await page.evaluate(() => {
+      const sc = window.__BRAISES__.scene
+      const f = sc.fumerolleFx
+      const b = f.dernieresBouches[0]
+      sc.cameras.main.stopFollow() // la bouche est plus haut que l'avatar : au triple zoom, elle sortait du cadre
+      sc.cameras.main.setZoom(sc.cameras.main.zoom * 3)
+      if (b) sc.cameras.main.centerOn((b.tx + 0.5) * 16, (b.ty + 1.5) * 16)
+      for (let k = 0; k < 8; k++) f.update(f.dernieresBouches, 0.1)
+      sc.game.step(performance.now(), 16)
+    })
+    await page.waitForTimeout(300)
+    await page.screenshot({ path: `${OUT}/fumerolle-pres.png`, timeout: 150000 })
+  },
+
+  /**
    * LA BARRE HAUTE (2026-08-24) — elle DIT le lieu, l'année et le ciel, ou elle ment.
    *
    * Le scénario ne juge pas des pixels : il lit ce que la barre a écrit, dans le DOM, aux deux
@@ -4359,6 +4455,125 @@ const SCENARIOS = {
    *
    * Exige `--dev`. Les captures partent dans `scratchpad/smoke/planche-*.png`.
    */
+  /**
+   * LE VENT (spec `vent.md`) — le front EST le vent. Le scénario le PROUVE à l'écran, en deux
+   * temps : sans front (l'ambiance : aiguille pâle, aucun serpentin) puis sous une bande
+   * (l'aiguille s'affirme et pointe l'axe de traversée, les rubans sortent).
+   *
+   * Il LIT ce que le jeu montre — le `transform` de l'aiguille, la sonde de la couche — il ne
+   * fabrique rien. La seule chose qu'il pose est le front, par le canal de debug.
+   */
+  async vent(page) {
+    if (!dev) { console.log('\n(le vent exige --dev : le ciel se pose par le canal de debug)'); return {} }
+    await page.waitForFunction(() => Boolean(window.__BRAISES__?.scene?.registry?.get('worldReady')), null, { timeout: 150000 })
+    await page.waitForTimeout(2500)
+    const agir = async (a, ms = 700) => { await page.evaluate((x) => window.__BRAISES__.scene.sendAction(x), a); await page.waitForTimeout(ms) }
+    await agir({ type: 'debug_god', on: true }, 600)
+    await agir({ type: 'debug_set_season_day', day: 75 }, 900) // les Pluies : les bandes y sont larges
+
+    /** Ce que l'ÉCRAN dit du vent — l'aiguille, la couche, et le cap de la sim. */
+    const releve = () => page.evaluate(() => {
+      const s = window.__BRAISES__?.scene ?? {}
+      const aig = document.querySelector('.bh-vent-aig')
+      const bloc = document.querySelector('.bh-vent')
+      const tr = aig ? getComputedStyle(aig).transform : 'none'
+      // La matrice CSS → l'angle réellement peint : on ne relit pas la valeur qu'on a écrite.
+      let deg = null
+      const m = /matrix\(([^)]+)\)/.exec(tr)
+      if (m) {
+        const [a, b] = m[1].split(',').map(Number)
+        deg = Math.round((Math.atan2(b, a) * 180) / Math.PI)
+      }
+      return {
+        deg,
+        opacite: aig ? Number(getComputedStyle(aig).opacity).toFixed(2) : null,
+        visible: bloc ? getComputedStyle(bloc).visibility : null,
+        cap: s.view?.wind ?? null,
+        force: s.registry?.get('vent')?.force ?? null,
+        serpentins: s.ventLayer?.sonde ?? null,
+        front: s.view?.meteo ? { type: s.view.meteo.type, edge: s.view.meteo.edge } : null,
+      }
+    })
+
+    const prise = async (nom, quoi) => {
+      // ON ATTEND LA CONCORDANCE, PAS UNE DURÉE. Le HUD vit dans `UIScene`, qui tourne AVANT
+      // `WorldScene` : la barre a donc toujours une IMAGE de retard sur le registre — et en
+      // headless sur SwiftShader, avec un rideau de pluie à l'écran, une image dure des
+      // secondes. Une attente fixe photographierait le monde d'avant et accuserait le HUD de
+      // mentir. On attend que l'angle PEINT rejoigne le cap de la sim, et on borne.
+      await page.waitForFunction(() => {
+        // ⚠ GAINÉ : en `--dev`, la page peut se recharger sous la sonde (HMR, retour au menu)
+        // et `__BRAISES__` disparaît une image. Un accès nu y jette, et la sonde accuse alors
+        // le jeu d'une faute qui est la sienne.
+        const s = window.__BRAISES__?.scene
+        const aig = document.querySelector('.bh-vent-aig')
+        const cap = s?.view?.wind
+        if (!aig || !cap) return false
+        const m = /matrix\(([^)]+)\)/.exec(getComputedStyle(aig).transform)
+        if (!m) return false
+        const [a, b] = m[1].split(',').map(Number)
+        const peint = (Math.atan2(b, a) * 180) / Math.PI
+        const attendu = (Math.atan2(cap.y, cap.x) * 180) / Math.PI
+        return Math.abs(((peint - attendu + 540) % 360) - 180) < 6
+      }, null, { timeout: 45000 }).catch(() => console.log(`   (${nom} : l'aiguille n'a pas rejoint le cap dans le temps imparti)`))
+      // ET LE PEUPLEMENT. Un ruban naît PAR IMAGE (une rafale monte, elle ne claque pas) :
+      // à 60 fps le cadre est plein en moins d'une demi-seconde, mais en headless une image
+      // dure des secondes — photographier tout de suite montrerait quatre rubans là où le jeu
+      // en a vingt-six, et ferait juger le FX sur l'instrument.
+      await page.waitForFunction(() => {
+        const s = window.__BRAISES__?.scene?.ventLayer?.sonde
+        return !s || s.cible === 0 || s.vivants >= Math.min(15, s.cible)
+      }, null, { timeout: 60000 }).catch(() => console.log(`   (${nom} : les rubans n'ont pas peuplé le cadre)`))
+      await page.waitForTimeout(1200)
+      const r = await releve()
+      // ⚠ LA CAPTURE PEUT MENTIR. Une prise sur trois revenait ENTIÈREMENT NOIRE — le canvas
+      // n'est pas repeint pendant certaines fenêtres du headless, et le PNG tombe alors à
+      // quelques kilo-octets. Juger la DA là-dessus, c'est juger l'instrument. On reprend
+      // jusqu'à ce que l'image ait du contenu, et on le DIT si elle n'en a jamais.
+      const chemin = `${OUT}/vent-${nom}.png`
+      let octets = 0
+      for (let essai = 0; essai < 5; essai++) {
+        await page.screenshot({ path: chemin })
+        octets = statSync(chemin).size
+        if (octets > 60_000) break
+        await page.waitForTimeout(1500)
+      }
+      if (octets <= 60_000) console.error(`!! ${nom} : capture vide (${octets} o) — l'écran n'a pas été peint`)
+      const cap = r.cap ? `(${r.cap.x.toFixed(2)}, ${r.cap.y.toFixed(2)})` : 'aucun'
+      console.log(`  ${nom.padEnd(12)} aiguille ${String(r.deg).padStart(5)}° op ${r.opacite}`
+        + ` · cap ${cap} force ${r.force === null ? '—' : r.force.toFixed(2)}`
+        + ` · serpentins ${r.serpentins ? `${r.serpentins.vivants}/${r.serpentins.cible}` : '—'}`
+        + ` · front ${r.front ? `${r.front.type} bord ${r.front.edge}` : 'aucun'}   — ${quoi}`)
+      return { nom, ...r }
+    }
+
+    await agir({ type: 'debug_meteo', meteo: null }, 1200)
+    const calme = await prise('1-ambiance', 'sans front : l’aiguille tient, aucun ruban')
+    await agir({ type: 'debug_meteo', meteo: 'pluie', phase: 0.5 }, 1200)
+    const souffle = await prise('2-sous-front', 'sous la bande : elle s’affirme, les rubans filent')
+
+    // ── LES VERDICTS ──
+    if (calme.visible !== 'visible') console.error('!! le cadran est caché alors que le monde est venté')
+    if (calme.serpentins && calme.serpentins.cible !== 0) {
+      console.error(`!! ${calme.serpentins.cible} serpentin(s) visés SANS front — ils doivent être un présage, pas une ambiance`)
+    }
+    if (souffle.force !== null && calme.force !== null && !(souffle.force > calme.force)) {
+      console.error(`!! la force n’a pas monté sous le front (${calme.force} → ${souffle.force})`)
+    }
+    if (souffle.serpentins && souffle.serpentins.vivants === 0) {
+      console.error('!! aucun serpentin sous un front : le présage ne se voit pas')
+    }
+    // L'AIGUILLE DIT-ELLE LE FRONT ? Le cap de la sim et l'angle peint doivent concorder — et
+    // c'est le seul verdict qui prouve que le HUD ne ment pas sur ce que le monde fait.
+    if (souffle.cap && souffle.deg !== null) {
+      const attendu = Math.round((Math.atan2(souffle.cap.y, souffle.cap.x) * 180) / Math.PI)
+      const ecart = Math.abs(((souffle.deg - attendu + 540) % 360) - 180)
+      if (ecart > 8) console.error(`!! l’aiguille (${souffle.deg}°) contredit le cap de la sim (${attendu}°)`)
+      else console.log(`  l’aiguille suit le cap de la sim (écart ${ecart}°)`)
+    }
+    return { calme, souffle }
+  },
+
   async planche(page) {
     if (!dev) { console.log('\n(la planche exige --dev : calendrier, heure, ciel et TP)'); return {} }
     await page.waitForFunction(() => Boolean(window.__BRAISES__?.scene?.registry?.get('worldReady')), null, { timeout: 150000 })
@@ -4631,6 +4846,229 @@ const SCENARIOS = {
     return { sec, plein, crue, jourDeCrue: JOUR_DE_CRUE }
   },
 
+  /**
+   * LA FRONTIÈRE VASE / EAU PROFONDE (2026-08-24) — « une frontière propre entre la vase et
+   * l'eau profonde, la même que celle entre les marécages et l'eau peu profonde » (Alexis).
+   *
+   * CE QU'ON MESURE, ET POURQUOI CE N'EST PAS UNE COULEUR : la frontière demandée est une
+   * FRANGE — un débord irrégulier de 2 à 5 px d'art, celui que toute surface pose sur la
+   * surface qu'elle domine. Une couture nue, elle, tombe pile sur le bord de tuile, à la même
+   * abscisse sur toute la hauteur. On relève donc, ligne d'écran par ligne d'écran, l'ABSCISSE
+   * où le chaud (la vase, R > B) cède au froid (l'eau, B > R), et on juge sur DEUX propriétés
+   * de ce profil : il déborde du bord de tuile, et il n'est pas droit.
+   *
+   * Exige `--dev` : le jour de saison et la téléportation passent par le mode debug.
+   */
+  async vase(page) {
+    if (!dev) { console.log('\n(la sécheresse exige --dev : le jour de saison et le TP)'); return {} }
+    await page.waitForFunction(() => Boolean(window.__BRAISES__?.scene?.registry?.get('worldReady')), null, { timeout: 150000 })
+    await page.waitForTimeout(2500)
+    const agir = async (a, ms = 900) => { await page.evaluate((x) => window.__BRAISES__.scene.sendAction(x), a); await page.waitForTimeout(ms) }
+
+    // ── ① LE BORD VISÉ : une tuile de haut-fond (qui deviendra vase) dont le voisin EST est de
+    //    l'eau PROFONDE, avec du profond derrière lui et du haut-fond derrière elle. Un bord
+    //    isolé d'une tuile ne prouverait rien : on veut une vraie rive intérieure.
+    const trouve = await page.evaluate(() => {
+      const s = window.__BRAISES__.scene
+      const m = s.map
+      const me = s.view?.me ?? { x: m.width / 2, y: m.height / 2 }
+      const t = (x, y) => (x < 0 || y < 0 || x >= m.width || y >= m.height ? 0 : m.terrain[y * m.width + x])
+      let best = null, bestD = Infinity
+      for (let ty = 3; ty < m.height - 3; ty++) {
+        for (let tx = 3; tx < m.width - 3; tx++) {
+          if (t(tx, ty) !== 4 || t(tx + 1, ty) !== 6) continue
+          // Trois rangs de chaque côté, et la colonne du bord franche sur trois lignes.
+          if (t(tx - 1, ty) !== 4 || t(tx + 2, ty) !== 6) continue
+          if (t(tx, ty - 1) !== 4 || t(tx, ty + 1) !== 4) continue
+          if (t(tx + 1, ty - 1) !== 6 || t(tx + 1, ty + 1) !== 6) continue
+          const d = (tx - me.x) ** 2 + (ty - me.y) ** 2
+          if (d < bestD) { bestD = d; best = { tx, ty } }
+        }
+      }
+      return best
+    })
+    if (!trouve) { console.error('!! aucun bord haut-fond | eau profonde sur cette carte — rien à mesurer'); return {} }
+    console.log(`  bord visé : vase en (${trouve.tx}, ${trouve.ty}), eau profonde en (${trouve.tx + 1}, ${trouve.ty})`)
+
+    // ── ② LA SÉCHERESSE. Elle ne se souhaite pas : le monde ouvre aux PLUIES, et l'aridité
+    //    demande de la chaleur autant que du temps sec. Un relevé au jour d'ouverture mesure
+    //    un haut-fond EN EAU et conclut sur la vase (fait le 2026-08-24 : état peint −2).
+    //
+    //    ET LE JOUR SE CHERCHE SUR LE CALENDRIER DE LA VEILLÉE, pas sur celui par défaut.
+    //    `cyclesDepuisPluie` compte des CYCLES RÉELS quand l'aridité se lit en JOURS DE SAISON :
+    //    `calendarScale` les découple (≈ 48 en Veillée, 1 par défaut), et la mémoire de pluie de
+    //    huit cycles couvre alors huit JOURS au lieu d'un sixième de jour. Balayé le 2026-08-24
+    //    avec `calendarScaleForSeasonCycles(SEASON_DAYS)` : la première Ardeur n'a que DEUX jours
+    //    à sec (158-159), mais la seconde en tient VINGT (276-295) — c'est une saison de
+    //    caractère, un ciel qui ne casse jamais. On vise son cœur, le **285**.
+    //    (Le même balayage sur `DEFAULT_CALENDAR_SCALE` dit 165 : il aurait mesuré de l'eau.)
+    const JOUR_SEC = Number(process.env.SMOKE_JOUR_SEC ?? 285)
+    // UNE TUILE ET DEMIE PLUS BAS, pas quatre : à ×8, une tuile fait 128 px d'écran — la caméra
+    // suit l'avatar, et un TP à 3,5 tuiles poussait le bord visé HORS CADRE (ordonnée −48 le
+    // 2026-08-24). Le découpage se clampait alors à 0 et le profil se lisait dans la barre du
+    // HUD : une mesure qui ne regardait pas le jeu.
+    await agir({ type: 'debug_teleport', x: trouve.tx + 0.5, y: trouve.ty + 1.5 }, 1800)
+    await agir({ type: 'debug_set_season_day', day: JOUR_SEC }, 800)
+    // On ATTEND le jour, puis on RELIT — l'attente qui expire n'est pas une preuve d'échec (vue
+    // rouge le 2026-08-24 alors que le jour était bien arrivé), c'est le jour lu qui l'est.
+    await page.waitForFunction((d) => window.__BRAISES__.scene.lastTime?.seasonDay === d, JOUR_SEC, { timeout: 40000 }).catch(() => {})
+    const jourLu = await page.evaluate(() => window.__BRAISES__.scene.lastTime?.seasonDay)
+    if (jourLu !== JOUR_SEC) console.error(`!! le calendrier est au jour ${jourLu}, pas au ${JOUR_SEC} — la sécheresse visée n'est pas celle qu'on mesure`)
+    await agir({ type: 'debug_set_hour', hour: 12 }, 800)
+    await page.waitForFunction(() => {
+      const h = window.__BRAISES__.scene.lastTime?.hourOfCycle ?? 0
+      return h >= 11 && h < 14
+    }, null, { timeout: 40000 }).catch(() => console.error("!! l'heure n'est jamais arrivée à midi"))
+    // LA PRÉMISSE, AFFIRMÉE : la tuile est-elle VRAIMENT à sec ? Le manteau le dit — son état
+    // est celui qu'il peint. Sans ça, on mesurerait un haut-fond et on conclurait sur la vase.
+    //
+    // ⚠ ET ON L'ATTEND, on ne la suppose pas. La couche ne relit qu'UNE signature de chunk par
+    // image (`SIGNATURES_PAR_FRAME`) : après un saut de calendrier, il lui faut le temps de
+    // repasser sur tous les chunks vivants. Une attente fixe de 3 s a rendu 5 (assec) puis −2
+    // (eau libre) au MÊME jour, deux runs de suite le 2026-08-24 — c'était la course, pas le jeu.
+    const etat = await page.waitForFunction(({ tx, ty }) => {
+      const g = window.__BRAISES__.scene.gelLayer
+      const e = g ? g.etatAt(tx, ty) : null
+      return e === 5 ? { e } : null
+    }, trouve, { timeout: 60000, polling: 500 })
+      .then((h) => h.jsonValue().then((v) => v.e))
+      .catch(async () => page.evaluate(({ tx, ty }) => {
+        const g = window.__BRAISES__.scene.gelLayer
+        return g ? g.etatAt(tx, ty) : null
+      }, trouve))
+    const autour = await page.evaluate(({ tx, ty }) => {
+      const g = window.__BRAISES__.scene.gelLayer
+      const compte = {}
+      for (let oy = -6; oy <= 6; oy++) for (let ox = -6; ox <= 6; ox++) {
+        const e = g ? g.etatAt(tx + ox, ty + oy) : null
+        compte[e] = (compte[e] ?? 0) + 1
+      }
+      return { jour: window.__BRAISES__.scene.lastTime?.seasonDay, compte }
+    }, trouve)
+    console.log(`  jour ${autour.jour} · états sur 13×13 tuiles : ${JSON.stringify(autour.compte)} (5 = assec, −2 = eau libre, 0 = terre)`)
+    console.log(`  état peint de la tuile visée : ${etat} (5 = assec ; 0/−2 = pas de sécheresse, la mesure serait vide)`)
+    if (etat !== 5) console.error('!! LA TUILE N’EST PAS À SEC — le relevé qui suit ne mesure pas la vase')
+
+    // ── ③ LE GROS PLAN. À l'échelle du jeu, cinq pixels d'art font quinze pixels d'écran : on
+    //    pousse le zoom pour la photo (le MÊME rendu, de plus près), et on le rend ensuite.
+    await page.evaluate(() => {
+      const s = window.__BRAISES__.scene
+      window.__ZOOM_VASE__ = s.cameras.main.zoom
+      s.cameras.main.setZoom(8)
+      return true
+    })
+    await page.waitForTimeout(1200)
+    const geo = await page.evaluate(({ tx, ty }) => {
+      const s = window.__BRAISES__.scene, cam = s.cameras.main
+      const c = s.scale.canvas.getBoundingClientRect()
+      const k = c.width / s.scale.width
+      const ecran = (wx, wy) => ({
+        x: c.left + (wx * 16 - cam.worldView.x) * cam.zoom * k,
+        y: c.top + (wy * 16 - cam.worldView.y) * cam.zoom * k,
+      })
+      return { bord: ecran(tx + 1, ty), haut: ecran(tx + 1, ty), zoom: cam.zoom * k }
+    }, trouve)
+    const Z = geo.zoom // pixels d'écran par pixel d'art
+    const COTE = Math.round(16 * Z)
+    // LA PRÉMISSE DU CADRE, AFFIRMÉE : la tuile visée est-elle bien dans l'image ? Un découpage
+    // clampé mesurerait autre chose sans le dire (cf. le TP ci-dessus).
+    const vue = await page.evaluate(() => ({ h: window.innerHeight, w: window.innerWidth }))
+    if (geo.bord.y < 0 || geo.bord.y + COTE > vue.h || geo.bord.x - 2.5 * COTE < 0 || geo.bord.x + 2.5 * COTE > vue.w) {
+      console.error(`!! LE BORD VISÉ N'EST PAS DANS LE CADRE (${Math.round(geo.bord.x)}, ${Math.round(geo.bord.y)} · tuile ${COTE} px · fenêtre ${vue.w}×${vue.h}) — le relevé ne mesurerait pas le jeu`)
+    }
+    // Le cadre part du HAUT de la tuile visée et descend de deux tuiles : au-dessus il y a la
+    // barre du HUD, trois tuiles plus bas il y a l'avatar (le TP l'a posé là, et la caméra le
+    // suit). Entre les deux, il n'y a que le bord qu'on juge.
+    await page.screenshot({
+      path: `${OUT}/vase-bord.png`,
+      clip: { x: Math.max(0, geo.bord.x - 2.5 * COTE), y: Math.max(0, geo.bord.y - 0.6 * COTE), width: 5 * COTE, height: 1.5 * COTE },
+      timeout: 90000,
+    })
+
+    // ── ④ LE PROFIL : sur toute la hauteur de la tuile, l'abscisse où le chaud cède au froid.
+    const large = Math.round(8 * Z) // 8 px d'art de part et d'autre du bord : la frange en fait 5 au plus
+    const r = await regionAt(page, {
+      x: Math.max(0, Math.round(geo.bord.x - large)), y: Math.max(0, Math.round(geo.bord.y)),
+      width: 2 * large, height: Math.round(16 * Z),
+    })
+    await page.evaluate(() => void window.__BRAISES__.scene.cameras.main.setZoom(window.__ZOOM_VASE__))
+    await page.waitForTimeout(1200)
+    // ET LA MÊME RIVE À L'ÉCHELLE DU JEU : la sécheresse n'est pas locale (`estAsseche` n'a
+    // aucune géographie), donc CETTE frange devient tout le trait de côte de chaque lac. Elle
+    // se juge aussi de loin, là où on la verra vraiment.
+    await page.screenshot({ path: `${OUT}/vase-rive.png`, timeout: 90000 })
+    if (!r) { console.error('!! le profil n’a pas pu être lu'); return {} }
+    // Le bord de tuile est à `large` dans la région ; l'abscisse se rend en PIXELS D'ART.
+    const chaud = (x, y) => { const p = r.px(x, y); return p[0] - p[2] > 6 }
+    const debords = []
+    for (let y = 1; y < r.h - 1; y++) {
+      let x = large
+      while (x < 2 * large - 1 && chaud(x, y)) x++
+      debords.push((x - large) / Z)
+    }
+    const PAVE_FRANGE_MIN = 2 // `PAVE.FRANGE_MIN` de `render/paves.ts`
+    const moy = debords.reduce((a, b) => a + b, 0) / debords.length
+    const max = Math.max(...debords)
+    const distinctes = new Set(debords.map((d) => Math.round(d))).size
+    console.log(`\n  débord de la vase dans l'eau profonde : ${moy.toFixed(2)} px d'art en moyenne, ${max.toFixed(2)} au plus`)
+    console.log(`  profil : ${distinctes} profondeurs distinctes sur ${debords.length} lignes relevées`)
+    // ⚠ LE SEUIL EST CELUI DE LA FRANGE ELLE-MÊME, et il le faut : « > 0 » serait VACUEUX. Le
+    // LIT sous l'eau porte du sable, et le sable est chaud lui aussi — mesuré le 2026-08-24 au
+    // même bord, l'assec remis au rang de l'eau (l'état d'avant le correctif), le débord « chaud »
+    // valait encore **1,19 px de moyenne sur 2 profondeurs** alors qu'aucune frange n'existait.
+    // (Ce premier relevé se lisait dans un découpage CLAMPÉ, donc en partie dans la barre du HUD.
+    // Recadré, le même avant/après tient sur les mêmes lignes : **0,11 px de moyenne, 0,50 au
+    // plus** sans la frange, **3,24 px de moyenne, 5,00 au plus** avec — 5,00 étant très
+    // exactement `FRANGE_MAX`.) On demande donc la frange MINIMALE de `paves.ts` — 2 px, sa borne
+    // par construction — et trois profondeurs distinctes, qu'un bord droit ne peut pas donner.
+    //
+    // LA GARDE QUI TRANCHE VRAIMENT LES DEUX CÔTÉS EST AILLEURS : `manteau.test.ts` cuit le bord
+    // vase|eau libre et le bord vase|terre sur l'image pure, sans climat ni caméra.
+    if (moy < PAVE_FRANGE_MIN) console.error(`!! COUTURE NUE : la vase déborde de ${moy.toFixed(2)} px, moins que la frange minimale (${PAVE_FRANGE_MIN}) — le lit de sable suffit à expliquer ça`)
+    else if (distinctes < 3) console.error('!! LE BORD EST DROIT : un débord constant n’est pas une frange (elle est irrégulière, 2-5 px)')
+    else console.log(`   ✓ la vase déborde dans l'eau d'une frange irrégulière — la frontière du marais, à l'autre bout de l'année`)
+
+    // ══ ⑤ L'AUTRE BOUT DE L'ANNÉE : LA GLACE SUR L'EAU LIBRE ══
+    //
+    // Le rang qui donne sa frange à la vase le donne AUSSI à la glace — c'est forcé, pas choisi
+    // (à un rang plus bas, la terre nue déborderait EN TRANSPARENT sur la banquise, et le trait
+    // de côte y montrerait l'eau du dessous). Cette frontière-là n'a pas été demandée : on va
+    // donc la REGARDER, au lieu de la signaler et de passer.
+    //
+    // La configuration existe parce que `seuilDe` est PAR TERRAIN : le gué prend avant le lac.
+    // Le jour ne se calcule pas d'ici (`estGele` dépend de la position, pas seulement du jour) —
+    // on balaie le Grand Froid et on s'arrête au premier jour qui donne le couple.
+    const HIVERS = (process.env.SMOKE_JOURS_GEL ?? '105,110,115,120,225,230,235,240').split(',').map(Number)
+    let gel = null
+    for (const jour of HIVERS) {
+      await agir({ type: 'debug_set_season_day', day: jour }, 900)
+      await page.waitForFunction((d) => window.__BRAISES__.scene.lastTime?.seasonDay === d, jour, { timeout: 40000 }).catch(() => {})
+      // La couche ne relit qu'une signature par image : on laisse le manteau se refaire.
+      const couple = await page.waitForFunction(({ tx, ty }) => {
+        const g = window.__BRAISES__.scene.gelLayer
+        if (!g) return null
+        const a = g.etatAt(tx, ty), b = g.etatAt(tx + 1, ty)
+        // 3 = glace de gué, −2 = eau libre : la banquise contre l'eau qui n'a pas pris.
+        return a === 3 && b === -2 ? { a, b } : null
+      }, trouve, { timeout: 25000, polling: 500 }).then(() => true).catch(() => false)
+      const vus = await page.evaluate(({ tx, ty }) => {
+        const g = window.__BRAISES__.scene.gelLayer
+        return g ? [g.etatAt(tx, ty), g.etatAt(tx + 1, ty)] : null
+      }, trouve)
+      console.log(`  jour ${jour} : gué ${vus ? vus[0] : '?'}, lac ${vus ? vus[1] : '?'} (3 = glace de gué, 4 = glace de lac, −2 = eau libre)`)
+      if (couple) { gel = jour; break }
+    }
+    if (gel === null) {
+      console.log('  (aucun jour balayé ne pose la banquise contre l’eau libre à ce bord — la frontière glace | eau libre reste NON VUE ici)')
+    } else {
+      await agir({ type: 'debug_set_hour', hour: 12 }, 800)
+      await page.waitForTimeout(2500)
+      await page.screenshot({ path: `${OUT}/vase-glace-rive.png`, timeout: 90000 })
+      console.log(`   ✓ jour ${gel} : la banquise borde l'eau libre — capture \`vase-glace-rive.png\`, à juger à l'œil`)
+    }
+    return { bord: trouve, etat, moy: Number(moy.toFixed(2)), max: Number(max.toFixed(2)), distinctes, jourDeGel: gel }
+  },
+
   async flore(page) {
     await page.waitForFunction(() => Boolean(window.__BRAISES__?.scene?.registry?.get('worldReady')), null, { timeout: 150000 })
     await page.waitForTimeout(3000)
@@ -4757,37 +5195,8 @@ const SCENARIOS = {
     return { tiede, gele, derive }
   },
 
-  async cendre(page) {
-    await page.goto(URL)
-    await page.waitForFunction(() => Boolean(window.__BRAISES__?.scene?.registry?.get('worldReady')), null, { timeout: 60000 })
-
-    // Le client ne TIENT pas la sim : il tient la vue du dernier snapshot. C'est elle qu'on lit —
-    // le smoke lit l'état du jeu, il ne le fabrique pas.
-    const lire = () => {
-      const s = window.__BRAISES__.scene
-      const n = s.view?.nodes
-      return {
-        jour: s.lastTime?.seasonDay ?? null,
-        noeuds: n ? (n.size ?? n.length ?? null) : null,
-      }
-    }
-
-    const avant = await page.evaluate(lire)
-
-    // On saute au jour 105 — le cœur du Grand Froid (réancré : l'ancien jour 58 est une Ardeur).
-    // Le debug n'est armé qu'en `--dev`.
-    await page.evaluate(() => {
-      window.__BRAISES__.scene.sendAction({ type: 'debug_set_season_day', day: 105 })
-    })
-    await page.waitForTimeout(4000)
-    const apres = await page.evaluate(lire)
-
-    console.log(`jour ${avant.jour} → ${apres.jour} · nœuds ${avant.noeuds} → ${apres.noeuds}`)
-    if (apres.noeuds !== null && avant.noeuds !== null && apres.noeuds >= avant.noeuds) {
-      console.log('⚠ la cendre n\'a rien brûlé — le front n\'avance pas')
-    }
-    await page.screenshot({ path: `${OUT}/cendre.png` })
-  },
+  // (Le scénario `cendre` — sauter au cœur du Grand Froid et compter les nœuds que le front
+  //  avait mangés — est retiré le 2026-08-24 avec le front lui-même.)
 
   /**
    * LA CLAIRIÈRE DU FEU, LA NUIT (2026-08-03) — trois promesses que seul le navigateur peut tenir,
@@ -11789,11 +12198,21 @@ const SCENARIOS = {
       const s = window.__BRAISES__.scene
       const me = (s.lastEntities ?? []).find((e) => e.id === s.playerId)
       const compte = (it) => (me?.inventory ?? []).reduce((n, sl) => n + (sl?.item === it ? sl.count : 0), 0)
-      return { fishing: me?.fishing ?? null, poissons: compte('gudgeon') + compte('trout') + compte('pike'), vers: compte('worms') }
+      // LES DIX-HUIT ESPÈCES (D12) : on somme le catalogue livré, jamais trois noms écrits à
+      // la main — le jour où une espèce s'ajoute, ce compte la voit toute seule.
+      const especes = (window.__BRAISES__.sim.FISH_SPECIES ?? []).map((sp) => sp.id)
+      return { fishing: me?.fishing ?? null, poissons: especes.reduce((n, id) => n + compte(id), 0), vers: compte('worms') }
     })
 
     // LE COIN : le plus proche de nous n'importe pas — on prend le premier coin de LAC (le
-    // brochet y vit) sinon de rivière, et on se plante sur le gué à côté, à 1 tuile du centre.
+    // brochet y vit), sinon de rivière.
+    //
+    // ⚠ ON SE PLANTE À LA PORTÉE RÉELLE (`FISHING.RANGE`, 4 t depuis le 2026-08-24), PAS À UNE
+    // TUILE. Le montage se collait au coin, ce qui ne testait plus le geste que les joueurs
+    // font : depuis l'allonge, on pêche DE LA BERGE. Et c'est aussi ce qui met l'ARC DU LANCER
+    // sous l'œil (`LANCER_ARC_PX` est une hauteur FIXE — sur 4 tuiles elle se lit à plat là où
+    // elle était un vrai lob sur une). On recule le long d'un rayon jusqu'à trouver du
+    // marchable, et on retombe sur la tuile voisine si la berge ne porte pas si loin.
     const coin = await page.evaluate(() => {
       const s = window.__BRAISES__.scene
       const coins = (s.view.nodes ?? []).filter((n) => (n.type === 'fishing_spot_lake' || n.type === 'fishing_spot_river') && n.stock > 0)
@@ -11803,11 +12222,20 @@ const SCENARIOS = {
       const m = s.map
       const t = (x, y) => m.terrain[y * m.width + x]
       const ok = (x, y) => t(x, y) !== 6 && t(x, y) !== 5 // ni profond, ni roche — le gué (4) se marche
-      const cand = [[-1, 0], [1, 0], [0, -1], [0, 1]].map(([dx, dy]) => [c.tx + dx, c.ty + dy]).find(([x, y]) => ok(x, y))
-      return { id: c.id, type: c.type, tx: c.tx, ty: c.ty, stock: c.stock, pied: cand ? { x: cand[0] + 0.5, y: cand[1] + 0.5 } : null, total: coins.length }
+      // La portée vient de /sim, jamais recopiée : le scénario doit suivre le nombre livré.
+      const R = window.__BRAISES__.sim.NODE_DEFS[c.type].range ?? 1.5
+      // D'abord LOIN (à la portée pile, sur du sol sec), sinon on retombe sur le voisin collé.
+      const rayons = [[-1, 0], [1, 0], [0, -1], [0, 1]]
+      const loin = rayons
+        .map(([dx, dy]) => [c.tx + Math.round(dx * R), c.ty + Math.round(dy * R)])
+        .find(([x, y]) => x >= 0 && y >= 0 && x < m.width && y < m.height && t(x, y) !== 6 && t(x, y) !== 5 && t(x, y) !== 4)
+      const cand = loin ?? rayons.map(([dx, dy]) => [c.tx + dx, c.ty + dy]).find(([x, y]) => ok(x, y))
+      const d = cand ? Math.hypot(cand[0] - c.tx, cand[1] - c.ty) : 0
+      return { id: c.id, type: c.type, tx: c.tx, ty: c.ty, stock: c.stock, portee: R, distance: d, pied: cand ? { x: cand[0] + 0.5, y: cand[1] + 0.5 } : null, total: coins.length }
     })
     if (!coin || !coin.pied) { console.error('!! aucun coin de pêche joignable sur cette carte'); return {} }
     console.log(`\n${coin.total} coins de pêche sur la carte ; on vise ${coin.type} #${coin.id} en (${coin.tx}, ${coin.ty}), stock ${coin.stock}.`)
+    console.log(`   on se plante à ${coin.distance.toFixed(1)} tuile(s) du coin — la portée livrée est ${coin.portee}`)
     await agir({ type: 'debug_teleport', x: coin.pied.x, y: coin.pied.y }, 900)
     await agir({ type: 'debug_grant', item: 'crude_rod' }, 160)
     const rslot = await slotDe('crude_rod')
@@ -11847,7 +12275,9 @@ const SCENARIOS = {
         }
       }
     })
-    await agir({ type: 'harvest_charge_start', nodeId: coin.id }, 120)
+    // ⚠ LE LANCER VISE UNE TUILE depuis D9 (2026-08-24), plus un nœud : `cast_line`. Le coin
+    // sous la tuile n'est plus qu'un bonus — le geste est le même sur l'eau nue.
+    await agir({ type: 'cast_line', tx: coin.tx, ty: coin.ty }, 120)
     let etat = await moi()
     for (let i = 0; i < 15 && !etat.fishing; i++) { await page.waitForTimeout(60); etat = await moi() }
     if (!etat.fishing) { console.error(`!! le lancer n'a pas tendu de ligne (refus ${JSON.stringify(await page.evaluate(() => window.__BRAISES__.scene.registry.get('error') ?? null))})`); return {} }
@@ -11892,7 +12322,7 @@ const SCENARIOS = {
     for (let i = 0; i < 3; i++) await agir({ type: 'debug_grant', item: 'worms' }, 70)
     await agir({ type: 'set_active_slot', slot: rslot }, 300) // `debug_grant` EMPOIGNE ce qu'il donne : on reprend la canne
     const avecVers = await moi()
-    await agir({ type: 'harvest_charge_start', nodeId: coin.id }, 120)
+    await agir({ type: 'cast_line', tx: coin.tx, ty: coin.ty }, 120)
     let appat = await moi()
     for (let i = 0; i < 15 && !appat.fishing; i++) { await page.waitForTimeout(60); appat = await moi() }
     if (!appat.fishing) console.error(`!! le second lancer (avec vers) n’a pas tendu de ligne (refus ${JSON.stringify(await page.evaluate(() => window.__BRAISES__.scene.registry.get('error') ?? null))}, état ${JSON.stringify(appat)}, moi ${await page.evaluate(() => { const s = window.__BRAISES__.scene; const me = s.lastEntities.find((e) => e.id === s.playerId); return JSON.stringify({ slot: me.activeSlot, inv: me.inventory.filter(Boolean), x: me.x, y: me.y }) })})`)

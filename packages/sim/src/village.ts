@@ -72,7 +72,7 @@ import {
 } from './items'
 import { heldSlot } from './inventory-actions'
 import { meteoFeuConso, meteoMouille } from './meteo'
-import { estIncassable, matiereChiffre, matieresDe, parPiece, piece } from './pieces'
+import { estIncassable, matiereChiffre, matieresDe, parPiece, piece, PIECES } from './pieces'
 import { terrainAt, zoneAt } from './map'
 import { isSheltered } from './temperature'
 import { floreGelee } from './gel'
@@ -1075,7 +1075,14 @@ export function applyVillageAction(state: SimState, actorId: number, action: Vil
       // le four, l'établi (des composants) et le coffre ne se posent PAS au marteau.
       const item = held?.item
       const isComp = item !== undefined && (COMPONENT_TYPES as readonly string[]).includes(item)
-      if (!held || !(isComp || item === 'chest')) return reject('il faut un composant ou un coffre en main')
+      // ⚠ LA LISTE VIENT DU REGISTRE, plus d'une énumération à la main (2026-08-24). Elle disait
+      // « un composant OU le coffre » — et le SÉCHOIR (`peche.md` S1), du mobilier posé comme le
+      // coffre, tombait dans le trou : fabricable, tenu en main, et impossible à poser. C'est le
+      // défaut que la doctrine du registre existe pour éviter (« ajouter une pièce = compléter
+      // le registre, pas toucher quinze fichiers ») ; ici on lit `pose: 'objet'`, qui est
+      // exactement la question posée. Le coffre et les composants y répondent déjà oui.
+      const tenuPosable = item !== undefined && item in PIECES && piece(item as StructureType).pose === 'objet'
+      if (!held || !(isComp || tenuPosable)) return reject('il faut un composant ou un objet posable en main')
       const placeType = item as StructureType // 'chest' ou une ComponentType (mêmes noms)
       const { tx, ty } = action
       if (!Number.isInteger(tx) || !Number.isInteger(ty)) return reject('case invalide')

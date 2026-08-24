@@ -720,6 +720,7 @@ export class UIScene extends Phaser.Scene {
       lieu: getHud(this.registry, 'lieu'),
       ambiant: getHud(this.registry, 'ambiant'),
       ciel: getHud(this.registry, 'cielIci') ?? null,
+      vent: getHud(this.registry, 'vent'),
       caractere: idCaractere === null ? undefined : NOMS_MODIFICATEUR[idCaractere],
       now: this.time.now,
     })
@@ -757,6 +758,7 @@ export class UIScene extends Phaser.Scene {
       seen: getHud(this.registry, 'seen') ?? [],
       container: getHud(this.registry, 'openContainerView') ?? null,
       skills: getHud(this.registry, 'skills') ?? {},
+      pecheCarnet: getHud(this.registry, 'pecheCarnet') ?? [],
     })
     // LE MENU DU MARTEAU (spec construction R20-R21) : dans le monde, hors TAB/carte,
     // et SEULEMENT le marteau en main. Le ranger le referme et DÉSARME — les fantômes

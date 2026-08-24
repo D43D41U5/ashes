@@ -1,3 +1,4 @@
+import type { NodeType } from './balance'
 /**
  * Protocole client ⇄ hôte de simulation (spec client R1-R3).
  *
@@ -201,6 +202,16 @@ export interface NodeDelta {
    *  client anime la repousse (la pousse grandit, le minéral se reforme) sur `[tick, regrowAt]`
    *  au lieu de « popper ». Absent sinon : un delta de stock ordinaire ne le porte pas. */
   regrowAt?: number
+  /**
+   * LE TYPE — joint UNIQUEMENT quand le nœud est NEUF pour le client (une fumerolle qui s'ouvre,
+   * un filon que la Brume découvre).
+   *
+   * ⚠ SANS LUI, UN NŒUD NÉ EN COURS DE PARTIE N'EXISTAIT PAS POUR LE JOUEUR : `applyDeltas` jette
+   * tout id inconnu (`if (!n) continue`), et la liste complète ne part qu'UNE fois, au message
+   * `ready`. Le filon de la Brume portait ce défaut depuis sa naissance — il se posait dans la sim
+   * et personne ne pouvait le voir ni le miner. Constaté au navigateur en ouvrant les fumerolles.
+   */
+  neuf?: NodeType
 }
 
 export interface SnapshotMessage {
@@ -217,6 +228,13 @@ export interface SnapshotMessage {
    *  pas, il les lit (et les PRÉDIT pour le fantôme, R22). */
   functions: RecognizedFunction[]
   nodeDeltas: NodeDelta[]
+  /**
+   * L'ÂGE DE CHAQUE FOYER DE CENDRE, en jours (spec `cendre.md`). **Dix nombres, et c'est tout ce
+   * que la cendre coûte au réseau** : le client en dérive la frange entière en relisant
+   * `estCendre` sur le champ statique qu'il a reçu avec la carte. Ni tuile, ni masque, ni delta —
+   * le patron du gel et du niveau d'eau, poussé à son terme.
+   */
+  cendreAge: number[]
   npcs: Npc[]
   monsters: Monster[]
   corpses: Corpse[]
@@ -229,8 +247,13 @@ export interface SnapshotMessage {
   refugeeGroups: RefugeeGroup[]
   /** LE SANG AU SOL (spec chasse C9) : les gouttes que le client dessine et efface. */
   blood: { x: number; y: number; tick: number }[]
-  /** LE VENT (C17) : il doit SE VOIR — une règle invisible est une injustice. */
+  /** LE CAP DU VENT (C17, `vent.md`) : il doit SE VOIR — une règle invisible est une injustice.
+   *  Le client le LIT, il ne le recompose jamais de `front.edge` (écrivain unique, A8). */
   wind: { x: number; y: number }
+  /** LA FORCE DU VENT au centre de la carte (`vent.md` V3), de `VENT.AMBIANT` à 1 — 0 sous la
+   *  sentinelle du calme plat. Le client ne l'invente plus (il l'inventait : `vent-lisse.ts`).
+   *  La force LOCALE se recalcule de la fonction pure partagée `ventForceAt`. */
+  windForce: number
   /** LES PILES AU SOL (C18) : l'appât posé, la viande jetée, la charge larguée. */
   groundItems: { id: number; x: number; y: number; item: string; count: number; expiresAt: number }[]
   /**

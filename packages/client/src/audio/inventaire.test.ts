@@ -7,7 +7,7 @@ import { FAMILLES, INVENTAIRE, SONORES, faitsDeFamille, type FamilleId } from '.
  * le trou que ce chantier vient boucher. Les gardes balaient tout l'espace (62 faits), elles
  * ne piochent pas des cas.
  */
-describe('l’inventaire des 73 faits', () => {
+describe('l’inventaire des 90 faits', () => {
   const ids = new Set<string>(FAMILLES.map((f) => f.id))
 
   it('AUCUN fait ne tombe dans une famille non déclarée (sinon il sort du banc en silence)', () => {
@@ -18,7 +18,7 @@ describe('l’inventaire des 73 faits', () => {
     expect(orphelins).toEqual([])
   })
 
-  it('les familles PARTITIONNENT les 73 faits — chacune en porte, aucune n’est vide', () => {
+  it('les familles PARTITIONNENT les 90 faits — chacune en porte, aucune n’est vide', () => {
     const comptes = FAMILLES.map((f) => ({ id: f.id, n: faitsDeFamille(f.id).length }))
     expect(comptes.filter((c) => c.n === 0)).toEqual([]) // pas de section vide à l'écran
     const somme = comptes.reduce((t, c) => t + c.n, 0)
@@ -33,7 +33,9 @@ describe('l’inventaire des 73 faits', () => {
     // se lit et se voit.
     // 82 → 85 le 2026-08-22 : la pêche (`fish_bite`, `fish_caught`, `fish_escaped` — spec peche.md).
     // 85 → 86 le 2026-08-22 : `carcass_cut` (spec depecage.md) — la coupe, sœur du coup de récolte.
-    expect(somme).toBe(86)
+    // 86 → 90 le 2026-08-24 : la refonte de la pêche (`fish_nibble`, `fishing_cancelled`,
+    // `fishing_junk`, `fish_record` — spec peche.md D9-D12).
+    expect(somme).toBe(90)
   })
 
   it('chaque fait DIT ce qu’il raconte — pas son identifiant', () => {
@@ -45,7 +47,7 @@ describe('l’inventaire des 73 faits', () => {
     expect(muets).toEqual([])
   })
 
-  it('l’état publié est bien l’état ACTUEL : 44 voix, 35 silences décidés', () => {
+  it('l’état publié est bien l’état ACTUEL : 53 voix, 37 silences décidés', () => {
     // Un compte, pas un jugement. `sound.test.ts` vérifie séparément que ces 38 sonnent
     // VRAIMENT (et que les 26 se taisent vraiment) — ici on garde seulement la proportion.
     // 34 → 35 le 2026-07-29 : `node_depleted` sort du silence (l'arbre qui tombe craque).
@@ -89,12 +91,17 @@ describe('l’inventaire des 73 faits', () => {
     // SONNE (le raté qui se voit s'entend), `fish_caught` MUET (tombe sur `resource_harvested`).
     // 49 → 50 le 2026-08-22 : `carcass_cut` SONNE (depecage.md) — la coupe est la sœur du coup de
     // récolte, et le maintien n'a pas d'autre retour qu'elle.
-    expect(SONORES.length).toBe(50)
+    // 50 → 53 le 2026-08-24 : `fish_nibble`, `fishing_cancelled`, `fish_record` (peche.md
+    // D9-D12) — le mordillage EST le retour d'information de D11, l'annulation dit pourquoi la
+    // ligne rentre, et le record est le seul fait de pêche qui s'entend de loin.
+    expect(SONORES.length).toBe(53)
     // 33 → 34 le 2026-08-21 : `refugee_rumeur` naît MUET (annales.md R12) — le geste de
     // nourrir parle déjà, le renseignement se lit dans la chronique.
     // 34 → 35 le 2026-08-21 : `cendre_prend` naît MUET (P5a) — la perte se lit et se voit.
     // 35 → 36 le 2026-08-22 : `fish_caught` naît MUET (voir ci-dessus).
-    expect(Object.keys(INVENTAIRE).length - SONORES.length).toBe(36)
+    // 36 → 37 le 2026-08-24 : `fishing_junk` naît MUET — il tombe sur `resource_harvested`
+    // comme `fish_caught` ; deux sons pour un caillou remonté seraient un doublé.
+    expect(Object.keys(INVENTAIRE).length - SONORES.length).toBe(37)
   })
 
   it('PLUS AUCUNE famille n’est entièrement muette, sauf celle qui l’est par décision', () => {

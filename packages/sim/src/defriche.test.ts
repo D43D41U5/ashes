@@ -164,7 +164,11 @@ describe('D1 — la repousse ne se rouvre pas dans l’emprise', () => {
     // + leaf_pile le 2026-08-16 (forêts-vivantes §1) : les feuilles retombent.
     // + les deux coins de pêche le 2026-08-22 (peche.md P6) : le coin se vide et ROUVRE — sur
     //   l'eau, chez soi ou non, on ne défriche pas un lac.
-    expect(vivants).toEqual(['berry_bush', 'champignon', 'fiber_plant', 'fishing_spot_lake', 'fishing_spot_river', 'leaf_pile'])
+    // + la fumerolle le 2026-08-24 : elle n'est PAS vivante, mais elle se recharge et surtout on
+    //   ne la défriche pas — un trou dans le sol ne se débroussaille pas. Le titre dit « le
+    //   vivant » parce que c'était vrai des six premiers ; le CRITÈRE, lui, a toujours été
+    //   `renewable`, et c'est lui qui décide.
+    expect(vivants).toEqual(['berry_bush', 'champignon', 'fiber_plant', 'fishing_spot_lake', 'fishing_spot_river', 'fumerolle', 'leaf_pile'])
   })
 })
 

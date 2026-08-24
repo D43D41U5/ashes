@@ -13,6 +13,7 @@ import {
   HUNT,
   NODE_DEFS,
   noeudDefriche,
+  noeudTombeParLaCendre,
   forageRichness,
   sentinelOf,
   STRUCTURE_HP,
@@ -31,7 +32,7 @@ import {
   type NodeDelta,
   type SnapshotMessage,
 } from '@ashes/sim'
-import { estUnCoinDePeche, feuillageDenude, fireStateAt, hash2, tailleDeBloc, TERRAIN_CLIFF, terrainAt, type SimState, type WorldMap } from '@ashes/sim'
+import { estUnCoinDePeche, feuillageDenude, fireStateAt, hash2, tailleDeBloc, TERRAIN_CLIFF, terrainAt, VENT, type SimState, type WorldMap } from '@ashes/sim'
 import { TransitionsFlore, retardDe } from '../../render/flore-gel'
 import { cliffKey } from '../../render/cliff-art'
 import { cleCarcasse, etatCarcasse } from '../../render/carcasse-art'
@@ -94,6 +95,7 @@ import type { ChuteArbre } from './chute-arbre'
 import type { ReveilFx } from './reveil-fx'
 import { createContactShadow, positionShadow, SHADOW_ALPHA } from './contact-shadow'
 import { riveAt, type RiveField } from '../../render/water-field'
+import { coupeDeNeige, enfoncement } from '../../render/enfoncement'
 
 /** Le nœud VISÉ à portée s'éclaire d'or ; hors de portée, il se grise (G4). */
 const AIM_TINT = 0xffe9a8
@@ -122,13 +124,9 @@ const SEC_TINT = 0xd9cfa6
  *  poudreuse couvre les chevilles (`NEIGE_CHEVILLES_PX` à 1), la profonde les genoux
  *  (`NEIGE_GENOUX_PX` à 2) — constants comme l'eau : la neige a UNE hauteur, chaque corps y
  *  trempe selon sa taille (le lapin y disparaît presque). Bornée à une part du corps. */
-const NEIGE_CHEVILLES_PX = 2
-const NEIGE_GENOUX_PX = 6
-function coupeDeNeige(hauteur: number, displayH: number): number {
-  if (hauteur <= 0.01) return 0
-  const px = hauteur <= 1 ? NEIGE_CHEVILLES_PX * hauteur : NEIGE_CHEVILLES_PX + (NEIGE_GENOUX_PX - NEIGE_CHEVILLES_PX) * (hauteur - 1)
-  return Math.min(px, displayH * 0.45)
-}
+// ⚠ LES PROFONDEURS DE MILIEU (neige, vase, eau) ONT DÉMÉNAGÉ dans `render/enfoncement.ts`
+// le 2026-08-24 : elles se composent, donc elles se prouvent ensemble — et ce module-ci n'est
+// pas testable en Node (il tient des sprites).
 /**
  * LE ROUGE DE LA DÉMOLITION — plus CHAUD que le rouge d'interface du fantôme refusé (#d9614f),
  * et il le faut : il se pose sur du BOIS, qui est déjà orange.
@@ -483,6 +481,10 @@ export class SnapshotView {
   glaceAt: ((tx: number, ty: number) => boolean) | null = null
   /** La hauteur de neige en un point, continue dans [0, 2] (`GelLayer.hauteurNeige`). */
   hauteurNeigeAt: ((x: number, y: number) => number) | null = null
+  /** LE SDF DU MARAIS (peche.md R13) — la distance signée à son bord, comme la rive de l'eau.
+   *  Un CHAMP, pas un booléen : « s'enfoncer » est une pente, et une pente se lit sur une
+   *  distance continue. Injecté par WorldScene, qui tient la carte. */
+  vase: RiveField | null = null
   /** La flore de la tuile est-elle gelée ? Même source (`GelLayer.floreGeleeAt`). */
   floreGeleeAt: ((tx: number, ty: number) => boolean | null) | null = null
   /** Les bascules gel/dégel des nœuds gélifs (voir `render/flore-gel.ts`). */
@@ -676,6 +678,9 @@ export class SnapshotView {
    */
   private carte: WorldMap | null = null
   private worldSeed = 0
+  /** Les âges des foyers de cendre du dernier snapshot — le rendu APPLIQUE R13 avec (voir
+   *  `noeudTombeParLaCendre`). Vide tant qu'aucun snapshot n'est arrivé : rien ne tombe alors. */
+  cendreAge: readonly number[] = []
   /** REPOUSSE EN COURS (spec recolte-vivante D2) : un nœud épuisé, avec la fenêtre
    * `[since, until]` en TICKS reçue au delta (`regrowAt`). Le rendu en tire la
    * fraction de croissance (pousse qui grandit / minéral qui se reforme), au lieu du
@@ -730,6 +735,9 @@ export class SnapshotView {
   /** LE SANG AU SOL (spec chasse C9), LE VENT (C17), LES PILES (C18). */
   blood: SnapshotMessage['blood'] = []
   wind: SnapshotMessage['wind'] = { x: 1, y: 0 }
+  /** LA FORCE DU VENT au centre (`vent.md` V3) — le client la LIT désormais au lieu de
+   *  l'inventer. `VentLisse` la consomme, le cadran du HUD la montre. */
+  windForce: SnapshotMessage['windForce'] = VENT.AMBIANT
   /** LE FRONT MÉTÉO EN COURS (spec meteo.md), ou rien — le RECORD D'ÉLECTION, patron `wind`.
    *  Tout le reste (bande, gradient, éclairs) se recalcule du tick par les fonctions pures. */
   meteo: SnapshotMessage['meteo'] = null
@@ -1010,10 +1018,15 @@ export class SnapshotView {
     const p = actorPlacement(x, y, footprint, TILE_PX, BALANCE.AVATAR_HITBOX_DEPTH_TILES)
     const feetY = y + BALANCE.AVATAR_HITBOX_DEPTH_TILES / 2
     const lift = this.warp?.lift(x, feetY) ?? 0
-    // ═══ L'IMMERSION AUX GENOUX (spec eau-vivante R4) — le corps ENTRE dans l'eau ═══
-    // CONTINUE (« feel = pente continue ») : 0 pile au trait de rive, pleine à 0,6 tuile
-    // d'avancée — le champ de rive (le même que le shader) donne la profondeur d'avancée.
-    let immersion = 0
+    // ═══ DANS QUOI LE CORPS ENTRE — eau, neige, vase, terre (`render/enfoncement.ts`) ═══
+    //
+    // La composition a QUITTÉ cette méthode le 2026-08-24 : elle mêlait quatre milieux, deux
+    // lois et trois portes au milieu du code qui pousse des sprites, et ses transitions étaient
+    // sales (la vase descendait d'un coup en franchissant une arête). Elle vit maintenant dans
+    // un module PUR, prouvé continu sur tout le domaine en Node — pas à l'œil sur une capture.
+    //
+    // Ici ne reste que ce qui demande la SCÈNE : lire les deux SDF et le manteau, et le cas de
+    // la glace.
     let dRive = -99
     if (this.rive) {
       dRive = riveAt(this.rive, x, feetY)
@@ -1023,32 +1036,21 @@ export class SnapshotView {
       // l'acteur « plongeait » dans un lac pris parce que seule la rive était lue (grief
       // d'Alexis, 2026-08-22). `dRive` passe NÉGATIF pour que la semelle compte comme sèche.
       if (dRive > 0 && this.glaceAt?.(Math.floor(x), Math.floor(feetY)) === true) dRive = -dRive
-      if (dRive > 0) immersion = Math.min(1, dRive / 0.6)
     }
     const displayH = crouch ? p.displayH * CROUCH_FACTOR : p.displayH
-    // La coupe est en px MONDE constants (l'eau a UNE profondeur — ~7 px au plein) : le
-    // lapin y disparaît presque, le cerf y trempe les pattes, l'avatar y entre aux genoux —
-    // la taille de chacun raconte la profondeur. L'eau est rendue SOUS les acteurs
-    // (WATER_DEPTH < 0) : la découpe RÉVÈLE la nappe, aucun raccord à faire.
-    const coupeEau = immersion > 0.02 ? Math.min(7 * immersion, displayH * 0.45) : 0
-    // ═══ LA NEIGE MONTE SUR LES PIEDS (gel.md G9) — une couche de PLUS sur le sol ═══
-    // Alexis : « elle apporte une hauteur supplémentaire… ne devrait pas faire descendre le
-    // personnage ». Donc : la même DÉCOUPE que l'eau (le manteau est rendu sous les acteurs, la
-    // découpe le révèle), mais SANS descente — le corps reste à sa place, la neige le recouvre
-    // aux chevilles (poudreuse) puis aux genoux (profonde) — et l'ombre de contact REMONTE de
-    // la même hauteur : elle se pose sur la surface de la neige, pas sous elle.
-    const coupeNeige = immersion > 0.02 ? 0 : coupeDeNeige(this.hauteurNeigeAt?.(x, feetY) ?? 0, displayH)
-    // ═══ ET LE CORPS QUI SORT DE TERRE (spec `cendreux.md` R21/R22) ═══
-    // Le MAX, jamais la somme : l'eau et la terre décrivent toutes deux « à partir d'où le
-    // corps est caché », pas deux enfouissements à cumuler. Les additionner aurait fait
-    // disparaître sous le sol un Cendreux qui sort les pieds dans une mare.
-    // Et la coupe de terre est une FRACTION de la hauteur, pas des pixels constants comme
-    // l'eau : l'eau a UNE profondeur (chaque bête y trempe selon sa taille), la terre les
-    // recouvre TOUS entièrement — c'est ce qui doit rester vrai du lapin au cerf.
-    const coupe = Math.max(coupeEau, coupeNeige, displayH * enfoui)
-    // Le corps descend de la coupe d'EAU ou de TERRE (+2 px d'enfoncement) : la ligne de
-    // flottaison est aux pieds. Jamais de la neige : elle monte, lui reste.
-    const descente = Math.max(coupeEau, displayH * enfoui)
+    const milieux = enfoncement({
+      dRive,
+      dVase: this.vase ? riveAt(this.vase, x, feetY) : -99,
+      hauteurNeige: this.hauteurNeigeAt?.(x, feetY) ?? 0,
+      enfoui,
+      displayH,
+    })
+    const immersion = milieux.immersion
+    const coupe = milieux.coupe
+    const descente = milieux.descente
+    // L'OMBRE NE REMONTE QUE POUR CE QUI MONTE : la neige. Sur un sol qui cède (eau, vase),
+    // le corps descend et l'ombre reste au sol.
+    const coupeNeige = coupeDeNeige(this.hauteurNeigeAt?.(x, feetY) ?? 0, displayH)
     sprite.setPosition(p.px, p.py - lift + descente + 2 * immersion)
     sprite.setDepth(p.depth)
     sprite.setDisplaySize(p.displayW, displayH)
@@ -1068,6 +1070,8 @@ export class SnapshotView {
     const shadow = sprite.getData('shadow') as Phaser.GameObjects.Image | undefined
     if (shadow) {
       // SUR LA NEIGE : l'ombre remonte de la hauteur du manteau (le gap de l'art, pour une fois).
+      // ⚠ LA VASE N'Y ENTRE PAS : l'ombre ne remonte que pour ce qui MONTE (la neige). Sur un
+      // sol qui cède, le corps descend et l'ombre reste au sol — comme dans l'eau.
       positionShadow(shadow, p.px, p.py, p.displayW, p.depth, coupeNeige)
       // ELLE SE FOND AUSSI SOUS TERRE. Sans `enfoui` ici, un corps encore aux trois quarts
       // enfoui projetait l'ombre de contact d'un CORPS ENTIER autour du tertre — une ombre
@@ -1748,7 +1752,6 @@ export class SnapshotView {
    * n'aura pas de delta `stock→0` à venir : on amorce sa repousse ici pour l'animer
    * plutôt que le montrer plein à tort. */
   setNodes(nodes: ResourceNode[]): void {
-    this.tousLesNoeuds = nodes
     this.reindexer(nodes)
     this.depleted.clear()
     for (const n of nodes) {
@@ -1792,31 +1795,6 @@ export class SnapshotView {
     this.versionCouvert++
   }
 
-  /**
-   * LES NŒUDS QUE LA CENDRE A MANGÉS — et le client le DÉCOUVRE, on ne le lui dit pas.
-   *
-   * LE TROU QU'ON BOUCHE, et il était béant. Le protocole envoie les nœuds UNE fois, au `ready`,
-   * puis ne transmet que des changements de STOCK. Son commentaire l'assumait : *« le jeu de nœuds
-   * est stable au runtime : seul `stock` bouge, jamais d'ajout/retrait »*. Le front de cendre a
-   * rendu cette phrase FAUSSE — `/sim` détruisait 335 902 nœuds et **le client n'en savait rien**.
-   * Il continuait à dessiner des arbres dans un pré carbonisé, et à s'y cogner. Mesuré au smoke
-   * test : « jour 1 → 58, nœuds 335 902 → 335 902 ». La mécanique était morte à l'écran.
-   *
-   * ON NE TRANSMET RIEN. Le client a `map.cendre` (statique) et le tick : il RECALCULE le front,
-   * exactement comme la sim, et laisse tomber ce qui a brûlé. Zéro octet sur le fil, zéro version
-   * de protocole, zéro état à synchroniser — c'est toute la vertu du modèle, et il fallait juste
-   * s'en souvenir jusqu'ici.
-   */
-  private tousLesNoeuds: ResourceNode[] = []
-  private dernierFront = -Infinity
-
-  majCendre(champ: readonly number[] | undefined, width: number, front: number): void {
-    if (!champ || front <= this.dernierFront) return
-    this.dernierFront = front
-    const vivants = this.tousLesNoeuds.filter((n) => (champ[n.ty * width + n.tx] ?? Infinity) >= front)
-    if (vivants.length === this.nodes.length) return
-    this.reindexer(vivants)
-  }
 
   /**
    * Applique les changements de nœud reçus par tick (récolte, repousse, DÉRIVE).
@@ -1829,6 +1807,20 @@ export class SnapshotView {
    */
   private applyNodeDeltas(deltas: NodeDelta[], now: number): void {
     for (const d of deltas) {
+      // ═══ UN NŒUD NEUF NAÎT ICI (spec `cendre.md` — les fumerolles ; `brume.md` — le filon) ═══
+      //
+      // ⚠ LA LIGNE `if (!n) continue` CI-DESSOUS EST UN PIÈGE ANCIEN : la liste complète des
+      // nœuds ne part qu'UNE fois (message `ready`), donc tout nœud né APRÈS l'amorce voyait son
+      // delta jeté en silence. **Le filon de la Brume portait ce défaut depuis sa naissance** :
+      // il se posait dans la sim, et personne ne pouvait ni le voir ni le miner. Depuis, l'hôte
+      // marque ces deltas-là (`neuf`), et on crée le nœud au lieu de l'ignorer.
+      if (d.neuf !== undefined && !this.nodeById.has(d.id) && d.tx !== undefined && d.ty !== undefined) {
+        const ne: ResourceNode = { id: d.id, type: d.neuf, tx: d.tx, ty: d.ty, stock: d.stock, regrowAt: d.regrowAt ?? 0 }
+        this.nodes.push(ne)
+        this.nodeById.set(ne.id, ne)
+        this.nodeByTile.set(ne.tx * NODE_TILE_STRIDE + ne.ty, ne)
+        continue
+      }
       const n = this.nodeById.get(d.id)
       if (!n) continue
       // La CANOPÉE bouge ? Un arbre qui tombe à 0 (abattage/dérive) ou qui repousse
@@ -1906,10 +1898,15 @@ export class SnapshotView {
         if (n === undefined) continue
         // DÉFRICHÉ : la sim ne le fera jamais repousser (`defriche.ts`), donc on ne le
         // dessine plus — le sol est dégagé, et c'est ce que le joueur vient de faire. Le
-        // client APPLIQUE la règle, on ne la lui transmet pas : même leçon que la Cendre
-        // (`majCendre`), et c'est ce qui garantit qu'il ne reste pas un arbre fantôme
-        // contre lequel la prédiction locale irait se cogner.
+        // client APPLIQUE la règle, on ne la lui transmet pas, et c'est ce qui garantit qu'il
+        // ne reste pas un arbre fantôme contre lequel la prédiction locale irait se cogner.
         if (noeudDefriche(this.villages, n)) continue
+        // TOMBÉ AVEC LA CENDRE (spec `cendre.md` R13) : même leçon, même patron que le défrichage
+        // ci-dessus — le protocole ne transmet jamais la disparition d'un nœud, seulement des
+        // stocks. Sans cette ligne, la futaie morte restait DEBOUT sur la cendre (constaté au
+        // navigateur), et la prédiction locale se serait cognée à des fantômes.
+        if (this.carte && noeudTombeParLaCendre(this.carte, this.cendreAge, this.worldSeed, n,
+          NODE_DEFS[n.type]?.vivant === true)) continue
         // LE GROS BOIS EST UN ARBRE : deux sprites (tronc + houppier), un décalage dans sa tuile,
         // et le houppier s'efface autour du joueur. Sans cette ligne, il naissait sans houppier —
         // un fût nu au milieu d'une futaie, ce qui est exactement ce qu'il n'est pas.
