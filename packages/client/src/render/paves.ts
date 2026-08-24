@@ -154,6 +154,28 @@ export const MANTEAU = 103
 export const MANTEAU_PROFOND = 104
 
 /**
+ * ═══ LES TROIS VISAGES DU NIVEAU D'EAU (spec `saisons.md` S10) ═══
+ *
+ * Le niveau d'eau est un scalaire SIGNÉ et il change la carte dans les deux sens. Il se peint
+ * par la même couche que la glace, pour la même raison : c'est un état de tuile DÉRIVÉ, pas une
+ * tuile qui bouge. Comme la glace, ce sont des SURFACES — l'eau n'a pas d'épaisseur, la vase
+ * non plus.
+ *
+ *   • `ASSEC` — la mare partie, le gué en poussière (`estAsseche`). Le fond d'eau mis à nu :
+ *     une vase claire, craquelée. Rang 0 comme la glace : la tuile EST de l'eau sur la carte,
+ *     donc la BERGE du sol a déjà tracé son bord — le manteau n'a qu'à couvrir la surface.
+ *   • `GUE_FERME` — l'eau peu profonde devenue infranchissable sous la crue (`estGueBloque`).
+ *     **C'est le seul des trois qui BLOQUE**, donc le seul que G5 rend obligatoire : « on ne
+ *     s'engage jamais sur la glace par surprise » vaut à l'identique pour un gué qui se ferme.
+ *     Une eau trouble et SOMBRE — le contraire du haut-fond clair qu'on traversait hier.
+ *   • `CRUE` — la terre passée sous l'eau (`estInonde`). Elle, elle est sur du MARCHABLE : rien
+ *     n'a tracé son bord, elle porte donc son propre débord. Rang 1, au-dessus du dessous.
+ */
+export const ASSEC = 105
+export const GUE_FERME = 106
+export const CRUE = 107
+
+/**
  * L'ORDRE DE RECOUVREMENT — qui déborde sur qui. Plus haut = dessus. Un terrain absent vaut 0
  * (il ne recouvre rien). Les STRUCTURELS ne sont pas dans la table : `prioriteDe` leur rend −1.
  *
@@ -203,6 +225,14 @@ export const SURFACES: Record<number, number> = {
   [DESSOUS]: 0,
   [GLACE_GUE]: 0,
   [GLACE_LAC]: 0,
+  // L'ASSEC et le GUÉ FERMÉ tombent sur des tuiles qui SONT de l'eau à la carte : la berge du
+  // sol a déjà tracé leur bord (R13), ils n'ont qu'à couvrir. Rang 0, comme la glace.
+  [ASSEC]: 0,
+  [GUE_FERME]: 0,
+  // LA CRUE, elle, tombe sur de la TERRE — rien ne l'y borde. Rang 1 : elle déborde sur le
+  // dessous d'une frange, comme le marais glisse sur l'eau. Une surface : frange seule, ni
+  // liseré ni ombre — une nappe d'eau n'a pas d'épaisseur.
+  [CRUE]: 1,
 }
 
 /** Les terrains STRUCTURELS : jamais propriétaires par débordement, transparents dans le chunk. */

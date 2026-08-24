@@ -58,12 +58,17 @@
  */
 import Phaser from 'phaser'
 import {
+  EAU,
   TERRAIN_DEEP_WATER,
   TERRAIN_SHALLOW_WATER,
+  estAsseche,
   estGele,
+  estGueBloque,
+  estInonde,
   floreGelee,
   gelPossible,
   neigeAuSol,
+  niveauDEau,
   niveauPourCouverture,
   terrainAt,
   type SimState,
@@ -72,8 +77,9 @@ import {
 import { GROUND_MAP_DEPTH, TILE_PX } from '../../render/framing'
 import { GRAIN_CELLS, grainFacteur } from '../../render/grain-sol'
 import {
-  TUILE_GLACE_GUE, TUILE_GLACE_LAC, TUILE_NEIGE, TUILE_NEIGE_PROFONDE, TUILE_NUE, TUILE_STRUCTURELLE,
-  cuireManteau, trameDeGlace, tuileDeNiveau, type EtatTuile,
+  TUILE_ASSEC, TUILE_CRUE, TUILE_GLACE_GUE, TUILE_GLACE_LAC, TUILE_GUE_FERME,
+  TUILE_NEIGE, TUILE_NEIGE_PROFONDE, TUILE_NUE, TUILE_STRUCTURELLE,
+  cuireManteau, trameDeCrue, trameDeGlace, trameDeVase, tuileDeNiveau, type EtatTuile,
 } from '../../render/manteau'
 import { PAVE, PAVE_PX, estStructurel } from '../../render/paves'
 import { poserChunk } from './pave-layer'
@@ -127,6 +133,8 @@ export class GelLayer {
   private frame = 0
   private readonly trameNeige: Float32Array
   private readonly trameGlace = trameDeGlace()
+  private readonly trameVase = trameDeVase()
+  private readonly trameCrue = trameDeCrue()
   private etat: SimState | null = null
   private glacePossible = false
 
@@ -314,6 +322,23 @@ export class GelLayer {
     const ty0 = cy * N - 1
     let change = false
     let neige = 0, glace = 0, glaceProfonde = 0, somme = 0, max = 0
+
+    // ═══ LE NIVEAU D'EAU SE LIT UNE FOIS PAR CHUNK, JAMAIS PAR TUILE (spec `saisons.md` S10) ═══
+    //
+    // `niveauDEau` REMBOBINE HUIT CYCLES d'élection météo pour connaître l'aridité. Le payer
+    // par tuile, c'est 324 rembobinages par signature — sur le chemin qui coûte déjà le plus
+    // cher de la couche (`SIGNATURES_PAR_FRAME` vaut 1 précisément pour ça). Il est GLOBAL à
+    // la vallée par construction (S10 : « l'aridité est globale, la conséquence est locale »),
+    // donc une lecture suffit, et on la passe en `niveauConnu` aux trois prédicats.
+    //
+    // ⚠ ET LES DEUX PORTES SONT ICI, pas dans la boucle. Les prédicats de `/sim` court-circuitent
+    // sur `crueGlobale <= 0` quand on ne leur passe PAS de niveau — en le passant, on désarme
+    // leur sortie et on paierait leur corps sur chaque tuile, 363 jours sur 365 pour rien.
+    const niveauEau = niveauDEau(etat)
+    const peutAssecher = niveauEau <= -EAU.SEUIL_ASSECHEMENT
+    const peutInonder = niveauEau > 0
+    const peutFermerLesGues = niveauEau >= EAU.SEUIL_GUE_BLOQUE
+
     for (let ly = 0; ly < L; ly++) {
       for (let lx = 0; lx < L; lx++) {
         const tx = tx0 + lx
@@ -327,15 +352,28 @@ export class GelLayer {
           const eau = terrain === TERRAIN_SHALLOW_WATER || terrain === TERRAIN_DEEP_WATER
           if (estStructurel(terrain)) e = TUILE_STRUCTURELLE
           else if (eau) {
-            // LA GLACE : une eau gelée est de la glace, pas de l'eau enneigée — et la neige ne
-            // la couvre jamais (G5 : la glace doit se VOIR, voir `render/manteau.ts`).
+            // LA GLACE D'ABORD : elle l'emporte sur les régimes d'eau, et sans conflit possible
+            // — une eau prise par la glace est un Grand Froid, où la crue ne se tire jamais
+            // (elle n'est qu'un caractère d'Éclosion) et où l'aridité est au plus bas.
+            // Une eau gelée est de la glace, pas de l'eau enneigée — et la neige ne la couvre
+            // jamais (G5 : la glace doit se VOIR, voir `render/manteau.ts`).
             e = this.glacePossible && estGele(etat, tx, ty)
               ? (terrain === TERRAIN_DEEP_WATER ? TUILE_GLACE_LAC : TUILE_GLACE_GUE)
+              // LE GUÉ FERMÉ AVANT L'ASSEC, et ce n'est pas de la prudence : c'est le seul des
+              // trois régimes qui BLOQUE le pas, donc le seul que G5 rend obligatoire. Les deux
+              // sont d'ailleurs exclusifs (un niveau ne peut être à la fois ≥ +0,3 et ≤ −0,6).
+              : peutFermerLesGues && estGueBloque(etat, tx, ty, niveauEau) ? TUILE_GUE_FERME
+              : peutAssecher && estAsseche(etat, tx, ty, niveauEau) ? TUILE_ASSEC
               : TUILE_NUE
           } else {
             couverture = neigeAuSol(etat, tx, ty)
             // LE NIVEAU est la loi de la sim (gel.md G9) : ce qu'on peint est ce qui ralentit.
             e = tuileDeNiveau(niveauPourCouverture(couverture, tx, ty))
+            // LA CRUE NE SE PEINT QUE SOUS LA NEIGE ABSENTE : là où il y a de la poudreuse,
+            // c'est elle qu'on voit. Le cas ne se présente pas dans le jeu (la crue est un
+            // caractère d'Éclosion, la neige un fait de Grand Froid) — mais un `debug_meteo`
+            // peut les croiser, et une nappe peinte SOUS un manteau serait un rendu faux.
+            if (e === TUILE_NUE && peutInonder && estInonde(etat, tx, ty, niveauEau)) e = TUILE_CRUE
             gele = floreGelee(etat, tx, ty) ? 1 : 0
           }
         }
@@ -380,7 +418,11 @@ export class GelLayer {
     let vide = true
     for (let i = 0; i < L * L && vide; i++) vide = c.etats[i]! <= TUILE_NUE
     if (vide) { this.sonde.recuissons++; this.sonde.msRecuisson = performance.now() - t0; return }
-    const cuit = cuireManteau({ cx, cy, etatAt, trameNeige: this.trameNeige, trameGlace: this.trameGlace })
+    const cuit = cuireManteau({
+      cx, cy, etatAt,
+      trameNeige: this.trameNeige, trameGlace: this.trameGlace,
+      trameVase: this.trameVase, trameCrue: this.trameCrue,
+    })
     const cle = `gel-${this.suffixe}-${cx}-${cy}`
     // Le manteau cuit par `cuireChunk` : ses tampons portent le même DÉBORD d'un pixel, et ses
     // images se posent donc du même décalage. Sans ça, la neige serait décalée d'un pixel du sol.

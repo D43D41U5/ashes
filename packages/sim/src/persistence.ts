@@ -301,6 +301,13 @@ export function deserializeCarte(text: string): CarteSauvee {
   if (c.profondeur !== undefined && (!Array.isArray(c.profondeur) || c.profondeur.length !== attendu)) {
     throw new Error(`Champ de profondeur tronqué : ${Array.isArray(c.profondeur) ? c.profondeur.length : 'absent'} pour ${attendu} tuiles`)
   }
+  // `distEau` (`saisons.md` S10) est optionnelle (carte d'avant les saisons) — mais si elle est
+  // là, elle couvre toute la carte. Même loi que les deux précédentes, et le silence y serait
+  // pire : `distanceALEau` rend **0** hors du tableau, ce qui ne jette pas — ça rend la crue
+  // FAUSSE, partout, sans un mot. Tronquée, on jette.
+  if (c.distEau !== undefined && (!Array.isArray(c.distEau) || c.distEau.length !== attendu)) {
+    throw new Error(`Champ de distance à l'eau tronqué : ${Array.isArray(c.distEau) ? c.distEau.length : 'absent'} pour ${attendu} tuiles`)
+  }
   if (typeof env.seed !== 'number') {
     throw new Error("Carte illisible : elle ne dit pas de quel monde elle est (seed absente)")
   }

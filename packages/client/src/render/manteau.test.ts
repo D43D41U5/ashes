@@ -8,17 +8,23 @@
 import { describe, expect, it } from 'vitest'
 import { PAVE, PAVE_COTE_BAVE, PAVE_PX, prioriteDe } from './paves'
 import {
-  NEIGE_PAVE, TUILE_GLACE_GUE, TUILE_GLACE_LAC, TUILE_NEIGE, TUILE_NEIGE_PROFONDE, TUILE_NUE, TUILE_STRUCTURELLE,
-  cuireManteau, trameDeGlace, tuileDeNiveau, type EtatTuile,
+  EAU_PAVE, NEIGE_PAVE, TUILE_ASSEC, TUILE_CRUE, TUILE_GLACE_GUE, TUILE_GLACE_LAC, TUILE_GUE_FERME,
+  TUILE_NEIGE, TUILE_NEIGE_PROFONDE, TUILE_NUE, TUILE_STRUCTURELLE,
+  couleurDuManteau, cuireManteau, terrainDuManteau,
+  trameDeCrue, trameDeGlace, trameDeVase, tuileDeNiveau, type EtatTuile,
 } from './manteau'
-import { DESSOUS, GLACE_GUE, GLACE_LAC, MANTEAU, MANTEAU_PROFOND } from './paves'
+import { ASSEC, CRUE, DESSOUS, GLACE_GUE, GLACE_LAC, GUE_FERME, MANTEAU, MANTEAU_PROFOND } from './paves'
 
 const N = PAVE.CHUNK
 const S = N * PAVE_PX
 const P = PAVE_PX
 
 function cuire(etatAt: (tx: number, ty: number) => EtatTuile) {
-  return cuireManteau({ cx: 0, cy: 0, etatAt, trameNeige: null, trameGlace: trameDeGlace() })
+  return cuireManteau({
+    cx: 0, cy: 0, etatAt,
+    trameNeige: null, trameGlace: trameDeGlace(),
+    trameVase: trameDeVase(), trameCrue: trameDeCrue(),
+  })
 }
 /** Le pixel (x, y) DU CHUNK : le tampon porte le débord (`PAVE.BAVE`) tout autour — les gardes
  *  se lisent en coordonnées de chunk, le débord est une affaire de pose. */
@@ -152,10 +158,99 @@ describe('le manteau cuit', () => {
     }
   })
 
+  // ═══════════════ LE NIVEAU D'EAU (spec `saisons.md` S10) ═══════════════
+
+  it('les trois régimes d’eau ont un terrain ET une couleur — la table est exhaustive par construction', () => {
+    // La garde qui compte : un état de plus dans `EtatTuile` sans peinture est un état
+    // INVISIBLE, et c'est exactement la panne qu'on vient de réparer (le niveau d'eau vivait
+    // dans /sim depuis le 2026-08-23 sans qu'un pixel en dépende). On énumère donc TOUS les
+    // états — le compilateur tient la liste, pas moi.
+    const TOUS: EtatTuile[] = [
+      TUILE_STRUCTURELLE, TUILE_NUE, TUILE_NEIGE, TUILE_NEIGE_PROFONDE,
+      TUILE_GLACE_GUE, TUILE_GLACE_LAC, TUILE_ASSEC, TUILE_GUE_FERME, TUILE_CRUE,
+    ]
+    for (const e of TOUS) {
+      const t = terrainDuManteau(e)
+      // Seuls le nu (transparent) et le structurel (le bake reste maître) n'ont pas de couleur.
+      if (e === TUILE_NUE || e === TUILE_STRUCTURELLE) continue
+      expect(t, `l'état ${e} a un terrain virtuel`).not.toBe(DESSOUS)
+      expect(couleurDuManteau(t), `l'état ${e} a une couleur`).toBeGreaterThan(0)
+    }
+    expect(terrainDuManteau(TUILE_ASSEC)).toBe(ASSEC)
+    expect(terrainDuManteau(TUILE_GUE_FERME)).toBe(GUE_FERME)
+    expect(terrainDuManteau(TUILE_CRUE)).toBe(CRUE)
+  })
+
+  it('l’assec et le gué fermé sont bordés par la BERGE du sol (rang 0) ; la crue porte son propre bord (rang 1)', () => {
+    // La ligne de partage est GÉOMÉTRIQUE, pas esthétique : l'assec et le gué fermé tombent sur
+    // des tuiles qui SONT de l'eau à la carte, donc la berge du sol a déjà tracé leur contour ;
+    // la crue tombe sur du MARCHABLE, où rien ne la borde. Se tromper de rang ici, c'est soit
+    // un double trait, soit une couture nue — le défaut qu'a connu le marais.
+    expect(prioriteDe(ASSEC)).toBe(prioriteDe(GLACE_GUE))
+    expect(prioriteDe(GUE_FERME)).toBe(prioriteDe(GLACE_GUE))
+    expect(prioriteDe(CRUE)).toBeGreaterThan(prioriteDe(DESSOUS))
+  })
+
+  it('LE GUÉ FERMÉ SE VOIT (contrat G5) : il est franchement plus sombre que tout ce qui se traverse', () => {
+    // « On ne s'engage jamais sur la glace par surprise » vaut à l'identique pour un gué que la
+    // crue a fermé — c'est le SEUL des trois régimes qui bloque le pas. La garde est un écart
+    // MESURÉ sur la luminance, pas un avis sur la teinte : il doit se distinguer du gué GELÉ
+    // (qu'on traverse) et de la crue (qu'on patauge).
+    const lum = (c: number) => 0.2126 * ((c >> 16) & 0xff) + 0.7152 * ((c >> 8) & 0xff) + 0.0722 * (c & 0xff)
+    expect(lum(EAU_PAVE.GUE_FERME)).toBeLessThan(lum(NEIGE_PAVE.GLACE_GUE) - 40)
+    expect(lum(EAU_PAVE.GUE_FERME)).toBeLessThan(lum(EAU_PAVE.CRUE) - 25)
+    // Et l'assec part dans l'autre sens : le sec est CHAUD (R > B), l'eau est froide (B > R).
+    expect((EAU_PAVE.ASSEC >> 16) & 0xff).toBeGreaterThan(EAU_PAVE.ASSEC & 0xff)
+    expect(EAU_PAVE.GUE_FERME & 0xff).toBeGreaterThan((EAU_PAVE.GUE_FERME >> 16) & 0xff)
+  })
+
+  it('la mare partie est une surface opaque et craquelée, sans frange — la berge du sol l’encadre déjà', () => {
+    const assecAGauche = (tx: number): EtatTuile => (tx < 8 ? TUILE_ASSEC : TUILE_NUE)
+    const { sol, surplomb } = cuire(assecAGauche)
+    for (let y = 0; y < S; y++) {
+      for (let x = 0; x < 8 * P; x++) expect(px(sol, x, y)[3], `vase opaque en (${x},${y})`).toBe(255)
+      for (let x = 8 * P; x < S; x++) expect(px(sol, x, y)[3], `sol nu transparent en (${x},${y})`).toBe(0)
+    }
+    if (surplomb) for (let i = 3; i < surplomb.length; i += 4) expect(surplomb[i]).toBe(0)
+    // LA CRAQUELURE : des cellules plus SOMBRES (l'inverse du givre), et la vase reste chaude.
+    let sombres = 0
+    for (let y = 0; y < 8 * P; y++) for (let x = 0; x < 8 * P; x++) {
+      const c = px(sol, x, y)
+      expect(c[0], `la vase reste chaude en (${x},${y})`).toBeGreaterThan(c[2])
+      if (c[0] < R(EAU_PAVE.ASSEC) - 4) sombres++
+    }
+    expect(sombres / (64 * P * P)).toBeGreaterThan(0.2)
+    expect(sombres / (64 * P * P)).toBeLessThan(0.5)
+  })
+
+  it('la crue déborde sur la terre d’une frange SEULE : pas de liseré, pas d’ombre — une nappe n’a pas d’épaisseur', () => {
+    const crueEnHaut = (_tx: number, ty: number): EtatTuile => (ty < 8 ? TUILE_CRUE : TUILE_NUE)
+    const { sol, surplomb } = cuire(crueEnHaut)
+    expect(surplomb).not.toBeNull()
+    const bord = 8 * P
+    for (let x = 0; x < S; x++) {
+      // Le corps de la nappe est opaque…
+      for (let y = 0; y < bord; y++) expect(px(sol, x, y)[3], `nappe opaque en (${x},${y})`).toBe(255)
+      // … et elle déborde d'une frange d'eau, dans le SURPLOMB (la terre du dessous est peinte
+      // par le sol, pas par nous — on passe au-dessus, comme la neige sur le sol nu).
+      let y = bord
+      let frange = 0
+      while (y < S && px(surplomb, x, y)[3] === 255) { frange++; y++ }
+      expect(frange, `frange de crue en x=${x}`).toBeGreaterThanOrEqual(PAVE.FRANGE_MIN)
+      expect(frange, `frange de crue en x=${x}`).toBeLessThanOrEqual(PAVE.FRANGE_MAX)
+      // ET RIEN SOUS ELLE : ni liseré sombre, ni ombre portée. Une surface ne pèse pas.
+      for (; y < S; y++) expect(px(surplomb, x, y)[3], `rien sous la nappe en (${x},${y})`).toBe(0)
+    }
+  })
+
+  // DEUX CUISSONS PLEINES d'un chunk de 16 × 16 tuiles : 3,5 s sur une machine au repos
+  // (mesuré le 2026-08-24, après l'ajout des trois régimes d'eau), et le défaut par
+  // vitest est de 5 s — assez pour tomber dès que le reste de la suite tourne à côté.
+  // On donne la marge : ce test affirme le DÉTERMINISME, pas une vitesse.
   it('la cuisson est déterministe', () => {
     const a = cuire(neigeEnHaut)
     const b = cuire(neigeEnHaut)
     expect(a.sol).toEqual(b.sol)
     expect(a.surplomb).toEqual(b.surplomb)
-  })
+  }, 60_000)
 })

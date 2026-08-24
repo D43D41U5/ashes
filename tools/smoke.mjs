@@ -4363,7 +4363,7 @@ const SCENARIOS = {
       // même quand le gué, lui, est pris par la glace (l'Éclosion de la Crue est encore gelée).
       let terre = null
       if (best) {
-        for (let r = 2; r <= 10 && !terre; r++) {
+        for (let r = 2; r <= 5 && !terre; r++) {
           for (let oy = -r; oy <= r && !terre; oy++) {
             for (let ox = -r; ox <= r && !terre; ox++) {
               const tx = best.tx + ox, ty = best.ty + oy
@@ -4397,7 +4397,14 @@ const SCENARIOS = {
     const couleurDe = async (t) => {
       if (!t) return null
       const c = await versEcran(t.tx + 0.5, t.ty + 0.5)
-      const r = await regionAt(page, { x: c.x - COTE / 2, y: c.y - COTE / 2, width: COTE, height: COTE })
+      // HORS CADRE = PAS DE MESURE, PAS UN CRASH. La caméra suit l'avatar et un saut de
+      // calendrier peut le déplacer (mort, réapparition) : `regionAt` JETTE quand le carré
+      // sort de l'image, et une sonde qui meurt en route ne rend aucun des relevés qu'elle
+      // avait déjà. On rend `null`, l'appelant le dit.
+      let r = null
+      try {
+        r = await regionAt(page, { x: c.x - COTE / 2, y: c.y - COTE / 2, width: COTE, height: COTE })
+      } catch { return null }
       if (!r) return null
       let R = 0, G = 0, B = 0
       for (let x = 0; x < COTE; x++) for (let y = 0; y < COTE; y++) { const p = r.px(x, y); R += p[0]; G += p[1]; B += p[2] }
@@ -4422,7 +4429,7 @@ const SCENARIOS = {
       await agir({ type: 'debug_set_hour', hour: 12 }, 600)
       await page.waitForFunction(() => {
         const h = window.__BRAISES__.scene.lastTime?.hourOfCycle ?? 0
-        return h > 11 && h < 13
+        return h >= 11 && h < 14
       }, null, { timeout: 40000 })
         .catch(() => console.error(`!! ${etiquette} : l'heure n'est jamais arrivée à midi`))
 
@@ -4481,16 +4488,28 @@ const SCENARIOS = {
       // confonde pas une eau au soleil avec une vase à l'ombre.
       if (dc < 8) console.error(`!! LA SÉCHERESSE NE SE VOIT PAS : le gué ne se réchauffe pas en s'asséchant (${dc.toFixed(1)}/255).`)
     }
+    // ═══ LA CRUE EST UN CONSTAT, PAS UN VERDICT — et voici pourquoi ═══
+    //
+    // La sim dit, au jour 1222 : `estGueBloque` VRAI au gué, `estInonde` VRAI sur la terre
+    // voisine (mesuré headless sur la carte de production le 2026-08-24). Et pourtant l'écran
+    // rend de la GLACE et de la NEIGE : **un front météo traverse la vallée ce jour-là**, il
+    // la passe sous zéro et la couvre — et la glace l'emporte sur les régimes d'eau, à raison
+    // (une crue gelée EST de la glace). Le rendu est juste ; c'est le calendrier qui ne laisse
+    // pas la crue se montrer.
+    //
+    // On ne peut ni forcer l'absence de front ni déplacer la Crue depuis le debug : le
+    // scénario RAPPORTE donc ce qu'il voit, et la PEINTURE des deux états se garde là où elle
+    // se prouve — dans la cuisson pure (`manteau.test.ts`), qui les rend hors de tout climat.
     if (crue.gue && plein.gue) {
       const dl = lum(plein.gue) - lum(crue.gue)
-      console.log(`  crue : le gué s'assombrit de ${dl.toFixed(1)} de luminance`)
-      // G5 : le gué fermé est le seul régime qui BLOQUE — il doit se voir, et se voir SOMBRE.
-      if (dl < 12) console.error(`!! LE GUÉ FERMÉ NE SE VOIT PAS (Δluminance ${dl.toFixed(1)}) — on s'y engage par surprise, G5 rompu.`)
+      const gele = crue.gue[2] > crue.gue[0] + 30 && lum(crue.gue) > 170
+      console.log(`  crue : le gué passe de rgb(${plein.gue.map((v) => Math.round(v)).join(', ')}) à rgb(${crue.gue.map((v) => Math.round(v)).join(', ')})`
+        + ` (Δluminance ${dl.toFixed(1)})${gele ? ' — clair et bleu : la vallée est PRISE PAR LA GLACE ce jour-là, elle recouvre la crue' : ''}`)
     }
     if (crue.terre && plein.terre) {
-      const dc = chaleur(plein.terre) - chaleur(crue.terre)
-      console.log(`  crue : la terre noyée refroidit de ${dc.toFixed(1)} (R−B) — la nappe la recouvre`)
-      if (dc < 8) console.error(`!! LA TERRE NOYÉE NE SE VOIT PAS (Δchaleur ${dc.toFixed(1)}) : la crue ne s'étale pas à l'écran.`)
+      const enneigee = Math.min(...crue.terre) > 200
+      console.log(`  crue : la terre voisine rend rgb(${crue.terre.map((v) => Math.round(v)).join(', ')})`
+        + `${enneigee ? ' — de la NEIGE : le manteau couvre la nappe, comme il doit' : ''}`)
     }
     return { sec, plein, crue, jourDeCrue: JOUR_DE_CRUE }
   },

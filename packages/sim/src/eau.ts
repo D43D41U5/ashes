@@ -140,16 +140,20 @@ export function estInonde(state: EtatEau, tx: number, ty: number, niveauConnu?: 
  * profonde : **les passages se ferment**. C'est le miroir exact du lac gelé qui devient un
  * chemin — la vallée change de forme deux fois par an, dans les deux sens.
  */
-export function estGueBloque(state: EtatEau, tx: number, ty: number): boolean {
+export function estGueBloque(state: EtatEau, tx: number, ty: number, niveauConnu?: number): boolean {
   // ⚠ **CE TEST EST SUR LE CHEMIN LE PLUS CHAUD DE LA COLLISION** — `blockedSubAt` l'emprunte
   // une fois par SOUS-TUILE balayée, et les champs de flux ratissent l'eau en permanence. Il
   // sort donc AVANT de toucher à l'aridité : le niveau ne peut dépasser la crue (`niveau =
   // crue − aridité`), donc une crue nulle suffit à conclure, et `crueGlobale` ne coûte qu'une
   // lecture de caractère mémoïsé. Sans cette sortie, chaque sous-tuile d'eau payait un
   // rembobinage de huit cycles d'élection météo.
-  if (crueGlobale(state) < EAU.SEUIL_GUE_BLOQUE) return false
+  //
+  // `niveauConnu` se passe quand on balaie PLUSIEURS tuiles au même tick — le RENDU le fait,
+  // un chunk entier par signature (`gel-layer.ts`) : le niveau est global, le relire par tuile
+  // paierait le rembobinage autant de fois qu'il y a de tuiles. Même porte que `porteDeLEau`.
+  if (niveauConnu === undefined && crueGlobale(state) < EAU.SEUIL_GUE_BLOQUE) return false
   if (terrainAt(state.map, tx, ty) !== TERRAIN_SHALLOW_WATER) return false
-  return niveauDEau(state) >= EAU.SEUIL_GUE_BLOQUE
+  return (niveauConnu ?? niveauDEau(state)) >= EAU.SEUIL_GUE_BLOQUE
 }
 
 /**
