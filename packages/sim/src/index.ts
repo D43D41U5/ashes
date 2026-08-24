@@ -158,6 +158,16 @@ export {
   NEIGE_NUE, NEIGE_POUDREUSE, NEIGE_GENOUX,
 } from './gel'
 export type { NiveauDeNeige } from './gel'
+// LE NIVEAU D'EAU (spec `saisons.md` S10) — même contrat que le gel, et pour la même raison :
+// le client peint la mare partie, le gué fermé et la terre inondée avec les PRÉDICATS DE LA SIM,
+// jamais avec une copie. Deux échantillonnages différents feraient diverger ce qu'on voit de ce
+// qui bloque — et un gué qui se ferme sans qu'on le voie est exactement ce que G5 interdit.
+export {
+  niveauDEau, ariditeGlobale, crueGlobale, cyclesDepuisPluie,
+  estAsseche, estInonde, estGueBloque, porteDeLEau, distanceALEau,
+} from './eau'
+export type { EtatEau } from './eau'
+export { EAU } from './balance'
 export { METEO } from './balance'
 // LE FEU-STATION (spec feu-station) : l'état dérivable du snapshot côté client, et la donnée des slots.
 export { fireState, fireStateAt, fireActive, fireWarmthFactor, advanceFire, fuelTicksRemaining, fuelBurnProgress } from './fire'

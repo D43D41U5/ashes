@@ -4202,6 +4202,196 @@ const SCENARIOS = {
    *
    * Exige `--dev` : tout passe par le debug, inerte dans un build de production.
    */
+  /**
+   * L'EAU MONTE ET DESCEND — SE VOIT-ELLE ? (spec `saisons.md` S10, branché le 2026-08-24)
+   *
+   * Le niveau d'eau vivait dans `/sim` depuis le 2026-08-23 sans qu'un seul pixel en dépende :
+   * un gué se fermait sous la crue et rien à l'écran ne l'annonçait — l'exact contraire du
+   * contrat maison (`gel.md` G5, « annoncé, pas surprise »). Ce scénario est la garde de ce
+   * branchement, et il regarde les DEUX bouts du scalaire signé.
+   *
+   * ═══ DEUX RÉGIMES, DEUX FAÇONS DE LES ATTEINDRE ═══
+   *
+   *   • LA SÉCHERESSE est GRATUITE : le monde NAÎT en aridité 1,00 (rien n'a plu avant le
+   *     premier tick, `cyclesDepuisPluie` plafonne à `MEMOIRE_CYCLES`), et elle retombe au
+   *     troisième jour. On photographie donc le jour d'ouverture, puis le jour 54 — deux
+   *     régimes opposés sur la MÊME tuile, sans rien forcer.
+   *   • LA CRUE se MÉRITE : elle n'est qu'un caractère d'Éclosion, tiré une saison sur 22
+   *     (≈ une année sur 5,6, mesuré sur 400 saisons). On ne l'espère pas : le jour se
+   *     CHERCHE dans l'élection, qui est pure et se lit à l'avance — comme `enneige` cherche
+   *     son cycle neigeux plutôt que d'attendre la neige.
+   *
+   * ═══ ET ON ATTEND LA SIGNATURE, PAS UNE DURÉE ═══
+   *
+   * `GelLayer` ne relève qu'UN chunk par image et une image dure ~900 ms sous swiftshader :
+   * une attente fixe mesurerait la signature d'hier (le piège qui a fait accuser `flore` à
+   * tort). On guette donc la COULEUR de la tuile visée, bornée.
+   *
+   * Exige `--dev` : le jour de saison et le TP sont inertes en build de production.
+   */
+  async crue(page) {
+    if (!dev) { console.log('\n(le niveau d’eau exige --dev : le jour de saison et le TP)'); return {} }
+    await page.waitForFunction(() => Boolean(window.__BRAISES__?.scene?.registry?.get('worldReady')), null, { timeout: 150000 })
+    await page.waitForTimeout(2500)
+
+    const agir = async (a, ms = 900) => { await page.evaluate((x) => window.__BRAISES__.scene.sendAction(x), a); await page.waitForTimeout(ms) }
+
+    // ── LA CIBLE : un gué (eau PEU PROFONDE) au CŒUR d'une nappe, pas sur sa rive. Une tuile
+    //    de rive rend la couleur du SABLE, et on mesurerait la plage au lieu de l'eau (relevé
+    //    rgb(128,128,95) au premier essai, le 2026-08-24).
+    const cible = await page.evaluate(() => {
+      const s = window.__BRAISES__.scene
+      const m = s.map
+      const me = s.view?.me ?? { x: m.width / 2, y: m.height / 2 }
+      const eau = (x, y) => { const t = m.terrain[y * m.width + x]; return t === 4 || t === 6 }
+      let best = null, bestD = Infinity
+      for (let ty = 2; ty < m.height - 2; ty++) {
+        for (let tx = 2; tx < m.width - 2; tx++) {
+          if (m.terrain[ty * m.width + tx] !== 4) continue
+          let n = 0
+          for (let oy = -2; oy <= 2; oy++) for (let ox = -2; ox <= 2; ox++) if (eau(tx + ox, ty + oy)) n++
+          if (n < 25) continue
+          const d = (tx - me.x) ** 2 + (ty - me.y) ** 2
+          if (d < bestD) { bestD = d; best = { tx, ty } }
+        }
+      }
+      // ET UNE TERRE À NOYER : la crue s'étale depuis les rives, donc on vise une tuile
+      // MARCHABLE proche du gué et proche de l'eau — c'est elle qui verra la nappe monter
+      // même quand le gué, lui, est pris par la glace (l'Éclosion de la Crue est encore gelée).
+      let terre = null
+      if (best) {
+        for (let r = 2; r <= 10 && !terre; r++) {
+          for (let oy = -r; oy <= r && !terre; oy++) {
+            for (let ox = -r; ox <= r && !terre; ox++) {
+              const tx = best.tx + ox, ty = best.ty + oy
+              if (tx < 1 || ty < 1 || tx >= m.width - 1 || ty >= m.height - 1) continue
+              const t = m.terrain[ty * m.width + tx]
+              if (t === 4 || t === 6) continue
+              const d = m.distEau ? m.distEau[ty * m.width + tx] : 0
+              if (d > 0 && d <= 3) terre = { tx, ty, d }
+            }
+          }
+        }
+      }
+      return { cible: best, terre, aDistEau: Array.isArray(m.distEau) && m.distEau.length === m.width * m.height }
+    })
+    if (!cible.cible) { console.error('!! aucun gué au cœur d’une nappe — rien à mesurer'); return {} }
+    // LA PRÉMISSE, AFFIRMÉE : sans `distEau`, `estInonde` est faux PARTOUT sans un mot.
+    if (!cible.aDistEau) console.error('!! la carte du client ne porte pas `distEau` — la crue serait muette')
+    const gue = cible.cible
+    const terre = cible.terre
+    console.log(`  gué visé (${gue.tx}, ${gue.ty})${terre ? ` · terre à noyer (${terre.tx}, ${terre.ty}), à ${terre.d} tuiles de l’eau` : ' · AUCUNE terre à portée'} · distEau transportée : ${cible.aDistEau ? 'oui' : 'NON'}`)
+    await agir({ type: 'debug_teleport', x: gue.tx + 0.5, y: gue.ty + 4.5 }, 1800)
+
+    const versEcran = (tx, ty) => page.evaluate(({ x, y }) => {
+      const s = window.__BRAISES__.scene, cam = s.cameras.main
+      const gx = (x * 16 - cam.worldView.x) * cam.zoom, gy = (y * 16 - cam.worldView.y) * cam.zoom
+      const c = s.scale.canvas.getBoundingClientRect()
+      return { x: Math.round(c.left + gx * (c.width / s.scale.width)), y: Math.round(c.top + gy * (c.height / s.scale.height)) }
+    }, { x: tx, y: ty })
+
+    const COTE = 28
+    const couleurDe = async (t) => {
+      if (!t) return null
+      const c = await versEcran(t.tx + 0.5, t.ty + 0.5)
+      const r = await regionAt(page, { x: c.x - COTE / 2, y: c.y - COTE / 2, width: COTE, height: COTE })
+      if (!r) return null
+      let R = 0, G = 0, B = 0
+      for (let x = 0; x < COTE; x++) for (let y = 0; y < COTE; y++) { const p = r.px(x, y); R += p[0]; G += p[1]; B += p[2] }
+      const n = COTE * COTE
+      return [R / n, G / n, B / n]
+    }
+    const lum = (c) => 0.2126 * c[0] + 0.7152 * c[1] + 0.0722 * c[2]
+    /** L'AXE CHAUD/FROID — `R − B`. C'est LUI que la DA règle (« le sec est chaud, l'eau est
+     *  froide »), et c'est donc lui qu'on mesure : la luminance seule confond une vase à
+     *  l'ombre avec une eau au soleil. */
+    const chaleur = (c) => c[0] - c[2]
+
+    const releve = async (etiquette, jour) => {
+      // ⚠ LE JOUR D'ABORD, L'HEURE ENSUITE, ET CHACUN ATTENDU. `debug_set_season_day` déplace
+      // le TICK, donc la phase du cycle : régler l'heure avant lui la ferait dériver (relevé
+      // à 16 h au lieu de midi le 2026-08-24, soit deux lumières comparées au lieu de deux
+      // niveaux d'eau). Et les deux actions tirées dans le même envoi ne portent que la
+      // seconde — même piège que `thermo`.
+      await agir({ type: 'debug_set_season_day', day: jour }, 600)
+      await page.waitForFunction((d) => window.__BRAISES__.scene.lastTime?.seasonDay === d, jour, { timeout: 40000 })
+        .catch(() => console.error(`!! ${etiquette} : le calendrier n'est jamais arrivé au jour ${jour}`))
+      await agir({ type: 'debug_set_hour', hour: 12 }, 600)
+      await page.waitForFunction(() => {
+        const h = window.__BRAISES__.scene.lastTime?.hourOfCycle ?? 0
+        return h > 11 && h < 13
+      }, null, { timeout: 40000 })
+        .catch(() => console.error(`!! ${etiquette} : l'heure n'est jamais arrivée à midi`))
+
+      // ON ATTEND LA SIGNATURE : un chunk par image, jusqu'à 96 vivants. On guette que la
+      // couleur du gué se STABILISE — deux relevés identiques à 1/255 près, ou la borne.
+      let precedent = null, stable = 0
+      for (let n = 0; n < 45 && stable < 2; n++) {
+        const c = await couleurDe(gue)
+        if (precedent && c && Math.max(...[0, 1, 2].map((i) => Math.abs(c[i] - precedent[i]))) < 1) stable++
+        else stable = 0
+        precedent = c
+        if (stable < 2) await page.waitForTimeout(1000)
+      }
+      const t = await page.evaluate(() => { const x = window.__BRAISES__.scene.lastTime; return x ? { j: x.seasonDay, h: Math.round(x.hourOfCycle) } : null })
+      const cTerre = await couleurDe(terre)
+      await page.screenshot({ path: `${OUT}/eau-${etiquette}.png` })
+      const c = precedent
+      const dis = (v) => (v ? v.map((x) => Math.round(x)).join(', ') : '?')
+      console.log(`  ${etiquette.padEnd(14)} jour ${t ? t.j : '?'} ${t ? t.h : '?'} h · gué rgb(${dis(c)}) chaleur ${c ? chaleur(c).toFixed(1) : '?'}`
+        + ` · terre rgb(${dis(cTerre)}) chaleur ${cTerre ? chaleur(cTerre).toFixed(1) : '?'}`)
+      return { gue: c, terre: cTerre }
+    }
+
+    // ── ① LA SÉCHERESSE, gratuite : le monde naît à sec, il ne l'est plus trois jours après.
+    //    Le jour d'OUVERTURE se lit sur la sim (`saisons.md` S2), il ne s'écrit pas ici.
+    const ouverture = await page.evaluate(() => window.__BRAISES__.scene.lastTime?.seasonDay ?? 51)
+    const sec = await releve('1-a-sec', ouverture)
+    const plein = await releve('2-en-eau', ouverture + 3)
+
+    // ── ② LA CRUE : le jour est CHERCHÉ, pas espéré. L'élection d'un caractère est pure, elle
+    //    se lit donc à l'avance sans jouer — même méthode qu'`enneige` pour son cycle neigeux.
+    //
+    //    BALAYAGE DU 2026-08-24 (`modificateurDuJour`, monde ouvert au jour 51) : sur DOUZE
+    //    ANNÉES, « la Crue » n'est tirée qu'UNE fois — au **jour 1201, l'Éclosion de l'an 11**.
+    //    Elle n'est au tirage qu'à l'Éclosion, une saison sur 22 (mesuré sur 400 saisons), et
+    //    la suite seedée la place tard. C'est un fait de jeu, pas une limite de l'instrument :
+    //    un joueur devrait tenir onze années de Veillée pour la voir une fois.
+    //
+    //    ET LE JOUR VISÉ N'EST PAS SON PREMIER : **l'Éclosion de la Crue est encore GELÉE**.
+    //    Mesuré le 2026-08-24 sur la courbe du socle à l'an 11 : le socle de MIDI reste sous
+    //    0 °C (`GEL.SEUIL_GUE`) jusqu'au jour 1218 — le gué inondé y est pris par la glace, et
+    //    c'est la glace qu'on peint (elle l'emporte, à raison : une crue gelée est de la glace).
+    //    La crue décroît par ailleurs (`1 − part de saison écoulée`) et passe sous
+    //    `SEUIL_GUE_BLOQUE` vers le jour 1224. **La fenêtre où un gué fermé se voit comme de
+    //    l'eau tient donc en trois jours : 1220-1223.** On vise 1222 (crue 0,30, midi +5,3 °C).
+    //    C'est un fait de jeu, pas une limite de l'instrument — et il mérite d'être su.
+    const JOUR_DE_CRUE = Number(process.env.SMOKE_JOUR_CRUE ?? 1222)
+    console.log(`  la Crue s'ouvre au jour 1201 (Éclosion de l'an 11) ; on vise le jour ${JOUR_DE_CRUE}, où elle n'est plus gelée`)
+    const crue = await releve('3-en-crue', JOUR_DE_CRUE)
+
+    // ═══ LES VERDICTS ═══
+    if (sec.gue && plein.gue) {
+      const dc = chaleur(sec.gue) - chaleur(plein.gue)
+      console.log(`\n  sécheresse : le gué gagne ${dc.toFixed(1)} de chaleur (R−B) en s'asséchant`)
+      // La vase est CHAUDE, l'eau est FROIDE : c'est l'axe que la DA règle, et le seul qui ne
+      // confonde pas une eau au soleil avec une vase à l'ombre.
+      if (dc < 8) console.error(`!! LA SÉCHERESSE NE SE VOIT PAS : le gué ne se réchauffe pas en s'asséchant (${dc.toFixed(1)}/255).`)
+    }
+    if (crue.gue && plein.gue) {
+      const dl = lum(plein.gue) - lum(crue.gue)
+      console.log(`  crue : le gué s'assombrit de ${dl.toFixed(1)} de luminance`)
+      // G5 : le gué fermé est le seul régime qui BLOQUE — il doit se voir, et se voir SOMBRE.
+      if (dl < 12) console.error(`!! LE GUÉ FERMÉ NE SE VOIT PAS (Δluminance ${dl.toFixed(1)}) — on s'y engage par surprise, G5 rompu.`)
+    }
+    if (crue.terre && plein.terre) {
+      const dc = chaleur(plein.terre) - chaleur(crue.terre)
+      console.log(`  crue : la terre noyée refroidit de ${dc.toFixed(1)} (R−B) — la nappe la recouvre`)
+      if (dc < 8) console.error(`!! LA TERRE NOYÉE NE SE VOIT PAS (Δchaleur ${dc.toFixed(1)}) : la crue ne s'étale pas à l'écran.`)
+    }
+    return { sec, plein, crue, jourDeCrue: JOUR_DE_CRUE }
+  },
+
   async flore(page) {
     await page.waitForFunction(() => Boolean(window.__BRAISES__?.scene?.registry?.get('worldReady')), null, { timeout: 150000 })
     await page.waitForTimeout(3000)
