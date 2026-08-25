@@ -52,6 +52,7 @@ export function publishPlayerVitals(registry: Registry, me: Entity): void {
   setHud(registry, 'temperature', me.temperature)
   setHud(registry, 'skills', me.skills)
   setHud(registry, 'pecheCarnet', me.peche ?? []) // le bestiaire (peche.md B5) — du snapshot, jamais compté ici
+  setHud(registry, 'carnetEncyclo', me.carnet ?? []) // l'encyclopédie — idem : la sim compte, l'écran lit
   setHud(registry, 'hp', me.hp)
   setHud(registry, 'stamina', me.stamina)
   setHud(registry, 'wounds', me.wounds)

@@ -322,6 +322,156 @@ async function fonderPres(page, agir, slotDe, p0, sites = SITES_FONDATION) {
 
 const SCENARIOS = {
   /**
+   * L'ENCYCLOPÉDIE (spec `encyclopedie.md`) — le rail, les huit sections, la fiche au survol.
+   *
+   * Il COUPE UN ARBRE pour de vrai : le carnet n'a pas de porte dérobée (aucun `debug_` ne le
+   * remplit), donc la seule façon de voir une case parler est de faire le geste. Le reste des
+   * sections se regarde MUET — c'est l'état du jeu au premier quart d'heure, et c'est
+   * exactement ce que la décision du 2026-08-24 promet.
+   *
+   * Deux pièges de capture, tous deux payés en runs perdus (mémoire
+   * `capture-ecran-plein-hud-dom`) : `page.screenshot` expire tant que Phaser tourne (on
+   * endort `game.loop` le temps de la prise), et `page.hover` n'atteint jamais la « stabilité »
+   * sur un board mis à l'échelle (on vise le centre calculé, à la souris nue).
+   */
+  async encyclopedie(page) {
+    await page.waitForFunction(() => Boolean(window.__BRAISES__?.scene?.registry?.get('worldReady')), null, { timeout: 150000 })
+    await page.waitForTimeout(1500)
+
+    // ── 1. LE GESTE : couper un arbre, pour que le carnet ait quelque chose à dire ──
+    const cible = await page.evaluate(() => {
+      const s = window.__BRAISES__.scene
+      const p = s.registry.get('playerPos')
+      const n = (s.view.nodes ?? [])
+        .filter((q) => q.type === 'tree' && q.stock > 0)
+        .map((q) => ({ id: q.id, tx: q.tx, ty: q.ty, d: Math.hypot(q.tx - p.x, q.ty - p.y) }))
+        .sort((a, b) => a.d - b.d)[0]
+      return n ?? null
+    })
+    if (!cible) { console.error('!! aucun arbre en vue — le carnet restera vide'); return }
+    console.log(`arbre visé : (${cible.tx}, ${cible.ty}), à ${cible.d.toFixed(1)} tuiles`)
+
+    const KEYS = { E: 'KeyD', O: 'KeyQ', S: 'KeyS', N: 'KeyW' }
+    let held = new Set()
+    const hold = async (want) => {
+      for (const k of held) if (!want.has(k)) await page.keyboard.up(k)
+      for (const k of want) if (!held.has(k)) await page.keyboard.down(k)
+      held = want
+    }
+    for (let i = 0; i < 120; i++) {
+      const p = await page.evaluate(() => window.__BRAISES__.scene.registry.get('playerPos'))
+      const dx = cible.tx + 0.5 - p.x
+      const dy = cible.ty + 0.5 - p.y
+      if (Math.hypot(dx, dy) < 1.2) break
+      const want = new Set()
+      if (dx > 0.4) want.add(KEYS.E); else if (dx < -0.4) want.add(KEYS.O)
+      if (dy > 0.4) want.add(KEYS.S); else if (dy < -0.4) want.add(KEYS.N)
+      await hold(want)
+      await page.waitForTimeout(250)
+    }
+    await hold(new Set())
+    for (let coup = 0; coup < 5; coup++) {
+      await page.evaluate(({ id, tx, ty }) => window.__BRAISES__.scene.sendAction({ type: 'harvest', nodeId: id, aimX: tx + 0.5, aimY: ty + 0.5 }), cible)
+      await page.waitForTimeout(1100)
+    }
+    const carnet = await page.evaluate(() => window.__BRAISES__.scene.registry.get('carnetEncyclo') ?? [])
+    console.log('carnet :', JSON.stringify(carnet))
+    const bois = carnet.find((l) => l.k === 'recolte:wood')?.n ?? 0
+    console.log(`${bois > 0 ? '✓' : '✗'} le carnet a retenu la récolte (recolte:wood = ${bois})`)
+
+    // ── 2. L'ÉCRAN ──
+    await page.mouse.click(640, 400)
+    await page.waitForTimeout(300)
+    for (let essai = 0; essai < 3; essai++) {
+      await page.keyboard.press('Tab')
+      await page.waitForTimeout(600)
+      if (await page.evaluate(() => window.__BRAISES__.scene.registry.get('characterMenuOpen'))) break
+    }
+    await page.evaluate(() => document.querySelector('.hch-tab[data-tab="encyclopedie"]')?.click())
+    await page.waitForTimeout(700)
+
+    const rail = await page.evaluate(() =>
+      Array.from(document.querySelectorAll('.hch-enc-rl')).map((el) => `${el.dataset.section} ${el.querySelector('em').textContent}`),
+    )
+    console.log('rail :', rail.join(' · '))
+
+    const capture = async (nom) => {
+      await page.evaluate(() => window.__BRAISES__.scene.game.loop.sleep())
+      await page.waitForTimeout(250)
+      await page.screenshot({ timeout: 90000, path: `${OUT}/encyclopedie-${nom}.png` })
+      // ⚠ RÉVEILLER : le repeint du panneau est piloté par `update()` d'UIScene — boucle
+      // endormie, un clic d'onglet ne redessine rien.
+      await page.evaluate(() => window.__BRAISES__.scene.game.loop.wake())
+      await page.waitForTimeout(250)
+    }
+    await capture('1-ressources')
+
+    // ── 3. LA FICHE AU SURVOL, sur la seule case qui parle ──
+    const centre = await page.evaluate(() => {
+      const el = document.querySelector('.hch-bc:not(.is-vide)')
+      if (!el) return null
+      const r = el.getBoundingClientRect()
+      return { x: r.x + r.width / 2, y: r.y + r.height / 2 }
+    })
+    if (centre) {
+      await page.mouse.move(centre.x, centre.y)
+      await page.waitForTimeout(600)
+      const fiche = await page.evaluate(() => {
+        const f = document.querySelector('.hch-bc:not(.is-vide) .hch-fi')
+        if (!f) return null
+        const r = f.getBoundingClientRect()
+        return { nom: f.querySelector('.hch-fi-nom')?.textContent, lignes: f.querySelectorAll('.hch-fi-r').length, opacite: getComputedStyle(f).opacity, x: r.x, y: r.y, w: r.width, h: r.height }
+      })
+      console.log('fiche :', JSON.stringify(fiche))
+      const dedans = fiche && fiche.x >= 0 && fiche.y >= 0 && fiche.x + fiche.w <= 1280 && fiche.y + fiche.h <= 720
+      // ⚠ `opacite` est INFORMATIF, pas un verdict : lue par `getComputedStyle` juste après un
+      // `mouse.move` de CDP elle rend « 0 » alors que la CAPTURE montre la fiche ouverte. Un ✗
+      // qui accuse à tort est pire que pas de sonde — on juge sur ce qui se mesure vraiment :
+      // la fiche EXISTE, elle porte son nom et ses lignes, et elle tient dans le cadre.
+      console.log(`${fiche && fiche.nom && fiche.lignes > 0 ? '✓' : '✗'} la fiche est posée sous la case (${fiche?.nom}, ${fiche?.lignes} lignes ; opacité lue : ${fiche?.opacite}) · ${dedans ? '✓' : '✗'} elle tient dans le cadre`)
+      await capture('2-fiche')
+      await page.mouse.move(5, 5)
+    } else {
+      console.error('!! aucune case ne parle — la récolte n\'a rien écrit')
+    }
+
+    // ── 4. LES HUIT SECTIONS, une par une ──
+    const sections = ['nourriture', 'outils', 'armes', 'poissons', 'animaux', 'monstres', 'saisons']
+    for (const section of sections) {
+      await page.evaluate((s) => {
+        Array.from(document.querySelectorAll('.hch-enc-rl')).find((x) => x.dataset.section === s)?.click()
+      }, section)
+      await page.waitForTimeout(600)
+      const cases = await page.evaluate(() => ({
+        cases: document.querySelectorAll('.hch-bc').length,
+        muettes: document.querySelectorAll('.hch-bc.is-vide').length,
+        cartes: document.querySelectorAll('.hch-sc').length,
+        rangees: document.querySelectorAll('.hch-brangee').length,
+      }))
+      console.log(`  ${section.padEnd(11)} ${JSON.stringify(cases)}`)
+      await capture(`3-${section}`)
+    }
+
+    // ── 5. L'EFFIGIE D'UNE BÊTE se pose à une échelle ENTIÈRE ──
+    // Aucune bête n'est connue au premier quart d'heure : on ne peut pas la VOIR dans une
+    // capture. On mesure donc la RÈGLE plutôt que l'image — les sprites du monde ne sont pas
+    // carrés, et un facteur fractionnaire crénellerait l'art (mémoire « rendu cubique »).
+    const effigies = await page.evaluate(() => {
+      const t = window.__BRAISES__.scene.game.textures
+      return ['spr-rabbit', 'spr-deer', 'spr-boar', 'spr-wolf', 'spr-cendreux'].map((k) => {
+        const src = t.get(k).getSourceImage()
+        return { k, w: src.width, h: src.height }
+      })
+    })
+    const ECHELLE = 4
+    for (const e of effigies) {
+      const ok = e.w * ECHELLE <= 112 && e.h * ECHELLE <= 112
+      console.log(`  ${ok ? '✓' : '✗'} ${e.k.padEnd(14)} ${e.w}×${e.h} → ×${ECHELLE} = ${e.w * ECHELLE}×${e.h * ECHELLE} (cadre 112)`)
+    }
+    console.log(`\ncaptures dans ${OUT}`)
+  },
+
+  /**
    * LA FRONTIÈRE DE CONSTRUCTION (2026-08-04) — le carré du Feu se voit, marteau en main.
    *
    * L'instrument est un PROFIL, pas un point : un liseré d'un pixel d'art (2,5 px d'écran)

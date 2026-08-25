@@ -33,6 +33,7 @@ import {
   type ResourceNode,
 } from './economy'
 import { emitEvent, type SimEvent } from './events'
+import { advanceEncyclopedie, type LigneEncyclo } from './encyclopedie'
 import { applyInventoryAction, isInventoryAction, type InventoryAction } from './inventory-actions'
 import { carryRatio, carryTier, makeInventory, type Inventory, type ItemId, type SkillId } from './items'
 import { createEmptyMap, type WorldMap } from './map'
@@ -202,6 +203,17 @@ export interface Entity {
    * mémoire. C'est un carnet, pas un bien.
    */
   peche?: { sp: FishId; mm: number; tick: number; prises: number }[]
+  /**
+   * LE CARNET DE L'ENCYCLOPÉDIE (décision d'Alexis, 2026-08-24) — ce que ce joueur a
+   * rencontré, et combien de fois : `{ k: 'recolte:wood', n: 1240 }`. C'est lui qui décide
+   * du MUET (une entrée jamais rencontrée ne dit rien) pour toutes les sections SAUF les
+   * poissons, qui gardent `peche` (il porte le record en millimètres).
+   *
+   * Alimenté par `advanceEncyclopedie` (un consommateur du flux d'événements), et SEULEMENT
+   * pour les joueurs — un carnet de PNJ voyagerait dans chaque snapshot sans lecteur.
+   * Comme `peche`, il survit à la mort : c'est une mémoire, pas un bien.
+   */
+  carnet?: LigneEncyclo[]
   /**
    * LE DÉPEÇAGE EN COURS (spec `depecage.md` C3). Posé par `butcher_start`, couteau en main, sur
    * une carcasse ; effacé au relâchement, au pas, à la mort, au sac plein, au réservoir vide ou
@@ -813,6 +825,10 @@ export function speedScaleFor(
 
 /** Avance la simulation d'exactement un tick. Mute `state` en place. */
 export function step(state: SimState, inputs: MoveInput[]): void {
+  // LA MARQUE DU BUFFER, prise AVANT que quoi que ce soit n'émette : le carnet de
+  // l'encyclopédie ne lira que la tranche écrite par CE tick (voir `advanceEncyclopedie` —
+  // le buffer n'est vidé que par l'hôte, et un appelant qui ne draine pas ferait recompter).
+  const eventsAuDepart = state.events.length
   // `moved` décrit CE tick : remis à zéro ici, levé par chaque système de
   // déplacement (inputs, PNJ, monstres). Sans ce reset, une entité sans
   // input garderait la valeur d'un tick passé — et la régén d'endurance
@@ -1016,6 +1032,9 @@ export function step(state: SimState, inputs: MoveInput[]): void {
   // tick de jeu passé à l'intérieur d'une tuile non marchable. Inerte dans un monde qui ne
   // gèle pas (personne ne peut se tenir sur de l'eau profonde sans lui).
   advanceDegel(state)
+  // LE CARNET DE L'ENCYCLOPÉDIE lit le buffer d'événements du tick : il doit passer APRÈS
+  // tout ce qui émet (récolte, craft, repas, mise à mort) et avant que l'hôte ne draine.
+  advanceEncyclopedie(state, eventsAuDepart)
   // En DERNIER : les invulnérables retrouvent leurs jauges pleines, quoi qu'il
   // se soit passé pendant le tick (faim, froid, saignement). No-op hors debug.
   refreshGodMode(state)

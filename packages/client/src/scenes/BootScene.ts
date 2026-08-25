@@ -38,6 +38,7 @@ export class BootScene extends Phaser.Scene {
     // posture du bestiaire, sans art neuf : mêmes teintes, la hauteur devenue longueur.
     this.makeSpriteCouche('spr-cendreux-rampant', 0xb8b0a4, 0x6b3a20)
     this.makeFauna()
+    this.makeSaisons()
 
     const g = this.add.graphics()
     g.fillStyle(0xcac2b2) // cadavre : ossements
@@ -641,6 +642,47 @@ export class BootScene extends Phaser.Scene {
    * est bas et massif, le cerf haut et sur pattes, le lapin minuscule et dressé —
    * on doit savoir ce qui détale avant d'avoir lu la couleur.
    */
+  /**
+   * LES QUATRE EMBLÈMES DE SAISON (spec `saisons.md` S3) — l'ENCYCLOPÉDIE en a besoin, et une
+   * saison n'a pas d'objet à montrer : elle n'est ni un item du sac ni une bête du monde.
+   *
+   * Même grille de 16 px que les icônes d'objets, même lumière au nord-ouest, mêmes teintes
+   * que la palette (la braise pour l'été, le gel pour l'hiver) : à 176 px dans une carte, on
+   * lit une SILHOUETTE — un bourgeon, un soleil, une averse, un flocon.
+   */
+  private makeSaisons(): void {
+    const g = this.add.graphics()
+
+    // 1 — L'ÉCLOSION : une pousse qui sort, deux feuilles.
+    g.fillStyle(0x4a7a3a).fillRect(7, 8, 2, 7)
+    g.fillStyle(0x7fae44).fillEllipse(5, 7, 7, 5)
+    g.fillStyle(0x8fc255).fillEllipse(11, 6, 6, 5)
+    g.fillStyle(0xc9d98a).fillRect(4, 6, 1, 1)
+    g.generateTexture('ic-saison-1', 16, 16)
+    g.clear()
+
+    // 2 — L'ARDEUR : le soleil plein, quatre rais.
+    g.fillStyle(0xc98b3a).fillCircle(8, 8, 4)
+    g.fillStyle(0xe8c66a).fillCircle(7, 7, 2)
+    g.fillStyle(0xc98b3a).fillRect(7, 0, 2, 2).fillRect(7, 14, 2, 2).fillRect(0, 7, 2, 2).fillRect(14, 7, 2, 2)
+    g.generateTexture('ic-saison-2', 16, 16)
+    g.clear()
+
+    // 3 — LES PLUIES : la nuée, et ce qui en tombe.
+    g.fillStyle(0x5a5f6a).fillRect(2, 3, 12, 4)
+    g.fillStyle(0x727888).fillRect(2, 3, 12, 1)
+    g.fillStyle(0x6f93a0).fillRect(3, 9, 1, 4).fillRect(6, 11, 1, 4).fillRect(9, 9, 1, 4).fillRect(12, 11, 1, 4)
+    g.generateTexture('ic-saison-3', 16, 16)
+    g.clear()
+
+    // 4 — LE GRAND FROID : le flocon, en croix, avec son cœur clair.
+    g.fillStyle(0x8fb0bc).fillRect(7, 1, 2, 14).fillRect(1, 7, 14, 2)
+    g.fillStyle(0x6f93a0).fillRect(3, 3, 2, 2).fillRect(11, 3, 2, 2).fillRect(3, 11, 2, 2).fillRect(11, 11, 2, 2)
+    g.fillStyle(0xdfe9ee).fillRect(6, 6, 4, 4)
+    g.generateTexture('ic-saison-4', 16, 16)
+    g.destroy()
+  }
+
   private makeFauna(): void {
     const g = this.add.graphics()
 

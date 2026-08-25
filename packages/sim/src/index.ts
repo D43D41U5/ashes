@@ -90,6 +90,12 @@ export { POI,
   WORLD_EVENTS,
   TOOL_RANK,
   TOOL_YIELD,
+  TOOL_TIERS,
+  TOOL_DURABILITIES,
+  STACK_SIZES,
+  STACK_DEFAULT,
+  DRYING,
+  DRY_SLOT,
   FISHING,
   FISH_SPECIES,
   BUTCHER,
@@ -306,6 +312,8 @@ export { nomDeSaison } from './chronicle'
 export { modificateurDeSaison, modificateurDuJour, effetsDuJour, effetsDe, NOMS_MODIFICATEUR } from './modificateur'
 export type { ModificateurId } from './modificateur'
 export type { ChronicleEntry, ChronicleWeight, ChronicleVolume } from './chronicle'
+export { cleEncyclo, compteEncyclo, connuEncyclo } from './encyclopedie'
+export type { LigneEncyclo, VerbeCarnet } from './encyclopedie'
 
 // ─── Persistance : sérialiser/reprendre une Veillée (l'hôte écrit dans IndexedDB) ─
 export {

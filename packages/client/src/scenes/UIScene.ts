@@ -759,6 +759,7 @@ export class UIScene extends Phaser.Scene {
       container: getHud(this.registry, 'openContainerView') ?? null,
       skills: getHud(this.registry, 'skills') ?? {},
       pecheCarnet: getHud(this.registry, 'pecheCarnet') ?? [],
+      carnetEncyclo: getHud(this.registry, 'carnetEncyclo') ?? [],
     })
     // LE MENU DU MARTEAU (spec construction R20-R21) : dans le monde, hors TAB/carte,
     // et SEULEMENT le marteau en main. Le ranger le referme et DÉSARME — les fantômes

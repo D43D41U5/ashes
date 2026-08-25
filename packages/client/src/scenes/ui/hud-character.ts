@@ -50,7 +50,16 @@ import type { CapacitesEnPortee, CharacterTab, OpenContainerView } from '../../h
 import { ITEM_LABELS, itemIconKey } from '../../render/item-art'
 import { coutJetons, craftRows, etatRecette, fonctionsAbsentes, type CraftRow } from './craft-panel'
 import { dragIntentFrom, dragToAction, quickMoveToAction } from './inventory-panel'
-import { BEST_COLS, rangeesDuBestiaire, sommeDuBestiaire, type CaseBestiaire, type FicheEspece } from './bestiaire'
+import {
+  cartesDesSaisons,
+  railDeLEncyclopedie,
+  rangeesDeSection,
+  type CarnetsDuJoueur,
+  type CarteSaison,
+  type CaseEncyclo,
+  type FicheEncyclo,
+  type SectionId,
+} from './encyclopedie'
 import { SKILL_LABELS } from './skill-labels'
 import { skillGuides, type SkillGuide } from './skill-guide'
 
@@ -112,6 +121,8 @@ export interface HudCharacter {
     skills: Partial<Record<SkillId, number>>
     /** LE BESTIAIRE (peche.md B5/R11) — le carnet de MON avatar, tel que le snapshot le porte. */
     pecheCarnet: readonly { sp: string; mm: number; prises: number }[]
+    /** LE CARNET DE L'ENCYCLOPÉDIE — ce que MON avatar a rencontré (2026-08-24). */
+    carnetEncyclo: readonly { k: string; n: number }[]
   }): void
 }
 
@@ -153,9 +164,9 @@ export function createHudCharacter(
   const persoWrap = $('.hch-perso')
   const sacWrap = $('.hch-sac')
   const metWrap = $('.hch-met')
-  const bestWrap = $('.hch-best')
-  const bestList = $('.hch-best-list')
-  const bestSomme = $('.hch-best-somme')
+  const encWrap = $('.hch-enc')
+  const encRail = $('.hch-enc-rail')
+  const encBody = $('.hch-enc-body')
   const tabBtns = Array.from(root.querySelectorAll<HTMLElement>('.hch-tab'))
 
   // ── L'avatar : le VRAI sprite du monde (`spr-player`), à ses proportions (carré, pixel) —
@@ -244,7 +255,7 @@ export function createHudCharacter(
     persoWrap.style.display = perso ? '' : 'none'
     sacWrap.style.display = perso ? '' : 'none'
     metWrap.style.display = activeTab === 'metiers' ? 'flex' : 'none'
-    bestWrap.style.display = activeTab === 'bestiaire' ? 'flex' : 'none'
+    encWrap.style.display = activeTab === 'encyclopedie' ? 'flex' : 'none'
     // Hors PERSONNAGE, le butin et les métiers-à-gauche disparaissent ; sur PERSONNAGE, leur
     // affichage fin (butin vs stats) reste tranché dans `update`, au vu du conteneur.
     if (!perso) {
@@ -261,83 +272,126 @@ export function createHudCharacter(
   }
 
   /**
-   * ═══ LE BESTIAIRE (spec `peche.md` R11/B5) ═══
+   * ═══ L'ENCYCLOPÉDIE (décision d'Alexis, 2026-08-24) ═══
    *
-   * Une ligne par espèce du catalogue — **y compris celles qu'on n'a jamais prises**, éteintes.
-   * C'est délibéré : la liste doit donner envie d'aller voir ailleurs, et une espèce qu'on
-   * ignore n'apprend rien. Ce qu'elle montre alors, c'est OÙ et QUAND elle mord, jamais sa
-   * taille — le record se mérite.
+   * Un rail de sections à gauche, la grille de la section à droite, une fiche au survol.
    *
-   * Le carnet vient du SNAPSHOT (`Entity.peche`), jamais d'un compte tenu ici : l'écran montre
-   * la sim, il ne la refait pas.
+   * **UNE ENTRÉE JAMAIS RENCONTRÉE NE DIT RIEN** — et ce n'est pas décidé ici : une case
+   * muette arrive d'`encyclopedie.ts` sans effigie, sans nom et sans fiche. Le rendu ne peut
+   * donc rien laisser fuir, pas même dans un attribut. Il pose ce que le module pur l'autorise
+   * à dire, et rien d'autre.
+   *
+   * Le carnet vient du SNAPSHOT (`Entity.carnet`, `Entity.peche`), jamais d'un compte tenu
+   * ici : l'écran montre la sim, il ne la refait pas.
    */
-  /** LA FICHE au survol. Elle n'est appelée QUE pour une case dont `bestiaire.ts` a rendu une
-   *  `fiche` : le rendu ne décide de rien, il pose ce que le module pur l'autorise à dire. */
-  const ficheDom = (f: FicheEspece): HTMLElement => {
+  /** La SECTION regardée. Purement locale à l'écran — la sim n'a pas à la connaître, et rien
+   *  ne la persiste : on rouvre l'encyclopédie sur les ressources, comme un livre à la page 1. */
+  let encSection: SectionId = 'ressources'
+
+  /** L'URL d'une texture quelconque (une effigie de bête n'est pas une icône d'objet). */
+  const texUrl = (key: string): string => {
+    let u = urls.get(key)
+    if (u === undefined) {
+      u = game.textures.getBase64(key)
+      urls.set(key, u)
+    }
+    return u
+  }
+
+  /** LA FICHE au survol. Elle n'est appelée QUE pour une case dont `encyclopedie.ts` a rendu
+   *  une `fiche` : le rendu ne décide de rien. */
+  const ficheDom = (f: FicheEncyclo): HTMLElement => {
     const fi = document.createElement('div')
     fi.className = 'hch-fi'
-    const crans = (n: number, tot: number): string =>
-      `<span class="hch-fi-j">${Array.from({ length: tot }, (_, i) => (i < n ? '<i class="on"></i>' : '<i></i>')).join('')}</span>`
-    fi.innerHTML =
-      `<div class="hch-fi-h"><span class="hch-fi-nom"></span><span class="hch-fi-cl"></span></div>` +
-      `<div class="hch-fi-rec"><div><span class="hch-fi-sk">record</span><b class="hch-fi-recv"></b></div>` +
-      `<div class="hch-fi-n"><span class="hch-fi-sk">prises</span><b class="hch-fi-nv"></b></div></div>` +
-      `<div class="hch-fi-bloc hch-fi-conds">` +
-      f.conditions.map(() => `<div class="hch-fi-r"><span class="hch-fi-k"></span><span class="hch-fi-v"></span></div>`).join('') +
-      // ⚑ LE COIN DE PÊCHE (E3) : il porte le GEL — la grammaire du CONDITIONNEL (palette.ts).
-      (f.coinSeul ? `<div class="hch-fi-coin">◈ seulement sur un coin de pêche</div>` : '') +
-      `</div>` +
-      `<div class="hch-fi-bloc hch-fi-last">` +
-      `<div class="hch-fi-r"><span class="hch-fi-k">ferrage</span>${crans(f.ferrage.crans, f.ferrage.total)}` +
-      `<span class="hch-fi-v hch-fi-vs hch-fi-ferr"></span></div>` +
-      `<div class="hch-fi-r"><span class="hch-fi-k">rareté</span>${crans(f.rarete.crans, f.rarete.total)}` +
-      `<span class="hch-fi-v hch-fi-vs hch-fi-rar"></span></div>` +
-      `<div class="hch-fi-r"><span class="hch-fi-k">taille</span><span class="hch-fi-v hch-fi-tai"></span></div>` +
-      `</div>` +
-      // La fenêtre affichée est celle du niveau 0 : la Chasse l'élargit (D5/D6). Sans ce pied,
-      // le chiffre mentirait à moitié — un joueur maîtrisé n'y retrouverait pas sa fenêtre.
-      `<div class="hch-fi-pied">fenêtre au niveau 0 — elle s’élargit avec la Chasse</div>`
-    // TOUT texte venu de la table se pose par `textContent` : un libellé d'espèce ou un nom de
-    // zone ne doit jamais pouvoir se lire comme du balisage.
-    const t = (sel: string, v: string): void => { fi.querySelector<HTMLElement>(sel)!.textContent = v }
-    t('.hch-fi-nom', f.nom)
-    t('.hch-fi-cl', f.classe)
-    t('.hch-fi-recv', f.record)
-    t('.hch-fi-nv', f.prises)
-    t('.hch-fi-ferr', `${f.ferrage.mot} · ${f.ferrageSecondes}`)
-    t('.hch-fi-rar', f.rarete.mot)
-    t('.hch-fi-tai', f.taille)
-    const rows = Array.from(fi.querySelectorAll<HTMLElement>('.hch-fi-conds .hch-fi-r'))
-    f.conditions.forEach(([k, v], i) => {
-      const row = rows[i]
-      if (!row) return
-      row.querySelector<HTMLElement>('.hch-fi-k')!.textContent = k
-      row.querySelector<HTMLElement>('.hch-fi-v')!.textContent = v
+    const el = (cls: string, txt?: string): HTMLElement => {
+      const d = document.createElement('div')
+      d.className = cls
+      if (txt !== undefined) d.textContent = txt
+      return d
+    }
+    // ── L'en-tête : le nom, et le mot du coin (classe, palier, famille) ──
+    const tete = el('hch-fi-h')
+    tete.append(el('hch-fi-nom', f.nom), el('hch-fi-cl', f.kicker))
+    // ── Les deux grands chiffres : celui du joueur à gauche, celui de la table à droite ──
+    const chiffres = el('hch-fi-rec')
+    const colonne = (sk: string, val: string, droite: boolean): HTMLElement => {
+      const c = el(droite ? 'hch-fi-n' : '')
+      const s1 = document.createElement('span')
+      s1.className = 'hch-fi-sk'
+      s1.textContent = sk
+      const b = document.createElement('b')
+      b.textContent = val
+      c.append(s1, b)
+      return c
+    }
+    chiffres.append(colonne(f.gauche[0], f.gauche[1], false), colonne(f.droite[0], f.droite[1], true))
+    fi.append(tete, chiffres)
+    // ── Les blocs de lignes, séparés par un filet ──
+    f.blocs.forEach((bloc, i) => {
+      const b = el(`hch-fi-bloc${i === f.blocs.length - 1 && f.puces.length === 0 ? ' hch-fi-last' : ''}`)
+      for (const ligne of bloc) {
+        const r = el('hch-fi-r')
+        const k = document.createElement('span')
+        k.className = 'hch-fi-k'
+        k.textContent = ligne.k
+        const v = document.createElement('span')
+        v.className = `hch-fi-v${ligne.petit === true ? ' hch-fi-vs' : ''}`
+        v.textContent = ligne.v
+        r.append(k, v)
+        if (ligne.jauge) {
+          const j = document.createElement('span')
+          j.className = 'hch-fi-j'
+          for (let n = 0; n < ligne.jauge.total; n++) {
+            const i2 = document.createElement('i')
+            const teinte = ligne.jauge.teinte
+            i2.className = [teinte ?? '', n < ligne.jauge.crans ? 'on' : ''].filter((x) => x).join(' ')
+            j.append(i2)
+          }
+          r.append(j)
+        }
+        b.append(r)
+      }
+      fi.append(b)
     })
+    // ── Les puces : le GEL porte le conditionnel, la BRAISE ce qui chauffe (palette.ts) ──
+    if (f.puces.length > 0) {
+      const p = el('hch-fi-puces')
+      for (const puce of f.puces) {
+        const c = document.createElement('span')
+        c.className = `hch-chip${puce.chaud === true ? ' is-chaud' : ''}`
+        c.textContent = puce.texte
+        p.append(c)
+      }
+      fi.append(p)
+    }
     return fi
   }
 
-  /** UNE CASE. Tout ce qu'elle a le droit de montrer est déjà tranché par `bestiaire.ts` — une
-   *  case muette arrive sans icône, sans nom et sans fiche, et il n'y a donc rien à cacher ici. */
-  const caseDom = (c: CaseBestiaire, rang: number, col: number): HTMLElement => {
+  /** UNE CASE. Tout ce qu'elle a le droit de montrer est déjà tranché par `encyclopedie.ts` —
+   *  une case muette arrive sans effigie, sans nom et sans fiche : il n'y a rien à cacher ici. */
+  const caseDom = (c: CaseEncyclo, rang: number, col: number, cols: number): HTMLElement => {
     const el = document.createElement('div')
     // Le RETOURNEMENT est décidé ici, pas au survol : une fiche de ~300 px ne tient sous une
     // case qu'à la première rangée, et les deux dernières colonnes la feraient sortir à droite.
-    el.className = ['hch-bc', c.fiche ? '' : 'is-vide', rang >= 1 ? 'fl-y' : '', col >= BEST_COLS - 2 ? 'fl-x' : '']
+    el.className = ['hch-bc', c.fiche ? '' : 'is-vide', rang >= 1 ? 'fl-y' : '', col >= cols - 2 ? 'fl-x' : '']
       .filter((k) => k)
       .join(' ')
     const cadre = document.createElement('div')
     cadre.className = 'hch-bc-cadre'
-    if (c.coinSeul) {
+    if (c.drapeau) {
       const coin = document.createElement('span')
       coin.className = 'hch-bc-coin'
-      coin.textContent = '◈'
+      coin.textContent = '⚑'
       cadre.append(coin)
     }
-    if (c.icone !== null) {
+    if (c.effigie !== null) {
       const img = document.createElement('img')
-      img.className = 'hch-bc-ic'
-      img.src = iconUrl(c.icone as ItemId)
+      // UNE EFFIGIE DE BÊTE N'EST PAS CARRÉE (spr-deer 22×22, spr-wolf 22×17, spr-boar 22×15) :
+      // l'étirer à 100×100 en `contain` donnerait une échelle de 4,54 — des colonnes de pixels
+      // de 4 px et d'autres de 5. On la pose à son échelle NATURELLE ×4 (mémoire « rendu
+      // cubique » : NEAREST + facteur entier, ou l'art se crénèle).
+      img.className = c.effigie.kind === 'item' ? 'hch-bc-ic' : 'hch-bc-eff'
+      img.src = c.effigie.kind === 'item' ? iconUrl(c.effigie.item) : texUrl(c.effigie.key)
       cadre.append(img)
     } else {
       const q = document.createElement('span')
@@ -348,37 +402,145 @@ export function createHudCharacter(
     const nom = document.createElement('div')
     nom.className = 'hch-bc-nom'
     nom.textContent = c.nom
-    const rec = document.createElement('div')
-    rec.className = c.fiche ? 'hch-bc-rec' : 'hch-bc-rec is-vide'
-    rec.textContent = c.record
-    const n = document.createElement('div')
-    n.className = 'hch-bc-n'
-    n.textContent = c.prises
-    el.append(cadre, nom, rec, n)
+    const val = document.createElement('div')
+    val.className = c.fiche ? 'hch-bc-rec' : 'hch-bc-rec is-vide'
+    val.textContent = c.valeur
+    const sous = document.createElement('div')
+    sous.className = 'hch-bc-n'
+    sous.textContent = c.sous
+    el.append(cadre, nom, val, sous)
     if (c.fiche) el.append(ficheDom(c.fiche))
     return el
   }
 
-  /** La signature du carnet — le bestiaire est repeint à CHAQUE image tant qu'on le regarde, et
-   *  il bâtit dix-huit cases plus leurs fiches. Il ne rebâtit que quand le carnet a bougé. */
-  let bestSig = ' '
-  const paintBestiaire = (carnet: readonly { sp: string; mm: number; prises: number }[]): void => {
-    const sig = carnet.map((l) => `${l.sp}:${l.mm}:${l.prises}`).join('|')
-    if (sig === bestSig) return
-    bestSig = sig
-    bestSomme.textContent = sommeDuBestiaire(carnet)
-    bestList.replaceChildren(
-      ...rangeesDuBestiaire(carnet).map((r, rang) => {
+  /** UNE CARTE DE SAISON. Quatre entrées seulement : ce n'est pas une grille d'icônes, et une
+   *  saison jamais traversée se tait comme le reste. */
+  const carteSaisonDom = (s: CarteSaison): HTMLElement => {
+    const el = document.createElement('div')
+    el.className = s.fiche === null ? 'hch-sc is-vide' : 'hch-sc'
+    const cadre = document.createElement('div')
+    cadre.className = 'hch-bc-cadre hch-sc-cadre'
+    if (s.phase === null) {
+      const q = document.createElement('span')
+      q.className = 'hch-bc-q hch-sc-q'
+      q.textContent = '?'
+      cadre.append(q)
+    } else {
+      const img = document.createElement('img')
+      img.className = 'hch-bc-ic hch-sc-ic'
+      img.src = texUrl(`ic-saison-${s.phase}`)
+      cadre.append(img)
+    }
+    const nom = document.createElement('div')
+    nom.className = 'hch-sc-nom'
+    nom.textContent = s.nom
+    const rang = document.createElement('div')
+    rang.className = 'hch-sc-k'
+    rang.textContent = s.rang
+    el.append(cadre, nom, rang)
+    if (s.phase !== null) {
+      const temps = document.createElement('div')
+      temps.className = 'hch-sc-t'
+      for (const [cls, lbl, v] of [
+        ['hch-sc-jour', 'JOUR', s.jour],
+        ['hch-sc-nuit', 'NUIT', s.nuit],
+      ] as const) {
+        const sp = document.createElement('span')
+        sp.className = cls
+        const i = document.createElement('i')
+        i.textContent = lbl
+        const b = document.createElement('b')
+        b.textContent = v
+        sp.append(i, b)
+        temps.append(sp)
+      }
+      const barre = document.createElement('div')
+      barre.className = 'hch-sc-bar'
+      const jour = document.createElement('i')
+      jour.className = 'is-jour'
+      jour.style.width = `${s.partJour}%`
+      const nuit = document.createElement('i')
+      nuit.className = 'is-nuit'
+      nuit.style.width = `${100 - s.partJour}%`
+      barre.append(jour, nuit)
+      const vecue = document.createElement('div')
+      vecue.className = 'hch-sc-v'
+      vecue.textContent = s.vecue
+      el.append(temps, barre, vecue)
+      if (s.fiche) el.append(ficheDom(s.fiche))
+    }
+    return el
+  }
+
+  /** La signature de ce qui est à l'écran — l'encyclopédie est repeinte à CHAQUE image tant
+   *  qu'on la regarde, et elle bâtit une grille entière plus ses fiches. Elle ne rebâtit que
+   *  quand le carnet ou la section ont bougé. */
+  let encSig = ' '
+  const paintEncyclopedie = (carnets: CarnetsDuJoueur): void => {
+    const sig =
+      encSection +
+      '|' +
+      carnets.encyclo.map((l) => `${l.k}=${l.n}`).join(',') +
+      '|' +
+      carnets.peche.map((l) => `${l.sp}:${l.mm}:${l.prises}`).join(',')
+    if (sig === encSig) return
+    encSig = sig
+
+    // ── LE RAIL : une entrée par section, son compte, et les filets qui font les groupes ──
+    const rail: HTMLElement[] = []
+    for (const e of railDeLEncyclopedie(carnets)) {
+      const li = document.createElement('div')
+      li.className = `hch-enc-rl hud-click${e.id === encSection ? ' is-on' : ''}`
+      li.dataset.section = e.id
+      const nom = document.createElement('span')
+      nom.textContent = e.nom
+      const compte = document.createElement('em')
+      compte.textContent = `${e.su}/${e.tot}`
+      li.append(nom, compte)
+      li.addEventListener('click', () => {
+        encSection = e.id
+        encSig = ' ' // la section a changé : on force le rebâti au prochain passage
+      })
+      rail.push(li)
+      if (e.filet) {
+        const sep = document.createElement('div')
+        sep.className = 'hch-enc-sep'
+        rail.push(sep)
+      }
+    }
+    encRail.replaceChildren(...rail)
+
+    // ── LE CORPS : la grille de la section, ou les quatre cartes des saisons ──
+    if (encSection === 'saisons') {
+      const grille = document.createElement('div')
+      grille.className = 'hch-sais'
+      grille.append(...cartesDesSaisons(carnets).map(carteSaisonDom))
+      encBody.replaceChildren(grille)
+      return
+    }
+    encBody.replaceChildren(
+      ...rangeesDeSection(encSection, carnets).map((r, rang) => {
         const bloc = document.createElement('div')
         bloc.className = 'hch-brangee'
         const tete = document.createElement('div')
         tete.className = 'hch-brang'
-        tete.innerHTML = `<span class="hch-brang-t"></span><span class="hch-brang-fil"></span><span class="hch-brang-s"></span>`
-        tete.querySelector<HTMLElement>('.hch-brang-t')!.textContent = r.titre
-        tete.querySelector<HTMLElement>('.hch-brang-s')!.textContent = r.sous
+        const titre = document.createElement('span')
+        titre.className = 'hch-brang-t'
+        titre.textContent = r.titre
+        const fil = document.createElement('span')
+        fil.className = 'hch-brang-fil'
+        const note = document.createElement('span')
+        note.className = 'hch-brang-s'
+        note.textContent = r.note
+        tete.append(titre, fil, note)
         const grille = document.createElement('div')
         grille.className = 'hch-bgrid'
-        grille.append(...r.cases.map((c, col) => caseDom(c, rang, col)))
+        grille.style.gridTemplateColumns = `repeat(${r.cols},minmax(0,1fr))`
+        // UNE CASE NE S'ÉTIRE PAS SANS FIN : à deux colonnes (les animaux sauvages), une case
+        // pleine largeur ferait 520 px pour une effigie de 112. On borne la LARGEUR DE GRILLE
+        // au produit — dérivé, donc juste pour toute section présente ou à venir.
+        grille.style.maxWidth = `${r.cols * 240}px`
+        grille.append(...r.cases.map((c, col) => caseDom(c, rang, col, r.cols)))
         bloc.append(tete, grille)
         return bloc
       }),
@@ -663,9 +825,9 @@ export function createHudCharacter(
       if (activeTab !== s.tab) hooks.setTab(activeTab)
       applyTab()
       paintMet(s.skills)
-      // Le bestiaire ne se repeint QUE quand on le regarde : il bâtit 18 lignes de DOM, et
-      // l'écran de personnage se met à jour à chaque image tant qu'il est ouvert.
-      if (activeTab === 'bestiaire') paintBestiaire(s.pecheCarnet)
+      // L'encyclopédie ne se repeint QUE quand on la regarde : elle bâtit une grille entière
+      // plus ses fiches, et l'écran se met à jour à chaque image tant qu'il est ouvert.
+      if (activeTab === 'encyclopedie') paintEncyclopedie({ encyclo: s.carnetEncyclo, peche: s.pecheCarnet })
 
       for (let i = 0; i < bagCells.length; i++) paintCell(bagCells[i]!, inv[BAG_LO + i] ?? null, false)
       for (let i = 0; i < beltCells.length; i++) paintCell(beltCells[i]!, inv[i] ?? null, i === activeSlot)
@@ -851,31 +1013,41 @@ function markup(): string {
     /* ONGLET METIERS : quatre colonnes pleine largeur, centrées, entre la barre d'onglets et
        la ceinture. Chaque colonne = une fiche : geste, echelle de paliers, passifs, note outil. */
     .hch-met{position:absolute;left:0;right:0;top:96px;bottom:120px;display:none;justify-content:center;align-items:flex-start;}
-    /* LE BESTIAIRE (peche.md R11) — UNE GRILLE D'ICÔNES, EN TROIS RANGÉES DE CLASSE.
-       La rangée enseigne ce qu'une case ne peut pas dire : la classe décide des portions, du
-       cuit et du séché. Une espèce JAMAIS PRISE est MUETTE (décision d'Alexis, 2026-08-24) :
-       un « ? », pas de nom, pas de silhouette, et AUCUNE fiche n'est posée dessus — le survol
-       ne peut donc rien fuiter. Seul le compteur avoue qu'il reste des espèces à trouver. */
-    .hch-best{position:absolute;left:0;right:0;top:96px;bottom:120px;display:none;flex-direction:column;padding:0 40px;}
-    .hch-best-h{display:flex;justify-content:space-between;font-size:13px;letter-spacing:.14em;color:#c98b3a;padding:0 4px 10px;border-bottom:1px solid #2a2a34;}
-    .hch-best-somme{color:#9a8f78;letter-spacing:.06em;}
-    .hch-best-list{flex:1;min-height:0;display:flex;flex-direction:column;gap:10px;padding:8px 0 2px;}
+    /* L'ENCYCLOPÉDIE (décision d'Alexis, 2026-08-24) — UN RAIL DE SECTIONS, PUIS UNE GRILLE.
+       Une entrée JAMAIS RENCONTRÉE est MUETTE : un « ? », pas de nom, pas de silhouette, et
+       AUCUNE fiche n'est posée dessus — le survol ne peut donc rien fuiter. Seuls les comptes
+       du rail avouent qu'il reste des choses à trouver. */
+    .hch-enc{position:absolute;left:0;right:0;top:96px;bottom:120px;display:none;padding:0 40px;gap:28px;align-items:stretch;}
+    /* LE RAIL : la largeur de la colonne des métiers (250 px), pour que l'écran garde sa mesure. */
+    .hch-enc-rail{width:250px;flex:0 0 250px;display:flex;flex-direction:column;gap:3px;
+      border-right:1px solid #22222a;padding-right:20px;}
+    .hch-enc-rl{display:flex;align-items:baseline;justify-content:space-between;gap:8px;
+      padding:9px 10px 9px 11px;border-left:3px solid transparent;font-size:13px;letter-spacing:.10em;
+      color:#8b8474;cursor:pointer;}
+    .hch-enc-rl em{font-style:normal;font-size:11px;letter-spacing:.04em;color:#4a4740;flex:0 0 auto;}
+    .hch-enc-rl:hover{color:#e8e0c8;background:#191519;}
+    .hch-enc-rl.is-on{color:#f4ecd2;background:#1b1b22;border-left-color:#c98b3a;}
+    .hch-enc-rl.is-on em{color:#c98b3a;}
+    .hch-enc-sep{height:1px;background:#22222a;margin:7px 10px;}
+    .hch-enc-body{flex:1;min-width:0;display:flex;flex-direction:column;gap:10px;}
     .hch-brangee{display:flex;flex-direction:column;flex:1;min-height:0;}
     .hch-brang{display:flex;align-items:baseline;gap:12px;margin-bottom:6px;}
     .hch-brang-t{font-size:11px;letter-spacing:.20em;color:#c98b3a;}
     .hch-brang-fil{flex:1;height:1px;background:#22222a;}
     .hch-brang-s{font-size:10px;letter-spacing:.06em;color:#6b6455;}
-    .hch-bgrid{flex:1;min-height:0;display:grid;grid-template-columns:repeat(${BEST_COLS},minmax(0,1fr));
-      grid-auto-rows:minmax(0,1fr);gap:10px;}
+    .hch-bgrid{flex:1;min-height:0;display:grid;grid-auto-rows:minmax(0,1fr);gap:10px;}
 
-    /* LA CASE. L'icône est celle du SAC — la même effigie, pour qu'une prise se reconnaisse. */
+    /* LA CASE. L'effigie est celle du SAC pour un objet, celle du MONDE pour une bête —
+       la même image qu'en jeu, pour qu'une rencontre se reconnaisse. */
     .hch-bc{position:relative;background:#1b1b22;border:2px solid #2a2a34;padding:9px 6px 7px;
       display:flex;flex-direction:column;align-items:center;justify-content:center;gap:2px;cursor:default;}
     .hch-bc:hover{border-color:#6b5a3a;background:#211c17;z-index:30;}
     .hch-bc-cadre{position:relative;width:112px;height:112px;flex:0 0 auto;background:#14100c;border:2px solid #22222a;
       display:grid;place-items:center;margin-bottom:6px;}
-    .hch-bc-ic{width:100px;height:100px;image-rendering:pixelated;}
-    .hch-bc-nom{font-size:13px;color:#e8e0c8;letter-spacing:.03em;}
+    .hch-bc-ic{width:100px;height:100px;image-rendering:pixelated;object-fit:contain;}
+    /* L'effigie d'une bête : sa taille NATURELLE ×4 (facteur entier), jamais étirée. */
+    .hch-bc-eff{image-rendering:pixelated;transform:scale(4);transform-origin:center center;}
+    .hch-bc-nom{font-size:13px;color:#e8e0c8;letter-spacing:.03em;text-align:center;}
     .hch-bc-rec{font-size:15px;color:#c98b3a;margin-top:3px;letter-spacing:.02em;}
     .hch-bc-rec.is-vide{color:#4a4740;}
     .hch-bc-n{font-size:10px;color:#8b8474;height:13px;}
@@ -888,21 +1060,49 @@ function markup(): string {
     .hch-bc.is-vide .hch-bc-nom{color:#5c574d;letter-spacing:.14em;}
     .hch-bc-q{font-size:56px;font-weight:700;color:#6b5a3a;line-height:1;}
 
+    /* LES SAISONS : quatre cartes larges, pas une grille d'icônes. Elles ne remplissent pas
+       toute la bande — la fiche s'ouvre DESSOUS, et doit tenir au-dessus de la ceinture. */
+    .hch-sais{flex:1;min-height:0;display:grid;grid-template-columns:repeat(4,minmax(0,1fr));
+      grid-auto-rows:540px;align-items:start;gap:16px;}
+    .hch-sc{position:relative;background:#1b1b22;border:2px solid #2a2a34;height:100%;
+      display:flex;flex-direction:column;align-items:center;justify-content:center;padding:26px 20px 20px;}
+    .hch-sc:hover{border-color:#6b5a3a;background:#211c17;z-index:30;}
+    .hch-sc.is-vide{background:#17151a;border-style:dashed;border-color:#26262f;}
+    .hch-sc.is-vide:hover{border-color:#26262f;background:#17151a;}
+    .hch-sc.is-vide .hch-bc-cadre{border-style:dashed;border-color:#22222a;}
+    .hch-sc.is-vide .hch-sc-nom{color:#5c574d;letter-spacing:.16em;}
+    .hch-sc-cadre{width:190px;height:190px;margin-bottom:22px;}
+    .hch-sc-ic{width:176px;height:176px;}
+    .hch-sc-q{font-size:80px;}
+    .hch-sc-nom{font-size:19px;font-weight:700;color:#f4ecd2;letter-spacing:.10em;text-align:center;}
+    .hch-sc-k{font-size:11px;color:#8b8474;letter-spacing:.18em;margin-top:5px;}
+    .hch-sc-t{display:flex;gap:26px;margin-top:22px;}
+    .hch-sc-t span{text-align:center;}
+    .hch-sc-t i{display:block;font-style:normal;font-size:10px;color:#8b8474;letter-spacing:.10em;margin-bottom:3px;}
+    .hch-sc-t b{font-size:20px;font-weight:700;line-height:1;}
+    .hch-sc-jour b{color:#c98b3a;}
+    .hch-sc-nuit b{color:#6f93a0;}
+    .hch-sc-bar{width:100%;height:6px;background:#2a2a34;margin-top:22px;display:flex;}
+    .hch-sc-bar i{display:block;height:100%;}
+    .hch-sc-bar i.is-jour{background:#c98b3a;}
+    .hch-sc-bar i.is-nuit{background:#3b4a52;}
+    .hch-sc-v{font-size:12px;color:#8b8474;margin-top:12px;letter-spacing:.06em;}
+
     /* LA FICHE au survol — TRAVERSANTE (pointer-events:none) : posée sous le curseur elle
        lui volerait le survol de sa propre case et clignoterait. Elle se retourne EN HAUT hors
-       de la première rangée et À GAUCHE sur les deux dernières colonnes : à 1280×720 elle
-       sortirait du cadre autrement (les classes fl-y / fl-x sont posées à la construction). */
+       de la première rangée et À GAUCHE sur les deux dernières colonnes : elle sortirait du
+       cadre autrement (les classes fl-y / fl-x sont posées à la construction). */
     .hch-fi{position:absolute;left:50%;top:calc(100% + 8px);transform:translateX(-50%);width:274px;
       background:#16120d;border:2px solid #2a2a34;box-shadow:0 8px 0 rgba(0,0,0,.45),0 0 0 1px #0c0a07;
       padding:12px 14px 10px;text-align:left;opacity:0;pointer-events:none;z-index:30;
       transition:opacity .09s linear;}
-    .hch-bc:hover .hch-fi{opacity:1;}
+    .hch-bc:hover .hch-fi,.hch-sc:hover .hch-fi{opacity:1;}
     .fl-x .hch-fi{left:auto;right:0;transform:none;}
     .fl-y .hch-fi{top:auto;bottom:calc(100% + 8px);}
-    .hch-fi-h{display:flex;justify-content:space-between;align-items:baseline;
+    .hch-fi-h{display:flex;justify-content:space-between;align-items:baseline;gap:10px;
       border-bottom:1px solid #2a2a34;padding-bottom:7px;margin-bottom:9px;}
     .hch-fi-nom{font-size:15px;font-weight:700;color:#f4ecd2;letter-spacing:.10em;}
-    .hch-fi-cl{font-size:11px;color:#8b8474;letter-spacing:.14em;}
+    .hch-fi-cl{font-size:11px;color:#8b8474;letter-spacing:.14em;flex:0 0 auto;}
     .hch-fi-rec{display:flex;justify-content:space-between;align-items:flex-end;margin-bottom:11px;
       white-space:nowrap;gap:12px;}
     .hch-fi-sk{display:block;font-size:10px;color:#8b8474;letter-spacing:.10em;margin-bottom:1px;}
@@ -911,16 +1111,24 @@ function markup(): string {
     .hch-fi-n b{font-size:15px;color:#e8e0c8;}
     .hch-fi-bloc{display:flex;flex-direction:column;gap:5px;padding-bottom:9px;margin-bottom:9px;
       border-bottom:1px solid #1e1e26;}
-    .hch-fi-last{border-bottom:none;padding-bottom:2px;margin-bottom:6px;}
+    .hch-fi-last{border-bottom:none;padding-bottom:0;margin-bottom:2px;}
     .hch-fi-r{display:flex;align-items:center;gap:8px;font-size:12px;}
-    .hch-fi-k{color:#8b8474;letter-spacing:.08em;width:56px;flex:0 0 56px;}
-    .hch-fi-v{color:#e8e0c8;flex:1;}
+    /* 92 px : les intitulés de l'encyclopédie sont plus longs que ceux du seul bestiaire
+       (« rendement », « durabilité », « temp. jour ») — à 56 px ils chevauchaient la valeur. */
+    .hch-fi-k{color:#8b8474;letter-spacing:.06em;font-size:11px;width:92px;flex:0 0 92px;line-height:1.35;}
+    .hch-fi-v{color:#e8e0c8;flex:1;min-width:0;}
     .hch-fi-vs{font-size:11px;color:#b9b09a;}
     .hch-fi-j{display:flex;gap:2px;flex:0 0 auto;}
     .hch-fi-j i{width:6px;height:10px;background:#2a2a34;display:block;}
     .hch-fi-j i.on{background:#c98b3a;}
-    .hch-fi-coin{font-size:11px;color:#6f93a0;letter-spacing:.04em;margin-top:2px;}
-    .hch-fi-pied{font-size:10px;color:#6b6455;letter-spacing:.05em;border-top:1px solid #1e1e26;padding-top:7px;}
+    /* La grammaire de palette.ts : le GEL porte le conditionnel (le froid), le rouge ce qui
+       blesse. Une jauge de dégâts en ambre dirait « ça chauffe », pas « ça tue ». */
+    .hch-fi-j i.gel.on{background:#6f93a0;}
+    .hch-fi-j i.alerte.on{background:#e05a4a;}
+    .hch-fi-puces{display:flex;flex-wrap:wrap;gap:5px;margin-top:9px;}
+    .hch-chip{font-size:10px;letter-spacing:.06em;color:#6f93a0;border:1px solid #2c3c42;
+      background:#151c1f;padding:3px 7px;}
+    .hch-chip.is-chaud{color:#c98b3a;border-color:#3d3020;background:#1c1710;}
     .hch-met-row{display:flex;gap:26px;justify-content:center;padding:0 40px;}
     .hch-met-col{width:396px;background:#16120d;border:3px solid #14141a;padding:22px 22px 24px;display:flex;flex-direction:column;}
     .hch-met-head{display:grid;grid-template-columns:48px 1fr auto;grid-template-rows:auto auto;column-gap:14px;align-items:center;margin-bottom:16px;}
@@ -956,13 +1164,13 @@ function markup(): string {
   <div class="hch-tabs">
     <button class="hch-tab hud-click" data-tab="perso">PERSONNAGE</button>
     <button class="hch-tab hud-click" data-tab="metiers">MÉTIERS</button>
-    <button class="hch-tab hud-click" data-tab="bestiaire">BESTIAIRE</button>
+    <button class="hch-tab hud-click" data-tab="encyclopedie">ENCYCLOPÉDIE</button>
     <button class="hch-tab hud-click" data-tab="carte">CARTE</button>
   </div>
   <div class="hch-met"><div class="hch-met-row"></div></div>
-  <div class="hch-best">
-    <div class="hch-best-h"><span>LE BESTIAIRE — CE QUE J’AI SORTI DE L’EAU</span><span class="hch-best-somme"></span></div>
-    <div class="hch-best-list"></div>
+  <div class="hch-enc">
+    <div class="hch-enc-rail"></div>
+    <div class="hch-enc-body"></div>
   </div>
   <div class="hch-art">
     <div class="hch-art-h"><span class="hch-art-t">ARTISANAT</span><span class="hch-art-hint">MOLETTE POUR DÉFILER</span></div>
