@@ -43,7 +43,8 @@
  */
 import { describe, expect, it } from 'vitest'
 import {
-  BALANCE, CENDREUX, FAUNA, GEL, METEO, MONSTER_DEFS, TEMPERATURE, TERRAIN_GRASS, TERRAIN_SNOW,
+  BALANCE, CENDREUX, FAUNA, GEL, METEO, MONSTER_DEFS, TEMPERATURE, TERRAIN_GLACIER, TERRAIN_GRASS,
+  TERRAIN_MARSH, TERRAIN_SNOW,
 } from './balance'
 import { brumeJourEligible } from './brume'
 import { CHRONICLE_EVENT_TYPES, chronicleFromEvents } from './chronicle'
@@ -61,7 +62,7 @@ import {
   foudreTelegrapheAt, partDeBlizzard, frontDuCycle, frontEstBlizzard, frontMeteoPos, frontMouille,
   largeurDe, meteoAspectAt, meteoColdAt, meteoFeuConso, meteoIntensity, meteoIntensityAt,
   meteoCycleEligible, meteoMouille, meteoQuiet, meteoSpeedFactor, meteoSpeedFactorAt,
-  meteoTypeBrut, meteoTypeDuCycle, meteoVisionFactor, neigeA,
+  meteoTypeBrut, meteoTypeDuCycle, meteoVisionFactor, neigeA, partDeNeige,
   type BandeMeteo, type MeteoAspect, type MeteoFront, type MeteoType,
 } from './meteo'
 import { nearestPrey, spawnMonster, type Monster } from './monsters'
@@ -2183,10 +2184,18 @@ describe('A12 — l’ASPECT se dérive du froid, il ne s’élit pas (R11)', ()
     // encore au-dessus de la limite (la plaine ne neige à AUCUNE heure) et où le socle de JOUR
     // moins l'offset du Névé est déjà dessous (le Névé neige à TOUTE heure). Un jour écrit en
     // dur redeviendrait faux au premier recalibrage de la courbe.
+    //
+    // DEPUIS R14 LES DEUX BORNES SONT CELLES DU GRÉSIL, pas la limite : « au-dessus de la
+    // limite » ne veut plus dire « rien au sol », il veut dire « moins de la moitié ». Le
+    // contraste FRANC — rien d'un côté, tout de l'autre — vit une demi-rampe plus loin de
+    // chaque côté. C'est exactement ce que la zone de grésil a coûté à cette garde, et le
+    // `vu > 0` final affirme qu'il reste des jours pour la tenir.
     const LIMITE = METEO.SEUIL_NEIGE + METEO.COLD.pluie
+    const SEC = LIMITE + METEO.NEIGE_RAMPE / 2 // au-dessus : `partDeNeige` vaut 0, il PLEUT
+    const BLANC = LIMITE - METEO.NEIGE_RAMPE / 2 // en dessous : elle vaut 1, il NEIGE
     const neve = TEMPERATURE.BIOME_OFFSET[TERRAIN_SNOW]!
     const contraste = (jour: number): boolean =>
-      socleDuJour(jour, 1) - TEMPERATURE.ECART_NUIT(jour) >= LIMITE && socleDuJour(jour, 1) + neve < LIMITE
+      socleDuJour(jour, 1) - TEMPERATURE.ECART_NUIT(jour) >= SEC && socleDuJour(jour, 1) + neve <= BLANC
 
     const map = createEmptyMap(120, 40, TERRAIN_GRASS)
     for (let ty = 0; ty < 40; ty++) for (let tx = 60; tx < 120; tx++) setTile(map, tx, ty, TERRAIN_SNOW)
@@ -2199,13 +2208,110 @@ describe('A12 — l’ASPECT se dérive du froid, il ne s’élit pas (R11)', ()
       sim.tick = f.endTick + 200
       // Les deux prémisses, RELUES sur le monde au tick de lecture : la plaine est au-dessus
       // de la limite, le Névé dessous. Sans elles, un « 0 » sur la plaine ne dirait rien.
-      expect(dehorsSansMeteo(sim, 20.5, 20.5, sim.tick), `plaine, cycle ${c}`).toBeGreaterThanOrEqual(LIMITE)
-      expect(dehorsSansMeteo(sim, 90.5, 20.5, sim.tick), `Névé, cycle ${c}`).toBeLessThan(LIMITE)
+      expect(dehorsSansMeteo(sim, 20.5, 20.5, sim.tick), `plaine, cycle ${c}`).toBeGreaterThanOrEqual(SEC)
+      expect(dehorsSansMeteo(sim, 90.5, 20.5, sim.tick), `Névé, cycle ${c}`).toBeLessThanOrEqual(BLANC)
       expect(neigeAuSol(sim, 20, 20), `plaine, cycle ${c}`).toBe(0) // il a PLU : rien au sol
       expect(neigeAuSol(sim, 90, 20), `Névé, cycle ${c}`).toBeGreaterThan(0) // il a NEIGÉ
       vu++
     }
     expect(vu).toBeGreaterThan(0) // la garde prouve sa prémisse : l'année a bien de tels fronts
+  })
+})
+
+describe('A16 — la neige est une PART, pas un oui/non (R14)', () => {
+  const LIMITE = METEO.SEUIL_NEIGE + METEO.COLD.pluie
+  const DEMI = METEO.NEIGE_RAMPE / 2
+
+  it('BALAYAGE du domaine de T₀ : 1 en dessous, 0 au-dessus, monotone entre — et `neigeA` en est le passage à 0,5', () => {
+    let plein = 0
+    let nul = 0
+    let gresil = 0
+    let precedent = 1
+    // Pas de 0,125 : exactement représentable en binaire, donc aucun point ne tombe à un
+    // cheveu de la limite — l'équivalence `neigeA ⟺ part > 0,5` s'affirme sans zone grise.
+    for (let t0 = LIMITE - 3 * DEMI; t0 <= LIMITE + 3 * DEMI; t0 += 0.125) {
+      const p = partDeNeige(t0)
+      expect(p, `t0=${t0}`).toBeGreaterThanOrEqual(0)
+      expect(p, `t0=${t0}`).toBeLessThanOrEqual(1)
+      expect(p, `t0=${t0}`).toBeLessThanOrEqual(precedent) // décroissante en T₀, sans exception
+      precedent = p
+      if (t0 <= LIMITE - DEMI) { expect(p, `t0=${t0}`).toBe(1); plein++ }
+      if (t0 >= LIMITE + DEMI) { expect(p, `t0=${t0}`).toBe(0); nul++ }
+      if (p > 0 && p < 1) gresil++
+      // LE SEUIL D'AVANT EST LE MILIEU DE LA PENTE — une loi, deux écritures, jamais deux lois.
+      expect(neigeA(t0), `t0=${t0}`).toBe(p > 0.5)
+    }
+    // La garde prouve sa prémisse : les TROIS régimes ont été vus, et pas une fois chacun.
+    expect(plein).toBeGreaterThan(10)
+    expect(nul).toBeGreaterThan(10)
+    expect(gresil).toBeGreaterThan(10)
+    expect(partDeNeige(LIMITE)).toBe(0.5) // la limite est le point à moitié, par construction
+  })
+
+  it('LA MARCHE DE BIOME LA PLUS LARGE DE LA VALLÉE ne fait pas basculer le ciel à elle seule', () => {
+    // C'EST LA GARDE QUI COMPTE, et elle regarde `BIOME_OFFSET`, pas la rampe : le défaut
+    // corrigé est géométrique (six pas de marais vers pré retournaient tout le ciel), et il
+    // reviendrait à l'identique — sous le nom de « pente » — si la rampe redescendait à la
+    // taille d'une marche. Les GATES de froid sont hors jeu : la neige (−16) et le glacier
+    // (−30) sont des changements de climat, pas des lisières qu'on traverse en marchant.
+    const gates: number[] = [TERRAIN_SNOW, TERRAIN_GLACIER]
+    const vallee = Object.entries(TEMPERATURE.BIOME_OFFSET)
+      .filter(([id]) => !gates.includes(Number(id)))
+      .map(([, v]) => v)
+    // Le sol nu (0) participe : il n'a pas d'entrée dans la table, c'est le repli `?? 0`.
+    const marche = Math.max(0, ...vallee) - Math.min(0, ...vallee)
+    expect(marche).toBe(4) // forêt (+2) contre marais (−2) — la plus large de la vallée
+    // Au plus DEUX TIERS du mélange par marche : la lisière devient une transition.
+    expect(marche).toBeLessThanOrEqual(METEO.NEIGE_RAMPE * 2 / 3)
+  })
+
+  it('LE CAS SIGNALÉ — le pré est SOUS la limite de neige de moins d’une demi-rampe : il s’y dépose du grésil, et le marais en reçoit plus', () => {
+    // Le scénario d'Alexis, en test : une lisière marais/pré, un front qui précipite dessus.
+    //
+    // CE QUI DISCRIMINE LES DEUX LOIS, et rien d'autre ne le fait : on CHERCHE un front dont
+    // toute la traversée laisse le pré dans la MOITIÉ HAUTE de la zone de grésil (`T₀` entre
+    // la limite et une demi-rampe au-dessus, à chaque instant de la fenêtre — brume comprise,
+    // puisqu'on relit `dehorsSansMeteo` et non le socle). Sous l'ancien oui/non, `neigeA` y est
+    // FAUX partout : le dépôt vaut exactement 0. Sous R14 il vaut la part, donc > 0 — et le
+    // marais, deux degrés plus froid, en reçoit strictement plus. C'est la MÊME tuile, le
+    // MÊME front : seule la loi change.
+    const map = createEmptyMap(120, 40, TERRAIN_GRASS)
+    for (let ty = 0; ty < 40; ty++) for (let tx = 60; tx < 120; tx++) setTile(map, tx, ty, TERRAIN_MARSH)
+    const sim = createSim(11, { map, calendarScale: SCALE, meteoActive: true })
+    const MARGE = 0.25 // on se tient à l'écart des deux bords : aucune tranche ne les frôle
+    let trouve = 0
+    for (let c = 0; c < YEAR_DAYS; c++) {
+      const f = frontDuCycle(c, SCALE, sim.jourDeDepart)
+      if (!f || (f.type !== 'pluie' && f.type !== 'orage')) continue
+      // LA PRÉMISSE, RELUE SUR LE MONDE le long de toute la fenêtre du front — deux moitiés :
+      //   • JAMAIS sous la limite : `neigeA` est faux à chaque tranche, donc l'ancienne loi
+      //     dépose EXACTEMENT zéro sur le pré. C'est ce qui rend le `> 0` discriminant.
+      //   • AU MOINS UNE FOIS dans la zone de grésil : il y a quelque chose à déposer.
+      // Elle se lit SUR LES SEULS INSTANTS OÙ LA BANDE COUVRE LA TUILE (`meteoIntensityAt` > 0 —
+      // la fonction de la sim, pas une copie) : c'est cette fenêtre-là que `neigeAuSol` intègre,
+      // et pas la fenêtre du front, qui est bien plus longue.
+      let jamaisSousLaLimite = true
+      let toucheLeGresil = false
+      let couvert = 0
+      for (let i = 0; i <= 60; i++) {
+        const t = f.startTick + Math.round(((f.endTick - f.startTick) * i) / 60)
+        if (meteoIntensityAt(f, t, 120, 40, 20.5, 20.5) <= 0) continue
+        couvert++
+        const t0 = dehorsSansMeteo(sim, 20.5, 20.5, t)
+        if (t0 <= LIMITE + MARGE) jamaisSousLaLimite = false
+        if (t0 < LIMITE + DEMI - MARGE) toucheLeGresil = true
+      }
+      if (couvert < 4 || !jamaisSousLaLimite || !toucheLeGresil) continue
+      sim.tick = f.endTick + 200
+      const pre = neigeAuSol(sim, 20, 20)
+      const marais = neigeAuSol(sim, 90, 20)
+      expect(pre, `pré, cycle ${c}`).toBeGreaterThan(0) // 0 sous l'ancienne loi : rien n'y neigeait
+      expect(marais, `marais, cycle ${c}`).toBeGreaterThan(pre) // deux degrés plus froid
+      expect(pre, `pré, cycle ${c}`).toBeLessThan(1) // du GRÉSIL, pas une vraie neige
+      trouve++
+    }
+    // La garde prouve sa prémisse : l'année porte de tels fronts.
+    expect(trouve).toBeGreaterThan(0)
   })
 })
 

@@ -10127,6 +10127,288 @@ const SCENARIOS = {
   },
 
   /**
+   * LE GRÉSIL (spec `meteo.md` R14) — LA LISIÈRE NE RETOURNE PLUS LE CIEL.
+   *
+   * ═══ LE DÉFAUT, TEL QU'IL A ÉTÉ SIGNALÉ ═══
+   *
+   * « Je suis passé de précipitations neige plein écran à précipitations pluie plein écran sur
+   * six cases de traversée, marais vers pré. Je vois tout le ciel se transformer d'un coup. »
+   *
+   * Trois causes s'additionnaient, et deux vivaient dans la LOI : la limite neige/pluie était
+   * un SEUIL (`neigeA`, un oui/non) ; `T₀` saute par MARCHES d'une tuile (`BIOME_OFFSET` :
+   * marais −2, pré 0, forêt +2), si bien que la lisière ÉTAIT la ligne de neige dès que le
+   * socle tombait dans la bonne fenêtre ; et le rideau lisait l'aspect en UN point pour le
+   * peindre PLEIN CADRE. R14 remplace le seuil par une part continue et le point par un champ.
+   *
+   * ═══ CE QUE CE SCÉNARIO MESURE ═══
+   *
+   *   1. LE GRÉSIL EXISTE — sur un jour où la plaine est au milieu de la zone, le rideau porte
+   *      des flocons ET des gouttes DANS LA MÊME IMAGE (`sonde.flocons` / `sonde.gouttes`).
+   *   2. LA LISIÈRE EST UNE PENTE — on traverse une vraie frontière marais/pré tuile par tuile
+   *      et on relève la part de froid du cadre à chaque pas : elle doit BOUGER (sinon le champ
+   *      ne dit rien) sans jamais SAUTER (sinon on a renommé le mur en pente).
+   *
+   * Rien n'est truqué : le jour vient du calendrier, le front de `debug_meteo` (un vrai record
+   * d'élection), la lisière de la carte générée. Exige `--dev`.
+   */
+  async gresil(page) {
+    if (!dev) {
+      console.log('\n(le grésil exige le mode debug pour armer un front — relancer avec --dev)')
+      return {}
+    }
+    await page.waitForFunction(() => Boolean(window.__BRAISES__?.scene?.registry?.get('worldReady')), null, { timeout: 150000 })
+    await page.waitForTimeout(1200)
+
+    const agir = async (action, ms = 300) => {
+      await page.evaluate((a) => { window.__BRAISES__.scene.sendAction(a) }, action)
+      await page.waitForTimeout(ms)
+    }
+    /** La sonde du rideau, telle que la couche la tient — jamais un nombre refait ici. */
+    const sonde = async () => page.evaluate(() => {
+      const l = window.__BRAISES__.scene.meteoLayer
+      return l ? { ...l.sonde, intensite: l.intensiteAuJoueur, bande: l.bande } : null
+    })
+
+    // MIDI, et INVULNÉRABLE : le ciel se juge éclairé, et on va se planter sous une averse.
+    await agir({ type: 'debug_set_hour', hour: 12 }, 900)
+    await agir({ type: 'debug_god', on: true }, 200)
+
+    /**
+     * ON ENTRE PAR LE NORD (`edge: 2`) — la bande est alors PERPENDICULAIRE à la traversée, donc
+     * elle couvre TOUT l'axe des x : on marche d'un bout à l'autre de la lisière sans jamais en
+     * sortir. Avec un front d'ouest, chaque pas aurait changé l'intensité.
+     *
+     * ELLE DÉRIVE PENDANT QU'ON MESURE (l'horloge headless galope — 9,5 tuiles en 1,4 s, relevé
+     * par le scénario `meteo`), d'où le réarmement avant chaque relevé : idempotent, un tick.
+     * La phase se calcule sur la géométrie qu'on vient de lire : `lo = phase × (span + largeur)
+     * − largeur`, donc centrer sur `yC` demande `(yC + largeur/2) / (span + largeur)`.
+     */
+    await agir({ type: 'debug_meteo', meteo: 'pluie', edge: 2, phase: 0.5 }, 1200)
+    await page.waitForFunction(() => Boolean(window.__BRAISES__.scene.meteoLayer?.bande), null, { timeout: 20000 }).catch(() => {})
+    const bande0 = (await sonde())?.bande
+    if (!bande0) { console.error('!! aucune bande dessinée — le front n’est pas arrivé au client'); return {} }
+    const monde = await page.evaluate(() => ({ w: window.__BRAISES__.scene.map.width, h: window.__BRAISES__.scene.map.height }))
+    const largeur = bande0.hi - bande0.lo
+    const phasePour = (y) => Math.min(0.99, Math.max(0.01, (y + largeur / 2) / (monde.h + largeur)))
+    console.log(`  bande d'axe ${bande0.axis}, large de ${Math.round(largeur)} tuiles sur une carte de ${monde.w}×${monde.h}`)
+
+    /** LA BANDE SEULE, replantée sur la rangée voulue — idempotent, un tick. */
+    const armerLaBande = async (y) => {
+      await page.evaluate((ph) => { window.__BRAISES__.scene.sendAction({ type: 'debug_meteo', meteo: 'pluie', edge: 2, phase: ph }) }, phasePour(y))
+      await page.waitForFunction(
+        () => (window.__BRAISES__.scene.meteoLayer?.intensiteAuJoueur ?? 0) >= 0.9,
+        null, { timeout: 15000, polling: 150 },
+      ).catch(() => {})
+    }
+
+    /**
+     * ⚠ LE JOUR D'ABORD, L'HEURE ENSUITE, ET CHACUN ATTENDU — la leçon coûte un run entier.
+     *
+     * Envoyés d'un bloc dans un seul `evaluate`, les trois ordres passent, mais on LIT avant que
+     * le client ait vu le nouveau jour : `waitForFunction` sur l'intensité rend AUSSITÔT (la
+     * bande de l'itération précédente est encore là), et en headless une image dure une seconde.
+     * Le premier balayage a ainsi relevé « jour 61, 14 h » à chaque pas alors qu'il demandait 68
+     * à 96 — et une part de neige NULLE partout, parfaitement juste pour un jour d'été. On attend
+     * donc CHAQUE preuve chez celui qui la porte. Et le saut de jour déplace le tick de centaines
+     * de milliers de ticks : l'heure se pose APRÈS, sans quoi le décalage de phase vise l'ancien.
+     */
+    const armer = async (jour, y) => {
+      await page.evaluate((j) => { window.__BRAISES__.scene.sendAction({ type: 'debug_set_season_day', day: j }) }, jour)
+      await page.waitForFunction((j) => window.__BRAISES__.scene.lastTime?.seasonDay === j, jour, { timeout: 20000, polling: 200 })
+      await page.evaluate(() => { window.__BRAISES__.scene.sendAction({ type: 'debug_set_hour', hour: 12 }) })
+      await page.waitForFunction(() => Math.abs((window.__BRAISES__.scene.lastTime?.hourOfCycle ?? 0) - 12) < 1.5, null, { timeout: 20000, polling: 200 })
+      await armerLaBande(y)
+    }
+
+    // ── 1. LE JOUR SE CHERCHE, IL NE SE SUPPOSE PAS ──
+    // La zone de grésil est une fenêtre de la courbe de saison ; un jour écrit en dur
+    // redeviendrait faux au premier recalibrage du socle. On balaie la descente vers l'hiver et
+    // on garde le jour où le cadre est le plus près de moitié-moitié. QUATRE points suffisent :
+    // la courbe est monotone sur cette pente, et chaque pas attend trois preuves.
+    const pos0 = await page.evaluate(() => window.__BRAISES__.scene.registry.get('playerPos') ?? { x: 100, y: 100 })
+    let meilleur = null
+    for (const jour of [76, 82, 88, 94]) {
+      await armer(jour, pos0.y)
+      const s = await sonde()
+      if (!s) continue
+      console.log(`  jour ${String(jour).padStart(3)} : intensité ${s.intensite.toFixed(2)} — part ${s.partIci.toFixed(2)} — ${s.flocons} flocons / ${s.gouttes} gouttes`)
+      if (s.vivantes === 0) continue
+      const ecart = Math.abs(s.partIci - 0.5)
+      if (!meilleur || ecart < meilleur.ecart) meilleur = { jour, ecart, s }
+    }
+    if (!meilleur) {
+      console.error('!! aucun front armé n’a rendu de particules — le rideau ne s’est pas levé')
+      return {}
+    }
+    const { jour, s: releve } = meilleur
+    // LE VERDICT 1 : les deux populations, ensemble. Avant R14 l'une des deux valait ZÉRO,
+    // par construction — l'aspect était un scalaire, et il n'y avait qu'un profil.
+    if (releve.flocons > 0 && releve.gouttes > 0) {
+      console.log(`   ✓ IL GRÉSILLE au jour ${jour} : ${releve.flocons} flocons et ${releve.gouttes} gouttes dans la même image`)
+    } else {
+      console.error(`!! pas de mélange au meilleur jour (${jour}) : ${releve.flocons} flocons, ${releve.gouttes} gouttes`)
+    }
+
+    // ── 2. LA LISIÈRE SE DEMANDE AU CHAMP, ELLE NE SE DEVINE PAS DANS LA TABLE DES TERRAINS ──
+    //
+    // Deux essais l'ont cherchée par un motif écrit à la main (« n tuiles de marais, puis n de
+    // pré »). Le premier a trouvé une langue HAUTE D'UNE TUILE : la maille du champ de neige vaut
+    // quatre tuiles et ses nœuds tombent sur des y multiples de 4, si bien qu'elle passe entre
+    // les mailles — on mesurait le lissage, pas la loi, et le verdict a accusé le champ. Le
+    // second, en exigeant un bloc de 4×4, n'a RIEN trouvé : sur cette carte les marais sont
+    // découpés, il n'existe aucun carré de marais pur adossé à un carré de pré pur.
+    //
+    // ON INTERROGE DONC LE CHAMP LUI-MÊME (`cielFacade.mesure` — la loi de `/sim` telle que le
+    // client la lit) et on cherche le SEGMENT DE MARCHE où la part de neige varie le plus. C'est
+    // exactement la question posée — « où le ciel change-t-il le plus quand je marche ? » — et
+    // la réponse ne suppose ni la forme des biomes ni leur découpage.
+    await armer(jour, pos0.y)
+    const PAS_TRAVERSEE = 16
+    const seg = await page.evaluate((L) => {
+      const sc = window.__BRAISES__.scene
+      const m = sc.map
+      const INFRANCHISSABLE = [0, 4, 5, 6, 7, 15, 23] // vide, eaux, roche, mur, glacier, falaise
+      const at = (x, y) => m.terrain[y * m.width + x]
+      const mesure = (x, y) => sc.cielFacade.mesure(x + 0.5, y + 0.5)
+      let best = null
+      // Un balayage grossier : une colonne sur quatre, une rangée sur six. On ne cherche pas LE
+      // maximum de la carte, on cherche un segment franc — et il y en a des milliers.
+      for (let y = 20; y < m.height - 20; y += 6) {
+        for (let x = 20; x < m.width - L - 20; x += 4) {
+          let sol = true
+          for (let k = 0; k <= L && sol; k += 2) sol = !INFRANCHISSABLE.includes(at(x + k, y))
+          if (!sol) continue
+          const d = Math.abs(mesure(x + L, y) - mesure(x, y))
+          if (!best || d > best.d) best = { x, y, d }
+        }
+      }
+      return best
+    }, PAS_TRAVERSEE)
+    if (!seg || seg.d < 0.02) {
+      console.error(`!! nulle part sur la carte le ciel ne change en seize tuiles (max ${seg ? seg.d.toFixed(3) : 'aucun'}) — le champ ne lit pas le biome`)
+      return { jour }
+    }
+    console.log(`  segment le plus franc : (${seg.x}, ${seg.y}) → +${PAS_TRAVERSEE} tuiles, Δ part ${seg.d.toFixed(2)}`)
+
+    // ── 3. LA TRAVERSÉE, TUILE PAR TUILE ──
+    await armer(jour, seg.y)
+    const profil = []
+    for (let k = 0; k <= PAS_TRAVERSEE; k += 1) {
+      await agir({ type: 'debug_teleport', x: seg.x + k + 0.5, y: seg.y + 0.5 }, 200)
+      await armerLaBande(seg.y)
+      const s = await sonde()
+      if (s) profil.push({ k, part: s.partIci, voile: s.mixVoile, flocons: s.flocons, gouttes: s.gouttes })
+    }
+    console.log('  pas | voile (lissé) | part brute | flocons/gouttes')
+    for (const p of profil) {
+      console.log(`  ${String(p.k).padStart(3)} |     ${p.voile.toFixed(2)}      |    ${p.part.toFixed(2)}    | ${p.flocons}/${p.gouttes}`)
+    }
+    // ON JUGE SUR LA PART AU JOUEUR — ce qu'il a AU-DESSUS DE LA TÊTE, puisque c'est ça qui l'a
+    // fait sursauter. Un verdict posé sur la MOYENNE DU CADRE a rougi en croyant juger la loi :
+    // marcher seize tuiles ne déplace la moyenne d'une vue de soixante que de 0,04. On lit donc
+    // le voile (la valeur lissée, celle qui part au shader) ; la part brute est imprimée à côté,
+    // et leur écart montre le retard du lissage — un dixième au plus, dans le sens de la marche.
+    const parts = profil.map((p) => p.voile)
+    const course = Math.max(...parts) - Math.min(...parts)
+    let saut = 0
+    for (let i = 1; i < parts.length; i++) saut = Math.max(saut, Math.abs(parts[i] - parts[i - 1]))
+    // LE VERDICT 2, EN DEUX MOITIÉS — et il faut les deux : un champ constant ne saute pas non
+    // plus, et il ne dirait RIEN. La course prouve que la lisière se voit ; le saut prouve qu'on
+    // la traverse au lieu de la franchir.
+    if (course < 0.05) {
+      console.error(`!! la lisière ne change RIEN au ciel du joueur (course ${course.toFixed(2)})`)
+    } else if (saut > 0.34) {
+      console.error(`!! le ciel SAUTE en une tuile (${saut.toFixed(2)}) — le mur est toujours là, sous un autre nom`)
+    } else {
+      console.log(`   ✓ la lisière est une PENTE : ${course.toFixed(2)} de course en ${PAS_TRAVERSEE} tuiles, jamais plus de ${saut.toFixed(2)} par pas`)
+    }
+
+    // ── 4. LE VOILE EST-IL SEULEMENT VIVANT ? ──
+    //
+    // TOUT CE QUI PRÉCÈDE SE MESURE SUR LES PARTICULES, peintes par un `Graphics` — le fragment
+    // n'y est pour rien. Or R14 lui a ajouté une fonction (`cielDe`, à paramètres `out`) et deux
+    // uniformes : s'il ne COMPILE PAS, Phaser le signale en console et ne rend RIEN — et les
+    // verdicts ci-dessus passeraient au vert sur un ciel sans voile. C'est le mode d'échec que
+    // cette maison connaît sous le nom de « sonde qui ne peut pas échouer ». On mesure donc le
+    // voile SEUL, optiquement : grain éteint, front armé contre front retiré.
+    //
+    // ON NE RE-SAUTE PAS LE JOUR : le calendrier a AVANCÉ pendant la traversée (un jour de saison
+    // dure 37 s réelles à `calendarScale` 48). Le verdict ne demande pas une valeur précise,
+    // seulement que la part soit STRICTEMENT entre 0 et 1 — tout ce qu'il faut pour prouver que
+    // la branche de mélange tourne.
+    const lum = async () => page.evaluate(async () => {
+      const s = window.__BRAISES__.scene
+      const img = await new Promise((ok) => s.game.renderer.snapshot((i) => ok(i)))
+      const c = document.createElement('canvas')
+      c.width = img.width
+      c.height = img.height
+      const cx = c.getContext('2d', { willReadFrequently: true })
+      cx.drawImage(img, 0, 0)
+      const d = cx.getImageData(0, 0, c.width, c.height).data
+      let somme = 0
+      let n = 0
+      for (let y = 0; y < c.height - 140; y += 3) {
+        for (let x = 0; x < c.width; x += 3) {
+          const i = (y * c.width + x) * 4
+          somme += 0.2126 * d[i] + 0.7152 * d[i + 1] + 0.0722 * d[i + 2]
+          n++
+        }
+      }
+      return somme / Math.max(1, n)
+    })
+    await agir({ type: 'debug_teleport', x: seg.x + PAS_TRAVERSEE / 2 + 0.5, y: seg.y + 0.5 }, 300)
+    await page.evaluate(() => { window.__BRAISES__.scene.meteoLayer.grainActif = false })
+    await armerLaBande(seg.y)
+    const mixVoile = (await sonde())?.mixVoile ?? 0
+    const avecVoile = await lum()
+    const shaderVu = await page.evaluate(() => Boolean(window.__BRAISES__.scene.meteoLayer?.shader?.visible))
+    await agir({ type: 'debug_meteo', meteo: null }, 900)
+    const sansCiel = await lum()
+    await page.evaluate(() => { window.__BRAISES__.scene.meteoLayer.grainActif = true })
+    const ecart = avecVoile - sansCiel
+    console.log(`  voile seul : ${avecVoile.toFixed(1)} contre ${sansCiel.toFixed(1)} sans ciel (Δ ${ecart.toFixed(1)}), uMix ${mixVoile.toFixed(2)}, shader visible ${shaderVu}`)
+    if (!shaderVu || Math.abs(ecart) < 3) {
+      console.error(`!! le VOILE ne rend rien (Δ ${ecart.toFixed(1)}) — le fragment ne compile probablement pas : lire les lignes CONSOLE ci-dessus`)
+    } else if (mixVoile <= 0.002 || mixVoile >= 0.998) {
+      console.error(`!! le voile rend, mais uMix vaut ${mixVoile.toFixed(3)} : la BRANCHE DE MÉLANGE du fragment n’a pas été empruntée — non prouvée`)
+    } else {
+      console.log(`   ✓ le voile MÊLE deux ciels et il rend (Δ ${ecart.toFixed(1)} de luminance à uMix ${mixVoile.toFixed(2)})`)
+    }
+
+    // ── 5. TROIS PLANCHES, PAS UNE : LA QUESTION POSÉE ÉTAIT PERCEPTIVE ──
+    //
+    // « Je vois tout le ciel se transformer d'un coup. » Les nombres ci-dessus prouvent que la
+    // pente existe ; ils ne disent pas si elle SE VOIT. Trois prises au même endroit, à la même
+    // heure, à trois pas de la même traversée, le disent — et c'est comme ça que la DA se tranche
+    // dans cette maison : sur des planches rendues, pas sur des adjectifs.
+    //
+    // ⚠ CE QU'ELLES PEUVENT RÉVÉLER, et il faut le dire d'avance pour ne pas le prendre pour un
+    // bug : la goutte fait 1 px monde à alpha 0,11-0,22 — DÉLIBÉRÉMENT à la limite du visible
+    // (« c'est le NOMBRE qui fait le rideau »). Si la planche à part 0,56 et celle à 0,99 se
+    // ressemblent, le défaut n'est pas dans R14 : c'est que la moitié PLUIE d'un grésil ne se
+    // voit pas sous les flocons, et la question devient un réglage de DA (relever l'alpha ou le
+    // compte des gouttes quand la part est au milieu ?) — une décision d'Alexis, sur ces planches.
+    const plaques = [0, Math.round(PAS_TRAVERSEE * 0.75), PAS_TRAVERSEE]
+    const vues = []
+    for (const k of plaques) {
+      await agir({ type: 'debug_teleport', x: seg.x + k + 0.5, y: seg.y + 0.5 }, 400)
+      await armerLaBande(seg.y)
+      const s = await sonde()
+      // FIGER D'ABORD : l'horloge headless galope, et le rideau se refait entre l'ordre et
+      // l'obturateur. On réveille la boucle après la prise pour que la suivante soit vivante.
+      await page.evaluate(() => { window.__BRAISES__.scene.game.loop.sleep() })
+      const nom = `gresil-${String(k).padStart(2, '0')}-part${Math.round((s?.mixVoile ?? 0) * 100)}`
+      await page.screenshot({ path: `${OUT}/${nom}.png` })
+      vues.push({ k, part: s?.mixVoile ?? 0, flocons: s?.flocons ?? 0, gouttes: s?.gouttes ?? 0, nom })
+      console.log(`   → ${nom}.png — part ${(s?.mixVoile ?? 0).toFixed(2)}, ${s?.flocons ?? 0} flocons / ${s?.gouttes ?? 0} gouttes`)
+      await page.evaluate(() => { window.__BRAISES__.scene.game.loop.wake() })
+    }
+    const chrono = await sonde()
+    console.log(`  coût du champ de neige : ${(chrono?.msChamp ?? 0).toFixed(2)} ms/image sur ${chrono?.noeuds ?? 0} nœuds relevés`)
+    return { jour, course, saut, flocons: releve.flocons, gouttes: releve.gouttes, vues }
+  },
+
+  /**
    * LES CINQ CIELS ET LA FOUDRE (spec `meteo.md`, tranche de rendu).
    *
    * Sept tranches ont rendu la météo mordante — le froid, la faim du feu, le silence du

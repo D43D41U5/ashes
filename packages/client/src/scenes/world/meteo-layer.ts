@@ -149,6 +149,7 @@
 import Phaser from 'phaser'
 import { frontMeteoPos, meteoIntensityAt, type MeteoAspect, type MeteoFront } from '@ashes/sim'
 import { TILE_PX } from '../../render/framing'
+import { ChampNeige } from './meteo-melange'
 import {
   BUDGET_PARTICULES,
   ChampParticules,
@@ -167,6 +168,25 @@ import {
  * Sous les lucioles (1 250 000) et loin sous l'overlay du HUD.
  */
 export const METEO_DEPTH = 1_120_000
+
+/**
+ * LE CIEL D'UN FRONT, TEL QUE LA COUCHE LE REÇOIT (R14) — deux aspects et un champ, jamais un
+ * aspect seul. `WorldScene` le bâtit une fois par image sur la façade du gel ; la couche en
+ * fait un troupeau mélangé (les particules) et un voile mélangé (le shader).
+ */
+export interface CielDuFront {
+  /** L'aspect DOUX du front — sa classe élue : `pluie`, `orage`, `brouillard`, `vent_de_cendre`. */
+  readonly doux: MeteoAspect
+  /** Son aspect FROID (`neige`, `blizzard`) — `null` pour un ciel qui ne peut pas neiger. */
+  readonly froid: MeteoAspect | null
+  /** La part de froid BRUTE en (x, y), tuiles monde — `partDeNeige(T₀)` de `/sim`. La couche
+   *  l'échantillonne et la lisse : l'appelant n'a qu'à savoir la lire en un point. */
+  readonly mesure: (x: number, y: number) => number
+}
+
+/** La constante de temps du lissage TEMPOREL du voile, en secondes. Le voile est un aplat :
+ *  il ne peut pas montrer une lisière, alors il la traverse lentement. */
+const MIX_TAU_S = 0.55
 
 /** LE GRAIN EST DEVANT LE VOILE — il tombe *dans* la matière, pas derrière elle. Un cran
  *  au-dessus, et toujours sous les lucioles. */
@@ -195,6 +215,8 @@ uniform float uLo;      // bord bas de la bande sur cet axe, en TUILES
 uniform float uHi;      // bord haut
 uniform float uRampe;   // RAMPE x LARGEUR, en tuiles — la pente bord vers coeur
 uniform float uType;    // 0 pluie · 1 brouillard · 2 neige · 3 orage · 4 blizzard · 5 vent de cendre
+uniform float uType2;   // l'aspect FROID du meme front (neige/blizzard) — = uType s'il n'en a pas
+uniform float uMix;     // 0..1 — la part de uType2 dans le voile, au point de l'oeil (R14)
 uniform vec2 uSouffle;  // derive LENTE du voile, integree et repliee cote CPU
 uniform float uDay;     // 0 nuit · 1 plein jour
 uniform float uFlash;   // 0..1 — l'embrasement de l'eclair (l'orage seul)
@@ -218,25 +240,19 @@ float vnoise(vec2 p) {
   return mix(mix(a, b, u.x), mix(c, d, u.x), u.y);
 }
 
-void main() {
-  // Le monde a l'endroit (V texture monte, ty descend), PLANCHE au grain de l'art.
-  vec2 worldPx = vec2(outTexCoord.x, 1.0 - outTexCoord.y) * uWorldPx;
-  vec2 flatPx = floor(worldPx / GRAIN) * GRAIN;
-  vec2 tile = flatPx / uTilePx;
-  vec2 cell = flatPx / GRAIN;
-
-  // ── L'INTENSITE : la loi de meteoIntensityAt, au mot pres (0 dehors, 1 au coeur). ──
-  float c = uAxis < 0.5 ? tile.x : tile.y;
-  float d = min(c - uLo, uHi - c);
-  if (d <= 0.0) discard;
-  float I = uRampe <= 0.0 ? 1.0 : min(1.0, d / uRampe);
-  if (I <= 0.004) discard;
-
-  bool brouillard = uType > 0.5 && uType < 1.5;
-  bool neige = uType > 1.5 && uType < 2.5;
-  bool orage = uType > 2.5 && uType < 3.5;
-  bool blizzard = uType > 3.5 && uType < 4.5;
-  bool cendre = uType > 4.5;
+/**
+ * LE VOILE D'UN CIEL — sa teinte et son opacite, pour l'aspect t. Extraite de main()
+ * (PAS D'ACCENT GRAVE ICI : ce commentaire vit DANS le template literal du fragment — un
+ *  backtick le fermerait, et le build casse chez vite, pas chez tsc. Piege paye deux fois.)
+ * (R14) parce qu'on l'appelle DEUX FOIS : sous du gresil, le ciel est une proportion de deux
+ * aspects, et le voile se mele comme le troupeau de particules se mele.
+ */
+void cielDe(in float t, in float houle, in float I, out vec3 teinte, out float a) {
+  bool brouillard = t > 0.5 && t < 1.5;
+  bool neige = t > 1.5 && t < 2.5;
+  bool orage = t > 2.5 && t < 3.5;
+  bool blizzard = t > 3.5 && t < 4.5;
+  bool cendre = t > 4.5;
 
   // ── LE VOILE, ET RIEN QUE LUI : la matiere en suspension, propre a chaque ciel.
   //
@@ -246,11 +262,8 @@ void main() {
   // (Pas d'accent grave dans ce commentaire : le fragment EST un template literal, et un
   //  backtick le fermerait — le build casse chez vite, pas chez tsc. Piege deja paye.)
   //
-  // Il RESPIRE par grandes plaques — sans quoi c'est un aplat mort. Sur sa PROPRE derive
-  // (uSouffle, lente) : les nappes d'un ciel ne filent pas a la vitesse des gouttes.
-  float houle = vnoise(cell / 26.0 + uSouffle);
-  vec3 teinte;
-  float a;
+  // Il RESPIRE par grandes plaques (la houle, calculee UNE fois dans main et passee ici :
+  // les deux voiles d'un gresil doivent respirer ENSEMBLE, sans quoi le melange bat).
   if (brouillard) {
     // LE BROUILLARD : dense, PALE, sans grain qui tombe — c'est son signalement, et c'est
     // pour ca qu'il n'a AUCUNE particule. Il mange la distance, il n'assombrit pas
@@ -281,7 +294,46 @@ void main() {
     teinte = vec3(0.18, 0.21, 0.29);
     a = (0.30 + 0.10 * houle) * I;
   }
+}
 
+void main() {
+  // Le monde a l'endroit (V texture monte, ty descend), PLANCHE au grain de l'art.
+  vec2 worldPx = vec2(outTexCoord.x, 1.0 - outTexCoord.y) * uWorldPx;
+  vec2 flatPx = floor(worldPx / GRAIN) * GRAIN;
+  vec2 tile = flatPx / uTilePx;
+  vec2 cell = flatPx / GRAIN;
+
+  // ── L'INTENSITE : la loi de meteoIntensityAt, au mot pres (0 dehors, 1 au coeur). ──
+  float c = uAxis < 0.5 ? tile.x : tile.y;
+  float d = min(c - uLo, uHi - c);
+  if (d <= 0.0) discard;
+  float I = uRampe <= 0.0 ? 1.0 : min(1.0, d / uRampe);
+  if (I <= 0.004) discard;
+
+  // ── LE MELANGE DES DEUX VOILES (R14) : uType est l'aspect DOUX du front, uType2 son
+  // aspect FROID, uMix la part de froid au point de l'oeil (deja lissee cote CPU). A uMix
+  // nul on repasse EXACTEMENT par la branche unique d'avant — un ciel franc ne paie rien,
+  // ni en calcul ni en arrondi. ──
+  // LA HOULE — le bruit lent qui fait respirer le voile, PARTAGE par les deux aspects.
+  float houle = vnoise(cell / 26.0 + uSouffle);
+  vec3 c1;
+  float a1;
+  cielDe(uType, houle, I, c1, a1);
+  vec3 teinte;
+  float a;
+  if (uMix <= 0.002) {
+    teinte = c1;
+    a = a1;
+  } else {
+    vec3 c2;
+    float a2;
+    cielDe(uType2, houle, I, c2, a2);
+    // ON MELE EN PREMULTIPLIE puis on redivise : meler des couleurs DROITES ferait passer
+    // l'ardoise de la pluie (0.18 a alpha 0.30) et le blanc de la neige (0.80 a alpha 0.16)
+    // par un gris que ni l'un ni l'autre ne contient — le fondu virerait au sale.
+    a = mix(a1, a2, uMix);
+    teinte = a <= 0.0001 ? c1 : mix(c1 * a1, c2 * a2, uMix) / a;
+  }
   // ── LA NUIT ASSOMBRIT LE CIEL LUI-MEME (patron de la brume, meme raison) : la couche est
   // AU-DESSUS du voile d'ambiance, donc rien d'autre ne l'eteindrait. La racine du jour, pas
   // le jour : la pluie de l'aube s'allume avant le sol, comme la brume. ──
@@ -352,8 +404,25 @@ export class MeteoLayer {
   private hi = 0
   private rampe = 1
   private type = 0
+  private type2 = 0
+  private mix = 0
   private day = 1
   private flash = 0
+  /** LE CHAMP DE NEIGE — la part de flocons, relevée sur une grille grossière ancrée au monde
+   *  et relue en bilinéaire (voir `meteo-melange.ts`). Il porte tout le lissage SPATIAL. */
+  private readonly champNeige = new ChampNeige()
+  /** La part de froid du VOILE, lissée dans le temps — `null` tant qu'aucun front n'est peint
+   *  (le premier relevé saisit au lieu de ramper depuis zéro). */
+  private mixLisse: number | null = null
+  /**
+   * LE MÉLANGE PASSÉ AU TROUPEAU — un seul objet, muté en place image après image (patron
+   * `ventFacade` de `WorldScene`) : une fermeture neuve par image serait du déchet pur.
+   */
+  private readonly melange: { froid: ProfilChute | null; doux: ProfilChute | null; part: (x: number, y: number) => number } = {
+    froid: null,
+    doux: null,
+    part: (x: number, y: number) => this.champNeige.part(x, y),
+  }
   /** La dernière intensité calculée au point du joueur — la sonde du smoke, et rien d'autre
    *  ne la lit : le rendu se juge sur des pixels, pas sur une variable. */
   intensiteAuJoueur = 0
@@ -369,6 +438,20 @@ export class MeteoLayer {
   readonly sonde = {
     vivantes: 0, cible: 0, rects: 0,
     budget: BUDGET_PARTICULES, plafonne: false,
+    /** ═══ LE MÉLANGE (R14), LU PAR LE SMOKE ═══
+     *  `flocons` + `gouttes` = `vivantes` : le rideau rend compte des DEUX troupeaux qu'il peint.
+     *  `partIci` est la part de froid BRUTE au point de l'œil (ce que le champ dit) et `mixVoile`
+     *  la même après le lissage temporel du voile — les deux, parce que leur ÉCART est le retard
+     *  du voile, et qu'un scénario qui les confondrait ne pourrait pas le voir.
+     *
+     *  ⚠ LA MOYENNE DU CADRE N'EST PAS ICI, ET C'EST DÉLIBÉRÉ. Elle vit dans `champ.partFroid`,
+     *  qui n'est calculé que par `champ.update` — donc PAS quand le grain est éteint, c'est-à-dire
+     *  dans le montage même qui mesure le voile seul. La remonter d'ici l'aurait rendue fausse à
+     *  l'endroit où on la lit : mieux vaut un nombre de moins qu'un nombre qui ment. */
+    flocons: 0, gouttes: 0, partIci: 0, mixVoile: 0,
+    /** Le champ de neige : combien de nœuds au dernier rebâti, et ce que les rebâtis coûtent
+     *  par image en moyenne (même fenêtre que `msPhysique`). */
+    noeuds: 0, msChamp: 0,
     /**
      * CE QUE LA COUCHE PREND SUR LE FIL PRINCIPAL, en ms par image — moyenne glissante sur
      * `FENETRE_MS` de physique (`champ.update`) et de peinture (les `fillRect`).
@@ -415,6 +498,8 @@ export class MeteoLayer {
             setUniform('uHi', this.hi)
             setUniform('uRampe', this.rampe)
             setUniform('uType', this.type)
+            setUniform('uType2', this.type2)
+            setUniform('uMix', this.mix)
             setUniform('uSouffle', [this.souffle.x, this.souffle.y])
             setUniform('uDay', this.day)
             setUniform('uFlash', this.flash)
@@ -440,9 +525,10 @@ export class MeteoLayer {
   update(
     nowMs: number,
     front: MeteoFront | null,
-    /** L'ASPECT du front à l'œil du joueur (`aspectAuPoint` — pluie ou neige, orage ou
-     *  blizzard selon le froid du monde là où il regarde), `null` sans front. */
-    aspect: MeteoAspect | null,
+    /** LE CIEL DE CE FRONT — ses DEUX aspects et la part de froid au point (R14), `null` sans
+     *  front. Ce n'est plus UN aspect : un même front est pluie en plaine, neige sur les hauts
+     *  et grésil entre les deux, dans la MÊME image. */
+    ciel: CielDuFront | null,
     tick: number,
     day: number,
     flash: number,
@@ -459,9 +545,14 @@ export class MeteoLayer {
     this.lastMs = nowMs
 
     const bande = front ? frontMeteoPos(front, tick, this.mapWidth, this.mapHeight) : null
-    if (!front || !bande || !aspect) {
+    if (!front || !bande || !ciel) {
       this.intensiteAuJoueur = 0
       this.bande = null
+      this.mixLisse = null
+      this.mix = 0
+      this.sonde.mixVoile = 0
+      this.sonde.partIci = 0
+      this.champNeige.vider()
       this.shader?.setVisible(false)
       this.eteindreLeGrain()
       return
@@ -472,9 +563,50 @@ export class MeteoLayer {
     this.lo = bande.lo
     this.hi = bande.hi
     this.rampe = rampeDe(front)
-    this.type = TYPE_INDEX[aspect]
     this.day = day
     this.flash = flash
+
+    // ── LE CADRE, ET LE CHAMP DE NEIGE QUI LE COUVRE ──
+    const vue = camera.worldView
+    const cadre = {
+      x0: vue.x / TILE_PX - MARGE_TUILES,
+      y0: vue.y / TILE_PX - MARGE_TUILES,
+      x1: (vue.x + vue.width) / TILE_PX + MARGE_TUILES,
+      y1: (vue.y + vue.height) / TILE_PX + MARGE_TUILES,
+    }
+    // LE RELEVÉ SE CHRONOMÈTRE : il vit hors des deux fenêtres de `chronometrer` (physique et
+    // peinture), et un coût qu'aucun instrument ne voit est un coût qui dérive.
+    const tChamp = performance.now()
+    if (ciel.froid) this.champNeige.maj(ciel.mesure, cadre, nowMs)
+    else this.champNeige.vider()
+    this.msChampBrut += performance.now() - tChamp
+
+    this.melange.doux = PROFILS[ciel.doux]
+    this.melange.froid = ciel.froid ? PROFILS[ciel.froid] : null
+    this.type = TYPE_INDEX[ciel.doux]
+    this.type2 = ciel.froid ? TYPE_INDEX[ciel.froid] : this.type
+
+    // ── LA PART DE FROID DU VOILE — au point de l'œil, et LISSÉE DEUX FOIS ──
+    //
+    // Dans l'ESPACE par le champ (bilinéaire sur sa maille), et dans le TEMPS par cette
+    // approche exponentielle. Le voile est la seule pièce du dispositif qui reste UNIFORME
+    // plein cadre — un aplat ne peut pas montrer une lisière —, alors on lui interdit
+    // l'à-coup : ce qu'il ne peut pas dire dans l'espace, il le dit lentement. Les particules,
+    // elles, portent la vraie géographie du mélange.
+    //
+    // Le premier relevé d'un front SAISIT (pas de rampe depuis zéro) : sans ça, entrer sous
+    // une averse de neige commencerait par une demi-seconde de pluie — et le smoke, qui se
+    // téléporte, jugerait un ciel en train de se faire.
+    const cible = ciel.froid ? this.champNeige.part(joueur.x, joueur.y) : 0
+    if (this.mixLisse === null) this.mixLisse = cible
+    else this.mixLisse += (cible - this.mixLisse) * Math.min(1, dt / MIX_TAU_S)
+    this.mix = this.mixLisse
+    // LA SONDE SE POSE ICI, ET PAS AVEC LE GRAIN — c'est une propriété du CIEL, pas du troupeau.
+    // Posée dans `peindre`, elle tombait à zéro dès qu'on éteint le grain… c'est-à-dire dans le
+    // montage même qui mesure le voile SEUL : le relevé accusait le mélange de ne pas tourner
+    // alors qu'il tournait. Une sonde éteinte par le geste qui l'interroge ne prouve rien.
+    this.sonde.mixVoile = this.mix
+    this.sonde.partIci = ciel.froid ? cible : 0
 
     // Le voile dérive lentement, replié sur la période exacte du bruit (289 cellules) :
     // sans couture, et borné pour une session illimitée. Un repli sur une valeur arbitraire
@@ -491,25 +623,19 @@ export class MeteoLayer {
     this.shader?.setVisible(true)
 
     // ── LE GRAIN : de vraies particules, émises DANS LE CADRE seulement. ──
-    const profil = PROFILS[aspect]
-    if (!profil || !this.grainActif) { this.eteindreLeGrain(); return }
-    const vue = camera.worldView
-    const cadre = {
-      x0: vue.x / TILE_PX - MARGE_TUILES,
-      y0: vue.y / TILE_PX - MARGE_TUILES,
-      x1: (vue.x + vue.width) / TILE_PX + MARGE_TUILES,
-      y1: (vue.y + vue.height) / TILE_PX + MARGE_TUILES,
-    }
+    if ((!this.melange.doux && !this.melange.froid) || !this.grainActif) { this.eteindreLeGrain(); return }
     const t0 = performance.now()
-    this.champ.update(dt, profil, cadre, bande, this.rampe, reservees)
+    this.champ.update(dt, this.melange, cadre, bande, this.rampe, reservees)
     const t1 = performance.now()
-    this.peindre(profil, day)
+    this.peindre(day)
     this.chronometrer(t1 - t0, performance.now() - t1, dtMs)
   }
 
   /** La moyenne glissante des deux temps, sur une fenêtre de `CHRONO_FENETRE_MS`. */
   private chronoPhysique = 0
   private chronoPeinture = 0
+  /** Le temps passé dans `champNeige.maj` depuis le dernier relevé de la fenêtre. */
+  private msChampBrut = 0
   private chronoImages = 0
   private chronoAge = 0
   private chronometrer(msPhysique: number, msPeinture: number, dtMs: number): void {
@@ -521,6 +647,9 @@ export class MeteoLayer {
     const n = Math.max(1, this.chronoImages)
     this.sonde.msPhysique = this.chronoPhysique / n
     this.sonde.msPeinture = this.chronoPeinture / n
+    this.sonde.msChamp = this.msChampBrut / n
+    this.sonde.noeuds = this.champNeige.releves
+    this.msChampBrut = 0
     this.sonde.images = this.chronoImages
     this.chronoPhysique = 0
     this.chronoPeinture = 0
@@ -536,8 +665,13 @@ export class MeteoLayer {
     this.sonde.cible = 0
     this.sonde.rects = 0
     this.sonde.plafonne = false
+    this.sonde.flocons = 0
+    this.sonde.gouttes = 0
     this.sonde.msPhysique = 0
     this.sonde.msPeinture = 0
+    this.sonde.msChamp = 0
+    this.sonde.noeuds = 0
+    this.msChampBrut = 0
     this.chronoPhysique = 0
     this.chronoPeinture = 0
     this.chronoImages = 0
@@ -549,20 +683,28 @@ export class MeteoLayer {
    * par cran d'opacité (deux `fillStyle` par ciel, pas un par particule : chaque changement
    * de style rompt le lot).
    */
-  private peindre(profil: ProfilChute, day: number): void {
+  private peindre(day: number): void {
     const g = this.grain.clear().setVisible(true)
-    const couleur = teinteDeNuit(profil.teinte, day)
-    // LA GRILLE DE CE CIEL, pas une constante globale : la goutte tombe sur 1 px monde (la
-    // grille de l'ART), le flocon reste sur les 4 px des FX de lumière. Voir `ProfilChute.grainPx`.
-    const grain = profil.grainPx
-    const parTuile = TILE_PX / grain
     let rects = 0
+    let flocons = 0
     const crans: readonly (0 | 1)[] = [0, 1]
-    for (const cran of crans) {
+    // QUATRE GROUPES AU LIEU DE DEUX (R14) : deux natures × deux crans. Chaque groupe est un
+    // `fillStyle` et un seul — c'est le lot du rasteriseur qu'on protège, et il ne se rompt
+    // pas plus qu'avant : sous un ciel franc, deux des quatre groupes sont vides.
+    for (const nature of [false, true]) {
+      const profil = nature ? this.melange.froid : this.melange.doux
+      if (!profil) continue
+      const couleur = teinteDeNuit(profil.teinte, day)
+      // LA GRILLE DE CE CIEL, pas une constante globale : la goutte tombe sur 1 px monde (la
+      // grille de l'ART), le flocon reste sur les 4 px des FX de lumière. Voir `ProfilChute.grainPx`.
+      const grain = profil.grainPx
+      const parTuile = TILE_PX / grain
+      for (const cran of crans) {
       g.fillStyle(couleur, profil.alpha[cran]!)
       const epaisseur = profil.taille[cran]!
       for (const p of this.champ.particules) {
-        if (!p.vive || p.cran !== cran) continue
+        if (!p.vive || p.cran !== cran || p.froid !== nature) continue
+        if (nature) flocons++
         // La QUANTIFICATION : la tête tombe sur la grille de l'art, en cellules de 4 px.
         const cx = Math.floor(p.x * parTuile)
         const cy = Math.floor(p.y * parTuile)
@@ -578,9 +720,12 @@ export class MeteoLayer {
         }
         rects += n
       }
+      }
     }
 
     this.sonde.vivantes = this.champ.vivantes
+    this.sonde.flocons = flocons
+    this.sonde.gouttes = this.champ.vivantes - flocons
     this.sonde.cible = this.champ.cible
     this.sonde.rects = rects
     this.sonde.plafonne = this.champ.cible >= BUDGET_PARTICULES

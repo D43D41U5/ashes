@@ -62,6 +62,18 @@
  * n'existait pas pour la gerbe mais pour la dispersion (sans elle, tout toucherait sur le bord
  * bas du cadre, en une rangée) ; une goutte qui a touché renaît simplement en silence.
  *
+ * ═══ DEUX TROUPEAUX QUAND LE CIEL GRÉSILLE (R14, 2026-08-24) ═══
+ *
+ * Le champ ne mène plus UN ciel mais DEUX — l'aspect doux du front et son aspect froid —,
+ * chacun avec sa cible, sa densité de table et sa physique, et chacun semé par rejet contre
+ * SA part du champ de neige. Une particule est une goutte OU un flocon, jamais un entre-deux :
+ * `grainPx` est une grille de quantification (1 px pour la goutte, 4 pour le flocon), pas un
+ * nombre qu'on interpole. Ce qui se mélange, c'est le troupeau.
+ *
+ * Le détail — et la mesure qui a écarté la version naïve — est sous les deux cibles, dans
+ * `update`. Sans aspect froid (`melangeUniforme`), tout ce dispositif est INERTE : aucun
+ * tirage de plus, le flux d'aléa d'avant R14 au bit près, et les gardes de ce fichier avec lui.
+ *
  * ═══ L'INTENSITÉ SE RELIT INLINE, ET UN TEST LE PROUVE ═══
  *
  * `meteoIntensityAt` de `/sim` reste L'AUTORITÉ — mais elle recalcule la bande et alloue son
@@ -232,6 +244,49 @@ export const PROFILS: Record<MeteoAspect, ProfilChute | null> = {
   },
 }
 
+/**
+ * ═══ LE CIEL EST UN MÉLANGE, PAS UN ASPECT (R14, décision d'Alexis 2026-08-24) ═══
+ *
+ * Ce qui tombe ici n'est pas UN des six ciels : c'est une PROPORTION de deux d'entre eux —
+ * l'aspect DOUX du front (`pluie`, `orage`) et son aspect FROID (`neige`, `blizzard`) —, et
+ * cette proportion VARIE D'UN POINT À L'AUTRE (`partDeNeige` sur le froid du monde).
+ *
+ * ═══ ON MÉLANGE DES POPULATIONS, PAS DES NOMBRES ═══
+ *
+ * Interpoler les champs de deux `ProfilChute` ne veut RIEN dire : `grainPx` vaut 1 pour la
+ * goutte et 4 pour le flocon, et c'est une GRILLE DE QUANTIFICATION — la moitié du chemin
+ * entre les deux est un grain de 2,5 px qui n'existe dans aucune DA. Ce qui se mélange, c'est
+ * le TROUPEAU : chaque particule est une goutte OU un flocon, tirée à sa NAISSANCE contre la
+ * part de froid AU POINT OÙ ELLE NAÎT.
+ *
+ * Trois propriétés tombent de là, et aucune n'a demandé de machinerie :
+ *   • LA TRANSITION SE VOIT DANS L'ESPACE — au-dessus du marais il tombe des flocons, au-dessus
+ *     du pré des gouttes, dans la MÊME image. C'était le défaut signalé : six pas suffisaient
+ *     à retourner tout le ciel, parce que l'aspect se lisait en UN point et se peignait plein
+ *     cadre.
+ *   • ELLE SE VOIT DANS LE TEMPS, GRATUITEMENT — une particule garde sa nature jusqu'à son
+ *     recyclage (une à deux secondes) : marcher fait GLISSER le mélange, il ne commute pas.
+ *     Et c'est physiquement juste : un flocon ne devient pas une goutte en trois tuiles.
+ *   • CHAQUE POPULATION GARDE SA PHYSIQUE — le flocon flâne à 1,2 tuile/s pendant que la
+ *     goutte file à 9, côte à côte. C'est ÇA, du grésil.
+ */
+export interface Melange {
+  /** L'aspect FROID du front (`neige` ou `blizzard`) — `null` pour un ciel qui ne peut pas
+   *  neiger (le vent de cendre), auquel cas rien n'est tiré et le flux d'aléa ne bouge pas. */
+  readonly froid: ProfilChute | null
+  /** Son aspect DOUX (`pluie`, `orage`, `vent_de_cendre`) — `null` = aucun grain (brouillard). */
+  readonly doux: ProfilChute | null
+  /** La part de FROID en (x, y), dans [0, 1]. L'appelant l'a déjà LISSÉE dans l'espace : `T₀`
+   *  saute par marches d'une tuile (le biome), et une marche crue redessinerait la grille. */
+  part(x: number, y: number): number
+}
+
+/** UN CIEL D'UN SEUL TENANT — pour les ciels qui ne peuvent pas neiger et pour les montages.
+ *  `part` vaut 0 partout : aucun tirage de plus, le flux d'aléa est celui d'avant R14. */
+export function melangeUniforme(profil: ProfilChute | null): Melange {
+  return { froid: null, doux: profil, part: () => 0 }
+}
+
 /** La bande dessinée ce frame, en tuiles — telle que `frontMeteoPos` la rend. */
 export interface Bande {
   readonly axis: 'x' | 'y'
@@ -277,6 +332,10 @@ export interface Particule {
   phase: number
   /** 0 = lointain (pâle, fin) · 1 = proche (franc, gros). Deux crans, jamais une rampe. */
   cran: 0 | 1
+  /** SA NATURE, tirée à la naissance contre la part de froid au point où elle est née (R14) :
+   *  vrai = flocon (l'aspect froid du front), faux = goutte. Elle la GARDE jusqu'à son
+   *  recyclage — c'est ce qui fait le fondu quand le mélange change sous les pieds. */
+  froid: boolean
   /** Ce qu'il reste à tomber avant de toucher, en tuiles. À zéro : renaissance, en silence.
    *  C'est une FICTION DE PROFONDEUR assumée — la vue est du dessus, il n'y a pas d'altitude :
    *  sans elle, toutes les gouttes toucheraient sur le bord bas du cadre, en une rangée. */
@@ -391,13 +450,16 @@ export class ChampParticules {
   vivantes = 0
   /** Le compte visé ce frame (budget × intensité moyenne du cadre) — LU PAR LE SMOKE. */
   cible = 0
+  /** La part de FROID moyenne du cadre, relevée ce frame — elle partage la cible entre les
+   *  deux troupeaux. LUE PAR LE SMOKE aussi : c'est le nombre qui dit « il grésille ». */
+  partFroid = 0
   private readonly rng: () => number
   private t = 0
 
   constructor(graine = 0x5eed_bea7) {
     this.rng = creerRng(graine)
     for (let i = 0; i < BUDGET_PARTICULES; i++) {
-      this.particules.push({ x: 0, y: 0, vx: 0, vy: 0, phase: 0, cran: 0, chute: 0, vive: false })
+      this.particules.push({ x: 0, y: 0, vx: 0, vy: 0, phase: 0, cran: 0, froid: false, chute: 0, vive: false })
     }
   }
 
@@ -413,19 +475,21 @@ export class ChampParticules {
    * tuiles, `bande` et `rampe` disent où il pleut.
    */
   update(
-    dt: number, profil: ProfilChute, vue: Vue, bande: Bande, rampe: number,
+    dt: number, melange: Melange, vue: Vue, bande: Bande, rampe: number,
     /** Ce que d'AUTRES particules occupent déjà du budget partagé (la gerbe de la foudre) :
      *  le plafond du rideau descend d'autant. Les 650 sont un budget de MACHINE — il se
      *  partage, il ne s'empile pas par système. */
     reservees = 0,
   ): void {
     this.t += dt
-    const k = profil.g / profil.vLimite // le coefficient de traînée — le même air pour les deux axes
+    const { doux, froid } = melange
+    if (!doux && !froid) { this.vider(); return }
 
     // ── LE COMPTE CIBLE SUIT L'INTENSITÉ MOYENNE DU CADRE (rampe continue, pas d'interrupteur).
     //    Échantillonnée sur une grille grossière : 48 lectures d'une formule à trois opérations,
     //    contre 900 si on la relisait par particule pour le même chiffre. ──
     let somme = 0
+    let sommeFroid = 0
     const NX = 8
     const NY = 6
     for (let j = 0; j < NY; j++) {
@@ -433,17 +497,52 @@ export class ChampParticules {
       for (let i = 0; i < NX; i++) {
         const x = vue.x0 + ((i + 0.5) / NX) * (vue.x1 - vue.x0)
         somme += intensiteDansBande(bande, rampe, x, y)
+        // LA MÊME GRILLE SERT LES DEUX RELEVÉS — la part de froid du cadre ne mérite pas un
+        // second balayage, et c'est elle qui pondère le flux d'entrée et la densité visée.
+        if (froid) sommeFroid += melange.part(x, y)
       }
     }
     const moyenne = somme / (NX * NY)
+    // LA PART DE FROID DU CADRE — 0 sans aspect froid, donc tout ce qui suit est inerte.
+    this.partFroid = froid ? (doux ? sommeFroid / (NX * NY) : 1) : 0
     const aire = Math.max(1, (vue.x1 - vue.x0) * (vue.y1 - vue.y0))
     const plafond = Math.max(0, BUDGET_PARTICULES - reservees)
-    this.cible = Math.min(plafond, Math.round(profil.densite * aire * moyenne))
+
+    // ═══ DEUX TROUPEAUX, DEUX CIBLES — et c'est ce qui rend le mélange JUSTE ═══
+    //
+    // La tentation était de tirer la nature à pile ou face contre la part et de garder UN
+    // compte. MESURÉ, ça ne marche pas : un troupeau à effectif constant reflète le débit des
+    // naissances MULTIPLIÉ par la durée de vie (`N = débit × durée`), et un flocon vit dix fois
+    // plus longtemps qu'une goutte — il flâne à 1,2 tuile/s là où elle file à 9. À moitié de
+    // part, on obtenait **76 % de flocons à l'écran**, et le dégradé qu'on construit s'écrasait.
+    // Pire : sous une lisière, les flocons du côté froid mangeaient le budget commun et le
+    // côté doux tombait à un quatorzième de sa densité — **relevé : 0,05 goutte par tuile pour
+    // 0,69 due**.
+    //
+    // On pilote donc chaque espèce SUR SA PROPRE CIBLE, et les durées de vie s'annulent d'elles-
+    // mêmes : chacune a sa densité de table, pondérée par sa part du cadre. Aucune loi de
+    // conversion à écrire, aucun facteur à calibrer.
+    let cibleDoux = doux ? doux.densite * aire * moyenne * (1 - this.partFroid) : 0
+    let cibleFroid = froid ? froid.densite * aire * moyenne * this.partFroid : 0
+    // LE BUDGET RESTE COMMUN — c'est un budget de MACHINE. Trop plein, les deux se serrent
+    // dans la même proportion : le mélange ne change pas parce que la machine est chargée.
+    const voulu = cibleDoux + cibleFroid
+    if (voulu > plafond) {
+      const k = voulu <= 0 ? 0 : plafond / voulu
+      cibleDoux *= k
+      cibleFroid *= k
+    }
+    const cibleDe = [Math.round(cibleDoux), Math.round(cibleFroid)] as const
+    this.cible = cibleDe[0] + cibleDe[1]
 
     // ── L'INTÉGRATION ──
-    let vivantes = 0
+    const vivantesDe: [number, number] = [0, 0]
     for (const p of this.particules) {
       if (!p.vive) continue
+      // SON PROFIL, pas celui du ciel : une goutte et un flocon tombent côte à côte, chacun
+      // avec sa masse et son air. C'est toute la différence entre du grésil et un fondu.
+      const profil = (p.froid ? froid : doux) ?? doux ?? froid!
+      const k = profil.g / profil.vLimite // le coefficient de traînée — le même air pour les deux axes
       // dv/dt = g·(1 − v/vLimite) : la gravité pousse, la traînée retient, l'équilibre est
       // à vLimite. Le même k emporte l'axe horizontal vers le vent — c'est le même air.
       p.vy += (profil.g - k * p.vy) * dt
@@ -456,8 +555,11 @@ export class ChampParticules {
       // Touché : sa hauteur de chute est épuisée, elle renaît ailleurs dans l'aire. RIEN NE
       // SE PEINT AU SOL — l'éclaboussure a été retirée le 2026-08-23 (voir l'en-tête).
       if (p.chute <= 0) {
-        this.naitre(p, profil, vue, bande, rampe, 'volume')
-        vivantes++
+        // ELLE RENAÎT DANS SON ESPÈCE — un flocon ne devient pas une goutte parce qu'il a
+        // touché. Si le point où il renaît ne porte plus de neige, le rejet le refuse et il
+        // meurt : c'est le pilotage par cible qui remet alors une goutte à sa place.
+        this.naitre(p, melange, p.froid, vue, bande, rampe, 'volume')
+        if (p.vive) vivantesDe[p.froid ? 1 : 0] += 1
         continue
       }
       // Sortie du cadre : elle rentre PAR LE BORD OPPOSÉ, celui d'où elle vient — pas par un
@@ -474,44 +576,49 @@ export class ChampParticules {
             : p.x > vue.x1 ? 'ouest'
               : p.x < vue.x0 ? 'est'
                 : 'flux'
-        this.naitre(p, profil, vue, bande, rampe, par)
+        this.naitre(p, melange, p.froid, vue, bande, rampe, par)
+        if (!p.vive) continue
       }
-      vivantes++
+      vivantesDe[p.froid ? 1 : 0] += 1
     }
 
     // ── LA POPULATION REJOINT SA CIBLE : on naît ou on meurt, quelques-unes par image, pour
     //    que la lisière s'éclaircisse en fondu et non par à-coups. ──
-    if (vivantes < this.cible) {
-      // Quand le rideau n'est pas encore établi (moitié du compte manquante : le front vient
-      // d'entrer, ou on vient de se téléporter dedans), on sème DANS TOUT LE CADRE d'un coup —
-      // sinon une averse commence par une ligne au plafond qui descend pendant deux secondes.
-      // Une fois établi, elle ne renaît que par un bord et par petites bouffées : la lisière
-      // s'éclaircit en fondu, jamais par à-coups.
-      const etabli = vivantes * 2 >= this.cible
-      const par: Entree = etabli ? 'flux' : 'volume'
-      const quota = etabli ? Math.max(4, Math.ceil(this.cible * 0.12)) : this.cible - vivantes
-      let nes = 0
-      let essais = 0
-      for (const p of this.particules) {
-        if (nes >= quota || essais > quota * 4 + 16) break
-        if (p.vive) continue
-        essais++
-        this.naitre(p, profil, vue, bande, rampe, par)
-        if (!p.vive) continue
-        nes++
-        vivantes++
-      }
-    } else if (vivantes > this.cible) {
-      let aTuer = vivantes - this.cible
-      for (const p of this.particules) {
-        if (aTuer <= 0) break
-        if (!p.vive) continue
-        p.vive = false
-        vivantes--
-        aTuer--
+    for (const espece of [0, 1] as const) {
+      const cible = cibleDe[espece]
+      const froidVoulu = espece === 1
+      if (vivantesDe[espece] < cible) {
+        // Quand le rideau n'est pas encore établi (moitié du compte manquante : le front vient
+        // d'entrer, ou on vient de se téléporter dedans), on sème DANS TOUT LE CADRE d'un coup —
+        // sinon une averse commence par une ligne au plafond qui descend pendant deux secondes.
+        // Une fois établi, elle ne renaît que par un bord et par petites bouffées : la lisière
+        // s'éclaircit en fondu, jamais par à-coups.
+        const etabli = vivantesDe[espece] * 2 >= cible
+        const par: Entree = etabli ? 'flux' : 'volume'
+        const quota = etabli ? Math.max(4, Math.ceil(cible * 0.12)) : cible - vivantesDe[espece]
+        let nes = 0
+        let essais = 0
+        for (const p of this.particules) {
+          if (nes >= quota || essais > quota * 4 + 16) break
+          if (p.vive) continue
+          essais++
+          this.naitre(p, melange, froidVoulu, vue, bande, rampe, par)
+          if (!p.vive) continue
+          nes++
+          vivantesDe[espece] += 1
+        }
+      } else if (vivantesDe[espece] > cible) {
+        let aTuer = vivantesDe[espece] - cible
+        for (const p of this.particules) {
+          if (aTuer <= 0) break
+          if (!p.vive || p.froid !== froidVoulu) continue
+          p.vive = false
+          vivantesDe[espece] -= 1
+          aTuer--
+        }
       }
     }
-    this.vivantes = vivantes
+    this.vivantes = vivantesDe[0] + vivantesDe[1]
 
   }
 
@@ -538,7 +645,23 @@ export class ChampParticules {
    * dans la bande — le repli ne tire pas, le flux d'aléa ne bouge pas, les gardes d'avant
    * ne bronchent pas — et le REJET qui suit garde la rampe : rien ne fuit au-delà de `lo`.
    */
-  private naitre(p: Particule, profil: ProfilChute, vue: Vue, bande: Bande, rampe: number, par: Entree): void {
+  private naitre(
+    p: Particule,
+    melange: Melange,
+    /** L'ESPÈCE VOULUE — le pilotage par cible la choisit, `naitre` ne la tire pas. */
+    froidVoulu: boolean,
+    vue: Vue,
+    bande: Bande,
+    rampe: number,
+    par: Entree,
+  ): void {
+    const profil = froidVoulu ? melange.froid : melange.doux
+    if (!profil) { p.vive = false; return }
+    // LA PART DE CETTE ESPÈCE ICI — elle multiplie l'intensité dans le rejet, si bien que la
+    // densité SPATIALE de chaque troupeau suit le champ de neige comme elle suit déjà la rampe
+    // du front. C'est là, et nulle part ailleurs, que la géographie du mélange entre.
+    // Sans second aspect, le facteur vaut 1 tout rond : le tirage d'avant R14, au bit près.
+    const melange2 = melange.froid !== null && melange.doux !== null
     // ── L'AIRE D'ÉMISSION : LE CADRE INTERSECTÉ AVEC LA BANDE, jamais le cadre nu. ──
     // Identité quand le cadre est immergé (le cas courant) ; sous une lisière, elle DÉCOUPE.
     // Ses bords sont ceux qui comptent, et sa hauteur est celle qui pèse dans le flux : à
@@ -554,6 +677,9 @@ export class ChampParticules {
     // Par quel bord ? PAR LE FLUX : la proportion qui entre par le haut vaut le débit
     // vertical (vLimite × largeur) contre le débit latéral (|vent| × hauteur). Le blizzard
     // entre donc surtout par l'ouest, la pluie par le haut — sans qu'on ait à le dire.
+    // LE FLUX EST CELUI DE SON ESPÈCE : le flocon chassé entre par le côté, la goutte par le
+    // haut, et chacune garde son débit. Rien à mélanger ici — les deux troupeaux sont pilotés
+    // séparément, c'est tout l'intérêt.
     const fluxHaut = profil.vLimite * w
     const fluxCote = Math.abs(profil.vent) * h
     for (let essai = 0; essai < 6; essai++) {
@@ -579,9 +705,11 @@ export class ChampParticules {
         y = ay0 + this.rng() * h
       }
       const I = intensiteDansBande(bande, rampe, x, y)
-      if (I <= 0 || this.rng() > I) continue
+      const facteur = melange2 ? (froidVoulu ? melange.part(x, y) : 1 - melange.part(x, y)) : 1
+      if (I <= 0 || this.rng() > I * facteur) continue
       p.x = x
       p.y = y
+      p.froid = froidVoulu
       // Elle entre à sa vitesse d'équilibre (à un cheveu près) : une particule qui
       // démarrerait à zéro traverserait le haut du cadre en accélérant, et l'œil verrait
       // le plafond « pleuvoir plus lentement » que le sol.

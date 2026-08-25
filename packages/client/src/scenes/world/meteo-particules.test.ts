@@ -14,9 +14,11 @@ import {
   PROFILS,
   creerRng,
   intensiteDansBande,
+  melangeUniforme,
   rampeDe,
   traineeEnRuns,
   type Bande,
+  type Melange,
   type Run,
   type Vue,
 } from './meteo-particules'
@@ -50,7 +52,7 @@ const VUE: Vue = { x0: 110, y0: 40, x1: 150, y1: 64 }
 /** Faire tourner le champ N images à 60 Hz, comme le fait la couche. */
 function avancer(c: ChampParticules, type: 'pluie' | 'neige' | 'orage' | 'blizzard', n: number, vue = VUE, bande = BANDE): void {
   const profil = PROFILS[type]!
-  for (let i = 0; i < n; i++) c.update(1 / 60, profil, vue, bande, rampeDe(frontDe(type)))
+  for (let i = 0; i < n; i++) c.update(1 / 60, melangeUniforme(profil), vue, bande, rampeDe(frontDe(type)))
 }
 
 describe("l'intensité relue inline est celle de la sim", () => {
@@ -296,6 +298,85 @@ describe('la traînée', () => {
   })
 })
 
+describe('R14 — le troupeau se MÉLANGE, il ne commute pas', () => {
+  /** Un mélange pluie/neige dont la part de froid est donnée par une fonction de x. */
+  const melange = (part: (x: number) => number): Melange => ({
+    doux: PROFILS.pluie,
+    froid: PROFILS.neige,
+    part: (x: number) => part(x),
+  })
+  const BANDE_LARGE: Bande = { axis: 'x', lo: 0, hi: 400 }
+  const VUE_LARGE: Vue = { x0: 100, y0: 40, x1: 160, y1: 70 }
+
+  it('à MOITIÉ de part, il tombe MOITIÉ de flocons — le grésil existe, ce n’est pas un fondu', () => {
+    // DÈS LA PREMIÈRE IMAGE, ET ENCORE QUINZE SECONDES PLUS TARD — et c'est le pilotage par
+    // cible qui l'offre : chaque espèce est semée à SA cible d'un coup, si bien qu'il n'y a
+    // AUCUN régime transitoire à attendre. (Un tirage de nature par naissance en aurait eu un
+    // de dix secondes, le temps qu'une espèce dix fois plus lente peuple le cadre — et le
+    // relevé précoce aurait menti. MESURÉ, dans cette version-là : 0,20 à deux secondes.)
+    const part = (n: number): number => {
+      const c = new ChampParticules(0x9e17)
+      for (let i = 0; i < n; i++) c.update(1 / 60, melange(() => 0.5), VUE_LARGE, BANDE_LARGE, RAMPE_PLUIE)
+      const vivantes = c.particules.filter((p) => p.vive)
+      expect(vivantes.length, `${n} images`).toBeGreaterThan(200) // la prémisse : il tombe quelque chose
+      return vivantes.filter((p) => p.froid).length / vivantes.length
+    }
+    for (const n of [1, 30, 900]) {
+      // Les DEUX populations coexistent, dans la proportion demandée. La cible exacte n'est pas
+      // 0,50 mais 0,55/(0,55+0,69) = 0,44 : chaque espèce vise SA densité de table, et le flocon
+      // en a moins que la goutte. AUCUN aspect ne l'emporte — c'est ça, du grésil.
+      expect(part(n), `${n} images`).toBeGreaterThan(0.4)
+      expect(part(n), `${n} images`).toBeLessThan(0.5)
+    }
+  })
+
+  it('LE CAS SIGNALÉ, à l’écran — de part et d’autre d’une lisière, flocons ici et gouttes là DANS LA MÊME IMAGE', () => {
+    // La part passe de 1 à 0 sur la maille du champ de neige, autour de x = 130. Ce que la
+    // garde affirme : la nature d'une particule suit LE POINT OÙ ELLE NAÎT. Avant R14, tout
+    // le cadre portait un seul aspect — celui lu sous les pieds du joueur.
+    const c = new ChampParticules(0x51ee7)
+    const rampe = (x: number): number => Math.min(1, Math.max(0, (130 - x) / 4))
+    for (let i = 0; i < 600; i++) c.update(1 / 60, melange(rampe), VUE_LARGE, BANDE_LARGE, RAMPE_PLUIE)
+    const gauche = c.particules.filter((p) => p.vive && p.x < 120)
+    const droite = c.particules.filter((p) => p.vive && p.x > 142)
+    expect(gauche.length).toBeGreaterThan(40)
+    expect(droite.length).toBeGreaterThan(40)
+    // Le froid pur à gauche, le doux pur à droite — la tolérance couvre la DÉRIVE : une
+    // particule garde sa nature en traversant, et c'est exactement ce qu'on veut d'elle.
+    expect(gauche.filter((p) => p.froid).length / gauche.length).toBeGreaterThan(0.9)
+    expect(droite.filter((p) => p.froid).length / droite.length).toBeLessThan(0.1)
+  })
+
+  it('SANS ASPECT FROID, RIEN NE CHANGE — pas un flocon, pas un tirage de plus', () => {
+    // `melangeUniforme` doit être INERTE : c'est ce qui garde le flux d'aléa d'avant R14, donc
+    // toutes les gardes statistiques de ce fichier. Deux champs de même graine, l'un mené par
+    // le mélange dégénéré, l'autre par un mélange à part nulle : mêmes positions au bit près.
+    const a = new ChampParticules(0x1234)
+    const b = new ChampParticules(0x1234)
+    for (let i = 0; i < 60; i++) {
+      a.update(1 / 60, melangeUniforme(PROFILS.pluie), VUE_LARGE, BANDE_LARGE, RAMPE_PLUIE)
+      b.update(1 / 60, { doux: PROFILS.pluie, froid: null, part: () => 1 }, VUE_LARGE, BANDE_LARGE, RAMPE_PLUIE)
+    }
+    expect(a.particules.some((p) => p.froid)).toBe(false)
+    for (let i = 0; i < a.particules.length; i++) {
+      expect(b.particules[i]!.x, `particule ${i}`).toBe(a.particules[i]!.x)
+      expect(b.particules[i]!.vive, `particule ${i}`).toBe(a.particules[i]!.vive)
+    }
+  })
+
+  it('CHAQUE POPULATION GARDE SA PHYSIQUE — le flocon flâne pendant que la goutte file, côte à côte', () => {
+    const c = new ChampParticules(0xbeef)
+    for (let i = 0; i < 600; i++) c.update(1 / 60, melange(() => 0.5), VUE_LARGE, BANDE_LARGE, RAMPE_PLUIE)
+    const vitesse = (froid: boolean): number => {
+      const lot = c.particules.filter((p) => p.vive && p.froid === froid)
+      return lot.reduce((s, p) => s + p.vy, 0) / Math.max(1, lot.length)
+    }
+    // Sept fois plus lent, c'est la table (1,2 contre 9 tuiles/s). On demande un facteur 3 :
+    // la garde vise le fait que les deux physiques COEXISTENT, pas le calibrage de la table.
+    expect(vitesse(false)).toBeGreaterThan(vitesse(true) * 3)
+  })
+})
+
 describe("l'émission suit la bande", () => {
   it('AUCUNE particule hors de la bande — jamais, sur 400 images', () => {
     // La règle dure : sous la bande il pleut, à dix tuiles de sa lisière il ne pleut pas.
@@ -303,7 +384,7 @@ describe("l'émission suit la bande", () => {
     const bande: Bande = { axis: 'x', lo: 200, hi: 240 }
     const vue: Vue = { x0: 170, y0: 40, x1: 270, y1: 64 }
     const c = new ChampParticules(4242)
-    for (let i = 0; i < 400; i++) c.update(1 / 60, PROFILS.pluie!, vue, bande, RAMPE_PLUIE)
+    for (let i = 0; i < 400; i++) c.update(1 / 60, melangeUniforme(PROFILS.pluie), vue, bande, RAMPE_PLUIE)
     for (const p of c.particules) {
       if (!p.vive) continue
       expect(p.x, `x=${p.x} hors bande`).toBeGreaterThan(bande.lo)
@@ -323,7 +404,7 @@ describe("l'émission suit la bande", () => {
     for (let centre = -4; centre <= rampe; centre += rampe / 24) {
       const c = new ChampParticules(11)
       const vue: Vue = { x0: centre, y0: 40, x1: centre + 4, y1: 64 }
-      for (let i = 0; i < 3; i++) c.update(1 / 60, PROFILS.pluie!, vue, bande, rampe)
+      for (let i = 0; i < 3; i++) c.update(1 / 60, melangeUniforme(PROFILS.pluie), vue, bande, rampe)
       comptes.push(c.cible)
     }
     expect(comptes[0]).toBe(0) // dehors : rien
@@ -344,7 +425,7 @@ describe("l'émission suit la bande", () => {
     const rampe = RAMPE_PLUIE
     const vue: Vue = { x0: 100, y0: 40, x1: 100 + 2 * rampe, y1: 64 }
     const c = new ChampParticules(2026)
-    for (let i = 0; i < 240; i++) c.update(1 / 60, PROFILS.pluie!, vue, bande, rampe)
+    for (let i = 0; i < 240; i++) c.update(1 / 60, melangeUniforme(PROFILS.pluie), vue, bande, rampe)
     let bord = 0
     let coeur = 0
     for (const p of c.particules) {
@@ -359,7 +440,7 @@ describe("l'émission suit la bande", () => {
     const bande: Bande = { axis: 'x', lo: -1e4, hi: 1e4 }
     const vue: Vue = { x0: 0, y0: 0, x1: 400, y1: 300 } // 120 000 tuiles² : 100 000 gouttes sans plafond
     const c = new ChampParticules(5)
-    for (let i = 0; i < 40; i++) c.update(1 / 60, PROFILS.blizzard!, vue, bande, rampeDe(frontDe('blizzard')))
+    for (let i = 0; i < 40; i++) c.update(1 / 60, melangeUniforme(PROFILS.blizzard), vue, bande, rampeDe(frontDe('blizzard')))
     expect(c.cible).toBe(BUDGET_PARTICULES)
     expect(c.particules.filter((p) => p.vive).length).toBeLessThanOrEqual(BUDGET_PARTICULES)
   })
@@ -450,7 +531,7 @@ describe("le rideau ne penche pas d'un côté", () => {
     // (relevé 182/126 sur une graine contre 1153/1051 sur huit, au même code).
     for (let graine = 0; graine < 6; graine++) {
       const c = new ChampParticules(1000 + graine * 7919)
-      for (let i = 0; i < 300; i++) c.update(1 / 30, profil, VUE_ECRAN, bande, RAMPE_LISIBLE)
+      for (let i = 0; i < 300; i++) c.update(1 / 30, melangeUniforme(profil), VUE_ECRAN, bande, RAMPE_LISIBLE)
       vivantes += c.vivantes
       cible += c.cible
       const w = VUE_ECRAN.x1 - VUE_ECRAN.x0

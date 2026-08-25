@@ -146,7 +146,7 @@ export {
   FOUDRE_CRENEAU_TICKS, foudreImpactAt, foudreTelegrapheAt, frontMeteoPos, meteoCold, meteoFeuConso,
   meteoIntensity, meteoIntensityAt, meteoCycleEligible, meteoMouille, meteoQuiet, meteoSpeedFactor,
   meteoSpeedFactorAt, meteoTypeBrut, meteoTypeDuCycle, meteoVisionFactor, frontDuCycle, meteoColdAt,
-  largeurDe, neigeA, partDeBlizzard, coldMaximal, meteoAspectAt, aspectSousFront, aspectAuPoint, frontEstBlizzard, meteoColdSousFront,
+  largeurDe, neigeA, partDeNeige, partDeBlizzard, coldMaximal, meteoAspectAt, aspectSousFront, aspectAuPoint, frontEstBlizzard, meteoColdSousFront,
 } from './meteo'
 export type { MeteoFront, MeteoType, MeteoAspect, BandeMeteo, FoudreImpact } from './meteo'
 

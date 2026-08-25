@@ -92,7 +92,7 @@ import {
   TERRAINS,
 } from './balance'
 import { terrainAt } from './map'
-import { coldMaximal, frontDuCycle, frontMeteoPos, largeurDe, neigeA, type BandeMeteo } from './meteo'
+import { coldMaximal, frontDuCycle, frontMeteoPos, largeurDe, partDeNeige, type BandeMeteo } from './meteo'
 import { effetsDuJour } from './modificateur'
 import { fbm2, hash2 } from './noise'
 import type { SimState } from './sim'
@@ -374,7 +374,7 @@ export function gelMortel(state: SimState, tx: number, ty: number): boolean {
 }
 
 /** Les fronts qui PEUVENT déposer de la neige : ceux qui précipitent (R11). Qu'ils en
- *  déposent ICI se décide tranche par tranche, par `neigeA` sur le froid du monde — le
+ *  déposent ICI se décide tranche par tranche, par `partDeNeige` sur le froid du monde — le
  *  brouillard et le vent de cendre ne déposent rien. */
 const PRECIPITANTS = ['pluie', 'orage']
 
@@ -406,8 +406,9 @@ const PRECIPITANTS = ['pluie', 'orage']
  * ═══ LA FONTE PAIE LE TEMPS **ET** LA TEMPÉRATURE ═══
  *
  * Sous la bande : la couverture MONTE, de 0 à l'entrée à 1 à la sortie — **sur les seules
- * tranches où il NEIGE ici** (R11 : `neigeA` sur le froid du monde sans le front, à l'instant
- * de la tranche — la même loi que l'aspect dessiné). Un front de pluie d'acte I ne laisse rien
+ * tranches où il NEIGE ici, AU PRORATA** (R11 puis R14 : `partDeNeige` sur le froid du monde
+ * sans le front, à l'instant de la tranche — la même loi que ce qui tombe à l'écran ; une
+ * tranche de grésil dépose la moitié d'une tranche de neige). Un front de pluie d'acte I ne laisse rien
  * en plaine et couvre le Névé ; une bande qui traverse la plaine d'acte II au crépuscule y
  * dépose la part nocturne de son passage. Chaque tranche se juge à un instant FIXE (son
  * milieu sur la grille, borné à la sortie), jamais au tick courant : la couverture est
@@ -456,7 +457,11 @@ export function neigeAuSol(state: SimState, tx: number, ty: number): number {
     for (let t0 = entree; t0 < finChute; t0 += PAS_NEIGE) {
       const t1 = Math.min(finChute, t0 + PAS_NEIGE)
       const instant = Math.min(sortie, t0 + PAS_NEIGE / 2) // FIXE par tranche : monotone en `tick`
-      if (neigeA(dehorsSansMeteo(state, tx, ty, instant))) tombe += (t1 - t0) / (sortie - entree)
+      // R14 — AU PRORATA DE LA PART DE NEIGE, plus par oui/non : sur la lisière il grésille,
+      // et le grésil couvre le sol moitié moins vite qu'une vraie neige. `partDeNeige` vaut
+      // encore 0 et 1 franchement dès qu'on s'écarte d'une demi-rampe de la limite : la plaine
+      // d'acte I ne reçoit toujours RIEN et le Névé reçoit toujours TOUT.
+      tombe += partDeNeige(dehorsSansMeteo(state, tx, ty, instant)) * (t1 - t0) / (sortie - entree)
     }
     if (tombe <= 0) continue // il a plu ici, pas neigé : rien au sol
     if (state.tick < sortie) {

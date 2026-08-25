@@ -4525,6 +4525,27 @@ export const METEO = {
    */
   SEUIL_NEIGE: 0,
   /**
+   * R14 — LA ZONE DE GRÉSIL, en degrés (décision d'Alexis, 2026-08-24). `SEUIL_NEIGE` disait
+   * OÙ la neige remplace la pluie ; cette rampe dit SUR QUELLE ÉPAISSEUR DE FROID elle la
+   * remplace. `partDeNeige(T₀)` vaut 0 une demi-rampe au-dessus de la limite, 1 une demi-rampe
+   * en dessous, et la limite elle-même est le point à moitié — `neigeA` reste son passage à
+   * 0,5, au bit près.
+   *
+   * ═══ POURQUOI SIX, ET PAS DEUX ═══
+   *
+   * Le défaut qu'elle corrige est GÉOMÉTRIQUE, pas temporel (rapport d'Alexis : six cases de
+   * marais vers pré, et tout le ciel bascule de la neige à la pluie). `T₀` saute par MARCHES
+   * d'une tuile, celles de `TEMPERATURE.BIOME_OFFSET` : marais → pré vaut **2 °C**, marais →
+   * forêt **4 °C**. Une rampe de 2 reproduirait donc exactement le mur qu'on retire, en le
+   * renommant « pente » : la marche vaudrait 100 % du mélange. À 6, marais → pré en fait un
+   * TIERS et marais → forêt deux tiers — la lisière devient une transition qu'on traverse,
+   * et il tombe du grésil entre les deux.
+   *
+   * Elle ne touche PAS les gates de froid : `snow` (−16) et `glacier` (−30) sont à quatre et
+   * huit demi-rampes sous la limite. Le Névé reste franchement neigeux.
+   */
+  NEIGE_RAMPE: 6,
+  /**
    * R12 — LE REFROIDISSEMENT ÉOLIEN : le froid d'un orage dépend du froid qu'il trouve. Le
    * facteur `u` vaut 0 à la limite de neige (`SEUIL_NEIGE + COLD.pluie` = 55 : un orage par
    * temps doux est une pluie violente) et 1 cette RAMPE plus bas (45 : le monde gèle déjà,

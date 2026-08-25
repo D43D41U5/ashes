@@ -35,6 +35,16 @@
  * (annonce, entrée, passage) est un orage dont l'aspect en plaine à découvert au milieu de sa
  * fenêtre est `blizzard` (`frontEstBlizzard`) — fonction pure du cycle, écrivain unique.
  *
+ * ═══ ET IL GRÉSILLE ENTRE LES DEUX (R14, décision d'Alexis 2026-08-24) ═══
+ *
+ * La bascule neige/pluie était le DERNIER SEUIL DUR de la météo, et `T₀` saute par marches
+ * d'une tuile (`BIOME_OFFSET`) : la lisière marais/pré était une ligne de neige franche, six
+ * pas suffisaient à retourner tout le ciel. `partDeNeige(T₀)` remplace le oui/non par une part
+ * continue sur `NEIGE_RAMPE` degrés — `neigeA` en reste le passage à 0,5, au bit près. Ses deux
+ * lecteurs : `neigeAuSol` (le grésil dépose au prorata) et le rideau du client (la part de
+ * flocons dans ce qui tombe, tirée au point de CHAQUE particule — d'où une transition qui se
+ * voit dans l'espace, et non un ciel qui commute).
+ *
  * ═══ ZÉRO TIRAGE SUR LE PRNG D'ÉTAT ═══
  *
  * Occurrence, type, bord, fenêtre : tout se dérive du CYCLE par `hash2` (patron
@@ -377,6 +387,38 @@ const LIMITE_NEIGE = METEO.SEUIL_NEIGE + METEO.COLD.pluie
  */
 export function neigeA(t0: number): boolean {
   return t0 < LIMITE_NEIGE
+}
+
+/** La demi-largeur de la zone de grésil — écrite une fois, lue par la rampe. */
+const DEMI_GRESIL = METEO.NEIGE_RAMPE / 2
+
+/**
+ * R14 — LA PART DE NEIGE de ce qui tombe (décision d'Alexis, 2026-08-24) : 0 (que de la
+ * pluie) une demi-rampe AU-DESSUS de la limite, 1 (que des flocons) une demi-rampe en
+ * dessous, en PENTE CONTINUE entre les deux — c'est du GRÉSIL. `neigeA` en est exactement le
+ * passage à 0,5 (`t0 < LIMITE_NEIGE` : la même comparaison, écrite en direct pour rester au
+ * bit près celle d'avant — une division ne doit pas décider d'un aspect sur un cheveu).
+ *
+ * ═══ CE QU'ELLE CORRIGE, ET POURQUOI CE N'EST PAS UN DÉTAIL DE RENDU ═══
+ *
+ * `T₀` ne varie pas continûment dans l'espace : il saute par MARCHES d'une tuile, celles de
+ * `BIOME_OFFSET` (marais −2, pré 0, forêt +2). Avec un seuil, la lisière marais/pré EST la
+ * ligne de neige dès que le socle du monde tombe dans `[LIMITE, LIMITE + 2[` — un mur d'une
+ * tuile d'épaisseur, traversé en six pas, et tout ce qui tombe change de nature d'un coup.
+ * La rampe ne supprime pas la marche (elle est dans le biome, à sa place) : elle en fait une
+ * FRACTION du mélange. Le ciel garde une neige et une pluie franches là où il fait vraiment
+ * froid ou vraiment doux, et il grésille sur la lisière — ce qui est le vrai temps.
+ *
+ * MÊME PATRON QUE R12 (`partDeBlizzard`), dont le commentaire disait déjà « en PENTE
+ * CONTINUE — jamais un seuil » : `neigeA` était le dernier seuil dur de la météo.
+ *
+ * DEUX LECTEURS, comme la loi qu'elle raffine : `neigeAuSol` (ce qui se DÉPOSE — le grésil
+ * couvre moitié moins vite qu'une vraie neige) et le rideau du client (la part de flocons
+ * dans ce qui tombe, au point de chaque particule).
+ */
+export function partDeNeige(t0: number): number {
+  const u = (LIMITE_NEIGE + DEMI_GRESIL - t0) / METEO.NEIGE_RAMPE
+  return u < 0 ? 0 : u > 1 ? 1 : u
 }
 
 /**

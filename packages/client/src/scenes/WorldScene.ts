@@ -32,6 +32,7 @@ import {
   meteoColdAt,
   meteoIntensityAt,
   aspectAuPoint,
+  partDeNeige,
   ambientTemperature,
   baselineTemperature,
   cibleCorporelle,
@@ -53,6 +54,7 @@ import {
   type Entity,
   type GameTime,
   type ItemId,
+  type MeteoAspect,
   type PlayerAction,
   type PredictInput,
   type PredictionState,
@@ -410,6 +412,23 @@ export class WorldScene extends Phaser.Scene {
    *  aurait divergé au premier calibrage, comme la rampe de pluie avant elle. */
   private ventFacade: EtatVent = {
     tick: 0, map: null as never, wind: { x: 1, y: 0 }, calendarScale: 1, jourDeDepart: 1, meteo: null, meteoActive: true,
+  }
+  /**
+   * LE CIEL DU FRONT (spec `meteo.md` R14) — la façade que le rideau reçoit : les DEUX aspects
+   * d'un même front et de quoi lire la part de flocons en n'importe quel point. `mesure` est
+   * LA loi de `/sim` (`partDeNeige` sur `dehorsSansMeteo`), jamais une copie ; la couche s'occupe
+   * de l'échantillonner et de la lisser. Allouée UNE fois — la fermeture aussi : une fermeture
+   * neuve par image serait du déchet pur sur un chemin appelé soixante fois par seconde.
+   */
+  private readonly cielFacade: { doux: MeteoAspect; froid: MeteoAspect | null; mesure: (x: number, y: number) => number } = {
+    doux: 'pluie',
+    froid: null,
+    mesure: (x: number, y: number) => {
+      const etat = this.etatGel
+      const t = this.lastTime
+      if (!etat || !t) return 0
+      return partDeNeige(dehorsSansMeteo(etat, x, y, t.tick))
+    },
   }
   /** LE NIVEAU D'EAU DU TICK (peche.md E5) — relevé une fois par snapshot, jamais par lecture :
    *  `niveauDEau` rembobine huit cycles d'élection météo, et la visée l'interroge sans cesse. */
@@ -1872,6 +1891,17 @@ export class WorldScene extends Phaser.Scene {
       const aspect = meteoFront
         ? aspectAuPoint(this.etatGel, meteoFront, this.predicted.x, this.predicted.y, this.lastTime.tick)
         : null
+      // ── LE CIEL PASSÉ AU RIDEAU (spec meteo.md R14) : DEUX aspects et un champ, plus un
+      // aspect seul. `aspectAuPoint` reste ce que la barre haute nomme (l'icône est un
+      // pictogramme : elle tranche, elle ne dégrade pas) ; ce que le rideau PEINT, lui, est un
+      // MÉLANGE — la part de flocons se relit au point de chaque particule, si bien que la
+      // lisière marais/pré porte du grésil au lieu de faire commuter tout le ciel.
+      // Façade mutée en place (patron `ventFacade`) : zéro allocation par image.
+      const ciel = meteoFront ? this.cielFacade : null
+      if (ciel && meteoFront) {
+        ciel.doux = meteoFront.type
+        ciel.froid = meteoFront.type === 'pluie' ? 'neige' : meteoFront.type === 'orage' ? 'blizzard' : null
+      }
       // …et il part tel quel à la barre haute, qui en fait son icône : une seule lecture
       // par image, partagée par le ciel qu'on peint et par le pictogramme qui le nomme.
       setHud(this.registry, 'cielIci', aspect)
@@ -1927,7 +1957,7 @@ export class WorldScene extends Phaser.Scene {
       // LA GERBE S'IMPUTE SUR LE BUDGET DE PARTICULES, elle ne s'empile pas à côté : le
       // rideau retranche de sa cible ce que les éclats occupent (au plus 48, ~7 %, 0,3 s).
       this.meteoLayer?.update(
-        time, meteoFront, aspect, this.lastTime.tick, day, flash, this.predicted, this.cameras.main,
+        time, meteoFront, ciel, this.lastTime.tick, day, flash, this.predicted, this.cameras.main,
         this.foudreFx?.particulesReservees ?? 0,
       )
 
