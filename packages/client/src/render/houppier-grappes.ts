@@ -55,7 +55,8 @@ export const FORME_PAR_VARIANTE: Record<string, FormeCime> = {
   meleze: 'conifere',
 }
 
-/** Le caractère du bois nu d'une variante (les conifères n'ont pas de cime nue). */
+/** Le caractère du bois nu d'une variante — sa cime d'hiver s'il est caduc, son CHICOT s'il ne
+ *  l'est pas (2026-08-27 : le conifère n'a pas de cime nue, mais il a un squelette). */
 export interface PortNu {
   /** monopodial : l'axe monte jusqu'à la plus haute touffe et chaque touffe s'y accroche ;
    *  sympodial : chaque touffe s'accroche au fût ou à la touffe posée la plus proche en dessous. */
@@ -72,6 +73,16 @@ export const PORT_PAR_VARIANTE: Record<string, PortNu> = {
   baliveau: { axe: 'sympodial', tortueux: 0.15 },
   saule: { axe: 'sympodial', tortueux: 0.18 },
   bouleau: { axe: 'monopodial', tortueux: 0.08 },
+  // ── LES CHICOTS (état `mort`) : MONOPODIAUX, et c'est ce qui les fait reconnaître de loin.
+  //    Un conifère mort garde sa flèche et ses verticilles — l'axe monte tout droit, les
+  //    charpentières partent à l'horizontale et raccourcissent vers le haut. C'est le squelette
+  //    des chandelles sur brûlis, et c'est exactement la silhouette conique que la variante
+  //    portait vivante : elle ne change pas de forme en mourant, elle perd sa masse.
+  //    Une tortuosité BASSE (0,06) : ce bois-là est raide, il ne serpente pas.
+  pin: { axe: 'monopodial', tortueux: 0.06 },
+  vieux_pin: { axe: 'monopodial', tortueux: 0.09 },
+  sapin: { axe: 'monopodial', tortueux: 0.05 },
+  meleze: { axe: 'monopodial', tortueux: 0.07 },
 }
 
 /** Les réglages des grappes — ce qui se règle en REGARDANT une planche. */

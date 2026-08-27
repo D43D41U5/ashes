@@ -18,7 +18,7 @@
 import type Phaser from 'phaser'
 import { mirrorCanvas, mirrorRelief, newCanvas, normalFromCanvas, poserPaire, registerLitPaire } from './normal-map'
 import {
-  cleHouppier, colonneX, houppierLargeur, pariteDeCime, prendLaSaison,
+  cleFut, cleHouppier, colonneX, estRamure, houppierLargeur, pariteDeCime, prendLaSaison, tonsMorts,
   CIMES_PAR_ARBRE, CHARGE_NEIGE, etatsDeCime,
   TOUTES_VARIANTES, TONS_HOUPPIER_VIEUX,
   type EtatCime, type MesuresArbre, type TonsFut, type VarianteArbre,
@@ -142,17 +142,28 @@ let surAmorce = true
  */
 const NORMALES = new Map<string, HTMLCanvasElement>()
 
+/** La clé NUE d'un fût — `registerLitPaire` y ajoute lui-même `_lit` et `_lit_m`. Elle passe
+ *  par `cleFut` pour que la cuisson et les deux poseurs ne puissent pas se désaccorder. */
+function cleFutBase(slug: string, mort = false): string {
+  return cleFut(slug, false, mort)
+}
+
 /** L'albédo d'un état de cime, ce jour-là. La saison ne mord que sur le feuillage CADUC. */
 function grainDeCime(v: VarianteArbre, cime: number, etat: EtatCime, jour: number): GrainHouppier {
   const m = v.mesures
   const W = houppierLargeur(m)
   const forme = FORME_PAR_VARIANTE[v.slug] ?? 'rond'
   const graine = graineDe(cime)
-  if (etat === 'nu') {
-    // LA CIME NUE (G6) — dérivée de la feuillue, une branche par grappe, aux tons du FÛT. Elle
-    // ne prend PAS la teinte de la saison : un tronc ne rousse pas.
+  if (estRamure(etat)) {
+    // LA RAMURE — dérivée de la feuillue, une branche par grappe, aux tons du BOIS. Elle ne
+    // prend PAS la teinte de la saison : un tronc ne rousse pas.
+    //   `nu`   la cime d'hiver d'un caduc (G6), aux tons du fût VIVANT
+    //   `mort` le CHICOT d'un persistant que la cendre a tué (`cendre.md` R13, 2026-08-27),
+    //          aux tons du bois mort — c'est la MÊME recette, et c'est voulu : un squelette
+    //          d'arbre est un squelette d'arbre, ce qui change est la couleur et le port.
     const port = PORT_PAR_VARIANTE[v.slug] ?? { axe: 'sympodial' as const, tortueux: 0.18 }
-    return cimeNue(W, m.houppierS, forme, v.fut, port, m.recouvrementPx, m.colonneW, graine)
+    const bois = etat === 'mort' ? tonsMorts(v.fut) : v.fut
+    return cimeNue(W, m.houppierS, forme, bois, port, m.recouvrementPx, m.colonneW, graine)
   }
   // LA TEINTE DE LA SAISON (S17, loi ③ « base + panachage », décision d'Alexis 2026-08-25) —
   // sur les variantes SAISONNIÈRES. Un pin roux romprait la promesse G6 (« la silhouette du
@@ -179,10 +190,11 @@ function cuireCime(scene: Phaser.Scene, v: VarianteArbre, cime: number, etat: Et
   const grain = grainDeCime(v, cime, etat, jour)
   const alb = crownAlbedo(W, m.houppierS, grain)
   // Trois passes de lissage sur une cime de pavés (six les arrondissaient en coussins, une
-  // seule facettait chaque pixel de frange) ; DEUX sur une cime nue — une branche est fine,
-  // la lisser six fois en ferait une masse molle (c'est le réglage du fût).
-  const passes = etat === 'nu' ? 2 : 3
-  const k = etat === 'nu' ? 3.5 : 3.2
+  // seule facettait chaque pixel de frange) ; DEUX sur une RAMURE — une branche est fine, la
+  // lisser six fois en ferait une masse molle (c'est le réglage du fût). Le chicot est une
+  // ramure : il prend le cadran du bois, pas celui du feuillage.
+  const passes = estRamure(etat) ? 2 : 3
+  const k = estRamure(etat) ? 3.5 : 3.2
   let normale = NORMALES.get(cle)
   if (normale === undefined) {
     normale = normalFromCanvas(alb, passes, k, 4, false, [], grain.relief)
@@ -244,9 +256,35 @@ export function generateLitTrees(scene: Phaser.Scene, jour = 1): void {
     const alb = futAlbedo(m, v.fut, e, grain)
     // LE FÛT EST DRESSÉ, et c'est même la partie ASYMÉTRIQUE de l'arbre : son écorce a un grain,
     // et la cuire une seule fois donnait douze fûts identiques dans une futaie.
-    registerLitPaire(scene, `nd-${v.slug}_trunk`, {
+    registerLitPaire(scene, cleFutBase(v.slug), {
       albedo: alb, dresse: true, passes: 1, k: 3.5, cell: 2, relief: grain.relief,
     })
+
+    /**
+     * ═══ LE FÛT MORT — IL ACCOMPAGNE LE CHICOT, ET CE N'EST PAS UN CHOIX DE GOÛT ═══
+     *
+     * `cimeNue` peint DÉJÀ le haut du tronc dans la boîte de la cime (elle prolonge le fût
+     * jusqu'au bas de sa boîte, pour qu'une grappe basse s'accroche à du bois). Une cime morte
+     * sur un fût vivant coupe donc le tronc EN DEUX à `ancrageHouppierPx` — gris au-dessus,
+     * saumon ou brun en dessous, sur une horizontale nette. **Vu sur planche** (`planche-chicot`,
+     * ligne 2) : ça ne se lit pas comme un arbre mort, ça se lit comme un raccord manqué.
+     *
+     * Le fût mort n'est donc pas un état de plus à décider, c'est la conséquence du premier.
+     * Seuls les PERSISTANTS le cuisent — le caduc en agonie garde sa cime `nu`, peinte aux tons
+     * de son fût VIVANT, et les deux moitiés de son tronc s'accordent déjà.
+     *
+     * Le RELIEF est celui du fût vivant, et c'est exact : la mort décolore l'écorce, elle ne la
+     * rabote pas. La normale peut donc se reprendre telle quelle — un albédo de plus, pas une
+     * normale de plus.
+     */
+    if (etatsDeCime(v.slug).includes('mort')) {
+      const futMort = tonsMorts(v.fut)
+      const grainMort = champDeHauteur(e, m.futW, m.futH, x0, x0 + m.colonneW, futMort)
+      registerLitPaire(scene, cleFutBase(v.slug, true), {
+        albedo: futAlbedo(m, futMort, e, grainMort), dresse: true,
+        passes: 1, k: 3.5, cell: 2, relief: grainMort.relief,
+      })
+    }
   }
 }
 
@@ -279,9 +317,10 @@ export function rafraichirCimes(scene: Phaser.Scene, jour: number): boolean {
       if (!prendLaSaison(v.slug)) continue
       for (let cime = 0; cime < CIMES_PAR_ARBRE; cime++) {
         // TOUS les états qui portent la saison — le feuillage, et les coiffes de neige du
-        // mélèze (son feuillage se voit entre les plaques). Jamais la cime NUE : tons du fût.
+        // mélèze (son feuillage se voit entre les plaques). Jamais une RAMURE : tons du bois,
+        // et le chicot du mélèze virerait à l'or aux Pluies (il est `prendLaSaison`).
         for (const etat of etatsDeCime(v.slug)) {
-          if (etat === 'nu') continue
+          if (estRamure(etat)) continue
           file.push({ v, cime, etat, cran })
           // LE TOUT PREMIER cran cuit les DEUX emplacements : l'autre porterait sinon la teinte
           // du jour 1 posée à l'amorce, et le fondu partirait d'une couleur qui n'a jamais eu lieu.

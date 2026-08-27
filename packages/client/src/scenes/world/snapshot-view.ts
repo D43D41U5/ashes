@@ -7,6 +7,7 @@
  */
 import {
   BALANCE,
+  agonise,
   cropStage,
   doorPairs,
   isPlot,
@@ -82,7 +83,7 @@ import {
   TILE_PX,
 } from '../../render/framing'
 import {
-  ancrageHouppierPx, cleHouppier, houppierLargeur, hauteurTuiles, pariteDeCime,
+  ancrageHouppierPx, cleFut, cleHouppier, houppierLargeur, hauteurTuiles, pariteDeCime,
   TOUTES_VARIANTES, VARIANTES, VARIANTES_CADUQUES, type EtatCime,
 } from '../../render/arbre-art'
 import { NeigeDesCimes } from './neige-houppier'
@@ -282,7 +283,13 @@ function nodeArtGap(texture: string): number {
   // liste de noms : une variante ajoutée aurait sinon reçu le gap des BLOCS (2 texels) et son
   // ombre de contact serait remontée de deux pixels — exactement le bug qu'Alexis avait vu sur
   // les arbres et la fibre, à ceci près qu'il serait revenu par la porte de derrière.
-  if (/^nd-.+_trunk(_lit)?$/.test(texture)) return 0 // tronc plein jusqu'au bas
+  //
+  // ⚠ **ET LE SUFFIXE A GRANDI DEUX FOIS DEPUIS.** `_lit_m` (le miroir du 2026-08-27) puis
+  // `_trunk_mort` (le chicot, R13) ne matchaient plus : la moitié des troncs — tous ceux dont
+  // le bit de miroir vaut 1 — retombaient sur le gap des BLOCS et leur ombre de contact
+  // remontait de deux pixels. C'est EXACTEMENT le bug qu'Alexis avait vu, revenu par la porte
+  // de derrière que ce commentaire annonçait. La forme est donc écrite en entier.
+  if (/^nd-.+_trunk(_mort)?(_lit(_m)?)?$/.test(texture)) return 0 // tronc plein jusqu'au bas
   if (SOCLE_KEYS.has(texture)) return 0 // LE SOCLE MINÉRAL est FLUSH : pleine tuile, planté au bord bas.
   // (La règle se lit sur l'ENSEMBLE des clés cuites, pas sur un préfixe : ajouter un `startsWith`
   //  par matière était exactement la porte de derrière par où l'ombre de contact était remontée.)
@@ -650,13 +657,54 @@ export class SnapshotView {
    * L'exclusion est structurelle et vient du type : un CADUC se dénude (G6, `/sim` le dit sur
    * le jour de saison, jamais sur la température), un PERSISTANT se coiffe de neige. Aucun ne
    * fait les deux, et `EtatCime` n'a pas de quatrième combinaison à offrir.
+   *
+   * ═══ ET L'AGONIE PASSE AVANT LA SAISON (spec `cendre.md` R13, 2026-08-27) ═══
+   *
+   * La cendre prend la tuile, l'arbre s'y dessèche `CENDRE.AGONIE_JOURS` puis TOMBE — et la
+   * spec promet depuis le 2026-08-24 qu'il est « visible, DÉNUDÉ et récoltable » pendant ce
+   * temps. `agonise()` existait dans `/sim`, testée, avec « le rendu le dénude » écrit dans sa
+   * docstring — **et aucun appelant**. La futaie mourante gardait donc son houppier d'été
+   * jusqu'à disparaître d'un coup au cinquième jour, ce qui retirait au joueur le seul signal
+   * qui lui disait d'aller la chercher : la frange qui approche est une ÉCHÉANCE à exploiter.
+   *
+   * Elle passe AVANT la saison : un arbre qui meurt ne la porte plus. Un caduc en agonie
+   * reprend sa cime `nu` (elle existait pour l'hiver, et un feuillu mort est nu) ; un
+   * persistant prend son CHICOT — G6 lui interdit délibérément de se dénuder, il n'avait donc
+   * aucune façon de dire qu'il meurt (*« la silhouette du conifère dit qu'il tient »*).
+   *
+   * ⚠ **ELLE LIT `carte`/`cendreAge`/`worldSeed`, PAS LA FAÇADE DU GEL.** C'est le triplet
+   * qu'utilise déjà `noeudTombeParLaCendre` dans la boucle de dessin : le chicot et la CHUTE
+   * doivent s'accorder sur quel arbre agonise, sinon un arbre tomberait sans avoir grisé.
    */
   private etatDeCime(slug: string, tx: number, ty: number): EtatCime {
+    if (this.carte !== null && agonise(this.carte, tx, ty, this.cendreAge, this.worldSeed)) {
+      return VARIANTES_CADUQUES.includes(slug) ? 'nu' : 'mort'
+    }
     if (this.etatGel === null) return 'feuillu'
     if (VARIANTES_CADUQUES.includes(slug)) {
       return feuillageDenude(this.etatGel, tx, ty) ? 'nu' : 'feuillu'
     }
     return this.neigeCimes.etatDe(this.etatGel, tx, ty)
+  }
+
+  /**
+   * ═══ LA CLÉ DU FÛT — ELLE SUIT SA CIME, ELLE NE SE DÉCIDE PAS À CÔTÉ ═══
+   *
+   * `cimeNue` prolonge le fût DANS la boîte de la cime (une grappe basse doit s'accrocher à du
+   * bois). Un chicot gris planté sur un fût vivant coupe donc le tronc en deux à
+   * `ancrageHouppierPx`, sur une horizontale nette — vu sur planche, ça se lit comme un raccord
+   * manqué, pas comme un arbre mort. Le fût passe au bois mort avec sa cime, ou pas du tout.
+   *
+   * Le REPLI est le même que celui de `cleDeCime`, et pour la même raison : le fût mort n'est
+   * cuit que pour les variantes qui ont un état `mort` (les persistants), et seulement en mode
+   * éclairé. Mieux vaut un tronc vivant sous un chicot que le carré vert d'une texture absente.
+   */
+  private cleDeFut(slug: string, etat: EtatCime, lit: boolean, miroir: boolean): string {
+    if (etat === 'mort') {
+      const mort = cleFut(slug, lit, true, miroir)
+      if (this.scene.textures.exists(mort)) return mort
+    }
+    return cleFut(slug, lit, false, miroir)
   }
 
   /** La clé d'une cime, avec le REPLI sur la feuillue quand l'état demandé n'a pas été cuit
@@ -2200,6 +2248,14 @@ export class SnapshotView {
         // clé droite même quand le bit vaut 1. Le flip Phaser reste interdit en mode `_lit` :
         // il n'inverse pas le canal X de la normale.
         const mir = miroirDeTuile(n.tx, n.ty)
+        // L'ÉTAT DE SA CIME — CALCULÉ UNE FOIS, ET C'EST UN COUPLAGE avant d'être une économie.
+        // Le fût, le houppier et les feuilles qu'un coup détache le demandent tous les trois ;
+        // trois appels seraient trois dérivations indépendantes d'un même fait sur une même
+        // tuile, et « deux écritures d'une même forme finissent par différer » est l'avertissement
+        // que ce fichier porte déjà quatre fois. Ici la conséquence serait un chicot gris sur un
+        // fût vivant — le tronc coupé en deux. (Au passage : `agonise` fait un fbm et une
+        // dichotomie, ×182 arbres visibles × 60 images.)
+        const etatCime: EtatCime = isTree ? this.etatDeCime(variante.slug, n.tx, n.ty) : 'feuillu'
         const texture = isBerry
           ? (this.lighting
             ? litNodeTextureKey(`nd-berry_bush-${gele ? 0 : berryDots(n)}`, mir)
@@ -2207,7 +2263,7 @@ export class SnapshotView {
           : growing && isTree
             ? (this.lighting ? litNodeTextureKey('nd-sapling', mir) : 'nd-sapling')
             : isTree
-              ? (litTree ? cleLit(`nd-${variante.slug}_trunk`, mir) : `nd-${variante.slug}_trunk`)
+              ? this.cleDeFut(variante.slug, etatCime, litTree, mir)
               // LE SOCLE MINÉRAL — les six nœuds qui bloquent leur tuile entière partagent un
               // seul art, à trois hauteurs (`socle-mineral.ts`). Le BLOC porte sa taille sur une
               // butte (`size`, elle y dépend de la forme de la butte entière) et la redérive
@@ -2303,7 +2359,7 @@ export class SnapshotView {
             const m = variante.mesures
             this.recolteFx?.feuillage(
               n.id, coup.at, now,
-              this.cleDeCime(variante.slug, cimeDe(n.tx, n.ty), this.etatDeCime(variante.slug, n.tx, n.ty), miroirDeTuile(n.tx, n.ty)),
+              this.cleDeCime(variante.slug, cimeDe(n.tx, n.ty), etatCime, miroirDeTuile(n.tx, n.ty)),
               // La HAUTEUR d'où les feuilles tombent suit la hauteur du houppier ; leur
               // dispersion suit sa LARGEUR, qui n'est plus la même depuis `houppierW` (le saule
               // et le parasol du vieux pin sont plus larges que hauts). Les feuilles d'un saule
@@ -2378,12 +2434,14 @@ export class SnapshotView {
         // ENTIÈRE, comme la variante et la cime. `pine` et `larch` ne sont jamais caducs, donc
         // aucun conifère ne se dénude — mais la texture nue peut manquer (un slug nouveau, une
         // variante non cuite) : on retombe alors sur la cime feuillue plutôt que sur le carré
-        // vert d'une texture absente.
+        // vert d'une texture absente. ET LA CENDRE PASSE AVANT LA SAISON (`etatCime`, calculé
+        // plus haut avec le fût) : sur la frange, le caduc reprend sa cime nue et le conifère
+        // prend son CHICOT — c'est le seul état qu'un persistant ait jamais eu pour dire qu'il
+        // meurt (`cendre.md` R13).
         const cime = cimeDe(n.tx, n.ty)
-        const etat = this.etatDeCime(variante.slug, n.tx, n.ty)
         // ⚠ LE MÊME BIT QUE LE FÛT, sur la MÊME tuile : un houppier retourné sur un tronc droit
         // se verrait au raccord d'écorce. `miroirDeTuile` est pure, les deux le tirent d'elle.
-        const etape = this.fondu.etape(n.id, this.cleDeCime(variante.slug, cime, etat, miroirDeTuile(n.tx, n.ty)), etat, now)
+        const etape = this.fondu.etape(n.id, this.cleDeCime(variante.slug, cime, etatCime, miroirDeTuile(n.tx, n.ty)), etatCime, now)
         // LE SPRITE NAÎT SUR LA CIME QU'IL VA PORTER — après le fondu, donc, et jamais sur une clé
         // écrite en dur. Il naissait sur l'art PEINT (`cleHouppier(slug, false, 0)`) : une image de
         // vieux houppier avant la première pose, et une deuxième écriture de la même clé à côté de

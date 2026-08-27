@@ -308,9 +308,30 @@ parte, et elle se **négocie** foyer par foyer.
 - **R13 — LE VIVANT MEURT LENTEMENT, LE MINÉRAL RESTE** *(décision d'Alexis)*. La cendre ne vide pas
   la case au passage — c'est très exactement le défaut de l'ancien front (`avancerLaCendre` faisait
   un `filter` sur `state.nodes` : au jour 285, **69 % des nœuds de la Racine effacés**, et rien ne les
-  rendait jamais). Ici, l'arbre pris se **dessèche** sur quelques jours (le houppier se dénude — le
-  rendu sait déjà le faire, `feuillageDenude`), reste **récoltable**, puis tombe en laissant une
-  souche. Le minéral (roche, filon, carrière) n'est pas touché.
+  rendait jamais). Ici, l'arbre pris se **dessèche** sur quelques jours, reste **récoltable**, puis
+  tombe en laissant une souche. Le minéral (roche, filon, carrière) n'est pas touché.
+
+  ⚠ **« LE RENDU SAIT DÉJÀ LE FAIRE, `feuillageDenude` » ÉTAIT FAUX**, et cette ligne de la spec a
+  coûté trois jours de jeu muets (corrigé le 2026-08-27, sur constat d'Alexis : « pourquoi les
+  arbres sur la cendre ont encore leur houppier ? »). `feuillageDenude` est la règle **saisonnière**
+  (G6) : elle lit le jour de l'année, elle n'a jamais rien su de la cendre. `agonise()` avait bien
+  été écrite dans `/sim`, testée, avec « le rendu le dénude » dans sa docstring — et **aucun
+  appelant**. La futaie mourante gardait donc son houppier d'été jusqu'à disparaître d'un coup au
+  cinquième jour, ce qui vidait R14 de son sens : sans signal, pas d'échéance à exploiter.
+
+  Ce que le rendu fait maintenant (`etatDeCime`, `snapshot-view`), l'agonie passant **avant** la
+  saison — un arbre qui meurt ne la porte plus :
+
+  | | en agonie | pourquoi |
+  |---|---|---|
+  | **caduc** | sa cime `nu` | elle existait pour l'hiver, et un feuillu mort est nu |
+  | **persistant** | un **CHICOT** gris (`mort`) | G6 lui interdit de se dénuder (« la silhouette du conifère dit qu'il tient ») : sans lui, un pin mourait vert |
+
+  Le **fût** passe au bois mort avec sa cime, et ce n'est pas un choix de goût : `cimeNue` prolonge
+  le tronc DANS la boîte de la cime, donc un chicot sur un fût vivant coupe le tronc en deux sur une
+  horizontale nette (vu sur planche, `tools/planche-chicot.mts`). La couleur du bois mort est
+  **dérivée de l'essence** et sa clarté vient du FOND : un gris sombre disparaîtrait dans la cendre
+  qu'il habite. L'étalon est le feuillage vivant, pas un nombre — garde dans `houppier-grappes.test.ts`.
 
 - **R14 — DONC LA CENDRE TIRE AUTANT QU'ELLE POUSSE.** C'est la conséquence de R13 et c'est le cœur
   du feel : la frange qui approche est une **échéance à exploiter**. Le joueur va couper dans le

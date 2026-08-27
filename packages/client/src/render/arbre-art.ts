@@ -26,6 +26,7 @@
 /** Taille de tuile de l'art. Le module raisonne en pixels monde ; `TILE_PX` les convertit. */
 import { TILE_PX } from './framing'
 import { ecorceDe } from './ecorce'
+import { teinterFamille, type TeinteSaison } from './teinte-saison'
 
 /** Un rect de dessin : `[x, y, largeur, hauteur]`, dans le repère de sa texture. */
 export type Rect = readonly [number, number, number, number]
@@ -387,6 +388,46 @@ export const TONS_FUT_PIN: TonsFut = { corps: '#7a4f34', clair: '#8a5a3c', sombr
  */
 export const TONS_FUT_GRIS: TonsFut = { corps: '#6d6a63', clair: '#87847b', sombre: '#4c4a45' }
 
+/**
+ * ═══ LE BOIS MORT — LA COULEUR D'UN CHICOT (décision d'Alexis, 2026-08-27) ═══
+ *
+ * *« ok pour les conifères transforme les en chicot gris »* — la cendre prend la tuile, l'arbre
+ * s'y dessèche cinq jours (`CENDRE.AGONIE_JOURS`), puis il tombe. Le feuillu disait déjà cette
+ * agonie par sa silhouette (il se dénude, G6) ; **le conifère, non** — G6 lui interdit
+ * délibérément de perdre sa cime (« la silhouette du conifère dit qu'il tient »), et la promesse
+ * de la cendre était donc muette sur un pin. Elle se dit maintenant par la COULEUR.
+ *
+ * ⚠ **UNE CIBLE CLAIRE, ET C'EST LE FOND QUI LA COMMANDE.** Un chicot se voit sur de la cendre,
+ * pas sur de l'herbe : `cendre_bois` est à `#3b3630` (luma 0,21) et `cendre_pre` à `#71695a`.
+ * Un gris SOMBRE — le premier réflexe, « du bois brûlé » — disparaîtrait dans son propre sol.
+ * C'est le bois d'argent des chandelles sur brûlis : desséché, décoloré, plus PÂLE que l'écorce
+ * qu'il remplace. Le fût du sapin (`#3d2b1c`, luma 0,17) est presque invisible sur sa cendre ;
+ * mort, il monte à 0,50 et s'en détache franchement.
+ *
+ * ⚠ **LA CIBLE A ÉTÉ REMONTÉE UNE FOIS** (`#8c857a` → `#a89f92`), et c'est la garde qui l'a
+ * exigé, pas l'œil : à l'ancienne valeur, le chicot du mélèze contrastait 0,214 avec sa cendre
+ * là où son FEUILLAGE VIVANT en faisait 0,226 — l'arbre mort se voyait moins bien que l'arbre
+ * qu'il remplaçait, ce qui vide la mécanique de son sens. L'étalon est le feuillage, pas un
+ * nombre : si les tons d'une essence bougent, on refait la mesure.
+ */
+export const BOIS_MORT: TeinteSaison = { cible: 0xa89f92, force: 0.72 }
+
+/**
+ * LES TONS D'UN FÛT MORT — **dérivés de l'essence, jamais posés en dur.**
+ *
+ * Une palette grise unique aurait lu « mort » sur le sapin et « rien du tout » sur le bouleau,
+ * dont le fût est DÉJÀ pâle (`#9a9484`). On fond donc le `corps` vers le bois d'argent et on
+ * translate les autres tons du même delta (`teinterFamille`, loi ② du 2026-08-25) : la famille
+ * converge vers le gris, ses écarts internes — l'arête claire, la lenticelle du bouleau, le
+ * cœur du gros bois — survivent, et la lumière du jeu a encore de quoi sculpter.
+ *
+ * La force est haute (0,72) et c'est voulu : à la mort, les essences se ressemblent. Ce qui
+ * reste de leur identité est leur SILHOUETTE, ce qui est exactement ce que le jeu veut dire.
+ */
+export function tonsMorts(fut: TonsFut): TonsFut {
+  return teinterFamille(fut, BOIS_MORT)
+}
+
 /** Les familles de houppier. Même famille, sous-teintes : le vert ne doit pas se disperser.
  *  C'est le ton `lumiere` qui devient l'albédo éclairé — c'est donc LUI qu'on voit en jeu. */
 export const TONS_HETRE: TonsHouppier = { masse: '#153a24', corps: '#1a462b', lumiere: '#26603c', eclat: '#2d7046', ombre: '#112e1c' }
@@ -662,6 +703,21 @@ export function cleHouppier(
 }
 
 /**
+ * LA CLÉ D'UN FÛT — centralisée pour la MÊME raison que celle d'une cime : l'arbre debout
+ * (`snapshot-view`) et l'arbre qui s'abat (`chute-arbre`) la construisaient chacun de son
+ * côté, et le chicot aurait retrouvé un tronc vivant EN TOMBANT.
+ *
+ * `mort` n'est cuit que pour les variantes qui portent un chicot, et seulement en mode éclairé
+ * (`lit-trees`) : les deux appelants testent donc l'existence de la texture avant de la poser,
+ * exactement comme ils le font pour la cime. Mieux vaut un tronc vivant sous un chicot que le
+ * carré vert d'une clé absente.
+ */
+export function cleFut(slug: string, lit: boolean, mort = false, miroir = false): string {
+  const base = `nd-${slug}_trunk${mort ? '_mort' : ''}`
+  return lit ? `${base}${miroir ? '_lit_m' : '_lit'}` : base
+}
+
+/**
  * ═══ LA PARITÉ DE CRAN — DEUX SAISONS CUITES À LA FOIS, ET POURQUOI IL EN FAUT DEUX ═══
  *
  * *(Demande d'Alexis, 2026-08-25 : « il faudra que la transition entre chaque état soit lerpée,
@@ -682,10 +738,12 @@ export function cleHouppier(
  * même image. La règle vit ICI, en une ligne, plutôt que chez les trois appelants.
  */
 export function pariteDeCime(slug: string, etat: EtatCime, cran: number): number {
-  // La cime NUE est peinte aux tons du FÛT : elle ne tourne pas, un tronc ne rousse pas. Tout le
-  // reste d'une variante saisonnière tourne — y compris ses cimes COIFFÉES, dont le feuillage
-  // se voit entre les plaques de neige.
-  return etat !== 'nu' && prendLaSaison(slug) ? cran & 1 : 0
+  // UNE RAMURE est peinte aux tons du BOIS : elle ne tourne pas, un tronc ne rousse pas — et un
+  // chicot encore moins (le mélèze est `prendLaSaison`, donc sans ce test son bois mort virerait
+  // à l'or aux Pluies et se ferait recuire par `rafraichirCimes`). Tout le reste d'une variante
+  // saisonnière tourne — y compris ses cimes COIFFÉES, dont le feuillage se voit entre les
+  // plaques de neige.
+  return !estRamure(etat) && prendLaSaison(slug) ? cran & 1 : 0
 }
 
 
@@ -700,11 +758,36 @@ export function pariteDeCime(slug: string, etat: EtatCime, cran: number): number
  *
  * L'exclusion est une propriété du DOMAINE : elle se dit dans le type, pas dans un garde-fou.
  * *(C'est la leçon du 2026-08-06 : une table exhaustive par construction, pas par vigilance.)*
+ *
+ * ⚠ **`mort` EST LE PREMIER ÉTAT QUI TRAVERSE LA LIGNE CADUC/PERSISTANT** (2026-08-27), et il
+ * ne l'ouvre pas pour autant : c'est le persistant qui le porte, parce que lui seul n'avait
+ * aucune façon de dire qu'il meurt. Le caduc a déjà `nu`, et la cendre le lui emprunte.
  */
-export type EtatCime = 'feuillu' | 'nu' | 'neige1' | 'neige2'
+export type EtatCime = 'feuillu' | 'nu' | 'neige1' | 'neige2' | 'mort'
 
 const SUFFIXE_CIME: Record<EtatCime, string> = {
-  feuillu: '', nu: '_nu', neige1: '_n1', neige2: '_n2',
+  feuillu: '', nu: '_nu', neige1: '_n1', neige2: '_n2', mort: '_mort',
+}
+
+/**
+ * ═══ CET ÉTAT EST-IL UNE RAMURE ? — le prédicat, écrit UNE fois ═══
+ *
+ * `nu` et `mort` sont la MÊME matière (du bois, pas du feuillage) et se comportent pareil aux
+ * quatre endroits qui les distinguent : les cadrans de la normale (`passes: 2, k: 3,5` — une
+ * branche est fine, la lisser comme une masse de pavés en ferait un coussin), la parité de
+ * cime, la file du recuit saisonnier, et le choix de la recette dans `grainDeCime`.
+ *
+ * Il est ÉCRIT ICI plutôt que répété en quatre `=== 'nu' || === 'mort'` : l'un des quatre
+ * finirait par dériver, et la dérive serait SILENCIEUSE — `cleDeCime` retombe sur la cime
+ * feuillue quand la texture demandée n'existe pas, donc un chicot oublié sortirait vert.
+ *
+ * ⚠ **C'EST UN PRÉDICAT DE TYPE, et c'est ce qui garde la table exhaustive.** Écrit en
+ * `boolean`, il ne rétrécit rien : `CHARGE_NEIGE[etat]` après le `return` de la ramure ne
+ * compilait plus, parce que `mort` restait dans l'union. Le `etat is` rend au compilateur ce
+ * que le code sait déjà — passé cette porte, il ne reste que du feuillage.
+ */
+export function estRamure(etat: EtatCime): etat is 'nu' | 'mort' {
+  return etat === 'nu' || etat === 'mort'
 }
 
 /**
@@ -715,9 +798,14 @@ const SUFFIXE_CIME: Record<EtatCime, string> = {
  */
 export const CHARGE_NEIGE: Record<'neige1' | 'neige2', number> = { neige1: 0.35, neige2: 0.7 }
 
-/** Les états qu'une variante sait porter — c'est ce que `lit-trees` cuit, et rien d'autre. */
+/**
+ * Les états qu'une variante sait porter — c'est ce que `lit-trees` cuit, et rien d'autre.
+ *
+ * LE PERSISTANT EN A QUATRE depuis le 2026-08-27 : son chicot. Le caduc n'en a pas besoin —
+ * l'agonie de la cendre lui reprend sa cime `nu`, qui existait déjà pour l'hiver.
+ */
 export function etatsDeCime(slug: string): readonly EtatCime[] {
-  return VARIANTES_CADUQUES.includes(slug) ? ['feuillu', 'nu'] : ['feuillu', 'neige1', 'neige2']
+  return VARIANTES_CADUQUES.includes(slug) ? ['feuillu', 'nu'] : ['feuillu', 'neige1', 'neige2', 'mort']
 }
 
 /**

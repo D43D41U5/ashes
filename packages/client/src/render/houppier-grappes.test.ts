@@ -9,9 +9,11 @@
  */
 import { describe, expect, it } from 'vitest'
 import {
-  TOUTES_VARIANTES, VARIANTES_CADUQUES, CIMES_PAR_ARBRE, cleHouppier, etatsDeCime, houppierLargeur,
-  pariteDeCime, prendLaSaison,
+  TOUTES_VARIANTES, VARIANTES_CADUQUES, CIMES_PAR_ARBRE, cleHouppier, estRamure,
+  etatsDeCime, houppierLargeur, pariteDeCime, prendLaSaison, tonsMorts,
 } from './arbre-art'
+import { TERRAIN_COLORS } from './terrain-colors'
+import { TERRAIN_BURNT_FOREST, TERRAIN_CENDRE_BOIS } from '@ashes/sim'
 import { FORME_PAR_VARIANTE, PORT_PAR_VARIANTE, centresDe, cimeEnGrappes, cimeNue, grappesDe, type GrainHouppier } from './houppier-grappes'
 
 const GRAINES = Array.from({ length: CIMES_PAR_ARBRE }, (_, c) => 11 + c * 7919)
@@ -242,16 +244,20 @@ describe('la coiffe de neige — les persistants sous la charge', () => {
       }
     }
     // 7 caducs × 5 cimes × (feuillu × 2 parités + nu) = 105
-    // le MÉLÈZE, seul conifère saisonnier : 5 cimes × 3 états × 2 parités = 30
-    // 3 autres persistants × 5 cimes × 3 états = 45
-    expect(vues.size).toBe(7 * 5 * 3 + 5 * 3 * 2 + 3 * 5 * 3)
+    // le MÉLÈZE, seul conifère saisonnier : 5 cimes × (2 coiffes + feuillu) × 2 parités + son
+    //   CHICOT, qui ne tourne pas (5) = 35
+    // 3 autres persistants × 5 cimes × 4 états = 60
+    expect(vues.size).toBe(7 * 5 * 3 + (5 * 3 * 2 + 5) + 3 * 5 * 4)
   })
 
   it('la PARITÉ suit « prend la saison », et la cime NUE ne tourne jamais', () => {
     for (const v of TOUTES_VARIANTES) {
       for (const e of etatsDeCime(v.slug)) {
         const bascule = pariteDeCime(v.slug, e, 0) !== pariteDeCime(v.slug, e, 1)
-        expect(bascule, `${v.slug}/${e}`).toBe(prendLaSaison(v.slug) && e !== 'nu')
+        // UNE RAMURE NE TOURNE JAMAIS — ni la cime nue de l'hiver, ni le CHICOT de la cendre.
+        // Le mélèze est le cas qui mord : il est `prendLaSaison`, donc sans le test son bois
+        // mort virerait à l'or aux Pluies et se ferait recuire à chaque cran.
+        expect(bascule, `${v.slug}/${e}`).toBe(prendLaSaison(v.slug) && !estRamure(e))
       }
     }
   })
@@ -261,12 +267,111 @@ describe('la coiffe de neige — les persistants sous la charge', () => {
     // quelqu'un refond « tourne » et « se dénude » en un seul test, ce cas-ci rougira.
     expect(prendLaSaison('meleze')).toBe(true)
     expect(VARIANTES_CADUQUES.includes('meleze')).toBe(false)
-    expect(etatsDeCime('meleze')).toEqual(['feuillu', 'neige1', 'neige2'])
+    // `mort` est le CHICOT (`cendre.md` R13) : il ne dit rien de la saison, c'est la cendre
+    // qui le pose. Un persistant en porte un précisément parce qu'il ne se dénude pas.
+    expect(etatsDeCime('meleze')).toEqual(['feuillu', 'neige1', 'neige2', 'mort'])
     // Et les autres conifères, eux, ne tournent pas.
     for (const slug of ['pin', 'sapin', 'vieux_pin']) {
       expect(prendLaSaison(slug), slug).toBe(false)
     }
     // Tout caduc tourne : « se dénuder » implique « tourner », l'inverse est faux.
     for (const slug of VARIANTES_CADUQUES) expect(prendLaSaison(slug), slug).toBe(true)
+  })
+})
+
+
+/**
+ * ═══ LE CHICOT — ce que la cendre fait d'un conifère (spec `cendre.md` R13, 2026-08-27) ═══
+ *
+ * *(Décision d'Alexis : « ok pour les conifères transforme les en chicot gris ».)*
+ *
+ * Le persistant n'avait AUCUNE façon de dire qu'il meurt : G6 lui interdit de se dénuder
+ * (« la silhouette du conifère dit qu'il tient »), et la cendre le faisait donc disparaître
+ * d'un coup, vert, au cinquième jour. L'état `mort` le dit par la couleur — et ce que ces
+ * gardes tiennent, c'est la RAISON de cette couleur : elle est claire PARCE QUE le fond est
+ * de la cendre, pas parce qu'un gris a été choisi.
+ */
+describe('le chicot — l\'arbre que la cendre a tué', () => {
+  const PERSISTANTS = TOUTES_VARIANTES.filter((v) => !VARIANTES_CADUQUES.includes(v.slug))
+  const luma = (n: number): number =>
+    (0.2126 * ((n >> 16) & 0xff) + 0.7152 * ((n >> 8) & 0xff) + 0.0722 * (n & 0xff)) / 255
+  const hex = (c: string): number => parseInt(c.slice(1), 16)
+
+  it('les persistants — et EUX SEULS — portent un chicot', () => {
+    expect(PERSISTANTS.length, 'la garde doit d’abord VOIR des persistants').toBe(4)
+    for (const v of PERSISTANTS) expect(etatsDeCime(v.slug), v.slug).toContain('mort')
+    // Le caduc n'en a pas besoin : l'agonie lui reprend sa cime `nu`, qui existait pour l'hiver.
+    for (const slug of VARIANTES_CADUQUES) expect(etatsDeCime(slug), slug).not.toContain('mort')
+    // Et les deux sont la MÊME matière — c'est ce que `estRamure` dit aux quatre appelants.
+    expect(estRamure('nu') && estRamure('mort')).toBe(true)
+    expect(estRamure('feuillu') || estRamure('neige1') || estRamure('neige2')).toBe(false)
+  })
+
+  /**
+   * ═══ LA PROPRIÉTÉ QUI COMMANDE LA COULEUR — ET SON ÉTALON N'EST PAS UN NOMBRE ═══
+   *
+   * Un chicot se voit sur de la CENDRE, jamais sur de l'herbe. Le premier réflexe (« du bois
+   * brûlé », donc sombre) l'aurait fait disparaître dans son propre sol : `cendre_bois` est à
+   * luma 0,21 et le fût du sapin à 0,17 — l'arbre mort aurait été MOINS visible que le vivant.
+   *
+   * L'étalon est donc le FEUILLAGE VIVANT de la même essence : c'est le contraste que le jeu a
+   * déjà validé sur ce sol, et un chicot qui fait moins bien que lui n'est pas lisible. Rien
+   * n'est comparé à un seuil écrit à la main.
+   *
+   * ⚠ **SUR LES DEUX SOLS QU'UN CONIFÈRE RENCONTRE, ET SUR EUX SEULS.** `terrainCendre` envoie
+   * le BOISÉ sur `cendre_bois` à la frange et `burnt_forest` au cœur ; `cendre_pre` est ce que
+   * devient l'HERBE, et le peuplement n'envoie de conifère que sur `pine`/`larch`. Mesurer le
+   * pré ferait rougir la garde sur un cas que le jeu ne produit pas — et le vrai risque, si un
+   * conifère y arrivait un jour, serait un chicot à luma 0,43 sur un sol à 0,41 : invisible.
+   */
+  it('le chicot se détache de son sol AU MOINS autant que l’arbre vivant', () => {
+    for (const sol of [TERRAIN_CENDRE_BOIS, TERRAIN_BURNT_FOREST]) {
+      const fond = luma(TERRAIN_COLORS[sol]!)
+      expect(fond, 'un sol de cendre boisée est SOMBRE').toBeLessThan(0.3)
+      for (const v of PERSISTANTS) {
+        const ecorce = Math.abs(luma(hex(v.fut.corps)) - fond)
+        const feuillage = Math.abs(luma(hex(v.tons.lumiere)) - fond)
+        const mort = Math.abs(luma(hex(tonsMorts(v.fut).corps)) - fond)
+        expect(mort, `${v.slug} : le chicot doit battre son écorce vivante`).toBeGreaterThan(ecorce)
+        expect(mort, `${v.slug} : et tenir la comparaison avec son feuillage`).toBeGreaterThanOrEqual(feuillage)
+      }
+    }
+  })
+
+  /** LA MORT DÉSATURE ET RASSEMBLE : quatre essences très différentes (le pin est saumon, le
+   *  sapin brun sombre) convergent vers la même famille. Ce qui les sépare encore est leur
+   *  SILHOUETTE, ce qui est exactement ce que le jeu veut dire. */
+  it('la mort désature, et rapproche les essences les unes des autres', () => {
+    const ecart = (c: string): number => {
+      const n = hex(c), r = (n >> 16) & 0xff, g = (n >> 8) & 0xff, b = n & 0xff
+      return Math.max(r, g, b) - Math.min(r, g, b)
+    }
+    for (const v of PERSISTANTS) {
+      expect(ecart(tonsMorts(v.fut).corps), `${v.slug} désaturé`).toBeLessThan(ecart(v.fut.corps))
+    }
+    const corps = PERSISTANTS.map((v) => luma(hex(tonsMorts(v.fut).corps)))
+    expect(Math.max(...corps) - Math.min(...corps), 'les quatre morts se ressemblent').toBeLessThan(0.1)
+  })
+
+  /** UN CHICOT EST UNE RAMURE, pas une cime : il passe par `cimeNue`, donc il occupe une petite
+   *  part de sa boîte — et il ne reste pas un pixel de vert dedans. */
+  it('le chicot est un squelette gris — pas une cime repeinte', () => {
+    for (const v of PERSISTANTS) {
+      const m = v.mesures, W = houppierLargeur(m)
+      const forme = FORME_PAR_VARIANTE[v.slug]!
+      const port = PORT_PAR_VARIANTE[v.slug]!
+      expect(port.axe, `${v.slug} : un conifère mort garde sa flèche`).toBe('monopodial')
+      const mort = cimeNue(W, m.houppierS, forme, tonsMorts(v.fut), port, m.recouvrementPx, m.colonneW, GRAINES[2]!)
+      const vive = cimeEnGrappes(W, m.houppierS, forme, v.tons, GRAINES[2]!, undefined, 0)
+      const pleins = (g: GrainHouppier): number => g.ton.reduce((n, t) => n + (t === null ? 0 : 1), 0)
+      expect(pleins(mort), `${v.slug} : le chicot doit être MAIGRE`).toBeLessThan(pleins(vive) / 2)
+      expect(pleins(mort), `${v.slug} : et exister quand même`).toBeGreaterThan(40)
+      for (const t of mort.ton) {
+        if (t === null) continue
+        const mm = /rgb\((\d+),(\d+),(\d+)\)/.exec(t)!
+        const [r, g, b] = [Number(mm[1]), Number(mm[2]), Number(mm[3])]
+        expect(g <= Math.max(r, b) + 4, `${v.slug} : il reste du feuillage dans le chicot (${t})`).toBe(true)
+      }
+    }
   })
 })

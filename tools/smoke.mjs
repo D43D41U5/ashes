@@ -5342,6 +5342,124 @@ const SCENARIOS = {
   },
 
   /**
+   * LE CHICOT (2026-08-27) — un conifère que la cendre a tué garde-t-il sa cime verte ?
+   *
+   * LE DÉFAUT QU'IL GARDE. `cendre.md` R13 promet qu'un arbre pris par la cendre reste
+   * « visible, DÉNUDÉ et récoltable » pendant `AGONIE_JOURS` avant de tomber. Le rendu ne
+   * posait jamais la question : `agonise()` vivait dans `/sim`, testée, sans un seul appelant,
+   * et `etatDeCime` ne consultait que la saison. Un pin mourait donc VERT et disparaissait d'un
+   * coup au cinquième jour — le joueur n'avait aucun signal pour aller le chercher.
+   *
+   * IL NE JUGE PAS DES PIXELS, il lit ce que le rendu a POSÉ : la texture de chaque sprite
+   * d'arbre à l'écran. Un chicot se reconnaît à sa clé (`_trunk_mort`, `_crown_mort_lit`), et
+   * c'est la seule preuve qui ne peut pas être obtenue par accident — `cleDeCime` et
+   * `cleDeFut` retombent SILENCIEUSEMENT sur le bois vivant quand la texture manque, donc une
+   * cuisson oubliée rendrait exactement l'image d'avant.
+   *
+   * LE CADRE VIENT D'UNE SONDE, PAS DE L'ŒIL : au jour 200, graine 2026, la frange traverse
+   * 508 tuiles de conifère, et (864, 164) en concentre 62 dans un rayon de dix.
+   *
+   * Exige `--dev` : le saut de jour et la téléportation sont inertes en production.
+   */
+  async chicot(page) {
+    const JOUR = Number(process.env.JOUR ?? 200)
+    const [TX, TY] = (process.env.OU ?? '864,164').split(',').map(Number)
+    await page.goto(URL)
+    await page.waitForFunction(() => Boolean(window.__BRAISES__?.scene?.registry?.get('mapData')), null, { timeout: 150000 })
+    await page.waitForTimeout(1200)
+    await page.evaluate(() => window.__BRAISES__.scene.sendAction({ type: 'debug_set_hour', hour: 11 }))
+    await page.evaluate((d) => window.__BRAISES__.scene.sendAction({ type: 'debug_set_season_day', day: d }), JOUR)
+    await page.waitForTimeout(2500)
+    await page.evaluate(({ x, y }) => window.__BRAISES__.scene.sendAction({ type: 'debug_teleport', x, y }), { x: TX + 0.5, y: TY + 0.5 })
+    await page.waitForTimeout(6000)
+
+    // ① LES TEXTURES SONT-ELLES CUITES ? Quatre persistants × cinq cimes × deux miroirs, plus
+    //    les quatre fûts morts. Sans elles, le repli rendrait l'image d'avant sans un mot.
+    const cuisson = await page.evaluate(() => {
+      const sc = window.__BRAISES__.scene
+      const manque = []
+      for (const slug of ['pin', 'vieux_pin', 'sapin', 'meleze']) {
+        for (const m of ['', '_m']) {
+          if (!sc.textures.exists(`nd-${slug}_trunk_mort_lit${m}`)) manque.push(`nd-${slug}_trunk_mort_lit${m}`)
+          for (let c = 0; c < 5; c++) {
+            const cle = `nd-${slug}_crown_mort_lit-${c}${m}`
+            if (!sc.textures.exists(cle)) manque.push(cle)
+          }
+        }
+      }
+      return { manque, total: 4 * 2 * 6 }
+    })
+    if (cuisson.manque.length > 0) console.error(`!! ${cuisson.manque.length}/${cuisson.total} textures de chicot NON CUITES : ${cuisson.manque.slice(0, 4).join(', ')}…`)
+    else console.log(`   ✓ les ${cuisson.total} textures de chicot sont cuites`)
+
+    // ② LE RENDU LES POSE-T-IL ? On lit la texture de chaque sprite d'arbre du pool.
+    const pose = await page.evaluate(() => {
+      const sc = window.__BRAISES__.scene
+      const pool = sc.view.nodePool ?? []
+      const crowns = sc.view.crownPool ?? []
+      const cles = {}
+      let futsMorts = 0, futsVifs = 0, cimesMortes = 0, cimesVives = 0
+      for (const sp of pool) {
+        if (!sp?.visible) continue
+        const k = sp.texture?.key ?? ''
+        if (!k.includes('_trunk')) continue
+        cles[k] = (cles[k] ?? 0) + 1
+        if (k.includes('_trunk_mort')) futsMorts++
+        else futsVifs++
+      }
+      for (const cr of crowns) {
+        if (!cr?.visible) continue
+        const k = cr.texture?.key ?? ''
+        if (k.includes('_crown_mort')) cimesMortes++
+        else if (k.includes('_crown')) cimesVives++
+      }
+      return { futsMorts, futsVifs, cimesMortes, cimesVives, cles }
+    })
+    console.log(`fûts : ${pose.futsMorts} morts / ${pose.futsVifs} vifs — cimes : ${pose.cimesMortes} mortes / ${pose.cimesVives} vives`)
+    if (pose.futsMorts + pose.futsVifs === 0) console.error('!! aucun arbre à l’écran — le cadre ne montre pas le sujet')
+    else if (pose.cimesMortes === 0) console.error(`!! AUCUN chicot posé au jour ${JOUR} sur (${TX},${TY}) : l’agonie ne se voit pas`)
+    else console.log(`   ✓ ${pose.cimesMortes} chicots à l’écran`)
+    // LE FÛT SUIT SA CIME — l'un sans l'autre coupe le tronc en deux (planche `planche-chicot`).
+    if (pose.cimesMortes > 0 && pose.futsMorts === 0) console.error('!! des cimes mortes sur des fûts VIVANTS : le tronc est coupé en deux')
+
+    // ⚠ LA CANOPÉE S'EFFACE AUTOUR DU JOUEUR : sans ça, la photo ne montrerait QUE des troncs
+    //   — et l'aide d'affordance masquerait précisément le sujet (les cimes).
+    await canopeePleine(page)
+    await page.waitForTimeout(400)
+    await page.evaluate(() => { window.__BRAISES__.scene.game.loop.sleep() })
+    await page.waitForTimeout(300)
+    await page.evaluate(() => window.__BRAISES__.scene.game.step(performance.now(), 16))
+    await page.waitForTimeout(200)
+    await page.screenshot({ path: `${OUT}/chicot.png`, timeout: 150000 })
+
+    // …ET DE PRÈS SUR UN CHICOT, par la CAMÉRA (pas un agrandissement après coup) : le rendu
+    // repasse par le vrai pipeline, normale comprise. On vise le fût MORT le plus au centre,
+    // relevé sur les sprites posés — jamais une coordonnée écrite à la main, et jamais le
+    // joueur, qui masquerait l'arbre qu'on vient photographier.
+    const vise = await page.evaluate(() => {
+      const sc = window.__BRAISES__.scene
+      const cam = sc.cameras.main
+      const cx = cam.worldView.x + cam.worldView.width / 2
+      const cy = cam.worldView.y + cam.worldView.height / 2
+      let best = null
+      for (const sp of sc.view.nodePool ?? []) {
+        if (!sp?.visible || !(sp.texture?.key ?? '').includes('_trunk_mort')) continue
+        const d = (sp.x - cx) ** 2 + (sp.y - cy) ** 2
+        if (!best || d < best.d) best = { x: sp.x, y: sp.y, d }
+      }
+      if (!best) return null
+      cam.stopFollow()
+      cam.setZoom(cam.zoom * 3)
+      cam.centerOn(best.x, best.y - 40)
+      sc.game.step(performance.now(), 16)
+      return { x: best.x, y: best.y }
+    })
+    console.log(`   cadré sur le chicot ${vise ? `(${Math.round(vise.x)}, ${Math.round(vise.y)})` : '— AUCUN'}`)
+    await page.waitForTimeout(300)
+    await page.screenshot({ path: `${OUT}/chicot-pres.png`, timeout: 150000 })
+  },
+
+  /**
    * LA BARRE HAUTE (2026-08-24) — elle DIT le lieu, l'année et le ciel, ou elle ment.
    *
    * Le scénario ne juge pas des pixels : il lit ce que la barre a écrit, dans le DOM, aux deux

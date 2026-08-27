@@ -32,8 +32,7 @@
  */
 import Phaser from 'phaser'
 import { TIE_CLUTTER, TIE_NODE, TILE_PX, ySortDepth } from '../../render/framing'
-import { ancrageHouppierPx, cleHouppier, type EtatCime, type VarianteArbre } from '../../render/arbre-art'
-import { cleLit } from '../../render/normal-map'
+import { ancrageHouppierPx, cleFut, cleHouppier, type EtatCime, type VarianteArbre } from '../../render/arbre-art'
 
 /** La chute elle-même (ms) : le temps que met le fût à toucher le sol. */
 export const CHUTE_MS = 760
@@ -137,6 +136,17 @@ interface Chute {
 /** Plafond de troncs en train de tomber. Une coupe rase reste une coupe, pas une avalanche. */
 const MAX_CHUTES = 6
 
+/** La clé du fût à POSER, avec le repli sur le bois vivant : `cleFut` sait NOMMER la texture
+ *  morte, elle ne sait pas si elle a été cuite (elle ne l'est que pour les variantes qui
+ *  portent un chicot, et seulement en mode éclairé). Même patron que la cime. */
+function cleFutPose(scene: Phaser.Scene, slug: string, lit: boolean, mort: boolean, miroir: boolean): string {
+  if (mort) {
+    const cle = cleFut(slug, lit, true, miroir)
+    if (scene.textures.exists(cle)) return cle
+  }
+  return cleFut(slug, lit, false, miroir)
+}
+
 /**
  * LES ARBRES QUI TOMBENT. Sprites empruntés à un banc (une chute dure ~1,6 s et il en
  * tombe rarement deux à la fois), texturés à la variante RÉELLE de l'arbre abattu — c'est
@@ -164,7 +174,10 @@ export class ChuteArbre {
       // LE MIROIR VIENT DE L'APPELANT, comme la cime et l'état, et pour la MÊME raison : le
       // redériver ici le tirerait d'une tuile déduite de `px/py`, qui portent le tressaillement —
       // l'arbre se retournerait À L'INSTANT où il tombe.
-      .image(px, py, lit ? cleLit(`nd-${variante.slug}_trunk`, miroir) : `nd-${variante.slug}_trunk`)
+      // ET LE FÛT SUIT SON ÉTAT : un CHICOT qui s'abat garde son bois mort (`cendre.md` R13).
+      // Le repli sur le fût vivant est le même que celui de la cime — la clé morte n'est cuite
+      // que pour les variantes qui en ont une, et seulement en mode éclairé.
+      .image(px, py, cleFutPose(this.scene, variante.slug, lit, etat === 'mort', miroir))
       .setOrigin(0.5, 1)
       .setDepth(ySortDepth(py / TILE_PX, TILE_PX, TIE_NODE))
     fut.setLighting(lit)
