@@ -39,17 +39,18 @@ import {
   NODE_DEFS,
   RECIPES,
   SPOIL_CYCLES,
-  STACK_DEFAULT,
-  STACK_SIZES,
   TERRAINS,
   TOOL_DURABILITIES,
   TOOL_TIERS,
   TOOL_YIELD,
+  TORCHE,
   WEAPON_DAMAGE,
   WEAPON_PROFILES,
   ZONES,
+  cleEncyclo,
   compteEncyclo,
   connuEncyclo,
+  extremeEncyclo,
   isRangedWeapon,
   type ClasseDePrise,
   type FishSpecies,
@@ -60,6 +61,7 @@ import {
   type RecipeId,
   type SkillId,
   type ToolFamily,
+  type ToolTier,
   type VerbeCarnet,
 } from '@ashes/sim'
 import { ITEM_LABELS } from '../../render/item-art'
@@ -157,10 +159,17 @@ export interface CarteSaison {
   phase: number | null
   rang: string
   nom: string
-  jour: string
-  nuit: string
-  /** La part du cycle qui est du JOUR, en pourcent (la barre jour/nuit). */
-  partJour: number
+  /** LE PLUS FROID et LE PLUS CHAUD que ce joueur a endurés dans cette saison (décision
+   *  d'Alexis, 2026-08-25). Ce ne sont PAS les cardinaux de la table : la carte et sa fiche
+   *  disent la même chose, et c'est le relevé du joueur — sinon deux vérités se côtoieraient. */
+  froid: string
+  chaud: string
+  /** LA BARRE JOUR/NUIT, EN POURCENTS DE CYCLE **DEPUIS MINUIT** (décision d'Alexis,
+   *  2026-08-27) : deux abscisses, et non une largeur. La barre est une horloge — le jour y
+   *  occupe la place qu'il occupe dans la journée, pas un ruban calé à gauche. Le reste est
+   *  nuit, des DEUX côtés. */
+  lever: number
+  coucher: number
   vecue: string
   fiche: FicheEncyclo | null
 }
@@ -188,13 +197,13 @@ export const CLASSES_DE_PRISE: readonly { classe: ClasseDePrise; titre: string; 
 
 /** Les millimètres de la sim en centimètres qu'on lit, virgule française. */
 const enCm = (mm: number): string => `${(mm / 10).toFixed(1).replace('.', ',')} cm`
-/** Des ticks en secondes, virgule française. */
-const enSec = (ticks: number, dec = 2): string =>
-  `${(ticks / BALANCE.TICK_RATE_HZ).toFixed(dec).replace('.', ',')} s`
 /** Un nombre décimal à la française. */
 const fr = (n: number, dec = 1): string => n.toFixed(dec).replace('.', ',')
 /** Les milliers séparés par une espace fine — `1 240` se lit, `1240` se compte. */
 const groupe = (n: number): string => String(n).replace(/\B(?=(\d{3})+(?!\d))/g, ' ')
+/** Le chiffre que porte une case DÉVERROUILLÉE (`carnetComplet`) : un, jamais zéro — une
+ *  case à zéro se tairait, et on ne relirait rien. Il ne prétend pas être un vrai compte. */
+export const COMPTE_FEINT = 1
 /** `×7`, ou la chaîne vide : une case muette ne compte rien. */
 const fois = (n: number): string => (n > 0 ? `×${groupe(n)}` : '')
 /** Le libellé d'un objet — la table du sac, jamais un mot recopié. */
@@ -208,12 +217,6 @@ const coutEnClair = (id: RecipeId): string =>
   Object.entries(RECIPES[id].inputs)
     .map(([item, n]) => `${n} ${nomDItem(item as ItemId).toLowerCase()}`)
     .join(' · ')
-/** La station d'une recette, en clair. `requiert` est une exigence de fonction, ou rien. */
-const stationEnClair = (id: RecipeId): string => {
-  const req = RECIPES[id].requiert
-  if (req === null || req === undefined) return 'à la main'
-  return typeof req === 'string' ? req : `${req.fonction} N${req.niveau}`
-}
 /** La recette qui SORT cet objet, s'il y en a une. */
 const recetteDe = (item: ItemId): RecipeId | undefined =>
   (Object.keys(RECIPES) as RecipeId[]).find((id) => RECIPES[id].output === item)
@@ -221,6 +224,163 @@ const recetteDe = (item: ItemId): RecipeId | undefined =>
 const jauge = (n: number, total: number, teinte?: Jauge['teinte']): Jauge => {
   const crans = Math.max(0, Math.min(total, Math.round(n)))
   return teinte === undefined ? { crans, total } : { crans, total, teinte }
+}
+
+/* ═══ DES MOTS, PLUTÔT QUE DES NOMBRES ═════════════════════════════════════ */
+
+/**
+ * UNE FICHE DIT CE QU'ON EN FAIT, JAMAIS COMMENT C'EST CODÉ (décision d'Alexis, 2026-08-25 :
+ * « il y a trop d'infos techniques dans les tooltips — réduis la taille ET la nature des
+ * infos »). Ont disparu de TOUTES les fiches : les durées en secondes (wind-up, repos, charge,
+ * ferrage), les cônes en degrés, l'endurance, la taille de pile, le stock par nœud, la
+ * durabilité chiffrée, le poids de tirage, la fourchette de taille, les portions.
+ *
+ * ⚠ ET LE MOT QUI REMPLACE UN CHIFFRE SE DÉRIVE DE SA TABLE, jamais d'un seuil écrit ici :
+ * `motParRang` classe la valeur parmi les valeurs DISTINCTES que la table porte. Une hache
+ * d'acier ajoutée demain reclasse les autres toute seule — un seuil en dur, lui, aurait fait
+ * mentir la fiche au premier changement d'équilibrage.
+ */
+function motParRang(v: number, table: readonly number[], mots: readonly string[]): string {
+  const vals = [...new Set(table)].sort((a, b) => a - b)
+  const i = vals.findIndex((x) => x >= v)
+  const rang = i < 0 ? vals.length - 1 : i
+  const part = vals.length <= 1 ? 0 : rang / (vals.length - 1)
+  return mots[Math.min(mots.length - 1, Math.floor(part * mots.length))]!
+}
+
+/** LA TENUE d'un outil ou d'une arme — sa durabilité, en un mot. */
+const motDeTenue = (usure: number): string =>
+  motParRang(usure, [...Object.values(TOOL_DURABILITIES), BALANCE.TOOL_DURABILITY], [
+    'fragile',
+    'correcte',
+    'solide',
+    'robuste',
+  ])
+
+/** CE QUE ÇA RASSASIE — la valeur de faim, en un mot. */
+const motDeFaim = (faim: number): string =>
+  motParRang(faim, Object.values(FOOD_VALUES), ['une bouchée', 'un en-cas', 'un repas', 'un festin'])
+
+/** COMBIEN DE TEMPS ÇA TIENT. Pas de péremption du tout ⇒ rien ne la prend. */
+const motDeGarde = (cycles: number | undefined): string =>
+  cycles === undefined
+    ? 'ne se gâte pas'
+    : motParRang(cycles, Object.values(SPOIL_CYCLES), [
+        'se gâte vite',
+        'quelques cycles',
+        'longtemps',
+        'très longtemps',
+      ])
+
+/** CE QUE LE COUP CHARGÉ AJOUTE — un rapport, pas deux chiffres à soustraire de tête. */
+const motDeCharge = (leger: number, charge: number): string => {
+  const r = leger <= 0 ? 1 : charge / leger
+  return r >= 2.75
+    ? 'trois fois plus fort'
+    : r >= 2.25
+      ? 'deux fois et demie plus fort'
+      : r >= 1.75
+        ? 'deux fois plus fort'
+        : r >= 1.25
+          ? 'moitié plus fort'
+          : 'à peine plus fort'
+}
+
+/** LE RENDEMENT D'UN OUTIL, rapporté aux mains nues — c'est la seule comparaison qui parle. */
+const MULTIPLES = [
+  '',
+  'autant qu’à mains nues',
+  'deux fois plus',
+  'trois fois plus',
+  'quatre fois plus',
+  'cinq fois plus',
+] as const
+const motDeRendement = (rendement: number): string =>
+  MULTIPLES[Math.min(MULTIPLES.length - 1, Math.max(1, Math.round(rendement / TOOL_YIELD.none)))]!
+
+/** COMBIEN LE GIBIER EST FAROUCHE — sa distance d'alerte, en un mot. */
+const motFarouche = (alerte: number): string =>
+  motParRang(
+    alerte,
+    (Object.keys(MONSTER_DEFS) as MonsterType[]).filter((t) => MONSTER_DEFS[t].damage === 0).map((t) => MONSTER_DEFS[t].alertRange ?? 0),
+    ['placide', 'méfiant', 'farouche', 'très farouche'],
+  )
+
+/**
+ * LE NOM PLURIEL D'UN NŒUD — « les arbres », pas `tree`. Il sert DEUX lignes : d'où sort une
+ * ressource, et ce qu'un outil ouvre. Une seule table, pour que les deux disent le même mot.
+ */
+const NOEUDS_AU_PLURIEL: Record<string, string> = {
+  tree: 'les arbres',
+  old_tree: 'les géants de la sylve',
+  rock: 'la caillasse',
+  bloc: 'les blocs de pierre',
+  fiber_plant: 'les touffes de fibre',
+  berry_bush: 'les buissons',
+  champignon: 'les coins à champignons',
+  leaf_pile: 'les tas de feuilles',
+  fumerolle: 'les fumerolles',
+  iron_vein: 'les filons de fer',
+  coal_seam: 'les veines de charbon',
+  peat_cut: 'les coupes de tourbe',
+  quarry: 'les carrières',
+  ash_heap: 'les tas de cendre',
+  rubble: 'les décombres',
+  fishing_spot_river: 'les coins de rivière',
+  fishing_spot_lake: 'les coins de lac',
+  // LE GLANAGE (spec `glanage.md`) : on ne les « récolte » pas, on les RAMASSE — le mot doit
+  // dire le geste, puisque c'est le seul bois et la seule pierre qui viennent sans outil.
+  branche_au_sol: 'le bois mort au sol',
+  pierre_au_sol: 'les pierres au sol',
+}
+const auPluriel = (t: NodeType): string => NOEUDS_AU_PLURIEL[t] ?? nomDeNoeud(t)
+
+/** AVEC QUOI on le prend. */
+const AVEC_QUOI: Record<ToolFamily, string> = {
+  axe: 'à la hache',
+  pickaxe: 'à la pioche',
+  rod: 'à la canne',
+  knife: 'au couteau',
+}
+
+/** CE QU'IL FAUT EN MAIN. Rien du tout quand les mains suffisent : pas de ligne, pas de bruit. */
+const EXIGENCE_DE_PALIER: Partial<Record<ToolTier, string>> = {
+  crude: 'un outil, même de fortune',
+  basic: 'un outil d’atelier',
+  iron: 'un outil de fer',
+  steel: 'un outil d’acier',
+}
+
+/** OÙ ÇA SE FABRIQUE, avec son article — « au feu », « à l’atelier ». */
+const AU_POSTE: Record<string, string> = {
+  atelier: 'à l’atelier',
+  feu: 'au feu',
+  forge: 'à la forge',
+  grenier: 'au grenier',
+  ferme: 'à la ferme',
+}
+
+/** OÙ ELLE MORD. */
+const EN_EAU: Record<string, string> = { riviere: 'en rivière', mare: 'en mare', lac: 'en lac' }
+/** QUAND ELLE MORD. */
+const AU_CRENEAU: Record<string, string> = {
+  aube: 'à l’aube',
+  jour: 'en plein jour',
+  crepuscule: 'au crépuscule',
+  nuit: 'la nuit',
+}
+
+/** UN RELEVÉ DE TEMPÉRATURE, ou le vide s'il n'y en a pas — au degré près : le dixième est du
+ *  bruit sur un souvenir de saison. */
+const degre = (t: number | undefined): string => (t === undefined ? VALEUR_VIDE : `${signe(Math.round(t))} °C`)
+
+/** LA RECETTE EN UNE LIGNE : ce qu'elle coûte, et où on la fait. Le NIVEAU de station n'y est
+ *  plus — c'est le panneau ARTISANAT qui gère la progression, pas l'encyclopédie. */
+const phraseDeRecette = (id: RecipeId): string => {
+  const req = RECIPES[id].requiert
+  const fonction = req === null || req === undefined ? undefined : typeof req === 'string' ? req : req.fonction
+  const ou = fonction === undefined ? 'à la main' : (AU_POSTE[fonction] ?? `à ${fonction}`)
+  return `${coutEnClair(id)}, ${ou}`
 }
 
 /* ═══ LE CARNET, VU DE L'ÉCRAN ══════════════════════════════════════════════ */
@@ -259,6 +419,13 @@ function ressourcesDe(skill: SkillId): ItemId[] {
     // La PÊCHE n'est pas une ressource : les coins de pêche rendent des poissons, qui ont
     // leur propre section (et leur propre carnet, avec le record).
     if (def.skill !== skill || def.skill === 'hunting') continue
+    // ⚠ CE QUI SE MANGE EST UNE NOURRITURE, PAS UNE RESSOURCE (Alexis, 2026-08-25 : « les baies
+    // sont dans ressources ET dans nourriture… retire de ressources »). Même doctrine que E9
+    // pour le poisson cru : une entrée vit dans UNE section, celle qui répond à la question
+    // qu'on se pose devant elle — d'une baie on veut savoir ce qu'elle rassasie, pas si elle
+    // repousse. La règle est DÉRIVÉE de `FOOD_VALUES`, pas une liste d'exceptions à tenir :
+    // une plante comestible ajoutée demain quitte RESSOURCES toute seule.
+    if ((FOOD_VALUES[def.item] ?? 0) > 0) continue
     if (!out.includes(def.item)) out.push(def.item)
   }
   return out
@@ -267,26 +434,20 @@ function ressourcesDe(skill: SkillId): ItemId[] {
 function ficheRessource(item: ItemId, c: CarnetsDuJoueur): FicheEncyclo {
   const t = noeudDe(item)
   const def = t === undefined ? undefined : NODE_DEFS[t]
-  const rendement = def?.minTool === 'basic' ? TOOL_YIELD.basic : TOOL_YIELD.none
+  const outil = def === undefined || def.tool === null || def.tool === undefined ? 'à mains nues' : AVEC_QUOI[def.tool]
+  const lignes: LigneFiche[] = [
+    { k: 'source', v: t === undefined ? `le monde, ${outil}` : `${auPluriel(t)}, ${outil}` },
+  ]
+  // LA LIGNE « IL FAUT » N'EXISTE QUE S'IL FAUT QUELQUE CHOSE. Sans elle, rien n'explique
+  // qu'une pioche de fortune ne morde pas dans un filon — et le joueur croit le jeu cassé.
+  const exige = def === undefined ? undefined : EXIGENCE_DE_PALIER[def.minTool ?? 'none']
+  if (exige !== undefined) lignes.push({ k: 'il faut', v: exige })
   return {
     nom: nomDItem(item).toUpperCase(),
     kicker: 'RESSOURCE',
     gauche: ['récolté', groupe(compte(c, 'recolte', item))],
     droite: ['poids', fr(ITEM_WEIGHT[item] ?? 0)],
-    blocs: [
-      [
-        { k: 'source', v: t === undefined ? '—' : nomDeNoeud(t) },
-        { k: 'outil', v: def?.tool === null || def?.tool === undefined ? 'mains nues' : nomDeFamille(def.tool) },
-        { k: 'palier', v: def?.minTool === 'basic' ? 'outil d’atelier' : def?.minTool === 'crude' ? 'de fortune' : 'aucun' },
-        { k: 'métier', v: def === undefined ? '—' : SKILL_LABELS[def.skill] },
-      ],
-      [
-        { k: 'stock', v: `${def?.stock ?? 0} / nœud`, petit: true },
-        { k: 'rendement', v: `×${rendement}`, petit: true, jauge: jauge(rendement, TOOL_YIELD.steel) },
-        { k: 'repousse', v: def?.renewable === true ? 'oui' : 'non', petit: true },
-        { k: 'pile', v: String(STACK_SIZES[item] ?? STACK_DEFAULT), petit: true },
-      ],
-    ],
+    blocs: [lignes],
     puces: def?.gelif === true ? [{ texte: '⚑ le gel la prend' }] : [],
   }
 }
@@ -310,17 +471,11 @@ const NOMS_DE_NOEUD: Record<string, string> = {
   rubble: 'décombres',
   fishing_spot_river: 'coin de rivière',
   fishing_spot_lake: 'coin de lac',
+  branche_au_sol: 'branche tombée',
+  pierre_au_sol: 'pierre détachée',
 }
 const nomDeNoeud = (t: NodeType): string => NOMS_DE_NOEUD[t] ?? t
 
-/** Le nom d'une famille d'outil, en clair. */
-const NOMS_DE_FAMILLE: Record<ToolFamily, string> = {
-  axe: 'hache',
-  pickaxe: 'pioche',
-  rod: 'canne',
-  knife: 'couteau',
-}
-const nomDeFamille = (f: ToolFamily): string => NOMS_DE_FAMILLE[f] ?? f
 
 /* ═══ NOURRITURE ════════════════════════════════════════════════════════════ */
 
@@ -364,7 +519,6 @@ function rangeesNourriture(): { titre: string; items: ItemId[] }[] {
 }
 
 function ficheNourriture(item: ItemId, c: CarnetsDuJoueur): FicheEncyclo {
-  const faim = FOOD_VALUES[item] ?? 0
   const rec = recetteDe(item)
   const secheDepuis = (Object.entries(DRY_SLOT.sechoir ?? {}) as [string, { output: ItemId; ticks: number }][]).find(
     ([, e]) => e.output === item,
@@ -373,36 +527,17 @@ function ficheNourriture(item: ItemId, c: CarnetsDuJoueur): FicheEncyclo {
     ([, e]) => e.output === item,
   )
   const source = secheDepuis ?? cuitDepuis
-  const bloc2: LigneFiche[] = source
-    ? [
-        { k: 'depuis', v: nomDItem(source[0] as ItemId).toLowerCase(), petit: true },
-        { k: 'poste', v: secheDepuis ? 'séchoir' : 'feu · four', petit: true },
-        { k: 'temps', v: enSec(source[1].ticks, 0), petit: true },
-      ]
+  const dOu: LigneFiche = source
+    ? { k: secheDepuis ? 'au séchoir' : 'au feu', v: `depuis ${nomDItem(source[0] as ItemId).toLowerCase()}` }
     : rec !== undefined
-      ? [
-          { k: 'recette', v: coutEnClair(rec), petit: true },
-          { k: 'station', v: stationEnClair(rec), petit: true },
-          { k: 'temps', v: `${RECIPES[rec].seconds} s`, petit: true },
-        ]
-      : [{ k: 'source', v: 'du monde', petit: true }]
+      ? { k: 'recette', v: phraseDeRecette(rec) }
+      : { k: 'se trouve', v: 'dans le monde' }
   return {
     nom: nomDItem(item).toUpperCase(),
     kicker: 'NOURRITURE',
     gauche: ['mangées', fois(compte(c, 'mange', item)) || VALEUR_VIDE],
-    droite: ['poids', fr(ITEM_WEIGHT[item] ?? 0)],
-    blocs: [
-      [
-        { k: 'faim', v: String(faim), petit: true, jauge: jauge(faim / 12, 5) },
-        {
-          k: 'péremption',
-          v: SPOIL_CYCLES[item] === undefined ? 'aucune' : `${SPOIL_CYCLES[item]} cycles`,
-          petit: true,
-        },
-        { k: 'pile', v: String(STACK_SIZES[item] ?? STACK_DEFAULT), petit: true },
-      ],
-      bloc2,
-    ],
+    droite: ['rassasie', motDeFaim(FOOD_VALUES[item] ?? 0)],
+    blocs: [[{ k: 'se garde', v: motDeGarde(SPOIL_CYCLES[item]) }, dOu]],
     puces: [],
   }
 }
@@ -421,9 +556,10 @@ const PALIERS: readonly { cle: 'crude' | 'basic' | 'iron' | 'steel'; titre: stri
   { cle: 'steel', titre: 'ACIER' },
 ]
 
-/** LE MARTEAU n'est d'aucune famille outillée (il ne récolte rien : il bâtit). Il rejoint le
- *  palier de sa RECETTE — elle exige le Feu, donc l'atelier. Dérivé, pas posé. */
-const HORS_FAMILLE: readonly ItemId[] = ['hammer']
+/** LE MARTEAU n'est d'aucune famille outillée (il ne récolte rien : il bâtit) ; LA TORCHE non
+ *  plus (elle ne récolte rien : elle éclaire — spec `torche.md`). Tous deux rejoignent le palier
+ *  de leur RECETTE : le marteau exige le Feu (atelier), la torche non (fortune). Dérivé, pas posé. */
+export const HORS_FAMILLE: readonly ItemId[] = ['hammer', 'torche']
 
 function outilsDuPalier(cle: 'crude' | 'basic' | 'iron' | 'steel'): ItemId[] {
   const out: ItemId[] = []
@@ -457,7 +593,12 @@ function palierDe(item: ItemId): 'crude' | 'basic' | 'iron' | 'steel' {
 }
 
 /** Ce qu'un outil OUVRE : les nœuds que sa famille récolte. */
-function ouvreDe(f: ToolFamily | undefined): string {
+function ouvreDe(item: ItemId, f: ToolFamily | undefined): string {
+  // Les deux outils SANS famille ne récoltent rien — ils ne peuvent donc pas se dériver de
+  // `NODE_DEFS`, et leur ligne se dit à la main. Un `if (f === undefined) return 'le bâti'`
+  // nu aurait fait dire à la torche qu'elle ouvre le bâti : la garde d'exhaustivité de
+  // l'encyclopédie l'aurait laissée passer (elle compte les cases, pas leur sens).
+  if (item === 'torche') return 'la nuit'
   if (f === undefined) return 'le bâti'
   const noeuds = (Object.keys(NODE_DEFS) as NodeType[]).filter((t) => NODE_DEFS[t].tool === f)
   return noeuds.map(nomDeNoeud).join(' · ') || '—'
@@ -466,33 +607,20 @@ function ouvreDe(f: ToolFamily | undefined): string {
 function ficheOutil(item: ItemId, c: CarnetsDuJoueur): FicheEncyclo {
   const f = familleDe(item)
   const palier = palierDe(item)
-  const rendement = TOOL_YIELD[palier]
-  const usure = TOOL_DURABILITIES[item] ?? BALANCE.TOOL_DURABILITY
   const rec = recetteDe(item)
-  const metier: SkillId = f === 'axe' ? 'woodcutting' : f === 'pickaxe' ? 'mining' : f === 'rod' || f === 'knife' ? 'hunting' : 'crafting'
+  const lignes: LigneFiche[] = [{ k: 'ouvre', v: ouvreDe(item, f) }]
+  // LA TORCHE NE RÉCOLTE RIEN : sa deuxième ligne dit ce qu'elle DURE, là où un outil dit ce
+  // qu'il rend. C'est la seule case de la section dont le rendement n'a pas de sens — et la
+  // faire mentir à « ×2 » aurait promis un outil de fortune qui coupe.
+  if (item === 'torche') lignes.push({ k: 'brûle', v: `~${Math.round(TORCHE.BURN_TICKS / (20 * 60))} min` })
+  else lignes.push({ k: 'récolte', v: motDeRendement(TOOL_YIELD[palier]) })
+  if (rec !== undefined) lignes.push({ k: 'recette', v: phraseDeRecette(rec) })
   return {
     nom: nomDItem(item).toUpperCase(),
     kicker: PALIERS.find((p) => p.cle === palier)!.titre,
     gauche: ['fabriqués', fois(compte(c, 'fabrique', item)) || VALEUR_VIDE],
-    droite: ['durabilité', String(usure)],
-    blocs: [
-      [
-        { k: 'famille', v: f === undefined ? 'bâti' : nomDeFamille(f) },
-        { k: 'ouvre', v: ouvreDe(f), petit: true },
-        { k: 'métier', v: SKILL_LABELS[metier] },
-      ],
-      [
-        { k: 'rendement', v: `×${rendement}`, petit: true, jauge: jauge(rendement, TOOL_YIELD.steel) },
-        { k: 'usure', v: `${usure} coups`, petit: true, jauge: jauge((usure / 180) * 5, 5) },
-      ],
-      rec === undefined
-        ? [{ k: 'recette', v: '—', petit: true }]
-        : [
-            { k: 'recette', v: coutEnClair(rec), petit: true },
-            { k: 'station', v: stationEnClair(rec), petit: true },
-            { k: 'temps', v: `${RECIPES[rec].seconds} s`, petit: true },
-          ],
-    ],
+    droite: ['tenue', motDeTenue(TOOL_DURABILITIES[item] ?? BALANCE.TOOL_DURABILITY)],
+    blocs: [lignes],
     puces: [],
   }
 }
@@ -509,12 +637,6 @@ function rangeesArmes(): { titre: string; items: ItemId[] }[] {
   ]
 }
 
-/** L'angle d'un cône, depuis son cosinus — pour LIRE la portée d'un coup. */
-const angleDe = (arcCos: number): string => {
-  if (arcCos <= -1) return 'tout autour'
-  // acos est interdit en /sim (invariant §2) mais l'écran n'est pas la sim : il peut lire.
-  return `cône ${Math.round((Math.acos(arcCos) * 180) / Math.PI)}°`
-}
 
 function ficheArme(item: ItemId, c: CarnetsDuJoueur): FicheEncyclo {
   const p = WEAPON_PROFILES[item as keyof typeof WEAPON_PROFILES]
@@ -526,79 +648,41 @@ function ficheArme(item: ItemId, c: CarnetsDuJoueur): FicheEncyclo {
       nom: nomDItem(item).toUpperCase(),
       kicker: 'MUNITION',
       gauche: ['fabriquées', fois(compte(c, 'fabrique', item)) || VALEUR_VIDE],
-      droite: ['poids', fr(ITEM_WEIGHT[item] ?? 0, 2)],
+      droite: ['pour', 'les arcs'],
       blocs: [
-        [
-          { k: 'pile', v: String(STACK_SIZES[item] ?? STACK_DEFAULT), petit: true },
-          { k: 'pour', v: 'les arcs', petit: true },
-        ],
         rec === undefined
-          ? [{ k: 'recette', v: '—', petit: true }]
-          : [
-              { k: 'recette', v: `${coutEnClair(rec)} → ×${RECIPES[rec].count ?? 1}`, petit: true },
-              { k: 'station', v: stationEnClair(rec), petit: true },
-              { k: 'temps', v: `${RECIPES[rec].seconds} s`, petit: true },
-            ],
+          ? [{ k: 'recette', v: '—' }]
+          : [{ k: 'recette', v: `${phraseDeRecette(rec)} → ×${RECIPES[rec].count ?? 1}` }],
       ],
       puces: [],
     }
   }
-  const tir = isRangedWeapon(item)
+  const lignes: LigneFiche[] = [
+    { k: 'chargé', v: motDeCharge(p.light.damage, p.charged.damage) },
+    { k: 'tenue', v: motDeTenue(usure) },
+  ]
+  if (rec !== undefined) lignes.push({ k: 'recette', v: phraseDeRecette(rec) })
   return {
     nom: nomDItem(item).toUpperCase(),
-    kicker: tir ? 'TIR' : 'MÊLÉE',
+    kicker: isRangedWeapon(item) ? 'TIR' : 'MÊLÉE',
     gauche: ['dégâts', String(p.light.damage)],
     droite: ['portée', fr(p.light.range)],
-    blocs: [
-      [
-        {
-          k: 'léger',
-          v: `${p.light.damage} · ${fr(p.light.range)} · ${angleDe(p.light.arcCos)}`,
-          petit: true,
-          jauge: jauge((p.light.damage / 34) * 5, 5),
-        },
-        {
-          k: 'chargé',
-          v: `${p.charged.damage} · ${fr(p.charged.range)} · ${angleDe(p.charged.arcCos)}`,
-          petit: true,
-          jauge: jauge((p.charged.damage / 34) * 5, 5),
-        },
-        { k: 'charge', v: enSec(p.chargeTicks), petit: true },
-      ],
-      [
-        { k: 'wind-up', v: enSec(p.light.windupTicks), petit: true, jauge: jauge((p.light.windupTicks / 14) * 5, 5) },
-        {
-          k: 'repos',
-          v: `${enSec(p.light.recoveryHit)} touché · ${enSec(p.light.recoveryWhiff)} à vide`,
-          petit: true,
-        },
-        { k: 'endurance', v: `${p.light.stamina} · ${p.charged.stamina}`, petit: true },
-      ],
-      rec === undefined
-        ? [{ k: 'durabilité', v: String(usure), petit: true }]
-        : [
-            { k: 'durabilité', v: String(usure), petit: true },
-            { k: 'recette', v: coutEnClair(rec), petit: true },
-            { k: 'station', v: stationEnClair(rec), petit: true },
-          ],
-    ],
-    puces: tir ? [{ texte: '⚑ elle ne frappe pas au corps à corps' }] : [],
+    blocs: [lignes],
+    puces: isRangedWeapon(item) ? [{ texte: '⚑ elle ne frappe pas au corps à corps' }] : [],
   }
 }
 
 /* ═══ POISSONS ══════════════════════════════════════════════════════════════ */
 
-/** LA FENÊTRE DE FERRAGE et la RARETÉ, en jauges : les deux nombres bruts ne veulent rien
- *  dire au joueur (un compte de ticks, un poids de tirage). */
-const cransFerrage = (ticks: number): number => Math.max(1, Math.min(6, Math.round((ticks - 4) / 2)))
-const motFerrage = (ticks: number): string =>
-  ticks <= 6 ? 'éclair' : ticks <= 9 ? 'court' : ticks <= 13 ? 'large' : 'très large'
+/** LA RARETÉ, en un mot et en crans : le poids de tirage brut ne veut rien dire au joueur. */
 const cransRarete = (poids: number): number => (poids >= 6 ? 1 : poids >= 4 ? 2 : poids >= 2 ? 3 : 4)
 const motRarete = (poids: number): string =>
   poids >= 6 ? 'commune' : poids >= 4 ? 'assez commune' : poids >= 2 ? 'rare' : 'très rare'
 
 function fichePoisson(sp: FishSpecies, l: { mm: number; prises: number }): FicheEncyclo {
-  const portions = CLASSES_DE_PRISE.find((k) => k.classe === sp.classe)!.portions
+  const eaux = sp.eaux.map((e) => EN_EAU[e] ?? `en ${e}`).join(' ou ')
+  const ou = sp.zones ? `${eaux} (${sp.zones.map(nomDeZone).join(' · ')})` : eaux
+  const quand = sp.creneaux ? sp.creneaux.map((cr) => AU_CRENEAU[cr] ?? cr).join(' et ') : 'à toute heure'
   return {
     nom: sp.label.toUpperCase(),
     kicker: sp.classe.toUpperCase(),
@@ -606,27 +690,12 @@ function fichePoisson(sp: FishSpecies, l: { mm: number; prises: number }): Fiche
     droite: ['prises', `×${l.prises}`],
     blocs: [
       [
-        { k: 'eau', v: sp.eaux.map((e) => (e === 'riviere' ? 'rivière' : e)).join(' · ') },
+        { k: 'mord', v: `${ou}, ${quand}` },
         {
           k: 'saison',
           v: sp.saisons ? sp.saisons.map((n) => SAISON_COURTE[n - 1] ?? '').join(' · ') : 'toute l’année',
         },
-        {
-          k: 'heure',
-          v: sp.creneaux ? sp.creneaux.map((cr) => (cr === 'crepuscule' ? 'crépuscule' : cr)).join(' · ') : 'à toute heure',
-        },
-        { k: 'pays', v: sp.zones ? sp.zones.map(nomDeZone).join(' · ') : 'partout' },
-      ],
-      [
-        {
-          k: 'ferrage',
-          v: `${motFerrage(sp.windowTicks)} · ${enSec(sp.windowTicks)}`,
-          petit: true,
-          jauge: jauge(cransFerrage(sp.windowTicks), 6),
-        },
-        { k: 'rareté', v: motRarete(sp.weight), petit: true, jauge: jauge(cransRarete(sp.weight), 4) },
-        { k: 'taille', v: `${Math.round(sp.tailleMinMm / 10)} – ${Math.round(sp.tailleMaxMm / 10)} cm`, petit: true },
-        { k: 'portions', v: String(portions), petit: true },
+        { k: 'rareté', v: motRarete(sp.weight), jauge: jauge(cransRarete(sp.weight), 4) },
       ],
     ],
     // ⚑ E3 : sans cette puce, la fiche laisse croire que le sandre mord sur n'importe quel lac.
@@ -657,6 +726,7 @@ const NOMS_DE_BETE: Record<MonsterType, string> = {
   boar: 'Sanglier',
   wolf: 'Loup',
   cendreux: 'Cendreux',
+  tetras: 'Grand tétras',
 }
 /** Le sprite du monde — la MÊME effigie qu'en jeu, pour qu'une bête se reconnaisse. */
 const SPRITES_DE_BETE: Record<MonsterType, string> = {
@@ -665,31 +735,28 @@ const SPRITES_DE_BETE: Record<MonsterType, string> = {
   boar: 'spr-boar',
   wolf: 'spr-wolf',
   cendreux: 'spr-cendreux',
+  tetras: 'spr-tetras',
 }
 
 function ficheBete(t: MonsterType, c: CarnetsDuJoueur): FicheEncyclo {
   const d = MONSTER_DEFS[t]
   const gibier = d.damage === 0
-  const bloc1: LigneFiche[] = gibier
+  const heures = d.activity === undefined ? 'à toute heure' : (NOMS_D_ACTIVITE[d.activity] ?? d.activity)
+  const enBande = d.herdSize ? `, en ${gibier ? 'harde' : 'meute'} de ${d.herdSize[0]} à ${d.herdSize[1]}` : ' — seul'
+  const ou: LigneFiche = {
+    k: gibier ? 'on la croise' : 'on le croise',
+    v: d.habitat ? d.habitat.map(nomDHabitat).join(' · ') : 'partout où le froid l’éveille',
+  }
+  // DEUX GRAMMAIRES, parce que ce ne sont pas les mêmes questions : d'un gibier on veut savoir
+  // s'il détalera de loin ; d'un prédateur, quand il sort et ce qu'il laisse.
+  const lignes: LigneFiche[] = gibier
     ? [
-        { k: 'vitesse', v: fr(d.speed), petit: true, jauge: jauge((d.speed / 6) * 5, 5) },
-        { k: 'alerte', v: `${d.alertRange ?? 0} tuiles`, petit: true, jauge: jauge(((d.alertRange ?? 0) / 14) * 5, 5) },
-        { k: 'fuite', v: `${d.flightRange ?? 0} tuiles`, petit: true, jauge: jauge(((d.flightRange ?? 0) / 14) * 5, 5) },
+        { k: 'paît', v: `${heures}${enBande}` },
+        { k: 'farouche', v: motFarouche(d.alertRange ?? 0), jauge: jauge(((d.alertRange ?? 0) / 14) * 5, 5) },
+        ou,
       ]
-    : [
-        { k: 'dégâts', v: String(d.damage), petit: true, jauge: jauge((d.damage / 34) * 5, 5, 'alerte') },
-        { k: 'wind-up', v: enSec(d.windupTicks), petit: true, jauge: jauge((d.windupTicks / 14) * 5, 5) },
-        { k: 'repos', v: enSec(d.attackCooldownTicks), petit: true, jauge: jauge((d.attackCooldownTicks / 50) * 5, 5) },
-        { k: 'vitesse', v: fr(d.speed), petit: true, jauge: jauge((d.speed / 6) * 5, 5) },
-      ]
-  const bloc2: LigneFiche[] = [
-    { k: 'heures', v: d.activity === undefined ? 'à toute heure' : (NOMS_D_ACTIVITE[d.activity] ?? d.activity) },
-    ...(d.herdSize ? [{ k: gibier ? 'harde' : 'meute', v: `${d.herdSize[0]} – ${d.herdSize[1]}` }] : []),
-    ...(d.aggroRange > 0 ? [{ k: 'vue', v: `${d.aggroRange} tuiles`, petit: true, jauge: jauge((d.aggroRange / 14) * 5, 5) }] : []),
-    ...(d.habitat
-      ? [{ k: 'habitat', v: d.habitat.map(nomDHabitat).join(' · '), petit: true }]
-      : [{ k: 'habitat', v: 'partout où le froid l’éveille', petit: true }]),
-  ]
+    : [{ k: 'rôde', v: `${heures}${enBande}` }, ou]
+  lignes.push({ k: 'dépouille', v: butinEnClair(t) })
   const puces: { texte: string; chaud?: boolean }[] = []
   if (d.predator === true) puces.push({ texte: '⚑ il chasse en meute' })
   if (d.chargeChance > 0) puces.push({ texte: '⚑ blessé, il charge' })
@@ -698,8 +765,8 @@ function ficheBete(t: MonsterType, c: CarnetsDuJoueur): FicheEncyclo {
     nom: NOMS_DE_BETE[t].toUpperCase(),
     kicker: t === 'cendreux' ? 'MORT-VIVANT' : gibier ? 'GIBIER' : 'DANGEREUSE',
     gauche: ['abattus', fois(compte(c, 'abat', t)) || VALEUR_VIDE],
-    droite: ['points de vie', String(d.hp)],
-    blocs: [bloc1, bloc2, [{ k: 'dépouille', v: butinEnClair(t), petit: true }]],
+    droite: gibier ? ['points de vie', String(d.hp)] : ['dégâts', String(d.damage)],
+    blocs: [lignes],
     puces,
   }
 }
@@ -707,15 +774,84 @@ function ficheBete(t: MonsterType, c: CarnetsDuJoueur): FicheEncyclo {
 /* ═══ SAISONS ═══════════════════════════════════════════════════════════════ */
 
 /**
+ * LES DEUX BOUTS DU JOUR SONT **DÉRIVÉS**, jamais recopiés (2026-08-26). Les trois autres
+ * colonnes de la table sont des recopies assumées de la spec ; celles-ci ne pouvaient pas
+ * l'être, parce que le RENDU s'y cale désormais (`lighting.heureSolaire`) : deux écritures du
+ * même nombre, et la fiche promettrait une durée de journée que le monde ne tiendrait pas —
+ * c'est très exactement le défaut qu'on vient de corriger, rejoué dans l'autre sens.
+ *
+ * ⚠ **AUCUN ARRONDI** : ces deux nombres sont les abscisses de la barre, et la fiche écrit
+ * juste en dessous les mêmes instants EN HEURES. Un `Math.floor` sur la part de jour posait le
+ * bout droit de la barre à 18h46 quand la ligne « coucher » disait 18h56 — la divergence que
+ * la dérivation était censée rendre impossible.
+ *
+ * Le cardinal `i` est celui de la phase `i` : les deux courbes posent un point au CŒUR de
+ * chaque saison (jours 15 · 45 · 75 · 105), dans l'ordre des phases.
+ */
+function leverDe(phase: number): number {
+  return (BALANCE.LEVER_DU_JOUR.cardinaux[phase - 1]!.valeur / 24) * 100
+}
+
+function coucherDe(phase: number): number {
+  return leverDe(phase) + BALANCE.PART_DE_JOUR.cardinaux[phase - 1]!.valeur * 100
+}
+
+/** Une heure murale en « 06h46 » — le format d'un almanach, puisque c'en est un. */
+function heureDite(h: number): string {
+  const m = Math.round((h % 1) * 60)
+  return `${String(Math.floor(h) + (m === 60 ? 1 : 0)).padStart(2, '0')}h${String(m === 60 ? 0 : m).padStart(2, '0')}`
+}
+
+/**
+ * ═══ LE LEVER ET LE COUCHER SE DISENT EN PLAGES, PAS EN INSTANTS (2026-08-26) ═══
+ *
+ * (Alexis : « On ne peut pas avoir les mêmes heures tout au long d'une saison. Dans ce cas,
+ * l'encyclopédie doit montrer les plages pour les 2. »)
+ *
+ * Les deux courbes du soleil (`LEVER_DU_JOUR`, `PART_DE_JOUR`) interpolent JOUR PAR JOUR entre
+ * leurs cardinaux — le soleil se lève quelques minutes plus tôt ou plus tard chaque matin. Un
+ * cardinal ne décrit donc que le MILIEU de sa saison ; l'afficher seul laisserait croire que
+ * les Pluies ont un horaire, alors qu'elles en ont trente.
+ *
+ * ⚠ **LE PLUS TÔT ET LE PLUS TARD DE LA SAISON, PAS SES DEUX BOUTS** — et la différence n'est
+ * pas cosmétique. Une saison est centrée sur son cardinal (`coeurDeLaSaisonSuivante`), donc
+ * l'Ardeur et le Grand Froid ENJAMBENT leur solstice : la courbe y descend puis remonte, et
+ * leurs deux extrémités sont presque égales. Mesuré avant d'écrire : les bouts donnaient
+ * « 05h41 → 05h45 » pour l'Ardeur — ce qui cache le 04h45 du solstice, c'est-à-dire tout
+ * l'été. On balaie donc les trente jours et l'on rend le minimum et le maximum.
+ *
+ * Sans flèche, pour la même raison : le glissement n'est monotone que dans les saisons
+ * d'équinoxe. Une flèche y affirmerait un sens que deux saisons sur quatre n'ont pas.
+ */
+function bornesDeSaison(phase: number): { lever: [number, number]; coucher: [number, number] } {
+  let lMin = Infinity, lMax = -Infinity, cMin = Infinity, cMax = -Infinity
+  for (let d = 0; d < BALANCE.ACT_DAYS; d++) {
+    const j = (phase - 1) * BALANCE.ACT_DAYS + 1 + d
+    const l = BALANCE.LEVER_DU_JOUR(j)
+    const c = l + 24 * BALANCE.PART_DE_JOUR(j)
+    if (l < lMin) lMin = l
+    if (l > lMax) lMax = l
+    if (c < cMin) cMin = c
+    if (c > cMax) cMax = c
+  }
+  return { lever: [lMin, lMax], coucher: [cMin, cMax] }
+}
+
+/** Une plage d'heures, du plus tôt au plus tard. Un seul horaire quand la saison ne bouge pas. */
+function plage([a, b]: [number, number]): string {
+  return heureDite(a) === heureDite(b) ? heureDite(a) : `${heureDite(a)} – ${heureDite(b)}`
+}
+
+/**
  * LES CARDINAUX DE SAISON (spec `saisons.md` S4/S6) — la température au CŒUR de chaque
  * saison, et la part de jour de son cycle. Recopiés de la spec plutôt que recalculés : la
  * courbe de `/sim` interpole entre ces cardinaux, et c'est le cardinal qui NOMME la saison.
  */
-const CARDINAUX: readonly { jour: number; nuit: number; partJour: number; ciel: string; fronts: string }[] = [
-  { jour: 8, nuit: -2, partJour: 62, ciel: 'pluie · brouillard du matin', fronts: '1 cycle sur 2' },
-  { jour: 26, nuit: 20, partJour: 72, ciel: 'orage sec · pluie rare', fronts: '1 cycle sur 3' },
-  { jour: 8, nuit: -2, partJour: 62, ciel: 'pluie · brouillard épais', fronts: '2 cycles sur 3' },
-  { jour: -2, nuit: -16, partJour: 48, ciel: 'neige · blizzard', fronts: '3 cycles sur 4' },
+const CARDINAUX: readonly { jour: number; nuit: number; ciel: string; fronts: string }[] = [
+  { jour: 8, nuit: -2, ciel: 'pluie · brouillard du matin', fronts: '1 cycle sur 2' },
+  { jour: 26, nuit: 20, ciel: 'orage sec · pluie rare', fronts: '1 cycle sur 3' },
+  { jour: 8, nuit: -2, ciel: 'pluie · brouillard épais', fronts: '2 cycles sur 3' },
+  { jour: -2, nuit: -16, ciel: 'neige · blizzard', fronts: '3 cycles sur 4' },
 ]
 
 /** La culture de chaque saison — DÉRIVÉE de la table du potager (S16). */
@@ -731,19 +867,25 @@ function ficheSaison(phase: number, c: CarnetsDuJoueur): FicheEncyclo {
   return {
     nom: NOMS_DE_SAISON[phase - 1]!,
     kicker: `SAISON ${phase}`,
-    gauche: ['vécue', fois(compte(c, 'vecu', String(phase))) || VALEUR_VIDE],
-    droite: ['jours', String(BALANCE.ACT_DAYS)],
+    // ⚠ CE SONT LES RELEVÉS DU JOUEUR, pas les cardinaux de la table (décision d'Alexis,
+    // 2026-08-25) : la saison ne dit pas ce qu'elle vaut en théorie, elle dit ce qu'on y a
+    // enduré. Froid à gauche, chaud à droite.
+    gauche: ['le plus froid', degre(extremeEncyclo(c.encyclo, 'froid', String(phase)))],
+    droite: ['le plus chaud', degre(extremeEncyclo(c.encyclo, 'chaud', String(phase)))],
     blocs: [
       [
-        { k: 'temp. jour', v: `${signe(k.jour)} °C`, petit: true, jauge: jauge(((k.jour + 16) / 42) * 5, 5, 'gel') },
-        { k: 'temp. nuit', v: `${signe(k.nuit)} °C`, petit: true, jauge: jauge(((k.nuit + 16) / 42) * 5, 5, 'gel') },
-        { k: 'clarté', v: `${fr(k.partJour / 100, 2)} du cycle`, petit: true, jauge: jauge((k.partJour / 100) * 5, 5) },
-      ],
-      [
-        { k: 'fronts', v: k.fronts, petit: true },
+        // ⚠ PAS DE LIGNE « vécue » ICI : la CARTE la porte déjà, deux fois — `rang` dit
+        // « SAISON 3 · 30 JOURS » et `vecue` dit « vécue ×2 », juste au-dessus de cette fiche.
+        // La répéter coûtait la ligne dont le soleil avait besoin (la fiche en tient quatre).
+        // LE SOLEIL, DIT EN HEURES (2026-08-26) : la barre jour/nuit donnait une PART, jamais
+        // un horaire — or c'est l'horaire qu'on lit sur l'horloge du HUD, et c'est par là que
+        // le joueur vérifie que le monde tient sa promesse. Deux lignes et non une : le lever
+        // et le coucher ne glissent pas du même côté, et c'est ça, une saison.
+        { k: 'lever', v: plage(bornesDeSaison(phase).lever) },
+        { k: 'coucher', v: plage(bornesDeSaison(phase).coucher) },
         { k: 'ciel', v: k.ciel },
+        { k: 'semis', v: cultureDe(phase) },
       ],
-      [{ k: 'semis', v: cultureDe(phase), petit: true }],
     ],
     puces: [],
   }
@@ -758,21 +900,22 @@ export function cartesDesSaisons(c: CarnetsDuJoueur): CarteSaison[] {
         phase: null,
         rang: `SAISON ${phase}`,
         nom: NOM_INCONNU,
-        jour: '',
-        nuit: '',
-        partJour: 0,
+        froid: '',
+        chaud: '',
+        lever: 0,
+        coucher: 0,
         vecue: '',
         fiche: null,
       }
     }
-    const k = CARDINAUX[phase - 1]!
     return {
       phase,
       rang: `SAISON ${phase} · ${BALANCE.ACT_DAYS} JOURS`,
       nom: NOMS_DE_SAISON[phase - 1]!,
-      jour: `${signe(k.jour)} °C`,
-      nuit: `${signe(k.nuit)} °C`,
-      partJour: k.partJour,
+      froid: degre(extremeEncyclo(c.encyclo, 'froid', String(phase))),
+      chaud: degre(extremeEncyclo(c.encyclo, 'chaud', String(phase))),
+      lever: leverDe(phase),
+      coucher: coucherDe(phase),
       vecue: `vécue ×${n}`,
       fiche: ficheSaison(phase, c),
     }
@@ -933,3 +1076,53 @@ export const SECTIONS: readonly SectionId[] = [
   'monstres',
   'saisons',
 ]
+
+/* ═══ LE DÉVERROUILLAGE DE RELECTURE (DEV) ══════════════════════════════════ */
+
+/**
+ * UN CARNET QUI A TOUT RENCONTRÉ — pour RELIRE les fiches, pas pour jouer (2026-08-25).
+ *
+ * Relire les tooltips demandait, autrement, d'avoir vraiment récolté, fabriqué, mangé, pêché
+ * et abattu chaque entrée : quelques dizaines d'heures de Veillée pour voir une fois toutes
+ * les fiches — et donc, en pratique, des fiches qu'on n'a jamais relues. Même remède que
+ * partout ailleurs dans ce projet : ce qu'on ne peut pas ATTEINDRE ne se corrige pas.
+ *
+ * ⚠ C'EST UNE SUBSTITUTION, PAS UNE DÉROGATION. On ne passe pas un drapeau « révèle tout » aux
+ * fabriques de cases : on leur donne un carnet complet, et elles suivent leur chemin ORDINAIRE.
+ * Il n'existe donc toujours qu'UNE seule façon pour une case de parler — la règle du muet
+ * (*une entrée jamais rencontrée ne dit rien*) reste entière, et ses balayages exhaustifs, qui
+ * partent d'un carnet VIDE, gardent exactement ce qu'ils gardaient.
+ *
+ * Il MIROITE LES ÉNUMÉRATEURS DE L'ÉCRAN (`ressourcesDe`, `rangeesNourriture`, `outilsDuPalier`,
+ * `rangeesArmes`, `FISH_SPECIES`, `MONSTER_DEFS`, les quatre saisons) et non les tables brutes de
+ * `/sim` : une entrée ajoutée demain à une section entre ici par le même chemin qu'elle entre
+ * dans la grille. La garde qui le prouve est dans `encyclopedie.test.ts` — `su === tot` sur
+ * CHAQUE entrée du rail, la seule assertion qui dise « complètement » plutôt que « à l'œil ».
+ *
+ * Le VERBE est celui de la section qui affiche la case : c'est lui que le chiffre montre.
+ */
+export function carnetComplet(): CarnetsDuJoueur {
+  const encyclo: LigneEncyclo[] = []
+  const note = (verbe: VerbeCarnet, id: string): void => {
+    const k = cleEncyclo(verbe, id)
+    if (!encyclo.some((l) => l.k === k)) encyclo.push({ k, n: COMPTE_FEINT })
+  }
+  for (const skill of METIERS_DE_RECOLTE) for (const i of ressourcesDe(skill)) note('recolte', i)
+  for (const r of rangeesNourriture()) for (const i of r.items) note('mange', i)
+  for (const p of PALIERS) for (const i of outilsDuPalier(p.cle)) note('fabrique', i)
+  for (const r of rangeesArmes()) for (const i of r.items) note('fabrique', i)
+  for (const t of Object.keys(MONSTER_DEFS) as MonsterType[]) note('abat', t)
+  for (const phase of [1, 2, 3, 4]) {
+    note('vecu', String(phase))
+    // LES RELEVÉS DE SAISON — les cardinaux de la table font des relevés PLAUSIBLES (la nuit
+    // pour le froid, le jour pour le chaud) : une fiche relue sur des `—` ne se relit pas.
+    const k = CARDINAUX[phase - 1]!
+    encyclo.push({ k: cleEncyclo('froid', String(phase)), n: k.nuit }, { k: cleEncyclo('chaud', String(phase)), n: k.jour })
+  }
+  return {
+    encyclo,
+    // LE RECORD EST LE MAXIMUM DE L'ESPÈCE : un `0,0 cm` sous le nom d'un brochet ferait relire
+    // une fiche qui ment, et c'est justement la relecture qu'on vient chercher.
+    peche: FISH_SPECIES.map((sp) => ({ sp: sp.id, mm: sp.tailleMaxMm, prises: COMPTE_FEINT })),
+  }
+}

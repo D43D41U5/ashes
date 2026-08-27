@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { generateZonedTerrain } from './zonegen'
+import { carteDeTest } from '../../../tools/carte-cache'
 
 /**
  * LA CARTE DES TESTS EST LA VRAIE CARTE — générée UNE fois, partagée.
@@ -13,7 +13,7 @@ import { generateZonedTerrain } from './zonegen'
  * larges pour que deux portes tiennent à 250 tuiles d'écart. On génère donc la carte de
  * production, une seule fois, et tous les tests la partagent.
  */
-const CARTE = generateZonedTerrain(5)
+const CARTE = carteDeTest(5)
 const MAP = CARTE.map
 import { POI_TYPES, capFor, poiSemis, poiSpacing, spawnPoiMonsters, placePois } from './poi'
 import { terrainAt, createEmptyMap, zoneSlugAt } from './map'
@@ -160,8 +160,8 @@ describe('POIs dans la carte alpine', () => {
     // La nouvelle vallée tire sa taille du nombre de joueurs (`JOUEURS_CIBLE`) : doubler les
     // joueurs double la surface. Les lieux doivent suivre.
     const lieux = (m: { zones: { kind?: string }[] }) => m.zones.filter((z) => z.kind !== undefined).length
-    const petite = lieux(generateZonedTerrain(5, 50).map)
-    const grande = lieux(generateZonedTerrain(5, 100).map) // deux fois plus de joueurs = deux fois plus de terre
+    const petite = lieux(carteDeTest(5, 50).map)
+    const grande = lieux(carteDeTest(5, 100).map) // deux fois plus de joueurs = deux fois plus de terre
     expect(grande, `${petite} lieux sur la carte de 50 joueurs, ${grande} sur celle de 100`)
       .toBeGreaterThan(petite * 1.4)
   })

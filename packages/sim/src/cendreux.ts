@@ -23,7 +23,7 @@ import {
 import { densiteDesMorts, siteDansLaCouronne } from './morts'
 import { isPrey, stimulusPourLesMorts } from './faune'
 import { hash2 } from './noise'
-import { pathToward } from './pathfinding'
+import { lisserLeChemin, pathToward } from './pathfinding'
 import { jourDeSaison, seasonRamp } from './time'
 import type { Entity, SimState } from './sim'
 import { spillOnGround } from './village'
@@ -396,7 +396,15 @@ export function cendreuxStep(state: SimState, monster: Monster, entity: Entity, 
       const world = { map: state.map, structures: state.structures, nodes: state.nodes, moverVillageId: null, etat: state }
       // Le Feu bloque désormais sa tuile (hitbox) : viser À CÔTÉ, pas dessus —
       // sinon la dérive nocturne vers la chaleur ne trouve jamais de chemin.
-      monster.path = pathToward(world, entity.x, entity.y, Math.floor(goal.x), Math.floor(goal.y)) ?? []
+      // LE CHEMIN EST LISSÉ AVANT D'ÊTRE SUIVI (Alexis, 2026-08-25 : « ils se déplacent quasi
+      // exclusivement en X et Y toujours »). L'A* est 4-connexe et rend des **L** — dix tuiles
+      // plein est, puis dix plein sud — et aucun réglage du PAS ne peut faire une diagonale d'un
+      // chemin qui n'en contient pas. `lisserLeChemin` ne retire que les jalons joignables en
+      // ligne droite : même corridor, mêmes tuiles (un sous-ensemble), mais le cap devient
+      // oblique là où la grille l'interdisait. MESURÉ, branche `chemin` : 9,9 % de pas obliques
+      // avant, `tools/diag-cendreux-cap.mts` le relève après.
+      const brut = pathToward(world, entity.x, entity.y, Math.floor(goal.x), Math.floor(goal.y))
+      monster.path = brut ? lisserLeChemin(world, entity.x, entity.y, brut) : []
     } else {
       monster.path = []
     }

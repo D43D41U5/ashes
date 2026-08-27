@@ -10,9 +10,10 @@ import { describe, expect, it } from 'vitest'
 import { TERRAIN_CLIFF, TERRAINS } from './balance'
 import { POI_TYPES } from './poi'
 import { generateZonedTerrain, type CarteZonee } from './zonegen'
+import { carteDeTest } from '../../../tools/carte-cache'
 
 const SEEDS = [2026, 7, 42]
-const cartes: CarteZonee[] = SEEDS.map((s) => generateZonedTerrain(s))
+const cartes: CarteZonee[] = SEEDS.map((s) => carteDeTest(s))
 
 const marchable = (c: CarteZonee, i: number) => TERRAINS[c.map.terrain[i]!]?.walkable === true
 
@@ -298,7 +299,7 @@ describe('le terrain, à la taille de production', () => {
   }, 120_000)
 
   it('A12 — le terrain est DÉTERMINISTE : même seed, même carte, au bit près', () => {
-    const a = generateZonedTerrain(42)
+    const a = carteDeTest(42)
     const b = generateZonedTerrain(42)
     expect(a.map.terrain).toEqual(b.map.terrain)
     expect([...a.zone]).toEqual([...b.zone])

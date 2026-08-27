@@ -1,4 +1,7 @@
-# Forêts vivantes — la litière, l'envol, les coulées, la lumière
+# Forêts vivantes — la litière, l'envol, les coulées ~~et la lumière~~
+
+> **§5 (les taches de soleil) est RETIRÉ le 2026-08-25** — « on gérera la canopée
+> différemment ». Le bandeau de §5 dit quoi et pourquoi ; §1 à §4 sont en vigueur.
 
 *Spec du 2026-08-16. Décision d'Alexis (« propose 5 choses pour améliorer les forêts » →
 panel de 5 lentilles, 10 propositions vérifiées contre le code → « fais tout de manière
@@ -119,6 +122,17 @@ géographie module et n'autorise jamais, feel en pente continue, FX quantifiés 
 
 ## §5 — LES TACHES DE SOLEIL : la lumière du sous-bois
 
+> **⚠ RETIRÉE LE 2026-08-25 — R6 ET A5 NE SONT PLUS EN VIGUEUR.** *« Retire les soupiraux dans
+> la forêt, on gérera la canopée différemment »* (Alexis). La couche entière est déposée :
+> `soleil-layer.ts`, `soleil-masque.ts` et leur test sont supprimés, avec la version de canopée
+> qui les nourrissait (`versionCouvert`, `arbresCouvert`) — une mécanique sans consommateur ne
+> se garde pas « au cas où » (git la garde). Le 2026-08-25 avait déjà retiré son PREMIER domaine
+> (la clairière : « les tâches blanches là ») ; le sous-bois était le second, et il n'en restait
+> pas d'autre — hors des bois la couche se taisait déjà (`d < 1`). **CE QUI RESTE À FAIRE, ET
+> QUI N'EST PAS ABANDONNÉ** : la canopée aura un autre langage — l'emplacement est vacant, pas
+> renoncé. Ce qui suit est conservé comme HISTORIQUE : ce qu'on avait écrit, et pourquoi.
+> *(Le reste de la spec — §1 à §4 : litière, envol, coulées — est intact et en vigueur.)*
+
 - **R6** *(amendée le 2026-08-16 — décision d'Alexis : la v1 sur `d` seul posait des
   taches sous les couronnes et éteignait les trous de canopée — « incohérent avec la
   couverture réelle des arbres »)* — Le jour, le sol des bois se mouchette de taches de
@@ -142,6 +156,6 @@ géographie module et n'autorise jamais, feel en pente continue, FX quantifiés 
 
 *Réglages : `CONTENU.TAS_FEUILLES` (zone-content) ; `HUNT.LITIERE_BRUIT_COEUR`,
 `ENVOL_*` (balance — se règlent en jouant) ; `COULEES` (bloc worldgen à côté du
-générateur — se règle en regardant une carte) ; les constantes du FX taches côté client
-(patron `CLUTTER_MEAN_SQ`). Ordre de livraison : §1+§2 (la litière), §3 (l'envol), §4
-(les coulées), §5 (la lumière) — un commit par étage, revue déterminisme avant fusion.*
+générateur — se règle en regardant une carte). Ordre de livraison : §1+§2 (la litière), §3
+(l'envol), §4 (les coulées), §5 (la lumière) — un commit par étage, revue déterminisme avant
+fusion. **§5 est retiré depuis le 2026-08-25 : il n'a plus de constantes à régler.***

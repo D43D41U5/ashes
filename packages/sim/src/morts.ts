@@ -27,6 +27,10 @@
  * Pur et déterministe : `+ - * /`, `min`, `max`, `floor`, `sqrt` (invariant n°2).
  */
 import { CENDREUX, MORTS, NIGHT_HUNT } from './balance'
+import {
+  cadranDeFoyer, caracteresDeLaCarte, foyerDuSol, foyersDeLaCarte, profondeurNueDeCendre,
+  rampeDeSuccession,
+} from './cendre'
 import { isBlockedAt } from './collision'
 import { emitEvent } from './events'
 import { effetsDuJour } from './modificateur'
@@ -103,6 +107,26 @@ export function densiteDesMorts(state: SimState, tx: number, ty: number): number
       }
     }
   }
+  // ═══ LA HANTISE, RÉ-ARMÉE SUR LA SUCCESSION (spec `cendre.md` R23, 2026-08-27) ═══
+  //
+  // Elle avait été démontée le 2026-08-24 avec le front qui la datait, et ses trois constantes
+  // sont restées orphelines avec la note « à reprendre avec la nouvelle mécanique ». La voici :
+  // même loi, même plafond, nouvel axe. L'ancien était « la part de la course du front » —
+  // c'est-à-dire une PROFONDEUR, exactement ce que R20 compte désormais en tuiles. Le plateau
+  // s'ancre donc à `CENDRE.CROUTE_TUILES` (l'entrée de la bande vieille) et `HANTISE_PART`,
+  // qui l'exprimait en part d'une course de 74 tuiles qui n'existe plus, est retirée.
+  //
+  // MESURÉ avant de le brancher (`tools/diag-cendre-eveil.mts`, monde joué, seed 2026) : sans
+  // elle, la cendre n'était PAS plus habitée que le pré — 0,2526 au cœur contre 0,2501 dehors,
+  // soit ±1 %. La piste ⑥ (« le cœur est déjà le territoire des morts ») était donc fausse.
+  const prof = profondeurNueDeCendre(state, tx, ty)
+  if (prof >= 0) d += MORTS.PART_CENDRE + (MORTS.HANTISE_MAX - MORTS.PART_CENDRE) * rampeDeSuccession(prof)
+  // LE CARACTÈRE DE LA FOSSE QUI TIENT CE SOL (spec `cendre.md` R21) — la Gueule en rend 60 % de
+  // plus, la Muette moitié moins. Deux lectures de tableau : `foyerDuSol` lit le coût NU (sans le
+  // grain, qui coûterait quatre `fbm2` sur un chemin lu par tuile de couronne — une densité n'a
+  // pas de lisière). Hors cendre, il rend -1 et le cadran vaut 1.
+  const k = foyerDuSol(state, tx, ty)
+  if (k >= 0) d *= cadranDeFoyer(caracteresDeLaCarte(state.map, state.seed), k, 'morts')
   return d > 1 ? 1 : d
 }
 
@@ -121,6 +145,9 @@ export function advanceLieuxBrules(state: SimState): void {
   const zones = state.map.zones
   if (zones.length === 0) return
   const r2 = MORTS.BRULE_RAYON * MORTS.BRULE_RAYON
+  // Les fosses et leurs caractères, UNE fois : la boucle qui suit les relit par zone touchée.
+  const foyers = foyersDeLaCarte(state.map)
+  const caracteres = caracteresDeLaCarte(state.map, state.seed)
   for (const s of state.structures) {
     if (s.type !== 'fire' || s.villageId !== 0) continue
     if (fireState(state, s) !== 'lit') continue // il faut des FLAMMES — les braises ne brûlent pas un lieu
@@ -134,7 +161,13 @@ export function advanceLieuxBrules(state: SimState): void {
       // LA DURÉE SUIT LE CARACTÈRE DE LA SAISON (spec `cendre.md` R18) : `orages_secs` la double
       // (le feu prend partout — la saison des expéditions d'assainissement), `deluge` la divise
       // par deux (on n'allume pas un feu sous quatre jours de pluie).
-      const jours = MORTS.BRULE_DUREE_JOURS * (effetsDuJour(jourDeSaison(state)).cendreGel ?? 1)
+      // …ET LE CARACTÈRE DE LA FOSSE (R21) : la Docile se tient trente jours au lieu de quinze.
+      // C'est elle qui rend le verbe de R16 gagnant quelque part — avec dix fosses, on ne peut
+      // pas toutes les tenir, mais il en existe une qui coûte deux fois moins cher.
+      const k = foyers.findIndex((f) => f.zone === zi)
+      const jours = MORTS.BRULE_DUREE_JOURS
+        * (effetsDuJour(jourDeSaison(state)).cendreGel ?? 1)
+        * cadranDeFoyer(caracteres, k, 'gel')
       const duree = Math.round((jours * TICKS_PER_SEASON_DAY) / state.calendarScale)
       state.lieuxBrules.push({ zone: zi, until: state.tick + duree })
       emitEvent(state, { type: 'charnier_brule', tick: state.tick, zone: zi, x: cx, y: cy })
@@ -143,14 +176,17 @@ export function advanceLieuxBrules(state: SimState): void {
 }
 
 /**
- * ⚠ LA HANTISE DE CENDRE EST RETIRÉE (2026-08-24), avec le front qui la datait.
+ * ⚠ LA HANTISE DE CENDRE, RETIRÉE LE 2026-08-24, EST REVENUE LE 2026-08-27 (R23).
  *
- * Elle ajoutait au champ des morts un terme en DÉGRADÉ — `MORTS.PART_CENDRE` sur le brûlé de
- * l'instant, jusqu'à `MORTS.HANTISE_MAX` sur le vieux brûlé — lu sur la marge de cendre. Sans
- * front, aucune tuile n'a d'âge de brûlure : le champ des morts ne connaît plus que son plancher
- * et le tier de la zone (`densiteDeBase`), ce qui est EXACTEMENT le repli qu'il avait déjà sur un
- * banc sans Cendrière. `MORTS.PART_CENDRE` / `HANTISE_MAX` / `HANTISE_PART` n'ont plus de lecteur
- * — à reprendre avec la nouvelle mécanique.
+ * Elle avait disparu avec le front qui la datait : sans front, aucune tuile n'avait d'âge de
+ * brûlure, et le champ des morts ne connaissait plus que son plancher et le tier de sa zone.
+ * `PART_CENDRE` / `HANTISE_MAX` / `HANTISE_PART` étaient restées sans lecteur, avec la note « à
+ * reprendre avec la nouvelle mécanique ».
+ *
+ * C'est fait, et l'axe n'a même pas changé de nature : l'ancien était « la part de la course du
+ * front », le nouveau est la PROFONDEUR en tuiles que R20 compte déjà. Voir le terme dans
+ * `densiteDesMorts` ; `HANTISE_PART` est la seule des trois à ne pas avoir survécu (son
+ * dénominateur, la course totale d'un front, n'existe plus).
  */
 
 /**

@@ -138,6 +138,24 @@ export interface Monster {
   /** Tick depuis lequel plus aucune menace n'est perçue — décide du couché (C11). */
   calmSince?: number
 
+  /* ── L'ENVOL du tétras (spec faune R21) ─────────────────────────────────── */
+  /**
+   * ELLE EST EN L'AIR — le tick où elle se posera. Absent = au sol.
+   *
+   * C'est LE drapeau que lit le reste du jeu : `combat.ts` refuse la mêlée sur
+   * une bête en vol (seul le trait l'atteint), et le client en tire sa silhouette
+   * et sa hauteur. Un seul champ pour dire un état, parce qu'il porte AUSSI sa
+   * fin : rien à purger si le tick passe, la comparaison suffit.
+   */
+  volUntil?: number
+  /** Le tick du DÉCOLLAGE — l'autre borne du bond : elle donne la fraction parcourue. */
+  volDepuis?: number
+  /** D'où il est parti, et où il se posera : le bond est une DROITE, tirée une fois. */
+  volFromX?: number
+  volFromY?: number
+  volX?: number
+  volY?: number
+
   /* ── Le terrier du lapin (spec chasse C16) ──────────────────────────────── */
   /** Sa tuile de naissance : levé, il fuit VERS elle — et il y disparaît. */
   burrowX?: number
@@ -874,6 +892,49 @@ export function descendreLeChamp(
   // tranche sur l'ordre des `entityId`. Le replay reste au bit près.
   let cx = bestTx + 0.5
   let cy = bestTy + 0.5
+
+  // ═══ LA DIAGONALE EST UN CAP, PAS UNE TUILE (Alexis, 2026-08-25) ═══
+  //
+  // *« Les Cendreux ne semblent pas avoir la possibilité de naviguer en diagonale. »* Exact, et
+  // c'était mécanique : le champ de flux est 4-CONNEXE (`VOISINS4`), donc la tuile élue est
+  // toujours un voisin orthogonal, donc l'un des deux écarts vaut zéro — et `moveToward` a une
+  // ZONE MORTE qui annule tout axe sous le déport d'un pas. Une goule ne pouvait littéralement
+  // pas prendre un cap oblique : elle montait l'escalier, une marche à la fois.
+  //
+  // ⚠ ON NE TOUCHE PAS AU CHAMP, ET C'EST TOUT LE POINT. Rendre `VOISINS4` diagonal changerait
+  //   la distance de CHAQUE tuile de la carte, donc chaque chemin, chaque date d'arrivée, chaque
+  //   ordre d'événement — le replay et le banc d'équilibrage avec. Ici, le gradient élit
+  //   toujours la même TUILE (`bestTx/bestTy` : c'est elle qui porte le test de franchissement et
+  //   le siège, inchangés) ; on ne corrige que le CAP qu'on donne au pas.
+  //
+  // LA RÈGLE, CONSERVATRICE : on n'oblique que vers une tuile qui est SUR le champ et pas plus
+  // loin du but que celle qu'on vient d'élire. Une diagonale ne peut donc jamais éloigner ni
+  // faire sortir du champ ; au pire elle ne se prend pas. Et si un mur barre l'un des deux axes,
+  // c'est la collision qui le refuse — elle résout déjà axe par axe.
+  //
+  // ⚠ ET ELLE CÈDE LE PAS À L'ÉCART DE HORDE, ce que la garde `worldevents` a exigé en rougissant
+  //   (graine 88 : douze tuiles occupées la moitié du temps, puis dix). LA RAISON EST GÉOMÉTRIQUE
+  //   et vaut d'être sue : la poussée de séparation s'AJOUTE à la cible, et `moveToward` quantifie
+  //   ensuite en huit directions avec une zone morte. Tant que la cible était orthogonale, l'axe
+  //   perpendiculaire valait ~0 et la poussée en DÉCIDAIT à elle seule. Une cible déjà oblique
+  //   sature les deux axes : la poussée ne peut plus en retourner aucun, et la horde se retasse.
+  //   Une goule au coude à coude a mieux à faire qu'un beau cap — elle s'écarte d'abord.
+  //   (`separating` est une hystérésis persistée : on la lit d'avant la mise à jour de ce tick,
+  //   ce qui coûte une image de retard sur un drapeau qui vit déjà des dizaines de ticks.)
+  const serre = monster.separating === true
+  const axeX = bestTy === ty
+  const perp: readonly (readonly [number, number])[] = axeX ? [[0, 1], [0, -1]] : [[1, 0], [-1, 0]]
+  for (const [dx, dy] of serre ? [] : perp) {
+    const nx = bestTx + dx
+    const ny = bestTy + dy
+    if (nx < 0 || nx >= width || ny < 0 || ny >= height) continue
+    const d = field[ny * width + nx]
+    if (d === undefined || d === -1 || d > bestD) continue
+    cx = nx + 0.5
+    cy = ny + 0.5
+    break
+  }
+
   if (hordeIds !== null) {
     const radius = monster.separating ? WORLD_EVENTS.HORDE_SEPARATION_COMFORT : WORLD_EVENTS.HORDE_SEPARATION
     // PAR INDEX ET PAR L'INDEX DU TICK : `hordeIds` se lit sans fabriquer d'objets, et

@@ -15,7 +15,7 @@
  */
 import { WORLD_EVENTS, phaseOf, tourOf } from './balance'
 import type { SimEvent } from './events'
-import { faitsDuLieu } from './annales'
+import { faitsDuLieu, lieuDuFait, nomDEre, phraseDuFait } from './annales'
 import type { FaitDeGeneration, WorldMap } from './map'
 import { modificateurDeSaison, NOMS_MODIFICATEUR } from './modificateur'
 import { POI_CHARGES } from './poi-discovery'
@@ -110,6 +110,13 @@ export function chronicleFromEvents(
   calendarScale: number,
   jourDeDepart: number,
   villageNames: Record<number, string>,
+  /**
+   * LA CARTE — pour poser la CLEF DE LIEU sur toute ligne dont le fait a eu lieu quelque part
+   * (R13). Elle est REQUISE et non optionnelle, exprès : un paramètre facultatif aurait laissé
+   * chaque appelant perdre la clef en silence, et la fiche d'un lieu serait redevenue une ligne
+   * unique sans que rien ne rougisse. Le compilateur tient la liste des appelants.
+   */
+  map: WorldMap,
 ): ChronicleEntry[] {
   // Le `+ jourDeDepart` EST le jour d'ouverture du monde (S2) : recopier `+ 1` en dur datait
   // toute la chronique de cinquante jours trop tôt et scellait les volumes sur la mauvaise année.
@@ -124,8 +131,15 @@ export function chronicleFromEvents(
 
   for (const e of events) {
     const d = day(e.tick)
+    // LA CLEF DE LIEU SE POSE ICI, EN UN SEUL POINT (R13) : ou bien l'appelant la connaît
+    // (`poi_first_visit`, `refugee_rumeur` — ils PORTENT un `poiId`), ou bien on la DÉRIVE de
+    // la position du fait. Un événement de chronique qui gagnera demain un (tx, ty) entrera
+    // dans les fiches sans qu'on y touche ; un fait sans position n'appartient à aucun lieu,
+    // et c'est un fait sur la donnée, pas un oubli.
+    const p = e as { tx?: number; ty?: number }
     const push = (text: string, weight: ChronicleWeight, lieu?: number): void => {
-      entries.push({ day: d, text, weight, ...(lieu !== undefined ? { lieu } : {}) })
+      const clef = lieu ?? (p.tx !== undefined && p.ty !== undefined ? lieuDuFait(map, p.tx, p.ty) : undefined)
+      entries.push({ day: d, text, weight, ...(clef !== undefined ? { lieu: clef } : {}) })
     }
     switch (e.type) {
       case 'village_founded':
@@ -355,6 +369,7 @@ export function volumesDeChronique(
   calendarScale: number,
   jourDeDepart: number,
   villageNames: Record<number, string>,
+  map: WorldMap,
 ): ChronicleVolume[] {
   const parAn = new Map<number, SimEvent[]>()
   for (const e of events) {
@@ -365,7 +380,7 @@ export function volumesDeChronique(
   }
   return [...parAn.entries()]
     .sort((a, b) => a[0] - b[0])
-    .map(([an, liste]) => ({ an, entrees: chronicleFromEvents(liste, calendarScale, jourDeDepart, villageNames) }))
+    .map(([an, liste]) => ({ an, entrees: chronicleFromEvents(liste, calendarScale, jourDeDepart, villageNames, map) }))
 }
 
 /**
@@ -381,10 +396,11 @@ export function scellerLaChronique(
   jourDeDepart: number,
   villageNames: Record<number, string>,
   tourCourant: number,
+  map: WorldMap,
 ): { volumes: ChronicleVolume[]; courant: SimEvent[] } {
   const revolus = events.filter((e) => anDe(e, calendarScale, jourDeDepart) < tourCourant)
   const courant = events.filter((e) => anDe(e, calendarScale, jourDeDepart) >= tourCourant)
-  return { volumes: volumesDeChronique(revolus, calendarScale, jourDeDepart, villageNames), courant }
+  return { volumes: volumesDeChronique(revolus, calendarScale, jourDeDepart, villageNames, map), courant }
 }
 
 /**
@@ -404,4 +420,57 @@ export function registreDuLieu(
   const lignes: { an: number; entree: ChronicleEntry }[] = []
   for (const v of volumes) for (const entree of v.entrees) if (entree.lieu === poiId) lignes.push({ an: v.an, entree })
   return { annales, lignes }
+}
+
+/**
+ * UNE LIGNE DE LA FICHE — la colonne UNIQUE (décision d'Alexis, 2026-08-25 : « une colonne
+ * chronologique »). La strate du monde et la strate du joueur y prennent la MÊME forme : une
+ * gouttière, un texte, un registre. On ne distingue plus qui a écrit quoi, et c'est le but —
+ * la fiche du docstring de `registreDuLieu` (« … et l'on ne distingue plus qui est la strate
+ * de qui »).
+ */
+export interface LigneDeFiche {
+  /** La gouttière : le nom de l'ÈRE pour un fait du pays d'avant, « l'an K · jour N » pour une
+   *  ligne de chronique. Écrite ICI et nulle part ailleurs — l'écrivain unique. */
+  gouttiere: string
+  texte: string
+  poids: ChronicleWeight
+  /**
+   * LE RANG CHRONOLOGIQUE, en donnée — pour qu'une garde affirme l'ordre sans relire le texte,
+   * et pour qu'un rendu puisse grouper. Les ères précèdent toutes les années : le pays d'avant
+   * est, par définition, avant.
+   */
+  rang: { ere: number } | { an: number; jour: number }
+}
+
+/**
+ * LA FICHE D'UN LIEU, PRÊTE À LIRE — `registreDuLieu` rend deux tableaux, celle-ci rend LA
+ * colonne : les faits d'annales dans l'ordre des ères, puis les lignes de chronique dans
+ * l'ordre des années. C'est le seul endroit où les deux strates se rencontrent.
+ *
+ * Pure. La SAILLANCE (R4) ne filtre pas ici : MESURÉ sur le monde joué (`tools/diag-fiche.mts`,
+ * seeds 2026/7/99), **28 faits sur 28 sont saillants** — la règle est inerte à cette échelle, et
+ * un filtre inerte est un filtre qui ment sur son utilité. La LACUNE (R5), elle, ne s'applique
+ * jamais au constat d'un visiteur (R5②).
+ */
+export function ficheDuLieu(map: WorldMap, poiId: number, volumes: ChronicleVolume[]): LigneDeFiche[] {
+  const { annales, lignes } = registreDuLieu(map, poiId, volumes)
+  const out: LigneDeFiche[] = []
+  // Le pays d'avant, ère par ère. `sort` est stable en JS moderne — deux faits d'une même ère
+  // gardent l'ordre de la génération, qui est déterministe.
+  for (const f of [...annales].sort((a, b) => a.ere - b.ere)) {
+    const { texte, poids } = phraseDuFait(f)
+    out.push({ gouttiere: nomDEre(f.ere), texte, poids, rang: { ere: f.ere } })
+  }
+  // Puis le joueur, an par an — et à l'intérieur d'une année, jour par jour.
+  const siennes = [...lignes].sort((a, b) => (a.an - b.an) || (a.entree.day - b.entree.day))
+  for (const { an, entree } of siennes) {
+    out.push({
+      gouttiere: `l’an ${an} · jour ${entree.day}`,
+      texte: entree.text,
+      poids: entree.weight,
+      rang: { an, jour: entree.day },
+    })
+  }
+  return out
 }

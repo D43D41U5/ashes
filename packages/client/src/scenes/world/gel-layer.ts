@@ -71,6 +71,7 @@ import {
   niveauDEau,
   niveauPourCouverture,
   terrainAt,
+  zoneSlugAt,
   type SimState,
   type WorldMap,
 } from '@ashes/sim'
@@ -82,6 +83,7 @@ import {
   cuireManteau, trameDeCrue, trameDeGlace, trameDeVase, tuileDeNiveau, type EtatTuile,
 } from '../../render/manteau'
 import { PAVE, PAVE_PX, estStructurel } from '../../render/paves'
+import { ambianceDe } from '../../render/zone-ambiance'
 import { poserChunk } from './pave-layer'
 
 /** Le sol du manteau : sous le surplomb de la berge (+0,29), au-dessus des reflets (+0,28). */
@@ -173,6 +175,23 @@ export class GelLayer {
     }
   }
 
+  /**
+   * LA TEINTE DU PAYS d'une tuile — la modulation de zone du bake (`zone-ambiance`), mémoïsée
+   * par slug comme le fait `bakeMapTexture`. Seule la VASE s'en sert : c'est la seule surface
+   * de cette couche qui soit un SOL, et le sol de ce jeu prend la teinte de son pays. Sans
+   * elle, une rivière asséchée traversait trois pays en une seule couleur.
+   */
+  private readonly solParZone = new Map<string | undefined, readonly [number, number, number]>()
+  private readonly solDeZone = (tx: number, ty: number): readonly [number, number, number] | undefined => {
+    const slug = zoneSlugAt(this.map, tx, ty)
+    let sol = this.solParZone.get(slug)
+    if (!sol) {
+      sol = ambianceDe(slug).sol
+      this.solParZone.set(slug, sol)
+    }
+    return sol
+  }
+
   /** La flore de cette tuile est-elle gelée, d'après la dernière signature relevée ici ?
    *  `null` hors de tout chunk vivant : ON NE SAIT PAS ENCORE — et le fouillis ne doit pas
    *  prendre ce silence pour « libre » puis jouer un gel une image plus tard (au premier rendu,
@@ -186,11 +205,20 @@ export class GelLayer {
     return c.flore[ly * L + lx] === 1
   }
 
-  /** L'état d'une tuile d'après la dernière signature (neige, glace, nue) — pour les empreintes. */
+  /** L'état d'une tuile d'après la dernière signature (neige, glace, nue) — pour les empreintes.
+   *  Hors d'un chunk cuit, il rend `TUILE_NUE` : c'est ce que veut qui DESSINE (rien à peindre).
+   *  Qui EFFACE, lui, doit distinguer « nue » de « on ne sait pas » — voir `etatConnuAt`. */
   etatAt(tx: number, ty: number): EtatTuile {
+    return this.etatConnuAt(tx, ty) ?? TUILE_NUE
+  }
+
+  /** Idem, mais `null` hors de tout chunk vivant : ON NE SAIT PAS ENCORE. Même contrat que
+   *  `floreGeleeAt`, et pour la même raison — une empreinte dans la neige meurt quand SA tuile
+   *  dégèle, et le silence d'un chunk évincé (caméra tournée) n'est pas un dégel. */
+  etatConnuAt(tx: number, ty: number): EtatTuile | null {
     const N = PAVE.CHUNK
     const c = this.chunks.get(Math.floor(ty / N) * 65536 + Math.floor(tx / N))
-    if (!c) return TUILE_NUE
+    if (!c) return null
     const lx = tx - Math.floor(tx / N) * N + 1
     const ly = ty - Math.floor(ty / N) * N + 1
     return c.etats[ly * L + lx] as EtatTuile
@@ -426,6 +454,7 @@ export class GelLayer {
       cx, cy, etatAt,
       trameNeige: this.trameNeige, trameGlace: this.trameGlace,
       trameVase: this.trameVase, trameCrue: this.trameCrue,
+      solDeZone: this.solDeZone,
     })
     const cle = `gel-${this.suffixe}-${cx}-${cy}`
     // Le manteau cuit par `cuireChunk` : ses tampons portent le même DÉBORD d'un pixel, et ses

@@ -24,7 +24,8 @@
  */
 import { describe, expect, it } from 'vitest'
 import { BALANCE, NODE_DEFS, TERRAINS } from './balance'
-import { generateZonedTerrain } from './zonegen'
+import { carteDeTest } from '../../../tools/carte-cache'
+import { rayonEmprise } from './defriche'
 import { placeZoneNodes, emplacementsDeVillage } from './zone-content'
 import { placeHuntingGrounds } from './faune'
 import { nidsAMonstre } from './poi'
@@ -107,7 +108,7 @@ function empreinte(map: WorldMap): string {
  * (F3) : A3 mesurait alors le gel au lieu de mesurer la carte.
  */
 function mondeReel(): { sim: SimState; joueur: number } {
-  const carte = generateZonedTerrain(2026)
+  const carte = carteDeTest(2026)
   const nodes = placeZoneNodes(carte)
   const emplacements = emplacementsDeVillage(carte, nodes, {
     coinsDeChasse: placeHuntingGrounds(carte.map, 2026),
@@ -224,11 +225,41 @@ describe('la carte est immuable pendant la partie', () => {
       TERRAINS[sim.map.terrain[ty * sim.map.width + tx]!]?.walkable === true &&
       !sim.nodes.some((n) => n.tx === tx && n.ty === ty) &&
       !sim.structures.some((s) => s.tx === tx && s.ty === ty)
+    // LE SITE DU FEU SE CHERCHE AUSSI, et sur DEUX critères de plus que `libre` : fonder un
+    // village exige qu'aucun landmark ne tombe dans le carré d'emprise, et qu'aucun Feu déjà
+    // planté ne soit trop près (village R1). Le nœud le plus proche récoltable à mains nues
+    // n'a aucune raison de satisfaire ça — le glanage en sème justement au pied des rochers et
+    // des ruines, qui sont des landmarks — et la fondation partait alors en « un landmark tombe
+    // dans le carré » : la garde mesurait le voisinage du spawn, pas la carte. On s'écarte par
+    // ANNEAUX jusqu'à un carré propre, et le joueur suit — il a fini de récolter.
+    const r = rayonEmprise()
+    const carrePropre = (cx: number, cy: number): boolean =>
+      !sim.map.zones.some((z) => z.kind !== undefined
+        && z.x <= cx + r && z.x + z.w - 1 >= cx - r
+        && z.y <= cy + r && z.y + z.h - 1 >= cy - r)
+    const loinDesFeux = (cx: number, cy: number): boolean =>
+      !sim.villages.some((v) =>
+        Math.max(Math.abs(v.fireTx - cx), Math.abs(v.fireTy - cy)) < BALANCE.FIRE_MIN_DISTANCE)
     const monTx = Math.floor(moi.x)
     const monTy = Math.floor(moi.y)
-    const voisines = [[0, 1], [1, 0], [-1, 0], [1, 1], [-1, 1], [0, -1], [1, -1], [-1, -1]]
-      .map(([dx, dy]) => [monTx + dx!, monTy + dy!] as const)
-    const [feuTx, feuTy] = voisines.find(([tx, ty]) => libre(tx, ty)) ?? voisines[0]!
+    const [feuTx, feuTy] = (() => {
+      for (let rayon = 1; rayon <= 60; rayon++) {
+        for (let dy = -rayon; dy <= rayon; dy++) {
+          for (let dx = -rayon; dx <= rayon; dx++) {
+            if (Math.max(Math.abs(dx), Math.abs(dy)) !== rayon) continue // l'anneau, pas le disque
+            const tx = monTx + dx
+            const ty = monTy + dy
+            if (tx <= 0 || ty <= 0 || tx >= sim.map.width || ty >= sim.map.height) continue
+            if (libre(tx, ty) && carrePropre(tx, ty) && loinDesFeux(tx, ty)) return [tx, ty] as const
+          }
+        }
+      }
+      return [monTx, monTy + 1] as const
+    })()
+    // Le joueur va AU site : `place_campfire` veut le bras tendu, et `found_village` la portée
+    // d'interaction. Une tuile au sud du site — jamais dessus, le Feu bloque.
+    moi.x = feuTx + 0.5
+    moi.y = feuTy + 1.5
     refus.push(...agir(sim, joueur, { type: 'set_active_slot', slot: slotDe('campfire') }))
     refus.push(...agir(sim, joueur, { type: 'place_campfire', tx: feuTx, ty: feuTy }))
     const feu = sim.structures.find((s) => s.tx === feuTx && s.ty === feuTy)
@@ -249,8 +280,22 @@ describe('la carte est immuable pendant la partie', () => {
       moi.y = ty + 1.5
       refus.push(...agir(sim, joueur, { type: 'build', structure: 'wall', tx, ty }))
     }
-    const compTx = feuTx + 2
-    const compTy = feuTy + 3
+    // LA TUILE DU COMPOSANT SE CHERCHE, elle ne se calcule pas. Écrite en dur (`+2, +3`), elle
+    // tombait sur ce que le monde y avait mis : le glanage (`glanage.md`) sème des branches et
+    // des pierres au pied des arbres et des rochers, et `place_component` refuse « un nœud
+    // occupe la tuile ». La garde mesurait alors la chance, pas la carte. On réutilise `libre`.
+    const [compTx, compTy] = (() => {
+      for (let r = 2; r <= 6; r++) {
+        for (let dy = -r; dy <= r; dy++) {
+          for (let dx = -r; dx <= r; dx++) {
+            const tx = feuTx + dx
+            const ty = feuTy + dy
+            if (tx > 0 && ty > 0 && tx < sim.map.width && ty < sim.map.height && libre(tx, ty)) return [tx, ty] as const
+          }
+        }
+      }
+      return [feuTx + 2, feuTy + 3] as const
+    })()
     moi.inventory[0] = { item: 'workshop', count: 1 }
     moi.activeSlot = 0
     moi.x = compTx + 0.5

@@ -30,7 +30,7 @@ const MI_GRAND_FROID = Math.round(BALANCE.ACT_DAYS * 3.5)
 function veilleDAube(jour: number, seed = 1, largeur = 128): SimState {
   const state = createSim(seed, {
     map: createEmptyMap(largeur, 96, TERRAIN_GRASS),
-    cycleOffset: cycleOffsetForStartHour(0),
+    cycleOffset: cycleOffsetForStartHour(0, 1),
     calendarScale: 1,
   })
   let tick = (jour - 1) * TICKS_PER_SEASON_DAY

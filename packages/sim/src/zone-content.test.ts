@@ -15,11 +15,12 @@ import { placeHuntingGrounds } from './faune'
 import { nidsAMonstre } from './poi'
 import { CONTENU, CONTENUS, emplacementsDeVillage, placeZoneNodes, pointsDeSpawn, stockDArbre } from './zone-content'
 import { generateZonedTerrain, type CarteZonee } from './zonegen'
+import { carteDeTest } from '../../../tools/carte-cache'
 import { MONDE, VRAIES_ZONES, ZONES } from './zonegraph'
 
 const SEEDS = [2026, 7, 42]
 const mondes = SEEDS.map((s) => {
-  const c: CarteZonee = generateZonedTerrain(s)
+  const c: CarteZonee = carteDeTest(s)
   const nodes = placeZoneNodes(c)
   // Les mêmes dangers que les hôtes réels (veillee.ts, scenario.ts) : coins + nids.
   const grounds = placeHuntingGrounds(c.map, s)
@@ -294,7 +295,7 @@ describe('le contenu, sur la vraie carte', () => {
   }, 120_000)
 
   it('A12 — le contenu est DÉTERMINISTE', () => {
-    const a = generateZonedTerrain(42)
+    const a = carteDeTest(42)
     const b = generateZonedTerrain(42)
     expect(placeZoneNodes(a)).toEqual(placeZoneNodes(b))
     // Les coulées voyagent avec la carte (forêts-vivantes §4) : mêmes chemins, au bit près.

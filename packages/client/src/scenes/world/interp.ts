@@ -29,6 +29,32 @@ export function pushSample(buffer: Sample[], at: number, x: number, y: number): 
 }
 
 /**
+ * ═══ DE COMBIEN A-T-IL BOUGÉ, RÉCEMMENT ? — le déplacement RÉEL, pas le cap rangé ═══
+ *
+ * *(Alexis, 2026-08-25 : « il devrait s'aligner vers la direction où il se déplace le plus en X
+ * et en Y ».)*
+ *
+ * `entity.facing` est quantifié en HUIT secteurs par la sim (il vient des signes du pas) : sur une
+ * diagonale, ses deux composantes sont ÉGALES, et « de quel côté se déplace-t-il le plus ? » n'y a
+ * pas de réponse. Le tampon d'interpolation, lui, porte les positions réelles : la différence
+ * entre le dernier relevé et celui d'il y a `fenetreMs` EST la question, sans arbitrage.
+ *
+ * Rend `{ dx: 0, dy: 0 }` quand le tampon est trop court ou l'entité immobile — l'appelant garde
+ * alors ce qu'il avait, plutôt que de basculer sur un zéro.
+ */
+export function deplacementRecent(buffer: readonly Sample[], fenetreMs: number): { dx: number; dy: number } {
+  const dernier = buffer[buffer.length - 1]
+  if (dernier === undefined) return { dx: 0, dy: 0 }
+  // Le relevé le plus RÉCENT parmi ceux d'il y a au moins `fenetreMs` — à défaut, le plus vieux
+  // qu'on ait : un tampon qui vient de naître dit quand même dans quel sens on va.
+  let base = buffer[0]!
+  for (let i = buffer.length - 1; i >= 0; i--) {
+    if (dernier.at - buffer[i]!.at >= fenetreMs) { base = buffer[i]!; break }
+  }
+  return { dx: dernier.x - base.x, dy: dernier.y - base.y }
+}
+
+/**
  * Position à l'instant `target`, interpolée entre les deux relevés qui l'encadrent.
  * Dégradé GRACIEUX aux deux bouts :
  * - `target` avant le premier relevé (démarrage à froid) → le premier relevé ;

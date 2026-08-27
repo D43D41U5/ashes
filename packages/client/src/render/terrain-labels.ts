@@ -31,6 +31,7 @@ export const TERRAIN_NOMS: Record<string, string> = {
   peat_bog: 'tourbière',
   reed_marsh: 'roselière',
   juniper_heath: 'lande à genévriers',
+  clairiere: 'clairière',
 }
 
 /** Le nom d'un terrain, ou son slug si personne ne le lui a donné (la garde le rattrapera). */

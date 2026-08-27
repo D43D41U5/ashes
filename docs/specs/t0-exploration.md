@@ -116,8 +116,11 @@ variable de profondeur, couvert plat par terrain, entrelacement de lisières sau
   de son massif BOISÉ de la Racine, plafonnée à `PROF_CAP`. Boisé = forêt, futaie ancienne,
   pin, mélèze, saulaie ; zéro partout ailleurs (autres zones, terrains ouverts, eau). Aucun
   bruit : deux érosions du même terrain donnent le même champ. Les clairières ne percent PAS
-  la profondeur (terrain encore boisé) : ce sont des chambres DANS la masse, pas des trouées
-  de lisière. **Le champ est GELÉ à l'amorce et persiste avec l'état** (le patron des solides
+  la profondeur : ce sont des chambres DANS la masse, pas des trouées de lisière. *(Révisé le
+  2026-08-25 : la clairière n'est plus « du terrain encore boisé » mais son PROPRE terrain —
+  le masque d'érosion la NOMME donc explicitement, `boisé ∪ clairière`. Même ensemble de
+  tuiles, donc même champ au bit près ; mais la clause est devenue une clause, et A19 la
+  garde.)* **Le champ est GELÉ à l'amorce et persiste avec l'état** (le patron des solides
   éternels : un état qui ne bouge jamais) — le feu qui ronge un bord ne recalcule rien, mais
   un bonus ne s'applique JAMAIS sur une tuile qui n'est plus boisée : l'étiquette survit,
   inerte ; le bonus meurt avec l'arbre.
@@ -172,9 +175,65 @@ variable de profondeur, couvert plat par terrain, entrelacement de lisières sau
   avec un cœur à portée le prend — testé en unitaire) ; et le VIEUX FÛT SURVIT À LA REPOUSSE
   (le stock majoré est une fonction pure de la position, réappliquée à la repousse — jamais
   une donnée d'instance qui meurt au premier épuisement).
+- **R38bis — LA CLAIRIÈRE EST UN BIOME, ET ELLE EST BORNÉE** *(décision d'Alexis, 2026-08-25 :
+  « certaines clairières de forêts sont trop grandes, on dirait que certaines parties de la
+  forêt est rasée alors que pas du tout », puis « je m'interroge si les clairières ne devraient
+  être un biome à part entière, uniquement disponibles en forêt. pas d'arbres sur une petite
+  zone mais on ajoute du clutter »).* Les trouées du massif étaient un SEUIL sur du fbm, donc
+  sans borne de taille par nature — mesuré, jusqu'à **1332 tuiles d'emprise 56×88** pour un
+  écran de 20. Et depuis le retrait du vert de clairière (2026-08-23) elles n'avaient plus
+  aucune marque : litière du bois, clutter de `forest` à densité 0,1, et un semis commun qui
+  les sautait EN ENTIER — pas d'arbre, mais pas de baie ni de fibre non plus. Trois clauses :
+  1. **UN TERRAIN**, `clairiere` (id 30), `walkable`, `speedFactor: 1`, **`cover: 1`** — on
+     y voit venir et on s'y fait voir : c'est la conséquence de jeu du biome, pour le loup qui
+     traque comme pour le chasseur qui approche. Il porte sa couleur de sol, sa ligne de
+     `BIOME_CLUTTER` (la plus dense de la carte après le marais : l'herbacé a gagné la place),
+     son habitat de faune (cerf, sanglier, loup, lapin — sans quoi en faire un terrain RETIRE
+     ~12 % de son salon à la faune du massif, en silence) et sa fiche.
+  2. **PETITE, ET BORNÉE PAR CONSTRUCTION** : une clairière par maille de 4 blocs, cadre de 1 à
+     2 blocs (le 1 six fois sur dix), marge d'un bloc de chaque côté de la maille. D'où **aucune
+     clairière > 16 tuiles de côté** et **jamais deux qui fusionnent** — deux contrats, pas deux
+     réglages. MESURÉ : médiane **30 tuiles**, moyenne 40 (c'était 1332 tuiles au pire avant le
+     chantier, puis 114-159 de moyenne au premier jet). Elle ne mord que du boisé (jamais
+     l'herbe : sinon l'herbe entrerait au masque de profondeur) et jamais `old_growth`. Toute
+     composante < `MIN_TUILES` est rendue au bois : pas d'éclat de bord.
+  2bis. **SA FRONTIÈRE EST ORGANIQUE** *(« on rend la frontière avec les autres biomes plus
+     organique »)*. La forme n'est pas le cadre : c'est un DISQUE inscrit dedans, dont le rayon
+     ONDULE sous un fbm fin. Le contour serpente au lieu de marcher en escalier de 8 tuiles —
+     et il le fait de façon cohérente (un bruit, pas un tirage par tuile, qui donnerait un bord
+     pointillé). Ce n'est pas une entorse à R32 : `entrelacerLesLisieres` fait déjà l'écotone
+     pré/bois à la tuile. Le rectiligne est la loi de ce qui se DÉCIDE, pas de ce qui pousse.
+  3. **ELLE PORTE, ET ELLE EST LA SEULE À PORTER DES BAIES SOUS UN COUVERT.** *« On retire les
+     buissons baies dans le biome forest »*, *« je veux qu'il y ait plus de buisson à baies dans
+     ce biome »* : `terrainAdmet` refuse désormais `berry_bush` sur TOUTE la masse boisée
+     (forêt, futaie ancienne, pin, mélèze, saulaie) — une ronce est une plante de lumière. R40
+     garde sa nature et change d'adresse : « les baies de lisière » deviennent **les baies de la
+     clairière** (`BAIES_CLAIRIERE` 0,085, presque le triple de l'ancien 0,03 sur une surface
+     bien plus petite). MESURÉ : un buisson pour 9 à 11 tuiles de trouée, ~90 % des nœuds qu'elle
+     porte. Conséquence à l'échelle du monde : **−39 % de buissons à baies** (909 → 553, graine
+     2026) — le garde-manger se déplace du couvert vers la lumière.
+  4. **ET AUCUN SOUPIRAIL** *(« retire les soupiraux de la clairière, les tâches blanches là »)*.
+     A22 disait « chambre de lumière PLEINE » et la couche du soleil y partait à densité 1 — mais
+     cette couche peint le soleil qui tombe ENTRE les feuilles. Une trouée n'a pas de feuilles :
+     à densité pleine, l'effet ne faisait pas une chambre de lumière, il faisait de grosses
+     taches blanches sur l'herbe. Le plein jour, ici, c'est ZÉRO tache — comme au pré.
+     **DEPUIS LE 2026-08-25 (SECOND MOT D'ALEXIS), LA QUESTION NE SE POSE PLUS NULLE PART** :
+     *« retire les soupiraux dans la forêt, on gérera la canopée différemment »* — la couche
+     entière est déposée (`forets-vivantes.md` §5). La clairière n'était que le premier des deux
+     domaines ; le sous-bois était le second, et il n'en reste aucun.
+- **A27 (§2quater)** — LES CLAIRIÈRES SONT PETITES ET VIVANTES : balayage de la carte ENTIÈRE
+  sur ≥ 3 graines — aucune composante > 16 tuiles de côté, toute tuile de clairière dans la
+  Racine ET à profondeur ≥ 1 (donc dans un massif), zéro arbre dedans, un buisson à baies pour
+  20 tuiles au moins, et **pas un buisson à baies sous un couvert** dans tout le monde. Le
+  plancher `MIN_TUILES` s'affirme sur la PASSE SEULE, jouée sur un bois plein : sur la carte
+  finie, une sente peut couper une trouée en deux et laisser un moignon — c'est un fait du
+  monde, pas un défaut du générateur (`clairieres.test.ts`).
 - **A22** — LE RENDU MONTRE LA PROFONDEUR : capture smoke lisière → cœur du même massif ; la
   luminance moyenne du sol décroît de la lisière au cœur (pente continue, mesurée sur la
-  capture) ; les clairières restent lisibles (elles ne s'assombrissent pas).
+  capture) ; les clairières restent lisibles (elles ne s'assombrissent pas). *Le volet « pas de
+  soupirail dans la clairière » est SANS OBJET depuis le 2026-08-25 : la couche des taches de
+  soleil est déposée pour TOUT le monde, sous-bois compris (`forets-vivantes.md` §5) — plus
+  personne ne porte de tache, donc plus personne n'a à prouver qu'il n'en porte pas.*
 - **A23** — DÉTERMINISME ET COÛT : double génération identique champ compris ; parité
   Veillée/LAN (même fonction, même amorce) ; coût de la dérivation MESURÉ à la génération et
   impact CHIFFRÉ sur la taille de sauvegarde — si l'un des deux déborde, on encode plus petit
@@ -323,6 +382,8 @@ Karst. Au retour du graphe, le récit tient sans retouche : en T0 la roche PERCE
 - **R51 — PLANCHERS GARANTIS (le patron des gués, R7).** Aucune seed ne naît sans : ≥ 1 affleurement
   ferreux, ≥ 1 charbonneux, ≥ 2 postes de carrière, ≥ 1 vieux fût. Si l'élection stricte n'en donne
   pas assez, on force au meilleur rang (la sécheresse cède avant le compte — jamais l'inverse).
+- **R53 — LE RECT REGISTRÉ EST UNE BOÎTE, PAS UNE SILHOUETTE — ET C'EST LE PIERRIER QUI FAIT LA BUTTE** *(retour d'Alexis, 2026-08-27 : « vérifie les buttes aussi »)*. `WorldMap.affleurements` ne porte qu'un `{x,y,w,h}` : depuis que la butte croît **tuile à tuile** (une ligne de niveau — voir `zonegen.ts`, R6bis étendu aux buttes), cette boîte ne contient plus la butte qu'à moitié. **MESURÉ, monde joué, trois graines : 42 à 56 % du rect est du pierrier.** Le client, lui, lisait le rect : `contexteDesButtes` marquait tout le rectangle `coeur`, or le rôle `coeur` rend un semis VIDE — le décor du pré était **effacé sur 1 264 à 2 222 tuiles par carte**, un carré chauve de ~27 × 27 tuiles autour de chaque butte, et la poussière de houille se semait sur l'herbe. ⚠ **LA CONNEXITÉ SUFFIT, ET ELLE EST GRATUITE** : la croissance part du sommet et ne franchit que des voisines, donc une propagation sur le pierrier depuis le sommet, bornée au rect, retrouve la butte **exactement** — vérifié par le compte (1 600 tuiles pour cinq buttes, soit 5 × `AFFL_TUILES` pile). Rien à registrer de plus, `WorldMap` ne bouge pas. La frange (2 tuiles) et la pente (`grad` : profondeur depuis le bord, normalisée — 0 au pourtour, 1 au fond) s'en dérivent, et la **teinte** minérale se lit sur ce contexte et non sur le rect : un pierrier de Karst tombé dans la boîte sans toucher la butte ne s'oxyde plus (0 tuile dans ce cas aujourd'hui — un défaut latent, fermé avant qu'on place une butte dans le Karst).
+- **R54 — LA MOUCHETURE SE SÈME À 4 px, EN CROÛTES QUE LA PENTE CONCENTRE** *(décision d'Alexis, 2026-08-27, sur quatre planches rendues sur la vraie butte : « 4 » — le gravier en croûte)*. Le second ton de la rocaille (la rouille du chapeau de fer, la houille de la strate) se tirait **par tuile** — `hash2(tx, ty) < 0,38`. Écrit le 2026-08-18, quand le sol se cuisait à **1 px par tuile** : la moucheture était alors littéralement un pixel, et la règle des FX pixellisés était tenue. Depuis les pavés (`sol-dessine.md` R8) le sol se cuit à **16 px par tuile** : le même code peint **256 fois la surface**, et la butte se lit en mosaïque de carrés de 16 px. **MESURÉ**, l'écart des deux tons : fer **Δ 30 de luminance sur 132 (23 %)** plus un saut de teinte franc, charbon **Δ 26 sur 88 (30 %)** — quand le damier par tuile du grain vaut 3 à 4,5 %, et que `grain-sol.ts` écrit déjà qu'à *cette* amplitude « le damier par tuile se lit comme une grille de 16 px ». Six à huit fois au-dessus d'une valeur déjà jugée trop forte. ⚠ **LE FOND DEVIENT LA TEINTE DE TOUTE LA BUTTE**, et la tache se sème à la **cellule de `GRAIN_CELL_PX` (4 px)**, la maille de la matière du jeu : à 2 px les deux tons fusionnent optiquement en un rouille uni et la roche grise disparaît (rendu, écarté sur planche). ⚠ **UN CHAMP D'AMAS (3 tuiles) RASSEMBLE LES CELLULES EN CROÛTES** — une part uniforme donne un poivre et sel régulier, qui n'est pas ce qu'est un chapeau de fer ; il est lu **au centre de la cellule**, ce qui la rend atomique (lu au pixel, le champ traverse son seuil À L'INTÉRIEUR d'une cellule et la maille de 4 px cesse d'être vraie — une garde l'a attrapé) et coûte une lecture d'`fbm2` par cellule au lieu de seize. ⚠ **LA PENTE COMMANDE LA DENSITÉ** (`densiteDeMoucheture(grad)`, de 0,35 à 1,85 fois la part) : la rouille gagne en montant, ce qu'est un chapeau de fer — et c'est le **premier consommateur de `grad`** depuis la purge des gradins de dalles (R53 notait qu'il n'en avait plus). ⚠ **RIEN N'EST CALCULÉ HORS D'UNE BUTTE** : `cuireChunk` demande la moucheture **par tuile** et n'en trouve que sur ~1 600 tuiles de la carte ; le pré ne paie pas une lecture de bruit. La cendre l'éteint (une tuile cendrée porte la teinte de la cendre : deux matières sur le même sol se disputeraient). Gardes : `paves.test.ts` (uniforme dans la cellule, **jamais dans la tuile** — un tirage par tuile passerait le test de la part et échoue sur celui-ci), part suivie, amas mesuré, et le second ton arrive bien dans l'image.
 - **R52 — La butte n'est le jardin de personne.** Un emplacement de village ne se pose pas sur un
   affleurement (exclusion dans `emplacementsDeVillage`, même famille que R17bis) : la distance fait
   le prix. Aucun interdit joueur (worldgen R17) : fonder à côté reste permis.
@@ -350,10 +411,10 @@ mais la NAISSANCE change — élection et couronnement, plus jamais un tampon po
 Un « Verger sauvage » de 3×3 tuiles ne peut pas produire d'émotion : on n'entre jamais *dedans*. Don't Starve le fait depuis dix ans : quelques morceaux de bravoure par carte, grands, nommés, qui ne ressemblent qu'à eux-mêmes.
 
 - **R9 — La Racine porte TROIS set-pieces à grande empreinte, un de chaque, nommés :**
-  - **le Bois Noir** (~48×40) : une mini-sylve — sol `old_growth`, futaie dense, sombre, clairières comprises. Il murmure ce que la Vieille Sylve promet.
+  - **le Bois Noir** (~48×40) : une mini-sylve — sol `old_growth`, futaie dense, sombre, **et SANS clairière** (révisé le 2026-08-25 : la passe des clairières exclut `old_growth`, qui EST la déclaration « ici le couvert est fermé » — et le trouer cassait A25, son budget exact, comme A26, sa masse unique). Il murmure ce que la Vieille Sylve promet.
   - **le Cercle de pierres** (~24×24) : une couronne de pierres levées sur la fleuraie. Il est la destination de la chaîne des menhirs (R2), et sa couronne se voit de loin (R1).
   - **la Combe brumeuse** (~40×32) : un creux de marais et de roselière autour d'une mare, noyé d'une brume au sol (client). Champignons et fibre y abondent — par les règles EXISTANTES d'admission de terrain, pas par une table neuve.
-- **R10 — Un set-piece est un LIEU, pas un sprite.** Il a un `kind`, un nom, il se découvre et entre dans la carte (mécanisme `lieux.md` intact) — mais son corps est son TERRAIN : `PoiLayer` n'y pose pas d'image-centre (étiquette seule), et il est **exclu de `poiClearings`** (on ne « dégage » pas un endroit dont le contenu est la raison d'être — même exclusion que gisement/carrière). Techniquement, les trois kinds entrent dans `POI_TYPES` **hors semis** (`biomes: []`, jamais éligibles au tirage — ils se posent en passe dédiée du worldgen) : la garde A19 (« chaque type naît vraiment ») les couvre alors gratuitement, et `poiFamily` sait répondre pour le garde-fou des charges. Le semis de Poisson, lui, **écarte tout point à moins d'un espacement d'un lieu déjà enregistré** — la garde d'espacement minimal reste vraie avec des lieux posés hors semis.
+- **R10 — Un set-piece est un LIEU, pas un sprite.** Il a un `kind`, un nom, il se découvre et entre dans la carte (mécanisme `lieux.md` intact) — mais son corps est son TERRAIN : `PoiLayer` n'y pose pas d'image-centre — et, depuis le retrait des étiquettes flottantes (`lieux.md` R8bis, 2026-08-25), **plus rien du tout** : un set-piece n'a ni sprite ni nom suspendu, il s'annonce au carton de découverte quand on le foule. Il est **exclu de `poiClearings`** (on ne « dégage » pas un endroit dont le contenu est la raison d'être — même exclusion que gisement/carrière). Techniquement, les trois kinds entrent dans `POI_TYPES` **hors semis** (`biomes: []`, jamais éligibles au tirage — ils se posent en passe dédiée du worldgen) : la garde A19 (« chaque type naît vraiment ») les couvre alors gratuitement, et `poiFamily` sait répondre pour le garde-fou des charges. Le semis de Poisson, lui, **écarte tout point à moins d'un espacement d'un lieu déjà enregistré** — la garde d'espacement minimal reste vraie avec des lieux posés hors semis.
 - **R11 — Le Bois Noir porte un TEASER, patron du Filon.** UN `old_tree` unique, stock dérisoire (`TEASER_STOCK`) : *« le gros bois existe. Pas ici. »* Même grammaire que le fer — le joueur qui a compris le Filon comprend le Bois Noir sans un mot.
 - **R12 — Placement au cœur.** Comme les lacs : marge aux frontières (l'eau et les seuils vivent aux bords), jamais sur l'eau ni un seuil, écartés entre eux d'au moins 200 tuiles. Tirage par rejet, salé, positionnel.
 

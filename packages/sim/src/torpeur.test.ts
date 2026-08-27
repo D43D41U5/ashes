@@ -35,7 +35,7 @@ const GRAND_FROID = coeurDeSaison(4)
 function jourAHeure(jour: number, heure: number, seed = 1): SimState {
   const state = createSim(seed, {
     map: createEmptyMap(64, 64, TERRAIN_GRASS),
-    cycleOffset: cycleOffsetForStartHour(heure),
+    cycleOffset: cycleOffsetForStartHour(heure, 1),
     calendarScale: 1,
   })
   state.tick = (jour - 1) * TICKS_PER_SEASON_DAY

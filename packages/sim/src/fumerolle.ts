@@ -19,9 +19,13 @@
  *
  * ═══ UN LIEU, PAS UNE TEXTURE ═══
  *
- * Trois ou quatre par foyer, repérables à un écran — pas de la fumée partout. Une fumerolle
- * fréquente ferait un banc de brouillard permanent et tuerait la lisibilité de ce qui doit rester
- * une TERRE NUE. C'est le même parti que les charniers : rares, et donc des repères.
+ * Une par écran au plus, jamais deux — pas de la fumée partout. Une fumerolle fréquente ferait
+ * un banc de brouillard permanent et tuerait la lisibilité de ce qui doit rester une TERRE NUE.
+ * C'est le même parti que les charniers : espacées, et donc des repères.
+ *
+ * ⚠ « Trois ou quatre par foyer » a longtemps été écrit ici, et c'était une INTENTION prise pour
+ * une mesure : le semis n'en donnait qu'une et demie au jour 240 (mesuré le 2026-08-25). Le
+ * réglage porte désormais ses vrais nombres et l'instrument qui les rend — voir `MAILLE`.
  *
  * ═══ ZÉRO ÉTAT, ZÉRO PASSE DE WORLDGEN ═══
  *
@@ -33,27 +37,64 @@
  * Pur et déterministe : `hash2`, `+ - * /`, `floor` (invariant n°2).
  */
 import { hash2 } from './noise'
-import { auCoeurDeLaCendre, estSolCendre } from './cendre'
+import { auCoeurDeLaCendre, cadranDeFoyer, caracteresDeLaCarte, estSolCendre, foyerDeLaTuile } from './cendre'
 import { TERRAINS, TERRAIN_BURNT_FOREST } from './balance'
 import type { WorldMap } from './map'
 import type { ResourceNode } from './economy'
 
 export const FUMEROLLE = {
   /**
-   * LA MAILLE DU SEMIS, en tuiles — une fumerolle au plus par maille. C'est le réglage qui fait
-   * d'elles un LIEU et non une texture.
+   * ═══ LE SEMIS — RESSERRÉ D'UN FACTEUR 4 (Alexis, 2026-08-25 : « il n'y a pas assez de
+   * fumerolles dans les cendres ») ═══
    *
-   * MESURÉ (seed 2026, dix foyers) : **1,1 fumerolle par foyer à la fin de l'an 1**, 4,6 au jour
-   * 240, 8,6 à l'an 7 — elles naissent avec la corruption, comme elle. Voisines : 28 tuiles au
-   * minimum (MESURÉ après le resserrement du tirage — un écran en fait 36), 66 en médiane.
+   * `MAILLE` est le côté d'une maille en tuiles (une fumerolle au plus par maille) et `PART` la
+   * fraction des mailles qui en portent une. Ensemble, ils font d'elles un LIEU ou une texture.
+   *
+   * CE QUI A DÉCIDÉ DU CHIFFRE, ET IL N'ÉTAIT PAS LISIBLE DANS LE CODE. « Une maille de 56, une
+   * sur trois » ne dit pas combien on en croise : la cendre n'a pris qu'une part de la vallée, et
+   * c'est ELLE le dénominateur. MESURÉ (`tools/diag-fumerolle.mts`, seed 2026, dix foyers) sous
+   * l'ancien semis : **3 bouches dans toute la vallée au jour 120, 16 au jour 240** — soit UNE
+   * POUR ~14 000 TUILES DE CENDRE, c'est-à-dire une tous les dix-neuf écrans. On pouvait traverser
+   * la cendrière d'un bout à l'autre sans en voir une seule. Ce n'était pas de la rareté, c'était
+   * une absence.
+   *
+   * À 48 / 0,80 : **15 bouches au jour 120, 69 au jour 240**, une pour ~3 200 tuiles — une tous
+   * les quatre écrans et demi. Et la promesse d'origine tient TOUJOURS, parce qu'elle a cessé
+   * d'être un espoir : l'écart minimal est désormais DÉRIVÉ (voir `JEU`) et mesuré à 38-44 tuiles
+   * à tous les horizons, soit plus d'un écran. Elles restent des repères ; elles ne sont plus
+   * un mythe.
+   *
+   * ⚠ C'EST AUSSI UN CHANGEMENT DE DIFFICULTÉ, PAS SEULEMENT DE DÉCOR — voir `FROID`. La part du
+   * cœur de la cendre qui tombe sous un souffle froid passe de ~1 % à ~5 % (rayon 7, jour 240).
+   * C'est borné, mais ce sont autant de puits de froid qui réveillent les Cendreux en été.
+   *
+   * ⚠ ET LA DENSITÉ SE PAIE EN RÉGULARITÉ, PAS EN ESPACEMENT. C'est le choix qui a été fait ici,
+   * et il est explicite : voir `JEU`.
    */
-  MAILLE: 56,
+  MAILLE: 48,
+  PART: 0.8,
 
   /**
-   * LA PART DES MAILLES QUI EN PORTENT UNE. À 0,30, une maille sur trois — les deux autres
-   * laissent la terre nue, qui est le sujet. *Ordre de grandeur, à regarder sur une carte.*
+   * LA PART DE LA MAILLE OÙ LA BOUCHE PEUT TOMBER — et c'est ELLE qui tient la promesse « une
+   * seule à la fois », pas la maille.
+   *
+   * Le tirage court sur la fraction CENTRALE de la maille, donc deux voisines de mailles
+   * adjacentes ne peuvent jamais s'approcher à moins de `MAILLE × (1 − JEU)` : le plancher
+   * d'écart est DÉRIVÉ, il n'est pas espéré. À `0,25`, il vaut 36 tuiles sur une maille de 48 —
+   * exactement la largeur d'un écran (`ECRAN_TUILES`), et c'est de là que le nombre vient.
+   *
+   * ⚠ C'EST LE PRIX DE LA DENSITÉ, ET IL FAUT LE DIRE : resserrer le jeu REND LE SEMIS PLUS
+   * RÉGULIER. Il valait 0,50 quand les bouches étaient quatre fois plus rares — on pouvait
+   * s'offrir du désordre parce que deux voisines ne se rencontraient jamais. À densité haute, le
+   * désordre et l'espacement se disputent la même maille : on garde l'ESPACEMENT (qui est la
+   * promesse) et on paie en régularité. Ce qui casse la grille, ce sont les 20 % de mailles
+   * VIDES (`PART`) — sans elles, ce serait un treillis.
    */
-  PART: 0.3,
+  JEU: 0.25,
+
+  /** La largeur d'un écran, en tuiles — l'étalon de l'espacement (mémoire : un rayon se juge
+   *  contre le CADRE, jamais contre l'art). Il ne sert qu'à dériver et à garder `JEU`. */
+  ECRAN_TUILES: 36,
 
   /**
    * LE RAYON DE SON SOUFFLE, en tuiles — ce que le froid et la fumée couvrent. 7 : on la voit
@@ -82,18 +123,49 @@ export const FUMEROLLE = {
  * dans la maille. Sans le second tirage, toutes les fumerolles tomberaient sur la même fraction de
  * leur maille et le semis se lirait comme une grille.
  */
-function bouchePotentielle(seed: number, mx: number, my: number): { tx: number; ty: number } | null {
+function placeDeLaBouche(seed: number, mx: number, my: number): { tx: number; ty: number } {
   const sel = (seed ^ 0x46554d45) | 0 /* 'FUME' */
-  if (hash2(mx, my, sel) >= FUMEROLLE.PART) return null
   const M = FUMEROLLE.MAILLE
-  // ⚠ LE TIRAGE EST BORNÉ AU CŒUR DE LA MAILLE (le quart central de chaque côté). Sans ça, deux
-  //   bouches de mailles voisines peuvent tomber de part et d'autre de leur bord commun : MESURÉ,
-  //   des voisines à 21 tuiles, soit deux fumerolles dans le MÊME écran — la promesse « un lieu,
-  //   pas une texture » tombait sur la queue de la distribution. Borné, l'écart minimal vaut la
-  //   demi-maille (28 tuiles), et le semis reste irrégulier au regard.
-  const dx = Math.floor(M * 0.25 + hash2(mx, my, (sel ^ 0x1111) | 0) * M * 0.5)
-  const dy = Math.floor(M * 0.25 + hash2(mx, my, (sel ^ 0x2222) | 0) * M * 0.5)
+  // ⚠ LE TIRAGE EST BORNÉ AU CŒUR DE LA MAILLE. Sans ça, deux bouches de mailles voisines peuvent
+  //   tomber de part et d'autre de leur bord commun : MESURÉ, des voisines à 21 tuiles, soit deux
+  //   fumerolles dans le MÊME écran — la promesse « un lieu, pas une texture » tombait sur la
+  //   queue de la distribution. Borné à `JEU`, l'écart minimal vaut `M × (1 − JEU)` : il est
+  //   DÉRIVÉ de la maille, et il ne peut pas se démentir quand la maille bouge.
+  const J = FUMEROLLE.JEU
+  const bord = M * ((1 - J) / 2)
+  const dx = Math.floor(bord + hash2(mx, my, (sel ^ 0x1111) | 0) * M * J)
+  const dy = Math.floor(bord + hash2(mx, my, (sel ^ 0x2222) | 0) * M * J)
   return { tx: mx * M + dx, ty: my * M + dy }
+}
+
+/**
+ * ═══ …ET CETTE MAILLE EN PORTE-T-ELLE UNE ? — LE CARACTÈRE DU FOYER PÈSE ICI (`cendre.md` R21) ═══
+ *
+ * La PLACE se tire d'abord, la PART se teste ensuite : il faut savoir QUELLE fosse tient la
+ * tuile pour savoir de combien sa part est multipliée. À caractère neutre le tirage est
+ * identique au précédent, bit pour bit — la Salée sature à 1 (aucune maille vide), la Gueule
+ * tombe à 0,24.
+ *
+ * ⚠ **LE CARACTÈRE MODULE LA PART, JAMAIS LA PORTE.** Le seuil d'éveil reste
+ * `auCoeurDeLaCendre` chez l'appelant : une Gueule fume peu, elle ne fume pas ailleurs.
+ *
+ * ⚠ **ET IL SE LIT SUR LE TERRITOIRE STATIQUE (`foyerDeLaTuile`), JAMAIS SUR LE FRONT** — voir
+ * `cendre.ts` : gater sur « la cendre est-elle arrivée » faisait se REFERMER des bouches déjà
+ * ouvertes, en laissant leur nœud derrière.
+ */
+function bouchePotentielle(
+  map: WorldMap,
+  seed: number,
+  mx: number,
+  my: number,
+): { tx: number; ty: number } | null {
+  const b = placeDeLaBouche(seed, mx, my)
+  const k = foyerDeLaTuile(map, b.tx, b.ty)
+  const f = cadranDeFoyer(caracteresDeLaCarte(map, seed), k, 'fumerolles')
+  const part = FUMEROLLE.PART * f
+  const sel = (seed ^ 0x46554d45) | 0 /* 'FUME' */
+  if (hash2(mx, my, sel) >= (part > 1 ? 1 : part)) return null
+  return b
 }
 
 /** Cette tuile PEUT-elle porter une fumerolle ? Il faut un sol de cendre, et qu'on puisse y venir. */
@@ -129,7 +201,7 @@ export function fumerollesAutour(
   const m1y = Math.floor((cy + rayon) / M)
   for (let my = m0y; my <= m1y; my++) {
     for (let mx = m0x; mx <= m1x; mx++) {
-      const b = bouchePotentielle(seed, mx, my)
+      const b = bouchePotentielle(map, seed, mx, my)
       if (!b) continue
       if (!solTenable(map, b.tx, b.ty)) continue
       // ⚠ AU CŒUR SEULEMENT : une fumerolle sur la frange fumerait sur un sol encore tiède, et le
@@ -150,7 +222,7 @@ export function fumerolleIci(
   seed: number,
 ): boolean {
   const M = FUMEROLLE.MAILLE
-  const b = bouchePotentielle(seed, Math.floor(tx / M), Math.floor(ty / M))
+  const b = bouchePotentielle(map, seed, Math.floor(tx / M), Math.floor(ty / M))
   if (!b || b.tx !== tx || b.ty !== ty) return false
   return solTenable(map, tx, ty) && auCoeurDeLaCendre(map, tx, ty, avancees, seed)
 }
@@ -181,7 +253,10 @@ export function froidDeFumerolle(
     const dy = b.ty + 0.5 - y
     const d = Math.sqrt(dx * dx + dy * dy)
     if (d >= R) continue
-    const f = FUMEROLLE.FROID * (1 - d / R)
+    // LE SOUFFLE SUIT LE CARACTÈRE DE SA FOSSE (R21) — la Muette souffle 40 % plus froid.
+    const k = foyerDeLaTuile(map, b.tx, b.ty)
+    const froid = FUMEROLLE.FROID * cadranDeFoyer(caracteresDeLaCarte(map, seed), k, 'froid')
+    const f = froid * (1 - d / R)
     if (f > pire) pire = f
   }
   return pire
@@ -203,7 +278,7 @@ export function toutesLesFumerolles(
   const my1 = Math.floor((map.height - 1) / M)
   for (let my = 0; my <= my1; my++) {
     for (let mx = 0; mx <= mx1; mx++) {
-      const b = bouchePotentielle(seed, mx, my)
+      const b = bouchePotentielle(map, seed, mx, my)
       if (!b) continue
       if (b.tx >= map.width || b.ty >= map.height) continue
       if (!solTenable(map, b.tx, b.ty)) continue
@@ -260,7 +335,12 @@ export function ouvrirLesFumerolles(
     // Une tuile ne porte qu'un nœud : si quelque chose occupe déjà la bouche, elle attendra que
     // la cendre l'ait fait tomber (R13). Rien ne se perd, la fumerolle s'ouvrira plus tard.
     if (occupees.has(b.ty * map.width + b.tx)) continue
-    nodes.push({ id, type: 'fumerolle', tx: b.tx, ty: b.ty, stock, regrowAt: 0 })
+    // LE STOCK SUIT LE CARACTÈRE DE SA FOSSE (R21) — la Salée rend trois fois plus de sel. C'est
+    // LÀ que sa promesse se tient : `PART` valant déjà 0,80, la multiplier ne rendait que +25 %
+    // de bouches, tandis que `SEL_STOCK` a toute la place qu'il faut.
+    const k = foyerDeLaTuile(map, b.tx, b.ty)
+    const sel = Math.round(stock * cadranDeFoyer(caracteresDeLaCarte(map, seed), k, 'sel'))
+    nodes.push({ id, type: 'fumerolle', tx: b.tx, ty: b.ty, stock: sel, regrowAt: 0 })
     ouvertes += 1
   }
   return ouvertes

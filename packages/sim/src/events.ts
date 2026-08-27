@@ -72,6 +72,14 @@ export type SimEvent =
   // ou il se rallume quand on le nourrit. Portés par la STRUCTURE (pas un village).
   | { type: 'fire_extinguished'; tick: number; structureId: number }
   | { type: 'fire_relit'; tick: number; structureId: number }
+  /**
+   * LA TORCHE PREND AU FOYER, puis MEURT (spec `torche.md`). Deux faits discrets, et le
+   * second est celui qui compte : c'est l'instant où la nuit se referme sur le joueur loin
+   * de chez lui. La chronique et l'encyclopédie s'en saisiront s'il y a lieu ; le client, lui,
+   * en fait un bandeau et un son.
+   */
+  | { type: 'torche_allumee'; tick: number; entityId: number; structureId: number }
+  | { type: 'torche_eteinte'; tick: number; entityId: number }
   // LA CUISSON AU SLOT (spec feu-station S25) : un aliment est sorti cuit du slot d'une station.
   | { type: 'meat_cooked'; tick: number; structureId: number; item: import('./items').ItemId }
   /** LE VILLAGE EST TOMBÉ (V1-12/V2-20) : son Feu abattu (à sec), il devient une RUINE
@@ -107,7 +115,17 @@ export type SimEvent =
   // `clean` : le coup a porté DANS LE VERT (abattage à maîtrise, spec recolte-maitrise
   // A4) — l'événement porte l'info, la chronique et le retour de frappe la lisent
   // sans deviner. Absent/`false` = coup baseline (toute récolte instantanée l'est).
-  | { type: 'resource_harvested'; tick: number; entityId: number; nodeId: number; item: ItemId; count: number; clean?: boolean }
+  // `nodeType` : DE QUOI ON L'A TIRÉ (2026-08-27) — le même remède que sur `node_depleted`
+  // ci-dessous, et pour la même raison. `item` ne suffit PAS à dire le GESTE : la branche au
+  // sol et le tronc rendent tous deux `wood`, la pierre au sol et le rocher tous deux `stone`,
+  // or on se BAISSE dans un cas et on frappe dans l'autre. Router un son sur l'objet ferait
+  // sonner la hache quand on ramasse un bout de bois — pendant très exactement les dix minutes
+  // de glanage qui amorcent toute la rampe d'outils.
+  //   OPTIONNEL, et il faut qu'il le reste : la prise de pêche et la trouvaille ferrée émettent
+  // ce fait SANS nœud (`nodeId: -1`, la ligne rentre d'une eau qui n'a plus de coin). Absent =
+  // « quelque chose est entré au sac, on ne sait pas de quelle matière » — un régime honnête,
+  // qui a sa propre voix côté client.
+  | { type: 'resource_harvested'; tick: number; entityId: number; nodeId: number; nodeType?: NodeType; item: ItemId; count: number; clean?: boolean }
   // IL DIT CE QUI MEURT, pas seulement QUE quelque chose meurt (2026-07-29). L'événement ne
   // portait que l'`id`, et ses consommateurs ne pouvaient donc rien en faire de MATÉRIEL :
   // un arbre qui s'abat, un filon qui s'effondre et un buisson qu'on vide ne sonnent pas

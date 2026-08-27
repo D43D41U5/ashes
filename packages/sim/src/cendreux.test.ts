@@ -24,7 +24,7 @@ const coeurDeSaison = (phase: number): number => (phase - 1) * BALANCE.ACT_DAYS 
 const ARDEUR = coeurDeSaison(2)
 const GRAND_FROID = coeurDeSaison(4)
 /** Le tick du DÉBUT DE CYCLE du jour de saison voulu (patron du banc `nuits`) — l'heure qu'il
- *  y est, elle, se règle par `cycleOffset` : minuit à `cycleOffsetForStartHour(0)`, midi à 12. */
+ *  y est, elle, se règle par `cycleOffset` : minuit à `cycleOffsetForStartHour(0, 1)`, midi à 12. */
 const debutDuJour = (jour: number): number => {
   const t = (jour - 1) * TICKS_PER_SEASON_DAY
   return t - (t % TICKS_PER_CYCLE)
@@ -75,6 +75,15 @@ describe('type cendreux (fondation)', () => {
 function humanAt(state: SimState, x: number, y: number) {
   const id = spawnEntity(state, x, y)
   const e = state.entities.find((en) => en.id === id)!
+  return e
+}
+
+/** Un homme, HACHE EN MAIN — depuis `glanage.md` G1, l'arbre ne cède plus aux mains nues, et
+ *  A39 ne parlerait pas du « coup d'outil » si aucun outil ne partait. */
+function bucheronAt(state: SimState, x: number, y: number) {
+  const e = humanAt(state, x, y)
+  grantItems(state, e.id, { crude_axe: 1 })
+  e.activeSlot = e.inventory.findIndex((sl) => sl !== null && sl.item === 'crude_axe')
   return e
 }
 
@@ -208,7 +217,7 @@ describe('IA cendreux (jour/nuit)', () => {
     // midi — mais marcher DESSUS la réveille toujours (le plancher existe pour ça).
     // MIDI DE L'ARDEUR, et rien d'autre : l'aube porte encore le plein froid nocturne
     // (`partDeNuit`), et l'Éclosion s'ouvre GELÉE (S4) — le seul vrai chaud est celui de l'été.
-    const state = createSim(1, { cycleOffset: cycleOffsetForStartHour(12), calendarScale: 1 })
+    const state = createSim(1, { cycleOffset: cycleOffsetForStartHour(12, 1), calendarScale: 1 })
     state.tick = debutDuJour(ARDEUR) // le cycle est calé sur midi : ce tick EST midi
     const id = spawnMonster(state, 'cendreux', 5, 5)
     const monster = state.monsters.find((m) => m.entityId === id)!
@@ -218,7 +227,7 @@ describe('IA cendreux (jour/nuit)', () => {
     expect(monster.targetId).toBeNull()
   })
   it('…et dans le froid qui mord (nuit du Grand Froid), il chasse à pleine vue (chemin posé)', () => {
-    const state = createSim(1, { cycleOffset: cycleOffsetForStartHour(0), calendarScale: 1 })
+    const state = createSim(1, { cycleOffset: cycleOffsetForStartHour(0, 1), calendarScale: 1 })
     state.tick = debutDuJour(GRAND_FROID) // plaine de nuit à −16 °C → éveil 1
     const id = spawnMonster(state, 'cendreux', 5, 5)
     const monster = state.monsters.find((m) => m.entityId === id)!
@@ -250,7 +259,7 @@ describe('IA cendreux (jour/nuit)', () => {
     // Une nuit TIÈDE d'Ardeur laisse désormais l'homme tranquille à trois tuiles : ce n'est
     // plus le bug du bouclier (nearestWarmth battait l'homme), c'est la torpeur — et le
     // monstre paiera sa venue autrement (il boira le feu, décision ⑯).
-    const state = createSim(1, { cycleOffset: cycleOffsetForStartHour(0), calendarScale: 1 })
+    const state = createSim(1, { cycleOffset: cycleOffsetForStartHour(0, 1), calendarScale: 1 })
     state.tick = debutDuJour(GRAND_FROID) // cœur du Grand Froid, à minuit (patron du banc `nuits`)
     state.structures.push({ type: 'fire', tx: 15, ty: 15, villageId: 0 } as never)
     const proie = humanAt(state, 17.5, 15.5) // DERRIÈRE le feu, vu du Cendreux
@@ -315,7 +324,7 @@ describe('la nuit bascule d\'espèce (R11) — la tension croissante', () => {
     for (let n = 0; n < combien; n++) {
       const state = createSim(100 + n, {
         map: createEmptyMap(64, 64, TERRAIN_GRASS),
-        cycleOffset: cycleOffsetForStartHour(0), // minuit
+        cycleOffset: cycleOffsetForStartHour(0, 1), // minuit
         calendarScale: 1,
       })
       // On se place au jour de saison voulu sans le jouer : le calendrier dérive du tick.
@@ -597,7 +606,7 @@ describe('tuer un Cendreux : 2 coups d\'arme basique, cadavre + loot redéposé 
 describe('A34 — le Cendreux levé survit au coup de celui qui l\'a fait', () => {
   it('dans un tick COMPLET, le levé naît sous le coup de son meurtrier et n\'en meurt PAS', () => {
     const state = createSim(1)
-    state.cycleOffset = cycleOffsetForStartHour(0) // minuit : le Cendreux ne cherche pas d'abri
+    state.cycleOffset = cycleOffsetForStartHour(0, 1) // minuit : le Cendreux ne cherche pas d'abri
 
     // Une victime seule, loin de tout feu — les trois conditions de `willRiseAsCendreux`.
     const victime = humanAt(state, 40, 40)
@@ -673,7 +682,7 @@ describe('A35 — l\'alliance des Cendreux : par espèce, et rien de plus', () =
   /** Pose deux cibles dans le même arc, frappe depuis `attaquant`, et rend leurs PV. */
   function coupSurDeuxCibles(attaquantEstCendreux: boolean): { cendreux: number; vivant: number } {
     const state = createSim(1)
-    state.cycleOffset = cycleOffsetForStartHour(0)
+    state.cycleOffset = cycleOffsetForStartHour(0, 1)
     const def = MONSTER_DEFS.cendreux
     // Les deux cibles se touchent presque, droit devant l'attaquant : l'arc les prend toutes deux.
     const cibleCendreuxId = spawnMonster(state, 'cendreux', 41, 39.7)
@@ -730,7 +739,7 @@ describe('les sens honnêtes (R24-R25)', () => {
   function nuitDuGrandFroid(): SimState {
     const state = createSim(1, {
       map: createEmptyMap(160, 160, TERRAIN_GRASS),
-      cycleOffset: cycleOffsetForStartHour(0),
+      cycleOffset: cycleOffsetForStartHour(0, 1),
       calendarScale: 1,
     })
     state.tick = debutDuJour(GRAND_FROID) // aligné à minuit
@@ -804,7 +813,7 @@ describe('les sens honnêtes (R24-R25)', () => {
     const chaud = (dist: number): number | null => {
       const state = createSim(1, {
         map: createEmptyMap(160, 160, TERRAIN_GRASS),
-        cycleOffset: cycleOffsetForStartHour(12),
+        cycleOffset: cycleOffsetForStartHour(12, 1),
         calendarScale: 1,
       })
       state.tick = debutDuJour(ARDEUR) // le cycle est calé sur midi : ce tick EST midi
@@ -824,7 +833,7 @@ describe('les sens honnêtes (R24-R25)', () => {
     const state = nuitDuGrandFroid()
     const id = spawnMonster(state, 'cendreux', 26.5, 15.5)
     const monster = state.monsters.find((m) => m.entityId === id)!
-    const bucheron = humanAt(state, 20.5, 16.5)
+    const bucheron = bucheronAt(state, 20.5, 16.5)
     state.nodes.push({ id: 9001, type: 'tree', tx: 20, ty: 15, stock: 5, regrowAt: 0 })
     tick(state, [{ entityId: bucheron.id, dx: 0, dy: 0, action: { type: 'harvest', nodeId: 9001 } }])
     expect(monster.lastSeenX).toBe(20.5) // le point d'IMPACT, pas le bûcheron
@@ -836,13 +845,13 @@ describe('les sens honnêtes (R24-R25)', () => {
     // l'aube y porte tout le froid de la nuit.
     const jour = createSim(1, {
       map: createEmptyMap(160, 160, TERRAIN_GRASS),
-      cycleOffset: cycleOffsetForStartHour(12),
+      cycleOffset: cycleOffsetForStartHour(12, 1),
       calendarScale: 1,
     })
     jour.tick = debutDuJour(ARDEUR)
     const id2 = spawnMonster(jour, 'cendreux', 26.5, 15.5)
     const monster2 = jour.monsters.find((m) => m.entityId === id2)!
-    const b2 = humanAt(jour, 20.5, 16.5)
+    const b2 = bucheronAt(jour, 20.5, 16.5)
     jour.nodes.push({ id: 9001, type: 'tree', tx: 20, ty: 15, stock: 5, regrowAt: 0 })
     tick(jour, [{ entityId: b2.id, dx: 0, dy: 0, action: { type: 'harvest', nodeId: 9001 } }])
     expect(monster2.lastSeenX).toBeUndefined()
@@ -905,7 +914,7 @@ describe('le rampant (R26)', () => {
   function nuitDuGrandFroid(): SimState {
     const state = createSim(1, {
       map: createEmptyMap(160, 160, TERRAIN_GRASS),
-      cycleOffset: cycleOffsetForStartHour(0),
+      cycleOffset: cycleOffsetForStartHour(0, 1),
       calendarScale: 1,
     })
     state.tick = debutDuJour(GRAND_FROID)
@@ -1024,7 +1033,7 @@ describe('la mémoire extrapole (R28)', () => {
   function nuitDuGrandFroid(): SimState {
     const state = createSim(1, {
       map: createEmptyMap(160, 160, TERRAIN_GRASS),
-      cycleOffset: cycleOffsetForStartHour(0),
+      cycleOffset: cycleOffsetForStartHour(0, 1),
       calendarScale: 1,
     })
     state.tick = debutDuJour(GRAND_FROID)

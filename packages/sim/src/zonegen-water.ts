@@ -29,10 +29,10 @@
  * Pur et déterministe : `hash2`, et `+ - * / sqrt floor ceil round abs sign min max` uniquement
  * (invariant n°2).
  */
-import { TERRAINS, TERRAIN_DEEP_WATER, TERRAIN_MARSH, TERRAIN_SHALLOW_WATER } from './balance'
+import { TERRAINS, TERRAIN_BOULDERS, TERRAIN_DEEP_WATER, TERRAIN_MARSH, TERRAIN_PEAT_BOG, TERRAIN_REED_MARSH, TERRAIN_SCREE, TERRAIN_SHALLOW_WATER } from './balance'
 import { isWater } from './map'
-import { hash2 } from './noise'
-import { CREUX, altitudeAt, celluleDe, type Creux } from './racine-relief'
+import { fbm2, hash2 } from './noise'
+import { CREUX, ROCHE, altitudeAt, celluleDe, familleDeCellule, lireLeChampAt, seuilParQuantile, type Creux } from './racine-relief'
 import type { GrapheZones } from './zonegraph'
 
 /**
@@ -264,8 +264,277 @@ export function paintWaterRacine(
   const riviere = tracerLaRiviere(terrain, zone, g, width, height, s, lacs, eaux, creux)
   const chenaux: number[] = []
   relierLesLacs(terrain, zone, racineId, width, height, lacs, eaux, creux, horsSeuils, chenaux)
+  // LE LAPIAZ puis LES RÉSURGENCES — la face sèche et la face humide du même karst. Avant la
+  // frange de marais, exprès : une source reçoit ses joncs comme n'importe quelle eau, et rien
+  // dans le monde ne dit qu'elle est d'une autre nature.
+  poserLesLapiaz(terrain, zone, racineId, width, height, bordure, creux, s)
   frangeDeMarais(terrain, zone, racineId, width, height, s, eaux)
+  // LES RÉSURGENCES EN DERNIER, DONC SANS FRANGE DE MARAIS — et ce n'est pas un détail d'ordre.
+  // ① Une source karstique est de l'eau CLAIRE qui sort de la roche, pas une vasque de boue :
+  //    lui coller des joncs serait faux. ② Et la garde A11 l'a exigé : la frange des ~35 mares
+  //    inversait le rang à l'eau au bout mouillé (seed 7 : marais 5,28 > roselière 4,83), en
+  //    diluant les deux SEULS terrains du T0 qui savent où est l'eau. Les servir en dernier
+  //    règle les deux d'un coup, et `eaux` n'a alors plus de lecteur — la source ne s'y ajoute
+  //    donc pas.
+  poserLesResurgences(terrain, zone, racineId, width, height, bordure, creux, horsSeuils)
   return { riviere, chenaux }
+}
+
+/**
+ * ═══ LE RÉGLAGE DU LAPIAZ — il se règle EN REGARDANT UNE CARTE, donc il vit ici ═══
+ *
+ * (Retour d'Alexis, 2026-08-27 : *« les biomes scree et boulders sont trop droits (des gros
+ * chunks), il faudrait que ça se rapproche de la forme des autres biomes. »* — MESURÉ avant
+ * d'écrire une ligne, seed 2026, monde joué : la caillasse sortait en **13 amas pour 39 760
+ * tuiles**, dont un de 16 768, avec **91,8 % de ses segments de bord longs de huit tuiles ou
+ * plus** ; les autres biomes du pays sont à 0,7-1,5 % — herbe 1,3 %, forêt 1,5 %, lande 0,7 %.
+ * La cause tenait en une ligne : le lapiaz décidait PAR CELLULE de motif et peignait ses 64
+ * tuiles d'un bloc, quand la végétation de la Racine décide PAR TUILE — `vegetationAt`, la
+ * lecture molle de `sol-dessine.md` R1. Le minéral était le seul biome du pays resté au carré.)
+ */
+const LAPIAZ = {
+  /** L'échelle du moucheté, en tuiles — celle des taches d'une palette de zone. */
+  ECHELLE: 60,
+  /** Au-dessus : de l'éboulis. Sous : de la roche nue. ~35 % d'éboulis — la roche domine. */
+  SEUIL_EBOULIS: 0.54,
+  /**
+   * L'amplitude du grain du CONTOUR (× (fbm − 0,5)), en unités des champs de roche et
+   * d'altitude — les deux vivent dans [0,1], donc leurs marges se comparent sans conversion.
+   *
+   * C'est LUI qui déchiquette le bord : sans lui, la lecture bilinéaire seule rendrait une
+   * hyperbole entre quatre centres de cellule — lisse, et toujours pas la forme d'un pierrier.
+   * Le même rôle exactement que `CREUX.GRAIN_TUILE_AMPLITUDE` pour ce qui pousse. CALIBRÉ à la
+   * mesure (segments de bord ≥ 8 tuiles, cible : le régime des autres biomes).
+   */
+  GRAIN_CONTOUR: 0.055,
+  /**
+   * L'ÉPAISSEUR DE LA FRANGE D'ÉBOULIS, en unités de champ — la marge sous laquelle on est
+   * encore sur la PENTE de la doline, pas dans son fond.
+   *
+   * Elle remplace le « bord » d'avant, qui était `la cellule touche une non-cuvette` : un liseré
+   * d'exactement un motif de large, donc un contour dessiné. Ici la frange est une BANDE DE
+   * NIVEAU du même champ que le reste — elle s'épaissit là où la doline est plate et se pince là
+   * où elle plonge. Le bord cesse d'être un trait pour devenir une pente.
+   */
+  FRANGE: 0.022,
+} as const
+
+/**
+ * LE PAYS MOUILLÉ — eau, marais, roselière, tourbière.
+ *
+ * ⚠ NI LE LAPIAZ NI LA RÉSURGENCE N'Y MORDENT, et c'est une garde qui l'a exigé. Le marais et la
+ * roselière sont les DEUX SEULS terrains du T0 qui savent où est l'eau (ils en dérivent), et A11
+ * affirme leur rang : `d(marais) < d(roselière)`. Les repeindre, même de loin, dilue les deux
+ * mesures et inverse le rang (seed 7, mesuré : marais 5,52 contre roselière 4,83). C'est aussi
+ * le bon sens du terrain : une doline qui porte une tourbière n'est pas un pavement de roche, et
+ * une source ne sort pas au milieu d'une roselière.
+ */
+function estMouille(t: number): boolean {
+  return isWater(t) || t === TERRAIN_MARSH || t === TERRAIN_REED_MARSH || t === TERRAIN_PEAT_BOG
+}
+
+/**
+ * ═══ LE LAPIAZ — la cuvette calcaire qui ne s'est pas remplie (spec `roche-mere.md` R6) ═══
+ *
+ * Le karst (R4) retire l'eau des cuvettes calcaires. Ce qui reste n'est pas un TROU dans la
+ * carte : c'est un pavement de roche nue — une doline. On le peint donc, et avec deux terrains
+ * qui **existent, sont dessinés, et que le monde joué ne posait jamais** : mesuré avant ce
+ * chantier, `boulders` = **0,00 %** de la carte et `scree` = **0,12 %**. C'est le seul endroit
+ * où la roche-mère crée un paysage qui n'existait pas du tout — **un biome minéral MARCHABLE au
+ * milieu du pré**, sans un id de terrain neuf et sans une ressource neuve (contrainte d'Alexis
+ * du 2026-08-26).
+ *
+ * ⚠ **IL RESTE MARCHABLE, ET C'EST CE QUI REND A13 GRATUIT.** `boulders` (0,6) et `scree` sont
+ * lents, jamais bloquants : assécher n'enferme personne, et « la Racine marchable reste d'un
+ * seul tenant » tient par construction — la garde n'a rien à réparer.
+ *
+ * La même prémisse que les lacs (`altLarge < seuilBassin`, cellule propre), la roche en plus, et
+ * l'eau en moins. Aucun tirage : la géologie décide seule.
+ */
+function poserLesLapiaz(
+  terrain: number[],
+  zone: Int32Array,
+  racineId: number,
+  width: number,
+  height: number,
+  bordure: number,
+  creux: Creux | null,
+  sel: number,
+): void {
+  if (!creux) return
+  const n = creux.cols * creux.rows
+
+  // ── ① LE CHAMP CONTINU, par cellule : « de combien suis-je DANS la doline calcaire ? »
+  //
+  // Deux marges, la plus faible fait la loi (`min`) : on est dans un lapiaz quand on est à la
+  // fois dans le calcaire ET sous le seuil du bassin. Négatif dehors, et d'autant plus négatif
+  // qu'on s'en éloigne — c'est cette PENTE que la lecture molle interpole, et c'est elle qui
+  // remplace le tout-ou-rien d'un masque de cellules.
+  const marge = new Float64Array(n)
+  for (let k = 0; k < n; k++) {
+    marge[k] = Math.min(creux.seuilCalcaire - creux.roche[k]!, creux.seuilBassin - creux.altLarge[k]!)
+  }
+  const selContour = (sel ^ 0x4c50424f) | 0 /* 'LPBO' */
+  const selMouchet = (sel ^ 0x4c415049) | 0 /* 'LAPI' */
+
+  // ── ② LA PEINTURE, PAR TUILE — mais LE TRI SE FAIT PAR CELLULE, et c'est ce qui la rend
+  //    gratuite. Descendre à la tuile faisait passer la doline de 12 000 verdicts à 780 000 :
+  //    A13 (« une carte de production naît en moins de 15 s ») est une garde MURALE, elle ne
+  //    pardonne pas un facteur soixante.
+  //
+  //    LE MAJORANT EST EXACT, pas heuristique — donc l'élagage ne peut pas changer la carte.
+  //    `lireLeChampAt` rend une interpolation bilinéaire des quatre cellules qui entourent la
+  //    tuile, plus `(fbm2 − 0,5) × amplitude`. Une convexe est bornée par son max, et `fbm2` par
+  //    1 : toute tuile de la cellule (mx,my) lit dans le voisinage 3×3 de cette cellule, donc sa
+  //    valeur est **≤ max(marge sur le 3×3) + amplitude/2**. Si ce majorant est ≤ 0, aucune
+  //    tuile du carré ne peut être un lapiaz — on saute les 64 sans les regarder.
+  const plafond = LAPIAZ.GRAIN_CONTOUR / 2
+  const MOT: number = CREUX.MOTIF
+  for (let my = 0; my < creux.rows; my++) {
+    for (let mx = 0; mx < creux.cols; mx++) {
+      let hautVoisin = -Infinity
+      for (let dy = -1; dy <= 1; dy++) {
+        const ky = my + dy
+        if (ky < 0 || ky >= creux.rows) continue
+        for (let dx = -1; dx <= 1; dx++) {
+          const kx = mx + dx
+          if (kx < 0 || kx >= creux.cols) continue
+          const v = marge[ky * creux.cols + kx]!
+          if (v > hautVoisin) hautVoisin = v
+        }
+      }
+      if (hautVoisin + plafond <= 0) continue
+
+      // (Les annotations `: number` ne sont pas décoratives : sans elles, `tsc` bute sur
+      //  TS7022 dans cette fonction — l'inférence circule entre les bornes de boucle et l'index.)
+      const tx0: number = (creux.mx0 + mx) * MOT
+      const ty0: number = (creux.my0 + my) * MOT
+      for (let dy = 0; dy < MOT; dy++) {
+        const y: number = ty0 + dy
+        if (y < bordure || y >= height - bordure) continue
+        for (let dx = 0; dx < MOT; dx++) {
+          const x = tx0 + dx
+          if (x < bordure || x >= width - bordure) continue
+          const i = y * width + x
+          // La Racine, sèche et marchable : une doline ne mord ni sur l'eau déjà peinte (un
+          // ruisseau peut TRAVERSER le calcaire, R5) ni sur une autre zone, ni sur la roche du
+          // mur. Les vétos DURS se testent À LA TUILE — et c'est plus juste que l'ancien « les
+          // 64 tuiles du motif sont propres », qui refusait un motif entier pour une seule tuile
+          // de ruisseau et taillait donc des angles droits dans la doline.
+          if (zone[i] !== racineId) continue
+          const t = terrain[i]!
+          if (TERRAINS[t]?.walkable !== true || estMouille(t)) continue
+          const v = lireLeChampAt(creux, marge, x, y, selContour, LAPIAZ.GRAIN_CONTOUR)
+          if (v <= 0) continue
+          // LE CŒUR EST EN BLOCS, LA PENTE EN ÉBOULIS — la grammaire du lac (cœur profond ceint
+          // de haut-fond), retournée. Et le cœur est MOUCHETÉ, pas un aplat : sans ce
+          // rebattement, la doline sortait en une masse grise uniforme cernée d'un liseré — une
+          // forme DESSINÉE au milieu d'un monde dont chaque biome est un mélange.
+          const eboulis = v < LAPIAZ.FRANGE || fbm2(x, y, LAPIAZ.ECHELLE, selMouchet) > LAPIAZ.SEUIL_EBOULIS
+          terrain[i] = eboulis ? TERRAIN_SCREE : TERRAIN_BOULDERS
+        }
+      }
+    }
+  }
+}
+
+/**
+ * ═══ LES RÉSURGENCES — ce que le calcaire avale ressort au CONTACT (spec `roche-mere.md` R7) ═══
+ *
+ * Ce n'est pas un semis de mares : c'est **le point où le bilan se referme**. Le karst (R4) prend
+ * l'eau des cuvettes calcaires ; elle reparaît là où la roche imperméable l'arrête — donc **dans
+ * le pays sec**, précisément là où la vallée n'a rien.
+ *
+ * ⚠ **C'EST ELLE QUI PORTE TOUT LE GAIN DE FAUNE, PAS LE KARST.** Mesuré avant d'écrire une
+ * ligne : assécher le calcaire, SEUL, rend des coins de chasse **plats à −1** (5→5 · 6→5 · 6→6 ·
+ * 5→4 · 6→6 sur cinq seeds). Le goulot n'est pas la quantité d'eau — **91,7 % de toute l'eau de
+ * la vallée tient dans 7 corps** — mais sa DISTRIBUTION contre le treillis de Poisson à 200
+ * tuiles du semis des coins : 23 à 26 points sont tirés, 5 à 6 passent, et ce qui tue les autres
+ * est `FAUNA.GROUND_WATER_NEAR`. Sept lacs ne peuvent pas nourrir vingt-cinq points ; quarante
+ * adresses, si. Le karst n'est pas la CAUSE du gain — il en est la RAISON, et c'est ce qui
+ * sépare cette passe d'un saupoudrage de mares.
+ *
+ * ⚠ **UNE SOURCE EST DE L'EAU DORMANTE : la garde A16 vaut pour elle.** *Un seuil ne nourrit
+ * rien, pas même à boire* — elle passe donc par le MÊME `horsSeuils` que les lacs, sans quoi on
+ * rouvrirait par la petite porte le défaut que `MARGE_SEUIL` a fermé (une porte qui débouche sur
+ * une rive, et la sente sans où se poser).
+ *
+ * ÉLECTION DÉTERMINISTE, sans tirage : balayage row-major des cellules, on garde la première
+ * assez loin de toutes les précédentes. Pas de PRNG, pas de `hash2` — la géologie décide seule.
+ */
+function poserLesResurgences(
+  terrain: number[],
+  zone: Int32Array,
+  racineId: number,
+  width: number,
+  height: number,
+  bordure: number,
+  creux: Creux | null,
+  horsSeuils: Uint8Array,
+): void {
+  if (!creux) return
+  const M = CREUX.MOTIF
+  const gardees: { x: number; y: number }[] = []
+
+  // ⚠ **UNE SOURCE SORT AU PIED D'UNE PENTE, JAMAIS SUR UNE CRÊTE — et deux gardes l'ont exigé.**
+  // La première écriture n'imposait que le contact de roche. Les sources tombaient donc aussi sur
+  // les DOS SECS, qui sont précisément le pays que deux invariants tiennent pour sec :
+  //   · A14 — le pin de crête doit être à plus du TRIPLE de l'eau que le bosquet humide. Mesuré
+  //     après coup : **96 tuiles contre 118 exigées** (ratio tombé à 2,4). Le bois sec cessait
+  //     d'être sec, et la demande d'Alexis du 2026-07-29 (« loin des points d'eau ») avec lui.
+  //   · A11 — le rang à l'eau s'inversait au bout mouillé (seed 7 : marais 5,21 > roselière 4,83),
+  //     la frange de marais des sources brouillant les deux terrains qui SAVENT où est l'eau.
+  // Exiger que la cellule soit sous l'altitude MÉDIANE du pays règle les deux d'un coup, et ce
+  // n'est pas un rustine : une résurgence est un point BAS par définition — l'eau ne ressort pas
+  // en haut. ⚠ On ne peut pas lire `creux.hum` ici : l'humidité se compose à la passe 1.55, APRÈS
+  // l'eau. L'altitude, elle, est là depuis le socle.
+  const seuilBas = seuilParQuantile(creux.alt, creux.dedans, ROCHE.SOURCE_PART_BASSE, -0.5, 1.5)
+
+  for (let my = 1; my + 1 < creux.rows; my++) {
+    for (let mx = 1; mx + 1 < creux.cols; mx++) {
+      const k = my * creux.cols + mx
+      if (creux.dedans[k] !== 1 || horsSeuils[k] === 0) continue
+      if (creux.alt[k]! >= seuilBas) continue
+      // LE CONTACT, et il est pris du bon côté : la source sort de la roche IMPERMÉABLE, au pied
+      // du calcaire — jamais au milieu du plateau karstique, qui est justement ce qui ne retient
+      // rien. La cellule n'est donc PAS calcaire, et l'une de ses quatre voisines l'est.
+      if (familleDeCellule(creux, k) === -1) continue
+      const voisinCalcaire =
+        familleDeCellule(creux, k - 1) === -1 || familleDeCellule(creux, k + 1) === -1
+        || familleDeCellule(creux, k - creux.cols) === -1 || familleDeCellule(creux, k + creux.cols) === -1
+      if (!voisinCalcaire) continue
+
+      const cx = (creux.mx0 + mx) * M + M / 2
+      const cy = (creux.my0 + my) * M + M / 2
+      if (cx < bordure || cy < bordure || cx >= width - bordure || cy >= height - bordure) continue
+
+      let tropPres = false
+      for (const g of gardees) {
+        if (Math.max(Math.abs(g.x - cx), Math.abs(g.y - cy)) < ROCHE.SOURCE_ESPACEMENT) { tropPres = true; break }
+      }
+      if (tropPres) continue
+
+      // La mare : du HAUT-FOND seulement (marchable — la connexité tient par construction, et
+      // l'invariant de R45 n'a rien à garder puisqu'il n'y a pas de cœur profond).
+      const r = ROCHE.SOURCE_RAYON
+      let posees = 0
+      for (let dy = -r; dy <= r; dy++) {
+        for (let dx = -r; dx <= r; dx++) {
+          const tx = cx + dx
+          const ty = cy + dy
+          if (tx < 0 || ty < 0 || tx >= width || ty >= height) continue
+          const i = ty * width + tx
+          if (zone[i] !== racineId) continue
+          if (TERRAINS[terrain[i]!]?.walkable !== true || estMouille(terrain[i]!)) continue
+          terrain[i] = TERRAIN_SHALLOW_WATER
+          posees++
+        }
+      }
+      // Une source qui n'a pas pu poser une seule tuile n'est pas une source : elle ne prend pas
+      // sa place dans l'écart, sinon elle stériliserait 90 tuiles autour d'elle pour rien.
+      if (posees > 0) gardees.push({ x: cx, y: cy })
+    }
+  }
 }
 
 /**
@@ -325,6 +594,17 @@ function placerLacs(
   const inondable = (k: number): boolean => {
     if (propre[k] !== 1) return false
     if (horsSeuils[k] === 0) return false // un seuil ne nourrit rien, pas même à boire (A16)
+    // ═══ LE CALCAIRE N'INONDE PAS (spec `roche-mere.md` R4) ═══
+    //
+    // Une cuvette karstique ne retient rien : l'eau s'infiltre. Le lac ne DISPARAÎT pas pour
+    // autant — `candidats` est trié du plus creux au moins creux et l'on en prend `nLacs` :
+    // écarter le calcaire fait simplement DESCENDRE LA LISTE. Même compte, autres adresses.
+    // C'est là toute la différence avec « il y a moins d'eau » : il y en a autant, ailleurs.
+    //
+    // ⚠ LA RIVIÈRE, ELLE, EST EXEMPTE (R5) — mais elle ne passe pas par ici : son fil se trace
+    // dans sa propre passe, qui ne lit pas `inondable`. Un cours pérenne colmate son lit dans
+    // n'importe quelle roche, et §2 R5 promet qu'on peut LE SUIVRE du nord au sud.
+    if (familleDeCellule(creux, k) === -1) return false
     const kx = k % creux.cols
     const ky = (k - kx) / creux.cols
     if (kx === 0 || ky === 0 || kx + 1 >= creux.cols || ky + 1 >= creux.rows) return false

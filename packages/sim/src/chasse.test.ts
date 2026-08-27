@@ -38,7 +38,7 @@ function makeMap(): WorldMap {
  * nul = pas de vent, jamais) et on le mesure dans son banc à lui (A18).
  */
 function makeSim(hour = 12, wind: { x: number; y: number } = { x: 0, y: 0 }): SimState {
-  const sim = createSim(1234, { map: makeMap(), faunaCap: 0, worldEvents: false, cycleOffset: cycleOffsetForStartHour(hour) })
+  const sim = createSim(1234, { map: makeMap(), faunaCap: 0, worldEvents: false, cycleOffset: cycleOffsetForStartHour(hour, 1) })
   sim.wind = wind
   return sim
 }

@@ -30,8 +30,9 @@
  * (« trois rouges pour un seul accent »).
  */
 import { BALANCE, VENT, type GameTime, type MeteoAspect } from '@ashes/sim'
-import { AMBIENT_KEYS } from '../../render/lighting'
+import { ASTRES } from './astres'
 import { CARDINAUX as CARDINAUX_SAISON } from '../../render/teinte-saison'
+import { ambientTint, heureSolaire } from '../../render/lighting'
 import { INK_OUTLINE, INK_OUTLINE_STRONG } from './hud-dom'
 import { HEX } from './palette'
 
@@ -171,7 +172,7 @@ function hex(col: number): string {
 /**
  * LE CIEL DU RUBAN — la loi d'ambiance du jeu, composée sur un sol de plein jour.
  *
- * `AMBIENT_KEYS` donne, heure par heure, la teinte et l'opacité du voile que le monde porte.
+ * `ambientTint` donne, heure par heure, la teinte et l'opacité du voile que le monde porte.
  * Ce voile se pose en MULTIPLY sur le rendu : on refait ici le même mélange sur une couleur de
  * sol unique, et le ruban devient un échantillon honnête de la journée. L'aube et le
  * crépuscule y ont donc les vraies pentes — la chute de 20 h à 21 h est raide parce que
@@ -182,13 +183,29 @@ function hex(col: number): string {
  */
 const SOL_ETALON = [0xa6, 0x9e, 0x8a] as const
 
-function cielDuJour(): string {
-  const stops = AMBIENT_KEYS.map((k) => {
+const PAS_CIEL = 0.5
+
+export function cielDuJour(dayTicks: number, lever: number): string {
+  const stops: string[] = []
+  // ═══ ON ÉCHANTILLONNE À HEURES MURALES, ON NE DÉPLACE PAS LES KEYFRAMES (2026-08-26) ═══
+  //
+  // La règle du ruban est en heures MURALES ; les keyframes, elles, vivent sur le cadran
+  // solaire — et depuis que le jour suit la saison (`saisons.md` S6), les deux ne coïncident
+  // qu'à l'équinoxe : l'or de « 20 h » tombe bien plus tôt au Grand Froid. On demande donc à
+  // l'ambiance ce qu'elle vaut À CHAQUE HEURE MURALE, au lieu de convertir chaque keyframe.
+  //
+  // ⚠ C'EST LE SENS DE LA CONVERSION QUI COMPTE, et l'autre ne marchait pas. Poser les
+  // keyframes à leur heure murale rend une liste NON CROISSANTE dès que la journée est courte
+  // (mesuré au jour 105 : 90,3 % · 19,2 % · 25,0 % …) — or CSS comme SVG rabattent tout stop
+  // sur le plus grand qui précède, si bien que le ruban s'effondrait en une bande de nuit
+  // plate, sans un mot. Échantillonner en avant est croissant PAR CONSTRUCTION.
+  for (let h = 0; h <= 24; h += PAS_CIEL) {
+    const k = ambientTint(heureSolaire(h, dayTicks, lever))
     const t = [(k.color >> 16) & 255, (k.color >> 8) & 255, k.color & 255]
     const canal = (i: number): number =>
       Math.round(SOL_ETALON[i]! * (1 - k.alpha) + ((SOL_ETALON[i]! * t[i]!) / 255) * k.alpha)
-    return `rgb(${canal(0)},${canal(1)},${canal(2)}) ${((k.hour / 24) * 100).toFixed(2)}%`
-  })
+    stops.push(`rgb(${canal(0)},${canal(1)},${canal(2)}) ${((h / 24) * 100).toFixed(2)}%`)
+  }
   return `linear-gradient(90deg,${stops.join(',')})`
 }
 
@@ -417,7 +434,6 @@ export function createBarreHaute(board: HTMLElement): BarreHaute {
   const icones = new Map<string, HTMLElement>()
   for (const el of root.querySelectorAll<HTMLElement>('.bh-ico')) icones.set(el.dataset.ico!, el)
 
-  cielEl.style.backgroundImage = cielDuJour()
 
   let memoireLieu: MemoireDuLieu = MEMOIRE_VIERGE
   /** Le jour dont le tapis est peint — il ne se rebâtit qu'au changement de jour. */
@@ -457,6 +473,10 @@ export function createBarreHaute(board: HTMLElement): BarreHaute {
       if (s.time.seasonDay !== jourPeint) {
         jourPeint = s.time.seasonDay
         tapisEl.innerHTML = tapis(s.time)
+        // LE RUBAN DU CIEL SE REPEINT AVEC LE JOUR : la longueur du jour est saisonnière, donc
+        // les stops du dégradé bougent d'un cycle à l'autre. `dayTicks` est constant sur tout le
+        // cycle (voir `dayTicksAt`), une repeinte par jour suffit exactement.
+        cielEl.style.backgroundImage = cielDuJour(s.time.dayTicks, s.time.lever)
       }
       tapisEl.style.transform = `translateX(${vue.tapisX}px)`
       // Le voile du passé passe par une VARIABLE portée par le tapis : il est reconstruit
@@ -684,12 +704,11 @@ function icones(): string {
   const nuage = `<path d="M4.5 10.5h7a2.5 2.5 0 0 0 0-5 3.5 3.5 0 0 0-6.8-.8 2.9 2.9 0 0 0-.2 5.8Z" stroke-linejoin="round"/>`
   const neigeux = '#9fbcc6'
   return [
-    svg(
-      'soleil',
-      HEX.emberBright,
-      `<circle cx="8" cy="8" r="3.1"/><path d="M8 1v1.8M8 13.2V15M1 8h1.8M13.2 8H15M3.1 3.1l1.3 1.3M11.6 11.6l1.3 1.3M12.9 3.1l-1.3 1.3M4.4 11.6l-1.3 1.3" stroke-linecap="round"/>`,
-    ),
-    svg('lune', HEX.gel, `<path d="M11.4 10.6A5 5 0 0 1 5.4 4.6a5 5 0 1 0 6 6Z" stroke-linejoin="round"/>`),
+    // LES DEUX ASTRES VIENNENT DE `astres.ts` — le cadran de l'encyclopédie tire du même trait
+    // (2026-08-27). Ici ils gardent leurs teintes : la barre haute les pose sur un panneau
+    // sombre, pas sur une bande de couleur.
+    svg('soleil', HEX.emberBright, ASTRES.soleil),
+    svg('lune', HEX.gel, ASTRES.lune),
     svg('pluie', HEX.gel, `${nuage}<path d="M5.6 12.4v1.9M8 12.8v1.9M10.4 12.4v1.9" stroke-linecap="round"/>`),
     svg('neige', neigeux, `${nuage}<path d="M5.6 12.6v1.6M4.8 13.4h1.6M10.4 12.6v1.6M9.6 13.4h1.6" stroke-linecap="round"/>`),
     svg('orage', HEX.emberBright, `${nuage}<path d="M8.8 12 6.9 14.6h1.6l-.6 1.8" stroke-linejoin="round" stroke-linecap="round"/>`),

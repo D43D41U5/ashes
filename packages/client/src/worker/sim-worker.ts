@@ -112,7 +112,7 @@ function nomsDesVillages(state: SimState): Record<number, string> {
  */
 function scellerLesAnneesRevolues(state: SimState, tour: number): void {
   if (tour <= tourOuvert && volumes.length > 0) return
-  const r = scellerLaChronique(chronicleLog, state.calendarScale, state.jourDeDepart, nomsDesVillages(state), tour)
+  const r = scellerLaChronique(chronicleLog, state.calendarScale, state.jourDeDepart, nomsDesVillages(state), tour, state.map)
   if (r.volumes.length > 0) volumes.push(...r.volumes)
   chronicleLog = r.courant
   tourOuvert = tour

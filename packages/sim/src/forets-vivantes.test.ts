@@ -34,7 +34,7 @@ function makeSim(faunaCap = 0, hour = 12): SimState {
     map: carteAvecMassif(),
     faunaCap,
     worldEvents: false,
-    cycleOffset: cycleOffsetForStartHour(hour),
+    cycleOffset: cycleOffsetForStartHour(hour, 1),
   })
 }
 
@@ -169,7 +169,7 @@ describe('A6 (§4 R5quater) — la harde emprunte sa coulée : la trace ne ment 
     const chemin: number[] = []
     for (let y = 90; y >= 79; y--) chemin.push(y * map.width + 60)
     map.coulees = chemin
-    const sim = createSim(1234, { map, faunaCap: 0, worldEvents: false, cycleOffset: cycleOffsetForStartHour(hour) })
+    const sim = createSim(1234, { map, faunaCap: 0, worldEvents: false, cycleOffset: cycleOffsetForStartHour(hour, 1) })
     return { sim, chemin }
   }
 

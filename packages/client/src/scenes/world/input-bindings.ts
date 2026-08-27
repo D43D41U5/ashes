@@ -32,6 +32,17 @@ export interface InputDeps {
   predicted(): { x: number; y: number }
   structures(): Structure[]
   nodes(): ResourceNode[]
+  /** ═══ LES DEUX INDEX DE NŒUDS — le tableau ne se balaie plus par image (MESURÉ 764 µs) ═══
+   *
+   *  `SnapshotView` tient déjà `nodeByTile` et `nodeById`, bâtis une fois au `ready` et
+   *  PATCHÉS en O(1) à la naissance, à la dérive et à la mort d'un nœud. Les résolveurs
+   *  d'ici les balayaient linéairement (~62 000 entrées sur la carte jouée), dont deux à
+   *  CHAQUE IMAGE : la visée (`aimNow`) et le contour de la touche d'interaction
+   *  (`isForageNode`, via `interactCible`). On les reçoit, on ne les refait pas.
+   *
+   *  ⚠ `noeudALaTuile` rend le nœud même ÉPUISÉ : c'est à l'appelant de filtrer. */
+  noeudALaTuile(tx: number, ty: number): ResourceNode | undefined
+  noeudParId(id: number): ResourceNode | undefined
   corpses(): Corpse[]
   /** LES PILES AU SOL (spec chasse C18) — ce qu'on a jeté, et les flèches retombées
    *  (`tir.md` T6). Cibles de `pick_up`, à la touche « interagir ». */
@@ -381,11 +392,34 @@ export function bindInputs(scene: Phaser.Scene, deps: InputDeps): MovementBindin
     const world = pointerToWorld(pointer)
     return { x: world.x / TILE_PX, y: world.y / TILE_PX }
   }
+  /**
+   * ═══ LA VISÉE NE SE RÉSOUT QU'UNE FOIS PAR IMAGE (MESURÉ : elle l'était DEUX fois) ═══
+   *
+   * `WorldScene.update` demande `aim(...)` pour la teinte du nœud, puis `interactTarget(...)`
+   * pour le contour de `F` — et `interactCible` rappelait `aimNow`. Tout repartait de zéro :
+   * le balayage des nœuds, celui des cadavres, des piles, des structures, des entités. Le
+   * commentaire d'`interactTargetAt` revendiquait pourtant « deux lecteurs, une seule
+   * résolution » : c'est maintenant vrai.
+   *
+   * LA CLÉ EST (image, tuile visée), et c'est exact : dans une même image, `aimAt` est une
+   * fonction PURE de la tuile et d'un état que rien ne fait bouger entre deux appels
+   * synchrones (les snapshots arrivent entre deux tâches, jamais au milieu d'une frame).
+   * On garde la TUILE dans la clé plutôt que le compteur d'image seul, parce qu'en headless
+   * la boucle s'endort (`game.loop.sleep()`) et que `frame` cesse alors d'avancer : la
+   * mémoire dégénère en « même tuile, même image », jamais en visée périmée d'ailleurs.
+   */
+  let viseeMemo: { frame: number; tx: number; ty: number; cible: AimTarget } | null = null
   const aimNow = (pointer: Phaser.Input.Pointer): AimTarget => {
     const world = pointerToWorld(pointer)
-    return aimAt(
-      Math.floor(world.x / TILE_PX),
-      Math.floor(world.y / TILE_PX),
+    const tx = Math.floor(world.x / TILE_PX)
+    const ty = Math.floor(world.y / TILE_PX)
+    const frame = scene.game.loop.frame
+    if (viseeMemo !== null && viseeMemo.frame === frame && viseeMemo.tx === tx && viseeMemo.ty === ty) {
+      return viseeMemo.cible
+    }
+    const cible = aimAt(
+      tx,
+      ty,
       deps.predicted(),
       deps.nodes(),
       deps.corpses(),
@@ -395,7 +429,10 @@ export function bindInputs(scene: Phaser.Scene, deps: InputDeps): MovementBindin
       deps.simTick(), // pour juger la maturité d'une parcelle
       deps.piles(), // les tas au sol : flèches retombées, appâts, charge larguée
       deps.porteDeLEau, // l'eau du jour (peche.md D9) : où la ligne peut tomber
+      deps.noeudALaTuile, // l'index tuile→nœud : O(1) au lieu des ~62 000 du tableau
     )
+    viseeMemo = { frame, tx, ty, cible }
+    return cible
   }
   /** L'overlay (carte, sac, menu pause) mange le clic : il ne doit pas agir dans le monde. */
   const overlayOpen = (): boolean =>
@@ -496,7 +533,7 @@ export function bindInputs(scene: Phaser.Scene, deps: InputDeps): MovementBindin
    *  plantes gardent le clic-maintenu instantané. Robuste aux futurs types d'arbre :
    *  la famille se lit du métier, pas d'une liste de types codée en dur. */
   const isFellNode = (nodeId: number): boolean => {
-    const node = deps.nodes().find((n) => n.id === nodeId)
+    const node = deps.noeudParId(nodeId)
     return node !== undefined && NODE_DEFS[node.type].skill === 'woodcutting'
   }
 
@@ -508,7 +545,7 @@ export function bindInputs(scene: Phaser.Scene, deps: InputDeps): MovementBindin
    *  le VERROU-nœud : on frappe le bon flanc, le curseur indiquant le côté autour du
    *  centre du nœud — même famille lue du métier. */
   const isMineNode = (nodeId: number): boolean => {
-    const node = deps.nodes().find((n) => n.id === nodeId)
+    const node = deps.noeudParId(nodeId)
     return node !== undefined && NODE_DEFS[node.type].skill === 'mining'
   }
 
@@ -519,7 +556,7 @@ export function bindInputs(scene: Phaser.Scene, deps: InputDeps): MovementBindin
    *  (l'appui `pointerdown` ET le maintien `holdHarvest`) — sinon fouiller un cadavre
    *  puis glisser le curseur sur un buisson cueillerait encore. */
   const isForageNode = (nodeId: number): boolean => {
-    const node = deps.nodes().find((n) => n.id === nodeId)
+    const node = deps.noeudParId(nodeId)
     return node !== undefined && NODE_DEFS[node.type].skill === 'foraging'
   }
   const isClickForage = (a: PlayerAction | null): boolean => a?.type === 'harvest' && isForageNode(a.nodeId)
@@ -973,7 +1010,7 @@ export function bindInputs(scene: Phaser.Scene, deps: InputDeps): MovementBindin
     }
     if (mining) {
       if (scene.time.now - lastMineAt >= GATHER_COOLDOWN_MS) {
-        const node = deps.nodes().find((n) => n.id === mineNodeId)
+        const node = deps.noeudParId(mineNodeId)
         if (!node || node.stock <= 0) {
           mining = false
           holding = false

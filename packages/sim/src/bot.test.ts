@@ -53,6 +53,18 @@ function waitCraft(bot: Bot): void {
   expect(me(bot).craftQueue).toHaveLength(0)
 }
 
+/**
+ * LE GLANAGE (spec `glanage.md`) : un nœud posé au sol, stock 1, mains nues. Un coup, et il
+ * n'y est plus — c'est par là que passe la première hache depuis que le bois et la pierre
+ * exigent un outil, donc c'est par là que commence toute rampe.
+ */
+function glaner(bot: Bot, node: ResourceNode): void {
+  goTo(bot, node.tx, node.ty)
+  tick(bot, 0, 0, { type: 'harvest', nodeId: node.id })
+  for (let t = 1; t < BALANCE.GATHER_COOLDOWN_TICKS; t++) tick(bot, 0, 0)
+  expect(node.stock, `le glanage n'a pas porté en (${node.tx}, ${node.ty})`).toBe(0)
+}
+
 /** Récolte un nœud jusqu'à posséder `want` de l'item (ou épuisement). */
 function harvestUntil(bot: Bot, node: ResourceNode, item: ItemId, want: number): void {
   goTo(bot, node.tx, node.ty)
@@ -83,8 +95,23 @@ describe('le bot headless (A7)', () => {
       { id: 3, type: 'tree', tx: 16, ty: 10, stock: 20, regrowAt: 0 },
     ] as const satisfies readonly ResourceNode[]
     const rock: ResourceNode = { id: 4, type: 'rock', tx: 6, ty: 10, stock: 12, regrowAt: 0 }
-    const fiber: ResourceNode = { id: 5, type: 'fiber_plant', tx: 10, ty: 14, stock: 6, regrowAt: 0 }
-    const nodes = [...trees.map((t) => ({ ...t })), rock, fiber]
+    // La fibre est passée de 6 à 20 : la rampe en consomme deux fois plus depuis le glanage
+    // (deux CORDES pour les deux outils de fortune, en plus du marteau et de la hache).
+    const fiber: ResourceNode = { id: 5, type: 'fiber_plant', tx: 10, ty: 14, stock: 20, regrowAt: 0 }
+    // LE GLANAGE (spec `glanage.md`) — deux branches et cinq pierres au sol : le prix exact des
+    // DEUX outils de fortune (hachereau bois 2 + pierre 3, pioche bois 3 + pierre 2, le bois de
+    // la pioche venant de l'arbre une fois la hache en main). Ils ne bloquent rien
+    // (`blockHalfSub: 0`), donc ils ne peuvent pas barrer la route d'un bot sans pathfinding.
+    const glanage: ResourceNode[] = [
+      { id: 6, type: 'branche_au_sol', tx: 12, ty: 9, stock: 1, regrowAt: 0 },
+      { id: 7, type: 'branche_au_sol', tx: 8, ty: 9, stock: 1, regrowAt: 0 },
+      { id: 8, type: 'pierre_au_sol', tx: 12, ty: 11, stock: 1, regrowAt: 0 },
+      { id: 9, type: 'pierre_au_sol', tx: 8, ty: 11, stock: 1, regrowAt: 0 },
+      { id: 10, type: 'pierre_au_sol', tx: 11, ty: 8, stock: 1, regrowAt: 0 },
+      { id: 11, type: 'pierre_au_sol', tx: 9, ty: 8, stock: 1, regrowAt: 0 },
+      { id: 12, type: 'pierre_au_sol', tx: 13, ty: 10, stock: 1, regrowAt: 0 },
+    ]
+    const nodes = [...trees.map((t) => ({ ...t })), rock, fiber, ...glanage]
     const options: SimOptions = { map, nodes }
 
     const setup = (state: SimState) => {
@@ -103,14 +130,35 @@ describe('le bot headless (A7)', () => {
       tick(bot, 0, 0, { type: 'set_active_slot', slot })
     }
 
+    // 0. GLANER, PARCE QU'IL N'A RIEN (spec `glanage.md`). L'arbre et le rocher sont là et ne
+    //    cèdent à rien : la boucle ne s'ouvre plus par un coup, elle s'ouvre par un ramassage.
+    for (const g of sim.nodes.filter((n) => n.type === 'branche_au_sol' || n.type === 'pierre_au_sol')) {
+      glaner(bot, g)
+    }
+    expect(countOf(me(bot).inventory, 'wood')).toBe(2)
+    expect(countOf(me(bot).inventory, 'stone')).toBe(5)
+    harvestUntil(bot, sim.nodes[4]!, 'fiber', 6) // deux cordes
+    tick(bot, 0, 0, { type: 'craft', recipeId: 'rope' })
+    waitCraft(bot)
+    tick(bot, 0, 0, { type: 'craft', recipeId: 'crude_axe' })
+    waitCraft(bot)
+    equip('crude_axe')
+
     // 1. Récolter. Le MARTEAU (bois 4 + pierre 2 + fibre 2) s'ajoute à la note :
-    //    25 bois (Feu 10 + marteau 4 + atelier 6 + hache 5), 9 pierre, 4 fibres.
+    //    25 bois (Feu 10 + marteau 4 + atelier 6 + hache 5), 9 pierre, 4 fibres — plus les
+    //    3 bois de la pioche de fortune, sans laquelle le rocher ne s'ouvre pas.
     //    On FINIT par l'arbre de l'EST (nodes[2], en 16,10) : c'est de là qu'on
     //    reviendra fonder, donc le bot arrive par l'est et fonde AU BORD EST de la
     //    tuile du Feu — d'où il peut ressortir tout droit vers l'est (§2).
+    harvestUntil(bot, sim.nodes[0]!, 'wood', 12)
+    tick(bot, 0, 0, { type: 'craft', recipeId: 'rope' })
+    waitCraft(bot)
+    tick(bot, 0, 0, { type: 'craft', recipeId: 'crude_pickaxe' })
+    waitCraft(bot)
+    equip('crude_pickaxe')
     harvestUntil(bot, sim.nodes[3]!, 'stone', 9)
+    equip('crude_axe')
     harvestUntil(bot, sim.nodes[4]!, 'fiber', 4)
-    harvestUntil(bot, sim.nodes[0]!, 'wood', 10)
     harvestUntil(bot, sim.nodes[1]!, 'wood', 20)
     harvestUntil(bot, sim.nodes[2]!, 'wood', 25)
     expect(countOf(me(bot).inventory, 'wood')).toBeGreaterThanOrEqual(25)
@@ -164,18 +212,28 @@ describe('le bot headless (A7)', () => {
   })
 
   /**
-   * A6 (spec craft-fortune) — LA RAMPE, avant le village. Le bot est nu : pas de
-   * Feu, pas d'atelier, pas de marteau. Il tresse, il taille, et il coupe deux
-   * fois plus vite — sans qu'aucune structure n'existe dans la sim. C'est tout
-   * l'objet de la couche 1 : donner quelque chose à faire de ses mains à la
-   * minute 0, sans court-circuiter l'établi.
+   * A6 (spec craft-fortune, RÉVISÉE par `glanage.md` le 2026-08-25) — LA RAMPE, avant le
+   * village. Le bot est nu : pas de Feu, pas d'atelier, pas de marteau.
+   *
+   * ⚠ **CE QU'IL PROUVE A CHANGÉ, ET C'EST LE CŒUR DU CHANTIER.** Il disait : à mains nues on
+   * récolte ×1, avec le hachereau ×2. Les mains nues ne récoltent plus RIEN sur le bois et la
+   * pierre — la rampe part donc du SOL. Le bot ramasse ce qui traîne, tresse, taille, et
+   * seulement alors l'arbre lui cède. Ce test est le seul endroit qui affirme, bout à bout,
+   * que la boucle d'ouverture n'est pas fermée sur elle-même : c'est lui qui rougirait le jour
+   * où quelqu'un gaterait le glanage derrière un outil.
    */
-  it('la couche 1 : le bot NU tresse une corde, taille un hachereau, et coupe ×2 — sans une seule structure', () => {
+  it('la couche 1 : l’arbre refuse le bot NU — il glane, tresse, taille, et ALORS l’arbre cède', () => {
     const map = createEmptyMap(32, 32, TERRAIN_GRASS)
     const nodes: ResourceNode[] = [
       { id: 1, type: 'tree', tx: 14, ty: 10, stock: 10, regrowAt: 0 },
       { id: 2, type: 'rock', tx: 6, ty: 10, stock: 12, regrowAt: 0 },
       { id: 3, type: 'fiber_plant', tx: 10, ty: 14, stock: 6, regrowAt: 0 },
+      // Le prix exact du hachereau, posé par terre : 2 bois + 3 pierre.
+      { id: 4, type: 'branche_au_sol', tx: 11, ty: 9, stock: 1, regrowAt: 0 },
+      { id: 5, type: 'branche_au_sol', tx: 9, ty: 9, stock: 1, regrowAt: 0 },
+      { id: 6, type: 'pierre_au_sol', tx: 11, ty: 11, stock: 1, regrowAt: 0 },
+      { id: 7, type: 'pierre_au_sol', tx: 9, ty: 11, stock: 1, regrowAt: 0 },
+      { id: 8, type: 'pierre_au_sol', tx: 12, ty: 10, stock: 1, regrowAt: 0 },
     ]
     const options: SimOptions = { map, nodes }
     const setup = (state: SimState) => {
@@ -190,13 +248,23 @@ describe('le bot headless (A7)', () => {
       for (let t = 0; t < BALANCE.GATHER_COOLDOWN_TICKS; t++) tick(bot, 0, 0)
     }
 
-    // 1. À MAINS NUES, ×1 par coup : 3 fibres (la corde), 2 bois + 3 pierres (le
-    //    hachereau). La pierre ne demande rien — sans quoi rien ne démarrerait.
-    harvestUntil(bot, sim.nodes[2]!, 'fiber', 3)
-    harvestUntil(bot, sim.nodes[0]!, 'wood', 2)
-    harvestUntil(bot, sim.nodes[1]!, 'stone', 3)
+    // 1. LE REFUS D'ABORD — la prémisse de tout le reste. Le bot est devant un arbre et un
+    //    rocher qu'il ne peut pas entamer : c'est CE mur que le glanage contourne.
+    goTo(bot, sim.nodes[0]!.tx, sim.nodes[0]!.ty)
+    tick(bot, 0, 0, { type: 'harvest', nodeId: sim.nodes[0]!.id })
+    expect(countOf(me(bot).inventory, 'wood'), "l'arbre ne cède pas aux mains nues").toBe(0)
+    expect(sim.nodes[0]!.stock).toBe(10)
 
-    // 2. Tresser, puis tailler — LÀ OÙ IL SE TIENT. Aucune station, aucun village.
+    // 2. GLANER : ce qui traîne au sol se prend sans rien tenir. 2 bois + 3 pierres, soit le
+    //    prix du hachereau — et 3 fibres pour la corde, que la cueillette donne toujours.
+    for (const g of sim.nodes.filter((n) => n.type === 'branche_au_sol' || n.type === 'pierre_au_sol')) {
+      glaner(bot, g)
+    }
+    expect(countOf(me(bot).inventory, 'wood')).toBe(2)
+    expect(countOf(me(bot).inventory, 'stone')).toBe(3)
+    harvestUntil(bot, sim.nodes[2]!, 'fiber', 3)
+
+    // 3. Tresser, puis tailler — LÀ OÙ IL SE TIENT. Aucune station, aucun village.
     tick(bot, 0, 0, { type: 'craft', recipeId: 'rope' })
     waitCraft(bot)
     expect(countOf(me(bot).inventory, 'rope')).toBe(1)
@@ -206,18 +274,21 @@ describe('le bot headless (A7)', () => {
     expect(sim.structures).toHaveLength(0) // la preuve : rien n'a été bâti
     expect(sim.villages).toHaveLength(0)
 
-    // 3. L'empoigner — la sim ne choisit pas pour le joueur (spec inventaire R9).
+    // 4. L'empoigner — la sim ne choisit pas pour le joueur (spec inventaire R9).
     const slot = me(bot).inventory.findIndex((s) => s?.item === 'crude_axe')
     expect(slot).toBeGreaterThanOrEqual(0)
     tick(bot, 0, 0, { type: 'set_active_slot', slot })
 
-    // 4. Le même arbre, le même geste : deux fois plus de bois par coup.
+    // 5. LE MÊME ARBRE, LE MÊME GESTE — et cette fois il cède, à ×2. L'écart mesuré ici n'est
+    //    plus un rendement (mains nues ×1 → fortune ×2) : c'est RIEN → DEUX. La boucle s'est
+    //    ouverte, et elle s'est ouverte par le sol.
     const before = countOf(me(bot).inventory, 'wood')
     wait()
     harvestUntil(bot, sim.nodes[0]!, 'wood', before + 2)
     expect(countOf(me(bot).inventory, 'wood')).toBe(before + 2) // un seul coup a suffi
+    expect(sim.nodes[0]!.stock).toBe(8) // et l'arbre, lui, a bien perdu deux bois
 
-    // 5. Et tout rejoue au bit près.
+    // 6. Et tout rejoue au bit près.
     const replayed = runReplay(log, setup)
     expect(snapshot(replayed)).toBe(snapshot(sim))
   })

@@ -13,6 +13,7 @@ import {
   estCrepuscule,
   getGameTime,
   jourDeSaison,
+  leverPourJour,
   NIGHT_RAMP_TICKS,
   partDeNuit,
   phaseForDay,
@@ -61,20 +62,27 @@ describe('temps (A1 — fonction pure du tick)', () => {
     expect(seasonDayAtTick(parJour, echelle, 1)).toBe(2)
   })
 
-  it('début de partie : jour 1, acte I, à l’aube (horloge murale), de jour', () => {
+  it('début de partie : jour 1, acte I, au LEVER (horloge murale), de jour', () => {
     const sim = createSim(1)
-    // Le cycle démarre à l'aube ; l'horloge murale la place à CYCLE_DAWN_HOUR.
+    // Le lever du jour 1 est INTERPOLÉ entre le solstice d'hiver et l'équinoxe : on le relit de
+    // la loi plutôt que de l'épingler à la sixième décimale — c'est l'HEURE qu'on affirme
+    // (07h40, à la minute), pas les chiffres d'un flottant.
+    const LEVER_J1 = leverPourJour(1)
+    expect(LEVER_J1).toBeCloseTo(7 + 40 / 60, 1) // 07h40, à la minute
+    // Le cycle démarre au LEVER — dont l'heure murale suit la saison depuis que le soleil est
+    // celui de la France (2026-08-26). Au 1er de l'Éclosion l'année sort tout juste de l'hiver :
+    // le soleil se lève encore à 7 h 40, et le jour n'occupe que 0,431 du cycle.
     expect(getGameTime(sim)).toEqual({
       tick: 0,
-      hourOfCycle: BALANCE.CYCLE_DAWN_HOUR,
+      // Le MÊME repli de domaine que `gameTimeAt` : `(x % 24 + 24) % 24` n'est pas l'identité
+      // au dernier bit, et épingler le flottant nu ferait rougir la garde pour un ulp.
+      hourOfCycle: ((LEVER_J1 % 24) + 24) % 24, // 07h40 — entre le solstice d'hiver et l'équinoxe
       isNight: false,
-      nuit: 1, // l'aube est le FOND du froid : la pente ne le rend qu'au fil de la matinée
+      nuit: 1, // le lever est le FOND du froid : la pente ne le rend qu'au fil de la matinée
 
-      // La longueur du JOUR est saisonnière (S6) : au 1er de l'Éclosion l'année sort tout juste
-      // de l'hiver, le jour n'occupe encore que 0,557 du cycle et il s'allongera jusqu'à
-      // l'Ardeur. Épinglé en littéral — une garde relue à la courbe qu'elle teste ne garde rien.
-      // (0,557 × 36 000 ; c'était 30 096 quand le cycle durait 45 min.)
-      dayTicks: 20_064,
+      // Épinglé en littéral — une garde relue à la courbe qu'elle teste ne garde rien.
+      dayTicks: 15_505, // 0,430706 × 36 000
+      lever: LEVER_J1,
       seasonDay: 1,
       jourFrac: 0, // le jour vient de commencer — la part écoulée est nulle
 
@@ -84,32 +92,37 @@ describe('temps (A1 — fonction pure du tick)', () => {
     })
   })
 
-  it('le cycle bascule en nuit à la longueur du jour, puis reboucle à l’aube', () => {
-    // Posé à l'ÉQUINOXE (mi-Éclosion, jour 15), où le jour occupe 0,625 du cycle : la valeur
-    // d'avant que la longueur du jour devienne saisonnière (S6), donc la nuit y tombe encore à
-    // 21 h murales (aube 6 h + 15 h de jour). Le calendrier est verrouillé sur le cycle
-    // (un jour = un cycle), si bien que le jour 15 s'ouvre pile sur une aube.
+  it('le cycle bascule en nuit au coucher, puis reboucle au lever', () => {
+    // Posé à l'ÉQUINOXE (mi-Éclosion, jour 15) : lever 06h46, coucher 18h56, les heures de
+    // Paris (décision d'Alexis, 2026-08-26). Le calendrier est verrouillé sur le cycle
+    // (un jour = un cycle), si bien que le jour 15 s'ouvre pile sur un lever.
     const sim = createSim(1, { calendarScale: TICKS_PER_SEASON_DAY / TICKS_PER_CYCLE })
     const aube = 14 * TICKS_PER_CYCLE
     sim.tick = aube
     expect(jourDeSaison(sim)).toBe(15)
     const jour = dayTicksAt(sim, aube)
-    expect(jour).toBe(22_500) // 0,625 × 36 000
+    expect(jour).toBe(18_253) // 0,507034 × 36 000 — 12 h 10 de jour, l'équinoxe de Paris
 
     sim.tick = aube + jour - 1
     expect(getGameTime(sim).isNight).toBe(false)
     sim.tick = aube + jour
     expect(getGameTime(sim).isNight).toBe(true)
-    expect(getGameTime(sim).hourOfCycle).toBe(21)
+    expect(getGameTime(sim).hourOfCycle).toBeCloseTo(18 + 56 / 60, 1) // 18h56, l'almanach
     sim.tick = aube + TICKS_PER_CYCLE
     expect(getGameTime(sim).isNight).toBe(false)
-    expect(getGameTime(sim).hourOfCycle).toBe(BALANCE.CYCLE_DAWN_HOUR)
+    // ⚠ C'EST LE LEVER DU JOUR 16, PAS CELUI DU 15 : passé l'équinoxe les jours s'allongent, et
+    // le soleil se lève quatre minutes plus tôt chaque matin. Réécrire 06h46 ici serait
+    // affirmer que le lever ne bouge pas — le défaut même qu'on corrige.
+    expect(getGameTime(sim).hourOfCycle).toBeCloseTo(leverPourJour(16), 6)
+    expect(leverPourJour(16)).toBeLessThan(leverPourJour(15)) // il se lève plus tôt
 
-    // Et la longueur du jour SUIT la saison : entre le cœur de l'Ardeur et celui du Grand
-    // Froid, le crépuscule recule de près de six heures murales. C'est le mécanisme de S6 —
-    // la nuit est la fenêtre de danger, elle s'allonge quand le froid mord.
-    expect(dayTicksPourJour(45)).toBe(25_920) // 0,72 du cycle : 8,4 min de nuit réelle
-    expect(dayTicksPourJour(105)).toBe(17_280) // 0,48 : 15,6 min de nuit réelle
+    // Et LES DEUX BOUTS suivent la saison : entre le solstice d'été et celui d'hiver, le lever
+    // recule de quatre heures et le coucher de quatre autres. C'est le mécanisme de S6, rendu
+    // aux heures de la France — la nuit est la fenêtre de danger, elle s'allonge quand le froid mord.
+    expect(dayTicksPourJour(45)).toBe(24_271) // 0,6742 : 16 h 11 de jour, 9,8 min de nuit réelle
+    expect(dayTicksPourJour(105)).toBe(12_365) // 0,3435 : 8 h 15 de jour, 19,7 min de nuit réelle
+    expect(leverPourJour(45)).toBeCloseTo(4 + 45 / 60, 1) // 04h45
+    expect(leverPourJour(105)).toBeCloseTo(8 + 43 / 60, 1) // 08h43
   })
 
   /**
@@ -166,9 +179,13 @@ describe('temps (A1 — fonction pure du tick)', () => {
   })
 
   it('cycleOffsetForStartHour : démarrer à minuit met le cycle en nuit, calendrier intact', () => {
-    const sim = createSim(1, { cycleOffset: cycleOffsetForStartHour(0) })
+    const sim = createSim(1, { cycleOffset: cycleOffsetForStartHour(0, 1) })
     const t = getGameTime(sim)
-    expect(t.hourOfCycle).toBe(0)
+    // ⚠ « MINUIT » N'EST PLUS EXACT AU TICK, ET C'EST STRUCTUREL (2026-08-26) : l'offset se
+    // calcule sur le lever du jour 1, mais le cycle qui CONTIENT le tick 0 a commencé la
+    // veille — au lever du jour 0, quatre minutes plus tard. L'écart vaut donc la dérive d'un
+    // matin à l'autre, jamais plus. Ce qui compte, et qui est exact, c'est qu'il fait nuit.
+    expect(Math.min(t.hourOfCycle, 24 - t.hourOfCycle)).toBeLessThan(0.1) // < 6 min de minuit
     expect(t.isNight).toBe(true)
     expect(t.seasonDay).toBe(1) // le décalage ne touche QUE le cycle, pas le calendrier
     // createSim émet night_started (pas day_started) quand on démarre de nuit.
@@ -177,23 +194,37 @@ describe('temps (A1 — fonction pure du tick)', () => {
     expect(types).not.toContain('day_started')
   })
 
-  it('cycleOffsetForStartHour(6) = 0 : l’aube est le départ par défaut', () => {
-    expect(cycleOffsetForStartHour(BALANCE.CYCLE_DAWN_HOUR)).toBe(0)
+  it('partir AU LEVER donne un offset nul — et le lever n’est plus une constante', () => {
+    // ⚠ CE N'EST PLUS 6 H : le lever suit la saison (2026-08-26). « Partir à l'aube » se dit
+    // donc `leverPourJour(jour)`, et une garde écrite avec 6 en dur ne garderait plus rien.
+    expect(cycleOffsetForStartHour(leverPourJour(1), 1)).toBe(0)
     expect(createSim(1).cycleOffset).toBe(0)
-    expect(getGameTime(createSim(1)).hourOfCycle).toBe(BALANCE.CYCLE_DAWN_HOUR)
+    expect(getGameTime(createSim(1)).hourOfCycle).toBeCloseTo(leverPourJour(1), 9)
+    // Les quatre cœurs de saison, à la minute de l'almanach de Paris.
+    expect(leverPourJour(15)).toBeCloseTo(6 + 46 / 60, 1)
+    expect(leverPourJour(45)).toBeCloseTo(4 + 45 / 60, 1)
+    expect(leverPourJour(75)).toBeCloseTo(6 + 46 / 60, 1)
+    expect(leverPourJour(105)).toBeCloseTo(8 + 43 / 60, 1)
   })
 
-  it('minuit (0h murale) tombe en pleine nuit, à toute saison', () => {
-    const sim = createSim(1)
-    // Minuit = 18h après l'aube de 6h → phase 0.75 du cycle, bien dans la nuit.
-    sim.tick = Math.round(TICKS_PER_CYCLE * 0.75)
-    expect(getGameTime(sim).hourOfCycle).toBe(0)
-    expect(getGameTime(sim).isNight).toBe(true)
-    // Et ça tient les 120 jours de l'année, pas seulement au jour du montage : même la plus
-    // longue journée (cœur de l'Ardeur) s'arrête à 0,72 du cycle, loin avant minuit.
-    const minuit = Math.round(TICKS_PER_CYCLE * 0.75)
+  it('minuit (0h murale) tombe en pleine nuit, TOUS les jours de l’année', () => {
+    // ⚠ MINUIT N'EST PLUS UNE PHASE FIXE DU CYCLE : le lever bouge, donc la part de cycle
+    // écoulée à minuit bouge avec lui (0,68 en été, 0,64 en hiver). On la DÉRIVE du lever du
+    // jour, jour par jour — et l'on exige que le soleil y soit couché partout. Une garde posée
+    // sur 0,75 en dur aurait mesuré l'ancien monde.
+    const sim = createSim(1, { calendarScale: TICKS_PER_SEASON_DAY / TICKS_PER_CYCLE })
     for (let j = 1; j <= YEAR_DAYS; j++) {
-      expect(dayTicksPourJour(j), `le jour ${j} déborde sur minuit`).toBeLessThan(minuit)
+      const debut = (j - 1) * TICKS_PER_CYCLE
+      const l = leverPourJour(j)
+      // Heures de cycle écoulées entre le lever et minuit, ramenées en ticks.
+      const versMinuit = Math.round((((24 - l) % 24) / 24) * TICKS_PER_CYCLE)
+      sim.tick = debut + versMinuit
+      const t = getGameTime(sim)
+      expect(t.seasonDay, `jour ${j}`).toBe(j)
+      // Minuit est la COUTURE du modulo : 23,9999 est minuit autant que 0,0001.
+      const versMinuitH = Math.min(t.hourOfCycle, 24 - t.hourOfCycle)
+      expect(versMinuitH, `jour ${j} — ${t.hourOfCycle} h`).toBeLessThan(0.02)
+      expect(t.isNight, `le jour ${j} déborde sur minuit`).toBe(true)
     }
   })
 
@@ -272,7 +303,7 @@ describe('couplage cycle↔calendrier (V0-9 — l’endgame observable en solo)'
   const monde = (scale: number, heure: number): SimState =>
     createSim(1, {
       calendarScale: scale,
-      cycleOffset: cycleOffsetForStartHour(heure),
+      cycleOffset: cycleOffsetForStartHour(heure, BALANCE.JOUR_DE_DEPART),
       jourDeDepart: BALANCE.JOUR_DE_DEPART,
     })
 

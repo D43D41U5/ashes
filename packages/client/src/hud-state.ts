@@ -385,6 +385,13 @@ export interface HudState {
   alertes: string[]
   conseils: string[]
   /**
+   * LA FILE DES DÉCOUVERTES — un NOM DE LIEU par première visite (2026-08-25). Même patron
+   * que les deux autres, et pour la même raison : traverser deux lieux voisins ne doit pas
+   * en effacer un. Le surtitre (« Nouveau lieu découvert ») est écrit par le bandeau, pas
+   * ici — l'émetteur transporte un fait, pas une phrase.
+   */
+  decouvertes: string[]
+  /**
    * LA DERNIÈRE ALERTE, EN MIROIR — pour le DIAGNOSTIC, jamais pour l'affichage.
    *
    * Elle n'est plus la source du bandeau (c'est `alertes` qui l'est) mais elle reste écrite,
@@ -456,7 +463,7 @@ export const CLES_HUD: Record<keyof HudState, true> = {
   hp: true, stamina: true, wounds: true, selected: true, buildMaterial: true, buildEdge: true, demolir: true,
   marteau: true,
   foundableFire: true, refugeesNearby: true, upgradableFire: true, deathMoment: true, deathVeilOpen: true, corpseHint: true,
-  alertes: true, conseils: true,
+  alertes: true, conseils: true, decouvertes: true,
   characterMenuOpen: true, characterTab: true, uiTyping: true, chatTyping: true, debugTyping: true, chatLog: true,
   chatDraft: true, openContainer: true, openContainerView: true, openFire: true, openFireView: true,
   pickups: true, crafts: true, levelUps: true, fogVersion: true, fog: true,

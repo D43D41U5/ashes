@@ -37,7 +37,7 @@ import { createReplayLog, recordAndStep, runReplay } from './replay'
 import { createSim, snapshot, spawnEntity, step, type MoveInput, type SimOptions, type SimState } from './sim'
 import { cycleOffsetForStartHour, jourDeSaison, TICKS_PER_SEASON_DAY } from './time'
 import { MONDE_JOUE } from './zonegraph'
-import { generateZonedTerrain } from './zonegen'
+import { carteDeTest } from '../../../tools/carte-cache'
 import { placeZoneNodes } from './zone-content'
 
 const SEED = 2026
@@ -46,7 +46,7 @@ const TICKS = 400
 
 /** Le monde tel que les trois hôtes le bâtissent — même ordre, mêmes graines. */
 function mondeJoue(): { options: SimOptions; peupler: (s: SimState) => void } {
-  const carte = generateZonedTerrain(SEED, JOUEURS, MONDE_JOUE)
+  const carte = carteDeTest(SEED, JOUEURS, MONDE_JOUE)
   const nodes = placeZoneNodes(carte)
   const grounds = placeHuntingGrounds(carte.map, SEED)
   // Le foyer : les trois cercles de danger s'y adossent (`predatorBias` lit `state.home`).
@@ -59,7 +59,7 @@ function mondeJoue(): { options: SimOptions; peupler: (s: SimState) => void } {
     faunaCap: FAUNA.CAP,
     meteoActive: true,
     worldEvents: true,
-    cycleOffset: cycleOffsetForStartHour(9),
+    cycleOffset: cycleOffsetForStartHour(9, 3 * BALANCE.ACT_DAYS + 1),
     // ⚠ CALENDRIER ACCÉLÉRÉ, ET C'EST LE SUJET. La Cendre ne fait quelque chose qu'au
     // BASCULEMENT d'un jour de saison (`sim.ts` ne l'appelle qu'à cette condition) : au
     // calendrier par défaut, quatre cents ticks n'en franchissent aucun, et le seul système

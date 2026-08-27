@@ -21,7 +21,14 @@ import { BUILT_KINDS } from './poi-batis'
 // ids terrain (balance.ts) — repris localement pour lisibilité de la table.
 const SCREE = 9, ROCK = 5, SNOW = 10, BOULDERS = 16, GLACIER = 15, BURNT = 21, PEAT = 18, REED = 19,
   AL_MEADOW = 12, AL_FLOWERS = 20, OLD_GROWTH = 22, HEATH = 11, PINE = 13, FLOWER = 17,
-  FOREST = 3, GRASS = 1, MARSH = 8, LARCH = 14, WILLOW = 24, WET_MEADOW = 25, JUNIPER = 26
+  FOREST = 3, GRASS = 1, MARSH = 8, LARCH = 14, WILLOW = 24, WET_MEADOW = 25, JUNIPER = 26,
+  // LA CLAIRIÈRE (2026-08-25) — elle est du BOIS et de l'OUVERT à la fois. D'où la règle qui
+  // décide où elle entre, et qui n'est pas un goût : **une ligne éligible à la fois sur FOREST
+  // et sur GRASS l'est sur CLAIRIERE** — le lieu marche déjà sous les arbres ET au grand jour,
+  // donc il marche dans une trouée. Sans ça, faire de la clairière un terrain retire ~12 % du
+  // massif au tirage des lieux : MESURÉ, un lieu perdu sur 136 (`charniers.test.ts`), et rien
+  // n'aurait dit lequel.
+  CLAIRIERE = 30
 
 export interface PoiType {
   slug: string
@@ -210,7 +217,7 @@ export const POI_TYPES: PoiType[] = [
   // Abris — les empreintes des lieux BÂTIS (étage 1) sont dimensionnées pour leur PLAN
   // (`poi-batis.ts` : côté du plan = empreinte, garde `verifierPlans`), plus pour un sprite.
   // Élargies le 2026-08-10 sous garde de recensement A7 (chaque type doit continuer de naître).
-  { slug: 'ruines', zones: ['ruines'], name: 'les Ruines', family: 'shelter', biomes: [OLD_GROWTH, FOREST, GRASS], weight: 3, cap: 4, reserve: 1, footprint: 6 },
+  { slug: 'ruines', zones: ['ruines'], name: 'les Ruines', family: 'shelter', biomes: [OLD_GROWTH, FOREST, GRASS, CLAIRIERE], weight: 3, cap: 4, reserve: 1, footprint: 6 },
   { slug: 'cabane', zones: ['alpages'], name: 'la Cabane de berger', family: 'shelter', biomes: [AL_MEADOW, AL_FLOWERS], weight: 4, cap: 5, reserve: 1, footprint: 5 },
   { slug: 'abri', zones: ['karst', 'aiguilles', 'gouffre', 'ruines'], name: "l'Abri sous roche", family: 'shelter', biomes: [ROCK, BOULDERS, SCREE], weight: 5, cap: 6, reserve: 1, footprint: 4 },
   // Mine et grotte : 5→7 le 2026-08-11 (l'anneau de MASSIF d'une tuile pleine + un antre qui
@@ -218,9 +225,9 @@ export const POI_TYPES: PoiType[] = [
   // du 2026-08-10 : si le type cesse de naître, on resserre.
   { slug: 'mine', zones: ['karst', 'gouffre'], name: 'la Mine abandonnée', family: 'shelter', biomes: [SCREE, ROCK], minElev: 0.5, weight: 3, cap: 3, reserve: 1, footprint: 7 },
   { slug: 'oratoire', zones: ['alpages', 'karst'], name: 'l’Oratoire', family: 'shelter', biomes: [SCREE, ROCK, AL_MEADOW], minElev: 0.55, weight: 3, cap: 3, reserve: 1, footprint: 3 },
-  { slug: 'bivouac', name: 'le Vieux bivouac', family: 'shelter', biomes: [GRASS, AL_MEADOW, HEATH, FOREST, SCREE, FLOWER, OLD_GROWTH, PINE], weight: 4, cap: 4, reserve: 1, footprint: 3 },
+  { slug: 'bivouac', name: 'le Vieux bivouac', family: 'shelter', biomes: [GRASS, AL_MEADOW, HEATH, FOREST, SCREE, FLOWER, OLD_GROWTH, PINE, CLAIRIERE], weight: 4, cap: 4, reserve: 1, footprint: 3 },
   // Danger
-  { slug: 'taniere', zones: ['sylve', 'pres_bas'], name: 'la Tanière', family: 'danger', biomes: [FOREST, PINE, GRASS], weight: 6, cap: 8, reserve: 1, footprint: 3, monster: 'boar' },
+  { slug: 'taniere', zones: ['sylve', 'pres_bas'], name: 'la Tanière', family: 'danger', biomes: [FOREST, PINE, GRASS, CLAIRIERE], weight: 6, cap: 8, reserve: 1, footprint: 3, monster: 'boar' },
   { slug: 'repaire', zones: ['brule', 'cendriere'], name: 'le Repaire de Cendrés', family: 'danger', biomes: [BURNT, ROCK, SCREE], weight: 4, cap: 5, reserve: 1, footprint: 3, monster: 'cendreux' },
   { slug: 'epave', zones: ['aiguilles', 'glacier'], name: "l'Épave d'avalanche", family: 'danger', biomes: [SCREE, BOULDERS], minElev: 0.55, weight: 3, cap: 3, reserve: 1, footprint: 4 },
   { slug: 'fondriere', zones: ['tourbiere', 'lac_mort'], name: 'la Fondrière', family: 'danger', biomes: [PEAT, REED], weight: 3, cap: 3, reserve: 1, footprint: 3 },
@@ -243,7 +250,7 @@ export const POI_TYPES: PoiType[] = [
    * Il ne reste ici que comme garde-fou contre une carte dégénérée.
    */
   { slug: 'charnier', name: 'le Charnier', family: 'danger', horsSemis: true, weight: 0, cap: 80, footprint: 2,
-    biomes: [GRASS, FOREST, HEATH, FLOWER, AL_MEADOW, AL_FLOWERS, OLD_GROWTH, PINE, LARCH, BURNT, PEAT, REED, MARSH, SCREE, BOULDERS, SNOW] },
+    biomes: [GRASS, FOREST, HEATH, FLOWER, AL_MEADOW, AL_FLOWERS, OLD_GROWTH, PINE, LARCH, BURNT, PEAT, REED, MARSH, SCREE, BOULDERS, SNOW, CLAIRIERE] },
   /**
    * LE CHAMP DE CREVASSES — était une LIGNE MORTE (mesuré 2026-07-13) : biome
    * `GLACIER` seul, or le glacier est `walkable: false` et se cache derrière la
@@ -308,8 +315,8 @@ export const POI_TYPES: PoiType[] = [
   // minerai. Sa charge serait d'ailleurs redondante : le voir sur la carte sous son nom dit
   // déjà « le fer existe », et l'épuiser en trois coups dit « pas ici ». Le message passe par
   // le LIEU et par son stock dérisoire, pas par une ligne de chronique.
-  { slug: 'filon', zones: ['pres_bas'], name: 'le Filon affleurant', family: 'eco', biomes: [GRASS, FOREST, SCREE, ROCK, BOULDERS, FLOWER], weight: 2, cap: 1, reserve: 1, unique: true, footprint: 2 },
-  { slug: 'chene', zones: ['pres_bas'], name: 'le Grand Chêne', family: 'reward', biomes: [GRASS, FOREST, FLOWER], weight: 3, cap: 1, reserve: 1, unique: true, footprint: 2 },
+  { slug: 'filon', zones: ['pres_bas'], name: 'le Filon affleurant', family: 'eco', biomes: [GRASS, FOREST, SCREE, ROCK, BOULDERS, FLOWER, CLAIRIERE], weight: 2, cap: 1, reserve: 1, unique: true, footprint: 2 },
+  { slug: 'chene', zones: ['pres_bas'], name: 'le Grand Chêne', family: 'reward', biomes: [GRASS, FOREST, FLOWER, CLAIRIERE], weight: 3, cap: 1, reserve: 1, unique: true, footprint: 2 },
   // ═══ LES REPÈRES D'HORIZON DE LA RACINE (spec t0-exploration §1) ═══
   // Le Grand Chêne prouvait la boucle « voir un repère → y aller → y gagner de quoi voir plus
   // loin » — mais il était SEUL dans 614 000 tuiles. On généralise le langage sans le diluer :
@@ -319,7 +326,7 @@ export const POI_TYPES: PoiType[] = [
   // LA TOUR DE GUET EFFONDRÉE — le Belvédère de la plaine : on grimpe aux décombres, on voit
   // (savoir/radius, REVEAL_TOUR_TILES). Unique : un repère n'en est un que s'il est seul. Et
   // c'est une RUINE : le pays d'avant guettait déjà le sud — la tour regarde la Cendrière.
-  { slug: 'tour_guet', zones: ['pres_bas'], name: 'la Tour de guet effondrée', family: 'reward', biomes: [GRASS, FLOWER, HEATH, FOREST], weight: 2, cap: 1, reserve: 1, unique: true, footprint: 3 },
+  { slug: 'tour_guet', zones: ['pres_bas'], name: 'la Tour de guet effondrée', family: 'reward', biomes: [GRASS, FLOWER, HEATH, FOREST, CLAIRIERE], weight: 2, cap: 1, reserve: 1, unique: true, footprint: 3 },
   // LES PIERRES LEVÉES — les menhirs se RÉPONDENT (savoir/nearest parmi PIERRES_KINDS) : une
   // chaîne d'indices qui mène au Cercle, le patron Vegvisir de Valheim. reserve 2 : la chaîne
   // exige au moins deux maillons, sinon c'est un caillou qui pointe vers rien.
@@ -330,7 +337,7 @@ export const POI_TYPES: PoiType[] = [
    * l'ère 2 (`placeSteles` — croisées et gués, au bord du chemin, jamais dessus). Basse, sans
    * couronne : un lecteur, pas un repère d'horizon.
    */
-  { slug: 'stele', name: 'la Stèle', family: 'reward', horsSemis: true, weight: 0, cap: 7, footprint: 1, biomes: [GRASS, FLOWER, HEATH, FOREST, PINE] },
+  { slug: 'stele', name: 'la Stèle', family: 'reward', horsSemis: true, weight: 0, cap: 7, footprint: 1, biomes: [GRASS, FLOWER, HEATH, FOREST, PINE, CLAIRIERE] },
   // ═══ LES RUINES BASSES DU PAYS D'AVANT (spec t0-exploration R19) ═══
   // Des abris au sens des shelters existants, AUCUN butin (lieux.md A9). Avec la Tour, le pré
   // raconte : on vivait ici, on guettait le sud, on est partis.
@@ -340,7 +347,7 @@ export const POI_TYPES: PoiType[] = [
   // diluait la ferme à UN exemplaire (mesuré) — or c'est LA grande ruine explorable du T0.
   // La réservation garantit l'existence ; le semis garde l'abondance.
   { slug: 'ferme_ruinee', zones: ['pres_bas'], name: 'la Ferme ruinée', family: 'shelter', biomes: [GRASS, FLOWER, HEATH], weight: 3, cap: 2, reserve: 2, footprint: 18, pres: 'eau' },
-  { slug: 'charrette', zones: ['pres_bas'], name: 'la Charrette abandonnée', family: 'shelter', biomes: [GRASS, FLOWER, HEATH, FOREST], weight: 3, cap: 3, reserve: 1, footprint: 3, pres: 'route' },
+  { slug: 'charrette', zones: ['pres_bas'], name: 'la Charrette abandonnée', family: 'shelter', biomes: [GRASS, FLOWER, HEATH, FOREST, CLAIRIERE], weight: 3, cap: 3, reserve: 1, footprint: 3, pres: 'route' },
   // ═══ LES SET-PIECES — des lieux HORS SEMIS (spec t0-exploration R9-R10) ═══
   // `biomes: []` : jamais éligibles au tirage — ils se posent en passe dédiée du worldgen
   // (`zonegen-setpieces.ts`), leur corps est leur TERRAIN. Ils figurent ici pour que la garde
@@ -349,7 +356,7 @@ export const POI_TYPES: PoiType[] = [
   { slug: 'bois_noir', zones: ['pres_bas'], name: 'le Bois Noir', family: 'eco', biomes: [], weight: 0, cap: 1, unique: true, footprint: 40 },
   { slug: 'cercle_pierres', zones: ['pres_bas'], name: 'le Cercle de pierres', family: 'reward', biomes: [], weight: 0, cap: 1, unique: true, footprint: 24 },
   { slug: 'combe_brumeuse', zones: ['pres_bas'], name: 'la Combe brumeuse', family: 'eco', biomes: [], weight: 0, cap: 1, unique: true, footprint: 32 },
-  { slug: 'cairn', name: 'le Cairn', family: 'reward', biomes: [GRASS, AL_MEADOW, HEATH, SCREE, ROCK, FLOWER, AL_FLOWERS, FOREST, PINE], weight: 12, cap: 14, reserve: 1, footprint: 1 },
+  { slug: 'cairn', name: 'le Cairn', family: 'reward', biomes: [GRASS, AL_MEADOW, HEATH, SCREE, ROCK, FLOWER, AL_FLOWERS, FOREST, PINE, CLAIRIERE], weight: 12, cap: 14, reserve: 1, footprint: 1 },
   { slug: 'sanctuaire', zones: ['aiguilles', 'alpages', 'karst'], name: 'le Sanctuaire', family: 'reward', biomes: [SCREE, ROCK, AL_MEADOW], minElev: 0.7, weight: 1, cap: 2, reserve: 1, footprint: 2 },
   { slug: 'source_chaude', zones: ['alpages', 'karst'], name: 'la Source chaude', family: 'reward', biomes: [SCREE, ROCK, AL_MEADOW], minElev: 0.55, weight: 2, cap: 2, reserve: 1, footprint: 2 },
   { slug: 'arche', zones: ['aiguilles', 'karst'], name: "l'Arche de roche", family: 'reward', biomes: [ROCK, SCREE], weight: 2, cap: 2, reserve: 1, footprint: 2 },

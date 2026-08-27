@@ -258,7 +258,7 @@ describe('4. LA NUIT CHASSE (mais elle s’annonce, et elle a une parade)', () =
   const nuit = (): SimState =>
     createSim(5, {
       map: createEmptyMap(64, 64, TERRAIN_GRASS),
-      cycleOffset: cycleOffsetForStartHour(0), // minuit
+      cycleOffset: cycleOffsetForStartHour(0, MI_ARDEUR), // minuit
       jourDeDepart: MI_ARDEUR,
     })
 
@@ -323,7 +323,7 @@ describe('4. LA NUIT CHASSE (mais elle s’annonce, et elle a une parade)', () =
   it('LE JOUR, on ne se fait pas chasser (la nuit est un MOMENT, pas un état)', () => {
     const sim = createSim(5, {
       map: createEmptyMap(64, 64, TERRAIN_GRASS),
-      cycleOffset: cycleOffsetForStartHour(12), // plein midi
+      cycleOffset: cycleOffsetForStartHour(12, MI_ARDEUR), // plein midi
       jourDeDepart: MI_ARDEUR,
     })
     spawnEntity(sim, 32.5, 32.5)

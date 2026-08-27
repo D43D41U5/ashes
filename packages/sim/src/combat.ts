@@ -35,6 +35,7 @@ import { heldSlot, poserAuSol, wearHeld } from './inventory-actions'
 import { addItems, addSlot, countOf, isEmpty, makeInventory, pourInto, removeItems, carryRatio } from './items'
 import { staminaPoiFactor } from './poi-discovery'
 import { rngRoll } from './rng'
+import { enVol } from './vol'
 import type { Entity, SimState } from './sim'
 import { coldStaminaRegenFactor } from './temperature'
 import { applyStructureDamage, getVillageOf } from './village'
@@ -685,6 +686,15 @@ function resolveStrike(state: SimState, attacker: Entity): void {
     // plus bas : c'était deux `find` sur `state.monsters` par cible, c'en est un — et il
     // ne se paye plus que sur ce qui est réellement dans l'arc.
     const targetMonster = monsterOf(target.id)
+    // EN VOL, SEUL LE TRAIT ATTEINT (spec faune R21, décision d'Alexis 2026-08-26).
+    // Le tétras levé est en l'air : une lame ou un épieu passent dessous. C'est
+    // ce qui fait de lui LE gibier de l'arc — sans arc, on ne le prend qu'au sol,
+    // donc en réussissant l'approche jusqu'à trois tuiles.
+    //
+    // Une LIGNE, parce que le tir est ici un hitscan : il n'y a pas de projectile
+    // qui voyage, donc pas de balistique à inventer — l'altitude d'une cible est
+    // une question d'ÉLIGIBILITÉ, et elle se répond là où les cibles s'élisent.
+    if (!ranged && targetMonster !== undefined && enVol(targetMonster, state.tick)) continue
     if (attackerHerd !== undefined && targetMonster?.herdId === attackerHerd) continue
     if (attackerIsCendreux && targetMonster?.type === 'cendreux') continue
     if (

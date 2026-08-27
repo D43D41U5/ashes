@@ -210,7 +210,7 @@ describe('le réveil : le sol travaille, puis il rend son mort (R14, R21)', () =
   function nuitAvecUnHomme(): { state: SimState; proie: number } {
     const state = createSim(7, {
       map: createEmptyMap(120, 120, TERRAIN_GRASS),
-      cycleOffset: cycleOffsetForStartHour(0), // minuit
+      cycleOffset: cycleOffsetForStartHour(0, 1), // minuit
       calendarScale: 1,
     })
     // AU CŒUR DU GRAND FROID : c'est l'éveil qui décide si la nuit envoie un mort ou un loup,

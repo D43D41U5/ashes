@@ -4,9 +4,13 @@ import {
   ALERTE_HOLD_MS,
   CONSEIL_FADE_MS,
   CONSEIL_HOLD_MS,
+  DECOUVERTE_ENTREE_MS,
+  DECOUVERTE_SORTIE_MS,
+  DECOUVERTE_TENUE_MS,
   FILE_MAX,
   avancerCreneau,
   empiler,
+  geometrieDecouverte,
   opacite,
 } from './bandeaux'
 
@@ -113,5 +117,85 @@ describe('les deux registres restent distincts', () => {
     // elle — deux canaux, deux horloges.
     expect(alerte.affiche).toBe('trop tôt')
     expect(alerte.file).toEqual(['matériaux insuffisants']) // le troisième attend son tour
+  })
+})
+
+/**
+ * LE CARTON DE DÉCOUVERTE (2026-08-25) — sa géométrie, aux deux bouts et TOUT DU LONG.
+ *
+ * Ce qui ferait rougir ces tests, énoncé d'abord : une animation posée par PALIERS (le
+ * carton apparaît puis se pose), une sortie EN MIROIR de l'entrée (il repart par où il est
+ * venu — un yo-yo), une opacité qui n'atteint jamais 1 pendant la tenue, ou un carton qui
+ * survit à sa fenêtre. C'est le prix du modèle TLD : les noms ne flottent plus sur le
+ * paysage, donc ce carton est le SEUL moment où un lieu se nomme — s'il rate son passage,
+ * le joueur n'apprend jamais où il est allé.
+ */
+describe('la géométrie du carton de découverte', () => {
+  const FIN_ENTREE = DECOUVERTE_ENTREE_MS
+  const FIN = DECOUVERTE_TENUE_MS + DECOUVERTE_SORTIE_MS
+
+  it('les trois instants clefs : absent, plein, parti', () => {
+    const debut = geometrieDecouverte(0, 0)
+    expect(debut.opacite).toBe(0)
+    expect(debut.dy).toBeGreaterThan(0) // il arrive PAR LE BAS
+    expect(debut.filet).toBe(0)
+
+    const plein = geometrieDecouverte(0, FIN_ENTREE)
+    expect(plein.opacite).toBe(1)
+    expect(plein.dy).toBe(0)
+    expect(plein.echelle).toBe(1)
+    expect(plein.filet).toBe(1)
+
+    const parti = geometrieDecouverte(0, FIN)
+    expect(parti.opacite).toBe(0)
+    // ET IL EST PARTI VERS LE HAUT : une sortie en miroir de l'entrée (dy > 0) serait un
+    // aller-retour, pas un passage. C'est l'assertion qui attrape le copier-coller.
+    expect(parti.dy).toBeLessThan(0)
+  })
+
+  it('la pente est CONTINUE sur toute l’entrée, jamais par paliers', () => {
+    // Balayage exhaustif de la fenêtre d'entrée : opacité et hauteur doivent avancer à
+    // CHAQUE pas. Un seul palier (deux échantillons identiques) fait rougir.
+    const PAS = 20
+    let precedent = geometrieDecouverte(0, 0)
+    for (let t = PAS; t <= FIN_ENTREE; t += PAS) {
+      const g = geometrieDecouverte(0, t)
+      expect(g.opacite).toBeGreaterThan(precedent.opacite)
+      expect(g.dy).toBeLessThan(precedent.dy)
+      expect(g.ecart).toBeLessThan(precedent.ecart) // l'interlettre se resserre en arrivant
+      precedent = g
+    }
+  })
+
+  it('la TENUE est pleine encre du début à la fin — on lit un nom propre', () => {
+    for (let t = FIN_ENTREE; t <= DECOUVERTE_TENUE_MS; t += 100) {
+      expect(geometrieDecouverte(0, t).opacite).toBe(1)
+    }
+  })
+
+  it('la SORTIE efface tout, et rien ne dépasse la fenêtre', () => {
+    let precedent = geometrieDecouverte(0, DECOUVERTE_TENUE_MS)
+    for (let t = DECOUVERTE_TENUE_MS + 20; t <= FIN; t += 20) {
+      const g = geometrieDecouverte(0, t)
+      expect(g.opacite).toBeLessThan(precedent.opacite)
+      precedent = g
+    }
+    // Au-delà, la géométrie reste bornée : pas de dy qui file à l'infini si une frame tarde.
+    const bienApres = geometrieDecouverte(0, FIN + 60_000)
+    expect(bienApres.opacite).toBe(0)
+    expect(bienApres.dy).toBe(geometrieDecouverte(0, FIN).dy)
+  })
+
+  it('deux lieux voisins : le second attend son tour, il n’efface pas le premier', () => {
+    // Le cas réel : on traverse une Combe brumeuse et on tombe sur une ferme ruinée dans la
+    // foulée. Sans file, le nom de la Combe disparaîtrait avant d'avoir été lu.
+    const c = creneau()
+    empiler(c.file, ['La Combe brumeuse', 'La Ferme des Frênes'])
+    avancerCreneau(c, 0, DECOUVERTE_TENUE_MS, DECOUVERTE_SORTIE_MS)
+    expect(c.affiche).toBe('La Combe brumeuse')
+    avancerCreneau(c, FIN - 1, DECOUVERTE_TENUE_MS, DECOUVERTE_SORTIE_MS)
+    expect(c.affiche).toBe('La Combe brumeuse') // il parle encore
+    avancerCreneau(c, FIN, DECOUVERTE_TENUE_MS, DECOUVERTE_SORTIE_MS)
+    expect(c.affiche).toBe('La Ferme des Frênes')
   })
 })

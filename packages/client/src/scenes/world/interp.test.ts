@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { pushSample, sampleAt, type Sample } from './interp'
+import { deplacementRecent, pushSample, sampleAt, type Sample } from './interp'
 
 describe('interpolation des entités distantes (tampon de gigue)', () => {
   const buf = (): Sample[] => {
@@ -39,5 +39,33 @@ describe('interpolation des entités distantes (tampon de gigue)', () => {
     expect(b.length).toBe(12)
     expect(b[0]!.at).toBe(18) // 30 - 12
     expect(b[b.length - 1]!.at).toBe(29)
+  })
+})
+
+describe('le déplacement récent (l’axe d’un corps couché)', () => {
+  it('rend le déplacement sur la fenêtre demandée, pas sur tout le tampon', () => {
+    const b: Sample[] = []
+    // Il va plein EST pendant 400 ms, puis plein NORD pendant 400 ms.
+    for (let i = 0; i <= 8; i++) pushSample(b, i * 100, i * 0.1, 0)
+    for (let i = 1; i <= 4; i++) pushSample(b, 800 + i * 100, 0.8, -i * 0.1)
+    const d = deplacementRecent(b, 400)
+    expect(Math.abs(d.dy)).toBeGreaterThan(Math.abs(d.dx)) // sur les 400 dernières ms : il MONTE
+    const long = deplacementRecent(b, 1200)
+    expect(Math.abs(long.dx)).toBeGreaterThan(Math.abs(long.dy)) // sur tout : il est allé à l'est
+  })
+
+  it('un tampon vide ou d’un seul relevé ne bouge pas (et ne jette rien)', () => {
+    expect(deplacementRecent([], 400)).toEqual({ dx: 0, dy: 0 })
+    const b: Sample[] = []
+    pushSample(b, 0, 5, 5)
+    expect(deplacementRecent(b, 400)).toEqual({ dx: 0, dy: 0 })
+  })
+
+  it('un tampon plus COURT que la fenêtre répond quand même, sur ce qu’il a', () => {
+    const b: Sample[] = []
+    pushSample(b, 0, 0, 0)
+    pushSample(b, 100, 0, -0.4)
+    const d = deplacementRecent(b, 400)
+    expect(d).toEqual({ dx: 0, dy: -0.4 })
   })
 })

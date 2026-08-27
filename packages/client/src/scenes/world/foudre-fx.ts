@@ -221,7 +221,7 @@ const ALPHA_GAINE = 0.42
 const GERBE_TEINTES = [0xffe2b4, 0xa98a5f, 0x6b5a42] as const
 
 /** Le télégraphe est AU SOL — on le lit sous ses pieds, sous les acteurs qui s'en écartent.
- *  Même bande que la flaque du Feu (4) et les taches de soleil (5). */
+ *  Même bande que la flaque du Feu (4) et le sol (FLOOR_DEPTH 6). */
 const TELEGRAPHE_DEPTH = 4.5
 /** Le liseré sombre juste SOUS l'anneau clair : ils ne se recouvrent pas, mais si un pixel
  *  était disputé, c'est la lumière qui doit gagner. */

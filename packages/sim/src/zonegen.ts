@@ -52,6 +52,7 @@ import { isWater, MARCHABLE, type WorldMap, type Zone as ZoneRect } from './map'
 import { calculeChampDeCendre, computeCendreField, foyersDeLaCarte } from './cendre'
 import { distSq } from './geometry'
 import { placeCharniers, placePois, placeSteles } from './poi'
+import { peindreLesClairieres } from './clairieres'
 import { densiteDeBase } from './morts'
 import { fbm2, hash2 } from './noise'
 import { deriverDistanceEau, deriverProfondeur } from './profondeur'
@@ -64,6 +65,11 @@ import {
   celluleDe,
   coifferLesCretes,
   composerLHumidite,
+  composerLaRoche,
+  familleDeCellule,
+  grainDuSol,
+  lireLeChampAt,
+  lireLeChampGraine,
   mesurerLaDistanceALEau,
   seuilParQuantile,
   vegetationAt,
@@ -446,19 +452,6 @@ export function generateZonedTerrain(
   // La carte n'est PAS un pavage (spec R39) : ce qui n'est pas une région est du VIDE. On ne peint
   // donc plus une zone partout — on peint des ÎLES, et le reste devient de la ROCHE PLATE,
   // infranchissable (façon montagne RimWorld). Pas de gouffre, pas de hauteur : un mur qu'on longe.
-  /**
-   * LE SOL, MÉMORISÉ PAR MOTIF — et ce n'est pas une approximation, c'est la lecture de `solDe`.
-   *
-   * `solDe` n'échantillonne le bruit qu'au CENTRE du motif de 8×8 : « tout le carré partage son
-   * verdict », dit sa doc, et c'est vrai. On le lui demandait pourtant une fois par TUILE —
-   * soixante-quatre fois le même calcul, six évaluations de `gradientNoise2` à chaque fois. C'était
-   * 20 % du temps de génération (MESURÉ).
-   *
-   * On le calcule donc une fois par (motif, région) — la région varie DANS un motif, un motif de 8
-   * n'étant pas aligné sur le bloc de 16, d'où la clé à deux termes. Le cache ne vit que le temps
-   * d'une RANGÉE de motifs, puisque `my` ne dépend que de `y` : un tableau plat, vidé au changement
-   * de rangée. `solDe` étant pure, le terrain est BIT À BIT le même (invariant n°2).
-   */
   // ── PASSE 1a : LES ZONES ET LA ROCHE DU VIDE ──
   for (let y = 0; y < height; y++) {
     for (let x = 0; x < width; x++) {
@@ -480,10 +473,30 @@ export function generateZonedTerrain(
   // couche II : c'est lui que `solDe` lit.
   const creux = batirLeSocle(g, seed, zone, width, height,
     (x, y) => blocs.vide[blocDe(blocs, x, y)] === 1)
+
+  // ── PASSE 1b-bis : LA ROCHE-MÈRE — le SECOND axe (spec `roche-mere.md` R1-R3) ──
+  //
+  // ⚠ ELLE SE COMPOSE ICI, ET PAS AILLEURS : le calcaire n'inonde pas (R4, passe 1.5) et son
+  // drainage entre dans l'humidité avant les quantiles (R4, passe 1.55). Les deux la veulent
+  // déjà faite. Comme le socle : jamais rendue, jamais dans `WorldMap` ni `SimState` — elle ne
+  // vit que le temps de la génération, et le monde la relit en la RECALCULANT.
+  if (creux) composerLaRoche(creux, seed)
+
   const regles = reglesDuSol(g, creux, seed)
 
   // ── PASSE 1c : LE SOL — chaque zone compose selon sa palette, DÉRIVÉE du socle (S-R10) ──
+  //
+  // ⚠ **LE CACHE PAR MOTIF SURVIT EXACTEMENT LÀ OÙ LE VERDICT EST ENCORE PAR MOTIF**
+  // (`sol-dessine.md` R20, 2026-08-27). Depuis que la lecture est molle, une zone DÉRIVÉE rend un
+  // verdict par tuile : il n'y a plus rien à mémoriser pour elle. Le chemin HISTORIQUE, lui,
+  // échantillonne toujours au centre du carré de 8 — les Prés Bas (repeints par leurs propres
+  // passes) et le Névé (de la neige, et rien d'autre), soit ~800 000 tuiles de la vallée. Les
+  // servir sans cache, c'était recalculer six `gradientNoise2` par tuile pour une valeur
+  // constante sur le carré : le cache est donc conservé pour elles seules, et il reste EXACT —
+  // le prédicat est très exactement « cette zone passe-t-elle par le chemin historique ? ».
   const M_SOL = RELIEF.MOTIF
+  const parMotif = new Uint8Array(g.zones.length)
+  for (const z of g.zones) parMotif[z.id] = regles?.parZone[z.id] == null ? 1 : 0
   const colsMotif = Math.ceil(width / M_SOL)
   const solCache = new Int16Array(colsMotif * g.zones.length).fill(-1)
   let rangeeMotif = -1
@@ -496,6 +509,7 @@ export function generateZonedTerrain(
       const k = blocDe(blocs, x, y)
       if (blocs.vide[k]) continue // la roche du vide est déjà posée
       const z = blocs.zone[k]!
+      if (parMotif[z] === 0) { terrain[i] = solDe(g, z, x, y, creux, regles); continue }
       const kc = Math.floor(x / M_SOL) * g.zones.length + z
       let sol = solCache[kc]!
       if (sol < 0) {
@@ -566,6 +580,15 @@ export function generateZonedTerrain(
   // ── PASSE 1.6 : LES SET-PIECES — trois endroits à grande empreinte, COURONNÉS et non plus
   //    posés (spec t0-exploration R9, révisé §2quinquies : élection pure, aucun tirage) ──
   const setPieces = placerLesSetPieces(terrain, zone, g, width, height)
+
+  // ── PASSE 1.62 : LES CLAIRIÈRES — le biome des trouées (décision d'Alexis, 2026-08-25) ──
+  //
+  // APRÈS tout ce qui pose du bois (le sol, la lisière sud, les bosquets de crête, les lisières
+  // entrelacées, les set-pieces — le Bois Noir a droit à ses trouées comme le reste), et AVANT
+  // les sentes : une sente qui traverse une clairière la recouvre, comme elle recouvre un bois.
+  // La passe ne mord QUE du boisé, tuile par tuile — voir `clairieres.ts` : c'est ce qui laisse
+  // `deriverProfondeur` bit à bit identique.
+  peindreLesClairieres(terrain, zone, g.racine, width, height, seed)
 
   // ── PASSE 1.7 : LES SENTES — les routes du pays d'avant, et leurs gués (R17, R7) ──
   // Elles CONTOURNENT les set-pieces (R18 : un lieu se poste au bord du chemin) ; et la
@@ -1024,21 +1047,84 @@ function peindreLesBosquetsDeCrete(
   }
   // Le masque des seuils est celui de l'eau : un bosquet dans une porte la NOURRIRAIT (du bois),
   // et worldgen R10.3 l'interdit au même titre que l'eau. Une seule règle, un seul masque.
-  const bosquets = coifferLesCretes(creux, masqueDesSeuils(creux, g, g.racine), peignable)
+  const horsSeuils = masqueDesSeuils(creux, g, g.racine)
+  const bosquets = coifferLesCretes(creux, horsSeuils, peignable)
+  if (bosquets.length === 0) return
+
+  // ═══ LE CONTOUR DU BOSQUET EST UNE LIGNE DE NIVEAU, LUE À LA TUILE (R23, 2026-08-27) ═══
+  //
+  // (Retour d'Alexis : *« il y a toujours des patterns carrés, au niveau de pine et larch vs le
+  // reste »* — et il avait raison là où R21 s'était arrêtée. R21 n'avait réparé que l'ESSENCE
+  // À L'INTÉRIEUR du bois ; son CONTOUR restait une union de carrés de 8, remplis d'un bloc.
+  // MESURÉ, seed 2026 : herbe/mélèzes 69,6 % des bords portés par un segment droit de 8 tuiles
+  // ou plus, sur 6 813 bords — le dernier gros damier de la carte.)
+  //
+  // Le bosquet ÉTAIT déjà une ligne de niveau : `coifferLesCretes` garde les cellules dont
+  // l'altitude dépasse `plancher`. On ne change donc pas la règle, on la lit à la bonne échelle.
+  // La MARGE (`altLarge − plancher`) devient un champ de cellules, et le peintre en prend le
+  // niveau zéro par la LECTURE MOLLE : bilinéaire entre les quatre cellules qui entourent la
+  // tuile, plus le grain. La recette exacte du lapiaz et de la butte d'affleurement.
+  //
+  // ⚠ **DEUX COURONNES, PAS UNE.** Une tuile du bord d'une cellule lit une cellule au-delà ; une
+  // tuile de la première couronne en lit deux. Sans la seconde, la sentinelle (très négative)
+  // rentrerait dans l'interpolation et retaillerait un bord DROIT à la frontière de la couronne :
+  // on aurait déplacé le carré d'un cran, pas supprimé.
+  //
+  // ⚠ **LA COURONNE RESPECTE LE MASQUE DES SEUILS** : un bosquet ne nourrit pas une porte
+  // (worldgen R10.3), et le débord n'est pas une porte dérobée.
+  const nCell = creux.cols * creux.rows
+  const SENTINELLE = -1 // bien en dessous de toute marge réelle : `altLarge` vit dans [0, 1]
+  const marge = new Float64Array(nCell).fill(SENTINELLE)
+  const ecrit = new Uint8Array(nCell)
+  for (const bosquet of bosquets) {
+    let front = bosquet.cellules.slice()
+    for (const k of front) { marge[k] = creux.altLarge[k]! - bosquet.plancher; ecrit[k] = 1 }
+    for (let anneau = 0; anneau < 2; anneau++) {
+      const suivant: number[] = []
+      for (const k of front) {
+        const kx = k % creux.cols
+        const ky = (k - kx) / creux.cols
+        const voisines = [
+          kx > 0 ? k - 1 : -1,
+          kx + 1 < creux.cols ? k + 1 : -1,
+          ky > 0 ? k - creux.cols : -1,
+          ky + 1 < creux.rows ? k + creux.cols : -1,
+        ]
+        for (const v of voisines) {
+          if (v < 0 || ecrit[v] === 1) continue
+          if (creux.dedans[v] !== 1 || horsSeuils[v] === 0) continue
+          marge[v] = creux.altLarge[v]! - bosquet.plancher
+          ecrit[v] = 1
+          suivant.push(v)
+        }
+      }
+      front = suivant
+    }
+  }
 
   const sel = (seed ^ 0x43524554) | 0 /* 'CRET' */
-  for (const bosquet of bosquets) {
-    for (const k of bosquet) {
-      const kx = k % creux.cols
-      const tx0 = (creux.mx0 + kx) * M
-      const ty0 = (creux.my0 + (k - kx) / creux.cols) * M
-      // L'essence se tire PAR MOTIF, pas par bosquet : un bois de montagne est un mélange de pins
-      // et de mélèzes, pas une monoculture. Même grain que le reste de la carte (R32).
-      const essence = HAUT_BOIS[Math.floor(hash2(tx0 / M, ty0 / M, sel) * HAUT_BOIS.length)]!
-      // Le motif est ENTIÈREMENT libre (`peignable` l'a exigé) : on le prend en entier, et le
-      // bosquet reste donc d'un seul tenant.
-      for (let dy = 0; dy < M; dy++) {
-        for (let dx = 0; dx < M; dx++) terrain[(ty0 + dy) * width + tx0 + dx] = essence
+  for (let k = 0; k < nCell; k++) {
+    if (ecrit[k] !== 1) continue
+    const kx = k % creux.cols
+    const tx0 = (creux.mx0 + kx) * M
+    const ty0 = (creux.my0 + (k - kx) / creux.cols) * M
+    // ⚠ **L'ESSENCE AUSSI EST MOLLE** (R21) : pin ou mélèze se tirait à PILE OU FACE PAR MOTIF
+    // (`hash2` au centre du carré de 8), donc un bois de montagne sortait en damier, huit tuiles
+    // par case — MESURÉ, seed 42 : 28,6 % des bords pin/mélèze portés par un segment droit de 8+
+    // tuiles, quand le reste de la carte est à 3 %. Le mélange voulu était le bon ; c'est le
+    // TIRAGE qui était faux. Il vient du même champ que le haut bois des zones.
+    for (let dy = 0; dy < M; dy++) {
+      const y = ty0 + dy
+      for (let dx = 0; dx < M; dx++) {
+        const x = tx0 + dx
+        // LE VÉTO EST À LA TUILE, et il n'a plus besoin d'être à la cellule. `peignable` exigeait
+        // les 64 tuiles libres pour que les tuiles refusées ne COUPENT pas un bosquet plein ; un
+        // bord déjà dentelé n'a pas ce souci — et `tuileLibre` reste la vérité (ni eau, ni sente,
+        // ni prairie humide sous un bois sec). `peignable` garde son rôle d'ÉLECTION dans
+        // `coifferLesCretes` : le compte et la taille des bosquets ne bougent pas.
+        if (!tuileLibre(x, y)) continue
+        if (lireLeChampAt(creux, marge, x, y, sel, CREUX.CRETE_GRAIN_CONTOUR) <= 0) continue
+        terrain[y * width + x] = hautBoisAt(g, x, y, grainDuSol(x, y, sel) * CREUX.GRAIN_TUILE_AMPLITUDE)
       }
     }
   }
@@ -1066,6 +1152,12 @@ export interface Affleurement {
   rect: Rect
   ressource: 'fer' | 'charbon'
 }
+
+/** Le rayon qu'aurait une butte parfaitement ronde, en tuiles — l'unité dans laquelle se compte
+ *  l'éloignement au sommet (`AFFL_COMPACITE`). √(320/π) ≈ 10,1 ; écrit en dur parce qu'il DÉRIVE
+ *  de `AFFL_TUILES` et que `/sim` n'a pas droit à `Math.PI ** 0.5` — la constante suffit, et le
+ *  test de forme (R6sexies ①) verrait tout de suite un réglage qui ne tient plus. */
+const RAYON_DE_BUTTE = 10.1
 
 function poserLesAffleurements(
   terrain: number[],
@@ -1118,11 +1210,44 @@ function poserLesAffleurements(
   for (const ressource of CREUX.AFFL_IDENTITES) {
     // ── LE SOMMET : le plus haut du pays parmi les candidates écartées des buttes déjà prises.
     //    Deux tours : la bande sèche d'abord ; si elle est vide, le plancher R51 relâche `sec`.
+    // ═══ LA ROCHE DONNE LE MINERAI (spec `roche-mere.md` R12-R13) ═══
+    //
+    // Le fer est un filon de contact (GRANITE), la houille un bassin sédimentaire (ARGILE), et
+    // le CALCAIRE ne porte ni l'un ni l'autre — un carbonate pur n'a rien à donner. La
+    // prospection cesse d'être une loterie et devient une lecture de carte : *sur le calcaire,
+    // il n'y a pas de fer.* L'identité suivait le RANG du sommet, un ordre invisible au joueur.
+    //
+    // ⚠ **LA CASCADE EST LA RÈGLE, PAS UNE PRÉCAUTION — la dérivation nue casse le jeu une fois
+    // sur trois.** MESURÉ (`tools/__diag-buttes.mts`, 10 seeds) sur « la butte prend le minerai
+    // de la roche où elle tombe » : **3 seeds sur 10 perdent tout leur charbon ou tout leur
+    // fer** (aucune butte sur argile, ou aucune sur granite), et **22 buttes sur 50 (44 %)**
+    // tombent sur le calcaire, donc stériles. Ce n'est pas une pénurie de terrain — celui-ci est
+    // équi-réparti entre les trois provinces (29-39 / 33-37 / 28-36 %) — c'est qu'on n'élit que
+    // CINQ buttes au rang global : cinq tirages dans trois provinces laissent souvent une
+    // province vide. Descendre le rang pour trouver la bonne roche coûte un sommet plus bas.
+    //
+    // L'ORDRE DES CRANS DIT CE QUI COMPTE : **la sécheresse cède avant la roche, la roche cède
+    // avant le compte, et le compte ne cède jamais.** R51 disait déjà la moitié de cette phrase.
+    // `familleDeCellule` : −1 calcaire · 0 granite · +1 argile.
+    const famVoulue = ressource === 'fer' ? 0 : 1
+    const CRANS: { roche: 'voulue' | 'hors_calcaire' | 'toute'; sec: boolean }[] = [
+      { roche: 'voulue', sec: true },
+      { roche: 'voulue', sec: false },
+      { roche: 'hors_calcaire', sec: true },
+      { roche: 'hors_calcaire', sec: false },
+      { roche: 'toute', sec: true },
+      { roche: 'toute', sec: false },
+    ]
     let sommet = -1
-    for (const exigeSec of [true, false]) {
+    for (const cran of CRANS) {
+      const exigeSec = cran.sec
       let haut = -Infinity
       for (let k = 0; k < n; k++) {
         if ((exigeSec ? sec[k] : libre[k]) !== 1 || pris[k] === 1) continue
+        if (cran.roche !== 'toute') {
+          const f = familleDeCellule(creux, k)
+          if (cran.roche === 'voulue' ? f !== famVoulue : f === -1) continue
+        }
         const kx = k % creux.cols
         const ky = (k - kx) / creux.cols
         let loin = true
@@ -1139,51 +1264,107 @@ function poserLesAffleurements(
     }
     if (sommet < 0) continue // plus une cellule libre dans tout le pays — la garde A28 le verra
 
-    // ── LE CHAPEAU : ce qui dépasse, proche-en-proche, plafonné petit (2-5 cellules). Un
-    //    chapeau maigre est GARDÉ quand même : le plancher R51 prime sur la silhouette.
-    const haut = creux.altLarge[sommet]!
-    const plancher = haut - CREUX.AFFL_CHAPEAU
-    const cap: number[] = [sommet]
-    const vu = new Set<number>([sommet])
-    for (let t = 0; t < cap.length && cap.length < CREUX.AFFL_MAX_CELLULES; t++) {
-      const k = cap[t]!
-      const kx = k % creux.cols
-      const ky = (k - kx) / creux.cols
-      const voisines = [
-        kx > 0 ? k - 1 : -1,
-        kx + 1 < creux.cols ? k + 1 : -1,
-        ky > 0 ? k - creux.cols : -1,
-        ky + 1 < creux.rows ? k + creux.cols : -1,
-      ]
-      for (const v of voisines) {
-        if (v < 0 || vu.has(v)) continue
-        vu.add(v)
-        if (libre[v] !== 1 || pris[v] === 1 || creux.altLarge[v]! < plancher) continue
-        cap.push(v)
-        if (cap.length >= CREUX.AFFL_MAX_CELLULES) break
+    // ══ LE CHAPEAU SE FAIT À LA TUILE, PLUS À LA CELLULE (R6bis étendu aux buttes, 2026-08-27)
+    //
+    // Il empilait 2 à 5 carrés de 8×8 : mesuré, **100 % de ses segments de bord faisaient
+    // ≥ 8 tuiles** (3/3, 5/5, 6/6 sur trois graines) — le défaut du lapiaz, en pire, puisqu'une
+    // butte n'a que cinq cellules pour se donner une silhouette.
+    //
+    // On croît donc TUILE À TUILE, en prenant toujours **la plus haute de la frontière** :
+    // le contour est alors la ligne de niveau qui enferme exactement `AFFL_TUILES` tuiles.
+    // Trois propriétés, toutes par construction et non par garde — c'est ce qui rend le
+    // remplacement franc :
+    //   ① ORGANIQUE : une ligne de niveau d'un champ mou (bilinéaire + grain) n'a aucun bord droit ;
+    //   ② BORNÉE : le plafond en tuiles remplace exactement le plafond en cellules, aire égale ;
+    //   ③ CONNEXE : la croissance part du sommet et ne franchit que des voisines.
+    // La whitelist de terrain se relit PAR TUILE (`tuileLibre`) : une butte contourne la
+    // rivière et la route au lieu de les recouvrir — « seul le THÈME cède », la règle du fichier.
+    // Deux bornes, et la seconde est GÉOLOGIQUE : le plafond en tuiles donne la taille, et
+    // `AFFL_CHAPEAU` interdit de descendre sous le ras de l'os — sans lui, une butte qui n'a pas
+    // 320 tuiles de sommet à sa disposition irait les chercher au fond de la vallée voisine.
+    const plancher = creux.altLarge[sommet]! - CREUX.AFFL_CHAPEAU
+    const selContour = (g.seed ^ 0x41464643) | 0 /* 'AFFC' */
+    const altMolle = (x: number, y: number): number =>
+      lireLeChampAt(creux, creux.altLarge, x, y, selContour, CREUX.AFFL_GRAIN_CONTOUR)
+
+    const skx0 = sommet % creux.cols
+    const sky0 = (sommet - skx0) / creux.cols
+    // La tuile de départ : le centre de la cellule du sommet.
+    const departX = (creux.mx0 + skx0) * M + M / 2
+    const departY = (creux.my0 + sky0) * M + M / 2
+    const depart = departY * width + departX
+
+    const capT: number[] = []
+    const dansCap = new Set<number>()
+    let front: number[] = []
+    const enFront = new Set<number>()
+    if (tuileLibre(departX, departY)) {
+      front.push(depart)
+      enFront.add(depart)
+    }
+    while (capT.length < CREUX.AFFL_TUILES && front.length > 0) {
+      // La plus haute de la frontière, PÉNALISÉE PAR L'ÉLOIGNEMENT AU SOMMET — départage par
+      // index, donc déterministe. Sans la pénalité, la croissance suit la crête et la butte
+      // s'étire en ruban (mesuré en jeu : 18 % de remplissage de sa boîte).
+      let meilleur = 0
+      let hMax = -Infinity
+      for (let f = 0; f < front.length; f++) {
+        const i = front[f]!
+        const ix = i % width
+        const iy = (i - ix) / width
+        const ex = ix - departX
+        const ey = iy - departY
+        const a = altMolle(ix, iy)
+          - CREUX.AFFL_COMPACITE * Math.sqrt(ex * ex + ey * ey) / RAYON_DE_BUTTE
+        if (a > hMax) { hMax = a; meilleur = f }
+      }
+      const i = front[meilleur]!
+      front[meilleur] = front[front.length - 1]!
+      front.pop()
+      enFront.delete(i)
+      capT.push(i)
+      dansCap.add(i)
+      const ix = i % width
+      const iy = (i - ix) / width
+      for (const v of [ix > 0 ? i - 1 : -1, ix + 1 < width ? i + 1 : -1, iy > 0 ? i - width : -1, iy + 1 < height ? i + width : -1]) {
+        if (v < 0 || dansCap.has(v) || enFront.has(v)) continue
+        const vx = v % width
+        const vy = (v - vx) / width
+        if (!tuileLibre(vx, vy) || altMolle(vx, vy) < plancher) continue
+        front.push(v)
+        enFront.add(v)
       }
     }
+    front = []
+    if (capT.length === 0) continue // le sommet lui-même n'était pas peignable — A28 le verra
 
-    // ── LA PEINTURE, et le REGISTRE : la boîte englobante des motifs peints, en tuiles.
+    // ── LA PEINTURE, et le REGISTRE : la boîte englobante des TUILES peintes (plus des motifs).
+    //    A29 exige que chaque nœud de minerai tombe dans un rect registré ; une tuile dentelée
+    //    hors de la bbox des motifs y serait « hors de toute butte ».
     let x0 = Infinity
     let y0 = Infinity
     let x1 = -Infinity
     let y1 = -Infinity
-    for (const k of cap) {
-      pris[k] = 1
-      const kx = k % creux.cols
-      const tx0 = (creux.mx0 + kx) * M
-      const ty0 = (creux.my0 + (k - kx) / creux.cols) * M
-      for (let dy = 0; dy < M; dy++) {
-        for (let dx = 0; dx < M; dx++) terrain[(ty0 + dy) * width + tx0 + dx] = TERRAIN_SCREE
-      }
-      if (tx0 < x0) x0 = tx0
-      if (ty0 < y0) y0 = ty0
-      if (tx0 + M > x1) x1 = tx0 + M
-      if (ty0 + M > y1) y1 = ty0 + M
+    for (const i of capT) {
+      terrain[i] = TERRAIN_SCREE
+      const ix = i % width
+      const iy = (i - ix) / width
+      if (ix < x0) x0 = ix
+      if (iy < y0) y0 = iy
+      if (ix + 1 > x1) x1 = ix + 1
+      if (iy + 1 > y1) y1 = iy + 1
     }
-    const skx = sommet % creux.cols
-    sommets.push({ kx: skx, ky: (sommet - skx) / creux.cols })
+    // Les CELLULES touchées sont marquées prises : l'écartement des buttes suivantes
+    // (`AFFL_ECART`) et l'élection se raisonnent toujours à la maille du motif.
+    for (let cy = Math.floor(y0 / M); cy <= Math.floor((y1 - 1) / M); cy++) {
+      for (let cx = Math.floor(x0 / M); cx <= Math.floor((x1 - 1) / M); cx++) {
+        const kx = cx - creux.mx0
+        const ky = cy - creux.my0
+        if (kx < 0 || ky < 0 || kx >= creux.cols || ky >= creux.rows) continue
+        pris[ky * creux.cols + kx] = 1
+      }
+    }
+    sommets.push({ kx: skx0, ky: sky0 })
     affs.push({ rect: { x: x0, y: y0, w: x1 - x0, h: y1 - y0 }, ressource })
   }
   return affs
@@ -1301,10 +1482,26 @@ const STADES_BRULE = {
   PART_STERILE: 0.36,
   PART_LANDE: 0.66, //   stérile + lande
   PART_PIONNIER: 0.86, // + pionniers ; le reste : jeune futaie
-  /** Amplitude du dither par motif (± la moitié), en tuiles de distance au front. */
+  /**
+   * Amplitude du grain qui BROUILLE la limite des stades (± la moitié), en tuiles de distance
+   * au front. Sans lui, chaque bande serait une courbe de niveau propre — et morte.
+   */
   DITHER: 26,
-  /** La part de mélèzes semés PAR MOTIF dans la bande pionnière — les éclaireurs du bois. */
+  /**
+   * L'échelle de ce grain, en tuiles (`sol-dessine.md` R24, 2026-08-27).
+   *
+   * ⚠ IL ÉTAIT TIRÉ PAR MOTIF, ET C'EST CE QUI DÉCOUPAIT LA SUCCESSION EN CARRÉS : un saut de
+   * ±13 tuiles de distance au front à chaque arête de motif, donc une limite de stade qui
+   * tombait sur la grille de 8. MESURÉ, seed 2026 : lande/calciné 65,8 % de bords portés par un
+   * segment droit de 8 tuiles ou plus, herbe/mélèzes 68,2 %. 28 tuiles : l'ordre de grandeur du
+   * déplacement qu'il produit — un grain plus fin ferait de la dentelle sur une frontière qui
+   * doit se lire comme une avancée du feu.
+   */
+  DITHER_ECHELLE: 28,
+  /** La part de mélèzes semés dans la bande pionnière — les éclaireurs du bois. */
   MELEZES_PIONNIERS: 0.16,
+  /** L'échelle des taches de pionniers, en tuiles : des bosquets d'éclaireurs, pas un semis. */
+  PIONNIERS_ECHELLE: 34,
 } as const
 
 function peindreLesStadesDuBrule(
@@ -1323,30 +1520,42 @@ function peindreLesStadesDuBrule(
 
   // Les quantiles de la distance au front, sur les tuiles de la zone (histogramme, en motifs).
   const dists: number[] = []
+  /**
+   * ET LE CHAMP DES PIONNIERS, ÉCHANTILLONNÉ AU MÊME PAS — parce que sa part est un CONTRAT.
+   *
+   * ⚠ `fbm2` N'EST PAS UNIFORME : c'est une cloche centrée sur 0,5 d'écart-type ≈ 0,17. Le
+   * comparer directement à `MELEZES_PIONNIERS` = 0,16 ne sèmerait pas 16 % de la bande mais
+   * **2,6 %** (0,16 est à deux écarts-types du centre). On prend donc le QUANTILE du champ sur
+   * la zone, exactement comme pour les stades : la part reste vraie quel que soit le bruit.
+   */
+  const pions: number[] = []
   for (let y = 0; y < height; y += M) {
     for (let x = 0; x < width; x += M) {
       const i = y * width + x
-      if (zone[i] === brule.id) dists.push(champCendre[i]!)
+      if (zone[i] !== brule.id) continue
+      dists.push(champCendre[i]!)
+      pions.push(fbm2(x, y, STADES_BRULE.PIONNIERS_ECHELLE, (sel ^ 0x504e) | 0 /* 'PN' */))
     }
   }
   if (dists.length < 32) return
-  let lo = Infinity
-  let hi = -Infinity
-  for (const d of dists) {
-    if (d < lo) lo = d
-    if (d > hi) hi = d
-  }
-  const etendue = hi - lo || 1
-  const SEAUX = 1024
-  const hist = new Int32Array(SEAUX)
-  for (const d of dists) {
-    let b = Math.floor(((d - lo) / etendue) * SEAUX)
-    if (b < 0) b = 0
-    if (b >= SEAUX) b = SEAUX - 1
-    hist[b]!++
-  }
-  const quantile = (part: number): number => {
-    const cible = Math.floor(dists.length * part)
+  /** Le quantile d'un échantillon, par histogramme d'entiers — déterministe, sans tri. */
+  const quantileDe = (vals: readonly number[], part: number): number => {
+    let lo = Infinity
+    let hi = -Infinity
+    for (const d of vals) {
+      if (d < lo) lo = d
+      if (d > hi) hi = d
+    }
+    const etendue = hi - lo || 1
+    const SEAUX = 1024
+    const hist = new Int32Array(SEAUX)
+    for (const d of vals) {
+      let b = Math.floor(((d - lo) / etendue) * SEAUX)
+      if (b < 0) b = 0
+      if (b >= SEAUX) b = SEAUX - 1
+      hist[b]!++
+    }
+    const cible = Math.floor(vals.length * part)
     let cum = 0
     for (let b = 0; b < SEAUX; b++) {
       cum += hist[b]!
@@ -1354,9 +1563,10 @@ function peindreLesStadesDuBrule(
     }
     return hi
   }
-  const qSterile = quantile(STADES_BRULE.PART_STERILE)
-  const qLande = quantile(STADES_BRULE.PART_LANDE)
-  const qPionnier = quantile(STADES_BRULE.PART_PIONNIER)
+  const qSterile = quantileDe(dists, STADES_BRULE.PART_STERILE)
+  const qLande = quantileDe(dists, STADES_BRULE.PART_LANDE)
+  const qPionnier = quantileDe(dists, STADES_BRULE.PART_PIONNIER)
+  const qPion = quantileDe(pions, STADES_BRULE.MELEZES_PIONNIERS)
 
   for (let y = 0; y < height; y++) {
     for (let x = 0; x < width; x++) {
@@ -1366,13 +1576,15 @@ function peindreLesStadesDuBrule(
       // Seul le THÈME cède (calciné, lande, herbe) : l'eau, la roche, les routes et tout ce
       // que d'autres passes ont posé gardent leur nature — la règle de toutes les passes.
       if (t !== TERRAIN_BURNT_FOREST && t !== TERRAIN_HEATH && t !== TERRAIN_GRASS && t !== TERRAIN_LARCH) continue
-      const mx = Math.floor(x / M)
-      const my = Math.floor(y / M)
-      const d = champCendre[i]! + (hash2(mx, my, sel) - 0.5) * STADES_BRULE.DITHER
+      // LE GRAIN EST À LA TUILE, PLUS AU MOTIF (R24) : le champ de cendre est continu, c'est le
+      // dither qui découpait la succession en carrés de 8.
+      const d = champCendre[i]!
+        + (fbm2(x, y, STADES_BRULE.DITHER_ECHELLE, sel) - 0.5) * STADES_BRULE.DITHER
       if (d < qSterile) terrain[i] = TERRAIN_BURNT_FOREST
       else if (d < qLande) terrain[i] = TERRAIN_HEATH
       else if (d < qPionnier) {
-        terrain[i] = hash2(mx, my, sel ^ 0x504e) < STADES_BRULE.MELEZES_PIONNIERS
+        // Les ÉCLAIREURS : un champ, comparé à SON quantile — donc 16 % de la bande, en taches.
+        terrain[i] = fbm2(x, y, STADES_BRULE.PIONNIERS_ECHELLE, (sel ^ 0x504e) | 0) < qPion
           ? TERRAIN_LARCH : TERRAIN_GRASS
       } else terrain[i] = TERRAIN_LARCH
     }
@@ -1413,11 +1625,72 @@ function peindreLisiereSud(
 }
 
 /**
- * LE SOL D'UNE TUILE — le thème de sa zone, semé de bosquets et d'accents, et QUANTIFIÉ AU MOTIF.
+ * ═══ LA MOLLESSE DES FRONTIÈRES — le réglage se juge EN REGARDANT UNE CARTE, il vit donc ici ═══
  *
- * Le bruit ne décide plus tuile par tuile : il décide par carré de 8. Une forêt devient un pavage
- * de carrés, un affleurement de roche un rectangle. C'est le grain « pixel-art assumé » de la
- * nouvelle direction artistique — et c'est la même quantification que les zones, un cran plus fin.
+ * (Retour d'Alexis, 2026-08-27 : *« beaucoup de frontières de biomes sont trop droites (scree vs
+ * boulder par exemple) ; il faudrait trouver une gestion universelle des frontières entre biomes
+ * de même hauteur. »* — MESURÉ avant d'écrire une ligne, seed 2026, vallée entière, part des
+ * segments de bord rectilignes de ≥ 8 tuiles : pins/mélèzes **99,5 %**, éboulis/blocs **87,4 %**,
+ * blocs/brûlé **100 %**, alpage/fleurs **99,5 %**, tourbe/roselière **98,4 %** — quand le pré des
+ * Prés Bas est à **1-3 %** depuis `sol-dessine` (2026-08-22). Le pré avait été réparé ; la
+ * réparation n'avait jamais quitté la Racine.)
+ */
+const SOL_MOU = {
+  /**
+   * LE SEL DU GRAIN DU SOL — un seul pour toute la carte, et c'est le point.
+   *
+   * Le grain est tiré UNE fois par tuile (`grainDuSol`) et sert les trois verdicts du sol :
+   * l'accent, la tache, l'essence du haut bois. Deux sels différents feraient deux dentelles
+   * étrangères sur la même tuile. Il reste distinct de celui de l'humidité de la Racine
+   * (`selGrain`) : deux bords qui partageraient leur grain se ressembleraient — la même dentelle,
+   * décalée.
+   */
+  SEL: 0x534f4c4d, /* 'SOLM' */
+  /**
+   * L'ÉCHELLE DU PARTAGE PIN / MÉLÈZE, en tuiles.
+   *
+   * L'essence du haut bois était un PILE-OU-FACE PAR MOTIF (`hash2` au centre du carré de 8) :
+   * pas une forme, une mosaïque — 27 939 bords, 99,5 % rectilignes, la plus grosse couture de la
+   * carte. Un `hash2` par TUILE ne la répare pas, il la remplace par des confettis : il faut un
+   * CHAMP. 40 tuiles — deux écrans de large : des peuplements qu'on traverse, pas des taches.
+   * CALIBRÉ à la mesure (11,9 % de segments ≥ 8, contre 99,5 % avant).
+   */
+  ECHELLE_HAUT_BOIS: 40,
+  /** Le sel du champ des essences — jamais celui du grain, jamais celui d'une palette. */
+  SEL_HAUT_BOIS: 0x424f4953, /* 'BOIS' */
+} as const
+
+/**
+ * L'ESSENCE DU HAUT BOIS — pin ou mélèze, décidée par un CHAMP et non par un tirage.
+ *
+ * Le grain lui arrive du sol (déjà multiplié par son amplitude) : c'est ce qui donne au bord des
+ * peuplements la même dentelle qu'aux taches et aux accents de la même tuile. Sans lui, le seuil
+ * d'un `fbm2` rend des contours lisses — propres, et morts (la leçon de `LAPIAZ.GRAIN_CONTOUR`).
+ */
+function hautBoisAt(g: GrapheZones, x: number, y: number, grain: number): number {
+  return fbm2(x, y, SOL_MOU.ECHELLE_HAUT_BOIS, (g.seed ^ SOL_MOU.SEL_HAUT_BOIS) | 0) + grain > 0.5
+    ? HAUT_BOIS[0]!
+    : HAUT_BOIS[1]!
+}
+
+/**
+ * LE SOL D'UNE TUILE — le thème de sa zone, semé de bosquets et d'accents.
+ *
+ * ⚠ **LE VERDICT EST À LA TUILE, LE CHAMP RESTE AU MOTIF** (`sol-dessine.md` R20, 2026-08-27) —
+ * exactement la réparation que `humAt` a faite pour la Racine, étendue à toutes les zones. Les
+ * champs du socle (`champAlt`, `champHum`) ne sont PAS recalculés par tuile : on les lit
+ * BILINÉAIREMENT entre les quatre cellules qui entourent la tuile, plus un grain fin, et on
+ * compare aux MÊMES seuils de quantile. L'interpolation conserve la moyenne et le grain est
+ * symétrique : les parts de chaque palette restent le contrat qu'elles étaient.
+ *
+ * ⚠ **CE QUI RESTE DROIT LE RESTE, et c'est la règle qu'Alexis a posée** : *entre biomes de même
+ * hauteur*. Le mur du vide (`rock`) et la falaise (`cliff`) SONT une hauteur — ils gardent leurs
+ * arêtes de bloc (R32), et la mesure le montre : après ce chantier, tout ce qui dépasse 90 % de
+ * segments longs est `rock|…` ou `cliff|…`, plus une seule paire biome/biome.
+ *
+ * Le CHEMIN HISTORIQUE, lui, échantillonne toujours au centre du motif : il ne sert que les Prés
+ * Bas (entièrement repeints par leurs propres passes) et le Névé (de la neige, et rien d'autre).
+ * Le rendre mou ne changerait pas un pixel et déplacerait le flux du PRNG pour rien.
  */
 function solDe(
   g: GrapheZones,
@@ -1429,7 +1702,7 @@ function solDe(
 ): number {
   const z = g.zones[id]!
   const p = PALETTES[z.def.slug]!
-  // Le centre du MOTIF qui contient la tuile : tout le carré partage son verdict.
+  // Le centre du MOTIF qui contient la tuile — le chemin HISTORIQUE seul s'en sert désormais.
   const M = RELIEF.MOTIF
   const mx = Math.floor(x / M) * M + M / 2
   const my = Math.floor(y / M) * M + M / 2
@@ -1437,15 +1710,19 @@ function solDe(
   // ═══ LE CHEMIN DÉRIVÉ (S-R10) : la zone lit le socle, l'accent gagne sur la tache ═══
   const r = regles?.parZone[id]
   if (socle && regles && r) {
-    const k = celluleDe(socle, x, y)
-    if (k >= 0) {
-      const va = r.accentAlt ? regles.champAlt[k]! : regles.champHum[k]!
+    // LE GATE RESTE À LA CELLULE : « cette tuile est-elle dans le rectangle du socle ? ». Hors
+    // socle, on retombe sur le chemin historique — `lireLeChampGraine` clampe au bord et ne
+    // saurait pas le dire.
+    if (celluleDe(socle, x, y) >= 0) {
+      // LE GRAIN DU SOL, UNE SEULE FOIS POUR LA TUILE — partagé par les trois verdicts. Ce n'est
+      // pas une économie de `fbm2` : trois grains indépendants feraient trois dentelles
+      // étrangères là où il n'y a qu'un sol.
+      const grain = grainDuSol(x, y, (g.seed ^ SOL_MOU.SEL) | 0) * CREUX.GRAIN_TUILE_AMPLITUDE
+      const va = lireLeChampGraine(socle, r.accentAlt ? regles.champAlt : regles.champHum, x, y, grain)
       if (r.partAccent > 0 && (r.accentHaut ? va >= r.accentSeuil : va < r.accentSeuil)) return p.accent
-      const vt = r.tacheAlt ? regles.champAlt[k]! : regles.champHum[k]!
+      const vt = lireLeChampGraine(socle, r.tacheAlt ? regles.champAlt : regles.champHum, x, y, grain)
       if (r.tacheHaut ? vt >= r.tacheSeuil : vt < r.tacheSeuil) {
-        if (p.taches === TERRAIN_FOREST && z.def.tier > 0) {
-          return HAUT_BOIS[Math.floor(hash2(mx, my, g.seed ^ 0x5b) * HAUT_BOIS.length)]!
-        }
+        if (p.taches === TERRAIN_FOREST && z.def.tier > 0) return hautBoisAt(g, x, y, grain)
         return p.taches
       }
       return p.sol
@@ -1461,7 +1738,7 @@ function solDe(
     // Les BOSQUETS. Dans les zones hautes, le bois qui pousse est un pin ou un mélèze — un
     // thème n'est pas un aplat.
     if (p.taches === TERRAIN_FOREST && z.def.tier > 0) {
-      return HAUT_BOIS[Math.floor(hash2(mx, my, g.seed ^ 0x5b) * HAUT_BOIS.length)]!
+      return hautBoisAt(g, x, y, grainDuSol(x, y, (g.seed ^ SOL_MOU.SEL) | 0) * CREUX.GRAIN_TUILE_AMPLITUDE)
     }
     return p.taches
   }

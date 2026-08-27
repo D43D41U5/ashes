@@ -3,14 +3,31 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>ASHES — l'Atelier des plans</title>
+    <title>ASHES — l'Atelier</title>
     <style>
       /* L'Atelier est un OUTIL DE DEV (spec atelier-plans.md A5) : il vit à côté du banc
          d'écoute, servi par `pnpm dev` seulement — le build de prod ne le connaît pas.
          LE LAYOUT EST L'ÉTABLI (décision d'Alexis) : barre d'outils, gauche (lieux +
          palette), viewport, inspecteur, barre d'état — tout visible, rien de modal. */
       html, body { margin: 0; padding: 0; background: #14110d; color: #d8d2c6; font: 13px/1.45 ui-monospace, monospace; height: 100%; }
-      #app { display: grid; height: 100vh; box-sizing: border-box;
+      /* ═══ LE PORTAIL (demande d'Alexis : « un seul portail pour tous les outils ») ═══
+         Une barre d'onglets, puis la place entière pour l'outil ouvert. Les outils ne se
+         connaissent pas : chacun vit dans sa section, et `#app` (les PLANS) garde exactement
+         la grille qu'il avait — seule sa hauteur passe de la fenêtre à celle de son hôte. */
+      body { display: flex; flex-direction: column; }
+      #portail { display: flex; align-items: center; gap: 14px; padding: 6px 12px; background: #100d0a;
+        border-bottom: 1px solid #2e2820; flex: none; }
+      #portail .p-marque { color: #e8b34a; font-size: 12px; letter-spacing: 0.18em; }
+      #p-onglets { display: flex; gap: 3px; }
+      .p-onglet { background: #201c15; border: 1px solid #3a3226; border-radius: 3px; color: #948a76;
+        font: inherit; font-size: 11px; letter-spacing: 0.12em; padding: 4px 14px; cursor: pointer; }
+      .p-onglet:hover { color: #d8d2c6; }
+      .p-onglet.actif { border-color: #e8b34a; color: #e8b34a; background: #2c2416; }
+      #p-propos { color: #948a76; font-size: 11.5px; }
+      #outils { flex: 1; min-height: 0; }
+      #outils > section { height: 100%; }
+      #outil-son { overflow-y: auto; background: #0f0b08; }
+      #app { display: grid; height: 100%; box-sizing: border-box;
         grid-template-columns: 300px 1fr 252px;
         grid-template-rows: auto 1fr auto auto;
         grid-template-areas: "tb tb tb" "gauche centre droite" "aide aide aide" "sb sb sb"; }
@@ -82,9 +99,16 @@
     </style>
   </head>
   <body>
+    <div id="portail">
+      <span class="p-marque">ASHES — L’ATELIER</span>
+      <nav id="p-onglets"></nav>
+      <span id="p-propos"></span>
+    </div>
+    <div id="outils">
+    <section id="outil-plans">
     <div id="app">
       <div id="toolbar">
-        <h1>L'Atelier</h1>
+        <h1>Les plans</h1>
         <div class="outil-groupe">
           <label><input type="radio" name="outil" value="peindre" checked />✏ peindre <kbd>B</kbd></label>
           <label><input type="radio" name="outil" value="gommer" />⌫ gommer <kbd>E</kbd></label>
@@ -185,6 +209,9 @@
     </div>
     <div id="aide-panneau" style="display:none"></div>
     <div id="infobulle"></div>
-    <script type="module" src="/src/atelier/main.ts"></script>
+    </section>
+    <section id="outil-son" style="display:none"></section>
+    </div>
+    <script type="module" src="/src/atelier/portail.ts"></script>
   </body>
 </html>

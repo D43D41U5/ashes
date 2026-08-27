@@ -46,9 +46,23 @@ function vif(s: SimState, n: ResourceNode): ResourceNode {
 function act(s: SimState, id: number, action: PlayerAction): void {
   step(s, [{ entityId: id, dx: 0, dy: 0, action }])
 }
-/** Vide un nœud à mains nues, coup par coup, et rend le nombre de coups portés. */
+/**
+ * Vide un nœud coup par coup, et rend le nombre de coups portés.
+ *
+ * **L'OUTIL S'ÉQUIPE ICI** (spec `glanage.md` G1) : le bois et la pierre ne cèdent plus aux
+ * mains nues, et ce fichier ne parle pas du verrou d'outil — il parle de la REPOUSSE. Sans
+ * cette ligne, chaque `harvest` serait refusé et toutes ses gardes deviendraient vertes par
+ * accident, sur un monde où rien n'a jamais été récolté. On prend l'outil d'atelier : il ne
+ * casse pas en cours de route (100 coups contre 20), et sa durabilité n'est pas le sujet.
+ */
 function vider(s: SimState, id: number, n: ResourceNode): number {
   const e = s.entities.find((x) => x.id === id)!
+  const famille = NODE_DEFS[n.type].tool
+  if (famille === 'axe' || famille === 'pickaxe') {
+    const outil = famille === 'axe' ? 'axe' : 'pickaxe'
+    if (countOf(e.inventory, outil) === 0) grantItems(s, id, { [outil]: 1 })
+    e.activeSlot = e.inventory.findIndex((sl) => sl !== null && sl.item === outil)
+  }
   let coups = 0
   while (n.stock > 0 && coups < 80) {
     // Juste au sud du nœud : à portée, hors de son emprise bloquante (se planter SUR un

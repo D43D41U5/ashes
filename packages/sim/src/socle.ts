@@ -428,6 +428,10 @@ export function batirLeSocle(
     // Seuils de végétation NEUTRES avant `composerLHumidite` : la prairie (≥ 2) et la lande
     // (< −1) sont inatteignables, le bosquet et la fleuraie comme avant.
     seuilBassin, seuilPrairie: 2, seuilBois: 1, seuilFleuraie: 0, seuilLande: -1, selGrain: 0,
+    // LA ROCHE-MÈRE, NEUTRE avant `composerLaRoche` : champ à zéro et seuils qui rendent tout
+    // le pays GRANITE (−0,5 < 0 < 1,5) — donc `familleDeCellule` vaut 0 partout et le monde est
+    // celui d'avant, au bit près. Le patron des seuils de végétation, deux lignes plus haut.
+    roche: new Float64Array(n), seuilCalcaire: -0.5, seuilArgile: 1.5,
     flux, recepteur, pente, zoneCell, videCell, mouille,
   }
 }

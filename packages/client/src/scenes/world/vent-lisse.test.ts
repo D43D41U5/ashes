@@ -66,3 +66,65 @@ describe('A9 — la force vient de la sim', () => {
     expect(fin.x).toBeLessThan(0) // il a bien fini par se retourner
   })
 })
+
+/**
+ * ═══ LE CAP DU DÉCOR (Alexis, 2026-08-25) ═══
+ *
+ * *« Les houppiers et autres végétaux reviennent à la position initiale d'un coup. »* La cause
+ * était que le décor lisait le cap BRUT de la sim, qui avance par crans de 45°. Il lit désormais
+ * `cap` — le même ressort que la brume, sans la force. Ces gardes affirment les deux propriétés
+ * dont dépend l'absence de saut, et la troisième sans laquelle on aurait cassé les mondes muets.
+ */
+describe('le cap que le DÉCOR plie', () => {
+  it('un cran de 45° ne bouge l’assiette que d’un degré par image, jamais d’un coup', () => {
+    const v = new VentLisse()
+    const EST = { x: 1, y: 0 }
+    for (let i = 0; i < 400; i++) v.update(i * 16, 16, EST, 0.55)
+    // ⚠ ON MESURE `wx` — LA COMPOSANTE HORIZONTALE, ET PAS L'ANGLE. C'est elle, et elle seule,
+    //   qu'un billboard peut montrer (`windSway` : `BASE_LEAN × take × wx`) : un cap qui
+    //   tournerait en douceur pendant que `wx` saute laisserait le défaut intact.
+    const NORD_EST = { x: Math.SQRT1_2, y: -Math.SQRT1_2 }
+    let precedent = v.cap.x
+    let pireSaut = 0
+    // 3 000 images = 48 s, soit douze demi-vies de 4 s : le résidu tombe sous 0,03 %. À 24 s il
+    // en reste 1,6 %, et une garde de convergence y échouerait sur le MODÈLE, pas sur un défaut.
+    for (let i = 0; i < 3000; i++) {
+      v.update(i * 16, 16, NORD_EST, 0.55)
+      pireSaut = Math.max(pireSaut, Math.abs(v.cap.x - precedent))
+      precedent = v.cap.x
+    }
+    // Une image ne peut pas déplacer `wx` de plus de 1 % de sa plage. Le défaut d'origine valait
+    // 1,0 d'un coup (est → nord : `wx` de 1 à 0) — soit cent fois ce plafond.
+    expect(pireSaut, 'l’assiette a sauté d’une image à l’autre').toBeLessThan(0.01)
+    expect(v.cap.x, 'et il a bien fini par rallier').toBeCloseTo(Math.SQRT1_2, 2)
+  })
+
+  it('un cap plein NORD ne redresse pas les tiges d’un coup — il les redresse en pente', () => {
+    const v = new VentLisse()
+    for (let i = 0; i < 400; i++) v.update(i * 16, 16, { x: 1, y: 0 }, 0.55)
+    // Le pire cas du rapport : est → nord, `wx` passe de 1 à 0. C'est CE virage qu'Alexis a vu.
+    const releves: number[] = []
+    for (let i = 0; i < 3000; i++) {
+      v.update(i * 16, 16, { x: 0, y: -1 }, 0.55)
+      releves.push(v.cap.x)
+    }
+    expect(releves[0]!, 'la première image ne doit presque rien changer').toBeGreaterThan(0.99)
+    expect(releves.at(-1)!, 'et il finit bien à plat').toBeLessThan(0.02)
+    // La pente est MONOTONE : pas de retour en arrière, pas d'oscillation autour de zéro.
+    for (let i = 1; i < releves.length; i++) expect(releves[i]!).toBeLessThanOrEqual(releves[i - 1]!)
+  })
+
+  it('la sentinelle du calme plat TRAVERSE — un monde sans vent n’a pas de tige qui plie', () => {
+    const v = new VentLisse()
+    for (let i = 0; i < 400; i++) v.update(i * 16, 16, { x: 1, y: 0 }, 0.55)
+    // ⚠ CETTE GARDE EST LA CONTREPARTIE DE LA PRÉCÉDENTE. `cap` est unitaire par construction ;
+    //   le rendre tel quel sous `wind = {0,0}` aurait fait plier les herbes d'un banc ou d'un
+    //   hôte muet — un monde qui n'a PAS de vent (`vent.ts`), pas un monde dont le vent est
+    //   faible. C'est le vecteur nul, et `windSway` s'y appuie pour ne rien faire bouger.
+    v.update(0, 16, { x: 0, y: 0 }, 0)
+    expect(v.cap).toEqual({ x: 0, y: 0 })
+    // Et la brume, elle, garde son souffle : les deux sorties ne disent pas la même chose.
+    const derive = v.update(16, 16, { x: 0, y: 0 }, 0)
+    expect(Math.sqrt(derive.x ** 2 + derive.y ** 2)).toBeGreaterThan(0)
+  })
+})

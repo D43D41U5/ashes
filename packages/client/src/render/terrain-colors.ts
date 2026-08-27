@@ -74,4 +74,18 @@ export const TERRAIN_COLORS: Record<number, number> = {
   27: 0x71695a, // cendre de pré — la plus claire, un ocre éteint
   28: 0x3b3630, // cendre de bois — la plus sombre, sous les troncs debout
   29: 0x7b7a76, // cendre minérale — froide et pâle : la roche n'a jamais eu de couleur
+  /**
+   * LA CLAIRIÈRE (2026-08-25) — l'herbe qui prend enfin le soleil.
+   *
+   * PLUS CLAIRE ET PLUS CHAUDE que l'herbe du pré (0x3e7d3a), et à des lieues de la litière
+   * brune du bois (0x6b5730..0x5c5e38, cf. `solForet`) : cernée de litière, elle dit « ici la
+   * lumière entre », ce qui est la seule chose qu'une clairière ait à dire. Moins pâle que le
+   * pré fleuri (0x9cb25c), qui reste le mot de la fleuraie.
+   *
+   * ⚠ Ce n'est PAS le vert de clairière retiré le 2026-08-23. Celui-là TEINTAIT le sol de la
+   * forêt par un champ décidé au bloc — des taches de couleur dans une matière qui doit se lire
+   * d'un bloc. Ici la tuile A CHANGÉ DE BIOME : sa lisière est une frontière de terrain comme
+   * les autres, quantifiée au motif de 8 comme toute la carte (R32).
+   */
+  30: 0x6b8f3e, // clairière — l'herbe au soleil, dans le bois
 }

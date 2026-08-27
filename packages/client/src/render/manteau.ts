@@ -45,9 +45,10 @@
  *
  * Pur : testé en Node (`manteau.test.ts`).
  */
-import { NEIGE_GENOUX, NEIGE_POUDREUSE, hash2, type NiveauDeNeige } from '@ashes/sim'
+import { NEIGE_GENOUX, NEIGE_POUDREUSE, fbm2, hash2, type NiveauDeNeige } from '@ashes/sim'
+import { moduler } from './zone-ambiance'
 import { GRAIN_CELLS } from './grain-sol'
-import { ASSEC, CRUE, cuireChunk, DESSOUS, DESSOUS_EAU, GLACE_GUE, GLACE_LAC, GUE_FERME, MANTEAU, MANTEAU_PROFOND, type ChunkCuit } from './paves'
+import { ASSEC, CRUE, cuireChunk, soleilDuPavement, DESSOUS, DESSOUS_EAU, GLACE_GUE, GLACE_LAC, GUE_FERME, MANTEAU, MANTEAU_PROFOND, type ChunkCuit } from './paves'
 
 /** Réglages du manteau — ce qui se règle en REGARDANT (da-feeling), pas en jouant. Le SEUIL
  *  d'une tuile et sa distribution, eux, commandent le pas : ils vivent dans `GEL` (`balance.ts`,
@@ -78,20 +79,70 @@ export const NEIGE_PAVE = {
  * glace une surface qui se voit.
  */
 export const EAU_PAVE = {
-  /** LA VASE du fond mis à nu : un limon gris-ocre, plus sombre et plus terne que le sable de
-   *  la berge (qui vaut ~0xc8b48c) — sinon la mare partie se lit « plage », pas « à sec ». */
-  ASSEC: 0x8a7c62,
+  /** LA VASE du fond mis à nu : un limon brun, plus sombre et plus terne que le sable de la
+   *  berge (qui vaut ~0xc8b48c) — sinon la mare partie se lit « plage », pas « à sec ».
+   *
+   *  ⚠ C'EST UNE RÉFÉRENCE, PLUS UN APLAT (2026-08-25). Elle passe par `couleurVase` avant
+   *  d'être peinte : la teinte du PAYS la module, le damier et les taches macro la font
+   *  respirer. Elle a été rabaissée de 0x8a7c62 d'un peu moins d'un cinquième en même temps —
+   *  la modulation de zone RELÈVE la valeur (+7 % mesuré sur la rivière de la seed 2026), et
+   *  un lit de rivière est un CREUX qui vient de perdre son eau : il ne doit pas devenir la
+   *  zone la plus claire du cadre. Composite mesuré (planche-vase, seed 2026) : luminance
+   *  moyenne 109 contre 118 pour l'aplat d'avant, sur une herbe à 88. */
+  ASSEC: 0x71664f,
   /** LE GUÉ FERMÉ : une eau trouble et sombre. Nettement plus sombre que le haut-fond du
    *  shader — c'est l'écart qui dit « c'est devenu profond », pas la teinte seule. */
   GUE_FERME: 0x3d5561,
   /** LA CRUE sur la terre : la même eau, mais peu profonde — plus claire, plus verte (elle
    *  charrie ce qu'elle a noyé). Elle et le gué fermé sont la MÊME nappe : deux profondeurs. */
   CRUE: 0x6b8377,
-  /** LA CRAQUELURE de la vase : une cellule de 4 px sur trois, plus sombre — sans elle un
-   *  aplat de limon lit « terrain manquant » plutôt que « fond de mare ». Même remède que le
-   *  givre sur la glace, à l'autre bout de l'année. */
-  CRAQUELURE: 0.84,
-  CRAQUELURE_PART: 0.34,
+  /**
+   * ═══ LA CRAQUELURE — un RÉSEAU, pas un moucheté (Alexis, 2026-08-25) ═══
+   *
+   * *« Améliore le rendu de la vase lorsque la rivière s'assèche. Ça n'a rien à voir avec le
+   * reste du sol et ça rend très mal. »*
+   *
+   * Elle était une cellule sur trois tirée au hasard, indépendamment de ses voisines, à 84 %
+   * de luminance — le remède du givre, recopié. Or **une fente est CONNEXE** : des cellules
+   * tirées une à une ne peuvent pas en faire une, quelle que soit leur part. À 4 px sur un
+   * ruban de rivière qui traverse la carte, ça ne se lisait pas comme un fond de mare séché,
+   * ça se lisait comme du bruit de tramage sur un aplat — la moitié de « ça rend très mal ».
+   * (C'est la leçon déjà écrite pour la cendre, un cran plus loin : une même recette ne veut
+   * pas dire la même chose selon ce qu'elle doit RE-PRÉSENTER.)
+   *
+   * La craquelure est donc CELLULAIRE : des germes sur un treillis qui BOUCLE sur les 64
+   * cellules de la trame (donc aucune couture au pavage), une plaque par germe, et la fente
+   * là où les deux germes les plus proches sont à égale distance — l'arête de Voronoï. Ce
+   * sont de vraies plaques polygonales, comme une vasière qui a séché.
+   *
+   * Trois choses réglées en REGARDANT (planches `trame-essai`, 2026-08-25) :
+   *   • `PLAQUE_PAS` — le côté d'une plaque, EN CELLULES de 4 px. À 4 (une tuile) la fente
+   *     fait le quart de la plaque : le réseau redevient une mouture, on a retrouvé le
+   *     tramage. 8 (deux tuiles) est le seul pas qui tienne à cette quantification.
+   *   • `PLAQUE_VARIA` — le seuil de fente varie PAR PLAQUE : deux plaques dont la fente ne
+   *     prend pas se lisent comme une seule, plus grande. Sans lui, les plaques sont toutes
+   *     de la même taille et le fond de mare se lit comme un PAVAGE de pierres.
+   *     ⚠ Ne PAS chercher cette irrégularité en rompant la fente cellule par cellule (essayé,
+   *     regardé, jeté) : une fente pointillée à 4 px, c'est le moucheté d'avant.
+   *   • `FISSURE` / `PLAQUE_*` — la fente est plus sombre, et chaque plaque garde sa valeur
+   *     propre (elle a séché à sa façon).
+   */
+  PLAQUE_PAS: 8,
+  PLAQUE_SEUIL: 0.9,
+  PLAQUE_VARIA: 0.5,
+  FISSURE: 0.8,
+  PLAQUE_MIN: 0.95,
+  PLAQUE_AMPLITUDE: 0.06,
+  /**
+   * LA VASE RESPIRE COMME LE SOL — le damier par tuile et les taches macro, la loi du bake
+   * (`WorldScene.bakeMapTexture`). C'est l'autre moitié de « ça n'a rien à voir avec le reste
+   * du sol » : chaque tuile de terre porte une teinte de PAYS, un damier de famille et une
+   * seconde échelle de bruit à ~10 tuiles ; la vase, elle, était UN entier, le même d'un bout
+   * à l'autre de la carte. Un chenal de trois cents tuiles en une seule couleur.
+   */
+  DAMIER: 0.05,
+  TACHES: 0.12,
+  TACHES_ECHELLE: 10,
   /** LE CLAPOT de la crue : une cellule sur quatre, plus claire — la nappe bouge un peu. */
   CLAPOT: 1.16,
   CLAPOT_PART: 0.25,
@@ -170,9 +221,67 @@ export function trameDeGlace(): Float32Array {
   return trameMouchetee(0x61e, NEIGE_PAVE.GIVRE_PART, NEIGE_PAVE.GIVRE)
 }
 
-/** La trame de la VASE : la craquelure, plus sombre — le fond de mare qui a séché. */
+/**
+ * La trame de la VASE : la craquelure — le fond de mare qui a séché en PLAQUES.
+ *
+ * Un Voronoï à un germe par maille de `PLAQUE_PAS` cellules, le treillis pris MODULO la
+ * largeur de la trame : les germes du bord droit sont ceux du bord gauche, donc le motif se
+ * pave sans couture (`cuireChunk` l'indexe en `& (GRAIN_CELLS − 1)`). La fente vit là où les
+ * deux germes les plus proches sont à égale distance, à `PLAQUE_SEUIL` près — un seuil qui
+ * varie par plaque, sinon toutes les plaques ont la même taille et la vase se lit en pavage.
+ */
 export function trameDeVase(): Float32Array {
-  return trameMouchetee(0xea0, EAU_PAVE.CRAQUELURE_PART, EAU_PAVE.CRAQUELURE)
+  const pas = EAU_PAVE.PLAQUE_PAS
+  const L = GRAIN_CELLS / pas // mailles par côté — la boucle du treillis
+  const trame = new Float32Array(GRAIN_CELLS * GRAIN_CELLS)
+  for (let cy = 0; cy < GRAIN_CELLS; cy++) {
+    for (let cx = 0; cx < GRAIN_CELLS; cx++) {
+      const gx = Math.floor(cx / pas)
+      const gy = Math.floor(cy / pas)
+      // Les deux plus proches germes des neuf mailles alentour.
+      let d1 = Infinity
+      let d2 = Infinity
+      for (let oy = -1; oy <= 1; oy++) {
+        for (let ox = -1; ox <= 1; ox++) {
+          const lx = (((gx + ox) % L) + L) % L
+          const ly = (((gy + oy) % L) + L) % L
+          const fx = (gx + ox + hash2(lx, ly, 0x5e1)) * pas - cx
+          const fy = (gy + oy + hash2(lx, ly, 0x5e2)) * pas - cy
+          const d = fx * fx + fy * fy
+          if (d < d1) { d2 = d1; d1 = d } else if (d < d2) d2 = d
+        }
+      }
+      const seuil = EAU_PAVE.PLAQUE_SEUIL * (1 - EAU_PAVE.PLAQUE_VARIA + 2 * EAU_PAVE.PLAQUE_VARIA * hash2(gx, gy, 0x5e4))
+      trame[cy * GRAIN_CELLS + cx] = Math.sqrt(d2) - Math.sqrt(d1) < seuil
+        ? EAU_PAVE.FISSURE
+        : EAU_PAVE.PLAQUE_MIN + EAU_PAVE.PLAQUE_AMPLITUDE * hash2(gx, gy, 0x5e3)
+    }
+  }
+  return trame
+}
+
+/**
+ * LA COULEUR D'UNE TUILE DE VASE — la référence, modulée par le PAYS, damée et tachée.
+ *
+ * C'est la loi du bake (`WorldScene.bakeMapTexture`), appliquée à la seule surface du manteau
+ * qui soit un SOL : on y marche, on la voit sur des centaines de tuiles d'affilée. La glace,
+ * le gué fermé et la crue restent des aplats — ce sont des nappes, et une nappe est unie.
+ *
+ * `sol` est la modulation du pays (`zone-ambiance`), ou `undefined` hors zone : la vase de la
+ * Vieille Sylve n'est pas celle des Prés Bas, comme l'herbe de l'une n'est pas celle de
+ * l'autre. Positionnelle de bout en bout (`hash2`/`fbm2` sur les coordonnées MONDE) : deux
+ * cuissons du même chunk sont identiques, et le débord d'un pixel se recuit à l'identique
+ * chez le voisin (`PAVE.BAVE`).
+ */
+export function couleurVase(tx: number, ty: number, sol?: readonly [number, number, number]): number {
+  const base = sol ? moduler(EAU_PAVE.ASSEC, sol) : EAU_PAVE.ASSEC
+  const d = EAU_PAVE.DAMIER
+  let g = 1 - d / 2 + d * hash2(tx, ty, 0xa55)
+  g *= 1 + (fbm2(tx, ty, EAU_PAVE.TACHES_ECHELLE, 0x7ac3) - 0.5) * EAU_PAVE.TACHES
+  const r = Math.min(255, Math.round(((base >> 16) & 0xff) * g))
+  const v = Math.min(255, Math.round(((base >> 8) & 0xff) * g))
+  const b = Math.min(255, Math.round((base & 0xff) * g))
+  return (r << 16) | (v << 8) | b
 }
 
 /** La trame de la CRUE : le clapot, plus clair — la nappe qui bouge un peu. */
@@ -183,7 +292,12 @@ export function trameDeCrue(): Float32Array {
 /**
  * UNE TRAME MOUCHETÉE, positionnelle : une part des cellules de 4 px prend `facteur`, le reste
  * vaut 1. `GRAIN_CELLS²` facteurs, tuilés — c'est ce que le givre faisait déjà, extrait pour
- * que la vase et le clapot ne le recopient pas (trois hachages, une seule loi).
+ * que le clapot ne le recopie pas.
+ *
+ * ⚠ ELLE NE CONVIENT QU'À CE QUI EST VRAIMENT MOUCHETÉ : du givre sur la glace, un clapot sur
+ * une nappe. La vase l'a portée jusqu'au 2026-08-25 et c'était une erreur de nature — une
+ * craquelure est un RÉSEAU, et des cellules tirées indépendamment n'en font jamais un (voir
+ * `trameDeVase`). Ne pas l'y ramener.
  */
 function trameMouchetee(sel: number, part: number, facteur: number): Float32Array {
   const trame = new Float32Array(GRAIN_CELLS * GRAIN_CELLS)
@@ -206,7 +320,19 @@ export interface CuissonManteau {
   /** La craquelure de la vase et le clapot de la crue (spec `saisons.md` S10). */
   trameVase: Float32Array
   trameCrue: Float32Array
+  /**
+   * LA TEINTE DU PAYS d'une tuile (`zone-ambiance`, `ambianceDe(...).sol`), ou `undefined`.
+   *
+   * Seule la VASE s'en sert (voir `couleurVase`) : c'est la seule surface du manteau qui soit
+   * un sol, et le sol de ce jeu prend la teinte de son pays depuis le bake. Absente, la vase
+   * garde sa référence — la cuisson pure des tests n'a pas de carte, et n'en a pas besoin.
+   */
+  solDeZone?: (tx: number, ty: number) => readonly [number, number, number] | undefined
 }
+
+/** Le manteau n'a pas de relief de pavement : un soleil quelconque suffit, et on le hoiste
+ *  pour ne pas le rebâtir à chaque chunk. */
+const SOLEIL_PLAT = soleilDuPavement(0)
 
 /** Cuit un chunk du manteau : le sol (neige, glace) et le surplomb (frange et ombre de la
  *  neige sur le dessous et sur la glace). Même maille, mêmes chunks que le sol. */
@@ -214,8 +340,16 @@ export function cuireManteau(p: CuissonManteau): ChunkCuit {
   return cuireChunk({
     cx: p.cx,
     cy: p.cy,
+    // Le manteau ne rend QUE ses propres terrains (neige, glace, vase) : le pavement du lapiaz
+    // ne peut pas s'y déclencher, ni la graine ni le soleil n'ont rien à y décider.
+    seed: 0,
+    soleil: SOLEIL_PLAT,
     terrainAt: (tx, ty) => terrainDuManteau(p.etatAt(tx, ty)),
-    couleurAt: (tx, ty) => couleurDuManteau(terrainDuManteau(p.etatAt(tx, ty))),
+    couleurAt: (tx, ty) => {
+      const t = terrainDuManteau(p.etatAt(tx, ty))
+      // LA VASE SEULE VARIE À LA TUILE — les autres sont des nappes, et une nappe est unie.
+      return t === ASSEC ? couleurVase(tx, ty, p.solDeZone?.(tx, ty)) : couleurDuManteau(t)
+    },
     trameDe: (t) => {
       if (t === MANTEAU || t === MANTEAU_PROFOND) return p.trameNeige
       if (t === GLACE_GUE || t === GLACE_LAC) return p.trameGlace

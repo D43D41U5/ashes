@@ -50,6 +50,25 @@ export const CLICKS: [string, string][] = [
   ['du bois, sur un mur abîmé', 'le RÉPARER'],
   ['une graine, sur une parcelle', 'semer'],
   ['un cadavre, une pile au sol', 'fouiller, ramasser'],
+  // LA TORCHE (2026-08-26) : le geste existait depuis la veille et RIEN ne le nommait — or
+  // c'est la parade au « prix du noir » juste en dessous. Une règle dont la parade est muette
+  // n'est pas une règle, c'est un piège.
+  ['une TORCHE, sur un feu', 'la prendre au feu — elle brûle'],
+]
+
+/**
+ * LA NUIT — la règle que le joueur SENT avant de la comprendre (décision d'Alexis,
+ * 2026-08-26 : « la sortie dehors la nuit doit être dure »).
+ *
+ * Elle ne s'apprend par aucun clic : elle s'apprend en appuyant sur une touche qui ne répond
+ * pas. C'est exactement le genre de chose qui doit être ÉCRITE quelque part de permanent —
+ * le jeu ne s'explique plus par-dessus l'épaule (2026-08-25), donc c'est ici, avec les autres
+ * règles centrales, et pas dans un conseil qui passe.
+ */
+export const NUITS: [string, string][] = [
+  ['la lune décroît', 'quelques nuits sont AVEUGLES'],
+  ['dans le noir', 'ni course, ni parade'],
+  ['une torche, un feu, la lune', 'rendent l’une et l’autre'],
 ]
 
 /**
@@ -163,6 +182,8 @@ export function createPauseMenu({ onResume, getVolume, onVolume, onQuit }: Pause
     <div class="pm-table">${CLICKS.map((c) => row(c, 'pm-click')).join('')}</div>
     <div class="pm-sect">LE CLIC DROIT — VISER</div>
     <div class="pm-table">${CLICS_DROITS.map((c) => row(c, 'pm-click')).join('')}</div>
+    <div class="pm-sect">LA NUIT</div>
+    <div class="pm-table">${NUITS.map((c) => row(c, 'pm-click')).join('')}</div>
     <div class="pm-sect">LES TOUCHES</div>
     <div class="pm-table pm-keys"></div>
     <div class="pm-sect">LE SON</div>

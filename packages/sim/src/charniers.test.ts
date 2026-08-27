@@ -14,9 +14,10 @@ import { distSq } from './geometry'
 import { densiteDeBase } from './morts'
 import { placeCharniers, placePois, POI_TYPES } from './poi'
 import { generateZonedTerrain } from './zonegen'
+import { carteDeTest } from '../../../tools/carte-cache'
 
 /** La vallée de production — celle que le joueur ouvre en lançant une Veillée. */
-const CARTE = generateZonedTerrain(2026)
+const CARTE = carteDeTest(2026)
 const charniersDe = (map: WorldMap) => map.zones.filter((z) => z.kind === 'charnier')
 const lieuxDe = (map: WorldMap) => map.zones.filter((z) => z.kind !== undefined && z.kind !== 'charnier')
 
@@ -67,7 +68,7 @@ describe('la loterie des lieux ne bouge pas', () => {
     expect(map.terrain).toEqual(avantTerrain)
   })
 
-  it('la vallée de production porte toujours ses 133 autres lieux', () => {
+  it('la vallée de production porte toujours ses 139 autres lieux', () => {
     // Non-régression grossière mais parlante : si `horsSemis` fuyait dans la loterie, les autres
     // types en perdraient — le tirage est à somme nulle.
     // RÉ-ÉPINGLÉ 138 → 136 → 134 (Stratigraphie, 2026-08-09) : la grille du socle devenue
@@ -86,9 +87,16 @@ describe('la loterie des lieux ne bouge pas', () => {
     // se posent au bord des croisées/gués saillants — un AJOUT pur, pas un rebrassage : la
     // loterie ne bouge pas d'un tirage, les 133 lieux d'avant sont les MÊMES (gardé juste
     // en dessous, par différence de kinds).
-    expect(lieuxDe(CARTE.map).length).toBe(136)
-    expect(lieuxDe(CARTE.map).filter((z) => z.kind === 'stele').length).toBe(3)
-    expect(lieuxDe(CARTE.map).filter((z) => z.kind !== 'stele').length).toBe(133)
+    // RE-ÉPINGLÉ 136 → 143 (Les frontières universelles, `sol-dessine.md` R20-R24, 2026-08-27) :
+    // le verdict de sol est passé au motif → à la tuile pour TOUTE la carte, donc le terrain a
+    // changé partout hors Racine — et la loterie, qui lit le terrain, se rebrasse avec lui. ⚠ À
+    // la différence des stèles, ce n'est PAS un ajout pur : les 133 d'avant ne sont plus les
+    // mêmes, la somme nulle a rejoué. Le mécanisme est intact — A19 (`zonegen.test.ts`, « aucune
+    // ligne morte ») reste vert : les 38 types naissent tous, aucun ne meurt. Les stèles passent
+    // de 3 à 4 : elles se posent au bord des croisées saillantes, et la carte en offre une de plus.
+    expect(lieuxDe(CARTE.map).length).toBe(143)
+    expect(lieuxDe(CARTE.map).filter((z) => z.kind === 'stele').length).toBe(4)
+    expect(lieuxDe(CARTE.map).filter((z) => z.kind !== 'stele').length).toBe(139)
     expect(lieuxDe(CARTE.map).filter((z) => z.kind === 'repaire').length).toBe(9)
   })
 })

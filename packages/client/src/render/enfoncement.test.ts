@@ -20,6 +20,7 @@ import {
   VASE_PX,
   enfoncement,
   rampe,
+  epaisseurQuiSEnfonce,
   type Milieux,
 } from './enfoncement'
 
@@ -121,5 +122,25 @@ describe('les deux lois de la composition', () => {
     expect(surLaGlace.immersion).toBe(0)
     expect(surLaGlace.coupe).toBe(0)
     expect(surLaGlace.descente).toBe(0)
+  })
+})
+
+describe('ce qui s’enfonce, c’est l’ÉPAISSEUR (le corps couché, 2026-08-25)', () => {
+  it('un corps DEBOUT s’enfonce sur sa hauteur ; un corps COUCHÉ sur son petit côté', () => {
+    expect(epaisseurQuiSEnfonce(12, 24, false)).toBe(24) // le marcheur : sa hauteur
+    expect(epaisseurQuiSEnfonce(24, 10, true)).toBe(10) // couché est-ouest : son épaisseur
+    expect(epaisseurQuiSEnfonce(10, 24, true)).toBe(10) // couché NORD-SUD : la même épaisseur
+  })
+
+  it('…et c’est ce qui empêchait l’eau de couper un rampant EN DEUX', () => {
+    // Le défaut : `displayH` d'un couché nord-sud est sa LONGUEUR (24), et le plafond de coupe
+    // vaut 45 % — l'eau lui prenait 45 % du corps par le pied. Sur son épaisseur, jamais plus
+    // de 4,5 px, soit moins d'un cinquième de sa longueur.
+    const milieu = { dRive: 5, dVase: -99, hauteurNeige: 0, enfoui: 0 }
+    const faux = enfoncement({ ...milieu, displayH: 24 })
+    const juste = enfoncement({ ...milieu, displayH: epaisseurQuiSEnfonce(10, 24, true) })
+    expect(faux.coupe).toBeGreaterThan(6) // ce que le corps perdait sur sa longueur
+    expect(juste.coupe).toBeLessThanOrEqual(10 * COUPE_MAX_FRACTION)
+    expect(juste.coupe / 24).toBeLessThan(0.2)
   })
 })

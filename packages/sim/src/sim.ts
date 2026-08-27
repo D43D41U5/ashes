@@ -10,7 +10,7 @@
  * que snapshot = JSON.stringify et que le transport Worker/réseau soit
  * trivial.
  */
-import { BALANCE, CARRY, COMBAT, HUNT, NODE_DEFS, SLOTS, TEMPERATURE, TERRAIN_GRASS, TICK_DT_S, VENT, type FishId, type NodeType, type RecipeId, type Strike } from './balance'
+import { BALANCE, CARRY, COMBAT, HUNT, NODE_DEFS, NUIT, SLOTS, TEMPERATURE, TERRAIN_GRASS, TICK_DT_S, VENT, type FishId, type NodeType, type RecipeId, type Strike } from './balance'
 import { moveAvatar } from './collision'
 import { advanceDegel } from './gel'
 import { advanceEnvols } from './faune'
@@ -22,6 +22,7 @@ import { effetsDuJour } from './modificateur'
 import { advanceLieuxBrules, advanceReveils, type Reveil } from './morts'
 import { advanceDecouverte } from './decouverte'
 import { advanceFire } from './fire'
+import { advanceTorches } from './torche'
 import { applyDebugAction, isDebugAction, refreshGodMode, type DebugAction } from './debug'
 import {
   advanceCraft,
@@ -41,6 +42,7 @@ import { advanceAlignment, type Aggression } from './alignment'
 import { advanceMonsters, type Monster } from './monsters'
 import { advanceWorldEvents, type Horde, type Presage } from './worldevents'
 import { advanceRefugees } from './refugees'
+import { clarteSurSoi } from './nuit'
 import { advanceBrume } from './brume'
 import { advanceFoudre } from './foudre'
 import { advanceMeteo, meteoSpeedFactor } from './meteo'
@@ -770,6 +772,10 @@ export function speedScaleFor(
    *  marcheur, fourni par l'appelant — la formule reste pure d'état, la prédiction client
    *  passera le sien (même fonction, même snapshot). Défaut 1 : ciel clair. */
   meteoFactor = 1,
+  /** LA CLARTÉ SUR SOI (`nuit.clarteSurSoi`), dans [0, 1] — fournie par l'appelant, comme la
+   *  météo au-dessus, pour que la formule reste pure d'état et que la prédiction du client
+   *  passe exactement la même. Défaut 1 : plein jour. */
+  clarte = 1,
 ): { scale: number; sprinting: boolean; sneaking: boolean } {
   let scale = 1
   if (entity.hunger <= 0) scale *= BALANCE.HUNGER_SPEED_MALUS
@@ -785,9 +791,17 @@ export function speedScaleFor(
   const ratio = carryRatio(entity.inventory)
   const tier = carryTier(ratio)
   scale *= carrySpeedFactor(ratio)
+  // ═══ ON NE COURT PAS, ET ON NE PARE PAS, DANS LE NOIR ═══
+  // (décision d'Alexis, 2026-08-26 : « la sortie dehors la nuit doit être dure ». Le pourquoi
+  // de ces deux capacités-là — et la mesure qui les désigne — vit dans le bloc `NUIT` de
+  // `balance.ts`.) REFUSÉES, pas dégradées : c'est le patron du palier LOURD juste en dessous,
+  // et c'est ce qui rend la règle lisible sans une ligne d'interface — on appuie, le corps ne
+  // suit pas. Elle se répare d'un geste que le joueur possède déjà : une torche, un feu, ou
+  // simplement attendre que la lune revienne.
+  const voitClair = clarte >= NUIT.SEUIL_NOIR
   // On ne sprinte plus dès le palier LOURD (spec P6) : refusé, pas ralenti.
-  const canSprint = tier === 'light' || tier === 'medium'
-  const blocking = input.block && entity.stamina > 0
+  const canSprint = (tier === 'light' || tier === 'medium') && voitClair
+  const blocking = input.block && entity.stamina > 0 && voitClair
   // ON NE CHARGE PAS EN COURANT (spec R4ter) : armer un coup lourd, c'est se planter
   // sur ses appuis. Le sprint est refusé, pas seulement ralenti — sans quoi la charge
   // serait une posture de fuite, et l'engagement qu'elle est censée coûter n'existerait pas.
@@ -870,8 +884,13 @@ export function step(state: SimState, inputs: MoveInput[]): void {
       }
     }
 
+    // LA CLARTÉ SUR SOI, lue UNE FOIS pour ce corps et pour ce tick : la posture ci-dessous
+    // et `speedScaleFor` plus bas doivent juger sur le MÊME nombre, sans quoi un avatar
+    // pourrait garder sa parade et perdre ses jambes (ou l'inverse) à la frontière du seuil.
+    const clarte = clarteSurSoi(state, entity)
     // Postures (spec combat) : bloquer, viser, sprinter.
-    entity.blocking = (input.block ?? false) && entity.stamina > 0
+    // ⚠ ON NE PARE PAS CE QU'ON NE VOIT PAS (2026-08-26) : même seuil que `speedScaleFor`.
+    entity.blocking = (input.block ?? false) && entity.stamina > 0 && clarte >= NUIT.SEUIL_NOIR
     // LE PAS ORIENTE — SAUF QUAND ON ARME (décision d'Alexis, 2026-08-02). Pendant une
     // charge, c'est la VISÉE qui tient le corps : reculer en bandant ne doit pas faire
     // pivoter l'archer dos à sa cible, alors que la zone, elle, continue de la montrer.
@@ -897,7 +916,7 @@ export function step(state: SimState, inputs: MoveInput[]): void {
       drawing: entity.charge !== undefined && tientUnArc(entity),
       // LE FRONT SOUS LES PIEDS (spec meteo.md R7) : évalué à la position du marcheur,
       // ce tick — la rampe de `meteoIntensity` fait le reste (une pente, jamais un mur).
-    }, meteoSpeedFactor(state, entity.x, entity.y))
+    }, meteoSpeedFactor(state, entity.x, entity.y), clarte)
     // L'ALLURE du tick (spec chasse C2) — ce que la faune entendra de ce pas.
     const moving = input.dx !== 0 || input.dy !== 0
     entity.gait = !moving ? 'still' : sprinting ? 'sprint' : sneaking ? 'sneak' : 'walk'
@@ -975,6 +994,9 @@ export function step(state: SimState, inputs: MoveInput[]): void {
   // LE FEU LIBRE brûle son combustible (spec feu-station S2/S12) — jumeau de l'upkeep,
   // pour la structure feu hors village. À sec, il passe en braises puis s'éteint.
   advanceFire(state)
+  // LA TORCHE brûle juste après le Feu : deux horloges de combustion, côte à côte, et la
+  // seconde ne peut pas s'allumer sans la première (spec `torche.md`).
+  advanceTorches(state)
   advanceTime(state)
   // LA CENDRE VIEILLIT — une fois par bascule de jour de saison, jamais au tick (spec `cendre.md`
   // R9/R16/R18). Elle ne mute aucune tuile : elle avance l'ÂGE de chaque foyer, et l'appartenance

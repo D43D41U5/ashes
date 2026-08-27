@@ -36,6 +36,49 @@ describe('aimAt', () => {
   })
 })
 
+/**
+ * L'INDEX TUILE→NŒUD (`noeudA`) EST LE CHEMIN DU JEU — le balayage du tableau ne sert plus
+ * qu'aux tests. Il faut donc que le chemin joué soit gardé, et gardé sur TOUT le domaine :
+ * une poignée de cas choisis prouverait seulement que j'ai su choisir mes cas.
+ *
+ * On balaie donc une fenêtre entière et on affirme UNE propriété : les deux chemins rendent
+ * exactement la même visée. Ce qui la ferait rougir : un nœud épuisé que l'index laisserait
+ * passer (il rend le nœud quel que soit son stock, contrairement au `find`), une portée de
+ * nœud perdue, un décalage de tuile.
+ */
+describe('aimAt — l’index tuile→nœud rend la MÊME visée que le balayage', () => {
+  const NOEUDS: ResourceNode[] = [
+    node(1, 10, 10), // sous les pieds, plein
+    node(2, 10, 11, 0), // ÉPUISÉ : l'index le rend, le `find` non — le filtre doit tenir
+    node(3, 11, 10), // voisin, plein
+    node(4, 20, 20), // hors de portée
+    node(5, 9, 12, 0), // second épuisé, ailleurs
+  ]
+  const parTuile = new Map(NOEUDS.map((n) => [n.tx * 1000 + n.ty, n]))
+  const index = (tx: number, ty: number): ResourceNode | undefined => parTuile.get(tx * 1000 + ty)
+
+  it('sur toute la fenêtre 8..22 × 8..22, les deux chemins coïncident au champ près', () => {
+    let vus = 0
+    for (let ty = 8; ty <= 22; ty++) {
+      for (let tx = 8; tx <= 22; tx++) {
+        const balaye = aimAt(tx, ty, PLAYER, NOEUDS, [], RANGE)
+        const indexe = aimAt(tx, ty, PLAYER, NOEUDS, [], RANGE, [], [], 0, [], () => false, index)
+        expect({ ou: `${tx},${ty}`, ...indexe }).toEqual({ ou: `${tx},${ty}`, ...balaye })
+        if (balaye.nodeId !== null) vus++
+      }
+    }
+    // La garde de la garde : si la fenêtre ne portait aucun nœud, tout ce qui précède
+    // serait vrai par vacuité. Trois nœuds à stock y sont — les deux épuisés, eux, ne
+    // doivent JAMAIS compter.
+    expect(vus).toBe(3)
+  })
+
+  it('l’index rend le nœud ÉPUISÉ, la visée ne le prend pas', () => {
+    expect(index(10, 11)?.id).toBe(2) // il est bien là, l'index ne ment pas
+    expect(aimAt(10, 11, PLAYER, NOEUDS, [], RANGE, [], [], 0, [], () => false, index).nodeId).toBeNull()
+  })
+})
+
 describe('clickToAction — désarmé, le clic ne bâtit JAMAIS (A1)', () => {
   it('une tuile vide n’émet AUCUNE action', () => {
     // LE bug d'origine : ceci renvoyait `build`, et posait un mur.

@@ -10,17 +10,32 @@
  */
 import { describe, expect, it } from 'vitest'
 import {
+  TERRAIN_ALPINE_FLOWERS,
+  TERRAIN_ALPINE_MEADOW,
+  TERRAIN_BOULDERS,
+  TERRAIN_BURNT_FOREST,
+  TERRAIN_CLIFF,
   TERRAIN_FLOWER_MEADOW,
   TERRAIN_FOREST,
   TERRAIN_GRASS,
   TERRAIN_JUNIPER_HEATH,
+  TERRAIN_LARCH,
+  TERRAIN_OLD_GROWTH,
+  TERRAIN_PEAT_BOG,
+  TERRAIN_PINE,
+  TERRAIN_REED_MARSH,
+  TERRAIN_ROCK,
+  TERRAIN_SCREE,
+  TERRAIN_SNOW,
   TERRAIN_WET_MEADOW,
 } from './balance'
-import { generateZonedTerrain, type CarteZonee } from './zonegen'
+import { MONDE } from './zonegraph'
+import { type CarteZonee } from './zonegen'
+import { carteDeTest } from '../../../tools/carte-cache'
 import { CREUX, humAt, type Creux } from './racine-relief'
 
 const SEEDS = [2026, 7, 42]
-const mondes: CarteZonee[] = SEEDS.map((seed) => generateZonedTerrain(seed))
+const mondes: CarteZonee[] = SEEDS.map((seed) => carteDeTest(seed))
 
 /** L'échelle à cinq étages — les terrains que la passe des Prés Bas décide. */
 const ECHELLE = new Set([TERRAIN_WET_MEADOW, TERRAIN_FOREST, TERRAIN_GRASS, TERRAIN_FLOWER_MEADOW, TERRAIN_JUNIPER_HEATH])
@@ -99,6 +114,8 @@ describe('R1 — la lecture à la tuile interpole le champ, elle ne le recalcule
       alt: new Float64Array(n), altLarge: new Float64Array(n), dedans: new Uint8Array(n).fill(1),
       distEau: new Int32Array(n), hum: Float64Array.from(valeurs),
       seuilBassin: 0, seuilPrairie: 2, seuilBois: 1, seuilFleuraie: 0, seuilLande: -1, selGrain: 7,
+      // Roche NEUTRE : le banc éprouve l'interpolation du champ, pas le second axe.
+      roche: new Float64Array(n), seuilCalcaire: -0.5, seuilArgile: 1.5,
     }
   }
   const M = CREUX.MOTIF
@@ -139,5 +156,138 @@ describe('R1 — la lecture à la tuile interpole le champ, elle ne le recalcule
     for (let y = 0; y < 3 * M; y += 3) {
       for (let x = 0; x < 3 * M; x += 3) expect(humAt(c, x, y)).toBe(humAt(c, x, y))
     }
+  })
+})
+
+/**
+ * ═══ R20-R21 — LES FRONTIÈRES UNIVERSELLES : le monde entier passe à la tuile (2026-08-27) ═══
+ *
+ * Retour d'Alexis : *« beaucoup de frontières de biomes sont trop droites (scree vs boulder par
+ * exemple) ; il faudrait trouver une gestion universelle des frontières entre biomes de même
+ * hauteur. »* La cause était UNE ligne — `solDe` échantillonnait au centre du motif de 8, donc
+ * toute zone hors Racine sortait en damier. Ce que R1 avait réparé pour le pré n'avait jamais
+ * quitté la Racine.
+ *
+ * LA MESURE N'EST PAS CELLE DE R2, ET C'EST VOULU. R2 demande « ce bord tombe-t-il sur la grille
+ * de 8 ? » — le grain fin suffit à le faire mentir : une frontière peut être hors grille et
+ * parfaitement rectiligne. On mesure donc ce qu'Alexis a VU : la longueur des SEGMENTS DE BORD
+ * rectilignes. Un bord organique casse tous les 1 à 2 tuiles ; un bord décidé par cellule fait
+ * des runs de 8 et plus.
+ *
+ * SUR LA VALLÉE ENTIÈRE, pas sur le monde joué : les zones fautives (Karst, Sylve, Alpages,
+ * Tourbière, Brûlé, Aiguilles, Gouffre, Glacier) n'existent que là. Les cartes sont en cache
+ * (`carteDeTest`) — la vallée est déjà générée par une trentaine d'autres tests.
+ */
+describe('R20 — aucune frontière de biome ne sort en gros carrés (vallée entière)', () => {
+  const vallees: CarteZonee[] = SEEDS.map((seed) => carteDeTest(seed, MONDE.JOUEURS_CIBLE, 'vallee'))
+
+  /**
+   * LES PAIRES QUE `solDe` DÉCIDE — celles dont ce chantier répond. Chacune était entre 87 % et
+   * 100 % de segments longs avant, mesurée sur la seed 2026.
+   *
+   * Les deux dernières sont le CONTOUR des bosquets de crête (R23) : Alexis les a signalées après
+   * coup — *« il y a toujours des patterns carrés, au niveau de pine et larch vs le reste »* — et
+   * R21, qui n'avait réparé que l'essence à l'intérieur du bois, les laissait à 69,6 %.
+   *
+   * ⚠ Ce qui n'y est PAS y manque exprès, et c'est consigné dans la spec : la frange de la
+   * saulaie ('RIPI'), la succession du Versant Brûlé (`STADES_BRULE`) et la frange de marais ont
+   * chacun leur propre peintre, encore au motif — un chantier chacun. Les affirmer ici ferait
+   * rougir la garde pour un défaut qu'elle ne couvre pas.
+   */
+  const PAIRES: readonly (readonly [number, number, string])[] = [
+    [TERRAIN_SCREE, TERRAIN_BOULDERS, 'éboulis / chaos de blocs'],
+    [TERRAIN_PINE, TERRAIN_LARCH, 'pins / mélèzes'],
+    [TERRAIN_BOULDERS, TERRAIN_BURNT_FOREST, 'chaos de blocs / brûlé'],
+    [TERRAIN_ALPINE_MEADOW, TERRAIN_ALPINE_FLOWERS, 'alpage / fleurs alpines'],
+    [TERRAIN_PEAT_BOG, TERRAIN_REED_MARSH, 'tourbe / roselière'],
+    [TERRAIN_LARCH, TERRAIN_OLD_GROWTH, 'mélèzes / vieille futaie'],
+    [TERRAIN_PINE, TERRAIN_OLD_GROWTH, 'pins / vieille futaie'],
+    [TERRAIN_SCREE, TERRAIN_SNOW, 'éboulis / neige'],
+    [TERRAIN_GRASS, TERRAIN_LARCH, 'herbe / mélèzes (contour du bosquet de crête)'],
+    [TERRAIN_GRASS, TERRAIN_PINE, 'herbe / pins (contour du bosquet de crête)'],
+  ]
+
+  /** Le plafond : la part des bords portés par un segment rectiligne de ≥ 8 tuiles. */
+  const PLAFOND = 0.25
+  const LONG = 8
+
+  /**
+   * La part des bords (a|b) portés par un segment rectiligne d'au moins `LONG` tuiles.
+   *
+   * Un « segment » est une suite maximale d'arêtes colinéaires SÉPARANT LES MÊMES DEUX TERRAINS
+   * DANS LE MÊME SENS : les arêtes verticales s'enfilent selon y, les horizontales selon x. Le
+   * sens compte — un bord qui serpente change de sens, et deux serpents accolés ne doivent pas
+   * se compter comme une droite.
+   */
+  function partDesLongsSegments(c: CarteZonee, a: number, b: number): { part: number; bords: number } {
+    const { width, height, terrain } = c.map
+    let bords = 0
+    let longs = 0
+    const paire = (u: number, v: number): boolean => (u === a && v === b) || (u === b && v === a)
+
+    // Arêtes verticales (entre (x,y) et (x+1,y)), enfilées selon y.
+    const vus = new Uint8Array(width * height)
+    for (let x = 0; x + 1 < width; x++) {
+      for (let y = 0; y < height; y++) {
+        const i = y * width + x
+        const g = terrain[i]!
+        const d = terrain[i + 1]!
+        if (!paire(g, d)) continue
+        bords++
+        if (vus[i] === 1) continue
+        let len = 0
+        for (let yy = y; yy < height && terrain[yy * width + x] === g && terrain[yy * width + x + 1] === d; yy++) {
+          vus[yy * width + x] = 1
+          len++
+        }
+        if (len >= LONG) longs += len
+      }
+    }
+    // Arêtes horizontales (entre (x,y) et (x,y+1)), enfilées selon x.
+    const vusH = new Uint8Array(width * height)
+    for (let y = 0; y + 1 < height; y++) {
+      for (let x = 0; x < width; x++) {
+        const i = y * width + x
+        const h = terrain[i]!
+        const bas = terrain[i + width]!
+        if (!paire(h, bas)) continue
+        bords++
+        if (vusH[i] === 1) continue
+        let len = 0
+        for (let xx = x; xx < width && terrain[y * width + xx] === h && terrain[(y + 1) * width + xx] === bas; xx++) {
+          vusH[y * width + xx] = 1
+          len++
+        }
+        if (len >= LONG) longs += len
+      }
+    }
+    return { part: bords === 0 ? 0 : longs / bords, bords }
+  }
+
+  for (const [a, b, nom] of PAIRES) {
+    it(`${nom} : ≤ ${PLAFOND * 100} % des bords sur un segment droit de ${LONG}+ tuiles`, () => {
+      for (let i = 0; i < vallees.length; i++) {
+        const { part, bords } = partDesLongsSegments(vallees[i]!, a, b)
+        // La garde EXIGE SA PRÉMISSE : une paire absente de la carte rendrait 0 % et passerait
+        // pour un succès. 400 bords, c'est de quoi mesurer une forme — et pas plus, parce que
+        // le partage pin/mélèze varie d'une graine à l'autre : la seed 42 penche du côté des
+        // mélèzes et ne laisse que 880 bords herbe/pins, ce qui reste une frontière bien réelle.
+        expect(bords, `${nom}, seed ${SEEDS[i]} : la paire a disparu de la carte`).toBeGreaterThan(400)
+        expect(part, `${nom}, seed ${SEEDS[i]} : ${(part * 100).toFixed(1)} % (${bords} bords)`)
+          .toBeLessThanOrEqual(PLAFOND)
+      }
+    })
+  }
+
+  /**
+   * R21 — LE MUR RESTE DROIT. C'est la moitié de la règle qu'Alexis a posée (« entre biomes de
+   * MÊME HAUTEUR ») : la roche du vide et la falaise SONT une hauteur, et R32 continue de les
+   * gouverner. Sans cette garde, un chantier futur pourrait attendrir le mur en croyant bien
+   * faire — et la carte perdrait ce qui la rend lisible.
+   */
+  it('le mur du vide, lui, garde ses arêtes de bloc', () => {
+    const { part, bords } = partDesLongsSegments(vallees[0]!, TERRAIN_ROCK, TERRAIN_CLIFF)
+    expect(bords).toBeGreaterThan(1000)
+    expect(part).toBeGreaterThan(0.9)
   })
 })

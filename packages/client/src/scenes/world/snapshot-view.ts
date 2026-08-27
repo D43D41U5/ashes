@@ -32,14 +32,14 @@ import {
   type NodeDelta,
   type SnapshotMessage,
 } from '@ashes/sim'
-import { estUnCoinDePeche, feuillageDenude, fireStateAt, hash2, tailleDeBloc, TERRAIN_CLIFF, terrainAt, VENT, type SimState, type WorldMap } from '@ashes/sim'
+import { enVol, hauteurDeBond, estUnCoinDePeche, feuillageDenude, fireStateAt, hash2, TERRAIN_CLIFF, terrainAt, VENT, type SimState, type WorldMap } from '@ashes/sim'
 import { TransitionsFlore, retardDe } from '../../render/flore-gel'
 import { cliffKey } from '../../render/cliff-art'
 import { cleCarcasse, etatCarcasse } from '../../render/carcasse-art'
 import Phaser from 'phaser'
 import { FONT } from '../ui/typography'
-import { windSway } from '../../render/wind'
-import { pushSample, sampleAt, type Sample } from './interp'
+import { windStretch, windSway } from '../../render/wind'
+import { deplacementRecent, pushSample, sampleAt, type Sample } from './interp'
 // LA POSTURE ET LA TEINTE D'UNE BÊTE vivent à part (`beast-posture`) : sans Phaser, donc
 // jouables headless. C'est ce qui permet à `tools/diag-cerf.mts` de compter ce que l'ÉCRAN
 // montre, au lieu d'en garder une copie qui dérive.
@@ -47,18 +47,24 @@ import {
   BEAST_TINTS,
   beastTexture,
   beastTint,
+  majCran,
   majMiroir,
   majRepos,
+  nouveauCran,
   nouveauMiroir,
   nouveauRepos,
   saigneBete,
+  type CranLatch,
   type MiroirLatch,
   type ReposLatch,
 } from './beast-posture'
+import { orientCouchee } from '../../render/corps-couche'
 import { decorerSang, SANG_TEXTURES, teinteSechage, type DecorSang } from './sang-sol'
 import { GOUTTE_CADENCE_MS, type SangFx } from './sang-fx'
 export { BEAST_TINTS } from './beast-posture'
 import {
+  ACTOR_FOOTPRINTS,
+  DEFAULT_FOOTPRINT,
   actorPlacement,
   corpseDepth,
   crownAlpha,
@@ -74,9 +80,13 @@ import {
   TIE_SEUIL,
   tileFeetAnchor,
   TILE_PX,
-  type ActorFootprint,
 } from '../../render/framing'
-import { ancrageHouppierPx, cleHouppier, houppierLargeur, hauteurTuiles, TOUTES_VARIANTES, VARIANTES } from '../../render/arbre-art'
+import {
+  ancrageHouppierPx, cleHouppier, houppierLargeur, hauteurTuiles, pariteDeCime,
+  TOUTES_VARIANTES, VARIANTES, VARIANTES_CADUQUES, type EtatCime,
+} from '../../render/arbre-art'
+import { NeigeDesCimes } from './neige-houppier'
+import { FonduDeCime } from '../../render/fondu-cime'
 
 /** Le débord de fenêtre, en TUILES : la hauteur du plus haut arbre de la table. Dérivé une fois
  *  au chargement — un arbre qui grandit l'emporte avec lui, sans qu'on ait à y penser. */
@@ -84,6 +94,7 @@ const MARGE_CIMES = Math.ceil(Math.max(...TOUTES_VARIANTES.map((v) => hauteurTui
 import { cimeDe, varianteArbre } from '../../render/arbre-peuplement'
 import { warmthColor } from '../../render/lighting'
 import { LIT_NODE_TYPES } from '../../render/lit-props'
+import { cleDeSocle, estUnSocle, SOCLE_KEYS, SOCLE_OMBRE_DESCENTE, SOCLE_OMBRE_TUILES, tailleDeSocle, type SocleType } from '../../render/socle-mineral'
 import { BATI_LIT_TYPES, COUPE_DE, EDGE_ORIGIN_Y, MUR_HT, RUINE_SEUIL } from '../../render/bati-art'
 import { creerPortesAnimees } from '../../render/porte-anim'
 import { calculerNappe, calculerPans, pansTombes } from '../../render/pans'
@@ -95,7 +106,8 @@ import type { ChuteArbre } from './chute-arbre'
 import type { ReveilFx } from './reveil-fx'
 import { createContactShadow, positionShadow, SHADOW_ALPHA } from './contact-shadow'
 import { riveAt, type RiveField } from '../../render/water-field'
-import { coupeDeNeige, enfoncement } from '../../render/enfoncement'
+import { coupeDeNeige, enfoncement, epaisseurQuiSEnfonce } from '../../render/enfoncement'
+import { cleDeTuile, indexerParTuile } from './index-noeuds'
 
 /** Le nœud VISÉ à portée s'éclaire d'or ; hors de portée, il se grise (G4). */
 const AIM_TINT = 0xffe9a8
@@ -202,42 +214,12 @@ export const INTERP_DELAY_MULTI_MS = 100
  * L'emprise logique (collision/clic) reste AVATAR_HITBOX_TILES, inchangée.
  * `facesRight` : le sens dans lequel la silhouette est DESSINÉE — le flip du
  * regard (spec R9bis : la bête regarde où elle va) s'en déduit. */
-const ACTOR_FOOTPRINTS: Record<string, ActorFootprint & { facesRight?: boolean }> = {
-  'spr-player': { widthTiles: 0.75, heightTiles: 1.5 },
-  'spr-player_lit': { widthTiles: 0.75, heightTiles: 1.5 }, // même emprise que la version peinte
-  'spr-npc': { widthTiles: 0.75, heightTiles: 1.5 },
-  'spr-npc_lit': { widthTiles: 0.75, heightTiles: 1.5 },
-  // Le Cendreux : une silhouette d'HOMME, parce que c'en était un — c'est tout le lore.
-  // Il n'avait aucune emprise déclarée et tombait donc sur le repli, alors qu'il hérite du
-  // rôle du zombie (spec `cendreux.md` R1) : même gabarit que celui qu'il remplace.
-  'spr-cendreux': { widthTiles: 0.75, heightTiles: 1.5 },
-  // LE RAMPANT (spec `cendreux.md` R26ter) : le même homme, COUCHÉ — la hauteur devenue
-  // longueur (texture 24 × 10 : pixels carrés à 1,5 × 0,625 tuile). Sans cette entrée il
-  // tombait sur le repli et se dessinait aux dimensions du marcheur, debout dans une
-  // texture à plat — MESURÉ au smoke `rampant` : 12 × 24 pour une texture de 24 × 10.
-  'spr-cendreux-rampant': { widthTiles: 1.5, heightTiles: 0.625 },
-  // Le gibier (spec faune) : sa TAILLE est la première information, et sa
-  // POSTURE est la seconde (R9bis/C19) — tête au sol elle broute, tête dressée
-  // elle a vu quelque chose, corps tendu elle fuit. Le lapin rase le sol, le
-  // cerf domine le joueur — on sait ce qu'on approche, et dans quel état c'est.
-  'spr-boar': { widthTiles: 1.5, heightTiles: 1 },
-  'spr-boar-root': { widthTiles: 1.5, heightTiles: 1 },
-  'spr-boar-charge': { widthTiles: 1.65, heightTiles: 0.85 },
-  'spr-deer': { widthTiles: 1.4, heightTiles: 1.8, facesRight: true },
-  'spr-deer-graze': { widthTiles: 1.4, heightTiles: 1.4, facesRight: true },
-  'spr-deer-flee': { widthTiles: 1.75, heightTiles: 1.35, facesRight: true },
-  'spr-deer-bed': { widthTiles: 1.4, heightTiles: 0.95, facesRight: true },
-  'spr-rabbit': { widthTiles: 0.6, heightTiles: 0.6, facesRight: true },
-  'spr-rabbit-graze': { widthTiles: 0.6, heightTiles: 0.45, facesRight: true },
-  'spr-rabbit-flee': { widthTiles: 0.8, heightTiles: 0.45, facesRight: true },
-  'spr-wolf': { widthTiles: 1.5, heightTiles: 1.15 },
-  'spr-wolf-stalk': { widthTiles: 1.5, heightTiles: 0.8 },
-  'spr-wolf-eat': { widthTiles: 1.45, heightTiles: 1 },
-  // L'alpha DÉBORDE : il est visiblement plus gros que les siens. C'est le
-  // signal qui rend la règle jouable — on ne peut pas le rater dans la meute.
-  'spr-wolf-alpha': { widthTiles: 2, heightTiles: 1.55 },
-}
-const DEFAULT_FOOTPRINT: ActorFootprint = { widthTiles: 0.75, heightTiles: 1.5 }
+
+/** SUR QUELLE FENÊTRE on lit le déplacement d'un corps couché pour en tirer son axe (ms). Le
+ *  tampon d'interpolation porte ~0,6 s ; 400 ms lissent le pas sans retarder un vrai virage. */
+const AXE_FENETRE_MS = 400
+/** En deçà de ce déplacement (tuiles) sur cette fenêtre, il est IMMOBILE : on garde son axe. */
+const AXE_SEUIL_TUILES = 0.05
 
 /** Combien la canopée prend le vent (voir render/wind.ts). Un houppier est lourd :
  * il oscille moins qu'un roseau, mais il est large, donc ça se voit. */
@@ -270,7 +252,6 @@ function isCrouched(monster: Monster | undefined, entity: Entity): boolean {
 
 /** Clé d'index tuile→nœud : `tx * STRIDE + ty`. STRIDE > toute coordonnée de
  * tuile (carte alpine pleine ≤ 3600) → injectif, pas de collision de clé. */
-const NODE_TILE_STRIDE = 1_000_000
 
 /** REPOUSSE (spec recolte-vivante D2) : échelle plancher d'un nœud qui vient de repousser
  *  — une pousse tout juste sortie reste visible (jamais une taille nulle). */
@@ -301,7 +282,9 @@ function nodeArtGap(texture: string): number {
   // ombre de contact serait remontée de deux pixels — exactement le bug qu'Alexis avait vu sur
   // les arbres et la fibre, à ceci près qu'il serait revenu par la porte de derrière.
   if (/^nd-.+_trunk(_lit)?$/.test(texture)) return 0 // tronc plein jusqu'au bas
-  if (texture.startsWith('nd-bloc')) return 0 // le bloc d'affleurement est FLUSH : pleine tuile, sans offset
+  if (SOCLE_KEYS.has(texture)) return 0 // LE SOCLE MINÉRAL est FLUSH : pleine tuile, planté au bord bas.
+  // (La règle se lit sur l'ENSEMBLE des clés cuites, pas sur un préfixe : ajouter un `startsWith`
+  //  par matière était exactement la porte de derrière par où l'ombre de contact était remontée.)
   if (texture.startsWith('nd-sapling') || texture.startsWith('nd-fiber_plant') || texture.startsWith('nd-stump')) return 1 // plantes fines, art bas (suffixe _lit compris — piège épinglé par la vague A)
   return 2 // blocs (roche, baies, minerais…) : l'art bombe et s'arrête ~2 texels avant le bord
 }
@@ -325,6 +308,19 @@ export interface InterpolatedSprite {
   textureKey: string
   /** Silhouette TASSÉE ce snapshot (rampeur, tapi, fougeur) — lue par `interpolate`. */
   crouch: boolean
+  /**
+   * L'ENVOL (spec faune R21) : la fenêtre du bond, EN MILLISECONDES D'HORLOGE DE RENDU.
+   *
+   * Pas en ticks, et c'est le point. La position est interpolée entre deux snapshots
+   * (`interp.ts`) ; une hauteur recalculée à chaque snapshot monterait par marches de 20 Hz
+   * pendant que la position glisse — l'oiseau sauterait en montant. On convertit donc la
+   * fenêtre UNE fois, à chaque snapshot (idempotent : elle se recale toute seule), et
+   * `interpolate` en tire une fraction continue, frame par frame.
+   *
+   * Absent = au sol.
+   */
+  volDebutMs?: number
+  volDureeMs?: number
   /** Relevés de position datés — `interpolate` y rend à `now - interpDelayMs` (tampon de gigue). */
   buffer: Sample[]
   /** DEPUIS QUAND ELLE NE BOUGE PLUS — décide du couché (voir `beast-posture`). Une bête
@@ -332,6 +328,10 @@ export interface InterpolatedSprite {
   repos: ReposLatch
   /** LE SENS DESSINÉ, et depuis quand elle penche de l'autre côté (voir `majMiroir`). */
   miroir: MiroirLatch
+  /** LE CAP DU CORPS COUCHÉ (rampant) — l'index de sa variante, sous le même verrou que le
+   *  miroir et pour la même raison : un corps allongé qui pivoterait à chaque frisson de cap
+   *  serait le plus voyant des tremblements. */
+  axe: CranLatch
 }
 
 /** Le dernier relevé connu d'un tampon (position autoritative la plus récente). */
@@ -487,6 +487,32 @@ export class SnapshotView {
   vase: RiveField | null = null
   /** La flore de la tuile est-elle gelée ? Même source (`GelLayer.floreGeleeAt`). */
   floreGeleeAt: ((tx: number, ty: number) => boolean | null) | null = null
+  /**
+   * ═══ Y A-T-IL DE L'EAU ICI, AUJOURD'HUI ? (Alexis, 2026-08-25 : « il ne peut y avoir ni
+   * feuilles, ni coin de pêche sur une tuile sèche ») ═══
+   *
+   * `porteDeLEau` de /sim, hoistée par frame et posée par `WorldScene` — le patron exact de
+   * `floreGeleeAt` juste au-dessus, et pour la même raison : la loi vit dans la sim, le rendu
+   * ne fait que la LIRE, et le niveau d'eau se relève une fois par image (`niveauDEau`
+   * rembobine huit cycles d'élection météo).
+   *
+   * ⚠ ELLE NE FILTRE PAS LES NŒUDS EN GÉNÉRAL, seulement les COINS DE PÊCHE. Un coin est le
+   * seul nœud dont l'existence même dit « il y a de l'eau » : la sim le sait déjà et refuse d'y
+   * lancer (`eauIndisponible` : « l'eau s'est retirée »), mais le sprite, lui, restait posé sur
+   * la vase craquelée — un flotteur peint sur de la terre sèche. `null` : on dessine tel quel
+   * (le monde n'a pas encore dit son niveau d'eau).
+   */
+  eauIci: ((tx: number, ty: number) => boolean) | null = null
+  /**
+   * LA CENDRE A-T-ELLE PRIS CETTE TUILE ? (`tuileCendree` de /sim, posée par `WorldScene`.)
+   *
+   * *« La cendre remplace les caractéristiques de la tuile sous-jacente. Si c'est un marais avec
+   * de la cendre, pas d'offset pas de slow »* (Alexis, 2026-08-25). Le `slow` vit dans la sim
+   * (`solFoule`, appelé par `moveAvatar`) ; l'`offset` est ICI — le champ de VASE est un SDF cuit
+   * une fois de `map.terrain`, donc il ne peut pas savoir que le marais a brûlé, et l'acteur
+   * continuait de s'y enfoncer sur un sol de poussière.
+   */
+  cendreIci: ((tx: number, ty: number) => boolean) | null = null
   /** Les bascules gel/dégel des nœuds gélifs (voir `render/flore-gel.ts`). */
   private readonly transitionsFlore = new TransitionsFlore()
   /** Les reflets du monde (R13) — pool par frame, posé par WorldScene avec la couche d'eau. */
@@ -600,6 +626,35 @@ export class SnapshotView {
     this.sangFx.goutter(x, y, now, id)
   }
 
+  /**
+   * ═══ L'ÉTAT DE LA CIME D'UN ARBRE PLANTÉ LÀ ═══
+   *
+   * UN SEUL endroit, parce qu'ils sont TROIS à en avoir besoin — l'arbre debout, l'arbre qui
+   * s'abat (`chute-arbre`) et les feuilles qu'un coup détache (`recolte-fx`). C'est exactement
+   * l'avertissement que l'en-tête de `cleHouppier` porte depuis le 2026-07-30 : « trois
+   * consommateurs la construisaient chacun de son côté, et un arbre changerait de cime EN
+   * TOMBANT ». La cime nue y était déjà passée ; la coiffe de neige y serait retombée.
+   *
+   * L'exclusion est structurelle et vient du type : un CADUC se dénude (G6, `/sim` le dit sur
+   * le jour de saison, jamais sur la température), un PERSISTANT se coiffe de neige. Aucun ne
+   * fait les deux, et `EtatCime` n'a pas de quatrième combinaison à offrir.
+   */
+  private etatDeCime(slug: string, tx: number, ty: number): EtatCime {
+    if (this.etatGel === null) return 'feuillu'
+    if (VARIANTES_CADUQUES.includes(slug)) {
+      return feuillageDenude(this.etatGel, tx, ty) ? 'nu' : 'feuillu'
+    }
+    return this.neigeCimes.etatDe(this.etatGel, tx, ty)
+  }
+
+  /** La clé d'une cime, avec le REPLI sur la feuillue quand l'état demandé n'a pas été cuit
+   *  (un slug neuf, une variante non cuite) : mieux vaut la mauvaise saison que le carré vert
+   *  d'une texture absente. */
+  private cleDeCime(slug: string, cime: number, etat: EtatCime): string {
+    const cle = cleHouppier(slug, this.lighting, cime, etat, pariteDeCime(slug, etat, this.cranSaison))
+    return this.scene.textures.exists(cle) ? cle : cleHouppier(slug, this.lighting, cime, 'feuillu')
+  }
+
   setChuteArbre(fx: ChuteArbre): void {
     this.chuteArbre = fx
   }
@@ -623,6 +678,11 @@ export class SnapshotView {
   private refugeeSprites = new Map<number, Phaser.GameObjects.Image>()
   npcs: Npc[] = []
   monsters: Monster[] = []
+  /** LES SOLS QUI TRAVAILLENT du dernier snapshot. Ils partaient jusqu'ici DIRECTEMENT dans
+   *  `reveilFx` et personne d'autre ne pouvait les lire — or le thème d'ambiance se coupe sur
+   *  un réveil à portée (`musique.ts`), et c'est un second lecteur. On les RETIENT donc ici,
+   *  comme `monsters` : le FX les peint, la musique les écoute. */
+  reveils: SnapshotMessage['reveils'] = []
   villages: SnapshotMessage['villages'] = []
   /** LES FONCTIONS ÉMERGENTES reconnues (spec construction R9-R22) : l'overlay les affiche. */
   functions: SnapshotMessage['functions'] = []
@@ -644,6 +704,29 @@ export class SnapshotView {
   /** Pool SÉPARÉ : un arbre est deux sprites (tronc trié avec les acteurs,
    * houppier dans sa bande propre). Les autres nœuds n'en consomment aucun. */
   private crownPool: Phaser.GameObjects.Image[] = []
+  /** LE SECOND SPRITE DE CIME — celui qui S'EFFACE pendant qu'un autre paraît (`fondu-cime.ts`).
+   *  Pool SÉPARÉ, servi par son PROPRE compteur : seuls les arbres EN TRANSITION en consomment
+   *  un, donc un index partagé avec `crownPool` laisserait des cimes fantômes allumées. */
+  private crownFadePool: Phaser.GameObjects.Image[] = []
+  /** Les fondus en cours, un par arbre — indexés par l'ID du nœud, jamais par l'index de pool. */
+  private readonly fondu = new FonduDeCime()
+  /** L'éclairage sous lequel les fondus en cours ont été armés — un basculement les invalide tous
+   *  (toutes les clés changent à la fois). `null` : rien n'a encore été rendu. */
+  private eclairageSuivi: boolean | null = null
+  /**
+   * ═══ LE CRAN DE SAISON — UN SEUL ÉCRIVAIN, ET C'EST LE POINT ═══
+   *
+   * La parité de la clé de cime et la CUISSON de cette même cime doivent lire le MÊME cran :
+   * si la cuisson range la nouvelle teinte en parité 1 pendant que le rendu va chercher la
+   * parité 0, l'arbre affiche à jamais la saison d'avant — et rien ne le dit.
+   *
+   * Ils l'avaient déjà : la cuisson (`WorldScene` → `rafraichirCimes`) lisait
+   * `lastTime.seasonDay`, la clé lisait le tick de la façade du gel. Deux nombres presque
+   * toujours égaux, jamais garantis — MESURÉ au navigateur, le feuillage ne tournait plus.
+   * `WorldScene` pousse donc le cran ICI, à la même ligne où il le pousse au décor et à la
+   * cuisson.
+   */
+  cranSaison = 0
   /**
    * LA CANOPÉE RESTE PLEINE — pour les images, et pour elles seules.
    *
@@ -659,6 +742,8 @@ export class SnapshotView {
   private canopeePleine = false
   /** Voir `setEtatGel`. */
   private etatGel: SimState | null = null
+  /** L'enneigement des cimes de persistants (2026-08-25) — mémoïsé par peuplement, cf. le module. */
+  private readonly neigeCimes = new NeigeDesCimes()
   /** Pool des SOUCHES/traces laissées par la dérive (spec recolte-vivante D1). */
   private stumpPool: Phaser.GameObjects.Image[] = []
   /** Index id→nœud pour appliquer les deltas de stock en O(1). */
@@ -738,6 +823,22 @@ export class SnapshotView {
   /** LA FORCE DU VENT au centre (`vent.md` V3) — le client la LIT désormais au lieu de
    *  l'inventer. `VentLisse` la consomme, le cadran du HUD la montre. */
   windForce: SnapshotMessage['windForce'] = VENT.AMBIANT
+  /**
+   * LE CAP RALLIÉ (`VentLisse.cap`), posé par `WorldScene` — ce à quoi la VÉGÉTATION plie.
+   *
+   * `wind` reste le cap BRUT de la sim : c'est la donnée, et c'est elle que le reste lit (la
+   * sentinelle du calme plat, le cadran). Mais un cap qui avance par crans de 45° fait sauter
+   * l'assiette de toutes les tiges d'une image à l'autre — sur un virage vers le nord ou le sud,
+   * la composante horizontale tombe à zéro et le décor se redresse d'un coup (constaté par
+   * Alexis, 2026-08-25). Le rendu prend donc la version RALLIÉE ; `null` : personne ne l'a dite,
+   * on retombe sur le cap brut (banc, hôte muet).
+   */
+  capLisse: { x: number; y: number } | null = null
+
+  /** Le cap auquel le décor plie — un seul point de lecture pour `windSway`/`windStretch`. */
+  private get ventDuDecor(): { x: number; y: number } {
+    return this.capLisse ?? this.wind
+  }
   /** LE FRONT MÉTÉO EN COURS (spec meteo.md), ou rien — le RECORD D'ÉLECTION, patron `wind`.
    *  Tout le reste (bande, gradient, éclairs) se recalcule du tick par les fonctions pures. */
   meteo: SnapshotMessage['meteo'] = null
@@ -785,11 +886,18 @@ export class SnapshotView {
     this.hour = msg.time.hourOfCycle
     this.blood = msg.blood
     this.wind = msg.wind
+    // ⚠ LA FORCE ÉTAIT DÉCLARÉE ET JAMAIS POSÉE (trouvé le 2026-08-25). Le champ existait, le
+    // protocole la portait (`sim-worker`), le snapshot l'écrivait — et personne ne la recopiait
+    // ici : `windForce` restait collée à `VENT.AMBIANT` pour toujours. Trois consommateurs y
+    // lisaient donc une ambiance perpétuelle : la brume (`VentLisse`, depuis l'unification), et
+    // depuis aujourd'hui le pli des brins et la fumée des feux. Une loi livrée sans appelant.
+    this.windForce = msg.windForce
     this.meteo = msg.meteo
     this.groundItems = msg.groundItems
     // LES SOLS QUI TRAVAILLENT (spec `cendreux.md` R21) : le snapshot les portait déjà et
     // le client les jetait. Ils se recalent sur l'horloge du RENDU ici, une fois par
     // message ; la rampe, elle, avance à chaque frame (voir `reveil-fx`).
+    this.reveils = msg.reveils
     this.reveilFx?.suivre(msg.reveils, msg.tick, now)
     // La position (autoritative) de l'avatar local — le FADE des toits en dépend (R24).
     const self = msg.entities.find((e) => e.id === playerId)
@@ -991,7 +1099,14 @@ export class SnapshotView {
       // sur chaque acteur À CHAQUE FRAME. La rampe de sortie est en millisecondes (elle dure
       // moins d'une seconde), la rendre au rythme des snapshots l'aurait fait monter par
       // marches de trois images.
-      this.syncActor(o.sprite, p.x, p.y, o.textureKey, o.crouch, this.reveilFx?.enfouissementDe(id, now) ?? 0)
+      // L'ENVOL (R21) : la hauteur du bond, sur la MÊME horloge que la position — donc
+      // à `target`, l'instant rendu, et non à `now`. Prise à `now`, l'oiseau aurait volé
+      // en avance sur son propre déplacement d'un délai d'interpolation entier.
+      const hVol =
+        o.volDebutMs !== undefined && o.volDureeMs !== undefined && o.volDureeMs > 0
+          ? hauteurDeBond((target - o.volDebutMs) / o.volDureeMs)
+          : 0
+      this.syncActor(o.sprite, p.x, p.y, o.textureKey, o.crouch, this.reveilFx?.enfouissementDe(id, now) ?? 0, hVol)
     }
   }
 
@@ -1013,6 +1128,10 @@ export class SnapshotView {
     textureKey: string,
     crouch = false,
     enfoui = 0,
+    /** LA HAUTEUR DU BOND (spec faune R21), en tuiles — 0 au sol. Elle soulève le SPRITE et
+     *  rien d'autre : la profondeur de tri et l'ombre restent AU SOL, sinon l'oiseau passerait
+     *  devant ce qu'il survole et son ombre décollerait avec lui. */
+    hauteurVol = 0,
   ): void {
     const footprint = ACTOR_FOOTPRINTS[textureKey] ?? DEFAULT_FOOTPRINT
     const p = actorPlacement(x, y, footprint, TILE_PX, BALANCE.AVATAR_HITBOX_DEPTH_TILES)
@@ -1038,20 +1157,48 @@ export class SnapshotView {
       if (dRive > 0 && this.glaceAt?.(Math.floor(x), Math.floor(feetY)) === true) dRive = -dRive
     }
     const displayH = crouch ? p.displayH * CROUCH_FACTOR : p.displayH
+    // ═══ CE QUI S'ENFONCE, C'EST L'ÉPAISSEUR D'UN CORPS COUCHÉ — PAS SA LONGUEUR ═══
+    //
+    // *(Alexis, 2026-08-25 : « il divise par 2 sa longueur lorsqu'il est aligné en Y ».)*
+    //
+    // `enfoncement` reçoit `displayH` pour deux choses : la PROFONDEUR qu'un milieu creuse, et
+    // son PLAFOND (`COUPE_MAX_FRACTION` = 0,45). Pour un corps debout, `displayH` est sa hauteur
+    // — juste. Pour un corps COUCHÉ NORD-SUD, `displayH` est sa LONGUEUR : l'eau lui rognait
+    // jusqu'à 45 % du corps, par le pied. D'où « divisé par deux ».
+    //
+    // Ce qui s'enfonce dans l'eau, la vase ou la neige, c'est l'ÉPAISSEUR du corps posé au sol —
+    // son petit côté, quel que soit l'axe. Et la DÉCOUPE, elle, ne s'applique qu'au corps dont
+    // le petit côté est vertical : rogner le bas d'un sprite couché nord-sud, c'est lui couper
+    // la tête, pas les jambes. Il DESCEND (`descente`), il ne raccourcit pas.
+    // « Couché » se lit sur la clé ; « couché DANS L'AXE VERTICAL » se lit sur sa BOÎTE (elle
+    // est plus haute que large) — plus sur un suffixe, il y a huit caps désormais.
+    const couche = textureKey.startsWith('spr-cendreux-rampant')
+    const coucheEnY = couche && p.displayH > p.displayW
+    const hauteurQuiSEnfonce = epaisseurQuiSEnfonce(p.displayW, displayH, couche)
+    // LA CENDRE COUVRE LA VASE (voir `cendreIci`) : `-99` dit « pas de vase du tout », le même
+    // mot que l'absence de champ. C'est le patron de la glace trois lignes plus haut — un milieu
+    // qu'une autre couche a recouvert cesse d'être un milieu, il ne s'atténue pas.
+    const surCendre = this.cendreIci?.(Math.floor(x), Math.floor(feetY)) === true
     const milieux = enfoncement({
       dRive,
-      dVase: this.vase ? riveAt(this.vase, x, feetY) : -99,
+      dVase: this.vase && !surCendre ? riveAt(this.vase, x, feetY) : -99,
       hauteurNeige: this.hauteurNeigeAt?.(x, feetY) ?? 0,
       enfoui,
-      displayH,
+      displayH: hauteurQuiSEnfonce,
     })
     const immersion = milieux.immersion
-    const coupe = milieux.coupe
+    // L'ENFOUISSEMENT (le corps qui SORT DU SOL) reste sur toute la longueur : là, le sprite
+    // émerge vraiment, et il émerge par le haut — c'est la seule découpe qui ait un sens sur un
+    // couché nord-sud, et `reveilFx` la commande de 1 à 0.
+    const coupe = coucheEnY ? displayH * Math.max(0, Math.min(1, enfoui)) : milieux.coupe
     const descente = milieux.descente
     // L'OMBRE NE REMONTE QUE POUR CE QUI MONTE : la neige. Sur un sol qui cède (eau, vase),
     // le corps descend et l'ombre reste au sol.
-    const coupeNeige = coupeDeNeige(this.hauteurNeigeAt?.(x, feetY) ?? 0, displayH)
-    sprite.setPosition(p.px, p.py - lift + descente + 2 * immersion)
+    // ⚠ ET L'OMBRE NE MONTE QUE SI LE CORPS MONTE : le couché nord-sud ne se rogne pas (son petit
+    //   côté est horizontal), donc rien ne le fait sortir de la neige — une ombre qui remonterait
+    //   quand même se détacherait de lui, le défaut exact que la ligne du dessus a corrigé ailleurs.
+    const coupeNeige = coucheEnY ? 0 : coupeDeNeige(this.hauteurNeigeAt?.(x, feetY) ?? 0, hauteurQuiSEnfonce)
+    sprite.setPosition(p.px, p.py - lift - hauteurVol * TILE_PX + descente + 2 * immersion)
     sprite.setDepth(p.depth)
     sprite.setDisplaySize(p.displayW, displayH)
     if (coupe > 0) {
@@ -1076,7 +1223,12 @@ export class SnapshotView {
       // ELLE SE FOND AUSSI SOUS TERRE. Sans `enfoui` ici, un corps encore aux trois quarts
       // enfoui projetait l'ombre de contact d'un CORPS ENTIER autour du tertre — une ombre
       // pleine sous une tête qui perce, et le trou perdait toute sa profondeur.
-      shadow.setAlpha(SHADOW_ALPHA * (1 - Math.max(immersion, enfoui)))
+      // ET ELLE S'ÉLOIGNE SOUS CE QUI VOLE (R21) : une ombre qui garderait sa taille et sa
+      // densité sous un oiseau monté à 1,6 tuile collerait le bond au sol — c'est elle, plus
+      // que la hauteur du sprite, qui dit qu'il a décollé.
+      const partVol = hauteurVol > 0 ? 1 / (1 + hauteurVol) : 1
+      shadow.setAlpha(SHADOW_ALPHA * (1 - Math.max(immersion, enfoui)) * partVol)
+      if (hauteurVol > 0) shadow.setScale(shadow.scaleX * partVol, shadow.scaleY * partVol)
     }
     // LE REGARD DU CENDREUX (demande d'Alexis, 2026-08-21 — spec `cendreux.md` R27) : le même
     // pion d'orientation que l'avatar (`fx-gaze`), posé au bord de la tête du côté du `facing`
@@ -1101,7 +1253,12 @@ export class SnapshotView {
     }
     this.syncFlottaison(sprite, p.px, p.py - lift, p.displayW, p.depth, immersion)
     // LES ÉVÉNEMENTS D'EAU (R3/R7) : la gerbe au franchissement, les pas mouillés en sortant.
-    if (this.rive) this.eau?.track(sprite, p.px, p.py, p.depth, dRive, this.scene.time.now, p.displayW)
+    // LE RAMPANT TRAÎNE AU LIEU DE MARCHER (Alexis, 2026-08-25) — et c'est SA TEXTURE qui le dit,
+    // pas un drapeau de plus à faire descendre : un corps est couché parce qu'il se dessine
+    // couché, et les deux axes (`-rampant`, `-rampant-v`) partagent le même préfixe.
+    if (this.rive) {
+      this.eau?.track(sprite, p.px, p.py, p.depth, dRive, this.scene.time.now, p.displayW, textureKey.startsWith('spr-cendreux-rampant'))
+    }
     // LE REFLET (R13) : un acteur dans l'eau se redit tête-bêche sur la nappe sous lui.
     if (this.reflets && immersion > 0.05) {
       const coupeTexels = coupe > 0 ? Math.round((coupe / displayH) * sprite.frame.height) : 0
@@ -1188,6 +1345,7 @@ export class SnapshotView {
           buffer: [{ at: now, x: entity.x, y: entity.y }],
           repos: nouveauRepos(now),
           miroir: nouveauMiroir(false, now),
+          axe: nouveauCran(0, now),
         }
         this.others.set(entity.id, record)
       }
@@ -1216,8 +1374,25 @@ export class SnapshotView {
       // snapshot) décide du couché : une bête qui marche est debout, fût-il 3 h
       // du matin (« ils bougent allongés », Alexis, 2026-08-01).
       const posee = majRepos(record.repos, entity.moved, now)
+      // LE CORPS COUCHÉ SUIT SON AXE (Alexis, 2026-08-25). Un rampant a une LONGUEUR : elle doit
+      // être dans le sens de sa marche, sinon il avance en travers. Le miroir ne sait que
+      // retourner — d'où une seconde texture, choisie ici, et VERROUILLÉE par le même latch que
+      // lui : le cap est rangé en huit secteurs, et sur une diagonale les deux composantes sont
+      // égales — sans verrou, le corps pivoterait d'un quart de tour à chaque tick.
+      //
+      // ⚠ SUR LE DÉPLACEMENT RÉEL, PAS SUR `facing` (Alexis, 2026-08-25 : « il devrait s'aligner
+      //   vers la direction où il se déplace le plus en X et en Y »). `facing` est rangé en huit
+      //   secteurs par la sim : sur une diagonale ses deux composantes sont ÉGALES, et la question
+      //   n'y a pas de réponse. Le tampon d'interpolation porte les positions vraies.
+      const rampe = monster?.rampant === true
+      const d = rampe ? deplacementRecent(record.buffer, AXE_FENETRE_MS) : { dx: 0, dy: 0 }
+      const bouge = d.dx * d.dx + d.dy * d.dy > AXE_SEUIL_TUILES * AXE_SEUIL_TUILES
+      const orientCouche = rampe
+        // Immobile : on GARDE le cap qu'il portait. Un corps arrêté ne pivote pas.
+        ? majCran(record.axe, bouge ? orientCouchee(d.dx, d.dy) : record.axe.cran, now)
+        : 0
       const key = monster
-        ? beastTexture(monster, sentinels.has(entity.id), this.hour, posee)
+        ? beastTexture(monster, sentinels.has(entity.id), this.hour, posee, orientCouche, this.tick)
         : this.lighting ? 'spr-npc_lit' : 'spr-npc' // l'humain bascule (R9) ; la bête reste peinte (consigné)
       if (record.textureKey !== key) {
         // setTexture réinitialise la frame : ne le rappeler que si la texture
@@ -1235,11 +1410,26 @@ export class SnapshotView {
       // une frontière de secteur alternait sinon d'un côté à l'autre à chaque
       // tick — le sprite entier se retournait, et ça se lisait comme un
       // tremblement (Alexis, 2026-08-01).
-      if (monster && Math.abs(entity.facing.x) > 0.25) {
+      // ⚠ PAS DE MIROIR SUR UN CORPS COUCHÉ : ses huit caps couvrent déjà le tour d'horizon, et
+      //   retourner par-dessus reviendrait à décrire son cap deux fois, avec deux quantités qui
+      //   ne disent pas la même chose (le `facing` rangé de la sim, et son déplacement réel).
+      if (monster && !rampe && Math.abs(entity.facing.x) > 0.25) {
         const facesRight = ACTOR_FOOTPRINTS[key]?.facesRight === true
         record.sprite.setFlipX(majMiroir(record.miroir, facesRight ? entity.facing.x < 0 : entity.facing.x > 0, now))
       }
       record.crouch = isCrouched(monster, entity)
+      // L'ENVOL (spec faune R21) : on convertit la fenêtre du bond en millisecondes de
+      // l'horloge de RENDU, une fois par snapshot. Le calcul est IDEMPOTENT — il repart du
+      // décollage à chaque fois, donc il se recale tout seul si un snapshot se perd, au lieu
+      // de dériver depuis un instant mémorisé une seule fois.
+      if (monster !== undefined && enVol(monster, this.tick) && monster.volDepuis !== undefined) {
+        const ecoule = ((this.tick - monster.volDepuis) / BALANCE.TICK_RATE_HZ) * 1000
+        record.volDebutMs = now - ecoule
+        record.volDureeMs = ((monster.volUntil! - monster.volDepuis) / BALANCE.TICK_RATE_HZ) * 1000
+      } else if (record.volDebutMs !== undefined) {
+        delete record.volDebutMs
+        delete record.volDureeMs
+      }
       record.sprite.setTint(beastTint(monster, entity.windup !== undefined, npc !== undefined, this.tick))
       record.sprite.setAlpha(npc?.sleeping ? 0.45 : 1)
       // LA PLAIE GOUTTE. L'état qui saigne (la même vérité que la teinte ci-dessus :
@@ -1779,20 +1969,38 @@ export class SnapshotView {
     this.worldSeed = seed
   }
 
-  /**
-   * LA VERSION DE LA CANOPÉE — s'incrémente quand le JEU D'ARBRES change (peuplement
-   * initial, abattage, repousse, dérive, front de cendre). Les taches de soleil en
-   * dépendent : leur masque se bâtit sur les couronnes RÉELLES (spec §5 R6 amendée,
-   * 2026-08-16) et doit se rebâtir quand elles bougent. WorldScene la LIT à la frame
-   * (un entier) et ne rebâtit que sur changement, throttlé — jamais par frame.
-   */
-  versionCouvert = 0
-
   private reindexer(nodes: ResourceNode[]): void {
     this.nodes = nodes
     this.nodeById = new Map(nodes.map((n) => [n.id, n]))
-    this.nodeByTile = new Map(nodes.map((n) => [n.tx * NODE_TILE_STRIDE + n.ty, n]))
-    this.versionCouvert++
+    // Premier gagnant, comme l'index de /sim — la règle, sa raison et sa garde vivent dans
+    // `index-noeuds.ts` (cet index décide aujourd'hui de ce qu'un clic fait, pas seulement
+    // de ce qu'on dessine).
+    this.nodeByTile = indexerParTuile(nodes)
+  }
+
+  /**
+   * LE NŒUD D'UNE TUILE, EN O(1) — l'index que `renderNodes` utilise déjà, ouvert aux
+   * autres lecteurs de la frame (la VISÉE, la règle de pose).
+   *
+   * Il ne se rebâtit qu'à `reindexer` (la liste complète, au `ready`) : la naissance,
+   * la dérive et la mort d'un nœud le PATCHENT en O(1) (`applyNodeDeltas`). C'est donc
+   * la seule façon honnête de demander « qu'y a-t-il ici ? » à chaque image — le
+   * balayage du tableau coûtait 764 µs par appel sur les ~62 000 nœuds de la carte jouée.
+   *
+   * ⚠ Il rend le nœud QUEL QUE SOIT SON STOCK : un épuisé occupe encore sa tuile (il
+   *   repousse). C'est à l'appelant de trancher — la visée écarte les épuisés, la règle
+   *   de pose s'en sert au contraire pour savoir que la tuile est prise.
+   */
+  noeudALaTuile(tx: number, ty: number): ResourceNode | undefined {
+    return this.nodeByTile.get(cleDeTuile(tx, ty))
+  }
+
+  /** LE NŒUD D'UN ID, en O(1) — même index, même raison que `noeudALaTuile`. Les
+   *  résolveurs d'input (« ce nœud est-il un arbre / un filon / de la cueillette ? »)
+   *  le demandaient au tableau, donc en O(62 000), et l'un d'eux tourne à chaque image
+   *  (le contour de la touche d'interaction). */
+  noeudParId(id: number): ResourceNode | undefined {
+    return this.nodeById.get(id)
   }
 
 
@@ -1818,14 +2026,11 @@ export class SnapshotView {
         const ne: ResourceNode = { id: d.id, type: d.neuf, tx: d.tx, ty: d.ty, stock: d.stock, regrowAt: d.regrowAt ?? 0 }
         this.nodes.push(ne)
         this.nodeById.set(ne.id, ne)
-        this.nodeByTile.set(ne.tx * NODE_TILE_STRIDE + ne.ty, ne)
+        this.nodeByTile.set(cleDeTuile(ne.tx, ne.ty), ne)
         continue
       }
       const n = this.nodeById.get(d.id)
       if (!n) continue
-      // La CANOPÉE bouge ? Un arbre qui tombe à 0 (abattage/dérive) ou qui repousse
-      // plein change la couverture réelle — les taches de soleil doivent suivre.
-      if ((n.type === 'tree' || n.type === 'old_tree') && (d.stock > 0) !== (n.stock > 0)) this.versionCouvert++
       if (d.stock > 0) {
         n.stock = d.stock
         this.depleted.delete(d.id)
@@ -1843,10 +2048,10 @@ export class SnapshotView {
       // Épuisement. Déménagement éventuel (bois/plante qui dérive).
       if (d.tx !== undefined && d.ty !== undefined && (d.tx !== n.tx || d.ty !== n.ty)) {
         this.stumps.push({ tx: n.tx, ty: n.ty, type: n.type, at: now })
-        this.nodeByTile.delete(n.tx * NODE_TILE_STRIDE + n.ty)
+        this.nodeByTile.delete(cleDeTuile(n.tx, n.ty))
         n.tx = d.tx
         n.ty = d.ty
-        this.nodeByTile.set(n.tx * NODE_TILE_STRIDE + n.ty, n)
+        this.nodeByTile.set(cleDeTuile(n.tx, n.ty), n)
       }
       n.stock = 0
       // `regrowAt > 0`, comme `setNodes` : à 0 la sim dit « aucune repousse en cours » — le
@@ -1884,8 +2089,18 @@ export class SnapshotView {
     const tx1 = Math.ceil((v.x + v.width) / TILE_PX) + 2
     const ty1 = Math.ceil((v.y + v.height) / TILE_PX) + crownMargin
     const feetY = playerY + BALANCE.AVATAR_HITBOX_DEPTH_TILES / 2
+    // ÉTEINDRE OU RALLUMER LA LUMIÈRE N'EST PAS UN FONDU. Le toggle DEV (panneau P) change TOUTES
+    // les clés de cime d'un coup — art peint ↔ `_lit` — et `FonduDeCime`, qui ne juge que sur la
+    // clé, y lirait un virage de saison : trente secondes de vieux houppier par-dessus le neuf,
+    // sur un panneau dont le but est justement de COMPARER les deux rendus. On oublie donc les
+    // suivis au basculement : chaque arbre repart sur ce qu'il porte, sans transition.
+    if (this.eclairageSuivi !== this.lighting) {
+      this.eclairageSuivi = this.lighting
+      this.fondu.oublieTout()
+    }
     let used = 0
     let crownsUsed = 0
+    let fadesUsed = 0 // les cimes SORTANTES d'un fondu — leur propre compteur (pool séparé)
     this.transitionsFlore.image()
     // LE NŒUD SURVOLÉ N'A PAS ENCORE DE SPRITE À CETTE FRAME : le pool se réattribue ici. On
     // repart donc de rien — sinon un nœud sorti de l'écran laisserait son contour posé sur le
@@ -1894,7 +2109,7 @@ export class SnapshotView {
     const idSurvole = this.interactTarget?.kind === 'node' ? this.interactTarget.id : -1
     for (let ty = ty0; ty <= ty1; ty++) {
       for (let tx = tx0; tx <= tx1; tx++) {
-        const n = this.nodeByTile.get(tx * NODE_TILE_STRIDE + ty)
+        const n = this.nodeByTile.get(cleDeTuile(tx, ty))
         if (n === undefined) continue
         // DÉFRICHÉ : la sim ne le fera jamais repousser (`defriche.ts`), donc on ne le
         // dessine plus — le sol est dégagé, et c'est ce que le joueur vient de faire. Le
@@ -1907,6 +2122,11 @@ export class SnapshotView {
         // navigateur), et la prédiction locale se serait cognée à des fantômes.
         if (this.carte && noeudTombeParLaCendre(this.carte, this.cendreAge, this.worldSeed, n,
           NODE_DEFS[n.type]?.vivant === true)) continue
+        // L'EAU S'EST RETIRÉE (voir `eauIci`) : un coin de pêche sur une tuile à sec ne se
+        // dessine plus. La sim refusait déjà d'y pêcher — c'est le RENDU qui mentait, et il
+        // mentait sur la seule chose qu'un coin promet. Le nœud n'est pas perdu pour autant :
+        // la mare revient avec la pluie, et il repeint avec elle (aucun état n'a bougé).
+        if (estUnCoinDePeche(n.type) && this.eauIci !== null && !this.eauIci(n.tx, n.ty)) continue
         // LE GROS BOIS EST UN ARBRE : deux sprites (tronc + houppier), un décalage dans sa tuile,
         // et le houppier s'efface autour du joueur. Sans cette ligne, il naissait sans houppier —
         // un fût nu au milieu d'une futaie, ce qui est exactement ce qu'il n'est pas.
@@ -1958,11 +2178,13 @@ export class SnapshotView {
             ? (this.lighting ? 'nd-sapling_lit' : 'nd-sapling')
             : isTree
               ? `nd-${variante.slug}_trunk${litTree ? '_lit' : ''}`
-              // LE BLOC D'AFFLEUREMENT a trois TAILLES — la même fonction pure que le stock
-              // côté sim (`tailleDeBloc`) : l'art et la résistance coïncident au bit près,
-              // rien ne transite. Pleine tuile, sans offset — c'est la demande, littéralement.
-              : n.type === 'bloc'
-                ? `nd-bloc-${tailleDeBloc(n.tx, n.ty)}${this.lighting ? '_lit' : ''}`
+              // LE SOCLE MINÉRAL — les six nœuds qui bloquent leur tuile entière partagent un
+              // seul art, à trois hauteurs (`socle-mineral.ts`). Le BLOC porte sa taille sur une
+              // butte (`size`, elle y dépend de la forme de la butte entière) et la redérive
+              // ailleurs par `tailleDeBloc` ; les cinq autres la tirent d'un hash pur de la
+              // tuile. Pleine tuile, planté au bord bas, sans offset.
+              : estUnSocle(n.type)
+                ? `${cleDeSocle(n.type as SocleType, tailleDeSocle(n.type as SocleType, n.tx, n.ty, n.size))}${this.lighting ? '_lit' : ''}`
                 : this.lighting && LIT_NODE_TYPES.has(n.type)
                     ? `nd-${n.type}_lit` // masse pâteuse (roche…) : albédo aplati + normal map quand éclairé
                     : `nd-${n.type}`
@@ -2015,7 +2237,11 @@ export class SnapshotView {
         // Plus de fantôme à 25 % (spec recolte-vivante D2) : un nœud est TOUJOURS opaque.
         // Épuisé, il n'est pas « à moitié là » — il REPOUSSE, et c'est son échelle qui le dit.
         sprite.setAlpha(1)
-        sprite.setScale(g * echX, g * echY) // plein = 1 ; repousse = fraction ; gel = le geste (origine basse)
+        // LE STRETCH DU VENT NORD-SUD (essai, 2026-08-25) — voir `windStretch`. Multiplié à
+        // l'échelle de repousse et à celle du gel : les trois gestes se composent, aucun ne
+        // remplace l'autre. Posé CHAQUE image comme la rotation (le sprite est poolé).
+        const etire = windStretch(growing && isTree ? SAPLING_WIND_TAKE : (NODE_WIND_TAKE[n.type] ?? 0), this.ventDuDecor, this.windForce)
+        sprite.setScale(g * echX, g * echY * etire) // plein = 1 ; repousse = fraction ; gel = le geste (origine basse)
         // LA MATIÈRE QUITTE LE NŒUD (spec recolte.md G10, 3e signe). Ici et pas ailleurs :
         // `px/py-lift` est le pied RÉEL du sprite, `displayHeight` sa hauteur APRÈS
         // `setScale` (une pousse qui repousse gicle donc à sa taille), et `texture` est
@@ -2045,7 +2271,7 @@ export class SnapshotView {
             const m = variante.mesures
             this.recolteFx?.feuillage(
               n.id, coup.at, now,
-              cleHouppier(variante.slug, litTree, cimeDe(n.tx, n.ty)),
+              this.cleDeCime(variante.slug, cimeDe(n.tx, n.ty), this.etatDeCime(variante.slug, n.tx, n.ty)),
               // La HAUTEUR d'où les feuilles tombent suit la hauteur du houppier ; leur
               // dispersion suit sa LARGEUR, qui n'est plus la même depuis `houppierW` (le saule
               // et le parasol du vieux pin sont plus larges que hauts). Les feuilles d'un saule
@@ -2059,7 +2285,7 @@ export class SnapshotView {
         // remis DROIT, jamais la rotation d'un voisin héritée. Pivot aux pieds (origine 0.5,1) → il
         // plie depuis sa base, comme le houppier et les touffes du décor.
         const windTake = growing && isTree ? SAPLING_WIND_TAKE : (NODE_WIND_TAKE[n.type] ?? 0)
-        sprite.setRotation(windSway(tx + j.dx, ty + j.dy, now, windTake, this.wind))
+        sprite.setRotation(windSway(tx + j.dx, ty + j.dy, now, windTake, this.ventDuDecor, this.windForce, this.wind))
         sprite.setVisible(true)
         // LE REFLET DE L'ARBRE (eau-vivante R13) : un fût de la rive nord se redit dans
         // l'eau au sud de son pied — la couche découpe elle-même à la course d'eau.
@@ -2087,8 +2313,16 @@ export class SnapshotView {
           const frame = sprite.frame
           sprite.setCrop(0, 0, frame.width, Math.max(1, frame.height - coupeNeige / Math.max(1e-6, sprite.scaleY)))
         } else if (sprite.isCropped) sprite.setCrop()
+        // LE SOCLE MINÉRAL a sa propre flaque : plus large que sa tuile, et descendue d'un texel
+        // (voir SOCLE_OMBRE_TUILES) — centrée sur un bloc pleine largeur, l'ombre ordinaire
+        // disparaissait derrière lui.
+        const socle = SOCLE_KEYS.has(texture)
         const gapWorld = nodeArtGap(texture) * sprite.scaleY + coupeNeige
-        positionShadow(nodeShadow, px, py, sprite.displayWidth, sprite.depth, gapWorld)
+          - (socle ? SOCLE_OMBRE_DESCENTE * sprite.scaleY : 0)
+        positionShadow(
+          nodeShadow, px, py, sprite.displayWidth, sprite.depth, gapWorld,
+          socle ? TILE_PX * SOCLE_OMBRE_TUILES * sprite.scaleX : undefined,
+        )
         // UN COIN DE PÊCHE est SUR l'eau : rien n'y projette d'ombre de contact (peche.md) — la
         // flaque sombre d'un nœud posé sur une surface qui n'en porte pas se verrait comme une tache.
         if (estUnCoinDePeche(n.type)) nodeShadow.setVisible(false)
@@ -2099,11 +2333,6 @@ export class SnapshotView {
         // LE HOUPPIER. Ses mesures — hauteur du fût, côté du houppier, recouvrement — sont
         // déclarées dans `arbre-art` : c'est de là que sort son ancrage, plus d'un nombre écrit ici.
         const mesures = variante.mesures
-        let crown = this.crownPool[crownsUsed]
-        if (!crown) {
-          crown = this.scene.add.image(0, 0, cleHouppier(variante.slug, false, 0)).setOrigin(0.5, 1)
-          this.crownPool[crownsUsed] = crown
-        }
         // LE POOL RÉUTILISE LES SPRITES : la texture doit être reposée à CHAQUE image, sinon un
         // houppier de gros bois se retrouve sur un arbre ordinaire (et l'inverse) selon l'ordre
         // dans lequel le pool a été servi. Le tronc le faisait déjà ; le houppier, non.
@@ -2119,35 +2348,62 @@ export class SnapshotView {
         // variante non cuite) : on retombe alors sur la cime feuillue plutôt que sur le carré
         // vert d'une texture absente.
         const cime = cimeDe(n.tx, n.ty)
-        const feuillu = cleHouppier(variante.slug, this.lighting, cime)
-        let cle = feuillu
-        if (this.etatGel !== null && feuillageDenude(this.etatGel, n.tx, n.ty)) {
-          const nue = cleHouppier(variante.slug, this.lighting, cime, true)
-          if (this.scene.textures.exists(nue)) cle = nue
+        const etat = this.etatDeCime(variante.slug, n.tx, n.ty)
+        const etape = this.fondu.etape(n.id, this.cleDeCime(variante.slug, cime, etat), etat, now)
+        // LE SPRITE NAÎT SUR LA CIME QU'IL VA PORTER — après le fondu, donc, et jamais sur une clé
+        // écrite en dur. Il naissait sur l'art PEINT (`cleHouppier(slug, false, 0)`) : une image de
+        // vieux houppier avant la première pose, et une deuxième écriture de la même clé à côté de
+        // `cleDeCime`, qui est la seule à savoir la construire.
+        let crown = this.crownPool[crownsUsed]
+        if (!crown) {
+          crown = this.scene.add.image(0, 0, etape.cle).setOrigin(0.5, 1)
+          this.crownPool[crownsUsed] = crown
         }
-        crown.setTexture(cle)
-        crown.setLighting(this.lighting) // pooled : réarmé chaque frame (cf. le tronc)
-        // L'ANCRAGE SE DÉRIVE, il ne s'écrit plus. C'était `py − 16` pour LES DEUX arbres alors
-        // que leurs fûts n'ont pas la même hauteur : le houppier mordait 6 px sur l'un et 8 sur
-        // l'autre, pendant que le commentaire d'ici affirmait 6 pour les deux (relevé au
-        // navigateur, `smoke --scenario echelle`). Le recouvrement est désormais DÉCLARÉ.
-        crown.setPosition(px, py - ancrageHouppierPx(mesures) - lift) // `px` porte déjà le tressaillement
-        crown.setDepth(crownDepth(ty + 1 + j.dy, TILE_PX))
-        // Un arbre visé s'éclaire ENTIER : teinter le tronc seul donnerait un
-        // houppier flottant, détaché de ce qu'on vise.
-        if (n.id === this.aimedNodeId) crown.setTint(this.aimedInRange ? AIM_TINT : AIM_TINT_FAR)
-        else crown.clearTint()
-        // Distance des pieds du joueur au PIED DU TRONC : l'arbre à ton contact
-        // s'efface, celui dont la cime te survole de loin reste opaque.
+        // Distance des pieds du joueur au PIED DU TRONC : l'arbre à ton contact s'efface, celui
+        // dont la cime te survole de loin reste opaque. Elle borne les DEUX sprites du fondu.
         const dx = playerX - (tx + 0.5)
         const dy = feetY - (ty + 1)
         const d = Math.sqrt(dx * dx + dy * dy)
-        crown.setAlpha(this.canopeePleine ? 1 : crownAlpha(d))
-        // La canopée prend le vent, elle aussi. Sans ça, la forêt reste une photo
-        // posée sur un sol qui remue — et c'est le contraste qui trahit le décor.
-        // Origine (0.5, 1) : le houppier bascule autour du haut du tronc.
-        crown.setRotation(windSway(tx + j.dx, ty + j.dy, now, CROWN_WIND_TAKE, this.wind))
-        crown.setVisible(true)
+        const alphaCanopee = this.canopeePleine ? 1 : crownAlpha(d)
+        const depth = crownDepth(ty + 1 + j.dy, TILE_PX)
+        /** LA POSE D'UNE CIME — écrite UNE fois et appliquée aux deux sprites du fondu. Deux
+         *  écritures d'un même placement finiraient par différer d'un pixel, et le fondu se
+         *  verrait comme un tremblement au lieu d'un passage. */
+        const poser = (img: Phaser.GameObjects.Image, cle: string, alpha: number, dz: number): void => {
+          // LE POOL RÉUTILISE LES SPRITES : la texture doit être reposée à CHAQUE image, sinon
+          // un houppier de gros bois se retrouve sur un arbre ordinaire selon l'ordre dans
+          // lequel le pool a été servi.
+          img.setTexture(cle)
+          img.setLighting(this.lighting) // pooled : réarmé chaque frame (cf. le tronc)
+          // L'ANCRAGE SE DÉRIVE, il ne s'écrit plus (cf. `arbre-art`). `px` porte déjà le
+          // tressaillement et le décalage d'arbre.
+          img.setPosition(px, py - ancrageHouppierPx(mesures) - lift)
+          img.setDepth(depth + dz)
+          // Un arbre visé s'éclaire ENTIER : teinter le tronc seul donnerait un houppier
+          // flottant, détaché de ce qu'on vise.
+          if (n.id === this.aimedNodeId) img.setTint(this.aimedInRange ? AIM_TINT : AIM_TINT_FAR)
+          else img.clearTint()
+          img.setAlpha(alpha)
+          // La canopée prend le vent, elle aussi. Sans ça, la forêt reste une photo posée sur
+          // un sol qui remue — et c'est le contraste qui trahit le décor. Origine (0.5, 1) : le
+          // houppier bascule autour du haut du tronc.
+          img.setRotation(windSway(tx + j.dx, ty + j.dy, now, CROWN_WIND_TAKE, this.ventDuDecor, this.windForce, this.wind))
+          // Et la cime s'étire ou se tasse sous un vent nord-sud, comme les tiges du sol.
+          img.setScale(1, windStretch(CROWN_WIND_TAKE, this.ventDuDecor, this.windForce))
+          img.setVisible(true)
+        }
+        poser(crown, etape.cle, alphaCanopee * etape.u, 0)
+        // ── LA CIME D'AVANT, qui s'efface. Elle passe JUSTE SOUS la nouvelle : à profondeur
+        //    égale, deux sprites qui se recouvrent scintillent selon l'ordre d'insertion.
+        if (etape.precedente !== null) {
+          let sortante = this.crownFadePool[fadesUsed]
+          if (!sortante) {
+            sortante = this.scene.add.image(0, 0, etape.precedente).setOrigin(0.5, 1)
+            this.crownFadePool[fadesUsed] = sortante
+          }
+          poser(sortante, etape.precedente, alphaCanopee * (1 - etape.u), -0.0001)
+          fadesUsed++
+        }
         crownsUsed++
       }
     }
@@ -2156,6 +2412,10 @@ export class SnapshotView {
     // ne reste allumée sur une tuile que le culling vient de quitter.
     for (let i = used; i < this.nodeShadowPool.length; i++) this.nodeShadowPool[i]!.setVisible(false)
     for (let i = crownsUsed; i < this.crownPool.length; i++) this.crownPool[i]!.setVisible(false)
+    for (let i = fadesUsed; i < this.crownFadePool.length; i++) this.crownFadePool[i]!.setVisible(false)
+    // Les fondus des arbres qu'on ne regarde plus s'oublient — la carte reste bornée à ce qui
+    // est passé sous les yeux dans la dernière demi-minute (balayage rare, cf. `fondu-cime.ts`).
+    this.fondu.menage(now)
 
     // ═══ LA MORT DES NŒUDS (spec recolte.md G15) ═══════════════════════════════════════
     //
@@ -2185,7 +2445,7 @@ export class SnapshotView {
         const variante = this.carte !== null
           ? varianteArbre(this.carte, e.tx, e.ty, this.worldSeed, e.type === 'old_tree')
           : VARIANTES[e.type === 'old_tree' ? 'old_tree' : 'tree']!
-        this.chuteArbre?.tomber(px, py, variante, this.lighting, dir.dx, dir.dy, now, cimeDe(e.tx, e.ty))
+        this.chuteArbre?.tomber(px, py, variante, this.lighting, dir.dx, dir.dy, now, cimeDe(e.tx, e.ty), this.etatDeCime(variante.slug, e.tx, e.ty))
       } else {
         // LA PIERRE S'EFFONDRE, LE VÉGÉTAL LÂCHE SES FEUILLES : une gerbe à 360°, de la
         // couleur du nœud — la même texture que celle qu'il affichait, donc la même

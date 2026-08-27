@@ -155,7 +155,9 @@ export function createVeillee(
     // Arche en solo — l'année tourne, l'hiver revient. La fin de saison n'est plus qu'un jour.
     finDeSaison: null,
     nodes,
-    cycleOffset: cycleOffsetForStartHour(VEILLEE_START_HOUR),
+    // ⚠ LE JOUR EST REQUIS : le lever suit la saison (2026-08-26), donc « ouvrir à 9 h » se
+    // compte depuis le lever du jour d'ouverture — 06h50 au jour 61, pas un 6 h de convention.
+    cycleOffset: cycleOffsetForStartHour(VEILLEE_START_HOUR, BALANCE.JOUR_DE_DEPART),
     faunaCap: FAUNA.CAP,
     grounds,
     home: spawn,

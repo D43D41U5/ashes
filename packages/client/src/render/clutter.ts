@@ -13,6 +13,7 @@ import {
   TERRAIN_PINE,
   TERRAIN_LARCH,
   TERRAIN_BURNT_FOREST,
+  TERRAIN_CLAIRIERE,
   TERRAIN_CENDRE_BOIS,
   TERRAIN_CENDRE_PRE,
   TERRAIN_GRASS,
@@ -88,6 +89,39 @@ export const BIOME_CLUTTER: Record<number, BiomeClutter> = {
   [TERRAIN_LARCH]: { density: 0.35, scale: 20, understory: false, props: ['larch', 'grass_tuft'] },
   [TERRAIN_BURNT_FOREST]: { density: 0.4, scale: 22, understory: false, props: ['burnt_trunk', 'grass_tuft'] },
   /**
+   * ═══ LA CLAIRIÈRE (demande d'Alexis, 2026-08-25 : « pas d'arbres sur une petite zone mais on
+   * ajoute du clutter ») ═══
+   *
+   * C'EST CETTE LIGNE QUI RÉPARE LE « ON DIRAIT QUE C'EST RASÉ ». Une clairière n'avait aucun
+   * décor propre : elle héritait de `forest`, à densité **0,1**, et perdait ses arbres. Sol nu,
+   * quelques buissons, rien — la grammaire d'une coupe rase. Une vraie trouée est l'inverse d'un
+   * vide : c'est le seul endroit du massif où la lumière arrive au sol, donc le plus DENSE en
+   * herbacé de tout le bois.
+   *
+   * 0,62 — la plus haute densité de la carte après le marais (0,95). Le tirage dit l'histoire du
+   * lieu dans cet ordre : l'HERBE domine (elle a gagné la place), les FLEURS suivent (plein
+   * soleil), un BUISSON reprend en bordure. Le caillou est minoritaire — un accent, comme partout.
+   *
+   * ⚠ **PAS DE SOUCHE — et c'est une DÉCISION D'ALEXIS qu'on ne rouvre pas tout seul.** La
+   * première écriture en posait une (1 tirage sur 8) pour « dire pourquoi il y a une trouée
+   * ici ». Or `TERRAIN_FOREST`, six lignes plus haut, porte noir sur blanc : *« PLUS DE
+   * CONIFÈRES NI DE SOUCHES DÉCORATIFS (demande d'Alexis, 2026-07-18) »*. L'argument d'alors
+   * ne vaut pas ici (une souche décorative mentait au milieu d'arbres qu'on COUPE ; dans une
+   * clairière il n'y a aucun arbre à confondre avec elle) — mais renverser sa demande tient en
+   * un mot de sa part, pas en un raisonnement du mien. La ligne est prête à l'accueillir.
+   *
+   * MESURÉ dans le jeu (smoke `clairiere`, 2026-08-25) : le tirage rend `grass_tuft=39
+   * flower=29 low_bush=22 pebbles=11` autour du joueur, et la trouée est **×3,2 plus habillée
+   * que le bois** d'à côté sur la même boîte. Le `low_bush` est le prop SOMBRE de la liste :
+   * s'il faut alléger quelque chose un jour, c'est lui — pas l'herbe.
+   *
+   * `understory: false` : il n'y a pas de canopée au-dessus, c'est le principe.
+   */
+  [TERRAIN_CLAIRIERE]: {
+    density: 0.62, scale: 15, understory: false,
+    props: ['grass_tuft', 'grass_tuft', 'grass_tuft', 'flower', 'flower', 'low_bush', 'pebbles'],
+  },
+  /**
    * ═══ LE DÉCOR DE LA CENDRE (spec `cendre.md` R11) ═══
    *
    * La première version TAISAIT tout décor sur la cendre — rien ne pousse, donc rien à dessiner.
@@ -130,7 +164,13 @@ export const BIOME_CLUTTER: Record<number, BiomeClutter> = {
   [TERRAIN_REED_MARSH]: { density: 0.6, scale: 13, understory: false, props: ['reed'] },
   [TERRAIN_PEAT_BOG]: { density: 0.45, scale: 14, understory: false, props: ['sphagnum', 'reed'] },
   [TERRAIN_SCREE]: { density: 0.4, scale: 16, understory: false, props: ['pebbles', 'lichen'] },
-  [TERRAIN_BOULDERS]: { density: 0.5, scale: 16, understory: false, props: ['boulder', 'lichen'] },
+  // ⚠ **LE CHAOS DE BLOCS N'A PLUS DE ROCHER PEINT** (2026-08-27). Il en portait un (`boulder`)
+  // à densité 0,5, et c'était le défaut qu'Alexis a signalé : *« on passe au travers. »* Un gros
+  // bloc de pierre est désormais un VRAI nœud `bloc` — boîte pleine tuile, trois tailles, art
+  // `nd-bloc-<taille>` — semé par `blocsDuChaos`. Laisser le décor à côté rendrait le champ
+  // illisible : deux rochers identiques à l'écran, l'un qui arrête et l'autre non. Le décor ne
+  // garde donc que **ce qu'on enjambe** (INV-2) : des moellons et du lichen.
+  [TERRAIN_BOULDERS]: { density: 0.5, scale: 16, understory: false, props: ['pebbles', 'pebbles', 'lichen'] },
   [TERRAIN_SNOW]: { density: 0.2, scale: 18, understory: false, props: ['snowdrift', 'pebbles'] },
   // LE VOCABULAIRE DU PRÉ (spec t0-exploration §2ter). La saulaie : un sous-bois de berge —
   // buissons et roseaux entre les troncs (les saules eux-mêmes sont de VRAIS nœuds, posés

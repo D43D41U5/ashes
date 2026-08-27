@@ -69,6 +69,15 @@ export type ItemId =
   | 'stew'
   | 'iron_ore'
   | 'coal'
+  /**
+   * LE CHARBON DE BOIS — ce que le feu laisse quand la bûche a fini de brûler (décision
+   * d'Alexis, 2026-08-25). ⚠ CE N'EST PAS `coal` : la houille se MINE (filon, affleurement
+   * charbonneux, butin de convoi) et c'est elle, et elle seule, qui fond le fer. Le charbon
+   * de bois ne fond rien — question posée, arbitrée : chaque feu de camp produisant la
+   * houille aurait dissous en silence le goulot qui borne la carte à un village équipé.
+   * Il attend son consommateur (la carte au fusain) ; voir `feu-station.md` S30.
+   */
+  | 'charcoal'
   /** ── LES RESSOURCES STRUCTURANTES DES ZONES (spec worldgen R9) ──
    *  Chacune n'existe QUE dans sa zone. C'est ce qui remplace la récompense de distance, qui
    *  était arithmétiquement morte : *loin* ne veut plus dire « plus », ça veut dire
@@ -177,6 +186,34 @@ export type ItemId =
    *  Obligatoire EN MAIN pour dépecer, viande comprise : le geste EST la lame. Une seule marche
    *  de couteau pour l'instant ; il s'use d'un cran par coupe. Un OUTIL, pas une arme. */
   | 'crude_knife'
+  /**
+   * ═══ LA TORCHE — la seule lumière qui MARCHE (décision d'Alexis, 2026-08-26) ═══
+   *
+   * Deux items, et c'est délibéré : `torche` est le fagot ÉTEINT qu'on taille à la main
+   * (bois + fibre, sans poste), `torche_vive` est le même objet EN FEU, avec son horloge
+   * de combustion dans `wear`. Deux items plutôt qu'un drapeau sur la case, parce que
+   * l'inventaire ne sait empiler et comparer que des `ItemId` : une torche allumée ne doit
+   * jamais fusionner avec une éteinte, et `isStackable` le garantit tout seul (les deux
+   * sont hors de `STACK_SIZES`, donc à 1).
+   *
+   * ⚠ TROIS INTERDITS, et ils sont la raison pour laquelle la torche avait été ABANDONNÉE
+   * (`decisions.md` 2026-07-12, `craft-fortune.md`) :
+   *   • Elle NE CHAUFFE PAS — aucun terme dans `advanceTemperature`, aucune isolation. Une
+   *     source de chaleur portable saperait le Feu, et c'est la moitié encore vivante de la
+   *     décision d'abandon (l'autre moitié — « le client n'a aucun système de lumière » —
+   *     est morte le 2026-07-24, quand l'éclairage dynamique est devenu le rendu nominal).
+   *   • Elle NE REPOUSSE RIEN — ni loup, ni cendreux, ni meute. C'est I3 de la bible
+   *     diégétique à la lettre : le Feu ne devient jamais un ward, et une parade agit parce
+   *     qu'elle OCCUPE, jamais parce qu'elle est portée.
+   *   • Elle NE S'ALLUME QU'AU FEU (`light_torch`, sur un foyer allumé ou en braises). Le
+   *     foyer reste donc l'ORIGINE de toute lumière du jeu : la torche est une LAISSE qui
+   *     ramène au Feu, pas une évasion. Elle s'éteint d'elle-même, et il faut rentrer.
+   *
+   * Ce qu'elle coûte : une case de ceinture, EN MAIN. Qui s'éclaire ne tient ni hache, ni
+   * arc, ni canne — la nuit se paie en mains libres.
+   */
+  | 'torche'
+  | 'torche_vive'
   /** L'OS (spec `depecage.md` D5/D6) : la couche que seul le chasseur aguerri sait tirer d'une
    *  carcasse (`BUTCHER.BONE_LEVEL`). Livré SANS recette (décision d'Alexis, dette actée) :
    *  son évier viendra avec la Couture. */

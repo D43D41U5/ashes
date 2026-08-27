@@ -7,10 +7,13 @@ import Phaser from 'phaser'
 import { generateItemIcons } from '../render/item-art'
 import { generateVitalIcons } from '../render/vital-art'
 import { generateLitTrees } from '../render/lit-trees'
+import { generateEssaiCaillou } from '../render/essai-da-caillou'
 import { generateLitStructures } from '../render/lit-structures'
 import { generateBatiArt } from '../render/bati-art'
-import { generateFireProp, generateLitProps, FLOWERS, FLOWER_STEM_COLOR, PEBBLES, PEBBLE_TONES, PEBBLE_SHADOW, pebbleShadowRects, variantBase, CHAMPIGNON_RECTS, LEAF_PILE_RECTS, CHICOT_RECTS, POUSSIERE_RECTS, BLOC_RECTS } from '../render/lit-props'
+import { generateSocles } from '../render/socle-mineral'
+import { generateFireProp, generateLitProps, FLOWERS, FLOWER_STEM_COLOR, PEBBLES, PEBBLE_TONES, PEBBLE_SHADOW, pebbleShadowRects, variantBase, CHAMPIGNON_RECTS, LEAF_PILE_RECTS, CHICOT_RECTS, POUSSIERE_RECTS, BRANCHE_RECTS, CAILLOU_RECTS } from '../render/lit-props'
 import { makeCliffTextures } from '../render/cliff-art'
+import { ORIENTATIONS_COUCHE, boiteCouchee, cleCouchee, rasterCorpsCouche } from '../render/corps-couche'
 import { makeCarcasseTextures } from '../render/carcasse-art'
 import { makePoiTextures } from './world/poi-art'
 import { makeBorneTextures } from './world/borne-layer'
@@ -36,7 +39,13 @@ export class BootScene extends Phaser.Scene {
     // LE RAMPANT (spec `cendreux.md` R26ter) : le même pion, COUCHÉ — ce que le sol rend n'a
     // pas toujours ses jambes, et un rampant dessiné debout mentirait sur sa vitesse. Première
     // posture du bestiaire, sans art neuf : mêmes teintes, la hauteur devenue longueur.
-    this.makeSpriteCouche('spr-cendreux-rampant', 0xb8b0a4, 0x6b3a20)
+    // LE CORPS COUCHÉ SUIT SA MARCHE, EN HUIT CAPS (Alexis, 2026-08-25 : « il devrait s'aligner
+    // vers la direction où il se déplace le plus en X et en Y »). Deux textures — est-ouest et
+    // nord-sud — ne savaient pas répondre sur une diagonale : le corps y avait le choix entre
+    // deux mensonges. Même remède que les 16 caps d'une empreinte, et pour les mêmes raisons
+    // mesurées (NEAREST délave un art tourné ; une rotation Phaser ne tourne pas le canal X
+    // d'une normale). Les dimensions viennent de `render/corps-couche.ts`, seul à les connaître.
+    this.makeCorpsCouche('spr-cendreux-rampant', 0xb8b0a4, 0x6b3a20)
     this.makeFauna()
     this.makeSaisons()
 
@@ -83,9 +92,14 @@ export class BootScene extends Phaser.Scene {
     this.makeGlowTexture()
     generateItemIcons(this) // les 16 icônes d'items — voir render/item-art.ts
     generateVitalIcons(this) // les 4 icônes des jauges du HUD — voir render/vital-art.ts
-    generateLitTrees(this) // essai éclairage dynamique : arbres normal-mappés — voir render/lit-trees.ts
-    generateLitProps(this) // + masse pâteuse (buissons, roches…) aplatie + normal-mappée — render/lit-props.ts
+    // Les arbres normal-mappés (voir render/lit-trees.ts). Le JOUR n'est pas encore connu ici —
+    // le monde n'est pas chargé : on cuit la teinte du jour 1, et `rafraichirCimes` la corrige
+    // dès la première image qui porte un snapshot (WorldScene).
+    generateLitTrees(this)
+    generateLitProps(this) // + masse pâteuse (buissons…) aplatie + normal-mappée — render/lit-props.ts
+    generateSocles(this) // LE SOCLE MINÉRAL : les six nœuds qui bloquent leur tuile — render/socle-mineral.ts
     generateFireProp(this) // + le Feu : bûches croisées, normal-mappées (st-fire + st-fire_lit) — render/lit-props.ts
+    generateEssaiCaillou(this) // ESSAI DA (2026-08-26) : caillou/buisson à la grammaire de la référence — render/essai-da-caillou.ts
 
     // NETTETÉ DU PIXEL-ART : le rendu global est en ANTIALIAS (pour un texte/UI lisse
     // comme la maquette), donc les textures pixel-art générées ici recevraient un
@@ -374,23 +388,10 @@ export class BootScene extends Phaser.Scene {
     g.generateTexture('nd-scar', 16, 16)
     g.clear()
 
-    // ROCHE : un bloc facetté, pas un galet. Dessus/gauche éclairés, pied dans l'ombre.
-    g.fillStyle(0x45454c).fillRect(3, 7, 11, 7) // ombre/base
-    g.fillStyle(0x6a6a72).fillRect(3, 6, 11, 7) // corps
-    g.fillStyle(0x8e8e98).fillRect(3, 6, 11, 2) // dessus éclairé
-    g.fillStyle(0xa4a4ae).fillRect(3, 6, 4, 6) // face NO
-    g.fillStyle(0x3a3a40).fillRect(3, 13, 11, 1) // ombre au pied
-    g.generateTexture('nd-rock', 16, 16)
-    g.clear()
-
-    // LES BLOCS D'AFFLEUREMENT — trois tailles pleine tuile SANS offset (§2sexies R48bis),
-    // silhouettes rejouées depuis `BLOC_RECTS` (le contrat des deux backends, comme le
-    // champignon). Le haut fait 16×24 : le cube déborde sur la tuile du nord, pas sur le sol.
-    for (let taille = 0; taille < BLOC_RECTS.length; taille++) {
-      for (const [x, y, w, h, col] of BLOC_RECTS[taille]!) g.fillStyle(parseInt(col.slice(1), 16)).fillRect(x, y, w, h)
-      g.generateTexture(`nd-bloc-${taille}`, 16, taille === 2 ? 24 : 16)
-      g.clear()
-    }
+    // LA ROCHE, LES BLOCS D'AFFLEUREMENT, LES FILONS, LA CARRIÈRE ET LES GRAVATS ont quitté ce
+    // fichier : ils sont désormais cuits par `generateSocles` (render/socle-mineral.ts), qui les
+    // rend TOUS depuis un seul socle pleine largeur à trois hauteurs — leur art mentait sur la
+    // collision (11 ou 12 texels de large pour une tuile bloquée en entier).
 
     g.fillStyle(0x6f9c3a) // fibres : touffe de brins verticaux
     g.fillRect(4, 8, 2, 7)
@@ -412,6 +413,19 @@ export class BootScene extends Phaser.Scene {
     // `LEAF_PILE_RECTS` (même contrat que le champignon : flat et `_lit` ne peuvent pas diverger).
     for (const [x, y, w, h, col] of LEAF_PILE_RECTS) g.fillStyle(parseInt(col.slice(1), 16)).fillRect(x, y, w, h)
     g.generateTexture('nd-leaf_pile', 16, 16)
+    g.clear()
+
+    // LE GLANAGE (spec `glanage.md`) — la branche tombée et la pierre détachée, qu'on ramasse les
+    // mains vides. Silhouettes partagées avec `lit-props` (`BRANCHE_RECTS` / `CAILLOU_RECTS`), et
+    // leur OMBRE DE CONTACT est peinte ici comme là-bas : sans elle, le butin flotte au-dessus de
+    // l'herbe — or c'est précisément « posé par terre » qu'il doit dire.
+    for (const [x, y, w, h, col] of BRANCHE_RECTS) g.fillStyle(parseInt(col.slice(1), 16)).fillRect(x, y, w, h)
+    g.fillStyle(0x000000, 0.22).fillRect(3, 13, 10, 1)
+    g.generateTexture('nd-branche_au_sol', 16, 16)
+    g.clear()
+    for (const [x, y, w, h, col] of CAILLOU_RECTS) g.fillStyle(parseInt(col.slice(1), 16)).fillRect(x, y, w, h)
+    g.fillStyle(0x000000, 0.22).fillRect(3, 14, 9, 1)
+    g.generateTexture('nd-pierre_au_sol', 16, 16)
     g.clear()
 
     // LES COINS DE PÊCHE (spec peche.md) : un nœud SUR L'EAU, presque rien à dessiner — trois
@@ -447,24 +461,6 @@ export class BootScene extends Phaser.Scene {
     }
     g.clear()
 
-    // FILON DE FER : le bloc de roche, veiné de rouille (rectangles).
-    g.fillStyle(0x45454c).fillRect(3, 7, 11, 7)
-    g.fillStyle(0x6a6a72).fillRect(3, 6, 11, 7)
-    g.fillStyle(0x8e8e98).fillRect(3, 6, 11, 2)
-    g.fillStyle(0xb0632e).fillRect(5, 9, 4, 2).fillRect(9, 11, 3, 2) // veinules rouille
-    g.fillStyle(0xc9803f).fillRect(5, 9, 2, 1) // reflet
-    g.generateTexture('nd-iron_vein', 16, 16)
-    g.clear()
-
-    // VEINE DE CHARBON : le bloc de roche, strié de noir luisant.
-    g.fillStyle(0x45454c).fillRect(3, 7, 11, 7)
-    g.fillStyle(0x6a6a72).fillRect(3, 6, 11, 7)
-    g.fillStyle(0x8e8e98).fillRect(3, 6, 11, 2)
-    g.fillStyle(0x1c1c20).fillRect(5, 9, 4, 2).fillRect(9, 11, 3, 2) // veines de charbon
-    g.fillStyle(0x3a3a42).fillRect(5, 9, 2, 1) // luisance
-    g.generateTexture('nd-coal_seam', 16, 16)
-    g.clear()
-
     // ══ LES CINQ STRUCTURANTS — un par zone T1, et chacun n'existe QUE chez lui ═══════════════
     //
     // Ils étaient dans /sim depuis la veille, et le client n'en savait rien : Phaser peignait à
@@ -493,14 +489,6 @@ export class BootScene extends Phaser.Scene {
     g.generateTexture('nd-peat_cut', 16, 16)
     g.clear()
 
-    // LA CARRIÈRE (Hauts Alpages) — un BLOC taillé, avec des arêtes. Pas un galet.
-    g.fillStyle(0x6a6a72).fillRect(2, 5, 12, 9)
-    g.fillStyle(0x8e8e98).fillRect(2, 5, 12, 3) // le dessus, éclairé
-    g.fillStyle(0xa4a4ae).fillRect(2, 5, 4, 9) // la face au NO
-    g.fillStyle(0x45454c).fillRect(2, 13, 12, 1) // l'ombre au pied
-    g.generateTexture('nd-quarry', 16, 16)
-    g.clear()
-
     // LA CENDRE (Versant Brûlé) — un tas gris en gradins, et UNE braise qui couve. Le jeu
     // porte son nom. Blocky : un monticule de rectangles, dessus clair, braise carrée.
     g.fillStyle(0x56524e).fillRect(3, 11, 11, 3) // base/ombre
@@ -512,13 +500,6 @@ export class BootScene extends Phaser.Scene {
     g.generateTexture('nd-ash_heap', 16, 16)
     g.clear()
 
-    // LES GRAVATS (Combe aux Ruines) — de la pierre TAILLÉE, cassée. On reconnaît le mur qu'elle fut.
-    g.fillStyle(0x5e5a56).fillRect(2, 9, 6, 5)
-    g.fillStyle(0x7a7570).fillRect(2, 9, 6, 1)
-    g.fillStyle(0x6a6560).fillRect(8, 7, 6, 7)
-    g.fillStyle(0x8a857f).fillRect(8, 7, 6, 1)
-    g.fillStyle(0x4a4642).fillRect(5, 5, 4, 3) // un fragment, de travers
-    g.generateTexture('nd-rubble', 16, 16)
     g.destroy()
   }
 
@@ -807,6 +788,125 @@ export class BootScene extends Phaser.Scene {
     g.generateTexture('spr-rabbit-flee', 14, 9)
     g.clear()
 
+    // ── LE GRAND TÉTRAS (spec faune R21) ───────────────────────────────────
+    //
+    // ⚠ REDESSINÉ APRÈS L'AVOIR VU (planche `--scenario tetras-art`). Le premier
+    // jet était juste sur le papier et illisible à l'écran : la queue, dessinée
+    // sous le corps, disparaissait dessous ; les ailes du vol se réduisaient à un
+    // trait ; et le tout, sombre sur sombre, rendait un scarabée. Trois règles en
+    // sont sorties, et elles valent pour toute silhouette d'oiseau ici —
+    //   ① CE QUI DÉPASSE SE DESSINE PAR-DESSUS, et plus grand que le corps ;
+    //   ② IL FAUT UNE ARÊTE CLAIRE sur le dos : sans elle, un oiseau noir dans un
+    //      sous-bois sombre n'a pas de contour, donc pas de silhouette ;
+    //   ③ LA QUEUE EST UN ÉVENTAIL, et un éventail se lit à ses SÉPARATIONS —
+    //      trois traits sombres dedans, sinon c'est un triangle.
+    //
+    // Et il reste SOMBRE : c'est sa défense (il se terre). Le joueur qui le rate
+    // ne l'a pas vu — ce n'est pas la même chose que ne pas avoir su l'approcher.
+    const TET_OMBRE = 0x171a1e //  le contour, presque noir
+    const TET_ROBE = 0x3f4650 //   l'ardoise du corps
+    const TET_DOS = 0x5d6672 //    l'arête claire du dos : le contour qui SAUVE la silhouette
+    const TET_GORGE = 0x1f4550 //  le poitrail vert-bleu, iridescent
+    const TET_SOURCIL = 0xd0392b //le sourcil rouge : sa marque, visible à toute taille
+    const TET_BEC = 0xe8e0cc
+    const TET_PATTE = 0x6b5334
+
+    /**
+     * L'ÉVENTAIL DE LA QUEUE — dressé (`demi` grand) ou refermé. Toujours PAR-DESSUS.
+     *
+     * ⚠ DEUX ENCOCHES, PAS TROIS TRAITS CLAIRS. Le jet précédent séparait les
+     * plumes avec la teinte du dos : sur fond sombre, ça rendait un code-barres
+     * flottant à côté de l'oiseau. Une queue se lit à sa MASSE ; les séparations
+     * ne sont qu'un rappel, dans la teinte du corps, et elles s'arrêtent avant le
+     * bord — sinon elles découpent la silhouette au lieu de la meubler.
+     */
+    const queueTetras = (cx: number, cy: number, demi: number, long: number): void => {
+      g.fillStyle(TET_OMBRE).fillTriangle(cx, cy - demi, cx, cy + demi, cx - long, cy)
+      g.fillStyle(TET_ROBE)
+      g.fillRect(cx - long + 3, cy - Math.floor(demi / 2), long - 5, 1)
+      g.fillRect(cx - long + 3, cy + Math.floor(demi / 2), long - 5, 1)
+    }
+
+    /**
+     * LA TÊTE ET SON COU, D'UN SEUL GESTE — parce que les dessiner séparément
+     * les DÉTACHE. Le jet précédent posait un carré gris en l'air au-dessus du
+     * corps, sourcil rouge flottant par-dessus : ça ne se lisait pas comme une
+     * tête, ça se lisait comme un bloc. Le cou est donc un trapèze plein, de la
+     * teinte du corps, tiré du corps À la tête ; et le sourcil MORD sur la tête,
+     * il ne la surplombe pas.
+     */
+    const teteTetras = (bx: number, by: number, hx: number, hy: number, r: number): void => {
+      // ⚠ LE COU SE PEINT DANS LA TEINTE DU CORPS, pas dans celle du contour :
+      // un cou couleur d'ombre sur un fond sombre n'existe pas, et la tête
+      // redevient le bloc flottant qu'on essayait de rattacher.
+      g.fillStyle(TET_ROBE).fillTriangle(bx - 3, by + 2, bx + 3, by - 1, hx, hy)
+      g.fillStyle(TET_ROBE).fillCircle(hx, hy, r)
+      // ⚠ ET LES MARQUES SONT PETITES. À cette taille, une tête fait cinq pixels :
+      // un sourcil de quatre et un bec de trois la MANGENT, et l'oiseau devient
+      // un carré gris à bandes. Deux pixels de rouge suffisent à porter la marque.
+      g.fillStyle(TET_SOURCIL).fillRect(hx - 1, hy - r, 2, 1)
+      g.fillStyle(TET_BEC).fillRect(hx + r - 1, hy, 2, 1)
+    }
+
+    // AUX AGUETS — la posture qu'il tient douze tuiles durant : cou dressé, queue
+    // en éventail, immobile. C'est CELLE-LÀ que le joueur doit apprendre à voir.
+    queueTetras(9, 11, 7, 8)
+    g.fillStyle(TET_OMBRE).fillEllipse(13, 12, 13, 12) // corps
+    g.fillStyle(TET_ROBE).fillEllipse(13, 12, 10, 9)
+    g.fillStyle(TET_DOS).fillRect(10, 7, 7, 2) //         l'arête du dos
+    g.fillStyle(TET_GORGE).fillEllipse(13, 14, 7, 6) //   le poitrail
+    g.fillStyle(0xd8d2c4).fillRect(10, 11, 2, 2) //       la tache blanche de l'épaule
+    teteTetras(16, 8, 18, 4, 2) //                        cou dressé, tête haute : il vous regarde
+    g.fillStyle(TET_PATTE).fillRect(11, 17, 2, 3).fillRect(15, 17, 2, 3)
+    g.generateTexture('spr-tetras', 24, 21)
+    g.clear()
+
+    // IL PICORE : tassé, cou rentré, bec dans la litière, queue REFERMÉE. La seule
+    // posture où il ne regarde pas — donc la seule fenêtre d'approche.
+    queueTetras(7, 8, 4, 6)
+    g.fillStyle(TET_OMBRE).fillEllipse(12, 9, 15, 10) // corps tassé
+    g.fillStyle(TET_ROBE).fillEllipse(12, 9, 12, 7)
+    g.fillStyle(TET_DOS).fillRect(8, 5, 9, 2)
+    g.fillStyle(TET_GORGE).fillEllipse(12, 11, 7, 5)
+    g.fillStyle(0xd8d2c4).fillRect(9, 8, 2, 2)
+    teteTetras(16, 10, 18, 13, 2) //                      cou rentré, bec dans la litière
+    g.fillStyle(TET_PATTE).fillRect(10, 13, 2, 2).fillRect(14, 13, 2, 2)
+    g.generateTexture('spr-tetras-graze', 24, 17)
+    g.clear()
+
+    // IL COURT (retombé de son bond) : corps porté en avant, cou tendu, queue
+    // basse, pattes en ciseaux. Il court MAL — c'est la contrepartie du vol, et
+    // c'est là qu'on le reprend si on l'a suivi.
+    queueTetras(6, 8, 4, 6)
+    g.fillStyle(TET_OMBRE).fillEllipse(12, 8, 15, 9)
+    g.fillStyle(TET_ROBE).fillEllipse(12, 8, 12, 6)
+    g.fillStyle(TET_DOS).fillRect(8, 4, 9, 2)
+    g.fillStyle(TET_GORGE).fillEllipse(13, 10, 7, 4)
+    teteTetras(17, 7, 21, 5, 2) //                        cou tendu en avant
+    g.fillStyle(TET_PATTE) //                             les pattes en ciseaux
+    g.fillTriangle(10, 12, 7, 18, 12, 12).fillTriangle(14, 12, 17, 18, 16, 12)
+    g.generateTexture('spr-tetras-flee', 28, 19)
+    g.clear()
+
+    // EN VOL — l'image d'une seconde et demie, et rien d'autre dans le jeu n'a
+    // cette forme : DEUX AILES, l'une levée l'autre abattue, chacune PLUS LONGUE
+    // que le corps, dessinées PAR-DESSUS lui. C'est l'envergure qui dit le vol ;
+    // un oiseau dont les ailes tiennent dans sa silhouette n'a l'air que rapide.
+    queueTetras(11, 12, 6, 9) //                          la queue ouverte, en bas
+    g.fillStyle(TET_OMBRE).fillEllipse(20, 12, 16, 9) //  le corps, à l'horizontale
+    g.fillStyle(TET_ROBE).fillEllipse(20, 12, 13, 7)
+    g.fillStyle(TET_GORGE).fillEllipse(22, 13, 8, 5)
+    // L'AILE LEVÉE : elle part du dos et monte à gauche, très au-delà du corps.
+    g.fillStyle(TET_OMBRE).fillTriangle(19, 9, 1, 0, 13, 11)
+    g.fillStyle(TET_DOS).fillTriangle(18, 8, 4, 1, 13, 9) // le dessus clair de la rémige
+    // L'AILE ABATTUE : large et pleine, elle descend sous la ligne du corps. Le
+    // jet précédent en faisait une pointe fine — donc un aileron, pas une aile.
+    g.fillStyle(TET_OMBRE).fillTriangle(17, 14, 30, 24, 27, 13)
+    g.fillStyle(TET_ROBE).fillTriangle(19, 14, 27, 21, 26, 14)
+    teteTetras(26, 11, 30, 9, 2) //                       cou tendu, tête en avant
+    g.generateTexture('spr-tetras-vol', 37, 26)
+    g.clear()
+
     // Sanglier qui FOUGE : la hure PIQUE dans la terre — c'est l'approche offerte
     // (R14). La terre retournée le dit mieux qu'une teinte.
     g.fillStyle(0x4a2e1a).fillEllipse(12, 6, 20, 11) // corps, cul relevé
@@ -1010,12 +1110,24 @@ export class BootScene extends Phaser.Scene {
     g.destroy()
   }
 
-  /** Le même pion, à plat : 24 de long sur 10 de haut — la silhouette d'un corps qui rampe. */
-  private makeSpriteCouche(key: string, fill: number, border: number): void {
+  /** LE MÊME PION, COUCHÉ — une texture par CAP (`ORIENTATIONS_COUCHE`). La silhouette est
+   *  rastérisée dans le repère du corps (`rasterCorpsCouche`) : aux caps cardinaux elle rend
+   *  exactement l'ancien pion de 24 × 10, aux caps obliques elle existe enfin. */
+  private makeCorpsCouche(base: string, fill: number, border: number): void {
     const g = this.add.graphics()
-    g.fillStyle(border).fillRect(0, 0, 24, 10)
-    g.fillStyle(fill).fillRect(1, 1, 22, 8)
-    g.generateTexture(key, 24, 10)
+    for (let orient = 0; orient < ORIENTATIONS_COUCHE; orient++) {
+      const { w, h } = boiteCouchee(orient)
+      const px = rasterCorpsCouche(orient)
+      for (let y = 0; y < h; y++) {
+        for (let x = 0; x < w; x++) {
+          const v = px[y * w + x]
+          if (v === 0) continue
+          g.fillStyle(v === 1 ? border : fill).fillRect(x, y, 1, 1)
+        }
+      }
+      g.generateTexture(cleCouchee(base, orient), w, h)
+      g.clear()
+    }
     g.destroy()
   }
 

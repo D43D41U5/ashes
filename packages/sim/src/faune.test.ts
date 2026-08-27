@@ -56,7 +56,7 @@ function makeSim(faunaCap = BENCH_CAP, hour = 12): SimState {
     map: makeMap(),
     faunaCap,
     worldEvents: false,
-    cycleOffset: cycleOffsetForStartHour(hour),
+    cycleOffset: cycleOffsetForStartHour(hour, 1),
   })
   // CALME PLAT (spec chasse C17). L'odorat est un canal à PART : il ignore le
   // couvert, l'allure et le dos tourné — il rendrait donc chaque banc de ce
@@ -544,7 +544,7 @@ describe('le rythme jour/nuit (A11 — R10)', () => {
         map,
         faunaCap: BENCH_CAP,
         worldEvents: false, // (voir plus haut : la nuit qui chasse fausserait le comptage)
-        cycleOffset: cycleOffsetForStartHour(hour),
+        cycleOffset: cycleOffsetForStartHour(hour, 1),
       })
       spawnEntity(sim, 80.5, 80.5)
       for (let t = 0; t < 90 * BALANCE.TICK_RATE_HZ; t++) tick(sim)
@@ -918,7 +918,7 @@ describe('le mâle alpha (A13 — R12)', () => {
    */
   function packSauvage(): { sim: SimState; alpha: Monster; meute: Monster[] } {
     const map = createEmptyMap(160, 160, TERRAIN_FOREST)
-    const sim = createSim(99, { map, faunaCap: BENCH_CAP, cycleOffset: cycleOffsetForStartHour(2) })
+    const sim = createSim(99, { map, faunaCap: BENCH_CAP, cycleOffset: cycleOffsetForStartHour(2, 1) })
     spawnEntity(sim, 80.5, 80.5)
     let alpha: Monster | undefined
     for (let t = 0; t < 90 * BALANCE.TICK_RATE_HZ && !alpha; t++) {
@@ -2329,7 +2329,7 @@ describe('les coins de chasse (A24 — R17)', () => {
       map: makeMap(),
       faunaCap: BENCH_CAP,
       worldEvents: false,
-      cycleOffset: cycleOffsetForStartHour(12),
+      cycleOffset: cycleOffsetForStartHour(12, 1),
       grounds: [{ x: 20.5, y: 20.5 }], // UN seul coin, tout au nord-ouest
     })
     sim.wind = { x: 0, y: 0 }
@@ -2343,7 +2343,7 @@ describe('les coins de chasse (A24 — R17)', () => {
       map: makeMap(),
       faunaCap: BENCH_CAP,
       worldEvents: false,
-      cycleOffset: cycleOffsetForStartHour(12),
+      cycleOffset: cycleOffsetForStartHour(12, 1),
       grounds: [{ x: 80.5, y: 80.5 }],
     })
     dedans.wind = { x: 0, y: 0 }
@@ -2357,7 +2357,7 @@ describe('les coins de chasse (A24 — R17)', () => {
       map: makeMap(),
       faunaCap: BENCH_CAP,
       worldEvents: false,
-      cycleOffset: cycleOffsetForStartHour(12),
+      cycleOffset: cycleOffsetForStartHour(12, 1),
       grounds: [{ x: 80.5, y: 80.5 }],
     })
     sim.wind = { x: 0, y: 0 }
@@ -2414,7 +2414,7 @@ describe('le moteur tient le MULTI (A25 — R17)', () => {
       faunaCap: FAUNA.CAP,
       grounds,
       worldEvents: false,
-      cycleOffset: cycleOffsetForStartHour(12),
+      cycleOffset: cycleOffsetForStartHour(12, 1),
     })
     const ids = []
     for (let i = 0; i < N; i++) ids.push(spawnEntity(sim, grounds[i]!.x, grounds[i]!.y))
@@ -2443,7 +2443,7 @@ describe('le moteur tient le MULTI (A25 — R17)', () => {
       faunaCap: FAUNA.CAP,
       grounds,
       worldEvents: false,
-      cycleOffset: cycleOffsetForStartHour(12),
+      cycleOffset: cycleOffsetForStartHour(12, 1),
     })
     const a = spawnEntity(sim, g.x - 8, g.y)
     const b = spawnEntity(sim, g.x + 8, g.y)
@@ -2480,7 +2480,7 @@ describe('le quota de prédateurs (A26 — R18)', () => {
       faunaCap: FAUNA.CAP,
       grounds,
       worldEvents: false,
-      cycleOffset: cycleOffsetForStartHour(2), // 2 h du matin : l'heure du loup
+      cycleOffset: cycleOffsetForStartHour(2, 1), // 2 h du matin : l'heure du loup
     })
     const a = spawnEntity(sim, 200.5, 200.5)
     for (let t = 0; t < 150 * BALANCE.TICK_RATE_HZ; t++) tick(sim, [{ entityId: a, dx: 0, dy: 0 }])
@@ -2501,7 +2501,7 @@ describe('le quota de prédateurs (A26 — R18)', () => {
       faunaCap: FAUNA.CAP,
       grounds: [{ x: 200.5, y: 200.5 }],
       worldEvents: false,
-      cycleOffset: cycleOffsetForStartHour(2),
+      cycleOffset: cycleOffsetForStartHour(2, 1),
     })
     const a = spawnEntity(sim, 200.5, 200.5)
     for (let t = 0; t < 150 * BALANCE.TICK_RATE_HZ; t++) tick(sim, [{ entityId: a, dx: 0, dy: 0 }])
@@ -2519,7 +2519,7 @@ describe('le quota de prédateurs (A26 — R18)', () => {
       faunaCap: FAUNA.CAP,
       grounds: [{ x: 200.5, y: 200.5 }],
       worldEvents: false,
-      cycleOffset: cycleOffsetForStartHour(12),
+      cycleOffset: cycleOffsetForStartHour(12, 1),
     })
     const a = spawnEntity(sim, 200.5, 200.5)
     for (let t = 0; t < 120 * BALANCE.TICK_RATE_HZ; t++) tick(sim, [{ entityId: a, dx: 0, dy: 0 }])
@@ -2555,7 +2555,7 @@ describe('la clairière et la souille (A27 — R17)', () => {
         faunaCap: FAUNA.CAP,
         grounds: [{ x: gx, y: gy }],
         worldEvents: false,
-        cycleOffset: cycleOffsetForStartHour(hour),
+        cycleOffset: cycleOffsetForStartHour(hour, 1),
       })
       const a = spawnEntity(sim, gx, gy)
       for (let t = 0; t < 150 * BALANCE.TICK_RATE_HZ; t++) tick(sim, [{ entityId: a, dx: 0, dy: 0 }])

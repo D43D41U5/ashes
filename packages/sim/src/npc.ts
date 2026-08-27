@@ -17,6 +17,8 @@ import {
   BALANCE,
   COMBAT,
   NODE_DEFS,
+  OUTILS_PAR_FAMILLE,
+  TOOL_RANK,
   FIRE_UPKEEP,
   NPC_AI,
   RECIPES,
@@ -91,7 +93,7 @@ export interface Npc {
 
 const TASK_DEFS: Record<
   Exclude<TaskKind, 'cook_stew' | 'repair' | 'feed_fire' | 'build'>,
-  { nodeType: NodeType; item: ItemId; carry: number }
+  { nodeType: NodeType; item: ItemId; carry: number; portee?: number }
 > = {
   gather_berries: { nodeType: 'berry_bush', item: 'berries', carry: BALANCE.NPC_CARRY_TARGETS.berries },
   gather_wood: { nodeType: 'tree', item: 'wood', carry: BALANCE.NPC_CARRY_TARGETS.wood },
@@ -101,6 +103,11 @@ const TASK_DEFS: Record<
   // (minTool basic, garde DURE), que `ensurePickaxe` fournit avant de frapper.
   gather_stone: { nodeType: 'rock', item: 'stone', carry: BALANCE.NPC_CARRY_TARGETS.stone },
   gather_cut_stone: { nodeType: 'quarry', item: 'cut_stone', carry: BALANCE.NPC_CARRY_TARGETS.cut_stone },
+  // LE GLANAGE (spec `glanage.md` G6) : la MÊME mécanique que les autres cueillettes — un type
+  // de nœud, un objet, un quota — ce qui est tout l'intérêt de l'avoir fait avec de vrais nœuds.
+  // Le quota est en NŒUDS (chacun porte 1), d'où `NPC_GLANAGE_CARRY` et pas la cible du bois.
+  glaner_bois: { nodeType: 'branche_au_sol', item: 'wood', carry: BALANCE.NPC_GLANAGE_CARRY, portee: BALANCE.NPC_GLANAGE_PORTEE },
+  glaner_pierre: { nodeType: 'pierre_au_sol', item: 'stone', carry: BALANCE.NPC_GLANAGE_CARRY, portee: BALANCE.NPC_GLANAGE_PORTEE },
 }
 
 const RANGE = BALANCE.INTERACT_RANGE - 0.2 // marge : on agit un peu en dedans de la portée
@@ -140,7 +147,7 @@ function moveWorldFor(state: SimState, villageId: number): MoveWorld {
  * ancienne vallée) : le filtre est alors inerte et le comportement d'origine est conservé,
  * exactement.
  */
-function nearestAliveNode(state: SimState, entity: Entity, type: NodeType): ResourceNode | undefined {
+function nearestAliveNode(state: SimState, entity: Entity, type: NodeType, porteeMax = Infinity): ResourceNode | undefined {
   const maZone = zoneIdAt(state.map, Math.floor(entity.x), Math.floor(entity.y))
   let best: ResourceNode | undefined
   let bestD = Infinity
@@ -163,9 +170,20 @@ function nearestAliveNode(state: SimState, entity: Entity, type: NodeType): Reso
   // repli ne coûte que là où il est la seule issue : voyager est ce que le jeu attend.
   let hors: ResourceNode | undefined
   let horsD = Infinity
+  const porteeMax2 = porteeMax === Infinity ? Infinity : porteeMax * porteeMax
   for (const n of state.nodes) {
     if (n.type !== type || n.stock <= 0) continue
     const d = distSq(entity.x, entity.y, n.tx + 0.5, n.ty + 0.5)
+    // LA PORTÉE MAXIMALE — MESURÉE, et elle n'existe que pour le GLANAGE (spec `glanage.md` G9).
+    //
+    // Un nœud de glanage porte UNE unité : là où un arbre coûte un A* pour dix bûches, une
+    // branche en coûte un par bûche. Et comme le glanage se CONSOMME, le plus proche recule à
+    // chaque ramassage — l'A* enfle, puis échoue (4096 expansions brûlées), puis recommence.
+    // MESURÉ au profileur du banc (`tools/profil-banc.mts`, 8 joueurs, 1 jour, 6 tranches) :
+    // sans plafond, le tick passe de 1,33 à **64,5 ms** sur la journée, et `findPath` pèse
+    // 35 % du temps CPU. Avec, il reste plat. Un villageois ne traverse pas le pays pour une
+    // brindille : s'il n'y en a pas dans son voisinage, la corvée quitte le tableau.
+    if (d > porteeMax2) continue
     if (maZone >= 0 && zoneIdAt(state.map, n.tx, n.ty) !== maZone) {
       if (d < horsD || (d === horsD && hors && n.id < hors.id)) {
         hors = n
@@ -368,6 +386,8 @@ const TASK_INTAKE: Record<TaskKind, ItemId[]> = {
   gather_fiber: ['fiber'],
   gather_stone: ['stone'],
   gather_cut_stone: ['cut_stone'],
+  glaner_bois: ['wood'],
+  glaner_pierre: ['stone'],
   cook_stew: ['berries', 'fiber', 'stew'],
   repair: ['wood'],
   feed_fire: ['wood'],
@@ -426,15 +446,31 @@ function executeGather(state: SimState, village: Village, npc: Npc, entity: Enti
   const task = npc.task!
   const def = TASK_DEFS[task.kind as Exclude<TaskKind, 'cook_stew' | 'repair' | 'feed_fire' | 'build'>]
 
-  // LA CARRIÈRE EXIGE LA PIOCHE D'ATELIER (minTool basic, garde DURE — economy.ts) :
-  // sans elle, chaque coup serait refusé à 20 Hz. On l'assure AVANT de viser le nœud.
-  if (task.kind === 'gather_cut_stone') {
-    const r = ensurePickaxe(state, village, npc, entity)
-    if (r === 'failed') return dropTask(village, npc, false)
-    if (r !== 'ready') return
-  }
-
   if (task.stage === 'work') {
+    // L'OUTIL AVANT LE NŒUD (spec `glanage.md` G5). La carrière exigeait déjà la pioche
+    // d'atelier ; depuis G1, l'ARBRE et le ROCHER exigent au moins l'outil de fortune. Sans
+    // cette marche, chaque coup serait refusé à 20 Hz et le village s'éteindrait en silence,
+    // ses PNJ plantés devant un tronc. La table du nœud décide — pas une liste de `task.kind`,
+    // qui aurait dérivé au premier nœud ajouté.
+    //
+    // ⚠ **DANS le stade `work`, ET C'EST NÉCESSAIRE.** Placé avant l'aiguillage des stades, il
+    // frappait aussi le retour au grenier : une hache qui casse pendant que le PNJ RENTRE, huit
+    // bûches sur le dos, lui faisait perdre sa corvée — et sa charge n'arrivait jamais. On ne
+    // demande pas son outil à qui a fini de couper.
+    //
+    // ⚠ **L'ÉCHEC QUITTE LE TABLEAU (`true`), pas « libre ».** C'est la doctrine du coût déjà
+    // écrite pour le marteau du chantier : « le village ne peut pas fournir de hache » vaut
+    // pour N'IMPORTE QUI. Rendue libre, la corvée — en tête de tableau par priorité — était
+    // re-réclamée par le MÊME PNJ au tick suivant (`canTakeInFor` ne juge que la place au sac,
+    // jamais l'outil) : réclame→échoue→lâche à 20 Hz, et aucune corvée de rang inférieur ne
+    // passait. `refreshBoard` la repostera quand le village pourra la tenir.
+    const besoin = outilPourNoeud(def.nodeType)
+    if (besoin !== null) {
+      const r = ensureOutil(state, village, npc, entity, besoin.acceptes, besoin.repli)
+      if (r === 'failed') return dropTask(village, npc, true)
+      if (r !== 'ready') return
+    }
+
     if (countOf(entity.inventory, def.item) >= def.carry) {
       task.stage = 'store'
       npc.path = []
@@ -456,7 +492,7 @@ function executeGather(state: SimState, village: Village, npc: Npc, entity: Enti
     }
     let node = task.nodeId !== null ? state.nodes.find((n) => n.id === task.nodeId) : undefined
     if (!node || node.stock <= 0) {
-      node = nearestAliveNode(state, entity, def.nodeType)
+      node = nearestAliveNode(state, entity, def.nodeType, def.portee ?? Infinity)
       if (!node) {
         // Rien à récolter dans le monde : si on porte déjà quelque chose, on le range.
         if (countOf(entity.inventory, def.item) > 0) task.stage = 'store'
@@ -626,12 +662,28 @@ function ensureHammer(state: SimState, village: Village, npc: Npc, entity: Entit
   return progressCraft(state, village, npc, entity, 'hammer')
 }
 
-/** La pioche de la carrière (minTool basic, garde dure) : portée, au grenier, ou
- *  façonnée à l'ÉTABLI du village — c'est pour ça que l'établi précède la pierre. */
-const QUARRY_PICKS: readonly ItemId[] = ['pickaxe', 'iron_pickaxe', 'steel_pickaxe']
-function ensurePickaxe(state: SimState, village: Village, npc: Npc, entity: Entity): CraftProgress {
-  if (QUARRY_PICKS.some((p) => countOf(entity.inventory, p) > 0)) return 'ready'
-  for (const p of QUARRY_PICKS) {
+/**
+ * ═══ L'OUTIL QUE LE VILLAGE FOURNIT (spec `glanage.md` G5) ═══
+ *
+ * En poche → au grenier → sinon on le FAÇONNE. Trois marches, dans cet ordre, et c'est le
+ * patron qu'`ensurePickaxe` tenait déjà pour la carrière ; depuis que le bois et la pierre
+ * exigent un outil (G1), la hache et la pioche de fortune passent par le même chemin — sans
+ * quoi un village neuf n'aurait plus AUCUN moyen de couper un arbre.
+ *
+ * `acceptes` est ordonné du plus MODESTE au plus riche : on sort le hachereau du grenier avant
+ * la hache de fer. Ce n'est pas de l'avarice, c'est ce qui laisse l'outil de métier à qui en
+ * fera quelque chose — et `equipBestTool` reclasse de toute façon au moment de frapper.
+ */
+function ensureOutil(
+  state: SimState,
+  village: Village,
+  npc: Npc,
+  entity: Entity,
+  acceptes: readonly ItemId[],
+  repli: RecipeId,
+): CraftProgress {
+  if (acceptes.some((p) => countOf(entity.inventory, p) > 0)) return 'ready'
+  for (const p of acceptes) {
     const chest = granaries(state, village.id).find((c) => countOf(c.inventory ?? [], p) > 0)
     if (!chest) continue
     if (near(entity, chest.tx, chest.ty)) {
@@ -641,7 +693,39 @@ function ensurePickaxe(state: SimState, village: Village, npc: Npc, entity: Enti
     followPath(state, npc, entity)
     return 'busy'
   }
-  return progressCraft(state, village, npc, entity, 'pickaxe')
+  // LA CORDE D'ABORD, ET C'EST LE MAILLON QU'ON OUBLIE. Tout outil de fortune en coûte une
+  // (`craft-fortune` C8 : la corde est le goulot volontaire de la couche 1), or `progressCraft`
+  // ne sait que RETIRER des intrants du grenier — il ne sait pas en fabriquer. Sans cette
+  // marche, un village qui a la fibre et pas la corde échouait en boucle sur `crude_axe`.
+  const rope = RECIPES[repli].inputs.rope ?? 0
+  if (
+    rope > 0 &&
+    countOf(entity.inventory, 'rope') < rope &&
+    !granaries(state, village.id).some((c) => countOf(c.inventory ?? [], 'rope') > 0)
+  ) {
+    const r = progressCraft(state, village, npc, entity, 'rope')
+    if (r !== 'ready') return r
+  }
+  return progressCraft(state, village, npc, entity, repli)
+}
+
+/** La pioche de la carrière (minTool basic, garde dure) : portée, au grenier, ou
+ *  façonnée à l'ÉTABLI du village — c'est pour ça que l'établi précède la pierre. */
+const QUARRY_PICKS: readonly ItemId[] = ['pickaxe', 'iron_pickaxe', 'steel_pickaxe']
+
+/** L'outil qu'exige ce nœud, ou `null` s'il se prend à la main (la cueillette, le glanage). */
+function outilPourNoeud(type: NodeType): { acceptes: readonly ItemId[]; repli: RecipeId } | null {
+  const def = NODE_DEFS[type]
+  if (TOOL_RANK[def.minTool] === 0) return null // rien à tenir : le geste est nu
+  if (def.tool === 'axe') return { acceptes: OUTILS_PAR_FAMILLE.axe, repli: 'crude_axe' }
+  if (def.tool === 'pickaxe') {
+    // Le palier `basic` (filon, carrière, gravats) n'accepte PAS la fortune : trois pierres
+    // ficelées ne valent pas une forge (`craft-fortune` C5). La liste porte cette règle.
+    return TOOL_RANK[def.minTool] > 1
+      ? { acceptes: QUARRY_PICKS, repli: 'pickaxe' }
+      : { acceptes: OUTILS_PAR_FAMILLE.pickaxe, repli: 'crude_pickaxe' }
+  }
+  return null // la canne et le couteau ont leurs propres chemins (pêche, dépeçage)
 }
 
 /** La pièce de cet ordre est-elle déjà dans le monde ? (le verdict d'accompli) */
@@ -745,6 +829,23 @@ function executeBuild(state: SimState, village: Village, npc: Npc, entity: Entit
   // chantier entière (8 400 ticks), la corvée dûment servie et réclamée. Le geste décide de
   // la portée, jamais la corvée qui le porte.
   const portee = order.action === 'defriche' ? RANGE : BALANCE.BUILD_RANGE - 0.5
+  // DÉFRICHER, C'EST ABATTRE (spec `glanage.md` G5) : le geste est un `harvest`, donc il tombe
+  // sous le même verrou d'outil que la corvée de bois. Sans cette marche, un village neuf
+  // s'arrêtait à son premier arbre de cour — et le défrichement est déjà le poste le plus
+  // tendu du chantier (une fenêtre par arbre). L'outil s'assure AVANT la marche : traverser la
+  // cour pour se faire refuser le coup est un trajet perdu, exactement comme pour le gel.
+  if (order.action === 'defriche') {
+    const n = state.nodes.find((x) => x.tx === order.tx && x.ty === order.ty && x.stock > 0)
+    const besoin = n === undefined ? null : outilPourNoeud(n.type)
+    if (besoin !== null) {
+      const r = ensureOutil(state, village, npc, entity, besoin.acceptes, besoin.repli)
+      // ÉCHEC = LA CORVÉE QUITTE LE TABLEAU (drop TRUE), la doctrine du coût de cette fonction :
+      // « le village ne peut pas fournir de hache » vaut pour n'importe qui, et une corvée
+      // relâchée libre en tête de tableau est re-réclamée par le même PNJ à 20 Hz.
+      if (r === 'failed') return dropTask(village, npc, true)
+      if (r !== 'ready') return
+    }
+  }
   if (near(entity, tx, ty, portee)) {
     // Un composant BLOQUE et refuse « pas sous ses pieds » : on s'écarte d'un pas.
     if (order.action === 'place' && Math.floor(entity.x) === tx && Math.floor(entity.y) === ty) {

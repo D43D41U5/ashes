@@ -21,7 +21,7 @@ Fermer la première boucle économique complète : récolter → crafter → s'�
 ### La récolte
 
 - **R4 — Un coup par action** (`harvest { nodeId }`) : à portée (`INTERACT_RANGE`), avec un rythme borné (`GATHER_COOLDOWN_TICKS = 20`, soit 1 s — le clic frénétique ne paie pas, et c'est une borne de vraisemblance anti-cheat). Rendement = base × outil × compétence, entier.
-- **R5 — La main nue suffit en T1** (rendement ×1) ; l'outil donne le rendement (`hache`/`pioche` d'atelier ×3, versions fer ×4 ; outil de fortune ×2) — barème `TOOL_YIELD`, gaté par la compétence (voir `recolte-vivante.md`). Le T2 **exige** la pioche (le filon ne cède rien à mains nues) : l'outillage est la porte du tier, pas un simple bonus.
+- **R5 — ~~La main nue suffit en T1~~ → L'OUTIL EST LA PORTE, DÈS LE T1** *(révisé le 2026-08-25, spec `glanage.md` G1 : le bois et la pierre exigent au moins l'outil de fortune ; ce qu'on récolte les mains vides, c'est la CUEILLETTE et le GLANAGE)* ; l'outil donne le rendement (`hache`/`pioche` d'atelier ×3, versions fer ×4 ; outil de fortune ×2) — barème `TOOL_YIELD`, gaté par la compétence (voir `recolte-vivante.md`). Le T2 **exige** la pioche (le filon ne cède rien à mains nues) : l'outillage est la porte du tier, pas un simple bonus.
 - **R6 — L'usure est portée PAR LA CASE** (`Slot.wear`), pas agrégée par type d'outil. *(Corrigé le 2026-07-12 : la rédaction d'origine — « `wear[outil]` agrégé » — a été rendue fausse par le chantier « le sac ». Deux haches ne partagent plus un compteur : celle qu'on TIENT s'use seule, et l'usure voyage avec l'objet, coffre compris.)* À `TOOL_DURABILITY` (100 coups), la case est consommée. Les outils restent des consommables — débouché permanent des artisans.
 
 ### La faim (« faim simple », décision actée GDD §8)

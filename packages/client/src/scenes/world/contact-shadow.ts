@@ -103,8 +103,19 @@ export function positionShadow(
   actorDisplayW: number,
   actorDepth: number,
   baseGapWorld = 0,
+  /**
+   * Largeur imposée (px monde), quand la règle générale ne convient pas.
+   *
+   * Elle existe pour LE SOCLE MINÉRAL, et la raison est géométrique : la flaque est CENTRÉE sur
+   * le pied du sprite, donc sa moitié haute passe DERRIÈRE lui. Tant que l'art était étroit
+   * (11 texels sur 16), elle débordait largement et se voyait ; un socle pleine tuile la mange
+   * presque entière — `16 × 1,2 = 19,2`, soit 1,6 texel de chaque côté. « L'ombre de la pierre
+   * est trop petite maintenant » (Alexis) : ce n'est pas l'ombre qui a rétréci, c'est la pierre
+   * qui s'est élargie jusqu'à la couvrir.
+   */
+  largeurMonde?: number,
 ): void {
-  const w = Math.max(MIN_WIDTH, Math.min(MAX_WIDTH, actorDisplayW * WIDTH_FACTOR))
+  const w = largeurMonde ?? Math.max(MIN_WIDTH, Math.min(MAX_WIDTH, actorDisplayW * WIDTH_FACTOR))
   const h = w * FLATTEN
   shadow.setPosition(feetX, feetY - baseGapWorld)
   shadow.setDisplaySize(w, h)

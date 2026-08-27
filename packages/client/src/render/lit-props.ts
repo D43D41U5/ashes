@@ -95,7 +95,7 @@ function drawLeafPile(ctx: CanvasRenderingContext2D): void {
  * (le plus clair — c'est elle qu'on récolte), la vasque, puis la gueule. Un croissant sombre au
  * nord de la lèvre pose l'ombre interne : sans lui, l'œil lit un caillou plat.
  *
- * Les rects, pas un dégradé : c'est la grammaire cubique du reste (`CHICOT_RECTS`, `BLOC_RECTS`).
+ * Les rects, pas un dégradé : c'est la grammaire cubique du reste (`CHICOT_RECTS`, `FUMEROLLE_RECTS`).
  */
 export const FUMEROLLE_RECTS: readonly (readonly [number, number, number, number, string])[] = [
   // ⚠ CONTRASTE POUSSÉ APRÈS CAPTURE : la première version tenait dans une bande de gris et se
@@ -113,6 +113,51 @@ export const FUMEROLLE_RECTS: readonly (readonly [number, number, number, number
   [6, 14, 4, 1, '#c2bcae'],
 ]
 
+/**
+ * LE GLANAGE (spec `glanage.md`) — ce qui TRAÎNE au pied d'un arbre, au pied d'un rocher, et qui
+ * se ramasse les mains vides. Deux silhouettes, et elles ont un travail précis à faire :
+ *
+ * **SE DISTINGUER DU DÉCOR.** Le fouillis pose déjà des cailloux (`PEBBLES`) et des chicots : si
+ * le butin leur ressemblait, le joueur passerait sa première heure à cliquer sur des pierres
+ * peintes. Trois écarts, cumulés — et aucun n'est un liseré magique, qui trahirait la DA :
+ *   ① UNE MASSE, pas un semis. Le décor éparpille trois petits blocs ; le butin en pose UN gros,
+ *     franc. C'est ce qui se lit de plus loin, avant même la couleur.
+ *   ② Il est PLUS HAUT sur sa tuile (il ne rase pas le sol) : un objet posé, pas une texture.
+ *   ③ Sa matière est plus CLAIRE et plus chaude que le gris froid du fouillis.
+ * Le surlignage de visée (`recolte.md` G4) fait le reste au survol — mais il ne doit pas être le
+ * SEUL signal, sinon il faut survoler tout l'écran pour savoir où est le jeu.
+ */
+export const BRANCHE_RECTS: readonly (readonly [number, number, number, number, string])[] = [
+  // Le fût couché — la masse, d'un seul tenant, posée en travers.
+  [3, 10, 10, 3, '#6b5334'],
+  // La face du dessus, prise par la lumière : c'est elle qui donne le volume d'un rondin.
+  [3, 10, 10, 1, '#8a6a44'],
+  // Deux ramilles, l'une devant l'autre — sans elles, c'est une planche.
+  [11, 8, 3, 2, '#5c4429'],
+  [2, 13, 3, 2, '#5c4429'],
+]
+/**
+ * ⚠ **LA PIERRE AU SOL EST DE LA MÊME PIERRE QUE LE NŒUD** (Alexis, 2026-08-27 : « fais
+ * correspondre la couleur/texture des pierres tombées au sol avec celle des nœuds »).
+ *
+ * Elle était d'un gris BLEU (`#8b8b93`) quand le socle minéral est d'un gris CHAUD (`#726c64`,
+ * `socle-mineral.ts`) : le morceau détaché ne venait visiblement pas du bloc d'à côté. Les trois
+ * tons sont donc pris dans la famille du socle — le corps, son dessus éclairé, et l'éclat.
+ *
+ * Ce qui NE change pas, et c'est la raison d'être de ces rects : les trois écarts qui séparent le
+ * BUTIN du fouillis (une masse franche au lieu d'un semis, plus haut sur la tuile, plus clair et
+ * plus chaud que le gris FROID des cailloux décoratifs, `PEBBLE_TONES` = `#71717a`/`#5a5a62`).
+ * En se rapprochant du socle, elle s'éloigne du décor : les deux demandes tirent dans le même sens.
+ */
+export const CAILLOU_RECTS: readonly (readonly [number, number, number, number, string])[] = [
+  // LE bloc — un seul, franc, et plus gros qu'aucun caillou du fouillis (qui plafonne à 5).
+  [4, 8, 7, 6, '#7d766d'],
+  // Sa face supérieure, un ton au-dessus : le cube se lit à midi comme au couchant.
+  [4, 8, 7, 2, '#8f887d'],
+  // L'éclat qui l'accompagne — il dit « ça vient de se détacher ».
+  [11, 11, 3, 3, '#6d675f'],
+]
+
 export const CHICOT_RECTS: readonly (readonly [number, number, number, number, string])[] = [
   [5, 27, 8, 3, '#6e6862'],   // l'assise élargie (bas rangée 29 → gap 2)
   [6, 22, 6, 5, '#7b746c'],   // le pied
@@ -123,34 +168,11 @@ export const CHICOT_RECTS: readonly (readonly [number, number, number, number, s
   [9, 14, 1, 8, '#8a4e2e'],   // la longue coulure de rouille
   [7, 12, 2, 1, '#aa6a40'],   // la tache vive au collet
 ]
-/**
- * LES BLOCS D'AFFLEUREMENT (§2sexies R48bis) — « chaque bloc prend une tuile complète sans
- * offset » (Alexis) : l'art est PLEINE LARGEUR (0→16) et calé au bord BAS de sa texture — le
- * rendu des nœuds étant centré-tuile à l'échelle native, le bloc remplit exactement sa tuile,
- * sur la grille. Trois TAILLES (la même `tailleDeBloc` que le stock côté sim) : bas, moyen,
- * haut (16×24 — il dépasse sur la tuile du nord, comme un cube qui a de la hauteur).
- */
-export const BLOC_RECTS: readonly (readonly (readonly [number, number, number, number, string])[])[] = [
-  [ // taille 0 — le bloc BAS
-    [0, 8, 16, 8, '#716c66'],   // le corps, pleine tuile
-    [0, 8, 16, 3, '#8a847c'],   // le dessus
-    [3, 12, 2, 4, '#57534e'],   // la fissure
-    [11, 11, 3, 2, '#5d5954'],  // l'écornure
-  ],
-  [ // taille 1 — le bloc MOYEN
-    [0, 4, 16, 12, '#716c66'],
-    [0, 4, 16, 3, '#8a847c'],
-    [7, 9, 2, 7, '#57534e'],
-    [2, 7, 3, 2, '#5d5954'],
-  ],
-  [ // taille 2 — le bloc HAUT (16×24)
-    [0, 5, 16, 19, '#6d6862'],
-    [0, 5, 16, 4, '#88827a'],
-    [0, 20, 16, 4, '#615c56'],  // l'assise plus sombre
-    [4, 12, 2, 10, '#544f4a'],
-    [10, 9, 3, 2, '#5d5954'],
-  ],
-]
+/* (LES BLOCS D'AFFLEUREMENT — `BLOC_RECTS` et son long calibrage du 2026-08-27 sur l'échine —
+   ont été RETIRÉS le même jour : le socle minéral (`socle-mineral.ts`) rend les trois hauteurs
+   depuis un champ de faces, sans une seule valeur peinte. Le calibrage qu'ils portaient (« on
+   garde les trois dessus près du sol de pierrier et on FONCE le corps à mesure qu'il grandit »)
+   est devenu inutile : mesuré, l'échelle des hauteurs sort désormais de la géométrie seule.) */
 
 /** LA POUSSIÈRE DE HOUILLE — une tache de sol quantifiée (grain de l'art, jamais lissée),
  *  au ras des veines de la butte charbonneuse. Prop RAMPANT : elle EST le sol. */
@@ -203,12 +225,9 @@ const PROPS: LitProp[] = [
   // `passes: 1` / `k: 3.5` comme les autres silhouettes cubiques franches : elle prend la lumière
   // comme un objet TAILLÉ, pas comme une tache peinte.
   { key: 'nd-fumerolle', w: 16, h: 16, draw: drawRects(FUMEROLLE_RECTS), passes: 1, k: 3.5 },
-  // Le nœud roche (masse pâteuse côté SnapshotView) — pas de miroir (les nœuds ne se miroitent pas).
-  { key: 'nd-rock', w: 16, h: 16, draw: (c) => { c.fillStyle = '#6a6a72'; c.fillRect(3, 6, 11, 8) } },
-  // Les BLOCS d'affleurement, trois tailles pleine tuile (RECTS partagés) — cubes francs.
-  { key: 'nd-bloc-0', w: 16, h: 16, draw: drawRects(BLOC_RECTS[0]!), passes: 1, k: 3.5 },
-  { key: 'nd-bloc-1', w: 16, h: 16, draw: drawRects(BLOC_RECTS[1]!), passes: 1, k: 3.5 },
-  { key: 'nd-bloc-2', w: 16, h: 24, draw: drawRects(BLOC_RECTS[2]!), passes: 1, k: 3.5 },
+  // (LA ROCHE et LES BLOCS D'AFFLEUREMENT sont partis dans `socle-mineral.ts` — comme les
+  //  filons, la carrière et les gravats : les six nœuds qui bloquent leur tuile entière ont
+  //  désormais UN socle commun, pleine largeur, à trois hauteurs.)
   // ═══ LES HUMAINS (da-feeling R9) — des billboards mono-frame SYMÉTRIQUES, jamais miroités :
   //     la bascule est celle d'un chip. Bord + cœur = deux MATÉRIAUX (un liseré n'est pas un
   //     ombrage), normale blocky. La FAUNE, elle, reste consignée : asymétrique, miroitée par
@@ -237,8 +256,6 @@ const PROPS: LitProp[] = [
   { key: 'nd-fiber_plant', w: 16, h: 16, draw: (c) => { c.fillStyle = '#77a53f'; c.fillRect(4, 8, 2, 7); c.fillRect(7, 6, 2, 9); c.fillRect(10, 9, 2, 6) } },
   // La POUSSE : fût + cube de feuillage — LES MATÉRIAUX DE L'ARBRE ADULTE LIT (aucun pop à l'âge).
   { key: 'nd-sapling', w: 16, h: 16, passes: 1, k: 3.5, draw: (c) => { c.fillStyle = '#5c4429'; c.fillRect(7, 9, 2, 6); c.fillStyle = '#2d6b32'; c.fillRect(4, 3, 8, 8) } },
-  // Les GRAVATS : deux pierres deux gris + le fragment de travers — on reconnaît le mur qu'elle fut.
-  { key: 'nd-rubble', w: 16, h: 16, passes: 1, k: 3.5, draw: (c) => { c.fillStyle = '#5e5a56'; c.fillRect(2, 9, 6, 5); c.fillStyle = '#6a6560'; c.fillRect(8, 7, 6, 7); c.fillStyle = '#4a4642'; c.fillRect(5, 5, 4, 3) } },
   // La SOUCHE (récolte vivante) : billot + coupe claire (bois frais = matériau) ; l'ombre au sol
   // passe en `shade` (après la normale — la rangée 0x241a10 du painter peint était du contact).
   {
@@ -251,6 +268,17 @@ const PROPS: LitProp[] = [
   // Le nœud CHAMPIGNON — cubique (arêtes franches, `passes:1`/`k:3.5`), silhouette partagée avec BootScene.
   { key: 'nd-champignon', w: 16, h: 16, passes: 1, k: 3.5, draw: drawChampignon },
   { key: 'nd-leaf_pile', w: 16, h: 16, passes: 1, k: 3.5, draw: drawLeafPile },
+  // LE GLANAGE (spec `glanage.md`) — cubique franc comme tout ce qui est TAILLÉ ou POSÉ, et
+  // silhouettes partagées avec BootScene (flat et `_lit` ne peuvent pas diverger). L'ombre de
+  // contact les POSE au sol : un objet qu'on ramasse ne flotte pas.
+  {
+    key: 'nd-branche_au_sol', w: 16, h: 16, passes: 1, k: 3.5, draw: drawRects(BRANCHE_RECTS),
+    shade: (c) => { c.fillStyle = 'rgba(0,0,0,0.22)'; c.fillRect(3, 13, 10, 1) },
+  },
+  {
+    key: 'nd-pierre_au_sol', w: 16, h: 16, passes: 1, k: 3.5, draw: drawRects(CAILLOU_RECTS),
+    shade: (c) => { c.fillStyle = 'rgba(0,0,0,0.22)'; c.fillRect(3, 14, 9, 1) },
+  },
   // (Les COINS DE PÊCHE n'ont pas de `_lit` : un remous sur l'eau n'a rien à éclairer — leur art
   // flat vit dans `BootScene.makeNodes`, comme tout nœud hors `LIT_NODE_TYPES`.)
 ]
@@ -385,7 +413,12 @@ export const LIT_CLUTTER_KINDS: ReadonlySet<string> = new Set([
  *  types de nœud (`nd-tree_trunk`, `nd-tree_crown`, `nd-berry_bush-2`, `nd-rubble`, `nd-fiber_plant`…).
  *  Dériver de `nd-*` polluerait ce whitelist et ferait demander à SnapshotView un `nd-<type>_lit`
  *  inexistant. On ne met ici QUE des `n.type` réels (test : chacun a bien sa texture générée). */
-export const LIT_NODE_TYPES: ReadonlySet<string> = new Set(['rock', 'champignon', 'fiber_plant', 'rubble', 'leaf_pile', 'fumerolle'])
+/** Les nœuds dont la variante `_lit` est une masse pâteuse de ce module. Les SOCLES minéraux
+ *  (`socle-mineral.ts`) n'y sont pas : ils ont leurs propres clés, à trois hauteurs. */
+export const LIT_NODE_TYPES: ReadonlySet<string> = new Set([
+  'champignon', 'fiber_plant', 'leaf_pile', 'fumerolle',
+  'branche_au_sol', 'pierre_au_sol',
+])
 /** Toutes les clés de texture RÉELLEMENT générées par `generateLitProps` — surface testable du
  *  câblage (le clutter a `_lit` + `_lit_m` ; les nœuds, `_lit` seul ; chaque variété de fleur, les deux). */
 export const LIT_PROP_KEYS: ReadonlySet<string> = new Set([

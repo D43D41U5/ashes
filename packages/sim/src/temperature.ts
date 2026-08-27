@@ -19,7 +19,7 @@ import { die } from './combat'
 import { countOf } from './items'
 import { terrainAt } from './map'
 import { meteoColdAt } from './meteo'
-import { avanceesDepuisAges } from './cendre'
+import { avanceesDepuisAges, froidDeCendre } from './cendre'
 import { froidDeFumerolle } from './fumerolle'
 import { isOnPoiKind } from './poi-discovery'
 import { gameTimeAt } from './time'
@@ -141,18 +141,93 @@ export function baselineTemperature(state: SimState, x: number, y: number): numb
  * L'erreur va dans le sens du dégel : elle peut raccourcir une hystérésis, jamais inventer
  * une glace qui n'a pas existé.
  */
-export function baselineTemperatureAt(state: SimState, x: number, y: number, tick: number): number {
-  const shelter = isSheltered(state, Math.floor(x), Math.floor(y)) ? T.SHELTER_FACTOR : 1
-  return froidDuMonde(state, x, y, tick, shelter)
+export function baselineTemperatureAt(state: SimState, x: number, y: number, tick: number, cst?: ConstantesDeTuile): number {
+  const shelter = cst?.abri ?? abriDeTuile(state, x, y)
+  return froidDuMonde(state, x, y, tick, shelter, cst)
+}
+
+/**
+ * ═══ CE QUI, DANS LE FROID D'UNE TUILE, NE DÉPEND PAS DU TICK (perf, 2026-08-26) ═══
+ *
+ * Deux termes du froid ne bougent pas quand l'horloge bouge : **l'ABRI** (une maison ou une
+ * grotte est là ou n'y est pas) et **le souffle des FUMEROLLES** (une bouche est ouverte ou
+ * non — son froid ne dépend que de la distance et de l'avancée de la cendre). Les relire à
+ * chaque instant d'une intégration, c'est poser quarante-huit fois la même question.
+ *
+ * MESURÉ sur le monde joué (772 structures, 6 144 tuiles × 24 tranches) :
+ *   · `isSheltered`      618 ms — il BALAIE `state.structures`, et il grandit avec ce qu'on bâtit
+ *   · `froidDeFumerolle` 216 ms — un balayage de mailles + une allocation par appel
+ * soit **les deux tiers** de `baselineTemperatureAt` (1 030 ms) à eux seuls. La recuisson du
+ * gel du client, qui les appelle en boucle, mangeait **121 % d'une image**.
+ *
+ * On les relève donc UNE FOIS PAR TUILE et on les passe. Les valeurs sont IDENTIQUES au bit
+ * près — c'est le même appel, avec les mêmes arguments, simplement sorti de la boucle.
+ *
+ * ⚠ L'ARGUMENT EST OPTIONNEL, ET C'EST DÉLIBÉRÉ : la température se lit par entité et par tick
+ *   dans toute la sim. Sans le passer, chaque appelant retrouve EXACTEMENT son comportement
+ *   d'avant (le fallback est le même calcul, au même endroit) — le hisser est une décision
+ *   d'appelant, prise là où il y a une boucle à sortir.
+ *
+ * ⚠ ET C'EST À LA TUILE : `froidDeFumerolle` lit x/y en FLOTTANT (la pente du souffle est
+ *   continue), donc ces constantes ne valent que pour le point qu'on leur a donné. `neigeAuSol`
+ *   travaille à la tuile entière — c'est là qu'on les hisse, et nulle part au hasard.
+ */
+export interface ConstantesDeTuile {
+  /** `T.SHELTER_FACTOR` sous un toit ou dans une grotte, `1` à découvert. */
+  abri?: number
+  /** Les degrés que le souffle des fumerolles RETIRE ici (`0` s'il n'y en a aucune). */
+  fumerolle?: number
+  /**
+   * Les degrés que la VIEILLE CENDRE retire ici (R22 — `0` hors cendre et sur la frange).
+   *
+   * ⚠ IL SE HISSE SOUS LA MÊME SENTINELLE QUE `fumerolle`, jamais par un `??=` : son zéro est
+   * une VALEUR (hors cendre, frange), pas une absence. Voir le site de hissage dans `gel.ts`.
+   */
+  cendre?: number
+}
+
+/**
+ * ⚠ LES DEUX CHAMPS SONT INDÉPENDAMMENT OPTIONNELS, ET CE N'EST PAS DE LA SOUPLESSE.
+ *
+ * Les deux intégrations n'ont pas les mêmes besoins : la CHUTE (`dehorsSansMeteo`) lit le
+ * souffle des fumerolles et **jamais l'abri** ; la FONTE (`baselineTemperatureAt`) lit les deux.
+ * Les servir en un seul paquet fait payer `isSheltered` — le plus cher des deux, 4,2 µs sur un
+ * monde bâti — à une boucle qui n'en fera rien. MESURÉ : la première version, qui les liait,
+ * rendait la passe de recuisson PLUS LENTE qu'avant le correctif. Chacun se relève donc quand
+ * il est vraiment demandé, et pas avant.
+ */
+export function abriDeTuile(state: SimState, x: number, y: number): number {
+  return isSheltered(state, Math.floor(x), Math.floor(y)) ? T.SHELTER_FACTOR : 1
+}
+
+/**
+ * Le souffle des fumerolles en un point — l'écrivain UNIQUE, pour que le chemin hissé et le
+ * chemin direct ne puissent pas diverger.
+ *
+ * ⚠ `?? []` N'EST PAS DE LA PRUDENCE : le client fabrique de FAUX `SimState` par double cast
+ *   pour ses façades (`etat-gel.ts` et consorts, qui relisent le froid du monde sans avoir de
+ *   sim). Un champ neuf y est donc `undefined`, et `.length` dessus JETTE — constaté au
+ *   navigateur, la scène entière tombait. Sans fumerolle, le froid vaut zéro.
+ */
+export function froidDeFumerolleDeTuile(state: SimState, x: number, y: number): number {
+  const ages = state.cendreAge ?? []
+  return froidDeFumerolle(state.map, x, y, avanceesDepuisAges(ages, ages.length), state.seed)
 }
 
 /**
  * LE FROID DU MONDE À DÉCOUVERT — l'écrivain unique de `baselineTemperatureAt` et de
  * `climatFlore`, qui ne diffèrent QUE par le facteur d'abri.
  */
-function froidDuMonde(state: SimState, x: number, y: number, tick: number, shelter: number): number {
-  const base = baseDuMonde(state, tick)
-  const exposedSansMeteo = expositionSansMeteo(state, x, y, tick)
+function froidDuMonde(state: SimState, x: number, y: number, tick: number, shelter: number, cst?: ConstantesDeTuile): number {
+  // ═══ UNE SEULE LECTURE DE L'HORLOGE (perf, 2026-08-26) ═══
+  //
+  // `baseDuMonde` et `expositionSansMeteo` demandaient CHACUNE `gameTimeAt(state, tick)` — le
+  // même appel, le même tick, et un objet de onze champs alloué deux fois pour la même réponse.
+  // MESURÉ : 30 ms pour 147 456 lectures, doublées. On la fait une fois et on la passe ; les
+  // deux fonctions gardent leur repli par défaut, donc tous leurs autres appelants sont intacts.
+  const time = gameTimeAt(state, tick)
+  const base = baseDuMonde(state, tick, time)
+  const exposedSansMeteo = expositionSansMeteo(state, x, y, tick, cst, time)
   // R11-R12 (`meteo.md`) : LE FRONT LIT LE FROID QU'IL TROUVE. `T₀` est le monde SANS lui, à
   // découvert — c'est sur elle que l'orage décide de sa morsure (`partDeBlizzard`) et que la pluie
   // décide d'être neige (`neigeA`). Calculée ICI, une fois, et passée : pas de seconde lecture.
@@ -168,8 +243,9 @@ function froidDuMonde(state: SimState, x: number, y: number, tick: number, shelt
  * dessus, jamais sur la température sous le front (aucune circularité). Mêmes expressions,
  * même ordre que `froidDuMonde` — au bit près.
  */
-export function dehorsSansMeteo(state: SimState, x: number, y: number, tick: number): number {
-  return clampTemp(baseDuMonde(state, tick) + expositionSansMeteo(state, x, y, tick))
+export function dehorsSansMeteo(state: SimState, x: number, y: number, tick: number, cst?: ConstantesDeTuile): number {
+  const time = gameTimeAt(state, tick) // une seule lecture, comme `froidDuMonde` (voir son en-tête)
+  return clampTemp(baseDuMonde(state, tick, time) + expositionSansMeteo(state, x, y, tick, cst, time))
 }
 
 /**
@@ -183,8 +259,7 @@ export function socleDuJour(jour: number, tour: number): number {
   return T.SOCLE(jour + (e.socleJours ?? 0), tour) + (e.socleDegres ?? 0)
 }
 
-function baseDuMonde(state: SimState, tick: number): number {
-  const time = gameTimeAt(state, tick)
+function baseDuMonde(state: SimState, tick: number, time = gameTimeAt(state, tick)): number {
   // La carte est plate : le froid ne vient plus de l'altitude, seulement du BIOME (la neige, le
   // glacier) et de l'heure. Le froid des zones hautes est porté par leur terrain, pas par une hauteur.
   return socleDuJour(time.seasonDay, time.tour)
@@ -192,10 +267,9 @@ function baseDuMonde(state: SimState, tick: number): number {
 
 /** L'EXPOSITION hors front — biome, nuit, Brume — SIGNÉE (le biome peut réchauffer),
  *  celle que l'abri amortit. Le froid du front s'y ajoute dans `froidDuMonde`, après `T₀`. */
-function expositionSansMeteo(state: SimState, x: number, y: number, tick: number): number {
+function expositionSansMeteo(state: SimState, x: number, y: number, tick: number, cst?: ConstantesDeTuile, time = gameTimeAt(state, tick)): number {
   const tx = Math.floor(x)
   const ty = Math.floor(y)
-  const time = gameTimeAt(state, tick)
   const biome = T.BIOME_OFFSET[terrainAt(state.map, tx, ty)] ?? 0
   // LA BRUME (spec brume.md R4) et LE FRONT MÉTÉO (spec meteo.md R4) sont des EXPOSITIONS
   // de plus : l'abri les amortit, et le feu comme la tenue les PLANCHENT (l'ambiant est un
@@ -216,12 +290,22 @@ function expositionSansMeteo(state: SimState, x: number, y: number, tick: number
   //   sim). Un champ neuf y est donc `undefined`, et `.length` dessus JETTE — constaté au
   //   navigateur, la scène entière tombait. Le même piège avait déjà donné un `NaN` silencieux
   //   sur `jourDeSaison` à la refonte des saisons. Sans fumerolle, le froid vaut zéro.
-  const ages = state.cendreAge ?? []
-  const fumerolle = froidDeFumerolle(state.map, x, y, avanceesDepuisAges(ages, ages.length), state.seed)
+  // Le souffle des fumerolles ne dépend PAS du tick : un appelant qui boucle sur l'horloge le
+  // relève une fois et le passe (voir `ConstantesDeTuile`). Sans lui, on le calcule ici — même
+  // appel, mêmes arguments, même valeur.
+  const fumerolle = cst?.fumerolle ?? froidDeFumerolleDeTuile(state, x, y)
+  // LE FROID DE LA VIEILLE CENDRE (spec `cendre.md` R22, décision d'Alexis 2026-08-27) — le
+  // SOCLE sur lequel les fumerolles font leurs pics. Zéro sur la frange (on y travaille, R14),
+  // montée linéaire jusqu'à `CENDRE.FROID_COEUR` à l'entrée de la bande vieille. Il n'est PAS
+  // hissé dans `ConstantesDeTuile` et c'est mesuré, pas supposé : il lit le coût NU (deux
+  // lectures de tableau et une racine mémoïsée — `profondeurNueDeCendre`), là où le souffle
+  // balaie des mailles et allouait. Le hisser aurait demandé une sentinelle (`??=` sur un
+  // nombre qui vaut LÉGITIMEMENT 0 hors cendre recalculerait à chaque tranche).
+  const cendre = cst?.cendre ?? froidDeCendre(state, tx, ty)
   // LA NUIT EST UNE PENTE (`partDeNuit`, décision d'Alexis 2026-08-23) : `time.nuit` vaut 1 sur
   // toute la nuit et redescend sur les lisières du jour — le froid du soir se SENT venir, il ne
   // claque plus de douze degrés en un tick. La nuit pleine est inchangée au bit près.
-  return biome - T.ECART_NUIT(time.seasonDay) * time.nuit - brumeColdAt(state, x, y, tick) - fumerolle // amorti par l'abri
+  return biome - T.ECART_NUIT(time.seasonDay) * time.nuit - brumeColdAt(state, x, y, tick) - fumerolle - cendre // amorti par l'abri
 }
 
 /**

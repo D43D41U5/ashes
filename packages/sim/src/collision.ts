@@ -16,6 +16,7 @@
  * obstacle ? ». Un arbre bloque sa tuile pour l'A* et son seul tronc pour l'avatar.
  */
 import { BALANCE, NODE_DEFS, TERRAIN_DEEP_WATER, TERRAIN_SHALLOW_WATER, TERRAINS, TICK_DT_S } from './balance'
+import { solFoule } from './cendre'
 import { nodeAt, treeJitter, type ResourceNode } from './economy'
 import { estGueBloque } from './eau'
 import { estGele, gelPossible, vitesseSurGlace, vitesseSurNeige } from './gel'
@@ -617,7 +618,19 @@ export function moveAvatar(
   // LA NEIGE COMMANDE LE PAS après la glace et avant le terrain (spec `gel.md` G9) : quel que
   // soit le sol dessous, on foule de la poudreuse (×0,95) ou on enfonce jusqu'aux genoux (×0,75).
   const neige = glace === undefined && world.etat !== undefined ? vitesseSurNeige(world.etat, tx, ty) : undefined
-  const terrain = TERRAINS[terrainAt(world.map, tx, ty)]
+  // LA CENDRE COMMANDE LE PAS après la neige et avant le terrain (`solFoule`, décision d'Alexis
+  // 2026-08-25 : « la cendre remplace les caractéristiques de la tuile sous-jacente »). Un marais
+  // cendré n'est plus un marais : on ne patauge pas dans une boue qui a brûlé. Elle vient APRÈS
+  // la neige pour la même raison que la neige vient après la glace — c'est la couche du DESSUS
+  // qui décide, et la neige tombe sur la cendre.
+  //
+  // ⚠ CE N'EST PAS SUR LE CHEMIN CHAUD. `moveAvatar` est appelé une fois par acteur et par tick ;
+  //   c'est `blockedSubAt` qui est balayé par sous-tuile, et il ne passe pas par ici. `solFoule`
+  //   sort d'ailleurs immédiatement sur une carte sans champ de cendre (banc, worldgen).
+  const cendre = glace === undefined && neige === undefined && world.etat !== undefined
+    ? solFoule(world.etat, tx, ty)
+    : undefined
+  const terrain = TERRAINS[cendre ?? terrainAt(world.map, tx, ty)]
   const factor = glace ?? neige ?? (terrain?.walkable ? terrain.speedFactor : 1)
   const speed = BALANCE.WALK_SPEED_TILES_PER_S * dtS * factor * speedScale
   const norm = dx !== 0 && dy !== 0 ? Math.SQRT1_2 : 1

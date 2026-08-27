@@ -49,7 +49,7 @@ import { foundNpcVillage } from './worldgen'
 import { desiredOrders } from './village-plan'
 import { die } from './combat'
 import { placeZoneNodes } from './zone-content'
-import { generateZonedTerrain } from './zonegen'
+import { carteDeTest } from '../../../tools/carte-cache'
 import { MONDE_JOUE } from './zonegraph'
 
 // ── LE LAC D'ESSAI ────────────────────────────────────────────────────────────
@@ -184,7 +184,7 @@ function jusquAUnPoisson(b: Banc, essais = 60): SimEvent[] {
 // ── A1/A2 — LE SEMIS, sur le vrai monde ──────────────────────────────────────
 describe('A1/A2 — les coins de pêche existent, sont joignables, et viennent en queue', () => {
   it('rivière aux coudes, lacs contre le cœur, tous sur du haut-fond touchant le profond, en Racine, ids en queue', () => {
-    const carte = generateZonedTerrain(2026, undefined, MONDE_JOUE)
+    const carte = carteDeTest(2026, undefined, MONDE_JOUE)
     const nodes = placeZoneNodes(carte)
     const { width, height, terrain } = carte.map
     const coins = nodes.filter((n) => n.type === 'fishing_spot_river' || n.type === 'fishing_spot_lake')
@@ -197,7 +197,12 @@ describe('A1/A2 — les coins de pêche existent, sont joignables, et viennent e
     // rivière et plus de lacs, donc plus de coins. Le compte MESURÉ sur la seed 2026 est 43 ; la
     // borne le suit. Elle reste un plafond de LISIBILITÉ, pas un réglage : si elle saute encore,
     // c'est la carte qui a bougé, et il faut regarder pourquoi avant de la remonter.
-    expect(coins.length).toBeLessThanOrEqual(43)
+    // 43 → 45 le 2026-08-27 (frontières universelles, `sol-dessine.md` R20-R24) : ce n'est PAS
+    // la pêcherie qui s'est agrandie — l'eau de la Racine n'a pas bougé d'une tuile (les lacs et
+    // la rivière se creusent dans le socle, que ce chantier ne touche pas). C'est le SEMIS qui
+    // s'est rebrassé : le terrain a changé partout, donc le flux du PRNG des nœuds avec lui, et
+    // le compte a re-tiré dans le même régime (une poignée sur la rivière, un à trois par lac).
+    expect(coins.length).toBeLessThanOrEqual(45)
     const maxAutre = Math.max(...autres.map((n) => n.id))
     for (const k of coins) {
       expect(k.id, 'en queue : aucun nœud d’avant ne bouge (P5)').toBeGreaterThan(maxAutre)
@@ -325,6 +330,12 @@ describe('A6 — ferrer dans la fenêtre = un poisson, un seul', () => {
     const recoltes = des(evs, 'resource_harvested') as Extract<SimEvent, { type: 'resource_harvested' }>[]
     expect(recoltes).toHaveLength(1)
     expect(recoltes[0]!.count).toBe(prises[0]!.count)
+    // LA PRISE PORTE SA MATIÈRE (2026-08-27), comme tout coup de récolte : `fish_caught` est
+    // MUET par décision — « il tombe sur `resource_harvested`, qui parle déjà au même tick » —
+    // donc c'est CE fait qui doit dire d'où sort le poisson, sans quoi le son de la prise
+    // retombe sur le bip d'interface au lieu du « flop » mouillé. `landFish` est un chemin
+    // distinct de `harvestStrike` : la garde des matières (`economy.test.ts`) ne le couvre pas.
+    expect(recoltes[0]!.nodeType).toBe('fishing_spot_lake')
     expect(entity(b).skills.hunting ?? 0).toBeGreaterThan(0)
     expect(entity(b).inventory[entity(b).activeSlot!]!.wear ?? 0).toBeGreaterThan(wearAvant)
     expect(entity(b).fishing).toBeUndefined()

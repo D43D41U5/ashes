@@ -1,10 +1,10 @@
 import { describe, expect, it } from 'vitest'
-import { generateZonedTerrain } from './zonegen'
+import { carteDeTest } from '../../../tools/carte-cache'
 import { renderVignette } from './vignette'
 
 describe('renderVignette', () => {
   it('produit un buffer RGB déterministe aux bonnes dimensions', { timeout: 60_000 }, () => {
-    const map = generateZonedTerrain(9).map
+    const map = carteDeTest(9).map
     const a = renderVignette(map, 100)
     const b = renderVignette(map, 100)
     expect(a.w).toBeGreaterThan(0)

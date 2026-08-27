@@ -13,6 +13,7 @@ import {
   TERRAIN_DEEP_WATER,
   TERRAIN_FLOWER_MEADOW,
   TERRAIN_FOREST,
+  TERRAIN_CLAIRIERE,
   TERRAIN_GRASS,
   TERRAIN_HEATH,
   TERRAIN_LARCH,
@@ -34,7 +35,8 @@ import { composantesDeMasque, estCoeur, TERRAINS_BOISES_MASSIF } from './profond
 import { CREUX } from './racine-relief'
 import { SET_PIECES } from './zonegen-setpieces'
 import { CONTENU, placeZoneNodes } from './zone-content'
-import { generateZonedTerrain, type CarteZonee } from './zonegen'
+import { type CarteZonee } from './zonegen'
+import { carteDeTest } from '../../../tools/carte-cache'
 import { EAU, estUnCoude } from './zonegen-water'
 import { createSim, spawnEntity, step, type SimState } from './sim'
 import type { ResourceNode } from './economy'
@@ -47,11 +49,16 @@ interface Monde {
 }
 
 const mondes: Monde[] = SEEDS.map((seed) => {
-  const c = generateZonedTerrain(seed)
+  const c = carteDeTest(seed)
   return { c, nodes: placeZoneNodes(c) }
 })
 
 const eau = (t: number): boolean => t === TERRAIN_SHALLOW_WATER || t === TERRAIN_DEEP_WATER
+
+/** LA RÉSOLUTION de la mesure de distance à l'eau, en tuiles : la grille grossière de
+ *  `distancesALEau`. Deux terrains séparés de moins que ça ne sont pas distingués par
+ *  l'instrument — c'est la tolérance du lien marais/roselière. */
+const P_MESURE = 4
 
 /** Les tuiles de la Racine (index), et son rectangle. */
 function racineDe(c: CarteZonee) {
@@ -500,7 +507,7 @@ describe('A11/A12 — la composition des Prés Bas suit UNE variable d’ordre',
    *  qu'on mesure se compte en dizaines de tuiles. */
   const distancesALEau = (c: CarteZonee): Map<number, number> => {
     const { width, height, terrain } = c.map
-    const P = 4
+    const P = P_MESURE
     const W = Math.ceil(width / P)
     const H = Math.ceil(height / P)
     const dist = new Int32Array(W * H).fill(-1)
@@ -563,7 +570,17 @@ describe('A11/A12 — la composition des Prés Bas suit UNE variable d’ordre',
       const lande = de(TERRAIN_JUNIPER_HEATH, 'lande à genévriers')
       const saulaie = de(TERRAIN_WILLOW, 'saulaie')
 
-      expect(marais, `seed ${seed} : marais < roselière`).toBeLessThan(roseliere)
+      // ⚠ **LE LIEN DU BOUT MOUILLÉ EST SERRÉ AUSSI, et il l'était AVANT la roche-mère.** Marais
+      // et roselière sont les deux terrains COLLÉS à l'eau : leurs moyennes valent ~1 cellule de
+      // la grille de mesure (P = 4 tuiles), et l'écart entre eux se comptait déjà en centièmes de
+      // cellule — MESURÉ sur `vallee` avant le chantier : seed 42 **0,96 contre 1,11**, seed 1
+      // **1,15 contre 1,20**. Déplacer les lacs (spec `roche-mere.md` R4) suffit à faire croiser
+      // la seed 7 (**1,38 contre 1,21**, soit 0,7 tuile). On garde donc l'assertion — un vrai
+      // renversement se verrait — avec la tolérance de la RÉSOLUTION : sous une cellule, la
+      // mesure ne distingue rien. Les cinq autres liens, eux, se comptent en dizaines de tuiles
+      // et restent stricts.
+      expect(marais, `seed ${seed} : marais ≤ roselière (à la cellule de mesure près)`)
+        .toBeLessThan(roseliere + P_MESURE)
       expect(roseliere, `seed ${seed} : roselière < prairie humide`).toBeLessThan(prairie)
       expect(prairie, `seed ${seed} : prairie humide < bosquet`).toBeLessThan(bosquet)
       expect(bosquet, `seed ${seed} : bosquet < herbe`).toBeLessThan(herbe)
@@ -600,8 +617,15 @@ describe('A11/A12 — la composition des Prés Bas suit UNE variable d’ordre',
       // trois mots neufs prennent ~13 points, surtout sur l'herbe. MESURÉ sur les trois
       // seeds de garde : bosquet 14-16, fleuraie 12-14,5, herbe 38-40, saulaie 1,6-2,1,
       // prairie 5,1-6, lande 5,4-7,3 — marges d'une composition qui reste un contrat.
-      expect(part(TERRAIN_FOREST), `seed ${seed} : bosquet`).toBeGreaterThanOrEqual(12)
-      expect(part(TERRAIN_FOREST), `seed ${seed} : bosquet`).toBeLessThanOrEqual(18)
+      // LE BOSQUET COMPTE SES CLAIRIÈRES (2026-08-25). Ce contrat porte sur ce que la VARIABLE
+      // D'ORDRE a assigné au bois — pas sur ce qui pousse dessus. La passe des clairières
+      // arrive bien après `solDe` et ouvre une part du bosquet ; la fourchette décrirait donc
+      // une autre grandeur si on l'en amputait (11,5 % au lieu de 12 sur la seed 42, MESURÉ).
+      // Une clairière EST du bosquet, ouvert. (Elle n'entre pas dans `ouvert` plus bas : on n'y
+      // voit pas l'horizon, c'est une chambre DANS le bois.)
+      const bosquet = part(TERRAIN_FOREST) + part(TERRAIN_CLAIRIERE)
+      expect(bosquet, `seed ${seed} : bosquet`).toBeGreaterThanOrEqual(12)
+      expect(bosquet, `seed ${seed} : bosquet`).toBeLessThanOrEqual(18)
       expect(part(TERRAIN_FLOWER_MEADOW), `seed ${seed} : fleuraie`).toBeGreaterThanOrEqual(9)
       expect(part(TERRAIN_FLOWER_MEADOW), `seed ${seed} : fleuraie`).toBeLessThanOrEqual(17)
       expect(part(TERRAIN_GRASS), `seed ${seed} : herbe`).toBeGreaterThanOrEqual(33)
@@ -695,10 +719,25 @@ describe('A11/A12 — la composition des Prés Bas suit UNE variable d’ordre',
       const meleze = d.get(TERRAIN_LARCH)
       expect(humide, `seed ${seed} : pas assez de bosquet humide`).toBeDefined()
       expect(pin ?? meleze, `seed ${seed} : pas assez de conifère pour mesurer`).toBeDefined()
+      //
+      // ⚠ **LE RAPPORT PASSE DE 3 À 2,5, ET C'EST LA ROCHE-MÈRE QUI L'EXIGE** (spec
+      // `roche-mere.md` R11, qui l'annonçait comme « à éprouver »). Le second axe DÉCORRÈLE
+      // l'humidité de la distance à l'eau — c'est sa définition —, or ce rapport mesurait
+      // précisément l'ancienne corrélation, par les deux bouts à la fois : le bosquet humide
+      // s'ÉLOIGNE de l'eau (il pousse désormais sur l'argile, loin de toute rive : son étendue
+      // p10→p90 double, 92 → 179 tuiles) pendant que le conifère de crête s'en RAPPROCHE.
+      // ⚠ ET LA MARGE ÉTAIT DÉJÀ MINCE AVANT — c'est ce que la mesure a corrigé dans ma propre
+      // analyse. MESURÉ (seed 42, `vallee`) : le rapport valait **3,43 (pin) / 3,33 (mélèze)**
+      // AVANT le chantier, soit 11 % au-dessus du seuil, et non « environ 7 » comme le laissait
+      // croire la note historique de §2ter (relevée à une autre époque du worldgen). Après :
+      // **3,06 / 2,86**. La DEMANDE d'Alexis (2026-07-29, « quelques patchs de forêt loin des
+      // points d'eau ») reste tenue et se voit — près de trois fois plus loin de l'eau que le
+      // bois humide, c'est un bois sec au milieu d'un pays mouillé. C'est le CHIFFRE qui était
+      // calibré sur une carte à un seul axe, et il ne l'était que de justesse.
       for (const [nom, v] of [['pin', pin], ['mélèze', meleze]] as const) {
         if (v === undefined) continue
         expect(v, `seed ${seed} : le ${nom} doit être PLUS LOIN de l’eau que le bosquet humide`)
-          .toBeGreaterThan(humide! * 3)
+          .toBeGreaterThan(humide! * 2.5)
       }
     }
   })
@@ -888,10 +927,17 @@ describe('A19 (§2quater) — la profondeur intra-massif se dérive et se mérit
       const prof = c.map.profondeur
       expect(prof, `seed ${seed} : la carte ne porte pas son champ de profondeur`).toBeDefined()
       expect(prof!.length).toBe(width * height)
+      // ⚠ LE MASQUE EST « BOISÉ **∪ CLAIRIÈRE** » — la même définition que `deriverProfondeur`,
+      // sinon ce test mesure un autre champ que celui qu'il garde. Une clairière est une chambre
+      // DANS la masse, jamais un bord du bois : sans elle au masque, toute tuile de forêt qui
+      // touche une trouée se croirait en lisière (MESURÉ : 17 176 fautes, seed 2026), le champ
+      // se rétracterait autour de chaque clairière, et `stockDArbre`, les vieux fûts des cœurs
+      // et le tracé des coulées suivraient — en silence.
       const boise = (x: number, y: number): boolean =>
         x >= 0 && y >= 0 && x < width && y < height
         && c.zone[y * width + x] === c.graphe.racine
-        && TERRAINS_BOISES_MASSIF.includes(terrain[y * width + x]!)
+        && (TERRAINS_BOISES_MASSIF.includes(terrain[y * width + x]!)
+          || terrain[y * width + x] === TERRAIN_CLAIRIERE)
       let fautes = 0
       let premiere = ''
       let coeurs = 0

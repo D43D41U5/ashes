@@ -38,7 +38,7 @@
  * valeurs de la maquette. Une constante partagée aurait retouché les deux d'un coup.
  */
 import Phaser from 'phaser'
-import { TILE_PX } from '../../render/framing'
+import { TILE_PX, crownDepth } from '../../render/framing'
 
 /** Le canal R du masque encode min(distance, DIST_FIELD_MAX)/DIST_FIELD_MAX — tuiles. */
 export const DIST_FIELD_MAX = 15
@@ -55,7 +55,7 @@ precision mediump float;
 varying vec2 outTexCoord;
 
 uniform sampler2D uMask;   // R : distance à l'eau (0 = l'eau), en 1/15 de tuile
-uniform vec2 uWorldPx;
+uniform vec4 uQuad;        // le RECT MONDE de ce quad : origine xy, taille zw, en px
 uniform vec2 uMapTiles;
 uniform float uTilePx;
 uniform vec2 uOff1;        // dérive INTÉGRÉE des nappes (tuiles) — ∫vent·dt côté CPU, replié
@@ -71,6 +71,9 @@ uniform float uRelief;     // écartement de l'échelle d'opacité autour de son
 uniform float uJitter;     // amplitude du décalage PROPRE à chaque tuile (0 = aucun réseau visible)
 uniform float uFrange;     // amplitude (tuiles) du FROISSEMENT de la frontière — 0 = iso-distance nue
 uniform float uDebug;      // 1 = peindre la COUVERTURE en gris opaque (l'instrument, pas le jeu)
+// ── LA BRUME EST UNE NAPPE D'ÉPAISSEUR (2026-08-25) : la pile de bandes, et sa condition. ──
+uniform float uBande;      // 0 = un quad plein monde (la Combe) · 1 = une BANDE de la pile
+uniform float uPart;       // 0..1 — LA CONDITION du matin (écart jour/nuit × calme), sur l'alpha FINAL
 
 const float GRAIN = 4.0;    // le pixel de l'art : toute la brume se décide par cellule de 4 px
 const float DIST_MAX = 15.0;
@@ -143,7 +146,10 @@ void main() {
   // Le monde à l'endroit (V texture monte, ty descend). Le grain dépend du MODE : cellules de
   // 4 px (le pixel de l'art) pour les crans, coordonnée pleine pour le gradient par tuile —
   // c'est 'champTuile' qui y porte alors la structure, et elle la porte à la TUILE.
-  vec2 worldPx = vec2(outTexCoord.x, 1.0 - outTexCoord.y) * uWorldPx;
+  // Le quad n'est plus forcément le monde entier : depuis la pile de bandes, il porte SON rect
+  // monde ('uQuad'). Plein monde, 'uQuad = (0, 0, worldW, worldH)' — l'expression d'avant, au
+  // bit près.
+  vec2 worldPx = uQuad.xy + vec2(outTexCoord.x, 1.0 - outTexCoord.y) * uQuad.zw;
   vec2 tileBrut = worldPx / uTilePx;
   vec2 tile = floor(worldPx / GRAIN) * GRAIN / uTilePx;
 
@@ -231,6 +237,29 @@ void main() {
   // sinon corps et crête s'y écrasent ensemble — les crans fusionnent et le drap uniforme
   // (« toute blanche ») revient en silence. Chaque appelant justifie son couple (poids, plafond).
   float a = min(uPlafond, d * 2.2 * poids);
+  // ── LA CONDITION DU MATIN S'APPLIQUE ICI, SUR L'ALPHA FINAL, ET PAS SUR 'uDensity' ──
+  // Baisser 'uDensity' aurait été le geste évident, et il est FAUX : 'd' entre dans 'v' par
+  // 'min(1, d·2,6)·0,55', donc il ne fait pas que pâlir la nappe — il l'ÉVIDE. MESURÉ sur la
+  // formule : à part 0,4, 'v' plafonne à 0,587, le cran de CRÊTE (0,72) n'est jamais atteint
+  // et 29 % du champ passe sous le 'discard' — on n'aurait pas une brume plus légère, on
+  // aurait une AUTRE brume, avec sa frange mangée et sa calibration ('CRANS_MAREE', mesurée
+  // au smoke 'blancheur') hors de ses gonds. Multiplier APRÈS le rail préserve les trois
+  // crans et leurs écarts : la nappe pâlit sans changer de texture, et « on disperse
+  // proprement » veut dire exactement ça.
+  a *= clamp(uPart, 0.0, 1.0);
+  // ── L'ÉCUME DE LA PILE (patron 'meteo-layer.ts', même raison, même preuve) ──
+  // Les bandes se chevauchent de moitié et chacune porte une rampe TRIANGULAIRE (nulle à ses
+  // bords, pleine au milieu). Deux triangles décalés d'une demi-longueur SOMMENT À UNE
+  // CONSTANTE (fenêtre de Bartlett), donc le SOL — couvert par deux bandes en tout point —
+  // garde une opacité rigoureusement uniforme, tandis que le haut d'une cime émergée, couvert
+  // par UNE seule bande, reçoit la rampe nue et se fond sur 'bandePx' pixels. On compose en
+  // TRANSMITTANCE (jamais en alpha) : c'est la seule composition où deux couches empilées
+  // rendent exactement 'a' — additionner ferait lire le chevauchement en rayures.
+  if (uBande > 0.5) {
+    float pv = clamp((worldPx.y - uQuad.y) / max(1.0, uQuad.w), 0.0, 1.0);
+    float ecume = 1.0 - abs(2.0 * pv - 1.0);
+    a = 1.0 - pow(1.0 - clamp(a, 0.0, 1.0), ecume);
+  }
   // PRÉMULTIPLIÉ — le contrat du pipeline Phaser (prouvé dans la source : le blend NORMAL
   // du Shader GO est ONE, ONE_MINUS_SRC_ALPHA). Non prémultiplié = le mur blanc d'origine.
   gl_FragColor = vec4(teinte * a, a);
@@ -255,6 +284,54 @@ export interface ReglageCrans {
 
 const CRANS_MAQUETTE: ReglageCrans = { poids: [0.34, 0.66, 0.9], plafond: 0.72 }
 
+/**
+ * ═══ LA NAPPE : CE QUI DONNE UNE ÉPAISSEUR À LA BRUME (2026-08-25) ═══
+ *
+ * Une brume peinte sur UN quad ne peut être qu'AU-DESSUS ou AU-DESSOUS de ce qu'elle traverse :
+ * au-dessus, elle coiffe le monde comme un film (c'est ce que la marée du matin faisait depuis
+ * juillet) ; au-dessous, elle laisse tous les sprites ENTIERS. Ni l'un ni l'autre n'est du
+ * brouillard. Pour qu'un arbre soit **dedans** et non **dessus**, il faut couper les silhouettes
+ * à une HAUTEUR — et le tri Y sait déjà le faire, exactement :
+ *
+ *   Un sprite dont les pieds sont à la ligne monde `F` peint les lignes `[F − haut, F]`, donc
+ *   son pixel de la ligne `r` est à la hauteur `F − r` au-dessus du sol. Une bande qui couvre
+ *   la ligne `r`, dessinée à la profondeur d'un sprite dont les pieds seraient `H` plus bas,
+ *   recouvre exactement les sprites tels que `F ≤ r + H` — c'est-à-dire exactement les pixels
+ *   dont la hauteur ne dépasse pas `H`. Empiler ces bandes, c'est une nappe d'épaisseur `H`.
+ *
+ * La pile vit dans la bande des HOUPPIERS (`crownDepth`), pas dans la bande de tri Y : un arbre
+ * est peint en deux sprites, le fût dans le tri Y et la cime à `CROWN_BASE` (900 000, au-dessus
+ * de tous les acteurs). Une nappe glissée sous les acteurs ne mordrait donc JAMAIS une cime —
+ * la mesure du scénario `brouillardsol` l'avait relevé sur le brouillard météo : coupe à 20 px
+ * au lieu de 51,3, soit pile la hauteur où le fût cède la place au houppier.
+ *
+ * ⚠ CE QUE ÇA EMPORTE, et c'est la même exclusion mutuelle que pour le brouillard météo : une
+ * bande recouvre TOUT ce qui passe sous elle — fûts, acteurs, murs, et les TOITS
+ * (`ROOF_DEPTH` = 800 000, sous les houppiers), qui sont donc avalés entiers. Avec un algorithme
+ * du peintre, on ne peut donner une hauteur qu'à UNE bande de profondeur à la fois.
+ */
+export interface ReglageNappe {
+  /** L'ÉPAISSEUR de la nappe, en pixels monde — jusqu'où elle mange les silhouettes. */
+  hauteur: number
+  /** Le PAS de la pile, en pixels monde. Il porte DEUX choses : l'épaisseur du FONDU au bas
+   *  d'une cime émergée (le dégradé court sur `bandePx`), et la précision de la coupe (au
+   *  `bandePx / 2` près). Les quads font `2 × bandePx` — c'est le chevauchement de moitié que
+   *  l'écume exige. */
+  bandePx: number
+}
+
+/** Plafond du nombre de bandes vivantes — il borne la mémoire ET le coût. Sous ce plafond, un
+ *  `bandePx` trop fin ÉLARGIT les bandes au lieu d'en créer mille. */
+const BANDES_MAX = 48
+
+/** Départage d'une bande contre un houppier de MÊMES pieds : la bande passe après, donc elle
+ *  l'avale. Les houppiers n'ont pas de `TIE_*` — ils ne se trient que sur leurs pieds. */
+const TIE_NAPPE = 0.5
+
+/** La profondeur d'une bande AVANT sa première pose : `posterLesBandes` la recalcule à chaque
+ *  image, et une bande jamais posée reste invisible. */
+const BANDE_DEPTH_INITIALE = 900_000
+
 export class MistLayer {
   /** LU À CHAQUE FRAME, donc réglable À CHAUD : le smoke `blancheur` balaie des candidats sur
    *  une seule scène (même monde, même heure, même caméra) et les MESURE contre le même monde
@@ -270,8 +347,15 @@ export class MistLayer {
   frange = 0
   /** Instrument seulement : 1 peint la couverture en gris opaque. Jamais armé en jeu. */
   debug = 0
-  private shader: Phaser.GameObjects.Shader | null = null
+  /** LA PILE — une entrée par bande en mode nappe, un seul quad plein monde sinon. */
+  private shaders: Phaser.GameObjects.Shader[] = []
+  /** Le rect MONDE de chaque quad (`uQuad`), muté en place : les fermetures d'uniformes le
+   *  lisent à chaque image, comme `crans`. */
+  private quads: { x: number; y: number; w: number; h: number }[] = []
+  private readonly nappe: ReglageNappe | null
+  private bandesVives = 0
   private density = 0
+  private part = 1
   private front = 0
   private day = 1
   private wind = { x: 0.28, y: 0.1 }
@@ -288,49 +372,122 @@ export class MistLayer {
     height: number,
     depth: number,
     crans: ReglageCrans = CRANS_MAQUETTE,
+    /** Posé → la brume est une NAPPE D'ÉPAISSEUR (pile de bandes dans la bande des houppiers).
+     *  Absent → un quad plein monde à `depth`, le rendu d'avant au bit près (la Combe). */
+    nappe: ReglageNappe | null = null,
   ) {
     this.crans = crans
+    this.nappe = nappe
     const worldW = width * TILE_PX
     const worldH = height * TILE_PX
-    this.shader = scene.add
-      .shader(
-        {
-          name: `braises-mist-${maskKey}`,
-          fragmentSource: FRAGMENT,
-          setupUniforms: (setUniform: (name: string, value: unknown) => void) => {
-            setUniform('uMask', 0)
-            setUniform('uWorldPx', [worldW, worldH])
-            setUniform('uMapTiles', [width, height])
-            setUniform('uTilePx', TILE_PX)
-            setUniform('uOff1', [this.off1.x, this.off1.y])
-            setUniform('uOff2', [this.off2.x, this.off2.y])
-            setUniform('uDensity', this.density)
-            setUniform('uFront', this.front)
-            setUniform('uDay', this.day)
-            setUniform('uPoids', this.crans.poids)
-            setUniform('uPlafond', this.crans.plafond)
-            setUniform('uMode', this.mode)
-            setUniform('uRelief', this.relief)
-            setUniform('uJitter', this.jitter)
-            setUniform('uFrange', this.frange)
-            setUniform('uDebug', this.debug)
+    const combien = nappe ? BANDES_MAX : 1
+    for (let i = 0; i < combien; i++) {
+      // Plein monde : le quad EST la carte, donc `uQuad` reproduit l'expression d'avant. En
+      // bandes, `posterLesBandes` réécrit ce rect à chaque image.
+      this.quads.push(nappe ? { x: 0, y: 0, w: TILE_PX, h: TILE_PX } : { x: 0, y: 0, w: worldW, h: worldH })
+      const q = this.quads[i]!
+      const sh = scene.add
+        .shader(
+          {
+            name: nappe ? `braises-mist-nappe-${maskKey}` : `braises-mist-${maskKey}`,
+            fragmentSource: FRAGMENT,
+            setupUniforms: (setUniform: (name: string, value: unknown) => void) => {
+              setUniform('uMask', 0)
+              setUniform('uQuad', [q.x, q.y, q.w, q.h])
+              setUniform('uMapTiles', [width, height])
+              setUniform('uTilePx', TILE_PX)
+              setUniform('uOff1', [this.off1.x, this.off1.y])
+              setUniform('uOff2', [this.off2.x, this.off2.y])
+              setUniform('uDensity', this.density)
+              setUniform('uFront', this.front)
+              setUniform('uDay', this.day)
+              setUniform('uPoids', this.crans.poids)
+              setUniform('uPlafond', this.crans.plafond)
+              setUniform('uMode', this.mode)
+              setUniform('uRelief', this.relief)
+              setUniform('uJitter', this.jitter)
+              setUniform('uFrange', this.frange)
+              setUniform('uDebug', this.debug)
+              setUniform('uBande', nappe ? 1 : 0)
+              setUniform('uPart', this.part)
+            },
           },
-        },
-        0,
-        0,
-        worldW,
-        worldH,
-        [maskKey],
-      )
-      .setOrigin(0, 0)
-      .setDepth(depth)
+          q.x,
+          q.y,
+          q.w,
+          q.h,
+          [maskKey],
+        )
+        .setOrigin(0, 0)
+        .setDepth(nappe ? BANDE_DEPTH_INITIALE : depth)
+      if (nappe) sh.setVisible(false)
+      this.shaders.push(sh)
+    }
+  }
+
+  /** LE QUAD DE TÊTE — ce que les sondes du smoke lisent (`maree`, `blancheur`). En mode
+   *  nappe c'est la première bande : sa visibilité est celle de toute la pile. */
+  get shader(): Phaser.GameObjects.Shader | null {
+    return this.shaders[0] ?? null
+  }
+
+  /**
+   * LA PILE, POSÉE SUR LA VUE — bandes ANCRÉES AU MONDE (`floor(vue.y / bande) × bande`) et non
+   * au bord de la caméra : ancrées à la caméra, elles glisseraient d'un pixel à chaque pas et la
+   * hauteur de coupe de chaque arbre TREMBLERAIT pendant qu'on marche.
+   */
+  private posterLesBandes(camera: Phaser.Cameras.Scene2D.Camera): void {
+    const nappe = this.nappe!
+    const vue = camera.worldView
+    // Le `bandePx` demandé peut être plus fin que ce que le plafond permet : on l'ÉLARGIT
+    // alors, plutôt que de tronquer la pile et de laisser le bas de l'écran sans brume.
+    const bande = Math.max(nappe.bandePx, Math.ceil(vue.height / (BANDES_MAX - 3)))
+    const y0 = Math.floor(vue.y / bande) * bande
+    // TROIS BANDES DE MARGE : chaque ligne doit être couverte par DEUX bandes pour que la somme
+    // des triangles de l'écume soit constante. Les rangs 0 et n−1 ont leur moitié non appariée
+    // hors cadre.
+    const n = Math.min(BANDES_MAX, Math.ceil(vue.height / bande) + 3)
+    const marge = TILE_PX * 2
+    for (let i = 0; i < n; i++) {
+      const haut = y0 + (i - 1) * bande
+      const q = this.quads[i]!
+      q.x = vue.x - marge
+      q.y = haut
+      q.w = vue.width + marge * 2
+      q.h = bande * 2 // le double du pas : c'est ce qui fait le chevauchement de moitié
+      const sh = this.shaders[i]!
+      sh.setPosition(q.x, q.y).setDisplaySize(q.w, q.h)
+      // LA COUPE EST CENTRÉE SUR `hauteur`, PAS POSÉE À SON PIED : le seuil se réfère au QUART
+      // haut du quad (`haut + bande / 2`), si bien que le fondu de l'écume court de
+      // `hauteur − bandePx / 2` à `hauteur + bandePx / 2` — sa médiane reste `hauteur`.
+      const milieu = haut + bande / 2
+      sh.setDepth(crownDepth((milieu + nappe.hauteur) / TILE_PX, TILE_PX) + TIE_NAPPE)
+      sh.setVisible(true)
+    }
+    for (let i = n; i < this.bandesVives; i++) this.shaders[i]!.setVisible(false)
+    this.bandesVives = n
+  }
+
+  private eteindreLesBandes(): void {
+    for (let i = 0; i < this.bandesVives; i++) this.shaders[i]!.setVisible(false)
+    this.bandesVives = 0
   }
 
   /** Chaque frame : le vent fait dériver les nappes par INTÉGRATION (off += vent·dt, replié
    *  modulo la période exacte du bruit — sans couture, coordonnées bornées ~1 600 tuiles :
    *  la précision fp32 et le hash tiennent sur une session illimitée), la marée et la
    *  densité viennent de l'appelant, le jour (daylight) décide de la teinte. */
-  update(nowMs: number, density: number, front: number, wind?: { x: number; y: number }, day = 1): void {
+  update(
+    nowMs: number,
+    density: number,
+    front: number,
+    wind?: { x: number; y: number },
+    day = 1,
+    /** LA CONDITION du matin (0..1) — appliquée à l'alpha FINAL par le fragment. */
+    part = 1,
+    /** Requise en mode NAPPE : la pile se pose sur la vue. */
+    camera?: Phaser.Cameras.Scene2D.Camera,
+  ): void {
     // dt borné : une frame hoquetée (onglet en arrière-plan) ne téléporte pas le champ.
     const dt = this.lastMs === null ? 0 : Math.min(0.25, Math.max(0, (nowMs - this.lastMs) / 1000))
     this.lastMs = nowMs
@@ -345,12 +502,23 @@ export class MistLayer {
     this.density = density
     this.front = front
     this.day = day
-    this.shader?.setVisible(density > 0.003)
+    this.part = part
+    // LA CONDITION ÉTEINT LA COUCHE, elle ne la laisse pas tourner à vide : un matin sans brume
+    // ne doit pas coûter une passe de fragments pour un alpha nul.
+    const vivante = density * part > 0.003
+    if (!this.nappe) {
+      this.shader?.setVisible(vivante)
+      return
+    }
+    if (vivante && camera) this.posterLesBandes(camera)
+    else this.eteindreLesBandes()
   }
 
   destroy(): void {
-    this.shader?.destroy()
-    this.shader = null
+    for (const sh of this.shaders) sh.destroy()
+    this.shaders = []
+    this.quads = []
+    this.bandesVives = 0
   }
 }
 

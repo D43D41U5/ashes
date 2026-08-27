@@ -191,3 +191,33 @@ export function registerLit(scene: Phaser.Scene, key: string, albedo: HTMLCanvas
   const tex = scene.textures.addCanvas(key, albedo)
   tex?.setDataSource(normal)
 }
+
+/**
+ * EMBALLE UN CHAMP DE NORMALES ÉCRIT À LA MAIN (socle minéral) — même encodage que
+ * `normalFromCanvas`, et c'est tout l'intérêt de le sortir ici : `enc` et `FLIP_G` ne sont
+ * appliqués qu'à UN endroit. Un module qui referait « 128 + v × 127 » de son côté finirait par
+ * diverger de la convention du shader, et l'erreur serait plausible à l'œil (une face claire,
+ * une face sombre) tout en étant inversée.
+ *
+ * `field` est entrelacé (nx, ny, nz), dans le repère de l'écran, **y vers le BAS** — comme le
+ * gradient de `normalFromCanvas`. `alpha` décide de ce qui est matière ; le vide reçoit la
+ * normale plate, jamais une valeur non initialisée.
+ */
+export function packNormals(field: Float32Array, alpha: Uint8Array, w: number, h: number): HTMLCanvasElement {
+  const out = newCanvas(w, h)
+  const d = out.ctx.createImageData(w, h)
+  for (let i = 0; i < w * h; i++) {
+    const o = i * 4
+    if (!alpha[i]) {
+      d.data[o] = enc(0); d.data[o + 1] = enc(0); d.data[o + 2] = enc(1); d.data[o + 3] = 255
+      continue
+    }
+    const nx = field[i * 3]!, ny = field[i * 3 + 1]!, nz = field[i * 3 + 2]!
+    d.data[o] = enc(nx)
+    d.data[o + 1] = enc(FLIP_G ? -ny : ny)
+    d.data[o + 2] = enc(nz)
+    d.data[o + 3] = 255
+  }
+  out.ctx.putImageData(d, 0, 0)
+  return out.c
+}

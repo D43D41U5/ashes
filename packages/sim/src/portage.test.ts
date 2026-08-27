@@ -122,6 +122,10 @@ describe('on n’est JAMAIS bloqué (A5)', () => {
     const sim = simAvec([arbre])
     const id = spawnEntity(sim, 10.3, 10.5)
     grantItems(sim, id, { stone: 100 }) // 200 de charge = 333 %
+    // La hache EN MAIN (spec `glanage.md` G1) : ce test éprouve la CHARGE, pas le verrou
+    // d'outil — sans elle, le refus qui tomberait ne serait pas celui qu'on mesure.
+    grantItems(sim, id, { crude_axe: 1 })
+    me(sim).activeSlot = me(sim).inventory.findIndex((sl) => sl !== null && sl.item === 'crude_axe')
     expect(carryRatio(me(sim).inventory)).toBeGreaterThan(3)
     const avant = countOf(me(sim).inventory, 'wood')
     drainEvents(sim)
@@ -129,7 +133,7 @@ describe('on n’est JAMAIS bloqué (A5)', () => {
     step(sim, [{ entityId: id, dx: 0, dy: 0, action: { type: 'harvest', nodeId: arbre.id } }])
 
     // Le coup PORTE : la sim n'a aucun refus « trop lourd », et n'en aura jamais.
-    expect(countOf(me(sim).inventory, 'wood')).toBe(avant + 1)
+    expect(countOf(me(sim).inventory, 'wood')).toBe(avant + 2) // le hachereau rend ×2
     const refus = drainEvents(sim).flatMap((e) => (e.type === 'action_rejected' ? [e.reason] : []))
     expect(refus).toEqual([])
   })

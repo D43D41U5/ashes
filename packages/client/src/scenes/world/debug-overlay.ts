@@ -14,7 +14,8 @@ import type Phaser from 'phaser'
 import { getHud, setHud } from '../../hud-state'
 
 const AIDE_CARTE = 'molette : zoom · glisser : déplacer · M : fermer'
-const AIDE_CARTE_DEBUG = 'clic : TÉLÉPORTER · molette : zoom · glisser : déplacer · M : fermer'
+const AIDE_CARTE_DEBUG =
+  'clic : TÉLÉPORTER · carte ENTIÈRE · molette : zoom · glisser : déplacer · M : fermer'
 
 export function createDebugOverlay(scene: Phaser.Scene, style: Phaser.Types.GameObjects.Text.TextStyle, depth: number): Phaser.GameObjects.Text {
   // Sous les barres PV/endurance, à droite : le seul coin libre (le bas porte
@@ -52,7 +53,7 @@ export function renderDebugOverlay(
       hover
         ? `curseur [${hover.tx} ${hover.ty}] ${hover.terrain} · ${hover.zone}`
         : 'curseur hors carte',
-      'carte (M) : clic pour se téléporter',
+      'carte (M) : brouillard levé (affichage seul) · clic pour se téléporter',
     ]
       .filter(Boolean)
       .join('\n'),

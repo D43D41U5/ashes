@@ -1,7 +1,8 @@
 import { describe, expect, it } from 'vitest'
-import { VENT, type GameTime } from '@ashes/sim'
+import { TICKS_PER_CYCLE, VENT, YEAR_DAYS, dayTicksPourJour, leverPourJour, type GameTime } from '@ashes/sim'
 import {
   BARRE_ALPHA_MIN,
+  cielDuJour,
   BARRE_SOL_ARRETS,
   BARRE_SOL_ENCRE,
   LIEU_GRACE_MS,
@@ -21,6 +22,7 @@ function temps(p: Partial<GameTime> = {}): GameTime {
     isNight: false,
     nuit: 0,
     dayTicks: 0,
+    lever: 6,
     seasonDay: 52,
     jourFrac: 0,
     act: 2,
@@ -360,3 +362,55 @@ describe('le cadran du vent (V10)', () => {
   })
 })
 
+/**
+ * ═══ LE RUBAN DU CIEL NE S'EFFONDRE PAS (2026-08-26) ═══
+ *
+ * Le dégradé pose l'ambiance du monde sur une règle en heures MURALES, et le jour suit la
+ * saison (`saisons.md` S6). La première forme convertissait chaque keyframe vers son heure
+ * murale et les posait dans l'ordre de la table : dès que la journée raccourcit, la liste
+ * cesse de croître (MESURÉ au jour 105 : 90,3 % · 19,2 % · 25,0 % …) — et **CSS comme SVG
+ * rabattent tout stop sur le plus grand qui précède**, si bien que le ruban devenait une
+ * bande de nuit plate, sur toute la moitié sombre de l'année, sans une erreur.
+ *
+ * ⚠ CE QUI FERAIT ROUGIR CES GARDES, dit avant d'accepter le vert : des arrêts qui reculent,
+ * ou un ruban où le point le plus CLAIR ne tombe plus dans le jour de la sim — ce qui est
+ * exactement l'état d'un dégradé effondré. Éprouvé en remettant la conversion par keyframe :
+ * les deux rougissent dès le jour 76, et restent vertes aux jours d'été.
+ */
+describe('le ruban du ciel suit la saison', () => {
+  /** Les arrêts du dégradé, en pour-cent, dans l'ordre où ils sont émis. */
+  const arrets = (css: string): number[] =>
+    [...css.matchAll(/([\d.]+)%/g)].map((m) => Number(m[1]))
+  /** La luminance de chaque arrêt — le ruban est peint sur un sol unique, donc c'est un profil. */
+  const clartes = (css: string): number[] =>
+    [...css.matchAll(/rgb\((\d+),(\d+),(\d+)\)/g)].map((m) => Number(m[1]) + Number(m[2]) + Number(m[3]))
+
+  it('ses arrêts CROISSENT, tous les jours de l’année', () => {
+    for (let jour = 1; jour <= YEAR_DAYS; jour++) {
+      const xs = arrets(cielDuJour(dayTicksPourJour(jour), leverPourJour(jour)))
+      expect(xs.length, `jour ${jour}`).toBeGreaterThan(24)
+      for (let i = 1; i < xs.length; i++) {
+        expect(xs[i], `jour ${jour}, arrêt ${i}`).toBeGreaterThan(xs[i - 1]!)
+      }
+    }
+  })
+
+  it('son point le plus CLAIR tombe dans le jour de la sim, le plus SOMBRE dans sa nuit', () => {
+    // La propriété que l'effondrement rompait : un ruban rabattu sur une bande de nuit a son
+    // maximum n'importe où. On la vérifie sur l'année entière, contre la bascule de la sim.
+    for (let jour = 1; jour <= YEAR_DAYS; jour++) {
+      const dt = dayTicksPourJour(jour)
+      const aube = leverPourJour(jour)
+      const css = cielDuJour(dt, aube)
+      const xs = arrets(css)
+      const l = clartes(css)
+      // L'heure MURALE où la sim bascule en nuit, en pour-cent de la règle du ruban.
+      const crepuscule = ((aube + 24 * (dt / TICKS_PER_CYCLE)) / 24) * 100
+      const clair = xs[l.indexOf(Math.max(...l))]!
+      const sombre = xs[l.indexOf(Math.min(...l))]!
+      expect(clair, `le plus clair, jour ${jour}`).toBeGreaterThan((aube / 24) * 100)
+      expect(clair, `le plus clair, jour ${jour}`).toBeLessThan(crepuscule)
+      expect(sombre >= crepuscule || sombre <= (aube / 24) * 100, `le plus sombre, jour ${jour} (${sombre}%)`).toBe(true)
+    }
+  })
+})

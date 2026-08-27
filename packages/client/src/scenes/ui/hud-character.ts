@@ -52,6 +52,7 @@ import { coutJetons, craftRows, etatRecette, fonctionsAbsentes, type CraftRow } 
 import { dragIntentFrom, dragToAction, quickMoveToAction } from './inventory-panel'
 import {
   cartesDesSaisons,
+  carnetComplet,
   railDeLEncyclopedie,
   rangeesDeSection,
   type CarnetsDuJoueur,
@@ -60,6 +61,8 @@ import {
   type FicheEncyclo,
   type SectionId,
 } from './encyclopedie'
+import { astreUrl } from './astres'
+import { HEX } from './palette'
 import { SKILL_LABELS } from './skill-labels'
 import { skillGuides, type SkillGuide } from './skill-guide'
 
@@ -288,6 +291,29 @@ export function createHudCharacter(
    *  ne la persiste : on rouvre l'encyclopédie sur les ressources, comme un livre à la page 1. */
   let encSection: SectionId = 'ressources'
 
+  /**
+   * LE DÉVERROUILLAGE DE RELECTURE (DEV uniquement, 2026-08-25) — un interrupteur au pied du
+   * rail qui remplace le carnet de l'avatar par un carnet COMPLET (`carnetComplet`), le temps
+   * de relire les fiches. Il ne touche pas à la sauvegarde : le carnet du snapshot est intact,
+   * on l'éteint et l'écran redit exactement ce que ce joueur a rencontré.
+   *
+   * Il PERSISTE (`localStorage`) parce qu'une séance de relecture recharge la page vingt fois,
+   * et qu'un interrupteur qu'il faut rarmer à chaque rechargement ne sert personne. La clé est
+   * en `braises.` comme toutes les adresses de ce projet (voir l'en-tête de CLAUDE.md).
+   *
+   * `import.meta.env.DEV` : Rollup élimine la branche du bundle de production, comme pour le
+   * panneau debug — un joueur n'a pas d'interrupteur qui lui raconte le jeu qu'il n'a pas joué.
+   */
+  const CLE_ENC_TOUT = 'braises.dev.encyclo-tout'
+  let encTout = false
+  if (import.meta.env.DEV) {
+    try {
+      encTout = localStorage.getItem(CLE_ENC_TOUT) === '1'
+    } catch {
+      encTout = false
+    }
+  }
+
   /** L'URL d'une texture quelconque (une effigie de bête n'est pas une icône d'objet). */
   const texUrl = (key: string): string => {
     let u = urls.get(key)
@@ -441,9 +467,12 @@ export function createHudCharacter(
     if (s.phase !== null) {
       const temps = document.createElement('div')
       temps.className = 'hch-sc-t'
+      // LE PLUS FROID à gauche, LE PLUS CHAUD à droite — les relevés de CE joueur (décision
+      // d'Alexis, 2026-08-25). Les classes gardent leurs noms : `nuit` peint le froid, `jour`
+      // le chaud, et c'est exactement la teinte qu'on veut sous chacun.
       for (const [cls, lbl, v] of [
-        ['hch-sc-jour', 'JOUR', s.jour],
-        ['hch-sc-nuit', 'NUIT', s.nuit],
+        ['hch-sc-nuit', 'LE PLUS FROID', s.froid],
+        ['hch-sc-jour', 'LE PLUS CHAUD', s.chaud],
       ] as const) {
         const sp = document.createElement('span')
         sp.className = cls
@@ -454,15 +483,35 @@ export function createHudCharacter(
         sp.append(i, b)
         temps.append(sp)
       }
+      // LA BARRE COMMENCE À MINUIT (décision d'Alexis, 2026-08-27) — donc TROIS segments et
+      // non deux : la nuit d'avant l'aube, le jour, la nuit d'après le crépuscule. Le jour
+      // n'est plus un ruban calé à gauche, il occupe sa place dans la journée, et l'on voit
+      // d'un coup d'œil que l'hiver le pousse tard ET le reprend tôt.
+      //   Aucun repli pour un jour qui enjamberait minuit : à 48,86 N la bande tient toujours
+      // dans un cycle (04h45 → 20h56 au plus large). Et la nuit d'après se DÉDUIT des deux
+      // autres, pour que les trois largeurs fassent exactement 100 sous `display:flex`.
       const barre = document.createElement('div')
       barre.className = 'hch-sc-bar'
-      const jour = document.createElement('i')
-      jour.className = 'is-jour'
-      jour.style.width = `${s.partJour}%`
-      const nuit = document.createElement('i')
-      nuit.className = 'is-nuit'
-      nuit.style.width = `${100 - s.partJour}%`
-      barre.append(jour, nuit)
+      //   LES ASTRES SONT CEUX DE LA BARRE HAUTE (`astres.ts`, à la demande d'Alexis) — le
+      // même trait, une seule écriture. Seule la TEINTE change, et c'est le fond qui la
+      // dicte : la braise du soleil de la barre haute (`emberBright`) disparaîtrait dans la
+      // bande d'or, sur laquelle elle ne pèse que 1,8:1. Sur l'or, l'astre est donc ce qu'il y
+      // a de plus clair (blanc, 2,9:1) ; sur l'ardoise, la lune est en encre vive (7,4:1).
+      //   PEINTS EN FOND, PAS INSÉRÉS : un fond se DÉCOUPE au bord de son segment. Une image
+      // enfant déborderait sur la bande voisine dès qu'un segment devient plus étroit qu'elle
+      // — la nuit d'après le crépuscule de l'Ardeur ne fait que 12,8 % du cadran, et c'est la
+      // plus mince de l'année.
+      for (const [cls, w, astre, teinte] of [
+        ['is-nuit', s.lever, 'lune', HEX.bodyBright],
+        ['is-jour', s.coucher - s.lever, 'soleil', HEX.title],
+        ['is-nuit', 100 - s.coucher, 'lune', HEX.bodyBright],
+      ] as const) {
+        const seg = document.createElement('i')
+        seg.className = cls
+        seg.style.width = `${w}%`
+        seg.style.backgroundImage = `url("${astreUrl(astre, teinte, 1.6)}")`
+        barre.append(seg)
+      }
       const vecue = document.createElement('div')
       vecue.className = 'hch-sc-v'
       vecue.textContent = s.vecue
@@ -507,6 +556,29 @@ export function createHudCharacter(
         sep.className = 'hch-enc-sep'
         rail.push(sep)
       }
+    }
+    // ── L'INTERRUPTEUR DE RELECTURE (DEV) — au pied du rail, sous un filet : il ne fait pas
+    //    partie du livre, il en ouvre toutes les pages. Absent du bundle de production.
+    if (import.meta.env.DEV) {
+      const sep = document.createElement('div')
+      sep.className = 'hch-enc-sep'
+      const li = document.createElement('div')
+      li.className = `hch-enc-rl hch-enc-dev hud-click${encTout ? ' is-on' : ''}`
+      const nom = document.createElement('span')
+      nom.textContent = 'TOUT RÉVÉLER'
+      const etat = document.createElement('em')
+      etat.textContent = encTout ? 'dev · on' : 'dev · off'
+      li.append(nom, etat)
+      li.addEventListener('click', () => {
+        encTout = !encTout
+        try {
+          localStorage.setItem(CLE_ENC_TOUT, encTout ? '1' : '0')
+        } catch {
+          // un navigateur qui refuse le stockage garde quand même l'interrupteur de la séance
+        }
+        encSig = ' ' // le carnet affiché change : on force le rebâti au prochain passage
+      })
+      rail.push(sep, li)
     }
     encRail.replaceChildren(...rail)
 
@@ -827,7 +899,14 @@ export function createHudCharacter(
       paintMet(s.skills)
       // L'encyclopédie ne se repeint QUE quand on la regarde : elle bâtit une grille entière
       // plus ses fiches, et l'écran se met à jour à chaque image tant qu'il est ouvert.
-      if (activeTab === 'encyclopedie') paintEncyclopedie({ encyclo: s.carnetEncyclo, peche: s.pecheCarnet })
+      // LE CARNET AFFICHÉ — celui de l'avatar, ou le carnet complet quand la relecture est
+      // armée (DEV). C'est une SUBSTITUTION : les fabriques de cases ne savent rien du levier,
+      // et le mémo de `paintEncyclopedie` voit un carnet différent, donc il repeint.
+      if (activeTab === 'encyclopedie') {
+        paintEncyclopedie(
+          import.meta.env.DEV && encTout ? carnetComplet() : { encyclo: s.carnetEncyclo, peche: s.pecheCarnet },
+        )
+      }
 
       for (let i = 0; i < bagCells.length; i++) paintCell(bagCells[i]!, inv[BAG_LO + i] ?? null, false)
       for (let i = 0; i < beltCells.length; i++) paintCell(beltCells[i]!, inv[i] ?? null, i === activeSlot)
@@ -1029,6 +1108,10 @@ function markup(): string {
     .hch-enc-rl.is-on{color:#f4ecd2;background:#1b1b22;border-left-color:#c98b3a;}
     .hch-enc-rl.is-on em{color:#c98b3a;}
     .hch-enc-sep{height:1px;background:#22222a;margin:7px 10px;}
+    /* L'interrupteur de relecture (DEV) : il se voit comme un outil, pas comme une section. */
+    .hch-enc-dev{color:#6b5f50;font-size:11px;letter-spacing:.06em;}
+    .hch-enc-dev.is-on{color:#8fb0bc;background:#141a1d;border-left-color:#8fb0bc;}
+    .hch-enc-dev.is-on em{color:#8fb0bc;}
     .hch-enc-body{flex:1;min-width:0;display:flex;flex-direction:column;gap:10px;}
     .hch-brangee{display:flex;flex-direction:column;flex:1;min-height:0;}
     .hch-brang{display:flex;align-items:baseline;gap:12px;margin-bottom:6px;}
@@ -1039,8 +1122,18 @@ function markup(): string {
 
     /* LA CASE. L'effigie est celle du SAC pour un objet, celle du MONDE pour une bête —
        la même image qu'en jeu, pour qu'une rencontre se reconnaisse. */
+    /* ⚠ max-height:max-content — UNE CASE NE S'ÉTIRE PAS EN HAUTEUR NON PLUS (2026-08-25).
+       La rangée prend son tiers du cadre (décision du 2026-08-24), mais la CASE, elle, s'arrête
+       à ce que son contenu demande. Sans ce plafond, une section d'UNE seule rangée (MONSTRES)
+       donnait une case de 560 px de haut — et sa fiche, qui s'ouvre DESSOUS (le côté est décidé
+       au rang : fl-y à partir de la deuxième rangée), tombait 117 px sous le bord de l'écran :
+       MESURÉ, la seule des 80 fiches du livre à déborder. Le plafond vaut max-content et non un
+       nombre : il suit ce que la case contient — cadre, nom, chiffre — donc l'art et la typo
+       peuvent bouger sans qu'on le recalibre.
+       (Un backtick dans ce commentaire casserait le template literal : mémoire vécue.) */
     .hch-bc{position:relative;background:#1b1b22;border:2px solid #2a2a34;padding:9px 6px 7px;
-      display:flex;flex-direction:column;align-items:center;justify-content:center;gap:2px;cursor:default;}
+      display:flex;flex-direction:column;align-items:center;justify-content:center;gap:2px;cursor:default;
+      max-height:max-content;}
     .hch-bc:hover{border-color:#6b5a3a;background:#211c17;z-index:30;}
     .hch-bc-cadre{position:relative;width:112px;height:112px;flex:0 0 auto;background:#14100c;border:2px solid #22222a;
       display:grid;place-items:center;margin-bottom:6px;}
@@ -1082,10 +1175,15 @@ function markup(): string {
     .hch-sc-t b{font-size:20px;font-weight:700;line-height:1;}
     .hch-sc-jour b{color:#c98b3a;}
     .hch-sc-nuit b{color:#6f93a0;}
-    .hch-sc-bar{width:100%;height:6px;background:#2a2a34;margin-top:22px;display:flex;}
-    .hch-sc-bar i{display:block;height:100%;}
-    .hch-sc-bar i.is-jour{background:#c98b3a;}
-    .hch-sc-bar i.is-nuit{background:#3b4a52;}
+    /* LE CADRAN JOUR/NUIT — assez HAUT pour porter ses astres (2026-08-27, à la demande
+       d'Alexis). ⚠ background-color et non le raccourci background : les segments posent leur
+       soleil ou leur lune en background-image, et le raccourci l'effacerait. Et pas de
+       image-rendering:pixelated : les astres sont des TRAITS SVG, pas de l'art 16 px. */
+    .hch-sc-bar{width:100%;height:24px;background:#2a2a34;margin-top:18px;display:flex;}
+    .hch-sc-bar i{display:block;height:100%;background-repeat:no-repeat;background-position:center;
+                  background-size:20px 20px;}
+    .hch-sc-bar i.is-jour{background-color:#c98b3a;}
+    .hch-sc-bar i.is-nuit{background-color:#3b4a52;}
     .hch-sc-v{font-size:12px;color:#8b8474;margin-top:12px;letter-spacing:.06em;}
 
     /* LA FICHE au survol — TRAVERSANTE (pointer-events:none) : posée sous le curseur elle

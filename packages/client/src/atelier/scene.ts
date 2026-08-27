@@ -31,6 +31,7 @@ import { getGameTime, VENT } from '@ashes/sim'
 import type { SimState, SnapshotMessage } from '@ashes/sim'
 import { SnapshotView } from '../scenes/world/snapshot-view'
 import { DynamicLighting } from '../scenes/world/dynamic-lighting'
+import { heureCanonique } from '../render/lighting'
 import { createContactShadow } from '../scenes/world/contact-shadow'
 import { poiTextureKey } from '../scenes/world/poi-art'
 import { erratiqueVariantFor, litErratiqueKey, POI_LIT_KINDS, poiLitKey } from '../render/poi-lit'
@@ -343,7 +344,7 @@ export class AtelierScene extends Phaser.Scene {
   override update(time: number): void {
     if (!this.courant) return
     // Le soleil du jeu, à l'heure du curseur — c'est LUI qui fait vivre les `_lit`.
-    this.dyn.update(true, this.cameras.main, this.courant.structures, this.courant.villages, this.heure, 1, time)
+    this.dyn.update(true, this.cameras.main, this.courant.structures, this.courant.villages, heureCanonique(this.heure), 1, time)
     this.view.renderNodes(this.cameras.main, this.avatarPos.x, this.avatarPos.y, time)
     this.view.syncActor(this.avatar, this.avatarPos.x, this.avatarPos.y, 'spr-player')
   }

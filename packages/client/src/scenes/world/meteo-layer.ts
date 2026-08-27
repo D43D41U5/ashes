@@ -101,8 +101,9 @@
  *   • pas de post-FX (il rendrait blanc sous swiftshader, et coûterait le seul juge visuel
  *     du projet) — ni pour le voile ni pour le grain ;
  *   • TOUT est quantifié sur UNE GRILLE DE PIXELS D'ART — mais elle n'est plus la même pour
- *     tous. Les flocons, le blizzard et le voile restent sur les 4 px des FX de lumière ;
- *     **la goutte est descendue à 1 px monde**, la grille de l'art elle-même
+ *     tous. Le voile et le vent de cendre restent sur les 4 px des FX de lumière ; **le
+ *     flocon et le blizzard sont descendus à 2 px** (`GRAIN_FLOCON`, Alexis 2026-08-26 : « la
+ *     taille des flocons divisée par 2 ») et **la goutte à 1 px monde**, la grille de l'art
  *     (`ProfilChute.grainPx`), et c'est ce qui fait sa finesse. Dans les deux cas ce sont des
  *     CARRÉS DURS, jamais un dégradé lissé, jamais un rectangle tourné (qui baverait en bords
  *     lissés : la traînée inclinée se peint en ESCALIER, voir `traineeEnRuns`). CE QUE ÇA
@@ -132,10 +133,49 @@
  *
  * La rampe vaut `RAMPE × LARGEUR` : 9 tuiles pour la pluie (la lisière traverse l'écran en
  * un quart de sa largeur — elle se VOIT venir), mais 240 pour le blizzard, dont la bande fait
- * la carte entière. L'écran en montre ~35 : le blizzard n'a donc PAS de lisière lisible, par
+ * la carte entière. L'écran en montre ~35 EN LARGEUR (et 20 en hauteur — MESURÉ le 2026-08-25 :
+ * 1280 × 720 à zoom 2,25 ; le « ~35 » d'ici a été lu comme une HAUTEUR et a fait poser un rayon
+ * de brouillard hors cadre) : le blizzard n'a donc PAS de lisière lisible, par
  * construction et non par défaut de rendu — c'est le « carte entière par calibrage » de R1, et
  * R9 le compense en l'annonçant la veille au crépuscule. Les autres types, eux, tiennent le
  * contrat géométriquement.
+ *
+ * ═══ LE BROUILLARD EST LE SEUL CIEL À DEUX ÉTAGES (2026-08-25) ═══
+ *
+ * Les quatre autres ciels sont UN aplat plein cadre. Le brouillard, lui, était le même aplat —
+ * uniforme à ~0,44 d'opacité partout — et c'était son défaut : *« pas assez occultant »*. Un
+ * aplat ne peut pas être à la fois assez dense pour fermer l'horizon et assez mince pour qu'on
+ * voie où l'on met les pieds. Il faut donc deux choses à la fois, et c'est le patron de Project
+ * Zomboid (référence d'Alexis) :
+ *
+ *   1. **ÇA S'OUVRE AUTOUR DE L'ŒIL.** L'opacité suit le RAYON depuis l'avatar : mince dans
+ *      `r0` tuiles, plein à `r1`. La géométrie est CONTINUE sur tout le rayon (bornes exactes),
+ *      et la sortie reste CONTINUE — on a essayé de la postériser en crans comme la brume, et
+ *      c'est justement ce qui fabriquait le vignettage qu'on fuyait : postériser un RAYON ne
+ *      peut rendre que des anneaux (détail sur `ReglageBrouillard.crans`). Le voile est déjà
+ *      planché sur la grille de 4 px de l'art, il est donc pixellisé là où ça compte. Et le
+ *      rayon est OURLÉ par la houle : sans ça le cercle EST un cercle, c'est-à-dire une aide
+ *      d'interface.
+ *
+ *   2. **ÇA COLLE AU SOL, ET LES OBJETS HAUTS EN DÉPASSENT.** Le voile se dédouble : une NAPPE
+ *      au sol qui mange le sol au loin, et le VOILE D'AIR d'origine (`METEO_DEPTH`, au-dessus
+ *      de tout) devenu mince. Un arbre lointain est peint APRÈS la nappe et ne reçoit que
+ *      l'air : au loin le sol part à ~0,92 d'opacité et une cime émergée à ~0,37. **C'est cet ÉCART,
+ *      et rien d'autre, qui fait le « ça dépasse »** — la nappe seule donnerait des arbres
+ *      posés sur du blanc, l'air seul l'aplat d'avant. Les deux étages sont UNE passe, deux
+ *      familles d'instances (`uNappe`) : un second fragment aurait fait deux brouillards qui
+ *      respirent différemment.
+ *
+ *   3. **ET LA NAPPE A UNE ÉPAISSEUR.** Posée sous les sprites, elle les laissait ENTIERS :
+ *      l'arbre était debout *sur* le brouillard, pas *dedans*. Alexis, le même jour : « on ne
+ *      doit voir que ce qui dépasse du tiers le plus haut du houppier des bouleaux ». La nappe
+ *      est donc une PILE DE BANDES horizontales à profondeurs échelonnées, **dans la bande des
+ *      houppiers** — un brouillard d'épaisseur `HAUTEUR_NAPPE_PX` au pixel près. Doctrine
+ *      complète plus bas, au-dessus de `TIE_NAPPE`, avec ce que ça emporte (les toits).
+ *
+ * PORTÉE ASSUMÉE : le brouillard SEUL. Le blizzard tient son identité de « le blanc qui efface »
+ * (COLD 55, le type le plus létal) — lui creuser un cercle lisible affaiblirait une conséquence
+ * de JEU, pas un défaut de rendu. C'est une décision à prendre, pas un effet de bord à subir.
  *
  * ═══ CINQ CIELS QUI SE NOMMENT SANS HUD ═══
  *
@@ -148,7 +188,8 @@
  */
 import Phaser from 'phaser'
 import { frontMeteoPos, meteoIntensityAt, type MeteoAspect, type MeteoFront } from '@ashes/sim'
-import { TILE_PX } from '../../render/framing'
+import { TILE_PX, crownDepth } from '../../render/framing'
+import { hauteurPx, VARIANTES } from '../../render/arbre-art'
 import { ChampNeige } from './meteo-melange'
 import {
   BUDGET_PARTICULES,
@@ -192,6 +233,197 @@ const MIX_TAU_S = 0.55
  *  au-dessus, et toujours sous les lucioles. */
 export const METEO_GRAIN_DEPTH = METEO_DEPTH + 500
 
+/**
+ * ═══ LA NAPPE EST UNE PILE DE BANDES, ET C'EST ÇA QUI LUI DONNE UNE HAUTEUR ═══
+ *
+ * Une nappe d'UN SEUL quad, posée sous tous les sprites, ne peut que les laisser ENTIERS : un
+ * arbre y est debout **sur** le brouillard, pas **dedans**. Alexis (2026-08-25) : *« on ne doit
+ * voir que ce qui dépasse du tiers le plus haut du houppier des bouleaux ; le reste plus bas ne
+ * doit pas être visible dans un brouillard à 100 % loin du joueur »*. Il faut donc COUPER les
+ * silhouettes à une hauteur, pas les épargner en bloc.
+ *
+ * LE TRI Y SAIT DÉJÀ LE FAIRE, et c'est exact — pas une approximation :
+ *
+ *   Un sprite dont les pieds sont à la ligne monde `F` peint les lignes `[F − haut, F]`, et son
+ *   pixel de la ligne `r` se trouve donc à la HAUTEUR `F − r` au-dessus du sol. Une bande de
+ *   brouillard qui couvre la ligne `r`, dessinée à la profondeur `ySortDepth(r + H)`, recouvre
+ *   exactement les sprites dont les pieds vérifient `F ≤ r + H` — c'est-à-dire exactement les
+ *   pixels dont la hauteur ne dépasse pas `H`. Empiler ces bandes sur la vue, c'est un
+ *   brouillard d'épaisseur `H`, au pixel près.
+ *
+ * LE PRIX, ET IL EST NOMMÉ : une bande porte UNE profondeur, donc UNE hauteur de coupe pour
+ * toutes les lignes qu'elle couvre. La coupe d'un arbre tombe au `bandePx / 2` près de `H`.
+ * C'est le seul réglage qui achète de la précision contre des objets à dessiner
+ * (`ReglageBrouillard.bandePx`), et le scénario `brouillardsol` MESURE cette erreur sur de
+ * vrais bouleaux au lieu de la raisonner.
+ *
+ * ⚠ SEULE LA NAPPE EST EN BANDES. Le voile d'AIR reste un quad unique au-dessus de tout
+ * (`METEO_DEPTH`) : c'est lui qui voile les cimes qui dépassent. Le bander aussi ferait
+ * recouvrir les cimes par la bande d'au-dessus, et le « ça dépasse » s'effondrerait.
+ */
+
+/**
+ * ═══ LA PILE VIT DANS LA BANDE DES HOUPPIERS, ET IL A FALLU LA MESURE POUR LE VOIR ═══
+ *
+ * Premier jet : la pile était dans la bande de tri Y (`ySortDepth`). Elle marchait — et elle
+ * ne coupait QUE LES FÛTS. Relevé par le scénario : **coupe médiane 20 px pour 51,3 attendus**,
+ * c'est-à-dire pile la hauteur où le fût cède la place au houppier.
+ *
+ * La cause est dans l'architecture des profondeurs (`framing.ts`) : un arbre est peint en DEUX
+ * sprites, le fût dans la bande de tri Y (~1 000) et le HOUPPIER dans une bande à lui
+ * (`CROWN_BASE` = 900 000, au-dessus de TOUS les acteurs). Une nappe glissée sous les acteurs
+ * ne peut donc jamais mordre une cime : elle passe dessous.
+ *
+ * On pose donc la pile dans la bande des houppiers, et le calcul est le même au mot près —
+ * `crownDepth` est `CROWN_BASE + feetY × tilePx`, une profondeur proportionnelle aux pieds
+ * exactement comme `ySortDepth`. Une bande à `crownDepth(r + H)` recouvre les houppiers dont
+ * les pieds vérifient `F ≤ r + H` : exactement les pixels de cime sous la hauteur `H`.
+ *
+ * ⚠ CE QUE ÇA EMPORTE AVEC, ET IL FAUT LE DIRE. Une bande recouvre TOUT ce qui est sous elle,
+ * pas seulement les cimes : fûts, acteurs, murs, et **les TOITS** (`ROOF_DEPTH` = 800 000, sous
+ * les houppiers). Au loin, un toit est donc avalé entier, quelle que soit sa hauteur.
+ *
+ * CE N'EST PAS UN OUBLI, C'EST UNE EXCLUSION MUTUELLE. Avec un algorithme du peintre, un voile
+ * inséré à une profondeur cache TOUT ce qui est en dessous : on ne peut donc donner une hauteur
+ * qu'à UNE bande de profondeur à la fois. Les toits étant SOUS les houppiers, « la cime dépasse »
+ * et « le toit dépasse » ne peuvent pas être vrais ensemble sans rouvrir l'ordre toit/houppier
+ * (or un toit au-dessus des cimes cacherait l'arbre planté devant la maison). Alexis a nommé le
+ * HOUPPIER DU BOULEAU : c'est lui qu'on sert. Le toit est un chantier à part — il demanderait
+ * une couche de toit consciente de sa hauteur, pas un réglage.
+ *
+ * Et parce que la pile est au-dessus de tout le tri Y, **une seule pile suffit** : la nappe
+ * qu'on avait sous les sprites était redondante avec celle-ci. On n'en paie qu'une.
+ */
+
+/** Départage de la bande contre un houppier de MÊMES pieds : la bande passe après, donc elle
+ *  l'avale. Les houppiers, eux, n'ont pas de `TIE_*` — ils ne se trient que sur leurs pieds. */
+const TIE_NAPPE = 0.5
+
+/** Plafond du nombre de bandes vivantes. Il borne la mémoire ET le coût : sous ce plafond, un
+ *  `bandePx` trop fin ÉLARGIT les bandes au lieu d'en créer mille (voir `posterLesBandes`). */
+const BANDES_MAX = 48
+
+/** La profondeur d'une bande AVANT sa première pose. Elle ne sert qu'à naître : `posterLesBandes`
+ *  la recalcule à chaque image, et une bande jamais posée est invisible. */
+const NAPPE_DEPTH_INITIALE = 900_000
+
+/**
+ * CE QUE PÈSE LE BROUILLARD, ÉTAGE PAR ÉTAGE. Les seuls nombres du dispositif.
+ *
+ * `nappe` et `air` se lisent pareil : `[base, part de houle, facteur au PRÈS]`. L'opacité vaut
+ * `(base + houle × part) × intensité × mix(près, 1, rayon)` — donc `près` est ce qui reste du
+ * voile DANS le cercle lisible, et 1 ce qu'il pèse au loin.
+ */
+export interface ReglageBrouillard {
+  /** Rayon du cercle lisible, en tuiles : dedans, on voit où l'on met les pieds. Trois, soit
+   *  près de deux fois la portée d'un bras — de quoi lire le sol qu'on foule et ce qu'on va
+   *  ramasser, pas de quoi choisir sa route. */
+  r0: number
+  /**
+   * Rayon de l'occultation pleine, en tuiles.
+   *
+   * MESURÉ, et le premier jet s'est trompé dessus : à zoom 2,25 sur une toile de 1280 × 720,
+   * **le cadre fait 35,6 tuiles de large et 20,0 de haut** — donc 17,8 de l'œil au bord
+   * latéral, 10,0 au bord haut, 20,4 au coin. (L'en-tête de cette couche disait « ~35 tuiles
+   * de haut » : c'est la LARGEUR, et s'y fier avait posé `r1` à 19, c'est-à-dire une densité
+   * pleine qui n'existait NULLE PART à l'écran. Le scénario `brouillardsol` a rougi sur sa
+   * propre prémisse — « les coins sont à 16,9 tuiles, r1 = 19 » — avant de rien conclure.)
+   *
+   * 11 : le plein est atteint au-delà du bord HAUT (10,0) et bien avant les coins, mais loin
+   * après le pas. Le brouillard ferme l'horizon sans jamais fermer le pied.
+   */
+  r1: number
+  /** De combien la houle déforme ce rayon, en tuiles. SANS LUI LE CERCLE EST UN CERCLE, et
+   *  une pastille géométrique collée à l'avatar se lit comme une aide d'interface. */
+  ourlet: number
+  /**
+   * Crans d'opacité du rayon — 0 = rampe continue.
+   *
+   * **LIVRÉ À 0, ET C'EST UN RENVERSEMENT MESURÉ.** La maison postérise ses voiles (la brume
+   * et ses trois crans), et le premier jet a suivi la doctrine : rayon en 5 crans. REGARDÉ,
+   * ça rend un ARC CONCENTRIQUE net autour de l'avatar — une cuvette, exactement le
+   * vignettage d'interface qu'on voulait éviter (planches `brouillardsol-2/3` du 2026-08-25,
+   * contre `-4-continu`).
+   *
+   * La raison est que les crans de la brume ne postérisent pas un RAYON : ils postérisent un
+   * champ de BRUIT, dont les paliers sont des taches, pas des anneaux. Un champ radial
+   * quantifié ne peut donner que des cercles. La DA n'y perd rien : le voile est déjà planché
+   * sur la grille de 4 px de l'art (`flatPx`), donc pixellisé dans l'ESPACE — on ne lui
+   * ajoute pas des marches dans l'OPACITÉ.
+   */
+  crans: number
+  /** LA NAPPE : ce qui mange le sol au loin. */
+  nappe: [number, number, number]
+  /** LE VOILE D'AIR : ce qui voile les silhouettes qui dépassent. Mince, DÉLIBÉRÉMENT — c'est
+   *  son rapport à la nappe qui fait tout le dispositif. Au loin, le sol part à ~0,77 d'opacité
+   *  et un tronc à ~0,37 : l'écart EST le « ça dépasse ». */
+  air: [number, number, number]
+  /**
+   * L'ÉPAISSEUR DE LA NAPPE, en pixels monde — la hauteur au-dessus du sol jusqu'à laquelle
+   * le brouillard mange les silhouettes. **DÉRIVÉE, JAMAIS POSÉE** : voir `HAUTEUR_NAPPE_PX`.
+   */
+  hauteur: number
+  /**
+   * Le PAS de la pile, en pixels monde — et depuis l'écume, il porte DEUX choses à la fois :
+   *
+   *   • **l'épaisseur du fondu** au bas d'une cime émergée. Le dégradé court de
+   *     `hauteur − bandePx / 2` à `hauteur + bandePx / 2` : monter ce nombre adoucit le bord.
+   *   • **la précision de la coupe** : elle tombe au `bandePx / 2` près. Les deux tirent en
+   *     sens contraire, mais moins qu'il n'y paraît — un bord FONDU pardonne une imprécision
+   *     qu'un bord franc exhibait.
+   *
+   * Les quads font `2 × bandePx` (chevauchement de moitié), donc le coût en fragments vaut
+   * deux plein-cadres ; leur NOMBRE, lui, reste la hauteur de vue divisée par le pas.
+   */
+  bandePx: number
+}
+
+/**
+ * L'ÉPAISSEUR DU BROUILLARD — **DÉRIVÉE DU BOULEAU**, parce que c'est le bouleau qu'Alexis a
+ * nommé : *« on ne doit voir que ce qui dépasse du tiers le plus haut du houppier des
+ * bouleaux »*. Elle vaut donc le sommet du bouleau moins le tiers de son houppier — et si un
+ * jour on redessine le bouleau, elle suit toute seule (`arbre-art.ts` est la source, ici on ne
+ * recopie aucun nombre).
+ *
+ * CE QUE ÇA DONNE SUR LES AUTRES ESSENCES, calculé sur la table de `arbre-art` — Alexis
+ * demandait la COHÉRENCE, la voici, et c'est une hiérarchie lisible :
+ *
+ *     bouleau      64 px de haut  →  13 px émergent  =  33 % du houppier
+ *     tree         64             →  13              =  30 %
+ *     chêne du pré 64             →  13              =  25 %
+ *     saule        64             →  13              =  24 %   (cime basse et large)
+ *     pin          80             →  29              =  45 %
+ *     vieux pin    80             →  29              =  65 %   (le parasol)
+ *     old_tree     96             →  45              =  70 %   (le gros bois domine)
+ *     baliveau     48             →   0              =   0 %   ← ENGLOUTI, et c'est juste
+ *
+ * LE BALIVEAU DISPARAÎT ENTIÈREMENT (48 px < 51,3) et on ne corrige pas : une jeune tige noyée
+ * dans un brouillard épais est exactement ce que la règle dit. Ça se DIT, ça ne s'amollit pas.
+ */
+const BOULEAU = VARIANTES.bouleau!.mesures
+export const HAUTEUR_NAPPE_PX = hauteurPx(BOULEAU) - BOULEAU.houppierS / 3
+
+const BROUILLARD: ReglageBrouillard = {
+  r0: 3,
+  r1: 11,
+  ourlet: 4,
+  crans: 0,
+  // LA NAPPE VA JUSQU'À LA NOYADE, et ce n'est pas un excès de zèle : Alexis a écrit « le reste
+  // plus bas NE DOIT PAS ÊTRE VISIBLE dans un brouillard à 100 % loin du joueur ». À 0,5–0,76
+  // (le premier jet), la partie noyée d'un houppier restait un FANTÔME PÂLE, et la coupe se
+  // lisait alors comme un TRAIT en travers de ce fantôme — l'arbre avait l'air tranché, pas
+  // immergé (planche `brouillardsol-2-livre` du 2026-08-25, avant/après). Une nappe opaque
+  // rend le trait invisible : on ne voit plus une ligne sur une cime, on voit une cime qui sort
+  // d'une mer. C'est l'opacité, et non le tracé de la coupe, qui fait lire le brouillard.
+  nappe: [0.86, 0.12, 0.14],
+  air: [0.3, 0.14, 0.1],
+  hauteur: HAUTEUR_NAPPE_PX,
+  // 12 ET NON 8 : depuis l'écume, ce nombre est d'abord l'ÉPAISSEUR DU FONDU. À 8 le bord
+  // restait sec ; à 12, le fondu court sur 12 px, soit près d'un tiers du houppier d'un
+  // bouleau (38 px) — assez pour que la cime sorte de la brume au lieu d'y être posée.
+  bandePx: 12,
+}
+
 /** L'ordre des ASPECTS dans l'uniforme `uType` — le fragment branche dessus. L'aspect, pas
  *  le type élu : depuis R11 la neige et le blizzard se dérivent au point (`aspectAuPoint`),
  *  et c'est `WorldScene` qui le lit à l'œil du joueur et le passe ici. */
@@ -208,7 +440,7 @@ precision mediump float;
 
 varying vec2 outTexCoord;
 
-uniform vec2 uWorldPx;
+uniform vec4 uQuad;     // le RECT MONDE de ce quad : origine xy, taille zw, en px
 uniform float uTilePx;
 uniform float uAxis;    // 0 = la bande traverse en X · 1 = en Y
 uniform float uLo;      // bord bas de la bande sur cet axe, en TUILES
@@ -220,6 +452,15 @@ uniform float uMix;     // 0..1 — la part de uType2 dans le voile, au point de
 uniform vec2 uSouffle;  // derive LENTE du voile, integree et repliee cote CPU
 uniform float uDay;     // 0 nuit · 1 plein jour
 uniform float uFlash;   // 0..1 — l'embrasement de l'eclair (l'orage seul)
+// ── LE BROUILLARD A DEUX ETAGES (voir l'en-tete) : la MEME passe, deux instances. ──
+uniform float uNappe;   // 0 = le voile d'AIR (au-dessus de tout) · 1 = la NAPPE (sous les sprites)
+uniform vec2 uOeil;     // l'oeil du joueur, en TUILES monde — le centre du cercle lisible
+uniform float uR0;      // rayon du cercle lisible, en tuiles
+uniform float uR1;      // rayon de l'occultation pleine, en tuiles
+uniform float uOurlet;  // de combien la houle deforme ce rayon, en tuiles (0 = un cercle net)
+uniform float uCrans;   // crans d'opacite du rayon (0 = rampe continue, sans posterisation)
+uniform vec3 uNap;      // la NAPPE : base, part de houle, facteur au PRES
+uniform vec3 uAir;      // le VOILE D'AIR : base, part de houle, facteur au PRES
 
 const float GRAIN = 4.0;
 
@@ -247,7 +488,7 @@ float vnoise(vec2 p) {
  * (R14) parce qu'on l'appelle DEUX FOIS : sous du gresil, le ciel est une proportion de deux
  * aspects, et le voile se mele comme le troupeau de particules se mele.
  */
-void cielDe(in float t, in float houle, in float I, out vec3 teinte, out float a) {
+void cielDe(in float t, in float houle, in float I, in float rad, in float ecume, out vec3 teinte, out float a) {
   bool brouillard = t > 0.5 && t < 1.5;
   bool neige = t > 1.5 && t < 2.5;
   bool orage = t > 2.5 && t < 3.5;
@@ -264,12 +505,36 @@ void cielDe(in float t, in float houle, in float I, out vec3 teinte, out float a
   //
   // Il RESPIRE par grandes plaques (la houle, calculee UNE fois dans main et passee ici :
   // les deux voiles d'un gresil doivent respirer ENSEMBLE, sans quoi le melange bat).
+  // ── LA NAPPE N'APPARTIENT QU'AU BROUILLARD. Tout autre ciel n'a pas d'etage bas : on rend
+  // un alpha nul, la passe se jette au discard de main(), et le rendu des quatre autres ciels
+  // reste EXACTEMENT celui d'avant — ni calcul, ni arrondi de plus. (En pratique l'instance
+  // basse est meme rendue invisible cote CPU des que le ciel n'est pas du brouillard : cette
+  // garde est la ceinture, pas les bretelles.)
+  if (uNappe > 0.5 && !brouillard) {
+    teinte = vec3(0.0);
+    a = 0.0;
+    return;
+  }
+
   if (brouillard) {
     // LE BROUILLARD : dense, PALE, sans grain qui tombe — c'est son signalement, et c'est
     // pour ca qu'il n'a AUCUNE particule. Il mange la distance, il n'assombrit pas
     // (COLD.brouillard = 0 : le ciel dit la meme chose).
+    //
+    // IL A DEUX ETAGES, ET C'EST TOUT SON SUJET (voir l'en-tete) :
+    //   • la NAPPE, sous les sprites — c'est elle qui MANGE LE SOL au loin, et c'est parce
+    //     qu'elle passe SOUS eux que les arbres, les murs et les acteurs en DEPASSENT ;
+    //   • le VOILE D'AIR, au-dessus de tout — mince, il ne fait que voiler ces silhouettes.
+    // Leur RAPPORT est le seul nombre qui compte : nappe seule = des arbres poses sur du
+    // blanc ; air seul = l'aplat uniforme d'avant.
+    //
+    // Les deux se creusent du MEME rayon (rad) : plein au loin, mince autour de l'oeil.
     teinte = vec3(0.78, 0.80, 0.82);
-    a = (0.34 + 0.20 * houle) * I;
+    vec3 g = uNappe > 0.5 ? uNap : uAir;
+    a = (g.x + g.y * houle) * I * mix(g.z, 1.0, rad);
+    // LA RAMPE DE L'ECUME, EN TRANSMITTANCE (voir plus haut). ecume vaut 1 pour le voile
+    // d'air, qui n'est pas une bande : il repasse alors par l'identite, au bit pres.
+    if (ecume < 0.999) a = 1.0 - pow(1.0 - clamp(a, 0.0, 1.0), ecume);
   } else if (blizzard) {
     // LE BLIZZARD : le blanc qui efface. Le voile le plus lourd des cinq — on ne voit plus
     // ou l'on va, et c'est la CONSEQUENCE DE JEU du type le plus letal (COLD 55).
@@ -298,7 +563,10 @@ void cielDe(in float t, in float houle, in float I, out vec3 teinte, out float a
 
 void main() {
   // Le monde a l'endroit (V texture monte, ty descend), PLANCHE au grain de l'art.
-  vec2 worldPx = vec2(outTexCoord.x, 1.0 - outTexCoord.y) * uWorldPx;
+  // LE QUAD N'EST PLUS FORCEMENT LE MONDE ENTIER : la nappe est une PILE DE BANDES qui suit
+  // la camera, chacune avec son propre rect. On repasse donc par l'origine du quad — a
+  // uQuad = (0, 0, mondeW, mondeH), c'est mot pour mot le calcul d'avant.
+  vec2 worldPx = uQuad.xy + vec2(outTexCoord.x, 1.0 - outTexCoord.y) * uQuad.zw;
   vec2 flatPx = floor(worldPx / GRAIN) * GRAIN;
   vec2 tile = flatPx / uTilePx;
   vec2 cell = flatPx / GRAIN;
@@ -316,9 +584,51 @@ void main() {
   // ni en calcul ni en arrondi. ──
   // LA HOULE — le bruit lent qui fait respirer le voile, PARTAGE par les deux aspects.
   float houle = vnoise(cell / 26.0 + uSouffle);
+
+  // ── LE RAYON DE L'OEIL — 0 dans le cercle lisible, 1 la ou le brouillard occulte plein.
+  //
+  // LA GEOMETRIE EST CONTINUE sur tout le rayon (bornes exactes : uR0 lisible, uR1 plein) ;
+  // c'est la SORTIE qu'on posterise, comme la brume posterise ses crans — un degrade lisse
+  // sur un jeu quantifie se lirait comme un vignettage de moteur 3D. uCrans = 0 rend la
+  // rampe nue, pour comparer les deux a l'oeil.
+  //
+  // LE RAYON EST OURLE PAR LA HOULE (uOurlet, en tuiles) : sans elle, le cercle EST un
+  // cercle — une pastille geometrique collee sur l'avatar, qui se lit comme une aide d'UI et
+  // non comme de l'air. La houle etant le meme bruit lent qui fait respirer le voile, la
+  // frange du cercle respire avec lui.
+  float dTuiles = distance(tile, uOeil);
+  float dOurle = dTuiles + (houle - 0.5) * uOurlet;
+  float k = clamp((dOurle - uR0) / max(0.001, uR1 - uR0), 0.0, 1.0);
+  float rad = uCrans < 0.5 ? k : floor(k * uCrans + 0.5) / uCrans;
+
+  // ── L'ECUME : LE BAS D'UNE CIME QUI DEPASSE SE FOND, IL NE SE COUPE PAS ──
+  //
+  // Une bande peignant la MEME opacite sur toute sa hauteur, la cime emergee reposait sur un
+  // bord RIGOUREUSEMENT DROIT (« c'est trop droit en l'etat actuel »). On veut que le bas du
+  // morceau qui depasse se fonde dans le blanc.
+  //
+  // LA RECETTE : les bandes se CHEVAUCHENT DE MOITIE et chacune porte une rampe TRIANGULAIRE
+  // (nulle a ses deux bords, pleine au milieu). Deux triangles decales d'une demi-longueur
+  // SOMMENT A UNE CONSTANTE — la propriete de recouvrement de la fenetre de Bartlett — donc :
+  //
+  //   • le SOL, couvert par DEUX bandes en tout point, garde une opacite rigoureusement
+  //     uniforme : le chevauchement ne se voit NULLE PART ;
+  //   • le haut d'une cime, couvert par UNE SEULE bande (la plus haute qui l'atteigne), recoit
+  //     la rampe NUE — il s'eteint en degrade continu sur bandePx pixels.
+  //
+  // On compose en TRANSMITTANCE (produit : 1 moins (1−a) puissance tri), jamais en alpha :
+  // c'est la seule composition ou deux couches empilees rendent EXACTEMENT a. Additionner
+  // les alphas rendrait le sol plus opaque au milieu d'une bande qu'a sa jointure, et le
+  // chevauchement se lirait en RAYURES — le defaut meme qu'on corrige.
+  float ecume = 1.0;
+  if (uNappe > 0.5) {
+    float pv = clamp((worldPx.y - uQuad.y) / max(1.0, uQuad.w), 0.0, 1.0);
+    ecume = 1.0 - abs(2.0 * pv - 1.0);
+  }
+
   vec3 c1;
   float a1;
-  cielDe(uType, houle, I, c1, a1);
+  cielDe(uType, houle, I, rad, ecume, c1, a1);
   vec3 teinte;
   float a;
   if (uMix <= 0.002) {
@@ -327,7 +637,7 @@ void main() {
   } else {
     vec3 c2;
     float a2;
-    cielDe(uType2, houle, I, c2, a2);
+    cielDe(uType2, houle, I, rad, ecume, c2, a2);
     // ON MELE EN PREMULTIPLIE puis on redivise : meler des couleurs DROITES ferait passer
     // l'ardoise de la pluie (0.18 a alpha 0.30) et le blanc de la neige (0.80 a alpha 0.16)
     // par un gris que ni l'un ni l'autre ne contient — le fondu virerait au sale.
@@ -392,6 +702,24 @@ export function teinteDeNuit(teinte: readonly [number, number, number], day: num
 
 export class MeteoLayer {
   private shader: Phaser.GameObjects.Shader | null = null
+  /** LA PILE DE BANDES de la nappe — la même passe que le voile d'air, découpée en tranches
+   *  horizontales qui suivent la caméra, chacune à SA profondeur de tri Y (voir la doctrine
+   *  plus haut). Rendues visibles pour le SEUL brouillard : les quatre autres ciels n'en
+   *  paient aucune. */
+  private nappes: Phaser.GameObjects.Shader[] = []
+  /** Le rect MONDE de chaque bande, muté en place image après image — une fermeture neuve par
+   *  bande et par image serait du déchet pur (patron `melange`). L'index 0 est le voile d'AIR. */
+  private readonly quads: { x: number; y: number; w: number; h: number }[] = []
+  /** Combien de bandes sont vivantes cette image. Le reste de la pile est éteint. */
+  private bandesVives = 0
+  /** L'œil du joueur, en TUILES — le centre du cercle lisible. */
+  private oeil = { x: 0, y: 0 }
+  /**
+   * LE RÉGLAGE DU BROUILLARD, relu à chaque image — donc modifiable en session (console,
+   * smoke) sans rebâtir. C'est le patron `crans` de `MistLayer`, et pour la même raison :
+   * ce sont des nombres qui se calibrent EN REGARDANT, pas en jouant.
+   */
+  reglage: ReglageBrouillard = { ...BROUILLARD }
   /** Le grain, peint en rectangles durs : un seul objet, deux crans d'opacité par ciel —
    *  donc deux `fillStyle` par image, pas neuf cents. */
   private grain: Phaser.GameObjects.Graphics
@@ -483,15 +811,96 @@ export class MeteoLayer {
     private readonly mapWidth: number,
     private readonly mapHeight: number,
   ) {
-    const worldW = mapWidth * TILE_PX
-    const worldH = mapHeight * TILE_PX
-    this.shader = scene.add
+    // L'INDEX 0 EST LE VOILE D'AIR, et son quad est le monde ENTIER — il ne bouge jamais.
+    this.quads.push({ x: 0, y: 0, w: mapWidth * TILE_PX, h: mapHeight * TILE_PX })
+    this.shader = this.creerVoile(scene, 0, 0, METEO_DEPTH)
+    // LA PILE EST ALLOUÉE UNE FOIS POUR TOUTES. Créer et détruire des `Shader` par image
+    // (la vue change de hauteur, donc le nombre de bandes aussi) recompilerait et rebâtirait
+    // des objets soixante fois par seconde ; on en garde `BANDES_MAX` sous la main et on
+    // éteint celles qui ne servent pas.
+    for (let i = 0; i < BANDES_MAX; i++) {
+      this.quads.push({ x: 0, y: 0, w: 1, h: 1 })
+      this.nappes.push(this.creerVoile(scene, i + 1, 1, NAPPE_DEPTH_INITIALE))
+    }
+    this.grain = scene.add.graphics().setDepth(METEO_GRAIN_DEPTH).setVisible(false)
+  }
+
+  /**
+   * POSER LA PILE DE BANDES SUR LA VUE — une fois par image, quand le ciel est du brouillard.
+   *
+   * Les bandes sont ANCRÉES À LA GRILLE DU MONDE (`floor(y / bandePx) * bandePx`) et non au
+   * bord de la caméra : ancrées à la caméra, elles glisseraient d'un pixel à chaque pas et la
+   * hauteur de coupe de chaque arbre TREMBLERAIT pendant qu'on marche. Ancrées au monde, un
+   * arbre garde sa bande — donc sa coupe — tant qu'on ne le quitte pas des yeux.
+   */
+  private posterLesBandes(camera: Phaser.Cameras.Scene2D.Camera): void {
+    const vue = camera.worldView
+    // Le `bandePx` demandé peut être plus fin que ce que le plafond permet : on l'ÉLARGIT
+    // alors, au lieu de tronquer la pile et de laisser le bas de l'écran sans brouillard.
+    const bande = Math.max(this.reglage.bandePx, Math.ceil(vue.height / (BANDES_MAX - 3)))
+    const y0 = Math.floor(vue.y / bande) * bande
+    // TROIS BANDES DE MARGE depuis que les bandes SE CHEVAUCHENT DE MOITIÉ : chaque ligne doit
+    // être couverte par DEUX bandes pour que la somme des triangles soit constante (voir
+    // l'écume, dans le fragment). Une ligne couverte par une seule serait à MOITIÉ de son
+    // opacité — une bande claire en travers de l'écran. Les bandes de rang 0 et n−1 ont
+    // justement leur moitié non appariée HORS CADRE.
+    const n = Math.min(BANDES_MAX, Math.ceil(vue.height / bande) + 3)
+    // MARGE HORIZONTALE : le quad doit déborder la vue, sinon un pixel de bord reste nu
+    // pendant l'interpolation de la caméra.
+    const marge = TILE_PX * 2
+    for (let i = 0; i < n; i++) {
+      const haut = y0 + (i - 1) * bande
+      const q = this.quads[i + 1]!
+      q.x = vue.x - marge
+      q.y = haut
+      q.w = vue.width + marge * 2
+      // LA HAUTEUR DU QUAD EST LE DOUBLE DU PAS : c'est ce qui fait le chevauchement de moitié.
+      q.h = bande * 2
+      const nappe = this.nappes[i]!
+      nappe.setPosition(q.x, q.y).setDisplaySize(q.w, q.h)
+      // LA PROFONDEUR EST TOUT LE DISPOSITIF : la bande couvre la ligne médiane `milieu`, et
+      // se dessine à la profondeur d'un sprite dont les pieds seraient `hauteur` plus bas.
+      // Elle avale donc exactement les sprites dont le pixel, ICI, est sous `hauteur`.
+      // LA COUPE EST CENTRÉE SUR `hauteur`, PAS POSÉE À SON PIED. Le seuil de profondeur se
+      // réfère au QUART haut du quad (`haut + bande / 2`), si bien que le dégradé de l'écume
+      // court de `hauteur − bandePx / 2` (opaque) à `hauteur + bandePx / 2` (clair) : sa
+      // MÉDIANE reste `hauteur`, donc le tiers haut du houppier du bouleau reste la promesse.
+      // Le référer au milieu du quad décalerait tout le fondu d'une demi-bande vers le haut.
+      const milieu = haut + bande / 2
+      nappe.setDepth(crownDepth((milieu + this.reglage.hauteur) / TILE_PX, TILE_PX) + TIE_NAPPE)
+      nappe.setVisible(true)
+    }
+    for (let i = n; i < this.bandesVives; i++) this.nappes[i]!.setVisible(false)
+    this.bandesVives = n
+  }
+
+  /** Éteint toute la pile — hors brouillard, et hors front. */
+  private eteindreLesBandes(): void {
+    for (let i = 0; i < this.bandesVives; i++) this.nappes[i]!.setVisible(false)
+    this.bandesVives = 0
+  }
+
+  /**
+   * UNE PASSE, DEUX INSTANCES — le voile d'air et la nappe au sol partagent le MÊME fragment
+   * et ne se distinguent que par `uNappe` et leur profondeur. Deux shaders séparés auraient
+   * dupliqué le hash, la houle, la nuit et le contrat prémultiplié : quatre endroits où deux
+   * brouillards auraient pu se mettre à respirer différemment.
+   */
+  private creerVoile(
+    scene: Phaser.Scene,
+    /** L'index de son rect dans `quads` — 0 = le voile d'air, 1.. = les bandes. */
+    quad: number,
+    nappe: number,
+    depth: number,
+  ): Phaser.GameObjects.Shader {
+    const q = this.quads[quad]!
+    return scene.add
       .shader(
         {
-          name: 'braises-meteo',
+          name: nappe > 0.5 ? 'braises-meteo-nappe' : 'braises-meteo',
           fragmentSource: FRAGMENT,
           setupUniforms: (setUniform: (name: string, value: unknown) => void) => {
-            setUniform('uWorldPx', [worldW, worldH])
+            setUniform('uQuad', [q.x, q.y, q.w, q.h])
             setUniform('uTilePx', TILE_PX)
             setUniform('uAxis', this.axis)
             setUniform('uLo', this.lo)
@@ -503,17 +912,27 @@ export class MeteoLayer {
             setUniform('uSouffle', [this.souffle.x, this.souffle.y])
             setUniform('uDay', this.day)
             setUniform('uFlash', this.flash)
+            // ── LE BROUILLARD À DEUX ÉTAGES — relus À CHAQUE IMAGE (patron `crans` de la
+            // brume) : le réglage est un objet public, donc calibrable à l'œil en session
+            // sans rebâtir, et lisible par le smoke.
+            setUniform('uNappe', nappe)
+            setUniform('uOeil', [this.oeil.x, this.oeil.y])
+            setUniform('uR0', this.reglage.r0)
+            setUniform('uR1', this.reglage.r1)
+            setUniform('uOurlet', this.reglage.ourlet)
+            setUniform('uCrans', this.reglage.crans)
+            setUniform('uNap', this.reglage.nappe)
+            setUniform('uAir', this.reglage.air)
           },
         },
-        0,
-        0,
-        worldW,
-        worldH,
+        q.x,
+        q.y,
+        q.w,
+        q.h,
       )
       .setOrigin(0, 0)
-      .setDepth(METEO_DEPTH)
+      .setDepth(depth)
       .setVisible(false)
-    this.grain = scene.add.graphics().setDepth(METEO_GRAIN_DEPTH).setVisible(false)
   }
 
   /**
@@ -539,6 +958,9 @@ export class MeteoLayer {
      *  qu'on empilerait. Conséquence nommée : sous une frappe le rideau perd au plus 48
      *  gouttes (~7 %) pendant trois dixièmes de seconde. */
     reservees = 0,
+    /** LE CAP DU VENT — le rideau penche désormais DANS SON SENS (`souffleDuCiel`), au lieu
+     *  de pencher vers l'est quel que soit le front. Par défaut l'est : le rideau d'avant. */
+    cap: { x: number; y: number } = { x: 1, y: 0 },
   ): void {
     const dtMs = this.lastMs === null ? 0 : Math.min(250, Math.max(0, nowMs - this.lastMs))
     const dt = dtMs / 1000
@@ -554,6 +976,7 @@ export class MeteoLayer {
       this.sonde.partIci = 0
       this.champNeige.vider()
       this.shader?.setVisible(false)
+      this.eteindreLesBandes()
       this.eteindreLeGrain()
       return
     }
@@ -620,12 +1043,25 @@ export class MeteoLayer {
     // du froid qu'il prend et du rideau qu'il voit. Une fois par image, pas par particule.
     this.intensiteAuJoueur = meteoIntensityAt(front, tick, this.mapWidth, this.mapHeight, joueur.x, joueur.y)
 
+    // L'ŒIL — le centre du cercle lisible du brouillard. C'est la position PRÉDITE, la même
+    // que la sonde d'intensité : le trou suit l'avatar image par image, sans le retard d'un
+    // tick que prendrait la position interpolée du snapshot.
+    this.oeil.x = joueur.x
+    this.oeil.y = joueur.y
+
     this.shader?.setVisible(true)
+    // LA NAPPE NE SE PAIE QUE SOUS LE BROUILLARD. Ailleurs la pile est ÉTEINTE, pas seulement
+    // transparente : les bandes couvrent ensemble un plein cadre, c'est une passe de fragment
+    // de plus par image — invisible dans le profil d'un GPU, pas dans celui de swiftshader,
+    // qui est le seul juge optique du projet. Le brouillard n'est jamais l'aspect FROID d'un
+    // front (`froid` ∈ {neige, blizzard}) : interroger l'aspect doux suffit.
+    if (ciel.doux === 'brouillard') this.posterLesBandes(camera)
+    else this.eteindreLesBandes()
 
     // ── LE GRAIN : de vraies particules, émises DANS LE CADRE seulement. ──
     if ((!this.melange.doux && !this.melange.froid) || !this.grainActif) { this.eteindreLeGrain(); return }
     const t0 = performance.now()
-    this.champ.update(dt, this.melange, cadre, bande, this.rampe, reservees)
+    this.champ.update(dt, this.melange, cadre, bande, this.rampe, reservees, cap)
     const t1 = performance.now()
     this.peindre(day)
     this.chronometrer(t1 - t0, performance.now() - t1, dtMs)
@@ -696,7 +1132,8 @@ export class MeteoLayer {
       if (!profil) continue
       const couleur = teinteDeNuit(profil.teinte, day)
       // LA GRILLE DE CE CIEL, pas une constante globale : la goutte tombe sur 1 px monde (la
-      // grille de l'ART), le flocon reste sur les 4 px des FX de lumière. Voir `ProfilChute.grainPx`.
+      // grille de l'ART), le flocon sur 2 (`GRAIN_FLOCON`), le vent de cendre sur les 4 px des
+      // FX de lumière. Voir `ProfilChute.grainPx`.
       const grain = profil.grainPx
       const parTuile = TILE_PX / grain
       for (const cran of crans) {
@@ -734,6 +1171,9 @@ export class MeteoLayer {
   destroy(): void {
     this.shader?.destroy()
     this.shader = null
+    for (const b of this.nappes) b.destroy()
+    this.nappes = []
+    this.bandesVives = 0
     this.grain.destroy()
   }
 }

@@ -15,7 +15,7 @@ import { MONSTER_DEFS, type Corpse, type MonsterType } from '@ashes/sim'
 export type EtatCarcasse = 0 | 1 | 2
 
 /** Les espèces qui ont une carcasse dessinée — les autres (le Cendreux) retombent sur les ossements. */
-const ESPECES: readonly MonsterType[] = ['boar', 'deer', 'wolf', 'rabbit']
+const ESPECES: readonly MonsterType[] = ['boar', 'deer', 'wolf', 'rabbit', 'tetras']
 
 export function cleCarcasse(species: MonsterType, etat: EtatCarcasse): string {
   return ESPECES.includes(species) ? `spr-carcasse-${species}-${etat}` : 'spr-corpse'
@@ -136,10 +136,39 @@ export function makeCarcasseTextures(g: Phaser.GameObjects.Graphics): void {
     g.clear()
   }
 
+  // ── TÉTRAS couché (spec faune R21) : une aile encore ouverte. C'est LA lecture —
+  // l'oiseau est tombé en vol, et l'aile restée déployée le dit. Un tas de plumes
+  // refermé se serait confondu avec le lapin à distance.
+  const tetras = (etat: EtatCarcasse): void => {
+    if (etat < 2) {
+      g.fillStyle(0x1e2126).fillEllipse(9, 7, 13, 7) // corps à plat
+      g.fillStyle(0x3c4148).fillEllipse(9, 7, 10, 5) // robe ardoise
+      g.fillStyle(0x2e3238).fillTriangle(6, 6, 17, 2, 12, 8) // L'AILE restée ouverte
+      g.fillStyle(0x3c4148).fillCircle(3, 8, 2) // tête retournée
+      g.fillStyle(0xc0392b).fillRect(2, 6, 2, 1) // le sourcil rouge, éteint
+      g.fillStyle(0xe8e0cc).fillRect(0, 8, 2, 1) // bec
+    } else {
+      g.fillStyle(0x1e2126).fillEllipse(9, 8, 10, 3)
+      g.fillStyle(0x2e3238).fillTriangle(7, 7, 15, 4, 12, 8) // l'aile reste : c'est de l'os et des plumes
+      g.fillStyle(0x3c4148).fillCircle(3, 8, 2)
+      g.fillStyle(0xe8e0cc).fillRect(0, 8, 2, 1)
+    }
+    if (etat === 1) {
+      g.fillStyle(0x5a1a16).fillRect(7, 5, 5, 4)
+      g.fillStyle(0x9c2e28).fillRect(8, 6, 3, 2)
+    }
+    if (etat === 2) {
+      g.fillStyle(0xe6ddc8).fillRect(7, 6, 1, 4).fillRect(10, 6, 1, 4).fillRect(6, 7, 6, 1)
+    }
+    g.generateTexture(`spr-carcasse-tetras-${etat}`, 18, 11)
+    g.clear()
+  }
+
   for (const etat of [0, 1, 2] as const) {
     sanglier(etat)
     cerf(etat)
     loup(etat)
     lapin(etat)
+    tetras(etat)
   }
 }

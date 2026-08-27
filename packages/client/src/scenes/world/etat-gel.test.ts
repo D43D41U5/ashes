@@ -87,6 +87,10 @@ function sourceDepuis(state: SimState): SourceDuGel {
     // Le jour d'ouverture (spec `saisons.md` S2) fait partie du fil : sans lui le jour de
     // saison de la façade serait NaN, et tout le gel disparaîtrait du rendu sans un mot.
     jourDeDepart: state.jourDeDepart,
+    // La cendre fait partie du fil depuis qu'elle commande le PAS (`moveAvatar`) : sans elle,
+    // la prédiction locale lirait un monde sans cendre et caoutchouterait sur chaque tuile.
+    cendreAge: state.cendreAge,
+    seed: state.seed,
     structures: state.structures,
     meteo: state.meteo ?? null,
   }
@@ -114,9 +118,11 @@ describe('le décalage de cycle se retrouve de l’heure publiée', () => {
     for (const tick of [0, 1, 997, TICKS_PER_CYCLE - 1, TICKS_PER_CYCLE, 123_456, 1_000_003]) {
       for (let k = 0; k < 100; k++) {
         const offset = Math.round((k / 100) * TICKS_PER_CYCLE)
-        const state = { tick, cycleOffset: offset, calendarScale: SCALE } as unknown as SimState
+        // ⚠ `jourDeDepart` EST REQUIS DEPUIS QUE LE LEVER SUIT LA SAISON (2026-08-26) : sans lui
+        // `jourDeSaison` rend NaN et l'heure murale avec — le leurre doit porter un vrai calendrier.
+        const state = { tick, cycleOffset: offset, calendarScale: SCALE, jourDeDepart: BALANCE.JOUR_DE_DEPART } as unknown as SimState
         const temps = getGameTime(state)
-        expect(cycleOffsetDepuis(tick, temps.hourOfCycle), `tick=${tick} offset=${offset}`).toBe(offset)
+        expect(cycleOffsetDepuis(tick, temps.hourOfCycle, temps.lever), `tick=${tick} offset=${offset}`).toBe(offset)
       }
     }
   })
@@ -128,7 +134,7 @@ describe('le décalage de cycle se retrouve de l’heure publiée', () => {
       const tick = 400_000 + k * 719
       const state = { tick, cycleOffset: (k * 1237) % TICKS_PER_CYCLE, calendarScale: SCALE } as unknown as SimState
       const vrai = getGameTime(state)
-      const refait = getGameTime({ ...state, cycleOffset: cycleOffsetDepuis(tick, vrai.hourOfCycle) } as SimState)
+      const refait = getGameTime({ ...state, cycleOffset: cycleOffsetDepuis(tick, vrai.hourOfCycle, vrai.lever) } as SimState)
       expect(refait.isNight, `k=${k}`).toBe(vrai.isNight)
       expect(refait.act, `k=${k}`).toBe(vrai.act)
     }

@@ -277,7 +277,7 @@ describe('LE scénario (A7) — tient ou casse', () => {
     // pas de cris, pas de salves — le climax du Grand Froid a ses propres gardes).
     // RE-MESURÉ sous le calendrier qui tourne, 12 graines : 12/12 tiennent, et le plateau
     // s'étend sur toute la fin des Pluies (j77→j83) — ce n'est pas une graine chanceuse.
-    const sim = createSim(14, { map: createEmptyMap(40, 40, TERRAIN_GRASS), cycleOffset: cycleOffsetForStartHour(0), calendarScale: 1 })
+    const sim = createSim(14, { map: createEmptyMap(40, 40, TERRAIN_GRASS), cycleOffset: cycleOffsetForStartHour(0, 1), calendarScale: 1 })
     sim.tick = (NUIT_A_MI_REGIME - 1) * TICKS_PER_SEASON_DAY
     sim.tick -= sim.tick % TICKS_PER_CYCLE
     sim.tick += 1
@@ -302,7 +302,7 @@ describe('LE scénario (A7) — tient ou casse', () => {
     // partie de la promesse. L'ancien « acte III, jour 55 » visait cette zone-là ; sous
     // l'année qui tourne (S1), le jour 55 est une fin d'Ardeur tiède où rien ne se lève.
     // RE-MESURÉ au cœur du Grand Froid, 12 graines : 12/12 cassent, en 780 à 1 619 ticks.
-    const sim = createSim(17, { map: createEmptyMap(40, 40, TERRAIN_GRASS), cycleOffset: cycleOffsetForStartHour(0), calendarScale: 1 })
+    const sim = createSim(17, { map: createEmptyMap(40, 40, TERRAIN_GRASS), cycleOffset: cycleOffsetForStartHour(0, 1), calendarScale: 1 })
     sim.tick = (MI_GRAND_FROID - 1) * TICKS_PER_SEASON_DAY
     sim.tick -= sim.tick % TICKS_PER_CYCLE
     sim.tick += 1
@@ -361,7 +361,7 @@ describe('la horde s’ouvre en marchant (décision 2026-08-20)', () => {
     new Set(corps(sim).map((e) => `${Math.floor(e.x)},${Math.floor(e.y)}`)).size
   /** Un village sans milice armée : on vient regarder MARCHER, pas se battre. */
   function hordeEnMarche(taille: number, graine = 23): SimState {
-    const sim = createSim(graine, { map: createEmptyMap(60, 60, TERRAIN_GRASS), cycleOffset: cycleOffsetForStartHour(0), calendarScale: 1 })
+    const sim = createSim(graine, { map: createEmptyMap(60, 60, TERRAIN_GRASS), cycleOffset: cycleOffsetForStartHour(0, 1), calendarScale: 1 })
     // LA NUIT FROIDE (cœur du Grand Froid, minuit) — depuis le cadran de température
     // (2026-08-21), une horde de nuit tiède marche au quart de l'allure : l'écart se mesure
     // au régime que la machine vise, la nuit d'assaut de l'hiver, pas dans une nuit

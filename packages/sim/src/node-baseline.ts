@@ -61,6 +61,10 @@ export const PART_DU_NOEUD: Record<keyof ResourceNode, 'fixe' | 'mobile'> = {
   type: 'fixe',
   tx: 'fixe',
   ty: 'fixe',
+  // La taille d'un bloc de butte (R6septies) : décidée à la pose, d'après la forme de la butte,
+  // et jamais retouchée — un bloc ne rapetisse pas quand on le mine, il perd du stock. Elle naît
+  // donc avec la carte, comme `type`.
+  size: 'fixe',
   // MOBILE : ce que la récolte, la repousse et l'oubli font bouger. C'est tout le diff.
   stock: 'mobile',
   regrowAt: 'mobile',

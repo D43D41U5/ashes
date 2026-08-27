@@ -384,16 +384,24 @@ describe('A9/A10 — le potager : on ne sème pas une terre gelée, et le gel tu
     // sinon ce n'est pas l'orage qu'on mesure. (Mesuré : c'est un orage de MIDI, en plein
     // Grand Froid. Les nuits d'hiver, elles, tuent toutes seules — elles sont donc écartées,
     // et le tick retenu n'est plus « la nuit venue » comme sous l'ancienne table d'actes.)
+    // ⚠ ON BALAIE LA FENÊTRE, PAS SEULEMENT SON MILIEU (2026-08-26). Le milieu suffisait quand
+    // le jour d'hiver occupait 0,48 du cycle ; aux heures de la France il n'en occupe plus que
+    // 0,34, si bien que le milieu de fenêtre tombe presque toujours dans une nuit — laquelle
+    // tue toute seule, donc aucun orage ne se qualifiait plus. La question posée est la même
+    // (« un orage bascule-t-il une culture que le ciel clair épargne ? ») ; c'est l'instant
+    // qu'on cherche mieux, au lieu de parier sur un seul.
     let letal = -1
     for (let c = 0; c < 400 && letal < 0; c++) {
       const f = frontDuCycle(c, FAST, sim.jourDeDepart)
       if (!f || f.type !== 'orage') continue
-      const t = Math.floor((f.startTick + f.endTick) / 2)
-      if (t <= jour) continue
-      if (dehorsSansMeteo(sim, 13, 12, t) < FLORE.SEUIL_MORTEL) continue // le ciel clair tue déjà
-      sim.tick = t
-      sim.meteo = f
-      if (climatFlore(sim, 13, 12, t) < FLORE.SEUIL_MORTEL) letal = t
+      for (let i = 1; i < 12 && letal < 0; i++) {
+        const t = Math.floor(f.startTick + ((f.endTick - f.startTick) * i) / 12)
+        if (t <= jour) continue
+        if (dehorsSansMeteo(sim, 13, 12, t) < FLORE.SEUIL_MORTEL) continue // le ciel clair tue déjà
+        sim.tick = t
+        sim.meteo = f
+        if (climatFlore(sim, 13, 12, t) < FLORE.SEUIL_MORTEL) letal = t
+      }
     }
     expect(letal, 'aucun orage du calendrier ne bascule une culture que le ciel clair épargne').toBeGreaterThan(jour)
     expect(dehorsSansMeteo(sim, 13, 12, letal)).toBeGreaterThanOrEqual(FLORE.SEUIL_MORTEL) // le ciel clair ne tue pas
@@ -492,10 +500,16 @@ describe('LE PNJ NE RESTE PAS COLLÉ À UN BUISSON GELÉ (régression)', () => {
       nodes,
       worldEvents: false,
       jourDeDepart: JOUR_TIEDE,
-      cycleOffset: cycleOffsetForStartHour(12),
+      cycleOffset: cycleOffsetForStartHour(12, JOUR_TIEDE),
     })
     foundNpcVillage(sim, 12, 12, 1)
-    sim.structures.find((st) => st.type === 'chest')!.inventory = makeInventory(SLOTS.CHEST)
+    // Grenier VIDÉ (on veut mesurer ce qu'il rapporte, pas ce qu'il avait) — sauf UNE hache.
+    // Depuis `glanage.md` G1 l'arbre exige un outil, et le tableau ne poste même pas la corvée
+    // de bois quand le village ne peut en fournir aucun (G6) : sans elle, ce test verrait un
+    // PNJ « qui ne descend pas au bois » pour une raison qui n'a rien à voir avec le gel.
+    const grenier = sim.structures.find((st) => st.type === 'chest')!
+    grenier.inventory = makeInventory(SLOTS.CHEST)
+    grenier.inventory[0] = { item: 'crude_axe', count: 1 }
     return sim
   }
 

@@ -97,8 +97,16 @@ export function createDebugPanel(scene: Phaser.Scene, deps: DebugPanelDeps): Deb
     `font:12px/1.3 ${GAME_FONT}`, 'color:#e6d9c4', // la police du jeu, même en outil de dev
     'background:rgba(20,15,11,0.86)', 'border:1px solid #33291f', 'border-radius:12px',
     'backdrop-filter:blur(6px)', 'box-shadow:0 14px 40px -16px rgba(0,0,0,0.7)',
-    'user-select:none',
+    'user-select:none', 'transition:opacity 140ms',
   ].join(';')
+  // LE PANNEAU S'EFFACE DEVANT LA CARTE. Il est posé à gauche, la carte plein écran commence
+  // à 5 % du bord : il mangeait une bande OUEST de la vallée — or le mode debug ouvre la carte
+  // ENTIÈRE, et un outil qui cache le pays qu'il sert à regarder se contredit. On le rend donc
+  // fantôme tant que l'onglet CARTE est ouvert, et il REVIENT SOUS LA SOURIS : le saut de
+  // saison et le cadran restent atteignables sans refermer la carte (regarder la carte pendant
+  // qu'on saute d'une saison à l'autre est justement ce qu'on veut pouvoir faire).
+  root.onmouseenter = () => { root.style.opacity = '1' }
+  root.onmouseleave = () => { root.style.opacity = getHud(reg, 'mapOpen') ? '0.12' : '1' }
 
   const title = document.createElement('div')
   title.textContent = 'DEBUG'
@@ -195,6 +203,10 @@ export function createDebugPanel(scene: Phaser.Scene, deps: DebugPanelDeps): Deb
     const on = Boolean(getHud(reg, 'debugOn'))
     root.style.display = on ? 'flex' : 'none'
     if (!on) return
+    // `:hover` ne se lit pas en JS sans `matches` — on ne l'interroge que si la carte est
+    // ouverte, seul cas où l'effacement est en jeu.
+    const carte = Boolean(getHud(reg, 'mapOpen'))
+    root.style.opacity = carte && !root.matches(':hover') ? '0.12' : '1'
     paint(bGod, `Invulnérabilité${getHud(reg, 'debugGod') ? ' ·on' : ''}`, Boolean(getHud(reg, 'debugGod')))
     paint(bLight, `Éclairage dynamique${getHud(reg, 'debugLighting') ? ' ·on' : ''}`, Boolean(getHud(reg, 'debugLighting')))
     const sp = getHud(reg, 'debugSpeed') ?? 1

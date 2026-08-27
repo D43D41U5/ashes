@@ -16,6 +16,12 @@ pnpm check        # tsc --noEmit sur tous les packages
 pnpm test         # LES QUATRE SUITES — sim, client, serveur, banc de scénario (tools/suites.mjs).
                   # Il juge sur les COMPTES de tests Vitest, pas l'exit code (flaky « onTaskUpdate » absorbé).
                   # Un seul fichier : pnpm --filter @ashes/sim exec vitest run src/tir.test.ts
+                  # LES CARTES DE TEST SONT EN CACHE (tools/carte-cache.ts) : `carteDeTest(...)`
+                  # rend, au bit près, ce que rendrait generateZonedTerrain — mais une seule fois
+                  # par (graine, joueurs, monde). Le cache se périme sur l'EMPREINTE de tout
+                  # packages/sim/src : toucher /sim régénère. ASHES_SANS_CACHE=1 le court-circuite,
+                  # et la suite doit rendre le même compte. Un test qui éprouve la GÉNÉRATION
+                  # (déterminisme, budget A13) appelle generateZonedTerrain en direct — jamais le cache.
 pnpm lint         # eslint, dont les garde-fous de pureté de /sim
 pnpm dev          # client Vite SUR L'HÔTE (jeu jouable sur http://localhost:3000)
 pnpm --filter @ashes/server dev   # zone LAN Colyseus sur ws://localhost:2567
@@ -23,9 +29,13 @@ pnpm --filter @ashes/server dev   # zone LAN Colyseus sur ws://localhost:2567
 pnpm scenario     # banc d'équilibrage : le vrai worldgen joué sur des milliers de ticks
                   # (SCENARIO_DAYS=60 pnpm scenario pour une saison entière)
 pnpm plans        # régénère plans-batis.genere.ts depuis packages/sim/src/plans/*.plan
-                  # L'ATELIER des plans (éditeur graphique du bâti, spec atelier-plans.md) :
+                  # L'ATELIER — LE PORTAIL DE TOUS LES OUTILS WEB, une seule adresse :
                   # pnpm dev → http://localhost:3000/atelier.html (dev seulement, hors dist)
-                  # LE BANC-SON (le vrai routage audio sur le vrai moteur) : /banc-son.html (idem)
+                  #   onglet PLANS (#plans) : l'éditeur graphique du bâti, spec atelier-plans.md
+                  #   onglet SON   (#son)   : le banc d'écoute — le vrai routage audio sur le
+                  #     vrai moteur, avec la distance et le côté (spatialisation).
+                  # Les outils se montent À LA DEMANDE : ouvrir #son ne boote pas Phaser.
+                  # /banc-son.html reste et redirige vers #son.
 # Stack Docker : `docker compose up -d` → jeu sur http://ashes.test via le proxy Traefik
 # PARTAGÉ (~/projects/proxy, à lancer d'abord : cd ~/projects/proxy && docker compose up -d)
 pnpm build        # build web statique → packages/client/dist

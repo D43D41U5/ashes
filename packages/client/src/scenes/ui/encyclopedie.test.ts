@@ -20,11 +20,15 @@ import {
   NOM_INCONNU,
   SECTIONS,
   VALEUR_VIDE,
+  carnetComplet,
   cartesDesSaisons,
+  type CarteSaison,
+  type FicheEncyclo,
   railDeLEncyclopedie,
   rangeesDeSection,
   type CarnetsDuJoueur,
   type CaseEncyclo,
+  HORS_FAMILLE,
 } from './encyclopedie'
 
 /**
@@ -78,11 +82,18 @@ function carnetOmniscient(): CarnetsDuJoueur {
   for (const f of Object.keys(TOOL_TIERS) as ToolFamily[]) {
     for (const marche of Object.values(TOOL_TIERS[f])) note(cleEncyclo('fabrique', marche))
   }
-  note(cleEncyclo('fabrique', 'hammer'))
+  // DÉRIVÉ de `HORS_FAMILLE`, plus écrit à la main : c'était `note(… 'hammer')`, une ligne
+  // recopiée — et la torche, entrée dans la même liste, a laissé sa case MUETTE sur un carnet
+  // omniscient (le test l'a dit). Un outil sans famille ajouté demain est couvert d'office.
+  for (const i of HORS_FAMILLE) note(cleEncyclo('fabrique', i))
   for (const i of Object.keys(WEAPON_DAMAGE) as ItemId[]) note(cleEncyclo('fabrique', i))
   note(cleEncyclo('fabrique', 'arrow'))
   for (const t of Object.keys(MONSTER_DEFS) as MonsterType[]) note(cleEncyclo('abat', t))
   for (const phase of [1, 2, 3, 4]) note(cleEncyclo('vecu', String(phase)))
+  // LES RELEVÉS de saison : le plus froid et le plus chaud endurés (des degrés, pas un compte).
+  for (const phase of [1, 2, 3, 4]) {
+    encyclo.push({ k: cleEncyclo('froid', String(phase)), n: -6 }, { k: cleEncyclo('chaud', String(phase)), n: 14 })
+  }
   return {
     encyclo,
     peche: FISH_SPECIES.map((sp) => ({ sp: sp.id, mm: sp.tailleMaxMm, prises: 2 })),
@@ -125,8 +136,8 @@ describe('l’encyclopédie — le muet', () => {
     for (const carte of cartes) {
       expect(carte.phase).toBeNull()
       expect(carte.nom).toBe(NOM_INCONNU)
-      expect(carte.jour).toBe('')
-      expect(carte.nuit).toBe('')
+      expect(carte.froid).toBe('')
+      expect(carte.chaud).toBe('')
       expect(carte.fiche).toBeNull()
     }
     // Le RANG reste (« SAISON 1 ») : c'est la place dans l'année, pas un savoir sur la saison.
@@ -224,6 +235,15 @@ describe('l’encyclopédie — la couverture des tables', () => {
     'rope', 'iron_ingot', 'steel_ingot', 'leather', 'raw_hide', 'bone',
     // Semences : elles se mettent en terre, elles ne se rencontrent pas.
     'graine', 'graine_verte', 'graine_fruit', 'graine_tubercule',
+    // Le CHARBON DE BOIS (`feu-station.md` S30) : la section « ressources » se dérive de
+    // `NODE_DEFS`, c'est-à-dire de ce qui se RÉCOLTE — or celui-ci ne se récolte pas, il se
+    // trouve dans les sorties d'un feu qu'on a entretenu. Comme les cuits, pas de fiche. (La
+    // HOUILLE, elle, a la sienne : c'est une veine qu'on mine.)
+    'charcoal',
+    // LA TORCHE ALLUMÉE (`torche.md`) : ce n'est pas une SECONDE entrée, c'est l'ÉTAT de la
+    // première. `torche` a sa case (outils / fortune) ; lui en donner une aussi ferait deux
+    // fiches pour un seul objet, dont l'une ne se fabrique pas.
+    'torche_vive',
     // Vêtement (aucune section « habits » : l'équipement n'existe pas encore en /sim).
     'tenue_hiver',
     // LE BÂTI et les composants posables — leur section reste à ouvrir.
@@ -287,6 +307,252 @@ describe('l’encyclopédie — la grille et le rail', () => {
       const cases = rangeesDeSection(e.id, c).flatMap((r) => r.cases)
       expect(e.tot, `${e.id}`).toBe(cases.length)
       expect(e.su).toBe(cases.filter((x) => x.fiche !== null).length)
+    }
+  })
+})
+
+/**
+ * LE DÉVERROUILLAGE DE RELECTURE (DEV) — `carnetComplet()`.
+ *
+ * « Complètement » est une affirmation sur CHAQUE case, et un déverrouillage partiel est
+ * SILENCIEUX : la section s'ouvre, quelques cases restent à `???`, et on ne le voit qu'en
+ * comptant. Les sorties de cuisson et de séchage (`COOK_SLOT`/`DRY_SLOT`) sont les premières
+ * à manquer si l'on énumère les objets de tête. Le garde est donc `su === tot` sur CHAQUE
+ * entrée du rail — la seule assertion qui dise « complètement » plutôt que « à l'œil ».
+ *
+ * ⚠ CE QUI LE FERAIT ROUGIR : une entrée ajoutée à une section sans être ajoutée au carnet
+ * complet (une case muette de plus, `su < tot`), ou un chiffre laissé à zéro (la case parle
+ * mais affiche `—`, et on relirait une fiche qui ment).
+ */
+describe('l’encyclopédie — le déverrouillage de relecture (DEV)', () => {
+  it('TOUTES LES CASES PARLENT — su === tot sur chaque entrée du rail', () => {
+    const c = carnetComplet()
+    for (const e of railDeLEncyclopedie(c)) {
+      expect(e.su, `la section ${e.id} garde ${e.tot - e.su} case(s) muette(s)`).toBe(e.tot)
+    }
+  })
+
+  it('CHAQUE CASE porte son id, son nom, son effigie et sa fiche', () => {
+    const c = carnetComplet()
+    for (const s of SECTIONS) {
+      if (s === 'saisons') continue
+      for (const r of rangeesDeSection(s, c)) {
+        for (const k of r.cases) {
+          expect(k.id, `${s} / ${r.titre}`).not.toBeNull()
+          expect(k.nom, `${s} / ${r.titre}`).not.toBe(NOM_INCONNU)
+          expect(k.effigie, `${s} / ${r.titre} / ${k.nom}`).not.toBeNull()
+          expect(k.fiche, `${s} / ${r.titre} / ${k.nom}`).not.toBeNull()
+          // Un chiffre à `—` sur une case ouverte, c'est une fiche qu'on relirait de travers.
+          expect(k.valeur, `${s} / ${k.nom} n’affiche aucun chiffre`).not.toBe(VALEUR_VIDE)
+        }
+      }
+    }
+  })
+
+  it('LES QUATRE SAISONS sont vécues, avec leur nom et leur fiche', () => {
+    const cartes = cartesDesSaisons(carnetComplet())
+    expect(cartes).toHaveLength(4)
+    for (const carte of cartes) {
+      expect(carte.phase).not.toBeNull()
+      expect(carte.nom).not.toBe(NOM_INCONNU)
+      expect(carte.fiche).not.toBeNull()
+      expect(carte.vecue).not.toBe('')
+    }
+  })
+
+  it('IL NE TOUCHE À RIEN : un carnet vide se tait toujours autant', () => {
+    carnetComplet()
+    for (const k of toutesLesCases(RIEN)) expect(k.fiche).toBeNull()
+  })
+})
+
+/**
+ * LES FICHES SONT COURTES, ET ELLES PARLENT (décision d'Alexis, 2026-08-25 : « trop d'infos
+ * techniques dans les tooltips — réduis la taille ET la nature des infos »).
+ *
+ * DEUX PROMESSES, DEUX GARDES, et elles se prennent par le haut : on ne vérifie pas que telle
+ * ligne a disparu de telle fiche (il en resterait toujours une), on balaie TOUTES les fiches de
+ * TOUTES les sections, saisons comprises.
+ *
+ * ⚠ CE QUI LES FERAIT ROUGIR : un bloc de plus (le filet réapparaîtrait, et avec lui l'envie de
+ * le remplir), une cinquième ligne, ou n'importe quel mot de moteur qui revient — une durée en
+ * secondes, un cône en degrés, une portée en tuiles, une durabilité chiffrée.
+ */
+describe('l’encyclopédie — des mots, pas des nombres de moteur', () => {
+  /** Toutes les fiches du livre, cases ET cartes de saison. */
+  const toutesLesFiches = (): FicheEncyclo[] => {
+    const c = carnetComplet()
+    const desCases = toutesLesCases(c)
+      .map((k) => k.fiche)
+      .filter((f): f is FicheEncyclo => f !== null)
+    const desSaisons = cartesDesSaisons(c)
+      .map((s) => s.fiche)
+      .filter((f): f is FicheEncyclo => f !== null)
+    return [...desCases, ...desSaisons]
+  }
+
+  it('AUCUNE FICHE ne passe UN bloc ni QUATRE lignes', () => {
+    const fiches = toutesLesFiches()
+    expect(fiches.length).toBeGreaterThan(40)
+    for (const f of fiches) {
+      expect(f.blocs.length, `${f.nom} : ${f.blocs.length} blocs`).toBe(1)
+      expect(f.blocs[0]!.length, `${f.nom} : ${f.blocs[0]!.length} lignes`).toBeLessThanOrEqual(4)
+      expect(f.blocs[0]!.length).toBeGreaterThan(0)
+    }
+  })
+
+  it('AUCUN MOT DE MOTEUR ne survit dans une fiche', () => {
+    const serialise = JSON.stringify(toutesLesFiches())
+    const interdits = [
+      'wind-up',
+      'endurance',
+      'cône',
+      'arcCos',
+      'stock',
+      'pile',
+      'ferrage',
+      'portions',
+      'durabilité',
+      'usure',
+      'péremption',
+      'clarté',
+      'tuiles',
+      'à vide',
+      'métier',
+      'station',
+    ]
+    for (const mot of interdits) {
+      expect(serialise, `« ${mot} » est revenu dans une fiche`).not.toContain(mot)
+    }
+    // Et aucune DURÉE : ni « 0,40 s », ni un compte de ticks.
+    expect(serialise, 'une durée en secondes est revenue').not.toMatch(/\d+,\d+\s?s\b/)
+    expect(serialise, 'un compte de ticks est revenu').not.toMatch(/\bticks?\b/)
+  })
+
+  it('LES SAISONS montrent LE RELEVÉ DU JOUEUR, pas les cardinaux de la table', () => {
+    // Un carnet qui a tout vécu SANS relevé : la saison parle, mais elle n'a pas de température
+    // à donner. Si la fiche affichait la table, elle mentirait ici — et le test le verrait.
+    const sansReleve: CarnetsDuJoueur = {
+      encyclo: [1, 2, 3, 4].map((p) => ({ k: cleEncyclo('vecu', String(p)), n: 1 })),
+      peche: [],
+    }
+    for (const carte of cartesDesSaisons(sansReleve)) {
+      expect(carte.fiche).not.toBeNull()
+      expect(carte.froid, `saison ${carte.phase}`).toBe(VALEUR_VIDE)
+      expect(carte.chaud).toBe(VALEUR_VIDE)
+      expect(carte.fiche!.gauche[1]).toBe(VALEUR_VIDE)
+      expect(carte.fiche!.droite[1]).toBe(VALEUR_VIDE)
+    }
+    // Avec un relevé, c'est LUI qu'on lit — froid à gauche, chaud à droite.
+    const avec: CarnetsDuJoueur = {
+      encyclo: [
+        { k: cleEncyclo('vecu', '3'), n: 2 },
+        { k: cleEncyclo('froid', '3'), n: -4.2 },
+        { k: cleEncyclo('chaud', '3'), n: 11.7 },
+      ],
+      peche: [],
+    }
+    const carte = cartesDesSaisons(avec)[2]!
+    expect(carte.froid).toBe('-4 °C')
+    expect(carte.chaud).toBe('+12 °C')
+    expect(carte.fiche!.gauche).toEqual(['le plus froid', '-4 °C'])
+    expect(carte.fiche!.droite).toEqual(['le plus chaud', '+12 °C'])
+  })
+})
+
+/**
+ * ═══ LA FICHE DIT LE SOLEIL DE LA SAISON, PAS CELUI D'UN JOUR (2026-08-26) ═══
+ *
+ * Alexis : « On ne peut pas avoir les mêmes heures tout au long d'une saison. Dans ce cas,
+ * l'encyclopédie doit montrer les plages pour les 2 : levé et couché du soleil. »
+ *
+ * ⚠ CE QUI FERAIT ROUGIR CES GARDES, dit avant d'accepter le vert : une fiche qui n'annonce
+ * qu'un horaire ; une plage prise sur les DEUX BOUTS de la saison au lieu de ses extrêmes —
+ * la première forme écrite ici, et elle donnait « 05h41 → 05h45 » pour l'Ardeur, cachant le
+ * 04h45 du solstice, c'est-à-dire tout l'été ; ou des heures qui cesseraient d'être celles
+ * de la France.
+ */
+describe('l’encyclopédie — le soleil de chaque saison', () => {
+  const heures = (carte: CarteSaison, cle: string): string =>
+    carte.fiche!.blocs.flat().find((l) => l.k === cle)!.v
+  /** « 04h45 – 05h45 » → [4.75, 5.75] ; un horaire seul → deux fois la même heure. */
+  const bornes = (v: string): [number, number] => {
+    const hs = [...v.matchAll(/(\d{2})h(\d{2})/g)].map((m) => Number(m[1]) + Number(m[2]) / 60)
+    return [hs[0]!, hs[hs.length - 1]!]
+  }
+
+  it('annonce une PLAGE, et elle contient le solstice — pas seulement les bords de saison', () => {
+    const cartes = cartesDesSaisons(carnetComplet())
+    // L'ARDEUR ENJAMBE LE SOLSTICE D'ÉTÉ : ses deux bouts valent presque la même heure, et le
+    // vrai extrême est en son milieu. C'est le cas qui distingue « bornes » de « extrêmes ».
+    const [tot, tard] = bornes(heures(cartes[1]!, 'lever'))
+    expect(tot).toBeCloseTo(4 + 45 / 60, 1) // le solstice, au CŒUR de la saison
+    expect(tard - tot).toBeGreaterThan(0.5) // une vraie plage, pas deux bouts confondus
+    const [ct, ctard] = bornes(heures(cartes[1]!, 'coucher'))
+    expect(ctard).toBeCloseTo(20 + 56 / 60, 1) // 20h56, le coucher du solstice
+    expect(ctard - ct).toBeGreaterThan(0.5)
+  })
+
+  it('les quatre saisons portent les heures de la France, et elles GLISSENT', () => {
+    const cartes = cartesDesSaisons(carnetComplet())
+    for (const [i, carte] of cartes.entries()) {
+      const l = bornes(heures(carte, 'lever'))
+      const c = bornes(heures(carte, 'coucher'))
+      // Aucune saison n'a un horaire figé : le soleil bouge tous les jours de l'année.
+      expect(l[1] - l[0], `lever, saison ${i + 1}`).toBeGreaterThan(0)
+      expect(c[1] - c[0], `coucher, saison ${i + 1}`).toBeGreaterThan(0)
+      // Et le jour est toujours entre le lever et le coucher — l'ordre ne s'inverse jamais.
+      expect(c[0], `saison ${i + 1}`).toBeGreaterThan(l[1])
+    }
+    // L'EXTRÊME DE L'ANNÉE, aux deux bouts : 04h45 en été, 08h43 en hiver (Paris).
+    expect(bornes(heures(cartes[1]!, 'lever'))[0]).toBeCloseTo(4 + 45 / 60, 1)
+    expect(bornes(heures(cartes[3]!, 'lever'))[1]).toBeCloseTo(8 + 43 / 60, 1)
+  })
+
+  /**
+   * ═══ LA BARRE EST UNE HORLOGE, ET SON ORIGINE EST MINUIT (2026-08-27) ═══
+   *
+   * Ce qui rendrait ce test rouge, dit avant de l'accepter vert :
+   *  · la barre d'AVANT (une largeur calée à gauche, `lever` toujours nul) — les quatre midis
+   *    solaires vaudraient alors 25 · 34 · 25 · 17 % au lieu d'un seul et même nombre ;
+   *  · le `Math.floor` d'avant sur la part de jour — le midi de l'hiver tomberait à 12h46
+   *    quand celui de l'été tombe à 12h50 ;
+   *  · une origine posée sur l'aube, ou sur n'importe quelle heure autre que minuit.
+   *
+   * Le midi solaire NE BOUGE PAS de l'année : les deux courbes sont linéaires entre quatre
+   * cardinaux tirés d'un seul modèle solaire. Il ne tombe pas sur 12h00 mais sur **12h50,6**,
+   * et ces cinquante minutes ne sont pas une erreur — c'est l'écart de Paris à son fuseau,
+   * `1 − 2,3522/15` h, écrit ici tel quel plutôt qu'arrondi à la minute : le même écart qui
+   * fait que le soleil du Finistère se couche après celui de Strasbourg. Une barre qui
+   * commence à minuit doit le montrer.
+   */
+  it('la barre part de MINUIT — les quatre saisons partagent le même midi solaire', () => {
+    const cartes = cartesDesSaisons(carnetComplet())
+    const midis = cartes.map((c) => ((c.lever + c.coucher) / 2 / 100) * 24)
+    const midiDeParis = 12 + (1 - 2.3522 / 15) // 12h50,6 — la longitude, pas le fuseau
+    for (const [i, midi] of midis.entries()) {
+      expect(midi, `midi solaire, saison ${i + 1}`).toBeCloseTo(midiDeParis, 3)
+    }
+    // Et la nuit borde la barre DES DEUX CÔTÉS : aucune saison ne commence par du jour.
+    for (const [i, c] of cartes.entries()) {
+      expect(c.lever, `nuit d'avant l'aube, saison ${i + 1}`).toBeGreaterThan(15)
+      expect(100 - c.coucher, `nuit d'après le crépuscule, saison ${i + 1}`).toBeGreaterThan(10)
+    }
+  })
+
+  it('les deux bouts de la barre SONT les heures que la fiche écrit', () => {
+    // Une seule écriture du même instant : la barre est bornée par le lever et le coucher du
+    // CŒUR de la saison, et la fiche encadre ce cœur dans sa plage. Un arrondi sur l'un des
+    // deux les ferait diverger — c'est ce qui est arrivé, et ce que ce test interdit.
+    for (const [i, c] of cartesDesSaisons(carnetComplet()).entries()) {
+      const l = (c.lever / 100) * 24
+      const co = (c.coucher / 100) * 24
+      const pl = bornes(heures(c, 'lever'))
+      const pc = bornes(heures(c, 'coucher'))
+      expect(l, `lever, saison ${i + 1}`).toBeGreaterThanOrEqual(pl[0] - 0.01)
+      expect(l, `lever, saison ${i + 1}`).toBeLessThanOrEqual(pl[1] + 0.01)
+      expect(co, `coucher, saison ${i + 1}`).toBeGreaterThanOrEqual(pc[0] - 0.01)
+      expect(co, `coucher, saison ${i + 1}`).toBeLessThanOrEqual(pc[1] + 0.01)
     }
   })
 })

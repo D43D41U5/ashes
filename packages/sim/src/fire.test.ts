@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { BALANCE, CENDREUX, COOK_SLOT, FIRE, TERRAIN_GRASS } from './balance'
+import { BALANCE, CENDREUX, COOK_SLOT, FIRE, FIRE_UPKEEP, RECIPES, TERRAIN_GRASS } from './balance'
 import { addItems, countOf, inventoryOf, makeInventory, stackSize } from './items'
 import { willRiseAsCendreux } from './cendreux'
 import { drainEvents } from './events'
@@ -7,10 +7,10 @@ import { advanceFire, fireState, type FireZone } from './fire'
 import { applyInventoryAction } from './inventory-actions'
 import { createEmptyMap } from './map'
 import { advanceMonsters, spawnMonster } from './monsters'
-import { createSim, spawnEntity, type SimState } from './sim'
+import { createSim, spawnEntity, step, type SimState } from './sim'
 import { cycleOffsetForStartHour, getGameTime } from './time'
 import { baselineTemperature, fireBubble } from './temperature'
-import { addStructure, applyStructureDamage, applyVillageAction, grantItems, type Structure } from './village'
+import { addStructure, advanceUpkeep, applyStructureDamage, applyVillageAction, createVillage, grantItems, type Structure } from './village'
 
 /**
  * LE FEU COMME STATION (spec `docs/specs/feu-station.md`) — l'état du feu LIBRE
@@ -318,7 +318,7 @@ describe('Le Feu-station : le feu ATTIRE les Cendreux quand il fait froid (spec 
     createSim(1, {
       map: createEmptyMap(96, 96, TERRAIN_GRASS),
       jourDeDepart: coeurDe(4),
-      cycleOffset: cycleOffsetForStartHour(0),
+      cycleOffset: cycleOffsetForStartHour(0, coeurDe(4)),
     })
 
   it('A4 — la NUIT du Grand Froid, un Cendreux chemine vers un feu ALLUMÉ à portée', () => {
@@ -350,7 +350,7 @@ describe('Le Feu-station : le feu ATTIRE les Cendreux quand il fait froid (spec 
     const sim = createSim(1, {
       map: createEmptyMap(96, 96, TERRAIN_GRASS),
       jourDeDepart: coeurDe(2),
-      cycleOffset: cycleOffsetForStartHour(12),
+      cycleOffset: cycleOffsetForStartHour(12, coeurDe(2)),
     })
     expect(getGameTime(sim).isNight).toBe(false)
     expect(baselineTemperature(sim, 5, 5)).toBeGreaterThan(CENDREUX.TORPEUR.CONVERGE_SOUS) // il fait doux
@@ -397,5 +397,149 @@ describe('Le Feu-station : destructibilité découplée du combustible (spec feu
     expect(countOf(fire.fuel!, 'wood')).toBeGreaterThan(0)
     applyStructureDamage(sim, fire.id, 99999, 0)
     expect(sim.structures.some((s) => s.id === fire.id)).toBe(false) // il tombe malgré le combustible
+  })
+})
+
+/**
+ * ═══ LE CHARBON DE BOIS (spec feu-station S30, décision d'Alexis 2026-08-25) ═══
+ *
+ * Le feu et le Foyer laissent du charbon de bois derrière eux. CE QUI FERAIT ROUGIR ces
+ * gardes, énoncé d'abord :
+ *   · un feu qui produit sans rien brûler (un Foyer À SEC, dont le drain s'exécute encore et
+ *     se fait clamper à 0 — la fabrique perpétuelle à partir de rien) ;
+ *   · une horde qui BOIT le Foyer et en tire du charbon (elle vide un stock, elle ne brûle
+ *     rien) ;
+ *   · du charbon perdu en silence parce que la SORTIE était pleine ;
+ *   · et le défaut de fond : que ce charbon-là fonde le fer, c'est-à-dire que chaque feu de
+ *     camp devienne une mine de houille.
+ */
+/** Le charbon en SORTIE — tolère l'absence de sortie : un feu qui n'a jamais rien produit
+ *  n'a pas encore d'inventaire de sortie, et c'est un ZÉRO, pas une erreur. */
+const charbon = (s: Structure): number => (s.cookOut ? countOf(s.cookOut, 'charcoal') : 0)
+
+describe('Le Feu-station : le charbon de bois (S30)', () => {
+  it('S30 — QUATRE bûches consumées laissent UN charbon, en sortie', () => {
+    const sim = makeSim()
+    const owner = spawnEntity(sim, 10, 10)
+    const fire = addStructure(sim, 'fire', 10, 10, 0, owner)
+    wood(fire, FIRE.CHARBON_PAR_BUCHES)
+    fire.burnAt = sim.tick
+    fire.burnSlot = 0
+    // Le compte EXACT : quatre bûches × leur durée. Une de moins et il ne doit rien sortir.
+    for (let t = 0; t < FIRE.BURN_TICKS * FIRE.CHARBON_PAR_BUCHES - 1; t++) {
+      sim.tick += 1
+      advanceFire(sim)
+    }
+    expect(charbon(fire)).toBe(0) // pas encore : la dernière brûle encore
+    sim.tick += 1
+    advanceFire(sim)
+    expect(charbon(fire)).toBe(1)
+    expect(fire.buchesConsumees ?? 0).toBe(0) // la dette est soldée, pas reportée
+  })
+
+  it('S30 — la SORTIE pleine ne PERD rien : la dette reste due et se solde à la place libérée', () => {
+    const sim = makeSim()
+    const owner = spawnEntity(sim, 10, 10)
+    const fire = addStructure(sim, 'fire', 10, 10, 0, owner)
+    fire.cookOut = inventoryOf(FIRE.COOK_OUTPUTS, { cooked_meat: FIRE.COOK_OUTPUTS * stackSize('cooked_meat') })
+    wood(fire, FIRE.CHARBON_PAR_BUCHES)
+    fire.burnAt = sim.tick
+    fire.burnSlot = 0
+    for (let t = 0; t < FIRE.BURN_TICKS * FIRE.CHARBON_PAR_BUCHES; t++) {
+      sim.tick += 1
+      advanceFire(sim)
+    }
+    expect(charbon(fire)).toBe(0) // aucune place
+    expect(fire.buchesConsumees).toBe(FIRE.CHARBON_PAR_BUCHES) // …mais la dette est INTACTE
+    fire.cookOut![2] = null // on vide une case
+    advanceFire(sim)
+    expect(charbon(fire)).toBe(1) // le charbon se fait enfin
+    expect(fire.buchesConsumees).toBe(0)
+  })
+
+  it('S30 — LE FOYER en produit aussi : ce qui se consume au stock devient charbon, exactement', () => {
+    const sim = makeSim()
+    const owner = spawnEntity(sim, 10, 10)
+    const v = createVillage(sim, { chiefId: owner, tx: 10, ty: 10, npcsArrived: true })
+    const foyer = addStructure(sim, 'fire', 10, 10, v.id, owner) // le FOYER, sur fireTx/fireTy
+    // Un village NOURRI : on remplit le stock à chaque tick, comme le feraient ses porteurs de
+    // bois. On relève NOUS-MÊMES ce qui s'y consume — le drain réel n'est pas `DRAIN_PER_TICK`
+    // (l'acte de la saison et la pluie le multiplient), et une garde écrite sur le nombre
+    // nominal mesurerait la constante, pas le mécanisme.
+    let consume = 0
+    for (let t = 0; t < 40_000; t++) {
+      v.fuel = FIRE_UPKEEP.CAPACITY
+      const avant = v.fuel
+      advanceUpkeep(sim)
+      advanceFire(sim)
+      sim.tick += 1
+      consume += avant - v.fuel
+    }
+    const buches = consume / FIRE_UPKEEP.FEED_PER_WOOD
+    expect(buches).toBeGreaterThan(1) // sinon la garde ne mesure rien
+    // LA LOI DE CONSERVATION : autant de charbons que de PAQUETS de quatre bûches consumées,
+    // et le reste encore dû. Rien ne se crée, rien ne se perd.
+    expect(charbon(foyer)).toBe(Math.floor(buches / FIRE.CHARBON_PAR_BUCHES))
+    expect((foyer.buchesConsumees ?? 0) + (v.charbonDette ?? 0)).toBeCloseTo(buches % FIRE.CHARBON_PAR_BUCHES, 6)
+  })
+
+  it('S30 — et il en produit AU VRAI TICK : la dette traverse les deux phases de `step`', () => {
+    // La dette naît dans `advanceUpkeep` (village.ts) et se solde dans `advanceFire` (fire.ts).
+    // C'est l'espace ENTRE deux phases — le seul endroit où un défaut d'ordre se verrait — donc
+    // cette garde-là passe par le tick complet et rien d'autre.
+    const sim = makeSim()
+    const owner = spawnEntity(sim, 10, 10)
+    const v = createVillage(sim, { chiefId: owner, tx: 10, ty: 10, npcsArrived: true })
+    const foyer = addStructure(sim, 'fire', 10, 10, v.id, owner)
+    for (let t = 0; t < 90_000 && charbon(foyer) === 0; t++) {
+      v.fuel = FIRE_UPKEEP.CAPACITY
+      step(sim, [])
+    }
+    expect(charbon(foyer)).toBeGreaterThanOrEqual(1)
+  })
+
+  it('S30 — ⚠ CE QUE LE SIÈGE NE DONNE PAS : boire le Foyer vide le stock sans faire de charbon', () => {
+    // Observé en menant le VRAI tick : sur 40 000 ticks, le stock perdait 7,73 bûches quand la
+    // combustion n'en avait consumé que 3,17 — les Cendreux avaient BU la différence. C'est la
+    // règle, pas un écart : le charbon est ce que la combustion laisse, et une horde qui boit ne
+    // brûle rien. Une dette prise sur la perte de stock ferait du siège une fabrique de charbon.
+    const sim = makeSim()
+    const owner = spawnEntity(sim, 10, 10)
+    const v = createVillage(sim, { chiefId: owner, tx: 10, ty: 10, npcsArrived: true })
+    v.fuel = FIRE_UPKEEP.CAPACITY
+    const temoin = makeSim()
+    spawnEntity(temoin, 10, 10)
+    const vT = createVillage(temoin, { chiefId: 1, tx: 10, ty: 10, npcsArrived: true })
+    vT.fuel = FIRE_UPKEEP.CAPACITY
+    expect(spawnMonster(sim, 'cendreux', 10, 10)).not.toBeNull()
+    for (let t = 0; t < 2000; t++) {
+      advanceUpkeep(sim)
+      advanceUpkeep(temoin)
+    }
+    expect(v.fuel).toBeLessThan(vT.fuel) // la horde A bien bu (sinon la garde ne mesure rien)
+    expect(v.charbonDette ?? 0).toBeCloseTo(vT.charbonDette ?? 0, 6) // …sans une miette de charbon de plus
+  })
+
+  it('S30 — LE DÉFAUT ÉVITÉ : un Foyer À SEC ne fabrique RIEN (le drain clampé n’est pas du feu)', () => {
+    const sim = makeSim()
+    const owner = spawnEntity(sim, 10, 10)
+    const v = createVillage(sim, { chiefId: owner, tx: 10, ty: 10, npcsArrived: true })
+    const foyer = addStructure(sim, 'fire', 10, 10, v.id, owner)
+    v.fuel = 0 // à sec : `advanceUpkeep` soustrait quand même, et `Math.max(0, …)` rattrape
+    for (let t = 0; t < 20_000; t++) advanceUpkeep(sim)
+    expect(v.charbonDette ?? 0).toBe(0)
+    advanceFire(sim)
+    expect(charbon(foyer)).toBe(0)
+  })
+
+  it('S30 — le charbon de BOIS ne fond rien : aucune recette ne le consomme (la houille reste minière)', () => {
+    // La décision d'Alexis, gardée par le compilateur ET par ce balayage : le jour où
+    // quelqu'un l'ajoute à une recette de forge, il faudra passer ici et l'assumer.
+    const consommateurs = Object.entries(RECIPES).filter(([, r]) => (r.inputs as Record<string, number>).charcoal !== undefined)
+    expect(consommateurs).toEqual([])
+    // Et la houille, elle, garde ses deux clients — sinon ce test serait vrai d'un monde
+    // où plus rien ne fond du tout.
+    const clientsHouille = Object.entries(RECIPES).filter(([, r]) => (r.inputs as Record<string, number>).coal !== undefined)
+    expect(clientsHouille.length).toBeGreaterThanOrEqual(2)
   })
 })

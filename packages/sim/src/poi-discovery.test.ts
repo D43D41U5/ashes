@@ -478,7 +478,7 @@ describe('le récit — la première fois seulement', () => {
     expect(state.visitedPois).toEqual([])
     expect(state.events.filter((e) => e.type === 'poi_first_visit')).toHaveLength(0)
     expect(
-      chronicleFromEvents(state.events, state.calendarScale, state.jourDeDepart, {})
+      chronicleFromEvents(state.events, state.calendarScale, state.jourDeDepart, {}, state.map)
         .map(formatChronicleLine)
         .some((l) => l.includes('Sanctuaire')),
     ).toBe(false)
@@ -487,7 +487,7 @@ describe('le récit — la première fois seulement', () => {
   it('la chronique écrit une ligne pour le Sanctuaire (devise récit)', () => {
     const { state, playerId } = simWith([{ name: 'le Sanctuaire I', x: 10, y: 10, w: 2, h: 2, kind: 'sanctuaire' }])
     walkTo(state, playerId, 10.5, 10.5)
-    const lines = chronicleFromEvents(state.events, state.calendarScale, state.jourDeDepart, {}).map(formatChronicleLine)
+    const lines = chronicleFromEvents(state.events, state.calendarScale, state.jourDeDepart, {}, state.map).map(formatChronicleLine)
     expect(lines.some((l) => l.includes('le Sanctuaire I'))).toBe(true)
   })
 
@@ -499,7 +499,7 @@ describe('le récit — la première fois seulement', () => {
     walkTo(state, playerId, 10.5, 10.5)
     const eventsA = [...state.events]
     walkTo(state, playerId, 30.5, 30.5)
-    const lines = chronicleFromEvents([...eventsA, ...state.events], state.calendarScale, state.jourDeDepart, {}).map(formatChronicleLine)
+    const lines = chronicleFromEvents([...eventsA, ...state.events], state.calendarScale, state.jourDeDepart, {}, state.map).map(formatChronicleLine)
     expect(lines.some((l) => l.includes('Gisement'))).toBe(false)
     expect(lines.some((l) => l.includes('Cairn'))).toBe(false)
   })

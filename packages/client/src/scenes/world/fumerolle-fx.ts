@@ -48,6 +48,33 @@ const BUDGET = 128
 /** Durée de vie d'une bouffée, en secondes. Longue : la nappe rampe, elle ne claque pas. */
 const VIE_S = 4.5
 
+/**
+ * ═══ LA NAPPE NE QUITTE PAS SON TROU (Alexis, 2026-08-25) ═══
+ *
+ * *« entre le trou de la fumerolle et l'émission des particules, il y a parfois une sacré
+ * distance. »* CONFIRMÉ, et mesuré en rejouant l'intégration au pas de 1/60 s : une bouffée
+ * encore VISIBLE (alpha > 0,02) s'éloignait jusqu'à **5,5 tuiles** du trou — 4,8 vers le bas,
+ * 2,8 de côté — et un dixième d'entre elles passaient 3,4 tuiles. Le gros de la nappe restait
+ * sur la bouche (centroïde pondéré : 0,76 tuile), mais la QUEUE partait au loin : c'est elle
+ * qu'on voit, et elle ne ressemble plus à de la fumée qui sort de ce trou-là.
+ *
+ * LES DEUX TERMES ÉTAIENT NON BORNÉS, et c'est toute la cause :
+ *   · `vy += 11·dt` sans vitesse limite — la « retombée » devenait une CHUTE. Partie à −8 px/s,
+ *     la bouffée finissait à +41 px/s : elle ne rampait pas, elle plongeait.
+ *   · `vx *= 1 + 0,55·dt` — une croissance EXPONENTIELLE, ×11,9 sur une vie. Un étalement qui
+ *     double puis quadruple n'est pas un étalement, c'est une fuite.
+ *
+ * On garde la LECTURE (elle sort, elle retombe, elle rampe) et on lui donne des VITESSES
+ * LIMITES, comme en a tout ce qui tombe dans de l'air. Les deux plafonds se DÉRIVENT du seul
+ * nombre qui a un sens à l'œil — le rayon de la nappe, en tuiles : au-delà, on ne lit plus
+ * « la fumée de ce trou », on lit « du brouillard qui traîne ».
+ */
+const NAPPE_TUILES = 1.6
+/** Vitesse limite de chute, px/s — la moitié du rayon en une vie : elle se pose, elle ne plonge pas. */
+const CHUTE_MAX = (NAPPE_TUILES * TILE_PX * 0.5) / VIE_S
+/** Vitesse limite de reptation, px/s — le rayon plein en une vie, c'est l'étalement au sol. */
+const RAMPE_MAX = (NAPPE_TUILES * TILE_PX) / VIE_S
+
 interface Bouffee {
   x: number
   y: number
@@ -139,8 +166,14 @@ export class FumerolleFx {
       // LA PESANTEUR DE LA FUMÉE FROIDE : elle retombe, puis RAMPE — la vitesse verticale passe
       // par zéro et redevient positive, pendant que l'horizontale s'ouvre. Une fumée chaude ferait
       // l'inverse (elle accélère vers le haut et se disperse) : c'est la lecture qu'on achète ici.
-      b.vy += 11 * dt
-      b.vx *= 1 + 0.55 * dt // elle s'étale au ras du sol
+      // La pesanteur pousse toujours, mais l'air freine : `vy` monte vers `CHUTE_MAX` et s'y
+      // arrête. Le passage par zéro — le moment où elle cesse de sortir et commence à retomber —
+      // est intact, c'est lui qui la dit FROIDE ; ce qui disparaît, c'est la chute libre après.
+      b.vy = Math.min(CHUTE_MAX, b.vy + 11 * dt)
+      // Elle s'étale au ras du sol — vers sa vitesse limite, plus en la MULTIPLIANT : une
+      // croissance exponentielle n'a pas d'échelle, donc pas de rayon (voir `NAPPE_TUILES`).
+      const cible = b.vx < 0 ? -RAMPE_MAX : RAMPE_MAX
+      b.vx += (cible - b.vx) * Math.min(1, 0.55 * dt)
       b.x += b.vx * dt
       b.y += b.vy * dt
 

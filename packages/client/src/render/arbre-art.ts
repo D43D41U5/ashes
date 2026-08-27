@@ -648,9 +648,71 @@ export const CIMES_PAR_ARBRE = 5
  * `snapshot-view` teste l'existence de la texture avant de la poser, plutôt que d'afficher
  * le carré vert d'une clé absente.
  */
-export function cleHouppier(slug: string, lit: boolean, cime: number, nu = false): string {
-  const n = nu ? '_nu' : ''
-  return lit ? `nd-${slug}_crown${n}_lit-${cime}` : `nd-${slug}_crown${n}`
+export function cleHouppier(
+  slug: string, lit: boolean, cime: number, etat: EtatCime = 'feuillu', parite = 0,
+): string {
+  const n = SUFFIXE_CIME[etat]
+  const p = parite === 1 ? '~1' : ''
+  return lit ? `nd-${slug}_crown${n}_lit-${cime}${p}` : `nd-${slug}_crown${n}`
+}
+
+/**
+ * ═══ LA PARITÉ DE CRAN — DEUX SAISONS CUITES À LA FOIS, ET POURQUOI IL EN FAUT DEUX ═══
+ *
+ * *(Demande d'Alexis, 2026-08-25 : « il faudra que la transition entre chaque état soit lerpée,
+ * une transition lente ».)*
+ *
+ * Un fondu se fait ENTRE DEUX IMAGES. Or le recuit saisonnier remplace la texture SOUS LA MÊME
+ * CLÉ (`registerLit` fait `remove` puis `addCanvas`) : à l'instant où le cran change, l'ancienne
+ * couleur n'existe plus nulle part, et il n'y a rien à fondre — le seul rendu possible est le
+ * saut.
+ *
+ * D'où deux emplacements, choisis par la PARITÉ du cran : le cran courant occupe `cran & 1`, le
+ * précédent occupe l'autre, et le fondu va de l'un à l'autre. Ça ne double pas la cuisson (on
+ * ne recuit qu'un emplacement par changement de cran, l'autre porte déjà le passé) — ça double
+ * seulement la place, et de 35 textures.
+ *
+ * ⚠ **SEUL LE FEUILLAGE CADUC EN A DEUX.** La cime nue, les coiffes de neige et le feuillage
+ * des persistants ne dépendent pas du jour : leur donner une parité serait cuire deux fois la
+ * même image. La règle vit ICI, en une ligne, plutôt que chez les trois appelants.
+ */
+export function pariteDeCime(slug: string, etat: EtatCime, cran: number): number {
+  // La cime NUE est peinte aux tons du FÛT : elle ne tourne pas, un tronc ne rousse pas. Tout le
+  // reste d'une variante saisonnière tourne — y compris ses cimes COIFFÉES, dont le feuillage
+  // se voit entre les plaques de neige.
+  return etat !== 'nu' && prendLaSaison(slug) ? cran & 1 : 0
+}
+
+
+/**
+ * ═══ L'ÉTAT D'UNE CIME — UN SEUL PARAMÈTRE, ET C'EST LE POINT ═══
+ *
+ * Il y avait `nu: boolean`, et la neige des persistants (2026-08-25) en appelait un second.
+ * Deux booléens indépendants savent former quatre combinaisons dont **deux n'existent pas** :
+ * un feuillu dénudé ne porte pas de coiffe (on n'a rien cuit pour lui), et un conifère n'est
+ * jamais nu (`VARIANTES_CADUQUES` ne le nomme pas — promesse G6). `cleHouppier` aurait donc pu
+ * fabriquer une clé que rien ne cuit, et le repli `textures.exists` l'aurait avalée en silence.
+ *
+ * L'exclusion est une propriété du DOMAINE : elle se dit dans le type, pas dans un garde-fou.
+ * *(C'est la leçon du 2026-08-06 : une table exhaustive par construction, pas par vigilance.)*
+ */
+export type EtatCime = 'feuillu' | 'nu' | 'neige1' | 'neige2'
+
+const SUFFIXE_CIME: Record<EtatCime, string> = {
+  feuillu: '', nu: '_nu', neige1: '_n1', neige2: '_n2',
+}
+
+/**
+ * LES DEUX CHARGES DE NEIGE — tranchées sur planche rendue (2026-08-25) : à 1,0 la cime est
+ * blanche et le conifère perd le vert qui le fait reconnaître ; à 0,35 la neige se voit déjà.
+ * Elles répondent aux deux niveaux du manteau au sol (poudreuse, jusqu'aux genoux) : ce qu'on
+ * a sous les pieds et ce qu'on a au-dessus de la tête disent la même chose.
+ */
+export const CHARGE_NEIGE: Record<'neige1' | 'neige2', number> = { neige1: 0.35, neige2: 0.7 }
+
+/** Les états qu'une variante sait porter — c'est ce que `lit-trees` cuit, et rien d'autre. */
+export function etatsDeCime(slug: string): readonly EtatCime[] {
+  return VARIANTES_CADUQUES.includes(slug) ? ['feuillu', 'nu'] : ['feuillu', 'neige1', 'neige2']
 }
 
 /**
@@ -668,6 +730,31 @@ export function cleHouppier(slug: string, lit: boolean, cime: number, nu = false
 export const VARIANTES_CADUQUES: readonly string[] = [
   'tree', 'old_tree', 'chene_pre', 'hetre', 'saule', 'bouleau', 'baliveau',
 ]
+
+/**
+ * ═══ LES VARIANTES DONT LE HOUPPIER TOURNE — ET LE MÉLÈZE EN EST ═══
+ *
+ * *(Décision d'Alexis, 2026-08-25 : « et l'histoire des mélèzes ».)*
+ *
+ * « Tourner » et « se dénuder » étaient le MÊME test (`VARIANTES_CADUQUES`) tant que les deux
+ * allaient ensemble. Le mélèze les sépare : **c'est un conifère qui DORE**. Il perd même ses
+ * aiguilles en vrai — G6 l'aligne délibérément sur les persistants « par lisibilité : la
+ * silhouette du conifère doit dire qu'il tient », et cette décision-là n'est PAS rouverte. Ce
+ * qui change est la seule chose que la silhouette ne dit pas : la couleur.
+ *
+ * Il garde donc sa cime douze mois sur douze, il garde ses coiffes de neige — et il vire à l'or
+ * aux Pluies comme un feuillu. C'est le seul arbre du jeu à faire les deux, et c'est exactement
+ * ce qu'est un mélèze.
+ *
+ * ⚠ **SA FAMILLE ÉTAIT DÉJÀ OLIVE** (`TONS_MELEZE`, le bois clair) : fondue vers le roux de la
+ * saison, elle sort JAUNE-OR là où les verts des feuillus sortent roux. On n'a donc pas eu à
+ * lui écrire une cible à part — la loi commune, appliquée à ses tons à lui, donne sa couleur.
+ */
+export const VARIANTES_SAISONNIERES: readonly string[] = [...VARIANTES_CADUQUES, 'meleze']
+
+export function prendLaSaison(slug: string): boolean {
+  return VARIANTES_SAISONNIERES.includes(slug)
+}
 
 /**
  * L'ASSISE — la zone par laquelle la cime REPOSE sur le fût, et qu'aucune découpe n'a le droit

@@ -211,6 +211,7 @@ const FORMES: { [T in ActionJouable]: FormeDe<Extract<PlayerAction, { type: T }>
   light_fire: {},
   place_campfire: { tx: req(TUILE), ty: req(TUILE) },
   found_village: { structureId: req(ID) },
+  light_torch: { structureId: req(ID) },
   repair: { structureId: req(ID) },
   plant: { structureId: req(ID) },
   harvest_crop: { structureId: req(ID) },

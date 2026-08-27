@@ -30,7 +30,7 @@ const GRAND_FROID = coeurDeSaison(4)
 function nuitDuJour(jour: number): SimState {
   const state = createSim(1, {
     map: createEmptyMap(96, 64, TERRAIN_GRASS),
-    cycleOffset: cycleOffsetForStartHour(0),
+    cycleOffset: cycleOffsetForStartHour(0, 1),
     calendarScale: 1,
   })
   state.tick = (jour - 1) * TICKS_PER_SEASON_DAY

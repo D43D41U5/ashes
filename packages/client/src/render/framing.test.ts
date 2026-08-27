@@ -5,6 +5,7 @@ import {
   barriereDepth,
   seuilDepth,
   AMBIENT_DEPTH,
+  AMBIENT_DEPTH_LIT,
   CANOPY_DEPTH,
   CROWN_ALPHA_MIN,
   CROWN_R_IN,
@@ -12,8 +13,11 @@ import {
   crownAlpha,
   crownDepth,
   clutterDepth,
+  fireflyDepth,
+  FLOOR_DEPTH,
   corpseDepth,
   GROUND_FIRE_DEPTH,
+  GROUND_PROP_DEPTH,
   lookaheadOffset,
   nodeDepth,
   OVERLAY_DEPTH,
@@ -160,6 +164,42 @@ describe('houppiers : la bande de profondeur (A9)', () => {
 
   it('deux houppiers se trient entre eux par leur rangée', () => {
     expect(crownDepth(11, TILE)).toBeGreaterThan(crownDepth(10, TILE))
+  })
+})
+
+describe('lucioles : entre le sol et le houppier (Alexis, 2026-08-26)', () => {
+  // La vallée canonique fait 3600 tuiles : une luciole peut dériver n'importe où dedans, et
+  // elle flotte, donc son y n'est pas borné par une rangée entière. On balaie TOUT le domaine
+  // au pas de la tuile, plus les bords fractionnaires — la propriété est de BANDE, pas
+  // d'échantillon, et c'est ce qui la rend prouvable.
+  const domaine: number[] = []
+  for (let y = 0; y <= 3600; y++) domaine.push(y, y + 0.5)
+
+  it('AUCUNE luciole ne passe devant un houppier, où qu\'elles soient toutes deux', () => {
+    // Le houppier LE PLUS BAS de la carte (rangée 0) contre la luciole LA PLUS BASSE (y max) :
+    // si celui-là gagne, tous gagnent, puisque `crownDepth` croît avec la rangée.
+    const houppierLePlusHaut = crownDepth(0, TILE)
+    for (const y of domaine) expect(fireflyDepth(y, TILE)).toBeLessThan(houppierLePlusHaut)
+  })
+
+  it('AUCUNE luciole ne tombe sous le sol, ni sous ce qui rampe dessus', () => {
+    for (const y of domaine) {
+      expect(fireflyDepth(y, TILE)).toBeGreaterThan(Y_SORT_BASE - 1)
+      expect(fireflyDepth(y, TILE)).toBeGreaterThan(GROUND_PROP_DEPTH)
+      expect(fireflyDepth(y, TILE)).toBeGreaterThan(GROUND_FIRE_DEPTH)
+      expect(fireflyDepth(y, TILE)).toBeGreaterThan(FLOOR_DEPTH)
+    }
+  })
+
+  it('elle trie AVEC le sous-bois : un fût plus au sud la couvre, un fût plus au nord non', () => {
+    // C'est TOUT l'objet du changement — avant, elle passait devant les deux.
+    expect(fireflyDepth(10, TILE)).toBeLessThan(nodeDepth(10, TILE)) // le fût de la rangée d'en dessous
+    expect(fireflyDepth(10, TILE)).toBeGreaterThan(nodeDepth(8, TILE)) // celui d'au-dessus
+  })
+
+  it('elle survit au voile de nuit du mode ÉCLAIRÉ (le mode nominal)', () => {
+    // AMBIENT_DEPTH_LIT passe sous la bande Y : c'est la condition qui rend la descente possible.
+    for (const y of domaine) expect(fireflyDepth(y, TILE)).toBeGreaterThan(AMBIENT_DEPTH_LIT)
   })
 })
 

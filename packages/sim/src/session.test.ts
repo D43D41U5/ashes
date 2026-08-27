@@ -42,6 +42,21 @@ function recolter(sim: SimState, id: number, nodeId: number, item: 'wood' | 'ber
   }
 }
 
+/** Ramasse un nœud de GLANAGE (stock 1, mains nues) : un coup, et il n'y est plus. */
+function ramasser(sim: SimState, id: number, nodeId: number): void {
+  const node = sim.nodes.find((n) => n.id === nodeId)!
+  me(sim).x = node.tx + 0.5
+  me(sim).y = node.ty + 0.5
+  act(sim, id, { type: 'harvest', nodeId })
+  for (let t = 1; t < BALANCE.GATHER_COOLDOWN_TICKS; t++) step(sim, [])
+}
+
+/** Enfile une recette et attend qu'elle sorte (le craft est dans le TEMPS, spec craft-file). */
+function fabriquer(sim: SimState, id: number, recipeId: 'rope' | 'crude_axe'): void {
+  act(sim, id, { type: 'craft', recipeId })
+  for (let t = 0; t < 20 * BALANCE.TICK_RATE_HZ && me(sim).craftQueue.length > 0; t++) step(sim, [])
+}
+
 /**
  * Le monde du banc : de quoi vivre à portée de main — le reste est au joueur.
  *
@@ -60,6 +75,15 @@ function mondeSolo(): { sim: SimState; id: number } {
     { id: 4, type: 'tree', tx: 10, ty: 9, stock: 10, regrowAt: 0 },
     { id: 5, type: 'tree', tx: 12, ty: 11, stock: 10, regrowAt: 0 },
     { id: 6, type: 'fiber_plant', tx: 9, ty: 11, stock: 6, regrowAt: 0 },
+    // LE GLANAGE (spec `glanage.md`) — la première hache se RAMASSE. Depuis G1, plus rien ne
+    // se coupe à mains nues : sans ces cinq objets par terre, ce banc ne mesurerait plus « le
+    // jeu est-il jouable », il mesurerait un joueur qui n'a aucun geste à faire. Deux branches
+    // et trois pierres : exactement le prix du hachereau (bois 2 + pierre 3 + corde 1).
+    { id: 7, type: 'branche_au_sol', tx: 10, ty: 8, stock: 1, regrowAt: 0 },
+    { id: 8, type: 'branche_au_sol', tx: 12, ty: 12, stock: 1, regrowAt: 0 },
+    { id: 9, type: 'pierre_au_sol', tx: 11, ty: 12, stock: 1, regrowAt: 0 },
+    { id: 10, type: 'pierre_au_sol', tx: 9, ty: 12, stock: 1, regrowAt: 0 },
+    { id: 11, type: 'pierre_au_sol', tx: 8, ty: 10, stock: 1, regrowAt: 0 },
   ]
   const sim = createSim(21, {
     map: createEmptyMap(32, 32, TERRAIN_GRASS),
@@ -74,7 +98,19 @@ describe('LA SESSION SOLO — le jeu est-il jouable ?', () => {
   it('QUI JOUE BIEN SURVIT : ramasser, faire du feu, CUISINER, manger', () => {
     const { sim, id } = mondeSolo()
 
-    // 1. Le bois d'abord — sans Feu, on ne cuisine pas, et sans cuisine on meurt.
+    // 0. LE GLANAGE, ET C'EST LA PREMIÈRE CHOSE QU'ON FAIT (spec `glanage.md`). L'arbre est là,
+    //    à deux pas, et il ne cède pas : il faut d'abord ramasser de quoi tailler le hachereau.
+    //    C'est l'ouverture réelle de toute partie depuis le 2026-08-25.
+    for (const n of [7, 8, 9, 10, 11]) ramasser(sim, id, n)
+    expect(countOf(me(sim).inventory, 'wood')).toBe(2)
+    expect(countOf(me(sim).inventory, 'stone')).toBe(3)
+    recolter(sim, id, 6, 'fiber', 3)
+    fabriquer(sim, id, 'rope')
+    fabriquer(sim, id, 'crude_axe')
+    expect(countOf(me(sim).inventory, 'crude_axe'), 'le hachereau est taillé').toBe(1)
+    me(sim).activeSlot = me(sim).inventory.findIndex((sl) => sl !== null && sl.item === 'crude_axe')
+
+    // 1. Le bois — MAINTENANT il vient. Sans Feu on ne cuisine pas, et sans cuisine on meurt.
     recolter(sim, id, 4, 'wood', 10)
     act(sim, id, { type: 'light_fire' })
     expect(sim.villages).toHaveLength(1)
@@ -83,7 +119,7 @@ describe('LA SESSION SOLO — le jeu est-il jouable ?', () => {
     const foyer = { x: me(sim).x, y: me(sim).y }
 
     // 2. De quoi faire un ragoût (4 baies + 1 fibre) — et de la marge.
-    recolter(sim, id, 6, 'fiber', 3)
+    recolter(sim, id, 6, 'fiber', 6)
     recolter(sim, id, 1, 'berries', 8)
     recolter(sim, id, 2, 'berries', 14)
 

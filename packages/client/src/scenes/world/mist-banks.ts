@@ -18,6 +18,7 @@ import Phaser from 'phaser'
 import { TERRAIN_SHALLOW_WATER, TERRAIN_DEEP_WATER, type WorldMap } from '@ashes/sim'
 import { crownDepth, TILE_PX } from '../../render/framing'
 import { brumeDuMatin, lerpColor } from '../../render/lighting'
+import type { HeureSolaire } from '../../render/lighting'
 
 /** Largeurs des 4 gabarits de banc, en tuiles (hauteur ≈ 0,55×). */
 const GABARITS = [7, 9, 11, 13]
@@ -142,16 +143,29 @@ export class MistBanks {
   update(
     nowMs: number,
     dtMs: number,
-    hour: number,
+    hour: HeureSolaire,
     vent: { x: number; y: number },
     day: number,
     camTx: number,
     camTy: number,
+    /**
+     * LA CONDITION DU MATIN (`partDeBrumeMatinale`, décision d'Alexis 2026-08-25) — la MÊME
+     * qui commande la marée, et il le FAUT : la brume du matin est **un** phénomène rendu par
+     * deux objets (R15 : « un shader de nappes + DES BANCS »). N'en conditionner qu'un donnerait
+     * le pire des deux mondes — un matin tiède ou venté où la nappe est absente mais où des
+     * bancs continuent de naître sur l'eau, et l'absence de l'une se lirait comme un bug à côté
+     * de la présence des autres.
+     */
+    part = 1,
   ): void {
-    const enveloppe = brumeDuMatin(hour)
+    const enveloppe = brumeDuMatin(hour) * Math.min(1, Math.max(0, part))
     // ── Naissances : dans la fenêtre seulement, au compte-gouttes (un contrôle par ~700 ms),
     //    sur une grande eau proche de la caméra, jamais collé à un banc vivant. ──
+    //    ⚠ L'ENVELOPPE GARDE AUSSI LA NAISSANCE, pas seulement la vie : sans elle, un matin sans
+    //    brume ferait naître un banc puis le tuerait à la ligne suivante (la mort teste
+    //    `enveloppe <= 0.001`) — un sprite créé et détruit par image, pour rien.
     if (
+      enveloppe > 0.001 &&
       hour >= NAISSANCE.debut &&
       hour <= NAISSANCE.fin &&
       this.bancs.length < MAX_BANCS &&

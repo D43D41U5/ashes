@@ -16,6 +16,14 @@ const SCALE = TICKS_PER_SEASON_DAY
  */
 const DEPART = 1
 const NAMES: Record<number, string> = { 1: 'le Foyer de la Rivière', 2: 'la Meute des Cendres' }
+/**
+ * LA CARTE DU BANC — NUE, sans une seule zone. Le formateur y dérive donc une clef de lieu
+ * `undefined` pour tout fait (R13), et les attendus de ce fichier restent des `{day, text,
+ * weight}` exacts. La clef de lieu se garde là où elle vit : `fiche-lieu.test.ts`, sur une
+ * carte QUI A des lieux — un banc qui se fabriquerait des lieux ici testerait deux choses à la
+ * fois et n'en garderait aucune.
+ */
+const CARTE = createEmptyMap(200, 200, 0)
 
 /** LE PREMIER JOUR D'UN ACTE (S1) — dérivé d'`ACT_DAYS`, jamais recopié : des saisons de
  *  30 jours ouvrent l'Éclosion au 1, l'Ardeur au 31, les Pluies au 61, le Grand Froid au 91,
@@ -35,6 +43,7 @@ describe('chronicleFromEvents — entrées structurées {jour, texte, poids}', (
       SCALE,
       DEPART,
       NAMES,
+      CARTE,
     )
     expect(entry).toEqual({ day: 1, text: "Un Feu s'est allumé : le Foyer de la Rivière.", weight: 'recit' })
     expect(formatChronicleLine(entry!)).toBe("Jour 1 — Un Feu s'est allumé : le Foyer de la Rivière.")
@@ -55,6 +64,7 @@ describe('chronicleFromEvents — entrées structurées {jour, texte, poids}', (
       SCALE,
       DEPART,
       NAMES,
+      CARTE,
     )
     const byDay = Object.fromEntries(entries.map((e) => [e.day, e.weight])) as Record<number, ChronicleWeight>
     expect(byDay[hiver]).toBe('battement')
@@ -79,6 +89,7 @@ describe('chronicleFromEvents — entrées structurées {jour, texte, poids}', (
       SCALE,
       DEPART,
       NAMES,
+      CARTE,
     )
     expect(entries).toHaveLength(0)
   })
@@ -93,6 +104,7 @@ describe('chronicleFromEvents — entrées structurées {jour, texte, poids}', (
       SCALE,
       DEPART,
       NAMES,
+      CARTE,
     )
     // Deux donneurs distincts → deux lignes ; le second don du même donneur est mangé.
     expect(entries.filter((e) => e.text.includes('offerts')).length).toBe(2)
@@ -107,6 +119,7 @@ describe('chronicleFromEvents — entrées structurées {jour, texte, poids}', (
       SCALE,
       DEPART,
       NAMES,
+      CARTE,
     )
     expect(entries).toHaveLength(1)
     expect(entries[0]!.text).toBe('le Sanctuaire a été atteint pour la première fois.')
@@ -123,6 +136,7 @@ describe('chronicleFromEvents — entrées structurées {jour, texte, poids}', (
       SCALE,
       DEPART,
       NAMES,
+      CARTE,
     )
     expect(entries).toHaveLength(2)
     // Forme ACTIVE (« On a atteint ») : insensible à l'accord par construction — « la Ferme
@@ -138,6 +152,7 @@ describe('chronicleFromEvents — entrées structurées {jour, texte, poids}', (
       SCALE,
       DEPART,
       NAMES,
+      CARTE,
     )
     // AU PLUS UNE proposition (règle de l'écrivain) : l'intact prime sur la cause — c'est le
     // payoff de la doctrine « loin des routes = intact = riche », et sa sobriété EST son poids.
@@ -150,6 +165,7 @@ describe('chronicleFromEvents — entrées structurées {jour, texte, poids}', (
       SCALE,
       DEPART,
       NAMES,
+      CARTE,
     )
     expect(entries).toEqual([{ day: 6, text: 'On a atteint la Tour de guet effondrée I. Elle regardait le sud.', weight: 'recit', lieu: 8 }])
     // Et l'article se plie à la direction : « l'est », jamais « le est ».
@@ -158,6 +174,7 @@ describe('chronicleFromEvents — entrées structurées {jour, texte, poids}', (
       SCALE,
       DEPART,
       NAMES,
+      CARTE,
     )
     expect(est[0]!.text).toBe("On a atteint la Tour de guet effondrée I. Elle regardait l'est.")
   })
@@ -176,6 +193,7 @@ describe('chronicleFromEvents — entrées structurées {jour, texte, poids}', (
       SCALE,
       DEPART,
       NAMES,
+      CARTE,
     )
     expect(entries).toEqual([{ day: hiver + 1, text: 'La Cendre s’est mise en marche : le sud brûle.', weight: 'battement' }])
   })
@@ -191,6 +209,7 @@ describe('chronicleFromEvents — entrées structurées {jour, texte, poids}', (
       SCALE,
       DEPART,
       NAMES,
+      CARTE,
     )
     expect(entries).toEqual([
       { day: hiver + 4, text: 'La Cendre est entrée chez « la Meute des Cendres ».', weight: 'intime' },
@@ -207,7 +226,7 @@ describe('chronicleFromEvents — entrées structurées {jour, texte, poids}', (
     // Et depuis S18, la ligne porte le CARACTÈRE de la saison quand elle en tire un (une sur
     // trois n'en a pas). C'est le seul endroit du jeu qui le nomme : le HUD se tait.
     const acteDe = (acte: number): string =>
-      chronicleFromEvents([at(PREMIER_JOUR_DE(acte), { type: 'act_started', act: acte })], SCALE, DEPART, NAMES)[0]!.text
+      chronicleFromEvents([at(PREMIER_JOUR_DE(acte), { type: 'act_started', act: acte })], SCALE, DEPART, NAMES, CARTE)[0]!.text
 
     // L'an 1 se tait sur son numéro — c'est la seule année que le joueur n'a pas à situer.
     expect(acteDe(2)).toBe('l’Ardeur a commencé.')
@@ -223,6 +242,7 @@ describe('chronicleFromEvents — entrées structurées {jour, texte, poids}', (
       SCALE,
       DEPART,
       NAMES,
+      CARTE,
     )
     expect(entries).toEqual([{ day: 12, text: 'On a lu la Stèle II. « Ici les chemins se répondaient. Nous guettions le sud. »', weight: 'recit', lieu: 20 }])
   })
@@ -233,6 +253,7 @@ describe('chronicleFromEvents — entrées structurées {jour, texte, poids}', (
       SCALE,
       DEPART,
       NAMES,
+      CARTE,
     )
     expect(entries).toEqual([{ day: 17, text: 'Pour un repas, des réfugiés ont dit où trouver la Ferme brûlée I.', weight: 'recit', lieu: 4 }])
   })
@@ -243,6 +264,7 @@ describe('chronicleFromEvents — entrées structurées {jour, texte, poids}', (
       SCALE,
       DEPART,
       NAMES,
+      CARTE,
     )
     expect(entries).toHaveLength(0)
   })
@@ -253,6 +275,7 @@ describe('chronicleFromEvents — entrées structurées {jour, texte, poids}', (
       SCALE,
       DEPART,
       NAMES,
+      CARTE,
     )
     expect(entries).toHaveLength(0)
   })
@@ -263,6 +286,7 @@ describe('chronicleFromEvents — entrées structurées {jour, texte, poids}', (
       SCALE,
       DEPART,
       NAMES,
+      CARTE,
     )
     expect(entries).toHaveLength(0)
   })
@@ -273,6 +297,7 @@ describe('chronicleFromEvents — entrées structurées {jour, texte, poids}', (
       SCALE,
       DEPART,
       NAMES,
+      CARTE,
     )
     expect(entries).toHaveLength(0)
   })
@@ -291,6 +316,7 @@ describe('chronicleFromEvents — entrées structurées {jour, texte, poids}', (
       SCALE,
       DEPART,
       NAMES,
+      CARTE,
     )
     expect(entries.map((e) => e.weight)).toEqual(['battement', 'recit', 'recit'])
     expect(entries[0]!.text).toBe("Le monde s'est éteint. Ce qu'on retiendra :")
@@ -316,7 +342,7 @@ describe('chronicleFromEvents — entrées structurées {jour, texte, poids}', (
         [at(30, villageId === undefined
           ? { type: 'horde_spawned', hordeId: 1, size, fireTx: 20, fireTy: 10, tx: 40, ty: 40 }
           : { type: 'horde_spawned', hordeId: 1, size, fireTx: 20, fireTy: 10, villageId, tx: 40, ty: 40 })],
-        SCALE, DEPART, NAMES,
+        SCALE, DEPART, NAMES, CARTE,
       )[0]?.text ?? ''
 
     const grande = (WORLD_EVENTS.HORDE_TAILLE.DEBUT + WORLD_EVENTS.HORDE_TAILLE.FIN) / 2
@@ -348,6 +374,7 @@ describe('les volumes — un par année, et le formateur repart à neuf au tour 
       SCALE,
       DEPART,
       NAMES,
+      CARTE,
     )
     expect(volumes.map((v) => v.an)).toEqual([1, 2])
     expect(volumes[0]!.entrees.map((e) => e.weight)).toEqual(['battement', 'intime'])
@@ -357,11 +384,11 @@ describe('les volumes — un par année, et le formateur repart à neuf au tour 
   })
 
   it('un flux vide rend zéro volume ; un an dont rien ne se dit garde un volume VIDE', () => {
-    expect(volumesDeChronique([], SCALE, DEPART, NAMES)).toEqual([])
+    expect(volumesDeChronique([], SCALE, DEPART, NAMES, CARTE)).toEqual([])
     // Un événement muet (un cairn, hors devise récit, sans annales) : l'an existe dans le flux
     // mais son volume est vide — on le garde (l'an a eu lieu), ses entrées sont [].
     const anDeux = YEAR_DAYS + 30
-    const v = volumesDeChronique([at(anDeux, { type: 'poi_first_visit', poiId: 2, kind: 'cairn', name: 'un cairn', byEntityId: 7 })], SCALE, DEPART, NAMES)
+    const v = volumesDeChronique([at(anDeux, { type: 'poi_first_visit', poiId: 2, kind: 'cairn', name: 'un cairn', byEntityId: 7 })], SCALE, DEPART, NAMES, CARTE)
     expect(v).toEqual([{ an: 2, entrees: [] }])
   })
 })
@@ -376,7 +403,7 @@ describe('le scellement — les années révolues deviennent des textes, l’ann
       at(an3, { type: 'act_started', act: 9 }),
       at(an3 + 20, { type: 'cendre_avance', jour: an3 + 20, front: 30, noeudsBrules: 2 }),
     ]
-    const { volumes, courant } = scellerLaChronique(flux, SCALE, DEPART, NAMES, 3)
+    const { volumes, courant } = scellerLaChronique(flux, SCALE, DEPART, NAMES, 3, CARTE)
     expect(volumes.map((v) => v.an)).toEqual([1, 2])
     expect(volumes.every((v) => v.entrees.length === 1)).toBe(true)
     expect(courant).toHaveLength(2) // les deux événements de l'an 3, BRUTS
@@ -385,7 +412,7 @@ describe('le scellement — les années révolues deviennent des textes, l’ann
 
   it('rien à sceller au tour de l’an 1 : tout reste courant', () => {
     const flux = [at(22, { type: 'cendre_avance', jour: 22, front: 2, noeudsBrules: 3 })]
-    const { volumes, courant } = scellerLaChronique(flux, SCALE, DEPART, NAMES, 1)
+    const { volumes, courant } = scellerLaChronique(flux, SCALE, DEPART, NAMES, 1, CARTE)
     expect(volumes).toEqual([])
     expect(courant).toHaveLength(1)
   })
@@ -411,6 +438,7 @@ describe('la fiche par lieu — annales et chronique interfeuillées par la clef
       SCALE,
       DEPART,
       NAMES,
+      CARTE,
     )
     const fiche = registreDuLieu(map, 0, volumes)
     // La vallée écrit les premières lignes…

@@ -41,10 +41,13 @@ describe('les tailles de sac (spec inventaire R11)', () => {
 })
 
 describe('terrains d\'altitude alpins', () => {
-  it('scree est marchable et lent (éboulis)', () => {
+  it('scree est marchable et À PLEIN RÉGIME (éboulis)', () => {
     expect(TERRAIN_SCREE).toBe(9)
-    // `cover: 1` : l'éboulis n'abrite personne (spec chasse C3).
-    expect(TERRAINS[TERRAIN_SCREE]).toEqual({ name: 'scree', walkable: true, speedFactor: 0.7, cover: 1 })
+    // `speedFactor: 1` depuis le 2026-08-27 (décision d'Alexis : « pas de ralentissement dans
+    // les biomes concernés ») — il valait 0,7. Le coût de la caillasse n'est plus une vitesse
+    // de marche, c'est le DÉTOUR : le chaos porte des blocs pleine tuile qu'on contourne, et
+    // rien n'y pousse. `cover: 1` : l'éboulis n'abrite personne (spec chasse C3).
+    expect(TERRAINS[TERRAIN_SCREE]).toEqual({ name: 'scree', walkable: true, speedFactor: 1, cover: 1 })
   })
   /**
    * LA NEIGE EST PRATICABLE — décision d'Alexis, 2026-07-14. Ce test disait l'inverse.

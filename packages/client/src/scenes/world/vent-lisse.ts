@@ -30,6 +30,32 @@ const PLANCHER_RENDU = 0.4
 export class VentLisse {
   private dir = { x: 1, y: 0 }
   private cible = { x: 1, y: 0 }
+  /** Le cap de la sim tel qu'il est arrivé — c'est lui qui porte la SENTINELLE du calme plat. */
+  private brut = { x: 1, y: 0 }
+
+  /**
+   * ═══ LE CAP RALLIÉ, SANS LA FORCE (Alexis, 2026-08-25) ═══
+   *
+   * *« Quand il y a un changement de direction du vent, les houppiers et autres végétaux
+   * reviennent à la position initiale d'un coup. »* Exactement : le décor lisait `state.wind`,
+   * le cap BRUT de la sim, qui avance par crans de 45°. À chaque bascule, `windSway` recalculait
+   * son inclinaison de fond (`BASE_LEAN × wx`) sur le nouveau cap — et sur un virage vers le
+   * nord ou le sud, `wx` tombe à zéro : toutes les tiges se redressaient d'une image à l'autre.
+   * Ce module tenait DÉJÀ la pente continue, mais seule la brume en profitait.
+   *
+   * On expose donc le cap rallié SEUL, sans le plancher de rendu ni la respiration : ce que le
+   * décor doit prendre ici, c'est la DIRECTION lissée ; sa force, il la lit de la sim
+   * (`state.windForce`), qui monte avant la pluie et n'a pas à être réinventée.
+   *
+   * ⚠ LA SENTINELLE DU CALME PLAT TRAVERSE. `wind = {0,0}` dit « ce monde n'a pas de vent »
+   * (`vent.ts`) et `windSway` s'y appuie pour ne RIEN faire bouger. Un cap rallié, lui, est
+   * toujours unitaire : le rendre tel quel aurait fait plier les herbes d'un monde sans vent —
+   * un banc, un hôte muet. On repasse donc le vecteur nul quand la sim l'envoie.
+   */
+  get cap(): { x: number; y: number } {
+    if (this.brut.x === 0 && this.brut.y === 0) return this.brut
+    return this.dir
+  }
 
   /**
    * À appeler chaque frame. `windSim` est le cap de la sim (norme 1, ou nul par calme plat),
@@ -37,6 +63,7 @@ export class VentLisse {
    * plat). Rend un vecteur direction × force — l'appelant applique sa vitesse.
    */
   update(nowMs: number, dtMs: number, windSim?: { x: number; y: number }, forceSim?: number): { x: number; y: number } {
+    if (windSim) this.brut = windSim
     if (windSim && (windSim.x !== 0 || windSim.y !== 0)) {
       const n = Math.sqrt(windSim.x * windSim.x + windSim.y * windSim.y)
       this.cible = { x: windSim.x / n, y: windSim.y / n }

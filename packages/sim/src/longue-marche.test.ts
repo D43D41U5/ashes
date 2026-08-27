@@ -31,7 +31,7 @@ const GRAND_FROID = coeurDeSaison(4)
 function nuitDuJour(jour: number): SimState {
   const state = createSim(1, {
     map: createEmptyMap(128, 64, TERRAIN_GRASS),
-    cycleOffset: cycleOffsetForStartHour(0),
+    cycleOffset: cycleOffsetForStartHour(0, 1),
     calendarScale: 1,
   })
   state.tick = (jour - 1) * TICKS_PER_SEASON_DAY
@@ -112,6 +112,65 @@ describe('la longue marche (décision ①)', () => {
     advanceMonsters(state)
     expect((monster.path?.length ?? 0)).toBeGreaterThan(0)
     expect(CENDREUX.WARMTH_SEEK_RANGE).toBe(20)
+  })
+})
+
+/**
+ * ═══ ILS NE MONTENT PLUS L'ESCALIER (Alexis, 2026-08-25) ═══
+ *
+ * *« Les Cendreux ne semblent pas avoir la possibilité de naviguer en diagonale. Trouve une
+ * solution pour éviter qu'ils ne se déplacent tout le temps qu'en X ou qu'en Y. »*
+ *
+ * La cause était double et purement mécanique : le champ de flux est 4-CONNEXE, donc la tuile
+ * élue est toujours un voisin orthogonal ; et `moveToward` annule tout axe sous sa ZONE MORTE.
+ * L'un des deux écarts valait donc zéro à chaque pas. La correction ne touche PAS au champ (ce
+ * serait rouvrir chaque chemin du jeu) : elle corrige le CAP — voir `descendreLeChamp`.
+ */
+describe('la marche oblique (Alexis, 2026-08-25)', () => {
+  /** La part des ticks où l'entité a bougé sur LES DEUX axes — l'unique nombre qui décide. */
+  function partObliques(state: SimState, ent: { x: number; y: number }, ticks: number): number {
+    let obliques = 0
+    let pas = 0
+    for (let t = 0; t < ticks; t++) {
+      const x0 = ent.x
+      const y0 = ent.y
+      state.tick += 1
+      advanceMonsters(state)
+      const dx = Math.abs(ent.x - x0)
+      const dy = Math.abs(ent.y - y0)
+      // Un « pas » est un tick où la bête a bougé du tout — les ticks de pensée ne comptent pas.
+      if (dx > 1e-6 || dy > 1e-6) {
+        pas += 1
+        if (dx > 1e-6 && dy > 1e-6) obliques += 1
+      }
+    }
+    expect(pas, 'la bête n’a pas bougé du tout : le montage ne mesure rien').toBeGreaterThan(50)
+    return obliques / pas
+  }
+
+  it('un feu EN DIAGONALE se rejoint en oblique, pas en escalier', () => {
+    const state = nuitDuJour(GRAND_FROID)
+    feuEn(state, 100, 12) // à 45° du départ : 45 tuiles à l'est, 45 au nord
+    const id = spawnMonster(state, 'cendreux', 55.5, 57.5)
+    const ent = state.entities.find((e) => e.id === id)!
+    const part = partObliques(state, ent, 400)
+    // Sur une plaine nue et un but à 45°, l'immense majorité des pas doit porter les deux axes.
+    // MESURÉ à 0 avant la correction — pas « peu » : ZÉRO, le champ ne pouvait pas l'exprimer.
+    expect(part, 'il monte encore l’escalier').toBeGreaterThan(0.5)
+  })
+
+  it('un feu PLEIN EST se rejoint tout droit — on n’a pas remplacé un tic par un autre', () => {
+    // ⚠ LA CONTREPARTIE, ET ELLE COMPTE AUTANT. Une correction qui obliquerait TOUJOURS ferait
+    //   zigzaguer une approche en ligne droite : ce serait le même défaut de lisibilité, dans
+    //   l'autre sens. La règle n'oblique que vers une tuile qui RAPPROCHE autant — donc jamais ici.
+    const state = nuitDuJour(GRAND_FROID)
+    feuEn(state, 100, 32)
+    const id = spawnMonster(state, 'cendreux', 50.5, 32.5)
+    const ent = state.entities.find((e) => e.id === id)!
+    const y0 = ent.y
+    const part = partObliques(state, ent, 400)
+    expect(part, 'il zigzague sur une approche droite').toBeLessThan(0.05)
+    expect(Math.abs(ent.y - y0), 'il a dérivé du droit chemin').toBeLessThan(1)
   })
 })
 

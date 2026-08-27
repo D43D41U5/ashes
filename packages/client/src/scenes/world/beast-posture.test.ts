@@ -9,8 +9,9 @@
  *                                une frontière de secteur.
  */
 import { describe, expect, it } from 'vitest'
-import type { Monster } from '@ashes/sim'
-import { BEAST_TINTS, COUCHER_DELAI_MS, MIROIR_DELAI_MS, beastTexture, beastTint, majMiroir, majRepos, nouveauMiroir, nouveauRepos } from './beast-posture'
+import { isPrey, MONSTER_DEFS, type Monster, type MonsterType } from '@ashes/sim'
+import { BEAST_TINTS, COUCHER_DELAI_MS, MIROIR_DELAI_MS, POSTURES_GIBIER, beastTexture, beastTint, majMiroir, majRepos, nouveauMiroir, nouveauRepos } from './beast-posture'
+import { ACTOR_FOOTPRINTS } from '../../render/framing'
 
 /** Un cerf nu : ni levé, ni tapi, ni méfiant. */
 function cerf(patch: Partial<Monster> = {}): Monster {
@@ -64,9 +65,21 @@ describe('la posture (R9bis / C19)', () => {
 
   it('LE RAMPANT se dessine couché (cendreux.md R26ter) — le marcheur garde son pion', () => {
     expect(beastTexture(cerf({ type: 'cendreux' }), false, NUIT, false)).toBe('spr-cendreux')
-    expect(beastTexture(cerf({ type: 'cendreux', rampant: true }), false, NUIT, false)).toBe('spr-cendreux-rampant')
+    expect(beastTexture(cerf({ type: 'cendreux', rampant: true }), false, NUIT, false)).toBe('spr-cendreux-rampant-0')
     // Posé ou non, jour ou nuit : un rampant ne se relève jamais.
-    expect(beastTexture(cerf({ type: 'cendreux', rampant: true }), true, JOUR, true)).toBe('spr-cendreux-rampant')
+    expect(beastTexture(cerf({ type: 'cendreux', rampant: true }), true, JOUR, true)).toBe('spr-cendreux-rampant-0')
+  })
+
+  it('…et SA LONGUEUR suit son CAP, en huit variantes (2026-08-25)', () => {
+    // Le miroir ne sait que retourner — il ne sait pas coucher ; et deux axes ne savent pas
+    // dire une diagonale. D'où huit textures, et l'appelant qui dit laquelle (il tient le
+    // verrou anti-tremblement).
+    const rampant = cerf({ type: 'cendreux', rampant: true })
+    expect(beastTexture(rampant, false, NUIT, false, 0)).toBe('spr-cendreux-rampant-0')
+    expect(beastTexture(rampant, false, NUIT, false, 2)).toBe('spr-cendreux-rampant-2')
+    expect(beastTexture(rampant, false, NUIT, false, 3)).toBe('spr-cendreux-rampant-3')
+    // Le cap ne concerne QUE le rampant : un marcheur garde son pion debout dans tous les cas.
+    expect(beastTexture(cerf({ type: 'cendreux' }), false, NUIT, false, 3)).toBe('spr-cendreux')
   })
 })
 
@@ -141,5 +154,67 @@ describe('le bond du loup se VOIT (R19)', () => {
 
   it('…mais le SANG prime sur le bond : ce qu’on traque reste l’information la plus chère', () => {
     expect(beastTint(loup({ leapUntil: 100, bleedMortal: true }), false, false, 50)).toBe(BEAST_TINTS.bleeding)
+  })
+})
+
+/**
+ * ═══ LA GARDE D'ATTEIGNABILITÉ DES POSTURES (spec faune R21) ═══
+ *
+ * Elle existe à cause d'un défaut qui ne PLANTE PAS. La branche des postures de
+ * gibier s'écrivait `type === 'deer' || type === 'rabbit'` : une sixième espèce y
+ * tombait à travers et se dessinait sur sa texture de base — jamais de broutage,
+ * jamais de fuite, et pas un test rouge pour le dire. Le pendant est vrai côté
+ * emprises : une clé absente d'`ACTOR_FOOTPRINTS` retombe sur le défaut et
+ * dessine la bête à la mauvaise taille, en silence.
+ *
+ * On BALAIE donc le bestiaire au lieu de citer des cas. Une espèce ajoutée à
+ * `MONSTER_DEFS` répond à ces gardes ou les fait rougir — c'est la seule forme
+ * qui s'étende toute seule.
+ */
+describe('R21 — toute bête de gibier a ses postures ET ses emprises', () => {
+  const especes = Object.keys(MONSTER_DEFS) as MonsterType[]
+
+  it('toute bête qui FUIT a une silhouette de fuite — distincte de son arrêt', () => {
+    // La condition est DÉRIVÉE, pas listée : « du gibier QUI FUIT » (`flightRange`
+    // non nul). Le sanglier est du gibier et n'a pas de posture de fuite — c'est
+    // sa spec (R14 : il ne fuit pas, il décide), pas un oubli. Une garde qui
+    // l'aurait exigé aurait été fausse ; une garde qui liste les espèces à la
+    // main n'aurait rien gardé du tout.
+    for (const t of especes) {
+      if (!isPrey(t) || (MONSTER_DEFS[t].flightRange ?? 0) === 0) continue
+      const arret = beastTexture({ ...cerf(), type: t, wary: true } as Monster, false, JOUR, false, 0, 0)
+      const fuite = beastTexture({ ...cerf(), type: t, fleeSince: 10 } as Monster, false, JOUR, false, 0, 0)
+      expect(fuite, `${t} : la fuite et l’arrêt se dessinent pareil`).not.toBe(arret)
+      expect(POSTURES_GIBIER[t], `${t} n’a pas de préfixe de posture`).toBeDefined()
+    }
+  })
+
+  it('chaque posture déclarée a son EMPRISE — sinon la bête se dessine à la taille par défaut', () => {
+    for (const t of especes) {
+      const base = POSTURES_GIBIER[t]
+      if (base === undefined) continue
+      // Les trois postures que la branche peut rendre pour toute bête de gibier…
+      for (const cle of [base, `${base}-graze`, `${base}-flee`]) {
+        expect(ACTOR_FOOTPRINTS[cle], `${cle} n’a pas d’emprise`).toBeDefined()
+      }
+      // …et la quatrième, pour celles qui volent.
+      if (MONSTER_DEFS[t].vol === true) {
+        expect(ACTOR_FOOTPRINTS[`${base}-vol`], `${base}-vol n’a pas d’emprise`).toBeDefined()
+      }
+    }
+  })
+
+  it('une bête qui VOLE se dessine en vol — et seulement tant qu’elle est en l’air', () => {
+    for (const t of especes) {
+      if (MONSTER_DEFS[t].vol !== true) continue
+      const base = POSTURES_GIBIER[t]!
+      const enLAir = { ...cerf(), type: t, volDepuis: 10, volUntil: 40, fleeSince: 10 } as Monster
+      expect(beastTexture(enLAir, false, JOUR, false, 0, 20)).toBe(`${base}-vol`)
+      // Posé : elle reprend une posture de sol (elle court — elle vient d'atterrir).
+      const pose = { ...cerf(), type: t, fleeSince: 10 } as Monster
+      expect(beastTexture(pose, false, JOUR, false, 0, 20)).toBe(`${base}-flee`)
+      // Et SANS horloge, jamais de vol : le repli sûr (voir le paramètre `tick`).
+      expect(beastTexture(enLAir, false, JOUR, false, 0)).not.toBe(`${base}-vol`)
+    }
   })
 })

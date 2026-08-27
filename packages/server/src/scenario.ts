@@ -88,7 +88,7 @@ export function createZone(): LanWorld {
     calendarScale: LAN_CALENDAR_SCALE,
     jourDeDepart: BALANCE.JOUR_DE_DEPART, // le monde ouvre à la fin de l'Ardeur (S2)
     nodes,
-    cycleOffset: cycleOffsetForStartHour(LAN_START_HOUR),
+    cycleOffset: cycleOffsetForStartHour(LAN_START_HOUR, BALANCE.JOUR_DE_DEPART),
     faunaCap: FAUNA.CAP,
     grounds,
     home: { x: base.tx + 0.5, y: base.ty + 0.5 },

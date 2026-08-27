@@ -12,7 +12,7 @@ import { advanceBrume, brumeCentre, brumeJourEligible, dansLaBrume } from './bru
 import { avanceesDepuisAges, foyersDeLaCarte } from './cendre'
 import { toutesLesFumerolles } from './fumerolle'
 import { MONDE_JOUE } from './zonegraph'
-import { generateZonedTerrain } from './zonegen'
+import { carteDeTest } from '../../../tools/carte-cache'
 import { placeZoneNodes } from './zone-content'
 import { drainEvents, type SimEvent } from './events'
 import { distSq } from './geometry'
@@ -402,7 +402,7 @@ describe('déterminisme (A1, A2/R9)', () => {
  * le nombre de tuiles).
  */
 describe('la Brume se lève sur le MONDE RÉEL, pas seulement sur le banc', () => {
-  const carteReelle = generateZonedTerrain(SEED_REEL, 8, MONDE_JOUE)
+  const carteReelle = carteDeTest(SEED_REEL, 8, MONDE_JOUE)
   const nodesReels = placeZoneNodes(carteReelle)
 
   function simReelle(): SimState {

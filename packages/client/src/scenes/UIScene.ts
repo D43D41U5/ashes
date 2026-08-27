@@ -7,7 +7,7 @@
 import { formatChronicleLine, modificateurDeSaison, NOMS_MODIFICATEUR, TEMPERATURE, zoneAt, type VillageTask, type WorldMap } from '@ashes/sim'
 import Phaser from 'phaser'
 import { getHud, setHud } from '../hud-state'
-import { drainAlertes, drainConseils, drainCrafts, drainLevelUps, drainPickups, queueAction } from './world/hud-bridge'
+import { drainAlertes, drainConseils, drainCrafts, drainDecouvertes, drainLevelUps, drainPickups, queueAction } from './world/hud-bridge'
 import { TILE_PX } from '../render/framing'
 import { createHudCore, type HudCore } from './ui/hud-core'
 import { createBarreHaute, type BarreHaute } from './ui/barre-haute'
@@ -20,6 +20,7 @@ import { createRefugeePrompt, type RefugeePrompt } from './ui/refugee-prompt'
 import { createBandeaux, type Bandeaux } from './ui/bandeaux'
 import { createDeathVeil, DEATH_VEIL_FILET_MS, type DeathVeil } from './ui/death-veil'
 import { createSeasonVeil, type SeasonVeil } from './ui/season-veil'
+import { createFicheLieu, type FicheLieu } from './ui/fiche-lieu'
 import { createPauseMenu, type PauseMenu } from './ui/pause-menu'
 import { mountHud, type HudDom } from './ui/hud-dom'
 import { mountVignette, type Vignette } from './ui/vignette'
@@ -40,8 +41,14 @@ export const TASK_LABELS: Record<VillageTask['kind'], string> = {
   gather_berries: 'récolter des baies',
   gather_wood: 'couper du bois',
   gather_fiber: 'ramasser des fibres',
-  gather_stone: 'ramasser de la pierre',
+  gather_stone: 'extraire de la pierre',
   gather_cut_stone: 'tailler à la carrière',
+  // LE GLANAGE (spec `glanage.md` G9) — et la nuance avec la corvée d'à côté est le sujet même
+  // du chantier : on RAMASSE ce qui traîne tant qu'on n'a pas l'outil pour EXTRAIRE. D'où le
+  // verbe de `gather_stone`, passé de « ramasser » à « extraire » : les deux libellés se
+  // seraient contredits sur le tableau, et c'est justement l'écart qu'il faut lire.
+  glaner_bois: 'glaner du bois mort',
+  glaner_pierre: 'glaner des pierres',
   cook_stew: 'cuisiner',
   repair: 'réparer',
   feed_fire: 'nourrir le Feu',
@@ -79,8 +86,16 @@ const MAP_FOG_TEX = 'map-fog'
 const MAP_POI_RADIUS = 3
 const MAP_POI_FILL = 0xe8e0c8
 const MAP_POI_STROKE = 0x14141a
+/** La pastille d'un lieu QU'ON NE CONNAÎT PAS, montrée seulement par le mode debug (P). Elle
+ *  ne peut pas porter la teinte des vraies : sinon on ne saurait plus, en jouant, ce que
+ *  l'avatar a réellement trouvé. Sourde et froide — un repère d'outil, pas un savoir. */
+const MAP_POI_FILL_DEBUG = 0x4a4a52
 /** Sous ce déplacement (px), un appui-relâché sur la carte est un CLIC, pas un pan. */
 const MAP_CLICK_SLOP_PX = 5
+/** Le rayon de CLIC d'une pastille, en pixels d'écran. La pastille est dessinée à
+ *  `MAP_POI_RADIUS` (3 px, taille constante) : viser trois pixels à la souris est un jeu
+ *  d'adresse, pas une lecture. 12 px = la moitié de la cible de 24 px que recommande WCAG. */
+const MAP_POI_HIT_PX = 12
 
 export class UIScene extends Phaser.Scene {
   private alarmOverlay!: Phaser.GameObjects.Rectangle
@@ -101,6 +116,8 @@ export class UIScene extends Phaser.Scene {
   private refugeePrompt!: RefugeePrompt
   private deathVeil!: DeathVeil
   private seasonVeil!: SeasonVeil
+  /** LE TIROIR DU REGISTRE (T5) — ouvert en cliquant une pastille CONNUE de la carte. */
+  private ficheLieu!: FicheLieu
   /** La stèle de fin de saison n'est levée qu'UNE fois (la saison ne finit qu'une fois). */
   private seasonVeilShown = false
   private pauseMenu!: PauseMenu
@@ -145,6 +162,9 @@ export class UIScene extends Phaser.Scene {
   private mapFogVersion = -1
   /** La texture CANVAS du brouillard — c'est ce type-là (et pas `Texture`) qui sait se rafraîchir. */
   private mapFogTex?: Phaser.Textures.CanvasTexture
+  /** L'état de « tout voir » DÉJÀ appliqué — basculer P doit repeindre, or `mapFogVersion`
+   *  ne bouge pas quand on arme le mode debug (la marche n'a rien découvert). */
+  private mapToutVu = false
   private mapMarker!: Phaser.GameObjects.Arc
   /** Une pastille par POI (zone avec un `kind`), AVEC son poiId — l'index dans `map.zones`,
    *  qui est l'identité d'un lieu (spec lieux R4). Le filtre `knownPois` en dépend. */
@@ -211,6 +231,7 @@ export class UIScene extends Phaser.Scene {
       this.bandeaux?.destroy() // idem — il monte sur `document.body`, pas sur la scène
       this.seasonVeil?.destroy() // idem : monté sur document.body
       this.pauseMenu?.destroy() // idem
+      this.ficheLieu?.destroy() // idem — le tiroir du registre monte sur document.body
     })
 
     // LA BANDE DU HUD (maquette 2A), en DOM : jour/lieu (haut-gauche), toasts (haut-
@@ -266,6 +287,10 @@ export class UIScene extends Phaser.Scene {
     })
     // Le menu PAUSE (ESC) : REPRENDRE referme (menuOpen=false → WorldScene reprend l'hôte) ; le
     // curseur de son passe par le registre (`audioVolume`), que WorldScene applique au moteur.
+    // LE TIROIR DU REGISTRE (T5) : `registreDuLieu`/`ficheDuLieu` vivaient dans /sim, purs et
+    // testés, SANS un seul appelant côté client. Voici leur lecteur — ouvert d'un clic sur une
+    // pastille CONNUE de la carte, refermé par sa croix ou en refermant l'onglet.
+    this.ficheLieu = createFicheLieu({ onFermer: () => this.ficheLieu.fermer() })
     this.pauseMenu = createPauseMenu({
       onResume: () => setHud(this.registry, 'menuOpen', false),
       getVolume: () => Number(getHud(this.registry, 'audioVolume') ?? 1),
@@ -345,12 +370,20 @@ export class UIScene extends Phaser.Scene {
       this.updateMapHover(pointer)
     })
     this.input.on('pointerup', (pointer: Phaser.Input.Pointer) => {
-      // DEV, mode debug armé (P) : un clic SANS glisser téléporte l'avatar sur
-      // la tuile visée. Le seuil distingue le clic du relâchement d'un pan —
-      // sans lui, tout déplacement de carte finirait par un TP surprise.
-      if (import.meta.env.DEV && this.mapVisible() && getHud(this.registry, 'debugOn')) {
-        const dragged = Math.abs(pointer.x - this.mapDragStart.px) + Math.abs(pointer.y - this.mapDragStart.py)
-        const tile = dragged <= MAP_CLICK_SLOP_PX ? this.mapTileAt(pointer) : null
+      // Le seuil distingue le clic du relâchement d'un pan — sans lui, tout déplacement
+      // de carte finirait par une action surprise.
+      const dragged = Math.abs(pointer.x - this.mapDragStart.px) + Math.abs(pointer.y - this.mapDragStart.py)
+      const clic = this.mapVisible() && dragged <= MAP_CLICK_SLOP_PX
+      // LE REGISTRE D'UN LIEU : un clic sur une pastille CONNUE ouvre sa fiche ; le même clic
+      // dans le vide la referme. Il passe AVANT le TP de debug, et c'est ce qui les départage :
+      // en DEV la téléportation REFERME l'onglet carte (« on veut voir où l'on atterrit »,
+      // debug-overlay) — les deux sur le même clic, le tiroir s'ouvrait puis tombait dans la
+      // frame suivante. VU en smoke, pas déduit. Une pastille visée est un LIEU qu'on veut
+      // lire, pas une tuile où l'on veut sauter.
+      const lu = clic && pointer.leftButtonReleased() ? this.ouvrirLaFiche(pointer) : false
+      // DEV, mode debug armé (P) : le clic téléporte l'avatar sur la tuile visée.
+      if (import.meta.env.DEV && clic && !lu && getHud(this.registry, 'debugOn')) {
+        const tile = this.mapTileAt(pointer)
         // On POSE la demande ; WorldScene la consomme (elle seule parle à l'hôte).
         if (tile) requestTeleport(this, tile)
       }
@@ -531,7 +564,10 @@ export class UIScene extends Phaser.Scene {
     const at = this.mapTileAt(pointer)
     const zone = at ? zoneAt(map, at.tx, at.ty) : undefined
     const poiId = zone ? map.zones.indexOf(zone) : -1
-    const hidden = zone?.kind !== undefined && !(getHud(this.registry, 'knownPois') ?? []).includes(poiId)
+    // La levée debug nomme TOUT : identifier la zone qu'on est en train de juger est la moitié
+    // du travail (« ce pierrier trop droit, c'est lequel ? »).
+    const hidden =
+      !this.mapToutVu && zone?.kind !== undefined && !(getHud(this.registry, 'knownPois') ?? []).includes(poiId)
     this.mapHover.setText(zone && !hidden ? zone.name : '')
   }
 
@@ -552,6 +588,40 @@ export class UIScene extends Phaser.Scene {
   }
 
   /**
+   * LE MODE DEBUG OUVRE LA CARTE EN ENTIER (demande d'Alexis, 2026-08-26).
+   *
+   * Raison d'être : le brouillard (R19) est une règle de JEU, et elle empêche de faire le
+   * travail d'AUTEUR — juger la silhouette d'un biome, la forme d'une vallée, le semis des
+   * lieux — qui demande de voir la carte d'un coup d'œil, pas de l'arpenter une heure. P
+   * suffit donc à la lever : pas de nouvel interrupteur, « lorsqu'on est en mode debug ».
+   *
+   * ⚠ LA LEVÉE EST UN AFFICHAGE, JAMAIS UNE ÉCRITURE. On cache le CALQUE ; on ne touche pas
+   * à `fog.vu`. Un `revele()` plein écran serait empaqueté dans la sauvegarde au prochain
+   * `saveFog` (WorldScene) et brûlerait le brouillard de cette case POUR DE BON — on aurait
+   * détruit la partie du joueur pour regarder une carte.
+   *
+   * Doublement mort en production : `import.meta.env.DEV` est statiquement faux, Rollup
+   * élimine la branche, et `debugOn` n'y est de toute façon jamais armé (P n'est pas câblé).
+   */
+  private carteToutVoir(): boolean {
+    return import.meta.env.DEV && Boolean(getHud(this.registry, 'debugOn'))
+  }
+
+  /** Applique (ou retire) la levée debug. Ne fait rien tant que l'état ne CHANGE pas : la
+   *  carte reste peinte une fois pour toutes, comme le reste de l'overlay. */
+  private syncCarteToutVoir(): void {
+    const tout = this.carteToutVoir()
+    if (tout === this.mapToutVu) return
+    this.mapToutVu = tout
+    this.mapFog?.setVisible(!tout)
+    // Le compte « ARPENTÉ » et les pastilles se relisent : `mapFogVersion` ne bouge pas tout
+    // seul ici (rien n'a été découvert), et sans ce forçage le libellé mentirait jusqu'au
+    // prochain pas. Un repeint coûte 40 000 pixels, une fois par bascule.
+    this.mapFogVersion = -1
+    this.mapPoiScale = 0
+  }
+
+  /**
    * REPEINT LE BROUILLARD (spec R19) — et seulement si la marche a découvert du neuf.
    *
    * Une cellule non vue est de l'ENCRE OPAQUE : on ne devine rien de la forme du pays derrière.
@@ -566,28 +636,40 @@ export class UIScene extends Phaser.Scene {
     this.mapFogVersion = version
     const tex = this.mapFogTex
     if (!tex) return
-    const src = tex.getSourceImage() as HTMLCanvasElement
-    const ctx = src.getContext('2d')
-    if (!ctx) return
-    const img = ctx.createImageData(fog.cols, fog.rows)
-    for (let i = 0; i < fog.vu.length; i++) {
-      const k = i * 4
-      // L'encre de la palette (#14141a) : le brouillard est la MÊME matière que les cadres
-      // et les contours du jeu, pas un gris neutre venu d'ailleurs.
-      img.data[k] = 0x14
-      img.data[k + 1] = 0x14
-      img.data[k + 2] = 0x1a
-      img.data[k + 3] = fog.vu[i] ? 0 : 255
+    // Levée debug : le calque est caché (`syncCarteToutVoir`), donc on ne peint pas 40 000
+    // pixels qu'on ne montre pas. La bascule remet `mapFogVersion` à -1, donc le retour au
+    // jeu repeint un brouillard à jour — l'économie ne peut pas laisser une texture périmée.
+    if (!this.mapToutVu) {
+      const src = tex.getSourceImage() as HTMLCanvasElement
+      const ctx = src.getContext('2d')
+      if (!ctx) return
+      const img = ctx.createImageData(fog.cols, fog.rows)
+      for (let i = 0; i < fog.vu.length; i++) {
+        const k = i * 4
+        // L'encre de la palette (#14141a) : le brouillard est la MÊME matière que les cadres
+        // et les contours du jeu, pas un gris neutre venu d'ailleurs.
+        img.data[k] = 0x14
+        img.data[k + 1] = 0x14
+        img.data[k + 2] = 0x1a
+        img.data[k + 3] = fog.vu[i] ? 0 : 255
+      }
+      ctx.putImageData(img, 0, 0)
+      tex.refresh()
     }
-    ctx.putImageData(img, 0, 0)
-    tex.refresh()
 
     // Et on le DIT. Au premier jour, « ARPENTÉ : 0 % » explique le noir au lieu de le subir ;
     // plus tard, le chiffre qui monte est une raison de sortir à lui tout seul.
+    //
+    // Sous la levée debug, le chiffre RESTE VRAI (on n'a rien arpenté de plus) mais il serait
+    // lu comme une panne devant une carte entière : la mention dit d'où vient ce qu'on voit.
     if (this.mapArpente) {
       const pct = partDecouverte(fog) * 100
-      this.mapArpente.setText(`ARPENTÉ : ${pct < 1 && pct > 0 ? '< 1' : Math.round(pct)} %` +
-        (pct < 1 ? '  ·  la carte se dessine à mesure que vous marchez' : ''))
+      const arpente = `ARPENTÉ : ${pct < 1 && pct > 0 ? '< 1' : Math.round(pct)} %`
+      this.mapArpente.setText(
+        this.mapToutVu
+          ? `${arpente}  ·  DEBUG : carte entière (le brouillard est intact)`
+          : arpente + (pct < 1 ? '  ·  la carte se dessine à mesure que vous marchez' : ''),
+      )
     }
   }
 
@@ -617,8 +699,67 @@ export class UIScene extends Phaser.Scene {
       for (const { dot } of this.mapPoiDots) dot.setScale(1 / scale)
     }
     // Les lieux se gagnent : on ne montre que ceux qu'on connaît (spec lieux R1).
+    //
+    // SAUF sous la levée debug, qui montre AUSSI les autres — mais en teinte sourde
+    // (`MAP_POI_FILL_DEBUG`) : le semis des lieux fait partie de la forme de la vallée, et on
+    // doit pouvoir le juger d'un coup d'œil ; en revanche on ne doit jamais confondre, dans la
+    // même image, ce que l'avatar a trouvé et ce que l'outil dévoile. Elles restent NON
+    // CLIQUABLES (voir `ouvrirLaFiche`) : un repère, pas une porte — et c'est aussi ce qui
+    // laisse le clic de TP libre sur la quasi-totalité de la carte.
     const known = getHud(this.registry, 'knownPois') ?? []
-    for (const { poiId, dot } of this.mapPoiDots) dot.setVisible(known.includes(poiId))
+    const tout = this.mapToutVu
+    for (const { poiId, dot } of this.mapPoiDots) {
+      const su = known.includes(poiId)
+      dot.setVisible(su || tout)
+      dot.setFillStyle(su ? MAP_POI_FILL : MAP_POI_FILL_DEBUG)
+    }
+  }
+
+  /**
+   * OUVRE LA FICHE DU LIEU VISÉ — ou referme le tiroir si le clic est tombé dans le vide.
+   *
+   * On vise la PASTILLE À L'ÉCRAN, pas l'empreinte du lieu : une empreinte de POI fait
+   * quelques tuiles, soit quelques pixels au zoom d'ouverture — invisable. L'étalon d'un rayon
+   * de clic est la MAIN, pas la donnée : `MAP_POI_HIT_PX` vaut le rayon de cible minimal
+   * recommandé, quatre fois le rayon dessiné de la pastille.
+   *
+   * Un lieu INCONNU ne s'ouvre jamais : la carte ne montre pas sa pastille (spec lieux R1), et
+   * le tiroir ne doit pas être une porte dérobée vers ce que le brouillard cache. Le filtre
+   * `known` TIENT MÊME SOUS LA LEVÉE DEBUG, qui rend pourtant les pastilles inconnues visibles
+   * — et pour une raison de main autant que de règle : le rayon de clic est de 12 px pour ~90
+   * lieux, donc rendre tout cliquable ferait manger le clic de TÉLÉPORTATION (qui passe APRÈS)
+   * sur une large part de la carte. Une pastille dévoilée par l'outil est un repère, pas une
+   * cible.
+   */
+  private ouvrirLaFiche(pointer: Phaser.Input.Pointer): boolean {
+    const map = getHud(this.registry, 'mapData')
+    // Hors de la BOÎTE, la carte est masquée par les bandes : on y cliquerait un pays invisible.
+    if (!map || pointer.y < MAP_BOX_TOP || pointer.y > MAP_BOX_BOTTOM) return false
+    const known = getHud(this.registry, 'knownPois') ?? []
+    const scale = this.mapFit * this.mapZoom
+    let vise: number | null = null
+    let meilleur = MAP_POI_HIT_PX * MAP_POI_HIT_PX
+    for (const { poiId, dot } of this.mapPoiDots) {
+      if (!known.includes(poiId)) continue
+      const dx = this.mapLayer.x + dot.x * scale - pointer.x
+      const dy = this.mapLayer.y + dot.y * scale - pointer.y
+      const d2 = dx * dx + dy * dy
+      // Strict : à égalité, le plus petit index tranche — l'ordre de `placePois`, déterministe.
+      if (d2 < meilleur) {
+        meilleur = d2
+        vise = poiId
+      }
+    }
+    if (vise === null) {
+      this.ficheLieu.fermer()
+      return false
+    }
+    // La mémoire des hivers, entière : les années SCELLÉES par l'hôte puis les années VIVES du
+    // flux — la même paire que le journal (J), et pour la même raison (le passé ne se perd plus
+    // au plafond du flux).
+    const volumes = [...(getHud(this.registry, 'volumesScelles') ?? []), ...(getHud(this.registry, 'volumesVifs') ?? [])]
+    this.ficheLieu.ouvrir(map, vise, map.zones[vise]?.name ?? '', volumes)
+    return true
   }
 
   /**
@@ -649,7 +790,12 @@ export class UIScene extends Phaser.Scene {
    * et se peint au-dessus des panneaux. Ici, il ne reste que le DRAIN.
    */
   private renderBandeaux(): void {
-    this.bandeaux.update(this.time.now, drainAlertes(this.registry), drainConseils(this.registry))
+    this.bandeaux.update(
+      this.time.now,
+      drainAlertes(this.registry),
+      drainConseils(this.registry),
+      drainDecouvertes(this.registry),
+    )
   }
 
   /** LA FLÈCHE DE DÉPOUILLE (mort-suite 2) : pointe vers le sac tombé quand il est HORS
@@ -714,6 +860,16 @@ export class UIScene extends Phaser.Scene {
     // donc rien à faire transiter. Le HUD ne le disait pas — Alexis a tranché l'inverse le
     // 2026-08-24 : le PRÉSENT se nomme, seul le FUTUR se tait.
     const idCaractere = modificateurDeSaison(time.tour, time.phase)
+    // LA BARRE HAUTE SE TAIT SUR LA CARTE (demande d'Alexis, 2026-08-25). L'onglet CARTE est
+    // un plein écran opaque, et la barre lui tombait dessus : « LES PRÉS BAS · ◇ LA FERME
+    // MUETTE II » chevauchait la rangée d'onglets, et le ruban de l'année barrait le haut de
+    // la vallée. La carte dit DÉJÀ où l'on est, en mieux — le survol nomme la zone sous le
+    // curseur, la pastille marque l'avatar : la barre n'y ajoutait qu'un doublon en travers.
+    //
+    // On la CACHE sans cesser de la NOURRIR (`update` ci-dessous tourne toujours) : sa mémoire
+    // du lieu et sa grâce de sortie restent à jour, donc elle revient juste au lieu de revenir
+    // vide et de se rallumer sous les yeux du joueur.
+    this.barreHaute.setVisible(!getHud(this.registry, 'mapOpen'))
     this.barreHaute.update({
       time,
       toponyme: getHud(this.registry, 'toponyme'),
@@ -863,10 +1019,13 @@ export class UIScene extends Phaser.Scene {
       this.mapRoot.setVisible(mapOpen)
       if (mapOpen && mapData) {
         if (!this.mapWasOpen) this.resetMapView() // vue neuve à chaque ouverture
+        this.syncCarteToutVoir() // DEV + P : la carte s'ouvre en entier (affichage seul)
         this.refreshMapFog() // ne repeint que si la marche a découvert du neuf
         this.updateMapMarker(mapData)
         this.updateMapPoiDots()
       }
+      // Le tiroir du registre vit DANS l'onglet carte : il tombe avec lui.
+      if (!mapOpen && this.mapWasOpen) this.ficheLieu.fermer()
       this.mapWasOpen = mapOpen
     }
 

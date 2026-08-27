@@ -102,6 +102,7 @@ describe('la dérive du bosquet (D1)', () => {
     const sim = makeSim([node('tree', 24, 24, 1)]) // un coup suffit
     const tree = sim.nodes[0]!
     const id = spawnEntity(sim, 24.5, 24.5)
+    grantHeld(sim, id, 'crude_axe') // le bois exige un outil (spec `glanage.md` G1)
     standOn(sim, id, tree)
     act(sim, id, { type: 'harvest', nodeId: tree.id })
     // Il a bougé…
@@ -133,6 +134,7 @@ describe('la dérive du bosquet (D1)', () => {
       const sim = makeSim([node('tree', 24, 24, 1)])
       const tree = sim.nodes[0]!
       const id = spawnEntity(sim, 24.5, 24.5)
+      grantHeld(sim, id, 'crude_axe') // le bois exige un outil (spec `glanage.md` G1)
       standOn(sim, id, tree)
       act(sim, id, { type: 'harvest', nodeId: tree.id })
       return { tx: tree.tx, ty: tree.ty }
@@ -153,6 +155,7 @@ describe('la dérive du bosquet (D1)', () => {
     const still = makeSim([node('tree', 24, 24, 5)])
     for (const s of [drift, still]) {
       const id = spawnEntity(s, 24.5, 24.5)
+      grantHeld(s, id, 'crude_axe') // le bois exige un outil (spec `glanage.md` G1)
       standOn(s, id, s.nodes[0]!)
       act(s, id, { type: 'harvest', nodeId: s.nodes[0]!.id })
     }

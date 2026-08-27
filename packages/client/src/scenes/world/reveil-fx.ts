@@ -156,6 +156,9 @@ export const PART_DU_SOL: Record<GrainFamille, number> = {
   // Ce qu'on déterre EST la surface : elle passe presque entière.
   neige: 0.9,
   mineral: 0.8,
+  // La DALLE (le pavement du lapiaz) suit le minéral : sous une table de calcaire il y a du
+  // calcaire. Ce qui sort du trou est de la roche broyée, pas de la terre.
+  dalle: 0.8,
   // Sous l'herbe, la litière et la tourbe, il y a de la terre. La surface ne fait que teinter.
   herbe: 0.2,
   litiere: 0.25,

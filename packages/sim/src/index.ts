@@ -41,6 +41,8 @@ export { POI,
   SEASON,
   SLOTS,
   FIRE_UPKEEP,
+  TORCHE,
+  NUIT,
   SPOIL,
   SPOIL_CYCLES,
   STRUCTURE_COSTS,
@@ -79,6 +81,7 @@ export { POI,
   TERRAIN_WILLOW,
   TERRAIN_WET_MEADOW,
   TERRAIN_JUNIPER_HEATH,
+  TERRAIN_CLAIRIERE,
   TERRAIN_CENDRE_PRE,
   TERRAIN_CENDRE_BOIS,
   TERRAIN_CENDRE_MIN,
@@ -131,9 +134,18 @@ export {
   profondeurAt,
 } from './map'
 export { deriverProfondeur, estCoeur, estLisiere, TERRAINS_BOISES_MASSIF } from './profondeur'
+// LES CLAIRIÈRES (2026-08-25) — le client lit le TERRAIN, jamais un champ recalculé. Seul
+// `estClairiere` sort (le masque solaire le consomme) ; `CLAIRIERE` et `peindreLesClairieres`
+// restent au worldgen, et les sondes de `tools/` lisent le module en direct.
+export { estClairiere } from './clairieres'
 export { CREUX } from './racine-relief'
-export type { WorldMap, Zone } from './map'
-export { getGameTime, seasonDayAtTick, actForDay, coeurDeLaSaisonSuivante, tourForDay, phaseForDay, YEAR_DAYS, cycleOffsetForStartHour, calendarScaleForSeasonCycles, TICKS_PER_CYCLE, dayTicksAt, dayTicksPourJour, estCrepuscule, jourDeSaison, jourDeLAnnee, TICKS_PER_SEASON_DAY } from './time'
+export type { WorldMap, Zone, FaitDeGeneration } from './map'
+// LES LECTEURS DU PAYS D'AVANT (spec `annales.md`) — la VOIX du visiteur et le nom des ères.
+// Exportés le 2026-08-25 pour la fiche d'un lieu : le client les LIT, il ne les réécrit pas
+// (doctrine de l'écrivain unique — `fiche-lieu.test.ts` le garde par balayage).
+export { phraseDuFait, nomDEre } from './annales'
+export type { PhraseDeFait } from './annales'
+export { getGameTime, seasonDayAtTick, actForDay, coeurDeLaSaisonSuivante, tourForDay, phaseForDay, YEAR_DAYS, cycleOffsetForStartHour, calendarScaleForSeasonCycles, TICKS_PER_CYCLE, dayTicksAt, dayTicksPourJour, leverPourJour, leverAt, estCrepuscule, jourDeSaison, jourDeLAnnee, TICKS_PER_SEASON_DAY } from './time'
 export type { GameTime, Act } from './time'
 export { AMBIANT_HYPOTHERMIE, ambientTemperature, baselineTemperature, baselineTemperatureAt, cibleCorporelle, climatFlore, climatMaximal, dehorsSansMeteo, advanceTemperature } from './temperature'
 // LA BRUME (spec brume.md) : le client rendra la nappe en la RECALCULANT du tick (patron front
@@ -195,6 +207,23 @@ export { fireZoneInventory, fireZoneAccepts, fireSlotLocked, recettesDuPoste } f
 export { estTerrainDeMarais, estTerrainDEau, deriverNatureDeLEau, NATURE_MARAIS, NATURE_RIEN } from './peche-nature'
 export { eauPechable, natureDeLEau, creneauAt, tableDePrises, poidsDuRien, especeRetenue, conditionsAt } from './peche-table'
 export type { FireState, FireZone } from './fire'
+// LA TORCHE (spec `torche.md`) : le client lit `torcheVive`/`partDeFlamme` pour poser sa lumière.
+export { estTorcheVive, torcheVive, ticksDeFlamme, partDeFlamme, foyerDonneLeFeu, advanceTorches } from './torche'
+
+// LE CADRAN DE LA LUNE ET LE PRIX DU NOIR (`nuit.ts`, décision d'Alexis 2026-08-26) : le
+// client lit la MÊME courbe de lune que la règle (jamais une seconde), et rappelle
+// `clarteSurSoiAt` dans sa prédiction locale — sans quoi il prédirait un sprint que
+// l'autorité refuse.
+export {
+  LUNAISON_JOURS,
+  LUNE_PLEINE_JOUR,
+  phaseDeLune,
+  clarteDeLune,
+  clarteDuCiel,
+  lumiereDuFeu,
+  clarteSurSoi,
+  clarteSurSoiAt,
+} from './nuit'
 export { FIRE, COOK_SLOT } from './balance'
 export { resolveMove, moveAvatar, moveAvatarStepped, overlapsBlocking, isBlockedAt } from './collision'
 export type { MoveWorld } from './collision'
@@ -242,6 +271,7 @@ export { advanceMonsters } from './monsters'
 export type { Monster } from './monsters'
 export { isPrey, isPredator, isWild, activityAt, predatorBias, sentinelOf, wolfVigor } from './faune'
 export { placeHuntingGrounds } from './faune' // hôte/scénario : le semis des coins de chasse
+export { enVol, hauteurDeVol, hauteurDeBond } from './vol' // l'envol du tétras (R21) : le client en tire silhouette et hauteur
 export { advanceCendreux, willRiseAsCendreux } from './cendreux'
 /** LE SOL QUI TRAVAILLE (spec `cendreux.md` R21) — le client le PEINT : il lui faut le type
  *  des entrées du snapshot, et la durée du réveil pour en tirer l'avancement de sa rampe. */
@@ -307,12 +337,12 @@ export { applyInventoryAction, heldSlot, wearHeld, isInventoryAction } from './i
 export type { InventoryAction, SlotRef } from './inventory-actions'
 
 // ─── Consommateurs du flux d'événements ───────────────────────────────────
-export { chronicleFromEvents, formatChronicleLine, CHRONICLE_EVENT_TYPES, volumesDeChronique, scellerLaChronique, registreDuLieu } from './chronicle'
+export { chronicleFromEvents, formatChronicleLine, CHRONICLE_EVENT_TYPES, volumesDeChronique, scellerLaChronique, registreDuLieu, ficheDuLieu } from './chronicle'
 export { nomDeSaison } from './chronicle'
 export { modificateurDeSaison, modificateurDuJour, effetsDuJour, effetsDe, NOMS_MODIFICATEUR } from './modificateur'
 export type { ModificateurId } from './modificateur'
-export type { ChronicleEntry, ChronicleWeight, ChronicleVolume } from './chronicle'
-export { cleEncyclo, compteEncyclo, connuEncyclo } from './encyclopedie'
+export type { ChronicleEntry, ChronicleWeight, ChronicleVolume, LigneDeFiche } from './chronicle'
+export { cleEncyclo, compteEncyclo, connuEncyclo, extremeEncyclo, VERBES_DE_RELEVE } from './encyclopedie'
 export type { LigneEncyclo, VerbeCarnet } from './encyclopedie'
 
 // ─── Persistance : sérialiser/reprendre une Veillée (l'hôte écrit dans IndexedDB) ─
@@ -369,7 +399,15 @@ export {
   auCoeurDeLaCendre, grainDeCendre, jourDuReveilDeLaCendre, noeudTombeParLaCendre,
   profondeurDeCendre, terrainCendre,
   tomberLesMortsDeLaCendre, tuileCendree,
+  // LA SUCCESSION (R20) — quatre bandes comptées en TUILES, pas en jours.
+  BANDE_HORS, BANDE_FRANGE, BANDE_NUE, BANDE_CROUTE, BANDE_VIEILLE, bandeDeCendre,
+  // LE CARACTÈRE D'UN FOYER (R21) — les dix fosses ne rendent pas la même cendre.
+  CARACTERES_DE_FOYER, ORDRE_DES_CARACTERES, cadranDeFoyer, caracteresDeLaCarte,
+  caracteresDesFoyers, foyerDeLaTuile, foyerDuSol,
+  // LE FROID DE LA VIEILLE CENDRE (R22) et la rampe que la hantise (R23) partage avec lui.
+  froidDeCendre, profondeurNueDeCendre, rampeDeSuccession,
 } from './cendre'
+export type { CaractereDeFoyer, EffetsDeFoyer } from './cendre'
 // LES FUMEROLLES (spec `cendre.md`) — dérivées comme la cendre elle-même : le client les
 // retrouve en appelant ces fonctions, aucune position ne transite.
 export {
@@ -378,7 +416,8 @@ export {
 } from './fumerolle'
 export { zoneSlugAt, zoneIdAt } from './map'
 export {
-  clairiereForet, CONTENU, CONTENUS, emplacementsDeVillage, placeZoneNodes, pointsDeSpawn, tailleDeBloc, type DangersDePlacement, type Emplacement,
+  CONTENU, CONTENUS, champDuChaos, emplacementsDeVillage, MINE, placeZoneNodes, pointsDeSpawn, tailleDeBloc,
+  type DangersDePlacement, type Emplacement, type TailleDuReseau,
 } from './zone-content'
 export { nidsAMonstre, placePois, POI_TYPES, POI_PLACEMENT, spawnPoiMonsters } from './poi'
 export { buildPoiStructures, batirLieu, BUILT_KINDS, PLANS, LEGENDE, regionDe, verifierPlan, verifierPlans, type Plan, type Case } from './poi-batis'

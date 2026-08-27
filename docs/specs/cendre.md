@@ -6,6 +6,13 @@ front de cendre** retiré le même jour (`cortege-cendre.md` et `worldgen.md` §
 (`cendre-layer.ts`), 26 gardes vertes dans `cendre.test.ts`. Reste l'ART des trois terrains (les
 teintes en place sont des teintes de travail). Jalon : avant GATE 1.*
 
+*⚠ **AMENDÉE LE 2026-08-27**, en deux temps, voir les sections en fin de document : **R20** coupe
+le cœur en quatre bandes comptées en TUILES (l'ossature de l'écosystème), **R21** donne un
+caractère à quatre des dix fosses (sa variété) — puis **R22** refroidit la cendre à mesure qu'elle
+mûrit et **R23** ré-arme la hantise du champ des morts sur le même axe (le danger). Le catalogue
+des sept pistes d'habitants encore non tranchées vit dans
+`docs/superpowers/plans/2026-08-27-ecosysteme-de-la-cendre.md`.*
+
 ## Objectif de design
 
 L'ancien front était une LIGNE qui traversait la vallée du sud au nord, calibrée pour en manger une
@@ -87,6 +94,24 @@ parte, et elle se **négocie** foyer par foyer.
   forme qui est irrégulière, c'est le fait qu'elle se découpe de plus en plus à mesure qu'elle
   s'éloigne de sa fosse. Un front qui diffuse rugosifie en s'étalant ; celui-ci aussi.
 
+  ④ **LE BLOC SE DÉPLACE** *(décision d'Alexis, 2026-08-25, sur planche rendue : « implémente
+  ça »)*. La coordonnée est TORDUE avant d'être quantifiée au motif — `CENDRE.BLOC_AMPLITUDE = 6`
+  tuiles, `BLOC_ECHELLE = 22`, l'idiome de `fbmWarp2` tourné d'un cran, en amont de la
+  quantification. **Les marches d'escalier restent** (c'est la grammaire de tout le terrain du
+  jeu, et la raison pour laquelle on ne lit pas le bruit tuile par tuile) ; seuls leurs bords
+  cessent de suivre les axes.
+
+  ⚠ **LE DÉFAUT QU'IL CORRIGE EST UNE COÏNCIDENCE DE DEUX GRILLES, et ① en est la moitié.** Les
+  bords d'un bloc de 8 tuiles sont horizontaux et verticaux par construction ; les isolignes d'un
+  Dijkstra 8-connexe sont des **OCTOGONES**, dont les côtés le sont aussi. Quand une isoligne longe
+  un bord de bloc, tout le bord bascule d'un coup et **la lisière sort en MUR**. La seconde octave
+  du grain, posée pour ça, ne les avait pas tuées. MESURÉ (`tools/diag-frange.mts`, seed 2026,
+  vallée entière, l'eau et le vide exclus des deux côtés — un bord de lac n'est pas un front) :
+  au jour 391, **la plus longue arête parfaitement droite passe de 40 à 14 tuiles** et le nombre
+  d'arêtes de 8 tuiles ou plus de **502 à 98**. La part cendrée bouge de 0,05 point : aucun
+  équilibrage ne se déplace. Prix : deux `fbm2` de plus, **par tuile et non par bloc** — c'est
+  l'objet même du déplacement (`grainDeCendre` mesuré ×1,95).
+
 - **R7 — LA COURBE EST CONCAVE, ET C'EST VOULU.** Coût à parcourir pour prendre 25 / 50 / 60 / 75 /
   90 / 100 % de la vallée : **150 / 245 / 290 / 375 / 510 / ~950** (moyenne sur trois graines, avec
   minéral ×3). La cendre mord tôt et traîne longtemps : le premier quart tombe vite, chaque tranche
@@ -106,33 +131,53 @@ parte, et elle se **négocie** foyer par foyer.
   et `Math.sqrt` est dans les opérations autorisées à `/sim` (l'invariant n°2 interdit `pow`, `exp`
   et `log`, pas `sqrt`) :
 
-      avancée(jour) = min( R0 + A·√(jour − 91) ,  avancée(jour − 1) + 3 )      A = 13,769
+      avancée(jour) = min( R0 + A·√(jour − 91) ,  avancée(jour − 1) + P )      A = 6,8845 · P = 1,5
 
-  **`A` est dérivé de la contrainte d'Alexis**, pas choisi — *« il faudrait que la cendre commence à
-  appliquer une pression réelle à la fin du second hiver »*, traduit en mesurable : **la moitié des
+  **`A` ÉTAIT dérivé de la contrainte d'Alexis**, pas choisi — *« il faudrait que la cendre commence
+  à appliquer une pression réelle à la fin du second hiver »*, traduit en mesurable : **la moitié des
   sites de village pris**, ce qui vaut un coût de **211** (très stable : 211, 211, 205 sur trois
-  graines). La fin du 2ᵉ hiver est le **jour 240**, d'où `A·√149 = 178 − 10`. ⚠ `A` a été **redérivé**
-  (16,479 → 13,769) quand le champ est passé en 8-connexe et a reçu son grain : la même contrainte,
-  sur une échelle de coûts qui a changé. C'est bien la contrainte qui est stable, pas le nombre.
+  graines). La fin du 2ᵉ hiver est le **jour 240**, d'où `A·√149 = 178 − 10` → `A = 13,769`. ⚠ `A` a
+  été **redérivé** une fois (16,479 → 13,769) quand le champ est passé en 8-connexe et a reçu son
+  grain : la même contrainte, sur une échelle de coûts qui a changé.
 
-  **LE PLAFOND DE 3 EST GRATUIT, et c'est ce qui le rend acceptable.** Sans lui, le réveil du jour 91
+  ⚠⚠ **LA CONTRAINTE A ÉTÉ LEVÉE LE 2026-08-25** *(Alexis : « divise la propagation de la cendre par
+  2 »)*. `A` passe à **6,8845** et le plafond à **1,5** — divisés ENSEMBLE, pour que l'avancée
+  au-dessus de `R0` vaille exactement la moitié **à toutes les dates** (le plafond laissé à 3 aurait
+  rendu les cinq premiers jours identiques à avant : le `min` ne fait que rabaisser).
+
+  > **La loi est une RACINE : « deux fois moins loin » n'est pas « deux fois plus lent ».** Atteindre
+  > un coût donné demande **quatre fois** plus de jours. Le repère de pression (moitié des sites)
+  > glisse du **jour 255 au jour 747** — la fin du 6ᵉ hiver au lieu du 2ᵉ. *(Si l'intention avait été
+  > « deux fois plus de temps », le nombre serait `A/√2 ≈ 9,736` — moitié des sites au jour 419.)*
+
+  **LE PLAFOND EST GRATUIT, et c'est ce qui le rend acceptable.** Sans lui, le réveil du jour 91
   serait une BOUFFÉE : la tache initiale plus que doublée en un seul jour. Avec lui, le réveil
-  s'étale sur trois semaines à 3/jour — et la droite `3·t` **rejoint exactement** la courbe `A·√t`
-  en `t = (A/3)² ≈ 21`. Passé ce point le plafond ne mord plus jamais : il ne déplace pas la courbe,
-  il ne fait que lisser son entrée, et toute la queue est celle de la racine nue.
+  s'étale sur trois semaines à `P`/jour — et la droite `P·t` **rejoint exactement** la courbe `A·√t`
+  en `t = (A/P)² ≈ 21`. Passé ce point le plafond ne mord plus jamais : il ne déplace pas la courbe,
+  il ne fait que lisser son entrée, et toute la queue est celle de la racine nue. **Le rapport `A/P`
+  est ce qui compte** — c'est pourquoi les deux se divisent ensemble : les ~21 jours de lissage sont
+  les mêmes avant et après.
 
-  **Ce que la décroissance achète, mesuré :** la vitesse tombe de 3/jour au réveil à **0,68 au jour
-  240**, **0,37 à l'an 5**, **0,25 à l'an 10**. La vallée n'est donc **jamais entièrement prise** —
-  il reste 18 à 27 % de terre vivante à l'an 5 et 4 à 10 % à l'an 10. *« La condamnation est une
-  PENTE, pas une échéance »*, à la lettre. Sous la loi linéaire d'avant, tout était perdu à l'an 5.
+  **Ce que la décroissance achète, mesuré :** la vitesse tombe de 1,5/jour au réveil à **0,28 au jour
+  240**, **0,15 à l'an 5**, **0,10 à l'an 10**. La vallée n'est donc **jamais entièrement prise** —
+  et le refuge est désormais large : **38 % de terre vivante encore à l'an 10** (contre 4 à 10 %
+  avant). *« La condamnation est une PENTE, pas une échéance »*, à la lettre — la pente est deux fois
+  plus douce.
 
   **Simulé sur le vrai monde** (seed 2026, 10 fosses, un champ de coût par foyer, personne ne touche
-  aux fosses) :
+  aux fosses). Les deux lois sont relevées **dans la même exécution, sur la même carte** — le champ
+  de coût ne dépend pas de `A`, donc la comparaison ne doit rien à une seconde génération
+  (`node --import tsx tools/diag-cendre.mts 2026 --compare 13.769,3`) :
 
-  | | j.1 | fin an 1 (j.120) | **fin 2ᵉ hiver (j.240)** | fin an 3 (j.360) | an 5 (j.600) | an 7 (j.840) |
-  |---|---|---|---|---|---|---|
-  | vallée sous la cendre | 0,2 % | 13,7 % | **45,6 %** | 62,2 % | 80,6 % | 88,3 % |
-  | sites de village pris | 1/50 | 6/50 | **25/50** | 35/50 | 46/50 | 47/50 |
+  | | j.1 | fin an 1 (j.120) | fin 2ᵉ hiver (j.240) | fin an 3 (j.360) | an 5 (j.600) | **fin 6ᵉ hiver (j.720)** | an 7 (j.840) | an 10 (j.1200) |
+  |---|---|---|---|---|---|---|---|---|
+  | vallée sous la cendre | 0,2 % | 4,2 % | 16,5 % | 26,1 % | 40,6 % | **46,0 %** | 50,4 % | 61,6 % |
+  | sites de village pris | 0/50 | 4/50 | 8/50 | 14/50 | 24/50 | **27/50** | 28/50 | 35/50 |
+  | *avant le ÷2 : vallée* | *0,2 %* | *13,2 %* | *44,6 %* | *60,7 %* | *78,6 %* | *82,9 %* | *86,2 %* | *91,6 %* |
+  | *avant le ÷2 : sites* | *0/50* | *7/50* | *25/50* | *35/50* | *46/50* | *47/50* | *47/50* | *50/50* |
+
+  La dernière colonne dit tout : à l'an 10, la vallée passait de **91,6 % prise et 50 sites sur 50**
+  à **61,6 % et 35 sur 50**. Ce n'est plus la même fin de partie.
 
   ⚠ **LA LOI RACINE A RÉGLÉ TROIS CHOSES D'UN COUP**, dont deux qui n'étaient même pas la question
   posée. ① **La queue** : il reste ~19 % de vallée vivante à l'an 5 et ~11 % à l'an 7 — un refuge,
@@ -145,9 +190,9 @@ parte, et elle se **négocie** foyer par foyer.
   encore libres au lieu de trois**.
 
   À l'échelle d'une session c'est **imperceptible passé le réveil** : au jour 240 la frange gagne
-  0,7 tuile par jour dans le pré — une tuile toutes les 45 minutes de jeu, et trois fois moins sur
-  la roche. On ne voit pas la cendre bouger : on constate, en revenant deux sessions plus tard,
-  qu'elle a mangé le bosquet du bas.
+  **0,28 tuile par jour** dans le pré (0,7 avant le ÷2 du 2026-08-25) — une tuile tous les trois
+  jours et demi de jeu, et trois fois moins sur la roche. On ne voit pas la cendre bouger : on
+  constate, en revenant plusieurs sessions plus tard, qu'elle a mangé le bosquet du bas.
 
 - **R10 — LES SPAWNS SONT ÉCARTÉS DES FOSSES, PAS LES SITES DE VILLAGE.** Un site, on le choisit ;
   son point de naissance, non. Le charnier rejoint donc `DangersDePlacement` **pour `pointsDeSpawn`
@@ -164,8 +209,33 @@ parte, et elle se **négocie** foyer par foyer.
   entre dans `PRIORITE_PAVE` au rang 10 — **au-dessus de tout ce qui pousse** (elle recouvre ce
   qu'elle a tué), **sous le manteau de neige** (l'hiver recouvre la cendre comme le reste). Le
   `PaveLayer` lit un TERRAIN EFFECTIF (`terrainCendre` appliqué à la volée : la carte n'est jamais
-  mutée), et jette les chunks porteurs de cendre quand un âge de foyer change — au plus une fois
+  mutée), et périme les chunks dont l'aspect change quand un âge de foyer change — au plus une fois
   par jour de saison, ~10 à 14 ms par chunk recuit (MESURÉ au navigateur).
+
+  ⚠ **« DONT L'ASPECT CHANGE » N'EST PAS « QUI PORTENT DE LA CENDRE », et la première écriture s'y
+  est trompée** *(corrigé le 2026-08-25, sur capture d'Alexis)*. Une appartenance POSITIVE relevée
+  à la cuisson ne peut pas voir arriver le front : un chunk cuit AVANT que la cendre l'atteigne
+  n'était dans aucun ensemble, donc jamais jeté, donc **jamais recuit** — la cendre s'arrêtait net
+  sur une arête de chunk, 16 tuiles de long, et y restait tant que le joueur gardait la zone à
+  l'écran (l'oubli, 120 images, ne réparait que si on lui tournait le dos deux secondes). MESURÉ
+  (seed 2026, la fenêtre d'un écran autour de (632, 239), cuite à l'âge 60 et regardée jusqu'à
+  l'âge 200) : **21 chunks sur 35 restaient faux, 3 403 tuiles peintes vivantes après avoir
+  brûlé**. La question se pose donc au SEUIL (`render/cendre-chunk.ts`) : chaque chunk retient, par
+  fosse qui le revendique, **l'avancée à laquelle sa première tuile prend feu** — marge de cuisson
+  comprise (`PAVE_MARGE_TUILES`, ce que `cuireChunk` LIT), sans quoi le même défaut se rouvrirait
+  sur une tuile de large à chaque couture. Il se recuit dès que ce foyer a vieilli ET que son
+  avancée a atteint ce seuil. **On compare des ÂGES, pas des avancées** : un caractère `deluge`
+  vieillit un foyer de 0,4 jour et repeint la frange (la cendre refroidit sur 30 jours) sans
+  déplacer l'avancée d'un pouce. Coût relevé : **0,033 ms par chunk**, contre 5,5 à 10,9 ms de
+  cuisson — 0,4 %.
+
+  ⚠ **ET LES RECUISSONS S'ÉTALENT** : le correctif fait passer le pire jour de saison de 7 chunks
+  (faux) à **28 chunks** (justes) dans une fenêtre d'écran
+  (à 5,5-10,9 ms la cuisson, de l'ordre de 150 à 300 ms si tout tombait sur une image — estimé,
+  pas relevé au navigateur). Un chunk périmé garde donc son image d'hier jusqu'à son tour
+  (`RECUISSONS_CENDRE_PAR_FRAME` = 2, le visible d'abord) : les 28 passent en 14 images. C'est la
+  différence avec un chunk MANQUANT, qui se cuit toujours sans budget — celui-là est un trou à
+  l'écran, celui-ci a un jour de retard sur la frange, ce que personne ne peut voir.
 
   ⚠ **UNE COUCHE À PART NE PEUT PAS MARCHER, et ça ne se voit qu'en capture.** La première version
   peignait un pixel par tuile étiré à la taille du monde : bonne couleur, bon grain, bon dégradé
@@ -329,6 +399,359 @@ d'une cendre se **RECALCULE** ; le monde n'a pas à se souvenir de ce qu'il a br
 
 ---
 
+---
+
+# La succession et le caractère — remplir le désert
+
+*Deux décisions d'Alexis du 2026-08-27, prises l'une après l'autre à partir d'un catalogue de dix
+pistes. **Statut : IMPLÉMENTÉ le 2026-08-27** (`cendre.ts`, `fumerolle.ts`, `morts.ts`, gardes dans
+`cendre-succession.test.ts`). Le catalogue entier, avec les huit pistes non tranchées, vit dans
+`docs/superpowers/plans/2026-08-27-ecosysteme-de-la-cendre.md`.*
+
+## Le constat
+
+La cendre a un sol, du clutter, des fumerolles et des charniers — et rien d'autre. **Zéro faune**
+(aucun `habitat:` de `MONSTER_DEFS` ne cite un terrain cendré), **zéro flore** (R15 interdit toute
+repousse, et la dérive de nœuds avec). Le désert n'est pas un oubli, c'est la lettre de la spec.
+Demande d'Alexis : *« j'aimerais que la cendre remplace l'écosystème présent avant par SON
+écosystème — une nouvelle zone qui se déploie au fur et à mesure de la partie »*.
+
+R20 et R21 posent l'OSSATURE de cet écosystème et sa VARIÉTÉ. Elles n'ajoutent aucun habitant :
+les colonisatrices, le charbon, le nécrophage, la fosse ouverte et les trouvailles restent au
+catalogue, non tranchés — mais chacun a désormais une bande et un foyer où se poser.
+
+---
+
+## R20 — LA SUCCESSION : quatre bandes, et elles se comptent en TUILES
+
+Le cœur (`profondeur > 3`) était un désert uniforme. On le coupe en trois, du bord vers la fosse :
+
+| bande | largeur | ce qu'elle porte AUJOURD'HUI | ce qu'elle porterait |
+|---|---|---|---|
+| `BANDE_FRANGE` | ≤ 3 t | le terrain recyclé de R11a, les arbres en agonie (R13), l'échéance de R14, **la hantise à son plancher (R23)** | le nécrophage |
+| `BANDE_NUE` | 3 → 15 t | la poudre, **le froid qui commence (R22)**, la hantise qui monte | **rien de plus — et c'est voulu** |
+| `BANDE_CROUTE` | 15 → 40 t | les fumerolles, le froid et la hantise en pente | les colonisatrices, le charbon |
+| `BANDE_VIEILLE` | > 40 t | les fumerolles, le sel, **le froid et la hantise à leur plafond (R22/R23)** | les trouvailles, la fosse ouverte |
+
+**La bande nue reste vide EXPRÈS** : c'est le contraste qui fait lire les autres. Sans désert, la
+richesse ne se voit pas.
+
+### ⚠ EN TUILES ET PAS EN JOURS — c'est LA décision, et elle a été mesurée
+
+`ancienneteDeCendre` semblait l'axe évident (« la cendre a des âges »). Mais **la loi est une
+RACINE** : la frange ralentit de 1,5 tuile/jour au réveil à 0,10 à l'an 10, donc un seuil posé en
+jours désigne une bande de plus en plus MINCE. MESURÉ (`tools/diag-cendre-succession.mts`,
+seed 2026, largeur au front sur sol vivant) :
+
+| jour | vitesse | bande « 5 j » | bande « 30 j » | bande « 90 j » |
+|---|---|---|---|---|
+| 92 (réveil) | 1,500 t/j | 1,5 | 1,5 | 1,5 |
+| 240 | 0,282 | 1,4 | 8,9 | 31,2 |
+| 600 | 0,153 | 0,8 | 4,6 | 14,4 |
+| 1200 | 0,103 | 0,5 | **3,1** | 9,5 |
+
+…et **sur la roche il faut diviser par `COUT_MINERAL` = 3** : une bande « 30 jours » vaut UNE
+TUILE sur un massif à l'an 3, une bande « 5 jours » passe sous la tuile partout dès le jour 600.
+Une succession en jours **s'éteint donc toute seule à mesure que la partie dure** — exactement
+l'inverse de ce qui était demandé.
+
+En PROFONDEUR, la largeur est stable par construction, et c'est la ZONE qui se déploie :
+
+| jour | frange | nue | croûte | vieille | âge médian du « vieille » |
+|---|---|---|---|---|---|
+| **61** (ouverture) | 51,2 % | 48,8 % | 0 % | 0 % | — |
+| 120 | 12,2 % | 40,8 % | 44,2 % | 2,8 % | 29 j |
+| 240 | 6,1 % | 22,7 % | 36,9 % | 34,3 % | 130 j |
+| 600 | 2,5 % | 9,6 % | 20,8 % | 67,1 % | 373 j |
+| 1200 | 1,1 % | 4,7 % | 10,3 % | **84,0 %** | 776 j |
+
+**Deux bandes au jour 1, les quatre dès le jour ~115, et le stade mûr passe de 3 % à 84 %.**
+L'étirement de la racine tombe au bon endroit : une tuile de la bande vieille a 29 jours au j.120
+et 776 au j.1200 — « mûr » veut vraiment dire mûr.
+
+### Ce que l'âge garde, et ce qu'on lui retire
+
+`ancienneteDeCendre` garde son **seul** métier : la CHALEUR (R11quinquies — la teinte brune qui
+refroidit sur trente jours) et l'agonie des arbres (R13). C'est une température, elle se compte en
+temps réel. On ne lui en demande pas plus.
+
+*(Âge et profondeur sont d'ailleurs le même ORDRE à ~90 % près : 4,07 % de paires discordantes au
+j.240 à foyers synchrones. Ce qui les sépare est le verbe du joueur — un foyer GELÉ (R16) continue
+de vieillir sa cendre pendant que son front est immobile, et la discordance monte alors à 11,54 %.
+Choisir la profondeur ferme cette ambiguïté.)*
+
+### ⚠ La porte des fumerolles n'a pas bougé
+
+`auCoeurDeLaCendre` reste à `profondeur > FRANGE_TUILES` : les fumerolles vivent toujours dans les
+bandes 1, 2 et 3. Les remonter en bande 2+ défairait le resserrement ×4 demandé le 2026-08-25
+(*« il n'y a pas assez de fumerolles dans les cendres »*). **Les bandes COUPENT le cœur, elles ne
+le DÉPLACENT pas.**
+
+---
+
+## R21 — LE CARACTÈRE D'UN FOYER : les dix fosses ne rendent pas la même cendre
+
+Les foyers étaient interchangeables. La variété reposait entièrement sur la géographie (R2), et
+elle ne suffisait pas : traverser la cendre du sud ou celle du nord donnait la même chose.
+
+**C'est le patron exact de `modificateur.ts`, doctrine comprise : *« il surcharge des cadrans, il
+n'invente rien »*.** Cinq multiplicateurs sur des réglages existants, quatre caractères qui les
+tournent, aucun mécanisme neuf.
+
+### Le tirage
+
+`hash2(index, 0, seed)` — un HACHAGE, donc **aucun tirage consommé** sur le flux du PRNG seedé (il
+ne peut pas décaler un test sans rapport). Les quatre caractères vont aux quatre fosses de plus
+faible hash : la vallée porte **une** Salée, **une** Gueule, **une** Muette, **une** Docile.
+`PART_CARACTERE = 0,4` → quatre fosses sur dix portent un caractère, **six sont nues** (précédent
+littéral de `modificateur.ts` : *« une saison sur trois n'en a pas »*). Si les dix sont spéciales,
+aucune ne l'est.
+
+MESURÉ (quatre graines) : **aucun foyer n'avale les autres** — le plus gros revendique 11 à 17 %
+de la cendre, le plus petit 4 à 7 %. Un caractère touche donc toujours une part réelle de la carte.
+
+### Les cinq cadrans
+
+| cadran | ce qu'il multiplie |
+|---|---|
+| `fumerolles` | `FUMEROLLE.PART` — la part des mailles qui portent une bouche (borné à 1) |
+| `sel` | `FUMEROLLE.SEL_STOCK` — ce qu'une bouche rend avant de s'épuiser |
+| `morts` | le champ des morts là où SA cendre a pris (`densiteDesMorts`) |
+| `froid` | `FUMEROLLE.FROID` — le souffle de ses bouches |
+| `gel` | `MORTS.BRULE_DUREE_JOURS` — combien de temps un feu tient CETTE fosse (R16) |
+
+### Les quatre caractères
+
+| caractère | cadrans | pourquoi |
+|---|---|---|
+| **la Salée** | `fumerolles: 1,25` · `sel: 3` | Toutes ses mailles fument, ses bouches rendent trois fois plus de sel. Le foyer qu'on **VISITE** : la seule raison d'aller dans la cendre devient une adresse. |
+| **la Gueule** | `morts: 1,6` · `fumerolles: 0,3` | Le sol y est plein de morts et ne fume presque pas : rien à y prendre, tout à y perdre. Celui qu'on **ÉVITE**, puis qu'on finit par devoir purger (R16). |
+| **la Muette** | `morts: 0,5` · `froid: 1,4` | Deux fois moins de morts, un souffle plus froid. Traversable et glaçante — le contrepoint qui empêche « cendre = morts-vivants » d'être toute la lecture. |
+| **la Docile** | `gel: 2` | Un feu la tient trente jours au lieu de quinze. C'est le foyer qu'on peut réellement **TENIR**, donc celui qui rend le verbe de R16 gagnant quelque part. |
+
+⚠ **`fumerolles` NE PEUT PAS TRIPLER, et il ne faut pas faire semblant.** `FUMEROLLE.PART` vaut
+déjà 0,80 : ×3 sature à 1 et ne rend que +25 % de bouches. La Salée porte donc sa promesse là où
+elle a de la place — le SEL (stock 4 → 12) — et sa saturation à 1 lui donne ce qu'aucune autre
+n'a : **aucune maille vide**, on y croise toujours une bouche.
+
+### ⚠ PAS DE CADRAN `vitesse`, et c'est délibéré
+
+Ce serait le plus évident, et il contredit **R2**, décision actée : *« ils partent tous au même
+instant et avancent à la même allure ; la géographie fait toute la variété »*. Le rouvrir serait
+une décision utilisateur à consigner dans `docs/decisions.md`, pas une ligne de table. Une garde
+exhaustive (A22) balaie les cadrans autorisés et rougirait sur toute clé ajoutée.
+
+### ⚠ LE CARACTÈRE EST UNE PROPRIÉTÉ DU TERRITOIRE, PAS DU FRONT
+
+Deux lectures du foyer, et confondre les deux a produit un vrai défaut, attrapé avant livraison :
+
+- `foyerDeLaTuile(map, tx, ty)` — **STATIQUE**, `cendreFoyer` posé au worldgen. C'est celle que
+  lisent les fumerolles (part, sel, froid).
+- `foyerDuSol(state, tx, ty)` — exige que le front soit PASSÉ. C'est celle que lit le champ des
+  morts, qui ne doit peser que là où la cendre EST.
+
+**Le défaut** : gater la part des fumerolles sur « la cendre est-elle arrivée » **faisait clignoter
+les bouches**. Une tuile de grain positif peut être cendrée — donc porter une bouche ouverte, via
+`auCoeurDeLaCendre` — alors que le seuil NU n'est pas encore franchi. Quelques jours plus tard il
+l'était, le cadran d'une Gueule tombait à 0,24, `bouchePotentielle` rendait `null` : **la bouche se
+refermait sous elle-même, tandis que son nœud restait posé** — rendu et froid partant chacun de
+leur côté. Sur le territoire statique, aucun clignotement n'est possible (garde A24).
+
+⚠ **Et `foyerDuSol` lit le coût NU, sans le grain.** `estCendre` déforme son seuil par quatre
+`fbm2` (`grainDeCendre`, mesuré ×1,95) parce qu'une LISIÈRE doit être irrégulière. Une DENSITÉ n'a
+pas de lisière : la déformer coûterait quatre bruits sur un chemin lu par tuile de la couronne de
+réveil, pour un effet que personne ne peut voir. Une garde (A24) affirme que tout désaccord entre
+les deux lectures tient **dans la bande de grain**, jamais ailleurs.
+
+---
+
+## Critères d'acceptation de R20/R21 (`cendre-succession.test.ts`)
+
+- **A17 — Les bandes sont un ORDRE.** Seuils strictement croissants ; et sur un balayage de toute
+  la carte, la tuile la plus profonde d'une bande est toujours moins profonde que la moins
+  profonde de la suivante — **une seule affirmation qui ferme les quatre bandes d'un coup**.
+- **A18 — Hors de la cendre, la bande vaut `HORS`** — et jamais une bande. Équivalence exacte avec
+  `estCendre`, balayée.
+- **A19 — La porte des fumerolles n'a pas bougé** : `auCoeurDeLaCendre` ⟺ `bande ≥ BANDE_NUE`,
+  balayé sur la carte de production (et la garde exige d'avoir vu du cœur, sinon elle ne prouve
+  rien).
+- **A20 — La zone se DÉPLOIE.** Au jour d'ouverture, la tache initiale ne porte QUE frange et
+  cendre nue ; les quatre bandes existent au jour 120 ; la part de la bande vieille **croît à
+  chaque relevé** (120 → 240 → 600 → 1200) et dépasse 70 % à l'an 10.
+- **A21 — Quatre fosses, quatre caractères, tous distincts**, et l'attribution BOUGE avec la
+  graine (relevé sur six graines : la Salée ne tombe pas toujours sur la même fosse).
+- **A22 — Aucun cadran hors de la liste autorisée**, et `vitesse` n'y est pas (R2). Balayage
+  exhaustif des clés de `CARACTERES_DE_FOYER`.
+- **A23 — Un cadran non tourné, une fosse nue ou hors bornes valent 1** — balayage complet des
+  cinq cadrans × quatre caractères, et chaque caractère rend bien SON réglage.
+- **A24 — Une bouche ouverte ne se referme JAMAIS.** L'ensemble des fumerolles éveillées ne fait
+  que croître entre les jours 120, 240, 360, 600 et 1200. C'est la garde du défaut ci-dessus, et
+  elle exige d'avoir vu des bouches. S'y ajoute : tout désaccord entre `foyerDuSol` et `estCendre`
+  tient dans la bande de grain (`±WARP_PART`), et la garde exige d'avoir vu des désaccords.
+- **A25 — La carte de PRODUCTION porte vraiment ses quatre caractères** (mémoire : une table ne
+  prouve pas l'atteignabilité), chacun sur une fosse distincte.
+- **A26 — Le cadran MORD.** On brûle deux fosses pour de vrai — une Docile, une nue — et on
+  compare les durées de gel : le rapport vaut exactement `CARACTERES_DE_FOYER.docile.gel`. ⚠ La
+  garde affirme le RAPPORT et non les deux durées : le caractère de la SAISON (R18, `cendreGel`)
+  multiplie les deux de la même façon, et épingler l'absolu ferait rougir la garde le jour où le
+  tirage tombe sur `orages_secs`, pour une raison qui n'a rien à voir avec ce qu'elle mesure.
+
+**MESURÉ sur le monde joué** (`tools/diag-foyer-caractere.mts`, seed 2026, jour 600) — la preuve
+que les cadrans ne sont pas une table sans lecteur :
+
+| fosse | caractère | champ des morts | bouches | sel total |
+|---|---|---|---|---|
+| 2 | **gueule** | **0,3953** | **5** | 20 |
+| 3 | **muette** | **0,1292** | 16 | 64 |
+| 8 | **salee** | 0,2500 | **30** (le maximum) | **360** |
+| 4 | **docile** | 0,2500 | 13 | 52 | *(son cadran est le gel — il se relève par A26)* |
+| les six nues | — | 0,2500 | 16 à 25 | 64 à 100 |
+
+La Gueule rend **trois fois moins de bouches** et un champ des morts **1,58×** celui d'une fosse
+nue ; la Muette **0,52×** ; la Salée porte **3,6 à 5,6 fois** le sel de n'importe quelle autre.
+
+**ET LE SEMIS N'A PAS BOUGÉ AILLEURS — prouvé, pas affirmé.** Le test de part de
+`bouchePotentielle` a dû passer de `hash2 ≥ PART` à `hash2 ≥ min(1, PART × f)`, la place étant
+désormais tirée AVANT (il faut connaître la fosse pour connaître `f`). À `f = 1` c'est le même
+tirage — mais un commentaire ne le démontre pas. Relevé au jour 600 sur la carte de production :
+**cadrans neutralisés, `toutesLesFumerolles` rend 189 bouches — exactement le compte de la
+réimplémentation indépendante du semis d'origine** (`tools/diag-fumerolle.mts`, qui recopie
+l'ancien `bouchePotentielle` pour pouvoir balayer `MAILLE`/`PART`). Cadrans actifs : **182**.
+L'écart tient **entièrement** dans les deux fosses caractérisées — la Gueule tombe de 15 à 5, la
+Salée monte de 27 à 30 et son sel de 108 à 360.
+
+⚠ **`tools/diag-fumerolle.mts` NE VOYAIT PAS LE CARACTÈRE**, et c'est un piège d'instrument : sa
+ligne « SEMIS COURANT » est une COPIE du semis, pas un appel — elle mesurait donc le semis nu en
+prétendant mesurer le jeu. Elle porte désormais son avertissement et une seconde table, « LE VRAI
+CHEMIN », qui appelle `toutesLesFumerolles` : l'écart (−6 à −7 bouches sur la vallée entière, du
+jour 240 à l'an 10) EST l'effet des cadrans. Petit en total, grand par fosse — c'est exactement ce
+qu'on veut d'un caractère : il est LOCAL.
+
+---
+
+## R22 / R23 — LE FROID DE LA VIEILLE CENDRE, ET LA HANTISE RÉ-ARMÉE
+
+*Décision d'Alexis du 2026-08-27, sur la piste ⑥ du catalogue (« le cœur est déjà le territoire des
+morts »), tranchée « hantise + cendre froide » contre une recommandation plus prudente. Le risque
+a été énoncé avant la décision et il est chiffré plus bas.*
+
+### La piste ⑥ disait « aucun mécanisme à écrire ». C'était faux, et c'est mesuré
+
+⑥ tenait sur un raisonnement séduisant : les fumerolles soufflent du froid, l'éveil du Cendreux
+est thermique (`CENDREUX.TORPEUR` : vue = `aggroRange × max(éveil, 0,2)`, éveil = pente de +6 °C à
+−14 °C) — **donc le cœur serait déjà, par les lois en place, l'endroit où les morts voient le plus
+loin.** Relevé sur le monde joué (`tools/diag-cendre-eveil.mts`, seed 2026, nuit du jour de
+saison 10) :
+
+| | frange | nue | croûte | vieille | HORS cendre |
+|---|---|---|---|---|---|
+| vue d'un Cendreux, avant | 2,55 | 2,54 | 2,54 | 2,55 | **2,52** |
+| champ des morts, avant | 0,2481 | 0,2490 | 0,2504 | 0,2526 | **0,2501** |
+
+**±1 % sur les deux.** Trois raisons, toutes structurelles :
+
+1. les trois terrains cendrés ont un `BIOME_OFFSET` de **zéro** — la cendre n'était ni chaude ni
+   froide ;
+2. la hantise avait été **démontée le 2026-08-24** avec le front qui la datait, laissant
+   `MORTS.PART_CENDRE`, `HANTISE_MAX` et `HANTISE_PART` sans lecteur (« *à reprendre avec la
+   nouvelle mécanique* ») ;
+3. le souffle des fumerolles, lui, mord bien (vue **×1,58** sous une bouche) — mais il ne couvre
+   que **5 % du cœur** (`MAILLE` 48, `RAYON` 7, `PART` 0,80 → π·49·0,8/48²) et **0 % de la
+   frange**.
+
+### R22 — la cendre se refroidit en vieillissant
+
+`CENDRE.FROID_COEUR` (**2 °C**) retirés à la température de base, en **rampe continue** :
+**0 sur la frange**, montée linéaire, plateau à l'entrée de la bande vieille (`CROUTE_TUILES`).
+C'est une EXPOSITION de plus, au même rang que la Brume, le front météo et le souffle d'une
+bouche : l'abri l'amortit, le feu et la tenue la **planchent** (l'ambiant est un `max`).
+
+- ⚠ **La frange reste à ZÉRO, et c'est la moitié de la décision.** R14 veut qu'on TRAVAILLE la
+  frange, et R11quinquies dit que ce qui vient de brûler est encore **chaud**. Un froid posé au
+  front aurait contredit les deux.
+- ⚠ **2, et c'est LA NEIGE qui l'a décidé.** La valeur d'essai était 4. Trois bornes : les
+  bouches doivent rester les PICS du cœur (garde A27 : `2 × FROID_COEUR ≤ FUMEROLLE.FROID`) ; le
+  prix est GLOBAL (80 % de la carte finit en cendre) ; et surtout **le froid déplace la ligne
+  pluie/neige, or le manteau est un pavé OPAQUE**. Mesuré (`tools/diag-cendre-neige.mts`, part de
+  la bande vieille sous la neige au jour de saison 10) : **4 °C → 88,1 % · 3 → 79,7 % · 2 →
+  18,5 % · 1 → 5,5 %**, contre 1,5 % hors cendre. À 4, l'art des trois terrains cendrés
+  disparaissait sous du blanc la moitié de la saison — une décision de DA que personne n'avait
+  prise. **À 2 la cendre reste le seul endroit où il neige plus qu'ailleurs** : une signature, pas
+  un linceul.
+- ⚠ **Il se lit sur la profondeur NUE**, sans le grain — même argument que `foyerDuSol` (R21) :
+  une température n'a pas de lisière, et `baselineTemperature` est lue par entité et par tick
+  dans toute la sim. Mesuré : `froidDeCendre` coûte **0,69 µs**, contre 1,87 µs pour le souffle
+  et 3,32 µs pour le froid du monde entier. Dans la boucle de neige du gel (24 tranches par
+  tuile), il se **hisse** avec le souffle, sous une sentinelle d'OBJET — son zéro est une valeur,
+  pas une absence, donc `??=` n'y suffirait pas.
+
+### R23 — la hantise revient, sur le même axe
+
+Le champ des morts reçoit de nouveau son terme de cendre : `PART_CENDRE` (0,35) sur la frange,
+rampe jusqu'à `HANTISE_MAX` (0,60) au plateau. **Même loi, même plafond, nouvel axe** — l'ancien
+était « la part de la course du front », c'est-à-dire une profondeur, exactement ce que R20 compte
+en tuiles. `HANTISE_PART` est **retirée** : son dénominateur (la course totale d'un front, 74
+tuiles) n'existe plus.
+
+**MESURÉ après branchement** (mêmes conditions, seed 2026, jour de cendre 240) :
+
+| | frange | nue | croûte | vieille | HORS cendre |
+|---|---|---|---|---|---|
+| champ des morts | **0,4310** | **0,5712** | **0,7309** | **0,8194** | 0,2565 |
+| vue d'un Cendreux (nuit fraîche) | 2,58 | 2,63 | 2,84 | **3,04** (×1,21) | 2,52 |
+| … sous une bouche | — | — | — | **3,69** (×1,46) | — |
+| froid retiré (°C) | 0,11 | 0,38 | 1,22 | **1,96** | 0 |
+
+**9,8 % de la vieille cendre sature à 1** — ce que `HANTISE_MAX` promettait mot pour mot,
+combiné au tier 2 de la Cendrière : *« le pire sol de la vallée, et il doit se sentir comme tel »*.
+Le bout de la chaîne se voit : `rodeursPortes` = `ceil(plafond × densité)`, donc **dormir dans la
+vieille cendre coûte plus de rôdeurs que dormir au village** (garde A29), la part de rampants suit
+(`partRampante`), et l'origine d'une marche de horde est pondérée par **densité³**.
+
+### ⚠ CE QUE ÇA COÛTE, ET IL FAUT LE DIRE
+
+**Le monde entier finit dans la cendre.** Mesuré au jour 1200 : **19 375 tuiles marchables sur
+25 197 (80 %) sont de la vieille cendre.** `FROID_COEUR` est donc, à terme, un décalage de la
+vallée entière — un hiver qui ne se retire plus. C'est la deuxième raison d'avoir posé le cadran à
+2 plutôt qu'à 4, et **ça reste LE bouton à tourner** si l'hiver perpétuel se révèle trop lourd.
+
+Ce que ça donne pour un corps, sur la nuit la plus froide de la saison (jour de saison 1, 2 h),
+en part de tuiles sous la ligne d'hypothermie (`AMBIANT_HYPOTHERMIE` = −10 °C) :
+
+| | frange | nue | croûte | vieille | HORS cendre |
+|---|---|---|---|---|---|
+| un corps NU, avec R22 | 6,0 % | 6,9 % | 34,6 % | **81,3 %** | 6,8 % |
+| le même monde sans R22 | 6,0 % | 6,1 % | 5,7 % | 5,2 % | 6,8 % |
+| *(pour mémoire, à `FROID_COEUR` = 4)* | *8,5 %* | *21,7 %* | *70,3 %* | *99,2 %* | *6,9 %* |
+
+…et sur une nuit ordinaire d'acte I (jour de saison 10) : **frange 0,3 %, vieille 1,9 %**. En été
+(jour 55) : **zéro partout**. La bascule de 4 à 2 coûte donc **18 points sur la nuit la plus
+froide** (99,2 → 81,3) et rend **70 points de neige** (88,1 → 18,5) : c'est ce rapport qui a
+tranché.
+
+**La règle qui en sort est nette : la vieille cendre, la nuit d'hiver, exige une tenue ou un feu.**
+Et cette porte-là ne peut pas se refermer : `TENUE_FLOOR` (−5,2 °C) et `FIRE_WARMTH` (+14 °C) sont
+des **planchers** appliqués par un `max` — R22 ne peut rien contre un joueur vêtu ou au feu.
+Une garde (A28) l'affirme sur les constantes elles-mêmes.
+
+### Critères d'acceptation de R22/R23 (`cendre-succession.test.ts`)
+
+- **A27 — La rampe, balayée sur tout son domaine** (de −1 à 60 tuiles, au dixième) : 0 sur la
+  frange, 1 au plateau, jamais décroissante, et **elle a un intérieur** (sans quoi une rampe
+  plate passerait la garde). Plus : `2 × FROID_COEUR ≤ FUMEROLLE.FROID`.
+- **A28 — Sur le monde JOUÉ** : aucune tuile de frange ne porte de froid, aucune tuile hors cendre
+  non plus, le plafond tient partout — balayé, pas échantillonné, avec ses deux prémisses
+  affirmées (la carte porte bien de la frange ET du cœur froid). Le désaccord nu/grain doit
+  **exister** (sinon la garde ne garde rien). La température moyenne **décroît strictement** de
+  bande en bande, lue sur `baselineTemperatureAt` — le branchement, pas la table. Un FAUX
+  `SimState` (sans champ, sans âges — les façades du client) rend 0 et ne jette pas.
+- **A29 — La hantise** : le champ monte bande après bande, borné dans ]0, 1], sature quelque part
+  dans la vieille ; sur une carte NUE il vaut **exactement** son socle (`densiteDeBase`) — il
+  module, il n'autorise jamais ; et `rodeursPortes` rend plus de rôdeurs dans la vieille cendre
+  qu'en sol ordinaire.
+
+---
+
 ## Critères d'acceptation
 
 - **A1 — Le champ est statique et complet.** `map.cendreCout` couvre toute la carte, vaut `-1` (ou
@@ -336,8 +759,10 @@ d'une cendre se **RECALCULE** ; le monde n'a pas à se souvenir de ce qu'il a br
   vivant (`carte-immuable` A1, étendue à ce champ).
 - **A2 — L'avancée est une fonction pure du tick.** Deux sims au même tick, même seed, rendent le
   même ensemble de tuiles cendrées ; un replay le reproduit au bit près.
-- **A3 — Le calendrier tient.** Avancée nulle avant le jour 91. Au jour 240, la part de la vallée
-  cendrée vaut 47 % ± 5 et la part des sites de village pris dépasse 50 % — balayé sur ≥ 3 graines.
+- **A3 — Le calendrier tient.** Avancée nulle avant le jour 91. **Au jour 720** (le repère a glissé
+  du 2ᵉ au 6ᵉ hiver avec le ÷2 du 2026-08-25), la part de la vallée cendrée vaut 46 % ± 6 et la part
+  des sites de village pris dépasse 45 %. Et le 2ᵉ hiver est devenu DOUX : moins de 25 % au jour 240
+  — affirmé aussi, sinon la garde ne dirait plus rien de ce qui a changé.
 - **A4 — Monotone, jamais décroissante**, balayée jour par jour sur vingt ans.
 - **A5 — Aucun spawn à moins de 150 de coût d'une fosse**, sur ≥ 3 graines, et `pointsDeSpawn` en
   rend toujours autant qu'avant (le filtre ne doit pas affamer le semis).
@@ -360,6 +785,19 @@ d'une cendre se **RECALCULE** ; le monde n'a pas à se souvenir de ce qu'il a br
   qu'une année ordinaire, une année de `reveil` avance PLUS — et **aucune n'inverse la monotonie**
   (A4 tient sous tous les caractères, balayée sur vingt ans). Un caractère absent laisse l'avancée
   identique au bit près à la formule fermée.
+- **A16 — La lisière ne fait pas de mur.** `cendre.test.ts` : sur la carte de production, à trois
+  âges de foyer, **aucune arête de front parfaitement rectiligne ne dépasse 24 tuiles** et le
+  nombre d'arêtes de 8 tuiles ou plus reste sous 200. La garde énonce d'abord sa prémisse — le
+  même balayage sur le grain SANS déplacement (`BLOC_AMPLITUDE = 0`) doit rougir, sinon elle ne
+  mesure rien. ⚠ Elle ne compte que les couples de tuiles **joignables des deux côtés** : le bord
+  d'un lac est droit sur trente tuiles et n'a rien à voir avec le grain — sans ce filtre,
+  l'instrument accusait le relief (les plus longues arêtes tombaient hors de la grille du grain).
+- **A15 — Le front entre dans un chunk vierge.** `cendre-chunk.test.ts` : sur une carte de pré à
+  une seule fosse, on cherche un couple (chunk, âge) tel que le chunk soit **vierge à l'âge N et
+  entamé à N+1** ; l'ancienne règle (« porte de la cendre », relevée au pas de 4 tuiles) le laisse
+  passer — la garde l'affirme —, la règle du seuil le jette. Et elle ne jette PAS un chunk que le
+  front n'a pas atteint, ni un chunk dont le foyer est gelé : sans ces deux-là, « tout recuire »
+  passerait la garde.
 - **A14 — Le cumul ne coûte rien et ne ment pas.** `avancée(jour)` rendue par somme préfixe est égale
   au bit près à la somme naïve sur toute la fenêtre testée, et deux sims au même tick la calculent
   identiquement — quelle que soit l'ordre dans lequel les jours ont été demandés (le cache est une

@@ -561,11 +561,72 @@ export const BALANCE = {
    * compte en cycles n'est recalibré par accident. En temps réel, la nuit passe de 12,6 min
    * l'été à 23,4 min l'hiver.
    */
+  /**
+   * ═══ LE SOLEIL DE LA VALLÉE EST CELUI DE LA FRANCE (décision d'Alexis, 2026-08-26) ═══
+   *
+   * « Suis les heures de lever et coucher du soleil que l'on trouve IRL pour la France. »
+   * Les quatre cardinaux ne sont plus choisis : ils sont **CALCULÉS**, par l'équation du lever
+   * pour **Paris (48,8566 N)** à l'altitude standard −0,833° (réfraction + demi-diamètre du
+   * soleil), sur l'**heure légale d'hiver toute l'année** (CET, pas de changement d'heure —
+   * une horloge qui saute d'une heure deux fois l'an sans qu'aucun phénomène ne l'explique).
+   * Ils tombent à la minute de l'almanach :
+   *
+   * ⚠ **LES QUATRE CARDINAUX TOMBENT AU MILIEU DE LEUR SAISON** (jours 15 · 45 · 75 · 105 —
+   * `coeurDeLaSaisonSuivante`, la même règle que toutes les courbes annuelles d'ici) : le
+   * solstice EST le cœur de l'été, l'équinoxe le cœur du printemps. Une saison s'ouvre donc à
+   * mi-pente et se ferme à mi-pente, ce qui est exactement ce qu'on veut sentir — les jours
+   * raccourcissent PENDANT les Pluies, ils ne changent pas d'un coup à leur bord.
+   *
+   *   | jour | saison                | lever | coucher | durée   | part   |
+   *   |------|-----------------------|-------|---------|---------|--------|
+   *   |  15  | équinoxe (Éclosion)   | 06h46 |  18h56  | 12 h 10 | 0,5070 |
+   *   |  45  | solstice (Ardeur)     | 04h45 |  20h56  | 16 h 11 | 0,6742 |
+   *   |  75  | équinoxe (Pluies)     | 06h46 |  18h56  | 12 h 10 | 0,5070 |
+   *   | 105  | solstice (Grand Froid)| 08h43 |  16h58  |  8 h 15 | 0,3435 |
+   *
+   * (Almanach Paris : 21 juin 05h47/21h58 CEST = 04h47/20h58 CET ; 21 décembre 08h42/16h56.)
+   *
+   * ⚠ **LES DEUX BOUTS BOUGENT MAINTENANT, ET C'EST LE VRAI CHANGEMENT** — voir
+   * `LEVER_DU_JOUR`. Jusqu'ici l'aube était clouée à 6 h et seul le crépuscule se déplaçait :
+   * un demi-soleil. Le midi solaire de Paris tombe vers 12h51 (la France vit à l'est de son
+   * fuseau), ce que les keyframes du rendu font déjà — leur zénith est à 13 h.
+   *
+   * ⚠ **LE PRIX, CHIFFRÉ AVANT DE TRANCHER : le monde perd 17 % de sa lumière sur l'année.**
+   * L'ancienne courbe valait 0,625 aux équinoxes — une journée de quinze heures, ce qui n'est
+   * le soleil de nulle part. Sur un cycle de 30 min : les équinoxes passent de 18,8 à
+   * **15,2 min de jour**, l'été de 21,6 à 20,2, et le cœur du Grand Froid de 14,4 à
+   * **10,3 min** (nuit de 19,7). L'hiver français EST sombre — c'est la saison la plus dure
+   * qui se resserre le plus, et c'est assumé.
+   */
   PART_DE_JOUR: courbeAnnuelle([
-    { jour: 15, valeur: 0.625 },
-    { jour: 45, valeur: 0.72 },
-    { jour: 75, valeur: 0.625 },
-    { jour: 105, valeur: 0.48 },
+    { jour: 15, valeur: 0.507034 },
+    { jour: 45, valeur: 0.674192 },
+    { jour: 75, valeur: 0.507034 },
+    { jour: 105, valeur: 0.343473 },
+  ]),
+
+  /**
+   * ═══ L'HEURE MURALE DU LEVER — une courbe, comme la durée (2026-08-26) ═══
+   *
+   * `CYCLE_DAWN_HOUR` (retirée le 2026-08-27) la remplaçait par la constante 6 h : le cycle commençait toujours à
+   * six heures, et TOUTE la variation saisonnière tombait sur le seul coucher. Le monde
+   * n'avait donc pas de matins d'hiver — on se levait à 6 h en décembre comme en juin, et
+   * seule la nuit s'allongeait, par un bout.
+   *
+   * Les mêmes quatre cardinaux que `PART_DE_JOUR`, issus du même calcul (Paris, CET) — les
+   * deux courbes ne peuvent pas se contredire : `coucher = LEVER_DU_JOUR + 24 × PART_DE_JOUR`
+   * tombe sur l'almanach aux quatre cœurs, et interpole entre eux comme tout le reste ici.
+   *
+   * ⚠ ELLE SE LIT SUR LE JOUR DU DÉBUT DU CYCLE, jamais sur le jour courant — même raison
+   * que `dayTicksPourJour`, et `gameTimeAt` s'en charge : le calendrier bascule EN COURS de
+   * cycle (9 h en Veillée), une lecture au jour courant ferait sauter l'horloge au milieu de
+   * la journée.
+   */
+  LEVER_DU_JOUR: courbeAnnuelle([
+    { jour: 15, valeur: 6.758779 },
+    { jour: 45, valeur: 4.752883 },
+    { jour: 75, valeur: 6.758779 },
+    { jour: 105, valeur: 8.721515 },
   ]),
   /**
    * LE JOUR OÙ LE MONDE COMMENCE (spec `saisons.md` S2) — **le 61ᵉ, à l'ouverture des
@@ -601,11 +662,6 @@ export const BALANCE = {
    * relevé de banc ouvert à l'ouverture réelle.
    */
   JOUR_DE_DEPART: 61,
-
-  /** Heure murale de l'aube — le cycle démarre au lever du jour, mais l'horloge
-   * affichée est une horloge murale : minuit (0h) au cœur de la nuit, midi en plein
-   * jour. Avec DAWN=6 et DAY_FRACTION=0.625 : jour 6h→21h, nuit 21h→6h. */
-  CYCLE_DAWN_HOUR: 6,
 
   /**
    * LA CADENCE DES ACTES (saison-sans-fin T2, décision d'Alexis 2026-08-21 : « l'année fait
@@ -953,6 +1009,28 @@ export const BALANCE = {
 
   /** Quantités visées par sortie de récolte PNJ, par item. */
   NPC_CARRY_TARGETS: { berries: 6, wood: 8, fiber: 3, stone: 6, cut_stone: 4 },
+  /**
+   * LE QUOTA D'UNE TOURNÉE DE GLANAGE (spec `glanage.md` G6). Petit, et il DOIT l'être : un
+   * nœud de glanage porte UNE unité, donc ce nombre est un nombre de NŒUDS, pas de coups —
+   * le glaneur va de branche en branche jusqu'à l'atteindre. Trois, c'est déjà trois trajets
+   * pour trois bûches ; viser le quota du bois (8) enverrait un villageois arpenter la zone
+   * une demi-journée pour ce qu'un coup de hache donne en trois secondes. Le glanage AMORCE
+   * la hache, il ne nourrit pas le village.
+   */
+  NPC_GLANAGE_CARRY: 3,
+  /**
+   * LA PORTÉE D'UNE TOURNÉE DE GLANAGE, en tuiles — et c'est un GARDE-FOU DE COÛT autant qu'une
+   * règle de jeu (spec `glanage.md` G9).
+   *
+   * Un nœud de glanage porte UNE unité : là où un arbre coûte une recherche de chemin pour dix
+   * bûches, une branche en coûte une par bûche — et le plus proche RECULE à mesure qu'on les
+   * ramasse. MESURÉ sans plafond (`tools/profil-banc.mts`, 8 joueurs, 1 jour) : le tick dérive
+   * de 1,33 à **64,5 ms** sur la journée, `findPath` pesant 35 % du CPU ; avec, il reste plat.
+   *
+   * 40 tuiles = le rayon dans lequel un village regarde déjà (`CONTENU.RAYON_VILLAGE`) : au-delà,
+   * ce n'est plus sa cour, et il n'a rien à y faire pour une brindille.
+   */
+  NPC_GLANAGE_PORTEE: 40,
 } as const
 
 /**
@@ -971,6 +1049,28 @@ export const VILLAGE_GROWTH = {
    * `worldgen.ts`, où aucun calibrage ne l'aurait trouvé.
    */
   STOCK_INITIAL: { berries: 10, wood: 10, fiber: 2 } as const,
+  /**
+   * LA PIERRE D'AMORÇAGE (spec `glanage.md` G6) — ce qu'un village doit GLANER avant de savoir
+   * tailler ses deux outils de fortune : 3 pour le hachereau, 2 pour la pioche.
+   *
+   * Il existe parce que la cible de pierre ordinaire (`stoneTarget`) vaut ZÉRO tant qu'aucun
+   * chantier n'en demande — et qu'un village sans pioche n'a alors aucune raison de ramasser
+   * un caillou. Il resterait sans hache pour l'éternité, la hache coûtant de la pierre. Ce
+   * plancher est la seule chose qui ouvre la boucle ; il ne s'applique QUE quand l'outil manque.
+   */
+  PIERRE_D_AMORCAGE: 5,
+  /**
+   * LE BOIS D'AMORÇAGE — le pendant de `PIERRE_D_AMORCAGE`, et il manquait (2 pour le hachereau
+   * + 3 pour la pioche de fortune).
+   *
+   * ⚠ **SON ABSENCE ÉTAIT LE DÉFAUT LE PLUS COÛTEUX DU CHANTIER.** La corvée de glanage se
+   * postait tant que `stocks.wood < woodTarget` — or cette cible vise le CHANTIER (24 et plus),
+   * pas l'outil. Un village ramassait donc vingt-quatre bûches UNE PAR UNE, chacune payée d'une
+   * recherche de chemin, le plus proche reculant à chaque prise : 1,33 → 64,5 ms/tick sur une
+   * journée de banc (mesuré). Le glanage n'est pas une économie, c'est un AMORÇAGE : il s'arrête
+   * dès que l'outil est taillable, et l'outil coupe mille fois plus vite qu'on ne ramasse.
+   */
+  BOIS_D_AMORCAGE: 5,
   /** Rayon (Chebyshev) du DISQUE de l'enceinte — la PALISSADE se dérive sur l'anneau
    *  extérieur (rayon+1), dans le carré du Feu palier 1 (rayon 10). 8 depuis que les
    *  logis font 4×4 (retour d'Alexis, 2026-08-01) : leurs bandes montent à ±8. */
@@ -1072,7 +1172,19 @@ export const TERRAINS: Record<number, TerrainDef> = {
   6: { name: 'deep_water', walkable: false, speedFactor: 0, cover: 1 },
   7: { name: 'wall', walkable: false, speedFactor: 0, cover: 1 },
   8: { name: 'marsh', walkable: true, speedFactor: 0.6, cover: 0.85 },
-  9: { name: 'scree', walkable: true, speedFactor: 0.7, cover: 1 },
+  /**
+   * ⚠ **L'ÉBOULIS ET LE CHAOS DE BLOCS SONT À PLEIN RÉGIME** (décision d'Alexis, 2026-08-27 :
+   * « et pas de ralentissement dans les biomes concernés ») — 0,7 et 0,6 auparavant.
+   *
+   * Même mouvement que la forêt (2026-07-18) et la futaie ancienne (2026-08-16) : le coût d'un
+   * pays ne se paie pas en vitesse de marche, qui est ce qu'on SENT le plus et ce qui se
+   * justifie le moins. Et depuis ce jour la caillasse a un vrai prix, qui n'est pas un malus
+   * caché : **on la contourne** — le chaos porte des blocs pleine tuile (R6ter), on y serpente
+   * par les galeries, et rien n'y pousse (R6quater). Le détour EST le coût.
+   *
+   * `cover` ne bouge pas : à découvert sur l'éboulis (1), à demi caché entre les blocs (0,8).
+   */
+  9: { name: 'scree', walkable: true, speedFactor: 1, cover: 1 },
   /**
    * LA NEIGE EST PRATICABLE — décision d'Alexis, 2026-07-14.
    *
@@ -1091,7 +1203,7 @@ export const TERRAINS: Record<number, TerrainDef> = {
   13: { name: 'pine', walkable: true, speedFactor: 0.85, cover: 0.65 },
   14: { name: 'larch', walkable: true, speedFactor: 0.85, cover: 0.7 },
   15: { name: 'glacier', walkable: false, speedFactor: 0, cover: 1 },
-  16: { name: 'boulders', walkable: true, speedFactor: 0.6, cover: 0.8 },
+  16: { name: 'boulders', walkable: true, speedFactor: 1, cover: 0.8 }, // plein régime — voir `scree` ci-dessus
   17: { name: 'flower_meadow', walkable: true, speedFactor: 1, cover: 0.8 },
   18: { name: 'peat_bog', walkable: true, speedFactor: 0.45, cover: 0.9 },
   19: { name: 'reed_marsh', walkable: true, speedFactor: 0.55, cover: 0.5 },
@@ -1146,6 +1258,35 @@ export const TERRAINS: Record<number, TerrainDef> = {
   27: { name: 'cendre_pre', walkable: true, speedFactor: 0.95, cover: 1 },
   28: { name: 'cendre_bois', walkable: true, speedFactor: 0.95, cover: 0.95 },
   29: { name: 'cendre_min', walkable: false, speedFactor: 0, cover: 1 },
+  /**
+   * ═══ LA CLAIRIÈRE — un BIOME, et non plus un trou (décision d'Alexis, 2026-08-25) ═══
+   *
+   * *« certaines clairières de forêts sont trop grandes, on dirait que certaines parties de la
+   * forêt est rasée alors que pas du tout. »* — et c'était vrai deux fois. MESURÉ (seed 2026,
+   * monde joué) : la plus grande trouée faisait **1332 tuiles, d'emprise 56×88**, quand l'écran
+   * en montre 20 de haut. Et depuis le 2026-08-23 (retrait du vert de clairière), elle n'avait
+   * plus AUCUNE marque : même litière brune que le bois, zéro prop (le clutter de `forest` est à
+   * densité 0,1), zéro nœud (le semis commun y était sauté en entier). Litière nue + rien = la
+   * grammaire visuelle d'une coupe rase.
+   *
+   * Le champ `clairiereForet` n'avait pourtant pas bougé depuis le 2026-07-18 : les clairières
+   * n'ont pas grossi, elles ont perdu leur seule marque. On leur en donne donc une VRAIE — un
+   * terrain à part entière, pas une teinte. Ce qu'Alexis avait refusé le 08-23, c'était de
+   * TEINTER le sol de la forêt par un champ décidé au bloc (des taches de couleur dans une
+   * matière qui doit se lire d'un bloc) ; tout le terrain de cette carte est déjà quantifié au
+   * MOTIF de 8 (R32, « tout est rectiligne »), donc une lisière de clairière n'est pas plus
+   * carrée qu'une lisière de lande. Et un terrain porte ce qu'une teinte ne pouvait pas :
+   * sa couleur de sol, sa ligne de `BIOME_CLUTTER`, son couvert, son habitat de faune, sa fiche.
+   *
+   * `cover: 1` — **À DÉCOUVERT, et c'est la conséquence de jeu.** `faune.ts` multiplie la
+   * furtivité de TOUTE menace par ce nombre : dans une clairière, le loup qui traque et le
+   * chasseur qui approche se voient tous les deux de loin. C'est ce qui fait d'une trouée un
+   * ENDROIT (on l'évite de nuit, on y guette de jour) plutôt qu'un vide. Un cran à 0,85 la
+   * rendrait tiède : c'est un bouton, il se tourne.
+   *
+   * `speedFactor: 1` — le sol est ouvert, on y marche comme au pré.
+   */
+  30: { name: 'clairiere', walkable: true, speedFactor: 1, cover: 1 },
 }
 
 export const TERRAIN_VOID = 0
@@ -1180,6 +1321,8 @@ export const TERRAIN_JUNIPER_HEATH = 26
 export const TERRAIN_CENDRE_PRE = 27
 export const TERRAIN_CENDRE_BOIS = 28
 export const TERRAIN_CENDRE_MIN = 29
+/** La clairière de forêt (2026-08-25) — un biome, borné, qui ne vit QUE dans un massif boisé. */
+export const TERRAIN_CLAIRIERE = 30
 
 /**
  * VUE DÉRIVÉE du registre (`pieces.ts`) — ce que coûte chaque pièce : pose au marteau,
@@ -1618,6 +1761,14 @@ export type NodeType =
   | 'ash_heap'
   /** La Combe aux Ruines : on FOUILLE des gravats. Ce qu'on en tire est ce que d'autres ont fait. */
   | 'rubble'
+  // ── LE GLANAGE (spec `glanage.md`, décision d'Alexis 2026-08-25) — ce qui TRAÎNE au pied
+  //    d'un arbre ou d'un rocher. Depuis que le bois et la pierre exigent un outil, c'est par
+  //    là que passe la toute première hache : deux ramassages, et la rampe repart. Stock 1,
+  //    aucun outil, ne bloque pas — on se BAISSE, on ne récolte pas.
+  /** La branche tombée, au pied d'un arbre. Donne `wood`. */
+  | 'branche_au_sol'
+  /** La pierre détachée, au pied d'un rocher. Donne `stone`. */
+  | 'pierre_au_sol'
 
 /**
  * Les quatre paliers d'outil, ORDONNÉS (spec craft-fortune C4). Le rang décide
@@ -1658,9 +1809,12 @@ export interface NodeDef {
    * de la mine (GDD §8 : la puissance T2 passe OBLIGATOIREMENT par un bâtiment).
    * Les filons exigent donc un outil FORGÉ, pas un caillou ficelé.
    *
-   * La PIERRE, elle, reste à `none` pour toujours (C3) : tout outil de fortune
-   * est fait de pierre — la gater derrière un outil serait le blocage circulaire
-   * que `recolte.md` G13 a déjà refusé pour le marteau.
+   * ⚠ **C3 EST RETIRÉ** (décision d'Alexis, 2026-08-25 — spec `glanage.md`). Il disait « la
+   * PIERRE reste à `none` pour toujours : tout outil de fortune est fait de pierre, la gater
+   * serait le blocage circulaire que `recolte.md` G13 a refusé pour le marteau ». La prémisse
+   * était que la pierre ne s'obtient QUE d'un rocher. Le GLANAGE la casse : la branche et la
+   * pierre au sol (`branche_au_sol`, `pierre_au_sol`) donnent bois et pierre sans rien tenir,
+   * donc le hachereau se taille sans hachereau. Bois et pierre exigent désormais `crude`.
    */
   minTool: ToolTier
   /**
@@ -1724,11 +1878,11 @@ export interface NodeDef {
 export const NODE_DEFS: Record<NodeType, NodeDef> = {
   // LE TRONC S'ÉPAISSIT (décision d'Alexis, 2026-07-28) : 1 → 1,5, soit 0,375 tuile (6 px),
   // la largeur de la colonne dessinée (`client/render/arbre-art.ts`, qui confronte les deux).
-  tree: { item: 'wood', stock: 10, blockHalfSub: 1.5, skill: 'woodcutting', tool: 'axe', minTool: 'none', vivant: true },
-  rock: { item: 'stone', stock: 12, blockHalfSub: 4, skill: 'mining', tool: 'pickaxe', minTool: 'none' },
+  tree: { item: 'wood', stock: 10, blockHalfSub: 1.5, skill: 'woodcutting', tool: 'axe', minTool: 'crude', vivant: true },
+  rock: { item: 'stone', stock: 12, blockHalfSub: 4, skill: 'mining', tool: 'pickaxe', minTool: 'crude' },
   // Le stock du BLOC est un DÉFAUT : la pose le remplace par celui de sa taille (`tailleDeBloc`
   // — 8/12/18), même patron que `stockDArbre`. La boîte pleine (`blockHalfSub: 4`) fait la règle.
-  bloc: { item: 'stone', stock: 12, blockHalfSub: 4, skill: 'mining', tool: 'pickaxe', minTool: 'none' },
+  bloc: { item: 'stone', stock: 12, blockHalfSub: 4, skill: 'mining', tool: 'pickaxe', minTool: 'crude' },
   fiber_plant: { item: 'fiber', stock: 6, blockHalfSub: 0, skill: 'foraging', tool: null, minTool: 'none', renewable: true, vivant: true },
   berry_bush: { item: 'berries', stock: 8, blockHalfSub: 0, skill: 'foraging', tool: null, minTool: 'none', renewable: true, vivant: true, gelif: true },
   /**
@@ -1764,6 +1918,22 @@ export const NODE_DEFS: Record<NodeType, NodeDef> = {
   quarry: { item: 'cut_stone', stock: 6, blockHalfSub: 4, skill: 'mining', tool: 'pickaxe', minTool: 'basic' },
   ash_heap: { item: 'ash', stock: 8, blockHalfSub: 0, skill: 'foraging', tool: null, minTool: 'none' },
   rubble: { item: 'components', stock: 4, blockHalfSub: 4, skill: 'mining', tool: 'pickaxe', minTool: 'basic' },
+
+  // ── LE GLANAGE (spec `glanage.md` G2) — l'amorçage de toute la rampe d'outils ──────────
+  //
+  // `stock: 1` : on se BAISSE, on ne frappe pas. Un ramassage, le nœud est vide, et le geste
+  //  n'a ni jauge d'abattage ni flanc de minage à lire — `tool: null` le range du côté de la
+  //  cueillette, où le clic prend tout d'un coup.
+  // `minTool: 'none'` : c'est le seul bois et la seule pierre qu'on obtienne les mains vides.
+  //  Le jour où l'un des deux passerait à `crude`, le jeu se refermerait sur lui-même.
+  // PAS `renewable`, et c'est une décision : `renewable` exempte de « rien ne repousse dans
+  //  l'emprise d'un village » (`defriche.ts`) — une pierre au sol renouvelable donnerait un
+  //  filet de pierre infini dans sa propre cour, contre « ce qui s'extrait ne revient pas ».
+  //  Hors village, elle repousse comme tout le reste : personne ne peut s'enfermer dehors.
+  // PAS `vivant` non plus, des deux côtés : une branche MORTE est tombée de l'arbre, le gel
+  //  n'a plus rien à lui prendre et la cendre ne la fait pas tomber une seconde fois.
+  branche_au_sol: { item: 'wood', stock: 1, blockHalfSub: 0, skill: 'foraging', tool: null, minTool: 'none' },
+  pierre_au_sol: { item: 'stone', stock: 1, blockHalfSub: 0, skill: 'foraging', tool: null, minTool: 'none' },
 }
 
 /** Les trois paliers outillés de chaque famille. Le barème, lui, est `TOOL_YIELD`. */
@@ -1780,6 +1950,24 @@ export const TOOL_TIERS: Record<
   rod: { crude: 'crude_rod', basic: 'crude_rod', iron: 'crude_rod', steel: 'crude_rod' },
   // LE COUTEAU, une marche aussi (spec `depecage.md` G5) : même raison, même forme.
   knife: { crude: 'crude_knife', basic: 'crude_knife', iron: 'crude_knife', steel: 'crude_knife' },
+}
+
+/**
+ * LES OBJETS D'UNE FAMILLE, DU PLUS MODESTE AU PLUS RICHE — dérivés de `TOOL_TIERS`, jamais
+ * recopiés (spec `glanage.md` G8). Deux consommateurs qui doivent dire le MÊME mot : le tableau
+ * du village, qui demande « peut-on tenir une hache ? » avant de poster une corvée outillée, et
+ * `ensureOutil`, qui va la chercher. Une liste écrite deux fois aurait divergé au premier outil
+ * ajouté, et le village aurait posté des corvées que personne ne peut mener.
+ *
+ * Dédupliqué : la canne et le couteau n'ont qu'une marche (leurs quatre paliers pointent le même
+ * objet), et une liste qui répéterait `crude_rod` quatre fois ferait quatre allers au grenier.
+ */
+const outilsDe = (f: ToolFamily): readonly import('./items').ItemId[] => [...new Set(Object.values(TOOL_TIERS[f]))]
+export const OUTILS_PAR_FAMILLE: Record<ToolFamily, readonly import('./items').ItemId[]> = {
+  axe: outilsDe('axe'),
+  pickaxe: outilsDe('pickaxe'),
+  rod: outilsDe('rod'),
+  knife: outilsDe('knife'),
 }
 
 /**
@@ -1960,6 +2148,7 @@ export type RecipeId =
   | 'crude_spear'
   | 'crude_bow'
   | 'crude_rod'
+  | 'torche'
   | 'sechoir'
   | 'crude_knife'
   | 'bow'
@@ -2079,6 +2268,10 @@ export const RECIPES: Record<RecipeId, Recipe> = {
   // qu'un arc — la ligne ne tue personne — mais elle passe par la corde comme tout ce qui se
   // ficelle en couche 1 (C8).
   crude_rod: { requiert: null, inputs: { wood: 1, rope: 1 }, output: 'crude_rod', seconds: 4 },
+  /** LA TORCHE — un fagot de fibre ligaturé sur une branche. Sans poste, dès la première nuit :
+   *  c'est le pendant de la corde côté LUMIÈRE, et il ne coûte rien d'autre que ce qu'on ramasse.
+   *  Elle sort ÉTEINTE (`torche`) — la flamme se prend au Feu, jamais à l'atelier (`light_torch`). */
+  torche: { requiert: null, inputs: { wood: 1, fiber: 3 }, output: 'torche', seconds: 3 },
   // LE COUTEAU DE FORTUNE (spec `depecage.md` D4/G5) : une pierre, un bout de bois, sans poste —
   // SANS corde : on ne ficelle pas une lame, on la cale. Le lapin du jour 1 coûte ce craft-là.
   crude_knife: { requiert: null, inputs: { wood: 1, stone: 1 }, output: 'crude_knife', seconds: 4 },
@@ -2570,7 +2763,7 @@ export function isRangedWeapon(item: WeaponKind | import('./items').ItemId): boo
  * du bestiaire : le monde ne porte pas deux morts-vivants avec deux lores — celui du GDD et
  * le Cendreux de la direction A×C. Partout où une horde marchait, ce sont des Cendreux.
  */
-export type MonsterType = 'boar' | 'cendreux' | 'rabbit' | 'deer' | 'wolf'
+export type MonsterType = 'boar' | 'cendreux' | 'rabbit' | 'deer' | 'wolf' | 'tetras'
 
 /**
  * Le RYTHME d'une bête (spec faune R10). C'est ce qui donne une identité à
@@ -2671,6 +2864,17 @@ export interface MonsterDef {
    * sanglier jamais (absent) — lui ne zigzague pas, il se retourne.
    */
   jink?: number
+  /**
+   * ELLE S'ENVOLE (spec faune R21) : à la levée, cette bête DÉCOLLE — un bond
+   * d'aile de `FAUNA.VOL_TUILES` par-dessus ce qui bloque, et pendant lequel
+   * seul le TRAIT l'atteint (décision d'Alexis, 2026-08-26).
+   *
+   * C'est un DRAPEAU DE DONNÉES, pas un `type === 'tetras'` dans la machine à
+   * états : le jour où une seconde espèce vole (la gélinotte, la bécasse), elle
+   * n'a qu'à le poser. La leçon est celle des gardes d'atteignabilité — un
+   * comportement qui se lit sur le TYPE ne s'étend jamais tout seul.
+   */
+  vol?: true
 }
 
 export const MONSTER_DEFS: Record<MonsterType, MonsterDef> = {
@@ -2681,7 +2885,10 @@ export const MONSTER_DEFS: Record<MonsterType, MonsterDef> = {
     loot: { raw_meat: 3, bone: 1 }, // l'os : la couche du chasseur aguerri (depecage.md D5)
     sac: 0, // elle ne porte rien : son butin est `loot`, versé au cadavre
     // Le sanglier tient sa forêt. Il laisse approcher — et c'est le piège.
-    habitat: [TERRAIN_FOREST, TERRAIN_PINE, TERRAIN_LARCH, TERRAIN_OLD_GROWTH, TERRAIN_WILLOW],
+    // `clairiere` (2026-08-25) : la trouée est DANS son bois, et c'est là qu'il fouge. Sans
+    // cette ligne, faire de la clairière un terrain lui aurait retiré ~14 % de son salon
+    // sans qu'aucune assertion ne rougisse — un compte n'est pas un contrat.
+    habitat: [TERRAIN_FOREST, TERRAIN_PINE, TERRAIN_LARCH, TERRAIN_OLD_GROWTH, TERRAIN_WILLOW, TERRAIN_CLAIRIERE],
     alertRange: 7, flightRange: 0,
     activity: 'nocturnal', // il fouge de nuit — le vrai sanglier aussi
   },
@@ -2705,7 +2912,8 @@ export const MONSTER_DEFS: Record<MonsterType, MonsterDef> = {
     thinkEveryTicks: ticksFor(0.6), wanderChance: 0.4, chargeChance: 0,
     loot: { raw_meat: 1 },
     sac: 0, // elle ne porte rien : son butin est `loot`, versé au cadavre
-    habitat: [TERRAIN_GRASS, TERRAIN_HEATH, TERRAIN_FLOWER_MEADOW, TERRAIN_ALPINE_MEADOW, TERRAIN_ALPINE_FLOWERS, TERRAIN_WET_MEADOW, TERRAIN_JUNIPER_HEATH],
+    // `clairiere` : de l'herbe à découvert avec du couvert à deux bonds — c'est le lapin même.
+    habitat: [TERRAIN_GRASS, TERRAIN_HEATH, TERRAIN_FLOWER_MEADOW, TERRAIN_ALPINE_MEADOW, TERRAIN_ALPINE_FLOWERS, TERRAIN_WET_MEADOW, TERRAIN_JUNIPER_HEATH, TERRAIN_CLAIRIERE],
     alertRange: 11, flightRange: 7,
     activity: 'crepuscular', // à l'aube et au crépuscule : les heures du lapin
     jink: 1, // il crochète À FOND : on ne l'attrape pas en courant droit (chasse C15)
@@ -2717,7 +2925,9 @@ export const MONSTER_DEFS: Record<MonsterType, MonsterDef> = {
     thinkEveryTicks: ticksFor(1.2), wanderChance: 0.2, chargeChance: 0,
     loot: { quartier: 2, bone: 2 }, // V0-5 : le gros gibier rend des QUARTIERS lourds (portage) ; deux os (depecage.md)
     sac: 0, // elle ne porte rien : son butin est `loot`, versé au cadavre
-    habitat: [TERRAIN_ALPINE_MEADOW, TERRAIN_HEATH, TERRAIN_GRASS, TERRAIN_FOREST, TERRAIN_LARCH, TERRAIN_WILLOW, TERRAIN_WET_MEADOW],
+    // `clairiere` : c'est LÀ qu'un cerf broute — de l'herbe sous le ciel, à trois bonds du bois.
+    // La trouée devient donc un lieu de chasse, ce qui est la moitié de sa raison d'être.
+    habitat: [TERRAIN_ALPINE_MEADOW, TERRAIN_HEATH, TERRAIN_GRASS, TERRAIN_FOREST, TERRAIN_LARCH, TERRAIN_WILLOW, TERRAIN_WET_MEADOW, TERRAIN_CLAIRIERE],
     alertRange: 14, flightRange: 9,
     herdSize: [3, 5], // la harde : ils broutent ensemble et détalent ensemble
     activity: 'diurnal', // le grand gibier du plein jour
@@ -2740,11 +2950,69 @@ export const MONSTER_DEFS: Record<MonsterType, MonsterDef> = {
     thinkEveryTicks: ticksFor(0.5), wanderChance: 0.2, chargeChance: 0,
     loot: { raw_meat: 2, bone: 1 },
     sac: 0, // elle ne porte rien : son butin est `loot`, versé au cadavre
-    habitat: [TERRAIN_FOREST, TERRAIN_PINE, TERRAIN_LARCH, TERRAIN_OLD_GROWTH, TERRAIN_HEATH],
+    // `clairiere` : il suit le gibier, et le gibier y broute. Mais `cover: 1` l'y met à
+    // découvert — la trouée est le seul endroit du massif où on voit venir la meute.
+    habitat: [TERRAIN_FOREST, TERRAIN_PINE, TERRAIN_LARCH, TERRAIN_OLD_GROWTH, TERRAIN_HEATH, TERRAIN_CLAIRIERE],
     alertRange: 0, flightRange: 0, // il ne fuit pas parce qu'on approche : il fuit parce qu'il saigne
     herdSize: [3, 4], // la meute
     activity: 'nocturnal',
     predator: true,
+  },
+  /**
+   * LE GRAND TÉTRAS (spec faune R21, décisions d'Alexis 2026-08-26) — l'oiseau du
+   * vieux bois, et le seul gibier qui n'obéit pas à la leçon des autres.
+   *
+   * Le lapin et le cerf enseignent l'approche DE LOIN : ils partent tôt, on les
+   * gagne en venant lentement. Le tétras enseigne l'inverse — IL SE TERRE. Il
+   * vous voit venir de douze tuiles et ne bouge pas : il compte sur son
+   * immobilité, comme le vrai. Puis à trois tuiles il EXPLOSE sous vos pieds, et
+   * pendant son bond seul le trait peut l'atteindre.
+   *
+   * D'où l'arithmétique, et elle est le cœur du réglage. 14 PV :
+   *   · pris AU SOL d'un coup propre (avant la levée) — l'épieu (10 × 3 = 30) ou
+   *     même l'arc de fortune bandé (8 × 3 = 24) l'abattent : l'approche paie ;
+   *   · pris EN VOL — il est alerté, donc plus rien n'est propre : l'arc long
+   *     bandé (26) l'abat, l'arc de fortune bandé (8) ne fait que l'ouvrir. Le
+   *     tétras est le gibier qui PAIE l'arc long.
+   * Et il vole huit tuiles depuis une levée à trois : il retombe à ~11 — DANS la
+   * portée de l'arc long (16,5), HORS de celle de l'arc de fortune (7,5).
+   *
+   * SOLITAIRE, délibérément : il n'a pas de harde à lever, donc pas de contagion
+   * d'alarme. Ce qui part sous vos pieds est UN oiseau, et ce qu'il alarme, c'est
+   * le reste du coin — par son envol, pas par les siens.
+   *
+   * Sa lenteur au sol (3,2 — sous le lapin, sous le cerf) n'est pas une faiblesse
+   * de calibrage : elle est la contrepartie du vol. Retombé, il court mal ; c'est
+   * là qu'on le reprend, si on l'a suivi.
+   */
+  tetras: {
+    hp: 14, damage: 0, speed: 3.2,
+    windupTicks: ticksFor(0.3), attackCooldownTicks: ticksFor(2), aggroRange: 0,
+    thinkEveryTicks: ticksFor(0.7), wanderChance: 0.3, chargeChance: 0,
+    loot: { raw_meat: 2, bone: 1 },
+    sac: 0, // elle ne porte rien : son butin est `loot`, versé au cadavre
+    // LE BOIS, ET RIEN QUE LE BOIS — il ne descend jamais au pré.
+    //
+    // ⚠ `TERRAIN_FOREST` EST LÀ PARCE QU'UNE MESURE L'A EXIGÉ, et c'est la garde
+    // d'atteignabilité de ce chantier. Le premier jet ne donnait que le vieux bois
+    // et les résineux (`old_growth`, `pine`, `larch`) — juste pour l'oiseau réel,
+    // et MORT dans le jeu : sur cinq graines du MONDE JOUÉ (la Racine seule depuis
+    // le 2026-08-24), les coins de chasse tombent sur `grass`, `forest`,
+    // `wet_meadow` et `willow` — et sur AUCUN des trois. Zéro tétras, jamais, dans
+    // aucune partie. Rien n'aurait rougi : la table était cohérente, la règle
+    // testée, l'espèce simplement injoignable. Une valeur du domaine doit être
+    // prouvée ATTEIGNABLE, pas seulement licite (`tools/__diag-tetras.mts`).
+    //
+    // La saulaie reste au sanglier : elle est près de l'eau par construction, et
+    // c'est ce qui laisse au tétras une aire un cran plus étroite que la sienne —
+    // l'oiseau du bois fermé, pas du bord de l'eau.
+    habitat: [TERRAIN_FOREST, TERRAIN_OLD_GROWTH, TERRAIN_PINE, TERRAIN_LARCH],
+    // IL SE TERRE : il voit loin (12) et ne part que très tard (3). L'écart entre
+    // les deux EST le comportement — douze tuiles de « il m'a vu et il ne bouge
+    // pas », qui font croire qu'on peut l'avoir, jusqu'aux trois dernières.
+    alertRange: 12, flightRange: 3,
+    activity: 'crepuscular', // la parade est à l'aube ; et ça l'écarte du bras de fer nocturne du loup
+    vol: true,
   },
 }
 
@@ -2937,6 +3205,35 @@ export const FAUNA = {
   FLEE_GOAL: 30,
   /** La borne dure de l'engagement — pour la bête ACCULÉE contre une falaise. */
   FLEE_MAX_TICKS: ticksFor(15),
+
+  /* ── L'ENVOL (R21) — le bond d'aile du tétras ───────────────────────────── */
+  /**
+   * LA DISTANCE DU BOND, en tuiles. Huit, et le nombre se lit contre les ARCS :
+   * levé à trois tuiles (`flightRange`), l'oiseau retombe à ONZE — dans la portée
+   * de l'arc long bandé (16,5), hors de celle de l'arc de fortune (7,5). Le vol
+   * n'est donc pas « il s'échappe » : c'est une FENÊTRE, et l'arme décide si on
+   * l'a. Monter ce nombre le met hors de portée de tout le monde et rend l'envol
+   * cosmétique ; le baisser rend le tétras trivial pour qui a n'importe quel arc.
+   */
+  VOL_TUILES: 8,
+  /**
+   * LA DURÉE DU BOND. 1,3 s pour huit tuiles ≈ 6,2 t/s — juste au-dessus du
+   * sprint d'un joueur (6) : on ne le suit pas à la course.
+   *
+   * C'EST AUSSI LA FENÊTRE DE TIR, et c'est par là qu'elle se règle. Bander l'arc
+   * long demande `chargeTicks` ; un chasseur qui marche l'arc DÉJÀ bandé n'a plus
+   * qu'à décocher, et il l'a — mais bander rend plus visible et plus bruyant
+   * (`DRAW_VISIBILITY`, `DRAW_NOISE`), donc l'oiseau part plus tôt. Le tétras
+   * PAIE cet arbitrage, il ne le contourne pas.
+   */
+  VOL_TICKS: ticksFor(1.3),
+  /**
+   * LE CULMEN, en tuiles : la hauteur du bond à mi-course (pure décoration de
+   * sim — le rendu s'en sert pour décoller le sprite du sol, et le tri Y garde
+   * la position AU SOL). Il vit ici parce que c'est un ordre de grandeur qu'on
+   * règle à l'œil, comme le reste du bond.
+   */
+  VOL_HAUTEUR: 1.6,
 
   /* ── L'espace vital et l'impatience (R6bis) ─────────────────────────────── */
   /**
@@ -4181,7 +4478,89 @@ export const FIRE = {
   /** Slots de cuisson : 3 ENTRÉES (aliments cuisant en parallèle), 3 SORTIES (cuits + sous-produits). */
   COOK_INPUTS: 3,
   COOK_OUTPUTS: 3,
+  /**
+   * ═══ LE CHARBON DE BOIS (S30, décision d'Alexis 2026-08-25) ═══
+   *
+   * Combien de BÛCHES entièrement consumées laissent un charbon de bois. 4 : c'est l'ordre de
+   * grandeur réel d'une meule (~20-25 % de la masse survit à la carbonisation), et ça donne
+   * un tempo lisible — un feu libre brûle ~6,7 bûches par cycle, donc **~1,7 charbon par
+   * jour** pour qui entretient son feu. Le premier tombe dans la première nuit : c'est le
+   * « possible dès l'ouverture » qui était demandé.
+   *
+   * LE FOYER compte les mêmes bûches, converties depuis son évier continu
+   * (`FIRE_UPKEEP.FEED_PER_WOOD` de stock = une bûche).
+   */
+  CHARBON_PAR_BUCHES: 4,
 } as const
+
+/**
+ * ═══ LA TORCHE (décision d'Alexis, 2026-08-26) — voir `items.ts` pour les trois interdits ═══
+ *
+ * ELLE N'A QU'UN NOMBRE : le TEMPS qu'elle dure. La lumière qu'elle JETTE reste un fait de
+ * rendu (elle vit dans le client, `render/torche.ts`) — mais depuis « le prix du noir »
+ * (2026-08-26), la sim sait qui porte une flamme : `nuit.clarteSurSoi` la lit pour rendre au
+ * corps ce que le noir lui prend, et pour cela seulement. Elle ne peint toujours rien, et
+ * elle ne repousse toujours rien.
+ *
+ * `BURN_TICKS` est calé sur LA NUIT, pas sur une durée ronde : la nuit dure 0,375 cycle
+ * (`DAY_FRACTION` 0,625), soit ~11 min réelles. Une torche en tient ~0,13 — le TIERS d'une
+ * nuit. C'est délibérément court : de quoi aller quelque part ET revenir, jamais de quoi
+ * traverser la nuit d'un bout à l'autre. Qui veut la traverser en emporte plusieurs, et paie
+ * ça en cases de ceinture.
+ */
+export const TORCHE = {
+  /** Combien de ticks une torche vive brûle avant de retomber en fagot éteint (~1/3 de nuit). */
+  BURN_TICKS: ticksForCycles(0.13),
+} as const
+/*
+ * ⚠ IL N'Y A PAS DE « PORTÉE D'ALLUMAGE ». Il y en a eu une (`ALLUMAGE_RANGE: 2`), pendant une
+ * heure, et le smoke l'a tuée : la sim acceptait à 2 tuiles, mais le CLIENT n'offre le geste
+ * qu'à `BALANCE.INTERACT_RANGE` (1,5 — le bras, la même porte que `feed_fire`, `repair`,
+ * `plant`, `found_village`). Le joueur avait donc une demi-tuile de zone morte où le clic ne
+ * faisait RIEN et où rien ne le lui disait : pas d'action, donc pas d'`action_rejected`, donc
+ * pas de bandeau. La torche prend le feu à PORTÉE DE BRAS, comme tout ce qui se fait sur une
+ * structure — un nombre de moins, et une zone muette de moins.
+ */
+
+/**
+ * ═══ LE PRIX DU NOIR (décision d'Alexis, 2026-08-26 : « la sortie dehors la nuit doit être
+ * dure […] qu'on ne sorte pas en nouvelle lune sans torche sans mourir vite ») ═══
+ *
+ * UN SEUL NOMBRE, et il porte toute la règle : sous cette clarté, le corps ne sait plus
+ * COURIR ni PARER. Rien d'autre ne change — ni les monstres, ni le froid, ni les dégâts.
+ *
+ * ⚠ CE N'EST PAS UN WARD (bible `I3` : *le Feu ne devient jamais un ward*). La lumière ne
+ * repousse rien : elle REND une capacité de base que le noir avait prise. Le jour, la pleine
+ * lune, le coin du feu et la torche en main sont tous au même niveau — c'est le noir qui est
+ * l'écart, pas la lumière qui est un bonus. Un monstre se comporte exactement pareil qu'on
+ * porte une torche ou non, et les mondes jumeaux de `torche.test.ts` (T-A/T-B) continuent de
+ * le prouver au bit près.
+ *
+ * ═══ POURQUOI CES DEUX CAPACITÉS-LÀ, ET PAS UNE PÉNALITÉ DE DÉGÂTS ═══
+ *
+ * Parce que les deux prédateurs de la nuit se sèment de deux façons, MESURÉES :
+ *   · **le LOUP court à 4,8 t/s** — un avatar marche à 4 et sprinte à 6. Le sprint est donc
+ *     EXACTEMENT ce qui permet de le semer aujourd'hui : le lui retirer, c'est le laisser
+ *     rattraper. Sans cette règle, il ne rattrape jamais personne qui décide de partir.
+ *   · **le CENDREUX rampe à 1,3 t/s mais frappe à 34** — on le sème d'une simple marche, donc
+ *     les jambes ne le concernent pas ; ce qui décide, c'est la parade (`BLOCK_REDUCTION` 0,7,
+ *     soit 34 → 10). Le lui retirer, c'est trois coups pour mourir au lieu de dix.
+ * Une pénalité de dégâts, elle, aurait durci les DEUX de la même façon, sans rien dire au
+ * joueur de ce qu'il fait de travers. Ici, ce qu'il perd, il l'a demandé du doigt : il a
+ * appuyé sur sprint, il a levé sa garde, et son corps n'a pas suivi.
+ *
+ * ═══ LE SEUIL, LU SUR LE CADRAN ═══
+ *
+ * `clarteDeLune` rend, jour par jour depuis la pleine lune (mesuré) : 1 · 0,98 · 0,93 · 0,84 ·
+ * 0,73 · 0,60 · 0,47 · 0,33 · 0,21 · 0,12 · 0,05 · 0,01, puis remonte. À 0,30, la vallée est
+ * donc aveugle **huit nuits sur vingt-trois** — une semaine par lunaison où sortir exige une
+ * flamme, quinze où la lune suffit. C'est le rythme qu'on règle ici, et il se règle en JOUANT.
+ */
+export const NUIT = {
+  /** Sous cette clarté sur soi (`nuit.ts`), plus de sprint et plus de parade. */
+  SEUIL_NOIR: 0.3,
+} as const
+
 
 /**
  * CE QUI SE CUIT AU SLOT D'UNE STATION (spec feu-station S10-S11) — par type de station :
@@ -5198,18 +5577,17 @@ export const MORTS = {
    */
   HANTISE_MAX: 0.6,
   /**
-   * LA PROFONDEUR À LAQUELLE LA HANTISE PLAFONNE — EN PART DE LA COURSE DU FRONT, pas en tuiles.
+   * ⚠ `HANTISE_PART` A ÉTÉ RETIRÉE LE 2026-08-27, avec le ré-armement de la hantise (R23).
    *
-   * Même correction que pour les bandes du cortège (`CENDRE.STERILE_PART`), et pour la même
-   * raison : MESURÉ sur la carte de production, `cendreMax` — la course TOTALE du front sur une
-   * saison — vaut **74 tuiles**. Une profondeur écrite « 60 tuiles » aurait couvert 80 % de tout
-   * ce que le front parcourra jamais : le dégradé n'aurait jamais atteint son plafond, et le
-   * « vieux brûlé » n'aurait pas existé.
+   * Elle exprimait la profondeur du plateau **en part de la course totale du front** — une course
+   * mesurée à 74 tuiles sur une saison, pour un front qui n'existe plus depuis le 2026-08-24. La
+   * cendre, elle, ne s'arrête jamais : son avancée passe 239 tuiles au jour 1200. Une « part de
+   * la course » n'a donc plus de dénominateur.
    *
-   * À 0,35, le plafond est atteint après un tiers de la course : le joueur traverse un dégradé
-   * complet en reculant d'une bande, et le cœur du brûlé se distingue franchement de sa lisière.
+   * Le plateau s'ancre désormais sur `CENDRE.CROUTE_TUILES` (40 t) — l'entrée de la bande
+   * VIEILLE de R20. Un seul nombre au lieu de deux, et il est déjà celui que la succession, le
+   * froid (R22) et le rendu lisent : la hantise plafonne là où la cendre devient mûre.
    */
-  HANTISE_PART: 0.35,
   /**
    * COMBIEN LE CHAMP FAIT VARIER LE NOMBRE DE RÔDEURS. Le plafond de l'acte
    * (`NIGHT_HUNT.UNDEAD_MAX_ALIVE`) reste le toit ; la densité dit quelle part on en atteint,
@@ -5340,6 +5718,15 @@ export const NPC_AI = {
     gather_wood: 1,
     gather_stone: 1,
     gather_cut_stone: 1,
+    /**
+     * LE GLANAGE PASSE AVANT LA RÉCOLTE QU'IL DÉBLOQUE (spec `glanage.md` G6). Il n'est posté
+     * QUE quand le village ne peut pas tenir l'outil (`refreshBoard`) : à ce moment-là, c'est
+     * le seul travail qui fasse avancer quoi que ce soit — la corvée de bois, elle, serait
+     * refusée à chaque coup. Au-dessus du bois et de la pierre, donc, et sous la cueillette
+     * qui nourrit : un village qui glane doit quand même manger.
+     */
+    glaner_bois: 2,
+    glaner_pierre: 2,
   } as const,
   /**
    * LA ZONE MORTE D'UN PAS DE PNJ — en-deçà de cet écart sur un axe, il ne pousse pas
@@ -5429,6 +5816,10 @@ export const NPC_AI = {
  * transpirer, pas la promenade en forêt.
  */
 export const ITEM_WEIGHT: Record<import('./items').ItemId, number> = {
+  // LA TORCHE — une branche et un paquet de fibres : légère. Elle ne coûte pas un DOS, elle
+  // coûte une MAIN (une case de ceinture, tenue) — et c'est là tout son prix.
+  torche: 1,
+  torche_vive: 1,
   // Le SÉCHOIR en objet : une claie encombrante, comme le coffre (`peche.md` S1).
   sechoir: 5,
   wood: 1,
@@ -5470,6 +5861,10 @@ export const ITEM_WEIGHT: Record<import('./items').ItemId, number> = {
   rope: 0.4,
   iron_ore: 3,
   coal: 2,
+  /** Le charbon de bois est PRESQUE RIEN — une bûche qui a perdu son eau et ses volatils :
+   *  on en rapporte un plein sac sans le sentir. C'est ce qui le distingue de la houille (2)
+   *  à l'usage, avant même de distinguer ce qu'ils fondent. */
+  charcoal: 0.3,
 
   // ── LES STRUCTURANTES : elles sont LOURDES, et c'est le second verrou de la zone.
   //
@@ -5594,6 +5989,7 @@ export const STACK_SIZES: Partial<Record<import('./items').ItemId, number>> = {
   fiber: 20,
   iron_ore: 20,
   coal: 20,
+  charcoal: 20,
   components: 10,
   berries: 10,
   champignons: 10, // s'empile comme les baies

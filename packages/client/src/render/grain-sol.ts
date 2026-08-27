@@ -38,7 +38,7 @@ export const GRAIN_TILES = 16
 export const GRAIN_CELLS = (GRAIN_TILES * 16) / GRAIN_CELL_PX // 64
 
 /** Les cinq familles, dans l'ORDRE DES BLOCS de l'atlas — l'index sert d'UV. */
-export const FAMILLES = ['mineral', 'litiere', 'herbe', 'neige', 'humide', 'cendre'] as const
+export const FAMILLES = ['mineral', 'litiere', 'herbe', 'neige', 'humide', 'cendre', 'dalle'] as const
 export type Famille = (typeof FAMILLES)[number]
 
 interface Profil {
@@ -103,6 +103,29 @@ const PROFILS: Record<Famille, Profil> = {
    *     valeur ne veut pas dire la même chose selon la résolution où on la peint.
    */
   cendre: { echelle: 1.8, crans: [1, 0.965, 0.93], seuils: [0.35, 0.55], damier: 0.045 },
+  /**
+   * LA DALLE — le pavement du lapiaz, et la seule matière LISSE de la table minérale.
+   *
+   * *(Décision d'Alexis, 2026-08-27, sur planche : « go 3 ».)* Le `boulders` partageait la
+   * famille `mineral` avec la ROUTE (« du gravier tassé ») et la falaise : le pays s'appelle
+   * pavement de calcaire et son sol disait caillou générique. Or une table de calcaire est
+   * POLIE — c'est l'eau qui l'a taillée, pas le gel. Deux partis, opposés à ceux du minéral :
+   *
+   *   • CRANS SERRÉS (1 / 0,975 / 0,95, les plus doux après la neige) — la dalle est unie ; sa
+   *     variation ne vient pas du grain, elle vient des FISSURES, qui sont dessinées par
+   *     `paves.ts` à partir du champ de la sim. Laisser ici le contraste du minéral doublerait
+   *     le motif et brouillerait les deux.
+   *   • DAMIER PRESQUE MUET (0,03) — sur une surface claire et unie, le damier par tuile se lit
+   *     comme une grille de 16 px (la leçon de la neige, R20), et la dalle est justement le
+   *     terrain le plus clair de la famille.
+   *
+   * ⚠ L'ÉBOULIS RESTE `mineral`, ET C'EST DÉLIBÉRÉ. Lui donner sa propre matière de gravier
+   * changerait le `scree` PARTOUT sur la carte — les pierriers d'affleurement compris, qui
+   * portent déjà leurs deux tons de butte (`fondDeButte`/`tacheDeButte`, semés à 4 px par
+   * `mouchetureIci`). C'est une décision à part, pas un
+   * dommage collatéral de celle-ci.
+   */
+  dalle: { echelle: 2.6, crans: [1, 0.975, 0.95], seuils: [0.34, 0.56], damier: 0.03 },
 }
 
 /**
@@ -131,7 +154,7 @@ export const FAMILLE_PAR_TERRAIN: Record<number, Famille | null> = {
   13: 'litiere', // pine
   14: 'litiere', // larch
   15: 'neige', // glacier
-  16: 'mineral', // boulders
+  16: 'dalle', // boulders — le pavement du lapiaz : lisse, et fissuré par `paves.ts`
   17: 'herbe', // flower_meadow
   18: 'humide', // peat_bog
   19: 'humide', // reed_marsh
@@ -147,6 +170,7 @@ export const FAMILLE_PAR_TERRAIN: Record<number, Famille | null> = {
   27: 'cendre', // cendre_pre
   28: 'cendre', // cendre_bois
   29: 'cendre', // cendre_min
+  30: 'herbe', // clairiere — de l'herbe, pas de la litière : c'est tout le propos du biome
 }
 
 /** L'index de bloc d'une famille dans l'atlas (son UV horizontal). */

@@ -59,7 +59,7 @@
  * PUR : aucun import Phaser. La cuisson rend deux tampons RGBA (sol, surplomb) que
  * `scenes/world/pave-layer.ts` verse dans des `CanvasTexture`. Testé en Node (`paves.test.ts`).
  */
-import { hash2 } from '@ashes/sim'
+import { champDuChaos, fbm2, hash2, TERRAIN_BOULDERS, TERRAIN_ROCK } from '@ashes/sim'
 import { TILE_PX } from './framing'
 import { GRAIN_CELLS, GRAIN_CELL_PX } from './grain-sol'
 
@@ -210,6 +210,12 @@ export const PRIORITE_PAVE: Record<number, number> = {
   26: 6, // juniper_heath — la lande sèche
   25: 6, // wet_meadow
   1: 7, // grass
+  // LA CLAIRIÈRE (2026-08-25) — au-dessus de la litière ET de l'herbe, exprès : la trouée doit
+  // ANNONCER son bord quoi qu'elle touche. C'est tout l'objet d'en avoir fait un biome ; à
+  // égalité avec l'herbe, sa lisière du côté du pré s'effacerait — et un bord nu est justement
+  // ce qui se lisait comme une coupe. Elle déborde donc d'une frange sur le sous-bois et sur
+  // le pré, comme la fleuraie déborde sur l'herbe.
+  30: 8, // clairiere
   11: 7, // heath
   10: 7, // snow
   15: 7, // glacier
@@ -325,6 +331,286 @@ export function frange(tx: number, ty: number, cote: number, along: number): num
   return PAVE.FRANGE_MIN + Math.floor(hash2(tx * 4 + cote, ty * 4 + along, 0xf1) * n)
 }
 
+/**
+ * ═══ LA MOUCHETURE — LE GRAVIER EN CROÛTE D'UNE BUTTE D'AFFLEUREMENT ═══
+ *
+ * *(Décision d'Alexis, 2026-08-27, sur quatre planches rendues sur la vraie butte : « 4 ».)*
+ *
+ * Une butte porte DEUX tons : son fond (le gris chauffé, l'anthracite) et sa tache (la rouille,
+ * la houille). Le tirage se faisait PAR TUILE — donc, depuis que le sol se cuit à 16 px, en
+ * carrés de 16 px. Il se fait ici, à la maille de l'art :
+ *   • la CELLULE DE `GRAIN_CELL_PX` (4 px), celle du grain — c'est le pas de la matière du jeu, et le seul qui
+ *     lise encore comme du gravier ; à 2 px les deux tons fusionnent optiquement en un rouille
+ *     uni et la roche grise disparaît (rendu, écarté sur planche) ;
+ *   • un champ d'AMAS basse fréquence (3 tuiles) qui rassemble les cellules en croûtes — sans
+ *     lui, une part uniforme donne un poivre et sel régulier, qui n'est pas ce qu'est un
+ *     chapeau de fer ;
+ *   • la DENSITÉ vient de l'appelant (`densiteDeMoucheture`, commandée par la pente vers le
+ *     sommet) : la rouille gagne en montant.
+ *
+ * ⚠ **RIEN N'EST CALCULÉ HORS D'UNE BUTTE** : `moucheture` est demandée par TUILE et rend `null`
+ * partout ailleurs — la lecture d'`fbm2` par pixel ne se paie que sur les ~1 600 tuiles de
+ * rocaille de la carte, jamais sur le pré. C'est l'élagage du lapiaz, à sa maille.
+ */
+export const MOUCHETURE = {
+  /** L'échelle du champ d'amas, en TUILES — des croûtes qu'on traverse, pas un semis. */
+  AMAS_ECHELLE: 3,
+  /** L'amas module la densité de `MIN` à `MIN + GAIN` (de moyenne ≈ 0,95 : la part est tenue). */
+  AMAS_MIN: 0.2,
+  AMAS_GAIN: 1.5,
+}
+
+/**
+ * La cellule de 4 px du monde (wx, wy) prend-elle la tache ? Pur, positionnel, déterministe.
+ *
+ * ⚠ **L'AMAS SE LIT AU CENTRE DE LA CELLULE, PAS AU PIXEL** — et c'est ce qui fait de la cellule
+ * une UNITÉ. Lu au pixel, le champ traverse son seuil À L'INTÉRIEUR d'une cellule au bord d'une
+ * croûte : la marque s'y effiloche d'un pixel, et la maille de 4 px cesse d'être vraie (une
+ * garde l'a attrapé). Au centre, la cellule est atomique — et l'on paie une lecture d'`fbm2`
+ * par cellule au lieu de seize.
+ */
+export function mouchetureIci(wx: number, wy: number, densite: number, seed: number): boolean {
+  const cx = (wx / GRAIN_CELL_PX) | 0
+  const cy = (wy / GRAIN_CELL_PX) | 0
+  const demi = GRAIN_CELL_PX / 2
+  const amas = fbm2((cx * GRAIN_CELL_PX + demi) / PAVE_PX, (cy * GRAIN_CELL_PX + demi) / PAVE_PX,
+    MOUCHETURE.AMAS_ECHELLE, (seed ^ 0x4d4f5543) | 0)
+  return hash2(cx, cy, (seed ^ 0x7a1e) | 0) < densite * (MOUCHETURE.AMAS_MIN + MOUCHETURE.AMAS_GAIN * amas)
+}
+
+/**
+ * ═══ L'ENGRENAGE — LE BORD ENTRE DEUX TERRAINS DE MÊME RANG (spec `sol-dessine.md` R25) ═══
+ *
+ * *(Décision d'Alexis, 2026-08-27, sur planche : « go engrenage ».)*
+ *
+ * `prendre` ne donne un pixel qu'à un pavé qui DOMINE STRICTEMENT. Entre deux terrains de même
+ * rang — `scree`/`boulders`, `pine`/`larch`, `grass`/`heath` — personne ne cède : pas de frange,
+ * pas un pixel déplacé, et le bord reste l'arête de tuile. MESURÉ avant le chantier (graine 2026,
+ * vallée entière) : **40,6 %** des bords terre-terre étaient dans ce cas, 35,2 % hors paires à
+ * `rock`. C'est le défaut que R20-R24 ne pouvaient pas voir — elles ont réparé la FORME à la
+ * tuile, celui-ci vit SOUS la tuile.
+ *
+ * La règle : à rang égal, les deux pavés se débordent l'un sur l'autre, **par blocs de 4 px**,
+ * chacun son tour — la denture s'imbrique au lieu que l'un passe devant. C'est la lecture honnête
+ * de « même hauteur », et c'est ce qui la distingue d'un départage : aucune hiérarchie n'est
+ * inventée, donc rien ne peut se lire comme une marche.
+ *
+ * ⚠ **LA FRANGE EST SEULE, ET ELLE L'EST SANS UNE LIGNE DE PLUS.** R15 avait tranché la question
+ * pour le marais (frange seule : ni liseré, ni arête, ni tranche, ni ombre) et REFUSÉ sur planche
+ * la variante qui donne de l'épaisseur à l'un des deux — « le même bord, mais le marais se lisait
+ * comme une troisième herbe ». Ici la passe d'ombrage lit `ownP[voisin] < pk` pour le liseré et
+ * `> pk` pour l'ombre : à rang égal, les deux sont faux. L'épaisseur ne peut pas apparaître.
+ *
+ * ⚠ **LE TIRAGE EST CELUI DE LA COUTURE, PAS CELUI DE LA TUILE** — sinon les deux voisines
+ * tireraient chacune le leur et se disputeraient les mêmes pixels. La clé est la position du
+ * BLOC DE COUTURE dans le monde (l'arête partagée, pas la tuile qui la regarde), et le sel est
+ * la PAIRE de terrains, `min`/`max` : les deux côtés calculent le même tirage, et là où trois
+ * terrains de même rang se rencontrent, chaque couture garde le sien.
+ *
+ * ⚠ **RIEN NE DOIT DÉPENDRE DE L'ORDRE DE BALAYAGE.** Relâcher `<` en `<=` dans `prendre` aurait
+ * suffi à faire déborder tout le monde — mais c'est la tuile la plus TARDIVE de la boucle qui
+ * aurait mangé sa voisine, et tous les bords de la carte auraient penché au sud-est. D'où ce
+ * tirage positionnel, et un `prendreEgal` qui ne prend que le sol NU du perdant.
+ */
+export function engrenageGagne(
+  gx: number, gy: number, cote: number, along: number, t: number, voisin: number,
+): boolean {
+  const vertical = cote === COTE_E || cote === COTE_O
+  // La couture, en coordonnées du monde : l'arête partagée (et non la tuile qui la regarde),
+  // repérée au bloc de 4 px. Les deux voisines tombent donc sur la même clé.
+  const sx = vertical ? (cote === COTE_E ? gx + 1 : gx) : gx * 4 + along
+  const sy = vertical ? gy * 4 + along : (cote === COTE_S ? gy + 1 : gy)
+  const bas = t < voisin ? t : voisin
+  const haut = t < voisin ? voisin : t
+  const sel = (vertical ? 0x2c00 : 0x7b00) + bas * 61 + haut
+  return (hash2(sx, sy, sel) < 0.5) === (t === bas)
+}
+
+/**
+ * ═══ LE PAVEMENT DU LAPIAZ — le sol du chaos de blocs porte ses FISSURES ═══
+ *
+ * *(Décision d'Alexis, 2026-08-27, tranchée en jeu : « ok pour cette version ».)*
+ *
+ * Le chaos de blocs partageait la famille de grain de la ROUTE (« du gravier tassé ») et de la
+ * falaise : le pays s'appelle pavement de calcaire et son sol disait caillou générique. Il a
+ * désormais sa matière (`grain-sol.ts`, famille `dalle` — lisse, une table polie par l'eau) et
+ * son motif : un PAVAGE de lauzes, tracé.
+ *
+ * ═══ ON TRACE, ON NE REMPLIT PAS — et c'est la correction qui a fait la version livrée ═══
+ *
+ * La première écriture peignait la dalle et l'allée du grand réseau de galeries (`champDuChaos`)
+ * de deux VALEURS différentes, sur des polygones de onze tuiles à 33 % d'écart. Verdict en jeu :
+ * *« les motifs sont trop larges, ça ne correspond pas à la DA actuelle »* — et c'était juste,
+ * mesurable : toute la grammaire du sol de ce jeu tient en marques de **1 à 4 px** (les brins
+ * font 1×2 px, le liseré 1 px, le grain trois crans à la maille de 4) et en écarts de l'ordre de
+ * **15 %**. Un aplat de valeur étendu sur onze tuiles ne se lit pas comme du sol dessiné : il se
+ * lit comme une ZONE de terrain, c'est-à-dire comme le langage d'à côté.
+ *
+ * Deux traits, donc, et le fond garde partout sa valeur :
+ *
+ *   • LA FISSURE DU PAVAGE (≈ 1 px, pas de `LAPIAZ.PAS`) — c'est elle qui donne sa matière au
+ *     pavement, et elle est à l'échelle du PROP, pas du paysage.
+ *   • LA FISSURE MAÎTRESSE (≈ 2 px) — le CŒUR d'une allée du grand réseau, tracé au lieu d'être
+ *     rempli. Elle garde le dédale présent à l'œil sans étaler une valeur dessus.
+ *
+ * ⚠ **LE PLAN DU LABYRINTHE N'A PAS BESOIN DU SOL POUR SE DIRE.** Les BLOCS le portent déjà, en
+ * volume et en collision — c'est ce qui autorise le sol à n'en donner qu'un trait.
+ *
+ * ⚠ **LE JOINT EST DE LA PIERRE, PAS DE LA TERRE.** La première planche le tirait à pleine
+ * chaleur : les allées sortaient ocre et le lapiaz se lisait comme des îlots dans de la boue.
+ * Une fissure de calcaire est grise, à peine réchauffée par ce qui s'y dépose.
+ *
+ * ⚠ **LA GÉOMÉTRIE VIENT DE LA SIM, PAS D'UNE COPIE.** La fissure maîtresse se lit dans
+ * `champDuChaos` — le champ même dont `galerieDuChaos` tire le vide qu'on marche. Ce qu'on voit
+ * est donc exactement ce qu'on parcourt, et une retouche du dédale ne peut pas laisser le
+ * dessin derrière elle. Le pavage fin, lui, ne porte aucune règle : il est de l'ART pur, il a
+ * son propre pas et il ne demande rien à la sim.
+ */
+export const LAPIAZ = {
+  /**
+   * ⚠ **LA PREMIÈRE ÉCRITURE REMPLISSAIT, ET C'ÉTAIT LE MAUVAIS REGISTRE.** *(Alexis, 2026-08-27,
+   * sur le rendu en jeu : « les motifs sont trop larges, ça ne correspond pas à la DA actuelle ».)*
+   * Elle peignait la dalle et l'allée de deux VALEURS différentes sur des polygones de **11
+   * tuiles**, à **33 %** d'écart. Or toute la grammaire du sol de ce jeu tient en marques de 1 à
+   * 4 px (les brins font 1×2 px, le liseré 1 px, le grain trois crans à la maille de 4) et en
+   * écarts de l'ordre de 15 %. Un aplat de valeur étendu sur onze tuiles ne se lit pas comme du
+   * sol dessiné : il se lit comme une ZONE de terrain — c'est-à-dire comme le langage d'à côté.
+   *
+   * Le réseau ne se remplit donc plus, il se TRACE. Deux largeurs de fissure, rien d'autre :
+   * la caillasse garde partout la même valeur de base, et seules les lignes la creusent.
+   */
+  /**
+   * LE PAVAGE — le pas du réseau FIN, en tuiles. C'est lui qui donne sa matière au pavement, et
+   * il est à l'échelle du PROP, pas du paysage : une lauze fait une tuile ou deux, comme un pavé
+   * de la grammaire choisie le 2026-08-22. À 11 tuiles on dessinait la géologie ; à 1,8 on
+   * dessine ce que le pied foule.
+   */
+  PAS: 1.8,
+  /**
+   * La demi-largeur de la fissure fine, en unités de `F2 − F1`. Près d'une arête ce champ croît
+   * d'environ DEUX par tuile : 0,13 fait donc à peu près **un pixel d'art**. C'est la largeur
+   * d'un liseré, et c'est voulu — on n'a pas d'autre trait plus fin dans ce sol.
+   */
+  FIN: 0.13,
+  /** Le facteur de la fissure fine. −10 %, l'ordre de grandeur d'un cran de grain. */
+  F_FIN: 0.9,
+  /**
+   * LA FISSURE MAÎTRESSE — le CŒUR de l'allée du grand réseau (`champDuChaos`), tracé au lieu
+   * d'être rempli. Elle garde le dédale présent à l'œil (la ligne se poursuit d'un bord à
+   * l'autre) sans étaler une valeur sur onze tuiles : deux pixels au lieu d'un, et c'est tout
+   * ce qui la distingue d'une fissure de surface. Le plan du labyrinthe, lui, reste porté par
+   * les BLOCS — ils le disent déjà, en volume.
+   */
+  MAITRESSE: 0.09,
+  /** Le facteur de la fissure maîtresse : plus creuse que les autres, sans être un trou. */
+  F_MAITRESSE: 0.84,
+  /** La teinte de ce qui se dépose au fond d'une fissure, par canal. À peine — c'est de la
+   *  pierre, pas de la terre (leçon de la première planche, où les allées sortaient ocre). */
+  TEINTE_R: 0.05,
+  TEINTE_V: 0.01,
+  TEINTE_B: -0.04,
+
+  // ═══ LE RELIEF — une fissure a deux bords, et ils ne prennent pas la même lumière ═══
+  /** La profondeur d'une fissure, en unités du champ de hauteur. La maîtresse est plus creuse ;
+   *  c'est tout ce qui les distingue en relief, comme en albédo. */
+  CREUX_FIN: 0.55,
+  CREUX_MAITRESSE: 1,
+  /** La PENTE : de combien la normale bascule pour une unité de profondeur par pixel. Haut =
+   *  des lèvres franches (le parti « cube » du 24/07), bas = un dôme mou. */
+  PENTE: 3.2,
+  /** Le seuil de POSTÉRISATION du relief. Sous lui, la lèvre se tait : c'est ce qui garde trois
+   *  valeurs franches au lieu d'un dégradé — la même règle que partout ailleurs dans ce sol. */
+  RELIEF_SEUIL: 0.1,
+  /** Les deux facteurs de lèvre : celle qui prend le jour, celle qui s'en détourne. */
+  F_LEVRE: 1.12,
+  F_OMBRE: 0.86,
+  /**
+   * LE BIAIS NORD ET LA HAUTEUR DU SOLEIL, en unités de son décalage est-ouest.
+   *
+   * Ce sont les proportions de `DynamicLighting` (`SUN_FAR` 2200, `SUN_NORTH` 1600, `SUN_Z` 620),
+   * pas des nombres neufs : le sol doit être éclairé par LE soleil du jeu, celui qui pose déjà
+   * les lumières des houppiers et le couloir spéculaire de l'eau. Un second soleil dériverait
+   * du premier — le défaut que `water-layer.ts` a documenté et corrigé.
+   */
+  NORD: 1600 / 2200,
+  HAUTEUR: 620 / 2200,
+} as const
+
+/**
+ * LE VECTEUR VERS LE SOLEIL, en espace ÉCRAN (x est+, y sud+, z vers le spectateur), unitaire.
+ *
+ * `dirX` est la seule entrée : c'est `sunDirection(heure).x` de `render/lighting.ts` — +1 à
+ * l'aube (est), 0 vers 13 h, −1 au couchant. Le reste (le biais nord, la hauteur) est une
+ * constante de la scène, comme dans `DynamicLighting`.
+ *
+ * ⚠ **`dirX = 0` N'EST PAS « PAS DE SOLEIL »** : c'est le soleil de MIDI, plein nord, et c'est
+ * exactement la convention que le pavé truque déjà partout (`ARETE_HAUTE` en haut, `LISERE` en
+ * bas et sur les côtés — une lumière qui vient du haut de l'écran). Un pavement à soleil figé
+ * se demande donc en passant zéro, sans autre chemin de code.
+ */
+export function soleilDuPavement(dirX: number): { x: number; y: number; z: number } {
+  const x = dirX
+  const y = -LAPIAZ.NORD
+  const z = LAPIAZ.HAUTEUR
+  const l = Math.sqrt(x * x + y * y + z * z) || 1
+  return { x: x / l, y: y / l, z: z / l }
+}
+
+/**
+ * L'ÉCART AU JOINT DU PAVAGE — `F2 − F1` d'un Worley au pas de `LAPIAZ.PAS`, rendu par une
+ * FABRIQUE qui pose les sites UNE FOIS pour tout le chunk.
+ *
+ * ⚠ **DEUX OPTIMISATIONS, ET ELLES NE SONT PAS DU CONFORT.** Ce trait se lit AU PIXEL (c'est ce
+ * qui lui donne sa finesse d'un pixel, là où le grand réseau se contente de la cellule de 4) :
+ * un chunk en fait soixante-six mille lectures. MESURÉ en écrivant naïvement — 18 `hash2` et
+ * 9 `sqrt` par pixel — la cuisson d'un chunk de chaos passait de 86 à 102 ms, +18 %.
+ *
+ *   ① LES SITES SONT PRÉ-POSÉS. Le pas est de 1,8 tuile : un chunk et son débord ne couvrent
+ *      qu'une dizaine de cases de grille dans chaque sens. On les jitte une fois, et le pixel ne
+ *      fait plus que des différences.
+ *   ② LA RACINE VIENT EN DERNIER. On classe sur les distances au CARRÉ — l'ordre est le même —
+ *      et l'on n'extrait que les deux racines qui comptent, au lieu de neuf.
+ *
+ * Pur : `+ - * /`, `floor`, `sqrt`, `hash2`.
+ */
+function fabriquePavage(fx0: number, fy0: number, cote: number, seed: number): (fx: number, fy: number) => number {
+  const S = LAPIAZ.PAS
+  const sel = (seed ^ 0x4c415a45) | 0 /* 'LAZE' */
+  const selY = (sel ^ 0x5a5a5a5a) | 0
+  const gx0 = Math.floor(fx0 / S) - 1
+  const gy0 = Math.floor(fy0 / S) - 1
+  const NG = Math.floor((fx0 + cote) / S) - gx0 + 2
+  const NGY = Math.floor((fy0 + cote) / S) - gy0 + 2
+  const sx = new Float32Array(NG * NGY)
+  const sy = new Float32Array(NG * NGY)
+  for (let j = 0; j < NGY; j++) {
+    for (let i = 0; i < NG; i++) {
+      const cx = gx0 + i
+      const cy = gy0 + j
+      sx[j * NG + i] = (cx + hash2(cx, cy, sel)) * S
+      sy[j * NG + i] = (cy + hash2(cx, cy, selY)) * S
+    }
+  }
+  return (fx: number, fy: number): number => {
+    const i0b = Math.floor(fx / S) - gx0
+    const j0b = Math.floor(fy / S) - gy0
+    // Aucune borne à vérifier : la grille est posée avec UNE case de marge de chaque côté
+    // (`gx0 − 1`, `NG + 2`), donc les neuf voisines d'un pixel du chunk existent toujours.
+    let d1 = Infinity
+    let d2 = Infinity
+    for (let dj = -1; dj <= 1; dj++) {
+      const base = (j0b + dj) * NG + i0b
+      for (let di = -1; di <= 1; di++) {
+        const ex = sx[base + di]! - fx
+        const ey = sy[base + di]! - fy
+        const d = ex * ex + ey * ey
+        if (d < d1) { d2 = d1; d1 = d } else if (d < d2) { d2 = d }
+      }
+    }
+    return Math.sqrt(d2) - Math.sqrt(d1)
+  }
+}
+
 export interface CuissonChunk {
   /** Coordonnées du chunk, en chunks. */
   cx: number
@@ -336,10 +622,25 @@ export interface CuissonChunk {
   /** La TRAME de grain d'un terrain : `GRAIN_CELLS²` facteurs, une cellule de `GRAIN_CELL_PX`
    *  px monde, tuilée (`grain-sol.ts`) — ou `null` pour un terrain sans matière. */
   trameDe: (t: number) => Float32Array | null
+  /** LA MOUCHETURE d'une tuile (`render/buttes.ts`) : le second ton de la rocaille d'une butte
+   *  et sa densité, ou `null` — la carte entière sauf ~1 600 tuiles. Voir `MOUCHETURE`. */
+  moucheture?: (tx: number, ty: number) => { tache: number; densite: number } | null
+  /** La graine du monde — le pavement du lapiaz lit le MÊME champ que la sim (`champDuChaos`),
+   *  et un champ seedé sans sa graine ne dessinerait pas le dédale qu'on marche. */
+  seed: number
+  /** Le vecteur vers le soleil (`soleilDuPavement`) : il décide de quel côté d'une fissure tombe
+   *  la lèvre claire. Passer `soleilDuPavement(0)` fige la lumière plein nord, la convention du
+   *  liseré ; passer `soleilDuPavement(sunDirection(heure).x)` la fait tourner avec le jour. */
+  soleil: { x: number; y: number; z: number }
 }
 
 /** Le côté d'un chunk en px d'art, SANS le débord — la maille du monde (16 tuiles × 16 px). */
 export const PAVE_COTE = PAVE.CHUNK * PAVE_PX
+/** LA MARGE DE LECTURE d'une cuisson, en TUILES : `cuireChunk` lit une tuile tout autour du chunk
+ *  (les franges et les ombres débordent jusqu'à 5 px). Elle est exportée parce qu'une autre couche
+ *  doit savoir CE QUE le chunk regarde — l'invalidation de la cendre (`cendre-chunk.ts`) balaie
+ *  exactement ce périmètre. La réécrire là-bas rouvrirait le défaut sur une tuile de large. */
+export const PAVE_MARGE_TUILES = 1
 /** Le côté de l'IMAGE cuite, débord compris : ce que mesurent les textures posées. */
 export const PAVE_COTE_BAVE = PAVE_COTE + 2 * PAVE.BAVE
 
@@ -349,6 +650,22 @@ export interface ChunkCuit {
   /** Le surplomb, AU-DESSUS du shader d'eau : ce qui tombe sur une tuile d'eau — frange de terre,
    *  ombre, ressac. `null` si le chunk n'a pas d'eau (aucune texture à poser). */
   surplomb: Uint8ClampedArray | null
+  /** Ce chunk porte-t-il du RELIEF (du pavement de lapiaz) ? C'est la seule chose que la course
+   *  du soleil périme : un chunk plat rend la même image à toute heure, et le repérer ici évite
+   *  de recuire toute la carte douze fois par jour. */
+  relief: boolean
+}
+
+/**
+ * LE TAMPON DE PROFONDEUR, réutilisé d'une cuisson à l'autre — 258² flottants, soit 266 Ko qu'on
+ * n'a aucune raison de rendre au ramasse-miettes quarante fois par seconde. Il est INTÉGRALEMENT
+ * réécrit à chaque cuisson (chaque pixel reçoit sa valeur ou zéro), donc rien d'une cuisson ne
+ * peut fuir dans la suivante — c'est ce qui autorise un état module dans une fonction pure.
+ */
+let scratch: Float32Array | null = null
+function profondeurScratch(cote: number): Float32Array {
+  if (!scratch || scratch.length < cote * cote) scratch = new Float32Array(cote * cote)
+  return scratch
 }
 
 /**
@@ -369,16 +686,17 @@ export interface ChunkCuit {
 export function cuireChunk(p: CuissonChunk): ChunkCuit {
   const N = PAVE.CHUNK
   const P = PAVE_PX
-  const L = N + 2 // tuiles locales, marge comprise
+  const L = N + 2 * PAVE_MARGE_TUILES // tuiles locales, marge comprise
   const LP = L * P // pixels locaux
-  const tx0 = p.cx * N - 1 // tuile carte de la colonne locale 0
-  const ty0 = p.cy * N - 1
+  const tx0 = p.cx * N - PAVE_MARGE_TUILES // tuile carte de la colonne locale 0
+  const ty0 = p.cy * N - PAVE_MARGE_TUILES
 
   // ── Les tuiles locales : terrain, priorité, couleur, trame, brins ──
   const terr = new Int16Array(L * L)
   const prio = new Int8Array(L * L)
   const coul = new Uint32Array(L * L)
   const trames: (Float32Array | null)[] = new Array(L * L)
+  const mouch: ({ tache: number; densite: number } | null)[] | null = p.moucheture ? new Array(L * L) : null
   const brins = new Int8Array(L * L * PAVE.BRINS_PAR_TUILE * 2)
   for (let ly = 0; ly < L; ly++) {
     for (let lx = 0; lx < L; lx++) {
@@ -388,6 +706,7 @@ export function cuireChunk(p: CuissonChunk): ChunkCuit {
       prio[k] = prioriteDe(t)
       coul[k] = p.couleurAt(tx0 + lx, ty0 + ly)
       trames[k] = p.trameDe(t)
+      if (mouch) mouch[k] = p.moucheture!(tx0 + lx, ty0 + ly)
       for (let j = 0; j < PAVE.BRINS_PAR_TUILE; j++) {
         brins[(k * PAVE.BRINS_PAR_TUILE + j) * 2] = 1 + Math.floor(hash2(tx0 + lx, ty0 + ly, 3 + j) * (P - 3))
         brins[(k * PAVE.BRINS_PAR_TUILE + j) * 2 + 1] = 1 + Math.floor(hash2(tx0 + lx, ty0 + ly, 5 + j) * (P - 4))
@@ -407,11 +726,23 @@ export function cuireChunk(p: CuissonChunk): ChunkCuit {
     const i = py * LP + px
     if (prio[owner[i]!]! < pk) owner[i] = k
   }
+  /**
+   * L'ENGRENAGE (R25) : la dent du pavé `k` mord sur le sol NU de son voisin de même rang `kv`.
+   * Elle ne prend QUE ce que `kv` tient encore lui-même — un pavé de rang supérieur qui a déjà
+   * débordé là garde son pixel, et une dent voisine qui a déjà mordu le même creux (ça n'arrive
+   * qu'aux coins, sur quelques pixels) n'est pas repoussée. Rien n'est jamais volé à personne.
+   */
+  const prendreEgal = (px: number, py: number, k: number, kv: number): void => {
+    if (px < 0 || py < 0 || px >= LP || py >= LP) return
+    const i = py * LP + px
+    if (owner[i] === kv) owner[i] = k
+  }
   for (let ly = 0; ly < L; ly++) {
     for (let lx = 0; lx < L; lx++) {
       const k = ly * L + lx
       const pk = prio[k]!
       if (pk <= 0) continue // structurel ou sans rang : ne déborde jamais
+      const tk = terr[k]!
       const gx = tx0 + lx
       const gy = ty0 + ly
       const x0 = lx * P
@@ -428,27 +759,72 @@ export function cuireChunk(p: CuissonChunk): ChunkCuit {
       const sudCede = cede(lx, ly + 1)
       const ouestCede = cede(lx - 1, ly)
       const estCede = cede(lx + 1, ly)
+      /**
+       * L'ENGRENAGE (R25) : le voisin est-il de MÊME RANG, et éligible à la denture ?
+       *
+       * ⚠ **LES SURFACES EN SONT EXCLUES, ET C'EST R15 QUI LE DIT** : la vase, la glace, l'assec
+       * et le gué fermé sont à égalité EXPRÈS — « une frange de plus y ferait un double trait, et
+       * la vase mangerait la rive », la berge du sol ayant déjà tracé ce bord.
+       * ⚠ **`rock` EN EST EXCLU, ET C'EST R22** : la roche du vide EST une hauteur (comme la
+       * falaise, déjà structurelle), elle reste rectiligne. Elle partage pourtant le rang 3 avec
+       * l'éboulis et le chaos de blocs — 5,4 % des bords de la vallée, qu'on attendrirait en
+       * croyant bien faire.
+       */
+      const engrene = (nx: number, ny: number): boolean => {
+        if (nx < 0 || ny < 0 || nx >= L || ny >= L) return false
+        const j = ny * L + nx
+        const tv = terr[j]!
+        return prio[j]! === pk && tv !== tk && !estSurface(tv) && tv !== TERRAIN_ROCK
+      }
+      const engrenable = !estSurface(tk) && tk !== TERRAIN_ROCK
+      const nordEng = engrenable && !nordCede && engrene(lx, ly - 1)
+      const sudEng = engrenable && !sudCede && engrene(lx, ly + 1)
+      const ouestEng = engrenable && !ouestCede && engrene(lx - 1, ly)
+      const estEng = engrenable && !estCede && engrene(lx + 1, ly)
+      const kN = (ly - 1) * L + lx
+      const kS = (ly + 1) * L + lx
+      const kO = ly * L + lx - 1
+      const kE = ly * L + lx + 1
       for (let c = 0; c < P / 4; c++) {
-        if (nordCede) {
+        // Par côté : soit le voisin CÈDE (domination stricte, la frange ordinaire), soit il est
+        // de même rang et la dent de ce bloc-ci nous revient (l'engrenage). Jamais les deux.
+        if (nordCede || (nordEng && engrenageGagne(gx, gy, COTE_N, c, tk, terr[kN]!))) {
           const d = frange(gx, gy, COTE_N, c)
-          for (let dy = 1; dy <= d; dy++) for (let u = 0; u < 4; u++) prendre(x0 + 4 * c + u, y0 - dy, k, pk)
+          for (let dy = 1; dy <= d; dy++) for (let u = 0; u < 4; u++) {
+            if (nordCede) prendre(x0 + 4 * c + u, y0 - dy, k, pk)
+            else prendreEgal(x0 + 4 * c + u, y0 - dy, k, kN)
+          }
         }
-        if (sudCede) {
+        if (sudCede || (sudEng && engrenageGagne(gx, gy, COTE_S, c, tk, terr[kS]!))) {
           const d = frange(gx, gy, COTE_S, c)
-          for (let dy = 0; dy < d; dy++) for (let u = 0; u < 4; u++) prendre(x0 + 4 * c + u, y1 + dy, k, pk)
+          for (let dy = 0; dy < d; dy++) for (let u = 0; u < 4; u++) {
+            if (sudCede) prendre(x0 + 4 * c + u, y1 + dy, k, pk)
+            else prendreEgal(x0 + 4 * c + u, y1 + dy, k, kS)
+          }
         }
-        if (ouestCede) {
+        if (ouestCede || (ouestEng && engrenageGagne(gx, gy, COTE_O, c, tk, terr[kO]!))) {
           const d = frange(gx, gy, COTE_O, c)
-          for (let dx = 1; dx <= d; dx++) for (let u = 0; u < 4; u++) prendre(x0 - dx, y0 + 4 * c + u, k, pk)
+          for (let dx = 1; dx <= d; dx++) for (let u = 0; u < 4; u++) {
+            if (ouestCede) prendre(x0 - dx, y0 + 4 * c + u, k, pk)
+            else prendreEgal(x0 - dx, y0 + 4 * c + u, k, kO)
+          }
         }
-        if (estCede) {
+        if (estCede || (estEng && engrenageGagne(gx, gy, COTE_E, c, tk, terr[kE]!))) {
           const d = frange(gx, gy, COTE_E, c)
-          for (let dx = 0; dx < d; dx++) for (let u = 0; u < 4; u++) prendre(x1 + dx, y0 + 4 * c + u, k, pk)
+          for (let dx = 0; dx < d; dx++) for (let u = 0; u < 4; u++) {
+            if (estCede) prendre(x1 + dx, y0 + 4 * c + u, k, pk)
+            else prendreEgal(x1 + dx, y0 + 4 * c + u, k, kE)
+          }
         }
       }
       // Les CHANFREINS de coin : dans la diagonale qui cède, un triangle `ox + oy ≤ f − 1`, avec
       // f la plus petite des deux franges qui se rencontrent. Un coin convexe s'arrondit, un
       // coin rentrant se remplit par l'union des deux côtés.
+      //
+      // ⚠ **PAS DE CHANFREIN À RANG ÉGAL** (R25) : le chanfrein arrondit le coin de CELUI QUI
+      // DOMINE, et il n'y a pas de dominant ici. Sur une denture qui s'imbrique, les deux
+      // arrondiraient le même coin chacun de son côté — un rond-point, pas une dent. Le bord est
+      // déjà cassé tous les 4 px : le coin n'a rien à rattraper.
       const derniere = P / 4 - 1
       const coin = (sx: number, sy: number): void => {
         if (!cede(lx + sx, ly + sy)) return
@@ -487,6 +863,67 @@ export function cuireChunk(p: CuissonChunk): ChunkCuit {
   // chunk et finit un pixel après, pour que deux images voisines se recouvrent au lieu de se
   // toucher. La marge locale fait une TUILE — lire un pixel de plus reste largement dedans.
   const SB = PAVE_COTE_BAVE
+  // ═══ LE PAVEMENT DU LAPIAZ — la PROFONDEUR d'abord, l'image ensuite ═══
+  //
+  // On cuit un champ de PROFONDEUR au pixel (0 = la table, 1 = le fond d'une fissure), puis le
+  // reste s'en dérive : l'albédo par un seuil, et le RELIEF par le gradient de ce même champ.
+  // Deux lectures, une vérité — la lèvre claire ne peut pas se retrouver ailleurs que la
+  // fissure qu'elle borde.
+  //
+  // ⚠ **LE CHAMP DU GRAND RÉSEAU RESTE LU À LA CELLULE DE 4 px, ET IL SERT D'ÉLAGAGE.** La
+  // fissure maîtresse ne vit qu'au cœur d'une allée ; partout ailleurs on s'épargne
+  // `champDuChaos`, qui porte un `fbm2`. Neuf pixels sur dix sont écartés par cette lecture.
+  // Le pavage fin, lui, se lit AU PIXEL — c'est ce qui lui donne son trait d'un pixel.
+  //
+  // Rien n'est alloué ni calculé si le chunk ne porte pas de chaos de blocs.
+  const CELL = GRAIN_CELL_PX
+  const wpx0 = tx0 * P + (P - PAVE.BAVE)
+  const wpy0 = ty0 * P + (P - PAVE.BAVE)
+  const bcx = Math.floor(wpx0 / CELL)
+  const bcy = Math.floor(wpy0 / CELL)
+  const NC = Math.floor((wpx0 + SB - 1) / CELL) - bcx + 1
+  const NCY = Math.floor((wpy0 + SB - 1) / CELL) - bcy + 1
+  let relief = false
+  for (let q = 0; q < L * L; q++) if (terr[q] === TERRAIN_BOULDERS) { relief = true; break }
+  let creux: Float32Array | null = null
+  if (relief) {
+    const champ = new Float32Array(NC * NCY)
+    for (let cy = 0; cy < NCY; cy++) {
+      const fy = ((bcy + cy) * CELL + CELL / 2) / P
+      for (let cx = 0; cx < NC; cx++) champ[cy * NC + cx] = champDuChaos(((bcx + cx) * CELL + CELL / 2) / P, fy, p.seed)
+    }
+    const pavage = fabriquePavage(wpx0 / P, wpy0 / P, SB / P, p.seed)
+    creux = profondeurScratch(SB + 2)
+    // ⚠ **UN ANNEAU DE PLUS QUE L'IMAGE**, et ce n'est pas du confort : le gradient d'un pixel
+    // du bord lit ses deux voisins. Sans cet anneau, le pixel du débord n'aurait pas de gradient
+    // là où son chunk voisin lui en donne un — la couture invisible de R17 redeviendrait visible,
+    // et le test de positionnalité l'attrape.
+    for (let y = -1; y <= SB; y++) {
+      const py2 = y + P - PAVE.BAVE
+      const ly2 = Math.max(0, Math.min(L - 1, (py2 / P) | 0))
+      const fy = (ty0 * P + py2) / P
+      const cyc = Math.max(0, Math.min(NCY - 1, (((ty0 * P + py2) / CELL) | 0) - bcy)) * NC
+      for (let x = -1; x <= SB; x++) {
+        const px2 = x + P - PAVE.BAVE
+        // La profondeur ne se calcule QUE sur les tuiles de chaos : ailleurs elle vaut zéro, et
+        // le gradient au bord dit alors exactement ce qu'il doit dire — la roche s'arrête là.
+        const k2 = (y + 1) * (SB + 2) + (x + 1)
+        if (terr[ly2 * L + Math.max(0, Math.min(L - 1, (px2 / P) | 0))] !== TERRAIN_BOULDERS) { creux[k2] = 0; continue }
+        const fx = (tx0 * P + px2) / P
+        const grossier = champ[cyc + Math.max(0, Math.min(NC - 1, (((tx0 * P + px2) / CELL) | 0) - bcx))]!
+        let d = 0
+        if (grossier < 0.35) {
+          const u = champDuChaos(fx, fy, p.seed)
+          if (u < LAPIAZ.MAITRESSE) d = (1 - u / LAPIAZ.MAITRESSE) * LAPIAZ.CREUX_MAITRESSE
+        }
+        if (d === 0) {
+          const e = pavage(fx, fy)
+          if (e < LAPIAZ.FIN) d = (1 - e / LAPIAZ.FIN) * LAPIAZ.CREUX_FIN
+        }
+        creux[k2] = d
+      }
+    }
+  }
   const out = new Uint8ClampedArray(SB * SB * 4)
   // Le surplomb n'est alloué que si le chunk (marge comprise) touche une tuile surplombée.
   let eauVue = false
@@ -521,6 +958,11 @@ export function cuireChunk(p: CuissonChunk): ChunkCuit {
       const basL = ownT[iL] !== t && ownP[iL]! < pk
       const basR = ownT[iR] !== t && ownP[iR]! < pk
       let f: number
+      // LES FACTEURS PAR CANAL — neutres partout sauf dans le joint du lapiaz, qui se réchauffe
+      // à peine (une fissure de calcaire est grise). Une luminance seule ne saurait pas le dire.
+      let kr = 1
+      let kv = 1
+      let kb = 1
       // Un pavé à épaisseur au-dessus de ce pixel (à `n` lignes) : celui qui porte une ombre.
       const domine = (j: number): boolean => ownT[j] !== t && ownP[j]! > pk && !estSurface(ownT[j]!)
       // Une surface n'a ni liseré ni arête ni tranche ; elle reçoit l'ombre de la berge, puis le
@@ -535,6 +977,32 @@ export function cuireChunk(p: CuissonChunk): ChunkCuit {
       else if (domine(iL) || domine(iR)) f = PAVE.OMBRE_LATERALE
       else if (estVoile(t)) continue // l'eau nue, le dessous nu : rien à peindre ici
       else if (tSurf) f = 1 // le marais nu, la glace nue : plat, sans brin
+      else if (creux && t === TERRAIN_BOULDERS) {
+        // ① L'ALBÉDO : trois valeurs franches, décidées par la seule profondeur.
+        const kc = (y + 1) * (SB + 2) + (x + 1)
+        const d = creux[kc]!
+        const maitresse = d > LAPIAZ.CREUX_FIN
+        const fine = d > 0 && !maitresse
+        f = maitresse ? LAPIAZ.F_MAITRESSE : fine ? LAPIAZ.F_FIN : 1
+        const chaud = maitresse ? 1 : fine ? 0.6 : 0
+        // ② LE RELIEF : le gradient du MÊME champ, éclairé par LE soleil du jeu.
+        //    Une fissure a deux bords ; celui qui fait face à la lumière prend une lèvre claire,
+        //    celui qui s'en détourne une ombre. Postérisé en TROIS crans (lèvre · rien · ombre)
+        //    au seuil `RELIEF_SEUIL` : un dégradé serait un aérographe, et le sol de ce jeu n'en
+        //    a nulle part. C'est le côté qui bascule quand le soleil traverse le ciel — la
+        //    même bascule que l'ombre portée d'un houppier, à un pixel près.
+        const gx = (creux[kc + 1]! - creux[kc - 1]!) * LAPIAZ.PENTE
+        const gy = (creux[kc + SB + 2]! - creux[kc - SB - 2]!) * LAPIAZ.PENTE
+        const inv = 1 / Math.sqrt(gx * gx + gy * gy + 1)
+        // n = (gx, gy, 1)/‖…‖ — la hauteur vaut −creux, d'où le signe direct du gradient.
+        const ecart = (gx * p.soleil.x + gy * p.soleil.y + p.soleil.z) * inv - p.soleil.z
+        if (ecart > LAPIAZ.RELIEF_SEUIL) f *= LAPIAZ.F_LEVRE
+        else if (ecart < -LAPIAZ.RELIEF_SEUIL) f *= LAPIAZ.F_OMBRE
+        kr = 1 + LAPIAZ.TEINTE_R * chaud
+        kv = 1 + LAPIAZ.TEINTE_V * chaud
+        kb = 1 + LAPIAZ.TEINTE_B * chaud
+        // Pas de BRIN sur la dalle : la variation du lapiaz est sa fissure, pas un moucheté.
+      }
       else {
         f = 1
         // Les brins, dans le repère de la tuile PROPRIÉTAIRE (un brin peut vivre dans la frange).
@@ -561,7 +1029,10 @@ export function cuireChunk(p: CuissonChunk): ChunkCuit {
         sur[o + 3] = Math.round(255 * Math.min(1, Math.abs(1 - f)))
         continue
       }
-      const c = coul[k]!
+      // LA MOUCHETURE : la cellule de 4 px prend le second ton de la butte. Elle se lit sur le
+      // pixel du MONDE, donc une dent de frange qui déborde emporte la sienne avec elle.
+      const mk = mouch ? mouch[k] : null
+      const c = mk && mouchetureIci(tx0 * P + px, ty0 * P + py, mk.densite, p.seed) ? mk.tache : coul[k]!
       // Le grain est POSITIONNEL (cellule de 4 px monde), pas relatif au propriétaire : deux
       // tuiles voisines de même famille partagent leur trame sans couture.
       const trame = trames[k]
@@ -574,11 +1045,11 @@ export function cuireChunk(p: CuissonChunk): ChunkCuit {
       // mouillée ne s'arrête plus au trait de rive, elle y entre. Voir PAVE.MOUILLE.
       const m = estEau(tSol) ? PAVE.MOUILLE : 0
       const sec = 1 - m
-      cible[o] = ((c >> 16) & 0xff) * g * sec + MOUILLE_TEINTE[0] * m
-      cible[o + 1] = ((c >> 8) & 0xff) * g * sec + MOUILLE_TEINTE[1] * m
-      cible[o + 2] = (c & 0xff) * g * sec + MOUILLE_TEINTE[2] * m
+      cible[o] = ((c >> 16) & 0xff) * g * kr * sec + MOUILLE_TEINTE[0] * m
+      cible[o + 1] = ((c >> 8) & 0xff) * g * kv * sec + MOUILLE_TEINTE[1] * m
+      cible[o + 2] = (c & 0xff) * g * kb * sec + MOUILLE_TEINTE[2] * m
       cible[o + 3] = 255
     }
   }
-  return { sol: out, surplomb: sur }
+  return { sol: out, surplomb: sur, relief }
 }

@@ -71,6 +71,7 @@ import {
   type StructureType,
 } from './items'
 import { heldSlot } from './inventory-actions'
+import { foyerDonneLeFeu } from './torche'
 import { meteoFeuConso, meteoMouille } from './meteo'
 import { estIncassable, matiereChiffre, matieresDe, parPiece, piece, PIECES } from './pieces'
 import { terrainAt, zoneAt } from './map'
@@ -182,6 +183,18 @@ export interface Structure {
   /** LES SORTIES (spec feu-station) — un inventaire des cuits (+ sous-produits), 3 cases. Dépôt/retrait
    *  libres (filtré aux produits cuits). Aucune consommation ici : rien n'y est jamais verrouillé. */
   cookOut?: Inventory
+  /**
+   * LES BÛCHES CONSUMÉES QUI N'ONT PAS ENCORE FAIT LEUR CHARBON (S30) — la dette, en bûches.
+   * Monte de 1 à chaque bûche finie (feu libre) ou de la part correspondante du stock brûlé
+   * (Foyer, `FIRE_UPKEEP.FEED_PER_WOOD` de stock = une bûche) ; retombe de
+   * `FIRE.CHARBON_PAR_BUCHES` chaque fois qu'un charbon tombe en SORTIE.
+   *
+   * ELLE NE SE PERD PAS QUAND LA SORTIE EST PLEINE : la dette reste due, le charbon se fait
+   * dès qu'une case se libère. Sinon un feu laissé à tourner sur un feu plein perdrait
+   * silencieusement sa production, et « j'ai brûlé vingt bûches pour rien » est exactement le
+   * genre de trou qu'on ne découvre qu'au playtest.
+   */
+  buchesConsumees?: number
 }
 
 export type TaskKind =
@@ -190,6 +203,15 @@ export type TaskKind =
   | 'gather_fiber'
   | 'gather_stone'
   | 'gather_cut_stone'
+  /**
+   * LE GLANAGE (spec `glanage.md` G6) — ramasser la branche et la pierre qui traînent, pour
+   * TAILLER L'OUTIL qui ouvrira l'arbre et le rocher. Deux corvées et non une : elles visent
+   * deux types de nœud et remplissent deux cases du grenier, exactement comme `gather_wood` et
+   * `gather_stone` dont elles sont l'amont. `refreshBoard` ne les poste QUE quand le village
+   * ne peut pas tenir l'outil — un village outillé n'envoie personne ramasser des brindilles.
+   */
+  | 'glaner_bois'
+  | 'glaner_pierre'
   | 'cook_stew'
   | 'repair'
   | 'feed_fire'
@@ -261,6 +283,11 @@ export interface Village {
    *  chaque tick (`advanceUpkeep`) ; à SEC (0), les murs de la zone se dégradent. On le
    *  nourrit en y déposant du bois (`feed_fire`). Braises dormantes : jamais d'extinction. */
   fuel: number
+  /** LA DETTE DE CHARBON DU FOYER (S30), en BÛCHES — le stock brûlé depuis le dernier charbon,
+   *  converti par `FIRE_UPKEEP.FEED_PER_WOOD`. Elle vit ici et non sur la structure parce que
+   *  c'est ici que le stock se consume ; `advanceFire` la convertit en charbon là où il tient
+   *  déjà la structure du Foyer, sans un balayage de plus par village et par tick. */
+  charbonDette?: number
   /** Le tableau du village — généré par seuils, consommé par les PNJ (et bientôt lu par les joueurs). */
   tasks: VillageTask[]
   nextTaskId: number
@@ -304,6 +331,15 @@ export type VillageAction =
    * Aucun PNJ n'arrive (décision utilisateur : le spawn d'accueil est retiré).
    */
   | { type: 'found_village'; structureId: number }
+  /**
+   * JE PRENDS LE FEU AU FOYER (spec `torche.md`) — la torche ÉTEINTE que je tiens s'allume
+   * au contact d'un `fire` allumé OU en braises, à portée de bras.
+   *
+   * C'est le SEUL chemin vers une flamme portative, et c'est tout le design : le foyer reste
+   * l'origine de toute lumière du jeu, la torche n'est qu'une laisse qui y ramène. L'allumage
+   * passe par un INPUT (jamais par une mutation directe) — sans quoi le replay diverge.
+   */
+  | { type: 'light_torch'; structureId: number }
   | { type: 'repair'; structureId: number }
   /** SEMER (agriculture voie A, spec `agriculture.md`) : une graine en main + une parcelle VIDE
    *  de mon village, à portée. RÉCOLTER : une parcelle MÛRE. La pousse se dérive du tick (pur). */
@@ -809,6 +845,19 @@ export function advanceUpkeep(state: SimState): void {
     // (`fire_starved`, murs qui cèdent, braises dormantes) — la météo n'a fait qu'y mener
     // plus vite. C'est le §8 : la tâche communautaire zéro devient plus pressante.
     village.fuel = Math.max(0, village.fuel - drain * meteoFeuConso(state, village.fireTx, village.fireTy))
+    // ═══ LA DETTE DE CHARBON DU FOYER (S30) ═══
+    //
+    // On compte le DELTA RÉELLEMENT CONSOMMÉ, jamais le `drain` nominal : à sec, la ligne
+    // au-dessus s'exécute quand même et se fait clamper par le `max(0, …)` — une dette prise
+    // sur le drain ferait produire du charbon à un Foyer mort, indéfiniment, à partir de rien.
+    //
+    // ⚠ ET ON LA PREND AVANT LES BUVEURS, délibérément : le charbon est ce que la COMBUSTION
+    // laisse derrière elle. Une horde qui boit le Foyer vide son stock sans rien brûler — la
+    // compter ferait du siège une fabrique de charbon. (Sur le feu LIBRE, l'asymétrie est
+    // inverse et tout aussi voulue : la soif et la pluie y reculent l'ancre `burnAt`, donc
+    // elles font vraiment finir des bûches — et une bûche finie est une bûche finie.)
+    const brule = before - village.fuel
+    if (brule > 0) village.charbonDette = (village.charbonDette ?? 0) + brule / FIRE_UPKEEP.FEED_PER_WOOD
     if (buveurs.length > 0 && village.fuel > CENDREUX.BOIRE.FOYER_PLANCHER) {
       let bouches = 0
       for (const b of buveurs) {
@@ -1040,6 +1089,35 @@ export function applyVillageAction(state: SimState, actorId: number, action: Vil
       s.villageId = village.id
       s.ownerId = 0
       s.access = 'village'
+      return
+    }
+
+    /**
+     * PRENDRE LE FEU AU FOYER (spec `torche.md` T3). Aucun coût, aucune permission : on ne
+     * VOLE pas une flamme, et une torche refusée au Feu d'un autre aurait fait du feu une
+     * serrure de plus — or « des serrures, pas des lois » vise la PROPRIÉTÉ, pas la lumière.
+     *
+     * ⚠ L'allumage ne touche NI le foyer, NI son combustible : prendre le feu n'en ôte pas.
+     * C'était la tentation (« ça devrait coûter une bûche ») — écartée, parce que le coût de
+     * la torche est déjà payé deux fois, en case de ceinture et en trajet de retour.
+     */
+    case 'light_torch': {
+      const s = state.structures.find((st) => st.id === action.structureId)
+      if (!s || s.type !== 'fire') return reject('pas un feu')
+      // PORTÉE DE BRAS, la même que `feed_fire` / `repair` / `plant` / `found_village` — et
+      // la même que celle où le CLIENT offre le geste (`aim.inRange`). Deux portées auraient
+      // fait une demi-tuile de zone morte, muette (voir le bloc sous `TORCHE`, balance.ts).
+      const range = BALANCE.INTERACT_RANGE
+      if (distSq(actor.x, actor.y, s.tx + 0.5, s.ty + 0.5) > range * range) return reject('trop loin')
+      if (!foyerDonneLeFeu(state.tick, s)) return reject('ce feu est éteint')
+      const held = heldSlot(actor)
+      if (held === null || held.item !== 'torche') return reject('pas de torche en main')
+      // La MÊME case devient vive : pas d'échange, pas de recherche de place. C'est la raison
+      // pour laquelle la torche n'est pas empilable (`items.ts`) — une pile ne saurait pas
+      // n'allumer qu'un seul de ses fagots.
+      held.item = 'torche_vive'
+      held.wear = 0
+      emitEvent(state, { type: 'torche_allumee', tick: state.tick, entityId: actorId, structureId: s.id })
       return
     }
 

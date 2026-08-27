@@ -320,14 +320,1647 @@ async function fonderPres(page, agir, slotDe, p0, sites = SITES_FONDATION) {
   return null
 }
 
+/** Les noms des variantes de feu — copie de `render/feu-variante.ts` (le smoke est un script
+ *  Node nu, il n'importe pas le paquet client). */
+const NOMS_FEU = ['étalon (le rendu d’avant)', 'la respiration', 'le cœur blanc', 'les escarbilles', 'le liseré chaud', 'le halo de chaleur', 'TOUT (le rendu livré)']
+
 const SCENARIOS = {
+  /**
+   * ═══ LE SON SE PLACE (spatialisation, 2026-08-27) ═══
+   *
+   * Le seul scénario qui ne juge RIEN à l'œil : il écoute. Et il a une raison d'exister que
+   * les tests unitaires n'ont pas — `spatial.test.ts` prouve la COURBE, `sound.test.ts` prouve
+   * le ROUTAGE, mais ni l'un ni l'autre ne peut dire ce que le vrai monde émet, ni ce qu'un
+   * vrai WebAudio en fait. Les deux moitiés se mesurent ici :
+   *
+   *   ① LES FAITS — sur une minute de jeu réel, chaque fait sonore est-il SITUÉ, ASSUMÉ comme
+   *      annonce, ou TU parce que son sujet est au-delà du rayon d'intérêt (64 tuiles) ? Le
+   *      premier passage a servi à quelque chose : `item_crafted` ne se situait jamais, et
+   *      c'est ainsi qu'on a appris que le snapshot rogne ses entités — un PNJ qui forge à
+   *      l'autre bout de la vallée n'y est pas, donc il est trop loin, donc il se tait.
+   *   ② LA CHAÎNE — le MÊME son joué à cinq endroits autour de l'auditeur, et les pans relus
+   *      sur les `StereoPannerNode` réellement montés. C'est la seule preuve que le graphe se
+   *      câble dans un moteur audio complet, et pas seulement dans le contexte de papier du test.
+   *
+   * ⚠ Il ne juge pas ce qui S'ENTEND : le timbre se cale au banc (`banc-son.html`), qui a
+   * maintenant ses curseurs de distance et de côté.
+   */
+  /**
+   * LE THÈME D'AMBIANCE (`audio/musique.ts`) — ce que les tests unitaires NE PEUVENT PAS voir.
+   *
+   * La machine à états (espacement, apaisement, fondus) est éprouvée en unitaire sur une `Piste`
+   * de papier. Ce qui n'existe qu'ici, c'est LE CÂBLAGE : un vrai `AudioContext`, un vrai
+   * `MediaElementSource`, un vrai mp3 servi par un vrai serveur — et le GAIN RÉEL du nœud, relu
+   * sur le graphe, pas l'intention qu'on a exprimée.
+   *
+   * ⚠ IL NE JUGE PAS CE QUI S'ENTEND. Le NIVEAU se cale à l'oreille dans l'Atelier
+   * (`atelier.html#son`, panneau « LE THÈME ») — ici on prouve seulement que ça sort.
+   *
+   * ⚠ SOUS SWIFTSHADER LA BANDE MET ~6 s À PARTIR (une image dure des secondes) : tout se lit
+   * en RELEVÉS successifs, jamais sur une attente fixe — lire à 2,5 s mesurerait le harnais.
+   */
+  theme: async (page) => {
+    // On s'accroche AVANT la naissance du contexte : on veut PROUVER que la piste monte un
+    // vrai MediaElementSource sur un vrai AudioContext, avec un vrai mp3 derrière.
+    await page.evaluate(() => {
+      const S = (window.__TH = { sources: 0, gains: 0, url: null, erreurs: [], el: null })
+      // ⚠ `new Audio(url)` fabrique un element DETACHE : il n'est dans aucun document, donc
+      //    `querySelector('audio')` ne le trouvera jamais. On l'attrape a la fabrique.
+      // Le GainNode de la piste est le dernier cree apres le montage du MediaElementSource.
+      const protoG = window.AudioContext.prototype
+      const vraiG = protoG.createGain
+      protoG.createGain = function () {
+        const g = vraiG.call(this)
+        S.dernierGain = g
+        return g
+      }
+      const Vrai = window.Audio
+      window.Audio = function (u) {
+        const el = new Vrai(u)
+        S.el = el
+        el.addEventListener('error', () => S.erreurs.push('erreur de chargement du mp3'))
+        return el
+      }
+      const proto = window.AudioContext.prototype
+      const vrai = proto.createMediaElementSource
+      proto.createMediaElementSource = function (el) {
+        S.sources += 1
+        S.url = el.currentSrc || el.src
+        // Le gain de la piste est cree JUSTE APRES la source, dans `SoundEngine.piste`.
+        queueMicrotask(() => {
+          S.gain = S.dernierGain
+        })
+        return vrai.call(this, el)
+      }
+    })
+    await page.mouse.click(640, 400)
+    await page.evaluate(() => window.__BRAISES__.scene.audioFx.resume())
+    await page.waitForTimeout(1200)
+    const pret = await page.evaluate(() => window.__BRAISES__.scene.audioFx.isReady())
+    console.log(`audio ouvert : ${pret ? 'oui' : 'NON'}`)
+    if (!pret) console.error('!! le contexte audio ne tourne pas : rien de ce qui suit ne prouve quoi que ce soit')
+
+    // ① L'OUVERTURE DE LA RUN — ON NE POUSSE RIEN. Le thème doit partir tout seul, dès la
+    //    première image jouable (Alexis : « je n'entends pas la musique au lancement de la
+    //    run »). Si ce relevé exige qu'on force l'échéance, c'est que la promesse est rompue.
+    const ouverture = await page.evaluate(async () => {
+      const scene = window.__BRAISES__.scene
+      const t = scene.theme
+      window.__TH.t0 = performance.now()
+      await new Promise((r) => setTimeout(r, 2500))
+      const el = window.__TH.el
+      return {
+        passages: t.passages,
+        phase: t.phase,
+        sources: window.__TH.sources,
+        url: window.__TH.url,
+        erreurs: window.__TH.erreurs,
+        joue: el ? !el.paused : null,
+        avance: el ? el.currentTime : null,
+        duree: el ? el.duration : null,
+      }
+    })
+    console.log(`piste : ${ouverture.sources} MediaElementSource · ${ouverture.url?.split('/').pop() ?? '—'}`)
+    console.log(`durée annoncée : ${ouverture.duree?.toFixed?.(1) ?? '?'} s · lit : ${ouverture.joue} · avancée ${ouverture.avance?.toFixed?.(2)} s`)
+    console.log(`passages=${ouverture.passages} phase=${ouverture.phase}`)
+    if (ouverture.erreurs.length) console.error(`!! le mp3 ne se charge pas : ${ouverture.erreurs.join(', ')}`)
+    if (ouverture.sources !== 1) console.error(`!! la piste n'a pas monté de MediaElementSource (${ouverture.sources})`)
+    if (ouverture.passages !== 1) console.error(`!! le thème n'a PAS ouvert la run tout seul (passages=${ouverture.passages})`)
+    if (!ouverture.joue) console.error(`!! l'element <audio> ne lit pas`)
+    // (l'avancée se juge plus bas, dans le relevé de fondu : sous swiftshader la mise en
+    //  route prend ~6 s, et lire à 2,5 s mesurerait le harnais, pas le jeu.)
+
+    // ② LE FONDU EST RÉEL — on relit le gain du noeud sur le graphe, pas une intention.
+    const fondu = await page.evaluate(async () => {
+      const S = window.__TH
+      const el = S.el
+      const releves = []
+      for (let i = 0; i < 8; i++) {
+        releves.push({ t: Math.round(performance.now() - S.t0), g: Number(S.gain.gain.value.toFixed(4)), a: Number(el.currentTime.toFixed(2)) })
+        await new Promise((r) => setTimeout(r, 900))
+      }
+      return { releves, etat: window.__BRAISES__.scene.audioFx.isReady() }
+    })
+    console.log('fondu (ms depuis jouer · gain · avancée de bande) :')
+    for (const r of fondu.releves) console.log(`   ${String(r.t).padStart(6)} ms   gain ${r.g.toFixed(4)}   bande ${r.a.toFixed(2)} s`)
+    // CE QUI FERAIT ROUGIR : un gain déjà au niveau alors que la bande n'a pas bougé —
+    // c'est-à-dire exactement le défaut corrigé (le fondu joué sur du silence).
+    const premierSon = fondu.releves.find((r) => r.a > 0)
+    const avantSon = fondu.releves.filter((r) => r.a === 0)
+    if (!premierSon) console.error('!! la bande n a jamais roule')
+    else {
+      console.log(`la bande part a ${premierSon.t} ms ; gain a cet instant : ${premierSon.g}`)
+      const fuite = avantSon.find((r) => r.g > 0.001)
+      if (fuite) console.error(`!! le fondu a couru sur du silence (gain ${fuite.g} a ${fuite.t} ms, bande a 0)`)
+      const monte = fondu.releves.some((r) => r.g > 0.001 && r.g < 0.099)
+      if (!monte) console.error('!! aucun releve intermediaire : on n a pas vu de fondu, juste un saut')
+    }
+
+    // DIAGNOSTIC : ce navigateur sait-il seulement décoder du mp3 ?
+    const codec = await page.evaluate(async () => {
+      const el = window.__TH.el
+      const sonde = new Audio()
+      const r = await fetch(el.src).then((x) => ({ ok: x.ok, type: x.headers.get('content-type'), n: x.headers.get('content-length') }))
+      return {
+        canPlayMpeg: sonde.canPlayType('audio/mpeg'),
+        canPlayOgg: sonde.canPlayType('audio/ogg; codecs=vorbis'),
+        canPlayWav: sonde.canPlayType('audio/wav'),
+        avance: el.currentTime,
+        duree: el.duration,
+        enPause: el.paused,
+        readyState: el.readyState,
+        networkState: el.networkState,
+        erreur: el.error ? `code ${el.error.code} — ${el.error.message}` : null,
+        reponse: r,
+      }
+    })
+    console.log(`codecs : mpeg="${codec.canPlayMpeg}" ogg="${codec.canPlayOgg}" wav="${codec.canPlayWav}"`)
+    console.log(`bande MAINTENANT : avancée ${codec.avance?.toFixed(2)} s / ${codec.duree?.toFixed?.(1)} s · en pause : ${codec.enPause}`)
+    console.log(`element : readyState=${codec.readyState} networkState=${codec.networkState} erreur=${codec.erreur}`)
+    console.log(`serveur : ${codec.reponse.ok ? 'HTTP ok' : 'HTTP KO'} ${codec.reponse.type} ${codec.reponse.n} octets`)
+
+    // ③ LE DANGER COUPE — un reveil planté A PORTEE, lu par le vrai `dangerProche` de la scene.
+    const coupure = await page.evaluate(async () => {
+      const scene = window.__BRAISES__.scene
+      const t = scene.theme
+      const avant = t.coupures
+      const moi = scene.predicted
+      // On pose un reveil a 2 tuiles : bien dans la portee derivee du cadre.
+      scene.view.reveils = [{ x: moi.x + 2, y: moi.y, at: 0, preyId: scene.playerId }]
+      t.update(performance.now(), true)
+      const phaseApres = t.phase
+      await new Promise((r) => setTimeout(r, 900))
+      t.update(performance.now(), true)
+      const el = window.__TH.el
+      scene.view.reveils = []
+      return { avant, apres: t.coupures, phaseApres, phaseFin: t.phase, enPause: el ? el.paused : null }
+    })
+    console.log(`coupure : ${coupure.avant} → ${coupure.apres} · phase ${coupure.phaseApres} → ${coupure.phaseFin} · <audio> en pause : ${coupure.enPause}`)
+    if (coupure.apres !== coupure.avant + 1) console.error(`!! un reveil a portee n'a PAS coupe la musique`)
+    if (coupure.phaseFin !== 'attente') console.error(`!! le fondu de coupure ne s'est pas consomme (${coupure.phaseFin})`)
+    if (coupure.enPause !== true) console.error(`!! la bande tourne encore apres la coupure`)
+
+    // ④ ET LE DANGER TIENT : l'apaisement empeche le retour immediat.
+    const retour = await page.evaluate(() => {
+      const scene = window.__BRAISES__.scene
+      const t = scene.theme
+      t.prochainA = 0 // l'espacement n'est plus l'obstacle : il ne reste que l'apaisement
+      t.update(performance.now(), false)
+      return { passages: t.passages, phase: t.phase }
+    })
+    console.log(`retour immediat : passages=${retour.passages} phase=${retour.phase}`)
+    if (retour.passages !== 1) console.error(`!! la musique est revenue sans attendre l'apaisement`)
+  },
+
+  son: async (page) => {
+    await page.evaluate(() => {
+      const scene = window.__BRAISES__.scene
+      const proto = Object.getPrototypeOf(scene)
+      const orig = proto.lieuDeLEvenement
+      const S = (window.__SON = { parType: {}, panners: [], coupes: 0, joues: 0 })
+      proto.lieuDeLEvenement = function (e, entiteParId, structuresAvant) {
+        const r = orig.call(this, e, entiteParId, structuresAvant)
+        const k = (S.parType[e.type] ??= { n: 0, situes: 0, monde: 0, hors: 0, dmin: Infinity, dmax: 0 })
+        k.n += 1
+        if (r === 'monde') k.monde += 1
+        else if (r === 'hors') k.hors += 1
+        else {
+          k.situes += 1
+          const d = Math.hypot(r.x - this.predicted.x, r.y - this.predicted.y)
+          k.dmin = Math.min(k.dmin, d)
+          k.dmax = Math.max(k.dmax, d)
+        }
+        return r
+      }
+      // ② LE VRAI WEBAUDIO — on s'accroche AVANT que le contexte naisse (il naît au 1er geste).
+      const proto2 = window.AudioContext.prototype
+      const vrai = proto2.createStereoPanner
+      proto2.createStereoPanner = function () {
+        const n = vrai.call(this)
+        S.panners.push(n)
+        return n
+      }
+      // ③ ce que la portée COUPE : `play` rend sans rien monter quand `placer` dit null.
+      const moteur = scene.audioFx
+      const jouer = moteur.play.bind(moteur)
+      moteur.play = (spec, delayS, at) => {
+        if (!spec) return
+        S.joues += 1
+        const av = S.panners.length
+        jouer(spec, delayS, at)
+        if (at && S.panners.length === av && moteur.isReady()) S.coupes += 1
+      }
+    })
+
+    // L'audio ne s'ouvre qu'au premier geste ; le drapeau de lancement lève la politique
+    // d'autoplay, et on réveille le contexte à la main (le clic Phaser ne suffit pas ici).
+    await page.mouse.click(640, 400)
+    await page.evaluate(() => window.__BRAISES__.scene.audioFx.resume())
+    await page.waitForTimeout(1200)
+    const pret = await page.evaluate(() => window.__BRAISES__.scene.audioFx.isReady())
+    console.log(`audio ouvert : ${pret ? 'oui' : 'NON (le graphe ne se montera pas)'}`)
+
+    // ═══ LE VRAI GRAPHE, DANS UN VRAI WEBAUDIO ═══ Le monde donne les FAITS ; ce bloc donne la
+    // CHAÎNE — et, depuis les crans de puissance, la PORTÉE. Deux sons aux deux bouts de
+    // l'échelle (le gond, cran `GESTE` ; le hurlement, cran `CRI`) joués aux mêmes endroits :
+    // c'est la seule preuve que la puissance déplace la coupure et NON le panoramique.
+    const chaine = await page.evaluate(() => {
+      const scene = window.__BRAISES__.scene
+      const { soundForEvent } = window.__BRAISES__.audio
+      const hurle = soundForEvent({ type: 'wolf_howl', tick: 0, x: 0, y: 0 }, false)
+      const gond = soundForEvent({ type: 'door_toggled', tick: 0, structureId: 1, open: true, byEntityId: 1 }, false)
+      const moi = { x: scene.predicted.x, y: scene.predicted.y }
+      const points = [
+        ['hurlement · sur moi', hurle, 0, 0],
+        ['hurlement · 3 t à gauche', hurle, -3, 0],
+        ['hurlement · bord du cadre, à droite', hurle, 17.8, 0],
+        ['hurlement · droit devant, 12 t', hurle, 0, 12],
+        ['hurlement · 40 t (hors cadre, dans sa portée)', hurle, 40, 0],
+        ['hurlement · 90 t (au-delà de sa portée)', hurle, 90, 0],
+        ['gond · 5 t à droite', gond, 5, 0],
+        ['gond · 15 t (VU à l’écran, mais trop faible)', gond, 15, 0],
+      ]
+      const out = []
+      for (const [nom, spec, dx, dy] of points) {
+        const avant = window.__SON.panners.length
+        scene.audioFx.play(spec, 0, { x: moi.x + dx, y: moi.y + dy })
+        const monte = window.__SON.panners.length > avant
+        out.push({ nom, monte, pan: monte ? Number(window.__SON.panners.at(-1).pan.value.toFixed(3)) : null })
+      }
+      return out
+    })
+    console.log('\n── la chaîne, et les deux bouts de l’échelle de puissance ──')
+    for (const c of chaine) console.log(`  ${c.nom.padEnd(44)} ${c.monte ? `pan ${c.pan}` : 'AUCUN SON (coupé)'}`)
+
+    // On laisse le monde vivre : PNJ qui récoltent et bâtissent, portes, bêtes, nuit.
+    for (let i = 0; i < 8; i += 1) {
+      // On marche : un joueur immobile au spawn ne provoque aucun fait de proximité.
+      const touche = ['KeyW', 'KeyD', 'KeyS', 'KeyA'][i % 4]
+      await page.keyboard.down(touche)
+      await page.waitForTimeout(2500)
+      await page.keyboard.up(touche)
+      await page.waitForTimeout(2500)
+      const n = await page.evaluate(() => window.__SON.joues)
+      process.stdout.write(`\r  ${(i + 1) * 5}s — ${n} sons routés   `)
+    }
+    console.log('')
+
+    const r = await page.evaluate(() => ({
+      horsInteret: window.__BRAISES__.scene.sonsHorsInteret,
+      joues: window.__SON.joues,
+      coupes: window.__SON.coupes,
+      panners: window.__SON.panners.map((p) => Number(p.pan.value.toFixed(3))),
+      parType: window.__SON.parType,
+    }))
+
+    const types = Object.entries(r.parType).sort((a, b) => b[1].n - a[1].n)
+    console.log(`\n── ${types.length} types de faits routés, ${r.joues} sons ──`)
+    for (const [t, k] of types) {
+      const port = k.situes ? ` · ${k.dmin.toFixed(1)}–${k.dmax.toFixed(1)} t` : ''
+      console.log(
+        `  ${t.padEnd(24)} ${String(k.n).padStart(4)} · situés ${k.situes} · annonces ${k.monde} · hors intérêt ${k.hors}${port}`,
+      )
+    }
+    const pans = r.panners.filter((v) => v !== 0)
+    console.log(`\npanoramiques montés : ${r.panners.length} (dont ${pans.length} hors centre)`)
+    if (pans.length) console.log(`  pans : ${[...new Set(pans)].slice(0, 12).join(', ')}`)
+    console.log(`sons coupés par la portée : ${r.coupes}`)
+
+    // ═══ LES QUATRE CAS QUE LE MONDE NE FAIT PAS LA FAVEUR DE PRODUIRE ═══
+    // Une minute de jeu n'exerce que trois ancrages sur les huit. Ceux-ci se posent donc à la
+    // main, sur le VRAI résolveur et le VRAI état : chacun a failli être un défaut muet.
+    const cas = await page.evaluate(() => {
+      const scene = window.__BRAISES__.scene
+      const avant = scene.myVillageId
+      const appel = (e) => {
+        const r = scene.lieuDeLEvenement(e, () => null, [])
+        return typeof r === 'string' ? r : 'situé'
+      }
+      const v = scene.view.villages[0]
+      const out = {
+        // ① MON Feu qui tombe à sec doit s'entendre d'où que je sois (annonce, jamais coupée).
+        monVillage: v ? ((scene.myVillageId = v.id), appel({ type: 'fire_starved', tick: 0, villageId: v.id })) : 'pas de village',
+        // ② Le Feu d'un AUTRE se place, donc se coupe s'il est loin — c'était le correctif.
+        autreVillage: v ? ((scene.myVillageId = -1), appel({ type: 'fire_starved', tick: 0, villageId: v.id })) : 'pas de village',
+        // ③ `byEntityId: 0` = « c'est le village qui agit », PERSONNE — pas quelqu'un de loin.
+        acteurZero: appel({ type: 'refugees_fed', tick: 0, byEntityId: 0 }),
+        // ④ Un acteur qu'on ne trouve pas EST hors du rayon d'intérêt, donc hors de portée.
+        acteurInconnu: appel({ type: 'refugees_fed', tick: 0, byEntityId: 999999 }),
+        annonce: appel({ type: 'night_started', tick: 0 }),
+      }
+      scene.myVillageId = avant
+      return out
+    })
+    console.log('\n── les cas posés à la main ──')
+    for (const [k, v2] of Object.entries(cas)) console.log(`  ${k.padEnd(16)} ${v2}`)
+    if (cas.monVillage !== 'pas de village' && cas.monVillage !== 'monde') {
+      console.error(`!! MON Feu qui tombe à sec est « ${cas.monVillage} » : je serais sourd à mon propre village`)
+    }
+    if (cas.autreVillage !== 'pas de village' && cas.autreVillage !== 'situé') {
+      console.error(`!! le Feu d'un AUTRE village ne se place pas : « ${cas.autreVillage} »`)
+    }
+    if (cas.acteurZero !== 'monde') console.error(`!! l'acteur ZÉRO (« le village agit ») est « ${cas.acteurZero} » au lieu d'une annonce`)
+    if (cas.acteurInconnu !== 'hors') console.error(`!! un acteur introuvable est « ${cas.acteurInconnu} » au lieu d'être tu`)
+    if (cas.annonce !== 'monde') console.error(`!! la nuit qui tombe est « ${cas.annonce} » au lieu d'une annonce`)
+
+    // ── LES VERDICTS ──────────────────────────────────────────────────────────────────────
+    console.log(`faits tus (sujet hors du rayon d'intérêt, > 64 t) : ${r.horsInteret}`)
+    if (r.joues === 0) console.error('!! aucun son routé : le banc ne mesure rien (le monde ne bouge pas)')
+    if (!types.some(([, k]) => k.situes > 0)) console.error('!! AUCUN fait situé : la résolution ne marche jamais')
+    if (pret && r.panners.length === 0) console.error('!! aucun panoramique monté : le son ne se spatialise PAS dans un vrai WebAudio')
+    if (pret && pans.length === 0 && r.panners.length > 0) {
+      console.error('!! tous les panoramiques sont à 0 : rien ne se place jamais à gauche ni à droite')
+    }
+    const parNom = Object.fromEntries(chaine.map((c) => [c.nom, c]))
+    const dit = (nom) => parNom[nom]
+    if (pret) {
+      if (dit('hurlement · sur moi').pan !== 0) console.error(`!! « sur moi » n'est pas au centre : pan ${dit('hurlement · sur moi').pan}`)
+      if (!(dit('hurlement · 3 t à gauche').pan < 0)) console.error('!! un son à GAUCHE ne panoramique pas à gauche')
+      if (!(dit('hurlement · bord du cadre, à droite').pan > 0.6)) {
+        console.error(`!! le bord du cadre ne panoramique pas à fond : ${dit('hurlement · bord du cadre, à droite').pan}`)
+      }
+      if (dit('hurlement · droit devant, 12 t').pan !== 0) console.error('!! la PROFONDEUR déplace le son latéralement')
+      // LA PUISSANCE : le hurlement porte là où le gond s'est tu depuis longtemps.
+      if (!dit('hurlement · 40 t (hors cadre, dans sa portée)').monte) console.error('!! le hurlement ne porte pas à 40 t : son cran CRI est inerte')
+      if (dit('hurlement · 90 t (au-delà de sa portée)').monte) console.error('!! le hurlement se joue encore à 90 t : plus rien ne le coupe')
+      if (!dit('gond · 5 t à droite').monte) console.error('!! le gond ne s’entend pas à 5 t : son cran GESTE coupe trop court')
+      if (dit('gond · 15 t (VU à l’écran, mais trop faible)').monte) console.error('!! le gond porte encore à 15 t : son cran GESTE est inerte')
+    }
+  },
+
+  /**
+   * ═══ LE PAVEMENT DU LAPIAZ (décision d'Alexis, 2026-08-27 : « go 3 ») ═══
+   *
+   * Le sol du chaos de blocs dessine désormais ses dalles : `champDuChaos` (la sim) lu au
+   * sous-pixel par `render/paves.ts`, trois valeurs franches sur la grille de 4 px, plus une
+   * fissure de surface. La planche hors ligne l'a fait valider — mais elle ne montrait QUE le
+   * sol. Ce qui ne se prouve qu'au navigateur :
+   *
+   *   ① le motif survit-il à ce qui se pose PAR-DESSUS — l'ombre du versant, la lumière du
+   *      moment, le décor, et les blocs, qui sont ici des sprites à volume et non des carrés ;
+   *   ② l'allée dessinée est-elle bien celle qu'on MARCHE (les blocs doivent tenir les dalles).
+   *
+   * Trois heures, le même cadre : midi (le plein jour), la fin d'après-midi (le rasant, quand
+   * l'ombre du versant multiplie par-dessus), et la nuit. On endort la boucle avant chaque
+   * capture — `page.screenshot` expire sous SwiftShader tant que Phaser tourne (mémoire
+   * « capture d'un écran HUD plein cadre »).
+   *
+   * Exige `--dev` : `debug_teleport`, `debug_set_hour`, `debug_god`.
+   */
+  async ['lapiaz'](page) {
+    const agir = async (action, ms = 350) => {
+      await page.evaluate((a) => { window.__BRAISES__.scene.sendAction(a) }, action)
+      await page.waitForTimeout(ms)
+    }
+    await agir({ type: 'debug_god', on: true }, 250)
+    await agir({ type: 'debug_meteo', meteo: null }, 400)
+
+    // ── OÙ EST LE LAPIAZ ? On ne le devine pas : on balaie la carte du jeu qui tourne.
+    //    Le `boulders` (16) n'existe QUE là (`poserLesLapiaz` ne peint que chez la Racine).
+    const cible = await page.evaluate(() => {
+      const m = window.__BRAISES__.scene.map
+      const B = 16
+      let best = null
+      for (let by = 0; by < m.height - 24; by += 12) {
+        for (let bx = 0; bx < m.width - 24; bx += 12) {
+          let n = 0
+          for (let y = by; y < by + 24; y += 2) for (let x = bx; x < bx + 24; x += 2) if (m.terrain[y * m.width + x] === B) n++
+          if (!best || n > best.n) best = { n, x: bx + 12, y: by + 12 }
+        }
+      }
+      return best && best.n > 20 ? best : null
+    })
+    if (!cible) { console.error('!! aucun chaos de blocs sur cette carte — rien à photographier'); return }
+    console.log(`chaos de blocs le plus dense : (${cible.x}, ${cible.y}) — ${cible.n}/144 sondes`)
+
+    // ── LA TUILE D'ARRIVÉE : une GALERIE, sinon on se téléporte dans un bloc plein.
+    const pose = await page.evaluate(({ x, y }) => {
+      const sc = window.__BRAISES__.scene
+      const bloque = (tx, ty) => (sc.view.nodes ?? []).some((n) => n.tx === tx && n.ty === ty && n.type === 'bloc' && n.stock > 0)
+      for (let r = 0; r < 12; r++) {
+        for (let dy = -r; dy <= r; dy++) for (let dx = -r; dx <= r; dx++) {
+          const tx = x + dx
+          const ty = y + dy
+          if (sc.map.terrain[ty * sc.map.width + tx] !== 16) continue
+          if (!bloque(tx, ty)) return { x: tx + 0.5, y: ty + 0.5 }
+        }
+      }
+      return { x: x + 0.5, y: y + 0.5 }
+    }, cible)
+
+    const cadre = { x: 0, y: 0, width: 1280, height: 720 }
+    const luminances = async () => {
+      const r = await regionAt(page, { x: 320, y: 140, width: 640, height: 440 })
+      if (!r) return null
+      const l = []
+      for (let y = 0; y < r.h; y += 2) for (let x = 0; x < r.w; x += 2) { const [rr, gg, bb] = r.px(x, y); l.push(0.2126 * rr + 0.7152 * gg + 0.0722 * bb) }
+      l.sort((a, b) => a - b)
+      const q = (p2) => l[Math.floor(l.length * p2)]
+      return { p10: q(0.1), p50: q(0.5), p90: q(0.9) }
+    }
+
+    // DEUX RENDUS, LE MÊME CADRE : la lèvre FIGÉE plein nord (la convention du liseré) et la
+    // lèvre qui SUIT le soleil. On bascule en place — `soleilTournant` est relu par la scène à
+    // chaque image, et `soleilABouge` périme alors les seuls chunks à relief.
+    for (const tournant of [true, false]) {
+      await page.evaluate((t) => { window.__BRAISES__.scene.paves.soleilTournant = t }, tournant)
+      const v = tournant ? 'tournant' : 'fige'
+      for (const [nom, heure] of [['midi', 12], ['rasant', 18], ['nuit', 23]]) {
+        await agir({ type: 'debug_teleport', x: pose.x, y: pose.y }, 500)
+        await agir({ type: 'debug_set_hour', hour: heure }, 700)
+        // Les chunks du sol cuisent au budget : on laisse la couronne se poser avant de figer.
+        await page.waitForTimeout(2600)
+        await page.evaluate(() => window.__BRAISES__.scene.game.loop.sleep())
+        await page.screenshot({ path: `${OUT}/lapiaz-${v}-${nom}.png`, clip: cadre, timeout: 180000 })
+        const q = await luminances()
+        // LE PRIX RÉEL DE LA CUISSON, lu dans le jeu et non dans un banc Node.
+        const ms = await page.evaluate(() => window.__BRAISES__.scene.paves?.derniereCuissonMs ?? null)
+        await page.evaluate(() => window.__BRAISES__.scene.game.loop.wake())
+        if (q) console.log(`   ${v}/${nom} @${heure}h → p10 ${q.p10.toFixed(0)} · p50 ${q.p50.toFixed(0)} · p90 ${q.p90.toFixed(0)}` + (ms === null ? '' : ` · dernière cuisson ${ms.toFixed(2)} ms`))
+        else console.error(`   ${v}/${nom} : région illisible`)
+      }
+    }
+    console.log(`captures → ${OUT}/lapiaz-*.png`)
+  },
+
+  /**
+   * LA GRILLE DE LA FLAQUE SOUS UN PORTEUR QUI MARCHE (spec `torche.md`, 2026-08-26).
+   *
+   * La flaque du FEU est plantée sur `(tx + 0,5) × 16`, un multiple de 2 : sa grille de texels
+   * de 4 px monde tombe pile sur la grille de 2 px de l'art. Celle de la TORCHE suit une position
+   * INTERPOLÉE, donc flottante. Question posée avant d'écrire « c'est assumé » dans le code :
+   * ses carrés GROUILLENT-ILS en marchant, ou GLISSENT-ILS comme tout sprite qui se déplace ?
+   *
+   * ⚠ DEUX MONTAGES JETÉS AVANT CELUI-CI, et les deux échecs sont la moitié de la leçon :
+   *   ① par DIFFÉRENCE (torche en main moins torche rengainée) — les deux clichés sont pris à
+   *      une seconde d'écart, or la flamme VACILLE (`forceDeTorche` lit `flicker(timeMs)`) et le
+   *      décor vit : la soustraction ne mesurait que le temps qui passe (114 « texels » de 1 à
+   *      4 px sur 160, c'est-à-dire du bruit). Une soustraction n'isole rien quand les deux
+   *      termes bougent.
+   *   ② par cliché CADRÉ SUR LE JOUEUR — la caméra le suit, donc tout le décor défile avec lui
+   *      et deux images ne se comparent pas.
+   *
+   * D'où celui-ci : la caméra est FIGÉE (`stopFollow`), le porteur avance de 1 px monde par
+   * image — LE QUART d'un texel de lumière, le régime sous-texel pur —, et le cadre est serré.
+   * Seule la flaque bouge dans l'image. Le verdict est un jugement de rendu : il se rend à l'œil
+   * sur les trois planches, pas sur un nombre.
+   *
+   * Exige `--dev` : `debug_grant`, `debug_set_hour`, `debug_set_season_day`, `debug_teleport`.
+   */
+  /**
+   * ═══ LE BANC DES VARIANTES DE FEU (2026-08-26) ═══
+   *
+   * Cinq propositions de rendu du Feu, plus l'étalon, PHOTOGRAPHIÉES SUR LA MÊME NUIT, LE MÊME
+   * FOYER, LE MÊME DÉCOR. C'est tout l'enjeu du montage : `window.__FEU__` est relu à CHAQUE
+   * appel côté client (voir `render/feu-variante.ts`), donc on pose le décor une seule fois et
+   * on balaie la variante en place. Six rechargements auraient donné six mondes, six positions
+   * de joueur et six lunes — et les six images n'auraient plus différé que par ce qu'on ne
+   * mesure pas (précédent mesuré : « le ✗ du banc accuse à tort », et la vitrine où sept heures
+   * rendaient la même image).
+   *
+   * L'ANIMATION SE PREND EN PAS DE BOUCLE, jamais en attendant. Sous SwiftShader une image dure
+   * des secondes : `await page.waitForTimeout(200)` entre deux clichés ne donnerait pas 200 ms
+   * de flamme, il donnerait ce que le hasard de la frame veut bien. On ENDORT donc la boucle et
+   * on avance à la main par `game.step(t, dt)` — chaque cliché est alors à un `t` CONNU, et la
+   * planche animée est une vraie séquence à pas constant.
+   *
+   * ⚠ LE JOUR NE PEUT QUE MONTER (`debug_set_season_day` pose le tick ; viser un jour passé
+   * rembobine et le client fige en silence). On ne touche au jour qu'une fois, en montant.
+   */
+  async ['feu-variantes'](page) {
+    /**
+     * ═══ DEUX RENDUS, PLUS SEPT (2026-08-26, après « en quoi on a besoin de ces images ? ») ═══
+     *
+     * La planche des cinq axes avait un but : faire CHOISIR. Le choix est fait (« fais tout »),
+     * et rephotographier les cinq propositions ne servirait plus qu'à illustrer une décision
+     * déjà prise — vingt-cinq minutes de machine pour rien.
+     *
+     * Il reste UNE question qu'aucun test unitaire ne peut trancher : la composition empile
+     * trois additifs au même endroit, et le défaut qu'elle frôle est le DÉLAVAGE — la terre qui
+     * perd sa couleur propre. C'est un fait de PIXELS (mesuré une fois à « un sol vert
+     * (33,38,31) devenu (65,62,54), un kaki plat »), donc ça se relève sur une image rendue.
+     *
+     * Deux rendus suffisent à y répondre : l'étalon et le livré, au même endroit.
+     */
+    const VARIANTES = [0, 6]
+    const IMAGES = 6 // par rendu — de quoi voir la flamme bouger, pas de quoi faire un film
+    // 14 × 110 ms ≈ 1,54 s de flamme. La fenêtre DOIT couvrir plus d'un cycle du battement le
+    // plus lent (`flickerV` variante 1 : 1/0,55 ≈ 1,8 s) — le premier montage n'échantillonnait
+    // que 0,72 s et déclarait la variante 1 « sans effet » alors qu'il n'en voyait qu'un bout.
+    const PAS_MS = 110
+    const CHAUFFE = 40 // pas de boucle avant le premier cliché : le temps que les particules peuplent
+
+    await page.waitForFunction(() => Boolean(window.__BRAISES__?.scene?.registry?.get('worldReady')), null, { timeout: 180000 })
+    await page.waitForTimeout(1500)
+    /**
+     * ⚠ LE VITE DE DEV RECHARGE LA PAGE SOUS LE SCÉNARIO, et il n'a pas besoin qu'on édite quoi
+     * que ce soit pour ça (ré-optimisation de dépendances). Un run entier est mort là-dessus :
+     * « Execution context was destroyed, most likely because of a navigation ». On ne se contente
+     * donc PAS d'attendre la poignée avant chaque geste — on RÉESSAIE quand le contexte meurt
+     * pendant l'appel, en re-attendant la poignée entre deux essais. Le rechargement coûte alors
+     * du temps, pas le run.
+     */
+    const tenace = async (op) => {
+      for (let essai = 0; essai < 4; essai++) {
+        try {
+          await page.waitForFunction(() => Boolean(window.__BRAISES__?.scene), null, { timeout: 180000 })
+          return await op()
+        } catch (e) {
+          // Deux morts distinctes, et le remède n'est pas le même :
+          //  · la page a NAVIGUÉ sous nous → il suffit d'attendre, la poignée revient.
+          //  · la poignée NE REVIENT PAS (timeout de 180 s) → le renderer s'est écroulé
+          //    (SwiftShader sous pression), et attendre davantage ne rend rien. Un run entier
+          //    est mort là-dessus, sur le PREMIER geste, après un `worldReady` pourtant passé.
+          //    On RECHARGE alors : la Veillée reprend la sauvegarde, donc le même monde.
+          const perdue = /Execution context was destroyed|Target closed|Cannot read properties of undefined/.test(String(e))
+          const morte = /Timeout .* exceeded/.test(String(e))
+          if ((!perdue && !morte) || essai === 3) throw e
+          if (morte) {
+            console.log('  (la poignée ne revient pas — on recharge la page)')
+            await page.reload({ waitUntil: 'domcontentloaded', timeout: 120000 }).catch(() => {})
+            await page.waitForFunction(() => Boolean(window.__BRAISES__?.scene?.registry?.get('worldReady')), null, { timeout: 240000 }).catch(() => {})
+            await page.waitForTimeout(2000)
+          } else {
+            console.log('  (la page a rechargé — on reprend la main)')
+            await page.waitForTimeout(3000)
+          }
+        }
+      }
+    }
+    const agir = async (action, ms = 350) => {
+      await tenace(() => page.evaluate((a) => { window.__BRAISES__.scene.sendAction(a) }, action))
+      await page.waitForTimeout(ms)
+    }
+    const lire = async (fn, arg) => tenace(() => page.evaluate(fn, arg))
+
+    await agir({ type: 'debug_god', on: true }, 250)
+    /**
+     * ⚠ ON PURGE LA MÉTÉO AVANT TOUT — et c'est la sonde de refus qui l'a appris, pas le
+     * raisonnement : « **un feu neuf ne prend pas sous la pluie** ». Deux campagnes entières
+     * sont mortes sur « aucun feu posé » sans jamais dire pourquoi, parce que la boucle de pose
+     * n'imprimait pas `registry.error`. Le monde jouait sa météo pendant qu'on cherchait un
+     * emplacement, et aucun emplacement au monde n'aurait convenu.
+     *
+     * (Elle est re-purgée avant CHAQUE variante, plus bas, pour une autre raison : la campagne
+     * dure une demi-heure et une bande de neige traverse en cours de route.)
+     */
+    await agir({ type: 'debug_meteo', meteo: null }, 700)
+    await agir({ type: 'debug_set_season_day', day: 72 }, 900) // NOUVELLE lune : la nuit la plus noire, le feu seul éclaire
+    await agir({ type: 'debug_set_hour', hour: 0 }, 1600)
+    // 30 s, pas 150 : c'est une VÉRIFICATION de confort (l'écran porte-t-il le bon jour ?), et
+    // son échec est déjà rattrapé plus bas. À 150 s elle mangeait deux minutes et demie du
+    // budget de la page — le temps qu'il faut, sur cette machine, pour se faire tuer par l'OOM.
+    await page.waitForFunction(() => document.body.innerText.includes('JOUR 72'), null, { timeout: 30000 }).catch(() => {})
+
+    // ═══ CHERCHER UN COIN QUI TIENNE — ET LA POSE FAIT PARTIE DU TEST ═══
+    //
+    // Le montage d'avant choisissait un emplacement sur ses volumes, s'y arrêtait, PUIS tentait
+    // la pose. Il est tombé sur un lieu où `place_campfire` est refusé (« 4 volumes à portée,
+    // 0 collés »), et il est mort là : « aucun feu posé », sans une raison. Un critère de choix
+    // qui ne contient pas la condition qu'on va exiger juste après ne choisit rien.
+    //
+    // Donc : pour CHAQUE candidat, on éprouve les deux d'un coup — assez de volumes à portée ET
+    // une tuile qui prend le feu. Et on IMPRIME le refus (`registry.error` + ce qu'on a en main) :
+    // sans lui, on ne distingue pas un landmark d'un sous-bois fermé ou d'un inventaire vide.
+    const p0 = await lire(() => window.__BRAISES__.scene.registry.get('playerPos'))
+    const RONDE = [[2, 0], [-2, 0], [0, 2], [0, -2], [2, 2], [-2, -2], [2, -2], [-2, 2], [3, 0], [-3, 0], [0, 3], [0, -3]]
+    let tuile = null
+    let recale = null
+    // DEUX PASSES. La première exige la pleine nature (`bati === 0`) ; si aucun candidat ne la
+    // satisfait, la seconde relâche cette exigence — mieux vaut une planche avec un mur dans le
+    // coin qu'un run de vingt minutes qui meurt sur « aucun feu posé ». Un critère de qualité
+    // ne doit pas pouvoir devenir un critère d'échec.
+    const OFFSETS = [[60, 40], [-70, 50], [80, -60], [40, 90], [-50, -95], [120, 30], [-30, 130]]
+    let strictDejaVu = false
+    for (const [dx, dy, strict] of [...OFFSETS.map((o) => [...o, true]), ...OFFSETS.map((o) => [...o, false])]) {
+      if (!strict && !strictDejaVu) { console.log('  (aucun coin de pleine nature — on relâche l’exigence de bâti)'); strictDejaVu = true }
+      await agir({ type: 'debug_teleport', x: p0.x + dx, y: p0.y + dy }, 2200)
+      await page.waitForTimeout(2000)
+      const info = await lire(() => {
+        const sc = window.__BRAISES__.scene
+        const p = sc.registry.get('playerPos')
+        const d = (n) => Math.max(Math.abs(n.tx - p.x), Math.abs(n.ty - p.y))
+        const ns = sc.view?.nodes ?? []
+        // DES VOLUMES À PORTÉE (2 à 5 tuiles) : le liseré ne sculpte QUE des volumes ; sur un pré
+        // nu, la planche le déclarerait mort pour une raison qui n'est pas la sienne.
+        //
+        // ⚠ `collant` NE SERT PLUS DE FILTRE ICI. Il se mesurait autour du JOUEUR, alors que ce
+        // qu'on veut dégagé, c'est LA TUILE DU FEU — deux tuiles plus loin. Les meilleurs coins
+        // de forêt (22 volumes à portée !) étaient rejetés parce qu'un buisson touchait le
+        // joueur, et les coins retenus étaient les plus pauvres. Le dégagement se vérifie
+        // maintenant tuile par tuile, dans la ronde de pose, sur la tuile réellement visée.
+        // ET AUCUN BÂTI DANS LE CADRE. Le premier montage a cadré une porte : elle a
+        // apporté son mur, et surtout son AIDE D'AFFORDANCE — un cône clair qui s'allume quand
+        // le joueur passe à portée, et qui s'est invité sur un tiers des clichés. Une aide
+        // d'interface n'a rien à faire sur une planche de lumière (mémoire « la capture peut
+        // mentir »). On veut un feu de camp EN PLEINE NATURE, ce qui est de toute façon la
+        // situation qu'on juge.
+        const bati = (sc.view?.structures ?? []).filter((st) => Math.max(Math.abs(st.tx - p.x), Math.abs(st.ty - p.y)) <= 9).length
+        return {
+          x: p.x, y: p.y,
+          portee: ns.filter((n) => d(n) >= 2 && d(n) <= 5).length,
+          collant: ns.filter((n) => d(n) < 2).length,
+          bati,
+          lieu: sc.registry.get('lieuCourant') ?? null,
+        }
+      })
+      console.log(`  candidat (${Math.round(info.x)}, ${Math.round(info.y)}) : ${info.portee} volumes à portée, ${info.collant} collés, ${info.bati} bâtis dans le cadre${info.lieu ? `, lieu « ${info.lieu} »` : ''}`)
+      if (info.portee < 2 || (strict && info.bati > 0)) continue
+
+      // Le campfire d'abord — `debug_grant` le met au sac ; la pose lit le sac, pas la main,
+      // mais on relit les deux au premier refus pour ne pas avoir à deviner.
+      await agir({ type: 'debug_grant', item: 'campfire' }, 500)
+      let refusVu = false
+      for (const [ox, oy] of RONDE) {
+        const tx = Math.floor(info.x) + ox
+        const ty = Math.floor(info.y) + oy
+        // LE FOYER DÉGAGÉ, vérifié sur LA TUILE VISÉE : un montage a planté le feu au pied d'un
+        // tronc qui le masquait à moitié. On juge le FEU, pas ce qui passe devant.
+        const degagee = await lire(({ tx, ty }) => !(window.__BRAISES__.scene.view?.nodes ?? [])
+          .some((n) => Math.abs(n.tx - tx) <= 1 && Math.abs(n.ty - ty) <= 1), { tx, ty })
+        if (!degagee) continue
+        await agir({ type: 'place_campfire', tx, ty }, 550)
+        const ok = await lire(({ tx, ty }) => (window.__BRAISES__.scene.view?.structures ?? [])
+          .some((st) => st.type === 'fire' && st.tx === tx && st.ty === ty), { tx, ty })
+        if (ok) { tuile = { tx, ty }; recale = info; break }
+        if (!refusVu) {
+          refusVu = true
+          const pourquoi = await lire(() => {
+            const sc = window.__BRAISES__.scene
+            const inv = sc.registry.get('inv') ?? []
+            return {
+              raison: sc.registry.get('error')?.reason ?? '?',
+              main: inv[sc.registry.get('activeSlot')]?.item ?? null,
+              sac: inv.filter((e) => e?.item === 'campfire').length,
+            }
+          })
+          console.log(`    (refus : ${pourquoi.raison} · en main : ${pourquoi.main} · campfire au sac : ${pourquoi.sac})`)
+        }
+      }
+      if (tuile) break
+    }
+    if (!tuile) { console.error('!! aucun feu posé — rien à photographier'); return }
+    console.log(`  feu posé en (${tuile.tx}, ${tuile.ty}) — ${recale.portee} volumes à portée`)
+
+    // ── CADRER : la caméra s'arrête, le feu est au centre ──
+    await lire(({ tx, ty }) => {
+      const sc = window.__BRAISES__.scene
+      const cam = sc.cameras.main
+      cam.stopFollow()
+      cam.centerOn((tx + 0.5) * 16, (ty + 0.5) * 16)
+    }, tuile)
+    // LE RÉTICULE DE VISÉE SUIT LA SOURIS, et il tombait en plein cadre : un petit rond blanc
+    // par-dessus la flamme sur les 84 clichés. On pousse la souris dans un coin — c'est du
+    // décor d'interface, pas le sujet.
+    const vp = page.viewportSize() ?? { width: 1280, height: 800 }
+    await page.mouse.move(vp.width - 8, vp.height - 8)
+    await page.waitForTimeout(2500)
+
+    const geo = await lire(({ tx, ty }) => {
+      const sc = window.__BRAISES__.scene
+      const cam = sc.cameras.main
+      const r = sc.scale.canvas.getBoundingClientRect()
+      const k = r.width / sc.scale.width
+      return {
+        x: r.x + (((tx + 0.5) * 16 - cam.worldView.x) * cam.zoom) * k,
+        y: r.y + (((ty + 0.5) * 16 - cam.worldView.y) * cam.zoom) * k,
+        tuilePx: 16 * cam.zoom * k,
+        rect: { x: r.x, y: r.y, w: r.width, h: r.height },
+      }
+    }, tuile)
+    // ±4 tuiles autour du foyer. Le premier montage cadrait ±5 et le feu y tenait dans un
+    // dixième de l'image : on comparait des paysages. C'est LE FEU qu'on juge — on serre, et
+    // l'artefact ré-agrandit en `image-rendering: pixelated` (le grain est celui du jeu).
+    const demi = Math.round(geo.tuilePx * 4)
+    const clip = {
+      x: Math.max(0, Math.round(geo.x - demi)),
+      y: Math.max(0, Math.round(geo.y - demi)),
+      width: Math.min(Math.round(demi * 2), Math.round(geo.rect.w)),
+      height: Math.min(Math.round(demi * 2), Math.round(geo.rect.h)),
+    }
+    console.log(`  cadre ${clip.width}×${clip.height} px CSS (tuile = ${geo.tuilePx.toFixed(1)} px)`)
+
+    const lum = ([r, v, b]) => 0.2126 * r + 0.7152 * v + 0.0722 * b
+    const mediane = (xs) => xs.slice().sort((a, b) => a - b)[Math.floor(xs.length / 2)]
+
+    console.log('\n── LA PLANCHE ──')
+    for (const v of VARIANTES) {
+      // ═══ LE DÉCOR SE RECALE AVANT CHAQUE VARIANTE ═══
+      // Le premier montage ne le faisait pas, et les six images ne montraient pas le même
+      // endroit : entre deux variantes, la boucle tourne, le monde avance (la neige avait
+      // fondu d'une image à l'autre) et la caméra s'était remise à suivre le joueur. On
+      // re-pose donc l'HEURE (la lumière est tout le sujet) et le CADRAGE à chaque tour.
+      await agir({ type: 'debug_set_hour', hour: 0 }, 600)
+      // ⚠ ET ON PURGE LE FRONT MÉTÉO. Vingt minutes de run, c'est assez pour qu'une bande de
+      // neige traverse : les premières variantes ont été photographiées sur une terre nue et les
+      // dernières sous la neige. Le décor cessait alors d'être le témoin — il devenait une
+      // seconde variable, et la planche comparait deux choses à la fois.
+      await agir({ type: 'debug_meteo', meteo: null }, 500)
+      await lire(({ tx, ty }) => {
+        const cam = window.__BRAISES__.scene.cameras.main
+        cam.stopFollow()
+        cam.centerOn((tx + 0.5) * 16, (ty + 0.5) * 16)
+      }, tuile)
+      // La variante se pose, PUIS on laisse la boucle tourner un instant : les émetteurs et la
+      // texture de la flaque se RECONSTRUISENT au changement (couleur bakée, réglages posés à la
+      // création) — capturer tout de suite photographierait la variante précédente.
+      await lire((vv) => { window.__FEU__ = vv; window.__BRAISES__.scene.game.loop.wake() }, v)
+      await page.waitForTimeout(1400)
+      await lire(({ tx, ty }) => {
+        const cam = window.__BRAISES__.scene.cameras.main
+        cam.stopFollow()
+        cam.centerOn((tx + 0.5) * 16, (ty + 0.5) * 16)
+      }, tuile)
+      // ═══ ON RELIT `__FEU__` AVANT DE PHOTOGRAPHIER ═══
+      // `window.__FEU__` est une simple propriété de `window` : un rechargement de page l'efface.
+      // `tenace` reprendrait la main sans erreur, et on capturerait alors des images de l'ÉTALON
+      // étiquetées « variante N » — le seul défaut de ce montage qui produise des images FAUSSES
+      // au lieu de pas d'images du tout. On l'affirme donc, on ne l'espère pas.
+      for (let essai = 0; essai < 3; essai++) {
+        const pose = await lire(() => window.__FEU__ ?? 0)
+        if (pose === v) break
+        console.log(`  !! __FEU__ vaut ${pose}, pas ${v} (la page a rechargé) — on repose`)
+        await lire((vv) => { window.__FEU__ = vv }, v)
+        await page.waitForTimeout(1500)
+      }
+      // Endormir, puis CHAUFFER à la main : les particules peuplent à `t` connu.
+      await lire((n) => {
+        const g = window.__BRAISES__.scene.game
+        g.loop.sleep()
+        let t = g.loop.time
+        for (let i = 0; i < n; i++) { t += 45; g.step(t, 45) }
+      }, CHAUFFE)
+
+      const profils = []
+      for (let i = 0; i < IMAGES; i++) {
+        if (i > 0) {
+          await lire((dt) => {
+            const g = window.__BRAISES__.scene.game
+            let t = g.loop.time
+            // Deux demi-pas : `step` avec un delta trop gros fait sauter les émetteurs.
+            t += dt / 2; g.step(t, dt / 2)
+            t += dt / 2; g.step(t, dt / 2)
+          }, PAS_MS)
+        }
+        await page.screenshot({ path: `${OUT}/feu-v${v}-${i}.png`, clip, timeout: 120000 })
+        // LE PROFIL DE LUMINANCE — du foyer vers la DROITE sur 5 tuiles, 9 px de haut. C'est LUI
+        // qui dit si une variante SÉPARE de l'étalon : deux images qu'on trouve « différentes »
+        // à l'œil sans écart mesuré sont deux images identiques et un observateur qui espère.
+        //
+        // UNE IMAGE SUR TROIS, et c'est un choix de coût explicite : `regionAt` repasse par un
+        // `page.screenshot`, dont le prix sous SwiftShader est celui d'un RENDU COMPLET, pas
+        // celui de la taille du clip. Mesurer les quatorze doublait le run — cinq échantillons
+        // étalés sur toute la fenêtre suffisent aux trois colonnes de distance (elles moyennent),
+        // et la colonne « battement » n'a de toute façon jamais rien pu prouver (voir plus bas).
+        if (i % 3 !== 0) continue
+        const bande = await regionAt(page, {
+          x: Math.round(geo.x), y: Math.round(geo.y - 4), width: Math.round(geo.tuilePx * 5), height: 9,
+        })
+        if (bande) {
+          const prof = []
+          for (let x = 0; x < bande.w; x++) {
+            const col = []
+            for (let y = 0; y < bande.h; y++) col.push(lum(bande.px(x, y)))
+            prof.push(mediane(col))
+          }
+          profils.push(prof)
+        }
+      }
+      // LE PLAN LARGE — un seul cliché par variante, plein cadre : le folioscope serré montre
+      // la flamme, celui-ci montre CE QU'ELLE FAIT À LA NUIT autour d'elle (la clairière, la
+      // portée, les volumes au loin). Les deux échelles ne répondent pas à la même question.
+      await page.screenshot({ path: `${OUT}/feu-large-v${v}.png`, timeout: 120000, clip: {
+        x: Math.max(0, Math.round(geo.x - geo.tuilePx * 11)),
+        y: Math.max(0, Math.round(geo.y - geo.tuilePx * 7)),
+        width: Math.min(Math.round(geo.tuilePx * 22), Math.round(geo.rect.w)),
+        height: Math.min(Math.round(geo.tuilePx * 14), Math.round(geo.rect.h)),
+      } })
+      await lire(() => { window.__BRAISES__.scene.game.loop.wake() })
+
+      // ═══ LA TERRE GARDE-T-ELLE SA COULEUR ? ═══
+      //
+      // La luminance ne peut pas répondre : un sol délavé est justement un sol PLUS CLAIR. Ce
+      // qui meurt dans un délavage, c'est l'ÉCART ENTRE LES CANAUX — ajouter de la lumière monte
+      // les trois, l'écart se referme, et le vert de l'herbe devient un kaki plat. On relève
+      // donc la SATURATION (max−min sur RVB, rapportée au max), à trois tuiles du foyer : assez
+      // loin pour que ce soit de la terre et non de la braise, assez près pour être dans la
+      // flaque. Le chiffre de l'étalon est le témoin ; c'est leur RAPPORT qui juge.
+      const loin = await regionAt(page, {
+        x: Math.round(geo.x + geo.tuilePx * 2.5), y: Math.round(geo.y - 5),
+        width: Math.round(geo.tuilePx), height: 11,
+      })
+      if (loin) {
+        let sat = 0, lum2 = 0, n = 0
+        const canaux = [0, 0, 0]
+        for (let x = 0; x < loin.w; x++) {
+          for (let y = 0; y < loin.h; y++) {
+            const px = loin.px(x, y)
+            const mx = Math.max(px[0], px[1], px[2])
+            const mn = Math.min(px[0], px[1], px[2])
+            sat += mx === 0 ? 0 : (mx - mn) / mx
+            lum2 += lum(px)
+            canaux[0] += px[0]; canaux[1] += px[1]; canaux[2] += px[2]
+            n++
+          }
+        }
+        console.log(
+          `  v${v} ${String(NOMS_FEU[v]).padEnd(24)} sol à 3 t : rvb(${canaux.map((c) => (c / n).toFixed(0)).join(', ')}) ` +
+          `· saturation ${(sat / n).toFixed(3)} · luminance ${(lum2 / n).toFixed(1)}`,
+        )
+      }
+
+      if (profils.length) {
+        const n = profils[0].length
+        const moy = []
+        for (let x = 0; x < n; x++) moy.push(profils.reduce((s, p) => s + (p[x] ?? 0), 0) / profils.length)
+        // L'AMPLITUDE TEMPORELLE au plus près du foyer (le premier quart de la bande) : c'est la
+        // signature du battement, celle que la variante 1 doit faire bouger.
+        const proche = Math.max(1, Math.round(n / 4))
+        const parImage = profils.map((p) => p.slice(0, proche).reduce((s, q) => s + q, 0) / proche)
+        const amp = Math.max(...parImage) - Math.min(...parImage)
+        const aTuile = (t) => moy[Math.min(n - 1, Math.round(t * geo.tuilePx))] ?? 0
+        console.log(
+          `  v${v} ${String(NOMS_FEU[v]).padEnd(22)} ` +
+          `0,5 t ${aTuile(0.5).toFixed(1).padStart(5)} · 1,5 t ${aTuile(1.5).toFixed(1).padStart(5)} · ` +
+          `3 t ${aTuile(3).toFixed(1).padStart(5)} · battement ±${amp.toFixed(1)}`,
+        )
+      }
+    }
+    console.log(`\n  ${VARIANTES.length * IMAGES} clichés dans ${OUT}/feu-v*-*.png`)
+  },
+
+  async ['torche-grille'](page) {
+    await page.waitForFunction(() => Boolean(window.__BRAISES__?.scene?.registry?.get('worldReady')), null, { timeout: 150000 })
+    await page.waitForTimeout(1200)
+    const agir = async (action, ms = 350) => {
+      await page.evaluate((a) => { window.__BRAISES__.scene.sendAction(a) }, action)
+      await page.waitForTimeout(ms)
+    }
+    await agir({ type: 'debug_god', on: true }, 200)
+    await agir({ type: 'debug_set_season_day', day: 72 }, 400) // nouvelle lune : la nuit étalon
+    await agir({ type: 'debug_set_hour', hour: 0 }, 700)
+    await agir({ type: 'debug_grant', item: 'torche_vive' }, 700)
+    await canopeePleine(page)
+    await page.evaluate(() => window.__BRAISES__.scene.cameras.main.stopFollow())
+    await page.waitForTimeout(900)
+    const cadre = await page.evaluate(() => {
+      const c = window.__BRAISES__.scene.scale.canvas.getBoundingClientRect()
+      return { x: Math.round(c.x + c.width / 2 - 120), y: Math.round(c.y + c.height / 2 - 60), width: 240, height: 150 }
+    })
+    const xs = []
+    for (let i = 0; i < 3; i++) {
+      if (i > 0) {
+        const q = await page.evaluate(() => window.__BRAISES__.scene.registry.get('playerPos'))
+        await agir({ type: 'debug_teleport', x: q.x + 1 / 16, y: q.y }, 500) // 1 px monde = ¼ de texel
+      }
+      await page.waitForTimeout(500)
+      await page.screenshot({ path: `${OUT}/torche-grille-${i}.png`, clip: cadre, timeout: 90000 })
+      xs.push((await page.evaluate(() => window.__BRAISES__.scene.registry.get('playerPos'))).x)
+    }
+    console.log(`\n── LA GRILLE DE LA FLAQUE, caméra figée, pas de ¼ de texel ──`)
+    console.log(`  x = ${xs.map((v) => v.toFixed(4)).join(' → ')}`)
+    console.log('  → torche-grille-{0,1,2}.png : la flaque doit GLISSER, pas se recomposer')
+  },
+
+  /**
+   * LA TORCHE ÉCLAIRE-T-ELLE VRAIMENT — ET SANS EFFACER LA NUIT ? (spec `torche.md`, 2026-08-26)
+   *
+   * Deux verdicts, et il en faut DEUX : une torche qui n'éclaire pas ne sert à rien, une torche
+   * qui éclaire tout annule la nuit noire calibrée la veille (`VOILE_NOUVELLE_LUNE`). La sonde
+   * relève donc la luminance en DEUX endroits — sous les pieds du porteur, et au BORD de l'écran
+   * — dans les deux états (mains nues / torche vive), et exige :
+   *
+   *   ① SOUS LES PIEDS, la torche RELÈVE nettement (≥ +25 % de luminance) ;
+   *   ② AU BORD, elle ne change quasiment rien (≤ +10 %) — la nuit tient à quelques tuiles.
+   *
+   * ⚠ ELLE SE JOUE À LA NOUVELLE LUNE, et c'est décisif : sans `debug_set_season_day`, le client
+   * retombe sur `LUNE_PLEINE_JOUR` (l'étalon, la nuit la PLUS CLAIRE du mois). Étalonner une
+   * torche là-dessus, c'est l'étalonner sur la nuit où l'on n'en a pas besoin.
+   *
+   * CE QUI LA FERAIT ROUGIR : brancher le point light SANS la flaque ni le trou (le sol reste
+   * noir → ① tombe) ; monter `TORCHE_HOLE_TILES` à la portée d'un Feu (→ ② tombe) ; oublier
+   * `porteursDeTorche` (les deux relevés deviennent identiques). Vérifié en cassant chacun.
+   *
+   * Exige `--dev` : `debug_teleport`, `debug_set_hour`, `debug_set_season_day`, `debug_grant`.
+   */
+  /**
+   * LE PRIX DU NOIR (spec `nuit-noire.md`, 2026-08-26) — VU DANS LE VRAI JEU.
+   *
+   * Ce qui se juge ici n'est pas une lumière, c'est une ALLURE : `entity.gait`, celle que la
+   * SIM a retenue (pas celle qu'on croit tenir au clavier). Trois montages sur la MÊME touche
+   * tenue — Shift + W — et une seule question à chaque fois : la sim a-t-elle accordé le
+   * sprint ?
+   *
+   *   ① nouvelle lune (jour 72), minuit, les mains vides  → elle doit REFUSER
+   *   ② la même nuit, une torche VIVE en main             → elle doit ACCORDER
+   *   ③ pleine lune (jour 61), minuit, les mains vides    → elle doit ACCORDER
+   *
+   * ③ est le montage qui compte le plus : sans lui, un bug qui refuserait le sprint TOUTES
+   * les nuits (ou tout le temps) passerait au vert sur ① et ② — c'est le cadran mensuel qu'on
+   * éprouve, pas seulement « il fait noir ».
+   *
+   * ⚠ LE HEADLESS NE SERT PAS UN INPUT PAR TICK (quelques images par seconde sous
+   * SwiftShader) : on ne CHRONOMÈTRE donc rien et on ne compare aucune distance — on COMPTE
+   * des relevés d'allure. Un `sprint` observé prouve l'accord ; zéro `sprint` sur trente
+   * relevés, la touche tenue tout du long et l'avatar en `walk`, prouve le refus.
+   */
+  /**
+   * LE PLANCHER DE LA NUIT SANS LUNE (décision d'Alexis, 2026-08-26 : « pas noir #000, un bleu
+   * très foncé, un peu gris ») — VU, et chiffré.
+   *
+   * Deux nuits au même endroit, à la même heure, à la seule lune près : la NOUVELLE (jour 72)
+   * et la PLEINE (jour 61). Ce qui se juge, c'est le sol loin de tout feu : il doit être très
+   * sombre ET franchement bleu — donc `bleu > rouge` avec de la marge, et une luminance qui
+   * reste basse. La pleine lune sert d'étalon : sans elle, un plancher qui aurait allumé toute
+   * la nuit passerait pour un succès.
+   *
+   * ⚠ ON ENDORT LA BOUCLE AVANT CHAQUE CAPTURE. `page.screenshot` attend une image, et sous
+   * SwiftShader — surtout quand une autre session fait tourner son propre Chromium — l'image
+   * de nuit dépasse les 90 s de la capture : le scénario `torche` est mort là trois fois de
+   * suite. Endormie, la page rend son dernier tampon tout de suite.
+   */
+  /**
+   * LA PORTÉE DE LA LUMIÈRE D'UN FEU, SELON LA NUIT (demande d'Alexis, 2026-08-26).
+   *
+   * ⚠ LA PORTÉE GÉOMÉTRIQUE NE VARIE PAS, et c'est le premier fait à poser : `fireHoleRadius`
+   * vaut `HOLE_RADIUS_TILES` (6) × le vacillement de la flamme, et rien d'autre — décision du
+   * 2026-08-03, « portée CONSTANTE, l'engagement se lit à la flamme ». Ce qui varie d'une nuit
+   * à l'autre, c'est ce qu'on VOIT de cette portée : le trou est creusé dans un voile dont la
+   * profondeur suit la lune et l'heure. Sous la pleine lune, la clairière se fond dans une nuit
+   * déjà claire ; à la nouvelle, elle est le seul endroit du monde qui existe.
+   *
+   * On mesure donc un PROFIL : la luminance le long d'une bande horizontale qui part du feu et
+   * s'en va sur quatorze tuiles, et la distance à laquelle elle rejoint le fond. Une seule
+   * capture par condition (`regionAt` décode la bande entière) — surtout pas quatorze captures
+   * d'un pixel, qui coûteraient quatorze fois 90 s sur cette machine.
+   *
+   * La MÉDIANE par colonne, jamais la moyenne : un tronc ou une souche sur la bande tirerait
+   * une moyenne vers le noir et inventerait une portée courte.
+   */
+  /**
+   * LA NUIT NEUVE, SEULE — le fond du mois, sans un feu dans le cadre.
+   *
+   * Le scénario le plus court possible, et c'est le but : chaque geste de plus est une chance
+   * de plus que le vite de dev recharge la page en cours de route. On saute au jour 72 (la
+   * nouvelle lune ; le monde ouvre au 61, donc c'est bien un saut EN AVANT — un jour passé
+   * rembobinerait le tick et figerait le client), à minuit, on s'écarte de tout foyer, et on
+   * capture. Trois pixels de sol relevés au passage, pour que l'image ait ses chiffres.
+   */
+  async ['nuit-seule'](page) {
+    await page.waitForFunction(() => Boolean(window.__BRAISES__?.scene?.registry?.get('worldReady')), null, { timeout: 150000 })
+    await page.waitForTimeout(1500)
+    /**
+     * ⚠ ON ATTEND `worldReady`, PAS LA POIGNÉE. `window.__BRAISES__` est posée dès la création
+     * de `WorldScene`, donc AVANT que le monde existe. Une version qui n'attendait que la
+     * poignée a traversé un rechargement sans broncher et rendu ses trois « pixels de sol »
+     * sur… l'écran de chargement : rvb(20, 15, 9), le halo orange du logo. Le verdict disait
+     * « elle est grise » — c'était la braise du menu.
+     */
+    const pret = () => page.waitForFunction(
+      () => Boolean(window.__BRAISES__?.scene?.registry?.get('worldReady')), null, { timeout: 200000 },
+    )
+    const agir = async (action, ms = 400) => {
+      await pret()
+      await page.evaluate((a) => { window.__BRAISES__.scene.sendAction(a) }, action)
+      await page.waitForTimeout(ms)
+    }
+    const lire = async (fn) => { await pret(); return page.evaluate(fn) }
+    const lum = ([r, v, b]) => 0.2126 * r + 0.7152 * v + 0.0722 * b
+
+    await agir({ type: 'debug_god', on: true }, 200)
+    await agir({ type: 'debug_set_season_day', day: 72 }, 900)
+    await agir({ type: 'debug_set_hour', hour: 0 }, 1500)
+    await page.waitForFunction(() => document.body.innerText.includes('JOUR 72'), null, { timeout: 120000 }).catch(() => {})
+    // S'ÉCARTER : le spawn est un lieu, et les villages ont des Feux. On veut le SOL NU.
+    const p0 = await lire(() => window.__BRAISES__.scene.registry.get('playerPos'))
+    await agir({ type: 'debug_teleport', x: p0.x + 90, y: p0.y + 60 }, 3000)
+    await page.waitForTimeout(4000)
+
+    const feux = await lire(() => {
+      const sc = window.__BRAISES__.scene
+      const p = sc.registry.get('playerPos')
+      return (sc.view?.structures ?? []).filter((st) => st.type === 'fire')
+        .map((st) => Math.round(Math.sqrt((st.tx - p.x) ** 2 + (st.ty - p.y) ** 2))).sort((a, b) => a - b).slice(0, 3)
+    })
+    console.log(`  (feux les plus proches, en tuiles : ${feux.length ? feux.join(', ') : 'aucun'})`)
+
+    // DERNIÈRE VÉRIFICATION AVANT LA CAPTURE : c'est bien le JEU, au bon jour, qu'on regarde.
+    if (!(await page.evaluate(() => document.body.innerText.includes('JOUR 72')))) {
+      console.error('!! l’écran ne porte pas « JOUR 72 » — rien de mesurable ici'); return
+    }
+    await lire(() => { window.__BRAISES__.scene.game.loop.sleep() })
+    await page.screenshot({ path: `${OUT}/nuit-seule.png`, timeout: 90000 })
+    const cam = await lire(() => {
+      const c = window.__BRAISES__.scene.scale.canvas.getBoundingClientRect()
+      return { x: c.x, y: c.y, w: c.width, h: c.height }
+    })
+    console.log('\n── LE SOL, À MINUIT, SOUS LA NOUVELLE LUNE ──')
+    const vus = []
+    for (const [nom, dx, dy] of [['gauche', -260, -40], ['droite', 250, 60], ['bas', -80, 180]]) {
+      const p = await pixelAt(page, Math.round(cam.x + cam.w / 2 + dx), Math.round(cam.y + cam.h / 2 + dy))
+      if (p) { vus.push(p); console.log(`  ${nom.padEnd(8)} rvb(${p.join(', ')})  lum ${lum(p).toFixed(1)}`) }
+    }
+    await lire(() => { window.__BRAISES__.scene.game.loop.wake() })
+    if (vus.length) {
+      const moy = [0, 1, 2].map((c) => vus.reduce((s, q) => s + q[c], 0) / vus.length)
+      console.log(`  moyenne  rvb(${moy.map((v) => v.toFixed(1)).join(', ')})  lum ${lum(moy).toFixed(1)}`)
+      console.log(moy[2] > moy[0] * 1.3 ? '  ✓ la nuit est BLEUE' : '  ✗ elle est grise')
+    }
+  },
+
+  async ['feu-portee'](page) {
+    /**
+     * ⚠ LES JOURS NE PEUVENT QUE MONTER, et ce n'est pas une convenance — c'est le seul ordre
+     * qui donne une image vraie. `debug_set_season_day` POSE LE TICK (`debug.ts`) ; viser un
+     * jour PASSÉ le rembobine, et le client jette alors tout snapshot dont le tick n'est pas
+     * strictement supérieur au dernier reçu (`WorldScene`: « Rejette les snapshots périmés ou
+     * hors ordre »). L'écran reste donc figé sur l'état d'AVANT, sans rien dire.
+     *
+     * Le premier run est tombé dedans exactement : sa première condition demandait le jour 61,
+     * or le monde OUVRE au 61 et on y avait déjà joué quelques minutes. Résultat, une planche
+     * étiquetée « pleine lune · minuit » qui montrait un plein midi vert — et un « fond » relevé
+     * à 100 de luminance là où une vraie nuit de pleine lune en rend une quarantaine.
+     *
+     * La pleine lune se prend donc à la lunaison SUIVANTE (61 + 23 = 84). L'HEURE, elle, est
+     * libre : `debug_set_hour` ne touche qu'à `cycleOffset`, jamais au tick.
+     */
+    const CONDITIONS = [
+      { jour: 65, heure: 0, nom: 'gibbeuse · minuit' },
+      { jour: 68, heure: 0, nom: 'quartier · minuit' },
+      { jour: 71, heure: 0, nom: 'croissant · minuit' },
+      { jour: 72, heure: 0, nom: 'NOUVELLE lune · minuit' },
+      { jour: 72, heure: 21, nom: 'nouvelle · crépuscule 21 h' },
+      { jour: 72, heure: 5, nom: 'nouvelle · fin de nuit 5 h' },
+      { jour: 84, heure: 0, nom: 'PLEINE lune · minuit' },
+    ]
+    for (let i = 1; i < CONDITIONS.length; i++) {
+      if (CONDITIONS[i].jour < CONDITIONS[i - 1].jour) {
+        console.error(`!! les jours doivent MONTER (${CONDITIONS[i - 1].jour} → ${CONDITIONS[i].jour}) : un jour passé rembobine le tick et le client fige`)
+        return
+      }
+    }
+    await page.waitForFunction(() => Boolean(window.__BRAISES__?.scene?.registry?.get('worldReady')), null, { timeout: 150000 })
+    await page.waitForTimeout(1200)
+    /**
+     * ⚠ ON ATTEND LA POIGNÉE AVANT CHAQUE GESTE. `window.__BRAISES__` n'est posée qu'à la
+     * création de `WorldScene` : si le vite de dev recharge la page en cours de route (il le
+     * fait, ne serait-ce que pour ré-optimiser ses dépendances), tout `evaluate` suivant meurt
+     * sur « Cannot read properties of undefined ». Deux runs sont morts là, à des points
+     * différents. On attend donc la poignée, avec le temps qu'il faut pour un monde qui se
+     * régénère — et la boucle en dessous re-pose son décor à chaque condition, de sorte qu'un
+     * rechargement coûte du temps, pas une mesure fausse.
+     */
+    const agir = async (action, ms = 350) => {
+      await page.waitForFunction(() => Boolean(window.__BRAISES__?.scene), null, { timeout: 180000 })
+      await page.evaluate((a) => { window.__BRAISES__.scene.sendAction(a) }, action)
+      await page.waitForTimeout(ms)
+    }
+    /** Lire l'état de la page, en attendant la poignée comme `agir` (même raison). */
+    const lire = async (fn, arg) => {
+      await page.waitForFunction(() => Boolean(window.__BRAISES__?.scene), null, { timeout: 180000 })
+      return page.evaluate(fn, arg)
+    }
+    const lum = ([r, v, b]) => 0.2126 * r + 0.7152 * v + 0.0722 * b
+    await agir({ type: 'debug_god', on: true }, 200)
+
+    // ═══ POSER UN FEU — la recette éprouvée du scénario `torche` ═══
+    await agir({ type: 'debug_grant', item: 'campfire' }, 400)
+    let p0 = await lire(() => window.__BRAISES__.scene.registry.get('playerPos'))
+    for (const d of [40, 80, 120, 160]) {
+      await agir({ type: 'debug_teleport', x: p0.x + d, y: p0.y }, 500)
+      const q = await lire(() => window.__BRAISES__.scene.registry.get('playerPos'))
+      await agir({ type: 'place_campfire', tx: Math.floor(q.x) + 2, ty: Math.floor(q.y) }, 500)
+      const err = await lire(() => window.__BRAISES__.scene.registry.get('error') ?? null)
+      if (!err || !String(err.reason).includes('landmark')) break
+    }
+    p0 = await lire(() => window.__BRAISES__.scene.registry.get('playerPos'))
+    /**
+     * ⚠ UN FEU NEUF À CHAQUE CONDITION, et ce n'est pas de la prudence : entre deux relevés on
+     * SAUTE des jours et des heures, or un feu de camp brûle son bois. Le premier run l'a
+     * montré — « au feu » tombait de 99,8 à 71,7 entre minuit et 21 h, et la dernière condition
+     * n'avait plus de feu du tout : on comparait des nuits, on mesurait un feu qui s'éteint.
+     * On en pose donc un frais, sur une tuile neuve, juste avant chaque mesure.
+     */
+    const OFFSETS = [[2, 0], [0, 2], [-2, 0], [0, -2], [3, 0], [0, 3], [-3, 0], [0, -3], [3, 3], [-3, -3]]
+    let iOffset = 0
+    const poserUnFeuNeuf = async () => {
+      for (let k = 0; k < OFFSETS.length; k++) {
+        const [dx, dy] = OFFSETS[(iOffset + k) % OFFSETS.length]
+        await agir({ type: 'debug_grant', item: 'campfire' }, 300)
+        await agir({ type: 'place_campfire', tx: Math.floor(p0.x) + dx, ty: Math.floor(p0.y) + dy }, 500)
+        const ok = await lire(({ x, y, dx, dy }) => (window.__BRAISES__.scene.view?.structures ?? [])
+          .some((st) => st.type === 'fire' && st.tx === Math.floor(x) + dx && st.ty === Math.floor(y) + dy),
+          { x: p0.x, y: p0.y, dx, dy })
+        if (ok) { iOffset = (iOffset + k + 1) % OFFSETS.length; return [dx, dy] }
+      }
+      return null
+    }
+    const premier = await poserUnFeuNeuf()
+    if (premier === null) { console.error('!! aucun feu posé — rien à mesurer'); return }
+
+    /** Où le feu tombe À L'ÉCRAN, en pixels CSS (le canvas est mis à l'échelle : sans le rapport
+     *  `rect / scale`, la bande partirait à côté du foyer). */
+    const ecranDuFeu = (tx, ty) => lire(({ tx, ty }) => {
+      const sc = window.__BRAISES__.scene
+      const cam = sc.cameras.main
+      const f = (sc.view?.structures ?? []).find((st) => st.type === 'fire' && st.tx === tx && st.ty === ty)
+      if (!f) return null
+      const r = sc.scale.canvas.getBoundingClientRect()
+      const k = r.width / sc.scale.width
+      return {
+        x: r.x + (((f.tx + 0.5) * 16 - cam.worldView.x) * cam.zoom) * k,
+        y: r.y + (((f.ty + 0.5) * 16 - cam.worldView.y) * cam.zoom) * k,
+        tuilePx: 16 * cam.zoom * k,
+        rect: { x: r.x, y: r.y, w: r.width, h: r.height },
+      }
+    }, { tx, ty })
+
+    const mediane = (xs) => xs.slice().sort((a, b) => a - b)[Math.floor(xs.length / 2)]
+    const releves = []
+    for (const c of CONDITIONS) {
+      // Le décor se REPOSE à chaque tour : invulnérabilité et position du joueur relues, feu
+      // neuf. Un rechargement de page entre deux conditions coûte alors du temps, pas une
+      // mesure fausse (le joueur y renaît ailleurs, et l'ancien feu n'existe plus).
+      await agir({ type: 'debug_god', on: true }, 150)
+      p0 = await lire(() => window.__BRAISES__.scene.registry.get('playerPos'))
+      await agir({ type: 'debug_set_season_day', day: c.jour }, 700)
+      await agir({ type: 'debug_set_hour', hour: c.heure }, 1500)
+      // On attend que l'ÉCRAN porte le bon jour — jamais une durée (le HUD a une image de retard).
+      await page.waitForFunction((j) => document.body.innerText.includes(`JOUR ${j}`), c.jour, { timeout: 120000 }).catch(() => {})
+      await page.waitForTimeout(1500)
+      const ou = await poserUnFeuNeuf()
+      if (ou === null) { console.log(`  ${c.nom} : plus une tuile ne prend le feu`); continue }
+      await page.waitForTimeout(2500)
+      await lire(() => { window.__BRAISES__.scene.game.loop.sleep() })
+
+      const f = await ecranDuFeu(Math.floor(p0.x) + ou[0], Math.floor(p0.y) + ou[1])
+      if (!f) { console.log(`  ${c.nom} : feu hors écran`); await lire(() => { window.__BRAISES__.scene.game.loop.wake() }); continue }
+      const etiq = `${c.jour}-${String(c.heure).padStart(2, '0')}h`
+      // LE CADRE SERRÉ : douze tuiles de part et d'autre du feu — c'est LUI qu'on compare, pas
+      // la carte. Une planche de six plein cadre ne se lit pas.
+      const cote = Math.round(f.tuilePx * 12)
+      await page.screenshot({
+        path: `${OUT}/portee-${etiq}.png`,
+        timeout: 90000,
+        clip: {
+          x: Math.max(0, Math.round(f.x - cote)), y: Math.max(0, Math.round(f.y - cote)),
+          width: Math.min(Math.round(cote * 2), Math.round(f.rect.w)), height: Math.min(Math.round(cote * 2), Math.round(f.rect.h)),
+        },
+      })
+
+      // LA BANDE : du feu vers la DROITE, sur quatorze tuiles, neuf pixels de haut.
+      const large = Math.round(f.tuilePx * 14)
+      const haut = 9
+      const bande = await regionAt(page, {
+        x: Math.round(f.x), y: Math.round(f.y - haut / 2), width: large, height: haut,
+      })
+      await lire(() => { window.__BRAISES__.scene.game.loop.wake() })
+      if (!bande) { console.log(`  ${c.nom} : bande illisible`); continue }
+
+      const profil = []
+      for (let x = 0; x < bande.w; x++) {
+        const col = []
+        for (let y = 0; y < bande.h; y++) col.push(lum(bande.px(x, y)))
+        profil.push(mediane(col))
+      }
+      // LE FOND : la médiane du dernier tiers de la bande (au-delà de neuf tuiles, le feu ne
+      // porte plus rien) — c'est l'étalon de « on ne le voit plus ».
+      const fond = mediane(profil.slice(Math.round(f.tuilePx * 9)))
+      const auFeu = mediane(profil.slice(0, Math.round(f.tuilePx * 0.5)))
+      // LA PORTÉE LISIBLE : la dernière tuile où la bande dépasse le fond de 10 % de l'écart
+      // total. En deçà, l'œil ne distingue plus la clairière de la nuit.
+      const seuil = fond + (auFeu - fond) * 0.1
+      // ⚠ LA PREMIÈRE CHUTE DURABLE, jamais le dernier sursaut. La version d'avant retenait le
+      // DERNIER point au-dessus du seuil : un arbre éclairé par la lune à onze tuiles suffisait
+      // à rendre « portée 14 » sous la pleine lune, c'est-à-dire toute la largeur de la bande.
+      // On cherche donc le premier x sous le seuil qui le RESTE jusqu'au bout.
+      let portee = profil.length / f.tuilePx
+      for (let x = 0; x < profil.length; x++) {
+        if (profil[x] > seuil) continue
+        let tient = true
+        for (let y = x; y < profil.length; y++) if (profil[y] > seuil) { tient = false; break }
+        if (tient) { portee = x / f.tuilePx; break }
+      }
+      releves.push({ ...c, fond, auFeu, portee, profil, tuilePx: f.tuilePx })
+      console.log(`  ${c.nom.padEnd(28)} au feu ${auFeu.toFixed(1).padStart(5)} · fond ${fond.toFixed(1).padStart(5)} · écart ${(auFeu - fond).toFixed(1).padStart(5)} · portée lisible ${portee.toFixed(1)} tuiles`)
+    }
+
+    if (releves.length === 0) return
+    console.log('\n── LE PROFIL, TUILE PAR TUILE (luminance médiane) ──')
+    console.log(`  ${'condition'.padEnd(28)}` + [0, 1, 2, 3, 4, 5, 6, 7, 8, 10, 12].map((t) => `${t}t`.padStart(6)).join(''))
+    for (const r of releves) {
+      const ligne = [0, 1, 2, 3, 4, 5, 6, 7, 8, 10, 12]
+        .map((t) => (r.profil[Math.round(t * r.tuilePx)] ?? 0).toFixed(1).padStart(6))
+        .join('')
+      console.log(`  ${r.nom.padEnd(28)}${ligne}`)
+    }
+    console.log('\n  (la portée GÉOMÉTRIQUE est constante — 6 tuiles × le vacillement, `fireHoleRadius`.')
+    console.log('   ce qui change ci-dessus est ce qu’on en VOIT : le trou est creusé dans un voile')
+    console.log('   dont la profondeur suit la lune et l’heure.)')
+  },
+
+  async ['nuit-plancher'](page) {
+    await page.waitForFunction(() => Boolean(window.__BRAISES__?.scene?.registry?.get('worldReady')), null, { timeout: 150000 })
+    await page.waitForTimeout(1200)
+    const agir = async (action, ms = 350) => {
+      await page.evaluate((a) => { window.__BRAISES__.scene.sendAction(a) }, action)
+      await page.waitForTimeout(ms)
+    }
+    const lum = ([r, v, b]) => 0.2126 * r + 0.7152 * v + 0.0722 * b
+
+    await agir({ type: 'debug_god', on: true }, 200)
+    const cam = await page.evaluate(() => {
+      const c = window.__BRAISES__.scene.scale.canvas.getBoundingClientRect()
+      return { x: c.x, y: c.y, w: c.width, h: c.height }
+    })
+    // ⚠ TROIS POINTS DANS LE MONDE, ET C'EST TOUT LE PIÈGE. La première version visait les
+    // COINS de la toile : elle a relevé (150, 61, 51) identiques d'une nuit à l'autre — c'était
+    // le HUD (la barre haute, les quatre jauges), qui est en DOM PAR-DESSUS la toile et que la
+    // capture prend avec. On vise donc autour du centre, décalé du sprite du joueur.
+    const cx = cam.x + cam.w / 2
+    const cy = cam.y + cam.h / 2
+    const points = [
+      ['gauche', Math.round(cx - 220), Math.round(cy - 60)],
+      ['droite', Math.round(cx + 240), Math.round(cy + 40)],
+      ['bas', Math.round(cx - 120), Math.round(cy + 170)],
+    ]
+
+    const nuitDe = async (jour, etiquette) => {
+      await agir({ type: 'debug_set_season_day', day: jour }, 700)
+      await agir({ type: 'debug_set_hour', hour: 0 }, 1500)
+      // ⚠ ON ATTEND QUE LE MONDE AIT SUIVI, jamais une durée. La première version endormait la
+      // boucle 1,5 s après le saut de jour : le HUD disait encore « JOUR 72 » sous une pleine
+      // lune, et la capture montrait le tampon d'AVANT, un coin repeint mis à part. On attend
+      // donc que l'écran porte le bon jour, puis on laisse les tuiles finir.
+      await page.waitForFunction((j) => document.body.innerText.includes(`JOUR ${j}`), jour, { timeout: 120000 }).catch(() => {})
+      await page.waitForTimeout(4000)
+      // CE QUE LA COUCHE VAUT VRAIMENT, lu sur l'objet et pas supposé : une couche invisible,
+      // à alpha nul ou au mauvais blend rendrait exactement le même noir qu'avant.
+      const etat = await page.evaluate(() => {
+        const v = window.__BRAISES__.scene.nightVeil
+        const p = v?.plancher
+        const a = v?.air
+        return p
+          ? { c: p.fillColor, a: p.fillAlpha, b: p.blendMode, vis: p.visible, d: p.depth, air: { c: a?.fillColor, a: a?.fillAlpha, d: a?.depth } }
+          : { absent: true, cles: v ? Object.keys(v) : null }
+      })
+      console.log(`  [${etiquette}] plancher ${JSON.stringify(etat)}`)
+      await page.evaluate(() => { window.__BRAISES__.scene.game.loop.sleep() })
+      await page.screenshot({ path: `${OUT}/nuit-${etiquette}.png`, timeout: 90000 })
+      const rvb = []
+      for (const [nom, x, y] of points) {
+        const p = await pixelAt(page, x, y)
+        if (p) { rvb.push(p); console.log(`  ${etiquette.padEnd(8)} ${nom.padEnd(12)} rvb(${p.join(', ')})  lum ${lum(p).toFixed(1)}`) }
+      }
+      await page.evaluate(() => { window.__BRAISES__.scene.game.loop.wake() })
+      if (rvb.length === 0) return null
+      const moy = [0, 1, 2].map((c) => rvb.reduce((s, p) => s + p[c], 0) / rvb.length)
+      return moy
+    }
+
+    console.log('\n── LE PLANCHER DE LA NUIT (sol loin du joueur, minuit) ──')
+    const neuve = await nuitDe(72, 'neuve')
+    const pleine = await nuitDe(61, 'pleine')
+    if (!neuve || !pleine) { console.error('!! relevé impossible'); return }
+
+    console.log(`\n  nouvelle lune : rvb(${neuve.map((v) => v.toFixed(1)).join(', ')})  lum ${lum(neuve).toFixed(1)}`)
+    console.log(`  pleine lune   : rvb(${pleine.map((v) => v.toFixed(1)).join(', ')})  lum ${lum(pleine).toFixed(1)}`)
+    console.log(neuve[2] > neuve[0] * 1.4 ? '  ✓ la nuit neuve est BLEUE (le bleu domine le rouge)' : '  ✗ ELLE EST GRISE OU NOIRE — le plancher ne passe pas')
+    console.log(lum(neuve) > 6 ? '  ✓ elle n’est pas #000' : '  ✗ ELLE EST ENCORE NOIRE')
+    console.log(lum(neuve) < lum(pleine) ? '  ✓ elle reste plus sombre que la pleine lune' : '  ✗ LE PLANCHER A ALLUMÉ LA NUIT')
+  },
+
+  async ['nuit-noire'](page) {
+    await page.waitForFunction(() => Boolean(window.__BRAISES__?.scene?.registry?.get('worldReady')), null, { timeout: 150000 })
+    await page.waitForTimeout(1200)
+    const agir = async (action, ms = 350) => {
+      await page.evaluate((a) => { window.__BRAISES__.scene.sendAction(a) }, action)
+      await page.waitForTimeout(ms)
+    }
+
+    // INVULNÉRABLE : au jour 72 à minuit, le porteur MEURT pendant la sonde (la leçon du
+    // scénario `torche`), et la mort lâche tout — on mesurerait alors un défaut qui n'est
+    // pas celui qu'on éprouve.
+    await agir({ type: 'debug_god', on: true }, 200)
+
+    /**
+     * Tenir Shift+W et compter les allures que la SIM rend.
+     *
+     * ⚠ LE COMPTAGE SE FAIT DANS LA PAGE, pas depuis le pilote. Un `page.evaluate` attend
+     * derrière une frame, et sous SwiftShader une frame dure des secondes : trente allers-
+     * retours par montage, c'était des minutes de sonde et le scénario mourait sur son
+     * timeout. Un `setInterval` dans la page, lui, court sur l'horloge des timers et non sur
+     * celle du rendu — un seul aller-retour par montage, à la fin.
+     */
+    const courir = async (etiquette, ms = 2500) => {
+      const t0 = Date.now()
+      const chrono = (quoi) => console.log(`     · ${quoi.padEnd(18)} ${((Date.now() - t0) / 1000).toFixed(1)} s`)
+      await page.evaluate(() => {
+        window.__ALLURES__ = []
+        window.__ALLURE_T__ = setInterval(() => {
+          const sc = window.__BRAISES__.scene
+          const me = (sc.lastEntities ?? []).find((e) => e.id === sc.playerId)
+          window.__ALLURES__.push(me?.gait ?? '?')
+        }, 100)
+      })
+      chrono('sonde posée')
+      await page.keyboard.down('ShiftLeft')
+      await page.keyboard.down('KeyW')
+      chrono('touches tenues')
+      await page.waitForTimeout(ms)
+      await page.keyboard.up('KeyW')
+      await page.keyboard.up('ShiftLeft')
+      chrono('touches lâchées')
+      // ⚠ ON ENDORT LA BOUCLE AVANT DE LIRE. Un `page.evaluate` attend derrière une frame, et
+      // sous SwiftShader une frame de nuit peut durer des minutes : la première version du
+      // scénario est morte là, sur un relevé de quarante nombres. Endormie, la page répond
+      // tout de suite (recette de la capture plein cadre).
+      const vus = await page.evaluate(() => {
+        const sc = window.__BRAISES__.scene
+        sc.game.loop.sleep()
+        clearInterval(window.__ALLURE_T__)
+        const t = { sprint: 0, walk: 0, autre: 0 }
+        for (const a of window.__ALLURES__ ?? []) {
+          if (a === 'sprint') t.sprint++
+          else if (a === 'walk') t.walk++
+          else t.autre++
+        }
+        return t
+      })
+      chrono('relevé lu')
+      await page.evaluate(() => { window.__BRAISES__.scene.game.loop.wake() })
+      console.log(`  ${etiquette.padEnd(26)} sprint ${String(vus.sprint).padStart(2)} · walk ${String(vus.walk).padStart(2)} · autre ${vus.autre}`)
+      return vus
+    }
+
+    console.log('\n── LE PRIX DU NOIR : l’allure que la SIM accorde ──')
+    await agir({ type: 'debug_set_season_day', day: 72 }, 500)
+    await agir({ type: 'debug_set_hour', hour: 0 }, 900)
+    await agir({ type: 'set_active_slot', slot: -1 }, 200)
+    const noir = await courir('① nouvelle lune, mains nues')
+
+    // LE BANDEAU : le refus doit se DIRE, sinon la touche passe pour cassée.
+    const dit = await page.evaluate(() => document.body.innerText.includes('Trop noir'))
+
+    await agir({ type: 'debug_grant', item: 'torche_vive' }, 900)
+    const enMain = await page.evaluate(() => {
+      const sc = window.__BRAISES__.scene
+      const inv = sc.registry.get('inv') ?? []
+      return inv[sc.registry.get('activeSlot')]?.item ?? null
+    })
+    const flamme = await courir('② la même nuit, torche vive')
+
+    await agir({ type: 'set_active_slot', slot: -1 }, 200)
+    await agir({ type: 'debug_set_season_day', day: 61 }, 500)
+    await agir({ type: 'debug_set_hour', hour: 0 }, 900)
+    const pleine = await courir('③ pleine lune, mains nues')
+
+    console.log(`\n  (en main au ② : ${enMain} · bandeau « Trop noir » : ${dit ? 'vu' : 'ABSENT'})`)
+
+    // ⚠ UN RELEVÉ MAIGRE N'ACCUSE PERSONNE. Sur cette machine sans GPU, une image de nuit
+    // coûte de 100 à 300 s quand un autre navigateur tourne à côté : la fenêtre de sonde
+    // tient alors ENTIÈRE dans une seule image, l'avatar n'a pas bougé d'un pixel, et les
+    // trois compteurs sont à zéro. Rendre un ✗ là-dessus, ce serait accuser le code d'un
+    // défaut de la machine — le travers que `verdict-du-banc-accuse-a-tort` documente.
+    const maigre = (v) => v.sprint + v.walk < 5
+    if (maigre(noir) || maigre(flamme) || maigre(pleine)) {
+      console.log('  ⚠ RELEVÉ TROP MAIGRE — la page n’a pas rendu assez d’images pour juger.')
+      console.log('    (machine chargée : une image de nuit y coûte des minutes. À rejouer au calme.)')
+      return
+    }
+    console.log(noir.sprint === 0 ? '  ✓ ① le noir REFUSE la course' : '  ✗ ① LE NOIR N’A RIEN REFUSÉ')
+    console.log(flamme.sprint > 0 ? '  ✓ ② la torche rend les jambes' : '  ✗ ② LA TORCHE NE REND RIEN')
+    console.log(pleine.sprint > 0 ? '  ✓ ③ la pleine lune suffit — le cadran est mensuel' : '  ✗ ③ LA PLEINE LUNE NE SUFFIT PAS (la règle mord toutes les nuits)')
+    console.log(dit ? '  ✓ le refus se dit' : '  ✗ LE REFUS EST MUET')
+  },
+
+  async torche(page) {
+    await page.waitForFunction(() => Boolean(window.__BRAISES__?.scene?.registry?.get('worldReady')), null, { timeout: 150000 })
+    await page.waitForTimeout(1200)
+    const agir = async (action, ms = 350) => {
+      await page.evaluate((a) => { window.__BRAISES__.scene.sendAction(a) }, action)
+      await page.waitForTimeout(ms)
+    }
+    // LA NOUVELLE LUNE : `LUNE_PLEINE_JOUR` (61) + une demi-lunaison (23/2) — la nuit la plus
+    // noire du mois, la seule qui vaille comme étalon.
+    // INVULNÉRABLE, ET CE N'EST PAS UN CONFORT : au jour 72 (acte III) à minuit dans un bois,
+    // le porteur MEURT pendant la sonde — et la mort « lâche tout » (`combat.ts` R12, activeSlot
+    // à −1). Le premier run l'a montré : inventaire vide, verdict ③ au rouge, pour un défaut qui
+    // n'était pas celui qu'on mesurait.
+    await agir({ type: 'debug_god', on: true }, 200)
+    await agir({ type: 'debug_set_season_day', day: 72 }, 500)
+    await agir({ type: 'debug_set_hour', hour: 0 }, 700)
+    await canopeePleine(page)
+    await page.waitForTimeout(900)
+
+    const cam = await page.evaluate(() => {
+      const s = window.__BRAISES__.scene
+      const c = s.scale.canvas.getBoundingClientRect()
+      return { x: c.x, y: c.y, w: c.width, h: c.height }
+    })
+    // Sous les PIEDS : le joueur est au centre de la caméra. Un poil sous lui, pour viser le
+    // SOL et non son sprite (c'est la terre qu'on veut voir s'éclairer, pas son manteau).
+    const pieds = { x: Math.round(cam.x + cam.w / 2), y: Math.round(cam.y + cam.h / 2 + 26) }
+    // AU BORD : le coin haut-gauche, aussi loin de la torche que l'écran le permet.
+    const bord = { x: Math.round(cam.x + 40), y: Math.round(cam.y + 40) }
+    const lum = ([r, v, b]) => 0.2126 * r + 0.7152 * v + 0.0722 * b
+
+    const releve = async (etiquette) => {
+      await page.waitForTimeout(700)
+      const p = await pixelAt(page, pieds.x, pieds.y)
+      const b = await pixelAt(page, bord.x, bord.y)
+      await page.screenshot({ path: `${OUT}/torche-${etiquette}.png`, timeout: 90000 })
+      if (!p || !b) return null
+      console.log(`  ${etiquette.padEnd(8)} pieds rvb(${p.join(',')}) lum ${lum(p).toFixed(1)}  ·  bord rvb(${b.join(',')}) lum ${lum(b).toFixed(1)}`)
+      return { pieds: lum(p), bord: lum(b) }
+    }
+
+    console.log('\n── LA TORCHE À LA NOUVELLE LUNE, MINUIT ──')
+    const noir = await releve('sans')
+    await agir({ type: 'debug_grant', item: 'torche_vive' }, 900)
+    const tenue = await page.evaluate(() => {
+      const inv = window.__BRAISES__.scene.registry.get('inv') ?? []
+      const a = window.__BRAISES__.scene.registry.get('activeSlot')
+      return inv[a]?.item ?? null
+    })
+    console.log(`  (en main : ${tenue})`)
+    const feu = await releve('avec')
+    if (!noir || !feu || tenue !== 'torche_vive') { console.error('!! relevé impossible'); return }
+
+    const gainPieds = (feu.pieds - noir.pieds) / Math.max(1, noir.pieds)
+    const gainBord = (feu.bord - noir.bord) / Math.max(1, noir.bord)
+    console.log(`\n  ① sous les pieds : ${(gainPieds * 100).toFixed(0)} %  (attendu ≥ +25 %)`)
+    console.log(`  ② au bord        : ${(gainBord * 100).toFixed(0)} %  (attendu ≤ +10 %)`)
+    console.log(gainPieds >= 0.25 ? '  ✓ elle éclaire' : '  ✗ ELLE N’ÉCLAIRE PAS le sol sous le porteur')
+    console.log(gainBord <= 0.10 ? '  ✓ la nuit tient au loin' : '  ✗ ELLE EFFACE LA NUIT jusqu’au bord de l’écran')
+
+    // ═══ ③ LE CHEMIN DU JOUEUR : poser un feu, tenir une torche ÉTEINTE, CLIQUER dessus ═══
+    //
+    // Le relevé ci-dessus est parti d'un `debug_grant torche_vive` : il prouve la LUMIÈRE, pas
+    // le GESTE. Or c'est le geste qui peut se perdre en silence — `clickToAction` est une
+    // cascade, et une branche mal placée y tombe jusqu'au coup de poing (le défaut qu'`aim.ts`
+    // documente pour la clôture : « deux pièces livrées, mortes en jeu »). On rejoue donc le
+    // vrai chemin : le vrai résolveur, la vraie souris, le vrai foyer.
+    await agir({ type: 'set_active_slot', slot: -1 }, 200)
+    // LE FEU DE CAMP EST UN OBJET QU'ON TIENT (`place_campfire` : « le feu de camp QUE JE
+    // TIENS ») — pas dix bûches au sac. Le premier run posait du bois et croyait poser un feu.
+    await agir({ type: 'debug_grant', item: 'campfire' }, 400)
+    // SORTIR DU LANDMARK D'ABORD : le spawn tombe dans un POI (« Le Bois Noir »), et un
+    // landmark est INCONSTRUCTIBLE (`village.ts`). Le premier run essayait huit tuiles autour
+    // du spawn et se faisait refuser huit fois pour cette seule raison — un ✗ qui accusait le
+    // code neuf pour une règle du monde. On s'écarte, puis on cherche.
+    let p0 = await page.evaluate(() => window.__BRAISES__.scene.registry.get('playerPos'))
+    for (const d of [40, 80, 120, 160]) {
+      await agir({ type: 'debug_teleport', x: p0.x + d, y: p0.y }, 500)
+      const dansZone = await page.evaluate(() => window.__BRAISES__.scene.registry.get('lieuCourant') ?? null)
+      const q = await page.evaluate(() => window.__BRAISES__.scene.registry.get('playerPos'))
+      await agir({ type: 'place_campfire', tx: Math.floor(q.x) + 2, ty: Math.floor(q.y) }, 500)
+      const err = await page.evaluate(() => window.__BRAISES__.scene.registry.get('error') ?? null)
+      if (!err || !String(err.reason).includes('landmark')) break
+      console.log(`  (à +${d} : encore dans un landmark${dansZone ? ` (${dansZone})` : ''})`)
+    }
+    p0 = await page.evaluate(() => window.__BRAISES__.scene.registry.get('playerPos'))
+    await canopeePleine(page)
+    // FONDER AU BORD, jamais sous ses pieds : une structure pleine-tuile emmure un acteur
+    // centré dessus (mémoire `feu-piege-centre-place-component`).
+    // ON ESSAIE PLUSIEURS TUILES, et on LIT le refus. Une seule tentative dit « aucun feu posé »
+    // sans jamais dire POURQUOI (premier run : le sous-bois refuse — arbres et terrain).
+    let pose = null
+    for (const [dx, dy] of [[2, 0], [-2, 0], [0, 2], [0, -2], [2, 2], [-2, -2], [3, 0], [0, 3]]) {
+      await agir({ type: 'place_campfire', tx: Math.floor(p0.x) + dx, ty: Math.floor(p0.y) + dy }, 500)
+      const err = await page.evaluate(() => window.__BRAISES__.scene.registry.get('error') ?? null)
+      const ok = await page.evaluate(({ x, y }) => (window.__BRAISES__.scene.view?.structures ?? [])
+        .some((st) => st.type === 'fire' && (st.tx - x) ** 2 + (st.ty - y) ** 2 < 100), p0)
+      if (ok) { pose = [dx, dy]; break }
+      const main = await page.evaluate(() => {
+        const sc = window.__BRAISES__.scene
+        return (sc.registry.get('inv') ?? [])[sc.registry.get('activeSlot')]?.item ?? null
+      })
+      console.log(`  (pose en +${dx},${dy} refusée : ${err?.reason ?? '?'} · en main : ${main})`)
+    }
+    if (pose === null) console.log('  (aucune tuile ne prend le feu — le sous-bois est fermé)')
+    // LE FEU LE PLUS PROCHE, pas « le premier de la liste » : le snapshot en porte d'autres, à
+    // des centaines de tuiles (premier run : un feu à (80, 720) pour un joueur à (800, 432) —
+    // le clic tombait sur de l'herbe et le verdict accusait le code neuf).
+    const feuPose = await page.evaluate(({ x, y }) => {
+      const feux = (window.__BRAISES__.scene.view?.structures ?? []).filter((st) => st.type === 'fire')
+      let best = null
+      for (const f of feux) {
+        const d = (f.tx - x) ** 2 + (f.ty - y) ** 2
+        if (best === null || d < best.d) best = { ...f, d }
+      }
+      return best && best.d < 100 ? best : null
+    }, p0)
+    if (!feuPose) { console.error('  ✗ aucun feu de camp posé à portée — le geste ne peut pas être éprouvé'); return }
+    console.log(`  (feu posé en (${feuPose.tx}, ${feuPose.ty}) · joueur en (${p0.x.toFixed(1)}, ${p0.y.toFixed(1)}))`)
+    await agir({ type: 'debug_grant', item: 'torche' }, 500)
+    const avantClic = await page.evaluate(() => {
+      const inv = window.__BRAISES__.scene.registry.get('inv') ?? []
+      return inv[window.__BRAISES__.scene.registry.get('activeSlot')]?.item ?? null
+    })
+    // ON VIDE LE LOQUET D'ERREUR AVANT LE CLIC : il est PERSISTANT (`publishError` écrit un
+    // « loquet de diagnostic »), et le run précédent a lu le refus d'un `place_campfire`
+    // d'il y a dix secondes en croyant lire celui du clic.
+    // SE COLLER AU FEU : le geste se prend à PORTÉE DE BRAS (1,5 tuile, `INTERACT_RANGE` —
+    // la même que `feed_fire`). Le premier run se tenait à 1,5000003 : le clic ne faisait rien,
+    // et le verdict accusait le code neuf pour trois millionièmes de tuile.
+    await agir({ type: 'debug_teleport', x: feuPose.tx - 0.5, y: feuPose.ty + 0.5 }, 600)
+    await page.evaluate(() => window.__BRAISES__.scene.registry.set('error', null))
+    // ⚠ LA CAMÉRA GLISSE ENCORE APRÈS UNE TÉLÉPORTATION. Un pixel calculé « juste après » le
+    // saut désignait la tuile d'à côté (843 au lieu de 842, une tuile pleine = ~36 px CSS), et
+    // le clic tombait dans l'herbe — trois runs de verdict rouge pour un défaut de montage.
+    // On ne calcule donc pas UNE fois : on recalcule jusqu'à ce que le pixel visé DÉSIGNE
+    // vraiment le feu (mémoire `hud-une-image-de-retard` : attendre la concordance, jamais une
+    // durée). Aller-retour tuile → CSS → tuile dans le MÊME `evaluate`, sur la MÊME caméra.
+    let cible = null
+    for (let essai = 0; essai < 12 && cible === null; essai++) {
+      await page.waitForTimeout(300)
+      cible = await page.evaluate(({ tx, ty }) => {
+        const sc = window.__BRAISES__.scene
+        const c = sc.cameras.main
+        const sm = sc.game.scale
+        const b = sm.canvasBounds
+        const jeu = { x: ((tx + 0.5) * 16 - c.worldView.x) * c.zoom, y: ((ty + 0.5) * 16 - c.worldView.y) * c.zoom }
+        // La souris CDP parle en pixels CSS (mémoire `smoke-clic-coord-jeu-vs-css`).
+        const css = { x: b.left + jeu.x / sm.displayScale.x, y: b.top + jeu.y / sm.displayScale.y }
+        // …et on REFAIT le chemin inverse pour vérifier qu'on désigne bien la bonne tuile.
+        const jx = (css.x - b.left) * sm.displayScale.x
+        const jy = (css.y - b.top) * sm.displayScale.y
+        const vx = Math.floor((c.worldView.x + jx / c.zoom) / 16)
+        const vy = Math.floor((c.worldView.y + jy / c.zoom) / 16)
+        return vx === tx && vy === ty ? css : null
+      }, { tx: feuPose.tx, ty: feuPose.ty })
+    }
+    if (cible === null) { console.error('  ✗ la caméra ne se stabilise pas sur le feu — clic impossible'); return }
+    await page.mouse.move(cible.x, cible.y)
+    await page.waitForTimeout(150)
+    await page.mouse.down()
+    await page.mouse.up()
+    await page.waitForTimeout(800)
+    const apresClic = await page.evaluate(() => {
+      const inv = window.__BRAISES__.scene.registry.get('inv') ?? []
+      return inv[window.__BRAISES__.scene.registry.get('activeSlot')]?.item ?? null
+    })
+    // Le refus, s'il y en a un : un clic MUET (aucune action émise) et un clic REFUSÉ sont deux
+    // défauts différents, et sans cette ligne ils rendent le même verdict rouge.
+    const refus = await page.evaluate(() => window.__BRAISES__.scene.registry.get('error') ?? null)
+    if (refus) console.log(`  (la sim refuse : « ${refus.reason} »)`)
+    await page.screenshot({ path: `${OUT}/torche-au-feu.png`, timeout: 90000 })
+    console.log(`\n  ③ le geste : ${avantClic} → (clic sur le feu) → ${apresClic}`)
+    console.log(apresClic === 'torche_vive'
+      ? '  ✓ la torche prend le feu au foyer'
+      : `  ✗ LE CLIC N’ALLUME PAS (la case tient toujours « ${apresClic} »)`)
+
+  },
+
+
+  /**
+   * LA CIME AU CHARGEMENT — l'arbre est-il tout de suite dans SA cime ? (2026-08-25)
+   *
+   * Le défaut, MESURÉ ici avant d'être corrigé : `view.lighting` se posait en BAS d'`update`,
+   * après `renderNodes`. La première image qui portait des nœuds les dessinait donc sur l'art
+   * PEINT (`nd-<slug>_crown`, les rects d'avant les grappes), et l'image suivante passait au
+   * `_lit` — un changement de clé à état constant, c'est-à-dire, pour `FonduDeCime`, un virage
+   * de SAISON : trente secondes de vieux houppier en train de s'effacer par-dessus le neuf,
+   * sur les arbres visibles au spawn. Six textures peintes encore à l'écran 1,5 s après le
+   * chargement, sur cette sonde même.
+   *
+   * Elle SAIT échouer : les deux verdicts du bas rougissent dès qu'on remet la pose de
+   * l'éclairage après le rendu (vérifié en cassant le correctif exprès).
+   */
+  async ['houppier-charge'](page) {
+    await page.waitForFunction(() => Boolean(window.__BRAISES__?.scene?.registry?.get('worldReady')), null, { timeout: 150000 })
+    const lu = await page.evaluate(() => {
+      const v = window.__BRAISES__.scene.view
+      const suivis = v.fondu && v.fondu.suivis ? [...v.fondu.suivis.values()] : null
+      const vus = (pool) => [...new Set((pool ?? []).filter((c) => c.visible).map((c) => c.texture.key))]
+      return {
+        lighting: v.lighting,
+        suivisN: suivis ? suivis.length : -1,
+        clesPeintes: suivis ? [...new Set(suivis.filter((x) => !x.cle.includes('_lit')).map((x) => x.cle))] : ['?'],
+        fondusPeints: suivis ? [...new Set(suivis.filter((x) => x.precedente && !x.precedente.includes('_lit')).map((x) => x.precedente))] : ['?'],
+        cimes: vus(v.crownPool),
+        sortantes: vus(v.crownFadePool),
+      }
+    })
+    const dit = (ok, txt) => (ok ? console.log(`\u2713 ${txt}`) : console.error(`!! ${txt}`))
+    // LA SONDE PROUVE SA PRÉMISSE : sans cimes suivies ni cimes à l'écran, les verdicts du bas
+    // seraient verts pour rien (mémoire « une sonde qui ne peut pas échouer »).
+    dit(lu.suivisN > 0, `des cimes sont suivies (${lu.suivisN})`)
+    dit(lu.cimes.length > 0, `des cimes sont à l'écran (${lu.cimes.length} clés)`)
+    dit(lu.lighting === true, `l'éclairage est posé (${lu.lighting})`)
+    dit(lu.clesPeintes.length === 0, `aucune cime suivie sur l'art peint : ${JSON.stringify(lu.clesPeintes)}`)
+    dit(lu.fondusPeints.length === 0, `aucun fondu ne part de l'art peint : ${JSON.stringify(lu.fondusPeints)}`)
+    dit(lu.sortantes.length === 0, `aucune cime SORTANTE au chargement : ${JSON.stringify(lu.sortantes)}`)
+  },
   /**
    * L'ENCYCLOPÉDIE (spec `encyclopedie.md`) — le rail, les huit sections, la fiche au survol.
    *
    * Il COUPE UN ARBRE pour de vrai : le carnet n'a pas de porte dérobée (aucun `debug_` ne le
    * remplit), donc la seule façon de voir une case parler est de faire le geste. Le reste des
    * sections se regarde MUET — c'est l'état du jeu au premier quart d'heure, et c'est
-   * exactement ce que la décision du 2026-08-24 promet.
+   * exactement ce que la décision du 2026-08-24 promet. *(Pour regarder le livre OUVERT — la
+   * relecture des fiches —, c'est le scénario `encyclopedie-tout`, et il exige `--dev`.)*
    *
    * Deux pièges de capture, tous deux payés en runs perdus (mémoire
    * `capture-ecran-plein-hud-dom`) : `page.screenshot` expire tant que Phaser tourne (on
@@ -391,7 +2024,7 @@ const SCENARIOS = {
     await page.waitForTimeout(700)
 
     const rail = await page.evaluate(() =>
-      Array.from(document.querySelectorAll('.hch-enc-rl')).map((el) => `${el.dataset.section} ${el.querySelector('em').textContent}`),
+      Array.from(document.querySelectorAll('.hch-enc-rl[data-section]')).map((el) => `${el.dataset.section} ${el.querySelector('em').textContent}`),
     )
     console.log('rail :', rail.join(' · '))
 
@@ -468,6 +2101,164 @@ const SCENARIOS = {
       const ok = e.w * ECHELLE <= 112 && e.h * ECHELLE <= 112
       console.log(`  ${ok ? '✓' : '✗'} ${e.k.padEnd(14)} ${e.w}×${e.h} → ×${ECHELLE} = ${e.w * ECHELLE}×${e.h * ECHELLE} (cadre 112)`)
     }
+    console.log(`\ncaptures dans ${OUT}`)
+  },
+
+  /**
+   * L'ENCYCLOPÉDIE DÉVERROUILLÉE (2026-08-25) — les huit sections OUVERTES, pour relire les
+   * fiches sans avoir joué la saison qui les débloque.
+   *
+   * Le scénario `encyclopedie` regarde le jeu tel qu'on le joue : une case parle, les autres
+   * se taisent. Celui-ci regarde l'autre état — l'interrupteur « TOUT RÉVÉLER » du pied du
+   * rail, armé en DEV seulement, qui substitue un carnet COMPLET au carnet de l'avatar.
+   *
+   * CE QUI LE FERAIT ROUGIR, et c'est le point : une seule case muette après le clic (le
+   * déverrouillage serait PARTIEL, et un déverrouillage partiel est silencieux à l'œil), ou
+   * un rail qui ne dit pas `n/n` sur les huit sections. La sonde compte `.hch-bc.is-vide`.
+   *
+   * Exige `--dev` : l'interrupteur n'existe pas dans un build de production (`import.meta.env.DEV`).
+   */
+  async ['encyclopedie-tout'](page) {
+    await page.waitForFunction(() => Boolean(window.__BRAISES__?.scene?.registry?.get('worldReady')), null, { timeout: 150000 })
+    await page.waitForTimeout(1500)
+
+    await page.mouse.click(640, 400)
+    await page.waitForTimeout(300)
+    for (let essai = 0; essai < 3; essai++) {
+      await page.keyboard.press('Tab')
+      await page.waitForTimeout(600)
+      if (await page.evaluate(() => window.__BRAISES__.scene.registry.get('characterMenuOpen'))) break
+    }
+    await page.evaluate(() => document.querySelector('.hch-tab[data-tab="encyclopedie"]')?.click())
+    await page.waitForTimeout(700)
+
+    // ── L'INTERRUPTEUR : il doit EXISTER (DEV), et son clic doit ouvrir le livre ──
+    const present = await page.evaluate(() => Boolean(document.querySelector('.hch-enc-dev')))
+    console.log(`${present ? '✓' : '✗'} l'interrupteur « TOUT RÉVÉLER » est au pied du rail (mode debug armé ?)`)
+    if (!present) { console.log('(sans --dev, il est éliminé du bundle — relancer avec --dev)'); return }
+
+    const railDe = () => page.evaluate(() =>
+      Array.from(document.querySelectorAll('.hch-enc-rl[data-section]')).map((el) => ({
+        s: el.dataset.section, c: el.querySelector('em').textContent,
+      })),
+    )
+    const avant = (await railDe()).map((e) => `${e.s} ${e.c}`).join(' · ')
+    console.log('avant :', avant)
+
+    // ── LE RELEVÉ DU JOUEUR, AVANT TOUT DÉVERROUILLAGE ──
+    // La saison en cours doit porter LE PLUS FROID et LE PLUS CHAUD que CET avatar a endurés
+    // (2026-08-25). C'est la chaîne entière qu'on éprouve ici — `baselineTemperature` relevée
+    // dans le carnet de la sim, le carnet dans le snapshot, le snapshot dans la carte — et
+    // rien d'autre ne le ferait : le carnet complet du levier, lui, se fabrique ses degrés.
+    await page.evaluate(() =>
+      Array.from(document.querySelectorAll('.hch-enc-rl[data-section]')).find((x) => x.dataset.section === 'saisons')?.click(),
+    )
+    await page.waitForTimeout(600)
+    const releve = await page.evaluate(() => {
+      const c = document.querySelector('.hch-sc:not(.is-vide)')
+      if (c === null) return null
+      return Array.from(c.querySelectorAll('.hch-sc-t span')).map(
+        (sp) => `${sp.querySelector('i')?.textContent} ${sp.querySelector('b')?.textContent}`,
+      )
+    })
+    const lu = releve !== null && releve.length === 2 && releve.every((x) => /-?\d+ °C$/.test(x))
+    console.log(`${lu ? '✓' : '✗'} la saison en cours porte le relevé de CE joueur : ${JSON.stringify(releve)}`)
+    await page.evaluate(() => document.querySelector('.hch-enc-dev').click())
+    await page.waitForTimeout(800)
+    const apres = await railDe()
+    console.log('après :', apres.map((e) => `${e.s} ${e.c}`).join(' · '))
+    const pleines = apres.filter((e) => {
+      const [su, tot] = e.c.split('/').map((n) => Number(n))
+      return su === tot && tot > 0
+    })
+    console.log(`${pleines.length === apres.length ? '✓' : '✗'} les ${apres.length} sections sont pleines (${pleines.length}/${apres.length})`)
+
+    const capture = async (nom) => {
+      await page.evaluate(() => window.__BRAISES__.scene.game.loop.sleep())
+      await page.waitForTimeout(250)
+      await page.screenshot({ timeout: 90000, path: `${OUT}/encyclopedie-tout-${nom}.png` })
+      await page.evaluate(() => window.__BRAISES__.scene.game.loop.wake())
+      await page.waitForTimeout(250)
+    }
+
+    // ── LES HUIT SECTIONS, une par une : aucune case muette nulle part ──
+    let muettesEnTout = 0
+    const debordantes = []
+    for (const section of ['ressources', 'nourriture', 'outils', 'armes', 'poissons', 'animaux', 'monstres', 'saisons']) {
+      await page.evaluate((s) => {
+        Array.from(document.querySelectorAll('.hch-enc-rl[data-section]')).find((x) => x.dataset.section === s)?.click()
+      }, section)
+      await page.waitForTimeout(600)
+      const n = await page.evaluate(() => ({
+        cases: document.querySelectorAll('.hch-bc').length,
+        muettes: document.querySelectorAll('.hch-bc.is-vide').length,
+        cartes: document.querySelectorAll('.hch-sc').length,
+        // La HAUTEUR des cases : c'est elle qui décide si la fiche tient sous la case (une
+        // section d'une seule rangée étirait la sienne sur tout le panneau).
+        hauteurs: [...new Set(Array.from(document.querySelectorAll('.hch-bc')).map((c) => Math.round(c.getBoundingClientRect().height)))],
+      }))
+      muettesEnTout += n.muettes
+      // ── ET LA FICHE TIENT-ELLE DANS LE CADRE ? ──
+      // Une fiche déverrouillée mais COUPÉE par le bord ne se relit pas : le levier rendrait
+      // la case atteignable et illisible. On n'a pas besoin de survoler pour le savoir — la
+      // fiche est dans le DOM en permanence (opacité 0) et sa place est POSÉE AU CSS
+      // (`fl-x`/`fl-y` à la construction) : on mesure les rects, tous, d'un coup.
+      const deborde = await page.evaluate(() =>
+        Array.from(document.querySelectorAll('.hch-bc:not(.is-vide), .hch-sc'))
+          .map((c) => {
+            const f = c.querySelector('.hch-fi')
+            if (f === null) return null
+            const r = f.getBoundingClientRect()
+            const hors = [
+              r.x < 0 ? 'gauche' : null,
+              r.y < 0 ? 'haut' : null,
+              r.x + r.width > window.innerWidth ? 'droite' : null,
+              r.y + r.height > window.innerHeight ? 'bas' : null,
+            ].filter(Boolean)
+            return hors.length === 0 ? null : { nom: c.querySelector('.hch-bc-nom, .hch-sc-nom')?.textContent ?? '?', hors: hors.join('+'), bas: Math.round(r.y + r.height) }
+          })
+          .filter(Boolean),
+      )
+      debordantes.push(...deborde.map((d) => `${section}/${d.nom} (${d.hors}, bas ${d.bas})`))
+      console.log(`  ${n.muettes === 0 && deborde.length === 0 ? '✓' : '✗'} ${section.padEnd(11)} ${JSON.stringify(n)} · fiches hors cadre : ${deborde.length}`)
+      await capture(section)
+    }
+    console.log(`${muettesEnTout === 0 ? '✓' : '✗'} aucune case muette dans tout le livre (${muettesEnTout})`)
+    console.log(`${debordantes.length === 0 ? '✓' : '✗'} toutes les fiches tiennent dans le cadre (${debordantes.length} hors cadre)`)
+    for (const d of debordantes) console.log(`    · ${d}`)
+
+    // ── UNE FICHE, sur une case qui n'aurait JAMAIS parlé sans le levier (un monstre) ──
+    await page.evaluate(() => {
+      Array.from(document.querySelectorAll('.hch-enc-rl[data-section]')).find((x) => x.dataset.section === 'monstres')?.click()
+    })
+    await page.waitForTimeout(600)
+    const centre = await page.evaluate(() => {
+      const el = document.querySelector('.hch-bc:not(.is-vide)')
+      if (!el) return null
+      const r = el.getBoundingClientRect()
+      return { x: r.x + r.width / 2, y: r.y + r.height / 2 }
+    })
+    if (centre) {
+      await page.mouse.move(centre.x, centre.y)
+      await page.waitForTimeout(600)
+      const fiche = await page.evaluate(() => {
+        const f = document.querySelector('.hch-bc:not(.is-vide) .hch-fi')
+        return f === null ? null : { nom: f.querySelector('.hch-fi-nom')?.textContent, lignes: f.querySelectorAll('.hch-fi-r').length }
+      })
+      console.log(`${fiche && fiche.lignes > 0 ? '✓' : '✗'} la fiche du Cendreux s'ouvre (${fiche?.nom}, ${fiche?.lignes} lignes)`)
+      await capture('fiche-cendreux')
+      await page.mouse.move(5, 5)
+    }
+
+    // ── ET IL S'ÉTEINT : le carnet de l'avatar est intact ──
+    await page.evaluate(() => document.querySelector('.hch-enc-dev').click())
+    await page.waitForTimeout(800)
+    // ⚠ On NE juge PAS « zéro connue » : un monde rouvert peut porter un vrai carnet, et le ✗
+    //    accuserait à tort. L'invariant qui tient dans tous les cas, c'est que le rail RETROUVE
+    //    exactement les comptes d'avant le levier — donc que rien n'a été écrit nulle part.
+    const eteint = (await railDe()).map((e) => `${e.s} ${e.c}`).join(' · ')
+    console.log(`${eteint === avant ? '✓' : '✗'} éteint, le rail retrouve ses comptes d'avant (${eteint})`)
+
     console.log(`\ncaptures dans ${OUT}`)
   },
 
@@ -1755,6 +3546,12 @@ const SCENARIOS = {
     console.log(`A5 — remous : immobile ${wImmobile} ${wImmobile === 0 ? '✓' : '✗'} · en marche (max) ${wMarche} ${wMarche >= 1 ? '✓' : '✗'} · 1,1 s après l'arrêt ${wArret} ${wArret === 0 ? '✓' : '✗'}`)
 
     // ── A6 : la brume, aux quatre heures qui la racontent ──
+    // ⚠ ELLE EST CONDITIONNELLE DEPUIS LE 2026-08-25 (écart jour/nuit × calme d'ici) et le monde
+    //   OUVRE sous son plancher : sans ce saut au jour 91 — mesuré sans front et à 12,1 °C
+    //   d'écart, cf. le scénario `maree` — A6 photographierait un matin sec et déclarerait la
+    //   brume « invisible » alors qu'elle fait exactement ce qu'on lui demande.
+    await page.evaluate(() => window.__BRAISES__.scene.sendAction({ type: 'debug_set_season_day', day: 91 }))
+    await page.waitForTimeout(1200)
     for (const [h, nom] of [[5.5, '0530'], [6, '0600'], [8, '0800'], [12, '1200']]) {
       await heure(h)
       await page.waitForTimeout(800)
@@ -1807,6 +3604,13 @@ const SCENARIOS = {
     await page.evaluate(({ px, py }) => window.__BRAISES__.scene.sendAction({ type: 'debug_teleport', x: px, y: py }), { px: gue.x, py: gue.y })
     await page.waitForTimeout(1400)
 
+    const jour = async (d) => {
+      await page.evaluate((dd) => window.__BRAISES__.scene.sendAction({ type: 'debug_set_season_day', day: dd }), d)
+      await page.waitForTimeout(900)
+      const lu = await page.evaluate(() => window.__BRAISES__.scene.lastTime?.seasonDay ?? -1)
+      if (lu !== d) console.error(`!! set_season_day(${d}) n'a pas pris (jour lu : ${lu})`)
+    }
+
     const heure = async (h) => {
       for (let essai = 0; essai < 4; essai++) {
         await page.evaluate((hh) => window.__BRAISES__.scene.sendAction({ type: 'debug_set_hour', hour: hh }), h)
@@ -1816,6 +3620,54 @@ const SCENARIOS = {
       }
       console.error(`!! set_hour(${h}) n'a jamais pris`)
     }
+
+    // ══ LE TÉMOIN SEC VIENT D'ABORD, ET C'EST L'ÉTAT PAR DÉFAUT DU JEU ══
+    //
+    // La brume est CONDITIONNELLE depuis le 2026-08-25 : écart jour/nuit × calme d'ici. Le monde
+    // ouvre au jour 61 (`JOUR_DE_DEPART`), dont l'écart vaut 8,1 °C — SOUS le plancher
+    // `BRUME_ECART_MUET`. À l'ouverture, donc, il n'y a PAS de brume, et c'est le meilleur témoin
+    // négatif qui soit : on ne le fabrique pas, on le trouve.
+    //
+    // ⚠ ON NE REVIENT PAS EN ARRIÈRE DANS LE CALENDRIER : `debug_set_season_day` pose le tick, et
+    //   le RECULER de trente jours fige la Veillée (relevé : le jour lu restait 91 et l'heure ne
+    //   prenait plus). Le témoin passe donc AVANT le saut, jamais après.
+    await heure(6.2)
+    await page.waitForTimeout(1200)
+    const sec = await page.evaluate(() => {
+      const sc = window.__BRAISES__.scene
+      const ly = sc.morningMist?.layer
+      return {
+        jour: sc.lastTime?.seasonDay ?? -1,
+        front: ly ? +ly.front.toFixed(2) : null,
+        part: sc.morningMist ? +sc.morningMist.part.toFixed(3) : null,
+        visible: ly?.shader?.visible ?? null,
+        bandes: ly ? (ly.bandesVives ?? -1) : null,
+        bancs: sc.mistBanks?.bancs?.length ?? -1,
+      }
+    })
+    // ⚠ LA BOUCLE S'ENDORT AVANT LA CAPTURE. Sous swiftshader, une image du monde coûte des
+    //   centaines de ms ; sur une machine chargée (une seconde session lance ses propres lots),
+    //   `page.screenshot` attend une image qui ne vient pas et rend un TimeoutError de 30 s —
+    //   le scénario meurt sur son instrument, pas sur son sujet. Endormie, la toile est stable
+    //   et la capture est immédiate.
+    await page.evaluate(() => window.__BRAISES__.scene.game.loop.sleep())
+    await page.screenshot({ path: `${OUT}/maree-sec-ouverture.png` })
+    await page.evaluate(() => window.__BRAISES__.scene.game.loop.wake())
+    console.log(`maree — témoin SEC (ouverture, 6h12) : ${JSON.stringify(sec)}`)
+    // La MARÉE, elle, doit être PLEINE : c'est bien la CONDITION qui éteint la brume, et non une
+    // heure ratée. Sans cette assertion, le témoin passerait au vert pour la mauvaise raison.
+    if ((sec.front ?? 0) < 6) console.error(`!! le témoin sec n'est pas à pleine marée (front ${sec.front}) — heure ratée, pas condition`)
+    if ((sec.part ?? 1) > 0.001) console.error(`!! l'ouverture rend de la brume (part ${sec.part}) — la condition ne mord pas`)
+    if (sec.visible) console.error(`!! la nappe est encore visible à l'ouverture`)
+    if ((sec.bandes ?? 0) > 0) console.error(`!! ${sec.bandes} bande(s) encore posées à l'ouverture`)
+    // LES BANCS SONT LA MÊME BRUME (R15) : sans cette ligne, on gaterait la moitié du phénomène
+    // et l'absence de la nappe se lirait comme un bug à côté des bancs restés sur l'eau.
+    if ((sec.bancs ?? 0) > 0) console.error(`!! ${sec.bancs} banc(s) voyageurs à l'ouverture — la condition ne les gate pas`)
+
+    // ══ ET MAINTENANT LE JOUR QUI LA PORTE ══
+    // Le jour 91 est choisi MESURÉ : son cycle n'élit AUCUN front (donc rien ne souffle au-dessus
+    // de l'ambiance) et son écart jour/nuit vaut 12,1 °C — au-delà de `BRUME_ECART_PLEIN`.
+    await jour(91)
 
     // Le front ATTENDU à chaque heure sondée (copie de frontDeBrume — 9 tuiles au max) :
     const attendu = { 5: 3, 6.2: 9, 7.6: 4.76, 12: 0 }
@@ -1831,11 +3683,25 @@ const SCENARIOS = {
           h: +(sc.lastTime?.hourOfCycle ?? -1).toFixed(2),
           front: ly ? +ly.front.toFixed(2) : null,
           densite: ly ? +ly.density.toFixed(3) : null,
+          // LA CONDITION du matin (écart jour/nuit × calme) — `null` = sonde débranchée.
+          part: sc.morningMist ? +sc.morningMist.part.toFixed(3) : null,
+          // Le quad de TÊTE : en mode nappe c'est la première bande de la pile, et sa
+          // visibilité est celle de toute la pile.
           visible: ly?.shader?.visible ?? null,
+          // La PILE : combien de bandes sont posées. 0 hors brume, ~20 à pleine marée — c'est
+          // ce qui prouve que la nappe a une ÉPAISSEUR et n'est plus un film qui coiffe.
+          bandes: ly ? (ly.bandesVives ?? -1) : null,
           bancs: sc.mistBanks?.bancs?.length ?? -1,
         }
       })
+      // LA BOUCLE S'ENDORT AVANT LA CAPTURE — même raison qu'au témoin sec, et depuis la NAPPE
+      // c'est devenu nécessaire ici aussi : la pile pose ~23 quads de brume qui se chevauchent
+      // de moitié, soit deux plein-écrans de fragments là où le film n'en coûtait qu'un. Sous
+      // swiftshader (VM sans GPU) l'image passe alors au-dessus des 30 s de `page.screenshot`,
+      // et le scénario meurt sur son instrument. Endormie, la toile est stable et immédiate.
+      await page.evaluate(() => window.__BRAISES__.scene.game.loop.sleep())
       await page.screenshot({ path: `${OUT}/maree-${nom}.png` })
+      await page.evaluate(() => window.__BRAISES__.scene.game.loop.wake())
       const cible = attendu[h]
       // L'heure du jeu AVANCE entre le set_hour et la sonde : on juge le front CONTRE l'heure
       // LUE, à la tolérance de la pente la plus raide (6 tuiles/h de jeu × la dérive lue).
@@ -1845,16 +3711,26 @@ const SCENARIOS = {
       console.log(`maree — ${h}h : ${JSON.stringify(sonde)} (front attendu ${cible} ± ${tolerance.toFixed(1)})`)
       // UNE SONDE DÉBRANCHÉE N'EST PAS UN ZÉRO (revue : un champ privé renommé cassait tout
       // en silence) : -1/null = le harnais ne lit plus l'état, c'est une erreur à part entière.
-      if (sonde.bancs === -1 || sonde.visible === null || sonde.densite === null)
+      if (sonde.bancs === -1 || sonde.visible === null || sonde.densite === null || sonde.part === null || sonde.bandes === -1)
         console.error('!! sonde brume débranchée (champ privé renommé ? morningMist/mistBanks absents ?)')
       if (ecart > tolerance) console.error(`!! front hors marée à ${h}h : ${sonde.front} pour ${cible} attendu`)
       if (h !== 12 && sonde.front > 3 && (sonde.densite ?? 0) < 0.2)
         console.error(`!! densité anémique à ${h}h (${sonde.densite}) alors que la marée est à ${sonde.front} tuiles`)
+      // LE JOUR 91 EST UN JOUR À BRUME, par construction : si la condition n'y vaut pas 1, ce
+      // n'est pas le rendu qui a bougé, c'est le CALENDRIER — et tout le reste du scénario
+      // mesurerait alors un matin sec en croyant mesurer la marée.
+      if ((sonde.part ?? 0) < 0.999)
+        console.error(`!! la condition ne vaut pas 1 au jour 91 (part ${sonde.part}) — les bornes ont bougé ?`)
+      // LA NAPPE A UNE ÉPAISSEUR : la pile est posée dès que la brume vit, éteinte sinon.
+      if (h !== 12 && (sonde.densite ?? 0) > 0.01 && (sonde.bandes ?? 0) < 4)
+        console.error(`!! ${sonde.bandes} bande(s) posées à ${h}h alors que la brume vit — la pile n'est pas montée`)
       if (h === 12 && sonde.visible) console.error('!! il reste de la brume à midi')
+      if (h === 12 && (sonde.bandes ?? 0) > 0) console.error(`!! ${sonde.bandes} bande(s) encore posées à midi`)
       if (h === 12 && (sonde.densite ?? 0) > 0) console.error(`!! densité non nulle à midi (${sonde.densite})`)
       if (h === 12 && sonde.bancs > 0) console.error(`!! ${sonde.bancs} banc(s) encore vivants à midi`)
       if (h !== 12) bancsVus = Math.max(bancsVus, sonde.bancs)
     }
+
     console.log(`maree — bancs voyageurs : maximum vu ${bancsVus} ${bancsVus >= 1 ? '✓' : '✗'}`)
     if (bancsVus < 1) console.error('!! aucun banc voyageur né près de la rivière dans toute la fenêtre')
     console.log(`captures → ${OUT}/maree-*.png — à REGARDER (le front qui monte, les bancs, le retrait)`)
@@ -1981,6 +3857,13 @@ const SCENARIOS = {
       return {}
     }
     await tp(gue.x + 3.5, gue.y + 3.5)
+    // ⚠ LA MARÉE EST CONDITIONNELLE DEPUIS LE 2026-08-25 (écart jour/nuit × calme d'ici) et le
+    //   monde OUVRE sous son plancher : sans ce saut au jour 91 — mesuré sans front et à 12,1 °C
+    //   d'écart —, « avec » et « sans » seraient la MÊME image et l'instrument rendrait zéro en
+    //   croyant mesurer une nappe transparente. La station COMBE, elle, n'y touche pas : sa brume
+    //   est permanente, et c'est le témoin de non-régression du chemin NON-nappe.
+    await page.evaluate(() => window.__BRAISES__.scene.sendAction({ type: 'debug_set_season_day', day: 91 }))
+    await page.waitForTimeout(1200)
     await heure(6.2)
     await page.waitForTimeout(4500) // les bancs naissent au compte-gouttes
     await page.screenshot({ path: `${OUT}/blancheur-gue-avec.png` })
@@ -3652,6 +5535,185 @@ const SCENARIOS = {
   },
 
   /**
+   * LE MODE DEBUG OUVRE LA CARTE EN ENTIER (demande d'Alexis, 2026-08-26).
+   *
+   * Ce qui se mesure ici, et pourquoi chacun :
+   *
+   *   ① LA CARTE SE VOIT. On compte, sur les VRAIS pixels rendus (snapshot du renderer) et
+   *      DANS LA BOÎTE de la carte seulement, la part de pixels qui ne sont ni le fond
+   *      (#14100c) ni l'encre du brouillard (#14141a) — c'est-à-dire du TERRAIN. Fermée, elle
+   *      est quasi nulle ; ouverte par P, elle doit sauter. Un `mapFog.visible === false` seul
+   *      ne prouverait rien : le calque pourrait être caché ET la carte rester noire.
+   *
+   *   ② LE BROUILLARD EST INTACT. `fog.vu` est empaqueté dans la sauvegarde (`saveFog`) : une
+   *      levée qui ÉCRIRAIT dans la grille brûlerait la découverte de cette case pour de bon.
+   *      On somme `vu` avant et après — l'égalité stricte est le cœur du scénario.
+   *
+   *   ③ LE CLIC DE TP SURVIT. Les pastilles inconnues deviennent visibles ; si elles devenaient
+   *      aussi CLIQUABLES, leur rayon de 12 px sur ~90 lieux mangerait le clic de téléportation
+   *      (qui passe après la fiche). On téléporte donc pour de vrai et on lit l'avatar bouger.
+   *
+   *   ④ ÇA SE REFERME. P éteint remet l'encre : sinon le mode debug laisserait la carte ouverte
+   *      derrière lui pour le reste de la partie.
+   *
+   * Exige `--dev` : hors DEV la branche est éliminée par Rollup et P n'est même pas câblé.
+   */
+  async ['carte-debug'](page) {
+    if (!dev) {
+      console.log('\n(la levée debug du brouillard n\'existe pas en build de prod — relancer avec --dev)')
+      return {}
+    }
+    await page.goto(URL)
+    await page.waitForFunction(() => Boolean(window.__BRAISES__?.scene?.registry?.get('worldReady')), null, { timeout: 150000 })
+    await page.waitForTimeout(1500)
+
+    /** La somme brute de `fog.vu` — l'empreinte de ce qui est arpenté. */
+    const empreinteFog = () => page.evaluate(() => {
+      const f = window.__BRAISES__.scene.registry.get('fog')
+      if (!f) return null
+      let n = 0
+      for (let i = 0; i < f.vu.length; i++) n += f.vu[i]
+      return n
+    })
+
+    /** Part de pixels de TERRAIN dans la boîte de la carte, sur la frame rendue.
+     *  Ni le fond (#14100c) ni l'encre (#14141a) ne dépassent 26 sur un canal : le seuil à 60
+     *  les exclut tous les deux sans avoir à les distinguer l'un de l'autre. */
+    const partTerrain = () => page.evaluate(async () => {
+      const s = window.__BRAISES__.scene
+      const img = await new Promise((ok) => s.game.renderer.snapshot((i) => ok(i)))
+      const c = document.createElement('canvas')
+      c.width = img.width
+      c.height = img.height
+      const cx = c.getContext('2d', { willReadFrequently: true })
+      cx.drawImage(img, 0, 0)
+      // La boîte, en coordonnées de JEU (1280×720) ramenée aux pixels de l'image.
+      const k = c.height / 720
+      const x0 = Math.round(64 * k), x1 = Math.round(1216 * k)
+      const y0 = Math.round(60 * k), y1 = Math.round(626 * k)
+      const d = cx.getImageData(x0, y0, x1 - x0, y1 - y0).data
+      let terrain = 0
+      const total = d.length / 4
+      for (let i = 0; i < d.length; i += 4) {
+        if (Math.max(d[i], d[i + 1], d[i + 2]) >= 60) terrain++
+      }
+      return +(terrain / total).toFixed(4)
+    })
+
+    /** L'état interne de l'overlay carte (UIScene) — le pourquoi, quand le combien surprend. */
+    const etatCarte = () => page.evaluate(() => {
+      const ui = window.__BRAISES__.scene.scene.get('ui')
+      const r = window.__BRAISES__.scene.registry
+      const known = r.get('knownPois') ?? []
+      const dots = ui.mapPoiDots ?? []
+      const panneau = [...document.querySelectorAll('div')].find((d) => d.style.position === 'fixed' && d.style.width === '186px')
+      return {
+        opacitePanneau: panneau ? panneau.style.opacity : null,
+        debugOn: Boolean(r.get('debugOn')),
+        fogVisible: ui.mapFog ? ui.mapFog.visible : null,
+        pastillesVisibles: dots.filter((p) => p.dot.visible).length,
+        pastillesTotal: dots.length,
+        pastillesConnues: known.length,
+        arpente: ui.mapArpente ? ui.mapArpente.text : null,
+      }
+    })
+
+    const fogAvant = await empreinteFog()
+
+    // ── ① la carte, brouillard EN PLACE ──
+    await page.keyboard.press('m')
+    await page.waitForTimeout(600)
+    const avant = await partTerrain()
+    const etatAvant = await etatCarte()
+    await page.evaluate(() => window.__BRAISES__.scene.game.loop.sleep())
+    await page.screenshot({ path: `${OUT}/carte-debug-brouillard.png` })
+    await page.evaluate(() => window.__BRAISES__.scene.game.loop.wake())
+    await page.keyboard.press('m')
+    await page.waitForTimeout(300)
+
+    // ── P : le mode debug ──
+    await page.keyboard.press('p')
+    await page.waitForTimeout(300)
+
+    // ── ② la même carte, levée ──
+    await page.keyboard.press('m')
+    await page.waitForTimeout(600)
+    // La souris AU MILIEU DE LA CARTE : le panneau debug s'efface quand on ne le survole pas
+    // (il est posé sur la bande ouest de la vallée). La laisser dessus, c'est photographier
+    // exactement ce que le changement vient de corriger.
+    await page.mouse.move(640, 400)
+    await page.waitForTimeout(300)
+    const apres = await partTerrain()
+    const etatApres = await etatCarte()
+    const fogApres = await empreinteFog()
+    await page.evaluate(() => window.__BRAISES__.scene.game.loop.sleep())
+    await page.screenshot({ path: `${OUT}/carte-debug-levee.png` })
+    await page.evaluate(() => window.__BRAISES__.scene.game.loop.wake())
+
+    console.log(`carte : terrain visible ${(avant * 100).toFixed(1)} % → ${(apres * 100).toFixed(1)} % (P)`)
+    console.log(`  brouillard ${JSON.stringify(etatAvant)}`)
+    console.log(`  levée      ${JSON.stringify(etatApres)}`)
+    console.log(apres > 0.5 && apres > avant * 3
+      ? `   ✓ LA CARTE S'AFFICHE EN ENTIER sous P (${(avant * 100).toFixed(1)} % → ${(apres * 100).toFixed(1)} %)`
+      : `   ✗ la carte ne s'ouvre pas sous P (${(avant * 100).toFixed(1)} % → ${(apres * 100).toFixed(1)} %)`)
+    console.log(fogAvant !== null && fogApres === fogAvant
+      ? `   ✓ LE BROUILLARD EST INTACT (vu = ${fogAvant}, inchangé — la levée n'écrit rien)`
+      : `   ✗ LA LEVÉE A ÉCRIT DANS LE BROUILLARD (${fogAvant} → ${fogApres}) — la sauvegarde est brûlée`)
+    console.log(etatApres.pastillesVisibles === etatApres.pastillesTotal
+      ? `   ✓ tous les lieux sont repérés (${etatApres.pastillesVisibles}/${etatApres.pastillesTotal}, dont ${etatApres.pastillesConnues} connus)`
+      : `   ✗ pastilles ${etatApres.pastillesVisibles}/${etatApres.pastillesTotal}`)
+    console.log(/DEBUG/.test(etatApres.arpente ?? '')
+      ? `   ✓ le libellé dit d'où vient l'image (« ${etatApres.arpente} »)`
+      : `   ✗ « ARPENTÉ » ment devant une carte entière (« ${etatApres.arpente} »)`)
+
+    // ── ③ le clic de TP survit aux pastilles révélées ──
+    const posAvant = await page.evaluate(() => window.__BRAISES__.scene.registry.get('playerPos'))
+    // Un point au hasard DANS la boîte, converti en pixels CSS (le canvas est scalé).
+    const cible = await page.evaluate(() => {
+      const cv = document.querySelector('canvas').getBoundingClientRect()
+      const k = cv.height / 720
+      return { x: Math.round(cv.left + 500 * k), y: Math.round(cv.top + 250 * k) }
+    })
+    await page.mouse.move(cible.x, cible.y)
+    await page.waitForTimeout(120)
+    await page.mouse.down()
+    await page.waitForTimeout(120)
+    await page.mouse.up()
+    await page.waitForTimeout(300)
+    // LE DIAGNOSTIC AVANT LE VERDICT : un avatar immobile ne dit pas OÙ le geste s'est perdu.
+    // `debugTeleport` posé = UIScene a bien vu le clic ; l'écran refermé = WorldScene l'a
+    // consommé. Sans ces deux-là, un ✗ accuserait le code au hasard.
+    const trace = await page.evaluate(() => {
+      const r = window.__BRAISES__.scene.registry
+      return {
+        demande: r.get('debugTeleport') ?? null,
+        menu: Boolean(r.get('characterMenuOpen')),
+        mapOpen: Boolean(r.get('mapOpen')),
+      }
+    })
+    await page.waitForTimeout(700)
+    const posApres = await page.evaluate(() => window.__BRAISES__.scene.registry.get('playerPos'))
+    console.log(`   (trace du clic : ${JSON.stringify(trace)} · avatar ${JSON.stringify(posAvant)} → ${JSON.stringify(posApres)})`)
+    const saut = posAvant && posApres ? Math.abs(posApres.x - posAvant.x) + Math.abs(posApres.y - posAvant.y) : 0
+    console.log(saut > 5
+      ? `   ✓ le clic TÉLÉPORTE encore (saut de ${saut.toFixed(0)} tuiles)`
+      : `   ✗ le clic ne téléporte plus (saut ${saut.toFixed(1)}) — les pastilles révélées ont mangé le geste`)
+
+    // ── ④ P éteint remet l'encre ──
+    await page.keyboard.press('p')
+    await page.waitForTimeout(200)
+    await page.keyboard.press('m')
+    await page.waitForTimeout(700)
+    const refermee = await partTerrain()
+    const etatFin = await etatCarte()
+    console.log(refermee < apres / 3 && etatFin.fogVisible === true
+      ? `   ✓ P éteint REFERME la carte (${(refermee * 100).toFixed(1)} %)`
+      : `   ✗ la carte reste ouverte après P (${(refermee * 100).toFixed(1)} %, fogVisible=${etatFin.fogVisible})`)
+
+    return { avant, apres, refermee, fogAvant, fogApres, saut }
+  },
+
+  /**
    * LE CUBIQUE (DA 2026-07-24) — décor passé en normal-map + fleurs en VARIÉTÉS. On MESURE ce qui se
    * mesure (géométrie du miroir, étendue des facettes de la normale) et on CAPTURE ce qui se juge à
    * l'œil (variété des fleurs, penche des nœuds-plantes au vent). Tourne en build de PROD — aucun TP.
@@ -3984,6 +6046,188 @@ const SCENARIOS = {
     await page.waitForTimeout(500)
     await page.screenshot({ path: `${OUT}/erratique-nuit.png` })
     console.log(`✓ ${info.n} sprites réels (pipeline Phaser) → erratique-jour.png (heure ${info.hour}) · erratique-nuit.png ${night.ok ? '' : '(⚠ dynLight introuvable)'}`)
+  },
+
+  /**
+   * ESSAI DA CAILLOU/BUISSON (demande d'Alexis 2026-08-26) — la grammaire de `rock and bush.png`
+   * portée sur nos nœuds, en option (a) : ALBÉDO SEUL, la lumière reste calculée.
+   *
+   * Deux étages, comme `erratique` — et c'est le second qui juge :
+   *   ① la PLANCHE hors-ligne (silhouette · albédo · normale · jour · nuit) pour lire la forme
+   *     et la normale côte à côte avec l'art EN PLACE ;
+   *   ② la CONTRE-ÉPREUVE in-world : les mêmes textures posées sur l'herbe, `setLighting(true)`,
+   *     capturées au jour puis avec le contrôleur GELÉ sur le préréglage nuit. L'aperçu de la
+   *     planche sous-estime le pipeline (mémoire `da-cubique-a-l-echelle-poi`) : la vérité est là.
+   *
+   * Ce qu'on regarde, nommément — un ✓ obtenu par accident ne vaut rien :
+   *   • le LISERÉ tient-il sa ligne à midi (il tombe dans la facette de bord) ET la nuit (le corps
+   *     descend le rejoindre) ? Si non, l'option (a) exige de le faire porter par la normale.
+   *   • les TOUFFES du buisson existent-elles à cell 2, ou faut-il descendre à cell 1 ?
+   *   • trois blocs suffisent-ils à 16×16, ou l'amas demande-t-il 16×24 (`nd-bloc-2`) ?
+   */
+  async caillou(page) {
+    await page.goto(URL)
+    await page.waitForFunction(() => Boolean(window.__BRAISES__?.scene?.registry?.get('worldReady')), null, { timeout: 150000 })
+    await page.waitForTimeout(800)
+
+    const LIGNES = [
+      { titre: 'LA ROCHE', keys: [['nd-rock_lit', 'EN PLACE (un rect)'], ['essai-roche-a_lit', 'témoin : SANS liseré'], ['essai-roche-b_lit', 'amas 3 · liseré peint'], ['essai-roche-c_lit', '16×24 · amas 4 · LISERÉ']] },
+      { titre: 'LA ROCHE SANS LISERÉ — les trois leviers non peints', keys: [['essai-roche-d_lit', '① sillons gravés'], ['essai-roche-e_lit', '② aucun lissage'], ['essai-roche-f_lit', '③ matières écartées'], ['essai-roche-h_lit', '①+②+③ cumulés'], ['essai-roche-i_lit', '④ joints, sans cerne'], ['essai-roche-j_lit', '④+③ joints + matières']] },
+      { titre: 'LE BUISSON', keys: [['cl-bush_lit', 'EN PLACE (dôme lisse)'], ['essai-buisson-a_lit', 'témoin : dôme régulier'], ['essai-buisson-d_lit', 'irrégulier · 2 matières'], ['essai-buisson-e_lit', '+ sillons GRAVÉS'], ['essai-buisson-f_lit', '+ 3 traits PEINTS'], ['essai-buisson-g_lit', '16×24 · 13 touffes · sillons']] },
+    ]
+
+    const dataUrl = await page.evaluate((LIGNES) => {
+      const s = window.__BRAISES__.scene
+      const SC = 7
+      // Phaser range la normale tantôt en canvas nu, tantôt dans un TextureSource (`.image`) —
+      // on déballe, sinon `drawImage` refuse l'objet et le scénario meurt sur la 1re roche.
+      const readPix = (raw) => {
+        const img = raw && raw.image ? raw.image : raw
+        const cv = document.createElement('canvas'); cv.width = img.width; cv.height = img.height
+        const cx = cv.getContext('2d', { willReadFrequently: true }); cx.drawImage(img, 0, 0)
+        return { w: cv.width, h: cv.height, d: cx.getImageData(0, 0, cv.width, cv.height).data }
+      }
+      const albedoOf = (k) => readPix(s.textures.get(k).getSourceImage())
+      const normalOf = (k) => readPix(s.textures.get(k).dataSource[0])
+      const norml = (x, y, z) => { const l = Math.hypot(x, y, z) || 1; return [x / l, y / l, z / l] }
+      // MÊMES constantes que dynamic-lighting.ts (cf. scénario `erratique`).
+      const shade = (alb, nrm, amb, light, intensity, L) => {
+        const out = document.createElement('canvas'); out.width = alb.w; out.height = alb.h
+        const ox = out.getContext('2d'); const od = ox.createImageData(alb.w, alb.h)
+        const ar = (amb >> 16) & 255, ag = (amb >> 8) & 255, ab = amb & 255
+        const lr = (light >> 16) & 255, lg = (light >> 8) & 255, lb = light & 255
+        for (let i = 0; i < alb.w * alb.h; i++) {
+          const a = alb.d[i * 4 + 3]
+          if (a <= 8) { od.data[i * 4 + 3] = 0; continue }
+          const nx = (nrm.d[i * 4] / 255) * 2 - 1
+          const ny = -((nrm.d[i * 4 + 1] / 255) * 2 - 1)
+          const nz = (nrm.d[i * 4 + 2] / 255) * 2 - 1
+          const dot = Math.max(0, nx * L[0] + ny * L[1] + nz * L[2])
+          const mix = (alc, ambc, lc) => Math.min(255, Math.round(alc * (ambc / 255 + (lc / 255) * intensity * dot)))
+          od.data[i * 4] = mix(alb.d[i * 4], ar, lr)
+          od.data[i * 4 + 1] = mix(alb.d[i * 4 + 1], ag, lg)
+          od.data[i * 4 + 2] = mix(alb.d[i * 4 + 2], ab, lb)
+          od.data[i * 4 + 3] = a
+        }
+        ox.putImageData(od, 0, 0); return out
+      }
+      const L_SUN = norml(-0.45, -0.6, 0.75)
+      const L_MOON = norml(0.0, -0.7, 0.7)
+      const dayOf = (a, n) => shade(a, n, 0xb6ad9c, 0xfff2e6, 1.2, L_SUN)
+      const nightOf = (a, n) => shade(a, n, 0x33415f, 0xaec2e6, 0.32, L_MOON)
+      const silhouetteOf = (alb) => {
+        const out = document.createElement('canvas'); out.width = alb.w; out.height = alb.h
+        const ox = out.getContext('2d'); const od = ox.createImageData(alb.w, alb.h)
+        for (let i = 0; i < alb.w * alb.h; i++) if (alb.d[i * 4 + 3] > 8) { od.data[i * 4 + 3] = 255; od.data[i * 4] = 206; od.data[i * 4 + 1] = 212; od.data[i * 4 + 2] = 200 }
+        ox.putImageData(od, 0, 0); return out
+      }
+      const imgOf = (pix) => { const c = document.createElement('canvas'); c.width = pix.w; c.height = pix.h; const x = c.getContext('2d'); const d = x.createImageData(pix.w, pix.h); d.data.set(pix.d); x.putImageData(d, 0, 0); return c }
+
+      const COLS = ['silhouette', 'albédo', 'normale', 'jour (aperçu)', 'nuit (aperçu)']
+      const CELL = 24 * SC, GAP = 14, LBL = 20, PADX = 210, HEAD = 46
+      const manquants = []
+      const nRows = LIGNES.reduce((n, l) => n + l.keys.length, 0)
+      const W = PADX + COLS.length * (CELL + GAP) + GAP
+      const H = HEAD + LIGNES.length * 30 + nRows * (CELL + LBL + GAP) + 20
+      const c = document.createElement('canvas'); c.width = W; c.height = H
+      const ctx = c.getContext('2d'); ctx.imageSmoothingEnabled = false
+      ctx.fillStyle = '#14171c'; ctx.fillRect(0, 0, W, H)
+      ctx.textBaseline = 'alphabetic'
+      ctx.fillStyle = '#ffd94a'; ctx.font = 'bold 17px monospace'; ctx.textAlign = 'left'
+      ctx.fillText('ESSAI DA — caillou & buisson à la grammaire de la référence (option a : albédo seul, lumière calculée)', 14, 26)
+      ctx.font = 'bold 12px monospace'; ctx.textAlign = 'center'
+      COLS.forEach((cl, j) => {
+        ctx.fillStyle = cl.startsWith('jour') ? '#ffd08a' : cl.startsWith('nuit') ? '#9fb6e6' : '#7f8a96'
+        ctx.fillText(cl, PADX + j * (CELL + GAP) + CELL / 2, HEAD - 4)
+      })
+      let y = HEAD + 6
+      for (const ligne of LIGNES) {
+        ctx.textAlign = 'left'; ctx.fillStyle = '#e6c07b'; ctx.font = 'bold 14px monospace'
+        ctx.fillText(ligne.titre, 14, y + 16); y += 26
+        for (const [key, leg] of ligne.keys) {
+          if (!s.textures.exists(key)) { manquants.push(key); continue }
+          const alb = albedoOf(key), nrm = normalOf(key)
+          // Chaque case est cadrée sur 24 px de haut, ALIGNÉE PAR LE BAS (les pieds au sol) :
+          // sinon un 16×24 flotte au-dessus d'un 16×16 et on compare des hauteurs, pas des formes.
+          const put = (canvas, col) => {
+            const dw = canvas.width * SC, dh = canvas.height * SC
+            ctx.drawImage(canvas, PADX + col * (CELL + GAP) + (CELL - dw) / 2, y + CELL - dh, dw, dh)
+          }
+          // fond d'herbe sous les 4 dernières colonnes (le contraste réel se juge sur l'herbe)
+          for (let col = 1; col < COLS.length; col++) {
+            ctx.fillStyle = col >= 3 ? (col === 3 ? '#4a7a45' : '#1f2b33') : '#22262c'
+            ctx.fillRect(PADX + col * (CELL + GAP), y, CELL, CELL)
+          }
+          ctx.fillStyle = '#1a1d22'; ctx.fillRect(PADX, y, CELL, CELL)
+          put(silhouetteOf(alb), 0)
+          put(imgOf(alb), 1)
+          put(imgOf(nrm), 2)
+          put(dayOf(alb, nrm), 3)
+          put(nightOf(alb, nrm), 4)
+          ctx.textAlign = 'right'; ctx.fillStyle = leg.startsWith('EN PLACE') ? '#8a94a0' : '#cfd6de'
+          ctx.font = leg.startsWith('EN PLACE') ? '12px monospace' : 'bold 12px monospace'
+          ctx.fillText(leg, PADX - 16, y + CELL / 2)
+          ctx.textAlign = 'left'; ctx.fillStyle = '#5d6670'; ctx.font = '11px monospace'
+          ctx.fillText(`${key}  ${alb.w}×${alb.h}`, PADX, y + CELL + 14)
+          y += CELL + LBL + GAP
+        }
+      }
+      return { planche: c.toDataURL('image/png'), manquants }
+    }, LIGNES)
+
+    if (dataUrl.manquants.length) console.log(`⚠ textures absentes : ${dataUrl.manquants.join(', ')}`)
+    writeFileSync(`${OUT}/caillou-planche.png`, Buffer.from(dataUrl.planche.split(',')[1], 'base64'))
+    console.log(`✓ planche → ${OUT}/caillou-planche.png`)
+
+    // ── CONTRE-ÉPREUVE : les vraies textures sous le pipeline Phaser Light2D, sur l'herbe ──
+    const keys = LIGNES.flatMap((l) => l.keys.map(([k]) => k))
+    // La bande utile. Cadrer dessus évite de juger nos sprites au milieu d'une forêt qui leur
+    // ressemble : la capture pleine page tombait sur LE BOIS NOIR, plein de buissons et de blocs.
+    const BANDE = { x: 140, y: 300, width: 1000, height: 240 }
+    const info = await page.evaluate((keys) => {
+      const s = window.__BRAISES__.scene
+      const cam = s.cameras.main
+      const cx = cam.worldView.x + cam.worldView.width / 2
+      const cy = cam.worldView.y + cam.worldView.height / 2 + 16
+      const posed = []
+      keys.forEach((k, i) => {
+        if (!s.textures.exists(k)) return
+        const img = s.add.image(cx + (i - (keys.length - 1) / 2) * 24, cy, k).setOrigin(0.5, 1).setDepth(900000)
+        img.setLighting(true)
+        posed.push(k)
+      })
+      cam.stopFollow()
+      cam.centerOn(cx, cy - 8)
+      const reg = s.registry.get('debugInfo')
+      return { posed, hour: reg?.hour ?? null, cx, cy }
+    }, keys)
+    // Zoom 4 et non 6 : à 6, les 9 témoins débordent du cadre de 1280 px et les deux du bout
+    // sortent de l'image — on croirait des textures manquantes. Entier, pour ne pas créneler.
+    await page.evaluate(() => window.__BRAISES__.scene.cameras.main.setZoom(4))
+    await page.waitForTimeout(700)
+    // ENDORMIR LA BOUCLE avant la capture : sous swiftshader un `page.screenshot` sur une scène
+    // qui tourne part en timeout de 90 s (mémoire `capture-ecran-plein-hud-dom`).
+    await page.evaluate(() => window.__BRAISES__.scene.game.loop.sleep())
+    await page.screenshot({ path: `${OUT}/caillou-jour.png`, clip: BANDE })
+
+    const night = await page.evaluate(() => {
+      const s = window.__BRAISES__.scene
+      const dl = s.dynLight
+      if (!dl) return { ok: false }
+      dl.update = () => {}
+      const v = s.cameras.main.worldView
+      s.lights.setAmbientColor(0x33415f)
+      dl.sun.intensity = 0
+      dl.moon.intensity = 0.32
+      dl.moon.x = v.x + v.width / 2
+      dl.moon.y = v.y - 1600
+      s.game.loop.wake() // il faut UNE image pour que la nuit se peigne…
+      return { ok: true }
+    })
+    await page.waitForTimeout(500)
+    await page.evaluate(() => window.__BRAISES__.scene.game.loop.sleep()) // …puis on rendort
+    await page.screenshot({ path: `${OUT}/caillou-nuit.png`, clip: BANDE })
+    console.log(`✓ ${info.posed.length} sprites réels → caillou-jour.png (heure ${info.hour}) · caillou-nuit.png ${night.ok ? '' : '(⚠ dynLight introuvable)'}`)
   },
 
   /**
@@ -4666,13 +6910,13 @@ const SCENARIOS = {
         const attendu = (Math.atan2(cap.y, cap.x) * 180) / Math.PI
         return Math.abs(((peint - attendu + 540) % 360) - 180) < 6
       }, null, { timeout: 45000 }).catch(() => console.log(`   (${nom} : l'aiguille n'a pas rejoint le cap dans le temps imparti)`))
-      // ET LE PEUPLEMENT. Un ruban naît PAR IMAGE (une rafale monte, elle ne claque pas) :
-      // à 60 fps le cadre est plein en moins d'une demi-seconde, mais en headless une image
-      // dure des secondes — photographier tout de suite montrerait quatre rubans là où le jeu
-      // en a vingt-six, et ferait juger le FX sur l'instrument.
+      // ET LE PEUPLEMENT. La naissance est cadencée EN SECONDES (une rafale monte, elle ne
+      // claque pas) : à 60 fps le cadre est plein en moins d'une demi-seconde, mais en headless
+      // une image dure des secondes — photographier tout de suite montrerait quatre rubans là
+      // où le jeu en a neuf, et ferait juger le FX sur l'instrument.
       await page.waitForFunction(() => {
         const s = window.__BRAISES__?.scene?.ventLayer?.sonde
-        return !s || s.cible === 0 || s.vivants >= Math.min(15, s.cible)
+        return !s || s.cible === 0 || s.vivants >= s.cible
       }, null, { timeout: 60000 }).catch(() => console.log(`   (${nom} : les rubans n'ont pas peuplé le cadre)`))
       await page.waitForTimeout(1200)
       const r = await releve()
@@ -6023,6 +8267,350 @@ const SCENARIOS = {
 
 
   /**
+   * LA PLANCHE DES SILHOUETTES DU TÉTRAS (spec faune R21).
+   *
+   * Ce sont les VRAIES textures — celles que `BootScene` génère dans le client
+   * qui tourne, lues dans son gestionnaire de textures et redessinées à l'échelle
+   * (NEAREST : on agrandit le grain, on ne le lisse pas). Ce n'est donc pas un
+   * aperçu hors moteur : c'est l'art du jeu, montré assez grand pour être jugé.
+   *
+   * Elle existe parce que la planche EN SITUATION est ingrate ici : à l'échelle
+   * de jeu l'oiseau fait moins d'une tuile, il dérive en broutant, et sans GPU
+   * une image coûte des secondes. Les deux planches disent deux choses — celle-ci
+   * le DESSIN, l'autre (`tetras`) qu'il vit et qu'il vole vraiment.
+   */
+  async ['tetras-art'](page) {
+    const info = await page.evaluate(() => {
+      const sc = window.__BRAISES__.scene
+      const CLES = ['spr-tetras', 'spr-tetras-graze', 'spr-tetras-flee', 'spr-tetras-vol']
+      const manquantes = CLES.filter((k) => !sc.textures.exists(k))
+      if (manquantes.length > 0) return { manquantes }
+
+      // On peint sur une toile POSÉE DANS LA PAGE, par-dessus le jeu : la capture
+      // n'a alors rien à voir avec la caméra, le zoom ou l'heure.
+      const K = 8
+      const marge = 24
+      const tailles = CLES.map((k) => sc.textures.get(k).getSourceImage())
+      const largeur = tailles.reduce((a, i) => a + i.width * K + marge, marge)
+      const hauteur = Math.max(...tailles.map((i) => i.height)) * K + marge * 3
+      const cv = document.createElement('canvas')
+      cv.width = largeur
+      cv.height = hauteur
+      cv.style.cssText = `position:fixed;left:0;top:0;z-index:99999;background:#2b2a24`
+      const g = cv.getContext('2d')
+      g.imageSmoothingEnabled = false // NEAREST : le pixel reste un pixel
+      g.fillStyle = '#2b2a24'
+      g.fillRect(0, 0, largeur, hauteur)
+      let x = marge
+      const dessins = []
+      for (let i = 0; i < CLES.length; i++) {
+        const img = tailles[i]
+        const w = img.width * K
+        const h = img.height * K
+        const y = hauteur - marge * 2 - h
+        g.drawImage(img, 0, 0, img.width, img.height, x, y, w, h)
+        g.fillStyle = '#cfc4a8'
+        g.font = '13px monospace'
+        g.fillText(CLES[i].replace('spr-tetras', 'tétras'), x, hauteur - marge / 2)
+        dessins.push(`${CLES[i]} ${img.width}×${img.height}`)
+        x += w + marge
+      }
+      document.body.appendChild(cv)
+      return { dessins, largeur, hauteur }
+    })
+    if (info.manquantes) {
+      console.log(`  ✗ textures absentes : ${info.manquantes.join(', ')} — BootScene ne les a pas produites`)
+      return
+    }
+    console.log(`silhouettes du tétras : ${info.dessins.join(' · ')}`)
+    await page.evaluate(() => window.__BRAISES__.scene.game.loop.sleep())
+    await page.screenshot({
+      path: `${OUT}/tetras-planche.png`,
+      clip: { x: 0, y: 0, width: Math.min(info.largeur, 1280), height: Math.min(info.hauteur, 800) },
+      timeout: 180000,
+    })
+    await page.evaluate(() => window.__BRAISES__.scene.game.loop.wake())
+    console.log('  capture : tetras-planche.png')
+  },
+
+  /**
+   * LE GRAND TÉTRAS ET SON ENVOL (spec faune R21) — et c'est un FX ÉPHÉMÈRE.
+   *
+   * Le bond dure 1,3 s de temps de JEU. En headless sans GPU, une image peut
+   * coûter des secondes : une capture prise « après un waitForTimeout » tombe
+   * presque toujours à côté, et rend une planche d'oiseau POSÉ dont on conclurait
+   * que le vol ne se voit pas. On applique donc le patron déjà payé ailleurs
+   * (`fx-ephemere-figer-et-stepper`, `headless-1fps-lire-le-snapshot-a-la-source`) :
+   * la détection se fait DANS LA PAGE, sur le snapshot, et le premier tick où
+   * l'oiseau est en l'air ENDORT la boucle. On photographie un arrêt sur image.
+   *
+   * Exige `--dev` (téléportation, heure). Et l'heure compte : le tétras est
+   * CRÉPUSCULAIRE — à midi il est au plancher de vigueur et ne naît presque pas.
+   */
+  async tetras(page) {
+    const agir = async (action, ms = 400) => {
+      await page.evaluate((a) => window.__BRAISES__.scene.sendAction(a), action)
+      await page.waitForTimeout(ms)
+    }
+
+    // ── L'HEURE DE L'OISEAU : la parade est à l'aube. ──
+    await agir({ type: 'debug_set_hour', hour: 7 }, 800)
+
+    // ── SON ADRESSE : un coin de chasse BOISÉ (R17). Le tétras ne vit que dans
+    //    la futaie et les résineux ; entre les coins, la vallée est vide. Chercher
+    //    « un tétras » sans aller chez lui, c'est mesurer le vide.
+    // Les identifiants de terrain sont ceux de `balance.ts` — recopiés ICI, en
+    // toutes lettres, parce que ce fichier est du JS nu et n'importe pas /sim.
+    // (`TERRAIN_FOREST` 3, `TERRAIN_PINE` 13, `TERRAIN_LARCH` 14, `TERRAIN_OLD_GROWTH` 22.)
+    const coin = await page.evaluate((ids) => {
+      const sc = window.__BRAISES__.scene
+      const BOIS = new Set(ids)
+      const m = sc.map
+      const terrain = (x, y) => m.terrain[Math.floor(y) * m.width + Math.floor(x)]
+      const p = sc.registry.get('playerPos')
+      let best = null
+      for (const g of sc.grounds ?? []) {
+        const t = terrain(g.x, g.y)
+        if (!BOIS.has(t)) continue
+        const d = Math.hypot(g.x - p.x, g.y - p.y)
+        if (best === null || d < best.d) best = { x: g.x, y: g.y, d, t }
+      }
+      return { best, coins: (sc.grounds ?? []).length }
+    }, [3, 13, 14, 22])
+    if (!coin.best) {
+      console.log(`  ✗ aucun coin de chasse BOISÉ trouvé (${coin.coins} coins en tout) — rien à mesurer ici`)
+      return
+    }
+    console.log(`coin boisé le plus proche : ${coin.best.x.toFixed(0)},${coin.best.y.toFixed(0)} (terrain ${coin.best.t}, à ${coin.best.d.toFixed(0)}t)`)
+    await agir({ type: 'debug_teleport', x: coin.best.x, y: coin.best.y }, 2500)
+
+    // ── ON ATTEND QU'IL NAISSE. Le peuplement est un TIRAGE : on laisse le coin
+    //    se remplir, en marchant un peu (la faune naît hors-champ, R1).
+    let oiseau = null
+    for (let essai = 0; essai < 12 && oiseau === null; essai++) {
+      await page.keyboard.down('KeyD')
+      await page.waitForTimeout(1500)
+      await page.keyboard.up('KeyD')
+      await page.waitForTimeout(500)
+      oiseau = await page.evaluate(() => {
+        const sc = window.__BRAISES__.scene
+        const m = (sc.view.monsters ?? []).find((x) => x.type === 'tetras')
+        if (!m) return null
+        const rec = sc.view.others.get(m.entityId)
+        return rec ? { id: m.entityId, x: rec.sprite.x / 16, y: rec.sprite.y / 16 } : null
+      })
+    }
+    const recensement = await page.evaluate(() => {
+      const par = {}
+      for (const m of window.__BRAISES__.scene.view.monsters ?? []) par[m.type] = (par[m.type] ?? 0) + 1
+      return par
+    })
+    console.log(`  bêtes autour : ${JSON.stringify(recensement)}`)
+    if (oiseau === null) {
+      console.log('  ✗ aucun tétras n’est né en 12 tentatives — le coin, l’heure ou le tirage')
+      return
+    }
+
+    // ═══ LE GROS PLAN : zoom ×4 + découpe autour de L'OISEAU ═══
+    //
+    // À l'échelle de jeu, le tétras fait moins d'une tuile : une planche plein
+    // cadre ne dit rien de sa silhouette. On pousse le zoom de la CAMÉRA (le même
+    // rendu, de plus près — rien n'est fabriqué) et on découpe autour de lui, pas
+    // du joueur : c'est LUI le sujet, et il ne sera jamais au centre de l'écran.
+    const zoomer = async (f) => {
+      await page.evaluate((k) => {
+        const s = window.__BRAISES__.scene
+        window.__Z0__ ??= s.cameras.main.zoom
+        s.cameras.main.setZoom(window.__Z0__ * k)
+        return true
+      }, f)
+      await page.waitForTimeout(1200)
+    }
+    /** La position ÉCRAN (pixels CSS) d'un point du monde, à l'instant présent. */
+    const ecran = (tx, ty) =>
+      page.evaluate(({ x, y }) => {
+        const s = window.__BRAISES__.scene
+        const cam = s.cameras.main
+        const c = s.scale.canvas.getBoundingClientRect()
+        return {
+          x: c.left + (x * 16 - cam.worldView.x) * cam.zoom * (c.width / s.scale.width),
+          y: c.top + (y * 16 - cam.worldView.y) * cam.zoom * (c.height / s.scale.height),
+        }
+      }, { x: tx, y: ty })
+    /**
+     * ⚠ ON FIGE D'ABORD, ON VISE ENSUITE. La caméra GLISSE vers le joueur après
+     * une téléportation : un point d'écran calculé avant l'arrêt sur image vise
+     * là où le sujet SERA — le premier jet a rendu trois planches du bandeau de
+     * HUD, en haut à gauche, parce que la caméra avait continué sa course entre
+     * la mesure et la photo. Endormir la boucle d'abord fixe le `worldView`.
+     */
+    const decouper = async (nom, tx, ty) => {
+      await page.evaluate(() => window.__BRAISES__.scene.game.loop.sleep())
+      const pt = await ecran(tx, ty)
+      // ⚠ LA DÉCOUPE SE BORNE À L'IMAGE. Playwright refuse net (« Clipped area is
+      // either empty or outside ») dès qu'un sujet sort du cadre — et à ×4 de
+      // zoom, une bête à quinze tuiles EST hors cadre. On rabat plutôt que de
+      // planter : une planche décentrée reste lisible, une exception ne rend rien.
+      const vp = page.viewportSize() ?? { width: 1280, height: 800 }
+      const cx = Math.min(Math.max(0, pt.x - 180), Math.max(0, vp.width - 360))
+      const cy = Math.min(Math.max(0, pt.y - 150), Math.max(0, vp.height - 300))
+      await page.screenshot({
+        path: `${OUT}/${nom}.png`,
+        clip: { x: cx, y: cy, width: Math.min(360, vp.width), height: Math.min(300, vp.height) },
+        // Un rendu logiciel à ×4 de zoom, c'est seize fois les pixels.
+        timeout: 180000,
+      })
+      await page.evaluate(() => window.__BRAISES__.scene.game.loop.wake())
+      return pt
+    }
+
+    /** Le tétras le plus proche du joueur, À L'INSTANT — sa position RENDUE. */
+    const plusProche = () =>
+      page.evaluate(() => {
+        const sc = window.__BRAISES__.scene
+        const p = sc.registry.get('playerPos')
+        let best = null
+        for (const m of sc.view.monsters ?? []) {
+          if (m.type !== 'tetras') continue
+          const rec = sc.view.others.get(m.entityId)
+          if (!rec) continue
+          const x = rec.sprite.x / 16
+          const y = rec.shadow.y / 16 // les PIEDS : le sprite peut être en l'air
+          const d = Math.hypot(x - p.x, y - p.y)
+          if (best === null || d < best.d) best = { id: m.entityId, x, y, d, cle: rec.textureKey }
+        }
+        return best ? { ...best, px: p.x, py: p.y } : null
+      })
+
+    // ── AU SOL : la planche de la bête posée, avant qu'on la lève. ──
+    //
+    // ⚠ ON RELIT SA POSITION APRÈS CHAQUE SAUT. Viser une position mesurée trente
+    // secondes plus tôt, c'est cadrer là où l'oiseau ÉTAIT — le premier jet a
+    // rendu une planche du bandeau de HUD, en haut à gauche, parce que la bête
+    // avait dérivé hors du cadre entre la mesure et la photo.
+    await agir({ type: 'debug_teleport', x: oiseau.x + 6, y: oiseau.y }, 2000)
+    let pose = await plusProche()
+    if (pose === null) {
+      console.log('  ✗ le tétras a disparu entre-temps')
+      return
+    }
+    // ON SE RAPPROCHE JUSQU'À L'AVOIR DANS LE CADRE, en relisant à chaque saut :
+    // à ×4 de zoom, une bête à quinze tuiles est hors champ, et la découpe n'a
+    // plus rien à montrer. Cinq tuiles : assez près pour la voir, assez loin pour
+    // ne pas la lever avant la photo (`flightRange` = 3).
+    for (let essai = 0; essai < 6; essai++) {
+      pose = await plusProche()
+      if (pose === null) break
+      if (pose.d <= 6) break
+      await agir({ type: 'debug_teleport', x: pose.x + 5, y: pose.y }, 1800)
+    }
+    if (pose === null) {
+      console.log('  ✗ le tétras a disparu entre-temps')
+      return
+    }
+    await zoomer(4)
+    pose = (await plusProche()) ?? pose
+    console.log(`  au sol : silhouette « ${pose.cle} », à ${pose.d.toFixed(1)} tuiles du joueur`)
+    await decouper('tetras-sol', pose.x, pose.y)
+
+    // ── ON LE LÈVE. Le guetteur s'arme AVANT le geste et vit DANS LA PAGE : en
+    //    headless une image peut durer des secondes, et une boucle de sondes
+    //    depuis Node laisserait passer le bond entier entre deux images. Le
+    //    premier tick où il est en l'air ENDORT la boucle — arrêt sur image.
+    // ⚠ LE GUET S'ACCROCHE AU FLUX DE SNAPSHOTS, PAS AU rAF — et c'est LA leçon
+    // de ce scénario. Le bond dure 26 ticks, soit 1,3 s de temps de jeu ; sans
+    // GPU, une IMAGE peut durer plus longtemps que ça. Un guetteur cadencé par
+    // `requestAnimationFrame` ne regarde donc l'état qu'une fois par image, et le
+    // vol entier tombe entre deux regards : trois runs de suite ont conclu « il
+    // n'a pas décollé » alors qu'il décollait à chaque fois. Le worker, lui,
+    // envoie un snapshot à 20 Hz quoi qu'il arrive — on lit à la SOURCE.
+    await page.evaluate(() => {
+      const sc = window.__BRAISES__.scene
+      window.__VOL__ = { vu: false, snaps: 0, vus: 0, peur: 0, fuites: 0 }
+      sc.host.onMessage((msg) => {
+        if (msg.type !== 'snapshot' || window.__VOL__.vu) return
+        window.__VOL__.snaps++
+        // DIAGNOSTIC : sans lui, un « il n'a pas décollé » ne dit pas POURQUOI —
+        // approche ratée (il ne fuit jamais) ou envol refusé (il fuit à pied) ?
+        for (const x of msg.monsters ?? []) {
+          if (x.type !== 'tetras') continue
+          window.__VOL__.peur = Math.max(window.__VOL__.peur ?? 0, x.suspicion ?? 0)
+          if (x.fleeSince >= 0) window.__VOL__.fuites = (window.__VOL__.fuites ?? 0) + 1
+        }
+        const m = (msg.monsters ?? []).find((x) => x.type === 'tetras' && x.volUntil !== undefined)
+        if (!m) return
+        window.__VOL__.vus++
+        // On retient l'ÉTAT DE SIM (le rendu, lui, n'a peut-être pas encore vu ce
+        // snapshot) — la silhouette et la hauteur se relisent après l'arrêt.
+        window.__VOL__ = {
+          ...window.__VOL__,
+          vu: true,
+          id: m.entityId,
+          volUntil: m.volUntil,
+          volDepuis: m.volDepuis,
+          tick: msg.tick,
+        }
+      })
+    })
+
+    // ═══ ON LE SERRE, PAR SAUTS COURTS ET RÉPÉTÉS ═══
+    //
+    // Marcher a été essayé et a échoué trois fois : une touche ne pousse que sur
+    // UN axe, l'oiseau dérive en broutant, et trente secondes de marche plein
+    // ouest passent à côté d'une bête qui était à neuf tuiles EN BIAIS. On relit
+    // donc sa position à chaque tour et on se replace À DEUX TUILES — dans sa
+    // distance de fuite (3). La méfiance, elle, monte toute seule et vite : à
+    // deux tuiles l'espace vital (R6bis) sature la jauge en quelques ticks.
+    for (let essai = 0; essai < 20; essai++) {
+      if (await page.evaluate(() => window.__VOL__.vu)) break
+      const p = await plusProche()
+      if (p === null) break
+      // ⚠ ON LUI TOMBE DESSUS, à moins d'une tuile. Deux tuiles ne suffisaient
+      // pas : à 0,69 de méfiance, l'IMPATIENCE (R6bis) lui fait prendre du champ
+      // au trot, et chaque saut arrivait là où il ÉTAIT — la jauge plafonnait
+      // sans jamais atteindre la levée (mesuré : 0 fuite en 1 626 snapshots).
+      await agir({ type: 'debug_teleport', x: p.x + 0.8, y: p.y }, 1200)
+    }
+
+    const vol = await page.evaluate(() => window.__VOL__)
+    if (vol.vu) {
+      // On laisse le RENDU rattraper le snapshot (une image), puis on fige et on
+      // relit la silhouette SUR LE SPRITE : c'est l'écran qu'on juge, pas l'état.
+      await page.waitForTimeout(900)
+      await page.evaluate(() => window.__BRAISES__.scene.game.loop.sleep())
+      const vu = await page.evaluate((id) => {
+        const sc = window.__BRAISES__.scene
+        const rec = sc.view.others.get(id)
+        if (!rec) return null
+        return { cle: rec.textureKey, hautPx: rec.shadow.y - rec.sprite.y, x: rec.sprite.x / 16, y: rec.shadow.y / 16 }
+      }, vol.id)
+      await page.evaluate(() => window.__BRAISES__.scene.game.loop.wake())
+      if (vu !== null) {
+        vol.cle = vu.cle
+        vol.hautPx = vu.hautPx
+        vol.x = vu.x
+        vol.y = vu.y
+      }
+    }
+    console.log(`  guet : ${vol.snaps} snapshots lus, ${vol.vus} avec un tétras en l’air`)
+    console.log(`  méfiance max atteinte : ${(vol.peur ?? 0).toFixed(2)} · snapshots où un tétras FUYAIT : ${vol.fuites ?? 0}`)
+    if (!vol.vu) {
+      console.log('  ✗ l’envol n’a pas été surpris — il n’a pas décollé, ou la fenêtre a été manquée')
+      await page.evaluate(() => window.__BRAISES__.scene.game.loop.sleep())
+      await page.screenshot({ path: `${OUT}/tetras-rate.png`, timeout: 180000 })
+      await page.evaluate(() => window.__BRAISES__.scene.game.loop.wake())
+      return
+    }
+    await decouper('tetras-envol', vol.x ?? pose.x, vol.y ?? pose.y)
+    const hauteur = ((vol.hautPx ?? 0) / 16).toFixed(2)
+    console.log(`  ENVOL surpris : silhouette « ${vol.cle} », sprite ${hauteur} tuile au-dessus de son ombre`)
+    console.log(`  ${vol.cle === 'spr-tetras-vol' ? '✓' : '✗'} la silhouette de vol est celle attendue`)
+    console.log(`  ${Number(hauteur) > 0.2 ? '✓' : '✗'} il a DÉCOLLÉ (l’ombre, elle, reste au sol)`)
+    console.log('  captures : tetras-sol.png / tetras-envol.png')
+    await page.evaluate(() => window.__BRAISES__.scene.game.loop.wake())
+  },
+
+  /**
    * LE MONDE EST-IL VIVANT ? On laisse la faune ambiante peupler l'anneau, on
    * compte ce qui vit vraiment autour du joueur, et on regarde si ça BOUGE :
    * deux relevés de positions à 2 s d'intervalle. Une bête immobile est un bug.
@@ -6733,6 +9321,315 @@ const SCENARIOS = {
 
 
     return base
+  },
+
+  /**
+   * LA CLAIRIÈRE — le biome du 2026-08-25, REGARDÉ.
+   *
+   * Alexis : « on dirait que certaines parties de la forêt est rasée alors que pas du tout ».
+   * Ce scénario va se planter DANS une trouée et rapporte trois choses qu'on ne peut pas
+   * déduire d'un tableur : ce que le sol y fait (sa teinte contre celle du bois d'à côté),
+   * ce qui y pousse (le compte de props du `ClutterLayer`), et à quoi ça ressemble.
+   *
+   * Exige `--dev` (`debug_teleport`). Il CHERCHE la clairière dans la carte du client plutôt
+   * que d'en coder une : les coordonnées bougent avec la graine.
+   */
+  async clairiere(page) {
+    await page.waitForFunction(() => Boolean(window.__BRAISES__?.scene?.registry?.get('worldReady')), null, { timeout: 150000 })
+    await page.waitForTimeout(1200)
+    const agir = async (action, ms = 320) => {
+      await page.evaluate((a) => { window.__BRAISES__.scene.sendAction(a) }, action)
+      await page.waitForTimeout(ms)
+    }
+    await agir({ type: 'debug_set_hour', hour: 11 }, 400)
+
+    // LA PLUS GROSSE TROUÉE de la carte, et son CENTRE : c'est au milieu qu'on juge si le
+    // lieu se lit comme une clairière ou comme une coupe rase.
+    const cible = await page.evaluate(() => {
+      const s = window.__BRAISES__.scene
+      const { width, height, terrain } = s.map
+      const CLAIRIERE = 30
+      const vu = new Uint8Array(width * height)
+      let best = null
+      for (let d = 0; d < width * height; d++) {
+        if (terrain[d] !== CLAIRIERE || vu[d]) continue
+        const pile = [d]; vu[d] = 1
+        let n = 0, sx = 0, sy = 0, x0 = width, x1 = -1, y0 = height, y1 = -1
+        while (pile.length) {
+          const i = pile.pop(); const tx = i % width; const ty = (i - tx) / width
+          n++; sx += tx; sy += ty
+          if (tx < x0) x0 = tx; if (tx > x1) x1 = tx
+          if (ty < y0) y0 = ty; if (ty > y1) y1 = ty
+          for (const j of [tx > 0 ? i - 1 : -1, tx < width - 1 ? i + 1 : -1, ty > 0 ? i - width : -1, ty < height - 1 ? i + width : -1]) {
+            if (j >= 0 && terrain[j] === CLAIRIERE && !vu[j]) { vu[j] = 1; pile.push(j) }
+          }
+        }
+        if (!best || n > best.n) best = { n, tx: Math.round(sx / n), ty: Math.round(sy / n), w: x1 - x0 + 1, h: y1 - y0 + 1 }
+      }
+      return best
+    })
+    if (!cible) { console.error('!! aucune clairière sur cette carte'); return }
+    console.log(`\nLa plus grande clairière : ${cible.n} tuiles, emprise ${cible.w}×${cible.h}, centre (${cible.tx}, ${cible.ty}).`)
+    await agir({ type: 'debug_teleport', x: cible.tx + 0.5, y: cible.ty + 0.5 }, 600)
+    // ⚠ ON ATTEND LA CONCORDANCE, JAMAIS UNE DURÉE (mémoire `hud-une-image-de-retard`). Le
+    // `ClutterLayer` cull à la caméra et ne repeuple qu'à son `update` — or en headless une
+    // image dure près d'une seconde. Mesuré : avec un simple délai, la sonde comptait UNE FOIS
+    // SUR DEUX les props du POINT DE DÉPART (159 visibles, zéro dans la boîte) et concluait
+    // « la ligne BIOME_CLUTTER ne mord pas ». On attend donc qu'un prop soit VRAIMENT arrivé
+    // dans la trouée.
+    await page.waitForFunction(({ tx, ty }) => {
+      // Défensif : en `--dev`, un HMR peut recharger la page sous nos pieds (mémoire
+      // `smoke-dev-hmr-tue-la-prise`). On rend `false` au lieu de jeter — l'attente reprend.
+      const l = window.__BRAISES__?.scene?.clutter
+      if (!l || !l.pool) return false
+      return l.pool.some((i) => i.visible && Math.abs(i.x / 16 - tx) <= 8 && Math.abs(i.y / 16 - ty) <= 8)
+    }, { tx: cible.tx, ty: cible.ty }, { timeout: 30000 })
+    await page.waitForTimeout(600)
+
+    // ① LE SOL — la teinte moyenne cuite au centre de la trouée, contre celle du bois à
+    //    12 tuiles de là. Si l'écart est nul, la clairière est invisible et rien n'est réglé.
+    const sols = await page.evaluate(({ tx, ty }) => {
+      const s = window.__BRAISES__.scene
+      const { width, terrain } = s.map
+      const lire = (x, y) => {
+        const c = s.solCouleurs
+        return c ? c[y * width + x] : null
+      }
+      const CLAIRIERE = 30
+      let bois = null
+      for (let r = 6; r < 40 && !bois; r++) {
+        for (const [dx, dy] of [[r, 0], [-r, 0], [0, r], [0, -r], [r, r], [-r, -r]]) {
+          const x = tx + dx, y = ty + dy
+          if (x < 0 || y < 0 || x >= width) continue
+          const t = terrain[y * width + x]
+          if (t === 3 || t === 22) { bois = { x, y, t, c: lire(x, y) }; break }
+        }
+      }
+      return { clairiere: { t: terrain[ty * width + tx], c: lire(tx, ty), estClairiere: terrain[ty * width + tx] === CLAIRIERE }, bois }
+    }, { tx: cible.tx, ty: cible.ty })
+    const hex = (c) => (c === null || c === undefined ? 'n/a' : '#' + c.toString(16).padStart(6, '0'))
+    console.log(`SOL — clairière ${hex(sols.clairiere.c)} (terrain ${sols.clairiere.t}) vs bois ${hex(sols.bois?.c)} (terrain ${sols.bois?.t})`)
+    console.log(`     ${sols.clairiere.estClairiere ? '✓ on est bien DANS la clairière' : '✗ le TP a raté la trouée'}`)
+
+    // ② LE DÉCOR — et il se COMPARE, sinon il ne peut pas échouer. On compte les props du
+    //    `ClutterLayer` dans une boîte de 6 tuiles autour du centre de la trouée, PUIS dans une
+    //    boîte identique posée sur le bois d'à côté. C'était la moitié du défaut : la clairière
+    //    héritait de `forest` (densité 0,1) et devait passer à 0,62 — soit ~6×. Un compte nu
+    //    aurait dit « 40 props » et on l'aurait cru bon sans savoir contre quoi.
+    const props = await page.evaluate(({ tx, ty, bx, by }) => {
+      const s = window.__BRAISES__.scene
+      const l = s.clutter
+      if (!l || !l.pool) return null
+      const boite = (cx, cy) => {
+        let n = 0
+        for (const im of l.pool) {
+          if (!im.visible) continue
+          if (Math.abs(im.x / 16 - cx) <= 6 && Math.abs(im.y / 16 - cy) <= 6) n++
+        }
+        return n
+      }
+      // QUOI, et pas seulement combien : la clé de texture dit l'espèce du prop. C'est ce qui
+      // permet de juger le TIRAGE (une clairière pleine de bois mort ne se lit pas comme une
+      // clairière pleine d'herbe) et non sa seule densité.
+      const kinds = {}
+      for (const im of l.pool) {
+        if (!im.visible) continue
+        if (Math.abs(im.x / 16 - tx) > 8 || Math.abs(im.y / 16 - ty) > 8) continue
+        const k = (im.texture?.key ?? '?').replace(/^cl-/, '').replace(/_lit(_m)?$/, '').replace(/-\d+$/, '')
+        kinds[k] = (kinds[k] ?? 0) + 1
+      }
+      return { clairiere: boite(tx, ty), bois: bx === null ? null : boite(bx, by), actifs: l.pool.filter((i) => i.visible).length, kinds }
+    }, { tx: cible.tx, ty: cible.ty, bx: sols.bois?.x ?? null, by: sols.bois?.y ?? null })
+    if (!props) console.log('DÉCOR — couche de décor introuvable')
+    else {
+      const rap = props.bois ? (props.clairiere / Math.max(1, props.bois)).toFixed(1) : 'n/a'
+      console.log(`DÉCOR — clairière ${props.clairiere} props / bois ${props.bois} props (×${rap}) sur des boîtes de 6 tuiles · ${props.actifs} visibles`)
+      console.log(`     tirage dans la trouée : ${Object.entries(props.kinds).sort((a, b) => b[1] - a[1]).map(([k, n]) => `${k}=${n}`).join(' ')}`)
+      console.log(`     ${props.bois !== null && props.clairiere > props.bois ? '✓ la trouée est PLUS habillée que le bois' : '✗ pas plus dense que le bois — la ligne BIOME_CLUTTER ne mord pas'}`)
+    }
+
+    // ④ AUCUNE TEXTURE MANQUANTE — le carré vert `__MISSING` de Phaser. Un `kind` de clutter
+    //    câblé sans art, ou un terrain sans entrée de table, se voit comme ça et pas autrement.
+    const manque = await page.evaluate(() => {
+      const s = window.__BRAISES__.scene
+      const compte = {}
+      const ou = []
+      const scan2 = (o, source) => {
+        const k = o?.texture?.key
+        if (k === '__MISSING' || k === '__DEFAULT') {
+          compte[source] = (compte[source] ?? 0) + 1
+          if (o.visible && ou.length < 8) {
+            const tx = Math.round(o.x / 16 - 0.5)
+            const ty = Math.round(o.y / 16 - 0.5)
+            const n = (s.view?.nodes ?? []).find((v) => Math.abs(v.tx - tx) <= 1 && Math.abs(v.ty - ty) <= 1)
+            ou.push(`@${tx},${ty} ${o.width}x${o.height} — nœud voisin : ${n ? n.type : 'aucun'}`)
+          }
+        }
+      }
+      // RÉCURSIF : un carré vert peut vivre dans un Container, invisible à un scan de surface.
+      const marche = (o, source, prof) => {
+        if (!o || prof > 6) return
+        scan2(o, source)
+        const enfants = o.list ?? o.getChildren?.()
+        if (Array.isArray(enfants)) enfants.forEach((e) => marche(e, `${source}>${o.name || o.type}`, prof + 1))
+      }
+      s.children.list.forEach((o) => marche(o, 'scene', 0))
+      ;(s.clutter?.pool ?? []).forEach((i) => scan2(i, 'clutter'))
+      return { compte, ou }
+    })
+    const nManque = Object.values(manque.compte).reduce((a, b) => a + b, 0)
+    console.log(`TEXTURES — ${nManque === 0 ? '✓ aucune manquante' : `✗ ${nManque} en __MISSING : ${JSON.stringify(manque.compte)}`}`)
+    if (nManque > 0) manque.ou.forEach((l) => console.log(`     ${l}`))
+
+    // ⑤ LE TÉMOIN — la même sonde en PLEIN BOIS, loin de toute trouée. Sans lui, un carré vert
+    //    trouvé près d'une clairière accuse la clairière ; c'est le seul moyen de savoir si le
+    //    défaut la suit ou s'il était là avant (mémoire `verdict-du-banc-accuse-a-tort`).
+    const loin = await page.evaluate(({ tx, ty }) => {
+      const s = window.__BRAISES__?.scene
+      if (!s) return null
+      const { width, height, terrain } = s.map
+      const CLAIRIERE = 30
+      const pres = (x, y) => {
+        for (let dy = -24; dy <= 24; dy += 2) for (let dx = -24; dx <= 24; dx += 2) {
+          const j = (y + dy) * width + (x + dx)
+          if (j >= 0 && j < width * height && terrain[j] === CLAIRIERE) return true
+        }
+        return false
+      }
+      for (let r = 60; r < 400; r += 20) {
+        for (const [dx, dy] of [[r, 0], [-r, 0], [0, r], [0, -r]]) {
+          const x = tx + dx, y = ty + dy
+          if (x < 30 || y < 30 || x >= width - 30 || y >= height - 30) continue
+          if (terrain[y * width + x] !== 3) continue
+          if (!pres(x, y)) return { x, y }
+        }
+      }
+      return null
+    }, { tx: cible.tx, ty: cible.ty })
+    if (loin) {
+      await agir({ type: 'debug_teleport', x: loin.x + 0.5, y: loin.y + 0.5 }, 3000)
+      const t2 = await page.evaluate(() => {
+        const s = window.__BRAISES__?.scene
+        if (!s) return -1
+        let n = 0
+        const marche = (o, p) => {
+          if (!o || p > 6) return
+          const k = o?.texture?.key
+          if (o.visible && (k === '__MISSING' || k === '__DEFAULT')) n++
+          const e = o.list ?? o.getChildren?.()
+          if (Array.isArray(e)) e.forEach((c) => marche(c, p + 1))
+        }
+        s.children.list.forEach((o) => marche(o, 0))
+        return n
+      })
+      console.log(`TÉMOIN — en plein bois (${loin.x},${loin.y}), sans clairière à 24 tuiles : ${t2} carré(s) vert(s)`)
+      console.log(`     ${t2 > 0 ? '→ le défaut N\'EST PAS lié à la clairière : il est dans le bois' : '→ le bois est propre : le défaut suit la clairière'}`)
+      await agir({ type: 'debug_teleport', x: cible.tx + 0.5, y: cible.ty + 0.5 }, 3000)
+    } else console.log('TÉMOIN — aucun coin de bois assez loin d\'une trouée sur cette carte')
+
+    // ③ LA PHOTO — boucle endormie avant la prise (mémoire `capture-ecran-plein-hud-dom` :
+    //    sous swiftshader, `page.screenshot` expire tant que Phaser tourne).
+    // ⚠ ON LAISSE LE SOL FINIR DE CUIRE AVANT D'ENDORMIR LA BOUCLE. Les chunks de pavés se
+    //    cuisent par images, et en headless une image dure près d'une seconde : endormie 300 ms
+    //    après le TP, la capture montrait des RECTANGLES SOMBRES là où le sol n'était pas encore
+    //    cuit — qu'on prend pour un défaut de rendu alors que c'est la sonde qui a photographié
+    //    trop tôt (mémoire `bord-nu-est-une-couture-de-cache`).
+    await page.waitForTimeout(4000)
+    await page.evaluate(() => { window.__BRAISES__.scene.game.loop.sleep() })
+    await page.waitForTimeout(300)
+    await page.screenshot({ timeout: 90000, path: `${OUT}/clairiere.png` })
+    console.log(`PHOTO — ${OUT}/clairiere.png`)
+    return { cible, sols, props }
+  },
+
+  /**
+   * LE GLANAGE (spec `glanage.md`) — le butin au sol EXISTE-T-IL, et SE DISTINGUE-T-IL ?
+   *
+   * Deux questions, et la seconde est la seule qui compte pour la DA : le fouillis pose déjà
+   * des cailloux peints (`PEBBLES`) et des chicots. Si le butin leur ressemblait, le joueur
+   * passerait sa première heure à cliquer sur du décor. On se plante donc À CÔTÉ d'un nœud de
+   * glanage, on gèle la boucle, on regarde — et on relève sa distance au spawn, qui est le
+   * tempo de la première heure.
+   *
+   * ⚠ `--dev` obligatoire : la téléportation passe par `debug_teleport`, inerte en production
+   * (`veillee.ts` arme le debug sur `import.meta.env.DEV`).
+   */
+  async glanage(page) {
+    await page.waitForFunction(() => Boolean(window.__BRAISES__?.scene?.registry?.get('worldReady')), null, { timeout: 150000 })
+    await page.waitForTimeout(1200)
+    const agir = async (action, ms = 320) => {
+      await page.evaluate((a) => { window.__BRAISES__.scene.sendAction(a) }, action)
+      await page.waitForTimeout(ms)
+    }
+    await agir({ type: 'debug_set_hour', hour: 11 }, 400)
+    const depart = await page.evaluate(() => window.__BRAISES__.scene.registry.get('playerPos'))
+
+    // LE BUTIN LE PLUS PROCHE, des deux matières — et on relève la distance : c'est ce que le
+    // joueur devra marcher à la minute 0, et aucune planche offline ne peut le dire.
+    const cibles = await page.evaluate(({ px, py }) => {
+      const s = window.__BRAISES__.scene
+      const d = (n) => Math.hypot(n.tx + 0.5 - px, n.ty + 0.5 - py)
+      const pris = (t) => (s.view.nodes ?? []).filter((n) => n.type === t && n.stock > 0).sort((a, b) => d(a) - d(b))[0] ?? null
+      const fmt = (n) => (n ? { type: n.type, tx: n.tx, ty: n.ty, d: Math.round(d(n)) } : null)
+      return { bois: fmt(pris('branche_au_sol')), pierre: fmt(pris('pierre_au_sol')) }
+    }, { px: depart.x, py: depart.y })
+    console.log(`
+Depuis le spawn (${depart.x.toFixed(0)}, ${depart.y.toFixed(0)}) :`)
+    for (const [quoi, n] of Object.entries(cibles)) {
+      console.log(n ? `  ${quoi} : ${n.type} en (${n.tx}, ${n.ty}), à ${n.d} tuiles` : `  ${quoi} : AUCUN dans le snapshot`)
+    }
+    const cible = cibles.pierre ?? cibles.bois
+    if (!cible) { console.error('!! aucun nœud de glanage dans le snapshot — la partie ne peut pas commencer'); return }
+
+    // ═══ LE REFUS SE VOIT-IL ? (spec `glanage.md` G4) ═══
+    //
+    // La question la plus importante de la minute 1, et elle ne se lit dans AUCUNE capture :
+    // un joueur nu clique sur un arbre. Si la sim refuse en silence, l'objet le plus évident
+    // de l'écran devient un no-op, et le jeu passe pour cassé. On fait donc le geste — mains
+    // vides, un vrai `harvest` sur un vrai arbre — et on lit le bandeau du HUD.
+    const arbre = await page.evaluate(({ px, py }) => {
+      const s = window.__BRAISES__.scene
+      const d = (n) => Math.hypot(n.tx + 0.5 - px, n.ty + 0.5 - py)
+      const a = (s.view.nodes ?? []).filter((n) => n.type === 'tree' && n.stock > 0).sort((x, y) => d(x) - d(y))[0]
+      return a ? { id: a.id, tx: a.tx, ty: a.ty } : null
+    }, { px: depart.x, py: depart.y })
+    if (arbre) {
+      await agir({ type: 'debug_teleport', x: arbre.tx + 0.5, y: arbre.ty + 1.2 }, 900)
+      await page.evaluate(() => { window.__BRAISES__.scene.registry.set('error', null) })
+      await agir({ type: 'harvest', nodeId: arbre.id }, 700)
+      const refus = await page.evaluate(() => window.__BRAISES__.scene.registry.get('error'))
+      console.log(`  MAINS NUES sur l'arbre (${arbre.tx}, ${arbre.ty}) → ${refus ? `« ${refus.reason} »` : 'AUCUN RETOUR (le clic est muet !)'}`)
+      const inv = await page.evaluate(() => (window.__BRAISES__.scene.registry.get('inv') ?? []).reduce((t, sl) => t + (sl?.item === 'wood' ? sl.count : 0), 0))
+      console.log(`  bois au sac après le coup : ${inv} (doit être 0 — l'arbre n'a pas cédé)`)
+    }
+
+    // On se pose à une tuile et demie, au sud-ouest : le butin reste DÉGAGÉ à l'image (un
+    // avatar planté dessus le remplirait de sa propre silhouette) et il est dans la portée.
+    await agir({ type: 'debug_teleport', x: cible.tx - 1.2, y: cible.ty + 1.2 }, 400)
+    // ON ATTEND QUE LE MONDE AIT SUIVI, on ne compte pas sur un délai. Premier jet : 1 200 ms
+    // « qui suffisent », et la capture a montré le SPAWN — le téléport n'était pas encore
+    // arrivé quand `game.loop.sleep()` a figé la scène, et l'image était une herbe rase parfaitement
+    // convaincante (mémoire `debug-empile-lit-le-passe`). On affirme la position, puis on gèle.
+    await page.waitForFunction(({ x, y }) => {
+      const p = window.__BRAISES__?.scene?.registry?.get('playerPos')
+      return Boolean(p) && Math.abs(p.x - x) < 1.5 && Math.abs(p.y - y) < 1.5
+    }, { x: cible.tx - 1.2, y: cible.ty + 1.2 }, { timeout: 20000 })
+    await page.waitForTimeout(700) // la couche des nœuds a une image de retard sur la caméra
+    // LA CAPTURE PEUT MENTIR : avant de juger une image, on affirme que le jeu a de quoi la
+    // peindre. Une texture manquante ne fait pas toujours un carré vert — un sprite peut naître
+    // vide et l'herbe aurait l'air d'être la bonne réponse.
+    const diag = await page.evaluate(({ tx, ty, type }) => {
+      const s = window.__BRAISES__.scene
+      const t = (k) => s.textures.exists(k)
+      const vus = (s.view.nodes ?? []).filter((n) => n.tx === tx && n.ty === ty).map((n) => `${n.type}#${n.id}/${n.stock}`)
+      return { flat: t(`nd-${type}`), lit: t(`nd-${type}_lit`), vus, lighting: Boolean(s.snapshotView?.lighting) }
+    }, { tx: cible.tx, ty: cible.ty, type: cible.type })
+    console.log(`  textures : nd-${cible.type}=${diag.flat} · _lit=${diag.lit} · éclairage=${diag.lighting}`)
+    console.log(`  nœuds sur la tuile : ${diag.vus.join(', ') || 'AUCUN'}`)
+    await page.evaluate(() => window.__BRAISES__.scene.game.loop.sleep())
+    await page.screenshot({ path: `${OUT}/glanage.png` })
+    console.log(`capture : ${OUT}/glanage.png (${cible.type} en ${cible.tx}, ${cible.ty})`)
+    return cibles
   },
 
   async default(page) {
@@ -8430,6 +11327,252 @@ const SCENARIOS = {
    * PAS poussé, et que démolir un vantail rend l'autre à sa famille simple. En horizontal ET
    * en vertical — c'est la demande. Exige `--dev` (TP).
    */
+  /**
+   * HOUPPIER × SAISON × NEIGE (2026-08-25) — ce que la planche ne peut PAS montrer.
+   *
+   * La planche rend l'ALBÉDO : elle a servi à trancher la loi de teinte, et elle s'arrête là.
+   * Ce qui manque, et qui est tout le pipeline, c'est la NORMALE et la lumière du jeu par-dessus
+   * — une cime teintée doit rester sculptée, et une coiffe de neige doit prendre le soleil comme
+   * un pavé du sol. Plus le seul nombre qu'on ne peut pas mesurer hors navigateur : ce que COÛTE
+   * le recuit des 35 albédos caducs au passage d'un cran de saison.
+   *
+   * ⚠ Ce scénario ÉCRIT dans l'état, contrairement à la règle. Deux écritures, toutes deux
+   * assumées et nommées : `lastTime.seasonDay` (pour ne pas jouer trente jours de saison) et
+   * l'état de cime (pour ne pas attendre un front de neige). Ce qu'on regarde ensuite — la
+   * couleur, la normale, la lumière — est le VRAI chemin, intact.
+   *
+   * La partie NEIGE exige `--dev` (elle se téléporte dans un peuplement de conifères) ; les
+   * quatre saisons et le fondu, non.
+   */
+  async 'houppier-saison'(page) {
+    await page.waitForFunction(() => Boolean(window.__BRAISES__?.scene?.registry?.get('worldReady')), null, { timeout: 150000 })
+    await page.waitForTimeout(1500)
+
+    // ── 1. TROUVER UN BOIS, et y poser la caméra (sans TP : on ne bouge pas le joueur) ──
+    const vue = await page.evaluate(() => {
+      const s = window.__BRAISES__.scene
+      const map = s.registry.get('mapData')
+      const p = s.registry.get('playerPos')
+      const { width, height, terrain } = map
+      // Le carré de 12 tuiles le plus boisé dans un rayon de 90 autour du joueur.
+      let best = { n: -1, x: p.x, y: p.y }
+      for (let ty = Math.max(6, (p.y | 0) - 90); ty < Math.min(height - 6, (p.y | 0) + 90); ty += 4) {
+        for (let tx = Math.max(6, (p.x | 0) - 90); tx < Math.min(width - 6, (p.x | 0) + 90); tx += 4) {
+          let n = 0
+          for (let dy = -6; dy <= 6; dy++) for (let dx = -6; dx <= 6; dx++) {
+            const t = terrain[(ty + dy) * width + tx + dx]
+            if (t === 3 || t === 22 || t === 13 || t === 14) n++
+          }
+          if (n > best.n) best = { n, x: tx, y: ty }
+        }
+      }
+      const cam = s.cameras.main
+      cam.stopFollow()
+      cam.setZoom(2.6)
+      cam.centerOn(best.x * 24, best.y * 24)
+      return best
+    })
+    console.log(`bois visé : ${vue.n} tuiles boisées autour de (${vue.x}, ${vue.y})`)
+
+    // ── 2. LES QUATRE SAISONS, sur la MÊME vue ──
+    //
+    // ⚠ LA MOYENNE NE SE LIT PAS SUR LE CANVAS. `drawImage(canvas WebGL)` après présentation
+    // rend du NOIR sans `preserveDrawingBuffer` — mesuré, rgb(0,0,0) aux quatre saisons, et le
+    // verdict accusait le code neuf. On lit donc l'ALBÉDO RÉELLEMENT CUIT dans le gestionnaire
+    // de textures (nos canvas 2D, eux, sont relisibles) : c'est ce que la carte de normales et
+    // la lumière du jeu consomment ensuite, et les captures montrent le composite à l'œil.
+    const couleurs = []
+    for (const [jour, nom] of [[15, 'eclosion'], [45, 'ardeur'], [75, 'pluies'], [105, 'grandfroid']]) {
+      const c = await page.evaluate((j) => {
+        const s = window.__BRAISES__.scene
+        if (s.lastTime) s.lastTime.seasonDay = j
+        // LE RECUIT EST ÉTALÉ (4 albédos par image) : une seule frame n'en cuit qu'un huitième,
+        // et la sonde lirait la saison d'avant. On draine jusqu'à ce que la file soit vide.
+        for (let i = 0; i < 40; i++) s.game.step(performance.now(), 16)
+        // ET ON LIT LA CLÉ QUE LE RENDU LIT — parité comprise, sinon on relève l'emplacement
+        // qui porte le cran PRÉCÉDENT (c'est tout l'objet des deux emplacements).
+        const parite = s.view.cranSaison & 1
+        const moyenne = (cle) => {
+          const tex = s.textures.get(cle)
+          const img = tex && tex.getSourceImage()
+          if (!img || !img.width) return null
+          const g = document.createElement('canvas')
+          g.width = img.width; g.height = img.height
+          const ctx = g.getContext('2d', { willReadFrequently: true })
+          ctx.drawImage(img, 0, 0)
+          const d = ctx.getImageData(0, 0, img.width, img.height).data
+          let r = 0, v = 0, b = 0, n = 0
+          for (let i = 0; i < d.length; i += 4) { if (d[i + 3] > 8) { r += d[i]; v += d[i + 1]; b += d[i + 2]; n++ } }
+          return n === 0 ? null : { r: Math.round(r / n), v: Math.round(v / n), b: Math.round(b / n), n }
+        }
+        // LE SOL : la moyenne d'un chunk de pavés RÉELLEMENT posé (CanvasTexture, donc
+        // relisible — contrairement au canvas WebGL). C'est l'image que le joueur a sous les
+        // pieds, pas le bake 1 px/tuile qui ne sert plus qu'au lit de l'eau et à la minicarte.
+        const chunks = s.textures.getTextureKeys().filter((k) => k.startsWith('pave-') && !k.endsWith('-surplomb'))
+        return {
+          cran: s.view.cranSaison,
+          gelPresent: s.view.etatGel !== null,
+          caduc: moyenne(`nd-hetre_crown_lit-0${parite === 1 ? '~1' : ''}`),
+          meleze: moyenne(`nd-meleze_crown_lit-0${parite === 1 ? '~1' : ''}`),
+          persistant: moyenne('nd-pin_crown_lit-0'),
+          sol: chunks.length ? moyenne(chunks.sort()[Math.floor(chunks.length / 2)]) : null,
+          recuitsSaison: s.paves ? s.paves.recuitsSaison : -1,
+        }
+      }, jour)
+      await page.evaluate(() => window.__BRAISES__.scene.game.loop.sleep())
+      await page.screenshot({ path: `${OUT}/houppier-${nom}.png` })
+      await page.evaluate(() => window.__BRAISES__.scene.game.loop.wake())
+      couleurs.push({ nom, jour, ...c })
+      const f = (x) => (x ? `rgb(${x.r},${x.v},${x.b})` : 'ABSENT')
+      console.log(`${nom.padEnd(11)} j${String(jour).padStart(3)} cran ${String(c.cran).padStart(2)} → sol ${f(c.sol)} · hêtre ${f(c.caduc)} · mélèze ${f(c.meleze)} · pin ${f(c.persistant)}`)
+    }
+
+    // ── 2 bis. CE QUE COÛTE LE RECUIT, moyenné sur dix passages de cran ──
+    //
+    // Une frame isolée ne le dit pas : sous SwiftShader l'écart-type d'un `game.step` dépasse
+    // 100 ms, soit dix fois ce qu'on cherche. On fait donc DIX allers-retours entre deux crans
+    // (dix recuits) contre DIX images au même jour (zéro recuit), et on prend l'écart.
+    const cout = await page.evaluate(() => {
+      const s = window.__BRAISES__.scene
+      const pas = () => s.game.step(performance.now(), 16)
+      s.lastTime.seasonDay = 45; pas() // on part d'un état cuit
+      const t0 = performance.now()
+      for (let i = 0; i < 10; i++) { s.lastTime.seasonDay = i % 2 ? 45 : 75; pas() }
+      const avec = performance.now() - t0
+      s.lastTime.seasonDay = 45; pas()
+      const t1 = performance.now()
+      for (let i = 0; i < 10; i++) pas()
+      const sans = performance.now() - t1
+      return { avec, sans, parRecuit: (avec - sans) / 10 }
+    })
+    console.log(`recuit d’un cran (35 albédos caducs, normales en cache) : ${cout.parRecuit.toFixed(1)} ms`)
+    console.log(`  (10 images avec recuit ${cout.avec.toFixed(0)} ms · 10 images sans ${cout.sans.toFixed(0)} ms)`)
+
+    // ── 2 ter. LE FONDU EST-IL VRAIMENT LERPÉ ? ──
+    //
+    // Ce que ni `pnpm test` ni la planche ne voient : que DEUX sprites de cime coexistent
+    // pendant le passage, et que leurs opacités se répondent (elles somment à l'opacité de
+    // canopée). On regarde à trois instants du fondu d'ÉTAT, sur un arbre qu'on force à changer.
+    const fondu = await page.evaluate(async () => {
+      const s = window.__BRAISES__.scene
+      const v = s.view
+      // On force le POINT DE DÉCISION lui-même (`etatDeCime`), pas l'une de ses sources : la
+      // source ne parle que si l'état du gel est présent, et le scénario ne doit pas dépendre
+      // de ça pour montrer un fondu.
+      //
+      // `'nu'` pour TOUT LE MONDE : les caducs se dénudent (leur texture existe), les conifères
+      // retombent sur leur cime feuillue (`cleDeCime` le fait) et ne bougent donc pas. Quel que
+      // soit le bois qu'on a sous les yeux, quelque chose change — c'est ce qu'il faut ici.
+      v.etatDeCime = () => 'nu'
+      const releve = []
+      releve.textures = []
+      const t0 = performance.now()
+      for (const attente of [0, 1500, 3000, 7000]) {
+        // On avance l'horloge de la scène SANS attendre : `now` du rendu vient de Phaser, donc
+        // on pousse le temps à la main dans le pas de boucle.
+        s.game.step(t0 + attente, 16)
+        const vus = v.crownPool.filter((c) => c.visible)
+        if (attente === 0) releve.textures = [...new Set(vus.map((c) => c.texture.key))].slice(0, 6)
+        const sortants = v.crownFadePool.filter((c) => c.visible)
+        releve.push({
+          attente,
+          cimes: vus.length,
+          sortantes: sortants.length,
+          alphaEntrant: vus.length ? Number(vus[0].alpha.toFixed(3)) : null,
+          alphaSortant: sortants.length ? Number(sortants[0].alpha.toFixed(3)) : null,
+        })
+      }
+      return { pas: releve, textures: releve.textures }
+    })
+    console.log(`  cimes à l’écran : ${fondu.textures.join(' · ')}`)
+    for (const r of fondu.pas) {
+      console.log(`  t+${String(r.attente).padStart(4)} ms → ${r.cimes} cimes, ${r.sortantes} sortantes · entrant ${r.alphaEntrant} / sortant ${r.alphaSortant}`)
+    }
+    const mi = fondu.pas.find((r) => r.attente === 1500)
+    const fin = fondu.pas.find((r) => r.attente === 7000)
+    if (!mi || mi.sortantes === 0) console.error(`!! LE FONDU NE SE VOIT PAS : aucune cime sortante à mi-parcours`)
+    if (fin && fin.sortantes !== 0) console.error(`!! LE FONDU N’ARRIVE PAS : ${fin.sortantes} cimes sortantes après la durée`)
+
+    // ── 3. LA NEIGE SUR LES PERSISTANTS ──
+    //
+    // ⚠ ON NE PEUT PAS ALLER LA VOIR SUR UN VRAI PEUPLEMENT SANS `--dev`. Mesuré, et c'est une
+    // leçon d'instrument : déplacer la CAMÉRA ne suffit pas — les nœuds sont diffusés AUTOUR DU
+    // JOUEUR, donc un cadre posé à 600 tuiles montre le sol de là-bas et les arbres d'ici. Le
+    // relevé le disait sans ambiguïté : terrain 13 (pin) au centre du cadre, et des cimes
+    // `chene_pre` / `saule` / `bouleau` à l'écran. Il faut téléporter, donc `--dev`.
+    //
+    // On vérifie donc ce qui EST vérifiable ici, et qui est l'essentiel : que les textures de
+    // coiffe existent dans le jeu qui tourne, qu'elles portent leur carte de NORMALES, et à
+    // quoi elles ressemblent SOUS LA LUMIÈRE DU JEU — on les pose en grand au centre de
+    // l'écran, par le même chemin éclairé que n'importe quelle cime.
+    const neige = await page.evaluate(() => {
+      const s = window.__BRAISES__.scene
+      const cam = s.cameras.main
+      const cx = cam.worldView.x + cam.worldView.width / 2
+      const cy = cam.worldView.y + cam.worldView.height / 2
+      const etats = ['', '_n1', '_n2']
+      const rapport = []
+      etats.forEach((suffixe, i) => {
+        const cle = `nd-pin_crown${suffixe}_lit-0`
+        const tex = s.textures.get(cle)
+        const img = tex && tex.getSourceImage()
+        let blancs = 0
+        if (img && img.width) {
+          const g = document.createElement('canvas')
+          g.width = img.width; g.height = img.height
+          const ctx = g.getContext('2d', { willReadFrequently: true })
+          ctx.drawImage(img, 0, 0)
+          const d = ctx.getImageData(0, 0, img.width, img.height).data
+          for (let k = 0; k < d.length; k += 4) {
+            if (d[k + 3] > 8 && Math.min(d[k], d[k + 1], d[k + 2]) > 170) blancs++
+          }
+        }
+        rapport.push({
+          cle,
+          existe: s.textures.exists(cle),
+          normale: Boolean(tex && tex.dataSource && tex.dataSource.length > 0),
+          blancs,
+        })
+        const sp = s.add.image(cx - 120 + i * 120, cy, cle).setScale(3).setDepth(1e6)
+        if (sp.setLighting) sp.setLighting(true)
+      })
+      s.game.step(performance.now(), 16)
+      s.game.step(performance.now(), 16)
+      s.game.loop.sleep()
+      return rapport
+    })
+    for (const r of neige) {
+      console.log(`  ${r.cle.padEnd(26)} présente ${r.existe} · normale ${r.normale} · pixels de neige ${r.blancs}`)
+    }
+    await page.screenshot({ path: `${OUT}/houppier-neige.png` })
+    await page.evaluate(() => window.__BRAISES__.scene.game.loop.wake())
+    const sansNeige = neige.find((r) => r.cle.endsWith('crown_lit-0'))
+    const poudre = neige.find((r) => r.cle.includes('_n1'))
+    const chargee = neige.find((r) => r.cle.includes('_n2'))
+    if (!poudre.existe || !chargee.existe) console.error('!! LES COIFFES DE NEIGE NE SONT PAS CUITES')
+    else if (!poudre.normale || !chargee.normale) console.error('!! UNE COIFFE N’A PAS DE CARTE DE NORMALES : elle sera plate sous la lumière')
+    else if (sansNeige.blancs !== 0 || poudre.blancs === 0 || chargee.blancs <= poudre.blancs) {
+      console.error(`!! LA CHARGE NE CROÎT PAS : ${sansNeige.blancs} / ${poudre.blancs} / ${chargee.blancs}`)
+    }
+
+    // ── LE VERDICT ──
+    // ① le CADUC change franchement d'une saison à l'autre ; ② le PERSISTANT ne bouge PAS d'un
+    // point (promesse G6 : la silhouette du conifère dit qu'il tient — et sa couleur aussi).
+    const ecart = (a, b) => (a && b ? Math.round(Math.hypot(a.r - b.r, a.v - b.v, a.b - b.b)) : -1)
+    const par = (n) => couleurs.find((c) => c.nom === n)
+    const dCaduc = ecart(par('ardeur').caduc, par('pluies').caduc)
+    const dMeleze = ecart(par('ardeur').meleze, par('pluies').meleze)
+    const dPersistant = ecart(par('ardeur').persistant, par('pluies').persistant)
+    const dSol = ecart(par('ardeur').sol, par('pluies').sol)
+    console.log(`écart Ardeur↔Pluies : sol ${dSol} · hêtre ${dCaduc} · mélèze ${dMeleze} · pin ${dPersistant} (le pin doit valoir 0)`)
+    console.log(`chunks de sol recuits par la saison : ${par('grandfroid').recuitsSaison}`)
+    if (dCaduc < 25) console.error(`!! LE FEUILLAGE CADUC NE TOURNE PAS : ${dCaduc}`)
+    if (dMeleze < 20) console.error(`!! LE MÉLÈZE NE DORE PAS : ${dMeleze}`)
+    if (dPersistant !== 0) console.error(`!! LE CONIFÈRE TOURNE, il ne devrait pas : ${dPersistant}`)
+    if (dSol < 10) console.error(`!! LE SOL NE TOURNE PAS : ${dSol}`)
+    return { couleurs, dCaduc, dMeleze, dPersistant, dSol, cout, fondu, neige }
+  },
+
   async 'porte-double'(page) {
     await page.waitForFunction(() => Boolean(window.__BRAISES__?.scene?.registry?.get('worldReady')), null, { timeout: 150000 })
     await page.waitForTimeout(1200)
@@ -10040,6 +13183,66 @@ const SCENARIOS = {
     return releve
   },
 
+  /**
+   * LE CARTON DE DÉCOUVERTE — un lieu foulé pour la première fois s'annonce-t-il ?
+   * (2026-08-25, modèle The Long Dark : les noms ne flottent plus au-dessus du paysage,
+   * donc ce carton est le SEUL moment où un lieu se nomme de lui-même.)
+   *
+   * Exige `--dev` : on se pose dans le lieu par `debug_teleport`.
+   *
+   * CE QUI LE FERAIT ROUGIR : un carton qui ne monte jamais à pleine encre (l'événement
+   * n'arrive pas jusqu'au bandeau), un carton qui nomme autre chose que le lieu foulé, ou
+   * une étiquette RESTÉE suspendue au-dessus des lieux (la moitié qu'on a retirée — un
+   * `Phaser.GameObjects.Text` de plus par lieu connu).
+   */
+  async decouverte(page) {
+    await page.waitForTimeout(2000)
+    const cible = await page.evaluate(() => {
+      const z = window.__BRAISES__.scene.map?.zones ?? []
+      const ok = z.filter((v) => v.kind !== undefined && v.kind !== 'cairn')
+      const pref = ok.find((v) => v.kind === 'ferme_ruinee') ?? ok[0]
+      return pref ? { kind: pref.kind, name: pref.name, x: pref.x + pref.w / 2, y: pref.y + pref.h / 2 } : null
+    })
+    if (!cible) { console.error('!! aucun lieu sur la carte'); return }
+    console.log(`cible : ${JSON.stringify(cible)}`)
+    await page.evaluate(({ px, py }) => window.__BRAISES__.scene.sendAction({ type: 'debug_teleport', x: px, y: py }), { px: cible.x, py: cible.y })
+
+    // On GUETTE la pleine encre, PUIS on gèle. Sans le gel, la frame headless (~800 ms)
+    // tombe n'importe où dans les 5 s du carton — souvent en plein fondu.
+    let vu = null
+    for (let i = 0; i < 300; i++) {
+      const e = await page.evaluate(() => {
+        const el = document.querySelector('.bnd-dec')
+        if (!el || el.style.display === 'none') return null
+        return { o: Number(el.style.opacity), t: el.style.transform, nom: document.querySelector('.bnd-dec-nom')?.textContent ?? '' }
+      })
+      if (e && e.o >= 1) { await page.evaluate(() => window.__BRAISES__.scene.game.loop.sleep()); vu = e; break }
+      await page.waitForTimeout(20)
+    }
+    console.log(`carton : ${JSON.stringify(vu)}`)
+    if (!vu) console.error("!! LE CARTON DE DÉCOUVERTE N'EST JAMAIS MONTÉ — un lieu foulé ne se nomme nulle part")
+    else if (vu.nom !== cible.name) console.error(`!! LE CARTON NOMME AUTRE CHOSE : ${vu.nom} != ${cible.name}`)
+
+    // L'AUTRE MOITIÉ : plus une seule étiquette suspendue. On compte les objets Texte de
+    // WorldScene qui portent un nom de lieu — s'il en reste un, le monde parle encore.
+    // ⚠ LA SONDE PROUVE SA PRÉMISSE : un `0` tout nu ne distingue pas « plus une étiquette »
+    // de « mauvaise liste » ou « mauvaise propriété ». On rapporte donc aussi la taille de la
+    // liste d'affichage et le nombre d'objets Texte qu'elle porte — un zéro n'a de sens que
+    // sur une liste peuplée qui contient bien des Textes.
+    const etiq = await page.evaluate(() => {
+      const list = window.__BRAISES__.scene.children.list
+      const noms = new Set((window.__BRAISES__.scene.map?.zones ?? []).map((z) => z.name).filter(Boolean))
+      const textes = list.filter((o) => typeof o.text === 'string')
+      return { total: list.length, noms: noms.size, textes: textes.length, suspendues: textes.filter((o) => noms.has(o.text)).length }
+    })
+    console.log(`étiquettes : ${JSON.stringify(etiq)}`)
+    if (etiq.total < 10 || etiq.noms < 10) console.error(`!! LA SONDE NE REGARDE RIEN (liste ${etiq.total}, noms ${etiq.noms}) — son zéro ne prouve rien`)
+    else if (etiq.suspendues > 0) console.error(`!! ${etiq.suspendues} NOM(S) FLOTTENT ENCORE AU-DESSUS DU PAYSAGE`)
+
+    await page.screenshot({ timeout: 90000, path: `${OUT}/decouverte.png` })
+    return { ...vu, ...etiq }
+  },
+
   async chene(page) {
     await page.waitForTimeout(1500)
     const vu = await page.evaluate(() => {
@@ -10599,6 +13802,486 @@ const SCENARIOS = {
    *
    * Exige `--dev` (TP et `debug_meteo` sont inertes en build de production).
    */
+  /**
+   * LE BROUILLARD À DEUX ÉTAGES (2026-08-25) — « pas assez occultant », et ce que ça exige.
+   *
+   * Alexis : *« le brouillard n'est pas assez occultant, il faudrait faire comme Project
+   * Zomboid : très occultant loin du joueur, un cercle plus lisible autour ; et il colle au
+   * sol, on voit les objets hauts qui en dépassent (bâtiment, arbre…) »*.
+   *
+   * Le brouillard était un APLAT plein cadre à ~0,44 d'opacité — un aplat ne peut pas être à
+   * la fois assez dense pour fermer l'horizon et assez mince pour qu'on voie ses pieds. La
+   * réponse est en deux pièces (voir l'en-tête de `meteo-layer.ts`) : l'opacité suit le RAYON
+   * depuis l'avatar, et le voile se DÉDOUBLE — une nappe sous les sprites, un voile d'air
+   * au-dessus de tout.
+   *
+   * ═══ CE SCÉNARIO PEUT ROUGIR, ET VOICI À QUOI ═══
+   *
+   * Un voile qui couvre le cadre a l'air « correct » sur n'importe quelle photo : il faut donc
+   * dire AVANT ce qui le ferait échouer. Deux verdicts, chacun mesuré CONTRE L'APLAT D'AVANT,
+   * au même endroit, à la même heure, dans la même exécution (on ne compare pas deux mondes) :
+   *
+   *   ① LE CERCLE S'OUVRE. Δµ(loin) − Δµ(près), les deux Δ pris contre le monde SANS front
+   *     (la différence des différences élimine le décor, qui n'est pas le même au centre et
+   *     aux coins). L'aplat rend ~0 par construction : il est uniforme. **Rouge si le réglage
+   *     livré rend moins de 15.**
+   *
+   *   ② LES OBJETS HAUTS DÉPASSENT. L'ÉTENDUE (p90 − p10 de luminance) du CHAMP LOINTAIN.
+   *     C'est la mesure du dispositif entier : au loin le sol reçoit nappe + air (~0,77) et
+   *     un tronc le seul air (~0,37) — les silhouettes restent sombres sur un sol devenu pâle,
+   *     donc l'étendue MONTE. Sous l'aplat, tout reçoit la même opacité et l'étendue s'écrase.
+   *     **Rouge si l'étendue livrée ne vaut pas au moins 1,5 × celle de l'aplat.**
+   *
+   *   ③ LA PRÉMISSE, prouvée et non supposée : les coins mesurés sont-ils vraiment AU-DELÀ de
+   *     `r1` (sinon ① ne mesure rien), et portent-ils vraiment des arbres (sinon ② mesure du
+   *     sol contre du sol) ? Les deux sont criés, et rouges s'ils manquent.
+   *
+   * Exige `--dev` (le ciel se pose par le canal de debug). Captures dans
+   * `scratchpad/smoke/brouillardsol-*.png`.
+   */
+  async brouillardsol(page) {
+    if (!dev) { console.log('\n(brouillardsol exige --dev : le ciel se pose par le canal de debug)'); return {} }
+    await page.waitForFunction(() => Boolean(window.__BRAISES__?.scene?.registry?.get('worldReady')), null, { timeout: 150000 })
+    await page.waitForTimeout(2500)
+    const agir = async (a, ms = 700) => { await page.evaluate((x) => window.__BRAISES__.scene.sendAction(x), a); await page.waitForTimeout(ms) }
+    await agir({ type: 'debug_god', on: true }, 600)
+
+    /** ATTENDRE DES IMAGES, PAS DES MILLISECONDES : sous swiftshader une image dure ~900 ms,
+     *  et un `waitForTimeout(600)` photographie alors le réglage PRÉCÉDENT. */
+    // ⚠ GAINÉ, et il l'a fallu : en `--dev` la page peut NAVIGUER sous la sonde (HMR, retour au
+    // menu). Playwright jette alors « Execution context was destroyed » et le scénario meurt en
+    // plein milieu, après avoir déjà payé dix minutes de rendu logiciel.
+    const images = (n) => page.evaluate(async (k) => {
+      for (let i = 0; i < k; i++) await new Promise((r) => requestAnimationFrame(r))
+    }, n).catch(() => page.waitForTimeout(1500))
+
+    const etat = () => page.evaluate(() => {
+      const s = window.__BRAISES__.scene
+      return {
+        bande: s.meteoLayer?.bande ?? null,
+        intensite: s.meteoLayer?.intensiteAuJoueur ?? 0,
+        pos: s.registry.get('playerPos'),
+        map: { w: s.map.width, h: s.map.height },
+      }
+    })
+
+    /**
+     * CE QUE L'ÉCRAN DIT, EN TROIS ZONES — relevé sur le SNAPSHOT DU RENDU, pas sur une
+     * capture de page : le HUD est en DOM, et une capture de page le mêlerait aux pixels du
+     * monde. Le snapshot ne rend que la toile.
+     *
+     * Les zones sont en pixels de TOILE, et le centre est CALCULÉ (avatar → écran par la
+     * caméra), jamais supposé au milieu.
+     */
+    const zones = () => page.evaluate(async () => {
+      const s = window.__BRAISES__.scene
+      const img = await new Promise((ok) => s.game.renderer.snapshot((i) => ok(i)))
+      const c = document.createElement('canvas')
+      c.width = img.width
+      c.height = img.height
+      const cx = c.getContext('2d', { willReadFrequently: true })
+      cx.drawImage(img, 0, 0)
+      const d = cx.getImageData(0, 0, c.width, c.height).data
+      const cam = s.cameras.main
+      const p = s.registry.get('playerPos')
+      const TILE = 16
+      const enEcran = (tx, ty) => ({
+        x: (tx * TILE - cam.worldView.x) * cam.zoom,
+        y: (ty * TILE - cam.worldView.y) * cam.zoom,
+      })
+      const moi = enEcran(p.x, p.y)
+      // ── LES DEUX CHAMPS SONT DES MASQUES RADIAUX, PAS DES BOÎTES ──
+      //
+      // Le premier jet mesurait deux boîtes de coin, et le scénario a rougi sur sa prémisse :
+      // À ZOOM 2,25 LE CADRE FAIT 35,6 × 20,0 TUILES, donc les centres de coin ne tombaient
+      // qu'à 16,9 tuiles de l'œil — ET ILS NE PORTAIENT AUCUN ARBRE. On mesurait du sol contre
+      // du sol, et le verdict « ça dépasse » ne pouvait rien dire. Un masque radial balaie
+      // TOUT le cadre au-delà d'un rayon : il ramasse forcément ce qui s'y trouve.
+      const rPres = 3, rLoin = 9 // en TUILES, de l'œil
+      const pxParTuile = cam.zoom * TILE
+      const champs = (rMin, rMax) => {
+        const lum = []
+        for (let y = 0; y < c.height; y++) {
+          for (let x = 0; x < c.width; x++) {
+            const dt = Math.hypot(x - moi.x, y - moi.y) / pxParTuile
+            if (dt < rMin || dt >= rMax) continue
+            const i = (y * c.width + x) * 4
+            lum.push(0.2126 * d[i] + 0.7152 * d[i + 1] + 0.0722 * d[i + 2])
+          }
+        }
+        if (!lum.length) return null
+        lum.sort((a, b) => a - b)
+        const q = (t) => lum[Math.floor(t * (lum.length - 1))]
+        return { moy: lum.reduce((a, b) => a + b, 0) / lum.length, etendue: q(0.9) - q(0.1), n: lum.length }
+      }
+      // ③ LA PRÉMISSE : le champ LOINTAIN existe-t-il vraiment à l'écran (des pixels au-delà
+      //   de rLoin), et porte-t-il des ARBRES ? Sans arbres, « ça dépasse » n'a pas d'objet.
+      const arbres = (s.view?.nodes ?? []).filter((n) => n.type === 'tree' || n.type === 'old_tree')
+      let debout = 0
+      let coin = 0
+      for (const a of arbres) {
+        const e = enEcran(a.tx + 0.5, a.ty + 1)
+        if (e.x < 0 || e.y < 0 || e.x >= c.width || e.y >= c.height) continue
+        const dt = Math.hypot(e.x - moi.x, e.y - moi.y) / pxParTuile
+        if (dt >= rLoin) debout++
+        coin = Math.max(coin, dt)
+      }
+      const loin = champs(rLoin, 1e9)
+      return {
+        toile: { w: c.width, h: c.height, zoom: cam.zoom, tuilesX: c.width / pxParTuile, tuilesY: c.height / pxParTuile },
+        moi,
+        rPres,
+        rLoin,
+        coin,
+        pres: champs(0, rPres),
+        loin: { ...loin, arbres: debout },
+      }
+    })
+
+    /** Le réglage courant, écrit d'un bloc — relu par le shader À CHAQUE IMAGE. */
+    const poser = (r) => page.evaluate((x) => { if (window.__BRAISES__?.scene?.meteoLayer) window.__BRAISES__.scene.meteoLayer.reglage = x }, r).catch(() => {})
+    const livre = await page.evaluate(() => ({ ...window.__BRAISES__.scene.meteoLayer.reglage }))
+
+    /** RAPPELER LE FRONT SUR SON CENTRE — la bande traverse la carte pendant qu'on la
+     *  photographie (9,5 tuiles en 1,4 s, MESURÉ) : sans ce rappel, l'obturateur tombe sur un
+     *  ciel déjà parti. Idempotent, un tick. On attend la PREUVE (l'intensité), pas un délai. */
+    const rappeler = async (cible = 0.9) => {
+      await page.evaluate(() => {
+        const sc = window.__BRAISES__?.scene
+        if (!sc) return
+        sc.sendAction({ type: 'debug_set_hour', hour: 12 })
+        sc.sendAction({ type: 'debug_meteo', meteo: 'brouillard', edge: 0, phase: 0.5 })
+      }).catch(() => {})
+      await page.waitForFunction(
+        (k) => (window.__BRAISES__.scene.meteoLayer?.intensiteAuJoueur ?? 0) >= k,
+        cible, { timeout: 15000, polling: 100 },
+      ).catch(() => {})
+    }
+
+    // ── SE PLANTER LÀ OÙ IL Y A DES ARBRES, ET LE CHOISIR PAR LA MESURE ──
+    //
+    // Le cœur de la bande est ANALYTIQUE (phase 0,5 → centre = map.w / 2) : c'est le X. Reste
+    // le Y, et il décide de tout — un cadre de rocaille ne peut RIEN dire de « les objets
+    // hauts dépassent ». On sonde donc quelques hauteurs et on garde la plus boisée, au lieu
+    // d'écrire une coordonnée qui vieillira avec la seed.
+    await agir({ type: 'debug_meteo', meteo: 'brouillard', edge: 0, phase: 0.5 }, 500)
+    await page.waitForFunction(() => Boolean(window.__BRAISES__.scene.meteoLayer?.bande), null, { timeout: 20000 }).catch(() => {})
+    const e0 = await etat()
+    if (!e0.bande) { console.error('!! aucune bande dessinée — le front n\'est pas arrivé au client'); return { brouillard_sol: false } }
+    const coeur = e0.map.w / 2
+    let meilleur = null
+    for (const part of [0.3, 0.4, 0.5, 0.6, 0.7]) {
+      const y = Math.round(e0.map.h * part)
+      await agir({ type: 'debug_teleport', x: coeur, y }, 400)
+      // ON ATTEND L'ARRIVÉE DE LA **CAMÉRA**, PAS UN DÉLAI — et c'est le sondage entier qui
+      // en dépendait. Après un `debug_teleport` la prédiction met ~1,5 s à rejoindre la sim,
+      // et la caméra la suit encore après : compter à délai fixe comptait les arbres du cadre
+      // PRÉCÉDENT. MESURÉ : deux exécutions du même scénario ont élu deux hauteurs
+      // différentes (147 arbres puis 44), c'est-à-dire une planche non reproductible.
+      await page.waitForFunction((t) => {
+        const s = window.__BRAISES__.scene
+        const p = s.registry.get('playerPos')
+        if (!p || Math.abs(p.x - t.x) > 2 || Math.abs(p.y - t.y) > 2) return false
+        const v = s.cameras.main.worldView
+        return Math.abs((v.x + v.width / 2) / 16 - p.x) < 2 && Math.abs((v.y + v.height / 2) / 16 - p.y) < 2
+      }, { x: coeur, y }, { timeout: 20000, polling: 200 }).catch(() => console.log(`   (y=${y} : la caméra n'est pas arrivée — comptage douteux)`))
+      // ON COMPTE LES ARBRES **À L'ÉCRAN**, PAS LA LISTE. Le premier jet comptait
+      // `view.nodes` en entier : il rendait 40 540 aux cinq hauteurs sondées — c'est la carte
+      // entière, elle ne dépend pas d'où l'on est, et le sondage ne choisissait donc RIEN.
+      const n = await page.evaluate(() => {
+        // ⚠ GAINÉ : en `--dev` la page peut se recharger sous la sonde (HMR, retour au menu)
+        // et `__BRAISES__` disparaît une image. Un accès nu y jette, et le scénario meurt en
+        // accusant le jeu d'une faute qui est la sienne. (Vu ici, en plein sondage.)
+        const s = window.__BRAISES__?.scene
+        if (!s?.cameras) return -1
+        const cam = s.cameras.main
+        const v = cam.worldView
+        return (s.view?.nodes ?? []).filter((x) => {
+          if (x.type !== 'tree' && x.type !== 'old_tree') return false
+          const px = (x.tx + 0.5) * 16, py = (x.ty + 1) * 16
+          return px >= v.x && px < v.x + v.width && py >= v.y && py < v.y + v.height
+        }).length
+      })
+      if (n < 0) { console.log(`   sondage y=${y} : la page s'est rechargée sous la sonde — hauteur ignorée`); continue }
+      console.log(`   sondage y=${y} : ${n} arbres DANS LE CADRE`)
+      if (!meilleur || n > meilleur.n) meilleur = { y, n }
+    }
+    console.log(`\n   → cadre retenu : (${coeur}, ${meilleur.y}) — ${meilleur.n} arbres`)
+    await agir({ type: 'debug_teleport', x: coeur, y: meilleur.y }, 400)
+    await page.waitForFunction((t) => {
+      const s = window.__BRAISES__.scene
+      const p = s.registry.get('playerPos')
+      if (!p || Math.abs(p.x - t.x) > 2 || Math.abs(p.y - t.y) > 2) return false
+      const v = s.cameras.main.worldView
+      return Math.abs((v.x + v.width / 2) / 16 - p.x) < 2 && Math.abs((v.y + v.height / 2) / 16 - p.y) < 2
+    }, { x: coeur, y: meilleur.y }, { timeout: 20000, polling: 200 }).catch(() => console.error('!! la caméra n\'est pas arrivée sur le cadre retenu — la planche montre autre chose'))
+    await canopeePleine(page)
+
+    /** UNE PRISE : on pose le réglage, on laisse le rendu le rattraper, on ENDORT la boucle
+     *  (sinon la capture expire à 90 s sous swiftshader), on photographie, on réveille. */
+    const prise = async (nom, quoi, reglage) => {
+      if (reglage) await poser(reglage)
+      await rappeler()
+      await images(4)
+      const m = await zones()
+      const e = await etat()
+      if (e.intensite < 0.9) console.error(`!! ${nom} : intensité ${e.intensite.toFixed(2)} À L'OBTURATEUR — la photo ne montre pas le ciel`)
+      await page.evaluate(() => window.__BRAISES__?.scene?.game.loop.sleep()).catch(() => {})
+      await page.screenshot({ path: `${OUT}/brouillardsol-${nom}.png`, timeout: 90000 })
+      await page.evaluate(() => window.__BRAISES__?.scene?.game.loop.wake()).catch(() => {})
+      console.log(`   ${nom.padEnd(12)} ${quoi.padEnd(38)} près µ ${m.pres.moy.toFixed(1)} · loin µ ${m.loin.moy.toFixed(1)} étendue ${m.loin.etendue.toFixed(1)}`)
+      return m
+    }
+
+    // ── LE TÉMOIN : le MÊME cadre, à la MÊME heure, SANS front. Tous les Δ se prennent
+    //    contre lui — un µ de 150 ne dit rien, c'est son ÉCART au monde nu qui parle. ──
+    await page.evaluate(() => {
+      const sc = window.__BRAISES__.scene
+      sc.sendAction({ type: 'debug_set_hour', hour: 12 })
+      sc.sendAction({ type: 'debug_meteo', meteo: null })
+    })
+    await page.waitForTimeout(1200)
+    await images(4)
+    const nu = await zones()
+    await page.evaluate(() => window.__BRAISES__.scene.game.loop.sleep())
+    await page.screenshot({ path: `${OUT}/brouillardsol-0-nu.png`, timeout: 90000 })
+    await page.evaluate(() => window.__BRAISES__.scene.game.loop.wake())
+    console.log(`\n   ${'0-nu'.padEnd(12)} ${'le monde sans front (le témoin)'.padEnd(38)} près µ ${nu.pres.moy.toFixed(1)} · loin µ ${nu.loin.moy.toFixed(1)} étendue ${nu.loin.etendue.toFixed(1)}`)
+
+    // ③ LA PRÉMISSE, PROUVÉE MAINTENANT — avant toute conclusion tirée des zones.
+    console.log(`\n   toile ${nu.toile.w}x${nu.toile.h} · zoom ${nu.toile.zoom.toFixed(2)} · cadre ${nu.toile.tuilesX.toFixed(1)} x ${nu.toile.tuilesY.toFixed(1)} tuiles · œil à (${Math.round(nu.moi.x)}, ${Math.round(nu.moi.y)})`)
+    console.log(`   champ PRÈS : < ${nu.rPres} tuiles (${nu.pres.n} px) · champ LOIN : ≥ ${nu.rLoin} tuiles (${nu.loin.n} px), ${nu.loin.arbres} arbres, coin du cadre à ${nu.coin.toFixed(1)} tuiles`)
+    // Le champ LOINTAIN doit dépasser `r1` quelque part, sinon la densité pleine n'existe pas
+    // à l'écran et ① ne mesure qu'une pente à mi-course.
+    const premisseDistance = nu.coin > livre.r1 && nu.loin.n > 20000
+    const premisseArbres = nu.loin.arbres >= 3
+    if (!premisseDistance) console.error(`!! LE CHAMP LOINTAIN N'ATTEINT PAS r1 (coin à ${nu.coin.toFixed(1)} ≤ ${livre.r1}) — le brouillard n'est jamais plein à l'écran`)
+    if (!premisseArbres) console.error(`!! LE CHAMP LOINTAIN NE PORTE QUE ${nu.loin.arbres} ARBRE(S) — le verdict ② mesurerait du sol contre du sol`)
+
+    // ── LES QUATRE CIELS, MÊME CADRE, MÊME HEURE, SEUL LE RÉGLAGE CHANGE ──
+    //
+    // `aplat` REJOUE EXACTEMENT LE BROUILLARD D'AVANT : nappe éteinte, air à (0,34 + 0,20·houle)
+    // et facteur au près de 1 — c'est-à-dire l'ancienne ligne du fragment, au chiffre près.
+    // C'est lui l'étalon des deux verdicts : sans lui on compare le brouillard à rien.
+    const APLAT = { ...livre, crans: 0, ourlet: 0, nappe: [0, 0, 1], air: [0.34, 0.2, 1] }
+    // L'ÉTALON DE ②, ET IL EN FALLAIT UN AUTRE : un aplat aussi OCCULTANT que le nouveau
+    // champ lointain (~0,77 de sol). Comparer les deux étages à l'aplat MINCE d'avant ferait
+    // gagner ce dernier pour une raison qui n'est pas la bonne — il laisse plus de tout
+    // passer, silhouettes comprises. La question est : **à sol également mangé, les
+    // silhouettes survivent-elles mieux ?** Il faut donc les mettre à densité de sol égale.
+    const APLAT_DENSE = { ...livre, crans: 0, ourlet: 0, nappe: [0, 0, 1], air: [0.66, 0.2, 1] }
+    // LE PLATEAU DU BROUILLARD — un aplat OPAQUE : l'écran entier à la teinte du voile, et rien
+    // d'autre. C'est le repère de la NOYADE : « à 100 % loin du joueur, le reste plus bas n'est
+    // pas visible » se mesure comme une PART DU CHEMIN parcouru du monde nu jusqu'à ce plateau.
+    const APLAT_OPAQUE = { ...livre, crans: 0, ourlet: 0, nappe: [0, 0, 1], air: [0.995, 0, 1] }
+    const TRANCHE = { ...livre, nappe: [0.62, 0.26, 0.14], air: [0.22, 0.12, 0.06] }
+    // LE REPOUSSOIR, GARDÉ EXPRÈS : le rayon POSTÉRISÉ en 5 crans. Il rend un arc concentrique
+    // net autour de l'avatar — la cuvette d'interface. C'est la planche qui a fait livrer
+    // `crans: 0` (voir `ReglageBrouillard.crans`), et on la retire d'autant moins qu'elle est
+    // la seule chose qui empêche quelqu'un de « remettre la doctrine » sans regarder.
+    const CRANS = { ...livre, crans: 5 }
+
+    /**
+     * ③ OÙ TOMBE LA COUPE — la seule mesure qui juge la DEMANDE d'Alexis (« le tiers le plus
+     * haut du houppier »). ① et ② ne la verraient pas : ils rendraient les mêmes nombres avec
+     * une nappe de 20 px ou de 100.
+     *
+     * ON MESURE PAR DIFFÉRENCE ENTRE DEUX CIELS, et c'est ce qui rend la mesure possible : le
+     * même cadre avec la nappe (livré) et sans elle (air seul, MÊME air). Sous la coupe, la
+     * nappe recouvre le sprite → les deux images diffèrent. Au-dessus, elles sont identiques.
+     * La coupe est la hauteur où l'écart s'effondre. Lire une seule image ne le pourrait pas :
+     * un fût de BOULEAU est pâle comme le brouillard, et c'est justement le bouleau qu'on juge.
+     *
+     * Le seuil est ADAPTATIF par colonne (la moitié de l'écart médian tout en bas, là où l'on
+     * est certain d'être dans la nappe) : un seuil absolu jugerait un tronc sombre et un tronc
+     * pâle avec la même barre, alors qu'ils ne peuvent pas rendre le même écart.
+     */
+    const capturer = (cle) => page.evaluate(async (k) => {
+      const s = window.__BRAISES__?.scene
+      if (!s) { window[k] = null; return }
+      const img = await new Promise((ok) => s.game.renderer.snapshot((i) => ok(i)))
+      const c = document.createElement('canvas')
+      c.width = img.width
+      c.height = img.height
+      const cx = c.getContext('2d', { willReadFrequently: true })
+      cx.drawImage(img, 0, 0)
+      const d = cx.getImageData(0, 0, c.width, c.height).data
+      const lum = new Float32Array(c.width * c.height)
+      for (let i = 0, j = 0; j < lum.length; i += 4, j++) lum[j] = 0.2126 * d[i] + 0.7152 * d[i + 1] + 0.0722 * d[i + 2]
+      window[k] = { lum, w: c.width, h: c.height }
+    }, cle)
+
+    const coupes = () => page.evaluate(() => {
+      const s = window.__BRAISES__?.scene
+      if (!s) return null
+      const A = window.__FOG_AIR, B = window.__FOG_NAPPE
+      if (!A || !B || A.w !== B.w) return null
+      const cam = s.cameras.main
+      const p = s.registry.get('playerPos')
+      const TILE = 16
+      const z = cam.zoom
+      const pxT = z * TILE
+      const enEcran = (tx, ty) => ({ x: (tx * TILE - cam.worldView.x) * z, y: (ty * TILE - cam.worldView.y) * z })
+      const moi = enEcran(p.x, p.y)
+      const rLoin = 9
+      // ON NE BALAIE QUE LA SILHOUETTE DE L'ARBRE (`tree` fait 64 px de haut), ET C'EST LA
+      // CORRECTION QUI A SAUVÉ LA MESURE. Au-dessus de sa cime, la colonne montre le FOND —
+      // des arbres plus lointains, du sol — qui sont eux aussi sous la nappe : l'écart y
+      // REMONTE. Le premier jet cherchait le DERNIER rang qui diffère, et remontait donc
+      // jusqu'au bout du balayage : médiane 93 px pour 51 attendus, dispersion 87 px. Ce
+      // qu'on cherche est la PREMIÈRE CHUTE DURABLE de l'écart en montant — là où le sprite
+      // sort de la nappe.
+      const HMAX = 64
+      const releves = []
+      for (const n of s.view?.nodes ?? []) {
+        if (n.type !== 'tree') continue // `tree` et `bouleau` font la MÊME hauteur (64 px)
+        const e = enEcran(n.tx + 0.5, n.ty + 1)
+        if (e.x < 4 || e.y < 4 || e.x >= A.w - 4 || e.y >= A.h - 4) continue
+        if (Math.hypot(e.x - moi.x, e.y - moi.y) / pxT < rLoin) continue
+        // ── L'OCCLUSION NE PEUT QUE FAIRE LIRE **TROP BAS**, JAMAIS TROP HAUT ──
+        //
+        // Dans un bois de 147 arbres, la colonne d'un arbre est souvent recouverte par la cime
+        // d'un arbre PLUS PROCHE (dessiné après, donc au-dessus), dont la coupe tombe plus bas
+        // à l'écran : on relève alors SA coupe. Symptôme du premier jet : médiane 33 px quand
+        // le p90 valait 51 — les bonnes colonnes étaient là, noyées dans les mauvaises.
+        //
+        // Filtrer les arbres masqués (|Δtx| ≤ 2, Δty ≤ 6) a marché… et n'a laissé que DEUX
+        // arbres sur 92. Un échantillon de deux ne juge rien.
+        //
+        // On exploite donc l'ASYMÉTRIE plutôt que de jeter : un masque abaisse la lecture, rien
+        // ne la relève (au-dessus de la cime l'écart REMONTE — fond brumeux —, donc il n'y a pas
+        // de chute durable et la colonne est REJETÉE, jamais comptée haut). D'où trois gestes :
+        // filtre LÂCHE, plusieurs colonnes par arbre dont on garde la MEILLEURE, et un QUANTILE
+        // HAUT comme estimateur au lieu de la médiane.
+        let masque = false
+        for (const o of s.view?.nodes ?? []) {
+          if (o === n || (o.type !== 'tree' && o.type !== 'old_tree')) continue
+          if (o.ty <= n.ty || o.ty - n.ty > 3) continue
+          if (Math.abs(o.tx - n.tx) > 1) continue
+          masque = true
+          break
+        }
+        if (masque) continue
+        // PLUSIEURS COLONNES PAR ARBRE, dont on garde la MEILLEURE (cf. l'asymétrie ci-dessus) :
+        // le fût ne fait que 6 px de large, le houppier déborde, et une colonne malchanceuse
+        // tombe sur un voisin. Cinq colonnes sur la largeur du tronc suffisent.
+        const colonne = (col) => {
+          if (col < 0 || col >= A.w) return null
+          const ecart = []
+          for (let hp = 0; hp <= HMAX; hp++) {
+            const y = Math.round(e.y - hp * z)
+            if (y < 0 || y >= A.h) { ecart.push(null); continue }
+            ecart.push(Math.abs(B.lum[y * A.w + col] - A.lum[y * A.w + col]))
+          }
+          // LE SEUIL, PRIS EN BAS DE LA COLONNE — là où l'on est SÛR d'être sous la nappe.
+          const bas = ecart.slice(2, 14).filter((v) => v !== null).sort((a, b) => a - b)
+          if (bas.length < 8) return null
+          const ref = bas[Math.floor(bas.length / 2)]
+          if (ref < 12) return null // colonne sans signal : on jette
+          const seuil = ref / 2
+          // LA PREMIÈRE CHUTE **DURABLE** : quatre pixels d'affilée sous le seuil. Un seul
+          // suffirait à faire mentir la mesure — un texel de houppier peut valoir la teinte du
+          // brouillard par accident, et la coupe tomberait dix pixels trop bas.
+          const TENUE = 4
+          for (let hp = 2; hp + TENUE <= HMAX; hp++) {
+            let creux = true
+            for (let k = 0; k < TENUE; k++) if (ecart[hp + k] === null || ecart[hp + k] >= seuil) { creux = false; break }
+            if (creux) return hp
+          }
+          return null // pas de chute sous la cime : colonne inexploitable, JETÉE
+        }
+        let coupe = null
+        for (const dx of [-4, -2, 0, 2, 4]) {
+          const c2 = colonne(Math.round(e.x + dx))
+          if (c2 !== null && (coupe === null || c2 > coupe)) coupe = c2
+        }
+        if (coupe !== null) releves.push(coupe)
+      }
+      releves.sort((a, b) => a - b)
+      if (!releves.length) return { n: 0 }
+      const q = (t) => releves[Math.floor(t * (releves.length - 1))]
+      // L'ESTIMATEUR EST LE p75, pas la médiane — voir l'asymétrie plus haut : ce qui reste de
+      // masque tire la lecture vers le BAS, rien ne la tire vers le haut.
+      return { n: releves.length, estime: q(0.75), p50: q(0.5), p90: q(0.9) }
+    })
+
+    const aplat = await prise('1-aplat', 'l’aplat d’avant (0,34–0,54)', APLAT)
+    await prise('1b-aplat-dense', 'un aplat AUSSI dense que le loin livré', APLAT_DENSE)
+    const opaque = await prise('1d-plateau', 'le plateau : un voile OPAQUE (repère de noyade)', APLAT_OPAQUE)
+    // AIR SEUL : la nappe éteinte, le MÊME air. C'est l'étalon de ③ — et il se prend JUSTE
+    // AVANT le livré, caméra immobile, pour que les deux images ne diffèrent que par la nappe.
+    await prise('1c-air-seul', 'la nappe éteinte, l’air seul (étalon ③)', { ...livre, nappe: [0, 0, 1] })
+    await capturer('__FOG_AIR')
+    const deuxEtages = await prise('2-livre', 'les deux étages, réglage livré', livre)
+    await capturer('__FOG_NAPPE')
+    const coupe = await coupes()
+    const tranche = await prise('3-tranche', 'nappe plus dense, air plus mince', TRANCHE)
+    await prise('4-crans', 'REPOUSSOIR : rayon postérisé (la cuvette)', CRANS)
+    await poser(livre)
+
+    // ── LES VERDICTS ──
+    const ouverture = (m) => (m.loin.moy - nu.loin.moy) - (m.pres.moy - nu.pres.moy)
+    const oAplat = ouverture(aplat)
+    const oLivre = ouverture(deuxEtages)
+    const oTranche = ouverture(tranche)
+    console.log('\n   ① LE CERCLE S’OUVRE — Δµ(loin) − Δµ(près), contre le monde nu')
+    console.log(`      aplat ${oAplat.toFixed(1)}  ·  livré ${oLivre.toFixed(1)}  ·  tranché ${oTranche.toFixed(1)}   (seuil 15)`)
+    const v1 = premisseDistance && oLivre >= 15
+    if (!premisseDistance) console.error('!! ① N’EST PAS JUGÉ : sa prémisse est rompue (voir plus haut)')
+    else if (oLivre < 15) console.error(`!! LE CERCLE NE S’OUVRE PAS (${oLivre.toFixed(1)} < 15) — le brouillard reste un aplat`)
+
+    /**
+     * ② A CHANGÉ DE FORME AVEC LA DEMANDE, et il faut le dire plutôt que le maquiller.
+     *
+     * Tant que le brouillard laissait les arbres ENTIERS, « ça dépasse » se mesurait par
+     * l'ÉTENDUE du champ lointain : les silhouettes gardaient leur contraste sur un sol devenu
+     * pâle. Depuis qu'il MORD LES CIMES (demande d'Alexis), cette mesure ne veut plus rien
+     * dire — plus la règle est bien appliquée, moins il reste de silhouette, donc plus
+     * l'étendue baisse. Un instrument qui rougit quand le code s'améliore n'est pas un
+     * instrument. On mesure donc les DEUX moitiés de la promesse, qui se contredisent :
+     *
+     *   ②a LA NOYADE : le champ lointain doit avoir parcouru l'essentiel du chemin du monde
+     *      nu jusqu'au PLATEAU (un voile opaque). C'est « ce qui est plus bas n'est pas
+     *      visible », en une fraction.
+     *   ②b CE QUI RESTE : il doit RESTER des silhouettes. Sans ce second nombre, un voile
+     *      complètement opaque gagnerait ②a haut la main — et n'aurait rien montré du tout.
+     */
+    const chemin = (m) => {
+      const den = opaque.loin.moy - nu.loin.moy
+      return den === 0 ? 0 : (m.loin.moy - nu.loin.moy) / den
+    }
+    const noyade = chemin(deuxEtages)
+    // CE QUI RESTE, en points de luminance : de combien le décile CLAIR du champ lointain
+    // dépasse encore sa médiane. Sur un plateau opaque, c'est zéro par construction.
+    const reste = (m) => m.loin.etendue
+    console.log('\n   ② NOYÉ AU LOIN, MAIS PAS VIDE — le champ lointain contre le monde nu et contre le plateau opaque')
+    console.log(`      plateau opaque µ ${opaque.loin.moy.toFixed(1)} · monde nu µ ${nu.loin.moy.toFixed(1)} · livré µ ${deuxEtages.loin.moy.toFixed(1)}`)
+    console.log(`      ②a noyade : ${(noyade * 100).toFixed(0)} % du chemin vers le plateau (seuil 80 %) — aplat d’avant ${(chemin(aplat) * 100).toFixed(0)} %`)
+    console.log(`      ②b ce qui reste : étendue ${reste(deuxEtages).toFixed(1)} (seuil > 8 ; le plateau opaque rend ${reste(opaque).toFixed(1)})`)
+    const v2 = premisseArbres && noyade >= 0.8 && reste(deuxEtages) > 8
+    if (!premisseArbres) console.error('!! ② N’EST PAS JUGÉ : sa prémisse est rompue (voir plus haut)')
+    else if (noyade < 0.8) console.error(`!! LE LOIN N’EST PAS NOYÉ (${(noyade * 100).toFixed(0)} % < 80 %) — on voit encore le sol et le bas des silhouettes`)
+    else if (reste(deuxEtages) <= 8) console.error(`!! IL NE RESTE RIEN (étendue ${reste(deuxEtages).toFixed(1)}) — le brouillard a tout mangé, y compris ce qui devait dépasser`)
+
+    // ── ③ LA COUPE TOMBE-T-ELLE AU TIERS HAUT DU HOUPPIER ? ──
+    const H = livre.hauteur
+    const bande = livre.bandePx
+    console.log('\n   ③ LA COUPE TOMBE AU TIERS HAUT — hauteur relevée sur de VRAIS arbres du champ lointain')
+    if (!coupe || !coupe.n) {
+      console.error('!! ③ N’EST PAS JUGÉ : aucune colonne d’arbre exploitable dans le champ lointain')
+    } else {
+      console.log(`      ${coupe.n} arbres · coupe estimée (p75) ${coupe.estime} px, attendu ${H.toFixed(1)} · médiane ${coupe.p50} · p90 ${coupe.p90}`)
+      console.log(`      l’écart p90−médiane = ${coupe.p90 - coupe.p50} px est ce qui reste de MASQUE (une cime plus proche abaisse la lecture), pas l’erreur de bande (${bande} px)`)
+    }
+    const v3 = Boolean(coupe && coupe.n >= 5 && Math.abs(coupe.estime - H) <= bande)
+    if (coupe && coupe.n > 0 && coupe.n < 5) console.error(`!! ③ N’EST PAS JUGÉ : ${coupe.n} arbre(s) mesuré(s), il en faut 5`)
+    else if (coupe && coupe.n >= 5 && Math.abs(coupe.estime - H) > bande)
+      console.error(`!! LA COUPE NE TOMBE PAS OÙ ELLE DOIT (${coupe.estime} px contre ${H.toFixed(1)}, écart > une bande de ${bande})`)
+
+    console.log(`\n   captures : ${OUT}/brouillardsol-*.png`)
+    return { brouillard_cercle: v1, brouillard_depasse: v2, brouillard_coupe: v3 }
+  },
+
   async meteo(page) {
     if (!dev) {
       console.log('\n(la météo exige le mode debug pour armer un front — relancer avec --dev)')
@@ -13748,6 +17431,7 @@ const SCENARIOS = {
           const s = window.__BRAISES__.scene
           const t0 = s.time.now
           const releve = []
+      releve.textures = []
           const cam = s.cameras.main
           const lire = () => {
             const c = s.chuteArbre.chutes[0]
@@ -14612,6 +18296,234 @@ const SCENARIOS = {
       console.log(`   ✓ (${Math.round(p.x)}, ${Math.round(p.y)}) → affleurement-${p.nom}.png`)
     }
     return cibles
+  },
+
+  /**
+   * ═══ LA CAILLASSE — la forme du minéral, et le chaos qui BLOQUE (spec `roche-mere.md` R6bis/R6ter) ═══
+   *
+   * Deux choses à VOIR, et une à ÉPROUVER :
+   *   ① la LISIÈRE du pierrier — elle sortait en marches de huit tuiles, elle doit s'effiler
+   *     comme celle du bois (mesuré : 91,8 % → 2,3 % de segments longs) ;
+   *   ② le CHAOS de blocs — des masses de vraie pierre séparées de galeries ;
+   *   ③ **on ne passe PLUS au travers** : on marche droit sur un bloc et on relève si l'avatar
+   *     s'arrête. C'était la demande, et c'est la seule qui ne se photographie pas.
+   *
+   * `--dev` OBLIGATOIRE (`debugTeleport`).
+   */
+  async caillasse(page) {
+    if (!dev) {
+      console.log(`   ✗ ce scénario se téléporte — relancer avec --dev`)
+      return null
+    }
+    const cibles = await page.evaluate(() => {
+      const scene = window.__BRAISES__.scene
+      const map = scene.registry.get('mapData')
+      const { width, height, terrain } = map
+      const SCREE = 9, BOULDERS = 16
+      // La fenêtre la plus MINÉRALE (somme intégrale, pas de tri) — on photographie le pays,
+      // pas une tuile élue au hasard.
+      const P = 40
+      const cw = Math.ceil(width / P), ch = Math.ceil(height / P)
+      const grille = new Int32Array(cw * ch)
+      const grilleB = new Int32Array(cw * ch)
+      for (let ty = 0; ty < height; ty++) {
+        for (let tx = 0; tx < width; tx++) {
+          const t = terrain[ty * width + tx]
+          if (t !== SCREE && t !== BOULDERS) continue
+          const k = Math.floor(ty / P) * cw + Math.floor(tx / P)
+          grille[k] += 1
+          if (t === BOULDERS) grilleB[k] += 1
+        }
+      }
+      let kMin = 0, kBloc = 0
+      for (let k = 0; k < grille.length; k++) {
+        if (grille[k] > grille[kMin]) kMin = k
+        if (grilleB[k] > grilleB[kBloc]) kBloc = k
+      }
+      const centre = (k) => ({ x: (k % cw) * P + P / 2, y: Math.floor(k / cw) * P + P / 2 })
+      // UNE LISIÈRE : une tuile de caillasse dont un voisin est du pré — c'est le bord qu'on juge.
+      let lisiere = null
+      for (let ty = 1; ty < height - 1 && !lisiere; ty++) {
+        for (let tx = 1; tx < width - 1; tx++) {
+          const t = terrain[ty * width + tx]
+          if (t !== SCREE && t !== BOULDERS) continue
+          const v = terrain[ty * width + tx + 1]
+          if (v === 1 || v === 17 || v === 26) { lisiere = { x: tx + 0.5, y: ty + 0.5 }; break }
+        }
+      }
+      // LA MINE — une butte d'affleurement, registrée dans la carte (`WorldMap.affleurements`).
+      // On prend la plus GRANDE : c'est celle dont la silhouette et le dédale se jugent le mieux.
+      // ⚠ **PAS LE CENTRE DU RECT** : la butte est une ligne de niveau, donc une forme quelconque
+      // dans une boîte souvent très allongée (28×62 mesuré) — son centre géométrique tombe
+      // couramment DEHORS, et la photo montre alors le bois d'à côté. On vise le CENTROÏDE de ses
+      // tuiles de pierrier, puis la tuile de pierrier la plus proche de ce centroïde.
+      let mine = null
+      let meilleure = -1
+      for (const a of map.affleurements ?? []) {
+        let n = 0
+        let sx = 0
+        let sy = 0
+        for (let ty = a.y; ty < a.y + a.h; ty++) {
+          for (let tx = a.x; tx < a.x + a.w; tx++) {
+            if (terrain[ty * width + tx] !== SCREE) continue
+            n++; sx += tx; sy += ty
+          }
+        }
+        if (n === 0 || n <= meilleure) continue
+        meilleure = n
+        const cx = sx / n, cy = sy / n
+        let best = null, bestD = Infinity
+        for (let ty = a.y; ty < a.y + a.h; ty++) {
+          for (let tx = a.x; tx < a.x + a.w; tx++) {
+            if (terrain[ty * width + tx] !== SCREE) continue
+            const d = (tx - cx) * (tx - cx) + (ty - cy) * (ty - cy)
+            if (d < bestD) { bestD = d; best = { x: tx + 0.5, y: ty + 0.5 } }
+          }
+        }
+        mine = { ...best, ressource: a.ressource, w: a.w, h: a.h, tuiles: n }
+      }
+      const nodes = scene.view?.nodes ?? []
+      return {
+        minéral: centre(kMin), chaos: centre(kBloc), lisiere, mine,
+        blocsVus: nodes.filter((n) => n.type === 'bloc').length,
+        nodesVus: nodes.length,
+      }
+    })
+    if (cibles.mine) console.log(`   mine (${cibles.mine.ressource}) ${cibles.mine.tuiles} tuiles, boîte ${cibles.mine.w}×${cibles.mine.h}, visée (${Math.round(cibles.mine.x)},${Math.round(cibles.mine.y)})`)
+    else console.log(`   ✗ aucune butte d'affleurement registrée — la mine ne sera pas photographiée`)
+    console.log(`   fenêtre minérale (${Math.round(cibles.minéral.x)},${Math.round(cibles.minéral.y)}) · chaos (${Math.round(cibles.chaos.x)},${Math.round(cibles.chaos.y)})`)
+
+    const tp = async (x, y, zoom) => {
+      await page.evaluate(({ px, py }) => {
+        window.__BRAISES__.scene.registry.set('debugTeleport', { x: px, y: py, at: performance.now() })
+      }, { px: x, py: y })
+      await page.waitForTimeout(1700)
+      await page.evaluate((z) => { window.__BRAISES__.scene.cameras.main.setZoom(z) }, zoom)
+      await page.waitForTimeout(500)
+    }
+
+    const photos = [
+      { nom: 'chaos', ...cibles.chaos, zoom: 1 },
+      { nom: 'chaos-pres', ...cibles.chaos, zoom: 2.2 },
+      { nom: 'mineral', ...cibles.minéral, zoom: 1 },
+      ...(cibles.lisiere ? [{ nom: 'lisiere', ...cibles.lisiere, zoom: 1 }] : []),
+      // LA MINE (R6sexies) : sa silhouette d'abord — c'est le contour qu'on juge — puis son
+      // dédale de près.
+      ...(cibles.mine ? [{ nom: 'mine', x: cibles.mine.x, y: cibles.mine.y, zoom: 0.75 }] : []),
+      ...(cibles.mine ? [{ nom: 'mine-pres', x: cibles.mine.x, y: cibles.mine.y, zoom: 1.6 }] : []),
+    ]
+    for (const p of photos) {
+      await tp(p.x, p.y, p.zoom)
+      // ⚠ **ENDORMIR LA BOUCLE AVANT DE PHOTOGRAPHIER** (mémoire du projet) : sous swiftshader une
+      // image coûte près d'une seconde, et `page.screenshot` sur une boucle éveillée dépasse ses
+      // 30 s dès que la machine travaille — six captures, et la troisième tombait en TimeoutError.
+      await page.evaluate(() => { window.__BRAISES__.scene.game.loop.sleep() })
+      await page.screenshot({ path: `${OUT}/caillasse-${p.nom}.png` })
+      await page.evaluate(() => { window.__BRAISES__.scene.game.loop.wake() })
+      console.log(`   ✓ (${Math.round(p.x)}, ${Math.round(p.y)}) ×${p.zoom} → caillasse-${p.nom}.png`)
+    }
+
+    // ── ③ ON NE PASSE PLUS AU TRAVERS ────────────────────────────────────────────────────
+    //
+    // ⚠ **AVEC SON TÉMOIN, ET C'EST LA MOITIÉ DU SCÉNARIO.** Une sonde qui pousse l'avatar vers
+    // un bloc et constate qu'il n'avance pas rend le BON verdict quand l'entrée ne marche pas du
+    // tout — un ✓ obtenu par accident (« un clic muet ≠ un clic refusé »). On joue donc la MÊME
+    // poussée deux fois : d'abord sur une galerie DÉGAGÉE (elle doit avancer), puis contre le
+    // bloc (elle doit buter). Si le témoin n'avance pas, la sonde est cassée et on le DIT.
+    const paires = await page.evaluate(() => {
+      const s = window.__BRAISES__.scene
+      const map = s.registry.get('mapData')
+      const { width, terrain } = map
+      const blocs = (s.view?.nodes ?? []).filter((n) => n.type === 'bloc' && n.stock > 0)
+      if (!blocs.length) return null
+      const pris = new Set((s.view?.nodes ?? []).filter((n) => n.type === 'bloc' || n.type === 'rock')
+        .map((n) => `${n.tx},${n.ty}`))
+      const libre = (tx, ty) => !pris.has(`${tx},${ty}`) && terrain[ty * width + tx] === 16
+      // LE MUR : un bloc précédé de trois tuiles libres à l'ouest (de quoi prendre son élan).
+      const mur = blocs.find((n) => libre(n.tx - 1, n.ty) && libre(n.tx - 2, n.ty) && libre(n.tx - 3, n.ty))
+      // LE TÉMOIN : quatre tuiles de galerie d'affilée, sans un bloc au bout — la même poussée,
+      // dans le même biome, à la même vitesse de terrain (`boulders`, speedFactor 0,6).
+      let temoin = null
+      for (const n of blocs) {
+        for (let d = 2; d < 6 && !temoin; d++) {
+          const tx = n.tx - d, ty = n.ty
+          if (libre(tx, ty) && libre(tx + 1, ty) && libre(tx + 2, ty) && libre(tx + 3, ty) && libre(tx + 4, ty)) {
+            temoin = { tx, ty }
+          }
+        }
+        if (temoin) break
+      }
+      return mur ? { mur: { tx: mur.tx, ty: mur.ty }, temoin } : null
+    })
+    if (!paires) {
+      console.error('!! aucun bloc visible du client — le chaos porte-t-il bien ses nœuds ?')
+      return { ...cibles, mur: null }
+    }
+    /**
+     * Pose l'avatar puis pousse plein est, touche TENUE, et rend son déplacement en tuiles.
+     *
+     * ⚠ **ON AVANCE LA BOUCLE À LA MAIN.** Sous swiftshader une image dure près d'une seconde :
+     * deux secondes de touche tenue ne valent que deux pas de logique — MESURÉ, **0,12 tuile**,
+     * là où le pas réel en fait deux par seconde. On endort donc la boucle et on la STEPPE
+     * (`game.step`, le patron des FX éphémères) : la logique avance vraiment, le rendu ne
+     * coûte rien, et la touche reste tenue pendant tout le paquet.
+     */
+    const pousser = async (x, y, images) => {
+      await page.evaluate(({ px, py }) => {
+        window.__BRAISES__.scene.registry.set('debugTeleport', { x: px, y: py, at: performance.now() })
+      }, { px: x, py: y })
+      await page.waitForTimeout(1700)
+      const a = await page.evaluate(() => window.__BRAISES__.scene.registry.get('playerPos'))
+      await page.keyboard.down('KeyD')
+      await page.waitForTimeout(150)
+      // ⚠ **DE GROS PAS, PEU NOMBREUX.** `game.step` REND aussi, et une image swiftshader coûte
+      //   près d'une seconde : 240 pas de 16 ms ont fait dépasser le scénario de plusieurs
+      //   minutes. On avance donc le même TEMPS DE JEU en quarante pas de 60 ms — le
+      //   déplacement se calcule sur le `dt`, pas sur le nombre d'images.
+      await page.evaluate((n) => {
+        const g = window.__BRAISES__.scene.game
+        g.loop.sleep()
+        let t = g.loop.time
+        for (let i = 0; i < n; i++) { t += 60; g.step(t, 60) }
+        g.loop.wake()
+      }, images)
+      await page.keyboard.up('KeyD')
+      await page.waitForTimeout(700)
+      const b = await page.evaluate(() => window.__BRAISES__.scene.registry.get('playerPos'))
+      return { a, b, dx: b.x - a.x }
+    }
+
+    const out = { ...cibles, mur: paires.mur }
+    if (paires.temoin) {
+      const t = await pousser(paires.temoin.tx + 0.5, paires.temoin.ty + 0.5, 40)
+      out.temoin = t
+      console.log(`   témoin (galerie dégagée) : x ${t.a.x.toFixed(2)} → ${t.b.x.toFixed(2)} (+${t.dx.toFixed(2)} tuile)`)
+      if (t.dx < 1) {
+        console.error(`   ✗✗ SONDE CASSÉE — le témoin n'a pas avancé d'une tuile : l'entrée ne passe pas, le verdict du bloc ne vaudrait rien`)
+        return out
+      }
+    } else {
+      console.error('   !! pas de galerie dégagée pour le témoin — verdict du bloc NON concluant')
+      return out
+    }
+
+    // La MÊME poussée, cette fois contre le bloc. Le bloc occupe la tuile [tx, tx+1] : entrer
+    // dedans, c'est dépasser `tx`. On part de tx − 2,5 (l'élan du témoin, à l'identique).
+    const e = await pousser(paires.mur.tx - 2.5, paires.mur.ty + 0.5, 40)
+    out.epreuve = e
+    const entre = e.b.x - paires.mur.tx
+    console.log(`   bloc @${paires.mur.tx},${paires.mur.ty} : x ${e.a.x.toFixed(2)} → ${e.b.x.toFixed(2)} (+${e.dx.toFixed(2)}), face ouest du bloc à ${paires.mur.tx.toFixed(2)}`)
+    if (e.dx <= 0.05) {
+      console.error(`   ? il n'a pas bougé du tout — départ déjà collé au bloc, verdict non concluant`)
+    } else if (entre < 0) {
+      console.log(`   ✓ IL BUTE : arrêté ${(-entre).toFixed(2)} tuile avant la face du bloc, après avoir parcouru ${e.dx.toFixed(2)}`)
+    } else {
+      console.error(`   ✗ IL TRAVERSE : ${entre.toFixed(2)} tuile DANS le bloc`)
+    }
+    // (Pas de capture ici : `page.screenshot` sur une boucle ÉVEILLÉE dépasse les 90 s sous
+    //  swiftshader — mesuré, le scénario est mort dessus. Le verdict est un NOMBRE, il se lit
+    //  dans la console ; les images du chaos sont prises plus haut, boucle au repos.)
+    return out
   },
 
   /**
@@ -15642,10 +19554,32 @@ const SCENARIOS = {
       // table `AMBIENT_KEYS` y donne 0,10 et 0,12 d'alpha — presque rien. Les vrais paliers de
       // l'ambre sont 6 h (0,32) et 20 h (0,34) ; entre 10 et 15 h l'alpha est NUL. On tire donc
       // au ras de l'aube et au ras du couchant, et on laisse le plein jour aux CIELS.
-      { nom: 'feu-hameau', heure: 4.6, village: 1, stage: 2, couvert: false, tuiles: 24, quoi: 'le feu du hameau, avant le jour' },
-      { nom: 'sylve-aube', heure: 6.4, futaie: true, quoi: 'la futaie au soleil levant' },
-      { nom: 'brume-futaie', heure: 7.2, futaie: true, meteo: 'brouillard', tuiles: 24, quoi: 'le brouillard du matin dans la futaie' },
-      { nom: 'chene-aube', heure: 6.6, ou: ['chene', 'erratique'], tuiles: 22, quoi: 'le Grand Chêne au petit jour' },
+      // ═══ LA NUIT A UN CADRAN, ET C'EST LA LUNE (2026-08-26, MESURÉ À L'ÉCHELLE) ═══
+      //
+      // Depuis que le voile de nuit SUIT LA LUNE (`lighting.ts`, 2026-08-25), le jour de saison
+      // ne choisit plus seulement une saison : il choisit une NUIT. `SMOKE_LUNE=62,64,66,68,70,72`
+      // a tiré six fois le même hameau, à la même heure, sans bouger d'un pouce :
+      //
+      //   jour 62 (pleine lune)  un pré OLIVE en plein jour — le feu ne se voit pas, la palissade
+      //                          non plus, et l'image ouvre la vitrine sur une photo d'inventaire.
+      //   jour 68 (lune à ⅓)     une VRAIE nuit : le foyer porte, les toits prennent l'orange,
+      //                          les lucioles de la clairière existent.
+      //   jour 70 (lune à ⅒)     la même, un cran plus profonde — c'est celle-ci.
+      //   jour 72 (lune neuve)   à peine plus sombre : le voile SATURE (`VOILE_NOUVELLE_LUNE`),
+      //                          donc rien à gagner à viser le noir exact.
+      //
+      // LE JOUR D'OUVERTURE EST LE PIRE DES DOUZE — 61 est la PLEINE LUNE par construction
+      // (`LUNE_PLEINE_JOUR = 61`). Une prise de nuit qui ne dit pas son jour tombe donc, par
+      // défaut, sur la nuit la plus plate de la lunaison. Toutes les prises de nuit de cette
+      // planche portent désormais leur jour, et il est CHOISI sur la phase.
+      { nom: 'feu-hameau', jour: 70, heure: 4.6, village: 1, stage: 2, couvert: false, tuiles: 24, quoi: 'le feu du hameau, dans la nuit sans lune' },
+      // ET LE JOUR CHOISIT AUSSI LA COULEUR DU SOL (`teinte-saison.ts`, 2026-08-23). La variété
+      // que la planche précédente avait perdue avec la seconde zone REVIENT par la saison : le
+      // cardinal des Pluies tombe au jour 75 de l'année, et c'est la teinte la plus FORTE des
+      // quatre (roux, force 0,55 — « la saison qui se voit »). Les deux prises de sous-bois s'y
+      // posent : une futaie rousse au soleil levant n'est pas la même image qu'une futaie verte.
+      { nom: 'brume-futaie', jour: 72, heure: 7.2, futaie: true, meteo: 'brouillard', tuiles: 24, quoi: 'le brouillard du matin dans la futaie' },
+      { nom: 'sylve-aube', jour: 75, heure: 6.4, futaie: true, quoi: 'la futaie rousse au soleil levant' },
 
       // ═══ LES PLUIES (jour 75) — la bande fait 4500 tuiles : elle couvre la carte entière ═══
       //
@@ -15665,6 +19599,34 @@ const SCENARIOS = {
       // ET LE BROUILLARD SUR LES MENHIRS AUSSI : il DÉSATURE. Les pierres levées valent par
       // l'ambre du couchant et leurs ombres longues ; un voile gris les rend au gris.
       { nom: 'cercle', jour: 75, heure: 20.1, ou: ['cercle_pierres', 'pierre_levee', 'erratique'], quoi: 'les menhirs au couchant' },
+      // ═══ LA PÊCHE — ET ON PHOTOGRAPHIE LE FERRAGE, PAS L'ATTENTE (demande d'Alexis, 2026-08-26) ═══
+      //
+      // La pêche a QUATRE éléments rendus (`peche-fx.ts`, spec `peche.md` R1-R4) : le lancer en
+      // arc, le fil de Verlet qui PEND, le flotteur qui clapote puis PLONGE, et le ferrage — la
+      // canne se cambre, le fil claque droit, le poisson sort en arc vers la main, la gerbe part
+      // à l'opposé. Trois de ces quatre sont une ligne molle sur de l'eau : jolis en mouvement,
+      // muets sur une photo. **Le seul instant qui RACONTE quelque chose, c'est le poisson qui
+      // sort de l'eau** — et il dure 460 ms.
+      //
+      // ⚠ 460 ms, C'EST MOINS QU'UNE FRAME ICI. Le rAF headless est bridé à ~1 Hz et une image
+      // SwiftShader bloque le fil principal ~800 ms : attendre le ferrage à coups d'aller-retours
+      // Playwright, c'est le manquer à tous les coups. On reprend donc, à la lettre, la recette
+      // déjà payée par le scénario `peche` — elle vit DANS LA PAGE :
+      //   ① un `host.onMessage` (20 Hz, la cadence des snapshots, pas celle des frames) qui ferre
+      //      à l'instant où `windowEnd` apparaît ; la fenêtre du goujon fait 600 ms et tiendrait
+      //      entière entre deux frames ;
+      //   ② un accrochage de `pecheFx.caught`/`escaped` qui ENDORT la boucle et avance d'UN
+      //      `game.step` de 160 ms — la frame du ferrage est POSÉE À LA MAIN (patron maison des
+      //      FX éphémères : `fx.update` seul ne redessine rien).
+      // La prise arrive donc au déclenchement avec la boucle déjà figée sur la bonne image.
+      // L'HEURE EST MESURÉE, ET C'EST L'EAU QUI L'A CHOISIE (`SMOKE_ECHELLE=6.6,8,11,17,18.6`).
+      // À 19,8 h — l'heure « couchant » du reste de la planche — la nappe profonde ne reçoit plus
+      // rien : elle rend un VIDE gris-brun sur la moitié du cadre, et la canne cambrée se perd
+      // dedans. À 18,6 h la même eau porte encore le bleu du ciel ET la bande ocre du haut-fond
+      // le long de la berge — et les MONTÉES de poissons (`poissons-ombres`) s'y lisent en
+      // pastilles chaudes. Ce n'est pas une teinte qu'on gagne, c'est un sujet : l'eau redevient
+      // une surface au lieu d'être un trou.
+      { nom: 'peche', jour: 75, heure: 18.6, peche: true, tuiles: 15, quoi: 'le ferrage sur le lac, le poisson qui sort' },
       // ET L'ORAGE EST ICI, PAS À L'ARDEUR : `METEO.ORAGE_SEC_PHASE` vaut 2 — un orage d'Ardeur
       // ne MOUILLE PAS (il tonne, il frappe, il n'éteint rien). Le rideau de pluie en travers de
       // la vallée n'existe donc qu'aux trois autres saisons.
@@ -15672,8 +19634,48 @@ const SCENARIOS = {
       // la carte, il rend une averse impeccable sur un pré vide : le rideau traverse tout le
       // cadre et il n'y a rien dessous. On le pose donc sur une RUINE — la seule chose de cette
       // vallée qui ait une silhouette verticale et qui ne soit pas un arbre.
-      { nom: 'orage-ruine', jour: 75, heure: 15.5, ou: ['tour_guet', 'ferme_ruinee', 'charrette'], meteo: 'orage', tuiles: 22, quoi: "l'orage sur la ruine" },
-      { nom: 'bourg-pluie', jour: 75, heure: 20.3, village: 2, stage: 3, couvert: false, meteo: 'pluie', tuiles: 26, quoi: 'le bourg sous la pluie, au crépuscule' },
+      // ET LA RUINE SE CADRE SERRÉ (2026-08-26). Tirée à 22 tuiles, la Tour de guet effondrée
+      // est un MOIGNON GRIS de trente pixels au tiers haut : l'averse traverse impeccablement,
+      // et il n'y a rien dessous — la prise redevient « la pluie sur un bois », qui est très
+      // exactement le défaut qu'on avait cru corriger en lui donnant un sujet. Une silhouette
+      // ne se photographie pas au plan large : on resserre à 18, le seul cadrage plus étroit
+      // que le jeu de toute la planche, et la pluie reste un TRAIT FIN à tous les cadrages
+      // (`grainPx: 1` — c'est la neige, pas elle, qui interdisait d'élargir).
+      // ET CE N'EST PLUS UN ORAGE, C'EST UNE AVERSE — la prise a changé de nom pour ça (2026-08-26).
+      // L'orage de cette carte ne tombe pas qu'en traits : il GRÉSILLE (le rideau grésille sur la
+      // lisière, 2026-08-25), et le grésil se rend en RECTANGLES BLANCS gros comme une caisse,
+      // partout dans le cadre — mesuré à 18 tuiles ET à 22, donc ce n'est pas un défaut de zoom.
+      // La pluie simple garde le rideau, la lumière basse et le ciel bouché, sans les barres.
+      { nom: 'ferme-pluie', jour: 75, heure: 15.5, ou: ['ferme_ruinee', 'tour_guet', 'charrette'], meteo: 'pluie', tuiles: 22, quoi: "l'averse sur la ferme muette" },
+      // ⚠ ET ON NE RESSERRE PAS POUR AUTANT (mesuré le 2026-08-26, dans les deux sens). À 18
+      // tuiles la Ferme muette se lit ENFIN — mais la GOUTTE, elle, est dimensionnée en cellules
+      // de son grain et suit donc le zoom : le même orage qui trace des traits fins à 22 tuiles
+      // peint, à 18, des BARRES BLANCHES horizontales grosses comme une caisse, partout dans le
+      // cadre. C'est le défaut de la neige (mesure ② de la cinquième série), à ceci près qu'on
+      // l'obtient en RESSERRANT au lieu d'élargir. La ruine tient dans 22 tuiles parce que
+      // c'est une FERME (une dizaine de tuiles de côté) et non la tour, qui n'en faisait que
+      // trois : le sujet a changé, pas le cadrage.
+      // ═══ ET L'ORAGE A UN SECOND SUJET, PLUS SÛR : LES PIERRES LEVÉES (2026-08-26) ═══
+      //
+      // `orage-ruine` est tirée, et elle rate pour une raison nette : `viser` rend le CENTRE de
+      // la zone, et le centre de « la Tour de guet effondrée » n'est pas la tour — la prise
+      // rapporte trois blocs gris au bord haut du cadre et une belle averse sur un bois. La
+      // ruine est le sujet le plus VERTICAL de la vallée sur le papier, et le moins CADRABLE en
+      // pratique : elle tient en une poignée de tuiles, et le centre d'une zone ne les vise pas.
+      //
+      // Les menhirs, eux, sont NEUF silhouettes verticales réparties sur tout le cercle : quel
+      // que soit le point visé, il y en a dans le cadre — c'est la propriété qui fait un sujet
+      // d'orage, pas la hauteur. Et la seule chose que le journal ait jamais reprochée au
+      // cercle, c'est le BROUILLARD (« il DÉSATURE ; les pierres valent par l'ambre du couchant
+      // et leurs ombres longues »). L'averse ne désature pas : c'est un trait fin qui passe
+      // DEVANT, et le couchant reste dessous. On la tire donc un cran avant le crépuscule,
+      // quand les pierres portent encore leur ombre.
+      { nom: 'orage-cercle', jour: 75, heure: 19.4, ou: ['cercle_pierres', 'pierre_levee'], meteo: 'orage', tuiles: 20, quoi: "l'orage sur les menhirs, au couchant" },
+      // LE BOURG A SON PROPRE SOLEIL — son feu. Il peut donc se permettre une nuit basse : au
+      // jour 76 la lune est à ⅕, l'averse prend l'orange du foyer et les logis se découpent.
+      // (Au jour 75, où la planche l'avait laissé, elle est à ⅒ — mais c'est la MÊME nuit à un
+      // cran près : ce qui l'aurait tué, c'était le jour 84, la pleine lune, qui aplatit tout.)
+      { nom: 'bourg-pluie', jour: 76, heure: 20.3, village: 2, stage: 3, couvert: false, meteo: 'pluie', tuiles: 26, quoi: 'le bourg sous la pluie, au crépuscule' },
       // LA HORDE — ON RECULE, ET C'EST TOUT LE CORRECTIF (2026-08-24). Les trois séries
       // précédentes se plantaient à SIX tuiles du paquet, donc DANS son `aggroRange` (5) : les
       // goules lâchaient la descente de gradient, se retournaient sur le photographe, et leurs
@@ -15686,7 +19688,38 @@ const SCENARIOS = {
       // pâles gros comme une goule, et le trait de foudre gelé barre l'image d'une règle
       // blanche d'un bord à l'autre. Ce qui se photographie bien en mouvement ne se
       // photographie pas à l'arrêt.
-      { nom: 'horde-village', jour: 75, heure: 20.2, horde: true, recul: 12, viseSujet: true, figer: true, couvert: false, tuiles: 24, quoi: 'la horde en marche sur le feu' },
+      // ═══ ET LA HORDE PORTE ENFIN UNE LUMIÈRE — LA TORCHE (2026-08-26) ═══
+      //
+      // La prise de la cinquième série avait résolu la GÉOMÉTRIE (reculer de douze tuiles pour
+      // que personne ne s'arme) et elle est revenue avec dix rectangles gris sur un pré vert
+      // plat, et un onzième rectangle seul en bas : rien ne dit qu'il y a un homme, rien ne dit
+      // qu'il fait nuit, rien n'éclaire. Le feu du village, LUI, est à quarante tuiles — il ne
+      // tient pas dans le cadre, et c'était le seul luminaire de la scène.
+      //
+      // La torche allumée est la SEULE lumière qu'un joueur PORTE (spec `torche.md`) : elle
+      // vient avec le photographe, donc elle est toujours dans le cadre. `debug_grant` la met
+      // EN MAIN (`activeSlot`, `debug.ts`), la sim la déclare vive (`torcheVive`), et le client
+      // en fait une vraie source dynamique + sa flaque au sol (`torche-ground-glow`). Un homme,
+      // une flamme, et dix silhouettes qui descendent le pré — c'est l'image demandée depuis le
+      // 2026-08-20, et il lui manquait une lampe.
+      //
+      // LA LUNE EST À MI-COURSE, ET C'EST UN ARBITRAGE : au jour 78 elle vaut ~0,47. Plus bas,
+      // les goules deviennent des taches dans du noir (rien ne les éclaire, elles sont loin de
+      // la torche) ; plus haut, on retombe sur le pré olive du jour 62. C'est la seule prise de
+      // la planche où l'on veut la nuit À MOITIÉ.
+      // ⚠ ET LA HORDE A CHANGÉ DE SAISON, PARCE QUE LA TRAQUE EST THERMIQUE (2026-08-26).
+      // Alexis : « les cendreux ne traquent pas le joueur… pas de tension sur l'image ». C'était
+      // vrai, et ce n'était NI la distance NI le cadrage. L'éveil d'un Cendreux suit la
+      // TEMPÉRATURE (`CENDREUX.TORPEUR` : éveil 0 à +6 °C, éveil 1 à −14 °C), et sa vue vaut
+      // `aggroRange × éveil × stimulus`. Au jour 78 — une soirée des Pluies — l'éveil est au
+      // plancher : sa vue tombe à `aggroRange × VUE_PLANCHER` = **1 tuile**. Le test de la sim
+      // le dit en toutes lettres (« au chaud, presque amorphe : on peut passer à trois tuiles
+      // d'une carcasse en plein midi »).
+      // RELEVÉ QUI A TRANCHÉ : photographe à 1,4 tuile du paquet, allure « walk », dix goules —
+      // `targetId: null`, `suspicion: 0`. Elles ne le snobaient pas, elles ne le VOYAIENT pas.
+      // On tire donc la horde une NUIT DU GRAND FROID, où l'éveil est plein — et la lune y est
+      // à mi-course au jour 101 (0,47), ce qu'on voulait déjà pour cette prise.
+      { nom: 'horde-village', jour: 101, heure: 20.2, horde: true, recul: 12, traque: 5.5, viseSujet: true, figer: true, torche: true, couvert: false, tuiles: 20, quoi: 'la horde qui fond sur le porteur de torche' },
 
       // ═══ LE GRAND FROID (jour 105) — LA NEIGE N'EST PLUS UN TYPE, C'EST UN ASPECT ═══
       // `MeteoTypeId` ne connaît que pluie · brouillard · orage · vent_de_cendre. `neigeA` dérive
@@ -15698,8 +19731,43 @@ const SCENARIOS = {
       // au cadrage du jeu il fait des flocons, à 24 tuiles il fait des BLOCS BLANCS gros comme
       // un tronc. La pluie, elle, est un trait fin et tient à tous les cadrages (voir
       // `orage-ruine`, tiré à 22). Une prise d'hiver reste donc au cadrage du jeu ou moins.
-      { nom: 'chasse-neige', jour: 105, heure: 8.5, chasse: true, arme: 'bow', figer: true, meteo: 'pluie', tuiles: 18, quoi: 'la chasse sous la neige' },
+      // ⚠ LA MESURE ② DE LA SÉRIE PRÉCÉDENTE EST PÉRIMÉE, ET C'EST UNE BONNE NOUVELLE
+      // (2026-08-26). « La neige ne supporte pas qu'on élargisse le cadre » tenait à son grain :
+      // 4 px, soit un flocon de 4 px au loin et 8 de près, donc des BLOCS gros comme un tronc
+      // dès qu'on dézoomait. `GRAIN_FLOCON` les a divisés par deux le 2026-08-26 (Alexis : « la
+      // neige fait des carrés trop gros ») — flocon ET blizzard, le vent de cendre exclu, qui
+      // garde les 4 px des FX de lumière. Le plafond de 18 tuiles tombe donc avec sa cause : la
+      // chasse se cadre comme le reste de la planche.
+      // ET L'ARC SE BANDE (2026-08-26). Tirée sans `charger`, la prise rend un homme DEBOUT à
+      // cinq tuiles d'un sanglier, sous quelques flocons : il ne chasse pas, il attend. Le coup
+      // maintenu peint le télégraphe du VRAI tir (`pendingStrike`) — la ligne de visée part de
+      // la main et va à la bête, et l'image dit enfin ce qu'elle montre. (C'est le levier que
+      // la planche possédait depuis le 2026-08-20 et que cette prise n'avait jamais armé.)
+      { nom: 'chasse-neige', jour: 105, heure: 8.5, chasse: true, arme: 'bow', charger: true, figer: true, meteo: 'pluie', tuiles: 20, quoi: 'la chasse sous la neige, arc bandé' },
       { nom: 'lac-gele', jour: 112, heure: 7.4, berge: true, tuiles: 24, quoi: 'le lac pris par la glace, au lever du jour' },
+
+      // ═══ L'ÉCLOSION — LA QUATRIÈME SAISON, ET C'EST LA VARIÉTÉ QU'ON CROYAIT PERDUE ═══
+      //
+      // La cinquième série s'était écrite sur un constat : « le monde joué n'a plus qu'une zone,
+      // la variété ne se prend plus au SOL ». `teinte-saison.ts` a rouvert cette porte — le sol
+      // VIVANT tourne avec l'année (vert tendre à l'Éclosion, or à l'Ardeur, roux aux Pluies,
+      // gris-bleu au Grand Froid), et le même bois n'est plus le même bois d'une saison à
+      // l'autre. Une planche qui ne montre qu'une saison montre donc un quart du jeu.
+      //
+      // Le Grand Chêne est le sujet qui le porte le mieux : c'est un ARBRE ISOLÉ (le seul de la
+      // carte), donc sa couronne est la couleur de la saison, en grand, au milieu du cadre.
+      // Au jour 130 on est en pleine Éclosion — le vert acide de la sève qui monte.
+      //
+      // ⚠ LE JOUR 130 EST UN PIÈGE, ET IL S'EST REFERMÉ UNE FOIS. La feuille REVIENT à
+      // `JOUR_REFEUILLAISON` — jour 10 DE L'ANNÉE — et elle met `DEFEUILLAISON_JOURS` (7) à
+      // faire toute la forêt, tuile par tuile, décalée par `hash2` pour que les arbres ne
+      // reverdissent pas tous le même matin (`balance.ts`, G6). Or le jour de saison 130 tombe
+      // sur le jour 10 de l'an 2 : soit le PREMIER matin de la repousse. La prise est revenue
+      // avec un sol de printemps sous une forêt de SQUELETTES — une image qui a l'air d'un
+      // bug alors qu'elle est juste tirée sept jours trop tôt. Au jour 145 (jour 25 de l'année)
+      // la repousse est finie depuis longtemps et la teinte tient encore le vert tendre du
+      // cardinal de l'Éclosion.
+      { nom: 'chene-eclosion', jour: 145, heure: 6.6, ou: ['chene', 'erratique'], tuiles: 22, quoi: "le Grand Chêne à l'Éclosion, au petit jour" },
 
       // ═══ LA CENDRE — le pays du titre, et il est enfin PHOTOGRAPHIABLE (2026-08-24) ═══
       //
@@ -15843,6 +19911,30 @@ const SCENARIOS = {
       ? process.env.SMOKE_ECHELLE.split(',').map(Number).filter((h) => Number.isFinite(h))
       : null
 
+    /**
+     * `SMOKE_LUNE=64,68,72` — LA MÊME PRISE À PLUSIEURS JOURS, pour voir la LUNE (2026-08-26).
+     *
+     * Depuis que le voile de nuit SUIT LA LUNE (`lighting.ts`, 2026-08-25 : « la lumière
+     * naturelle actuelle à minuit doit être notre PLEINE LUNE »), la nuit n'a plus UNE
+     * luminosité, elle en a vingt-trois. `NIGHT_ALPHA_MAX` (0,72) est désormais le voile de la
+     * PLEINE lune et `VOILE_NOUVELLE_LUNE` (0,97) celui de la nouvelle : entre les deux, un
+     * hameau endormi passe d'un pré olive en plein jour à un carré noir où le feu est la seule
+     * chose qui existe. Une prise de nuit tirée sans regarder la phase hérite donc d'une
+     * lumière que PERSONNE n'a choisie.
+     *
+     * ET AUCUN JOUR ROND N'EST SÛR : la lunaison fait 23 jours de saison (`LUNAISON_JOURS`,
+     * un nombre PREMIER, choisi pour être premier avec la saison de 60 et l'année de 120) —
+     * la phase ne se devine pas, elle se calcule ou elle se REGARDE. C'est ce que fait cette
+     * échelle, et c'est le pendant de `SMOKE_ECHELLE` : l'heure y était le levier faible, ici
+     * la phase est le levier fort.
+     *
+     * ⚠ LES JOURS DOIVENT CROÎTRE, et le premier être ≥ au jour déjà posé : `debug_set_season_day`
+     * ne va que vers l'avant (`time.ts`), et un saut en arrière est refusé EN SILENCE.
+     */
+    const echelleLune = process.env.SMOKE_LUNE
+      ? process.env.SMOKE_LUNE.split(',').map(Number).filter((j) => Number.isFinite(j))
+      : null
+
     let prises = 0
     // LE CALENDRIER EST COLLANT ET NE VA QUE VERS L'AVANT — et son point de départ N'EST PAS 1.
     // Le monde s'OUVRE en cours de saison (`saisons.md` S2 : jour 51 sur la carte de production,
@@ -15913,6 +20005,36 @@ const SCENARIOS = {
       }
       frontPose = false
 
+      /**
+       * ═══ UN BALAYAGE SE FAIT LA PAGE ENDORMIE (2026-08-26, appris en perdant deux runs) ═══
+       *
+       * `page.evaluate` N'A PAS DE TIMEOUT et il attend son TOUR dans la boucle JS de la page.
+       * Tant que le rendu tourne, « son tour » vient après la frame en cours — et une frame de
+       * futaie fermée à canopée pleine, sous SwiftShader et sans GPU, se compte en MINUTES.
+       * MESURÉ deux fois : le balayage de `sylve-aube` n'est JAMAIS revenu (38 minutes, le
+       * processus GPU à 416 %, pas une ligne de log), et il n'était pas LENT — il était derrière
+       * une file de frames qui ne se vidait pas. La prise d'avant décide donc du sort de la
+       * suivante : `brume-futaie` passe (elle balaie depuis le hameau, une image bon marché),
+       * `sylve-aube` meurt (elle balaie depuis la futaie où `brume-futaie` l'a laissée).
+       *
+       * Le remède est celui que la branche `village` appliquait DÉJÀ, pour très exactement la
+       * même raison : on endort la boucle de RENDU le temps de parler à la page. Le monde
+       * continue d'être suivi (`view.apply` est appelée par le gestionnaire de MESSAGE, pas par
+       * l'`update`), seul le repeint s'arrête — et l'aller-retour redevient ce qu'il est
+       * vraiment, une centaine de millisecondes de JS pur.
+       *
+       * ET ON LE BORNE, parce qu'un balayage qui ne revient pas ne doit plus jamais emporter
+       * onze prises en silence.
+       */
+      const balayer = async (nom, fn, ms = 90000) => {
+        await page.evaluate(() => window.__BRAISES__.scene.game.loop.sleep()).catch(() => {})
+        try {
+          return await borne(fn(), ms, nom)
+        } finally {
+          await page.evaluate(() => window.__BRAISES__.scene.game.loop.wake()).catch(() => {})
+        }
+      }
+
       let cible = null
       if (p.village) {
         // LE FEU DU VILLAGE, pas un feu fondé : chaque village PNJ naît autour du sien
@@ -15963,7 +20085,7 @@ const SCENARIOS = {
         // porte une nappe de 80 % d'eau à deux cents tuiles de là. On note donc les PIEDS,
         // directement, et l'image intégrale rend les 209 tuiles du demi-cadre en quatre
         // lectures (sans elle, 337 000 pieds × 209 = 70 M d'accès).
-        cible = await page.evaluate(() => {
+        cible = await balayer('le balayage de la rive', () => page.evaluate(() => {
           const m = window.__BRAISES__.scene.map
           const { width: W, height: H, terrain: T } = m
           const cols = Math.ceil(W / m.zonePas)
@@ -16008,7 +20130,7 @@ const SCENARIOS = {
             recul = k
           }
           return { x: pose.x, y: pose.y + recul, kind: '(terrain)', name: `une rive de lac (${pose.devant}/209 tuiles d'eau devant, reculé de ${recul})` }
-        })
+        }))
         if (!cible || cible.echec) { console.error(`   ✗ ${p.nom.padEnd(18)} pas de rive de lac : ${cible?.echec ?? 'balayage muet'} — prise SAUTÉE`); continue }
       } else if (p.futaie) {
         // ═══ UNE FUTAIE SE VISE PAR SA DENSITÉ, PAS PAR LE CENTRE D'UN LIEU ═══
@@ -16019,7 +20141,7 @@ const SCENARIOS = {
         // « old_growth est moins dense que forest » : on mesure l'espacement, on ne suppose
         // pas la silhouette.) On note donc ce que le CADRE contiendrait, en couvert d'arbres,
         // et on garde la fenêtre la plus fermée de la Racine.
-        cible = await page.evaluate(() => {
+        cible = await balayer('le balayage de la futaie', () => page.evaluate(() => {
           const m = window.__BRAISES__.scene.map
           const { width: W, height: H, terrain: T } = m
           const cols = Math.ceil(W / m.zonePas)
@@ -16051,14 +20173,14 @@ const SCENARIOS = {
             }
           }
           return best && { ...best, kind: '(terrain)', name: `une futaie fermée (${best.arbre}/198 relevés boisés, ${best.nu} nus, ${best.essences} essences)` }
-        })
+        }))
         if (!cible) { console.error(`   ✗ ${p.nom.padEnd(18)} aucune futaie trouvée — prise SAUTÉE`); continue }
       } else if (p.ouvert) {
         // PAS UN LIEU : UN CIEL. On cherche donc ce qu'un front sert le mieux — de l'ouvert
         // (le rideau et l'embrasement ont besoin de place) avec une lisière au fond pour la
         // profondeur. (Le filtre « dans la Racine » ne discrimine plus rien depuis que le monde
         // joué n'a qu'une zone ; il est gardé tel quel pour le jour où une seconde revient.)
-        cible = await page.evaluate(() => {
+        cible = await balayer('le balayage de la prairie', () => page.evaluate(() => {
           const m = window.__BRAISES__.scene.map
           const { width: W, height: H, terrain: T } = m
           const cols = Math.ceil(W / m.zonePas)
@@ -16089,7 +20211,7 @@ const SCENARIOS = {
             }
           }
           return best && { ...best, kind: '(terrain)', name: `une prairie ouverte (${best.ouvert} d'ouvert, ${best.arbre} d'arbres)` }
-        })
+        }))
         if (!cible) { console.error(`   ✗ ${p.nom.padEnd(18)} aucune prairie trouvée — prise SAUTÉE`); continue }
       } else if (p.cendre) {
         // ═══ LA FRANGE — ET ELLE N'EST PAS DANS `map.terrain` (2026-08-24, appris en ratant) ═══
@@ -16104,7 +20226,7 @@ const SCENARIOS = {
         //
         // ET ON BALAIE AUTOUR DES FOSSES, PAS LA CARTE. La cendre sourd d'un charnier ; ailleurs
         // il n'y en a pas. Dix voisinages coûtent mille fois moins qu'un balayage de 1580×800.
-        cible = await borne(page.evaluate(() => {
+        cible = await balayer('le balayage de la frange', () => page.evaluate(() => {
           const sc = window.__BRAISES__.scene
           const m = sc.map
           const { width: W, height: H, terrain: T } = m
@@ -16148,8 +20270,126 @@ const SCENARIOS = {
           }
           if (!pied) return { echec: 'la frange la mieux coupée n’a aucun pied vivant où se tenir' }
           return { x: pied.x, y: pied.y, kind: '(cendre)', name: `la frange de ${best.fosse} (${best.cendre} cendrées / ${best.vif} vives sur 84 relevés)` }
-        }), 60000, 'le balayage de la frange')
+        }))
         if (!cible || cible.echec) { console.error(`   ✗ ${p.nom.padEnd(18)} pas de frange : ${cible?.echec ?? 'balayage muet'} — prise SAUTÉE`); continue }
+      } else if (p.peche) {
+        // ═══ UN COIN DE PÊCHE EST UN NŒUD, DONC IL N'EXISTE QU'AUTOUR DE NOUS ═══
+        //
+        // Comme les fumerolles : `view.nodes` ne porte que ce que le client a reçu dans son rayon
+        // d'intérêt. La prise d'avant nous a laissés au cercle de pierres, à deux cents tuiles de
+        // toute eau — lire les nœuds d'ici rendrait zéro coin et ferait conclure que la carte n'en
+        // a pas. On va donc D'ABORD à l'eau (le même balayage de rive que `lac-gele`, qui note les
+        // PIEDS et non les nappes), puis on relit.
+        //
+        // ET ON PRÉFÈRE LE LAC : `peche-table.ts` y met le brochet, et une nappe fermée cadre mieux
+        // qu'un ruban de rivière — mais on prend la rivière plutôt que rien.
+        const rives = await balayer('le balayage des rives', () => page.evaluate(() => {
+          const m = window.__BRAISES__.scene.map
+          const { width: W, height: H, terrain: T } = m
+          const cols = Math.ceil(W / m.zonePas)
+          const idRacine = (m.zoneDefs ?? []).findIndex((d) => d.slug === 'pres_bas')
+          const dansRacine = (x, y) => m.zoneGrid[Math.floor(y / m.zonePas) * cols + Math.floor(x / m.zonePas)] === idRacine
+          const SOLIDE = new Set([5, 7, 23])
+          const S = new Int32Array((W + 1) * (H + 1))
+          for (let y = 0; y < H; y++) {
+            let ligne = 0
+            for (let x = 0; x < W; x++) {
+              if (T[y * W + x] === 6) ligne++
+              S[(y + 1) * (W + 1) + (x + 1)] = S[y * (W + 1) + (x + 1)] + ligne
+            }
+          }
+          const somme = (x0, y0, x1, y1) => {
+            const a = S[y1 * (W + 1) + x1 + 1], b = S[y0 * (W + 1) + x1 + 1]
+            const c = S[y1 * (W + 1) + x0], d = S[y0 * (W + 1) + x0]
+            return a - b - c + d
+          }
+          // ON EN GARDE PLUSIEURS, ET C'EST LE POINT : la plus belle rive de la carte n'a pas
+          // forcément de coin de pêche dessus. Une seule candidate, et la prise dépend d'une
+          // loterie qu'on ne peut pas relancer.
+          const cand = []
+          for (let y = 14; y < H - 4; y += 4) {
+            for (let x = 12; x < W - 12; x += 4) {
+              const t = T[y * W + x]
+              if (t === 6 || t === 4 || SOLIDE.has(t)) continue
+              if (!dansRacine(x, y)) continue
+              const devant = somme(x - 8, y - 9, x + 8, y - 1)
+              if (devant >= 40) cand.push({ x: x + 0.5, y: y + 0.5, devant })
+            }
+          }
+          cand.sort((a, b) => b.devant - a.devant)
+          // Écartées les unes des autres : dix points collés sur la même anse, c'est une candidate.
+          const loin = []
+          for (const c of cand) {
+            if (loin.some((q) => (q.x - c.x) ** 2 + (q.y - c.y) ** 2 < 60 * 60)) continue
+            loin.push(c)
+            if (loin.length >= 8) break
+          }
+          return loin
+        }), 90000)
+        if (!rives || rives.length === 0) { console.error(`   ✗ ${p.nom.padEnd(18)} aucune rive de lac sur cette carte — prise SAUTÉE`); continue }
+        for (const r of rives) {
+          await agirV({ type: 'debug_teleport', x: r.x, y: r.y }, 2400)
+          const trouve = await borne(page.evaluate(() => {
+            const s = window.__BRAISES__.scene
+            const m = s.map
+            const t = (x, y) => m.terrain[y * m.width + x]
+            const coins = (s.view.nodes ?? []).filter((n) => (n.type === 'fishing_spot_lake' || n.type === 'fishing_spot_river') && n.stock > 0)
+            if (coins.length === 0) return { coins: 0 }
+            // ⚠ LE PÊCHEUR DOIT SE VOIR, ET C'EST CE QUI CHOISIT LE COIN (2026-08-26, deuxième
+            // tirage). Le premier prenait le premier coin de lac venu et le premier pied SEC :
+            // il a planté l'avatar SOUS LA CANOPÉE d'une berge boisée, et sur la photo la canne
+            // cambrée sortait d'un tas de houppiers — un geste de pêche invisible. Un pied sec
+            // n'est pas un pied NU. On note donc, pour chaque coin, ce que le cadre contiendrait :
+            // de l'eau devant, et pas d'arbre autour du pêcheur.
+            const ARBRE = new Set([3, 13, 14, 22, 24])
+            const sec = (x, y) => x > 1 && y > 1 && x < m.width - 2 && y < m.height - 2
+              && t(x, y) !== 6 && t(x, y) !== 4 && t(x, y) !== 5 && t(x, y) !== 7 && t(x, y) !== 23
+            // ON SE PLANTE À LA PORTÉE LIVRÉE, jamais à une tuile écrite ici : `NODE_DEFS[type].range`.
+            // De la berge, à quatre tuiles, l'arc du lancer se lit et le fil traverse l'image ; collé
+            // au coin, la canne, le fil et le flotteur tiennent dans trois pixels.
+            const rayons = [[0, 1], [-1, 0], [1, 0], [0, -1]] // le SUD d'abord : l'eau tient alors le haut du cadre
+            let best = null
+            for (const c of coins) {
+              const R = window.__BRAISES__.sim.NODE_DEFS[c.type].range ?? 1.5
+              for (const [dx, dy] of rayons) {
+                for (const k of [R, R - 1]) {
+                  const x = c.tx + Math.round(dx * k), y = c.ty + Math.round(dy * k)
+                  if (!sec(x, y) || ARBRE.has(t(x, y))) continue
+                  // LA CLAIRIÈRE AUTOUR DU PIED (3 tuiles) et L'EAU DANS LE DEMI-CADRE côté coin.
+                  let arbres = 0
+                  for (let oy = -3; oy <= 3; oy++) for (let ox = -3; ox <= 3; ox++) {
+                    const xx = x + ox, yy = y + oy
+                    if (xx < 0 || yy < 0 || xx >= m.width || yy >= m.height) continue
+                    if (ARBRE.has(t(xx, yy))) arbres++
+                  }
+                  let eau = 0
+                  for (let oy = -7; oy <= 7; oy++) for (let ox = -7; ox <= 7; ox++) {
+                    const xx = x + ox * (dx || 1), yy = y + oy
+                    if (xx < 0 || yy < 0 || xx >= m.width || yy >= m.height) continue
+                    if (t(xx, yy) === 6 || t(xx, yy) === 4) eau++
+                  }
+                  const score = eau - arbres * 3 + (c.type === 'fishing_spot_lake' ? 20 : 0)
+                  if (!best || score > best.score) best = { c, x, y, R, score, arbres, eau }
+                }
+              }
+            }
+            if (!best) return { coins: coins.length, sansPied: true }
+            return {
+              coins: coins.length, type: best.c.type, id: best.c.id, stock: best.c.stock,
+              tx: best.c.tx, ty: best.c.ty, portee: best.R, x: best.x + 0.5, y: best.y + 0.5,
+              arbres: best.arbres, eau: best.eau,
+            }
+          }), 20000, 'lecture des coins de pêche')
+          console.log(`      rive (${Math.round(r.x)}, ${Math.round(r.y)}) : ${trouve.coins} coin(s) de pêche${trouve.sansPied ? ' — aucun pied NU' : trouve.x !== undefined ? ` — pied à ${trouve.arbres} arbre(s) autour, ${trouve.eau} d'eau devant` : ''}`)
+          if (trouve.x === undefined) continue
+          cible = {
+            x: trouve.x, y: trouve.y, kind: 'peche',
+            name: `${trouve.type} #${trouve.id} (stock ${trouve.stock}), pêché de ${trouve.portee} tuile(s)`,
+            coin: { tx: trouve.tx, ty: trouve.ty }, viser: { x: trouve.tx + 0.5, y: trouve.ty + 0.5 },
+          }
+          break
+        }
+        if (!cible) { console.error(`   ✗ ${p.nom.padEnd(18)} aucun coin de pêche joignable sur ${rives.length} rive(s) — prise SAUTÉE`); continue }
       } else if (p.fumerolle) {
         // LES BOUCHES NE SONT PAS DES LIEUX, CE SONT DES NŒUDS — donc dans `view.nodes`, et
         // seulement dans le rayon d'intérêt du client. On lit celles qu'il a reçues, et si le
@@ -16242,13 +20482,24 @@ const SCENARIOS = {
         // surface de lecture du smoke, alimentée par `CHRONICLE_EVENT_TYPES`) et on se
         // téléporte dessus dès qu'il tombe. L'attente n'est plus celle de la MARCHE, c'est
         // celle du CRÉPUSCULE : ~72 s de sim, connues d'avance.
-        const feux = await page.evaluate(() => (window.__BRAISES__.scene.view?.villages ?? [])
-          .filter((v) => v.chiefId === 0).map((v) => ({ id: v.id, x: v.fireTx + 0.5, y: v.fireTy + 0.5 })))
+        // ⚠ CE RELEVÉ SE FAIT LA PAGE ENDORMIE, LUI AUSSI (2026-08-26, une heure perdue à le
+        // rapprendre). L'aide `balayer()` avait été posée sur les quatre balayages de CARTE ;
+        // celui-ci — trois lignes qui lisent `view.villages` — était resté nu, et il tombe
+        // pourtant dans le même piège, parce qu'il vient juste APRÈS un saut de calendrier de
+        // dix-sept jours en pleine nuit d'acte III. MESURÉ : 50 minutes sans une ligne de log,
+        // le processus GPU à 266 %. Il n'était pas lent, il attendait son tour derrière une
+        // frame qui ne finissait pas. La règle n'a pas d'exception : **tout `page.evaluate` de
+        // ce scénario se fait boucle endormie et borné.**
+        //
+        // (On endort donc AVANT, et on ne réveille pas : l'attente de la horde qui suit voulait
+        // déjà la boucle au repos — `view.apply` est appelée par le gestionnaire de MESSAGE et
+        // non par l'`update`, donc le monde continue d'être suivi alors que plus rien ne se
+        // peint, et le fil principal rend la main au Worker.)
+        await page.evaluate(() => window.__BRAISES__.scene.game.loop.sleep()).catch(() => {})
+        const feux = await borne(page.evaluate(() => (window.__BRAISES__.scene.view?.villages ?? [])
+          .filter((v) => v.chiefId === 0).map((v) => ({ id: v.id, x: v.fireTx + 0.5, y: v.fireTy + 0.5 }))),
+        30000, 'lecture des feux de village')
         if (feux.length === 0) { console.error(`   ✗ ${p.nom.padEnd(18)} aucun village PNJ — prise SAUTÉE`); continue }
-        // On endort la BOUCLE DE RENDU pendant l'attente : `view.apply` est appelée par le
-        // gestionnaire de MESSAGE (pas par l'`update`), donc le monde continue d'être suivi
-        // alors que plus rien ne se peint — et le fil principal rend la main au Worker.
-        await page.evaluate(() => window.__BRAISES__.scene.game.loop.sleep())
         // LE TICK DE DÉPART, ET C'EST UNE GARDE, PAS UNE TRACE. Le journal est un HISTORIQUE :
         // en le balayant à l'envers on retiendrait une horde d'une nuit PRÉCÉDENTE, FIGÉE à
         // l'aube depuis longtemps (`advanceWorldEvents` 2026-08-21 : l'aube ne dissipe plus,
@@ -16380,12 +20631,41 @@ const SCENARIOS = {
           // MÊME GARDE QUE LE DÉCLENCHEMENT DE LA PLANCHE : le flake SwiftShader de cette
           // machine ne doit emporter QUE son échelon, jamais l'échelle entière.
           try {
-            await page.screenshot({ path: `${OUT}/echelle-${p.nom}-${String(h).replace('.', 'h')}.jpg`, type: 'jpeg', quality: 82, timeout: 180000 })
+            await page.screenshot({ path: `${OUT}/echelle-${p.nom}-${String(h).replace('.', 'h')}.jpg`, type: 'jpeg', quality: 82, timeout: 600000 })
           } catch (e) {
             console.error(`   ✗ échelle ${p.nom} à ${h} h — déclenchement expiré (${e.name})`)
             continue
           }
           console.log(`   ○ échelle ${p.nom} — visée ${h} h, prise à ${lu.toFixed(1)} h`)
+        }
+        continue
+      }
+
+      // L'ÉCHELLE DE LUNE (voir `echelleLune` en tête) — le même cadre, plusieurs phases.
+      if (echelleLune) {
+        for (const j of echelleLune) {
+          if (j > jourPose) {
+            await agirV({ type: 'debug_set_season_day', day: j }, 500)
+            await page.waitForFunction((d) => (window.__BRAISES__.scene.lastTime?.seasonDay ?? 0) >= d, j,
+              { timeout: 30000, polling: 200 }).catch(() => {})
+            jourPose = await page.evaluate(() => window.__BRAISES__.scene.lastTime?.seasonDay ?? -1)
+          }
+          // LE JOUR BOUGE L'HEURE : `debug_set_season_day` déplace le TICK, donc le cycle
+          // jour/nuit avec lui. On repose l'heure APRÈS le saut, sinon on compare deux phases
+          // de lune sous deux heures différentes — et on ne mesure plus rien.
+          await heure(p.heure)
+          await page.waitForTimeout(900)
+          const lu = await page.evaluate(() => ({
+            h: window.__BRAISES__.scene.lastTime?.hourOfCycle ?? -1,
+            j: window.__BRAISES__.scene.lastTime?.seasonDay ?? -1,
+          }))
+          try {
+            await page.screenshot({ path: `${OUT}/lune-${p.nom}-j${j}.jpg`, type: 'jpeg', quality: 82, timeout: 600000 })
+          } catch (e) {
+            console.error(`   ✗ lune ${p.nom} au jour ${j} — déclenchement expiré (${e.name})`)
+            continue
+          }
+          console.log(`   ○ lune ${p.nom} — jour ${lu.j}, prise à ${lu.h.toFixed(1)} h`)
         }
         continue
       }
@@ -16415,11 +20695,93 @@ const SCENARIOS = {
         if (p.arme === 'bow') for (let i = 0; i < 6; i++) await agirV({ type: 'debug_grant', item: 'arrow' }, 120)
         await agirV({ type: 'debug_grant', item: p.arme }, 700)
       }
+      if (p.torche) {
+        // LA TORCHE — LA SEULE LUMIÈRE QUI SUIT LE PHOTOGRAPHE (spec `torche.md`, 2026-08-26).
+        // `torche_vive` est la torche DÉJÀ EN FEU : `debug_grant` la met en main (c'est la main
+        // qui décide de tout — inventaire R9), la sim la déclare vive, et le client en tire une
+        // source dynamique et sa flaque au sol. Un feu de village ne tient pas toujours dans le
+        // cadre ; celui-ci, si. On VÉRIFIE qu'elle brûle : une torche qu'on croit tenir et qui
+        // n'éclaire pas, c'est une nuit noire qu'on prendrait pour un défaut de rendu.
+        await agirV({ type: 'debug_grant', item: 'torche_vive' }, 900)
+        const flamme = await page.evaluate(() => (window.__BRAISES__.scene.porteursDeTorche?.() ?? []).length)
+        console.log(`      torche : ${flamme} flamme(s) portée(s) à l'image`)
+        if (flamme === 0) console.error(`      !! la torche ne brûle pas — la scène n'aura pas de lumière`)
+      }
       if (viseurPx) {
         const vx = Math.max(40, Math.min(1240, Math.round(viseurPx.x)))
         const vy = Math.max(40, Math.min(680, Math.round(viseurPx.y)))
         await page.mouse.move(vx, vy)
         await page.waitForTimeout(600)
+      }
+      // LE GESTE DE PÊCHE VIENT APRÈS LA SOURIS, ET C'EST LA RAISON D'ÊTRE DE SA PLACE : le
+      // décalage de caméra « Foxhole » suit le curseur, et `viser` le pose sur le COIN — donc
+      // l'eau monte dans le cadre et le pêcheur descend. Or le guetteur du ferrage ENDORT la
+      // boucle : tout ce qui n'a pas été cadré avant ne le sera plus jamais.
+      if (p.peche) {
+        // ═══ LE GESTE DE PÊCHE, JOUÉ EN ENTIER — recette du scénario `peche`, à la lettre ═══
+        //
+        // ⚠ RIEN ICI NE DÉCIDE : on envoie les vraies actions (`cast_line`, `harvest_release`) et
+        // on regarde la sim répondre. Le poisson, l'espèce, la fenêtre : c'est `peche.md` qui les
+        // donne. Le seul rôle du montage est de ne pas RATER l'image.
+        await agirV({ type: 'debug_grant', item: 'crude_rod' }, 700)
+        const rslot = await page.evaluate(() => (window.__BRAISES__.scene.registry.get('inv') ?? []).findIndex((sl) => sl?.item === 'crude_rod'))
+        if (rslot >= 0) await agirV({ type: 'set_active_slot', slot: rslot }, 400)
+        // LES DEUX GUETTEURS, POSÉS AVANT LE LANCER (voir la note en tête de la prise).
+        await page.evaluate(() => {
+          const s = window.__BRAISES__.scene
+          const fx = s.pecheFx
+          window.__VITPECHE__ = { touche: null, fait: null }
+          s.host.onMessage((msg) => {
+            if (window.__VITPECHE__.touche || msg.type !== 'snapshot') return
+            const f = (msg.entities ?? []).find((e) => e.id === s.playerId)?.fishing
+            if (f?.windowEnd === undefined) return
+            window.__VITPECHE__.touche = { species: f.species }
+            s.sendAction({ type: 'harvest_release' })
+          })
+          for (const m of ['caught', 'escaped']) {
+            const orig = fx[m].bind(fx)
+            fx[m] = (...a) => {
+              orig(...a)
+              if (a[0] !== s.playerId || window.__VITPECHE__.fait) return
+              window.__VITPECHE__.fait = m
+              // ON FIGE ET ON POSE LA FRAME. `game.step` PEINT ; `fx.update` seul ne redessine
+              // rien. 160 ms après le début du ferrage, la canne est cambrée et le poisson est
+              // en l'air — au milieu de l'arc, pas à son départ.
+              s.game.loop.sleep()
+              s.game.step(s.game.loop.time + 160, 160)
+            }
+          }
+        })
+        await agirV({ type: 'cast_line', tx: cible.coin.tx, ty: cible.coin.ty }, 300)
+        const tendue = await borne(page.evaluate(() => {
+          const s = window.__BRAISES__.scene
+          return Boolean((s.lastEntities ?? []).find((e) => e.id === s.playerId)?.fishing)
+        }), 15000, 'lecture de la ligne')
+        if (!tendue) {
+          console.error(`      !! le lancer n'a pas tendu de ligne (refus ${JSON.stringify(await page.evaluate(() => window.__BRAISES__.scene.registry.get('error') ?? null))})`)
+        } else {
+          // ON ATTEND LE FAIT DANS LA PAGE, jamais par aller-retours : une fois la boucle figée par
+          // le guetteur, `requestAnimationFrame` ne tourne plus — d'où `setTimeout`, comme dans le
+          // scénario `peche`. Sans touche en 25 s, on garde ce qu'on a (la ligne tendue sur l'eau
+          // au couchant reste une image ; elle est juste moins forte).
+          const bilan = await borne(page.evaluate(() => new Promise((ok) => {
+            const t0 = performance.now()
+            const guetter = () => {
+              const P = window.__VITPECHE__
+              if (P.fait) return ok({ fait: P.fait, espece: P.touche?.species ?? null })
+              if (performance.now() - t0 > 25000) return ok({ fait: null, espece: P.touche?.species ?? null })
+              setTimeout(guetter, 20)
+            }
+            guetter()
+          })), 40000, 'attente du ferrage')
+          console.log(bilan.fait === 'caught'
+            ? `      ✓ PRISE ferrée (espèce ${bilan.espece}) — la frame du ferrage est posée`
+            : bilan.fait === 'escaped'
+              ? `      ~ le poisson a FILÉ (espèce ${bilan.espece}) — c'est la fuite qui est à l'image`
+              : `      !! aucune touche en 25 s — la photo montrera la ligne tendue, pas le ferrage`)
+          // Sans fait rendu, personne n'a figé : on le fait, sinon le flotteur bouge sous la photo.
+          if (!bilan.fait) await page.evaluate(() => window.__BRAISES__.scene.game.loop.sleep()).catch(() => {})
+        }
       }
       if (p.charger) {
         // LE COUP MAINTENU, pas un clic : ce qui se peint au sol est le télégraphe du VRAI
@@ -16452,16 +20814,150 @@ const SCENARIOS = {
           const my = paquet.reduce((a, b) => a + b.y, 0) / paquet.length
           console.log(`      recadrage : ${g.length} goules en vue, paquet de ${paquet.length} autour de (${Math.round(mx)}, ${Math.round(my)})`)
           cible.viser = { x: mx, y: my } // le cadrage de la caméra lit CE point, pas celui d'il y a dix secondes
-          // ON SE POSE `recul` TUILES SOUS LE PAQUET : elles occupent le haut du cadre, on leur
-          // fait face. Au-delà de cinq (`aggroRange`), personne ne s'arme — c'est ce qui sépare
-          // une horde EN MARCHE d'une mêlée barrée de télégraphes.
-          await agirV({ type: 'debug_teleport', x: mx, y: my + (p.recul ?? 6), }, 900)
-          const px = await page.evaluate(({ x, y }) => {
-            const cam = window.__BRAISES__.scene.cameras.main
-            return { x: (x * 16 - cam.worldView.x) * cam.zoom, y: (y * 16 - cam.worldView.y) * cam.zoom }
-          }, { x: mx, y: my })
-          await page.mouse.move(Math.max(40, Math.min(1240, Math.round(px.x))), Math.max(40, Math.min(680, Math.round(px.y))))
-          await page.waitForTimeout(500)
+          // ═══ ON SE POSTE DANS LA FENÊTRE DE TRAQUE (2026-08-26, demande d'Alexis) ═══
+          //
+          // « Les cendreux ne traquent pas le joueur… pas de tension sur l'image. » C'était vrai,
+          // et MESURÉ par la prise elle-même : « 0 coup armé, 0/10 goules retournées ». À douze
+          // tuiles elles descendaient leur gradient vers le feu du village et traversaient le
+          // cadre SANS LE VOIR — dix passants, pas une menace.
+          //
+          // La série précédente avait reculé jusque-là pour fuir les télégraphes, et jeté la
+          // tension avec eux. Or les deux nombres qui gouvernent ça sont TRÈS écartés :
+          //   · `MONSTER_DEFS.cendreux.aggroRange` = 5   — il LÂCHE la horde et vous prend pour
+          //     cible (`cendreux.ts` : « un joueur à `aggroRange` se fait mordre, horde ou pas ») ;
+          //   · `COMBAT.MELEE_ENGAGE_RANGE`       = 1,2 — il ARME son coup.
+          // Entre les deux il reste **3,8 tuiles** où dix goules marchent SUR VOUS et où pas une
+          // seule ne peut peindre un télégraphe. À 1,3 tuile/s, les traverser prend ~2,9 s : on a
+          // tout le temps de figer. C'est cette fenêtre qu'on vient chercher.
+          //
+          // LA DISTANCE SE CALCULE SUR LA GOULE LA PLUS PROCHE, jamais sur le barycentre : un
+          // paquet fait deux à trois tuiles de rayon, donc « à quatre tuiles du centre » met déjà
+          // les premières au contact. On cherche donc le `d` (plein sud du paquet — elles tiennent
+          // le haut du cadre, on leur fait face) tel que la plus proche soit à `traque` tuiles.
+          const traque = p.traque ?? 5.5
+          const plusProche = (d) => Math.min(...g.map((b) => Math.sqrt((b.x - mx) ** 2 + (b.y - (my + d)) ** 2)))
+          let lo = 0.5, hi = 20
+          for (let k = 0; k < 24; k++) {
+            const mid = (lo + hi) / 2
+            if (plusProche(mid) < traque) lo = mid
+            else hi = mid
+          }
+          const d = hi
+          console.log(`      traque : on se poste à ${d.toFixed(1)} t sous le paquet — la plus proche sera à ${plusProche(d).toFixed(1)} t`
+            + ` (bascule à 5, armement à 1,2)`)
+          await agirV({ type: 'debug_teleport', x: mx, y: my + d }, 900)
+          cible.recul = d // la caméra `viseSujet` se pose entre les deux : elle lit CETTE distance
+          // ═══ ET IL FAUT QU'IL MARCHE — SINON IL EST UN ROCHER (2026-08-26, MESURÉ) ═══
+          //
+          // Premier jet : on se postait à 4,2 tuiles et on attendait. Relevé : **0/10 retournées
+          // en 5,6 s**. La géométrie n'était pas en cause, l'arithmétique l'était. La vue d'un
+          // Cendreux n'est PAS `aggroRange` : c'est `aggroRange × éveil × LE STIMULUS QUE LA
+          // PROIE OFFRE` (spec R24, « sa vue est HONNÊTE »), et le stimulus d'un homme planté
+          // vaut `HUNT.VIS_STILL` = 0,25 — commentaire de `balance.ts` à l'appui : « l'œil du
+          // gibier accroche le MOUVEMENT ; une silhouette plantée redevient un rocher ».
+          //
+          //     immobile  5 × 0,25 = 1,25 tuile   ← on était à 4,2 : invisible, et pour toujours
+          //     marche    5 × 1    = 5 tuiles
+          //     sprint    5 × 1,4  = 7 (et 8 au BRUIT, `NOISE_SPRINT` 1,6)
+          //
+          // Un photographe immobile n'est donc jamais vu — il se fait piétiner, pas traquer. On
+          // le fait MARCHER SUR ELLES (`KeyW` : le paquet est plein nord). Deux gains d'un coup :
+          // il devient visible, et il est cadré EN MOUVEMENT vers la horde au lieu d'attendre.
+          // (Pas le sprint : à 6 t/s il traverse le cadre entre deux relevés.)
+          await page.keyboard.down('KeyW')
+          let bascule = null
+          for (let essai = 0; essai < 20; essai++) {
+            await page.waitForTimeout(300)
+            const c = await borne(page.evaluate(() => {
+              const sc = window.__BRAISES__.scene
+              const goules = (sc.view?.monsters ?? []).filter((m) => m.type === 'cendreux')
+              // ⚠ ON NE COMPTE QUE LES COUPS QUI ME VISENT, et c'est un correctif payé d'un
+              // tirage. `windups` porte TOUS les armements de la scène — dont celui d'une goule
+              // qui tape un MUR du village (`monsters.ts`, la branche de siège). Compté nu, il
+              // valait 1 dès le premier relevé et figeait la sim avant que quiconque ait pensé.
+              // Ce qui salit l'image, c'est le télégraphe posé SUR MOI ; celui d'une porte
+              // défoncée trente tuiles plus loin n'est même pas dans le cadre.
+              const surMoi = goules.filter((m) => m.targetId === sc.playerId)
+              const vise = new Set(surMoi.map((m) => m.entityId))
+              const moi = (sc.lastEntities ?? []).find((e) => e.id === sc.playerId)
+              let proche = 99
+              for (const m of goules) {
+                const r = sc.view.others.get(m.entityId)?.buffer?.at(-1)
+                if (!r || !moi) continue
+                const d = Math.sqrt((r.x - moi.x) ** 2 + (r.y - moi.y) ** 2)
+                if (d < proche) proche = d
+              }
+              return {
+                armes: (sc.windups ?? []).filter((w) => vise.has(w.id) || w.id === sc.playerId).length,
+                surMoi: surMoi.length, total: goules.length, proche, gait: moi?.gait ?? '?',
+              }
+            }), 20000, 'lecture de la traque')
+            // ⚠ ON FIGE LA SIM ICI, PAS AU DÉCLENCHEMENT. Entre l'ouverture de la fenêtre et la
+            // photo il reste le relevé de combat, le décrochage de caméra et sa seconde
+            // d'attente : ~2 s, soit 2,6 tuiles à 1,3 t/s. Les premières passeraient sous
+            // `MELEE_ENGAGE_RANGE` (1,2) — donc armées, donc le télégraphe qu'on est venu
+            // éviter. On arrête le MONDE au bon instant et on cadre ensuite ; la boucle de
+            // RENDU reste vivante (`figerTout` l'endormira juste avant l'obturateur), sans quoi
+            // `centerOn` ne repeindrait pas.
+            const assez = c.surMoi >= 5 && c.surMoi * 2 >= c.total
+            // ON S'ARRÊTE À TROIS TUILES, PAS À DEUX. Le relevé est pris toutes les 300 ms et
+            // il marche pendant ce temps : parti de 2,2 comme seuil, il s'est retrouvé à 1,5 —
+            // sous la marge, deux goules armées, et un TÉLÉGRAPHE ROUGE en plein cadre. Regardé,
+            // c'est un losange filaire posé sur l'homme : un gizmo d'interface, exactement ce que
+            // la cinquième série avait fui. La tension vient de la MEUTE QUI SE RETOURNE, pas du
+            // coup qui part — celui-là, on ne le veut à aucun prix.
+            const tropPres = c.proche < 3.0
+            if (!assez && !tropPres && c.armes === 0) continue
+            // ═══ LE GEL SE VÉRIFIE, IL NE SE SUPPOSE PAS (2026-08-26, deuxième leçon) ═══
+            //
+            // `pause` est un MESSAGE au Worker : il met deux à trois cents millisecondes à
+            // prendre, soit quatre à six ticks. Or un Cendreux REPENSE sa cible à chaque pensée,
+            // et un homme ARRÊTÉ retombe à `VIS_STILL` (0,25) — donc à 1,25 tuile de vue. Entre
+            // le relevé qui déclenche le gel et le gel lui-même, il a le temps de s'immobiliser
+            // et de redevenir un rocher : MESURÉ, « 3/13 retournées » au déclenchement puis
+            // « 0/13 » au relevé suivant. La cible n'est pas perdue par hasard, elle est perdue
+            // par construction. On fige donc, on attend que l'horloge de la sim s'ARRÊTE
+            // VRAIMENT, et on RE-COMPTE : c'est l'état gelé qui décide, jamais celui d'avant.
+            await page.evaluate(() => window.__BRAISES__.scene.send({ type: 'pause' })).catch(() => {})
+            let t0 = -1
+            for (let k = 0; k < 8; k++) {
+              await page.waitForTimeout(250)
+              const t = await page.evaluate(() => window.__BRAISES__.scene.lastTime?.tick ?? -1).catch(() => -1)
+              if (t === t0) break
+              t0 = t
+            }
+            const gele = await borne(page.evaluate(() => {
+              const sc = window.__BRAISES__.scene
+              const goules = (sc.view?.monsters ?? []).filter((m) => m.type === 'cendreux')
+              const surMoi = goules.filter((m) => m.targetId === sc.playerId)
+              const vise = new Set(surMoi.map((m) => m.entityId))
+              return {
+                armes: (sc.windups ?? []).filter((w) => vise.has(w.id) || w.id === sc.playerId).length,
+                surMoi: surMoi.length, total: goules.length,
+              }
+              // (`proche` et `gait` restent côté Node : ce sont les valeurs du relevé qui a
+              //  déclenché le gel, et la page ne les connaît pas.)
+            }), 25000, 'recompte à froid')
+            gele.proche = c.proche
+            gele.gait = c.gait
+            if (gele.surMoi >= 4 && gele.armes === 0) { bascule = gele; break }
+            console.log(`      traque : ${c.surMoi} au relevé, ${gele.surMoi} une fois gelé, ${gele.armes} armé(s) — on relance`)
+            await page.evaluate(() => window.__BRAISES__.scene.send({ type: 'resume' })).catch(() => {})
+            if (gele.armes > 0) {
+              // TROP PRÈS : on recule d'un pas avant de reprendre. Reculer garde l'allure
+              // (donc la visibilité) tout en rouvrant la marge d'armement.
+              await page.keyboard.up('KeyW')
+              await page.keyboard.down('KeyS')
+              await page.waitForTimeout(700)
+              await page.keyboard.up('KeyS')
+              await page.keyboard.down('KeyW')
+            }
+          }
+          await page.keyboard.up('KeyW')
+          console.log(bascule
+            ? `      traque : ${bascule.surMoi}/${bascule.total} retournées, ${bascule.armes} coup(s) armé(s) sur moi,`
+              + ` la plus proche à ${bascule.proche.toFixed(1)} t, allure « ${bascule.gait} » — sim figée`
+            : `      traque : personne ne s'est retourné en 6 s — la photo sera molle`)
         }
       }
       if (p.horde) {
@@ -16500,11 +20996,39 @@ const SCENARIOS = {
       // (`setFollowOffset` ne suffirait pas : `WorldScene.update` le réécrit à chaque image
       // depuis le décalage « Foxhole » du curseur. On raccroche après la photo.)
       if (p.viseSujet && cible.viser) {
+        // ═══ ON CADRE L'AXE DE LA CONFRONTATION, RELU APRÈS COUP (2026-08-26) ═══
+        //
+        // La version d'avant centrait sur le barycentre du paquet relevé AVANT la traque, plus
+        // un décalage tiré de `recul`. Or entre les deux, le photographe a MARCHÉ sur elles et
+        // elles ont marché sur lui : la géométrie qu'on cadre n'est plus celle qu'on a mesurée.
+        // Résultat, premier tirage de la nuit froide : la meute au coin haut-gauche, l'homme au
+        // milieu à droite, et rien entre les deux — huit goules le traquaient et l'image ne le
+        // disait pas. On relit donc les DEUX positions dans l'état FIGÉ et on pose la caméra sur
+        // leur milieu : l'axe traverse le cadre, et la distance qui reste se lit.
+        const axe = p.horde ? await borne(page.evaluate(() => {
+          const sc = window.__BRAISES__.scene
+          const moi = (sc.lastEntities ?? []).find((e) => e.id === sc.playerId)
+          const pts = []
+          for (const m of (sc.view?.monsters ?? []).filter((q) => q.type === 'cendreux')) {
+            const r = sc.view.others.get(m.entityId)?.buffer?.at(-1)
+            // LES TRAQUEUSES D'ABORD : celles qui l'ont pris pour cible SONT le sujet ; les
+            // autres continuent vers le village et n'ont pas à tirer le cadre vers elles.
+            if (r) pts.push({ x: r.x, y: r.y, vise: m.targetId === sc.playerId })
+          }
+          const vise = pts.filter((q) => q.vise)
+          const g = vise.length >= 3 ? vise : pts
+          if (!moi || g.length === 0) return null
+          const gx = g.reduce((a, b) => a + b.x, 0) / g.length
+          const gy = g.reduce((a, b) => a + b.y, 0) / g.length
+          return { x: (gx + moi.x) / 2, y: (gy + moi.y) / 2, gx, gy, mx: moi.x, my: moi.y, n: g.length }
+        }), 20000, 'lecture de l’axe') : null
+        if (axe) console.log(`      axe : ${axe.n} traqueuse(s) en (${Math.round(axe.gx)}, ${Math.round(axe.gy)}) contre l'homme en (${Math.round(axe.mx)}, ${Math.round(axe.my)})`)
+        const centre = axe ?? { x: cible.viser.x, y: cible.viser.y + (cible.recul ?? p.recul ?? 6) * 0.45 }
         await page.evaluate(({ x, y }) => {
           const cam = window.__BRAISES__.scene.cameras.main
           cam.stopFollow()
           cam.centerOn(x * 16, y * 16)
-        }, { x: cible.viser.x, y: cible.viser.y + (p.recul ?? 6) * 0.45 })
+        }, { x: centre.x, y: centre.y })
         await page.waitForTimeout(900)
       }
       // LES BOUFFÉES SE CHAUFFENT À LA MAIN — sinon la bouche ne fume pas encore. `FumerolleFx`
@@ -16534,8 +21058,17 @@ const SCENARIOS = {
       // du code : quand il tombe, il ne doit emporter QUE sa prise. Une planche de quinze vues
       // où la deuxième mort tue les treize suivantes, c'est vingt minutes rejouées pour rien —
       // et c'est exactement ce qui est arrivé, deux fois, avant cette garde.
+      //
+      // ⚠ QUATRE-VINGT-DIX SECONDES NE SUFFISENT PLUS, ET CE N'EST PAS LE CODE (2026-08-26).
+      // `sylve-aube` — la fenêtre la plus fermée de la carte, canopée PLEINE — a expiré à
+      // 180 s alors que la machine portait une charge de 12 (les suites de l'autre session).
+      // Le rendu d'une image dense sous SwiftShader n'est pas borné par le jeu, il l'est par
+      // le CPU qu'on lui laisse : la seule chose qu'un plafond court garantit, c'est de perdre
+      // la plus belle prise de la planche les jours où la machine travaille. On attend donc
+      // dix minutes — ça ne coûte RIEN quand tout va bien (les prises passent en 20 s), et ça
+      // sauve la série quand la machine est prise.
       try {
-        await page.screenshot({ path: `${OUT}/vitrine-${p.nom}.jpg`, type: 'jpeg', quality: 82, timeout: 180000 })
+        await page.screenshot({ path: `${OUT}/vitrine-${p.nom}.jpg`, type: 'jpeg', quality: 82, timeout: 600000 })
       } catch (e) {
         console.error(`   ✗ ${p.nom.padEnd(18)} le déclenchement a expiré (${e.name}) — prise PERDUE, la planche continue`)
         if (p.charger) { await degeler().catch(() => {}); await page.mouse.up().catch(() => {}) }
@@ -17032,11 +21565,16 @@ const SCENARIOS = {
       const s = window.__BRAISES__.scene
       const corps = []
       for (const [id, o] of s.view.others) {
-        if (o.textureKey !== 'spr-cendreux' && o.textureKey !== 'spr-cendreux-rampant') continue
+        if (o.textureKey !== 'spr-cendreux' && !o.textureKey.startsWith('spr-cendreux-rampant')) continue
         const g = o.sprite.getData('gaze')
+        const f = o.sprite.getData('facing')
         corps.push({
           id, texture: o.textureKey, x: o.sprite.x, y: o.sprite.y,
           w: +o.sprite.displayWidth.toFixed(1), h: +o.sprite.displayHeight.toFixed(1),
+          // LE CAP, pour juger l'AXE du corps couché (2026-08-25) : un rampant doit être allongé
+          // DANS sa marche, pas en travers. Sans lui, « plus large que haute » condamnerait à
+          // tort celui qui monte plein nord — et c'est exactement ce que ce verdict aurait fait.
+          facing: f ? { x: +f.x.toFixed(2), y: +f.y.toFixed(2) } : null,
           gaze: g ? { visible: g.visible, x: +g.x.toFixed(1), y: +g.y.toFixed(1), allume: g.isTinted } : null,
         })
       }
@@ -17052,7 +21590,7 @@ const SCENARIOS = {
       while (Date.now() - debut < 9000 && !rampant) {
         await page.waitForTimeout(300)
         const corps = await lire()
-        rampant = corps.find((c) => c.texture === 'spr-cendreux-rampant') ?? null
+        rampant = corps.find((c) => c.texture.startsWith('spr-cendreux-rampant')) ?? null
         if (corps.length > essais) break // celui-ci est sorti (marcheur ou non) : au suivant
       }
     }
@@ -17079,19 +21617,40 @@ const SCENARIOS = {
     await page.screenshot({ path: `${OUT}/rampant.png` })
     const apres = (await lire()).find((c) => c.id === rampant.id) ?? rampant
     const temoin = marcheurs[0] ?? null
-    const couche = apres.w > apres.h
+    // LA SILHOUETTE EST COUCHÉE — et dans le SENS DE SA MARCHE. HUIT CAPS depuis le 2026-08-25
+    // (`-rampant-0` … `-rampant-7`, `render/corps-couche.ts`) : le verdict ne peut plus lire
+    // « plus large que haute », qui condamnait le nord-sud et ne dit rien d'une diagonale. Ce
+    // qu'on affirme, c'est que la BOÎTE est celle du cap qu'il porte.
+    const orient = Number(apres.texture.slice(apres.texture.lastIndexOf('-') + 1))
+    const boite = { 0: [24, 10], 2: [10, 24], 4: [24, 10], 6: [10, 24] }[orient] ?? null
+    const couche = boite === null ? apres.w > 10 && apres.h > 10 : apres.w === boite[0] && apres.h === boite[1]
+    const capVertical = apres.facing ? Math.abs(apres.facing.y) > Math.abs(apres.facing.x) : null
     const regard = apres.gaze?.visible === true
     const regardTemoin = temoin ? temoin.gaze?.visible === true : null
     console.log(`   rampant : ${JSON.stringify(apres)} → ${OUT}/rampant.png`)
     if (temoin) console.log(`   témoin (marcheur) : ${JSON.stringify(temoin)}`)
-    console.log(`   ${couche ? '✓' : '✗'} la silhouette est couchée (plus large que haute : ${apres.w} × ${apres.h})`)
+    console.log(`   ${couche ? '✓' : '!!'} la silhouette porte la boîte de son cap (${orient} : ${apres.w} × ${apres.h})`)
+    if (!couche) console.error(`!! la boîte du rampant ne suit pas son cap ${orient} : ${apres.w} × ${apres.h}`)
+    // ⚠ ON NE JUGE QUE CE QUE LE CAP SAIT TRANCHER. `facing` est rangé en HUIT secteurs par la
+    //   sim : sur une diagonale ses deux composantes sont ÉGALES, et l'axe du corps, lui, se
+    //   décide sur le DÉPLACEMENT réel (`deplacementRecent`, 400 ms) — deux quantités
+    //   différentes. Juger l'égalité ferait rougir du code juste, et un verdict qui accuse à
+    //   tort est pire que pas de verdict. Cap nul (il vient de sortir) : rien à dire non plus.
+    const ecartAxe = capVertical === null ? 0 : Math.abs(Math.abs(apres.facing.y) - Math.abs(apres.facing.x))
+    if (ecartAxe > 0.3) {
+      const bonAxe = capVertical === (orient === 2 || orient === 6)
+      console.log(`   ${bonAxe ? '✓' : '!!'} la texture suit le cap (${JSON.stringify(apres.facing)} → ${apres.texture})`)
+      if (!bonAxe) console.error(`!! le rampant est couché EN TRAVERS de sa marche : cap ${JSON.stringify(apres.facing)}, texture ${apres.texture}`)
+    } else {
+      console.log(`   (cap ${apres.facing ? 'sans axe dominant' : 'nul'} : l’axe du corps ne se juge pas ici)`)
+    }
     console.log(`   ${regard ? '✓' : '✗'} le rampant porte son regard (R27)`)
     if (temoin) console.log(`   ${regardTemoin ? '✓' : '✗'} le marcheur aussi`)
     // R27bis — LE REGARD S'ALLUME : venus pour le joueur (réveils `debug_reveil`, la nuit, à
     // portée de chaleur), au moins un de ces morts a un vivant pour cible — son pion est teinté.
     const allumes = corps.filter((c) => c.gaze?.allume === true).length
     console.log(`   ${allumes > 0 ? '✓' : '✗'} le regard s'allume sur ${allumes}/${corps.length} morts qui ont une cible (R27bis)`)
-    return { essais, rampant: apres, temoin, couche, regard, regardTemoin, allumes }
+    return { essais, rampant: apres, temoin, couche, orient, capVertical, regard, regardTemoin, allumes }
   },
 
   /**
@@ -17532,93 +22091,280 @@ const SCENARIOS = {
   },
 
   /**
-   * LES TACHES DE SOLEIL SUIVENT LA CANOPÉE RÉELLE (2026-08-16, R6 amendée) — la preuve
-   * se lit dans le MASQUE lui-même (`soleil-mask`, un canvas 2D : il se relit, lui),
-   * pas dans une luminance d'écran : les taches sont subtiles (alpha ≤ 0,30) et le
-   * moutonnement du sol les noierait. Trois propriétés, sur le monde RÉEL :
-   *   • au PIED d'un arbre vivant, le masque est ÉTEINT (la couronne tamponne) ;
-   *   • dans une TROUÉE de bois (aucun arbre à portée de couronne, profondeur ≥ 1),
-   *     il est ALLUMÉ — pénombre comprise, jamais sous 0,5 ;
-   *   • HORS des bois (profondeur 0), rien.
-   * Plus la capture d'ambiance (A5) : une lisière zoomée, à l'œil.
+   * LES EMPREINTES (2026-08-25) — elles POINTENT, elles ENJAMBENT, elles s'ÉTEIGNENT, et elles
+   * ont un relief. Quatre défauts constatés par Alexis, quatre sondes, chacune capable de rougir
+   * sur le code d'AVANT :
+   *
+   *   ① LE CAP. Les tampons étaient toujours droits : marcher vers l'est laissait des semelles
+   *      qui regardaient le sud. On marche donc dans DEUX caps et on lit la variante bakée que
+   *      chaque trace porte (`sondeTracesSol.orient`) : elle doit SUIVRE la marche. Avant, la
+   *      texture était unique — l'histogramme des deux caps aurait été identique.
+   *   ② L'ENJAMBEMENT. Le décalage gauche/droite se faisait en X, toujours : plein est, les deux
+   *      pieds tombaient sur la MÊME ligne. On mesure l'écart LATÉRAL (perpendiculaire au cap)
+   *      des traces : il doit changer de signe d'un pas à l'autre, dans les deux caps.
+   *   ③ LA MORT AVEC SON SOL. Une empreinte est un creux DANS la neige. On fait FONDRE la neige
+   *      (le jour de saison passe à l'été) et les traces doivent partir avec — mais AVANT ça, on
+   *      éloigne la caméra pour évincer les chunks du gel et on revient : le silence d'un chunk
+   *      n'est pas une fonte, la piste doit avoir survécu (c'est le faux positif qui guettait).
+   *   ④ LE RELIEF ET LA NUIT. La texture porte une NORMALE (dataSource), et le décalque est
+   *      ÉCLAIRÉ : de midi à minuit, ses propres pixels doivent s'éteindre comme le monde. Avant,
+   *      sans `setLighting`, il restait pleine couleur sur un monde noir.
+   *
+   * Puis la CENDRE : des pas sur la cendre de pré, AUCUN sur la cendre de bois (demande d'Alexis
+   * du 2026-08-25) — et c'est le zéro qui compte, un vert sur le seul cas positif passerait aussi
+   * avec un prédicat trop large.
    */
-  async soleil(page) {
+  async pas(page) {
+    if (!dev) { console.log('\n(les empreintes exigent --dev : le jour de saison, l’heure et le TP)'); return {} }
+    const JOUR = Number(process.env.SMOKE_JOUR ?? 105)
     await page.waitForFunction(() => Boolean(window.__BRAISES__?.scene?.registry?.get('worldReady')), null, { timeout: 150000 })
-    await page.waitForTimeout(2500) // le premier peuplement + le premier rebâti du masque
-
-    const lu = await page.evaluate(() => {
-      const s = window.__BRAISES__.scene
-      const map = s.map
-      const tex = s.textures.get('soleil-mask')
-      if (!map || !tex || !map.profondeur) return { erreur: 'carte ou masque introuvable' }
-      const ctx = tex.getContext()
-      const img = ctx.getImageData(0, 0, map.width, map.height).data
-      const dens = (tx, ty) => img[(ty * map.width + tx) * 4] / 255
-      const prof = (tx, ty) => map.profondeur[ty * map.width + tx] ?? 0
-
-      const arbres = s.view.nodes.filter((n) => (n.type === 'tree' || n.type === 'old_tree') && n.stock > 0)
-      if (arbres.length === 0) return { erreur: 'aucun arbre vivant' }
-      // Le pied de N troncs EN FORÊT (profondeur ≥ 1 — un arbre de pré n'a pas de sous-bois).
-      const pieds = arbres.filter((n) => prof(n.tx, n.ty) >= 1).slice(0, 200).map((n) => dens(n.tx, n.ty))
-      // Les TROUÉES : des tuiles de bois à ≥ 4 tuiles de tout arbre vivant (Chebyshev).
-      const trouees = []
-      for (let ty = 2; ty < map.height - 2 && trouees.length < 60; ty += 3) {
-        for (let tx = 2; tx < map.width - 2 && trouees.length < 60; tx += 3) {
-          if (prof(tx, ty) < 2) continue
-          let libre = true
-          for (const a of arbres) {
-            if (Math.max(Math.abs(a.tx - tx), Math.abs(a.ty - ty)) < 4) { libre = false; break }
-          }
-          if (libre) trouees.push(dens(tx, ty))
-        }
-      }
-      // HORS bois : profondeur 0.
-      const dehors = []
-      for (let ty = 2; ty < map.height - 2 && dehors.length < 60; ty += 5) {
-        for (let tx = 2; tx < map.width - 2 && dehors.length < 60; tx += 5) {
-          if (prof(tx, ty) === 0) dehors.push(dens(tx, ty))
-        }
-      }
-      // Une lisière à REGARDER : le premier arbre de forêt qui a une trouée à 5 tuiles.
-      let cadre = null
-      for (const a of arbres) {
-        if (prof(a.tx, a.ty) < 1) continue
-        if (dens(a.tx + 5, a.ty) > 0.5) { cadre = { tx: a.tx, ty: a.ty }; break }
-      }
-      const moyenne = (l) => (l.length === 0 ? -1 : l.reduce((s2, v) => s2 + v, 0) / l.length)
-      return {
-        nPieds: pieds.length, piedMoyen: moyenne(pieds), piedMax: Math.max(...pieds),
-        nTrouees: trouees.length, troueeMin: trouees.length ? Math.min(...trouees) : -1,
-        nDehors: dehors.length, dehorsMax: dehors.length ? Math.max(...dehors) : -1,
-        cadre,
-      }
+    await page.waitForTimeout(1200)
+    const agir = async (action, ms = 300) => {
+      await page.evaluate((a) => { window.__BRAISES__.scene.sendAction(a) }, action)
+      await page.waitForTimeout(ms)
+    }
+    const lireTraces = () => page.evaluate(() => {
+      const e = window.__BRAISES__.scene.eauEvents
+      return { sol: e.sondeTracesSol, neige: e.tracesNeigeVivantes, cendre: e.tracesCendreVivantes }
     })
-    if (lu.erreur) {
-      console.log(`   ✗ ${lu.erreur}`)
-      return
-    }
-    console.log(`MESURÉ — masque lu en jeu : ${lu.nPieds} pieds d'arbre (moyenne ${lu.piedMoyen.toFixed(2)}, max ${lu.piedMax.toFixed(2)}) · ${lu.nTrouees} trouées (min ${lu.troueeMin.toFixed(2)}) · ${lu.nDehors} tuiles hors bois (max ${lu.dehorsMax.toFixed(2)})`)
-    console.log(lu.piedMax < 0.15 ? '   ✓ au pied d\'un tronc, la canopée éteint la tache' : '   ✗ des taches percent au pied des troncs')
-    console.log(lu.nTrouees > 0 && lu.troueeMin > 0.5 ? '   ✓ une trouée de bois est ALLUMÉE (pénombre comprise)' : `   ✗ des trouées éteintes (min ${lu.troueeMin})`)
-    console.log(lu.dehorsMax === 0 ? '   ✓ hors des bois, rien — le sous-bois seulement' : `   ✗ des taches hors des bois (max ${lu.dehorsMax})`)
+    const purger = () => page.evaluate(() => { window.__BRAISES__.scene.eauEvents.destroy() })
 
-    // L'AMBIANCE (A5), à l'œil : une lisière zoomée — taches dans les trouées, rien sous
-    // les couronnes. La boucle dort pour une frame stable (rendu logiciel).
-    if (lu.cadre) {
-      await page.evaluate((c) => {
-        const s = window.__BRAISES__.scene
-        s.cameras.main.stopFollow()
-        s.cameras.main.centerOn((c.tx + 2.5) * 16, c.ty * 16)
-        s.cameras.main.setZoom(4)
-        const g = s.game
-        g.loop.sleep()
-        g.step(g.loop.time + 16, 16)
-        g.step(g.loop.time + 16, 16)
-      }, lu.cadre)
-      await page.screenshot({ timeout: 90000, path: `${OUT}/soleil-lisiere.png` })
-      await page.evaluate(() => window.__BRAISES__.scene.game.loop.wake())
-      console.log(`→ ${OUT}/soleil-lisiere.png`)
+    console.log('  · monde prêt, on arme le debug')
+    await agir({ type: 'debug_god', on: true }, 200)
+    await agir({ type: 'debug_set_season_day', day: JOUR }, 400)
+    await page.waitForFunction((j) => (window.__BRAISES__.scene.lastTime?.seasonDay ?? 0) >= j, JOUR, { timeout: 30000, polling: 200 }).catch(() => {})
+    await agir({ type: 'debug_set_hour', hour: 12 }, 600)
+    const jourReel = await page.evaluate(() => window.__BRAISES__.scene.lastTime?.seasonDay ?? -1)
+    console.log(`  · jour de saison réel ${jourReel}, midi — on cherche un sol ouvert ET ENNEIGÉ`)
+
+    // ═══ ① + ② LE CAP ET L'ENJAMBEMENT, sur la neige ═══
+    // ⚠ LE PLUS OUVERT N'EST PAS LE PLUS ENNEIGÉ. Un premier jet prenait la clairière la plus large
+    // et s'y posait : `0 tuile de neige au balayage`, et deux sondes qui mesuraient le vide. On
+    // essaie donc les MEILLEURS sites l'un après l'autre, et on ne garde que celui qui a de la
+    // neige sous les pieds — c'est le manteau qui décide, pas le terrain.
+    const candidats = await page.evaluate(() => {
+      const s = window.__BRAISES__.scene
+      const { width: W, height: H, terrain } = s.map
+      const OUVERT = new Set([1, 11, 17, 12, 20, 26])
+      const tous = []
+      for (let cy = 12; cy < H - 12; cy += 6) {
+        for (let cx = 20; cx < W - 20; cx += 6) {
+          let ouvert = 0
+          for (let y = cy - 8; y < cy + 8; y += 2) for (let x = cx - 12; x < cx + 12; x += 2) if (OUVERT.has(terrain[y * W + x])) ouvert++
+          tous.push({ x: cx, y: cy, ouvert })
+        }
+      }
+      return tous.sort((a, b) => b.ouvert - a.ouvert).slice(0, 12)
+    })
+    let site = null
+    let neigeIci = null
+    for (const c of candidats) {
+      await agir({ type: 'debug_teleport', x: c.x + 0.5, y: c.y + 0.5 }, 1400)
+      await page.waitForFunction(() => (window.__BRAISES__.scene.gelLayer?.sonde?.recuissons ?? 0) > 0, null, { timeout: 20000, polling: 150 }).catch(() => {})
+      await page.waitForTimeout(600)
+      neigeIci = await page.evaluate(() => {
+        const sc = window.__BRAISES__.scene
+        const p = sc.registry.get('playerPos')
+        return { etat: sc.gelLayer.etatConnuAt(Math.floor(p.x), Math.floor(p.y)), sonde: sc.gelLayer?.sonde?.tuilesNeige ?? -1 }
+      })
+      console.log(`  · essai (${c.x}, ${c.y}) : état ${neigeIci.etat} · ${neigeIci.sonde} tuiles de neige`)
+      if (neigeIci.etat === 1 || neigeIci.etat === 2) { site = c; break }
     }
+    if (!site) { console.error(`!! aucune neige sous les pieds au jour ${jourReel} — la sonde des empreintes ne mesurerait rien`); return { jourReel, candidats } }
+    console.log(`  · site enneigé (${site.x}, ${site.y})`)
+
+    /** Marche `touche` jusqu'à récolter au moins `combien` traces (ou à bout de patience). */
+    const marcher = async (touche, combien) => {
+      await purger()
+      const depart = await page.evaluate(() => ({ ...window.__BRAISES__.scene.registry.get('playerPos') }))
+      await page.keyboard.down(touche)
+      let t = null
+      for (let k = 0; k < 30; k++) {
+        await page.waitForTimeout(400)
+        t = await lireTraces()
+        if (t.neige >= combien) break
+      }
+      await page.keyboard.up(touche)
+      await page.waitForTimeout(200)
+      const arrivee = await page.evaluate(() => ({ ...window.__BRAISES__.scene.registry.get('playerPos') }))
+      return { ...(t ?? await lireTraces()), depart, arrivee }
+    }
+
+    const est = await marcher('KeyD', 6)
+    console.log(`  · marche est : ${est.neige} traces`)
+    const sud = await marcher('KeyS', 6)
+    console.log(`  · marche sud : ${sud.neige} traces`)
+    const ORIENTATIONS = 16
+    /** Le cap d'une marche (rad, repère écran) et l'écart lateral d'une trace à sa ligne. */
+    const capDe = (m) => Math.atan2(m.arrivee.y - m.depart.y, m.arrivee.x - m.depart.x)
+    const ecartAngle = (a, b) => { let d = (a - b) % (2 * Math.PI); if (d > Math.PI) d -= 2 * Math.PI; if (d < -Math.PI) d += 2 * Math.PI; return d }
+    const juger = (m, nom) => {
+      const cap = capDe(m)
+      const marge = Math.PI / ORIENTATIONS + 0.16 + 0.11 + 1e-6 // demi-cran + ouverture + jitter
+      const hors = m.sol.filter((t) => Math.abs(ecartAngle((t.orient * 2 * Math.PI) / ORIENTATIONS, cap)) > marge)
+      // L'écart LATÉRAL : la trace projetée sur la perpendiculaire au cap, en px.
+      const nx = -Math.sin(cap), ny = Math.cos(cap)
+      const lat = m.sol.map((t) => (t.x - m.depart.x * 16) * nx + (t.y - m.depart.y * 16) * ny)
+      // Chaque pas doit tomber de l'autre côté du précédent : la piste enjambe, elle ne file pas.
+      const med = lat.slice().sort((a, b) => a - b)[Math.floor(lat.length / 2)] ?? 0
+      const signes = lat.map((v) => Math.sign(v - med))
+      let alternances = 0
+      for (let i = 1; i < signes.length; i++) if (signes[i] !== 0 && signes[i] === -signes[i - 1]) alternances++
+      const amplitude = lat.length ? Math.max(...lat) - Math.min(...lat) : 0
+      console.log(`  ${nom} : ${m.sol.length} pas · cap ${((cap * 180) / Math.PI).toFixed(0)}°`
+        + ` · variantes {${[...new Set(m.sol.map((t) => t.orient))].sort((a, b) => a - b).join(',')}}`
+        + ` hors cap ${hors.length} ${hors.length === 0 ? '✓' : '✗'}`
+        + ` · enjambement ${amplitude.toFixed(1)} px, ${alternances} alternances ${amplitude >= 2 && alternances >= 2 ? '✓' : '✗'}`)
+      if (m.sol.length < 4) console.error(`!! ${nom} : moins de quatre pas posés — la sonde ne mesure rien`)
+      if (hors.length > 0) console.error(`!! ${nom} : ${hors.length} pas ne pointent PAS dans le sens de la marche`)
+      if (amplitude < 2 || alternances < 2) console.error(`!! ${nom} : les deux pieds ne s'écartent pas de part et d'autre de la marche`)
+      return { cap, hors: hors.length, amplitude, alternances, orients: [...new Set(m.sol.map((t) => t.orient))] }
+    }
+    const jEst = juger(est, 'plein est')
+    const jSud = juger(sud, 'plein sud')
+    const memeTexture = jEst.orients.length === 1 && jSud.orients.length === 1 && jEst.orients[0] === jSud.orients[0]
+    console.log(`  les deux caps portent-ils la MÊME variante ? ${memeTexture ? 'OUI ✗' : 'non ✓'}`)
+    if (memeTexture) console.error('!! est et sud tamponnent la même image : le pas ne suit pas la marche')
+
+    // ═══ ④ LE RELIEF ET LA NUIT (mesurés sur les PIXELS DE LA TRACE, pas sur le décor) ═══
+    const normale = await page.evaluate(() => {
+      const t = window.__BRAISES__.scene.textures.get('fx-pas-neige-0')
+      const src = t?.dataSource ?? []
+      return { dataSources: src.length, cle: t?.key ?? null }
+    })
+    console.log(`  la texture du pas porte une normale : ${normale.dataSources} dataSource ${normale.dataSources > 0 ? '✓' : '✗'}`)
+    if (normale.dataSources === 0) console.error('!! fx-pas-neige-0 n’a pas de normal map (dataSource absent)')
+
+    // On vise une trace RÉELLE à l'écran, caméra figée sur elle et boucle endormie (sinon la
+    // capture expire sous swiftshader — mémoire `capture-ecran-plein-hud-dom`).
+    const zoomJeu = await page.evaluate(() => window.__BRAISES__.scene.cameras.main.zoom)
+    const viser = async () => page.evaluate(() => {
+      const sc = window.__BRAISES__.scene
+      const t = sc.eauEvents.sondeTracesSol[Math.floor(sc.eauEvents.sondeTracesSol.length / 2)]
+      if (!t) return null
+      const cam = sc.cameras.main
+      cam.stopFollow()
+      cam.setZoom(8)
+      cam.centerOn(t.x, t.y)
+      const b = sc.scale.canvasBounds
+      return { cx: b.x + b.width / 2, cy: b.y + b.height / 2 }
+    })
+    const cible = await viser()
+    let jourNuit = null
+    if (cible) {
+      const lireCarre = async () => {
+        await page.evaluate(() => { window.__BRAISES__.scene.game.loop.sleep() })
+        await page.waitForTimeout(300)
+        const r = await regionAt(page, { x: Math.round(cible.cx) - 12, y: Math.round(cible.cy) - 12, width: 24, height: 24 })
+        await page.evaluate(() => { window.__BRAISES__.scene.game.loop.wake() })
+        if (!r) return null
+        let s = 0, n = 0
+        for (let y = 0; y < r.h; y++) for (let x = 0; x < r.w; x++) { const [rr, vv, bb] = r.px(x, y); s += 0.299 * rr + 0.587 * vv + 0.114 * bb; n++ }
+        return s / n
+      }
+      await agir({ type: 'debug_set_hour', hour: 12 }, 1200)
+      await viser()
+      const midi = await lireCarre()
+      await agir({ type: 'debug_set_hour', hour: 0 }, 1200)
+      await viser()
+      const minuit = await lireCarre()
+      jourNuit = { midi, minuit }
+      const chute = midi && minuit ? 1 - minuit / midi : 0
+      console.log(`  la trace s’éteint la nuit : ${midi?.toFixed(1)} → ${minuit?.toFixed(1)} (−${(chute * 100).toFixed(0)} %) ${chute > 0.35 ? '✓' : '✗'}`)
+      if (!(chute > 0.35)) console.error('!! l’empreinte ne s’éteint pas la nuit — décal fluorescent sur un monde noir')
+      await agir({ type: 'debug_set_hour', hour: 12 }, 800)
+      await page.evaluate((z) => { const sc = window.__BRAISES__.scene; sc.cameras.main.setZoom(z); sc.cameras.main.startFollow(sc.playerSprite, true) }, zoomJeu)
+    }
+
+    // ═══ ③ LA MORT AVEC SON SOL — d'abord le faux positif, ensuite le vrai ═══
+    const avantPano = (await lireTraces()).neige
+    const loin = await page.evaluate(() => {
+      const sc = window.__BRAISES__.scene
+      const p = sc.registry.get('playerPos')
+      return { x: Math.max(20, p.x - 120), y: p.y, retourX: p.x, retourY: p.y }
+    })
+    await agir({ type: 'debug_teleport', x: loin.x, y: loin.y }, 4000)
+    const pendant = (await lireTraces()).neige
+    await agir({ type: 'debug_teleport', x: loin.retourX, y: loin.retourY }, 2500)
+    const apresPano = (await lireTraces()).neige
+    console.log(`  chunks évincés (caméra à 120 tuiles) : ${avantPano} → ${pendant} → ${apresPano} traces ${apresPano === avantPano ? '✓ (le doute laisse vivre)' : '✗'}`)
+    if (apresPano !== avantPano) console.error('!! des traces sont mortes du SILENCE d’un chunk évincé, pas d’une fonte')
+
+    // …et maintenant la vraie fonte : l'été, la neige s'en va, la piste avec elle.
+    const ETE = Number(process.env.SMOKE_ETE ?? 45) // le cœur de l'Ardeur : +26 °C au socle (BALANCE.SOCLE)
+    await agir({ type: 'debug_set_season_day', day: ETE }, 600)
+    let fondu = null
+    for (let k = 0; k < 30; k++) {
+      await page.waitForTimeout(500)
+      const t = await page.evaluate(() => {
+        const sc = window.__BRAISES__.scene
+        const p = sc.registry.get('playerPos')
+        return { neige: sc.eauEvents.tracesNeigeVivantes, sol: sc.gelLayer.etatConnuAt(Math.floor(p.x), Math.floor(p.y)) }
+      })
+      fondu = t
+      if (t.sol === 0 && t.neige === 0) break
+    }
+    console.log(`  la neige a fondu (état ${fondu?.sol}) : ${fondu?.neige} trace(s) restante(s) ${fondu?.sol === 0 && fondu?.neige === 0 ? '✓' : '✗'}`)
+    if (fondu?.sol !== 0) console.error(`!! la neige n’a pas fondu au jour ${ETE} (état ${fondu?.sol}) — la sonde ne mesure rien`)
+    else if (fondu?.neige !== 0) console.error(`!! ${fondu?.neige} empreintes flottent sur un sol qui n’a plus de neige`)
+
+    // ═══ LA CENDRE : des pas sur le pré brûlé, AUCUN dans la forêt brûlée ═══
+    await agir({ type: 'debug_set_season_day', day: JOUR }, 600)
+    const solsCendre = await page.evaluate(() => {
+      const sc = window.__BRAISES__.scene
+      const { width: W, height: H } = sc.map
+      const bloquants = new Set()
+      for (const n of (sc.view?.nodes ?? [])) bloquants.add(`${n.tx},${n.ty}`)
+      const trouve = (cible) => {
+        for (let ty = 8; ty < H - 8; ty += 2) {
+          for (let tx = 8; tx < W - 8; tx += 2) {
+            if (sc.paves.terrainAffiche(tx, ty) !== cible) continue
+            let large = true
+            for (let k = 0; k <= 8 && large; k++) for (let dy = -1; dy <= 1; dy++) {
+              if (sc.paves.terrainAffiche(tx + k, ty + dy) !== cible || bloquants.has(`${tx + k},${ty + dy}`)) large = false
+            }
+            if (large) return { tx, ty }
+          }
+        }
+        return null
+      }
+      return { pre: trouve(27), bois: trouve(28) }
+    })
+    console.log(`  sols de cendre trouvés — pré ${solsCendre.pre ? `(${solsCendre.pre.tx}, ${solsCendre.pre.ty})` : 'aucun'}`
+      + ` · bois ${solsCendre.bois ? `(${solsCendre.bois.tx}, ${solsCendre.bois.ty})` : 'aucun'}`)
+    const marcherCendre = async (site) => {
+      if (!site) return null
+      await agir({ type: 'debug_teleport', x: site.tx + 0.5, y: site.ty + 0.5 }, 1800)
+      await purger()
+      await page.keyboard.down('KeyD')
+      let t = null
+      for (let k = 0; k < 24; k++) { await page.waitForTimeout(400); t = await lireTraces(); if (t.cendre >= 6) break }
+      await page.keyboard.up('KeyD')
+      await page.waitForTimeout(200)
+      return await lireTraces()
+    }
+    const surPre = await marcherCendre(solsCendre.pre)
+    const surBois = await marcherCendre(solsCendre.bois)
+    if (surPre) {
+      console.log(`  cendre de pré : ${surPre.cendre} empreintes ${surPre.cendre >= 4 ? '✓' : '✗'}`)
+      if (surPre.cendre < 4) console.error('!! la cendre de pré ne garde pas les pas')
+    } else console.error('!! aucune cendre de pré assez large sur cette carte — la sonde ne mesure rien')
+    if (surBois) {
+      console.log(`  cendre de bois : ${surBois.cendre} empreintes ${surBois.cendre === 0 ? '✓ (rien, comme demandé)' : '✗'}`)
+      if (surBois.cendre !== 0) console.error('!! des pas se posent dans la cendre de BOIS — seule la cendre de pré en porte')
+    } else console.error('!! aucune cendre de bois assez large sur cette carte — le zéro n’est pas prouvé')
+
+    // La capture : la piste, de près, à une heure rasante (le creux se lit à son ombre).
+    await agir({ type: 'debug_set_hour', hour: 8 }, 900)
+    const vue = await viser()
+    if (vue) {
+      await page.evaluate(() => { window.__BRAISES__.scene.game.loop.sleep() })
+      await page.waitForTimeout(400)
+      await page.screenshot({ path: `${OUT}/pas-piste.png`, timeout: 180000 })
+      await page.evaluate(() => { window.__BRAISES__.scene.game.loop.wake() })
+      console.log('  capture pas-piste.png (zoom 8, 8 h — le creux à son ombre)')
+    }
+    return { site, jEst, jSud, normale, jourNuit, fondu, solsCendre, surPre, surBois }
   },
 
   /**
@@ -17938,6 +22684,744 @@ const SCENARIOS = {
    * le journal en posant `journalOpen` (la touche J passe par le même registre) et on capture,
    * boucle endormie. Exige `--dev` (debug_set_season_day).
    */
+  /**
+   * LA FICHE D'UN LIEU (spec `annales.md` R13-R16) — le registre qu'on ouvre depuis la carte.
+   *
+   * Ce que ce scénario prouve, et qu'aucun test CPU ne peut prouver : la chaîne ENTIÈRE tient
+   * dans le vrai jeu — un lieu foulé entre dans `knownPois`, sa pastille devient cliquable, le
+   * clic ouvre le tiroir DOM, et le tiroir porte les DEUX strates dans UNE colonne (les faits
+   * du pays d'avant que la carte a estampillés, puis les lignes que le joueur a écrites).
+   *
+   * Exige `--dev` : on se téléporte sur un lieu pour le découvrir pour de vrai — le carnet des
+   * lieux n'a pas de porte dérobée, aucun `debug_` ne le remplit.
+   *
+   *     pnpm smoke --scenario fiche --dev
+   */
+  async fiche(page) {
+    if (!dev) {
+      console.error('!! la fiche exige --dev (téléportation)')
+      return
+    }
+    await page.waitForFunction(() => Boolean(window.__BRAISES__?.scene?.registry?.get('worldReady')), null, { timeout: 150000 })
+    await page.waitForTimeout(800)
+
+    // ── Choisir la cible : un lieu QUI PARLE (des faits d'annales à son centre exact). La clef
+    //    est celle de l'écrivain (`poi.ts`) et de `faitsDuLieu` : centre d'empreinte + slug.
+    const cible = await page.evaluate(() => {
+      const map = window.__BRAISES__.scene.registry.get('mapData')
+      const annales = map.annales ?? []
+      const lieux = []
+      for (let poiId = 0; poiId < map.zones.length; poiId += 1) {
+        const z = map.zones[poiId]
+        if (z.kind === undefined) continue
+        const cx = Math.floor(z.x + z.w / 2)
+        const cy = Math.floor(z.y + z.h / 2)
+        const faits = annales.filter((f) => f.x === cx && f.y === cy && f.lieu === z.kind)
+        if (faits.length > 0) lieux.push({ poiId, nom: z.name, kind: z.kind, cx, cy, faits: faits.map((f) => `${f.ere}:${f.type}${f.cause ? ':' + f.cause : ''}`) })
+      }
+      const me = window.__BRAISES__.scene.registry.get('playerPos') ?? { x: 0, y: 0 }
+      // Le plus proche du joueur parmi ceux qui parlent — le voyage est plus court, et le
+      // scénario ne dépend pas d'un poiId écrit à la main (qui dériverait à la seed suivante).
+      lieux.sort((a, b) => (a.cx - me.x) ** 2 + (a.cy - me.y) ** 2 - ((b.cx - me.x) ** 2 + (b.cy - me.y) ** 2))
+      // ⚠ ON VEUT LES DEUX STRATES. La ligne de première visite n'existe QUE si le lieu porte
+      // une fondation À CAUSE (R7bis : « quelqu'un s'était installé là pour une raison ») — un
+      // bivouac dont la fondation n'a pas de cause entre dans la carte SANS une ligne, et le
+      // premier run l'a choisi : deux lignes d'annales, zéro ligne de joueur, verdict rompu à
+      // tort. On préfère donc un lieu qui PEUT parler des deux côtés.
+      const parlant = lieux.find((l) => l.faits.some((f) => f.startsWith('1:fondation:')))
+      return { choisi: parlant ?? lieux[0] ?? null, deuxStrates: Boolean(parlant), combien: lieux.length, total: map.zones.filter((z) => z.kind !== undefined).length }
+    })
+    if (!cible.choisi) {
+      console.error('!! aucun lieu porteur d’annales sur cette carte — rien à lire')
+      return
+    }
+    console.log(`${cible.combien}/${cible.total} lieux portent des annales ; cible : ${cible.choisi.nom} (#${cible.choisi.poiId}) [${cible.choisi.faits.join(' · ')}]`)
+
+    // ── Le fouler pour de vrai : c'est la SEULE façon d'entrer dans `knownPois`. ──
+    await page.keyboard.press('P') // arme le debug (le TP passe par le registre)
+    await page.waitForTimeout(300)
+    await page.evaluate(({ x, y }) => {
+      window.__BRAISES__.scene.registry.set('debugTeleport', { x: x + 0.5, y: y + 0.5, at: performance.now() })
+    }, { x: cible.choisi.cx, y: cible.choisi.cy })
+    await page.waitForTimeout(1500)
+
+    const connu = await page.evaluate((id) => (window.__BRAISES__.scene.registry.get('knownPois') ?? []).includes(id), cible.choisi.poiId)
+    console.log(connu ? `✓ ${cible.choisi.nom} est entré dans la carte` : `!! ${cible.choisi.nom} n'est PAS entré dans knownPois — la suite ne prouve rien`)
+
+    // ── Ouvrir la carte, viser la PASTILLE À L'ÉCRAN et cliquer. ──
+    const barreAvant = await page.evaluate(() => getComputedStyle(document.querySelector('.bh')).display !== 'none')
+    await page.keyboard.press('m')
+    await page.waitForTimeout(900)
+    // LA BARRE HAUTE SE TAIT SUR LA CARTE (demande d'Alexis, 2026-08-25) : elle tombait sur la
+    // rangée d'onglets et barrait le haut de la vallée. On l'affirme dans les DEUX sens — une
+    // sonde qui ne vérifierait que la disparition passerait aussi si la barre ne revenait plus.
+    const barrePendant = await page.evaluate(() => getComputedStyle(document.querySelector('.bh')).display !== 'none')
+    if (!barreAvant) console.error('!! la barre haute était déjà cachée AVANT la carte — la sonde ne prouve rien')
+    if (barrePendant) console.error('!! la barre haute est encore visible sur la carte')
+    else console.log('✓ la barre haute se tait sur la carte')
+    const ecran = await page.evaluate((id) => {
+      const sc = window.__BRAISES__.scene
+      const ui = sc.game.scene.getScene('ui')
+      const map = sc.registry.get('mapData')
+      const z = map.zones[id]
+      // La même conversion que `ouvrirLaFiche` : tuile → local du calque → écran.
+      const scale = ui.mapFit * ui.mapZoom
+      const TILE = 16
+      const lx = (z.x + z.w / 2) * TILE - (map.width * TILE) / 2
+      const ly = (z.y + z.h / 2) * TILE - (map.height * TILE) / 2
+      const jeu = { x: ui.mapLayer.x + lx * scale, y: ui.mapLayer.y + ly * scale }
+      // ⚠ LE CANVAS EST MIS À L'ÉCHELLE. Les coordonnées de Phaser sont celles du JEU ; la
+      // souris de CDP parle en pixels CSS. Sans cette conversion, le clic tombe ailleurs —
+      // premier run : la pastille visée à (634, 278) en jeu, le tiroir jamais ouvert.
+      const sm = sc.game.scale
+      const b = sm.canvasBounds
+      return {
+        jeu,
+        x: b.left + jeu.x / sm.displayScale.x,
+        y: b.top + jeu.y / sm.displayScale.y,
+        echelle: [sm.displayScale.x, sm.displayScale.y],
+      }
+    }, cible.choisi.poiId)
+    console.log(`pastille : jeu (${ecran.jeu.x.toFixed(0)}, ${ecran.jeu.y.toFixed(0)}) → CSS (${ecran.x.toFixed(0)}, ${ecran.y.toFixed(0)}) · échelle ${ecran.echelle.map((n) => n.toFixed(2)).join('×')}`)
+    // À la souris NUE : `page.click` attend une stabilité que le canvas Phaser n'atteint pas.
+    await page.mouse.move(ecran.x, ecran.y)
+    await page.waitForTimeout(120)
+    await page.mouse.down()
+    await page.mouse.up()
+    await page.waitForTimeout(600)
+
+    // ── Lire le tiroir : ce qu'il PORTE, pas ce qu'on espère qu'il porte. ──
+    const tiroir = await page.evaluate(() => {
+      const el = document.querySelector('.fiche-lieu')
+      if (!el) return { monte: false }
+      const r = el.getBoundingClientRect()
+      return {
+        monte: true,
+        visible: getComputedStyle(el).display !== 'none',
+        nom: el.querySelector('.fl-nom')?.textContent ?? '',
+        lignes: [...el.querySelectorAll('.fl-l')].map((l) => [
+          l.querySelector('.fl-g')?.textContent ?? '',
+          l.querySelector('.fl-t')?.textContent ?? '',
+          l.className.replace('fl-l ', ''),
+        ]),
+        vide: el.querySelector('.fl-vide')?.textContent ?? null,
+        cadre: { x: Math.round(r.x), w: Math.round(r.width), h: Math.round(r.height) },
+      }
+    })
+    if (!tiroir.monte) {
+      console.error('!! le tiroir n’est pas monté')
+      return
+    }
+    console.log(`tiroir : visible=${tiroir.visible} · « ${tiroir.nom} » · ${tiroir.lignes.length} ligne(s)${tiroir.vide ? ` · vide : « ${tiroir.vide} »` : ''}`)
+    for (const [g, t, cls] of tiroir.lignes) console.log(`   ${g.padEnd(20)} ${t}   [${cls}]`)
+    if (!tiroir.visible) console.error('!! le clic sur la pastille n’a pas ouvert le tiroir')
+    if (tiroir.nom !== cible.choisi.nom) console.error(`!! le tiroir nomme « ${tiroir.nom} », on a cliqué « ${cible.choisi.nom} »`)
+    // LA PROMESSE DE LA COLONNE : les DEUX strates, et le pays d'avant EN PREMIER.
+    const gouttieres = tiroir.lignes.map((l) => l[0])
+    const premiereAnnee = gouttieres.findIndex((g) => g.includes('an '))
+    const derniereEre = gouttieres.map((g) => !g.includes('an ')).lastIndexOf(true)
+    if (tiroir.lignes.length < cible.choisi.faits.length) {
+      console.error(`!! ${cible.choisi.faits.length} faits d’annales, ${tiroir.lignes.length} lignes affichées`)
+    }
+    if (premiereAnnee === -1 && cible.deuxStrates) console.error('!! aucune ligne de chronique — la strate du joueur manque')
+    else if (premiereAnnee === -1) console.log('(pas de ligne de joueur : aucun lieu à fondation CAUSÉE sur cette carte — R7bis)')
+    else if (derniereEre > premiereAnnee) console.error('!! une ère suit une année : la colonne n’est pas chronologique')
+    else console.log('✓ la colonne est chronologique : le pays d’avant, puis le joueur')
+
+    // ⚠ LA CAPTURE SE PREND ICI, et pas à la fin : le clic sur le lieu secret (plus bas) tombe
+    // dans le vide de la carte, donc en DEV il TÉLÉPORTE — et la téléportation referme l'onglet.
+    // Prise après, la capture montrait le MONDE et pas la carte (vu, pas déduit).
+    await page.evaluate(() => window.__BRAISES__.scene.game.loop.sleep())
+    await page.screenshot({ timeout: 90000, path: `${OUT}/fiche-lieu.png` })
+    await page.evaluate(() => window.__BRAISES__.scene.game.loop.wake())
+    console.log(`→ ${OUT}/fiche-lieu.png`)
+
+    // Un lieu INCONNU ne doit pas s'ouvrir : le tiroir n'est pas une porte dérobée.
+    const secret = await page.evaluate(() => {
+      const sc = window.__BRAISES__.scene
+      const map = sc.registry.get('mapData')
+      const connus = sc.registry.get('knownPois') ?? []
+      for (let i = 0; i < map.zones.length; i += 1) if (map.zones[i].kind !== undefined && !connus.includes(i)) return i
+      return -1
+    })
+    // ── LA PROMESSE DE SECRET (R16) : cliquer là où dort un lieu INCONNU n'ouvre RIEN. Le
+    //    tiroir n'est pas une porte dérobée vers ce que le brouillard cache — et cette
+    //    promesse-là ne se garde nulle part ailleurs (elle vit dans le hit-test d'UIScene,
+    //    que ni /sim ni les tests client — sans DOM — n'atteignent).
+    if (secret >= 0) {
+      const ou = await page.evaluate((id) => {
+        const sc = window.__BRAISES__.scene
+        const ui = sc.game.scene.getScene('ui')
+        const map = sc.registry.get('mapData')
+        const z = map.zones[id]
+        const scale = ui.mapFit * ui.mapZoom
+        const TILE = 16
+        const lx = (z.x + z.w / 2) * TILE - (map.width * TILE) / 2
+        const ly = (z.y + z.h / 2) * TILE - (map.height * TILE) / 2
+        const sm = sc.game.scale
+        return {
+          x: sm.canvasBounds.left + (ui.mapLayer.x + lx * scale) / sm.displayScale.x,
+          y: sm.canvasBounds.top + (ui.mapLayer.y + ly * scale) / sm.displayScale.y,
+          nom: z.name,
+        }
+      }, secret)
+      await page.mouse.move(ou.x, ou.y)
+      await page.waitForTimeout(120)
+      await page.mouse.down()
+      await page.mouse.up()
+      await page.waitForTimeout(500)
+      const apres = await page.evaluate(() => {
+        const el = document.querySelector('.fiche-lieu')
+        return { visible: getComputedStyle(el).display !== 'none', nom: el.querySelector('.fl-nom')?.textContent ?? '' }
+      })
+      // Le clic est tombé dans le vide de la carte : le tiroir se REFERME, et surtout il n'a
+      // jamais nommé le secret. (S'il restait ouvert sur l'ancien lieu, ce serait aussi juste ;
+      // ce qui doit être faux, c'est qu'il porte le nom du lieu inconnu.)
+      console.log(`clic sur le lieu secret #${secret} → tiroir visible=${apres.visible} · « ${apres.nom} »`)
+      if (apres.nom === ou.nom) console.error(`!! le tiroir a NOMMÉ un lieu inconnu (${ou.nom}) — le brouillard fuit`)
+      else console.log('✓ un lieu inconnu ne s’ouvre pas : le tiroir n’est pas une porte dérobée')
+    } else {
+      console.log('(tous les lieux sont connus — la promesse de secret n’est pas éprouvée ici)')
+    }
+
+
+    // ── … ET ELLE REVIENT en refermant l'onglet, avec son lieu à jour (on la nourrit même
+    //    cachée : elle ne doit pas revenir vide puis se rallumer sous les yeux du joueur). ──
+    //
+    // ⚠ ON NE PRESSE PAS « m » À L'AVEUGLE. Le clic précédent est tombé dans le vide de la
+    // carte, donc en DEV il a TÉLÉPORTÉ — et la téléportation REFERME déjà l'onglet. Un « m »
+    // de plus le rouvrait, et la sonde accusait la barre de ne pas revenir alors qu'elle était
+    // simplement encore sur la carte. On lit l'état, puis on bascule s'il le faut.
+    for (let i = 0; i < 4 && (await page.evaluate(() => Boolean(window.__BRAISES__.scene.registry.get('mapOpen')))); i += 1) {
+      await page.keyboard.press('m')
+      await page.waitForTimeout(600)
+    }
+    await page.waitForTimeout(400)
+    const apresCarte = await page.evaluate(() => {
+      const el = document.querySelector('.bh')
+      // ⚠ PAS `el.textContent` : le module embarque son `<style>` DANS sa racine, donc le
+      // texte de la racine rend le CSS. On lit les cartouches, qui sont ce que le joueur lit.
+      const lu = [...el.querySelectorAll('.bh-lieu, .bh-toponyme, .bh-jour, .bh-heure')].map((n) => n.textContent.trim()).filter(Boolean)
+      return {
+        visible: getComputedStyle(el).display !== 'none',
+        mapOpen: Boolean(window.__BRAISES__.scene.registry.get('mapOpen')),
+        tab: window.__BRAISES__.scene.registry.get('characterTab'),
+        lu: lu.join(' · ').slice(0, 70),
+      }
+    })
+    console.log(`barre haute après la carte : visible=${apresCarte.visible} · mapOpen=${apresCarte.mapOpen} · onglet ${apresCarte.tab} · « ${apresCarte.lu} »`)
+    if (!apresCarte.visible) console.error('!! la barre haute n’est PAS revenue en refermant la carte')
+    else if (apresCarte.lu.length < 3) console.error('!! la barre haute est revenue VIDE')
+    else console.log('✓ elle revient garnie')
+  },
+
+  /**
+   * ═══ LES LUCIOLES SONT-ELLES SORTIES DU BOIS ? (Alexis, 2026-08-26) ═══
+   *
+   * *« déplace les lucioles vers les biomes sans arbres, sans neige et sans cendre »*. La
+   * liste vit dans `firefly-biomes.ts` et une garde unitaire la balaie ; ce qui ne se prouve
+   * QUE dans le jeu, c'est que les essaims se posent vraiment là — et qu'on les VOIT.
+   *
+   * Trois relevés, et le troisième est celui qui peut échouer :
+   *   ① AU PRÉ, nuit noire : des essaims existent, et le sol SOUS chacun d'eux est un biome
+   *      autorisé — lu par `paves.terrainAffiche`, le sol tel qu'il se voit (cendre comprise),
+   *      exactement la source que `AmbientLife` consomme.
+   *   ② LA PHOTO, boucle endormie (sinon la capture rame sous swiftshader et les lucioles
+   *      dérivent pendant l'obturation).
+   *   ③ **LA CONTRE-ÉPREUVE, EN FUTAIE** : on se téléporte au cœur du bois le plus fermé
+   *      qu'on trouve, on laisse tout le temps du monde, et on exige **ZÉRO essaim**. Sans
+   *      ce relevé-là, ① serait vert même si la liste n'avait pas bougé.
+   */
+  async lucioles(page) {
+    if (!dev) { console.log('\n(les lucioles exigent --dev : l’heure et le TP)'); return {} }
+    await page.waitForFunction(() => Boolean(window.__BRAISES__?.scene?.registry?.get('worldReady')), null, { timeout: 150000 })
+    await page.waitForTimeout(1200)
+    const agir = async (action, ms = 300) => {
+      await page.evaluate((a) => { window.__BRAISES__.scene.sendAction(a) }, action)
+      await page.waitForTimeout(ms)
+    }
+    // Nuit NOIRE : `FIREFLY_NIGHT_THRESHOLD` vaut 0,45 d'obscurité, et le compte d'essaims est
+    // proportionnel à ce qui dépasse ce seuil — à 21 h on n'en aurait qu'un, au hasard.
+    await agir({ type: 'debug_god', on: true }, 200)
+    await agir({ type: 'debug_set_hour', hour: 1 }, 800)
+
+    /** Le centre de la plus grosse tache d'un jeu de terrains, loin des bords. */
+    const siteDe = (ids) => page.evaluate((IDS) => {
+      const s = window.__BRAISES__.scene
+      const { width: W, height: H, terrain } = s.map
+      const veut = new Set(IDS)
+      let best = null
+      for (let cy = 40; cy < H - 40; cy += 6) {
+        for (let cx = 40; cx < W - 40; cx += 6) {
+          let n = 0
+          for (let y = cy - 14; y <= cy + 14; y += 2) for (let x = cx - 20; x <= cx + 20; x += 2) if (veut.has(terrain[y * W + x])) n++
+          if (!best || n > best.n) best = { x: cx, y: cy, n }
+        }
+      }
+      return best
+    }, ids)
+
+    /** Ce que les essaims occupent VRAIMENT, lu à la source du jeu.
+     *
+     *  ⚠ `mourant` et `alpha` NE SONT PAS DU CONFORT : un essaim condamné reste dans la liste
+     *  tant que son fondu n'a pas touché zéro, et en headless ce fondu dure **une dizaine de
+     *  frames** (Phaser plafonne son `delta` en panique, donc 1,4 s de fondu ne s'écoulent pas
+     *  en 1,4 s de montre). Compter `swarms.length` ferait rougir un couvre-feu qui mord très
+     *  bien : ce qui se juge, c'est ce qui est VIVANT et ce qui se VOIT.
+     *
+     *  Et le TEMPS remonte brut : l'obscurité se recalcule côté Node (voir `obscuriteDe`), la
+     *  scène ne la publie nulle part. */
+    const releve = () => page.evaluate(() => {
+      const s = window.__BRAISES__.scene
+      const al = s.ambientLife
+      if (!al) return { absent: true }
+      const t = s.lastTime
+      return {
+        n: al.swarms.length,
+        vivants: al.swarms.filter((sw) => !sw.dying).length,
+        sols: al.swarms.map((sw) => {
+          const tx = Math.floor(sw.x), ty = Math.floor(sw.y)
+          return {
+            tx, ty,
+            vu: s.paves?.terrainAffiche(tx, ty) ?? -1,
+            brut: s.map.terrain[ty * s.map.width + tx] ?? -1,
+            mouches: sw.flies.length,
+            mourant: sw.dying === true,
+            alpha: Math.round(Math.max(0, ...sw.flies.map((f) => f.sprite.alpha)) * 1000) / 1000,
+            lumiere: sw.light ? Math.round(sw.light.intensity * 100) / 100 : null,
+          }
+        }),
+        temps: t ? { hourOfCycle: t.hourOfCycle, lever: t.lever, dayTicks: t.dayTicks } : null,
+      }
+    })
+
+    /**
+     * L'OBSCURITÉ QUE VOIT LE JEU — recalculée ICI, à partir du seul temps de la sim.
+     *
+     * ⚠ Elle se lisait `1 - registry.get('daylight')` : **cette clé n'existe pas**, le `?? 0`
+     * la remplaçait par 0 et le relevé annonçait « obscurité 1 » à toute heure, y compris en
+     * plein midi. Une lecture morte, donc une garde qui ne pouvait pas rougir.
+     *
+     * Les keyframes et le cadran canonique sont RECOPIÉS (le scénario est du Node, le jeu du
+     * navigateur) : `render/lighting.ts`, `DAYLIGHT_KEYS` + `heureSolaire`. TICKS_PER_CYCLE =
+     * 30 min × 60 × 20 Hz.
+     */
+    const obscuriteDe = (t) => {
+      if (!t) return null
+      const KEYS = [[0, 0], [5, 0], [6, 0.15], [8, 0.7], [10, 1], [15, 1], [18, 0.7], [20, 0.2], [21, 0.05], [24, 0]]
+      const p = Math.max(0.01, Math.min(0.99, t.dayTicks / (30 * 60 * 20)))
+      const u = (((t.hourOfCycle - t.lever) % 24) + 24) % 24
+      const jourReel = 24 * p
+      const vv = u < jourReel ? (u * 15) / jourReel : 15 + ((u - jourReel) * 9) / (24 - jourReel)
+      const h = (((vv + 6) % 24) + 24) % 24
+      let day = 0
+      for (let i = 0; i < KEYS.length - 1; i++) {
+        const [a, va] = KEYS[i], [b, vb] = KEYS[i + 1]
+        if (h >= a && h <= b) { day = va + (vb - va) * (b === a ? 0 : (h - a) / (b - a)); break }
+      }
+      return Math.round((1 - day) * 100) / 100
+    }
+
+    // Les ids de `FIREFLY_TERRAINS`, recopiés ICI À DESSEIN : une garde écrite avec la
+    // constante qu'elle teste ne garde rien (le scénario est du Node, le jeu du navigateur).
+    const AUTORISES = new Map([
+      [1, 'grass'], [8, 'marsh'], [11, 'heath'], [17, 'flower_meadow'], [18, 'peat_bog'],
+      [19, 'reed_marsh'], [25, 'wet_meadow'], [26, 'juniper_heath'], [30, 'clairiere'],
+    ])
+    const nom = (t) => AUTORISES.get(t) ?? `#${t}`
+
+    // ── ① AU PRÉ ──
+    const pre = await siteDe([...AUTORISES.keys()].filter((t) => t !== 30))
+    await agir({ type: 'debug_teleport', x: pre.x + 0.5, y: pre.y + 0.5 }, 1500)
+    await agir({ type: 'debug_set_hour', hour: 1 }, 600)
+    await page.waitForFunction(() => (window.__BRAISES__.scene.ambientLife?.swarms.length ?? 0) > 0, null, { timeout: 30000, polling: 200 }).catch(() => {})
+    await page.waitForTimeout(1500)
+    const auPre = await releve()
+    if (auPre.absent) { console.error('!! `ambientLife` introuvable — relevé sans valeur'); return {} }
+    console.log(`\nAU PRÉ (${pre.x},${pre.y}, obscurité ${obscuriteDe(auPre.temps)}) — ${auPre.n} essaim(s)`)
+    let hors = 0
+    for (const sw of auPre.sols) {
+      const ok = AUTORISES.has(sw.vu)
+      if (!ok) hors++
+      console.log(`  (${sw.tx},${sw.ty}) sol vu ${nom(sw.vu)}${sw.brut !== sw.vu ? ` (brut ${sw.brut})` : ''} · ${sw.mouches} mouches · lumière ${sw.lumiere} ${ok ? '✓' : '✗ BIOME INTERDIT'}`)
+    }
+    if (!auPre.n) console.error('!! aucun essaim au pré en pleine nuit — les lucioles ne sortent plus')
+    else if (hors) console.error(`!! ${hors} essaim(s) hors des biomes autorisés`)
+    else console.log('✓ tous les essaims sont sur un biome du découvert')
+
+    // ── ② LA PHOTO, boucle endormie ──
+    await page.evaluate(() => { window.__BRAISES__.scene.game.loop.sleep() })
+    await page.waitForTimeout(300)
+    await page.screenshot({ path: `${OUT}/lucioles-pre.png`, timeout: 180000 })
+    console.log(`  photo → lucioles-pre.png`)
+    await page.evaluate(() => { window.__BRAISES__.scene.game.loop.wake() })
+
+    // ── ③ LA CONTRE-ÉPREUVE : en futaie, PLUS RIEN ──
+    //
+    // ⚠ ELLE PEUT PASSER PAR ACCIDENT DE DEUX FAÇONS, et les deux sont barrées ici :
+    //   • si le bois est à moins de `SWARM_FORGET_DIST` (46 tuiles) du pré, les essaims du pré
+    //     ne sont NI oubliés NI reposés — on lirait un compte périmé. On exige donc l'écart.
+    //   • si le compte était DÉJÀ nul avant le voyage, « 0 » ne prouve rien. On l'affiche donc
+    //     comme une CHUTE depuis le compte du pré, et ce compte-là est celui du relevé ①.
+    const bois = await siteDe([3, 13, 14, 22])
+    const ecart = Math.round(Math.sqrt((bois.x - pre.x) ** 2 + (bois.y - pre.y) ** 2))
+    if (ecart <= 46) console.error(`!! le bois n’est qu’à ${ecart} tuiles du pré (< SWARM_FORGET_DIST = 46) — la contre-épreuve lirait des essaims PÉRIMÉS`)
+    await agir({ type: 'debug_teleport', x: bois.x + 0.5, y: bois.y + 0.5 }, 2000)
+    await agir({ type: 'debug_set_hour', hour: 1 }, 600)
+    await page.waitForTimeout(6000) // largement de quoi laisser `SWARM_FORGET_DIST` purger et retenter
+    const auBois = await releve()
+    console.log(`\nEN FUTAIE (${bois.x},${bois.y}, à ${ecart} tuiles du pré, obscurité ${obscuriteDe(auBois.temps)}) — ${auBois.n} essaim(s), après ${auPre.n} au pré`)
+    for (const sw of auBois.sols) console.log(`  (${sw.tx},${sw.ty}) sol vu ${nom(sw.vu)}`)
+    // Un essaim EST admis s'il s'est posé sur une trouée : la clairière est restée au jeu.
+    const enBois = auBois.sols.filter((sw) => sw.vu !== 30).length
+    if (enBois) console.error(`!! ${enBois} essaim(s) SOUS BOIS — la liste n’a pas mordu`)
+    else if (!auPre.n) console.error('!! 0 sous la futaie, mais 0 au pré aussi — ce relevé ne prouve rien')
+    else console.log(`✓ zéro essaim sous la futaie${auBois.n ? ` (${auBois.n} en clairière, qui est restée au jeu)` : ''} — chute depuis ${auPre.n}`)
+
+    // ── ④ LE COUVRE-FEU DE L'AUBE (Alexis, 2026-08-27) ──
+    //
+    // *« fais en sorte que les lucioles disparaissent 1h avant le lever du soleil »*. La loi est
+    // pure et balayée sur l'année entière (`render/couvre-feu-lucioles.test.ts`) ; ce qui ne se
+    // prouve QUE dans le jeu, c'est que le vrai chemin de code la LIT — jusqu'ici les essaims
+    // ne connaissaient que l'obscurité, qui, elle, dit encore « nuit » bien après le lever.
+    //
+    // ⚠ CE QUI FERAIT ROUGIR, énoncé AVANT de regarder le vert :
+    //   • ZÉRO essaim vivant à T−2 h 30 — le couvre-feu mordrait trop tôt (ou le pré serait
+    //     stérile, et alors le « 0 » de T−0 h 30 ne prouverait rien) ;
+    //   • un essaim encore VIVANT, ou une mouche encore VISIBLE, à T−0 h 30 ;
+    //   • une obscurité retombée SOUS 0,45 à T−0 h 30 — ce serait le JOUR qui aurait éteint les
+    //     lucioles, et le relevé ne dirait rien du couvre-feu. C'est cette garde-là qui empêche
+    //     le scénario de passer au vert par accident.
+    //
+    // ⚠ ON NE COMPTE PAS `swarms.length` : un essaim condamné y reste tant que son fondu n'a
+    // pas touché zéro, et en headless ce fondu s'étire sur une dizaine de frames (Phaser
+    // plafonne son `delta`). On juge donc les VIVANTS et l'alpha VU — ce que le joueur verrait.
+    //
+    // L'heure du LEVER se lit sur la page (elle suit la saison) au lieu d'être écrite ici :
+    // à l'ouverture du monde elle vaut 5 h 45, mais 4 h 45 en été. `debug_set_hour` ne touche
+    // que `cycleOffset`, jamais le tick — les sauts d'heure peuvent donc aller dans les deux
+    // sens sans rembobiner le calendrier.
+    await agir({ type: 'debug_teleport', x: pre.x + 0.5, y: pre.y + 0.5 }, 2000)
+    const lever = await page.evaluate(() => window.__BRAISES__.scene.lastTime?.lever ?? 6)
+    const avantLever = (d) => (((lever - d) % 24) + 24) % 24
+    await agir({ type: 'debug_set_hour', hour: avantLever(2.5) }, 1000)
+    await page.waitForFunction(() => (window.__BRAISES__.scene.ambientLife?.swarms.filter((w) => !w.dying).length ?? 0) > 0, null, { timeout: 30000, polling: 200 }).catch(() => {})
+    await page.waitForTimeout(2500)
+    const loin = await releve()
+    await agir({ type: 'debug_set_hour', hour: avantLever(0.5) }, 1200)
+    // L'INSTANT DU COUVRE-FEU, relevé AVANT d'avancer quoi que ce soit — c'est lui que la
+    // demande nomme, et il est le seul que la suite ne peut plus rendre.
+    const pose = await page.evaluate(() => {
+      const t = window.__BRAISES__.scene.lastTime
+      return t ? { hourOfCycle: t.hourOfCycle, lever: t.lever, dayTicks: t.dayTicks } : null
+    })
+    // ⚠ LE FONDU S'AVANCE À LA MAIN, IL NE S'ATTEND PAS (mémoire « FX éphémère : figer et
+    // stepper »). Une frame headless dure près d'une seconde ET Phaser plafonne son `delta` en
+    // panique : huit secondes de montre n'avancent le fondu que de quelques dixièmes, et la
+    // sonde lisait des mouches à 0,86 d'alpha sur des essaims tous CONDAMNÉS.
+    //
+    // ⚠ ET PEU D'IMAGES, LONGUES — pas beaucoup de courtes. Le fondu se compte en `dt`, mais
+    // le MONDE, lui, court à l'horloge murale (30 min réelles pour 24 h de jeu) et chaque
+    // image coûte près d'une seconde sous swiftshader : 90 images de 33 ms avaient poussé la
+    // sim de 5 h 15 à 6 h 53, bien APRÈS le lever qu'on prétendait mesurer. 12 × 200 ms =
+    // 2,4 s de fondu (contre 1,4 s à `FONDU_SORTIE_S`) pour une douzaine d'images seulement.
+    await page.evaluate(() => { window.__BRAISES__.scene.game.loop.sleep() })
+    await page.waitForTimeout(400)
+    await page.evaluate(() => {
+      const s = window.__BRAISES__.scene
+      let t = s.game.loop.time
+      for (let i = 0; i < 12; i++) { t += 200; s.game.step(t, 200) }
+    })
+    const pres = await releve()
+    await page.evaluate(() => { window.__BRAISES__.scene.game.loop.wake() })
+    // La page a-t-elle été rechargée sous nos pieds (HMR d'une session voisine) ? Alors le
+    // relevé est vide et ne dit RIEN — on le dit, plutôt que de jeter une pile d'exception.
+    if (loin.absent || pres.absent) { console.error('!! la page a rechargé pendant le relevé du couvre-feu — sans valeur, à rejouer'); return { auPre, auBois } }
+    const vuLoin = Math.max(0, ...loin.sols.map((sw) => sw.alpha))
+    const vuPres = Math.max(0, ...pres.sols.map((sw) => sw.alpha))
+    const obsLoin = obscuriteDe(loin.temps), obsPres = obscuriteDe(pres.temps)
+    console.log(`\nCOUVRE-FEU (lever ${lever.toFixed(2)} h)`)
+    console.log(`  T−2 h 30 (${loin.temps.hourOfCycle.toFixed(2)} h, obscurité ${obsLoin}) — ${loin.vivants} vivant(s) sur ${loin.n}, alpha vu ${vuLoin}`)
+    console.log(`  T−0 h 30 posé à ${pose.hourOfCycle.toFixed(2)} h (obscurité ${obscuriteDe(pose)}), relu à ${pres.temps.hourOfCycle.toFixed(2)} h (obscurité ${obsPres}) — ${pres.vivants} vivant(s) sur ${pres.n}, alpha vu ${vuPres}`)
+    if (!loin.vivants) console.error('!! aucun essaim vivant à 2 h 30 du lever — le couvre-feu mord trop tôt, ou le pré est stérile')
+    else if (pres.vivants) console.error(`!! ${pres.vivants} essaim(s) VIVANTS à 30 min du lever — le couvre-feu ne mord pas`)
+    else if (vuPres > 0.05) console.error(`!! des mouches encore VISIBLES à 30 min du lever (alpha ${vuPres})`)
+    else if (obsPres < 0.45) console.error(`!! obscurité ${obsPres} < 0,45 à T−0 h 30 : c'est le JOUR qui a éteint les lucioles, ce relevé ne prouve rien`)
+    else console.log(`✓ éteintes avant l'aube — et c'est bien l'HEURE qui les couche : l'obscurité vaut encore ${obsPres} (chute de ${loin.vivants} vivants à 0)`)
+
+    return { auPre, auBois, loin, pres }
+  },
+
+  /**
+   * ═══ LES LUCIOLES N'APPARAISSENT PLUS D'UN COUP (Alexis, 2026-08-26) ═══
+   *
+   * *« fais en sorte que les lucioles n'apparaissent et ne disparaissent pas d'un coup »*.
+   * La COURBE du fondu se prouve à l'unité (`render/fondu-essaim.test.ts`) ; ce qu'un test
+   * pur ne peut pas dire, c'est que le vrai chemin de code l'atteint — un essaim naissait
+   * ALLUMÉ parce que l'alpha des mouches ne passait par aucune rampe.
+   *
+   * LA MÉTHODE — boucle ENDORMIE et images avancées À LA MAIN (`game.step(t, dt)`), sans quoi
+   * une frame headless dure près d'une seconde et enjambe tout le fondu (mémoire « FX éphémère :
+   * figer et stepper »). Chaque image relève, par essaim : `fade`, l'alpha MAX de ses mouches,
+   * l'alpha de sa flaque et l'intensité de sa source.
+   *
+   * ⚠ CE QUI FERAIT ROUGIR — énoncé AVANT de regarder le vert (mémoire « une sonde qui ne peut
+   * pas échouer ») :
+   *   ① NAISSANCE : à la première image où un essaim existe, ses mouches sont à plus de 0,06
+   *      d'alpha. Avant le correctif, cette valeur montait à ~0,9 en UNE image.
+   *   ② DURÉE : l'essaim atteint 90 % de son éclat en moins de 30 images de 33 ms (~1 s).
+   *   ③ SAUT : deux images consécutives écartées de plus de 0,12 d'alpha, ou de plus de 0,05
+   *      de `fade`.
+   *   ④ MORT : à l'aube (heure 6,5 → deux essaims de trop), un essaim DISPARAÎT de la liste
+   *      sans être passé par une descente d'au moins 20 images.
+   */
+  async luciolesFondu(page) {
+    if (!dev) { console.log('\n(le fondu des lucioles exige --dev : l’heure et le TP)'); return {} }
+    await page.waitForFunction(() => Boolean(window.__BRAISES__?.scene?.registry?.get('worldReady')), null, { timeout: 150000 })
+    await page.waitForTimeout(1200)
+    const agir = async (action, ms = 300) => {
+      await page.evaluate((a) => { window.__BRAISES__.scene.sendAction(a) }, action)
+      await page.waitForTimeout(ms)
+    }
+    /** Le centre de la plus grosse tache de découvert, loin des bords — et loin d'un point donné. */
+    const preLoin = (de) => page.evaluate((DE) => {
+      const s = window.__BRAISES__.scene
+      const { width: W, height: H, terrain } = s.map
+      const veut = new Set([1, 8, 11, 17, 18, 19, 25, 26])
+      let best = null
+      for (let cy = 40; cy < H - 40; cy += 6) {
+        for (let cx = 40; cx < W - 40; cx += 6) {
+          if (DE && Math.sqrt((cx - DE.x) ** 2 + (cy - DE.y) ** 2) < 120) continue
+          let n = 0
+          for (let y = cy - 14; y <= cy + 14; y += 2) for (let x = cx - 20; x <= cx + 20; x += 2) if (veut.has(terrain[y * W + x])) n++
+          if (!best || n > best.n) best = { x: cx, y: cy, n }
+        }
+      }
+      return best
+    }, de)
+
+    /** N images avancées à la main, et ce que chaque essaim y vaut. */
+    const filmer = (frames, dt) => page.evaluate(({ N, DT }) => {
+      const s = window.__BRAISES__.scene
+      const al = s.ambientLife
+      if (!al) return null
+      let t = s.game.loop.time
+      const film = []
+      for (let i = 0; i < N; i++) {
+        t += DT
+        s.game.step(t, DT)
+        const r3 = (v) => Math.round(v * 1000) / 1000
+        film.push(al.swarms.map((sw) => ({
+          id: `${Math.round(sw.x)},${Math.round(sw.y)}`,
+          fade: r3(sw.fade),
+          dying: sw.dying,
+          aMax: r3(sw.flies.reduce((m, f) => Math.max(m, f.sprite.alpha), 0)),
+          flaque: r3(sw.flaque.alpha),
+          lum: sw.light ? r3(sw.light.intensity) : null,
+        })))
+      }
+      return film
+    }, { N: frames, DT: dt })
+
+    /** Ce qu'un essaim (repéré par son ancre) traverse au fil du film. */
+    const piste = (film, id) => film.map((f) => f.find((sw) => sw.id === id) ?? null)
+
+    await agir({ type: 'debug_god', on: true }, 200)
+    await agir({ type: 'debug_set_hour', hour: 1 }, 800)
+    const pre1 = await preLoin(null)
+    await agir({ type: 'debug_teleport', x: pre1.x + 0.5, y: pre1.y + 0.5 }, 2500)
+    await agir({ type: 'debug_set_hour', hour: 1 }, 800)
+
+    // ── ① LA NAISSANCE ──
+    // On part AILLEURS (> SWARM_FORGET_DIST) pour que les essaims du premier pré soient
+    // oubliés et que de tout NEUFS se posent — et on endort la boucle AVANT le voyage, pour
+    // tenir la toute première image de leur existence.
+    const pre2 = await preLoin(pre1)
+    await page.evaluate(() => { window.__BRAISES__.scene.game.loop.sleep() })
+    await page.evaluate((p) => { window.__BRAISES__.scene.sendAction({ type: 'debug_teleport', x: p.x + 0.5, y: p.y + 0.5 }) }, pre2)
+    await page.waitForTimeout(1200) // le worker traite le TP pendant que le rendu dort
+    const film = await filmer(110, 33)
+    if (!film) { console.error('!! `ambientLife` introuvable — film sans valeur'); return {} }
+
+    const vus = new Map()
+    film.forEach((f, i) => f.forEach((sw) => { if (!vus.has(sw.id)) vus.set(sw.id, i) }))
+    // NÉ SOUS L'OBJECTIF = première image où on le voit, `fade` encore au ras de zéro. On ne
+    // demande PAS que l'image soit > 0 : le voyage ne se consomme qu'à la première image
+    // avancée à la main (la caméra n'a pas bougé tant que rien n'a tourné), donc les essaims
+    // neufs naissent précisément à l'image 0 du film.
+    const nes = [...vus].filter(([id, i]) => (piste(film, id)[i]?.fade ?? 1) <= 0.05)
+    console.log(`\nNAISSANCE — ${vus.size} essaim(s) au film, dont ${nes.length} nés sous l’objectif (pré ${pre2.x},${pre2.y})`)
+    if (!nes.length) console.error('!! aucun essaim n’est né pendant le film — la sonde ne prouve rien')
+    let pop = 0, brusque = 0, express = 0
+    for (const [id, i0] of nes) {
+      const p = piste(film, id).slice(i0).filter(Boolean)
+      const premier = p[0]
+      const crete = p.reduce((m, f) => Math.max(m, f.aMax), 0)
+      const monte = p.findIndex((f) => f.aMax >= 0.9 * crete)
+      let sautA = 0, sautF = 0
+      for (let k = 1; k < p.length; k++) {
+        sautA = Math.max(sautA, Math.abs(p[k].aMax - p[k - 1].aMax))
+        sautF = Math.max(sautF, Math.abs(p[k].fade - p[k - 1].fade))
+      }
+      const okNaissance = premier.aMax <= 0.06
+      const okDuree = monte >= 30
+      const okSaut = sautA <= 0.12 && sautF <= 0.05
+      if (!okNaissance) pop++
+      if (!okDuree) express++
+      if (!okSaut) brusque++
+      console.log(
+        `  essaim ${id} : 1re image alpha ${premier.aMax} (fade ${premier.fade}, flaque ${premier.flaque}, lum ${premier.lum})` +
+        ` · 90 % de l’éclat en ${monte} images (~${Math.round(monte * 33)} ms)` +
+        ` · plus grand saut alpha ${sautA.toFixed(3)} / fade ${sautF.toFixed(3)}` +
+        ` ${okNaissance && okDuree && okSaut ? '✓' : '✗'}`,
+      )
+    }
+    if (pop) console.error(`!! ${pop} essaim(s) NAISSENT ALLUMÉS (> 0,06 dès la première image)`)
+    if (express) console.error(`!! ${express} essaim(s) atteignent leur éclat en moins de 30 images`)
+    if (brusque) console.error(`!! ${brusque} essaim(s) sautent d’une image à l’autre`)
+    if (nes.length && !pop && !express && !brusque) console.log('✓ ils s’insinuent : première image noire, montée d’une bonne seconde, aucun saut')
+
+    // ── ② LA MORT ──
+    // L'aube réduit le compte que la nuit commandait (3 essaims à minuit, 1 à 6 h 30) : les
+    // essaims de trop sont CONDAMNÉS, pas détruits. On filme leur descente.
+    await page.evaluate(() => { window.__BRAISES__.scene.sendAction({ type: 'debug_set_hour', hour: 6.5 }) })
+    await page.waitForTimeout(1200)
+    const filmMort = await filmer(110, 33)
+    const avant = new Set(filmMort[0].map((sw) => sw.id))
+    const partis = [...avant].filter((id) => !filmMort[filmMort.length - 1].some((sw) => sw.id === id))
+    console.log(`\nMORT (aube, heure 6,5) — ${avant.size} essaim(s) au départ, ${partis.length} parti(s)`)
+    let coupes = 0
+    for (const id of partis) {
+      const p = piste(filmMort, id)
+      const derniere = p.findIndex((f) => f === null)
+      const vivantes = p.slice(0, derniere).filter(Boolean)
+      const descente = vivantes.filter((f) => f.dying).length
+      const dernierAlpha = vivantes[vivantes.length - 1]?.aMax ?? 1
+      const ok = descente >= 20 && dernierAlpha <= 0.06
+      if (!ok) coupes++
+      console.log(`  essaim ${id} : ${descente} image(s) de descente (~${Math.round(descente * 33)} ms), alpha juste avant de disparaître ${dernierAlpha} ${ok ? '✓' : '✗'}`)
+    }
+    if (!partis.length) console.log('  (aucun essaim n’est parti : l’aube n’a pas réduit le compte — relevé sans portée)')
+    else if (coupes) console.error(`!! ${coupes} essaim(s) DISPARAISSENT D’UN COUP`)
+    else console.log('✓ ils s’éteignent avant de partir')
+
+    // ── ③ LA PHOTO, à mi-fondu : une nuée qui s'allume, pas un interrupteur ──
+    await page.screenshot({ path: `${OUT}/lucioles-fondu.png`, timeout: 180000 })
+    console.log(`  photo → lucioles-fondu.png`)
+    await page.evaluate(() => { window.__BRAISES__.scene.game.loop.wake() })
+    return { nes: nes.length, partis: partis.length }
+  },
+
+  /**
+   * ═══ LA TAILLE D'UN FLOCON, EN PIXELS RENDUS (Alexis, 2026-08-26 : « diviser la taille des
+   * flocons de neige par 2 pour toutes les tailles déjà existantes ») ═══
+   *
+   * `meteo-particules.test.ts` affirme la taille en px MONDE (`taille × grainPx`). Ce qu'il ne
+   * peut pas dire, c'est ce que le rasteriseur en fait — et « diviser par deux » est une
+   * demande qui se juge à l'œil, donc qui se MESURE sur les pixels rendus.
+   *
+   * LA MÉTHODE — la même que la planche des gouttes de 2026-08-19 : **médiane des plages
+   * horizontales** de pixels de flocon. En pleine NUIT (h = 1), un flocon blanc à alpha 0,42-0,86
+   * est de loin ce qu'il y a de plus clair et de moins coloré à l'écran ; on retient donc les
+   * pixels à la fois CLAIRS et DÉSATURÉS, et on mesure la longueur de leurs plages en x. Le
+   * résultat est ramené en px MONDE par le zoom caméra, seule grandeur comparable d'un run à
+   * l'autre.
+   *
+   * ⚠ ON PROUVE QU'ON REGARDE BIEN DES FLOCONS : la sonde de `meteoLayer` compte séparément
+   * flocons et gouttes (le ciel est un MÉLANGE depuis R14, dérivé du froid AU POINT) — si le
+   * relevé n'a pas au moins 80 % de flocons, il ne vaut rien et on le dit. Au besoin le
+   * scénario pousse le jour de saison vers l'hiver pour refroidir le monde.
+   */
+  async flocons(page) {
+    if (!dev) { console.log('\n(les flocons exigent --dev : l’heure, le jour de saison et le TP)'); return {} }
+    await page.waitForFunction(() => Boolean(window.__BRAISES__?.scene?.registry?.get('worldReady')), null, { timeout: 150000 })
+    await page.waitForTimeout(1200)
+    const agir = async (action, ms = 300) => {
+      await page.evaluate((a) => { window.__BRAISES__.scene.sendAction(a) }, action)
+      await page.waitForTimeout(ms)
+    }
+    await agir({ type: 'debug_god', on: true }, 200)
+    const JOUR = Number(process.env.SMOKE_JOUR ?? 105)
+    await agir({ type: 'debug_set_season_day', day: JOUR }, 500)
+    await page.waitForFunction((j) => (window.__BRAISES__.scene.lastTime?.seasonDay ?? 0) >= j, JOUR, { timeout: 30000, polling: 200 }).catch(() => {})
+    await agir({ type: 'debug_set_hour', hour: 1 }, 800)
+
+    /**
+     * LA MESURE, en page : une frame réelle, les plages horizontales de pixels « flocon ».
+     * `clair` et `desature` sont écrits ici en toutes lettres — un seuil dérivé de la teinte
+     * du profil ferait passer la garde par le nombre qu'elle juge.
+     */
+    const mesure = () => page.evaluate(async () => {
+      const s = window.__BRAISES__.scene
+      const img = await new Promise((ok) => s.game.renderer.snapshot((i) => ok(i)))
+      const c = document.createElement('canvas')
+      c.width = img.width; c.height = img.height
+      const ctx = c.getContext('2d', { willReadFrequently: true })
+      ctx.drawImage(img, 0, 0)
+      const d = ctx.getImageData(0, 0, c.width, c.height).data
+      // Le HUD est en DOM, mais on écarte quand même les 90 px du bas (bandeaux, barre).
+      const haut = c.height - 90
+      const plages = []
+      for (let y = 0; y < haut; y++) {
+        let run = 0
+        for (let x = 0; x < c.width; x++) {
+          const i = (y * c.width + x) * 4
+          const r = d[i], g = d[i + 1], b = d[i + 2]
+          const lum = 0.2126 * r + 0.7152 * g + 0.0722 * b
+          const sat = Math.max(r, g, b) - Math.min(r, g, b)
+          if (lum > 95 && sat < 26) run++
+          else { if (run) plages.push(run); run = 0 }
+        }
+        if (run) plages.push(run)
+      }
+      plages.sort((a, b) => a - b)
+      const q = (p) => (plages.length ? plages[Math.floor(p * (plages.length - 1))] : 0)
+      return {
+        n: plages.length, p50: q(0.5), p90: q(0.9), max: q(1),
+        zoom: s.cameras.main.zoom,
+        sonde: { ...(s.meteoLayer?.sonde ?? {}) },
+        intensite: s.meteoLayer?.intensiteAuJoueur ?? 0,
+      }
+    })
+
+    const out = {}
+    for (const ciel of ['neige', 'blizzard']) {
+      const pos = await page.evaluate(() => {
+        const s = window.__BRAISES__.scene
+        return { x: s.map.width / 2, y: Math.min(s.map.height - 3, Math.max(3, s.registry.get('playerPos').y)) }
+      })
+      await agir({ type: 'debug_teleport', x: pos.x, y: pos.y }, 1200)
+      await page.evaluate((t) => {
+        const sc = window.__BRAISES__.scene
+        sc.sendAction({ type: 'debug_set_hour', hour: 1 })
+        sc.sendAction({ type: 'debug_meteo', meteo: t, edge: 0, phase: 0.5 })
+      }, ciel)
+      await page.waitForFunction(() => (window.__BRAISES__.scene.meteoLayer?.intensiteAuJoueur ?? 0) >= 0.9, null, { timeout: 25000, polling: 150 }).catch(() => {})
+      await page.waitForTimeout(1800)
+      const m = await mesure()
+      out[ciel] = m
+      const part = m.sonde.vivantes ? m.sonde.flocons / m.sonde.vivantes : 0
+      console.log(
+        `\n${ciel.toUpperCase()} — intensité ${m.intensite.toFixed(2)}, zoom ${m.zoom}, ` +
+        `${m.sonde.vivantes} particules dont ${m.sonde.flocons} flocons (${Math.round(part * 100)} %)`,
+      )
+      if (part < 0.8) { console.error(`!! ${Math.round(part * 100)} % de flocons seulement — relevé sans valeur (le monde n’est pas assez froid ici)`); continue }
+      const enMonde = (px) => Math.round((px / m.zoom) * 100) / 100
+      console.log(
+        `  plages claires & désaturées : ${m.n} · médiane ${m.p50} px écran = **${enMonde(m.p50)} px monde** ` +
+        `· p90 ${m.p90} (${enMonde(m.p90)}) · max ${m.max} (${enMonde(m.max)})`,
+      )
+      // Boucle ENDORMIE avant la photo : sous swiftshader une capture pleine page sur boucle
+      // vivante dépasse les 180 s (constaté sur `meteoplanche`, ce soir même).
+      await page.evaluate(() => { window.__BRAISES__.scene.game.loop.sleep() })
+      await page.waitForTimeout(250)
+      await page.screenshot({ path: `${OUT}/flocons-${ciel}.png`, timeout: 180000 })
+      await page.evaluate(() => { window.__BRAISES__.scene.game.loop.wake() })
+      console.log(`  photo → flocons-${ciel}.png`)
+    }
+    return out
+  },
+
   async journal(page) {
     await page.goto(URL)
     await page.waitForFunction(() => Boolean(window.__BRAISES__?.scene?.registry?.get('worldReady')), null, { timeout: 150000 })

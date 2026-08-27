@@ -18,12 +18,15 @@
 import type Phaser from 'phaser'
 import { newCanvas, normalFromCanvas, registerLit as register } from './normal-map'
 import {
-  cleHouppier, colonneX, houppierLargeur, CIMES_PAR_ARBRE,
-  TOUTES_VARIANTES, TONS_HOUPPIER_VIEUX, VARIANTES_CADUQUES,
-  type MesuresArbre, type TonsFut,
+  cleHouppier, colonneX, houppierLargeur, pariteDeCime, prendLaSaison,
+  CIMES_PAR_ARBRE, CHARGE_NEIGE, etatsDeCime,
+  TOUTES_VARIANTES, TONS_HOUPPIER_VIEUX,
+  type EtatCime, type MesuresArbre, type TonsFut, type VarianteArbre,
 } from './arbre-art'
+import { CRAN_SAISON, cranDeSaison, panachageDeFamille, teinteSaisonniere, teinterFamille } from './teinte-saison'
 import { champDeHauteur, ecorceDe, facteurPied, type Ecorce, type GrainFut } from './ecorce'
 import { FORME_PAR_VARIANTE, PORT_PAR_VARIANTE, cimeEnGrappes, cimeNue, type GrainHouppier } from './houppier-grappes'
+import { hash2 } from '@ashes/sim'
 
 /* LES COULEURS NE SONT PLUS RÉÉCRITES ICI NON PLUS. Elles étaient recopiées de l'art peint —
  * la garde de palette a fini par le voir (trois fichiers pour un même brun sans nom). C'est
@@ -105,68 +108,192 @@ function futAlbedo(m: MesuresArbre, tons: TonsFut, e: Ecorce, grain: GrainFut): 
 }
 
 /**
- * Enregistre les `_lit` de TOUTES les variantes : albédo uniforme + normale (houppier par la
- * recette commune, tronc analytique).
- *
- * UNE SEULE BOUCLE DEPUIS LE 2026-07-29 — elle remplace les deux blocs écrits à la main, et elle
- * rend le même résultat AU BIT PRÈS pour `tree` et `old_tree` : mêmes cadrans (7 passes,
- * facettes de 4 px, K 3,2), même silhouette (`houppierOpaqueDe` sur une variante de silhouette 2
- * est exactement l'ancien `houppierOpaque`), mêmes tons (la table les tient déjà). On garde la
- * TAILLE de facette et non le compte de cellules : le houppier grandit, le grain non.
+ * ═══ LA GRAINE D'UNE CIME ═══ Cinq par variante, espacées d'un nombre premier (deux graines
+ * voisines donneraient deux cimes cousines — on aurait payé cinq textures pour une variation).
  */
-export function generateLitTrees(scene: Phaser.Scene): void {
+function graineDe(cime: number): number {
+  return 11 + cime * 7919
+}
+
+/** Le cran de saison actuellement CUIT dans les textures — `null` tant que rien ne l'est. */
+let cranCuit: number | null = null
+/**
+ * VRAI tant que le monde n'a pas dit son jour — c'est-à-dire tant que ce qui est cuit vient de
+ * l'AMORCE (`generateLitTrees` sans calendrier : la teinte du jour 1, cf. `BootScene`).
+ *
+ * Il ne se déduit pas de `cranCuit === null`, et c'est le piège qu'on a laissé un moment : l'amorce
+ * POSE `cranCuit` (0), donc « premier » n'était jamais vrai en jeu et le second emplacement de
+ * parité gardait la teinte d'Éclosion jusqu'au deuxième changement de cran — le premier fondu de
+ * saison partait alors d'une couleur que la saison n'avait jamais eue.
+ */
+let surAmorce = true
+
+/**
+ * ═══ LES NORMALES SE CACHENT, LES ALBÉDOS SE RECUISENT ═══
+ *
+ * La teinte de la saison ne touche QUE la couleur : `relief` — le champ de hauteur des pavés
+ * que `normalFromCanvas` consomme — est identique en Éclosion et aux Pluies. Recuire la normale
+ * à chaque cran serait donc payer deux fois le même résultat, et c'est la partie chère
+ * (lissage + facettes + gradient, contre une boucle de pixels pour l'albédo).
+ *
+ * Le cache est indexé par la CLÉ DE TEXTURE, donc par (variante, cime, état) : deux états n'ont
+ * jamais le même relief (une cime nue est faite de branches, une cime coiffée porte un dôme de
+ * neige), et il n'y a pas de collision possible.
+ */
+const NORMALES = new Map<string, HTMLCanvasElement>()
+
+/** L'albédo d'un état de cime, ce jour-là. La saison ne mord que sur le feuillage CADUC. */
+function grainDeCime(v: VarianteArbre, cime: number, etat: EtatCime, jour: number): GrainHouppier {
+  const m = v.mesures
+  const W = houppierLargeur(m)
+  const forme = FORME_PAR_VARIANTE[v.slug] ?? 'rond'
+  const graine = graineDe(cime)
+  if (etat === 'nu') {
+    // LA CIME NUE (G6) — dérivée de la feuillue, une branche par grappe, aux tons du FÛT. Elle
+    // ne prend PAS la teinte de la saison : un tronc ne rousse pas.
+    const port = PORT_PAR_VARIANTE[v.slug] ?? { axe: 'sympodial' as const, tortueux: 0.18 }
+    return cimeNue(W, m.houppierS, forme, v.fut, port, m.recouvrementPx, m.colonneW, graine)
+  }
+  // LA TEINTE DE LA SAISON (S17, loi ③ « base + panachage », décision d'Alexis 2026-08-25) —
+  // sur les variantes SAISONNIÈRES. Un pin roux romprait la promesse G6 (« la silhouette du
+  // conifère dit qu'il tient »), et il porte déjà l'hiver autrement : sa coiffe de neige. Le
+  // MÉLÈZE, lui, en est : un conifère qui dore, et qui garde sa cime (cf. `prendLaSaison`).
+  const saisonnier = prendLaSaison(v.slug)
+  const tons = saisonnier ? teinterFamille(v.tons, teinteSaisonniere(jour)) : v.tons
+  const panache = saisonnier
+    ? panachageDeFamille(v.tons, jour, (i) => hash2(i, 0, (graine ^ 0x5ea5) | 0))
+    : undefined
+  return cimeEnGrappes(W, m.houppierS, forme, tons, graine, panache, etat === 'feuillu' ? 0 : CHARGE_NEIGE[etat])
+}
+
+/** Cuit (ou recuit) UNE cime : albédo neuf, normale reprise du cache quand elle y est.
+ *  `cran` commande DEUX choses à la fois, et c'est voulu : la teinte du jour qu'on cuit, et
+ *  l'emplacement où on la range (`pariteDeCime`). Elles ne peuvent donc pas se désaccorder. */
+function cuireCime(scene: Phaser.Scene, v: VarianteArbre, cime: number, etat: EtatCime, cran: number): void {
+  const m = v.mesures
+  const W = houppierLargeur(m)
+  const jour = cran * CRAN_SAISON + 1 + CRAN_SAISON / 2 // le MILIEU du cran : sa couleur moyenne
+  const cle = cleHouppier(v.slug, true, cime, etat, pariteDeCime(v.slug, etat, cran))
+  const grain = grainDeCime(v, cime, etat, jour)
+  const alb = crownAlbedo(W, m.houppierS, grain)
+  let normale = NORMALES.get(cle)
+  if (normale === undefined) {
+    // Trois passes de lissage sur une cime de pavés (six les arrondissaient en coussins, une
+    // seule facettait chaque pixel de frange) ; DEUX sur une cime nue — une branche est fine,
+    // la lisser six fois en ferait une masse molle (c'est le réglage du fût).
+    normale = etat === 'nu'
+      ? normalFromCanvas(alb, 2, 3.5, 4, false, [], grain.relief)
+      : normalFromCanvas(alb, 3, 3.2, 4, false, [], grain.relief)
+    NORMALES.set(cle, normale)
+  }
+  register(scene, cle, alb, normale)
+}
+
+/**
+ * Enregistre les `_lit` de TOUTES les variantes : albédo + normale (houppier par la recette
+ * commune, tronc par un champ de hauteur d'écorce).
+ *
+ * `jour` est le JOUR DE SAISON du monde à l'amorce — il commande la teinte du feuillage caduc.
+ * Il a une valeur par défaut parce que l'Atelier et les bancs cuisent des arbres sans calendrier ;
+ * le jeu, lui, passe celui de son snapshot (`WorldScene`).
+ */
+export function generateLitTrees(scene: Phaser.Scene, jour = 1): void {
+  const cran = cranDeSaison(jour)
+  cranCuit = cran
+  surAmorce = true // ce qui va être cuit ici est une teinte d'attente : le monde n'a pas dit son jour
+  file.length = 0
   for (const v of TOUTES_VARIANTES) {
     const m = v.mesures
-    // LE HOUPPIER — ses touffes, et le relief qu'elles portent. Le champ est passé À LA CARTE DE
-    // NORMALES (dernier paramètre, le chemin qu'empruntait déjà le fût) : chaque touffe reçoit
-    // donc sa vraie normale et se fait éclairer par le soleil du jeu. On ne peint pas de l'ombre,
-    // on donne de la FORME à la lumière. Le lissage reste à 6 passes (il valait 7 sur une
-    // silhouette nue) : descendu à 2, il FACETTAIT durement chaque touffe — second contributeur
-    // au contraste dont Alexis s'est plaint le 2026-07-30. Six passes gardent le volume des
-    // masses sans en tailler les arêtes.
-    // CINQ CIMES PAR VARIANTE (demande d'Alexis, 2026-07-30) — cinq graines du même champ. Une
-    // futaie pure ne montre plus douze fois la même cime au pixel près. Les graines sont
-    // espacées d'un nombre premier : deux graines voisines donneraient deux cimes cousines, et
-    // on aurait payé cinq textures pour une seule variation perceptible.
-    // LA CIME EN GRAPPES (décision d'Alexis 2026-08-22, `houppier-grappes.ts`) : des pavés
-    // chanfreinés empilés, la grammaire du sol dessiné. Le relief passé à la normale est celui
-    // des pavés (plein au corps, creusé au liseré) : la lumière du jeu sculpte chaque pavé comme
-    // elle sculpte un pavé du sol. Trois passes de lissage (six arrondissaient les pavés en
-    // coussins ; une seule facettait chaque pixel de frange) : les arêtes restent des arêtes.
-    const W = houppierLargeur(m)
-    const caduc = VARIANTES_CADUQUES.includes(v.slug)
-    const forme = FORME_PAR_VARIANTE[v.slug] ?? 'rond'
+    // LE HOUPPIER — la cime en grappes (décision d'Alexis 2026-08-22) : des pavés chanfreinés
+    // empilés, la grammaire du sol dessiné. Le relief passé à la normale est celui des pavés,
+    // donc la lumière du jeu sculpte chaque pavé comme elle sculpte un pavé du sol.
+    // CINQ CIMES PAR VARIANTE (2026-07-30) : une futaie pure ne montre plus douze fois la même
+    // cime au pixel près. Et TROIS ÉTATS au plus — feuillu, puis SOIT nu (le caduc, G6), SOIT
+    // coiffé de neige en deux charges (le persistant, 2026-08-25). Les deux ne se croisent
+    // jamais : `etatsDeCime` le dit, et le type `EtatCime` empêche d'en inventer un cinquième.
+    // Les DEUX emplacements de parité sont cuits à l'amorce (le cran courant et le précédent) :
+    // sans ça, le premier changement de cran fondrait DEPUIS une texture absente.
     for (let cime = 0; cime < CIMES_PAR_ARBRE; cime++) {
-      const graine = 11 + cime * 7919
-      const feuilles = cimeEnGrappes(W, m.houppierS, forme, v.tons, graine)
-      const crown = crownAlbedo(W, m.houppierS, feuilles)
-      register(
-        scene, cleHouppier(v.slug, true, cime), crown,
-        normalFromCanvas(crown, 3, 3.2, 4, false, [], feuilles.relief),
-      )
-      // ── LA CIME NUE (spec `gel.md` G6) — DÉRIVÉE de la feuillue : une branche par grappe. ──
-      // Seulement pour les feuillus — un conifère nu n'existe pas, c'est la promesse de G6.
-      // La normale prend 2 passes : une branche est fine, la lisser six fois en ferait une
-      // masse molle (c'est le réglage du fût, pas celui de la canopée).
-      if (!caduc) continue
-      const port = PORT_PAR_VARIANTE[v.slug] ?? { axe: 'sympodial', tortueux: 0.18 }
-      const nues = cimeNue(W, m.houppierS, forme, v.fut, port, m.recouvrementPx, m.colonneW, graine)
-      const nu = crownAlbedo(W, m.houppierS, nues)
-      register(
-        scene, cleHouppier(v.slug, true, cime, true), nu,
-        normalFromCanvas(nu, 2, 3.5, 4, false, [], nues.relief),
-      )
+      for (const etat of etatsDeCime(v.slug)) {
+        cuireCime(scene, v, cime, etat, cran)
+        if (pariteDeCime(v.slug, etat, cran) !== pariteDeCime(v.slug, etat, cran + 1)) {
+          cuireCime(scene, v, cime, etat, cran - 1)
+        }
+      }
     }
 
     // LE FÛT — même recette que tout le reste du pipeline, sur un champ de hauteur d'écorce.
     // Les cadrans sont ceux du « cube franc » du 24/07 : `passes:1`, `k:3,5`, facettes de 2 px.
     // À 6 px de colonne, `cell:2` donne trois pans — le budget exact d'un tronc d'arbre.
+    // Il ne prend NI la saison NI la neige : un tronc ne rousse pas, et ce qui tombe dessus,
+    // c'est le manteau au sol qui le dit (`coupeDeNeige` remonte le pied du sprite).
     const e = ecorceDe(v.slug)
     const x0 = colonneX(m)
     const grain = champDeHauteur(e, m.futW, m.futH, x0, x0 + m.colonneW, v.fut)
     const alb = futAlbedo(m, v.fut, e, grain)
     register(scene, `nd-${v.slug}_trunk_lit`, alb, normalFromCanvas(alb, 1, 3.5, 2, false, [], grain.relief))
   }
+}
+
+/**
+ * ═══ LA SAISON RECUIT LE FEUILLAGE — par CRAN de dix jours, ET ÉTALÉ SUR PLUSIEURS IMAGES ═══
+ *
+ * Sept variantes caduques × cinq cimes = 35 albédos, normales reprises du cache. La cime nue,
+ * les coiffes de neige et les fûts ne dépendent pas du jour : jamais recuits.
+ *
+ * ⚠ **MESURÉ AU NAVIGATEUR (smoke `houppier-saison`, SwiftShader) : 82 ms pour les 35.** Dans
+ * une seule image, c'est un à-coup qu'on voit — et il tomberait pile au moment où la forêt est
+ * censée changer de couleur en douceur, ce qui est exactement le contraire du but. On les met
+ * donc EN FILE et on en cuit `PAR_IMAGE` par frame : le cran met une poignée d'images à
+ * s'installer, et le fondu de cime (`fondu-cime.ts`) couvre l'arrivée.
+ *
+ * `rafraichirCimes` s'appelle À CHAQUE IMAGE : il enfile au changement de cran, puis draine.
+ */
+const PAR_IMAGE = 4
+/** La file de cuisson : ce qui reste à recuire pour le cran courant. */
+const file: { v: VarianteArbre; cime: number; etat: EtatCime; cran: number }[] = []
+
+export function rafraichirCimes(scene: Phaser.Scene, jour: number): boolean {
+  const cran = cranDeSaison(jour)
+  if (cran !== cranCuit) {
+    const premier = surAmorce
+    surAmorce = false
+    cranCuit = cran
+    file.length = 0
+    for (const v of TOUTES_VARIANTES) {
+      if (!prendLaSaison(v.slug)) continue
+      for (let cime = 0; cime < CIMES_PAR_ARBRE; cime++) {
+        // TOUS les états qui portent la saison — le feuillage, et les coiffes de neige du
+        // mélèze (son feuillage se voit entre les plaques). Jamais la cime NUE : tons du fût.
+        for (const etat of etatsDeCime(v.slug)) {
+          if (etat === 'nu') continue
+          file.push({ v, cime, etat, cran })
+          // LE TOUT PREMIER cran cuit les DEUX emplacements : l'autre porterait sinon la teinte
+          // du jour 1 posée à l'amorce, et le fondu partirait d'une couleur qui n'a jamais eu lieu.
+          if (premier) file.push({ v, cime, etat, cran: cran - 1 })
+        }
+      }
+    }
+  }
+  if (file.length === 0) return false
+  for (let i = 0; i < PAR_IMAGE && file.length > 0; i++) {
+    const t = file.shift()!
+    cuireCime(scene, t.v, t.cime, t.etat, t.cran)
+  }
+  return true
+}
+
+/** Repart de zéro — pour les tests et pour un redémarrage de scène, qui recuit tout. */
+export function oublierCimes(): void {
+  NORMALES.clear()
+  cranCuit = null
+  surAmorce = true
+  file.length = 0
+}
+
+/** Ce qui reste à cuire — pour les gardes, et pour qui voudrait attendre la fin d'un cran. */
+export function cuissonEnCours(): number {
+  return file.length
 }
 
 // (Le vert du gros bois est exporté pour d'éventuels consommateurs de cohérence — la pousse

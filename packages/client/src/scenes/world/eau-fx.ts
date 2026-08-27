@@ -8,9 +8,12 @@
  *   • fx-plouf-0..4 — la GERBE d'entrée dans l'eau : colonne centrale exagérée +
  *     gouttes discrètes de 1-2 cellules retombant en arc, SURJOUÉE (la grammaire de
  *     Medeiros : un splash timide ne se lit pas) ;
- *   • fx-empreinte — le pas MOUILLÉ : une semelle sombre, l'alpha vit sur l'Image.
+ *   • fx-pas-{humide,neige,cendre}-0..15 — LE PAS, cuit dans seize orientations, albédo `_lit` +
+ *     normale analytique (voir `cuireEmpreintes` plus bas) ; l'alpha vit sur l'Image.
  */
 import Phaser from 'phaser'
+import { ORIENTATIONS, PAS_CV, rasterEmpreinte } from '../../render/empreintes'
+import { FLIP_G, enc, newCanvas, registerLit } from '../../render/normal-map'
 
 const G = 4
 
@@ -86,33 +89,86 @@ export function ensureEauFxTextures(scene: Phaser.Scene): void {
     nearest(scene, `fx-plouf-${f}`, cv)
   }
 
-  // ── L'EMPREINTE MOUILLÉE : une semelle sombre 4×6 (2 tons) — l'alpha vit sur l'Image ──
-  {
-    const cv = document.createElement('canvas')
-    cv.width = 4
-    cv.height = 6
-    const ctx = cv.getContext('2d', { willReadFrequently: true })!
-    ctx.fillStyle = 'rgba(20,16,10,0.85)'
-    ctx.fillRect(0, 0, 4, 4)
-    ctx.fillStyle = 'rgba(20,16,10,0.6)'
-    ctx.fillRect(0, 4, 4, 2)
-    nearest(scene, 'fx-empreinte', cv)
-  }
+  // ── LES EMPREINTES : trois matières, seize orientations, une normale par variante ──
+  for (const m of MATIERES_PAS) cuireEmpreintes(scene, m)
+}
 
-  // ── L'EMPREINTE DANS LA NEIGE : un creux 4×6 — bord haut sombre, fond bleuté, arête basse
-  //    claire (la grammaire du pavé, en négatif : un trou a son ombre en haut et sa lumière en
-  //    bas). L'alpha vit sur l'Image.
-  {
-    const cv = document.createElement('canvas')
-    cv.width = 4
-    cv.height = 6
-    const ctx = cv.getContext('2d', { willReadFrequently: true })!
-    ctx.fillStyle = 'rgba(96,118,150,0.85)'
-    ctx.fillRect(0, 0, 4, 1)
-    ctx.fillStyle = 'rgba(160,182,210,0.8)'
-    ctx.fillRect(0, 1, 4, 3)
-    ctx.fillStyle = 'rgba(255,255,255,0.9)'
-    ctx.fillRect(0, 4, 4, 1)
-    nearest(scene, 'fx-empreinte-neige', cv)
+/**
+ * ═══ L'EMPREINTE, MATIÈRE PAR MATIÈRE ET CAP PAR CAP ═══
+ *
+ * Elle était UNE image droite de 4×6 px à l'ombrage PEINT (bord haut sombre, arête basse claire).
+ * Trois choses clochaient, et elles tombent ensemble :
+ *
+ *   ① ELLE NE TOURNAIT PAS. Un pas doit pointer où l'on va (`render/empreintes.ts`). On ne peut
+ *      pas la tourner à l'affichage : une rotation Phaser ne tourne PAS le canal X de la normale
+ *      (le même piège que le flip, mesuré le 24/07), et 4 px tournés au NEAREST se délavent. On
+ *      cuit donc `ORIENTATIONS` variantes, chacune RASTÉRISÉE dans son repère — pixels francs.
+ *
+ *   ② ELLE N'AVAIT PAS DE NORMALE, donc pas de relief : un creux dans la neige est un TROU, et
+ *      son ombre doit tourner avec le soleil comme celle de tout le décor cubique. La normale
+ *      est ici ANALYTIQUE (une cuvette `h = −creux·(1−p²)(1−q²)`) et non dérivée de la silhouette
+ *      — `normalFromCanvas` fabrique une BUTTE à partir d'un masque, or il nous faut son négatif,
+ *      et quatre passes de lissage n'ont pas la place de vivre dans 8 px. Même dérogation que le
+ *      tronc cylindrique de `lit-trees`, et les CONVENTIONS (encodage, `FLIP_G`, enregistrement)
+ *      restent celles de `normal-map.ts` : il n'y a toujours qu'un seul endroit qui les sait.
+ *
+ *   ③ SON OMBRAGE ÉTAIT PEINT et se battait avec la lumière calculée (doctrine `_lit`). L'albédo
+ *      ne garde donc que la MATIÈRE, plus une occlusion NON directionnelle (le fond d'un trou voit
+ *      moins de ciel — c'est vrai à toute heure), jamais un hillshade.
+ */
+
+interface MatierePas {
+  /** Le préfixe des textures : `<cle>-<orientation>`. */
+  cle: string
+  /** L'albédo — la MATIÈRE seule, sans ombrage directionnel. */
+  rgb: readonly [number, number, number]
+  alpha: number
+  /** L'occlusion du fond (0..1) : de combien le cœur du creux s'assombrit, à toute heure. */
+  occlusion: number
+  /** La profondeur du creux pour la normale — 0 = décalque PLAT (une tache mouillée ne creuse rien). */
+  creux: number
+}
+
+const MATIERES_PAS: readonly MatierePas[] = [
+  // LA SEMELLE HUMIDE : une tache sombre, pas un trou. Normale plate — le sol mouillé reste le sol.
+  { cle: 'fx-pas-humide', rgb: [20, 16, 10], alpha: 0.85, occlusion: 0.15, creux: 0 },
+  // LA NEIGE : un vrai creux. L'albédo est la neige elle-même (à peine bleutée) ; tout le reste
+  // vient de la lumière — c'est ce qui fait que la piste tourne son ombre avec le soleil.
+  { cle: 'fx-pas-neige', rgb: [214, 228, 244], alpha: 0.95, occlusion: 0.34, creux: 1.35 },
+  // LA CENDRE : le pied enfonce la poudre et découvre le brûlé dessous — sombre, et creusé.
+  { cle: 'fx-pas-cendre', rgb: [58, 50, 46], alpha: 0.8, occlusion: 0.3, creux: 1.15 },
+]
+
+/** Cuit les `ORIENTATIONS` variantes d'une matière. La FORME et la NORMALE viennent de
+ *  `render/empreintes.ts` (pur, testé) ; ici on ne fait que peindre et enregistrer. */
+function cuireEmpreintes(scene: Phaser.Scene, m: MatierePas): void {
+  for (let k = 0; k < ORIENTATIONS; k++) {
+    const pixels = rasterEmpreinte(k, m.creux)
+    const alb = newCanvas(PAS_CV, PAS_CV)
+    const nrm = newCanvas(PAS_CV, PAS_CV)
+    const da = alb.ctx.createImageData(PAS_CV, PAS_CV)
+    const dn = nrm.ctx.createImageData(PAS_CV, PAS_CV)
+    for (let j = 0; j < pixels.length; j++) {
+      const px = pixels[j]!
+      const i = j * 4
+      if (px.dedans) {
+        const ao = 1 - m.occlusion * px.cuve
+        da.data[i] = Math.round(m.rgb[0] * ao)
+        da.data[i + 1] = Math.round(m.rgb[1] * ao)
+        da.data[i + 2] = Math.round(m.rgb[2] * ao)
+        da.data[i + 3] = Math.round(255 * m.alpha)
+      }
+      dn.data[i] = enc(px.nx)
+      dn.data[i + 1] = enc(FLIP_G ? -px.ny : px.ny)
+      dn.data[i + 2] = enc(px.nz)
+      dn.data[i + 3] = 255
+    }
+    alb.ctx.putImageData(da, 0, 0)
+    nrm.ctx.putImageData(dn, 0, 0)
+    const cle = `${m.cle}-${k}`
+    registerLit(scene, cle, alb.c, nrm.c)
+    // NEAREST : la caméra zoome ×3,4 (`zoomForFraming`) — un pas de 4 px y occupe 14 px d'écran,
+    // et un filtre linéaire en ferait une bavure au lieu d'une semelle.
+    scene.textures.get(cle).setFilter(Phaser.Textures.FilterMode.NEAREST)
   }
 }

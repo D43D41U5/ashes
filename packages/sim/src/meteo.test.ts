@@ -876,7 +876,7 @@ describe('R6 — la faune se terre (A5)', () => {
       map: createEmptyMap(160, 160, TERRAIN_GRASS),
       faunaCap: FAUNA.GROUND_CAP,
       worldEvents: false,
-      cycleOffset: cycleOffsetForStartHour(12),
+      cycleOffset: cycleOffsetForStartHour(12, 1),
     })
     const ambients = (): number => sim.monsters.filter((m) => m.ambient).length
     const a = spawnEntity(sim, 80.5, 80.5)
@@ -1969,6 +1969,7 @@ describe('R9 — l’annonce (blizzard)', () => {
       SCALE,
       1, // le jour d'ouverture du monde des montages (S2 : le vrai jeu, lui, ouvre au jour 61)
       {},
+      simMeteo().map, // la carte : le formateur y cherche la clef de LIEU (annales R13)
     )
     expect(entrees).toHaveLength(1)
     expect(entrees[0]!.weight).toBe('battement')
@@ -1979,7 +1980,7 @@ describe('R9 — l’annonce (blizzard)', () => {
       { type: 'blizzard_entre', tick: tickAubeDuJour(d), day: d },
       { type: 'blizzard_passe', tick: tickAubeDuJour(d) + 1, day: d },
     ]
-    expect(chronicleFromEvents(muets, SCALE, 1, {})).toEqual([])
+    expect(chronicleFromEvents(muets, SCALE, 1, {}, simMeteo().map)).toEqual([])
   })
 })
 
@@ -2291,7 +2292,7 @@ describe('A16 — la neige est une PART, pas un oui/non (R14)', () => {
       // la fonction de la sim, pas une copie) : c'est cette fenêtre-là que `neigeAuSol` intègre,
       // et pas la fenêtre du front, qui est bien plus longue.
       let jamaisSousLaLimite = true
-      let toucheLeGresil = false
+      let dansLeGresil = 0
       let couvert = 0
       for (let i = 0; i <= 60; i++) {
         const t = f.startTick + Math.round(((f.endTick - f.startTick) * i) / 60)
@@ -2299,9 +2300,15 @@ describe('A16 — la neige est une PART, pas un oui/non (R14)', () => {
         couvert++
         const t0 = dehorsSansMeteo(sim, 20.5, 20.5, t)
         if (t0 <= LIMITE + MARGE) jamaisSousLaLimite = false
-        if (t0 < LIMITE + DEMI - MARGE) toucheLeGresil = true
+        if (t0 < LIMITE + DEMI - MARGE) dansLeGresil++
       }
-      if (couvert < 4 || !jamaisSousLaLimite || !toucheLeGresil) continue
+      // ⚠ UN SEUL ÉCHANTILLON DANS LA BANDE NE SUFFIT PAS, et c'est ce qui a rougi le
+      // 2026-08-26 quand la journée a pris les heures de la France : `neigeAuSol` intègre par
+      // TRANCHES, une grille bien plus grossière que ces soixante points. Un instant de grésil
+      // qu'aucune tranche ne visite dépose zéro — la prémisse était vraie, la conclusion
+      // fausse, et la garde accusait la loi. On exige donc que le pré passe UN TIERS de sa
+      // couverture dans la bande : n'importe quelle grille d'intégration l'y trouve.
+      if (couvert < 4 || !jamaisSousLaLimite || dansLeGresil * 3 < couvert) continue
       sim.tick = f.endTick + 200
       const pre = neigeAuSol(sim, 20, 20)
       const marais = neigeAuSol(sim, 90, 20)

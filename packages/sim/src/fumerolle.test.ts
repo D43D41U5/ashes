@@ -6,17 +6,18 @@
  */
 import { describe, expect, it } from 'vitest'
 import { BALANCE, NODE_DEFS, TERRAINS } from './balance'
-import { CENDRE, auCoeurDeLaCendre, avanceesDepuisAges, foyersDeLaCarte } from './cendre'
+import { CENDRE, auCoeurDeLaCendre, avanceesDepuisAges, estCendre, foyersDeLaCarte } from './cendre'
 import {
   FUMEROLLE, froidDeFumerolle, fumerolleIci, fumerollesAutour, idDeFumerolle,
   ouvrirLesFumerolles, toutesLesFumerolles,
 } from './fumerolle'
+import type { WorldMap } from './map'
 import type { ResourceNode } from './economy'
-import { generateZonedTerrain } from './zonegen'
+import { carteDeTest } from '../../../tools/carte-cache'
 import { MONDE, MONDE_JOUE } from './zonegraph'
 
 const SEED = 2026
-const monde = generateZonedTerrain(SEED, MONDE.JOUEURS_CIBLE, MONDE_JOUE)
+const monde = carteDeTest(SEED, MONDE.JOUEURS_CIBLE, MONDE_JOUE)
 const map = monde.map
 const foyers = foyersDeLaCarte(map)
 const REVEIL = (CENDRE.ACTE_DEPART - 1) * BALANCE.ACT_DAYS + 1
@@ -24,10 +25,37 @@ const auJour = (jour: number): number[] =>
   avanceesDepuisAges(foyers.map(() => Math.max(0, jour - REVEIL)), foyers.length)
 
 describe('elles naissent AVEC la corruption, et nulle part ailleurs', () => {
-  it('aucune avant le réveil — le cœur n’existe pas encore', () => {
-    expect(toutesLesFumerolles(map, auJour(1), SEED)).toHaveLength(0)
-    expect(toutesLesFumerolles(map, auJour(REVEIL), SEED)).toHaveLength(0)
-  })
+  /**
+   * ⚠ CETTE GARDE DISAIT UN ACCIDENT, PAS UNE LOI (corrigé le 2026-08-25).
+   *
+   * Elle exigeait ZÉRO fumerolle au jour du réveil « parce que le cœur n'existe pas encore ». Or
+   * il existe : `avanceeDeCendre(0)` vaut `CENDRE.R0`, donc chaque charnier porte déjà son
+   * disque. Le zéro ne venait pas du modèle, il venait de la RARETÉ du semis — aucune bouche ne
+   * tombait dans un disque aussi petit. Le premier resserrement du semis l'a fait rougir, et il
+   * avait raison de rougir : la garde tenait par chance depuis le début.
+   *
+   * Ce qui est une loi, c'est que rien ne fume là où la cendre n'a pas pris. On l'affirme des
+   * deux côtés — sans champ de cendre, jamais ; au réveil, le compte doit être une poussière de
+   * ce qu'il devient — et on PROUVE LA PRÉMISSE au passage (le monde mûr, lui, en porte).
+   */
+  it('rien ne fume là où la cendre n’a pas pris', () => {
+    // ① Un monde SANS cendre du tout : la mécanique entière est muette.
+    // ⚠ ON RETIRE LE CHAMP, on ne le met pas à `undefined` : `exactOptionalPropertyTypes` refuse
+    //   l'un et accepte l'autre, et c'est `tsc` qui l'a dit — pas vitest, qui passait très bien.
+    const sansCendre: WorldMap = { ...map }
+    delete sansCendre.cendreCout
+    expect(toutesLesFumerolles(sansCendre, auJour(840), SEED)).toHaveLength(0)
+    // ② Au réveil, le disque `R0` est minuscule : ce qui s'y ouvre tient sur les doigts d'une
+    //    main, et chaque bouche est bien AU CŒUR d'un foyer (pas posée sur la terre vierge).
+    const av0 = auJour(REVEIL)
+    const auReveil = toutesLesFumerolles(map, av0, SEED)
+    expect(auReveil.length, 'au réveil, la cendre est un disque, pas une région').toBeLessThanOrEqual(foyers.length)
+    for (const b of auReveil) expect(auCoeurDeLaCendre(map, b.tx, b.ty, av0, SEED)).toBe(true)
+    // ③ LA PRÉMISSE : le monde mûr en porte vraiment beaucoup plus — sans quoi ② passerait
+    //    parce que le semis est mort, et non parce que la cendre est jeune.
+    const mur = toutesLesFumerolles(map, auJour(840), SEED).length
+    expect(mur, 'le semis est mort').toBeGreaterThan(20 * Math.max(1, auReveil.length))
+  }, 60_000)
 
   it('elles apparaissent au fil de la cendre, sans jamais reculer', () => {
     let precedent = 0
@@ -55,10 +83,15 @@ describe('elles naissent AVEC la corruption, et nulle part ailleurs', () => {
 
 describe('UN LIEU, PAS UNE TEXTURE — c’est le réglage qui le décide', () => {
   it('deux voisines ne tiennent jamais dans le même écran', () => {
-    // L'écran montre ~36 tuiles de large. La promesse « on la repère de loin, et une seule à la
-    // fois » ne tient que si l'écart minimal la dépasse. ⚠ MESURÉ à 21 tuiles au premier jet (le
-    // tirage courait sur toute la maille, donc deux bouches pouvaient se coller de part et
-    // d'autre d'un bord commun) — le tirage est depuis borné au cœur de la maille.
+    // L'écran montre ~36 tuiles de large (`FUMEROLLE.ECRAN_TUILES`). La promesse « on la repère
+    // de loin, et une seule à la fois » ne tient que si l'écart minimal l'atteint. ⚠ MESURÉ à 21
+    // tuiles au premier jet (le tirage courait sur toute la maille, donc deux bouches pouvaient
+    // se coller de part et d'autre d'un bord commun) — le tirage est depuis borné au cœur de la
+    // maille, et ce plancher est DÉRIVÉ : `MAILLE × (1 − JEU)`.
+    //
+    // ⚠ LE SEUIL SE LIT SUR L'ÉCRAN, PAS SUR LE RÉGLAGE. L'écrire `MAILLE × (1 − JEU)` ferait une
+    // garde qui ne garde rien : elle suivrait le semis dans sa chute au lieu de la refuser. C'est
+    // le CADRE qui est l'étalon (mémoire `etalon-d-un-rayon-est-le-cadre`).
     const f = toutesLesFumerolles(map, auJour(840), SEED)
     expect(f.length).toBeGreaterThan(10)
     let min = Infinity
@@ -70,12 +103,36 @@ describe('UN LIEU, PAS UNE TEXTURE — c’est le réglage qui le décide', () =
         if (d < min) min = d
       }
     }
-    expect(min, 'deux fumerolles dans un écran = une texture, pas un lieu').toBeGreaterThan(30)
+    expect(min, 'deux fumerolles dans un écran = une texture, pas un lieu').toBeGreaterThanOrEqual(
+      FUMEROLLE.ECRAN_TUILES,
+    )
   }, 60_000)
 
-  it('elles restent rares : une poignée par foyer, jamais un tapis', () => {
-    const n = toutesLesFumerolles(map, auJour(840), SEED).length
-    expect(n / foyers.length, 'par foyer, à l’an 7').toBeLessThan(15)
+  /**
+   * ⚠ CETTE GARDE A CHANGÉ D'ÉTALON LE 2026-08-25, ET C'ÉTAIT LE FOND DU DÉFAUT.
+   *
+   * Elle comptait « par FOYER » — or un foyer n'est pas une quantité que le joueur perçoit : la
+   * cendre d'un foyer couvre dix tuiles au réveil et cent mille à l'an 7, si bien que « moins de
+   * 15 par foyer » autorisait aussi bien un tapis qu'une absence. La garde était verte pendant
+   * qu'on traversait la cendrière sans voir une seule bouche (MESURÉ : une pour 14 000 tuiles).
+   *
+   * Le bon dénominateur est la CENDRE ELLE-MÊME : combien de terre brûlée pour une bouche. On
+   * borne des deux côtés — trop rare est un défaut au même titre que trop dense, et c'est
+   * précisément celui qu'on vient de payer.
+   */
+  it('une bouche pour quelques écrans de cendre — ni un tapis, ni une absence', () => {
+    const av = auJour(840)
+    const n = toutesLesFumerolles(map, av, SEED).length
+    let cendre = 0
+    for (let ty = 0; ty < map.height; ty += 2) {
+      for (let tx = 0; tx < map.width; tx += 2) if (estCendre(map, tx, ty, av, SEED)) cendre += 4
+    }
+    // Un écran ≈ 36 × 20 tuiles ≈ 720. On veut en croiser une toutes les deux à huit poignées
+    // d'écrans : assez pour que la cendre en porte, assez peu pour qu'elle reste une TERRE NUE.
+    const ecran = FUMEROLLE.ECRAN_TUILES * 20
+    const ecransParBouche = cendre / n / ecran
+    expect(ecransParBouche, 'un tapis de fumée').toBeGreaterThan(2)
+    expect(ecransParBouche, 'on traverse la cendrière sans en voir une').toBeLessThan(8)
   }, 60_000)
 })
 

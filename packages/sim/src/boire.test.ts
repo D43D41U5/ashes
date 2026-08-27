@@ -18,7 +18,7 @@ import { foundNpcVillage } from './worldgen'
 function nuitDuJour(jour: number, largeur = 64): SimState {
   const state = createSim(1, {
     map: createEmptyMap(largeur, 64, TERRAIN_GRASS),
-    cycleOffset: cycleOffsetForStartHour(0),
+    cycleOffset: cycleOffsetForStartHour(0, 1),
     calendarScale: 1,
   })
   state.tick = (jour - 1) * TICKS_PER_SEASON_DAY

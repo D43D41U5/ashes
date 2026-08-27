@@ -9,10 +9,11 @@
  */
 import { describe, expect, it } from 'vitest'
 import { generateZonedTerrain } from './zonegen'
+import { carteDeTest } from '../../../tools/carte-cache'
 import { TERRAINS, TERRAIN_DEEP_WATER } from './balance'
 import { isWater } from './map'
 
-const CARTE = generateZonedTerrain(7)
+const CARTE = carteDeTest(7)
 const { map, graphe, zone, rampe } = CARTE
 const W = map.width
 const H = map.height

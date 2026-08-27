@@ -35,21 +35,23 @@ import {
   TERRAIN_ROAD,
   TERRAIN_ROCK,
   TERRAIN_SCREE,
+  TERRAIN_BOULDERS,
   TERRAIN_WET_MEADOW,
   TERRAIN_WILLOW,
   TERRAIN_SHALLOW_WATER,
   TERRAIN_DEEP_WATER,
   TERRAINS,
   type NodeType,
+  TERRAIN_CLAIRIERE,
 } from './balance'
 import { CENDRE, coutDe } from './cendre'
 import type { ResourceNode } from './economy'
 import { distSq } from './geometry'
 import { profondeurAt, terrainAt, type WorldMap } from './map'
 import { fbm2, hash2 } from './noise'
-import { estCoeur, estLisiere, TERRAINS_BOISES_MASSIF, TERRAINS_FEUILLUS } from './profondeur'
+import { estCoeur, TERRAINS_BOISES_MASSIF, TERRAINS_FEUILLUS } from './profondeur'
 import { CREUX } from './racine-relief'
-import { RELIEF, type CarteZonee } from './zonegen'
+import { type CarteZonee } from './zonegen'
 import { EAU, estUnCoude } from './zonegen-water'
 import { MONDE } from './zonegraph'
 
@@ -100,16 +102,12 @@ export const CONTENU = {
   ARBRES_ECHELLE: 22,
 
   /**
-   * LES CLAIRIÈRES DE LA FORÊT — un couvert plein, MAIS troué de clairières RECTANGULAIRES et
-   * irrégulières (demande d'Alexis, 2026-07-18 — le grain « RimWorld » de la carte).
-   *
-   * La décision « clairière ? » se prend par BLOC (le motif de 8 tuiles, comme tout le terrain) :
-   * une clairière est donc, par construction, un rectangle ; des blocs voisins se fondent en
-   * clairières plus grandes, aux contours en marches d'escalier. `ECHELLE` règle leur taille,
-   * `SEUIL` la part de forêt qu'elles évident (plus il est BAS, plus il y a de clairières).
+   * ⚠ `CLAIRIERE_ECHELLE` / `CLAIRIERE_SEUIL` ONT ÉTÉ RETIRÉS le 2026-08-25. Les clairières ne
+   * sont plus un seuil sur du bruit — un ensemble de sur-niveau de fbm n'a aucune borne, et on
+   * a mesuré des trouées de 56×88 tuiles pour un écran de 20. Elles sont maintenant un TERRAIN,
+   * borné par construction : tout leur réglage vit dans `clairieres.ts`, à côté de son
+   * générateur, comme le veut la ligne de partage de `balance.ts`.
    */
-  CLAIRIERE_ECHELLE: 34,
-  CLAIRIERE_SEUIL: 0.62,
 
   /** Le teaser : UN filon, et son stock est dérisoire. Épuisé en une heure. */
   /** La densité d'un VERGER : un buisson toutes ~3 tuiles de son emprise. Assez dense pour que
@@ -124,13 +122,35 @@ export const CONTENU = {
    * l'enceinte (R49), vieux fûts AU CŒUR des massifs (R50). Ordres de grandeur — le calibrage
    * se fait en regardant la carte, et les planchers de R51 sont gardés par A28.
    */
-  /** Nœuds par affleurement. 4 × stock 8 = 32 coups par butte : un filet, pas une mine. */
-  AFFL_NOEUDS: 4,
-  /** Les BLOCS d'une butte (décision d'Alexis 2026-08-18 : « un bloc = une tuile pleine de
-   *  non traversable ») : de VRAIS nœuds `bloc` pleine tuile, en trois tailles — ils bloquent
-   *  tant qu'ils ont du stock et se taillent en pierre. 10 depuis la purge du décor pierreux
-   *  (« trop de cailloux-clutter ») : c'est EUX qui peuplent la butte, personne d'autre. */
-  AFFL_BLOCS: 10,
+  /**
+   * ═══ NŒUDS DE MINERAI PAR AFFLEUREMENT — 4 → 12 (décision d'Alexis, 2026-08-27) ═══
+   *
+   * « 4 × stock 8 = 32 coups par butte : un filet, pas une mine », disait ce commentaire, et il
+   * avait raison. **L'INVENTAIRE DU MONDE JOUÉ A TRANCHÉ** : 48 750 arbres, 6 564 rochers,
+   * 4 099 blocs — et **13 filons de fer, 8 de charbon**. Trois ordres de grandeur d'écart, sur
+   * la ressource qui commande toute la forge. Et depuis R6sexies la butte est un DÉDALE : on
+   * creusait quatre-vingt-dix blocs pour quatre filons.
+   *
+   * ⚠ **C'EST UN NOMBRE QU'ON RÈGLE EN JOUANT, PAS EN REGARDANT UNE CARTE** — d'où sa place ici
+   * et non dans le bloc du générateur. La tentation était de le DÉRIVER de la surface de galerie,
+   * comme les blocs dérivent maintenant de la surface de la butte ; ce serait une faute de
+   * famille : un bloc EST du terrain, un filon est de l'ÉCONOMIE. Dérivé, le rendement en fer
+   * deviendrait un effet de bord de `MINE.DALLE` — retoucher le pas du labyrinthe changerait en
+   * silence le nombre de villages capables de forger.
+   *
+   * L'ÉCHELLE, contre les recettes (`iron_ingot` = 2 minerais + 1 charbon ; `steel_ingot` =
+   * 2 lingots + 2 charbons) et les 3 buttes ferreuses / 2 charbonneuses de `AFFL_IDENTITES` :
+   * fer **96 → 288** unités, charbon **64 → 192**. Le charbon reste le goulot (c'est son rôle
+   * depuis 2026-08-18), mais il cesse de borner la carte à un seul village équipé.
+   */
+  AFFL_NOEUDS: 12,
+  /**
+   * ⚠ `AFFL_BLOCS` A ÉTÉ RETIRÉ le 2026-08-27 (R6sexies). La butte posait 10 plots à pas constant
+   * dans la liste row-major ; elle porte maintenant le même réseau de galeries que le chaos, et
+   * son compte de blocs DÉRIVE de sa surface (53 à 115 mesurés). C'est le sens inverse de
+   * `AFFL_NOEUDS` juste au-dessus, et c'est cohérent : le bloc est du terrain, le filon est de
+   * l'économie.
+   */
   /** Postes de carrière le long de l'enceinte, écartés au max-min. */
   CARRIERES: 3,
   /** Nœuds `quarry` par poste (stock 6 chacun). */
@@ -191,7 +211,7 @@ export const CONTENU = {
    *   — la FIBRE veut l'humide : plein régime aux mots mouillés et au bord de l'eau ;
    *   — la BAIE veut le bord et la lande : plein régime en lande/bruyère et au contact des bois ;
    *   — la PIERRE veut le relief : plein régime en lande (R34 : « sa pierre ») et au pied du rocheux.
-   * Les passes appendues CONCENTRENT en face (FIBRE_PRAIRIE, BAIES_LISIERE renforcées).
+   * Les passes appendues CONCENTRENT en face (FIBRE_PRAIRIE, BAIES_CLAIRIERE renforcées).
    * RACINE SEULE : les tables des zones T1/T2 ne bougent pas d'un nœud (A14/A15 intacts).
    */
   /** Rayon (Chebyshev) du « au contact de » : bois, eau, rocheux. 2 = la portée d'un regard. */
@@ -222,6 +242,16 @@ export const CONTENU = {
    *  0.025 → 0.018 (2026-08-23) : le pierrier reste plus dense que tout ce qui l'entoure, mais
    *  il pesait 3 146 rochers — 28 % de toute la pierre de la carte, dans la zone de départ. */
   PIERRIER_CHANCE: 0.018,
+  /**
+   * LA PIERRE DES GALERIES DU CHAOS (passe 'CHPR', 2026-08-27) — la chance par tuile de galerie.
+   *
+   * Le `boulders` est devenu STÉRILE pour le semis commun le jour où ses blocs ont pris une
+   * boîte : un rocher tiré au milieu d'une masse aurait été un nœud VISIBLE ET INATTEIGNABLE.
+   * Sa pierre revient donc ici, sur les galeries — et à la MÊME abondance qu'avant, calibrée
+   * sur le compte mesuré (≈ 4,4 rochers pour 100 tuiles de chaos, trois seeds) : le chaos n'a
+   * pas été appauvri, sa récolte a changé d'adresse.
+   */
+  CHAOS_PART_PIERRE: 0.035,
 
   /**
    * LA PROFONDEUR PORTE DU JEU (spec t0-exploration §2quater R40). Le VIEUX FÛT : facteur de
@@ -238,9 +268,21 @@ export const CONTENU = {
    */
   VIEUX_FUT_FACTEUR: 1.5,
   CHAMPIGNON_COEUR: 0.012,
-  /** 0.015 → 0.03 avec R34bis : la lisière est LE bord à baies — elle concentre ce que
-   *  l'affinité retire au plein champ. */
-  BAIES_LISIERE: 0.03,
+  /**
+   * ═══ LES BAIES DE LA CLAIRIÈRE — l'adresse du garde-manger (Alexis, 2026-08-25) ═══
+   *
+   * `BAIES_LISIERE` (0,03, la lisière du bois) est devenu ceci : *« on retire les buissons baies
+   * dans le biome forest »* et *« je veux qu'il y ait plus de buisson à baies dans ce biome »*.
+   * La règle de R40 ne change pas de NATURE — la baie va là où la lumière touche le sol du
+   * massif ; elle change d'ENDROIT : la lisière était sous les arbres, la trouée ne l'est pas.
+   *
+   * 0,03 → **0,085**, presque le triple, et il se lit sur une surface bien plus petite : la
+   * lisière fait des milliers de tuiles, les clairières quelques milliers en tout. Une trouée
+   * d'un bloc (une trentaine de tuiles) porte donc **deux à trois buissons de cette passe**, plus
+   * ce que le semis commun y sème. On entre dans une clairière pour la cueillir : c'est ce qui
+   * fait d'elle une destination et non un trou.
+   */
+  BAIES_CLAIRIERE: 0.085,
 
   /**
    * LES TAS DE FEUILLES (forêts-vivantes §1 R1 — sel 'FEUI') : la fouille du sous-bois,
@@ -248,6 +290,24 @@ export const CONTENU = {
    * ses baies, le cœur ses champignons). Chance par tuile libre, passe appendue en queue.
    */
   TAS_FEUILLES: 0.02,
+
+  /**
+   * ═══ LE GLANAGE (spec `glanage.md` G3 — sel 'GLAN') ═══
+   *
+   * Depuis que le bois et la pierre exigent un outil (`NODE_DEFS.tree/rock.minTool = 'crude'`),
+   * c'est CETTE constante qui décide si la partie peut commencer. Une chance par NŒUD PARENT :
+   * un arbre sur ~N laisse tomber une branche à son pied, un rocher sur ~N détache une pierre.
+   *
+   * ANCRÉE SUR LE PARENT, jamais semée à plat — c'est ce qui fait qu'on la CHERCHE là où on
+   * l'attend : au pied de ce qu'on ne peut pas encore couper. Un semis indépendant aurait
+   * saupoudré du bois sur le pré nu, et le geste n'aurait rien appris au joueur.
+   *
+   * ⚠ **CE NOMBRE EST LE TEMPO DE LA PREMIÈRE HEURE.** Le hachereau coûte 2 bois + 3 pierre,
+   * la pioche 3 + 2 : cinq ramassages pour le premier outil, dix pour les deux. Trop bas, le
+   * jeu s'ouvre sur une fouille stérile ; trop haut, le verrou ne se sent pas. Se calibre EN
+   * JOUANT (`recolte.md` G11), et la sonde `tools/mesure-glanage.mts` en donne le relevé.
+   */
+  GLANAGE_CHANCE: 0.06,
 
   /**
    * LES COINS DE PÊCHE (spec `peche.md` P3/P4 — sel 'PECH'). Réglage de GÉNÉRATEUR : il se
@@ -382,6 +442,17 @@ export const CONTENUS: Record<string, ContenuZone> = {
   lac_mort: { commun: { fiber_plant: 0.6, berry_bush: 0.4 } },
 }
 
+/**
+ * LA FAMILLE MINÉRALE — le sol NU, celui où rien n'a de racine. Écrite par NOM, l'idiome de
+ * `terrainAdmet` : une seule vérité (la table `TERRAINS`), pas une liste d'ids à tenir synchrone.
+ * `estRocheux` (plus bas, l'affinité) y ajoute la roche et la falaise, qui ne sont pas
+ * marchables : ce qui suit ne parle que des sols où l'on MET LE PIED.
+ */
+function estMineral(terrain: number): boolean {
+  const n = TERRAINS[terrain]?.name
+  return n === 'scree' || n === 'boulders'
+}
+
 /** Le terrain admet-il ce nœud ? Un arbre ne pousse pas dans un éboulis. */
 function terrainAdmet(type: NodeType, terrain: number): boolean {
   const def = TERRAINS[terrain]
@@ -392,9 +463,28 @@ function terrainAdmet(type: NodeType, terrain: number): boolean {
     case 'old_tree':
       return n === 'forest' || n === 'old_growth' || n === 'pine' || n === 'larch' || n === 'burnt_forest' || n === 'willow'
     case 'berry_bush':
+      // ⚠ **AUCUNE BAIE SOUS UN COUVERT** (demande d'Alexis, 2026-08-25 : « on retire les
+      // buissons baies dans le biome forest »). Une ronce est une plante de LUMIÈRE : elle
+      // tient les bords, les coupes et les trouées, jamais l'ombre d'une futaie. La règle est
+      // écrite sur TOUTE la masse boisée et pas sur le seul `forest` — le pin et la saulaie
+      // sont plus sombres encore, et une exclusion qui laisserait la baie au mélèze serait une
+      // incohérence qu'on relirait un jour sans en trouver la raison.
+      //
+      // Les baies ne disparaissent pas du monde, elles CHANGENT D'ADRESSE : la clairière les
+      // prend (`baiesDeLaClairiere`), et l'affinité du commun donnait déjà plein régime au pré
+      // qui touche le bois (`AFFINITE_BAIE_OUVERT`). Le garde-manger se déplace du couvert vers
+      // la lumière — c'est ce qui fait d'une trouée une destination.
+      if (TERRAINS_BOISES_MASSIF.includes(terrain)) return false
       return n !== 'snow' && n !== 'scree' && n !== 'boulders' && n !== 'shallow_water'
     case 'fiber_plant':
-      return n !== 'snow' && n !== 'scree' && n !== 'shallow_water'
+      // ⚠ **RIEN NE POUSSE DANS LA CAILLASSE** (demande d'Alexis, 2026-08-27 : *« retire les
+      // fibres ou les trucs du genre, c'est de la caillasse ! »*). L'éboulis était déjà exclu ;
+      // le chaos de blocs ne l'était pas, et MESURÉ (trois seeds, monde joué) il portait 10 à
+      // 22 plants de joncs POSÉS SUR DE LA ROCHE NUE. La règle s'écrit maintenant sur la
+      // FAMILLE minérale entière, comme la baie s'écrit sur la masse boisée entière : une
+      // exclusion qui vaudrait pour l'éboulis mais pas pour les blocs est une incohérence qu'on
+      // relirait un jour sans en trouver la raison.
+      return !estMineral(terrain) && n !== 'snow' && n !== 'shallow_water'
     case 'peat_cut':
       return n === 'peat_bog' || n === 'reed_marsh' || n === 'marsh'
     case 'rock':
@@ -409,6 +499,15 @@ function terrainAdmet(type: NodeType, terrain: number): boolean {
     case 'leaf_pile':
       // La litière des FEUILLUS (forêts-vivantes §1) : le sec ne fait pas de tas.
       return n === 'forest' || n === 'old_growth' || n === 'willow'
+    case 'branche_au_sol':
+      // LE GLANAGE se pose au SEC (spec `glanage.md` G3). Une branche flottant dans le haut-fond
+      // ou couchée sur la tourbière n'est pas un objet qu'on ramasse, c'est un objet qui dérive.
+      // ET PAS DE BOIS MORT SUR LA ROCHE NUE (2026-08-27, même demande que la fibre) : une
+      // branche tombe d'un arbre, or il n'en pousse pas un seul dans un pierrier. La PIERRE au
+      // sol, elle, y reste — c'est le seul glanage qui ait sa place ici, et c'est le sien.
+      return !estMineral(terrain) && n !== 'shallow_water' && n !== 'peat_bog' && n !== 'reed_marsh' && n !== 'marsh'
+    case 'pierre_au_sol':
+      return n !== 'shallow_water' && n !== 'peat_bog' && n !== 'reed_marsh' && n !== 'marsh'
     case 'champignon':
       // L'humide et l'ombre : marais, tourbière, roselière, sous-bois de vieille sylve, le sol
       // des forêts ordinaires (là, très rare — voir `champignonsRares`) — et les deux mots
@@ -491,8 +590,20 @@ export function placeZoneNodes(c: CarteZonee): ResourceNode[] {
   // Réservée ICI, à la source — le semis principal passait AVANT les passes de butte et pouvait
   // y poser un rocher de la table ordinaire (attrapé par la garde A29, seed 7).
   const sommets = c.affleurements.map((a) => sommetDeButte(c, a.rect)).filter((i) => i >= 0)
-  const sterileSet = new Set([...steriles, ...sommets])
-  const occupeesPlus = (): Set<number> => new Set([...nodes.map((n) => n.ty * width + n.tx), ...steriles, ...sommets])
+  // LE CHAOS DE BLOCS EST STÉRILE POUR LE SEMIS COMMUN (2026-08-27) — et c'est ce qui rend
+  // « des nœuds accessibles dans la structure » vrai PAR CONSTRUCTION plutôt que par chance :
+  // `blocsDuChaos` seul y repose la pierre, sur ses galeries. Sans ce masque, le semis ordinaire
+  // aurait laissé ses rochers au milieu des masses, où le bloc les aurait emmurés.
+  const chaos = tuilesDuChaos(c)
+  const sterileSet = new Set([...steriles, ...sommets, ...chaos])
+  // ⚠ `occupeesPlus` PORTE LE CHAOS, `occupeesDuChaos` NE LE PORTE PAS — et c'est toute la
+  // différence. Le chaos appartient à `blocsDuChaos` seul : sans le masque ici, les passes
+  // appendues (le pierrier du pré, le glanage, la carrière) y déposaient encore des nœuds au
+  // milieu des masses — MESURÉ avant de le poser : 8 rochers, 31 branches et 3 pierres au sol
+  // injoignables, exactement le défaut qu'« on doit pouvoir spawn des nodes accessibles »
+  // interdit. Et le glanage cesse du même coup de coucher du bois mort sur la roche nue.
+  const occupeesPlus = (): Set<number> => new Set([...nodes.map((n) => n.ty * width + n.tx), ...steriles, ...sommets, ...chaos])
+  const occupeesDuChaos = (): Set<number> => new Set([...nodes.map((n) => n.ty * width + n.tx), ...steriles, ...sommets])
   const seed = (c.graphe.seed ^ 0x51ab3f77) | 0
   let id = 1
 
@@ -505,11 +616,17 @@ export function placeZoneNodes(c: CarteZonee): ResourceNode[] {
       if (t === TERRAIN_ROAD) continue // rien ne pousse sur une sente (t0-exploration R18)
       if (!TERRAINS[t]?.walkable) continue
 
-      // Une CLAIRIÈRE de la forêt de la racine reste NUE — la trouée respire (le sol y verdit).
-      // Sans ça, le semis commun la reboiserait à moitié et la clairière ne se lirait plus.
-      if (c.zone[i] === c.graphe.racine && terrainAdmet('tree', t) && clairiereForet(c.graphe.seed, tx, ty) > 0) {
-        continue
-      }
+      // ⚠ ICI VIVAIT LE SAUT DE CLAIRIÈRE, et c'était le défaut (retiré le 2026-08-25).
+      // Son commentaire disait « sans ça le semis la REBOISERAIT » — mais le code gardait sur
+      // `terrainAdmet('tree', …)` et sautait la table commune EN ENTIER : pas d'arbre, mais pas
+      // de baie, pas de fibre, pas de champignon non plus. Litière brune, zéro prop, zéro nœud :
+      // la grammaire d'une coupe rase, et c'est exactement ce qu'Alexis a vu. Sa prémisse
+      // affichée (« le sol y verdit ») avait d'ailleurs été supprimée deux jours plus tôt.
+      //
+      // La clairière étant un TERRAIN, plus rien n'est à dire ici : `terrainAdmet` refuse l'arbre
+      // sur `clairiere` et la table de la zone se renormalise sur ce qui pousse à la lumière.
+      // L'affinité fait le reste — une tuile de clairière a du bois dans son voisinage, donc la
+      // BAIE y garde son plein régime pendant que la PIERRE y est éclaircie (`AFFINITE_*`).
 
       // La densité : un nœud tous les PAS_SEMIS, modulée par les bosquets. Les nœuds se
       // GROUPENT — un tapis uniforme n'est pas un pays, c'est une moquette.
@@ -569,8 +686,8 @@ export function placeZoneNodes(c: CarteZonee): ResourceNode[] {
   const vieux = teaserDuBoisNoir(c, occupeesPlus(), id)
   if (vieux) { nodes.push(vieux); id += 1 }
 
-  // ── LA PROFONDEUR PORTE DU JEU (spec §2quater R40) — en QUEUE : aucun nœud d'avant ne bouge ──
-  const baies = baiesDeLisiere(c, occupeesPlus(), id)
+  // ── LES BAIES DE LA CLAIRIÈRE (spec §2quater R40 révisé) — en QUEUE : rien d'avant ne bouge ──
+  const baies = baiesDeLaClairiere(c, occupeesPlus(), id)
   for (const b of baies) nodes.push(b)
   id += baies.length
   const coeurs = champignonsDuCoeur(c, occupeesPlus(), id)
@@ -593,6 +710,10 @@ export function placeZoneNodes(c: CarteZonee): ResourceNode[] {
   const blocs = blocsDesAffleurements(c, occupeesPlus(), id)
   for (const b of blocs) nodes.push(b)
   id += blocs.length
+  // ── LE CHAOS DE BLOCS — les galeries et ce qui les borde (2026-08-27) ──
+  const chaosNodes = blocsDuChaos(c, chaos, occupeesDuChaos(), id)
+  for (const b of chaosNodes) nodes.push(b)
+  id += chaosNodes.length
   const carrieres = carrieresDeLEnceinte(c, occupeesPlus(), id)
   for (const q of carrieres) nodes.push(q)
   id += carrieres.length
@@ -600,10 +721,83 @@ export function placeZoneNodes(c: CarteZonee): ResourceNode[] {
   for (const f of futs) nodes.push(f)
   id += futs.length
 
+  // ── LE GLANAGE (spec `glanage.md`) — il lit TOUTES les passes de bois et de pierre, donc
+  //    il passe après elles ; mais AVANT la pêche, dont la spec exige les ids en queue (P5).
+  //    Aucun conflit possible avec elle : un coin de pêche est sur l'eau, le glanage au sec. ──
+  const glane = glanageAuSol(c, nodes, occupeesPlus(), id)
+  for (const g of glane) nodes.push(g)
+  id += glane.length
+
   // ── LES COINS DE PÊCHE (spec `peche.md` P3-P5) — en QUEUE : aucun nœud d'avant ne bouge ──
   const coins = coinsDePeche(c, occupeesPlus(), id)
   for (const k of coins) nodes.push(k)
   return nodes
+}
+
+/**
+ * ═══ LE GLANAGE (spec `glanage.md` G3 — sel 'GLAN') ═══
+ *
+ * Ce qui TRAÎNE au pied de ce qu'on ne peut pas encore couper : une branche tombée sous un
+ * arbre, une pierre détachée d'un rocher. Depuis que le bois et la pierre exigent un outil de
+ * fortune, **c'est par ici que passe la première hache** — donc cette passe n'est pas de la
+ * saveur, c'est l'amorçage de toute la rampe.
+ *
+ * DEUX PROPRIÉTÉS, et elles décident du reste :
+ *
+ * - **Elle est ANCRÉE sur un nœud parent**, jamais semée à plat. Le butin se cherche là où
+ *   l'œil l'attend, et il APPREND la règle : on trouve du bois au pied des arbres qu'on ne
+ *   sait pas encore abattre. Un semis indépendant aurait saupoudré des branches sur le pré nu.
+ * - **Elle est la DERNIÈRE de la file**, et son tirage est positionnel (`hash2` sur la tuile
+ *   du parent, sel neuf). Elle ne consomme aucun flux, elle ne décale aucun nœud d'avant : les
+ *   passes existantes rendent, au nœud près, ce qu'elles rendaient. Ce qui change, c'est le
+ *   COMPTE total — ce que les gardes de budget mesurent, et qu'on assume.
+ *
+ * Le parent choisit sa matière : l'arbre (ordinaire ou vieux fût) donne du bois, le rocher et
+ * le bloc donnent de la pierre. Le butin se pose sur une tuile VOISINE libre — jamais sur le
+ * parent, qui est occupé et souvent bloquant (un bloc remplit sa tuile) : on se baisse À CÔTÉ.
+ */
+const GLANAGE_PARENTS: Partial<Record<NodeType, NodeType>> = {
+  tree: 'branche_au_sol',
+  old_tree: 'branche_au_sol',
+  rock: 'pierre_au_sol',
+  bloc: 'pierre_au_sol',
+}
+
+/** Les huit voisins, dans un ordre FIXE — le tirage choisit par où on commence, pas qui gagne. */
+const VOISINS_8: readonly (readonly [number, number])[] = [
+  [0, -1], [1, -1], [1, 0], [1, 1], [0, 1], [-1, 1], [-1, 0], [-1, -1],
+]
+
+function glanageAuSol(c: CarteZonee, parents: readonly ResourceNode[], occupees: Set<number>, idStart: number): ResourceNode[] {
+  const { width, height, terrain } = c.map
+  const out: ResourceNode[] = []
+  let id = idStart
+  const salt = (c.graphe.seed ^ 0x474c414e) | 0 // 'GLAN'
+  const tour = (c.graphe.seed ^ 0x474c4132) | 0 // 'GLA2' — par où l'on commence à chercher la place
+  for (const p of parents) {
+    const type = GLANAGE_PARENTS[p.type]
+    if (type === undefined) continue
+    if (hash2(p.tx, p.ty, salt) >= CONTENU.GLANAGE_CHANCE) continue
+    // La place : le premier voisin libre à partir d'un départ tiré. Sans ce décalage, tout le
+    // glanage du monde se collerait au NORD de son parent — une régularité qui se voit.
+    const depart = Math.min(VOISINS_8.length - 1, Math.floor(hash2(p.tx, p.ty, tour) * VOISINS_8.length))
+    for (let k = 0; k < VOISINS_8.length; k++) {
+      const [dx, dy] = VOISINS_8[(depart + k) % VOISINS_8.length]!
+      const tx = p.tx + dx
+      const ty = p.ty + dy
+      if (tx < 0 || ty < 0 || tx >= width || ty >= height) continue
+      const i = ty * width + tx
+      if (c.rampe[i] || occupees.has(i)) continue
+      const t = terrain[i]!
+      if (t === TERRAIN_ROAD) continue // une sente est un sol qu'on balaie (t0-exploration R18)
+      if (!terrainAdmet(type, t)) continue
+      out.push({ id, type, tx, ty, stock: NODE_DEFS[type].stock, regrowAt: 0 })
+      occupees.add(i)
+      id += 1
+      break
+    }
+  }
+  return out
 }
 
 /**
@@ -795,6 +989,192 @@ function sommetDeButte(c: CarteZonee, r: { x: number; y: number; w: number; h: n
   return sommet
 }
 
+/**
+ * ═══ L'ÉCHINE D'UNE BUTTE, ET LA DISTANCE QUI EN DESCEND (Alexis, 2026-08-27) ═══
+ *
+ * *« une colonne vertébrale pour la butte avec les pierres les plus hautes, un dégradé de 2 ou 3
+ * tuiles vers les pierres basses, puis le minerai / petite pierre autour. »*
+ *
+ * Deux champs, tirés de la seule forme du pierrier — donc rien d'arbitraire à régler :
+ *   `prof`    la distance au premier non-pierrier (BFS 4-connexe depuis le bord de la butte) ;
+ *   `dEchine` la distance à l'ÉCHINE, elle-même définie comme les **maxima locaux** de `prof`.
+ *
+ * ⚠ **L'ÉCHINE N'EST PAS « LES TUILES PROFONDES », ET LA DIFFÉRENCE EST TOUT LE SUJET.** Un seuil
+ * sur `prof` (« ≥ 5 ») rend un DISQUE, pas une vertèbre : mesuré, 49 tuiles sur une butte de
+ * profondeur 6 et **110** sur une de profondeur 9 — une tache, et qui double d'une graine à
+ * l'autre. Les maxima locaux, eux, rendent une LIGNE : **28 à 50 tuiles par butte, en 3 à 5
+ * morceaux dont un principal de 21 à 38** (mesuré, seed 2026). C'est la crête de la carte de
+ * distance, soit exactement le squelette de la forme.
+ *
+ * Des `Map` locales, jamais un champ de `SimState` : donnée de GÉNÉRATION, elle meurt avec la
+ * passe (même statut que `Affleurement`).
+ */
+const BUTTE = {
+  /** L'épaisseur de la marche intermédiaire, en tuiles — « un dégradé de 2 ou 3 tuiles vers les
+   *  pierres basses » (Alexis). Sur l'échine : la pierre HAUTE ; jusqu'ici : la moyenne ;
+   *  au-delà : la basse. */
+  DEGRADE: 2,
+  /** Au-delà de cette distance à l'échine, on est « autour » : c'est là que se posent le minerai
+   *  et les petites pierres. Un cran plus loin que le dégradé, pour que la couronne commence là
+   *  où la pierre haute s'est déjà tue. */
+  COURONNE: 4,
+} as const
+
+interface ReliefDeButte {
+  /** Distance à l'échine, en tuiles. 0 = sur l'échine. */
+  dEchine: Map<number, number>
+}
+
+/** Les paquets 8-connexes d'un ensemble de tuiles — l'échine en sort en 3 à 10 morceaux. */
+function composantesDeLEchine(tuiles: readonly number[], width: number): number[][] {
+  const dedans = new Set(tuiles)
+  const vu = new Set<number>()
+  const out: number[][] = []
+  for (const i of tuiles) {
+    if (vu.has(i)) continue
+    const pile = [i]
+    vu.add(i)
+    const amas: number[] = []
+    while (pile.length) {
+      const k: number = pile.pop()!
+      amas.push(k)
+      const kx = k % width
+      for (let dy = -1; dy <= 1; dy++) {
+        for (let dx = -1; dx <= 1; dx++) {
+          if (dx === 0 && dy === 0) continue
+          const v = k + dy * width + dx
+          if (Math.abs((v % width) - kx) > 1) continue
+          if (dedans.has(v) && !vu.has(v)) { vu.add(v); pile.push(v) }
+        }
+      }
+    }
+    out.push(amas)
+  }
+  return out
+}
+
+function reliefDeLaButte(c: CarteZonee, r: { x: number; y: number; w: number; h: number }): ReliefDeButte {
+  const { width, height, terrain } = c.map
+  const estRocaille = (i: number): boolean => i >= 0 && i < width * height && terrain[i] === TERRAIN_SCREE
+
+  // ① LA PROFONDEUR — BFS multi-source depuis le bord du pierrier.
+  const prof = new Map<number, number>()
+  const file: number[] = []
+  for (let ty = r.y; ty < r.y + r.h; ty++) {
+    for (let tx = r.x; tx < r.x + r.w; tx++) {
+      const i = ty * width + tx
+      if (tx < 0 || ty < 0 || tx >= width || ty >= height || !estRocaille(i)) continue
+      // Le bord du monde compte comme bord de butte (une butte n'y touche jamais en pratique,
+      // mais la garde évite qu'un `i - 1` déborde d'une ligne à l'autre).
+      const bord = tx === 0 || ty === 0 || tx + 1 >= width || ty + 1 >= height
+        || !estRocaille(i - 1) || !estRocaille(i + 1) || !estRocaille(i - width) || !estRocaille(i + width)
+      if (bord) { prof.set(i, 1); file.push(i) }
+    }
+  }
+  for (let t = 0; t < file.length; t++) {
+    const k = file[t]!
+    const p = prof.get(k)! + 1
+    const kx = k % width
+    for (const v of [kx > 0 ? k - 1 : -1, kx + 1 < width ? k + 1 : -1, k - width, k + width]) {
+      if (v < 0 || !estRocaille(v) || prof.has(v)) continue
+      prof.set(v, p)
+      file.push(v)
+    }
+  }
+
+  // ② L'ÉCHINE — les maxima locaux de `prof` (4-connexe). Une tuile au moins aussi profonde que
+  //    ses quatre voisines : la crête de la carte de distance.
+  const echine: number[] = []
+  for (const [i, p] of prof) {
+    const ix = i % width
+    let cime = true
+    for (const v of [ix > 0 ? i - 1 : -1, ix + 1 < width ? i + 1 : -1, i - width, i + width]) {
+      if (v >= 0 && (prof.get(v) ?? 0) > p) { cime = false; break }
+    }
+    if (cime) echine.push(i)
+  }
+
+  // ②bis ON RELIE LES VERTÈBRES — et c'est ce qui fait la différence entre une colonne et des
+  //      morceaux. Les maxima locaux d'une forme quelconque sortent en 3 à 10 paquets (mesuré :
+  //      une butte de la graine 7 n'avait pas une arête de plus de **5 tuiles**, quand la garde
+  //      en demande 10). On raccorde donc chaque paquet au plus gros par un **chemin de crête**.
+  //
+  //      ⚠ **PAS LE PLUS COURT CHEMIN — celui qui reste le plus HAUT.** Un plus court chemin
+  //      couperait au travers du flanc, et l'échine descendrait vers le bord pour rejoindre sa
+  //      voisine : on obtiendrait une croix, pas une arête. C'est un maximin (on maximise la
+  //      profondeur MINIMALE du trajet), le même patron que le chemin de goulot d'un cours d'eau,
+  //      et il passe par les cols les plus élevés — ce que fait une ligne de crête.
+  const morceaux = composantesDeLEchine(echine, width)
+  if (morceaux.length > 1) {
+    let tronc = morceaux[0]!
+    for (const m of morceaux) if (m.length > tronc.length) tronc = m
+    const dansEchine = new Set(echine)
+    // Un maximin multi-source depuis le tronc : `meilleur[i]` = la plus haute « profondeur du
+    // point le plus bas » d'un chemin de i au tronc ; `parent[i]` reconstruit ce chemin.
+    const meilleur = new Map<number, number>()
+    const parent = new Map<number, number>()
+    const reste = new Set<number>(prof.keys())
+    for (const i of tronc) meilleur.set(i, prof.get(i)!)
+    for (;;) {
+      // La tuile ouverte au meilleur score — balayage linéaire : une butte fait 320 tuiles, un
+      // tas coûterait plus à lire qu'à exécuter.
+      let k = -1
+      let best = -Infinity
+      for (const i of reste) {
+        const v = meilleur.get(i)
+        if (v !== undefined && v > best) { best = v; k = i }
+      }
+      if (k < 0) break
+      reste.delete(k)
+      const kx = k % width
+      for (const v of [kx > 0 ? k - 1 : -1, kx + 1 < width ? k + 1 : -1, k - width, k + width]) {
+        if (v < 0 || !reste.has(v)) continue
+        const score = Math.min(best, prof.get(v)!)
+        if (score > (meilleur.get(v) ?? -Infinity)) { meilleur.set(v, score); parent.set(v, k) }
+      }
+    }
+    for (const m of morceaux) {
+      if (m === tronc) continue
+      // Depuis la tuile la plus profonde du morceau, on remonte jusqu'à retomber sur l'échine.
+      let depart = m[0]!
+      for (const i of m) if (prof.get(i)! > prof.get(depart)!) depart = i
+      let pas = parent.get(depart)
+      let garde = 0
+      while (pas !== undefined && !dansEchine.has(pas) && garde++ < 4096) {
+        dansEchine.add(pas)
+        echine.push(pas)
+        pas = parent.get(pas)
+      }
+    }
+  }
+
+  // ③ LA DISTANCE À L'ÉCHINE — BFS multi-source depuis elle, dans le pierrier seul.
+  const dEchine = new Map<number, number>()
+  const file2: number[] = []
+  for (const i of echine) { dEchine.set(i, 0); file2.push(i) }
+  for (let t = 0; t < file2.length; t++) {
+    const k = file2[t]!
+    const d = dEchine.get(k)! + 1
+    const kx = k % width
+    for (const v of [kx > 0 ? k - 1 : -1, kx + 1 < width ? k + 1 : -1, k - width, k + width]) {
+      if (v < 0 || !prof.has(v) || dEchine.has(v)) continue
+      dEchine.set(v, d)
+      file2.push(v)
+    }
+  }
+  return { dEchine }
+}
+
+/**
+ * LA TAILLE D'UN BLOC DE BUTTE — dérivée de sa place dans la butte, plus du hash de sa tuile.
+ * `BUTTE.DEGRADE` dit l'épaisseur de la marche intermédiaire (« un dégradé de 2 ou 3 tuiles »).
+ */
+function tailleSurLaButte(dEchine: number | undefined): 0 | 1 | 2 {
+  if (dEchine === undefined) return 0
+  if (dEchine === 0) return 2
+  return dEchine <= BUTTE.DEGRADE ? 1 : 0
+}
+
 /** Les tuiles de rocaille LIBRES d'une butte (hors rampe, hors occupées, hors sommet). */
 function rocailleLibre(c: CarteZonee, r: { x: number; y: number; w: number; h: number }, type: NodeType, occupees: Set<number>): number[] {
   const { width, height, terrain } = c.map
@@ -832,11 +1212,299 @@ function mineraisDesAffleurements(c: CarteZonee, occupees: Set<number>, id: numb
   const out: ResourceNode[] = []
   for (const aff of c.affleurements) {
     const type: NodeType = aff.ressource === 'fer' ? 'iron_vein' : 'coal_seam'
-    const libres = rocailleLibre(c, aff.rect, type, occupees)
+    // ⚠ **LE MINERAI SE POSE SUR LES GALERIES, ET C'EST LA MOITIÉ DE LA DEMANDE** — « on doit
+    // pouvoir spawn des nodes accessibles dans la structure » (Alexis). Depuis que la butte est
+    // un dédale, une tuile prise au hasard a une chance sur trois d'être au milieu d'une masse :
+    // le filon serait VISIBLE et jamais atteignable sans creuser. On restreint donc les
+    // candidates au vide du réseau — la même règle que la pierre du chaos, qui ne se pose que
+    // sur ses joints. Repli SANS filtre si la butte n'offre aucune galerie libre : le plancher
+    // R51 (« le compte ne cède jamais ») prime sur le confort d'accès.
+    const toutes = rocailleLibre(c, aff.rect, type, occupees)
+    const { dEchine } = reliefDeLaButte(c, aff.rect)
+    const surGalerie = toutes.filter((i) => {
+      const tx = i % width
+      return galerieDuChaos(tx, (i - tx) / width, c.graphe.seed, MINE)
+    })
+    // ── ET LE MINERAI SE POSE « AUTOUR » (Alexis) : dans la COURONNE, au-delà du dégradé de
+    //    pierre haute. L'anneau S'ÉLARGIT s'il ne tient pas le compte — c'est lui qui cède, pas
+    //    les galeries : un filon un peu trop près de l'échine se voit à peine, un filon emmuré
+    //    ment sur toute la mine (R6sexies ③, 100 % sans tolérance).
+    const couronne = surGalerie.filter((i) => (dEchine.get(i) ?? 99) > BUTTE.COURONNE)
+    // ⚠ **LE REPLI SE COMPARE À ZÉRO, PAS À LA CIBLE.** Écrit `surGalerie.length >= AFFL_NOEUDS`,
+    // il tenait tant que la cible valait 4 ; à 12, toute butte offrant onze galeries libres
+    // basculerait sur `toutes` — donc poserait des filons au milieu des masses, ce que
+    // R6sexies ③ interdit à 100 %. On préfère TOUJOURS les galeries, quitte à en poser moins que
+    // demandé : un filon de moins se voit à peine, un filon emmuré ment sur toute la mine. Le
+    // plancher R51 reste tenu par A28, qui compte à l'échelle du pays et non de la butte.
+    const libres = couronne.length >= CONTENU.AFFL_NOEUDS ? couronne
+      : surGalerie.length > 0 ? surGalerie : toutes
     const n = Math.min(CONTENU.AFFL_NOEUDS, libres.length)
     if (n === 0) continue
     const depart = Math.floor(hash2(aff.rect.x, aff.rect.y, (c.graphe.seed ^ 0x4146464c) | 0) * (libres.length / n))
     semerSurLaButte(libres, n, depart, type, width, occupees, id + out.length, out)
+  }
+  return out
+}
+
+/**
+ * ═══ LE CHAOS DE BLOCS — la caillasse qui BLOQUE, et la galerie qui la traverse ═══
+ *
+ * *(Demande d'Alexis, 2026-08-27 : « ok pour qu'il y ait des gros blocs de pierre, mais dans ce
+ * cas, on les fait correspondre à la DA, on leur donne un hitbox pour éviter qu'on passe au
+ * travers (tu les mets sur une tuile complète), et tu donnes une structure logique pour les
+ * boulders si on doit en faire un mine labyrinthe (on doit pouvoir spawn des nodes accessibles
+ * dans la structure). »)*
+ *
+ * Le `boulders` s'appelait « chaos de blocs » et n'en portait aucun : ses rochers étaient du
+ * DÉCOR CLIENT (`BIOME_CLUTTER[TERRAIN_BOULDERS].props: ['boulder']`), donc on les traversait.
+ * On ne dessine donc plus des blocs, **on en pose** — le type `bloc` existait déjà pour les
+ * buttes, avec sa boîte pleine tuile (`blockHalfSub: 4`), ses trois tailles (`tailleDeBloc`) et
+ * son art (`nd-bloc-<taille>`, flush, sans offset). Une seule règle, deux adresses.
+ *
+ * ═══ LA STRUCTURE : DES GALERIES D'ABORD, LES BLOCS DANS CE QUI RESTE ═══
+ *
+ * On ne sème pas des blocs en espérant qu'il reste un passage — **on trace le passage, puis on
+ * remplit.** Un treillis de galeries ondulées, pas un damier : deux familles de bandes
+ * continues (une par axe), décalées par un champ basse fréquence. Leur continuité tient par
+ * ARITHMÉTIQUE et non par une garde : le décalage varie de `AMPLITUDE / ECHELLE_ONDULATION`
+ * par tuile — cinq neuvièmes d'un dixième — donc une bande ne peut pas se replier sur
+ * elle-même ni se rompre. Chaque bande court d'un bout à l'autre du chaos, les deux familles
+ * se croisent : **tout le vide est d'un seul tenant, et il débouche.** Aucun flood fill, aucun
+ * rattrapage a posteriori.
+ *
+ * ⚠ **ET LES NŒUDS SONT SUR LES GALERIES, PAS DANS LES MASSES.** C'est la seconde moitié de la
+ * demande, et elle ne se tient pas par la chance : le chaos est déclaré STÉRILE pour le semis
+ * commun (le patron des coulées), puis cette passe seule y repose sa pierre — sur les tuiles de
+ * galerie, exactement. Un rocher enfermé dans six tuiles de bloc serait un nœud qu'on VOIT sans
+ * pouvoir l'atteindre : le pire des deux mondes.
+ *
+ * Les masses, elles, sont ÉRODÉES par un second champ ('MASS') : sans lui, un treillis régulier
+ * rendrait des carrés de six sur six — la géométrie même qu'Alexis vient de faire retirer du
+ * terrain. Ce qui borde une galerie doit être aussi déchiqueté que ce qui borde un biome.
+ */
+const CHAOS = {
+  /**
+   * ═══ LA DALLE — le diamètre moyen d'un bloc de lapiaz, en tuiles ═══
+   *
+   * ⚠ **LE TREILLIS EST MORT, ET C'EST UN CHANGEMENT DE GÉNÉRATEUR, PAS DE RÉGLAGE.**
+   * *(Alexis, 2026-08-27, troisième passe : « j'ai toujours l'impression de voir un damier dans
+   * les boulders, toutes les chemins sont trop alignés. »)* Les deux passes précédentes avaient
+   * élargi le méandre (±2,5 → ±7) et fait respirer la largeur des allées — en pure perte, et
+   * pour une raison qui n'était pas une question de degré : **un `modulo` sur x et un `modulo`
+   * sur y SONT une grille**, quelle que soit l'amplitude qu'on leur ajoute. Deux familles de
+   * bandes perpendiculaires à période fixe se lisent comme un damier même déformées, parce que
+   * l'œil retrouve les deux directions et le pas.
+   *
+   * Le réseau se dérive donc d'un **VORONOÏ** : un semis de sites sur une grille jitterée, et la
+   * galerie est le JOINT entre deux dalles voisines (`F2 − F1 < largeur`, le patron de Worley).
+   * Il n'y a plus de direction privilégiée, plus de période, et les dalles ont des formes et des
+   * tailles toutes différentes. C'est aussi, littéralement, la géométrie d'un lapiaz : des
+   * dalles de calcaire séparées par des fissures d'élargissement.
+   *
+   * ═══ ET LA CONNEXITÉ TIENT TOUJOURS PAR CONSTRUCTION ═══
+   *
+   * Le graphe des arêtes d'un diagramme de Voronoï est **connexe dans le plan** : chaque dalle
+   * est entièrement ceinte de joint, et deux joints voisins se rejoignent à un sommet. La bande
+   * `F2 − F1 < largeur` est un voisinage de ce graphe, donc connexe elle aussi, et elle atteint
+   * la rive du chaos puisqu'elle entoure la dalle de rive. Aucun flood fill, aucun rattrapage.
+   * MESURÉ après coup, trois graines : le vide du chaos est joint au reste du monde à
+   * **99,91 · 100,00 · 99,94 %**.
+   *
+   * 11 tuiles : la dalle qui redonne la densité validée par Alexis — **31 · 27 · 27 % du cœur
+   * muré**, contre 31 · 29 · 27 % du treillis d'avant. « Laisse comme c'est » porte sur le
+   * dédale, pas sur la façon de le dessiner.
+   */
+  DALLE: 11,
+  /**
+   * LA LARGEUR DU JOINT, en tuiles — de `JOINT_MIN` (un passage) à `JOINT_MAX` (une placette),
+   * tirée d'un champ basse fréquence ('LARG'). Une largeur constante était l'autre moitié du
+   * « trop aligné » : toutes les allées se ressemblaient, donc l'œil les comptait.
+   *
+   * ⚠ Ce sont des demi-largeurs de la BANDE `F2 − F1`, pas des largeurs en tuiles : près d'une
+   * arête, `F2 − F1` croît d'environ deux quand on s'écarte d'une tuile. Un joint à 2 fait donc
+   * une allée d'à peu près deux tuiles — le pincement reste franchissable.
+   */
+  JOINT_MIN: 2,
+  JOINT_MAX: 4.5,
+  /** L'échelle du champ de largeur, en tuiles. Longue : une allée garde sa largeur sur
+   *  plusieurs écrans, elle ne clignote pas d'une tuile à l'autre. */
+  ECHELLE_LARGEUR: 70,
+  /** L'échelle de l'érosion des masses, en tuiles. Fine : c'est du grain de bord, pas une
+   *  seconde géographie. */
+  ECHELLE_MASSE: 7,
+  /** Au-dessus : du bloc. Sous : de la rocaille qu'on enjambe. */
+  SEUIL_MASSE: 0.42,
+  /**
+   * ⚠ `EROSION_PORTEE` A ÉTÉ RETIRÉE le 2026-08-27 — *« retire l'érosion de boulders dans tous
+   * les cas »* (Alexis). Elle faisait décroître la masse vers l'extérieur (seuil montant à 1 sur
+   * la première tuile de rive), pour répondre à un « trop damier » qui venait en réalité d'AILLEURS
+   * : la découpe au motif de 8 du lapiaz, et le treillis à modulo des galeries. Les deux sont
+   * corrigés — la frontière se lit à la tuile, les galeries sont les joints d'un Voronoï — et
+   * l'érosion n'avait plus qu'un effet : maigrir le chaos sur sa rive, donc l'ouvrir là où il
+   * devrait justement se présenter comme un mur. Le chaos est PLEIN jusqu'à son bord ; c'est le
+   * contour du lapiaz qui fait sa forme, pas une décroissance de densité.
+   */
+} as const
+
+/**
+ * LES DEUX PLUS PROCHES SITES — `F1` et `F2` de Worley, sur une grille jitterée de `DALLE`.
+ *
+ * Un site par case de la grille, posé par `hash2` : la grille garantit la COUVERTURE (pas de
+ * dalle géante), le jitter tue sa régularité. Neuf cases suffisent — un site ne peut pas être
+ * plus proche depuis plus loin que sa case et ses voisines.
+ *
+ * Pur : `+ - * /`, `floor`, `sqrt`, `hash2`.
+ */
+function deuxPlusProches(tx: number, ty: number, sel: number, dalle: number): { f1: number; f2: number } {
+  const S = dalle
+  const gx = Math.floor(tx / S)
+  const gy = Math.floor(ty / S)
+  const selY = (sel ^ 0x5a5a5a5a) | 0
+  let f1 = Infinity
+  let f2 = Infinity
+  for (let dy = -1; dy <= 1; dy++) {
+    for (let dx = -1; dx <= 1; dx++) {
+      const cx = gx + dx
+      const cy = gy + dy
+      const ex = (cx + hash2(cx, cy, sel)) * S - tx
+      const ey = (cy + hash2(cx, cy, selY)) * S - ty
+      const d = Math.sqrt(ex * ex + ey * ey)
+      if (d < f1) { f2 = f1; f1 = d } else if (d < f2) { f2 = d }
+    }
+  }
+  return { f1, f2 }
+}
+
+/**
+ * LA TUILE EST-ELLE SUR UNE GALERIE ? Fonction PURE de la tuile — le patron de `tailleDeBloc` :
+ * la sim en fait le vide, et n'importe quel instrument peut la relire sans rien transporter.
+ *
+ * Une galerie est le JOINT entre deux dalles : l'endroit où l'on est à peu près à égale distance
+ * des deux sites les plus proches. Pas de modulo, donc pas de période ; pas d'axe, donc pas de
+ * direction privilégiée.
+ */
+export function galerieDuChaos(tx: number, ty: number, seed: number, taille: TailleDuReseau = CHAOS): boolean {
+  const { f1, f2 } = deuxPlusProches(tx, ty, (seed ^ 0x4a4f494e) | 0 /* 'JOIN' */, taille.DALLE)
+  const larg = taille.JOINT_MIN
+    + fbm2(tx, ty, CHAOS.ECHELLE_LARGEUR, (seed ^ 0x4c415247) | 0 /* 'LARG' */)
+      * (taille.JOINT_MAX - taille.JOINT_MIN)
+  return f2 - f1 < larg
+}
+
+/**
+ * ═══ LE CHAMP DU CHAOS — la MÊME géométrie, rendue CONTINUE pour que l'ART puisse la dessiner ═══
+ *
+ * *(Décision d'Alexis, 2026-08-27, tranchée sur planche : « go 3 » — le sol du lapiaz dessine
+ * ses dalles.)*
+ *
+ * `galerieDuChaos` répond oui/non À LA TUILE : c'est ce dont la sim a besoin, et rien de plus.
+ * Le SOL, lui, se cuit à 16 px par tuile (`render/paves.ts`) — peindre l'allée depuis un booléen
+ * par tuile rendrait des bords carrés, très exactement la géométrie que R6bis vient de retirer
+ * du terrain. Cette fonction rend donc l'ÉCART NORMALISÉ au joint, lisible à la FRACTION de
+ * tuile :
+ *
+ *   **0** au cœur de l'allée · **1** à son bord exact · **> 1** sur la dalle.
+ *
+ * ⚠ **ELLE NE REDÉFINIT PAS LE PRÉDICAT, ET C'EST DÉLIBÉRÉ.** Réécrire `galerieDuChaos` en
+ * `champDuChaos(...) < 1` serait la même règle en algèbre exacte — mais pas au bit près : une
+ * division peut arrondir une tuile de frontière d'un côté à l'autre, et une galerie qui bascule
+ * DÉPLACE un nœud, donc décale le flux du PRNG seedé (roche-mère R9, mémoire « RNG fragile au
+ * décompte d'entités »). Les deux vivent donc côte à côte, et une garde EXHAUSTIVE affirme leur
+ * accord sur les VRAIES tuiles du monde joué (`chaos.test.ts`) — le patron de `tailleDeBloc` :
+ * une seule vérité, deux lecteurs.
+ *
+ * Pure : `+ - * /`, `sqrt`, `hash2`, `fbm2`.
+ */
+export function champDuChaos(fx: number, fy: number, seed: number, taille: TailleDuReseau = CHAOS): number {
+  const { f1, f2 } = deuxPlusProches(fx, fy, (seed ^ 0x4a4f494e) | 0 /* 'JOIN' */, taille.DALLE)
+  const larg = taille.JOINT_MIN
+    + fbm2(fx, fy, CHAOS.ECHELLE_LARGEUR, (seed ^ 0x4c415247) | 0 /* 'LARG' */)
+      * (taille.JOINT_MAX - taille.JOINT_MIN)
+  return (f2 - f1) / larg
+}
+
+/**
+ * ═══ LE RÉSEAU SE MET À L'ÉCHELLE DE SON CONTENANT (Alexis, 2026-08-27 : « le même traitement
+ * […] sur les mines de charbon et de fer ») ═══
+ *
+ * Le dédale du lapiaz se déploie sur des milliers de tuiles ; une butte d'affleurement en fait
+ * **320**. La dalle de 11 y poserait deux ou trois sites — pas un dédale, du bruit. On ne
+ * grossit pas la butte pour autant (ce serait déplacer `AFFL_ECART`, les lectures de distance
+ * de `poi.ts` et l'écartement gardé par A30) : c'est le RÉSEAU qui change de pas.
+ *
+ * ⚠ **LES DEUX RÉGLAGES SE TIENNENT PAR UN RAPPORT, PAS PAR DEUX NOMBRES.** La part murée
+ * dépend de `JOINT / DALLE` : halver la dalle sans halver le joint noierait la butte sous le
+ * vide (la bande `F2 − F1 < 2` autour de dalles de 5 couvre presque tout). `MINE` est donc
+ * `CHAOS` à l'échelle 1/2, au rapport près — et c'est ce qui lui rend la densité validée.
+ */
+export interface TailleDuReseau { readonly DALLE: number; readonly JOINT_MIN: number; readonly JOINT_MAX: number }
+
+export const MINE: TailleDuReseau = {
+  DALLE: 5.5,
+  JOINT_MIN: 1,
+  JOINT_MAX: 2.25,
+}
+
+/**
+ * LES TUILES DU CHAOS — le `boulders` marchable de la Racine, hors seuil et hors sente.
+ * Calculé UNE fois en tête de `placeZoneNodes` : le semis commun s'en sert comme masque
+ * stérile, cette passe comme domaine. Un seul prédicat, deux lecteurs.
+ */
+function tuilesDuChaos(c: CarteZonee): number[] {
+  // ⚠ **LE MONDE RÉDUIT SEUL, ET LA RACINE SEULE** — deux gardes, deux raisons distinctes.
+  //
+  // ① Le plan `'vallee'` DORT (A31 : « zéro nœud neuf »), et son `boulders` ne vient pas d'un
+  //    lapiaz : c'est la palette de quatre zones de marge (Karst, Aiguilles, Gouffre,
+  //    Cendrière), dont le contenu est explicitement différé. Mesuré sans cette garde :
+  //    **83 234 blocs** sur le plan complet — un budget de nœuds doublé pour un pays que
+  //    personne ne joue.
+  // ② Dans le monde réduit, tout le `boulders` EST le cœur d'un lapiaz, donc de la Racine
+  //    (`poserLesLapiaz` ne peint que chez elle). La garde de zone dit la même chose que la
+  //    géologie — elle ne restreint rien, elle l'ÉCRIT.
+  if ((c.graphe.monde ?? 'vallee') !== 'racine') return []
+  const { width, height, terrain } = c.map
+  const out: number[] = []
+  for (let ty = 0; ty < height; ty++) {
+    for (let tx = 0; tx < width; tx++) {
+      const i = ty * width + tx
+      if (terrain[i] !== TERRAIN_BOULDERS) continue
+      if (c.rampe[i]) continue
+      if (c.zone[i] !== c.graphe.racine) continue
+      out.push(i)
+    }
+  }
+  return out
+}
+
+/**
+ * LES BLOCS DU CHAOS, et la pierre de ses galeries. Deux nœuds, une passe : ce qui bouche et ce
+ * qui se ramasse se décident au même endroit, donc ils ne peuvent pas se contredire.
+ */
+function blocsDuChaos(c: CarteZonee, chaos: readonly number[], occupees: Set<number>, id: number): ResourceNode[] {
+  const { width } = c.map
+  const out: ResourceNode[] = []
+  const seed = c.graphe.seed
+  const selMasse = (seed ^ 0x4d415353) | 0 /* 'MASS' */
+  const selPierre = (seed ^ 0x43485052) | 0 /* 'CHPR' */
+  for (const i of chaos) {
+    if (occupees.has(i)) continue
+    const tx = i % width
+    const ty = (i - tx) / width
+    if (galerieDuChaos(tx, ty, seed)) {
+      // LA GALERIE PORTE LA RÉCOLTE. Même densité que le semis commun de la zone y posait avant
+      // qu'elle ne devienne stérile — on n'a pas appauvri le chaos, on a DÉPLACÉ sa pierre là
+      // où l'on peut aller la chercher.
+      if (hash2(tx, ty, selPierre) >= CONTENU.CHAOS_PART_PIERRE) continue
+      occupees.add(i)
+      out.push({ id: id + out.length, type: 'rock', tx, ty, stock: NODE_DEFS.rock.stock, regrowAt: 0 })
+      continue
+    }
+    // LA MASSE, sans décroissance de rive (l'érosion est tombée le 2026-08-27) : un seul seuil,
+    // le même au bord et au cœur. Le chaos se présente donc comme un mur, et c'est le contour du
+    // lapiaz — dentelé à la tuile — qui lui donne sa forme.
+    if (fbm2(tx, ty, CHAOS.ECHELLE_MASSE, selMasse) <= CHAOS.SEUIL_MASSE) continue
+    occupees.add(i)
+    out.push({ id: id + out.length, type: 'bloc', tx, ty, stock: BLOC_STOCKS[tailleDeBloc(tx, ty)], regrowAt: 0 })
   }
   return out
 }
@@ -867,40 +1535,48 @@ function blocsDesAffleurements(c: CarteZonee, occupees: Set<number>, id: number)
   const { width, terrain } = c.map
   const out: ResourceNode[] = []
   for (const aff of c.affleurements) {
-    const libres = rocailleLibre(c, aff.rect, 'bloc', occupees)
-    const n = Math.min(CONTENU.AFFL_BLOCS, libres.length)
-    if (n === 0) continue
+    // ══ LA BUTTE EST UN DÉDALE, PLUS UN SEMIS (Alexis, 2026-08-27) ══════════════════════════
+    //
+    // Elle posait `AFFL_BLOCS` plots par pas constant dans la liste row-major, chacun s'agrégeant
+    // un voisin une fois sur deux : une dizaine de cailloux épars sur 320 tuiles. C'est
+    // exactement ce que le chaos du lapiaz faisait avant qu'il devienne une structure, et la
+    // demande est la même — *« le même traitement sur les frontières et la structure sur les
+    // mines de charbon et de fer »*. Le réseau est donc le MÊME générateur (`galerieDuChaos`),
+    // à l'échelle de `MINE` : ce qui n'est pas galerie et que le champ de masse retient devient
+    // un bloc. Le compte cesse d'être un réglage — il DÉRIVE de la surface de la butte.
+    // ── ET LA PIERRE SE RANGE PAR HAUTEUR (Alexis, 2026-08-27) : la HAUTE sur l'échine, la
+    //    moyenne sur `BUTTE.DEGRADE` tuiles de descente, la basse au-delà. La taille cesse
+    //    d'être un hash de la tuile pour devenir une PLACE dans la butte — elle est donc portée
+    //    par le nœud (`size`), le client ne pouvant pas redériver la forme de la butte.
     const sel = (c.graphe.seed ^ 0x424c4f43) | 0 /* 'BLOC' */
-    const depart = Math.floor(hash2(aff.rect.y, aff.rect.x, sel) * (libres.length / n))
     const sommet = sommetDeButte(c, aff.rect)
-    const pose = (i: number): void => {
-      occupees.add(i)
-      const tx = i % width
-      const ty = (i - tx) / width
-      out.push({ id: id + out.length, type: 'bloc', tx, ty, stock: BLOC_STOCKS[tailleDeBloc(tx, ty)], regrowAt: 0 })
-    }
-    for (let k = 0; k < n; k++) {
-      const i = libres[Math.min(libres.length - 1, depart + Math.floor((k * libres.length) / n))]!
-      if (occupees.has(i)) continue
-      pose(i)
-      // « DE DIFFÉRENTES TAILLES » AU NIVEAU DE LA COLLISION (précision d'Alexis : un bloc =
-      // une tuile PLEINE) : un bloc sur deux s'agrège un voisin de rocaille — des MASSES de
-      // 1 à 2 tuiles pleines (3 quand deux chaos se touchent), pas un semis de plots isolés.
-      const tx = i % width
-      const ty = (i - tx) / width
-      if (hash2(tx, ty, (sel ^ 0x11) | 0) < 0.5) {
-        const dirs = [i + 1, i + width, i - 1, i - width]
-        const d0 = Math.floor(hash2(tx, ty, (sel ^ 0x22) | 0) * 4)
-        for (let d = 0; d < 4; d++) {
-          const j = dirs[(d0 + d) % 4]!
-          const jx = j % width
-          const jy = (j - jx) / width
-          if (jx < aff.rect.x || jx >= aff.rect.x + aff.rect.w || jy < aff.rect.y || jy >= aff.rect.y + aff.rect.h) continue
-          if (j === sommet || occupees.has(j) || c.rampe[j]) continue
-          if (terrain[j] !== TERRAIN_SCREE) continue
-          pose(j)
-          break
+    const { dEchine } = reliefDeLaButte(c, aff.rect)
+    for (let ty = aff.rect.y; ty < aff.rect.y + aff.rect.h; ty++) {
+      for (let tx = aff.rect.x; tx < aff.rect.x + aff.rect.w; tx++) {
+        const i = ty * width + tx
+        if (i === sommet || occupees.has(i) || c.rampe[i]) continue
+        if (terrain[i] !== TERRAIN_SCREE) continue
+        const size = tailleSurLaButte(dEchine.get(i))
+        // ⚠ **L'ÉCHINE PORTE SA PIERRE, QUOI QU'EN DISENT LE RÉSEAU ET LE CHAMP DE MASSE.**
+        //
+        // Sans cette exception, la colonne vertébrale existait dans la géométrie et disparaissait
+        // à la pose : mesuré, la crête fait 28 à 50 tuiles d'un seul tenant sur 13 à 38, mais
+        // **8 à 42 % seulement portaient un bloc** — les galeries la traversaient, le champ de
+        // masse en retirait encore — et la plus longue chaîne de pierres hautes retombait à
+        // **1 à 8**. Sur une butte, 36 tuiles de crête continue rendaient UN bloc haut. On avait
+        // dessiné une vertèbre et posé du gravier.
+        //
+        // Le prix, chiffré avant de le prendre : **+16 à +37 blocs**, part murée **18-36 % →
+        // 29-41 %**, et la butte se trouve coupée en deux — ce qui est très exactement la
+        // « crique » demandée, deux anses de part et d'autre d'une arête. Le minerai, lui, ne
+        // paie rien : il est en COURONNE, donc à l'extérieur de la crête, joignable des deux
+        // côtés — **12/12 vérifié avant et après**.
+        if (size !== 2) {
+          if (galerieDuChaos(tx, ty, c.graphe.seed, MINE)) continue
+          if (fbm2(tx, ty, CHAOS.ECHELLE_MASSE, sel) <= CHAOS.SEUIL_MASSE) continue
         }
+        occupees.add(i)
+        out.push({ id: id + out.length, type: 'bloc', tx, ty, stock: BLOC_STOCKS[size], regrowAt: 0, size })
       }
     }
   }
@@ -1121,23 +1797,32 @@ export function stockDArbre(map: WorldMap, tx: number, ty: number): number {
 }
 
 /**
- * LES BAIES DE LISIÈRE (spec §2quater R40 — sel 'LISI'). Le bois se CUEILLE au bord : la
- * bande de lisière (1 ≤ d ≤ PROF_LISIERE) porte des buissons à baies. Passe appendue en
- * queue, tirage positionnel — patron 'FIBR' : la table `CONTENUS` n'est pas touchée, aucun
- * nœud existant ne bouge, le flux de génération n'est pas décalé.
+ * LES BAIES DE LA CLAIRIÈRE (spec §2quater R40, révisé le 2026-08-25 — sel 'LISI' conservé).
+ *
+ * **C'ÉTAIT « LES BAIES DE LISIÈRE ».** R40 disait : le massif porte du jeu, sa bande de bord
+ * (1 ≤ d ≤ PROF_LISIERE) donne les baies, son cœur donne les champignons. La règle garde sa
+ * NATURE — *la baie pousse là où la lumière touche le sol du massif* — et change d'ADRESSE :
+ * Alexis a retiré la baie du biome forêt, et la lisière est du bois. La trouée ne l'est pas.
+ *
+ * Ce n'est pas un appauvrissement de R40, c'est sa moitié claire qui trouve enfin un lieu à
+ * elle : une bande de lisière est un bord qu'on longe, une clairière est un endroit où l'on
+ * entre. Le pré qui touche le bois, lui, gardait déjà son plein régime par
+ * `AFFINITE_BAIE_OUVERT` — l'idée « la baie veut le bord » n'a rien perdu.
+ *
+ * Passe appendue en queue, tirage positionnel — patron 'FIBR' : la table `CONTENUS` n'est pas
+ * touchée, aucun nœud existant ne bouge, le flux de génération n'est pas décalé.
  */
-function baiesDeLisiere(c: CarteZonee, occupees: Set<number>, idStart: number): ResourceNode[] {
+function baiesDeLaClairiere(c: CarteZonee, occupees: Set<number>, idStart: number): ResourceNode[] {
   const { width, height, terrain } = c.map
   const out: ResourceNode[] = []
   let id = idStart
-  const salt = (c.graphe.seed ^ 0x4c495349) | 0 // 'LISI'
+  const salt = (c.graphe.seed ^ 0x4c495349) | 0 // 'LISI' — le sel de la lisière, conservé
   for (let ty = 0; ty < height; ty++) {
     for (let tx = 0; tx < width; tx++) {
       const i = ty * width + tx
       if (c.rampe[i] || occupees.has(i)) continue // le seuil ne nourrit rien ; tuile prise
-      if (!estLisiere(profondeurAt(c.map, tx, ty))) continue // prof ≥ 1 ⇒ boisé, Racine
-      if (!terrainAdmet('berry_bush', terrain[i]!)) continue
-      if (hash2(tx, ty, salt) >= CONTENU.BAIES_LISIERE) continue
+      if (terrain[i] !== TERRAIN_CLAIRIERE) continue
+      if (hash2(tx, ty, salt) >= CONTENU.BAIES_CLAIRIERE) continue
       out.push({ id, type: 'berry_bush', tx, ty, stock: NODE_DEFS.berry_bush.stock, regrowAt: 0 })
       occupees.add(i)
       id += 1
@@ -1358,9 +2043,11 @@ function arbresDeLaRacine(c: CarteZonee, occupees: Set<number>, idStart: number)
       if (t === TERRAIN_GRASS) {
         pas = CONTENU.ARBRES_PRE_PAS; socle = 0.5; ampli = 1.2
       } else if (t === TERRAIN_FOREST || t === TERRAIN_OLD_GROWTH || t === TERRAIN_PINE || t === TERRAIN_LARCH || t === TERRAIN_WILLOW) {
-        // LES CLAIRIÈRES : décidées par BLOC (cf. `clairiereForet`) → des trouées RECTANGULAIRES.
-        // Le MÊME champ sert au rendu du sol (qui y verdit) : une source unique, sinon les
-        // clairières des arbres et celles du sol divergeraient.
+        // LES CLAIRIÈRES ne sont plus testées ici (2026-08-25) : elles ne sont plus un champ
+        // qu'on consulte, elles sont un TERRAIN (`clairieres.ts`), et `clairiere` n'est dans
+        // aucune des deux listes ci-dessus — une tuile de clairière tombe donc au `continue`
+        // final, comme la fleuraie. Une seule source, le terrain : le semis, le rendu du sol,
+        // le clutter et la pénombre ne peuvent plus diverger, ils lisent tous la même case.
         //
         // La FUTAIE, c'est la forêt, le Bois Noir (old_growth, spec t0-exploration R9) et — depuis
         // le 2026-07-29 — les BOSQUETS DE CRÊTE (pin, mélèze : le bois SEC des dos, demande
@@ -1372,7 +2059,6 @@ function arbresDeLaRacine(c: CarteZonee, occupees: Set<number>, idStart: number)
         // SANS CETTE LIGNE le bosquet de crête serait un APLAT DE COULEUR : `terrainAdmet` laisse
         // bien le pin porter des arbres, mais à la densité commune du semis (un nœud toutes les
         // 36 tuiles) — on aurait peint un bois qui n'en est pas un.
-        if (clairiereForet(c.graphe.seed, tx, ty) > 0) continue // ce bloc est une clairière : nu
         pas = CONTENU.ARBRES_FORET_PAS; socle = 0.85; ampli = 0.4
       } else {
         continue // ni herbe ni futaie : ce sol garde sa nature (fleuraie, lande, accent…)
@@ -1389,28 +2075,6 @@ function arbresDeLaRacine(c: CarteZonee, occupees: Set<number>, idStart: number)
     }
   }
   return out
-}
-
-/**
- * LE CHAMP DES CLAIRIÈRES DE LA FORÊT — une SOURCE UNIQUE, et c'est le point.
- *
- * Rend 0 sous le couvert plein, et une valeur CROISSANTE vers le CŒUR d'une clairière (la marge
- * au-dessus du seuil : plus on est au centre, plus le bruit est haut). La décision se prend par
- * BLOC (le motif de 8 tuiles) : une clairière est donc un rectangle, et des blocs voisins se
- * fondent en clairières plus grandes, irrégulières.
- *
- * Deux consommateurs, un seul calcul (comme `poiClearings`) : le semis d'arbres l'ÉVIDE (`> 0` →
- * bloc nu) ; le rendu l'exempte de la pénombre du couvert et de l'assombrissement de cœur (la
- * trouée est une chambre de lumière DANS la masse). Le carré est donc PORTEUR : il est celui du
- * semis, et la lumière ne peut pas contredire les arbres. Pur et déterministe (`fbm2`, `+ - * /`).
- */
-export function clairiereForet(seed: number, tx: number, ty: number): number {
-  const M = RELIEF.MOTIF
-  const bx = Math.floor(tx / M) * M + M / 2
-  const by = Math.floor(ty / M) * M + M / 2
-  const s = ((seed ^ 0x51ab3f77) ^ 0x6f2a) | 0
-  const v = fbm2(bx, by, CONTENU.CLAIRIERE_ECHELLE, s)
-  return v > CONTENU.CLAIRIERE_SEUIL ? v - CONTENU.CLAIRIERE_SEUIL : 0
 }
 
 /** Le type de nœud d'une tuile : la table de sa zone, filtrée par ce que le terrain admet. */

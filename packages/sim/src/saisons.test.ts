@@ -262,13 +262,19 @@ describe('A8 — le crépuscule mobile ne perd pas son événement', () => {
     }
   })
 
-  it('la nuit d’hiver dure presque le double de la nuit d’été', () => {
+  it('la nuit d’hiver dure DEUX FOIS la nuit d’été — les heures de la France', () => {
+    // ⚠ L'ÉQUINOXE NE VAUT PLUS 0,625 (décision d'Alexis, 2026-08-26) : le soleil de la vallée
+    // est celui de Paris, et un équinoxe, par définition, partage le jour en deux. L'ancienne
+    // valeur — quinze heures de jour un 21 mars — n'était le soleil de nulle part.
     const nuitDe = (jour: number): number => TICKS_PER_CYCLE - dayTicksPourJour(jour)
-    expect(nuitDe(105) / nuitDe(45)).toBeGreaterThan(1.8)
-    // …et l'équinoxe vaut EXACTEMENT la valeur d'avant la refonte : la moyenne annuelle ne
-    // bouge pas, donc rien de ce qui se compte en cycles n'est recalibré par accident.
-    expect(dayTicksPourJour(15)).toBe(Math.round(TICKS_PER_CYCLE * 0.625))
-    expect(dayTicksPourJour(75)).toBe(Math.round(TICKS_PER_CYCLE * 0.625))
+    expect(nuitDe(105) / nuitDe(45)).toBeGreaterThan(2)
+    // L'équinoxe partage le cycle : douze heures de jour, douze de nuit, à dix minutes près
+    // (les dix minutes que valent la réfraction et le demi-diamètre du soleil — c'est pour ça
+    // qu'un « équinoxe » réel donne 12 h 10 de jour, et non 12 h 00).
+    for (const equinoxe of [15, 75]) {
+      const heuresDeJour = (dayTicksPourJour(equinoxe) / TICKS_PER_CYCLE) * 24
+      expect(heuresDeJour, `équinoxe au jour ${equinoxe}`).toBeCloseTo(12 + 10 / 60, 1)
+    }
   })
 
   it('la part de nuit reste continue quelle que soit la longueur du jour', () => {

@@ -154,7 +154,10 @@ export function applyDebugAction(state: SimState, entityId: number, action: Debu
     // hourOfCycle dérive de (tick + cycleOffset) : pour viser une heure sans
     // toucher au tick (qui porte le calendrier, les cooldowns, les wind-ups),
     // on ne bouge que la phase.
-    const target = cycleOffsetForStartHour(clamp(action.hour, 0, 24))
+    // ⚠ LE LEVER SUIT LA SAISON (2026-08-26) : « viser 9 h » se compte depuis le lever du jour
+    // COURANT, pas depuis un 6 h de convention — sinon le saut d'heure du debug déraperait de
+    // plus de deux heures entre juin et décembre.
+    const target = cycleOffsetForStartHour(clamp(action.hour, 0, 24), jourDeSaison(state))
     state.cycleOffset = (((target - state.tick) % TICKS_PER_CYCLE) + TICKS_PER_CYCLE) % TICKS_PER_CYCLE
   } else if (action.type === 'debug_set_season_day') {
     // ON ATTERRIT JUSTE AVANT LE JOUR VISÉ, PAS DESSUS — et ce détail est tout le correctif.

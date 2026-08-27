@@ -32,7 +32,7 @@ const GRAND_FROID = coeurDe(4)
 function plaineA(jour: number, heure: number, seed = 1): SimState {
   const state = createSim(seed, {
     map: createEmptyMap(96, 96, TERRAIN_GRASS),
-    cycleOffset: cycleOffsetForStartHour(heure),
+    cycleOffset: cycleOffsetForStartHour(heure, 1),
     calendarScale: 1,
   })
   state.tick = (jour - 1) * TICKS_PER_SEASON_DAY

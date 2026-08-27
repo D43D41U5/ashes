@@ -88,6 +88,36 @@ import { METEO, largeurDe, meteoIntensityAt, type MeteoAspect, type MeteoFront }
 export const GRAIN_PX = 4
 
 /**
+ * ═══ LE FLOCON DE MOITIÉ (« diviser la taille des flocons de neige par 2 pour toutes les
+ * tailles déjà existantes », Alexis 2026-08-26) ═══
+ *
+ * La taille d'un flocon, c'est `taille × grainPx` — et `taille` était `[1, 2]` cellules de
+ * `GRAIN_PX`, soit **4 px monde au loin et 8 de près**. On divise donc **le GRAIN**, pas la
+ * taille, et c'est le seul des deux qui marche :
+ *
+ *   • `taille: [0.5, 1]` sortirait de la grille — `traineeEnRuns` compte en CELLULES entières
+ *     et `fillRect` recevrait des demi-cellules. Une demi-cellule n'est pas un pixel d'art.
+ *   • `grainPx: 2` divise les DEUX tailles par deux d'un seul coup (2 px au loin, 4 de près)
+ *     en gardant `taille: [1, 2]` entier — et 2 divise encore 4 comme 16 (`TILE_PX`), donc la
+ *     quantification reste alignée sur la grille de l'art : le flocon se pose seulement sur
+ *     une grille deux fois plus fine, il n'est pas lissé pour autant.
+ *
+ * ⚠ **LA TRAÎNÉE, ELLE, NE RÉTRÉCIT PAS** : `trainee` est un nombre de SECONDES de mouvement,
+ * converti en cellules à l'usage — MESURÉ, le blizzard passe de 3 cellules de 4 px (12 px
+ * monde) à 5 de 2 px (10 px), l'écart n'étant que l'arrondi à la cellule. C'est ce qu'on
+ * veut : le flocon MAIGRIT, il ne raccourcit pas sa course. Seule son épaisseur est divisée
+ * par deux. Ce que ça COÛTE, mesuré aussi : le blizzard rend **2 rectangles par flocon au
+ * lieu d'1** (l'escalier a deux fois plus de marches sur une grille deux fois plus fine) —
+ * la neige et le vent de cendre en restent à 1, et le plafond du profil (`PLAFOND` dans
+ * `meteo-particules.test.ts`) tient.
+ *
+ * ⚠ **LE VENT DE CENDRE GARDE `GRAIN_PX`** : ce ne sont pas des flocons, ce sont des
+ * escarbilles — la demande dit « les flocons de neige ». C'est aussi ce qui les SÉPARE
+ * désormais à silhouette égale : le grain de cendre est deux fois plus gros que le flocon.
+ */
+export const GRAIN_FLOCON = GRAIN_PX / 2
+
+/**
  * LE PLAFOND DE PARTICULES VIVANTES — le seul garde-fou qui compte.
  *
  * Cette machine n'a PAS de GPU (swiftshader, rendu logiciel) : c'est la raison pour laquelle
@@ -125,8 +155,9 @@ export interface ProfilChute {
    * d'un flocon plus sûrement que sa couleur.
    *
    * Le grain de l'art n'est pas UN nombre, c'est DEUX (demande d'Alexis, 2026-08-19) :
-   *   • `GRAIN_PX` (4) — la grille des FX de LUMIÈRE, celle du Feu et de la foudre. Le flocon
-   *     et le blizzard y restent : leur silhouette carrée est validée, on n'y touche pas.
+   *   • `GRAIN_PX` (4) — la grille des FX de LUMIÈRE, celle du Feu et de la foudre. Le vent de
+   *     cendre y reste. Le flocon et le blizzard sont descendus à `GRAIN_FLOCON` (2) le
+   *     2026-08-26 : même silhouette carrée, deux fois plus petite (voir `GRAIN_FLOCON`).
    *   • **1 px monde** — la grille de l'ART LUI-MÊME, la plus fine qui existe (les tuiles sont
    *     peintes à 16 px). La goutte y descend : c'est ce qui fait la FINESSE. Ce reste du
    *     pixel art — bords francs, positions entières, NEAREST — simplement aligné sur une
@@ -188,10 +219,11 @@ export const PROFILS: Record<MeteoAspect, ProfilChute | null> = {
   brouillard: null,
   // LA NEIGE : sept fois plus lente que la pluie, et ELLE FLOTTE — l'oscillation latérale
   // vaut les deux tiers de sa vitesse de chute : le flocon dérive visiblement en descendant.
-  // (INCHANGÉE — sa silhouette carrée est validée : elle garde le grain de 4 px des FX.)
+  // SA SILHOUETTE RESTE CARRÉE, elle est seulement DEUX FOIS PLUS PETITE (Alexis 2026-08-26,
+  // voir `GRAIN_FLOCON`) : 2 px monde au loin, 4 de près, au lieu de 4 et 8.
   neige: {
     vLimite: 1.2, g: 6, vent: 0.35, flotte: 0.8, flottePuls: 1.7,
-    trainee: 0, grainPx: GRAIN_PX, taille: [1, 2], densite: 0.55,
+    trainee: 0, grainPx: GRAIN_FLOCON, taille: [1, 2], densite: 0.55,
     teinte: [250, 252, 255], alpha: [0.42, 0.82],
     hauteur: [8, 26],
   },
@@ -213,12 +245,14 @@ export const PROFILS: Record<MeteoAspect, ProfilChute | null> = {
   },
   // LE BLIZZARD RASE : son vent (11) dépasse sa chute (2,1) — la trajectoire est PLUS
   // HORIZONTALE QUE VERTICALE, et c'est ça qu'on lit, pas la couleur. Traînée courte
-  // (0,06 s ≈ 3 cellules) : un flocon chassé reste un flocon, il ne devient pas une barre —
-  // la leçon MESURÉE du shader, où LX = 7 peignait des rubans de 120 px.
-  // (INCHANGÉ — même raison que la neige : le flocon chassé reste un carré de 4 px.)
+  // (0,06 s ≈ 5 cellules de 2 px, soit ~12 px monde — la MÊME longueur qu'avant, comptée sur
+  // une grille deux fois plus fine) : un flocon chassé reste un flocon, il ne devient pas une
+  // barre — la leçon MESURÉE du shader, où LX = 7 peignait des rubans de 120 px.
+  // Comme la neige, il MAIGRIT de moitié (Alexis 2026-08-26, voir `GRAIN_FLOCON`) : sa course
+  // ne change pas, son épaisseur passe de 4/8 px monde à 2/4.
   blizzard: {
     vLimite: 2.1, g: 9, vent: 11, flotte: 0.5, flottePuls: 2.4,
-    trainee: 0.06, grainPx: GRAIN_PX, taille: [1, 2], densite: 0.66,
+    trainee: 0.06, grainPx: GRAIN_FLOCON, taille: [1, 2], densite: 0.66,
     teinte: [252, 253, 255], alpha: [0.44, 0.86],
     hauteur: [10, 30],
   },
@@ -389,6 +423,55 @@ export function creerRng(graine: number): () => number {
  * `hors` reçoit les runs (tableau réutilisé, remis à zéro par l'appelant) ; rend le nombre
  * de runs écrits.
  */
+/**
+ * ═══ LE SOUFFLE D'UN CIEL, PROJETÉ SUR LE CAP DU VENT ═══
+ *
+ * `Profil.vent` n'est PAS une direction : c'est la FORCE latérale de ce ciel (0,8 pour la pluie,
+ * 11 pour le blizzard qui rase). Elle pointait l'est, toujours — le rideau penchait donc à
+ * droite quel que soit le front, et l'aiguille du HUD le contredisait une fois sur deux.
+ *
+ * On la projette désormais sur le cap. La vue est de DESSUS, donc l'écran n'a pas d'axe
+ * vertical à donner à la chute : c'est l'axe `y` qui porte À LA FOIS le nord-sud du monde et la
+ * chute. La projection en tient compte (décision d'Alexis, 2026-08-25) :
+ *
+ *   • la composante EST-OUEST penche le rideau — c'est ce qu'on voit ;
+ *   • la composante NORD-SUD change la VITESSE DE CHUTE. Un vent du nord (qui pousse vers le
+ *     bas de l'écran) raidit et accélère la chute ; un vent du sud la ralentit, et le
+ *     flottement reprend le dessus.
+ *
+ * Ce qu'on gagne, et c'est le point : le blizzard garde sa violence sous TOUS les caps — il
+ * rase sous un vent d'ouest, il martèle sous un vent du nord. Aucun plancher de râclage, donc
+ * aucun mensonge sur la direction : ce que le rideau montre, l'aiguille le dit.
+ *
+ * ⚠ LE PLANCHER DE CHUTE N'EST PAS UN CONFORT. Sans lui, un blizzard plein sud (vent 11 contre
+ * une chute de 2,1) rendrait une vitesse NÉGATIVE : de la neige qui remonte. Le plancher garde
+ * la chute vers le bas, toujours.
+ */
+export interface Souffle {
+  /** Ce qui pousse par le travers, en tuiles/s (positif = vers l'est). */
+  readonly lateral: number
+  /** Ce qui tombe, en tuiles/s — toujours > 0. */
+  readonly chute: number
+}
+
+/** Quelle part du vent nord-sud entre dans la chute. Pleine, un blizzard plein nord tomberait
+ *  cinq fois plus vite que sa vitesse limite : la neige deviendrait des barres. */
+export const PART_CHUTE = 0.6
+/** Le plancher de chute, en part de `vLimite` — voir l'en-tête : sans lui, la neige remonte. */
+export const PLANCHER_CHUTE = 0.4
+
+export function souffleDuCiel(profil: ProfilChute, cap: { x: number; y: number }): Souffle {
+  const n = Math.sqrt(cap.x * cap.x + cap.y * cap.y)
+  // CALME PLAT (le vecteur nul) : rien ne penche, et la chute est celle de l'air immobile.
+  // C'est un monde qui n'a pas de vent — le même contrat que `windSway` et les serpentins.
+  if (n < 0.001) return { lateral: 0, chute: profil.vLimite }
+  const chute = profil.vLimite + (profil.vent * cap.y * PART_CHUTE) / n
+  return {
+    lateral: (profil.vent * cap.x) / n,
+    chute: Math.max(profil.vLimite * PLANCHER_CHUTE, chute),
+  }
+}
+
 export function traineeEnRuns(
   cxTete: number,
   cyTete: number,
@@ -470,6 +553,9 @@ export class ChampParticules {
     this.cible = 0
   }
 
+  /** Le cap du vent de la dernière image — posé par `update`, lu par `naitre`. */
+  private cap: { x: number; y: number } = { x: 1, y: 0 }
+
   /**
    * UNE IMAGE. `dt` en secondes (borné par l'appelant) ; `vue` est le cadre visible en
    * tuiles, `bande` et `rampe` disent où il pleut.
@@ -480,8 +566,13 @@ export class ChampParticules {
      *  le plafond du rideau descend d'autant. Les 650 sont un budget de MACHINE — il se
      *  partage, il ne s'empile pas par système. */
     reservees = 0,
+    /** LE CAP DU VENT (pas besoin qu'il soit unitaire) — voir `souffleDuCiel`. Par défaut
+     *  l'est : c'est le rideau d'avant la projection, au bit près, et c'est ce qui laisse
+     *  tous les montages d'avant inchangés. */
+    cap: { x: number; y: number } = { x: 1, y: 0 },
   ): void {
     this.t += dt
+    this.cap = cap
     const { doux, froid } = melange
     if (!doux && !froid) { this.vider(); return }
 
@@ -536,17 +627,23 @@ export class ChampParticules {
     this.cible = cibleDe[0] + cibleDe[1]
 
     // ── L'INTÉGRATION ──
+    // Le souffle projeté, UNE FOIS par image et par espèce : la goutte et le flocon n'ont ni
+    // la même masse ni la même prise au vent, mais ils sont dans le même air.
+    const souffleDoux = doux ? souffleDuCiel(doux, this.cap) : null
+    const souffleFroid = froid ? souffleDuCiel(froid, this.cap) : null
     const vivantesDe: [number, number] = [0, 0]
     for (const p of this.particules) {
       if (!p.vive) continue
       // SON PROFIL, pas celui du ciel : une goutte et un flocon tombent côte à côte, chacun
       // avec sa masse et son air. C'est toute la différence entre du grésil et un fondu.
       const profil = (p.froid ? froid : doux) ?? doux ?? froid!
+      const souffle = (p.froid ? souffleFroid : souffleDoux) ?? souffleDoux ?? souffleFroid!
       const k = profil.g / profil.vLimite // le coefficient de traînée — le même air pour les deux axes
-      // dv/dt = g·(1 − v/vLimite) : la gravité pousse, la traînée retient, l'équilibre est
-      // à vLimite. Le même k emporte l'axe horizontal vers le vent — c'est le même air.
-      p.vy += (profil.g - k * p.vy) * dt
-      p.vx += k * (profil.vent - p.vx) * dt
+      // dv/dt = k·(cible − v) : l'air retient, l'équilibre est à la cible. Sur y c'est la
+      // CHUTE (`vLimite` corrigée du vent nord-sud), sur x le souffle latéral — même k, même
+      // air. À cap plein est, `k · vLimite` vaut exactement `g` : le rideau d'avant, au bit près.
+      p.vy += k * (souffle.chute - p.vy) * dt
+      p.vx += k * (souffle.lateral - p.vx) * dt
       // LE FLOTTEMENT : une vitesse latérale de plus, avec la PHASE PROPRE de la particule.
       const osc = profil.flotte === 0 ? 0 : profil.flotte * Math.sin(profil.flottePuls * this.t + p.phase)
       p.x += (p.vx + osc) * dt
@@ -657,6 +754,7 @@ export class ChampParticules {
   ): void {
     const profil = froidVoulu ? melange.froid : melange.doux
     if (!profil) { p.vive = false; return }
+    const souffle = souffleDuCiel(profil, this.cap)
     // LA PART DE CETTE ESPÈCE ICI — elle multiplie l'intensité dans le rejet, si bien que la
     // densité SPATIALE de chaque troupeau suit le champ de neige comme elle suit déjà la rampe
     // du front. C'est là, et nulle part ailleurs, que la géographie du mélange entre.
@@ -680,15 +778,15 @@ export class ChampParticules {
     // LE FLUX EST CELUI DE SON ESPÈCE : le flocon chassé entre par le côté, la goutte par le
     // haut, et chacune garde son débit. Rien à mélanger ici — les deux troupeaux sont pilotés
     // séparément, c'est tout l'intérêt.
-    const fluxHaut = profil.vLimite * w
-    const fluxCote = Math.abs(profil.vent) * h
+    const fluxHaut = souffle.chute * w
+    const fluxCote = Math.abs(souffle.lateral) * h
     for (let essai = 0; essai < 6; essai++) {
       let x: number
       let y: number
       // Le tirage au flux ne tranche QUE le cas `flux` : ailleurs le bord est nommé.
       const bord: Entree = par !== 'flux' ? par
         : this.rng() * (fluxHaut + fluxCote) < fluxHaut ? 'haut'
-          : profil.vent >= 0 ? 'ouest' : 'est'
+          : souffle.lateral >= 0 ? 'ouest' : 'est'
       if (bord === 'volume') {
         x = ax0 + this.rng() * w
         y = ay0 + this.rng() * h
@@ -713,8 +811,8 @@ export class ChampParticules {
       // Elle entre à sa vitesse d'équilibre (à un cheveu près) : une particule qui
       // démarrerait à zéro traverserait le haut du cadre en accélérant, et l'œil verrait
       // le plafond « pleuvoir plus lentement » que le sol.
-      p.vy = profil.vLimite * (0.82 + 0.18 * this.rng())
-      p.vx = profil.vent * (0.85 + 0.3 * this.rng())
+      p.vy = souffle.chute * (0.82 + 0.18 * this.rng())
+      p.vx = souffle.lateral * (0.85 + 0.3 * this.rng())
       p.phase = this.rng() * Math.PI * 2
       p.cran = this.rng() < 0.42 ? 1 : 0
       p.chute = profil.hauteur[0] + this.rng() * (profil.hauteur[1] - profil.hauteur[0])

@@ -1,11 +1,12 @@
 import { describe, expect, it } from 'vitest'
 import { BALANCE, COMBAT, NODE_DEFS, TERRAIN_GRASS } from './balance'
 import { spawnMonster } from './monsters'
-import { compteEncyclo, connuEncyclo } from './encyclopedie'
+import { compteEncyclo, connuEncyclo, extremeEncyclo, VERBES_DE_RELEVE } from './encyclopedie'
 import type { ResourceNode } from './economy'
 import { createEmptyMap } from './map'
 import { createSim, spawnEntity, step, type PlayerAction, type SimState } from './sim'
-import { TICKS_PER_SEASON_DAY, phaseForDay, jourDeSaison } from './time'
+import { TICKS_PER_CYCLE, TICKS_PER_SEASON_DAY, phaseForDay, jourDeSaison } from './time'
+import { baselineTemperature } from './temperature'
 import { grantItems } from './village'
 
 /**
@@ -45,8 +46,11 @@ describe('le carnet de l’encyclopédie', () => {
     const id = spawnEntity(sim, 10.5, 10.5)
     step(sim, [])
     const carnet = moi(sim, id).carnet ?? []
-    // Rien de ramassé, rien de fabriqué, rien de mangé, rien d'abattu.
-    expect(carnet.filter((l) => !l.k.startsWith('vecu:'))).toEqual([])
+    // Rien de ramassé, rien de fabriqué, rien de mangé, rien d'abattu. (Les RELEVÉS de saison
+    // — le plus froid, le plus chaud endurés — ne sont pas des gestes : ils s'écrivent du seul
+    // fait d'être là, comme `vecu`.)
+    const gestes = carnet.filter((l) => !['vecu', ...VERBES_DE_RELEVE].some((v) => l.k.startsWith(`${v}:`)))
+    expect(gestes).toEqual([])
     // …mais on est bien quelque part dans l'année, et on la vit.
     expect(compteEncyclo(carnet, 'vecu', String(phaseForDay(jourDeSaison(sim))))).toBe(1)
   })
@@ -56,6 +60,9 @@ describe('le carnet de l’encyclopédie', () => {
     const sim = monde([tree])
     const id = spawnEntity(sim, 10.5, 10.5)
     step(sim, [])
+    // La hache EN MAIN : le bois exige un outil (spec `glanage.md` G1).
+    grantItems(sim, id, { crude_axe: 1 })
+    moi(sim, id).activeSlot = moi(sim, id).inventory.findIndex((sl) => sl !== null && sl.item === 'crude_axe')
     act(sim, id, { type: 'harvest', nodeId: tree.id })
     const carnet = moi(sim, id).carnet!
     const bois = compteEncyclo(carnet, 'recolte', 'wood')
@@ -177,6 +184,39 @@ describe('le carnet de l’encyclopédie', () => {
     expect(compteEncyclo(moi(sim, id).carnet, 'vecu', String(depart))).toBe(2)
   })
 
+  it('LE FROID ET LE CHAUD ENDURÉS se relèvent tout seuls — et ce sont des EXTRÊMES, pas une moyenne', () => {
+    const sim = monde()
+    const id = spawnEntity(sim, 10.5, 10.5)
+    step(sim, [])
+    const phase = String(phaseForDay(jourDeSaison(sim)))
+    const carnet = () => moi(sim, id).carnet ?? []
+    const froid0 = extremeEncyclo(carnet(), 'froid', phase)
+    const chaud0 = extremeEncyclo(carnet(), 'chaud', phase)
+    expect(froid0).toBeDefined()
+    expect(chaud0).toBe(froid0) // un seul relevé : les deux bornes se touchent
+
+    // ON TRAVERSE UN CYCLE ENTIER. La nuit passe forcément sous le jour : les bornes s'écartent,
+    // et elles ENCADRENT tout ce qui a été relevé (c'est ça, un extrême).
+    for (let i = 0; i < TICKS_PER_CYCLE; i++) step(sim, [])
+    const froid = extremeEncyclo(carnet(), 'froid', phase)!
+    const chaud = extremeEncyclo(carnet(), 'chaud', phase)!
+    expect(froid).toBeLessThan(chaud)
+    expect(froid).toBeLessThanOrEqual(froid0!)
+    expect(chaud).toBeGreaterThanOrEqual(chaud0!)
+    // Le relevé encadre bien la température du lieu, à tout instant du cycle.
+    for (let i = 0; i < 40; i++) {
+      step(sim, [])
+      const t = baselineTemperature(sim, moi(sim, id).x, moi(sim, id).y)
+      expect(t).toBeGreaterThanOrEqual(froid - 0.05)
+      expect(t).toBeLessThanOrEqual(chaud + 0.05)
+    }
+    // ⚠ ET UN RELEVÉ N'EST PAS UNE RENCONTRE. `chaud:3` porte des DEGRÉS : seul, il ne doit
+    // rien rendre « connu ». (Sans la garde de `connuEncyclo`, une saison relevée ferait parler
+    // toute entrée dont l'id est « 3 » — le jour où un objet s'appellera ainsi.)
+    expect(connuEncyclo([{ k: 'chaud:3', n: 11 }], '3')).toBe(false)
+    expect(connuEncyclo([{ k: 'vecu:3', n: 1 }], '3')).toBe(true)
+  })
+
   it('ABATTRE écrit la BÊTE — et pour le tueur seul : voir mourir n’apprend rien', () => {
     const sim = monde()
     const cible = spawnMonster(sim, 'rabbit', 20.5, 20.5)
@@ -232,6 +272,9 @@ describe('le carnet de l’encyclopédie', () => {
     const sim = monde([tree])
     const id = spawnEntity(sim, 10.5, 10.5)
     step(sim, [])
+    // La hache EN MAIN : le bois exige un outil (spec `glanage.md` G1).
+    grantItems(sim, id, { crude_axe: 1 })
+    moi(sim, id).activeSlot = moi(sim, id).inventory.findIndex((sl) => sl !== null && sl.item === 'crude_axe')
     act(sim, id, { type: 'harvest', nodeId: tree.id })
     const avant = compteEncyclo(moi(sim, id).carnet, 'recolte', 'wood')
     expect(avant).toBeGreaterThan(0)

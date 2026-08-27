@@ -64,6 +64,13 @@ Corollaire non négociable : **aucun lieu `reward` ne donne de butin.** Le butin
   - **l'Arche de roche** (`arche`) — révèle **tous les abris inconnus** (`family === 'shelter'`) dans `POI.REVEAL_ARCHE_TILES`. La porte de pierre montre où l'on peut dormir de l'autre côté.
 - **R8 — Déterminisme des révélations.** Distances comparées **au carré** (jamais `Math.hypot`/`sqrt` — invariant #2) ; « le plus proche » départage les égalités exactes par **`poiId` croissant**. Toute entrée dans `knownPois` émet `poi_discovered` — qu'elle vienne d'une visite ou d'une révélation à distance.
 
+- **R8bis — CE QUI SE DIT À L'ÉCRAN QUAND ON ARRIVE (2026-08-25, décision d'Alexis).** Le modèle est celui de *The Long Dark*, et il vient en DEUX MOITIÉS indissociables :
+  - **① Les noms ne flottent plus au-dessus du paysage.** `PoiLayer` suspendait au-dessus de chaque lieu connu une étiquette permanente, qui montait en encre et en échelle à mesure qu'on approchait — jusqu'à cinq ou six noms en l'air en même temps, une couche de HUD posée sur le monde. Elle est **retirée**. Le nom d'un lieu se relit sur la carte, dans sa fiche (R13-R16 d'`annales.md`), et dans la barre haute tant qu'on est dessus.
+  - **② Un lieu FOULÉ s'annonce une fois.** Sur `poi_first_visit` (donc R6 : le contact, pas la vue), le client pose un **carton de découverte** au centre haut de l'écran — surtitre « Nouveau lieu découvert », puis le nom que la sim a baptisé à la génération. Cinq secondes en tout (entrée 0,7 s, tenue 3,4 s, sortie 0,9 s), en file avec les deux autres bandeaux : deux lieux voisins ne s'effacent pas l'un l'autre.
+  - **Pourquoi la VISITE et non la découverte** : `poi_discovered` se déclenche aussi à trente tuiles (la simple vue, R6bis) et **en masse** — un Belvédère en révèle trois cents d'un coup. Un carton par lieu révélé serait une rafale pour des endroits où l'on n'a pas mis les pieds.
+  - **La densité est réglée côté client**, pas en sim : `KINDS_SANS_BANDEAU` (`world/hud-bridge.ts`) tait le **cairn**, et lui seul. Une carte jouée porte ~57 lieux nommés dont **14 cairns** (mesuré, 3 graines) : un jalon de sentier existe pour se répéter, l'annoncer quatorze fois ferait du carton un papier peint. Restent ~43 annonces sur 60 jours.
+  - **⚠ LIMITE, DITE** : la garde est `state.visitedPois`, **globale** (R12) — en LAN, le second arrivant n'aura pas son carton. Juste en Veillée. Le jour où ça compte, c'est un événement de plus à côté de `entity.reachedPois`, côté sim, jamais un `Set` de rattrapage côté client.
+
 ### Le répit — trois lieux qui refont les trajets (R9-R11)
 
 Le répit n'émet aucun événement : c'est un **effet continu de terrain**, comme le `speedFactor`. On y revient autant qu'on veut, c'est le but.

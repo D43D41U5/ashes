@@ -32,6 +32,18 @@ export const TICKS_PER_CYCLE = BALANCE.CYCLE_REAL_MINUTES * 60 * BALANCE.TICK_RA
 export function dayTicksPourJour(jour: number): number {
   return Math.round(TICKS_PER_CYCLE * BALANCE.PART_DE_JOUR(jour))
 }
+/**
+ * L'HEURE MURALE DU LEVER, CE JOUR-LÀ (`BALANCE.LEVER_DU_JOUR`, 2026-08-26) — 06h46 aux
+ * équinoxes, 04h45 au solstice d'été, 08h43 à celui d'hiver, le soleil de Paris.
+ *
+ * ⚠ **MÊME PIÈGE QUE `dayTicksPourJour` : elle se lit sur le jour du DÉBUT DU CYCLE**, jamais
+ * sur le jour courant (`leverAt` s'en charge). Le calendrier bascule en cours de cycle, et une
+ * lecture au jour courant ferait sauter l'horloge murale d'un quart d'heure en pleine
+ * journée — un saut qu'aucun phénomène du monde n'expliquerait.
+ */
+export function leverPourJour(jour: number): number {
+  return BALANCE.LEVER_DU_JOUR(jour)
+}
 /** Durée de la pente du froid nocturne, en ticks — dérivée de `NIGHT_RAMP_HOURS`, jamais écrite. */
 export const NIGHT_RAMP_TICKS = Math.round((TEMPERATURE.NIGHT_RAMP_HOURS / 24) * TICKS_PER_CYCLE)
 /** Ticks par jour de saison à l'échelle 1 (un jour réel). */
@@ -50,7 +62,7 @@ export interface GameTime {
   tick: number
   /**
    * Heure murale du cycle, dans [0, 24) — minuit (0h) au cœur de la nuit, midi en
-   * plein jour. Le cycle démarre à l'aube (CYCLE_DAWN_HOUR) ; avec DAWN=6 et
+   * plein jour. Le cycle démarre au LEVER (`lever`, saisonnier) ; à l'équinoxe
    * DAY_FRACTION=0.625 : jour 6h→21h, nuit 21h→6h (bascule reflétée par `isNight`).
    */
   hourOfCycle: number
@@ -64,6 +76,14 @@ export interface GameTime {
   nuit: number
   /** La longueur du JOUR de ce cycle, en ticks — saisonnière (S6), constante sur le cycle. */
   dayTicks: number
+  /**
+   * L'HEURE MURALE DU LEVER de ce cycle — saisonnière depuis le 2026-08-26, constante sur le
+   * cycle. Elle est PORTÉE plutôt que recalculée par le client parce que le rendu doit se caler
+   * sur EXACTEMENT le même lever que la sim : la recalculer là-bas, c'est rouvrir la porte à
+   * deux chaînes qui ne sont pas à la même heure (le défaut du 2026-08-25 sur `sunDirection`).
+   * Avec `dayTicks`, elle donne le coucher : `lever + 24 × dayTicks / TICKS_PER_CYCLE`.
+   */
+  lever: number
   /** Jour de saison, à partir de 1. Peut dépasser SEASON_DAYS (la Cendre finale). */
   seasonDay: number
   /**
@@ -118,6 +138,12 @@ export function debutDeCycle(state: SimState, tick: number): number {
  *  `dayTicksPourJour`). C'est le tick de crépuscule, en coordonnée de cycle. */
 export function dayTicksAt(state: SimState, tick: number): number {
   return dayTicksPourJour(jourDeSaison(state, debutDeCycle(state, tick)))
+}
+
+/** L'heure murale du lever du cycle où tombe `tick` — constante sur tout le cycle, exactement
+ *  comme `dayTicksAt`, et pour la même raison. */
+export function leverAt(state: SimState, tick: number): number {
+  return leverPourJour(jourDeSaison(state, debutDeCycle(state, tick)))
 }
 
 /** LE CRÉPUSCULE TOMBE-T-IL À CE TICK ? L'écrivain unique de l'égalité — quatre systèmes
@@ -225,8 +251,13 @@ export function calendarScaleForSeasonCycles(cycles: number): number {
  * murale, 0-24). N'affecte que le cycle jour/nuit, jamais le calendrier de
  * saison. Ex. `cycleOffsetForStartHour(0)` → commencer à minuit (en pleine nuit).
  */
-export function cycleOffsetForStartHour(startHour: number): number {
-  const fromDawn = (((startHour - BALANCE.CYCLE_DAWN_HOUR) % 24) + 24) % 24
+export function cycleOffsetForStartHour(startHour: number, jourDeDepart: number): number {
+  // ⚠ LE JOUR EST REQUIS DEPUIS QUE LE LEVER BOUGE (2026-08-26) : « commencer à 9 h » ne veut
+  // plus rien dire sans savoir de quel matin on parle — 9 h, c'est trois heures après le lever
+  // en juin et vingt minutes après en décembre. Le rendre optionnel aurait laissé compiler
+  // tous les appels d'avant en leur donnant silencieusement le lever du jour 1 ; c'est le
+  // compilateur qui énumère les sites, comme pour `seasonDayAtTick`.
+  const fromDawn = (((startHour - leverPourJour(jourDeDepart)) % 24) + 24) % 24
   return Math.round((fromDawn / 24) * TICKS_PER_CYCLE)
 }
 
@@ -287,14 +318,17 @@ export function gameTimeAt(state: SimState, tick: number): GameTime {
   const cycleTick = (tick + state.cycleOffset) % TICKS_PER_CYCLE
   const seasonDay = jourDeSaison(state, tick)
   const dayTicks = dayTicksAt(state, tick)
-  // Le cycle démarre à l'aube ; on décale la phase vers une horloge murale.
-  const wallHour = (cycleTick / TICKS_PER_CYCLE) * 24 + BALANCE.CYCLE_DAWN_HOUR
+  // Le cycle démarre au LEVER — dont l'heure murale suit la saison (2026-08-26) : on décale la
+  // phase du cycle vers l'horloge murale par le lever de CE cycle, pas par une constante.
+  const lever = leverAt(state, tick)
+  const wallHour = (cycleTick / TICKS_PER_CYCLE) * 24 + lever
   return {
     tick,
-    hourOfCycle: wallHour % 24,
+    hourOfCycle: ((wallHour % 24) + 24) % 24,
     isNight: cycleTick >= dayTicks,
     nuit: partDeNuit(cycleTick, dayTicks),
     dayTicks,
+    lever,
     seasonDay,
     jourFrac: fractionDuJourAtTick(tick, state.calendarScale),
     act: actForDay(seasonDay),

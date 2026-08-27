@@ -256,6 +256,125 @@ export function pathToward(
 }
 
 /**
+ * ═══ LE LISSAGE D'UN CHEMIN — la diagonale se gagne APRÈS l'A*, jamais dedans ═══
+ *
+ * *« Les cendreux se déplacent quasi exclusivement en X et Y toujours. »* (Alexis, 2026-08-25.)*
+ *
+ * MESURÉ avant d'écrire une ligne (`tools/diag-cendreux-cap.mts`, graine 2026, nuit du jour 50) :
+ * sur la branche du CHEMIN, **9,9 % des pas seulement sont obliques**. Et la cause n'est pas la
+ * quantification du pas — `moveToward` sait faire huit directions depuis toujours : c'est la
+ * FORME des chemins. L'A* est 4-connexe et son départage d'égalités produit des **L**, pas des
+ * escaliers — relevé sur la carte du banc, du spawn vers (+10, +10) :
+ *
+ *     ESEEEEEEEEESSSSSSSSS      20 pas, 3 virages
+ *     ESEEEEEEEEEEEEEEEEEEESSSSSSSSSSSSSSSSSSS   (vers +20, +20)
+ *
+ * Une goule qui suit ce chemin marche dix tuiles plein est, puis dix plein sud. Corriger le CAP
+ * d'un waypoint à l'autre (ce que fait `descendreLeChamp` pour la horde) ne peut rien y changer :
+ * il n'y a que trois virages sur vingt pas.
+ *
+ * ⚠ ON NE TOUCHE NI À L'A* NI À SON RÉSULTAT COMME CHEMIN — on n'en retire que les jalons dont
+ *   personne n'a besoin. Le corridor est le même, les tuiles retenues sont un SOUS-ENSEMBLE de
+ *   celles que l'A* a élues, et le dernier jalon est toujours gardé : ce qui était joignable le
+ *   reste, mot pour mot. Le lissage n'invente aucune tuile.
+ *
+ * LA RÈGLE (« string pulling », le classique) : depuis le point de départ, on garde le jalon le
+ * plus LOIN qu'on voie en ligne droite, on repart de lui, et ainsi de suite. Ce qui restait entre
+ * les deux n'était qu'un artefact de la grille.
+ *
+ * ═══ CE QUE « VOIR » VEUT DIRE ICI ═══
+ *
+ * Une traversée de tuiles exacte (Amanatides–Woo) — chaque tuile que le segment touche doit être
+ * libre — PLUS la règle du coin : là où le segment passe pile par un coin, les deux tuiles
+ * orthogonales doivent l'être aussi, sinon un corps de `AVATAR_HITBOX_TILES` s'y coincerait.
+ * Conservateur par construction : au pire on garde un jalon de trop, jamais un de moins.
+ *
+ * Le coût est payé UNE FOIS PAR CALCUL DE CHEMIN (pas par tick) et il est petit devant l'A* qui
+ * vient de tourner : le même index d'occupation, et au plus `LISSAGE_PORTEE` tuiles balayées par
+ * jalon. Pur : + - * / et comparaisons (invariant #2 — pas de `hypot`, pas de trigonométrie).
+ */
+const LISSAGE_PORTEE = 16
+
+/** La ligne (x0,y0)→(x1,y1) ne traverse-t-elle que des tuiles libres ? (avec la règle du coin) */
+function vueDegagee(
+  bloque: (tx: number, ty: number) => boolean,
+  x0: number, y0: number, x1: number, y1: number,
+): boolean {
+  let tx = Math.floor(x0)
+  let ty = Math.floor(y0)
+  const finX = Math.floor(x1)
+  const finY = Math.floor(y1)
+  const dx = x1 - x0
+  const dy = y1 - y0
+  const sx = dx > 0 ? 1 : dx < 0 ? -1 : 0
+  const sy = dy > 0 ? 1 : dy < 0 ? -1 : 0
+  // Distance paramétrique jusqu'à la prochaine ligne de grille, et pas entre deux lignes.
+  // `Infinity` sur un axe immobile : la comparaison le sort naturellement du jeu.
+  const dtX = sx === 0 ? Infinity : (sx > 0 ? 1 : -1) / dx
+  const dtY = sy === 0 ? Infinity : (sy > 0 ? 1 : -1) / dy
+  let tMaxX = sx === 0 ? Infinity : (sx > 0 ? tx + 1 - x0 : x0 - tx) * (sx > 0 ? 1 / dx : -1 / dx)
+  let tMaxY = sy === 0 ? Infinity : (sy > 0 ? ty + 1 - y0 : y0 - ty) * (sy > 0 ? 1 / dy : -1 / dy)
+  // 2×PORTÉE pas au plus : une traversée franchit au pire une ligne de grille par axe et par tuile.
+  for (let garde = 0; garde < 2 * LISSAGE_PORTEE + 4; garde++) {
+    if (tx === finX && ty === finY) return true
+    if (tMaxX < tMaxY) {
+      tx += sx
+      tMaxX += dtX
+    } else if (tMaxY < tMaxX) {
+      ty += sy
+      tMaxY += dtY
+    } else {
+      // PILE UN COIN : le corps ne passe qu'entre deux tuiles libres.
+      if (bloque(tx + sx, ty) || bloque(tx, ty + sy)) return false
+      tx += sx
+      ty += sy
+      tMaxX += dtX
+      tMaxY += dtY
+    }
+    if (bloque(tx, ty)) return false
+  }
+  return false // au-delà de la garde : on ne PRÉTEND pas voir, on garde le jalon
+}
+
+/**
+ * Le même chemin, débarrassé des jalons qu'on peut joindre en ligne droite (voir ci-dessus).
+ * `fromX/fromY` : la position RÉELLE du marcheur, pas le centre de sa tuile — c'est de là qu'il
+ * part. Rend un tableau neuf ; l'entrée n'est pas touchée.
+ */
+export function lisserLeChemin(
+  world: MoveWorld,
+  fromX: number,
+  fromY: number,
+  chemin: readonly { tx: number; ty: number }[],
+): { tx: number; ty: number }[] {
+  if (chemin.length < 2) return chemin.map((w) => ({ tx: w.tx, ty: w.ty }))
+  const bloque = makeIndexedIsBlockedAt(world)
+  const out: { tx: number; ty: number }[] = []
+  let x = fromX
+  let y = fromY
+  let i = 0
+  while (i < chemin.length) {
+    // Le plus LOIN qu'on voie, en s'arrêtant au premier jalon invisible : au-delà, le corridor
+    // n'est plus garanti droit, et sauter par-dessus un jalon qu'on ne voit pas serait inventer
+    // un chemin que l'A* n'a pas trouvé.
+    let j = i
+    for (let k = i + 1; k < chemin.length; k++) {
+      const cx = chemin[k]!.tx + 0.5
+      const cy = chemin[k]!.ty + 0.5
+      if (distSq(cx, cy, x, y) > LISSAGE_PORTEE * LISSAGE_PORTEE) break
+      if (!vueDegagee(bloque, x, y, cx, cy)) break
+      j = k
+    }
+    const garde = chemin[j]!
+    out.push({ tx: garde.tx, ty: garde.ty })
+    x = garde.tx + 0.5
+    y = garde.ty + 0.5
+    i = j + 1
+  }
+  return out
+}
+
+/**
  * LES SOLIDES ÉTERNELS (décision d'Alexis, 2026-08-11) : les structures `incassable`
  * du monde — le massif d'un antre. Le gradient de la horde et la joignabilité des
  * spawns les traitent comme de la ROCHE, jamais comme du bâti : ils ne tomberont

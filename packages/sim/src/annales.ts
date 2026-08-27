@@ -46,6 +46,23 @@ export const ANNALES = {
   /** La portée de la ligne 2 : de quoi la stèle a le droit de parler. L'ordre de grandeur est
    *  l'écran et demi — une stèle parle du PAYS autour d'elle, pas de l'autre bout du monde. */
   STELE_PORTEE: 120,
+  /**
+   * LE RAYON D'APPARTENANCE D'UN FAIT À UN LIEU (R13, décision d'Alexis du 2026-08-25) — « ce
+   * qui s'est passé ICI » pour la fiche d'un lieu.
+   *
+   * ⚠ CE N'EST PAS L'ÉCRAN, malgré ce qu'on serait tenté d'écrire : le cadre fait
+   * `VISIBLE_TILES_TALL` = 20 tuiles de haut (≈ 36 de large en 16:9), donc 40 tuiles valent
+   * DEUX hauteurs d'écran. C'est le PAYS autour du lieu, le même ordre de grandeur que
+   * `STELE_PORTEE` en plus serré.
+   *
+   * MESURÉ (`tools/diag-fiche.mts --joue`, banc 12 cycles, seed 2026) sur les 14 faits de
+   * chronique qui portent un (tx, ty) : **l'empreinte stricte en capte 1**, un rayon de 20 en
+   * capte 4, **celui-ci en capte 13**. C'est ce chiffre-là qui a décidé la valeur — sans lui,
+   * la fiche d'un lieu tenait UNE ligne à jamais (seuls `poi_first_visit` et `refugee_rumeur`
+   * posaient une clef). Il se recalibre en LISANT une fiche, d'où sa place ici et non dans
+   * `balance.ts`.
+   */
+  LIEU_RAYON: 40,
 } as const
 
 const SEL_LACUNE = 0x4c414355 // 'LACU'
@@ -64,6 +81,35 @@ export function faitsDuLieu(map: WorldMap, zone: { x: number; y: number; w: numb
     if (f.x === cx && f.y === cy && f.lieu === zone.kind) out.push(f)
   }
   return out
+}
+
+/**
+ * LE LIEU AUQUEL UN FAIT APPARTIENT (R13) — le plus proche des lieux dans `LIEU_RAYON`, ou
+ * `undefined` si le fait s'est produit en pleine campagne.
+ *
+ * Sur le CENTRE du lieu et non son empreinte : une empreinte de POI fait quelques tuiles, et
+ * mesurée, elle n'attrapait qu'un fait sur quatorze. Strict (`<`) : à égalité, le plus petit
+ * `poiId` tranche — l'ordre de `placePois`, déterministe pour une seed.
+ *
+ * Pur, et O(zones) par appel : on ne l'appelle qu'au formatage d'une chronique (quelques
+ * dizaines de faits), jamais dans le tick.
+ */
+export function lieuDuFait(map: WorldMap, tx: number, ty: number): number | undefined {
+  const r2 = ANNALES.LIEU_RAYON * ANNALES.LIEU_RAYON
+  let best: number | undefined
+  let bestD = r2 + 1
+  for (let i = 0; i < map.zones.length; i += 1) {
+    const z = map.zones[i]!
+    if (z.kind === undefined) continue // une zone sans `kind` est un toponyme, jamais un lieu
+    const dx = z.x + z.w / 2 - tx
+    const dy = z.y + z.h / 2 - ty
+    const d2 = dx * dx + dy * dy
+    if (d2 <= r2 && d2 < bestD) {
+      bestD = d2
+      best = i
+    }
+  }
+  return best
 }
 
 /**
@@ -223,4 +269,107 @@ export function texteDeStele(map: WorldMap, sx: number, sy: number): TexteDeStel
     }
   }
   return { lignes, brisee: false, ...(lieuVise !== undefined ? { lieuVise } : {}) }
+}
+
+
+// ═══════════════════════════════════════════════════════════════════════════════════════════
+// LA VOIX DU VISITEUR (spec `annales.md` R14) — ce qu'un marcheur constate d'un fait.
+//
+// C'est le SECOND lecteur du même vocabulaire, et il ne parle pas comme le premier : la stèle
+// a un auteur mort (le « nous », l'impératif — bible T2), le visiteur n'a que ses yeux. Il dit
+// donc à la troisième personne, et il a le droit de dire le SORT — que la stèle ignore par
+// construction (R9bis) : les ruines brûlées se VOIENT.
+//
+// La lacune salée (R5) ne s'applique PAS ici : elle borne les textes GRAVÉS dans le monde,
+// jamais le constat d'un visiteur (R5②). Une fiche ne se brise pas.
+// ═══════════════════════════════════════════════════════════════════════════════════════════
+
+/** Ce qu'un fait devient sous les yeux d'un visiteur : sa phrase et son registre. */
+export interface PhraseDeFait {
+  texte: string
+  /** Le même registre que la chronique — la fiche mêle les deux sans qu'on distingue lequel
+   *  est lequel : `intime` pour ce qui touche les morts, `recit` pour le reste. */
+  poids: 'recit' | 'intime'
+}
+
+/** « le sud », « l'est » — l'article suit la voyelle, en DONNÉE (jamais une formule d'accord). */
+const LE_POINT: Record<string, string> = { nord: 'le nord', sud: 'le sud', est: "l'est", ouest: "l'ouest" }
+/** « au sud », « à l'est ». */
+const AU_POINT: Record<string, string> = { nord: 'au nord', sud: 'au sud', est: "à l'est", ouest: "à l'ouest" }
+
+/**
+ * LA TABLE, TENUE PAR LE COMPILATEUR — un `Record` sur l'union des types : un type ajouté à
+ * `FaitDeGeneration` ne compile plus tant qu'il n'a pas sa voix. C'est la garde d'exhaustivité
+ * par CONSTRUCTION ; l'atteignabilité des CAUSES, elle, se prouve à part sur une vraie carte
+ * (une table balayée fabrique ses propres conditions).
+ *
+ * Les temps suivent la bible T1 : l'imparfait appartient au pays d'avant (ce qui DURAIT), le
+ * passé composé dit ce qui l'a fini (ère 3 — la Cendre, la fosse, le départ).
+ */
+const VOIX: Record<FaitDeGeneration['type'], (f: FaitDeGeneration) => PhraseDeFait> = {
+  // ── Ère 0 : la pierre et l'eau ──
+  gravure: () => ({ texte: 'Les pierres portaient une écriture.', poids: 'recit' }),
+
+  // ── Ère 1 : l'implantation ──
+  fondation: (f) => ({
+    texte:
+      f.cause === 'eau' ? "Quelqu'un s'était installé ici, pour l'eau."
+      : f.cause === 'route' ? "Quelqu'un s'était installé ici, pour la route."
+      : "Quelqu'un s'était installé ici.",
+    poids: 'recit',
+  }),
+  essart: () => ({ texte: 'Le bois avait reculé pour faire la place.', poids: 'recit' }),
+  taille: (f) => ({
+    texte:
+      f.cause === 'fer' ? 'On taillait le fer, là où la roche affleure.'
+      : f.cause === 'charbon' ? 'On tirait le charbon, là où la roche affleure.'
+      : 'On taillait la roche là où elle affleure.',
+    poids: 'recit',
+  }),
+  guet: (f) => ({
+    texte: LE_POINT[f.cause ?? ''] === undefined ? 'On surveillait, depuis ici.' : `On regardait ${LE_POINT[f.cause!]}.`,
+    poids: 'recit',
+  }),
+
+  // ── Ère 2 : les routes ──
+  gue: () => ({ texte: "L'eau se laissait passer ici.", poids: 'recit' }),
+  croisee: () => ({ texte: 'Des chemins se répondaient ici.', poids: 'recit' }),
+  porte: (f) => ({
+    texte: f.cause === 'secours' ? "C'était une porte de secours." : 'Le pays borne ici son seuil.',
+    poids: 'recit',
+  }),
+
+  // ── Ère 3 : la Cendre ──
+  sort: (f) => (
+    f.cause === 'brule' ? { texte: 'La Cendre est passée : tout a brûlé.', poids: 'intime' }
+    : f.cause === 'pille' ? { texte: 'On est venu prendre ce qui restait.', poids: 'recit' }
+    : { texte: "Personne n'y est revenu.", poids: 'intime' }
+  ),
+  fosse: () => ({ texte: 'La vallée a enterré ici.', poids: 'intime' }),
+  fuite: (f) => ({
+    texte: AU_POINT[f.cause ?? ''] === undefined ? 'Ils sont partis.' : `Ils sont partis ${AU_POINT[f.cause!]}.`,
+    poids: 'intime',
+  }),
+}
+
+/**
+ * CE QU'UN VISITEUR CONSTATE D'UN FAIT — fonction TOTALE (tout fait a sa voix : c'est le
+ * `Record` ci-dessus qui le garantit, pas une discipline).
+ *
+ * Pure et partagée sim/client, comme `texteDeStele` : l'écrivain unique. Si la fiche et la
+ * chronique décrivaient le même fait avec deux phrases écrites deux fois, elles finiraient
+ * par se contredire — c'est très exactement le défaut que ce module existe pour empêcher.
+ */
+export function phraseDuFait(f: FaitDeGeneration): PhraseDeFait {
+  return VOIX[f.type](f)
+}
+
+/**
+ * LE NOM D'UNE ÈRE — la gouttière de la fiche, dans les mots de `map.ts` (le schéma les écrit
+ * déjà en toutes lettres : « 0 = la pierre et l'eau, 1 = l'implantation, 2 = les routes,
+ * 3 = la Cendre »). On ne baptise rien ici : on donne au lecteur ce que la donnée dit déjà.
+ * Totale — une ère hors domaine rend son chiffre plutôt que rien.
+ */
+export function nomDEre(ere: number): string {
+  return ['la pierre et l’eau', 'l’implantation', 'les routes', 'la Cendre'][ere] ?? `l’ère ${ere}`
 }

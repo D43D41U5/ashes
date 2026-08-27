@@ -29,6 +29,7 @@ import {
   type StationFonction,
   type Structure,
   type Village,
+  type WorldMap,
 } from '@ashes/sim'
 import type Phaser from 'phaser'
 import { getHud, setHud, type CapacitesEnPortee, type FireView, type SeasonVerdict } from '../../hud-state'
@@ -446,12 +447,15 @@ export function publishChronicle(
   calendarScale: number,
   jourDeDepart: number,
   villages: Village[],
+  /** LA CARTE — le formateur y cherche la clef de LIEU de chaque ligne (annales R13) : sans
+   *  elle, la fiche d'un lieu ne tiendrait que sa première visite. */
+  map: WorldMap,
 ): void {
   const names = Object.fromEntries(villages.map((v) => [v.id, v.name]))
-  setHud(registry, 'chronicle', chronicleFromEvents(eventLog, calendarScale, jourDeDepart, names))
+  setHud(registry, 'chronicle', chronicleFromEvents(eventLog, calendarScale, jourDeDepart, names, map))
   // LES VOLUMES VIFS (T5) : le flux du client partitionné par an — quand l'année tourne sans
   // reprise, l'an révolu et l'an neuf se lisent chacun avec leurs premières fois.
-  setHud(registry, 'volumesVifs', volumesDeChronique(eventLog, calendarScale, jourDeDepart, names))
+  setHud(registry, 'volumesVifs', volumesDeChronique(eventLog, calendarScale, jourDeDepart, names, map))
 }
 
 /**
@@ -482,6 +486,48 @@ export function drainAlertes(registry: Registry): string[] {
 export function drainConseils(registry: Registry): string[] {
   const file = getHud(registry, 'conseils') ?? []
   if (file.length > 0) setHud(registry, 'conseils', [])
+  return file
+}
+
+/**
+ * LES LIEUX QUI NE S'ANNONCENT PAS.
+ *
+ * Une carte jouée en porte 57 nommés (mesuré sur trois graines) — dont QUATORZE cairns. Un
+ * cairn est un jalon de sentier : sa raison d'être est de se répéter, et ses quatorze
+ * annonces feraient du bandeau un papier peint avant le jour trois. Les autres familles
+ * restent : un charnier, une tanière, une ferme ruinée sont des lieux dont on se souvient
+ * d'être arrivé. Reste ~43 annonces sur une saison de 60 jours, moins d'une par jour.
+ *
+ * ⚠ C'est un réglage de DENSITÉ D'ANNONCE, pas une règle de sim : la découverte, elle, a
+ * bien lieu (la carte s'ouvre, la fiche existe, le cairn révèle son voisin). Seul le carton
+ * se tait.
+ */
+export const KINDS_SANS_BANDEAU: readonly string[] = ['cairn']
+
+/**
+ * UN LIEU FOULÉ POUR LA PREMIÈRE FOIS (2026-08-25) — le modèle The Long Dark, avec son
+ * revers : les noms ne flottent plus au-dessus du paysage, ils s'annoncent une fois ici.
+ *
+ * Sur `poi_first_visit`, jamais sur `poi_discovered` : le second se déclenche à trente
+ * tuiles (la simple VUE), et un Belvédère en révèle trois cents d'un coup — ce serait une
+ * rafale de cartons pour des lieux où l'on n'a pas mis les pieds. On annonce l'ARRIVÉE.
+ *
+ * ⚠ SA LIMITE, DITE : la sim garde la première visite dans `state.visitedPois`, qui est
+ * GLOBAL — « en multi, c'est une course », il n'y a qu'un premier visiteur pour la partie.
+ * Juste en Veillée (un seul joueur) ; en LAN, le second arrivant n'aura pas son carton. Le
+ * jour où ça compte, c'est un événement de plus à côté de `entity.reachedPois`, côté sim —
+ * surtout pas un `Set` de rattrapage côté client.
+ */
+export function publishDecouverte(registry: Registry, nom: string): void {
+  const file = getHud(registry, 'decouvertes') ?? []
+  file.push(nom)
+  setHud(registry, 'decouvertes', file)
+}
+
+/** Côté UIScene : récupère et vide la file des découvertes. */
+export function drainDecouvertes(registry: Registry): string[] {
+  const file = getHud(registry, 'decouvertes') ?? []
+  if (file.length > 0) setHud(registry, 'decouvertes', [])
   return file
 }
 

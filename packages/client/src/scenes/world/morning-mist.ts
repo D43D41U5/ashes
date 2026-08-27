@@ -19,9 +19,11 @@
  * (oiseaux, bancs) ; ici, une seule vérité : le front.
  */
 import Phaser from 'phaser'
-import { TERRAIN_MARSH, TERRAIN_REED_MARSH, TERRAIN_SHALLOW_WATER, TERRAIN_DEEP_WATER, type WorldMap } from '@ashes/sim'
-import { frontDeBrume } from '../../render/lighting'
-import { DIST_FIELD_MAX, MIST_DEPTH, MistLayer, type ReglageCrans } from './mist-layer'
+import { TEMPERATURE, TERRAIN_MARSH, TERRAIN_REED_MARSH, TERRAIN_SHALLOW_WATER, TERRAIN_DEEP_WATER, type WorldMap } from '@ashes/sim'
+import { frontDeBrume, partDeBrumeMatinale } from '../../render/lighting'
+import type { HeureSolaire } from '../../render/lighting'
+import { HAUTEUR_NAPPE_PX } from './meteo-layer'
+import { DIST_FIELD_MAX, MIST_DEPTH, MistLayer, type ReglageCrans, type ReglageNappe } from './mist-layer'
 
 /** Plafond de densité à brume pleine — la crête du shader monte au-delà (voir ses crans).
  *  0,3 → 0,38 le 26/07 : regardé à 6h12, le sol de l'aube en jeu est plus clair que celui de
@@ -29,8 +31,13 @@ import { DIST_FIELD_MAX, MIST_DEPTH, MistLayer, type ReglageCrans } from './mist
  *  GARDE-FOU (revue) : JAMAIS ≥ 0,41 — au-delà le plafond de CRANS_MAREE mord, corps et crête
  *  s'y écrasent ensemble et le drap uniforme « toute blanche » revient en silence. */
 const DENSITE_MAX = 0.38
-/** Vitesse de dérive des nappes (tuiles/s) appliquée au vent lissé unitaire. */
+/** Vitesse de dérive des nappes (tuiles/s) appliquée au vent lissé unitaire — le PLANCHER,
+ *  celui du calme plat (décision consignée : une nappe dérive toujours). */
 const DERIVE = 0.32
+/** …et de combien le souffle d'ICI l'accélère, en part de ce plancher. Un souffle plein double
+ *  presque la dérive — mais à ce souffle-là la nappe est déjà dispersée : ce qu'on voit, c'est
+ *  la brume qui FILE juste avant de partir. */
+const PRISE_DU_VENT = 0.9
 
 /** LE FROISSEMENT DE LA FRONTIÈRE, en tuiles — choix d'Alexis du 2026-08-22 (« j'aimerais voir
  *  une frontière de brume plus organique et pas simplement droite »), planche F3 retenue.
@@ -81,6 +88,29 @@ const FRANGE = 5
  *  L'échelle reste ordonnée (α au pic : 0,284 / 0,351 / 0,418, écarts 0,067 et 0,067). Le rail
  *  0,45 passe juste au-dessus du pic 0,418 : il ne mord pas, il garde. */
 const CRANS_MAREE: ReglageCrans = { poids: [0.34, 0.42, 0.5], plafond: 0.45 }
+
+/**
+ * ═══ ELLE S'AFFICHE COMME LE BROUILLARD (décision d'Alexis, 2026-08-25) ═══
+ *
+ * *« La brume doit s'afficher comme le brouillard — entre le sol et le haut du houppier. »*
+ *
+ * Elle COIFFAIT le monde (`MIST_DEPTH` = 1 020 000, au-dessus des houppiers) — c'était le retour
+ * « au-dessus du personnage » de juillet, consigné en R15. Un film posé sur l'image : rien n'y
+ * est jamais DEDANS. Depuis, le brouillard météo a résolu le même problème et sa recette est
+ * mesurée (`meteo-layer.ts`, scénario `brouillardsol`) : une PILE DE BANDES dans la bande des
+ * houppiers, qui coupe les silhouettes à une hauteur, au pixel près. La marée du matin la
+ * reprend telle quelle — la brume devient un volume qu'on traverse, et les cimes en sortent.
+ *
+ * L'ÉPAISSEUR EST CELLE DU BROUILLARD, ET C'EST LE MÊME NOMBRE, PAS UNE COPIE. `HAUTEUR_NAPPE_PX`
+ * est dérivé du bouleau (« on ne doit voir que ce qui dépasse du tiers le plus haut du houppier
+ * des bouleaux ») : deux brumes qui promettent la même chose doivent la promettre avec la même
+ * constante. ⚠ Conséquence à dire : retoucher la hauteur du brouillard déplace AUSSI celle-ci.
+ *
+ * Le PAS est plus fin que celui du brouillard (12 px) : la nappe du matin est deux fois plus
+ * transparente (pic α ~0,42 contre 0,86), et un bord de coupe se lit d'autant plus qu'il traverse
+ * du translucide — on achète du fondu là où le brouillard pouvait s'en passer.
+ */
+const NAPPE_MAREE: ReglageNappe = { hauteur: HAUTEUR_NAPPE_PX, bandePx: 16 }
 
 /** Chanfrein 3-4 : distance à l'eau en tiers de tuile, deux passes (avant/arrière). */
 export function champDistanceEau(estSource: (i: number) => boolean, width: number, height: number): Uint16Array {
@@ -159,9 +189,18 @@ export class MorningMist {
     scene.textures.addCanvas(this.key, cv)
     scene.textures.get(this.key).setFilter(Phaser.Textures.FilterMode.NEAREST)
 
-    this.layer = new MistLayer(scene, this.key, width, height, MIST_DEPTH, CRANS_MAREE)
+    // `MIST_DEPTH` n'est plus qu'un repli : en mode nappe, la pile pose SA profondeur à chaque
+    // image dans la bande des houppiers (voir `NAPPE_MAREE`).
+    this.layer = new MistLayer(scene, this.key, width, height, MIST_DEPTH, CRANS_MAREE, NAPPE_MAREE)
     this.layer.frange = FRANGE
   }
+
+  /** LA CONDITION du dernier `update`, exposée pour les sondes (smoke `maree`) : 1 = la brume a
+   *  tout ce qu'il lui faut, 0 = ce matin-là n'en porte pas. */
+  get part(): number {
+    return this.dernierePart
+  }
+  private dernierePart = 0
 
   /** Chaque frame : la MARÉE décide de tout (pente continue), le vent LISSÉ du monde
    *  (`VentLisse`) porte les nappes — jamais un vecteur nul, jamais un saut de cap.
@@ -169,11 +208,33 @@ export class MorningMist {
    *  derniers instants) : regardé à 7h36, multiplier par l'enveloppe `brumeDuMatin`
    *  éteignait les dernières flaques du retrait — que la maquette validée gardait
    *  lisibles jusqu'au bout (le burn-off se raconte, il ne s'évapore pas en silence). */
-  update(nowMs: number, hour: number, vent: { x: number; y: number }, day = 1): void {
+  update(
+    nowMs: number,
+    hour: HeureSolaire,
+    vent: { x: number; y: number },
+    day = 1,
+    /** Le jour de saison et le tour — l'ÉCART JOUR/NUIT s'y lit par la loi de `/sim`. */
+    saison: { seasonDay: number; tour: number } = { seasonDay: 1, tour: 1 },
+    /** La part de souffle AU-DESSUS de l'ambiance, au point du joueur (`ventPartIci`). */
+    ventPart = 0,
+    camera?: Phaser.Cameras.Scene2D.Camera,
+  ): void {
     const front = frontDeBrume(hour)
     const densite = DENSITE_MAX * Math.min(1, front / 3)
-    const w = { x: vent.x * DERIVE, y: vent.y * DERIVE }
-    this.layer?.update(nowMs, densite, front, w, day)
+    // L'ÉCART VIENT DE LA LOI DE `/sim`, pas d'une seconde courbe peinte ici : c'est le même
+    // nombre que le froid nocturne retranche (`saisons.md` S5), donc la brume et le froid ne
+    // peuvent pas raconter deux automnes différents.
+    const ecart = TEMPERATURE.ECART_NUIT(saison.seasonDay, saison.tour)
+    this.dernierePart = partDeBrumeMatinale(ecart, ventPart)
+    // ── LE PEU DE VENT A PRISE SUR LA NAPPE (demande d'Alexis, 2026-08-25) ──
+    // La dérive ne prenait que le CAP du vent lissé, à vitesse fixe : par calme plat comme sous
+    // une bourrasque, les nappes glissaient au même pas. On garde ce PLANCHER — c'est une
+    // décision consignée (« une nappe de brume doit dériver même par calme plat ») — et on lui
+    // ajoute un terme proportionnel au souffle d'ici. La brume qu'on ne disperse pas encore
+    // FILE plus vite : le vent se voit sur elle avant de l'emporter.
+    const prise = DERIVE * (1 + PRISE_DU_VENT * Math.min(1, Math.max(0, ventPart)))
+    const w = { x: vent.x * prise, y: vent.y * prise }
+    this.layer?.update(nowMs, densite, front, w, day, this.dernierePart, camera)
   }
 
   destroy(): void {

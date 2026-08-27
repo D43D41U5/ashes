@@ -83,6 +83,24 @@ export function coupeDeNeige(hauteur: number, displayH: number): number {
 }
 
 /**
+ * ═══ CE QUI S'ENFONCE, C'EST L'ÉPAISSEUR — pas la plus grande dimension du sprite ═══
+ *
+ * *(Alexis, 2026-08-25 : le Cendreux rampant « divise par 2 sa longueur lorsqu'il est aligné en
+ * Y ».)*
+ *
+ * `enfoncement` prend `displayH` pour deux choses : la profondeur qu'un milieu creuse, et son
+ * PLAFOND (`COUPE_MAX_FRACTION`, 45 %). Pour un corps DEBOUT, `displayH` est sa hauteur — juste.
+ * Pour un corps COUCHÉ NORD-SUD, `displayH` est sa LONGUEUR, et l'eau lui rognait jusqu'à 45 %
+ * du corps : la moitié d'un homme, par le pied.
+ *
+ * Ce qui trempe dans l'eau, la vase ou la neige, c'est le PETIT CÔTÉ d'un corps posé au sol —
+ * son épaisseur —, et il ne dépend pas de l'axe où il est tourné.
+ */
+export function epaisseurQuiSEnfonce(displayW: number, displayH: number, couche: boolean): number {
+  return couche ? Math.min(displayW, displayH) : displayH
+}
+
+/**
  * CE QUE LES QUATRE MILIEUX FONT AU CORPS — l'écrivain unique de la question.
  *
  * Aucun cas particulier, aucune porte : quatre profondeurs continues, un `max` pour ce qui

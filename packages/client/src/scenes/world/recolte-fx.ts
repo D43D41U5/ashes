@@ -73,6 +73,11 @@ export const FAMILLE_DE_NOEUD: Record<NodeType, Famille> = {
   iron_vein: 'pierre',
   coal_seam: 'pierre',
   rubble: 'pierre',
+  // LE GLANAGE (spec `glanage.md`) : on se BAISSE, rien n'est fracturé — mais la matière
+  // reste ce qu'elle est. Une branche fait des copeaux, une pierre fait des éclats ; c'est
+  // le VOLUME du geste qui les distingue du coup d'outil, pas leur loi de vol.
+  branche_au_sol: 'bois',
+  pierre_au_sol: 'pierre',
   // Cueillis à MAINS NUES : rien n'est fracturé, ça se détache et ça retombe.
   fiber_plant: 'feuille',
   berry_bush: 'feuille',

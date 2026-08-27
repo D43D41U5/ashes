@@ -67,6 +67,8 @@ export const RECIPE_CATEGORY: Record<RecipeId, CraftCategory> = {
   // elle se range avec eux, parce qu'on vient les chercher dans le même geste.
   crude_bow: 'armes',
   crude_rod: 'outils', // la canne (peche.md D4) : un outil de récolte, pas une arme
+  // LA TORCHE (spec `torche.md`) : un outil, et le seul dont le rendement est de VOIR.
+  torche: 'outils',
   crude_knife: 'outils', // le couteau (depecage.md D4) : un outil de récolte, pas une arme
   bow: 'armes',
   arrow: 'armes',

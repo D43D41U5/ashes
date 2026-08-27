@@ -12,11 +12,17 @@
  *   qui ronge un bord ne recalcule rien ; mais un BONUS ne s'applique jamais sur une tuile qui
  *   n'est plus boisée — l'étiquette survit, inerte ; le bonus meurt avec l'arbre (R38).
  *
- * Les clairières ne percent PAS la profondeur : leur terrain reste boisé — ce sont des
- * chambres DANS la masse, pas des trouées de lisière.
+ * Les clairières ne percent PAS la profondeur — et depuis le 2026-08-25 c'est une clause
+ * EXPLICITE, non plus un effet de bord. La clairière était du terrain de forêt : elle entrait
+ * dans le masque sans qu'on ait rien à dire. Elle est maintenant son propre terrain
+ * (`TERRAIN_CLAIRIERE`), donc le masque la nomme — sinon toute trouée deviendrait une lisière,
+ * le champ se rétracterait autour d'elle, et avec lui `stockDArbre`, les vieux fûts des cœurs
+ * et le tracé des coulées. Une clairière est une chambre DANS la masse, pas un bord du bois :
+ * le masque est LE MÊME ENSEMBLE DE TUILES qu'avant, donc le champ est bit à bit le même.
  */
 import {
   EAU,
+  TERRAIN_CLAIRIERE,
   TERRAIN_DEEP_WATER,
   TERRAIN_FOREST,
   TERRAIN_LARCH,
@@ -191,7 +197,8 @@ export function deriverProfondeur(
   const N = width * height
   const boise = new Uint8Array(N)
   for (let i = 0; i < N; i++) {
-    if (zone[i] === racineId && TERRAINS_BOISES_MASSIF.includes(terrain[i]!)) boise[i] = 1
+    const t = terrain[i]!
+    if (zone[i] === racineId && (TERRAINS_BOISES_MASSIF.includes(t) || t === TERRAIN_CLAIRIERE)) boise[i] = 1
   }
   return eroderMasque(boise, width, height, CREUX.PROF_CAP)
 }

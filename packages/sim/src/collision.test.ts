@@ -209,8 +209,11 @@ describe('arbres hauts : la collision se limite au tronc', () => {
     nodes: trees.map(([tx, ty], i) => ({ id: i + 1, type: 'tree' as const, tx, ty, stock: 10, regrowAt: 0 })),
   })
 
-  it('A4 — rock, iron_vein et coal_seam bloquent toujours leur tuile ENTIÈRE', () => {
-    for (const type of ['rock', 'iron_vein', 'coal_seam'] as const) {
+  it('A4 — rock, iron_vein, coal_seam et bloc bloquent toujours leur tuile ENTIÈRE', () => {
+    // `bloc` ajouté le 2026-08-27 (`roche-mere.md` R6ter — Alexis : « on leur donne un hitbox
+    // pour éviter qu'on passe au travers, tu les mets sur une tuile complète »). Il n'était
+    // gardé que par son `blockHalfSub: 4` en table ; ce que la table promet, le PAS le prouve.
+    for (const type of ['rock', 'iron_vein', 'coal_seam', 'bloc'] as const) {
       const world = {
         map: createEmptyMap(16, 16, TERRAIN_GRASS),
         nodes: [{ id: 1, type, tx: 8, ty: 4, stock: 8, regrowAt: 0 }],

@@ -25,7 +25,7 @@ function makeSim(): SimState {
   return createSim(1, {
     map: createEmptyMap(96, 96, TERRAIN_GRASS),
     jourDeDepart: coeurDe(2),
-    cycleOffset: cycleOffsetForStartHour(12),
+    cycleOffset: cycleOffsetForStartHour(12, coeurDe(2)),
   })
 }
 function act(sim: SimState, id: number, action: PlayerAction): void {

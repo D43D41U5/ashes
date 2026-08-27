@@ -275,12 +275,29 @@ export function aimAt(
    *  l'appelant — `aim.ts` ne lit pas la carte, et l'assec comme la crue sont des états du
    *  jour. Par défaut « pas d'eau » : un appelant qui ne vise pas la pêche n'a rien à fournir. */
   porteEau: (tx: number, ty: number) => boolean = () => false,
+  /** ═══ L'INDEX TUILE→NŒUD, injecté (MESURÉ : 764 µs par balayage, deux fois par image) ═══
+   *
+   *  `nodes` compte ~62 000 entrées sur la carte jouée, et le `find` ci-dessous les balayait
+   *  TOUTES à chaque image — 15 % du budget de 16,7 ms, pour retrouver ce que `SnapshotView`
+   *  tient déjà : `nodeByTile`, bâti une fois et patché en O(1) à la dérive comme à la
+   *  naissance d'un nœud. On le REÇOIT donc, comme `porteEau` : `aim.ts` ne lit pas plus
+   *  l'index qu'il ne lit la carte.
+   *
+   *  ⚠ L'index rend le nœud de la tuile QUEL QUE SOIT SON STOCK — le `find` d'avant, lui,
+   *    écartait les épuisés. Le filtre `stock > 0` reste donc ici, et les deux chemins sont
+   *    équivalents au bit près (≤ 1 nœud par tuile, premier gagnant : `economy.ts:165`).
+   *
+   *  Absent (tests) : on retombe sur le balayage. */
+  noeudA?: (tx: number, ty: number) => ResourceNode | undefined,
 ): AimTarget {
   const corpse = corpses.find((c) => Math.floor(c.x) === tx && Math.floor(c.y) === ty)
   // LA PILE de la tuile visée. Comme le cadavre : on la cherche à la TUILE, parce qu'une
   // pile n'a pas d'emprise — c'est un tas posé, et le joueur désigne un carreau de sol.
   const pile = piles.find((p) => Math.floor(p.x) === tx && Math.floor(p.y) === ty)
-  const node = nodes.find((n) => n.tx === tx && n.ty === ty && n.stock > 0)
+  const surLaTuile = noeudA?.(tx, ty)
+  const node = noeudA
+    ? (surLaTuile !== undefined && surLaTuile.stock > 0 ? surLaTuile : undefined)
+    : nodes.find((n) => n.tx === tx && n.ty === ty && n.stock > 0)
   // Une seule passe sur les structures de la tuile : le Feu se NOURRIT (feed_fire, jamais
   // « réparé ») ; toute structure abîmée se RÉPARE ; une parcelle se SÈME (vide) ou se RÉCOLTE
   // (mûre). `STRUCTURE_HP` est TOTAL sur `StructureType` — pas de garde. Maturité PURE (isCropMature).
@@ -570,6 +587,17 @@ export function clickToAction(
   // du village (sans lui, le Feu se vide et le foyer tombe en ruine sans recours). La sim vise
   // TOUJOURS le foyer de l'acteur (pas la tuile cliquée) et revalide membre/portée/place.
   if (hand && hand.held === 'wood' && target.onFire && target.inRange) return { type: 'feed_fire' }
+  // PRENDRE LE FEU AU FOYER (spec `torche.md` T2) : une torche ÉTEINTE en main + un feu sous le
+  // curseur, à portée → elle s'allume. Sur `fireId` et non `feed_fire` : on peut prendre sa
+  // flamme à N'IMPORTE QUEL feu, y compris celui d'un autre village — le feu n'est pas une
+  // serrure (« des serrures, pas des lois » vise la propriété, pas la lumière).
+  //
+  // ⚠ PLACÉE AVANT LA FRAPPE, comme le bandage, et pour la même raison : une torche n'est pas
+  // une arme (`WEAPON_DAMAGE` l'ignore), donc elle serait tombée jusqu'au coup de poing — le
+  // joueur aurait tapé son propre foyer en croyant s'éclairer. Une torche DÉJÀ vive, elle,
+  // traverse cette branche et ne fait rien de spécial : on ne rallume pas ce qui brûle.
+  if (hand && hand.held === 'torche' && target.fireId !== null && target.inRange)
+    return { type: 'light_torch', structureId: target.fireId }
   // RÉPARER : du BOIS en main + une structure ABÎMÉE sous le curseur, à portée → on la répare.
   // Le pendant défensif du feed_fire : après une horde, remurer sa maison de sa propre main
   // plutôt que d'attendre un PNJ. La sim revalide l'appartenance, la portée et le coût.

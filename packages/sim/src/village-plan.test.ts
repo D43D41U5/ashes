@@ -142,6 +142,10 @@ describe('le plan directeur (R3)', () => {
   it('au palier 2, le village veut de la pierre (vers la barre du palier 3)', () => {
     const sim = npcVillageSim(2)
     village(sim).buildTier = 2
+    // LA PIOCHE AU GRENIER : depuis `glanage.md` G6, la corvée de pierre n'est postée que si
+    // le village peut fournir l'outil — sinon c'est le GLANAGE qu'il poste. Ce test parle de
+    // la CIBLE de stock du palier 2, pas du verrou d'outil.
+    addItems(granary(sim).inventory!, { crude_pickaxe: 1 })
     refreshBoard(sim, village(sim))
     expect(village(sim).tasks.some((t) => t.kind === 'gather_stone')).toBe(true)
   })
@@ -482,7 +486,10 @@ describe('le défrichement TIENT SON DÉBIT (2026-08-20)', () => {
     const sim = npcVillageSim(3)
     const v = village(sim)
     v.buildTier = 2
-    addItems(granary(sim).inventory!, { wood: 200, berries: 60 }) // le chantier ne doit pas caler faute de stock
+    // Le chantier ne doit pas caler faute de stock — NI FAUTE DE HACHE : défricher, c'est
+    // abattre, et depuis `glanage.md` G1 l'arbre ne cède qu'à l'outil. Ce qu'on chronomètre
+    // ici est le DÉBIT du défrichement ; l'approvisionnement en outils a ses propres gardes.
+    addItems(granary(sim).inventory!, { wood: 200, berries: 60, crude_axe: 1 })
     // UN SEUL arbre, planté dans la cour, loin des paillasses : ce qu'on chronomètre est le
     // défrichement, pas un logis qui se bâtit autour.
     const tx = v.fireTx + 5

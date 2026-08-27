@@ -4,6 +4,7 @@ import {
   FLOWERS, PEBBLES, PEBBLE_SHADOW, pebbleShadowRects, VARIANT_COUNTS, variantBase,
 } from './lit-props'
 import { BIOME_CLUTTER } from './clutter'
+import { cleDeSocle, estUnSocle, SOCLE_KEYS, SOCLE_TYPES } from './socle-mineral'
 
 /**
  * Le câblage `_lit`/`_lit_m`, testé en DONNÉES PURES (pas de scène Phaser). Un `kind` dans
@@ -70,23 +71,33 @@ describe('câblage des variantes cubiques (_lit / _lit_m)', () => {
     for (const type of LIT_NODE_TYPES) expect(LIT_PROP_KEYS.has(`nd-${type}_lit`)).toBe(true)
   })
 
-  it('le nœud roche est câblé, sans variante miroir (les nœuds ne se miroitent pas)', () => {
-    expect(LIT_NODE_TYPES.has('rock')).toBe(true)
-    expect(LIT_PROP_KEYS.has('nd-rock_lit')).toBe(true)
-    expect(LIT_PROP_KEYS.has('nd-rock_lit_m')).toBe(false)
+  it('LES SIX SOCLES sont câblés — trois hauteurs chacun, et AUCUN ne reste dans la masse pâteuse', () => {
+    // Le socle minéral (`socle-mineral.ts`) a quitté `PROPS` : ses clés vivent dans SOCLE_KEYS,
+    // à trois hauteurs. La garde attrape les deux moitiés de l'erreur possible : une matière
+    // oubliée à la cuisson, et une matière restée en double dans `LIT_NODE_TYPES` — auquel cas
+    // SnapshotView demanderait `nd-rock_lit`, qui n'existe plus, et Phaser peindrait son carré vert.
+    for (const type of SOCLE_TYPES) {
+      expect(estUnSocle(type)).toBe(true)
+      expect(LIT_NODE_TYPES.has(type), `${type} : le socle ne passe pas par la masse pâteuse`).toBe(false)
+      for (const taille of [0, 1, 2]) {
+        expect(SOCLE_KEYS.has(cleDeSocle(type, taille)), `${type}-${taille}`).toBe(true)
+        expect(SOCLE_KEYS.has(`${cleDeSocle(type, taille)}_lit`), `${type}-${taille}_lit`).toBe(true)
+      }
+      expect(LIT_PROP_KEYS.has(`nd-${type}_lit`), `${type} : l'ancienne clé plate ne doit plus exister`).toBe(false)
+    }
   })
 
   it('LA VAGUE A (da-feeling R3) : les nœuds restants ont leur _lit — et le câblage par BRANCHES est documenté', () => {
     // Les 4 états du buisson à baies, la pousse, la fibre, les gravats, la souche, la cicatrice.
-    for (const key of ['nd-berry_bush-0', 'nd-berry_bush-1', 'nd-berry_bush-2', 'nd-berry_bush-3', 'nd-sapling', 'nd-fiber_plant', 'nd-rubble', 'nd-stump', 'nd-scar']) {
+    for (const key of ['nd-berry_bush-0', 'nd-berry_bush-1', 'nd-berry_bush-2', 'nd-berry_bush-3', 'nd-sapling', 'nd-fiber_plant', 'nd-stump', 'nd-scar']) {
       expect(LIT_PROP_KEYS.has(`${key}_lit`), key).toBe(true)
       expect(LIT_PROP_KEYS.has(`${key}_lit_m`), `${key} : un nœud ne se miroite pas`).toBe(false)
     }
-    // fiber_plant et rubble passent par le whitelist générique ; berry_bush et sapling passent
-    // par leurs BRANCHES SPÉCIALES de SnapshotView (berryDots, repousse) — les mettre ici serait
-    // du câblage mort et trompeur (note d'intégration de la vague A).
+    // fiber_plant passe par le whitelist générique ; berry_bush et sapling passent par leurs
+    // BRANCHES SPÉCIALES de SnapshotView (berryDots, repousse) — les mettre ici serait du câblage
+    // mort et trompeur (note d'intégration de la vague A). Les gravats, eux, ont rejoint le SOCLE.
     expect(LIT_NODE_TYPES.has('fiber_plant')).toBe(true)
-    expect(LIT_NODE_TYPES.has('rubble')).toBe(true)
+    expect(estUnSocle('rubble')).toBe(true)
     expect(LIT_NODE_TYPES.has('berry_bush')).toBe(false)
     expect(LIT_NODE_TYPES.has('sapling')).toBe(false)
   })

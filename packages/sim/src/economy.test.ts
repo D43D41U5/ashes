@@ -109,19 +109,23 @@ describe('la récolte (A1)', () => {
     const tree = makeNode('tree', 11, 10)
     const sim = makeSim([tree])
     const id = spawnEntity(sim, 10.3, 10.5)
+    // LE HACHEREAU EN MAIN (spec `glanage.md` G1) : le bois ne se prend plus à mains nues, et
+    // il n'existe donc plus de récolte de bois au palier `none` — la baseline du bois est le
+    // rendement de fortune (×2). Ce n'est pas une commodité de montage : c'est la règle.
+    grantHeld(sim, id, 'crude_axe')
     drainEvents(sim)
 
     const simTree = () => sim.nodes[0]!
     act(sim, id, { type: 'harvest', nodeId: tree.id })
-    expect(countOf(me(sim).inventory, 'wood')).toBe(1)
-    expect(simTree().stock).toBe(9)
+    expect(countOf(me(sim).inventory, 'wood')).toBe(2)
+    expect(simTree().stock).toBe(8)
     drainEvents(sim)
 
     // Trop tôt = SILENCIEUX (décision d'Alexis : la cadence est le geste, pas un rejet). Le
     // cooldown gate TOUJOURS le coup, mais ne crache plus « trop tôt ». Trop loin, en
     // revanche, reste un vrai refus.
     act(sim, id, { type: 'harvest', nodeId: tree.id }) // dans le cooldown : aucun coup…
-    expect(countOf(me(sim).inventory, 'wood')).toBe(1)
+    expect(countOf(me(sim).inventory, 'wood')).toBe(2)
     expect(rejections(sim)).toEqual([]) // …et AUCUN rejet
     me(sim).x = 20
     for (let t = 0; t < BALANCE.GATHER_COOLDOWN_TICKS; t++) step(sim, [])
@@ -203,11 +207,12 @@ describe('la cueillette d’un coup (whole)', () => {
     const tree = makeNode('tree', 11, 10) // woodcutting, stock 10
     const sim = makeSim([tree])
     const id = spawnEntity(sim, 10.3, 10.5)
+    grantHeld(sim, id, 'crude_axe') // le bois exige un outil (spec `glanage.md` G1)
 
     act(sim, id, { type: 'harvest', nodeId: tree.id, whole: true }) // le gate foraging l'écarte
 
-    expect(countOf(me(sim).inventory, 'wood')).toBe(1) // 1 bois, PAS les 10
-    expect(sim.nodes[0]!.stock).toBe(NODE_DEFS.tree.stock - 1)
+    expect(countOf(me(sim).inventory, 'wood')).toBe(2) // le coup de hache, PAS les 10
+    expect(sim.nodes[0]!.stock).toBe(NODE_DEFS.tree.stock - 2)
   })
 
   it('n’a AUCUNE cadence : deux buissons se vident sur des ticks CONSÉCUTIFS (2026-07-25)', () => {
@@ -302,8 +307,13 @@ describe('la capacité à la récolte (A10, A11)', () => {
     const tree = makeNode('tree', 11, 10)
     const sim = makeSim([tree])
     const id = spawnEntity(sim, 10.3, 10.5)
-    me(sim).inventory = makeInventory(1)
-    me(sim).inventory[0] = { item: 'stone', count: stackSize('stone') } // aucune place
+    // DEUX cases : la hache qu'il TIENT (le bois l'exige, `glanage.md` G1) et une pile de
+    // pierre qui bouche le reste. Le refus qu'on éprouve ici est « sac plein » — il ne peut
+    // se produire qu'APRÈS le gate d'outil, donc l'outil doit être en main pour l'atteindre.
+    me(sim).inventory = makeInventory(2)
+    me(sim).inventory[0] = { item: 'crude_axe', count: 1 }
+    me(sim).inventory[1] = { item: 'stone', count: stackSize('stone') } // aucune place
+    me(sim).activeSlot = 0
     me(sim).cooldownUntil = 0
     const stock0 = sim.nodes[0]!.stock
     drainEvents(sim)
@@ -340,7 +350,15 @@ describe('les outils (A2)', () => {
     expect(held()).toBeNull() // la case s'est vidée
   })
 
-  it('A7 : hache DANS LE SAC mais pas en main → ×1, aucune usure (la sim ne choisit plus)', () => {
+  /**
+   * ⚠ CES TROIS GARDES ONT CHANGÉ DE VERDICT le 2026-08-25 (spec `glanage.md` G1), pas de
+   * question. Elles demandaient déjà « la sim va-t-elle chercher l'outil que je ne tiens pas ? »
+   * et la réponse est toujours NON. Ce qui a changé, c'est le PRIX de ce non : il coûtait la
+   * moitié du rendement (×1 au lieu de ×2), il coûte maintenant le geste entier. L'arbre
+   * n'était pas gaté, il l'est. Elles rougiraient le jour où la sim se mettrait à piocher dans
+   * le sac — c'est pour ça qu'elles existent, et c'est resté vrai.
+   */
+  it('A7 : hache DANS LE SAC mais pas en main → REFUS, aucune usure (la sim ne choisit plus)', () => {
     const tree = makeNode('tree', 11, 10)
     const sim = makeSim([tree])
     const id = spawnEntity(sim, 10.3, 10.5)
@@ -350,9 +368,9 @@ describe('les outils (A2)', () => {
 
     act(sim, id, { type: 'harvest', nodeId: tree.id })
 
-    expect(countOf(me(sim).inventory, 'wood')).toBe(1) // ×1 : mains nues
+    expect(countOf(me(sim).inventory, 'wood')).toBe(0) // rien : l'arbre exige la hache EN MAIN
     expect(me(sim).inventory[0]).toEqual({ item: 'axe', count: 1 }) // pas d'usure
-    expect(rejections(sim)).toEqual([]) // l'arbre cède quand même : il n'exige pas d'outil
+    expect(rejections(sim)).toEqual(['il faut une hache en main']) // et le refus NOMME l'outil
   })
 
   it('A7 bis : une case active VIDE vaut mains nues, même avec la hache juste à côté', () => {
@@ -364,19 +382,21 @@ describe('les outils (A2)', () => {
 
     act(sim, id, { type: 'harvest', nodeId: tree.id })
 
-    expect(countOf(me(sim).inventory, 'wood')).toBe(1)
+    expect(countOf(me(sim).inventory, 'wood')).toBe(0)
     expect(me(sim).inventory[1]).toEqual({ item: 'axe', count: 1 })
   })
 
-  it('tenir AUTRE CHOSE qu’un outil de la famille ne sert à rien (×1, aucune usure)', () => {
+  it('tenir AUTRE CHOSE qu’un outil de la famille ne sert à rien (refus, aucune usure)', () => {
     const tree = makeNode('tree', 11, 10)
     const sim = makeSim([tree])
     const id = spawnEntity(sim, 10.3, 10.5)
     grantHeld(sim, id, 'pickaxe') // une pioche… devant un arbre
+    drainEvents(sim)
 
     act(sim, id, { type: 'harvest', nodeId: tree.id })
 
-    expect(countOf(me(sim).inventory, 'wood')).toBe(1) // ×1
+    expect(countOf(me(sim).inventory, 'wood')).toBe(0)
+    expect(rejections(sim)).toEqual(['il faut une hache en main']) // la pioche n'est pas de la famille
     expect(me(sim).inventory[0]).toEqual({ item: 'pickaxe', count: 1 }) // intacte
   })
 
@@ -654,17 +674,36 @@ describe('l’artisanat de fortune (craft-fortune A1-A5)', () => {
     expect(countOf(me(sim).inventory, 'iron_ore')).toBe(2)
   })
 
-  it('A3bis : mais la PIERRE ne se refuse à personne — la fortune est faite de pierre', () => {
+  /**
+   * ⚠ **A3bis A CHANGÉ DE CAMP le 2026-08-25** (décision d'Alexis, spec `glanage.md`). Il
+   * affirmait « la PIERRE ne se refuse à personne » : C3 tenait le rocher à `minTool: none`
+   * pour qu'un survivant nu puisse tailler son premier outil, tout outil de fortune étant fait
+   * de pierre. Le GLANAGE casse cette prémisse — la pierre du premier outil ne vient plus du
+   * rocher, elle se RAMASSE. Le blocage circulaire que C3 redoutait reste donc interdit ; ce
+   * n'est simplement plus le rocher qui l'écarte.
+   *
+   * Les deux moitiés sont ici, et il FAUT les deux : sans la seconde, ce fichier célébrerait
+   * un verrou qui n'ouvre sur rien.
+   */
+  it('A3bis : la pierre du ROCHER se refuse aux mains nues — celle du SOL, jamais', () => {
     const rock = makeNode('rock', 11, 10)
-    const sim = makeSim([rock])
+    const caillou = makeNode('pierre_au_sol', 9, 10)
+    const sim = makeSim([rock, caillou])
     const id = spawnEntity(sim, 10.3, 10.5)
     drainEvents(sim)
 
-    // Mains nues, sans rien : le caillou vient. C'est ce qui interdit le blocage
-    // circulaire (spec C3) — tout outil de fortune est fait de pierre.
+    // ① Le rocher, mains nues : rien, et le refus nomme la pioche.
     act(sim, id, { type: 'harvest', nodeId: rock.id })
+    expect(countOf(me(sim).inventory, 'stone')).toBe(0)
+    expect(rejections(sim)).toEqual(['il faut une pioche en main'])
+
+    // ② La pierre au sol, mains nues : elle vient. C'est PAR LÀ que passe le premier outil.
+    for (let t = 0; t < BALANCE.GATHER_COOLDOWN_TICKS; t++) step(sim, [])
+    drainEvents(sim)
+    act(sim, id, { type: 'harvest', nodeId: caillou.id })
     expect(countOf(me(sim).inventory, 'stone')).toBe(1)
     expect(rejections(sim)).toEqual([])
+    expect(sim.nodes.find((n) => n.id === caillou.id)!.stock).toBe(0) // un ramassage, et c'est tout
   })
 
   it('A4 : le hachereau rend AUTANT que la hache (×2) — et casse cinq fois plus vite', () => {
@@ -686,10 +725,12 @@ describe('l’artisanat de fortune (craft-fortune A1-A5)', () => {
     expect(countOf(me(sim).inventory, 'crude_axe')).toBe(0)
     expect(heldSlot(me(sim))).toBeNull()
 
-    // Sans outil, le coup suivant retombe à ×1 : la fortune ne laisse rien derrière.
+    // Sans outil, le coup suivant NE PART PLUS : depuis `glanage.md` G1, le hachereau cassé
+    // rend l'arbre inabordable. La fortune ne laisse rien derrière, et « rien » est devenu
+    // littéral — c'est ce qui donne son poids à la durabilité de 20 coups.
     const before = countOf(me(sim).inventory, 'wood')
     swing(sim, id, tree.id, 1)
-    expect(countOf(me(sim).inventory, 'wood')).toBe(before + 1)
+    expect(countOf(me(sim).inventory, 'wood')).toBe(before)
   })
 
   it('A5 : le PNJ empoigne la hache d’atelier, pas le hachereau — on classe au rang', () => {
@@ -953,6 +994,7 @@ describe('la spécialisation (A5)', () => {
     for (let t = 0; t < BALANCE.GATHER_COOLDOWN_TICKS; t++) step(sim, [])
     const rock = makeNode('rock', 10, 11)
     sim.nodes.push(rock)
+    grantHeld(sim, id, 'crude_pickaxe') // le rocher exige la pioche (spec `glanage.md` G1)
     act(sim, id, { type: 'harvest', nodeId: rock.id })
     expect(me(sim).skills.mining).toBeCloseTo(1 / (1 + 0.5 * 10), 6)
   })
@@ -1141,6 +1183,9 @@ describe("l'abattage à maîtrise (spec recolte-maitrise, verbe 1)", () => {
     const tree = makeNode('tree', 11, 10)
     const sim = makeSim([tree])
     const id = spawnEntity(sim, 10.3, 10.5)
+    // LA HACHE EN MAIN : depuis `glanage.md` G1 l'abattage n'existe plus sans elle — la
+    // jauge de charge est refusée d'entrée (`strikeRejection` garde les trois chemins).
+    grantHeld(sim, id, 'crude_axe')
     drainEvents(sim)
     return { sim, id, nodeId: tree.id }
   }
@@ -1253,6 +1298,8 @@ describe('le minage à maîtrise (spec recolte-maitrise, verbe 2)', () => {
     const rock = makeNode('rock', 11, 10)
     const sim = makeSim([rock])
     const id = spawnEntity(sim, 10.3, 10.5)
+    // LA PIOCHE EN MAIN : depuis `glanage.md` G1, le rocher ne cède plus aux mains nues.
+    grantHeld(sim, id, 'crude_pickaxe')
     drainEvents(sim)
     return { sim, id, rock }
   }
@@ -1466,5 +1513,91 @@ describe('la cueillette à maîtrise (spec recolte-maitrise, verbe 3)', () => {
     node.regrowAt = sim.tick
     step(sim, [])
     expect(node.stock).toBe(withForageRichness('berry_bush', node.id, NODE_DEFS.berry_bush.stock))
+  })
+})
+
+/**
+ * ═══ LE FAIT PORTE SA MATIÈRE (2026-08-27) ═══
+ *
+ * `resource_harvested` a gagné un `nodeType` pour que le SON du coup puisse être celui de la
+ * matière — la hache dans le bois, la pioche dans la pierre (demande d'Alexis). Le routage
+ * lui-même est gardé côté client (`sound.test.ts`) ; ce qui se prouve ICI, et nulle part
+ * ailleurs, c'est que le champ ARRIVE VRAIMENT sur le fait quand le vrai geste s'exécute.
+ *
+ * Sans cette garde, la panne serait MUETTE dans le pire sens : un `nodeType` qui n'arrive
+ * jamais fait tomber TOUTES les matières sur la branche par défaut, le jeu rejoue le bip
+ * d'interface d'avant, et rien ne rougit — ni ici, ni côté client, où la table pure passerait
+ * ses treize cas sur des faits fabriqués à la main.
+ */
+describe('le coup de récolte dit DE QUOI il vient', () => {
+  /** Le métier au plafond : on veut que chaque nœud MORDE, pas doser un rendement. */
+  const MAITRISE = 62500
+  /** L'outil qu'exige une famille, au palier le plus haut : on veut récolter, pas doser. */
+  const OUTIL: Record<string, ItemId | null> = { axe: 'iron_axe', pickaxe: 'iron_pickaxe', rod: null, knife: null }
+
+  /**
+   * ⚠ TOUTES LES MATIÈRES QUI PASSENT PAR `harvestStrike`, énumérées depuis `NODE_DEFS` et non
+   * à la main : une matière neuve entre dans cette garde toute seule. Les coins de pêche en
+   * sortent — leur prise passe par `landFish`, un chemin distinct, gardé plus bas.
+   */
+  const AU_COUP = (Object.keys(NODE_DEFS) as ResourceNode['type'][]).filter((t) => NODE_DEFS[t].tool !== 'rod')
+
+  it('CHAQUE matière du monde arrive sur le fait — aucune ne part sans se nommer', () => {
+    // La garde prouve d'abord sa PRÉMISSE : si aucun coup ne portait, la boucle rendrait zéro
+    // désaccord et le vert serait obtenu par accident (leçon `sonde-qui-ne-peut-pas-echouer`).
+    const manquants: string[] = []
+    const muets: string[] = []
+    for (const type of AU_COUP) {
+      const node = makeNode(type, 11, 10)
+      const sim = makeSim([node])
+      const id = spawnEntity(sim, 10.3, 10.5)
+      // De quoi que le nœud ait besoin : le métier au plafond (les paliers de savoir, dont
+      // le patch de champignons) et l'outil de sa famille, EN MAIN (l'objet tenu fait foi).
+      const moi = me(sim)
+      moi.skills.woodcutting = MAITRISE
+      moi.skills.mining = MAITRISE
+      moi.skills.foraging = MAITRISE
+      const outil = OUTIL[NODE_DEFS[type].tool ?? '']
+      if (outil) grantHeld(sim, id, outil)
+      drainEvents(sim)
+
+      act(sim, id, { type: 'harvest', nodeId: node.id })
+      const ev = drainEvents(sim).find((e) => e.type === 'resource_harvested')
+      if (!ev) muets.push(type) // le coup n'a pas porté : la garde ne mesure RIEN sur ce nœud
+      else if (ev.type === 'resource_harvested' && ev.nodeType !== type) manquants.push(`${type} → ${ev.nodeType}`)
+    }
+    expect(muets, 'des nœuds n’ont rien émis : la garde ne les mesure pas').toEqual([])
+    expect(manquants).toEqual([])
+    expect(AU_COUP.length).toBeGreaterThan(10) // et le domaine balayé est bien le vrai
+  })
+
+  it('LA BRANCHE ET LE TRONC rendent le MÊME bois — et ne se disent plus pareil', () => {
+    // LA raison d'être du champ. Router le son sur `item` ferait sonner la hache quand on
+    // ramasse une branche au sol : les deux rendent `wood`, et seul `nodeType` les sépare.
+    const coup = (type: ResourceNode['type'], outil?: ItemId) => {
+      const node = makeNode(type, 11, 10)
+      const sim = makeSim([node])
+      const id = spawnEntity(sim, 10.3, 10.5)
+      me(sim).skills.woodcutting = MAITRISE
+      me(sim).skills.mining = MAITRISE
+      me(sim).skills.foraging = MAITRISE
+      if (outil) grantHeld(sim, id, outil)
+      drainEvents(sim)
+      act(sim, id, { type: 'harvest', nodeId: node.id })
+      return drainEvents(sim).find((e) => e.type === 'resource_harvested')!
+    }
+    const tronc = coup('tree', 'iron_axe')
+    const branche = coup('branche_au_sol')
+    expect(tronc.type === 'resource_harvested' && tronc.item).toBe('wood')
+    expect(branche.type === 'resource_harvested' && branche.item).toBe('wood') // le MÊME objet…
+    expect(tronc.type === 'resource_harvested' && tronc.nodeType).toBe('tree') // …deux matières
+    expect(branche.type === 'resource_harvested' && branche.nodeType).toBe('branche_au_sol')
+
+    const rocher = coup('rock', 'iron_pickaxe')
+    const galet = coup('pierre_au_sol')
+    expect(rocher.type === 'resource_harvested' && rocher.item).toBe('stone')
+    expect(galet.type === 'resource_harvested' && galet.item).toBe('stone')
+    expect(rocher.type === 'resource_harvested' && rocher.nodeType).toBe('rock')
+    expect(galet.type === 'resource_harvested' && galet.nodeType).toBe('pierre_au_sol')
   })
 })

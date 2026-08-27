@@ -8,6 +8,16 @@
  * Et la TRAÎNE POINTILLÉE promise par R15 : des points d'1 px semés aux positions
  * passées, alpha par PALIERS (jamais un dégradé) — le sillage discret qui donne le sens.
  * Les lacs et mares n'ont pas de fil : pas de courant, pas de feuilles — c'est juste.
+ *
+ * ═══ ET PAS DE FEUILLES SUR UNE TUILE SÈCHE (Alexis, 2026-08-25) ═══
+ *
+ * *« Il ne peut y avoir ni feuilles, ni coin de pêche sur une tuile sèche. »* Le champ de
+ * courant est CUIT DE LA CARTE, une fois : il ne sait rien de l'aridité. Une feuille naissait
+ * donc, et continuait de dériver, sur le lit d'une rivière que la sécheresse avait vidé — elle
+ * flottait sur de la vase craquelée. On lui passe l'eau du JOUR (`eauIci`, la loi `porteDeLEau`
+ * de /sim que `WorldScene` hoiste par image) : elle décide de la naissance ET de la survie, au
+ * même titre que la sortie du champ. Sans elle, le module est inchangé — un banc ou un hôte qui
+ * ne la fournit pas garde le comportement d'avant.
  */
 import Phaser from 'phaser'
 import type { WorldMap } from '@ashes/sim'
@@ -102,6 +112,17 @@ export class FeuillesDerive {
     return this.flow ? flowAt(this.flow, tx, ty) : null
   }
 
+  /**
+   * Y a-t-il de l'eau sur cette tuile AUJOURD'HUI ? Posé par `WorldScene` (patron `floreGeleeAt`).
+   * `null` : personne n'a répondu — on s'en tient au champ de courant, comme avant.
+   */
+  eauIci: ((tx: number, ty: number) => boolean) | null = null
+
+  /** L'eau du jour, ou le champ seul si personne ne l'a dite. Un seul point de lecture. */
+  private surLEau(tx: number, ty: number): boolean {
+    return this.eauIci === null || this.eauIci(Math.floor(tx), Math.floor(ty))
+  }
+
   update(nowMs: number, dtMs: number, camTx: number, camTy: number, vent: { x: number; y: number }): void {
     if (!this.flow) return
     // ── Naissances : une tuile de courant près de la caméra ──
@@ -112,6 +133,8 @@ export class FeuillesDerive {
         const tx = camTx + (hache(g, essai, 23) - 0.5) * RAYON * 1.7
         const ty = camTy + (hache(essai, g, 29) - 0.5) * RAYON * 1.7
         if (!flowAt(this.flow, tx, ty)) continue
+        // ⚠ ET IL FAUT DE L'EAU AUJOURD'HUI, pas seulement un lit sur la carte (voir `eauIci`).
+        if (!this.surLEau(tx, ty)) continue
         const sprite = this.scene.add
           .image(tx * TILE_PX, ty * TILE_PX, `fx-feuille-${g % 2}`)
           .setDepth(FEUILLE_DEPTH)
@@ -141,8 +164,11 @@ export class FeuillesDerive {
       const f = this.feuilles[i]!
       const c = flowAt(this.flow, f.x, f.y)
       const horsChamp = Math.max(Math.abs(f.x - camTx), Math.abs(f.y - camTy)) > RAYON * 1.7
-      if (!c || horsChamp) {
-        // sortie du courant (embouchure, berge) ou de la vue : la feuille s'en va
+      // ⚠ LA SURVIE SE JUGE AUSSI, PAS SEULEMENT LA NAISSANCE. La sécheresse arrive PENDANT que
+      //   la feuille dérive (le niveau d'eau est global et bascule d'un jour à l'autre) : sans
+      //   ce test, celles qui étaient déjà nées finissaient leur course sur la vase.
+      if (!c || horsChamp || !this.surLEau(f.x, f.y)) {
+        // sortie du courant (embouchure, berge), de la vue, ou de l'eau : la feuille s'en va
         f.sprite.destroy()
         f.ombre.destroy()
         for (const p of f.traine) p.destroy()

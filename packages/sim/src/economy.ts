@@ -97,6 +97,24 @@ export interface ResourceNode {
   depletions?: number
   /** Tick auquel le compteur d'épuisement perdra une marche. */
   forgetAt?: number
+  /**
+   * ═══ LA TAILLE D'UN `bloc` QUAND ELLE NE SE DEVINE PAS DE SA TUILE (2026-08-27) ═══
+   *
+   * Le chaos du lapiaz tire la sienne de `tailleDeBloc(tx, ty)` — pure fonction, rien ne transite,
+   * sim et client la relisent chacun de son côté. Les blocs d'une BUTTE, eux, se rangent par
+   * hauteur selon leur place dans la butte (`roche-mere.md` R6septies : la pierre haute sur
+   * l'échine, la moyenne sur trois tuiles de descente, la basse au-delà), et cette place se
+   * dérive de la FORME du pierrier — une carte de distance et sa crête, sur toute la butte.
+   *
+   * ⚠ **LE CLIENT NE PEUT PAS LA REFAIRE À LA VOLÉE, ET LE STOCK NE PEUT PAS LA PORTER** : il
+   * lui faudrait rejouer un BFS par butte au chargement (une surface d'état dérivé neuve dans le
+   * chemin de rendu, pour un seul motif visuel), et le stock — dont on la déduirait — DÉCROÎT dès
+   * qu'on mine. La taille cesse donc d'être une fonction de la position pour devenir une
+   * propriété du bloc posé, ce qui est très exactement ce que « dérivée de la forme de la butte »
+   * veut dire. Absente sur tout autre nœud, et sur les blocs du chaos : le client retombe alors
+   * sur `tailleDeBloc`.
+   */
+  size?: 0 | 1 | 2
 }
 
 /**
@@ -567,8 +585,13 @@ function strikeRejection(state: SimState, actor: Entity, node: ResourceNode | un
   }
   const { tier } = toolMultiplier(actor, def.tool)
   if (TOOL_RANK[tier] < TOOL_RANK[def.minTool]) {
+    // LE REFUS NOMME L'OUTIL QUI MANQUE (spec `glanage.md` G4). Il disait « il faut une pioche »
+    // pour TOUT nœud abordé les mains vides — un mensonge inoffensif tant que seuls des nœuds de
+    // minage étaient gatés à `none`, une impasse depuis que l'ARBRE l'est : le joueur de la
+    // première heure aurait cherché une pioche devant un tronc. La famille du nœud le dit.
     if (def.tool === 'rod') return 'il faut une canne en main' // peche.md D4 : le geste EST la ligne
-    return tier === 'none' ? 'il faut une pioche en main' : 'il faut un outil forgé en main'
+    if (tier !== 'none') return 'il faut un outil forgé en main'
+    return def.tool === 'axe' ? 'il faut une hache en main' : def.tool === 'knife' ? 'il faut un couteau en main' : 'il faut une pioche en main'
   }
   // Le GATE DE SAVOIR (verbe 3) : le patch de champignons est visible de tous, mais on ne sait
   // reconnaître les bons qu'expert. Sœur de `minTool`, côté connaissance — pas outil.
@@ -845,7 +868,7 @@ function landFish(state: SimState, actor: Entity, actorId: number, speciesId: Fi
   const record = enregistrerAuBestiaire(actor, species, mm, state.tick)
   emitEvent(state, { type: 'fish_caught', tick: state.tick, entityId: actorId, tx, ty, ...(node ? { nodeId: node.id } : {}), species: species.id, item: species.id, mm, count })
   if (record) emitEvent(state, { type: 'fish_record', tick: state.tick, entityId: actorId, species: species.id, mm })
-  emitEvent(state, { type: 'resource_harvested', tick: state.tick, entityId: actorId, ...(node ? { nodeId: node.id } : { nodeId: -1 }), item: species.id, count })
+  emitEvent(state, { type: 'resource_harvested', tick: state.tick, entityId: actorId, ...(node ? { nodeId: node.id, nodeType: node.type } : { nodeId: -1 }), item: species.id, count })
 }
 
 /**
@@ -1148,6 +1171,11 @@ function harvestStrike(state: SimState, actor: Entity, actorId: number, node: Re
     tick: state.tick,
     entityId: actorId,
     nodeId: node.id,
+    // LA MATIÈRE PART AVEC LE FAIT, et pas seulement l'objet : `depleteNode` vient de tourner
+    // deux lignes plus haut, donc le nœud peut DÉJÀ ne plus être dans l'état quand le client
+    // lira ce fait — et un glanage (`stock: 1`) est TOUJOURS un dernier coup. Aller relire le
+    // monde depuis le son serait l'instrumentation après coup que CLAUDE.md interdit.
+    nodeType: node.type,
     item: def.item,
     count: yielded,
     ...(clean ? { clean: true } : {}),
@@ -1157,11 +1185,15 @@ function harvestStrike(state: SimState, actor: Entity, actorId: number, node: Re
   // donc `level` est bien le niveau de cueillette. Le PATCH DE CHAMPIGNONS en est exclu (un mycélium
   // ne donne pas de graine — sa valeur est le champignon lui-même). Borné au sac : s'il est plein, le
   // bonus est simplement PERDU (c'est un cadeau, pas un dû — aucun refus, aucune inondation d'events).
-  if (whole && node.type !== 'champignon') {
+  // `vivant` : LA GRAINE VIENT D'UNE PLANTE. Le test portait sur le seul champignon, et il
+  // suffisait tant que tout ce qui se cueille d'un coup était végétal ; le sel de la fumerolle,
+  // la tourbe, la cendre — et maintenant la BRANCHE et la PIERRE au sol — passent par `whole`
+  // sans avoir jamais poussé. Une pierre ne donne pas de semence.
+  if (whole && node.type !== 'champignon' && NODE_DEFS[node.type].vivant === true) {
     const bounty = forageBounty(node.id, state.tick, forageRichness(node.id), level)
     if (bounty !== null && freeRoomFor(actor.inventory, bounty) > 0) {
       addItems(actor.inventory, { [bounty]: 1 })
-      emitEvent(state, { type: 'resource_harvested', tick: state.tick, entityId: actorId, nodeId: node.id, item: bounty, count: 1 })
+      emitEvent(state, { type: 'resource_harvested', tick: state.tick, entityId: actorId, nodeId: node.id, nodeType: node.type, item: bounty, count: 1 })
     }
   }
 }

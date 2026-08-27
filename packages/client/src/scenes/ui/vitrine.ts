@@ -1,7 +1,8 @@
 /**
  * LA VITRINE — les images du jeu qui défilent à droite du menu principal (demande d'Alexis,
  * 2026-07-28 ; élargie le 2026-08-20 « plus de variétés et d'epicness », puis le 2026-08-24
- * « des paysages dramatiques, une météo de ouf, des hordes de cendreux, des biomes variés »).
+ * « des paysages dramatiques, une météo de ouf, des hordes de cendreux, des biomes variés »,
+ * puis le 2026-08-26 « epicness et beauté n'oublie pas »).
  *
  * CE SONT DE VRAIES CAPTURES DU JEU, PAS DES ILLUSTRATIONS. Elles sortent du scénario smoke
  * `vitrine` (`pnpm smoke --scenario vitrine --dev`), qui téléporte l'avatar de lieu en lieu,
@@ -10,90 +11,142 @@
  * qui n'existe pas ; ② le jour où l'art bouge, on RELANCE l'atelier et on remplace ces
  * fichiers — la fraîcheur des images est à une commande, pas à une séance de photo.
  *
- * ET C'EST ARRIVÉ CINQ FOIS : le 2026-07-28 quand les arbres ont changé de taille, le
- * 2026-07-29 quand ils sont passés de deux sprites à dix, le 2026-08-01 quand le worldgen a
- * cessé de poser les tentes du campement, le 2026-08-20 pour la série des scènes, et le
- * 2026-08-24 pour celle-ci.
+ * ET C'EST ARRIVÉ SIX FOIS : le 2026-07-28 quand les arbres ont changé de taille, le 2026-07-29
+ * quand ils sont passés de deux sprites à dix, le 2026-08-01 quand le worldgen a cessé de poser
+ * les tentes du campement, le 2026-08-20 pour la série des scènes, le 2026-08-24 pour celle des
+ * ciels, et le 2026-08-26 pour celle-ci.
  *
- * ═══ CINQUIÈME SÉRIE — LE MONDE N'EST PLUS LE MÊME, ET LA PLANCHE NON PLUS ═══
+ * ═══ SIXIÈME SÉRIE — LA NUIT A UN CADRAN, ET LE SOL A QUATRE COULEURS ═══
  *
- * Trois choses ont changé sous la série précédente, et chacune l'invalidait :
+ * Trois chantiers de rendu ont atterri entre les deux séries, et chacun invalidait la
+ * précédente — non pas parce qu'elle avait vieilli, mais parce que les LEVIERS ont changé :
  *
- *   · LE MONDE JOUÉ N'A PLUS QU'UNE ZONE. `MONDE_JOUE = 'racine'` : les Prés Bas, seuls
- *     (2026-08-24). La Cendrière-ZONE a disparu — donc les quatre « biomes » de l'ancienne
- *     planche aussi. **La variété ne se prend plus au SOL, elle se prend au CIEL, à la SAISON
- *     et à l'ÉTAT DU MONDE.** C'est la contrainte qui a écrit cette planche.
- *   · LE MONDE S'OUVRE AU JOUR 61, pas au jour 1 (`saisons.md` S2) — en pleine saison des
- *     Pluies. L'ancienne planche visait les jours 1, 47, 51 : des sauts EN ARRIÈRE, que
- *     `debug_set_season_day` refuse en silence. Elle photographiait donc une lumière qu'elle
- *     croyait avoir choisie. L'atelier LIT désormais le jour d'ouverture.
- *   · LA CENDRE SOURD DES FOSSES (`cendre.md`, 2026-08-24) : un foyer par charnier, une tache
- *     qui s'étend en √t. C'est le sujet du jeu, il a enfin un BORD, et il se photographie.
+ *   · **LE VOILE DE NUIT SUIT LA LUNE** (`lighting.ts`, 2026-08-25 — « la lumière naturelle
+ *     actuelle à minuit doit être notre PLEINE LUNE »). La nuit n'a plus une luminosité, elle
+ *     en a vingt-trois : `NIGHT_ALPHA_MAX` (0,72) est le voile de la pleine lune,
+ *     `VOILE_NOUVELLE_LUNE` (0,97) celui de la nouvelle.
+ *   · **LE SOL TOURNE AVEC L'ANNÉE** (`teinte-saison.ts`, 2026-08-23). Vert tendre à
+ *     l'Éclosion, or à l'Ardeur, roux aux Pluies, gris-bleu au Grand Froid — sur le VIVANT
+ *     seulement (ni la roche, ni l'eau, ni le mur).
+ *   · **LA BRUME EST UNE NAPPE D'ÉPAISSEUR** (`mist-layer.ts`, 2026-08-25), et le FLOCON a
+ *     été divisé par deux (`GRAIN_FLOCON`, 2026-08-26).
  *
- * ═══ LES TROIS MESURES QUI ONT DÉCIDÉ DE LA SÉRIE ═══
+ * ═══ CE QUE LA SÉRIE A MESURÉ, ET QUI DÉCIDE DE TOUT ═══
  *
- * ① **L'HEURE EST UN LEVIER FAIBLE.** La même futaie tirée à 5,2 · 6 · 6,6 · 7,4 · 19 · 19,8 ·
- *    20,8 h (`SMOKE_ECHELLE`, l'échelle d'heures ajoutée pour ça) rend SEPT IMAGES QUASI
- *    IDENTIQUES : l'alpha d'`AMBIENT_KEYS` plafonne à 0,34, et sur un cadre de vingt tuiles un
- *    voile à 0,34 ne fait pas une lumière, il fait une teinte. Une prise n'a donc le droit
- *    d'exister sur sa seule heure que si elle a déjà autre chose à montrer. C'est ce qui a
- *    sorti trois paysages de la planche et fait entrer quatre ciels.
- * ② **LA NEIGE NE SUPPORTE PAS QU'ON ÉLARGISSE LE CADRE.** Son grain est quantifié sur la
- *    grille de l'art (4 px, `GRAIN_PX` — les FX de ce jeu ne sont jamais lissés) : au cadrage
- *    du jeu elle fait des flocons, à vingt-quatre tuiles elle fait des BLOCS BLANCS gros comme
- *    un tronc. La pluie, elle, est un trait fin (`grainPx: 1`) et tient à tous les cadrages.
- *    D'où `orage-ruine` à vingt-deux tuiles et le blizzard retiré.
- * ③ **LA HORDE NE S'ARME PAS SI L'ON RECULE.** Mesuré : à douze tuiles du paquet, **0 coup
- *    armé, 0 goule sur 10 retournée sur le photographe**. Voir ci-dessous.
+ * ① **LA LUNE EST LE LEVIER FORT DE LA NUIT — l'heure ne l'a jamais été.** `SMOKE_LUNE`
+ *    (l'échelle de phases, ajoutée pour ça) a tiré SIX FOIS le même hameau, à la même heure,
+ *    sans bouger d'un pouce : au jour 62 (pleine lune) c'est un pré OLIVE en plein jour où le
+ *    feu ne se voit pas ; au jour 70 (lune au dixième) c'est une VRAIE nuit, les toits prennent
+ *    l'orange du foyer et les lucioles de la clairière existent ; au jour 72 (lune neuve) le
+ *    voile SATURE — rien de plus à gagner à viser le noir exact.
+ *    ⚠ **ET LE JOUR D'OUVERTURE EST LE PIRE DES VINGT-TROIS** : `LUNE_PLEINE_JOUR = 61`, et le
+ *    monde ouvre au 61. Une prise de nuit qui ne DIT pas son jour tombe donc, par défaut, sur
+ *    la nuit la plus plate de la lunaison. C'est ce qui rendait les nuits de la série
+ *    précédente si pâles — personne n'avait choisi cette lumière.
+ * ② **LA VARIÉTÉ EST REVENUE AU SOL.** La cinquième série s'était écrite sur un constat — « le
+ *    monde joué n'a plus qu'une zone, la variété se prend au ciel, plus au sol ». La teinte de
+ *    saison a rouvert cette porte : le MÊME bois n'est plus le même bois d'un cardinal à
+ *    l'autre. Cette planche traverse donc l'année au lieu de traverser la carte — un chêne
+ *    d'Éclosion en vert acide, une futaie de Pluies en roux, un lac de Grand Froid en
+ *    gris-bleu, une frange de cendre sur un pré d'or.
+ * ③ **LA HORDE AVAIT BESOIN D'UNE LAMPE, PAS D'UNE GÉOMÉTRIE.** La série précédente avait
+ *    résolu le cadrage (reculer de douze tuiles pour que personne ne s'arme) et rapportait
+ *    quand même dix rectangles gris sur un pré plat : le feu du village qu'elles visent est à
+ *    cent tuiles, il n'entre pas dans le cadre, et rien d'autre n'éclairait la scène. La
+ *    `torche_vive` est la seule lumière qu'un joueur PORTE (spec `torche.md`) — elle vient
+ *    avec le photographe, donc elle est toujours à l'image. Un homme, une flamme, dix
+ *    silhouettes qui descendent le pré.
  *
- * ═══ LA HORDE — TROIS SÉRIES QU'ELLE A MANQUÉES, ET POURQUOI ═══
+ * ═══ LA PÊCHE (ajoutée le 2026-08-26, à la demande d'Alexis) ═══
  *
- * Alexis la demande depuis le 2026-08-20 ; la prise ABOUTISSAIT à tous les coups et l'image
- * était inregardable. Le journal accusait le décor (« pleine Cendrière, des dalles sombres sur
- * une plaine brune ») — c'était la moitié de la cause, et elle a disparu avec la Cendrière.
- * L'autre moitié était GÉOMÉTRIQUE, et personne ne l'avait nommée : le photographe se plantait
- * à SIX tuiles du paquet, donc DANS son `aggroRange` (5). Les goules lâchaient la descente de
- * gradient, se retournaient sur lui, et leurs coups peignaient des télégraphes rouges et des
- * cônes BLANCS pleine image — du HUD, sur une photo d'accueil.
+ * Elle a QUATRE éléments rendus (`peche-fx.ts`) — le lancer en arc, le fil de Verlet qui pend, le
+ * flotteur qui clapote puis plonge, et le FERRAGE. Trois d'entre eux sont une ligne molle posée sur
+ * de l'eau : jolis en mouvement, muets sur une photo. Le seul instant qui raconte quelque chose,
+ * c'est **le poisson qui sort de l'eau** — et il dure 460 ms, soit moins d'une frame sur cette
+ * machine. L'atelier reprend donc, à la lettre, la recette déjà payée par le scénario `peche` :
+ * un `host.onMessage` qui ferre à la cadence des SNAPSHOTS (20 Hz) et non des frames, et un
+ * accrochage de `pecheFx.caught` qui endort la boucle puis pose la frame à la main
+ * (`game.step`, 160 ms — au milieu de l'arc du poisson, pas à son départ).
  *
- * Reculer ne suffisait pas : la caméra CENTRE l'avatar, donc reculer de douze tuiles POUSSE le
- * paquet à douze tuiles du centre — collé au bord haut, à moitié coupé (mesuré, deux fois).
- * Les deux contraintes se battaient. **On a donc décroché la caméra du joueur** (`viseSujet`) :
- * elle se pose entre les deux, biaisée vers le sujet. La horde tient le tiers haut, le
- * photographe le bas du cadre, personne ne s'arme — et c'est la première fois que la vitrine
- * la porte.
+ * DEUX RÉGLAGES ONT ÉTÉ MESURÉS, ET AUCUN N'ÉTAIT DEVINABLE :
+ *   · **L'HEURE, PAR L'EAU.** À 19,8 h — l'heure « couchant » du reste de la planche — la nappe
+ *     profonde ne reçoit plus rien : elle rend un vide gris-brun sur la moitié du cadre. À 18,6 h
+ *     la même eau porte encore le bleu du ciel ET la bande ocre du haut-fond, et les MONTÉES de
+ *     poissons (`poissons-ombres`) s'y lisent en pastilles chaudes. On ne gagne pas une teinte, on
+ *     gagne un sujet.
+ *   · **UN PIED SEC N'EST PAS UN PIED NU.** Le premier tirage prenait le premier coin de lac venu
+ *     et la première tuile sèche à portée : il a planté l'avatar sous la CANOPÉE d'une berge
+ *     boisée, et la canne cambrée sortait d'un tas de houppiers. Le choix du coin note désormais
+ *     ce que le cadre contiendrait — l'eau devant, et zéro arbre autour du pêcheur.
  *
- * ═══ CE QUI A ÉTÉ ESSAYÉ ET ÉCARTÉ, pour que personne ne le retente à l'aveugle ═══
+ * ═══ LA TRAQUE EST THERMIQUE — et c'est ce qui manquait à la horde (2026-08-26) ═══
  *
- *   · LE GUÉ, deux fois (jour 61 ET jour 75). Depuis que le niveau d'eau se peint, la rivière
- *     de cette carte rend un chenal de vase ocre et une nappe gris-noir : ni en sortie
- *     d'Ardeur (aridité haute) ni en pleine saison des pluies elle n'a rendu l'eau dorée de la
- *     série précédente. C'est un fait de rendu, pas un mauvais réglage d'heure.
- *   · LE BROUILLARD SUR LES MENHIRS. Il DÉSATURE. Les pierres levées valent par l'ambre du
- *     couchant et leurs ombres longues ; un voile gris les rend au gris.
- *   · L'ORAGE SUR LA HORDE. Figée, l'averse rend des rectangles pâles gros comme une goule, et
- *     le trait de foudre gelé barre l'image d'une règle blanche d'un bord à l'autre. Ce qui se
- *     photographie bien en mouvement ne se photographie pas à l'arrêt.
- *   · LA CHASSE SOUS LA NEIGE. Deux obstacles indépendants : au jour 105 — le cardinal du
- *     Grand Froid, le point le plus froid de l'année — les SIX tanières visitées ont rendu
- *     « neige au sol 0,00 » (le manteau de cette carte est une mosaïque) ; et la neige qui
- *     TOMBE bloque en carrés (mesure ②) sur le sol gris d'une tanière.
- *   · LE VENT DE CENDRE. **La seule vraie perte de la série**, et elle mérite d'être sue : le
- *     front qui porte le nom du jeu existe, il s'arme, il traverse — et il se rend en
- *     rectangles gris pâle épars, pour la même raison que la neige (`grainPx: 4`). À vingt-deux
- *     tuiles il ne ressemble pas à de la cendre chassée, il ressemble à du bruit. Il faudra le
- *     photographier au cadrage du jeu, ou pas du tout.
- *   · LES FUMEROLLES. Tirées, réussies (le panache sort, une fois `fumerolleFx` chauffé à la
- *     main) — mais c'est le MÊME sujet que `front-cendre`, moins contrasté. Deux franges de
- *     cendre sur neuf vues, c'en était une de trop.
+ * Alexis, sur la première horde de cette série : *« les cendreux ne traquent pas le joueur… pas
+ * de tension sur l'image »*. C'était exact, et la prise le mesurait elle-même : « 0/10 goules
+ * retournées sur le photographe ». Trois explications ont été essayées et RÉFUTÉES avant la
+ * bonne — la distance (12 tuiles, puis 4,2, puis 1,4 : rien n'a changé), l'invulnérabilité
+ * (`debug_god` ne touche QUE les dégâts, `nearestPrey` l'ignore), et la sonde elle-même
+ * (`view.monsters` porte bien les `Monster` bruts du snapshot, `targetId` compris).
+ *
+ * LA CAUSE EST LE FROID. L'éveil d'un Cendreux suit la température (`CENDREUX.TORPEUR` : éveil 0
+ * à +6 °C, éveil 1 à −14 °C) et sa vue vaut `aggroRange × éveil × LE STIMULUS DE LA PROIE`. Un
+ * soir des Pluies, l'éveil est au plancher : sa vue tombe à `aggroRange × 0,2` = **une tuile**.
+ * Le relevé qui a tranché : photographe à 1,4 tuile de dix goules, `targetId: null`,
+ * `suspicion: 0` — elles ne le snobaient pas, elles ne le VOYAIENT pas. La horde est donc passée
+ * à une NUIT DU GRAND FROID (jour 101, lune à mi-course), où l'éveil est plein.
+ *
+ * ET IL FAUT QU'IL MARCHE. Le second facteur est le stimulus : `HUNT.VIS_STILL` vaut 0,25 —
+ * « l'œil du gibier accroche le MOUVEMENT ; une silhouette plantée redevient un rocher ». Un
+ * photographe immobile n'est jamais traqué, il est piétiné. L'atelier le fait donc AVANCER sur
+ * elles pendant qu'il guette la bascule (marche, pas sprint : à 6 t/s il traverse le cadre entre
+ * deux relevés).
+ *
+ * ⚠ ET LE GEL SE VÉRIFIE. `pause` est un message au Worker : il met deux à trois cents
+ * millisecondes à prendre. Or elles repensent leur cible à chaque pensée, et l'homme qui vient
+ * de s'arrêter redevient invisible — MESURÉ : « 3/13 retournées » au déclenchement, « 0/13 » au
+ * relevé suivant. On fige, on attend que l'horloge de la sim s'ARRÊTE, et on RE-COMPTE : c'est
+ * l'état gelé qui décide. Résultat livré : **7 goules sur 15 retournées, zéro coup armé**.
+ *
+ * (Le coup ARMÉ, lui, reste proscrit : essayé à 1,5 tuile, il peint un losange filaire rouge en
+ * plein sur l'homme — un gizmo d'interface, ce que la cinquième série avait déjà jeté. La
+ * tension vient de la meute qui se RETOURNE — les traqueuses portent un liseré rouge — jamais du
+ * coup qui part. L'atelier s'arrête donc à trois tuiles et refuse tout armement.)
+ *
+ * ═══ CE QUI A ÉTÉ TIRÉ ET ÉCARTÉ, pour que personne ne le retente à l'aveugle ═══
+ *
+ *   · **SE POSTER SUR L'AXE DE MARCHE DE LA HORDE** (plutôt que plein sud du paquet), pour
+ *     qu'elle vienne de face au lieu de défiler de flanc. Bonne idée, jetée sur mesure : le feu
+ *     qu'elle vise peut être à QUATRE CENTS tuiles, et sa géométrie à la levée n'a rien à voir
+ *     avec cette direction — le placement est parti à 14,3 tuiles et le relevé est retombé à
+ *     0/15. Le sud est arbitraire mais STABLE, et c'est lui qui rend 7/15.
+ *   · **LA CHASSE SOUS LA NEIGE.** Tirée, réussie au sens de l'atelier (une bête, de la neige
+ *     qui tombe) et illisible au sens de l'image : le chasseur est un rectangle beige de vingt
+ *     pixels, le sanglier une tache brune, et l'arc bandé ne se voit pas à ce cadrage. Ce n'est
+ *     pas un réglage à trouver, c'est un sujet trop petit pour une vitrine.
+ *   · **LES FUMEROLLES** (jour 290). Le panache sort — c'est un carré blanc de trente pixels
+ *     sur une plaine grise. Même verdict qu'à la cinquième série, et pour la même raison.
+ *   · **LE VENT DE CENDRE** (jour 240). Toujours des rectangles gris pâle épars : il a gardé
+ *     les 4 px des FX de lumière (`GRAIN_PX`) quand le flocon descendait à 2 (`GRAIN_FLOCON`).
+ *     Il faudra le photographier au cadrage du jeu, ou pas du tout.
+ *   · **L'ORAGE SUR LES MENHIRS** (essayé sur l'idée que neuf pierres font neuf silhouettes).
+ *     Il marche — et il fait doublon avec `cercle`, en moins chaud : l'averse mange l'ambre du
+ *     couchant, qui est très exactement ce qui porte cette prise-là.
+ *   · **L'ORAGE, TOUT COURT.** `ferme-pluie` s'appelait `orage-ruine` : depuis que le rideau
+ *     GRÉSILLE sur la lisière (2026-08-25), un orage figé peint des BARRES BLANCHES grosses
+ *     comme une caisse en travers du cadre — mesuré à 18 tuiles ET à 22, donc ce n'est pas un
+ *     défaut de zoom. L'averse simple garde le rideau et le ciel bouché, sans les barres.
+ *   · **LA TOUR DE GUET** comme sujet d'orage. Elle fait trois tuiles : à tout cadrage elle est
+ *     un moignon gris au bord du cadre. La Ferme muette, elle, fait une dizaine de tuiles et
+ *     s'ouvre sur son dedans — un toit crevé, un établi effondré, la pluie qui tombe DEDANS.
  *
  * ═══ L'ORDRE — UNE COURSE DU SOLEIL, ET LE FEU EN TÊTE ═══
  *
  * On ouvre sur le feu dans le noir : c'est ce que le jeu a de plus fort à montrer, et c'est
- * ainsi depuis la première série. Puis le jour se lève (la futaie, la brume), le soleil tourne
- * (l'orage de plein jour, la cendre de fin d'après-midi, les menhirs au couchant), la nuit
- * tombe sur le bourg et sur la horde, et l'hiver ferme la marche. Le carrousel BOUCLE : la
- * dernière image, un lac gelé au petit jour, revient sur un feu dans la nuit sans heurt.
+ * ainsi depuis la première série. Puis le jour se lève (le chêne, la futaie, la brume), le
+ * soleil tourne (l'averse de plein jour, la cendre de fin d'après-midi, les menhirs au
+ * couchant), la nuit tombe sur le bourg et sur la horde, et l'hiver ferme la marche. Le
+ * carrousel BOUCLE : la dernière image, un lac gelé au petit jour, revient sur un feu dans la
+ * nuit sans heurt.
  *
  * ⚠ UNE FAUSSE PISTE, NOTÉE POUR QU'ELLE NE SE REJOUE PAS. Le 2026-08-20, la capture
  * `accueil-principal.png` a fait croire que le voile `.bm-vitrine-bord` écrasait les vues de
@@ -107,10 +160,12 @@
  * écrite à la main dans le HTML casserait au premier `pnpm build`.
  */
 import feuHameau from '../../assets/vitrine/feu-hameau.jpg'
+import cheneEclosion from '../../assets/vitrine/chene-eclosion.jpg'
 import sylveAube from '../../assets/vitrine/sylve-aube.jpg'
 import brumeFutaie from '../../assets/vitrine/brume-futaie.jpg'
-import orageRuine from '../../assets/vitrine/orage-ruine.jpg'
+import fermePluie from '../../assets/vitrine/ferme-pluie.jpg'
 import frontCendre from '../../assets/vitrine/front-cendre.jpg'
+import peche from '../../assets/vitrine/peche.jpg'
 import cercle from '../../assets/vitrine/cercle.jpg'
 import bourgPluie from '../../assets/vitrine/bourg-pluie.jpg'
 import hordeVillage from '../../assets/vitrine/horde-village.jpg'
@@ -123,13 +178,15 @@ export interface Vue {
 }
 
 export const VITRINE: Vue[] = [
-  { src: feuHameau, alt: 'Un hameau de bois endormi autour de son feu, sa palissade close, avant le jour' },
-  { src: sylveAube, alt: 'Une futaie fermée de bouleaux et de hêtres au soleil levant, la canopée en étages' },
-  { src: brumeFutaie, alt: "Le brouillard du matin roule dans un bois de bouleaux, à la lisière d'une lande" },
-  { src: orageRuine, alt: "Une tour de guet effondrée sous l'averse, le rideau de pluie en travers de la vallée" },
+  { src: feuHameau, alt: 'Un hameau de bois endormi autour de son feu, palissade close, dans une nuit sans lune' },
+  { src: cheneEclosion, alt: "Le Grand Chêne dans un bois de l'Éclosion, au petit jour, la feuille tout juste revenue" },
+  { src: sylveAube, alt: 'Une futaie rousse des Pluies au soleil levant, la canopée en étages' },
+  { src: brumeFutaie, alt: 'Le brouillard du matin noie une futaie : une mer de nappe où les cimes émergent' },
+  { src: fermePluie, alt: "Une ferme en ruine sous l'averse, le toit crevé, la pluie tombant sur son établi effondré" },
   { src: frontCendre, alt: 'La frange de cendre mange le pré : le vert cède aux troncs morts et à la poussière grise' },
-  { src: cercle, alt: 'Un cercle de menhirs dans une prairie fleurie, au couchant, les pierres portant leur ombre' },
+  { src: peche, alt: "Un pêcheur ferre sur la berge d'un lac au couchant : la canne cambrée, le poisson qui sort de l'eau" },
+  { src: cercle, alt: 'Un cercle de menhirs dans une prairie dorée, au couchant, les pierres portant leur ombre' },
   { src: bourgPluie, alt: 'Un bourg de PNJ au crépuscule, son feu brûlant au milieu des logis, sous les premiers flocons' },
-  { src: hordeVillage, alt: 'Dix Cendreux descendent le pré vers un feu de village ; un seul homme leur fait face' },
+  { src: hordeVillage, alt: "Une nuit du Grand Froid : sept Cendreux, cernés de rouge, ont pris en chasse l'homme à la torche" },
   { src: lacGele, alt: 'Un lac pris par la glace au petit jour, la grève givrée et les arbres nus du Grand Froid' },
 ]

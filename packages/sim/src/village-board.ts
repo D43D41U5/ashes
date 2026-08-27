@@ -12,8 +12,8 @@
  * bras (bois cloué à 24 dès J1, PNJ oisifs ensuite). Et le tableau porte UNE tâche
  * `build` à la fois : la construction est séquentielle, un chantier après l'autre.
  */
-import { BALANCE, FIRE_UPKEEP, NPC_AI, STRUCTURE_HP, VILLAGE_GROWTH, WORLD_EVENTS } from './balance'
-import type { ItemBag } from './items'
+import { BALANCE, FIRE_UPKEEP, NPC_AI, OUTILS_PAR_FAMILLE, RECIPES, STRUCTURE_HP, VILLAGE_GROWTH, WORLD_EVENTS } from './balance'
+import { countOf, type ItemBag } from './items'
 import type { SimState } from './sim'
 import type { TaskKind, Village } from './village'
 import {
@@ -43,6 +43,40 @@ function affordable(stocks: GranaryStocks, food: number, cost: ItemBag): boolean
     stocks.stone >= (cost.stone ?? 0) &&
     stocks.cut_stone >= (cost.cut_stone ?? 0) &&
     stocks.fiber >= (cost.fiber ?? 0)
+  )
+}
+
+/**
+ * ═══ LE VILLAGE PEUT-IL METTRE UN OUTIL DE CETTE FAMILLE DANS UNE MAIN ? (spec `glanage.md` G6) ═══
+ *
+ * Trois façons, dans l'ordre où `ensureOutil` (npc.ts) les essaie — et c'est VOULU qu'elles se
+ * répondent : le tableau ne doit poster une corvée outillée que si l'exécutant pourra la mener.
+ * Deux jugements divergents ici, et le village posterait des corvées que personne ne peut faire.
+ *
+ *   ① quelqu'un le PORTE déjà (un PNJ rentré avec sa hache) ;
+ *   ② un grenier en contient un ;
+ *   ③ le grenier porte de quoi TAILLER celui de fortune — et la corde compte comme la fibre
+ *     qui la fait, puisque `ensureOutil` sait la tresser en chemin.
+ *
+ * ⚠ Ne juge QUE la fortune en repli. Un village sans établi ne façonnera jamais de hache
+ * d'atelier, et ce n'est pas ce qu'on lui demande : le hachereau suffit à ouvrir l'arbre.
+ */
+function outilTenable(state: SimState, village: Village, stocks: GranaryStocks, famille: 'axe' | 'pickaxe'): boolean {
+  const acceptes = OUTILS_PAR_FAMILLE[famille]
+  for (const id of village.memberIds) {
+    const e = state.entities.find((x) => x.id === id)
+    if (e && acceptes.some((p) => countOf(e.inventory, p) > 0)) return true
+  }
+  for (const chest of granaries(state, village.id)) {
+    if (acceptes.some((p) => countOf(chest.inventory ?? [], p) > 0)) return true
+  }
+  const recette = RECIPES[famille === 'axe' ? 'crude_axe' : 'crude_pickaxe'].inputs
+  const corde = granaries(state, village.id).reduce((t, c) => t + countOf(c.inventory ?? [], 'rope'), 0)
+  const cordesFaisables = corde + Math.floor(stocks.fiber / (RECIPES.rope.inputs.fiber ?? 3))
+  return (
+    stocks.wood >= (recette.wood ?? 0) &&
+    stocks.stone >= (recette.stone ?? 0) &&
+    cordesFaisables >= (recette.rope ?? 0)
   )
 }
 
@@ -80,12 +114,33 @@ export function refreshBoard(state: SimState, village: Village): void {
   // n'a pas d'établi pour la façonner, la tâche serait un livelock — on ne la veut pas.
   const hasWorkshop = state.structures.some((s) => s.type === 'workshop' && s.villageId === village.id)
 
+  // ═══ LE VILLAGE PEUT-IL TENIR UNE HACHE ? UNE PIOCHE ? (spec `glanage.md` G6) ═══
+  //
+  // Depuis G1, `gather_wood` et `gather_stone` sont des corvées OUTILLÉES. Les poster sans que
+  // le village puisse fournir l'outil, ce serait le livelock qu'`hasWorkshop` évite déjà pour
+  // la carrière — en pire : le bois et la pierre sont les deux ressources dont TOUT dépend.
+  // Quand l'outil manque, on poste le GLANAGE à la place : c'est le seul travail qui débloque.
+  const outillable = (famille: 'axe' | 'pickaxe'): boolean => outilTenable(state, village, stocks, famille)
+  const aLaHache = outillable('axe')
+  const aLaPioche = outillable('pickaxe')
+
   const wanted: Partial<Record<TaskKind, number>> = {
     gather_berries: foodScore < foodTarget ? 2 : 0,
-    gather_wood: stocks.wood < woodTarget ? (woodTarget - stocks.wood > VILLAGE_GROWTH.BIG_DEFICIT_WOOD ? 2 : 1) : 0,
+    gather_wood: aLaHache && stocks.wood < woodTarget ? (woodTarget - stocks.wood > VILLAGE_GROWTH.BIG_DEFICIT_WOOD ? 2 : 1) : 0,
     gather_fiber: stocks.fiber < Math.max(NPC_AI.VILLAGE_FIBER_TARGET, next.fiber ?? 0) ? 1 : 0,
-    gather_stone: stocks.stone < stoneTarget ? 1 : 0,
+    gather_stone: aLaPioche && stocks.stone < stoneTarget ? 1 : 0,
     gather_cut_stone: hasWorkshop && stocks.cut_stone < cutStoneTarget ? 1 : 0,
+    // LE GLANAGE, EN REMPLACEMENT ET JAMAIS EN PLUS : un village outillé n'envoie personne
+    // ramasser des brindilles — il abat. On glane le bois quand la hache manque, la pierre
+    // quand la pioche manque, et l'un peut arriver sans l'autre (le hachereau coûte 3 pierre,
+    // la pioche 3 bois : les deux amorçages se croisent).
+    //
+    // ⚠ LES DEUX CIBLES SONT CELLES DE L'OUTIL (`*_D_AMORCAGE`), JAMAIS CELLES DU CHANTIER.
+    // Le bois visait `woodTarget` (24+) : le village ramassait deux douzaines de bûches une par
+    // une, chacune payée d'une recherche de chemin — 64,5 ms/tick mesurés au banc. Le glanage
+    // AMORCE la hache ; c'est la hache qui remplit le grenier.
+    glaner_bois: !aLaHache && stocks.wood < VILLAGE_GROWTH.BOIS_D_AMORCAGE ? 1 : 0,
+    glaner_pierre: !aLaPioche && stocks.stone < VILLAGE_GROWTH.PIERRE_D_AMORCAGE ? 1 : 0,
     cook_stew:
       stocks.stew < BALANCE.VILLAGE_STEW_TARGET && stocks.berries >= NPC_AI.COOK_MIN_BERRIES && stocks.fiber >= NPC_AI.COOK_MIN_FIBER ? 1 : 0,
   }

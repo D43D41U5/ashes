@@ -26,6 +26,7 @@
  */
 import { hash2 } from '@ashes/sim'
 import type { TonsFut, TonsHouppier } from './arbre-art'
+import { NEIGE_PAVE } from './manteau'
 
 /** Ce que le pipeline `_lit` consomme (hérité de `feuillage.ts`, inchangé). */
 export interface GrainHouppier {
@@ -96,6 +97,42 @@ export const GRAPPES = {
   /** L'ombre portée d'un pavé sur ce qu'il recouvre : 2 px, puis 1 px de pénombre. */
   OMBRE: 0.72,
   PENOMBRE: 0.86,
+} as const
+
+/**
+ * ═══ LA COIFFE DE NEIGE DES PERSISTANTS (demande d'Alexis, 2026-08-25) ═══
+ *
+ * *« Il faudrait ajouter une couche de neige sur les arbres persistants. »*
+ *
+ * Le feuillu résout l'hiver par la SILHOUETTE : il se dénude (G6). Le conifère, lui, garde la
+ * même cime douze mois sur douze — et comme il ne prend pas non plus la teinte de la saison
+ * (`VARIANTES_CADUQUES` ne le nomme pas, et c'est la promesse « la silhouette du conifère dit
+ * qu'il tient »), il était la SEULE chose du paysage que le Grand Froid ne touchait pas.
+ *
+ * La neige se pose donc sur le HAUT de chaque pavé, et c'est exactement la grammaire du sol
+ * dessiné : un pavé de neige sur un pavé d'herbe (`manteau.ts` — arête claire en haut, frange
+ * irrégulière en bas, liseré d'ombre sur ce qu'elle recouvre). On ne peint pas un voile blanc
+ * sur la cime : on empile une matière de plus, la même que celle qui couvre le sol au pied de
+ * l'arbre — d'où la palette EMPRUNTÉE à `NEIGE_PAVE`, jamais recopiée.
+ *
+ * ⚠ **LE RELIEF DE LA COIFFE BOMBE, il ne monte pas.** `normalFromCanvas` lit un champ borné à
+ * [0, 1] et `RELIEF_CORPS` y vaut déjà 1 : une neige « plus haute » n'aurait nulle part où
+ * aller. La coiffe descend donc de son arête (1) vers sa frange (`RELIEF_FRANGE`), ce qui donne
+ * à la normale un dôme — une congère prend la lumière par le dessus, pas par la tranche.
+ */
+export const NEIGE_CIME = {
+  /** Part de la hauteur d'un pavé que la coiffe prend, à charge pleine. */
+  PART: 0.42,
+  /** Jamais moins que ça, sinon un petit pavé n'a pas de neige du tout (trous dans la cime). */
+  MIN_PX: 2,
+  /** La frange : le bas de la coiffe ondule de 0..FRANGE px, par colonne de 3 px. */
+  FRANGE: 3,
+  /** Les rangs du haut, au ton le plus clair — l'arête qui regarde le ciel. */
+  ARETE_PX: 2,
+  /** Le liseré d'ombre que la coiffe porte sur le feuillage juste dessous (facteur). */
+  LISERE: 0.74,
+  /** Le relief de la frange (l'arête vaut 1) : la coiffe bombe. */
+  RELIEF_FRANGE: 0.78,
 } as const
 
 export interface Grappe {
@@ -213,17 +250,53 @@ class Toile {
 }
 
 /**
+ * LA COIFFE DE NEIGE D'UN PAVÉ : une bande sur son haut, frangée en bas, avec son liseré
+ * d'ombre sur le feuillage qu'elle recouvre. Même grammaire que le manteau au sol.
+ */
+function coiffer(t: Toile, s: Grappe, neige: number, graine: number): void {
+  const C = GRAPPES.CHANFREIN
+  const hp = s.y1 - s.y0
+  const ep = Math.max(NEIGE_CIME.MIN_PX, Math.round(hp * NEIGE_CIME.PART * neige))
+  const corps = rgb('#' + NEIGE_PAVE.NEIGE.toString(16).padStart(6, '0'))
+  const arete = rgb('#' + NEIGE_PAVE.NEIGE_PROFONDE.toString(16).padStart(6, '0'))
+  for (let x = s.x0; x < s.x1; x++) {
+    // La frange ONDULE par colonne de 3 px — la neige ne s'arrête pas à la règle.
+    const d = Math.floor(hash2(x / 3 | 0, s.y0, (graine ^ 0x7e1) | 0) * (NEIGE_CIME.FRANGE + 1))
+    const bas = s.y0 + ep + d
+    for (let y = s.y0; y < bas; y++) {
+      // Le chanfrein du pavé : la neige n'a pas le droit de déborder de ses coins coupés.
+      const ex = Math.min(x - s.x0, s.x1 - 1 - x), ey = Math.min(y - s.y0, s.y1 - 1 - y)
+      if (ex + ey < C) continue
+      if (!t.est(x, y)) continue // hors de la cime : rien à coiffer
+      // Le relief BOMBE de l'arête (1) vers la frange — la normale y lit un dôme.
+      const u = (y - s.y0) / Math.max(1, bas - s.y0)
+      t.pose(x, y, y - s.y0 < NEIGE_CIME.ARETE_PX ? arete : corps, 1 - (1 - NEIGE_CIME.RELIEF_FRANGE) * u)
+    }
+    // LE LISERÉ : le rang de feuillage juste sous la frange s'assombrit. C'est lui qui donne
+    // son ÉPAISSEUR à la neige — sans lui, la coiffe se lit comme une décoloration.
+    t.mul(x, bas, NEIGE_CIME.LISERE, GRAPPES.RELIEF_LISERE)
+  }
+}
+
+/**
  * LA CIME FEUILLUE : les grappes empilées, chacune habillée. Du haut vers le bas — le pavé le plus
  * bas se peint en dernier, il est devant ; avant de le peindre, on porte son ombre sur ce qui est
  * déjà là. Même grammaire que `render/paves.ts`, sur une toile de sprite.
  */
-export function cimeEnGrappes(W: number, H: number, forme: FormeCime, tons: TonsHouppier, graine: number): GrainHouppier {
+export function cimeEnGrappes(
+  W: number, H: number, forme: FormeCime, tons: TonsHouppier, graine: number,
+  panache?: (index: number) => TonsHouppier,
+  neige = 0,
+): GrainHouppier {
   const t = new Toile(W, H)
-  const corps = rgb(tons.corps), lumiere = rgb(tons.lumiere), eclat = rgb(tons.eclat), masse = rgb(tons.masse), ombre = rgb(tons.ombre)
   const et = grappesDe(W, H, forme, graine)
-  const ordre = [...et].sort((a, b) => a.y1 - b.y1) // le plus bas en dernier
+  // Le plus bas en dernier — et il garde son INDEX, car la teinte peut varier d'une grappe à
+  // l'autre (`panache` : une cime qui tourne ne tourne pas d'un bloc).
+  const ordre = et.map((g, i) => ({ g, i })).sort((a, b) => a.g.y1 - b.g.y1)
   const C = GRAPPES.CHANFREIN
-  for (const s of ordre) {
+  for (const { g: s, i: iG } of ordre) {
+    const tg = panache?.(iG) ?? tons
+    const corps = rgb(tg.corps), lumiere = rgb(tg.lumiere), eclat = rgb(tg.eclat), masse = rgb(tg.masse), ombre = rgb(tg.ombre)
     // l'ombre du pavé sur ce qu'il recouvre (2 px + 1 px), avant de le peindre
     for (let x = s.x0 - 1; x <= s.x1; x++) for (let k = 0; k < 3; k++) t.mul(x, s.y1 + k, k < 2 ? GRAPPES.OMBRE : GRAPPES.PENOMBRE, GRAPPES.RELIEF_OMBRE)
     // le corps, chanfreiné, clair sur son tiers haut
@@ -249,6 +322,10 @@ export function cimeEnGrappes(W: number, H: number, forme: FormeCime, tons: Tons
       else if (!t.est(x - 1, y) || !t.est(x + 1, y)) m.push([x, y, ombre, GRAPPES.RELIEF_OMBRE])
     }
     for (const [x, y, c, r] of m) t.pose(x, y, c, r)
+    // LA COIFFE DE NEIGE — après les marques de CE pavé, jamais avant : l'arête claire du
+    // feuillage repeindrait sinon le rang du haut de la neige en vert. Un pavé posé plus bas
+    // (donc plus tard, donc DEVANT) recouvrira la coiffe de celui-ci — c'est ce qu'il faut.
+    if (neige > 0) coiffer(t, s, neige, graine)
   }
   // le grain 4 px, sur toute la cime
   for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) {

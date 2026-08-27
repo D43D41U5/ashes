@@ -10,6 +10,7 @@
  * bande de mur appartient à /sim — le rendu la LIT, il ne la choisit pas.
  */
 import { BALANCE } from '@ashes/sim'
+import { boiteCouchee, cleCouchee, ORIENTATIONS_COUCHE } from './corps-couche'
 
 /** Taille CANONIQUE d'une tuile à l'écran, en px (art placeholder 16×16).
  * Les fonctions de ce module la prennent en paramètre (testabilité) ; le
@@ -78,9 +79,50 @@ export const AMBIENT_DEPTH = 1_100_000
  *  tinte alors que le fond non éclairé ; les sprites prennent leur jour/nuit du LightsManager
  *  (sinon double-assombrissement). Éclairage éteint → le voile remonte à `AMBIENT_DEPTH`. */
 export const AMBIENT_DEPTH_LIT = 8
-/** Les lucioles sont au-dessus du voile de nuit — sinon la nuit éteindrait
- * précisément ce qui n'a de sens que la nuit. */
-export const SPARK_DEPTH = 1_250_000
+
+/**
+ * ═══ LA FLAQUE DES LUCIOLES PASSE AU-DESSUS DU VOILE, CELLE DU FEU NON ═══
+ *
+ * Les deux flaques sont additives et posées à plat, mais elles ne sont pas dans le même monde.
+ * Celle du Feu vit SOUS le voile (`FIRE_GROUND_DEPTH = 4`) et s'en accommode, parce que le Feu
+ * CREUSE le voile autour de lui (`WorldScene.veilFires` → `night-veil`) : le trou rend au sol
+ * sa propre couleur, et la flaque n'a plus qu'à poser une braise dessus. C'est écrit noir sur
+ * blanc dans `fire-ground-glow` : « ce n'est plus à elle de percer la nuit ».
+ *
+ * Un essaim de lucioles ne creuse RIEN — et il ne doit pas : un trou dans la nuit rend visible
+ * ce qu'il y a dessous, donc c'est de l'information, donc c'est une décision de jeu, pas de
+ * rendu. Laissée sous le voile, sa flaque était donc multipliée par la nuit à pleine force et
+ * ne se voyait pas, quel que soit son alpha : monter l'alpha n'aurait acheté que du délavage.
+ *
+ * Elle passe donc JUSTE au-dessus du voile éclairé, et sous tout ce qui a des pieds : elle
+ * ajoute du vert par-dessus une terre déjà assombrie, sans lui rendre sa couleur propre. Une
+ * lueur, pas une lucarne. (En mode à plat — debug DEV — le voile est à `AMBIENT_DEPTH` et la
+ * recouvre : c'est le sens de ce mode, tout y est éteint ensemble.)
+ */
+export const FIREFLY_GROUND_DEPTH = AMBIENT_DEPTH_LIT + 1
+/**
+ * ═══ UNE LUCIOLE VIT DANS LE SOUS-BOIS, DONC ELLE TRIE AVEC LUI (Alexis, 2026-08-26) ═══
+ *
+ * Elles vivaient à `SPARK_DEPTH` (1 250 000), au-dessus de TOUT — canopée, houppiers, voile de
+ * nuit, rideau de pluie. La raison tenait : le voile à plat (`AMBIENT_DEPTH`) les aurait
+ * éteintes, et une luciole éteinte la nuit ne sert à rien. Mais le prix était un décalage de
+ * plan : la lueur passait par-dessus les cimes, donc elle flottait DEVANT la forêt au lieu d'y
+ * être — un point vert collé sur l'objectif, jamais dans le bois.
+ *
+ * Elles descendent donc dans la bande de tri Y, entre le sol et le houppier : un fût les
+ * occulte, une cime les coiffe, on les devine entre les feuilles. Ce qui rend la manœuvre
+ * possible, c'est que le rendu ÉCLAIRÉ est le mode nominal depuis le 2026-07-24 — le voile y
+ * passe SOUS les sprites (`AMBIENT_DEPTH_LIT = 8`), donc la bande Y lui survit. En mode à plat
+ * (debug DEV seulement) le voile les assombrit avec le reste du monde : c'est le sens de ce
+ * mode, et c'est le seul endroit où l'on perd quelque chose.
+ *
+ * Le tie est celui d'un ACTEUR : à rangée exactement égale une lueur additive de 5 px passe
+ * devant plutôt que derrière, ce qui ne se voit pas — et l'égalité exacte n'arrive pas entre un
+ * flottant qui dérive et une tuile entière.
+ */
+export function fireflyDepth(y: number, tilePx: number): number {
+  return ySortDepth(y, tilePx, TIE_ACTOR)
+}
 
 /** Au-dessus de tout : aperçu de construction, marqueurs d'objectif, chargement. */
 export const OVERLAY_DEPTH = 10_000_000
@@ -356,3 +398,83 @@ export function corpseDepth(y: number, tilePx: number): number {
 export function clutterDepth(feetY: number, tilePx: number): number {
   return ySortDepth(feetY, tilePx, TIE_CLUTTER)
 }
+
+/* ═══ LES EMPRISES D'ACTEUR (R12) ═══════════════════════════════════════════
+ *
+ * La table a QUITTÉ `snapshot-view` le 2026-08-26, et pas pour ranger : ce
+ * fichier-là importe Phaser, donc rien qui l'importe ne peut être testé hors
+ * navigateur. Or l'oubli qu'on veut attraper ici ne plante pas — une clé absente
+ * retombe sur `DEFAULT_FOOTPRINT` et la bête se dessine à la mauvaise taille, en
+ * silence. Posée ici, à côté d'`actorPlacement` qui la consomme et du type
+ * qu'elle instancie, elle se BALAIE en test (`beast-posture.test.ts`).
+ *
+ * C'est la même doctrine que `beast-posture` : ce que l'écran montre doit être
+ * lisible SANS écran.
+ */
+/** Les emprises des `ORIENTATIONS_COUCHE` caps d'un corps couché, dérivées de leur DESSIN. */
+function emprisesCouchees(base: string): Record<string, ActorFootprint> {
+  const out: Record<string, ActorFootprint> = {}
+  for (let o = 0; o < ORIENTATIONS_COUCHE; o++) {
+    const { w, h } = boiteCouchee(o)
+    out[cleCouchee(base, o)] = { widthTiles: w / TILE_PX, heightTiles: h / TILE_PX }
+  }
+  return out
+}
+
+/**
+ * L'EMPRISE DE CHAQUE SILHOUETTE. EXPORTÉE — pour la même raison que `BEAST_TINTS` :
+ * une posture sans emprise ne PLANTE PAS, elle retombe sur `DEFAULT_FOOTPRINT` et se
+ * dessine à la mauvaise taille, en silence. C'est le genre d'oubli qu'aucun test ne
+ * voit tant que personne ne peut BALAYER la table (`beast-posture.test.ts` le fait).
+ */
+export const ACTOR_FOOTPRINTS: Record<string, ActorFootprint & { facesRight?: boolean }> = {
+  'spr-player': { widthTiles: 0.75, heightTiles: 1.5 },
+  'spr-player_lit': { widthTiles: 0.75, heightTiles: 1.5 }, // même emprise que la version peinte
+  'spr-npc': { widthTiles: 0.75, heightTiles: 1.5 },
+  'spr-npc_lit': { widthTiles: 0.75, heightTiles: 1.5 },
+  // Le Cendreux : une silhouette d'HOMME, parce que c'en était un — c'est tout le lore.
+  // Il n'avait aucune emprise déclarée et tombait donc sur le repli, alors qu'il hérite du
+  // rôle du zombie (spec `cendreux.md` R1) : même gabarit que celui qu'il remplace.
+  'spr-cendreux': { widthTiles: 0.75, heightTiles: 1.5 },
+  // LE RAMPANT (spec `cendreux.md` R26ter/R26quater) : le même homme, COUCHÉ, une entrée par CAP.
+  // Elles ne sont pas écrites — elles se DÉRIVENT de la boîte que le boot a peinte
+  // (`boiteCouchee`), sinon l'emprise et le dessin finiraient par différer d'un pixel, huit
+  // fois. Sans entrée, un couché tombait sur le repli et se dessinait au gabarit du marcheur —
+  // MESURÉ au smoke `rampant` : 12 × 24 pour une texture de 24 × 10.
+  ...emprisesCouchees('spr-cendreux-rampant'),
+  // Le gibier (spec faune) : sa TAILLE est la première information, et sa
+  // POSTURE est la seconde (R9bis/C19) — tête au sol elle broute, tête dressée
+  // elle a vu quelque chose, corps tendu elle fuit. Le lapin rase le sol, le
+  // cerf domine le joueur — on sait ce qu'on approche, et dans quel état c'est.
+  'spr-boar': { widthTiles: 1.5, heightTiles: 1 },
+  'spr-boar-root': { widthTiles: 1.5, heightTiles: 1 },
+  'spr-boar-charge': { widthTiles: 1.65, heightTiles: 0.85 },
+  'spr-deer': { widthTiles: 1.4, heightTiles: 1.8, facesRight: true },
+  'spr-deer-graze': { widthTiles: 1.4, heightTiles: 1.4, facesRight: true },
+  'spr-deer-flee': { widthTiles: 1.75, heightTiles: 1.35, facesRight: true },
+  'spr-deer-bed': { widthTiles: 1.4, heightTiles: 0.95, facesRight: true },
+  'spr-rabbit': { widthTiles: 0.6, heightTiles: 0.6, facesRight: true },
+  'spr-rabbit-graze': { widthTiles: 0.6, heightTiles: 0.45, facesRight: true },
+  'spr-rabbit-flee': { widthTiles: 0.8, heightTiles: 0.45, facesRight: true },
+  // LE TÉTRAS (spec faune R21) : entre le lapin et le cerf, et c'est délibéré —
+  // assez gros pour valoir le détour, assez petit pour qu'on ne le voie pas
+  // tapi. EN VOL il double d'envergure (l'aile ouverte) : la silhouette change
+  // de FORMAT, pas seulement de dessin, et c'est ce qui rend l'envol illisible
+  // en une image.
+  // ⚠ LES RAPPORTS SUIVENT LES TEXTURES (24×21, 24×17, 28×19, 37×26) : une
+  // emprise qui ne respecte pas la forme de son art ÉCRASE le dessin, et le
+  // grain cesse d'être carré — le défaut se voit avant tout le reste.
+  'spr-tetras': { widthTiles: 0.95, heightTiles: 0.85, facesRight: true },
+  'spr-tetras-graze': { widthTiles: 0.95, heightTiles: 0.68, facesRight: true },
+  'spr-tetras-flee': { widthTiles: 1.15, heightTiles: 0.78, facesRight: true },
+  'spr-tetras-vol': { widthTiles: 1.7, heightTiles: 1.2, facesRight: true },
+  'spr-wolf': { widthTiles: 1.5, heightTiles: 1.15 },
+  'spr-wolf-stalk': { widthTiles: 1.5, heightTiles: 0.8 },
+  'spr-wolf-eat': { widthTiles: 1.45, heightTiles: 1 },
+  // L'alpha DÉBORDE : il est visiblement plus gros que les siens. C'est le
+  // signal qui rend la règle jouable — on ne peut pas le rater dans la meute.
+  'spr-wolf-alpha': { widthTiles: 2, heightTiles: 1.55 },
+}
+
+/** Le repli — un humanoïde. Une clé sans entrée le prend, sans rien dire : voir la garde. */
+export const DEFAULT_FOOTPRINT: ActorFootprint = { widthTiles: 0.75, heightTiles: 1.5 }

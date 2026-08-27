@@ -7,7 +7,7 @@ import { FAMILLES, INVENTAIRE, SONORES, faitsDeFamille, type FamilleId } from '.
  * le trou que ce chantier vient boucher. Les gardes balaient tout l'espace (62 faits), elles
  * ne piochent pas des cas.
  */
-describe('l’inventaire des 90 faits', () => {
+describe('l’inventaire des 92 faits', () => {
   const ids = new Set<string>(FAMILLES.map((f) => f.id))
 
   it('AUCUN fait ne tombe dans une famille non déclarée (sinon il sort du banc en silence)', () => {
@@ -18,7 +18,7 @@ describe('l’inventaire des 90 faits', () => {
     expect(orphelins).toEqual([])
   })
 
-  it('les familles PARTITIONNENT les 90 faits — chacune en porte, aucune n’est vide', () => {
+  it('les familles PARTITIONNENT les 92 faits — chacune en porte, aucune n’est vide', () => {
     const comptes = FAMILLES.map((f) => ({ id: f.id, n: faitsDeFamille(f.id).length }))
     expect(comptes.filter((c) => c.n === 0)).toEqual([]) // pas de section vide à l'écran
     const somme = comptes.reduce((t, c) => t + c.n, 0)
@@ -35,7 +35,10 @@ describe('l’inventaire des 90 faits', () => {
     // 85 → 86 le 2026-08-22 : `carcass_cut` (spec depecage.md) — la coupe, sœur du coup de récolte.
     // 86 → 90 le 2026-08-24 : la refonte de la pêche (`fish_nibble`, `fishing_cancelled`,
     // `fishing_junk`, `fish_record` — spec peche.md D9-D12).
-    expect(somme).toBe(90)
+    // 90 → 92 le 2026-08-26 : la TORCHE (spec `torche.md`) — `torche_allumee` naît MUETTE (geste
+    // répété, et la lumière qui naît le dit déjà), `torche_eteinte` PARLE : c'est l'instant où la
+    // nuit se referme, et le joueur ne regarde pas sa ceinture à ce moment-là.
+    expect(somme).toBe(92)
   })
 
   it('chaque fait DIT ce qu’il raconte — pas son identifiant', () => {
@@ -47,7 +50,7 @@ describe('l’inventaire des 90 faits', () => {
     expect(muets).toEqual([])
   })
 
-  it('l’état publié est bien l’état ACTUEL : 53 voix, 37 silences décidés', () => {
+  it('l’état publié est bien l’état ACTUEL : 54 voix, 38 silences décidés', () => {
     // Un compte, pas un jugement. `sound.test.ts` vérifie séparément que ces 38 sonnent
     // VRAIMENT (et que les 26 se taisent vraiment) — ici on garde seulement la proportion.
     // 34 → 35 le 2026-07-29 : `node_depleted` sort du silence (l'arbre qui tombe craque).
@@ -94,14 +97,20 @@ describe('l’inventaire des 90 faits', () => {
     // 50 → 53 le 2026-08-24 : `fish_nibble`, `fishing_cancelled`, `fish_record` (peche.md
     // D9-D12) — le mordillage EST le retour d'information de D11, l'annulation dit pourquoi la
     // ligne rentre, et le record est le seul fait de pêche qui s'entend de loin.
-    expect(SONORES.length).toBe(53)
+    // 90 → 92 le 2026-08-26 : la TORCHE (spec `torche.md`) — `torche_allumee` naît MUETTE (geste
+    // répété, et la lumière qui naît le dit déjà), `torche_eteinte` PARLE : c'est l'instant où la
+    // nuit se referme, et le joueur ne regarde pas sa ceinture à ce moment-là.
+    expect(SONORES.length).toBe(54)
     // 33 → 34 le 2026-08-21 : `refugee_rumeur` naît MUET (annales.md R12) — le geste de
     // nourrir parle déjà, le renseignement se lit dans la chronique.
     // 34 → 35 le 2026-08-21 : `cendre_prend` naît MUET (P5a) — la perte se lit et se voit.
     // 35 → 36 le 2026-08-22 : `fish_caught` naît MUET (voir ci-dessus).
     // 36 → 37 le 2026-08-24 : `fishing_junk` naît MUET — il tombe sur `resource_harvested`
     // comme `fish_caught` ; deux sons pour un caillou remonté seraient un doublé.
-    expect(Object.keys(INVENTAIRE).length - SONORES.length).toBe(37)
+    // 90 → 92 le 2026-08-26 : la TORCHE (spec `torche.md`) — `torche_allumee` naît MUETTE (geste
+    // répété, et la lumière qui naît le dit déjà), `torche_eteinte` PARLE : c'est l'instant où la
+    // nuit se referme, et le joueur ne regarde pas sa ceinture à ce moment-là.
+    expect(Object.keys(INVENTAIRE).length - SONORES.length).toBe(38)
   })
 
   it('PLUS AUCUNE famille n’est entièrement muette, sauf celle qui l’est par décision', () => {

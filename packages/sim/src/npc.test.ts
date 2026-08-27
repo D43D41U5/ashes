@@ -64,7 +64,13 @@ function run(sim: SimState, ticks: number): void {
 describe('le tableau du village (A1)', () => {
   it('les seuils génèrent les tâches ; jamais de double réclamation', () => {
     const sim = npcVillageSim(3)
-    granary(sim).inventory = makeInventory(SLOTS.CHEST) // grenier à sec → tout manque
+    // Grenier à sec → tout manque. SAUF LES DEUX OUTILS : depuis `glanage.md` G6, un village
+    // qui ne peut fournir ni hache ni pioche ne poste PAS les corvées de bois et de pierre —
+    // il poste le glanage qui les débloque. Ce test-ci parle des SEUILS de stock ; le verrou
+    // d'outil a ses propres gardes (`glanage.test.ts`), et il le rendrait illisible.
+    granary(sim).inventory = makeInventory(SLOTS.CHEST)
+    granary(sim).inventory![0] = { item: 'crude_axe', count: 1 }
+    granary(sim).inventory![1] = { item: 'crude_pickaxe', count: 1 }
     run(sim, BALANCE.BOARD_REFRESH_TICKS + 1)
     const village = sim.villages[0]!
     const kinds = village.tasks.map((t) => t.kind)
@@ -101,7 +107,13 @@ describe('les besoins (A2, A3)', () => {
 
   it('A3 — la nuit, le PNJ fatigué dort ; la maison récupère ×2 vs le Feu', () => {
     const sim = npcVillageSim(2)
-    granary(sim).inventory = inventoryOf(SLOTS.CHEST, { berries: 30, wood: 30, fiber: 5, stew: 5 }) // oisifs
+    // LES DEUX OUTILS AU GRENIER — sans eux, `glanage.md` G6 poste une corvée de glanage de
+    // pierre que rien dans ce montage ne peut satisfaire, et les PNJ partent la chercher au
+    // lieu d'aller se coucher. Ce test mesure une VITESSE DE RÉCUPÉRATION : ce qui l'occupe
+    // avant le coucher déplace son zéro.
+    granary(sim).inventory = inventoryOf(SLOTS.CHEST, {
+      berries: 30, wood: 30, fiber: 5, stew: 5, crude_axe: 1, crude_pickaxe: 1,
+    })
     run(sim, 60) // assignation des maisons
     const [a, b] = [sim.npcs[0]!, sim.npcs[1]!]
     expect(a.homeId).not.toBeNull()
@@ -846,10 +858,17 @@ describe('anti-livelock des besoins : la cible est inatteignable', () => {
  * `action_rejected` : juste des chiffres qui baissent. D'où ces gardes.
  */
 describe('le PNJ arme sa main tout seul (A6/A9 côté PNJ)', () => {
-  /** Un village qui ne veut QUE du bois : grenier plein de tout, sauf de bois. */
+  /**
+   * Un village qui ne veut QUE du bois : grenier plein de tout, sauf de bois.
+   *
+   * LA PIOCHE DE FORTUNE Y EST DÉPOSÉE, et ce n'est pas du décor. Depuis `glanage.md` G6, un
+   * village qui ne peut fournir aucune pioche poste une corvée de GLANAGE de pierre — plus
+   * prioritaire que le bois, puisqu'elle le débloque. Ce groupe-ci parle de la HACHE : sans
+   * cette pioche, il mesurerait le tableau au lieu de mesurer la main du bûcheron.
+   */
   function woodOnlyVillage(): SimState {
     const sim = npcVillageSim(1)
-    granary(sim).inventory = inventoryOf(SLOTS.CHEST, { berries: 40, fiber: 10, stew: 5 })
+    granary(sim).inventory = inventoryOf(SLOTS.CHEST, { berries: 40, fiber: 10, stew: 5, crude_pickaxe: 1 })
     return sim
   }
 
@@ -880,11 +899,20 @@ describe('le PNJ arme sa main tout seul (A6/A9 côté PNJ)', () => {
     expect(axe.wear).toBeCloseTo(swings.length, 5)
   })
 
-  it('témoin : le MÊME PNJ sans hache récolte à ×1 (le test ci-dessus ne passe pas pour rien)', () => {
+  /**
+   * ⚠ **CE TÉMOIN A CHANGÉ DE VERDICT le 2026-08-25** (spec `glanage.md` G1/G6). Il disait
+   * « sans hache, il récolte à ×1 » ; il n'y a plus de ×1 sur le bois. Le témoin garde son
+   * office — prouver que le test d'à côté ne passe pas tout seul — mais l'écart qu'il mesure
+   * n'est plus un rendement, c'est l'existence même du geste. Et il éprouve du même coup la
+   * garde du TABLEAU : un village qui ne peut fournir aucune hache ne poste pas la corvée,
+   * au lieu d'envoyer un villageois se faire refuser un coup toutes les trente secondes.
+   */
+  it('témoin : le MÊME PNJ sans hache ne récolte RIEN — et le tableau ne lui donne pas la corvée', () => {
     const sim = woodOnlyVillage()
     const swings = woodSwings(sim, 60 * BALANCE.TICK_RATE_HZ)
-    expect(swings.length).toBeGreaterThan(0)
-    expect(swings.every((c) => c === 1)).toBe(true)
+    expect(swings).toEqual([])
+    expect(sim.villages[0]!.tasks.some((t) => t.kind === 'gather_wood')).toBe(false)
+    expect(sim.nodes.find((n) => n.type === 'tree')!.stock).toBe(10) // l'arbre est intact
   })
 
   it('une hache AU-DELÀ de la ceinture est ramenée dans la ceinture (sinon elle ne servirait jamais)', () => {
@@ -918,12 +946,15 @@ describe('le PNJ arme sa main tout seul (A6/A9 côté PNJ)', () => {
   })
 
   /**
-   * LE STADE QUI PEUT SE FERMER : la hache casse EN PLEIN COUP (`wearHeld` vide la
-   * case). Au tick suivant, `equipBestTool` ne trouve plus rien et le PNJ passe à
-   * mains nues — il doit CONTINUER (l'arbre n'exige pas d'outil), pas se figer sur
-   * une case active devenue vide.
+   * LE STADE QUI PEUT SE FERMER : la hache casse EN PLEIN COUP (`wearHeld` vide la case).
+   *
+   * ⚠ **SON VERDICT A CHANGÉ le 2026-08-25** (spec `glanage.md` G1). Il disait « il continue à
+   * mains nues » — l'arbre n'exigeait pas d'outil. Il l'exige. Ce qui est éprouvé ici n'a pas
+   * bougé d'un pouce, et c'est le seul point qui comptait : le PNJ ne se FIGE pas sur une case
+   * active devenue vide. Il lâche la corvée, le tableau cesse de la poster, et le bois déjà
+   * coupé est intégralement quelque part. Un livelock à 20 Hz serait toujours un livelock.
    */
-  it('la hache casse au milieu de la corvée : le PNJ continue à mains nues (aucun livelock)', () => {
+  it('la hache casse au milieu de la corvée : le PNJ lâche la corvée (aucun livelock)', () => {
     const sim = woodOnlyVillage()
     const e = npcEntity(sim)
     e.inventory[1] = { item: 'axe', count: 1, wear: BALANCE.TOOL_DURABILITY - 1 } // un dernier coup
@@ -933,7 +964,9 @@ describe('le PNJ arme sa main tout seul (A6/A9 côté PNJ)', () => {
 
     expect(countOf(e.inventory, 'axe')).toBe(0) // elle a cassé
     expect(swings[0]).toBe(2) // le dernier coup outillé
-    expect(swings.slice(1).some((c) => c === 1)).toBe(true) // PROGRESSION : il continue, à mains nues
+    expect(swings.slice(1).every((c) => c === 2)).toBe(true) // …et plus AUCUN coup à mains nues
+    // PAS DE FIGEAGE : la corvée a quitté le tableau, elle n'y est pas re-postée en boucle.
+    expect(sim.villages[0]!.tasks.filter((t) => t.kind === 'gather_wood').length).toBeLessThanOrEqual(1)
     // CONSERVATION : tout le bois récolté est quelque part (sac ou grenier), rien
     // ne s'est évaporé dans la case vide de la hache cassée.
     const after = countOf(granary(sim).inventory!, 'wood') + countOf(e.inventory, 'wood')

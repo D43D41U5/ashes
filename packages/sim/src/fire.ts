@@ -110,6 +110,33 @@ export function cendreuxVivantsPositions(state: SimState): { m: Monster; x: numb
  * PAS concerné (S16). `burnSlot` ANCRE le verrou : la case qui brûle ne bouge pas tant que sa
  * bûche n'est pas consumée — déposer ailleurs ne détourne pas la flamme.
  */
+/**
+ * ═══ LE CHARBON DE BOIS (spec `feu-station.md` S30, décision d'Alexis 2026-08-25) ═══
+ *
+ * Ce que le feu laisse quand la bûche a fini de brûler. UNE SEULE FABRIQUE pour les deux feux
+ * — le feu libre compte ses bûches une à une, le Foyer convertit son évier continu — parce que
+ * la règle est la même et qu'un second endroit dériverait au premier réglage.
+ *
+ * DÉTERMINISTE ET SANS TIRAGE : c'est un seuil sur un compteur, pas une chance. Un feu qui
+ * brûle quatre bûches rend un charbon, toujours, sur tout moteur.
+ *
+ * IL TOMBE EN SORTIE, avec les cuits — c'est un SOUS-PRODUIT, et la spec réservait déjà les
+ * cases de sortie aux « résultats + sous-produits » (S27). Si la sortie est pleine, **la dette
+ * reste due** : le charbon se fera dès qu'une case se libère, jamais on ne le perd en silence.
+ */
+export function produireCharbon(s: Structure, dette: number): number {
+  if (dette < FIRE.CHARBON_PAR_BUCHES) return dette
+  // LES SORTIES SE CRÉENT ICI SI ELLES N'EXISTENT PAS. `advanceCook` les ouvre paresseusement,
+  // à la première cuisson — mais un feu qui n'a JAMAIS rien cuit brûle quand même son bois,
+  // donc il a du charbon à poser. Sans cette ligne, la production entière serait muette sur le
+  // feu le plus courant du jeu : celui qu'on allume pour se chauffer.
+  if (!s.cookOut) s.cookOut = makeInventory(FIRE.COOK_OUTPUTS)
+  const combien = Math.floor(dette / FIRE.CHARBON_PAR_BUCHES)
+  const reste = addItems(s.cookOut, { charcoal: combien })
+  const poses = combien - (reste.charcoal ?? 0)
+  return dette - poses * FIRE.CHARBON_PAR_BUCHES
+}
+
 export function advanceFire(state: SimState): void {
   // ═══ ILS BOIVENT LA CHALEUR (décision d'Alexis ⑯, 2026-08-21) ═══
   //
@@ -154,6 +181,9 @@ export function advanceFire(state: SimState): void {
         if (burning) {
           burning.count -= 1
           if (burning.count <= 0) s.fuel[s.burnSlot] = null
+          // Elle a fini : elle laisse sa part de charbon (S30). La pluie et la soif des
+          // Cendreux ont pu la faire finir plus vite — une bûche finie est une bûche finie.
+          s.buchesConsumees = (s.buchesConsumees ?? 0) + 1
         }
         const next = firstFuelSlot(s.fuel)
         if (next >= 0) {
@@ -169,6 +199,22 @@ export function advanceFire(state: SimState): void {
     }
     // Cuisson passive (S7-S9) — sur TOUT feu (libre ou Foyer), le travail de la STATION.
     advanceCook(state, s)
+
+    // LE CHARBON (S30) — ici, et pas dans `advanceUpkeep` : cette boucle tient déjà la
+    // structure, donc son inventaire de sortie. Le Foyer a compté sa dette en BÛCHES là où
+    // son stock se consume (`village.ts`) ; on ne fait que la verser dans le même compteur.
+    if (s.type === 'fire') {
+      if (s.villageId !== 0) {
+        const v = state.villages.find((x) => x.id === s.villageId)
+        // Le Foyer du village est le feu posé SUR `fireTx/fireTy` — un autre feu bâti dans
+        // l'enceinte appartient au village sans être son Foyer, et ne brûle pas son stock.
+        if (v && v.fireTx === s.tx && v.fireTy === s.ty && (v.charbonDette ?? 0) > 0) {
+          s.buchesConsumees = (s.buchesConsumees ?? 0) + v.charbonDette!
+          v.charbonDette = 0
+        }
+      }
+      if ((s.buchesConsumees ?? 0) > 0) s.buchesConsumees = produireCharbon(s, s.buchesConsumees!)
+    }
   }
   // ═══ LES POSTES QUI TRAVAILLENT SANS FLAMME (spec `peche.md` S2/S4, 2026-08-24) ═══
   //
@@ -257,6 +303,11 @@ export function fireZoneInventory(s: Structure, zone: FireZone): Inventory | und
 export function fireZoneAccepts(s: Structure, zone: FireZone, item: ItemId): boolean {
   if (zone === 'fuel') return s.type === 'fire' && item === 'wood'
   if (zone === 'cookIn') return recettesDuPoste(s.type)?.[item] !== undefined
+  // LE CHARBON DE BOIS (S30) est un sous-produit du feu, mais de sa COMBUSTION et non d'une
+  // recette de cuisson : la table des postes ne le connaît pas. Sans cette ligne, un feu
+  // accepterait le charbon qu'il vient de produire dans sa propre sortie… mais pas qu'on l'y
+  // repose. Un filtre qui refuse ce que la case contient déjà est un défaut, pas une règle.
+  if (zone === 'cookOut' && s.type === 'fire' && item === 'charcoal') return true
   const rules = recettesDuPoste(s.type)
   if (!rules) return false
   for (const rule of Object.values(rules)) {

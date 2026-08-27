@@ -227,6 +227,15 @@ export const CREUX = {
   /** Taille maximale d'un bosquet, en cellules de motif (× 64 tuiles). 20 → ~1 280 tuiles,
    *  36 de côté : un bois qu'on traverse en un écran, pas une seconde Sylve. */
   CRETE_MAX_CELLULES: 20,
+  /**
+   * L'AMPLITUDE DU GRAIN DU CONTOUR d'un bosquet, en unités d'altitude — ce qui DENTELLE sa
+   * ligne de niveau (`sol-dessine.md` R23, 2026-08-27).
+   *
+   * Même champ que la butte d'affleurement (`altLarge`), donc le même ordre de grandeur que
+   * `AFFL_GRAIN_CONTOUR` — et surtout PAS celui du pré (0,08, sur l'humidité) : le chapeau ne
+   * fait que `CHAPEAU` = 0,045 d'épaisseur, un grain de cet ordre-là le mettrait en miettes.
+   */
+  CRETE_GRAIN_CONTOUR: 0.012,
 
   // ══ LES AFFLEUREMENTS — la géologie donne le minerai (spec t0-exploration §2sexies, R47) ═══
   //
@@ -244,10 +253,37 @@ export const CREUX = {
   /** Épaisseur du chapeau sous le sommet. Plus mince que `CHAPEAU` : la roche ne perce qu'au
    *  ras de l'os, une rocaille n'est pas une colline entière. */
   AFFL_CHAPEAU: 0.03,
-  /** Taille du chapeau, en cellules de motif (× 64 tuiles). 2 à 5 cellules ≈ 130-320 tuiles :
-   *  un genou de roche qu'on remarque dans le pré, pas un pierrier de montagne. */
-  AFFL_MIN_CELLULES: 2,
-  AFFL_MAX_CELLULES: 5,
+  /**
+   * ═══ LA TAILLE D'UNE BUTTE, EN TUILES (et plus en cellules de motif) ═══
+   *
+   * 320 = ce que valaient les 5 cellules d'avant : **l'aire ne bouge pas**, seule sa FORME
+   * change. La butte croît maintenant tuile à tuile, en prenant toujours la plus haute de sa
+   * frontière ; son contour est donc la ligne de niveau qui enferme exactement ces 320 tuiles —
+   * organique par construction, comme celui du lapiaz (`roche-mere.md` R6bis). Avant, elle
+   * empilait 2 à 5 carrés de 8×8 : **100 % de ses segments de bord faisaient ≥ 8 tuiles**.
+   *
+   * ⚠ Ce plafond est aussi ce qui BORNE la butte : sans lui, la ligne de niveau courrait le long
+   * de toute la crête. C'est le rôle que tenait `AFFL_MAX_CELLULES`.
+   */
+  AFFL_TUILES: 320,
+  /** L'amplitude du grain de contour, en unités d'altitude — ce qui DENTELLE la ligne de niveau.
+   *  Calibrée en mesurant la dentelle EN TUILES (le grain d'`altLarge` n'est pas celui de la
+   *  marge du lapiaz : la même amplitude n'y donne pas la même ondulation). */
+  AFFL_GRAIN_CONTOUR: 0.012,
+  /**
+   * ═══ CE QUI EMPÊCHE LA BUTTE DE S'ÉTIRER EN RUBAN ═══
+   *
+   * « Prendre toujours la plus haute » suit la CRÊTE : vu en jeu, la butte devenait un filet de
+   * cinq tuiles de large sur soixante de long, noyé entre les arbres — 320 tuiles dans une boîte
+   * de 28×62, soit **18 % de remplissage**. Or la spec en demande *« un genou de roche qu'on
+   * remarque dans le pré »*, et une tache qu'on remarque est une tache COMPACTE.
+   *
+   * On pénalise donc l'altitude par l'éloignement au sommet, en unités du rayon qu'aurait la
+   * butte si elle était ronde (√(`AFFL_TUILES`/π) ≈ 10 tuiles). C'est un poids, pas une borne :
+   * la ligne de niveau garde le dernier mot sur la forme locale — ce qui est haut et proche est
+   * pris avant ce qui est haut et loin.
+   */
+  AFFL_COMPACITE: 0.02,
   /** Écart minimal entre deux buttes, en cellules de motif. 30 → 240 tuiles : deux affleurements
    *  dans le même écran seraient un seul gisement qui ment. */
   AFFL_ECART: 30,
@@ -296,6 +332,98 @@ export interface Creux {
   seuilLande: number
   /** Le sel du grain fin de la lecture à la tuile (`humAt`). Posé par `composerLHumidite`. */
   selGrain: number
+
+  // ══ LA ROCHE-MÈRE — le SECOND axe (spec `roche-mere.md` R1-R3) ═══════════════════════════
+  /** Le champ de roche par cellule, [0,1]. Rempli par `composerLaRoche`. */
+  roche: Float64Array
+  /** Sous ce seuil : CALCAIRE (quantile `ROCHE.PART_CALCAIRE`). */
+  seuilCalcaire: number
+  /** Au-dessus : ARGILE (quantile `1 − ROCHE.PART_ARGILE`). Entre les deux : granite. */
+  seuilArgile: number
+}
+
+/**
+ * ═══ LA ROCHE-MÈRE — le second axe des Prés Bas (spec `roche-mere.md`) ═══
+ *
+ * Le vocabulaire du pré tenait sur UN rang : `d(marais) < … < d(lande)` (critère A16). Sept mots,
+ * un ordre total, une seule variable — donc un biome à sept niveaux d'humidité, prédictible d'un
+ * bout à l'autre du pays par une seule question. La roche est le second axe : elle ne peint AUCUN
+ * terrain, elle **module** ceux qui existent.
+ *
+ * ⚠ **L'ÉCHELLE EST LA RÈGLE, pas un réglage de confort.** 520 tuiles, soit PLUS que les 300 de
+ * l'ondulation d'humidité : une province doit TRAVERSER le gradient, jamais le suivre. À une
+ * échelle plus fine on obtiendrait un patchwork corrélé à l'humidité — c'est-à-dire rien.
+ *
+ * Pur et déterministe : `fbm2` à sel dédié (`'ROCH'`), aucun PRNG partagé (la leçon RNG).
+ */
+export const ROCHE = {
+  /** Échelle du champ, en tuiles. ~14 écrans : on met plusieurs sessions à traverser un pays. */
+  ECHELLE: 520,
+  /** Part de CALCAIRE (drainant) — le quantile bas. */
+  PART_CALCAIRE: 0.32,
+  /** Part d'ARGILE/marne (retenant) — le quantile haut. Le granite est le reste. */
+  PART_ARGILE: 0.32,
+  /**
+   * LE DÉCALAGE DE DRAINAGE, en unités du champ d'humidité, appliqué AVANT le seuillage.
+   *
+   * ⚠ **IL DOIT ENTRER DANS `c.hum` AVANT LES QUANTILES**, et c'est ce qui rend le chantier
+   * franc : les seuils se redérivent sur le champ décalé, donc la COMPOSITION du pays ne bouge
+   * pas d'un dixième (A1) — seules les ADRESSES changent. Décaler après les seuils ferait
+   * dériver les parts et rougir A12/A17 pour rien.
+   */
+  DRAINAGE: 0.085,
+  /** L'espacement des résurgences au contact du calcaire, en tuiles (R7). */
+  SOURCE_ESPACEMENT: 90,
+  /**
+   * LA PART BASSE DU PAYS où une source peut sortir (quantile d'altitude).
+   *
+   * ⚠ **CE N'EST PAS UN CONFORT DE CALIBRAGE, C'EST CE QUI SAUVE A14.** Sans lui les sources
+   * tombaient aussi sur les DOS SECS — le pays même que les bosquets de crête tiennent pour
+   * sec — et le pin passait de ~176 tuiles de l'eau à **96**, sous le triple exigé. Une
+   * résurgence est un point BAS par définition : l'eau ne ressort pas en haut.
+   */
+  SOURCE_PART_BASSE: 0.42,
+  /** Le rayon d'une résurgence, en tuiles (Chebyshev) : une mare, pas un lac. */
+  SOURCE_RAYON: 3,
+} as const
+
+/** Le sel du champ de roche — dédié, jamais partagé. */
+const SEL_ROCHE = 0x524f4348 /* 'ROCH' */
+
+/**
+ * LA FAMILLE D'UNE CELLULE : −1 calcaire (drainant) · 0 granite (neutre) · +1 argile (retenant).
+ * Le SIGNE est le sens physique : le calcaire assèche, l'argile retient.
+ */
+export function familleDeCellule(c: Creux, k: number): -1 | 0 | 1 {
+  const r = c.roche[k]!
+  return r < c.seuilCalcaire ? -1 : r > c.seuilArgile ? 1 : 0
+}
+
+/** La famille sous une TUILE — la cellule qui la contient. */
+export function familleAt(c: Creux, x: number, y: number): -1 | 0 | 1 {
+  const k = celluleDe(c, x, y)
+  return k < 0 ? 0 : familleDeCellule(c, k)
+}
+
+/**
+ * COMPOSE LE CHAMP DE ROCHE et fixe ses deux seuils, par quantile.
+ *
+ * À appeler AVANT `placerLacs` (le calcaire n'inonde pas) et avant `composerLHumidite` (le
+ * drainage entre dans l'humidité). Comme tous les seuils du worldgen : des QUANTILES du champ
+ * réellement tiré, jamais des valeurs — la part de chaque roche est un contrat.
+ */
+export function composerLaRoche(c: Creux, seed: number): void {
+  const M = CREUX.MOTIF
+  const sel = (seed ^ SEL_ROCHE) | 0
+  for (let my = 0; my < c.rows; my++) {
+    for (let mx = 0; mx < c.cols; mx++) {
+      const tx = (c.mx0 + mx) * M + M / 2
+      const ty = (c.my0 + my) * M + M / 2
+      c.roche[my * c.cols + mx] = fbm2(tx, ty, ROCHE.ECHELLE, sel)
+    }
+  }
+  c.seuilCalcaire = seuilParQuantile(c.roche, c.dedans, ROCHE.PART_CALCAIRE, -0.5, 1.5)
+  c.seuilArgile = seuilParQuantile(c.roche, c.dedans, 1 - ROCHE.PART_ARGILE, -0.5, 1.5)
 }
 
 // (`ondulation` et `grain` vivent désormais dans `socle.ts` — mêmes sels, mêmes valeurs : le
@@ -423,7 +551,11 @@ export function composerLHumidite(c: Creux, seed: number): void {
       const proche = d < 0 ? 0 : Math.max(0, 1 - d / CREUX.PORTEE_EAU)
       const bas = 1 - c.alt[k]!
       const grain = fbm2(tx, ty, CREUX.ECHELLE_BRUIT, sel) - 0.5
-      c.hum[k] = bas * CREUX.POIDS_CREUX + proche * CREUX.POIDS_EAU + grain * CREUX.AMPLITUDE_BRUIT
+      // LE SECOND AXE (spec `roche-mere.md` R4) : le calcaire draine, l'argile retient. Il entre
+      // ICI, AVANT les quantiles — c'est ce qui laisse la composition intacte pendant que les
+      // adresses bougent (A1). Le granite vaut 0 : le monde d'aujourd'hui, au bit près.
+      const drainage = familleDeCellule(c, k) * ROCHE.DRAINAGE
+      c.hum[k] = bas * CREUX.POIDS_CREUX + proche * CREUX.POIDS_EAU + grain * CREUX.AMPLITUDE_BRUIT + drainage
     }
   }
   // Les seuils sont des quantiles du champ RÉELLEMENT tiré : la composition est un contrat.
@@ -450,6 +582,66 @@ export function composerLHumidite(c: Creux, seed: number): void {
  * tuile ne lit hors tableau. Pur : `+ - * /`, `floor`, `min`, `max`, `fbm2`.
  */
 export function humAt(c: Creux, x: number, y: number): number {
+  return lireLeChampAt(c, c.hum, x, y, c.selGrain, CREUX.GRAIN_TUILE_AMPLITUDE)
+}
+
+/**
+ * LA LECTURE MOLLE, GÉNÉRIQUE — n'importe quel champ de cellules, lu à la tuile.
+ *
+ * Extraite de `humAt` le 2026-08-27 pour le LAPIAZ, qui en avait le même besoin et pour la même
+ * raison : son contour était décidé PAR CELLULE, donc rectiligne au motif. MESURÉ avant le
+ * chantier (seed 2026, monde joué) : **91,8 % des segments de bord de la caillasse faisaient
+ * huit tuiles ou plus**, contre 1,5 % pour la forêt et 0,7 % pour la lande à genévriers — le
+ * minéral était le seul biome du pays à sortir en gros carrés (13 amas pour 39 760 tuiles, dont
+ * un de 16 768 ; périmètre/aire 0,080 contre 0,21 pour le bois).
+ *
+ * Le grain prend un SEL PROPRE à chaque client : deux bords qui partageraient le grain de
+ * l'humidité se ressembleraient — la même dentelle, décalée.
+ *
+ * Pur : `+ - * /`, `floor`, `min`, `max`, `fbm2`. Au bord de la grille, la cellule voisine
+ * manquante est la cellule elle-même (clamp) : aucune tuile ne lit hors tableau.
+ */
+export function lireLeChampAt(
+  c: Creux,
+  champ: Float64Array,
+  x: number,
+  y: number,
+  selGrain: number,
+  amplitude: number,
+): number {
+  return lireLeChampGraine(c, champ, x, y, grainDuSol(x, y, selGrain) * amplitude)
+}
+
+/**
+ * LE GRAIN DU SOL, TIRÉ À PART — la dentelle fine, sans le champ qu'elle mord.
+ *
+ * Elle sort de `lireLeChampAt` (2026-08-27, chantier des frontières universelles) parce qu'une
+ * tuile peut avoir PLUSIEURS verdicts à rendre — le sol des zones en a trois (l'accent, la tache,
+ * l'essence du haut bois) — et qu'ils doivent partager LE MÊME grain. Ce n'est pas l'économie
+ * d'un `fbm2` qui l'exige (elle est réelle, mais mince) : c'est le dessin. Trois grains
+ * indépendants sur la même tuile font trois dentelles étrangères l'une à l'autre ; un seul fait
+ * un bord, une frange et une essence qui appartiennent visiblement au même sol.
+ *
+ * Rend une valeur CENTRÉE sur zéro (`fbm2 − 0,5`), à multiplier par l'amplitude voulue.
+ */
+export function grainDuSol(x: number, y: number, selGrain: number): number {
+  return fbm2(x, y, CREUX.GRAIN_TUILE_ECHELLE, selGrain) - 0.5
+}
+
+/**
+ * LA LECTURE MOLLE, GRAIN DÉJÀ TIRÉ — le corps de `lireLeChampAt`, à qui l'on donne sa dentelle
+ * au lieu de la lui faire tirer. `grain` arrive DÉJÀ multiplié par son amplitude.
+ *
+ * Bit à bit identique à l'ancienne écriture : la somme se fait dans le même ordre, sur les mêmes
+ * flottants (`lireLeChampAt` délègue, elle ne recalcule pas).
+ */
+export function lireLeChampGraine(
+  c: Creux,
+  champ: Float64Array,
+  x: number,
+  y: number,
+  grain: number,
+): number {
   const M = CREUX.MOTIF
   // Coordonnée CONTINUE en cellules, origine au centre de la cellule (0,0) : la tuile au centre
   // d'une cellule lit exactement sa valeur.
@@ -463,14 +655,13 @@ export function humAt(c: Creux, x: number, y: number): number {
   const iy1 = Math.max(0, Math.min(c.rows - 1, iy + 1))
   ix = Math.max(0, Math.min(c.cols - 1, ix))
   iy = Math.max(0, Math.min(c.rows - 1, iy))
-  const h00 = c.hum[iy * c.cols + ix]!
-  const h10 = c.hum[iy * c.cols + ix1]!
-  const h01 = c.hum[iy1 * c.cols + ix]!
-  const h11 = c.hum[iy1 * c.cols + ix1]!
+  const h00 = champ[iy * c.cols + ix]!
+  const h10 = champ[iy * c.cols + ix1]!
+  const h01 = champ[iy1 * c.cols + ix]!
+  const h11 = champ[iy1 * c.cols + ix1]!
   const haut = h00 + (h10 - h00) * tx
   const bas = h01 + (h11 - h01) * tx
-  const grain = fbm2(x, y, CREUX.GRAIN_TUILE_ECHELLE, c.selGrain) - 0.5
-  return haut + (bas - haut) * ty + grain * CREUX.GRAIN_TUILE_AMPLITUDE
+  return haut + (bas - haut) * ty + grain
 }
 
 /**
@@ -512,13 +703,24 @@ export function vegetationAt(c: Creux, x: number, y: number): -2 | -1 | 0 | 1 | 
  * plus deux ou trois miettes de vingt tuiles semées à côté. Une miette de conifère au milieu d'un
  * pré ne se lit pas comme un boqueteau : elle se lit comme une erreur.
  *
- * Rend une liste de bosquets, chacun une liste de cellules de motif.
+ * Rend une liste de bosquets : les cellules de motif du chapeau, ET LE PLANCHER qui les a élues.
+ *
+ * ⚠ Le plancher SORT D'ICI parce que c'est LUI la frontière du bosquet — le peintre en fait une
+ * ligne de niveau lue à la tuile (`sol-dessine.md` R23). Sans lui, il ne resterait au peintre
+ * qu'une union de carrés à remplir, et c'est très exactement ce qui se voyait.
  */
+export interface Bosquet {
+  /** Les cellules de motif retenues — la portée du bosquet, et sa borne. */
+  cellules: number[]
+  /** `sommet − CHAPEAU` : l'altitude sous laquelle on n'est plus dans le bois. */
+  plancher: number
+}
+
 export function coifferLesCretes(
   c: Creux,
   horsSeuils: Uint8Array,
   peignable: (x: number, y: number) => boolean,
-): number[][] {
+): Bosquet[] {
   const M = CREUX.MOTIF
   const n = c.cols * c.rows
 
@@ -548,7 +750,7 @@ export function coifferLesCretes(
   }
 
   const pris = new Uint8Array(n)
-  const bosquets: number[][] = []
+  const bosquets: Bosquet[] = []
   const P = CREUX.CRETE_PAS
   for (let gy = 0; gy * P < c.rows; gy++) {
     for (let gx = 0; gx * P < c.cols; gx++) {
@@ -597,7 +799,7 @@ export function coifferLesCretes(
       // 23 de côté : les deux tiers d'un écran, donc un bois qu'on VOIT venir.
       if (bosquet.length < 8) continue
       for (const k of bosquet) pris[k] = 1
-      bosquets.push(bosquet)
+      bosquets.push({ cellules: bosquet, plancher })
     }
   }
   return bosquets

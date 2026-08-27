@@ -321,6 +321,6 @@ export function runScenario(seed: number, days: number, joueurs: number = BANC_J
     starvationSamples,
     deaths,
     hordesSpawned,
-    chronicle: chronicleFromEvents(events, sim.calendarScale, sim.jourDeDepart, names).map(formatChronicleLine),
+    chronicle: chronicleFromEvents(events, sim.calendarScale, sim.jourDeDepart, names, sim.map).map(formatChronicleLine),
   }
 }

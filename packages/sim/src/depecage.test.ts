@@ -41,7 +41,7 @@ function banc(
     faunaCap: opts.faunaCap ?? 0,
     worldEvents: false,
     meteoActive: false,
-    cycleOffset: cycleOffsetForStartHour(opts.heure ?? 12),
+    cycleOffset: cycleOffsetForStartHour(opts.heure ?? 12, 1),
   })
   sim.wind = { x: 0, y: 0 }
   const id = spawnEntity(sim, CHASSEUR.x, CHASSEUR.y)

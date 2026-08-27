@@ -517,16 +517,29 @@ export function advanceEnvols(state: SimState): void {
 
     envols.push({ x: tx, y: ty, t: state.tick })
     emitEvent(state, { type: 'bird_flush', tick: state.tick, x: tx, y: ty })
-    const rayon2 = HUNT.ENVOL_ALARME_RAYON * HUNT.ENVOL_ALARME_RAYON
-    for (const m of state.monsters) {
-      if (!isPrey(m.type)) continue
-      const em = state.entities.find((x) => x.id === m.entityId)
-      if (!em || em.hp <= 0) continue
-      const dx = em.x - (tx + 0.5)
-      const dy = em.y - (ty + 0.5)
-      if (dx * dx + dy * dy > rayon2) continue
-      m.suspicion = Math.min(1, m.suspicion + HUNT.ENVOL_SUSPICION)
-    }
+    alarmeDEnvol(state, tx, ty)
+  }
+}
+
+/**
+ * CE QU'UN ENVOL FAIT AU RESTE DU COIN : le gibier alentour prend un coup de
+ * méfiance. Extrait d'`advanceEnvols` le jour où le TÉTRAS s'est mis à voler
+ * (R21) — parce que c'est la MÊME chose : des ailes qui claquent préviennent le
+ * bois, que ce soit la nuée d'une lisière ou l'oiseau parti sous vos pieds. Deux
+ * copies auraient divergé au premier réglage.
+ *
+ * Aucun tirage : pure lecture, bornée au rayon d'alarme.
+ */
+function alarmeDEnvol(state: SimState, tx: number, ty: number): void {
+  const rayon2 = HUNT.ENVOL_ALARME_RAYON * HUNT.ENVOL_ALARME_RAYON
+  for (const m of state.monsters) {
+    if (!isPrey(m.type)) continue
+    const em = state.entities.find((x) => x.id === m.entityId)
+    if (!em || em.hp <= 0) continue
+    const dx = em.x - (tx + 0.5)
+    const dy = em.y - (ty + 0.5)
+    if (dx * dx + dy * dy > rayon2) continue
+    m.suspicion = Math.min(1, m.suspicion + HUNT.ENVOL_SUSPICION)
   }
 }
 
@@ -1939,6 +1952,116 @@ function burrowRun(state: SimState, monster: Monster, entity: Entity, threatX: n
 }
 
 /**
+ * L'ENVOL (spec faune R21) — LE DÉCOLLAGE.
+ *
+ * Ce qui vole ne détale pas : ça part en l'air. Le bond est une DROITE, tirée
+ * UNE fois au décollage — le cap à l'opposé de la peur, et le point de chute le
+ * plus LOINTAIN qui soit posable. Rien ne se recalcule ensuite : un oiseau levé
+ * ne négocie pas sa trajectoire, et c'est ce qui rend le tir possible (la cible
+ * est prévisible pendant 1,3 s — c'est LE contrat de la fenêtre de tir).
+ *
+ * IL FRANCHIT CE QUI BLOQUE, IL NE S'Y POSE PAS. On balaie de la portée maximale
+ * vers soi et on retient la première tuile marchable, libre ET de son habitat :
+ * sans la dernière condition, un tétras levé en lisière atterrissait au pré,
+ * hors de chez lui, et repartait aussitôt en `homing` — un vol pour rien. Sans
+ * point de chute valable, PAS d'envol : il détale au sol comme les autres (la
+ * bête acculée contre une falaise ne s'invente pas une issue).
+ *
+ * Déterminisme : `sqrt` et l'arithmétique de base, aucun tirage. Deux joueurs
+ * voient le même oiseau partir au même endroit.
+ *
+ * Rend `true` s'il a décollé — l'appelant lui rend alors son tick.
+ */
+function decolle(state: SimState, monster: Monster, entity: Entity): boolean {
+  // Le cap : à l'opposé du point de peur qu'on vient d'arrêter. Sans peur lisible
+  // (elle n'a rien vu, elle a été alarmée de loin), l'est arbitraire — mais un
+  // oiseau levé PART, il ne reste pas posé faute de direction.
+  let dx = entity.x - (monster.fleeFromX ?? entity.x)
+  let dy = entity.y - (monster.fleeFromY ?? entity.y)
+  const len = Math.sqrt(dx * dx + dy * dy)
+  if (len > 0.001) {
+    dx /= len
+    dy /= len
+  } else {
+    dx = 1
+    dy = 0
+  }
+
+  const monde = { map: state.map, structures: state.structures, nodes: state.nodes, etat: state }
+  let px = -1
+  let py = -1
+  for (let d = FAUNA.VOL_TUILES; d >= 1; d--) {
+    const tx = Math.floor(entity.x + dx * d)
+    const ty = Math.floor(entity.y + dy * d)
+    if (tx < 0 || ty < 0 || tx >= state.map.width || ty >= state.map.height) continue
+    if (!TERRAINS[terrainAt(state.map, tx, ty)]?.walkable) continue
+    if (isBlockedAt(monde, tx, ty)) continue
+    if (!inHabitat(state, monster.type, tx, ty)) continue
+    px = tx + 0.5
+    py = ty + 0.5
+    break
+  }
+  if (px < 0) return false
+
+  monster.volDepuis = state.tick
+  monster.volUntil = state.tick + FAUNA.VOL_TICKS
+  monster.volFromX = entity.x
+  monster.volFromY = entity.y
+  monster.volX = px
+  monster.volY = py
+
+  // LE MÊME FAIT QUE LA NUÉE DE LA LISIÈRE (`bird_flush`), et c'est voulu : le
+  // client sait déjà le peindre et le faire sonner, et le bois alentour prend le
+  // même coup de méfiance. Ce qui claque sous vos pieds prévient tout le coin —
+  // c'est le prix d'une approche ratée, et il ne se paie pas qu'en un oiseau.
+  const tx = Math.floor(entity.x)
+  const ty = Math.floor(entity.y)
+  emitEvent(state, { type: 'bird_flush', tick: state.tick, x: tx, y: ty })
+  alarmeDEnvol(state, tx, ty)
+  return true
+}
+
+/**
+ * L'ENVOL (R21) — LE BOND, tick par tick.
+ *
+ * Interpolation pure sur la droite du décollage : la position ne se DÉRIVE pas
+ * d'une vitesse accumulée, elle se CALCULE de la fraction écoulée. C'est ce qui
+ * garantit qu'il se pose exactement où il avait été dit, au bit près, quel que
+ * soit le moteur — et qu'un bond ne dérive jamais dans un obstacle.
+ *
+ * Rend `true` tant qu'il est EN L'AIR (le tick lui appartient, rien d'autre ne
+ * s'applique). Au tick de la retombée : nettoie et rend `false` — il se pose EN
+ * FUITE, et le reste du pas de fuite s'exécute normalement. Un oiseau ne se pose
+ * pas serein.
+ */
+function volStep(state: SimState, monster: Monster, entity: Entity): boolean {
+  const until = monster.volUntil
+  if (until === undefined) return false
+  const depuis = monster.volDepuis ?? state.tick
+  const total = Math.max(1, until - depuis)
+  const t = state.tick - depuis
+
+  if (t >= total) {
+    entity.x = monster.volX ?? entity.x
+    entity.y = monster.volY ?? entity.y
+    delete monster.volUntil
+    delete monster.volDepuis
+    delete monster.volFromX
+    delete monster.volFromY
+    delete monster.volX
+    delete monster.volY
+    return false
+  }
+
+  const fx = monster.volFromX ?? entity.x
+  const fy = monster.volFromY ?? entity.y
+  const f = t / total
+  entity.x = fx + ((monster.volX ?? fx) - fx) * f
+  entity.y = fy + ((monster.volY ?? fy) - fy) * f
+  return true
+}
+
+/**
  * Le pas d'une bête. Quatre états, dans cet ordre de priorité :
  * charger (sanglier blessé et décidé) → fuir → s'alerter (figée) → brouter.
  */
@@ -1952,6 +2075,14 @@ export function faunaStep(
   hour: number,
 ): void {
   const def = MONSTER_DEFS[monster.type]
+
+  // L'ENVOL (R21). EN L'AIR, PLUS RIEN D'AUTRE NE S'APPLIQUE — elle ne broute
+  // pas, ne charge pas, ne se couche pas, ne recolle pas à une harde. C'est la
+  // raison d'être de la garde en TÊTE de la machine à états : un état de vol
+  // interrogé plus bas se serait fait doubler par le sanglier, le couché ou
+  // l'appât selon le tick, et l'oiseau aurait clignoté entre deux mondes.
+  if (volStep(state, monster, entity)) return
+
   const attacker = monster.lastAttackerId !== null ? byId.get(monster.lastAttackerId) : undefined
   const wounded = entity.hp < def.hp
   const hunted = wounded && attacker !== undefined && attacker.hp > 0
@@ -2077,6 +2208,12 @@ export function faunaStep(
       monster.fleeFromX = fx ?? entity.x
       monster.fleeFromY = fy ?? entity.y
     }
+    // L'ENVOL (R21) : ce qui vole ne détale pas, ça DÉCOLLE — et seulement à la
+    // levée, jamais en cours de fuite. Une bête ne s'envole qu'une fois par peur :
+    // posée, elle court (mal — le tétras est lent au sol), et c'est là qu'on la
+    // reprend si on l'a suivie. Le point de peur vient d'être arrêté juste
+    // au-dessus, donc le bond porte TOUJOURS à l'opposé de la menace.
+    if (def.vol === true && decolle(state, monster, entity)) return
   }
 
   // LA FUITE ENGAGÉE (R6). Une bête levée part LOIN : jusqu'à FLEE_GOAL de son

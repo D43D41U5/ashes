@@ -21,12 +21,17 @@
  *      chaque réglage et la ligne de `sound.ts` s'écrit toute seule, prête à coller.
  *
  * Page de DEV, hors du jeu et hors du build de prod (Vite ne bâtit que `index.html`) : elle ne
- * touche ni la sim, ni le client, ni le protocole. Servie par `pnpm dev` → /banc-son.html
+ * touche ni la sim, ni le client, ni le protocole. **Elle vit dans le PORTAIL de l'Atelier**
+ * (`pnpm dev` → /atelier.html#son — demande d'Alexis : « un seul portail pour tous les
+ * outils ») ; `/banc-son.html` reste une porte d'entrée et y renvoie.
  */
 import type { SimEvent } from '@ashes/sim'
+import themeAmbianceUrl from './assets/audio/theme-ambiance.mp3'
 import { SoundEngine } from './audio/engine'
-import { FAMILLES, INVENTAIRE, SONORES, faitsDeFamille, type Voix } from './audio/inventaire'
+import { FAMILLES, INVENTAIRE, SONORES, faitsDeFamille, variantesDe, type Voix } from './audio/inventaire'
+import { MUSIQUE, type Piste } from './audio/musique'
 import { soundForEvent, type SoundSpec, type Waveform } from './audio/sound'
+import { DEMI_CADRE_TUILES, PLEIN_TUILES, PORTEE, PORTEE_TUILES, placer } from './audio/spatial'
 import { ensureGameFont, GAME_FONT } from './scenes/ui/game-font'
 import { HEX } from './scenes/ui/palette'
 
@@ -41,30 +46,80 @@ const ENTRE_DEUX_S = 0.28
 // de la Veillée — on cale un son à 10 %, et le jeu se retrouve muet au prochain lancement.
 const moteur = new SoundEngine({ persist: false })
 
+// ── OÙ SE TIENT LA SOURCE (spatialisation, 2026-08-27) ──────────────────────────────────────
+// Le banc doit rester le jeu : depuis que le son se PLACE, un banc qui jouerait tout au centre
+// cesserait de représenter ce qu'on entend en partie — et la boucle de calage d'Alexis, à
+// laquelle tous les commentaires de `sound.ts` renvoient, se serait tue sans le dire.
+//
+// L'auditeur est à l'origine, immobile ; les deux curseurs déplacent la SOURCE autour de lui.
+// `cote` est la part LATÉRALE de la distance (−1 tout à gauche, 0 droit devant) : on règle
+// « à quelle distance » et « de quel côté », les deux questions qu'on se pose en écoutant.
+moteur.setEcoute(0, 0)
+let distance = 0
+let cote = 0
+
+const lieuCourant = (): { x: number; y: number } => {
+  const dx = cote * distance
+  return { x: dx, y: Math.sqrt(Math.max(0, distance * distance - dx * dx)) }
+}
+
 /** Fabrique un événement synthétique — le routage ignore les champs superflus (cf. sound.test). */
-const ev = (type: string, onMe: boolean): SimEvent =>
-  ({ type, tick: 0, entityId: onMe ? 1 : 2, byEntityId: 9, targetEntityId: onMe ? 1 : 2 }) as unknown as SimEvent
+const ev = (type: string, onMe: boolean, champs: Record<string, unknown> = {}): SimEvent =>
+  ({ type, tick: 0, entityId: onMe ? 1 : 2, byEntityId: 9, targetEntityId: onMe ? 1 : 2, ...champs }) as unknown as SimEvent
 
 /** Les deux points de vue d'un fait : plusieurs sons ne se déclenchent que « sur moi ». */
-function pointsDeVue(type: string): { moi: SoundSpec | null; autre: SoundSpec | null; differents: boolean } {
-  const moi = soundForEvent(ev(type, true), true)
-  const autre = soundForEvent(ev(type, false), false)
+function pointsDeVue(type: string, champs: Record<string, unknown> = {}): { moi: SoundSpec | null; autre: SoundSpec | null; differents: boolean } {
+  const moi = soundForEvent(ev(type, true, champs), true)
+  const autre = soundForEvent(ev(type, false, champs), false)
   return { moi, autre, differents: JSON.stringify(moi) !== JSON.stringify(autre) }
 }
 
 /** Le son d'un fait, quel que soit le point de vue qui le porte (`null` s'il est muet). */
-function unSon(type: string): SoundSpec | null {
-  const vue = pointsDeVue(type)
+function unSon(type: string, champs: Record<string, unknown> = {}): SoundSpec | null {
+  const vue = pointsDeVue(type, champs)
   return vue.moi ?? vue.autre
+}
+
+/**
+ * TOUTES LES VOIX D'UN FAIT, DÉDOUBLONNÉES (2026-08-27).
+ *
+ * Trois faits se dédoublent sur un champ de leur charge utile (`variantesDe`) — et jusqu'ici le
+ * banc n'en jouait qu'une : `ev()` ne posait pas le champ, donc tout tombait sur la branche
+ * `default`. Les trois voix de `node_depleted` étaient inauditionnables depuis leur naissance,
+ * et les treize de la récolte le seraient nées ainsi. Un banc qui ne joue pas ce que le jeu joue
+ * ne cale rien du tout.
+ *
+ * ⚠ DÉDOUBLONNÉ, parce que plusieurs matières PARTAGENT une voix à dessein (le rocher, le bloc
+ * et la pierre au sol sonnent pareil : c'est le même caillou). Les lister séparément ferait
+ * croire à dix-neuf timbres là où `sound.ts` en propose treize (plus le régime SANS matière,
+ * qui a le sien), et on calerait dans le vide.
+ * Le libellé garde alors les noms de toutes les matières qui s'y rangent : ce qu'on entend,
+ * c'est le partage lui-même — et si Alexis le refuse, c'est ce bouton qui le lui dit.
+ */
+function voixDuFait(type: string): { libelle: string; spec: SoundSpec; champs: Record<string, unknown> }[] {
+  const variantes = variantesDe(type as SimEvent['type'])
+  if (!variantes.length) return []
+  const parSon = new Map<string, { libelles: string[]; spec: SoundSpec; champs: Record<string, unknown> }>()
+  for (const v of variantes) {
+    const spec = unSon(type, v.champs)
+    if (!spec) continue
+    const cle = JSON.stringify(spec)
+    const deja = parSon.get(cle)
+    if (deja) deja.libelles.push(v.libelle)
+    else parSon.set(cle, { libelles: [v.libelle], spec, champs: v.champs })
+  }
+  return [...parSon.values()].map((g) => ({ libelle: g.libelles.join(' · '), spec: g.spec, champs: g.champs }))
 }
 
 /** Joue un son par le VRAI moteur, en réveillant l'audio dans le geste même (règle navigateur). */
 function jouer(spec: SoundSpec | null, delai = 0): void {
   if (!spec) return
   moteur.resume()
-  moteur.play(spec, delai)
+  // Le VRAI chemin du jeu, lieu compris : à distance 0 le son est celui d'avant, au bit près.
+  moteur.play(spec, delai, lieuCourant())
   dernier = spec
   peindreEtat()
+  peindreLieu() // le relevé suit la PUISSANCE du son qu'on vient de lancer
 }
 
 /** Le dernier son joué — ESPACE le rejoue (on compare en tapotant, pas en visant une souris). */
@@ -150,7 +205,7 @@ function rapport(): string {
   return `${tete}\n${lignes.join('\n')}`
 }
 
-// ── L'ATELIER ───────────────────────────────────────────────────────────────────────────────
+// ── L'ÉTABLI ───────────────────────────────────────────────────────────────────────────────
 // Façonner un son à l'oreille sans rebâtir : les réglages de `SoundSpec`, et la ligne de
 // `sound.ts` qui en découle, prête à coller. Le candidat par défaut d'un fait MUET est
 // délibérément neutre — c'est un point de départ à déformer, pas une proposition.
@@ -170,6 +225,9 @@ function codeAtelier(): string {
     `dur: ${round2(s.dur)}`,
     `gain: ${round3(s.gain)}`,
     ...(s.lowpass !== undefined ? [`lowpass: ${s.lowpass}`] : []),
+    // La portée sort en CRAN NOMMÉ, pas en nombre : c'est un vocabulaire partagé, et une
+    // ligne collée avec `portee: 2` perdrait en route la raison qui a fait choisir `LOIN`.
+    ...(s.portee !== undefined && s.portee !== PORTEE.FAIT ? [`portee: PORTEE.${cleDuCran(s.portee)}`] : []),
   ]
   return `case '${atelierType}':\n  return { ${champs.join(', ')} }`
 }
@@ -182,9 +240,13 @@ const round3 = (n: number): number => Math.round(n * 1000) / 1000
 ensureGameFont()
 chargerVerdicts()
 
+// LE BANC SE MONTE DANS LE PORTAIL DE L'ATELIER (`atelier.html#son`, demande d'Alexis :
+// « un seul portail pour tous les outils »). Le repli sur `body` garde la page autonome —
+// c'est ce qui permet à `banc-son.html` de rester une porte d'entrée valide, et à un test
+// de charger le module seul.
 const racine = document.createElement('div')
 racine.className = 'banc'
-document.body.appendChild(racine)
+;(document.getElementById('outil-son') ?? document.body).appendChild(racine)
 
 const nbVoix = SONORES.length
 const nbTotal = Object.keys(INVENTAIRE).length
@@ -198,13 +260,33 @@ const nbTotal = Object.keys(INVENTAIRE).length
 const ETALON = faitsDeFamille('registre').map((f) => f.type)
 const nbEtalon = ETALON.length
 
+/**
+ * LE PIC DU REGISTRE — le SFX le plus fort que le jeu joue, MESURÉ sur `soundForEvent`, jamais
+ * recopié. C'est l'étalon contre lequel se cale le niveau de la musique : un thème qui passe
+ * au-dessus de lui joue devant le jeu. Recopier « 0,12 » ici, c'est le voir mentir à la première
+ * retouche d'un SFX.
+ */
+const PIC_REGISTRE = ((): { type: string; gain: number } => {
+  let pic = { type: '—', gain: 0 }
+  for (const type of SONORES) {
+    const spec = unSon(type)
+    if (spec && spec.gain > pic.gain) pic = { type, gain: spec.gain }
+  }
+  return pic
+})()
+
 racine.innerHTML = `
 <style>
   /* La grammaire des voiles DOM du jeu : fond chaud, sourcil braise, titre espacé, filet.
      Un instrument qui ressemble au jeu se lit avec les mêmes yeux que lui. */
-  *{box-sizing:border-box;}
-  body{background:${HEX.bg};color:${HEX.body};font-family:${GAME_FONT};font-size:13.5px;line-height:1.55;}
-  .banc{max-width:1180px;margin:0 auto;padding:34px 26px 90px;}
+  /* ⚠ TOUT EST PORTÉ PAR .banc, RIEN PAR body (pas de backtick ici : ce bloc vit dans un
+     template literal, et un accent grave le refermerait — vite casse, tsc ne dit rien).
+     Le banc est désormais un ONGLET du portail de l'Atelier : une règle posée sur body
+     repeindrait l'éditeur de plans d'à côté, police et fond compris. Un outil ne déborde
+     pas sur son voisin. */
+  .banc,.banc *{box-sizing:border-box;}
+  .banc{max-width:1180px;margin:0 auto;padding:34px 26px 90px;
+    background:${HEX.bg};color:${HEX.body};font-family:${GAME_FONT};font-size:13.5px;line-height:1.55;}
   .b-eyebrow{font-size:11.5px;color:${HEX.ember};letter-spacing:4px;}
   .b-title{font-size:25px;font-weight:700;color:${HEX.ember};letter-spacing:6px;margin:12px 0 0;
     text-shadow:0 2px 0 ${HEX.ink},0 0 18px rgba(201,139,58,.25);}
@@ -252,6 +334,12 @@ racine.innerHTML = `
   .b-quoi{color:${HEX.body};}
   .b-type{display:block;font-size:11px;color:${HEX.faint};letter-spacing:.5px;margin-top:2px;}
   .b-actions{display:flex;gap:7px;align-items:center;}
+  /* LES MATIÈRES D'UN MÊME FAIT — quatorze boutons pour le coup de récolte : elles ENROULENT et se
+     serrent, sinon la ligne pousse la colonne du verdict hors du cadre. Alignées à droite,
+     elles restent contre l'interrupteur qu'elles servent à trancher. */
+  .b-actions-mat{flex-wrap:wrap;justify-content:flex-end;max-width:52ch;gap:5px;}
+  .b-mat{font-size:10px;letter-spacing:.3px;padding:4px 8px;}
+  .b-mat-serie{font-size:10px;letter-spacing:.3px;padding:4px 8px;}
 
   /* Le verdict : deux moitiés d'un même interrupteur, jamais deux boutons libres — l'état
      courant se lit sans chercher lequel est allumé. */
@@ -290,6 +378,14 @@ racine.innerHTML = `
   .b-at-row{display:flex;gap:10px;align-items:center;margin-top:12px;flex-wrap:wrap;}
   .b-at-cible{color:${HEX.dim};font-size:12px;}
   .b-at-cible b{color:${HEX.emberBright};font-weight:400;}
+
+  /* LE THEME — le panneau de calibrage de la musique. */
+  .b-th{border:1px solid ${HEX.borderWarm};padding:16px 18px;margin-bottom:26px;background:rgba(201,139,58,.05);}
+  .b-th h2{font-size:13px;letter-spacing:3px;color:${HEX.emberBright};margin:0 0 6px;font-weight:700;}
+  .b-th p{color:${HEX.dim};font-size:12.5px;margin:0 0 14px;max-width:60rem;}
+  .b-th-row{display:flex;gap:14px;align-items:center;flex-wrap:wrap;}
+  .b-th-v{color:${HEX.bodyBright};font-variant-numeric:tabular-nums;}
+  .b-th-etat{font-size:12px;color:${HEX.faint};}
 </style>
 
 <div class="b-eyebrow">ASHES — OUTIL DE DEV</div>
@@ -299,7 +395,7 @@ racine.innerHTML = `
   <span class="b-count"><b>${nbVoix}</b> ont une voix</span>, ${nbTotal - nbVoix} un silence <em>décidé</em>.
   Plus aucun ne se tait par omission — et c’était toute la question : un silence choisi est un design, un silence
   par oubli est un trou. Ce qui est arrêté, c’est <b>qui parle</b>. Le TIMBRE de chacun, lui, a été posé sans être
-  entendu : c’est ici qu’il se rejuge. Écoutez l’étalon, puis une famille ; ce qui sonne faux part à l’atelier, qui
+  entendu : c’est ici qu’il se rejuge. Écoutez l’étalon, puis une famille ; ce qui sonne faux part à l’établi, qui
   rend la ligne à coller dans <code>sound.ts</code>. Le banc appelle le vrai routage et le vrai moteur du jeu —
   ce qu’on entend est ce que le jeu joue.
 </p>
@@ -313,16 +409,48 @@ racine.innerHTML = `
     <span class="b-vol-val"></span>
   </label>
   <span class="b-etat"></span>
+  <label class="b-at-l" style="max-width:250px">distance
+    <input type="range" class="b-vol b-dist" min="0" max="${Math.round(PORTEE_TUILES * PORTEE.CRI * 10)}" step="1" aria-label="Distance de la source, en tuiles">
+    <span class="b-dist-v"></span>
+  </label>
+  <label class="b-at-l" style="max-width:220px">côté
+    <input type="range" class="b-vol b-cote" min="-100" max="100" step="1" aria-label="Côté de la source">
+    <span class="b-cote-v"></span>
+  </label>
+  <span style="flex:1 0 100%"></span>
+  <span class="b-lieu b-etat"></span>
   <span style="flex:1"></span>
   <span class="b-solde b-etat"></span>
   <button class="b-btn b-ghost b-copier">COPIER LES VERDICTS</button>
   <button class="b-btn b-ghost b-reset">repartir de l’état actuel</button>
 </div>
 
+<div class="b-th">
+  <h2>LE THÈME — LE NIVEAU DE LA MUSIQUE</h2>
+  <p>
+    Le thème d’ambiance est la seule musique du jeu, et la contrainte d’Alexis est qu’<b>il ne masque rien</b>.
+    Le curseur ci-dessous rejoue le vrai fondu d’entrée du jeu (${MUSIQUE.FONDU_ENTREE_S} s) au niveau choisi ;
+    le bouton <b>COUP</b> tire par-dessus le SFX <b>le plus fort du registre</b>
+    (<code>${PIC_REGISTRE.type}</code>, gain <b>${round3(PIC_REGISTRE.gain)}</b> — mesuré, pas recopié).
+    Si le coup se perd sous la nappe, le niveau est trop haut. La valeur retenue va dans
+    <code>MUSIQUE.NIVEAU</code> (<code>audio/musique.ts</code>), aujourd’hui à <b>${MUSIQUE.NIVEAU}</b>.
+  </p>
+  <div class="b-th-row">
+    <button class="b-btn b-th-play">▶ LE THÈME</button>
+    <button class="b-btn b-ghost b-th-stop">■ couper (fondu ${MUSIQUE.FONDU_COUPURE_S} s)</button>
+    <label class="b-at-l" style="max-width:300px">niveau
+      <input type="range" class="b-vol b-th-niv" min="1" max="400" step="1" aria-label="Niveau du thème">
+      <span class="b-th-v"></span>
+    </label>
+    <button class="b-btn b-ghost b-th-coup">COUP (${round3(PIC_REGISTRE.gain)})</button>
+    <span class="b-th-etat"></span>
+  </div>
+</div>
+
 <div class="b-familles"></div>
 
 <div class="b-atelier b-plie">
-  <button class="b-at-t">L’ATELIER — FAÇONNER UNE VOIX<span class="b-at-chev">déployer ▾</span></button>
+  <button class="b-at-t">L’ÉTABLI — FAÇONNER UNE VOIX<span class="b-at-chev">déployer ▾</span></button>
   <div class="b-at-grid">
     <div class="b-at-l">forme
       <div class="b-at-wave"></div>
@@ -342,6 +470,9 @@ racine.innerHTML = `
     <label class="b-at-l"><input type="checkbox" class="b-lp-on"> coupe-bas
       <input type="range" class="b-lp" min="200" max="6000" step="50"><span class="b-lp-v"></span>
     </label>
+    <div class="b-at-l">portée
+      <div class="b-at-wave b-at-portee"></div>
+    </div>
   </div>
   <div class="b-code"></div>
   <div class="b-at-row">
@@ -369,7 +500,15 @@ for (const famille of FAMILLES) {
     </div>
     <div class="b-fam-rows"></div>`
 
-  const sonores = faits.map((f) => unSon(f.type)).filter(Boolean)
+  // LA SÉRIE D'UNE FAMILLE JOUE LES VARIANTES, pas seulement le fait : depuis que le coup de
+  // récolte a treize voix de matière, écouter « bâtir » sans elles, c'était écouter la famille amputée de
+  // ce qu'on y entend le plus souvent en jeu.
+  const sonores = faits
+    .flatMap((f) => {
+      const voix = voixDuFait(f.type)
+      return voix.length ? voix.map((v) => v.spec) : [unSon(f.type)]
+    })
+    .filter(Boolean)
   const btnFam = q<HTMLButtonElement>('.b-fam-play', bloc)
   if (!sonores.length) {
     btnFam.disabled = true
@@ -402,7 +541,26 @@ for (const famille of FAMILLES) {
     // ce banc doit éviter. Un fait muet n'a rien à jouer : son bouton mène à l'atelier, parce
     // que sa question n'est pas « comment ça sonne » mais « et si ça sonnait ».
     const actions = q('.b-actions', ligne)
-    if (vue.moi && vue.autre && vue.differents) {
+    const voix = voixDuFait(type)
+    if (voix.length > 1) {
+      // UN FAIT À PLUSIEURS MATIÈRES : une ligne de boutons, un par voix distincte. C'est le
+      // seul endroit du banc où l'on compare des timbres FRÈRES — la hache contre la pioche,
+      // le froissement contre l'éboulis — et c'est cette comparaison-là qu'il faut pouvoir
+      // faire en tapotant, sans quitter la ligne des yeux.
+      actions.className = 'b-actions b-actions-mat'
+      for (const v of voix) {
+        const bouton = document.createElement('button')
+        bouton.className = 'b-btn b-mat'
+        bouton.textContent = `▶ ${v.libelle}`
+        bouton.addEventListener('click', () => jouer(v.spec))
+        actions.appendChild(bouton)
+      }
+      const serie = document.createElement('button')
+      serie.className = 'b-btn b-ghost b-mat-serie'
+      serie.textContent = `▶ les ${voix.length} d’affilée`
+      serie.addEventListener('click', () => jouerSerie(voix.map((v) => v.spec)))
+      actions.appendChild(serie)
+    } else if (vue.moi && vue.autre && vue.differents) {
       actions.innerHTML = `<button class="b-btn b-p1">▶ sur moi</button><button class="b-btn b-p2">▶ sur un autre</button>`
       q<HTMLButtonElement>('.b-p1', actions).addEventListener('click', () => jouer(vue.moi))
       q<HTMLButtonElement>('.b-p2', actions).addEventListener('click', () => jouer(vue.autre))
@@ -456,7 +614,9 @@ function peindreSolde(): void {
   solde.textContent = n ? `${n} verdict(s) changé(s)` : 'aucun changement'
 }
 
-q<HTMLButtonElement>('.b-registre').addEventListener('click', () => jouerSerie(ETALON.map(unSon)))
+// `(t) => unSon(t)`, jamais `.map(unSon)` : depuis que `unSon` prend des champs de variante,
+// `map` lui passerait l'INDEX en second argument — et l'étalon jouerait autre chose que lui-même.
+q<HTMLButtonElement>('.b-registre').addEventListener('click', () => jouerSerie(ETALON.map((t) => unSon(t))))
 q<HTMLButtonElement>('.b-rejouer').addEventListener('click', () => jouer(dernier))
 
 const vol = q<HTMLInputElement>('.b-vol')
@@ -467,6 +627,71 @@ vol.addEventListener('input', () => {
   moteur.setVolume(Number(vol.value) / 100)
   volVal.textContent = `${vol.value} %`
 })
+
+/** Les cinq crans, dans l'ordre — le vocabulaire de `spatial.ts`, rendu cliquable. */
+const CRANS: { nom: string; v: number; cle: keyof typeof PORTEE }[] = [
+  { nom: 'geste', v: PORTEE.GESTE, cle: 'GESTE' },
+  { nom: 'fait', v: PORTEE.FAIT, cle: 'FAIT' },
+  { nom: 'masse', v: PORTEE.MASSE, cle: 'MASSE' },
+  { nom: 'loin', v: PORTEE.LOIN, cle: 'LOIN' },
+  { nom: 'cri', v: PORTEE.CRI, cle: 'CRI' },
+]
+const NOM_DU_CRAN = (v: number): string => CRANS.find((c) => c.v === v)?.nom ?? `×${v}`
+
+const dist = q<HTMLInputElement>('.b-dist')
+const distVal = q('.b-dist-v')
+const coteCtrl = q<HTMLInputElement>('.b-cote')
+const coteVal = q('.b-cote-v')
+const lieuTxt = q('.b-lieu')
+
+/**
+ * Ce que la distance et le côté FONT au son — en clair, et sans mentir sur la coupure.
+ *
+ * ⚠ IL SE LIT AVEC LA PUISSANCE DU SON QU'ON JUGE (`dernier`), pas avec le cran par défaut :
+ * un hurlement porte trois fois plus loin qu'un gond, donc un relevé qui l'ignore afficherait
+ * « hors de portée » sur un son qu'on est en train d'entendre. Un instrument qui contredit
+ * l'oreille est pire que pas d'instrument.
+ */
+function peindreLieu(): void {
+  const puissance = dernier?.portee ?? PORTEE.FAIT
+  distVal.textContent = `${distance.toFixed(1)} t`
+  coteVal.textContent = cote === 0 ? 'centre' : `${cote < 0 ? 'G' : 'D'} ${Math.abs(Math.round(cote * 100))} %`
+  const { x, y } = lieuCourant()
+  const p = placer(x, y, puissance)
+  const bout = PORTEE_TUILES * puissance
+  const cran = NOM_DU_CRAN(puissance)
+  if (!p) {
+    lieuTxt.textContent = `${cran} — hors de portée (> ${bout.toFixed(1)} t) : le son NE PART PAS`
+    lieuTxt.classList.remove('b-on')
+    return
+  }
+  const centre = placer(0, 0, puissance)!.gain
+  const ou =
+    distance <= PLEIN_TUILES * puissance
+      ? 'ici'
+      : distance <= DEMI_CADRE_TUILES
+        ? 'dans le cadre'
+        : 'hors champ'
+  const voile = p.lowpass === undefined ? 'aucun voile' : `voile ${(p.lowpass / 1000).toFixed(1)} kHz`
+  lieuTxt.textContent =
+    `${cran} (${bout.toFixed(0)} t) · ${ou} — pan ${p.pan.toFixed(2)} · ${Math.round((p.gain / centre) * 100)} % · ${voile}`
+  lieuTxt.classList.add('b-on')
+}
+
+dist.value = '0'
+coteCtrl.value = '0'
+dist.addEventListener('input', () => {
+  distance = Number(dist.value) / 10
+  peindreLieu()
+})
+coteCtrl.addEventListener('input', () => {
+  cote = Number(coteCtrl.value) / 100
+  peindreLieu()
+})
+// Le son vient au RELÂCHÉ, comme les curseurs de l'atelier : traîner un curseur ne doit pas
+// mitrailler cinquante sons. On rejoue le dernier — c'est lui qu'on est en train de juger.
+for (const ctrl of [dist, coteCtrl]) ctrl.addEventListener('change', () => jouer(dernier))
+peindreLieu()
 
 q<HTMLButtonElement>('.b-copier').addEventListener('click', () => {
   void navigator.clipboard.writeText(rapport()).then(
@@ -504,6 +729,16 @@ for (const b of zoneWave.querySelectorAll<HTMLButtonElement>('.b-at-w')) {
   })
 }
 
+const zonePortee = q('.b-at-portee')
+zonePortee.innerHTML = CRANS.map((c) => `<button class="b-at-w" data-p="${c.v}">${c.nom}</button>`).join('')
+for (const b of zonePortee.querySelectorAll<HTMLButtonElement>('.b-at-w')) {
+  b.addEventListener('click', () => {
+    atelierSpec = { ...atelierSpec, portee: Number(b.dataset.p) }
+    peindreAtelier()
+    jouer(atelierSpec)
+  })
+}
+
 const freq = q<HTMLInputElement>('.b-freq')
 const gl = q<HTMLInputElement>('.b-gl')
 const glOn = q<HTMLInputElement>('.b-gl-on')
@@ -522,6 +757,7 @@ function lireAtelier(): void {
     dur: Number(dur.value) / 100,
     gain: Number(gain.value) / 1000,
     ...(lpOn.checked ? { lowpass: Number(lp.value) } : {}),
+    ...(atelierSpec.portee !== undefined ? { portee: atelierSpec.portee } : {}),
   }
   peindreAtelier()
 }
@@ -574,6 +810,14 @@ function peindreAtelier(): void {
   for (const b of zoneWave.querySelectorAll<HTMLButtonElement>('.b-at-w')) {
     b.classList.toggle('b-sel', b.dataset.w === atelierSpec.wave)
   }
+  for (const b of zonePortee.querySelectorAll<HTMLButtonElement>('.b-at-w')) {
+    b.classList.toggle('b-sel', Number(b.dataset.p) === (atelierSpec.portee ?? PORTEE.FAIT))
+  }
+}
+
+/** La clé de `PORTEE` pour un cran — `codeAtelier` rend du code, pas un nombre à traduire. */
+function cleDuCran(v: number): string {
+  return CRANS.find((c) => c.v === v)?.cle ?? 'FAIT'
 }
 
 q<HTMLButtonElement>('.b-at-play').addEventListener('click', () => jouer(atelierSpec))
@@ -585,8 +829,12 @@ q<HTMLButtonElement>('.b-at-copy').addEventListener('click', () => {
 })
 
 // ESPACE rejoue : on compare deux candidats en tapotant, sans repartir chercher un bouton.
+// ⚠ SEULEMENT QUAND LE BANC EST À L'ÉCRAN : dans le portail, ESPACE est le PAN de l'éditeur
+// de plans. Un écouteur global posé une fois pour toutes volerait la touche à l'onglet d'à
+// côté, et le vol ne se verrait qu'en éditant un plan — loin d'ici.
 window.addEventListener('keydown', (e) => {
   if (e.code !== 'Space' || e.target instanceof HTMLInputElement) return
+  if (racine.offsetParent === null) return // onglet replié : la touche n'est pas à nous
   e.preventDefault()
   jouer(dernier ?? atelierSpec)
 })
@@ -596,6 +844,56 @@ window.addEventListener('pointerdown', () => {
   peindreEtat()
 })
 
+// ── LE THÈME : le panneau de calibrage de la musique ────────────────────────────────────────
+//
+// Il monte la VRAIE piste du VRAI moteur (`SoundEngine.piste`), avec les vrais fondus : ce qu'on
+// entend ici est ce que le jeu joue. Seul le NIVEAU est libre — c'est tout l'objet du panneau.
+// Le curseur n'écrit nulle part : la valeur retenue se recopie à la main dans `MUSIQUE.NIVEAU`.
+// (Le banc est un moteur JETABLE, `persist: false` : il ne touche pas aux réglages de la partie.)
+
+let piste: Piste | null = null
+let niveau = MUSIQUE.NIVEAU
+const thNiv = q<HTMLInputElement>('.b-th-niv')
+const thNivV = q('.b-th-v')
+const thEtat = q('.b-th-etat')
+
+const peindreTheme = (etat: string): void => {
+  thNivV.textContent = niveau.toFixed(3)
+  thEtat.textContent = etat
+  thEtat.classList.toggle('b-on', etat !== '')
+}
+
+thNiv.value = String(Math.round(niveau * 1000))
+thNiv.addEventListener('input', () => {
+  niveau = Number(thNiv.value) / 1000
+  // À CHAUD : on cale à l'oreille, donc le niveau doit suivre le curseur pendant que ça joue.
+  // Rampe courte — assez pour ne pas claquer, assez brève pour que le geste et le son coïncident.
+  piste?.rampe(niveau, 0.12)
+  peindreTheme(piste ? 'en lecture' : '')
+})
+
+q<HTMLButtonElement>('.b-th-play').addEventListener('click', () => {
+  moteur.resume()
+  piste ??= moteur.piste(themeAmbianceUrl)
+  if (!piste) {
+    peindreTheme('audio pas encore accordé — recliquez')
+    return
+  }
+  piste.jouer(niveau, MUSIQUE.FONDU_ENTREE_S)
+  peindreTheme(`fondu d’entrée ${MUSIQUE.FONDU_ENTREE_S} s…`)
+})
+
+q<HTMLButtonElement>('.b-th-stop').addEventListener('click', () => {
+  piste?.rampe(0, MUSIQUE.FONDU_COUPURE_S)
+  peindreTheme(`coupure ${MUSIQUE.FONDU_COUPURE_S} s (comme au danger)`)
+})
+
+// LE COUP : le SFX le plus fort du registre, tiré par-dessus la nappe. C'est LUI le juge —
+// s'il se perd, la musique masque le jeu, et c'est précisément ce qu'Alexis refuse.
+q<HTMLButtonElement>('.b-th-coup').addEventListener('click', () => jouer(unSon(PIC_REGISTRE.type)))
+
+peindreTheme('')
+
 // Le banc s'interroge de l'extérieur, comme le jeu par `__BRAISES__` : on LIT son état, on ne
 // le fabrique pas. C'est ce qui rend l'outil vérifiable — sinon son rapport ne se prouve
 // qu'en le lisant à l'œil dans un presse-papier.
@@ -604,6 +902,9 @@ window.addEventListener('pointerdown', () => {
   verdicts,
   jouer,
   specDe: unSon,
+  // Les voix distinctes d'un fait à matières — de quoi PROUVER depuis le navigateur que le
+  // coup de récolte en propose bien treize de matière, et lesquelles se partagent un timbre.
+  voixDuFait,
 }
 
 poserCurseurs()

@@ -16,9 +16,12 @@ import type { PropKind } from './clutter'
  *  Restent DÉLIBÉRÉMENT sans ombre : les brins wispy et innombrables (touffe d'herbe, roseau —
  *  illisibles et coûteux) et les FLAT_PROPS (ils SONT le sol). NB : `conifer`/`stump` ont bien une
  *  texture mais ne sont posés dans AUCUN biome (la Racine est faite de vrais nœuds) → hors liste,
- *  et le test épingle que tout membre d'ici est réellement placé. */
+ *  et le test épingle que tout membre d'ici est réellement placé. **`boulder` les a rejoints le
+ *  2026-08-27** : le chaos de blocs porte désormais de VRAIS nœuds `bloc` (spec `roche-mere.md`
+ *  R6ter), et son rocher peint a été retiré du biome — un décor qu'on traverse à côté d'un bloc
+ *  qui arrête rendrait le champ illisible. L'art reste (`cl-boulder`), il n'est plus posé. */
 export const SHADOW_PROPS = new Set<PropKind>([
-  'bush', 'low_bush', 'boulder', 'big_trunk', 'pine', 'larch', 'burnt_trunk', 'snowdrift', 'flower',
+  'bush', 'low_bush', 'big_trunk', 'pine', 'larch', 'burnt_trunk', 'snowdrift', 'flower',
   // Les buttes d'affleurement (§2sexies) : le chicot se dresse, donc il pose. La poussière,
   // elle, EST le sol (FLAT_PROPS) — jamais de flaque. (Les dalles : purgées, 2026-08-18.)
   'chicot',

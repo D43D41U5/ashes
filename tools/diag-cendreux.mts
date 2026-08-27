@@ -30,7 +30,7 @@ import { construireMondeDuBanc } from '../packages/sim/src/scenario'
 import { spawnEntity, step, type MoveInput, type PlayerAction, type SimState } from '../packages/sim/src/sim'
 import { walkableSpawn } from '../packages/sim/src/connectivity'
 import { BALANCE } from '../packages/sim/src/balance'
-import { cycleOffsetForStartHour, dayTicksPourJour, getGameTime, TICKS_PER_CYCLE, TICKS_PER_SEASON_DAY } from '../packages/sim/src/time'
+import { dayTicksPourJour, getGameTime, TICKS_PER_CYCLE, TICKS_PER_SEASON_DAY } from '../packages/sim/src/time'
 import { densiteDesMorts } from '../packages/sim/src/morts'
 import { plafondGlobal } from '../packages/sim/src/monsters'
 import { deserializeSim, serializeSim } from '../packages/sim/src/persistence'
@@ -94,8 +94,13 @@ function poserLaNuit(sim: SimState, jour: number): void {
   // l'heure posée par la phase du cycle (`debug_set_hour`, sans le debug).
   sim.calendarScale = 1
   sim.tick = (jour - 1) * TICKS_PER_SEASON_DAY
-  const cible = cycleOffsetForStartHour(BALANCE.CYCLE_DAWN_HOUR + 24 * BALANCE.CYCLE_DAY_FRACTION) // la tombée de la nuit
-  sim.cycleOffset = (((cible - sim.tick) % TICKS_PER_CYCLE) + TICKS_PER_CYCLE) % TICKS_PER_CYCLE
+  // LA TOMBÉE DE LA NUIT, DÉRIVÉE DE LA LOI QUI LA DÉFINIT (`isNight` = `cycleTick >= dayTicks`).
+  // Elle se calculait par `cycleOffsetForStartHour(DAWN + 24 * BALANCE.CYCLE_DAY_FRACTION)` — or
+  // cette constante N'EXISTE PAS (ni ici, ni à HEAD) : l'expression valait NaN, l'offset avec, et
+  // l'instrument jouait un plein JOUR en croyant jouer une nuit. `tools/` n'est dans aucun
+  // tsconfig, donc `pnpm check` ne pouvait pas le dire. (Vu le 2026-08-25.)
+  const dayTicks = dayTicksPourJour(jour)
+  sim.cycleOffset = (((dayTicks - sim.tick) % TICKS_PER_CYCLE) + TICKS_PER_CYCLE) % TICKS_PER_CYCLE
 }
 
 function jouer(base: string, seed: number, jour: number, comportement: Comportement): Releve {

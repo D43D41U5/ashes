@@ -46,7 +46,7 @@ describe('la pression (A1)', () => {
       map: createEmptyMap(40, 40, TERRAIN_GRASS),
       calendarScale: FAST,
       nodes: [node],
-      cycleOffset: cycleOffsetForStartHour(12),
+      cycleOffset: cycleOffsetForStartHour(12, 1),
     })
     const a = spawnEntity(sim, 10.3, 10.5)
     // Le buisson DÉRIVE à l'épuisement (spec recolte-vivante) : on se replante dessus
@@ -262,7 +262,7 @@ describe('la chronique (A5)', () => {
       runTo(sim, sim.tick + 40, events)
     }
     const names = Object.fromEntries(sim.villages.map((v) => [v.id, v.name]))
-    const chronicle = chronicleFromEvents(events, sim.calendarScale, sim.jourDeDepart, names).map(formatChronicleLine)
+    const chronicle = chronicleFromEvents(events, sim.calendarScale, sim.jourDeDepart, names, sim.map).map(formatChronicleLine)
 
     expect(chronicle.length).toBeGreaterThan(4)
     expect(chronicle.some((l) => l.includes('Feu s\'est allumé'))).toBe(true)

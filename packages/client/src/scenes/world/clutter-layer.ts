@@ -5,17 +5,18 @@
  * ici on ne fait que du pooling Phaser et du placement.
  */
 import Phaser from 'phaser'
-import { poiClearings, type Structure, type WorldMap } from '@ashes/sim'
+import { poiClearings, VENT, type Structure, type WorldMap } from '@ashes/sim'
 import { clutterDepth, GROUND_PROP_DEPTH, TILE_PX } from '../../render/framing'
-import { clutterAt, PROP_ASPECT, type PropKind, type SampleTerrain } from '../../render/clutter'
+import { PROP_ASPECT, type PropKind, type SampleTerrain } from '../../render/clutter'
+import { MemoireDuDecor } from '../../render/clutter-memo'
 import { terrainCendre } from '@ashes/sim'
 import { contexteDesButtes, type ButteContexte } from '../../render/buttes'
 import { teinteTouffe } from '../../render/clutter-teinte'
 import { TERRAIN_COLORS } from '../../render/terrain-colors'
-import { teinteDuTerrain, teinter } from '../../render/teinte-saison'
+import { CRAN_SAISON, cranDeSaison, teinteDuTerrain, teinter } from '../../render/teinte-saison'
 import { LIT_CLUTTER_KINDS, litClutterTextureKey, VARIANT_COUNTS, variantBase } from '../../render/lit-props'
 import { SHADOW_PROPS, SHADOW_PROP_GAP, SHADOW_PROP_GAP_LIT, SHADOW_PROP_WIDTH } from '../../render/prop-shadows'
-import { windSway, WIND_TAKE } from '../../render/wind'
+import { windStretch, windSway, WIND_TAKE } from '../../render/wind'
 import { TransitionsFlore, retardDe } from '../../render/flore-gel'
 import type { Warp } from '../../render/warp'
 import { createContactShadow, positionShadow } from './contact-shadow'
@@ -35,16 +36,24 @@ const CLUTTER_TINT = 0xbfc4bd // léger assombrissement/désaturation (INV-2)
  *  retombe sur la teinte commune. */
 const TEINTE_TOUFFE = new Map<number, number>()
 /**
- * ⚠ LA CLÉ PORTE LA SAISON (spec `saisons.md` S17), par CRANS de dix jours. La teinte
- * saisonnière est continue, mais la mémoïsation ne peut pas l'être : une clé au jour près
- * ferait douze fois plus d'entrées pour un écart invisible, et une teinte recalculée par
- * touffe et par frame paierait la conversion TSV quatre mille fois. Douze crans par an
- * suffisent — l'œil ne lit pas un demi-point de rouge d'un jour à l'autre.
+ * ⚠ LA CLÉ PORTE LA SAISON (spec `saisons.md` S17), par CRANS. La teinte saisonnière est
+ * continue, mais la mémoïsation ne peut pas l'être : une clé au jour près ferait soixante fois
+ * plus d'entrées pour un écart invisible, et une teinte recalculée par touffe et par frame
+ * paierait la conversion TSV quatre mille fois.
+ *
+ * ⚠ **LE CRAN NE VIT PLUS ICI.** Il est né dans ce fichier, où il ne commandait qu'une
+ * mémoïsation ; il commande aujourd'hui la CUISSON du sol et des cimes (S19), et les trois
+ * doivent tourner à la même date — sinon le décor porte l'automne pendant que le sol porte
+ * encore l'été, deux jours durant. Une seule écriture : `teinte-saison.ts`.
+ *
+ * ⚠ **ET LA CLÉ TENAIT SUR QUATRE BITS** (`terrain * 16 + cran`) : elle marchait à douze crans
+ * et se serait mise à COLLISIONNER en silence à soixante — deux terrains voisins partageant une
+ * teinte, sans qu'aucun test ne le dise. Elle est élargie, avec une garde qui l'affirme.
  */
-const CRAN_SAISON = 10
+const CRANS_PAR_AN = 120 / CRAN_SAISON
 function teinteDeLaTouffe(terrain: number, jour: number): number {
-  const cran = Math.floor((((jour - 1) % 120) + 120) % 120 / CRAN_SAISON)
-  const cle = terrain * 16 + cran
+  const cran = cranDeSaison(jour)
+  const cle = terrain * CRANS_PAR_AN + cran
   let t = TEINTE_TOUFFE.get(cle)
   if (t === undefined) {
     const sol = TERRAIN_COLORS[terrain]
@@ -63,11 +72,17 @@ const MARGIN_TILES = 2 // marge de culling pour éviter le pop en bordure d'écr
 const FLORE_GELIVE = new Set<PropKind>(['grass_tuft', 'flower'])
 const MAX_SPRITES = 4000 // borne dure de perf (cap silencieux : on log si dépassé)
 
+
 export class ClutterLayer {
   private readonly pool: Phaser.GameObjects.Image[] = []
   /** La teinte RÉELLEMENT posée sur chaque sprite du pool — pour n'appeler `setTint` qu'au
    *  changement (le décor d'un même biome garde la sienne d'une frame à l'autre). */
   private readonly poolTint: number[] = []
+  /** LA TEXTURE réellement posée sur chaque sprite du pool — même patron que `poolTint`, et
+   *  pour la même raison : un `setTexture` réarme la frame, invalide le crop et retouche le
+   *  batch, alors qu'un sprite poolé garde très généralement la sienne d'une image à l'autre
+   *  (la fenêtre glisse, elle ne se réattribue pas). */
+  private readonly poolTex: string[] = []
   /** Pool d'ombres de contact — POOL SÉPARÉ, servi par son PROPRE compteur (`shadowsUsed`), car
    *  tous les props n'en portent pas (cf. `SHADOW_PROPS`) : un caillou entre deux buissons
    *  désynchroniserait un index partagé et laisserait une ombre orpheline allumée. */
@@ -86,6 +101,9 @@ export class ClutterLayer {
   /** Le CONTEXTE des buttes d'affleurement (§2sexies) — cœur/sommet/frange par tuile, dérivé
    *  de `map.affleurements` une fois à l'amorce. Vide sur une carte sans buttes : coût nul. */
   private readonly buttes: Map<number, ButteContexte>
+  /** Le décor retenu à la tuile — voir `render/clutter-memo.ts` : c'est là que vivent la
+   *  raison, la borne et la règle d'invalidation (le terrain change quand la cendre arrive). */
+  private readonly memoire: MemoireDuDecor
   private warned = false
 
   constructor(
@@ -98,6 +116,7 @@ export class ClutterLayer {
       if (tx < 0 || ty < 0 || tx >= map.width || ty >= map.height) return -1
       return map.terrain[ty * map.width + tx] ?? -1
     }
+    this.memoire = new MemoireDuDecor(seed, this.sample)
     this.cleared = poiClearings(map)
     this.coulees = new Set((map.coulees ?? []).filter((i) => i >= 0))
     this.buttes = contexteDesButtes(map)
@@ -106,6 +125,9 @@ export class ClutterLayer {
   /** LE VENT DE LA SIM (spec chasse C17) : les herbes se couchent dans SON sens —
    *  c'est ce qui rend la règle de l'odorat lisible sans une seule ligne d'UI. */
   wind: { x: number; y: number } = { x: 1, y: 0 }
+  /** La FORCE du vent de la sim (`state.windForce`) : les brins plient d'autant plus qu'il
+   *  souffle fort. `VENT.AMBIANT` par défaut — le décor d'avant, inchangé. */
+  windForce: number = VENT.AMBIANT
 
   /** LA VÉGÉTATION FRÔLÉE (spec eau-vivante R16) : les marcheurs de la frame, chacun avec
    *  sa FORCE (1 en marche, fond en ~0,5 s après l'arrêt — l'enveloppe des waders : le brin
@@ -147,6 +169,9 @@ export class ClutterLayer {
   tuileCendree: ((tx: number, ty: number) => boolean) | null = null
   /** « Y a-t-il une fumerolle sur CETTE tuile ? » — la fonction de /sim, pas une copie. */
   fumerolleIci: ((tx: number, ty: number) => boolean) | null = null
+  /** LE CAP DE LA SIM, par crans de 45° — celui le long duquel l'ONDE se propage (`windSway`).
+   *  `wind`, lui, porte le cap RALLIÉ : c'est l'assiette. Voir l'en-tête de `windSway`. */
+  ventSim: { x: number; y: number } = { x: 1, y: 0 }
 
   update(camera: Phaser.Cameras.Scene2D.Camera, now: number): void {
     let used = 0
@@ -184,7 +209,10 @@ export class ClutterLayer {
           //   `SnapshotView` la dessine. On se contente de TAIRE le décor de sa tuile — un chicot
           //   planté dans le trou n'aurait aucun sens, et les deux sprites se superposaient.
           if (cendree && this.fumerolleIci?.(tx, ty)) continue
-          const props = clutterAt(tx, ty, terrain, this.seed, this.sample, this.map.profondeur?.[idx] ?? 0, this.buttes.get(idx))
+          // LE DÉCOR DE CETTE TUILE, RETENU (`clutter-memo.ts`) : pure fonction du terrain,
+          // rejouée pour rien soixante fois par seconde. Elle se recalcule quand le TERRAIN
+          // change — c'est-à-dire quand la cendre arrive —, et pas autrement.
+          const props = this.memoire.props(idx, tx, ty, terrain, this.map.profondeur?.[idx] ?? 0, this.buttes.get(idx))
           // LE GEL DE LA FLORE, relevé une fois par tuile (la couche du gel l'a déjà calculé).
           // `null` : la couche du gel n'a pas encore relevé cette tuile — on dessine tel quel, sans
           // inscrire de bascule (sinon chaque arrivée jouerait un gel sur un pré déjà gelé).
@@ -232,7 +260,11 @@ export class ClutterLayer {
             const base = count !== undefined
               ? variantBase(p.kind, Math.min(count - 1, Math.floor(p.variant * count)))
               : p.kind
-            sprite.setTexture(useLit ? litClutterTextureKey(base, p.mirror) : `cl-${base}`)
+            const cle = useLit ? litClutterTextureKey(base, p.mirror) : `cl-${base}`
+            if (this.poolTex[slot] !== cle) {
+              sprite.setTexture(cle)
+              this.poolTex[slot] = cle
+            }
             sprite.setLighting(this.lighting) // pooled : réarmé chaque frame (couche 1)
             // Les pieds se posent sur le sol DÉFORMÉ, comme le maillage du sol et
             // les acteurs. Sans ce lift, un prop est dessiné à sa position PLATE :
@@ -240,6 +272,12 @@ export class ClutterLayer {
             // les touffes de la berge finissent par flotter sur l'eau.
             const sy = feetY * TILE_PX - this.warp.lift(feetX, feetY)
             sprite.setPosition(feetX * TILE_PX, sy)
+            // LE STRETCH DU VENT NORD-SUD (essai, 2026-08-25) : une rotation ne sait pencher
+            // qu'à gauche ou à droite, la HAUTEUR APPARENTE dit le reste. Il se multiplie à
+            // l'échelle du gel plutôt que de la remplacer — les deux gestes se composent.
+            // ⚠ POSÉ CHAQUE IMAGE, comme la rotation : le sprite est POOLÉ, et une prise nulle
+            // doit rendre 1 pour effacer le facteur du voisin qui occupait la case avant.
+            echY *= windStretch(WIND_TAKE[p.kind] ?? 0, this.wind, this.windForce)
             // Les textures hautes (le chicot : 16×32) déclarent leur aspect — sans lui, le
             // carré par défaut ÉCRASERAIT l'aiguille en moellon.
             sprite.setDisplaySize(TILE_PX * p.scale * echX, TILE_PX * p.scale * (PROP_ASPECT[p.kind] ?? 1) * echY)
@@ -261,7 +299,10 @@ export class ClutterLayer {
             // plier le brin depuis sa base, comme une tige — et non tourner comme
             // une aiguille d'horloge. Le rocher a un `take` de 0 : il ne bouge pas.
             const take = WIND_TAKE[p.kind] ?? 0
-            let sway = windSway(feetX, feetY, now, take, this.wind)
+            // ⚠ DEUX CAPS (voir `windSway`) : l'assiette prend le cap RALLIÉ que `WorldScene` pose
+            //   dans `wind`, l'ONDE prend celui de la sim, qui saute par crans — sa phase dépend de
+            //   la position, donc la faire tourner en douceur ferait trembler tout le lointain.
+            let sway = windSway(feetX, feetY, now, take, this.wind, this.windForce, this.ventSim)
             // LA VÉGÉTATION FRÔLÉE (eau-vivante R16) : un marcheur à moins d'une tuile
             // pousse le brin du côté opposé — pente continue sur la distance, bornes
             // exactes (pleine au contact, nulle à 1 tuile). Ce qui ne prend pas le vent
@@ -326,6 +367,7 @@ export class ClutterLayer {
       sprite = this.scene.add.image(0, 0, 'cl-grass_tuft').setOrigin(0.5, 1).setTint(CLUTTER_TINT)
       this.pool[i] = sprite
       this.poolTint[i] = CLUTTER_TINT
+      this.poolTex[i] = 'cl-grass_tuft' // le miroir démarre SUR la texture posée, sinon il ment
     }
     return sprite
   }
@@ -334,6 +376,8 @@ export class ClutterLayer {
     for (const s of this.pool) s.destroy()
     this.pool.length = 0
     this.poolTint.length = 0
+    this.poolTex.length = 0
+    this.memoire.vider()
     for (const s of this.shadowPool) s.destroy()
     this.shadowPool.length = 0
   }

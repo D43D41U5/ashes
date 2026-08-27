@@ -91,6 +91,7 @@ import {
   TERRAIN_WILLOW,
   TERRAINS,
 } from './balance'
+import { froidDeCendre } from './cendre'
 import { terrainAt } from './map'
 import { coldMaximal, frontDuCycle, frontMeteoPos, largeurDe, partDeNeige, type BandeMeteo } from './meteo'
 import { effetsDuJour } from './modificateur'
@@ -99,6 +100,9 @@ import type { SimState } from './sim'
 import {
   baselineTemperature,
   baselineTemperatureAt,
+  abriDeTuile,
+  froidDeFumerolleDeTuile,
+  type ConstantesDeTuile,
   climatFlore,
   climatMaximal,
   dehorsSansMeteo,
@@ -427,6 +431,37 @@ export function neigeAuSol(state: SimState, tx: number, ty: number): number {
   if (!state.meteoActive) return 0
   const cycle = Math.floor(state.tick / TICKS_PER_CYCLE)
   const { width, height } = state.map
+  // ═══ CE QUI NE DÉPEND PAS DU TICK SORT DES DEUX BOUCLES (perf, 2026-08-26) ═══
+  //
+  // Les deux intégrations ci-dessous — la CHUTE (`dehorsSansMeteo`) et la FONTE
+  // (`baselineTemperatureAt`) — rejouent la même tuile à des dizaines d'instants. Or l'ABRI et
+  // le souffle des FUMEROLLES ne bougent pas avec l'horloge : les relire à chaque tranche, ce
+  // sont **quarante-huit fois la même réponse**. Et ce ne sont pas des broutilles : mesurés sur
+  // le monde joué, `isSheltered` (qui BALAIE `state.structures`, 772 sur une carte bâtie) et
+  // `froidDeFumerolle` pèsent à eux deux les DEUX TIERS de `baselineTemperatureAt`.
+  //
+  // La recuisson du gel du client, qui appelle cette fonction sur 6 144 tuiles, mangeait **121 %
+  // d'une image de 16,7 ms**. Les valeurs, elles, ne bougent pas d'un bit : c'est le même appel,
+  // avec les mêmes arguments, simplement sorti de la boucle.
+  //
+  // ⚠ RELEVÉ PARESSEUSEMENT, ET C'EST LE CŒUR DU CORRECTIF. Posé en tête de fonction, il
+  //   COÛTAIT PLUS QU'IL NE RAPPORTAIT — MESURÉ : 20,2 ms → 58,8 ms sur la fenêtre de recuisson.
+  //   Cette fonction sort par cinq chemins AVANT d'intégrer quoi que ce soit (pas de météo,
+  //   aucun front précipitant en mémoire, la bande pas encore arrivée…), et l'immense majorité
+  //   des tuiles sortent par l'un d'eux. On paierait alors l'abri et les fumerolles sur toute
+  //   la carte pour ne rien intégrer du tout. Le `??=` ne le relève qu'au premier instant
+  //   vraiment demandé, et une seule fois ensuite.
+  //
+  // ⚠ ET LES DEUX TERMES SE RELÈVENT SÉPARÉMENT : la chute ne lit QUE les fumerolles, la fonte
+  //   lit les deux. Les lier faisait payer `isSheltered` (le plus cher) à la boucle de chute
+  //   pour rien — MESURÉ, la passe en devenait plus lente qu'avant le correctif.
+  // ⚠ LES DEUX FROIDS LOCAUX TIENNENT DANS UN SEUL OBJET, ET C'EST LA SENTINELLE QUI L'EXIGE.
+  //   Le froid de la cendre (R22) vaut LÉGITIMEMENT 0 hors cendre et sur la frange : un `??=`
+  //   sur ce nombre-là n'est pas une sentinelle, il recalculerait à chaque tranche — la
+  //   régression de 216 ms du souffle, rebâtie là où rien ne l'aurait signalée. L'`undefined`
+  //   d'un OBJET, lui, ne peut pas être confondu avec une valeur.
+  let locaux: { fumerolle: number; cendre: number } | undefined
+  let abri: number | undefined
   let best = 0
   for (let k = 0; k < GEL.MEMOIRE_CYCLES; k++) {
     const c = cycle - k
@@ -454,6 +489,9 @@ export function neigeAuSol(state: SimState, tx: number, ty: number): number {
     const PAS_NEIGE = TICKS_PER_CYCLE / GEL.FONTE_TRANCHES_PAR_CYCLE
     const finChute = Math.min(state.tick, sortie)
     let tombe = 0
+    // La première tranche les paie, seule (voir la sentinelle plus haut).
+    locaux ??= { fumerolle: froidDeFumerolleDeTuile(state, tx, ty), cendre: froidDeCendre(state, tx, ty) }
+    const cstChute: ConstantesDeTuile = locaux
     for (let t0 = entree; t0 < finChute; t0 += PAS_NEIGE) {
       const t1 = Math.min(finChute, t0 + PAS_NEIGE)
       const instant = Math.min(sortie, t0 + PAS_NEIGE / 2) // FIXE par tranche : monotone en `tick`
@@ -461,7 +499,7 @@ export function neigeAuSol(state: SimState, tx: number, ty: number): number {
       // et le grésil couvre le sol moitié moins vite qu'une vraie neige. `partDeNeige` vaut
       // encore 0 et 1 franchement dès qu'on s'écarte d'une demi-rampe de la limite : la plaine
       // d'acte I ne reçoit toujours RIEN et le Névé reçoit toujours TOUT.
-      tombe += partDeNeige(dehorsSansMeteo(state, tx, ty, instant)) * (t1 - t0) / (sortie - entree)
+      tombe += partDeNeige(dehorsSansMeteo(state, tx, ty, instant, cstChute)) * (t1 - t0) / (sortie - entree)
     }
     if (tombe <= 0) continue // il a plu ici, pas neigé : rien au sol
     if (state.tick < sortie) {
@@ -483,6 +521,15 @@ export function neigeAuSol(state: SimState, tx: number, ty: number): number {
       // Le compte de tranches est borné par `MEMOIRE_CYCLES` (au-delà, la neige a fondu de
       // toute façon), donc aucune boucle sans fond.
       const PAS = TICKS_PER_CYCLE / GEL.FONTE_TRANCHES_PAR_CYCLE
+      // La fonte, elle, lit AUSSI l'abri — et lui seul balaie `state.structures`. On ne le
+      // relève donc qu'ici, c'est-à-dire seulement sur les tuiles qui ont VRAIMENT reçu de la
+      // neige : celles où il a plu et non neigé sortent plus haut sans l'avoir payé.
+      abri ??= abriDeTuile(state, tx, ty)
+      const cstFonte: ConstantesDeTuile = { abri, ...locaux }
+      // LES GRANDES NEIGES (S18) triplent la durée de fonte : le manteau tient, on marche
+      // au ralenti, et la chasse devient du pistage. Le modificateur du JOUR ne dépend ni de la
+      // tranche ni de la tuile — il se relève une fois, pas vingt-quatre.
+      const fonteMod = effetsDuJour(jourDeSaison(state)).fonte ?? 1
       let fondu = 0
       for (let t0 = sortie; t0 < state.tick; t0 += PAS) {
         const t1 = Math.min(state.tick, t0 + PAS)
@@ -495,14 +542,11 @@ export function neigeAuSol(state: SimState, tx: number, ty: number): number {
         // relevé au cycle 634). Sur la grille fixe, chaque tranche n'ajoute qu'une quantité
         // positive dont le coefficient ne dépend plus du tick : la somme est croissante par
         // CONSTRUCTION — la neige ne peut plus remonter, quoi que fasse le thermomètre.
-        const t = baselineTemperatureAt(state, tx, ty, t0 + PAS / 2)
+        const t = baselineTemperatureAt(state, tx, ty, t0 + PAS / 2, cstFonte)
         // Du gel du lac (−10 °C : la fonte est la plus lente) à l'air doux (+6 °C : elle est
         // la plus rapide) — `AMBIANT_DOUX` a remplacé l'ex-`COMFORT`, qui est devenu un seuil
         // du CORPS quand l'échelle est passée en degrés (2026-08-22).
         const u = Math.max(0, Math.min(1, (t - GEL.SEUIL_PROFOND) / (TEMPERATURE.AMBIANT_DOUX - GEL.SEUIL_PROFOND)))
-        // LES GRANDES NEIGES (S18) triplent la durée de fonte : le manteau tient, on marche
-        // au ralenti, et la chasse devient du pistage.
-        const fonteMod = effetsDuJour(jourDeSaison(state)).fonte ?? 1
         const cycles = (GEL.FONTE_CYCLES + (GEL.FONTE_CYCLES_CHAUD - GEL.FONTE_CYCLES) * u) * fonteMod
         fondu += (t1 - t0) / (cycles * TICKS_PER_CYCLE)
         if (fondu >= 1) break // tout est fondu : inutile de continuer à sommer

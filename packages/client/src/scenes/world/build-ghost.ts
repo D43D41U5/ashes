@@ -239,14 +239,37 @@ function famillePorte(structures: readonly Structure[], tx: number, ty: number, 
  * qui apparaît ou grimpe d'un palier. Pur (même moteur que la sim) : le fantôme ne
  * ment pas. `null` = rien de neuf (le composant est isolé, ou n'ajoute aucun palier).
  */
+const cleFonction = (f: RecognizedFunction): string => `${f.functionId}@${f.tx},${f.ty}`
+
+/**
+ * L'ÉTAT D'AVANT NE DÉPEND PAS DE LA POSE — il se mémoïse sur le TABLEAU (PERF, audit du
+ * 2026-08-20). `predictFunction` reconnaissait les amas DEUX fois par image, marteau en
+ * main : une fois le monde tel quel, une fois avec la pièce hypothétique. Or la première
+ * ne bouge qu'au snapshot.
+ *
+ * La clé est l'IDENTITÉ du tableau, et c'est ce qui rend le cache exact : `syncStructures`
+ * REMPLACE `view.structures` à chaque snapshot (snapshot-view.ts:1495), il ne le mute pas.
+ * Un tableau neuf = une entrée neuve ; l'ancienne s'en va avec lui (WeakMap). Il n'y a donc
+ * aucun front à guetter — pas de tuile qui changerait sous un cache resté valide.
+ */
+const AVANT_PAR_TABLEAU = new WeakMap<readonly Structure[], Map<string, number>>()
+function fonctionsAvant(structures: readonly Structure[]): Map<string, number> {
+  let avant = AVANT_PAR_TABLEAU.get(structures)
+  if (avant === undefined) {
+    avant = new Map(recognizeFunctions(structures).map((f) => [cleFonction(f), f.tier]))
+    AVANT_PAR_TABLEAU.set(structures, avant)
+  }
+  return avant
+}
+
 function predictFunction(
   structures: readonly Structure[],
   comp: Placeable,
   tx: number,
   ty: number,
 ): RecognizedFunction | null {
-  const key = (f: RecognizedFunction): string => `${f.functionId}@${f.tx},${f.ty}`
-  const before = new Map(recognizeFunctions(structures).map((f) => [key(f), f.tier]))
+  const key = cleFonction
+  const before = fonctionsAvant(structures)
   const hypo = [...structures, { id: -1, type: comp, tx, ty, villageId: 0 } as Structure]
   const after = recognizeFunctions(hypo)
   // La fonction NOUVELLE ou montée d'un palier grâce à la pose.

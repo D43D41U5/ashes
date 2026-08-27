@@ -22,13 +22,13 @@ import { MARCHABLE, terrainAt } from './map'
 import { modificateurDuJour } from './modificateur'
 import { createSim, type SimState } from './sim'
 import { TICKS_PER_CYCLE, TICKS_PER_SEASON_DAY } from './time'
-import { generateZonedTerrain } from './zonegen'
+import { carteDeTest } from '../../../tools/carte-cache'
 
 /** La vallée de production, bâtie UNE fois (≈ 7 s) — celle que `worker/veillee.ts` joue. */
 let cache: SimState | null = null
 function vallee(): SimState {
   if (cache) return cache
-  const carte = generateZonedTerrain(2026)
+  const carte = carteDeTest(2026)
   cache = createSim(2026, {
     map: carte.map,
     calendarScale: TICKS_PER_SEASON_DAY / TICKS_PER_CYCLE,

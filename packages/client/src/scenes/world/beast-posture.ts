@@ -10,7 +10,8 @@
  *
  * Zéro import Phaser : c'est la condition pour que l'instrument existe.
  */
-import { activityAt, FAUNA, HUNT, type Monster, type MonsterType } from '@ashes/sim'
+import { activityAt, enVol, FAUNA, HUNT, MONSTER_DEFS, type Monster, type MonsterType } from '@ashes/sim'
+import { cleCouchee } from '../../render/corps-couche'
 
 /** Chaque type de monstre a sa texture — exhaustif, donc un nouveau type ne
  * peut pas se glisser dans le monde déguisé en sanglier. */
@@ -20,6 +21,22 @@ export const MONSTER_TEXTURES: Record<MonsterType, string> = {
   deer: 'spr-deer',
   rabbit: 'spr-rabbit',
   wolf: 'spr-wolf',
+  tetras: 'spr-tetras',
+}
+
+/**
+ * LES BÊTES QUI ONT DES POSTURES DE GIBIER — et le préfixe de leurs sprites.
+ *
+ * C'est une TABLE et non un `type === 'deer' || type === 'rabbit'`, et la
+ * différence n'est pas cosmétique : la paire en dur était une garde qui ne peut
+ * pas échouer. Une sixième espèce de gibier y tombait à travers et retombait sur
+ * sa texture de base — jamais de broutage, jamais de fuite, et AUCUN test rouge
+ * pour le dire. Ici, l'oubli se voit : l'espèce n'est pas dans la table.
+ */
+export const POSTURES_GIBIER: Partial<Record<MonsterType, string>> = {
+  deer: 'spr-deer',
+  rabbit: 'spr-rabbit',
+  tetras: 'spr-tetras',
 }
 
 /**
@@ -197,6 +214,40 @@ export function majMiroir(latch: MiroirLatch, gauche: boolean, now: number): boo
 }
 
 /**
+ * LE CAP D'UN CORPS COUCHÉ NE CLAQUE PAS NON PLUS — le même verrou que le miroir, sur un CRAN
+ * au lieu d'un booléen. Huit caps veulent dire huit frontières de secteur, et un corps qui
+ * longe l'une d'elles pivoterait de 45° à chaque image sans ce délai. (Le miroir avait payé
+ * exactement ça en 2026-08-01 ; on ne le rachète pas.)
+ */
+export interface CranLatch {
+  cran: number
+  candidat: number
+  depuis: number
+  neuf: boolean
+}
+
+export function nouveauCran(cran: number, now: number): CranLatch {
+  return { cran, candidat: cran, depuis: now, neuf: true }
+}
+
+/** Rend le cran à DESSINER. `MIROIR_DELAI_MS` : un vrai virage le tient, un frisson jamais. */
+export function majCran(latch: CranLatch, cran: number, now: number): number {
+  if (latch.neuf) {
+    latch.neuf = false
+    latch.cran = cran
+    latch.candidat = cran
+    latch.depuis = now
+    return latch.cran
+  }
+  if (cran !== latch.candidat) {
+    latch.candidat = cran
+    latch.depuis = now
+  }
+  if (cran !== latch.cran && now - latch.depuis >= MIROIR_DELAI_MS) latch.cran = cran
+  return latch.cran
+}
+
+/**
  * LA POSTURE DIT L'ÉTAT (spec faune R9bis / chasse C19). Avant la teinte, avant
  * tout : la SILHOUETTE. Tête au sol = elle broute (approchez) ; tête dressée =
  * elle a vu quelque chose (figez-vous) — c'est aussi la posture de la
@@ -219,6 +270,14 @@ export function beastTexture(
   hour: number,
   /** Immobile depuis assez longtemps pour se poser (voir `majRepos`). */
   posee: boolean,
+  /** LE CAP du RAMPANT — l'index de sa variante couchée (`corps-couche.ts`), verrouillé par
+   *  l'appelant : un corps couché ne doit pas pivoter sur un frisson de cap. */
+  orientCouche = 0,
+  /** LE TICK DU SNAPSHOT — l'envol (R21) est un état BORNÉ DANS LE TEMPS, il ne se lit pas
+   *  sans horloge. `-1` = « je n'en ai pas » : aucune bête n'est alors en vol, ce qui est le
+   *  repli sûr (une silhouette d'oiseau posé est fausse une seconde ; une silhouette d'oiseau
+   *  en vol qui ne se pose jamais est un bug qu'on regarde longtemps). */
+  tick = -1,
 ): string {
   if (monster.type === 'boar') {
     if (monster.chargeUntil !== undefined) return 'spr-boar-charge'
@@ -231,8 +290,13 @@ export function beastTexture(
     if (monster.stalking) return 'spr-wolf-stalk'
     return 'spr-wolf'
   }
-  if (monster.type === 'deer' || monster.type === 'rabbit') {
-    const base = monster.type === 'deer' ? 'spr-deer' : 'spr-rabbit'
+  const base = POSTURES_GIBIER[monster.type]
+  if (base !== undefined) {
+    // L'ENVOL (spec faune R21) — TESTÉ EN PREMIER, avant la fuite et le broutage :
+    // en l'air, la bête n'est plus rien d'autre. C'est la même priorité que dans
+    // la sim (`volStep` est la garde de tête de `faunaStep`) et ce n'est pas une
+    // coïncidence : deux ordres différents auraient fait clignoter l'oiseau.
+    if (tick >= 0 && MONSTER_DEFS[monster.type].vol === true && enVol(monster, tick)) return `${base}-vol`
     if (monster.fleeSince >= 0) return `${base}-flee`
     // LA BÊTE TAPIE (spec chasse C11) : à bout de sang, couchée dans un fourré.
     // Même posture que le sommeil — mais la teinte, elle, dira le sang. (Elle ne
@@ -253,6 +317,10 @@ export function beastTexture(
   }
   // LE RAMPANT (spec `cendreux.md` R26ter) : sorti du sol sans ses jambes, il se dessine
   // COUCHÉ — le drapeau voyage dans le snapshot, la posture dit la vitesse.
-  if (monster.type === 'cendreux' && monster.rampant === true) return 'spr-cendreux-rampant'
+  // Sa LONGUEUR suit sa marche, en HUIT CAPS (Alexis, 2026-08-25). Le miroir ne sait que
+  // retourner — il ne sait pas coucher ; et deux axes ne savent pas dire une diagonale.
+  if (monster.type === 'cendreux' && monster.rampant === true) {
+    return cleCouchee('spr-cendreux-rampant', orientCouche)
+  }
   return MONSTER_TEXTURES[monster.type]
 }

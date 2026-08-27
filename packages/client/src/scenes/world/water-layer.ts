@@ -22,7 +22,8 @@ import Phaser from 'phaser'
 import { TERRAIN_DEEP_WATER, TERRAIN_SHALLOW_WATER, zoneSlugAt, type WorldMap } from '@ashes/sim'
 import { buildFlowField, COURANT_VITESSE, TAPER_RIVE_MAX, TAPER_RIVE_MIN, type FlowField } from '../../render/flow-field'
 import { GROUND_MAP_DEPTH, TILE_PX } from '../../render/framing'
-import { sunDirection } from '../../render/lighting'
+import { sunDirection, moonDirection, clarteDeLune, LUNE_PLEINE_JOUR } from '../../render/lighting'
+import type { HeureSolaire } from '../../render/lighting'
 import { buildFondField, buildRiveField, buildWaterField, MILIEU_VASE, REGIME_LAC_MORT, type RiveField } from '../../render/water-field'
 
 /** Période du cycle d'advection dual-phase (s). Courte À DESSEIN : sur la rampe du taper
@@ -709,7 +710,7 @@ void main() {
  * L'azimut du couloir vient de `sunDirection` (source unique) ; la lune, que la sim ne
  * connaît pas, prend un couchant figé — une direction inventée mais CONSTANTE.
  */
-export function cheminDeLAstre(hour: number, day: number): { force: number; col: [number, number, number]; dirX: number } {
+export function cheminDeLAstre(hour: HeureSolaire, day: number, jourLune = LUNE_PLEINE_JOUR): { force: number; col: [number, number, number]; dirX: number } {
   const rampe = (h: number, a: number, b: number, c: number, d: number): number =>
     h <= a || h >= d ? 0 : h < b ? (h - a) / (b - a) : h <= c ? 1 : 1 - (h - c) / (d - c)
   const aube = rampe(hour, 5.6, 6.3, 7.2, 8.3)
@@ -718,12 +719,16 @@ export function cheminDeLAstre(hour: number, day: number): { force: number; col:
   if (soleil > 0) {
     return { force: soleil, col: [1.0, 0.62, 0.3], dirX: sunDirection(hour).x || (aube > 0 ? 1 : -1) }
   }
-  // La lune : la nuit franche seulement (le jour l'éteint), toujours au sud-ouest.
-  const lune = Math.max(0, 1 - day / 0.06) * 0.5
-  return { force: lune, col: [0.75, 0.8, 0.88], dirX: -0.4 }
+  // La lune : la nuit franche seulement (le jour l'éteint). Son couloir suivait un couchant
+  // FIGÉ (`dirX: -0.4`, « une direction inventée mais CONSTANTE ») faute que la sim connaisse
+  // la lune. Elle la connaît depuis le 2026-08-25 : le couloir vient de `moonDirection`, comme
+  // celui du soleil vient de `sunDirection`, et sa force suit la PHASE — une nouvelle lune ne
+  // pose aucun couloir sur l'eau, ce qui est exactement ce qu'on voit dehors.
+  const lune = Math.max(0, 1 - day / 0.06) * 0.5 * clarteDeLune(jourLune)
+  return { force: lune, col: [0.75, 0.8, 0.88], dirX: moonDirection(hour, jourLune).x || -0.4 }
 }
 
-function sunVector(hour: number): { x: number; y: number; z: number } {
+function sunVector(hour: HeureSolaire): { x: number; y: number; z: number } {
   const gx = sunDirection(hour).x // la source UNIQUE : est(+) → ouest(−), |gx| = force au ras
   const alt = Math.sqrt(Math.max(0, 1 - gx * gx)) // sin(azimut) : 0 à l'horizon, 1 au zénith
   const grazing = 1 - 0.7 * alt
@@ -921,11 +926,13 @@ export class WaterLayer {
    */
   update(
     nowMs: number,
-    hour: number,
+    hour: HeureSolaire,
     daylight: number,
     fires: WaterFire[] = [],
     waders: WaterWader[] = [],
     camTile?: { x: number; y: number },
+    /** Le jour de saison AVEC ses décimales — la phase de la lune, pour le couloir lunaire. */
+    jourLune = LUNE_PLEINE_JOUR,
   ): void {
     if (!this.shader) return
     this.timeS = nowMs / 1000
@@ -934,7 +941,7 @@ export class WaterLayer {
     this.adv1 = (((this.ph0 + 0.5) % 1) - 0.5) * DUAL_T * COURANT_VITESSE
     this.sun = sunVector(hour)
     this.day = daylight
-    this.astre = cheminDeLAstre(hour, daylight)
+    this.astre = cheminDeLAstre(hour, daylight, jourLune)
     if (camTile) this.cam = camTile
     const n = Math.min(MAX_FIRES, fires.length)
     this.fireCount = n

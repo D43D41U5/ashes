@@ -7,10 +7,12 @@
  */
 import { describe, expect, it } from 'vitest'
 import { PAVE, PAVE_COTE_BAVE, PAVE_PX, prioriteDe } from './paves'
+import { hash2 } from '@ashes/sim'
+import { GRAIN_CELLS } from './grain-sol'
 import {
   EAU_PAVE, NEIGE_PAVE, TUILE_ASSEC, TUILE_CRUE, TUILE_EAU_LIBRE, TUILE_GLACE_GUE, TUILE_GLACE_LAC,
   TUILE_GUE_FERME, TUILE_NEIGE, TUILE_NEIGE_PROFONDE, TUILE_NUE, TUILE_STRUCTURELLE,
-  couleurDuManteau, cuireManteau, terrainDuManteau,
+  couleurDuManteau, couleurVase, cuireManteau, terrainDuManteau,
   trameDeCrue, trameDeGlace, trameDeVase, tuileDeNiveau, type EtatTuile,
 } from './manteau'
 import { ASSEC, CRUE, DESSOUS, DESSOUS_EAU, GLACE_GUE, GLACE_LAC, GUE_FERME, MANTEAU, MANTEAU_PROFOND } from './paves'
@@ -34,6 +36,44 @@ const px = (img: Uint8ClampedArray | null, x: number, y: number): [number, numbe
   return [img[o]!, img[o + 1]!, img[o + 2]!, img[o + 3]!]
 }
 const R = (c: number) => (c >> 16) & 0xff
+
+/** Combien de cellules de la trame vérifient `marque`. */
+function compter(marque: (i: number) => boolean): number {
+  let n = 0
+  for (let i = 0; i < GRAIN_CELLS * GRAIN_CELLS; i++) if (marque(i)) n++
+  return n
+}
+
+/**
+ * LES COMPOSANTES CONNEXES (4-voisins) d'un ensemble de cellules de la trame, SUR LE TORE —
+ * la trame se pave, donc le bord droit touche le bord gauche. Rend le total, le nombre d'îlots
+ * et la taille du plus grand : c'est la différence entre un réseau et un tramage.
+ */
+function composantes(marque: (i: number) => boolean): { total: number; nb: number; max: number } {
+  const G = GRAIN_CELLS
+  const vu = new Uint8Array(G * G)
+  let total = 0
+  let nb = 0
+  let max = 0
+  for (let i = 0; i < G * G; i++) if (marque(i)) total++
+  for (let i = 0; i < G * G; i++) {
+    if (vu[i] || !marque(i)) continue
+    nb++
+    let taille = 0
+    const pile = [i]
+    vu[i] = 1
+    while (pile.length) {
+      const k = pile.pop()!
+      taille++
+      const x = k % G
+      const y = (k - x) / G
+      const voisins = [((x + 1) % G) + y * G, ((x + G - 1) % G) + y * G, x + ((y + 1) % G) * G, x + ((y + G - 1) % G) * G]
+      for (const j of voisins) if (!vu[j] && marque(j)) { vu[j] = 1; pile.push(j) }
+    }
+    if (taille > max) max = taille
+  }
+  return { total, nb, max }
+}
 
 /**
  * BALAYER TOUT L'ESPACE, N'AFFIRMER QU'UNE FOIS.
@@ -248,14 +288,112 @@ describe('le manteau cuit', () => {
       'la vase est opaque sur son corps, le sol nu est transparent').toBeNull()
     // ET RIEN DANS LE SURPLOMB : pas un pixel de boue sur la rive.
     if (surplomb) expect(premierDefaut(S, S, (x, y) => px(surplomb, x, y)[3] === 0), 'aucun débord sur la rive').toBeNull()
-    // LA CRAQUELURE : des cellules plus SOMBRES (l'inverse du givre), et la vase reste chaude.
-    let sombres = 0
+    // LA CRAQUELURE assombrit (l'inverse du givre), et la vase reste chaude sur tout son corps.
     expect(premierDefaut(8 * P, 8 * P, (x, y) => px(sol, x, y)[0] > px(sol, x, y)[2]), 'la vase reste chaude').toBeNull()
+    let sombres = 0
     for (let y = 0; y < 8 * P; y++) for (let x = 0; x < 8 * P; x++) {
       if (px(sol, x, y)[0] < R(EAU_PAVE.ASSEC) - 4) sombres++
     }
     expect(sombres / (64 * P * P)).toBeGreaterThan(0.2)
-    expect(sombres / (64 * P * P)).toBeLessThan(0.5)
+    expect(sombres / (64 * P * P)).toBeLessThan(0.7)
+  })
+
+  /**
+   * ═══ LA CRAQUELURE EST UN RÉSEAU, PAS UN MOUCHETÉ (Alexis, 2026-08-25) ═══
+   *
+   * C'est LA propriété qui distingue une fente d'un tramage, et c'est celle qui manquait : la
+   * vase portait le remède du givre — une part de cellules tirées INDÉPENDAMMENT les unes des
+   * autres. Aucune part ne fait un réseau avec ça : sous le seuil de percolation, des cellules
+   * tirées à 27 % se cassent en centaines d'îlots.
+   *
+   * On mesure donc la CONNEXITÉ sur le tore (la trame se pave), et on la compare au témoin
+   * exact — un moucheté de MÊME part. MESURÉ le 2026-08-25 : le réseau cellulaire rend 89
+   * composantes dont la plus grande porte 37,6 % des cellules fendues ; le moucheté de même
+   * part en rend 525 dont la plus grande porte 1,7 %. Vingt-deux fois moins. Les seuils sont
+   * posés entre les deux, avec de la marge des deux côtés — et le témoin est CALCULÉ ici, pas
+   * recopié : c'est lui qui dit ce qui ferait rougir.
+   */
+  it('la craquelure de la vase est un RÉSEAU connexe — un moucheté de même part ne peut pas l’être', () => {
+    const trame = trameDeVase()
+    const fendue = (i: number): boolean => trame[i]! < EAU_PAVE.PLAQUE_MIN
+    const part = compter(fendue) / (GRAIN_CELLS * GRAIN_CELLS)
+    // La part elle-même : assez pour se voir, pas au point de manger la plaque.
+    expect(part, 'la part fendue').toBeGreaterThan(0.15)
+    expect(part, 'la part fendue').toBeLessThan(0.4)
+
+    const reseau = composantes(fendue)
+    // LE TÉMOIN : le moucheté d'avant, à la même part — c'est lui, l'étalon.
+    const moucheteAMemePart = (i: number): boolean =>
+      hash2((i % GRAIN_CELLS) + 7919, Math.floor(i / GRAIN_CELLS) + 104_729, 0xea0) < part
+    const temoin = composantes(moucheteAMemePart)
+
+    expect(reseau.max / reseau.total, `la plus grande fente porte ${(100 * reseau.max / reseau.total).toFixed(1)} % des cellules fendues`)
+      .toBeGreaterThan(5 * (temoin.max / temoin.total))
+    expect(reseau.max / reseau.total).toBeGreaterThan(0.15)
+    expect(reseau.nb, 'le réseau est en bien moins de morceaux que le moucheté').toBeLessThan(temoin.nb / 3)
+  })
+
+  /**
+   * LA TRAME SE PAVE SANS COUTURE — le treillis des germes BOUCLE sur les 64 cellules.
+   *
+   * `cuireChunk` indexe la trame en `& (GRAIN_CELLS − 1)` : elle se répète tous les 256 px de
+   * monde. Un Voronoï calculé sans refermer son treillis y poserait un TRAIT droit tous les 16
+   * tuiles — le défaut même qu'on vient de corriger, en pire (mémoire `bord-nu-est-une-couture`).
+   * On l'affirme par ce qu'une couture INTERDIT : qu'une fente traverse le raccord.
+   */
+  it('la craquelure se pave sans couture : une fente traverse le raccord', () => {
+    const trame = trameDeVase()
+    const fendue = (i: number): boolean => trame[i]! < EAU_PAVE.PLAQUE_MIN
+    const G = GRAIN_CELLS
+    // ① Une fente enjambe VRAIMENT le raccord (les deux cellules qui se toucheront au pavage).
+    let traversees = 0
+    for (let y = 0; y < G; y++) if (fendue(y * G + G - 1) && fendue(y * G)) traversees++
+    expect(traversees, 'des fentes passent d’un bord à l’autre').toBeGreaterThan(0)
+    // ② Et le raccord n'est pas un ARTEFACT : la colonne du bord n'est ni toute fendue (un
+    //    trait) ni toute lisse (un liseré) — elle a la densité du reste.
+    const part = compter(fendue) / (G * G)
+    let bord = 0
+    for (let y = 0; y < G; y++) if (fendue(y * G)) bord++
+    expect(bord / G, 'la colonne du raccord a la densité du reste').toBeGreaterThan(part / 3)
+    expect(bord / G, 'la colonne du raccord a la densité du reste').toBeLessThan(Math.min(1, part * 3))
+  })
+
+  /**
+   * LA VASE RESPIRE À LA TUILE — l'autre moitié de « ça n'a rien à voir avec le reste du sol ».
+   *
+   * Chaque tuile de terre porte un damier de famille et une seconde échelle de bruit (~10
+   * tuiles) : la vase, elle, était UN entier, le même d'un bout à l'autre de la carte. Un
+   * chenal de trois cents tuiles en une seule couleur, à côté d'un pré qui module.
+   */
+  it('la vase varie à la tuile et prend la teinte du PAYS, sans jamais devenir froide', () => {
+    const lum = (c: number) => 0.2126 * ((c >> 16) & 0xff) + 0.7152 * ((c >> 8) & 0xff) + 0.0722 * (c & 0xff)
+    const vues = new Set<number>()
+    let min = Infinity
+    let max = -Infinity
+    for (let ty = 0; ty < 64; ty++) {
+      for (let tx = 0; tx < 64; tx++) {
+        const c = couleurVase(tx, ty)
+        vues.add(c)
+        min = Math.min(min, lum(c))
+        max = Math.max(max, lum(c))
+        // ⚠ LE CONTRAT DE LECTURE, sur CHAQUE tuile : le sec est CHAUD (R > B), l'eau est
+        // froide. Deux verdicts du smoke en dépendent (`vase` cherche la frange sur R − B > 6,
+        // `crue` demande +8 de chaleur en s'asséchant) : une variation qui refroidirait une
+        // tuile les ferait accuser du code sain.
+        expect(((c >> 16) & 0xff) - (c & 0xff), `la vase en (${tx}, ${ty}) reste chaude`).toBeGreaterThan(20)
+      }
+    }
+    expect(vues.size, 'la vase ne peut plus être un aplat').toBeGreaterThan(20)
+    // Elle varie, mais elle reste calibrée : ±10 % autour de sa référence, pas un patchwork.
+    const ref = lum(EAU_PAVE.ASSEC)
+    expect(max - min, 'l’amplitude de la respiration').toBeGreaterThan(ref * 0.05)
+    expect(max - min, 'l’amplitude de la respiration').toBeLessThan(ref * 0.3)
+
+    // ET LA TEINTE DU PAYS la déplace : deux modulations différentes, deux vases différentes.
+    const froide = couleurVase(3, 3, [0.9, 0.95, 1.05])
+    const chaude = couleurVase(3, 3, [1.08, 1.0, 0.9])
+    expect(chaude, 'le pays module la vase').not.toBe(froide)
+    expect((chaude >> 16) & 0xff).toBeGreaterThan((froide >> 16) & 0xff)
   })
 
   it('la vase glisse dans l’EAU PROFONDE d’une frange SEULE — la même frontière que marais / haut-fond', () => {

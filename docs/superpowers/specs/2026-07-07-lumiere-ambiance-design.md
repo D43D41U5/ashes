@@ -173,10 +173,15 @@ Testables en unitaire (`lighting.test.ts`) sauf mention visuelle :
 
 ## Hors scope (YAGNI)
 
-- Pas de torche / objet de lumière portable (absent du GDD ; le froid se répond
-  par feux/vêtements/abris, §7).
+- ~~Pas de torche / objet de lumière portable~~ — **LEVÉ le 2026-08-26** (spec `docs/specs/torche.md`).
+  Le motif tenait tant que la lumière n'existait pas côté client ; il ne tient plus. Ce qui
+  RESTE vrai, et que la torche respecte à la lettre : *le froid se répond par
+  feux/vêtements/abris (§7)* — elle éclaire, elle ne chauffe pas.
 - Pas de fog-of-war ni de visibilité autoritative (resterait pur client).
 - Pas de pipeline Phaser Light2D ni de normal maps (invasif, art placeholder).
 - Pas de lune/étoiles dynamiques, pas de météo.
-- Pas de halo personnel autour du joueur (choix acté « lisible partout » : les
-  Feux sont les seules sources chaudes).
+- ~~Pas de halo personnel autour du joueur (choix acté « lisible partout » : les
+  Feux sont les seules sources chaudes).~~ **LEVÉ le 2026-08-26** — mais à une condition qui
+  garde l'esprit du choix : le halo n'est pas donné, il se PORTE et se paie (une case de
+  ceinture, en main), il ne dure qu'un tiers de nuit, et **il se prend au Feu**. Les Feux
+  restent donc l'unique ORIGINE de la lumière ; la torche n'en est qu'un emprunt qui s'éteint.

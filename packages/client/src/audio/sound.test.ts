@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import type { SimEvent } from '@ashes/sim'
-import { soundForEvent, type SoundSpec } from './sound'
-import { SONORES, VOIX } from './inventaire'
+import { filtreDeDoublons, soundForEvent, VOIX_UNIQUE_PAR_TICK, type SoundSpec } from './sound'
+import { MATIERES, SONORES, VOIX, variantesDe } from './inventaire'
 
 /** Fabrique un événement synthétique (les champs superflus sont ignorés par le routage). */
 const ev = (type: string, extra: Record<string, unknown> = {}): SimEvent =>
@@ -66,7 +66,7 @@ describe('la table de routage audio (soundForEvent)', () => {
     expect(desaccords).toEqual([])
   })
 
-  it("l'inventaire tranché de GATE 1 : 90 faits, 53 voix", () => {
+  it("l'inventaire tranché de GATE 1 : 92 faits, 54 voix", () => {
     // Un compte, pas un jugement. S'il bouge, c'est qu'un fait de domaine est né ou qu'une
     // voix a changé — dans les deux cas, quelqu'un doit le savoir.
     const total = Object.keys(VOIX).length
@@ -108,7 +108,10 @@ describe('la table de routage audio (soundForEvent)', () => {
     // faute d'eau, et une ligne qui disparaît sans un mot est un bug aux yeux du joueur),
     // `fish_record` SONNE et s'entend de LOIN (la plus grosse prise d'une vie est un fait de
     // village), `fishing_junk` MUET (il tombe sur `resource_harvested`, comme `fish_caught`).
-    expect(total).toBe(90)
+    // 90 → 92 le 2026-08-26 : la TORCHE (spec `torche.md`) — `torche_allumee` naît MUETTE (geste
+    // répété, et la lumière qui naît le dit déjà), `torche_eteinte` PARLE : c'est l'instant où la
+    // nuit se referme, et le joueur ne regarde pas sa ceinture à ce moment-là. Donc +2 faits, +1 voix.
+    expect(total).toBe(92)
     // 34 → 35 le 2026-07-29 : `node_depleted` a gagné sa voix (trois, selon la matière).
     // 61 → 62 faits et 35 → 36 voix le 2026-07-30 : `door_toggled` naît (spec construction R26).
     // 62 → 63 faits et 36 → 37 voix le 2026-07-31 : `cendreux_prowl` naît (spec cendreux R11bis) —
@@ -117,7 +120,10 @@ describe('la table de routage audio (soundForEvent)', () => {
     // 47 → 49 le 2026-08-22 : `fish_bite`, `fish_escaped` — deux voix (voir ci-dessus).
     // 49 → 50 le 2026-08-22 : `carcass_cut` — une voix (voir ci-dessus).
     // 50 → 53 le 2026-08-24 : `fish_nibble`, `fishing_cancelled`, `fish_record` (voir ci-dessus).
-    expect(voix).toBe(53)
+    // 90 → 92 le 2026-08-26 : la TORCHE (spec `torche.md`) — `torche_allumee` naît MUETTE (geste
+    // répété, et la lumière qui naît le dit déjà), `torche_eteinte` PARLE : c'est l'instant où la
+    // nuit se referme, et le joueur ne regarde pas sa ceinture à ce moment-là. Donc +2 faits, +1 voix.
+    expect(voix).toBe(54)
   })
 
   it('L’AXE D’ALIGNEMENT S’ENTEND : les verbes chauds montent, les froids tombent', () => {
@@ -147,12 +153,142 @@ describe('la table de routage audio (soundForEvent)', () => {
   })
 
   it('tous les gains restent BAS et les durées positives (décor sonore, pas arcade)', () => {
+    // ⚠ TOUTES LES VARIANTES, pas seulement la branche par défaut. Trois faits se dédoublent
+    // sur un champ de leur charge utile (`variantesDe`) : sans les poser, `ev()` ne joue que
+    // le `default` — les treize voix de matière du coup de récolte et les trois du nœud qui meurt
+    // passaient le plafond sur le dos d'UNE voix que le jeu n'emprunte presque jamais. Une
+    // garde qui n'atteint pas tout son domaine donne le bon verdict par accident.
     for (const type of SONORES) {
-      const s = soundForEvent(ev(type, { entityId: 1 }), true)
-      expect(s).not.toBeNull()
-      expect(s!.gain).toBeGreaterThan(0)
-      expect(s!.gain).toBeLessThanOrEqual(0.15)
-      expect(s!.dur).toBeGreaterThan(0)
+      for (const champs of [{}, ...variantesDe(type).map((v) => v.champs)]) {
+        const s = soundForEvent(ev(type, { entityId: 1, ...champs }), true)
+        expect(s, type).not.toBeNull()
+        expect(s!.gain, type).toBeGreaterThan(0)
+        expect(s!.gain, type).toBeLessThanOrEqual(0.15)
+        expect(s!.dur, type).toBeGreaterThan(0)
+      }
     }
+  })
+
+  /**
+   * ═══ LE COUP DE RÉCOLTE — TREIZE VOIX, ET UNE ENVELOPPE QUI LES BORNE ═══
+   * (demande d'Alexis, 2026-08-27 : « bruit de pioche pour la pierre, hache pour le bois ».)
+   *
+   * Ce que ces tests gardent n'est PAS le timbre — il est posé sans l'entendre et se rejuge au
+   * banc. C'est ce qui rend le timbre libre : la CADENCE (un coup par seconde) et le
+   * CONTRASTE qui rend les deux gestes reconnaissables sans qu'on les explique.
+   */
+  describe('la récolte parle la matière', () => {
+    const coup = (nodeType?: string): SoundSpec =>
+      soundForEvent(ev('resource_harvested', { entityId: 1, ...(nodeType ? { nodeType } : {}) }), true)!
+
+    it('CHAQUE matière du monde a une voix — aucune ne tombe dans le trou du défaut', () => {
+      // La vraie garde du chantier : `MATIERES` est exhaustif sur `NodeType` par le compilateur,
+      // donc une matière neuve arrive ICI. Si personne ne lui a écrit de `case`, elle rend le
+      // `square` d'interface — le bip d'avant, exactement ce qu'on est en train de retirer — et
+      // la panne serait MUETTE : un son sort, il est juste faux.
+      const sansMatiere = JSON.stringify(coup())
+      const orphelines = Object.keys(MATIERES).filter((m) => JSON.stringify(coup(m)) === sansMatiere)
+      expect(orphelines).toEqual([])
+    })
+
+    it('un geste qu’on répète à la seconde reste COURT — sauf ce qui n’arrive jamais en rafale', () => {
+      // `GATHER_COOLDOWN_TICKS` = une seconde. Une hache « épaisse » de 200 ms est
+      // insupportable au troisième coup, et rien d'autre ne l'attraperait. Les deux
+      // dérogations se justifient par la cadence : une prise par cycle de touche, un
+      // glanage par nœud (`stock: 1`) — jamais dix d'affilée.
+      const CADENCE_LIBRE = new Set(['fishing_spot_river', 'fishing_spot_lake', 'branche_au_sol', 'pierre_au_sol'])
+      for (const m of Object.keys(MATIERES)) {
+        if (CADENCE_LIBRE.has(m)) continue
+        expect(coup(m).dur, m).toBeLessThanOrEqual(0.08)
+        expect(coup(m).gain, m).toBeLessThanOrEqual(0.06)
+      }
+    })
+
+    it('LA HACHE est basse et pleine, LA PIOCHE haute et sèche — le contraste est le message', () => {
+      // Le seul axe que le bruit offre (`buildSound` ignore la hauteur du `noise`), donc le
+      // seul par lequel un joueur peut apprendre les deux gestes les yeux fermés. Une retouche
+      // au banc qui les rapprocherait casserait la lisibilité sans casser rien d'autre.
+      for (const bois of ['tree', 'old_tree']) {
+        for (const pierre of ['rock', 'quarry']) {
+          expect(coup(bois).lowpass!, `${bois} < ${pierre}`).toBeLessThan(coup(pierre).lowpass!)
+          expect(coup(bois).dur, `${bois} > ${pierre}`).toBeGreaterThan(coup(pierre).dur)
+        }
+      }
+    })
+
+    it('LA MAIN ne se fait pas remarquer : plus discrète que tout ce qui se frappe', () => {
+      // On cueille des dizaines de fois par jour. Le jour où le froissement du buisson pèse
+      // autant qu'un coup de hache, la cueillette devient fatigante — et personne ne saura dire
+      // pourquoi. `ash_heap` compris : la matière qui n'oppose rien.
+      const MAIN = ['fiber_plant', 'berry_bush', 'champignon', 'leaf_pile', 'fumerolle', 'ash_heap']
+      const OUTIL = ['tree', 'old_tree', 'rock', 'quarry', 'iron_vein', 'coal_seam']
+      const plusFort = Math.max(...MAIN.map((m) => coup(m).gain))
+      const plusFaible = Math.min(...OUTIL.map((m) => coup(m).gain))
+      expect(plusFort).toBeLessThan(plusFaible)
+    })
+
+    it('LE GLANAGE ne sonne pas comme l’outil — c’est toute la raison de `nodeType`', () => {
+      // `branche_au_sol` rend `wood` comme le tronc et `pierre_au_sol` rend `stone` comme le
+      // rocher : un routage sur l'OBJET ferait sonner la hache et la pioche quand on se baisse,
+      // pendant les dix minutes de glanage qui amorcent la rampe d'outils. Ce test est la
+      // preuve que le champ ajouté au fait de domaine sert bien à ça.
+      expect(coup('branche_au_sol')).not.toEqual(coup('tree'))
+      expect(coup('branche_au_sol').gain).toBeLessThan(coup('tree').gain)
+      expect(coup('pierre_au_sol').gain).toBeLessThan(coup('rock').gain + 0.0001)
+    })
+
+    it('sans matière, on ne fait pas semblant d’en avoir une', () => {
+      // La trouvaille ferrée (`nodeId: -1`) : la confirmation d'interface garde ici sa place,
+      // et seulement ici. `square` est, dans la grammaire de la maison, « un signal » — pas
+      // de la matière. Lui donner un timbre de matière serait mentir sur ce qu'on sait.
+      expect(coup().wave).toBe('square')
+      // …et la récolte reste MUETTE pour les autres, matière ou pas : sinon un village qui
+      // bûcheronne ferait un vacarme de fond. La garde vaut pour toutes les branches neuves.
+      for (const m of [undefined, ...Object.keys(MATIERES)]) {
+        expect(soundForEvent(ev('resource_harvested', { entityId: 2, ...(m ? { nodeType: m } : {}) }), false), m).toBeNull()
+      }
+    })
+  })
+
+  /**
+   * ═══ UNE SEULE VOIX PAR TICK — ET LE MUET NE PREND PAS LE TOUR DU SONORE ═══
+   *
+   * La règle existait déjà pour les deux battants d'une porte double, en dur au milieu de la
+   * boucle d'événements de `WorldScene`. Elle en SORT le jour où la récolte en a besoin (le
+   * butin de maîtrise émet DEUX `resource_harvested` au même tick) — parce qu'elle est devenue
+   * piégeuse, et qu'une règle piégeuse écrite dans une boucle de rendu n'a aucun test possible.
+   */
+  describe('une seule voix par tick', () => {
+    it('le second fait du MÊME type au MÊME tick se tait ; le tick suivant reparle', () => {
+      const garder = filtreDeDoublons()
+      expect(garder('resource_harvested', 40, true)).toBe(true) // la poignée
+      expect(garder('resource_harvested', 40, true)).toBe(false) // la graine, au même tick
+      expect(garder('resource_harvested', 41, true)).toBe(true) // le coup suivant
+    })
+
+    it('LA RÉCOLTE MUETTE D’UN PNJ N’AVALE PAS MON COUP DE HACHE', () => {
+      // LE défaut pour lequel cette règle est sortie de `WorldScene`. Les PNJ émettent
+      // `resource_harvested` sans arrêt, le snapshot verse TOUS les faits sans les filtrer, et
+      // leur récolte est muette (`onMe`). Une écriture qui réserve le tick AVANT de savoir s'il
+      // y a un son laisse le bûcheron du village manger mon coup — par intermittence, et sous
+      // forme de SILENCE, c'est-à-dire la panne qu'on ne peut pas repérer en jouant.
+      const garder = filtreDeDoublons()
+      expect(garder('resource_harvested', 40, false)).toBe(false) // un PNJ : rien à jouer…
+      expect(garder('resource_harvested', 40, false)).toBe(false) // …et ils sont plusieurs…
+      expect(garder('resource_harvested', 40, true)).toBe(true) // …MON coup passe quand même
+    })
+
+    it('les faits ordinaires ne sont JAMAIS dédoublonnés — deux loups hurlent deux fois', () => {
+      // La règle ne vaut que pour les deux faits que la sim dédouble VRAIMENT. L'étendre à tout
+      // ferait taire deux morts au même tick, ce qui est un fait de jeu et pas un doublon.
+      const garder = filtreDeDoublons()
+      expect(garder('wolf_howl', 40, true)).toBe(true)
+      expect(garder('wolf_howl', 40, true)).toBe(true)
+      expect(VOIX_UNIQUE_PAR_TICK.has('entity_died')).toBe(false)
+    })
+
+    it('et ce sont bien CES deux faits-là, pas d’autres', () => {
+      expect([...VOIX_UNIQUE_PAR_TICK].sort()).toEqual(['door_toggled', 'resource_harvested'])
+    })
   })
 })

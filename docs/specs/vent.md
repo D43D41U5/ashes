@@ -291,6 +291,56 @@ pansement.
     seconde (le FX dépendait du framerate — le headless plafonnait à 5 rubans là où le jeu en
     montre 14) ; et peints à opacité constante, les rubans lisaient comme des **barres** de
     compression — la queue s'effile désormais par crans.
+  - **V9b — LE TRACÉ, CHOISI SUR PLANCHE LE 2026-08-25.** Le premier tracé était une traînée
+    DROITE, et sous un front le cap est cardinal (V1) : neuf traînées droites sont neuf parallèles
+    de même épaisseur, que l'œil lit comme un artefact de compression. Une planche de six tracés
+    animés **à l'échelle du jeu** (artefact) a servi à trancher ; Alexis a retenu **le tourbillon**
+    et ses réglages : *longueur 1,6 tuile · rayon 0,5 · 1,1 tour · grain 2 px*. Le ruban file
+    droit, sa tête tourne sur un petit cercle dont le rayon s'ouvre et se referme **une fois**, au
+    milieu de sa vie — droit, puis il vrille, puis droit.
+    - **La position est DÉRIVÉE, pas intégrée** (`positionSerpentin(s, τ)`, forme close) : la
+      traînée EST la position de la tête aux instants passés, et `x += vx·dt` ne se remonte pas.
+      Aucun historique, aucune allocation. C'est la contrainte qui rend le tracé possible.
+    - **Trois défauts corrigés qui n'étaient PAS du tracé**, et qui valaient pour les six :
+      ① la **vitesse** (26 → 11 tuiles/s : à 26 le ruban traverse le cadre en 1,4 s et n'a pas le
+      temps d'être lu) ; ② la **naissance**, semée sur la demi-diagonale — par le travers, une
+      bonne moitié des rubans naissait hors marge et mourait à l'image suivante *sans s'être vue*,
+      troupeau plein et écran vide ; elle se fait désormais sur le **bord amont**, le travers
+      mesuré sur la coupe du cadre ; ③ l'**effilement**, 3 crans en `part²` — les deux tiers
+      arrière tombent sous 0,03 d'opacité, ce qui ne laissait voir qu'un segment et mangeait la
+      vrille ; 5 crans, pente linéaire.
+    - **La vie est taillée sur la TRAVERSÉE** (2,2 → 3–4,6 s) : un ruban qui meurt de vieillesse
+      avant d'avoir traversé laisse l'aval du cadre vide, et le vent ne souffle que d'un côté de
+      l'écran. Gardé par une garde de **couverture** (aucun sixième du cadre sous 5 % du relevé,
+      pesé par l'alpha — c'est ce qui SE VOIT, pas ce qui existe).
+    - **La cadence de la vrille est en SECONDES, pas en part de la vie** : sans ce découplage,
+      allonger la vie pour peupler l'aval ralentissait la vrille — deux réglages sans rapport se
+      tirant dessus, et « corriger l'écran vide » aurait défait le tracé validé à l'œil.
+    - ⚠ **À CES RÉGLAGES, LA VRILLE NE SE REFERME PAS EN BOUCLE.** Le rapport rayon×pulsation sur
+      vitesse vaut 0,22 à 0,33 selon la vitesse tirée : il faut passer 1 pour que le tracé revienne sur lui-même. C'est une
+      courbe franche (un demi-tuile d'écart au cap), pas un looping — dit à Alexis, qui garde ses
+      chiffres. Monter le rayon ou les tours suffirait ; c'est une ligne.
+    - **V9c — LE RUBAN DESCEND DANS LE MONDE, ET S'EFFACE (Alexis, 2026-08-25).** Deux demandes
+      du même jour, après l'avoir vu tourner : *« réduis l'opacité »*, puis *« réduis encore et
+      fais en sorte que sa couche soit entre le sol et le houppier d'un arbre en terme de
+      hauteur »*.
+      - **Profondeur** : `VENT_DEPTH = CROWN_BASE − 1000` (899 000). La bande de tri Y plafonne
+        vers 58 600 sur la vallée canonique et la canopée part de `CROWN_BASE` : le ruban passe
+        donc DEVANT le sol, les troncs et les acteurs, et DERRIÈRE les cimes. C'est de
+        l'arithmétique sur l'échelle de profondeur, pas une mesure — la liste d'affichage est
+        unique et l'ordre en découle. Il quitte au passage la strate de la météo
+        (`METEO_DEPTH − 100`), où il se lisait sur la vitre.
+      - **Opacité** : plafond `ALPHA_MAX` 0,34 → 0,22 → **0,14**. C'est un plafond, pas l'opacité
+        peinte : le palier le plus clair vaut `ALPHA_MAX × 0,875 × 0,9`, soit ~0,11.
+      - ⚠ **LE BAS DE LA TABLE PASSE SOUS LE PIXEL.** Le palier le plus faible vaut
+        `0,14 × 0,125 × 0,1` = 0,0018, sous 1/255 : la queue des rubans les plus jeunes ne
+        s'imprime plus. C'est exactement le coin que les 5 crans en pente linéaire protégeaient.
+        Si la vrille se remet à lire comme un arc, le levier est **moins de crans ou une pente
+        plus douce**, pas plus d'alpha.
+      - ⚠ **NON MESURÉ À L'ŒIL.** Sous un front de pluie, à 0,14, les rubans ne se distinguent
+        plus du rideau sur une capture (relevé le 2026-08-25 : sonde 9/9 rubans, 120 rectangles
+        peints, invisibles à la lecture). Le diff d'images ne tranche pas non plus — le rideau
+        dérive entre deux prises et son plancher de bruit vaut le signal cherché.
 - **V10 — LE CADRAN. ✅ LIVRÉ — et C19 EST OFFICIELLEMENT AMENDÉ.** `chasse.md` C19 interdisait
   *« une flèche d'UI »*. Alexis l'a levé le 2026-08-24 : sous l'unification le vent commande
   l'odorat et annonce le front, donc il doit se lire **sans interprétation**. Une aiguille dans la
@@ -302,6 +352,43 @@ pansement.
   - L'angle est **déroulé** : sans ça, franchir l'est faisait faire un tour complet à l'envers à
     la transition CSS. Le lissage est confié au DOM — jamais un timer client.
   - **Les herbes restent la lecture première.** Le cadran est le recours.
+
+- **V11 — LE VENT SE VOIT PARTOUT (demande d'Alexis, 2026-08-25).** Le vent était vrai dans la
+  sim et à peu près muet à l'écran : les brins penchaient dans son sens mais toujours d'autant,
+  le rideau de pluie penchait **vers l'est quel que soit le front**, et la fumée suivait le cap
+  sans connaître la force. Trois consommateurs, une seule source (`state.wind` + `state.windForce`).
+  - **LE RIDEAU SE PROJETTE SUR LE CAP** (`souffleDuCiel`, `meteo-particules.ts`). `Profil.vent`
+    n'est pas une direction : c'est la FORCE latérale d'un ciel (0,8 pour la pluie, 11 pour le
+    blizzard qui rase). Elle pointait l'est, toujours. Elle se projette désormais — et comme la
+    vue est de DESSUS, l'axe `y` porte à la fois le nord-sud du monde et la chute : **l'est-ouest
+    penche le rideau, le nord-sud change la vitesse de chute** (décision d'Alexis parmi trois
+    options : *plancher de râclage* et *projection sans plus* écartées). Le blizzard garde donc sa
+    violence sous tous les caps — il rase sous un vent d'ouest, il martèle sous un vent du nord —
+    sans qu'aucun pixel ne mente sur la direction. ⚠ Un **plancher de chute** (0,4 × `vLimite`)
+    empêche le seul cas qui casse : un blizzard plein sud (vent 11 contre chute 2,1) rendrait une
+    vitesse négative, c'est-à-dire de la neige qui remonte.
+  - **LA FORCE PLIE LE DÉCOR** (`render/wind.ts`). Inclinaison et oscillation sont multipliées par
+    `1 + 0,6 × part de souffle` : `1` à l'ambiance (le décor d'avant, au bit près), 1,6 au cœur
+    d'une bande. C'est ce qui fait qu'on voit le front arriver **sur les herbes**, avant la
+    première goutte. ⚠ **Limite assumée, et elle est géométrique** : une rotation de billboard ne
+    sait pencher qu'à gauche ou à droite, donc un cap **plein nord ou plein sud ne penche aucun
+    brin**. Ce que ces caps-là changent vit ailleurs (la chute du rideau, la dérive de la fumée).
+    **Depuis le même jour, un ESSAI le dit quand même** (`windStretch`) : la hauteur apparente.
+    La vue est de dessus, donc une tige couchée vers le BAS de l'écran part vers la caméra et se
+    tasse ; couchée vers le HAUT elle s'éloigne et s'étire. Ce n'est pas une projection exacte —
+    un vrai raccourci est PAIR, donc il ne distinguerait pas le nord du sud, donc il ne dirait
+    rien d'une direction : on lit l'écran comme une vue légèrement plongeante, et c'est assumé
+    comme convention. Le facteur est BORNÉ (0,7 à 1,3 : un brin deux fois plus haut n'est plus un
+    brin couché) et se MULTIPLIE aux échelles existantes (repousse, gel), sur les trois familles
+    qui prennent le vent — décor, nœuds-plantes, houppiers. **À l'essai le 2026-08-25.**
+  - **LA FUMÉE SE COUCHE** (`fire-fx.ts`). La dérive suivait le cap, pas la force ; elle prend
+    désormais `1 + 1,2 × part` — plus que les herbes, car une tige a une racine et une bouffée
+    n'a rien qui la retienne. Le rideau et la fumée lisent le **cap rallié** (`VentLisse`), jamais
+    le cap brut : le vent de la sim avance par crans de 45°, et une fumée qui pivote d'un bloc
+    trahit la grille.
+  - **CE QUI RESTE DEHORS, ET C'EST VOULU** : les **fumerolles** (`fumerolle-fx.ts`). Leur fumée
+    est *froide, plus lourde que l'air* — elle retombe et rampe, c'est toute son identité. La
+    pousser au vent en ferait une fumée ordinaire : c'est une décision de design, pas un oubli.
 
 ## Ce que le banc a appris (et que l'œil n'aurait pas vu)
 

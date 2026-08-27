@@ -15,7 +15,9 @@ import {
   creerRng,
   intensiteDansBande,
   melangeUniforme,
+  PLANCHER_CHUTE,
   rampeDe,
+  souffleDuCiel,
   traineeEnRuns,
   type Bande,
   type Melange,
@@ -50,10 +52,87 @@ const BANDE: Bande = { axis: 'x', lo: 100, hi: 160 }
 const VUE: Vue = { x0: 110, y0: 40, x1: 150, y1: 64 }
 
 /** Faire tourner le champ N images à 60 Hz, comme le fait la couche. */
-function avancer(c: ChampParticules, type: 'pluie' | 'neige' | 'orage' | 'blizzard', n: number, vue = VUE, bande = BANDE): void {
+function avancer(
+  c: ChampParticules, type: 'pluie' | 'neige' | 'orage' | 'blizzard', n: number,
+  vue = VUE, bande = BANDE, cap?: { x: number; y: number },
+): void {
   const profil = PROFILS[type]!
-  for (let i = 0; i < n; i++) c.update(1 / 60, melangeUniforme(profil), vue, bande, rampeDe(frontDe(type)))
+  for (let i = 0; i < n; i++) c.update(1 / 60, melangeUniforme(profil), vue, bande, rampeDe(frontDe(type)), 0, cap)
 }
+
+/** LES HUIT RELÈVEMENTS de la sim (`vent.ts` BEARINGS) — le domaine entier d'un cap. */
+const CAPS: readonly { x: number; y: number }[] = [
+  { x: 1, y: 0 }, { x: 0.7071, y: 0.7071 }, { x: 0, y: 1 }, { x: -0.7071, y: 0.7071 },
+  { x: -1, y: 0 }, { x: -0.7071, y: -0.7071 }, { x: 0, y: -1 }, { x: 0.7071, y: -0.7071 },
+]
+const CIELS = ['pluie', 'neige', 'orage', 'blizzard'] as const
+
+describe('le rideau penche DANS LE SENS DU VENT (décision d’Alexis, 2026-08-25)', () => {
+  it('le cap d’EST rend exactement le rideau d’avant la projection — au bit près', () => {
+    // La garde qui protège toutes les autres : la projection ne devait RIEN changer au seul cap
+    // que le rideau savait déjà rendre. Sans elle, on ne saurait pas si un écart mesuré ailleurs
+    // vient du vent ou d'une régression.
+    for (const type of CIELS) {
+      const profil = PROFILS[type]!
+      const s = souffleDuCiel(profil, { x: 1, y: 0 })
+      expect(s.lateral, type).toBeCloseTo(profil.vent, 9)
+      expect(s.chute, type).toBeCloseTo(profil.vLimite, 9)
+    }
+  })
+
+  it('la chute reste VERS LE BAS sur les huit relèvements, pour les quatre ciels', () => {
+    // LE DÉFAUT QU'ELLE GARDE : le blizzard souffle à 11 tuiles/s pour une chute de 2,1. Projeté
+    // plein sud sans plancher, il rendrait une vitesse NÉGATIVE — de la neige qui remonte. On
+    // balaie le domaine entier (8 caps × 4 ciels) plutôt que le cas qu'on croit pire.
+    for (const type of CIELS) {
+      const profil = PROFILS[type]!
+      for (const cap of CAPS) {
+        const s = souffleDuCiel(profil, cap)
+        expect(s.chute, `${type} cap ${cap.x},${cap.y}`).toBeGreaterThanOrEqual(profil.vLimite * PLANCHER_CHUTE)
+        expect(s.chute, `${type} cap ${cap.x},${cap.y}`).toBeGreaterThan(0)
+      }
+    }
+  })
+
+  it('le nord RAIDIT la chute, le sud la MOLLIT — et l’est/ouest ne la touche pas', () => {
+    // C'est la décision d'Alexis en une ligne : la vue est de dessus, l'axe y porte à la fois le
+    // nord-sud du monde et la chute. Affirmée sur le blizzard, où l'écart est le plus grand.
+    const b = PROFILS.blizzard!
+    const nord = souffleDuCiel(b, { x: 0, y: 1 })   // il vient du nord, il pousse vers le sud
+    const sud = souffleDuCiel(b, { x: 0, y: -1 })
+    const est = souffleDuCiel(b, { x: 1, y: 0 })
+    expect(nord.chute).toBeGreaterThan(b.vLimite * 2)
+    expect(sud.chute).toBeLessThan(b.vLimite)
+    expect(est.chute).toBeCloseTo(b.vLimite, 9)
+    // Et sur ces caps-là, plus rien ne penche : le rideau tombe droit.
+    expect(nord.lateral).toBeCloseTo(0, 9)
+    expect(sud.lateral).toBeCloseTo(0, 9)
+  })
+
+  it('CALME PLAT : rien ne penche, et la chute est celle de l’air immobile', () => {
+    for (const type of CIELS) {
+      const s = souffleDuCiel(PROFILS[type]!, { x: 0, y: 0 })
+      expect(s.lateral, type).toBe(0)
+      expect(s.chute, type).toBeCloseTo(PROFILS[type]!.vLimite, 9)
+    }
+  })
+
+  it('les GOUTTES VIVANTES dérivent du bon côté — le champ joué, pas la seule formule', () => {
+    // Une loi sans appelant ne garde rien : on joue le champ sous un cap d'OUEST et on affirme
+    // que les particules à l'écran filent vers l'ouest. La prémisse (il y en a) est prouvée
+    // d'abord — sans quoi un champ vide passerait le test.
+    for (const type of CIELS) {
+      const c = new ChampParticules(0x51_ce_00_01)
+      avancer(c, type, 240, VUE, BANDE, { x: -1, y: 0 })
+      const vivantes = c.particules.filter((p) => p.vive)
+      expect(vivantes.length, `${type} : aucune particule à mesurer`).toBeGreaterThan(20)
+      const moyenne = vivantes.reduce((a, p) => a + p.vx, 0) / vivantes.length
+      expect(moyenne, `${type} cap ouest`).toBeLessThan(0)
+      // Et elles tombent toujours : le rideau ne remonte pas.
+      for (const p of vivantes) expect(p.vy, `${type} : une particule remonte`).toBeGreaterThan(0)
+    }
+  })
+})
 
 describe("l'intensité relue inline est celle de la sim", () => {
   it('coïncide avec `meteoIntensityAt` sur TOUT l’axe, pour les cinq types', () => {
@@ -265,8 +344,8 @@ describe('la traînée', () => {
    *
    * La goutte doit faire UN pixel d'art de large et s'étirer nettement. On l'affirme sur les
    * profils réels : largeur = 1 cellule × `grainPx` = 1 px monde, et un rapport
-   * longueur/largeur d'au moins 15:1. La neige et le blizzard sont EXCLUS — leur silhouette
-   * carrée sur 4 px est validée, et cette garde les casserait à raison si on les affinait.
+   * longueur/largeur d'au moins 15:1. La neige et le blizzard sont EXCLUS de cette garde-ci —
+   * leur silhouette est CARRÉE, pas étirée ; ils ont la leur, juste en dessous.
    */
   it('la GOUTTE fait 1 px monde de large et s’étire au moins 15 fois plus qu’elle n’est large', () => {
     for (const type of ['pluie', 'orage'] as const) {
@@ -279,8 +358,33 @@ describe('la traînée', () => {
       // Et elle est DISCRÈTE : une goutte isolée reste sous le quart d'opacité.
       expect(p.alpha[1], `${type} : opacité proche`).toBeLessThanOrEqual(0.26)
     }
-    // La neige et le blizzard N'ONT PAS BOUGÉ : le grain des FX de lumière, et rien d'autre.
-    for (const type of ['neige', 'blizzard'] as const) expect(PROFILS[type]!.grainPx).toBe(4)
+  })
+
+  /**
+   * ═══ LE FLOCON FAIT LA MOITIÉ (Alexis, 2026-08-26) ═══
+   *
+   * *« il faut diviser la taille des flocons de neige par 2 pour toutes les tailles déjà
+   * existantes »*. La garde d'avant épinglait `grainPx === 4` — elle enregistrait la décision
+   * INVERSE (« la neige n'a pas bougé »), qui vient d'être révisée. On affirme donc la
+   * nouvelle, et on l'affirme là où elle se voit : **en px MONDE**, `taille × grainPx`, et non
+   * sur le grain seul — c'est la TAILLE qu'Alexis a divisée, le grain n'est que le bouton.
+   *
+   * Les deux crans sont nommés : `[1, 2]` cellules faisaient 4 et 8 px monde, elles font
+   * maintenant 2 et 4. Et la garde d'à-côté (« que ça reste un CARRÉ ») est ce qui empêche de
+   * rapetisser le flocon en l'étirant.
+   */
+  it('le flocon fait 2 px monde au loin et 4 de près — la moitié des 4 et 8 d’avant', () => {
+    for (const type of ['neige', 'blizzard'] as const) {
+      const p = PROFILS[type]!
+      expect(p.taille[0] * p.grainPx, `${type} : côté lointain`).toBe(2)
+      expect(p.taille[1] * p.grainPx, `${type} : côté proche`).toBe(4)
+      // ET IL RESTE SUR LA GRILLE DE L'ART : 2 divise 16 (`TILE_PX`), donc la quantification
+      // tombe juste. Un grain qui ne diviserait pas la tuile ferait grouiller les carrés.
+      expect(16 % p.grainPx, `${type} : grain hors grille de l’art`).toBe(0)
+    }
+    // LE VENT DE CENDRE N'EST PAS DE LA NEIGE : il garde les 4 px des FX de lumière.
+    expect(PROFILS.vent_de_cendre!.grainPx, 'vent de cendre : grain').toBe(4)
+    expect(PROFILS.vent_de_cendre!.taille[1]! * PROFILS.vent_de_cendre!.grainPx).toBe(8)
   })
 
   /**

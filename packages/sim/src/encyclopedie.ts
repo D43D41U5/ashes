@@ -26,6 +26,7 @@
  */
 import { BALANCE, RECIPES } from './balance'
 import type { SimState } from './sim'
+import { baselineTemperature } from './temperature'
 import { jourDeSaison, phaseForDay } from './time'
 
 /**
@@ -33,9 +34,26 @@ import { jourDeSaison, phaseForDay } from './time'
  * deux sections peuvent partager le même (le bois se récolte, le sel aussi). L'écran choisit
  * lequel il montre ; le carnet, lui, les tient tous.
  */
-export type VerbeCarnet = 'recolte' | 'fabrique' | 'mange' | 'abat' | 'vecu'
+export type VerbeCarnet = 'recolte' | 'fabrique' | 'mange' | 'abat' | 'vecu' | 'froid' | 'chaud'
 
-/** Une ligne du carnet : une clé `verbe:id`, et le compte. */
+/**
+ * LES DEUX VERBES QUI NE COMPTENT PAS (2026-08-25, décision d'Alexis : « je veux qu'on garde
+ * les températures max et min RENCONTRÉES par le joueur »).
+ *
+ * `froid` et `chaud` portent un RELEVÉ, pas un compte : le plus froid et le plus chaud que ce
+ * joueur a endurés dans cette saison-là, en °C. Ils vivent dans le même carnet parce que c'est
+ * exactement la même chose que le reste — *ce que ce joueur a rencontré* — et parce qu'un
+ * second tableau aurait demandé un champ de snapshot, une clé de persistance et quatre relais
+ * côté client pour deux nombres.
+ *
+ * ⚠ CE QU'ON RELÈVE EST LA TEMPÉRATURE DU LIEU (`baselineTemperature` — le front et l'abri
+ * compris, NI le feu NI la source chaude). Prendre le ressenti aurait fait dire à la fiche
+ * « le plus chaud du Grand Froid : +20 °C » à qui a passé la saison collé à son feu : c'est le
+ * feu qu'on aurait mesuré, pas la saison.
+ */
+export const VERBES_DE_RELEVE: readonly VerbeCarnet[] = ['froid', 'chaud']
+
+/** Une ligne du carnet : une clé `verbe:id`, et le compte — ou, pour `froid`/`chaud`, le RELEVÉ. */
 export interface LigneEncyclo {
   k: string
   n: number
@@ -64,7 +82,34 @@ export function compteEncyclo(carnet: readonly LigneEncyclo[] | undefined, verbe
 export function connuEncyclo(carnet: readonly LigneEncyclo[] | undefined, id: string): boolean {
   if (carnet === undefined) return false
   const suffixe = `:${id}`
-  return carnet.some((l) => l.k.endsWith(suffixe) && l.n > 0)
+  // ⚠ LES RELEVÉS NE SONT PAS DES RENCONTRES. `chaud:3` vaut +11 (des degrés), et sans cette
+  // garde une saison traversée rendrait « connu » toute entrée dont l'id est « 3 ». Aucun objet
+  // ne s'appelle « 3 » aujourd'hui — c'est bien pour ça qu'il faut l'écrire maintenant.
+  return carnet.some((l) => l.n > 0 && l.k.endsWith(suffixe) && !VERBES_DE_RELEVE.some((v) => l.k.startsWith(`${v}:`)))
+}
+
+/**
+ * LE RELEVÉ D'UNE SAISON — le plus froid ou le plus chaud endurés, en °C. `undefined` si cette
+ * saison n'a jamais été traversée : l'écran n'a alors rien à dire (même règle que le muet).
+ */
+export function extremeEncyclo(
+  carnet: readonly LigneEncyclo[] | undefined,
+  verbe: 'froid' | 'chaud',
+  id: string,
+): number | undefined {
+  if (carnet === undefined) return undefined
+  return carnet.find((l) => l.k === cleEncyclo(verbe, id))?.n
+}
+
+/**
+ * POUSSE UN RELEVÉ VERS SON EXTRÊME. `sens < 0` garde le plus petit, `sens > 0` le plus grand.
+ * Rien à voir avec `noter` : on n'additionne pas des degrés.
+ */
+function noterExtreme(carnet: LigneEncyclo[], verbe: VerbeCarnet, id: string, valeur: number, sens: number): void {
+  const k = cleEncyclo(verbe, id)
+  const ligne = carnet.find((l) => l.k === k)
+  if (ligne === undefined) carnet.push({ k, n: valeur })
+  else if (sens < 0 ? valeur < ligne.n : valeur > ligne.n) ligne.n = valeur
 }
 
 /** Ajoute `n` au compte de `verbe:id`. Pousse la ligne si elle n'existait pas. */
@@ -160,5 +205,12 @@ export function advanceEncyclopedie(state: SimState, depuis: number): void {
     if (entre || compteEncyclo(carnet, 'vecu', String(saison)) === 0) {
       noter(carnet, 'vecu', String(saison), 1)
     }
+    // ── CE QU'ON A ENDURÉ ──
+    // Une fois par seconde suffit : le froid du monde est une rampe lente (l'heure, l'acte, la
+    // bande météo), et rater une seconde ne peut pas rater un extrême. Arrondi au dixième de
+    // degré — le snapshot n'a pas à porter dix-sept décimales d'un flottant.
+    const t = Math.round(baselineTemperature(state, e.x, e.y) * 10) / 10
+    noterExtreme(carnet, 'froid', String(saison), t, -1)
+    noterExtreme(carnet, 'chaud', String(saison), t, 1)
   }
 }

@@ -7,6 +7,7 @@
  */
 import { describe, expect, it } from 'vitest'
 import { generateZonedTerrain } from './zonegen'
+import { carteDeTest } from '../../../tools/carte-cache'
 import { BUILT_KINDS } from './poi-batis'
 import { isWater } from './map'
 import {
@@ -15,7 +16,7 @@ import {
 } from './balance'
 import { ANNALES, saillant, texteDeStele, verbalise } from './annales'
 
-const CARTE = generateZonedTerrain(7)
+const CARTE = carteDeTest(7)
 const { map, graphe, zone } = CARTE
 const W = map.width
 

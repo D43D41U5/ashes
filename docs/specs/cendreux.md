@@ -484,6 +484,43 @@ faux-mort, lui, existe déjà en mieux : la carcasse torpide qui se réveille so
   24 × 10, mêmes teintes, choisi par `beastTexture` sur le drapeau que le snapshot transporte
   déjà) — la première posture du bestiaire, sans art neuf ; un vrai sprite la remplacera quand
   la DA repassera sur le bestiaire.
+- **R26quater — Sa LONGUEUR suit sa marche, en HUIT CAPS** *(Alexis, 2026-08-25 : « le cendreux
+  au sol ne voit pas son sprite aligné dans la bonne direction lorsqu'il avance en Y » ; puis,
+  sur une première version à deux axes : « pour moi non »)*. Un corps couché n'a pas un AXE, il a
+  un CAP : deux textures (est-ouest, nord-sud) ne laissent à une diagonale que le choix entre
+  deux mensonges. La silhouette est donc cuite en `ORIENTATIONS_COUCHE` = 8 variantes
+  pré-tournées (`render/corps-couche.ts`, `spr-cendreux-rampant-0…7`), dont la BOÎTE est
+  l'enveloppe exacte du corps tourné — 24 × 10 est-ouest, 10 × 24 nord-sud, 24 × 24 en oblique —
+  et dont `ACTOR_FOOTPRINTS` DÉRIVE l'emprise, pour que dessin et emprise ne puissent plus
+  différer d'un pixel. Aux caps cardinaux, le dessin rend l'ancien pion au pixel près. Le miroir
+  (`setFlipX`) ne pouvait pas y suffire — il retourne, il ne couche pas — et il est désormais
+  ÉTEINT sur un corps couché : ses huit caps couvrent déjà le tour d'horizon. Une rotation à
+  l'affichage reste exclue pour la raison des seize caps d'une empreinte (art de quelques pixels
+  délavé au NEAREST, canal X d'une normale non tourné). Le cap se lit sur le DÉPLACEMENT RÉEL
+  (« la direction où il se déplace le plus en X et en Y », Alexis) — le tampon d'interpolation
+  sur 400 ms, jamais `facing` : celui-ci est rangé en huit secteurs par la sim, donc sur une
+  diagonale ses deux composantes sont ÉGALES et la question n'a pas de réponse. Immobile, il
+  GARDE son cap. Et le choix est VERROUILLÉ (`majCran`, `MIROIR_DELAI_MS`) : huit caps veulent
+  dire huit frontières de secteur, et un corps qui en longe une pivoterait de 45° par image.
+  *(Un corps n'a pas de tête : un cap et son opposé donnent la même silhouette, donc le choix se
+  replie sur un demi-tour — sans quoi un corps qui recule pivoterait de 180° pour rien.)*
+- **R26sexies — Ce qui s'enfonce, c'est son ÉPAISSEUR** *(Alexis, 2026-08-25 : « il divise par 2
+  sa longueur lorsqu'il est aligné en Y »)*. `enfoncement` lit la dimension VERTICALE du sprite
+  pour deux choses — la profondeur qu'un milieu creuse et son plafond (45 %) : juste pour un
+  corps debout, faux pour un corps couché nord-sud, dont la dimension verticale est la LONGUEUR.
+  L'eau lui prenait donc jusqu'à 45 % du corps, par le pied. Un corps posé au sol s'enfonce de
+  son PETIT CÔTÉ (`epaisseurQuiSEnfonce`), quel que soit son axe ; et la DÉCOUPE ne s'applique
+  qu'à celui dont le petit côté est vertical — rogner le bas d'un couché nord-sud lui coupe la
+  tête, pas les jambes : il DESCEND, il ne raccourcit pas. Seul l'ENFOUISSEMENT (le corps qui
+  sort du sol, R21) le rogne encore, et sur toute sa longueur : là, il émerge vraiment.
+- **R26quinquies — Il TRAÎNE, il ne marche pas** *(même demande)*. Sur les sols qui gardent une
+  marque (neige, cendre de pré), un rampant ne laisse pas des pas comme ses congénères debout :
+  il n'a pas de pieds. Même matière et même mort avec son sol que les empreintes, mais la marque
+  se pose SUR la ligne de marche (ni alternance gauche/droite, ni écart perpendiculaire,
+  `poseTrainee`) et TROIS FOIS plus souvent (`TRAINEE_PX` = 3 px contre 9) : les marques se
+  recouvrent et ce qui reste est un sillon continu. *(La semelle HUMIDE reste en pas : elle
+  compte un budget de foulées, et le tripler raccourcirait la piste au lieu d'en changer la
+  nature — défaut connu et borné.)*
 - **R27 — LE CENDREUX PORTE SON REGARD** *(demande d'Alexis, 2026-08-21 ; client)*. Le même
   pion d'orientation que l'avatar (`fx-gaze`, audit UI/UX P3-11), posé au bord de la tête du
   côté du `facing` autoritatif du dernier snapshot — mêmes nombres (`GAZE_REACH`, `GAZE_PX`,

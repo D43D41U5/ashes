@@ -30,12 +30,15 @@ export const ITEM_LABELS: Record<ItemId, string> = {
   stew: 'Ragoût',
   iron_ore: 'Minerai de fer',
   coal: 'Charbon',
+  charcoal: 'Charbon de bois',
   iron_ingot: 'Lingot de fer',
   steel_ingot: "Lingot d'acier",
   rope: 'Corde',
   crude_axe: 'Hachereau de fortune',
   crude_pickaxe: 'Pic de fortune',
   crude_spear: 'Épieu taillé',
+  torche: 'Torche',
+  torche_vive: 'Torche allumée',
   axe: 'Hache',
   pickaxe: 'Pioche',
   iron_axe: 'Hache de fer',
@@ -191,6 +194,37 @@ export const ITEM_PAINTS: Record<ItemId, ItemPaint> = {
     g.fillStyle(0x5e4e38).fillRect(3, 5, 3, 8)
     g.fillStyle(0x2a2218).fillRect(5, 8, 6, 1) // la strate
     g.fillStyle(0x2a2218).fillRect(4, 11, 8, 1)
+  },
+
+  /**
+   * LA TORCHE ÉTEINTE — une hampe et un fagot ligaturé. À 16 px, la silhouette est un
+   * T lourd du haut : le manche mince descend, la tête est un BLOC. C'est ce bloc, et lui
+   * seul, qui la distingue de la canne et de l'épieu (des hampes à tête pointue).
+   */
+  torche: (g) => {
+    g.fillStyle(0x5a3d22).fillRect(7, 7, 2, 8) // la hampe
+    g.fillStyle(0x7a5530).fillRect(7, 7, 1, 8) // sa face au NO
+    g.fillStyle(0x6b5a3a).fillRect(4, 2, 8, 5) // le fagot de fibre, éteint : mat, terne
+    g.fillStyle(0x8a7750).fillRect(4, 2, 8, 2) // le dessus, éclairé
+    g.fillStyle(0x4a3d28).fillRect(4, 6, 8, 1) // l'ombre sous la tête
+    g.fillStyle(0x3a2a18).fillRect(5, 6, 6, 1)
+    g.fillStyle(0xa08a5a).fillRect(5, 4, 6, 1) // la ligature
+  },
+
+  /**
+   * LA TORCHE ALLUMÉE — la MÊME hampe, et la tête devient une FLAMME. Deux icônes voisines
+   * dont l'une brûle : le joueur doit pouvoir dire d'un coup d'œil, dans une ceinture pleine,
+   * laquelle de ses deux torches est vive. D'où le jaune franc, la seule chose lumineuse de
+   * l'inventaire avec le sel — et lui est blanc, pas chaud.
+   */
+  torche_vive: (g) => {
+    g.fillStyle(0x5a3d22).fillRect(7, 8, 2, 7) // la hampe, plus courte : la tête mange le haut
+    g.fillStyle(0x7a5530).fillRect(7, 8, 1, 7)
+    g.fillStyle(0x8a3a10).fillRect(5, 6, 6, 3) // le fagot, incandescent à sa base
+    g.fillStyle(0xd06a14).fillRect(5, 4, 6, 3) // le cœur orange
+    g.fillStyle(0xf0a028).fillRect(6, 2, 4, 3) // la flamme
+    g.fillStyle(0xffe07a).fillRect(7, 1, 2, 2) // la pointe, la plus claire
+    g.fillStyle(0xffe07a).fillRect(6, 3, 1, 1) // une langue qui part de côté
   },
 
   // Un tas de cendre, gris pâle, et UNE braise dedans. C'est le jeu qui porte son nom.
@@ -407,6 +441,19 @@ export const ITEM_PAINTS: Record<ItemId, ItemPaint> = {
     g.fillStyle(0x565660).fillCircle(8, 9, 6)
     g.fillStyle(0x6c6c76).fillCircle(6, 7, 3)
     g.fillStyle(0xb0632e).fillRect(9, 6, 2, 2).fillRect(6, 11, 2, 2).fillRect(11, 10, 1, 1)
+  },
+
+  // Charbon de bois : la BÛCHE de `wood`, mais carbonisée — même silhouette, même bout de
+  // cœur clair. C'est ce qui le distingue à l'œil de la houille (`coal`, des éclats anguleux
+  // sans forme d'origine) : l'un a été un arbre, l'autre est sorti de la roche. Le bout pâle
+  // n'est pas du bois vif mais la CENDRE du bout, et une braise y couve — le même 0xd9541f
+  // que la cendre et le feu de camp, la teinte qui veut dire « ça a brûlé » dans tout le jeu.
+  charcoal: (g) => {
+    g.fillStyle(0x2b2830).fillRect(2, 9, 12, 4)
+    g.fillStyle(0x3a353f).fillRect(2, 5, 12, 4)
+    g.fillStyle(0x565060).fillRect(2, 5, 12, 1) // l'arête qui prend la lumière
+    g.fillStyle(0x9a9088).fillRect(2, 5, 2, 4) // le bout cendré
+    g.fillStyle(0xd9541f).fillRect(9, 10, 2, 1) // une braise, dans la MASSE et non sur la cendre
   },
 
   // Charbon : éclats noirs anguleux.

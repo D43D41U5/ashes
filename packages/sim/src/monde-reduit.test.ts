@@ -21,12 +21,13 @@ import { nidsAMonstre } from './poi'
 import { BANC_JOUEURS, construireMondeDuBanc } from './scenario'
 import { emplacementsDeVillage, placeZoneNodes, pointsDeSpawn } from './zone-content'
 import { generateZonedTerrain } from './zonegen'
+import { carteDeTest } from '../../../tools/carte-cache'
 import { deriveGrapheZones, MONDE, MONDE_JOUE, tailleCarte } from './zonegraph'
 
 /** Les graines de production des autres gardes — le monde qu'on jouera vraiment. */
 const SEEDS = [2026, 7]
 
-const reduits = SEEDS.map((s) => ({ s, c: generateZonedTerrain(s, MONDE.JOUEURS_CIBLE, 'racine') }))
+const reduits = SEEDS.map((s) => ({ s, c: carteDeTest(s, MONDE.JOUEURS_CIBLE, 'racine') }))
 
 describe('A-MR1 — le monde réduit tient : la boucle de saison a tous ses organes', () => {
   it('UNE zone exactement — les Prés Bas seuls (2026-08-24), et la carte est COUPÉE au nord', () => {
@@ -104,7 +105,7 @@ describe('A-MR1 — le monde réduit tient : la boucle de saison a tous ses orga
   it('le balayage d\'échelles — le plan réduit génère à toutes les tailles, comme l\'autre', () => {
     for (let k = 1; k <= 8; k++) {
       const seed = k * 7919
-      const c = generateZonedTerrain(seed, 8, 'racine')
+      const c = carteDeTest(seed, 8, 'racine')
       expect(c.graphe.zones.length, `seed ${seed}`).toBe(1)
       expect((c.map.seuils ?? []).length, `seed ${seed}`).toBe(0)
       // La carte SORT, à toutes les échelles : c'est ce que ce balayage garde. On vérifie donc
@@ -141,7 +142,7 @@ describe("A-MR2 — le T0 réduit est le T0 complet ÉTIRÉ sur le sud (2026-08-
 
 describe('A-MR3 — le plan réduit est déterministe, au bit près (le contrat A12, étendu)', () => {
   it('même seed, même monde réduit — graphe ET carte', () => {
-    const a = generateZonedTerrain(42, 8, 'racine')
+    const a = carteDeTest(42, 8, 'racine')
     const b = generateZonedTerrain(42, 8, 'racine')
     expect(JSON.stringify(a.graphe)).toBe(JSON.stringify(b.graphe))
     expect(a.map.terrain).toEqual(b.map.terrain)

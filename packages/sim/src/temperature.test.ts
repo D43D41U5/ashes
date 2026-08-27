@@ -60,7 +60,7 @@ describe('ambientTemperature', () => {
     // au jour 1) et dégèle sur ses trente jours — le dégel EST le contenu du printemps
     // (`saisons.md` S4, O1 close). Au cardinal, +8 °C : deux degrés au-dessus du seuil, la
     // garde reste vivante.
-    const state = createSim(1, { cycleOffset: cycleOffsetForStartHour(12) })
+    const state = createSim(1, { cycleOffset: cycleOffsetForStartHour(12, 1) })
     flatMap(state, 1 /* grass */)
     auJour(state, coeurDe(1))
     expect(ambientTemperature(state, 5, 5)).toBeGreaterThanOrEqual(TEMPERATURE.AMBIANT_DOUX)
@@ -83,7 +83,7 @@ describe('ambientTemperature', () => {
     // MINUIT, et non « le tick de crépuscule » : la longueur du jour est SAISONNIÈRE depuis
     // `saisons.md` S6 (la nuit passe de 12,6 min l'été à 23,4 min l'hiver), donc seule une
     // heure murale désigne encore la pleine nuit à toute saison.
-    const state = createSim(1, { cycleOffset: cycleOffsetForStartHour(0) })
+    const state = createSim(1, { cycleOffset: cycleOffsetForStartHour(0, 1) })
     flatMap(state, 1 /* grass */)
     const exposed = ambientTemperature(state, 5, 5)
     state.structures.push({ type: 'house', tx: 5, ty: 5 } as never)
@@ -122,7 +122,7 @@ describe('dérive thermostat', () => {
     // est la PRÉMISSE de ce cas, pas sa garde — on la veut donc large, pas serrée. L'échelle 1
     // tient le jour en place, et `advanceTemperature` n'avance pas le tick : l'air ne bouge pas
     // des 5 000 pas de dérive.
-    const state = createSim(1, { calendarScale: 1, cycleOffset: cycleOffsetForStartHour(12) })
+    const state = createSim(1, { calendarScale: 1, cycleOffset: cycleOffsetForStartHour(12, 1) })
     flatMap(state, 1)
     auJour(state, coeurDe(2))
     const e = spawn(state, 5, 5)
@@ -204,7 +204,7 @@ describe('la tyrannie de la saison', () => {
     const ambientAtDay = (day: number): number => {
       // MIDI : depuis la rampe de nuit (`partDeNuit`), le tick 0 est l'aube et porte le plein
       // écart nocturne. Ce cas isole la SAISON — il lui faut une heure sans froid nocturne.
-      const state = createSim(1, { calendarScale: 1, cycleOffset: cycleOffsetForStartHour(12) })
+      const state = createSim(1, { calendarScale: 1, cycleOffset: cycleOffsetForStartHour(12, 1) })
       flatMap(state, 9 /* scree, offset biome 0 */)
       auJour(state, day)
       return ambientTemperature(state, 5, 5)
@@ -246,7 +246,7 @@ describe('le froid létal & la tenue d’hiver (V2-15/16, fork froid tranché)',
     // recomposé de constantes : `ACT_COLD` n'existe plus (`saisons.md` S4 l'a remplacé par la
     // courbe `SOCLE`, et la valeur EST le degré au lieu d'être un froid soustrait de `BASE`).
     // La Brume, le front et la Cendre ne peuvent qu'enfoncer ce chiffre plus bas.
-    const state = createSim(1, { cycleOffset: cycleOffsetForStartHour(0) })
+    const state = createSim(1, { cycleOffset: cycleOffsetForStartHour(0, 1) })
     flatMap(state, 1 /* grass — la plaine, aucun offset de biome */)
     auJour(state, coeurDe(4))
     const plaineHiverNuit = ambientTemperature(state, 5, 5)
@@ -268,7 +268,7 @@ describe('le froid létal & la tenue d’hiver (V2-15/16, fork froid tranché)',
     // Carte VIDE en glacier (aucune source chaude parasite) + MINUIT : un ambiant franchement
     // mortel (le plancher `AMBIANT_MIN`), où seule la tenue sauve. L'heure murale, et non un
     // tick de crépuscule : la longueur du jour est saisonnière depuis `saisons.md` S6.
-    const cold = (): Parameters<typeof createSim>[1] => ({ map: createEmptyMap(96, 96, 15 /* glacier */), cycleOffset: cycleOffsetForStartHour(0) })
+    const cold = (): Parameters<typeof createSim>[1] => ({ map: createEmptyMap(96, 96, 15 /* glacier */), cycleOffset: cycleOffsetForStartHour(0, 1) })
     const froid = createSim(1, cold())
     const nu = spawn(froid, 5, 5)
     const chaud = createSim(1, cold())

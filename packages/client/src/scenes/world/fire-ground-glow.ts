@@ -42,6 +42,7 @@
 import Phaser from 'phaser'
 import { fireStateAt, type SnapshotMessage, type Structure } from '@ashes/sim'
 import { fireGlow } from '../../render/lighting'
+import { axesFeu, varianteFeu, type VarianteFeu } from '../../render/feu-variante'
 import { FIRE_GROUND_DEPTH, TILE_PX } from '../../render/framing'
 
 /** Le CŒUR de la flaque : chaud et LUMINEUX (près du foyer, demande d'Alexis « plus d'intensité
@@ -73,9 +74,48 @@ const GLOW_ALPHA_SCALE = 0.75
  *  concentrée au centre), l'ALPHA suit un smoothstep. NEAREST → carrés durs calés sur l'art. On
  *  bake la couleur (pas de `setTint`) car un cœur plus clair que le bord exige un vrai dégradé. */
 const TEX_KEY = 'fx-fire-ground'
-function ensureTexture(scene: Phaser.Scene): void {
-  if (scene.textures.exists(TEX_KEY)) return
-  const tex = scene.textures.createCanvas(TEX_KEY, TEX_SIDE, TEX_SIDE)
+
+/**
+ * ═══ LE CŒUR BLANC — la rampe de température (2026-08-26) ═══
+ *
+ * La flaque étalon va d'un ambre clair (#ffa848) à un ambre saturé (#ff5a14) : deux oranges.
+ * Or ce qui fait lire « chaud » n'est pas l'orange, c'est l'ÉCART DE TEMPÉRATURE dans une même
+ * tache — un corps noir qui chauffe passe par le rouge sombre, l'orange, le jaune, puis le
+ * blanc. Un vrai foyer montre les trois d'un coup : les braises blanchies au centre, l'ambre
+ * autour, un rouge profond qui meurt sur la terre.
+ *
+ * On passe donc de DEUX à TROIS arrêts, et le blanc n'est pas un blanc : #fff0cc, un blanc de
+ * braise (le bleu reste sous le rouge — un blanc franc en ADD délave, c'est le défaut mesuré
+ * dans l'en-tête de ce fichier). Le rouge de bord descend à #8e1e04 : sombre, il ne monte
+ * presque pas la luminance et laisse au sol sa couleur, mais il TEINTE la frange.
+ */
+const STOPS_CHAUD: readonly (readonly [number, number, number])[] = [
+  [0xff, 0xf0, 0xcc], // le blanc de braise, au centre
+  [0xff, 0x9a, 0x30], // l'ambre
+  [0x8e, 0x1e, 0x04], // le rouge profond de la frange
+]
+
+/** Interpole la rampe à trois arrêts en `t` ∈ 0..1 (0 = centre, 1 = bord). */
+function rampeChaude(t: number): [number, number, number] {
+  const s = Math.min(0.999, Math.max(0, t)) * (STOPS_CHAUD.length - 1)
+  const i = Math.floor(s)
+  const f = s - i
+  const a = STOPS_CHAUD[i] as readonly [number, number, number]
+  const b = STOPS_CHAUD[i + 1] as readonly [number, number, number]
+  return [a[0] + (b[0] - a[0]) * f, a[1] + (b[1] - a[1]) * f, a[2] + (b[2] - a[2]) * f]
+}
+
+/** La texture selon que la rampe de température est allumée — DEUX clefs, jamais une.
+ *  `ensureTexture` sort tôt si la clef existe et la couleur est BAKÉE (pas de `setTint`) : une
+ *  clef partagée rendrait les deux rendus avec le dégradé du premier affiché, en silence. */
+function texKey(chaud: boolean): string {
+  return chaud ? `${TEX_KEY}-chaud` : TEX_KEY
+}
+
+function ensureTexture(scene: Phaser.Scene, chaud: boolean): void {
+  const key = texKey(chaud)
+  if (scene.textures.exists(key)) return
+  const tex = scene.textures.createCanvas(key, TEX_SIDE, TEX_SIDE)
   if (!tex) return
   const ctx = tex.getContext()
   const img = ctx.createImageData(TEX_SIDE, TEX_SIDE)
@@ -86,32 +126,55 @@ function ensureTexture(scene: Phaser.Scene): void {
       const t = Math.min(1, Math.sqrt(dx * dx + dy * dy) / POOL_RADIUS_CELLS) // 0 centre → 1 bord
       const s = 1 - t
       const a = s * s * (3 - 2 * s) // smoothstep sur (1-t) : plein au centre, 0 doux au bord
-      // Couleur cœur→bord ; le cœur tient plus longtemps (t²) → une vraie tache chaude au centre.
-      const ct = t * t
       const k = (j * TEX_SIDE + i) * 4
-      img.data[k] = Math.round(CORE_COLOR[0] + (EDGE_COLOR[0] - CORE_COLOR[0]) * ct)
-      img.data[k + 1] = Math.round(CORE_COLOR[1] + (EDGE_COLOR[1] - CORE_COLOR[1]) * ct)
-      img.data[k + 2] = Math.round(CORE_COLOR[2] + (EDGE_COLOR[2] - CORE_COLOR[2]) * ct)
+      if (chaud) {
+        // Rampe à trois arrêts. Le centre tient (t^1.6 ≈ t·√t) pour garder une vraie tache blanche.
+        const ct = t * t // le blanc tient jusqu'à ~mi-rayon : une VRAIE tache blanche, pas un liseré
+        const [r, g, b] = rampeChaude(ct)
+        img.data[k] = Math.round(r)
+        img.data[k + 1] = Math.round(g)
+        img.data[k + 2] = Math.round(b)
+      } else {
+        // Couleur cœur→bord ; le cœur tient plus longtemps (t²) → une vraie tache chaude au centre.
+        const ct = t * t
+        img.data[k] = Math.round(CORE_COLOR[0] + (EDGE_COLOR[0] - CORE_COLOR[0]) * ct)
+        img.data[k + 1] = Math.round(CORE_COLOR[1] + (EDGE_COLOR[1] - CORE_COLOR[1]) * ct)
+        img.data[k + 2] = Math.round(CORE_COLOR[2] + (EDGE_COLOR[2] - CORE_COLOR[2]) * ct)
+      }
       img.data[k + 3] = Math.round(a * 255)
     }
   }
   ctx.putImageData(img, 0, 0)
   tex.refresh()
   // NEAREST : chaque texel = un carré plein de 4 px (le LINEAR par défaut lisserait la grille).
-  scene.textures.get(TEX_KEY).setFilter(Phaser.Textures.FilterMode.NEAREST)
+  scene.textures.get(key).setFilter(Phaser.Textures.FilterMode.NEAREST)
 }
 
 type Glow = Phaser.GameObjects.Image
 
 export class FireGroundGlow {
   private glows = new Map<number, Glow>()
+  /** La variante avec laquelle les images en vie ont été construites. Un changement de variante
+   *  RECONSTRUIT tout : la couleur est bakée dans la texture, donc on ne peut pas la retourner
+   *  sur une image déjà posée. */
+  private varianteEnCours: VarianteFeu | null = null
 
   constructor(private scene: Phaser.Scene) {
-    ensureTexture(scene)
+    ensureTexture(scene, axesFeu().coeurBlanc)
   }
 
-  /** Réconcilie une flaque par Feu et la fait respirer (alpha) avec la flamme (`fireGlow`). */
+  /** Réconcilie une flaque par Feu et la fait respirer (alpha) avec la flamme (`fireGlow`).
+   *  `structures` reçoit la sous-liste des FEUX dérivée une fois par `WorldScene` (PERF-08) ;
+   *  la garde `type !== 'fire'` reste, une liste déjà filtrée la traverse sans frais. */
   update(structures: Structure[], villages: SnapshotMessage['villages'], day: number, now: number, tick: number): void {
+    const v = varianteFeu()
+    const ax = axesFeu(v)
+    if (v !== this.varianteEnCours) {
+      for (const g of this.glows.values()) g.destroy()
+      this.glows.clear()
+      this.varianteEnCours = v
+    }
+    ensureTexture(this.scene, ax.coeurBlanc)
     const seen = new Set<number>()
     for (const s of structures) {
       if (s.type !== 'fire') continue
@@ -120,20 +183,36 @@ export class FireGroundGlow {
       if (fireStateAt(tick, s) === 'out') continue
       seen.add(s.id)
       const warmth = villages.find((v) => v.id === s.villageId)?.warmth ?? 0
-      const g = fireGlow(warmth, day, now, s.id * 1.7)
+      const g = fireGlow(warmth, day, now, s.id * 1.7, ax.respiration)
       let glow = this.glows.get(s.id)
       if (!glow) {
         // Centrée sur le CENTRE de la tuile du foyer — un multiple de 2 px, donc la grille des
         // cellules tombe pile sur la grille de 2 px de l'art (aucun décalage d'un demi-pixel).
         glow = this.scene.add
-          .image((s.tx + 0.5) * TILE_PX, (s.ty + 0.5) * TILE_PX, TEX_KEY)
+          .image((s.tx + 0.5) * TILE_PX, (s.ty + 0.5) * TILE_PX, texKey(ax.coeurBlanc))
           .setOrigin(0.5, 0.5)
           .setDepth(FIRE_GROUND_DEPTH)
           .setBlendMode('ADD')
           .setDisplaySize(TEX_SIDE * LIGHT_PX, TEX_SIDE * LIGHT_PX) // 1 texel = 4 px monde
         this.glows.set(s.id, glow)
       }
-      glow.setAlpha(Math.min(1, g.alpha * GLOW_ALPHA_SCALE))
+      // ═══ COMPOSITION ① — LA FLAQUE RENTRE QUAND LE HALO EST LÀ ═══
+      //
+      // Sur le banc, chaque axe était mesuré SEUL et gardait le gain de l'étalon : ce qui
+      // changeait d'une image à l'autre devait être la proposition, jamais un réglage glissé à
+      // côté. Ce n'est plus la bonne règle une fois qu'on les allume ENSEMBLE.
+      //
+      // La flaque (ADD, au sol) et le halo (ADD, en l'air) se recouvrent sur les trois tuiles
+      // du foyer. Empilés à plein gain c'est +15,8 de luminance mesurée pour le halo seul,
+      // plus la flaque par-dessus — et l'en-tête de ce fichier dit ce qui arrive alors : un sol
+      // vert (33,38,31) devenu (65,62,54), un kaki plat. Le « sol tout jaune ».
+      //
+      // On rentre donc la flaque de 25 % quand le halo l'accompagne. C'est elle qui cède, pas
+      // le halo : la flaque est REDONDANTE avec lui au centre (les deux y sont saturés), alors
+      // que le halo est le seul à occuper le volume — retirer du halo aurait retiré la seule
+      // chose que l'autre ne sait pas faire.
+      const gain = ax.halo && ax.compose ? GLOW_ALPHA_SCALE * 0.75 : GLOW_ALPHA_SCALE
+      glow.setAlpha(Math.min(1, g.alpha * gain))
     }
     for (const [id, glow] of this.glows) {
       if (seen.has(id)) continue
