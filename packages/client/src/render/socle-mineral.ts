@@ -55,7 +55,7 @@
  */
 import type Phaser from 'phaser'
 import { tailleDeBloc } from '@ashes/sim'
-import { newCanvas, packNormals, registerLit } from './normal-map'
+import { cleLit, newCanvas, registerLitPaireDeChamp } from './normal-map'
 
 /** Les six nœuds qui bloquent leur tuile entière (`blockHalfSub: 4` dans `balance.ts`). */
 export const SOCLE_TYPES = ['rock', 'bloc', 'iron_vein', 'coal_seam', 'quarry', 'rubble'] as const
@@ -363,7 +363,9 @@ export function cleDeSocle(type: SocleType, taille: number): string {
 
 /** Toutes les clés RÉELLEMENT cuites — la surface testable du câblage. */
 export const SOCLE_KEYS: ReadonlySet<string> = new Set(
-  SOCLE_TYPES.flatMap((t) => [0, 1, 2].flatMap((n) => [cleDeSocle(t, n), `${cleDeSocle(t, n)}_lit`])),
+  SOCLE_TYPES.flatMap((t) => [0, 1, 2].flatMap((n) => [
+    cleDeSocle(t, n), cleLit(cleDeSocle(t, n)), cleLit(cleDeSocle(t, n), true),
+  ])),
 )
 
 /**
@@ -462,7 +464,12 @@ function cuireSocle(scene: Phaser.Scene, type: SocleType, taille: number, graine
   const cle = cleDeSocle(type, taille)
   if (scene.textures.exists(cle)) scene.textures.remove(cle)
   scene.textures.addCanvas(cle, plat.c)
-  registerLit(scene, `${cle}_lit`, alb.c, packNormals(n, f.alpha, w, h))
+  // LE SOCLE EST DRESSÉ — une brique plantée, avec un dessus et une face. Il a donc son retourné
+  // (2026-08-27), mais par un chemin à lui : sa normale n'est pas dérivée d'une silhouette, elle
+  // est ÉCRITE (`n`, un champ analytique). La retourner demande de NIER `nx` en plus d'échanger
+  // les colonnes — `mirrorField` le fait ; `mirrorCanvas` seul aurait rendu une pierre éclairée
+  // du mauvais côté, ce qui est exactement le défaut qu'on chasse.
+  registerLitPaireDeChamp(scene, cle, { albedo: alb.c, champ: n, alpha: f.alpha, dresse: true })
 }
 
 /** Cuit les dix-huit socles : six matières × trois hauteurs, à plat et éclairés. */

@@ -649,11 +649,16 @@ export const CIMES_PAR_ARBRE = 5
  * le carré vert d'une clé absente.
  */
 export function cleHouppier(
-  slug: string, lit: boolean, cime: number, etat: EtatCime = 'feuillu', parite = 0,
+  slug: string, lit: boolean, cime: number, etat: EtatCime = 'feuillu', parite = 0, miroir = false,
 ): string {
   const n = SUFFIXE_CIME[etat]
   const p = parite === 1 ? '~1' : ''
-  return lit ? `nd-${slug}_crown${n}_lit-${cime}${p}` : `nd-${slug}_crown${n}`
+  // LE MIROIR NE VIT QUE DU CÔTÉ `_lit` (2026-08-27) : c'est une texture PRÉ-RETOURNÉE, et l'art
+  // PEINT n'en a pas — il se retourne au `setFlipX`, qui lui va très bien puisqu'il n'a pas de
+  // normale à casser. Demander le retourné d'une cime peinte rend donc la cime peinte, pas une
+  // clé absente : la couche de rendu n'a pas à savoir dans quel mode elle est.
+  const m = miroir ? '_m' : ''
+  return lit ? `nd-${slug}_crown${n}_lit-${cime}${p}${m}` : `nd-${slug}_crown${n}`
 }
 
 /**

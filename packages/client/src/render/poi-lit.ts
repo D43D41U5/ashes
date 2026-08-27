@@ -18,7 +18,7 @@
 import type Phaser from 'phaser'
 // LA RECETTE VIT DANS normal-map.ts (spec da-feeling R1) — la recopie « volontaire » de
 // l'en-tête est morte : l'A/B de lit-props est tranché et commité, on importe.
-import { type Crack, mirrorCanvas, newCanvas, normalFromCanvas, registerLit as register, walkPath } from './normal-map'
+import { type Crack, cleLit, mirrorCanvas, mirrorCracks, newCanvas, normalFromCanvas, registerLit as register, walkPath } from './normal-map'
 import { POI_LIT_DEFS_DATA } from './poi-lit-defs'
 import { CRACK, CRACK2, STONE_A, STONE_B, QUARTZ, MOSS, MOSS_BR, MOSS_DK, LICHEN, GRAIN_D, GRAIN_L } from './matiere'
 
@@ -179,6 +179,11 @@ export interface PoiLitDef extends FormeCubique {
   w: number
   h: number
   crown?: number
+  /** AU RAS DU SOL ? Une crevasse, une fondrière, un tarn, une saline : ce sont des accidents
+   *  du terrain, pas des masses debout. Ils n'ont donc pas de retourné — voir l'en-tête de
+   *  section de `normal-map.ts`. Absent = DRESSÉ, ce qui est le cas de vingt-neuf lieux sur
+   *  trente-trois : la table dit l'exception, pas la règle. */
+  plat?: boolean
 }
 
 /** LES LIEUX BASCULÉS — autorés par familles de matière (vague B du 26/07), format du pilote.
@@ -189,41 +194,55 @@ export const POI_LIT_DEFS: readonly PoiLitDef[] = POI_LIT_DEFS_DATA
 /** Les kinds qui ont leur `_lit` — PoiLayer s'y câble (R8 : le câblage suit la texture). */
 export const POI_LIT_KINDS: ReadonlySet<string> = new Set(POI_LIT_DEFS.map((d) => d.slug))
 
-export const poiLitKey = (slug: string): string => `poi-${slug}_lit`
-export const poiLitCrownKey = (slug: string): string => `poi-${slug}-crown_lit`
-export const poiLitMirrorKey = (slug: string): string => `poi-${slug}_lit_m`
+/** LES LIEUX QUI SE TIENNENT DEBOUT — donc ceux dont le retourné existe. DÉRIVÉE de `plat`,
+ *  jamais recopiée : la table qui décide de la génération est celle qui décide de la pose.
+ *  (Elle remplace `POI_LIT_MIRRORED`, qui ne nommait que la pierre levée : depuis le
+ *  2026-08-27, tout ce qui est dressé se retourne, et c'est le défaut.) */
+export const POI_LIT_DRESSES: ReadonlySet<string> = new Set(
+  POI_LIT_DEFS.filter((d) => d.plat !== true).map((d) => d.slug),
+)
 
-/** Les lieux dont le DÉCOR se décline en miroir (les 9 pierres du Cercle) : un setFlipX
- *  casserait le canal X de la normale — on pré-retourne (R5, la règle du 24/07). */
-export const POI_LIT_MIRRORED: ReadonlySet<string> = new Set(['pierre_levee'])
+/** LA CLÉ D'UN LIEU, retourné compris — `mir` est FILTRÉ par `POI_LIT_DRESSES` : demander le
+ *  retourné d'un tarn rend le tarn, pas un carré vert. PoiLayer n'a rien à savoir. */
+export const poiLitKey = (slug: string, mir = false): string =>
+  cleLit(`poi-${slug}`, mir && POI_LIT_DRESSES.has(slug))
+/** La COURONNE (la découpe haute du même dessin) suit son corps : un lieu retourné dont la
+ *  cime resterait droite se verrait au raccord. */
+export const poiLitCrownKey = (slug: string, mir = false): string =>
+  cleLit(`poi-${slug}-crown`, mir && POI_LIT_DRESSES.has(slug))
+/** @deprecated Le retourné passe par `poiLitKey(slug, true)` — gardée le temps que les
+ *  appelants historiques du Cercle migrent. */
+export const poiLitMirrorKey = (slug: string): string => poiLitKey(slug, true)
 
 /** Enregistre tous les lieux basculés : albédo aplati + normale (base plantée, sillons),
  *  l'ombre de contact APRÈS la dérivation, la couronne = découpe haute des mêmes canvas. */
 export function generateLitPois(scene: Phaser.Scene): void {
   for (const d of POI_LIT_DEFS) {
+    const dresse = d.plat !== true
+    const sillons = d.cracks ?? []
     const alb = newCanvas(d.w, d.h)
     drawErratic(alb.ctx, d)
-    const nrm = normalFromCanvas(alb.c, 1, 3.5, 3, true, d.cracks ?? [])
+    // LES DEUX NORMALES SUR LA MASSE NUE, l'ombre de contact ensuite, le retourné sur l'ombré :
+    // l'ordre de `registerLitPaire`, tenu à la main ici parce que la COURONNE doit être découpée
+    // dans les mêmes canvas — la recette rend ses textures, pas ses canvas.
+    const nrm = normalFromCanvas(alb.c, 1, 3.5, 3, true, sillons)
+    const nrmM = dresse
+      ? normalFromCanvas(mirrorCanvas(alb.c), 1, 3.5, 3, true, mirrorCracks(sillons, d.w))
+      : null
     shadeErratic(alb.ctx, d)
+    const albM = nrmM ? mirrorCanvas(alb.c) : null
     register(scene, poiLitKey(d.slug), alb.c, nrm)
-    if (POI_LIT_MIRRORED.has(d.slug)) {
-      // Le miroir : canvas pré-retourné, normale dérivée DU retourné (jamais un flip Phaser).
-      const alb2 = newCanvas(d.w, d.h)
-      drawErratic(alb2.ctx, d)
-      const m = mirrorCanvas(alb2.c)
-      const nrmM = normalFromCanvas(m, 1, 3.5, 3, true, (d.cracks ?? []).map((c) => ({
-        ...c, path: c.path.map(([x, y]) => [d.w - 1 - x, y] as const),
-      })))
-      shadeErratic(alb2.ctx, d)
-      register(scene, poiLitMirrorKey(d.slug), mirrorCanvas(alb2.c), nrmM)
-    }
+    if (nrmM && albM) register(scene, poiLitKey(d.slug, true), albM, nrmM)
     if (d.crown !== undefined) {
+      // La découpe HAUTE commute avec le miroir (on coupe des rangs, il échange des colonnes) :
+      // la couronne du retourné est donc la découpe du retourné, sans autre précaution.
       const crop = (src: HTMLCanvasElement): HTMLCanvasElement => {
         const { c, ctx } = newCanvas(d.w, d.crown!)
         ctx.drawImage(src, 0, 0)
         return c
       }
       register(scene, poiLitCrownKey(d.slug), crop(alb.c), crop(nrm))
+      if (nrmM && albM) register(scene, poiLitCrownKey(d.slug, true), crop(albM), crop(nrmM))
     }
   }
 }

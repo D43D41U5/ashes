@@ -27,7 +27,7 @@
  */
 import type Phaser from 'phaser'
 import { disc, tri } from './lit-props'
-import { newCanvas, normalFromCanvas, registerLit } from './normal-map'
+import { cleLit, newCanvas, registerLitPaire } from './normal-map'
 
 interface LitChip {
   type: string
@@ -35,6 +35,13 @@ interface LitChip {
   k?: number
   draw: (ctx: CanvasRenderingContext2D) => void
 }
+
+/** LES CHIPS SONT TOUS DRESSÉS — ce sont des BÂTIMENTS vus de trois quarts, pas des dalles.
+ *  Ils ont donc tous leur retourné (2026-08-27, « la même technique pour tout ce qui est
+ *  dressé »). Le drapeau ne se met pas par chip : il n'y a pas de cas, et un `dresse?: boolean`
+ *  par entrée aurait invité quelqu'un à en poser un `false` sans y penser. Ce qui est AU RAS DU
+ *  SOL (`floor`, `roof`, `parcelle`, `terroir`) n'a jamais eu de chip ici — voir l'en-tête. */
+const CHIPS_DRESSES = true
 
 const CHIPS: readonly LitChip[] = [
   { type: 'workshop', draw: (c) => { c.fillStyle = '#3c3c40'; c.fillRect(0, 0, 16, 16); c.fillStyle = '#5c5c62'; c.fillRect(1, 1, 14, 14); c.fillStyle = '#2a2a2e'; c.fillRect(4, 7, 8, 5) } },
@@ -55,13 +62,18 @@ const CHIPS: readonly LitChip[] = [
 /** Les `Structure.type` qui ont leur `_lit` — la source du swap de SnapshotView (jamais recopié). */
 export const LIT_STRUCTURE_TYPES: ReadonlySet<string> = new Set(CHIPS.map((c) => c.type))
 
-/** Toutes les clés générées — la surface testable (garde A1 de la spec da-feeling). */
-export const LIT_STRUCTURE_KEYS: ReadonlySet<string> = new Set(CHIPS.map((c) => `st-${c.type}_lit`))
+/** Toutes les clés générées — la surface testable (garde A1 de la spec da-feeling). Le retourné
+ *  en fait partie : une clé absente que le rendu demande, c'est le carré vert. */
+export const LIT_STRUCTURE_KEYS: ReadonlySet<string> = new Set(
+  CHIPS.flatMap((c) => [cleLit(`st-${c.type}`), ...(CHIPS_DRESSES ? [cleLit(`st-${c.type}`, true)] : [])]),
+)
 
 export function generateLitStructures(scene: Phaser.Scene): void {
   for (const chip of CHIPS) {
     const alb = newCanvas(16, 16)
     chip.draw(alb.ctx)
-    registerLit(scene, `st-${chip.type}_lit`, alb.c, normalFromCanvas(alb.c, chip.passes ?? 1, chip.k ?? 3.5))
+    registerLitPaire(scene, `st-${chip.type}`, {
+      albedo: alb.c, dresse: CHIPS_DRESSES, passes: chip.passes ?? 1, k: chip.k ?? 3.5,
+    })
   }
 }

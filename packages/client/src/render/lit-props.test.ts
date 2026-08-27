@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import {
-  LIT_CLUTTER_KINDS, LIT_NODE_TYPES, LIT_PROP_KEYS, litClutterTextureKey,
+  LIT_CLUTTER_KINDS, LIT_NODE_TYPES, LIT_PROP_KEYS, litClutterTextureKey, litNodeTextureKey,
   FLOWERS, PEBBLES, PEBBLE_SHADOW, pebbleShadowRects, VARIANT_COUNTS, variantBase,
 } from './lit-props'
 import { BIOME_CLUTTER } from './clutter'
@@ -91,7 +91,6 @@ describe('câblage des variantes cubiques (_lit / _lit_m)', () => {
     // Les 4 états du buisson à baies, la pousse, la fibre, les gravats, la souche, la cicatrice.
     for (const key of ['nd-berry_bush-0', 'nd-berry_bush-1', 'nd-berry_bush-2', 'nd-berry_bush-3', 'nd-sapling', 'nd-fiber_plant', 'nd-stump', 'nd-scar']) {
       expect(LIT_PROP_KEYS.has(`${key}_lit`), key).toBe(true)
-      expect(LIT_PROP_KEYS.has(`${key}_lit_m`), `${key} : un nœud ne se miroite pas`).toBe(false)
     }
     // fiber_plant passe par le whitelist générique ; berry_bush et sapling passent par leurs
     // BRANCHES SPÉCIALES de SnapshotView (berryDots, repousse) — les mettre ici serait du câblage
@@ -100,5 +99,56 @@ describe('câblage des variantes cubiques (_lit / _lit_m)', () => {
     expect(estUnSocle('rubble')).toBe(true)
     expect(LIT_NODE_TYPES.has('berry_bush')).toBe(false)
     expect(LIT_NODE_TYPES.has('sapling')).toBe(false)
+  })
+
+  /**
+   * ═══ CE QUI EST DRESSÉ SE RETOURNE — LA MÉTHODE PAR DÉFAUT (demande d'Alexis, 2026-08-27) ═══
+   *
+   * ⚠ CETTE GARDE NE DÉRIVE RIEN. Elle ÉNUMÈRE À LA MAIN ce qui se tient debout et ce qui est
+   * couché : c'est un jugement de géométrie, et une garde qui le relirait dans `dresse` ne
+   * pourrait pas échouer (elle affirmerait « la table est égale à elle-même »). Écrite ainsi,
+   * elle rougit le jour où un drapeau bascule par distraction — c'est tout ce qu'on lui demande.
+   */
+  const DEBOUT = [
+    'cl-bush', 'cl-low_bush', 'cl-boulder', 'cl-sphagnum', 'cl-grass_tuft', 'cl-reed',
+    'cl-snowdrift', 'cl-conifer', 'cl-pine', 'cl-larch', 'cl-burnt_trunk', 'cl-big_trunk',
+    'cl-stump', 'cl-chicot',
+    'nd-fumerolle', 'nd-fiber_plant', 'nd-sapling', 'nd-stump', 'nd-champignon',
+    'nd-berry_bush-0', 'nd-berry_bush-3',
+  ] as const
+  const COUCHE = [
+    'cl-lichen', 'cl-poussiere',                                    // des taches sur le sol
+    'nd-scar', 'nd-leaf_pile', 'nd-branche_au_sol', 'nd-pierre_au_sol',
+    'spr-player', 'spr-npc',                                        // symétriques au pixel
+  ] as const
+
+  it('TOUT CE QUI EST DRESSÉ a sa _lit_m — et rien de ce qui est couché n\'en a', () => {
+    for (const base of DEBOUT) {
+      expect(LIT_PROP_KEYS.has(`${base}_lit`), `${base} : la droite`).toBe(true)
+      expect(LIT_PROP_KEYS.has(`${base}_lit_m`), `${base} est DRESSÉ : il lui faut son retourné`).toBe(true)
+    }
+    for (const base of COUCHE) {
+      expect(LIT_PROP_KEYS.has(`${base}_lit`), `${base} : la droite`).toBe(true)
+      expect(LIT_PROP_KEYS.has(`${base}_lit_m`), `${base} est COUCHÉ : pas de retourné`).toBe(false)
+    }
+  })
+
+  it('demander le retourné d\'un prop COUCHÉ rend la clé droite, jamais une clé absente', () => {
+    // Le piège que `litClutterTextureKey` doit désamorcer : ClutterLayer tire son bit de miroir
+    // d'un hash positionnel, sans savoir ce qui se retourne. Sur un lichen, le bit vaut 1 une
+    // fois sur deux — et une clé inexistante, c'est le carré vert de Phaser en plein pré.
+    for (const kind of ['lichen', 'poussiere']) {
+      expect(litClutterTextureKey(kind, true)).toBe(`cl-${kind}_lit`)
+      expect(LIT_PROP_KEYS.has(litClutterTextureKey(kind, true))).toBe(true)
+    }
+    expect(litClutterTextureKey('bush', true)).toBe('cl-bush_lit_m')
+  })
+
+  it('le nœud DRESSÉ se retourne par sa propre fabrique de clé, le couché non', () => {
+    expect(litNodeTextureKey('nd-champignon', true)).toBe('nd-champignon_lit_m')
+    expect(litNodeTextureKey('nd-branche_au_sol', true)).toBe('nd-branche_au_sol_lit')
+    for (const base of [...DEBOUT, ...COUCHE]) {
+      expect(LIT_PROP_KEYS.has(litNodeTextureKey(base, true)), `${base} : la clé posée existe`).toBe(true)
+    }
   })
 })

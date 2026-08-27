@@ -30,7 +30,7 @@
  */
 import type Phaser from 'phaser'
 import { BALANCE, isSingleEdge } from '@ashes/sim'
-import { type Crack, newCanvas, normalFromCanvas, registerLit } from './normal-map'
+import { type Crack, cleLit, mirrorCanvas, mirrorCracks, newCanvas, normalFromCanvas, registerLit } from './normal-map'
 
 const T = 16 // le côté d'une tuile
 
@@ -68,6 +68,11 @@ const MOUSSE = '#4a5a36'
 
 interface Piece {
   type: string
+  /** SE TIENT-ELLE DEBOUT ? Elle a alors son retourné `_lit_m` (2026-08-27). Toutes celles de
+   *  cette table le sont — le mobilier et le monde bâti sont vus de trois quarts, avec un dessus
+   *  et une face avant. Ce qui est AU RAS DU SOL (`floor`, `roof`, `friche`, `terre`, `roc`) ne
+   *  passe pas par ici : ces pièces n'ont pas de `_lit` du tout (règle de `lit-structures`). */
+  dresse?: boolean
   /** Hauteur du dessin, en px. Défaut : la tuile. L'encadrement monte à la crête du MUR. */
   hauteur?: number
   /** Largeur du dessin, en px. Défaut : la tuile. Seul le seuil déborde (il est À CHEVAL). */
@@ -209,7 +214,7 @@ const ARETE = (yf: number): Crack => ({ path: [[0, yf], [T, yf]], crevasse: true
 const PIECES: readonly Piece[] = [
   // ── LA TABLE : un plateau de planches, deux tréteaux ─────────────────────
   {
-    type: 'table',
+    type: 'table', dresse: true,
     dessiner: (g) => {
       const { yh, yf } = boite(g, 6, BOIS_T)
       rect(g, '#8a6438', 0, yh + 2, T, 1) //     les joints du plateau, vus de dessus
@@ -221,7 +226,7 @@ const PIECES: readonly Piece[] = [
   },
   // ── LE BANC : bas, on l'enjambe ──────────────────────────────────────────
   {
-    type: 'banc',
+    type: 'banc', dresse: true,
     dessiner: (g) => {
       const { yh, yf } = boite(g, 4, BOIS_T)
       rect(g, '#8a6438', 0, yh + 3, T, 1)
@@ -232,7 +237,7 @@ const PIECES: readonly Piece[] = [
   },
   // ── LA PAILLASSE : à même le sol, la plus basse du lot ───────────────────
   {
-    type: 'paillasse',
+    type: 'paillasse', dresse: true,
     dessiner: (g) => {
       const { yh, yf } = boite(g, 3, PAILLE_T)
       for (let k = 0; k < 10; k++) { // les brins qui dépassent — c'est ce qui dit PAILLE
@@ -245,7 +250,7 @@ const PIECES: readonly Piece[] = [
   },
   // ── L'ÉTAGÈRE : la plus haute — sa face porte trois rayons ───────────────
   {
-    type: 'etagere',
+    type: 'etagere', dresse: true,
     dessiner: (g) => {
       const { yf } = boite(g, 10, BOIS_T)
       for (const dy of [1, 4, 7]) {
@@ -257,7 +262,7 @@ const PIECES: readonly Piece[] = [
   },
   // ── LE TONNEAU : ses DOUVES sur la face, ses cercles de fer ─────────────
   {
-    type: 'tonneau',
+    type: 'tonneau', dresse: true,
     dessiner: (g) => {
       const { yh, yf } = boite(g, 8, BOIS_T)
       disque(g, '#5a3f24', 8, yh + 3, 6.5) //   le fond, vu de dessus : le seul disque du lot
@@ -272,7 +277,7 @@ const PIECES: readonly Piece[] = [
   // Repris ici depuis `lit-structures` : c'était un carré plat, il est maintenant vu du même
   // œil que le reste, avec une vraie normale.
   {
-    type: 'chest',
+    type: 'chest', dresse: true,
     dessiner: (g) => {
       const { yh, yf } = boite(g, 6, { haut: '#8a6438', hautH: '#a67f4a', face: '#6a4c2c', faceO: '#4a3520', pied: '#2e2016' })
       rect(g, '#5a3f24', 0, yh + CAP_M - 1, T, 1) // l'arête du couvercle
@@ -287,7 +292,7 @@ const PIECES: readonly Piece[] = [
   // suspendues. Pas de boîte — c'est un cadre ajouré, donc la silhouette est faite de
   // barres, et le sol se voit entre elles.
   {
-    type: 'sechoir',
+    type: 'sechoir', dresse: true,
     dessiner: (g) => {
       const yf = 5 // la traverse, à mi-hauteur : la claie est basse, on y accroche à la main
       rect(g, '#6a5232', 2, yf, T - 4, 2) //        la traverse
@@ -305,7 +310,7 @@ const PIECES: readonly Piece[] = [
   },
   // ── L'ÂTRE : la gueule noire, dans un manteau de pierre ─────────────────
   {
-    type: 'atre',
+    type: 'atre', dresse: true,
     dessiner: (g) => {
       const { yh, yf } = boite(g, 10, PIERRE_T)
       rect(g, PIERRE_T.faceO, 0, yh + 2, T, 1) //  les joints du manteau, vus de dessus
@@ -318,7 +323,7 @@ const PIECES: readonly Piece[] = [
   },
   // ── L'ABREUVOIR : une auge — son creux se voit DE DESSUS ────────────────
   {
-    type: 'abreuvoir',
+    type: 'abreuvoir', dresse: true,
     dessiner: (g) => {
       const { yh, yf } = boite(g, 5, PIERRE_T)
       rect(g, PIERRE_T.pied, 2, yh + 1, 12, CAP_M - 1) // le creux
@@ -331,7 +336,7 @@ const PIECES: readonly Piece[] = [
   },
   // ── LA MEULE : le foin, et la perche qui la tient ───────────────────────
   {
-    type: 'meule',
+    type: 'meule', dresse: true,
     dessiner: (g) => {
       const { yh, yf } = boite(g, 9, PAILLE_T)
       disque(g, '#a89a5e', 8, yh + 3, 6.5) //   le dôme, vu de dessus
@@ -348,7 +353,7 @@ const PIECES: readonly Piece[] = [
   // Elle est COUCHÉE : pas de dessus ni de face, une diagonale et son fil. C'est la seule
   // pièce du lot qui n'est pas une boîte, et c'est ce qui la fait lire comme « tombée ».
   {
-    type: 'poutre',
+    type: 'poutre', dresse: true,
     dessiner: (g) => {
       g.fillStyle = BOIS.nuit
       g.beginPath(); g.moveTo(0, 13); g.lineTo(13, 0); g.lineTo(16, 3); g.lineTo(3, 16); g.closePath(); g.fill()
@@ -363,7 +368,7 @@ const PIECES: readonly Piece[] = [
   // BAS pour de vrai : son dessus occupe la tuile, sa face ne fait que trois pixels. La
   // silhouette doit dire « ça ne se dresse plus ».
   {
-    type: 'mur_bas',
+    type: 'mur_bas', dresse: true,
     dessiner: (g) => {
       const joints: Crack[] = []
       const { yh, yf } = boite(g, 3, PIERRE_T)
@@ -391,7 +396,7 @@ const PIECES: readonly Piece[] = [
   // en plus large), une roue encore debout à l'arrière, l'AUTRE à plat sur le sol — une
   // charrette qui a perdu sa roue ne repart pas. Et l'herbe a pris le plateau.
   {
-    type: 'charrette',
+    type: 'charrette', dresse: true,
     dessiner: (g) => {
       // LE PLATEAU, en travers : l'arrière tient sur sa roue, l'avant touche terre.
       g.fillStyle = BOIS.nuit
@@ -437,7 +442,7 @@ const PIECES: readonly Piece[] = [
   // distingue du mur_bas par la silhouette même : lui ne se dresse plus, elle n'a jamais cessé.
   // Plus haute que large (16 px sur 8), la plus haute silhouette du mobilier.
   {
-    type: 'autel',
+    type: 'autel', dresse: true,
     dessiner: (g) => {
       // LE SOCLE — la marche taillée sur laquelle la pierre pose.
       rect(g, PIERRE_T.pied, 2, 13, 12, 3)
@@ -469,7 +474,7 @@ const PIECES: readonly Piece[] = [
   // ── LE ROCHER : le bloc erratique de poche (étage 2) — PAS une boîte : un erratique n'a
   //    pas d'angles droits. Silhouette arrondie-facettée, la recette cubique du clutter. ──
   {
-    type: 'rocher',
+    type: 'rocher', dresse: true,
     k: 3.5,
     dessiner: (g) => {
       // La masse, épaulée : plus large au pied qu'au sommet, décalée — rien de symétrique.
@@ -493,7 +498,7 @@ const PIECES: readonly Piece[] = [
   // ── L'ÉBOULIS : les pierres croulées (étage 2) — bas comme le mur_bas, mais en TAS,
   //    pas en assises : des blocs inégaux qui débordent la ligne. ──
   {
-    type: 'eboulis',
+    type: 'eboulis', dresse: true,
     dessiner: (g) => {
       const { yh } = boite(g, 3, PIERRE_T)
       // Les blocs, par-dessus la ligne : tailles et tons tirés du hash positionnel.
@@ -524,7 +529,7 @@ const PIECES: readonly Piece[] = [
   //    le re-texture à l'art falaise autotuilé (`cliffKey`) ; ce chip-ci est le repli du
   //    boot, le fantôme de l'Atelier et sa vignette — même palette, mêmes mouchetures. ──
   {
-    type: 'massif',
+    type: 'massif', dresse: true,
     dessiner: (g) => {
       rect(g, '#4b4852', 0, 0, T, T) //  l'ardoise de la falaise — la palette constante
       for (const [x, y] of [[3, 4], [9, 2], [13, 7], [5, 11], [11, 13], [7, 8]] as const) rect(g, '#3e3b46', x, y, 2, 1)
@@ -542,7 +547,7 @@ const PIECES: readonly Piece[] = [
   // C'est la silhouette qui disait « mine » quand la mine était un sprite : elle revient
   // en PIÈCE haute (40 px, l'échelle d'un fût d'arbre), et c'est le tri Y qui la couche.
   {
-    type: 'chevalement',
+    type: 'chevalement', dresse: true,
     hauteur: 40,
     dessiner: (g) => {
       // Les JAMBES, en A : larges au sol, serrées au sommet — trois marches de retrait
@@ -572,7 +577,7 @@ const PIECES: readonly Piece[] = [
   // bâti, c'est lui qui dit « ça s'enfonce ». Posée devant le passage d'un antre, elle est
   // l'entrée qu'on lit comme une porte. MOLLE : le dessin promet le franchissement.
   {
-    type: 'galerie',
+    type: 'galerie', dresse: true,
     hauteur: 24,
     dessiner: (g) => {
       rect(g, '#101014', 3, 8, 10, 16) //     la nuit de la galerie
@@ -594,7 +599,7 @@ const PIECES: readonly Piece[] = [
   // L'ÉTAI : un poteau de boisage et son chapeau — planté là où le toit menaçait. Bas
   // dans le monde (on enjambe ses calages), haut dans le dessin (24 px : un poteau).
   {
-    type: 'etai',
+    type: 'etai', dresse: true,
     hauteur: 24,
     dessiner: (g) => {
       rect(g, BOIS.mid, 4, 2, 8, 2) //        le CHAPEAU, débordant
@@ -614,7 +619,7 @@ const PIECES: readonly Piece[] = [
   // Le WAGONNET : la caisse ferrée sur ses deux roues, échouée à jamais — la charrette du
   // sous-sol. Le minerai qui dépasse dit ce qu'on n'a jamais fini de sortir.
   {
-    type: 'wagonnet',
+    type: 'wagonnet', dresse: true,
     dessiner: (g) => {
       const { yh, yf } = boite(g, 7, PIERRE_T) //  la caisse, en tôle grise
       rect(g, PIERRE_T.pied, 0, yf, 1, 7 - 2) //   les cornières, aux angles
@@ -1572,13 +1577,45 @@ function copier(src: HTMLCanvasElement): HTMLCanvasElement {
   return c
 }
 
-/** Pose `st-<cle>` (albédo) ET `st-<cle>_lit` (albédo + normale) du même dessin. */
+/**
+ * Pose `st-<cle>` (albédo peint) ET `st-<cle>_lit` (albédo + normale) du même dessin — plus
+ * `st-<cle>_lit_m` quand la pièce est DRESSÉE.
+ *
+ * Le retourné se dérive DU CANVAS RETOURNÉ, sillons compris (`mirrorCracks` le fait dans
+ * `registerLitPaire` ; ici on passe par `normalFromCanvas` en direct parce que l'appelant a
+ * déjà sa normale droite sous la main et ses propres cadrans). Un `setFlipX` ne ferait pas
+ * l'affaire : il n'inverse pas le canal X de la normale.
+ */
 function poser(
   scene: Phaser.Scene, cle: string, albedo: HTMLCanvasElement, normale: HTMLCanvasElement,
+  normaleMiroir: HTMLCanvasElement | null = null,
 ): void {
   if (scene.textures.exists(cle)) scene.textures.remove(cle)
   scene.textures.addCanvas(cle, copier(albedo))
-  registerLit(scene, `${cle}_lit`, albedo, normale)
+  const albM = normaleMiroir ? mirrorCanvas(albedo) : null
+  registerLit(scene, cleLit(cle), albedo, normale)
+  if (normaleMiroir && albM) registerLit(scene, cleLit(cle, true), albM, normaleMiroir)
+}
+
+/**
+ * ═══ UN MASQUE D'AUTOTILE SE RETOURNE-T-IL ? ═══
+ *
+ * Une barrière d'arête est indexée par son voisinage — **N=1, E=2, S=4, O=8**. Retourner
+ * l'image ÉCHANGE E ET O : le retourné du masque 6 (N+E) est le sprite légitime du masque 12
+ * (N+O)… qui existe déjà, à l'identique. Sur ces masques-là, le miroir ne serait pas une
+ * variété, ce serait un DOUBLON — et posé sur la mauvaise tuile, un mur qui pointe du mauvais
+ * côté.
+ *
+ * Il reste les masques que le miroir laisse en place : ceux dont E et O valent la même chose.
+ * Là, le retourné est un SECOND DESSIN VALIDE du même masque, et il en faut un, parce que
+ * l'art d'un masque est déterministe (aucune graine positionnelle) — toutes les tuiles d'un
+ * même masque sont identiques au pixel, et un long mur est fait de masques 5 (N+S) et 10 (E+O).
+ * C'est exactement là que la répétition se voit.
+ *
+ * Sept masques sur quinze : 1, 4, 5, 10, 11, 14, 15.
+ */
+export function masqueSeRetourne(masque: number): boolean {
+  return ((masque & 2) !== 0) === ((masque & 8) !== 0)
 }
 
 /** Les types qui ont leur `_lit` ici — la source du swap de `SnapshotView`, jamais recopiée. */
@@ -1586,9 +1623,13 @@ export const BATI_LIT_TYPES: ReadonlySet<string> = new Set([...PIECES.map((p) =>
 
 /** Toutes les clés produites — la surface testable. */
 export const BATI_KEYS: readonly string[] = [
-  ...PIECES.flatMap((p) => [`st-${p.type}`, `st-${p.type}_lit`]),
-  ...Array.from({ length: 16 }, (_, m) => [`st-cloture-${m}`, `st-cloture-${m}_lit`]).flat(),
-  ...Array.from({ length: 16 }, (_, m) => [`st-wall-ruine-${m}`, `st-wall-ruine-${m}_lit`]).flat(),
+  ...PIECES.flatMap((p) => [`st-${p.type}`, cleLit(`st-${p.type}`), ...(p.dresse === true ? [cleLit(`st-${p.type}`, true)] : [])]),
+  // L'AUTOTILE : le retourné n'existe que sur les sept masques que le miroir laisse en place
+  // (`masqueSeRetourne`). Cette liste dit ce qui EXISTE — en promettre seize rendrait la garde
+  // de couverture menteuse dans les deux sens.
+  ...['cloture', 'wall-ruine'].flatMap((nom) => Array.from({ length: 16 }, (_, m) => [
+    `st-${nom}-${m}`, cleLit(`st-${nom}-${m}`), ...(masqueSeRetourne(m) ? [cleLit(`st-${nom}-${m}`, true)] : []),
+  ]).flat()),
   // `st-cloture` sans masque : le repli, celui que demande tout code qui connaît le TYPE et pas
   // le voisinage (le fantôme de pose). Il a sa `_lit` comme les autres — l'oublier ici l'aurait
   // rendu invisible à la garde de couverture, alors qu'il existe bel et bien.
@@ -1725,7 +1766,10 @@ function generateEdgeBarrieres(scene: Phaser.Scene): void {
   for (let mask = 1; mask < 16; mask++) {
     for (const [nom, ht, tons, grain] of FAMILLES_BARRIERE) {
       const { albedo, joints } = dessinerBarriere(mask, ht, tons, grain)
-      poser(scene, `st-${nom}-e${mask}`, albedo, normalFromCanvas(albedo, 1, 3.2, 2, false, joints))
+      poser(scene, `st-${nom}-e${mask}`, albedo, normalFromCanvas(albedo, 1, 3.2, 2, false, joints),
+        masqueSeRetourne(mask)
+          ? normalFromCanvas(mirrorCanvas(albedo), 1, 3.2, 2, false, mirrorCracks(joints, albedo.width))
+          : null)
     }
     // LA PORTE DU JOUEUR — même bande, même crête, un vantail. Elle ne dérive pas de la boucle
     // ci-dessus : elle ajoute du dessin PAR-DESSUS la barrière, elle n'en change pas les tons.
@@ -1835,13 +1879,20 @@ export const COUPE_DE: Readonly<Record<string, string>> = {
 /** Toutes les clés d'arête — la surface testable, jamais recopiée. */
 export const EDGE_BARRIER_KEYS: readonly string[] = [
   ...['wall', 'wall-bois', 'wall-ruine', 'cloture', 'palissade'].flatMap((nom) =>
-    Array.from({ length: 15 }, (_, i) => [`st-${nom}-e${i + 1}`, `st-${nom}-e${i + 1}_lit`]).flat()),
+    Array.from({ length: 15 }, (_, i) => {
+      const cle = `st-${nom}-e${i + 1}`
+      return [cle, cleLit(cle), ...(masqueSeRetourne(i + 1) ? [cleLit(cle, true)] : [])]
+    }).flat()),
   ...['wall-coupe', 'cloture-coupe'].flatMap((nom) =>
     Array.from({ length: 15 }, (_, i) => `st-${nom}-e${i + 1}`)),
   // LA PORTE : quatre arêtes uniques × cinq frames, DEBOUT — et debout seulement, elle ne se
   // tranche plus (voir `COUPE_DE`). Pas de masque composite non plus : une porte n'en porte
   // jamais (R25), et la table doit dire ce qui EXISTE, pas ce qu'on imagine. Les MOITIÉS de
   // porte double (R27) suivent le même contrat, en deux familles — une par côté du cadre.
+  // ⚠ LA PORTE N'A PAS DE RETOURNÉ, et c'est le seul sprite DRESSÉ à qui on le refuse : son
+  // vantail pivote autour d'un gond, et le miroir le ferait s'ouvrir de l'autre côté. Ses
+  // quatre masques sont d'ailleurs des arêtes UNIQUES (1, 2, 4, 8) — dont deux seulement
+  // seraient symétriques, ce qui aurait donné une porte sur deux retournée et l'autre non.
   ...[1, 2, 4, 8].flatMap((bit) =>
     PORTE_FRAMES.flatMap((_, f) =>
       ['door', 'door2a', 'door2b'].flatMap((fam) => [`st-${fam}-e${bit}-f${f}`, `st-${fam}-e${bit}-f${f}_lit`]))),
@@ -1884,13 +1935,20 @@ export function generateBatiArt(scene: Phaser.Scene): void {
   for (const p of PIECES) {
     const { c, ctx } = newCanvas(p.largeur ?? T, p.hauteur ?? T)
     const joints = p.dessiner(ctx)
-    poser(scene, `st-${p.type}`, c, normalFromCanvas(c, p.passes ?? 1, p.k ?? 3.2, p.cell ?? 2, p.plant ?? false, joints))
+    const cad = [p.passes ?? 1, p.k ?? 3.2, p.cell ?? 2, p.plant ?? false] as const
+    poser(scene, `st-${p.type}`, c, normalFromCanvas(c, ...cad, joints),
+      p.dresse === true ? normalFromCanvas(mirrorCanvas(c), ...cad, mirrorCracks(joints, c.width)) : null)
   }
   for (let mask = 0; mask < 16; mask++) {
+    // Le retourné n'existe que sur les masques que le miroir laisse en place — voir
+    // `masqueSeRetourne`. Sur les autres, il serait le sprite d'un masque voisin.
+    const mir = masqueSeRetourne(mask)
+    const nrmM = (a: HTMLCanvasElement, j: Crack[]): HTMLCanvasElement | null =>
+      mir ? normalFromCanvas(mirrorCanvas(a), 1, 3.2, 2, false, mirrorCracks(j, a.width)) : null
     const cl = dessinerCloture(mask)
-    poser(scene, `st-cloture-${mask}`, cl.albedo, normalFromCanvas(cl.albedo, 1, 3.2, 2, false, cl.joints))
+    poser(scene, `st-cloture-${mask}`, cl.albedo, normalFromCanvas(cl.albedo, 1, 3.2, 2, false, cl.joints), nrmM(cl.albedo, cl.joints))
     const mur = dessinerMurRuine(mask, mask * 13 + 5)
-    poser(scene, `st-wall-ruine-${mask}`, mur.albedo, normalFromCanvas(mur.albedo, 1, 3.2, 2, false, mur.joints))
+    poser(scene, `st-wall-ruine-${mask}`, mur.albedo, normalFromCanvas(mur.albedo, 1, 3.2, 2, false, mur.joints), nrmM(mur.albedo, mur.joints))
   }
   // `st-cloture` tout court : le poteau seul (masque 0) — le fantôme de pose et tout code qui
   // demanderait la texture par son nom de type. Le rendu, lui, passe par les masques.

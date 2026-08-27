@@ -16,7 +16,7 @@
  * C'était le SEUL sprite du monde volontairement éteint — l'exception tombe (da-feeling R3).
  */
 import type Phaser from 'phaser'
-import { newCanvas, normalFromCanvas, registerLit as register } from './normal-map'
+import { mirrorCanvas, mirrorRelief, newCanvas, normalFromCanvas, poserPaire, registerLitPaire } from './normal-map'
 import {
   cleHouppier, colonneX, houppierLargeur, pariteDeCime, prendLaSaison,
   CIMES_PAR_ARBRE, CHARGE_NEIGE, etatsDeCime,
@@ -173,20 +173,31 @@ function cuireCime(scene: Phaser.Scene, v: VarianteArbre, cime: number, etat: Et
   const m = v.mesures
   const W = houppierLargeur(m)
   const jour = cran * CRAN_SAISON + 1 + CRAN_SAISON / 2 // le MILIEU du cran : sa couleur moyenne
-  const cle = cleHouppier(v.slug, true, cime, etat, pariteDeCime(v.slug, etat, cran))
+  const parite = pariteDeCime(v.slug, etat, cran)
+  const cles = (miroir: boolean): string => cleHouppier(v.slug, true, cime, etat, parite, miroir)
+  const cle = cles(false)
   const grain = grainDeCime(v, cime, etat, jour)
   const alb = crownAlbedo(W, m.houppierS, grain)
+  // Trois passes de lissage sur une cime de pavés (six les arrondissaient en coussins, une
+  // seule facettait chaque pixel de frange) ; DEUX sur une cime nue — une branche est fine,
+  // la lisser six fois en ferait une masse molle (c'est le réglage du fût).
+  const passes = etat === 'nu' ? 2 : 3
+  const k = etat === 'nu' ? 3.5 : 3.2
   let normale = NORMALES.get(cle)
   if (normale === undefined) {
-    // Trois passes de lissage sur une cime de pavés (six les arrondissaient en coussins, une
-    // seule facettait chaque pixel de frange) ; DEUX sur une cime nue — une branche est fine,
-    // la lisser six fois en ferait une masse molle (c'est le réglage du fût).
-    normale = etat === 'nu'
-      ? normalFromCanvas(alb, 2, 3.5, 4, false, [], grain.relief)
-      : normalFromCanvas(alb, 3, 3.2, 4, false, [], grain.relief)
+    normale = normalFromCanvas(alb, passes, k, 4, false, [], grain.relief)
     NORMALES.set(cle, normale)
   }
-  register(scene, cle, alb, normale)
+  // LE HOUPPIER EST DRESSÉ : il a son retourné (2026-08-27). Sa normale se dérive DU CANVAS
+  // RETOURNÉ — et elle est CACHÉE comme la droite, parce que le recuit saisonnier repasse ici
+  // trente-cinq fois par cran : c'est l'albédo qui change avec le jour, jamais la normale.
+  const cleM = cles(true)
+  let normaleM = NORMALES.get(cleM)
+  if (normaleM === undefined) {
+    normaleM = normalFromCanvas(mirrorCanvas(alb), passes, k, 4, false, [], mirrorRelief(grain.relief, alb.width, alb.height))
+    NORMALES.set(cleM, normaleM)
+  }
+  poserPaire(scene, cles, alb, normale, normaleM)
 }
 
 /**
@@ -231,7 +242,11 @@ export function generateLitTrees(scene: Phaser.Scene, jour = 1): void {
     const x0 = colonneX(m)
     const grain = champDeHauteur(e, m.futW, m.futH, x0, x0 + m.colonneW, v.fut)
     const alb = futAlbedo(m, v.fut, e, grain)
-    register(scene, `nd-${v.slug}_trunk_lit`, alb, normalFromCanvas(alb, 1, 3.5, 2, false, [], grain.relief))
+    // LE FÛT EST DRESSÉ, et c'est même la partie ASYMÉTRIQUE de l'arbre : son écorce a un grain,
+    // et la cuire une seule fois donnait douze fûts identiques dans une futaie.
+    registerLitPaire(scene, `nd-${v.slug}_trunk`, {
+      albedo: alb, dresse: true, passes: 1, k: 3.5, cell: 2, relief: grain.relief,
+    })
   }
 }
 

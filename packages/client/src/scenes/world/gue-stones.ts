@@ -14,7 +14,7 @@
 import Phaser from 'phaser'
 import type { WorldMap } from '@ashes/sim'
 import { TILE_PX, TIE_NODE, ySortDepth } from '../../render/framing'
-import { newCanvas, normalFromCanvas, registerLit } from '../../render/normal-map'
+import { newCanvas, registerLitPaire } from '../../render/normal-map'
 import type { Warp } from '../../render/warp'
 
 const KEY = 'gue-pierre'
@@ -37,12 +37,16 @@ export function makeGueStoneTexture(scene: Phaser.Scene): void {
   const { c: alb, ctx } = newCanvas(14, 12)
   ctx.fillStyle = '#9a938a'
   ctx.beginPath(); ctx.ellipse(7, 7, 6, 3.5, 0, 0, Math.PI * 2); ctx.fill()
-  const nrm = normalFromCanvas(alb, 1, 3.5, 2, true)
-  const { c: avecOmbre, ctx: ctx2 } = newCanvas(14, 12)
-  ctx2.drawImage(alb, 0, 0)
-  ctx2.fillStyle = 'rgba(0,0,0,0.22)'
-  ctx2.beginPath(); ctx2.ellipse(7, 9.5, 6, 2, 0, 0, Math.PI * 2); ctx2.fill()
-  registerLit(scene, `${KEY}_lit`, avecOmbre, nrm)
+  // COUCHÉE, et déclarée telle : une dalle de gué est une pierre plate posée dans le courant,
+  // quasi symétrique — son retourné serait la même image. C'est le `dresse: false` de la
+  // recette (`normal-map.ts`), pas un oubli : la variété vient de l'échelle, plus bas.
+  registerLitPaire(scene, KEY, {
+    albedo: alb, dresse: false, passes: 1, k: 3.5, cell: 2, plant: true,
+    ombrer: (c) => {
+      c.fillStyle = 'rgba(0,0,0,0.22)'
+      c.beginPath(); c.ellipse(7, 9.5, 6, 2, 0, 0, Math.PI * 2); c.fill()
+    },
+  })
 }
 
 export class GueStones {

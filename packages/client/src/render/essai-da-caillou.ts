@@ -26,7 +26,7 @@
  */
 import type Phaser from 'phaser'
 import type { Crack } from './normal-map'
-import { mirrorCanvas, newCanvas, normalFromCanvas, registerLit } from './normal-map'
+import { newCanvas, registerLitPaire } from './normal-map'
 
 type Rect = readonly [number, number, number, number]
 /** Un bloc/une touffe : son cadre, sa hauteur de relief (0..1) et son ton de MATIÈRE. */
@@ -291,8 +291,10 @@ interface Essai {
   k: number
   cell?: number
   plant?: boolean
-  /** miroir pré-retourné (le décor se décline, un nœud jamais — cf. lit-props). Hors essai :
-   *  un miroir devrait aussi retourner sillons et jonctions, pas seulement le relief. */
+  /** Miroir pré-retourné. La réserve que portait ce champ (« il devrait aussi retourner sillons
+   *  et jonctions ») est LEVÉE depuis le 2026-08-27 : `registerLitPaire` retourne le relief ET
+   *  les sillons, et les traits peints arrivent après la dérivation. Aucun essai ne le demande
+   *  aujourd'hui — le champ reste pour le prochain. */
   miroir?: boolean
   /** séparation interne GRAVÉE (la lumière la trouve) */
   sillons?: readonly Crack[]
@@ -367,24 +369,18 @@ export function generateEssaiCaillou(scene: Phaser.Scene): void {
   for (const e of ESSAIS) {
     const alb = newCanvas(e.w, e.h)
     peindre(alb.ctx, e.masses, e.lisere, e.w, e.h)
-    const rel = relief(e.w, e.h, e.masses, e.bombe)
-    // La normale se dérive AVANT les traits peints : le masque alpha ne bouge pas, mais l'ordre
-    // reste celui de lit-props (tout ce qui est peint « en plus » vient après la dérivation).
-    const nrm = normalFromCanvas(alb.c, e.passes, e.k, e.cell, e.plant ?? false, e.sillons ?? [], rel)
-    if (e.jonctions) peindreJonctions(alb.ctx, e.jonctions)
-    registerLit(scene, `${e.key}_lit`, alb.c, nrm)
-    if (e.miroir) {
-      const nrmM = normalFromCanvas(mirrorCanvas(alb.c), e.passes, e.k, e.cell, e.plant ?? false, [], mirrorRelief(rel, e.w, e.h))
-      registerLit(scene, `${e.key}_lit_m`, mirrorCanvas(alb.c), nrmM)
-    }
+    // TOUT PASSE PAR LA RECETTE (`registerLitPaire`) — l'essai comme le jeu. Les traits peints
+    // en plus (`jonctions`) sont son `ombrer` : ils arrivent APRÈS la dérivation des normales,
+    // ce qui était déjà la règle ici. Le relief et les sillons se retournent avec le canvas ;
+    // c'est la recette qui le fait maintenant, et le miroir de l'essai gagne au passage ses
+    // sillons retournés (il les perdait, faute d'un `mirrorCracks` sous la main).
+    registerLitPaire(scene, e.key, {
+      albedo: alb.c,
+      dresse: e.miroir === true,
+      passes: e.passes, k: e.k, cell: e.cell, plant: e.plant ?? false,
+      sillons: e.sillons ?? [],
+      relief: relief(e.w, e.h, e.masses, e.bombe),
+      ombrer: e.jonctions ? (c): void => peindreJonctions(c, e.jonctions!) : undefined,
+    })
   }
-}
-
-/** Le relief se retourne AVEC le canvas — sinon la normale du miroir creuse à l'envers de sa
- *  matière (mémoire : un flip Phaser n'inverse pas le canal X, c'est bien pour ça qu'on
- *  pré-retourne tout). */
-function mirrorRelief(src: Float32Array, w: number, h: number): Float32Array {
-  const out = new Float32Array(w * h)
-  for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) out[y * w + x] = src[y * w + (w - 1 - x)]!
-  return out
 }

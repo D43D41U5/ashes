@@ -93,9 +93,10 @@ import { FonduDeCime } from '../../render/fondu-cime'
 const MARGE_CIMES = Math.ceil(Math.max(...TOUTES_VARIANTES.map((v) => hauteurTuiles(v.mesures))))
 import { cimeDe, varianteArbre } from '../../render/arbre-peuplement'
 import { warmthColor } from '../../render/lighting'
-import { LIT_NODE_TYPES } from '../../render/lit-props'
+import { LIT_NODE_TYPES, litNodeTextureKey } from '../../render/lit-props'
+import { cleLit } from '../../render/normal-map'
 import { cleDeSocle, estUnSocle, SOCLE_KEYS, SOCLE_OMBRE_DESCENTE, SOCLE_OMBRE_TUILES, tailleDeSocle, type SocleType } from '../../render/socle-mineral'
-import { BATI_LIT_TYPES, COUPE_DE, EDGE_ORIGIN_Y, MUR_HT, RUINE_SEUIL } from '../../render/bati-art'
+import { BATI_LIT_TYPES, COUPE_DE, EDGE_ORIGIN_Y, masqueSeRetourne, MUR_HT, RUINE_SEUIL } from '../../render/bati-art'
 import { creerPortesAnimees } from '../../render/porte-anim'
 import { calculerNappe, calculerPans, pansTombes } from '../../render/pans'
 import { LIT_STRUCTURE_TYPES } from '../../render/lit-structures'
@@ -442,6 +443,17 @@ function memeBati(a: Structure[], b: Structure[]): boolean {
   return true
 }
 
+/**
+ * LE BIT DE MIROIR D'UN SPRITE DRESSÉ — tiré de sa TUILE, et de rien d'autre.
+ *
+ * Pas de l'index dans le pool, pas du rang dans la liste des nœuds : les deux changent d'un
+ * snapshot à l'autre, et le sprite se retournerait alors à chaque image. Ça se lirait comme un
+ * scintillement de rendu, pas comme un choix de texture — on chercherait le défaut dans le
+ * shader. La tuile, elle, ne bouge jamais : le même caillou est retourné du même côté toute la
+ * partie, et deux tuiles voisines ne le sont pas ensemble.
+ */
+const miroirDeTuile = (tx: number, ty: number): boolean => hash2(tx, ty, 0x5117) >= 0.5
+
 export class SnapshotView {
   /** Dernier état reçu — lu par la prédiction (collisions) et les inputs. */
   structures: Structure[] = []
@@ -650,9 +662,9 @@ export class SnapshotView {
   /** La clé d'une cime, avec le REPLI sur la feuillue quand l'état demandé n'a pas été cuit
    *  (un slug neuf, une variante non cuite) : mieux vaut la mauvaise saison que le carré vert
    *  d'une texture absente. */
-  private cleDeCime(slug: string, cime: number, etat: EtatCime): string {
-    const cle = cleHouppier(slug, this.lighting, cime, etat, pariteDeCime(slug, etat, this.cranSaison))
-    return this.scene.textures.exists(cle) ? cle : cleHouppier(slug, this.lighting, cime, 'feuillu')
+  private cleDeCime(slug: string, cime: number, etat: EtatCime, miroir = false): string {
+    const cle = cleHouppier(slug, this.lighting, cime, etat, pariteDeCime(slug, etat, this.cranSaison), miroir)
+    return this.scene.textures.exists(cle) ? cle : cleHouppier(slug, this.lighting, cime, 'feuillu', 0, miroir)
   }
 
   setChuteArbre(fx: ChuteArbre): void {
@@ -1556,15 +1568,21 @@ export class SnapshotView {
       sprite.setLighting(this.lighting) // couche 1 : murs, portes, ateliers… éclairés (pooled → chaque frame)
       // Les CHIPS dressés basculent sur leur albédo aplati + normale (da-feeling R4). Les murs,
       // la porte (autotile re-texturé plus bas) et le feu (swap dédié) ont leurs propres chemins.
+      // LE BIT DE MIROIR D'UNE STRUCTURE VIENT DE SA TUILE — elle ne bouge pas de la partie,
+      // là où son rang dans `structures` change à chaque pose et à chaque ruine.
+      const mirS = miroirDeTuile(s.tx, s.ty)
       if (LIT_STRUCTURE_TYPES.has(s.type) || BATI_LIT_TYPES.has(s.type)) {
-        sprite.setTexture(this.lighting ? `st-${s.type}_lit` : `st-${s.type}`)
+        sprite.setTexture(this.lighting ? cleLit(`st-${s.type}`, mirS) : `st-${s.type}`)
       }
       if (s.type === 'cloture') {
         // La clôture prend la texture qui CONNECTE ses voisines : poteau au centre, lisses
         // vers chaque direction du masque. Un bout d'enclos n'a qu'une branche, un angle deux,
         // un poteau isolé reste un poteau — les seize cas d'un coup, sans table.
         const m = wallMask(clotureTiles, s.tx, s.ty)
-        sprite.setTexture(this.lighting ? `st-cloture-${m}_lit` : `st-cloture-${m}`)
+        // ⚠ LE MIROIR D'UN AUTOTILE EST FILTRÉ PAR SON MASQUE (`masqueSeRetourne`) : retourner
+        // un masque asymétrique donnerait le sprite d'un masque VOISIN — une lisse qui pointe du
+        // mauvais côté. Sur les sept masques symétriques, il donne un second dessin valide.
+        sprite.setTexture(this.lighting ? cleLit(`st-cloture-${m}`, mirS && masqueSeRetourne(m)) : `st-cloture-${m}`)
       }
       if (s.type === 'massif') {
         // ═══ LE MASSIF EMPRUNTE L'ART DE LA FALAISE (révision d'Alexis, 2026-08-11) ═══
@@ -1589,7 +1607,7 @@ export class SnapshotView {
       if (s.type === 'fire') {
         // Les BÛCHES normal-mappées : bois mat `_lit` quand l'éclairage est armé (relief
         // calculé par la normal map cylindrique), sinon le sprite ombré simple.
-        sprite.setTexture(this.lighting ? 'st-fire_lit' : 'st-fire')
+        sprite.setTexture(this.lighting ? cleLit('st-fire', mirS) : 'st-fire')
         // La couleur suit l'ÉTAT (spec feu-station S1) : allumé → couleur du Feu (alignement R9,
         // bleu↔blanc↔rouge) ; braises → ambre sombre ; éteint → bûches froides et grises.
         const st = fireStateAt(this.tick, s)
@@ -1673,7 +1691,10 @@ export class SnapshotView {
         const cle = cacheLaSalle
           ? `st-${coupeFam}-e${s.edges}${suffixe}`
           : `st-${fam}-e${s.edges}${suffixe}`
-        sprite.setTexture(this.lighting && !cacheLaSalle ? `${cle}_lit` : cle)
+        // La PORTE ne se retourne jamais (son vantail pivoterait à l'envers) — `frame >= 0` la
+        // désigne exactement. Les autres suivent la règle du masque.
+        const mirE = frame < 0 && masqueSeRetourne(s.edges) && miroirDeTuile(s.tx, s.ty)
+        sprite.setTexture(this.lighting && !cacheLaSalle ? cleLit(cle, mirE) : cle)
         // L'ANCRAGE D'UNE BARRIÈRE N'EST PAS LE BAS DE SON IMAGE. Le mur est à cheval sur
         // l'arête : son sprite déborde d'une demi-épaisseur SOUS sa tuile. On ancre donc au bas
         // de la TUILE (`EDGE_ORIGIN_Y`) — à défaut, tout le bâti remonterait d'autant.
@@ -1709,7 +1730,9 @@ export class SnapshotView {
           // LE MUR D'UNE RUINE A SON PROPRE APPAREIL (render/ruined-wall.ts) : crête ébréchée,
           // pierres descellées, joints gravés dans la normale. Une teinte ne pouvait pas le
           // donner — le mur ordinaire est une DALLE, quelle que soit sa couleur.
-          sprite.setTexture(this.lighting ? `st-wall-ruine-${masque}_lit` : `st-wall-ruine-${masque}`)
+          sprite.setTexture(this.lighting
+            ? cleLit(`st-wall-ruine-${masque}`, mirS && masqueSeRetourne(masque))
+            : `st-wall-ruine-${masque}`)
           // Teinte ADOUCIE : la texture porte déjà son propre modelé (cinq gris, joints peints,
           // mousse, crête ébréchée). La réassombrir autant que le mur neuf écraserait ce
           // travail — on garde la couleur du matériau et un rien de vieillissement. Presque
@@ -2172,21 +2195,30 @@ export class SnapshotView {
         const variante = isTree && this.carte !== null
           ? varianteArbre(this.carte, n.tx, n.ty, this.worldSeed, n.type === 'old_tree')
           : VARIANTES[n.type === 'old_tree' ? 'old_tree' : 'tree']!
+        // LE MIROIR (2026-08-27) : tout nœud DRESSÉ se décline en retourné, et c'est
+        // `litNodeTextureKey` qui filtre — un nœud couché (branche, caillou au sol) reçoit sa
+        // clé droite même quand le bit vaut 1. Le flip Phaser reste interdit en mode `_lit` :
+        // il n'inverse pas le canal X de la normale.
+        const mir = miroirDeTuile(n.tx, n.ty)
         const texture = isBerry
-          ? `nd-berry_bush-${gele ? 0 : berryDots(n)}${this.lighting ? '_lit' : ''}`
+          ? (this.lighting
+            ? litNodeTextureKey(`nd-berry_bush-${gele ? 0 : berryDots(n)}`, mir)
+            : `nd-berry_bush-${gele ? 0 : berryDots(n)}`)
           : growing && isTree
-            ? (this.lighting ? 'nd-sapling_lit' : 'nd-sapling')
+            ? (this.lighting ? litNodeTextureKey('nd-sapling', mir) : 'nd-sapling')
             : isTree
-              ? `nd-${variante.slug}_trunk${litTree ? '_lit' : ''}`
+              ? (litTree ? cleLit(`nd-${variante.slug}_trunk`, mir) : `nd-${variante.slug}_trunk`)
               // LE SOCLE MINÉRAL — les six nœuds qui bloquent leur tuile entière partagent un
               // seul art, à trois hauteurs (`socle-mineral.ts`). Le BLOC porte sa taille sur une
               // butte (`size`, elle y dépend de la forme de la butte entière) et la redérive
               // ailleurs par `tailleDeBloc` ; les cinq autres la tirent d'un hash pur de la
               // tuile. Pleine tuile, planté au bord bas, sans offset.
               : estUnSocle(n.type)
-                ? `${cleDeSocle(n.type as SocleType, tailleDeSocle(n.type as SocleType, n.tx, n.ty, n.size))}${this.lighting ? '_lit' : ''}`
+                ? (this.lighting
+                  ? cleLit(cleDeSocle(n.type as SocleType, tailleDeSocle(n.type as SocleType, n.tx, n.ty, n.size)), mir)
+                  : cleDeSocle(n.type as SocleType, tailleDeSocle(n.type as SocleType, n.tx, n.ty, n.size)))
                 : this.lighting && LIT_NODE_TYPES.has(n.type)
-                    ? `nd-${n.type}_lit` // masse pâteuse (roche…) : albédo aplati + normal map quand éclairé
+                    ? litNodeTextureKey(`nd-${n.type}`, mir) // masse pâteuse : albédo aplati + normale, retournée si elle est dressée
                     : `nd-${n.type}`
         let sprite = this.nodePool[used]
         if (!sprite) {
@@ -2271,7 +2303,7 @@ export class SnapshotView {
             const m = variante.mesures
             this.recolteFx?.feuillage(
               n.id, coup.at, now,
-              this.cleDeCime(variante.slug, cimeDe(n.tx, n.ty), this.etatDeCime(variante.slug, n.tx, n.ty)),
+              this.cleDeCime(variante.slug, cimeDe(n.tx, n.ty), this.etatDeCime(variante.slug, n.tx, n.ty), miroirDeTuile(n.tx, n.ty)),
               // La HAUTEUR d'où les feuilles tombent suit la hauteur du houppier ; leur
               // dispersion suit sa LARGEUR, qui n'est plus la même depuis `houppierW` (le saule
               // et le parasol du vieux pin sont plus larges que hauts). Les feuilles d'un saule
@@ -2349,7 +2381,9 @@ export class SnapshotView {
         // vert d'une texture absente.
         const cime = cimeDe(n.tx, n.ty)
         const etat = this.etatDeCime(variante.slug, n.tx, n.ty)
-        const etape = this.fondu.etape(n.id, this.cleDeCime(variante.slug, cime, etat), etat, now)
+        // ⚠ LE MÊME BIT QUE LE FÛT, sur la MÊME tuile : un houppier retourné sur un tronc droit
+        // se verrait au raccord d'écorce. `miroirDeTuile` est pure, les deux le tirent d'elle.
+        const etape = this.fondu.etape(n.id, this.cleDeCime(variante.slug, cime, etat, miroirDeTuile(n.tx, n.ty)), etat, now)
         // LE SPRITE NAÎT SUR LA CIME QU'IL VA PORTER — après le fondu, donc, et jamais sur une clé
         // écrite en dur. Il naissait sur l'art PEINT (`cleHouppier(slug, false, 0)`) : une image de
         // vieux houppier avant la première pose, et une deuxième écriture de la même clé à côté de
@@ -2445,7 +2479,7 @@ export class SnapshotView {
         const variante = this.carte !== null
           ? varianteArbre(this.carte, e.tx, e.ty, this.worldSeed, e.type === 'old_tree')
           : VARIANTES[e.type === 'old_tree' ? 'old_tree' : 'tree']!
-        this.chuteArbre?.tomber(px, py, variante, this.lighting, dir.dx, dir.dy, now, cimeDe(e.tx, e.ty), this.etatDeCime(variante.slug, e.tx, e.ty))
+        this.chuteArbre?.tomber(px, py, variante, this.lighting, dir.dx, dir.dy, now, cimeDe(e.tx, e.ty), this.etatDeCime(variante.slug, e.tx, e.ty), miroirDeTuile(e.tx, e.ty))
       } else {
         // LA PIERRE S'EFFONDRE, LE VÉGÉTAL LÂCHE SES FEUILLES : une gerbe à 360°, de la
         // couleur du nœud — la même texture que celle qu'il affichait, donc la même
@@ -2477,8 +2511,8 @@ export class SnapshotView {
       const a = tileFeetAnchor(s.tx, s.ty, TILE_PX)
       g.setTexture(
         isTreeStump
-          ? (this.lighting ? 'nd-stump_lit' : 'nd-stump')
-          : this.lighting ? 'nd-scar_lit' : 'nd-scar',
+          ? (this.lighting ? litNodeTextureKey('nd-stump', miroirDeTuile(s.tx, s.ty)) : 'nd-stump')
+          : this.lighting ? 'nd-scar_lit' : 'nd-scar', // la cicatrice est COUCHÉE : pas de retourné
       )
       g.setLighting(this.lighting) // pooled : réarmé chaque frame, comme les nœuds
       g.setPosition(a.px, a.py)

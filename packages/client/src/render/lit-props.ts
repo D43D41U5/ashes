@@ -19,7 +19,7 @@ import type Phaser from 'phaser'
 // LA RECETTE VIT DANS normal-map.ts (spec da-feeling R1) : ce module n'est plus que l'ART des
 // props. Nos appels historiques (`passes`/`k`, cell 2 implicite) sont le cas particulier exact
 // de la recette finale — bit-identique, le smoke `cubique` en témoigne.
-import { enc, FLIP_G, mirrorCanvas, newCanvas, norm3, normalFromCanvas, registerLit as register } from './normal-map'
+import { cleLit, enc, FLIP_G, mirrorNormalCanvas, newCanvas, norm3, poserPaire, registerLitPaire } from './normal-map'
 
 
 
@@ -27,6 +27,12 @@ import { enc, FLIP_G, mirrorCanvas, newCanvas, norm3, normalFromCanvas, register
  *  des cadrans de normale (`passes`/`k`, cf. `normalFromCanvas`) pour un cube franc plutôt qu'un dôme. */
 interface LitProp {
   key: string
+  /** SE TIENT-IL DEBOUT ? Requis, et c'est `registerLitPaire` qui en tire la `_lit_m` — voir
+   *  l'en-tête de section de `normal-map.ts`. `false` couvre DEUX cas, et un seul mot les dit
+   *  parce qu'ils ont la même conséquence : au ras du sol (une tache de lichen, une branche
+   *  tombée — le miroir n'apporterait rien de visible), ou symétrique au pixel (les humains :
+   *  le retourné rendrait la même image). */
+  dresse: boolean
   w: number
   h: number
   draw: (ctx: CanvasRenderingContext2D) => void
@@ -195,36 +201,36 @@ function drawRects(rects: readonly (readonly [number, number, number, number, st
 // qui sont un MATÉRIAU (corolle, feuillage) restent. La normale se lit sur l'alpha seul.
 const PROPS: LitProp[] = [
   // La masse pâteuse (déjà cubique avant le 2026-07-24) : silhouette APLATIE d'une seule couleur.
-  { key: 'cl-bush', w: 16, h: 16, draw: (c) => { c.fillStyle = '#2f5330'; c.fillRect(2, 5, 12, 9); c.fillRect(3, 4, 10, 9) } },
-  { key: 'cl-low_bush', w: 16, h: 16, draw: (c) => { c.fillStyle = '#4b4a2e'; c.fillRect(4, 8, 9, 6) } },
-  { key: 'cl-boulder', w: 16, h: 16, draw: (c) => { c.fillStyle = '#5f5f64'; disc(c, 8, 10, 5) } },
-  { key: 'cl-sphagnum', w: 16, h: 16, draw: (c) => { c.fillStyle = '#6a6a3a'; disc(c, 8, 11, 4) } },
+  { key: 'cl-bush', dresse: true, w: 16, h: 16, draw: (c) => { c.fillStyle = '#2f5330'; c.fillRect(2, 5, 12, 9); c.fillRect(3, 4, 10, 9) } },
+  { key: 'cl-low_bush', dresse: true, w: 16, h: 16, draw: (c) => { c.fillStyle = '#4b4a2e'; c.fillRect(4, 8, 9, 6) } },
+  { key: 'cl-boulder', dresse: true, w: 16, h: 16, draw: (c) => { c.fillStyle = '#5f5f64'; disc(c, 8, 10, 5) } },
+  { key: 'cl-sphagnum', dresse: true, w: 16, h: 16, draw: (c) => { c.fillStyle = '#6a6a3a'; disc(c, 8, 11, 4) } },
   // Le petit décor de sol + les brins, désormais cubiques (mousse, touffes… « tout en cubique »).
   //  Les FLEURS, elles, ont plusieurs VARIÉTÉS (forme + couleur) — voir `FLOWERS` plus bas.
   // Le bleu de la touffe (0x42) est de la MARGE pour la teinte de biome — cf. `clutter-teinte.ts`.
-  { key: 'cl-grass_tuft', w: 16, h: 16, draw: (c) => { c.fillStyle = '#5a6e42'; c.fillRect(5, 9, 2, 5); c.fillRect(8, 8, 2, 6); c.fillRect(11, 10, 2, 4) } },
-  { key: 'cl-reed', w: 16, h: 16, draw: (c) => { c.fillStyle = '#6d7a40'; c.fillRect(6, 4, 1, 11); c.fillRect(9, 3, 1, 12); c.fillRect(11, 6, 1, 9) } },
-  { key: 'cl-lichen', w: 16, h: 16, draw: (c) => { c.fillStyle = '#777c50'; disc(c, 6, 10, 2); disc(c, 9, 11, 2) } },
-  { key: 'cl-snowdrift', w: 16, h: 16, draw: (c) => { c.fillStyle = '#d8dde6'; disc(c, 8, 12, 4) } },
+  { key: 'cl-grass_tuft', dresse: true, w: 16, h: 16, draw: (c) => { c.fillStyle = '#5a6e42'; c.fillRect(5, 9, 2, 5); c.fillRect(8, 8, 2, 6); c.fillRect(11, 10, 2, 4) } },
+  { key: 'cl-reed', dresse: true, w: 16, h: 16, draw: (c) => { c.fillStyle = '#6d7a40'; c.fillRect(6, 4, 1, 11); c.fillRect(9, 3, 1, 12); c.fillRect(11, 6, 1, 9) } },
+  { key: 'cl-lichen', dresse: false, w: 16, h: 16, draw: (c) => { c.fillStyle = '#777c50'; disc(c, 6, 10, 2); disc(c, 9, 11, 2) } },
+  { key: 'cl-snowdrift', dresse: true, w: 16, h: 16, draw: (c) => { c.fillStyle = '#d8dde6'; disc(c, 8, 12, 4) } },
   // Les conifères / troncs décoratifs (feuillage + fût = 2 matériaux, gardés).
-  { key: 'cl-conifer', w: 16, h: 16, draw: (c) => { c.fillStyle = '#24401f'; tri(c, 8, 1, 2, 13, 14, 13) } },
-  { key: 'cl-pine', w: 16, h: 16, draw: (c) => { c.fillStyle = '#2f5030'; tri(c, 8, 3, 4, 13, 12, 13) } },
-  { key: 'cl-larch', w: 16, h: 16, draw: (c) => { c.fillStyle = '#6f7a3a'; tri(c, 8, 3, 5, 12, 11, 12) } },
-  { key: 'cl-burnt_trunk', w: 16, h: 16, draw: (c) => { c.fillStyle = '#2b2b2f'; c.fillRect(7, 4, 2, 10) } },
-  { key: 'cl-big_trunk', w: 16, h: 16, draw: (c) => { c.fillStyle = '#3a2c1a'; c.fillRect(6, 4, 4, 11); c.fillStyle = '#24401f'; disc(c, 8, 4, 5) } },
-  { key: 'cl-stump', w: 16, h: 16, draw: (c) => { c.fillStyle = '#4a3826'; c.fillRect(6, 9, 4, 5) } },
+  { key: 'cl-conifer', dresse: true, w: 16, h: 16, draw: (c) => { c.fillStyle = '#24401f'; tri(c, 8, 1, 2, 13, 14, 13) } },
+  { key: 'cl-pine', dresse: true, w: 16, h: 16, draw: (c) => { c.fillStyle = '#2f5030'; tri(c, 8, 3, 4, 13, 12, 13) } },
+  { key: 'cl-larch', dresse: true, w: 16, h: 16, draw: (c) => { c.fillStyle = '#6f7a3a'; tri(c, 8, 3, 5, 12, 11, 12) } },
+  { key: 'cl-burnt_trunk', dresse: true, w: 16, h: 16, draw: (c) => { c.fillStyle = '#2b2b2f'; c.fillRect(7, 4, 2, 10) } },
+  { key: 'cl-big_trunk', dresse: true, w: 16, h: 16, draw: (c) => { c.fillStyle = '#3a2c1a'; c.fillRect(6, 4, 4, 11); c.fillStyle = '#24401f'; disc(c, 8, 4, 5) } },
+  { key: 'cl-stump', dresse: true, w: 16, h: 16, draw: (c) => { c.fillStyle = '#4a3826'; c.fillRect(6, 9, 4, 5) } },
   // Les BUTTES d'affleurement (§2sexies) — cubique franc, silhouettes partagées (RECTS ci-dessus).
   // (Les dalles décoratives ont été PURGÉES le 2026-08-18 — « trop de cailloux-clutter » : la
   // butte est peuplée par ses nœuds `bloc`, le décor ne garde que chicot et poussière.)
-  { key: 'cl-chicot', w: 16, h: 32, draw: drawRects(CHICOT_RECTS), passes: 1, k: 3.5 },
-  { key: 'cl-poussiere', w: 16, h: 16, draw: drawRects(POUSSIERE_RECTS) },
+  { key: 'cl-chicot', dresse: true, w: 16, h: 32, draw: drawRects(CHICOT_RECTS), passes: 1, k: 3.5 },
+  { key: 'cl-poussiere', dresse: false, w: 16, h: 16, draw: drawRects(POUSSIERE_RECTS) },
   // LA FUMEROLLE — c'est un NŒUD (on y récolte du sel), donc `nd-` et non `cl-` : elle est
   // dessinée par `SnapshotView` comme n'importe quel nœud, et pas par le décor. ⚠ Les deux à la
   // fois auraient fait un DOUBLON sur la même tuile — et sans le `nd-`, le nœud demandait une
   // texture inexistante : le carré vert de Phaser, en plein milieu de la cendre (vu au navigateur).
   // `passes: 1` / `k: 3.5` comme les autres silhouettes cubiques franches : elle prend la lumière
   // comme un objet TAILLÉ, pas comme une tache peinte.
-  { key: 'nd-fumerolle', w: 16, h: 16, draw: drawRects(FUMEROLLE_RECTS), passes: 1, k: 3.5 },
+  { key: 'nd-fumerolle', dresse: true, w: 16, h: 16, draw: drawRects(FUMEROLLE_RECTS), passes: 1, k: 3.5 },
   // (LA ROCHE et LES BLOCS D'AFFLEUREMENT sont partis dans `socle-mineral.ts` — comme les
   //  filons, la carrière et les gravats : les six nœuds qui bloquent leur tuile entière ont
   //  désormais UN socle commun, pleine largeur, à trois hauteurs.)
@@ -232,14 +238,15 @@ const PROPS: LitProp[] = [
   //     la bascule est celle d'un chip. Bord + cœur = deux MATÉRIAUX (un liseré n'est pas un
   //     ombrage), normale blocky. La FAUNE, elle, reste consignée : asymétrique, miroitée par
   //     le regard, et déclinée en postures — la recette « normale par posture » n'est pas actée.
-  { key: 'spr-player', w: 12, h: 24, passes: 1, k: 3.5, draw: (c) => { c.fillStyle = '#8a6f3c'; c.fillRect(0, 0, 12, 24); c.fillStyle = '#f0e6c8'; c.fillRect(1, 1, 10, 22) } },
-  { key: 'spr-npc', w: 12, h: 24, passes: 1, k: 3.5, draw: (c) => { c.fillStyle = '#4a5364'; c.fillRect(0, 0, 12, 24); c.fillStyle = '#9aa4b5'; c.fillRect(1, 1, 10, 22) } },
+  { key: 'spr-player', dresse: false, w: 12, h: 24, passes: 1, k: 3.5, draw: (c) => { c.fillStyle = '#8a6f3c'; c.fillRect(0, 0, 12, 24); c.fillStyle = '#f0e6c8'; c.fillRect(1, 1, 10, 22) } },
+  { key: 'spr-npc', dresse: false, w: 12, h: 24, passes: 1, k: 3.5, draw: (c) => { c.fillStyle = '#4a5364'; c.fillRect(0, 0, 12, 24); c.fillStyle = '#9aa4b5'; c.fillRect(1, 1, 10, 22) } },
   // ═══ LA VAGUE A DE LA BASCULE (spec da-feeling R3) — les nœuds restants, silhouettes
   //     BootScene reproduites à l'identique (deux backends, une forme), hillshade retiré. ═══
   // Le BUISSON À BAIES : 4 états de stock (berryDots borne à 3). Socle vert aplati '#3b682b'
   // (mi-corps/mi-dessus, comme cl-bush) ; les baies sont un MATÉRIAU (reflet spéculaire retiré).
   ...([0, 1, 2, 3] as const).map((n) => ({
     key: `nd-berry_bush-${n}`,
+    dresse: true,
     w: 16,
     h: 16,
     draw: (c: CanvasRenderingContext2D) => {
@@ -253,30 +260,30 @@ const PROPS: LitProp[] = [
     },
   })),
   // La FIBRE : trois brins verticaux, pointes zénithales retirées, vert relevé d'un tiers.
-  { key: 'nd-fiber_plant', w: 16, h: 16, draw: (c) => { c.fillStyle = '#77a53f'; c.fillRect(4, 8, 2, 7); c.fillRect(7, 6, 2, 9); c.fillRect(10, 9, 2, 6) } },
+  { key: 'nd-fiber_plant', dresse: true, w: 16, h: 16, draw: (c) => { c.fillStyle = '#77a53f'; c.fillRect(4, 8, 2, 7); c.fillRect(7, 6, 2, 9); c.fillRect(10, 9, 2, 6) } },
   // La POUSSE : fût + cube de feuillage — LES MATÉRIAUX DE L'ARBRE ADULTE LIT (aucun pop à l'âge).
-  { key: 'nd-sapling', w: 16, h: 16, passes: 1, k: 3.5, draw: (c) => { c.fillStyle = '#5c4429'; c.fillRect(7, 9, 2, 6); c.fillStyle = '#2d6b32'; c.fillRect(4, 3, 8, 8) } },
+  { key: 'nd-sapling', dresse: true, w: 16, h: 16, passes: 1, k: 3.5, draw: (c) => { c.fillStyle = '#5c4429'; c.fillRect(7, 9, 2, 6); c.fillStyle = '#2d6b32'; c.fillRect(4, 3, 8, 8) } },
   // La SOUCHE (récolte vivante) : billot + coupe claire (bois frais = matériau) ; l'ombre au sol
   // passe en `shade` (après la normale — la rangée 0x241a10 du painter peint était du contact).
   {
-    key: 'nd-stump', w: 16, h: 16, passes: 1, k: 3.5,
+    key: 'nd-stump', dresse: true, w: 16, h: 16, passes: 1, k: 3.5,
     draw: (c) => { c.fillStyle = '#3a2c1a'; c.fillRect(5, 11, 6, 3); c.fillStyle = '#6b5334'; c.fillRect(5, 9, 6, 2); c.fillStyle = '#8a6a44'; c.fillRect(7, 9, 2, 1) },
     shade: (c) => { c.fillStyle = 'rgba(0,0,0,0.22)'; c.fillRect(4, 14, 8, 1) },
   },
   // La CICATRICE : une plaque de terre remuée, à plat — la butte basse fait le « à peine un relief ».
-  { key: 'nd-scar', w: 16, h: 16, passes: 1, k: 3.5, draw: (c) => { c.fillStyle = '#3a2f22'; c.fillRect(4, 11, 8, 3) } },
+  { key: 'nd-scar', dresse: false, w: 16, h: 16, passes: 1, k: 3.5, draw: (c) => { c.fillStyle = '#3a2f22'; c.fillRect(4, 11, 8, 3) } },
   // Le nœud CHAMPIGNON — cubique (arêtes franches, `passes:1`/`k:3.5`), silhouette partagée avec BootScene.
-  { key: 'nd-champignon', w: 16, h: 16, passes: 1, k: 3.5, draw: drawChampignon },
-  { key: 'nd-leaf_pile', w: 16, h: 16, passes: 1, k: 3.5, draw: drawLeafPile },
+  { key: 'nd-champignon', dresse: true, w: 16, h: 16, passes: 1, k: 3.5, draw: drawChampignon },
+  { key: 'nd-leaf_pile', dresse: false, w: 16, h: 16, passes: 1, k: 3.5, draw: drawLeafPile },
   // LE GLANAGE (spec `glanage.md`) — cubique franc comme tout ce qui est TAILLÉ ou POSÉ, et
   // silhouettes partagées avec BootScene (flat et `_lit` ne peuvent pas diverger). L'ombre de
   // contact les POSE au sol : un objet qu'on ramasse ne flotte pas.
   {
-    key: 'nd-branche_au_sol', w: 16, h: 16, passes: 1, k: 3.5, draw: drawRects(BRANCHE_RECTS),
+    key: 'nd-branche_au_sol', dresse: false, w: 16, h: 16, passes: 1, k: 3.5, draw: drawRects(BRANCHE_RECTS),
     shade: (c) => { c.fillStyle = 'rgba(0,0,0,0.22)'; c.fillRect(3, 13, 10, 1) },
   },
   {
-    key: 'nd-pierre_au_sol', w: 16, h: 16, passes: 1, k: 3.5, draw: drawRects(CAILLOU_RECTS),
+    key: 'nd-pierre_au_sol', dresse: false, w: 16, h: 16, passes: 1, k: 3.5, draw: drawRects(CAILLOU_RECTS),
     shade: (c) => { c.fillStyle = 'rgba(0,0,0,0.22)'; c.fillRect(3, 14, 9, 1) },
   },
   // (Les COINS DE PÊCHE n'ont pas de `_lit` : un remous sur l'eau n'a rien à éclairer — leur art
@@ -375,13 +382,13 @@ function shadePebbles(ctx: CanvasRenderingContext2D, p: PebbleVariant): void {
  *  `shades` (optionnel) : la passe d'ombre au sol, peinte APRÈS la dérivation de la normale — voir
  *  `shadePebbles` pour pourquoi elle ne peut pas être dans `draws`. */
 const VARIANT_FAMILIES: {
-  kind: string; passes: number; k: number
+  kind: string; passes: number; k: number; dresse: boolean
   draws: ((ctx: CanvasRenderingContext2D) => void)[]
   shades?: ((ctx: CanvasRenderingContext2D) => void)[]
 }[] = [
-  { kind: 'flower', passes: 1, k: 3.5, draws: FLOWERS.map((f) => (c: CanvasRenderingContext2D) => drawFlower(c, f)) },
+  { kind: 'flower', passes: 1, k: 3.5, dresse: true, draws: FLOWERS.map((f) => (c: CanvasRenderingContext2D) => drawFlower(c, f)) },
   {
-    kind: 'pebbles', passes: 1, k: 3.5,
+    kind: 'pebbles', passes: 1, k: 3.5, dresse: true,
     draws: PEBBLES.map((p) => (c: CanvasRenderingContext2D) => drawPebbles(c, p)),
     shades: PEBBLES.map((p) => (c: CanvasRenderingContext2D) => shadePebbles(c, p)),
   },
@@ -396,9 +403,13 @@ export function variantBase(kind: string, i: number): string {
 
 /** La clé de texture `_lit` d'un prop de clutter, variante MIROIR comprise. LA SEULE fonction qui
  *  la calcule — clutter-layer l'appelle, ce module la génère : elles ne peuvent pas diverger (un
- *  kind câblé sans texture générée donnerait le carré vert `__MISSING`). */
+ *  kind câblé sans texture générée donnerait le carré vert `__MISSING`).
+ *
+ *  ⚠ ELLE FILTRE LE MIROIR PAR `dresse`, et c'est ce qui rend le drapeau sûr : une couche qui
+ *  demande le retourné d'un prop COUCHÉ (le lichen, la poussière) reçoit la clé droite au lieu
+ *  d'un carré vert. Le décor n'a plus à savoir ce qui se retourne — la table le sait. */
 export function litClutterTextureKey(kind: string, mirror: boolean): string {
-  return `cl-${kind}_lit${mirror ? '_m' : ''}`
+  return cleLit(`cl-${kind}`, mirror && CLUTTER_DRESSE.has(kind))
 }
 
 /** Les `kind` de clutter qui ont une variante `_lit` (swap côté ClutterLayer) — DÉRIVÉ de `PROPS`
@@ -419,43 +430,60 @@ export const LIT_NODE_TYPES: ReadonlySet<string> = new Set([
   'champignon', 'fiber_plant', 'leaf_pile', 'fumerolle',
   'branche_au_sol', 'pierre_au_sol',
 ])
+/** Les `kind` de clutter qui SE TIENNENT DEBOUT — donc ceux dont le retourné existe. Dérivé de
+ *  `dresse`, jamais recopié : la table qui décide de la génération est la table qui décide de la
+ *  pose. (Les familles à variétés répondent sur leur `kind`, pas sur chaque variété : elles sont
+ *  dressées ou couchées en bloc.) */
+const CLUTTER_DRESSE: ReadonlySet<string> = new Set([
+  ...PROPS.filter((p) => p.key.startsWith('cl-') && p.dresse).map((p) => p.key.slice(3)),
+  ...VARIANT_FAMILIES.filter((f) => f.dresse).map((f) => f.kind),
+  ...VARIANT_FAMILIES.filter((f) => f.dresse).flatMap((f) => f.draws.map((_, i) => variantBase(f.kind, i))),
+])
+
+/** LE MIROIR D'UN NŒUD EXISTE-T-IL ? La même table, du côté `nd-` — `SnapshotView` la lit pour
+ *  choisir entre `nd-<type>_lit` et son retourné. Un nœud COUCHÉ (branche, caillou, litière)
+ *  n'en a pas, et la demander rendrait la clé droite. */
+export const litNodeTextureKey = (base: string, miroir: boolean): string =>
+  cleLit(base, miroir && NODE_DRESSE.has(base))
+const NODE_DRESSE: ReadonlySet<string> = new Set(PROPS.filter((p) => p.dresse).map((p) => p.key))
+
 /** Toutes les clés de texture RÉELLEMENT générées par `generateLitProps` — surface testable du
- *  câblage (le clutter a `_lit` + `_lit_m` ; les nœuds, `_lit` seul ; chaque variété de fleur, les deux). */
+ *  câblage. Elle DÉCOULE de `dresse` : tout ce qui se tient debout a ses deux clés, tout ce qui
+ *  est couché n'en a qu'une. Plus aucune règle de préfixe (`cl-` avait les deux, `nd-` une
+ *  seule) — c'était la géométrie qu'on voulait dire, pas le namespace. */
 export const LIT_PROP_KEYS: ReadonlySet<string> = new Set([
-  ...PROPS.flatMap((p) => (p.key.startsWith('cl-') ? [`${p.key}_lit`, `${p.key}_lit_m`] : [`${p.key}_lit`])),
-  ...VARIANT_FAMILIES.flatMap((fam) => fam.draws.flatMap((_, i) => [`cl-${variantBase(fam.kind, i)}_lit`, `cl-${variantBase(fam.kind, i)}_lit_m`])),
+  ...PROPS.flatMap((p) => (p.dresse ? [cleLit(p.key), cleLit(p.key, true)] : [cleLit(p.key)])),
+  ...VARIANT_FAMILIES.flatMap((fam) => fam.draws.flatMap((_, i) => {
+    const base = `cl-${variantBase(fam.kind, i)}`
+    return fam.dresse ? [cleLit(base), cleLit(base, true)] : [cleLit(base)]
+  })),
 ])
 
 
 
-/** Enregistre les variantes `_lit` (albédo + normal map) de tout le décor, et `_lit_m` (miroir
- *  pré-retourné) pour le clutter — voir l'en-tête. */
+/**
+ * Enregistre les variantes `_lit` de tout le décor — et leur `_lit_m` pour tout ce qui se tient
+ * DEBOUT (`dresse`).
+ *
+ * L'ORDRE (dériver les deux normales sur la masse nue, ombrer, puis miroiter l'OMBRÉ) ne vit
+ * plus ici : il est dans `registerLitPaire`, en un exemplaire. Ce module ne dit plus que l'ART.
+ */
 export function generateLitProps(scene: Phaser.Scene): void {
   for (const p of PROPS) {
     const alb = newCanvas(p.w, p.h)
     p.draw(alb.ctx)
-    const nrm = normalFromCanvas(alb.c, p.passes, p.k)
-    const nrmM = p.key.startsWith('cl-') ? normalFromCanvas(mirrorCanvas(alb.c), p.passes, p.k) : null
-    p.shade?.(alb.ctx) // l'ombre bakée APRÈS la normale (voir LitProp.shade)
-    register(scene, `${p.key}_lit`, alb.c, nrm)
-    if (nrmM) register(scene, `${p.key}_lit_m`, mirrorCanvas(alb.c), nrmM)
+    registerLitPaire(scene, p.key, {
+      albedo: alb.c, dresse: p.dresse, ombrer: p.shade, passes: p.passes, k: p.k,
+    })
   }
-  // Les FAMILLES à variétés (fleurs, cailloux…) — chacune son `cl-<kind>-<i>_lit` + `_lit_m`.
+  // Les FAMILLES à variétés (fleurs, cailloux…) — chacune son `cl-<kind>-<i>`.
   for (const fam of VARIANT_FAMILIES) {
     for (let i = 0; i < fam.draws.length; i++) {
       const alb = newCanvas(16, 16)
       fam.draws[i]!(alb.ctx)
-      const base = `cl-${variantBase(fam.kind, i)}`
-      // LES DEUX NORMALES SE DÉRIVENT DE LA MASSE SEULE, avant toute ombre (`normalFromCanvas` lit le
-      // masque alpha : une bande d'ombre y passerait pour de la matière et arrondirait l'arête basse).
-      const nrm = normalFromCanvas(alb.c, fam.passes, fam.k)
-      const nrmM = normalFromCanvas(mirrorCanvas(alb.c), fam.passes, fam.k)
-      // L'OMBRE APRÈS LES DEUX NORMALES (séquence d'origine, REMISE — l'A/B du 25/07 est clos
-      // et consigné) ; et le _lit_m se re-miroite APRÈS l'ombre, sinon une tuile sur deux
-      // livrerait un caillou sans ombre (journal du 25/07, mot pour mot).
-      fam.shades?.[i]?.(alb.ctx)
-      register(scene, `${base}_lit`, alb.c, nrm)
-      register(scene, `${base}_lit_m`, mirrorCanvas(alb.c), nrmM)
+      registerLitPaire(scene, `cl-${variantBase(fam.kind, i)}`, {
+        albedo: alb.c, dresse: fam.dresse, ombrer: fam.shades?.[i], passes: fam.passes, k: fam.k,
+      })
     }
   }
 }
@@ -569,6 +597,10 @@ export function generateFireProp(scene: Phaser.Scene): void {
   // `st-fire` : sprite ombré simple (aucune normal — rendu quand l'éclairage est éteint).
   if (scene.textures.exists('st-fire')) scene.textures.remove('st-fire')
   scene.textures.addCanvas('st-fire', shaded.c)
-  // `st-fire_lit` : bois mat + normal map (rendu quand l'éclairage est armé).
-  register(scene, 'st-fire_lit', albedo.c, normal.c)
+  // `st-fire_lit` : bois mat + normal map (rendu quand l'éclairage est armé) — et son RETOURNÉ,
+  // comme tout ce qui est dressé (2026-08-27). Deux bûches croisées ne sont pas symétriques :
+  // le retourné donne un second foyer sans redessiner un pixel à la main.
+  // ⚠ Sa normale est ÉCRITE ICI, en PIXELS déjà encodés (pas un champ flottant comme le socle) :
+  // son miroir passe donc par `mirrorNormalCanvas`, qui retourne l'image ET inverse le canal X.
+  poserPaire(scene, (m) => cleLit('st-fire', m), albedo.c, normal.c, mirrorNormalCanvas(normal.c))
 }

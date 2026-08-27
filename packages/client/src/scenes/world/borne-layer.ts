@@ -16,7 +16,7 @@
  */
 import Phaser from 'phaser'
 import type { WorldMap } from '@ashes/sim'
-import { type Crack, newCanvas, normalFromCanvas, registerLit } from '../../render/normal-map'
+import { type Crack, cleLit, mirrorCanvas, mirrorCracks, newCanvas, normalFromCanvas, poserPaire } from '../../render/normal-map'
 import { STONE_B } from '../../render/matiere'
 import { crownDepth, TILE_PX, TIE_NODE, ySortDepth } from '../../render/framing'
 import type { Warp } from '../../render/warp'
@@ -115,22 +115,30 @@ export function makeBorneTextures(scene: Phaser.Scene): void {
     return cv
   }
   const fissure: Crack[] = [{ path: [[W / 2 + 3, H - 10], [W / 2 + 2, H - 30], [W / 2 + 3, H - 46]], crevasse: true }]
+  // UNE BORNE EST DRESSÉE — c'est un menhir de seuil. Elle a donc son retourné (2026-08-27),
+  // fissure comprise : `mirrorCracks` la fait passer de droite à gauche, faute de quoi le
+  // sillon serait gravé du côté opposé à celui que l'albédo montre.
   const entA = albedo(H, false)
   const entN = normalFromCanvas(entA, 1, 3.5, 3, true, fissure)
-  registerLit(scene, `${BORNE_KEY}_lit`, ombre(entA, H), entN)
+  const entNM = normalFromCanvas(mirrorCanvas(entA), 1, 3.5, 3, true, mirrorCracks(fissure, entA.width))
+  poserPaire(scene, (m) => cleLit(BORNE_KEY, m), ombre(entA, H), entN, entNM)
   // La couronne : la DÉCOUPE HAUTE des mêmes canvas — identiques au pixel là où ils se recouvrent.
+  // Elle suit le miroir de son corps (la découpe commute avec le retournement).
   const crop = (src: HTMLCanvasElement, hh: number): HTMLCanvasElement => {
     const { c: cv, ctx } = newCanvas(src.width, hh)
     ctx.drawImage(src, 0, 0)
     return cv
   }
-  registerLit(scene, `${crownKey(BORNE_KEY)}_lit`, crop(entA, CROWN), crop(entN, CROWN))
+  poserPaire(scene, (m) => cleLit(crownKey(BORNE_KEY), m),
+    crop(entA, CROWN), crop(entN, CROWN), crop(entNM, CROWN))
   const briA = albedo(H_BRISEE, true)
-  registerLit(scene, `${BORNE_BRISEE_KEY}_lit`, ombre(briA, H_BRISEE), normalFromCanvas(briA, 1, 3.5, 3, true))
+  poserPaire(scene, (m) => cleLit(BORNE_BRISEE_KEY, m), ombre(briA, H_BRISEE),
+    normalFromCanvas(briA, 1, 3.5, 3, true),
+    normalFromCanvas(mirrorCanvas(briA), 1, 3.5, 3, true))
 }
 
 export class BorneLayer {
-  private readonly sprites: { img: Phaser.GameObjects.Image; base: string }[] = []
+  private readonly sprites: { img: Phaser.GameObjects.Image; base: string; mir: boolean }[] = []
 
   constructor(scene: Phaser.Scene, map: WorldMap, warp: Warp) {
     for (const s of map.seuils ?? []) {
@@ -145,16 +153,20 @@ export class BorneLayer {
         const py = ty * TILE_PX - warp.lift(tx, ty)
         const key = s.secours ? BORNE_BRISEE_KEY : BORNE_KEY
         // Nominal : la variante _lit (albédo aplati + normale) — le toggle debug rebascule.
-        const body = scene.add.image(px, py, `${key}_lit`).setOrigin(0.5, 1)
+        // LES DEUX FLANCS D'UN SEUIL NE SONT PLUS JUMEAUX : celui de droite porte le retourné.
+        // Le bit vient du CÔTÉ, pas d'un hash — deux bornes qui se font face doivent se
+        // répondre, pas tirer au sort chacune de son côté.
+        const mir = cote === 1
+        const body = scene.add.image(px, py, cleLit(key, mir)).setOrigin(0.5, 1)
         body.setLighting(true)
         body.setDepth(ySortDepth(ty, TILE_PX, TIE_NODE))
-        this.sprites.push({ img: body, base: key })
+        this.sprites.push({ img: body, base: key, mir })
         if (!s.secours) {
           // La tête perce la canopée — même superposition au pixel près que les lieux.
-          const crown = scene.add.image(px, py - H, `${crownKey(BORNE_KEY)}_lit`).setOrigin(0.5, 0)
+          const crown = scene.add.image(px, py - H, cleLit(crownKey(BORNE_KEY), mir)).setOrigin(0.5, 0)
           crown.setLighting(true)
           crown.setDepth(crownDepth(ty, TILE_PX))
-          this.sprites.push({ img: crown, base: crownKey(BORNE_KEY) })
+          this.sprites.push({ img: crown, base: crownKey(BORNE_KEY), mir })
         }
       }
     }
@@ -163,7 +175,9 @@ export class BorneLayer {
   /** Le toggle debug : _lit + LightsManager, ou la version peinte d'avant — comme les lieux. */
   setLighting(lit: boolean): void {
     for (const e of this.sprites) {
-      e.img.setTexture(lit ? `${e.base}_lit` : e.base)
+      // Le retourné se REPOSE au rebasculement : sans son bit, le toggle debug remettait
+      // toutes les bornes droites, et l'A/B aurait comparé deux rendus différents.
+      e.img.setTexture(lit ? cleLit(e.base, e.mir) : e.base)
       e.img.setLighting(lit)
     }
   }

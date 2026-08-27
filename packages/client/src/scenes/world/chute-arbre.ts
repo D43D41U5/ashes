@@ -33,6 +33,7 @@
 import Phaser from 'phaser'
 import { TIE_CLUTTER, TIE_NODE, TILE_PX, ySortDepth } from '../../render/framing'
 import { ancrageHouppierPx, cleHouppier, type EtatCime, type VarianteArbre } from '../../render/arbre-art'
+import { cleLit } from '../../render/normal-map'
 
 /** La chute elle-même (ms) : le temps que met le fût à toucher le sol. */
 export const CHUTE_MS = 760
@@ -151,7 +152,7 @@ export class ChuteArbre {
    * UN ARBRE S'ABAT. `px/py` : le PIED du fût, tel que la boucle de nœuds le posait
    * (relief compris). `dx/dy` : la direction de chute — celle qui l'éloigne du bûcheron.
    */
-  tomber(px: number, py: number, variante: VarianteArbre, lit: boolean, dx: number, dy: number, now: number, cime = 0, etat: EtatCime = 'feuillu'): void {
+  tomber(px: number, py: number, variante: VarianteArbre, lit: boolean, dx: number, dy: number, now: number, cime = 0, etat: EtatCime = 'feuillu', miroir = false): void {
     if (this.chutes.length >= MAX_CHUTES) {
       const vieille = this.chutes.shift()
       vieille?.fut.destroy()
@@ -160,7 +161,10 @@ export class ChuteArbre {
     const m = variante.mesures
     const alpha = angleChute(dx, dy, m.futH)
     const fut = this.scene.add
-      .image(px, py, `nd-${variante.slug}_trunk${lit ? '_lit' : ''}`)
+      // LE MIROIR VIENT DE L'APPELANT, comme la cime et l'état, et pour la MÊME raison : le
+      // redériver ici le tirerait d'une tuile déduite de `px/py`, qui portent le tressaillement —
+      // l'arbre se retournerait À L'INSTANT où il tombe.
+      .image(px, py, lit ? cleLit(`nd-${variante.slug}_trunk`, miroir) : `nd-${variante.slug}_trunk`)
       .setOrigin(0.5, 1)
       .setDepth(ySortDepth(py / TILE_PX, TILE_PX, TIE_NODE))
     fut.setLighting(lit)
@@ -172,7 +176,7 @@ export class ChuteArbre {
       // décalage d'arbre — l'arbre changerait de houppier À L'INSTANT où il tombe.
       // L'ÉTAT vient de l'appelant, comme la cime, et pour la MÊME raison : un pin chargé
       // de neige perdrait sa coiffe à l'instant où il tombe, et un feuillu nu reverdirait.
-      .image(px, py - ancrageHouppierPx(m), cleHouppier(variante.slug, lit, cime, etat))
+      .image(px, py - ancrageHouppierPx(m), cleHouppier(variante.slug, lit, cime, etat, 0, miroir))
       .setOrigin(0.5, 1)
       .setDepth(ySortDepth(py / TILE_PX, TILE_PX, TIE_CLUTTER))
     houppier.setLighting(lit)

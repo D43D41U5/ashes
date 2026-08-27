@@ -7,7 +7,7 @@
 import { describe, expect, it } from 'vitest'
 import { POI, STRUCTURE_TYPES } from '@ashes/sim'
 import { POI_ART } from '../scenes/world/poi-art'
-import { ERRATIQUES, POI_LIT_DEFS, POI_LIT_KINDS, POI_LIT_MIRRORED } from './poi-lit'
+import { ERRATIQUES, POI_LIT_DEFS, POI_LIT_DRESSES, POI_LIT_KINDS, poiLitCrownKey, poiLitKey } from './poi-lit'
 import { LIT_STRUCTURE_KEYS, LIT_STRUCTURE_TYPES } from './lit-structures'
 import { BATI_KEYS, BATI_LIT_TYPES } from './bati-art'
 import { LIT_PROP_KEYS } from './lit-props'
@@ -112,6 +112,30 @@ describe('la couverture _lit (garde A1)', () => {
   it('les humains ont leur _lit ; le miroir des pierres est déclaré', () => {
     expect(LIT_PROP_KEYS.has('spr-player_lit')).toBe(true)
     expect(LIT_PROP_KEYS.has('spr-npc_lit')).toBe(true)
-    expect(POI_LIT_MIRRORED.has('pierre_levee')).toBe(true) // les 9 pierres du Cercle (R5)
+    expect(POI_LIT_DRESSES.has('pierre_levee')).toBe(true) // les 9 pierres du Cercle (R5)
+  })
+
+  /**
+   * ═══ LES LIEUX DRESSÉS SE RETOURNENT (2026-08-27) ═══
+   *
+   * La liste des PLATS est écrite à la main, et c'est le seul moyen que la garde ait de pouvoir
+   * échouer : la relire dans `plat` reviendrait à comparer la table à elle-même. Ce qui est ici
+   * est un jugement de géométrie — un tarn est une nappe d'eau, une crevasse une fente dans le
+   * sol : ni l'un ni l'autre ne se tient debout.
+   */
+  it('vingt-neuf lieux sur trente-trois sont DRESSÉS, et les quatre autres sont nommés', () => {
+    const PLATS = ['crevasses', 'fondriere', 'saline', 'tarn']
+    for (const slug of PLATS) {
+      expect(POI_LIT_DRESSES.has(slug), `${slug} est au ras du sol`).toBe(false)
+      // Et sa clé « retournée » retombe sur la droite — jamais sur une texture absente.
+      expect(poiLitKey(slug, true)).toBe(poiLitKey(slug, false))
+    }
+    for (const d of POI_LIT_DEFS) {
+      if (PLATS.includes(d.slug)) continue
+      expect(POI_LIT_DRESSES.has(d.slug), `${d.slug} se tient debout : il lui faut son retourné`).toBe(true)
+      expect(poiLitKey(d.slug, true)).toBe(`poi-${d.slug}_lit_m`)
+      if (d.crown !== undefined) expect(poiLitCrownKey(d.slug, true)).toBe(`poi-${d.slug}-crown_lit_m`)
+    }
+    expect(POI_LIT_DRESSES.size).toBe(POI_LIT_DEFS.length - PLATS.length)
   })
 })

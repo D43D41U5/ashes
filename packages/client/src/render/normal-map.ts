@@ -192,6 +192,208 @@ export function registerLit(scene: Phaser.Scene, key: string, albedo: HTMLCanvas
   tex?.setDataSource(normal)
 }
 
+// ═══════════════════════════════════════════════════════════════════════════
+//  LA PAIRE — LA MÉTHODE PAR DÉFAUT DE TOUT SPRITE DRESSÉ
+//  (demande d'Alexis, 2026-08-27 : « la même technique pour tout ce qui est dressé »)
+// ═══════════════════════════════════════════════════════════════════════════
+//
+// Un sprite DRESSÉ se retourne pour varier le décor — et un `setFlipX` Phaser retourne le
+// sprite SANS inverser le canal X de sa normale : le miroir s'éclaire alors du mauvais côté
+// (mesuré le 24/07). Le miroir est donc une TEXTURE, `_lit_m`, dont l'albédo ET la normale
+// sont pré-retournés.
+//
+// La recette tenait en quatre lignes recopiées dans `lit-props`, `poi-lit` et
+// `essai-da-caillou`, avec son ordre commenté en prose à chaque fois. Elle vit ICI désormais,
+// en UN exemplaire, parce que son ORDRE est ce qui casse en silence :
+//
+//   ① LES DEUX NORMALES SE DÉRIVENT DE LA MASSE NUE. `normalFromCanvas` lit le masque ALPHA :
+//      une ombre bakée y passerait pour de la matière et affaisserait l'arête basse.
+//   ② L'OMBRE SE POSE ENSUITE, sur l'albédo, une seule fois.
+//   ③ ET LE MIROIR SE PREND SUR L'ALBÉDO OMBRÉ, pas sur la masse nue — sinon une tuile sur
+//      deux livre un caillou sans ombre (journal du 25/07, payé une fois).
+//
+// `dresse` est REQUIS, sans valeur par défaut, et c'est délibéré : un défaut à `true` aurait
+// donné sa `_lit_m` à l'eau, aux dalles du gué et aux sols de friche sans que personne s'en
+// avise, et un défaut à `false` aurait laissé le compilateur muet sur chaque nouveau sprite
+// dressé. En le rendant obligatoire, `tsc` énumère les sites d'appel à notre place — la leçon
+// de `enumerer-une-union-par-le-compilateur`. « Dressé par défaut » ne veut pas dire un drapeau
+// qui vaut `true` tout seul : ça veut dire qu'il n'y a qu'UNE recette, et que tout ce qui se
+// tient debout y passe.
+
+/**
+ * LA CLÉ D'UNE TEXTURE `_lit`, VARIANTE MIROIR COMPRISE — la SEULE fabrique de ce nom.
+ * Générateurs et consommateurs l'appellent tous les deux : ils ne peuvent donc pas diverger.
+ * Un miroir généré que personne ne pose est une loi morte ; un miroir posé que personne n'a
+ * généré est le carré vert `__MISSING`. Les deux se voient, aucun ne se rattrape.
+ */
+export function cleLit(base: string, miroir = false): string {
+  return miroir ? `${base}_lit_m` : `${base}_lit`
+}
+
+/** Le relief se retourne AVEC le canvas — sinon la normale du miroir creuse à l'envers de sa
+ *  matière. (Il vivait dans `essai-da-caillou` ; il appartient à la recette.) */
+export function mirrorRelief(src: Float32Array, w: number, h: number): Float32Array {
+  const out = new Float32Array(w * h)
+  for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) out[y * w + x] = src[y * w + (w - 1 - x)]!
+  return out
+}
+
+/** Les sillons se retournent AVEC le canvas : `[x, y] → [w - 1 - x, y]`. (Il vivait inline
+ *  dans `poi-lit` ; même raison — une fissure gravée à droite doit passer à gauche.) */
+export function mirrorCracks(cracks: readonly Crack[], w: number): readonly Crack[] {
+  return cracks.map((c) => ({ ...c, path: c.path.map(([x, y]) => [w - 1 - x, y] as const) }))
+}
+
+/**
+ * LE CHAMP DE NORMALES ÉCRIT À LA MAIN SE RETOURNE AUTREMENT QU'UN CANVAS — et c'est pour ça
+ * qu'il a son propre chemin (`registerLitPaireDeChamp`) au lieu d'être plié dans la recette
+ * ordinaire. Retourner l'image ne suffit pas : il faut aussi **nier `nx`**, parce qu'une pente
+ * qui montait vers l'est monte vers l'ouest une fois la pierre retournée. `ny` et `nz` ne
+ * bougent pas — le miroir est horizontal.
+ *
+ * `field` est entrelacé (nx, ny, nz), repère écran, y vers le BAS — comme `packNormals`.
+ */
+export function mirrorField(field: Float32Array, w: number, h: number): Float32Array {
+  const out = new Float32Array(w * h * 3)
+  for (let y = 0; y < h; y++) {
+    for (let x = 0; x < w; x++) {
+      const src = (y * w + (w - 1 - x)) * 3
+      const dst = (y * w + x) * 3
+      out[dst] = -field[src]!
+      out[dst + 1] = field[src + 1]!
+      out[dst + 2] = field[src + 2]!
+    }
+  }
+  return out
+}
+
+/** Le masque de matière qui accompagne le champ — retourné, lui, sans autre forme de procès. */
+export function mirrorAlpha(alpha: Uint8Array, w: number, h: number): Uint8Array {
+  const out = new Uint8Array(w * h)
+  for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) out[y * w + x] = alpha[y * w + (w - 1 - x)]!
+  return out
+}
+
+/**
+ * LE MIROIR D'UNE NORMALE DÉJÀ ENCODÉE — pour qui a écrit sa carte à la main, en pixels, sans
+ * garder le champ flottant sous la main (le Feu et ses bûches croisées).
+ *
+ * Retourner l'image ne suffit pas, exactement comme pour `mirrorField` : il faut aussi INVERSER
+ * LE CANAL X. Encodé, `-x` s'écrit `255 - enc(x)` — c'est l'inverse exact de `enc`, au bit de
+ * l'arrondi près. Le vert (Y) et le bleu (Z) ne bougent pas : le miroir est horizontal.
+ *
+ * ⚠ Sans cette inversion on obtient le défaut même qu'on chasse : une pierre retournée dont la
+ * face éclairée reste du côté d'avant.
+ */
+export function mirrorNormalCanvas(src: HTMLCanvasElement): HTMLCanvasElement {
+  const w = src.width, h = src.height
+  const d = src.getContext('2d', { willReadFrequently: true })!.getImageData(0, 0, w, h)
+  const out = newCanvas(w, h)
+  const o = out.ctx.createImageData(w, h)
+  for (let y = 0; y < h; y++) {
+    for (let x = 0; x < w; x++) {
+      const si = (y * w + (w - 1 - x)) * 4
+      const di = (y * w + x) * 4
+      o.data[di] = 255 - d.data[si]!
+      o.data[di + 1] = d.data[si + 1]!
+      o.data[di + 2] = d.data[si + 2]!
+      o.data[di + 3] = d.data[si + 3]!
+    }
+  }
+  out.ctx.putImageData(o, 0, 0)
+  return out.c
+}
+
+/** Ce qu'un sprite éclairable a besoin de dire de lui-même. `albedo` porte la MASSE NUE — sans
+ *  ombre bakée : c'est `ombrer` qui la pose, et la recette décide QUAND. */
+export interface RecetteLit {
+  albedo: HTMLCanvasElement
+  /** SE TIENT-IL DEBOUT ? Requis — voir l'en-tête de section. `false` = au ras du sol (une
+   *  dalle, un plancher, une flaque) : pas de miroir, il n'apporterait rien de visible. */
+  dresse: boolean
+  /** L'ombre de contact, bakée dans l'albédo APRÈS la dérivation des deux normales. */
+  ombrer?: ((ctx: CanvasRenderingContext2D) => void) | undefined
+  // Les cadrans sont RELAYÉS tels quels par des appelants qui les tiennent facultatifs — d'où le
+  // `| undefined` explicite (`exactOptionalPropertyTypes`), et non un simple `?`.
+  passes?: number | undefined
+  k?: number | undefined
+  cell?: number | undefined
+  plant?: boolean | undefined
+  sillons?: readonly Crack[] | undefined
+  relief?: Float32Array | undefined
+}
+
+/**
+ * POSE `<base>_lit` — ET `<base>_lit_m` SI LE SPRITE EST DRESSÉ. L'unique chemin.
+ *
+ * Les défauts de `passes`/`k`/`cell` sont ceux de `normalFromCanvas` : ils ne sont pas
+ * redéclarés ici, sans quoi deux tables de cadrans finiraient par se désaccorder.
+ */
+/**
+ * LA POSE, NUE — les deux clés, l'albédo et son retourné. Sortie de `registerLitPaire` pour qui
+ * a déjà ses normales sous la main : le recuit saisonnier des cimes redessine trente-cinq
+ * albédos par cran, mais leur NORMALE ne dépend pas du jour et vit en cache. Lui faire redériver
+ * la normale à chaque recuit, c'est payer la seule partie chère pour rien.
+ *
+ * ⚠ Le retourné se prend ICI, sur l'albédo tel qu'il est passé — donc OMBRÉ si l'appelant l'a
+ * ombré. C'est l'ordre de `registerLitPaire`, et il n'y a pas deux façons de le faire.
+ */
+export function poserPaire(
+  scene: Phaser.Scene,
+  cles: (miroir: boolean) => string,
+  albedo: HTMLCanvasElement,
+  normale: HTMLCanvasElement,
+  normaleMiroir: HTMLCanvasElement | null,
+): void {
+  const albM = normaleMiroir ? mirrorCanvas(albedo) : null
+  registerLit(scene, cles(false), albedo, normale)
+  if (normaleMiroir && albM) registerLit(scene, cles(true), albM, normaleMiroir)
+}
+
+export function registerLitPaire(scene: Phaser.Scene, base: string, r: RecetteLit): void {
+  const w = r.albedo.width
+  const h = r.albedo.height
+  const sillons = r.sillons ?? []
+  // ① LES DEUX NORMALES, SUR LA MASSE NUE. Le miroir dérive la sienne DU CANVAS RETOURNÉ —
+  //    jamais un flip appliqué après coup, qui laisserait le canal X à l'endroit.
+  const nrm = normalFromCanvas(r.albedo, r.passes, r.k, r.cell, r.plant, sillons, r.relief)
+  const nrmM = r.dresse
+    ? normalFromCanvas(
+      mirrorCanvas(r.albedo), r.passes, r.k, r.cell, r.plant,
+      mirrorCracks(sillons, w),
+      r.relief ? mirrorRelief(r.relief, w, h) : undefined,
+    )
+    : null
+  // ② L'OMBRE, une fois, sur l'albédo.
+  r.ombrer?.(r.albedo.getContext('2d', { willReadFrequently: true })!)
+  // ③ LE MIROIR SE PREND SUR L'ALBÉDO OMBRÉ, et AVANT que Phaser ne prenne la propriété du
+  //    canvas (`addCanvas`). Les deux raisons sont bonnes ; la seconde est silencieuse.
+  poserPaire(scene, (m) => cleLit(base, m), r.albedo, nrm, nrmM)
+}
+
+/** Ce qu'un sprite dont la normale est ÉCRITE À LA MAIN a besoin de dire de lui-même. */
+export interface RecetteLitChamp {
+  albedo: HTMLCanvasElement
+  /** Le champ entrelacé (nx, ny, nz), repère écran, y vers le BAS. */
+  champ: Float32Array
+  /** Ce qui est MATIÈRE — le vide reçoit la normale plate. */
+  alpha: Uint8Array
+  dresse: boolean
+  ombrer?: ((ctx: CanvasRenderingContext2D) => void) | undefined
+}
+
+/** POSE LA PAIRE D'UN SPRITE À NORMALE ÉCRITE À LA MAIN (le socle minéral). Même ordre que
+ *  `registerLitPaire` — l'ombre après, le miroir sur l'ombré — mais le miroir du CHAMP passe
+ *  par `mirrorField`, qui nie `nx`. */
+export function registerLitPaireDeChamp(scene: Phaser.Scene, base: string, r: RecetteLitChamp): void {
+  const w = r.albedo.width
+  const h = r.albedo.height
+  const nrm = packNormals(r.champ, r.alpha, w, h)
+  const nrmM = r.dresse ? packNormals(mirrorField(r.champ, w, h), mirrorAlpha(r.alpha, w, h), w, h) : null
+  r.ombrer?.(r.albedo.getContext('2d', { willReadFrequently: true })!)
+  poserPaire(scene, (m) => cleLit(base, m), r.albedo, nrm, nrmM)
+}
+
 /**
  * EMBALLE UN CHAMP DE NORMALES ÉCRIT À LA MAIN (socle minéral) — même encodage que
  * `normalFromCanvas`, et c'est tout l'intérêt de le sortir ici : `enc` et `FLIP_G` ne sont

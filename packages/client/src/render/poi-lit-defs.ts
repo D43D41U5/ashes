@@ -377,6 +377,7 @@ export const POI_LIT_DEFS_DATA: readonly PoiLitDef[] = [
   },
   {
     slug: 'crevasses',
+    plat: true, // accident du terrain, pas une masse debout : aucun retourné
     w: 68,
     h: 20,
     blocks: [
@@ -527,6 +528,7 @@ export const POI_LIT_DEFS_DATA: readonly PoiLitDef[] = [
   },
   {
     slug: 'fondriere',
+    plat: true, // accident du terrain, pas une masse debout : aucun retourné
     w: 58,
     h: 16,
     blocks: [
@@ -847,6 +849,7 @@ export const POI_LIT_DEFS_DATA: readonly PoiLitDef[] = [
   },
   {
     slug: 'saline',
+    plat: true, // accident du terrain, pas une masse debout : aucun retourné
     w: 52,
     h: 16,
     blocks: [
@@ -1002,6 +1005,7 @@ export const POI_LIT_DEFS_DATA: readonly PoiLitDef[] = [
   },
   {
     slug: 'tarn',
+    plat: true, // accident du terrain, pas une masse debout : aucun retourné
     w: 56,
     h: 26,
     blocks: [

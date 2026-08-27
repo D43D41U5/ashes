@@ -24,7 +24,7 @@ import Phaser from 'phaser'
 import { BUILT_KINDS, POI, type WorldMap } from '@ashes/sim' // POI : SET_PIECE_KINDS (R10)
 import { crownDepth, TILE_PX, TIE_NODE, ySortDepth } from '../../render/framing'
 import { poiCrownKey, poiTextureKey, POI_ART } from './poi-art'
-import { erratiqueVariantFor, litErratiqueKey, POI_LIT_KINDS, poiLitCrownKey, poiLitKey, poiLitMirrorKey } from '../../render/poi-lit'
+import { erratiqueVariantFor, litErratiqueKey, POI_LIT_KINDS, poiLitCrownKey, poiLitKey } from '../../render/poi-lit'
 import type { Warp } from '../../render/warp'
 
 /** Un lieu haut (l'Arbre remarquable : 100 px) pend loin au-dessus de ses pieds. */
@@ -44,6 +44,14 @@ interface Placed {
   /** Le kind — de quoi re-swapper peint↔lit quand le toggle debug bascule. */
   kind?: string
 }
+
+/**
+ * LE BIT DE MIROIR D'UN LIEU — tiré de son `poiId`, qui EST son identité (son index dans
+ * `map.zones`) et ne change pas de la partie. Un lieu retourné le reste, et deux grottes de la
+ * même carte ne se ressemblent plus au pixel près. `poiLitKey` filtre : sur un lieu au ras du
+ * sol (un tarn, une crevasse), le bit est ignoré et la clé droite revient.
+ */
+const miroirDeLieu = (poiId: number): boolean => (Math.imul(poiId + 1, 0x9e3779b1) >>> 28) % 2 === 1
 
 export class PoiLayer {
   private readonly placed: Placed[] = []
@@ -90,7 +98,7 @@ export class PoiLayer {
             // _lit / _lit_m pré-retournée (R5) : un setFlipX casserait le canal X de la normale.
             const mir = k % 2 === 1
             const stone = scene.add
-              .image(sx, sy, mir ? poiLitMirrorKey('pierre_levee') : poiLitKey('pierre_levee'))
+              .image(sx, sy, poiLitKey('pierre_levee', mir))
               .setOrigin(0.5, 1)
               .setScale(0.66 + ((k * 37) % 5) * 0.05)
             stone.setLighting(this.lighting)
@@ -108,7 +116,7 @@ export class PoiLayer {
       const lit = z.kind === 'erratique' || POI_LIT_KINDS.has(z.kind)
       const key = z.kind === 'erratique'
         ? litErratiqueKey(erratiqueVariantFor(poiId))
-        : POI_LIT_KINDS.has(z.kind) ? poiLitKey(z.kind) : poiTextureKey(z.kind)
+        : POI_LIT_KINDS.has(z.kind) ? poiLitKey(z.kind, miroirDeLieu(poiId)) : poiTextureKey(z.kind)
       const body = scene.add.image(px, py, key).setOrigin(0.5, 1).setVisible(false)
       if (lit) body.setLighting(this.lighting)
       // Même bande que les acteurs et les nœuds : à pieds égaux, un lieu se
@@ -120,7 +128,8 @@ export class PoiLayer {
       if (a.crown !== undefined) {
         // Ancrée par le HAUT, exactement là où commence le sprite complet :
         // les deux se superposent au pixel près sur la part commune.
-        const crownTex = POI_LIT_KINDS.has(z.kind) ? poiLitCrownKey(z.kind) : poiCrownKey(z.kind)
+        // LA COURONNE PREND LE MIROIR DE SON CORPS — le même `poiId`, donc le même bit.
+        const crownTex = POI_LIT_KINDS.has(z.kind) ? poiLitCrownKey(z.kind, miroirDeLieu(z.kind === undefined ? 0 : poiId)) : poiCrownKey(z.kind)
         const crown = scene.add.image(px, py - a.h, crownTex).setOrigin(0.5, 0).setVisible(false)
         if (lit) crown.setLighting(this.lighting)
         crown.setDepth(crownDepth(feetY, TILE_PX))
@@ -147,14 +156,15 @@ export class PoiLayer {
       for (const p of this.placed) {
         if (!p.lit || p.kind === undefined) continue
         const kk = p.kind
-        const litKey = kk === 'erratique' ? litErratiqueKey(erratiqueVariantFor(p.poiId)) : poiLitKey(kk)
+        const mir = miroirDeLieu(p.poiId)
+        const litKey = kk === 'erratique' ? litErratiqueKey(erratiqueVariantFor(p.poiId)) : poiLitKey(kk, mir)
         p.body.setTexture(this.lighting ? litKey : poiTextureKey(kk))
-        p.crown?.setTexture(this.lighting ? poiLitCrownKey(kk) : poiCrownKey(kk))
+        p.crown?.setTexture(this.lighting ? poiLitCrownKey(kk, mir) : poiCrownKey(kk))
       }
       for (let i = 0; i < this.decor.length; i++) {
         const st = this.decor[i]!
         st.setTexture(this.lighting
-          ? (this.decorMir[i] ? poiLitMirrorKey('pierre_levee') : poiLitKey('pierre_levee'))
+          ? poiLitKey('pierre_levee', this.decorMir[i] === true)
           : poiTextureKey('pierre_levee'))
         st.setFlipX(!this.lighting && this.decorMir[i] === true) // le flip n'est licite qu'en peint
         st.setLighting(this.lighting)

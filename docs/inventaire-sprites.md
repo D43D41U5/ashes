@@ -66,7 +66,7 @@ préfère `art/<clé>.png` quand le fichier existe et retombe sur le générateu
 | natives Phaser | 4 | `__DEFAULT`, `__MISSING`, `__NORMAL`, `__WHITE` |
 | canvas de **texte** | 169 | un par `Phaser.Text` vivant — clé UUID, hauteur 16 à 32 px. Du texte, pas de l'art |
 | surface de composition | 1 | la `DynamicTexture` plein écran (1280×720) du voile de nuit, redessinée chaque frame. Clé UUID elle aussi |
-| **dessins** | **634** | 407 dessins de base + 204 compagnons `_lit` + 23 miroirs `_lit_m` |
+| **dessins** | **1598** | 695 dessins de base + 529 compagnons `_lit` + 374 miroirs `_lit_m` |
 
 4 + 169 + 1 + 634 = 808.
 
@@ -80,22 +80,37 @@ entière (1581 × 2372 px) : `water-field`, `water-fond`, `water-rive`, `combe-m
 (pipeline d'éclairage, spec da-feeling R1). `_lit_m` est le **miroir pré-retourné** du même dessin — une
 symétrie, pas un second dessin. Les compter comme des sprites doublerait l'inventaire pour rien.
 
+**Depuis le 2026-08-27, le miroir est la règle et non l'exception** (demande d'Alexis : « la même technique
+pour tout sprite qui correspond à quelque chose de dressé »). Les 23 miroirs du clutter sont devenus **374** :
+tout ce qui se tient debout — arbres (fûts et cimes), murs, murets, mobilier, lieux, socles minéraux, bornes
+de seuil, nœuds récoltables — passe par `registerLitPaire`, qui pose la paire d'un coup. Ce qui n'en a pas
+le dit : au ras du sol (lichen, branche tombée, dalle de gué, tarn, friche) ou symétrique au pixel (les
+humains). Trois familles gardent une exception motivée — la **porte** (son vantail s'ouvrirait à l'envers)
+et les **masques d'autotile asymétriques** (le retourné du masque 6 est le sprite du masque 12, qui existe
+déjà : seuls les sept masques que le miroir laisse en place ont un retourné).
+
 ## Les familles
+
+*(Relevé du 2026-08-27, `pnpm smoke --scenario textures`. Les clés de cime portent leur `_lit` au
+milieu — `nd-<slug>_crown_lit-<cime>` — d'où un compte `_lit` de `nd-` bien supérieur à ses bases.)*
 
 | préfixe | base | `_lit` | `_lit_m` | ce que c'est | peint dans |
 |---|---:|---:|---:|---|---|
-| `st-` | 174 | 106 | — | structures, murs, meubles, sol/toit | `BootScene.ts` (les 16×16 de base) + `render/bati-art.ts` (murs, clôtures, encadrements, usures) + `render/lit-structures.ts` (`_lit`) |
-| `it-` | 49 | — | — | icônes d'objets, une par `ItemId` | `render/item-art.ts` |
-| `poi-` | 48 | 55 | 1 | 32 lieux + 16 couronnes | `scenes/world/poi-art.ts` + `render/poi-lit.ts` / `poi-lit-defs.ts` |
-| `fx-` | 37 | — | — | effets : sang, terrier, plouf, poissons, feuilles, bancs de brume, halos | `BootScene.ts`, `eau-fx.ts`, `poissons-ombres.ts`, `feuilles-derive.ts`, `mist-banks.ts`, `fire-fx.ts`, `night-veil.ts`, `fire-ground-glow.ts`, `contact-shadow.ts` |
-| `spr-` | 23 | 2 | — | acteurs : avatar, PNJ, Cendreux, faune et ses poses | `BootScene.ts` (`makeSprite`, `makeFauna`) |
-| `cl-` | 23 | 22 | 22 | *clutter* : touffes, buissons, troncs, cailloux, fleurs, lichen | `render/lit-props.ts` |
-| `nd-` | 20 | 15 | — | nœuds récoltables : arbres, roche, filons, buissons à baies | `BootScene.ts` + `render/lit-trees.ts` |
+| `st-` | 275 | 206 | 84 | structures, murs, meubles, sol/toit | `BootScene.ts` (les 16×16 de base) + `render/bati-art.ts` (murs, clôtures, encadrements, usures) + `render/lit-structures.ts` (`_lit`) |
+| `nd-` | 56 | 222 | 218 | nœuds récoltables + les cimes et fûts d'arbres, cinq cimes par variante | `BootScene.ts` + `render/lit-trees.ts` + `render/lit-props.ts` |
+| `it-` | 92 | — | — | icônes d'objets, une par `ItemId` | `render/item-art.ts` |
+| `poi-` | 50 | 57 | 47 | 33 lieux + 18 couronnes + les trois erratiques | `scenes/world/poi-art.ts` + `render/poi-lit.ts` / `poi-lit-defs.ts` |
+| `fx-` | 97 | — | — | effets : sang, terrier, plouf, poissons, feuilles, bancs de brume, halos | `BootScene.ts`, `eau-fx.ts`, `poissons-ombres.ts`, `feuilles-derive.ts`, `mist-banks.ts`, `fire-fx.ts`, `night-veil.ts`, `fire-ground-glow.ts`, `contact-shadow.ts` |
+| `spr-` | 50 | 2 | — | acteurs : avatar, PNJ, Cendreux, faune et ses poses | `BootScene.ts` (`makeSprite`, `makeFauna`) |
+| `cl-` | 25 | 24 | 22 | *clutter* : touffes, buissons, troncs, cailloux, fleurs, lichen | `render/lit-props.ts` |
+| `pave-` | 18 | — | — | le sol dessiné : pavés autotile | `render/paves.ts` |
 | `cf-` | 16 | — | — | falaise vue de dessus : 8 masques × 2 variantes | `render/cliff-art.ts` |
+| `essai-` | — | 14 | — | les planches d'essai DA (hors jeu) | `render/essai-da-caillou.ts` |
 | `vt-` | 5 | — | — | icônes de vitales : PV, endurance, faim, température, charge | `render/vital-art.ts` |
-| `seuil-` | 3 | 3 | — | bornes de seuil (entière, brisée, couronne) | `scenes/world/borne-layer.ts` |
+| `ic-` | 4 | — | — | pictogrammes d'interface | `render/item-art.ts` |
+| `seuil-` | 3 | 3 | 3 | bornes de seuil (entière, brisée, couronne) | `scenes/world/borne-layer.ts` |
 | `water-` | 3 | — | — | champs pleine-carte : nappe, fond, rive | `scenes/world/water-layer.ts` |
-| `gue-` | 1 | 1 | — | pierre de gué | `scenes/world/gue-stones.ts` |
+| `gue-` | 1 | 1 | — | pierre de gué — **couchée**, donc sans miroir | `scenes/world/gue-stones.ts` |
 | `glow` | 1 | — | — | halo radial doux (le seul en filtrage LINEAR) | `BootScene.ts` |
 | `combe-`, `morning-` | 2 | — | — | masques de brume, pleine carte | `combe-mist.ts`, `morning-mist.ts` |
 | `map-` | 1 | — | — | `map-demo`, le terrain peint en une texture | `WorldScene.ts` |
@@ -119,8 +134,9 @@ sont des **poses** : cerf (debout, broute, fuit, couché), lapin (debout, broute
 fouille, charge), loup (debout, traque, mange, alpha), oiseau (posé, picore, alerte, envol, en vol). Tailles de
 12×9 à 36×28 px. Seuls `spr-player` et `spr-npc` ont un `_lit`.
 
-**`cl-` (23)** — le seul jeu **entièrement** normal-mappé et miroité (23 base / 22 `_lit` / 22 `_lit_m`) :
-c'est le décor le plus dense à l'écran, donc celui qui doit le moins se répéter.
+**`cl-` (25)** — le premier jeu **entièrement** normal-mappé et miroité, et le patron de tous les autres
+depuis le 2026-08-27 (25 base / 24 `_lit` / 22 `_lit_m` — le lichen et la poussière sont des taches sur le
+sol, pas des masses debout) : c'est le décor le plus dense à l'écran, donc celui qui doit le moins se répéter.
 
 ## Ce que ce relevé ne contient pas
 
