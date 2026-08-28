@@ -840,6 +840,26 @@ export class BootScene extends Phaser.Scene {
     g.generateTexture('spr-deer-lever', 22, 16)
     g.clear()
 
+    // ── LES TRACES DU COIN (faune R24) — trois marques de sol, dérivées des
+    // mêmes données que le comportement (render/traces.ts). Petites et sombres :
+    // des indices qu'on cherche, pas des panneaux. ──────────────────────────────
+    // L'EMPREINTE : deux sabots fendus, décalés — un pas, pas un tampon.
+    g.fillStyle(0x453626).fillRect(1, 0, 2, 3).fillRect(4, 1, 2, 3)
+    g.fillStyle(0x453626).fillRect(1, 4, 1, 1).fillRect(5, 5, 1, 1) // les gardes, derrière
+    g.generateTexture('spr-trace-empreinte', 7, 6)
+    g.clear()
+    // LES FUMÉES : une poignée de crottes rondes, groupées.
+    g.fillStyle(0x3c3122).fillRect(1, 2, 2, 2).fillRect(4, 1, 2, 2).fillRect(3, 4, 2, 1).fillRect(6, 3, 1, 2)
+    g.generateTexture('spr-trace-fumees', 8, 6)
+    g.clear()
+    // LE FROTTIS : l'écorce arrachée à hauteur de bois — une entaille claire
+    // au bord sombre, verticale, qui se lit contre un tronc de lisière.
+    g.fillStyle(0x2e2318).fillRect(0, 0, 4, 10)
+    g.fillStyle(0xd8c49a).fillRect(1, 1, 2, 8)
+    g.fillStyle(0xb59f74).fillRect(1, 3, 1, 2).fillRect(2, 6, 1, 2) // le fil du bois
+    g.generateTexture('spr-trace-frottis', 4, 10)
+    g.clear()
+
     // Lapin qui BROUTE : aplati, oreilles couchées en arrière, nez dans l'herbe.
     g.fillStyle(0x6b5a48).fillEllipse(6, 6, 11, 6) // corps tassé
     g.fillStyle(0xa8927a).fillEllipse(6, 6, 9, 4)

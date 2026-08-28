@@ -133,6 +133,7 @@ import {
   KINDS_SANS_BANDEAU,
 } from './world/hud-bridge'
 import { ClutterLayer } from './world/clutter-layer'
+import { TracesLayer } from './world/traces-layer'
 import { familleDe, moyenneFamille, profilDe } from '../render/grain-sol'
 import { GroundLayer } from './world/ground-layer'
 import { PaveLayer } from './world/pave-layer'
@@ -484,6 +485,8 @@ export class WorldScene extends Phaser.Scene {
    *  la somme des siennes et des nôtres, sinon elle reculerait à la passation. */
   private hostPhases = 0
   private worldSeed = 0
+  /** Les traces des coins de chasse (faune R24) — rebâties quand les coins bougent (R27). */
+  private tracesLayer: TracesLayer | null = null
   private clutter?: ClutterLayer
   private ground!: GroundLayer
   /** LES PAVÉS (spec sol-dessine R8) : le sol à 16 px/tuile, par chunks, au-dessus du bake. Exposé
@@ -1199,6 +1202,10 @@ export class WorldScene extends Phaser.Scene {
       },
       clutter: () => {
         this.clutter = new ClutterLayer(this, this.map, this.worldSeed, this.warp)
+        // LES TRACES DU COIN (faune R24) : posées une fois — la structure du coin
+        // est une donnée de carte, elles ne bougent qu'avec les coins (R27).
+        this.tracesLayer = new TracesLayer(this)
+        this.tracesLayer.rebuild(this.map, this.grounds, this.worldSeed)
         // Rien ne pousse sur la cendre (R15) : le décor lit la MÊME fonction que la sim.
         this.clutter.tuileCendree = (tx, ty) =>
           tuileCendree({ map: this.map, cendreAge: this.cendreAge, seed: this.worldSeed }, tx, ty)
@@ -3120,6 +3127,7 @@ export class WorldScene extends Phaser.Scene {
         // c'est cette liste que liront les traces au sol (R24), jamais une copie figée.
         if (event.type === 'coin_eteint') this.grounds = this.grounds.filter((g) => g.x !== event.x || g.y !== event.y)
         else this.grounds = [...this.grounds, { x: event.x, y: event.y }]
+        this.tracesLayer?.rebuild(this.map, this.grounds, this.worldSeed) // les traces suivent les coins
       } else if (event.type === 'poi_discovered' && event.byEntityId === this.playerId) {
         // MONTER, C'EST VOIR (spec lieux.md) : un lieu qui révèle un RAYON dévoile aussi le
         // TERRAIN de ce rayon, pas seulement les pastilles. C'est ce qui referme la boucle
