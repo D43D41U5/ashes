@@ -2304,6 +2304,13 @@ describe('les coins de chasse (A24 — R17)', () => {
     for (let ty = 190; ty < 210; ty++) {
       for (let tx = 190; tx < 210; tx++) map.terrain[ty * map.width + tx] = TERRAIN_SHALLOW_WATER
     }
+    // …et des DORTOIRS (R23) : quatre bosquets autour du lac — depuis 2026-08-28
+    // un coin sans couvert à portée n'est plus un coin, l'organe fait partie du montage.
+    for (const [bx, by] of [[150, 150], [240, 150], [150, 240], [240, 240]] as const) {
+      for (let ty = by; ty < by + 16; ty++) {
+        for (let tx = bx; tx < bx + 16; tx++) map.terrain[ty * map.width + tx] = TERRAIN_FOREST
+      }
+    }
     const grounds = placeHuntingGrounds(map, 7)
     expect(grounds.length).toBeGreaterThan(0)
 
@@ -2589,6 +2596,55 @@ describe('la clairière et la souille (A27 — R17)', () => {
     const bois = grounds.filter((g) => map.terrain[Math.floor(g.y) * map.width + Math.floor(g.x)] === TERRAIN_FOREST)
     expect(pres.length).toBeGreaterThan(0) // des clairières
     expect(bois.length).toBeGreaterThan(0) // ET des souilles
+  })
+
+  /**
+   * A37 (R23, 2026-08-28) — LE TROISIÈME ORGANE : LE DORTOIR. Un coin exige un
+   * massif boisé à portée, en plus de son herbe et de son eau. Contre-épreuve
+   * par construction : le premier montage passait AVANT la règle (des coins y
+   * naissaient), il doit rendre zéro depuis.
+   */
+  it('A37 — sans un massif boisé à portée, AUCUN point ne devient un coin', () => {
+    // De l'herbe et de l'eau à profusion — mais pas un arbre sur toute la carte.
+    const map = createEmptyMap(300, 300, TERRAIN_GRASS)
+    for (let ty = 0; ty < 300; ty++) {
+      for (let tx = 0; tx < 300; tx++) {
+        if (tx % 60 < 4) map.terrain[ty * map.width + tx] = TERRAIN_SHALLOW_WATER
+      }
+    }
+    expect(placeHuntingGrounds(map, 7).length).toBe(0)
+  })
+
+  it('A37 — le même monde, boisé, porte des coins — et CHACUN a son dortoir à portée', () => {
+    const map = createEmptyMap(300, 300, TERRAIN_GRASS)
+    for (let ty = 0; ty < 300; ty++) {
+      for (let tx = 0; tx < 300; tx++) {
+        if (tx % 60 < 4) map.terrain[ty * map.width + tx] = TERRAIN_SHALLOW_WATER
+      }
+    }
+    // Des bosquets de 12×12 semés tous les 48 : partout, un massif à portée.
+    for (let by = 24; by < 300 - 12; by += 48) {
+      for (let bx = 24; bx < 300 - 12; bx += 48) {
+        for (let ty = by; ty < by + 12; ty++) {
+          for (let tx = bx; tx < bx + 12; tx++) map.terrain[ty * map.width + tx] = TERRAIN_FOREST
+        }
+      }
+    }
+    const grounds = placeHuntingGrounds(map, 7)
+    expect(grounds.length).toBeGreaterThan(0)
+    // La garde est EXHAUSTIVE sur la sortie : chaque coin rendu a, à portée de
+    // `GROUND_COVER_NEAR` (+ une maille de quantification), au moins le plancher
+    // de tuiles boisées — recompté ici en brut, sans passer par la grille du code.
+    const marge = FAUNA.GROUND_COVER_NEAR + FAUNA.GROUND_WATER_CELL
+    for (const g of grounds) {
+      let bois = 0
+      for (let ty = Math.max(0, Math.floor(g.y) - marge); ty <= Math.min(299, Math.floor(g.y) + marge); ty++) {
+        for (let tx = Math.max(0, Math.floor(g.x) - marge); tx <= Math.min(299, Math.floor(g.x) + marge); tx++) {
+          if (map.terrain[ty * map.width + tx] === TERRAIN_FOREST) bois++
+        }
+      }
+      expect(bois, `coin (${g.x}, ${g.y}) sans dortoir`).toBeGreaterThanOrEqual(FAUNA.GROUND_COVER_MIN_TILES)
+    }
   })
 })
 

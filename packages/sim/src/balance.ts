@@ -3153,6 +3153,22 @@ export const FAUNA = {
   GROUND_WATER_NEAR: 40, // « à portée d'eau » : le gibier boit tous les jours
   GROUND_WATER_CELL: 8, // maille de la grille d'eau (précalcul du worldgen)
   /**
+   * LE TROISIÈME ORGANE DU COIN (spec faune R23, décision d'Alexis 2026-08-28) :
+   * le DORTOIR. Un coin de chasse exige, en plus de son gagnage et de son eau, un
+   * COUVERT — un massif boisé où dormir la nuit (R26). Symétrique de la règle
+   * d'eau : même portée, même grille. Conséquence assumée : les coins de plein
+   * ouvert sans bois à portée disparaissent — le cerf d'altitude reste près des
+   * mélézins. Se calibre en REGARDANT une carte (le compte de coins avant/après
+   * est consigné dans la spec, A37).
+   */
+  GROUND_COVER_NEAR: 40, // « à portée de couvert » : le gibier dort sous les arbres
+  /**
+   * UN ABRI, PAS TROIS ARBRES : le plancher de bois d'une cellule de la grille
+   * (8×8 tuiles) pour qu'elle compte comme du couvert. Dix tuiles boisées sur
+   * soixante-quatre — un vrai bosquet à l'échelle de la maille, pas une haie.
+   */
+  GROUND_COVER_MIN_TILES: 10,
+  /**
    * LA MIGRATION DANS SON COIN. Une bête d'un coin de chasse ne dérive pas
    * n'importe où : elle se donne un BUT à l'intérieur de son territoire, et elle
    * y va. Le troupeau traverse sa clairière ; il ne quitte pas le canton.

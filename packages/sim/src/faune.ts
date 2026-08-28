@@ -211,14 +211,20 @@ export function placeHuntingGrounds(map: WorldMap, seed: number): { x: number; y
   const gw = Math.ceil(map.width / cell)
   const gh = Math.ceil(map.height / cell)
   const wet = new Uint8Array(gw * gh)
+  // LE COUVERT SE PRÉCALCULE COMME L'EAU (spec faune R23) : par cellule, le COMPTE
+  // de tuiles boisées — le plancher (`GROUND_COVER_MIN_TILES`) distingue un massif
+  // d'une haie. Même passe, même grille, même prix.
+  const boise = new Uint16Array(gw * gh)
   for (let ty = 0; ty < map.height; ty++) {
     for (let tx = 0; tx < map.width; tx++) {
-      if (!WATER_TERRAINS.includes(terrainAt(map, tx, ty))) continue
-      wet[Math.floor(ty / cell) * gw + Math.floor(tx / cell)] = 1
+      const t = terrainAt(map, tx, ty)
+      const c = Math.floor(ty / cell) * gw + Math.floor(tx / cell)
+      if (WATER_TERRAINS.includes(t)) wet[c] = 1
+      else if (WOOD_TERRAINS.includes(t)) boise[c] = boise[c]! + 1
     }
   }
-  const nearWater = (tx: number, ty: number): boolean => {
-    const r = Math.ceil(FAUNA.GROUND_WATER_NEAR / cell)
+  const nearCell = (tx: number, ty: number, near: number, ok: (c: number) => boolean): boolean => {
+    const r = Math.ceil(near / cell)
     const cx = Math.floor(tx / cell)
     const cy = Math.floor(ty / cell)
     for (let oy = -r; oy <= r; oy++) {
@@ -226,11 +232,16 @@ export function placeHuntingGrounds(map: WorldMap, seed: number): { x: number; y
         const nx = cx + ox
         const ny = cy + oy
         if (nx < 0 || ny < 0 || nx >= gw || ny >= gh) continue
-        if (wet[ny * gw + nx] === 1) return true
+        if (ok(ny * gw + nx)) return true
       }
     }
     return false
   }
+  const nearWater = (tx: number, ty: number): boolean => nearCell(tx, ty, FAUNA.GROUND_WATER_NEAR, (c) => wet[c] === 1)
+  // LE DORTOIR À PORTÉE (R23) : le gibier dort sous les arbres — un coin sans
+  // massif boisé à portée n'est pas un coin, quelle que soit son herbe.
+  const nearCover = (tx: number, ty: number): boolean =>
+    nearCell(tx, ty, FAUNA.GROUND_COVER_NEAR, (c) => boise[c]! >= FAUNA.GROUND_COVER_MIN_TILES)
 
   const pts = poissonPoints(map.width, map.height, seed ^ 0x47524e44 /* 'GRND' */, FAUNA.GROUND_SPACING)
   const grounds: { x: number; y: number }[] = []
@@ -277,6 +288,7 @@ export function placeHuntingGrounds(map: WorldMap, seed: number): { x: number; y
           if (!TERRAINS[terrain]?.walkable) continue
           if (!veut.includes(terrain)) continue // de l'herbe, OU des arbres
           if (!nearWater(tx, ty)) continue // …et de l'eau (on boit ; le sanglier s'y vautre)
+          if (!nearCover(tx, ty)) continue // …et un DORTOIR (R23 : on dort sous les arbres)
           grounds.push({ x: tx + 0.5, y: ty + 0.5 })
           placed = true
         }
