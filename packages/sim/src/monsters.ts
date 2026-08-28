@@ -24,7 +24,7 @@ import { crossingBlocker } from './construction'
 import { cendreuxStep } from './cendreux'
 import { meteoVisionFactor } from './meteo'
 import { eveilCendreuxAt } from './temperature'
-import { advanceFauna, avatarDetectability, avatarThreat, coverAt, faunaStep, isPredator, isPrey, morsureDeLaCendre, wolfStep, type Threat } from './faune'
+import { advanceCoinsConnus, advanceFauna, avatarDetectability, avatarThreat, coverAt, faunaStep, isPredator, isPrey, morsureDeLaCendre, wolfStep, type Threat } from './faune'
 import { profondeurNueDeCendre } from './cendre'
 import { effetsDuJour } from './modificateur'
 import { actForDay, getGameTime, jourDeSaison, seasonRamp } from './time'
@@ -1063,6 +1063,10 @@ export function advanceMonsters(state: SimState): void {
   // plus personne ne regarde ne coûtent pas un pas de plus, et une meute dont
   // l'alpha est tombé se disperse avant d'avoir pu mordre une fois de plus.
   advanceFauna(state, avatars, byId)
+
+  // LA PASTILLE DU COIN (faune R24) : la découverte et l'oubli se jugent ici,
+  // où la liste des avatars existe déjà — quelques distances par tick.
+  advanceCoinsConnus(state, avatars)
 
   // Le peuplement a pu créer et retirer des entités : on réindexe.
   byId = new Map<number, Entity>()

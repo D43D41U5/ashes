@@ -184,6 +184,14 @@ export type SimEvent =
       cause?: 'cold' | 'hunger' | 'lightning' | 'cendre'
     }
   | { type: 'entity_respawned'; tick: number; entityId: number }
+  /** LE COIN VIVANT (faune R27) : un coin de chasse s'éteint (cendré, ou plus un couvert)… */
+  | { type: 'coin_eteint'; tick: number; x: number; y: number }
+  /** …et un autre se sème ailleurs, par le RNG d'état — le replay rejoue la renaissance. */
+  | { type: 'coin_seme'; tick: number; x: number; y: number }
+  /** LA DÉCOUVERTE (faune R24) : ce joueur a trouvé un coin de chasse — sa pastille se pose. */
+  | { type: 'coin_decouvert'; tick: number; entityId: number; x: number; y: number }
+  /** L'OUBLI (R24) : revenu sur place, il constate un coin mort — sa pastille s'éteint. */
+  | { type: 'coin_disparu'; tick: number; entityId: number; x: number; y: number }
   | { type: 'entity_bandaged'; tick: number; entityId: number; byEntityId: number }
   /** `clean` (spec chasse C6) : abattue d'un coup PROPRE — non alertée au départ du wind-up. */
   | { type: 'monster_slain'; tick: number; monsterType: import('./balance').MonsterType; byEntityId: number; clean: boolean }

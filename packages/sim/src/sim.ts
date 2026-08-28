@@ -13,7 +13,7 @@
 import { BALANCE, CARRY, COMBAT, HUNT, NODE_DEFS, NUIT, SLOTS, TEMPERATURE, TERRAIN_GRASS, TICK_DT_S, VENT, type FishId, type NodeType, type RecipeId, type Strike } from './balance'
 import { moveAvatar } from './collision'
 import { advanceDegel } from './gel'
-import { advanceEnvols } from './faune'
+import { advanceEnvols, entretienDesCoins } from './faune'
 import { advanceCombat, applyCombatAction, tientUnArc, type CombatAction, type Corpse } from './combat'
 import { advanceCendreux } from './cendreux'
 import { avanceesDepuisAges, avancerLaCendre, foyersDeLaCarte, jourDuReveilDeLaCendre, tomberLesMortsDeLaCendre } from './cendre'
@@ -248,6 +248,14 @@ export interface Entity {
    * a vu ≠ ce qu'on a atteint, et seul l'atteindre paye.
    */
   reachedPois: number[]
+  /**
+   * LES COINS DE CHASSE CONNUS de ce joueur (spec faune R24) — par POSITION, pas
+   * par index : un coin peut mourir et renaître ailleurs (R27), et LA CARTE EST
+   * UNE MÉMOIRE, PAS UN GPS — l'entrée d'un coin mort reste ici jusqu'à ce que
+   * le joueur revienne CONSTATER (l'oubli, `advanceCoinsConnus`). Optionnel :
+   * les sauvegardes d'avant R24 n'en ont pas.
+   */
+  knownGrounds?: { x: number; y: number }[]
 }
 
 /**
@@ -411,6 +419,12 @@ export interface SimState {
    * demandé de géographie).
    */
   grounds: { x: number; y: number }[]
+  /**
+   * LE DÉFICIT DE COINS (faune R27) : combien de coins éteints attendent encore
+   * leur renaissance — l'entretien quotidien retente, borné, jusqu'à résorption.
+   * Optionnel : les sauvegardes d'avant R27 n'en ont pas (`?? 0` à la lecture).
+   */
+  coinsAResemer?: number
   /**
    * LE SANG AU SOL (spec chasse C9). Les gouttes semées par ce qui saigne — bête
    * blessée comme avatar (le sang est le sang). C'est de l'ÉTAT, pas des
@@ -1040,6 +1054,10 @@ export function step(state: SimState, inputs: MoveInput[]): void {
         state.seed, FUMEROLLE.SEL_STOCK,
       )
     }
+    // LE COIN VIVANT (faune R27) — à CHAQUE bascule de jour, front éveillé ou
+    // pas : la cendre n'est qu'une des morts d'un coin, l'OCCUPATION (un bâti
+    // dans le dernier massif-dortoir) n'attend pas le réveil de la Cendrière.
+    entretienDesCoins(state)
   }
   advanceCraft(state)
   // LA DÉCOUVERTE (D2) après le craft : ce qu'on vient de fabriquer révèle la suite au

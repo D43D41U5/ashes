@@ -6,6 +6,8 @@ import { spawnMonster, type Monster } from './monsters'
 import { createSim, spawnEntity, step, type Entity, type MoveInput, type SimState } from './sim'
 import { cycleOffsetForStartHour } from './time'
 import { distSq } from './geometry'
+import { entretienDesCoins } from './faune'
+import { drainEvents } from './events'
 
 /**
  * ═══ LE DORTOIR (spec faune R26, critères A41-A43) ═══
@@ -213,4 +215,149 @@ describe('A43 — les trajets : au dortoir le soir, au gagnage le matin', () => 
     }
     expect(distSq(cx, cy, dortoir.x, dortoir.y), 'le centre de la harde a quitté le massif').toBeGreaterThan(6 * 6)
   }, 120_000)
+})
+
+describe('A44 (R27) — le coin vivant : le dortoir se remplace, le coin meurt et renaît ailleurs', () => {
+  // Une plus grande vallée : les massifs A et B au canton, un massif C avec son
+  // eau LOIN à l'est — le seul site de renaissance possible.
+  const MASSIF_C = { x0: 340, y0: 140 }
+  function grandeMap(): WorldMap {
+    const map = createEmptyMap(400, 200, TERRAIN_GRASS)
+    for (const m of [MASSIF_A, MASSIF_B, MASSIF_C]) {
+      for (let ty = m.y0; ty < m.y0 + 13; ty++) {
+        for (let tx = m.x0; tx < m.x0 + 13; tx++) map.terrain[ty * map.width + tx] = TERRAIN_FOREST
+      }
+    }
+    for (let ty = 0; ty < 200; ty++) {
+      for (let tx = 100; tx < 103; tx++) map.terrain[ty * map.width + tx] = TERRAIN_SHALLOW_WATER
+      for (let tx = 310; tx < 313; tx++) map.terrain[ty * map.width + tx] = TERRAIN_SHALLOW_WATER
+    }
+    return map
+  }
+  function grandeSim(hour: number): SimState {
+    const sim = createSim(1234, {
+      map: grandeMap(),
+      faunaCap: 0,
+      grounds: [{ x: GROUND.x, y: GROUND.y }],
+      worldEvents: false,
+      cycleOffset: cycleOffsetForStartHour(hour, 1),
+      // LES DEUX HORLOGES : au scale 1, un jour de saison = 24 h RÉELLES — la
+      // bascule (où vit l'entretien R27) est inatteignable en steppant. On
+      // accélère le calendrier, pas le monde : un jour ≈ 2 000 ticks.
+      calendarScale: 864,
+    })
+    sim.wind = { x: 0, y: 0 }
+    return sim
+  }
+  /** Un bâti posé au cœur d'un massif — l'OCCUPATION de R27. */
+  function occupe(sim: SimState, massif: { x0: number; y0: number }, id: number): void {
+    sim.structures.push({ id, type: 'fire', tx: massif.x0 + 6, ty: massif.y0 + 6, villageId: 0 } as never)
+  }
+
+  it('une maison dans le massif-dortoir ne tue pas le coin : la harde change de massif', () => {
+    const sim = grandeSim(22)
+    occupe(sim, MASSIF_A, 9100) // le plus proche est pris : le coin survit par B
+    const membres = harde(sim, 4, GROUND.x, GROUND.y)
+    for (let t = 0; t < 900; t++) step(sim, [])
+    expect(sim.grounds.length, 'le coin vit').toBe(1)
+    for (const m of membres) {
+      expect(m.dodo).toBe(true)
+      expect(m.dortoirY!, 'le dortoir est dans le massif B, pas dans la cour').toBeGreaterThan(MASSIF_B.y0 - 2)
+    }
+  })
+
+  it("tous les massifs perdus : le coin s'éteint au jour suivant, la harde se lève, un coin renaît vers l'est", () => {
+    const sim = grandeSim(22)
+    occupe(sim, MASSIF_A, 9100)
+    occupe(sim, MASSIF_B, 9101)
+    spawnEntity(sim, GROUND.x - 10, GROUND.y) // un témoin : la harde reste regardée, donc visible
+    const membres = harde(sim, 4, GROUND.x, GROUND.y)
+
+    // On traverse la bascule de jour (l'entretien R27 y vit — le même carrefour
+    // que le front de cendre). Borné : si le coin n'a pas bougé en 8 000 ticks,
+    // c'est rouge.
+    let bascule = -1
+    for (let t = 0; t < 6000; t++) { // ~3 jours de saison au scale du banc
+      step(sim, [])
+      if (sim.grounds.length === 0 || sim.grounds[0]!.x !== GROUND.x) {
+        bascule = t
+        break
+      }
+    }
+    expect(bascule, "l'entretien quotidien a jugé le coin").toBeGreaterThan(0)
+
+    // L'ancien coin est MORT, un nouveau est né — loin, vers le seul site viable.
+    expect(sim.grounds.length, 'la vallée ne perd pas son coin : il renaît').toBe(1)
+    const neuf = sim.grounds[0]!
+    expect(distSq(neuf.x, neuf.y, GROUND.x, GROUND.y)).toBeGreaterThan(100 * 100)
+    expect(neuf.x, 'né du côté du massif C et de son eau').toBeGreaterThan(280)
+
+    // Et la harde de l'ancien coin s'est LEVÉE : sans territoire, rendue à
+    // l'ambiant (elle se dissipera hors de portée de vue), en fuite du cœur mort.
+    step(sim, [])
+    for (const m of membres) {
+      if (!sim.monsters.includes(m)) continue // déjà dissipée hors de vue : c'est le contrat
+      expect(m.groundX).toBeUndefined()
+      expect(m.ambient).toBe(true)
+      expect(m.fleeSince).toBeGreaterThanOrEqual(0)
+    }
+  }, 60_000)
+})
+
+describe('A38 (R24) — la pastille du coin : découverte à l’approche, mémoire, oubli au constat', () => {
+  const MASSIF_C = { x0: 340, y0: 140 }
+  function carte(): WorldMap {
+    const map = createEmptyMap(400, 200, TERRAIN_GRASS)
+    for (const m of [MASSIF_A, MASSIF_B, MASSIF_C]) {
+      for (let ty = m.y0; ty < m.y0 + 13; ty++) {
+        for (let tx = m.x0; tx < m.x0 + 13; tx++) map.terrain[ty * map.width + tx] = TERRAIN_FOREST
+      }
+    }
+    for (let ty = 0; ty < 200; ty++) {
+      for (let tx = 100; tx < 103; tx++) map.terrain[ty * map.width + tx] = TERRAIN_SHALLOW_WATER
+      for (let tx = 310; tx < 313; tx++) map.terrain[ty * map.width + tx] = TERRAIN_SHALLOW_WATER
+    }
+    return map
+  }
+
+  it('approcher le cœur pose la pastille ; le coin mort la garde jusqu’au retour, qui l’éteint', () => {
+    const sim = createSim(1234, {
+      map: carte(),
+      faunaCap: 0,
+      grounds: [{ x: GROUND.x, y: GROUND.y }],
+      worldEvents: false,
+      cycleOffset: cycleOffsetForStartHour(12, 1),
+    })
+    sim.wind = { x: 0, y: 0 }
+    const joueurId = spawnEntity(sim, GROUND.x - 40, GROUND.y)
+    const joueur = sim.entities.find((e) => e.id === joueurId)!
+
+    // Trop loin : rien. La carte ne donne pas ce qu'on n'a pas vu.
+    step(sim, [])
+    expect(joueur.knownGrounds ?? []).toHaveLength(0)
+
+    // À portée de vue du cœur : la pastille se pose, et l'événement le dit.
+    joueur.x = GROUND.x - 20
+    drainEvents(sim)
+    step(sim, [])
+    expect(joueur.knownGrounds).toHaveLength(1)
+    expect(drainEvents(sim).some((e) => e.type === 'coin_decouvert' && e.entityId === joueur.id)).toBe(true)
+
+    // Le coin meurt LOIN du joueur (parti à l'autre bout) : LA CARTE EST UNE
+    // MÉMOIRE — la pastille reste, le joueur n'a rien constaté.
+    joueur.x = 20
+    sim.structures.push({ id: 9100, type: 'fire', tx: MASSIF_A.x0 + 6, ty: MASSIF_A.y0 + 6, villageId: 0 } as never)
+    sim.structures.push({ id: 9101, type: 'fire', tx: MASSIF_B.x0 + 6, ty: MASSIF_B.y0 + 6, villageId: 0 } as never)
+    entretienDesCoins(sim)
+    expect(sim.grounds.some((g) => g.x === GROUND.x && g.y === GROUND.y)).toBe(false)
+    step(sim, [])
+    expect(joueur.knownGrounds, 'la pastille du coin mort tient à distance').toHaveLength(1)
+
+    // Le RETOUR constate : la pastille s'éteint, et l'événement le dit.
+    joueur.x = GROUND.x - 15
+    drainEvents(sim)
+    step(sim, [])
+    expect(joueur.knownGrounds).toHaveLength(0)
+    expect(drainEvents(sim).some((e) => e.type === 'coin_disparu' && e.entityId === joueur.id)).toBe(true)
+  })
 })

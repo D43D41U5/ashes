@@ -1488,6 +1488,54 @@ function goHome(state: SimState, monster: Monster, entity: Entity): boolean {
   return false
 }
 
+/**
+ * ═══ LA PASTILLE DU COIN (spec faune R24, A38) — la carte est une mémoire, pas un GPS ═══
+ *
+ * LA DÉCOUVERTE : approcher le cœur d'un coin VIVANT à `GROUND_SIGHT` le pose sur
+ * la carte du joueur (`knownGrounds`, le patron `knownPois` — par POSITION, pas
+ * par index : un coin meurt et renaît ailleurs, R27). L'OUBLI : revenir à portée
+ * d'une pastille dont le coin est MORT l'éteint — la carte ne se corrige qu'au
+ * CONSTAT, jamais à distance. Les PNJ n'ont pas de carte.
+ */
+export function advanceCoinsConnus(state: SimState, avatars: Entity[]): void {
+  if (avatars.length === 0) return
+  const sight2 = FAUNA.GROUND_SIGHT * FAUNA.GROUND_SIGHT
+  const npc = new Set(state.npcs.map((n) => n.entityId))
+  for (const a of avatars) {
+    if (npc.has(a.id)) continue
+    for (const g of state.grounds) {
+      if (distSq(a.x, a.y, g.x, g.y) > sight2) continue
+      const connus = (a.knownGrounds ??= [])
+      let deja = false
+      for (const k of connus) {
+        if (k.x === g.x && k.y === g.y) {
+          deja = true
+          break
+        }
+      }
+      if (deja) continue
+      connus.push({ x: g.x, y: g.y })
+      emitEvent(state, { type: 'coin_decouvert', tick: state.tick, entityId: a.id, x: g.x, y: g.y })
+    }
+    const connus = a.knownGrounds
+    if (!connus) continue
+    for (let i = connus.length - 1; i >= 0; i--) {
+      const k = connus[i]!
+      if (distSq(a.x, a.y, k.x, k.y) > sight2) continue
+      let vivant = false
+      for (const g of state.grounds) {
+        if (g.x === k.x && g.y === k.y) {
+          vivant = true
+          break
+        }
+      }
+      if (vivant) continue
+      connus.splice(i, 1)
+      emitEvent(state, { type: 'coin_disparu', tick: state.tick, entityId: a.id, x: k.x, y: k.y })
+    }
+  }
+}
+
 /* ═══ LE DORTOIR (spec faune R26) — la harde dort au couvert, chacun son arbre ═══ */
 
 /**
@@ -1526,24 +1574,189 @@ function grilleBoisee(map: WorldMap): GrilleBoisee {
  * CE MASSIF PEUT-IL ÊTRE UN DORTOIR ? (R26, et la porte de R27.) Trois refus :
  * cendré (R25 — on ne dort pas dans le feu), OCCUPÉ (un bâti dans l'emprise de
  * la cellule : village, maison — la bête ne dort pas dans une cour), et PRIS
- * par une autre harde (une harde = SON dortoir).
+ * par une autre harde (une harde = SON dortoir). `sansLesHardes` retire ce
+ * troisième refus : c'est la question de VIABILITÉ d'un coin (R27) — « un
+ * couvert existe-t-il ? » — pas celle d'une harde qui cherche le sien.
  */
-function dortoirEligible(state: SimState, cellX: number, cellY: number, herdId: number | undefined): boolean {
+function dortoirEligible(
+  state: SimState,
+  cellX: number,
+  cellY: number,
+  herdId: number | undefined,
+  sansLesHardes = false,
+): boolean {
   const cell = FAUNA.GROUND_WATER_CELL
   const cx = cellX * cell + cell / 2
   const cy = cellY * cell + cell / 2
   if (profondeurNueDeCendre(state, Math.floor(cx), Math.floor(cy)) >= 0) return false
-  const x0 = cellX * cell
-  const y0 = cellY * cell
+  // L'OCCUPATION rayonne (R27) : une maison au cœur d'un massif l'occupe TOUT
+  // ENTIER — pas sa seule cellule de 8×8, sinon la harde dormait dans la cour,
+  // deux cellules plus loin (constaté au banc A44).
   for (const s of state.structures) {
-    if (s.tx >= x0 && s.tx < x0 + cell && s.ty >= y0 && s.ty < y0 + cell) return false
+    if (distSq(cx, cy, s.tx + 0.5, s.ty + 0.5) < FAUNA.DORTOIR_OCCUPATION * FAUNA.DORTOIR_OCCUPATION) return false
   }
-  for (const m of state.monsters) {
-    if (m.dortoirX === undefined || m.dortoirY === undefined) continue
-    if (herdId !== undefined && m.herdId === herdId) continue
-    if (distSq(cx, cy, m.dortoirX, m.dortoirY) < FAUNA.DORTOIR_EXCLUSION * FAUNA.DORTOIR_EXCLUSION) return false
+  if (!sansLesHardes) {
+    for (const m of state.monsters) {
+      if (m.dortoirX === undefined || m.dortoirY === undefined) continue
+      if (herdId !== undefined && m.herdId === herdId) continue
+      if (distSq(cx, cy, m.dortoirX, m.dortoirY) < FAUNA.DORTOIR_EXCLUSION * FAUNA.DORTOIR_EXCLUSION) return false
+    }
   }
   return true
+}
+
+/**
+ * UN COUVERT EXISTE-T-IL ENCORE autour de ce point ? (R27 — la viabilité du
+ * troisième organe.) La même grille et le même plancher que l'élection — mais
+ * sans la règle des hardes : un massif pris par la harde voisine reste un
+ * couvert qui EXISTE.
+ */
+function dortoirDisponible(state: SimState, gx: number, gy: number): boolean {
+  const cell = FAUNA.GROUND_WATER_CELL
+  const { gw, gh, boise } = grilleBoisee(state.map)
+  const r = Math.ceil(FAUNA.GROUND_COVER_NEAR / cell)
+  const cgx = Math.floor(gx / cell)
+  const cgy = Math.floor(gy / cell)
+  for (let oy = -r; oy <= r; oy++) {
+    for (let ox = -r; ox <= r; ox++) {
+      const nx = cgx + ox
+      const ny = cgy + oy
+      if (nx < 0 || ny < 0 || nx >= gw || ny >= gh) continue
+      if (boise[ny * gw + nx]! < FAUNA.GROUND_COVER_MIN_TILES) continue
+      if (dortoirEligible(state, nx, ny, undefined, true)) return true
+    }
+  }
+  return false
+}
+
+/** LA GRILLE MOUILLÉE — le miroir runtime du précalcul d'eau du placement (R17). */
+interface GrilleMouillee {
+  gw: number
+  gh: number
+  wet: Uint8Array
+}
+const EAU_PAR_CARTE = new WeakMap<WorldMap, GrilleMouillee>()
+function grilleMouillee(map: WorldMap): GrilleMouillee {
+  const connu = EAU_PAR_CARTE.get(map)
+  if (connu) return connu
+  const cell = FAUNA.GROUND_WATER_CELL
+  const gw = Math.ceil(map.width / cell)
+  const gh = Math.ceil(map.height / cell)
+  const wet = new Uint8Array(gw * gh)
+  for (let ty = 0; ty < map.height; ty++) {
+    for (let tx = 0; tx < map.width; tx++) {
+      if (!WATER_TERRAINS.includes(terrainAt(map, tx, ty))) continue
+      wet[Math.floor(ty / cell) * gw + Math.floor(tx / cell)] = 1
+    }
+  }
+  const grille = { gw, gh, wet }
+  EAU_PAR_CARTE.set(map, grille)
+  return grille
+}
+
+function eauAPortee(state: SimState, gx: number, gy: number): boolean {
+  const cell = FAUNA.GROUND_WATER_CELL
+  const { gw, gh, wet } = grilleMouillee(state.map)
+  const r = Math.ceil(FAUNA.GROUND_WATER_NEAR / cell)
+  const cgx = Math.floor(gx / cell)
+  const cgy = Math.floor(gy / cell)
+  for (let oy = -r; oy <= r; oy++) {
+    for (let ox = -r; ox <= r; ox++) {
+      const nx = cgx + ox
+      const ny = cgy + oy
+      if (nx < 0 || ny < 0 || nx >= gw || ny >= gh) continue
+      if (wet[ny * gw + nx] === 1) return true
+    }
+  }
+  return false
+}
+
+/**
+ * ═══ LE COIN VIVANT (spec faune R27, A44) — il se répare, ou il meurt et renaît ailleurs ═══
+ *
+ * Appelé UNE fois par bascule de jour de saison (le rythme du front de cendre —
+ * `sim.ts`, le même carrefour qu'`avancerLaCendre`). Trois temps :
+ *
+ *   1. CHAQUE COIN re-prouve ses organes : un gagnage non cendré, un couvert
+ *      encore disponible. (L'eau ne meurt pas — la cendre ne prend pas l'eau.)
+ *   2. Un coin mort S'ÉTEINT : retiré de `state.grounds` (plus une naissance —
+ *      rien ne naît hors d'un coin), et ses bêtes SE LÈVENT : sans territoire,
+ *      rendues à l'ambiant, elles fuient le cœur mort et se dissiperont hors de
+ *      portée de vue — jamais sous les yeux (c'est `despawnUnwatched` qui efface).
+ *   3. Il RENAÎT AILLEURS : un tirage par le RNG D'ÉTAT (le replay rejoue la
+ *      renaissance), sous les MÊMES règles que le semis (R23 : herbe ou bois,
+ *      eau et couvert à portée, hors cendre) plus l'espacement avec les coins
+ *      VIVANTS. Pas de site ce jour-là : le déficit est retenu (`coinsAResemer`)
+ *      et retenté chaque jour — la vallée ne perd pas ses coins en silence.
+ */
+export function entretienDesCoins(state: SimState): void {
+  const morts: { x: number; y: number }[] = []
+  const vivants: { x: number; y: number }[] = []
+  for (const g of state.grounds) {
+    const tx = Math.floor(g.x)
+    const ty = Math.floor(g.y)
+    const gagnageMort = profondeurNueDeCendre(state, tx, ty) >= 0
+    const sansDortoir = !dortoirDisponible(state, g.x, g.y)
+    if (gagnageMort || sansDortoir) morts.push(g)
+    else vivants.push(g)
+  }
+  if (morts.length > 0) {
+    state.grounds = vivants
+    for (const g of morts) {
+      emitEvent(state, { type: 'coin_eteint', tick: state.tick, x: g.x, y: g.y })
+      for (const m of state.monsters) {
+        if (m.groundX !== g.x || m.groundY !== g.y) continue
+        delete m.groundX
+        delete m.groundY
+        delete m.dortoirX
+        delete m.dortoirY
+        delete m.dodo
+        delete m.guet
+        m.ambient = true // plus personne ne la retient : elle se dissipera hors de vue
+        if (m.fleeSince < 0) {
+          m.fleeSince = state.tick
+          if (m.fleeFromX === undefined) {
+            m.fleeFromX = g.x
+            m.fleeFromY = g.y
+          }
+        }
+      }
+    }
+    state.coinsAResemer = (state.coinsAResemer ?? 0) + morts.length
+  }
+
+  // LA RENAISSANCE — bornée : quelques dizaines de tirages par coin manquant et
+  // par jour, jamais une boucle qui cherche jusqu'à trouver.
+  let manque = state.coinsAResemer ?? 0
+  while (manque > 0) {
+    let trouve = false
+    for (let k = 0; k < FAUNA.RESSEMIS_ESSAIS && !trouve; k++) {
+      const tx = Math.floor(roll(state) * state.map.width)
+      const ty = Math.floor(roll(state) * state.map.height)
+      const terrain = terrainAt(state.map, tx, ty)
+      if (!TERRAINS[terrain]?.walkable) continue
+      if (!OPEN_TERRAINS.includes(terrain) && !WOOD_TERRAINS.includes(terrain)) continue
+      if (profondeurNueDeCendre(state, tx, ty) >= 0) continue
+      const x = tx + 0.5
+      const y = ty + 0.5
+      if (!eauAPortee(state, x, y)) continue
+      if (!dortoirDisponible(state, x, y)) continue
+      let trop = false
+      for (const g of state.grounds) {
+        if (distSq(x, y, g.x, g.y) < FAUNA.GROUND_SPACING * FAUNA.GROUND_SPACING) {
+          trop = true
+          break
+        }
+      }
+      if (trop) continue
+      state.grounds.push({ x, y })
+      emitEvent(state, { type: 'coin_seme', tick: state.tick, x, y })
+      trouve = true
+    }
+    manque -= 1 // trouvé ou pas : les essais du jour sont consommés pour CE coin
+    state.coinsAResemer = (state.coinsAResemer ?? 0) - (trouve ? 1 : 0)
+    if (!trouve) break // pas de site aujourd'hui : on retentera demain
+  }
 }
 
 /**
@@ -1641,6 +1854,26 @@ function dortoirStep(
   }
   monster.wanderDx = 0
   monster.wanderDy = 0
+  // L'ENDORMISSEMENT RE-PROUVE LE DORTOIR (R27) — une fois par nuit, au moment
+  // de fermer les yeux : un bâti posé dans la journée, ou le front arrivé, et le
+  // massif n'est plus un lit. Toute la harde l'oublie — la prochaine pensée élira
+  // le meilleur massif restant, et le coin survit tant qu'il en reste un.
+  if (monster.dodo !== true && monster.guet !== true) {
+    const cell = FAUNA.GROUND_WATER_CELL
+    const cX = Math.floor(monster.dortoirX / cell)
+    const cY = Math.floor((monster.dortoirY ?? 0) / cell)
+    if (!dortoirEligible(state, cX, cY, monster.herdId)) {
+      delete monster.dortoirX
+      delete monster.dortoirY
+      if (herd) {
+        for (const other of herd) {
+          delete other.dortoirX
+          delete other.dortoirY
+        }
+      }
+      return false
+    }
+  }
   if (monster.guet !== true) monster.dodo = true
   return true
 }

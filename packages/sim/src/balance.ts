@@ -3189,6 +3189,23 @@ export const FAUNA = {
   DORTOIR_SPREAD: 1.8,
   /** UNE HARDE = SON DORTOIR : aucun massif ne s'élit à moins de ça du dortoir d'une autre harde. */
   DORTOIR_EXCLUSION: 10,
+  /** LA RENAISSANCE D'UN COIN (R27) : tirages de tuile par coin manquant et par jour — borné, jamais « jusqu'à trouver ». */
+  RESSEMIS_ESSAIS: 40,
+  /**
+   * L'OCCUPATION (R27) : un bâti disqualifie tout dortoir à moins de ça, en
+   * tuiles — la bête ne dort pas dans une cour, ni au fond du même bosquet que
+   * la maison. Calibré pour couvrir un massif de taille plancher d'une seule
+   * bâtisse en son cœur (13×13 : le coin le plus loin est à ~13 tuiles).
+   */
+  DORTOIR_OCCUPATION: 14,
+  /**
+   * TROUVER UN COIN (R24) : approcher son cœur à cette distance pose sa pastille
+   * sur la carte — et revenir à cette distance d'une pastille dont le coin est
+   * MORT (R27) l'éteint : la carte est une mémoire, elle ne se corrige qu'au
+   * constat. Un peu sous `SPAWN_RING_MIN` (28) : quand on découvre le coin, son
+   * gibier est déjà autour de soi — on découvre un lieu VIVANT.
+   */
+  GROUND_SIGHT: 24,
   /**
    * LA MIGRATION DANS SON COIN. Une bête d'un coin de chasse ne dérive pas
    * n'importe où : elle se donne un BUT à l'intérieur de son territoire, et elle
