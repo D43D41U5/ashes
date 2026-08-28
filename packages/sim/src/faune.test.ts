@@ -2578,8 +2578,11 @@ describe('la clairière et la souille (A27 — R17)', () => {
     expect((clairiere.deer ?? 0) + (clairiere.rabbit ?? 0)).toBeGreaterThan(5)
 
     // LA SOUILLE : posée dans les bois. Le sanglier y est CHEZ LUI.
+    // (≥ 3 depuis la harde 5-8 (R26, 2026-08-28) : une harde de cerfs prend plus
+    // de places du plafond partagé, la composition glisse d'un cran — la garde
+    // TRANCHANTE reste le zéro de la clairière, pas le compte exact du bois.)
     const souille = compo(150.5, 120.5, 2)
-    expect(souille.boar ?? 0).toBeGreaterThan(3)
+    expect(souille.boar ?? 0).toBeGreaterThanOrEqual(3)
   })
 
   it('A27 — le semis pose les DEUX natures : des prés ET des bois', () => {

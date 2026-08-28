@@ -2929,7 +2929,11 @@ export const MONSTER_DEFS: Record<MonsterType, MonsterDef> = {
     // La trouée devient donc un lieu de chasse, ce qui est la moitié de sa raison d'être.
     habitat: [TERRAIN_ALPINE_MEADOW, TERRAIN_HEATH, TERRAIN_GRASS, TERRAIN_FOREST, TERRAIN_LARCH, TERRAIN_WILLOW, TERRAIN_WET_MEADOW, TERRAIN_CLAIRIERE],
     alertRange: 14, flightRange: 9,
-    herdSize: [3, 5], // la harde : ils broutent ensemble et détalent ensemble
+    // LA HARDE DE BICHES (R26, décision d'Alexis 2026-08-28) : 5-8 — le cerf élaphe
+    // forestier réel vit en hardes matriarcales de 5 à 20 ; on prend le bas pour
+    // garder 2-3 hardes par coin (le plafond de 30 ne bouge pas) et une approche
+    // nocturne jouable (8 paires d'oreilles, pas 16). `herdCost` se re-dérive seul.
+    herdSize: [5, 8], // la harde : ils broutent ensemble et détalent ensemble
     activity: 'diurnal', // le grand gibier du plein jour
     jink: 0.5, // il crochète, mais moins sec que le lapin (chasse C15)
   },
