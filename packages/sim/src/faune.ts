@@ -169,7 +169,7 @@ const OPEN_TERRAINS: readonly number[] = [
  * vautre). C'est ce qui rend la carte apprenable : on va au pré pour le cerf, au
  * bois pour le sanglier.
  */
-const WOOD_TERRAINS: readonly number[] = [
+export const WOOD_TERRAINS: readonly number[] = [
   TERRAIN_FOREST,
   TERRAIN_PINE,
   TERRAIN_LARCH,

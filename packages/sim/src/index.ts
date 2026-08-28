@@ -271,6 +271,7 @@ export { advanceMonsters } from './monsters'
 export type { Monster } from './monsters'
 export { isPrey, isPredator, isWild, activityAt, predatorBias, sentinelOf, wolfVigor } from './faune'
 export { placeHuntingGrounds } from './faune' // hôte/scénario : le semis des coins de chasse
+export { WOOD_TERRAINS } from './faune' // le client (traces R24) lit LA liste, il n'en recopie pas une
 export { enVol, hauteurDeVol, hauteurDeBond } from './vol' // l'envol du tétras (R21) : le client en tire silhouette et hauteur
 export { advanceCendreux, willRiseAsCendreux } from './cendreux'
 /** LE SOL QUI TRAVAILLE (spec `cendreux.md` R21) — le client le PEINT : il lui faut le type
