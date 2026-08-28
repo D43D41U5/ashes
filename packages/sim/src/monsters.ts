@@ -192,6 +192,27 @@ export interface Monster {
   groundX?: number
   groundY?: number
 
+  /* ── Le dortoir de la harde (spec faune R26) ────────────────────────────── */
+  /**
+   * SON dortoir : le massif boisé où SA harde dort la nuit — élu une fois par la
+   * première bête qui s'endort, copié par les sœurs, oublié s'il devient
+   * inéligible (cendré, occupé — R27). Une harde = SON dortoir : l'élection
+   * refuse un massif où une AUTRE harde dort déjà.
+   */
+  dortoirX?: number
+  dortoirY?: number
+  /**
+   * ELLE DORT au dortoir : les trois sens bridés par `SLEEP_SENSES`. La sim est
+   * l'écrivain unique du sommeil — le client et la loi de perception le lisent,
+   * personne d'autre ne l'écrit. Purgé au réveil (l'heure) et à la levée (la peur).
+   */
+  dodo?: true
+  /**
+   * LE GUETTEUR (R26) : réveillée par le bruit, debout, sens NORMAUX — une seule
+   * par harde à la fois. Elle se recouche quand le verrou `wary` retombe.
+   */
+  guet?: true
+
   /* ── La méfiance (spec chasse C1) ───────────────────────────────────────── */
   /**
    * LA JAUGE, 0-1. Elle POURSUIT le stimulus (distance perçue) : vite en montée,

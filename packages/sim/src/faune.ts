@@ -1488,6 +1488,163 @@ function goHome(state: SimState, monster: Monster, entity: Entity): boolean {
   return false
 }
 
+/* ═══ LE DORTOIR (spec faune R26) — la harde dort au couvert, chacun son arbre ═══ */
+
+/**
+ * LA GRILLE BOISÉE, mémoïsée PAR CARTE. La même maille et le même plancher que le
+ * placement des coins (R23) — un dortoir est une cellule d'au moins
+ * `GROUND_COVER_MIN_TILES` tuiles boisées. Dérivé pur de la carte (le terrain ne
+ * change jamais après la génération) : une WeakMap module, pas de l'état de sim —
+ * le patron du cumul d'`avanceeDeCendre`.
+ */
+interface GrilleBoisee {
+  gw: number
+  gh: number
+  boise: Uint16Array
+}
+const BOISE_PAR_CARTE = new WeakMap<WorldMap, GrilleBoisee>()
+function grilleBoisee(map: WorldMap): GrilleBoisee {
+  const connu = BOISE_PAR_CARTE.get(map)
+  if (connu) return connu
+  const cell = FAUNA.GROUND_WATER_CELL
+  const gw = Math.ceil(map.width / cell)
+  const gh = Math.ceil(map.height / cell)
+  const boise = new Uint16Array(gw * gh)
+  for (let ty = 0; ty < map.height; ty++) {
+    for (let tx = 0; tx < map.width; tx++) {
+      if (!WOOD_TERRAINS.includes(terrainAt(map, tx, ty))) continue
+      const c = Math.floor(ty / cell) * gw + Math.floor(tx / cell)
+      boise[c] = boise[c]! + 1
+    }
+  }
+  const grille = { gw, gh, boise }
+  BOISE_PAR_CARTE.set(map, grille)
+  return grille
+}
+
+/**
+ * CE MASSIF PEUT-IL ÊTRE UN DORTOIR ? (R26, et la porte de R27.) Trois refus :
+ * cendré (R25 — on ne dort pas dans le feu), OCCUPÉ (un bâti dans l'emprise de
+ * la cellule : village, maison — la bête ne dort pas dans une cour), et PRIS
+ * par une autre harde (une harde = SON dortoir).
+ */
+function dortoirEligible(state: SimState, cellX: number, cellY: number, herdId: number | undefined): boolean {
+  const cell = FAUNA.GROUND_WATER_CELL
+  const cx = cellX * cell + cell / 2
+  const cy = cellY * cell + cell / 2
+  if (profondeurNueDeCendre(state, Math.floor(cx), Math.floor(cy)) >= 0) return false
+  const x0 = cellX * cell
+  const y0 = cellY * cell
+  for (const s of state.structures) {
+    if (s.tx >= x0 && s.tx < x0 + cell && s.ty >= y0 && s.ty < y0 + cell) return false
+  }
+  for (const m of state.monsters) {
+    if (m.dortoirX === undefined || m.dortoirY === undefined) continue
+    if (herdId !== undefined && m.herdId === herdId) continue
+    if (distSq(cx, cy, m.dortoirX, m.dortoirY) < FAUNA.DORTOIR_EXCLUSION * FAUNA.DORTOIR_EXCLUSION) return false
+  }
+  return true
+}
+
+/**
+ * L'ÉLECTION DU DORTOIR : le meilleur massif éligible du canton — le plus proche
+ * du cœur du coin, départagé par la position (arithmétique pure, zéro tirage).
+ * `null` : aucun massif (le banc sans bois, un canton entièrement mangé — R27
+ * en tirera l'extinction ; ici la bête retombe sur le repos groupé d'avant).
+ */
+function elireDortoir(state: SimState, monster: Monster): { x: number; y: number } | null {
+  const gx = monster.groundX
+  const gy = monster.groundY
+  if (gx === undefined || gy === undefined) return null
+  const cell = FAUNA.GROUND_WATER_CELL
+  const { gw, gh, boise } = grilleBoisee(state.map)
+  const r = Math.ceil(FAUNA.GROUND_COVER_NEAR / cell)
+  const cgx = Math.floor(gx / cell)
+  const cgy = Math.floor(gy / cell)
+  let bestX = -1
+  let bestY = -1
+  let bestD = Infinity
+  for (let oy = -r; oy <= r; oy++) {
+    for (let ox = -r; ox <= r; ox++) {
+      const nx = cgx + ox
+      const ny = cgy + oy
+      if (nx < 0 || ny < 0 || nx >= gw || ny >= gh) continue
+      if (boise[ny * gw + nx]! < FAUNA.GROUND_COVER_MIN_TILES) continue
+      if (!dortoirEligible(state, nx, ny, monster.herdId)) continue
+      const px = nx * cell + cell / 2
+      const py = ny * cell + cell / 2
+      const d = distSq(gx, gy, px, py)
+      if (d < bestD || (d === bestD && (px < bestX || (px === bestX && py < bestY)))) {
+        bestD = d
+        bestX = px
+        bestY = py
+      }
+    }
+  }
+  return bestX >= 0 ? { x: bestX, y: bestY } : null
+}
+
+/**
+ * « CHACUN SON ARBRE » : les places autour du centre du dortoir, par RANG dans la
+ * harde (l'ordre des `entityId` — le même rang que la sentinelle et la scission).
+ * Douze places pour une harde de huit : jamais deux bêtes sur la même.
+ */
+const PLACES_DU_DORTOIR: readonly (readonly [number, number])[] = [
+  [0, 0], [1, 0], [-1, 0], [0, 1], [0, -1], [1, 1], [-1, -1], [1, -1], [-1, 1], [2, 0], [-2, 0], [0, 2],
+]
+
+/**
+ * LE PAS DU DORTOIR (R26) — rend `true` s'il a consommé le tick. La bête gagne
+ * son massif au trot, rejoint SA place, et s'endort (`dodo`) — les sens bridés
+ * et le guetteur vivent dans `faunaStep`, pas ici. Une fois couchée elle ne se
+ * relève plus pour se replacer : le sommeil n'oscille pas.
+ */
+function dortoirStep(
+  state: SimState,
+  monster: Monster,
+  entity: Entity,
+  herd: Monster[] | undefined,
+): boolean {
+  if (!isPrey(monster.type)) return false
+  if (monster.groundX === undefined || monster.groundY === undefined) return false
+
+  // Le dortoir se COPIE d'une sœur avant de s'élire : une harde, un massif.
+  if (monster.dortoirX === undefined && herd) {
+    for (const other of herd) {
+      if (other.entityId !== monster.entityId && other.dortoirX !== undefined && other.dortoirY !== undefined) {
+        monster.dortoirX = other.dortoirX
+        monster.dortoirY = other.dortoirY
+        break
+      }
+    }
+  }
+  if (monster.dortoirX === undefined) {
+    const d = elireDortoir(state, monster)
+    if (d === null) return false
+    monster.dortoirX = d.x
+    monster.dortoirY = d.y
+  }
+
+  let rank = 0
+  if (herd) for (const other of herd) if (other.entityId < monster.entityId) rank++
+  const place = PLACES_DU_DORTOIR[rank % PLACES_DU_DORTOIR.length]!
+  const px = monster.dortoirX + place[0] * FAUNA.DORTOIR_SPREAD
+  const py = (monster.dortoirY ?? 0) + place[1] * FAUNA.DORTOIR_SPREAD
+
+  // Pas encore couchée et pas à sa place : elle y va — au trot, la nuit tombe.
+  // (0,9 tuile de tolérance : un tronc ou une sœur peuvent boucher le dernier
+  // pas, et une bête qui pousse un arbre toute la nuit serait pire qu'une bête
+  // couchée un peu court.)
+  if (monster.dodo !== true && distSq(entity.x, entity.y, px, py) > 0.9 * 0.9) {
+    moveToward(state, monster, entity, px, py, false, FAUNA.WARY_SPEED)
+    return true
+  }
+  monster.wanderDx = 0
+  monster.wanderDy = 0
+  if (monster.guet !== true) monster.dodo = true
+  return true
+}
+
 /**
  * LA SENTINELLE d'une harde de GIBIER (spec faune R9bis / chasse C13) :
  * l'`entityId` de la bête de garde, ou −1 (harde trop petite, meute de
@@ -2134,6 +2291,13 @@ export function faunaStep(
   // l'appât selon le tick, et l'oiseau aurait clignoté entre deux mondes.
   if (volStep(state, monster, entity)) return
 
+  // LE RÉVEIL (R26) : l'heure rend les sens et la station debout — le sommeil ne
+  // survit jamais à ses heures, quelle que soit la branche qui consommera le tick.
+  if ((monster.dodo !== undefined || monster.guet !== undefined) && !isResting(monster.type, hour)) {
+    delete monster.dodo
+    delete monster.guet
+  }
+
   const attacker = monster.lastAttackerId !== null ? byId.get(monster.lastAttackerId) : undefined
   const wounded = entity.hp < def.hp
   const hunted = wounded && attacker !== undefined && attacker.hp > 0
@@ -2169,7 +2333,10 @@ export function faunaStep(
   // c'est très exactement ce qui permet de l'approcher. Ce n'est pas un bonus
   // qu'on accorde au joueur — c'est un comportement de la bête, qu'il exploite.
   // LA GARDE (R9bis) : la sentinelle voit plus loin, les brouteuses relâchent.
-  const sentinel = herd !== undefined && sentinelOf(herd, state.tick) === monster.entityId
+  // LA SENTINELLE EST DIURNE (R26) : la nuit, la harde dort au dortoir sans
+  // garde permanente — c'est le GUETTEUR, levé par le bruit, qui la remplace.
+  const sentinel =
+    herd !== undefined && !isResting(monster.type, hour) && sentinelOf(herd, state.tick) === monster.entityId
   const watch = sentinel ? FAUNA.SENTINEL_ACUITY : herd !== undefined && isPrey(monster.type) ? FAUNA.HERD_RELAX : 1
   // Les têtes baissées (chasse C11/C18) : la bête TAPIE à bout de sang, et celle
   // qui MANGE un appât, ne voient plus grand-chose. Ce sont deux fenêtres que le
@@ -2180,7 +2347,10 @@ export function faunaStep(
     : monster.baitUntil !== undefined ? HUNT.BAIT_ALERTNESS
     : monster.drinkUntil !== undefined ? HUNT.BAIT_ALERTNESS // elle BOIT (§4 R5quater) — même fenêtre
     : 1
-  const alertness = headDown * watch
+  // LE SOMMEIL BRIDE LES SENS (R26) : la dormeuse au dortoir ne voit, n'entend et
+  // ne sent presque rien — le guetteur (`guet`), lui, est revenu aux sens pleins.
+  const sleep = monster.dodo === true ? FAUNA.SLEEP_SENSES : 1
+  const alertness = headDown * watch * sleep
   const alertRange = (def.alertRange ?? 0) * alertness
   const flightRange = (def.flightRange ?? 0) * alertness
   // Le plafond de perception (chasse C1) : au-delà, rien ne monte — mais on
@@ -2235,6 +2405,29 @@ export function faunaStep(
   // d'un congénère la saturent d'office.
   updateSuspicion(state, monster, spotted, perceiveRange, flightRange, hunted || alarmed)
 
+  // LE GUETTEUR (R26). Trop de bruit : le verrou `wary` d'UNE dormeuse se lève —
+  // elle se met debout, sens pleins, et guette (la branche « curieuse » plus bas
+  // fait le reste : figée, le regard sur la menace). UNE SEULE par harde : les
+  // autres dorment — c'est le guetteur qui, en repérant vraiment quelqu'un,
+  // lèvera la harde entière par la contagion.
+  if (monster.dodo === true && monster.wary === true) {
+    let dejaUnGuet = false
+    if (herd) {
+      for (const other of herd) {
+        if (other.guet === true) {
+          dejaUnGuet = true
+          break
+        }
+      }
+    }
+    if (!dejaUnGuet) {
+      delete monster.dodo
+      monster.guet = true
+    }
+  } else if (monster.guet === true && monster.wary !== true) {
+    delete monster.guet // le calme est revenu (le verrou est retombé) : elle se recouche
+  }
+
   // L'ESPACE VITAL (R6bis). Une menace REPÉRÉE (jauge ≥ alerte) à bout portant :
   // levée, immobile ou pas — un cerf ne broute pas à trois mètres d'une
   // silhouette identifiée. C'est le correctif du joueur AFK encerclé de statues.
@@ -2253,6 +2446,8 @@ export function faunaStep(
   if (monster.fleeSince < 0 && (hunted || alarmed || monster.suspicion >= 1)) {
     monster.fleeSince = state.tick
     monster.suspicion = 1
+    delete monster.dodo // la peur réveille tout (R26) — la fuite se court les yeux ouverts
+    delete monster.guet
     if (monster.fleeFromX === undefined) {
       const fx = hunted ? attacker.x : seen ? seen.x : alarmFromX
       const fy = hunted ? attacker.y : seen ? seen.y : alarmFromY
@@ -2424,12 +2619,12 @@ export function faunaStep(
 
   // L'APPÂT (chasse C18) : la nourriture qu'un chasseur a POSÉE. Elle y va, elle
   // mange, elle ne voit plus rien — la fenêtre du chasseur, ouverte de sa main.
-  if (!threatened && baitStep(state, monster, entity)) return
+  if (!threatened && monster.dodo !== true && baitStep(state, monster, entity)) return
 
   // LA COULÉE (forêts-vivantes §4 R5quater) : au crépuscule, la harde descend SON chemin
   // et boit — la fenêtre d'affût que la géographie enseigne. Après l'appât (une pile posée
   // prime : c'est la main du chasseur), avant l'impatience et le repos.
-  if (!threatened && couleeStep(state, monster, entity, hour)) return
+  if (!threatened && monster.dodo !== true && couleeStep(state, monster, entity, hour)) return
 
   // L'IMPATIENCE (R6bis) : alertée trop longtemps face à une menace plantée là,
   // la bête ne reste pas statue — elle tape du sabot, fixe, puis S'ÉCARTE au
@@ -2437,6 +2632,7 @@ export function faunaStep(
   // sanglier, lui, ne recule pas.)
   if (
     (def.flightRange ?? 0) > 0 &&
+    monster.dodo !== true && // une dormeuse ne tape pas du sabot (R26) — elle dort, ou elle se lève
     seen !== undefined &&
     monster.suspicion >= HUNT.SUSPICION_ALERT &&
     monster.alertSince !== undefined &&
@@ -2451,7 +2647,9 @@ export function faunaStep(
   // de plus fera monter la jauge — « annoncés, pas surprises » (GDD §9bis).
   // C'est ici que le STOP-AND-GO se joue : se figer maintenant fait redescendre
   // la jauge, et l'approche peut reprendre.
-  if (seen && monster.wary) {
+  // (Une DORMEUSE ne se fige pas pour regarder — elle dort : c'est le guetteur,
+  // debout et aux sens pleins, qui tient ce rôle pour la harde entière.)
+  if (seen && monster.wary && monster.dodo !== true) {
     monster.wanderDx = 0
     monster.wanderDy = 0
     const d = Math.sqrt(distSq(entity.x, entity.y, seen.x, seen.y))
@@ -2462,7 +2660,10 @@ export function faunaStep(
   // LE RETOUR AU PAYS. La fuite ne demande la permission à aucun terrain : une
   // bête peut se réveiller à trente tuiles de chez elle, dans un biome qui n'est
   // pas le sien. Elle rentre — avant même de songer à dormir ou à brouter.
-  if (goHome(state, monster, entity)) return
+  // (SAUF aux heures du dortoir (R26) : le massif élu peut être d'une essence
+  // hors habitat — une pinède est un toit, pas un garde-manger — et goHome se
+  // battrait toute la nuit contre le dortoir. La nuit, le dortoir EST le pays.)
+  if (!(isResting(monster.type, hour) && monster.dortoirX !== undefined) && goHome(state, monster, entity)) return
 
   // LE RETOUR AU TERRITOIRE (R17). La fuite engagée (30 tuiles) peut la jeter
   // HORS de son coin de chasse. Elle y revient — au trot, et sans traîner : un
@@ -2493,6 +2694,10 @@ export function faunaStep(
   if (isResting(monster.type, hour)) {
     monster.wanderDx = 0
     monster.wanderDy = 0
+    // LE DORTOIR D'ABORD (R26) : une bête de coin dort au massif de SA harde,
+    // espacée — « chacun son arbre ». Le repos groupé d'avant ne reste que pour
+    // les bêtes sans géographie (banc sans bois, canton sans massif).
+    if (dortoirStep(state, monster, entity, herd)) return
     const center = herd ? herdCenter(herd, monster, byId) : null
     // COLLANT, comme tout le reste : le centre de la harde se déplace dès qu'une
     // dormeuse se recale, donc celle qui vient de rentrer sous REST_SPREAD s'en

@@ -3168,6 +3168,23 @@ export const FAUNA = {
    * soixante-quatre — un vrai bosquet à l'échelle de la maille, pas une haie.
    */
   GROUND_COVER_MIN_TILES: 10,
+  /* ── Le dortoir (spec faune R26, décisions d'Alexis 2026-08-28) ─────────── */
+  /**
+   * LE SOMMEIL BRIDE LES SENS — le multiplicateur des trois canaux (vue, ouïe,
+   * odorat) d'une bête endormie au dortoir. C'est LA récompense d'avoir trouvé
+   * le dortoir : on peut approcher une harde qui dort — en marchant. Courir la
+   * réveille (le canal ouïe passe quand même le bruit d'un sprint proche), et
+   * c'est le GUETTEUR qui se lève, pas la harde.
+   */
+  SLEEP_SENSES: 0.25,
+  /**
+   * « CHACUN SON ARBRE » : l'espacement des couchées d'une harde au dortoir, en
+   * tuiles. Le repos resserré de R9bis (REST_SPREAD, un tableau) ne vaut pas au
+   * dortoir : l'image de nuit est un bosquet, des formes couchées ESPACÉES.
+   */
+  DORTOIR_SPREAD: 1.8,
+  /** UNE HARDE = SON DORTOIR : aucun massif ne s'élit à moins de ça du dortoir d'une autre harde. */
+  DORTOIR_EXCLUSION: 10,
   /**
    * LA MIGRATION DANS SON COIN. Une bête d'un coin de chasse ne dérive pas
    * n'importe où : elle se donne un BUT à l'intérieur de son territoire, et elle

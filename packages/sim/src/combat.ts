@@ -912,6 +912,19 @@ export function applyDamage(state: SimState, target: Entity, damage: number, byE
           other.fleeFromX = target.x
           other.fleeFromY = target.y
         }
+        // LE PREMIER SANG LÈVE (faune R26). Une MORT dans la harde ne met pas en
+        // alerte : elle fait FUIR — tout le monde, dormeuses comprises. La jauge
+        // saturée ne suffisait pas : elle décroît d'un cheveu avant que la levée
+        // ne la lise, et un tueur hors de perception (l'archer de nuit) laissait
+        // la harde dormir autour du cadavre. C'est la règle « un seul kill par
+        // nuit » : la deuxième flèche ne trouve plus une bête couchée. Un coup
+        // qui ne TUE pas garde l'ancienne réponse — alerte + point de peur, la
+        // levée viendra de la perception.
+        if (target.hp <= 0) {
+          delete other.dodo
+          delete other.guet
+          if (other.fleeSince < 0) other.fleeSince = state.tick
+        }
       }
     }
   }
