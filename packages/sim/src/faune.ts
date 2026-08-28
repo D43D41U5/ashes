@@ -46,6 +46,7 @@ import {
   isRangedWeapon,
   type MonsterType,
 } from './balance'
+import { CENDRE, profondeurNueDeCendre } from './cendre'
 import { isBlockedAt, makeIndexedIsBlockedAt } from './collision'
 import { applyDamage, die, startAttack, weaponKind, type Corpse } from './combat'
 import { emitEvent } from './events'
@@ -372,8 +373,38 @@ function roll(state: SimState): number {
 function inHabitat(state: SimState, type: MonsterType, tx: number, ty: number): boolean {
   const habitat = MONSTER_DEFS[type].habitat
   if (!habitat) return false
+  // LA CENDRE N'EST L'HABITAT DE PERSONNE (spec faune R25). Le front avance sur
+  // le biome sans changer sa tuile de terrain : sans cette garde, un pré cendré
+  // resterait « de la prairie » aux yeux du cerf — il y naîtrait, y brouterait,
+  // y dormirait. Frange comprise : on ne CHOISIT jamais un sol cendré (seule la
+  // loi de dégâts, elle, épargne la frange — deux seuils, deux rôles).
+  if (profondeurNueDeCendre(state, tx, ty) >= 0) return false
   const terrain = terrainAt(state.map, tx, ty)
   return habitat.includes(terrain)
+}
+
+/**
+ * LA LOI DE LA CENDRE (spec faune R25, A40) — le monde se nettoie tout seul.
+ *
+ * Toute FAUNE (bête à habitat : gibier et prédateurs — jamais les cendreux, qui
+ * sont chez eux) posée sur la cendre AU-DELÀ DE LA FRANGE brûle, vite. Le
+ * comportement l'évite partout (habitat, mur de `moveToward`) : cette loi est le
+ * FILET — recul, géométrie pathologique, donnée périmée — et elle est diégétique :
+ * on trouve une carcasse prise par la cendre, pas un cerf broutant l'absurde.
+ *
+ * La mort n'est pas une mise à mort : pas de `slainClean` (le drapeau n'est
+ * simplement jamais posé), pas de silence de chasse R16 (gardé par la cause dans
+ * `die`). Rend `true` si la bête est morte ce tick — son pas ne se joue pas.
+ */
+export function morsureDeLaCendre(state: SimState, monster: Monster, entity: Entity): boolean {
+  if (!isWild(monster.type)) return false
+  const p = profondeurNueDeCendre(state, Math.floor(entity.x), Math.floor(entity.y))
+  if (p <= CENDRE.FRANGE_TUILES) return false // hors cendre (−1) ou sur la frange : rien
+  entity.hp -= FAUNA.CENDRE_DOT_HP_S * TICK_DT_S
+  if (entity.hp > 0) return false
+  entity.hp = 0
+  die(state, entity, -1, 'cendre')
+  return true
 }
 
 /**
@@ -1856,6 +1887,14 @@ function couleeStep(state: SimState, monster: Monster, entity: Entity, hour: num
   const cible = coulees[Math.min(monster.couleePas, fin - 1)]!
   const cx = (cible % width) + 0.5
   const cy = (cible - (cible % width)) / width + 0.5
+  // LA COULÉE MANGÉE (R25). Le chemin fut tracé au worldgen ; le front, lui,
+  // avance. Un pas cendré sur la descente → elle renonce pour la fenêtre — une
+  // bête ne suit pas son habitude dans le feu, et le mur de `moveToward` l'aurait
+  // laissée pousser contre la lisière tout le crépuscule.
+  if (profondeurNueDeCendre(state, Math.floor(cx), Math.floor(cy)) >= 0) {
+    monster.couleePas = -1
+    return false
+  }
   if (distSq(entity.x, entity.y, cx, cy) <= 0.6 * 0.6) {
     if (monster.couleePas >= fin - 1) {
       // Le bout du chemin : l'eau. Elle boit — et ne redescendra pas cette fenêtre.

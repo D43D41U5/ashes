@@ -251,7 +251,7 @@ export interface HudState {
    *  `error`) : UIScene lève le voile de mort quand `at` change. `cause` : froid/faim/
    *  null (combat) ; `byEntityId` + `killerType` (le monstre du snapshot, ou null)
    *  résolvent la ligne exacte. `null` = pas de mort en attente. */
-  deathMoment: { cause: 'cold' | 'hunger' | 'lightning' | null; byEntityId: number; killerType: string | null; hadLoot: boolean; at: number } | null
+  deathMoment: { cause: 'cold' | 'hunger' | 'lightning' | 'cendre' | null; byEntityId: number; killerType: string | null; hadLoot: boolean; at: number } | null
   /**
    * LE VOILE DE MORT EST-IL ENCORE LEVÉ ? (décision d'Alexis, 2026-08-20, question ⑥)
    *

@@ -24,7 +24,8 @@ import { crossingBlocker } from './construction'
 import { cendreuxStep } from './cendreux'
 import { meteoVisionFactor } from './meteo'
 import { eveilCendreuxAt } from './temperature'
-import { advanceFauna, avatarDetectability, avatarThreat, coverAt, faunaStep, isPredator, isPrey, wolfStep, type Threat } from './faune'
+import { advanceFauna, avatarDetectability, avatarThreat, coverAt, faunaStep, isPredator, isPrey, morsureDeLaCendre, wolfStep, type Threat } from './faune'
+import { profondeurNueDeCendre } from './cendre'
 import { effetsDuJour } from './modificateur'
 import { actForDay, getGameTime, jourDeSaison, seasonRamp } from './time'
 
@@ -510,8 +511,33 @@ export function moveToward(
   // zombie, mesurée en son temps) ; une bête lancée cesse de scier son cap.
   const pasLateral = BALANCE.WALK_SPEED_TILES_PER_S * TICK_DT_S * scale * Math.SQRT1_2
   const zone = Math.max(ZONE_MORTE, pasLateral)
-  const sx = (dx > zone ? 1 : dx < -zone ? -1 : 0) as -1 | 0 | 1
-  const sy = (dy > zone ? 1 : dy < -zone ? -1 : 0) as -1 | 0 | 1
+  let sx = (dx > zone ? 1 : dx < -zone ? -1 : 0) as -1 | 0 | 1
+  let sy = (dy > zone ? 1 : dy < -zone ? -1 : 0) as -1 | 0 | 1
+
+  // ═══ LE MUR DE CENDRE (spec faune R25) ═══
+  //
+  // La faune — toute bête à HABITAT, jamais le cendreux, qui est chez lui — ne pose
+  // pas un sabot sur la cendre, FUITE COMPRISE : le pas dont un axe entrerait sur un
+  // sol cendré perd cet axe, et la bête LONGE le front comme une paroi. C'est ce qui
+  // fait de la cendre un mur de rabattage (une harde poussée dessus tourne le long
+  // du bord — prévisible, donc chassable) et jamais un sol. Frange comprise : on ne
+  // CHOISIT pas un sol cendré ; seule la loi de dégâts (`morsureDeLaCendre`)
+  // épargne la frange — deux seuils, deux rôles.
+  //
+  // Le test se fait à la TUILE VOISINE (pas au sous-pas) : le mur est épais d'au
+  // plus une tuile côté sain, ce qui est le comportement voulu — la bête s'arrête
+  // AVANT la lisière, elle ne la tangente pas. Et la diagonale est testée aussi :
+  // la collision sépare les axes, un pas diagonal dont les deux flancs sont sains
+  // pourrait sinon se recomposer dans le coin cendré.
+  if ((sx !== 0 || sy !== 0) && (def.habitat?.length ?? 0) > 0) {
+    const tx0 = Math.floor(entity.x)
+    const ty0 = Math.floor(entity.y)
+    const cendree = (x: number, y: number): boolean => profondeurNueDeCendre(state, x, y) >= 0
+    if (sx !== 0 && cendree(tx0 + sx, ty0)) sx = 0
+    if (sy !== 0 && cendree(tx0, ty0 + sy)) sy = 0
+    if (sx !== 0 && sy !== 0 && cendree(tx0 + sx, ty0 + sy)) sy = 0
+  }
+
   // Le pas ORIENTE la bête (spec chasse C4) : sa perception est directionnelle,
   // il faut donc que son regard suive sa marche — sans quoi « dans le dos » ne
   // voudrait rien dire pour une bête née face à l'est et jamais tournée.
@@ -1074,6 +1100,9 @@ export function advanceMonsters(state: SimState): void {
   for (const monster of [...state.monsters]) {
     const entity = byId.get(monster.entityId)
     if (!entity) continue
+    // LA LOI DE LA CENDRE (spec faune R25) : avant tout comportement — une bête
+    // qui brûle brûle, même en plein wind-up. Morte ce tick : son pas ne se joue pas.
+    if (morsureDeLaCendre(state, monster, entity)) continue
     if (entity.windup) continue // en train de frapper : immobile
 
     if (monster.type === 'cendreux') {

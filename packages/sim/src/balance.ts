@@ -3174,6 +3174,16 @@ export const FAUNA = {
    * part, et le monde ne se repeuple pas autour d'un joueur immobile.
    */
   PAUSE_CHANCE: 0.28,
+  /**
+   * LA LOI DE LA CENDRE (spec faune R25, décision d'Alexis 2026-08-28). Toute faune
+   * non-cendreuse posée sur la cendre AU-DELÀ DE LA FRANGE brûle — en hp par seconde.
+   * Ce n'est pas une garde de code, c'est une loi du monde : le comportement évite la
+   * cendre partout (fuite comprise — un mur qu'on longe), et si un cas imprévu laisse
+   * une bête dessus, le monde se nettoie tout seul. Un cerf de 45 hp coincé meurt en
+   * ~11 s. La frange vaut 0, comme le froid de la vieille cendre (`cendre.md` R22) :
+   * une seule grammaire de bandes.
+   */
+  CENDRE_DOT_HP_S: 4,
   FLEE_SPEED: 1, // × la vitesse de l'espèce : l'allure de rompue des prédateurs
   BURST_RUN_TICKS: ticksFor(1.6), // le sprint burst promis par combat.md R12…
   BURST_PAUSE_TICKS: ticksFor(0.7), // …et le souffle qui le rend LISIBLE (plus « chassable » : voir R6)

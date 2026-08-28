@@ -181,7 +181,7 @@ export type SimEvent =
       entityId: number
       byEntityId: number
       wasMonster: boolean
-      cause?: 'cold' | 'hunger' | 'lightning'
+      cause?: 'cold' | 'hunger' | 'lightning' | 'cendre'
     }
   | { type: 'entity_respawned'; tick: number; entityId: number }
   | { type: 'entity_bandaged'; tick: number; entityId: number; byEntityId: number }

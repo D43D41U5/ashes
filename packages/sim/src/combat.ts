@@ -976,7 +976,7 @@ function rendDesParts(type: MonsterType): boolean {
   return false
 }
 
-export function die(state: SimState, entity: Entity, byEntityId: number, cause?: 'cold' | 'hunger' | 'lightning'): void {
+export function die(state: SimState, entity: Entity, byEntityId: number, cause?: 'cold' | 'hunger' | 'lightning' | 'cendre'): void {
   const monster = state.monsters.find((m) => m.entityId === entity.id)
   emitEvent(state, {
     type: 'entity_died',
@@ -1053,8 +1053,11 @@ export function die(state: SimState, entity: Entity, byEntityId: number, cause?:
     // demi-seconde, et la chasse devient un robinet qu'on ouvre sans bouger.
     //
     // Un LOUP ne compte pas : tuer un prédateur n'a jamais fait fuir le gibier.
+    // Et la CENDRE non plus (spec faune R25) : le silence est une réponse à la
+    // CHASSE — une bête prise par le front n'a entendu ni pas ni coup, et son
+    // coin, s'il vit encore, n'a aucune raison de se taire.
     const wild = MONSTER_DEFS[monster.type]
-    if ((wild.habitat?.length ?? 0) > 0 && !wild.predator) {
+    if (cause !== 'cendre' && (wild.habitat?.length ?? 0) > 0 && !wild.predator) {
       state.faunaQuiet = state.faunaQuiet.filter((q) => q.until > state.tick)
       state.faunaQuiet.push({ x: entity.x, y: entity.y, until: state.tick + FAUNA.QUIET_TICKS })
     }
