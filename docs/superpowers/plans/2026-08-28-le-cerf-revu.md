@@ -1,6 +1,13 @@
 # Le cerf revu — le dortoir, les traces, la cendre, le coin vivant
 
-*Brainstorm d'Alexis du 2026-08-28, point par point (une question à la fois, reco d'abord — toutes tranchées). Spec : `docs/specs/faune.md` R23-R27 + A37-A44. Statut : **plan, rien de construit**.*
+*Brainstorm d'Alexis du 2026-08-28, point par point (une question à la fois, reco d'abord — toutes tranchées). Spec : `docs/specs/faune.md` R23-R27 + A37-A44. Statut : **CONSTRUIT le jour même** — six commits sim (cendre → placement → dortoir → harde 5-8 → coin vivant → pastille), la pastille et les traces client, l'animation du déplacement (agent da-rendu, captures mesurées au pixel), la revue déterminisme passée (deux notes cosmétiques, corrigées). Les quatre suites vertes.*
+
+## Ce qui reste à l'œil d'Alexis (le critère final)
+
+- **Le rythme perçu des bonds de fuite à 60 fps réels** (le headless rend ~1 im/s) — `pnpm dev`, lever une harde.
+- **La densité des traces** (59 sur le monde joué : 29 fumées, 30 frottis) et leur lisibilité au zoom de jeu.
+- ⚠ **MESURÉ, préexistant : ZÉRO coulée ne s'attache à ≤ `COULEE_ATTACHE` (28) d'un coin sur la carte sondée** — donc pas d'empreintes, et `couleeStep` (la descente boire du crépuscule) est lettre morte sur cette carte aussi. Calibrage à discuter : élargir l'attache, ou semer les coulées près des coins.
+- Le seuil « organe cendré » d'un coin ne juge que le CŒUR (la tuile du coin) — suffisant tant que le front avance en marée ; à re-regarder si un jour il mite.
 
 ## Les décisions, dans l'ordre où elles sont tombées
 
