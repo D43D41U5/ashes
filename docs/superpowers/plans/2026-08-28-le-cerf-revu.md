@@ -6,7 +6,7 @@
 
 - **Le rythme perçu des bonds de fuite à 60 fps réels** (le headless rend ~1 im/s) — `pnpm dev`, lever une harde.
 - **La densité des traces** (59 sur le monde joué : 29 fumées, 30 frottis) et leur lisibilité au zoom de jeu.
-- ⚠ **MESURÉ, préexistant : ZÉRO coulée ne s'attache à ≤ `COULEE_ATTACHE` (28) d'un coin sur la carte sondée** — donc pas d'empreintes, et `couleeStep` (la descente boire du crépuscule) est lettre morte sur cette carte aussi. Calibrage à discuter : élargir l'attache, ou semer les coulées près des coins.
+- ⚠ **MESURÉ, préexistant, structurel : les coulées et les coins ne se rencontrent JAMAIS.** Deux graines sondées (7 et 2026) : fins de coulées à 28-448 tuiles du coin le plus proche (médiane ~150), une seule attache limite sur 18 coins. Cause : deux semis INDÉPENDANTS — les coulées partent des CŒURS de forêt vers l'eau (forêts-vivantes §4), les coins d'un Poisson à eau+couvert. Conséquences dormantes : `couleeStep` (la descente boire du crépuscule, chasse R5quater) ne se déclenche jamais sur le monde joué, et les empreintes de R24 n'existent pas. Élargir `COULEE_ATTACHE` ne répare rien (à 55+ tuiles, boire sortirait la harde de son canton de 46). **Reco : semer AU WORLDGEN une coulée par coin (gagnage → eau la plus proche)** — R5quater, les empreintes et le boire du crépuscule reviennent d'un coup, sans toucher au comportement. DÉCISION D'ALEXIS — non implémenté.
 - Le seuil « organe cendré » d'un coin ne juge que le CŒUR (la tuile du coin) — suffisant tant que le front avance en marée ; à re-regarder si un jour il mite.
 
 ## Les décisions, dans l'ordre où elles sont tombées
