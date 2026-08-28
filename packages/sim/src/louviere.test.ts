@@ -201,11 +201,11 @@ describe('le coin de chasse de la Louvière (la garde du lien)', () => {
    * DEUX MONDES, DEUX RECENSEMENTS — la leçon coûte cher à chaque fois qu'on
    * l'oublie : la vallée entière ('vallee', le défaut de `carteDeTest`) N'EST PAS
    * le monde joué (`MONDE_JOUE` = le T0 seul). La première version de la Louvière
-   * (zones Sylve + Alpages) passait ce banc sur la vallée… et donnait ZÉRO
+   * (née sans `pres_bas`) passait ce banc sur la vallée… et donnait ZÉRO
    * Louvière dans la partie réelle — attrapé au smoke, pas ici. D'où `pres_bas`
    * (décision d'Alexis, 2026-08-28) et ce recensement dédoublé.
    */
-  function recense(carte: { map: typeof CARTE.map }, seed: number): void {
+  function recense(carte: { map: typeof CARTE.map }, seed: number, sansCoinAttendu: number): void {
     const louvieres = carte.map.zones.filter((z) => z.kind === 'louviere')
     expect(louvieres.length).toBeGreaterThanOrEqual(1) // le filet de réservation la garantit
     // Rare et marquante : le cap (3) suit la surface de la carte (`capFor`) — on
@@ -213,20 +213,31 @@ describe('le coin de chasse de la Louvière (la garde du lien)', () => {
     const type = POI_TYPES.find((t) => t.slug === 'louviere')!
     expect(louvieres.length).toBeLessThanOrEqual(capFor(carte.map, type))
 
+    // La garde est dure DANS LE SENS CONSTRUCTIBLE (faune R28) : un pays qui ne
+    // peut pas porter de gibier laisse la Louvière sans coin, et c'est ICI qu'on
+    // le compte — on ne tord pas la règle pour le cacher. Le contrat du jeu réel
+    // est le recensement T0 : zéro Louvière sans coin.
     const grounds = placeHuntingGrounds(carte.map, seed)
-    for (const z of louvieres) {
+    const sansCoin = louvieres.filter((z) => {
       const cx = Math.floor(z.x + z.w / 2) + 0.5
       const cy = Math.floor(z.y + z.h / 2) + 0.5
-      const couverte = grounds.some((g) => distSq(g.x, g.y, cx, cy) <= FAUNA.GROUND_RADIUS * FAUNA.GROUND_RADIUS)
-      expect(couverte, `la Louvière « ${z.name} » (${z.x},${z.y}) n'a aucun coin de chasse à portée`).toBe(true)
-    }
+      return !grounds.some((g) => distSq(g.x, g.y, cx, cy) <= FAUNA.GROUND_RADIUS * FAUNA.GROUND_RADIUS)
+    })
+    expect(
+      sansCoin.map((z) => `${z.name} (${z.x},${z.y})`),
+      'Louvières sans coin de chasse à portée',
+    ).toHaveLength(sansCoinAttendu)
   }
 
-  it('recensement sur la vallée entière : des Louvières naissent, et chacune a son coin à portée', () => {
-    recense(CARTE, 5)
+  it('recensement sur la vallée entière : des Louvières naissent — et le désert se compte', () => {
+    // MESURÉ (seed 5) : 2 Louvières, dont UNE sans coin — la Louvière I (529,2114)
+    // est née dans un `pres_bas` de marge où rien n'a eau ET dortoir à portée
+    // (`GROUND_RADIUS`). La vallée a le droit d'avoir des déserts ; cette carte
+    // n'est pas jouée, et le contrat du jeu réel est le test T0 ci-dessous.
+    recense(CARTE, 5, 1)
   })
 
   it('recensement sur le MONDE JOUÉ (T0 seul) : la partie réelle a ses Louvières, chacune avec son coin', () => {
-    recense(carteDeTest(5, undefined, MONDE_JOUE), 5)
+    recense(carteDeTest(5, undefined, MONDE_JOUE), 5, 0)
   })
 })

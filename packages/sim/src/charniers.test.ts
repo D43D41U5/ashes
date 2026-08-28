@@ -95,13 +95,20 @@ describe('la loterie des lieux ne bouge pas', () => {
     // ligne morte ») reste vert : les 38 types naissent tous, aucun ne meurt. Les stèles passent
     // de 3 à 4 : elles se posent au bord des croisées saillantes, et la carte en offre une de plus.
     // RE-ÉPINGLÉ 143 → 145 (LA LOUVIÈRE, faune R28, 2026-08-28) : un 39e type entre dans la
-    // loterie (zones sylve + alpages) — à somme nulle, il affame donc d'autres tirages.
+    // loterie — à somme nulle, il affame donc d'autres tirages.
     // MESURÉ (seed 2026) : 5 Louvières (cap 3 × l'échelle de surface `capFor`), net +2 —
     // stèles (4) et repaires (9) inchangés, et A19 (« aucune ligne morte ») reste vert :
     // les 39 types naissent tous, aucun ne meurt.
-    expect(lieuxDe(CARTE.map).length).toBe(145)
+    // RE-ÉPINGLÉ 145 → 144 (LA LOUVIÈRE EST T0 SEUL, même jour) : ses zones de vallée
+    // retirées (« retire toutes mentions des autres zones que la t0 »), la Louvière ne se
+    // sème plus qu'en `pres_bas` — la loterie rebrasse. MESURÉ (seed 2026) : 1 Louvière
+    // (le filet de réservation), net −1 — stèles (4) et repaires (9) inchangés, les 39
+    // types naissent tous. Le MONDE JOUÉ, lui, ne bouge pas : MESURÉ (T0, seed 7),
+    // les lieux sont identiques au kind et à la tuile près avec l'une ou l'autre liste
+    // — ses seules zones étaient déjà `pres_bas`.
+    expect(lieuxDe(CARTE.map).length).toBe(144)
     expect(lieuxDe(CARTE.map).filter((z) => z.kind === 'stele').length).toBe(4)
-    expect(lieuxDe(CARTE.map).filter((z) => z.kind !== 'stele').length).toBe(141)
+    expect(lieuxDe(CARTE.map).filter((z) => z.kind !== 'stele').length).toBe(140)
     expect(lieuxDe(CARTE.map).filter((z) => z.kind === 'repaire').length).toBe(9)
   })
 })

@@ -235,13 +235,12 @@ export const POI_TYPES: PoiType[] = [
    * et s'y reforme loup par loup (`advanceDens`). Rare et marquante à dessein
    * (cap 3) : le territoire des loups s'APPREND, et il se contourne — la pression
    * diffuse restante appartient à la nuit qui chasse (`nighthunt.ts`).
-   * Sylve (la canopée) et Alpages (la lande des bergers) sont son pays naturel ;
-   * `pres_bas` s'y ajoute (décision d'Alexis, même jour : « implante-les dans des
-   * biomes déjà existants ») parce que LE MONDE JOUÉ EST LE T0 SEUL — sans lui, la
-   * partie réelle n'aurait plus un loup hors nuit qui chasse. À re-marginaliser
-   * quand la vallée entière reviendra, si le danger doit rendre ses marges.
+   * `pres_bas` SEUL (décision d'Alexis, 2026-08-28) : LE MONDE JOUÉ EST LE T0 SEUL,
+   * et la première version, qui visait la ceinture, ne mettait pas une seule
+   * Louvière dans la partie réelle (attrapé au smoke, pas au banc). Ses zones de
+   * vallée se redécideront quand la vallée reviendra.
    */
-  { slug: 'louviere', zones: ['sylve', 'alpages', 'pres_bas'], name: 'la Louvière', family: 'danger', biomes: [FOREST, PINE, OLD_GROWTH, HEATH], weight: 3, cap: 3, reserve: 1, footprint: 3, monster: 'wolf' },
+  { slug: 'louviere', zones: ['pres_bas'], name: 'la Louvière', family: 'danger', biomes: [FOREST, PINE, OLD_GROWTH, HEATH], weight: 3, cap: 3, reserve: 1, footprint: 3, monster: 'wolf' },
   { slug: 'repaire', zones: ['brule', 'cendriere'], name: 'le Repaire de Cendrés', family: 'danger', biomes: [BURNT, ROCK, SCREE], weight: 4, cap: 5, reserve: 1, footprint: 3, monster: 'cendreux' },
   { slug: 'epave', zones: ['aiguilles', 'glacier'], name: "l'Épave d'avalanche", family: 'danger', biomes: [SCREE, BOULDERS], minElev: 0.55, weight: 3, cap: 3, reserve: 1, footprint: 4 },
   { slug: 'fondriere', zones: ['tourbiere', 'lac_mort'], name: 'la Fondrière', family: 'danger', biomes: [PEAT, REED], weight: 3, cap: 3, reserve: 1, footprint: 3 },

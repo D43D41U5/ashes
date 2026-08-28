@@ -98,7 +98,7 @@ La direction artistique passe aux **angles droits** — pour la **CARTE** (zones
 
 | Zone | Thème | Elle donne | Elle est gardée par |
 |---|---|---|---|
-| **La Vieille Sylve** | Futaie ancienne, canopée fermée, pénombre à midi. | **Gros bois** — la charpente, les grands bâtiments. | Hardes de sangliers, meutes de loups. *(faune existante)* |
+| **La Vieille Sylve** | Futaie ancienne, canopée fermée, pénombre à midi. | **Gros bois** — la charpente, les grands bâtiments. | Hardes de sangliers. *(faune existante ; les zones de vallée de la Louvière se redécideront quand la vallée reviendra — faune R28)* |
 | **Le Karst** | Cirque calcaire criblé de grottes et de gouffres. | **Fer** et **charbon**, en abondance. | Le **noir** (rien ne se voit sans feu) ; des Cendreux qui y dorment. |
 | **La Tourbière** | Marais, brume, eau noire, sol qui aspire. | **Tourbe** (combustible), plantes, os. | Le **terrain** — on y court à demi-vitesse : *on ne fuit pas un marais.* Les Cendreux s'y lèvent la nuit. |
 | **Les Hauts Alpages** | Pelouse d'altitude, vent, ciel immense, **zéro arbre**. | **Pierre de taille**, herbes de montagne, bouquetins. | Le **froid** — et l'absence de bois : on ne se chauffe pas sur place. |

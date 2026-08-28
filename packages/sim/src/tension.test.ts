@@ -227,9 +227,9 @@ describe('3. LE MONDE NE SE REMPLIT PLUS TOUT SEUL', () => {
 
   // (« LE LOIN EST RICHE… ET DANGEREUX » ne se joue plus au gradient de tirage
   // (`predatorBias`, retiré) : le loup est une bête de LIEU depuis le 2026-08-28,
-  // et le danger des marges est porté par les Louvières — semées en zones T1
-  // (Sylve, Alpages), jamais en racine — et par la nuit qui chasse, plus forte
-  // aux actes tardifs. Voir `louviere.test.ts`.)
+  // et le danger est porté par les Louvières — sur `pres_bas` seul, le T0 étant
+  // le seul monde joué — et par la nuit qui chasse, plus forte aux actes
+  // tardifs. Voir `louviere.test.ts`.)
 })
 
 describe('4. LA NUIT CHASSE (mais elle s’annonce, et elle a une parade)', () => {
