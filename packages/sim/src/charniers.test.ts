@@ -94,9 +94,14 @@ describe('la loterie des lieux ne bouge pas', () => {
     // mêmes, la somme nulle a rejoué. Le mécanisme est intact — A19 (`zonegen.test.ts`, « aucune
     // ligne morte ») reste vert : les 38 types naissent tous, aucun ne meurt. Les stèles passent
     // de 3 à 4 : elles se posent au bord des croisées saillantes, et la carte en offre une de plus.
-    expect(lieuxDe(CARTE.map).length).toBe(143)
+    // RE-ÉPINGLÉ 143 → 145 (LA LOUVIÈRE, faune R28, 2026-08-28) : un 39e type entre dans la
+    // loterie (zones sylve + alpages) — à somme nulle, il affame donc d'autres tirages.
+    // MESURÉ (seed 2026) : 5 Louvières (cap 3 × l'échelle de surface `capFor`), net +2 —
+    // stèles (4) et repaires (9) inchangés, et A19 (« aucune ligne morte ») reste vert :
+    // les 39 types naissent tous, aucun ne meurt.
+    expect(lieuxDe(CARTE.map).length).toBe(145)
     expect(lieuxDe(CARTE.map).filter((z) => z.kind === 'stele').length).toBe(4)
-    expect(lieuxDe(CARTE.map).filter((z) => z.kind !== 'stele').length).toBe(139)
+    expect(lieuxDe(CARTE.map).filter((z) => z.kind !== 'stele').length).toBe(141)
     expect(lieuxDe(CARTE.map).filter((z) => z.kind === 'repaire').length).toBe(9)
   })
 })

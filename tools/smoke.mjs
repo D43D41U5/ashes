@@ -5460,6 +5460,62 @@ const SCENARIOS = {
   },
 
   /**
+   * LA LOUVIÈRE (faune R28, 2026-08-28) — le lieu se VOIT et sa meute y RÉSIDE.
+   *
+   * Ce qui ferait rougir : aucune zone `louviere` sur la carte jouée ; texture
+   * `poi-louviere` (ou sa `_lit`) non cuite ; aucun loup à portée du lieu à midi
+   * (les résidents dorment chez eux — R10) ; le sprite du lieu hors du cadre.
+   * Exige `--dev` (TP + heure).
+   */
+  async louviere(page) {
+    await page.goto(URL)
+    await page.waitForFunction(() => Boolean(window.__BRAISES__?.scene?.registry?.get('mapData')), null, { timeout: 150000 })
+    await page.waitForTimeout(1200)
+
+    const cible = await page.evaluate(() => {
+      const m = window.__BRAISES__.scene.map
+      const zs = (m.zones ?? []).filter((q) => q.kind === 'louviere')
+      return { n: zs.length, un: zs[0] ? { x: zs[0].x + zs[0].w / 2, y: zs[0].y + zs[0].h / 2 } : null }
+    })
+    if (!cible.un) { console.error('!! aucune Louvière sur la carte jouée'); return }
+    console.log(`   ${cible.n} Louvière(s) — on visite (${Math.round(cible.un.x)}, ${Math.round(cible.un.y)})`)
+
+    const tex = await page.evaluate(() => ({
+      corps: window.__BRAISES__.scene.textures.exists('poi-louviere'),
+      lit: window.__BRAISES__.scene.textures.exists('poi-louviere_lit'),
+    }))
+    if (!tex.corps || !tex.lit) console.error(`!! texture manquante — corps:${tex.corps} lit:${tex.lit}`)
+    else console.log('   ✓ poi-louviere et sa _lit sont cuites')
+
+    await page.evaluate(() => window.__BRAISES__.scene.sendAction({ type: 'debug_set_hour', hour: 11 }))
+    await page.waitForTimeout(1500)
+    await page.evaluate((c) => window.__BRAISES__.scene.sendAction({ type: 'debug_teleport', x: c.x + 6.5, y: c.y + 4.5 }), cible.un)
+    await page.waitForTimeout(6000)
+
+    // La meute résidente : des loups à portée de territoire, lus sur les SPRITES rendus.
+    const loups = await page.evaluate((c) => {
+      const sc = window.__BRAISES__.scene
+      const out = []
+      for (const m of sc.view.monsters ?? []) {
+        if (m.type !== 'wolf') continue
+        const rec = sc.view.others.get(m.entityId)
+        if (!rec) continue
+        const dx = rec.sprite.x / 16 - c.x
+        const dy = rec.sprite.y / 16 - c.y
+        out.push(+Math.sqrt(dx * dx + dy * dy).toFixed(1))
+      }
+      return out.sort((a, b) => a - b)
+    }, cible.un)
+    if (loups.length === 0) console.error('!! AUCUN loup diffusé autour de la Louvière — la meute résidente manque')
+    else console.log(`   ✓ ${loups.length} loup(s) à ${loups.join(' / ')} tuiles du lieu`)
+
+    await page.evaluate(() => window.__BRAISES__.scene.game.loop.sleep())
+    await page.screenshot({ path: `${OUT}/louviere-midi.png`, timeout: 150000 })
+    await page.evaluate(() => window.__BRAISES__.scene.game.loop.wake())
+    console.log(`   → ${OUT}/louviere-midi.png`)
+  },
+
+  /**
    * LA BARRE HAUTE (2026-08-24) — elle DIT le lieu, l'année et le ciel, ou elle ment.
    *
    * Le scénario ne juge pas des pixels : il lit ce que la barre a écrit, dans le DOM, aux deux

@@ -1004,6 +1004,32 @@ export const POI_LIT_DEFS_DATA: readonly PoiLitDef[] = [
     ],
   },
   {
+    // LA LOUVIÈRE — de la PIERRE, pas de la terre remuée : la dalle-porche et la
+    // gueule dessous. Les os autour disent la meute (plusieurs repas, pas un).
+    slug: 'louviere',
+    w: 58,
+    h: 34,
+    blocks: [
+      { rect: [2, 26, 54, 6], tone: '#4a463f' }, // le pied de la dalle
+      { rect: [6, 16, 46, 10], tone: '#5a564e' }, // la dalle grise
+      { rect: [14, 10, 28, 6], tone: '#6b665c' }, // son dos, au NO
+    ],
+    accents: [
+      { rect: [22, 19, 18, 11], color: '#0a0908' }, // la gueule
+      { rect: [21, 17, 20, 3], color: '#2e2b26' }, // le linteau
+    ],
+    details: [
+      { rect: [4, 28, 5, 2], color: '#c9c1b0' }, // un crâne de cerf
+      { rect: [48, 29, 7, 2], color: '#9a9284' }, // un long os
+      { rect: [44, 27, 4, 2], color: '#6a5a48' },
+      { rect: [10, 21, 8, 1], color: '#2e2b26' },
+    ],
+    cracks: [
+      { path: [[10, 31], [12, 25], [13, 19]], crevasse: true },
+      { path: [[47, 31], [45, 26], [43, 21]], crevasse: true },
+    ],
+  },
+  {
     slug: 'tarn',
     plat: true, // accident du terrain, pas une masse debout : aucun retourné
     w: 56,

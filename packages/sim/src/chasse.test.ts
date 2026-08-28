@@ -9,7 +9,7 @@ import { describe, expect, it } from 'vitest'
 import { BALANCE, FAUNA, HUNT, MONSTER_DEFS, SLOTS, TERRAIN_FOREST, TERRAIN_GRASS, TERRAIN_ROCK, TERRAINS, WEAPON_PROFILES } from './balance'
 import { drainEvents } from './events'
 import { carryRatio, carryTier, countOf, inventoryOf, type ItemId } from './items'
-import { bloodBias, gaitNoise } from './faune'
+import { gaitNoise } from './faune'
 import { createEmptyMap, type WorldMap } from './map'
 import { createSim, spawnEntity, step, type MoveInput, type SimState } from './sim'
 import { cycleOffsetForStartHour } from './time'
@@ -541,20 +541,10 @@ describe('le sang appelle les loups (A13, C12)', () => {
     void sain
   })
 
-  it('A13 — LE BIAIS DE SPAWN : près d’une carcasse fraîche, le monde donne des prédateurs', () => {
-    const sim = makeSim(2)
-    expect(bloodBias(sim, 40.5, 40.5)).toBe(1) // rien : le monde est neutre
-    sim.corpses.push({
-      id: sim.nextCorpseId++,
-      x: 40.5,
-      y: 40.5,
-      inventory: inventoryOf(SLOTS.CORPSE, { raw_meat: 3 }),
-      decayAt: 1e9,
-      diedAt: sim.tick,
-    })
-    expect(bloodBias(sim, 40.5, 40.5)).toBe(HUNT.BLOOD_PREDATOR_BIAS) // la mort appelle
-    expect(bloodBias(sim, 120.5, 120.5)).toBe(1) // mais elle ne porte pas jusqu'au bout du monde
-  })
+  // (L'ancien A13 — le biais de SPAWN par le sang — est parti avec le canal
+  // ambiant des prédateurs, décision d'Alexis 2026-08-28 : le loup est une bête
+  // de lieu. C12 tient toujours par le FLAIR des loups vivants :
+  // `CARCASS_SEEK_FRESH`, éprouvé par « la carcasse fraîche porte loin » ci-dessus.)
 })
 
 /* ══ CHASSE III — LA RUSE (A15-A19) ══════════════════════════════════════════ */

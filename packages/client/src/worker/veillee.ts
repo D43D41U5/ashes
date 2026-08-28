@@ -164,6 +164,9 @@ export function createVeillee(
     // LA MÉTÉO (spec meteo.md R10) : armée dans le VRAI jeu seulement — décision d'hôte,
     // comme `faunaCap` ; les bancs et les tests restent sans elle (interrupteur dédié).
     meteoActive: true,
+    // LA NUIT QUI CHASSE : ÉTEINTE « pour l'instant » (décision d'Alexis, 2026-08-28,
+    // prise avec la Louvière) — le loup ne vit plus qu'à son lieu. Re-flipper ici.
+    nightHunt: false,
     debug: import.meta.env.DEV,
   })
   onPhase('monsters')

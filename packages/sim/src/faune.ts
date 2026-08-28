@@ -19,7 +19,6 @@ import {
   EAU,
   BALANCE,
   CENDREUX,
-  CIRCLES,
   COMBAT,
   FAUNA,
   HUNT,
@@ -53,7 +52,7 @@ import { emitEvent } from './events'
 import { fireState } from './fire'
 import { distSq } from './geometry'
 import { carryRatio, carryTier, countOf, isEmpty, removeItems, type ItemId } from './items'
-import { profondeurAt, terrainAt, zoneTierAt, type WorldMap } from './map'
+import { profondeurAt, terrainAt, type WorldMap } from './map'
 import { meteoQuiet, meteoVisionFactor } from './meteo'
 import { estCoeur, estLisiere, TERRAINS_BOISES_MASSIF, TERRAINS_FEUILLUS } from './profondeur'
 import { CREUX } from './racine-relief'
@@ -70,60 +69,13 @@ import type { Entity, SimState } from './sim'
 import { BEARINGS, ventGain } from './vent'
 
 /**
- * COMBIEN LE COIN AIME-T-IL LES PRÉDATEURS ? (spec tension.md, GDD §8bis)
- *
- * Pur, déterministe (`sqrt` seulement) : rare près du foyer, courant au loin. Sans
- * foyer déclaré (bancs de test), le monde reste uniforme — on n'impose pas une
- * géographie à qui ne l'a pas demandée.
- */
-export function predatorBias(state: SimState, tx: number, ty: number): number {
-  const home = state.home
-  if (!home) return 1
-  const dx = tx - home.x
-  const dy = ty - home.y
-  const d = Math.sqrt(dx * dx + dy * dy)
-  const radial =
-    d <= CIRCLES.DOMESTIC_RADIUS ? FAUNA.PREDATOR_BIAS_DOMESTIC : d >= CIRCLES.WILD_RADIUS ? FAUNA.PREDATOR_BIAS_WILD : 1
-  // RICHESSE ↔ DANGER (V2-19, tension.md T11bis) : une zone plus riche (tier plus haut) attire
-  // plus de prédateurs — le système de ressources est géographique, la peur doit l'être aussi.
-  // `zoneTierAt` rend 0 sans zones (bancs) : le facteur vaut alors 1, comportement préservé.
-  const tier = zoneTierAt(state.map, tx, ty)
-  return radial * (1 + FAUNA.DANGER_PER_TIER * tier)
-}
-
-/**
- * LE SANG APPELLE (spec chasse C12). Le poids des prédateurs au peuplement, près
- * d'une carcasse FRAÎCHE ou d'une entité qui SAIGNE. Il se cumule au gradient de
- * danger (`predatorBias`) : tuer, c'est armer un minuteur.
- */
-/**
  * UN CADAVRE PORTE-T-IL DE LA VIANDE ? La viande crue — ET LE QUARTIER (spec `depecage.md` R4) :
  * le cerf rend des quartiers, et tant que seul `raw_meat` comptait, le gros gibier n'attirait ni
  * ne nourrissait un loup — son minuteur C12 n'existait pas. C'est la seule lecture, partagée par
- * le flair (`bloodBias`), la recherche de repas et la bouchée.
+ * la recherche de repas et la bouchée.
  */
 export function porteDeLaViande(c: Corpse): boolean {
   return countOf(c.inventory, 'raw_meat') > 0 || countOf(c.inventory, 'quartier') > 0
-}
-
-export function bloodBias(state: SimState, x: number, y: number): number {
-  const r = HUNT.BLOOD_SCENT_RADIUS * HUNT.BLOOD_SCENT_RADIUS
-  for (const c of state.corpses) {
-    if (state.tick - c.diedAt >= HUNT.CARCASS_FRESH_TICKS) continue
-    if (!porteDeLaViande(c)) continue
-    if (distSq(x, y, c.x, c.y) <= r) return HUNT.BLOOD_PREDATOR_BIAS
-  }
-  for (const e of state.entities) {
-    if (e.hp <= 0 || e.wounds.bleeding !== true) continue
-    if (distSq(x, y, e.x, e.y) <= r) return HUNT.BLOOD_PREDATOR_BIAS
-  }
-  for (const m of state.monsters) {
-    if (!isBleeding(m, state.tick)) continue
-    const e = state.entities.find((x2) => x2.id === m.entityId)
-    if (!e || e.hp <= 0) continue
-    if (distSq(x, y, e.x, e.y) <= r) return HUNT.BLOOD_PREDATOR_BIAS
-  }
-  return 1
 }
 
 /**
@@ -243,25 +195,11 @@ export function placeHuntingGrounds(map: WorldMap, seed: number): { x: number; y
   const nearCover = (tx: number, ty: number): boolean =>
     nearCell(tx, ty, FAUNA.GROUND_COVER_NEAR, (c) => boise[c]! >= FAUNA.GROUND_COVER_MIN_TILES)
 
-  const pts = poissonPoints(map.width, map.height, seed ^ 0x47524e44 /* 'GRND' */, FAUNA.GROUND_SPACING)
-  const grounds: { x: number; y: number }[] = []
-  for (const p of pts) {
-    // LE COIN DE CHASSE EST UN LIEU LOGIQUE (retour utilisateur) : le gibier ne
-    // vit pas sur un éboulis. Il lui faut de l'HERBE (un biome ouvert, où l'on
-    // broute) et de l'EAU (on boit tous les jours). Le semis de Poisson donne
-    // l'ESPACEMENT ; ces deux conditions donnent l'ADRESSE.
-    //
-    // Le point tiré n'est qu'une graine : on cherche autour de lui la meilleure
-    // tuile — un pré près d'une rive. S'il n'y en a pas dans le rayon, ce point
-    // ne devient PAS un coin de chasse : la vallée a le droit d'avoir des déserts,
-    // et c'est même ce qui donne leur valeur aux coins qui restent.
-    const sx = Math.floor(p.x)
-    const sy = Math.floor(p.y)
-
-    // LE PAYS DÉCIDE DE LA NATURE DU COIN. On compte, autour de la graine, ce qui
-    // domine : de l'herbe ou des arbres. Un semis tombé au milieu des bois devient
-    // une SOUILLE (sanglier) ; au milieu des prés, une CLAIRIÈRE (cerf, lapin).
-    // Le gibier n'a pas à s'adapter au coin : c'est le coin qui est ce qu'il est.
+  // LE PAYS DÉCIDE DE LA NATURE DU COIN. On compte, autour de la graine, ce qui
+  // domine : de l'herbe ou des arbres. Un semis tombé au milieu des bois devient
+  // une SOUILLE (sanglier) ; au milieu des prés, une CLAIRIÈRE (cerf, lapin).
+  // Le gibier n'a pas à s'adapter au coin : c'est le coin qui est ce qu'il est.
+  const paysVoulu = (sx: number, sy: number): readonly number[] => {
     let pres = 0
     let bois = 0
     for (let oy = -FAUNA.GROUND_SNAP; oy <= FAUNA.GROUND_SNAP; oy += 3) {
@@ -274,12 +212,16 @@ export function placeHuntingGrounds(map: WorldMap, seed: number): { x: number; y
         else if (WOOD_TERRAINS.includes(t)) bois++
       }
     }
-    const veut = bois > pres ? WOOD_TERRAINS : OPEN_TERRAINS
-
-    let placed = false
-    for (let r = 0; r <= FAUNA.GROUND_SNAP && !placed; r++) {
-      for (let oy = -r; oy <= r && !placed; oy++) {
-        for (let ox = -r; ox <= r && !placed; ox++) {
+    return bois > pres ? WOOD_TERRAINS : OPEN_TERRAINS
+  }
+  // La graine n'est qu'une graine : on cherche autour d'elle la meilleure tuile —
+  // un pré près d'une rive — en anneaux croissants. Rien dans le rayon : pas de
+  // coin. La vallée a le droit d'avoir des déserts, et c'est même ce qui donne
+  // leur valeur aux coins qui restent.
+  const snapCoin = (sx: number, sy: number, rayon: number, veut: readonly number[]): { x: number; y: number } | null => {
+    for (let r = 0; r <= rayon; r++) {
+      for (let oy = -r; oy <= r; oy++) {
+        for (let ox = -r; ox <= r; ox++) {
           if (r > 0 && Math.abs(ox) !== r && Math.abs(oy) !== r) continue // le bord de l'anneau
           const tx = sx + ox
           const ty = sy + oy
@@ -289,11 +231,50 @@ export function placeHuntingGrounds(map: WorldMap, seed: number): { x: number; y
           if (!veut.includes(terrain)) continue // de l'herbe, OU des arbres
           if (!nearWater(tx, ty)) continue // …et de l'eau (on boit ; le sanglier s'y vautre)
           if (!nearCover(tx, ty)) continue // …et un DORTOIR (R23 : on dort sous les arbres)
-          grounds.push({ x: tx + 0.5, y: ty + 0.5 })
-          placed = true
+          return { x: tx + 0.5, y: ty + 0.5 }
         }
       }
     }
+    return null
+  }
+
+  const pts = poissonPoints(map.width, map.height, seed ^ 0x47524e44 /* 'GRND' */, FAUNA.GROUND_SPACING)
+  const grounds: { x: number; y: number }[] = []
+  for (const p of pts) {
+    // LE COIN DE CHASSE EST UN LIEU LOGIQUE (retour utilisateur) : le gibier ne
+    // vit pas sur un éboulis. Il lui faut de l'HERBE (un biome ouvert, où l'on
+    // broute) et de l'EAU (on boit tous les jours). Le semis de Poisson donne
+    // l'ESPACEMENT ; ces deux conditions donnent l'ADRESSE.
+    const sx = Math.floor(p.x)
+    const sy = Math.floor(p.y)
+    const g = snapCoin(sx, sy, FAUNA.GROUND_SNAP, paysVoulu(sx, sy))
+    if (g) grounds.push(g)
+  }
+
+  // LA LOUVIÈRE A SON COIN (décision d'Alexis, 2026-08-28). Le loup est une bête
+  // de lieu, mais il reste un CHASSEUR — une meute sans gibier serait un décor.
+  // Chaque Louvière est donc GARANTIE d'un coin de chasse dont le disque
+  // (`GROUND_RADIUS`) couvre sa tanière : le gibier broute là où la meute rôde,
+  // et chasser ce coin-là se paie. Le coin du Poisson déjà à portée fait
+  // l'affaire ; sinon on en SÈME un, aux mêmes exigences que tous les autres
+  // (le pays domine, l'eau à portée, le dortoir à portée), au plus près de la
+  // tanière. Un pays qui ne peut pas porter de gibier (alpage sec) laisse la
+  // Louvière sans coin — le recensement des tests le compte, on ne tord pas la
+  // règle pour le cacher.
+  for (const z of map.zones) {
+    if (z.kind !== 'louviere') continue
+    const cx = Math.floor(z.x + z.w / 2)
+    const cy = Math.floor(z.y + z.h / 2)
+    let couvert = false
+    for (const g of grounds) {
+      if (distSq(cx + 0.5, cy + 0.5, g.x, g.y) <= FAUNA.GROUND_RADIUS * FAUNA.GROUND_RADIUS) {
+        couvert = true
+        break
+      }
+    }
+    if (couvert) continue
+    const g = snapCoin(cx, cy, FAUNA.GROUND_RADIUS, paysVoulu(cx, cy))
+    if (g) grounds.push(g)
   }
   return grounds
 }
@@ -312,8 +293,15 @@ function nearestGround(state: SimState, x: number, y: number): { g: { x: number;
   return best ? { g: best, d2: bestD } : null
 }
 
-/** Les espèces sauvages : celles qui ont un habitat (spec faune R2). */
-const WILD_TYPES = (Object.keys(MONSTER_DEFS) as MonsterType[]).filter((t) => (MONSTER_DEFS[t].habitat?.length ?? 0) > 0)
+/**
+ * Les espèces du PEUPLEMENT AMBIANT : un habitat, et pas prédatrices. Le loup a
+ * un habitat mais ne naît plus ici (décision d'Alexis, 2026-08-28) : sa meute
+ * réside à la Louvière (`poi.ts`) et son autre visage est la nuit qui chasse
+ * (`nighthunt.ts`). L'anneau ne fabrique plus que du gibier.
+ */
+const WILD_TYPES = (Object.keys(MONSTER_DEFS) as MonsterType[]).filter(
+  (t) => (MONSTER_DEFS[t].habitat?.length ?? 0) > 0 && MONSTER_DEFS[t].predator !== true,
+)
 
 /** Cette bête est-elle sauvage (elle vit dans un biome) plutôt qu'un mort-vivant ? */
 export function isWild(type: MonsterType): boolean {
@@ -837,48 +825,25 @@ function trySpawn(state: SimState, avatars: Entity[]): void {
   if (state.tick % FAUNA.SPAWN_EVERY_TICKS !== 0) return
   if (avatars.length === 0) return
 
-  // La population de chaque coin de chasse, comptée une fois pour ce tick — et,
-  // séparément, celle de ses PRÉDATEURS : c'est elle qui borne le danger (R18).
+  // La population de chaque coin de chasse, comptée une fois pour ce tick.
+  // (Plus de compte prédateur : le loup est une bête de LIEU depuis le
+  // 2026-08-28 — l'anneau ne fabrique que du gibier, voir `WILD_TYPES`.)
   const perGround = new Map<string, number>()
-  const predPerGround = new Map<string, number>()
   let ambient = 0
-  let predators = 0
   for (const m of state.monsters) {
     if (!m.ambient) continue
     ambient++
-    const pred = isPredator(m.type)
-    if (pred) predators++
     if (m.groundX === undefined || m.groundY === undefined) continue
     const k = `${m.groundX},${m.groundY}`
     perGround.set(k, (perGround.get(k) ?? 0) + 1)
-    if (pred) predPerGround.set(k, (predPerGround.get(k) ?? 0) + 1)
   }
 
   const hour = getGameTime(state).hourOfCycle
-  const budget = { world: ambient, worldPred: predators, perGround, predPerGround }
+  const budget = { world: ambient, perGround }
   for (const host of avatars) {
     if (budget.world >= state.faunaCap) return // le garde-fou du serveur, et lui seul
     trySpawnNear(state, host, hour, budget)
   }
-}
-
-/**
- * COMBIEN DE PLACES RESTE-T-IL AUX PRÉDATEURS ICI (spec faune R18) ?
- *
- * Dans un coin de chasse : `PREDATOR_SHARE` de sa population, et pas une bête de
- * plus. Sans coin (banc de test, monde uniforme) : la même part, mais du plafond
- * du monde — la règle ne dépend pas de la géographie, elle dépend du DANGER.
- */
-function predatorRoom(
-  state: SimState,
-  ground: { x: number; y: number } | null,
-  budget: { worldPred: number; predPerGround: Map<string, number> },
-): number {
-  if (ground) {
-    const have = budget.predPerGround.get(`${ground.x},${ground.y}`) ?? 0
-    return Math.floor(FAUNA.GROUND_CAP * FAUNA.PREDATOR_SHARE) - have
-  }
-  return Math.floor(state.faunaCap * FAUNA.PREDATOR_SHARE) - budget.worldPred
 }
 
 /**
@@ -895,13 +860,10 @@ function trySpawnNear(
   hour: number,
   budget: {
     world: number
-    worldPred: number
     perGround: Map<string, number>
-    predPerGround: Map<string, number>
   },
 ): void {
   const perGround = budget.perGround
-  const predPerGround = budget.predPerGround
   const span = FAUNA.SPAWN_RING_MAX * 2 + 1
   const minSq = FAUNA.SPAWN_RING_MIN * FAUNA.SPAWN_RING_MIN
   const maxSq = FAUNA.SPAWN_RING_MAX * FAUNA.SPAWN_RING_MAX
@@ -949,8 +911,7 @@ function trySpawnNear(
       ground = near.g
     }
 
-    // Le biome choisit l'espèce — et L'HEURE la pondère (R10). À 3h du matin, la
-    // forêt donne des loups et des sangliers ; à midi, des cerfs. Le plancher
+    // Le biome choisit l'espèce — et L'HEURE la pondère (R10). Le plancher
     // (SPAWN_FLOOR) laisse subsister une chance pour les endormis : le monde ne
     // se recompose pas d'un coup au coucher du soleil.
     let candidates = WILD_TYPES.filter((t) => inHabitat(state, t, tx, ty))
@@ -966,43 +927,18 @@ function trySpawnNear(
     // pleine de bêtes de sous-bois. Le sanglier a maintenant SES coins : les
     // souilles. On va au pré pour le cerf, au bois pour le sanglier.
     //
-    // Le PRÉDATEUR, lui, va où va le gibier : il n'a pas de pré à lui, il suit les
-    // hardes. Il est admis partout — et borné, partout, par son quota (R18).
+    // (Le loup n'est plus tiré ici — il a son adresse à LUI, la Louvière, et le
+    // quota de prédateurs R18 est parti avec lui : un coin de chasse ne fabrique
+    // plus que du gibier.)
     if (ground) {
       const groundTerrain = terrainAt(state.map, Math.floor(ground.x), Math.floor(ground.y))
-      candidates = candidates.filter(
-        (t) => isPredator(t) || (MONSTER_DEFS[t].habitat?.includes(groundTerrain) ?? false),
-      )
+      candidates = candidates.filter((t) => MONSTER_DEFS[t].habitat?.includes(groundTerrain) ?? false)
       if (candidates.length === 0) continue
     }
 
-    // LE QUOTA DE PRÉDATEURS (spec faune R18). La nuit, le loup RAFLAIT le budget
-    // d'une clairière — jusqu'à dix-neuf loups dans un seul coin. On ne le rend
-    // pas plus rare (ça viderait la nuit de son sens) : on borne sa PART. Le reste
-    // va au gibier, qui la nuit DORT (R10) — des cerfs couchés, et quelques loups
-    // qui rôdent entre eux. C'est un écosystème, pas un mur.
-    //
-    // Il faut DEUX places libres pour ouvrir une meute : un loup seul n'ose pas
-    // (R11, le courage), et un demi-quota ne fabriquerait que des rôdeurs inutiles.
-    const predRoom = predatorRoom(state, ground, budget)
-    if (predRoom < 2) candidates = candidates.filter((t) => !isPredator(t))
-    if (candidates.length === 0) continue
-
-    // LE GRADIENT DE DANGER (GDD §8bis, cercle sauvage). Le biome choisit l'espèce,
-    // l'HEURE la pondère (R10)… et la DISTANCE AU FOYER décide de qui rôde : près
-    // du camp, les prédateurs sont rares ; aux marges, le monde leur appartient.
-    //
-    // Sans lui, le cercle sauvage était riche SANS être dangereux : s'éloigner
-    // rapportait sans faire peur, et le PORTAGE (qui rend la distance coûteuse)
-    // n'achetait aucune tension. Les deux règles se tiennent la main.
-    // LE SANG PÈSE (chasse C12) : près d'une carcasse fraîche ou d'un blessé, le
-    // monde donne des prédateurs. Il se CUMULE au gradient de danger — chasser
-    // aux marges est somptueux ET brûlant, exactement ce que veut le GDD §8bis.
-    const danger = predatorBias(state, tx, ty) * bloodBias(state, tx + 0.5, ty + 0.5)
     const weights = candidates.map(
       (t) =>
-        (FAUNA.SPAWN_FLOOR + (1 - FAUNA.SPAWN_FLOOR) * activityAt(t, hour)) *
-        (isPredator(t) ? danger : 1) /
+        (FAUNA.SPAWN_FLOOR + (1 - FAUNA.SPAWN_FLOOR) * activityAt(t, hour)) /
         // LE PRIX D'UNE HARDE (playtest : « il y a trop de bêtes » — et c'étaient
         // 43 CERFS sur 48). Le plafond était censé être un budget de POPULATION ;
         // il n'était qu'un budget de TIRAGES. Un tirage « cerf » coûte quatre
@@ -1032,12 +968,9 @@ function trySpawnNear(
     // Le coin est CRÉDITÉ tout de suite : la harde qui suit se compte dedans, et
     // le tour de peuplement du joueur suivant voit un budget à jour.
     const key = ground ? `${ground.x},${ground.y}` : null
-    const pred = MONSTER_DEFS[type].predator === true
     const credit = (): void => {
       budget.world += 1
-      if (pred) budget.worldPred += 1
       if (key) perGround.set(key, (perGround.get(key) ?? 0) + 1)
-      if (key && pred) predPerGround.set(key, (predPerGround.get(key) ?? 0) + 1)
     }
     if (ground) {
       born.groundX = ground.x
@@ -1053,22 +986,13 @@ function trySpawnNear(
     }
 
     // Le grégarisme (R9) : un cerf ne naît jamais seul. Ses congénères se posent
-    // autour de lui, et partagent son identité de harde.
+    // autour de lui, et partagent son identité de harde. (L'ALPHA n'a plus sa
+    // place ici : les meutes de prédateurs naissent à la Louvière, `poi.ts`.)
     const size = MONSTER_DEFS[type].herdSize
     if (size) {
       const herdId = state.nextHerdId
       state.nextHerdId += 1
       born.herdId = herdId
-
-      // L'ALPHA (R12). Une MEUTE a un chef ; une harde de cerfs n'en a pas — le
-      // premier-né d'une meute de prédateurs est l'alpha, et toute la meute
-      // retient son nom. C'est ce qui permet à chaque loup de savoir, plus tard,
-      // que le chef est tombé — sans registre, sans recherche.
-      if (MONSTER_DEFS[type].predator) {
-        born.alpha = true
-        born.alphaId = id
-        promoteToAlpha(state, id, type)
-      }
 
       const [lo, hi] = size
       const total = lo + Math.floor(roll(state) * (hi - lo + 1))
@@ -1079,8 +1003,6 @@ function trySpawnNear(
         // atteint — c'est-à-dire toujours.
         if (budget.world >= state.faunaCap) break // le garde-fou du monde
         if (key && (perGround.get(key) ?? 0) >= FAUNA.GROUND_CAP) break // …et celui du coin
-        // …et le QUOTA DE PRÉDATEURS (R18) : une meute ne dépasse pas sa part.
-        if (MONSTER_DEFS[type].predator && predatorRoom(state, ground, budget) <= 0) break
         const spot = herdSpot(state, type, tx, ty, host)
         if (!spot) continue
         const mateId = spawnMonster(state, type, spot.tx + 0.5, spot.ty + 0.5)
@@ -1092,7 +1014,6 @@ function trySpawnNear(
           mate.groundX = born.groundX
           mate.groundY = born.groundY
         }
-        if (born.alphaId !== undefined) mate.alphaId = born.alphaId
       }
     }
     return
@@ -1109,8 +1030,9 @@ function damageOf(monster: Monster): number {
   return MONSTER_DEFS[monster.type].damage * (monster.alpha ? FAUNA.ALPHA_DAMAGE : 1)
 }
 
-/** Le chef prend sa taille : ses PV montent, et ils sont pleins. */
-function promoteToAlpha(state: SimState, entityId: number, type: MonsterType): void {
+/** Le chef prend sa taille : ses PV montent, et ils sont pleins. (Appelé par la
+ *  Louvière, `poi.ts` — c'est là que les meutes naissent et se reforment.) */
+export function promoteToAlpha(state: SimState, entityId: number, type: MonsterType): void {
   const e = state.entities.find((x) => x.id === entityId)
   if (e) e.hp = MONSTER_DEFS[type].hp * FAUNA.ALPHA_HP
 }
@@ -1485,6 +1407,35 @@ function goHome(state: SimState, monster: Monster, entity: Entity): boolean {
   // Aucun habitat en vue (banc de test à carte uniforme) : qu'elle broute au
   // moins sur place plutôt que de rester une statue. On ne fige jamais une bête.
   delete monster.homing
+  return false
+}
+
+/**
+ * LA LAISSE DE LA LOUVIÈRE (décision d'Alexis, 2026-08-28). Une bête de lieu a un
+ * TERRITOIRE : quand plus rien ne la retient — ni proie, ni carcasse, ni combat —
+ * elle rentre vers son lieu dès qu'elle en est à plus de `DEN_TERRITORY` tuiles.
+ * C'est ce qui rend la promesse du POI tenable : « ici c'est chez les loups, là je
+ * suis tranquille » exige que la meute ne dérive pas au fil des patrouilles.
+ *
+ * Le retour est COLLANT (`ranging`, la même leçon que le retour au coin R17) :
+ * engagé, il ne rend la main qu'à `DEN_COMFORT` — sans hystérésis, la frontière
+ * vibrerait à chaque pas de broutage. Une CHASSE peut emmener le loup plus loin :
+ * la laisse ne tire que celui qui n'a plus rien à faire, jamais celui qui a une
+ * gorge en ligne de mire (elle n'est consultée qu'au pas de patrouille).
+ */
+function denLeashStep(state: SimState, monster: Monster, entity: Entity): boolean {
+  if (monster.homePoi === undefined) return false
+  const z = state.map.zones[monster.homePoi]
+  if (!z) return false
+  const cx = z.x + z.w / 2
+  const cy = z.y + z.h / 2
+  const away = distSq(entity.x, entity.y, cx, cy)
+  if (!monster.ranging && away > FAUNA.DEN_TERRITORY * FAUNA.DEN_TERRITORY) monster.ranging = true
+  else if (monster.ranging && away < FAUNA.DEN_COMFORT * FAUNA.DEN_COMFORT) delete monster.ranging
+  if (monster.ranging) {
+    moveToward(state, monster, entity, cx, cy, false, FAUNA.WARY_SPEED)
+    return true
+  }
   return false
 }
 
@@ -3548,6 +3499,7 @@ export function wolfStep(
       monster.stalking = false
       oublieLeChemin(monster)
       delete monster.alertSince // repu et tranquille : il baisse la garde (C6)
+      if (denLeashStep(state, monster, entity)) return // le repu rentre à la Louvière
       if (goHome(state, monster, entity)) return
       if (isResting('wolf', hour)) {
         monster.wanderDx = 0
@@ -3689,8 +3641,10 @@ export function wolfStep(
   // la mise à mort propre vaut aussi sur les prédateurs.
   if (!monster.routed) delete monster.alertSince
 
-  // 5. Rien à chasser. Il rentre chez lui s'il en est sorti ; hors de ses heures,
-  //    il dort ; sinon il patrouille avec les siens (la meute reste groupée).
+  // 5. Rien à chasser. Une bête de Louvière regagne d'abord son territoire (la
+  //    laisse) ; puis il rentre dans son habitat s'il en est sorti ; hors de ses
+  //    heures, il dort ; sinon il patrouille avec les siens (la meute reste groupée).
+  if (denLeashStep(state, monster, entity)) return
   if (goHome(state, monster, entity)) return
   if (isResting('wolf', hour)) {
     monster.wanderDx = 0

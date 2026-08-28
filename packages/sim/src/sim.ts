@@ -501,6 +501,10 @@ export interface SimState {
   /** Fronts armés ? Interrupteur DÉDIÉ (spec meteo.md R10), absent/faux par défaut —
    *  séparé de `worldEvents` (voir SimOptions.meteoActive). */
   meteoActive?: boolean
+  /** La nuit qui chasse est ÉTEINTE dans ce monde (décision d'Alexis, 2026-08-28 :
+   *  « désactive ce système pour l'instant ») — absent par défaut, posé par l'hôte
+   *  (voir SimOptions.nightHunt). */
+  nightHuntOff?: boolean
 }
 
 export interface SimOptions {
@@ -560,6 +564,14 @@ export interface SimOptions {
    * LAN) l'arme explicitement à la création du monde.
    */
   meteoActive?: boolean
+  /**
+   * LA NUIT QUI CHASSE (spec `tension.md`) : `false` l'ÉTEINT. VRAI par défaut — les bancs
+   * et les tests continuent d'éprouver le mécanisme tel qu'il est écrit — mais le VRAI jeu
+   * (Veillée, LAN) l'éteint « pour l'instant » (décision d'Alexis, 2026-08-28, prise avec la
+   * Louvière) : plus aucun loup ni Cendreux ne se lève sur un dormeur tant que cette ligne
+   * n'est pas re-flippée chez les hôtes.
+   */
+  nightHunt?: boolean
 }
 
 /** Intention d'un avatar pour un tick : déplacement, postures, au plus une action. */
@@ -644,6 +656,9 @@ export function createSim(seed: number, options: SimOptions = {}): SimState {
   // champs optionnels de la Brume) : une partie sans météo garde l'empreinte d'état — donc
   // le snapshot ET la forme attendue par la persistance — d'avant le système, au bit près.
   if (options.meteoActive) state.meteoActive = true
+  // LA NUIT QUI CHASSE s'éteint à la demande seulement — même patron : la clé n'existe
+  // que si l'hôte l'a posée, l'empreinte d'état des mondes existants ne bouge pas.
+  if (options.nightHunt === false) state.nightHuntOff = true
   // LE JOUR ET L'ACTE DE NAISSANCE SE DÉRIVENT (S2) — ils étaient écrits en dur, `1` et `1`,
   // et aucun compilateur ne l'aurait dit : un monde né au jour 51 se serait cru à l'Éclosion
   // pendant que l'Ardeur finissait. La phase du cycle dépend de `cycleOffset` (0 = aube).

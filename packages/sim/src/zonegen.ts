@@ -741,17 +741,6 @@ export function generateZonedTerrain(
     // Sans elle, la table de prises n'aurait aucun moyen de savoir ce qu'est l'eau qu'on pêche.
     natureEau: deriverNatureDeLEau(terrain, riviere?.fil, width, height),
   }
-  // LES COULÉES (forêts-vivantes §4) — dérivées après la profondeur (elles lisent le pic) :
-  // couche → eau, pour chaque massif à cœur qui boit. Champ additif, patron `fil`.
-  // ET UNE PAR COIN DE CHASSE (faune R24/R26, décision d'Alexis 2026-08-28) : les coins se
-  // calculent ICI, sur le terrain final — `placeHuntingGrounds` est pur de (carte, graine),
-  // l'hôte qui le rappellera après rendra les MÊMES coins, au bit près. Sans ça, coulées et
-  // coins ne se rencontraient jamais (deux semis indépendants — mesuré : 28-448 tuiles d'écart).
-  const coulees = tracerLesCoulees(
-    terrain, zone, g, width, height, map.profondeur!, creux,
-    placeHuntingGrounds(map, seed),
-  )
-  if (coulees.length > 0) map.coulees = coulees
   const carte: CarteZonee = { map, graphe: g, zone, rampe, affleurements }
 
   // ── PASSE 4.5 : LES SET-PIECES ET LES GUÉS ENTRENT DANS LA CARTE ──────────
@@ -807,6 +796,27 @@ export function generateZonedTerrain(
   // LES STÈLES (annales.md R8) : en DERNIER — elles se posent au bord des faits de l'ère 2 en
   // respectant les empreintes de tous les lieux déjà placés.
   placeSteles(map, champDeCreusement)
+
+  // ── LES COULÉES (forêts-vivantes §4) — APRÈS LES LIEUX, et ce n'est pas un détail ─────────
+  //
+  // Dérivées après la profondeur (elles lisent le pic) : couche → eau, pour chaque massif à
+  // cœur qui boit. Champ additif, patron `fil`. ET UNE PAR COIN DE CHASSE (faune R24/R26,
+  // décision d'Alexis 2026-08-28) : les coins se calculent ICI — `placeHuntingGrounds` est
+  // pur de (carte, graine), l'hôte qui le rappellera après rendra les MÊMES coins, au bit
+  // près. Sans ça, coulées et coins ne se rencontraient jamais (deux semis indépendants —
+  // mesuré : 28-448 tuiles d'écart).
+  //
+  // ⚠ APRÈS `placePois`, PARCE QUE LES COINS LISENT LES ZONES : depuis la Louvière (faune
+  // R28), `placeHuntingGrounds` GARANTIT un coin à chaque tanière de loups — il lit
+  // `map.zones`. Calculé avant les lieux (l'ordre historique), il rendait une liste SANS les
+  // coins des Louvières, l'hôte une liste AVEC : l'invariant « les mêmes coins, au bit près »
+  // était rompu, et 100 % des coins de Louvière naissaient sans coulée (mesuré, revue
+  // déterminisme du 2026-08-28 : 3 à 4 coins muets par carte, précisément ceux des meutes).
+  const coulees = tracerLesCoulees(
+    terrain, zone, g, width, height, map.profondeur!, creux,
+    placeHuntingGrounds(map, seed),
+  )
+  if (coulees.length > 0) map.coulees = coulees
 
   // ── LE CHAMP DE CHEMINEMENT DE LA CENDRE (spec `cendre.md` R4) ───────────────────────────
   //

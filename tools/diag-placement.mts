@@ -70,8 +70,8 @@ for (const seed of SEEDS) {
     return best
   }
 
-  // LES COINS DE CHASSE — le territoire (GROUND_RADIUS) est le disque où la faune naît,
-  // prédateurs compris (PREDATOR_SHARE de GROUND_CAP) : des loups à domicile.
+  // LES COINS DE CHASSE — le territoire (GROUND_RADIUS) est le disque où la faune naît.
+  // (Plus de prédateurs dans l'anneau depuis le 2026-08-28 : la meute vit à la Louvière.)
   const grounds = placeHuntingGrounds(carte.map, seed)
   const chasseLaPlusProche = (tx: number, ty: number): number => {
     let best = Infinity

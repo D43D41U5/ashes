@@ -2945,6 +2945,11 @@ export const MONSTER_DEFS: Record<MonsterType, MonsterDef> = {
    * et un loup seul n'ose pas. Voilà pourquoi il est dangereux et pourquoi on
    * peut le battre : il a une psychologie, et elle s'exploite.
    *
+   * BÊTE DE LIEU depuis le 2026-08-28 (décision d'Alexis) : il ne naît plus dans
+   * le peuplement ambiant — sa meute RÉSIDE à la Louvière (`POI_TYPES`, `poi.ts`)
+   * et son territoire est `FAUNA.DEN_TERRITORY`. Son autre visage reste la nuit
+   * qui chasse (`nighthunt.ts`), qui vient à VOUS et n'a pas d'adresse.
+   *
    * Vitesse 4,8 : plus rapide qu'un joueur qui marche (4), plus lent qu'un
    * joueur qui sprinte (6). On ne distance pas une meute, on lui échappe.
    */
@@ -2954,8 +2959,9 @@ export const MONSTER_DEFS: Record<MonsterType, MonsterDef> = {
     thinkEveryTicks: ticksFor(0.5), wanderChance: 0.2, chargeChance: 0,
     loot: { raw_meat: 2, bone: 1 },
     sac: 0, // elle ne porte rien : son butin est `loot`, versé au cadavre
-    // `clairiere` : il suit le gibier, et le gibier y broute. Mais `cover: 1` l'y met à
-    // découvert — la trouée est le seul endroit du massif où on voit venir la meute.
+    // L'habitat ne commande plus sa NAISSANCE (bête de lieu) : il reste sa notion de
+    // « chez lui » (`goHome`) — et `clairiere`, où `cover: 1` le met à découvert, est
+    // le seul endroit du massif où on voit venir la meute.
     habitat: [TERRAIN_FOREST, TERRAIN_PINE, TERRAIN_LARCH, TERRAIN_OLD_GROWTH, TERRAIN_HEATH, TERRAIN_CLAIRIERE],
     alertRange: 0, flightRange: 0, // il ne fuit pas parce qu'on approche : il fuit parce qu'il saigne
     herdSize: [3, 4], // la meute
@@ -3035,24 +3041,6 @@ export const MONSTER_DEFS: Record<MonsterType, MonsterDef> = {
  */
 export const FAUNA = {
   /**
-   * LE GRADIENT DE DANGER (spec tension.md, GDD §8bis). Près du foyer, les
-   * prédateurs sont RARES ; aux marges, le monde leur appartient. Sans lui, le
-   * cercle sauvage était riche sans être dangereux : s'éloigner rapportait sans
-   * faire peur, et le PORTAGE — qui rend la distance coûteuse — n'achetait aucune
-   * tension. Les deux règles se tiennent la main.
-   */
-  PREDATOR_BIAS_DOMESTIC: 0.2,
-  PREDATOR_BIAS_WILD: 2.5,
-  /**
-   * RICHESSE ↔ DANGER (V2-19, tension.md T11bis). Le gradient radial ne suffisait pas : le
-   * système de ressources est GÉOGRAPHIQUE (chaque zone T1 a son minerai), mais s'y rendre ne
-   * FAISAIT pas peur. On re-corrèle : une zone plus riche (tier plus haut) attire plus de
-   * prédateurs — facteur `1 + DANGER_PER_TIER × tier`. Le Karst (fer, T1) et les marges (T2)
-   * deviennent somptueux ET brûlants ; la racine (T0) reste le refuge. Ordre de grandeur, à
-   * caler en playtest : T1 ×1,35, T2 ×1,7 — cumulé au radial (loin+riche = très chaud).
-   */
-  DANGER_PER_TIER: 0.35,
-  /**
    * Plafond de bêtes ambiantes vivantes (hors bêtes de lieu, résidentes).
    *
    * CALIBRÉ EN JEU (2026-07-11) : ce qui compte n'est pas le plafond mais la
@@ -3092,30 +3080,6 @@ export const FAUNA = {
    * du nombre de coins : seulement du nombre de coins QU'ON REGARDE.
    */
   GROUND_CAP: 30,
-  /**
-   * LA PART DES PRÉDATEURS dans un coin de chasse — le garde-fou du DANGER.
-   *
-   * Mesuré : la nuit, un coin se remplissait de DIX-NEUF LOUPS (cinq ou six
-   * meutes), et neuf coins sur dix-neuf en portaient dix ou plus. Le loup ne
-   * débordait pas du plafond : il le RAFLAIT. Hors de leurs heures, le cerf et le
-   * lapin tombent au plancher (`SPAWN_FLOOR`) pendant que le loup est à son
-   * maximum ; il gagne six tirages sur dix, et il naît par trois ou quatre.
-   *
-   * Ce n'était plus « la nuit est dangereuse », c'était un MUR. Et c'était
-   * d'autant plus fâcheux que LA NUIT QUI CHASSE avait été bornée avec soin
-   * (`NIGHT_HUNT.MAX_ALIVE` : « on peut perdre, pas être submergé ») — le
-   * peuplement ambiant contournait cette borne par la porte de derrière.
-   *
-   * On ne rend donc PAS le loup plus rare (ça viderait la nuit de son sens) : on
-   * borne sa PART. Le reste du coin va au gibier — qui, la nuit, DORT (R10). Une
-   * clairière nocturne devient alors ce qu'elle doit être : des cerfs couchés, et
-   * quelques loups qui rôdent entre eux. C'est l'écosystème, pas un mur.
-   *
-   * 0,2 × 30 = SIX loups au plus dans une clairière : une meute pleine, plus un
-   * rôdeur. Assez pour tuer un homme sans lance (une meute de quatre inflige déjà
-   * ~37 dégâts/s) ; pas assez pour qu'il n'ait jamais eu sa chance.
-   */
-  PREDATOR_SHARE: 0.2,
   /* ── LES COINS DE CHASSE (spec faune R17) ───────────────────────────────── */
   /**
    * LE GIBIER A DES ADRESSES (décision utilisateur, 2026-07-13).
@@ -3750,6 +3714,24 @@ export const FAUNA = {
   DEN_RESPAWN_TICKS: ticksFor(240),
   DEN_SPAWN_CLEARANCE: 24, // aucun avatar à moins de ça, sinon on attend
   /**
+   * LE TERRITOIRE DE LA LOUVIÈRE (décision d'Alexis, 2026-08-28). Le loup a cessé
+   * d'être une bête AMBIANTE (il naissait dans l'anneau, n'importe où, et le
+   * danger était un brouillard qu'on ne pouvait pas apprendre) : il est une bête
+   * de LIEU. La carte porte des Louvières — la meute y vit, y chasse, y revient.
+   * « Ici c'est chez les loups, là je suis tranquille » : c'est la promesse d'un
+   * POI, et elle exige une laisse.
+   *
+   * 20 tuiles autour du lieu : plus large que l'aggro nocturne (13), pour que la
+   * meute patrouille et chasse à pleine portée SANS quitter son pays ; plus court
+   * que l'écart des villages aux nids (`CONTENU.ECART_NID` = 32), pour qu'une
+   * meute au bout de sa laisse ne rôde pas dans une cour. Une CHASSE engagée peut
+   * l'emmener plus loin — la laisse ne tire que le loup qui n'a plus rien à
+   * faire, et l'hystérésis (retour jusqu'à `DEN_COMFORT`) empêche la vibration
+   * de frontière, la même leçon que `GROUND_COMFORT`.
+   */
+  DEN_TERRITORY: 20,
+  DEN_COMFORT: 10,
+  /**
    * REPU N'EST PAS INOFFENSIF. Un loup rassasié ne chasse plus, mais il se DÉFEND :
    * qui le frappe le trouve en face. Il ne poursuit pas, il ne rôde pas, il ne
    * hurle pas — il rend le coup, et il rompt s'il saigne. Un prédateur repu qui se
@@ -3940,9 +3922,6 @@ export const HUNT = {
    */
   CARCASS_FRESH_TICKS: ticksFor(240),
   CARCASS_SEEK_FRESH: 40,
-  /** Le poids de spawn des prédateurs près d'une carcasse fraîche ou d'un blessé. */
-  BLOOD_PREDATOR_BIAS: 2,
-  BLOOD_SCENT_RADIUS: 30,
   /**
    * LE PRÉDATEUR PRÉFÈRE LE SANG. Une cible qui saigne « pèse » ça de plus au
    * choix de proie (même mécanique que PREY_PREFERENCE). La meute cueille les

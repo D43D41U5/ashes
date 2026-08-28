@@ -53,6 +53,10 @@ function preys(state: SimState): Entity[] {
 }
 
 export function advanceNightHunt(state: SimState): void {
+  // L'HÔTE PEUT L'ÉTEINDRE (décision d'Alexis, 2026-08-28 : « désactive ce système pour
+  // l'instant ») — la Veillée et le LAN le font ; les bancs, qui l'éprouvent, non.
+  // `debug_reveil`, lui, court-circuite le tirage : il reste armé pour les scénarios.
+  if (state.nightHuntOff === true) return
   if (state.tick % ROLL_EVERY !== 0) return
   if (!getGameTime(state).isNight) return
 

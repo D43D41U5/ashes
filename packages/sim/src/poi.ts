@@ -7,9 +7,10 @@ import { hash2 } from './noise'
 import { poissonPoints } from './poisson'
 import { isWater, terrainAt, isBlockingTile, type FaitDeGeneration, type WorldMap, type Zone } from './map'
 import { spawnMonster } from './monsters'
+import { promoteToAlpha } from './faune'
 import type { SimState } from './sim'
 import { setTile } from './map'
-import { FAUNA, MORTS, TERRAIN_FOREST, TERRAIN_LARCH, TERRAIN_OLD_GROWTH, TERRAIN_PINE, TERRAIN_ROAD, TERRAIN_SCREE } from './balance'
+import { FAUNA, MONSTER_DEFS, MORTS, TERRAIN_FOREST, TERRAIN_LARCH, TERRAIN_OLD_GROWTH, TERRAIN_PINE, TERRAIN_ROAD, TERRAIN_SCREE } from './balance'
 import { jourDeSaison, seasonRamp } from './time'
 import { distSq } from './geometry'
 import { type CarveField, carveDistanceToMain, walkableComponents } from './connectivity'
@@ -97,7 +98,7 @@ export interface PoiType {
   maxElev?: number
   footprint: number
   nodeKind?: 'gisement' | 'carriere'
-  monster?: 'boar' | 'cendreux'
+  monster?: 'boar' | 'cendreux' | 'wolf'
   /**
    * CE LIEU EST HUMAIN, ET IL S'EST INSTALLÉ POUR UNE RAISON (stratigraphie S-R13/S-R14).
    *
@@ -228,6 +229,19 @@ export const POI_TYPES: PoiType[] = [
   { slug: 'bivouac', name: 'le Vieux bivouac', family: 'shelter', biomes: [GRASS, AL_MEADOW, HEATH, FOREST, SCREE, FLOWER, OLD_GROWTH, PINE, CLAIRIERE], weight: 4, cap: 4, reserve: 1, footprint: 3 },
   // Danger
   { slug: 'taniere', zones: ['sylve', 'pres_bas'], name: 'la Tanière', family: 'danger', biomes: [FOREST, PINE, GRASS, CLAIRIERE], weight: 6, cap: 8, reserve: 1, footprint: 3, monster: 'boar' },
+  /**
+   * LA LOUVIÈRE (décision d'Alexis, 2026-08-28) — le loup cesse d'être une bête
+   * ambiante : sa meute RÉSIDE ici, y chasse (`FAUNA.DEN_TERRITORY`), y revient,
+   * et s'y reforme loup par loup (`advanceDens`). Rare et marquante à dessein
+   * (cap 3) : le territoire des loups s'APPREND, et il se contourne — la pression
+   * diffuse restante appartient à la nuit qui chasse (`nighthunt.ts`).
+   * Sylve (la canopée) et Alpages (la lande des bergers) sont son pays naturel ;
+   * `pres_bas` s'y ajoute (décision d'Alexis, même jour : « implante-les dans des
+   * biomes déjà existants ») parce que LE MONDE JOUÉ EST LE T0 SEUL — sans lui, la
+   * partie réelle n'aurait plus un loup hors nuit qui chasse. À re-marginaliser
+   * quand la vallée entière reviendra, si le danger doit rendre ses marges.
+   */
+  { slug: 'louviere', zones: ['sylve', 'alpages', 'pres_bas'], name: 'la Louvière', family: 'danger', biomes: [FOREST, PINE, OLD_GROWTH, HEATH], weight: 3, cap: 3, reserve: 1, footprint: 3, monster: 'wolf' },
   { slug: 'repaire', zones: ['brule', 'cendriere'], name: 'le Repaire de Cendrés', family: 'danger', biomes: [BURNT, ROCK, SCREE], weight: 4, cap: 5, reserve: 1, footprint: 3, monster: 'cendreux' },
   { slug: 'epave', zones: ['aiguilles', 'glacier'], name: "l'Épave d'avalanche", family: 'danger', biomes: [SCREE, BOULDERS], minElev: 0.55, weight: 3, cap: 3, reserve: 1, footprint: 4 },
   { slug: 'fondriere', zones: ['tourbiere', 'lac_mort'], name: 'la Fondrière', family: 'danger', biomes: [PEAT, REED], weight: 3, cap: 3, reserve: 1, footprint: 3 },
@@ -1126,25 +1140,87 @@ export function spawnPoiMonsters(state: SimState, seed: number): void {
     // On RETIENT les lieux peuplés : eux seuls repeupleront (spec faune R16). Le
     // peuplement appartient à l'hôte, et un monde qui n'a jamais voulu de bêtes de
     // lieu ne doit pas en voir apparaître au bout de quatre minutes.
-    if (populateDen(state, zone, seed) && !state.dens.includes(zone)) state.dens.push(zone)
+    //
+    // La Louvière naît MEUTE PLEINE : une tanière à un loup n'est pas une menace,
+    // c'est un rôdeur — et la meute (alpha compris) est ce que le lieu promet.
+    let posed = false
+    for (let n = 0; n < denCap(state, zone, seed); n++) posed = populateDen(state, zone, seed, n) || posed
+    if (posed && !state.dens.includes(zone)) state.dens.push(zone)
   }
 }
 
-/** Pose la bête d'un lieu sur son empreinte. Sans effet si le lieu n'en a pas. */
-function populateDen(state: SimState, zone: number, seed: number): boolean {
+/**
+ * COMBIEN DE BÊTES CE LIEU PORTE-T-IL À PLEIN ? 1 pour une tanière (le sanglier
+ * solitaire — c'est ce qui le rend inquiétant), la MEUTE pour une Louvière —
+ * tirée du `herdSize` de l'espèce par hachage du lieu : stable d'un respawn à
+ * l'autre (chaque Louvière a SA meute, pas un dé rejoué), et hors du flux RNG
+ * (le peuplement d'un lieu ne décale aucun tirage du monde). Le repaire de
+ * Cendrés a sa PROPRE loi (la rampe de saison, `advanceDens`) : ici il vaut 1,
+ * son compte de worldgen historique.
+ */
+function denCap(state: SimState, zone: number, seed: number): number {
+  const z = state.map.zones[zone]
+  const t = z ? POI_TYPES.find((p) => p.slug === z.kind) : undefined
+  if (t?.monster !== 'wolf' || !z) return 1
+  const [lo, hi] = MONSTER_DEFS.wolf.herdSize ?? [1, 1]
+  const r = hash2(z.x, z.y, seed ^ 0x4c4f55) // 'LOU'
+  return lo + Math.floor(r * (hi - lo + 1))
+}
+
+/**
+ * Pose UNE bête d'un lieu sur son empreinte. Sans effet si le lieu n'en a pas.
+ * `nonce` distingue les tuiles des congénères d'une meute (0 = la valeur
+ * historique : tanière et repaire posent au même endroit qu'avant, au bit près).
+ */
+function populateDen(state: SimState, zone: number, seed: number, nonce = 0): boolean {
   const z = state.map.zones[zone]
   if (!z) return false
   const t = POI_TYPES.find((p) => p.slug === z.kind)
   if (!t?.monster) return false
   const candidates = walkableTilesFor(state.map, z)
   if (candidates.length === 0) return false // aucune tuile praticable dans/autour de l'empreinte
-  const r = hash2(z.x, z.y, seed ^ 0x4d4f4e) // 'MON'
+  const r = hash2(z.x, z.y, seed ^ 0x4d4f4e ^ Math.imul(nonce, 0x9e3779b1)) // 'MON'
   const idx = Math.min(candidates.length - 1, Math.floor(r * candidates.length))
   const tile = candidates[idx]!
   const id = spawnMonster(state, t.monster, tile.tx + 0.5, tile.ty + 0.5)
   const born = state.monsters.find((m) => m.entityId === id)
-  if (born) born.homePoi = zone // elle appartient à ce lieu, et elle y reviendra
+  if (born) {
+    born.homePoi = zone // elle appartient à ce lieu, et elle y reviendra
+    if (t.monster === 'wolf') adoptIntoPack(state, zone)
+  }
   return true
+}
+
+/**
+ * LA MEUTE DE LA LOUVIÈRE. Le nouveau-né rejoint les siens — et si le chef est
+ * tombé (R12 a dispersé la meute : `routed`, harde dissoute), LE DOYEN est promu
+ * et la meute SE REFORME autour de lui. R12 garde tout son sens au combat —
+ * l'alpha tombe, la meute éclate sur-le-champ — mais un lieu n'en reste pas
+ * orphelin pour la saison : le retour se joue plus tard, hors de vue
+ * (`DEN_SPAWN_CLEARANCE`), au rythme lent du respawn. On ne farme pas une
+ * Louvière : on y revient, et elle a un nouveau chef.
+ */
+function adoptIntoPack(state: SimState, zone: number): void {
+  const pack = state.monsters.filter((m) => m.homePoi === zone && m.type === 'wolf')
+  let chief = pack.find((m) => m.alpha === true)
+  if (!chief) {
+    // Le doyen : le plus ancien entityId — le même rang que la sentinelle et la
+    // scission, arithmétique pure, zéro tirage.
+    chief = pack[0]!
+    for (const m of pack) if (m.entityId < chief.entityId) chief = m
+    chief.alpha = true
+    promoteToAlpha(state, chief.entityId, 'wolf')
+  }
+  if (chief.herdId === undefined) {
+    chief.herdId = state.nextHerdId
+    state.nextHerdId += 1
+  }
+  for (const m of pack) {
+    m.herdId = chief.herdId
+    m.alphaId = chief.entityId
+    delete m.routed // la meute reformée rechasse — la déroute appartenait à l'ancienne
+    m.fleeSince = -1
+  }
 }
 
 /**
@@ -1180,11 +1256,12 @@ export function advanceDens(state: SimState, seed: number): void {
     const z = state.map.zones[zone]
     if (!z) continue
     // LE CAP DU LIEU : 1 pour une tanière (le comportement historique, à l'identique) ;
-    // pour un repaire de Cendrés, la rampe de saison — il respire de plus en plus fort.
+    // pour un repaire de Cendrés, la rampe de saison — il respire de plus en plus fort ;
+    // pour une Louvière, SA meute (`denCap`) — qu'elle recompose loup par loup.
     const t = POI_TYPES.find((p) => p.slug === z.kind)
     const cap = t?.monster === 'cendreux'
       ? Math.round(seasonRamp(1, MORTS.RESPIRE_CAP_FIN, jour))
-      : 1
+      : denCap(state, zone, seed)
     if ((residents.get(zone) ?? 0) >= cap) continue // le lieu est plein : rien à faire
     // UN LIEU BRÛLÉ NE RESPIRE PAS (décision ⑧) : l'assainissement suspend le retour.
     if (state.lieuxBrules.some((lb) => lb.zone === zone && state.tick < lb.until)) continue
@@ -1212,7 +1289,9 @@ export function advanceDens(state: SimState, seed: number): void {
     }
     if (watched) continue
 
-    if (populateDen(state, zone, seed)) {
+    // Le nonce est le COMPTE de résidents : les congénères d'une Louvière ne se
+    // posent pas tous sur la même tuile (0 = la tuile historique des autres nids).
+    if (populateDen(state, zone, seed, residents.get(zone) ?? 0)) {
       state.denRespawns = state.denRespawns.filter((d) => d.zone !== zone)
     }
   }

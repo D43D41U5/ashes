@@ -95,6 +95,9 @@ export function createZone(): LanWorld {
     // LA MÉTÉO (spec meteo.md R10) : armée dans le VRAI jeu seulement — décision d'hôte,
     // comme `faunaCap` ; parité avec `worker/veillee.ts`, les bancs restent sans elle.
     meteoActive: true,
+    // LA NUIT QUI CHASSE : éteinte « pour l'instant » — parité avec la Veillée
+    // (décision d'Alexis, 2026-08-28, prise avec la Louvière).
+    nightHunt: false,
     debug: false,
   })
   spawnPoiMonsters(sim, LAN_SEED)

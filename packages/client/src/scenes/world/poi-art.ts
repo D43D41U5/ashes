@@ -63,6 +63,7 @@ const ART: Record<string, { fp: number; w: number; h: number; crown?: number }> 
   bivouac: { fp: 2, w: 36, h: 24 }, //              une trace, pas un volume
   // ── DANGER — bas, sourd, hostile ──
   taniere: { fp: 3, w: 56, h: 30 }, //              le tertre de terre remuée s'étale
+  louviere: { fp: 3, w: 58, h: 34 }, //             la dalle-porche, et la gueule dessous
   repaire: { fp: 3, w: 58, h: 54, crown: 12 },
   epave: { fp: 2, w: 44, h: 36 },
   fondriere: { fp: 3, w: 58, h: 16 },
@@ -317,6 +318,24 @@ export function makePoiTextures(scene: Phaser.Scene): void {
     g.fillStyle(RUST.deep).fillEllipse(c + 2, b - 12, 21, 6) // sa lèvre supérieure
     g.fillStyle(0x6a5a48).fillCircle(c - 18, b - 6, 2) // des os, autour
     g.fillStyle(0x6a5a48).fillRect(c + 19, b - 5, 5, 2)
+  })
+  tex('louviere', (w, b) => {
+    const c = w / 2
+    g.fillStyle(SHADOW, 0.2).fillEllipse(c, b - 3, w - 2, 8)
+    // LA DALLE-PORCHE. La meute ne creuse pas, elle S'ABRITE : de la PIERRE grise,
+    // pas un tertre roux — à seize pixels la tuile, c'est la matière qui sépare la
+    // Louvière de la tanière du sanglier, avant même la silhouette.
+    g.fillStyle(STONE.mid).fillEllipse(c, b - 12, w - 8, 22)
+    g.fillStyle(STONE.lit).fillEllipse(c - 13, b - 18, 22, 9) // lumière NO
+    g.fillStyle(STONE.deep).fillEllipse(c + 14, b - 8, 22, 9) // ombre SE
+    g.fillStyle(STONE.lit).fillRect(c - 16, b - 24, 18, 3) // l'arête de la dalle
+    g.fillStyle(VOID).fillEllipse(c + 1, b - 8, 22, 13) // LA GUEULE, sous la dalle
+    g.fillStyle(STONE.deep).fillEllipse(c + 1, b - 13, 23, 6) // son linteau
+    // CE QUI RESTE DES REPAS — plus d'os qu'à la tanière : une meute mange ici.
+    g.fillStyle(0xc9c1b0).fillCircle(c - 20, b - 6, 2.4) // un crâne de cerf
+    g.fillStyle(0x6a5a48).fillRect(c - 25, b - 8, 5, 2) // son bois, tombé à côté
+    g.fillStyle(0x9a9284).fillRect(c + 18, b - 5, 7, 2) // un long os
+    g.fillStyle(0x6a5a48).fillRect(c + 12, b - 4, 4, 2)
   })
   tex('charnier', (w, b) => {
     const c = w / 2
