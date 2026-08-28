@@ -90,6 +90,9 @@ const MAP_POI_STROKE = 0x14141a
  *  ne peut pas porter la teinte des vraies : sinon on ne saurait plus, en jouant, ce que
  *  l'avatar a réellement trouvé. Sourde et froide — un repère d'outil, pas un savoir. */
 const MAP_POI_FILL_DEBUG = 0x4a4a52
+/** La pastille d'un COIN DE CHASSE connu (faune R24) : chaude et fauve — du gibier, pas un
+ *  lieu bâti. Non cliquable : un coin n'a pas de fiche, c'est un territoire, pas une porte. */
+const MAP_GROUND_FILL = 0xd9a45a
 /** Sous ce déplacement (px), un appui-relâché sur la carte est un CLIC, pas un pan. */
 const MAP_CLICK_SLOP_PX = 5
 /** Le rayon de CLIC d'une pastille, en pixels d'écran. La pastille est dessinée à
@@ -169,6 +172,9 @@ export class UIScene extends Phaser.Scene {
   /** Une pastille par POI (zone avec un `kind`), AVEC son poiId — l'index dans `map.zones`,
    *  qui est l'identité d'un lieu (spec lieux R4). Le filtre `knownPois` en dépend. */
   private mapPoiDots: { poiId: number; dot: Phaser.GameObjects.Arc }[] = []
+  /** Les pastilles des COINS DE CHASSE connus (faune R24) — dynamiques : la sim écrit
+   *  `knownGrounds` (découverte à l'approche, oubli au constat), la carte suit. */
+  private mapGroundDots: { x: number; y: number; dot: Phaser.GameObjects.Arc }[] = []
   /** Dernière échelle appliquée aux pastilles — évite de les reparcourir à chaque frame. */
   private mapPoiScale = 0
   private mapHover!: Phaser.GameObjects.Text
@@ -716,6 +722,34 @@ export class UIScene extends Phaser.Scene {
   }
 
   /**
+   * LES PASTILLES DES COINS DE CHASSE (faune R24). Dynamiques, contrairement aux lieux :
+   * un coin se découvre en jouant, meurt (cendre, occupation — R27) et sa pastille ne
+   * s'éteint qu'au CONSTAT sur place — la sim est l'écrivain unique (`knownGrounds`),
+   * l'écran ne fait que poser. Non cliquables : un territoire, pas une porte.
+   */
+  private updateMapGroundDots(map: WorldMap): void {
+    if (!this.mapLayer) return
+    const known = getHud(this.registry, 'knownGrounds') ?? []
+    for (const k of known) {
+      if (this.mapGroundDots.some((d) => d.x === k.x && d.y === k.y)) continue
+      const dot = this.add
+        .circle(this.mapLocalX(map, k.x), this.mapLocalY(map, k.y), MAP_POI_RADIUS, MAP_GROUND_FILL)
+        .setStrokeStyle(1, MAP_POI_STROKE)
+      this.mapLayer.add(dot)
+      this.mapLayer.bringToTop(this.mapMarker) // le « tu es ici » prime toujours
+      this.mapGroundDots.push({ x: k.x, y: k.y, dot })
+    }
+    for (let i = this.mapGroundDots.length - 1; i >= 0; i--) {
+      const d = this.mapGroundDots[i]!
+      if (known.some((k) => k.x === d.x && k.y === d.y)) continue
+      d.dot.destroy() // l'oubli au constat : la pastille s'éteint
+      this.mapGroundDots.splice(i, 1)
+    }
+    const scale = this.mapFit * this.mapZoom
+    for (const { dot } of this.mapGroundDots) dot.setScale(1 / scale)
+  }
+
+  /**
    * OUVRE LA FICHE DU LIEU VISÉ — ou referme le tiroir si le clic est tombé dans le vide.
    *
    * On vise la PASTILLE À L'ÉCRAN, pas l'empreinte du lieu : une empreinte de POI fait
@@ -1023,6 +1057,7 @@ export class UIScene extends Phaser.Scene {
         this.refreshMapFog() // ne repeint que si la marche a découvert du neuf
         this.updateMapMarker(mapData)
         this.updateMapPoiDots()
+        this.updateMapGroundDots(mapData)
       }
       // Le tiroir du registre vit DANS l'onglet carte : il tombe avec lui.
       if (!mapOpen && this.mapWasOpen) this.ficheLieu.fermer()

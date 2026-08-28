@@ -359,6 +359,10 @@ export interface HudState {
   /** Les lieux que MON joueur connaît (spec lieux R1) — index dans `mapData.zones`.
    *  La carte plein écran ne montre que ceux-là : le terrain est offert, les lieux se gagnent. */
   knownPois: number[]
+  /** Les COINS DE CHASSE que mon joueur connaît (spec faune R24) — par position, la sim est
+   *  l'écrivain (`knownGrounds`) : la carte est une mémoire, un coin mort garde sa pastille
+   *  jusqu'au constat sur place. */
+  knownGrounds: { x: number; y: number }[]
   /** Position LOGIQUE de l'avatar (tuiles) — le marqueur « tu es ici » de la carte. */
   playerPos: { x: number; y: number }
   /** La chronique de la saison — entrées structurées `{ jour, texte, poids }`
@@ -468,7 +472,7 @@ export const CLES_HUD: Record<keyof HudState, true> = {
   chatDraft: true, openContainer: true, openContainerView: true, openFire: true, openFireView: true,
   pickups: true, crafts: true, levelUps: true, fogVersion: true, fog: true,
   saveState: true, pendingActions: true, journalOpen: true, mapOpen: true, menuOpen: true,
-  veillee: true, quitMondes: true, audioVolume: true, mapData: true, knownPois: true,
+  veillee: true, quitMondes: true, audioVolume: true, mapData: true, knownPois: true, knownGrounds: true,
   playerPos: true, chronicle: true, volumesScelles: true, volumesVifs: true, error: true, hint: true, fatal: true,
   alarm: true, seasonVerdicts: true, debugOn: true, debugGod: true, debugSpeed: true,
   debugLighting: true, debugInfo: true, debugTeleport: true,

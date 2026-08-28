@@ -3114,6 +3114,12 @@ export class WorldScene extends Phaser.Scene {
         // LE TEMPO du minage : le dernier coup relance le rechargement, que la lueur du
         // bon flanc REFORME visiblement (verbe 2 — la cadence se voit, pas de timer caché).
         this.lastStrikeAt = this.time.now
+      } else if (event.type === 'coin_eteint' || event.type === 'coin_seme') {
+        // LE COIN VIVANT (faune R27) : la liste des coins reçue au `ready` n'est plus
+        // immuable — le front la mange, le monde la ressème. Le client SUIT les faits :
+        // c'est cette liste que liront les traces au sol (R24), jamais une copie figée.
+        if (event.type === 'coin_eteint') this.grounds = this.grounds.filter((g) => g.x !== event.x || g.y !== event.y)
+        else this.grounds = [...this.grounds, { x: event.x, y: event.y }]
       } else if (event.type === 'poi_discovered' && event.byEntityId === this.playerId) {
         // MONTER, C'EST VOIR (spec lieux.md) : un lieu qui révèle un RAYON dévoile aussi le
         // TERRAIN de ce rayon, pas seulement les pastilles. C'est ce qui referme la boucle

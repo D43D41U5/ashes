@@ -80,6 +80,12 @@ export const INVENTAIRE: Inventaire = {
   bird_flush: { voix: 'voix', ou: 'xy', famille: 'registre', quoi: 'la nuée gicle de la lisière — la forêt dénonce un pas bruyant' },
   cendreux_prowl: { voix: 'voix', ou: 'xy', famille: 'registre', quoi: 'les morts ont senti un homme — l’avertissement des actes II-III' },
   cendreux_cri: { voix: 'voix', ou: 'xy', famille: 'registre', quoi: 'un cri qui n’a rien d’humain — la fureur du froid appelle le sol (décision ④⑤)' },
+  // Le coin vivant (faune R24/R27) : des faits de CARTE — la pastille parle à l'écran,
+  // pas à l'oreille. Une voix viendrait avec un vrai langage de découverte, pas avant.
+  coin_eteint: { voix: 'muet', famille: 'registre', quoi: 'un coin de chasse meurt (cendre, occupation) — plus une naissance' },
+  coin_seme: { voix: 'muet', famille: 'registre', quoi: 'un coin de chasse renaît ailleurs — le monde se répare' },
+  coin_decouvert: { voix: 'muet', famille: 'registre', quoi: 'ce joueur a trouvé un coin de chasse — sa pastille se pose' },
+  coin_disparu: { voix: 'muet', famille: 'registre', quoi: 'il constate un coin mort — sa pastille s’éteint' },
 
   // ── LE FEU — l'organe vital : 4 voix sur 5, seul le geste répété se tait ─────────
   fire_fed: { voix: 'muet', famille: 'feu', quoi: 'on donne du bois au Feu' },

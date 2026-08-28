@@ -58,6 +58,7 @@ export function publishPlayerVitals(registry: Registry, me: Entity): void {
   setHud(registry, 'stamina', me.stamina)
   setHud(registry, 'wounds', me.wounds)
   setHud(registry, 'knownPois', me.knownPois)
+  setHud(registry, 'knownGrounds', me.knownGrounds ?? [])
   setHud(registry, 'craftQueue', me.craftQueue)
   // LA DÉCOUVERTE (D2) vient du snapshot : le client ne décide jamais de ce qui est connu.
   setHud(registry, 'seen', me.seen ?? [])
