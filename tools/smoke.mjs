@@ -8855,7 +8855,16 @@ const SCENARIOS = {
           : `   ✗ le coin de chasse est vide, lui aussi : le gibier n'a plus d'adresse du tout`)
         await page.evaluate(() => window.__BRAISES__.scene.cameras.main.setZoom(2))
         await page.waitForTimeout(500)
+        // Boucle ENDORMIE avant la photo (recette verif-navigateur §4) : sous
+        // SwiftShader une frame dure des secondes et page.screenshot expirait.
+        await page.evaluate(() => {
+          const sc = window.__BRAISES__.scene
+          sc.game.loop.sleep()
+          const t0 = performance.now()
+          for (let k = 0; k < 3; k++) sc.game.step(t0 + k * 16, 16)
+        })
         await page.screenshot({ path: `${OUT}/faune-coin.png` })
+        await page.evaluate(() => window.__BRAISES__.scene.game.loop.wake())
         console.log(`   capture : faune-coin.png`)
       }
     }
