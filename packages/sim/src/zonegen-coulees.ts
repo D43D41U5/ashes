@@ -52,6 +52,8 @@ export function tracerLesCoulees(
   height: number,
   profondeur: readonly number[],
   creux: Creux | null,
+  /** LES COINS DE CHASSE (faune R24/R26) : chacun sème SA descente gagnage → eau. */
+  coins: readonly { x: number; y: number }[] = [],
 ): number[] {
   const racineId = g.racine
   const r = g.zones[racineId]!.rect
@@ -122,15 +124,11 @@ export function tracerLesCoulees(
     return altitudeAt(creux, x, (i - x) / width)
   }
 
-  const out: number[] = []
-  for (let c = 0; c < comp.tailles.length; c++) {
-    if (coeurs[c]! < COULEES.COEUR_MIN) continue //   un bosquet n'a pas de couche
-    const pic = pics[c]!
-    if (pic < 0 || dEau[pic]! === INF || dEau[pic]! > COULEES.PORTEE_EAU) continue // le bois SEC se tait
-    // ── LA DESCENTE : du pic vers l'eau, un pas de d-1 à chaque fois ; à égalité, la
-    //    cellule la plus basse du socle (le vallon), puis le premier index row-major. ──
+  // ── LA DESCENTE : d'un départ vers l'eau, un pas de d-1 à chaque fois ; à égalité, la
+  //    cellule la plus basse du socle (le vallon), puis le premier index row-major. ──
+  const descendre = (depart: number): number[] | null => {
     const chemin: number[] = []
-    let i = pic
+    let i = depart
     let garde = 0
     while (dEau[i]! > 1 && garde < COULEES.PORTEE_EAU + 8) {
       garde += 1
@@ -154,13 +152,43 @@ export function tracerLesCoulees(
         }
         if (alt(j) < alt(suivant) || (alt(j) === alt(suivant) && j < suivant)) suivant = j
       }
-      if (suivant === -1) break // un cul-de-sac du champ : pas de coulée forcée
+      if (suivant === -1) return null // un cul-de-sac du champ : pas de coulée forcée
       i = suivant
       chemin.push(i) // la liste dit le chemin ENTIER — sente comprise : c'est un fait de tracé
     }
-    if (chemin.length === 0 || dEau[i]! > 1) continue
+    if (chemin.length === 0 || dEau[i]! > 1) return null
+    return chemin
+  }
+
+  const out: number[] = []
+  const pose = (chemin: number[]): void => {
     if (out.length > 0) out.push(-1)
     for (const t of chemin) out.push(t)
+  }
+  for (let c = 0; c < comp.tailles.length; c++) {
+    if (coeurs[c]! < COULEES.COEUR_MIN) continue //   un bosquet n'a pas de couche
+    const pic = pics[c]!
+    if (pic < 0 || dEau[pic]! === INF || dEau[pic]! > COULEES.PORTEE_EAU) continue // le bois SEC se tait
+    const chemin = descendre(pic)
+    if (chemin) pose(chemin)
+  }
+
+  // ── LES COULÉES DES COINS (faune R24/R26, décision d'Alexis 2026-08-28). Les coulées
+  //    de massif partent des CŒURS de forêt — et les coins de chasse vivent ailleurs :
+  //    MESURÉ sur deux graines du monde joué, fins d'eau à 28-448 tuiles du coin le plus
+  //    proche, l'attache de `couleeStep` ne prenait JAMAIS. Le boire du crépuscule
+  //    (chasse R5quater) et les empreintes (R24) étaient lettre morte. Chaque coin sème
+  //    donc SA descente gagnage → eau — même champ, même descente, mêmes départages :
+  //    le chemin que les hardes marcheront vraiment. Un coin dont l'eau BFS est hors de
+  //    portée (falaise entre deux) se tait, comme un bois sec. ──
+  for (const coin of coins) {
+    const tx = Math.floor(coin.x)
+    const ty = Math.floor(coin.y)
+    if (tx < 0 || ty < 0 || tx >= width || ty >= height) continue
+    const i0 = ty * width + tx
+    if (dEau[i0]! === INF || dEau[i0]! > COULEES.PORTEE_EAU) continue
+    const chemin = descendre(i0)
+    if (chemin) pose(chemin)
   }
   return out
 }

@@ -58,6 +58,7 @@ import { fbm2, hash2 } from './noise'
 import { deriverDistanceEau, deriverProfondeur } from './profondeur'
 import { deriverNatureDeLEau } from './peche-nature'
 import { tracerLesCoulees } from './zonegen-coulees'
+import { placeHuntingGrounds } from './faune'
 import { masqueDesSeuils, paintWaterRacine, type Riviere } from './zonegen-water'
 import { assainirLeProfondHorsRacine, peindreLesEauxDesZones } from './zonegen-eaux-zones'
 import {
@@ -742,7 +743,14 @@ export function generateZonedTerrain(
   }
   // LES COULÉES (forêts-vivantes §4) — dérivées après la profondeur (elles lisent le pic) :
   // couche → eau, pour chaque massif à cœur qui boit. Champ additif, patron `fil`.
-  const coulees = tracerLesCoulees(terrain, zone, g, width, height, map.profondeur!, creux)
+  // ET UNE PAR COIN DE CHASSE (faune R24/R26, décision d'Alexis 2026-08-28) : les coins se
+  // calculent ICI, sur le terrain final — `placeHuntingGrounds` est pur de (carte, graine),
+  // l'hôte qui le rappellera après rendra les MÊMES coins, au bit près. Sans ça, coulées et
+  // coins ne se rencontraient jamais (deux semis indépendants — mesuré : 28-448 tuiles d'écart).
+  const coulees = tracerLesCoulees(
+    terrain, zone, g, width, height, map.profondeur!, creux,
+    placeHuntingGrounds(map, seed),
+  )
   if (coulees.length > 0) map.coulees = coulees
   const carte: CarteZonee = { map, graphe: g, zone, rampe, affleurements }
 

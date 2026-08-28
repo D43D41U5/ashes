@@ -84,6 +84,18 @@ géographie module et n'autorise jamais, feel en pente continue, FX quantifiés 
   pas de gibier, pas de chemin : la grammaire humide/giboyeux vs sec/silencieux gagne un
   lecteur au sol. Tracé au moindre coût sur l'altitude du socle (le patron des sentes —
   fond de vallon, jamais la ligne droite), quantifié, borné, départages stables.
+  **AMENDÉ le 2026-08-28 (décision d'Alexis — faune R24/R26) : chaque COIN DE CHASSE sème
+  aussi SA coulée**, gagnage → eau la plus proche — même champ, même descente, mêmes
+  départages. Mesuré avant : les coulées de massif et les coins ne se rencontraient JAMAIS
+  (fins d'eau à 28-448 tuiles du coin le plus proche, deux graines) — le boire du crépuscule
+  (R5quater) et les empreintes (faune R24) étaient lettre morte sur le monde joué. Les coins
+  se calculent au worldgen même (`placeHuntingGrounds` est pur de (carte, graine)). Un coin
+  dont l'eau est à plus de `COULEES.PORTEE_EAU` À PIED (falaise entre deux) se tait, comme
+  un bois sec — mesuré : 5 coins sur 8 gagnent leur coulée (seed 7), les 3 autres ont leur
+  eau imprenable à pied. Et l'ATTACHE de R5quater se scinde en deux nombres (`balance.ts`) :
+  la POSSESSION (`COULEE_ATTACHE`, dérivée du budget de descente — 62) et le RACCORD
+  bête → chemin (`COULEE_RACCORD`, 28) — un seul nombre jouait les deux rôles, et à 28 un
+  coin était orphelin de son propre chemin.
 - **R5bis** — La coulée est un CHAMP ADDITIF (`map.coulees: number[]`, patron `map.fil` —
   chemins séparés par -1, et la liste dit le chemin ENTIER, sentes comprises : c'est le
   DÉCAL qui s'interrompt sur la route, jamais le fait),

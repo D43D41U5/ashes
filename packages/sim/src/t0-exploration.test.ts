@@ -8,6 +8,7 @@
  */
 import { describe, expect, it } from 'vitest'
 import {
+  HUNT,
   POI,
   TERRAIN_BURNT_FOREST,
   TERRAIN_DEEP_WATER,
@@ -31,6 +32,7 @@ import {
 import { createEmptyMap, profondeurAt } from './map'
 import { fbm2 } from './noise'
 import { capFor, POI_TYPES } from './poi'
+import { placeHuntingGrounds } from './faune'
 import { composantesDeMasque, estCoeur, TERRAINS_BOISES_MASSIF } from './profondeur'
 import { CREUX } from './racine-relief'
 import { SET_PIECES } from './zonegen-setpieces'
@@ -1054,10 +1056,22 @@ describe('A4 (forêts-vivantes §4) — les coulées : couche → eau, dérivée
       }
       expect(chemins[0]!.length, `seed ${seed} : liste vide`).toBeGreaterThan(0)
       const occupes = new Set(nodes.map((n) => n.ty * width + n.tx))
+      // DEUX ESPÈCES DE CHEMINS depuis le 2026-08-28 (faune R24/R26, décision d'Alexis) :
+      // la coulée de MASSIF part d'un cœur, la coulée de COIN part du gagnage d'un coin
+      // de chasse — même champ, même descente. Le départ prouve son espèce.
+      const coins = placeHuntingGrounds(c.map, seed)
+      const presDunCoin = (i: number): boolean => {
+        const x = (i % width) + 0.5
+        const y = Math.floor(i / width) + 0.5
+        return coins.some((g) => (g.x - x) * (g.x - x) + (g.y - y) * (g.y - y) <= 2 * 2)
+      }
+      let cheminsDeCoin = 0
       for (const chemin of chemins) {
-        // Le DÉPART touche le cœur : la première tuile est voisine du pic (d élevé).
+        // Le DÉPART touche le cœur — OU le cœur d'un COIN de chasse (sa descente à lui).
         const d0 = profondeurAt(c.map, chemin[0]! % width, Math.floor(chemin[0]! / width))
-        expect(d0, `seed ${seed} : un chemin part de d=${d0}`).toBeGreaterThanOrEqual(CREUX.PROF_COEUR - 1)
+        const deCoin = presDunCoin(chemin[0]!)
+        if (deCoin) cheminsDeCoin++
+        if (!deCoin) expect(d0, `seed ${seed} : un chemin part de d=${d0}`).toBeGreaterThanOrEqual(CREUX.PROF_COEUR - 1)
         // L'ARRIVÉE est contre l'eau : la dernière tuile (toujours enregistrée — la liste
         // dit le chemin entier) a une eau voisine orthogonale.
         const fin = chemin[chemin.length - 1]!
@@ -1076,6 +1090,24 @@ describe('A4 (forêts-vivantes §4) — les coulées : couche → eau, dérivée
           expect(occupes.has(i), `seed ${seed} : un nœud pousse sur la coulée (${i})`).toBe(false)
         }
       }
+      // LA RÈGLE VIT (le contraire du semis d'avant, mesuré : 28-448 tuiles d'écart,
+      // zéro attache) : des chemins de coin existent, et au moins un coin est ATTACHABLE
+      // au sens exact de `couleeStep` — une fin d'eau à ≤ COULEE_ATTACHE de son cœur.
+      expect(cheminsDeCoin, `seed ${seed} : aucun chemin de coin`).toBeGreaterThan(0)
+      let attachables = 0
+      for (const g of coins) {
+        for (const chemin of chemins) {
+          const fin = chemin[chemin.length - 1]!
+          const fx = (fin % width) + 0.5
+          const fy = Math.floor(fin / width) + 0.5
+          const d2 = (g.x - fx) * (g.x - fx) + (g.y - fy) * (g.y - fy)
+          if (d2 <= HUNT.COULEE_ATTACHE * HUNT.COULEE_ATTACHE) {
+            attachables++
+            break
+          }
+        }
+      }
+      expect(attachables, `seed ${seed} : aucun coin attaché à sa coulée (${coins.length} coins)`).toBeGreaterThan(0)
     }
   })
 })

@@ -4012,7 +4012,21 @@ export const HUNT = {
   COULEE_AUBE_A: 8,
   COULEE_SOIR_DE: 17,
   COULEE_SOIR_A: 20,
-  COULEE_ATTACHE: 28, //     coin → fin de coulée, en tuiles (et bête → chemin, au raccord)
+  /**
+   * LA POSSESSION : coin → fin de coulée, en tuiles. SE DÉRIVE du budget de descente du
+   * worldgen (`COULEES.PORTEE_EAU` = 60, + une marge) : la coulée d'un coin peut finir
+   * aussi loin que sa descente a marché — une attache plus courte (28, l'ancienne valeur)
+   * rendait un coin ORPHELIN DE SON PROPRE CHEMIN (mesuré : zéro attache sur le monde
+   * joué). La possession n'est pas le trajet : la bête marche le chemin, quel qu'il soit.
+   */
+  COULEE_ATTACHE: 62,
+  /**
+   * LE RACCORD : bête → tuile du chemin, au moment de descendre. Distinct de la
+   * possession (il valait la même constante, deux rôles dans un nombre) : on ne
+   * téléporte pas une envie de boire — une bête à plus de ça du chemin ne force pas
+   * la descente cette fenêtre.
+   */
+  COULEE_RACCORD: 28,
   COULEE_BOIRE_TICKS: 200, // 10 s tête baissée au bord de l'eau
   /**
    * LE TERRIER (C16). Le lapin naît avec le sien (sa tuile de naissance, hors

@@ -2272,7 +2272,10 @@ function couleeStep(state: SimState, monster: Monster, entity: Entity, hour: num
   while (fin < coulees.length && coulees[fin]! >= 0) fin += 1
   if (monster.couleePas === undefined) {
     let pas = -1
-    let meilleure = HUNT.COULEE_ATTACHE * HUNT.COULEE_ATTACHE
+    // LE RACCORD est plus court que la POSSESSION (deux rôles, deux nombres depuis le
+    // 2026-08-28) : la harde possède sa coulée de loin, mais une bête ne force la
+    // descente que si le chemin passe à portée d'elle.
+    let meilleure = HUNT.COULEE_RACCORD * HUNT.COULEE_RACCORD
     for (let k = monster.couleeDebut; k < fin; k++) {
       const i = coulees[k]!
       const x = i % width
