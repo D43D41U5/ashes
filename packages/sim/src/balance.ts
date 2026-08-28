@@ -3189,6 +3189,10 @@ export const FAUNA = {
   DORTOIR_SPREAD: 1.8,
   /** UNE HARDE = SON DORTOIR : aucun massif ne s'élit à moins de ça du dortoir d'une autre harde. */
   DORTOIR_EXCLUSION: 10,
+  /** L'ARRIVÉE À SA PLACE : en deçà, elle se couche — un tronc ou une sœur peuvent boucher
+   *  le dernier pas, et une bête qui pousse un arbre toute la nuit serait pire qu'une bête
+   *  couchée un peu court. */
+  DORTOIR_ARRIVE: 0.9,
   /** LA RENAISSANCE D'UN COIN (R27) : tirages de tuile par coin manquant et par jour — borné, jamais « jusqu'à trouver ». */
   RESSEMIS_ESSAIS: 40,
   /**

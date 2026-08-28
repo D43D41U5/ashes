@@ -415,7 +415,7 @@ export function morsureDeLaCendre(state: SimState, monster: Monster, entity: Ent
   entity.hp -= FAUNA.CENDRE_DOT_HP_S * TICK_DT_S
   if (entity.hp > 0) return false
   entity.hp = 0
-  die(state, entity, -1, 'cendre')
+  die(state, entity, 0, 'cendre') // 0 = pas de tueur — la convention des morts environnementales (foudre, froid, faim)
   return true
 }
 
@@ -1848,7 +1848,7 @@ function dortoirStep(
   // (0,9 tuile de tolérance : un tronc ou une sœur peuvent boucher le dernier
   // pas, et une bête qui pousse un arbre toute la nuit serait pire qu'une bête
   // couchée un peu court.)
-  if (monster.dodo !== true && distSq(entity.x, entity.y, px, py) > 0.9 * 0.9) {
+  if (monster.dodo !== true && distSq(entity.x, entity.y, px, py) > FAUNA.DORTOIR_ARRIVE * FAUNA.DORTOIR_ARRIVE) {
     moveToward(state, monster, entity, px, py, false, FAUNA.WARY_SPEED)
     return true
   }
