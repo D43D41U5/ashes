@@ -60,6 +60,10 @@ import {
   type ReposLatch,
 } from './beast-posture'
 import { orientCouchee } from '../../render/corps-couche'
+// L'ALLURE DU CERF (spec faune R26, « Et ça se VOIT ») : cycle de pattes, bond de
+// fuite et micro-vie du broutage, tous dérivés de la DISTANCE PARCOURUE (odomètre
+// sur les positions RENDUES) — les lois vivent dans un module pur, prouvé en Node.
+import { afficheCerf, ALLURE_FENETRE_MS, avanceAllure, nouvelleAllure, type AllureCerf } from '../../render/allure'
 import { decorerSang, SANG_TEXTURES, teinteSechage, type DecorSang } from './sang-sol'
 import { GOUTTE_CADENCE_MS, type SangFx } from './sang-fx'
 export { BEAST_TINTS } from './beast-posture'
@@ -340,6 +344,17 @@ export interface InterpolatedSprite {
    *  miroir et pour la même raison : un corps allongé qui pivoterait à chaque frisson de cap
    *  serait le plus voyant des tremblements. */
   axe: CranLatch
+  /**
+   * L'ALLURE DU CERF (faune R26) : l'odomètre et les verrous de présentation —
+   * créés avec le premier snapshot qui dit « c'est un cerf », jamais pour les autres.
+   */
+  allure?: AllureCerf
+  /**
+   * La POSTURE du snapshot (le rendu de `beastTexture`, la vérité headless que
+   * `diag-cerf.mts` lit) — quand `allure` existe, `textureKey` cesse d'être la
+   * posture nue : c'est la FRAME que la résolution par image en a tirée.
+   */
+  posture?: string
 }
 
 /** Le dernier relevé connu d'un tampon (position autoritative la plus récente). */
@@ -1162,12 +1177,46 @@ export class SnapshotView {
       // L'ENVOL (R21) : la hauteur du bond, sur la MÊME horloge que la position — donc
       // à `target`, l'instant rendu, et non à `now`. Prise à `now`, l'oiseau aurait volé
       // en avance sur son propre déplacement d'un délai d'interpolation entier.
-      const hVol =
+      let hVol =
         o.volDebutMs !== undefined && o.volDureeMs !== undefined && o.volDureeMs > 0
           ? hauteurDeBond((target - o.volDebutMs) / o.volDureeMs)
           : 0
+      // L'ALLURE DU CERF (R26) : l'odomètre mange la distance RENDUE — à `target`,
+      // le même instant que la position, sinon les pattes battraient en avance sur
+      // le corps d'un délai d'interpolation entier (la leçon de l'envol, ci-dessus).
+      // Puis la frame se résout : cycle de pattes, bond (sa hauteur remplace hVol —
+      // un cerf ne vole pas), tête de broutage, transition de lever.
+      if (o.allure !== undefined) {
+        avanceAllure(o.allure, p.x, p.y)
+        hVol = this.syncCerf(o, id, now)
+      }
       this.syncActor(o.sprite, p.x, p.y, o.textureKey, o.crouch, this.reveilFx?.enfouissementDe(id, now) ?? 0, hVol)
     }
+  }
+
+  /**
+   * Résout la FRAME du cerf pour cette image (`render/allure.ts`) et l'applique au
+   * sprite ; rend la hauteur de bond (tuiles). Appelée PAR FRAME (`interpolate`) —
+   * et une fois par snapshot (`syncEntities`) pour que la naissance et les
+   * changements de posture ne dépendent pas de l'ordre des deux passes. Elle est
+   * idempotente à l'image : la rappeler ne compte rien deux fois.
+   */
+  private syncCerf(record: InterpolatedSprite, entityId: number, now: number): number {
+    const a = record.allure
+    const posture = record.posture
+    if (a === undefined || posture === undefined) return 0
+    const d = deplacementRecent(record.buffer, ALLURE_FENETRE_MS)
+    const vitesse = Math.hypot(d.dx, d.dy) / (ALLURE_FENETRE_MS / 1000)
+    const aff = afficheCerf(a, posture, entityId, this.tick, now, vitesse)
+    if (record.textureKey !== aff.key) {
+      // setTexture réinitialise la frame : ne le rappeler que si la clé change
+      // vraiment — même règle que `syncEntities`, et l'emprise se re-applique.
+      record.sprite.setTexture(aff.key)
+      record.textureKey = aff.key
+      const l = latest(record.buffer)
+      this.syncActor(record.sprite, l.x, l.y, aff.key)
+    }
+    return aff.hauteurBond
   }
 
   /** Place un acteur (R12 + R13) en consommant TOUT l'`ActorPlacement` :
@@ -1454,7 +1503,16 @@ export class SnapshotView {
       const key = monster
         ? beastTexture(monster, sentinels.has(entity.id), this.hour, posee, orientCouche, this.tick)
         : this.lighting ? 'spr-npc_lit' : 'spr-npc' // l'humain bascule (R9) ; la bête reste peinte (consigné)
-      if (record.textureKey !== key) {
+      if (monster?.type === 'deer') {
+        // L'ALLURE DU CERF (R26) : `key` est sa POSTURE — la vérité du snapshot,
+        // celle que `diag-cerf.mts` lit. La FRAME affichée (cycle de pattes, bond,
+        // tête qui mâche, lever) s'en dérive PAR IMAGE : on dépose la posture, et
+        // la résolution tourne tout de suite pour que la naissance et un changement
+        // de posture ne rendent jamais une image de la mauvaise silhouette.
+        record.posture = key
+        if (record.allure === undefined) record.allure = nouvelleAllure()
+        this.syncCerf(record, entity.id, now)
+      } else if (record.textureKey !== key) {
         // setTexture réinitialise la frame : ne le rappeler que si la texture
         // change vraiment. `syncActor` re-applique aussitôt l'emprise (R12).
         record.sprite.setTexture(key)

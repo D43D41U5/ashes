@@ -769,6 +769,77 @@ export class BootScene extends Phaser.Scene {
     g.generateTexture('spr-deer-bed', 22, 12)
     g.clear()
 
+    // ── L'ALLURE DU CERF (spec faune R26, « Et ça se VOIT ») : les frames que
+    // `render/allure.ts` commute sur la DISTANCE PARCOURUE — jamais le temps.
+
+    // Cerf en MARCHE, pas ÉTENDU : diagonale en extension — une antérieure tendue
+    // en avant, une postérieure en arrière. La tête porte mi-haute : il va, il ne
+    // guette pas (la tête dressée reste la posture d'alerte).
+    g.fillStyle(0x4a3524).fillEllipse(10, 11, 16, 9) // corps
+    g.fillStyle(0x9b7448).fillEllipse(10, 11, 13, 6) // robe fauve
+    g.fillStyle(0x8a6640).fillRect(14, 3, 3, 7) // encolure mi-haute
+    g.fillStyle(0x9b7448).fillEllipse(16, 3, 6, 4) // tête
+    g.fillStyle(0xcfc0a4).fillRect(14, 0, 1, 3).fillRect(18, 0, 1, 3) // bois
+    g.fillStyle(0x3a2a1c) // le pas étendu : la foulée s'ouvre
+    g.fillRect(2, 14, 2, 6).fillRect(8, 15, 2, 5).fillRect(12, 15, 2, 5).fillRect(16, 14, 2, 6)
+    g.generateTexture('spr-deer-walk-0', 22, 20)
+    g.clear()
+
+    // Cerf en MARCHE, pas CROISÉ : les jambes se rassemblent sous la masse —
+    // l'autre temps de la foulée. Même corps, même tête : seules les pattes
+    // bougent, c'est ce qui fait lire l'alternance comme un pas et non un saut.
+    g.fillStyle(0x4a3524).fillEllipse(10, 11, 16, 9)
+    g.fillStyle(0x9b7448).fillEllipse(10, 11, 13, 6)
+    g.fillStyle(0x8a6640).fillRect(14, 3, 3, 7)
+    g.fillStyle(0x9b7448).fillEllipse(16, 3, 6, 4)
+    g.fillStyle(0xcfc0a4).fillRect(14, 0, 1, 3).fillRect(18, 0, 1, 3)
+    g.fillStyle(0x3a2a1c) // le pas croisé : tout se ramasse
+    g.fillRect(5, 14, 2, 6).fillRect(9, 14, 2, 6).fillRect(12, 14, 2, 6).fillRect(15, 15, 2, 5)
+    g.generateTexture('spr-deer-walk-1', 22, 20)
+    g.clear()
+
+    // Cerf qui MÂCHE, tête levée : la micro-vie du broutage. Le corps du broutage,
+    // l'encolure remontée à mi-hauteur, un brin d'herbe encore au mufle — il
+    // regarde autour en mâchant, puis replonge. Ce n'est PAS l'alerte : la tête
+    // d'alerte (spr-deer) est plus haute et les bois dressés.
+    g.fillStyle(0x4a3524).fillEllipse(10, 10, 16, 9) // corps
+    g.fillStyle(0x9b7448).fillEllipse(10, 10, 13, 6)
+    g.fillStyle(0x8a6640).fillRect(14, 3, 3, 8) // encolure remontée
+    g.fillStyle(0x9b7448).fillEllipse(16, 3, 6, 4) // tête au niveau du garrot
+    g.fillStyle(0xcfc0a4).fillRect(14, 0, 1, 3).fillRect(18, 0, 1, 3) // bois
+    g.fillStyle(0x7a8f56).fillRect(19, 5, 2, 1) // le brin d'herbe qui pend : il mâche
+    g.fillStyle(0x3a2a1c) // pattes plantées (il ne bouge pas)
+    g.fillRect(4, 13, 2, 6).fillRect(8, 13, 2, 6).fillRect(13, 13, 2, 6)
+    g.generateTexture('spr-deer-graze-tete', 22, 19)
+    g.clear()
+
+    // Cerf de fuite À L'APPUI : la retombée du bond — même corps étiré que
+    // `spr-deer-flee`, mais les quatre pattes GROUPÉES sous la masse : il se
+    // reçoit, se ramasse et va repousser. C'est l'alternance appui/extension,
+    // commutée par la hauteur du bond, qui fait lire la course en BONDS.
+    g.fillStyle(0x4a3524).fillEllipse(12, 9, 20, 7) // corps étiré
+    g.fillStyle(0x9b7448).fillEllipse(12, 9, 17, 5)
+    g.fillStyle(0x8a6640).fillRect(18, 6, 6, 3) // encolure à plat
+    g.fillStyle(0x9b7448).fillEllipse(24, 7, 5, 3) // tête portée en avant
+    g.fillStyle(0xcfc0a4).fillRect(19, 3, 4, 1).fillRect(21, 4, 3, 1) // bois couchés
+    g.fillStyle(0x3a2a1c) // pattes groupées sous le corps
+    g.fillRect(8, 12, 2, 5).fillRect(11, 13, 2, 4).fillRect(14, 12, 2, 5).fillRect(16, 13, 2, 4)
+    g.generateTexture('spr-deer-flee-sol', 26, 17)
+    g.clear()
+
+    // Cerf qui SE LÈVE (ou se couche) : l'avant-train se dresse le premier —
+    // le corps encore posé, les antérieurs à demi dépliés, la tête déjà haute.
+    // Tenue quelques centaines de ms entre `spr-deer-bed` et debout (allure.ts).
+    g.fillStyle(0x4a3524).fillEllipse(10, 10, 17, 8) // corps soulevé à demi
+    g.fillStyle(0x9b7448).fillEllipse(10, 10, 14, 6)
+    g.fillStyle(0x3a2a1c).fillRect(3, 13, 11, 2) // l'arrière-train encore plié, ligne d'ombre
+    g.fillStyle(0x3a2a1c).fillRect(13, 11, 2, 5) // l'antérieur qui se déplie
+    g.fillStyle(0x8a6640).fillRect(15, 4, 3, 7) // encolure dressée
+    g.fillStyle(0x9b7448).fillEllipse(17, 4, 5, 3) // tête
+    g.fillStyle(0xcfc0a4).fillRect(15, 1, 1, 3).fillRect(19, 1, 1, 3) // bois
+    g.generateTexture('spr-deer-lever', 22, 16)
+    g.clear()
+
     // Lapin qui BROUTE : aplati, oreilles couchées en arrière, nez dans l'herbe.
     g.fillStyle(0x6b5a48).fillEllipse(6, 6, 11, 6) // corps tassé
     g.fillStyle(0xa8927a).fillEllipse(6, 6, 9, 4)

@@ -453,6 +453,16 @@ export const ACTOR_FOOTPRINTS: Record<string, ActorFootprint & { facesRight?: bo
   'spr-deer-graze': { widthTiles: 1.4, heightTiles: 1.4, facesRight: true },
   'spr-deer-flee': { widthTiles: 1.75, heightTiles: 1.35, facesRight: true },
   'spr-deer-bed': { widthTiles: 1.4, heightTiles: 0.95, facesRight: true },
+  // L'ALLURE DU CERF (faune R26, « Et ça se VOIT ») : les frames commutées par
+  // `render/allure.ts` sur la distance parcourue. Les DEUX frames de marche ont la
+  // MÊME emprise — une boîte qui pomperait à chaque demi-pas se lirait comme un
+  // tremblement, pas comme une foulée. Hauteurs au même pas texel→tuile que leur
+  // famille (base 22×22 → 1,4×1,8 ; fuite 26×18 → 1,75×1,35).
+  'spr-deer-walk-0': { widthTiles: 1.4, heightTiles: 1.65, facesRight: true },
+  'spr-deer-walk-1': { widthTiles: 1.4, heightTiles: 1.65, facesRight: true },
+  'spr-deer-graze-tete': { widthTiles: 1.4, heightTiles: 1.55, facesRight: true },
+  'spr-deer-flee-sol': { widthTiles: 1.75, heightTiles: 1.3, facesRight: true },
+  'spr-deer-lever': { widthTiles: 1.4, heightTiles: 1.25, facesRight: true },
   'spr-rabbit': { widthTiles: 0.6, heightTiles: 0.6, facesRight: true },
   'spr-rabbit-graze': { widthTiles: 0.6, heightTiles: 0.45, facesRight: true },
   'spr-rabbit-flee': { widthTiles: 0.8, heightTiles: 0.45, facesRight: true },
