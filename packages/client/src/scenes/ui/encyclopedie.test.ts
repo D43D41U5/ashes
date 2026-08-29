@@ -235,11 +235,12 @@ describe('l’encyclopédie — la couverture des tables', () => {
     'rope', 'iron_ingot', 'steel_ingot', 'leather', 'raw_hide', 'bone',
     // Semences : elles se mettent en terre, elles ne se rencontrent pas.
     'graine', 'graine_verte', 'graine_fruit', 'graine_tubercule',
-    // Le CHARBON DE BOIS (`feu-station.md` S30) : la section « ressources » se dérive de
-    // `NODE_DEFS`, c'est-à-dire de ce qui se RÉCOLTE — or celui-ci ne se récolte pas, il se
-    // trouve dans les sorties d'un feu qu'on a entretenu. Comme les cuits, pas de fiche. (La
-    // HOUILLE, elle, a la sienne : c'est une veine qu'on mine.)
-    'charcoal',
+    // ⚠ LE CHARBON DE BOIS EST SORTI D'ICI LE 2026-08-27, et la garde l'a exigé toute seule.
+    // Il y était parce que la section « ressources » se dérive de `NODE_DEFS` — ce qui se
+    // RÉCOLTE — et qu'il ne se récoltait pas : il tombait dans les sorties d'un feu entretenu.
+    // Depuis **R25** (`cendre.md`), la CHARBONNIÈRE est un nœud qui le rend : il se récolte
+    // donc, il entre dans la section, et la seconde clause du test (« rien n'est déclaré hors
+    // alors qu'il a sa case ») a rougi le jour même. C'est exactement son travail.
     // LA TORCHE ALLUMÉE (`torche.md`) : ce n'est pas une SECONDE entrée, c'est l'ÉTAT de la
     // première. `torche` a sa case (outils / fortune) ; lui en donner une aussi ferait deux
     // fiches pour un seul objet, dont l'une ne se fabrique pas.

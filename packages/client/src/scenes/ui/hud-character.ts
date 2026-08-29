@@ -857,7 +857,10 @@ export function createHudCharacter(
       `<div class="hch-rec-ic"><img alt="" src="${iconUrl(recipe.output)}"></div>` +
       `<div class="hch-rec-mid"><div class="hch-rec-name"></div><div class="hch-rec-cost"></div></div>` +
       `<div class="hch-rec-state"></div>`
-    el.querySelector<HTMLElement>('.hch-rec-name')!.textContent = ITEM_LABELS[recipe.output]
+    // LE NOM DE LA RECETTE, PUIS CELUI DE L'OBJET. Deux recettes peuvent rendre la même sortie
+    // (le lingot de fer, à la houille ou au charbon — R24) : sans `nom`, elles s'afficheraient
+    // sous le même libellé et seule la ligne de coût les distinguerait.
+    el.querySelector<HTMLElement>('.hch-rec-name')!.textContent = recipe.nom ?? ITEM_LABELS[recipe.output]
     const cout = el.querySelector<HTMLElement>('.hch-rec-cost')!
     for (const [i, j] of coutJetons(recipe.inputs, inv).entries()) {
       if (i > 0) cout.append(' · ')

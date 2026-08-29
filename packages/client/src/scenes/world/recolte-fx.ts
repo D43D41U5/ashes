@@ -72,6 +72,9 @@ export const FAMILLE_DE_NOEUD: Record<NodeType, Famille> = {
   quarry: 'pierre',
   iron_vein: 'pierre',
   coal_seam: 'pierre',
+  // LA CHARBONNIÈRE (R25) : c'est du BOIS, même brûlé — il se casse en copeaux noirs, pas en
+  // éclats. La famille suit la matière, jamais le lieu où elle se trouve.
+  charbonniere: 'bois',
   rubble: 'pierre',
   // LE GLANAGE (spec `glanage.md`) : on se BAISSE, rien n'est fracturé — mais la matière
   // reste ce qu'elle est. Une branche fait des copeaux, une pierre fait des éclats ; c'est

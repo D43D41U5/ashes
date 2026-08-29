@@ -17,7 +17,7 @@
  *
  * ═══ IL SURCHARGE DES CADRANS, IL N'INVENTE RIEN ═══
  *
- * Chacun des seize se lit comme une poignée de nombres appliqués à des lois qui existent
+ * Chacun des dix-sept se lit comme une poignée de nombres appliqués à des lois qui existent
  * déjà — la courbe du socle, l'aridité, la repousse, la péremption, la dureté de l'année, la
  * fonte des neiges, la mixture météo. C'est la doctrine de `meteo.md` (« la météo module,
  * elle n'invente pas ») étendue d'un cran. Un modificateur qui demanderait un mécanisme neuf
@@ -30,12 +30,14 @@
  * L'Hiver noir de l'an 5 est plus dur que celui de l'an 1 : le modificateur décale ou
  * multiplie ce que l'année vaut déjà (S12 pour le climat, S15 pour la menace).
  */
-import { ACTS_PER_YEAR, BALANCE, phaseOf, tourDuJour } from './balance'
+import { ACTS_PER_YEAR, BALANCE, phaseOf, tourDuJour, type MeteoTypeId } from './balance'
 import { hash2 } from './noise'
 
 const MODIF_SALT = 0x3f7a91c5
 
-/** Les seize caractères, quatre par saison. */
+/** Les dix-sept caractères — quatre par saison, cinq au Grand Froid (décision d'Alexis,
+ *  2026-08-28 : le vent de cendre redevient atteignable PAR UN CARACTÈRE, pas par les
+ *  mixtures — zéro décalage du ciel hors des saisons qui le tirent). */
 export type ModificateurId =
   // l'Éclosion
   | 'gelees_tardives'
@@ -57,15 +59,19 @@ export type ModificateurId =
   | 'grandes_neiges'
   | 'disette'
   | 'meute'
+  | 'vents_de_cendre'
 
-/** Quatre par phase, dans l'ordre des phases (1 = l'Éclosion). Chacune touche un système
- *  DIFFÉRENT — température, eau, vie, menace — pour qu'ils ne se confondent pas, et chacune
- *  a au moins un caractère FAVORABLE : sans ça, la couche n'ajouterait que des pics. */
+/** Par phase, dans l'ordre des phases (1 = l'Éclosion). Chacune touche un système
+ *  DIFFÉRENT — température, eau, vie, menace, et depuis 2026-08-28 le CIEL au Grand Froid
+ *  (l'Ardeur avait déjà le sien : l'Été pourri) — pour qu'ils ne se confondent pas, et
+ *  chacune a au moins un caractère FAVORABLE : sans ça, la couche n'ajouterait que des pics.
+ *  ⚠ Élargir un pool REBAT les élections passées de sa saison (l'index se tire sur la
+ *  taille de la table) — acceptable tant qu'aucune vallée n'est en cours, à consigner sinon. */
 const PAR_PHASE: readonly (readonly ModificateurId[])[] = [
   ['gelees_tardives', 'crue', 'grande_levee', 'reveil'],
   ['canicule', 'orages_secs', 'ete_pourri', 'nuee'],
   ['deluge', 'ete_indien', 'rouille', 'brame'],
-  ['hiver_noir', 'grandes_neiges', 'disette', 'meute'],
+  ['hiver_noir', 'grandes_neiges', 'disette', 'meute', 'vents_de_cendre'],
 ]
 
 /** La part des saisons qui n'ont AUCUN caractère (décision d'Alexis : une sur trois). Un
@@ -180,13 +186,16 @@ export interface EffetsModificateur {
   episode?: readonly [number, number]
   /** Emprunte la mixture météo d'une AUTRE phase (l'Été pourri prend celle des Pluies). */
   cielDeLaPhase?: number
+  /** REMPLACE la mixture météo de la saison par la sienne (les Vents de cendre). Prime sur
+   *  `cielDeLaPhase` ; les poids somment à 1, comme les tables de `METEO.PAR_SAISON`. */
+  ciel?: Partial<Record<MeteoTypeId, number>>
   /** Le cerf s'annonce et CHARGE : multiplie sa portée de perception et sa chance de charge. */
   brame?: number
 }
 
 const AUCUN: EffetsModificateur = {}
 
-/** LA TABLE — seize entrées, et chacune ne dit que ce qu'elle change. */
+/** LA TABLE — dix-sept entrées, et chacune ne dit que ce qu'elle change. */
 const EFFETS: Readonly<Record<ModificateurId, EffetsModificateur>> = {
   // ── l'Éclosion ──────────────────────────────────────────────────────────────────────
   /** L'hiver ne lâche pas : la courbe garde son froid quinze jours de plus. */
@@ -233,6 +242,12 @@ const EFFETS: Readonly<Record<ModificateurId, EffetsModificateur>> = {
   disette: { faunePlafond: 0.5 },
   /** Hordes plus grosses et plus fréquentes : l'hiver où l'on tient un mur. */
   meute: { plancherMenace: 0.85 },
+  /** LA CENDRIÈRE SOUFFLE (décision d'Alexis, 2026-08-28). L'hiver où le ciel vient du sud :
+   *  le front `vent_de_cendre` — inatteignable depuis S7, tout son câblage dormant (froid
+   *  3,2, conso de feu 1,8, vision 0,55, bord FORCÉ au sud) — redevient le ciel dominant de
+   *  la saison. Un dépôt gris sur la neige, on ne voit pas à dix pas, et le gibier se tait :
+   *  la violence, pas l'humidité. Poids : ordres de grandeur, à calibrer en jouant. */
+  vents_de_cendre: { ciel: { vent_de_cendre: 0.5, pluie: 0.3, orage: 0.2 } },
 }
 
 /**
@@ -281,4 +296,5 @@ export const NOMS_MODIFICATEUR: Readonly<Record<ModificateurId, string>> = {
   grandes_neiges: 'les Grandes Neiges',
   disette: 'la Disette',
   meute: 'la Meute',
+  vents_de_cendre: 'les Vents de cendre',
 }

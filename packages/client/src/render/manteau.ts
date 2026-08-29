@@ -130,17 +130,47 @@ export const EAU_PAVE = {
   PLAQUE_PAS: 8,
   PLAQUE_SEUIL: 0.9,
   PLAQUE_VARIA: 0.5,
-  FISSURE: 0.8,
+  FISSURE: 0.78,
   PLAQUE_MIN: 0.95,
   PLAQUE_AMPLITUDE: 0.06,
+  /** LA LÈVRE — la cellule SOUS une fente, éclaircie : le bord d'une plaque qui sèche
+   *  rebrousse et prend la lumière. Ombre en haut, lumière en bas : la lecture pixel-art
+   *  d'un creux, la même bascule que l'arête haute des pavés — sans elle la fente est un
+   *  trait posé SUR la vase, avec elle c'est la vase qui s'ouvre. */
+  LEVRE: 1.06,
+  /**
+   * LE GRAIN DES PLAQUES — la matière sous-tuile du standard (`grain-sol`), dans la vase.
+   *
+   * La craquelure avait remplacé le grain au lieu de s'y ajouter : l'intérieur d'une plaque
+   * était UNI (sa valeur propre, et rien), quand chaque sol du jeu porte un bruit-valeur
+   * postérisé en crans francs à la maille 4 px. À l'écran, la seule variation restante était
+   * le damier par tuile — la vase se lisait en CARRÉS de 16 px, pas en matière. La recette
+   * est celle de `grainFacteur` (fbm2 → trois crans), gamme entre `herbe` et `humide` : un
+   * limon sec est plus sourd qu'un marais, et la craquelure occupe déjà la surface.
+   *
+   * ⚠ LES CRANS NE DESCENDENT JAMAIS DANS LA FENTE : l'intérieur le plus sombre vaut
+   * `PLAQUE_MIN × GRAIN_CRANS[2]`, strictement au-dessus de `FISSURE` — c'est ce qui garde la
+   * fente et le grain SÉPARABLES en valeur (les gardes de `manteau.test.ts` classent par
+   * seuil), et ce qui empêche le grain de refabriquer le moucheté qu'on a jeté.
+   *
+   * Renforcé le 2026-08-28 (« ça manque encore de textures ») : échelle 2,7 → 2,4 et crans
+   * creusés vers la gamme `mineral` — un fond de lit séché est un limon cassant, pas un pré.
+   */
+  GRAIN_ECHELLE: 2.4,
+  GRAIN_CRANS: [1, 0.94, 0.885],
+  GRAIN_SEUILS: [0.38, 0.58],
   /**
    * LA VASE RESPIRE COMME LE SOL — le damier par tuile et les taches macro, la loi du bake
    * (`WorldScene.bakeMapTexture`). C'est l'autre moitié de « ça n'a rien à voir avec le reste
    * du sol » : chaque tuile de terre porte une teinte de PAYS, un damier de famille et une
    * seconde échelle de bruit à ~10 tuiles ; la vase, elle, était UN entier, le même d'un bout
    * à l'autre de la carte. Un chenal de trois cents tuiles en une seule couleur.
+   *
+   * 0,05 → 0,035 le 2026-08-28, en même temps que le grain : la leçon de la neige
+   * (`grain-sol`, profil `neige`) vaut ici aussi — sur une surface claire, le damier par
+   * tuile se lit comme une GRILLE ; c'est le grain qui porte la matière, la tuile se calme.
    */
-  DAMIER: 0.05,
+  DAMIER: 0.035,
   TACHES: 0.12,
   TACHES_ECHELLE: 10,
   /** LE CLAPOT de la crue : une cellule sur quatre, plus claire — la nappe bouge un peu. */
@@ -234,6 +264,16 @@ export function trameDeVase(): Float32Array {
   const pas = EAU_PAVE.PLAQUE_PAS
   const L = GRAIN_CELLS / pas // mailles par côté — la boucle du treillis
   const trame = new Float32Array(GRAIN_CELLS * GRAIN_CELLS)
+  // Le grain des plaques (recette `grainFacteur` : fbm2 postérisé en trois crans), et sa
+  // moyenne — la contrepartie du MULTIPLY, comme `moyenneFamille` : sans elle, donner de la
+  // matière à la vase l'assombrirait en silence et déferait le calibrage de `couleurVase`.
+  const [s0, s1] = EAU_PAVE.GRAIN_SEUILS
+  const cran = (cx: number, cy: number): number => {
+    const t = fbm2(cx, cy, EAU_PAVE.GRAIN_ECHELLE, 0x5e5)
+    return t < s0 ? EAU_PAVE.GRAIN_CRANS[2]! : t < s1 ? EAU_PAVE.GRAIN_CRANS[1]! : EAU_PAVE.GRAIN_CRANS[0]!
+  }
+  // ── ① LE RÉSEAU : la fente, sur son masque — la lèvre a besoin de connaître sa voisine. ──
+  const fente = new Uint8Array(GRAIN_CELLS * GRAIN_CELLS)
   for (let cy = 0; cy < GRAIN_CELLS; cy++) {
     for (let cx = 0; cx < GRAIN_CELLS; cx++) {
       const gx = Math.floor(cx / pas)
@@ -252,9 +292,33 @@ export function trameDeVase(): Float32Array {
         }
       }
       const seuil = EAU_PAVE.PLAQUE_SEUIL * (1 - EAU_PAVE.PLAQUE_VARIA + 2 * EAU_PAVE.PLAQUE_VARIA * hash2(gx, gy, 0x5e4))
-      trame[cy * GRAIN_CELLS + cx] = Math.sqrt(d2) - Math.sqrt(d1) < seuil
+      if (Math.sqrt(d2) - Math.sqrt(d1) < seuil) fente[cy * GRAIN_CELLS + cx] = 1
+    }
+  }
+  // ── ② LES INTÉRIEURS : valeur de plaque × grain × lèvre, la fente restant un aplat (une
+  //    ombre n'a pas de grain). La lèvre suit la fente au NORD (le tore : la trame se pave). ──
+  const facteur = (cx: number, cy: number): number => {
+    const nord = fente[(((cy - 1) & (GRAIN_CELLS - 1)) * GRAIN_CELLS) + cx] ? EAU_PAVE.LEVRE : 1
+    return cran(cx, cy) * nord
+  }
+  // La moyenne des facteurs sur les seuls intérieurs — la contrepartie exacte du MULTIPLY :
+  // grain et lèvre compris, la plaque moyenne garde la valeur calibrée du 2026-08-25.
+  let somme = 0
+  let n = 0
+  for (let cy = 0; cy < GRAIN_CELLS; cy++) {
+    for (let cx = 0; cx < GRAIN_CELLS; cx++) {
+      if (!fente[cy * GRAIN_CELLS + cx]) { somme += facteur(cx, cy); n++ }
+    }
+  }
+  const moyenne = somme / n
+  for (let cy = 0; cy < GRAIN_CELLS; cy++) {
+    for (let cx = 0; cx < GRAIN_CELLS; cx++) {
+      const i = cy * GRAIN_CELLS + cx
+      const gx = Math.floor(cx / pas)
+      const gy = Math.floor(cy / pas)
+      trame[i] = fente[i]
         ? EAU_PAVE.FISSURE
-        : EAU_PAVE.PLAQUE_MIN + EAU_PAVE.PLAQUE_AMPLITUDE * hash2(gx, gy, 0x5e3)
+        : (EAU_PAVE.PLAQUE_MIN + EAU_PAVE.PLAQUE_AMPLITUDE * hash2(gx, gy, 0x5e3)) * (facteur(cx, cy) / moyenne)
     }
   }
   return trame

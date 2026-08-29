@@ -29,7 +29,7 @@
  * ciel de `lighting.ts`. Les recopier ici, c'est la dérive que `palette.ts` raconte déjà
  * (« trois rouges pour un seul accent »).
  */
-import { BALANCE, VENT, type GameTime, type MeteoAspect } from '@ashes/sim'
+import { BALANCE, GEL, TEMPERATURE, VENT, type GameTime, type MeteoAspect } from '@ashes/sim'
 import { ASTRES } from './astres'
 import { CARDINAUX as CARDINAUX_SAISON } from '../../render/teinte-saison'
 import { ambientTint, heureSolaire } from '../../render/lighting'
@@ -227,11 +227,15 @@ function fondDeSaison(phase: number): string {
   return `rgba(${(c >> 16) & 255},${(c >> 8) & 255},${c & 255},.20)`
 }
 
-/** L'encre d'une température d'air : ce qui brûle, ce qui va, ce qui mord. */
+/** L'encre d'une température d'air : ce qui brûle, ce qui va, ce qui mord. Les deux bascules
+ *  basses sont DÉRIVÉES de la sim (le cadran dev lit les mêmes : `AMBIANT_DOUX` = l'air doux,
+ *  `SEUIL_GUE` = le zéro du gel) — un réglage de `balance.ts` déplace l'encre avec la loi.
+ *  Le seuil « brûlant » (18) reste un choix d'interface : aucune constante de jeu ne dit où
+ *  la chaleur commence à se lire chaude. */
 function encreDuFroid(c: number): string {
   if (c >= 18) return HEX.emberDeep
-  if (c >= 8) return HEX.ember
-  if (c >= 0) return HEX.body
+  if (c >= TEMPERATURE.AMBIANT_DOUX) return HEX.ember
+  if (c >= GEL.SEUIL_GUE) return HEX.body
   return HEX.gel
 }
 
@@ -243,8 +247,11 @@ export interface BarreHauteState {
   lieu: string | undefined
   /** L'air qu'il fait ici, en °C — undefined tant que le monde n'a rien dit. */
   ambiant: number | undefined
-  /** Le ciel au point du joueur — `null` par temps dégagé (→ soleil ou lune). */
+  /** Le ciel du FRONT DU JOUR au point du joueur — `null` quand aucun front n'est élu
+   *  (→ soleil ou lune). Sans test d'empreinte : le mur qui approche a déjà son aspect. */
   ciel: MeteoAspect | null
+  /** …et couvre-t-il ICI ? Faux : l'icône s'estompe — elle annonce, elle ne constate pas. */
+  couvre: boolean
   /** Le caractère de la saison, déjà nommé — undefined deux saisons sur trois. */
   caractere: string | undefined
   /**
@@ -304,6 +311,10 @@ export interface VueBarre {
   heureTxt: string
   cielX: number
   ico: string
+  /** L'icône météo s'ESTOMPE quand le front élu ne couvre pas encore ici (annonce, pas
+   *  constat — patron de l'aiguille du vent, qui s'estompe par force faible). '1' pour les
+   *  astres et sous la bande. */
+  icoOp: string
   ventVisible: boolean
   /** L'angle de l'aiguille, DÉROULÉ (il peut dépasser ±360°) — voir `MemoireDuLieu.ventDeg`. */
   ventDeg: number
@@ -402,6 +413,7 @@ export function vueDeLaBarre(
       // de 22 px toutes les deux minutes réelles.
       cielX: Math.round(TETE_H - (time.hourOfCycle + 24) * PX_PAR_HEURE),
       ico: s.ciel ?? (time.isNight ? 'lune' : 'soleil'),
+      icoOp: s.ciel !== null && !s.couvre ? '0.45' : '1',
       ventVisible,
       ventDeg,
       ventOp: (0.5 + 0.5 * u).toFixed(3),
@@ -495,7 +507,10 @@ export function createBarreHaute(board: HTMLElement): BarreHaute {
       ventAigEl.style.transform = `rotate(${vue.ventDeg}deg) scale(${vue.ventEchelle})`
       ventAigEl.style.opacity = vue.ventOp
       cielEl.style.backgroundPosition = `${vue.cielX}px 3px`
-      for (const [nom, el] of icones) el.style.display = nom === vue.ico ? '' : 'none'
+      for (const [nom, el] of icones) {
+        el.style.display = nom === vue.ico ? '' : 'none'
+        if (nom === vue.ico) el.style.opacity = vue.icoOp
+      }
     },
   }
 
@@ -676,7 +691,7 @@ function markup(): string {
     <div class="bh-droite">
       <div class="bh-ciel-fen"><div class="bh-ciel"></div><i class="bh-ciel-tete"></i></div>
       <div class="bh-meteo">${icones()}</div>
-      <div class="bh-vent" title="Le vent — l'aiguille pointe où il souffle">
+      <div class="bh-vent">
         <i class="bh-vent-cercle"></i>
         <svg class="bh-vent-aig" width="22" height="22" viewBox="0 0 22 22" fill="none" aria-hidden="true">
           <path d="M4 11h11" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
@@ -692,39 +707,45 @@ function markup(): string {
 }
 
 /**
- * LES SEPT TEMPS, au trait — les six aspects que `aspectAuPoint` rend au point du joueur
+ * LES HUIT TEMPS, au trait — les six aspects que `aspectAuPoint` rend au point du joueur
  * (`meteo.md` R11-R13 : la classe du front, plus la dérivation neige/blizzard au froid), plus
  * le soleil et la lune quand le ciel est dégagé. Dessinés en SVG et non en glyphes : le jeu
  * n'a pas d'émoji, et un trait se recolore.
  */
+const NUAGE = `<path d="M4.5 10.5h7a2.5 2.5 0 0 0 0-5 3.5 3.5 0 0 0-6.8-.8 2.9 2.9 0 0 0-.2 5.8Z" stroke-linejoin="round"/>`
+const NEIGEUX = '#9fbcc6'
+/** Un trait PAR ASPECT, exhaustif PAR LE COMPILATEUR (`Record<MeteoAspect, …>`) : un aspect
+ *  ajouté à la sim ne peut plus laisser l'icône du ciel VIDE en silence — le build casse ici.
+ *  Exporté pour la garde de contraste du test (les encres du ciel se mesurent à la source). */
+export const TRAITS_ASPECT: Record<MeteoAspect, { teinte: string; corps: string }> = {
+  pluie: { teinte: HEX.gel, corps: `${NUAGE}<path d="M5.6 12.4v1.9M8 12.8v1.9M10.4 12.4v1.9" stroke-linecap="round"/>` },
+  neige: { teinte: NEIGEUX, corps: `${NUAGE}<path d="M5.6 12.6v1.6M4.8 13.4h1.6M10.4 12.6v1.6M9.6 13.4h1.6" stroke-linecap="round"/>` },
+  orage: { teinte: HEX.emberBright, corps: `${NUAGE}<path d="M8.8 12 6.9 14.6h1.6l-.6 1.8" stroke-linejoin="round" stroke-linecap="round"/>` },
+  blizzard: {
+    teinte: NEIGEUX,
+    corps:
+      `<path d="M4.5 10h7a2.5 2.5 0 0 0 0-5 3.5 3.5 0 0 0-6.8-.8 2.9 2.9 0 0 0-.2 5.8Z" stroke-linejoin="round"/>` +
+      `<path d="M2.6 12.6h6.2M4.4 15h6.2M11.2 12.2v1.4M10.4 12.9h1.6" stroke-linecap="round"/>`,
+  },
+  brouillard: { teinte: HEX.dim, corps: `<path d="M2.6 4.6h10.2M1.8 7.5h11.6M3.4 10.4h9.4M2.6 13.3h8.2" stroke-linecap="round"/>` },
+  vent_de_cendre: {
+    teinte: HEX.emberDeep,
+    corps:
+      `<path d="M1.8 5.4h7.4a1.8 1.8 0 1 0-1.3-3.1" stroke-linecap="round"/>` +
+      `<path d="M1.8 9h9a1.9 1.9 0 1 1-1.4 3.2" stroke-linecap="round"/>` +
+      `<path d="M1.8 12.6h4.6" stroke-linecap="round"/>`,
+  },
+}
 function icones(): string {
   const svg = (nom: string, teinte: string, corps: string): string =>
     `<svg class="bh-ico" data-ico="${nom}" width="24" height="24" viewBox="0 0 16 16" fill="none" ` +
     `stroke="${teinte}" stroke-width="1.4" style="display:none">${corps}</svg>`
-  const nuage = `<path d="M4.5 10.5h7a2.5 2.5 0 0 0 0-5 3.5 3.5 0 0 0-6.8-.8 2.9 2.9 0 0 0-.2 5.8Z" stroke-linejoin="round"/>`
-  const neigeux = '#9fbcc6'
   return [
     // LES DEUX ASTRES VIENNENT DE `astres.ts` — le cadran de l'encyclopédie tire du même trait
     // (2026-08-27). Ici ils gardent leurs teintes : la barre haute les pose sur un panneau
     // sombre, pas sur une bande de couleur.
     svg('soleil', HEX.emberBright, ASTRES.soleil),
     svg('lune', HEX.gel, ASTRES.lune),
-    svg('pluie', HEX.gel, `${nuage}<path d="M5.6 12.4v1.9M8 12.8v1.9M10.4 12.4v1.9" stroke-linecap="round"/>`),
-    svg('neige', neigeux, `${nuage}<path d="M5.6 12.6v1.6M4.8 13.4h1.6M10.4 12.6v1.6M9.6 13.4h1.6" stroke-linecap="round"/>`),
-    svg('orage', HEX.emberBright, `${nuage}<path d="M8.8 12 6.9 14.6h1.6l-.6 1.8" stroke-linejoin="round" stroke-linecap="round"/>`),
-    svg(
-      'blizzard',
-      neigeux,
-      `<path d="M4.5 10h7a2.5 2.5 0 0 0 0-5 3.5 3.5 0 0 0-6.8-.8 2.9 2.9 0 0 0-.2 5.8Z" stroke-linejoin="round"/>` +
-        `<path d="M2.6 12.6h6.2M4.4 15h6.2M11.2 12.2v1.4M10.4 12.9h1.6" stroke-linecap="round"/>`,
-    ),
-    svg('brouillard', HEX.dim, `<path d="M2.6 4.6h10.2M1.8 7.5h11.6M3.4 10.4h9.4M2.6 13.3h8.2" stroke-linecap="round"/>`),
-    svg(
-      'vent_de_cendre',
-      HEX.emberDeep,
-      `<path d="M1.8 5.4h7.4a1.8 1.8 0 1 0-1.3-3.1" stroke-linecap="round"/>` +
-        `<path d="M1.8 9h9a1.9 1.9 0 1 1-1.4 3.2" stroke-linecap="round"/>` +
-        `<path d="M1.8 12.6h4.6" stroke-linecap="round"/>`,
-    ),
+    ...(Object.entries(TRAITS_ASPECT) as [string, { teinte: string; corps: string }][]).map(([nom, t]) => svg(nom, t.teinte, t.corps)),
   ].join('')
 }

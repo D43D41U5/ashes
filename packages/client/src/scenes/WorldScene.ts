@@ -12,6 +12,7 @@
  */
 import {
   BALANCE,
+  COMBAT,
   CHRONICLE_EVENT_TYPES,
   NODE_DEFS,
   TEMPERATURE,
@@ -29,6 +30,7 @@ import {
   meteoColdAt,
   meteoIntensityAt,
   aspectAuPoint,
+  aspectFroidDe,
   partDeNeige,
   ambientTemperature,
   baselineTemperature,
@@ -107,7 +109,7 @@ import {
 import { MUR_HT } from '../render/bati-art'
 import { rafraichirCimes } from '../render/lit-trees'
 import { cranDeSaison } from '../render/teinte-saison'
-import { airSansLune, ambientTint, daylight, fireGlow, fireHoleRadius, heureSolaire, lerpColor, lueurDeLune, partSansLune, plancherDeNuit, voileDeNuit, LUNE_PLEINE_JOUR } from '../render/lighting'
+import { airSansLune, ambientTint, daylight, fireGlow, fireHoleRadius, heureCanonique, heureSolaire, lerpColor, lueurDeLune, partSansLune, plancherDeNuit, voileDeNuit, LUNE_PLEINE_JOUR } from '../render/lighting'
 import { partDeNuitDesLucioles } from '../render/couvre-feu-lucioles'
 import { createWarp, type Warp } from '../render/warp'
 import { axesFeu } from '../render/feu-variante'
@@ -151,9 +153,9 @@ import { PoissonsOmbres } from './world/poissons-ombres'
 import { FeuillesDerive } from './world/feuilles-derive'
 import { RefletsLayer } from './world/reflets'
 import { SonsDeLEau } from '../audio/eau-audio'
+import { AVANCE_S, intensiteEntendue, SonsDuCiel } from '../audio/meteo-audio'
 import { riveAt } from '../render/water-field'
 import { FumerolleFx } from './world/fumerolle-fx'
-import { GueStones } from './world/gue-stones'
 import { MorningMist } from './world/morning-mist'
 import { FireFx } from './world/fire-fx'
 import { FireGroundGlow } from './world/fire-ground-glow'
@@ -192,8 +194,9 @@ function revealRadiusOf(kind: string): number {
   return charge && charge.devise === 'savoir' && charge.reveal === 'radius' ? charge.radiusTiles : 0
 }
 import { NightVeil } from './world/night-veil'
-import { DynamicLighting, facteurDuFeu } from './world/dynamic-lighting'
+import { DynamicLighting, deriveDOmbre, facteurDuFeu, forceDeLOmbre } from './world/dynamic-lighting'
 import { WaterLayer, type WaterWader } from './world/water-layer'
+import { flowAt } from '../render/flow-field'
 import { AmbientLife } from './world/ambient-life'
 import { FoudreFx } from './world/foudre-fx'
 import { MeteoLayer } from './world/meteo-layer'
@@ -215,9 +218,11 @@ import { SprintFx } from './world/sprint-fx'
 import { ChuteArbre } from './world/chute-arbre'
 import { ReveilFx } from './world/reveil-fx'
 import { BRISURES_CENDRE, createAttackFx, type AttackFx, type Zone } from './world/attack-fx'
+import { secousseDuCoup, SECOUSSE_PORTE_MS } from './world/encaissement'
 import { SangFx } from './world/sang-fx'
 import { createHandWeapons, type HandWeapons } from './world/hand-weapon'
 import { bindInputs, type MovementBindings } from './world/input-bindings'
+import { ciblesDesignees } from './world/cibles'
 import { demolishTargetAt } from './world/aim'
 import { GAZE_PX, GAZE_REACH, INTERP_DELAY_MULTI_MS, SnapshotView, type InterpolatedSprite } from './world/snapshot-view'
 import { silhouetteDepuisSprite } from './world/visee-corps'
@@ -243,6 +248,11 @@ const zoneOf = (strike: Strike): Zone => ({
   range: strike.range * TILE_PX,
   arcCos: strike.arcCos,
   radius: strike.radius * TILE_PX,
+  // LE CORPS DE LA CIBLE VOYAGE AVEC LA ZONE (2026-08-28) : c'est de lui que le télégraphe
+  // tenait un mensonge. La sim résout sur la zone ÉLARGIE de ce rayon — portée ET angle
+  // (R4quinquies) — et le dessin montrait la zone nominale : le coup portait HORS du
+  // télégraphe, de +16 % (lance) à +36 % (poings) de surface. Voir `render/zone-frappe.ts`.
+  corps: COMBAT.HIT_BODY_RADIUS * TILE_PX,
 })
 /**
  * LE TÉLÉGRAPHE PART DU CENTRE DU CORPS, PAS DE SOUS LES PIEDS. Les sprites sont ancrés
@@ -393,8 +403,8 @@ export class WorldScene extends Phaser.Scene {
   /** LES SERPENTINS DU VENT (spec `vent.md` V9) — le présage, quand un front approche. */
   ventLayer: VentLayer | null = null
   /** La part de souffle AU POINT DU JOUEUR, au-dessus de l'ambiance : 0 au calme, 1 au cœur
-   *  d'une bande. Relevée avec le reste du vent (quatre fois par seconde — un front met un
-   *  quart d'heure à traverser, la relire par image ne dirait rien de plus). */
+   *  d'une bande. Relevée avec le reste du vent, à chaque image (une lecture de `ventForceAt`,
+   *  sans garde de cadence — contrairement au thermo, qui balaie plus large). */
   private ventPartIci = 0
   /** LA FOUDRE (R8) — le télégraphe au sol, puis l'éclair. Publique, même raison. */
   foudreFx: FoudreFx | null = null
@@ -499,7 +509,6 @@ export class WorldScene extends Phaser.Scene {
   /** Les bornes de seuil (worldgen R21) et la brume de la Combe — décor dérivé de la carte. */
   private bornes: BorneLayer | null = null
   private combeMist: CombeMist | null = null
-  private gueStones: GueStones | null = null
   fumerolleFx: FumerolleFx | null = null // public : le harnais smoke LIT son compte de bouffées
   /** Les âges des foyers de cendre, tels que le dernier snapshot les a dits (spec `cendre.md`). */
   private cendreAge: number[] = []
@@ -513,6 +522,9 @@ export class WorldScene extends Phaser.Scene {
   /** Les événements d'eau (gerbe/empreintes) et leurs sons (spec eau-vivante R7-R8). */
   private eauEvents: EauEvents | null = null
   private sonsEau = new SonsDeLEau()
+  /** LES SONS DU CIEL (chantier audio météo, 2026-08-28) — les nappes de pluie et de vent,
+   *  le tonnerre et le grésillement du télégraphe. Publique : le smoke lit sa sonde. */
+  readonly sonsCiel = new SonsDuCiel()
   private lastSonPos: { x: number; y: number } | null = null
   /** Les poissons-ombres (R14) — décor assumé tant que la pêche n'existe pas. */
   private poissons: PoissonsOmbres | null = null
@@ -778,6 +790,8 @@ export class WorldScene extends Phaser.Scene {
   /** Les WIND-UPS du dernier snapshot : qui arme un coup, vers où, avec QUELLE FORME.
    *  C'est le TÉLÉGRAPHE du GDD §7 — on doit voir venir le coup, le sien comme
    *  celui d'en face. Il vient du snapshot, jamais du clic (invariant §3). */
+  /** L'axe et la récupération du dernier coup ARMÉ par chacun — lus au `attack_whiffed`. */
+  private ratesAVenir = new Map<number, { dx: number; dy: number; ms: number }>()
   private windups: {
     id: number
     dx: number
@@ -1173,6 +1187,15 @@ export class WorldScene extends Phaser.Scene {
         this.feuilles = new FeuillesDerive(this, this.map, this.water.flow, this.water.rive)
         // L'EAU DU JOUR (voir `eauIci`) : une feuille ne dérive pas sur un lit à sec.
         this.feuilles.eauIci = this.eauIci
+        // LES ROCHERS DU GUÉ (Alexis, 2026-08-28) : la feuille GLISSE le long du bord et
+        // lâche ; le poisson CONTOURNE (berge de plus pour ses whiskers et ses sous-pas).
+        // Le prédicat lit les NŒUDS VIVANTS — un rocher taillé rend son eau aux deux.
+        const pierreIci = (tx: number, ty: number): boolean => {
+          const n = this.view.noeudALaTuile(tx, ty)
+          return n !== undefined && n.type === 'rock' && n.stock > 0
+        }
+        this.feuilles.pierreIci = pierreIci
+        if (this.poissons) this.poissons.pierreIci = pierreIci
         this.reflets = new RefletsLayer(this, this.map)
         this.view.reflets = this.reflets
         // LA SONDE A10 (eau-vivante) : le boot de l'eau se CHRONOMÈTRE, il ne s'affirme pas.
@@ -1185,7 +1208,6 @@ export class WorldScene extends Phaser.Scene {
         // décor dérivé de la carte (map.seuils, zone `combe_brumeuse`) — rien n'est deviné.
         this.bornes = new BorneLayer(this, this.map, this.warp)
         this.combeMist = new CombeMist(this, this.map)
-        this.gueStones = new GueStones(this, this.map, this.warp)
         this.fumerolleFx = new FumerolleFx(this)
         // LA CENDRE (spec `cendre.md`) : elle REPEINT le sol des tuiles prises, avec la couleur du
         // terrain converti. Elle ne reçoit aucune tuile — elle relit `estCendre` de /sim sur le
@@ -1235,6 +1257,9 @@ export class WorldScene extends Phaser.Scene {
         // le recours, et ils ne sortent QUE quand un front approche.
         this.ventLayer = new VentLayer(this)
         this.foudreFx = new FoudreFx(this)
+        // LE TONNERRE (chantier audio météo, 2026-08-28) : la frappe se résout dans FoudreFx
+        // (la loi d'abri s'y écrit déjà), le son l'écoute — spatialisé au point d'impact.
+        this.foudreFx.onFrappe = (x, y) => this.sonsCiel.tonnerre(x, y, (sp, d2, at) => this.audioFx.play(sp, d2, at))
         // LE GEL (spec gel.md) : la neige qui tient au sol et la glace praticable. Comme la
         // cendre, RIEN n'est transmis — le client relit les fonctions pures de /sim sur un
         // état reconstitué du snapshot.
@@ -1373,7 +1398,6 @@ export class WorldScene extends Phaser.Scene {
     if (this.clutter) this.clutter.lighting = litFrame
     this.pois.lighting = litFrame // le bloc erratique (couche POI cubique) suit le même toggle
     this.bornes?.setLighting(litFrame) // les bornes de seuil aussi (da-feeling R5)
-    this.gueStones?.setLighting(litFrame) // et les dalles de gué (la revue a vu des dalles noires en OFF)
     if (this.eauEvents) this.eauEvents.lighting = litFrame // et les empreintes au sol (leur creux EST la lumière)
     // L'AVATAR bascule sur son _lit (R9 — un humain est un chip symétrique). Une fois par
     // changement de toggle : setTexture par frame réinitialiserait la frame pour rien.
@@ -1546,6 +1570,8 @@ export class WorldScene extends Phaser.Scene {
       this.playerId,
       this.lastSnapshotTick,
       getHud(this.registry, 'inv') ?? [],
+      // La façade du gel : le panneau du feu relit `meteoFeuConso` au point du feu (R5).
+      this.etatGel,
     )
     this.checkVitals()
 
@@ -1617,6 +1643,12 @@ export class WorldScene extends Phaser.Scene {
       const ay = sprite.y - ANCRE_SOL_PX
       this.attackFx.telegraph(sprite.x, ay, w.dx, w.dy, progress, zone, w.id === this.playerId, w.side, w.charged, w.ranged)
       this.armes.set(w.id, { x: sprite.x, y: ay, dx: w.dx, dy: w.dy, zone, charged: w.charged, ranged: w.ranged, portee: w.strike.range * TILE_PX })
+      this.designerLesCibles(w, spriteOf)
+      // CE QUE COÛTERAIT UN RATÉ, retenu tant que le coup est armé : l'événement
+      // `attack_whiffed` arrive APRÈS la disparition du wind-up et ne porte pas la forme
+      // du coup. On garde donc l'axe et la récupération sous la main — c'est la seule
+      // façon de peindre la VRAIE durée (`recoveryWhiff`) plutôt qu'une constante inventée.
+      this.ratesAVenir.set(w.id, { dx: w.dx, dy: w.dy, ms: (w.strike.recoveryWhiff * 1000) / BALANCE.TICK_RATE_HZ })
     }
     // UN WIND-UP QUI DISPARAÎT = LE COUP EST PARTI. La zone claque — y compris dans le
     // vide : un coup manqué coûte de l'endurance ET cloue sur place (récupération
@@ -1704,11 +1736,50 @@ export class WorldScene extends Phaser.Scene {
     this.clutter?.setBarriers(this.view.structures)
     // LA TEINTE DE LA SAISON (S17) : la touffe prend la couleur de son année. Posée ici, à
     // chaque image, parce que la couche mémoïse par cran de dix jours — le coût est nul.
-    if (this.clutter && this.lastTime) this.clutter.jourDeLAnnee = this.lastTime.seasonDay
+    if (this.clutter && this.lastTime) {
+      // AVEC ses décimales (`jourFrac`) : c'est ce qui égrène les éclosions sur les trente
+      // minutes du cycle au lieu d'une salve au changement de date (flore-especes.ts). La
+      // teinte, elle, plancherise d'elle-même (cranDeSaison arrondit) — rien ne clignote.
+      this.clutter.jourDeLAnnee = this.lastTime.seasonDay + this.lastTime.jourFrac
+      // Le jour vient d'un VRAI snapshot : les fenêtres de floraison peuvent s'armer
+      // (avant lui, le défaut jouerait de fausses bascules — voir `jourConnu`).
+      this.clutter.jourConnu = true
+    }
     // ET LE FEUILLAGE CADUC TOURNE AVEC ELLE (S17, loi ③ — décision d'Alexis 2026-08-25). Posé
     // ici, à chaque image, pour la même raison que le décor : `rafraichirCimes` ne recuit qu'au
     // CHANGEMENT DE CRAN (dix jours) et rend `false` le reste du temps. Le coût est nul, et le
     // feuillage ne peut pas prendre du retard sur la couleur du sol — ils lisent le même cran.
+    // ═══ L'HEURE QUE LIT TOUT LE RENDU EST L'HEURE SOLAIRE ═══
+    //
+    // Pas `hourOfCycle` : la longueur du jour SUIT LA SAISON (`saisons.md` S6), et les
+    // keyframes de `lighting.ts` sont écrites pour un jour d'équinoxe. `heureSolaire` recale
+    // le crépuscule du rendu sur celui de la sim — 22 h aux Pluies, 17 h 30 au Grand Froid,
+    // 23 h 15 à l'Ardeur — et vaut l'identité aux équinoxes (voir son bloc).
+    //
+    // ⚠ C'EST LA SEULE HORLOGE DE LA CHAÎNE, et ces deux `const` sont la raison pour laquelle
+    // elle l'est : le voile, le soleil, la lune, l'eau, les deux brumes, les oiseaux de l'aube
+    // et — depuis le 2026-08-27 — la dérive des ombres de socle reçoivent tous CES
+    // variables-là. En calculer une seconde ailleurs, c'est rejouer le défaut du 2026-08-25
+    // (deux chaînes pas à la même heure, le soleil qui se téléporte).
+    //
+    // ⚠ DÉCLARÉES ICI, ET PAS PLUS BAS AVEC LE RESTE DE L'ÉCLAIRAGE : `renderNodes` (juste
+    // après) pose les ombres de contact, donc il lui faut l'heure AVANT. Le repli à midi ne
+    // sert qu'à typer la variable tant qu'aucun snapshot n'est arrivé — tous les consommateurs
+    // restent sous leur `if (this.lastTime)`, et la dérive retombe à 0 (flaque centrée).
+    // Le jour porte ses DÉCIMALES (`jourFrac`) : la lune coule, elle ne saute pas d'un cran à
+    // minuit. Sans snapshot, on retombe sur la pleine lune — l'étalon, donc le rendu d'avant.
+    const hour = this.lastTime
+      ? heureSolaire(this.lastTime.hourOfCycle, this.lastTime.dayTicks, this.lastTime.lever)
+      : heureCanonique(12)
+    const jourLune = (this.lastTime?.seasonDay ?? LUNE_PLEINE_JOUR) + (this.lastTime?.jourFrac ?? 0)
+    // L'OMBRE DES SOCLES DÉRIVE À L'OPPOSÉ DE L'ASTRE (demande d'Alexis, 2026-08-27) — le côté
+    // et la force sortent de `dynamic-lighting`, qui ARBITRE les deux astres avec la fonction
+    // même qui pose leurs intensités ; l'amplitude vit dans `socle-mineral`. Sans snapshot :
+    // centrée.
+    this.view.deriveOmbre = this.lastTime ? deriveDOmbre(hour, jourLune) : 0
+    // ET ELLE S'ÉTEINT AVEC L'ASTRE QUI LA JETTE (Alexis : « elle devrait disparaître en fade au
+    // crépuscule »). Sans snapshot : pleine, comme avant.
+    this.view.forceOmbre = this.lastTime ? forceDeLOmbre(hour, jourLune) : 1
     if (this.lastTime) {
       rafraichirCimes(this, this.lastTime.seasonDay)
       // ET LE RENDU LIT LE MÊME CRAN QUE LA CUISSON — un seul écrivain (cf. `cranSaison`).
@@ -1764,18 +1835,6 @@ export class WorldScene extends Phaser.Scene {
     // chaque amas reconnu, doré + ✦ quand l'enceinte donne son bonus.
     this.view.renderFunctions()
     if (this.lastTime) {
-      // ═══ L'HEURE QUE LIT TOUT LE RENDU EST L'HEURE SOLAIRE ═══
-      //
-      // Pas `hourOfCycle` : la longueur du jour SUIT LA SAISON (`saisons.md` S6), et les
-      // keyframes de `lighting.ts` sont écrites pour un jour d'équinoxe. `heureSolaire` recale
-      // le crépuscule du rendu sur celui de la sim — 22 h aux Pluies, 17 h 30 au Grand Froid,
-      // 23 h 15 à l'Ardeur — et vaut l'identité aux équinoxes (voir son bloc).
-      //
-      // ⚠ C'EST LA SEULE HORLOGE DE LA CHAÎNE, et ce `const` est la raison pour laquelle elle
-      // l'est : le voile, le soleil, la lune, l'eau, les deux brumes et les oiseaux de l'aube
-      // reçoivent tous CETTE variable. En calculer une seconde ailleurs, c'est rejouer le
-      // défaut du 2026-08-25 (deux chaînes pas à la même heure, le soleil qui se téléporte).
-      const hour = heureSolaire(this.lastTime.hourOfCycle, this.lastTime.dayTicks, this.lastTime.lever)
       // ET LE RELIEF DU PAVEMENT SUIT LE MÊME SOLEIL. Posé ICI et pas dans le bloc de saison
       // plus haut : c'est `hour` — l'horloge unique de la chaîne — qui commande, exactement
       // comme le voile, la lune et l'eau. `soleilABouge` ne fait rien tant que le cran du
@@ -1818,13 +1877,10 @@ export class WorldScene extends Phaser.Scene {
       this.airAlpha += (cible.alpha - this.airAlpha) * k
       this.airColor = lerpColor(this.airColor, cible.color, k)
       const day = daylight(hour)
-      // LA LUNE (2026-08-25) — un seul nombre, résolu ICI et partagé par les deux chaînes qui
-      // en dépendent (le voile du sol, la lumière dynamique des sprites) : les faire calculer
-      // chacune la sienne, c'est très exactement le défaut qu'on vient de corriger sur le
-      // soleil — deux chaînes d'éclairage qui ne sont pas à la même heure.
-      // Le jour porte ses DÉCIMALES (`jourFrac`) : la lune coule, elle ne saute pas d'un cran
-      // à minuit. Sans snapshot, on retombe sur la pleine lune — l'étalon, donc le rendu d'avant.
-      const jourLune = (this.lastTime?.seasonDay ?? LUNE_PLEINE_JOUR) + (this.lastTime?.jourFrac ?? 0)
+      // LA LUNE (2026-08-25) — un seul nombre, résolu à partir du `jourLune` hoisté plus haut
+      // et partagé par les deux chaînes qui en dépendent (le voile du sol, la lumière dynamique
+      // des sprites) : les faire calculer chacune la sienne, c'est très exactement le défaut
+      // qu'on a corrigé sur le soleil — deux chaînes d'éclairage pas à la même heure.
       const lueurLune = lueurDeLune(hour, jourLune)
       // ═══ LA SOUS-LISTE DES FEUX, DÉRIVÉE UNE FOIS PAR IMAGE (PERF-08) ═══
       //
@@ -1922,7 +1978,51 @@ export class WorldScene extends Phaser.Scene {
       for (const id of this.waderTrack.keys()) {
         if (!vus.has(id)) this.waderTrack.delete(id)
       }
-      this.lastWaderCount = waders.length // la sonde d'A5 (lue par le smoke)
+      this.lastWaderCount = waders.length // la sonde d'A5 (lue par le smoke) — MARCHEURS seuls
+      // ═══ LES PIERRES DU GUÉ REMUENT L'EAU (Alexis, 2026-08-28 : « autour des pierres, le
+      // même effet qu'autour du joueur dans l'eau ») ═══
+      //
+      // L'eau se brise en continu sur un obstacle planté dans le courant : chaque pierre de gué
+      // VIVANTE (stock > 0 — taillée, elle quitte l'eau et l'eau se referme) émet les anneaux
+      // isotropes d'un marcheur à l'arrêt, mais SANS son extinction (une pierre ne s'arrête
+      // jamais de faire obstacle) et SANS sa turbidité (le drapeau `pierre` — la vase se soulève
+      // sous un pas, pas contre un caillou). EN QUEUE du tableau, après les marcheurs : eux
+      // bougent, ils gardent la priorité des 8 premiers slots ET la sonde `lastWaderCount`.
+      // À MI-FORCE : cinq pierres à pleine force couvriraient le gué d'anneaux — l'obstacle
+      // se lit, il ne crie pas. Phase par position : deux pierres ne battent pas ensemble.
+      // ET LE REMOUS SUIT LE COURANT (Alexis : « qu'ils correspondent plus à des remous dans
+      // le sens du courant ») : une pierre plantée dans un courant est un marcheur qui
+      // « marche » CONTRE lui — le sillage du shader sème ses anneaux à l'opposé du cap, donc
+      // vers l'AVAL, et fenêtre l'amont ; le V se traîne derrière la pierre comme derrière un
+      // pied. Le cap vient du champ de courant (`flow-field.ts`, la source unique de « où
+      // l'eau va ») ; une eau SANS courant (mare, lac) rend {0,0} et les ronds isotropes
+      // reviennent d'eux-mêmes — une pierre dans une eau immobile fait des ronds, pas un V.
+      for (const z of this.map.zones) {
+        if (z.kind !== undefined || z.name !== 'le Gué') continue
+        if (z.x + z.w < vx0 || z.x > vx1 || z.y + z.h < vy0 || z.y > vy1) continue
+        for (let ty = z.y; ty < z.y + z.h && waders.length < 14; ty++) {
+          for (let tx = z.x; tx < z.x + z.w && waders.length < 14; tx++) {
+            if (this.map.terrain[ty * this.map.width + tx] !== TERRAIN_SHALLOW_WATER) continue
+            if (!this.eauIci(tx, ty)) continue // gué à sec : la boue ne fait pas d'anneaux
+            const n = this.view.noeudALaTuile(tx, ty)
+            if (n === undefined || n.type !== 'rock' || n.stock <= 0) continue
+            const f = this.water?.flow ? flowAt(this.water.flow, tx + 0.5, ty + 0.5) : null
+            const nf = f ? Math.sqrt(f.x * f.x + f.y * f.y) : 0
+            waders.push({
+              // À LA LIGNE DE FLOTTAISON, pas au centre de la tuile : la pierre est un
+              // billboard — son eau visible est à son PIED (le bord bas de la tuile, là où
+              // la coupe d'immersion pose le trait). Émettre du centre plaçait le croissant
+              // d'écume DERRIÈRE le sprite et les anneaux à mi-hauteur du corps.
+              x: tx + 0.5, y: ty + 0.95,
+              phase: ((tx * 31 + ty * 17) % 97) * 0.211,
+              strength: 0.5,
+              dirX: nf > 0.05 ? -f!.x / nf : 0,
+              dirY: nf > 0.05 ? -f!.y / nf : 0,
+              pierre: true,
+            })
+          }
+        }
+      }
       if (this.clutter) this.clutter.agitateurs = agitateurs
       this.water?.update(
         time,
@@ -1948,7 +2048,8 @@ export class WorldScene extends Phaser.Scene {
       // relevé du snapshot précédent : une condition qui bouge à l'échelle du front n'a que
       // faire d'une image de retard).
       this.morningMist?.update(time, hour, vent, day, this.lastTime, this.ventPartIci, this.cameras.main)
-      this.combeMist?.update(time, vent, day) // la combe garde son air, au quart du vent
+      // …et la Combe garde son air (quart du vent) — en pile de bandes elle aussi (2026-08-28).
+      this.combeMist?.update(time, vent, day, this.cameras.main)
       // LES BANCS VOYAGEURS (V2) : nés des grandes eaux autour de la caméra, ils dérivent
       // dans la bande des houppiers — devant un arbre, derrière l'autre.
       const centre = this.cameras.main.worldView
@@ -2139,6 +2240,9 @@ export class WorldScene extends Phaser.Scene {
         jourDeDepart: this.jourDeDepart,
         structures: this.view.structures,
         meteo: meteoFront,
+        // LA NAPPE DE BRUME (etat-gel, point ③) : sans elle la façade relisait une température
+        // trop chaude de `BRUME.COLD_MALUS` sous la nappe — une glace autoritative invisible.
+        brume: this.view.brume,
         // LA CENDRE TRAVERSE (voir `SourceDuGel.cendreAge`) : depuis qu'elle commande le pas,
         // la prédiction locale doit la connaître aussi bien que l'autorité.
         cendreAge: this.cendreAge,
@@ -2164,11 +2268,23 @@ export class WorldScene extends Phaser.Scene {
       const ciel = meteoFront ? this.cielFacade : null
       if (ciel && meteoFront) {
         ciel.doux = meteoFront.type
-        ciel.froid = meteoFront.type === 'pluie' ? 'neige' : meteoFront.type === 'orage' ? 'blizzard' : null
+        // La paire doux → froid vient de la SIM (`aspectFroidDe`) : la recopier ici l'aurait
+        // fait mentir en silence le jour où un type gagne un aspect froid.
+        ciel.froid = aspectFroidDe(meteoFront.type)
       }
       // …et il part tel quel à la barre haute, qui en fait son icône : une seule lecture
       // par image, partagée par le ciel qu'on peint et par le pictogramme qui le nomme.
       setHud(this.registry, 'cielIci', aspect)
+      // …ET LA BARRE SAIT SI ÇA COUVRE ICI : `cielIci` est délibérément SANS test d'empreinte
+      // (le mur qui approche est déjà de neige ou de pluie), mais un pictogramme plein sous un
+      // ciel encore sec mentait pendant des heures — l'icône s'estompe hors de la bande, comme
+      // l'aiguille du vent s'estompe par force faible. Le cadran dev, lui, dit « clair ».
+      setHud(
+        this.registry,
+        'cielCouvre',
+        meteoFront !== null
+          && meteoIntensityAt(meteoFront, this.lastTime.tick, this.map.width, this.map.height, this.predicted.x, this.predicted.y) > 0,
+      )
 
       // ── LE VENT (spec `vent.md` V10) ── le cap vient de la sim tel quel (écrivain unique) ;
       // la FORCE se relit AU POINT DU JOUEUR par la fonction pure partagée, et non au centre de
@@ -2226,6 +2342,30 @@ export class WorldScene extends Phaser.Scene {
           glace: estGele(etat, tx, ty),
         })
       }
+      // ── LE CIEL S'ENTEND (spec meteo.md R9, chantier audio 2026-08-28) ──
+      // Les deux nappes suivent l'ASPECT du front du jour au point du joueur (le même que
+      // l'icône : le mur qui approche a déjà son timbre) et l'intensité ENTENDUE — le présent
+      // plein, ou le murmure du front relu une minute de jeu EN AVANCE (la bande est une
+      // fonction pure du tick : lire demain est gratuit). C'est le « on les entend avant de
+      // les voir » de R9, au sens propre. Et le télégraphe de foudre GRÉSILLE au point visé
+      // (R8), sur la sonde que FoudreFx vient de poser — un seul écrivain de la géométrie.
+      {
+        const iCiel = meteoFront
+          ? meteoIntensityAt(meteoFront, this.lastTime.tick, this.map.width, this.map.height, this.predicted.x, this.predicted.y)
+          : 0
+        const iAvance = meteoFront
+          ? meteoIntensityAt(
+              meteoFront,
+              this.lastTime.tick + AVANCE_S * BALANCE.TICK_RATE_HZ,
+              this.map.width, this.map.height, this.predicted.x, this.predicted.y,
+            )
+          : 0
+        this.sonsCiel.update((forme) => this.audioFx.nappe(forme), aspect, intensiteEntendue(iCiel, iAvance))
+        const tel = this.foudreFx?.sonde
+        if (tel && tel.ticksLeft > 0) {
+          this.sonsCiel.gresille(time, tel.x, tel.y, tel.alpha, (sp, d2, at) => this.audioFx.play(sp, d2, at))
+        }
+      }
       // LA GERBE S'IMPUTE SUR LE BUDGET DE PARTICULES, elle ne s'empile pas à côté : le
       // rideau retranche de sa cible ce que les éclats occupent (au plus 48, ~7 %, 0,3 s).
       this.meteoLayer?.update(
@@ -2237,9 +2377,17 @@ export class WorldScene extends Phaser.Scene {
         this.view.wind.x === 0 && this.view.wind.y === 0 ? this.view.wind : this.ventRendu,
       )
 
-      // LES SERPENTINS : le cap vient de la sim, la part de souffle du relevé cadencé. À 0,
-      // la couche s'éteint entièrement — c'est un événement, pas une ambiance.
-      this.ventLayer?.update(time, this.view.wind, this.ventPartIci, this.cameras.main)
+      // LES SERPENTINS : le cap RALLIÉ, comme le rideau et l'aiguille — pendant les ~17 s d'un
+      // virage, trois vents à l'écran (rubans sur le cran brut, pluie et aiguille sur le cap
+      // lissé) racontaient deux vents différents. La part de souffle vient du relevé cadencé ;
+      // à 0, la couche s'éteint entièrement — c'est un événement, pas une ambiance. La
+      // sentinelle du calme plat passe telle quelle (cap nul = pas de rubans).
+      this.ventLayer?.update(
+        time,
+        this.view.wind.x === 0 && this.view.wind.y === 0 ? this.view.wind : this.ventRendu,
+        this.ventPartIci,
+        this.cameras.main,
+      )
 
       this.gelLayer?.update(this.etatGel, this.lastTime.tick, this.cameras.main)
       // LES EMPREINTES DANS LA NEIGE se recouvrent vite quand il neige ICI (au joueur) : la
@@ -2860,6 +3008,24 @@ export class WorldScene extends Phaser.Scene {
     else if (this.worldReady) this.send({ type: 'resume' }) // pas avant que les couches soient montées
   }
 
+  /**
+   * LES CORPS QUE CE COUP ARMÉ PRENDRAIT MAINTENANT (item 2, spec R15).
+   *
+   * La DÉCISION vit dans `world/cibles.ts` — pure et gardée. Elle est sortie d'ici pour la
+   * raison qui a déjà sorti `encaissement` et `desequilibre` d'`attack-fx` : du branchement
+   * neuf sans garde est du code dont rien, à l'écran, ne distingue « ça marche » de « ça
+   * sort tôt à chaque image ». Ici il ne reste que la peinture.
+   */
+  private designerLesCibles(
+    w: { id: number; dx: number; dy: number; strike: Strike; ranged: boolean },
+    spriteOf: (id: number) => Phaser.GameObjects.Image | null,
+  ): void {
+    for (const id of ciblesDesignees(w, this.lastEntities, this.playerId)) {
+      const sp = spriteOf(id)
+      if (sp) this.attackFx.cible(sp)
+    }
+  }
+
   private checkVitals(): void {
     if (!getHud(this.registry, 'worldReady')) return
     // LA FAIM TUE désormais : à 0, les PV fondent. On le dit, fort.
@@ -3146,6 +3312,18 @@ export class WorldScene extends Phaser.Scene {
         // rare et le plus gros des trois retours — un bandeau doré qui NOMME le métier et le
         // cran. La sim tient le niveau (`gainXp`), l'écran ne fait que l'annoncer (§3).
         publishLevelUp(this.registry, event.skill, event.level)
+      } else if (event.type === 'attack_whiffed') {
+        // ═══ LE COUP A FENDU L'AIR — ET ÇA SE VOIT ENFIN (2026-08-28) ═══
+        //
+        // `recoveryWhiff` cloue jusqu'à 1,6 s : c'est la meilleure mécanique du combat de
+        // coût, et la fenêtre où le loup entre. Elle n'avait aucune expression à l'écran —
+        // le joueur mourait pendant une immobilité qu'il attribuait au jeu, pas à son
+        // geste. Le corps part maintenant avec son élan et se rattrape, garde ouverte.
+        const rate = this.ratesAVenir.get(event.entityId)
+        const corps =
+          event.entityId === this.playerId ? this.playerSprite : (this.view.others.get(event.entityId)?.sprite ?? null)
+        if (rate && corps) this.attackFx.rate(corps, this.time.now, rate.dx, rate.dy, rate.ms)
+        this.ratesAVenir.delete(event.entityId)
       } else if (event.type === 'entity_damaged') {
         // LE COUP A PORTÉ — et on ne le sait QUE parce que la sim le dit. Un coup
         // qui « part » à l'écran mais que la sim refuse serait un mensonge (G9) —
@@ -3162,7 +3340,7 @@ export class WorldScene extends Phaser.Scene {
             ? this.playerSprite
             : (this.view.others.get(event.byEntityId)?.sprite ?? null)
         if (cible) {
-          this.attackFx.impact(cible, now, frappeur?.x, frappeur?.y)
+          this.attackFx.impact(cible, now, frappeur?.x, frappeur?.y, event.amount)
           // LA MATIÈRE DE LA CIBLE décide de ce qui jaillit — la MÊME frontière que la
           // sim, qui ne fait saigner au sol que ce qui a du sang (`habitat` non vide,
           // combat.ts) : la chair GICLE (sang-fx, balistique, ça se pose), le Cendreux
@@ -3179,11 +3357,16 @@ export class WorldScene extends Phaser.Scene {
           // rien de ce qui suit ne touche la simulation (multi).
           this.cameras.main.shake(90, 0.006)
         } else if (event.byEntityId === this.playerId) {
-          // MON COUP A PORTÉ. Une secousse BRÈVE et trois fois plus faible que celle
+          // MON COUP A PORTÉ. Une secousse BRÈVE et franchement plus faible que celle
           // qu'on encaisse : elle doit confirmer le contact, jamais le disputer au coup
           // reçu — sinon frapper et être frappé se ressentent pareil, et la seule
           // information qui compte vraiment dans une mêlée (« qui prend ? ») se noie.
-          this.cameras.main.shake(60, 0.002)
+          //
+          // ELLE SUIT LES DÉGÂTS depuis le 2026-08-27, comme le recul peint : à secousse
+          // fixe, un coup de poing et un tourbillon de hache rendaient le même cadre, et
+          // l'identité par la FORME de `combat.md` R4bis s'arrêtait au sol. La borne haute
+          // reste sous 0,006 — la garde de `encaissement.test.ts` l'affirme.
+          this.cameras.main.shake(SECOUSSE_PORTE_MS, secousseDuCoup(event.amount))
         }
       } else if (event.type === 'monster_slain') {
         // LA MISE À MORT claque : deux étincelles là où la bête est tombée. C'est le
@@ -3235,6 +3418,16 @@ export class WorldScene extends Phaser.Scene {
           dir = ns && eo ? `${ns}-${eo}` : ns || eo
         }
         publishError(this.registry, `Au loin${dir ? ' vers le ' + dir : ''}, le sol travaille — la faune s’est tue. La nuit prochaine appartiendra aux morts.`, this.time.now)
+      } else if (event.type === 'blizzard_annonce') {
+        // LA VEILLE DU BLIZZARD (spec meteo.md R9) : « la réponse est PRÉPARER — rentrer le
+        // bois ». La sim émettait, la chronique gardait la phrase pour le voile de fin de
+        // saison — et RIEN ne la portait à l'écran au moment utile : le joueur découvrait le
+        // blizzard le matin même, à l'icône. Patron `presage_horde` (l'autre préavis de la
+        // veille), par le canal des bandeaux faute d'audio (le son est acté « après GATE 1 »).
+        // `blizzard_entre`/`blizzard_passe` restent muets : le ciel les dit lui-même (S17,
+        // « le monde le dit, l'interface non » — la veille est la seule chose qu'il ne peut
+        // pas dire).
+        publishError(this.registry, 'Le vent du nord se lève — un blizzard couvrira la vallée demain. Rentrez le bois.', this.time.now)
       } else if (event.type === 'charnier_brule') {
         // LE GESTE A PRIS (décision ⑧) : sans retour à l'écran, brûler un charnier serait un
         // acte de foi — la parade doit prouver qu'elle a marché (le patron de `reveil_etouffe`).

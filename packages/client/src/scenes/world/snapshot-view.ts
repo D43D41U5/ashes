@@ -33,7 +33,7 @@ import {
   type NodeDelta,
   type SnapshotMessage,
 } from '@ashes/sim'
-import { enVol, hauteurDeBond, estUnCoinDePeche, feuillageDenude, fireStateAt, hash2, TERRAIN_CLIFF, terrainAt, VENT, type SimState, type WorldMap } from '@ashes/sim'
+import { enVol, hauteurDeBond, estUnCoinDePeche, feuillageDenude, fireStateAt, hash2, TERRAIN_CLIFF, TERRAIN_SHALLOW_WATER, terrainAt, VENT, type SimState, type WorldMap } from '@ashes/sim'
 import { TransitionsFlore, retardDe } from '../../render/flore-gel'
 import { cliffKey } from '../../render/cliff-art'
 import { cleCarcasse, etatCarcasse } from '../../render/carcasse-art'
@@ -73,6 +73,7 @@ import {
   DEMI_BANDE_TUILES,
   FLOOR_DEPTH,
   GROUND_FIRE_DEPTH,
+  GROUND_MAP_DEPTH,
   nodeDepth,
   barriereDepth,
   ROOF_DEPTH,
@@ -91,12 +92,35 @@ import { FonduDeCime } from '../../render/fondu-cime'
 
 /** Le débord de fenêtre, en TUILES : la hauteur du plus haut arbre de la table. Dérivé une fois
  *  au chargement — un arbre qui grandit l'emporte avec lui, sans qu'on ait à y penser. */
+/**
+ * ═══ LA BANDE IMMERGÉE D'UNE PIERRE DE GUÉ — les quatre cadrans de l'optique ═══
+ *
+ * Le pied rogné par l'eau (`enfoncementDUnNoeud`) est redessiné sous la ligne de flottaison,
+ * mêmes pixels, vus à travers l'eau. Quatre constantes, chacune UNE décision :
+ */
+/** Le désalignement de réfraction, en px monde. UN pixel : au grain de l'art (16 px/tuile),
+ *  deux se liraient comme une pierre cassée. Constant et toujours du même côté — la réfraction
+ *  réelle dépend de l'angle de vue, mais un décalage qui varierait par pierre se lirait comme
+ *  du bruit, pas comme une loi optique. */
+const BANDE_REFRACTION_PX = 1
+/** La teinte de l'eau, en MULTIPLY — un ton froid qui verdit et assombrit la pierre sans la
+ *  repeindre (le matériau reste lisible ; c'est le filtre de l'eau, pas une autre pierre). */
+const BANDE_TEINTE_EAU = 0x9fc4c8
+/** À travers l'eau trouble : ni fantôme (< 0,3 : le pied semble absent) ni pleine matière
+ *  (> 0,6 : la ligne de flottaison disparaît). Aplat UNIQUE, pas de dégradé — FX pixellisés. */
+const BANDE_ALPHA = 0.45
+/** Sous TOUTES les couches de surface, au-dessus de l'eau : la pile du haut-fond est
+ *  eau (GROUND+0,25) < bande < ombre des feuilles (+0,26) < reflets (+0,28) < feuilles (+0,32).
+ *  Une feuille qui dérive passe donc DEVANT le pied immergé, et son ombre tombe dessus. */
+const BANDE_IMMERGEE_DEPTH = GROUND_MAP_DEPTH + 0.255
+
 const MARGE_CIMES = Math.ceil(Math.max(...TOUTES_VARIANTES.map((v) => hauteurTuiles(v.mesures))))
 import { cimeDe, varianteArbre } from '../../render/arbre-peuplement'
 import { warmthColor } from '../../render/lighting'
 import { LIT_NODE_TYPES, litNodeTextureKey } from '../../render/lit-props'
 import { cleLit } from '../../render/normal-map'
-import { cleDeSocle, estUnSocle, SOCLE_KEYS, SOCLE_OMBRE_DESCENTE, SOCLE_OMBRE_TUILES, tailleDeSocle, type SocleType } from '../../render/socle-mineral'
+import { cleDeSocle, estUnSocle, SOCLE_KEYS, SOCLE_OMBRE_DERIVE, SOCLE_OMBRE_DESCENTE, SOCLE_OMBRE_TUILES, tailleDeSocle, type SocleType } from '../../render/socle-mineral'
+import { cranDeDerive } from '../../render/ombre-socle'
 import { BATI_LIT_TYPES, COUPE_DE, EDGE_ORIGIN_Y, masqueSeRetourne, MUR_HT, RUINE_SEUIL } from '../../render/bati-art'
 import { creerPortesAnimees } from '../../render/porte-anim'
 import { calculerNappe, calculerPans, pansTombes } from '../../render/pans'
@@ -106,9 +130,9 @@ import type { InteractTarget } from './aim'
 import type { RecolteFx } from './recolte-fx'
 import type { ChuteArbre } from './chute-arbre'
 import type { ReveilFx } from './reveil-fx'
-import { createContactShadow, positionShadow, SHADOW_ALPHA } from './contact-shadow'
+import { createContactShadow, poserOmbreDeSocle, positionShadow, SHADOW_ALPHA } from './contact-shadow'
 import { riveAt, type RiveField } from '../../render/water-field'
-import { coupeDeNeige, enfoncement, epaisseurQuiSEnfonce } from '../../render/enfoncement'
+import { coupeDeNeige, enfoncement, enfoncementDUnNoeud, epaisseurQuiSEnfonce } from '../../render/enfoncement'
 import { cleDeTuile, indexerParTuile } from './index-noeuds'
 
 /** Le nœud VISÉ à portée s'éclaire d'or ; hors de portée, il se grise (G4). */
@@ -761,6 +785,10 @@ export class SnapshotView {
    *  Servi et libéré par le MÊME compteur (`used`) — impossible qu'une ombre survive à son
    *  nœud ou glisse sur un autre. Toutes partagent une texture : elles se batchent. */
   private nodeShadowPool: Phaser.GameObjects.Image[] = []
+  /** Pool PARALLÈLE encore (même compteur `used`) : la BANDE IMMERGÉE d'une pierre de gué —
+   *  le pied rogné, redessiné sous la ligne d'eau (voir le bloc BANDE_* plus bas). Seuls les
+   *  socles posés sur le haut-fond s'en servent ; pour tous les autres il reste invisible. */
+  private nodeBandePool: Phaser.GameObjects.Image[] = []
   /** Pool SÉPARÉ : un arbre est deux sprites (tronc trié avec les acteurs,
    * houppier dans sa bande propre). Les autres nœuds n'en consomment aucun. */
   private crownPool: Phaser.GameObjects.Image[] = []
@@ -876,6 +904,22 @@ export class SnapshotView {
    */
   private readonly portes = creerPortesAnimees()
   private hour = 12
+  /**
+   * LA DÉRIVE DE L'OMBRE, part signée dans [−1, 1] — POUSSÉE par `WorldScene`, jamais calculée
+   * ici. C'est l'invariant « une seule horloge traverse la chaîne » (`lighting.ts`) : le voile,
+   * le soleil, la lune et l'eau reçoivent tous la MÊME `heureSolaire`, et en dériver une seconde
+   * dans cette classe rejouerait le défaut du 2026-08-25 (deux chaînes pas à la même heure).
+   * 0 = flaque centrée — la valeur d'avant la dérive, et celle de la première image, avant que
+   * le premier snapshot n'ait donné une heure.
+   */
+  deriveOmbre = 0
+  /**
+   * LA FORCE DE L'OMBRE, dans [0, 1] — poussée par `WorldScene` comme la dérive, et pour la même
+   * raison (une seule horloge). C'est l'opacité de la coulée : elle S'ÉTEINT au crépuscule et
+   * n'existe pas sous une nouvelle lune, parce qu'une ombre PORTÉE n'a pas d'existence sans
+   * astre pour la jeter. 1 par défaut — l'ombre pleine, avant le premier snapshot.
+   */
+  forceOmbre = 1
 
   /** LE SANG AU SOL (spec chasse C9), LE VENT (C17), LES PILES (C18). */
   blood: SnapshotMessage['blood'] = []
@@ -902,6 +946,10 @@ export class SnapshotView {
   /** LE FRONT MÉTÉO EN COURS (spec meteo.md), ou rien — le RECORD D'ÉLECTION, patron `wind`.
    *  Tout le reste (bande, gradient, éclairs) se recalcule du tick par les fonctions pures. */
   meteo: SnapshotMessage['meteo'] = null
+  /** LA NAPPE DE BRUME, ou rien — même patron. La façade du gel la consomme : sans elle, la
+   *  température relue était trop chaude de `BRUME.COLD_MALUS` sous la nappe (G5). Optionnel
+   *  au protocole (additif) : un hôte d'avant n'en envoie pas, on retombe sur `null`. */
+  brume: NonNullable<SnapshotMessage['brume']> | null = null
   groundItems: SnapshotMessage['groundItems'] = []
 
   /** Applique un snapshot complet — hors avatar local (prédit par la scène). */
@@ -953,6 +1001,7 @@ export class SnapshotView {
     // depuis aujourd'hui le pli des brins et la fumée des feux. Une loi livrée sans appelant.
     this.windForce = msg.windForce
     this.meteo = msg.meteo
+    this.brume = msg.brume ?? null
     this.groundItems = msg.groundItems
     // LES SOLS QUI TRAVAILLENT (spec `cendreux.md` R21) : le snapshot les portait déjà et
     // le client les jetait. Ils se recalent sur l'horloge du RENDU ici, une fois par
@@ -2286,6 +2335,18 @@ export class SnapshotView {
         // près. Les autres nœuds restent centrés sur leur tuile.
         const j = isTree ? treeJitter(tx, ty) : { dx: 0, dy: 0 }
         const a = tileFeetAnchor(tx, ty, TILE_PX)
+        // LA PIERRE PLANTÉE DANS LE GUÉ A LE PIED SOUS L'EAU. Les blocs d'un passage à gué
+        // (`zone-content.ts`, `pierresDuGue`) sont les seuls nœuds que le monde pose SUR de l'eau
+        // qu'on foule ; la LOI (profondeur, composition avec la neige) vit dans `enfoncement.ts`
+        // avec les trois autres milieux — ici on ne fait que dire QUI est dedans.
+        // ET « DEDANS » SE JUGE SUR L'EAU DU JOUR, pas sur la carte (Alexis, 2026-08-28 :
+        // « lorsqu'une pierre est sur de la boue sèche, on affiche l'ombre ») : la sécheresse
+        // retire l'eau du gué (`eauIci`, la même loi que les feuilles et les coins de pêche) —
+        // la pierre remonte alors de ses 7 px, garde son pied, et sa COULÉE d'ombre revient
+        // d'elle-même : tout découle du seul prédicat, aucun état de plus.
+        const immerge = SOCLE_KEYS.has(texture) && this.carte !== null
+          && terrainAt(this.carte, tx, ty) === TERRAIN_SHALLOW_WATER
+          && (this.eauIci === null || this.eauIci(tx, ty))
         // Le coup qui porte fait TRESSAILLIR le nœud (spec recolte.md G10). Le
         // décalage est purement visuel et transitoire : il s'ajoute au dessin, il
         // ne touche ni la tuile, ni la profondeur, ni l'emprise logique.
@@ -2294,7 +2355,8 @@ export class SnapshotView {
         const px = a.px + j.dx * TILE_PX + shake
         const py = a.py + j.dy * TILE_PX
         const lift = this.warp?.lift(tx + 0.5 + j.dx, ty + 1 + j.dy) ?? 0
-        sprite.setPosition(px, py - lift)
+        const pyDessin = py - lift + (immerge ? enfoncementDUnNoeud(true).descente : 0)
+        sprite.setPosition(px, pyDessin)
         // Le sprite est POOLÉ : sa depth suit la tuile qu'il occupe cette frame,
         // jamais celle où il a été créé. Le pied réel intègre le décalage Y, pour
         // que deux arbres proches se trient par leur vrai pied, pas par le pool.
@@ -2340,7 +2402,7 @@ export class SnapshotView {
         if (coup !== undefined) {
           this.recolteFx?.eclater(
             n.id, coup.at, now, n.type, texture,
-            px, py - lift, sprite.displayHeight,
+            px, pyDessin, sprite.displayHeight,
             coup.fromX, coup.fromY, coup.count, coup.clean,
           )
           // ET LE HOUPPIER LÂCHE DES FEUILLES (demande d'Alexis, 2026-07-29). La hache mord
@@ -2364,7 +2426,7 @@ export class SnapshotView {
               // dispersion suit sa LARGEUR, qui n'est plus la même depuis `houppierW` (le saule
               // et le parasol du vieux pin sont plus larges que hauts). Les feuilles d'un saule
               // tombaient dans un rayon de cime carrée, donc trop serré pour la sienne.
-              px, py - lift, ancrageHouppierPx(m) + m.houppierS * 0.3, houppierLargeur(m) * 0.4,
+              px, pyDessin, ancrageHouppierPx(m) + m.houppierS * 0.3, houppierLargeur(m) * 0.4,
             )
           }
         }
@@ -2397,23 +2459,80 @@ export class SnapshotView {
         // hauteur (la découpe révèle le manteau), l'ombre remonte d'autant. Jamais sur un coin
         // de pêche (il est sur l'eau, qui n'en porte pas).
         const coupeNeige = coupeDeNeige(this.hauteurNeigeAt?.(tx + 0.5 + j.dx, ty + 1 + j.dy) ?? 0, sprite.displayHeight)
-        if (coupeNeige > 0) {
+        const { coupe, descente } = enfoncementDUnNoeud(immerge, coupeNeige)
+        if (coupe > 0) {
           const frame = sprite.frame
-          sprite.setCrop(0, 0, frame.width, Math.max(1, frame.height - coupeNeige / Math.max(1e-6, sprite.scaleY)))
+          sprite.setCrop(0, 0, frame.width, Math.max(1, frame.height - coupe / Math.max(1e-6, sprite.scaleY)))
         } else if (sprite.isCropped) sprite.setCrop()
+        // ═══ LA BANDE IMMERGÉE — le pied de la pierre, VU À TRAVERS L'EAU (Alexis, 2026-08-28 :
+        // « montrer la partie immergée avec un effet optique adapté ») ═══
+        //
+        // Le gué montre son fond PARTOUT (la vase de water-layer, les caustiques, l'ombre des
+        // feuilles qui ne se dessine que sur le haut-fond) : une pierre dont le pied disparaît
+        // net était la seule chose du gué qu'on ne voyait pas sous la surface. Les texels rognés
+        // ci-dessus sont donc REDESSINÉS, mêmes pixels, trois altérations et pas une de plus :
+        //   · TEINTÉS vers l'eau (multiply) et TRANSLUCIDES — on regarde à travers quelque chose ;
+        //   · DÉCALÉS d'un pixel en X : la signature de la réfraction — la partie immergée ne
+        //     s'ALIGNE pas avec l'émergée, et c'est ce désalignement qui dit « ça continue »
+        //     mieux que la transparence (aplat unique, pas de dégradé — FX pixellisés) ;
+        //   · SOUS les couches de surface : au-dessus de l'eau (le fond se voit), sous l'ombre
+        //     des feuilles (une feuille qui passe ombre AUSSI le pied de la pierre).
+        // La ligne de flottaison naît toute seule de la frontière crop-émergé / bande-immergée.
+        // JAMAIS sous la neige : si le manteau rogne plus profond que l'eau, le pied est sous
+        // la glace et la neige, pas sous une surface qu'on lirait à travers.
+        let bande = this.nodeBandePool[used]
+        if (immerge && descente > 0 && coupe <= descente) {
+          if (!bande) {
+            bande = this.scene.add.image(0, 0, texture).setOrigin(0.5, 1)
+            this.nodeBandePool[used] = bande
+          }
+          const frame = sprite.frame
+          const bandeTexels = Math.min(frame.height - 1, descente / Math.max(1e-6, sprite.scaleY))
+          bande.setTexture(texture)
+          bande.setCrop(0, frame.height - bandeTexels, frame.width, bandeTexels)
+          bande.setPosition(px + BANDE_REFRACTION_PX, pyDessin)
+          bande.setScale(sprite.scaleX, sprite.scaleY)
+          bande.setDepth(BANDE_IMMERGEE_DEPTH)
+          bande.setTint(BANDE_TEINTE_EAU).setTintMode(Phaser.TintModes.MULTIPLY)
+          bande.setAlpha(BANDE_ALPHA)
+          bande.setLighting(this.lighting)
+          bande.setVisible(true)
+        } else if (bande) bande.setVisible(false)
         // LE SOCLE MINÉRAL a sa propre flaque : plus large que sa tuile, et descendue d'un texel
         // (voir SOCLE_OMBRE_TUILES) — centrée sur un bloc pleine largeur, l'ombre ordinaire
         // disparaissait derrière lui.
+        // ET ELLE DÉRIVE EN X À L'OPPOSÉ DE L'ASTRE (demande d'Alexis, 2026-08-27) : sous une
+        // pierre pleine tuile, une flaque centrée ne sortait qu'en anneau symétrique — une
+        // auréole, pas une ombre. Le CÔTÉ vient de `deriveDOmbre` (poussée par WorldScene, la
+        // seule horloge de la chaîne), l'amplitude de `SOCLE_OMBRE_DERIVE`. Les autres nœuds
+        // gardent leur flaque centrée : la dérive vaut 0 par défaut.
+        // LE SOCLE A SA PROPRE OMBRE, ET CE N'EST PLUS UNE FLAQUE : une COULÉE pleine tuile à
+        // bords francs, cisaillée par la dérive (`ombre-socle.ts`) — « ce qui est taillé est
+        // droit ». Elle s'ancre au PIED et c'est sa POINTE qui part à l'opposé de l'astre.
+        // ⚠ `poserOmbreDeSocle` rend `false` si la forme retenue est l'ellipse : on retombe
+        // alors sur la flaque générique, sans chemin de code en plus (le témoin de la planche).
         const socle = SOCLE_KEYS.has(texture)
-        const gapWorld = nodeArtGap(texture) * sprite.scaleY + coupeNeige
-          - (socle ? SOCLE_OMBRE_DESCENTE * sprite.scaleY : 0)
-        positionShadow(
-          nodeShadow, px, py, sprite.displayWidth, sprite.depth, gapWorld,
-          socle ? TILE_PX * SOCLE_OMBRE_TUILES * sprite.scaleX : undefined,
+        const pose = socle && coupe === 0 && poserOmbreDeSocle(
+          nodeShadow, px, py, cranDeDerive(this.deriveOmbre), sprite.scaleX, sprite.scaleY, sprite.depth,
+          this.forceOmbre,
         )
+        if (!pose) {
+          // LA NEIGE REPREND LA FLAQUE : quand le manteau mange le pied du bloc, l'ombre doit
+          // REMONTER avec lui (G9) — une coulée ancrée au sol dirait que la pierre est encore
+          // posée sur la terre. La flaque, elle, sait déjà le faire par son gap.
+          const gapWorld = nodeArtGap(texture) * sprite.scaleY + coupe
+            - (socle ? SOCLE_OMBRE_DESCENTE * sprite.scaleY : 0)
+          positionShadow(
+            nodeShadow, px, py, sprite.displayWidth, sprite.depth, gapWorld,
+            socle ? TILE_PX * SOCLE_OMBRE_TUILES * sprite.scaleX : undefined,
+            socle ? this.deriveOmbre * TILE_PX * SOCLE_OMBRE_DERIVE * sprite.scaleX : 0,
+          )
+        }
         // UN COIN DE PÊCHE est SUR l'eau : rien n'y projette d'ombre de contact (peche.md) — la
         // flaque sombre d'un nœud posé sur une surface qui n'en porte pas se verrait comme une tache.
-        if (estUnCoinDePeche(n.type)) nodeShadow.setVisible(false)
+        // …et une PIERRE DE GUÉ est sur cette même eau : sa coulée se poserait sur la surface,
+        // sous une pierre dont le pied est en dessous. Même raison, même geste.
+        if (estUnCoinDePeche(n.type) || immerge) nodeShadow.setVisible(false)
         used++
         // Une POUSSE n'a pas encore de houppier — il reviendra avec l'arbre adulte.
         if (!isTree || growing) continue
@@ -2503,6 +2622,11 @@ export class SnapshotView {
     // Les ombres suivent EXACTEMENT le sort de leurs nœuds (même compteur) : aucune orpheline
     // ne reste allumée sur une tuile que le culling vient de quitter.
     for (let i = used; i < this.nodeShadowPool.length; i++) this.nodeShadowPool[i]!.setVisible(false)
+    // ⚠ CE POOL-CI EST TROUÉ, et c'est le seul : une bande n'est créée QUE pour un
+    // nœud immergé (`immerge && descente > 0`), donc les index des nœuds à sec restent
+    // `undefined` — le `!` des pools denses y crashait (`Cannot read properties of
+    // undefined`, attrapé par Alexis en jeu le 2026-08-28).
+    for (let i = used; i < this.nodeBandePool.length; i++) this.nodeBandePool[i]?.setVisible(false)
     for (let i = crownsUsed; i < this.crownPool.length; i++) this.crownPool[i]!.setVisible(false)
     for (let i = fadesUsed; i < this.crownFadePool.length; i++) this.crownFadePool[i]!.setVisible(false)
     // Les fondus des arbres qu'on ne regarde plus s'oublient — la carte reste bornée à ce qui

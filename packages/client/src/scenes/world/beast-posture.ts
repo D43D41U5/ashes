@@ -93,6 +93,9 @@ export function beastTint(monster: Monster | undefined, windup: boolean, isNpc: 
   // vitesse et fonce en ligne droite est déjà un signal ; la teinte de MENACE le
   // rend franc, et c'est la même qu'un sanglier lancé : « ça vient sur toi. »
   if (monster.leapUntil !== undefined) return BEAST_TINTS.menace
+  // LA DÉTENTE (2026-08-28) : le ressort se bande — même teinte, et elle arrive
+  // AVANT le vol : c'est elle qui donne au joueur le temps de lire l'attaque.
+  if (monster.bondPrepUntil !== undefined) return BEAST_TINTS.menace
 
   // Le sanglier (spec faune R14) — les trois secondes qui décident de tout.
   if (monster.threatSince !== undefined) return BEAST_TINTS.menace
@@ -285,7 +288,12 @@ export function beastTexture(
     return 'spr-boar'
   }
   if (monster.type === 'wolf') {
+    if (monster.petit) return 'spr-wolf-petit' // le petit (loup.md L15) : il ne se bat pas, ça se voit
     if (monster.alpha) return 'spr-wolf-alpha' // sa silhouette EST son identité : on n'y touche pas
+    // LA DÉTENTE (Alexis, 2026-08-28) : tassé avant le bond — la silhouette tapie
+    // EST le télégraphe (avec la teinte de menace, voir `beastTint`). Avant
+    // `eatingUntil` et `stalking` : un ressort qui se bande passe devant tout.
+    if (monster.bondPrepUntil !== undefined) return 'spr-wolf-stalk'
     if (monster.eatingUntil !== undefined) return 'spr-wolf-eat'
     if (monster.stalking) return 'spr-wolf-stalk'
     return 'spr-wolf'

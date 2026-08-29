@@ -410,8 +410,12 @@ describe('Le Feu-station : destructibilité découplée du combustible (spec feu
  *   · une horde qui BOIT le Foyer et en tire du charbon (elle vide un stock, elle ne brûle
  *     rien) ;
  *   · du charbon perdu en silence parce que la SORTIE était pleine ;
- *   · et le défaut de fond : que ce charbon-là fonde le fer, c'est-à-dire que chaque feu de
- *     camp devienne une mine de houille.
+ *   · et le défaut de fond : que chaque feu de camp devienne une mine de houille.
+ *
+ * ⚠ **CE DERNIER POINT A CHANGÉ DE FORME LE 2026-08-27** (R24, `cendre.md`) : le charbon de bois
+ * fond désormais le FER — c'est ce qui lui donne enfin un usage — mais jamais l'acier, et à
+ * DEUX unités pour une de houille. Le garde-fou tient donc sur le RAPPORT et sur l'ACIER, plus
+ * sur l'inertie. Voir la dernière garde de ce bloc.
  */
 /** Le charbon en SORTIE — tolère l'absence de sortie : un feu qui n'a jamais rien produit
  *  n'a pas encore d'inventaire de sortie, et c'est un ZÉRO, pas une erreur. */
@@ -532,13 +536,31 @@ describe('Le Feu-station : le charbon de bois (S30)', () => {
     expect(charbon(foyer)).toBe(0)
   })
 
-  it('S30 — le charbon de BOIS ne fond rien : aucune recette ne le consomme (la houille reste minière)', () => {
-    // La décision d'Alexis, gardée par le compilateur ET par ce balayage : le jour où
-    // quelqu'un l'ajoute à une recette de forge, il faudra passer ici et l'assumer.
-    const consommateurs = Object.entries(RECIPES).filter(([, r]) => (r.inputs as Record<string, number>).charcoal !== undefined)
-    expect(consommateurs).toEqual([])
-    // Et la houille, elle, garde ses deux clients — sinon ce test serait vrai d'un monde
-    // où plus rien ne fond du tout.
+  /**
+   * ⚠ CETTE GARDE A ÉTÉ RETOURNÉE LE 2026-08-27, ET C'EST UNE DÉCISION, PAS UN CORRECTIF.
+   *
+   * Elle affirmait « le charbon de BOIS ne fond rien : aucune recette ne le consomme » (décision
+   * du 2026-08-25), et elle prévenait elle-même : *« le jour où quelqu'un l'ajoute à une recette
+   * de forge, il faudra passer ici et l'assumer »*. C'est fait — **R24** (`cendre.md`) : le
+   * charbon de bois est le combustible de forge du pauvre. Le garde-fou qu'elle protégeait
+   * VRAIMENT (« un feu de camp ne doit pas devenir une mine de houille ») est donc reformulé,
+   * pas supprimé : il tient maintenant en deux clauses, le RAPPORT et l'ACIER.
+   */
+  it('S30 — le charbon de BOIS fond le FER (R24), jamais l’acier — un feu de camp n’est pas une mine', () => {
+    const auCharbon = Object.entries(RECIPES).filter(([, r]) => (r.inputs as Record<string, number>).charcoal !== undefined)
+    expect(auCharbon.length, 'le charbon de bois a un usage depuis R24').toBeGreaterThan(0)
+    for (const [id, r] of auCharbon) {
+      // ① IL NE SORT QUE DU FER — l'acier reste minier, et le palier 3 se paie en expédition.
+      expect(r.output, `${id} ne doit pas sortir d’acier`).not.toContain('steel')
+      // ② IL COÛTE PLUS CHER QUE LA HOUILLE, sinon la mine n'a plus de raison d'être : deux
+      //    charbons pour un lingot, c'est-à-dire HUIT bûches et le temps de feu qui va avec.
+      const houille = Object.entries(RECIPES).find(([, o]) => o.output === r.output && (o.inputs as Record<string, number>).coal !== undefined)
+      expect(houille, `${id} doit avoir un jumeau à la houille`).toBeDefined()
+      const nCharbon = (r.inputs as Record<string, number>).charcoal!
+      const nHouille = (houille![1].inputs as Record<string, number>).coal!
+      expect(nCharbon, `${id} : le charbon doit coûter plus d’unités que la houille`).toBeGreaterThan(nHouille)
+    }
+    // Et la houille garde ses clients — sinon la garde serait vraie d'un monde où plus rien ne fond.
     const clientsHouille = Object.entries(RECIPES).filter(([, r]) => (r.inputs as Record<string, number>).coal !== undefined)
     expect(clientsHouille.length).toBeGreaterThanOrEqual(2)
   })

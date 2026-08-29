@@ -15,9 +15,12 @@ import { moveAvatar } from './collision'
 import { advanceDegel } from './gel'
 import { advanceEnvols } from './faune'
 import { advanceCombat, applyCombatAction, tientUnArc, type CombatAction, type Corpse } from './combat'
+import { advanceSeparation } from './separation'
+import { advanceImpasse } from './impasse'
 import { advanceCendreux } from './cendreux'
 import { avanceesDepuisAges, avancerLaCendre, foyersDeLaCarte, jourDuReveilDeLaCendre, tomberLesMortsDeLaCendre } from './cendre'
 import { FUMEROLLE, ouvrirLesFumerolles } from './fumerolle'
+import { ouvrirLesCharbonnieres } from './charbonniere'
 import { effetsDuJour } from './modificateur'
 import { advanceLieuxBrules, advanceReveils, type Reveil } from './morts'
 import { advanceDecouverte } from './decouverte'
@@ -136,6 +139,37 @@ export interface Entity {
    * qui ont encaissé.
    */
   knockedAt?: number
+  /**
+   * LA TOUCHE DE PARADE EST-ELLE TENUE ? (spec combat R6bis) — l'état BRUT de l'entrée,
+   * distinct de `blocking` qui en est le DÉRIVÉ (souffle, clarté, nuit noire). Il ne sert
+   * qu'à une chose : reconnaître le FRONT MONTANT, celui qui arme la fenêtre de parade.
+   * Sur `blocking`, une jauge qui repasse au-dessus de zéro rouvrirait une fenêtre sans
+   * qu'un doigt ait bougé. Absent tant que personne ne pare : les PNJ et les bêtes ne
+   * portent jamais ce champ.
+   */
+  blockHeld?: true
+  /**
+   * LA FENÊTRE DE PARADE OUVERTE (R6bis) : le dernier tick où une garde posée à temps est
+   * encore gratuite. Armée au front montant, CONSOMMÉE par la parade qu'elle offre — une
+   * pression, une parade. Tenir la touche ne rouvre rien.
+   */
+  parryUntil?: number
+  /**
+   * DEPUIS QUAND LA GARDE EST-ELLE BASSE (R6bis) — le tick où la touche a été relâchée.
+   *
+   * ═══ CE QU'IL FERME, ET C'ÉTAIT UN TROU MESURÉ ═══
+   *
+   * Le front montant seul ne suffisait pas : MARTELER la touche rouvrait une fenêtre à
+   * chaque pression. MESURÉ (`tools/diag-parade.mts`, huit coups encaissés) — à raison
+   * d'une pression tous les trois ticks : **10 PV perdus pour 0 de souffle**, là où tenir
+   * la garde coûtait 52 de souffle pour les mêmes 10 PV. La défense complète, gratuite,
+   * et sans aucun timing : la parade parfaite devenait la conduite dominante.
+   *
+   * Une parade est un GESTE : il faut avoir baissé la garde pour la relever dessus. La
+   * fenêtre ne s'arme donc qu'après `PARRY_WINDOW_TICKS` passés garde basse — le martèlement
+   * ne laisse jamais ce temps, la lecture d'un télégraphe, si. Absent = on n'a jamais paré.
+   */
+  guardDownSince?: number
   exhaustedUntil: number
   /** LE COÛT DE MORT CROISSANT (V2-21) : morts RAPPROCHÉES → épuisement plus long
    *  (plafonné). Une longue survie fait OUBLIER le compte (`lastDeathAt`), pas de
@@ -788,6 +822,15 @@ export function speedScaleFor(
   // seulement : le facteur revient à 1 avec la bande, aucune accumulation au sol.
   scale *= meteoFactor
   if (entity.wounds.leg) scale *= COMBAT.LEG_WOUND_SPEED
+  // ═══ À BOUT DE SOUFFLE, ON TRAÎNE (spec R1, écart soldé le 2026-08-27) ═══
+  //
+  // La règle promettait « il ne peut plus que marcher : à la merci du premier coup » ; la
+  // sim ne faisait que lui refuser la course, et il marchait du pas d'un homme frais.
+  // C'est aussi ce qui abaisse enfin la moyenne de la course en dents de scie sous celle
+  // du loup (R1ter, arbitrage laissé ouvert) : ce n'est pas le rapport cyclique qu'on
+  // corrige, c'est la vitesse de sa moitié basse. Le verrou `exhausted` porte déjà son
+  // hystérésis — il ne se lève qu'à `SPRINT_RECOVER_STAMINA`.
+  if (entity.exhausted === true) scale *= COMBAT.WINDED_SPEED
   const ratio = carryRatio(entity.inventory)
   const tier = carryTier(ratio)
   scale *= carrySpeedFactor(ratio)
@@ -890,7 +933,33 @@ export function step(state: SimState, inputs: MoveInput[]): void {
     const clarte = clarteSurSoi(state, entity)
     // Postures (spec combat) : bloquer, viser, sprinter.
     // ⚠ ON NE PARE PAS CE QU'ON NE VOIT PAS (2026-08-26) : même seuil que `speedScaleFor`.
-    entity.blocking = (input.block ?? false) && entity.stamina > 0 && clarte >= NUIT.SEUIL_NOIR
+    // ═══ LA FENÊTRE DE PARADE S'ARME AU FRONT MONTANT DE LA TOUCHE (spec R6bis) ═══
+    //
+    // Sur la touche BRUTE (`blockHeld`), et surtout pas sur `entity.blocking` juste en
+    // dessous : celui-là est dérivé du souffle et de la clarté, il retombe et remonte tout
+    // seul, et l'armer là rendrait une parade gratuite à chaque scintillement de jauge —
+    // R6 (« bloquer coûte de l'endurance par coup encaissé ») serait mort sans un mot.
+    const veutParer = input.block ?? false
+    if (veutParer) {
+      if (entity.blockHeld !== true) {
+        entity.blockHeld = true
+        // ═══ UNE PARADE EST UN GESTE : il faut avoir BAISSÉ la garde pour la relever ═══
+        //
+        // Le front montant seul se martelait — mesuré : une pression tous les trois ticks
+        // donnait la protection COMPLÈTE pour zéro souffle, sans aucun timing. On exige
+        // donc que la garde soit restée basse au moins le temps d'une fenêtre : un
+        // martèlement ne laisse jamais ce temps, une lecture de télégraphe, si.
+        const basseDepuis = entity.guardDownSince
+        if (basseDepuis === undefined || state.tick - basseDepuis >= COMBAT.PARRY_WINDOW_TICKS) {
+          entity.parryUntil = state.tick + COMBAT.PARRY_WINDOW_TICKS
+        }
+      }
+    } else {
+      if (entity.blockHeld === true) entity.guardDownSince = state.tick
+      delete entity.blockHeld
+      delete entity.parryUntil
+    }
+    entity.blocking = veutParer && entity.stamina > 0 && clarte >= NUIT.SEUIL_NOIR
     // LE PAS ORIENTE — SAUF QUAND ON ARME (décision d'Alexis, 2026-08-02). Pendant une
     // charge, c'est la VISÉE qui tient le corps : reculer en bandant ne doit pas faire
     // pivoter l'archer dos à sa cible, alors que la zone, elle, continue de la montrer.
@@ -986,6 +1055,14 @@ export function step(state: SimState, inputs: MoveInput[]): void {
   advanceReveils(state)
   advanceLieuxBrules(state)
   advanceCombat(state)
+  // LES CORPS SE DÉCOLLENT (spec combat R4septies, `separation.ts`) — DERNIER de tout ce qui
+  // déplace, et c'est sa condition d'existence : elle corrige l'état FINAL du tick. Placée
+  // plus haut, le pas d'input, une charge de lance ou un recul repasseraient par-dessus et
+  // l'on se retrouverait dans le corps d'en face à l'instant où le snapshot part.
+  advanceSeparation(state)
+  // L'IMPASSE (impasse.ts) — le guet du tremblement, APRÈS la séparation : il lit
+  // l'état FINAL du tick, celui que le snapshot emporte et que l'œil voit.
+  advanceImpasse(state)
   advanceAlignment(state)
   // L'UPKEEP DU FEU (spec construction R16) : le Feu brûle son combustible, et à sec les
   // murs cèdent. Le seul évier permanent — après l'alignement (les raids ont pu casser),
@@ -1035,10 +1112,12 @@ export function step(state: SimState, inputs: MoveInput[]): void {
       }
       // LES FUMEROLLES S'OUVRENT — celles que le cœur de la corruption vient d'atteindre. Après
       // la chute des morts, et pas avant : une bouche sous un arbre attendait que l'arbre tombe.
-      ouvrirLesFumerolles(
-        state.nodes, state.map, avanceesDepuisAges(state.cendreAge, state.cendreAge.length),
-        state.seed, FUMEROLLE.SEL_STOCK,
-      )
+      const avanceesDuJour = avanceesDepuisAges(state.cendreAge, state.cendreAge.length)
+      ouvrirLesFumerolles(state.nodes, state.map, avanceesDuJour, state.seed, FUMEROLLE.SEL_STOCK)
+      // LES CHARBONNIÈRES aussi (R25) — ce que la cendre REND, sur l'ancienne forêt du cœur.
+      // Même moment, même raison : après la chute des morts, jamais avant, sinon un fût
+      // s'ouvrirait sous un arbre encore debout et attendrait pour rien.
+      ouvrirLesCharbonnieres(state.nodes, state.map, avanceesDuJour, state.seed)
     }
   }
   advanceCraft(state)

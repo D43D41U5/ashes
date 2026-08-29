@@ -13,6 +13,14 @@ const MASTER_GAIN = 0.6 // le plafond global : le son reste un DÉCOR, jamais au
 
 const clamp01 = (v: number): number => Math.max(0, Math.min(1, v))
 
+/** Une nappe ouverte — voir `SoundEngine.nappe`. */
+export interface Nappe {
+  /** Cible de niveau (gain absolu sous le maître) et de coupe/centre (Hz), rampées. */
+  regler(niveau: number, hz: number, fonduS: number): void
+  /** Rampe à zéro puis éteint la source — la nappe ne se rouvre pas. */
+  arreter(fonduS?: number): void
+}
+
 export class SoundEngine {
   private ctx: AudioContext | undefined
   private master: GainNode | undefined
@@ -168,6 +176,82 @@ export class SoundEngine {
       },
       resteS(): number {
         return Number.isFinite(el.duration) ? el.duration - el.currentTime : Infinity
+      },
+    }
+  }
+
+  /**
+   * OUVRE UNE NAPPE — un lit de bruit BOUCLÉ, synthétisé (zéro asset), sous le gain maître.
+   *
+   * C'est la primitive qui manquait entre le one-shot (`play`) et la bande streamée
+   * (`piste`) : la pluie et le vent ne sont ni des événements ni un morceau — un état
+   * continu dont seul le NIVEAU et le TIMBRE bougent. Deux formes :
+   *   `pluie` — bruit passe-bas : le crépitement, dont la coupe dit la densité de l'averse ;
+   *   `vent`  — bruit passe-bande étroit dont le centre ONDULE (LFO lent) : la plainte du
+   *             vent, jamais un souffle plat — un bandpass fixe sonne comme un ventilateur.
+   *
+   * Rend `null` tant que l'audio dort (patron `piste()`) : l'appelant repassera chaque
+   * image — la machine à états du thème, en plus petit. Le mute et le curseur passent par
+   * `master`, comme tout le reste (une seule source de gain effectif).
+   *
+   * ⚠ LES RAMPES REPARTENT DE LA VALEUR COURANTE (le patron de `rampeVers` de la piste) :
+   * une cible reposée chaque image ne fait pas sauter le niveau, elle infléchit la pente.
+   */
+  nappe(forme: 'pluie' | 'vent'): Nappe | null {
+    const ctx = this.ctx
+    const master = this.master
+    if (!ctx || !master || ctx.state !== 'running') return null
+    // Deux secondes de bruit blanc DÉTERMINISTE (le LCG de `buildSound`), bouclées : assez
+    // long pour que l'oreille ne lise pas la période, assez court pour rester léger.
+    const frames = Math.max(1, Math.floor(ctx.sampleRate * 2))
+    const buffer = ctx.createBuffer(1, frames, ctx.sampleRate)
+    const data = buffer.getChannelData(0)
+    let s = 0x2545f491
+    for (let i = 0; i < frames; i++) {
+      s = (s * 1103515245 + 12345) & 0x7fffffff
+      data[i] = (s / 0x40000000 - 1) * 0.9
+    }
+    const src = ctx.createBufferSource()
+    src.buffer = buffer
+    src.loop = true
+    const filtre = ctx.createBiquadFilter()
+    filtre.type = forme === 'pluie' ? 'lowpass' : 'bandpass'
+    if (forme === 'vent') filtre.Q.value = 5 // étroit : la plainte a une hauteur, le souffle non
+    const gain = ctx.createGain()
+    gain.gain.value = 0
+    src.connect(filtre)
+    filtre.connect(gain)
+    gain.connect(master)
+    let lfoGain: GainNode | undefined
+    let lfo: OscillatorNode | undefined
+    if (forme === 'vent') {
+      lfo = ctx.createOscillator()
+      lfo.frequency.value = 0.16 // une ondulation toutes les ~6 s — le vent respire, il ne vibre pas
+      lfoGain = ctx.createGain()
+      lfoGain.gain.value = 0
+      lfo.connect(lfoGain)
+      lfoGain.connect(filtre.frequency)
+      lfo.start()
+    }
+    src.start()
+    const rampe = (p: AudioParam, v: number, secondes: number): void => {
+      const t = ctx.currentTime
+      p.cancelScheduledValues(t)
+      p.setValueAtTime(p.value, t)
+      p.linearRampToValueAtTime(v, t + Math.max(0.01, secondes))
+    }
+    return {
+      regler(niveau: number, hz: number, fonduS: number): void {
+        rampe(gain.gain, niveau, fonduS)
+        rampe(filtre.frequency, hz, fonduS)
+        // L'ondulation suit le centre : ±25 % — assez pour vivre, pas assez pour siffler.
+        if (lfoGain) rampe(lfoGain.gain, hz * 0.25, fonduS)
+      },
+      arreter(fonduS = 0.4): void {
+        rampe(gain.gain, 0, fonduS)
+        const fin = ctx.currentTime + fonduS + 0.05
+        src.stop(fin)
+        lfo?.stop(fin)
       },
     }
   }

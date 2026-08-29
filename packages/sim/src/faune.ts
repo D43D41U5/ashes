@@ -687,7 +687,6 @@ function updateSuspicion(
   /** La peur imposée : coup reçu, contagion d'alarme, cri de mort — jauge à 1. */
   forced: boolean,
 ): void {
-  const prev = monster.suspicion
   const panics = (MONSTER_DEFS[monster.type].flightRange ?? 0) > 0
 
   if (forced) {
@@ -720,10 +719,19 @@ function updateSuspicion(
 
   // Le franchissement du seuil d'alerte se DATE (la mise à mort propre l'interroge,
   // C6) et se PAIE (la nervosité ralentit toutes les décrues à venir).
-  if (prev < HUNT.SUSPICION_ALERT && monster.suspicion >= HUNT.SUSPICION_ALERT) {
+  //
+  // ET L'ALERTE EST UN VERROU, PAS UNE COMPARAISON (même patron que `wary`,
+  // carte des oscillations 2026-08-28) : la jauge POURSUIT son stimulus et
+  // rasait 0,7 dans les deux sens plusieurs fois par seconde — chaque
+  // re-franchissement RE-PAYAIT la nervosité, qui ralentit la décrue, qui
+  // multiplie les re-franchissements : une contre-réaction positive branchée
+  // sur un seuil nu, le seul mécanisme du fichier qui EMPIRAIT avec le temps.
+  // Levée à `SUSPICION_ALERT`, l'alerte ne se rend qu'à `SUSPICION_ALERT_CALM` —
+  // et la nervosité ne se paie qu'une fois par VRAIE alerte.
+  if (monster.alertSince === undefined && monster.suspicion >= HUNT.SUSPICION_ALERT) {
     monster.alertSince = state.tick
     monster.nervous = Math.min(HUNT.NERVOUS_MAX, (monster.nervous ?? 1) * HUNT.NERVOUS_FACTOR)
-  } else if (monster.suspicion < HUNT.SUSPICION_ALERT && monster.alertSince !== undefined) {
+  } else if (monster.alertSince !== undefined && monster.suspicion < HUNT.SUSPICION_ALERT_CALM) {
     delete monster.alertSince
   }
 
@@ -809,6 +817,29 @@ function trySpawn(state: SimState, avatars: Entity[]): void {
     const k = `${m.groundX},${m.groundY}`
     perGround.set(k, (perGround.get(k) ?? 0) + 1)
     if (pred) predPerGround.set(k, (predPerGround.get(k) ?? 0) + 1)
+  }
+
+  // LES RÉSIDENTS COMPTENT (loup.md L4) : une meute de Louvière PRÉSENTE dans un
+  // coin mange le quota de prédateurs de ce coin — c'est le nombre de loups que
+  // LE JOUEUR VOIT qui est borné, pas le nombre qu'une fonction a fabriqués.
+  // Sans cette ligne, la meute venue chasser s'ajoutait PAR-DESSUS les places
+  // ambiantes, et le mur de dix-neuf loups (R18) revenait par la porte de derrière.
+  if (state.grounds.length > 0) {
+    let posOf: Map<number, Entity> | null = null
+    for (const m of state.monsters) {
+      if (m.ambient || !isPredator(m.type)) continue
+      if (posOf === null) {
+        posOf = new Map()
+        for (const e of state.entities) posOf.set(e.id, e)
+      }
+      const e = posOf.get(m.entityId)
+      if (!e || e.hp <= 0) continue
+      predators++
+      const near = nearestGround(state, e.x, e.y)
+      if (!near || near.d2 > FAUNA.GROUND_RADIUS * FAUNA.GROUND_RADIUS) continue
+      const k = `${near.g.x},${near.g.y}`
+      predPerGround.set(k, (predPerGround.get(k) ?? 0) + 1)
+    }
   }
 
   const hour = getGameTime(state).hourOfCycle
@@ -939,10 +970,12 @@ function trySpawnNear(
     // va au gibier, qui la nuit DORT (R10) — des cerfs couchés, et quelques loups
     // qui rôdent entre eux. C'est un écosystème, pas un mur.
     //
-    // Il faut DEUX places libres pour ouvrir une meute : un loup seul n'ose pas
-    // (R11, le courage), et un demi-quota ne fabriquerait que des rôdeurs inutiles.
+    // UNE place suffit : le RÔDEUR SOLITAIRE est la sortie voulue depuis que la
+    // meute vit en Louvière (loup.md L4 — l'ambiant n'ouvre plus de meute). La
+    // garde des deux places datait d'un monde où un demi-quota ne fabriquait
+    // « que des rôdeurs inutiles » ; le rôdeur est désormais la règle.
     const predRoom = predatorRoom(state, ground, budget)
-    if (predRoom < 2) candidates = candidates.filter((t) => !isPredator(t))
+    if (predRoom < 1) candidates = candidates.filter((t) => !isPredator(t))
     if (candidates.length === 0) continue
 
     // LE GRADIENT DE DANGER (GDD §8bis, cercle sauvage). Le biome choisit l'espèce,
@@ -959,7 +992,10 @@ function trySpawnNear(
     const weights = candidates.map(
       (t) =>
         (FAUNA.SPAWN_FLOOR + (1 - FAUNA.SPAWN_FLOOR) * activityAt(t, hour)) *
-        (isPredator(t) ? danger : 1) /
+        // LA PART DU RÔDEUR (loup.md L4) : l'ambiant aminci, en nombre explicite —
+        // sans lui, la chute de `herdCost` (3,5 → 1) triplait la fréquence de
+        // tirage du loup et affamait la souille de ses sangliers (garde A27).
+        (isPredator(t) ? danger * FAUNA.RODEUR_PART : 1) /
         // LE PRIX D'UNE HARDE (playtest : « il y a trop de bêtes » — et c'étaient
         // 43 CERFS sur 48). Le plafond était censé être un budget de POPULATION ;
         // il n'était qu'un budget de TIRAGES. Un tirage « cerf » coûte quatre
@@ -1056,8 +1092,9 @@ function trySpawnNear(
   }
 }
 
-/** Les PV maximaux d'une bête — l'alpha en porte davantage (R12). */
+/** Les PV maximaux d'une bête — l'alpha en porte davantage (R12), le petit bien moins (loup.md L15). */
 export function maxHpOf(monster: Monster): number {
+  if (monster.petit === true) return MONSTER_DEFS[monster.type].hp * FAUNA.PETIT_HP
   return MONSTER_DEFS[monster.type].hp * (monster.alpha ? FAUNA.ALPHA_HP : 1)
 }
 
@@ -1118,16 +1155,66 @@ function herdSpot(
 function disperseLeaderless(state: SimState, byId: Map<number, Entity>): void {
   for (const m of state.monsters) {
     if (m.routed || m.alphaId === undefined) continue
+    // Le PETIT ne déroute pas : il se terre (loup.md L15). Il garde son clan —
+    // c'est autour de lui que le gîte se repeuplera.
+    if (m.petit === true) continue
     const chief = byId.get(m.alphaId)
     if (chief && chief.hp > 0) continue
+    routClanMember(state, m, byId)
+  }
+}
 
-    m.routed = true
-    delete m.herdId // la meute est DISSOUTE : elle ne se reforme pas
-    m.targetId = null
-    m.stalking = false
-    m.fleeSince = -1
+/** La rompue d'un membre de clan — partagée entre la dispersion (R12) et la déroute collective (loup.md L14). */
+function routClanMember(state: SimState, m: Monster, byId: Map<number, Entity>): void {
+  m.routed = true
+  delete m.herdId // la meute est DISSOUTE : elle ne se reforme pas
+  m.targetId = null
+  m.stalking = false
+  m.fleeSince = -1
+  delete m.sortie
+  delete m.sortieX
+  delete m.sortieY
+  delete m.chasseAbstraiteAt
+  delete m.rageUntil // la déroute éteint la rage : les freins de survie priment (L13)
+  delete m.bondPrepUntil // …et lâche la détente, comme elle lâche le coup en cours
+  // LE DÉSERTEUR (loup.md L3) : il a quitté le clan — le gîte ne le compte plus
+  // (sinon quatre fuyards le tiendraient plein à jamais : un plafond compte ce
+  // qu'il borne), et le monde le reprend hors regard (balayage `expiresAt`).
+  if (m.homePoi !== undefined) {
+    delete m.homePoi
+    m.expiresAt = state.tick + FAUNA.ROUTED_LINGER_TICKS
+  }
+  const e = byId.get(m.entityId)
+  if (e) delete e.windup // il lâche le coup qu'il était en train de porter
+}
+
+/**
+ * LA DÉROUTE COLLECTIVE (loup.md L14) : le clan qui a perdu la moitié de ses
+ * ADULTES casse d'un coup — blessés ou pas, enragés ou pas. C'est le pendant
+ * graduel de la mort de l'alpha : on n'abat pas cinq loups, on en abat deux et
+ * le reste comprend. Seuls les clans FONDÉS (`clanAdultes`, posé par la
+ * Louvière) portent cette règle : une meute de banc sans étalon ne déroute
+ * qu'à l'alpha, comme avant.
+ */
+function routBrokenClans(state: SimState, byId: Map<number, Entity>): void {
+  let vivants: Map<number, number> | null = null
+  let etalons: Map<number, number> | null = null
+  for (const m of state.monsters) {
+    if (m.herdId === undefined || m.clanAdultes === undefined || m.petit === true || m.routed) continue
     const e = byId.get(m.entityId)
-    if (e) delete e.windup // il lâche le coup qu'il était en train de porter
+    if (!e || e.hp <= 0) continue
+    vivants ??= new Map()
+    etalons ??= new Map()
+    vivants.set(m.herdId, (vivants.get(m.herdId) ?? 0) + 1)
+    etalons.set(m.herdId, m.clanAdultes)
+  }
+  if (!vivants || !etalons) return
+  for (const [herdId, alive] of vivants) {
+    if (alive >= etalons.get(herdId)! * FAUNA.PACK_ROUT_LOSS) continue
+    for (const m of state.monsters) {
+      if (m.herdId !== herdId || m.routed || m.petit === true) continue
+      routClanMember(state, m, byId)
+    }
   }
 }
 
@@ -1339,8 +1426,10 @@ export function advanceFauna(state: SimState, avatars: Entity[], byId: Map<numbe
   advanceGroundItems(state)
 
   // La déroute d’une meute décapitée ne dépend d'aucun peuplement : elle vaut
-  // aussi dans un banc de test à faune nulle.
+  // aussi dans un banc de test à faune nulle. La déroute COLLECTIVE (loup.md
+  // L14) suit — le clan qui a perdu la moitié de ses adultes casse d'un coup.
   disperseLeaderless(state, byId)
+  routBrokenClans(state, byId)
 
   // Les zones de silence expirées ne servent plus à rien : la liste reste courte.
   if (state.faunaQuiet.length > 0) {
@@ -1676,13 +1765,29 @@ function graze(
       // il ne s'en va pas. C'est ce qui fait qu'on retrouve les cerfs au même
       // endroit demain — et c'est toute la différence entre un gibier de
       // territoire et un gibier de brouillard.
-      const goal = migrationTarget(monster, state.tick)
+      // LE CAP QUI BUTE SE TAIT (`capVetoJusqua`) : un but refusé par la
+      // lisière (demi-tour, plus bas) ne se re-vise pas pendant le veto — sans
+      // quoi chaque pensée renvoyait la bête gratter la même rive (mesuré :
+      // l'aller-retour de 10 px de `tremblement.png`). Le veto éteint TOUS les
+      // buts (migration ET dérive) : la bête broute où elle est.
+      const veto = monster.capVetoJusqua !== undefined && state.tick < monster.capVetoJusqua
+      if (monster.capVetoJusqua !== undefined && state.tick >= monster.capVetoJusqua) delete monster.capVetoJusqua
+      const goal = veto ? null : migrationTarget(monster, state.tick)
       if (goal && roll(state) < FAUNA.DRIFT_BIAS) {
         const dx = goal.x - entity.x
         const dy = goal.y - entity.y
-        monster.wanderDx = (dx > 0.5 ? 1 : dx < -0.5 ? -1 : 0) as -1 | 0 | 1
-        monster.wanderDy = (dy > 0.5 ? 1 : dy < -0.5 ? -1 : 0) as -1 | 0 | 1
-      } else if (monster.herdId !== undefined && roll(state) < FAUNA.DRIFT_BIAS) {
+        // LE SEUIL D'ARRIVÉE SE DÉRIVE DU PAS (leçon du corps et du pas) : la
+        // bête parcourt `thinkEveryTicks × pas` entre deux relectures du but.
+        // L'ancien seuil (0,5 tuile, écrit en dur) était DEUX FOIS PLUS ÉTROIT
+        // que ce chemin-là : elle le traversait d'une pensée à l'autre, demi-tour
+        // à la pensée suivante, retraversait — le cycle limite de la carte des
+        // oscillations (①). La moitié du chemin d'une pensée garantit qu'un
+        // aller ne peut plus traverser la zone entière ; 0,5 reste le plancher.
+        const pasParPensee = ((def.speed * FAUNA.GRAZE_SPEED) / BALANCE.TICK_RATE_HZ) * def.thinkEveryTicks
+        const arrive = Math.max(FAUNA.BUT_ARRIVE_PLANCHER, pasParPensee / 2 + FAUNA.BUT_ARRIVE_MARGE)
+        monster.wanderDx = (dx > arrive ? 1 : dx < -arrive ? -1 : 0) as -1 | 0 | 1
+        monster.wanderDy = (dy > arrive ? 1 : dy < -arrive ? -1 : 0) as -1 | 0 | 1
+      } else if (monster.herdId !== undefined && !veto && roll(state) < FAUNA.DRIFT_BIAS) {
         const d = herdDrift(monster.herdId, state.tick)
         monster.wanderDx = d[0]
         monster.wanderDy = d[1]
@@ -1703,6 +1808,11 @@ function graze(
   // réflexion en tirera un neuf.
   const step = (def.speed * FAUNA.GRAZE_SPEED) / BALANCE.TICK_RATE_HZ
   if (!stepStaysHome(state, monster, entity, step)) {
+    // …ET LA LISIÈRE FAIT TAIRE LES BUTS (`CAP_VETO_TICKS`) : si un but (la
+    // migration, la dérive) a mené ici, la pensée suivante le re-viserait et la
+    // bête gratterait la même rive en boucle. Le demi-tour se joue, ET le but
+    // se tait — au prochain tirage elle broute librement, ailleurs.
+    monster.capVetoJusqua = state.tick + FAUNA.CAP_VETO_TICKS
     monster.wanderDx = -monster.wanderDx as -1 | 0 | 1
     monster.wanderDy = -monster.wanderDy as -1 | 0 | 1
     if (!stepStaysHome(state, monster, entity, step)) {
@@ -2384,10 +2494,11 @@ export function faunaStep(
   // la bête ne reste pas statue — elle tape du sabot, fixe, puis S'ÉCARTE au
   // trot jusqu'à retomber sous le seuil. (Gibier qui fuit seulement : le
   // sanglier, lui, ne recule pas.)
+  // (Elle lit le VERROU d'alerte — `alertSince`, hystérétique — jamais le seuil
+  // nu : comparé chaque tick, il faisait alterner recul et broutage.)
   if (
     (def.flightRange ?? 0) > 0 &&
     seen !== undefined &&
-    monster.suspicion >= HUNT.SUSPICION_ALERT &&
     monster.alertSince !== undefined &&
     state.tick - monster.alertSince > FAUNA.IMPATIENCE_TICKS
   ) {
@@ -2426,12 +2537,37 @@ export function faunaStep(
   // trois ticks — avec le sprite qui se retourne à chaque fois. Elle rentre donc
   // jusqu'à `GROUND_COMFORT`, et la frontière redevient franchissable.
   if (monster.groundX !== undefined && monster.groundY !== undefined) {
+    const vetoCanton = monster.capVetoJusqua !== undefined && state.tick < monster.capVetoJusqua
+    // (Un veto ÉTEINT se rend ici aussi — pas seulement à la pensée de `graze` :
+    // une bête qui ne broute plus traînait le champ périmé dans le snapshot.)
+    if (monster.capVetoJusqua !== undefined && !vetoCanton) delete monster.capVetoJusqua
     const away = distSq(entity.x, entity.y, monster.groundX, monster.groundY)
-    if (!monster.ranging && away > FAUNA.GROUND_RADIUS * FAUNA.GROUND_RADIUS) monster.ranging = true
+    if (!monster.ranging && !vetoCanton && away > FAUNA.GROUND_RADIUS * FAUNA.GROUND_RADIUS) monster.ranging = true
     else if (monster.ranging && away < FAUNA.GROUND_COMFORT * FAUNA.GROUND_COMFORT) delete monster.ranging
     if (monster.ranging) {
-      moveToward(state, monster, entity, monster.groundX, monster.groundY, false, FAUNA.WARY_SPEED)
-      return
+      // LE CANTON NE S'ATTEINT PAS À TRAVERS UN AUTRE PAYS (carte des
+      // oscillations ②) : `moveToward(ground)` ne consulte pas l'habitat, or
+      // `goHome` — testé juste au-dessus — le fait respecter. Quand le prochain
+      // pas de retour SORTIRAIT de l'habitat, les deux branches se préemptaient
+      // tick à tick : un pas dehors, un pas dedans, à jamais. Le retour qui bute
+      // se tait (`CAP_VETO_TICKS`) — la bête vit où elle est, le canton attendra.
+      const dgx = monster.groundX - entity.x
+      const dgy = monster.groundY - entity.y
+      const lg = Math.max(0.001, Math.sqrt(dgx * dgx + dgy * dgy))
+      const pas = (MONSTER_DEFS[monster.type].speed * FAUNA.WARY_SPEED) / BALANCE.TICK_RATE_HZ
+      const nx = entity.x + (dgx / lg) * Math.max(1, pas)
+      const ny = entity.y + (dgy / lg) * Math.max(1, pas)
+      // (Seulement pour qui est CHEZ SOI : une bête déjà dehors — aucun habitat
+      // à portée de `goHome` — garde le droit de rentrer à travers n'importe quoi,
+      // c'est sa seule route de retour.)
+      const chezElle = inHabitat(state, monster.type, Math.floor(entity.x), Math.floor(entity.y))
+      if (chezElle && !inHabitat(state, monster.type, Math.floor(nx), Math.floor(ny))) {
+        delete monster.ranging
+        monster.capVetoJusqua = state.tick + FAUNA.CAP_VETO_TICKS
+      } else {
+        moveToward(state, monster, entity, monster.groundX, monster.groundY, false, FAUNA.WARY_SPEED)
+        return
+      }
     }
   }
 
@@ -2585,8 +2721,13 @@ function boarStep(
   // sa vigilance. C'est là toute la fenêtre du chasseur — sans ce facteur, la
   // fouille serait un joli mot sans conséquence, puisqu'il chargerait quand même
   // à quatre tuiles.
+  // …ET ELLE NE SE LÈVE PAS AU MÊME RAYON (hystérésis — tout seuil qui commande
+  // un mouvement veut la sienne) : engagée à `threatRange`, la menace tient
+  // jusqu'à `× THREAT_RELEASE`. Sans marge, l'intrus qui longeait l'anneau
+  // faisait alterner gel-de-menace et pas de broutage tick à tick.
   const threatRange = FAUNA.THREAT_RANGE * alertness
-  if (!threat || distSq(entity.x, entity.y, threat.x, threat.y) > threatRange * threatRange) {
+  const lache = monster.threatSince !== undefined ? threatRange * FAUNA.THREAT_RELEASE : threatRange
+  if (!threat || distSq(entity.x, entity.y, threat.x, threat.y) > lache * lache) {
     delete monster.threatSince
     return false
   }
@@ -2643,6 +2784,36 @@ function leapStep(
   if (monster.windedUntil !== undefined && state.tick < monster.windedUntil) return true
   delete monster.windedUntil
 
+  // LA DÉTENTE (Alexis, 2026-08-28) : tassé, immobile — le télégraphe du bond.
+  if (monster.bondPrepUntil !== undefined) {
+    if (state.tick < monster.bondPrepUntil) {
+      const t = monster.targetId !== null ? byId.get(monster.targetId) : undefined
+      if (t && t.hp > 0) {
+        const dx = t.x - entity.x
+        const dy = t.y - entity.y
+        const l = Math.sqrt(dx * dx + dy * dy)
+        if (l > 0.001) entity.facing = { x: dx / l, y: dy / l } // le regard SUIT la proie : on lit où ça part
+      }
+      return true
+    }
+    delete monster.bondPrepUntil
+    // LE DÉCOLLAGE — cap pris ICI et MAINTENANT, puis verrouillé (R19 : le loup
+    // n'est pas un artilleur ; c'est la couverture du bond qui le fait porter,
+    // pas une prédiction — et c'est ce qui laisse le pas de côté marcher).
+    const t = monster.targetId !== null ? byId.get(monster.targetId) : undefined
+    if (!t || t.hp <= 0) return true // la proie est tombée pendant la détente : le bond avorte
+    const dx = t.x - entity.x
+    const dy = t.y - entity.y
+    const l = Math.sqrt(dx * dx + dy * dy)
+    if (l < 0.001) return true
+    monster.leapUntil = state.tick + FAUNA.LEAP_TICKS
+    monster.leapDx = dx / l
+    monster.leapDy = dy / l
+    monster.leapHit = false
+    entity.facing = { x: dx / l, y: dy / l }
+    // …et il VOLE dès ce tick : on tombe dans la branche du vol ci-dessous.
+  }
+
   if (monster.leapUntil === undefined) return false
 
   if (state.tick < monster.leapUntil) {
@@ -2684,12 +2855,14 @@ function leapStep(
 }
 
 /**
- * LE DÉPART DU BOND (R19) — cap pris ICI et MAINTENANT, puis verrouillé.
+ * LE DÉPART DU BOND (R19, amendé 2026-08-28) — d'abord LA DÉTENTE, puis le vol.
  *
- * On vise la proie telle qu'elle est à cet instant, sans anticipation : le loup
- * n'est pas un artilleur. C'est le fait que le bond COUVRE plus de terrain que la
- * proie n'en gagne (voir le dimensionnement dans `balance.ts`) qui le fait porter,
- * pas une prédiction — et c'est ce qui laisse le pas de côté marcher.
+ * Le loup se tasse `LEAP_CROUCH_TICKS` durant (immobile, teinte de menace : le
+ * télégraphe), et le cap se verrouille AU DÉCOLLAGE, dans `leapStep` — sur la
+ * proie telle qu'elle est à cet instant, sans anticipation : le loup n'est pas
+ * un artilleur. C'est le fait que le bond COUVRE plus de terrain que la proie
+ * n'en gagne (dimensionnement dans `balance.ts`) qui le fait porter, pas une
+ * prédiction — et c'est ce qui laisse le pas de côté marcher.
  */
 function startLeap(state: SimState, monster: Monster, entity: Entity, target: Entity, cooldownTicks: number): void {
   const dx = target.x - entity.x
@@ -2702,14 +2875,27 @@ function startLeap(state: SimState, monster: Monster, entity: Entity, target: En
   // proie n'aurait vu qu'à moitié le corps qui lui arrive dessus). La branche de la
   // ruée l'éteint déjà pour exactement ces raisons ; le bond est une ruée.
   monster.stalking = false
-  monster.leapUntil = state.tick + FAUNA.LEAP_TICKS
-  monster.leapDx = dx / l
-  monster.leapDy = dy / l
-  monster.leapHit = false
-  entity.facing = { x: dx / l, y: dy / l }
+  // LA DÉTENTE (Alexis, 2026-08-28) : le bond ne part plus À l'instant — le loup
+  // se TASSE d'abord, immobile, `LEAP_CROUCH_TICKS` durant (teinte de menace,
+  // silhouette tapie : le ressort se bande, et on le VOIT). Le cap, lui, se
+  // verrouille AU DÉCOLLAGE (`leapStep`), sur la proie telle qu'elle sera : la
+  // détente annonce l'esquive, elle ne l'élargit pas — le pas de côté se joue
+  // toujours pendant le vol.
+  monster.bondPrepUntil = state.tick + FAUNA.LEAP_CROUCH_TICKS
+  monster.wanderDx = 0
+  monster.wanderDy = 0
+  entity.facing = { x: dx / l, y: dy / l } // le regard désigne déjà la proie
   // Le bond COMPTE comme le coup du loup : il paie la même cadence qu'une morsure,
-  // sans quoi il en serait un second, gratuit, par-dessus.
+  // sans quoi il en serait un second, gratuit, par-dessus. Payé AU TASSEMENT :
+  // une détente avortée (proie tombée) n'est pas un coup gratuit à rejouer.
   entity.cooldownUntil = state.tick + cooldownTicks
+  // …ET IL PAIE SA PROPRE CADENCE (Alexis, 2026-08-28) : `LEAP_COOLDOWN` entre
+  // deux bonds du même loup — la morsure de 1,5 s ne suffisait pas, la
+  // récupération en dure 1,6 et il repartait au relevé. Écrit ICI, le seul point
+  // de départ d'un bond : aucun appelant ne peut l'oublier. La rage le raccourcit
+  // de moitié (loup.md L13 — « le bond part plus souvent »).
+  const enRage = monster.rageUntil !== undefined && state.tick < monster.rageUntil
+  monster.bondAt = state.tick + (enRage ? Math.floor(FAUNA.LEAP_COOLDOWN / 2) : FAUNA.LEAP_COOLDOWN)
 }
 
 /**
@@ -2881,6 +3067,7 @@ function packNearby(herd: Monster[] | undefined, monster: Monster, entity: Entit
   let n = 0
   for (const other of herd) {
     if (other.entityId === monster.entityId) continue
+    if (other.petit === true) continue // un petit ne donne pas de courage (loup.md L15)
     const e = byId.get(other.entityId)
     if (!e || e.hp <= 0) continue
     if (distSq(entity.x, entity.y, e.x, e.y) <= FAUNA.PACK_COHESION_RADIUS * FAUNA.PACK_COHESION_RADIUS) n++
@@ -2925,12 +3112,28 @@ function feedStep(state: SimState, monster: Monster, entity: Entity): boolean {
     delete monster.eatingUntil
     delete monster.mealCorpseId
     delete monster.baitId
+    // LA JAUGE MANGE (loup.md L6) : une proie en rend `FAIM_PAR_PROIE` — il en
+    // faut une ou deux. ET LA DIGESTION DEMEURE (R15, réparée le 2026-08-28) :
+    // un repas rend QUIET un temps, quelle que soit la jauge. La première
+    // écriture l'avait perdue — un rôdeur de nuit à 0,45 de faim restait en
+    // chasse et FAUCHAIT LA COLONNE entière : MESURÉ au diag-raid, butin rentré
+    // 0/24, raiders vivants 0/4 — « il mange, puis il vous laisse passer »
+    // n'était plus vrai qu'une proie sur deux. Deux horloges, deux rôles : la
+    // digestion fait la TRÊVE, la jauge fait le CYCLE (départ, retour).
+    if (monster.type === 'wolf') {
+      monster.faim = Math.max(0, (monster.faim ?? 1) - FAUNA.FAIM_PAR_PROIE)
+    }
     monster.satedUntil = state.tick + FAUNA.SATED_TICKS
     return true
   }
 
-  if (monster.satedUntil !== undefined && state.tick < monster.satedUntil) return false // repu : rien à manger de plus
-  delete monster.satedUntil
+  // Repu : rien à manger de plus. Le loup le lit sur sa jauge (L6), le reste sur R15.
+  if (monster.type === 'wolf') {
+    if ((monster.faim ?? 1) <= FAUNA.FAIM_RETOUR) return false
+  } else {
+    if (monster.satedUntil !== undefined && state.tick < monster.satedUntil) return false
+    delete monster.satedUntil
+  }
 
   // LE SANG APPELLE (chasse C12). Une carcasse FRAÎCHE porte BIEN plus loin
   // qu'une vieille : `CARCASS_SEEK_FRESH` (40) contre `CARCASS_SEEK` (16). Mis
@@ -2983,6 +3186,319 @@ function feedStep(state: SimState, monster: Monster, entity: Entity): boolean {
   return true
 }
 
+/* ── LA LOUVIÈRE (spec loup.md — décisions d'Alexis 2026-08-28) ───────────── */
+
+/** Le gîte d'un loup résident : le centre de sa Louvière, ou `null` (rôdeur, banc). */
+function denOf(state: SimState, monster: Monster): { x: number; y: number } | null {
+  if (monster.homePoi === undefined) return null
+  const z = state.map.zones[monster.homePoi]
+  if (!z || z.kind !== 'louviere') return null
+  return { x: z.x + z.w / 2, y: z.y + z.h / 2 }
+}
+
+/**
+ * LE DÉPART (L7-L8) : l'alpha a faim, le clan part — les petits restent. La
+ * destination est le coin de chasse le plus proche QUI N'EST PAS TU (la pression
+ * de chasse R16 et la météo font taire) : le joueur qui vide sa clairière envoie
+ * sa meute plus loin, et c'est un effet de monde qu'on n'a pas eu à écrire.
+ * Sans aucun coin (banc de test) : on chasse autour de chez soi.
+ */
+function departDuClan(
+  state: SimState,
+  alpha: Monster,
+  pack: Monster[] | undefined,
+  byId: Map<number, Entity>,
+  den: { x: number; y: number },
+): void {
+  let dest = den
+  let bestD = Infinity
+  for (const g of state.grounds) {
+    if (isQuiet(state, g.x, g.y)) continue
+    const d = distSq(den.x, den.y, g.x, g.y)
+    if (d < bestD) {
+      bestD = d
+      dest = g
+    }
+  }
+  for (const w of pack ?? [alpha]) {
+    if (w.petit === true) continue // les petits restent au gîte (L7)
+    const e = byId.get(w.entityId)
+    if (!e || e.hp <= 0) continue
+    w.sortie = true
+    w.sortieX = dest.x
+    w.sortieY = dest.y
+  }
+}
+
+/** LE RETOUR (L10) : la sortie s'éteint pour tout le clan — repu, on rentre. */
+function finDeSortie(monster: Monster, pack: Monster[] | undefined | null): void {
+  for (const w of pack ?? [monster]) {
+    delete w.sortie
+    delete w.sortieX
+    delete w.sortieY
+    delete w.chasseAbstraiteAt
+  }
+}
+
+/**
+ * LA RAGE S'ALLUME (L13) — sur tout le clan d'un coup, les petits exceptés.
+ * Écriture idempotente, aucun tirage : la rafraîchir chaque tick de sang est sûr.
+ */
+function enrage(state: SimState, members: Monster[]): void {
+  for (const w of members) {
+    if (w.petit === true) continue
+    w.rageUntil = state.tick + FAUNA.RAGE_TICKS
+  }
+}
+
+/**
+ * QUI A FRAPPÉ LE CLAN (L5) ? Son propre agresseur d'abord, puis celui d'un
+ * frère — petits compris : le gîte se défend en CLAN, et c'est ce qui rend le
+ * raid de tanière un geste et non un self-service. Borné à `PURSUIT_RANGE` de
+ * SOI : un gîte ne poursuit pas son agresseur à travers la vallée — il défend
+ * son seuil (la poursuite illimitée est précisément ce que la décision ⑦ écarte).
+ */
+function clanAggressor(
+  state: SimState,
+  monster: Monster,
+  entity: Entity,
+  pack: Monster[] | undefined,
+  byId: Map<number, Entity>,
+): Entity | undefined {
+  const reach = FAUNA.PURSUIT_RANGE * FAUNA.PURSUIT_RANGE
+  const own = monster.lastAttackerId !== null ? byId.get(monster.lastAttackerId) : undefined
+  if (own && own.hp > 0 && distSq(entity.x, entity.y, own.x, own.y) <= reach) return own
+  if (!pack) return undefined
+  for (const w of pack) {
+    if (w.entityId === monster.entityId || w.lastAttackerId === null) continue
+    const we = byId.get(w.entityId)
+    if (!we || we.hp <= 0) continue
+    const agg = byId.get(w.lastAttackerId)
+    if (agg && agg.hp > 0 && distSq(entity.x, entity.y, agg.x, agg.y) <= reach) return agg
+  }
+  return undefined
+}
+
+/**
+ * LA VIE DU GÎTE (L5) — ce qu'un adulte tranquille fait de sa journée :
+ *
+ *   — LA RONDE : un adulte au plus s'écarte jusqu'à `DEN_PATROL_RADIUS`. Le tour
+ *     se DÉRIVE du rang et du tick (précédent : la sentinelle R9bis) — zéro état
+ *     stocké, et le client calcule exactement le même tour. Le pas de la ronde
+ *     suit les relèvements : il FAIT LE TOUR, il ne fait pas l'aller-retour.
+ *   — L'EMPRISE : trop loin du gîte (le retour de chasse passe par ici), il rentre.
+ *   — LE REPOS (R10) : hors de ses heures, couché, resserré avec les siens.
+ *   — sinon il vaque — le broutage ordinaire, ancré sur la gueule du gîte.
+ */
+function denLife(
+  state: SimState,
+  monster: Monster,
+  entity: Entity,
+  pack: Monster[] | undefined,
+  byId: Map<number, Entity>,
+  hour: number,
+  den: { x: number; y: number },
+): void {
+  const ids: number[] = []
+  if (pack) {
+    for (const w of pack) {
+      if (w.petit === true) continue
+      const e = byId.get(w.entityId)
+      if (!e || e.hp <= 0) continue
+      ids.push(w.entityId)
+    }
+  }
+  if (ids.length === 0) ids.push(monster.entityId)
+  ids.sort((a, b) => a - b)
+  const garde = ids[Math.floor(state.tick / FAUNA.DEN_PATROL_SHIFT) % ids.length]!
+  if (garde === monster.entityId) {
+    const b = BEARINGS[Math.floor(state.tick / FAUNA.DEN_PATROL_STEP) % BEARINGS.length]!
+    moveToward(state, monster, entity, den.x + b[0] * FAUNA.DEN_PATROL_RADIUS, den.y + b[1] * FAUNA.DEN_PATROL_RADIUS, false, FAUNA.WARY_SPEED)
+    return
+  }
+  // L'EMPRISE EST COLLANTE (diag-tremblement 2026-08-28 : des adultes épinglés à
+  // 10,6 du gîte, six inversions de cap par seconde — la séparation des corps
+  // poussait la meute vers l'anneau, le rayon nu la rappelait d'un tick). Le
+  // rappel s'ENGAGE (`regagne`) et ne lâche qu'à `DEN_HOME_CONFORT` — la même
+  // leçon que la cohésion, le retour au pays et le canton.
+  const d2 = distSq(entity.x, entity.y, den.x, den.y)
+  if (monster.regagne !== true && d2 > FAUNA.DEN_HOME_RADIUS * FAUNA.DEN_HOME_RADIUS) monster.regagne = true
+  else if (monster.regagne === true && d2 <= FAUNA.DEN_HOME_CONFORT * FAUNA.DEN_HOME_CONFORT) delete monster.regagne
+  if (monster.regagne === true) {
+    moveToward(state, monster, entity, den.x, den.y, false, FAUNA.WARY_SPEED)
+    return
+  }
+  if (isResting('wolf', hour)) {
+    // LE REPOS GROUPÉ AUSSI (le même patron que `REST_SPREAD`/`REST_COMFORT` de
+    // la harde, qui l'avait déjà appris) : rappelé à `REST_SPREAD`, le dormeur
+    // ne lâche qu'à `REST_COMFORT` — sinon la séparation le ressortait d'un pas
+    // et il se recalait sans fin.
+    if (!monster.regrouping && d2 > FAUNA.REST_SPREAD * FAUNA.REST_SPREAD) monster.regrouping = true
+    else if (monster.regrouping && d2 < FAUNA.REST_COMFORT * FAUNA.REST_COMFORT) delete monster.regrouping
+    if (monster.regrouping) {
+      moveToward(state, monster, entity, den.x, den.y, false, FAUNA.GRAZE_SPEED)
+      return
+    }
+    monster.wanderDx = 0
+    monster.wanderDy = 0
+    return
+  }
+  graze(state, monster, entity, den)
+}
+
+/**
+ * LE PAS D'UN PETIT (L15). Il ne se bat jamais — il JOUE, et il SE TERRE :
+ *
+ *   — LA PEUR : un homme à moins de `PETIT_ALERTE`, il court à la gueule du gîte
+ *     et s'y tapit. C'est là qu'on le tue — et c'est là que la fureur (L13) donne
+ *     son prix au geste.
+ *   — LE JEU : il poursuit un frère, les rôles tournent par tranches de temps
+ *     (dérivé du tick — aucun tirage), jamais à plus de `PETIT_JEU_RAYON` du gîte.
+ *   — seul, il trottine autour de la gueule.
+ */
+function pupStep(
+  state: SimState,
+  monster: Monster,
+  entity: Entity,
+  quarry: Entity[],
+  byId: Map<number, Entity>,
+  isAvatar: (id: number) => boolean,
+): void {
+  const den = denOf(state, monster) ?? { x: entity.x, y: entity.y }
+
+  let menace: Entity | undefined
+  let menaceD = FAUNA.PETIT_ALERTE * FAUNA.PETIT_ALERTE
+  for (const q of quarry) {
+    if (!isAvatar(q.id) || q.hp <= 0) continue
+    const d = distSq(entity.x, entity.y, q.x, q.y)
+    if (d < menaceD || (d === menaceD && menace !== undefined && q.id < menace.id)) {
+      menace = q
+      menaceD = d
+    }
+  }
+  if (menace) {
+    monster.wanderDx = 0
+    monster.wanderDy = 0
+    if (distSq(entity.x, entity.y, den.x, den.y) > 1.5 * 1.5) {
+      moveToward(state, monster, entity, den.x, den.y, false) // il court se terrer
+    }
+    return
+  }
+
+  // Le camarade de jeu : l'autre petit du clan, s'il vit encore.
+  let mate: Monster | undefined
+  if (monster.herdId !== undefined) {
+    for (const m of state.monsters) {
+      if (m.herdId !== monster.herdId || m.petit !== true || m.entityId === monster.entityId) continue
+      const e = byId.get(m.entityId)
+      if (!e || e.hp <= 0) continue
+      if (mate === undefined || m.entityId < mate.entityId) mate = m
+    }
+  }
+  if (mate) {
+    const mateE = byId.get(mate.entityId)!
+    // Le jeu reste AU GÎTE : trop loin, on rentre d'abord — et LE RETOUR
+    // S'ENGAGE (`regagne`, hystérésis jusqu'à `PETIT_JEU_CONFORT`). Le poursuivi
+    // FUIT son frère sans regarder où : relâché PILE au rayon, la fuite du jeu
+    // le ressortait au tick suivant — vingt inversions de cap par seconde,
+    // épinglé à 5,0 du gîte (la pire signature du diag-tremblement 2026-08-28).
+    const dDen2 = distSq(entity.x, entity.y, den.x, den.y)
+    if (monster.regagne !== true && dDen2 > FAUNA.PETIT_JEU_RAYON * FAUNA.PETIT_JEU_RAYON) monster.regagne = true
+    else if (monster.regagne === true && dDen2 <= FAUNA.PETIT_JEU_CONFORT * FAUNA.PETIT_JEU_CONFORT) delete monster.regagne
+    if (monster.regagne === true) {
+      moveToward(state, monster, entity, den.x, den.y, false, FAUNA.PETIT_JEU_VITESSE)
+      return
+    }
+    // Qui poursuit qui — le rang et la tranche décident, et les rôles tournent.
+    const slice = Math.floor(state.tick / FAUNA.PETIT_JEU_SLICE)
+    const jeChasse = (monster.entityId < mate.entityId) === (slice % 2 === 0)
+    if (jeChasse) {
+      if (distSq(entity.x, entity.y, mateE.x, mateE.y) > 1) {
+        moveToward(state, monster, entity, mateE.x, mateE.y, false, FAUNA.PETIT_JEU_VITESSE)
+      } else {
+        monster.wanderDx = 0 // attrapé ! la tranche suivante inversera les rôles
+        monster.wanderDy = 0
+      }
+    } else {
+      moveToward(state, monster, entity, mateE.x, mateE.y, true, FAUNA.PETIT_JEU_VITESSE)
+    }
+    return
+  }
+  graze(state, monster, entity, den)
+}
+
+/**
+ * LA ROUTE DE CHASSE (L8-L9) — un résident en sortie qui n'a rien sous la dent
+ * fait route vers son coin ; arrivé, si personne ne regarde, LA CHASSE ABSTRAITE
+ * se joue : la faim du clan tombe au bout du temps, sans qu'une bête meure.
+ *
+ * ⚠ C'est cette règle qui ferme la boucle DU TOUT : le gibier est AMBIANT (R1/R3),
+ * il n'existe pas là où personne ne regarde — une chasse réelle y viderait un
+ * coin vide pour toujours, et un banc qui pose un joueur et un cerf n'aurait
+ * rien vu (le banc fabrique la prémisse). Dès qu'un avatar est à `CHASSE_REELLE`,
+ * l'horloge s'annule : la vraie chasse reprend tous ses droits.
+ */
+function sortieTravel(
+  state: SimState,
+  monster: Monster,
+  entity: Entity,
+  pack: Monster[] | undefined,
+  byId: Map<number, Entity>,
+  quarry: Entity[],
+  isAvatar: (id: number) => boolean,
+): void {
+  const sx = monster.sortieX
+  const sy = monster.sortieY
+  if (sx === undefined || sy === undefined) {
+    graze(state, monster, entity, pack ? herdCenter(pack, monster, byId) : null)
+    return
+  }
+  if (distSq(entity.x, entity.y, sx, sy) > FAUNA.SORTIE_ARRIVEE * FAUNA.SORTIE_ARRIVEE) {
+    moveToward(state, monster, entity, sx, sy, false, FAUNA.WARY_SPEED) // au trot : il a un but
+    return
+  }
+  // Rendu au coin. L'horloge de l'abstraite est celle de l'ALPHA — une par clan.
+  if (monster.alpha === true || pack === undefined) {
+    let watched = false
+    for (const q of quarry) {
+      if (!isAvatar(q.id) || q.hp <= 0) continue
+      if (distSq(entity.x, entity.y, q.x, q.y) <= FAUNA.CHASSE_REELLE * FAUNA.CHASSE_REELLE) {
+        watched = true
+        break
+      }
+    }
+    if (watched) {
+      delete monster.chasseAbstraiteAt // on nous regarde : la chasse sera vraie
+    } else if (monster.chasseAbstraiteAt === undefined) {
+      monster.chasseAbstraiteAt = state.tick + FAUNA.CHASSE_ABSTRAITE_TICKS
+    } else if (state.tick >= monster.chasseAbstraiteAt) {
+      // LE REPAS QU'ON N'A PAS VU : le clan est nourri, aucune bête n'est morte.
+      for (const w of pack ?? [monster]) {
+        if (w.sortie === true) w.faim = 0
+      }
+      finDeSortie(monster, pack)
+      return
+    }
+  }
+  // En attendant : la meute quête autour du coin — on peut la SURPRENDRE ici.
+  graze(state, monster, entity, { x: sx, y: sy })
+}
+
+/**
+ * LE DOS D'UNE PROIE (L12) — la direction de sa prise à revers, ou `null` si son
+ * regard n'est pas lisible. Les bêtes posent `facing` à chaque pas (chasse C4),
+ * l'avatar aussi ; LE PNJ, JAMAIS (`npc.ts` n'écrit pas ce champ — il garde le
+ * cap de sa naissance, plein est) : lire son dos rendrait un verdict tiré au
+ * sort par la géographie. Contre un PNJ, les postes restent ceux du rang.
+ */
+function dosDe(state: SimState, target: Entity): { x: number; y: number } | null {
+  for (const n of state.npcs) if (n.entityId === target.id) return null
+  const f = target.facing
+  const l = Math.sqrt(f.x * f.x + f.y * f.y)
+  if (l < 0.001) return null
+  return { x: -f.x / l, y: -f.y / l }
+}
+
 /**
  * Le pas d'un loup. Cinq états, et chacun est une décision qu'il PREND — c'est
  * ce qui le sépare du zombie, qui n'en prend aucune :
@@ -3008,6 +3524,24 @@ export function wolfStep(
 ): void {
   const def = MONSTER_DEFS.wolf
   const pack = monster.herdId !== undefined ? herds.get(monster.herdId) : undefined
+
+  // LE PETIT (loup.md L15) : il ne se bat pas, il vit — et c'est tout son pas.
+  if (monster.petit === true) {
+    pupStep(state, monster, entity, quarry, byId, isAvatar)
+    return
+  }
+
+  // LA FAIM MONTE (L6) — plus lentement aux heures de repos. Elle monte pour tous
+  // les adultes, résidents ou rôdeurs : c'est la même bête. Absente = affamé
+  // (le rôdeur ambiant naît en chasse, comme il l'a toujours fait).
+  {
+    const repos = isResting('wolf', hour) ? FAUNA.FAIM_REPOS_FACTEUR : 1
+    monster.faim = Math.min(1, (monster.faim ?? 1) + repos / FAUNA.FAIM_PLEINE_TICKS)
+  }
+
+  // LA RAGE EXPIRE d'elle-même (L13) : sans nouveau sang, elle retombe.
+  if (monster.rageUntil !== undefined && state.tick >= monster.rageUntil) delete monster.rageUntil
+  const rage = monster.rageUntil !== undefined
 
   // 0. LE BOND EN COURS (R19). Il est ENGAGÉ : plus rien ne le fait dévier, ni une
   //    cible qui change, ni une blessure. C'est ce qui le rend esquivable — un bond
@@ -3040,43 +3574,66 @@ export function wolfStep(
   }
   monster.fleeSince = -1
 
-  // 2. LE REPAS (R15). Affamé, il va à la carcasse et il mange. Repu, il ne
-  //    chasse plus du tout — mais il se DÉFEND : qui le frappe le trouve en face.
-  //    Un prédateur rassasié qui se laisserait tuer sans réagir serait un décor.
-  if (feedStep(state, monster, entity)) return
+  // LE DÉPART ET LE RETOUR (loup.md L7/L10). Le résident part quand SON ALPHA a
+  // faim — le clan part ensemble, et c'est ce qui fait du départ un moment. Le
+  // solitaire (rôdeur ambiant, meute de banc sans gîte) se lève tout seul, sur la
+  // même hystérésis : FAIM_DEPART arme, FAIM_RETOUR désarme.
+  const den = denOf(state, monster)
+  if (den !== null && monster.alpha === true) {
+    if (monster.sortie !== true && (monster.faim ?? 1) >= FAUNA.FAIM_DEPART) departDuClan(state, monster, pack, byId, den)
+    if (monster.sortie === true && (monster.faim ?? 1) <= FAUNA.FAIM_RETOUR) finDeSortie(monster, pack)
+  } else if (den === null) {
+    if (monster.sortie !== true && (monster.faim ?? 1) >= FAUNA.FAIM_DEPART) monster.sortie = true
+    if (monster.sortie === true && (monster.faim ?? 1) <= FAUNA.FAIM_RETOUR) finDeSortie(monster, null)
+  }
 
+  // 2. LE REPAS (R15). Affamé, il va à la carcasse et il mange — et sa JAUGE (L6)
+  //    tombe d'une proie. Un loup en RAGE ne mange pas : il se bat (L13).
+  if (!rage && feedStep(state, monster, entity)) return
+
+  // CHASSE-T-IL ? La rage engage toujours. Sinon deux verrous se superposent :
+  // la SORTIE (le cycle — un résident tranquille ne chasse personne, L5 ; le
+  // rôdeur de nuit, lui, a été ENVOYÉ) et la DIGESTION (la trêve de R15 : qui
+  // vient de manger vous laisse passer, jauge ou pas — c'est elle qui laisse
+  // les survivants d'une colonne s'échapper).
   const sated = monster.satedUntil !== undefined && state.tick < monster.satedUntil
-  if (sated) {
-    const aggressor = monster.lastAttackerId !== null ? byId.get(monster.lastAttackerId) : undefined
-    if (!aggressor || aggressor.hp <= 0) {
-      // Rien ne le menace : il patrouille avec les siens, ou il dort. Le joueur
-      // peut passer à côté d'une meute repue — et c'est un moment de jeu à part
-      // entière : on la VOIT, on la contourne, et rien n'arrive.
-      monster.targetId = null
+  const hunts = rage || (!sated && (monster.nightHunter === true || monster.sortie === true))
+  if (!hunts) {
+    // IL SE DÉFEND — et le CLAN se défend (L5) : qui frappe un membre, petit
+    // compris, trouve les adultes en face. Pas de traque, pas de hurlement :
+    // de la défense, et la rompue s'il saigne.
+    const aggressor = clanAggressor(state, monster, entity, pack, byId)
+    if (aggressor) {
       monster.stalking = false
-      oublieLeChemin(monster)
-      delete monster.alertSince // repu et tranquille : il baisse la garde (C6)
-      if (goHome(state, monster, entity)) return
-      if (isResting('wolf', hour)) {
-        monster.wanderDx = 0
-        monster.wanderDy = 0
-        return
+      monster.targetId = aggressor.id
+      const d2 = distSq(entity.x, entity.y, aggressor.x, aggressor.y)
+      if (d2 <= COMBAT.MELEE_ENGAGE_RANGE * COMBAT.MELEE_ENGAGE_RANGE) {
+        if (startAttack(state, entity, aggressor.x - entity.x, aggressor.y - entity.y, { windupTicks: def.windupTicks, damage: damageOf(monster) })) {
+          entity.cooldownUntil = state.tick + def.attackCooldownTicks
+        }
+      } else {
+        moveToward(state, monster, entity, aggressor.x, aggressor.y, false)
       }
-      graze(state, monster, entity, pack ? herdCenter(pack, monster, byId) : null)
       return
     }
-    // On l'a frappé : il rend le coup. Pas de traque, pas d'encerclement, pas de
-    // hurlement — de la défense, et la rompue s'il saigne.
+    // Rien ne le menace : la vie du gîte (L5), ou la patrouille d'antan. Le
+    // joueur peut passer à côté d'une meute tranquille — et c'est un moment de
+    // jeu à part entière : on la VOIT, on la contourne, et rien n'arrive.
+    monster.targetId = null
     monster.stalking = false
-    monster.targetId = aggressor.id
-    const d2 = distSq(entity.x, entity.y, aggressor.x, aggressor.y)
-    if (d2 <= COMBAT.MELEE_ENGAGE_RANGE * COMBAT.MELEE_ENGAGE_RANGE) {
-      if (startAttack(state, entity, aggressor.x - entity.x, aggressor.y - entity.y, { windupTicks: def.windupTicks, damage: damageOf(monster) })) {
-        entity.cooldownUntil = state.tick + def.attackCooldownTicks
-      }
-    } else {
-      moveToward(state, monster, entity, aggressor.x, aggressor.y, false)
+    oublieLeChemin(monster)
+    delete monster.alertSince // tranquille : il baisse la garde (C6)
+    if (den !== null) {
+      denLife(state, monster, entity, pack, byId, hour, den)
+      return
     }
+    if (goHome(state, monster, entity)) return
+    if (isResting('wolf', hour)) {
+      monster.wanderDx = 0
+      monster.wanderDy = 0
+      return
+    }
+    graze(state, monster, entity, pack ? herdCenter(pack, monster, byId) : null)
     return
   }
 
@@ -3095,7 +3652,7 @@ export function wolfStep(
   // chasser à pleine portée jour et nuit — la nuit n'y gagnait rien.
   const vigor = wolfVigor(hour)
   monster.targetId =
-    chooseQuarry(state, monster, entity, quarry, def.aggroRange * vigor, isAvatar, stealthOf, monsterByEntity, vigor) ??
+    chooseQuarry(state, monster, entity, quarry, def.aggroRange * vigor, isAvatar, stealthOf, monsterByEntity, vigor, rage) ??
     packQuarry(state, pack, monster, entity, byId, isAvatar, vigor)
   const target = monster.targetId !== null ? byId.get(monster.targetId) : undefined
 
@@ -3105,12 +3662,20 @@ export function wolfStep(
     // Un homme est choisi : la meute hurle. Une fois, et le joueur est prévenu.
     if (isAvatar(target.id)) howlOnce(state, pack, monster, entity, target.id)
 
+    // LE SANG ENRAGE (loup.md L13, décision ⑦) : la proie qui saigne met le CLAN
+    // en rage — le courage tombe, la traque devient une ruée. Rafraîchie tant que
+    // le sang coule ; elle retombera d'elle-même (`RAGE_TICKS`) une fois la plaie
+    // fermée ou la proie perdue. Écriture idempotente, aucun tirage.
+    if (bleeds(state, target, monsterByEntity)) enrage(state, pack ?? [monster])
+
     // 4. LE COURAGE. Face à un HOMME, un loup mal entouré suit sans mordre : il
     //    reste à distance de morsure, il pèse. La meute décimée cesse d'attaquer,
-    //    et le joueur SENT qu'il a brisé quelque chose.
+    //    et le joueur SENT qu'il a brisé quelque chose. LA RAGE le lève (L13) :
+    //    un loup enragé mord, même seul — c'est un frein d'ENGAGEMENT.
     const brave =
       !isAvatar(target.id) ||
       monster.nightHunter === true || // la nuit ne pèse pas un homme : elle est venue pour lui
+      monster.rageUntil !== undefined ||
       packNearby(pack, monster, entity, byId) >= FAUNA.PACK_COURAGE
     const d2 = distSq(entity.x, entity.y, target.x, target.y)
 
@@ -3140,14 +3705,43 @@ export function wolfStep(
     //
     // Le bond part depuis le POSTE (`LEAP_RANGE` = `ENCIRCLE_RADIUS`) : le loup n'a plus
     // besoin de se coller d'abord — se coller était précisément ce qui ne servait à rien.
+    // LA CADENCE DU BOND (Alexis, 2026-08-28 : « il peut le spam sans que le
+    // joueur comprenne pourquoi ») : il ne payait que la cadence d'une morsure
+    // (1,5 s), or sa récupération en dure 1,6 — relevé, il repartait AUSSITÔT.
+    // `bondAt` (écrit par `startLeap`) impose `LEAP_COOLDOWN` entre deux bonds du
+    // MÊME loup ; absent = jamais bondi, et le PREMIER bond reste immédiat —
+    // c'est lui qui ouvre la chasse, le retarder rouvrirait le zéro-dégât mesuré.
+    // Entre deux bonds, il vient au contact et MORD, wind-up visible : le joueur
+    // retrouve un rythme qui se lit.
     if (
       target.moved &&
       d2 <= FAUNA.LEAP_RANGE * FAUNA.LEAP_RANGE &&
       state.tick >= entity.cooldownUntil &&
+      state.tick >= (monster.bondAt ?? 0) &&
       entity.windup === undefined
     ) {
       startLeap(state, monster, entity, target, def.attackCooldownTicks)
       return
+    }
+
+    // LE BOND DE RUPTURE (loup.md L11, décision ⑥) — sur une cible ARRÊTÉE, le
+    // bond n'est pas la règle (la morsure plantée la tient) mais il SURVIENT, de
+    // temps en temps : une surprise cadencée, jamais une routine. La rage double
+    // la cadence. Le premier cycle ATTEND (l'armement part du premier regard) —
+    // un bond à la première seconde ne serait pas une surprise, ce serait la règle.
+    if (!target.moved && d2 <= FAUNA.LEAP_RANGE * FAUNA.LEAP_RANGE) {
+      const cadence = monster.rageUntil !== undefined ? Math.floor(FAUNA.BOND_LENT_COOLDOWN / 2) : FAUNA.BOND_LENT_COOLDOWN
+      if (monster.bondLentAt === undefined) monster.bondLentAt = state.tick + cadence
+      else if (
+        state.tick >= monster.bondLentAt &&
+        state.tick >= entity.cooldownUntil &&
+        state.tick >= (monster.bondAt ?? 0) && // la cadence du bond vaut pour TOUS les bonds
+        entity.windup === undefined
+      ) {
+        monster.bondLentAt = state.tick + cadence
+        startLeap(state, monster, entity, target, def.attackCooldownTicks)
+        return
+      }
     }
 
     // À portée de crocs : il mord. Plus rien à calculer. (L'alpha mord plus fort.)
@@ -3172,7 +3766,8 @@ export function wolfStep(
     const aware = targetAware(entity, target, monsterByEntity, isAvatar)
     const ready = packInPlace(pack, target, byId)
 
-    if (ready || aware || d2 <= FAUNA.COMMIT_RANGE * FAUNA.COMMIT_RANGE) {
+    // LA RAGE NE RAMPE PAS (L13) : plus de traque, plus de camouflage — il fonce.
+    if (monster.rageUntil !== undefined || ready || aware || d2 <= FAUNA.COMMIT_RANGE * FAUNA.COMMIT_RANGE) {
       monster.stalking = false
       moveToward(state, monster, entity, target.x, target.y, false)
       noteBlocked(state, monster, entity, target, target.x, target.y, pack, byId)
@@ -3180,7 +3775,12 @@ export function wolfStep(
     }
 
     monster.stalking = true
-    const post = encirclePost(pack, monster, target)
+    // LA PRISE À REVERS EST UNE MANŒUVRE DE CIBLE LENTE (L11/L12) : sur une proie
+    // ARRÊTÉE, le dos est figé et le poste tient. La calculer sur une proie qui
+    // marche faisait TOURNER les postes à chaque pas (le « mieux placé » changeait
+    // de tête, la garde du cap scié comptait 7 retournements/s pour un plafond
+    // de 4) — le mobile, lui, garde les postes du rang.
+    const post = encirclePost(pack, monster, target, target.moved ? null : dosDe(state, target), byId, entity)
     moveToward(state, monster, entity, post.x, post.y, false, FAUNA.STALK_SPEED)
     // Un rampeur bloqué cherche aussi : sinon la meute qui vient se POSTER derrière
     // un mur reste plantée là, et l'encerclement n'a jamais lieu. Son but est son
@@ -3197,8 +3797,16 @@ export function wolfStep(
   // la mise à mort propre vaut aussi sur les prédateurs.
   if (!monster.routed) delete monster.alertSince
 
-  // 5. Rien à chasser. Il rentre chez lui s'il en est sorti ; hors de ses heures,
-  //    il dort ; sinon il patrouille avec les siens (la meute reste groupée).
+  // 5. Rien à chasser SOUS LA DENT — mais la sortie a une DESTINATION (loup.md
+  //    L8-L9) : le résident en chasse fait route vers son coin, et c'est là que
+  //    la chasse abstraite se joue si personne ne regarde.
+  if (monster.sortie === true && den !== null) {
+    sortieTravel(state, monster, entity, pack, byId, quarry, isAvatar)
+    return
+  }
+
+  // Rien à chasser. Il rentre chez lui s'il en est sorti ; hors de ses heures,
+  // il dort ; sinon il patrouille avec les siens (la meute reste groupée).
   if (goHome(state, monster, entity)) return
   if (isResting('wolf', hour)) {
     monster.wanderDx = 0
@@ -3300,19 +3908,70 @@ function packInPlace(pack: Monster[] | undefined, target: Entity, byId: Map<numb
  * trois loups on prend un relèvement sur trois (0°, 135°, 270°), pas trois
  * voisins. C'est ce qui ferme le cercle au lieu de faire un peloton.
  */
-function encirclePost(pack: Monster[] | undefined, monster: Monster, target: Entity): { x: number; y: number } {
+function encirclePost(
+  pack: Monster[] | undefined,
+  monster: Monster,
+  target: Entity,
+  /** LA PRISE À REVERS (loup.md L12) : la direction du dos de la proie — quand il se lit. */
+  dos?: { x: number; y: number } | null,
+  byId?: Map<number, Entity>,
+  entity?: Entity,
+): { x: number; y: number } {
   let rank = 0
   let size = 1
+  const adultes: Monster[] = []
   if (pack) {
-    size = pack.length
-    for (const other of pack) if (other.entityId < monster.entityId) rank++
+    for (const other of pack) {
+      if (other.petit === true) continue // un petit ne tient pas de poste (L15)
+      adultes.push(other)
+    }
+    size = Math.max(1, adultes.length)
+    for (const other of adultes) if (other.entityId < monster.entityId) rank++
   }
-  // Un pas de relèvement premier avec 8 (3) étale les postes au lieu de les
-  // agglutiner : rangs 0,1,2 → relèvements 0, 3, 6 (soit 0°, 135°, 270°).
-  const bearing = BEARINGS[(rank * 3) % BEARINGS.length]!
   // Une meute nombreuse se tient un peu plus large : le cercle doit tenir tout
   // le monde sans que les loups se marchent dessus.
   const radius = FAUNA.ENCIRCLE_RADIUS + (size > 4 ? 1 : 0)
+
+  // LA PRISE À REVERS (L12) : le relèvement le plus proche du DOS revient au loup
+  // LE MIEUX PLACÉ pour l'atteindre — pas un bonus, une INTENTION. Le cercle se
+  // ferme toujours ; il se ferme avec quelqu'un derrière. Départage par dot
+  // (produit scalaire normalisé, `sqrt` seul), égalités par `entityId` : pur.
+  let dosIdx = -1
+  if (dos && byId && entity) {
+    let best = -Infinity
+    for (let i = 0; i < BEARINGS.length; i++) {
+      const b = BEARINGS[i]!
+      const d = b[0] * dos.x + b[1] * dos.y
+      if (d > best) {
+        best = d
+        dosIdx = i
+      }
+    }
+    let bestDot = -Infinity
+    let bestId = monster.entityId
+    for (const w of adultes.length > 0 ? adultes : [monster]) {
+      const e = w.entityId === monster.entityId ? entity : byId.get(w.entityId)
+      if (!e || e.hp <= 0) continue
+      const dx = e.x - target.x
+      const dy = e.y - target.y
+      const l = Math.sqrt(dx * dx + dy * dy)
+      const dot = l < 0.001 ? -1 : (dx * dos.x + dy * dos.y) / l
+      if (dot > bestDot || (dot === bestDot && w.entityId < bestId)) {
+        bestDot = dot
+        bestId = w.entityId
+      }
+    }
+    if (bestId === monster.entityId && dosIdx >= 0) {
+      const b = BEARINGS[dosIdx]!
+      return { x: target.x + b[0] * radius, y: target.y + b[1] * radius }
+    }
+  }
+
+  // Un pas de relèvement premier avec 8 (3) étale les postes au lieu de les
+  // agglutiner : rangs 0,1,2 → relèvements 0, 3, 6 (soit 0°, 135°, 270°).
+  let idx = (rank * 3) % BEARINGS.length
+  if (idx === dosIdx) idx = (idx + 1) % BEARINGS.length // le poste du dos est pris
+  const bearing = BEARINGS[idx]!
   return { x: target.x + bearing[0] * radius, y: target.y + bearing[1] * radius }
 }
 
@@ -3375,6 +4034,8 @@ function chooseQuarry(
   monsterByEntity: Map<number, Monster>,
   /** L'heure du loup (R10bis) : elle raccourcit aussi sa POURSUITE. */
   vigor = 1,
+  /** LA RAGE (loup.md L13) : la poursuite s'allonge jusqu'à `PURSUIT_RANGE_RAGE` — bornée. */
+  rage = false,
 ): number | null {
   let bestId: number | null = null
   let bestScore = Infinity
@@ -3390,7 +4051,10 @@ function chooseQuarry(
     // la POURSUITE, elle, reste à distance vraie ET par tous les temps — même
     // doctrine que la furtivité trois lignes plus bas : une meute qui vous a choisi
     // ne vous perd ni parce que vous rampez, ni parce qu'il pleut sur vous.
-    const reach = q.id === monster.targetId ? FAUNA.PURSUIT_RANGE * vigor : range * meteoVisionFactor(state, q.x, q.y)
+    // LA RAGE ALLONGE LA POURSUITE (loup.md L13) — flatte de l'heure (la fureur ne
+    // somnole pas), et BORNÉE : une meute ne poursuit jamais à l'infini (décision ⑦).
+    const tenue = rage ? Math.max(FAUNA.PURSUIT_RANGE * vigor, FAUNA.PURSUIT_RANGE_RAGE) : FAUNA.PURSUIT_RANGE * vigor
+    const reach = q.id === monster.targetId ? tenue : range * meteoVisionFactor(state, q.x, q.y)
     let d = distSq(entity.x, entity.y, q.x, q.y)
     // L'ACQUISITION se fait à la distance PERÇUE (chasse C5) : un homme qui rampe
     // en fourré n'existe pour le loup que de bien plus près. C'est la symétrie qui

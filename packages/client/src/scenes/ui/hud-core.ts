@@ -22,6 +22,7 @@
  */
 import {
   CARRY,
+  COMBAT,
   carryTier,
   carryWeight,
   durabilityOf,
@@ -82,9 +83,59 @@ const VITALS: { id: Exclude<VitalId, 'carry'>; label: string; min?: number; max:
   { id: 'temperature', label: 'TEMP', min: TEMPERATURE.CORPS_MORTEL, max: TEMPERATURE.CORPS_SAIN, warn: TEMPERATURE.CORPS_HYPOTHERMIE, unite: '°C' },
 ]
 
+/** Ce qu'une vitale doit MONTRER : sa couleur d'alerte et son infobulle. */
+export interface EtatVital {
+  alerte: boolean
+  bulle: string
+}
+
+/**
+ * L'ÉTAT PEINT D'UNE VITALE — pur, pour être éprouvé sans monter un DOM ni un Phaser.
+ *
+ * ═══ CE QU'IL RÈGLE : L'ÉPUISEMENT ÉTAIT MUET ═══
+ *
+ * Le verrou `Entity.exhausted` (spec combat R1ter) refuse SILENCIEUSEMENT trois verbes
+ * d'un coup — l'attaque, la parade et la course. Le joueur encaissait trois refus sans
+ * qu'aucune interface ne dise pourquoi.
+ *
+ * Et la barre ne pouvait pas le dire à sa place : **le verrou se pose à 0 et ne se lève
+ * qu'à `SPRINT_RECOVER_STAMINA` (25)**, donc une jauge remontée à 20 refuse encore la
+ * course. Lire « il reste de l'endurance » et se voir refuser le sprint est exactement le
+ * genre d'incohérence qui se prend pour un bug. L'alerte suit donc le VERROU, jamais le
+ * niveau — et l'infobulle nomme le seuil, que le repère `.hc-seuil` trace sur la jauge.
+ */
+export function etatVital(
+  v: { id: string; label: string; max: number; warn?: number; unite?: string },
+  cur: number,
+  exhausted: boolean,
+): EtatVital {
+  const aBout = v.id === 'stamina' && exhausted
+  if (aBout) {
+    return {
+      alerte: true,
+      bulle: `${v.label} ${Math.ceil(cur)} / ${v.max} — À BOUT DE SOUFFLE : ni course, ni coup, ni parade avant ${COMBAT.SPRINT_RECOVER_STAMINA}`,
+    }
+  }
+  return {
+    alerte: v.warn !== undefined && cur <= v.warn,
+    // Une jauge à unité se lit en VALEUR (« TEMP 34 °C »), pas en fraction : « 34 / 37 »
+    // ne veut rien dire d'une température. Les autres gardent leur « x / max ».
+    bulle: v.unite ? `${v.label} ${Math.round(cur)} ${v.unite}` : `${v.label} ${Math.ceil(cur)} / ${v.max}`,
+  }
+}
+
 export interface HudCoreState {
   hp: number
   stamina: number
+  /**
+   * À BOUT DE SOUFFLE — le verrou `Entity.exhausted` de la sim (spec combat R1ter).
+   *
+   * Il refuse SILENCIEUSEMENT trois verbes d'un coup : l'attaque, la parade et la course.
+   * Le joueur encaissait trois refus sans qu'aucune interface ne lui dise pourquoi ni
+   * jusqu'à quand — et comme le verrou ne se lève qu'à `SPRINT_RECOVER_STAMINA` et non au
+   * premier point regagné, voir la barre remonter ne lui apprenait rien non plus.
+   */
+  exhausted?: boolean
   hunger: number
   temperature: number
   wounds: Entity['wounds']
@@ -146,6 +197,12 @@ export function createHudCore(
     cell.innerHTML =
       `<div class="hc-tip"></div>` +
       `<div class="hc-disc"><div class="hc-fill"></div>` +
+      // LE SEUIL DE RÉCUPÉRATION, tracé sur la SEULE jauge qu'il commande. Sans lui, « à
+      // bout de souffle » est une punition à durée inconnue : on regarde la barre monter
+      // sans savoir où elle doit arriver. Le trait répond, et il ne demande aucun mot.
+      (v.id === 'stamina'
+        ? `<div class="hc-seuil" style="bottom:${COMBAT.SPRINT_RECOVER_STAMINA}%"></div>`
+        : '') +
       `<img class="hc-vicon" src="${iconUrl(vitalIconKey(v.id))}" alt=""></div>`
     vitalsWrap.appendChild(cell)
     fills.set(v.id, cell.querySelector<HTMLElement>('.hc-fill')!)
@@ -271,16 +328,12 @@ export function createHudCore(
         const cur = vals[v.id]!
         const lo = v.min ?? 0
         const frac = Math.min(1, Math.max(0, (cur - lo) / (v.max - lo)))
-        const warn = v.warn !== undefined && cur <= v.warn
+        const { alerte, bulle } = etatVital(v, cur, s.exhausted === true)
         const fill = fills.get(v.id)!
         fill.style.height = `${(frac * 100).toFixed(1)}%`
-        fill.style.background = warn ? HEX.alert : VITAL_HEX[v.id].fill
-        fill.style.borderTopColor = warn ? HEX.alert : VITAL_HEX[v.id].rim
-        // Une jauge à unité se lit en VALEUR (« TEMP 34 °C »), pas en fraction : « 34 / 37 »
-        // ne veut rien dire d'une température. Les autres gardent leur « x / max ».
-        tips.get(v.id)!.textContent = v.unite
-          ? `${v.label} ${Math.round(cur)} ${v.unite}`
-          : `${v.label} ${Math.ceil(cur)} / ${v.max}`
+        fill.style.background = alerte ? HEX.alert : VITAL_HEX[v.id].fill
+        fill.style.borderTopColor = alerte ? HEX.alert : VITAL_HEX[v.id].rim
+        tips.get(v.id)!.textContent = bulle
       }
 
       // Ligne secondaire : poids (couleur par palier), blessures (libellé, rouge), métiers.
@@ -429,6 +482,9 @@ function markup(): string {
     .hc-med{position:relative;pointer-events:auto;}
     .hc-disc{position:relative;width:70px;height:70px;border-radius:50%;background:#1b1b22;border:3px solid #14141a;overflow:hidden;box-shadow:0 3px 0 rgba(0,0,0,.5);}
     .hc-fill{position:absolute;left:0;bottom:0;width:100%;height:0;background:#b0473c;border-top:2px solid #cf6a5c;transition:height .18s ease;}
+    /* Le seuil de reprise du souffle : un trait d'un pixel en travers de la jauge
+       d'endurance. Il dit OU la barre doit remonter, ce qu'aucun chiffre ne disait. */
+    .hc-seuil{position:absolute;left:0;width:100%;height:1px;background:#e8e0c8;opacity:.45;pointer-events:none;}
     .hc-vicon{position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);width:30px;height:30px;image-rendering:pixelated;filter:brightness(0);}
     .hc-tip{position:absolute;bottom:78px;left:50%;transform:translateX(-50%);background:#14100c;border:2px solid #14141a;padding:4px 8px;font-size:11px;color:#e8e0c8;white-space:nowrap;opacity:0;pointer-events:none;transition:opacity .1s ease;}
     .hc-med:hover .hc-tip{opacity:1;}

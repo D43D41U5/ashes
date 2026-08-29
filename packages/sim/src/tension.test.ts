@@ -267,15 +267,33 @@ describe('4. LA NUIT CHASSE (mais elle s’annonce, et elle a une parade)', () =
     spawnEntity(sim, 32.5, 32.5)
     drainEvents(sim)
 
-    for (let t = 0; t < 20 * 60 * BALANCE.TICK_RATE_HZ; t++) step(sim, []) // 20 minutes de nuit
+    // ⚠ ON RELÈVE PENDANT, PAS À LA FIN (2026-08-27). Le compte se prenait à l'instant
+    // t = 24 000, et un rôdeur qui vient, mord, puis meurt ou se dissipe laisse ce compte à
+    // ZÉRO : la garde lisait « le monde n'est pas venu » d'une nuit entière de chasse.
+    // Elle rougissait donc pour toute perturbation qui décale d'un cheveu (mesuré : elle
+    // tombe dès la plus petite force de corps solides, 0,25 comme 1 — signature d'un
+    // instantané sur une trajectoire chaotique, pas d'une règle rompue ; la garde d'à côté,
+    // « LA NUIT MORD », qui affirme la PROPRIÉTÉ, ne bouge pas). On relève donc ce que la
+    // règle promet : des loups sont VENUS, et jamais plus de `MAX_ALIVE` à la fois.
+    const vus = new Set<number>()
+    let simultanes = 0
+    for (let t = 0; t < 20 * 60 * BALANCE.TICK_RATE_HZ; t++) {
+      step(sim, [])
+      let n = 0
+      for (const m of sim.monsters) {
+        if (m.type !== 'wolf') continue
+        n++
+        vus.add(m.entityId)
+      }
+      if (n > simultanes) simultanes = n
+    }
     const events = drainEvents(sim)
 
-    const loups = sim.monsters.filter((m) => m.type === 'wolf')
-    expect(loups.length).toBeGreaterThan(0) // le monde est venu le chercher
+    expect(vus.size).toBeGreaterThan(0) // le monde est venu le chercher
     // ANNONCÉS, PAS SURPRISES (GDD §9bis) : chaque rôdeur a hurlé.
     expect(events.filter((e) => e.type === 'wolf_howl').length).toBeGreaterThan(0)
     // BORNÉ : on peut perdre, on ne doit pas être submergé.
-    expect(loups.length).toBeLessThanOrEqual(NIGHT_HUNT.MAX_ALIVE)
+    expect(simultanes).toBeLessThanOrEqual(NIGHT_HUNT.MAX_ALIVE)
   })
 
   /**

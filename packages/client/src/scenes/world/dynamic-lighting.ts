@@ -20,7 +20,7 @@
 import type Phaser from 'phaser'
 import { fireStateAt } from '@ashes/sim'
 import type { SnapshotMessage, Structure } from '@ashes/sim'
-import { fireGlow, sunDirection, moonDirection, heureCanonique, lerpColor, ambientTint, multiplicateurDuVoile, voileDeNuit, LUNE_PLEINE_JOUR } from '../../render/lighting'
+import { fireGlow, sunDirection, moonDirection, daylight, lueurDeLune, heureCanonique, lerpColor, ambientTint, multiplicateurDuVoile, voileDeNuit, LUNE_PLEINE_JOUR } from '../../render/lighting'
 import type { HeureSolaire } from '../../render/lighting'
 import { axesFeu } from '../../render/feu-variante'
 import { TORCHE_LIGHT_TILES, forceDeTorche } from '../../render/torche'
@@ -77,6 +77,102 @@ export function intensitesDuCiel(day: number, lueur = 1): { soleil: number; lune
   // lune »). La garde exhaustive « le soleil domine partout où il fait jour » reste donc VRAIE
   // par construction : on ne peut qu'affaiblir le terme qu'elle bornait déjà.
   return { soleil: d * SUN_INTENSITY, lune: nuit * MOON_INTENSITY * Math.max(0, Math.min(1, lueur)) }
+}
+
+/**
+ * ═══ LA DÉRIVE DE L'OMBRE — de quel côté la flaque de contact glisse ═══
+ * *(demande d'Alexis, 2026-08-27 : « l'ombre du bloc se déplace sur l'axe X en se mettant à
+ * l'opposé de la direction du soleil/lune », puis « on va trouver une solution pour la flaque
+ * qui passe par le centre au crépuscule ».)*
+ *
+ * Rend une part SIGNÉE dans [−1, 1] : le côté (et la force) vers lequel décaler une ombre, déjà
+ * INVERSÉE — +1 = décaler vers l'est (l'astre est à l'ouest), −1 vers l'ouest. L'appelant n'a
+ * qu'à multiplier par son amplitude en pixels ; il n'a pas à connaître la course du ciel.
+ *
+ * ⚠ **ELLE VIT ICI, ET PAS DANS `lighting.ts`, PARCE QU'ELLE ARBITRE LES DEUX ASTRES.** C'est
+ * `intensitesDuCiel` — la fonction qui pose `sun.intensity` et `moon.intensity` deux écrans plus
+ * bas — qui dit lequel éclaire, et elle est catégorique : **la lune reste ÉTEINTE tant que
+ * `daylight > MOON_DAWN`** (0,15). Une ombre qui se pondérerait autrement que la LUMIÈRE
+ * RÉELLEMENT RENDUE serait un troisième avis sur le ciel, et c'est très exactement le défaut
+ * dont ce fichier et `lighting.ts` sont les monuments (deux chaînes pas à la même heure).
+ *
+ * CE QUE ÇA CORRIGE, ET C'ÉTAIT UNE INCOHÉRENCE, PAS UN GOÛT. La première écriture pondérait par
+ * `daylight` et `lueurDeLune` bruts : à 19 h sous une pleine lune, la flaque était déjà revenue
+ * au centre puis repartie à l'ouest — alors que `moon.intensity` valait **ZÉRO** à cette heure-là
+ * et que tout ce que le joueur voyait était encore éclairé par le soleil couchant. MESURÉ, à
+ * l'amplitude livrée (8 px) : **19 h → +1 px** (presque centrée) contre **+6 px** maintenant ;
+ * **6 h → +4 px vers l'est** (donc du mauvais côté, la lune couchante l'emportait sur le soleil
+ * levant) contre **−2 px**. Le relais tombe désormais où le jeu le fait vraiment, entre 20 h et
+ * 21 h : la flaque et les sprites tournent ENSEMBLE.
+ *
+ *     dérive = −( sunX × soleil / PIC_SOLEIL + moonX × lune / PIC_LUNE )
+ *
+ * ⚠ **CHAQUE ASTRE EST NORMALISÉ PAR SON PROPRE PIC**, et c'est délibéré : la lune vaut 0,32
+ * contre 1,2 au soleil, donc un pic commun aurait rendu la nuit presque immobile (la moitié d'un
+ * pixel). Ce qu'on transporte est une DIRECTION, pas une luminance — l'ombre d'une nuit de
+ * pleine lune se voit autant que celle de midi. Les deux termes ne se recouvrent que dans la
+ * fenêtre de relais (`daylight < MOON_DAWN`), où la somme reste bornée.
+ *
+ * ⚠ **ON NE DÉCALE PAS SUR `sunDirection(hour).x` NU.** Cette composante est un COSINUS : elle
+ * vaut ±1 aux bornes de l'arc, là où elle s'annule d'un coup — le défaut du 2026-08-25 (le
+ * soleil qui se téléporte de 2 200 px), et la garde de continuité de `lighting.ts` porte sur
+ * `sunX × daylight`, JAMAIS sur `sunX`. Décaler sur le cosinus nu ferait sauter latéralement
+ * toutes les ombres de l'écran au lever et au coucher.
+ *
+ * Trois cas tombent juste sans une seule garde :
+ *   · nuit NOIRE (nouvelle lune) — `lueur` vaut 0, donc `lune` aussi : l'ombre revient CENTRÉE,
+ *     à l'identique de ce que le jeu rendait avant. Correct : sans lumière directionnelle, la
+ *     flaque n'est plus qu'une occlusion ambiante.
+ *   · lune de JOUR — `intensitesDuCiel` l'éteint deux fois (la rampe `MOON_DAWN` ET `clarteDeLune`
+ *     portée par `lueurDeLune`). Aucun garde-fou à écrire.
+ *   · relais du crépuscule — `soleil` descend continûment, `lune` monte sur la même rampe que le
+ *     voile du sol, et la lune s'éteint PAR CONSTRUCTION à son lever et à son coucher (`alt` y
+ *     vaut 0). L'ombre balaie d'un bord à l'autre en une heure de jeu au lieu de sauter.
+ *
+ * MESURÉ (balayage 0,005 h × toute la lunaison) : `PIC_SOLEIL` 0,72258 et `PIC_LUNE` 0,16000 —
+ * d'où la renormalisation, pour qu'une amplitude d'appelant se lise « pixels au maximum ATTEINT »
+ * et non « pixels jamais atteints ». Saut résiduel maximal **0,0958** sur l'axe des heures (à
+ * 21 h, la borne d'arc que `sunDirection` documente déjà à `daylight` = 0,05) et **0,00041** sur
+ * l'axe du JOUR : à l'amplitude livrée, moins d'un pixel, arrondi à zéro.
+ *
+ * PAS DE COMPOSANTE EN Y, et ce n'est pas un oubli : le soleil du jeu est un POINT au nord de la
+ * caméra (`SUN_NORTH`/`SUN_Z`), d'élévation FIXE — seul son azimut balaie. La descente de la
+ * flaque (`SOCLE_OMBRE_DESCENTE`) est donc constante par construction.
+ */
+/**
+ * ═══ LA FORCE DE L'OMBRE — ce qui la fait DISPARAÎTRE au crépuscule ═══
+ * *(Alexis, 2026-08-27 : « elle devrait disparaître en fade au crépuscule ».)*
+ *
+ * Rend, dans [0, 1], à quel point un astre JETTE une ombre — l'opacité que l'appelant doit
+ * appliquer. 1 en plein midi comme sous une pleine lune au zénith, 0 quand plus rien n'éclaire.
+ *
+ * ⚠ **CHAQUE ASTRE EST RAMENÉ À SON PROPRE PLEIN, et c'est ce qui rend la nuit lisible.** La
+ * lune vaut 0,32 contre 1,2 au soleil : un rapport commun aurait rendu toute ombre nocturne
+ * quatre fois plus pâle que celle de midi, c'est-à-dire invisible — et la course de la lune,
+ * qu'on vient de brancher, n'aurait jamais rien montré. Ce qu'on transporte est « y a-t-il une
+ * source qui projette », pas une luminance.
+ *
+ * ET C'EST AUSSI LA RÉPONSE AU PASSAGE PAR LE CENTRE. Entre le coucher et le lever de lune, les
+ * DEUX termes sont au plus bas : la force tombe vers 0,1, l'ombre s'efface — et c'est pendant
+ * cette éclipse qu'elle change de bord. Le relais ne se voit plus, parce qu'il n'y a plus
+ * d'ombre à voir pendant qu'il se fait. Une ombre qui pivote est un artefact ; une ombre qui
+ * s'éteint pendant que le jour meurt est ce que fait la vraie lumière.
+ *
+ * ⚠ Elle s'annule VRAIMENT à la nouvelle lune : un bloc n'a alors plus d'ombre du tout. C'est
+ * assumé — sans lumière directionnelle, il n'y a pas d'ombre portée, et cette nuit-là est déjà
+ * celle où le voile mange le monde (`NUIT.SEUIL_NOIR`).
+ */
+export function forceDeLOmbre(hour: HeureSolaire, jourLune: number): number {
+  const { soleil, lune } = intensitesDuCiel(daylight(hour), lueurDeLune(hour, jourLune))
+  return Math.max(0, Math.min(1, Math.max(soleil / SUN_INTENSITY, lune / MOON_INTENSITY)))
+}
+
+const PIC_SOLEIL = 0.72258
+const PIC_LUNE = 0.16
+export function deriveDOmbre(hour: HeureSolaire, jourLune: number): number {
+  const { soleil, lune } = intensitesDuCiel(daylight(hour), lueurDeLune(hour, jourLune))
+  const astre = (sunDirection(hour).x * soleil) / PIC_SOLEIL + (moonDirection(hour, jourLune).x * lune) / PIC_LUNE
+  return Math.max(-1, Math.min(1, -astre))
 }
 const AMBIENT_DAY = 0xb6ad9c // ambiante multiplicative de jour (gris chaud)
 const AMBIENT_NIGHT = 0x33415f // ambiante de nuit BLEUTÉE (relevée) : les arbres ne tombent plus au noir

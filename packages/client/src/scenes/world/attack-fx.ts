@@ -57,11 +57,16 @@
 import Phaser from 'phaser'
 import { FONT } from '../ui/typography'
 import { eclatAt } from './bande'
+import { amplitudeRecul, ECRASE_MAX, encaissement, ENCAISSE_MS } from './encaissement'
+import { contourZone } from '../../render/zone-frappe'
+import { desequilibre, INCLINE_MAX, PENCHE_MAX_PX, SEUIL_MS } from './desequilibre'
 
 const Vector2 = Phaser.Math.Vector2
 
-/** Durées, en ms. Courtes : un retour de frappe qui traîne devient de la soupe. */
-const IMPACT_MS = 160
+/** Durées, en ms. Courtes : un retour de frappe qui traîne devient de la soupe.
+ *  ⚠ L'ENCAISSEMENT N'EST PLUS ICI : sa fenêtre (`ENCAISSE_MS`), son temps d'arrêt et
+ *  ses amplitudes vivent dans `encaissement.ts`, module PUR et testé — une courbe de
+ *  feel se règle en la lisant, pas en relançant le jeu. */
 const BLEED_MS = 260
 const SPARK_MS = 220
 const NUMBER_MS = 620
@@ -76,6 +81,28 @@ export const BRISURES_CENDRE: readonly number[] = [0xb8b0a4, 0x8a8378, 0x6b3a20]
 const SPARK = 0xffe9b0
 /** L'arc d'un ENNEMI : rouge. Celui qui vient vers vous ne se lit pas comme le vôtre. */
 const THREAT = 0xe0553f
+/**
+ * L'ÉPAISSEUR DU LISERÉ, en pixels d'ART — le sprite est mis à l'échelle avec lui, donc le
+ * contour garde le GRAIN de ce qu'il souligne à toute résolution.
+ *
+ * ═══ 2 ET NON 1, ET C'EST MESURÉ ═══
+ *
+ * Le contour d'INTERACTION (`snapshot-view.ts`) se contente d'un pixel, et il a raison : on
+ * le CHERCHE, curseur posé sur ce qu'on veut prendre. Celui-ci doit se saisir en pleine
+ * mêlée, sans qu'on le cherche. À 1 px, MESURÉ par diff de deux images rendues au même
+ * horodatage : **495 pixels de liseré**, herbe L=119 → liseré L=196, soit 1,63:1 — présent
+ * et illisible sur un avatar déjà crème. À 2 px : **880 pixels**, L=213, 1,75:1, et il se
+ * lit d'un coup d'œil. Le contraste par pixel ne change quasiment pas (même couleur) :
+ * ce qui rend un liseré lisible, c'est sa SURFACE.
+ */
+const CONTOUR_PX = 2
+/** Les huit voisins — côtés ET diagonales. À quatre, une silhouette courbe laisse des
+ *  trous dans son propre contour. */
+const CONTOUR_DECALAGES: readonly (readonly [number, number])[] = [
+  [-1, -1], [0, -1], [1, -1],
+  [-1, 0], [1, 0],
+  [-1, 1], [0, 1], [1, 1],
+]
 /** LA GARDE : un acier froid, ni la lame crème ni la menace rouge — un bouclier se
  *  lit d'un autre registre. Le cône protégé est FRONTAL, comme la sim l'applique. */
 const GUARD = 0x9db4c8
@@ -131,6 +158,15 @@ export interface Zone {
   arcCos: number
   /** Disque : son rayon, en px. */
   radius: number
+  /**
+   * LE RAYON DU CORPS DE LA CIBLE, en px (`COMBAT.HIT_BODY_RADIUS`) — et c'est lui qui
+   * rend le télégraphe HONNÊTE. La sim résout sur la zone ÉLARGIE de ce rayon (portée ET
+   * angle, spec R4quinquies : de +16 % à +36 % de surface) ; le dessin, lui, montrait la
+   * zone nominale. Le coup portait donc HORS du télégraphe — un mensonge dans le sens
+   * généreux, le pire des deux : il apprend une portée fausse que le jeu dément sans
+   * jamais dire pourquoi. Le contour exact vit dans `render/zone-frappe.ts`.
+   */
+  corps: number
 }
 /** Le chiffre : blanc quand je frappe, rouge quand j'encaisse. On lit l'issue d'un
  *  combat à la COULEUR, avant même d'avoir lu le nombre. */
@@ -215,24 +251,72 @@ export interface AttackFx {
    * défensive du combat de coût, longtemps câblée à `false` et donc muette.
    */
   guard(x: number, y: number, dx: number, dy: number): void
+  /**
+   * LE CORPS QUE LE COUP ARMÉ PRENDRAIT — MAINTENANT, souligné d'un CONTOUR.
+   *
+   * ═══ POURQUOI SOULIGNER LE CORPS, ET PAS SEULEMENT DESSINER UNE ZONE ═══
+   *
+   * Même dessinée juste (`render/zone-frappe.ts`), une zone se lit contre des BILLBOARDS
+   * DEBOUT alors que la sim résout aux PIEDS : c'est le piège mesuré du 2026-08-02 (le
+   * curseur visait un torse et désignait un point de sol 0,56 tuile plus au nord — 23 à
+   * 42 % des coups perdus). Juger « ce loup est-il dans mon cône ? » à l'œil, c'est refaire
+   * cette erreur à chaque coup. La réponse honnête n'est pas de mieux dessiner la
+   * géométrie : c'est de NOMMER les cibles.
+   *
+   * ═══ UN CONTOUR, ET PAS UN ANNEAU AU SOL (décision d'Alexis, 2026-08-28) ═══
+   *
+   * Le premier jet posait un anneau sous les pieds. C'est un objet de PLUS à lire, au sol,
+   * là où l'œil n'est pas : on regarde les corps. Le contour, lui, ne dit pas « quelque
+   * chose se passe ici » — il dit « CELUI-LÀ », et il le dit sur la seule chose que le
+   * joueur fixe déjà. Même technique que le contour d'interaction (`snapshot-view.ts`) :
+   * huit copies décalées, teintées en `FILL`, posées DERRIÈRE le sprite — seul dépasse le
+   * pixel de frange. Une lueur de shader baverait et trahirait le grain de l'art, et cette
+   * machine rend sans GPU.
+   *
+   * La SÉLECTION vit dans `world/cibles.ts` (pure et gardée) et se calcule avec
+   * `inStrikeZone` — la fonction de la sim, pas une copie : vraie par construction.
+   */
+  cible(sprite: Phaser.GameObjects.Image): void
   /** À appeler une fois par frame AVANT les télégraphes : efface l'ardoise. */
   beginFrame(): void
   /**
-   * Un coup a porté sur une cible (événement `entity_damaged`) : elle BLANCHIT et
-   * RECULE d'un cheveu. `fromX/fromY` : d'où le coup venait — le recul part à l'opposé.
+   * Un coup a porté sur une cible (événement `entity_damaged`) : elle est CLOUÉE une
+   * fraction de seconde, se TASSE, BLANCHIT et RECULE. `fromX/fromY` : d'où le coup
+   * venait — le recul part à l'opposé. `degats` : le montant de l'événement, qui décide
+   * de l'amplitude — sans lui, une gifle et un coup de lance rendent le même écart.
+   *
+   * Rien n'est peint ici : on ENREGISTRE. Tout se peint dans `peindreRecul`, après
+   * `interpolate` — voir le commentaire de l'implémentation, c'est le cœur du correctif.
    */
-  impact(sprite: Phaser.GameObjects.Image, now: number, fromX?: number, fromY?: number): void
+  impact(sprite: Phaser.GameObjects.Image, now: number, fromX?: number, fromY?: number, degats?: number): void
   /**
-   * LE RECUL PEINT, à appeler APRÈS que `SnapshotView.interpolate` a replacé les sprites
-   * — c'est elle qui fait autorité sur la position, et elle repasse chaque frame.
+   * LE COUP QUI A FENDU L'AIR (événement `attack_whiffed`) : le corps part avec son geste
+   * et se rattrape, garde ouverte, le temps de sa récupération.
+   *
+   * C'était la meilleure mécanique INVISIBLE du jeu : `recoveryWhiff` cloue jusqu'à 1,6 s
+   * — la fenêtre où le loup entre — et rien ne le montrait. Le joueur mourait pendant une
+   * immobilité qu'il ne s'expliquait pas, et croyait le jeu muet. Une punition qu'on ne
+   * voit pas n'enseigne rien : elle se vit comme une injustice.
+   *
+   * `dureeMs` : la récupération RÉELLE du coup manqué. Sous `SEUIL_MS`, rien n'est peint —
+   * marquer la récupération d'un coup qui a TOUCHÉ apprendrait que toucher coûte.
+   */
+  rate(sprite: Phaser.GameObjects.Image, now: number, dx: number, dy: number, dureeMs: number): void
+  /**
+   * L'ENCAISSEMENT PEINT — temps d'arrêt, tassement, teinte et recul —, à appeler APRÈS
+   * que `SnapshotView.interpolate` a replacé et reteinté les sprites : c'est elle qui
+   * fait autorité sur la position, la taille ET la teinte, et elle repasse chaque frame.
+   * Tout ce qui est posé plus tôt dans l'image est effacé dans la même image.
    *
    * Le recul de combat existe dans la SIM (spec combat R4sexies) mais il est livré à
    * ZÉRO : mesuré, il défait l'encerclement de la meute (voir `COMBAT.KNOCKBACK_TILES`).
    * Le coup doit pourtant se SENTIR. On le peint donc ici, et ici seulement : quelques
-   * pixels d'écart qui reviennent en 160 ms, sans qu'aucune position de sim ne bouge.
-   * C'est la règle du fichier prise au mot — on peint par-dessus la vérité, on ne la
-   * bouscule pas — et c'est ce qui permet au recul d'être un EFFET tant qu'il n'est pas
-   * une RÈGLE.
+   * pixels d'écart qui reviennent en `ENCAISSE_MS`, sans qu'aucune position de sim ne
+   * bouge. C'est la règle du fichier prise au mot — on peint par-dessus la vérité, on ne
+   * la bouscule pas — et c'est ce qui permet au recul d'être un EFFET tant qu'il n'est
+   * pas une RÈGLE. Le TEMPS D'ARRÊT suit la même frontière : c'est un hold de SPRITE,
+   * jamais un gel de la boucle — figer le monde accumulerait une dette d'interpolation
+   * qu'il faudrait rendre d'un claquement.
    */
   peindreRecul(now: number): void
   /**
@@ -244,6 +328,16 @@ export interface AttackFx {
   peindreBande(): void
   /** C'est MOI qui ai pris : l'écran saigne. */
   hurt(now: number): void
+  /**
+   * COMBIEN DE CORPS ENCAISSENT À CET INSTANT, et combien sont encore CLOUÉS (temps d'arrêt).
+   *
+   * Même raison d'être qu'`enVol` et `enBande` : un encaissement dure `ENCAISSE_MS`, et le
+   * rendu logiciel de la machine de test tourne à quelques images par seconde. La réaction
+   * naît et meurt donc ENTRE deux captures, et « je n'ai rien vu » ne distingue pas « il n'y
+   * en a pas » de « j'ai regardé trop tard ». Le smoke LIT cet état pour savoir quand figer
+   * la boucle — il ne le fabrique pas.
+   */
+  enEncaissement(now: number): { corps: number; cloues: number }
   /**
    * COMBIEN DE TRAITS SONT EN VOL — la seule fenêtre du harnais sur un FX éphémère.
    *
@@ -321,29 +415,47 @@ export function createAttackFx(scene: Phaser.Scene, depth: number): AttackFx {
     lineAlpha: number,
     lineWidth: number,
   ): void => {
+    // ═══ ON DESSINE LA ZONE RÉSOLUE, PAS LA ZONE NOMINALE (2026-08-28) ═══
+    //
+    // `contourZone` reproduit le prédicat `inStrikeZone` de la sim au point près — flancs
+    // qui s'ouvrent, arc élargi, et le disque du corps qui fait le tour par le dos. Les
+    // deux cas ronds restent des CERCLES et non des polygones : à 360°, un polygone
+    // coudrait une couture disgracieuse dans le dos de l'avatar.
     if (zone.shape === 'disc') {
       const cx = x + dx * zone.range
       const cy = y + dy * zone.range
+      const rayon = zone.radius + zone.corps
       blade.fillStyle(teinte, fillAlpha)
-      blade.fillCircle(cx, cy, zone.radius)
+      blade.fillCircle(cx, cy, rayon)
       blade.lineStyle(lineWidth, teinte, lineAlpha)
-      blade.strokeCircle(cx, cy, zone.radius)
+      blade.strokeCircle(cx, cy, rayon)
       return
     }
-    // Le TOURBILLON (360°) : un disque autour de soi. Un polygone à 360° s'ouvrirait
-    // sur une couture disgracieuse au dos de l'avatar — le cercle n'en a pas.
     if (zone.arcCos <= -1) {
+      const rayon = zone.range + zone.corps
       blade.fillStyle(teinte, fillAlpha)
-      blade.fillCircle(x, y, zone.range)
+      blade.fillCircle(x, y, rayon)
       blade.lineStyle(lineWidth, teinte, lineAlpha)
-      blade.strokeCircle(x, y, zone.range)
+      blade.strokeCircle(x, y, rayon)
       return
     }
-    const pts = arcPoints(x, y, zone.range, Math.atan2(dy, dx), halfArcOf(zone))
+    const pts = contourPx(x, y, dx, dy, zone)
     blade.fillStyle(teinte, fillAlpha)
     blade.fillPoints(pts, true)
     blade.lineStyle(lineWidth, teinte, lineAlpha)
     blade.strokePoints(pts, true)
+  }
+
+  /**
+   * Le contour EXACT de la zone résolue, tourné vers la visée et posé sur l'acteur.
+   * `contourZone` travaille dans le repère du frappeur (visée le long de +x) et en unités
+   * arbitraires — la Zone étant déjà en pixels, on lui passe des pixels.
+   */
+  const contourPx = (x: number, y: number, dx: number, dy: number, zone: Zone): Phaser.Math.Vector2[] => {
+    const a = Math.atan2(dy, dx)
+    const c = Math.cos(a)
+    const s = Math.sin(a)
+    return contourZone(zone, zone.corps).map((p) => new Vector2(x + p.x * c - p.y * s, y + p.x * s + p.y * c))
   }
 
   /**
@@ -437,14 +549,23 @@ export function createAttackFx(scene: Phaser.Scene, depth: number): AttackFx {
     blade.lineTo(x + Math.cos(a) * zone.range, y + Math.sin(a) * zone.range)
     blade.strokePath()
   }
-  /** Les sprites qui encaissent : sprite → instant du coup et AXE du recul (px monde,
-   *  unitaire, orienté à l'opposé du frappeur). L'axe est nul quand on ignore d'où le
-   *  coup venait — on blanchit alors sans reculer, plutôt que de reculer au hasard. */
-  const impacts = new Map<Phaser.GameObjects.Image, { at: number; rx: number; ry: number }>()
-  /** Amplitude du recul peint, en px monde. Trois pixels sur une tuile de seize : on le
-   *  SENT sans que le corps quitte sa case — un recul qui déplace vraiment est une règle,
-   *  et les règles vivent dans /sim. */
-  const RECUL_PX = 3
+  /** Les sprites qui encaissent : sprite → instant du coup, AXE du recul (px monde,
+   *  unitaire, orienté à l'opposé du frappeur) et AMPLITUDE en px (elle suit les dégâts).
+   *  L'axe est nul quand on ignore d'où le coup venait — on blanchit alors sans reculer,
+   *  plutôt que de reculer au hasard. */
+  const impacts = new Map<Phaser.GameObjects.Image, { at: number; rx: number; ry: number; px: number }>()
+  /** Les corps qui se rattrapent d'un coup manqué (spec R4quater — `desequilibre.ts`). */
+  const rates = new Map<Phaser.GameObjects.Image, { at: number; dx: number; dy: number; duree: number }>()
+  /**
+   * LES COPIES QUI FORMENT LES CONTOURS DE CIBLE — recyclées, jamais recréées : une mêlée
+   * peut souligner plusieurs corps à la fois (huit copies chacun), et créer/détruire des
+   * `Image` à chaque image ferait travailler le ramasse-miettes en plein combat.
+   *
+   * POOL SÉPARÉ de celui de `SnapshotView` : là-bas il ne sert qu'UNE cible (celle de la
+   * touche d'interaction) ; ici il en faut autant que le coup en prend.
+   */
+  const contours: Phaser.GameObjects.Image[] = []
+  let curseurContour = 0
 
   /** Le banc d'étincelles et de chiffres — RÉUTILISÉS. Créer/détruire des objets
    *  Phaser à chaque coup, c'est le chemin le plus court vers un combat qui hoquette
@@ -545,6 +666,11 @@ export function createAttackFx(scene: Phaser.Scene, depth: number): AttackFx {
       // relâcher l'arc laisserait le harnais croire qu'on bande encore.
       bande = { eclat: 0, pleine: false }
       blade.clear()
+      // LES CONTOURS DE CIBLE aussi : ils se repeignent depuis la liste des wind-ups, comme
+      // la zone. Un corps qui sort de l'arc doit cesser d'être souligné DANS LA MÊME IMAGE
+      // — sinon le contour promet un coup que la sim ne portera plus.
+      for (let i = 0; i < curseurContour; i++) contours[i]?.setVisible(false)
+      curseurContour = 0
     },
 
     /**
@@ -642,7 +768,14 @@ export function createAttackFx(scene: Phaser.Scene, depth: number): AttackFx {
       if (traits.length > 12) traits.shift()
     },
 
-    impact(sprite, now, fromX, fromY) {
+    rate(sprite, now, dx, dy, dureeMs) {
+      if (dureeMs < SEUIL_MS) return
+      const len = Math.sqrt(dx * dx + dy * dy)
+      if (len < 0.0001) return
+      rates.set(sprite, { at: now, dx: dx / len, dy: dy / len, duree: dureeMs })
+    },
+
+    impact(sprite, now, fromX, fromY, degats = 0) {
       let rx = 0
       let ry = 0
       if (fromX !== undefined && fromY !== undefined) {
@@ -654,10 +787,16 @@ export function createAttackFx(scene: Phaser.Scene, depth: number): AttackFx {
           ry = ey / len
         }
       }
-      impacts.set(sprite, { at: now, rx, ry })
-      // `setTint` (et non `setTintFill`) : la bête garde sa silhouette et vire au
-      // rouge — un aplat plein en ferait un carré de couleur, illisible.
-      sprite.setTint(IMPACT_TINT)
+      impacts.set(sprite, { at: now, rx, ry, px: amplitudeRecul(degats) })
+      // ⚠ ON NE TEINTE PLUS ICI, ET C'EST LE CŒUR DU CORRECTIF (2026-08-27).
+      //
+      // `setTint(IMPACT_TINT)` était posé dans le drainage d'événements — donc AVANT
+      // `SnapshotView.interpolate`, qui appelle `syncActor`, qui repose la teinte de
+      // CHAQUE acteur à CHAQUE image (`beastTint` : l'espèce, le wind-up, le sommeil).
+      // Le flash rouge vivait une image, ~16 ms : le coup portait sans se voir. C'est
+      // très exactement le défaut que `peindreBande` avait été écrit pour corriger sur
+      // l'archer, et que l'impact n'avait jamais reçu. La teinte se peint désormais dans
+      // `peindreRecul`, après `interpolate` — et elle TIENT le temps de l'encaissement.
     },
 
     /**
@@ -694,15 +833,54 @@ export function createAttackFx(scene: Phaser.Scene, depth: number): AttackFx {
 
     peindreRecul(now) {
       for (const [sprite, imp] of impacts) {
-        const t = (now - imp.at) / IMPACT_MS
-        if (t < 0 || t >= 1) continue
-        const k = (1 - t) * (1 - t)
-        sprite.setPosition(sprite.x + imp.rx * RECUL_PX * k, sprite.y + imp.ry * RECUL_PX * k)
+        const e = encaissement(now - imp.at)
+        if (e.teinte <= 0) continue
+        // ① LE TEMPS D'ARRÊT, puis LA DÉTENTE. `encaissement` rend l'un et l'autre sur la
+        //    même courbe continue : le corps est cloué à l'écart plein, puis il revient.
+        sprite.setPosition(sprite.x + imp.rx * imp.px * e.recul, sprite.y + imp.ry * imp.px * e.recul)
+        // ② IL SE TASSE. Un corps qui encaisse se ramasse — plus large, plus bas. On part
+        //    de la taille que `syncActor` vient de poser (l'autorité : elle porte l'enfoncement,
+        //    la neige, le vol), donc on MULTIPLIE, on ne pose jamais.
+        if (e.ecrase > 0) {
+          const c = ECRASE_MAX * e.ecrase
+          sprite.setDisplaySize(sprite.displayWidth * (1 + c), sprite.displayHeight * (1 - c))
+        }
+        // ③ IL BLANCHIT — et cette fois ça se voit. `setTint` (et non l'aplat plein) : la
+        //    bête garde sa silhouette et vire au rouge ; un aplat en ferait un carré de
+        //    couleur. Reposé CHAQUE image tant que dure l'encaissement, parce que
+        //    `syncActor` vient de le reposer lui aussi.
+        sprite.setTint(IMPACT_TINT)
+      }
+      // ═══ ET CEUX QUI SE RATTRAPENT D'UN COUP MANQUÉ ═══
+      //
+      // Même passe, même frontière : on peint par-dessus la position vraie que
+      // `interpolate` vient de poser, et la frame suivante l'efface. Le corps PENCHE dans
+      // l'axe de son propre coup — il n'a rencontré aucune résistance, l'élan continue —
+      // et se redresse lentement. Rien ne claque : un raté PÈSE, il ne pique pas.
+      for (const [sprite, r] of rates) {
+        const d = desequilibre(now - r.at, r.duree)
+        if (d.penche <= 0) continue
+        sprite.setPosition(sprite.x + r.dx * PENCHE_MAX_PX * d.penche, sprite.y + r.dy * PENCHE_MAX_PX * d.penche)
+        // L'INCLINAISON dit « la garde est ouverte » là où l'écart seul dirait « il glisse ».
+        // Le SENS suit le côté vers lequel on penche : on ne bascule pas vers l'arrière.
+        sprite.setRotation(INCLINE_MAX * d.incline * (r.dx >= 0 ? 1 : -1))
       }
     },
 
     hurt(now) {
       bleedAt = now
+    },
+
+    enEncaissement(now) {
+      let corps = 0
+      let cloues = 0
+      for (const imp of impacts.values()) {
+        const e = encaissement(now - imp.at)
+        if (e.teinte <= 0) continue
+        corps++
+        if (e.arret) cloues++
+      }
+      return { corps, cloues }
     },
 
     enVol() {
@@ -711,6 +889,33 @@ export function createAttackFx(scene: Phaser.Scene, depth: number): AttackFx {
 
     enBande() {
       return bande
+    },
+
+    cible(sprite) {
+      // ROUGE, ET IL NE DIT QU'UNE CHOSE : celui-là prend le coup si je le lâche maintenant.
+      // Le premier jet distinguait deux teintes (crème « je toucherais celui-là », rouge
+      // « on te vise ») — une couleur pour deux messages est pire que pas de couleur.
+      for (const [dx, dy] of CONTOUR_DECALAGES) {
+        let c = contours[curseurContour]
+        if (!c) {
+          c = scene.add.image(0, 0, sprite.texture.key).setTintMode(Phaser.TintModes.FILL)
+          contours[curseurContour] = c
+        }
+        curseurContour++
+        c.setTexture(sprite.texture.key, sprite.frame.name)
+          .setOrigin(sprite.originX, sprite.originY)
+          .setPosition(sprite.x + dx * CONTOUR_PX, sprite.y + dy * CONTOUR_PX)
+          .setScale(sprite.scaleX, sprite.scaleY)
+          .setRotation(sprite.rotation)
+          .setFlipX(sprite.flipX)
+          // DERRIÈRE, et c'est tout le principe : le sprite recouvre l'intérieur des copies,
+          // seul dépasse le liseré. Devant, on obtiendrait une silhouette pleine — un corps
+          // blanc, pas un corps souligné.
+          .setDepth(sprite.depth - 0.5)
+          .setTint(THREAT)
+          .setAlpha(1)
+          .setVisible(true)
+      }
     },
 
     guard(x, y, dx, dy) {
@@ -828,12 +1033,22 @@ export function createAttackFx(scene: Phaser.Scene, depth: number): AttackFx {
       }
 
       for (const [sprite, imp] of impacts) {
-        if (now - imp.at < IMPACT_MS) continue
+        if (now - imp.at < ENCAISSE_MS) continue
         // On rend la teinte au sprite : `snapshot-view` la repose de toute façon au
         // snapshot suivant (elle encode le wind-up et l'espèce) — on ne fait donc
         // que lever le voile rouge, sans lui voler son état.
         sprite.clearTint()
         impacts.delete(sprite)
+      }
+
+      for (const [sprite, r] of rates) {
+        if (now - r.at < r.duree) continue
+        // ON REND LA ROTATION, et il le faut : `syncActor` ne repose PAS l'angle des
+        // acteurs (contrairement à la teinte et à la taille). Un sprite laissé penché
+        // le resterait pour toujours — le défaut exact que la teinte d'impact avait,
+        // à l'envers.
+        sprite.setRotation(0)
+        rates.delete(sprite)
       }
     },
   }

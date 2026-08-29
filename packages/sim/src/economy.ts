@@ -1049,7 +1049,12 @@ function depleteNode(state: SimState, node: ResourceNode): void {
   // (`setNodes` teste déjà `regrowAt > 0`), la boucle de repousse pour passer son chemin en
   // O(1), et la sauvegarde la porte telle quelle. On ne compte pas non plus les épuisements
   // d'un nœud qui n'en connaîtra pas d'autre : `depletions`/`forgetAt` n'ont plus d'objet.
-  if (noeudDefrichable(state.villages, node)) {
+  // UN GISEMENT FINI (`NodeDef.fini`, spec `cendre.md` R25) : la charbonnière de la cendre ne
+  // repousse pas, où qu'elle soit — R15 tient, rien ne repousse dans le brûlé. Elle porte donc
+  // la MÊME marque que le défriché (`stock 0` + `regrowAt 0`), déjà comprise du client, de la
+  // boucle de repousse et de la sauvegarde. Avant le défrichement, et pas après : hors d'un
+  // village, `noeudDefrichable` est faux et la branche `else` lui aurait donné une échéance.
+  if (NODE_DEFS[node.type].fini || noeudDefrichable(state.villages, node)) {
     node.regrowAt = 0
     delete node.depletions
     delete node.forgetAt

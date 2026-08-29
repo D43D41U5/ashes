@@ -189,11 +189,16 @@ describe('les paliers (A5)', () => {
     entity(sim, b).y = 10.5
     entity(sim, b).hp = 100
     entity(sim, a).hp = 100
+    // FACE À FACE (R6ter, 2026-08-27) : une entité fraîche regarde l'EST, et `b` est
+    // planté à l'est de `a` — il prenait donc le coup DANS LE DOS, et le ×1,3 du revers
+    // se serait ajouté au modulateur d'archétype qu'on mesure ici. On tourne `b` vers `a`.
+    entity(sim, b).facing = { x: -1, y: 0 }
     // Le Foyer initie (non provoqué) : ×0.6. 6 × 0.6 = 3.6.
     act(sim, a, { type: 'attack', dx: 1, dy: 0 })
     for (let t = 0; t < COMBAT.WINDUP_TICKS + 1; t++) step(sim, [])
     expect(100 - entity(sim, b).hp).toBeCloseTo(6 * ALIGNMENT.FOYER_OFFENSE_MALUS, 0)
-    // La Meute mord : ×1.2 — et c'est une riposte (a a frappé d'abord).
+    // La Meute mord : ×1.2 — et c'est une riposte (a a frappé d'abord). `a` regarde déjà
+    // `b` (le coup qu'il vient de porter l'a orienté) : pas de revers ici non plus.
     va.warmth = 80
     va.engagement = 50
     vb.warmth = -80

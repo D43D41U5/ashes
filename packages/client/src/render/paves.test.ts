@@ -90,6 +90,43 @@ describe('la cuisson d’un chunk', () => {
     expect(plats).toBeLessThan(S * S) // et il y a bien des brins
   })
 
+  /**
+   * LA MARQUE SUIT LA MATIÈRE (Alexis, 2026-08-28 : « les biomes cendre ou shallow_water
+   * n'ont pas d'herbes ») — table `MARQUES` de `paves.ts`. Ce qui ferait rougir : le brin
+   * unique de retour partout (la neige marquée, la cendre avec du clair qui dépasse).
+   */
+  it('la marque suit la matière : la neige est lisse, la cendre n’a que du charbon, l’éboulis a ses cailloux', () => {
+    const compte = (terrain: number): { clairs: number; sombres: number } => {
+      const img = cuire(() => terrain, 0x808080)
+      let clairs = 0
+      let sombres = 0
+      for (let y = 0; y < S; y++) {
+        for (let x = 0; x < S; x++) {
+          const [r] = px(img, x, y)
+          if (r! > 0x80) clairs++
+          else if (r! < 0x80) sombres++
+        }
+      }
+      return { clairs, sombres }
+    }
+    // La neige (famille `neige`) : AUCUNE marque — une congère est lisse et balayée.
+    const neige = compte(10)
+    expect(neige.clairs + neige.sombres, 'la neige est lisse').toBe(0)
+    // La cendre : du sombre seul — rien de clair ne dépasse d'une poussière.
+    const cendre = compte(27)
+    expect(cendre.clairs, 'rien de clair sur la cendre').toBe(0)
+    expect(cendre.sombres, 'les charbons existent').toBeGreaterThan(0)
+    // L'éboulis (famille `mineral`) : le caillou — du clair ET du sombre.
+    const scree = compte(9)
+    expect(scree.clairs, 'le dessus clair du caillou').toBeGreaterThan(0)
+    expect(scree.sombres, 'l’ombre du caillou').toBeGreaterThan(0)
+    // L'herbe garde son brin — clair et sombre aussi (le test d'au-dessus le couvre déjà en
+    // budget ; ici on affirme que la différenciation n'a pas éteint le brin).
+    const herbe = compte(1)
+    expect(herbe.clairs, 'le brin clair de l’herbe').toBeGreaterThan(0)
+    expect(herbe.sombres, 'le pied sombre du brin').toBeGreaterThan(0)
+  })
+
   it('LE DÉBORD (PAVE.BAVE) — l’image dépasse d’un pixel, et ce pixel est CELUI DU VOISIN', () => {
     // La couture d'un pixel qu'Alexis voyait venait du bord de deux images qui se TOUCHENT à un
     // demi-pixel d'écran. Le débord les fait se RECOUVRIR — mais il ne vaut que si le pixel

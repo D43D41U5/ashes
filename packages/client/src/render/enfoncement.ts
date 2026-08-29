@@ -101,6 +101,28 @@ export function epaisseurQuiSEnfonce(displayW: number, displayH: number, couche:
 }
 
 /**
+ * ═══ CE QUE L'EAU FAIT À UN NŒUD PLANTÉ DEDANS — les pierres du gué ═══
+ *
+ * *(Alexis, 2026-08-28 : « des nœuds de pierres, la même collision, immergés en partie ».)*
+ *
+ * Un nœud n'est pas un corps : il ne traverse jamais l'arête de sa tuile, donc il n'a pas de
+ * rampe à lisser — la lecture de terrain BINAIRE qui salissait le pas d'un marcheur (l'avertissement
+ * en tête de ce fichier) est ici la bonne réponse, et la seule qui coûte zéro SDF.
+ *
+ * Les deux lois du module valent quand même, et c'est tout l'intérêt de le faire écrire ICI :
+ *   ① **UN MAX, JAMAIS UNE SOMME** — un gué enneigé ne cumule pas ses deux découpes.
+ *   ② **CE QUI MONTE NE FAIT PAS DESCENDRE** — l'eau CÈDE (le bloc descend d'autant, si bien que
+ *      sa ligne de coupe retombe pile sur la surface) ; la neige, elle, ne fait que découper.
+ *
+ * La profondeur est `EAU_PX`, la même que pour le marcheur qui patauge à côté : deux hauteurs
+ * d'immersion sur une même tuile se verraient au premier coup d'œil.
+ */
+export function enfoncementDUnNoeud(surHautFond: boolean, coupeNeige = 0): Omit<Enfoncement, 'immersion'> {
+  const descente = surHautFond ? EAU_PX : 0
+  return { coupe: Math.max(coupeNeige, descente), descente }
+}
+
+/**
  * CE QUE LES QUATRE MILIEUX FONT AU CORPS — l'écrivain unique de la question.
  *
  * Aucun cas particulier, aucune porte : quatre profondeurs continues, un `max` pour ce qui

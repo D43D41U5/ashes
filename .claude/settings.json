@@ -6,5 +6,18 @@
     "claude-md-management@claude-plugins-official": true,
     "playwright@claude-plugins-official": true,
     "github@claude-plugins-official": true
+  },
+  "permissions": {
+    "allow": [
+      "Bash(pnpm --filter @ashes/client exec vitest run *)",
+      "Bash(pnpm --filter @ashes/sim exec vitest run *)",
+      "Bash(pnpm --filter @ashes/server exec vitest run *)",
+      "Bash(pnpm lint *)",
+      "Bash(pnpm test *)",
+      "Bash(pnpm check *)",
+      "Bash(pnpm --filter @ashes/client exec tsc --noEmit *)",
+      "Bash(pnpm --filter @ashes/sim exec tsc --noEmit *)",
+      "Bash(pnpm --filter @ashes/server exec tsc --noEmit *)"
+    ]
   }
 }

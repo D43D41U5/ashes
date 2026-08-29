@@ -170,6 +170,36 @@ export const SOCLE = {
 export const SOCLE_OMBRE_TUILES = 1.9
 export const SOCLE_OMBRE_DESCENTE = 1
 
+/**
+ * LA DÉRIVE DE LA FLAQUE, en TUILES — de combien elle glisse en X à l'astre RASANT.
+ * *(demande d'Alexis, 2026-08-27 : « l'ombre du bloc se déplace sur l'axe X en se mettant à
+ * l'opposé de la direction du soleil/lune ».)*
+ *
+ * Le CÔTÉ et la force viennent de `lighting.deriveDOmbre` (part signée dans [−1, 1], déjà
+ * inversée et pondérée par ce que chaque astre éclaire vraiment) ; ce nombre-ci n'est que
+ * l'amplitude — « combien de tuiles au maximum atteint ». 0,5 tuile = 8 px sur un bloc de 16 :
+ * la flaque (1,9 tuile) déborde alors de 15 px d'un côté et disparaît de l'autre, au lieu de
+ * 7 et 7. CHOISI SUR PLANCHE, contre 0,25 : à 4 px la flaque bouge sans qu'on puisse dire de
+ * quel côté — le débord passe de 7 à 11 px, sous le seuil où l'œil lit une DIRECTION.
+ *
+ * Elle ne s'applique qu'au SOCLE : c'est le seul art pleine tuile dont la flaque, centrée, ne
+ * sortait de sous la pierre qu'en un anneau symétrique — ce qui se lisait comme une auréole
+ * plutôt que comme une ombre. Les arbres et les props gardent la leur centrée (l'étendre est
+ * un argument de plus à `positionShadow`, pas un chantier).
+ */
+export const SOCLE_OMBRE_DERIVE = 0.5
+
+/**
+ * LE CHANFREIN DE LA SILHOUETTE, en texels — de combien les rangées HAUTES se resserrent de
+ * chaque côté. C'est le « le haut de la pierre est légèrement biseauté » d'Alexis, et c'est la
+ * seule chose qui empêche le socle d'être un rectangle parfait.
+ *
+ * ⚠ **EXPORTÉ DEPUIS LE 2026-08-27** : l'ombre du bloc (`ombre-socle.ts`) s'y resserre aussi —
+ * une ombre est la projection d'une SILHOUETTE, donc elle doit se rétrécir d'ici et pas d'un
+ * nombre recopié à côté. Changer ce chanfrein change l'ombre, par construction.
+ */
+export const CHANFREIN = 2
+
 /** Rangées de dessus à hauteur pleine : un PLAN, assez épais pour se lire comme tel. */
 const CROWN = 4
 /** Hauteur du corps. L'écart avec 1 EST la marche que la rampe descend. */
@@ -221,7 +251,7 @@ export function formeDeSocle(taille: number, graine = 0): FormeDeSocle {
   const w = SOCLE_W
   const alpha = new Uint8Array(w * h)
   const relief = new Float32Array(w * h)
-  const ch = graine ? 1 + Math.floor(hash3(graine, 1, 0) * 3) : 2
+  const ch = graine ? 1 + Math.floor(hash3(graine, 1, 0) * 3) : CHANFREIN
   for (let x = 0; x < w; x++) {
     for (let y = y0; y < h; y++) {
       const dy = y - y0

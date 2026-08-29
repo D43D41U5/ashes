@@ -233,8 +233,14 @@ function beastStrike(damage: number, windupTicks: number): Strike {
  *
  * Le pipeline ne connaît toujours pas les camps : bêtes, PNJ et joueurs y gagnent
  * ensemble (« personne ne triche »). La nuit mord donc plus fort, et c'est assumé.
+ *
+ * ⚠ EXPORTÉE POUR LE CLIENT (2026-08-28), et c'est le point : le télégraphe dessinait la
+ * zone NOMINALE (`strike.range`, `strike.arcCos`) alors que la résolution se joue sur la
+ * zone ÉLARGIE du corps — de +16 % à +36 % de surface, mesuré. Le coup portait donc HORS
+ * du dessin. Le client lit désormais cette fonction-ci pour désigner ses cibles, et
+ * `render/zone-frappe.ts` en reproduit le CONTOUR exact : une seule géométrie, pas deux.
  */
-function inStrikeZone(strike: Strike, ax: number, ay: number, dx: number, dy: number, tx: number, ty: number): boolean {
+export function inStrikeZone(strike: Strike, ax: number, ay: number, dx: number, dy: number, tx: number, ty: number): boolean {
   const corps = COMBAT.HIT_BODY_RADIUS
   if (strike.shape === 'disc') {
     // Le disque est posé DEVANT le corps, à `range` : l'overhead s'écrase au sol.
@@ -556,8 +562,24 @@ function knockback(
   ty: number,
   dist: number,
   charged: boolean,
+  degats: number,
 ): void {
-  const poussée = COMBAT.KNOCKBACK_TILES * (charged ? COMBAT.KNOCKBACK_CHARGED_FACTOR : 1)
+  // ═══ SEUL LE COUP LOURD REPOUSSE, ET C'EST CE QUI SAUVE LA MEUTE ═══
+  //
+  // La mesure de 2026-08-02 (6/6 → 0/6 d'encerclement dès 0,10 tuile) n'accusait pas le
+  // recul : elle accusait « TOUT coup recule », morsures comprises — la meute se
+  // désorganisait elle-même en poussant sa proie hors des cônes de ses propres frères.
+  //
+  // `charged` exclut les bêtes PAR CONSTRUCTION, et c'est une PREUVE et non six graines :
+  // le drapeau n'est posé qu'à un seul endroit de tout /sim — le relâchement d'une charge
+  // du joueur (`applyCombatAction`, `attack_release`). Bêtes, PNJ et Cendreux passent tous
+  // par `beastStrike` ou par le coup simple, qui ne le portent jamais.
+  if (!charged) return
+  // L'AMPLITUDE SUIT LES DÉGÂTS, comme le recul PEINT du client (`encaissement.ts`) : une
+  // arme se sent par son poids, pas par son seul chiffre. Rampe continue depuis zéro,
+  // plate au-delà — l'overhead des poings écarte à peine, le tourbillon de hache dégage.
+  const part = degats <= 0 ? 0 : degats >= COMBAT.KNOCKBACK_DAMAGE_FULL ? 1 : degats / COMBAT.KNOCKBACK_DAMAGE_FULL
+  const poussée = COMBAT.KNOCKBACK_TILES * part
   if (poussée <= 0) return
   // ═══ UNE HORDE NE CATAPULTE PAS : UN SEUL RECUL PAR TICK ═══
   //
@@ -749,18 +771,61 @@ function resolveStrike(state: SimState, attacker: Entity): void {
       }
     }
 
-    // Blocage directionnel (spec R6) : réduit si l'attaque arrive de face.
+    // ═══ LE DOS COÛTE CHER (spec R6ter) ═══
+    //
+    // Le cosinus de l'axe cible→frappeur contre le REGARD de la cible : +1 pile de face,
+    // −1 pile dans le dos. Il servait déjà à la parade et n'était calculé QUE pour les
+    // bloqueurs — c'est-à-dire pour le seul cas où il ne pouvait rien apprendre, puisqu'une
+    // parade n'existe que de face. Relevé pour TOUTE cible, il rend enfin le positionnement
+    // du GDD §7 (« on ne gagne pas un 1v3 ») effectif : l'encerclement blesse.
+    //
+    // Cible et frappeur confondus : aucun axe, donc aucun dos — on prend le cas de face.
+    const facingCos = dist > 0 ? (-tx * target.facing.x - ty * target.facing.y) / dist : 1
+    if (facingCos <= COMBAT.BACK_ARC_COS) dealt *= COMBAT.BACK_DAMAGE_FACTOR
+
+    // ═══ LA PARADE (spec R6), ET SA FENÊTRE (R6bis) ═══
+    //
+    // Elle MULTIPLIE désormais, là où elle affectait sèchement `damage * 0.3` : la
+    // réduction est de 70 % « du coup », donc de ce que le coup vaut RÉELLEMENT une fois
+    // la mise à mort propre et le modulateur d'alignement passés. Écrite en affectation,
+    // elle jetait ces deux facteurs — et un modulateur inférieur à 1 (le malus d'offense
+    // du Foyer) faisait qu'un coup PARÉ frappait plus fort qu'un coup non paré.
     if (target.blocking && target.stamina > 0 && dist > 0) {
-      const facingCos = (-tx * target.facing.x - ty * target.facing.y) / dist
       if (facingCos >= COMBAT.BLOCK_ARC_COS) {
-        dealt = damage * (1 - COMBAT.BLOCK_REDUCTION)
-        target.stamina = Math.max(0, target.stamina - (COMBAT.BLOCK_STAMINA_BASE + damage / 2))
+        const avant = dealt
+        dealt *= 1 - COMBAT.BLOCK_REDUCTION
+        // ═══ LA PARADE POSÉE À TEMPS NE COÛTE PAS DE SOUFFLE (R6bis) ═══
+        //
+        // Le timing paie dans la ressource REINE, jamais en dégâts et jamais en
+        // invulnérabilité : R4 tient (« l'esquive est du positionnement, pas un i-frame »).
+        // Sans ça, la parade n'était qu'un amortisseur — aucun instant du combat ne
+        // récompensait la lecture du télégraphe, et reculer d'un pas dominait toujours.
+        //
+        // UNE PRESSION, UNE FENÊTRE (`parryUntil` est consommé). Marteler la touche ne
+        // donne pas des parades gratuites en rafale : entre deux pressions on ne pare
+        // PAS DU TOUT, et le coup qui tombe là passe plein pot. Tenir la garde reste sûr
+        // et coûte ; marteler est gratuit et troué ; lire le coup donne les deux.
+        const parried = target.parryUntil !== undefined && state.tick <= target.parryUntil
+        if (parried) delete target.parryUntil
+        else target.stamina = Math.max(0, target.stamina - (COMBAT.BLOCK_STAMINA_BASE + damage / 2))
+        // UNE PARADE MUETTE NE S'APPREND PAS. `prevented` est ce que la garde a mangé —
+        // c'est lui, et lui seul, qui distingue une parade d'un coup faible : tant que
+        // seul `entity_damaged` sortait (avec son montant DÉJÀ réduit), le geste défensif
+        // le plus coûteux du jeu n'avait aucune preuve à l'écran qu'il avait marché.
+        emitEvent(state, {
+          type: 'attack_blocked',
+          tick: state.tick,
+          entityId: target.id,
+          byEntityId: attacker.id,
+          prevented: avant - dealt,
+          parried,
+        })
       }
     }
     // LE TRAIT NE REPOUSSE PAS (spec `tir.md` T10) : une flèche ne pousse pas un
     // sanglier. La règle est indépendante de l'arbitrage en cours sur `KNOCKBACK_TILES`
     // — quel que soit le nombre qu'il fixera, il ne vaudra que pour la mêlée.
-    if (!ranged) knockback(state, attacker, target, tx, ty, dist, windup.charged === true)
+    if (!ranged) knockback(state, attacker, target, tx, ty, dist, windup.charged === true, dealt)
     applyDamage(state, target, dealt, attacker.id)
     // ═══ IL BOIT LA CHALEUR DU CORPS (décision d'Alexis ⑯, 2026-08-21) ═══
     //
@@ -850,6 +915,18 @@ function resolveStrike(state: SimState, attacker: Entity): void {
   // de temps mort, pas une autorisation de frapper plus tôt.
   const recovery = struck ? strike.recoveryHit : strike.recoveryWhiff
   if (recovery > 0) attacker.cooldownUntil = Math.max(attacker.cooldownUntil, state.tick + recovery)
+  // ═══ LE COUP QUI FEND L'AIR SE DIT (spec R4quater) ═══
+  //
+  // C'est le fait le plus informatif du combat de coût, et il se produisait sans un mot :
+  // le raté cloue sur place jusqu'à 1,6 s, et c'est très exactement là que le loup entre.
+  // Le joueur mourait pendant sa récupération en croyant avoir mal cliqué.
+  //
+  // MÊLÉE SEULEMENT : une flèche perdue est déjà dite par son vol et par sa chute au sol
+  // (`tir.md`), et l'émettre doublerait le message d'un tir sur deux. Émis APRÈS la
+  // récupération, pour que rien ne se glisse entre la cause et son effet.
+  if (!struck && !ranged) {
+    emitEvent(state, { type: 'attack_whiffed', tick: state.tick, entityId: attacker.id, charged: windup.charged === true })
+  }
   delete attacker.windup
 }
 
@@ -993,7 +1070,9 @@ export function die(state: SimState, entity: Entity, byEntityId: number, cause?:
   // que rien ne soit jamais tronqué (spec inventaire R11).
   const loot = makeInventory(SLOTS.CORPSE)
   if (monster) {
-    addItems(loot, MONSTER_DEFS[monster.type].loot)
+    // LE PETIT (spec loup.md L15) : butin maigre, et pas d'os — ce n'est pas une
+    // source de matériau. Sa table vit avec les autres (`loot_petit`, balance.ts).
+    addItems(loot, monster.petit === true ? (MONSTER_DEFS[monster.type].loot_petit ?? MONSTER_DEFS[monster.type].loot) : MONSTER_DEFS[monster.type].loot)
     // LA PEAU BRUTE (spec chasse — coup propre, V0-4). Un gibier abattu PROPREMENT
     // (`slainClean` : charge relâchée dans le vert, lent et à découvert) laisse une
     // peau intacte ; un coup sale ne donne que la viande. Coût d'opportunité greffé
@@ -1046,6 +1125,39 @@ export function die(state: SimState, entity: Entity, byEntityId: number, cause?:
     // `clean` (spec chasse C6) : la chronique saura dire « d'un seul coup, sans
     // un bruit », et la future chaîne du cuir (peaux intactes) a son ancrage.
     emitEvent(state, { type: 'monster_slain', tick: state.tick, monsterType: monster.type, byEntityId, clean: monster.slainClean === true })
+
+    // ═══ LA FUREUR DU CLAN (spec loup.md L13, décision d'Alexis ⑤) ═══
+    //
+    // Un PETIT tué : tous les adultes du clan — même partis chasser — entrent en
+    // RAGE, lâchent leur sortie et RENTRENT sur le meurtrier. Sans elle, un gîte
+    // vidé de ses adultes serait de la viande gratuite : le robinet exact que la
+    // pression de chasse (R16) a été écrite pour fermer. Le hurlement l'annonce,
+    // une fois (GDD §9bis : « annoncés, pas surprises »). Le tueur n'est pris
+    // pour cible que s'il est à portée de la rage (`PURSUIT_RANGE_RAGE`) — la
+    // poursuite reste BORNÉE (décision ⑦) : trop loin, les adultes rentrent au
+    // gîte, et c'est là qu'ils le trouveront s'il y est encore.
+    if (monster.petit === true && monster.herdId !== undefined) {
+      const killer = state.entities.find((e) => e.id === byEntityId && e.hp > 0)
+      let hurle = false
+      let n = 0
+      for (const w of state.monsters) {
+        if (w.herdId !== monster.herdId || w.petit === true || w.routed) continue
+        n += 1
+        w.rageUntil = state.tick + FAUNA.RAGE_TICKS
+        delete w.sortie
+        delete w.sortieX
+        delete w.sortieY
+        delete w.chasseAbstraiteAt
+        const we = state.entities.find((e) => e.id === w.entityId)
+        if (killer && we && we.hp > 0 && distSq(we.x, we.y, killer.x, killer.y) <= FAUNA.PURSUIT_RANGE_RAGE * FAUNA.PURSUIT_RANGE_RAGE) {
+          w.targetId = killer.id
+          hurle = true
+        }
+      }
+      if (hurle && killer) {
+        emitEvent(state, { type: 'wolf_howl', tick: state.tick, targetEntityId: killer.id, packSize: n, x: entity.x, y: entity.y })
+      }
+    }
 
     // LA PRESSION DE CHASSE (spec faune R16). Le gibier déserte ce qu'on vient de
     // chasser : plus une seule naissance ambiante autour d'ici pendant un moment.

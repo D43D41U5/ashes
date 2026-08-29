@@ -550,15 +550,24 @@ describe('le coup propre à distance (A7)', () => {
     expect(sale, 'le trait porte dans les deux cas').toBeGreaterThan(0)
     // Un ENCADREMENT, pas une égalité : la bête blessée SAIGNE (chasse C8) pendant les
     // deux secondes qu'on laisse tourner, et ce filet-là n'appartient pas au coup.
-    expect(propre).toBeGreaterThan(sale * (HUNT.CLEAN_KILL_FACTOR - 0.5))
-    expect(propre).toBeLessThan(sale * (HUNT.CLEAN_KILL_FACTOR + 0.5))
+    //
+    // ⚠ ET LE RAPPORT INTÈGRE LE REVERS (R6ter, 2026-08-27). Ce n'est pas un ajustement de
+    // confort : c'est la MÊME cause qui produit les deux moitiés du rapport. Une bête
+    // ALERTÉE se TOURNE vers ce qu'elle voit (`faune.ts`, le regard de la bête méfiante) —
+    // elle prend donc le trait de face. Une bête surprise, non : elle le prend dans le dos.
+    // La surprise vaut désormais `CLEAN_KILL_FACTOR × BACK_DAMAGE_FACTOR`, et l'approche
+    // silencieuse de `chasse.md` C1 en sort renforcée par sa propre logique.
+    const attendu = HUNT.CLEAN_KILL_FACTOR * COMBAT.BACK_DAMAGE_FACTOR
+    expect(propre).toBeGreaterThan(sale * (attendu - 0.5))
+    expect(propre).toBeLessThan(sale * (attendu + 0.5))
   })
 })
 
 describe('le trait ne repousse pas (A8)', () => {
-  it('la cible d’un trait n’est pas poussée, KNOCKBACK armé', () => {
-    // On ARME le recul le temps de la garde : le jour où le nombre remonte, ce qu'il
-    // commande est déjà prouvé — et il ne doit jamais commander le trait (T10).
+  it('la cible d’un trait n’est pas poussée, KNOCKBACK au maximum', () => {
+    // Le recul n'est plus livré à zéro (R4sexies, 2026-08-27) ; on le pousse quand même au
+    // MAXIMUM le temps de la garde, pour que T10 se prouve contre le pire cas et non
+    // contre le réglage du jour.
     const avant = COMBAT.KNOCKBACK_TILES
     ;(COMBAT as { KNOCKBACK_TILES: number }).KNOCKBACK_TILES = 0.5
     try {
@@ -578,21 +587,25 @@ describe('le trait ne repousse pas (A8)', () => {
     }
   })
 
-  it('…alors qu’une MÊLÉE, elle, repousse bien (la contre-épreuve)', () => {
-    const avant = COMBAT.KNOCKBACK_TILES
-    ;(COMBAT as { KNOCKBACK_TILES: number }).KNOCKBACK_TILES = 0.5
-    try {
-      const sim = makeSim()
-      const a = spawnEntity(sim, 10, 10)
-      grantHeld(sim, a, 'spear')
-      const c = spawnEntity(sim, 11.5, 10)
-      const x0 = entity(sim, c).x
-      tick(sim, [{ entityId: a, dx: 0, dy: 0, action: { type: 'attack', dx: 1, dy: 0 } }])
-      for (let t = 0; t < 2 * BALANCE.TICK_RATE_HZ; t++) tick(sim)
-      expect(entity(sim, c).x).toBeGreaterThan(x0)
-    } finally {
-      ;(COMBAT as { KNOCKBACK_TILES: number }).KNOCKBACK_TILES = avant
+  it('…alors qu’une MÊLÉE LOURDE, elle, repousse bien (la contre-épreuve)', () => {
+    // ⚠ LOURDE, et c'est la moitié de la règle depuis le 2026-08-27 : seul le coup CHARGÉ
+    // repousse (R4sexies). Un clic bref ne déplace plus personne — c'est ce qui laisse la
+    // meute intacte, et c'est ce qui a permis d'armer le nombre. La contre-épreuve passe
+    // donc par le tourbillon de la hache : `lunge: 0`, cône de 360°, donc la cible est
+    // dans la zone sans qu'aucune adresse n'entre en jeu.
+    const sim = makeSim()
+    const a = spawnEntity(sim, 10, 10)
+    grantHeld(sim, a, 'iron_axe')
+    const c = spawnEntity(sim, 11.5, 10)
+    const x0 = entity(sim, c).x
+    const hold = WEAPON_PROFILES.iron_axe.chargeTicks + 2
+    for (let t = 0; t < hold; t++) {
+      tick(sim, [{ entityId: a, dx: 0, dy: 0, action: { type: 'attack_charge', dx: 1, dy: 0, hold: t > 0 } }])
     }
+    tick(sim, [{ entityId: a, dx: 0, dy: 0, action: { type: 'attack_release', dx: 1, dy: 0 } }])
+    for (let t = 0; t < 2 * BALANCE.TICK_RATE_HZ; t++) tick(sim)
+    expect(entity(sim, c).hp, 'le tourbillon a bien porté').toBeLessThan(100)
+    expect(entity(sim, c).x).toBeGreaterThan(x0)
   })
 })
 

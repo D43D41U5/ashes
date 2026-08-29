@@ -63,6 +63,7 @@ const ART: Record<string, { fp: number; w: number; h: number; crown?: number }> 
   bivouac: { fp: 2, w: 36, h: 24 }, //              une trace, pas un volume
   // ── DANGER — bas, sourd, hostile ──
   taniere: { fp: 3, w: 56, h: 30 }, //              le tertre de terre remuée s'étale
+  louviere: { fp: 3, w: 56, h: 34 }, //             la dalle et sa gueule — la meute vit dessous
   repaire: { fp: 3, w: 58, h: 54, crown: 12 },
   epave: { fp: 2, w: 44, h: 36 },
   fondriere: { fp: 3, w: 58, h: 16 },
@@ -317,6 +318,31 @@ export function makePoiTextures(scene: Phaser.Scene): void {
     g.fillStyle(RUST.deep).fillEllipse(c + 2, b - 12, 21, 6) // sa lèvre supérieure
     g.fillStyle(0x6a5a48).fillCircle(c - 18, b - 6, 2) // des os, autour
     g.fillStyle(0x6a5a48).fillRect(c + 19, b - 5, 5, 2)
+  })
+  // LA LOUVIÈRE (spec loup.md L1) : une DALLE de roche déchaussée, et sa GUEULE.
+  // La différence avec la Tanière doit se lire à l'ombre chinoise : la tanière
+  // est un tertre de TERRE au trou central ; la louvière est une PIERRE qui
+  // surplombe, la gueule s'ouvre DESSOUS, et le seuil est foulé — os épars,
+  // terre battue. On sait qui vit là avant d'avoir vu un loup.
+  tex('louviere', (w, b) => {
+    const c = w / 2
+    g.fillStyle(SHADOW, 0.2).fillEllipse(c, b - 3, w - 4, 8)
+    // La terre battue du seuil : plus claire que le sol, PELÉE — on passe ici tous les jours.
+    g.fillStyle(RUST.mid).fillEllipse(c, b - 6, w - 8, 12)
+    g.fillStyle(RUST.lit).fillEllipse(c - 6, b - 7, 20, 7)
+    // La dalle : une masse de pierre inclinée, déchaussée, qui surplombe la gueule.
+    g.fillStyle(STONE.deep).fillEllipse(c + 2, b - 18, 44, 20) // l'assise sombre
+    g.fillStyle(STONE.mid).fillEllipse(c + 1, b - 20, 40, 16) // le corps
+    g.fillStyle(STONE.lit).fillEllipse(c - 8, b - 24, 22, 8) // lumière NO sur le dessus
+    g.fillStyle(STONE.dark).fillEllipse(c + 14, b - 16, 18, 8) // ombre SE
+    // LA GUEULE — sous la dalle, décentrée : un vrai seuil, pas un puits.
+    g.fillStyle(VOID).fillEllipse(c - 4, b - 10, 18, 10)
+    g.fillStyle(STONE.deep).fillEllipse(c - 4, b - 14, 20, 5) // le linteau de pierre
+    // Les os du seuil : le garde-manger avoue.
+    g.fillStyle(0x8a7a62).fillRect(c + 14, b - 6, 6, 2)
+    g.fillStyle(0x8a7a62).fillCircle(c + 21, b - 5, 1.5)
+    g.fillStyle(0x6a5a48).fillRect(c - 20, b - 4, 5, 2)
+    g.fillStyle(0x6a5a48).fillCircle(c - 22, b - 7, 1.4)
   })
   tex('charnier', (w, b) => {
     const c = w / 2

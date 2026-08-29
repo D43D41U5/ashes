@@ -161,10 +161,10 @@ export { BRUME } from './balance'
 // l'éclair depuis `foudreImpactAt`, rien ne transite) et le bloc de calibration
 // s'exportent, l'ordonnanceur et la résolution non.
 export {
-  FOUDRE_CRENEAU_TICKS, foudreImpactAt, foudreTelegrapheAt, frontMeteoPos, meteoCold, meteoFeuConso,
+  FOUDRE_CRENEAU_TICKS, foudreImpactAt, foudreTelegrapheAt, frontMeteoPos, meteoFeuConso,
   meteoIntensity, meteoIntensityAt, meteoCycleEligible, meteoMouille, meteoQuiet, meteoSpeedFactor,
   meteoSpeedFactorAt, meteoTypeBrut, meteoTypeDuCycle, meteoVisionFactor, frontDuCycle, meteoColdAt,
-  largeurDe, neigeA, partDeNeige, partDeBlizzard, coldMaximal, meteoAspectAt, aspectSousFront, aspectAuPoint, frontEstBlizzard, meteoColdSousFront,
+  largeurDe, neigeA, partDeNeige, partDeBlizzard, coldMaximal, meteoAspectAt, aspectSousFront, aspectAuPoint, aspectFroidDe, frontEstBlizzard, meteoColdSousFront,
 } from './meteo'
 export type { MeteoFront, MeteoType, MeteoAspect, BandeMeteo, FoudreImpact } from './meteo'
 
@@ -263,7 +263,7 @@ export {
   pousseDe,
   type CultureId,
 } from './agriculture' // le potager (voie A) : maturité PURE, lue par le rendu
-export { applyCombatAction, advanceCombat, weaponDamage, weaponKind, weaponProfile, pendingStrike } from './combat'
+export { applyCombatAction, advanceCombat, weaponDamage, weaponKind, weaponProfile, pendingStrike, inStrikeZone } from './combat'
 export type { CombatAction, Corpse } from './combat'
 export { advanceNpcs } from './npc'
 export type { Npc, NpcTaskState } from './npc'
@@ -316,6 +316,7 @@ export {
   PIECES,
   STRUCTURE_TYPES,
   BARRIER_TYPES,
+  TENUS_POSABLES,
   FONCTION_LABEL,
   FONCTION_NOM,
   nomExigence,
@@ -330,7 +331,7 @@ export {
   matieresDe,
   matiereChiffre,
 } from './pieces'
-export type { PieceDef, Famille, Pose, Occupe, Arete, Bloque, Exigence, StationFonction, Matiere } from './pieces'
+export type { PieceDef, Famille, Pose, Occupe, Arete, Bloque, Exigence, StationFonction, Matiere, TenuPosable } from './pieces'
 
 // ─── L'inventaire : la case active, ce qu'on tient VRAIMENT en main (R8-R9) ─
 export { applyInventoryAction, heldSlot, wearHeld, isInventoryAction } from './inventory-actions'
@@ -408,6 +409,10 @@ export {
   froidDeCendre, profondeurNueDeCendre, rampeDeSuccession,
 } from './cendre'
 export type { CaractereDeFoyer, EffetsDeFoyer } from './cendre'
+// LA CHARBONNIÈRE (spec `cendre.md` R25) — ce que la cendre REND. Le client n'a rien à dériver
+// (les fûts arrivent en NŒUDS dans le snapshot) ; c'est l'outillage et les bancs qui lisent le
+// semis, comme pour les fumerolles.
+export { CHARBONNIERE, charbonniereIci, idDeCharbonniere, toutesLesCharbonnieres } from './charbonniere'
 // LES FUMEROLLES (spec `cendre.md`) — dérivées comme la cendre elle-même : le client les
 // retrouve en appelant ces fonctions, aucune position ne transite.
 export {

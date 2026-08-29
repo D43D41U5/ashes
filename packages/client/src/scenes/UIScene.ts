@@ -876,6 +876,8 @@ export class UIScene extends Phaser.Scene {
       lieu: getHud(this.registry, 'lieu'),
       ambiant: getHud(this.registry, 'ambiant'),
       ciel: getHud(this.registry, 'cielIci') ?? null,
+      // `?? true` : tant que personne n'a rien dit, l'icône reste pleine (les astres aussi).
+      couvre: getHud(this.registry, 'cielCouvre') ?? true,
       vent: getHud(this.registry, 'vent'),
       caractere: idCaractere === null ? undefined : NOMS_MODIFICATEUR[idCaractere],
       now: this.time.now,
@@ -966,6 +968,7 @@ export class UIScene extends Phaser.Scene {
     this.hudCore.update({
       hp: getHud(this.registry, 'hp') ?? 100,
       stamina: getHud(this.registry, 'stamina') ?? 100,
+      exhausted: getHud(this.registry, 'exhausted') ?? false,
       hunger: getHud(this.registry, 'hunger') ?? 100,
       temperature: getHud(this.registry, 'temperature') ?? TEMPERATURE.CORPS_SAIN, // °C, pas une jauge 0-100
       wounds: getHud(this.registry, 'wounds') ?? {},

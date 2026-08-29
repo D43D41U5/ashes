@@ -112,10 +112,33 @@ export function distanceALEau(map: WorldMap, tx: number, ty: number): number {
 /**
  * CETTE EAU PEU PROFONDE EST-ELLE À SEC ? La mare partie, le gué en poussière — on y marche
  * comme sur la terre, `nearWater` n'y voit plus d'eau, et le poisson n'y est plus.
+ *
+ * S10/A7 — L'HYSTÉRÉSIS (patron `gel.md` G8) : on assèche sous `−SEUIL_ASSECHEMENT`, on ne
+ * remouille qu'au-dessus du seuil relevé de `HYSTERESIS_ASSECHEMENT`. Dans la bande morte,
+ * le dernier état FRANC l'emporte — relu en rembobinant `niveauDEau` aux bords de cycle,
+ * exactement comme le gel relit la température du passé proche. Les bords de cycle
+ * SUFFISENT : la chaleur se lit au jour entier (`seasonDayAtTick` plancher) et les cycles
+ * secs se comptent par cycle, donc le niveau est CONSTANT dans un cycle — le verdict ne
+ * peut basculer qu'à la couture. Sans état franc dans la fenêtre de mémoire, l'eau est là :
+ * le doute profite à la carte générée. Le rembobinage ne se paie que DANS la bande (un
+ * niveau franc sort en deux comparaisons), et l'aridité elle-même sort en O(1) hors chaleur.
  */
 export function estAsseche(state: EtatEau, tx: number, ty: number, niveau?: number): boolean {
   if (terrainAt(state.map, tx, ty) !== TERRAIN_SHALLOW_WATER) return false
-  return (niveau ?? niveauDEau(state)) <= -EAU.SEUIL_ASSECHEMENT
+  const n = niveau ?? niveauDEau(state)
+  const entree = -EAU.SEUIL_ASSECHEMENT
+  const sortie = entree + EAU.HYSTERESIS_ASSECHEMENT
+  if (n <= entree) return true
+  if (n >= sortie) return false
+  const cycle = Math.floor(state.tick / TICKS_PER_CYCLE)
+  for (let k = 1; k <= EAU.MEMOIRE_CYCLES; k++) {
+    const c = cycle - k
+    if (c < 0) break
+    const passe = niveauDEau(state, c * TICKS_PER_CYCLE)
+    if (passe <= entree) return true
+    if (passe >= sortie) return false
+  }
+  return false
 }
 
 /**

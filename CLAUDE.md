@@ -15,6 +15,9 @@ pnpm install      # workspace complet
 pnpm check        # tsc --noEmit sur tous les packages
 pnpm test         # LES QUATRE SUITES — sim, client, serveur, banc de scénario (tools/suites.mjs).
                   # Il juge sur les COMPTES de tests Vitest, pas l'exit code (flaky « onTaskUpdate » absorbé).
+                  # CHAQUE SUITE A UN PLANCHER (SUITES dans suites.mjs) : une suite qui MAIGRIT
+                  # fait rougir, même toute verte — c'est le fichier évaporé qu'on attrape. Retirer
+                  # un test devenu faux est permis ; relever le plancher quand une suite a grossi.
                   # Un seul fichier : pnpm --filter @ashes/sim exec vitest run src/tir.test.ts
                   # LES CARTES DE TEST SONT EN CACHE (tools/carte-cache.ts) : `carteDeTest(...)`
                   # rend, au bit près, ce que rendrait generateZonedTerrain — mais une seule fois
@@ -46,7 +49,10 @@ pnpm smoke        # pilote le VRAI jeu dans Chromium et rapporte ce qu'il voit
 
 - `pnpm smoke --scenario lieux` — un scénario nommé (voir `SCENARIOS` dans le fichier).
 - `pnpm smoke --headed` — à l'œil, fenêtre ouverte.
-- `pnpm smoke --dev` — contre `pnpm dev`, **le seul mode où le debug est armé** : `veillee.ts` arme `debug` sur `import.meta.env.DEV`, donc TP/heure/invulnérabilité sont **inertes dans un build de production**. Un scénario qui se téléporte doit passer par là.
+- `pnpm smoke --dev` — contre un serveur de dev, **le seul mode où le debug est armé** : `veillee.ts` arme `debug` sur `import.meta.env.DEV`, donc TP/heure/invulnérabilité sont **inertes dans un build de production**. Un scénario qui se téléporte doit passer par là.
+  ⚠ **il vise `http://ashes.test/` par défaut** — la stack Docker PARTAGÉE, donc le code d'une autre
+  session. Pour éprouver le sien : `SMOKE_URL=http://localhost:3000/ pnpm smoke --dev …`.
+  La recette complète (vite isolé, debug, capture) : skill **`verif-navigateur`**.
 
 Le jeu s'expose via `window.__BRAISES__.scene` : le smoke test **lit** l'état, il ne le fabrique pas.
 
@@ -71,7 +77,8 @@ tools/            ← les instruments. `smoke.mjs` (navigateur), `suites.mjs` (l
 docs/specs/       ← specs par système, extraites du GDD, avec critères d'acceptation
 docs/gate1-finition.md ← le backlog de finition solo priorisé (P0/P1/P2) — ce qui reste vraiment à construire
 docs/decisions.md ← journal des décisions (ADR léger) — à tenir à jour
-docs/superpowers/ ← notes et plans de conception détaillés (juillet 06→11), COMPLÉMENT de docs/specs/ :
+docs/superpowers/ ← notes et plans de conception détaillés (juillet 06→11, puis au fil des gros
+                    chantiers), COMPLÉMENT de docs/specs/ :
                     encore amendés quand le système bouge (bannière « chiffres révisés » en tête) — donc
                     lire le bandeau avant les nombres, qui vivent dans le code et ses gardes.
 ```
@@ -96,7 +103,7 @@ Ils viennent du GDD §11 et §14 (« décisions actées »). Ne pas les rouvrir 
 - **État de sim JSON-sérialisable** : pas de classes, pas de `Map`/`Set` dans `SimState` — snapshot, transport Worker et persistance en dépendent.
 - **Specs avant systèmes** : avant d'implémenter un système de jeu (combat, alignement, économie…), extraire/compléter sa spec dans `docs/specs/` avec des critères d'acceptation testables, puis implémenter contre ces critères.
 - **Décisions** : toute décision de design ou d'architecture prise en session s'ajoute en une ligne dans `docs/decisions.md`. Les 14 décisions fondatrices sont dans le GDD §14.
-- **Travail en équipe de spécialistes** : six rôles ont une définition permanente dans `.claude/agents/` (`perf`, `da-rendu`, `determinisme-sim`, `systemes-jeu`, `ui-access`, `eclaireur-etat`), chacun avec l'instrument qu'il possède. Le protocole — **contrat `MESURÉ`/`SUSPECTÉ`** (seul `MESURÉ` entre au journal), worktree obligatoire pour qui écrit, et la liste de ce qu'on ne sait PAS encore mesurer — vit dans `docs/sprint-aaa.md` § L'ÉQUIPE. On convoque un spécialiste quand il y a un instrument à lancer ou une spec à confronter, jamais pour brainstormer.
+- **Travail en équipe de spécialistes** : six rôles ont une définition permanente dans `.claude/agents/` (`perf`, `da-rendu`, `determinisme-sim`, `systemes-jeu`, `ui-access`, `eclaireur-etat`), chacun avec l'instrument qu'il possède. Le protocole — **contrat `MESURÉ`/`SUSPECTÉ`** (seul `MESURÉ` entre au journal), worktree obligatoire pour qui écrit, et la liste de ce qu'on ne sait PAS encore mesurer — vit dans `docs/sprint-aaa.md` § L'ÉQUIPE. On convoque un spécialiste quand il y a un instrument à lancer ou une spec à confronter, jamais pour brainstormer. **Tout item de backlog repris commence par `eclaireur-etat`** (lecture seule) : le backlog est souvent pessimiste — trois items donnés « à faire » étaient déjà construits.
 - **Tests** : l'effort de test se concentre sur `/sim`. Chaque système livré arrive avec ses tests headless. Les bugs se reproduisent par un test `seed + inputs → état attendu` avant d'être corrigés.
 - Le code et les docs du projet sont en **français** (comme le GDD) ; les identifiants de code en anglais.
 
@@ -104,6 +111,6 @@ Ils viennent du GDD §11 et §14 (« décisions actées »). Ne pas les rouvrir 
 
 Le plan d'implémentation complet est dans **`docs/roadmap.md`** (jalons V0-V10 → LAN → Vallée → Saison 0, avec critères de sortie et gates). Le cadre vient du GDD §13.
 
-**La Phase Veillée (V0-V10) est complète** (cœur posé le 2026-07-05, près de quarante specs dans `docs/specs/` ; calibrage et pivots poursuivis depuis — worldgen graphe-de-zones puis stratigraphie, construction Rust puis catalogue `PIECES`, récolte vivante, l'arc, lieux bâtis composés en pièces + Atelier des plans). En attente d'actions humaines : brancher Cloudflare Pages (`pnpm build` → `packages/client/dist`) et jouer le **GATE 1** (la boucle solo est-elle fun 5 sessions d'affilée ?). Ce qui reste **constructible** d'ici là est priorisé dans **`docs/gate1-finition.md`** — le lire avant de choisir un chantier solo. **Phase LAN — jalon L1 en cours** (voir roadmap — `packages/server` + Colyseus substantiellement livrés le 2026-07-18, une zone ; le protocole `packages/sim/src/protocol.ts` est déjà le protocole réseau, seul le transport change ; reste : validation à plusieurs et GATE 2). Le calibrage continue via `pnpm scenario`. *(État réel et pistes : `docs/audit-gameplay-phase1.md`, `docs/axes-amelioration-phase2.md`, `docs/direction-design.md`.)*
+**La Phase Veillée (V0-V10) est complète** (cœur posé le 2026-07-05, plus de cinquante specs dans `docs/specs/` ; calibrage et pivots poursuivis depuis — worldgen graphe-de-zones puis stratigraphie, construction Rust puis catalogue `PIECES`, récolte vivante, l'arc, lieux bâtis composés en pièces + Atelier des plans). En attente d'actions humaines : brancher Cloudflare Pages (`pnpm build` → `packages/client/dist`) et jouer le **GATE 1** (la boucle solo est-elle fun 5 sessions d'affilée ?). Ce qui reste **constructible** d'ici là est priorisé dans **`docs/gate1-finition.md`** — le lire avant de choisir un chantier solo. **Phase LAN — jalon L1 en cours** (voir roadmap — `packages/server` + Colyseus substantiellement livrés le 2026-07-18, une zone ; le protocole `packages/sim/src/protocol.ts` est déjà le protocole réseau, seul le transport change ; reste : validation à plusieurs et GATE 2). Le calibrage continue via `pnpm scenario`. *(État réel et pistes : `docs/audit-gameplay-phase1.md`, `docs/axes-amelioration-phase2.md`, `docs/direction-design.md`.)*
 
 MVP gouvernance (Veillée/LAN) : rang unique + Chef + propriété individuelle. MVP alignement : deux axes + Foyer/Meute seulement.

@@ -261,8 +261,15 @@ export function createFirePanel(
       titleEl.textContent = view.title
       stateEl.textContent = STATE_LABEL[view.state]
       stateEl.style.color = STATE_COLOR[view.state]
+      // LA PLUIE MANGE LE BOIS (R5) : quand la sim accélère la consommation sous un front
+      // mouillé, le panneau le DIT — sans cette mention, le bois fondait sans explication.
+      const pressionMeteo = view.meteoConso > 1.01 ? ` · la pluie mange le bois ×${view.meteoConso.toFixed(1).replace('.', ',')}` : ''
       timeEl.textContent =
-        view.state === 'out' ? 'éteint' : view.state === 'ember' ? 'braises…' : `reste ${fmtTime(view.fuelTimeRemaining)}`
+        view.state === 'out'
+          ? 'éteint'
+          : view.state === 'ember'
+            ? 'braises…'
+            : `reste ${fmtTime(view.fuelTimeRemaining)}${pressionMeteo}`
       // UN POSTE SANS FLAMME (le séchoir, peche.md S4) : plus de section COMBUSTIBLE, plus
       // d'état de feu. Montrer trois cases vides à remplir de bois sur une claie qui n'en veut
       // pas serait un mensonge d'interface — le joueur chercherait ce qu'il faut y mettre.

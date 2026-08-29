@@ -127,7 +127,11 @@ Trois espèces, maigres, semées à la fumerolle : **fougère-de-feu** (fibre), 
 - **Jour 1** : rien — elles demandent la cendre *prise*. Assumé : c'est la récompense de la durée.
 - **VA, ne VIT pas** : le rendement doit rester sous le seuil de subsistance, sinon R14 s'inverse.
 
-### ④ La charbonnière — les fûts calcinés deviennent une économie
+### ④ La charbonnière — les fûts calcinés deviennent une économie — ✅ LIVRÉE (R24/R25)
+
+*Tranchée en deux temps : le charbon de bois existait déjà et ne servait à RIEN, donc R24 lui a
+d'abord donné un USAGE (deux charbons fondent un lingot de fer, jamais d'acier) et R25 sa
+GÉOGRAPHIE (les fûts calcinés du cœur, sur l'ancienne forêt, gisement fini). Voir `cendre.md`.*
 
 Le clutter existe déjà. En faire des **nœuds de charbon de bois** : forge, feu long, conservation.
 Prolongement direct de R14 (« la cendre tire »), mais *après* le passage du front.
@@ -346,13 +350,15 @@ la vallée, et il se sent comme tel »*. Elle ne touche pas un pixel hors cendre
 
 ## Reprise
 
-**①, ② et ⑥ sont livrées** — R20/R21 (l'ossature et la variété) puis R22/R23 (le froid et la
-hantise). Spec `cendre.md`, 32 gardes dans `cendre-succession.test.ts`, deux entrées au journal du
-2026-08-27. **③④⑤⑦⑧⑨⑩ restent au catalogue, non tranchées.**
+**①, ②, ⑥ et ④ sont livrées** — R20/R21 (l'ossature et la variété), R22/R23 (le froid et la
+hantise), R24/R25 (l'usage du charbon et la charbonnière). Spec `cendre.md`, 32 gardes dans
+`cendre-succession.test.ts` + 8 dans `charbonniere.test.ts`, trois entrées au journal du
+2026-08-27. **③⑤⑦⑧⑨⑩ restent au catalogue, non tranchées.**
 
-**La prochaine question à poser est ④ — la charbonnière** : ⑥ vient d'armer le danger, et R14 exige
-que la cendre TIRE autant qu'elle pousse. Aujourd'hui la cendre mûre est le pire sol de la vallée
-et ne rend toujours rien.
+**La boucle de la cendre est bouclée** : elle prend (R14), elle fait peur (R22/R23), elle rend
+(R24/R25). Les six pistes restantes sont des HABITANTS — de la variété, plus de la structure.
+Les plus mûres : ⑤ le nécrophage (le seul gibier, sur la frange mobile) et ⑧ le vent de cendre
+(elle s'annonce avant d'arriver, purement sensoriel).
 
 **La conséquence de neige a été tranchée** : le froid déplace la ligne pluie/neige et le manteau
 est un pavé OPAQUE, donc à 4 °C **88 % de la vieille cendre disparaissait sous du blanc** la moitié
@@ -369,6 +375,7 @@ l'emprise. À regarder du côté du chantier affleurements/buttes avant tout com
 Instruments : `tools/diag-cendre-succession.mts` (l'âge, la profondeur, la part par foyer),
 `tools/diag-cendre-eveil.mts` (l'éveil, la vue, le champ des morts et la survie d'un corps nu par
 bande — ⑥), `tools/diag-cendre-neige.mts` (ce que R22 met sous la neige, par palier de froid),
+`tools/diag-charbonniere.mts` (le total de charbon que porte la vallée, par jour et par fosse),
 `tools/diag-foyer-caractere.mts` (les cadrans de R21 sur la carte de production),
 `tools/diag-cendre.mts` (la courbe d'avancée et ce qu'elle prend, `--compare A,plafond`),
 `tools/diag-fumerolle.mts`, `tools/diag-frange.mts`.

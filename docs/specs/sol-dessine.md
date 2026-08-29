@@ -60,6 +60,8 @@ La direction choisie : le sol est un **terrain dessiné** (grammaire Stardew / Z
 
 - **R22 — LE MUR RESTE DROIT, et c'est la moitié de la règle.** Alexis a dit *« entre biomes de même hauteur »* : la roche du vide (`rock`) et la falaise (`cliff`) **sont** une hauteur, R32 continue de les gouverner, et une garde l'affirme pour qu'un chantier futur ne les attendrisse pas en croyant bien faire. Après R20-R21, **tout ce qui dépasse 90 % de segments longs est `rock|…` ou `cliff|…`** — plus une seule paire biome/biome.
 
+- **R26 — LA MARQUE DE SOL SUIT SA MATIÈRE** *(Alexis, 2026-08-28 : « on peut réutiliser les mêmes pour les brins d'herbe, mais les biomes cendre ou shallow_water, par exemple, n'ont pas d'herbes »)*. Le brin (1×2 px clair, pied sombre) était LA marque de tout pavé — neige, éboulis et cendres compris, où un brin qui POUSSE est un contresens. La clé est la **famille de `grain-sol`** (pas le biome : dix-sept formes ne se calibrent pas), table `MARQUES` de `paves.ts`, deux marques par tuile, ≤ 3 px, deux tons communs : **brin** debout (`herbe`, `humide` — ce qui pousse est debout), **brindille** couchée (`litiere` — un bois mort n'est pas debout), **caillou** clair-dessus/ombre-dessous (`mineral` — la règle cubique), **charbon** sombre seul (`cendre` — rien de clair ne dépasse d'une poussière), **rien** (`neige` lisse et balayée, `dalle` qui a sa fissure). **L'ASSEC est la seule SURFACE marquée** — l'**écaille** (sombre 2×1, lèvre claire dessous, la bascule de sa craquelure) : seule surface qui soit un SOL, le même argument que `couleurVase` ; le reste de R15 reste fermé (ni liseré, ni ombre, ni épaisseur).
+
 ## Critères d'acceptation
 
 - **A1 (R2)** — test sim, trois seeds de garde : part des transitions de végétation sur la grille de 8 ≤ 25 % en x et en y.
@@ -81,6 +83,7 @@ La direction choisie : le sol est un **terrain dessiné** (grammaire Stardew / Z
 - **A16 (R22)** — même fichier : sur `rock|cliff`, **> 90 %** des bords sur un segment de 8+ tuiles. Le mur ne doit pas devenir mou.
 - **A17 (R20)** — `replay`, `sim`, `events` verts : même seed → même carte, au bit près. `humAt` est **inchangée bit à bit** (`lireLeChampAt` délègue à `lireLeChampGraine`, la somme se fait dans le même ordre sur les mêmes flottants).
 - **A13 (R16)** — `manteau.test.ts` : la neige est opaque sur tout son corps, le sol nu transparent ; sur le sol nu le surplomb porte une frange opaque de 2-5 px finie par un liseré, puis un voile d'ombre, puis RIEN (jamais de ressac) ; la glace est opaque et plate, sans frange sur le sol nu ; la neige déborde sur la glace (frange au surplomb, glace ombrée dessous) ; elle ne déborde pas sur une falaise ; la profonde est un pavé sur la poudreuse (frange, liseré, ombre dans le sol de la couche) ; cuisson déterministe. Smoke `neige` : posé sur la poudreuse le sprite est coupé aux chevilles (]0, 3] px), au cœur de la profonde aux genoux (≥ 5 px), sans que le corps ait bougé de ses pieds (écart < 0,5 px) ; des empreintes naissent.
+- **A18 (R26)** — `paves.test.ts` : la neige est lisse (aucune marque), la cendre n'a que du sombre, l'éboulis porte clair ET sombre, l'herbe garde son brin ; `manteau.test.ts` : fente et grain de la vase séparables en valeur, moyenne des plaques compensée. Planche `planche-marques` regardée.
 
 ## Ce que ça change pour le joueur
 

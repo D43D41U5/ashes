@@ -19,9 +19,9 @@
  * Aucune règle de jeu n'est décidée ici — la sim revalide tout (invariant §3).
  * On ne fait qu'éviter d'ÉMETTRE une action qu'on sait perdue d'avance.
  */
-import { COMPONENT_TYPES, EDGE_E, FISHING, EDGE_N, EDGE_O, EDGE_S, FOOD_VALUES, NODE_DEFS, STRUCTURE_HP, WEAPON_DAMAGE, edgeBarrierAt, isCropMature, isPlot, isRangedWeapon, piece, porteeDuNoeud, toolTier, type ItemId, type StructureType, type WallMaterial } from '@ashes/sim'
+import { EDGE_E, FISHING, EDGE_N, EDGE_O, EDGE_S, FOOD_VALUES, NODE_DEFS, STRUCTURE_HP, TENUS_POSABLES, WEAPON_DAMAGE, edgeBarrierAt, isCropMature, isPlot, isRangedWeapon, piece, porteeDuNoeud, toolTier, type ItemId, type StructureType, type WallMaterial } from '@ashes/sim'
 import type { Placeable } from '../../hud-state'
-import type { ComponentType, Corpse, PlayerAction, ResourceNode, ToolFamily } from '@ashes/sim'
+import type { Corpse, PlayerAction, ResourceNode, TenuPosable, ToolFamily } from '@ashes/sim'
 
 /**
  * Le contexte de POSE (spec construction R8) : le palier de matériau choisi pour
@@ -464,14 +464,15 @@ export function estLOutilDuNoeud(item: ItemId | null, family: ToolFamily | null)
 }
 
 /**
- * CE QUI SE POSE SANS MARTEAU — composants et coffre tenu.
+ * CE QUI SE POSE SANS MARTEAU — les tenus-posables (composant, coffre, séchoir), dérivés
+ * du registre (`pose: 'objet'`) : la même lecture que la validation sim, jamais deux listes.
  *
  * Écrit comme prédicat de type pour que le compilateur porte la suite : ce qui survit à ce
- * test EST une pièce du marteau, et un `Placeable` neuf qui ne serait ni composant ni pièce
- * de marteau ferait rougir `tsc` au lieu de partir en coup de poing.
+ * test EST une pièce du marteau, et un `Placeable` neuf qui ne serait ni tenu-posable ni
+ * pièce de marteau ferait rougir `tsc` au lieu de partir en coup de poing.
  */
-function estPosableSansMarteau(p: Placeable): p is ComponentType | 'chest' {
-  return (COMPONENT_TYPES as readonly string[]).includes(p) || p === 'chest'
+function estPosableSansMarteau(p: Placeable): p is TenuPosable {
+  return (TENUS_POSABLES as readonly string[]).includes(p)
 }
 
 export function clickToAction(

@@ -66,4 +66,4 @@ La température existe déjà **en tout point** (`baselineTemperature(state, x, 
 
 ## Ajouts à `balance.ts`
 
-Bloc `GEL` (ordres de grandeur, à calibrer en jouant) : `SEUIL_GUE`, `SEUIL_PROFOND` (nettement plus bas), `SEUIL_FEUILLES`, `VITESSE_GLACE` (~1,1 — on glisse un peu plus vite que sur l'herbe), `MEMOIRE_CYCLES` (~3), `HYSTERESIS` (la marge de dégel), `JOUR_DEFEUILLAISON` (le jour de saison où les feuillus commencent à se dénuder).
+Bloc `GEL` (ordres de grandeur, à calibrer en jouant) : `SEUIL_GUE`, `SEUIL_PROFOND` (nettement plus bas), `VITESSE_GLACE` (~1,1 — on glisse un peu plus vite que sur l'herbe), `MEMOIRE_CYCLES` (~3), `HYSTERESIS` (la marge de dégel), `JOUR_DEFEUILLAISON` (le jour de saison où les feuillus commencent à se dénuder). *(`SEUIL_FEUILLES`, cité ici à l'origine, n'existe plus : la borne chaude de la fonte est `TEMPERATURE.AMBIANT_DOUX` depuis le passage en °C — 2026-08-22.)*

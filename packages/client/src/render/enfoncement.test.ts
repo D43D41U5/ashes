@@ -21,6 +21,7 @@ import {
   enfoncement,
   rampe,
   epaisseurQuiSEnfonce,
+  enfoncementDUnNoeud,
   type Milieux,
 } from './enfoncement'
 
@@ -142,5 +143,37 @@ describe('ce qui s’enfonce, c’est l’ÉPAISSEUR (le corps couché, 2026-08-
     expect(faux.coupe).toBeGreaterThan(6) // ce que le corps perdait sur sa longueur
     expect(juste.coupe).toBeLessThanOrEqual(10 * COUPE_MAX_FRACTION)
     expect(juste.coupe / 24).toBeLessThan(0.2)
+  })
+})
+
+/**
+ * ═══ LA PIERRE DU GUÉ — un NŒUD planté dans l'eau qu'on foule (2026-08-28) ═══
+ *
+ * Ce qui rendrait ce bloc ROUGE : une pierre de gué posée à sec (elle flotterait sur la surface,
+ * comme un jeton), une pierre HORS du gué qu'on immergerait quand même (tous les blocs de butte
+ * s'enfonceraient), ou une neige qui S'AJOUTE à l'eau au lieu de se composer en `max` — la
+ * découpe passerait le plafond du corps et la pierre disparaîtrait sous sa propre tuile.
+ */
+describe('la pierre du gué — le nœud qui a le pied sous l’eau', () => {
+  it('sur le haut-fond, elle DESCEND et se coupe d’autant — la ligne de coupe tombe sur la surface', () => {
+    const dans = enfoncementDUnNoeud(true)
+    expect(dans.descente).toBe(EAU_PX)
+    expect(dans.coupe).toBe(EAU_PX)
+    // C'est l'égalité qui fait le rendu juste : descendre sans couper enfoncerait la pierre
+    // dans le sol, couper sans descendre la ferait léviter au-dessus de l'eau.
+    expect(dans.coupe).toBe(dans.descente)
+  })
+
+  it('AU SEC, rien — la loi ne touche que ce qui est dans l’eau', () => {
+    expect(enfoncementDUnNoeud(false)).toEqual({ coupe: 0, descente: 0 })
+    // …et la neige d'une pierre de butte passe quand même : elle découpe sans faire descendre.
+    expect(enfoncementDUnNoeud(false, 4)).toEqual({ coupe: 4, descente: 0 })
+  })
+
+  it('UN MAX, JAMAIS UNE SOMME : un gué enneigé ne cumule pas ses deux découpes', () => {
+    expect(enfoncementDUnNoeud(true, 2).coupe).toBe(EAU_PX) //  l'eau est plus profonde
+    expect(enfoncementDUnNoeud(true, 12).coupe).toBe(12) //     la neige a passé devant
+    // ET LA DESCENTE NE SUIT PAS LA NEIGE (loi ②) : elle reste celle de l'eau seule.
+    expect(enfoncementDUnNoeud(true, 12).descente).toBe(EAU_PX)
   })
 })

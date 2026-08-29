@@ -110,6 +110,25 @@ export function soundForEvent(event: SimEvent, onMe: boolean): SoundSpec | null 
     case 'wound_inflicted':
       return { wave: 'noise', freq: 0, dur: 0.22, gain: 0.085, lowpass: 1100 }
 
+    // ── LE GESTE MANQUÉ ET LE GESTE TENU ────────────────────────────────────────────────
+    // LE VIDE : du bruit qui S'OUVRE vers l'aigu et meurt — un souffle, pas un choc. Il ne
+    // doit surtout pas se confondre avec `entity_damaged` (grave, mat, filtré bas) : c'est
+    // très exactement l'information « rien n'a touché », et c'est l'inverse d'un impact. La
+    // coupe haute (4000) le rend fin ; le gain bas le laisse sous le choc d'un vrai coup —
+    // un raté se remarque, il ne domine pas.
+    case 'attack_whiffed':
+      return event.charged
+        ? { wave: 'noise', freq: 0, dur: 0.34, gain: 0.075, lowpass: 3000 } // le lourd brasse plus d'air
+        : { wave: 'noise', freq: 0, dur: 0.18, gain: 0.05, lowpass: 4000 }
+    // LA GARDE : un choc DUR et court — ce qui s'arrête net contre quelque chose. La parade
+    // À TEMPS sonne plus HAUT et plus claire, et c'est le seul retour qui existe sur elle :
+    // le joueur doit pouvoir apprendre le geste à l'oreille, sans quitter le loup des yeux
+    // (le patron de `reveil_etouffe` — une parade muette ne s'apprend pas).
+    case 'attack_blocked':
+      return event.parried
+        ? { wave: 'triangle', freq: 900, freqEnd: 1500, dur: 0.14, gain: 0.09 }
+        : { wave: 'noise', freq: 0, dur: 0.1, gain: 0.07, lowpass: 2200 }
+
     // ── LE FEU — l'organe vital ──────────────────────────────────────────────────────────
     // À SEC : le fait qui condamne les murs, et qui se produisait sans un bruit. Grave,
     // étouffé (coupe 900), long : quelque chose s'affaisse vers l'intérieur.
@@ -200,6 +219,13 @@ export function soundForEvent(event: SimEvent, onMe: boolean): SoundSpec | null 
     // nuit mais d'ailleurs. Tant que la nappe n'a pas son rendu, c'est LE préavis (§9bis).
     case 'brume_annonce':
       return { wave: 'sine', freq: 294, freqEnd: 147, dur: 1.0, gain: 0.08 }
+    // LE BLIZZARD S'ANNONCE LA VEILLE (meteo.md R9) : le jumeau grave du préavis de Brume —
+    // même grammaire (une cérémonie du monde qui SE FERME : sine, hauteur qui descend), une
+    // octave plus bas et plus long : ce qui vient est plus grand. C'est la moitié sonore du
+    // bandeau « rentrez le bois » ; l'ENTRÉE et le PASSAGE, eux, restent muets — la nappe du
+    // vent (`meteo-audio.ts`) les porte mieux qu'un one-shot.
+    case 'blizzard_annonce':
+      return { wave: 'sine', freq: 147, freqEnd: 65, dur: 1.6, gain: 0.09 }
     // LA LEVÉE : la nappe est de la MATIÈRE (noise sourd, la voix de la cendre) — plus long
     // que `cendre_avance`, car celle-ci passe et repart.
     case 'brume_levee':
@@ -319,6 +345,11 @@ export function soundForEvent(event: SimEvent, onMe: boolean): SoundSpec | null 
         // fichier, et pas d'attaque. Ça ne casse pas, ça se descelle. Lourd, mou, mouillé.
         case 'peat_cut':
           return { wave: 'noise', freq: 0, dur: 0.08, gain: 0.045, lowpass: 500 }
+        // LE FÛT CALCINÉ (R25) — du bois qui a perdu sa fibre : il ne cède pas, il S'ÉMIETTE. On
+        // le pose entre le bois (le corps) et la cendre (le silence) : plus grave que le sel,
+        // plus mat que la houille, sans l'entaille du tronc. C'est un objet CREUX qu'on casse.
+        case 'charbonniere':
+          return { wave: 'noise', freq: 0, dur: 0.07, gain: 0.045, lowpass: 1400 }
         // LA CENDRE — la matière qui n'oppose RIEN. Presque pas un son : un souffle gris. C'est
         // le seul geste de récolte dont le silence relatif est le message.
         case 'ash_heap':

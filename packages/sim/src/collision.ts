@@ -15,10 +15,10 @@
  * déplacement, `overlapsBlocking`) répondent « ce point est-il dans un
  * obstacle ? ». Un arbre bloque sa tuile pour l'A* et son seul tronc pour l'avatar.
  */
-import { BALANCE, NODE_DEFS, TERRAIN_DEEP_WATER, TERRAIN_SHALLOW_WATER, TERRAINS, TICK_DT_S } from './balance'
+import { BALANCE, NODE_DEFS, TERRAIN_DEEP_WATER, TERRAIN_GRASS, TERRAIN_SHALLOW_WATER, TERRAINS, TICK_DT_S } from './balance'
 import { solFoule } from './cendre'
 import { nodeAt, treeJitter, type ResourceNode } from './economy'
-import { estGueBloque } from './eau'
+import { estAsseche, estGueBloque } from './eau'
 import { estGele, gelPossible, vitesseSurGlace, vitesseSurNeige } from './gel'
 import { EDGE_E, EDGE_N, EDGE_O, EDGE_S } from './geometry'
 import { MARCHABLE, terrainAt, type WorldMap } from './map'
@@ -630,8 +630,16 @@ export function moveAvatar(
   const cendre = glace === undefined && neige === undefined && world.etat !== undefined
     ? solFoule(world.etat, tx, ty)
     : undefined
-  const terrain = TERRAINS[cendre ?? terrainAt(world.map, tx, ty)]
-  const factor = glace ?? neige ?? (terrain?.walkable ? terrain.speedFactor : 1)
+  const terrainId = cendre ?? terrainAt(world.map, tx, ty)
+  const terrain = TERRAINS[terrainId]
+  // LE GUÉ EN POUSSIÈRE MARCHE COMME LA TERRE (spec `saisons.md` S10 : « l'eau peu profonde
+  // se comporte comme de la terre ») — l'assèchement retirait déjà l'eau à la marchabilité,
+  // à `nearWater` et à la pêche, mais on pataugeait encore à 0,5 sur de la vase sèche. Même
+  // point que le reste (la tuile du marcheur), et pas de coût caché : `estAsseche` sort en
+  // O(1) hors chaleur d'été (le même raisonnement que la sortie précoce de la crue).
+  const asseche = glace === undefined && neige === undefined && terrainId === TERRAIN_SHALLOW_WATER
+    && world.etat !== undefined && estAsseche(world.etat, tx, ty)
+  const factor = glace ?? neige ?? (asseche ? TERRAINS[TERRAIN_GRASS]!.speedFactor : terrain?.walkable ? terrain.speedFactor : 1)
   const speed = BALANCE.WALK_SPEED_TILES_PER_S * dtS * factor * speedScale
   const norm = dx !== 0 && dy !== 0 ? Math.SQRT1_2 : 1
   return resolveMove(world, x, y, dx * speed * norm, dy * speed * norm)

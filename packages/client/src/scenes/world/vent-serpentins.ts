@@ -60,8 +60,10 @@ export const BUDGET_SERPENTINS = 9
  * La grille du ruban, en px monde. DEMI-GRILLE : les FX de lumière (pluie, feu) sont à 4 px,
  * le ruban est à 2 — décision d'Alexis sur planche, contre « lignes assez fines ». Le pixel
  * natif de l'art est à 1 (16 px par tuile) : on est à mi-chemin, pas hors DA.
+ * (Nommée par SON grain : trois modules exportaient un `GRAIN_PX` qui ne valait pas la même
+ * chose — un import qui se trompe de module aurait compilé sans un mot.)
  */
-export const GRAIN_PX = 2
+export const GRAIN_SERPENTIN_PX = 2
 
 /**
  * Vitesse d'un ruban, en tuiles/s, à souffle plein.

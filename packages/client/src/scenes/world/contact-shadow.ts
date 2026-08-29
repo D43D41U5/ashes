@@ -15,17 +15,20 @@
  *   • NOIR en ALPHA NORMAL (~⅓), pas MULTIPLY. Le multiply « correct » a des ratés WebGL et
  *     se cumule avec l'ombrage de pente (`ShadeLayer`) sur les mêmes pixels de sol → des
  *     zones plates-en-ombre imprévisibles. Un noir composité normalement se règle à l'œil.
- *   • CENTRÉE, jamais orientée par le soleil. L'éclairage dynamique est désormais le rendu par
- *     défaut (décision d'Alexis, docs/decisions.md 2026-07-24), mais on garde DÉLIBÉRÉMENT
- *     l'ombre de contact hors du modèle de lumière : c'est une occlusion ambiante cosmétique,
- *     composée en alpha normal, qui doit rendre à l'identique lumière allumée ou éteinte. Une
- *     ombre orientée par `sunDirection(hour)` serait plus riche mais rouvrirait ce couplage —
- *     hors scope ici. On reste pure technique : ellipse de contact, sans angle de lumière.
+ *   • CENTRÉE PAR DÉFAUT, et hors du modèle de lumière. L'éclairage dynamique est le rendu par
+ *     défaut (décision d'Alexis, docs/decisions.md 2026-07-24), mais l'ombre de contact garde
+ *     son alpha constant et sa composition normale : c'est une occlusion ambiante cosmétique,
+ *     qui rend à l'identique lumière allumée ou éteinte.
+ *     ⚠ UNE SEULE ENTORSE, le 2026-08-27 : le paramètre `deriveX` fait GLISSER la flaque en X,
+ *     à l'opposé de l'astre (demande d'Alexis, pour le socle minéral). Ce n'est toujours pas un
+ *     couplage au modèle de lumière — l'appelant passe des PIXELS, ce module ne connaît ni
+ *     l'heure ni la lune — et le défaut de 0 rend le comportement d'avant, au pixel près.
  *   • CONSTANTE (occlusion ambiante), pas ∝ jour/nuit. L'objet bloque la lumière ambiante
  *     qu'il fasse jour ou nuit ; une ombre stable est plus simple et n'introduit aucune
  *     dépendance au modèle de lumière. Purement cosmétique, ne conditionne rien.
  */
 import Phaser from 'phaser'
+import { alphaDOmbre, cleOmbreSocle, CRANS, OMBRE_SOCLE, TEX_H, TEX_W, type FormeOmbre } from '../../render/ombre-socle'
 
 /** Rayon de la tache EN TEXELS. Volontairement PETIT (≈9 texels de large) : la flaque étant
  *  dimensionnée à l'acteur, peu de texels = un grain franc (~2 px monde sous un humain, la
@@ -114,11 +117,112 @@ export function positionShadow(
    * qui s'est élargie jusqu'à la couvrir.
    */
   largeurMonde?: number,
+  /**
+   * DÉRIVE EN X (px monde), SIGNÉE — de combien la flaque glisse à l'opposé de l'astre.
+   * *(demande d'Alexis, 2026-08-27 ; par défaut 0, donc rien ne bouge pour qui ne la passe pas.)*
+   *
+   * C'est la seule entorse au « CENTRÉE, jamais orientée par le soleil » de l'en-tête, et elle
+   * est bornée : l'appelant reste maître du côté (`lighting.deriveDOmbre`) et de l'amplitude,
+   * l'ombre garde son alpha constant et sa composition normale. On ne rouvre pas le couplage au
+   * modèle de lumière — on décale une ellipse. Aujourd'hui seul le SOCLE MINÉRAL s'en sert.
+   */
+  deriveX = 0,
 ): void {
+  // ⚠ **ON REPOSE LA TEXTURE ET L'ORIGINE.** Le pool des ombres de nœuds est réattribué à chaque
+  // image, et un socle a pu passer par CET objet la frame d'avant (`poserOmbreDeSocle` lui met
+  // une coulée et l'origine en haut). Sans ce retour au propre, un arbre hériterait de l'ombre
+  // du bloc voisin selon l'ordre dans lequel le pool a été servi — le défaut que l'en-tête de
+  // `renderNodes` documente déjà pour le houppier. L'ALPHA, lui, n'est PAS touché : l'appelant
+  // le règle après coup (l'immersion le fond, spec eau-vivante R4).
+  if (shadow.texture.key !== SHADOW_TEX_KEY) shadow.setTexture(SHADOW_TEX_KEY)
+  if (shadow.originY !== 0.5) shadow.setOrigin(0.5, 0.5)
   const w = largeurMonde ?? Math.max(MIN_WIDTH, Math.min(MAX_WIDTH, actorDisplayW * WIDTH_FACTOR))
   const h = w * FLATTEN
-  shadow.setPosition(feetX, feetY - baseGapWorld)
+  // ARRONDI AU PIXEL MONDE : la flaque est une texture NEAREST étirée sur ~30 px ; une
+  // destination fractionnaire ferait sautiller ses arêtes internes à contretemps pendant que
+  // l'astre rampe. Même raison que les crans du pavement (`CRANS_SOLEIL`).
+  //
+  // ⚠ **SYMÉTRIQUE, PAS `Math.round`.** JS arrondit les demis vers +∞ : `round(-3.5) = -3` mais
+  // `round(3.5) = 4`. Or la dérive est ANTISYMÉTRIQUE autour du zénith — matin et après-midi de
+  // même force tomberaient à un pixel l'un de l'autre, et l'ombre irait « plus loin d'un côté ».
+  const pas = Math.sign(deriveX) * Math.round(Math.abs(deriveX))
+  shadow.setPosition(feetX + pas, feetY - baseGapWorld)
   shadow.setDisplaySize(w, h)
   shadow.setDepth(actorDepth - DEPTH_UNDER)
   shadow.setVisible(true)
+}
+
+/**
+ * ═══ L'OMBRE DU SOCLE — la mécanique de rendu de la COULÉE ═══
+ * *(la géométrie, elle, est pure et vit dans `render/ombre-socle.ts` — voir son en-tête pour le
+ * pourquoi : une empreinte à angles droits sous une pierre taillée, pas une lentille molle.)*
+ *
+ * ⚠ **LA FORME EST UN CHOIX D'ALEXIS, PAS UNE CONSTANTE DE CODE** : `FORME_DU_SOCLE` pilote les
+ * trois variantes qu'il a vues sur planche. `ellipse` retombe MOT POUR MOT sur l'ombre de
+ * contact générique — aucun chemin de code en plus, aucune texture cuite — ce qui rend le
+ * retour en arrière gratuit et le témoin de la planche honnête.
+ */
+export const FORME_DU_SOCLE: FormeOmbre = 'coulee'
+
+/** Cuit les `2 × CRANS + 1` coulées (une par texel de cisaillement) — une fois, au premier socle
+ *  rencontré. 17 textures de 32×14 : le coût est celui d'un sprite. */
+function assurerOmbresDeSocle(scene: Phaser.Scene): void {
+  if (FORME_DU_SOCLE === 'ellipse') return
+  // ⚠ UN SEUL `exists` EN RÉGIME ÉTABLI. Cette fonction est appelée par socle ET par image :
+  // boucler sur les 17 crans pour les trouver tous déjà cuits, c'est 17 lookups × N blocs à
+  // l'écran, chaque frame. Le cran 0 existe toujours dès que la cuisson est passée.
+  if (scene.textures.exists(cleOmbreSocle(0))) return
+  for (let cran = -CRANS; cran <= CRANS; cran++) {
+    const cle = cleOmbreSocle(cran)
+    if (scene.textures.exists(cle)) continue
+    const tex = scene.textures.createCanvas(cle, TEX_W, TEX_H)
+    if (!tex) return
+    const ctx = tex.getContext()
+    const img = ctx.createImageData(TEX_W, TEX_H)
+    for (let j = 0; j < TEX_H; j++) {
+      for (let i = 0; i < TEX_W; i++) {
+        const k = (j * TEX_W + i) * 4
+        img.data[k] = 0
+        img.data[k + 1] = 0
+        img.data[k + 2] = 0
+        img.data[k + 3] = Math.round(alphaDOmbre(FORME_DU_SOCLE, cran, i, j) * 255)
+      }
+    }
+    ctx.putImageData(img, 0, 0)
+    tex.refresh()
+    scene.textures.get(cle).setFilter(Phaser.Textures.FilterMode.NEAREST)
+  }
+}
+
+/**
+ * Pose la coulée sous un socle. `feetY` est la LIGNE DE PIED (le bord bas de sa tuile : le socle
+ * est flush, cf. `nodeArtGap`) ; la coulée REMONTE de `OMBRE_SOCLE.REMONTE` texels au-dessus,
+ * pour se glisser sous la pierre — sans quoi un liseré de sol nu s'ouvre entre la base et son
+ * ombre. Origine en HAUT-CENTRE, donc c'est bien le CONTACT qui est ancré, jamais la pointe.
+ *
+ * Rend `false` si la forme retenue est l'ellipse : l'appelant retombe alors sur `positionShadow`.
+ */
+export function poserOmbreDeSocle(
+  shadow: Phaser.GameObjects.Image,
+  feetX: number,
+  feetY: number,
+  cran: number,
+  echelleX: number,
+  echelleY: number,
+  actorDepth: number,
+  /** Part de l'alpha nominal, dans [0, 1] — `dynamic-lighting.forceDeLOmbre`. Une ombre PORTÉE
+   *  n'existe que tant qu'un astre la jette : au crépuscule elle s'éteint, et à la nouvelle lune
+   *  elle n'est plus là du tout. (Défaut à 1 : le comportement d'avant.) */
+  force = 1,
+): boolean {
+  if (FORME_DU_SOCLE === 'ellipse') return false
+  assurerOmbresDeSocle(shadow.scene)
+  shadow.setTexture(cleOmbreSocle(cran))
+  shadow.setOrigin(0.5, 0)
+  shadow.setDisplaySize(TEX_W * echelleX, TEX_H * echelleY)
+  shadow.setPosition(feetX, feetY - OMBRE_SOCLE.REMONTE * echelleY)
+  shadow.setAlpha(SHADOW_ALPHA * Math.max(0, Math.min(1, force)))
+  shadow.setDepth(actorDepth - DEPTH_UNDER)
+  shadow.setVisible(true)
+  return true
 }

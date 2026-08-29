@@ -1004,6 +1004,32 @@ export const POI_LIT_DEFS_DATA: readonly PoiLitDef[] = [
     ],
   },
   {
+    // LA LOUVIÈRE (loup.md L1) : la dalle de pierre porte le relief, la gueule est
+    // un accent de vide, le seuil foulé et ses os sont des détails au ras du sol.
+    slug: 'louviere',
+    w: 56,
+    h: 34,
+    blocks: [
+      { rect: [4, 24, 48, 8], tone: '#503c30' }, // la terre battue du seuil
+      { rect: [8, 12, 42, 12], tone: STONE_B }, // l'assise de la dalle
+      { rect: [12, 6, 30, 8], tone: STONE_A }, // le dessus, au soleil
+    ],
+    accents: [
+      { rect: [16, 20, 18, 9], color: '#0a0908' }, // LA GUEULE — sous la dalle
+      { rect: [15, 18, 20, 3], color: '#3e3a34' }, // son linteau
+    ],
+    details: [
+      { rect: [40, 27, 6, 2], color: '#8a7a62' }, // les os du seuil…
+      { rect: [7, 29, 5, 2], color: '#6a5a48' }, // …et de l'autre côté
+      { rect: [12, 24, 10, 1], color: '#35271f' }, // la terre foulée
+      { rect: [36, 10, 5, 2], color: STONE_B }, // un éclat de la dalle
+    ],
+    cracks: [
+      { path: [[14, 22], [16, 16], [19, 10]], crevasse: true },
+      { path: [[44, 22], [42, 16], [40, 12]], crevasse: true },
+    ],
+  },
+  {
     slug: 'tarn',
     plat: true, // accident du terrain, pas une masse debout : aucun retourné
     w: 56,

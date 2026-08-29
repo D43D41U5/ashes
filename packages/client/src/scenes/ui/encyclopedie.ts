@@ -322,6 +322,7 @@ const NOEUDS_AU_PLURIEL: Record<string, string> = {
   fumerolle: 'les fumerolles',
   iron_vein: 'les filons de fer',
   coal_seam: 'les veines de charbon',
+  charbonniere: 'les fûts calcinés',
   peat_cut: 'les coupes de tourbe',
   quarry: 'les carrières',
   ash_heap: 'les tas de cendre',
@@ -465,6 +466,7 @@ const NOMS_DE_NOEUD: Record<string, string> = {
   fumerolle: 'fumerolle',
   iron_vein: 'filon de fer',
   coal_seam: 'veine de charbon',
+  charbonniere: 'fût calciné',
   peat_cut: 'coupe de tourbe',
   quarry: 'carrière',
   ash_heap: 'tas de cendre',
@@ -887,7 +889,10 @@ function ficheSaison(phase: number, c: CarnetsDuJoueur): FicheEncyclo {
         { k: 'semis', v: cultureDe(phase) },
       ],
     ],
-    puces: [],
+    // LA CADENCE DES FRONTS, en puce : la fiche tient quatre lignes (voir le bloc), la puce
+    // porte ce qui n'y rentrait plus. Le champ était calculé juste (vérifié contre
+    // `METEO.PAR_SAISON` : moyenne d'`episode` / `BLOC_EPISODE`) et jamais montré.
+    puces: [{ texte: `fronts : ${k.fronts}` }],
   }
 }
 
