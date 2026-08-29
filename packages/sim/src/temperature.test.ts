@@ -3,7 +3,7 @@ import { BALANCE, COMBAT, TEMPERATURE } from './balance'
 import { drainEvents } from './events'
 import { addItems } from './items'
 import { createEmptyMap } from './map'
-import { createSim, spawnEntity, type Entity, type SimState } from './sim'
+import { createSim, spawnEntity, step, type Entity, type SimState } from './sim'
 import {
   advanceTemperature,
   AMBIANT_HYPOTHERMIE,
@@ -15,7 +15,7 @@ import {
   coldStaminaRegenFactor,
   driftStep,
 } from './temperature'
-import { cycleOffsetForStartHour, jourDeSaison, TICKS_PER_SEASON_DAY, YEAR_DAYS } from './time'
+import { cycleOffsetForStartHour, jourDeSaison, TICKS_PER_CYCLE, TICKS_PER_SEASON_DAY, YEAR_DAYS } from './time'
 
 /** spawnEntity retourne un id → on récupère l'objet entité. */
 function spawn(state: SimState, x: number, y: number): Entity {
@@ -290,5 +290,66 @@ describe('le froid létal & la tenue d’hiver (V2-15/16, fork froid tranché)',
     expect(geleVetu).toBe(false) // le vêtu, jamais
     expect(vetu.hp).toBe(100) // et il n'a pas pris un seul PV de froid
     expect(vetu.temperature).toBeGreaterThan(T.CORPS_HYPOTHERMIE) // il reste au-dessus du seuil
+  })
+})
+
+describe('la thermogenèse — la faim suit le froid RESSENTI (décision d’Alexis, 2026-08-29)', () => {
+  const T = TEMPERATURE
+
+  /** La pente ATTENDUE d'un tick complet (`step`) : le drain de base (`advanceEconomy`) plus
+   *  le surcoût thermique (`advanceTemperature`) pour un manque donné — le même manque que la
+   *  dérive du corps, sur le ressenti APRÈS feu, abri et tenue. */
+  const penteParTick = (manque: number): number =>
+    (BALANCE.HUNGER_PER_CYCLE_HOUR + manque * BALANCE.HUNGER_COLD_PER_DEGREE_HOUR) /
+    (TICKS_PER_CYCLE / 24)
+
+  /** Pente de faim OBSERVÉE sur `n` ticks complets — sur `step`, jamais sur une phase seule :
+   *  la loi vit dans DEUX passes (base en économie, surcoût en température). */
+  const penteObservee = (state: SimState, e: Entity, n: number): number => {
+    const h = e.hunger
+    for (let t = 0; t < n; t++) step(state, [])
+    return (h - e.hunger) / n
+  }
+
+  it('sur glacier, le drain = base + manque MAXIMAL × coefficient (l’air est au plancher du monde)', () => {
+    const state = createSim(1, { cycleOffset: cycleOffsetForStartHour(12, 1) })
+    flatMap(state, 15 /* glacier */)
+    const e = spawn(state, 5, 5)
+    // La prémisse rend la garde stable : cet air est CLAMPÉ à `AMBIANT_MIN`, donc le manque
+    // vaut exactement `AMBIANT_DOUX − AMBIANT_MIN` quoi que la météo ajoute par-dessus.
+    expect(ambientTemperature(state, 5, 5)).toBe(T.AMBIANT_MIN)
+    expect(penteObservee(state, e, 200)).toBeCloseTo(penteParTick(T.AMBIANT_DOUX - T.AMBIANT_MIN), 6)
+  })
+
+  it('près d’un feu, le surcoût tombe à ZÉRO — se chauffer, c’est économiser des vivres', () => {
+    const state = createSim(1, { cycleOffset: cycleOffsetForStartHour(12, 1) })
+    flatMap(state, 15 /* glacier — sans le feu, le plein tarif du cas précédent */)
+    state.structures.push({ id: 9200, type: 'fire', tx: 6, ty: 5, villageId: 0, hp: 100 } as never)
+    const e = spawn(state, 5, 5)
+    expect(
+      ambientTemperature(state, 5, 5),
+      'la prémisse : la bulle du feu rend cet air doux',
+    ).toBeGreaterThanOrEqual(T.AMBIANT_DOUX)
+    expect(penteObservee(state, e, 200)).toBeCloseTo(penteParTick(0), 6)
+  })
+
+  it('la tenue d’hiver PLAFONNE la note : le manque est borné à AMBIANT_DOUX − TENUE_FLOOR', () => {
+    const state = createSim(1, { cycleOffset: cycleOffsetForStartHour(12, 1) })
+    flatMap(state, 15 /* glacier */)
+    const e = spawn(state, 5, 5)
+    addItems(e.inventory, { tenue_hiver: 1 })
+    expect(penteObservee(state, e, 200)).toBeCloseTo(penteParTick(T.AMBIANT_DOUX - T.TENUE_FLOOR), 6)
+  })
+
+  it('au-dessus de l’air doux, AUCUN surcoût — l’Ardeur vit au tarif de base, au bit près', () => {
+    const state = createSim(1, { cycleOffset: cycleOffsetForStartHour(12, 1) })
+    flatMap(state, 1 /* grass */)
+    auJour(state, coeurDe(2))
+    const e = spawn(state, 5, 5)
+    expect(
+      ambientTemperature(state, 5, 5),
+      'la prémisse : cet air-là est doux',
+    ).toBeGreaterThanOrEqual(T.AMBIANT_DOUX)
+    expect(penteObservee(state, e, 200)).toBeCloseTo(penteParTick(0), 6)
   })
 })

@@ -101,7 +101,7 @@ Deux épreuves opposées encadrent l'année au lieu d'une seule : **la sécheres
 
   | loi | l'Éclosion | l'Ardeur | les Pluies | le Grand Froid |
   |---|---|---|---|---|
-  | `ACT_HUNGER_FACTOR` | 1 | 1 | 2 | 3 |
+  | ~~`ACT_HUNGER_FACTOR`~~ | ~~1~~ | ~~1~~ | ~~2~~ | ~~3~~ — *supprimée le 2026-08-29 : la THERMOGENÈSE la remplace (`economie.md` R7bis) — la faim suit le froid ressenti, la saison n'y entre plus que par la courbe `SOCLE`* |
   | `SEASON.REGROW_ACT_FACTOR` *(lenteur)* | **1** | **2** | 1,5 | 3 |
   | `FIRE_UPKEEP.ACT_FACTOR` | 1 | 1 | 1,5 | 2 |
   | `ALIGNMENT.ACT_FACTOR` | 1 | 1 | 2 | 3 |

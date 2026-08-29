@@ -11,7 +11,7 @@
  * `balance.ts` pour la conversion depuis l'ancienne jauge 0-100 (une application affine :
  * l'équilibrage n'a pas bougé d'un bit, seules les étiquettes ont changé).
  */
-import { CENDREUX, POI, TEMPERATURE } from './balance'
+import { BALANCE, CENDREUX, POI, TEMPERATURE } from './balance'
 import { effetsDuJour } from './modificateur'
 import { brumeColdAt } from './brume'
 import { fireWarmthFactor } from './fire'
@@ -22,7 +22,7 @@ import { meteoColdAt } from './meteo'
 import { avanceesDepuisAges, froidDeCendre } from './cendre'
 import { froidDeFumerolle } from './fumerolle'
 import { isOnPoiKind } from './poi-discovery'
-import { gameTimeAt } from './time'
+import { TICKS_PER_CYCLE, gameTimeAt } from './time'
 import type { SimState } from './sim'
 
 const T = TEMPERATURE
@@ -438,6 +438,13 @@ export function coldStaminaRegenFactor(temp: number): number {
 /** Fait dériver chaque humain vers son ambiant. Une étape de tick. */
 export function advanceTemperature(state: SimState): void {
   const monsterIds = new Set(state.monsters.map((m) => m.entityId))
+  // LA THERMOGENÈSE (décision d'Alexis, 2026-08-29) : tenir 37 °C se paie en VENTRE — chaque
+  // degré ressenti sous `AMBIANT_DOUX` coûte de la faim. Elle vit ICI et non dans
+  // `advanceEconomy` parce que le ressenti (ambiant plancheré par le feu, puis par la tenue)
+  // n'est relevé qu'une fois par corps et par tick — le recalculer dans la passe économique
+  // paierait un second balayage des structures par entité. Remplace `ACT_HUNGER_FACTOR` :
+  // la saison n'affame plus par décret, elle affame par sa courbe `SOCLE`.
+  const faimParDegreTick = BALANCE.HUNGER_COLD_PER_DEGREE_HOUR / (TICKS_PER_CYCLE / 24)
   // Copie défensive (comme advanceCombat) : die() peut réassigner state.entities.
   for (const entity of [...state.entities]) {
     if (monsterIds.has(entity.id)) continue // pas de température pour les monstres
@@ -447,6 +454,11 @@ export function advanceTemperature(state: SimState): void {
     // donne une raison à toute la chaîne chasse→cuir→couture, et rend la plaine
     // franchissable en acte III. Vraie protection, pas un simple ralentissement de dérive.
     if (countOf(entity.inventory, 'tenue_hiver') > 0) ambient = Math.max(ambient, T.TENUE_FLOOR)
+    // Le surcoût suit l'EFFORT de compensation (l'écart au doux), pas la température atteinte :
+    // lutter contre le froid coûte à manger, PERDRE la lutte coûte des PV (l'hypothermie,
+    // plus bas). Près d'un feu, ambiant ≥ doux → zéro surcoût : se chauffer nourrit.
+    const manque = T.AMBIANT_DOUX - ambient
+    if (manque > 0) entity.hunger = Math.max(0, entity.hunger - manque * faimParDegreTick)
     // LA DÉRIVE SE FAIT SUR L'ÉCHELLE DU CORPS : on vise `cibleCorporelle(ambiant)`, jamais
     // l'air lui-même — un corps ne finit pas à la température de l'air, il se stabilise plus
     // haut. Le clamp est celui du corps : `CORPS_MORTEL` est le fond, atteint quand l'air est

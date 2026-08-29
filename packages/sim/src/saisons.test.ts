@@ -294,7 +294,6 @@ describe('A8 — le crépuscule mobile ne perd pas son événement', () => {
 
 describe('A11 — aucune loi ne reste à trois paliers', () => {
   const LOIS = [
-    ['ACT_HUNGER_FACTOR', BALANCE.ACT_HUNGER_FACTOR],
     ['SEASON.REGROW_ACT_FACTOR', SEASON.REGROW_ACT_FACTOR],
     ['FIRE_UPKEEP.ACT_FACTOR', FIRE_UPKEEP.ACT_FACTOR],
     ['ALIGNMENT.ACT_FACTOR', ALIGNMENT.ACT_FACTOR],

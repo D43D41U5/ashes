@@ -1565,11 +1565,11 @@ export function advanceSpoilage(state: SimState): void {
   for (const corpse of state.corpses) pourrir(corpse.inventory, 1)
 }
 
-/** Passe économique du tick : faim (modulée par l'acte) et repousse des nœuds. */
+/** Passe économique du tick : faim (le drain de BASE — le froid s'y ajoute en THERMOGENÈSE,
+ *  dans `advanceTemperature`, là où le ressenti de chaque corps est déjà relevé) et repousse
+ *  des nœuds. */
 export function advanceEconomy(state: SimState): void {
-  const act = actForDay(jourDeSaison(state))
-  const perTick =
-    (BALANCE.HUNGER_PER_CYCLE_HOUR / (TICKS_PER_CYCLE / 24)) * BALANCE.ACT_HUNGER_FACTOR(act)
+  const perTick = BALANCE.HUNGER_PER_CYCLE_HOUR / (TICKS_PER_CYCLE / 24)
   const starvePerTick = BALANCE.STARVE_HP_PER_MIN / (60 * BALANCE.TICK_RATE_HZ)
   const monsterIds = new Set(state.monsters.map((m) => m.entityId))
   for (const entity of [...state.entities]) {

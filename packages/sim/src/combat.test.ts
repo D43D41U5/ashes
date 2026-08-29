@@ -1,5 +1,5 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
-import { BALANCE, COMBAT, MONSTER_DEFS, SLOTS, TERRAIN_GRASS, TERRAIN_ROCK, WEAPON_DAMAGE, WEAPON_PROFILES, type MonsterType } from './balance'
+import { BALANCE, COMBAT, MONSTER_DEFS, SLOTS, TEMPERATURE, TERRAIN_GRASS, TERRAIN_ROCK, WEAPON_DAMAGE, WEAPON_PROFILES, type MonsterType } from './balance'
 import { drainEvents, type SimEvent } from './events'
 import { countOf, inventoryOf, makeInventory, stackSize, type Inventory, type ItemBag, type ItemId } from './items'
 import { die, startAttack, weaponDamage } from './combat'
@@ -8,7 +8,8 @@ import { spawnMonster } from './monsters'
 import { foundNpcVillage } from './worldgen'
 import { createReplayLog, recordAndStep, runReplay } from './replay'
 import { createSim, snapshot, spawnEntity, step, type MoveInput, type SimState } from './sim'
-import { dayTicksAt, gameTimeAt, TICKS_PER_CYCLE, TICKS_PER_SEASON_DAY } from './time'
+import { ambientTemperature } from './temperature'
+import { cycleOffsetForStartHour, dayTicksAt, gameTimeAt, TICKS_PER_CYCLE, TICKS_PER_SEASON_DAY } from './time'
 import { grantItems } from './village'
 
 function makeSim(): SimState {
@@ -220,7 +221,16 @@ describe('l’endurance (A1)', () => {
    * passive, elle, les frappe pareil et s'annule dans la soustraction.
    */
   it('récupérer de l’endurance coûte de la faim — et seulement ce qui est crédité', () => {
-    const sim = makeSim()
+    // MIDI AU CŒUR DE L'ARDEUR, et c'est la prémisse du témoin : depuis la thermogenèse
+    // (2026-08-29), un air sous `AMBIANT_DOUX` facture la faim de TOUT LE MONDE — au jour 1
+    // à l'aube (makeSim), la « faim passive » de la barre pleine portait ~1,4 point de froid
+    // et la garde comparait un prix à un climat. L'air doux rend la formule exacte.
+    const sim = createSim(5, { map: createEmptyMap(40, 40, TERRAIN_GRASS), cycleOffset: cycleOffsetForStartHour(12, 1) })
+    sim.tick = (coeurDeSaison(2) - 1) * TICKS_PER_SEASON_DAY
+    expect(
+      ambientTemperature(sim, 30, 30),
+      'la prémisse : cet air-là est doux',
+    ).toBeGreaterThanOrEqual(TEMPERATURE.AMBIANT_DOUX)
     const vide = spawnEntity(sim, 10, 10)
     const plein = spawnEntity(sim, 30, 30)
     entity(sim, vide).stamina = 0

@@ -905,8 +905,21 @@ export const BALANCE = {
    */
   STARVE_HP_PER_MIN: 6,
 
-  /** Multiplicateur de faim par acte — le Grand Froid mord (GDD §2). */
-  ACT_HUNGER_FACTOR: actLaw([1, 1, 2, 3]), // S13 : quatre paliers, réordonnés sur l'Éclosion · l'Ardeur · les Pluies · le Grand Froid
+  /**
+   * LA THERMOGENÈSE (décision d'Alexis, 2026-08-29) — le corps brûle des calories pour tenir
+   * ses 37 °C : chaque degré de froid RESSENTI sous `TEMPERATURE.AMBIANT_DOUX` coûte ce
+   * nombre de points de faim par heure de cycle. Le ressenti est celui de la dérive du corps
+   * (`advanceTemperature`) : le feu, l'abri et la tenue d'hiver comptent — se chauffer, c'est
+   * économiser des vivres.
+   *
+   * **Remplace `ACT_HUNGER_FACTOR`** (×1/×1/×2/×3 par saison) : la pression saisonnière
+   * DÉRIVE désormais de la courbe `SOCLE`, elle n'est plus décrétée par le calendrier.
+   * Ordres de grandeur à 0,5, contre l'ancien décret : nuit d'hiver en plaine
+   * 4 + 0,5×22 = 15 pts/h (était 12), journée d'hiver 8 (était 12), près d'un feu 4 — le
+   * tarif d'été, où que l'on soit. L'Ardeur (socle 26 °C) ne paie jamais rien : au bit près
+   * l'ancien ×1. Le pire du monde (air à `AMBIANT_MIN`, −18 °C) vaut 4 + 0,5×24 = 16 pts/h.
+   */
+  HUNGER_COLD_PER_DEGREE_HOUR: 0.5,
 
   /** Facteur de vitesse le ventre vide (faim à 0). */
   HUNGER_SPEED_MALUS: 0.5,
@@ -4719,8 +4732,8 @@ export const COMBAT = {
    * soit ~1 minute de survie. Une fuite qui vide la barre trois fois brûle donc une
    * demi-heure de ventre en deux minutes. Ça se sent sans dominer — la faim reste
    * réglée par les repas, la course l'accélère. Ne s'applique PAS aux monstres
-   * (leur faim n'est jamais drainée) ni à l'acte de saison (le coût est par point
-   * récupéré, pas par saison : c'est ACT_HUNGER_FACTOR qui porte le Grand Froid).
+   * (leur faim n'est jamais drainée) ni au froid (le coût est par point récupéré :
+   * c'est la thermogenèse — `HUNGER_COLD_PER_DEGREE_HOUR` — qui porte le Grand Froid).
    */
   STAMINA_REGEN_HUNGER_COST: 0.02,
   /**

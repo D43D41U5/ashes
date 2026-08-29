@@ -6,6 +6,7 @@ import {
   RECIPES,
   SLOTS,
   type RecipeId,
+  TEMPERATURE,
   TERRAIN_DEEP_WATER,
   TERRAIN_FOREST,
   TERRAIN_GRASS,
@@ -34,7 +35,8 @@ import { countOf, durabilityOf, freeRoomFor, inventoryOf, makeInventory, stackSi
 import { createEmptyMap, zoneAt } from './map'
 import { equipBestTool } from './npc'
 import { createSim, spawnEntity, step, type Entity, type PlayerAction, type SimState } from './sim'
-import { TICKS_PER_SEASON_DAY } from './time'
+import { ambientTemperature } from './temperature'
+import { TICKS_PER_CYCLE } from './time'
 import { addStructure, getVillageOf, grantItems } from './village'
 
 let nextNodeId = 100
@@ -937,28 +939,24 @@ describe('la file de craft (craft-file A1-A6)', () => {
 })
 
 describe('la faim (A4)', () => {
-  it('décroît, double aux Pluies, triple au Grand Froid, manger restaure', () => {
-    // Échelle extrême : 1 tick = ~1 jour de saison. LA FAIM SUIT LE FROID depuis S13
-    // (`ACT_HUNGER_FACTOR` = ×1 l'Éclosion, ×1 l'Ardeur, ×2 les Pluies, ×3 le Grand Froid) :
-    // le palier ne se lit plus à l'entrée de l'acte II mais au passage des saisons. On mesure
-    // donc trois fenêtres, chacune tout entière DANS sa saison — jour 1 ouvre à l'Éclosion.
-    const sim = createSim(1, {
-      map: createEmptyMap(32, 32, TERRAIN_GRASS),
-      calendarScale: TICKS_PER_SEASON_DAY,
-    })
+  it('décroît au drain de BASE quand l’air est doux ; manger restaure', () => {
+    // LA FAIM SUIT LE FROID RESSENTI depuis le 2026-08-29 (thermogenèse — `ACT_HUNGER_FACTOR`
+    // supprimé : la saison n'affame plus par décret, elle affame par sa courbe `SOCLE`). Le
+    // surcoût thermique est gardé dans `temperature.test.ts` (« la thermogenèse ») ; ici on
+    // affirme le COMPLÉMENT : à l'ouverture des Pluies (makeSim), douce jour ET nuit, l'air ne
+    // passe jamais sous `AMBIANT_DOUX` et la pente observée est EXACTEMENT le drain de base.
+    const sim = makeSim([])
     const id = spawnEntity(sim, 10.5, 10.5)
-    /** Décroissance moyenne par tick sur les dix jours qui suivent le jour `depuis`. */
-    const penteDepuis = (depuis: number): number => {
-      while (sim.tick < depuis - 1) step(sim, []) // tick t ⇒ jour t+1 (jourDeDepart = 1)
-      const h = me(sim).hunger
-      for (let t = 0; t < 10; t++) step(sim, [])
-      return (h - me(sim).hunger) / 10
-    }
-    const eclosion = penteDepuis(1) // jours 1-11
-    const pluies = penteDepuis(2 * BALANCE.ACT_DAYS + 1) // jours 61-71
-    const grandFroid = penteDepuis(3 * BALANCE.ACT_DAYS + 1) // jours 91-101
-    expect(pluies / eclosion).toBeCloseTo(2, 5)
-    expect(grandFroid / eclosion).toBeCloseTo(3, 5)
+    expect(
+      ambientTemperature(sim, 10.5, 10.5),
+      'la prémisse : cet air-là est doux',
+    ).toBeGreaterThanOrEqual(TEMPERATURE.AMBIANT_DOUX)
+    const h = me(sim).hunger
+    for (let t = 0; t < 100; t++) step(sim, [])
+    expect(h - me(sim).hunger).toBeCloseTo(
+      (BALANCE.HUNGER_PER_CYCLE_HOUR / (TICKS_PER_CYCLE / 24)) * 100,
+      6,
+    )
 
     // LE CRU NE NOURRIT PAS UN HOMME (chantier tension) : une baie vaut 6, un
     // ragoût 60. On ne vit plus de cueillette — on cuisine.

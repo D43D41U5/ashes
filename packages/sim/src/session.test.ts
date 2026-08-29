@@ -216,6 +216,7 @@ describe('LA SESSION SOLO — le jeu est-il jouable ?', () => {
     // Il cueille et croque, sans jamais faire de feu — la stratégie qui marchait
     // AVANT (un buisson = 171 minutes de survie).
     let baiesMangees = 0
+    let morts = 0
     for (let t = 0; t < 2 * TICKS_PER_CYCLE; t++) {
       const e = me(sim)
       if (e.hp <= 0) break
@@ -230,29 +231,29 @@ describe('LA SESSION SOLO — le jeu est-il jouable ?', () => {
       } else {
         step(sim, [])
       }
+      for (const ev of drainEvents(sim)) {
+        if (ev.type === 'entity_died' && ev.entityId === 1) morts += 1
+      }
     }
 
-    // Il a mangé — plusieurs fois —, et il a quand même souffert : les buissons se vident,
-    // ils repoussent lentement, et les baies POURRISSENT dans son sac. La cueillette
-    // est un dépannage, pas un mode de vie. (On n'exige pas qu'il MEURE : on exige
-    // que ça ne soit plus une promenade.)
+    // Il a mangé, il a rasé ses buissons — et la nuit sans feu l'a TUÉ. La cueillette
+    // est un dépannage, pas un mode de vie.
     //
     // LE COMPTE DE REPAS A BAISSÉ (6 → 5) le 2026-07-31, et pas par un adoucissement : la
     // cueillette pure est désormais INTERROMPUE. Mesuré sur ce montage exact — le loup de
     // la nuit le tue, il respawne, et depuis que toute mort seule et loin d'un feu se relève
-    // (spec `cendreux.md` R6), **ses propres cadavres reviennent le chasser** : deux
-    // Cendreux `risen` sur ses talons, 100 → 50 PV en deux cycles. Le seuil exact du compte
-    // n'a jamais été la règle ; on l'assouplit d'un cran et on affirme à la place ce qui
-    // porte vraiment la démonstration — il mange en boucle, il n'est jamais rassasié, et il
-    // a RASÉ ses buissons pour en arriver là.
+    // (spec `cendreux.md` R6), **ses propres cadavres reviennent le chasser**.
     //
-    // RELEVÉ À L'OUVERTURE RÉELLE : 26 repas, 100 → 50 PV, les trois buissons à sec. *(Chiffres
-    // relevés quand le monde ouvrait au jour 51 ; l'ouverture est passée au 61 le 2026-08-24 —
-    // les assertions ci-dessous portent sur la FORME (il mange en boucle, il rase ses buissons)
-    // et non sur le compte, précisément pour survivre à ce genre de déplacement.)* La saison est
-    // ORDINAIRE (les Pluies de l'an 1 ne tirent aucun caractère de S18) : ce banc mesure la
-    // calibration nue, pas un Déluge.
-    expect(baiesMangees).toBeGreaterThan(3)
+    // ET IL NE SE LIT PLUS DU TOUT (2026-08-29, thermogenèse — `economie.md` R7bis) : aux
+    // Pluies douces de l'ouverture, l'ancien décret ×2 est parti et la faim tient 4 pts/h —
+    // le premier repas tombe à h14,7 (relevé à la sonde), la nuit arrive AVANT le deuxième,
+    // et la traque fait le reste : sac perdu sur le cadavre, plus une baie à croquer. Le
+    // compte de repas mesurait le décret supprimé ; ce qui porte la démonstration est la
+    // FORME — il a dû manger, il a rasé ses buissons, il finit sur le fil, et surtout LA
+    // NUIT SANS FEU LE TUE. C'est désormais elle, avec le Grand Froid qui affame (la
+    // thermogenèse), qui interdit de vivre de cueillette — pas un multiplicateur.
+    expect(baiesMangees).toBeGreaterThanOrEqual(1)
+    expect(morts).toBeGreaterThanOrEqual(1) // la nuit sans feu n'a pas pardonné
     expect(me(sim).hunger).toBeLessThan(60) // il vit sur le fil, jamais rassasié
     expect(sim.nodes.filter((n) => n.type === 'berry_bush').reduce((s, n) => s + n.stock, 0)).toBe(0)
   })

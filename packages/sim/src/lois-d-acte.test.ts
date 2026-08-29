@@ -29,19 +29,22 @@ import { actForDay, phaseForDay, tourForDay, YEAR_DAYS } from './time'
 const ACTES_BALAYES = 200
 
 /**
- * Les six lois numériques, avec leurs QUATRE paliers ÉPINGLÉS — l'Éclosion · l'Ardeur · les
+ * Les cinq lois numériques, avec leurs QUATRE paliers ÉPINGLÉS — l'Éclosion · l'Ardeur · les
  * Pluies · le Grand Froid (les valeurs de S13, 2026-08-23).
  *
- * Elles étaient huit. Deux sont parties, et ni l'une ni l'autre n'est un oubli :
+ * Elles étaient huit. Trois sont parties, et aucune n'est un oubli :
  * · `TEMPERATURE.ACT_COLD` — S4 la remplace par la COURBE `SOCLE`, une valeur par JOUR de
  *   l'année et non plus une marche par saison. Ce n'est plus une `actLaw` du tout ; sa garde
  *   vit dans `saisons.test.ts` (A2, A12).
  * · `METEO.CHANCE_PER_CYCLE` — S7/S9 la remplacent par `PAR_SAISON` et l'élection par ÉPISODES :
  *   la densité de mauvais temps se lit sur la longueur des épisodes, plus sur une chance par
  *   cycle. La table saisonnière qui lui succède est gardée plus bas.
+ * · `BALANCE.ACT_HUNGER_FACTOR` — la THERMOGENÈSE la remplace (décision d'Alexis 2026-08-29) :
+ *   la faim suit le froid RESSENTI (`HUNGER_COLD_PER_DEGREE_HOUR`, payé dans
+ *   `advanceTemperature`), la saison n'y entre plus que par la courbe `SOCLE`. Sa garde vit
+ *   dans `temperature.test.ts` (« la thermogenèse »).
  */
 const LOIS: { nom: string; loi: ActLaw; paliers: readonly [number, number, number, number] }[] = [
-  { nom: 'BALANCE.ACT_HUNGER_FACTOR', loi: BALANCE.ACT_HUNGER_FACTOR, paliers: [1, 1, 2, 3] },
   // La repousse est LA seule ligne qui s'écarte de « la pression suit le froid », et S10 l'impose :
   // aussi lente à l'Ardeur qu'aux Pluies, parce que la sécheresse arrête ce que le froid arrêtera.
   { nom: 'SEASON.REGROW_ACT_FACTOR', loi: SEASON.REGROW_ACT_FACTOR, paliers: [1, 2, 1.5, 3] },

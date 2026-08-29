@@ -26,8 +26,9 @@ Fermer la première boucle économique complète : récolter → crafter → s'�
 
 ### La faim (« faim simple », décision actée GDD §8)
 
-- **R7 — Jauge 0-100**, décroissant avec le temps du cycle (`HUNGER_PER_CYCLE_HOUR = 4` — le ventre se vide bien plus vite qu'au premier jet). **Multipliée par l'acte** : ×1, ×2 (Grand Froid), ×3 (Cendre) — la pression saisonnière du GDD §2 mord dès V4.
-- **R8 — À 0 : vitesse ÷2.** Pas de mort de faim (la mort arrive en V6) ; le ventre vide rend lent et vulnérable, pas mort.
+- **R7 — Jauge 0-100**, décroissant avec le temps du cycle (`HUNGER_PER_CYCLE_HOUR = 4` — le ventre se vide bien plus vite qu'au premier jet). ~~Multipliée par l'acte~~ *(révisé le 2026-08-29 — `ACT_HUNGER_FACTOR` supprimé, voir R7bis : la pression saisonnière dérive désormais du froid, plus du calendrier.)*
+- **R7bis — LA THERMOGENÈSE** *(décision d'Alexis, 2026-08-29)* : tenir 37 °C se paie en ventre — chaque degré de froid **ressenti** sous `TEMPERATURE.AMBIANT_DOUX` coûte `HUNGER_COLD_PER_DEGREE_HOUR = 0,5` point de faim par heure de cycle. Le ressenti est **celui de la dérive du corps** (`advanceTemperature`, où le surcoût est facturé) : le feu, l'abri et la tenue d'hiver comptent — se chauffer, c'est économiser des vivres. Le surcoût suit l'**effort** de compensation, pas la température atteinte : lutter contre le froid coûte à manger, perdre la lutte coûte des PV (l'hypothermie). Ordres de grandeur : nuit d'hiver en plaine 15 pts/h, journée d'hiver 8, près d'un feu 4 (le tarif d'été) ; l'Ardeur ne paie jamais rien.
+- **R8 — À 0 : vitesse ÷2, et LA FAIM TUE** *(révisé — la rédaction d'origine disait « pas de mort de faim », rendue fausse par le chantier tension)* : les PV fondent à `STARVE_HP_PER_MIN = 6` (~17 min réelles d'une jauge de vie pleine), mort `cause: 'hunger'` dans la chronique.
 - **R9 — Manger** (`eat { item }`) : baies +6, **ragoût** +60 (cuit au Feu : 4 baies + 1 fibre). Le bonus de moral des repas variés attend d'avoir plusieurs recettes de cuisine (V5+).
 
 ### L'artisanat
@@ -47,7 +48,7 @@ Fermer la première boucle économique complète : récolter → crafter → s'�
 - **A1** — Récolter un arbre donne du bois, épuise le nœud, qui repousse à plein après `NODE_REGROW_TICKS` ; hors portée ou pendant le cooldown → rejeté.
 - **A2** — La hache double le rendement ; l'usure s'accumule ; au 100e coup l'outil est consommé et le compteur repart ; le filon ne cède rien sans pioche.
 - **A3** — La chaîne T2 complète : minerai + charbon → lingot **au four seulement** ; lingot + bois → hache de fer **à l'atelier seulement** ; loin de la station ou mauvaise station → rejeté.
-- **A4** — La faim décroît (×2 en acte II — testé en calendrier accéléré), manger restaure, à 0 la vitesse est divisée par 2 et revient après un repas.
+- **A4** — La faim décroît au drain de base quand l'air est doux ; le froid ressenti l'accélère (R7bis — drain = base + manque × coefficient, gardé dans `temperature.test.ts` : glacier au plein tarif, feu à zéro surcoût, tenue d'hiver qui borne la note) ; manger restaure ; à 0 la vitesse est divisée par 2 et revient après un repas.
 - **A5** — Récolter monte le métier ; un niveau supérieur rend plus ; l'XP d'un second métier progresse plus lentement quand le premier est haut (pression de spécialisation mesurable).
 - **A6** — `generateNodes` est déterministe (même seed = mêmes nœuds) ; fer et charbon uniquement dans les zones `kind: 'gisement'`.
 - **A7** — **Le bot headless** : un bot scripté joue la boucle entière — récolte bois/pierre/fibre, construit un atelier, crafte une hache, re-récolte plus vite — en pur `/sim`, et le replay de sa partie est identique au bit près.
@@ -63,4 +64,4 @@ Fermer la première boucle économique complète : récolter → crafter → s'�
 
 ## Ajouts à `balance.ts`
 
-`NODE_REGROW_TICKS`, `NODE_STOCKS` (arbre 10, affleurement 12, filon 8…), `GATHER_COOLDOWN_TICKS = 20`, `TOOL_DURABILITY = 100`, `TOOL_YIELD` (main 1, fortune 2, atelier 3, fer 4), `HUNGER_PER_CYCLE_HOUR = 4`, `ACT_HUNGER_FACTOR = [1, 2, 3]`, `HUNGER_SPEED_MALUS = 0.5`, `FOOD_VALUES` (baies 6, ragoût 60, viande crue 8, viande cuite 40), `RECIPES`, `XP_PER_GATHER = 1`, `XP_PER_CRAFT = 5`, `SKILL_YIELD_STEP = 8` (micro-marche additive), `GATE_BASIC_LEVEL = 2`, `GATE_IRON_LEVEL = 5`, `SKILL_SPREAD_PENALTY = 0.5`, coût du four.
+`NODE_REGROW_TICKS`, `NODE_STOCKS` (arbre 10, affleurement 12, filon 8…), `GATHER_COOLDOWN_TICKS = 20`, `TOOL_DURABILITY = 100`, `TOOL_YIELD` (main 1, fortune 2, atelier 3, fer 4), `HUNGER_PER_CYCLE_HOUR = 4`, ~~`ACT_HUNGER_FACTOR`~~ → `HUNGER_COLD_PER_DEGREE_HOUR = 0,5` *(thermogenèse, 2026-08-29 — R7bis)*, `HUNGER_SPEED_MALUS = 0.5`, `FOOD_VALUES` (baies 6, ragoût 60, viande crue 8, viande cuite 40), `RECIPES`, `XP_PER_GATHER = 1`, `XP_PER_CRAFT = 5`, `SKILL_YIELD_STEP = 8` (micro-marche additive), `GATE_BASIC_LEVEL = 2`, `GATE_IRON_LEVEL = 5`, `SKILL_SPREAD_PENALTY = 0.5`, coût du four.
