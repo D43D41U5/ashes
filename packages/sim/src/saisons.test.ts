@@ -19,6 +19,7 @@ import {
   BRUME,
   CENDREUX,
   dureteDeLAnnee,
+  EAU,
   FIRE_UPKEEP,
   GEL,
   jourDeLAnnee,
@@ -33,7 +34,8 @@ import {
 import { drainEvents } from './events'
 import { estGele, feuillageDenude } from './gel'
 import { createEmptyMap } from './map'
-import { episodeDuCycle, fenetreDe, largeurDe, meteoIntensityAt, meteoTypeDuCycle, type MeteoFront } from './meteo'
+import { episodeDuCycle, fenetreDe, frontMouille, largeurDe, meteoFeuConso, meteoIntensityAt, meteoMouille, meteoTypeDuCycle, type MeteoFront } from './meteo'
+import { estAsseche, niveauDEau } from './eau'
 import { effetsDe, effetsDuJour, modificateurDeSaison, PART_ORDINAIRE, type ModificateurId } from './modificateur'
 import { countOf } from './items'
 import { createSim, spawnEntity, step, type SimState } from './sim'
@@ -453,7 +455,7 @@ describe('A21/A22 — le caractère de la saison', () => {
       1: ['gelees_tardives', 'crue', 'grande_levee', 'reveil'],
       2: ['canicule', 'orages_secs', 'ete_pourri', 'nuee'],
       3: ['deluge', 'ete_indien', 'rouille', 'brame'],
-      4: ['hiver_noir', 'grandes_neiges', 'disette', 'meute'],
+      4: ['hiver_noir', 'grandes_neiges', 'disette', 'meute', 'vents_de_cendre'],
     }
     for (let tour = 1; tour <= 50; tour++) {
       for (let phase = 1; phase <= ACTS_PER_YEAR; phase++) {
@@ -463,17 +465,18 @@ describe('A21/A22 — le caractère de la saison', () => {
     }
   })
 
-  it('les seize mordent : aucun caractère n’est une étiquette vide', () => {
+  it('les dix-sept mordent : aucun caractère n’est une étiquette vide', () => {
     const tous: ModificateurId[] = [
       'gelees_tardives', 'crue', 'grande_levee', 'reveil',
       'canicule', 'orages_secs', 'ete_pourri', 'nuee',
       'deluge', 'ete_indien', 'rouille', 'brame',
-      'hiver_noir', 'grandes_neiges', 'disette', 'meute',
+      'hiver_noir', 'grandes_neiges', 'disette', 'meute', 'vents_de_cendre',
     ]
     for (const id of tous) {
       expect(Object.keys(effetsDe(id)).length, id).toBeGreaterThan(0)
     }
-    expect(tous.length).toBe(4 * ACTS_PER_YEAR)
+    // Quatre par saison, plus les Vents de cendre au Grand Froid (2026-08-28).
+    expect(tous.length).toBe(4 * ACTS_PER_YEAR + 1)
   })
 
   it('le caractère du jour est celui de la saison de ce jour', () => {
@@ -563,6 +566,108 @@ describe('A7bis — le niveau d’eau va dans les deux sens', () => {
     sim.map.terrain[32 * sim.map.width + 32] = 4 // TERRAIN_SHALLOW_WATER
     sim.cycleOffset = Math.round(TICKS_PER_CYCLE * 0.8) // en pleine nuit
     expect(estGele(sim, 32, 32)).toBe(false)
+  })
+})
+
+describe('A7 — l’assèchement porte une hystérésis (patron G8)', () => {
+  it('le verdict ne bascule JAMAIS dans la bande morte : toute bascule est franche', () => {
+    // Trois ans de cycles avec la météo ARMÉE : les fronts réels font respirer
+    // `cyclesDepuisPluie`, donc le niveau oscille autour du seuil au fil de l'Ardeur — le
+    // clignotement que l'hystérésis interdit. La loi se lit aux bords de cycle (le niveau est
+    // constant dans un cycle : chaleur au jour entier, cycles secs par cycle), et la
+    // propriété gardée est exactement G8 : une bascule du verdict n'arrive QUE sur un niveau
+    // FRANC — jamais dans la bande (`−SEUIL`, `−SEUIL + HYSTERESIS`).
+    const sim = mondeAuJour(1, { meteo: true })
+    sim.map.terrain[32 * sim.map.width + 32] = 4 // TERRAIN_SHALLOW_WATER : le gué témoin
+    const entree = -EAU.SEUIL_ASSECHEMENT
+    const sortie = entree + EAU.HYSTERESIS_ASSECHEMENT
+    let prev: boolean | null = null
+    let dansLaBande = 0
+    let bascules = 0
+    let basculesFranches = 0
+    for (let c = 0; c < 3 * YEAR_DAYS; c++) {
+      const t = c * TICKS_PER_CYCLE
+      const etat = { ...sim, tick: t }
+      const n = niveauDEau(etat, t)
+      if (n > entree && n < sortie) dansLaBande++
+      const v = estAsseche(etat, 32, 32)
+      if (prev !== null && v !== prev) {
+        bascules++
+        if (n <= entree || n >= sortie) basculesFranches++
+      }
+      prev = v
+    }
+    // Les trois prémisses qui rendraient la garde vide, affirmées : la bande est traversée,
+    // et le gué sèche puis revient au fil des ans.
+    expect(dansLaBande, 'aucun cycle dans la bande morte — la garde ne teste rien').toBeGreaterThan(0)
+    expect(bascules, 'le gué ne sèche jamais — la garde ne teste rien').toBeGreaterThan(0)
+    expect(basculesFranches, 'une bascule DANS la bande : l’hystérésis ne tient pas').toBe(bascules)
+  })
+})
+
+describe('les Vents de cendre — le vent de cendre a de nouveau un électeur (2026-08-28)', () => {
+  it('chaque élection du front TRACE au caractère, et il en existe — garde d’atteignabilité au runtime', () => {
+    // Balayage de 200 ans de cycles (1 jour = 1 cycle) : TOUTE élection `vent_de_cendre`
+    // doit venir d'un bloc dont le jour de départ porte le caractère (son seul électeur),
+    // et il doit y en avoir AU MOINS UNE — la prémisse sans laquelle « le front existe »
+    // resterait une affirmation de table, pas de runtime (le marais injoignable a déjà
+    // coûté quatre espèces).
+    const scale = TICKS_PER_SEASON_DAY / TICKS_PER_CYCLE
+    let elus = 0
+    for (let cycle = 0; cycle < 200 * YEAR_DAYS; cycle++) {
+      if (meteoTypeDuCycle(cycle, scale, 1) !== 'vent_de_cendre') continue
+      elus++
+      const bloc = Math.floor(cycle / METEO.BLOC_EPISODE)
+      const jourDuBloc = bloc * METEO.BLOC_EPISODE + 1 // 1 cycle = 1 jour, départ au jour 1
+      expect(effetsDuJour(jourDuBloc).ciel?.vent_de_cendre ?? 0, `cycle ${cycle} : élu hors caractère`).toBeGreaterThan(0)
+    }
+    expect(elus, 'aucun vent de cendre élu en 200 ans — le caractère n’élit pas').toBeGreaterThan(0)
+  })
+
+  it('il AFFAME le feu sans le mouiller — et l’orage sec de l’Ardeur ne s’est pas mis à presser', () => {
+    // Le front posé à la main, mi-fenêtre (patron `debug_meteo`) : bande de 420 sur une
+    // carte de 64, le centre est au cœur. `FEU_CONSO.vent_de_cendre` (1,8) dormait derrière
+    // la porte du mouillé tant qu'aucune saison ne l'élisait.
+    const sim = mondeAuJour(100, { meteo: true }) // Grand Froid, an 1 : aucun caractère (gel.test l'affirme)
+    const fenetre = TICKS_PER_CYCLE
+    sim.meteo = {
+      type: 'vent_de_cendre', cycle: Math.floor(sim.tick / TICKS_PER_CYCLE), day: jourDeSaison(sim),
+      edge: 3, startTick: sim.tick - fenetre / 2, endTick: sim.tick + fenetre / 2,
+    }
+    expect(meteoIntensityAt(sim.meteo, sim.tick, sim.map.width, sim.map.height, 32, 32)).toBeGreaterThan(0.9)
+    expect(meteoFeuConso(sim, 32, 32)).toBeCloseTo(METEO.FEU_CONSO.vent_de_cendre, 5)
+    expect(meteoMouille(sim, 32, 32)).toBe(false) // sec : la pose d'un feu neuf reste libre
+    // Le témoin : l'orage SEC de l'Ardeur passe par la même porte élargie et doit rester à 1.
+    const ete = mondeAuJour(45, { meteo: true })
+    ete.meteo = {
+      type: 'orage', cycle: Math.floor(ete.tick / TICKS_PER_CYCLE), day: jourDeSaison(ete),
+      edge: 0, startTick: ete.tick - fenetre / 2, endTick: ete.tick + fenetre / 2,
+    }
+    expect(meteoIntensityAt(ete.meteo, ete.tick, ete.map.width, ete.map.height, 32, 32)).toBeGreaterThan(0.9)
+    expect(meteoFeuConso(ete, 32, 32)).toBe(1)
+  })
+})
+
+describe('S18 — les Orages secs assèchent TOUTE leur saison, pluie comprise', () => {
+  it('sous le caractère, aucun front ne mouille ; hors du caractère, la pluie mouille toujours', () => {
+    // Le caractère se CHERCHE en balayant l'élection (patron `eau-rendu`) : jamais un jour
+    // écrit en dur. « `MOUILLE` faux partout — aucun front mouillé de la saison » (S18) :
+    // avant le correctif, seule l'aridité lisait `jamaisMouille` — il pleuvait sur les feux
+    // (conso ×1,5, pose refusée) pendant que la terre ne recevait rien.
+    let jourSec = -1
+    for (let j = 1; j <= 30 * YEAR_DAYS && jourSec < 0; j++) {
+      if (effetsDuJour(j).jamaisMouille === true) jourSec = j
+    }
+    expect(jourSec, 'aucun caractère « les Orages secs » en trente ans — prémisse morte').toBeGreaterThan(0)
+    expect(frontMouille({ type: 'pluie', day: jourSec })).toBe(false)
+    expect(frontMouille({ type: 'orage', day: jourSec })).toBe(false)
+    // Le témoin : un jour SANS le caractère, la pluie mouille comme toujours.
+    let jourHumide = -1
+    for (let j = 1; j <= YEAR_DAYS && jourHumide < 0; j++) {
+      if (effetsDuJour(j).jamaisMouille !== true) jourHumide = j
+    }
+    expect(jourHumide).toBeGreaterThan(0)
+    expect(frontMouille({ type: 'pluie', day: jourHumide })).toBe(true)
   })
 })
 

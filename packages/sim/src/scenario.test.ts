@@ -111,4 +111,27 @@ describe('le banc de test', () => {
     // ci-dessus — ici on ne vérifie que ce qu'on y VIT. Les trois villages doivent exister.
     expect(report.villages.length, 'trois villages : foyer, meute, neutre').toBe(3)
   })
+
+  /**
+   * A8 (spec `meteo.md`), la tranche automatisée — le critère complet (6 cycles × 3 graines)
+   * vit dans `tools/diag-meteo.mts`, resté manuel parce qu'il coûte dix-huit cycles ; ici on
+   * garde CHAQUE exécution de suite contre la régression qui tuerait des PNJ sous la météo :
+   * `pnpm test` n'armait `meteoActive` nulle part, donc une foudre qui se mettrait à frapper
+   * les abrités, ou un front qui gèlerait les villageois, ne faisait rougir AUCUNE suite.
+   */
+  // Deux jours MINIMUM : le cycle 0 du calendrier du banc est une accalmie (mesuré — le
+  // premier front est la pluie du cycle 1), et la prémisse `frontsVus > 0` doit pouvoir tenir.
+  it(`A8 — la météo armée ne tue aucun PNJ (${Math.max(DAYS, 2)} jours, seed 2026)`, { timeout: 900_000 }, () => {
+    const report = runScenario(2026, Math.max(DAYS, 2), undefined, { meteoActive: true })
+    console.log(`  A8 : ${report.frontsVus} front(s) vus · morts foudre ${report.mortsFoudre} · morts froid ${report.mortsFroid}`)
+    // La PRÉMISSE d'abord : sans front traversé, les deux zéros ne prouveraient rien.
+    expect(report.frontsVus, 'aucun front n’a couvert le banc — la garde est vide').toBeGreaterThan(0)
+    expect(report.mortsFoudre, 'la foudre a tué un PNJ (l’abri doit immuniser, R8)').toBe(0)
+    // Le froid compte TOUTES ses morts (front ou nuit) : au banc court, le socle sans front
+    // n'en cause aucune — le zéro est donc net, et un compte non nul accuse quoi qu'il en soit.
+    expect(report.mortsFroid, 'le froid a tué un PNJ (les villageois doivent s’abriter)').toBe(0)
+    // Et la famine ne doit pas se dégrader PARCE QUE la météo est là (le silence du gibier,
+    // la conso des feux) : même seuil absolu que le banc par défaut.
+    expect(report.starvationSamples).toBeLessThanOrEqual(10)
+  })
 })

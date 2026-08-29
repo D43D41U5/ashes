@@ -142,12 +142,14 @@ export const INVENTAIRE: Inventaire = {
   brume_retiree: { voix: 'muet', famille: 'saison', quoi: 'la Brume se retire (le filon qu’elle découvre a sa voix)' },
   filon_decouvert: { voix: 'voix', ou: 'tuile', famille: 'saison', quoi: 'un filon affleure au retrait de la Brume — la menace qui paie' },
   filon_retire: { voix: 'muet', famille: 'saison', quoi: 'le filon se referme sans coup de pioche final (périmé, remplacé, ou mangé)' },
-  // LE BLIZZARD (spec meteo.md R9) : trois faits nés MUETS — complétion de type, pas un
-  // arbitrage de timbre. Le vent qui se lève appartient au chantier audio du rendu météo
-  // (une nappe qui monte, pas un one-shot d'événement) : la voix se décidera là, au banc.
-  blizzard_annonce: { voix: 'muet', famille: 'saison', quoi: 'le vent du nord se lève — un blizzard arrivera demain' },
-  blizzard_entre: { voix: 'muet', famille: 'saison', quoi: 'le blizzard entre sur la vallée — le froid mord' },
-  blizzard_passe: { voix: 'muet', famille: 'saison', quoi: 'le blizzard est passé — on peut ressortir' },
+  // LE BLIZZARD (spec meteo.md R9, chantier audio météo 2026-08-28) : l'ANNONCE sonne — la
+  // veille est le seul télégraphe que le ciel lui-même ne peut pas donner, et c'est le
+  // jumeau grave du préavis de Brume. L'ENTRÉE et le PASSAGE restent muets PAR CHOIX : la
+  // nappe du vent (`meteo-audio.ts`) monte et retombe avec la bande — un one-shot par-dessus
+  // dirait deux fois la même chose.
+  blizzard_annonce: { voix: 'voix', ou: 'monde', famille: 'saison', quoi: 'le vent du nord se lève — un blizzard arrivera demain (le préavis de la veille)' },
+  blizzard_entre: { voix: 'muet', famille: 'saison', quoi: 'le blizzard entre sur la vallée — la nappe du vent le porte' },
+  blizzard_passe: { voix: 'muet', famille: 'saison', quoi: 'le blizzard est passé — la nappe retombe avec lui' },
   ark_departed: { voix: 'voix', ou: 'monde', famille: 'saison', quoi: 'l’Arche lève l’ancre — avec ceux qui étaient à bord' },
 
   // ── BÂTIR, CRAFTER, MANGER — 4 voix : poser, perdre, finir, cuire ────────────────
@@ -206,6 +208,14 @@ export const INVENTAIRE: Inventaire = {
   // ── LA PLAIE — refermée : on entend désormais qu'une plaie s'ouvre, pas seulement ─
   entity_bandaged: { voix: 'voix', ou: 'entite', famille: 'plaie', quoi: 'une plaie est pansée' },
   wound_inflicted: { voix: 'voix', ou: 'entite', famille: 'plaie', quoi: 'une BLESSURE s’ouvre — jambe, bras, saignement' },
+
+  // ── LE GESTE MANQUÉ ET LE GESTE TENU ─────────────────────────────────────────────
+  // Les deux moments les plus informatifs d'un combat de coût, et les deux seuls qui se
+  // produisaient sans un son : le raté qui cloue sur place (jusqu'à 1,6 s de récupération)
+  // et la parade qui a MARCHÉ. On les ancre sur l'ENTITÉ — c'est un fait de corps, il
+  // s'entend d'où il a lieu, et la distance dit s'il me concerne.
+  attack_whiffed: { voix: 'voix', ou: 'entite', famille: 'registre', quoi: 'un coup fend l’air — et cloue son porteur sur place' },
+  attack_blocked: { voix: 'voix', ou: 'entite', famille: 'registre', quoi: 'la garde a tenu (et si elle était posée à temps, elle fut gratuite)' },
 
   // ── MUET PAR NATURE — haute fréquence, ou pure plomberie d'interface ──────────────
   // Le silence tient — mais sa RAISON était fausse jusqu'au 2026-08-20. « Déjà un toast »
@@ -340,6 +350,7 @@ export const MATIERES: Record<NodeType, string> = {
   quarry: 'la carrière — la pierre à bâtir',
   iron_vein: 'le filon de fer — la seule matière qui TINTE',
   coal_seam: 'la veine de charbon — ça s’émiette',
+  charbonniere: 'le fût calciné — du charbon de bois qui s’effrite',
   rubble: 'les gravats — de la matière mêlée, qu’on fouille',
   fiber_plant: 'la fibre — un froissement',
   berry_bush: 'le buisson de baies',

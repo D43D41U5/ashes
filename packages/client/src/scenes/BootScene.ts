@@ -17,7 +17,6 @@ import { ORIENTATIONS_COUCHE, boiteCouchee, cleCouchee, rasterCorpsCouche } from
 import { makeCarcasseTextures } from '../render/carcasse-art'
 import { makePoiTextures } from './world/poi-art'
 import { makeBorneTextures } from './world/borne-layer'
-import { makeGueStoneTexture } from './world/gue-stones'
 import { generateLitErratiques, generateLitPois } from '../render/poi-lit'
 import {
   futRectsDe, houppierLargeur, houppierRectsDe, TOUTES_VARIANTES, type RectTon,
@@ -317,7 +316,6 @@ export class BootScene extends Phaser.Scene {
     this.makeClutter()
     makePoiTextures(this) // les lieux — voir world/poi-art.ts
     makeBorneTextures(this) // les bornes qui annoncent les seuils (worldgen R21) — world/borne-layer.ts
-    makeGueStoneTexture(this) // les dalles des gués : le passage se lit par la forme — world/gue-stones.ts
     generateLitStructures(this) // les chips de structures, albédo aplati + normale (da-feeling R4)
     generateBatiArt(this) // tout l'art du monde bâti (mobilier, clôture, mur ruiné) — render/bati-art.ts
     generateLitErratiques(this)
@@ -718,6 +716,20 @@ export class BootScene extends Phaser.Scene {
     g.fillRect(6, 14, 3, 6).fillRect(11, 14, 3, 6).fillRect(17, 14, 3, 6) // pattes épaisses
     g.fillStyle(0x4a4f57).fillTriangle(22, 7, 26, 3, 23, 12) // queue
     g.generateTexture('spr-wolf-alpha', 26, 20)
+    g.clear()
+
+    // LE PETIT (spec loup.md L15) : rond là où l'adulte est une ligne — la
+    // silhouette doit dire « ce n'est pas un combattant » avant toute teinte.
+    // Oreilles trop grandes, pattes courtes, queue dressée : un jeune, pas un
+    // loup réduit.
+    g.fillStyle(0x2e3238).fillEllipse(7, 7, 11, 7) // corps en boule
+    g.fillStyle(0x7d828a).fillEllipse(7, 7, 9, 5) // robe plus claire que l'adulte
+    g.fillStyle(0x5c6168).fillCircle(3, 6, 2.4) // tête ronde, museau court
+    g.fillStyle(0x3a3f46).fillTriangle(1, 2, 4, 5, 1, 5) // l'oreille trop grande…
+    g.fillStyle(0x3a3f46).fillTriangle(4, 2, 6, 5, 3, 5) // …et l'autre
+    g.fillStyle(0x2e3238).fillRect(4, 9, 2, 3).fillRect(9, 9, 2, 3) // pattes courtes
+    g.fillStyle(0x7d828a).fillTriangle(12, 4, 14, 2, 13, 8) // la queue DRESSÉE : il joue
+    g.generateTexture('spr-wolf-petit', 14, 12)
     g.clear()
 
     // Lapin : une boule, deux oreilles. La silhouette la plus lisible du lot.

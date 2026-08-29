@@ -315,7 +315,10 @@ describe('le manteau cuit', () => {
    */
   it('la craquelure de la vase est un RÉSEAU connexe — un moucheté de même part ne peut pas l’être', () => {
     const trame = trameDeVase()
-    const fendue = (i: number): boolean => trame[i]! < EAU_PAVE.PLAQUE_MIN
+    // Le classifieur suit la loi : la fente est un aplat à FISSURE, l'intérieur granuleux ne
+    // descend jamais sous PLAQUE_MIN × GRAIN_CRANS[2] — on coupe au milieu de l'écart.
+    const SEPARATEUR = (EAU_PAVE.FISSURE + EAU_PAVE.PLAQUE_MIN * EAU_PAVE.GRAIN_CRANS[2]!) / 2
+    const fendue = (i: number): boolean => trame[i]! < SEPARATEUR
     const part = compter(fendue) / (GRAIN_CELLS * GRAIN_CELLS)
     // La part elle-même : assez pour se voir, pas au point de manger la plaque.
     expect(part, 'la part fendue').toBeGreaterThan(0.15)
@@ -343,7 +346,10 @@ describe('le manteau cuit', () => {
    */
   it('la craquelure se pave sans couture : une fente traverse le raccord', () => {
     const trame = trameDeVase()
-    const fendue = (i: number): boolean => trame[i]! < EAU_PAVE.PLAQUE_MIN
+    // Le classifieur suit la loi : la fente est un aplat à FISSURE, l'intérieur granuleux ne
+    // descend jamais sous PLAQUE_MIN × GRAIN_CRANS[2] — on coupe au milieu de l'écart.
+    const SEPARATEUR = (EAU_PAVE.FISSURE + EAU_PAVE.PLAQUE_MIN * EAU_PAVE.GRAIN_CRANS[2]!) / 2
+    const fendue = (i: number): boolean => trame[i]! < SEPARATEUR
     const G = GRAIN_CELLS
     // ① Une fente enjambe VRAIMENT le raccord (les deux cellules qui se toucheront au pavage).
     let traversees = 0
@@ -356,6 +362,57 @@ describe('le manteau cuit', () => {
     for (let y = 0; y < G; y++) if (fendue(y * G)) bord++
     expect(bord / G, 'la colonne du raccord a la densité du reste').toBeGreaterThan(part / 3)
     expect(bord / G, 'la colonne du raccord a la densité du reste').toBeLessThan(Math.min(1, part * 3))
+  })
+
+  /**
+   * LES PLAQUES ONT UN GRAIN, ET IL NE SE MÉLANGE PAS À LA FENTE (2026-08-28).
+   *
+   * L'intérieur d'une plaque était UNI : la seule variation à l'écran était le damier par
+   * tuile, et la vase se lisait en carrés de 16 px — pas en matière. Elle porte désormais le
+   * bruit-valeur postérisé du standard (`grainFacteur` : trois crans francs à la maille 4 px).
+   * Ce qui ferait rougir : retirer le grain (un seul cran, la plaque redevient un aplat), ou
+   * le laisser DESCENDRE dans la gamme de la fente (le classifieur des deux gardes ci-dessus
+   * prendrait du grain pour du réseau — le moucheté qu'on a jeté, refabriqué par accident).
+   */
+  it('l’intérieur des plaques porte trois crans de grain, tous strictement au-dessus de la fente', () => {
+    const trame = trameDeVase()
+    const PLANCHER = EAU_PAVE.PLAQUE_MIN * EAU_PAVE.GRAIN_CRANS[2]!
+    // ① LA SÉPARATION : chaque cellule est soit la fente (l'aplat FISSURE exactement — au
+    //    fround près, la trame est une Float32Array), soit un intérieur au-dessus du plancher.
+    const FENTE = Math.fround(EAU_PAVE.FISSURE)
+    for (let i = 0; i < trame.length; i++) {
+      const v = trame[i]!
+      expect(v === FENTE || v >= PLANCHER, `la cellule ${i} (${v}) vit dans l'écart fente/plaque`).toBe(true)
+    }
+    // ② LE GRAIN EXISTE : les intérieurs d'une même plaque ne sont plus un aplat. On compte les
+    //    VALEURS distinctes par maille de plaque (PLAQUE_PAS² cellules partagent la même valeur
+    //    propre) : sans grain il y en a UNE ; avec trois crans il y en a plusieurs, presque
+    //    partout. Et chaque cran pèse — un grain à 1 % serait du bruit d'arrondi, pas une matière.
+    const pas = EAU_PAVE.PLAQUE_PAS
+    let maillesVariees = 0
+    const M = GRAIN_CELLS / pas
+    for (let gy = 0; gy < M; gy++) {
+      for (let gx = 0; gx < M; gx++) {
+        const vues = new Set<number>()
+        for (let cy = gy * pas; cy < (gy + 1) * pas; cy++) {
+          for (let cx = gx * pas; cx < (gx + 1) * pas; cx++) {
+            const v = trame[cy * GRAIN_CELLS + cx]!
+            if (v !== FENTE) vues.add(v)
+          }
+        }
+        if (vues.size >= 2) maillesVariees++
+      }
+    }
+    expect(maillesVariees / (M * M), 'presque chaque plaque porte au moins deux crans').toBeGreaterThan(0.7)
+    // ③ ET IL EST CALIBRÉ : la moyenne des intérieurs reste celle d'avant le grain (±2 %) — la
+    //    contrepartie du MULTIPLY, sinon la vase fonce en silence et défait `couleurVase`.
+    let somme = 0
+    let n = 0
+    for (let i = 0; i < trame.length; i++) {
+      if (trame[i] !== FENTE) { somme += trame[i]!; n++ }
+    }
+    const attendu = EAU_PAVE.PLAQUE_MIN + EAU_PAVE.PLAQUE_AMPLITUDE / 2
+    expect(Math.abs(somme / n - attendu), 'la moyenne des plaques est compensée').toBeLessThan(attendu * 0.02)
   })
 
   /**

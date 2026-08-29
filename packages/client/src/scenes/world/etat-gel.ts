@@ -38,21 +38,17 @@
  *      supposerait faux ne peindrait jamais de neige — l'erreur inverse coûterait la
  *      fonctionnalité entière.
  *
- *   ③ `brume` — **ABSENT, ET C'EST UN TROU QU'IL FAUT DIRE.** `SnapshotMessage` ne porte pas
- *      la nappe. `brumeColdAt` vaut `BRUME.COLD_MALUS` sous une Brume : sans elle, la
- *      température que le client relit est **trop CHAUDE de ce malus, et seulement sous la
- *      nappe**. Conséquence exacte, dans ce sens et pas l'autre :
- *
- *        · le client peut MANQUER une glace que la sim a posée sous une Brume (faux négatif) ;
- *        · il n'en INVENTE jamais une qui n'existe pas (faux positif impossible).
- *
- *      C'est un manquement à G5 (« on ne s'engage jamais sur la glace par surprise ») dans ce
- *      cas précis. Le remède est UN CHAMP ADDITIF dans `SnapshotMessage` (`brume`), qui
- *      n'incrémenterait même pas `PROTOCOL_VERSION` (le précédent `createdAt?` est écrit dans
- *      `protocol.ts`) — mais c'est `/sim` qu'il faudrait toucher : décision d'Alexis.
+ *   ③ `brume` — **PORTÉE PAR LE SNAPSHOT depuis le 2026-08-28** (champ additif `brume?`,
+ *      sans bump de `PROTOCOL_VERSION` — le précédent `createdAt?`). C'était le trou déclaré
+ *      de cette façade : sans la nappe, `brumeColdAt` rendait une température trop CHAUDE de
+ *      `BRUME.COLD_MALUS` sous une Brume, et le client pouvait MANQUER une glace que la sim
+ *      avait posée (faux négatif — manquement à G5, « on ne s'engage jamais sur la glace par
+ *      surprise »). La façade la relaie désormais telle quelle ; un hôte d'avant le champ
+ *      n'envoie rien et on retombe sur `null` — l'ancien comportement, jamais pire.
  */
 import {
   TICKS_PER_CYCLE,
+  type Brume,
   type GameTime,
   type MeteoFront,
   type SimState,
@@ -70,6 +66,9 @@ export interface SourceDuGel {
   readonly jourDeDepart: number
   readonly structures: readonly Structure[]
   readonly meteo: MeteoFront | null
+  /** LA NAPPE DE BRUME du snapshot (voir l'en-tête, point ③) — `null` hors nappe et face à
+   *  un hôte d'avant le champ. */
+  readonly brume: Brume | null
   /**
    * ═══ LA CENDRE, ET ELLE EST ENTRÉE PAR LE PAS (2026-08-25) ═══
    *
@@ -118,7 +117,7 @@ interface ChampsDuGel {
   structures: readonly Structure[]
   meteo: MeteoFront | null
   meteoActive: boolean
-  brume: null
+  brume: Brume | null
   /** L'âge de chaque foyer de cendre, et la graine du monde — voir `SourceDuGel.cendreAge`. */
   cendreAge: readonly number[]
   seed: number
@@ -144,10 +143,10 @@ export function creerEtatGel(src: SourceDuGel): EtatGel {
     map: src.map,
     structures: src.structures,
     meteo: src.meteo,
-    // Voir l'en-tête, points ② et ③ : l'un est exact partout où le jeu s'expédie, l'autre
-    // est un trou nommé.
+    // Voir l'en-tête, points ② et ③ : le premier est exact partout où le jeu s'expédie, le
+    // second arrive du snapshot depuis le 2026-08-28.
     meteoActive: true,
-    brume: null,
+    brume: src.brume,
     cendreAge: src.cendreAge,
     seed: src.seed,
   }
@@ -164,6 +163,7 @@ export function majEtatGel(cible: EtatGel, src: SourceDuGel): void {
   e.map = src.map
   e.structures = src.structures
   e.meteo = src.meteo
+  e.brume = src.brume
   e.cendreAge = src.cendreAge
   e.seed = src.seed
 }

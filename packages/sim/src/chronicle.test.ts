@@ -233,7 +233,10 @@ describe('chronicleFromEvents — entrées structurées {jour, texte, poids}', (
     expect(acteDe(4)).toBe('le Grand Froid a commencé.')
     // L'an 2 dit le sien, et ces deux saisons-là ont tiré un caractère.
     expect(acteDe(5)).toBe('L’an 2 — l’Éclosion a commencé. — la Grande Levée.')
-    expect(acteDe(8)).toBe('L’an 2 — le Grand Froid a commencé. — la Meute.')
+    // (« la Meute » avant le 2026-08-28 : le pool du Grand Froid est passé à cinq avec les
+    // Vents de cendre, ce qui a rebattu les élections de la saison — coût dit d'avance dans
+    // la décision, et c'est justement le nouveau venu que l'an 2 tire.)
+    expect(acteDe(8)).toBe('L’an 2 — le Grand Froid a commencé. — les Vents de cendre.')
   })
 
   it('la stèle SE CITE — le seul « nous » du jeu, entre guillemets', () => {

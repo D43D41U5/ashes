@@ -225,6 +225,12 @@ describe('clickToAction — armé, le clic bâtit (A2)', () => {
     const t = aimAt(11, 11, PLAYER, [], [], RANGE)
     expect(clickToAction(t, 'chest')).toEqual({ type: 'place_component', tx: 11, ty: 11 })
   })
+
+  it('le SÉCHOIR tenu se pose comme le coffre (peche.md S1) — du mobilier, pas un composant', () => {
+    // Le trou historique : la sim l'acceptait, le client (liste à la main) ne l'armait jamais.
+    const t = aimAt(11, 11, PLAYER, [], [], RANGE)
+    expect(clickToAction(t, 'sechoir')).toEqual({ type: 'place_component', tx: 11, ty: 11 })
+  })
 })
 
 describe('poser un feu de camp : la main tient un feu, le clic POSE', () => {

@@ -7,6 +7,7 @@ import {
   capaciteStation,
   BALANCE,
   chronicleFromEvents,
+  meteoFeuConso,
   volumesDeChronique,
   piece,
   recettesDuPoste,
@@ -56,6 +57,7 @@ export function publishPlayerVitals(registry: Registry, me: Entity): void {
   setHud(registry, 'carnetEncyclo', me.carnet ?? []) // l'encyclopédie — idem : la sim compte, l'écran lit
   setHud(registry, 'hp', me.hp)
   setHud(registry, 'stamina', me.stamina)
+  setHud(registry, 'exhausted', me.exhausted === true)
   setHud(registry, 'wounds', me.wounds)
   setHud(registry, 'knownPois', me.knownPois)
   setHud(registry, 'knownGrounds', me.knownGrounds ?? [])
@@ -290,6 +292,9 @@ export function publishOpenFire(
   playerId: number,
   tick: number,
   inv: Inventory,
+  /** La façade du gel (`etatGel`), pour relire `meteoFeuConso` au point du feu — `null` tant
+   *  que le monde n'a rien dit (la pression météo s'affiche alors ×1, c'est-à-dire pas). */
+  etat: import('@ashes/sim').SimState | null = null,
 ): void {
   const of = getHud(registry, 'openFire') ?? null
   if (of === null) {
@@ -365,6 +370,10 @@ export function publishOpenFire(
     fuelZone: brule,
     verbe: s.type === 'sechoir' ? 'secher' : 'cuire',
     fuelTimeRemaining: village ? Math.round(village.fuel / FIRE_UPKEEP.DRAIN_PER_TICK) : fuelTicksRemaining(tick, s),
+    // LA PLUIE MANGE LE BOIS (spec meteo.md R5) : la sim accélère la consommation sous un
+    // front mouillé (`fire.ts`) — sans cette ligne, le joueur voyait son bois fondre sans
+    // explication. Relu par la MÊME fonction pure que l'autorité, au point du FEU.
+    meteoConso: brule && etat ? meteoFeuConso(etat, s.tx + 0.5, s.ty + 0.5) : 1,
     fuelBurnProgress: village ? 0 : fuelBurnProgress(tick, s),
     fuelBurnSlot: village ? -1 : s.burnSlot ?? -1, // la case ANCRÉE qui brûle (source unique : la sim)
     cookIn,

@@ -223,6 +223,9 @@ function tick(): void {
     // LE FRONT MÉTÉO (spec meteo.md) : le record d'élection, cinq champs — le client en
     // recalcule la bande, le gradient et jusqu'aux éclairs. Rien d'autre ne transite.
     meteo: sim.meteo ?? null,
+    // LA BRUME, MÊME RAISON : sans son record, la façade du gel relit une température trop
+    // chaude de `BRUME.COLD_MALUS` sous la nappe et peut manquer une glace autoritative (G5).
+    brume: sim.brume ?? null,
     events,
   }
   post(moi ? filtreParInteret(corps, moi) : corps)

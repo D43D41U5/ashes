@@ -598,6 +598,16 @@ export const COMPONENT_TYPES = STRUCTURE_TYPES.filter((t) => PIECES[t].fam === '
 ) as ComponentType[]
 
 /**
+ * LES TENUS-POSABLES (R20, flux feu de camp) : ce qui se fabrique, se tient en main et
+ * se pose au clic (`place_component`) — les composants, le coffre, le séchoir. Dérivé de
+ * `pose: 'objet'`, la MÊME question que pose la validation (`village.ts`) : le client qui
+ * arme la pose et la sim qui l'accepte lisent une seule définition. L'énumération à la
+ * main (« un composant OU le coffre ») avait laissé le séchoir fabricable et imposable.
+ */
+export type TenuPosable = KeysWhere<'pose', 'objet'>
+export const TENUS_POSABLES = STRUCTURE_TYPES.filter((t) => PIECES[t].pose === 'objet') as TenuPosable[]
+
+/**
  * CETTE PIÈCE SERT-ELLE UNE FONCTION ? (les barrières et le Feu, non)
  *
  * La question porte sur le CHAMP `fonction`, pas sur la famille — et c'est la porte que

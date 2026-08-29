@@ -6,7 +6,7 @@
  * doivent JAMAIS appeler `registry.set/get` directement — uniquement
  * `setHud`/`getHud`.
  */
-import type { BarrierType, ChronicleEntry, ChronicleVolume, ComponentType, RecipeId, StationFonction, CraftOrder, Entity, GameTime, Inventory, ItemBag, ItemId, MeteoAspect, PlayerAction, SkillId, Village, VillageTask, WallMaterial, WorldMap } from '@ashes/sim'
+import type { BarrierType, ChronicleEntry, ChronicleVolume, TenuPosable, RecipeId, StationFonction, CraftOrder, Entity, GameTime, Inventory, ItemBag, ItemId, MeteoAspect, PlayerAction, SkillId, Village, VillageTask, WallMaterial, WorldMap } from '@ashes/sim'
 import type Phaser from 'phaser'
 import type { Brouillard } from './render/fog'
 
@@ -21,9 +21,9 @@ import type { Brouillard } from './render/fog'
 export type Buildable = BarrierType
 
 /** Ce qu'un clic gauche peut POSER au sol : une PIÈCE STRUCTURELLE (marteau en main),
- *  le FEU DE CAMP (`'fire'`), un COMPOSANT (enclume, four…) ou le COFFRE qu'on tient.
- *  Le fantôme et le résolveur de clic en dérivent — une notion, deux consommateurs. */
-export type Placeable = Buildable | 'fire' | ComponentType | 'chest'
+ *  le FEU DE CAMP (`'fire'`), ou un TENU-POSABLE (composant, coffre, séchoir — `pose:
+ *  'objet'` au registre). Le fantôme et le résolveur de clic en dérivent. */
+export type Placeable = Buildable | 'fire' | TenuPosable
 
 /**
  * CE QUE LE LIEU OFFRE — le meilleur palier de chaque fonction à portée de bras.
@@ -91,6 +91,10 @@ export interface FireView {
   fuelTimeRemaining: number
   fuelBurnProgress: number
   fuelBurnSlot: number
+  /** R5 — le multiplicateur de consommation sous un front mouillé (`meteoFeuConso` au point
+   *  du feu) : 1 par temps sec, jusqu'à ×2 au cœur d'un blizzard. Le panneau le DIT quand il
+   *  dépasse 1 — le bois qui fond doit avoir une cause lisible. */
+  meteoConso: number
   /** CUISSON : 3 ENTRÉES (STACK d'aliments — `count` — + progression 0..1 de l'unité qui cuit + prêt)
    *  et 3 SORTIES (cuit + sous-produit, avec compte). Ce sont de vraies cases-conteneurs (glisser). */
   cookIn: ({ item: import('@ashes/sim').ItemId; count: number; progress: number; ready: boolean } | null)[]
@@ -141,9 +145,14 @@ export interface HudState {
   /** L'air qu'il fait ICI, en °C (`ambientTemperature` sur la façade du gel) — le monde, pas
    *  le corps : le médaillon du bas dit le corps. Relevé quatre fois par seconde. */
   ambiant: number | undefined
-  /** L'aspect du ciel à l'œil du joueur (`aspectAuPoint`) — `null` hors de toute bande.
-   *  La barre en fait son icône ; le ciel s'en sert déjà pour peindre pluie ou neige. */
+  /** L'aspect du FRONT DU JOUR à l'œil du joueur (`aspectAuPoint`, délibérément SANS test
+   *  d'empreinte : le mur qui approche est déjà de neige ou de pluie) — `null` seulement
+   *  quand aucun front n'est élu. La barre en fait son icône, estompée hors de la bande via
+   *  `cielCouvre` ; le ciel s'en sert déjà pour peindre pluie ou neige. */
   cielIci: MeteoAspect | null
+  /** …et le front couvre-t-il ICI (`meteoIntensityAt > 0` au point du joueur) ? Faux : le
+   *  front est élu mais son mur n'est pas encore là — l'icône se fait annonce, pas constat. */
+  cielCouvre: boolean
   /** LE VENT (spec `vent.md` V10) : le cap de la sim et sa force AU POINT DU JOUEUR — relayé
    *  tel quel, jamais recomposé (`vent.ts` est l'écrivain unique du cap, A8). Le cadran de la
    *  barre haute en fait une aiguille. `undefined` tant que le monde n'a rien dit. */
@@ -174,7 +183,8 @@ export interface HudState {
    */
   seen: RecipeId[]
   hunger: number
-  /** Température du corps de l'avatar (0-100 ; sous 20, le froid mord). */
+  /** Température du CORPS de l'avatar, en °C — domaine [25, 37] depuis le passage en degrés
+   *  (2026-08-22) ; l'hypothermie mord sous `TEMPERATURE.HYPOTHERMIA` (29). */
   temperature: number
   skills: Partial<Record<SkillId, number>>
   /** LE BESTIAIRE DE PÊCHE (spec `peche.md` B5/R11) — une ligne par espèce déjà prise :
@@ -187,6 +197,10 @@ export interface HudState {
   carnetEncyclo: { k: string; n: number }[]
   hp: number
   stamina: number
+  /** LE VERROU D'ÉPUISEMENT (`Entity.exhausted`, spec combat R1ter) — il refuse la course,
+   *  le coup et la parade, et ne se lève qu'à `SPRINT_RECOVER_STAMINA`. Il voyage dans le
+   *  snapshot : le HUD le LIT, il ne le déduit pas de la barre (les deux ne coïncident pas). */
+  exhausted: boolean
   wounds: Entity['wounds']
   /** Pièce structurelle armée dans le MENU DU MARTEAU (spec construction R20) —
    *  `null` = DÉSARMÉ, et c'est l'état de départ : le clic nu ne bâtit jamais. Posé
@@ -461,10 +475,10 @@ export function getHud<K extends keyof HudState>(registry: Registry, key: K): Hu
  */
 export const CLES_HUD: Record<keyof HudState, true> = {
   worldReady: true, loadProgress: true, time: true, zone: true, village: true,
-  toponyme: true, lieu: true, ambiant: true, cielIci: true, vent: true,
+  toponyme: true, lieu: true, ambiant: true, cielIci: true, cielCouvre: true, vent: true,
   tasks: true, archetype: true, villageWarmth: true, inv: true, activeSlot: true,
   craftQueue: true, stationsInRange: true, seen: true, hunger: true, temperature: true, skills: true, pecheCarnet: true, carnetEncyclo: true,
-  hp: true, stamina: true, wounds: true, selected: true, buildMaterial: true, buildEdge: true, demolir: true,
+  hp: true, stamina: true, exhausted: true, wounds: true, selected: true, buildMaterial: true, buildEdge: true, demolir: true,
   marteau: true,
   foundableFire: true, refugeesNearby: true, upgradableFire: true, deathMoment: true, deathVeilOpen: true, corpseHint: true,
   alertes: true, conseils: true, decouvertes: true,

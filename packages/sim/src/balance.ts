@@ -1745,6 +1745,7 @@ export type NodeType =
   | 'fishing_spot_lake'
   | 'iron_vein'
   | 'coal_seam'
+  | 'charbonniere'
   /** LE BLOC D'AFFLEUREMENT (t0-exploration §2sexies R48bis) — « un bloc = une tuile pleine de
    *  non traversable » (Alexis, 2026-08-18). Un cube de roche qui REMPLIT sa tuile, en trois
    *  TAILLES (`tailleDeBloc` — la taille fait le stock : un gros bloc se taille plus longtemps).
@@ -1800,6 +1801,17 @@ export interface NodeDef {
   skill: import('./items').SkillId
   /** Famille d'outil qui multiplie le rendement (et, pour la canne, qui AUTORISE le geste). */
   tool: ToolFamily | null
+  /**
+   * UN GISEMENT, PAS UNE TOURNÉE — ce nœud ne repousse JAMAIS (spec `cendre.md` R25).
+   *
+   * À ne pas confondre avec `renewable`, qui dit l'inverse (« il se recharge sur place »). Le
+   * défaut, absent des deux, est le cas commun : un arbre, une roche repoussent lentement
+   * (`NODE_REGROW_TICKS`). `fini` est le troisième cas, celui de la cendre : on le vide, il
+   * reste là, vide, pour toujours. Techniquement, `depleteNode` lui pose la marque du
+   * défrichement (`stock 0` + `regrowAt 0`) — que le client sait déjà lire pour ne pas animer
+   * une pousse qui n'arrivera pas.
+   */
+  fini?: true
   /**
    * Le palier MINIMAL pour entamer le nœud (spec craft-fortune C5).
    *
@@ -1893,6 +1905,19 @@ export const NODE_DEFS: Record<NodeType, NodeDef> = {
    * et la cendre ne la fait pas tomber (R13 ne prend que le vivant).
    */
   fumerolle: { item: 'salt', stock: 4, blockHalfSub: 0, skill: 'foraging', tool: null, minTool: 'none', renewable: true },
+  /**
+   * LA CHARBONNIÈRE (spec `cendre.md` R25, 2026-08-27) — un fût calciné qu'on écharbonne, au cœur
+   * de la cendre, sur l'ancienne forêt. C'est ce que la cendre REND, en face de ce qu'elle prend
+   * (R14), et la seule source de charbon de bois qui ne coûte pas quatre bûches et un feu.
+   *
+   * `fini` et pas `renewable` : **R15 tient, rien ne repousse dans la cendre.** Chaque foyer est
+   * un gisement qu'on épuise. `vivant` non plus — un fût brûlé ne gèle pas et la cendre ne le
+   * fait pas tomber (R13 ne prend que le vivant), sinon il tomberait le jour même de sa naissance.
+   *
+   * Le stock vit dans `CHARBONNIERE.STOCK` (une garde confronte les deux) : c'est un réglage de
+   * la mécanique de cendre, pas une propriété du nœud.
+   */
+  charbonniere: { item: 'charcoal', stock: 5, blockHalfSub: 0, skill: 'foraging', tool: 'axe', minTool: 'none', fini: true },
   // LE PATCH DE CHAMPIGNONS : cueilli à mains nues (E), mais gaté par le SAVOIR — on ne récolte
   // les bons qu'à `FORAGE_QUALITY_LEVEL` (le novice les voit sans savoir les prendre). Humide/ombre.
   champignon: { item: 'champignons', stock: 6, blockHalfSub: 0, skill: 'foraging', tool: null, minTool: 'none', minForageLevel: BALANCE.FORAGE_QUALITY_LEVEL, renewable: true, vivant: true, gelif: true },
@@ -2161,6 +2186,7 @@ export type RecipeId =
   | 'axe'
   | 'pickaxe'
   | 'iron_ingot'
+  | 'iron_ingot_charbon'
   | 'iron_axe'
   | 'iron_pickaxe'
   | 'steel_ingot'
@@ -2205,6 +2231,16 @@ export interface Recipe {
   requiert: import('./pieces').Exigence | null
   inputs: import('./items').ItemBag
   output: import('./items').ItemId
+  /**
+   * LE NOM AFFICHÉ, quand celui de la sortie ne suffit plus.
+   *
+   * Absent — le cas de trente-neuf recettes sur quarante — le panneau affiche le nom de
+   * l'OBJET produit, et c'est le bon comportement : une recette est le seul chemin vers sa
+   * sortie. Dès que DEUX recettes rendent le même objet (le lingot de fer, à la houille ou au
+   * charbon de bois — R24), deux lignes nommées pareil deviennent illisibles ; c'est la recette
+   * qui doit alors se nommer, pas l'objet.
+   */
+  nom?: string
   /**
    * LE LOT — combien d'unités une exécution rend. Absent = 1.
    *
@@ -2300,6 +2336,36 @@ export const RECIPES: Record<RecipeId, Recipe> = {
   axe: { requiert: ATELIER_N1, inputs: { wood: 5, stone: 3, fiber: 2 }, output: 'axe', seconds: 8 },
   pickaxe: { requiert: ATELIER_N1, inputs: { wood: 5, stone: 3, fiber: 2 }, output: 'pickaxe', seconds: 8 },
   iron_ingot: { requiert: FORGE_N2, inputs: { iron_ore: 2, coal: 1 }, output: 'iron_ingot', seconds: 10 },
+  /**
+   * ═══ LE FER SE FOND AUSSI AU CHARBON DE BOIS (spec `cendre.md` R24, 2026-08-27) ═══
+   *
+   * *Décision d'Alexis : « le charbon de bois est le combustible de forge du pauvre ».*
+   *
+   * **Le charbon de bois EXISTAIT DÉJÀ et ne servait à RIEN** : tout feu en pose un par quatre
+   * bûches consumées (`produireCharbon`, déterministe, depuis toujours), il a un poids, une pile,
+   * une icône — et aucune recette ne le consommait. C'était une dette, pas une nouveauté.
+   *
+   * **DEUX CHARBONS POUR UNE HOUILLE, ET JAMAIS D'ACIER.** Le rapport est le prix : un lingot
+   * coûte alors **huit bûches** et le temps de feu qui va avec, contre un coup de pioche au
+   * filon. Ce qui s'échange, c'est de la DENSITÉ contre de l'ACCESSIBILITÉ — le charbon se fait
+   * partout, sans pioche et sans mine, mais il faut du bois et de la patience. L'ACIER, lui,
+   * reste minier (`steel_ingot` n'accepte que la houille) : le palier 3 continue de se payer en
+   * expédition, et les filons gardent leur raison d'être.
+   *
+   * ⚠ **UNE RECETTE DE PLUS, PAS UNE SUBSTITUTION CACHÉE.** On a écarté un mécanisme
+   * d'ingrédients de remplacement dans le résolveur : le joueur ne saurait pas lequel des deux
+   * il consomme quand il a les deux. Deux lignes explicites dans le panneau — même sortie, deux
+   * coûts — se lisent, se comparent et se choisissent. C'est aussi ce qui rend la découverte
+   * gratuite : `decouverte.ts` révèle une recette dès qu'on TOUCHE sa matière, donc le premier
+   * charbon ramassé d'un feu ouvre lui-même la ligne.
+   */
+  iron_ingot_charbon: {
+    requiert: FORGE_N2,
+    inputs: { iron_ore: 2, charcoal: 2 },
+    output: 'iron_ingot',
+    seconds: 10,
+    nom: 'Lingot de fer (au charbon)',
+  },
   iron_axe: { requiert: ATELIER_N1, inputs: { iron_ingot: 2, wood: 2 }, output: 'iron_axe', seconds: 12 },
   iron_pickaxe: { requiert: ATELIER_N1, inputs: { iron_ingot: 2, wood: 2 }, output: 'iron_pickaxe', seconds: 12 },
   // L'ACIER (V2-17, spec construction R10, GDD §372) — le T3, ce qui PAIE le palier 3 :
@@ -2839,6 +2905,34 @@ export interface MonsterDef {
    */
   sac: number
   /**
+   * ═══ L'EMPRISE DU CORPS, en part de celle d'un homme (spec combat R4septies) ═══
+   *
+   * La séparation (`separation.ts`) donnait à TOUT LE MONDE le corps de l'avatar : un
+   * lapin bousculait un homme, et un cerf se laissait traverser par ses flancs. La réserve
+   * était écrite noir sur blanc dans la spec du 2026-08-27 (« ⚠ RÉSERVÉ : une taille par
+   * espèce est une donnée neuve, et un arbitrage d'Alexis ») — c'est cette donnée-là.
+   *
+   * ⚠ ELLE NE PEUT PAS SE DÉRIVER DES SPRITES, et c'est un invariant, pas un oubli : les
+   * emprises RENDUES vivent dans `client/render/framing.ts`, et /sim n'importe rien du
+   * client (invariant §1). Les nombres ci-dessous sont INFORMÉS par elles ; ils sont écrits
+   * ici, et c'est ici qu'ils se règlent.
+   *
+   * ⚠ ET CE N'EST PAS LA LARGEUR DU SPRITE. Un loup rendu fait 1,5 tuile de large — le
+   * double d'un homme — queue et museau compris, dans le sens de la MARCHE. Ce qu'une
+   * séparation mesure, c'est ce dans quoi on se COGNE, et un loup de front ne tient pas
+   * plus de place qu'un homme. Reporter la largeur rendue aurait donné 2,0 au loup et au
+   * sanglier, soit 1,5 tuile de contact entre deux loups — or la mesure de ce matin dit
+   * déjà qu'une poussée plus généreuse ne sépare pas mieux, elle FAIT OSCILLER
+   * (`SEPARATION_MAX_TILES` : 877 ticks de recouvrement à plafond 0,25 contre 221 à 0,10).
+   *
+   * On reste donc près de 1 sur les grands corps — la meute est un équilibre fragile et ce
+   * n'est pas le chantier — et l'on corrige ce qui se VOIT : le menu fretin, qui n'a jamais
+   * dû bousculer personne.
+   *
+   * Absent = 1, l'emprise d'un homme.
+   */
+  corps?: number
+  /**
    * Le gibier (spec faune R2) : les terrains où l'espèce vit. Non vide = c'est
    * une BÊTE — elle broute, s'alerte, fuit, et le peuplement ambiant peut la
    * faire naître ici. Vide = c'est un monstre (zombie, cendreux).
@@ -2858,6 +2952,12 @@ export interface MonsterDef {
   activity?: Activity
   /** Le PRÉDATEUR (spec faune R11) : il chasse, il ne broute pas. */
   predator?: boolean
+  /**
+   * LE BUTIN D'UN PETIT (spec loup.md L15) : ce que laisse un JUVÉNILE de l'espèce
+   * (`Monster.petit`) — maigre, et sans matériau. Absent = l'espèce n'a pas de petits.
+   * C'est une table et non un nombre : elle vit ici avec les autres tables de loot.
+   */
+  loot_petit?: import('./items').ItemBag
   /**
    * LE CROCHET (spec chasse C15), dans [0, 1] : combien cette bête zigzague en
    * fuite, à découvert. Le lapin crochète à fond (1), le cerf à moitié (0,5), le
@@ -2879,6 +2979,7 @@ export interface MonsterDef {
 
 export const MONSTER_DEFS: Record<MonsterType, MonsterDef> = {
   boar: {
+    corps: 1.1, // massif et bas sur pattes : il POUSSE, c'est tout son combat
     hp: 30, damage: 8, speed: 3.6,
     windupTicks: ticksFor(0.4), attackCooldownTicks: ticksFor(2), aggroRange: 0,
     thinkEveryTicks: ticksFor(1), wanderChance: 0.25, chargeChance: 0.25,
@@ -2893,6 +2994,7 @@ export const MONSTER_DEFS: Record<MonsterType, MonsterDef> = {
     activity: 'nocturnal', // il fouge de nuit — le vrai sanglier aussi
   },
   cendreux: {
+    corps: 1, // un homme mort debout — l'emprise d'un homme, exactement
     hp: 20, damage: 34, speed: 1.3,
     windupTicks: ticksFor(0.7), attackCooldownTicks: ticksFor(2.5), aggroRange: 5,
     thinkEveryTicks: ticksFor(0.5), wanderChance: 0, chargeChance: 0,
@@ -2907,6 +3009,7 @@ export const MONSTER_DEFS: Record<MonsterType, MonsterDef> = {
   },
   // Le petit gibier (GDD §8bis) : il détale avant qu'on l'ait vu. L'école de l'approche.
   rabbit: {
+    corps: 0.35, // il file entre les jambes ; c'est LUI que la règle uniforme rendait absurde
     hp: 8, damage: 0, speed: 5,
     windupTicks: ticksFor(0.3), attackCooldownTicks: ticksFor(2), aggroRange: 0,
     thinkEveryTicks: ticksFor(0.6), wanderChance: 0.4, chargeChance: 0,
@@ -2920,6 +3023,12 @@ export const MONSTER_DEFS: Record<MonsterType, MonsterDef> = {
   },
   // Le gros gibier : le vrai repas. Il voit de loin, part tôt, et court plus vite que vous.
   deer: {
+    // 1 ET PAS 1,1, ET C'EST LA MESURE QUI L'A DIT. Un cerf est HAUT, pas large : sa
+    // silhouette impressionne, son encombrement au sol est celui d'un homme. À 1,1, la
+    // garde d'hystérésis de `faune.md` R9bis rougissait — cinq cerfs entassés repassaient
+    // à 35 changements de cap pour un plafond de 34 : le ping-pong que la séparation de
+    // harde avait précisément supprimé. Le gain visuel était nul, le coût réel.
+    corps: 1,
     hp: 45, damage: 0, speed: 4.6,
     windupTicks: ticksFor(0.4), attackCooldownTicks: ticksFor(2), aggroRange: 0,
     thinkEveryTicks: ticksFor(1.2), wanderChance: 0.2, chargeChance: 0,
@@ -2954,6 +3063,25 @@ export const MONSTER_DEFS: Record<MonsterType, MonsterDef> = {
    * joueur qui sprinte (6). On ne distance pas une meute, on lui échappe.
    */
   wolf: {
+    // ═══ 1, ET C'EST UNE MESURE QUI A TRANCHÉ, PAS UNE INTUITION ═══
+    //
+    // Un loup est long, bas et étroit de front : 0,95 se défendait très bien à l'œil. Il
+    // coûte la MOITIÉ des proies de la meute. MESURÉ (`tools/diag-recul.mts`, 6 graines,
+    // 2 h du matin, un homme désarmé face à quatre loups) :
+    //
+    //     loup corps   il MEURT      secondes jusqu'à la mort
+    //     1,00           5/6         4,0 · 4,0 · survit · 3,4 · 3,4 · 4,3
+    //     0,95           3/6         survit · 11,9 · survit · 3,8 · 20,1 · survit
+    //
+    // Cinq pour cent d'emprise, et `faune.md` R13 (« la mort doit être l'issue probable »)
+    // tombe. Le mécanisme : des corps plus petits se recouvrent moins, la séparation les
+    // écarte moins, et la meute S'EMPILE au lieu de se répartir autour de la proie —
+    // plusieurs loups tiennent alors le même poste d'attaque au lieu de quatre côtés.
+    //
+    // ⚠ CE QUE ÇA DIT DU SYSTÈME, ET QUI DÉPASSE CE NOMBRE : la létalité de la meute est
+    // sensible à 5 % près sur une donnée de géométrie. Toute retouche future d'emprise ou
+    // de séparation doit repasser par cet instrument.
+    corps: 1,
     hp: 35, damage: 14, speed: 4.8,
     windupTicks: ticksFor(0.45), attackCooldownTicks: ticksFor(1.5), aggroRange: 13,
     thinkEveryTicks: ticksFor(0.5), wanderChance: 0.2, chargeChance: 0,
@@ -2964,7 +3092,15 @@ export const MONSTER_DEFS: Record<MonsterType, MonsterDef> = {
     // le seul endroit du massif où on voit venir la meute.
     habitat: [TERRAIN_FOREST, TERRAIN_PINE, TERRAIN_LARCH, TERRAIN_OLD_GROWTH, TERRAIN_HEATH, TERRAIN_CLAIRIERE],
     alertRange: 0, flightRange: 0, // il ne fuit pas parce qu'on approche : il fuit parce qu'il saigne
-    herdSize: [3, 4], // la meute
+    // PLUS DE `herdSize`, ET C'EST LA DÉCISION QUI FONDE LA LOUVIÈRE (spec loup.md L4,
+    // décision d'Alexis 2026-08-28) : le peuplement ambiant ne lève plus que des RÔDEURS
+    // SOLITAIRES — la meute, elle, vit dans une tanière (POI `louviere`, posée en lisière
+    // d'un coin de chasse) et n'arrive au monde que par elle. Retirer le champ règle TROIS
+    // choses d'un coup, et c'est pour ça qu'on retire plutôt que de gater : le bloc de
+    // grégarisme de `faune.ts` (herdId + alpha) ne s'exécute plus, `herdCost` retombe à 1
+    // (le poids de tirage était divisé par 3,5 — la même densité de loups arrive donc,
+    // éparpillée en solitaires au lieu de paquets), et aucun alpha ambiant ne naît.
+    loot_petit: { raw_meat: 1 }, // le louveteau : maigre, et pas d'os (spec loup.md L15)
     activity: 'nocturnal',
     predator: true,
   },
@@ -2996,6 +3132,7 @@ export const MONSTER_DEFS: Record<MonsterType, MonsterDef> = {
    * là qu'on le reprend, si on l'a suivi.
    */
   tetras: {
+    corps: 0.4, // un oiseau au sol — et en vol il n'a plus de corps du tout (R21)
     hp: 14, damage: 0, speed: 3.2,
     windupTicks: ticksFor(0.3), attackCooldownTicks: ticksFor(2), aggroRange: 0,
     thinkEveryTicks: ticksFor(0.7), wanderChance: 0.3, chargeChance: 0,
@@ -3041,6 +3178,24 @@ export const MONSTER_DEFS: Record<MonsterType, MonsterDef> = {
  */
 export const FAUNA = {
   /**
+   * LE GRADIENT DE DANGER (spec tension.md, GDD §8bis). Près du foyer, les
+   * prédateurs sont RARES ; aux marges, le monde leur appartient. Sans lui, le
+   * cercle sauvage était riche sans être dangereux : s'éloigner rapportait sans
+   * faire peur, et le PORTAGE — qui rend la distance coûteuse — n'achetait aucune
+   * tension. Les deux règles se tiennent la main.
+   */
+  PREDATOR_BIAS_DOMESTIC: 0.2,
+  PREDATOR_BIAS_WILD: 2.5,
+  /**
+   * RICHESSE ↔ DANGER (V2-19, tension.md T11bis). Le gradient radial ne suffisait pas : le
+   * système de ressources est GÉOGRAPHIQUE (chaque zone T1 a son minerai), mais s'y rendre ne
+   * FAISAIT pas peur. On re-corrèle : une zone plus riche (tier plus haut) attire plus de
+   * prédateurs — facteur `1 + DANGER_PER_TIER × tier`. Le Karst (fer, T1) et les marges (T2)
+   * deviennent somptueux ET brûlants ; la racine (T0) reste le refuge. Ordre de grandeur, à
+   * caler en playtest : T1 ×1,35, T2 ×1,7 — cumulé au radial (loin+riche = très chaud).
+   */
+  DANGER_PER_TIER: 0.35,
+  /**
    * Plafond de bêtes ambiantes vivantes (hors bêtes de lieu, résidentes).
    *
    * CALIBRÉ EN JEU (2026-07-11) : ce qui compte n'est pas le plafond mais la
@@ -3080,6 +3235,24 @@ export const FAUNA = {
    * du nombre de coins : seulement du nombre de coins QU'ON REGARDE.
    */
   GROUND_CAP: 30,
+  /**
+   * LA PART DES PRÉDATEURS dans un coin de chasse — le garde-fou du DANGER.
+   *
+   * Mesuré : la nuit, un coin se remplissait de DIX-NEUF LOUPS (cinq ou six
+   * meutes), et neuf coins sur dix-neuf en portaient dix ou plus. Le loup ne
+   * débordait pas du plafond : il le RAFLAIT. Hors de leurs heures, le cerf et le
+   * peuplement ambiant contournait cette borne par la porte de derrière.
+   *
+   * On ne rend donc PAS le loup plus rare (ça viderait la nuit de son sens) : on
+   * borne sa PART. Le reste du coin va au gibier — qui, la nuit, DORT (R10). Une
+   * clairière nocturne devient alors ce qu'elle doit être : des cerfs couchés, et
+   * quelques loups qui rôdent entre eux. C'est l'écosystème, pas un mur.
+   *
+   * 0,2 × 30 = SIX loups au plus dans une clairière : une meute pleine, plus un
+   * rôdeur. Assez pour tuer un homme sans lance (une meute de quatre inflige déjà
+   * ~37 dégâts/s) ; pas assez pour qu'il n'ait jamais eu sa chance.
+   */
+  PREDATOR_SHARE: 0.2,
   /* ── LES COINS DE CHASSE (spec faune R17) ───────────────────────────────── */
   /**
    * LE GIBIER A DES ADRESSES (décision utilisateur, 2026-07-13).
@@ -3301,8 +3474,14 @@ export const FAUNA = {
    * franchi la lisière, c'est la lâcher PILE SUR LE BORD — où le moindre pas de
    * cohésion ou de séparation (qui ne connaissent pas les biomes) la rejette
    * dehors, et où `goHome` la rappelle aussitôt : elle danserait sur la frontière.
+   *
+   * 0,15 ET NON 0,35 (diag-tremblement, 2026-08-28) : à 0,35 la bête était
+   * relâchée à 0,15 tuile du bord — deux ticks de séparation ou de `ranging`
+   * suffisaient à la ressortir, et `homing` se ré-armait. « Le cœur », c'est le
+   * cœur. La borne basse est la zone morte du pas (`moveToward`), ~0,12 au trot
+   * pour l'espèce la plus vive : en deçà, elle n'arriverait jamais.
    */
-  HOMING_ARRIVE: 0.35,
+  HOMING_ARRIVE: 0.15,
 
   /* ── La harde (spec faune R9) ───────────────────────────────────────────── */
   /**
@@ -3555,6 +3734,169 @@ export const FAUNA = {
    * lui marche dessus. On ne fabrique pas un interrupteur, on incline le monde.
    */
   WOLF_DAY_FLOOR: 0.45,
+
+  /* ── LA LOUVIÈRE (spec loup.md, décisions d'Alexis 2026-08-28) ──────────── */
+  /**
+   * LA MEUTE A UNE ADRESSE. Le gîte (POI `louviere`, posé en lisière d'un coin de
+   * chasse — sa géométrie de pose vit avec le worldgen, `LOUVIERE` dans poi.ts)
+   * porte la composition : 1 alpha + 2 adultes + 2 petits. Ces nombres-CI sont
+   * ceux qui se règlent EN JOUANT : la vie du gîte, la faim, la rage, la déroute.
+   */
+  /** La composition du clan : le cap du lieu (1 alpha + DEN_ADULTES adultes + DEN_PETITS petits). */
+  DEN_ADULTES: 2,
+  DEN_PETITS: 2,
+  /**
+   * LA PART DU RÔDEUR (L4) — l'amincissement de l'ambiant, EN NOMBRE EXPLICITE.
+   *
+   * Retirer `herdSize` au loup a fait tomber `herdCost` de 3,5 à 1 : à densité
+   * égale, sa FRÉQUENCE de tirage triplait — et la souille se vidait de ses
+   * sangliers (garde A27, attrapé au premier run). On remet la fréquence d'avant
+   * (0,3 ≈ 1/3,5) : mêmes tirages de loup qu'avant la Louvière, mais chacun ne
+   * lève plus qu'UN rôdeur au lieu d'une meute de 3-4. L'ambiant est aminci
+   * d'exactement une taille de meute — c'est la décision ①, chiffrée ici et
+   * nulle part ailleurs.
+   */
+  RODEUR_PART: 0.3,
+  /** L'emprise du gîte : au-delà, un résident tranquille rentre. */
+  DEN_HOME_RADIUS: 10,
+  /**
+   * LA RONDE (L5) : un adulte au plus s'écarte jusqu'ici. Le tour se DÉRIVE du
+   * rang et du tick (précédent : la sentinelle R9bis) — zéro état stocké, et le
+   * client calcule le même tour.
+   */
+  DEN_PATROL_RADIUS: 22,
+  DEN_PATROL_SHIFT: ticksFor(45), // qui est de ronde — le tour passe
+  DEN_PATROL_STEP: ticksFor(6), // le pas de la ronde : un relèvement par tranche, il fait le tour
+  /**
+   * LA FAIM (L6) — la jauge de chaque adulte, 0 (repu) → 1 (affamé). Elle monte
+   * en ce temps-là au REPOS complet ; les heures d'éveil la creusent plus vite
+   * (`FAIM_REPOS_FACTEUR`). C'est elle qui remplace `satedUntil` chez le loup.
+   */
+  FAIM_PLEINE_TICKS: ticksFor(600), // ~10 min de repu à affamé
+  FAIM_REPOS_FACTEUR: 0.5, // aux heures de repos, la faim monte moitié moins vite
+  /**
+   * UNE PROIE NE SUFFIT PAS TOUT À FAIT (L6) : 0,55 par proie — il en faut une ou
+   * deux, et la seconde n'est prise que si la première n'a pas suffi. C'est la
+   * demande d'Alexis, chiffrée : parti à 0,7, un repas ramène à 0,15 (retour) ;
+   * parti à 1, il en faut deux.
+   */
+  FAIM_PAR_PROIE: 0.55,
+  /** L'alpha affamé au-delà : il lève la meute (L7). Le solitaire s'y lève lui-même. */
+  FAIM_DEPART: 0.7,
+  /** Sous ce seuil : le demi-tour (L10). L'hystérésis DEPART/RETOUR est celle de tous
+   *  les seuils de mouvement de ce fichier — un loup à 0,5 ne part ni ne rentre. */
+  FAIM_RETOUR: 0.15,
+  /**
+   * LA CHASSE ABSTRAITE (L9, décision ⑩). Un avatar à moins de ça d'un chasseur :
+   * tout se joue pour de bon. Personne : la meute est bien LÀ (tickée, rencontrable
+   * sur la route), mais sa faim se remplit au bout du temps sans qu'une bête meure —
+   * le gibier est AMBIANT, il n'existe pas là où personne ne regarde, et une chasse
+   * réelle y viderait un coin vide pour toujours.
+   *
+   * 40 tuiles, et le nombre est SOUS l'anneau de naissance du gibier
+   * (`SPAWN_RING_MAX` = 42), pas au-delà de sa dissipation (52) : le mode « vrai »
+   * n'a de sens que là où des proies PEUVENT exister.
+   */
+  CHASSE_REELLE: 40,
+  CHASSE_ABSTRAITE_TICKS: ticksFor(70), // le temps d'une chasse qu'on ne voit pas
+  SORTIE_ARRIVEE: 6, // à cette distance du coin visé, la meute est « rendue »
+  /**
+   * LE BOND DE RUPTURE (L11, décision ⑥) : sur une cible ARRÊTÉE, le bond n'est
+   * plus la règle (la morsure plantée la tient — 17 morsures au banc) mais il
+   * SURVIENT, de temps en temps, pour casser le rythme. Cadencé — jamais deux
+   * de suite. La règle « on bondit sur ce qui avance » (R19), elle, ne bouge pas.
+   */
+  BOND_LENT_COOLDOWN: ticksFor(6),
+  /**
+   * LE BOND A SA PROPRE CADENCE (Alexis, 2026-08-28 : « il peut le spam sans que
+   * le joueur comprenne pourquoi »). Le bond ne payait que la cadence d'une
+   * morsure (1,5 s) — or sa récupération dure 1,6 s : relevé, il repartait
+   * AUSSITÔT, et l'écran montrait un ressort, pas un prédateur. 3,5 s entre deux
+   * bonds D'UN MÊME loup : chaque bond redevient un ÉVÉNEMENT qu'on lit (vol,
+   * chute, fenêtre de riposte, repli) — et entre deux, il doit venir au contact
+   * mordre, wind-up visible. La meute de quatre garde un bond toutes les ~0,9 s
+   * en cadence de groupe : la létalité mesurée de R19 ne tombe pas (garde
+   * diag-recul à rejouer sur toute retouche). La RAGE le raccourcit de moitié —
+   * « le bond part plus souvent » (loup.md L13).
+   */
+  LEAP_COOLDOWN: ticksFor(3.5),
+  /**
+   * LA DÉTENTE (Alexis, 2026-08-28 : « une charge immobile courte avant que le
+   * loup saute afin qu'on puisse voir l'attaque arriver ») — le télégraphe du
+   * bond, dans la grammaire du jeu (GDD §9bis « annoncés, pas surprises » ; le
+   * sanglier a son temps planté, le Cendreux son wind-up long). Le loup se TASSE,
+   * immobile, teinte de menace — puis il part. Le cap se verrouille AU DÉCOLLAGE,
+   * pas au tassement : l'esquive reste le pas de côté pendant le vol (0,8 s,
+   * inchangé) — la détente ne l'élargit pas, elle l'ANNONCE. 0,45 s : la durée
+   * d'un wind-up de morsure — le vocabulaire des télégraphes reste homogène.
+   */
+  LEAP_CROUCH_TICKS: ticksFor(0.45),
+  /**
+   * LA RAGE (L13, décisions ⑦⑧) — un état de clan, deux déclencheurs (la proie qui
+   * SAIGNE ; un PETIT tué), et elle ne lève que les freins d'ENGAGEMENT : le
+   * courage tombe, la traque devient une ruée, le bond part deux fois plus souvent,
+   * la poursuite s'allonge — BORNÉE. Les freins de survie (rompue, déroute,
+   * dispersion à la mort de l'alpha) tiennent : un loup enragé engage plus, il ne
+   * meurt pas plus bêtement.
+   */
+  RAGE_TICKS: ticksFor(45), // ce que dure une rage sans nouveau sang
+  PURSUIT_RANGE_RAGE: 40, // la poursuite enragée — plus longue que 26, et elle S'ARRÊTE
+  /**
+   * LA DÉROUTE COLLECTIVE (L14) : le clan qui a perdu la moitié de ses ADULTES
+   * casse d'un coup, blessés ou pas. Le pendant graduel de la mort de l'alpha —
+   * on n'abat pas cinq loups, on en abat deux et le reste comprend.
+   */
+  PACK_ROUT_LOSS: 0.5,
+  /**
+   * LE DÉSERTEUR S'EN VA (L3) : un résident en déroute a quitté le clan — il ne
+   * compte plus pour le cap du gîte (sinon quatre fuyards le tiendraient plein à
+   * jamais et il ne repeuplerait plus : un plafond compte ce qu'il borne) et le
+   * monde le reprend au bout de ce délai, hors regard (balayage `expiresAt`).
+   */
+  ROUTED_LINGER_TICKS: ticksFor(120),
+  /* ── Les petits (L15) ── */
+  PETIT_HP: 0.35, // × les PV de l'espèce : ~12 PV — un coup d'épieu
+  PETIT_ALERTE: 8, // un avatar à moins de ça : il court se terrer à la gueule
+  PETIT_JEU_RAYON: 5, // le jeu ne s'éloigne jamais plus du gîte
+  PETIT_JEU_VITESSE: 0.6, // × l'allure de l'espèce : vif, mais c'est un jeu
+  PETIT_JEU_SLICE: ticksFor(8), // qui poursuit qui — les rôles tournent
+  /**
+   * …ET LE RETOUR AU GÎTE S'ENGAGE (hystérésis — la même leçon, au jeu des
+   * petits). Le poursuivi FUIT son frère sans regarder où : au franchissement de
+   * `PETIT_JEU_RAYON` il se faisait rappeler d'UN tick, et la fuite du jeu le
+   * ressortait au suivant — vingt inversions de cap par seconde, épinglé pile à
+   * 5,0 du gîte (MESURÉ, diag-tremblement 2026-08-28, la pire signature de tout
+   * le relevé). Il rentre donc JUSQU'ICI avant de rejouer.
+   */
+  PETIT_JEU_CONFORT: 3,
+  /**
+   * L'EMPRISE DU GÎTE EST COLLANTE ELLE AUSSI. `DEN_HOME_RADIUS` testé nu chaque
+   * tick — pendant que la séparation des corps pousse la meute vers l'anneau —
+   * épinglait des adultes à 10,6 du gîte, six inversions de cap par seconde
+   * (MESURÉ, même relevé). Le rappel ne lâche qu'ici.
+   */
+  DEN_HOME_CONFORT: 6,
+  /**
+   * LE CAP QUI BUTE SE TAIT (diag-tremblement + carte des oscillations,
+   * 2026-08-28). Le but de migration (`migrationTarget`) et le canton
+   * (`ranging`) sont tirés SANS regarder l'habitat : un but de l'autre côté de
+   * la rivière faisait marcher la bête jusqu'à la lisière, demi-tour
+   * (`stepStaysHome`), et la réflexion suivante re-visait le même but — un
+   * aller-retour de 10 px au bord de l'eau, en boucle, tout le temps de la
+   * tranche. Quand un cap de but est REFUSÉ par la lisière, la bête renonce aux
+   * BUTS (migration, dérive, canton) pour ce laps : elle broute où elle est,
+   * et le monde reste un monde — pas un mur qu'on gratte.
+   */
+  CAP_VETO_TICKS: ticksFor(30),
+  /**
+   * L'ARRIVÉE À UN BUT (migration/dérive) : le seuil SE DÉRIVE du chemin d'une
+   * pensée (`thinkEveryTicks × pas ÷ 2` — en deçà, la bête traverse la zone
+   * d'une pensée à l'autre et orbite). Ces deux nombres n'en sont que le
+   * PLANCHER (l'ancien réglage, pour les bêtes lentes) et la MARGE de sûreté.
+   */
+  BUT_ARRIVE_PLANCHER: 0.5,
+  BUT_ARRIVE_MARGE: 0.1,
+
   /* ── Le sanglier (spec faune R14) — il ne fuit pas, il décide ───────────── */
   /**
    * LA FOUILLE. Le sanglier fouge : groin au sol, il ne voit plus rien. C'est la
@@ -3575,6 +3917,14 @@ export const FAUNA = {
    * la dernière seconde où l'on peut encore reculer (GDD §9bis).
    */
   THREAT_RANGE: 4.5,
+  /**
+   * …ET LA MENACE NE SE LÈVE PAS AU MÊME RAYON (hystérésis — tout seuil qui
+   * commande un mouvement veut la sienne) : engagée à `THREAT_RANGE`, elle ne
+   * retombe qu'à `THREAT_RANGE × ça`. Sans marge, un intrus qui longeait
+   * l'anneau faisait alterner gel-de-menace et pas de broutage tick à tick —
+   * avec le museau qui claque d'une cible à l'autre.
+   */
+  THREAT_RELEASE: 1.2,
   THREAT_TICKS: ticksFor(1.1), // le temps qu'il vous laisse pour comprendre
   /**
    * LA CHARGE. Droite, engagée, plus rapide qu'un sprint (6,1 contre 6) : on ne
@@ -3776,6 +4126,17 @@ export const HUNT = {
   SUSPICION_CALM: 0.25,
   /** ALERTÉE : fixée, tendue, prête à partir — et un coup n'est plus PROPRE (C6). */
   SUSPICION_ALERT: 0.7,
+  /**
+   * …ET L'ALERTE NE SE REND QU'ICI (verrou `Monster.alertSince`, même patron que
+   * `wary`). La jauge POURSUIT son stimulus : à distance de seuil elle rasait
+   * 0,7 dans les deux sens plusieurs fois par seconde, et chaque re-franchissement
+   * RE-PAYAIT la nervosité (`NERVOUS_FACTOR`) — une contre-réaction positive
+   * branchée sur une comparaison nue : plus ça battait, plus la décrue
+   * ralentissait, plus ça battait. L'impatience (le recul au trot) battait avec.
+   * L'alerte se lève à `SUSPICION_ALERT` et ne retombe qu'ici — et la nervosité
+   * ne se paie qu'une fois par VRAIE alerte.
+   */
+  SUSPICION_ALERT_CALM: 0.55,
   /** À stimulus plein, la jauge sature en ce temps (secondes). Près = bien plus vite. */
   RISE_S: 1.2,
   /** Sans stimulus, la jauge retombe en ce temps (secondes) — c'est la fenêtre du figé. */
@@ -3922,6 +4283,9 @@ export const HUNT = {
    */
   CARCASS_FRESH_TICKS: ticksFor(240),
   CARCASS_SEEK_FRESH: 40,
+  /** Le poids de spawn des prédateurs près d'une carcasse fraîche ou d'un blessé. */
+  BLOOD_PREDATOR_BIAS: 2,
+  BLOOD_SCENT_RADIUS: 30,
   /**
    * LE PRÉDATEUR PRÉFÈRE LE SANG. Une cible qui saigne « pèse » ça de plus au
    * choix de proie (même mécanique que PREY_PREFERENCE). La meute cueille les
@@ -4046,6 +4410,41 @@ export const HUNT = {
   BAIT_ALERTNESS: 0.4, // tête dans l'appât : ses portées s'effondrent
   /** Une pile au sol périt : le monde ne se jonche pas (~10 min). */
   GROUND_TTL: ticksFor(600),
+} as const
+
+/**
+ * ═══ L'IMPASSE — LE FILET SOUS TOUTES LES MACHINES À ÉTATS (2026-08-28) ═══
+ *
+ * Demande d'Alexis, capture `tremblement.png` : « je ne veux plus JAMAIS voir une
+ * entité trembler — elle suit son intention si elle peut, sinon elle fait autre
+ * chose. » Les hystérésis corrigent chaque cause CONNUE ; l'impasse, elle, attrape
+ * les causes qu'on n'a pas encore écrites.
+ *
+ * LA SIGNATURE (celle de `tools/diag-tremblement.mts`, qui a mesuré 5-15 % de
+ * bête-ticks tremblés avant les correctifs) : sur une fenêtre glissante, la bête a
+ * PARCOURU beaucoup (chemin brut ≥ BRUT_MIN) sans ALLER nulle part (net ≤ NET_MAX).
+ * Un brouteur fait des pas courts (brut faible) ; un voyageur a un net grand ; seule
+ * l'oscillation a les deux. Détectée, la bête RENONCE : elle s'arrête, souffle, et
+ * ses intentions transitoires (cap, chemin, rappels) sont rendues — à la reprise,
+ * chaque machine à états repart d'une page blanche. La récidive rapproche double le
+ * souffle (plafonné) : une impasse que les correctifs de racine ne couvrent pas
+ * encore se voit UNE fois par demi-minute, pas vingt fois par seconde.
+ *
+ * Détail d'implémentation : `packages/sim/src/impasse.ts`. Aucun tirage RNG.
+ */
+export const IMPASSE = {
+  /** La fenêtre de mesure. L'œil repère un tremblement bien avant 2 s. */
+  FENETRE_TICKS: ticksFor(2),
+  /** Chemin brut minimal sur la fenêtre pour parler de mouvement (tuiles). */
+  BRUT_MIN: 1.0,
+  /** Déplacement net maximal : au-delà, la bête est vraiment allée quelque part. */
+  NET_MAX: 0.4,
+  /** Le souffle du renoncement : la bête se pose et laisse retomber la poussière. */
+  RENONCE_TICKS: ticksFor(2.5),
+  /** Récidive : une impasse qui remord dans ce délai double le souffle suivant. */
+  RECIDIVE_TICKS: ticksFor(30),
+  /** …et le doublement s'arrête là (2,5 s → 5 → 10 → 20). */
+  RENONCE_COUPS_MAX: 4,
 } as const
 
 /**
@@ -4344,6 +4743,37 @@ export const COMBAT = {
    * le joueur au sol le temps d'une barre entière. À calibrer en playtest.
    */
   SPRINT_RECOVER_STAMINA: 25,
+  /**
+   * ═══ À BOUT DE SOUFFLE, ON MARCHE MOINS VITE (écart de spec R1, soldé le 2026-08-27) ═══
+   *
+   * R1 promet depuis toujours qu'à 0 d'endurance « un combattant essoufflé ne peut plus que
+   * marcher : à la merci du premier coup ». La sim, elle, ne faisait que lui REFUSER la
+   * course : il marchait du même pas qu'un homme frais. L'écart était consigné dans la
+   * spec (« est mort » est aujourd'hui plus doux que promis) et il traînait depuis
+   * l'audit du 2026-07-19.
+   *
+   * ═══ ET IL SOLDE AUSSI L'ARBITRAGE DU RAPPORT CYCLIQUE (R1ter) ═══
+   *
+   * R1ter finissait sur une question ouverte : SHIFT tenu, l'avatar alterne récupération et
+   * rafales avec un rapport cyclique de `régén/(régén+ponction)` — 44 % bien nourri, soit
+   * **~4,9 tuiles/s de moyenne, encore au-dessus des 4,8 du loup**. La spec notait que ce
+   * rapport ne dépend PAS du seuil de récupération (il se simplifie), et que « seul un écart
+   * plus grand entre ponction et régén l'abaisserait ».
+   *
+   * Il y avait un troisième levier, et c'est celui-ci : ce n'est pas le RAPPORT qu'on
+   * abaisse, c'est la vitesse de la moitié BASSE du cycle. À 0,75 :
+   *
+   *     0,44 × 1,5 v  +  0,56 × 0,75 v  =  1,08 v     (contre 1,22 v auparavant)
+   *
+   * — soit ~4,3 t/s au lieu de 4,9, franchement sous les 4,8 du loup. La règle « on ne
+   * distance pas des loups » (`PURSUIT_RANGE`) redevient vraie, et elle le devient par une
+   * promesse de la spec qu'on tenait enfin, pas par un nombre inventé pour l'occasion.
+   *
+   * 0,75 et non 0,5 : essoufflé on TRAÎNE, on n'est pas cloué. La fuite reste possible, elle
+   * cesse d'être gagnante. Le verrou se lève à `SPRINT_RECOVER_STAMINA`, comme le reste —
+   * un seuil qui commande un mouvement veut son hystérésis, et il l'a déjà.
+   */
+  WINDED_SPEED: 0.75,
   /** UNE PLAIE NON SOIGNÉE FREINE LA GUÉRISON (V1-14, GDD §6bis) — c'est ce qui fait
    *  exister le médecin : le bandage clôt la plaie et rend la régén pleine. On ne coupe
    *  pas à zéro (sans soin PNJ autonome, les villageois spiraleraient) : on freine fort,
@@ -4434,12 +4864,194 @@ export const COMBAT = {
    * tir, donc aucun banc sans archer n'en consomme.
    */
   ARROW_RECOVERY: 0.5,
-  KNOCKBACK_TILES: 0,
-  /** Le coup CHARGÉ repousse le double : le poids du geste se lit au sol. */
-  KNOCKBACK_CHARGED_FACTOR: 2,
+  /**
+   * ═══ LE RECUL, ARMÉ — ET RÉSERVÉ AU COUP LOURD (décision d'Alexis, 2026-08-27) ═══
+   *
+   * La règle dormait à 0 depuis le 2026-08-02, sur un arbitrage que la mesure rendait
+   * insoluble tel qu'il était posé (`tools/diag-recul.mts`, 6 graines) :
+   *
+   *     recul   encerclement (≥ 2 côtés tenus)   l'homme désarmé MEURT
+   *     0                6/6                            6/6
+   *     0,10             0/6                            4/6
+   *
+   * Le mécanisme du désastre : un coup qui porte pousse la proie hors du cône DÉJÀ ARMÉ
+   * du loup suivant, qui fend l'air et mange sa récupération de raté — une morsure
+   * protégeait des trois d'après.
+   *
+   * ═══ CE QUI DÉBLOQUE, ET C'EST UNE PREUVE, PAS UNE MESURE ═══
+   *
+   * Ce que la mesure accusait n'était pas « le recul », c'était « TOUT coup recule » —
+   * les morsures comprises, donc la meute se désorganisant elle-même. Un seuil de DÉGÂTS
+   * ne l'aurait pas réparé : le loup mord à 14 et le Cendreux à 34, tous deux au-dessus
+   * de n'importe quel plancher utile.
+   *
+   * Le coup CHARGÉ, lui, exclut les bêtes PAR CONSTRUCTION : `charged` n'est posé qu'en
+   * un seul endroit de tout /sim — le relâchement d'une charge du joueur (`combat.ts`,
+   * `attack_release`). Aucune bête, aucun PNJ, aucun Cendreux ne charge : `startAttack`
+   * les sert par `beastStrike`, qui ne porte jamais le drapeau. L'encerclement est donc
+   * intact par une garde, et non par six graines (A16).
+   *
+   * Et la règle GAGNE un sens qu'elle n'avait pas : écarter les corps devient la réponse
+   * de l'arme lourde à la horde — payée 34 d'endurance et 1,6 s de récupération si elle
+   * rate. C'est exactement la promesse de R4ter (« le tourbillon prend plusieurs corps »)
+   * rendue au sol.
+   *
+   * 0,30 tuile au plein — trois fois la poussée qui suffisait à défaire une meute quand
+   * tout le monde poussait. Ici elle ne sort que d'un geste qu'on a choisi, chargé et payé.
+   */
+  KNOCKBACK_TILES: 0.3,
+  /**
+   * LES DÉGÂTS QUI VALENT LE PLEIN RECUL — en-dessous, la poussée est proportionnelle,
+   * et elle part de ZÉRO. C'est le même patron que `amplitudeRecul` côté client (le recul
+   * PEINT suit déjà les dégâts depuis ce matin) : une arme se sent par sa FORME et par son
+   * poids, pas par son seul chiffre. L'overhead des poings (18) écarte à peine ; le
+   * tourbillon de hache (24) et la charge de lance (32) dégagent vraiment.
+   *
+   * 32 = le plus fort coup chargé de l'arsenal (la lance). Le barème se lit donc « part de
+   * ce que frappe la meilleure arme du jeu », et il ne demande aucun réglage séparé.
+   */
+  KNOCKBACK_DAMAGE_FULL: 32,
+  /**
+   * ═══ LES CORPS PRENNENT DE LA PLACE (`separation.ts`, demande d'Alexis 2026-08-27) ═══
+   *
+   * La part du recouvrement que deux corps résorbent en UN tick — 1 = ils se décollent
+   * entièrement, 0 = la règle est éteinte et l'on se retraverse comme avant.
+   *
+   * C'est un nombre qui se règle EN JOUANT (d'où sa place ici, et non près d'un
+   * générateur) : il décide de la fermeté d'un contact. Trop bas, on s'enfonce dans un
+   * loup avant qu'il ne cède, et la plainte d'origine survit ; trop haut, un corps
+   * traversé se décolle d'un claquement au lieu d'être poussé.
+   *
+   * ⚠ CE N'EST PAS LE RECUL. `KNOCKBACK_TILES` est une poussée à l'IMPACT, dont la mesure
+   * dit qu'elle défait l'encerclement de la meute ; la séparation, elle, ne pousse que ce
+   * qui se CHEVAUCHE, et elle pousse les deux corps. Les deux règles sont indépendantes,
+   * et c'est exprès : celle-ci rend le corps solide sans rien offrir contre les crocs.
+   */
+  SEPARATION_PUSH: 1,
+  /**
+   * LE PLAFOND DE LA POUSSÉE, en tuiles par tick et par corps (norme du déplacement).
+   *
+   * Un corps cerné reçoit la somme de ses voisins, et cette somme n'est bornée par rien :
+   * sans plafond, une mêlée serrée catapulterait.
+   *
+   * ═══ IL DOIT RESTER SOUS LA DEMI-PROFONDEUR DU CORPS, ET C'EST MESURÉ ═══
+   *
+   * Posé d'abord à 0,25 — « l'ordre de grandeur d'une course ». C'était au-dessus de
+   * `AVATAR_HITBOX_DEPTH_TILES / 2` (0,1875), donc au-dessus de ce qu'une correction
+   * peut légitimement demander sur l'axe court : la poussée FRANCHISSAIT le contact, la
+   * cohésion de harde ramenait la bête, et le couple entrait en cycle limite de deux ticks.
+   * Le compteur le disait sans ambiguïté (`tools/diag-separation.mts`, 12 graines, le
+   * montage du banc de faune) :
+   *
+   *     poussée  plafond   la scission TIENT   ticks de recouvrement
+   *     0        —              8/12                   374     (témoin : sans la règle)
+   *     1        0,25           4/12                   877     ← un plafond plus HAUT
+   *     1        0,10           8/12                   221        donne PLUS de contacts
+   *
+   * À 0,10, la règle résorbe MIEUX les recouvrements que le témoin n'en subit (221 contre
+   * 374) et ne coûte rien à la harde. Un plafond plus généreux n'accélère pas la
+   * séparation : il la fait osciller. 0,10 tuile/tick = 2 tuiles/s par corps, soit une
+   * marche entière de résistance quand deux corps se poussent l'un l'autre.
+   */
+  SEPARATION_MAX_TILES: 0.1,
+  /**
+   * LA ZONE MORTE — la part du contact qu'on tolère avant de pousser, et l'HYSTÉRÉSIS de
+   * la règle. En dessous d'elle, rien ne bouge ; au-delà, on repousse jusqu'au contact
+   * PLEIN. Un corps écarté ne peut donc pas re-déclencher tant que quelque chose ne l'a
+   * pas ramené franchement dedans.
+   *
+   * ═══ CINQUIÈME FOIS QUE CE DÉPÔT L'APPREND : UN SEUIL QUI COMMANDE UN MOUVEMENT VEUT
+   *     SON HYSTÉRÉSIS ═══ (cohésion/séparation de `faune.ts`, verrou `wary`, `exhausted`
+   *     de R1ter, `separating` de la harde — et maintenant celle-ci.)
+   *
+   * Sans elle, un corps posé PILE au contact oscille : la moindre errance le repasse
+   * dessous, la règle le repousse, l'errance le ramène. MESURÉ sur le banc des cinq cerfs
+   * entassés (`faune.test.ts`, R9/R9bis, qui compte les inversions de sens en 30 s) :
+   *
+   *     zone morte   inversions entassées / au large
+   *     0                    40 / 17   ✗  (le ping-pong revient, celui-là même que la
+   *                                        séparation de harde avait supprimé en 2026-08)
+   *     0,10                 …
+   *
+   * 0,10 vaut 0,075 tuile sur l'axe large et 0,037 sur l'axe court : à peine un pixel de
+   * chevauchement toléré. Invisible à l'œil, décisif pour la stabilité.
+   */
+  SEPARATION_DEADBAND: 0.1,
   BLOCK_ARC_COS: 0.5, // cos(60°) — arc frontal de 120°
+  /**
+   * ═══ LE DOS COÛTE CHER (décision d'Alexis, 2026-08-27, spec combat R6ter) ═══
+   *
+   * Le GDD §7 promet « le skill individuel penche un duel, jamais un 1v3 ». Les corps qui
+   * se séparent (R4septies) en étaient la moitié : on ne traverse plus une meute. L'autre
+   * moitié manquait — **être encerclé ne coûtait rien de plus qu'être en face**. Un loup
+   * qui vous prend à revers mordait comme celui que vous regardez, et le POSITIONNEMENT,
+   * qui est la stat que tout le GDD annonce, n'avait aucun effet sur les dégâts.
+   *
+   * Le cosinus est celui de l'axe cible→frappeur contre le REGARD de la cible : +1 pile de
+   * face, −1 pile dans le dos. Sous −0,5, c'est l'arc ARRIÈRE de 120° — le complément
+   * exact de l'arc de parade (`BLOCK_ARC_COS`, 120° de face), et ce n'est pas une
+   * coïncidence : les deux disent la même chose, que ce qu'on regarde on l'encaisse mieux.
+   * Entre les deux, les flancs : ni parade, ni prime.
+   *
+   * ⚠ ET ÇA VAUT POUR TOUT LE MONDE — « personne ne triche » (R4quinquies). La meute y
+   * gagne autant que le joueur : c'est ce qui rend l'encerclement de `faune.md` R11
+   * VRAIMENT dangereux, et c'est ce qui rend la contre-attaque à revers vraiment payante.
+   * La conséquence est assumée : la nuit mord plus fort dans le dos.
+   *
+   * ⚠ ET LE CHAMP EXISTE POUR TOUT LE MONDE, ce qui n'allait pas de soi. `Entity.facing`
+   * est tenu par la marche des bêtes (`monsters.ts` : « le pas ORIENTE la bête… sans quoi
+   * DANS LE DOS ne voudrait rien dire »), par la sentinelle qui balaie, par le regard de la
+   * bête méfiante, par le bond, et par le coup lui-même (`startAttack`). Une règle posée
+   * sur un champ que personne ne tiendrait aurait été vraie par accident sur un camp et
+   * fausse sur l'autre.
+   */
+  BACK_ARC_COS: -0.5,
+  /**
+   * Ce que le coup à revers multiplie. 1,3 et non 2 : le but est de faire PENCHER un
+   * échange, pas d'en faire une exécution — le GDD veut un combat de coût, où le
+   * positionnement est un avantage qu'on cumule, jamais un bouton qui gagne. Mesuré sur
+   * l'empreinte des douze scénarios avant de le poser.
+   */
+  BACK_DAMAGE_FACTOR: 1.3,
   BLOCK_REDUCTION: 0.7,
   BLOCK_MOVE_FACTOR: 0.3,
+  /**
+   * ═══ LA FENÊTRE DE PARADE (décision d'Alexis, 2026-08-27, spec combat R6bis) ═══
+   *
+   * Une garde posée DANS cette fenêtre avant que le coup ne tombe ne coûte pas de
+   * souffle. C'est la seule chose du combat qui récompense la LECTURE du télégraphe :
+   * avant elle, la parade était un amortisseur (−70 %, payé cher) et jamais une
+   * décision — aucun instant du duel ne rendait « bien lire » meilleur que « reculer
+   * d'un pas ».
+   *
+   * Le gain est en ENDURANCE, pas en dégâts ni en invulnérabilité, et ce n'est pas un
+   * détail de dosage : c'est ce qui garde R4 intact (« l'esquive est du positionnement,
+   * pas un i-frame ») et ce qui fait payer le timing dans la ressource reine de R1.
+   *
+   * ═══ CE QUE LE NOMBRE DOIT GARANTIR — et ce n'est PAS ce que j'avais écrit ═══
+   *
+   * Premier jet : « plus courte que le plus court des télégraphes ». La garde l'a réfuté
+   * en trois secondes — les mains nues arment en 4 ticks (`WEAPON_PROFILES`), et non en 8
+   * (`COMBAT.WINDUP_TICKS`, qui est l'armement des BÊTES) ; l'arc, lui, en 3. Aucune
+   * fenêtre utile ne tient sous 0,15 s, et une fenêtre de deux ticks n'est plus un geste,
+   * c'est une loterie.
+   *
+   * La propriété qui compte est ailleurs, et elle est plus juste : **être DÉJÀ en garde
+   * quand le télégraphe s'ouvre n'est jamais gratuit.** La parade se paie à qui campe
+   * derrière sa garde, et se donne à qui la pose EN RÉACTION à ce qu'il voit. C'est
+   * exactement la lecture qu'on veut récompenser — et c'est ce que la consommation de
+   * `parryUntil` (une pression, une parade) rend inattaquable : même en tenant la touche,
+   * on n'a jamais qu'UNE parade gratuite, celle de la pression qui l'a ouverte.
+   *
+   * 0,3 s est alors un temps de RÉACTION, et il se lit comme tel : c'est le délai humain
+   * ordinaire entre voir un coup partir et refermer sa garde dessus.
+   *
+   * ⚠ Elle s'arme au FRONT MONTANT DE LA TOUCHE, jamais sur `Entity.blocking` — qui est
+   * DÉRIVÉ à chaque tick (souffle, clarté) et retombe/remonte tout seul : armée là, une
+   * parade redeviendrait gratuite à chaque scintillement de jauge, et R6 (« bloquer coûte
+   * de l'endurance par coup encaissé ») mourrait en silence.
+   */
+  PARRY_WINDOW_TICKS: ticksFor(0.3),
   SPRINT_FACTOR: 1.5,
   UNARMED_DAMAGE: 6,
   WOUND_THRESHOLDS: [66, 33],
@@ -5020,8 +5632,10 @@ export const METEO = {
    * → `u = 1` → −4 − 22 = −26, borné lui aussi). Ex-jauge 55.
    */
   ORAGE_FROID: { COLD: 22, FEU_CONSO: 2, SPEED: 0.8, VISION: 0.6 },
-  /** R5 — multiplicateur de consommation des feux sous l'empreinte d'un front mouillé.
-   *  JAMAIS d'extinction : la pression, pas la spirale de mort. */
+  /** R5 — multiplicateur de consommation des feux sous l'empreinte d'un front mouillé —
+   *  OU du vent de cendre (sec, mais il étouffe : sa colonne dormait derrière la porte du
+   *  mouillé, rendue vivante avec son électeur le 2026-08-28). JAMAIS d'extinction : la
+   *  pression, pas la spirale de mort. */
   FEU_CONSO: { pluie: 1.5, orage: 1.5, brouillard: 1, vent_de_cendre: 1.8 },
   /** R5 — les types MOUILLÉS : l'eau qui tombe. Porte le refus de pose d'un feu NEUF à
    *  découvert et arme `FEU_CONSO` (`meteoMouille`/`meteoFeuConso`). Cette table COÏNCIDE
@@ -5047,7 +5661,10 @@ export const METEO = {
    *  empreinte (prédicat pur `meteoQuiet` — un front MOBILE ne sème pas de points
    *  `faunaQuiet`, on interroge sa bande du tick). Le BROUILLARD ne fait pas taire le
    *  gibier : c'est le front tactique (visibilité, R7), pas un front mouillé — la table
-   *  d'effets décidée avec Alexis lui donne « faune : néant ». */
+   *  d'effets décidée avec Alexis lui donne « faune : néant ». Le VENT DE CENDRE fait
+   *  taire : la lecture de la décision ⑥ du 2026-08-23 est « ce qui fait taire, c'est la
+   *  violence, pas l'humidité » — et un ciel qui rabote la vue de moitié en est ; consigné
+   *  le 2026-08-28 avec son électeur (le caractère les Vents de cendre). */
   QUIET: { pluie: false, brouillard: false, orage: true, vent_de_cendre: true },
   /** R7 — multiplicateur de vitesse sous l'empreinte (pendant le front, pas après). */
   SPEED: { pluie: 0.95, brouillard: 1, orage: 0.95, vent_de_cendre: 0.9 },
@@ -5083,6 +5700,11 @@ export const EAU = {
    *  cinq cycles de sécheresse pleine : les mares partent au deuxième tiers d'un été sec,
    *  jamais dès le premier jour de chaud. */
   SEUIL_ASSECHEMENT: 0.6,
+  /** S10/A7 — la bande morte au-dessus du seuil d'assèchement : une mare partie ne revient
+   *  qu'un niveau FRANC plus haut (patron `GEL.HYSTERESIS`). Sans elle, une pluie un cycle
+   *  sur deux à la lisière du seuil ferait clignoter le gué toutes les 45 minutes. Ordre de
+   *  grandeur (l'aridité bouge d'environ 0,2 par cycle en plein été), à calibrer en jouant. */
+  HYSTERESIS_ASSECHEMENT: 0.15,
   /** Le niveau de crue à partir duquel les gués deviennent infranchissables. */
   SEUIL_GUE_BLOQUE: 0.3,
   /** La portée maximale de la crue depuis la rive, en tuiles — **et le plafond du champ
@@ -5229,10 +5851,13 @@ export const GEL = {
    *  Trois : au-delà, la couverture a fondu de toute façon (voir `FONTE_CYCLES`), et
    *  chaque cycle rembobiné coûte deux `hash2` par appel. */
   MEMOIRE_CYCLES: 3,
+  /** G8bis — jusqu'où le repli du dégel cherche une berge, en tuiles (anneaux de Chebyshev,
+   *  ordre fixe, puis on renonce : on ne téléporte pas au hasard). */
+  REPLI_RAYON: 12,
   /** G7 — la neige met ce nombre de CYCLES à disparaître **par grand froid** (à
    *  `SEUIL_PROFOND` ou en dessous). Au-dessus, la fonte accélère linéairement jusqu'à
-   *  `FONTE_CYCLES_CHAUD` à `SEUIL_FEUILLES` et au-delà : la même neige tient un jour
-   *  sur le Névé et une heure au bord de l'eau. */
+   *  `FONTE_CYCLES_CHAUD` à `TEMPERATURE.AMBIANT_DOUX` et au-delà : la même neige tient un
+   *  jour sur le Névé et une heure au bord de l'eau. */
   FONTE_CYCLES: 3,
   FONTE_CYCLES_CHAUD: 0.25,
   /** G7 — EN COMBIEN DE TRANCHES la fonte s'intègre, par cycle. La vitesse de fonte dépend

@@ -22,10 +22,10 @@ import { fireStateAt } from './fire'
 import { structureBlocks } from './village'
 import { crossingBlocker } from './construction'
 import { cendreuxStep } from './cendreux'
+import { profondeurNueDeCendre } from './cendre'
 import { meteoVisionFactor } from './meteo'
 import { eveilCendreuxAt } from './temperature'
-import { advanceCoinsConnus, advanceFauna, avatarDetectability, avatarThreat, coverAt, faunaStep, isPredator, isPrey, morsureDeLaCendre, wolfStep, type Threat } from './faune'
-import { profondeurNueDeCendre } from './cendre'
+import { advanceCoinsConnus, advanceFauna, avatarDetectability, avatarThreat, coverAt, faunaStep, isPredator, isPrey, maxHpOf, morsureDeLaCendre, wolfStep, type Threat } from './faune'
 import { effetsDuJour } from './modificateur'
 import { actForDay, getGameTime, jourDeSaison, seasonRamp } from './time'
 
@@ -182,6 +182,102 @@ export interface Monster {
   jinkDx?: number
   jinkDy?: number
 
+  /* ── L'IMPASSE (balance `IMPASSE`, module `impasse.ts` — 2026-08-28) ────── */
+  /**
+   * LA FENÊTRE DE GUET : l'ancre (position au début de la fenêtre), le chemin
+   * brut accumulé, la position du tick précédent, et le tick d'ouverture. Tenue
+   * seulement pour une bête QUI BOUGE — une dormeuse ne porte pas un octet.
+   * C'est la signature « du mouvement qui ne mène nulle part » : brut grand,
+   * net petit → la bête tremble, quelle qu'en soit la cause.
+   */
+  impAncreX?: number
+  impAncreY?: number
+  impBrut?: number
+  impPrevX?: number
+  impPrevY?: number
+  impDepuis?: number
+  /**
+   * ELLE A RENONCÉ : jusqu'à ce tick, sa machine à états ne joue pas — elle
+   * souffle sur place (le pilote `advanceMonsters` la saute). EXCEPTION, le
+   * sang : blessée avec son bourreau vivant, elle rejoue tout de suite — on ne
+   * cloue jamais une bête sous les crocs.
+   */
+  renonceJusqua?: number
+  /** Récidives rapprochées : chaque coup double le souffle suivant (plafonné). */
+  renonceCoups?: number
+  /**
+   * ELLE REGAGNE UN LIEU (gîte, rayon de jeu) — et le retour est ENGAGÉ jusqu'au
+   * CONFORT, jamais relâché au seuil (l'hystérésis des rappels de `denLife` et
+   * du jeu des petits ; mesuré au diag-tremblement : 6 à 20 inversions de cap
+   * par seconde sans lui).
+   */
+  regagne?: true
+  /**
+   * LE CAP QUI BUTE SE TAIT (`FAUNA.CAP_VETO_TICKS`) : jusqu'à ce tick, la bête
+   * ne poursuit plus de BUT (migration, dérive de harde, canton) — son dernier
+   * cap de but a été refusé par la lisière. Elle broute où elle est.
+   */
+  capVetoJusqua?: number
+
+  /* ── LA LOUVIÈRE (spec loup.md — décisions d'Alexis 2026-08-28) ─────────── */
+  /**
+   * LE PETIT (L15) : un juvénile, à vie de juvénile — il ne mord jamais, il joue,
+   * il se terre. PV × `FAUNA.PETIT_HP`, butin `loot_petit`. Il ne compte ni dans
+   * le courage ni dans les postes d'encerclement, et il ne part jamais en chasse.
+   * Le drapeau voyage dans le snapshot : le client en tire sa petite silhouette.
+   */
+  petit?: true
+  /**
+   * LA FAIM (L6) — la jauge d'un ADULTE, 0 (repu) → 1 (affamé). Elle remplace
+   * `satedUntil` chez le loup : c'est elle qui décide du départ en chasse (via
+   * l'alpha, L7) et du retour (L10). Absente = affamé (le rôdeur ambiant naît
+   * en chasse, comme avant) ; un petit n'en a jamais (le clan le nourrit).
+   */
+  faim?: number
+  /**
+   * LA SORTIE (L7-L10) : il est en chasse. Pour un résident, posée par l'ALPHA
+   * sur tous les adultes au départ (le clan part ensemble, rentre ensemble) ;
+   * pour un solitaire, il se la pose lui-même (hystérésis FAIM_DEPART/RETOUR).
+   */
+  sortie?: true
+  /** La DESTINATION de la sortie — le coin de chasse visé, choisi au départ. */
+  sortieX?: number
+  sortieY?: number
+  /**
+   * LA CHASSE ABSTRAITE (L9) : le tick où la chasse hors regard aboutit. Porté
+   * par l'ALPHA seul (une horloge par clan). Annulé dès qu'un avatar approche —
+   * la vraie chasse reprend ses droits.
+   */
+  chasseAbstraiteAt?: number
+  /**
+   * LA RAGE (L13) : jusqu'à ce tick, les freins d'ENGAGEMENT sont levés — jamais
+   * ceux de survie. Deux déclencheurs : la proie qui saigne, le petit tué.
+   */
+  rageUntil?: number
+  /** Le prochain tick où le BOND DE RUPTURE (L11) est permis sur une cible arrêtée. */
+  bondLentAt?: number
+  /**
+   * LE PROCHAIN TICK OÙ *UN* BOND EST PERMIS, quel qu'il soit (Alexis, 2026-08-28) :
+   * la cadence propre du bond (`LEAP_COOLDOWN`), écrite par `startLeap` — un seul
+   * point. Absent = jamais bondi : le PREMIER bond, celui qui ouvre la chasse,
+   * reste immédiat (c'est le cœur de R19). Distinct de `bondLentAt`, qui cadence
+   * la SURPRISE sur cible arrêtée — les deux se cumulent.
+   */
+  bondAt?: number
+  /**
+   * LA DÉTENTE (Alexis, 2026-08-28) : jusqu'à ce tick, le loup est TASSÉ,
+   * immobile — le télégraphe du bond. Le client le peint tapi et en teinte de
+   * menace ; au tick venu, le bond part, cap pris sur la proie À CET INSTANT.
+   * C'est ce qui rend l'attaque lisible : on voit le ressort se bander.
+   */
+  bondPrepUntil?: number
+  /**
+   * LA TAILLE FONDATRICE DU CLAN (L14) : combien d'ADULTES le gîte a levés. C'est
+   * l'étalon de la déroute collective — en perdre la moitié casse le clan. Posé
+   * par la Louvière seule ; une meute de banc sans lui ne déroute qu'à l'alpha.
+   */
+  clanAdultes?: number
+
   /* ── Le coin de chasse (spec faune R17) ─────────────────────────────────── */
   /**
    * SON TERRITOIRE : le coin de chasse dont cette bête est. Elle y est née, elle
@@ -191,8 +287,6 @@ export interface Monster {
    */
   groundX?: number
   groundY?: number
-
-  /* ── Le dortoir de la harde (spec faune R26) ────────────────────────────── */
   /**
    * SON dortoir : le massif boisé où SA harde dort la nuit — élu une fois par la
    * première bête qui s'endort, copié par les sœurs, oublié s'il devient
@@ -1129,6 +1223,17 @@ export function advanceMonsters(state: SimState): void {
     // qui brûle brûle, même en plein wind-up. Morte ce tick : son pas ne se joue pas.
     if (morsureDeLaCendre(state, monster, entity)) continue
     if (entity.windup) continue // en train de frapper : immobile
+
+    // L'IMPASSE A TRANCHÉ (`impasse.ts`) : elle a renoncé, elle souffle sur place.
+    // EXCEPTION, LE SANG : blessée avec son bourreau vivant, elle rejoue tout de
+    // suite — on ne cloue jamais une proie sous les crocs. (L'échéance n'est PAS
+    // effacée ici : le guet s'en sert pour dater la récidive, et la nettoie.)
+    if (monster.renonceJusqua !== undefined && state.tick < monster.renonceJusqua) {
+      const attacker = monster.lastAttackerId !== null ? byId.get(monster.lastAttackerId) : undefined
+      const auxAbois = attacker !== undefined && attacker.hp > 0 && entity.hp < maxHpOf(monster)
+      if (!auxAbois) continue
+      monster.renonceJusqua = state.tick // le souffle cède au sang — récidive datée d'ici
+    }
 
     if (monster.type === 'cendreux') {
       // Le champ de flux lui est passé : depuis R1/R2 c'est LUI qui fait les hordes, et la

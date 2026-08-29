@@ -154,12 +154,16 @@ export function gelPossible(state: SimState): boolean {
   // s'arrêterait au seuil nu écarterait des tuiles encore gelées — et une borne fausse, c'est
   // une tuile franchissable pour l'avatar et bloquante pour l'A*.
   //
-  // ⚠ ELLE EST EXACTEMENT TENDUE, et c'est une dépendance à écrire. Le point le plus froid
-  // de l'acte I vaut 50, et `SEUIL_GUE + HYSTERESIS` vaut 50 : la borne ne tient que parce
-  // que `estGele` compare par `<` STRICT (à 50, elle rend faux, et ici aussi). Relâcher l'une
-  // des deux comparaisons en `<=` sans l'autre rendrait cette borne UNSOUND — en silence.
+  // ⚠ LES DEUX COMPARAISONS SONT STRICTES, ET ELLES LE SONT ENSEMBLE : un plancher PILE au
+  // seuil relevé ne gèle nulle part (`estGele` compare par `<`), et cette porte rend faux au
+  // même point exactement. Relâcher l'une des deux en `<=` sans l'autre rendrait la borne
+  // UNSOUND — en silence. (La justification chiffrée d'origine — « le point le plus froid de
+  // l'acte I vaut 50, et le seuil relevé vaut 50, la borne est exactement tendue » — datait
+  // de la jauge 0-100 et des actes-paliers ; en °C sous la courbe saisonnière, la borne n'est
+  // plus tendue, elle est simplement CONSERVATRICE : elle inclut tout ce qui peut geler ou
+  // survivre gelé, et écarte l'acte I entier comme avant.)
   // (La rampe de nuit ne la touche pas : `partDeNuit` vaut 1 sur toute la nuit, donc le point
-  //  le plus froid de chaque acte est CELUI D'AVANT, au bit près. Vérifié le 2026-08-23.)
+  //  le plus froid de chaque saison est CELUI D'AVANT, au bit près. Vérifié le 2026-08-23.)
   return plancherDeLaVallee(state) < GEL.SEUIL_GUE + GEL.HYSTERESIS
 }
 
@@ -526,10 +530,6 @@ export function neigeAuSol(state: SimState, tx: number, ty: number): number {
       // neige : celles où il a plu et non neigé sortent plus haut sans l'avoir payé.
       abri ??= abriDeTuile(state, tx, ty)
       const cstFonte: ConstantesDeTuile = { abri, ...locaux }
-      // LES GRANDES NEIGES (S18) triplent la durée de fonte : le manteau tient, on marche
-      // au ralenti, et la chasse devient du pistage. Le modificateur du JOUR ne dépend ni de la
-      // tranche ni de la tuile — il se relève une fois, pas vingt-quatre.
-      const fonteMod = effetsDuJour(jourDeSaison(state)).fonte ?? 1
       let fondu = 0
       for (let t0 = sortie; t0 < state.tick; t0 += PAS) {
         const t1 = Math.min(state.tick, t0 + PAS)
@@ -547,6 +547,14 @@ export function neigeAuSol(state: SimState, tx: number, ty: number): number {
         // la plus rapide) — `AMBIANT_DOUX` a remplacé l'ex-`COMFORT`, qui est devenu un seuil
         // du CORPS quand l'échelle est passée en degrés (2026-08-22).
         const u = Math.max(0, Math.min(1, (t - GEL.SEUIL_PROFOND) / (TEMPERATURE.AMBIANT_DOUX - GEL.SEUIL_PROFOND)))
+        // LES GRANDES NEIGES (S18) triplent la durée de fonte : le manteau tient, on marche
+        // au ralenti, et la chasse devient du pistage. Le modificateur se relève AU JOUR DE LA
+        // TRANCHE, jamais au jour courant : lu à l'instant du relevé, il s'appliquait
+        // rétroactivement à toute la mémoire rembobinée, et la couverture SAUTAIT au bord du
+        // caractère (jusqu'à ×3 d'un relevé à l'autre) — le milieu de tranche est un point
+        // FIXE, donc chaque contribution est figée pour toujours et la monotonie tient AUSSI
+        // en travers des bords de caractère. (`effetsDuJour` est mémoïsé : O(1) par tranche.)
+        const fonteMod = effetsDuJour(jourDeSaison(state, t0 + PAS / 2)).fonte ?? 1
         const cycles = (GEL.FONTE_CYCLES + (GEL.FONTE_CYCLES_CHAUD - GEL.FONTE_CYCLES) * u) * fonteMod
         fondu += (t1 - t0) / (cycles * TICKS_PER_CYCLE)
         if (fondu >= 1) break // tout est fondu : inutile de continuer à sommer
@@ -599,8 +607,6 @@ export function jourDuCycle(state: SimState, cycle: number): number {
  * Elle n'émet PAS d'événement : « la glace a fondu sous mes pieds » est un fait de rendu, pas
  * un fait de chronique — et haute fréquence n'est pas domaine.
  */
-const REPLI_RAYON = 12
-
 export function advanceDegel(state: SimState): void {
   for (const entity of state.entities) {
     const tx = Math.floor(entity.x)
@@ -620,7 +626,7 @@ export function advanceDegel(state: SimState): void {
  * encore pris est un repli parfaitement valide, et c'est même le plus court.
  */
 function bergeLaPlusProche(state: SimState, tx: number, ty: number): { tx: number; ty: number } | null {
-  for (let r = 1; r <= REPLI_RAYON; r++) {
+  for (let r = 1; r <= GEL.REPLI_RAYON; r++) {
     for (let oy = -r; oy <= r; oy++) {
       for (let ox = -r; ox <= r; ox++) {
         if (Math.abs(ox) !== r && Math.abs(oy) !== r) continue // le bord de l'anneau

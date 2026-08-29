@@ -9,8 +9,9 @@ teintes en place sont des teintes de travail). Jalon : avant GATE 1.*
 *⚠ **AMENDÉE LE 2026-08-27**, en deux temps, voir les sections en fin de document : **R20** coupe
 le cœur en quatre bandes comptées en TUILES (l'ossature de l'écosystème), **R21** donne un
 caractère à quatre des dix fosses (sa variété) — puis **R22** refroidit la cendre à mesure qu'elle
-mûrit et **R23** ré-arme la hantise du champ des morts sur le même axe (le danger). Le catalogue
-des sept pistes d'habitants encore non tranchées vit dans
+mûrit et **R23** ré-arme la hantise du champ des morts sur le même axe (le danger), enfin **R24**
+donne un usage au charbon de bois et **R25** fait du cœur sa géographie (ce que la cendre REND).
+Le catalogue des six pistes d'habitants encore non tranchées vit dans
 `docs/superpowers/plans/2026-08-27-ecosysteme-de-la-cendre.md`.*
 
 ## Objectif de design
@@ -770,6 +771,85 @@ Une garde (A28) l'affirme sur les constantes elles-mêmes.
   dans la vieille ; sur une carte NUE il vaut **exactement** son socle (`densiteDeBase`) — il
   module, il n'autorise jamais ; et `rodeursPortes` rend plus de rôdeurs dans la vieille cendre
   qu'en sol ordinaire.
+
+---
+
+## R24 / R25 — CE QUE LA CENDRE REND : le charbon de bois
+
+*Décision d'Alexis du 2026-08-27, sur la piste ④ du catalogue (« la charbonnière ») : le charbon
+de bois est **le combustible de forge du pauvre**. R22/R23 avaient armé le danger ; R14 exige que
+la cendre TIRE autant qu'elle pousse — voici la contrepartie.*
+
+### Le constat : le charbon de bois existait déjà, et ne servait à RIEN
+
+`produireCharbon` (`fire.ts`) pose **un charbon par quatre bûches consumées**, dans tout feu,
+depuis toujours — déterministe, sans tirage. L'objet a un poids (0,3), une pile (20), une icône.
+**Aucune recette ne le consommait.** La forge tournait sur `coal`, la houille minée. ④ n'était
+donc pas « ajouter des nœuds » : c'était d'abord solder une dette.
+
+### R24 — deux charbons de bois valent une houille, pour le FER seulement
+
+`iron_ingot_charbon` : `2 minerai + 2 charbon de bois` → un lingot de fer, à la Forge N2.
+
+- **Le rapport EST le prix** : un lingot au charbon coûte **huit bûches** et le temps de feu qui va
+  avec, contre un coup de pioche au filon. Ce qui s'échange, c'est de la DENSITÉ (la houille, 2 de
+  poids l'unité, une expédition à la mine) contre de l'ACCESSIBILITÉ (le charbon se fait partout,
+  sans pioche et sans mine).
+- ⚠ **L'ACIER RESTE MINIER.** `steel_ingot` n'accepte que la houille, et une garde balaie *toutes*
+  les recettes d'acier — une recette ajoutée demain y tombe aussi. Le palier 3 continue de se
+  payer en expédition, et les filons gardent leur raison d'être.
+- ⚠ **Une recette de plus, PAS une substitution cachée.** On a écarté un mécanisme d'ingrédients
+  de remplacement dans le résolveur : le joueur ne saurait pas lequel des deux il consomme quand
+  il a les deux. Deux lignes explicites se lisent et se choisissent. Le panneau les distingue par
+  `Recipe.nom` (« Lingot de fer (au charbon) ») — sans quoi deux lignes porteraient le même titre.
+- **La découverte est gratuite** : `decouverte.ts` révèle une recette dès qu'on TOUCHE sa matière.
+  Le premier charbon ramassé dans un feu ouvre lui-même la ligne.
+
+### R25 — la charbonnière : les fûts calcinés du cœur
+
+Un nœud `charbonniere` (5 charbons, à mains nues, la hache multipliant le rendement), semé au
+hash comme les fumerolles, et gouverné par quatre choix :
+
+| choix | ce qu'il dit |
+|---|---|
+| **sur l'ancienne FORÊT** (`terrainCendre(sol, true) === TERRAIN_BURNT_FOREST`) | la cendre de pré ne rend pas de charbon : la géographie d'AVANT commande celle d'après, et une expédition se prépare |
+| **bande CROÛTE et au-delà** (profondeur > 15 t) | la frange est déjà exploitable (R14) et la bande nue reste vide exprès (R20) : le charbon est la récompense de la DURÉE |
+| **`fini` — jamais de repousse** (R15) | chaque foyer est un gisement qu'on épuise, pas une rente ; c'est ce qui garde la cendre du côté du « on y VA » |
+| **à mains nues** | le geste n'est pas le sujet — c'est d'avoir osé venir qui l'est (le mot de la fumerolle, et il vaut double sous R23) |
+
+⚠ **ELLE NE LIT PAS `map.terrain` EN FACE, ET C'EST LE PIÈGE DU BIOME** : la cendre n'est jamais
+écrite dans la carte, elle se dérive du tick. La première écriture comparait le terrain brut à
+`TERRAIN_BURNT_FOREST` et rendait **zéro charbonnière sur toute la carte** ; la garde A30 l'a
+attrapée du premier coup. On demande donc au sol d'origine ce qu'il DEVIENDRA au cœur.
+
+**MESURÉ** (`tools/diag-charbonniere.mts`, seed 2026 — le total, puisqu'un gisement fini n'a pas
+de débit) :
+
+| jour | fûts | charbons | lingots | par foyer (min → max) |
+|---|---|---|---|---|
+| 61 (ouverture) | **0** | 0 | 0 | — |
+| 120 | 6 | 30 | 15 | 0 → 2 |
+| 240 | **36** | 180 | 90 | 0 → 10 |
+| 600 | 87 | 435 | 217 | 2 → 15 |
+| 1200 | 136 | 680 | 340 | 2 → 26 |
+
+La maille (24) est calibrée sur ce total : à 32 la fosse la plus riche n'en portait qu'une à trois
+en milieu de partie — on ne traverse pas le pire sol de la vallée pour deux charbons ; à 16, la
+cendre devenait une exploitation et l'acier n'aurait plus eu de raison d'être minier.
+
+### Critères d'acceptation de R24/R25
+
+- **R24** (`economy.test.ts`) — un lingot se fond avec deux charbons et **zéro houille** ; les deux
+  charbons sont consommés ; **aucune** recette d'acier n'accepte le charbon (balayage) ; et le
+  charbon de bois a **au moins un consommateur** — la garde de la dette soldée.
+- **A30** (`charbonniere.test.ts`) — chaque fût est sur de l'ancienne forêt et en bande croûte ou
+  plus, balayé ; `charbonniereIci` et le balayage complet disent **exactement** la même chose
+  (écrivain unique) ; deux lectures du même jour rendent le même semis.
+- **A31** — **zéro à l'ouverture**, et le compte ne fait que croître ensuite ; le stock du registre
+  est celui du réglage, `renewable` absent et `fini` présent.
+- **A32** — l'ouverture est **idempotente** ; récoltée jusqu'au bout, la charbonnière porte la
+  marque du gisement (`regrowAt = 0`) et le semis **ne la rouvre jamais** ; son id vient de la
+  position, donc son stock entamé survit à une reprise.
 
 ---
 

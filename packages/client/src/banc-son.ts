@@ -25,10 +25,11 @@
  * (`pnpm dev` → /atelier.html#son — demande d'Alexis : « un seul portail pour tous les
  * outils ») ; `/banc-son.html` reste une porte d'entrée et y renvoie.
  */
-import type { SimEvent } from '@ashes/sim'
+import type { MeteoAspect, SimEvent } from '@ashes/sim'
 import themeAmbianceUrl from './assets/audio/theme-ambiance.mp3'
 import { SoundEngine } from './audio/engine'
 import { FAMILLES, INVENTAIRE, SONORES, faitsDeFamille, variantesDe, type Voix } from './audio/inventaire'
+import { SonsDuCiel } from './audio/meteo-audio'
 import { MUSIQUE, type Piste } from './audio/musique'
 import { soundForEvent, type SoundSpec, type Waveform } from './audio/sound'
 import { DEMI_CADRE_TUILES, PLEIN_TUILES, PORTEE, PORTEE_TUILES, placer } from './audio/spatial'
@@ -444,6 +445,28 @@ racine.innerHTML = `
     </label>
     <button class="b-btn b-ghost b-th-coup">COUP (${round3(PIC_REGISTRE.gain)})</button>
     <span class="b-th-etat"></span>
+  </div>
+</div>
+
+<div class="b-th b-mt">
+  <h2>LA MÉTÉO — LES NAPPES DU CIEL</h2>
+  <p>
+    Le chantier audio météo (2026-08-28) : deux <b>nappes bouclées</b> (la pluie qui crépite, le vent qui
+    ondule), croisées sur l’aspect du ciel — ce sont les <b>vraies nappes du vrai moteur</b>
+    (<code>SoundEngine.nappe</code>, cibles de <code>meteo-audio.ts</code>). Choisissez un ciel, faites glisser
+    l’<b>intensité</b> (la rampe bord → cœur de la bande) ; <b>TONNERRE</b> joue la frappe à la distance du
+    curseur du haut, <b>GRÉSIL</b> une salve de télégraphe. Les valeurs retenues se recopient dans
+    <code>LITS</code> (<code>audio/meteo-audio.ts</code>).
+  </p>
+  <div class="b-th-row b-mt-ciels"></div>
+  <div class="b-th-row" style="margin-top:10px">
+    <label class="b-at-l" style="max-width:300px">intensité
+      <input type="range" class="b-vol b-mt-int" min="0" max="100" step="1" aria-label="Intensité de la bande">
+      <span class="b-th-v b-mt-int-v"></span>
+    </label>
+    <button class="b-btn b-ghost b-mt-tonnerre">TONNERRE</button>
+    <button class="b-btn b-ghost b-mt-gresil">GRÉSIL (salve)</button>
+    <span class="b-th-etat b-mt-etat"></span>
   </div>
 </div>
 
@@ -893,6 +916,66 @@ q<HTMLButtonElement>('.b-th-stop').addEventListener('click', () => {
 q<HTMLButtonElement>('.b-th-coup').addEventListener('click', () => jouer(unSon(PIC_REGISTRE.type)))
 
 peindreTheme('')
+
+// ── LA MÉTÉO : le panneau des nappes du ciel ────────────────────────────────────────────────
+//
+// Il pilote un VRAI `SonsDuCiel` sur les VRAIES nappes du moteur : ce qu'on entend est ce que
+// le jeu joue sous ce ciel à cette intensité. Rien ne s'écrit : les valeurs retenues se
+// recopient dans `LITS` (`audio/meteo-audio.ts`), comme le thème dans `MUSIQUE.NIVEAU`.
+
+const sonsCiel = new SonsDuCiel()
+const CIELS_BANC: (MeteoAspect | null)[] = [null, 'pluie', 'orage', 'neige', 'blizzard', 'vent_de_cendre', 'brouillard']
+let cielBanc: MeteoAspect | null = null
+let intBanc = 1
+const mtEtat = q('.b-mt-etat')
+const mtIntV = q('.b-mt-int-v')
+const mtCiels = q('.b-mt-ciels')
+
+const peindreMeteo = (): void => {
+  mtIntV.textContent = `${Math.round(intBanc * 100)} %`
+  mtEtat.textContent = cielBanc === null
+    ? 'ciel clair'
+    : `${cielBanc} — pluie ${round3(sonsCiel.sonde.gainPluie)} · vent ${round3(sonsCiel.sonde.gainVent)}`
+  for (const b of mtCiels.querySelectorAll<HTMLButtonElement>('button')) {
+    b.classList.toggle('b-ghost', b.dataset.ciel !== String(cielBanc))
+  }
+}
+const poserCiel = (): void => {
+  moteur.resume()
+  sonsCiel.update((forme) => moteur.nappe(forme), cielBanc, intBanc)
+  peindreMeteo()
+}
+for (const ciel of CIELS_BANC) {
+  const b = document.createElement('button')
+  b.className = 'b-btn b-ghost'
+  b.dataset.ciel = String(ciel)
+  b.textContent = ciel === null ? 'CLAIR' : ciel.replace(/_/g, ' ').toUpperCase()
+  b.addEventListener('click', () => {
+    cielBanc = ciel
+    poserCiel()
+  })
+  mtCiels.appendChild(b)
+}
+const mtInt = q<HTMLInputElement>('.b-mt-int')
+mtInt.value = '100'
+mtInt.addEventListener('input', () => {
+  intBanc = Number(mtInt.value) / 100
+  poserCiel()
+})
+// Le tonnerre et le grésil passent par `jouer()` : la distance et le côté des curseurs du
+// haut s'appliquent — on cale la frappe lointaine comme la frappe sous soi.
+q<HTMLButtonElement>('.b-mt-tonnerre').addEventListener('click', () => {
+  moteur.resume()
+  sonsCiel.tonnerre(0, 0, (sp, d2) => jouer(sp, d2))
+})
+q<HTMLButtonElement>('.b-mt-gresil').addEventListener('click', () => {
+  moteur.resume()
+  // Une salve d'une seconde et demie, rampe qui MONTE — le télégraphe tel qu'il se vit.
+  for (let ms = 0; ms <= 1500; ms += 16) {
+    sonsCiel.gresille(ms, 0, 0, ms / 1500, (sp) => jouer(sp, ms / 1000))
+  }
+})
+peindreMeteo()
 
 // Le banc s'interroge de l'extérieur, comme le jeu par `__BRAISES__` : on LIT son état, on ne
 // le fabrique pas. C'est ce qui rend l'outil vérifiable — sinon son rapport ne se prouve

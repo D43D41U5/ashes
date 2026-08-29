@@ -175,6 +175,26 @@ export type SimEvent =
   | { type: 'skill_level_up'; tick: number; entityId: number; skill: SkillId; level: number }
   | { type: 'entity_damaged'; tick: number; entityId: number; byEntityId: number; amount: number }
   | { type: 'wound_inflicted'; tick: number; entityId: number; wound: 'leg' | 'arm' | 'bleeding' }
+  /**
+   * LE COUP QUI FEND L'AIR (spec combat R4quater). Un fait discret, et le plus
+   * INFORMATIF du combat de coût : c'est le raté qui cloue sur place (`recoveryWhiff`,
+   * jusqu'à 1,6 s), donc la fenêtre où le loup entre. Il se produisait sans un mot —
+   * le joueur mourait pendant sa récupération sans jamais apprendre pourquoi.
+   *
+   * MÊLÉE SEULEMENT : une flèche perdue est déjà dite par son vol et par sa chute au
+   * sol (spec `tir.md`), et l'émettre doublerait le message d'un tir sur deux.
+   */
+  | { type: 'attack_whiffed'; tick: number; entityId: number; charged: boolean }
+  /**
+   * LA PARADE A TENU (spec combat R6, R6bis). `prevented` : les dégâts que la garde a
+   * mangés — c'est LUI qui distingue une parade d'un coup faible, indiscernables tant que
+   * seul `entity_damaged` sortait, avec son montant DÉJÀ réduit. `parried` : la garde était
+   * posée DANS la fenêtre (R6bis), donc gratuite.
+   *
+   * Une règle que ce dépôt a déjà écrite pour le feu qui étouffe un réveil : **une parade
+   * muette ne s'apprend pas** — il faut la preuve à l'écran que le geste a marché.
+   */
+  | { type: 'attack_blocked'; tick: number; entityId: number; byEntityId: number; prevented: number; parried: boolean }
   | {
       type: 'entity_died'
       tick: number

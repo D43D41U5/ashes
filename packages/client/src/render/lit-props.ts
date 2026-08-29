@@ -120,6 +120,34 @@ export const FUMEROLLE_RECTS: readonly (readonly [number, number, number, number
 ]
 
 /**
+ * ═══ LA CHARBONNIÈRE (spec `cendre.md` R25) — un FÛT ROMPU, pas un tas ═══
+ *
+ * Elle doit dire deux choses d'un coup d'œil, à un écran de distance : **ceci a été un arbre**
+ * (donc une silhouette DRESSÉE, un moignon de fût cassé en biseau, pas une masse au sol), et
+ * **ceci se ramasse** (donc des morceaux tombés à son pied — c'est le charbon).
+ *
+ * ⚠ **LE CONTRASTE VA DANS L'AUTRE SENS QUE CELUI DE LA FUMEROLLE, et c'est le piège du biome.**
+ * La fumerolle se signale par du PRESQUE BLANC parce que la cendre est grise ; un fût noir sur du
+ * gris se lit tout aussi bien, mais seulement si son sommet reste franchement plus SOMBRE que le
+ * sol (`#131316` contre un sol de cendre autour de `#6a6660`). On garde donc une seule touche
+ * claire — la cassure du bois, à vif, en haut du fût — qui accroche l'œil sans faire de la
+ * charbonnière une lampe.
+ */
+export const CHARBONNIERE_RECTS: readonly (readonly [number, number, number, number, string])[] = [
+  [6, 3, 5, 11, '#131316'],  // le fût rompu, presque noir — la masse
+  [6, 3, 5, 2, '#3c3833'],   // la cassure, en biseau : le bois à vif, gris cendre
+  [7, 3, 2, 1, '#6b6155'],   // l'éclat le plus clair de la cassure — l'accroche
+  [10, 5, 1, 8, '#000000'],  // l'arête est, dans l'ombre : c'est elle qui donne le VOLUME
+  // ⚠ LES MORCEAUX TOMBÉS SE POSENT AU SOL, PAS À MI-FÛT. Première version, vue sur planche :
+  //   collés au flanc du tronc à mi-hauteur, ils lui faisaient deux PIEDS — la silhouette
+  //   basculait du côté « créature » au lieu de « ruine ». À la ligne de sol, ils redeviennent
+  //   ce qu'ils sont : du charbon tombé, ce qu'on vient ramasser.
+  [3, 14, 4, 1, '#1b1a1c'],
+  [10, 14, 4, 1, '#232124'],
+  [7, 15, 3, 1, '#2c2a2b'],   // la poussière de charbon, au pied
+]
+
+/**
  * LE GLANAGE (spec `glanage.md`) — ce qui TRAÎNE au pied d'un arbre, au pied d'un rocher, et qui
  * se ramasse les mains vides. Deux silhouettes, et elles ont un travail précis à faire :
  *
@@ -231,6 +259,10 @@ const PROPS: LitProp[] = [
   // `passes: 1` / `k: 3.5` comme les autres silhouettes cubiques franches : elle prend la lumière
   // comme un objet TAILLÉ, pas comme une tache peinte.
   { key: 'nd-fumerolle', dresse: true, w: 16, h: 16, draw: drawRects(FUMEROLLE_RECTS), passes: 1, k: 3.5 },
+  // LA CHARBONNIÈRE (R25) — un nœud, donc `nd-`, exactement pour la même raison que la
+  // fumerolle : sans elle, `SnapshotView` demanderait `nd-charbonniere` et Phaser rendrait son
+  // carré vert au milieu de la cendre.
+  { key: 'nd-charbonniere', dresse: true, w: 16, h: 16, draw: drawRects(CHARBONNIERE_RECTS), passes: 1, k: 3.5 },
   // (LA ROCHE et LES BLOCS D'AFFLEUREMENT sont partis dans `socle-mineral.ts` — comme les
   //  filons, la carrière et les gravats : les six nœuds qui bloquent leur tuile entière ont
   //  désormais UN socle commun, pleine largeur, à trois hauteurs.)
@@ -306,6 +338,20 @@ export const FLOWERS: readonly FlowerVariant[] = [
   { bloom: '#e6e2ee', stem: [7, 9, 2, 5], rects: [[7, 3, 2, 1], [6, 4, 4, 1], [5, 5, 6, 2], [6, 7, 4, 1], [7, 8, 2, 1]] },
   // 3 — corolle large et basse, rose-rouge
   { bloom: '#c85f7a', stem: [7, 8, 2, 6], rects: [[4, 5, 8, 3], [5, 4, 6, 1]] },
+  // ═══ LE CALENDRIER FLORAL (Alexis, 2026-08-28, sur planche rendue) : quatre espèces de plus,
+  // et chaque INDICE devient une ESPÈCE — crocus, jonquille, marguerite, coquelicot (0-3),
+  // puis les nouvelles. Qui pousse où et quand vit dans `flore-especes.ts` (tables par biome,
+  // fenêtres de floraison, nappes) ; ici seulement la silhouette et la couleur-matériau.
+  // Même recette cubique que les quatre premières (`passes:1`/`k:3.5`, tige commune). ═══
+  // 4 — tête frangée (deux éclats latéraux), bleu bleuet : le bleu qui manquait à la palette
+  { bloom: '#5b7fc4', stem: [7, 9, 2, 5], rects: [[6, 4, 4, 4], [5, 5, 1, 2], [10, 5, 1, 2], [7, 3, 2, 1]] },
+  // 5 — trompette dressée, bleu profond (gentiane — la signature d'altitude)
+  { bloom: '#3a56a8', stem: [7, 10, 2, 4], rects: [[6, 2, 4, 3], [7, 5, 2, 4]] },
+  // 6 — calice évasé vers le haut, rose pâle (colchique — la fleur de l'ouverture, j61)
+  { bloom: '#c9a0c4', stem: [7, 10, 2, 4], rects: [[5, 3, 6, 3], [6, 6, 4, 2], [7, 8, 2, 1]] },
+  // 7 — touffe basse en grappes, pourpre FONCÉ (bruyère ; foncée sur planche : sur la lande
+  // rousse d'automne, à valeur égale seule la teinte la séparait du sol — il faut l'écart de valeur)
+  { bloom: '#7d3459', stem: [7, 12, 2, 2], rects: [[4, 8, 3, 3], [8, 7, 3, 3], [6, 10, 4, 2], [11, 9, 2, 2]] },
 ]
 /** Dessine une variété de fleur (tige + tête) sur un contexte Canvas2D — l'albédo `_lit`. La version
  *  peinte de BootScene rejoue la MÊME donnée `FLOWERS` (autre backend), d'où silhouette identique. */
@@ -427,7 +473,7 @@ export const LIT_CLUTTER_KINDS: ReadonlySet<string> = new Set([
 /** Les nœuds dont la variante `_lit` est une masse pâteuse de ce module. Les SOCLES minéraux
  *  (`socle-mineral.ts`) n'y sont pas : ils ont leurs propres clés, à trois hauteurs. */
 export const LIT_NODE_TYPES: ReadonlySet<string> = new Set([
-  'champignon', 'fiber_plant', 'leaf_pile', 'fumerolle',
+  'champignon', 'fiber_plant', 'leaf_pile', 'fumerolle', 'charbonniere',
   'branche_au_sol', 'pierre_au_sol',
 ])
 /** Les `kind` de clutter qui SE TIENNENT DEBOUT — donc ceux dont le retourné existe. Dérivé de

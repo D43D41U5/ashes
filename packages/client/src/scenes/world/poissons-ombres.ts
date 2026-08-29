@@ -308,10 +308,25 @@ export class PoissonsOmbres {
     this.coins = coins.filter((c) => c.stock > 0).map((c) => ({ tx: c.tx + 0.5, ty: c.ty + 0.5 }))
   }
 
+  /**
+   * Une PIERRE VIVANTE sur cette tuile ? (les rochers du gué — posé par `WorldScene`, patron
+   * `eauIci` des feuilles). Un poisson la CONTOURNE (Alexis, 2026-08-28) : elle entre dans
+   * `eau()` comme une non-eau — le sous-pas bloqué pivote (le mécanisme des berges), et les
+   * whiskers la voient venir. `null` : aucune pierre, comme avant.
+   */
+  pierreIci: ((tx: number, ty: number) => boolean) | null = null
+
+  private surPierre(tx: number, ty: number): boolean {
+    return this.pierreIci !== null && this.pierreIci(Math.floor(tx), Math.floor(ty))
+  }
+
   private eau(tx: number, ty: number): boolean {
     if (tx < 1 || ty < 1 || tx >= this.map.width - 1 || ty >= this.map.height - 1) return false
     const t = this.map.terrain[Math.floor(ty) * this.map.width + Math.floor(tx)]
-    return t === SHALLOW || t === DEEP
+    if (t !== SHALLOW && t !== DEEP) return false
+    // Un rocher du gué N'EST PAS de l'eau nageable : naissance, sous-pas et fuite le
+    // refusent d'un seul point de lecture — le poisson pivote et le contourne.
+    return !this.surPierre(tx, ty)
   }
 
   private nait(nowMs: number, tx: number, ty: number, g: number): void {
@@ -430,8 +445,14 @@ export class PoissonsOmbres {
 
       // ── 2. LES WHISKERS DE BERGE : 2 antennes riveAt en avant de la référence ──
       const refA = p.fuiteActive ? Math.atan2(p.y - p.ancreY, p.x - p.ancreX) : p.theta
-      const dL = riveAt(this.rive, p.x + L_WHISK * Math.cos(refA + BETA), p.y + L_WHISK * Math.sin(refA + BETA))
-      const dR = riveAt(this.rive, p.x + L_WHISK * Math.cos(refA - BETA), p.y + L_WHISK * Math.sin(refA - BETA))
+      // …et une PIERRE au bout de l'antenne alerte comme une berge COLLÉE (distance 0) :
+      // le poisson infléchit AVANT le contact — il contourne, il ne rebondit pas.
+      const wLx = p.x + L_WHISK * Math.cos(refA + BETA)
+      const wLy = p.y + L_WHISK * Math.sin(refA + BETA)
+      const wRx = p.x + L_WHISK * Math.cos(refA - BETA)
+      const wRy = p.y + L_WHISK * Math.sin(refA - BETA)
+      const dL = this.surPierre(wLx, wLy) ? 0 : riveAt(this.rive, wLx, wLy)
+      const dR = this.surPierre(wRx, wRy) ? 0 : riveAt(this.rive, wRx, wRy)
       const urgence = Math.min(1, Math.max(0, (D_ALERTE - Math.min(dL, dR)) / D_ALERTE))
       const s = Math.abs(dL - dR) < 0.05 ? (hache(Math.floor(nowMs / 500), i, 23) < 0.5 ? -1 : 1) : Math.sign(dL - dR)
 

@@ -3,7 +3,9 @@ import {
   NODE_DEFS,
   ALIGNMENT,
   BALANCE,
+  RECIPES,
   SLOTS,
+  type RecipeId,
   TERRAIN_DEEP_WATER,
   TERRAIN_FOREST,
   TERRAIN_GRASS,
@@ -515,6 +517,42 @@ describe('l’artisanat (A3)', () => {
     // LE REFUS NOMME LA CAPACITÉ, plus l'objet (2026-08-01) : plusieurs stations répondent
     // à la même exigence, et « furnace » ne disait pas au joueur ce qu'il lui manque.
     expect(rejections(sim)).toEqual(['station requise hors de portée : une Forge N2'])
+  })
+
+  /**
+   * ═══ R24 — LE FER SE FOND AUSSI AU CHARBON DE BOIS (spec `cendre.md`) ═══
+   *
+   * Le charbon de bois était produit par TOUS les feux depuis toujours et consommé par
+   * PERSONNE. La garde tient les deux moitiés de la décision : il fond le fer, il ne fond
+   * jamais l'acier.
+   */
+  it('R24 — deux charbons de bois valent une houille pour le FER, et l’acier n’en veut pas', () => {
+    const sim = makeSim([])
+    const id = spawnEntity(sim, 10.5, 10.5)
+    grantItems(sim, id, { wood: 30, stone: 20, iron_ore: 2, charcoal: 2 }) // PAS un gramme de houille
+    act(sim, id, { type: 'light_fire' })
+    equipHammer(sim, id)
+    addStructure(sim, 'furnace', 11, 10, getVillageOf(sim, id)!.id, id)
+    drainEvents(sim)
+
+    act(sim, id, { type: 'craft', recipeId: 'iron_ingot_charbon' })
+    drain(sim, id)
+    expect(countOf(me(sim).inventory, 'iron_ingot'), 'le lingot sort').toBe(1)
+    expect(countOf(me(sim).inventory, 'charcoal'), 'et les deux charbons sont consommés').toBe(0)
+
+    // ⚠ L'ACIER RESTE MINIER : aucune recette d'acier n'accepte le charbon de bois. Balayage,
+    // pas un cas choisi — une recette d'acier ajoutée demain tomberait dedans.
+    for (const rid of Object.keys(RECIPES) as RecipeId[]) {
+      if (!RECIPES[rid].output.startsWith('steel')) continue
+      expect(RECIPES[rid].inputs.charcoal, `${rid} ne doit pas fondre au charbon de bois`).toBeUndefined()
+    }
+  })
+
+  it('R24 — le charbon de bois n’est plus un objet MORT : quelque chose le consomme', () => {
+    // La dette que R24 solde. Si un jour la recette disparaît, cette garde le dit — et elle
+    // vaut pour la classe entière : ce que le jeu FABRIQUE tout seul doit avoir un usage.
+    const consommateurs = (Object.keys(RECIPES) as RecipeId[]).filter((id) => RECIPES[id].inputs.charcoal)
+    expect(consommateurs.length, 'le charbon de bois doit avoir au moins un consommateur').toBeGreaterThan(0)
   })
 
   it('la chaîne T3 (V2-17) : l’acier au four d’acier, les outils d’acier à l’atelier lourd', () => {

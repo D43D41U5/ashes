@@ -14,7 +14,7 @@
 import Phaser from 'phaser'
 import { CROWN_BASE, TILE_PX } from '../../render/framing'
 import type { Vue } from './meteo-particules'
-import { alphaDuSerpentin, ChampSerpentins, GRAIN_PX, positionSerpentin } from './vent-serpentins'
+import { alphaDuSerpentin, ChampSerpentins, GRAIN_SERPENTIN_PX, positionSerpentin } from './vent-serpentins'
 
 /**
  * ENTRE LE SOL ET LE HOUPPIER (choix d'Alexis, 2026-08-25).
@@ -124,7 +124,7 @@ export class VentLayer {
    */
   private peindre(): void {
     const g = this.g.clear().setVisible(true)
-    const parTuile = TILE_PX / GRAIN_PX
+    const parTuile = TILE_PX / GRAIN_SERPENTIN_PX
     for (const jeu of this.vus) jeu.clear()
     let rects = 0
     for (let niveau = 0; niveau < NIVEAUX; niveau++) {
@@ -157,7 +157,7 @@ export class VentLayer {
             const clef = cx * 65_536 + cy
             if (jeu.has(clef)) continue
             jeu.add(clef)
-            g.fillRect(cx * GRAIN_PX, cy * GRAIN_PX, GRAIN_PX, GRAIN_PX)
+            g.fillRect(cx * GRAIN_SERPENTIN_PX, cy * GRAIN_SERPENTIN_PX, GRAIN_SERPENTIN_PX, GRAIN_SERPENTIN_PX)
             rects++
           }
         }

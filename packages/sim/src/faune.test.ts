@@ -19,7 +19,7 @@ import { deriverProfondeur, estCoeur } from './profondeur'
 import { createSim, spawnEntity, snapshot, step, type Entity, type MoveInput, type SimState } from './sim'
 import { cycleOffsetForStartHour } from './time'
 import { spawnMonster, type Monster } from './monsters'
-import { activityAt, isPredator, isPrey, octantOf, placeHuntingGrounds, sentinelOf, wolfVigor } from './faune'
+import { activityAt, isPredator, isPrey, octantOf, placeHuntingGrounds, predatorBias, sentinelOf, wolfVigor } from './faune'
 import { drainEvents } from './events'
 import { applyDamage, die } from './combat'
 import { spawnPoiMonsters } from './poi'
@@ -88,10 +88,32 @@ function strike(state: SimState, attackerId: number, dx: number, dy: number): vo
   for (let t = 0; t < COMBAT.WINDUP_TICKS + 1; t++) tick(state)
 }
 
-// (Le gradient RICHESSE ↔ DANGER (T11bis) et son `predatorBias` sont partis avec
-// le canal ambiant des prédateurs — décision d'Alexis, 2026-08-28 : le loup est
-// une bête de LIEU (la Louvière, `louviere.test.ts`), et le danger est une
-// géographie de lieux, plus un gradient de tirage.)
+describe('le gradient RICHESSE ↔ DANGER (V2-19, tension.md T11bis)', () => {
+  it('predatorBias monte avec le TIER de zone, à distance radiale égale', () => {
+    // Carte 80×80, deux zones (pas 40) : ouest = racine (T0), est = karst (T1).
+    const map = createEmptyMap(80, 80, TERRAIN_GRASS)
+    map.zonePas = 40
+    map.zoneGrid = [0, 1, 0, 1] // cols=2 : bloc (0,·)=racine, (1,·)=karst
+    map.zoneDefs = [
+      { slug: 'racine', nom: 'la racine', tier: 0 },
+      { slug: 'karst', nom: 'le Karst', tier: 1 },
+    ]
+    // `home` placé pour que (10,10) [T0] et (50,10) [T1] soient à distance ÉGALE et dans la
+    // bande radiale médiane (facteur radial = 1) : seul le TIER les départage.
+    const sim = createSim(1, { map, home: { x: 30, y: 60 } })
+    const bas = predatorBias(sim, 10, 10) // T0
+    const haut = predatorBias(sim, 50, 10) // T1
+    expect(haut).toBeGreaterThan(bas)
+    expect(bas).toBeCloseTo(1, 5) // radial médian × (1 + 0.35×0)
+    expect(haut).toBeCloseTo(1.35, 5) // radial médian × (1 + 0.35×1)
+  })
+
+  it('sans zones (banc plat), le tier est ignoré — comportement historique préservé', () => {
+    const map = createEmptyMap(80, 80, TERRAIN_GRASS)
+    const sim = createSim(1, { map, home: { x: 30, y: 60 } })
+    expect(predatorBias(sim, 50, 10)).toBeCloseTo(1, 5) // pas de zoneDefs → tier 0 → facteur 1
+  })
+})
 
 describe('les définitions (R8 — trois étages de gibier)', () => {
   it('lapin, cerf et sanglier sont du GIBIER ; le Cendreux n’en est pas', () => {
@@ -776,6 +798,17 @@ describe('la meute de loups (A12 — R11)', () => {
     let rampe = 0
     let ticks = 0
     for (let t = 0; t < 10 * BALANCE.TICK_RATE_HZ; t++) {
+      // ⚠ ON LE MAINTIENT DEBOUT (2026-08-27). Ce banc mesure la GÉOMÉTRIE de la traque,
+      // pas la survie — celle-ci a ses propres gardes (A14, `faune.md` R13). Or l'homme
+      // MOURAIT dans la fenêtre, sur les douze graines éprouvées et déjà sans les corps
+      // solides (`tools/diag-corps.mts`, colonne « tombe en A12bis » : 12/12 à poussée
+      // nulle) : `die()` le renvoyait à son point d'entrée, à douze tuiles de là, et
+      // l'assertion des « deux côtés » relevait donc la position de la meute autour d'un
+      // RESSUSCITÉ. Elle passait par chance, et elle rougissait au moindre reroutage —
+      // mesuré NON MONOTONE en la force des corps (12/12 à 0,25 et 0,75, 1/12 à 0,5 et 1),
+      // signature d'une garde qui ne mesure pas ce qu'elle croit. Debout, le cercle se
+      // ferme 12/12 à TOUTES les forces : c'est la propriété, et c'est elle qu'on affirme.
+      entity(sim, a).hp = 100
       tick(sim, [{ entityId: a, dx: 0, dy: 0 }])
       for (const w of pack) {
         ticks++
@@ -890,24 +923,44 @@ describe('la meute de loups (A12 — R11)', () => {
 
 describe('le mâle alpha (A13 — R12)', () => {
   /**
-   * Une meute née de la LOUVIÈRE (R28) — c'est elle qui distribue les alphas
-   * depuis que le loup est une bête de lieu (l'anneau n'en fabrique plus). On
-   * mesure DÈS QU'ELLE EXISTE, sans un tick : laisser tourner, c'est laisser
-   * l'alpha aller se battre avec un sanglier, et mesurer ses PV ne veut alors
-   * plus rien dire (vécu).
+   * Une meute NÉE du peuplement — c'est lui qui distribue les alphas. On s'arrête
+   * DÈS QU'ELLE EXISTE : laisser tourner, c'est laisser l'alpha aller se battre
+   * avec un sanglier, et mesurer ses PV ne veut alors plus rien dire (vécu).
    */
-  function packLouviere(): { sim: SimState; alpha: Monster; meute: Monster[] } {
+  /**
+   * LA MEUTE NE NAÎT PLUS DU PEUPLEMENT (loup.md L4, 2026-08-28) : l'ambiant ne
+   * lève que des rôdeurs solitaires — le clan vit en Louvière. Le banc pose donc
+   * sa meute à la main, comme `populateLouviere` la composerait ; et une harde
+   * de cerfs à côté, pour le contre-test (une harde n'a pas de chef).
+   */
+  function packSauvage(): { sim: SimState; alpha: Monster; meute: Monster[] } {
     const map = createEmptyMap(160, 160, TERRAIN_FOREST)
-    map.zones.push({ name: 'la Louvière', x: 78, y: 78, w: 3, h: 3, kind: 'louviere' })
-    const sim = createSim(99, { map, faunaCap: BENCH_CAP, cycleOffset: cycleOffsetForStartHour(2, 1) })
-    spawnPoiMonsters(sim, 99)
-    const alpha = sim.monsters.find((m) => m.type === 'wolf' && m.alpha)!
-    const meute = sim.monsters.filter((m) => m.alphaId === alpha.entityId)
-    return { sim, alpha, meute }
+    const sim = createSim(99, { map, faunaCap: 0, cycleOffset: cycleOffsetForStartHour(2, 1) })
+    spawnEntity(sim, 80.5, 80.5)
+    const herdId = sim.nextHerdId++
+    const alphaId = spawnMonster(sim, 'wolf', 100.5, 100.5)
+    const chef = sim.monsters.find((m) => m.entityId === alphaId)!
+    chef.alpha = true
+    chef.alphaId = alphaId
+    chef.herdId = herdId
+    entity(sim, alphaId).hp = MONSTER_DEFS.wolf.hp * FAUNA.ALPHA_HP
+    for (let i = 1; i <= 2; i++) {
+      const id = spawnMonster(sim, 'wolf', 100.5 + i * 1.5, 100.5)
+      const m = sim.monsters.find((x) => x.entityId === id)!
+      m.herdId = herdId
+      m.alphaId = alphaId
+    }
+    const deerHerd = sim.nextHerdId++
+    for (let i = 0; i < 3; i++) {
+      const id = spawnMonster(sim, 'deer', 60.5 + i * 2, 60.5)
+      sim.monsters.find((x) => x.entityId === id)!.herdId = deerHerd
+    }
+    const meute = sim.monsters.filter((m) => m.alphaId === alphaId)
+    return { sim, alpha: chef, meute }
   }
 
   it('A13 — chaque meute a UN alpha, et un seul ; les hardes de cerfs n’en ont pas', () => {
-    const { sim, alpha, meute } = packLouviere()
+    const { sim, alpha, meute } = packSauvage()
     expect(alpha).toBeDefined()
     expect(meute.length).toBeGreaterThan(1)
 
@@ -916,20 +969,15 @@ describe('le mâle alpha (A13 — R12)', () => {
       const freres = sim.monsters.filter((x) => x.herdId === m.herdId)
       expect(freres.filter((x) => x.alpha).length).toBe(1)
     }
-    // Le cerf n'a pas de chef : une harde n'est pas une meute — on laisse le
-    // peuplement ambiant en faire naître, puis on vérifie.
-    spawnEntity(sim, 80.5, 80.5)
-    for (let t = 0; t < 90 * BALANCE.TICK_RATE_HZ && !sim.monsters.some((m) => m.type === 'deer'); t++) tick(sim)
-    const cerfs = sim.monsters.filter((m) => m.type === 'deer')
-    expect(cerfs.length).toBeGreaterThan(0) // la garde doit d'abord VOIR
-    for (const d of cerfs) {
+    // Le cerf n'a pas de chef : une harde n'est pas une meute.
+    for (const d of sim.monsters.filter((m) => m.type === 'deer')) {
       expect(d.alpha).toBeFalsy()
       expect(d.alphaId).toBeUndefined()
     }
   })
 
   it('A13 — l’alpha est PLUS COSTAUD : il porte plus de PV que les siens', () => {
-    const { sim, alpha, meute } = packLouviere()
+    const { sim, alpha, meute } = packSauvage()
     const pvAlpha = entity(sim, alpha.entityId).hp
     expect(pvAlpha).toBe(MONSTER_DEFS.wolf.hp * FAUNA.ALPHA_HP)
 
@@ -1283,14 +1331,14 @@ describe('la satiété (A16 — R15) — un prédateur mange', () => {
     expect(mange).toBe(true) // il s'y est rendu et il mange
 
     for (let t = 0; t < FAUNA.EAT_TICKS + 2; t++) tick(sim)
-    expect(pack[0]!.satedUntil).toBeDefined() // il est repu
+    expect(pack[0]!.faim!).toBeLessThan(1 - FAUNA.FAIM_PAR_PROIE + 0.05) // la jauge a mangé (loup.md L6)
     expect(countOf(sim.corpses[0]!.inventory, 'raw_meat')).toBe(2) // et il a entamé la carcasse
   })
 
   it('A16 — REPU, il ne chasse plus : on passe à côté d’une meute rassasiée', () => {
     const sim = makeSim(0, 2)
     const pack = meutePosee(sim, 80.5, 80.5)
-    for (const w of pack) w.satedUntil = 1e9 // repus
+    for (const w of pack) w.faim = 0 // repus : la jauge à zéro, pas de sortie (loup.md L6)
 
     const a = spawnEntity(sim, 86.5, 80.5) // à 6 tuiles : bien dans leur aggro (13)
     drainEvents(sim)
@@ -1304,7 +1352,7 @@ describe('la satiété (A16 — R15) — un prédateur mange', () => {
   it('A16 — mais REPU N’EST PAS INOFFENSIF : frappé, il se défend', () => {
     const sim = makeSim(0, 2)
     const pack = meutePosee(sim, 80.5, 80.5, 1)
-    pack[0]!.satedUntil = 1e9
+    pack[0]!.faim = 0
     const a = spawnEntity(sim, 79.5, 80.5)
 
     strike(sim, a, 1, 0) // on le frappe
@@ -1329,8 +1377,8 @@ describe('la satiété (A16 — R15) — un prédateur mange', () => {
     })
     const corpseId = sim.corpses[0]!.id
 
-    for (let t = 0; t < 20 * BALANCE.TICK_RATE_HZ && pack[0]!.satedUntil === undefined; t++) tick(sim)
-    expect(pack[0]!.satedUntil).toBeDefined() // il a mangé la bouchée et il est repu
+    for (let t = 0; t < 20 * BALANCE.TICK_RATE_HZ && (pack[0]!.faim ?? 1) > 0.9; t++) tick(sim)
+    expect(pack[0]!.faim!).toBeLessThan(0.9) // il a mangé la bouchée : la jauge est tombée
 
     const meal = sim.corpses.find((c) => c.id === corpseId)
     expect(meal).toBeDefined() // la carcasse n’a PAS disparu : elle n’est pas vide
@@ -1351,9 +1399,9 @@ describe('la satiété (A16 — R15) — un prédateur mange', () => {
       diedAt: 0,
     })
 
-    for (let t = 0; t < 20 * BALANCE.TICK_RATE_HZ && pack[0]!.satedUntil === undefined; t++) tick(sim)
+    for (let t = 0; t < 20 * BALANCE.TICK_RATE_HZ && (pack[0]!.faim ?? 1) > 0.9; t++) tick(sim)
     // On le rend AFFAMÉ de nouveau : la carcasse ne porte plus que du bois.
-    pack[0]!.satedUntil = 0
+    pack[0]!.faim = 1
     delete pack[0]!.mealCorpseId
     for (let t = 0; t < 10 * BALANCE.TICK_RATE_HZ; t++) tick(sim)
 
@@ -2450,16 +2498,18 @@ describe('le moteur tient le MULTI (A25 — R17)', () => {
   })
 })
 
-describe("l'anneau ne fabrique plus de loup (A26bis — la Louvière)", () => {
+describe('le quota de prédateurs (A26 — R18)', () => {
   /**
-   * LE LOUP EST UNE BÊTE DE LIEU (décision d'Alexis, 2026-08-28). L'ancien R18
-   * bornait sa PART du coin de chasse ; il n'a plus de part du tout : sa meute
-   * réside à la Louvière (`louviere.test.ts`), et la pression diffuse restante
-   * appartient à la nuit qui chasse (`nighthunt.ts`). On sonde à 2 h du matin,
-   * en forêt, coin plein sous le nez — l'heure et le pays où l'ancien canal en
-   * fabriquait le PLUS : ce qui ferait rougir ce test, c'est UN SEUL loup ambiant.
+   * LA NUIT ÉTAIT UN MUR. Mesuré sur la vraie vallée : un coin de chasse se
+   * remplissait de DIX-NEUF LOUPS (cinq ou six meutes), et neuf coins sur
+   * dix-neuf en portaient dix ou plus. Le loup ne débordait pas du plafond : il
+   * le RAFLAIT — hors de leurs heures, le cerf et le lapin tombent au plancher
+   * pendant qu'il est à son maximum, et il naît par trois ou quatre.
+   *
+   * On ne l'a pas rendu plus rare (ça viderait la nuit de son sens) : on borne sa
+   * PART. Le reste du coin va au gibier — qui la nuit DORT (R10).
    */
-  it('A26bis — à 2 h du matin en forêt, zéro loup ambiant — et la nuit reste habitée par le gibier', () => {
+  it('A26 — la nuit, les prédateurs ne dépassent JAMAIS leur part du coin', () => {
     const map = createEmptyMap(400, 400, TERRAIN_FOREST) // la forêt : l'habitat du loup
     const grounds = [{ x: 200.5, y: 200.5 }]
     const sim = createSim(2026, {
@@ -2473,10 +2523,50 @@ describe("l'anneau ne fabrique plus de loup (A26bis — la Louvière)", () => {
     for (let t = 0; t < 150 * BALANCE.TICK_RATE_HZ; t++) tick(sim, [{ entityId: a, dx: 0, dy: 0 }])
 
     const ambient = sim.monsters.filter((m) => m.ambient)
-    expect(ambient.filter((m) => m.type === 'wolf').length).toBe(0)
-    // …et la clairière EST peuplée : la place du loup va au gibier, qui dort.
-    // Une nuit habitée, pas une nuit vide.
-    expect(ambient.length).toBeGreaterThan(FAUNA.GROUND_CAP / 2)
+    const loups = ambient.filter((m) => m.type === 'wolf').length
+    const quota = Math.floor(FAUNA.GROUND_CAP * FAUNA.PREDATOR_SHARE)
+    expect(loups).toBeLessThanOrEqual(quota) // le mur est tombé
+    // …et la clairière EST peuplée — une nuit habitée, pas une nuit vide. Le
+    // plancher a baissé d'une taille de meute (loup.md L4, 2026-08-28) : l'ambiant
+    // ne lève plus de meutes, le clan vit en Louvière — et le gibier, lui, DORT à
+    // 2 h (SPAWN_FLOOR). Le quart du coin est ce que la nuit ambiante porte seule.
+    // (− une bête depuis le DORTOIR (R26, mergé le même jour) : la harde couchée au
+    // massif tire une composition un cheveu plus basse à 2 h — 7 sur cette graine.
+    // Le propos de la garde est « habitée, pas vide » : le quart moins une tient.)
+    expect(ambient.length).toBeGreaterThanOrEqual(FAUNA.GROUND_CAP / 4 - 1)
+  })
+
+  it('A26 — mais la nuit reste À EUX : ils sont là, et en meute', () => {
+    const map = createEmptyMap(400, 400, TERRAIN_FOREST)
+    const sim = createSim(7, {
+      map,
+      faunaCap: FAUNA.CAP,
+      grounds: [{ x: 200.5, y: 200.5 }],
+      worldEvents: false,
+      cycleOffset: cycleOffsetForStartHour(2, 1),
+    })
+    const a = spawnEntity(sim, 200.5, 200.5)
+    for (let t = 0; t < 150 * BALANCE.TICK_RATE_HZ; t++) tick(sim, [{ entityId: a, dx: 0, dy: 0 }])
+    const loups = sim.monsters.filter((m) => m.ambient && m.type === 'wolf')
+    expect(loups.length).toBeGreaterThanOrEqual(1) // la nuit n'est pas devenue une promenade
+    // …mais ce sont des RÔDEURS SOLITAIRES (loup.md L4) : l'ambiant n'ouvre plus
+    // de meute — le clan vit en Louvière, et lui seul.
+    for (const l of loups) expect(l.herdId).toBeUndefined()
+  })
+
+  it('A26 — et le jour, le quota ne change RIEN : le loup y était déjà rare', () => {
+    const map = createEmptyMap(400, 400, TERRAIN_FOREST)
+    const sim = createSim(2026, {
+      map,
+      faunaCap: FAUNA.CAP,
+      grounds: [{ x: 200.5, y: 200.5 }],
+      worldEvents: false,
+      cycleOffset: cycleOffsetForStartHour(12, 1),
+    })
+    const a = spawnEntity(sim, 200.5, 200.5)
+    for (let t = 0; t < 120 * BALANCE.TICK_RATE_HZ; t++) tick(sim, [{ entityId: a, dx: 0, dy: 0 }])
+    const loups = sim.monsters.filter((m) => m.ambient && m.type === 'wolf').length
+    expect(loups).toBeLessThanOrEqual(Math.floor(FAUNA.GROUND_CAP * FAUNA.PREDATOR_SHARE))
   })
 })
 
@@ -2523,11 +2613,8 @@ describe('la clairière et la souille (A27 — R17)', () => {
     expect((clairiere.deer ?? 0) + (clairiere.rabbit ?? 0)).toBeGreaterThan(5)
 
     // LA SOUILLE : posée dans les bois. Le sanglier y est CHEZ LUI.
-    // (≥ 3 depuis la harde 5-8 (R26, 2026-08-28) : une harde de cerfs prend plus
-    // de places du plafond partagé, la composition glisse d'un cran — la garde
-    // TRANCHANTE reste le zéro de la clairière, pas le compte exact du bois.)
     const souille = compo(150.5, 120.5, 2)
-    expect(souille.boar ?? 0).toBeGreaterThanOrEqual(3)
+    expect(souille.boar ?? 0).toBeGreaterThan(3)
   })
 
   it('A27 — le semis pose les DEUX natures : des prés ET des bois', () => {

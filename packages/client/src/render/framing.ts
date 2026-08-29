@@ -480,6 +480,7 @@ export const ACTOR_FOOTPRINTS: Record<string, ActorFootprint & { facesRight?: bo
   'spr-tetras-vol': { widthTiles: 1.7, heightTiles: 1.2, facesRight: true },
   'spr-wolf': { widthTiles: 1.5, heightTiles: 1.15 },
   'spr-wolf-stalk': { widthTiles: 1.5, heightTiles: 0.8 },
+  'spr-wolf-petit': { widthTiles: 0.9, heightTiles: 0.75 }, // le petit (loup.md L15) : la moitié d'un adulte
   'spr-wolf-eat': { widthTiles: 1.45, heightTiles: 1 },
   // L'alpha DÉBORDE : il est visiblement plus gros que les siens. C'est le
   // signal qui rend la règle jouable — on ne peut pas le rater dans la meute.

@@ -44,8 +44,10 @@ const TAPER_MAX = TAPER_RIVE_MAX.toFixed(2)
 /** Plafond de foyers reflétés — DOIT égaler le `MAX_FIRES` du shader. */
 const MAX_FIRES = 8
 
-/** Plafond de marcheurs à remous — DOIT égaler le `MAX_WADERS` du shader. */
-const MAX_WADERS = 8
+/** Plafond d'émetteurs de remous — DOIT égaler le `MAX_WADERS` du shader. 8 marcheurs
+ *  (le plafond historique, servi en priorité de vue) + jusqu'à 6 pierres de gué (Alexis,
+ *  2026-08-28 : « autour des pierres, le même effet qu'autour du joueur dans l'eau »). */
+const MAX_WADERS = 14
 
 /** Un acteur qui marche dans le haut-fond : il émet des anneaux (spec da-feeling R11). */
 export interface WaterWader {
@@ -59,7 +61,14 @@ export interface WaterWader {
   /** Cap de marche NORMALISÉ (spec eau-vivante R6) — {0,0} à l'arrêt : anneaux isotropes.
    *  En marche, les anneaux sont fenêtrés à l'ARRIÈRE du cap et traînés : le sillage. */
   dirX: number
-  dirY: number
+  dirY: number  /**
+   * UNE PIERRE, PAS UN PAS. Les pierres du gué émettent les MÊMES anneaux qu'un marcheur —
+   * l'eau se brise dessus en continu — mais JAMAIS sa turbidité : la vase se soulève sous un
+   * pas et retombe ; un caillou qui troublerait l'eau à vie éteindrait caustiques et fond
+   * autour de lui pour toujours. Les pierres se placent EN QUEUE du tableau : le shader coupe
+   * la turbidité à partir du premier drapeau (`uWaderPierre`).
+   */
+  pierre?: boolean
 }
 
 /** Un Feu qui se reflète sur l'eau, poussé par frame depuis l'état sim. */
@@ -102,10 +111,11 @@ uniform float uDay;          // 0 nuit · 1 plein jour
 #define MAX_FIRES 8
 uniform int uFireCount;
 uniform vec4 uFires[MAX_FIRES];
-#define MAX_WADERS 8
+#define MAX_WADERS 14
 uniform int uWaderCount;
 uniform vec4 uWaders[MAX_WADERS]; // xy tuile · z phase (s) · w force (s'éteint après l'arrêt)
 uniform vec2 uWaderDirs[MAX_WADERS]; // cap de marche normalisé — {0,0} = à l'arrêt (isotrope)
+uniform int uWaderPierre; // l'index de la 1re PIERRE (en queue) : anneaux oui, turbidité non
 
 // LE CHEMIN DE L'ASTRE (spec eau-vivante R12) — le couloir de lumière du soleil bas / de la
 // lune. ANCRÉ À LA CAMÉRA : le glitter est vue-dépendant, c'est sa physique (chaque
@@ -383,6 +393,7 @@ void main() {
   float turb = 0.0;
   for (int i = 0; i < MAX_WADERS; i++) {
     if (i >= uWaderCount) break;
+    if (i >= uWaderPierre) break; // les pierres (en queue) ne soulèvent pas la vase
     vec4 wt = uWaders[i];
     if (wt.w <= 0.0) continue;
     vec2 dirT = uWaderDirs[i];
@@ -572,6 +583,7 @@ void main() {
   // déjà planché) — jamais un dégradé. La force w vient du CPU : pleine en marche, elle
   // s'éteint en ~0,7 s après l'arrêt — un avatar immobile ne remue pas l'eau.
   float ripple = 0.0;
+  float brise = 0.0; // L'EAU BLANCHE des pierres : l'amont qui se brise + la traînée qui mousse
   for (int i = 0; i < MAX_WADERS; i++) {
     if (i >= uWaderCount) break;
     vec4 wd = uWaders[i];
@@ -583,7 +595,12 @@ void main() {
     // À l'arrêt (dir = {0,0}), tout ceci s'annule : les ronds isotropes de R11, intacts.
     vec2 dir = uWaderDirs[i];
     float marche = step(0.01, dot(dir, dir));
-    float age = fract((t - wd.z) * 1.15);      // un anneau tous les ~0,87 s
+    // LA CADENCE : ~0,87 s par anneau sous un PAS — mais une PIERRE bat deux fois plus lent
+    // (Alexis : « la fréquence des remous est trop élevée ») : un pas est un événement, un
+    // obstacle est un régime — son remous se reforme sans hâte, et l'anneau plus lent vit
+    // plus longtemps sur son trajet vers l'aval (même fract, période double).
+    float cadence = i >= uWaderPierre ? 0.55 : 1.15;
+    float age = fract((t - wd.z) * cadence);
     vec2 centre = wd.xy - dir * age * (0.9 * marche);
     vec2 v = tile - centre;
     float dw = length(v);
@@ -594,7 +611,7 @@ void main() {
     // Largeur ≈ la CELLULE (4 px = 0,25 tuile) : plus fin, l'anneau raterait les cellules du grain.
     float band = step(abs(dw - r), 0.27) * (1.0 - age) * (1.0 - step(1.9, dw)) * arriere;
     // Le second anneau, en quinconce : la traîne du pas précédent, semée un cran plus loin.
-    float age2 = fract((t - wd.z) * 1.15 + 0.5);
+    float age2 = fract((t - wd.z) * cadence + 0.5);
     vec2 centre2 = wd.xy - dir * age2 * (0.9 * marche);
     vec2 v2 = tile - centre2;
     float dw2 = length(v2);
@@ -602,9 +619,50 @@ void main() {
     float arriere2 = mix(1.0, max(0.35, step(-0.15, dot(v2, -dir) / max(dw2, 0.001))), marche);
     band += step(abs(dw2 - r2), 0.22) * (1.0 - age2) * 0.6 * (1.0 - step(1.9, dw2)) * arriere2;
     ripple += band * wd.w;
+
+    // ═══ L'EAU SE BRISE SUR LA PIERRE (Alexis, 2026-08-28 : « un effet blanc sur le devant
+    // de la pierre vis-à-vis du courant, et un peu derrière dans la traînée ») ═══
+    //
+    // PIERRES SEULEMENT (i >= uWaderPierre), et SEULEMENT s'il y a un courant (marche) : dans
+    // une eau immobile rien ne se brise. Le cap dir pointe vers l'AMONT (la pierre « marche »
+    // contre le courant) — le CROISSANT d'écume colle donc au côté +dir, la TRAÎNÉE part en
+    // -dir. Le langage de l'écume de rive, à l'identique : paliers FRANCS (step), pointillé
+    // par cellule de 4 px, jamais un dégradé — et les points se retirent au fil de l'eau
+    // (le hash glisse avec pasT), comme la mousse réelle qui se reforme sans se figer.
+    if (i >= uWaderPierre) {
+      vec2 vp = tile - wd.xy;
+      float dp = length(vp);
+      float versAmont = dot(vp, dir) / max(dp, 0.001);
+      // ① LE COLLIER AMONT, À LA LIGNE DE FLOTTAISON : le point d'émission est déjà au PIED
+      //    du billboard (WorldScene), et la distance est ÉCRASÉE EN Y (×1,8 — la grammaire
+      //    des ombres de contact : ce qui entoure un billboard est une ellipse couchée).
+      //    L'écume enlace donc la BASE de la pierre — visible sur ses flancs — au lieu de
+      //    flotter à mi-corps ou de se cacher derrière le sprite. L'horizon est LARGE
+      //    (cos > 0,15 ≈ ±81°) : la brisure s'enroule jusqu'aux épaules aval. Elle RESPIRE
+      //    sur la cadence des anneaux : deux crans, jamais éteinte.
+      float dpE = length(vec2(vp.x, vp.y * 1.8));
+      float croissant = step(abs(dpE - 0.5), 0.17) * step(0.15, versAmont)
+        * (0.7 + 0.3 * step(0.5, age));
+      // ② LA TRAÎNÉE AVAL : un cône pointillé derrière la pierre — l'axe est -dir, la
+      //    demi-largeur s'ouvre avec la distance, la densité tombe en DEUX crans (0→0,9 tuile
+      //    pleine, 0,9→1,6 clairsemée). Le pointillé vit : son hash est resemé 2 fois/s.
+      float aval = -dot(vp, dir);
+      float lat = abs(vp.x * dir.y - vp.y * dir.x);
+      // Le cône part de la ligne de flottaison (le pied) — un cran de garde (0,1) pour ne
+      // pas mordre sous le sprite, puis il s'ouvre.
+      float cone = step(0.1, aval) * step(aval, 1.6) * step(lat, 0.20 + 0.26 * aval);
+      float dens = mix(0.62, 0.86, step(0.9, aval)); // loin = plus clairsemé (seuil plus haut)
+      // (pasT de l'écume de rive est déclaré plus BAS dans main — on cadence le nôtre ici.)
+      float pasEcume = floor(t * 2.0) / 2.0;
+      float points = step(dens, cellHash(flatPx / GRAIN + vec2(pasEcume * 3.0, 17.0)));
+      brise += (croissant + cone * points * 0.8) * wd.w * marche;
+    }
   }
   // La crête du remous ÉCLAIRCIT (l'eau retournée prend la lumière) — un palier, pas un halo.
   col = mix(col, col * 1.3 + vec3(0.07, 0.07, 0.05), clamp(ripple, 0.0, 1.0) * 0.6);
+  // …et L'EAU BRISÉE BLANCHIT : la couleur de l'écume de rive, plafonnée — du blanc cassé,
+  // pas un phare. (Le même ton que l'écume, déclaré avant elle : une seule eau blanche.)
+  col = mix(col, vec3(1.0, 0.99, 0.94), clamp(brise, 0.0, 0.65));
 
   // ═══ LE CHEMIN DE L'ASTRE (spec eau-vivante R12) ═══
   //
@@ -861,6 +919,17 @@ export class WaterLayer {
           name: 'braises-water',
           fragmentSource: FRAGMENT,
           setupUniforms: (setUniform: (name: string, value: unknown) => void) => {
+            // ⚠ UN TABLEAU S'ADRESSE « nom[0] » — le nom WebGL d'un uniforme tableau EST
+            // `uWaders[0]` (spec `getActiveUniform`), et le wrapper Phaser 4.2 indexe ses
+            // uniformes sur ce nom BRUT : `setUniform('uWaders', …)` ne trouve rien et est
+            // ignoré en silence (`if (!uniform) return`). MESURÉ (A/B au même instant, sonde
+            // `guePierres`) : 0 pixel de remous à l'écran avec 5 émetteurs côté TS — anneaux,
+            // sillage, turbidité ET reflets de feu, tous morts sans un mot. On pousse les
+            // deux noms : l'inconnu est ignoré, le bon est servi, quel que soit le driver.
+            const setTableau = (name: string, value: unknown): void => {
+              setUniform(name, value)
+              setUniform(name + '[0]', value)
+            }
             setUniform('uField', 0)
             setUniform('uSeabed', 1)
             setUniform('uRive', 2)
@@ -875,10 +944,11 @@ export class WaterLayer {
             setUniform('uSun', [this.sun.x, this.sun.y, this.sun.z])
             setUniform('uDay', this.day)
             setUniform('uFireCount', this.fireCount)
-            setUniform('uFires', this.fireData)
+            setTableau('uFires', this.fireData)
             setUniform('uWaderCount', this.waderCount)
-            setUniform('uWaders', this.waderData)
-            setUniform('uWaderDirs', this.waderDirData)
+            setUniform('uWaderPierre', this.waderPierre)
+            setTableau('uWaders', this.waderData)
+            setTableau('uWaderDirs', this.waderDirData)
             setUniform('uCam', [this.cam.x, this.cam.y])
             setUniform('uAstre', this.astre.force)
             setUniform('uAstreCol', this.astre.col)
@@ -918,6 +988,8 @@ export class WaterLayer {
   private readonly waderData = new Float32Array(MAX_WADERS * 4)
   /** vec2 par marcheur : le cap normalisé du sillage (eau-vivante R6), {0,0} à l'arrêt. */
   private readonly waderDirData = new Float32Array(MAX_WADERS * 2)
+  /** L'index de la première pierre dans `waderData` — voir `uWaderPierre`. */
+  private waderPierre = 0
   private waderCount = 0
 
   /**
@@ -957,6 +1029,11 @@ export class WaterLayer {
     for (let i = n; i < MAX_FIRES; i++) this.fireData[i * 4 + 3] = 0 // slots morts : force nulle
     const m = Math.min(MAX_WADERS, waders.length)
     this.waderCount = m
+    // LA FRONTIÈRE MARCHEURS/PIERRES : l'index du premier drapeau `pierre` (les pierres sont
+    // EN QUEUE par contrat d'appel — WorldScene les pousse après les marcheurs). Sans pierre,
+    // la frontière vaut m : la turbidité couvre tout le monde, comme avant.
+    const premierePierre = waders.findIndex((w) => w.pierre === true)
+    this.waderPierre = premierePierre < 0 ? m : Math.min(premierePierre, m)
     for (let i = 0; i < m; i++) {
       const wd = waders[i]
       if (!wd) continue

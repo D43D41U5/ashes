@@ -533,7 +533,10 @@ export class FoudreFx {
       this.halo.setPosition(px, py).setAlpha(u).setVisible(this.telegrapheActif)
       // Le liseré monte sur LA MÊME rampe : il est le dehors de l'anneau, pas un second
       // événement. Un peu moins fort — il défend la lecture, il ne la remplace pas.
-      this.lisere.setPosition(px, py).setAlpha(u * this.liserFacteur).setVisible(this.telegrapheActif)
+      // À FACTEUR NUL (l'état livré), on ne soumet pas une image invisible au rasteriseur :
+      // `setVisible(true)` à alpha 0 se paie quand même. Le smoke qui balaie le facteur la
+      // rallume au premier cran non nul.
+      this.lisere.setPosition(px, py).setAlpha(u * this.liserFacteur).setVisible(this.telegrapheActif && this.liserFacteur > 0)
       this.sonde.telegraphes += 1
       this.sonde.ticksLeft = tel.ticksLeft
       this.sonde.x = tel.x
@@ -550,8 +553,15 @@ export class FoudreFx {
   }
 
   /** LA FRAPPE — le trait naît, la terre part, l'écran encaisse. */
+  /** LE TONNERRE ÉCOUTE LA FRAPPE — posé par `WorldScene`, consommé par `meteo-audio.ts`.
+   *  C'est ICI que la loi d'abri se résout côté client : le son la lit d'où elle s'écrit,
+   *  il ne la recopie pas (un impact abrité garde son tonnerre — l'éclair a déchiré le
+   *  ciel, il n'a juste rien touché). */
+  onFrappe: ((x: number, y: number, abrite: boolean) => void) | null = null
+
   private frapper(now: number, tickImpact: number, impact: { x: number; y: number }, ctx: ContexteFoudre): void {
     const abrite = abriteAuClient(ctx.structures, ctx.map, Math.floor(impact.x), Math.floor(impact.y))
+    this.onFrappe?.(impact.x, impact.y, abrite)
     this.eclairDebut = now
     this.eclairPoint = { x: impact.x, y: impact.y }
     this.eclairAbrite = abrite

@@ -18,6 +18,7 @@ import { LIT_CLUTTER_KINDS, litClutterTextureKey, VARIANT_COUNTS, variantBase } 
 import { SHADOW_PROPS, SHADOW_PROP_GAP, SHADOW_PROP_GAP_LIT, SHADOW_PROP_WIDTH } from '../../render/prop-shadows'
 import { windStretch, windSway, WIND_TAKE } from '../../render/wind'
 import { TransitionsFlore, retardDe } from '../../render/flore-gel'
+import { enFleur } from '../../render/flore-especes'
 import type { Warp } from '../../render/warp'
 import { createContactShadow, positionShadow } from './contact-shadow'
 
@@ -163,6 +164,11 @@ export class ClutterLayer {
    *  (S17). Un jour par défaut plutôt qu'un `null` : la couche doit savoir peindre avant
    *  d'avoir reçu son premier snapshot. */
   jourDeLAnnee = 1
+  /** Vrai dès que `jourDeLAnnee` vient d'un VRAI snapshot. Les fenêtres de floraison ne
+   *  s'arment qu'alors : juger le défaut (jour 1, l'Éclosion) inscrirait de fausses bascules,
+   *  rejouées en gestes à l'arrivée du vrai jour. La teinte, elle, peut se tromper une image
+   *  sans mémoire — pas la transition. */
+  jourConnu = false
 
   /** Posé par `WorldScene` : « cette tuile est-elle cendrée ? », la fonction de /sim, pas une
    *  copie. Absente tant que la carte n'a pas de champ de cendre — rien ne se tait alors. */
@@ -224,15 +230,27 @@ export class ClutterLayer {
             // vient de la mémoire des bascules ; la gerbe part sur l'image où le geste commence.
             let echX = 1
             let echY = 1
-            if (gele !== null && FLORE_GELIVE.has(p.kind)) {
-              const pose = this.transitions.pose(idx * 4 + rang++, gele, now, retardDe(tx, ty, rang))
-              if (pose.eclat) {
-                this.onGivre?.((tx + 0.5 + p.ox) * TILE_PX, (ty + 1 + p.oy) * TILE_PX - this.warp.lift(tx + 0.5 + p.ox, ty + 1 + p.oy),
-                  TILE_PX * p.scale, now, idx * 31 + rang, !gele)
+            if (FLORE_GELIVE.has(p.kind)) {
+              const r = rang++
+              // LA FENÊTRE DE FLORAISON (calendrier floral, `flore-especes.ts`) : une fleur hors
+              // fenêtre est absente comme sous le gel — même mémoire de bascules, même geste, et
+              // le prédicat se compose : `gelé ∨ hors-fenêtre`. La fenêtre ne s'arme que le jour
+              // CONNU (voir `jourConnu`) ; l'herbe, elle, n'a pas de fenêtre.
+              const fenetreArmee = p.kind === 'flower' && p.espece !== undefined && this.jourConnu
+              const floraison = fenetreArmee ? enFleur(p.espece!, this.jourDeLAnnee, tx, ty, p.nappe) : true
+              if (gele !== null || fenetreArmee) {
+                const absent = gele === true || !floraison
+                const pose = this.transitions.pose(idx * 4 + r, absent, now, retardDe(tx, ty, r + 1))
+                if (pose.eclat) {
+                  // La gerbe : GIVRE quand c'est le gel qui prend, SÈVE dans tous les autres
+                  // sens — une colchique qui se ferme aux Pluies ne givre pas.
+                  this.onGivre?.((tx + 0.5 + p.ox) * TILE_PX, (ty + 1 + p.oy) * TILE_PX - this.warp.lift(tx + 0.5 + p.ox, ty + 1 + p.oy),
+                    TILE_PX * p.scale, now, idx * 31 + r + 1, gele !== true)
+                }
+                if (!pose.visible) continue
+                echX = pose.sx
+                echY = pose.sy
               }
-              if (!pose.visible) continue
-              echX = pose.sx
-              echY = pose.sy
             }
             // LE RAMPANT SOUS LA PROFONDE (caillou, lichen, sphaigne) : une texture de sol, la neige
             // la recouvre entière — on ne la dessine pas.
@@ -254,11 +272,12 @@ export class ClutterLayer {
             // Masse pâteuse : quand éclairé, on passe sur l'albédo APLATI `_lit` (+ sa normal map) ;
             // les autres props gardent leur art peint (la lumière plate les module sans les déformer).
             const useLit = this.lighting && LIT_CLUTTER_KINDS.has(p.kind)
-            // Les FAMILLES à variétés (fleur, cailloux) ont N textures : le `variant` (hash de la tuile)
-            // choisit laquelle. Les autres props n'ont qu'un stem de texture (leur `kind`).
+            // Les FAMILLES à variétés (fleur, cailloux) ont N textures : l'ESPÈCE de la nappe
+            // choisit celle d'une fleur (calendrier floral — l'indice `FLOWERS` est l'espèce),
+            // le `variant` (hash de la tuile) celle du reste. Un seul stem sinon (leur `kind`).
             const count = VARIANT_COUNTS[p.kind]
             const base = count !== undefined
-              ? variantBase(p.kind, Math.min(count - 1, Math.floor(p.variant * count)))
+              ? variantBase(p.kind, Math.min(count - 1, p.espece ?? Math.floor(p.variant * count)))
               : p.kind
             const cle = useLit ? litClutterTextureKey(base, p.mirror) : `cl-${base}`
             if (this.poolTex[slot] !== cle) {

@@ -93,6 +93,10 @@ function sourceDepuis(state: SimState): SourceDuGel {
     seed: state.seed,
     structures: state.structures,
     meteo: state.meteo ?? null,
+    // La nappe de Brume fait partie du fil depuis le 2026-08-28 (etat-gel, point ③) : sans
+    // elle, la façade relisait une température trop chaude de `BRUME.COLD_MALUS` sous la
+    // nappe et pouvait manquer une glace autoritative.
+    brume: state.brume ?? null,
   }
 }
 
@@ -211,12 +215,13 @@ describe('la façade rend les mêmes verdicts que le vrai SimState', () => {
   })
 })
 
-describe('la Brume : le seul écart, et il va toujours dans le sens sûr', () => {
-  it('sous une nappe, la façade MANQUE de la glace — elle n’en INVENTE jamais', () => {
-    // Le snapshot ne porte pas `state.brume`. On pose donc une nappe dans le vrai état, on
-    // laisse la façade l'ignorer (elle n'a pas le choix), et on affirme la seule propriété
-    // dont la sûreté du rendu dépend : `façade ⇒ sim`. Autrement dit, toute glace peinte est
-    // une glace praticable ; l'inverse peut manquer.
+describe('la Brume : l’ex-trou de la façade, soldé par le snapshot (2026-08-28)', () => {
+  it('sous une nappe, la façade dit EXACTEMENT la glace de la sim — et sans la nappe, elle en manquait', () => {
+    // Le snapshot porte `brume` depuis le 2026-08-28 (point ③ de l'en-tête d'`etat-gel.ts`).
+    // On pose une nappe dans le vrai état, on la fait traverser par le fil, et on affirme la
+    // PARITÉ bit à bit. Le témoin de la prémisse est la façade CENSURÉE (`brume: null` — un
+    // hôte d'avant le champ) : elle doit manquer de la glace, sinon la nappe ne mordait pas
+    // et la parité ne prouverait rien.
     const state = sim()
     // MI-PLUIES, DE JOUR : la bande morte du gué. Il prend la nuit sur toute cette fin
     // d'automne et rend la main au matin (A4) — donc sans la nappe rien ne gèle à cette heure,
@@ -235,18 +240,19 @@ describe('la Brume : le seul écart, et il va toujours dans le sens sûr', () =>
       x0: 0, y0: 0, x1: state.map.width, y1: state.map.height,
     }
     state.brume = nappe
-    const facade = creerEtatGel(sourceDepuis(state))
     const vrai = verdicts(state, state.map).gel
-    const vu = verdicts(facade, state.map).gel
+    // LA PARITÉ : la façade qui porte la nappe rend la glace de la sim, au bit près.
+    const facade = creerEtatGel(sourceDepuis(state))
+    expect(verdicts(facade, state.map).gel).toBe(vrai)
+    // LA PRÉMISSE, PROUVÉE PAR LA CENSURE : la façade d'un hôte d'avant le champ (`brume:
+    // null`) doit MANQUER au moins une tuile gelée — c'est l'écart que le champ solde. Sans
+    // ce témoin, la parité ci-dessus serait satisfaite par une nappe qui ne mord pas.
+    expect(BRUME.COLD_MALUS).toBeGreaterThan(0)
+    const censuree = creerEtatGel({ ...sourceDepuis(state), brume: null })
+    const vu = verdicts(censuree, state.map).gel
     for (let i = 0; i < vrai.length; i++) {
       if (vu[i] === '1') expect(vrai[i], `tuile ${i} : peinte gelée sans l'être`).toBe('1')
     }
-    // ET L'ÉCART EXISTE VRAIMENT — sans ce témoin, l'implication ci-dessus serait satisfaite
-    // par deux verdicts identiques et ce test ne prouverait rien. On exige donc UNE tuile que
-    // la sim gèle sous la nappe et que la façade, aveugle à celle-ci, ne peint pas. On
-    // n'affirme pas que la façade ne peint RIEN : ce serait faire de ce test une sentinelle du
-    // calibrage du gel, alors qu'il garde la fidélité de la reconstitution.
-    expect(BRUME.COLD_MALUS).toBeGreaterThan(0)
     let manquees = 0
     for (let i = 0; i < vrai.length; i++) if (vrai[i] === '1' && vu[i] === '0') manquees++
     expect(manquees, 'la nappe ne creuse aucun écart — le témoin ne vaut rien').toBeGreaterThan(0)

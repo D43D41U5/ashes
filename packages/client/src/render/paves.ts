@@ -14,7 +14,8 @@
  *   - un LISERÉ sombre sur ses bords bas et latéraux (l'épaisseur du pavé), une ARÊTE HAUTE
  *     éclairée, une seconde rangée en TRANCHE ;
  *   - une OMBRE PORTÉE sur le terrain du dessous, sous le pavé qui le domine ;
- *   - des BRINS : deux marques par tuile, dans la gamme du terrain.
+ *   - des MARQUES : deux par tuile, de la FORME de leur matière (brin, brindille, caillou,
+ *     charbon, écaille — voir `MARQUES`), dans la gamme du terrain.
  * Le grain de famille (`grain-sol.ts`) entre DIRECTEMENT dans la cuisson — plus de passe MULTIPLY
  * séparée : une seule image, une seule échelle.
  *
@@ -61,7 +62,7 @@
  */
 import { champDuChaos, fbm2, hash2, TERRAIN_BOULDERS, TERRAIN_ROCK } from '@ashes/sim'
 import { TILE_PX } from './framing'
-import { GRAIN_CELLS, GRAIN_CELL_PX } from './grain-sol'
+import { GRAIN_CELLS, GRAIN_CELL_PX, familleDe } from './grain-sol'
 
 /** Le côté d'une tuile en pixels de cuisson : la maille des props. */
 export const PAVE_PX = TILE_PX
@@ -86,7 +87,8 @@ export const PAVE = {
   PENOMBRE: 0.86,
   /** L'ombre latérale, plus courte (1 px). */
   OMBRE_LATERALE: 0.8,
-  /** Les brins : deux marques de 1×2 px par tuile, claires, avec un pixel sombre en pied. */
+  /** Les marques de sol : deux par tuile, de la FORME de leur matière (voir `MARQUES`) —
+   *  les deux tons sont communs à toutes les formes. */
   BRIN_CLAIR: 1.2,
   BRIN_SOMBRE: 0.8,
   BRINS_PAR_TUILE: 2,
@@ -307,6 +309,55 @@ export function estSurplombee(t: number): boolean {
 /** Une surface : l'eau ou le marais — sans épaisseur (voir `SURFACES`). */
 export function estSurface(t: number): boolean {
   return SURFACES[t] !== undefined
+}
+
+/**
+ * ═══ LES MARQUES DE SOL — la FORME suit la MATIÈRE (Alexis, 2026-08-28) ═══
+ *
+ * *« On peut réutiliser les mêmes pour les brins d'herbe, mais les biomes cendre ou
+ * shallow_water, par exemple, n'ont pas d'herbes. »*
+ *
+ * La marque était UNE forme pour tout le monde : le brin d'herbe (1×2 clair, pied sombre) —
+ * y compris sur la neige, l'éboulis et la cendre, où un brin qui POUSSE est un contresens.
+ * La clé n'est pas le biome (dix-sept formes ne se calibrent pas) : c'est la FAMILLE de
+ * `grain-sol`, le vocabulaire que le projet a déjà pour « ce qu'on foule ». Deux marques par
+ * tuile, ≤ 3 px chacune (la grammaire du sol : des marques de 1 à 4 px), deux tons communs
+ * (`BRIN_CLAIR`/`BRIN_SOMBRE`) :
+ *
+ *   • `herbe`, `humide`  — LE BRIN, vertical : ce qui pousse est debout (clair 1×2, pied sombre).
+ *   • `litiere`          — LA BRINDILLE, couchée : un bois mort n'est pas debout (sombre 2×1,
+ *                          bout clair).
+ *   • `mineral`          — LE CAILLOU : clair dessus, ombre dessous — la règle cubique, lumière
+ *                          du haut.
+ *   • `cendre`           — LE CHARBON : un pixel sombre, seul. Ce qui a brûlé n'a plus de
+ *                          structure ; rien de clair ne dépasse d'une poussière.
+ *   • `neige`, `dalle`   — RIEN : une congère est lisse et balayée (l'argument même de son
+ *                          profil de grain), la dalle a sa fissure.
+ *   • l'ASSEC (manteau)  — L'ÉCAILLE : sombre 2×1, lèvre claire dessous — la même bascule
+ *                          ombre-en-haut / lumière-en-bas que la craquelure de la vase. Rien
+ *                          ne pousse dans un lit à sec ; la marque est POSÉE, horizontale.
+ *
+ * Chaque forme : des triplets plats [dx, dy, facteur] relatifs au point tiré de la tuile —
+ * plats parce que la boucle des pixels est chaude, pas d'itérateur ni de destructuration.
+ */
+type Marque = readonly number[]
+const MARQUE_BRIN: Marque = [0, 0, PAVE.BRIN_CLAIR, 0, 1, PAVE.BRIN_CLAIR, 1, 2, PAVE.BRIN_SOMBRE]
+const MARQUE_BRINDILLE: Marque = [0, 0, PAVE.BRIN_SOMBRE, 1, 0, PAVE.BRIN_SOMBRE, 2, 0, PAVE.BRIN_CLAIR]
+const MARQUE_CAILLOU: Marque = [0, 0, PAVE.BRIN_CLAIR, 0, 1, PAVE.BRIN_SOMBRE, 1, 1, PAVE.BRIN_SOMBRE]
+const MARQUE_ECAILLE: Marque = [0, 0, PAVE.BRIN_SOMBRE, 1, 0, PAVE.BRIN_SOMBRE, 0, 1, PAVE.BRIN_CLAIR]
+const MARQUE_CHARBON: Marque = [0, 0, PAVE.BRIN_SOMBRE]
+
+/** La marque d'un terrain, ou `null` (lisse). L'ASSEC est la seule SURFACE qui en porte une :
+ *  c'est la seule qui soit un sol (le même argument que `couleurVase`). */
+export function marqueDe(t: number): Marque | null {
+  if (t === ASSEC) return MARQUE_ECAILLE
+  switch (familleDe(t)) {
+    case 'herbe': case 'humide': return MARQUE_BRIN
+    case 'litiere': return MARQUE_BRINDILLE
+    case 'mineral': return MARQUE_CAILLOU
+    case 'cendre': return MARQUE_CHARBON
+    default: return null // neige, dalle, et ce qui n'a pas de famille
+  }
 }
 
 /** La priorité d'un terrain : −1 pour un structurel, le rang de surface pour l'eau et le marais,
@@ -698,6 +749,7 @@ export function cuireChunk(p: CuissonChunk): ChunkCuit {
   const trames: (Float32Array | null)[] = new Array(L * L)
   const mouch: ({ tache: number; densite: number } | null)[] | null = p.moucheture ? new Array(L * L) : null
   const brins = new Int8Array(L * L * PAVE.BRINS_PAR_TUILE * 2)
+  const marques: (Marque | null)[] = new Array(L * L)
   for (let ly = 0; ly < L; ly++) {
     for (let lx = 0; lx < L; lx++) {
       const k = ly * L + lx
@@ -706,6 +758,7 @@ export function cuireChunk(p: CuissonChunk): ChunkCuit {
       prio[k] = prioriteDe(t)
       coul[k] = p.couleurAt(tx0 + lx, ty0 + ly)
       trames[k] = p.trameDe(t)
+      marques[k] = marqueDe(t)
       if (mouch) mouch[k] = p.moucheture!(tx0 + lx, ty0 + ly)
       for (let j = 0; j < PAVE.BRINS_PAR_TUILE; j++) {
         brins[(k * PAVE.BRINS_PAR_TUILE + j) * 2] = 1 + Math.floor(hash2(tx0 + lx, ty0 + ly, 3 + j) * (P - 3))
@@ -976,7 +1029,12 @@ export function cuireChunk(p: CuissonChunk): ChunkCuit {
       else if (tSurf && !estDessous(t) && !estGlace(t) && domine(iU - 3 * LP)) f = PAVE.RESSAC
       else if (domine(iL) || domine(iR)) f = PAVE.OMBRE_LATERALE
       else if (estVoile(t)) continue // l'eau nue, le dessous nu : rien à peindre ici
-      else if (tSurf) f = 1 // le marais nu, la glace nue : plat, sans brin
+      // Le marais nu, la glace nue : plat, sans brin (R15). UNE exception, la même que
+      // `couleurVase` : l'ASSEC est la seule surface qui soit un SOL — on y marche, et un fond
+      // de lit séché porte ses débris (2026-08-28, « ça manque encore de textures »). Ses
+      // marques tombent dans le bloc des brins ci-dessous ; il reste sans épaisseur : les
+      // branches liseré/arête/tranche au-dessus sont déjà fermées à toute surface.
+      else if (tSurf && t !== ASSEC) f = 1
       else if (creux && t === TERRAIN_BOULDERS) {
         // ① L'ALBÉDO : trois valeurs franches, décidées par la seule profondeur.
         const kc = (y + 1) * (SB + 2) + (x + 1)
@@ -1005,16 +1063,21 @@ export function cuireChunk(p: CuissonChunk): ChunkCuit {
       }
       else {
         f = 1
-        // Les brins, dans le repère de la tuile PROPRIÉTAIRE (un brin peut vivre dans la frange).
-        const lxk = k % L
-        const lyk = (k - lxk) / L
-        const ox = px - lxk * P
-        const oy = py - lyk * P
-        for (let j = 0; j < B; j++) {
-          const bx = brins[(k * B + j) * 2]!
-          const by = brins[(k * B + j) * 2 + 1]!
-          if (ox === bx && (oy === by || oy === by + 1)) f = PAVE.BRIN_CLAIR
-          else if (ox === bx + 1 && oy === by + 2) f = PAVE.BRIN_SOMBRE
+        // Les marques, dans le repère de la tuile PROPRIÉTAIRE (une marque peut vivre dans la
+        // frange) — de la forme de SA matière (`marqueDe`), ou aucune (neige, dalle).
+        const m = marques[k]
+        if (m) {
+          const lxk = k % L
+          const lyk = (k - lxk) / L
+          const ox = px - lxk * P
+          const oy = py - lyk * P
+          for (let j = 0; j < B; j++) {
+            const bx = brins[(k * B + j) * 2]!
+            const by = brins[(k * B + j) * 2 + 1]!
+            for (let q = 0; q < m.length; q += 3) {
+              if (ox === bx + m[q]! && oy === by + m[q + 1]!) f = m[q + 2]!
+            }
+          }
         }
       }
       if (estVoile(t)) {

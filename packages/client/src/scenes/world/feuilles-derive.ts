@@ -118,9 +118,21 @@ export class FeuillesDerive {
    */
   eauIci: ((tx: number, ty: number) => boolean) | null = null
 
+  /**
+   * Y a-t-il une PIERRE VIVANTE sur cette tuile ? (les rochers du gué — un nœud à stock,
+   * posé par `WorldScene` sur le même patron que `eauIci`). Une feuille ne traverse pas un
+   * caillou : elle GLISSE le long de son bord jusqu'à le dépasser, puis reprend le courant
+   * (Alexis, 2026-08-28). `null` : personne n'a répondu — aucune pierre, comme avant.
+   */
+  pierreIci: ((tx: number, ty: number) => boolean) | null = null
+
   /** L'eau du jour, ou le champ seul si personne ne l'a dite. Un seul point de lecture. */
   private surLEau(tx: number, ty: number): boolean {
     return this.eauIci === null || this.eauIci(Math.floor(tx), Math.floor(ty))
+  }
+
+  private surPierre(tx: number, ty: number): boolean {
+    return this.pierreIci !== null && this.pierreIci(Math.floor(tx), Math.floor(ty))
   }
 
   update(nowMs: number, dtMs: number, camTx: number, camTy: number, vent: { x: number; y: number }): void {
@@ -135,6 +147,7 @@ export class FeuillesDerive {
         if (!flowAt(this.flow, tx, ty)) continue
         // ⚠ ET IL FAUT DE L'EAU AUJOURD'HUI, pas seulement un lit sur la carte (voir `eauIci`).
         if (!this.surLEau(tx, ty)) continue
+        if (this.surPierre(tx, ty)) continue // pas de feuille née SUR un rocher du gué
         const sprite = this.scene.add
           .image(tx * TILE_PX, ty * TILE_PX, `fx-feuille-${g % 2}`)
           .setDepth(FEUILLE_DEPTH)
@@ -179,8 +192,24 @@ export class FeuillesDerive {
       // (flow-field), le taper de berge est LE MÊME que celui du shader — la feuille
       // et le clapot qu'elle chevauche avancent ensemble, jusque contre la rive.
       const taper = this.rive ? taperRive(riveAt(this.rive, f.x, f.y)) : 1
-      f.x += (c.x * COURANT_VITESSE * taper + vent.x * 0.06) * dtS
-      f.y += (c.y * COURANT_VITESSE * taper + vent.y * 0.06) * dtS
+      const vx = (c.x * COURANT_VITESSE * taper + vent.x * 0.06) * dtS
+      const vy = (c.y * COURANT_VITESSE * taper + vent.y * 0.06) * dtS
+      // ═══ LA PIERRE SE CONTOURNE EN GLISSANT (Alexis, 2026-08-28) ═══
+      //
+      // Le pas se sépare PAR AXE, le vieux glissement d'AABB : si la destination est un
+      // rocher, on tente X seul, puis Y seul — la feuille LONGE le bord de la tuile,
+      // poussée par la composante qui reste libre, et dès que le coin est dépassé les
+      // deux composantes reprennent : elle « lâche » toute seule, sans état ni minuterie.
+      // Les deux axes bloqués (le creux exact entre deux pierres) : elle attend — l'eau
+      // la ressortira par où elle est entrée dès que le courant tourne d'un cheveu.
+      if (!this.surPierre(f.x + vx, f.y + vy)) {
+        f.x += vx
+        f.y += vy
+      } else if (!this.surPierre(f.x + vx, f.y)) {
+        f.x += vx
+      } else if (!this.surPierre(f.x, f.y + vy)) {
+        f.y += vy
+      }
       f.sprite.setPosition(Math.round(f.x * TILE_PX), Math.round(f.y * TILE_PX))
       f.sprite.setFlipX(c.x < 0)
       // L'ombre sur le lit : HAUT-FOND seulement (en profond, l'eau trouble n'a pas de fond).

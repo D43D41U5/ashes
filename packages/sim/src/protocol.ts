@@ -270,6 +270,15 @@ export interface SnapshotMessage {
    * pluie simulée — et un ciel qui ment sur le froid qu'il apporte est pire qu'un ciel vide.
    */
   meteo: import('./meteo').MeteoFront | null
+  /**
+   * LA NAPPE DE BRUME (spec `brume.md`), ou rien — le record, patron `meteo` : la géométrie
+   * se recalcule (`brumeCentre`, `dansLaBrume`). OPTIONNEL, donc ADDITIF (le précédent
+   * `createdAt?` fait loi : pas de bump de `PROTOCOL_VERSION`). Sans elle, la température
+   * que le client relisait était trop CHAUDE de `BRUME.COLD_MALUS` sous la nappe, et le
+   * rendu pouvait MANQUER une glace que la sim avait posée — un manquement à G5 documenté
+   * dans `etat-gel.ts`, soldé par ce champ.
+   */
+  brume?: import('./brume').Brume | null
   events: SimEvent[]
 }
 

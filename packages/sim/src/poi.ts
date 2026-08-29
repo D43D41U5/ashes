@@ -7,7 +7,6 @@ import { hash2 } from './noise'
 import { poissonPoints } from './poisson'
 import { isWater, terrainAt, isBlockingTile, type FaitDeGeneration, type WorldMap, type Zone } from './map'
 import { spawnMonster } from './monsters'
-import { promoteToAlpha } from './faune'
 import type { SimState } from './sim'
 import { setTile } from './map'
 import { FAUNA, MONSTER_DEFS, MORTS, TERRAIN_FOREST, TERRAIN_LARCH, TERRAIN_OLD_GROWTH, TERRAIN_PINE, TERRAIN_ROAD, TERRAIN_SCREE } from './balance'
@@ -230,17 +229,18 @@ export const POI_TYPES: PoiType[] = [
   // Danger
   { slug: 'taniere', zones: ['sylve', 'pres_bas'], name: 'la Tanière', family: 'danger', biomes: [FOREST, PINE, GRASS, CLAIRIERE], weight: 6, cap: 8, reserve: 1, footprint: 3, monster: 'boar' },
   /**
-   * LA LOUVIÈRE (décision d'Alexis, 2026-08-28) — le loup cesse d'être une bête
-   * ambiante : sa meute RÉSIDE ici, y chasse (`FAUNA.DEN_TERRITORY`), y revient,
-   * et s'y reforme loup par loup (`advanceDens`). Rare et marquante à dessein
-   * (cap 3) : le territoire des loups s'APPREND, et il se contourne — la pression
-   * diffuse restante appartient à la nuit qui chasse (`nighthunt.ts`).
-   * `pres_bas` SEUL (décision d'Alexis, 2026-08-28) : LE MONDE JOUÉ EST LE T0 SEUL,
-   * et la première version, qui visait la ceinture, ne mettait pas une seule
-   * Louvière dans la partie réelle (attrapé au smoke, pas au banc). Ses zones de
-   * vallée se redécideront quand la vallée reviendra.
+   * LA LOUVIÈRE (spec `loup.md` L1-L3, décisions d'Alexis 2026-08-28) — le gîte de la meute.
+   *
+   * `horsSemis`, comme le Charnier : son adresse n'est ni une zone ni une loterie, c'est une
+   * RELATION — la lisière d'un coin de chasse (`placeGitesLoup`, appelé par zonegen après
+   * `placePois`). Un coin au plus par gîte, un gîte au plus par coin ; la géométrie de pose
+   * vit dans `LOUVIERE` plus bas (elle se calibre en regardant une carte). Ses biomes sont le
+   * COUVERT : la meute vit à couvert, en lisière du pré où elle mange — jamais dedans.
+   * Le cap est large (le nombre réel est borné par les coins) ; `monster: 'wolf'` la fait
+   * entrer d'office dans `nidsAMonstre` (on ne fonde pas un village au seuil d'une meute) et
+   * dans la machinerie des lieux peuplés (`spawnPoiMonsters`/`advanceDens`).
    */
-  { slug: 'louviere', zones: ['pres_bas'], name: 'la Louvière', family: 'danger', biomes: [FOREST, PINE, OLD_GROWTH, HEATH], weight: 3, cap: 3, reserve: 1, footprint: 3, monster: 'wolf' },
+  { slug: 'louviere', name: 'la Louvière', family: 'danger', horsSemis: true, weight: 0, cap: 14, footprint: 3, biomes: [FOREST, PINE, LARCH, OLD_GROWTH, SCREE, BOULDERS], monster: 'wolf' },
   { slug: 'repaire', zones: ['brule', 'cendriere'], name: 'le Repaire de Cendrés', family: 'danger', biomes: [BURNT, ROCK, SCREE], weight: 4, cap: 5, reserve: 1, footprint: 3, monster: 'cendreux' },
   { slug: 'epave', zones: ['aiguilles', 'glacier'], name: "l'Épave d'avalanche", family: 'danger', biomes: [SCREE, BOULDERS], minElev: 0.55, weight: 3, cap: 3, reserve: 1, footprint: 4 },
   { slug: 'fondriere', zones: ['tourbiere', 'lac_mort'], name: 'la Fondrière', family: 'danger', biomes: [PEAT, REED], weight: 3, cap: 3, reserve: 1, footprint: 3 },
@@ -1033,6 +1033,86 @@ export function placeCharniers(
 }
 
 /**
+ * ═══ LA LOUVIÈRE — la géométrie de pose (spec `loup.md` L1) ═══
+ *
+ * Elle se calibre en REGARDANT UNE CARTE, comme tout le worldgen (règle de
+ * balance.ts) : c'est pour ça qu'elle vit ici et pas dans `FAUNA`.
+ */
+const LOUVIERE = {
+  /**
+   * LA LISIÈRE : le gîte se pose entre ces deux distances du CŒUR d'un coin de
+   * chasse — jamais dans le pré (la meute vit à couvert), jamais si loin que la
+   * boucle gîte↔chasse ne se voie plus (30-60 t ≈ 10-18 s au trot : le cycle
+   * tient dans une session).
+   */
+  FROM_GROUND_MIN: 30,
+  FROM_GROUND_MAX: 60,
+  /** Pas DANS l'empreinte d'un autre lieu — le voisinage, lui, est permis (précédent : charnier). */
+  ECART_LIEU: 12,
+} as const
+
+/**
+ * LES GÎTES À LOUPS (spec `loup.md` L1) — un par coin de chasse, en lisière.
+ *
+ * `horsSemis`, par sa PROPRE règle (précédent : le Charnier) : l'adresse d'une
+ * Louvière n'est pas un biome tiré au sort, c'est une RELATION — le coin de
+ * chasse dont sa meute vivra. On balaie l'anneau [FROM_GROUND_MIN, FROM_GROUND_MAX]
+ * autour du cœur du coin, on garde les tuiles ÉLIGIBLES (couvert de la table,
+ * plain-pied, hors route, hors empreinte d'un autre lieu), et on en TIRE une par
+ * hachage du coin — sans quoi l'ordre de balayage mettrait tous les gîtes au
+ * NORD de leur pré, et le joueur apprendrait un mensonge. Un coin sans couvert
+ * dans l'anneau ne reçoit RIEN : la vallée a le droit d'avoir des clairières
+ * sans meute, et c'est ce qui donne leur poids à celles qui en ont une.
+ *
+ * Appelée par zonegen APRÈS `placePois` (les empreintes sont posées, `tropPres`
+ * les respecte) et AVANT `placeCharniers`/`placeSteles` (qui respectent la
+ * sienne). Les coins lui sont PASSÉS : `poi.ts` ne connaît pas `faune.ts` —
+ * même frontière que le champ des morts pour les charniers.
+ */
+export function placeGitesLoup(
+  map: WorldMap,
+  seed: number,
+  grounds: readonly { x: number; y: number }[],
+  champ?: CarveField,
+): void {
+  const t = POI_TYPES.find((p) => p.slug === 'louviere')
+  if (!t || grounds.length === 0) return
+  const field = champ ?? carveDistanceToMain(map, walkableComponents(map), POI_PLACEMENT.MAX_CARVE_TILES)
+  const used = new Map<string, number>()
+  // Les lieux déjà posés comptent dans `used` : le cap de la table reste un cap.
+  for (const z of map.zones) if (z.kind === 'louviere') used.set('louviere', (used.get('louviere') ?? 0) + 1)
+
+  for (const g of grounds) {
+    const cx = Math.floor(g.x)
+    const cy = Math.floor(g.y)
+    // Toutes les tuiles éligibles de l'anneau, en ordre de balayage déterministe…
+    const candidats: { tx: number; ty: number }[] = []
+    const rMax = LOUVIERE.FROM_GROUND_MAX
+    const min2 = LOUVIERE.FROM_GROUND_MIN * LOUVIERE.FROM_GROUND_MIN
+    const max2 = rMax * rMax
+    for (let oy = -rMax; oy <= rMax; oy += 2) {
+      for (let ox = -rMax; ox <= rMax; ox += 2) {
+        const d2 = ox * ox + oy * oy
+        if (d2 < min2 || d2 > max2) continue
+        const tx = cx + ox
+        const ty = cy + oy
+        if (tx < 0 || ty < 0 || tx >= map.width || ty >= map.height) continue
+        if (tropPres(map, tx, ty, LOUVIERE.ECART_LIEU)) continue
+        if (!isEligible(map, field, t, tx, ty, used)) continue
+        candidats.push({ tx, ty })
+      }
+    }
+    if (candidats.length === 0) continue // pas de couvert en lisière : ce pré vit sans meute
+    // …et le HASARD DU LIEU en choisit une — `hash2` du coin, pur, zéro tirage :
+    // le PRNG d'état n'existe pas encore ici, et deux graines proches donnent
+    // deux lisières différentes.
+    const idx = Math.min(candidats.length - 1, Math.floor(hash2(cx, cy, seed ^ 0x4c4f5556 /* 'LOUV' */) * candidats.length))
+    const spot = candidats[idx]!
+    placeOne(map, field, t, spot.tx, spot.ty, used)
+  }
+}
+
+/**
  * Le numéro d'un lieu, en chiffres romains. La table figée s'arrêtait à XIV et retombait sur des
  * chiffres arabes au-delà — inoffensif tant qu'aucun type ne dépassait quatorze exemplaires, ce
  * que les charniers font (leur plafond est large à dessein). Rend l'identique de I à XIV.
@@ -1139,87 +1219,97 @@ export function spawnPoiMonsters(state: SimState, seed: number): void {
     // On RETIENT les lieux peuplés : eux seuls repeupleront (spec faune R16). Le
     // peuplement appartient à l'hôte, et un monde qui n'a jamais voulu de bêtes de
     // lieu ne doit pas en voir apparaître au bout de quatre minutes.
-    //
-    // La Louvière naît MEUTE PLEINE : une tanière à un loup n'est pas une menace,
-    // c'est un rôdeur — et la meute (alpha compris) est ce que le lieu promet.
-    let posed = false
-    for (let n = 0; n < denCap(state, zone, seed); n++) posed = populateDen(state, zone, seed, n) || posed
-    if (posed && !state.dens.includes(zone)) state.dens.push(zone)
+    if (populateDen(state, zone, seed) && !state.dens.includes(zone)) state.dens.push(zone)
   }
 }
 
-/**
- * COMBIEN DE BÊTES CE LIEU PORTE-T-IL À PLEIN ? 1 pour une tanière (le sanglier
- * solitaire — c'est ce qui le rend inquiétant), la MEUTE pour une Louvière —
- * tirée du `herdSize` de l'espèce par hachage du lieu : stable d'un respawn à
- * l'autre (chaque Louvière a SA meute, pas un dé rejoué), et hors du flux RNG
- * (le peuplement d'un lieu ne décale aucun tirage du monde). Le repaire de
- * Cendrés a sa PROPRE loi (la rampe de saison, `advanceDens`) : ici il vaut 1,
- * son compte de worldgen historique.
- */
-function denCap(state: SimState, zone: number, seed: number): number {
-  const z = state.map.zones[zone]
-  const t = z ? POI_TYPES.find((p) => p.slug === z.kind) : undefined
-  if (t?.monster !== 'wolf' || !z) return 1
-  const [lo, hi] = MONSTER_DEFS.wolf.herdSize ?? [1, 1]
-  const r = hash2(z.x, z.y, seed ^ 0x4c4f55) // 'LOU'
-  return lo + Math.floor(r * (hi - lo + 1))
-}
-
-/**
- * Pose UNE bête d'un lieu sur son empreinte. Sans effet si le lieu n'en a pas.
- * `nonce` distingue les tuiles des congénères d'une meute (0 = la valeur
- * historique : tanière et repaire posent au même endroit qu'avant, au bit près).
- */
-function populateDen(state: SimState, zone: number, seed: number, nonce = 0): boolean {
+/** Pose la bête d'un lieu sur son empreinte. Sans effet si le lieu n'en a pas. */
+function populateDen(state: SimState, zone: number, seed: number): boolean {
   const z = state.map.zones[zone]
   if (!z) return false
   const t = POI_TYPES.find((p) => p.slug === z.kind)
   if (!t?.monster) return false
   const candidates = walkableTilesFor(state.map, z)
   if (candidates.length === 0) return false // aucune tuile praticable dans/autour de l'empreinte
-  const r = hash2(z.x, z.y, seed ^ 0x4d4f4e ^ Math.imul(nonce, 0x9e3779b1)) // 'MON'
+  if (t.monster === 'wolf') return populateLouviere(state, zone, candidates, seed)
+  const r = hash2(z.x, z.y, seed ^ 0x4d4f4e) // 'MON'
   const idx = Math.min(candidates.length - 1, Math.floor(r * candidates.length))
   const tile = candidates[idx]!
   const id = spawnMonster(state, t.monster, tile.tx + 0.5, tile.ty + 0.5)
   const born = state.monsters.find((m) => m.entityId === id)
-  if (born) {
-    born.homePoi = zone // elle appartient à ce lieu, et elle y reviendra
-    if (t.monster === 'wolf') adoptIntoPack(state, zone)
-  }
+  if (born) born.homePoi = zone // elle appartient à ce lieu, et elle y reviendra
   return true
 }
 
 /**
- * LA MEUTE DE LA LOUVIÈRE. Le nouveau-né rejoint les siens — et si le chef est
- * tombé (R12 a dispersé la meute : `routed`, harde dissoute), LE DOYEN est promu
- * et la meute SE REFORME autour de lui. R12 garde tout son sens au combat —
- * l'alpha tombe, la meute éclate sur-le-champ — mais un lieu n'en reste pas
- * orphelin pour la saison : le retour se joue plus tard, hors de vue
- * (`DEN_SPAWN_CLEARANCE`), au rythme lent du respawn. On ne farme pas une
- * Louvière : on y revient, et elle a un nouveau chef.
+ * LE CLAN D'UNE LOUVIÈRE (spec `loup.md` L2-L3) : 1 alpha + `FAUNA.DEN_ADULTES`
+ * adultes + `FAUNA.DEN_PETITS` petits. La fonction RÉTABLIT la composition — elle
+ * ne pose pas cinq loups au hasard : l'alpha d'abord s'il manque, puis les
+ * adultes, puis les petits. Les survivants sont gardés : un gîte qui a perdu ses
+ * adultes se repeuple AUTOUR de ses petits, dans le même clan (`herdId`), et
+ * chacun retient le nouveau chef (`alphaId`, rafraîchi partout).
+ *
+ * Aucun n'est `ambient` : les résidents ne se dissipent jamais (R16). Les adultes
+ * naissent repus (`faim: 0` — le clan qui s'installe a mangé) ; un petit n'a pas
+ * de jauge (L6, le clan le nourrit). Tout est dérivé de `hash2` : pur, zéro
+ * tirage sur le PRNG d'état.
  */
-function adoptIntoPack(state: SimState, zone: number): void {
-  const pack = state.monsters.filter((m) => m.homePoi === zone && m.type === 'wolf')
-  let chief = pack.find((m) => m.alpha === true)
-  if (!chief) {
-    // Le doyen : le plus ancien entityId — le même rang que la sentinelle et la
-    // scission, arithmétique pure, zéro tirage.
-    chief = pack[0]!
-    for (const m of pack) if (m.entityId < chief.entityId) chief = m
-    chief.alpha = true
-    promoteToAlpha(state, chief.entityId, 'wolf')
-  }
-  if (chief.herdId === undefined) {
-    chief.herdId = state.nextHerdId
+function populateLouviere(
+  state: SimState,
+  zone: number,
+  candidates: Array<{ tx: number; ty: number }>,
+  seed: number,
+): boolean {
+  const z = state.map.zones[zone]!
+  const clan = state.monsters.filter((m) => m.homePoi === zone)
+  const clanAdultes = 1 + FAUNA.DEN_ADULTES
+
+  let alpha = clan.find((m) => m.alpha === true)
+  let herdId = clan.find((m) => m.herdId !== undefined)?.herdId
+  if (herdId === undefined) {
+    herdId = state.nextHerdId
     state.nextHerdId += 1
   }
-  for (const m of pack) {
-    m.herdId = chief.herdId
-    m.alphaId = chief.entityId
-    delete m.routed // la meute reformée rechasse — la déroute appartenait à l'ancienne
-    m.fleeSince = -1
+
+  let poses = 0
+  const pose = (petit: boolean, n: number): void => {
+    const r = hash2(z.x + n * 7, z.y + (petit ? 131 : 0), seed ^ 0x4c4f5550 /* 'LOUP' */)
+    const tile = candidates[Math.min(candidates.length - 1, Math.floor(r * candidates.length))]!
+    const id = spawnMonster(state, 'wolf', tile.tx + 0.5, tile.ty + 0.5)
+    const born = state.monsters.find((m) => m.entityId === id)!
+    born.homePoi = zone
+    born.herdId = herdId
+    if (petit) {
+      born.petit = true
+      const e = state.entities.find((x) => x.id === id)!
+      e.hp = MONSTER_DEFS.wolf.hp * FAUNA.PETIT_HP
+    } else {
+      born.faim = 0
+      born.clanAdultes = clanAdultes
+    }
+    clan.push(born)
+    poses += 1
   }
+
+  // L'ALPHA D'ABORD : sans chef, le gîte n'a pas de meute — juste des loups.
+  if (!alpha) {
+    pose(false, 0)
+    alpha = clan[clan.length - 1]!
+    alpha.alpha = true
+    const e = state.entities.find((x) => x.id === alpha!.entityId)!
+    e.hp = MONSTER_DEFS.wolf.hp * FAUNA.ALPHA_HP // le chef prend sa taille, et ses PV sont pleins
+  }
+  let adultes = clan.filter((m) => m.petit !== true).length
+  for (let n = 1; adultes < clanAdultes; n++, adultes++) pose(false, n)
+  let petits = clan.filter((m) => m.petit === true).length
+  for (let n = 0; petits < FAUNA.DEN_PETITS; n++, petits++) pose(true, n)
+
+  // Tout le clan retient le chef — les petits d'un ancien clan compris.
+  for (const m of clan) {
+    m.alphaId = alpha.entityId
+    m.herdId = herdId
+  }
+  return poses > 0
 }
 
 /**
@@ -1255,12 +1345,17 @@ export function advanceDens(state: SimState, seed: number): void {
     const z = state.map.zones[zone]
     if (!z) continue
     // LE CAP DU LIEU : 1 pour une tanière (le comportement historique, à l'identique) ;
-    // pour un repaire de Cendrés, la rampe de saison — il respire de plus en plus fort ;
-    // pour une Louvière, SA meute (`denCap`) — qu'elle recompose loup par loup.
+    // pour un repaire de Cendrés, la rampe de saison — il respire de plus en plus fort.
     const t = POI_TYPES.find((p) => p.slug === z.kind)
+    // LE CAP DU LIEU : 1 pour une tanière ; la rampe de saison pour un repaire ;
+    // le CLAN ENTIER pour une Louvière (spec loup.md L3 — 1 alpha + adultes +
+    // petits). Les déserteurs ne comptent pas : `routClanMember` leur retire
+    // `homePoi` — un plafond compte ce qu'il borne.
     const cap = t?.monster === 'cendreux'
       ? Math.round(seasonRamp(1, MORTS.RESPIRE_CAP_FIN, jour))
-      : denCap(state, zone, seed)
+      : t?.monster === 'wolf'
+        ? 1 + FAUNA.DEN_ADULTES + FAUNA.DEN_PETITS
+        : 1
     if ((residents.get(zone) ?? 0) >= cap) continue // le lieu est plein : rien à faire
     // UN LIEU BRÛLÉ NE RESPIRE PAS (décision ⑧) : l'assainissement suspend le retour.
     if (state.lieuxBrules.some((lb) => lb.zone === zone && state.tick < lb.until)) continue
@@ -1288,9 +1383,7 @@ export function advanceDens(state: SimState, seed: number): void {
     }
     if (watched) continue
 
-    // Le nonce est le COMPTE de résidents : les congénères d'une Louvière ne se
-    // posent pas tous sur la même tuile (0 = la tuile historique des autres nids).
-    if (populateDen(state, zone, seed, residents.get(zone) ?? 0)) {
+    if (populateDen(state, zone, seed)) {
       state.denRespawns = state.denRespawns.filter((d) => d.zone !== zone)
     }
   }

@@ -92,6 +92,7 @@ export const RECIPE_CATEGORY: Record<RecipeId, CraftCategory> = {
   rope: 'materiaux',
   leather: 'materiaux', // le cuir : un matériau tanné
   iron_ingot: 'materiaux',
+  iron_ingot_charbon: 'materiaux', // le même lingot, fondu au charbon de bois (R24) : même rayon
   steel_ingot: 'materiaux', // l'acier : le lingot du T3
   // Les COMPOSANTS (spec construction §4bis) : assemblés au Feu, posés pour émerger.
   enclume: 'composants',

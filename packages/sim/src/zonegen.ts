@@ -51,14 +51,14 @@ import {
 import { isWater, MARCHABLE, type WorldMap, type Zone as ZoneRect } from './map'
 import { calculeChampDeCendre, computeCendreField, foyersDeLaCarte } from './cendre'
 import { distSq } from './geometry'
-import { placeCharniers, placePois, placeSteles } from './poi'
+import { placeCharniers, placeGitesLoup, placePois, placeSteles } from './poi'
+import { placeHuntingGrounds } from './faune'
 import { peindreLesClairieres } from './clairieres'
 import { densiteDeBase } from './morts'
 import { fbm2, hash2 } from './noise'
 import { deriverDistanceEau, deriverProfondeur } from './profondeur'
 import { deriverNatureDeLEau } from './peche-nature'
 import { tracerLesCoulees } from './zonegen-coulees'
-import { placeHuntingGrounds } from './faune'
 import { masqueDesSeuils, paintWaterRacine, type Riviere } from './zonegen-water'
 import { assainirLeProfondHorsRacine, peindreLesEauxDesZones } from './zonegen-eaux-zones'
 import {
@@ -785,6 +785,16 @@ export function generateZonedTerrain(
     return g.zones[zone[ty * width + tx]!]!.def.slug
   }
   const champDeCreusement = placePois(map, seed, zoneDe)
+
+  // ── PASSE 5bis : LES LOUVIÈRES — le gîte de chaque meute, en lisière de son coin ────
+  //
+  // APRÈS `placePois` (les empreintes sont posées, la Louvière les respecte), AVANT les
+  // charniers et les stèles (qui respecteront la sienne). Les coins de chasse sont une
+  // fonction PURE de (carte, graine) — le même appel que fera l'hôte (`placeHuntingGrounds`
+  // dans veillee/scenario) rend exactement les mêmes coins : aucune passe d'ici à la fin ne
+  // retouche le terrain de plain-pied (charniers et stèles ne creusent pas), donc le semis
+  // relu par l'hôte est au bit près celui qu'on lit maintenant. (spec `loup.md` L1)
+  placeGitesLoup(map, seed, placeHuntingGrounds(map, seed), champDeCreusement)
 
   // ── PASSE 6 : LES CHARNIERS — l'adresse n'est plus une zone, c'est une DENSITÉ ────
   //

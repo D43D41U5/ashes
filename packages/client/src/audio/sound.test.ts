@@ -66,7 +66,7 @@ describe('la table de routage audio (soundForEvent)', () => {
     expect(desaccords).toEqual([])
   })
 
-  it("l'inventaire tranché de GATE 1 : 96 faits, 54 voix", () => {
+  it("l'inventaire tranché de GATE 1 : 98 faits, 57 voix", () => {
     // Un compte, pas un jugement. S'il bouge, c'est qu'un fait de domaine est né ou qu'une
     // voix a changé — dans les deux cas, quelqu'un doit le savoir.
     const total = Object.keys(VOIX).length
@@ -112,7 +112,8 @@ describe('la table de routage audio (soundForEvent)', () => {
     // répété, et la lumière qui naît le dit déjà), `torche_eteinte` PARLE : c'est l'instant où la
     // nuit se referme, et le joueur ne regarde pas sa ceinture à ce moment-là. Donc +2 faits, +1 voix.
     // 92 → 96 le 2026-08-28 : le coin vivant (faune R24/R27), quatre faits muets de carte.
-    expect(total).toBe(96)
+    // 96 → 98 au merge du même jour : les faits de l'ère loup s'y ajoutent.
+    expect(total).toBe(98)
     // 34 → 35 le 2026-07-29 : `node_depleted` a gagné sa voix (trois, selon la matière).
     // 61 → 62 faits et 35 → 36 voix le 2026-07-30 : `door_toggled` naît (spec construction R26).
     // 62 → 63 faits et 36 → 37 voix le 2026-07-31 : `cendreux_prowl` naît (spec cendreux R11bis) —
@@ -124,7 +125,9 @@ describe('la table de routage audio (soundForEvent)', () => {
     // 90 → 92 le 2026-08-26 : la TORCHE (spec `torche.md`) — `torche_allumee` naît MUETTE (geste
     // répété, et la lumière qui naît le dit déjà), `torche_eteinte` PARLE : c'est l'instant où la
     // nuit se referme, et le joueur ne regarde pas sa ceinture à ce moment-là. Donc +2 faits, +1 voix.
-    expect(voix).toBe(54)
+    // 56 → 57 le 2026-08-28 : `blizzard_annonce` sort du silence (chantier audio météo) —
+    // le jumeau grave du préavis de Brume ; `entre`/`passe` restent à la nappe du vent.
+    expect(voix).toBe(57)
   })
 
   it('L’AXE D’ALIGNEMENT S’ENTEND : les verbes chauds montent, les froids tombent', () => {

@@ -7,6 +7,7 @@ import {
   FUNCTION_IDS,
   PIECES,
   STRUCTURE_TYPES,
+  TENUS_POSABLES,
   coutObjet,
   matiereChiffre,
   matieresDe,
@@ -55,6 +56,15 @@ describe('le registre des pièces — les accords que le type ne garde pas', () 
     // Et le DORTOIR n'est pas déclaré : le §4bis le donne pour différé, et son effet
     // n'existe pas. Une fonction qui émerge sans rien faire ment au joueur.
     expect(piece('paillasse').fonction).toBeUndefined()
+  })
+
+  it('les TENUS-POSABLES couvrent composants, coffre ET séchoir (peche.md S1)', () => {
+    // C'est la liste que le client lit pour armer la pose au clic. Si une pièce qui se
+    // fabrique en main perdait son `pose: 'objet'`, elle redeviendrait fabricable et
+    // imposable — le trou qu'a connu le séchoir — et c'est ici que ça rougirait.
+    for (const t of COMPONENT_TYPES) expect(TENUS_POSABLES, `${t}`).toContain(t)
+    expect(TENUS_POSABLES).toContain('chest')
+    expect(TENUS_POSABLES).toContain('sechoir')
   })
 
   it('`fonction` et `palier` vont ENSEMBLE, ou pas du tout', () => {

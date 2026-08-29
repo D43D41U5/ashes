@@ -3,7 +3,7 @@
  * VERTÉBRALE : des fronts spatiaux traversent la vallée. Une BANDE cardinale par jour au
  * plus, élue par `hash2`, entre par un bord et sort par l'autre en ~une demi-journée. Le
  * front EXISTE et se LIT (`meteoIntensity`, la surface unique que les tranches d'effets
- * consomment) ; la TRANCHE 2 branche LE FROID (`meteoCold`, spec R4) sur `temperature.ts` ;
+ * consomment) ; la TRANCHE 2 branche LE FROID (`meteoColdAt`, spec R4) sur `temperature.ts` ;
  * la TRANCHE 3 fait taire LA FAUNE (`meteoQuiet`, spec R6) dans le gate de naissance de
  * `faune.ts` ; la TRANCHE 4 met LE FEU SOUS LA PLUIE (`meteoMouille`/`meteoFeuConso`,
  * spec R5) : la consommation des feux accélère dans `fire.ts`, la pose d'un feu neuf à
@@ -183,9 +183,11 @@ export function episodeDuBloc(bloc: number, jourDuBloc: number): EpisodeMeteo {
 
 /** Le ciel d'un épisode — la mixture de sa saison, tirée sur l'index du bloc (canal 13). */
 function typeDeLEpisode(bloc: number, jourDuBloc: number): MeteoType {
-  // L'Été pourri emprunte le ciel d'une AUTRE phase (S18) — la mixture des Pluies, en été.
-  const emprunt = effetsDuJour(jourDuBloc).cielDeLaPhase
-  const table = METEO.PAR_SAISON(emprunt ?? actForDay(jourDuBloc)).types
+  // Deux caractères commandent le ciel (S18) : l'Été pourri EMPRUNTE la mixture d'une autre
+  // phase (`cielDeLaPhase` — celle des Pluies, en été), les Vents de cendre la REMPLACENT
+  // par la leur (`ciel` — le seul électeur du front `vent_de_cendre`, décision 2026-08-28).
+  const effets = effetsDuJour(jourDuBloc)
+  const table = effets.ciel ?? METEO.PAR_SAISON(effets.cielDeLaPhase ?? actForDay(jourDuBloc)).types
   const roll = hash2(bloc, 13, METEO_SALT)
   let cumul = 0
   let dernier: MeteoType = 'pluie'
@@ -211,10 +213,10 @@ export function meteoCycleEligible(cycle: number, calendarScale: number, jourDeD
 }
 
 /**
- * Le type élu par la table de l'acte, AVANT l'exclusion R3 — exposé pour la garde R3 des
- * tests (prouver que la dégradation a mordu exige de voir l'élu brut). Canal 1, décorrélé
- * du canal d'occurrence (0) : le type ne dérive pas du même tirage que le « oui » du jour
- * (patron des canaux Brume).
+ * Le type élu par la table de la saison, AVANT l'exclusion R3 — exposé pour la garde R3 des
+ * tests (prouver que la dégradation a mordu exige de voir l'élu brut). Depuis S9 le type
+ * vient de l'ÉPISODE (`typeDeLEpisode`, canaux 11-13 tirés sur l'index de BLOC) : il n'y a
+ * plus de canal de type par cycle.
  */
 export function meteoTypeBrut(cycle: number, calendarScale: number, jourDeDepart: number): MeteoType | null {
   return episodeDuCycle(cycle, calendarScale, jourDeDepart)?.type ?? null
@@ -462,10 +464,6 @@ export function coldMaximal(type: MeteoType): number {
  * code neuf côté vitals. Le brouillard a COLD 0 : il ne refroidit pas, au bit près. Pour
  * l'ORAGE, le froid dépend du froid qu'il trouve (R12, `partDeBlizzard`).
  */
-export function meteoCold(state: SimState, x: number, y: number): number {
-  return meteoColdAt(state, x, y, state.tick)
-}
-
 /**
  * LE MÊME FROID, À UN TICK QUELCONQUE — pour l'hystérésis du dégel (spec `gel.md` G8), qui
  * demande la température du passé PROCHE au même point. La géométrie de la bande étant une
@@ -525,9 +523,20 @@ export function aspectSousFront(
  * être de neige ou de pluie selon le froid qu'il va trouver sous lui (au point de l'œil).
  */
 export function aspectAuPoint(state: SimState, front: Pick<MeteoFront, 'type'>, x: number, y: number, tick: number): MeteoAspect {
-  if (front.type !== 'pluie' && front.type !== 'orage') return front.type
+  const froid = aspectFroidDe(front.type)
+  if (froid === null) return front.type
   if (!neigeA(dehorsSansMeteo(state, x, y, tick))) return front.type
-  return front.type === 'pluie' ? 'neige' : 'blizzard'
+  return froid
+}
+
+/**
+ * R14 — L'ASPECT FROID D'UNE CLASSE (la paire doux → froid), ou `null` si elle n'en a pas.
+ * ÉCRIVAIN UNIQUE de la paire : `aspectAuPoint` la consomme ici, et le rideau du client
+ * aussi (il mène deux troupeaux, un par aspect — une copie de la table côté rendu aurait
+ * fini par mentir en silence le jour où un type gagne un aspect froid).
+ */
+export function aspectFroidDe(type: MeteoType): MeteoAspect | null {
+  return type === 'pluie' ? 'neige' : type === 'orage' ? 'blizzard' : null
 }
 
 export function meteoAspectAt(state: SimState, x: number, y: number, tick: number = state.tick): MeteoAspect | null {
@@ -600,6 +609,13 @@ export function meteoQuiet(state: SimState, x: number, y: number): boolean {
  */
 export function frontMouille(front: Pick<MeteoFront, 'type' | 'day'>): boolean {
   if (!METEO.MOUILLE[front.type]) return false
+  // S18 — LE CARACTÈRE « LES ORAGES SECS » ASSÈCHE TOUTE SA SAISON, pluie comprise
+  // (« `MOUILLE` faux partout — aucun front mouillé de la saison »). Avant cette porte,
+  // seule l'aridité le lisait (`ariditeGlobale`) : il pleuvait sur les feux — conso ×1,5,
+  // pose refusée — pendant que la terre ne recevait rien. Un seul lecteur du caractère
+  // aurait dû suffire, et c'est celui-ci : `cyclesDepuisPluie` et les feux passent tous
+  // par `frontMouille`.
+  if (effetsDuJour(front.day).jamaisMouille) return false
   return !(front.type === 'orage' && phaseForDay(front.day) === METEO.ORAGE_SEC_PHASE)
 }
 
@@ -621,7 +637,12 @@ export function meteoMouille(state: SimState, x: number, y: number): boolean {
 export function meteoFeuConso(state: SimState, x: number, y: number): number {
   const front = state.meteo
   if (!front) return 1
-  if (!frontMouille(front)) return 1
+  // Deux pressions distinctes sur le feu : l'eau qui tombe (les fronts MOUILLÉS), et la
+  // cendre qui étouffe (le vent de cendre — sec, mais `FEU_CONSO` 1,8 : sa colonne dormait
+  // derrière la porte du mouillé tant qu'aucune saison ne l'élisait ; rendue vivante avec
+  // son électeur, décision 2026-08-28). La POSE d'un feu neuf, elle, reste gardée par le
+  // seul mouillé (`meteoMouille`) : la cendre n'empêche pas d'allumer, elle affame.
+  if (!frontMouille(front) && front.type !== 'vent_de_cendre') return 1
   const intensite = meteoIntensity(state, x, y)
   if (intensite <= 0) return 1
   const plein = effetOrage(front, METEO.FEU_CONSO[front.type], METEO.ORAGE_FROID.FEU_CONSO, dehorsSansMeteo(state, x, y, state.tick))

@@ -112,6 +112,13 @@ export interface ScenarioReport {
   starvationSamples: number
   deaths: number
   hordesSpawned: number
+  /** A8 — les morts d'avatar que la MÉTÉO cause : la foudre, et le froid (front ou nuit —
+   *  au banc court le socle n'en tue aucune, donc tout compte non nul accuse). */
+  mortsFoudre: number
+  mortsFroid: number
+  /** A8 — combien de fronts DISTINCTS ont couvert le banc : la prémisse de la garde
+   *  (0 quand `meteoActive` est resté faux, le défaut). */
+  frontsVus: number
   chronicle: string[]
 }
 
@@ -273,14 +280,28 @@ export function construireMondeDuBanc(seed: number, joueurs: number = BANC_JOUEU
 
 /**
  * Joue `days` jours complets (1 cycle = 1 jour) sur le monde de production, réduit à `joueurs`.
+ *
+ * `options.meteoActive` arme la météo (R10/A8) : le banc PAR DÉFAUT reste sans elle, au bit
+ * près (A10 — les seuils de famine sont absolus, calibrés sans le bruit météo) ; la garde A8
+ * de `scenario.test.ts` est la seule à l'armer.
  */
-export function runScenario(seed: number, days: number, joueurs: number = BANC_JOUEURS): ScenarioReport {
+export function runScenario(
+  seed: number,
+  days: number,
+  joueurs: number = BANC_JOUEURS,
+  options: { meteoActive?: boolean } = {},
+): ScenarioReport {
   const { sim, monde } = construireMondeDuBanc(seed, joueurs)
+  if (options.meteoActive === true) sim.meteoActive = true
 
   const events: SimEvent[] = [...drainEvents(sim)]
   let starvationSamples = 0
   let deaths = 0
   let hordesSpawned = 0
+  let mortsFoudre = 0
+  let mortsFroid = 0
+  let frontsVus = 0
+  let dernierFront = -1
   const total = days * TICKS_PER_CYCLE
   // Cadence d'échantillonnage de la faim, en ticks — fixée en temps réel (pas
   // en nombre de ticks brut) pour rester comparable d'un TICK_RATE_HZ à l'autre.
@@ -289,8 +310,21 @@ export function runScenario(seed: number, days: number, joueurs: number = BANC_J
     step(sim, [])
     for (const e of drainEvents(sim)) {
       events.push(e)
-      if (e.type === 'entity_died' && !e.wasMonster) deaths += 1
+      if (e.type === 'entity_died' && !e.wasMonster) {
+        deaths += 1
+        // A8 — les morts que la MÉTÉO cause, comptées par leur cause de mort. `cold` compte
+        // toute mort de froid (front OU nuit) : au banc court, le socle sans front n'en tue
+        // aucune — un compte non nul dit donc que quelque chose s'est cassé, front ou pas.
+        if (e.cause === 'lightning') mortsFoudre += 1
+        if (e.cause === 'cold') mortsFroid += 1
+      }
       if (e.type === 'horde_spawned') hordesSpawned += 1
+    }
+    // A8, la PRÉMISSE : combien de fronts distincts ont réellement couvert le banc. Un zéro
+    // rend la garde muette — c'est le compte qui l'empêche de passer pour vide.
+    if (sim.meteo && sim.meteo.startTick !== dernierFront) {
+      dernierFront = sim.meteo.startTick
+      frontsVus += 1
     }
     if (t % sampleEveryTicks === 0) {
       for (const npc of sim.npcs) {
@@ -321,6 +355,9 @@ export function runScenario(seed: number, days: number, joueurs: number = BANC_J
     starvationSamples,
     deaths,
     hordesSpawned,
+    mortsFoudre,
+    mortsFroid,
+    frontsVus,
     chronicle: chronicleFromEvents(events, sim.calendarScale, sim.jourDeDepart, names, sim.map).map(formatChronicleLine),
   }
 }

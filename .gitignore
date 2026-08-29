@@ -20,3 +20,7 @@ scratchpad/
 # Planche-contact de l'art, REGÉNÉRABLE : `pnpm smoke --scenario png` la refait
 # entièrement (voir docs/inventaire-sprites.md). Une sortie d'outil, pas une source.
 art-export/
+
+# Sondes jetables de session dans tools/ : le préfixe `__` dit « je meurs avec la session ».
+# Un instrument qui a fait ses preuves se RENOMME sans le préfixe et se commite.
+tools/__*

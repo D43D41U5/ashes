@@ -373,7 +373,8 @@ export class MistLayer {
     depth: number,
     crans: ReglageCrans = CRANS_MAQUETTE,
     /** Posé → la brume est une NAPPE D'ÉPAISSEUR (pile de bandes dans la bande des houppiers).
-     *  Absent → un quad plein monde à `depth`, le rendu d'avant au bit près (la Combe). */
+     *  Absent → un quad plein monde à `depth`, le rendu d'avant au bit près. Depuis le
+     *  2026-08-28 (la Combe passée en pile), plus personne ne le laisse absent en jeu. */
     nappe: ReglageNappe | null = null,
   ) {
     this.crans = crans
@@ -522,8 +523,8 @@ export class MistLayer {
   }
 }
 
-/** LA BRUME COIFFE LE MONDE (retour d'Alexis : « au-dessus du personnage ») : au-dessus des
- *  houppiers, SOUS les oiseaux et le voile de nuit — la nuit l'assombrit comme le reste, et
- *  l'aube bleutée la teinte d'elle-même. Les BANCS voyageurs (V2), eux, vivent dans la bande
- *  des houppiers : c'est leur raison d'être — passer devant un arbre, derrière l'autre. */
+/** L'ANCIENNE COIFFE DU MONDE — au-dessus des houppiers, sous les oiseaux et le voile de
+ *  nuit. Depuis les passages en pile (marée 2026-08-25, Combe 2026-08-28) ce n'est plus qu'un
+ *  REPLI : la profondeur d'un `MistLayer` sans `ReglageNappe`. Les BANCS voyageurs (V2), eux,
+ *  vivent dans la bande des houppiers : passer devant un arbre, derrière l'autre. */
 export const MIST_DEPTH = 1_020_000

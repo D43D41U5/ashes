@@ -7,7 +7,7 @@ import { FAMILLES, INVENTAIRE, SONORES, faitsDeFamille, type FamilleId } from '.
  * le trou que ce chantier vient boucher. Les gardes balaient tout l'espace (62 faits), elles
  * ne piochent pas des cas.
  */
-describe('l’inventaire des 96 faits', () => {
+describe('l’inventaire des 98 faits', () => {
   const ids = new Set<string>(FAMILLES.map((f) => f.id))
 
   it('AUCUN fait ne tombe dans une famille non déclarée (sinon il sort du banc en silence)', () => {
@@ -18,7 +18,7 @@ describe('l’inventaire des 96 faits', () => {
     expect(orphelins).toEqual([])
   })
 
-  it('les familles PARTITIONNENT les 96 faits — chacune en porte, aucune n’est vide', () => {
+  it('les familles PARTITIONNENT les 98 faits — chacune en porte, aucune n’est vide', () => {
     const comptes = FAMILLES.map((f) => ({ id: f.id, n: faitsDeFamille(f.id).length }))
     expect(comptes.filter((c) => c.n === 0)).toEqual([]) // pas de section vide à l'écran
     const somme = comptes.reduce((t, c) => t + c.n, 0)
@@ -41,7 +41,9 @@ describe('l’inventaire des 96 faits', () => {
     // 92 → 96 le 2026-08-28 : LE COIN VIVANT (faune R24/R27) — quatre faits de CARTE
     // (coin_eteint, coin_seme, coin_decouvert, coin_disparu), tous MUETS : la pastille
     // parle à l'écran, pas à l'oreille.
-    expect(somme).toBe(96)
+    // 96 → 98 au merge du même jour : les faits de l'ère loup (`loup.md`) s'y ajoutent —
+    // les deux chantiers du 28 se sont croisés, l'inventaire les porte tous.
+    expect(somme).toBe(98)
   })
 
   it('chaque fait DIT ce qu’il raconte — pas son identifiant', () => {
@@ -53,7 +55,7 @@ describe('l’inventaire des 96 faits', () => {
     expect(muets).toEqual([])
   })
 
-  it('l’état publié est bien l’état ACTUEL : 54 voix, 42 silences décidés', () => {
+  it('l’état publié est bien l’état ACTUEL : 57 voix, 41 silences décidés', () => {
     // Un compte, pas un jugement. `sound.test.ts` vérifie séparément que ces 38 sonnent
     // VRAIMENT (et que les 26 se taisent vraiment) — ici on garde seulement la proportion.
     // 34 → 35 le 2026-07-29 : `node_depleted` sort du silence (l'arbre qui tombe craque).
@@ -103,7 +105,9 @@ describe('l’inventaire des 96 faits', () => {
     // 90 → 92 le 2026-08-26 : la TORCHE (spec `torche.md`) — `torche_allumee` naît MUETTE (geste
     // répété, et la lumière qui naît le dit déjà), `torche_eteinte` PARLE : c'est l'instant où la
     // nuit se referme, et le joueur ne regarde pas sa ceinture à ce moment-là.
-    expect(SONORES.length).toBe(54)
+    // 56 → 57 le 2026-08-28 : `blizzard_annonce` sort du silence (chantier audio météo) —
+    // la veille est le seul télégraphe que le ciel lui-même ne peut pas donner.
+    expect(SONORES.length).toBe(57)
     // 33 → 34 le 2026-08-21 : `refugee_rumeur` naît MUET (annales.md R12) — le geste de
     // nourrir parle déjà, le renseignement se lit dans la chronique.
     // 34 → 35 le 2026-08-21 : `cendre_prend` naît MUET (P5a) — la perte se lit et se voit.
@@ -116,7 +120,10 @@ describe('l’inventaire des 96 faits', () => {
     // 38 → 42 le 2026-08-28 : LE COIN VIVANT (faune R24/R27) — quatre faits de carte, tous
     // MUETS (coin_eteint, coin_seme, coin_decouvert, coin_disparu) : la pastille parle à
     // l'écran, pas à l'oreille.
-    expect(Object.keys(INVENTAIRE).length - SONORES.length).toBe(42)
+    // 38 → 37 le même jour, autre chantier : `blizzard_annonce` a pris sa voix — `entre`/`passe`
+    // restent des silences DÉCIDÉS (la nappe du vent les porte, un one-shot les doublerait).
+    // Au merge des deux : 37 + 4 faits de carte muets = 41.
+    expect(Object.keys(INVENTAIRE).length - SONORES.length).toBe(41)
   })
 
   it('PLUS AUCUNE famille n’est entièrement muette, sauf celle qui l’est par décision', () => {

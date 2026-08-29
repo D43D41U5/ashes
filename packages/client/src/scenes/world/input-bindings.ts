@@ -17,7 +17,7 @@
  * nœuds, cadavres et position prédite changent à chaque snapshot ou frame —
  * chaque handler lit l'état AU MOMENT de la frappe.
  */
-import { BALANCE, COMPONENT_TYPES, EDGE_BITS, NODE_DEFS, SLOTS, edgeBarrierAt, isRangedWeapon, type Corpse, type PlayerAction, type ResourceNode, type Structure } from '@ashes/sim'
+import { BALANCE, EDGE_BITS, NODE_DEFS, SLOTS, TENUS_POSABLES, edgeBarrierAt, isRangedWeapon, type Corpse, type PlayerAction, type ResourceNode, type Structure } from '@ashes/sim'
 import Phaser from 'phaser'
 import { getHud, setHud, type Placeable } from '../../hud-state'
 import { TILE_PX } from '../../render/framing'
@@ -248,8 +248,10 @@ export function bindInputs(scene: Phaser.Scene, deps: InputDeps): MovementBindin
     const slot = getHud(scene.registry, 'activeSlot') ?? -1
     const held = slot >= 0 ? (inv[slot]?.item ?? null) : null
     if (held === 'campfire') return 'fire'
-    // Un COMPOSANT (enclume, four…) ou le COFFRE tenu s'arme comme le feu de camp (R20).
-    if (held !== null && ((COMPONENT_TYPES as readonly string[]).includes(held) || held === 'chest')) return held as Placeable
+    // Un TENU-POSABLE (composant, coffre, séchoir) s'arme comme le feu de camp (R20).
+    // La liste vient du registre (`pose: 'objet'`) — la même lecture que la validation
+    // sim ; l'énumération à la main avait laissé le séchoir imposable.
+    if (held !== null && (TENUS_POSABLES as readonly string[]).includes(held)) return held as Placeable
     return null
   }
 

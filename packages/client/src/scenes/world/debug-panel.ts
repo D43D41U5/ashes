@@ -23,7 +23,7 @@
  * lectures d'une même loi finiraient par diverger.
  */
 import type Phaser from 'phaser'
-import { coeurDeLaSaisonSuivante, GEL, nomDeSaison, phaseForDay, TEMPERATURE, type PlayerAction } from '@ashes/sim'
+import { coeurDeLaSaisonSuivante, GEL, nomDeSaison, phaseForDay, TEMPERATURE, type MeteoType, type PlayerAction } from '@ashes/sim'
 import { getHud, setHud } from '../../hud-state'
 import { ensureGameFont, GAME_FONT } from '../ui/game-font'
 
@@ -132,6 +132,16 @@ export function createDebugPanel(scene: Phaser.Scene, deps: DebugPanelDeps): Deb
   const bNight = mkBtn()
   const bReveil = mkBtn()
   const bSaison = mkBtn()
+  const bMeteo = mkBtn()
+  /** LA RONDE DES CIELS (`debug_meteo`) — l'action existait dans /sim et n'avait AUCUNE
+   *  surface au panneau : seuls la console et `smoke-lumiere` l'atteignaient. Le « clair »
+   *  final purge le front. `vent_de_cendre` s'élit en jeu par le caractère « les Vents de
+   *  cendre » (Grand Froid, 2026-08-28) ; ce bouton reste le chemin court pour le voir. */
+  const CIELS: readonly (readonly [MeteoType | null, string])[] = [
+    ['pluie', 'pluie'], ['brouillard', 'brouillard'], ['orage', 'orage'],
+    ['vent_de_cendre', 'vent de cendre'], [null, 'clair'],
+  ]
+  let cielIdx = 0
 
   // ── LE SAUT DE CALENDRIER ── un CHAMP à la place du jour affiché : il MONTRE le jour courant
   // en repli et le remplace dès qu'on tape. Sans lui, seul le bouton « saison suivante » existe,
@@ -217,6 +227,8 @@ export function createDebugPanel(scene: Phaser.Scene, deps: DebugPanelDeps): Deb
     // tête, et le panneau est fait pour qu'on n'ait pas à le faire.
     const cible = coeurDeLaSaisonSuivante(deps.seasonDay())
     paint(bSaison, `Saut → ${nomDeSaison(phaseForDay(cible))}`, false)
+    // Même règle que le saut : le bouton DIT ce que le prochain clic posera.
+    paint(bMeteo, `Ciel → ${CIELS[cielIdx]![1]}`, false)
     paint(bJour, 'Aller', false)
     // LE CHAMP MONTRE LE JOUR COURANT EN REPLI : c'est le relevé qu'il remplace. On n'écrase
     // jamais ce qui est en train d'être tapé — `value` reste au joueur, `placeholder` au monde.
@@ -305,6 +317,12 @@ export function createDebugPanel(scene: Phaser.Scene, deps: DebugPanelDeps): Deb
     render()
   }
   bSaison.onclick = () => sauterAu(coeurDeLaSaisonSuivante(deps.seasonDay()))
+  bMeteo.onclick = () => {
+    const [type] = CIELS[cielIdx]!
+    cielIdx = (cielIdx + 1) % CIELS.length
+    deps.sendAction({ type: 'debug_meteo', meteo: type })
+    render()
+  }
   const sautDemande = (): void => {
     // Le champ VIDE veut dire « rien de saisi », pas « jour 0 » : on ne saute qu'à un jour lu.
     const jour = Number.parseInt(champ.value, 10)

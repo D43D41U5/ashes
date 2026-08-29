@@ -1004,29 +1004,29 @@ export const POI_LIT_DEFS_DATA: readonly PoiLitDef[] = [
     ],
   },
   {
-    // LA LOUVIÈRE — de la PIERRE, pas de la terre remuée : la dalle-porche et la
-    // gueule dessous. Les os autour disent la meute (plusieurs repas, pas un).
+    // LA LOUVIÈRE (loup.md L1) : la dalle de pierre porte le relief, la gueule est
+    // un accent de vide, le seuil foulé et ses os sont des détails au ras du sol.
     slug: 'louviere',
-    w: 58,
+    w: 56,
     h: 34,
     blocks: [
-      { rect: [2, 26, 54, 6], tone: '#4a463f' }, // le pied de la dalle
-      { rect: [6, 16, 46, 10], tone: '#5a564e' }, // la dalle grise
-      { rect: [14, 10, 28, 6], tone: '#6b665c' }, // son dos, au NO
+      { rect: [4, 24, 48, 8], tone: '#503c30' }, // la terre battue du seuil
+      { rect: [8, 12, 42, 12], tone: STONE_B }, // l'assise de la dalle
+      { rect: [12, 6, 30, 8], tone: STONE_A }, // le dessus, au soleil
     ],
     accents: [
-      { rect: [22, 19, 18, 11], color: '#0a0908' }, // la gueule
-      { rect: [21, 17, 20, 3], color: '#2e2b26' }, // le linteau
+      { rect: [16, 20, 18, 9], color: '#0a0908' }, // LA GUEULE — sous la dalle
+      { rect: [15, 18, 20, 3], color: '#3e3a34' }, // son linteau
     ],
     details: [
-      { rect: [4, 28, 5, 2], color: '#c9c1b0' }, // un crâne de cerf
-      { rect: [48, 29, 7, 2], color: '#9a9284' }, // un long os
-      { rect: [44, 27, 4, 2], color: '#6a5a48' },
-      { rect: [10, 21, 8, 1], color: '#2e2b26' },
+      { rect: [40, 27, 6, 2], color: '#8a7a62' }, // les os du seuil…
+      { rect: [7, 29, 5, 2], color: '#6a5a48' }, // …et de l'autre côté
+      { rect: [12, 24, 10, 1], color: '#35271f' }, // la terre foulée
+      { rect: [36, 10, 5, 2], color: STONE_B }, // un éclat de la dalle
     ],
     cracks: [
-      { path: [[10, 31], [12, 25], [13, 19]], crevasse: true },
-      { path: [[47, 31], [45, 26], [43, 21]], crevasse: true },
+      { path: [[14, 22], [16, 16], [19, 10]], crevasse: true },
+      { path: [[44, 22], [42, 16], [40, 12]], crevasse: true },
     ],
   },
   {

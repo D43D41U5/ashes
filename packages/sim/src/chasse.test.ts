@@ -6,7 +6,7 @@
  * bougé (A5/A6 faune) documentent leur delta sur place.
  */
 import { describe, expect, it } from 'vitest'
-import { BALANCE, FAUNA, HUNT, MONSTER_DEFS, SLOTS, TERRAIN_FOREST, TERRAIN_GRASS, TERRAIN_ROCK, TERRAINS, WEAPON_PROFILES } from './balance'
+import { BALANCE, COMBAT, FAUNA, HUNT, MONSTER_DEFS, SLOTS, TERRAIN_FOREST, TERRAIN_GRASS, TERRAIN_ROCK, TERRAINS, WEAPON_PROFILES } from './balance'
 import { drainEvents } from './events'
 import { carryRatio, carryTier, countOf, inventoryOf, type ItemId } from './items'
 import { gaitNoise } from './faune'
@@ -309,7 +309,14 @@ describe('la mise à mort propre (A6, C6) et le cri de mort (A7, C7)', () => {
     // 45 − 30 = 15, et 15 < 22,5 (MORTAL_BELOW × 45) : LA PLAIE EST MORTELLE
     // (C8) — il saigne désormais, et ses PV glissent. On mesure donc une
     // fourchette : le coup a bien porté ×3, et le sang a commencé son travail.
-    const attendu = MONSTER_DEFS.deer.hp - WEAPON_PROFILES.crude_spear.light.damage * HUNT.CLEAN_KILL_FACTOR
+    // ⚠ LA SURPRISE SE COMPOSE AVEC LE REVERS (R6ter, 2026-08-27), et c'est la règle qui
+    // parle, pas une commodité de test : un cerf qui n'a rien vu ne s'est pas RETOURNÉ —
+    // il regarde encore ailleurs. Le coup propre est donc aussi un coup dans le dos, et
+    // les deux facteurs se multiplient. C'est exactement l'approche que `chasse.md` C6
+    // récompense, rendue cohérente avec le combat positionnel du GDD §7.
+    const attendu =
+      MONSTER_DEFS.deer.hp -
+      WEAPON_PROFILES.crude_spear.light.damage * HUNT.CLEAN_KILL_FACTOR * COMBAT.BACK_DAMAGE_FACTOR
     expect(hp).toBeLessThanOrEqual(attendu)
     expect(hp).toBeGreaterThan(attendu - 1)
     expect(monsterOf(deerSim, deerId)!.bleedMortal).toBe(true)

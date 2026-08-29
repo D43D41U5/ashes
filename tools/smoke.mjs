@@ -3395,6 +3395,234 @@ const SCENARIOS = {
    * marcheur — capture à REGARDER), A6 (la brume à 5h30/6h/8h : visible sur l'eau ; à 12h :
    * rien), A7 (la sonde `aube.chirps` compte dans la fenêtre, se tait dehors). Exige `--dev`.
    */
+  /**
+   * LES PIERRES DU GUÉ (2026-08-28) — des NŒUDS de pierre plantés dans le passage, immergés.
+   *
+   * Ce qui ne se prouve qu'au navigateur : que l'immersion EXISTE À L'ÉCRAN. Le sim pose des
+   * `bloc` sur le haut-fond (gardé par `gue.test.ts`) ; ce qui reste à voir, c'est que le
+   * client les DESCEND de EAU_PX et leur COUPE le pied d'autant — sans quoi la pierre est
+   * simplement posée sur l'eau, comme un jeton.
+   *
+   * CE QUI FERAIT ROUGIR : un sprite `nd-bloc-*` du gué non rogné (`isCropped` faux), ou dont
+   * le pied n'est pas descendu sous l'ancre de sa tuile. Les deux sont relevés, pas devinés.
+   * Exige `--dev` (TP).
+   */
+  async guePierres(page) {
+    // ⚠ LE HMR D'UNE AUTRE SESSION TUE LA PRISE. Mesuré ici deux fois : le vite qu'on interroge
+    // sert le dépôt PARTAGÉ, et l'édition d'un fichier client par la session d'à côté recharge
+    // la page en plein `evaluate` (« Execution context was destroyed »). On rejoue donc la
+    // séquence entière, jusqu'à trois fois — un rechargement n'est pas un verdict.
+    for (let essai = 1; essai <= 3; essai++) {
+      try { return await SCENARIOS._guePierres(page) }
+      catch (e) {
+        if (essai === 3 || !String(e).includes('Execution context was destroyed')) throw e
+        console.error(`!! page rechargée sous la sonde (HMR voisin) — essai ${essai + 1}/3`)
+      }
+    }
+  },
+
+  async _guePierres(page) {
+    await page.goto(URL)
+    await page.waitForFunction(() => Boolean(window.__BRAISES__?.scene?.registry?.get('worldReady')), null, { timeout: 150000 })
+    await page.waitForTimeout(1000)
+
+    const gue = await page.evaluate(() => {
+      const m = window.__BRAISES__.scene.map
+      const g = (m.zones ?? []).find((z) => z.kind === undefined && z.name === 'le Gué')
+      return g ? { x: g.x, y: g.y, w: g.w, h: g.h, cx: g.x + g.w / 2, cy: g.y + g.h / 2 } : null
+    })
+    if (!gue) { console.error('!! aucun Gué sur cette carte'); return }
+    console.log(`gué (${gue.x},${gue.y}) ${gue.w}x${gue.h}`)
+
+    await page.evaluate(({ px, py }) => window.__BRAISES__.scene.sendAction({ type: 'debug_teleport', x: px, y: py }), { px: gue.cx, py: gue.cy })
+    await page.waitForTimeout(1600)
+    for (let essai = 0; essai < 4; essai++) {
+      await page.evaluate(() => window.__BRAISES__.scene.sendAction({ type: 'debug_set_hour', hour: 11 }))
+      await page.waitForTimeout(600)
+      const lu = await page.evaluate(() => window.__BRAISES__.scene.lastTime?.hourOfCycle ?? -1)
+      if (Math.abs(lu - 11) < 0.3) break
+    }
+    await page.waitForTimeout(800)
+
+    // ── LE RELEVÉ : les blocs du gué, côté sim ET côté sprite ──
+    const releve = await page.evaluate((z) => {
+      const sc = window.__BRAISES__.scene
+      const dans = (tx, ty) => tx >= z.x && ty >= z.y && tx < z.x + z.w && ty < z.y + z.h
+      const blocs = (sc.view?.nodes ?? []).filter((n) => n.type === 'rock' && dans(n.tx, n.ty))
+      // ⚠ **LA TUILE SE PREND SUR LE NŒUD, JAMAIS SUR LE SPRITE.** La première écriture la
+      // redérivait par `floor(sp.y / 16)` — or `sp.y` porte DÉJÀ la descente qu'on veut mesurer :
+      // 7 px suffisent à faire basculer le sprite dans la rangée suivante, l'ancre était calculée
+      // une tuile trop bas, et la sonde rendait « descendu de −9 px ✗ » sur un rendu juste.
+      // (« le ✗ du banc accuse à tort » : on relève l'écart au nœud, pas au dessin.)
+      const pool = (sc.view?.nodePool ?? []).filter((sp) => sp && sp.visible && sp.texture && String(sp.texture.key).startsWith('nd-rock'))
+      // LA BANDE IMMERGÉE (le pied vu à travers l'eau) vit dans son pool parallèle.
+      const bandes = (sc.view?.nodeBandePool ?? []).filter((b) => b && b.visible)
+      const sprites = []
+      for (const n of blocs) {
+        const ancre = (n.ty + 1) * 16
+        // Le sprite de CE nœud : même colonne, et le pied à moins d'une tuile de l'ancre.
+        const sp = pool.find((s) => Math.floor(s.x / 16) === n.tx && Math.abs(s.y - ancre) < 16)
+        if (!sp) { sprites.push({ cle: null, tx: n.tx, ty: n.ty, ancre, absent: true }); continue }
+        // Sa bande : décalée de +1 px en X, même pied descendu.
+        const bd = bandes.find((b) => Math.abs(b.x - (sp.x + 1)) < 0.01 && Math.abs(b.y - sp.y) < 0.01)
+        sprites.push({
+          cle: sp.texture.key, tx: n.tx, ty: n.ty,
+          y: Math.round(sp.y * 10) / 10,
+          ancre,
+          rogne: Boolean(sp.isCropped),
+          hCadre: sp.frame ? sp.frame.height : null,
+          hRognee: sp._crop ? Math.round(sp._crop.height * 10) / 10 : null,
+          bande: bd ? {
+            alpha: Math.round(bd.alpha * 100) / 100,
+            teinte: (bd.tintTopLeft ?? 0).toString(16),
+            hBande: bd._crop ? Math.round(bd._crop.height * 10) / 10 : null,
+            yBande: bd._crop ? Math.round(bd._crop.y * 10) / 10 : null,
+          } : null,
+        })
+      }
+      return { blocs: blocs.length, tuiles: blocs.map((n) => `${n.tx},${n.ty}`), sprites }
+    }, gue)
+
+    console.log(`sim : ${releve.blocs} rochers dans l'emprise — ${releve.tuiles.join(' · ')}`)
+    // LES REMOUS DES PIERRES : le shader reçoit marcheurs + pierres, et la frontière protège
+    // la turbidité. Ce qui ferait rougir : zéro pierre dans les waders (l'eau ne se brise sur
+    // rien), ou une frontière ≥ compte (la turbidité couvrirait aussi les pierres).
+    const remous = await page.evaluate(() => {
+      const sc = window.__BRAISES__.scene
+      const w = sc.water
+      if (!w) return null
+      // Les caps des PIERRES (au-delà de la frontière) : normalisés s'il y a du courant.
+      const caps = []
+      for (let i = w.waderPierre; i < w.waderCount; i++) {
+        caps.push(Math.round(Math.sqrt(w.waderDirData[i * 2] ** 2 + w.waderDirData[i * 2 + 1] ** 2) * 100) / 100)
+      }
+      return { total: w.waderCount, premierePierre: w.waderPierre, marcheurs: sc.lastWaderCount, caps }
+    })
+    if (remous) {
+      const nbPierres = remous.total - remous.premierePierre
+      const avecCap = remous.caps.filter((c) => c > 0.9).length
+      // Un gué est SUR la rivière : ses pierres doivent porter un cap (le sillage suit le
+      // courant) — un gué sans un seul cap serait un flow-field muet là où l'eau coule.
+      const okR = nbPierres >= Math.min(5, releve.blocs) && remous.premierePierre === remous.marcheurs && avecCap > 0
+      console.log(`   ${okR ? '✓' : '✗'} remous : ${remous.total} émetteurs (${remous.marcheurs} marcheur·s + ${nbPierres} pierres, frontière turbidité à ${remous.premierePierre}) · caps aval ${avecCap}/${nbPierres} [${remous.caps.join(', ')}]`)
+    } else console.error('   ✗ pas de couche eau exposée — remous non sondés')
+    // EAU_PX vaut 7 (`render/enfoncement.ts`) : la pierre descend de 7 px ET perd 7 px de pied.
+    const EAU_PX = 7
+    for (const s of releve.sprites) {
+      if (s.absent) { console.error(`   ✗ (${s.tx},${s.ty}) : AUCUN sprite de rocher à cette tuile`); continue }
+      const descendu = Math.round((s.y - s.ancre) * 10) / 10
+      const rogneePx = s.hCadre === null || s.hRognee === null ? null : Math.round((s.hCadre - s.hRognee) * 10) / 10
+      const ok = s.rogne && Math.abs(descendu - EAU_PX) < 0.6 && rogneePx !== null && Math.abs(rogneePx - EAU_PX) < 0.6
+      // LA BANDE : elle existe, elle est translucide, et sa découpe est le COMPLÉMENT du crop
+      // de l'émergé (le pied, uniquement le pied). Ce qui ferait rougir : bande absente (le
+      // pied ne se voit plus sous l'eau), opaque (plus de ligne de flottaison), ou de la
+      // hauteur du sprite entier (la pierre-fantôme complète sous l'eau).
+      const b = s.bande
+      const okBande = b !== null && b.alpha > 0.3 && b.alpha < 0.6
+        && b.hBande !== null && Math.abs(b.hBande - EAU_PX) < 0.6
+        && s.hCadre !== null && Math.abs(b.yBande - (s.hCadre - b.hBande)) < 0.6
+      console.log(`   ${ok ? '✓' : '✗'} ${s.cle} (${s.tx},${s.ty}) : descendu de ${descendu} px · pied rogné de ${rogneePx} px (${s.hRognee}/${s.hCadre}) — attendu ${EAU_PX}/${EAU_PX}`)
+      console.log(`   ${okBande ? '✓' : '✗'}   bande immergée : ${b === null ? 'ABSENTE' : `alpha ${b.alpha} · teinte ${b.teinte} · ${b.hBande} px depuis y=${b.yBande}`}`)
+    }
+    if (releve.sprites.length === 0) console.error('!! aucun sprite de bloc VISIBLE dans le gué — le relevé ne prouve rien')
+
+    // ── LA PHOTO : boucle endormie (pas de GPU), cadre serré sur le passage ──
+    await page.evaluate(() => window.__BRAISES__.scene.game.loop.sleep())
+    const clip = await page.evaluate(() => {
+      const cam = window.__BRAISES__.scene.cameras.main
+      const c = { x: Math.round(cam.width / 2 - 210), y: Math.round(cam.height / 2 - 210), width: 420, height: 420 }
+      return c
+    })
+    await page.screenshot({ path: `${OUT}/gue-pierres.png`, clip })
+    await page.screenshot({ path: `${OUT}/gue-plein.png` })
+
+    // ── L'EMPREINTE VISIBLE DES ANNEAUX — la sonde d'uniformes ne prouve pas l'écran ──
+    //
+    // « je ne vois pas les remous sur les pierres » (Alexis) : waderCount=5 au shader et zéro
+    // pixel changé sont parfaitement compatibles. On mesure donc EN PIXELS, par A/B au MÊME
+    // instant (la leçon du contour : un diff sans gel du temps rendait 76 161 px — le vent) :
+    // une frame steppée à T avec les pierres, une frame steppée au MÊME T sans elles (les
+    // zones « le Gué » débaptisées → WorldScene ne pousse plus les pierres), et le diff ne
+    // contient QUE les anneaux. Ce qui ferait rougir : un diff quasi nul (l'effet n'atteint
+    // pas l'écran) — c'est très exactement le rapport d'Alexis qu'on cherche à objectiver.
+    const T = await page.evaluate(() => {
+      const sc = window.__BRAISES__.scene
+      const t = sc.game.loop.time + 100
+      sc.game.step(t, 16.6)
+      return t
+    })
+    const avecPierres = await regionAt(page, clip)
+    await page.evaluate((t) => {
+      const sc = window.__BRAISES__.scene
+      for (const z of sc.map.zones) if (z.kind === undefined && z.name === 'le Gué') z.name = 'le Gué ⌀'
+      sc.game.step(t, 16.6) // le MÊME instant : l'eau anime pareil, seuls les émetteurs changent
+    }, T)
+    const sansPierres = await regionAt(page, clip)
+    await page.evaluate((t) => {
+      const sc = window.__BRAISES__.scene
+      for (const z of sc.map.zones) if (z.kind === undefined && z.name === 'le Gué ⌀') z.name = 'le Gué'
+      sc.game.step(t, 16.6)
+    }, T)
+    if (avecPierres && sansPierres && avecPierres.w === sansPierres.w) {
+      let changes = 0
+      let maxD = 0
+      for (let y = 0; y < avecPierres.h; y++) {
+        for (let x = 0; x < avecPierres.w; x++) {
+          const a = avecPierres.px(x, y)
+          const b = sansPierres.px(x, y)
+          const d = Math.abs(
+            (0.2126 * a[0] + 0.7152 * a[1] + 0.0722 * a[2])
+            - (0.2126 * b[0] + 0.7152 * b[1] + 0.0722 * b[2]),
+          )
+          if (d > 6) changes += 1
+          if (d > maxD) maxD = d
+        }
+      }
+      // Le seuil : cinq pierres × un anneau de ~1 tuile de rayon × une bande de ~4 px d'écran
+      // ≈ plusieurs centaines de pixels S'ILS SE VOIENT. En deçà de 200, l'effet est cosmétique
+      // au sens propre : présent dans les uniformes, absent de l'œil.
+      const okAnneaux = changes >= 200 && maxD >= 15
+      console.log(`   ${okAnneaux ? '✓' : '✗'} anneaux À L'ÉCRAN : ${changes} px changés (|ΔL|>6) · ΔL max ${maxD.toFixed(0)} — plancher 200 px / ΔL 15`)
+    } else console.error('   ✗ A/B illisible (régions nulles ou tailles différentes)')
+
+    // ── L'ÉVITEMENT : feuilles et poissons ne sont JAMAIS sur une pierre (2026-08-28) ──
+    //
+    // Propriété GLOBALE échantillonnée : on steppe ~45 s de jeu et on relève, à chaque
+    // frame, toute feuille ou poisson posé sur une tuile de rocher vivant. Ce qui ferait
+    // rougir : une violation (le contournement ne tient pas), ou zéro individu observé
+    // (la garde n'aurait rien éprouvé — prémisse affichée, pas cachée).
+    const evitement = await page.evaluate((t0) => {
+      const sc = window.__BRAISES__.scene
+      let t = t0
+      let feuillesVues = 0
+      let poissonsVus = 0
+      let violations = 0
+      const pierre = (x, y) => {
+        const n = sc.view.noeudALaTuile(Math.floor(x), Math.floor(y))
+        return n !== undefined && n.type === 'rock' && n.stock > 0
+      }
+      for (let k = 0; k < 90; k++) {
+        t += 500
+        sc.game.step(t, 500)
+        for (const f of (sc.feuilles?.feuilles ?? [])) {
+          feuillesVues += 1
+          if (pierre(f.x, f.y)) violations += 1
+        }
+        for (const p of (sc.poissons?.poissons ?? [])) {
+          poissonsVus += 1
+          if (pierre(p.x, p.y)) violations += 1
+        }
+      }
+      return { feuillesVues, poissonsVus, violations }
+    }, T + 1000)
+    const okEvite = evitement.violations === 0 && evitement.feuillesVues > 0 && evitement.poissonsVus > 0
+    console.log(`   ${okEvite ? '✓' : '✗'} évitement : ${evitement.violations} violation(s) sur ${evitement.feuillesVues} feuille·frames et ${evitement.poissonsVus} poisson·frames`)
+
+    await page.evaluate(() => window.__BRAISES__.scene.game.loop.wake())
+    console.log(`captures → ${OUT}/gue-*.png`)
+    return releve
+  },
+
   async feeling(page) {
     await page.goto(URL)
     await page.waitForFunction(() => Boolean(window.__BRAISES__?.scene?.registry?.get('worldReady')), null, { timeout: 150000 })
@@ -3861,7 +4089,8 @@ const SCENARIOS = {
     //   monde OUVRE sous son plancher : sans ce saut au jour 91 — mesuré sans front et à 12,1 °C
     //   d'écart —, « avec » et « sans » seraient la MÊME image et l'instrument rendrait zéro en
     //   croyant mesurer une nappe transparente. La station COMBE, elle, n'y touche pas : sa brume
-    //   est permanente, et c'est le témoin de non-régression du chemin NON-nappe.
+    //   est permanente — le témoin d'une brume SANS condition (en pile elle aussi depuis le
+    //   2026-08-28 : plus personne ne roule sur le chemin non-nappe en jeu).
     await page.evaluate(() => window.__BRAISES__.scene.sendAction({ type: 'debug_set_season_day', day: 91 }))
     await page.waitForTimeout(1200)
     await heure(6.2)
@@ -3967,6 +4196,89 @@ const SCENARIOS = {
       console.log(`  TÉMOIN Combe (ne doit PAS bouger) : p99 = ${out.combe.p99} · >60 ${out.combe.sup60} %`)
     console.log(`\n  captures → ${OUT}/blancheur-*.png`)
     return out
+  },
+
+  /**
+   * LA PLANCHE DE LA COMBE EN NAPPE (2026-08-28) — la brume permanente de la Combe passe du
+   * FILM au-dessus des houppiers à la PILE DE BANDES (le geste de la marée du 25/08). Ce
+   * scénario capture le lieu pour la planche A/B : on le lance UNE FOIS avec le film (HEAD),
+   * une fois avec la pile — c'est l'appelant qui bascule le code, le scénario ne fait que
+   * regarder. Trois stations : le CENTRE à midi, le BORD NORD à midi (les silhouettes qui
+   * doivent sortir de la nappe), et le centre à 22h (la Combe doit rester une présence).
+   *
+   * CE QUI FERAIT ROUGIR la sonde : en mode pile, `bandesVives` = 0 (la pile ne se pose pas)
+   * ou une bande à profondeur ≥ 1 000 000 (elle coifferait encore) ; en mode film, l'inverse.
+   */
+  combenappe: async (page) => {
+    const heure = async (h) => {
+      for (let essai = 0; essai < 4; essai++) {
+        await page.evaluate((hh) => window.__BRAISES__.scene.sendAction({ type: 'debug_set_hour', hour: hh }), h)
+        await page.waitForTimeout(600)
+        const lu = await page.evaluate(() => window.__BRAISES__.scene.lastTime?.hourOfCycle ?? -1)
+        if (Math.abs(lu - h) < 0.3) return
+      }
+      console.error(`!! set_hour(${h}) n'a jamais pris`)
+    }
+    const tp = async (x, y) => {
+      await page.evaluate(({ px, py }) => window.__BRAISES__.scene.sendAction({ type: 'debug_teleport', x: px, y: py }), { px: x, py: y })
+      await page.waitForTimeout(1400)
+    }
+    const photo = async (nom) => {
+      await page.evaluate(() => window.__BRAISES__.scene.game.loop.sleep())
+      await page.screenshot({ path: `${OUT}/combenappe-${nom}.png`, timeout: 300000 })
+      await page.evaluate(() => window.__BRAISES__.scene.game.loop.wake())
+      await page.waitForTimeout(300)
+    }
+
+    const combe = await page.evaluate(() => {
+      const z = (window.__BRAISES__.scene.map.zones ?? []).find((z) => z.kind === 'combe_brumeuse')
+      return z ? { x: z.x, y: z.y, w: z.w, h: z.h } : null
+    })
+    if (!combe) {
+      console.error('!! aucune Combe brumeuse sur cette carte')
+      return {}
+    }
+
+    await tp(combe.x + combe.w / 2, combe.y + combe.h / 2)
+    await heure(12)
+    await page.waitForTimeout(2000)
+    // La sonde : le MODE réellement monté — bandes vivantes et profondeur du quad de tête.
+    const sonde = await page.evaluate(() => {
+      const ly = window.__BRAISES__.scene.combeMist?.layer
+      return ly
+        ? { vives: ly.bandesVives ?? 0, depth: ly.shaders?.[0]?.depth ?? -1, visible: ly.shaders?.[0]?.visible ?? false }
+        : null
+    })
+    console.log(`  sonde Combe : ${JSON.stringify(sonde)}`)
+    const enPile = sonde !== null && sonde.vives > 0 && sonde.depth < 1_000_000
+    const enFilm = sonde !== null && sonde.vives === 0 && sonde.depth >= 1_000_000 && sonde.visible
+    console.log(enPile ? '  → PILE DE BANDES posée' : enFilm ? '  → FILM (le rendu d’avant)' : '  ✗ ni pile ni film : la brume ne se pose pas')
+    await photo('centre-12h')
+
+    // Le BORD NORD : la lisière du halo, là où des arbres doivent SORTIR de la nappe.
+    await tp(combe.x + combe.w / 2, combe.y + 1.5)
+    await page.waitForTimeout(800)
+    await photo('bord-12h')
+
+    // 22h : la Combe demeure une présence la nuit (plancher bleuté du shader).
+    await heure(22)
+    await tp(combe.x + combe.w / 2, combe.y + combe.h / 2)
+    await page.waitForTimeout(1200)
+    await photo('centre-22h')
+
+    // LOIN DU LIEU : le cull doit éteindre la pile (une Combe permanente sans cull couvrirait
+    // la vue entière partout sur la carte). 40 tuiles à l'ouest — hors d'atteinte du halo.
+    await tp(Math.max(2, combe.x - 40), combe.y + combe.h / 2)
+    await page.waitForTimeout(800)
+    const loin = await page.evaluate(() => {
+      const ly = window.__BRAISES__.scene.combeMist?.layer
+      return ly ? { vives: ly.bandesVives ?? 0, visible: ly.shaders?.[0]?.visible ?? false } : null
+    })
+    const culle = loin !== null && loin.vives === 0 && !loin.visible
+    console.log(`  sonde loin (40 t à l'ouest) : ${JSON.stringify(loin)} ${culle ? '→ pile éteinte (cull ok)' : enPile ? '✗ LA PILE BRÛLE ENCORE hors du lieu' : '(film : pas de cull attendu)'}`)
+
+    console.log(`\n  captures → ${OUT}/combenappe-*.png`)
+    return { sonde, enPile, enFilm, loin }
   },
 
   /**
@@ -16010,6 +16322,263 @@ Depuis le spawn (${depart.x.toFixed(0)}, ${depart.y.toFixed(0)}) :`)
    * deux (ça m'a fait conclure « la lance ne frappe pas » — elle frappait). L'endurance,
    * elle, ne s'efface pas.
    */
+  /**
+   * L'ENCAISSEMENT — le coup se VOIT-IL porter ? (spec `combat.md`, `encaissement.ts`)
+   *
+   * La sim est prouvée headless ; ce que seul le NAVIGATEUR peut dire, c'est si un corps
+   * frappé se distingue d'un corps qui ne l'est pas. On mesure les trois signes, sur le
+   * MÊME sprite, à un instant où l'on sait qu'il encaisse :
+   *   · il est DÉPLACÉ (le recul peint, à l'opposé du frappeur) ;
+   *   · il est TASSÉ (plus large, plus bas — les pieds restent au sol) ;
+   *   · il est TEINTÉ (et la teinte TIENT : c'est le défaut corrigé le 2026-08-27, où elle
+   *     durait une seule image parce que `syncActor` la reposait à chaque frame).
+   *
+   * FIGER AU BON INSTANT. `enEncaissement()` est la fenêtre du harnais sur un FX éphémère :
+   * la réaction dure 260 ms et une image headless en dure plusieurs centaines. On boucle
+   * DANS la page (pas depuis Node : une frame tient entre deux `evaluate`) et l'on endort la
+   * boucle à l'intérieur du même `evaluate` que la lecture — aucune image entre les deux.
+   */
+  async encaissement(page) {
+    if (!dev) {
+      console.log('\n(l’encaissement exige le mode debug pour s’armer — relancer avec --dev)')
+      return {}
+    }
+    // ON ATTEND QUE LE MONDE SOIT LÀ. En `--dev`, vite peut recharger la page (HMR) et un
+    // `evaluate` lancé dans cette fenêtre meurt sur « Execution context was destroyed ».
+    await page.waitForFunction(() => window.__BRAISES__?.scene?.playerId !== undefined, null, { timeout: 60_000 })
+    await page.waitForTimeout(1500)
+
+    const pousser = (actions) =>
+      page.evaluate((as) => {
+        const s = window.__BRAISES__.scene
+        const q = s.registry.get('pendingActions') ?? []
+        for (const a of as) q.push(a)
+        s.registry.set('pendingActions', q)
+      }, actions)
+
+    // Invulnérable et armé — on mesure un coup PORTÉ, pas une survie. (`debug_grant` met
+    // l'objet EN MAIN : il pose `activeSlot` lui-même.)
+    await pousser([{ type: 'debug_god', on: true }, { type: 'debug_grant', item: 'iron_axe' }])
+    await page.waitForTimeout(1200)
+    // ON FAIT VENIR LE CORPS À NOUS. La faune naît hors-champ et 45 s de marche headless
+    // (quelques images par seconde sous swiftshader) ne couvrent presque rien — mesuré :
+    // zéro corps en vue, deux fois. `debug_reveil` plante un Cendreux dans la couronne
+    // serrée, par le chemin RÉEL de la nuit ; il se lève, puis il vient. On ne fabrique pas
+    // l'effet qu'on mesure : on fabrique seulement l'ADVERSAIRE.
+    // (⚠ pas de `debug_set_hour` ici : reculer l'horloge rembobine le tick et le client jette
+    //  tous les snapshots — écran figé, sans un mot.)
+    await pousser([{ type: 'debug_reveil' }, { type: 'debug_reveil' }, { type: 'debug_reveil' }])
+    await page.waitForTimeout(25_000) // le temps du réveil, puis de l'approche
+    const etat = await page.evaluate(() => {
+      const s = window.__BRAISES__.scene
+      const e = s.lastEntities?.find((x) => x.id === s.playerId)
+      return {
+        scene: s.scene.key,
+        pos: s.registry.get('playerPos'),
+        heure: s.registry.get('hud')?.hour ?? s.registry.get('gameHour') ?? null,
+        monstres: (s.view?.monsters ?? []).length,
+        autres: s.view?.others?.size ?? -1,
+        main: e && e.activeSlot >= 0 ? (e.inventory[e.activeSlot]?.item ?? null) : null,
+      }
+    })
+    console.log(`   état : scène ${etat.scene} · en main ${etat.main ?? '—'} · ${etat.monstres} monstres · ${etat.autres} corps suivis`)
+
+    /** Le corps le plus proche, tel que le CLIENT le voit (c'est lui qu'on va peindre). */
+    const proche = () =>
+      page.evaluate(() => {
+        const s = window.__BRAISES__.scene
+        const p = s.registry.get('playerPos')
+        let best = null
+        for (const m of s.view.monsters ?? []) {
+          const rec = s.view.others.get(m.entityId)
+          if (!rec) continue
+          const x = rec.buffer.at(-1).x
+          const y = rec.buffer.at(-1).y
+          const d = Math.hypot(x - p.x, y - p.y)
+          if (!best || d < best.d) best = { d, id: m.entityId, x, y, type: m.type }
+        }
+        return { p, n: (s.view.monsters ?? []).length, best }
+      })
+
+    let vue = await proche()
+    for (let i = 0; i < 20 && vue.n === 0; i++) {
+      await page.waitForTimeout(2000)
+      vue = await proche()
+    }
+    console.log(`   monde : ${vue.n} corps en vue ; le plus proche à ${vue.best ? vue.best.d.toFixed(1) + ' t (' + vue.best.type + ')' : '—'}`)
+    if (!vue.best) {
+      console.log('✗ aucun corps à frapper en 45 s de marche — rien à mesurer')
+      return {}
+    }
+    // On se pose à un pas de lui (la hache porte 1,5).
+    await page.evaluate(({ x, y }) => {
+      window.__BRAISES__.scene.registry.set('debugTeleport', { x, y, at: performance.now() })
+    }, { x: vue.best.x - 1, y: vue.best.y })
+    await page.waitForTimeout(1200)
+
+    await page.evaluate(() => window.__BRAISES__.scene.game.loop.sleep())
+    // ═══ ET LE CORPS DU JOUEUR, LUI, TREMBLE-T-IL ? ═══
+    //
+    // La séparation de `/sim` (R4septies) corrige la position APRÈS le mouvement : quand on
+    // marche dans un corps, le client PRÉDIT le pas, l'autorité le retient, et `renderOffset`
+    // absorbe l'écart (`reconciliation.md` R6) — vingt fois par seconde, tant qu'on pousse.
+    // La théorie dit « ça se fond » ; ici on REGARDE. Un offset plat, c'est une pression ; un
+    // offset qui SAUTE de plusieurs pixels d'une image à l'autre, c'est un tremblement sur son
+    // propre avatar — un défaut de feel échangé contre un autre.
+    //
+    // La touche se presse DEPUIS NODE (Phaser garde son état entre deux `step`) : on ne peut
+    // pas appeler `page.keyboard` depuis l'intérieur d'un `evaluate`.
+    const cap = await page.evaluate(() => {
+      const s = window.__BRAISES__.scene
+      const p = s.registry.get('playerPos')
+      for (const m of s.view.monsters ?? []) {
+        const rec = s.view.others.get(m.entityId)
+        if (!rec) continue
+        const b = rec.buffer.at(-1)
+        const dx = b.x - p.x
+        const dy = b.y - p.y
+        // ouest = KeyQ (ZQSD), pas KeyA — la convention du dépôt.
+        return Math.abs(dx) > Math.abs(dy) ? (dx > 0 ? 'KeyD' : 'KeyQ') : dy > 0 ? 'KeyS' : 'KeyW'
+      }
+      return null
+    })
+    let tremble = null
+    if (cap) {
+      await page.keyboard.down(cap)
+      tremble = await page.evaluate(async () => {
+        const s = window.__BRAISES__.scene
+        const TILE = 16
+        const ecarts = []
+        let t = performance.now()
+        for (let i = 0; i < 60; i++) {
+          t += 50
+          s.game.step(t, 50)
+          const p = s.registry.get('playerPos')
+          ecarts.push(Math.hypot(s.playerSprite.x - p.x * TILE, s.playerSprite.y - p.y * TILE))
+          await new Promise((r) => setTimeout(r, 30))
+        }
+        // On jette les vingt premières : le temps que la poussée s'établisse.
+        const tail = ecarts.slice(20)
+        let saut = 0
+        for (let i = 1; i < tail.length; i++) saut = Math.max(saut, Math.abs(tail[i] - tail[i - 1]))
+        return { max: Math.max(...tail), saut, n: tail.length }
+      })
+      await page.keyboard.up(cap)
+    }
+    if (tremble) {
+      console.log(`\n── LE CORPS DU JOUEUR SOUS PRESSION (${tremble.n} images, cap ${cap}) ──`)
+      console.log(`   écart sprite/vérité : ${tremble.max.toFixed(2)} px au pire · saut d’une image à l’autre : ${tremble.saut.toFixed(2)} px`)
+      console.log(tremble.saut < 2
+        ? `   ✓ pas de tremblement : la réconciliation absorbe la poussée sans se voir`
+        : `   ✗ le sprite du joueur SAUTE de ${tremble.saut.toFixed(1)} px d’une image à l’autre`)
+    }
+
+    // ═══ ON S'ACCROCHE À LA FABRIQUE, ET ON AVANCE À LA MAIN ═══
+    //
+    // Un encaissement dure 260 ms ; sous SwiftShader une image en dure des centaines. La
+    // réaction naît et meurt donc ENTRE deux images, et guetter `enEncaissement()` à la
+    // frame ne la voit jamais — mesuré : trois coups portés, zéro encaissement relevé.
+    //
+    // Le remède est celui du dépôt (« FX éphémère : figer et stepper ») : on ENDORT la
+    // boucle, on s'accroche à `AttackFx.impact` — la fabrique elle-même —, puis on avance
+    // par `game.step(t, dt)` à pas connu. L'image où `impact` est appelé est AUSSI celle
+    // qui peint (`peindreRecul` vit dans le même `update`) : on mesure donc juste après.
+    const gel = await page.evaluate(async () => {
+      const s = window.__BRAISES__.scene
+      s.game.loop.sleep()
+      window.__ENC = null
+      const vrai = s.attackFx.impact.bind(s.attackFx)
+      s.attackFx.impact = (sprite, now, fx, fy, deg) => {
+        if (window.__ENC === null) window.__ENC = { now, degats: deg ?? null }
+        return vrai(sprite, now, fx, fy, deg)
+      }
+      const near = () => {
+        const p = s.registry.get('playerPos')
+        let best = null
+        for (const m of s.view.monsters ?? []) {
+          const rec = s.view.others.get(m.entityId)
+          if (!rec) continue
+          const b = rec.buffer.at(-1)
+          const d = Math.hypot(b.x - p.x, b.y - p.y)
+          if (!best || d < best.d) best = { d, id: m.entityId, dx: b.x - p.x, dy: b.y - p.y }
+        }
+        return best
+      }
+      let t = performance.now()
+      let coups = 0
+      let plusProche = Infinity
+      for (let i = 0; i < 300; i++) {
+        const cible = near()
+        if (cible) {
+          if (cible.d < plusProche) plusProche = cible.d
+          const n = Math.hypot(cible.dx, cible.dy) || 1
+          const q = s.registry.get('pendingActions') ?? []
+          q.push({ type: 'attack', dx: cible.dx / n, dy: cible.dy / n })
+          s.registry.set('pendingActions', q)
+          coups++
+        }
+        t += 40
+        s.game.step(t, 40)
+        if (window.__ENC !== null) {
+          const enc = s.attackFx.enEncaissement(s.time.now)
+          return { gele: true, corps: enc.corps, cloues: enc.cloues, coups, plusProche, degats: window.__ENC.degats }
+        }
+        // On laisse la sim (dans son Worker) avancer entre deux images : sans ce souffle,
+        // on stepperait trois cents fois sur le même snapshot.
+        await new Promise((r) => setTimeout(r, 30))
+      }
+      return { gele: false, corps: 0, cloues: 0, coups, plusProche, degats: null }
+    })
+
+    if (!gel.gele) {
+      // ON IMPRIME CE QU'ON A VU AVANT DE CONCLURE : « rien » ne distingue pas « pas de
+      // cible » de « je frappe dans le vide » ni de « j'ai regardé trop tard ».
+      console.log(`\n✗ aucun corps n’a encaissé — ${gel.coups} coups envoyés, cible la plus proche ${Number.isFinite(gel.plusProche) ? gel.plusProche.toFixed(2) + ' t' : 'AUCUNE'}`)
+      await page.screenshot({ path: `${OUT}/encaissement-rate.png` })
+      return gel
+    }
+
+    // LA MESURE : le sprite PEINT contre la vérité de la sim, sur le même corps. C'est le
+    // seul verdict qui vaille — le module pur est déjà gardé par ses tests ; ce que le
+    // navigateur ajoute, c'est que la peinture ATTEINT L'ÉCRAN et n'est pas réécrite.
+    const m = await page.evaluate(() => {
+      const s = window.__BRAISES__.scene
+      const TILE = 16
+      let vus = 0
+      for (const [id, rec] of s.view.others) {
+        if (!rec?.sprite) continue
+        vus++
+        const b = rec.buffer.at(-1)
+        const sp = rec.sprite
+        const ecart = Math.hypot(sp.x - b.x * TILE, sp.y - b.y * TILE)
+        if (ecart > 0.5) {
+          return { id, ecartPx: ecart, teinté: sp.isTinted, teinte: sp.tintTopLeft >>> 0, largeur: sp.displayWidth, hauteur: sp.displayHeight, vus }
+        }
+      }
+      // LE COUP A PU ÊTRE POUR MOI : le sprite du joueur n'est pas dans `view.others`.
+      const p = s.registry.get('playerPos')
+      const sp = s.playerSprite
+      const ecart = Math.hypot(sp.x - p.x * TILE, sp.y - p.y * TILE)
+      if (ecart > 0.5) {
+        return { id: s.playerId, ecartPx: ecart, teinté: sp.isTinted, teinte: sp.tintTopLeft >>> 0, largeur: sp.displayWidth, hauteur: sp.displayHeight, vus }
+      }
+      return { vus, ecartPx: 0 }
+    })
+    await page.screenshot({ path: `${OUT}/encaissement.png` })
+
+    console.log(`\n── L’ENCAISSEMENT (${gel.corps} corps encaissent, ${gel.cloues} cloués) ──`)
+    if (!m || !m.ecartPx) {
+      console.log(`   ✗ aucun sprite déplacé (${m?.vus ?? 0} corps suivis) : le recul peint n’atteint pas l’écran`)
+    } else {
+      console.log(`   ✓ le corps est DÉPLACÉ de ${m.ecartPx.toFixed(1)} px (le recul peint, à l’opposé du frappeur)`)
+      console.log(`   ${m.teinté ? '✓' : '✗'} il est TEINTÉ (0x${m.teinte.toString(16)}) — et la teinte TIENT au-delà d’une image`)
+      console.log(`   sa taille peinte : ${m.largeur.toFixed(1)} × ${m.hauteur.toFixed(1)} px`)
+    }
+    console.log(`   capture : encaissement.png`)
+
+    return { ...gel, ...(m ?? {}), ...(tremble ?? {}) }
+  },
+
   async combat(page) {
     if (!dev) {
       console.log('\n(le combat exige le mode debug pour s’armer — relancer avec --dev)')

@@ -9,10 +9,12 @@ import {
   LIEU_RANG_H,
   MEMOIRE_VIERGE,
   opaciteDuSol,
+  TRAITS_ASPECT,
   vueDeLaBarre,
   type BarreHauteState,
   type MemoireDuLieu,
 } from './barre-haute'
+import { HEX } from './palette'
 
 /** L'horloge de jeu, réduite à ce que la barre en lit. */
 function temps(p: Partial<GameTime> = {}): GameTime {
@@ -39,6 +41,7 @@ function etat(p: Partial<BarreHauteState> = {}): BarreHauteState {
     lieu: undefined,
     ambiant: 14,
     ciel: null,
+    couvre: true,
     caractere: undefined,
     vent: undefined,
     now: 0,
@@ -226,9 +229,19 @@ describe('la barre haute — le ruban et le ciel', () => {
   it('l’icône dit le temps qu’il fait ici — soleil ou lune quand le ciel est dégagé', () => {
     expect(jouer(etat({ ciel: null, time: temps({ isNight: false }) })).vue.ico).toBe('soleil')
     expect(jouer(etat({ ciel: null, time: temps({ isNight: true }) })).vue.ico).toBe('lune')
-    for (const aspect of ['pluie', 'neige', 'orage', 'blizzard', 'brouillard', 'vent_de_cendre'] as const) {
+    // La liste vient du COMPILATEUR (`TRAITS_ASPECT: Record<MeteoAspect, …>`) : un aspect
+    // ajouté à la sim entre ici tout seul — plus d'énumération à la main qui prend du retard.
+    for (const aspect of Object.keys(TRAITS_ASPECT) as (keyof typeof TRAITS_ASPECT)[]) {
       expect(jouer(etat({ ciel: aspect })).vue.ico).toBe(aspect)
     }
+  })
+
+  it('l’icône s’ESTOMPE quand le front élu ne couvre pas encore ici — et jamais les astres', () => {
+    expect(jouer(etat({ ciel: 'pluie', couvre: false })).vue.icoOp).toBe('0.45')
+    expect(jouer(etat({ ciel: 'pluie', couvre: true })).vue.icoOp).toBe('1')
+    // `couvre` faux sans front élu : les astres restent pleins — l'estompe dit « le mur
+    // approche », pas « ciel dégagé ».
+    expect(jouer(etat({ ciel: null, couvre: false })).vue.icoOp).toBe('1')
   })
 })
 
@@ -294,6 +307,29 @@ describe('le sol de la barre haute', () => {
     // Le bas du texte est un peu plus mince que le haut de la barre, et jamais trop.
     expect(BARRE_ALPHA_MIN).toBeLessThan(opaciteDuSol(0))
     expect(BARRE_ALPHA_MIN).toBeGreaterThan(0.85)
+  })
+
+  it('LES ENCRES DE LA MÉTÉO passent AA sous le sol le plus mince — °C et icônes, à la source', () => {
+    // La garde `ENCRES` ci-dessus ne listait que l'heure et les noms : un réglage
+    // d'`encreDuFroid` ou d'un trait d'icône n'aurait fait rougir personne. On relit donc
+    // les encres LÀ OÙ ELLES VIVENT — la palette pour l'air (`encreDuFroid` : brûlant, doux,
+    // frais, gel) et `TRAITS_ASPECT` pour les six ciels — et on rejoue le même calcul.
+    const hexVersRgb = (h: string): [number, number, number] => [
+      parseInt(h.slice(1, 3), 16), parseInt(h.slice(3, 5), 16), parseInt(h.slice(5, 7), 16),
+    ]
+    const encresMeteo: Record<string, string> = {
+      'l’air brûlant': HEX.emberDeep,
+      'l’air doux': HEX.ember,
+      'l’air frais': HEX.body,
+      'l’air de gel': HEX.gel,
+    }
+    for (const [aspect, t] of Object.entries(TRAITS_ASPECT)) encresMeteo[`l’icône ${aspect}`] = t.teinte
+    for (const [nomFond, fond] of Object.entries(FONDS)) {
+      const dessous = sousLeSol(fond, BARRE_ALPHA_MIN)
+      for (const [nom, teinte] of Object.entries(encresMeteo)) {
+        expect(contraste(hexVersRgb(teinte), dessous), `${nom} (${teinte}) sur ${nomFond}`).toBeGreaterThan(4.5)
+      }
+    }
   })
 })
 

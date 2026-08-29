@@ -35,6 +35,7 @@ import {
   CREUX,
 } from '@ashes/sim'
 import type { ButteContexte } from './buttes'
+import { nappeDe, pCoeur, pFleur } from './flore-especes'
 
 export type PropKind =
   | 'conifer' | 'big_trunk' | 'stump' | 'pine' | 'larch' | 'burnt_trunk'
@@ -54,7 +55,14 @@ export interface PropInstance {
   oy: number
   scale: number // multiplicateur d'échelle (~0.7..1.0)
   mirror: boolean
-  variant: number // hash ∈ [0,1) pour choisir une VARIÉTÉ de texture (fleurs) ; ignoré si le prop n'en a qu'une
+  variant: number // hash ∈ [0,1) pour choisir une VARIÉTÉ de texture (cailloux) ; ignoré si le prop n'en a qu'une
+  /** L'ESPÈCE d'une fleur (indice `FLOWERS`), posée par les nappes de `flore-especes.ts` —
+   *  fixe à l'année (le calendrier ne décide que la visibilité, côté couche). Absente : la
+   *  variété retombe sur `variant`, le tirage uniforme d'avant. */
+  espece?: number
+  /** La FORCE de nappe de la tuile (`Nappe.force`) — `enFleur` en fait le « cœur d'abord » :
+   *  le cœur de la tache fleurit avant ses bords, et fane après eux. */
+  nappe?: number
 }
 
 export type SampleTerrain = (tx: number, ty: number) => number
@@ -178,7 +186,9 @@ export const BIOME_CLUTTER: Record<number, BiomeClutter> = {
   // proche. La lande : des boules de genévrier (low_bush) sur un sol caillouteux.
   [TERRAIN_WILLOW]: { density: 0.3, scale: 18, understory: false, props: ['bush', 'reed', 'grass_tuft'] },
   [TERRAIN_WET_MEADOW]: { density: 0.55, scale: 14, understory: false, props: ['grass_tuft', 'grass_tuft', 'reed', 'flower'] },
-  [TERRAIN_JUNIPER_HEATH]: { density: 0.42, scale: 14, understory: false, props: ['low_bush', 'low_bush', 'pebbles', 'grass_tuft'] },
+  // La bruyère des Pluies (calendrier floral, 2026-08-28) : un tirage de fleur — hors fenêtre
+  // il ne montre RIEN (la lande d'hiver se dénude), et les nappes le groupent en taches.
+  [TERRAIN_JUNIPER_HEATH]: { density: 0.42, scale: 14, understory: false, props: ['low_bush', 'low_bush', 'flower', 'pebbles', 'grass_tuft'] },
 }
 
 /**
@@ -264,9 +274,23 @@ function makePropKind(kind: PropKind, tx: number, ty: number, seed: number, slot
   }
 }
 
-function makeProp(cfg: BiomeClutter, tx: number, ty: number, seed: number, slot: number): PropInstance {
+function makeProp(cfg: BiomeClutter, terrain: number, tx: number, ty: number, seed: number, slot: number): PropInstance {
   const h1 = hash2(tx, ty, (seed ^ (0x1000 + slot)) | 0)
-  return makePropKind(pick(cfg.props, h1), tx, ty, seed, slot)
+  let kind = pick(cfg.props, h1)
+  // ═══ LES NAPPES FLORALES (flore-especes.ts) : là où le biome a une table, fleur et herbe
+  // s'ÉCHANGENT selon la force de la nappe — hors nappe la fleur tirée devient touffe, au cœur
+  // une part des touffes devient fleur. Le total de props ne bouge pas, il se redistribue ;
+  // et l'espèce posée ici est FIXE à l'année (la mémoire du décor y compte). ═══
+  if (kind === 'flower' || kind === 'grass_tuft') {
+    const nappe = nappeDe(terrain, tx, ty, seed)
+    if (nappe !== undefined) {
+      const u = hash2(tx, ty, (seed ^ (0x8000 + slot)) | 0)
+      if (kind === 'flower' && u > pFleur(nappe.force)) kind = 'grass_tuft'
+      else if (kind === 'grass_tuft' && u < pCoeur(nappe.force)) kind = 'flower'
+      if (kind === 'flower') return { ...makePropKind(kind, tx, ty, seed, slot), espece: nappe.espece, nappe: nappe.force }
+    }
+  }
+  return makePropKind(kind, tx, ty, seed, slot)
 }
 
 export function clutterAt(
@@ -333,8 +357,8 @@ export function clutterAt(
   )
   const u = hash2(tx, ty, (seed ^ 0x77aa1133) | 0)
   if (u < local) {
-    props.push(makeProp(cfg, tx, ty, seed, 0))
-    if (cfg.understory && u < local * 0.45) props.push(makeProp(cfg, tx, ty, seed, 1))
+    props.push(makeProp(cfg, terrain, tx, ty, seed, 0))
+    if (cfg.understory && u < local * 0.45) props.push(makeProp(cfg, terrain, tx, ty, seed, 1))
   }
   return props
 }

@@ -328,6 +328,17 @@ export const CONTENU = {
   PECHE_RAYON_RIVIERE: 2,
 
   /**
+   * LES PIERRES DU GUÉ (sel 'GUEP') — combien de blocs affleurent dans un passage à gué.
+   *
+   * Réglage de GÉNÉRATEUR : il se calibre en REGARDANT un gué, pas en jouant. Le gué est un
+   * carré de 7×7 tuiles de haut-fond (mesuré : 49/49 sur les seeds relevées) dont on retire la
+   * bordure — 25 tuiles éligibles. Cinq blocs y occupent **un cinquième** du passage : assez
+   * pour que la traversée SE DESSINE et qu'on louvoie, jamais assez pour la fermer (la garde
+   * de franchissement l'affirme, `zone-content.test.ts`).
+   */
+  GUE_PIERRES: 5,
+
+  /**
    * UN EMPLACEMENT DE VILLAGE : ce qu'il lui faut sous la main, et sur quel rayon.
    *
    * **CES SEUILS SONT COUPLÉS À `PAS_SEMIS`, et je l'avais oublié.** En divisant la densité de
@@ -728,10 +739,148 @@ export function placeZoneNodes(c: CarteZonee): ResourceNode[] {
   for (const g of glane) nodes.push(g)
   id += glane.length
 
+  // ── LES PIERRES DU GUÉ — après le glanage (il coucherait des branches sur l'eau), avant la
+  //    pêche (elle veut ses ids en queue). Un gué n'a ni arbre ni rocher : rien à glaner ici. ──
+  const gues = pierresDuGue(c, nodes, id)
+  for (const p of gues) nodes.push(p)
+  id += gues.length
+
   // ── LES COINS DE PÊCHE (spec `peche.md` P3-P5) — en QUEUE : aucun nœud d'avant ne bouge ──
   const coins = coinsDePeche(c, occupeesPlus(), id)
   for (const k of coins) nodes.push(k)
   return nodes
+}
+
+/**
+ * ═══ LES PIERRES DU GUÉ — le passage se lit par ce qu'on CONTOURNE ═══
+ *
+ * Le gué était un carré d'eau plus claire, et rien d'autre : l'interruption du cœur profond ne
+ * tenait qu'au canal bleu (contraste de luminance mesuré 1,29:1). Le client y posait cinq
+ * DALLES peintes — du décor, sans corps. Demande d'Alexis : *des nœuds de pierre, la même
+ * collision, immergés en partie.*
+ *
+ * Ce sont donc de VRAIS nœuds (mémoire du projet : « ajoute X » = objets de jeu réels), avec
+ * tout ce qu'un rocher porte déjà : boîte PLEINE TUILE (`blockHalfSub: 4`), l'art de socle à
+ * trois hauteurs (`tailleDeSocle`), un stock qui s'épuise à la pioche. Trois conséquences,
+ * toutes voulues :
+ *
+ *   ① **On louvoie.** Cinq tuiles murées sur 25 : la traversée cesse d'être une ligne droite,
+ *      et c'est ça qui la fait LIRE de loin — pas la teinte de l'eau.
+ *   ② **On peut les enlever.** Un rocher à stock nul cesse de bloquer : dégager son gué est un
+ *      chantier, payé en coups de pioche, et il rend de la pierre.
+ *   ③ **La bête les contourne aussi.** Aucun code de plus : `isBlockedAt` les voit.
+ *
+ * ⚠ LA TRAVERSÉE NE SE FERME JAMAIS. C'est la propriété qui compte, et elle est GARDÉE
+ * (`zone-content.test.ts`) plutôt que supposée : on ne pose une pierre que si le gué reste
+ * franchissable d'une rive à l'autre APRÈS l'avoir posée — vérifié par un parcours local sur
+ * la seule emprise du gué, donc quelques dizaines de tuiles, jamais un A* de carte.
+ *
+ * ⚠ **CETTE PASSE EST LA SEULE EXCEPTION À `terrainAdmet`, ET C'EST DÉLIBÉRÉ** : la table y
+ * refuse le `rock` sur le haut-fond (`n !== 'shallow_water'`), et elle a raison pour le SEMIS —
+ * un rocher tiré au hasard dans une rivière serait un accident. Un gué n'est pas un tirage :
+ * c'est un lieu, et ses pierres sont sa raison d'être. Bénéfice de bord : le semis commun ne
+ * peut donc poser aucun `rock` dans un gué, et le compte de la garde G2 est sans ambiguïté.
+ *
+ * ⚠ **`rock`, PAS `bloc`, ET LA GARDE A31 EN DIT LA RAISON** : *« le bloc n'existe QUE sur une
+ * butte »* est un invariant du monde réduit (`affleurements.test.ts`), et un gué de la vallée
+ * complète l'aurait rompu en silence. Les deux partagent de toute façon la boîte pleine tuile,
+ * l'art de socle et l'item rendu — ce qui les sépare est leur GÉOLOGIE, et un caillou de rivière
+ * n'est pas un bloc d'affleurement.
+ *
+ * En QUEUE de `placeZoneNodes`, après le glanage (sans quoi il coucherait des branches sur
+ * l'eau) : positionnel, sel neuf, aucun flux existant décalé.
+ */
+const GUE_NOM = 'le Gué'
+
+/** Les tuiles de l'emprise où l'on POSE LE PIED, une fois `murees` murées. Le gué est un carré
+ *  de haut-fond : ce qui n'est pas haut-fond est rive ou cœur profond, et ni l'une ni l'autre
+ *  n'est un pas de traversée. */
+function franchissable(
+  c: CarteZonee, z: { x: number; y: number; w: number; h: number }, murees: Set<number>,
+): boolean {
+  const { width, terrain } = c.map
+  // LES DEUX RIVES : le gué traverse son eau, on ne sait pas encore dans quel sens. On demande
+  // donc que les tuiles de haut-fond du BORD restent toutes joignables entre elles — c'est plus
+  // fort que « un chemin existe », et ça ne suppose aucun axe.
+  const dans = (tx: number, ty: number): boolean =>
+    tx >= z.x && ty >= z.y && tx < z.x + z.w && ty < z.y + z.h
+  const libre = (tx: number, ty: number): boolean =>
+    dans(tx, ty) && terrain[ty * width + tx] === TERRAIN_SHALLOW_WATER && !murees.has(ty * width + tx)
+
+  const bords: number[] = []
+  for (let ty = z.y; ty < z.y + z.h; ty++) {
+    for (let tx = z.x; tx < z.x + z.w; tx++) {
+      if (tx !== z.x && ty !== z.y && tx !== z.x + z.w - 1 && ty !== z.y + z.h - 1) continue
+      if (libre(tx, ty)) bords.push(ty * width + tx)
+    }
+  }
+  const depart = bords[0]
+  if (depart === undefined) return false
+
+  const vus = new Set<number>([depart])
+  const pile = [depart]
+  while (pile.length > 0) {
+    const i = pile.pop()!
+    const tx = i % width
+    const ty = (i - tx) / width
+    for (const [dx, dy] of [[1, 0], [-1, 0], [0, 1], [0, -1]] as const) {
+      const j = (ty + dy) * width + (tx + dx)
+      if (vus.has(j) || !libre(tx + dx, ty + dy)) continue
+      vus.add(j)
+      pile.push(j)
+    }
+  }
+  return bords.every((i) => vus.has(i))
+}
+
+function pierresDuGue(c: CarteZonee, nodes: readonly ResourceNode[], id: number): ResourceNode[] {
+  const { width, terrain } = c.map
+  const sel = (c.graphe.seed ^ 0x47554550) | 0 /* 'GUEP' */
+  const out: ResourceNode[] = []
+  const gues = c.map.zones.filter((z) => z.kind === undefined && z.name === GUE_NOM)
+  if (gues.length === 0) return out
+  // L'OCCUPATION, RESTREINTE AUX EMPRISES DE GUÉ — jamais le Set géant d'`occupeesPlus()`.
+  // Mesuré sur le plan complet : le Set de tous les nœuds coûte ~600 ms (8 % de
+  // `placeZoneNodes`) pour vérifier ~150 tuiles d'eau où, `terrainAdmet` refusant tout sur le
+  // haut-fond, il n'y a presque jamais personne. Un balayage O(N) qui ne retient que les tuiles
+  // des emprises rend le même service pour rien.
+  const occupees = new Set<number>()
+  for (const n of nodes) {
+    for (const z of gues) {
+      if (n.tx >= z.x && n.tx < z.x + z.w && n.ty >= z.y && n.ty < z.y + z.h) {
+        occupees.add(n.ty * width + n.tx)
+        break
+      }
+    }
+  }
+  for (const z of gues) {
+    // ÉLIGIBLES : le haut-fond de l'emprise, BORDURE EXCLUE — une pierre à la bouche du gué se
+    // lirait comme un caillou de rive, et elle mangerait l'entrée du passage.
+    const candidates: { i: number; cle: number }[] = []
+    for (let ty = z.y + 1; ty < z.y + z.h - 1; ty++) {
+      for (let tx = z.x + 1; tx < z.x + z.w - 1; tx++) {
+        const i = ty * width + tx
+        if (occupees.has(i) || c.rampe[i]) continue
+        if (terrain[i] !== TERRAIN_SHALLOW_WATER) continue
+        candidates.push({ i, cle: hash2(tx, ty, sel) })
+      }
+    }
+    // TIRAGE SANS REMISE, par clé de hash : cinq tuiles DISTINCTES par construction — le semis
+    // d'avant tirait cinq fois dans 25 cases et en superposait deux une fois sur deux (mesuré :
+    // 7 gués sur 16, 4,56 dalles distinctes pour 5 posées). Deux dalles plates l'une sur l'autre
+    // ne se voyaient pas ; deux ROCHERS pleine tuile, si.
+    candidates.sort((a, b) => a.cle - b.cle || a.i - b.i)
+    const murees = new Set<number>()
+    for (const { i } of candidates) {
+      if (murees.size >= CONTENU.GUE_PIERRES) break
+      murees.add(i)
+      if (!franchissable(c, z, murees)) { murees.delete(i); continue } // ① la traversée prime
+      const tx = i % width
+      const ty = (i - tx) / width
+      out.push({ id: id + out.length, type: 'rock', tx, ty, stock: NODE_DEFS.rock.stock, regrowAt: 0 })
+    }
+  }
+  return out
 }
 
 /**
