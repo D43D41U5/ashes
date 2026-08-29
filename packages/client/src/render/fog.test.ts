@@ -2,11 +2,28 @@
  * LES GARDES DU BROUILLARD — module pur, donc testable sans navigateur ni carte réelle.
  */
 import { describe, expect, it } from 'vitest'
-import { creerBrouillard, depackBrouillard, estVu, FOG_PAS, packBrouillard, partDecouverte, revele } from './fog'
+import { CENDRE, type WorldMap } from '@ashes/sim'
+import {
+  avanceeVue, creerBrouillard, depackBrouillard, estampilleCendre, estVu, FOG_PAS,
+  packBrouillard, partDecouverte, revele,
+} from './fog'
 
 /** Une vallée semée le lundi, et LA MÊME seed refondée le mardi : deux mondes, pas un. */
 const LUNDI = { seed: 2026, neA: 1_000_000 }
 const MARDI = { seed: 2026, neA: 2_000_000 }
+
+/** Une carte jouet dont CHAQUE tuile est revendiquée par la fosse 0, à coût constant —
+ *  de quoi éprouver l'estampille sans générer une vallée. */
+function carteAvecCendre(largeur: number, hauteur: number, cout = 5): WorldMap {
+  const N = largeur * hauteur
+  return {
+    width: largeur,
+    height: hauteur,
+    terrain: new Array<number>(N).fill(1),
+    zones: [],
+    cendreCout: new Array<number>(N).fill(cout * CENDRE.FOYERS_MAX + 0),
+  } as unknown as WorldMap
+}
 
 describe('le brouillard de guerre', () => {
   it('naît entièrement FERMÉ — au tick 0 on ne connaît rien', () => {
@@ -114,9 +131,64 @@ describe('le brouillard de guerre', () => {
     const b = creerBrouillard(600, 500)
     revele(b, 120, 140, 32)
     const texte = packBrouillard(b, LUNDI)
-    expect(texte.startsWith(`f1|${LUNDI.seed}|${LUNDI.neA}|`)).toBe(true)
+    expect(texte.startsWith(`f2|${LUNDI.seed}|${LUNDI.neA}|`)).toBe(true)
     // La garde de longueur porte sur la CHARGE, pas sur la chaîne entière : sans quoi tout
     // brouillard estampillé serait refusé, et la reprise perdrait sa carte à chaque fois.
     expect([...depackBrouillard(texte, LUNDI, 600, 500).vu]).toEqual([...b.vu])
+  })
+
+  // ── LE SAVOIR-CENDRE (décision d'Alexis, 2026-08-28) ──────────────────────────────────
+  // La carte montre la cendre TELLE QU'ON L'A VUE : chaque cellule vue retient l'avancée du
+  // foyer qui la revendiquait au moment du passage — et rien de plus.
+
+  it('l’estampille retient l’avancée VUE — et seulement sur les cellules du disque vu', () => {
+    const b = creerBrouillard(320, 320)
+    const map = carteAvecCendre(320, 320)
+    revele(b, 100, 100, 24)
+    expect(estampilleCendre(b, map, 100, 100, 24, [37.2])).toBe(true)
+    const cellule = Math.floor(100 / b.pas) * b.cols + Math.floor(100 / b.pas)
+    expect(avanceeVue(b, cellule)).toBeCloseTo(37.2, 1)
+    // Loin du disque : jamais estampillé — on ne sait pas ce qu'on n'a pas regardé.
+    const loin = Math.floor(300 / b.pas) * b.cols + Math.floor(300 / b.pas)
+    expect(avanceeVue(b, loin)).toBe(-1)
+  })
+
+  it('le savoir-cendre est MONOTONE — revenir devant un front gelé ne désapprend rien', () => {
+    const b = creerBrouillard(160, 160)
+    const map = carteAvecCendre(160, 160)
+    revele(b, 80, 80, 24)
+    estampilleCendre(b, map, 80, 80, 24, [50])
+    // Repasser avec une avancée MOINDRE (impossible en jeu, mais la garde est là) : rien ne bouge.
+    expect(estampilleCendre(b, map, 80, 80, 24, [20])).toBe(false)
+    const cellule = Math.floor(80 / b.pas) * b.cols + Math.floor(80 / b.pas)
+    expect(avanceeVue(b, cellule)).toBeCloseTo(50, 1)
+    // Et une avancée PLUS GRANDE s'apprend.
+    expect(estampilleCendre(b, map, 80, 80, 24, [51])).toBe(true)
+  })
+
+  it('une cellule NON VUE ne s’estampille pas — voir d’abord, savoir ensuite', () => {
+    const b = creerBrouillard(160, 160)
+    const map = carteAvecCendre(160, 160)
+    // Aucun `revele` : le disque est aveugle, l'estampille ne mord nulle part.
+    expect(estampilleCendre(b, map, 80, 80, 24, [50])).toBe(false)
+  })
+
+  it('le savoir-cendre se TASSE et se relit à l’identique (format f2)', () => {
+    const b = creerBrouillard(320, 320)
+    const map = carteAvecCendre(320, 320)
+    revele(b, 100, 100, 30)
+    estampilleCendre(b, map, 100, 100, 30, [123.4])
+    const relu = depackBrouillard(packBrouillard(b, LUNDI), LUNDI, 320, 320)
+    expect([...relu.cendreVue]).toEqual([...b.cendreVue])
+  })
+
+  it('un brouillard f1 (d’avant le savoir-cendre) se relit — la carte arpentée survit', () => {
+    const b = creerBrouillard(320, 320)
+    revele(b, 100, 100, 30)
+    // On refabrique la chaîne f1 telle que l'ancien code l'écrivait : mêmes trois segments.
+    const [, seed, neA, vu] = packBrouillard(b, LUNDI).split('|')
+    const relu = depackBrouillard(`f1|${seed}|${neA}|${vu}`, LUNDI, 320, 320)
+    expect([...relu.vu]).toEqual([...b.vu])
+    expect(relu.cendreVue.every((v) => v === 0)).toBe(true) // rien vu du front, honnêtement
   })
 })

@@ -82,7 +82,6 @@ const FATAL_DEPTH = LOADING_DEPTH + 2
 const DEBUG_DEPTH = FATAL_DEPTH + 1
 /** Pastille de POI sur la carte : plus petite et plus froide que le marqueur joueur, qui doit primer. */
 /** La texture du calque de brouillard : une cellule = un pixel, étirée en NEAREST. */
-const MAP_FOG_TEX = 'map-fog'
 const MAP_POI_RADIUS = 3
 const MAP_POI_FILL = 0xe8e0c8
 const MAP_POI_STROKE = 0x14141a
@@ -155,16 +154,16 @@ export class UIScene extends Phaser.Scene {
   private revealed = false
 
   // Carte plein écran (M) — visionneuse zoom/pan. Montée paresseusement (la
-  // texture `map-demo` n'existe qu'après le `ready` de WorldScene).
+  // texture `carte-savoir` n'existe qu'après le `ready` de WorldScene et son premier update).
   private mapRoot?: Phaser.GameObjects.Container
   private mapLayer!: Phaser.GameObjects.Container
+  /** L'image de la carte : `carte-savoir` (encre / grisé / vif — WorldScene la peint) en jeu,
+   *  `carte-lecture` (la vallée entière, vive) sous la levée debug. Le brouillard n'est plus
+   *  un calque : il est PEINT dans la texture, une seule vérité (décision 2026-08-28). */
   private mapImage!: Phaser.GameObjects.Image
-  /** Le calque de brouillard posé sur la carte (spec R19) — absent tant que la carte n'est pas montée. */
-  private mapFog?: Phaser.GameObjects.Image
-  /** La version de brouillard DÉJÀ peinte : on ne repeint que si la marche a découvert du neuf. */
+  /** La version de brouillard DÉJÀ lue : le libellé « ARPENTÉ » ne se recompte que si la
+   *  marche a découvert du neuf. */
   private mapFogVersion = -1
-  /** La texture CANVAS du brouillard — c'est ce type-là (et pas `Texture`) qui sait se rafraîchir. */
-  private mapFogTex?: Phaser.Textures.CanvasTexture
   /** L'état de « tout voir » DÉJÀ appliqué — basculer P doit repeindre, or `mapFogVersion`
    *  ne bouge pas quand on arme le mode debug (la marche n'a rien découvert). */
   private mapToutVu = false
@@ -436,9 +435,11 @@ export class UIScene extends Phaser.Scene {
 
     const texW = map.width * TILE_PX
     const texH = map.height * TILE_PX
-    // `map-demo` est bakée à 1 px/tuile (grande carte) → on l'étire à la taille monde
+    // `carte-savoir` est peinte à 1 px/tuile (grande carte) → on l'étire à la taille monde
     // (texW×texH) pour que le fit et le mapping curseur→tuile ci-dessous restent justes.
-    this.mapImage = this.add.image(0, 0, 'map-demo').setOrigin(0.5).setDisplaySize(texW, texH)
+    // (`map-demo` en repli : un monde d'avant l'art de carte reste lisible.)
+    const texCarte = this.textures.exists('carte-savoir') ? 'carte-savoir' : 'map-demo'
+    this.mapImage = this.add.image(0, 0, texCarte).setOrigin(0.5).setDisplaySize(texW, texH)
     this.mapTexW = texW
     this.mapTexH = texH
     // Ajuste la carte entière dans sa BOÎTE : entre la barre d'onglets et la ceinture, avec
@@ -460,26 +461,13 @@ export class UIScene extends Phaser.Scene {
 
     this.mapMarker = this.add.circle(0, 0, 5, 0xffd94a).setStrokeStyle(2, 0x14141a)
 
-    // LE BROUILLARD (spec R19) : un calque posé SUR le terrain et SOUS les pastilles — ce
-    // qu'on n'a pas arpenté est de l'encre. Une texture d'UNE cellule par pixel, étirée à la
-    // taille de la carte : le grossissement en NEAREST donne des carrés francs, la grammaire
-    // du jeu, et coûte 40 000 pixels au lieu de 2,5 millions.
-    const fog = getHud(this.registry, 'fog') ?? null
-    if (fog) {
-      if (this.textures.exists(MAP_FOG_TEX)) this.textures.remove(MAP_FOG_TEX)
-      const tex = this.textures.createCanvas(MAP_FOG_TEX, fog.cols, fog.rows)
-      if (tex) {
-        tex.setFilter(Phaser.Textures.FilterMode.NEAREST)
-        this.mapFogTex = tex
-      }
-      this.mapFog = this.add.image(0, 0, MAP_FOG_TEX).setOrigin(0.5).setDisplaySize(texW, texH)
-      this.mapFogVersion = -1 // force la première peinture
-    }
+    // LE BROUILLARD N'EST PLUS UN CALQUE : l'encre, le grisé et le vif sont PEINTS dans
+    // `carte-savoir` par WorldScene (une seule vérité, trois états — décision 2026-08-28).
+    this.mapFogVersion = -1 // force le premier recompte d'« ARPENTÉ »
 
     // Le marqueur joueur passe APRÈS les pastilles : il doit rester lisible par-dessus.
     this.mapLayer = this.add.container(W / 2, this.mapCenterY, [
       this.mapImage,
-      ...(this.mapFog ? [this.mapFog] : []),
       ...this.mapPoiDots.map((p) => p.dot),
       this.mapMarker,
     ])
@@ -619,49 +607,32 @@ export class UIScene extends Phaser.Scene {
     const tout = this.carteToutVoir()
     if (tout === this.mapToutVu) return
     this.mapToutVu = tout
-    this.mapFog?.setVisible(!tout)
+    // La levée ÉCHANGE la texture : `carte-lecture` (la vallée entière, vive) contre
+    // `carte-savoir` (encre / grisé / vif). Un affichage, jamais une écriture — le savoir
+    // du joueur n'est pas touché. `setTexture` reprend la taille du frame : on ré-étire.
+    if (this.textures.exists('carte-lecture') && this.textures.exists('carte-savoir')) {
+      this.mapImage.setTexture(tout ? 'carte-lecture' : 'carte-savoir')
+      this.mapImage.setDisplaySize(this.mapTexW, this.mapTexH)
+    }
     // Le compte « ARPENTÉ » et les pastilles se relisent : `mapFogVersion` ne bouge pas tout
     // seul ici (rien n'a été découvert), et sans ce forçage le libellé mentirait jusqu'au
-    // prochain pas. Un repeint coûte 40 000 pixels, une fois par bascule.
+    // prochain pas.
     this.mapFogVersion = -1
     this.mapPoiScale = 0
   }
 
   /**
-   * REPEINT LE BROUILLARD (spec R19) — et seulement si la marche a découvert du neuf.
+   * RECOMPTE L'« ARPENTÉ » (spec R19) — et seulement si la marche a découvert du neuf.
    *
-   * Une cellule non vue est de l'ENCRE OPAQUE : on ne devine rien de la forme du pays derrière.
-   * Une cellule vue est transparente : le terrain déjà baké transparaît tel quel. Il n'y a
-   * volontairement pas de troisième état (« vu mais pas en vue ») : la carte dit ce qu'on a
-   * arpenté, pas ce qu'on surveille — ce serait une autre promesse, et une autre spec.
+   * La PEINTURE du brouillard ne vit plus ici : l'encre du jamais-vu, le grisé de la mémoire
+   * et le vif du disque de vue sont trois états d'UNE texture (`carte-savoir`), peinte par
+   * WorldScene qui tient le savoir (décision d'Alexis, 2026-08-28). Ne reste que le libellé.
    */
   private refreshMapFog(): void {
     const fog = getHud(this.registry, 'fog')
     const version = getHud(this.registry, 'fogVersion') ?? 0
-    if (!fog || !this.mapFog || version === this.mapFogVersion) return
+    if (!fog || version === this.mapFogVersion) return
     this.mapFogVersion = version
-    const tex = this.mapFogTex
-    if (!tex) return
-    // Levée debug : le calque est caché (`syncCarteToutVoir`), donc on ne peint pas 40 000
-    // pixels qu'on ne montre pas. La bascule remet `mapFogVersion` à -1, donc le retour au
-    // jeu repeint un brouillard à jour — l'économie ne peut pas laisser une texture périmée.
-    if (!this.mapToutVu) {
-      const src = tex.getSourceImage() as HTMLCanvasElement
-      const ctx = src.getContext('2d')
-      if (!ctx) return
-      const img = ctx.createImageData(fog.cols, fog.rows)
-      for (let i = 0; i < fog.vu.length; i++) {
-        const k = i * 4
-        // L'encre de la palette (#14141a) : le brouillard est la MÊME matière que les cadres
-        // et les contours du jeu, pas un gris neutre venu d'ailleurs.
-        img.data[k] = 0x14
-        img.data[k + 1] = 0x14
-        img.data[k + 2] = 0x1a
-        img.data[k + 3] = fog.vu[i] ? 0 : 255
-      }
-      ctx.putImageData(img, 0, 0)
-      tex.refresh()
-    }
 
     // Et on le DIT. Au premier jour, « ARPENTÉ : 0 % » explique le noir au lieu de le subir ;
     // plus tard, le chiffre qui monte est une raison de sortir à lui tout seul.
@@ -1042,11 +1013,11 @@ export class UIScene extends Phaser.Scene {
     this.pauseMenu.setVisible(Boolean(getHud(this.registry, 'menuOpen')))
 
     // LA CARTE (onglet CARTE, ouvert à M) : montée à la première ouverture, puis basculée.
-    // Le BROUILLARD doit être publié À CE MOMENT-LÀ : `ensureMapOverlay` ne monte son calque
-    // qu'une fois, et sans lui la carte serait offerte entière — l'exact contraire de R19.
+    // On attend `carte-savoir` (peinte par WorldScene — l'encre du brouillard est DEDANS) :
+    // monter sur le bake nu offrirait la carte entière, l'exact contraire de R19.
     const mapData = getHud(this.registry, 'mapData')
     const mapOpen = Boolean(getHud(this.registry, 'mapOpen'))
-    if (mapOpen && mapData && getHud(this.registry, 'fog') && this.textures.exists('map-demo')) {
+    if (mapOpen && mapData && getHud(this.registry, 'fog') && this.textures.exists('carte-savoir')) {
       this.ensureMapOverlay(mapData)
     }
     if (this.mapRoot) {

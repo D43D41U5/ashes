@@ -165,6 +165,7 @@ import { champLisiere, poidsLisiere, LISIERE_MAX, LISIERE_PORTEE } from '../rend
 import {
   creerBrouillard,
   depackBrouillard,
+  estampilleCendre,
   FOG_RAYON_TUILES,
   loadFog,
   packBrouillard,
@@ -173,6 +174,8 @@ import {
   type Brouillard,
   type IdentiteMonde,
 } from '../render/fog'
+import { peindreCarteArt, type CarteArt } from '../render/carte-art'
+import { cellulesDuDisque, peindreSavoirRegion } from '../render/carte-savoir'
 import { eauPechable, estUnCoinDePeche, porteDeLEau, FISH_SPECIES, niveauDEau, torcheVive, partDeFlamme, clarteSurSoiAt, NUIT, MONSTER_DEFS, POI_CHARGES, TERRAIN_DEEP_WATER, TERRAIN_SHALLOW_WATER, CREUX, TERRAINS_BOISES_MASSIF, ventForceAt, VENT, type EtatVent } from '@ashes/sim'
 
 /** L'assombrissement du sol au plafond de profondeur (§2quater R42) : au cœur d'un massif,
@@ -478,6 +481,19 @@ export class WorldScene extends Phaser.Scene {
   private worldReady = false
   /** Ce que ce joueur a ARPENTÉ (spec R19). Vit côté client : aucune règle n'en dépend. */
   private fog?: Brouillard
+  /** L'ART DE LA CARTE (onglet M) : la paire vive/grise dérivée du bake — bâtie une fois,
+   *  dès que `solCouleurs` et le brouillard existent (voir `ensureCarteSavoir`). */
+  private carteArt?: CarteArt
+  /** La texture-canvas `carte-savoir` (1 px/tuile) et son tampon — l'image de l'onglet M. */
+  private carteSavoirTex?: Phaser.Textures.CanvasTexture
+  private carteSavoirImg?: ImageData
+  /** Le canvas a changé sans être versé au GPU — versé au prochain update si la carte est
+   *  ouverte (`refresh()` coûte un upload entier : on ne paie que devant témoin). */
+  private carteSale = false
+  /** La cellule de brouillard du joueur à la dernière peinture — le disque de VUE la suit. */
+  private carteCellule = -1
+  /** Les âges de foyer déjà estampillés (au dixième) — l'estampille ne repasse que si ça bouge. */
+  private carteAgesVus = ''
   /** Les étapes de montage du monde qui restent à jouer — une par frame (voir `onReady`).
    *  Non vide ⇒ le monde est en train de naître : `update` ne fait QUE le monter. */
   private buildQueue: [phase: string, run: () => void][] = []
@@ -1406,10 +1422,47 @@ export class WorldScene extends Phaser.Scene {
     this.reflets?.begin()
     // LE BROUILLARD SE LÈVE SOUS LES PAS (spec worldgen R19). On dévoile autour de la position
     // PRÉDITE (celle qu'on voit, pas celle du dernier snapshot : le brouillard suit l'œil).
-    // `revele` ne rend `true` que si du neuf est apparu — on ne prévient donc l'écran de carte
-    // que dans ce cas, au lieu de le faire repeindre à chaque frame pour rien.
-    if (this.fog && revele(this.fog, this.predicted.x, this.predicted.y, FOG_RAYON_TUILES)) {
-      setHud(this.registry, 'fogVersion', (getHud(this.registry, 'fogVersion') ?? 0) + 1)
+    // Et le SAVOIR-CENDRE s'estampille du même pas (décision 2026-08-28) : chaque cellule du
+    // disque retient l'avancée du front telle qu'on la VOIT — la carte la redérive, elle ne
+    // montre jamais un front qu'on n'a pas regardé avancer.
+    if (this.fog) {
+      const neuf = revele(this.fog, this.predicted.x, this.predicted.y, FOG_RAYON_TUILES)
+      this.ensureCarteSavoir()
+      // L'estampille ne repasse que si quelque chose a PU changer : du neuf sous les pas, un
+      // changement de cellule (on revient sur un savoir plus vieux que le front), ou des âges
+      // de foyer qui ont bougé (au dixième — la maille du recuit des pavés).
+      const cellule =
+        Math.floor(this.predicted.y / this.fog.pas) * this.fog.cols + Math.floor(this.predicted.x / this.fog.pas)
+      const ages = this.cendreAge.map((a) => Math.round(a * 10)).join(',')
+      let su = false
+      if (neuf || cellule !== this.carteCellule || ages !== this.carteAgesVus) {
+        su = estampilleCendre(
+          this.fog, this.map, this.predicted.x, this.predicted.y, FOG_RAYON_TUILES,
+          avanceesDepuisAges(this.cendreAge, this.cendreAge.length),
+        )
+        this.carteAgesVus = ages
+      }
+      if (neuf || su) {
+        setHud(this.registry, 'fogVersion', (getHud(this.registry, 'fogVersion') ?? 0) + 1)
+      }
+      // LA CARTE SE REPEINT PAR DISQUES : celui d'ici quand le savoir a changé, et l'ancien
+      // quand le disque de VUE a bougé de cellule (ce qu'on ne voit plus se grise derrière soi).
+      if (this.carteArt) {
+        if (neuf || su || cellule !== this.carteCellule) {
+          this.peindreCarteDisque(this.predicted.x, this.predicted.y, FOG_RAYON_TUILES)
+          if (this.carteCellule >= 0 && cellule !== this.carteCellule) {
+            const ox = (this.carteCellule % this.fog.cols + 0.5) * this.fog.pas
+            const oy = (Math.floor(this.carteCellule / this.fog.cols) + 0.5) * this.fog.pas
+            this.peindreCarteDisque(ox, oy, FOG_RAYON_TUILES)
+          }
+          this.carteCellule = cellule
+        }
+        // Le versement GPU ne se paie que devant témoin : la carte ouverte.
+        if (this.carteSale && this.carteSavoirTex && Boolean(getHud(this.registry, 'mapOpen'))) {
+          this.carteSavoirTex.refresh()
+          this.carteSale = false
+        }
+      }
     }
     // LE MENU PAUSE (ESC) : quand `menuOpen` bascule (par ESC ou le bouton REPRENDRE), on
     // fige ou reprend l'hôte. Piloté en niveau (sur le changement), pas à chaque frame.
@@ -3137,8 +3190,17 @@ export class WorldScene extends Phaser.Scene {
         const rayon = revealRadiusOf(event.kind)
         const lieu = this.map.zones[event.poiId]
         if (rayon > 0 && lieu && this.fog) {
-          if (revele(this.fog, lieu.x + lieu.w / 2, lieu.y + lieu.h / 2, rayon)) {
+          const lx = lieu.x + lieu.w / 2
+          const ly = lieu.y + lieu.h / 2
+          const neuf = revele(this.fog, lx, ly, rayon)
+          // Le savoir-cendre du même rayon : ce qu'un monument montre, la carte le retient.
+          const su = estampilleCendre(
+            this.fog, this.map, lx, ly, rayon,
+            avanceesDepuisAges(this.cendreAge, this.cendreAge.length),
+          )
+          if (neuf || su) {
             setHud(this.registry, 'fogVersion', (getHud(this.registry, 'fogVersion') ?? 0) + 1)
+            this.peindreCarteDisque(lx, ly, rayon)
           }
         }
       } else if (event.type === 'poi_first_visit' && event.byEntityId === this.playerId) {
@@ -3549,6 +3611,66 @@ export class WorldScene extends Phaser.Scene {
 
   private sendAction(action: PlayerAction): void {
     this.send({ type: 'action', action })
+  }
+
+  /**
+   * ═══ L'ÉCRAN CARTE (onglet M) — bâti UNE fois, dès que ses deux sources existent ═══
+   *
+   * `carte-lecture` : la matière VIVE entière (`carte-art`), statique — c'est elle que la levée
+   * debug affiche. `carte-savoir` : le canvas dynamique aux trois états (encre / grisé / vif,
+   * décision d'Alexis 2026-08-28), repeint par disques au fil de la marche. Les deux vivent ici
+   * et non dans UIScene : c'est WorldScene qui tient le brouillard, les âges de cendre et les
+   * couleurs du bake — UIScene ne fait qu'afficher des textures par clé.
+   */
+  private ensureCarteSavoir(): void {
+    if (this.carteArt || !this.fog || !this.solCouleurs) return
+    this.carteArt = peindreCarteArt(this.map, this.solCouleurs)
+    const { width, height } = this.map
+    for (const cle of ['carte-lecture', 'carte-savoir']) {
+      if (this.textures.exists(cle)) this.textures.remove(cle)
+    }
+    const lecture = this.textures.createCanvas('carte-lecture', width, height)
+    if (lecture) {
+      lecture.setFilter(Phaser.Textures.FilterMode.NEAREST)
+      const img = lecture.context.createImageData(width, height)
+      img.data.set(this.carteArt.vive)
+      lecture.context.putImageData(img, 0, 0)
+      lecture.refresh()
+    }
+    const savoir = this.textures.createCanvas('carte-savoir', width, height)
+    if (savoir) {
+      savoir.setFilter(Phaser.Textures.FilterMode.NEAREST)
+      this.carteSavoirTex = savoir
+      this.carteSavoirImg = savoir.context.createImageData(width, height)
+      // La première peinture couvre TOUT : l'encre du jamais-vu, et le savoir relu de la
+      // sauvegarde (la carte arpentée d'hier se rouvre grisée, sa cendre telle que vue).
+      this.peindreCarteRegion(0, 0, this.fog.cols - 1, this.fog.rows - 1)
+    }
+  }
+
+  /** Repeint une RÉGION de cellules du canvas `carte-savoir` (bornes incluses). */
+  private peindreCarteRegion(cx0: number, cy0: number, cx1: number, cy1: number): void {
+    const fog = this.fog
+    if (!fog || !this.carteArt || !this.carteSavoirTex || !this.carteSavoirImg) return
+    const joueur = this.worldReady ? { x: this.predicted.x, y: this.predicted.y } : null
+    peindreSavoirRegion(
+      this.carteSavoirImg.data, this.carteArt, this.map, fog, this.worldSeed,
+      joueur, FOG_RAYON_TUILES, cx0, cy0, cx1, cy1,
+    )
+    const x = Math.max(0, cx0) * fog.pas
+    const y = Math.max(0, cy0) * fog.pas
+    const w = Math.min(this.map.width, (Math.min(fog.cols - 1, cx1) + 1) * fog.pas) - x
+    const h = Math.min(this.map.height, (Math.min(fog.rows - 1, cy1) + 1) * fog.pas) - y
+    if (w <= 0 || h <= 0) return
+    this.carteSavoirTex.context.putImageData(this.carteSavoirImg, 0, 0, x, y, w, h)
+    this.carteSale = true
+  }
+
+  /** Repeint le disque de cellules autour d'un point en tuiles. */
+  private peindreCarteDisque(tuileX: number, tuileY: number, rayonTuiles: number): void {
+    if (!this.fog) return
+    const r = cellulesDuDisque(this.fog, tuileX, tuileY, rayonTuiles)
+    this.peindreCarteRegion(r.cx0, r.cy0, r.cx1, r.cy1)
   }
 
   /** Bake la carte statique en une texture (R8) — API generateTexture éprouvée dans Manif.
