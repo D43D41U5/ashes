@@ -123,7 +123,8 @@ export interface Entity {
   gait: 'still' | 'sneak' | 'walk' | 'sprint'
   /**
    * À BOUT DE SOUFFLE — le verrou d'hystérésis de la course (spec combat R1ter). Posé
-   * quand le sprint vide la barre, levé seulement à `SPRINT_RECOVER_STAMINA`. Sans lui,
+   * quand le sprint vide la barre, levé seulement au quart du plafond courant
+   * (`SPRINT_RECOVER_FRACTION` — dérivé depuis que la faim plafonne le max, 2026-08-29). Sans lui,
    * refuser la course à 0 la rend au tick suivant (l'allure retombe à `walk`, la régén
    * crédite) et l'avatar oscille sprint/marche à 10 Hz — mesuré, il courait encore une
    * tuile sur deux, indéfiniment. Absent = frais : un booléen optionnel ne salit le
@@ -858,7 +859,7 @@ export function speedScaleFor(
   // C'est aussi ce qui abaisse enfin la moyenne de la course en dents de scie sous celle
   // du loup (R1ter, arbitrage laissé ouvert) : ce n'est pas le rapport cyclique qu'on
   // corrige, c'est la vitesse de sa moitié basse. Le verrou `exhausted` porte déjà son
-  // hystérésis — il ne se lève qu'à `SPRINT_RECOVER_STAMINA`.
+  // hystérésis — il ne se lève qu'au quart du plafond (`SPRINT_RECOVER_FRACTION`).
   if (entity.exhausted === true) scale *= COMBAT.WINDED_SPEED
   const ratio = carryRatio(entity.inventory)
   const tier = carryTier(ratio)
@@ -897,7 +898,7 @@ export function speedScaleFor(
   // c'est le plus mauvais des choix. La parade tient en un geste — s'arrêter, se
   // relever, bander, décocher — et c'est exactement le stop-and-go de chasse C1.
   const sneaking = (input.sneak ?? false) && !blocking && !(input.drawing ?? false)
-  // À BOUT DE SOUFFLE, ON MARCHE — et on le reste jusqu'à `SPRINT_RECOVER_STAMINA`
+  // À BOUT DE SOUFFLE, ON MARCHE — et on le reste jusqu'au quart du plafond (`SPRINT_RECOVER_FRACTION`)
   // (R1ter). `stamina > 0` seul rendait la course DÈS le premier point regagné, d'où une
   // oscillation sprint/marche à 10 Hz qui laissait fuir à 5 t/s pour toujours.
   const sprinting =

@@ -4709,11 +4709,30 @@ export const COMBAT = {
   BLOCK_STAMINA_BASE: 10,
   STAMINA_REGEN_IDLE_PER_S: 10,
   STAMINA_REGEN_MOVING_PER_S: 5,
-  /** Modulateurs de régén : bien nourri (faim > `FED_REGEN_HUNGER`) / affamé (faim 0). */
+  /** Bien nourri (faim > `FED_REGEN_HUNGER`), le souffle revient plus vite. L'ancien malus
+   *  d'affamé (`STARVED_REGEN_MALUS`, régén ×0,5 à faim 0) est REMPLACÉ par le plafond
+   *  `STARVED_STAMINA_CAP` (2026-08-29) : une jauge visiblement raccourcie se LIT, une
+   *  régén molle se subit sans comprendre. */
   FED_REGEN_BONUS: 1.25,
-  STARVED_REGEN_MALUS: 0.5,
   /** Au-dessus de cette faim, le souffle revient plus vite (`FED_REGEN_BONUS`). */
   FED_REGEN_HUNGER: 70,
+  /**
+   * LA FAIM PLAFONNE LE SOUFFLE (décision d'Alexis, 2026-08-29 — Q2 du brainstorm
+   * faim/froid/endurance) : sous `STAMINA_CAP_HUNGER` de faim, le MAX d'endurance descend
+   * en pente continue de 100 vers ce plancher à faim 0 (`staminaCapFor`, combat.ts). Le
+   * corps affamé ÉCONOMISE — l'idée d'Alexis : une jauge plus courte se refait plus vite
+   * et facture moins de ventre (`STAMINA_REGEN_HUNGER_COST` porte sur les points crédités).
+   *
+   * 40, et JAMAIS sous le coût du coup le plus cher (`WEAPON_PROFILES.*.light.stamina` —
+   * garde exhaustive dans combat.test.ts) : un affamé se bat encore — deux coups et une
+   * foulée, pas zéro. Un plancher sous le coût d'attaque serait une spirale de mort pour
+   * qui est affamé ET chassé.
+   */
+  STARVED_STAMINA_CAP: 40,
+  /** En dessous de cette faim, le plafond descend (au-dessus : 100 plein). Aligné sur
+   *  `HP_REGEN_HUNGER_MIN` : à 50 de faim le corps commence à économiser — il ne cicatrise
+   *  plus, et son souffle raccourcit. */
+  STAMINA_CAP_HUNGER: 50,
   /**
    * ON NE CICATRISE PAS LE VENTRE VIDE : en-dessous de cette faim, les PV ne remontent
    * plus du tout. Distinct de `FED_REGEN_HUNGER` (qui module le SOUFFLE, pas les PV) —
@@ -4751,11 +4770,15 @@ export const COMBAT = {
    * verrou `wary`) : **un seuil qui commande un mouvement veut son hystérésis**. Le
    * verrou vit dans `Entity.exhausted` ; il se pose à 0 et ne se lève qu'ici.
    *
-   * 25 : ~2,5 s de récupération à l'arrêt (10/s), ~4 s en marchant. Assez pour qu'un
-   * essoufflement se PAIE — on ne repart pas en courant, on souffle d'abord — sans clouer
-   * le joueur au sol le temps d'une barre entière. À calibrer en playtest.
+   * LE SEUIL EST UNE FRACTION DU PLAFOND COURANT, pas un compte absolu (2026-08-29, depuis
+   * que la faim plafonne le max — `staminaCapFor`) : un quart. À plafond plein c'est
+   * l'ancien `SPRINT_RECOVER_STAMINA: 25` au bit près — ~2,5 s de récupération à l'arrêt
+   * (10/s), ~4 s en marchant : assez pour qu'un essoufflement se PAIE sans clouer le joueur
+   * au sol. Et l'affamé (plafond 40) ressort à 10 : un 25 absolu sous un plafond qui peut
+   * passer dessous aurait rendu l'épuisement PERMANENT — un seuil dérivé ne peut pas se
+   * faire enjamber par le réglage d'à côté. À calibrer en playtest.
    */
-  SPRINT_RECOVER_STAMINA: 25,
+  SPRINT_RECOVER_FRACTION: 0.25,
   /**
    * ═══ À BOUT DE SOUFFLE, ON MARCHE MOINS VITE (écart de spec R1, soldé le 2026-08-27) ═══
    *
@@ -4783,8 +4806,8 @@ export const COMBAT = {
    * promesse de la spec qu'on tenait enfin, pas par un nombre inventé pour l'occasion.
    *
    * 0,75 et non 0,5 : essoufflé on TRAÎNE, on n'est pas cloué. La fuite reste possible, elle
-   * cesse d'être gagnante. Le verrou se lève à `SPRINT_RECOVER_STAMINA`, comme le reste —
-   * un seuil qui commande un mouvement veut son hystérésis, et il l'a déjà.
+   * cesse d'être gagnante. Le verrou se lève au quart du plafond (`SPRINT_RECOVER_FRACTION`),
+   * comme le reste — un seuil qui commande un mouvement veut son hystérésis, et il l'a déjà.
    */
   WINDED_SPEED: 0.75,
   /** UNE PLAIE NON SOIGNÉE FREINE LA GUÉRISON (V1-14, GDD §6bis) — c'est ce qui fait

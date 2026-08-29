@@ -1303,6 +1303,12 @@ export function advanceCombat(state: SimState): void {
   // morte, pas le loup. On teste `gait`, pas `moved` : c'est l'allure du tick, elle vaut
   // aussi pour le sprint stoppé net, et elle voyage déjà dans le snapshot.
   for (const entity of state.entities) {
+    // LE PLAFOND DE LA FAIM (2026-08-29, `staminaCapFor`) se pose AVANT le verrou et les
+    // sorties précoces : un bloqueur ou un coureur affamé voit sa jauge rognée aussi, pas
+    // seulement l'homme à l'arrêt. Les monstres n'ont jamais faim (jauge à 100, jamais
+    // drainée) → plafond plein, comme partout ailleurs dans cette boucle.
+    const cap = monsterIds.has(entity.id) ? 100 : staminaCapFor(entity.hunger)
+    if (entity.stamina > cap) entity.stamina = cap
     // LE VERROU D'ÉPUISEMENT SUIT LA BARRE, PAS SA CAUSE (R1ter) : il se pose dès qu'elle
     // touche 0, qu'on l'ait vidée en courant, en frappant ou en parant. Le poser dans la
     // seule branche de sprint laissait un trou — qui arrivait à 0 autrement gardait droit
@@ -1318,12 +1324,14 @@ export function advanceCombat(state: SimState): void {
     perS *= coldStaminaRegenFactor(entity.temperature)
     perS *= staminaPoiFactor(state, entity.x, entity.y) // le Tarn est une halte
     if (!monsterIds.has(entity.id)) {
+      // L'AFFAMÉ N'A PLUS DE MALUS DE RÉGÉN (2026-08-29) : son PLAFOND raccourcit à la
+      // place (`cap` ci-dessus) — petite jauge, recharge pleine vitesse, et moins de
+      // ventre facturé puisque le coût porte sur les points crédités. Le corps économise.
       if (entity.hunger > COMBAT.FED_REGEN_HUNGER) perS *= COMBAT.FED_REGEN_BONUS
-      else if (entity.hunger <= 0) perS *= COMBAT.STARVED_REGEN_MALUS
       if (state.tick < entity.exhaustedUntil) perS *= COMBAT.EXHAUSTED_REGEN_FACTOR
     }
     const avant = entity.stamina
-    entity.stamina = Math.min(100, entity.stamina + perS / BALANCE.TICK_RATE_HZ)
+    entity.stamina = Math.min(cap, entity.stamina + perS / BALANCE.TICK_RATE_HZ)
     // LE SOUFFLE SE PAIE EN VENTRE (décision Alexis, 2026-08-01, spec R2). Ce qu'on
     // facture est ce qui a été RÉELLEMENT crédité — après le clamp à 100 — sinon une
     // barre déjà pleine draine la faim à l'arrêt. Les monstres n'ont pas faim : leur
@@ -1336,9 +1344,26 @@ export function advanceCombat(state: SimState): void {
     // boucle de mouvement ; le rendre au premier point regagné ferait osciller la course à
     // 10 Hz (mesuré : une tuile sur deux courue, indéfiniment). `delete` plutôt que
     // `= false` : le champ est optionnel, un frais ne le porte pas dans le snapshot.
-    if (entity.exhausted && entity.stamina >= COMBAT.SPRINT_RECOVER_STAMINA) delete entity.exhausted
+    // AU QUART DU PLAFOND COURANT, pas à un compte absolu (2026-08-29) : l'ancien 25 écrit
+    // en dur, sous un plafond d'affamé qui peut passer dessous, rendrait l'épuisement
+    // PERMANENT — le seuil se dérive du max, il ne peut pas se faire enjamber.
+    if (entity.exhausted && entity.stamina >= COMBAT.SPRINT_RECOVER_FRACTION * cap) delete entity.exhausted
   }
 
   // Un cadavre marqué (levée à venir) ne décante pas avant sa levée.
   state.corpses = state.corpses.filter((c) => c.risesAt !== undefined || c.decayAt > state.tick)
+}
+
+/**
+ * LE PLAFOND DU SOUFFLE — la faim plafonne le MAX d'endurance (décision d'Alexis,
+ * 2026-08-29, remplace l'ancien `STARVED_REGEN_MALUS`). 100 au-dessus de
+ * `STAMINA_CAP_HUNGER`, PENTE CONTINUE vers `STARVED_STAMINA_CAP` à faim 0 — jamais un
+ * seuil. Le corps affamé économise : jauge plus courte, recharge pleine vitesse, moins de
+ * ventre facturé. Pur ; le HUD le lit aussi (le plafond se VOIT sur la jauge — la zone
+ * condamnée et le seuil de reprise en descendent, aucune seconde règle côté client).
+ */
+export function staminaCapFor(hunger: number): number {
+  if (hunger >= COMBAT.STAMINA_CAP_HUNGER) return 100
+  const u = (hunger > 0 ? hunger : 0) / COMBAT.STAMINA_CAP_HUNGER
+  return COMBAT.STARVED_STAMINA_CAP + (100 - COMBAT.STARVED_STAMINA_CAP) * u
 }

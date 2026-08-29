@@ -2,7 +2,7 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import { BALANCE, COMBAT, MONSTER_DEFS, SLOTS, TEMPERATURE, TERRAIN_GRASS, TERRAIN_ROCK, WEAPON_DAMAGE, WEAPON_PROFILES, type MonsterType } from './balance'
 import { drainEvents, type SimEvent } from './events'
 import { countOf, inventoryOf, makeInventory, stackSize, type Inventory, type ItemBag, type ItemId } from './items'
-import { die, startAttack, weaponDamage } from './combat'
+import { die, staminaCapFor, startAttack, weaponDamage } from './combat'
 import { createEmptyMap } from './map'
 import { spawnMonster } from './monsters'
 import { foundNpcVillage } from './worldgen'
@@ -88,16 +88,26 @@ describe('l’endurance (A1)', () => {
     const reasons = drainEvents(sim).flatMap((e) => (e.type === 'action_rejected' ? [e.reason] : []))
     expect(reasons).toContain('à bout de souffle')
 
-    // Régén : repu (>70) vs affamé (0), à l'arrêt.
+    // Régén : repu (>70) vs normal vs affamé (0), à l'arrêt. L'AFFAMÉ N'A PLUS DE MALUS
+    // DE TAUX depuis le 2026-08-29 : sa punition est le PLAFOND (`staminaCapFor`, R2ter) —
+    // il recharge à pleine vitesse une jauge raccourcie. On le mesure donc LOIN de son
+    // plafond (20 < 40), sinon le clamp mangerait le gain et on comparerait deux règles.
     const fed = spawnEntity(sim, 20, 20)
+    const normal = spawnEntity(sim, 30, 30)
     const starved = spawnEntity(sim, 25, 25)
     entity(sim, fed).stamina = 50
-    entity(sim, starved).stamina = 50
+    entity(sim, normal).stamina = 20
+    entity(sim, normal).hunger = 60 // ni bonus (≤70) ni plafond mordant (≥50)
+    entity(sim, starved).stamina = 20
     entity(sim, starved).hunger = 0
     tick(sim)
     const fedGain = entity(sim, fed).stamina - 50
-    const starvedGain = entity(sim, starved).stamina - 50
-    expect(fedGain / starvedGain).toBeCloseTo(COMBAT.FED_REGEN_BONUS / COMBAT.STARVED_REGEN_MALUS, 2)
+    const normalGain = entity(sim, normal).stamina - 20
+    const starvedGain = entity(sim, starved).stamina - 20
+    expect(fedGain / starvedGain).toBeCloseTo(COMBAT.FED_REGEN_BONUS, 2)
+    // Précision 3, pas 6 : les deux corps dérivent d'un rien de température en des points
+    // différents du même monde — c'est le TAUX qu'on affirme égal, pas le bit.
+    expect(starvedGain).toBeCloseTo(normalGain, 3) // même taux : la faim plafonne, elle ne freine plus
   })
 
   it('le sprint accélère ×1.5 et draine', () => {
@@ -168,8 +178,8 @@ describe('l’endurance (A1)', () => {
    *
    * C'est la quatrième fois que ce dépôt l'apprend (cohésion et séparation dans
    * `faune.ts`, le verrou `wary`) : **un seuil qui commande un mouvement veut son
-   * hystérésis**. On sort d'épuisement à `SPRINT_RECOVER_STAMINA`, pas au premier point
-   * regagné.
+   * hystérésis**. On sort d'épuisement au quart du plafond (`SPRINT_RECOVER_FRACTION`),
+   * pas au premier point regagné.
    */
   it('à 0 d’endurance, SHIFT tenu ne fait plus que MARCHER — aucune oscillation', () => {
     const sim = createSim(5, { map: createEmptyMap(200, 200, TERRAIN_GRASS) })
@@ -192,7 +202,7 @@ describe('l’endurance (A1)', () => {
     }
     if (courante > 0) salves.push(courante)
 
-    // L'ÉPUISÉ RESSORT : passé `SPRINT_RECOVER_STAMINA` il recourt — sans quoi ce test
+    // L'ÉPUISÉ RESSORT : passé le quart du plafond il recourt — sans quoi ce test
     // passerait au vert sur un sprint définitivement mort, ce qui n'est pas la règle.
     expect(salves.length).toBeGreaterThan(0)
     // ET C'EST LA PROPRIÉTÉ : aucune salve ne dure un battement. La plus courte doit tenir
@@ -248,6 +258,65 @@ describe('l’endurance (A1)', () => {
     // que garantit la facturation sur les points RÉELLEMENT crédités (après le clamp).
     const passive = (BALANCE.HUNGER_PER_CYCLE_HOUR / (TICKS_PER_CYCLE / 24)) * 15 * BALANCE.TICK_RATE_HZ
     expect(100 - entity(sim, plein).hunger).toBeCloseTo(passive, 5)
+  })
+})
+
+describe('le plafond du souffle — la faim plafonne le MAX (R2ter, décision d’Alexis 2026-08-29)', () => {
+  it('la courbe : 100 au-dessus du genou, pente continue, plancher à faim 0 — et un affamé frappe encore', () => {
+    expect(staminaCapFor(100)).toBe(100)
+    expect(staminaCapFor(COMBAT.STAMINA_CAP_HUNGER)).toBe(100)
+    expect(staminaCapFor(0)).toBe(COMBAT.STARVED_STAMINA_CAP)
+    // Monotone et continue, balayée sur tout le domaine — pas trois cas choisis.
+    let prev = staminaCapFor(0)
+    for (let h = 1; h <= 100; h++) {
+      const cap = staminaCapFor(h)
+      expect(cap).toBeGreaterThanOrEqual(prev)
+      expect(cap - prev).toBeLessThanOrEqual(2) // pas de marche : ~1,2/point au plus raide
+      prev = cap
+    }
+    // LA GARDE EXHAUSTIVE : le plancher paie le coup LÉGER de TOUTES les armes de la table
+    // (et le coût par défaut des bêtes) — balayée sur la vraie table, jamais trois armes
+    // choisies. Sous l'une d'elles, un affamé chassé ne pourrait plus se défendre du
+    // tout : la spirale de mort que la décision interdit explicitement.
+    expect(COMBAT.STARVED_STAMINA_CAP).toBeGreaterThanOrEqual(COMBAT.ATTACK_STAMINA)
+    for (const [nom, p] of Object.entries(WEAPON_PROFILES)) {
+      expect(p.light.stamina, `l'arme « ${nom} »`).toBeLessThanOrEqual(COMBAT.STARVED_STAMINA_CAP)
+    }
+  })
+
+  it('le ventre vide ROGNE la jauge au tick même — et manger la rouvre', () => {
+    const sim = makeSim()
+    const a = spawnEntity(sim, 10, 10)
+    entity(sim, a).stamina = 100
+    entity(sim, a).hunger = 0
+    tick(sim)
+    expect(entity(sim, a).stamina).toBe(COMBAT.STARVED_STAMINA_CAP)
+    // Nourri de nouveau : le plafond remonte, la régén repeuple AU-DELÀ de l'ancien mur —
+    // le plafond est un état de la faim, jamais une amputation définitive.
+    entity(sim, a).hunger = 100
+    for (let t = 0; t < 10 * BALANCE.TICK_RATE_HZ; t++) tick(sim)
+    expect(entity(sim, a).stamina).toBeGreaterThan(COMBAT.STARVED_STAMINA_CAP)
+  })
+
+  it('l’affamé RESSORT d’épuisement — au quart de SON plafond, pas à l’ancien 25 absolu', () => {
+    const sim = makeSim()
+    const a = spawnEntity(sim, 10, 10)
+    entity(sim, a).stamina = 0
+    entity(sim, a).hunger = 0
+    tick(sim)
+    expect(entity(sim, a).exhausted).toBe(true)
+    // On le laisse souffler : le verrou doit se lever STRICTEMENT sous 25 — la preuve que
+    // le seuil DÉRIVE du plafond (¼ × 40 = 10) au lieu d'un compte absolu qui, le jour où
+    // un réglage passerait le plafond dessous, deviendrait inatteignable et clouerait
+    // l'affamé au sol pour toujours (le piège relevé au brainstorm).
+    let levee: number | undefined
+    for (let t = 0; t < 20 * BALANCE.TICK_RATE_HZ && levee === undefined; t++) {
+      tick(sim)
+      if (entity(sim, a).exhausted !== true) levee = entity(sim, a).stamina
+    }
+    expect(levee).toBeDefined()
+    expect(levee!).toBeGreaterThanOrEqual(COMBAT.SPRINT_RECOVER_FRACTION * COMBAT.STARVED_STAMINA_CAP)
+    expect(levee!).toBeLessThan(25) // l'ancien seuil absolu — la dérivation se lit ici
   })
 })
 

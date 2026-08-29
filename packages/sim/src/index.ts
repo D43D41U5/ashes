@@ -263,7 +263,7 @@ export {
   pousseDe,
   type CultureId,
 } from './agriculture' // le potager (voie A) : maturité PURE, lue par le rendu
-export { applyCombatAction, advanceCombat, weaponDamage, weaponKind, weaponProfile, pendingStrike, inStrikeZone } from './combat'
+export { applyCombatAction, advanceCombat, staminaCapFor, weaponDamage, weaponKind, weaponProfile, pendingStrike, inStrikeZone } from './combat'
 export type { CombatAction, Corpse } from './combat'
 export { advanceNpcs } from './npc'
 export type { Npc, NpcTaskState } from './npc'

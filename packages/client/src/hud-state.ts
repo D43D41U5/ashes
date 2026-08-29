@@ -198,8 +198,9 @@ export interface HudState {
   hp: number
   stamina: number
   /** LE VERROU D'ÉPUISEMENT (`Entity.exhausted`, spec combat R1ter) — il refuse la course,
-   *  le coup et la parade, et ne se lève qu'à `SPRINT_RECOVER_STAMINA`. Il voyage dans le
-   *  snapshot : le HUD le LIT, il ne le déduit pas de la barre (les deux ne coïncident pas). */
+   *  le coup et la parade, et ne se lève qu'au quart du plafond (`SPRINT_RECOVER_FRACTION`).
+   *  Il voyage dans le snapshot : le HUD le LIT, il ne le déduit pas de la barre (les deux
+   *  ne coïncident pas). */
   exhausted: boolean
   wounds: Entity['wounds']
   /** Pièce structurelle armée dans le MENU DU MARTEAU (spec construction R20) —

@@ -28,6 +28,7 @@ import {
   durabilityOf,
   skillLevel,
   SLOTS,
+  staminaCapFor,
   TEMPERATURE,
   type CarryTier,
   type Entity,
@@ -99,28 +100,39 @@ export interface EtatVital {
  * qu'aucune interface ne dise pourquoi.
  *
  * Et la barre ne pouvait pas le dire à sa place : **le verrou se pose à 0 et ne se lève
- * qu'à `SPRINT_RECOVER_STAMINA` (25)**, donc une jauge remontée à 20 refuse encore la
- * course. Lire « il reste de l'endurance » et se voir refuser le sprint est exactement le
- * genre d'incohérence qui se prend pour un bug. L'alerte suit donc le VERROU, jamais le
- * niveau — et l'infobulle nomme le seuil, que le repère `.hc-seuil` trace sur la jauge.
+ * qu'au quart du plafond courant** (`SPRINT_RECOVER_FRACTION` — 25 à plafond plein), donc
+ * une jauge remontée à 20 refuse encore la course. Lire « il reste de l'endurance » et se
+ * voir refuser le sprint est exactement le genre d'incohérence qui se prend pour un bug.
+ * L'alerte suit donc le VERROU, jamais le niveau — et l'infobulle nomme le seuil, que le
+ * repère `.hc-seuil` trace sur la jauge.
+ *
+ * ═══ ET LE PLAFOND DE LA FAIM SE VOIT (2026-08-29) ═══
+ *
+ * La faim plafonne le MAX d'endurance (`staminaCapFor`, spec combat R2ter) : la fraction de
+ * l'infobulle se lit sur le plafond COURANT (« 12 / 40 » ventre vide), et le seuil de
+ * reprise en dérive. C'est tout l'arbitrage de la décision — une jauge visiblement
+ * raccourcie se LIT, une régén molle se subissait sans comprendre. Aucune règle recopiée :
+ * `cap` vient de la fonction de la sim.
  */
 export function etatVital(
   v: { id: string; label: string; max: number; warn?: number; unite?: string },
   cur: number,
   exhausted: boolean,
+  cap: number = v.max,
 ): EtatVital {
   const aBout = v.id === 'stamina' && exhausted
+  const plafond = v.id === 'stamina' ? Math.round(cap) : v.max
   if (aBout) {
     return {
       alerte: true,
-      bulle: `${v.label} ${Math.ceil(cur)} / ${v.max} — À BOUT DE SOUFFLE : ni course, ni coup, ni parade avant ${COMBAT.SPRINT_RECOVER_STAMINA}`,
+      bulle: `${v.label} ${Math.ceil(cur)} / ${plafond} — À BOUT DE SOUFFLE : ni course, ni coup, ni parade avant ${Math.ceil(COMBAT.SPRINT_RECOVER_FRACTION * cap)}`,
     }
   }
   return {
     alerte: v.warn !== undefined && cur <= v.warn,
     // Une jauge à unité se lit en VALEUR (« TEMP 34 °C »), pas en fraction : « 34 / 37 »
     // ne veut rien dire d'une température. Les autres gardent leur « x / max ».
-    bulle: v.unite ? `${v.label} ${Math.round(cur)} ${v.unite}` : `${v.label} ${Math.ceil(cur)} / ${v.max}`,
+    bulle: v.unite ? `${v.label} ${Math.round(cur)} ${v.unite}` : `${v.label} ${Math.ceil(cur)} / ${plafond}`,
   }
 }
 
@@ -132,8 +144,9 @@ export interface HudCoreState {
    *
    * Il refuse SILENCIEUSEMENT trois verbes d'un coup : l'attaque, la parade et la course.
    * Le joueur encaissait trois refus sans qu'aucune interface ne lui dise pourquoi ni
-   * jusqu'à quand — et comme le verrou ne se lève qu'à `SPRINT_RECOVER_STAMINA` et non au
-   * premier point regagné, voir la barre remonter ne lui apprenait rien non plus.
+   * jusqu'à quand — et comme le verrou ne se lève qu'au quart du plafond
+   * (`SPRINT_RECOVER_FRACTION`) et non au premier point regagné, voir la barre remonter ne
+   * lui apprenait rien non plus.
    */
   exhausted?: boolean
   hunger: number
@@ -200,14 +213,18 @@ export function createHudCore(
       // LE SEUIL DE RÉCUPÉRATION, tracé sur la SEULE jauge qu'il commande. Sans lui, « à
       // bout de souffle » est une punition à durée inconnue : on regarde la barre monter
       // sans savoir où elle doit arriver. Le trait répond, et il ne demande aucun mot.
-      (v.id === 'stamina'
-        ? `<div class="hc-seuil" style="bottom:${COMBAT.SPRINT_RECOVER_STAMINA}%"></div>`
-        : '') +
+      // Sa position suit le PLAFOND courant (un quart, spec R2ter) — posée dans `update`.
+      // ET LA ZONE CONDAMNÉE : le ventre vide raccourcit le max (`staminaCapFor`) ; ce qui
+      // n'est plus atteignable s'assombrit depuis le HAUT du disque, au lieu de laisser
+      // croire à une barre qui « ne veut plus monter ».
+      (v.id === 'stamina' ? `<div class="hc-plafond" style="height:0%"></div><div class="hc-seuil"></div>` : '') +
       `<img class="hc-vicon" src="${iconUrl(vitalIconKey(v.id))}" alt=""></div>`
     vitalsWrap.appendChild(cell)
     fills.set(v.id, cell.querySelector<HTMLElement>('.hc-fill')!)
     tips.set(v.id, cell.querySelector<HTMLElement>('.hc-tip')!)
   }
+  const seuilEl = vitalsWrap.querySelector<HTMLElement>('.hc-seuil')!
+  const plafondEl = vitalsWrap.querySelector<HTMLElement>('.hc-plafond')!
 
   // ── La ceinture : BELT cases cliquables (→ set_active_slot) ──
   const beltWrap = $('.hc-belt')
@@ -324,11 +341,17 @@ export function createHudCore(
         hunger: s.hunger,
         temperature: s.temperature,
       }
+      // Le plafond du souffle, LU de la sim (aucune règle recopiée) : la faim raccourcit
+      // le max d'endurance — la zone condamnée descend du haut du disque, et le seuil de
+      // reprise (un quart du plafond) glisse avec elle.
+      const cap = staminaCapFor(s.hunger)
+      plafondEl.style.height = `${(100 - cap).toFixed(1)}%`
+      seuilEl.style.bottom = `${(COMBAT.SPRINT_RECOVER_FRACTION * cap).toFixed(1)}%`
       for (const v of VITALS) {
         const cur = vals[v.id]!
         const lo = v.min ?? 0
         const frac = Math.min(1, Math.max(0, (cur - lo) / (v.max - lo)))
-        const { alerte, bulle } = etatVital(v, cur, s.exhausted === true)
+        const { alerte, bulle } = etatVital(v, cur, s.exhausted === true, v.id === 'stamina' ? cap : v.max)
         const fill = fills.get(v.id)!
         fill.style.height = `${(frac * 100).toFixed(1)}%`
         fill.style.background = alerte ? HEX.alert : VITAL_HEX[v.id].fill
@@ -485,6 +508,10 @@ function markup(): string {
     /* Le seuil de reprise du souffle : un trait d'un pixel en travers de la jauge
        d'endurance. Il dit OU la barre doit remonter, ce qu'aucun chiffre ne disait. */
     .hc-seuil{position:absolute;left:0;width:100%;height:1px;background:#e8e0c8;opacity:.45;pointer-events:none;}
+    /* La ZONE CONDAMNÉE par la faim (spec combat R2ter) : le max raccourci s'assombrit
+       depuis le haut du disque. Un voile, pas une couleur pleine — c'est du disque en
+       moins, pas une deuxième jauge. */
+    .hc-plafond{position:absolute;left:0;top:0;width:100%;background:rgba(10,8,6,.55);border-bottom:1px dashed rgba(232,224,200,.35);pointer-events:none;}
     .hc-vicon{position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);width:30px;height:30px;image-rendering:pixelated;filter:brightness(0);}
     .hc-tip{position:absolute;bottom:78px;left:50%;transform:translateX(-50%);background:#14100c;border:2px solid #14141a;padding:4px 8px;font-size:11px;color:#e8e0c8;white-space:nowrap;opacity:0;pointer-events:none;transition:opacity .1s ease;}
     .hc-med:hover .hc-tip{opacity:1;}
