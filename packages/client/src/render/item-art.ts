@@ -7,6 +7,8 @@
  */
 import type Phaser from 'phaser'
 import { FISH_SPECIES, type FishId, type ItemId } from '@ashes/sim'
+import { newCanvas, registerLitPaire } from './normal-map'
+import { PeintreCanvas, type Peintre } from './peintre'
 
 export const ITEM_ICON_PX = 16
 
@@ -62,6 +64,16 @@ export const ITEM_LABELS: Record<ItemId, string> = {
   dried_fish_moyen: 'Poisson séché',
   dried_fish_gros: 'Gros poisson séché',
   dried_meat: 'Viande séchée',
+  coeur_de_braise: 'Cœur de braise',
+  braise_mere: 'Braise-mère',
+  cuir_cendre: 'Cuir cendré',
+  graine_de_braise: 'Graine de braise',
+  orge_de_braise: 'Orge-de-braise',
+  parcelle_de_suie: 'Parcelle de suie',
+  salted_fish_petit: 'Petit poisson salé',
+  salted_fish_moyen: 'Poisson salé',
+  salted_fish_gros: 'Gros poisson salé',
+  salted_meat: 'Viande salée',
   sechoir: 'Séchoir',
   crude_rod: 'Canne de fortune',
   crude_knife: 'Couteau de fortune',
@@ -100,7 +112,9 @@ export function itemIconKey(item: ItemId): string {
   return `it-${item}`
 }
 
-type ItemPaint = (g: Phaser.GameObjects.Graphics) => void
+/** Un dessin d'icône, écrit contre `Peintre` : le même code se rejoue sur un `Graphics` Phaser
+ *  (l'icône flat de BootScene) ET sur Canvas2D (l'albédo de la paire `_lit`) — voir peintre.ts. */
+type ItemPaint = (g: Peintre) => void
 
 /**
  * LA GRAMMAIRE D'UN POISSON (peche.md D12) — dos sombre, flanc, ventre clair, œil, queue ; la
@@ -133,6 +147,16 @@ function poissonSeche(x0: number, haut: number): ItemPaint {
     g.fillStyle(0xa89870).fillRect(x0 + 1, 5, 16 - 2 * x0 - 2, 1)
     g.fillStyle(0x3a3020).fillRect(7, 6, 1, haut - 3) // la fente du séchage
     g.fillStyle(0x1d1d1a).fillRect(x0 + 1, 5, 1, 1)
+  }
+}
+
+/** Le séché + la croûte de sel (S4bis) — même silhouette, des grains presque blancs. */
+function poissonSale(x0: number, haut: number): ItemPaint {
+  const seche = poissonSeche(x0, haut)
+  return (g) => {
+    seche(g)
+    g.fillStyle(0xe4dfd0)
+    g.fillRect(x0 + 1, 6, 1, 1).fillRect(16 - x0 - 2, 7, 1, 1).fillRect(6, 4 + haut - 2, 1, 1)
   }
 }
 
@@ -642,6 +666,16 @@ export const ITEM_PAINTS: Record<ItemId, ItemPaint> = {
     g.fillStyle(0x6f7f6a).fillRect(11, 6, 2, 5) // la queue
     g.fillStyle(0x1d1d1a).fillRect(4, 7, 1, 1) // l'œil
   },
+  // LA LAMPROIE DE SUIE (`cendre.md` R26b) — un SERPENT plus qu'un poisson : longue, fine,
+  // grise comme l'eau qu'elle habite, la bouche-ventouse ronde à gauche, SANS œil — c'est
+  // l'absence d'œil et la teinte de cendre qui la séparent de l'anguille au premier regard.
+  lamproie: (g) => {
+    g.fillStyle(0x5c5854).fillRect(2, 8, 11, 2) // le corps, gris de suie, d'un bord à l'autre
+    g.fillStyle(0x7a7268).fillRect(3, 8, 9, 1) // le dos, à peine plus clair
+    g.fillStyle(0x5c5854).fillRect(13, 7, 2, 4) // la queue
+    g.fillStyle(0x2e2c2a).fillRect(1, 7, 2, 3) // la tête ronde
+    g.fillStyle(0x0e0d0c).fillRect(1, 8, 1, 1) // la bouche-ventouse — pas d'œil
+  },
   trout: (g) => {
     g.fillStyle(0x4f6a5a).fillRect(2, 6, 10, 4) // le dos, vert sombre
     g.fillStyle(0xc9a56a).fillRect(3, 9, 8, 1) // le flanc doré
@@ -732,6 +766,65 @@ export const ITEM_PAINTS: Record<ItemId, ItemPaint> = {
     g.fillStyle(0x6a3a2a).fillRect(4, 4, 8, 9) // la lanière
     g.fillStyle(0x8a4a34).fillRect(5, 5, 6, 2)
     g.fillStyle(0x3a2018).fillRect(6, 8, 4, 1).fillRect(6, 11, 4, 1) // les fibres sèches
+  },
+  // ── LA SALAISON (S4bis) — le séché, PLUS LA CROÛTE : des grains presque blancs semés sur le
+  //    corps (la valeur du sel des fumerolles, `#e4dfd0`) — c'est l'écart de valeur qui dit
+  //    « salé » à la taille d'une case, jamais un changement de forme. ──
+  salted_fish_petit: poissonSale(4, 8),
+  salted_fish_moyen: poissonSale(3, 10),
+  salted_fish_gros: poissonSale(2, 12),
+  salted_meat: (g) => {
+    g.fillStyle(0x8a8272).fillRect(7, 1, 1, 3) // la ficelle
+    g.fillStyle(0x6a3a2a).fillRect(4, 4, 8, 9) // la lanière
+    g.fillStyle(0x8a4a34).fillRect(5, 5, 6, 2)
+    g.fillStyle(0x3a2018).fillRect(6, 8, 4, 1).fillRect(6, 11, 4, 1) // les fibres sèches
+    g.fillStyle(0xe4dfd0).fillRect(5, 6, 1, 1).fillRect(9, 7, 1, 1).fillRect(7, 10, 1, 1).fillRect(6, 12, 1, 1) // la croûte
+  },
+  // LE CŒUR DE BRAISE (cendre.md R29) : une pierre noire FENDUE de braise — c'est l'écart de
+  // valeur qui le dit vivant : les fentes orange sur le noir, l'éclat au centre.
+  coeur_de_braise: (g) => {
+    g.fillStyle(0x1d1a18).fillRect(4, 4, 8, 9) // la pierre, presque noire
+    g.fillStyle(0x2e2825).fillRect(5, 4, 6, 2) // la face haute
+    g.fillStyle(0xd0722a).fillRect(6, 7, 4, 1).fillRect(8, 8, 1, 3).fillRect(5, 10, 2, 1) // les fentes
+    g.fillStyle(0xf0a850).fillRect(7, 7, 2, 1) // l'éclat au cœur
+  },
+  // LA BRAISE-MÈRE (cendre.md R28) : un brasero — socle de pierre, vasque de fer, la braise
+  // qui affleure. La grammaire cubique des postes (silhouette franche, arêtes droites).
+  braise_mere: (g) => {
+    g.fillStyle(0x5c5854).fillRect(5, 12, 6, 2) // le socle de pierre
+    g.fillStyle(0x3a3a40).fillRect(4, 6, 8, 6) // la vasque de fer
+    g.fillStyle(0x54545c).fillRect(4, 6, 8, 1) // la lèvre
+    g.fillStyle(0xd0722a).fillRect(5, 4, 6, 2) // la braise qui affleure
+    g.fillStyle(0xf0a850).fillRect(7, 3, 2, 1).fillRect(6, 4, 1, 1) // les pointes chaudes
+  },
+  // LA GRAINE DE BRAISE (agriculture.md J3) : trois grains sombres, un point chaud sur
+  // chacun — la braise dort dedans. Le don du murmure se reconnaît au sac.
+  graine_de_braise: (g) => {
+    g.fillStyle(0x2e2825).fillRect(4, 6, 3, 3).fillRect(9, 5, 3, 3).fillRect(6, 10, 3, 3)
+    g.fillStyle(0xd0722a).fillRect(5, 7, 1, 1).fillRect(10, 6, 1, 1).fillRect(7, 11, 1, 1)
+  },
+  // LA PARCELLE DE SUIE (agriculture.md J1) : un cadre de bois plein de cendre — le carré
+  // sombre au centre dit la terre, les quatre coins clairs disent le cadre (cultivé = taillé).
+  parcelle_de_suie: (g) => {
+    g.fillStyle(0x7a5c38).fillRect(3, 5, 10, 8) // le cadre de bois
+    g.fillStyle(0x9a7848).fillRect(3, 5, 10, 1).fillRect(3, 5, 1, 8).fillRect(12, 5, 1, 8) // les chants clairs
+    g.fillStyle(0x44403c).fillRect(5, 7, 6, 5) // la suie
+    g.fillStyle(0x5c5854).fillRect(6, 8, 1, 1).fillRect(9, 10, 1, 1) // le grain de la cendre
+  },
+  // L'ORGE-DE-BRAISE (J2) : un épi GRIS aux grains qui rougeoient — la seule moisson que
+  // l'hiver connaît. La tige droite (cultivé = taillé), les grains en quinconce.
+  orge_de_braise: (g) => {
+    g.fillStyle(0x6a6660).fillRect(7, 3, 2, 11) // la tige, gris de suie
+    g.fillStyle(0x8e8c88).fillRect(5, 3, 2, 2).fillRect(9, 4, 2, 2).fillRect(5, 6, 2, 2).fillRect(9, 7, 2, 2) // les grains
+    g.fillStyle(0xc96a24).fillRect(6, 4, 1, 1).fillRect(10, 5, 1, 1).fillRect(6, 7, 1, 1) // le rougeoiement
+  },
+  // LE CUIR CENDRÉ (cendre.md R30c) : la peau brute, en GRIS — même silhouette que raw_hide,
+  // la teinte fait l'espèce (la corrompue se lit au sac comme à l'écran).
+  cuir_cendre: (g) => {
+    g.fillStyle(0x6a6660).fillRect(3, 4, 10, 9) // la dépouille, gris de suie
+    g.fillStyle(0x827e78).fillRect(4, 5, 8, 2) // le dos, plus clair
+    g.fillStyle(0x4a4744).fillRect(3, 4, 2, 2).fillRect(11, 4, 2, 2).fillRect(3, 11, 2, 2).fillRect(11, 11, 2, 2) // les pattes
+    g.fillStyle(0x8e8c88).fillRect(6, 8, 4, 3) // l'usure du poil, au centre
   },
   // LE SÉCHOIR EN OBJET (S1) : une claie — deux montants, une traverse, deux prises pendues.
   sechoir: (g) => {
@@ -833,4 +926,20 @@ export function generateItemIcons(scene: Phaser.Scene): void {
     g.generateTexture(itemIconKey(item), ITEM_ICON_PX, ITEM_ICON_PX)
   }
   g.destroy()
+}
+
+/**
+ * LES PAIRES `it-*_lit` — pour les PILES AU SOL et le poisson du ferrage : un item lâché vit
+ * dans le monde, donc sous sa lumière (l'ambiante ne mord que les sprites `setLighting`, et le
+ * voile de nuit passe SOUS les sprites — sans bascule, une pile brillait en pleine nuit comme
+ * en plein jour). Le MÊME `ItemPaint` rejoué sur Canvas2D (peintre.ts) fait l'albédo ; la
+ * normale est cubique (`passes:1`/`k:3.5` — un item est un objet taillé ou posé, pas un dôme),
+ * `dresse:false` (posé à plat : le miroir n'apporterait rien).
+ */
+export function generateItemIconsLit(scene: Phaser.Scene): void {
+  for (const item of Object.keys(ITEM_PAINTS) as ItemId[]) {
+    const alb = newCanvas(ITEM_ICON_PX, ITEM_ICON_PX)
+    ITEM_PAINTS[item](new PeintreCanvas(alb.ctx))
+    registerLitPaire(scene, itemIconKey(item), { albedo: alb.c, dresse: false, passes: 1, k: 3.5 })
+  }
 }

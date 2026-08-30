@@ -7,7 +7,7 @@ import { FAMILLES, INVENTAIRE, SONORES, faitsDeFamille, type FamilleId } from '.
  * le trou que ce chantier vient boucher. Les gardes balaient tout l'espace (62 faits), elles
  * ne piochent pas des cas.
  */
-describe('l’inventaire des 98 faits', () => {
+describe('l’inventaire des 97 faits', () => {
   const ids = new Set<string>(FAMILLES.map((f) => f.id))
 
   it('AUCUN fait ne tombe dans une famille non déclarée (sinon il sort du banc en silence)', () => {
@@ -18,7 +18,7 @@ describe('l’inventaire des 98 faits', () => {
     expect(orphelins).toEqual([])
   })
 
-  it('les familles PARTITIONNENT les 98 faits — chacune en porte, aucune n’est vide', () => {
+  it('les familles PARTITIONNENT les 97 faits — chacune en porte, aucune n’est vide', () => {
     const comptes = FAMILLES.map((f) => ({ id: f.id, n: faitsDeFamille(f.id).length }))
     expect(comptes.filter((c) => c.n === 0)).toEqual([]) // pas de section vide à l'écran
     const somme = comptes.reduce((t, c) => t + c.n, 0)
@@ -43,7 +43,13 @@ describe('l’inventaire des 98 faits', () => {
     // parle à l'écran, pas à l'oreille.
     // 96 → 98 au merge du même jour : les faits de l'ère loup (`loup.md`) s'y ajoutent —
     // les deux chantiers du 28 se sont croisés, l'inventaire les porte tous.
-    expect(somme).toBe(98)
+    // 98 → 99 le 2026-08-30 : `murmure_recueilli` (cendre.md R27) — silence PROVISOIRE déclaré,
+    // la voix arrive avec le fantôme (R27d).
+    // 99 → 100 le 2026-08-30 : `bete_cendreuse_levee` (cendre.md R30), muet décidé.
+    // 100 → 103 le 2026-08-30 : la traction et le Bûcher (traction.md, cendre.md R31) —
+    // `attelage_rompu` (voix : le claquement), `cadavre_rendu` (muet : ça se voit),
+    // `bucher_rituel` (voix : le seul recul du monde, la seule montée).
+    expect(somme).toBe(97)
   })
 
   it('chaque fait DIT ce qu’il raconte — pas son identifiant', () => {
@@ -55,7 +61,7 @@ describe('l’inventaire des 98 faits', () => {
     expect(muets).toEqual([])
   })
 
-  it('l’état publié est bien l’état ACTUEL : 57 voix, 41 silences décidés', () => {
+  it('l’état publié est bien l’état ACTUEL : 60 voix, 43 silences décidés', () => {
     // Un compte, pas un jugement. `sound.test.ts` vérifie séparément que ces 38 sonnent
     // VRAIMENT (et que les 26 se taisent vraiment) — ici on garde seulement la proportion.
     // 34 → 35 le 2026-07-29 : `node_depleted` sort du silence (l'arbre qui tombe craque).
@@ -107,7 +113,10 @@ describe('l’inventaire des 98 faits', () => {
     // nuit se referme, et le joueur ne regarde pas sa ceinture à ce moment-là.
     // 56 → 57 le 2026-08-28 : `blizzard_annonce` sort du silence (chantier audio météo) —
     // la veille est le seul télégraphe que le ciel lui-même ne peut pas donner.
-    expect(SONORES.length).toBe(57)
+    // 57 → 58 voix et 43 → 42 silences le 2026-08-30 : `murmure_recueilli` a pris sa voix
+    // avec son fantôme (R27d) — le souffle qui retombe, gain plancher, à rejuger au banc.
+    // 60 → 56 voix le 2026-08-30 : les réfugiés quittent le jeu (4 voix, 2 silences en moins).
+    expect(SONORES.length).toBe(56)
     // 33 → 34 le 2026-08-21 : `refugee_rumeur` naît MUET (annales.md R12) — le geste de
     // nourrir parle déjà, le renseignement se lit dans la chronique.
     // 34 → 35 le 2026-08-21 : `cendre_prend` naît MUET (P5a) — la perte se lit et se voit.
@@ -123,6 +132,10 @@ describe('l’inventaire des 98 faits', () => {
     // 38 → 37 le même jour, autre chantier : `blizzard_annonce` a pris sa voix — `entre`/`passe`
     // restent des silences DÉCIDÉS (la nappe du vent les porte, un one-shot les doublerait).
     // Au merge des deux : 37 + 4 faits de carte muets = 41.
+    // 41 → 42 le 2026-08-30 : `murmure_recueilli`, silence PROVISOIRE (sa voix arrive avec le
+    // fantôme du chantier de rendu, cendre.md R27d).
+    // 42 → 43 le 2026-08-30 : `bete_cendreuse_levee` (cendre.md R30), muet décidé — sa voix
+    // viendra avec l'art du tertre, le lot visuel de la cendre.
     expect(Object.keys(INVENTAIRE).length - SONORES.length).toBe(41)
   })
 

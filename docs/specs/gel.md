@@ -32,6 +32,7 @@ La température existe déjà **en tout point** (`baselineTemperature(state, x, 
 ### La neige au sol (G7)
 
 - **G7 — La neige tient après le front, puis fond.** Elle demande une MÉMOIRE, alors que la température est instantanée. Solution sans état : l'élection des fronts étant une fonction pure du cycle, `neigeAuSol(state, x, y)` rembobine les `GEL.MEMOIRE_CYCLES` derniers cycles et rend une couverture qui décroît avec le temps écoulé depuis le dernier front neigeux ayant couvert ce point — et qui fond d'autant plus vite que la température est haute. ~~PUREMENT VISUEL au v1~~ — **amendé par G9 (2026-08-22)** : la neige a deux hauteurs et commande le pas.
+- **G7bis — LA CENDRE BOIT LA NEIGE** (décision d'Alexis 2026-08-29). Une tuile cendrée ne porte JAMAIS de neige : ce qui y tombe est bu en permanence. Le prédicat est `tuileCendree` — le MÊME que celui qui peint le sol cendré, donc la neige s'arrête exactement à la lisière dessinée, grain compris — et par l'écrivain unique (`neigeAuSol` y rend 0) tout en découle : le manteau ne s'y peint pas, le pas y redevient celui du sol cendré (`solFoule`), les cimes ne s'y coiffent pas (G6 bis). La neige TOMBE toujours à l'écran au-dessus de la cendre (l'aspect du ciel est une autre loi, R11 de `meteo.md`) : elle est bue au sol, pas déviée du ciel.
 
 ### Le dégel (G8)
 

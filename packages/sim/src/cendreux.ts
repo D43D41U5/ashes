@@ -1,7 +1,7 @@
 /**
  * La levée des Cendreux (spec 2026-07-08). Critère de mort, réveil, IA. Pur/déterministe.
  */
-import { BALANCE, CENDREUX, COMBAT, MONSTER_DEFS, MORTS, NIGHT_HUNT, SLOTS } from './balance'
+import { BALANCE, CENDREUSE, CENDREUX, COMBAT, MONSTER_DEFS, MORTS, NIGHT_HUNT, SLOTS } from './balance'
 import { startAttack } from './combat'
 import { distSq } from './geometry'
 import { emitEvent } from './events'
@@ -95,7 +95,27 @@ export function advanceCendreux(state: SimState): void {
     )
     if (warded) {
       delete corpse.risesAt
+      delete corpse.bete
       corpse.decayAt = state.tick + COMBAT.CORPSE_TICKS
+      continue
+    }
+    // ═══ LA BÊTE CENDREUSE (spec `cendre.md` R30a) — la cendre relève ce qu'elle tue ═══
+    //
+    // Même grammaire que le Cendreux (le tertre, la veille du feu ci-dessus), SON plafond
+    // (lu ICI, à la levée — la leçon R8), et le cadavre est REPRIS : viande et carcasse
+    // partent avec lui, la cendre ne rend pas ce qu'elle relève.
+    if (corpse.bete !== undefined) {
+      const vivantes = state.monsters.filter((m) => m.cendreuse === true).length
+      if (vivantes >= CENDREUSE.MAX) {
+        delete corpse.risesAt
+        delete corpse.bete
+        corpse.decayAt = state.tick + COMBAT.CORPSE_TICKS
+        continue
+      }
+      const id = spawnMonster(state, corpse.bete, corpse.x, corpse.y)
+      state.monsters.find((m) => m.entityId === id)!.cendreuse = true
+      emitEvent(state, { type: 'bete_cendreuse_levee', tick: state.tick, entityId: id, espece: corpse.bete, x: corpse.x, y: corpse.y })
+      state.corpses = state.corpses.filter((c) => c.id !== corpse.id)
       continue
     }
     // ═══ LE PLAFOND SE LIT AUSSI ICI, ET C'EST TOUT LE POINT (R8) ═══

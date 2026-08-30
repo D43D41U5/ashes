@@ -120,10 +120,10 @@ ventre vide), `BUILD_WOOD_RESERVE` (la part du Feu est intouchable), et
   moins un village atteint le palier 2 et bâtit — et les villages qui survivaient
   SANS chantier survivent AVEC (le témoin `HEAD` fait foi). La croissance de
   population ne se montre que si la zone porte le gras (`ATTRACT_FOOD`) : la
-  géographie module la croissance, le recrutement de réfugiés reste le levier
-  fiable partout. *(Calibrage des barres — c'est le critère qui remplace tout
+  géographie module la croissance *(le « levier fiable » du recrutement de réfugiés
+  est parti avec eux, 2026-08-30)*. *(Calibrage des barres — c'est le critère qui remplace tout
   seuil de jour.)*
-- **R12 — Le village se RÉPARE aux réfugiés (décision d'Alexis, 2026-08-17).** Le
+- ~~**R12 — Le village se RÉPARE aux réfugiés (décision d'Alexis, 2026-08-17).**~~ **⚠ RETIRÉE avec le système des réfugiés (décision d'Alexis, 2026-08-30 — `docs/decisions.md`) : les villages PNJ n'ont PLUS AUCUNE source de réparation démographique — le constat fondateur du banc (mort d'attrition avant le j36) redevient vrai ; une autre source est un chantier ouvert.** Le texte est gardé pour mémoire (le cliquet mesuré, la β-garde du grenier, `foundedSize` — toujours posé par `foundNpcVillage`). Le
   constat fondateur est celui du banc de saison (`docs/calibration-saison.md`) : les
   villages PNJ meurent d'un cliquet démographique — 10 groupes de réfugiés passent
   par saison, 0 recrutés, le verbe étant joueur-seulement. Désormais : un groupe qui

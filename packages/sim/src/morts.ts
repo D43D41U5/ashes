@@ -31,12 +31,13 @@ import {
   cadranDeFoyer, caracteresDeLaCarte, foyerDuSol, foyersDeLaCarte, profondeurNueDeCendre,
   rampeDeSuccession,
 } from './cendre'
+import { tenterLeRituel } from './bucher'
 import { isBlockedAt } from './collision'
 import { emitEvent } from './events'
 import { effetsDuJour } from './modificateur'
 import { fireActive, fireState } from './fire'
 import { distSq } from './geometry'
-import { zoneTierAt, type WorldMap } from './map'
+import { isWater, terrainAt, zoneTierAt, type WorldMap } from './map'
 import { placeSousPlafondGlobal, spawnMonster } from './monsters'
 import { hash2 } from './noise'
 import { pathToward, solidesEternels } from './pathfinding'
@@ -88,7 +89,19 @@ export function partRampante(densite: number): number {
   return CENDREUX.RAMPANT.PART_MIN + (CENDREUX.RAMPANT.PART_MAX - CENDREUX.RAMPANT.PART_MIN) * d
 }
 
-export function densiteDesMorts(state: SimState, tx: number, ty: number): number {
+/** Ce que la densité LIT — structurel et minimal (le patron de `profondeurNueDeCendre`) :
+ *  `SimState` le satisfait tel quel, et le RENDU des murmures (cendre.md R27d) peut poser la
+ *  même question avec ce qu'il tient — `lieuxBrules: []` à défaut, divergence cosmétique
+ *  bornée à `BRULE_DUREE_JOURS` et documentée là-bas. */
+export interface EtatDesMorts {
+  map: WorldMap
+  cendreAge: readonly number[]
+  seed: number
+  tick: number
+  lieuxBrules: readonly { zone: number; until: number }[]
+}
+
+export function densiteDesMorts(state: EtatDesMorts, tx: number, ty: number): number {
   let d = densiteDeBase(state.map, tx, ty)
   // ON A BRÛLÉ ICI (décision ⑧, 2026-08-21) : autour d'un charnier ou d'un repaire assaini,
   // le sol rend moins de morts — pour un temps. La liste est minuscule (quelques lieux au
@@ -171,6 +184,10 @@ export function advanceLieuxBrules(state: SimState): void {
       const duree = Math.round((jours * TICKS_PER_SEASON_DAY) / state.calendarScale)
       state.lieuxBrules.push({ zone: zi, until: state.tick + duree })
       emitEvent(state, { type: 'charnier_brule', tick: state.tick, zone: zi, x: cx, y: cy })
+      // LE RITUEL DU BÛCHER (cendre.md R31b) : le brûlage EST le geste — si la fosse a ses
+      // morts et que la lune est écoulée, l'avancée RECULE. Ici et nulle part ailleurs : le
+      // feu, le jour, la fosse — une seule grammaire.
+      tenterLeRituel(state, zi, k, cx, cy)
     }
   }
 }
@@ -282,6 +299,9 @@ export function siteDansLaCouronne(
   couronne?: { dist: number; ring: number },
   /** Vrai quand cette élection EST déjà la couronne repoussée — une seule poussée, pas une fuite. */
   repoussee = false,
+  /** Combien de fois la couronne a déjà été poussée VERS LA RIVE (couronne toute en eau) —
+   *  borné par `MORTS.POUSSEES_RIVE`, voir le commentaire au point d'usage. */
+  pousseesRive = 0,
 ): { x: number; y: number } | undefined {
   const world = { map: state.map, structures: state.structures, nodes: state.nodes, moverVillageId: null, etat: state }
   // Le monde tel que la ROCHE le voit : ni murs ni portes — MAIS les SOLIDES ÉTERNELS
@@ -319,6 +339,8 @@ export function siteDansLaCouronne(
   // L'anneau, balayé dans un ordre FIXE (row-major) : c'est lui qui rend le repli reproductible.
   const tuiles: { x: number; y: number; poids: number }[] = []
   let somme = 0
+  /** Combien de tuiles la seule EAU a écartées — la prémisse de la poussée vers la rive. */
+  let noyees = 0
   const r = Math.floor(dMax) + 1
   for (let dy = -r; dy <= r; dy++) {
     for (let dx = -r; dx <= r; dx++) {
@@ -327,6 +349,23 @@ export function siteDansLaCouronne(
       const x = ptx + dx
       const y = pty + dy
       if (x < 1 || y < 1 || x >= state.map.width - 1 || y >= state.map.height - 1) continue
+      // ═══ ON NE SORT PAS DE L'EAU (Alexis, 2026-08-30 : « je les vois parfois sortir sur
+      //     la glace ») ═══
+      //
+      // La couronne se jugeait par `isBlockedAt`, c'est-à-dire « marchable » — or le lac
+      // GELÉ est marchable (`collision.ts`, c'est la vallée qui change de forme), et le gué
+      // hors crue l'est toujours. En Grand Froid, une tuile de banquise était donc un site
+      // d'apparition parfaitement éligible : le sol se soulevait au milieu du lac et le
+      // Cendreux sortait de la glace. Ce que le réveil raconte, c'est la TERRE qui s'ouvre —
+      // le champ des morts est un sol, pas une nappe (R15). L'eau est écartée qu'elle soit
+      // prise ou libre : la règle est « on ne naît pas dans l'eau », pas « pas sur la
+      // glace » — un mort qui sortirait d'un gué à la belle saison serait la même faute.
+      //
+      // ⚠ ÇA VAUT AUSSI POUR LE LOUP, qui partage cette couronne. Il ne creuse rien, mais il
+      // « vient du bois » — et le bois ne pousse pas sur l'eau. Une seule règle pour les deux
+      // plutôt qu'une exception par espèce (si le loup devait un jour y avoir droit, ce serait
+      // un paramètre de plus, comme `couronne` et `poids`).
+      if (isWater(terrainAt(state.map, x, y))) { noyees += 1; continue }
       if (feux.length > 0 && dansUnWard(x, y)) continue // sous le ward : le feu repousse (⑦)
       const p = poids ? poids(x, y) : 1
       somme += p
@@ -334,10 +373,29 @@ export function siteDansLaCouronne(
     }
   }
   if (tuiles.length === 0) {
+    // ═══ LA COURONNE NOYÉE POUSSE VERS LA RIVE, elle ne rend pas le lac inviolable ═══
+    //
+    // Camper au milieu d'un lac gelé ne doit pas être un SANCTUAIRE : ce serait le symétrique
+    // exact du bug que la couronne repoussée du Feu vient de fermer (⑦ — « le feu achète des
+    // tuiles de distance, jamais l'immunité »). Quand l'anneau entier est de l'eau, on
+    // ÉLARGIT donc d'un anneau, et de proche en proche on tombe sur la rive : le mort naît
+    // sur la berge, puis MARCHE sur la glace jusqu'à sa proie (la joignabilité, elle,
+    // traverse déjà la banquise — c'est le même terrain marchable). Le joueur sur le lac
+    // gagne les secondes de marche que lui vaut sa position, pas la paix.
+    //
+    // Borné par `MORTS.POUSSEES_RIVE` : au-delà, la nuit passe son tour — la réponse loyale
+    // d'A22bis. Aucun tirage de plus (le même `tirage` traverse la récursion) : A23/A28
+    // tiennent, exactement comme pour la poussée du ward.
+    if (noyees > 0 && pousseesRive < MORTS.POUSSEES_RIVE) {
+      return siteDansLaCouronne(
+        state, px, py, tirage, poids,
+        { dist: dist + 2 * ring, ring }, repoussee, pousseesRive + 1,
+      )
+    }
     // La couronne entière est sous un ward : on élit AU BORD de la bulle — une seule
     // poussée, le même tirage (aucun pas de PRNG de plus, A23/A28 tiennent).
     if (repoussee) return undefined
-    return siteDansLaCouronne(state, px, py, tirage, poids, { dist: ward + 1 + ring, ring }, true)
+    return siteDansLaCouronne(state, px, py, tirage, poids, { dist: ward + 1 + ring, ring }, true, pousseesRive)
   }
 
   // Le tirage tombe dans la somme cumulée — la tuile la plus dense a la plus grosse part.

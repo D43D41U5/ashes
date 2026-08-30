@@ -433,10 +433,16 @@ describe('le clic lance la ligne (peche.md D9)', () => {
     expect(clickToAction(surUnCoin, null, { held: 'crude_rod' as const, ...versLest })).toEqual({ type: 'cast_line', tx: 9, ty: 4 })
   })
 
-  it('SANS CANNE, le clic reste BAVARD : il part quand même, la sim dit « il faut une canne »', () => {
-    // Un clic sur l'eau qui ne fait RIEN est le pire des retours : le joueur croit que la
-    // pêche est cassée. On préfère un refus parlé (P7, le même piège que le nœud allongé).
-    expect(clickToAction(surLEau, null, { held: null, ...versLest })).toEqual({ type: 'cast_line', tx: 9, ty: 4 })
+  it('SANS CANNE, on ne tente pas la pêche : le clic FRAPPE (décision 2026-08-29)', () => {
+    // Le refus parlé d'avant (« il faut une canne ») avalait le clic de COMBAT : un ennemi
+    // dans l'eau, visé depuis la berge, rendait ce refus au lieu d'un coup. Sans canne en
+    // main, le clic retombe sur la défense du pauvre — le moulinet se voit, lui.
+    expect(clickToAction(surLEau, null, { held: null, ...versLest })).toEqual({ type: 'attack', dx: 1, dy: 0 })
+  })
+
+  it('UN ENNEMI DANS L’EAU se frappe depuis la berge — la régression qui a renversé P7', () => {
+    const ennemiDansLEau = { ...surLEau, entityId: 12 }
+    expect(clickToAction(ennemiDansLEau, null, { held: null, ...versLest })).toEqual({ type: 'attack', dx: 1, dy: 0 })
   })
 
   it('UNE ARME EN MAIN FRAPPE, même au bord de l’eau — on ne pêche pas à la lance', () => {
@@ -896,13 +902,12 @@ describe('le coin de pêche se prend de loin (nodeInRange)', () => {
     expect(clickToAction(t, null, { held: 'crude_rod', ...versLest })).toEqual({ type: 'harvest', nodeId: 7 })
   })
 
-  it('MAINS VIDES à 3 tuiles : le clic émet quand même — la sim doit pouvoir dire « il faut une canne »', () => {
-    // ⚠ LE DÉFAUT QUE CETTE GARDE TIENT : sans la branche `nodeInRange && !inRange`, la
-    // cascade tombait dans le trou entre les deux portées et rendait `attack` — un moulinet
-    // MUET dans l'eau. Le joueur qui a oublié de sélectionner sa canne n'aurait eu AUCUN
-    // retour. Un refus vaut mieux qu'un silence.
+  it('MAINS VIDES à 3 tuiles : pas de tentative de pêche sans canne — le clic FRAPPE (décision 2026-08-29)', () => {
+    // Le repli « bavard » d'avant émettait le `harvest` pour que la sim refuse — et avalait
+    // le clic de combat sur un ennemi dans l'eau. Sans canne en main, on ne pêche pas : la
+    // cascade retombe sur la défense du pauvre.
     const t = aimAt(10, 10, LOIN, [coin(7, 10, 10)], [], RANGE)
-    expect(clickToAction(t, null, { held: null, ...versLest })).toEqual({ type: 'harvest', nodeId: 7 })
+    expect(clickToAction(t, null, { held: null, ...versLest })).toEqual({ type: 'attack', dx: 1, dy: 0 })
   })
 
   it('UNE ARME en main reste une arme : elle FRAPPE, elle ne pêche pas', () => {

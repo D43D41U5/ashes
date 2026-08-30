@@ -40,3 +40,38 @@ Le piège serait de modéliser les cultures comme des entités spawnées ou de t
 - **A5** — **Déterminisme** : même seed + mêmes inputs (semer au tick T, récolter au tick T+GROW) ⇒ même état ET même flux d'événements (`crop_planted`/`crop_harvested`), rejoué au bit près. La suite complète (`replay.test`, `events.test`) reste verte — aucune entité ni RNG ajoutée au flux partagé.
 - **A6** — **La serre (R7)** : en acte III, semer une `parcelle` de plein air est refusé (« la terre est gelée »), semer une `serre` réussit (`plantedAt` posé). L'acte se dérive du calendrier (pur) — testé via une échelle calendaire élevée. *(Amendé : le refus se juge sur `climatFlore`, pas sur l'acte — critères A9/A10 de `flore-froid.md`.)*
 - **A7** — **Le terroir (R8)** : hivernal (se sème en acte III comme la serre) ET récolte `YIELD_TERROIR` légumes, strictement plus que la parcelle/serre (`YIELD`).
+
+## La culture de braise — le jardin de suie (chantier ⑦ de la cendre, 2026-08-30)
+
+*(Décision actée « on suit tes recos », prémisse corrigée à la reconnaissance : l'agriculture
+existait — le jardin de suie ne l'introduit pas, il lui ajoute la culture QUE la cendre seule
+porte. Le garde-fou §8bis tient : médiocre, un village y survit, n'y prospère jamais.)*
+
+- **J1 — La parcelle de suie** : une pièce du registre (`parcelle_de_suie`), posable **hors
+  village et hors carré** (`horsVillage`, le statut de la braise-mère — le jardin est LOIN, à
+  la frange) et **sur sol cendré SEULEMENT** (`surCendre` — `tuileCendree`, l'écrivain
+  unique). Son coût mange l'item orphelin : du bois et de la **cendre** (`ash` — le tas du
+  Versant Brûlé trouve enfin son consommateur). C'est un PLOT (`isPlot`) : les gestes, le
+  verdissement et la récolte existants la portent sans une ligne client.
+- **J2 — L'orge-de-braise** : la culture `braise` du catalogue — graine `graine_de_braise`,
+  récolte `orge_de_braise` (nourrit peu, se garde peu : médiocre, §8bis), pousse lente.
+  **Compatibilité TOTALE dans les deux sens** (`cultureAdmise`) : la braise ne germe QUE dans
+  la suie, et la suie n'accepte QU'elle — un légume dans la cendre ou une orge au potager
+  sont refusés avec leurs mots. Ni fenêtre de saison ni gel : la parcelle de suie sème et
+  pousse TOUTE l'année, F4/F5 l'ignorent par TYPE (le patron de la serre) — c'est sa raison
+  d'être : la seule terre qui travaille en plein Grand Froid, à ses risques (la hantise).
+- **J3 — La graine vient du MURMURE** (`cendre.md` R27c, la récompense matérielle actée en
+  tranche 2 : soldée) : chaque murmure recueilli glisse une `graine_de_braise` dans le sac du
+  visiteur (best-effort — sac plein, la graine se perd, assumé). L'agriculture de la cendre
+  se DÉCOUVRE en écoutant ses morts ; ensuite la boucle des graines se referme toute seule
+  (la récolte rend sa graine, comme toute culture).
+
+### Critères d'acceptation du jardin de suie
+
+- **J-A1** — La pose exige le sol cendré (« il faut un sol cendré » ailleurs) et passe sans
+  village ; le coût consomme `ash`.
+- **J-A2** — La compatibilité est totale : braise sur suie ✓ (même en plein gel, là où la
+  parcelle refuse « la terre est gelée ») ; légume sur suie ✗ ; braise sur parcelle/serre ✗ ;
+  et F5 (le gel qui tue les cultures) ne touche JAMAIS la parcelle de suie.
+- **J-A3** — La boucle : semer → mûrir (pousse de la culture) → récolter rend l'orge ET une
+  graine ; le murmure recueilli donne une graine (le témoin : le sprinteur n'en reçoit pas).

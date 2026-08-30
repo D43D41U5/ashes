@@ -308,6 +308,25 @@ const PIECES: readonly Piece[] = [
       return [ARETE(yf), { path: [[2, T], [2, yf]] }, { path: [[T - 2, T], [T - 2, yf]] }]
     },
   },
+  // ── LA BRAISE-MÈRE : un brasero — socle de pierre, vasque de fer, la braise ─
+  // (spec `cendre.md` R28). Elle doit se lire de LOIN comme une source de chaleur qui n'est
+  // pas un feu : la braise AFFLEURE, elle ne flambe pas — un liseré chaud sur du fer sombre.
+  {
+    type: 'braise_mere', dresse: true,
+    dessiner: (g) => {
+      const yf = 6
+      rect(g, '#4a4a44', 4, T - 3, 8, 2) //         le socle de pierre
+      rect(g, '#5c5c54', 4, T - 3, 8, 1) //         son dessus
+      rect(g, '#32323a', 3, yf, 10, T - yf - 3) //  la vasque de fer
+      rect(g, '#4a4a56', 3, yf, 10, 1) //           la lèvre
+      rect(g, '#22222a', 3, yf + 1, 1, T - yf - 4) // l'ombre du flanc ouest
+      rect(g, '#c96a24', 4, yf - 2, 8, 2) //        la braise qui affleure
+      rect(g, '#f0a850', 6, yf - 2, 2, 1) //        les pointes chaudes
+      rect(g, '#f0a850', 10, yf - 1, 1, 1)
+      return [ARETE(yf), { path: [[3, T - 3], [3, yf]] }, { path: [[13, T - 3], [13, yf]] },
+        { path: [[4, yf - 1.5], [12, yf - 1.5]], crevasse: true }]
+    },
+  },
   // ── L'ÂTRE : la gueule noire, dans un manteau de pierre ─────────────────
   {
     type: 'atre', dresse: true,

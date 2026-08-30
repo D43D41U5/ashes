@@ -79,6 +79,13 @@ export function saigneBete(monster: Monster, tick: number): boolean {
 export function beastTint(monster: Monster | undefined, windup: boolean, isNpc: boolean, tick: number): number {
   if (!monster) return windup ? 0xff8866 : isNpc ? 0xe8d9a0 : 0xffffff
 
+  // LA BÊTE CENDREUSE (spec `cendre.md` R30) — GRISE, toujours, et sous le sang même :
+  // c'est son identité, pas une humeur. La couleur se calibre contre son fond : un gris de
+  // suie plus froid que le sol cendré (~#5c5854), pour que la silhouette s'en détache.
+  if (monster.cendreuse === true) {
+    return saigneBete(monster, tick) ? 0x8a6a68 : 0x8e8c88
+  }
+
   // LE SANG PRIME SUR TOUT (spec chasse C8). Une bête qui saigne est une bête
   // qu'on TRAQUE : c'est l'information la plus chère de l'écran, elle passe
   // devant l'humeur. (Et la posture, elle, dit déjà si elle fuit ou si elle est

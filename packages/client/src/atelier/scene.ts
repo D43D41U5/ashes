@@ -285,7 +285,6 @@ export class AtelierScene extends Phaser.Scene {
       monsters: [],
       corpses: [],
       reveils: [],
-      refugeeGroups: [],
       blood: [],
       wind: { x: 1, y: 0 },
       windForce: VENT.AMBIANT,

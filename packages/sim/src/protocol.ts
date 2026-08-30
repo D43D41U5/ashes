@@ -20,7 +20,7 @@ import type { WorldMap } from './map'
 import type { Monster } from './monsters'
 import type { Reveil } from './morts'
 import type { Npc } from './npc'
-import type { Entity, PlayerAction, RefugeeGroup } from './sim'
+import type { Entity, PlayerAction } from './sim'
 import type { GameTime } from './time'
 import type { Structure, Village } from './village'
 
@@ -242,9 +242,6 @@ export interface SnapshotMessage {
    *  soulève, et son extinction sans `cendreux_risen` DIT que le feu a gagné. Quatre nombres
    *  par entrée, une poignée d'entrées à la fois — le plafond de l'acte les borne. */
   reveils: Reveil[]
-  /** LES RÉFUGIÉS (V2-25) : les groupes de survivants sur les routes, que le client dessine
-   *  et rend interactables (recruter/nourrir/dépouiller). */
-  refugeeGroups: RefugeeGroup[]
   /** LE SANG AU SOL (spec chasse C9) : les gouttes que le client dessine et efface. */
   blood: { x: number; y: number; tick: number }[]
   /** LE CAP DU VENT (C17, `vent.md`) : il doit SE VOIR — une règle invisible est une injustice.

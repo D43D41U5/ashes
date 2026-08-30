@@ -11,6 +11,7 @@ import {
   ALIGNMENT,
   BALANCE,
   CARRY,
+  CENDREUSE,
   CENDREUX,
   COMBAT,
   FAUNA,
@@ -25,7 +26,10 @@ import {
   type WeaponKind,
   type WeaponProfile,
 } from './balance'
+import { BRAISE_MERE } from './braise-mere'
+import { avanceesDepuisAges, BANDE_CROUTE, bandeDeCendre } from './cendre'
 import { willRiseAsCendreux } from './cendreux'
+import { hash2 } from './noise'
 import { ligneDegagee, resolveMove, traitLibre } from './collision'
 import { secouerLeSol } from './sens'
 import { isInvulnerable } from './debug'
@@ -47,6 +51,12 @@ export interface Corpse {
   inventory: Entity['inventory']
   decayAt: number
   risesAt?: number
+  /** LA BÊTE QUI SE RELÈVERA (spec `cendre.md` R30a) — l'espèce à lever CENDREUSE quand
+   *  `risesAt` échoit. Absent : la levée est celle d'un Cendreux (le chemin historique). */
+  bete?: MonsterType
+  /** UN CENDREUX MORT (spec `cendre.md` R31a) — le seul cadavre que la fosse accepte : on
+   *  rend à la fosse ce qui en est sorti. Posé à la mort, lu par le bûcher. */
+  cendreux?: true
   /**
    * LA FRAÎCHEUR (spec chasse C12). Une carcasse fraîche PORTE LOIN : le
    * prédateur affamé la sent à `CARCASS_SEEK_FRESH` (40) au lieu de 16. C'est ce
@@ -1067,6 +1077,7 @@ function rendDesParts(type: MonsterType): boolean {
 }
 
 export function die(state: SimState, entity: Entity, byEntityId: number, cause?: 'cold' | 'hunger' | 'lightning' | 'cendre'): void {
+  delete entity.attelage // la mort lâche la longe (traction.md T5)
   const monster = state.monsters.find((m) => m.entityId === entity.id)
   emitEvent(state, {
     type: 'entity_died',
@@ -1097,6 +1108,23 @@ export function die(state: SimState, entity: Entity, byEntityId: number, cause?:
     if (monster.slainClean === true && (def.habitat?.length ?? 0) > 0 && !def.predator) {
       addItems(loot, { raw_hide: 1 })
     }
+    // LE CŒUR DE BRAISE (spec `cendre.md` R29a) : un Cendreux tué CHEZ LUI — au-delà de la
+    // bande croûte, la serrure anti-farm : les sièges qui viennent à vous ne paient rien.
+    // Par HACHAGE et jamais au PRNG (la doctrine du butin, trois lignes plus haut) : même
+    // seed, même mort → même butin, et le flux RNG du reste du jeu ne bouge pas d'un cran.
+    if (monster.type === 'cendreux' && state.map.cendreCout) {
+      const bande = bandeDeCendre(
+        state.map, Math.floor(entity.x), Math.floor(entity.y),
+        avanceesDepuisAges(state.cendreAge, state.cendreAge.length), state.seed,
+      )
+      if (bande >= BANDE_CROUTE && hash2(entity.id, state.tick, state.seed ^ 0x434f4555) < BRAISE_MERE.PART_COEUR) {
+        addItems(loot, { coeur_de_braise: 1 })
+      }
+    }
+    // LE CUIR CENDRÉ (spec `cendre.md` R30c) : la corrompue chassée rend sa dépouille grise —
+    // le composant de la tenue (R29b) qui ne vient pas des Cendreux. Jamais de peau propre :
+    // ce n'est plus un gibier, `slainClean` est sans objet sur elle.
+    if (monster.cendreuse === true) addItems(loot, { cuir_cendre: 1 })
   }
   // Les CASES passent au cadavre (spec inventaire R11), pas un sac reconstruit :
   // sinon la mort réparerait les outils qu'on portait (l'usure vit dans la case).
@@ -1116,7 +1144,17 @@ export function die(state: SimState, entity: Entity, byEntityId: number, cause?:
       risesAt: state.tick + CENDREUX.RISE_DELAY,
     })
     state.nextCorpseId += 1
-  } else if (!isEmpty(loot)) {
+  } else if (!isEmpty(loot) || monster?.type === 'cendreux') {
+    // ⚠ UN CENDREUX LAISSE TOUJOURS UN CADAVRE, même les mains vides (R31a) : c'est lui qu'on
+    // TRAÎNE à la fosse — un mort sans dépouille serait un rituel impossible.
+    // LA CENDRE RELÈVE CE QU'ELLE TUE (spec `cendre.md` R30a) : une bête morte de la MORSURE —
+    // ni cendreux, ni déjà corrompue — se relève à `CENDREUSE.PART`, par HACHAGE (la doctrine
+    // du butin, trois écrans plus haut). Le cadavre marqué garde sa carcasse : jusqu'à la levée
+    // il se dépèce comme un autre — c'est la COURSE (récolter avant que la cendre reprenne).
+    const releve =
+      monster !== undefined && monster.type !== 'cendreux' && monster.cendreuse !== true &&
+      cause === 'cendre' &&
+      hash2(entity.id, state.tick, state.seed ^ 0x42455445) < CENDREUSE.PART
     state.corpses.push({
       id: state.nextCorpseId,
       x: entity.x,
@@ -1128,6 +1166,8 @@ export function die(state: SimState, entity: Entity, byEntityId: number, cause?:
       // dépecer, pas un coffre. Le Cendreux (table vide) ne porte que ce qu'il a hérité d'un
       // mort — ça, ça se fouille.
       ...(monster && rendDesParts(monster.type) ? { carcass: { species: monster.type, parts: totalOf(loot) } } : {}),
+      ...(releve ? { risesAt: state.tick + CENDREUSE.RISE_TICKS, bete: monster!.type } : {}),
+      ...(monster?.type === 'cendreux' ? { cendreux: true as const } : {}),
     })
     state.nextCorpseId += 1
   }

@@ -123,8 +123,13 @@
  *     qui tombe) et illisible au sens de l'image : le chasseur est un rectangle beige de vingt
  *     pixels, le sanglier une tache brune, et l'arc bandé ne se voit pas à ce cadrage. Ce n'est
  *     pas un réglage à trouver, c'est un sujet trop petit pour une vitrine.
- *   · **LES FUMEROLLES** (jour 290). Le panache sort — c'est un carré blanc de trente pixels
- *     sur une plaine grise. Même verdict qu'à la cinquième série, et pour la même raison.
+ *   · ~~**LES FUMEROLLES** (jour 290). Le panache sort — c'est un carré blanc de trente pixels
+ *     sur une plaine grise.~~ **REPRISE le 2026-08-30** (demande d'Alexis), et ce qui a changé
+ *     n'est pas la prise, c'est l'ART : la fumerolle est devenue une COLONNE 16×32 qui crache
+ *     par le haut (décision du 2026-08-29). Cadrée à 13 tuiles sur l'or du couchant (19,5 h
+ *     murale = 20 h solaire du jour 290), la colonne fume et se lit. Le champ n'a PAS de cœur
+ *     dense (espacement du semis > 12 t — mesuré : « 1 en grappe » à 6 ET à 12 t), donc une
+ *     image de colonnes en masse n'existe pas à ce cadrage : c'est un portrait, pas une foule.
  *   · **LE VENT DE CENDRE** (jour 240). Toujours des rectangles gris pâle épars : il a gardé
  *     les 4 px des FX de lumière (`GRAIN_PX`) quand le flocon descendait à 2 (`GRAIN_FLOCON`).
  *     Il faudra le photographier au cadrage du jeu, ou pas du tout.
@@ -165,6 +170,7 @@ import sylveAube from '../../assets/vitrine/sylve-aube.jpg'
 import brumeFutaie from '../../assets/vitrine/brume-futaie.jpg'
 import fermePluie from '../../assets/vitrine/ferme-pluie.jpg'
 import frontCendre from '../../assets/vitrine/front-cendre.jpg'
+import fumerolles from '../../assets/vitrine/fumerolles.jpg'
 import peche from '../../assets/vitrine/peche.jpg'
 import cercle from '../../assets/vitrine/cercle.jpg'
 import bourgPluie from '../../assets/vitrine/bourg-pluie.jpg'
@@ -184,6 +190,7 @@ export const VITRINE: Vue[] = [
   { src: brumeFutaie, alt: 'Le brouillard du matin noie une futaie : une mer de nappe où les cimes émergent' },
   { src: fermePluie, alt: "Une ferme en ruine sous l'averse, le toit crevé, la pluie tombant sur son établi effondré" },
   { src: frontCendre, alt: 'La frange de cendre mange le pré : le vert cède aux troncs morts et à la poussière grise' },
+  { src: fumerolles, alt: 'Une colonne de fumerolle crache sa fumée grise au couchant, au milieu du sol cendré du Charnier' },
   { src: peche, alt: "Un pêcheur ferre sur la berge d'un lac au couchant : la canne cambrée, le poisson qui sort de l'eau" },
   { src: cercle, alt: 'Un cercle de menhirs dans une prairie dorée, au couchant, les pierres portant leur ombre' },
   { src: bourgPluie, alt: 'Un bourg de PNJ au crépuscule, son feu brûlant au milieu des logis, sous les premiers flocons' },

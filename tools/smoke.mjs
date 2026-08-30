@@ -326,6 +326,295 @@ const NOMS_FEU = ['étalon (le rendu d’avant)', 'la respiration', 'le cœur bl
 
 const SCENARIOS = {
   /**
+   * ═══ LES SALAISONS AU SAC (jetable, 2026-08-30) — montrer les items du chantier ① ═══
+   * Octroie les nouveaux items (salaisons, lamproie, sel) et capture le sac ouvert.
+   * `--dev` obligatoire (debug_grant).
+   */
+  async salaisons(page) {
+    if (!dev) { console.error('!! salaisons exige --dev (debug_grant)'); return }
+    const agirS = async (action, ms) => {
+      await page.evaluate((a) => window.__BRAISES__.scene.sendAction(a), action)
+      await page.waitForTimeout(ms)
+    }
+    const items = ['salt', 'salt', 'salt', 'gudgeon', 'gudgeon', 'trout', 'raw_meat', 'dried_fish_moyen', 'dried_meat',
+      'salted_fish_petit', 'salted_fish_moyen', 'salted_fish_gros', 'salted_meat', 'lamproie', 'lamproie', 'sechoir']
+    for (const item of items) await agirS({ type: 'debug_grant', item }, 120)
+    await page.waitForTimeout(800)
+    for (let essai = 0; essai < 3; essai++) {
+      await page.keyboard.press('Tab')
+      await page.waitForTimeout(600)
+      if (await page.evaluate(() => window.__BRAISES__.scene.registry.get('characterMenuOpen'))) break
+    }
+    await page.waitForTimeout(700)
+    await page.evaluate(() => window.__BRAISES__.scene.game.loop.sleep())
+    await page.waitForTimeout(250)
+    await page.screenshot({ timeout: 90000, path: `${OUT}/salaisons-sac.png` })
+    // LE ZOOM DE LECTURE : les icônes font 16 px — on grossit le SAC seul (transform CSS,
+    // le layout absolu du panneau ne bouge pas) et on clippe sa boîte.
+    const rect = await page.evaluate(() => {
+      const el = document.querySelector('.hch-sac')
+      el.style.transform = 'translateX(-50%) scale(2.6)'
+      el.style.transformOrigin = 'center bottom'
+      return null
+    })
+    void rect
+    await page.waitForTimeout(400)
+    const box = await page.evaluate(() => {
+      const r = document.querySelector('.hch-sac').getBoundingClientRect()
+      return { x: Math.max(0, r.x - 8), y: Math.max(0, r.y - 8), width: r.width + 16, height: r.height + 16 }
+    })
+    await page.screenshot({ timeout: 90000, path: `${OUT}/salaisons-sac-zoom.png`, clip: box })
+    await page.evaluate(() => window.__BRAISES__.scene.game.loop.wake())
+    console.log(`   → ${OUT}/salaisons-sac.png + salaisons-sac-zoom.png`)
+  },
+
+  /**
+   * ═══ LA BRAISE-MÈRE (jetable, 2026-08-30) — montrer le chantier ④ : le brasero posé,
+   * nourri au charbon, et le cœur de braise au sac. `--dev` obligatoire. ═══
+   */
+  async braise(page) {
+    if (!dev) { console.error('!! braise exige --dev (debug_grant)'); return }
+    const agirB = async (action, ms) => {
+      await page.evaluate((a) => window.__BRAISES__.scene.sendAction(a), action)
+      await page.waitForTimeout(ms)
+    }
+    for (const item of ['coeur_de_braise', 'charcoal', 'charcoal', 'charcoal', 'braise_mere']) {
+      await agirB({ type: 'debug_grant', item }, 150)
+    }
+    const moi = await page.evaluate(() => {
+      const sc = window.__BRAISES__.scene
+      // `predicted` : la position prédite du joueur — la lecture des autres scénarios.
+      const e = sc.predicted ?? (sc.lastEntities ?? []).find((q) => q.id === sc.playerId) ?? { x: 0, y: 0 }
+      return { tx: Math.floor(e.x), ty: Math.floor(e.y) }
+    })
+    console.log(`   joueur en (${moi.tx}, ${moi.ty})`)
+    // `debug_grant` met l'objet EN MAIN — on pose sur la première voisine qui accepte,
+    // et un refus se LIT (le patron du coffre : la teinte ment, le toast dit pourquoi).
+    let s = null
+    let ou = { tx: moi.tx, ty: moi.ty }
+    for (const [dx, dy] of [[1, 0], [-1, 0], [0, 1], [0, -1], [1, 1], [-1, -1], [1, -1], [-1, 1]]) {
+      ou = { tx: moi.tx + dx, ty: moi.ty + dy }
+      await agirB({ type: 'place_component', tx: ou.tx, ty: ou.ty }, 500)
+      s = await page.evaluate(({ tx, ty }) => {
+        const sc = window.__BRAISES__.scene
+        const q = (sc.view.structures ?? []).find((z) => z.type === 'braise_mere' && z.tx === tx && z.ty === ty)
+        return q ? { id: q.id } : { refus: sc.registry.get('toast') ?? sc.dernierRefus ?? null }
+      }, ou)
+      if (s.id) break
+      console.log(`      (${ou.tx}, ${ou.ty}) refusée : ${s.refus ?? 'sans un mot'}`)
+      s = null
+    }
+    if (!s) { console.error('   ✗ la braise-mère ne s’est posée nulle part'); return }
+    // Le charbon dans la soute — le geste du joueur, par la vraie action de transfert.
+    for (let n = 0; n < 3; n++) {
+      await page.evaluate(({ id, n }) => {
+        const sc = window.__BRAISES__.scene
+        const inv = sc.registry.get('inv') ?? []
+        const from = inv.findIndex((c) => c && c.item === 'charcoal')
+        if (from >= 0) sc.sendAction({
+          type: 'transfer', kind: 'structure', containerId: id,
+          from: { side: 'player', slot: from }, to: { side: 'container', slot: n, zone: 'fuel' }, count: 1,
+        })
+      }, { id: s.id, n })
+      await page.waitForTimeout(250)
+    }
+    await page.waitForTimeout(600)
+    const soute = await page.evaluate((id) => {
+      const q = (window.__BRAISES__.scene.view.structures ?? []).find((z) => z.id === id)
+      return (q?.fuel ?? []).filter(Boolean).reduce((t, c) => t + c.count, 0)
+    }, s.id)
+    console.log(`   braise-mère posée en (${ou.tx}, ${ou.ty}) — ${soute} charbon(s) en soute`)
+    await page.evaluate(() => window.__BRAISES__.scene.game.loop.sleep())
+    await page.waitForTimeout(250)
+    await page.screenshot({ timeout: 90000, path: `${OUT}/braise-monde.png` })
+    await page.evaluate(() => window.__BRAISES__.scene.game.loop.wake())
+    // Le panneau : E sur la structure (le curseur posé dessus pour l'`aim`).
+    const css = await page.evaluate(({ tx, ty }) => {
+      const sc = window.__BRAISES__.scene
+      const cam = sc.cameras.main
+      const x = ((tx + 0.5) * 16 - cam.worldView.x) * cam.zoom
+      const y = ((ty + 0.5) * 16 - cam.worldView.y) * cam.zoom
+      const r = sc.game.canvas.getBoundingClientRect()
+      const sx = r.width / sc.scale.gameSize.width
+      return { x: r.x + x * sx, y: r.y + y * sx }
+    }, ou)
+    await page.mouse.move(css.x, css.y)
+    await page.waitForTimeout(500)
+    await page.keyboard.press('KeyE')
+    await page.waitForTimeout(900)
+    await page.evaluate(() => window.__BRAISES__.scene.game.loop.sleep())
+    await page.waitForTimeout(250)
+    await page.screenshot({ timeout: 90000, path: `${OUT}/braise-panneau.png` })
+    await page.evaluate(() => window.__BRAISES__.scene.game.loop.wake())
+    console.log(`   → ${OUT}/braise-monde.png + braise-panneau.png`)
+  },
+
+  /**
+   * ═══ LE BIEF SOUILLÉ (jetable, 2026-08-30) — voir la teinte de coulée R26d en jeu.
+   * Saut au jour 300 (cendre mûre), TP sur la rivière au droit des taches. `--dev`. ═══
+   */
+  async coulee(page) {
+    if (!dev) { console.error('!! coulee exige --dev'); return }
+    const agirC = async (action, ms) => {
+      await page.evaluate((a) => window.__BRAISES__.scene.sendAction(a), action)
+      await page.waitForTimeout(ms)
+    }
+    await agirC({ type: 'debug_set_season_day', day: 300 }, 2500)
+    await agirC({ type: 'debug_set_hour', hour: 12 }, 1500)
+    // Les points du fil relevés sur la sonde offline (__apercu-cendre-lois) : le bief
+    // souillé traverse ~(660,300)→(940,700). On en visite trois, on capture le plus net.
+    let n = 0
+    for (const [x, y] of [[700, 380], [790, 480], [640, 280]]) {
+      await agirC({ type: 'debug_teleport', x: x + 0.5, y: y + 0.5 }, 2500)
+      await page.evaluate(() => window.__BRAISES__.scene.game.loop.sleep())
+      await page.waitForTimeout(250)
+      await page.screenshot({ timeout: 120000, path: `${OUT}/coulee-${n}.png` })
+      await page.evaluate(() => window.__BRAISES__.scene.game.loop.wake())
+      await page.waitForTimeout(300)
+      n += 1
+    }
+    console.log(`   → ${OUT}/coulee-{0,1,2}.png`)
+  },
+
+  /**
+   * ═══ LE FANTÔME DU MURMURE (jetable, 2026-08-30) — R27d, de nuit. `--dev`. ═══
+   */
+  async murmure(page) {
+    if (!dev) { console.error('!! murmure exige --dev'); return }
+    const agirM = async (action, ms) => {
+      await page.evaluate((a) => window.__BRAISES__.scene.sendAction(a), action)
+      await page.waitForTimeout(ms)
+    }
+    await agirM({ type: 'debug_set_season_day', day: 300 }, 2500)
+    await agirM({ type: 'debug_set_hour', hour: 23 }, 1800)
+    await agirM({ type: 'debug_teleport', x: 700.5, y: 300.5 }, 2500)
+    // Le FX tient les sites du cycle — on lit SA liste (la loi même, pas une recopie).
+    const sites = await page.evaluate(() => (window.__BRAISES__.scene.murmureFx?.sites ?? []).slice(0, 8))
+    console.log(`   ${sites.length} site(s) lus au FX${sites[0] ? ` — premier en (${sites[0].tx}, ${sites[0].ty})` : ''}`)
+    if (!sites.length) { console.error('   ✗ aucun site — la nuit ou la cendre n’y est pas'); return }
+    await agirM({ type: 'debug_teleport', x: sites[0].tx + 0.5, y: sites[0].ty + 2.5 }, 2500)
+    await page.waitForTimeout(1200)
+    await page.evaluate(() => window.__BRAISES__.scene.game.loop.sleep())
+    await page.waitForTimeout(300)
+    await page.screenshot({ timeout: 300000, path: `${OUT}/murmure-nuit.png` })
+    await page.evaluate(() => window.__BRAISES__.scene.game.loop.wake())
+    console.log(`   → ${OUT}/murmure-nuit.png`)
+  },
+
+  /**
+   * ═══ LE JARDIN DE SUIE (jetable, 2026-08-30) — chantier ⑦ : poser la parcelle sur la
+   * cendre, semer la graine de braise, montrer la culture mûre. `--dev`. ═══
+   */
+  async suie(page) {
+    if (!dev) { console.error('!! suie exige --dev'); return }
+    const agirJ = async (action, ms) => {
+      await page.evaluate((a) => window.__BRAISES__.scene.sendAction(a), action)
+      await page.waitForTimeout(ms)
+    }
+    await agirJ({ type: 'debug_set_season_day', day: 300 }, 2500)
+    await agirJ({ type: 'debug_set_hour', hour: 12 }, 1500)
+    await agirJ({ type: 'debug_teleport', x: 700.5, y: 300.5 }, 2500)
+    // Une tuile CENDRÉE d'herbe, lue à la loi du client (`cendreIci`) — jamais recopiée.
+    const cible = await page.evaluate(() => {
+      const sc = window.__BRAISES__.scene
+      const v = sc.view
+      if (!v.cendreIci) return { erreur: 'cendreIci est nul — la vue n’a pas la loi' }
+      const cx = 700, cy = 300, GRASS = 1 // TERRAIN_GRASS (balance.ts)
+      let cendrees = 0
+      for (let r = 0; r < 40; r++) {
+        for (let dy = -r; dy <= r; dy++) for (let dx = -r; dx <= r; dx++) {
+          if (Math.max(Math.abs(dx), Math.abs(dy)) !== r) continue
+          const tx = cx + dx, ty = cy + dy
+          if (!v.cendreIci(tx, ty)) continue
+          cendrees += 1
+          if (sc.map.terrain[ty * sc.map.width + tx] === GRASS) return { tx, ty }
+        }
+      }
+      return { erreur: `${cendrees} tuile(s) cendrée(s) vues, aucune d’herbe` }
+    })
+    if (cible.erreur) { console.error(`   ✗ ${cible.erreur}`); return }
+    console.log(`   tuile cendrée en (${cible.tx}, ${cible.ty})`)
+    await agirJ({ type: 'debug_teleport', x: cible.tx + 0.5, y: cible.ty + 1.5 }, 1800)
+    await agirJ({ type: 'debug_grant', item: 'parcelle_de_suie' }, 400)
+    await agirJ({ type: 'place_component', tx: cible.tx, ty: cible.ty }, 900)
+    const plot = await page.evaluate(({ tx, ty }) => {
+      const q = (window.__BRAISES__.scene.view.structures ?? []).find((z) => z.type === 'parcelle_de_suie' && z.tx === tx && z.ty === ty)
+      return q ? { id: q.id } : null
+    }, cible)
+    if (!plot) { console.error('   ✗ la parcelle ne s’est pas posée'); return }
+    await agirJ({ type: 'debug_grant', item: 'graine_de_braise' }, 400)
+    await agirJ({ type: 'plant', structureId: plot.id }, 900)
+    const semee = await page.evaluate((id) => {
+      const q = (window.__BRAISES__.scene.view.structures ?? []).find((z) => z.id === id)
+      return q?.plantedAt !== undefined
+    }, plot.id)
+    console.log(`   parcelle posée (id ${plot.id}) — semée : ${semee}`)
+    // L'avatar est ancré aux pieds et COUVRE la tuile au nord — on s'écarte pour la photo.
+    await agirJ({ type: 'debug_teleport', x: cible.tx + 3.5, y: cible.ty + 2.5 }, 1500)
+    await page.evaluate(() => window.__BRAISES__.scene.game.loop.sleep())
+    await page.waitForTimeout(250)
+    await page.screenshot({ timeout: 120000, path: `${OUT}/suie-semee.png` })
+    await page.evaluate(() => window.__BRAISES__.scene.game.loop.wake())
+    // Un jour plus tard (pousse 0,8 cycle) : mûre — le vert dans la suie.
+    await agirJ({ type: 'debug_set_season_day', day: 301 }, 2500)
+    await page.waitForTimeout(800)
+    await page.evaluate(() => window.__BRAISES__.scene.game.loop.sleep())
+    await page.waitForTimeout(250)
+    await page.screenshot({ timeout: 120000, path: `${OUT}/suie-mure.png` })
+    // Le clip zoomé : la tuile de la parcelle et ses voisines, pour juger la texture.
+    const clip = await page.evaluate(({ tx, ty }) => {
+      const sc = window.__BRAISES__.scene
+      const cam = sc.cameras.main
+      const x = ((tx - 2) * 16 - cam.worldView.x) * cam.zoom
+      const y = ((ty - 2) * 16 - cam.worldView.y) * cam.zoom
+      const r = sc.game.canvas.getBoundingClientRect()
+      const sx = r.width / sc.scale.gameSize.width
+      return { x: r.x + x * sx, y: r.y + y * sx, width: 80 * cam.zoom * sx, height: 80 * cam.zoom * sx }
+    }, cible)
+    await page.screenshot({ timeout: 120000, path: `${OUT}/suie-zoom.png`, clip })
+    await page.evaluate(() => window.__BRAISES__.scene.game.loop.wake())
+    console.log(`   → ${OUT}/suie-semee.png + suie-mure.png + suie-zoom.png`)
+  },
+
+  /**
+   * ═══ LA TRACTION (jetable, 2026-08-30) — traîner un cadavre au bout de la longe. `--dev`. ═══
+   */
+  async trainer(page) {
+    if (!dev) { console.error('!! trainer exige --dev'); return }
+    const agirT = async (action, ms) => {
+      await page.evaluate((a) => window.__BRAISES__.scene.sendAction(a), action)
+      await page.waitForTimeout(ms)
+    }
+    await agirT({ type: 'debug_carcass', species: 'cendreux' }, 1200)
+    const avant = await page.evaluate(() => {
+      const sc = window.__BRAISES__.scene
+      const c = sc.view.corpses[sc.view.corpses.length - 1]
+      return c ? { id: c.id, x: c.x, y: c.y } : null
+    })
+    if (!avant) { console.error('   ✗ pas de cadavre'); return }
+    await page.keyboard.press('KeyR')
+    await page.waitForTimeout(900)
+    // Marcher vers l'ouest, deux secondes — la longe doit tirer.
+    await page.keyboard.down('KeyA')
+    await page.waitForTimeout(2200)
+    await page.keyboard.up('KeyA')
+    await page.waitForTimeout(600)
+    const apres = await page.evaluate((id) => {
+      const sc = window.__BRAISES__.scene
+      const c = sc.view.corpses.find((q) => q.id === id)
+      const moi = (sc.lastEntities ?? []).find((e) => e.id === sc.playerId)
+      return { c: c ? { x: c.x, y: c.y } : null, moi: moi ? { x: moi.x, y: moi.y, attelage: moi.attelage ?? null } : null }
+    }, avant.id)
+    const d = apres.c ? Math.hypot(apres.c.x - avant.x, apres.c.y - avant.y) : 0
+    console.log(`   cadavre déplacé de ${d.toFixed(1)} t — attelage: ${JSON.stringify(apres.moi?.attelage)}`)
+    await page.evaluate(() => window.__BRAISES__.scene.game.loop.sleep())
+    await page.waitForTimeout(250)
+    await page.screenshot({ timeout: 120000, path: `${OUT}/trainer.png` })
+    await page.evaluate(() => window.__BRAISES__.scene.game.loop.wake())
+    console.log(`   → ${OUT}/trainer.png`)
+  },
+
+  /**
    * ═══ LE SON SE PLACE (spatialisation, 2026-08-27) ═══
    *
    * Le seul scénario qui ne juge RIEN à l'œil : il écoute. Et il a une raison d'exister que
@@ -643,9 +932,9 @@ const SCENARIOS = {
         // ② Le Feu d'un AUTRE se place, donc se coupe s'il est loin — c'était le correctif.
         autreVillage: v ? ((scene.myVillageId = -1), appel({ type: 'fire_starved', tick: 0, villageId: v.id })) : 'pas de village',
         // ③ `byEntityId: 0` = « c'est le village qui agit », PERSONNE — pas quelqu'un de loin.
-        acteurZero: appel({ type: 'refugees_fed', tick: 0, byEntityId: 0 }),
+        acteurZero: appel({ type: 'gift_given', tick: 0, byEntityId: 0 }),
         // ④ Un acteur qu'on ne trouve pas EST hors du rayon d'intérêt, donc hors de portée.
-        acteurInconnu: appel({ type: 'refugees_fed', tick: 0, byEntityId: 999999 }),
+        acteurInconnu: appel({ type: 'gift_given', tick: 0, byEntityId: 999999 }),
         annonce: appel({ type: 'night_started', tick: 0 }),
       }
       scene.myVillageId = avant
@@ -5594,11 +5883,11 @@ const SCENARIOS = {
       else for (const [, x] of n) if (x.type === 'fumerolle') fum.push({ tx: x.tx, ty: x.ty, stock: x.stock })
       const p = sc.view.self ?? { x: 0, y: 0 }
       fum.sort((a, b) => ((a.tx - p.x) ** 2 + (a.ty - p.y) ** 2) - ((b.tx - p.x) ** 2 + (b.ty - p.y) ** 2))
-      return { fum, texture: sc.textures?.exists?.('nd-fumerolle_lit') ?? null }
+      return { fum, texture: sc.textures?.exists?.('nd-fumerolle-3_lit') ?? null }
     })
-    console.log(`bouches : ${bouches.fum.length} — texture nd-fumerolle_lit : ${bouches.texture}`)
+    console.log(`bouches : ${bouches.fum.length} — texture nd-fumerolle-3_lit : ${bouches.texture}`)
     if (bouches.fum.length === 0) console.error(`!! aucune fumerolle reçue par le client au jour ${JOUR}`)
-    if (bouches.texture !== true) console.error('!! la texture nd-fumerolle_lit manque — le nœud rendra un carré vert')
+    if (bouches.texture !== true) console.error('!! la texture nd-fumerolle-3_lit manque — le nœud rendra un carré vert')
     if (bouches.fum.length === 0) return
 
     // ⚠ ON SE POSE 3 TUILES SOUS LA BOUCHE, pas dessus : centré dessus, l'avatar la masque.
@@ -8751,6 +9040,152 @@ const SCENARIOS = {
     return p
   },
 
+  /**
+   * LA LUNE SUR L'EAU — le ciel nocturne réfléchi doit suivre la clarté de lune.
+   *
+   * Deux minuits au bord du MÊME lac, à la seule lune près : la PLEINE (jour 61, l'ouverture)
+   * puis la NOUVELLE (jour 72 — en AVANT seulement : un jour passé rembobine le tick et fige
+   * le client). La mesure est le relevé de pixels sur l'EAU PROFONDE, HORS du couloir de
+   * l'astre (lui suivait déjà la phase — c'est la nappe qu'on éprouve) ; l'image n'est que la
+   * planche. Ce qui ferait rougir : lum(pleine) ≤ lum(nouvelle), ou un écart nul (la nappe
+   * ignore la lune, l'état d'avant le changement).
+   */
+  async luneEau(page) {
+    await page.waitForFunction(() => Boolean(window.__BRAISES__?.scene?.registry?.get('worldReady')), null, { timeout: 150000 })
+    await page.waitForTimeout(1500)
+    const pret = () => page.waitForFunction(
+      () => Boolean(window.__BRAISES__?.scene?.registry?.get('worldReady')), null, { timeout: 200000 },
+    )
+    const agir = async (action, ms = 400) => {
+      await pret()
+      await page.evaluate((a) => { window.__BRAISES__.scene.sendAction(a) }, action)
+      await page.waitForTimeout(ms)
+    }
+    const lire = async (fn, arg) => { await pret(); return page.evaluate(fn, arg) }
+    const lum = ([r, v, b]) => 0.2126 * r + 0.7152 * v + 0.0722 * b
+
+    await agir({ type: 'debug_god', on: true }, 200)
+
+    // LE PLUS GROS PLAN D'EAU PROFONDE : la tuile profonde la plus entourée de profond — c'est
+    // là que la réflexion du ciel domine (skyMix ∝ deep). On se pose sur le HAUT-FOND le plus
+    // proche du large : on y tient debout, et la caméra cadre l'eau.
+    const spot = await lire(() => {
+      const sc = window.__BRAISES__.scene
+      const map = sc.registry.get('mapData')
+      const t = map.terrain
+      const W = map.width
+      const H = map.height
+      let best = null
+      let bestN = -1
+      for (let ty = 8; ty < H - 8; ty += 2) {
+        for (let tx = 8; tx < W - 8; tx += 2) {
+          if (t[ty * W + tx] !== 6) continue
+          let n = 0
+          for (let dy = -5; dy <= 5; dy++) for (let dx = -5; dx <= 5; dx++) if (t[(ty + dy) * W + tx + dx] === 6) n++
+          if (n > bestN) { bestN = n; best = { tx, ty } }
+        }
+      }
+      if (!best) return null
+      let pose = null
+      let poseD = Infinity
+      for (let ty = Math.max(0, best.ty - 14); ty < Math.min(H, best.ty + 14); ty++) {
+        for (let tx = Math.max(0, best.tx - 14); tx < Math.min(W, best.tx + 14); tx++) {
+          if (t[ty * W + tx] !== 4) continue
+          const d = (tx - best.tx) ** 2 + (ty - best.ty) ** 2
+          if (d < poseD) { poseD = d; pose = { tx, ty } }
+        }
+      }
+      return { best, pose, n: bestN }
+    })
+    if (!spot?.pose) { console.log('aucun plan d’eau profonde sur cette carte'); return }
+    console.log(`large : (${spot.best.tx}, ${spot.best.ty}) — ${spot.n}/121 tuiles profondes · pose (${spot.pose.tx}, ${spot.pose.ty})`)
+    await agir({ type: 'debug_teleport', x: spot.pose.tx + 0.5, y: spot.pose.ty + 0.5 }, 2500)
+    await lire(() => { window.__BRAISES__.scene.cameras.main.setZoom(1.5) })
+    await page.waitForTimeout(600)
+
+    const feux = await lire(() => {
+      const sc = window.__BRAISES__.scene
+      const p = sc.registry.get('playerPos')
+      return (sc.view?.structures ?? []).filter((st) => st.type === 'fire')
+        .map((st) => Math.round(Math.sqrt((st.tx - p.x) ** 2 + (st.ty - p.y) ** 2))).sort((a, b) => a - b).slice(0, 1)
+    })
+    console.log(`  (feu le plus proche : ${feux.length ? feux[0] + ' tuiles' : 'aucun'})`)
+
+    /** Capture + relevé : 5 tuiles d'eau profonde à l'écran, HORS du couloir de l'astre. */
+    const releve = async (nom, fichier) => {
+      await lire(() => { window.__BRAISES__.scene.game.loop.sleep() })
+      await page.screenshot({ path: `${OUT}/${fichier}`, timeout: 120000 })
+      const pts = await lire((s) => {
+        const sc = window.__BRAISES__.scene
+        const map = sc.registry.get('mapData')
+        const t = map.terrain
+        const W = map.width
+        const cam = sc.cameras.main
+        const c = sc.scale.canvas.getBoundingClientRect()
+        const kx = c.width / sc.scale.width
+        const ky = c.height / sc.scale.height
+        // Le couloir de l'astre, EXCLU comme le shader le trace : ancré au centre caméra,
+        // axe (dirX, 0.35) normalisé, demi-largeur dither 1,7 tuile — on garde > 2,2.
+        const astre = sc.water?.astre ?? { force: 0, dirX: 1 }
+        const al = Math.sqrt(astre.dirX * astre.dirX + 0.35 * 0.35) || 1
+        const A = { x: astre.dirX / al, y: 0.35 / al }
+        const camT = { x: (cam.worldView.x + cam.worldView.width / 2) / 16, y: (cam.worldView.y + cam.worldView.height / 2) / 16 }
+        const out = []
+        for (let dy = -7; dy <= 7; dy++) {
+          for (let dx = -7; dx <= 7; dx++) {
+            const tx = s.best.tx + dx
+            const ty = s.best.ty + dy
+            if (t[ty * W + tx] !== 6) continue
+            const dPerp = Math.abs((tx + 0.5 - camT.x) * -A.y + (ty + 0.5 - camT.y) * A.x)
+            if (astre.force > 0.001 && dPerp < 2.2) continue
+            const x = Math.round(c.left + ((tx + 0.5) * 16 - cam.worldView.x) * cam.zoom * kx)
+            const y = Math.round(c.top + ((ty + 0.5) * 16 - cam.worldView.y) * cam.zoom * ky)
+            if (x < 20 || y < 60 || x > c.left + c.width - 20 || y > c.top + c.height - 20) continue
+            out.push({ x, y, tx, ty })
+          }
+        }
+        // 5 points étalés : on trie par distance au large et on échantillonne le tri.
+        out.sort((a, b) => (a.tx - s.best.tx) ** 2 + (a.ty - s.best.ty) ** 2 - ((b.tx - s.best.tx) ** 2 + (b.ty - s.best.ty) ** 2))
+        const pas = Math.max(1, Math.floor(out.length / 5))
+        return out.filter((_, i) => i % pas === 0).slice(0, 5)
+      }, { best: spot.best })
+      const vus = []
+      for (const q of pts) {
+        const p = await pixelAt(page, q.x, q.y)
+        if (p) vus.push(p)
+      }
+      await lire(() => { window.__BRAISES__.scene.game.loop.wake() })
+      if (!vus.length) { console.log(`  ${nom} : aucun point mesurable`); return null }
+      const moy = [0, 1, 2].map((ch) => vus.reduce((sm, q) => sm + q[ch], 0) / vus.length)
+      console.log(`  ${nom.padEnd(14)} ${vus.length} pts  rvb(${moy.map((v) => v.toFixed(1)).join(', ')})  lum ${lum(moy).toFixed(2)}`)
+      return moy
+    }
+
+    console.log('\n── LA NAPPE À MINUIT, À LA SEULE LUNE PRÈS ──')
+    // ⚠ PAS de debug_set_season_day 61 : le monde OUVRE au jour 61, et « sauter » au jour
+    // courant pose le tick à 0 — un rembobinage, donc un client figé sur le matin (mesuré :
+    // la première version de ce scénario a relevé ses pixels « pleine lune » sur un 09H gelé).
+    await agir({ type: 'debug_set_hour', hour: 0 }, 1500)
+    await page.waitForFunction(() => document.body.innerText.includes('JOUR 61') && document.body.innerText.includes('00H'), null, { timeout: 120000 }).catch(() => {})
+    if (!(await page.evaluate(() => document.body.innerText.includes('00H')))) {
+      console.error('!! l’horloge ne porte pas 00H — rien de mesurable ici'); return
+    }
+    const pleine = await releve('pleine lune', 'lune-eau-pleine.png')
+
+    await agir({ type: 'debug_set_season_day', day: 72 }, 900)
+    await agir({ type: 'debug_set_hour', hour: 0 }, 1500)
+    await page.waitForFunction(() => document.body.innerText.includes('JOUR 72') && document.body.innerText.includes('00H'), null, { timeout: 120000 }).catch(() => {})
+    if (!(await page.evaluate(() => document.body.innerText.includes('JOUR 72')))) {
+      console.error('!! l’écran ne porte pas « JOUR 72 » — rien de mesurable ici'); return
+    }
+    const nouvelle = await releve('nouvelle lune', 'lune-eau-nouvelle.png')
+
+    if (pleine && nouvelle) {
+      const ecart = lum(pleine) - lum(nouvelle)
+      console.log(`  écart de lum : ${ecart.toFixed(2)} (pleine − nouvelle)`)
+      console.log(ecart > 1.5 ? '  ✓ la nappe suit la lune' : '  ✗ la nappe ignore la lune')
+    }
+  },
 
   /**
    * LA PLANCHE DES SILHOUETTES DU TÉTRAS (spec faune R21).
@@ -17325,7 +17760,7 @@ Depuis le spawn (${depart.x.toFixed(0)}, ${depart.y.toFixed(0)}) :`)
     console.log(coupes.length >= 1 && etat.quartier + etat.peau === coupes.length
       ? `   ✓ ${coupes.length} coupes tenues (${coupes.join(', ')}) — au sac : ${etat.quartier} quartier(s), ${etat.peau} peau ; XP chasse ${etat.xp}`
       : `   ✗ coupes ${JSON.stringify(coupes)}, sac ${etat.quartier}/${etat.peau}, refus ${JSON.stringify(etat.refus)}`)
-    console.log(etat.carcasse && /-1$/.test(etat.carcasse.texture ?? '')
+    console.log(etat.carcasse && /-1(_lit)?$/.test(etat.carcasse.texture ?? '')
       ? `   ✓ la carcasse est ENTAMÉE à l'écran (${etat.carcasse.texture}, ${etat.carcasse.reste} parts restantes)`
       : `   ✗ art de carcasse : ${etat.carcasse?.texture} (${etat.carcasse?.reste} restantes)`)
     await poserUneFrame()
@@ -17351,7 +17786,7 @@ Depuis le spawn (${depart.x.toFixed(0)}, ${depart.y.toFixed(0)}) :`)
     console.log(fin.quartier === 2 && fin.peau === 1 && fin.os === 0 && fin.carcasse && fin.carcasse.reste === 2 && !fin.butchering
       ? `   ✓ au bout : 2 quartiers + 1 peau au sac, l'OS reste sur la bête (niveau 0), la découpe s'est arrêtée d'elle-même (${total} coupes)`
       : `   ✗ fin : sac ${fin.quartier}/${fin.peau}/${fin.os}, carcasse ${JSON.stringify(fin.carcasse)}, butchering ${JSON.stringify(fin.butchering)}, ${total} coupes`)
-    console.log(fin.carcasse && /-2$/.test(fin.carcasse.texture ?? '')
+    console.log(fin.carcasse && /-2(_lit)?$/.test(fin.carcasse.texture ?? '')
       ? `   ✓ la carcasse est DÉPOUILLÉE à l'écran (${fin.carcasse.texture})`
       : `   ✗ art final : ${fin.carcasse?.texture}`)
     await poserUneFrame()
@@ -20331,7 +20766,16 @@ Depuis le spawn (${depart.x.toFixed(0)}, ${depart.y.toFixed(0)}) :`)
       // quatre (roux, force 0,55 — « la saison qui se voit »). Les deux prises de sous-bois s'y
       // posent : une futaie rousse au soleil levant n'est pas la même image qu'une futaie verte.
       { nom: 'brume-futaie', jour: 72, heure: 7.2, futaie: true, meteo: 'brouillard', tuiles: 24, quoi: 'le brouillard du matin dans la futaie' },
-      { nom: 'sylve-aube', jour: 75, heure: 6.4, futaie: true, quoi: 'la futaie rousse au soleil levant' },
+      // ⚠ LES HEURES SUIVENT LE SOLEIL SAISONNIER (2026-08-29). Depuis le soleil français,
+      // lever/coucher DÉRIVENT avec le jour (`leverPourJour`/`dayTicksPourJour`) : au jour 75
+      // le soleil se lève à 6,76 h et se couche à 18,93 h — les visées écrites pour l'ancien
+      // cadran (lever 6 h, coucher 21 h) tombaient dans la nuit noire. Recalées sur la courbe.
+      // ET UNE VISÉE D'AMBIANCE SE CONVERTIT EN HEURE SOLAIRE, PAS À L'ŒIL (2026-08-30) : l'or
+      // du couchant vit à 18-20 h du cadran CANONIQUE (`AMBIENT_KEYS`), et `heureSolaire` le
+      // comprime en mural — au jour 75 le plateau doré finit à 18,1 h murale. Une visée « juste
+      // avant le coucher » (18,7 h) tombe déjà dans le fondu bleu. La conversion :
+      // mur = lever + (solaire − 6) × jourReel / 15, avec jourReel = coucher − lever.
+      { nom: 'sylve-aube', jour: 75, heure: 7.0, futaie: true, quoi: 'la futaie rousse au soleil levant' },
 
       // ═══ LES PLUIES (jour 75) — la bande fait 4500 tuiles : elle couvre la carte entière ═══
       //
@@ -20350,7 +20794,7 @@ Depuis le spawn (${depart.x.toFixed(0)}, ${depart.y.toFixed(0)}) :`)
       // saison des pluies) elle n'a rendu l'eau dorée de la série précédente.
       // ET LE BROUILLARD SUR LES MENHIRS AUSSI : il DÉSATURE. Les pierres levées valent par
       // l'ambre du couchant et leurs ombres longues ; un voile gris les rend au gris.
-      { nom: 'cercle', jour: 75, heure: 20.1, ou: ['cercle_pierres', 'pierre_levee', 'erratique'], quoi: 'les menhirs au couchant' },
+      { nom: 'cercle', jour: 75, heure: 18.2, ou: ['cercle_pierres', 'pierre_levee', 'erratique'], quoi: 'les menhirs au couchant' },
       // ═══ LA PÊCHE — ET ON PHOTOGRAPHIE LE FERRAGE, PAS L'ATTENTE (demande d'Alexis, 2026-08-26) ═══
       //
       // La pêche a QUATRE éléments rendus (`peche-fx.ts`, spec `peche.md` R1-R4) : le lancer en
@@ -20378,7 +20822,7 @@ Depuis le spawn (${depart.x.toFixed(0)}, ${depart.y.toFixed(0)}) :`)
       // le long de la berge — et les MONTÉES de poissons (`poissons-ombres`) s'y lisent en
       // pastilles chaudes. Ce n'est pas une teinte qu'on gagne, c'est un sujet : l'eau redevient
       // une surface au lieu d'être un trou.
-      { nom: 'peche', jour: 75, heure: 18.6, peche: true, tuiles: 15, quoi: 'le ferrage sur le lac, le poisson qui sort' },
+      { nom: 'peche', jour: 75, heure: 17.1, peche: true, tuiles: 15, quoi: 'le ferrage sur le lac, le poisson qui sort' },
       // ET L'ORAGE EST ICI, PAS À L'ARDEUR : `METEO.ORAGE_SEC_PHASE` vaut 2 — un orage d'Ardeur
       // ne MOUILLE PAS (il tonne, il frappe, il n'éteint rien). Le rideau de pluie en travers de
       // la vallée n'existe donc qu'aux trois autres saisons.
@@ -20496,7 +20940,7 @@ Depuis le spawn (${depart.x.toFixed(0)}, ${depart.y.toFixed(0)}) :`)
       // la main et va à la bête, et l'image dit enfin ce qu'elle montre. (C'est le levier que
       // la planche possédait depuis le 2026-08-20 et que cette prise n'avait jamais armé.)
       { nom: 'chasse-neige', jour: 105, heure: 8.5, chasse: true, arme: 'bow', charger: true, figer: true, meteo: 'pluie', tuiles: 20, quoi: 'la chasse sous la neige, arc bandé' },
-      { nom: 'lac-gele', jour: 112, heure: 7.4, berge: true, tuiles: 24, quoi: 'le lac pris par la glace, au lever du jour' },
+      { nom: 'lac-gele', jour: 112, heure: 8.4, berge: true, tuiles: 24, quoi: 'le lac pris par la glace, au lever du jour' },
 
       // ═══ L'ÉCLOSION — LA QUATRIÈME SAISON, ET C'EST LA VARIÉTÉ QU'ON CROYAIT PERDUE ═══
       //
@@ -20536,7 +20980,7 @@ Depuis le spawn (${depart.x.toFixed(0)}, ${depart.y.toFixed(0)}) :`)
       { nom: 'vent-de-cendre', jour: 240, heure: 17.5, cendre: true, meteo: 'vent_de_cendre', tuiles: 22, quoi: 'le vent de cendre en travers de la vallée' },
       // LES FUMEROLLES — le cœur d'un vieux foyer s'ouvre (2026-08-24). Elles n'existent qu'une
       // fois la tache assez large ; le scénario `fumerolle` vise le jour 290, on le suit.
-      { nom: 'fumerolles', jour: 290, heure: 18.6, fumerolle: true, tuiles: 18, quoi: 'le cœur ouvert en fumerolles' },
+      { nom: 'fumerolles', jour: 290, heure: 19.5, fumerolle: true, tuiles: 13, quoi: 'le cœur ouvert en fumerolles' },
     ]
 
     /* ── LES LEVIERS DES SCÈNES (2026-08-20) ─────────────────────────────────────────────
@@ -21171,10 +21615,17 @@ Depuis le spawn (${depart.x.toFixed(0)}, ${depart.y.toFixed(0)}) :`)
           }
         }
         if (fum.length === 0) { console.error(`   ✗ ${p.nom.padEnd(18)} aucune fumerolle au jour ${p.jour} — prise SAUTÉE`); continue }
-        // TROIS TUILES SOUS LA BOUCHE, jamais dessus : centré dessus, l'avatar la masque
+        // LA BOUCHE LA MIEUX ENTOURÉE, pas la plus proche (2026-08-30) : viser la plus proche
+        // cadrait UNE aiguille au bord du cadre sur une plaine nue — le champ de bouches est
+        // le sujet, on se pose donc au cœur de sa grappe la plus dense. Voisines à ≤ 12 t :
+        // l'échelle du CADRE (13 tuiles de haut) — à 6 t le champ réel rendait « 1 en grappe »
+        // partout, l'espacement du semis est plus lâche que ça.
+        // Et DEUX TUILES SOUS LA BOUCHE, jamais dessus : centré dessus, l'avatar la masque
         // (la leçon du scénario `fumerolle`).
-        const b = fum[0]
-        cible = { x: b.tx + 0.5, y: b.ty + 3.5, kind: 'fumerolle', name: `${fum.length} bouche(s), la plus proche en (${b.tx}, ${b.ty})` }
+        const grappe = fum.map((a) => ({ ...a, n: fum.filter((c) => (c.tx - a.tx) ** 2 + (c.ty - a.ty) ** 2 <= 144).length }))
+        grappe.sort((a, b) => b.n - a.n)
+        const b = grappe[0]
+        cible = { x: b.tx + 0.5, y: b.ty + 2.5, kind: 'fumerolle', name: `${fum.length} bouche(s), ${b.n} en grappe autour de (${b.tx}, ${b.ty})` }
       } else if (p.chasse) {
         // LE GIBIER NE SE POSE PAS, IL NAÎT — et pas n'importe où : `placeHuntingGrounds`
         // exige de l'eau à proximité (« l'eau commande la faune »). Le seul gibier GARANTI de

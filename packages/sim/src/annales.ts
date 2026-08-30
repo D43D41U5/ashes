@@ -58,8 +58,8 @@ export const ANNALES = {
    * MESURÉ (`tools/diag-fiche.mts --joue`, banc 12 cycles, seed 2026) sur les 14 faits de
    * chronique qui portent un (tx, ty) : **l'empreinte stricte en capte 1**, un rayon de 20 en
    * capte 4, **celui-ci en capte 13**. C'est ce chiffre-là qui a décidé la valeur — sans lui,
-   * la fiche d'un lieu tenait UNE ligne à jamais (seuls `poi_first_visit` et `refugee_rumeur`
-   * posaient une clef). Il se recalibre en LISANT une fiche, d'où sa place ici et non dans
+   * la fiche d'un lieu tenait UNE ligne à jamais (seul `poi_first_visit`
+   * posait une clef). Il se recalibre en LISANT une fiche, d'où sa place ici et non dans
    * `balance.ts`.
    */
   LIEU_RAYON: 40,

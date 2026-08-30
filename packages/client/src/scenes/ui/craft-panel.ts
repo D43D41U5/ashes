@@ -61,6 +61,7 @@ export const RECIPE_CATEGORY: Record<RecipeId, CraftCategory> = {
   // LE COFFRE (décision d'Alexis) : fabriqué à la main, posé en objet tenu — plus au marteau.
   chest: 'campement',
   sechoir: 'campement', // la claie du bord de l'eau : on la pose à son camp (peche.md S1)
+  braise_mere: 'composants', // la parade de la cendre : forgée N2, posée à la frange (cendre.md R28)
   crude_axe: 'outils',
   crude_pickaxe: 'outils',
   // LE TIR (spec `tir.md`) : les arcs sont des ARMES, la flèche est leur munition —
@@ -107,6 +108,7 @@ export const RECIPE_CATEGORY: Record<RecipeId, CraftCategory> = {
   parcelle: 'composants',
   serre: 'composants',
   terroir: 'composants',
+  parcelle_de_suie: 'composants', // le jardin de suie : fabriqué au Feu, posé sur la cendre (agriculture.md J1)
 }
 
 /** Une ligne de la liste : un en-tête de rayon, ou une recette. */

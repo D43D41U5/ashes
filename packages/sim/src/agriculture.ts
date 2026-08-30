@@ -53,9 +53,19 @@ export function fenetreOuverte(culture: CultureId, jour: number, type: Structure
   return phaseOf(actForDay(jour)) === AGRICULTURE.CULTURES[culture].phase
 }
 
+/**
+ * LA CULTURE EST-ELLE ADMISE ICI ? (`agriculture.md` J2) — la compatibilité de la BRAISE est
+ * totale, dans les deux sens : elle ne germe QUE dans la parcelle de suie, et la suie
+ * n'accepte QU'elle. Un axe d'échange de monde, pas un filtre de plus — le patron de la
+ * table de pêche souillée (R26b). Les autres cultures gardent leur liberté d'avant.
+ */
+export function cultureAdmise(culture: CultureId, type: StructureType): boolean {
+  return (culture === 'braise') === (type === 'parcelle_de_suie')
+}
+
 /** Les structures où l'on CULTIVE (agriculture) : parcelle (plein air) → serre (hiver) → terroir
  *  (le meilleur palier). Une seule source du « c'est un potager » — /sim, aim client, rendu. */
-const PLOT_TYPES: readonly StructureType[] = ['parcelle', 'serre', 'terroir']
+const PLOT_TYPES: readonly StructureType[] = ['parcelle', 'serre', 'terroir', 'parcelle_de_suie']
 export function isPlot(type: StructureType): boolean {
   return PLOT_TYPES.includes(type)
 }

@@ -88,15 +88,6 @@ function know(state: SimState, entityId: number, knownPois: number[], poiId: num
   return true
 }
 
-/**
- * RÉVÉLER UN LIEU À UN JOUEUR — la façade de `know` pour les révélateurs EXTERNES (la rumeur
- * du réfugié, annales.md R12). Même garde d'idempotence, même événement `poi_discovered` :
- * une révélation est une révélation, d'où qu'elle vienne.
- */
-export function revelerPoi(state: SimState, entityId: number, knownPois: number[], poiId: number): boolean {
-  return know(state, entityId, knownPois, poiId)
-}
-
 /** Distance AU CARRÉ entre deux centres de zones. Jamais de sqrt : invariant #2. */
 function dist2(a: { x: number; y: number }, b: { x: number; y: number }): number {
   const dx = a.x - b.x

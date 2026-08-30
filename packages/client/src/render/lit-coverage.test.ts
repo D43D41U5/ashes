@@ -5,8 +5,10 @@
  * le trou : la planche smoke jugeait le rendu, mais aucune garde texte ne tenait le compte.
  */
 import { describe, expect, it } from 'vitest'
-import { POI, STRUCTURE_TYPES } from '@ashes/sim'
+import { MONSTER_DEFS, POI, STRUCTURE_TYPES } from '@ashes/sim'
 import { POI_ART } from '../scenes/world/poi-art'
+import { CARCASSE_ART, cleCarcasse } from './carcasse-art'
+import { ITEM_PAINTS } from './item-art'
 import { ERRATIQUES, POI_LIT_DEFS, POI_LIT_DRESSES, POI_LIT_KINDS, poiLitCrownKey, poiLitKey } from './poi-lit'
 import { LIT_STRUCTURE_KEYS, LIT_STRUCTURE_TYPES } from './lit-structures'
 import { BATI_KEYS, BATI_LIT_TYPES } from './bati-art'
@@ -87,6 +89,7 @@ describe('la couverture _lit (garde A1)', () => {
     roof: 'idem',
     parcelle: 'le potager se rend par son stade de pousse (`cropStage`), pas par un sprite fixe',
     terroir: 'idem',
+    parcelle_de_suie: 'idem — le jardin de suie est un plot (agriculture.md J1)',
     friche: 'clé PLATE de BATI_KEYS, gardée par bati-art.test',
     terre: 'idem',
     roc: 'idem',
@@ -113,6 +116,32 @@ describe('la couverture _lit (garde A1)', () => {
     expect(LIT_PROP_KEYS.has('spr-player_lit')).toBe(true)
     expect(LIT_PROP_KEYS.has('spr-npc_lit')).toBe(true)
     expect(POI_LIT_DRESSES.has('pierre_levee')).toBe(true) // les 9 pierres du Cercle (R5)
+  })
+
+  /**
+   * ═══ CE QUI GÎT AU SOL A SA _lit AUSSI (2026-08-30) ═══
+   *
+   * Cadavres, carcasses et piles d'items vivaient hors éclairage : pleine couleur en pleine
+   * nuit (le voile passe SOUS les sprites, seule l'ambiante fait leur nuit). Le consommateur
+   * (`snapshot-view`) demande `cleLit(cleCarcasse(...))` pour TOUTE espèce × état, et
+   * `cleLit('it-<item>')` pour toute pile : chaque clé demandée doit être générée — le carré
+   * vert `__MISSING` serait sinon la première chose qu'on verrait d'une espèce neuve.
+   */
+  it('toute carcasse demandée est générée — espèces neuves comprises', () => {
+    const generees = new Set(CARCASSE_ART.map((a) => a.key))
+    expect(generees.size, 'deux dessins se partagent une clé').toBe(CARCASSE_ART.length)
+    for (const species of Object.keys(MONSTER_DEFS) as (keyof typeof MONSTER_DEFS)[]) {
+      for (const etat of [0, 1, 2] as const) {
+        const cle = cleCarcasse(species, etat)
+        expect(generees.has(cle), `${species}/${etat} → ${cle} : demandée mais jamais générée`).toBe(true)
+      }
+    }
+  })
+
+  it('chaque item peint aura sa paire it-*_lit (une pile au sol vit sous la lumière)', () => {
+    // `generateItemIconsLit` balaie `ITEM_PAINTS`, qui est un Record<ItemId, …> exhaustif par
+    // construction : la garde affirme le lien table→génération (le balayage est le même objet).
+    expect(Object.keys(ITEM_PAINTS).length).toBeGreaterThan(60)
   })
 
   /**

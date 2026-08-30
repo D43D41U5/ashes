@@ -3965,11 +3965,11 @@ const SCENARIOS = {
       else for (const [, x] of n) if (x.type === 'fumerolle') fum.push({ tx: x.tx, ty: x.ty, stock: x.stock })
       const p = sc.view.self ?? { x: 0, y: 0 }
       fum.sort((a, b) => ((a.tx - p.x) ** 2 + (a.ty - p.y) ** 2) - ((b.tx - p.x) ** 2 + (b.ty - p.y) ** 2))
-      return { fum, texture: sc.textures?.exists?.('nd-fumerolle_lit') ?? null }
+      return { fum, texture: sc.textures?.exists?.('nd-fumerolle-3_lit') ?? null }
     })
-    console.log(`bouches : ${bouches.fum.length} — texture nd-fumerolle_lit : ${bouches.texture}`)
+    console.log(`bouches : ${bouches.fum.length} — texture nd-fumerolle-3_lit : ${bouches.texture}`)
     if (bouches.fum.length === 0) console.error(`!! aucune fumerolle reçue par le client au jour ${JOUR}`)
-    if (bouches.texture !== true) console.error('!! la texture nd-fumerolle_lit manque — le nœud rendra un carré vert')
+    if (bouches.texture !== true) console.error('!! la texture nd-fumerolle-3_lit manque — le nœud rendra un carré vert')
     if (bouches.fum.length === 0) return
 
     // ⚠ ON SE POSE 3 TUILES SOUS LA BOUCHE, pas dessus : centré dessus, l'avatar la masque.

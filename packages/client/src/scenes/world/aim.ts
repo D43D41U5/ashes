@@ -318,6 +318,8 @@ export function aimAt(
     // FAUX pour eux — c'est lui qui autorise `feed_fire` (on ne nourrit pas une claie).
     // Ils tombent quand même dans les tests de réparation plus bas : ils s'abîment.
     if (s.type === 'sechoir' || s.type === 'furnace') fireId = s.id
+    // LA BRAISE-MÈRE aussi (cendre.md R28b) : un poste à SOUTE — E l'ouvre pour la nourrir.
+    if (s.type === 'braise_mere') fireId = s.id
     if (s.hp < STRUCTURE_HP[s.type]) damaged = s // toute structure hors Feu, abîmée, se répare
     if (isPlot(s.type)) {
       // Parcelle (plein air) / serre (hiver) / terroir (le meilleur) se sèment/récoltent pareil ;
@@ -663,32 +665,15 @@ export function clickToAction(
   // pendant qu'un loup arrive.
   if (hand && isWeapon(hand.held)) return { type: 'attack', dx: hand.dx, dy: hand.dy }
 
-  // ⚠ LE NŒUD ALLONGÉ, MAIS SANS SON OUTIL — et c'est le cas qu'il ne faut PAS taire.
+  // ═══ SANS CANNE EN MAIN, ON NE TENTE JAMAIS LA PÊCHE (décision d'Alexis, 2026-08-29) ═══
   //
-  // Le coin de pêche se prend à 4 tuiles (`NodeDef.range`) ; le bras, lui, en fait 1,5. Entre
-  // les deux, la cascade tombait dans le trou : la branche outil ci-dessus ne mord pas (pas de
-  // canne en main), `isWeapon` non plus les mains vides, et le repli à nœud vit SOUS
-  // `target.inRange` — donc le clic finissait en `attack`, un moulinet MUET dans l'eau. Le
-  // joueur qui a oublié de sélectionner sa canne n'aurait rien eu : pas de ligne, pas de
-  // refus, rien. C'est exactement le défaut qu'on venait de corriger, recréé par l'allonge.
-  //
-  // On émet donc le `harvest` : `input-bindings` le route en lancer (coin + canne), et la sim
-  // répond « il faut une canne en main » quand il n'y en a pas. Un refus vaut mieux qu'un
-  // silence. Placé APRÈS `isWeapon` (une arme en main frappe toujours) et AVANT le bloc
-  // `inRange` (qu'on ne réordonne pas : il juge le cadavre avant le nœud).
-  if (target.nodeInRange && !target.inRange && target.nodeId !== null)
-    return { type: 'harvest', nodeId: target.nodeId }
-
-  // ⚠ ET DE L'EAU À PORTÉE SANS CANNE EN MAIN — le même piège, pour la pêche (P7).
-  //
-  // La branche de lancer plus haut exige la canne EN MAIN ; sans elle, un clic sur l'eau
-  // tombait dans le vide : ni ligne, ni refus, RIEN. Le joueur qui a oublié de sélectionner sa
-  // canne ne comprend pas pourquoi « on ne pêche pas ici ». On émet donc le `cast_line` : la
-  // sim répond « il faut une canne en main ». Un refus vaut mieux qu'un silence.
-  //
-  // Placé APRÈS `isWeapon` (une arme frappe toujours) et sous `!inRange` (à bout de bras, la
-  // tuile a d'autres prétendants : un cadavre, un nœud, une pile).
-  if (target.waterInRange && !target.inRange) return { type: 'cast_line', tx: target.tx, ty: target.ty }
+  // Deux replis vivaient ici (« un refus vaut mieux qu'un silence », P7) : de l'eau ou un coin
+  // à portée sans canne émettaient quand même le lancer, pour que la sim réponde « il faut une
+  // canne en main ». Mais ils avalaient le clic de COMBAT : un ennemi dans l'eau, visé depuis
+  // la berge, rendait ce refus-là au lieu d'un coup. La pêche ne se tente que canne en main
+  // (les branches plus haut) ; sans elle, le clic retombe sur la frappe — la défense du
+  // pauvre, qui vaut aussi contre ce qui patauge. La canne oubliée au sac n'est plus muette
+  // pour autant : le moulinet se VOIT, là où l'ancien défaut ne rendait rien du tout.
 
   // Hors portée, on n'émet rien : la sim refuserait, et un refus n'est pas
   // gratuit (c'est un SimEvent que la chronique consomme — spec recolte.md G7).

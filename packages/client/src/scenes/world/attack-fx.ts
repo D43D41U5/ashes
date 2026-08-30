@@ -358,6 +358,11 @@ export interface AttackFx {
    * accélère vraiment. Le smoke LIT cet état ; il ne le fabrique pas.
    */
   enBande(): { eclat: number; pleine: boolean }
+  /** L'éclairage dynamique est-il armé ? (posé par WorldScene, comme les couches). Seules les
+   *  GERBES le consomment — de la matière arrachée, qui prend la nuit du monde. Les signes
+   *  d'affordance (télégraphe, contours, étincelle, chiffre, sang-écran) restent pleine
+   *  couleur : ce sont des SIGNAUX, pas des objets — la nuit ne doit pas les manger. */
+  setLighting(lit: boolean): void
   /** Entretient les fondus. */
   update(now: number): void
 }
@@ -598,8 +603,10 @@ export function createAttackFx(scene: Phaser.Scene, depth: number): AttackFx {
   /** Combien d'éclats pour un coup, du plus faible au plus lourd. Un coup de 6 (les
    *  poings) en projette 3, un tourbillon à 32 en projette 8 : la gerbe DIT le poids. */
   const gerbeCount = (amount: number): number => Math.max(3, Math.min(8, 2 + Math.round(amount / 5)))
+  // Des IMAGES `__WHITE` teintées, pas des `Rectangle` : les Shapes n'ont pas le composant
+  // Lighting, or une brisure est de la MATIÈRE arrachée — elle prend la nuit du monde.
   const shards = Array.from({ length: GERBE_POOL }, () => ({
-    g: scene.add.rectangle(0, 0, 2, 2, BLEED).setDepth(depth).setVisible(false),
+    g: scene.add.image(0, 0, '__WHITE').setDisplaySize(2, 2).setTint(BLEED).setDepth(depth).setVisible(false),
     at: -1e9,
     x0: 0,
     y0: 0,
@@ -607,6 +614,8 @@ export function createAttackFx(scene: Phaser.Scene, depth: number): AttackFx {
     vy: 0,
   }))
   let nextShard = 0
+  /** L'éclairage dynamique est-il armé ? — posé par WorldScene, lu à l'émission des gerbes. */
+  let lit = true
 
   return {
     /**
@@ -640,7 +649,8 @@ export function createAttackFx(scene: Phaser.Scene, depth: number): AttackFx {
             sh.y0 = y - 8
             sh.vx = Math.cos(a) * v
             sh.vy = Math.sin(a) * v
-            sh.g.setFillStyle(palette[i % palette.length]!)
+            sh.g.setTint(palette[i % palette.length]!)
+            sh.g.setLighting(lit)
             sh.g.setPosition(sh.x0, sh.y0).setVisible(true).setAlpha(1)
           }
         }
@@ -930,6 +940,10 @@ export function createAttackFx(scene: Phaser.Scene, depth: number): AttackFx {
       // centre pour ne tracer que l'arc (un trait ouvert, jamais refermé en triangle).
       blade.lineStyle(2.5, GUARD, 0.85)
       blade.strokePoints(pts.slice(1), false)
+    },
+
+    setLighting(l) {
+      lit = l
     },
 
     update(now) {

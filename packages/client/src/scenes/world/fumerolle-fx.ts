@@ -1,16 +1,19 @@
 /**
- * ═══ LA FUMÉE FROIDE DES FUMEROLLES (décision d'Alexis, 2026-08-24) ═══
+ * ═══ LA FUMÉE FROIDE DES FUMEROLLES (Alexis, 2026-08-24 ; redressée le 2026-08-29) ═══
  *
- * *« des trous qui émettent de la fumée froide ».* Le prop dit le TROU ; cette couche dit le
- * souffle — et c'est elle qui fait qu'on repère une fumerolle à un écran de distance, ce qui est
- * tout l'intérêt d'en avoir fait un LIEU plutôt qu'une texture.
+ * *« des colonnes qui crachent de la fumée grise par le haut (la fumée tombe vers le sol ok) ».*
+ * Le prop dit la COLONNE (`FUMEROLLE_COLONNE_RECTS`, 16×32) ; cette couche dit le souffle — et
+ * c'est elle qui fait qu'on repère une fumerolle à un écran de distance, ce qui est tout
+ * l'intérêt d'en avoir fait un LIEU plutôt qu'une texture.
  *
  * ═══ FROIDE, DONC ELLE TOMBE ═══
  *
- * Une fumée chaude monte et s'évase. Celle-ci est **plus lourde que l'air** : elle sort du trou,
- * s'élève à peine, puis **retombe et rampe** en s'étalant au ras du sol. C'est la seule chose qui
- * la distingue d'une fumée ordinaire à l'œil, et c'est donc la seule qui compte. Elle dit la même
- * chose que le froid qu'elle porte : *ça ne s'échappe pas vers le ciel, ça s'accumule ici.*
+ * Une fumée chaude monte et s'évase. Celle-ci est **plus lourde que l'air** : elle sort de la
+ * GUEULE au sommet de la colonne (`FUMEROLLE_BOUCHE_PX` — dérivé de l'art, les deux ne peuvent
+ * pas diverger), s'élève à peine, puis **retombe le long du fût et rampe** en s'étalant au ras
+ * du sol. C'est la seule chose qui la distingue d'une fumée ordinaire à l'œil, et c'est donc la
+ * seule qui compte. Elle dit la même chose que le froid qu'elle porte : *ça ne s'échappe pas
+ * vers le ciel, ça s'accumule ici.*
  *
  * ═══ PIXELLISÉE, VACILLANTE PAR L'ALPHA ═══
  *
@@ -25,7 +28,8 @@
  * (`froidDeFumerolle`), et les deux ne se parlent pas : on ne peut pas les faire diverger.
  */
 import Phaser from 'phaser'
-import { TILE_PX } from '../../render/framing'
+import { TILE_PX, nodeDepth } from '../../render/framing'
+import { FUMEROLLE_BOUCHE_PX } from '../../render/lit-props'
 
 /** Le grain de l'art (px monde) — la même maille que la brume et le Feu. */
 const GRAIN_PX = 4
@@ -35,6 +39,13 @@ const QUAD_PX = GRAIN_PX * 2
  * ⚠ AU-DESSUS DU SOL **ET DES PROPS** (`GROUND_PROP_DEPTH` = 2, `FLOOR_DEPTH` = 6). À 4,5 elle
  * passait sous les dalles et sous le bâti : on ne voyait rien. Elle reste sous tout ce qui a des
  * pieds (les acteurs sont triés par Y, très au-dessus).
+ *
+ * …POUR LA NAPPE AU SOL SEULEMENT. Depuis que la fumée naît à la GUEULE (sommet de la colonne),
+ * une bouffée encore en l'air passerait DERRIÈRE le sprite du nœud (trié par Y, très au-dessus
+ * de 7) et la colonne avalerait son propre panache — on ne verrait rien cracher. Une bouffée en
+ * l'air prend donc la profondeur du nœud de sa bouche + ε (devant SA colonne, derrière ce qui
+ * se tient un rang plus bas), et redescend à `FUMEE_DEPTH` quand elle touche le sol — à cet
+ * instant elle est pâle et rampe, la bascule ne se voit pas.
  */
 const FUMEE_DEPTH = 7
 /**
@@ -70,8 +81,15 @@ const VIE_S = 4.5
  * « la fumée de ce trou », on lit « du brouillard qui traîne ».
  */
 const NAPPE_TUILES = 1.6
-/** Vitesse limite de chute, px/s — la moitié du rayon en une vie : elle se pose, elle ne plonge pas. */
-const CHUTE_MAX = (NAPPE_TUILES * TILE_PX * 0.5) / VIE_S
+/**
+ * Vitesse limite de chute, px/s — DÉRIVÉE DE LA COLONNE, plus de la nappe : née à la gueule
+ * (`FUMEROLLE_BOUCHE_PX` au-dessus du sol), la bouffée doit TOUCHER le sol avant de mourir,
+ * sinon « la fumée tombe vers le sol » resterait une intention. Elle sort vers le haut ~1 s
+ * (le temps que la pesanteur la retourne), il lui reste ~70 % de sa vie pour descendre la
+ * hauteur du fût : c'est le 0,7. L'ancien plafond (le demi-rayon de nappe en une vie,
+ * ~2,8 px/s) l'aurait laissée flotter au sommet pour toujours.
+ */
+const CHUTE_MAX = FUMEROLLE_BOUCHE_PX / (VIE_S * 0.7)
 /** Vitesse limite de reptation, px/s — le rayon plein en une vie, c'est l'étalement au sol. */
 const RAMPE_MAX = (NAPPE_TUILES * TILE_PX) / VIE_S
 
@@ -85,11 +103,19 @@ interface Bouffee {
   graine: number
   /** Fausse-t-elle sa première vie ? cf. `DEPHASAGE` — une seule fois, à l'allumage initial. */
   neuve: boolean
+  /** Le SOL de sa bouche (px monde) — sous lui elle rampe, au-dessus elle tombe le long du fût. */
+  solY: number
+  /** La profondeur « en l'air » : celle du nœud de sa bouche + ε (voir `FUMEE_DEPTH`). */
+  depthHaut: number
 }
 
 export class FumerolleFx {
   private readonly bouffees: Bouffee[] = []
-  readonly quads: Phaser.GameObjects.Rectangle[] = [] // public : le harnais smoke les LIT
+  readonly quads: Phaser.GameObjects.Image[] = [] // public : le harnais smoke les LIT
+  /** L'éclairage dynamique est-il armé ? (posé par WorldScene). La fumée est de la MATIÈRE du
+   *  monde : sans `setLighting`, elle restait gris plein en pleine nuit — le voile passe SOUS
+   *  les sprites, seule l'ambiante fait leur nuit. */
+  lighting = true
   /** Combien de bouffées sont vivantes — LU PAR LE SMOKE. */
   vivantes = 0
   /**
@@ -104,11 +130,16 @@ export class FumerolleFx {
 
   constructor(private scene: Phaser.Scene) {
     for (let i = 0; i < BUDGET; i++) {
-      this.bouffees.push({ x: 0, y: 0, vx: 0, vy: 0, age: 0, vive: false, graine: 0, neuve: true })
-      // BLANC BLEUTÉ, et c'est délibéré : sur un sol de cendre brun-gris, une fumée grise se
-      // confond. Le froid a le droit d'être un peu bleu — c'est ce qui la fait LIRE.
-      const r = scene.add.rectangle(0, 0, QUAD_PX, QUAD_PX, 0xdbe4e8)
-      r.setOrigin(0.5, 0.5).setDepth(FUMEE_DEPTH).setVisible(false)
+      this.bouffees.push({ x: 0, y: 0, vx: 0, vy: 0, age: 0, vive: false, graine: 0, neuve: true, solY: 0, depthHaut: FUMEE_DEPTH })
+      // GRISE (Alexis, 2026-08-29 : « de la fumée grise »). Le blanc bleuté d'avant disait le
+      // froid, mais la fumée naît désormais sur le fût SOMBRE de la colonne : un gris franc,
+      // nettement plus clair que le sol de cendre (~#6a6660), y reste lisible sans virer au givre.
+      // Une IMAGE `__WHITE` teintée, pas un `Rectangle` : les Shapes n'ont pas le composant
+      // Lighting, or la fumée doit prendre la nuit du monde comme le reste.
+      const r = scene.add.image(0, 0, '__WHITE')
+      r.setDisplaySize(QUAD_PX, QUAD_PX).setTint(0xb8b7b3)
+        .setOrigin(0.5, 0.5).setDepth(FUMEE_DEPTH).setVisible(false)
+      r.setLighting(true)
       this.quads.push(r)
     }
   }
@@ -131,10 +162,14 @@ export class FumerolleFx {
         const b = this.bouffees[i]!
         if (b.vive) continue
         const bouche = bouches[i % bouches.length]!
-        // Un départ légèrement dispersé sur la gueule : une colonne parfaitement axée se lirait
+        // Un départ légèrement dispersé sur la gueule : un panache parfaitement axé se lirait
         // comme un trait, et un trait n'est pas de la fumée.
+        // ⚠ ELLE NAÎT À LA GUEULE, au SOMMET de la colonne — `FUMEROLLE_BOUCHE_PX` au-dessus du
+        //   bas de la tuile (le pied du sprite) : l'origine du panache est dérivée de l'art.
+        b.solY = (bouche.ty + 1) * TILE_PX
+        b.depthHaut = nodeDepth(bouche.ty, TILE_PX) + 0.5
         b.x = (bouche.tx + 0.5) * TILE_PX + (this.pseudo(i, 1) - 0.5) * GRAIN_PX * 1.5
-        b.y = (bouche.ty + 0.5) * TILE_PX + (this.pseudo(i, 2) - 0.5) * GRAIN_PX
+        b.y = b.solY - FUMEROLLE_BOUCHE_PX + (this.pseudo(i, 2) - 0.5) * GRAIN_PX
         // ⚠ ELLE SORT VERS LE HAUT, MAIS À PEINE : `vy` négatif et FAIBLE, que la pesanteur
         //   retourne en une seconde. C'est ce qui la rend FROIDE à l'œil.
         b.vy = -6 - this.pseudo(i, 3) * 5
@@ -170,6 +205,12 @@ export class FumerolleFx {
       // arrête. Le passage par zéro — le moment où elle cesse de sortir et commence à retomber —
       // est intact, c'est lui qui la dit FROIDE ; ce qui disparaît, c'est la chute libre après.
       b.vy = Math.min(CHUTE_MAX, b.vy + 11 * dt)
+      // ARRIVÉE AU SOL DE SA BOUCHE, elle cesse de TOMBER et se met à s'étaler — vers le bas
+      // aussi, mais au pas de nappe (l'ancien plafond de chute, ~2,8 px/s) : c'est lui qui
+      // fabriquait l'étalement sud de la nappe, on le retrouve tel quel une fois posée. Sans ce
+      // frein, elle traversait la ligne de sol à pleine vitesse de chute et glissait vers le bas
+      // de l'écran — de la fumée qui coule sous le monde, pas une nappe.
+      if (b.y >= b.solY) b.vy = Math.min(b.vy, (NAPPE_TUILES * TILE_PX * 0.5) / VIE_S)
       // Elle s'étale au ras du sol — vers sa vitesse limite, plus en la MULTIPLIANT : une
       // croissance exponentielle n'a pas d'échelle, donc pas de rayon (voir `NAPPE_TUILES`).
       const cible = b.vx < 0 ? -RAMPE_MAX : RAMPE_MAX
@@ -188,10 +229,14 @@ export class FumerolleFx {
       // POSITION QUANTIFIÉE sur la grille de l'art : sans ça, le quad glisse en sous-pixel et la
       // fumée se met à ramper « lisse » au milieu d'un monde qui, lui, est en pixels.
       q.setPosition(Math.round(b.x / GRAIN_PX) * GRAIN_PX, Math.round(b.y / GRAIN_PX) * GRAIN_PX)
+      // EN L'AIR devant sa colonne, AU SOL sous les pieds (voir `FUMEE_DEPTH`) : la bascule se
+      // fait un quad au-dessus de la ligne de sol, quand la bouffée est déjà pâle et rampe.
+      q.setDepth(b.y < b.solY - QUAD_PX ? b.depthHaut : FUMEE_DEPTH)
       // ⚠ FAIBLE, ET C'EST VOULU : une bouche en porte vingt qui se chevauchent. C'est leur
       //   ACCUMULATION qui doit faire la nappe, pas chaque grain — à 0,9 chacun, on obtenait un
       //   bloc blanc opaque au lieu d'un voile.
       q.setAlpha(Math.max(0, enveloppe) * 0.34 * scintille)
+      q.setLighting(this.lighting) // réarmé chaque frame (toggle DEV), comme les nœuds
       q.setVisible(true)
       this.vivantes++
     }

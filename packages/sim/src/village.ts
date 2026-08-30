@@ -9,7 +9,6 @@
  * une action validée émet son événement de domaine.
  */
 import { isOutsider, recordAct, recordHostility, seasonActFactor } from './alignment'
-import { feedRefugees, recruitRefugees, robRefugees } from './refugees'
 import {
   AGRICULTURE,
   ALIGNMENT,
@@ -33,12 +32,14 @@ import {
 } from './balance'
 import {
   cultureDe,
+  cultureAdmise,
   cultureDeLaGraine,
   fenetreOuverte,
   isCropMature,
   isPlot,
   type CultureId,
 } from './agriculture'
+import { tuileCendree } from './cendre'
 import { poseLibre, rayonEmprise } from './defriche'
 import { secouerLeSol } from './sens'
 import {
@@ -293,12 +294,9 @@ export interface Village {
   nextTaskId: number
   /** Les PNJ d'accueil sont-ils déjà arrivés ? (spec pnj R9) */
   npcsArrived: boolean
-  /** L'EFFECTIF DE FONDATION (spec village-pnj-evolution R12) — le plafond de la
-   *  réparation aux réfugiés : le village se répare jusqu'à lui, jamais au-delà (la
-   *  croissance est l'affaire de R9). Posé par `foundNpcVillage` ; absent d'une vieille
-   *  sauvegarde, il se fige au premier passage à l'effectif courant (`??=` dans
-   *  `advanceRefugees`) — un village amputé d'avant la règle se maintient, il ne
-   *  ressuscite pas. Villages de joueur : jamais lu (la règle est PNJ-seulement). */
+  /** L'EFFECTIF DE FONDATION — posé par `foundNpcVillage`. Servait de plafond à la
+   *  réparation aux réfugiés (R12, système retiré le 2026-08-30) ; conservé dans l'état
+   *  (les sauvegardes le portent) pour le jour où une autre source de réparation naîtra. */
   foundedSize?: number
   /** Dernière alarme (spec événements R4 : une par vague) — TICK_NEVER si jamais. */
   lastAlarmAt: number
@@ -346,12 +344,6 @@ export type VillageAction =
   | { type: 'plant'; structureId: number }
   | { type: 'harvest_crop'; structureId: number }
   | { type: 'give'; targetEntityId: number; item: ItemId; count: number }
-  /** LES RÉFUGIÉS (V2-25, GDD §520) — à portée d'un groupe : le RECRUTER (ils rejoignent mon
-   *  village en PNJ ; il faut que j'aie un village), les NOURRIR (des vivres, chaleur) ou les
-   *  DÉPOUILLER (prendre leur bien, prédation). Refouler = ne rien faire, ils repartent seuls. */
-  | { type: 'recruit_refugees'; groupId: number }
-  | { type: 'feed_refugees'; groupId: number }
-  | { type: 'rob_refugees'; groupId: number }
   /**
    * JE POSE UNE PIÈCE STRUCTURELLE (mur/porte/sol/toit), marteau en main — et RIEN
    * d'autre (décision d'Alexis : le four, l'établi, le coffre se posent en objet
@@ -1147,7 +1139,14 @@ export function applyVillageAction(state: SimState, actorId: number, action: Vil
      */
     case 'place_component': {
       const village = getVillageOf(state, actorId)
-      if (!village) return reject('sans village — fonder un foyer d’abord')
+      // ⚠ LES PIÈCES DE LA FRANGE (cendre.md R28a, agriculture.md J1) — leur place est LOIN
+      // du Feu : le REGISTRE les déclare (`horsVillage`), et elles sont exemptées du village
+      // et du carré, comme le feu de camp. Toutes les autres portes (main, portée,
+      // sous-pieds, terrain, tuile, nœud) les jugent comme tout le monde. Sans village,
+      // elles naissent `villageId: 0` — le statut du feu de camp.
+      const tenu = heldSlot(actor)?.item
+      const braise = tenu !== undefined && tenu in PIECES && piece(tenu as StructureType).horsVillage === true
+      if (!village && !braise) return reject('sans village — fonder un foyer d’abord')
       const held = heldSlot(actor)
       // Les OBJETS TENUS-ET-POSÉS (décision d'Alexis) : les composants ET le coffre —
       // le four, l'établi (des composants) et le coffre ne se posent PAS au marteau.
@@ -1165,32 +1164,42 @@ export function applyVillageAction(state: SimState, actorId: number, action: Vil
       const { tx, ty } = action
       if (!Number.isInteger(tx) || !Number.isInteger(ty)) return reject('case invalide')
       // LE PALIER DU FEU débloque les composants (spec construction R6) ; le coffre est libre.
-      const unlockTier = isComp ? COMPONENTS[item as ComponentType].unlockTier : 1
-      if (unlockTier > village.tier) return reject('composant verrouillé (palier du Feu)')
-      if (chebyshev(village.fireTx, village.fireTy, tx, ty) > fireRadius(village.tier)) return reject('hors du carré du Feu')
+      // La braise-mère est HORS carré et hors palier (R28a) — sa serrure est sa recette (Forge N2).
+      if (village && !braise) {
+        const unlockTier = isComp ? COMPONENTS[item as ComponentType].unlockTier : 1
+        if (unlockTier > village.tier) return reject('composant verrouillé (palier du Feu)')
+        if (chebyshev(village.fireTx, village.fireTy, tx, ty) > fireRadius(village.tier)) return reject('hors du carré du Feu')
+      }
       if (distSq(actor.x, actor.y, tx + 0.5, ty + 0.5) > BALANCE.BUILD_RANGE * BALANCE.BUILD_RANGE) return reject('trop loin')
       // Un composant/coffre BLOQUE : pas sous ses pieds (on s'y emmurerait), comme le Feu.
       if (Math.floor(actor.x) === tx && Math.floor(actor.y) === ty) return reject('pas sous ses pieds')
       if (!terrainConstructible(terrainAt(state.map, tx, ty), placeType)) return reject('terrain inconstructible')
+      // LA TERRE DE LA SUIE (agriculture.md J1) : la pièce qui l'exige ne se pose que là —
+      // et le prédicat est l'écrivain unique du sol cendré, jamais une recopie.
+      if (piece(placeType).surCendre === true && !tuileCendree(state, tx, ty)) return reject('il faut un sol cendré')
       // « Prise ENTIÈRE » (R23) : un mur d'arête borde la tuile sans l'occuper — on ADOSSE
       // donc son four à son propre mur, ce que `solidAt` refusait dès la première arête posée.
       if (fullTileAt(state.structures, tx, ty)) return reject('tuile occupée')
       if (!poseLibre(state.villages, state.nodes, tx, ty)) return reject('un nœud occupe la tuile')
-      // Invariant de navigabilité (R7) : un composant/coffre bloque, comme un mur.
-      const ok = placementKeepsNavigable(
-        state.map,
-        state.structures,
-        state.entities,
-        actorId,
-        { tx: village.fireTx, ty: village.fireTy },
-        fireRadius(village.tier),
-        { tx, ty, type: placeType },
-      )
-      if (!ok) return reject('cela couperait le passage')
+      // Invariant de navigabilité (R7) : un composant/coffre bloque, comme un mur. Il est
+      // scopé au CARRÉ du Feu — une braise-mère posée à la frange, hors carré, n'a pas de
+      // carré à préserver (le feu de camp ne passe pas non plus par cette porte).
+      if (village && !braise) {
+        const ok = placementKeepsNavigable(
+          state.map,
+          state.structures,
+          state.entities,
+          actorId,
+          { tx: village.fireTx, ty: village.fireTy },
+          fireRadius(village.tier),
+          { tx, ty, type: placeType },
+        )
+        if (!ok) return reject('cela couperait le passage')
+      }
       // L'objet tenu se consomme (une unité) : il DEVIENT la structure.
       held.count -= 1
       if (held.count <= 0) actor.inventory[actor.activeSlot] = null
-      addStructure(state, placeType, tx, ty, village.id, actorId)
+      addStructure(state, placeType, tx, ty, village?.id ?? 0, actorId)
       // LE CHANTIER S'ENTEND (spec cendreux R25) — même règle que `build`, même portée.
       secouerLeSol(state, tx + 0.5, ty + 0.5, CENDREUX.SENS.BATIR)
       return
@@ -1378,12 +1387,18 @@ export function applyVillageAction(state: SimState, actorId: number, action: Vil
       for (const slot of actor.inventory) {
         if (slot === null || slot === undefined) continue
         const c = cultureDeLaGraine(slot.item)
-        if (c !== null && fenetreOuverte(c, jour, s.type)) {
+        // La COMPATIBILITÉ d'abord (J2 : la braise et la suie ne vont qu'ensemble), la
+        // FENÊTRE ensuite — deux refus distincts, deux mots distincts.
+        if (c !== null && cultureAdmise(c, s.type) && fenetreOuverte(c, jour, s.type)) {
           semee = c
           break
         }
       }
-      if (semee === null) return reject('aucune graine de saison — il faut sa fenêtre, ou une serre')
+      if (semee === null) {
+        return reject(s.type === 'parcelle_de_suie'
+          ? 'seule l’orge-de-braise pousse dans la suie'
+          : 'aucune graine de saison — il faut sa fenêtre, ou une serre')
+      }
       // Le retrait ne peut pas échouer : `semee` sort de l'inventaire qu'on vient de balayer.
       removeItems(actor.inventory, { [AGRICULTURE.CULTURES[semee].graine]: 1 })
       s.culture = semee
@@ -1515,25 +1530,6 @@ export function applyVillageAction(state: SimState, actorId: number, action: Vil
           item: action.item,
           count: given,
         })
-      }
-      return
-    }
-
-    case 'recruit_refugees':
-    case 'feed_refugees':
-    case 'rob_refugees': {
-      const group = state.refugeeGroups.find((g) => g.id === action.groupId)
-      if (!group) return reject('plus personne ici')
-      const range = BALANCE.INTERACT_RANGE
-      if (distSq(actor.x, actor.y, group.tx + 0.5, group.ty + 0.5) > range * range) return reject('trop loin')
-      if (action.type === 'recruit_refugees') {
-        const village = getVillageOf(state, actorId)
-        if (!village) return reject('il faut un Feu pour les accueillir')
-        recruitRefugees(state, actor, group, village)
-      } else if (action.type === 'feed_refugees') {
-        if (!feedRefugees(state, actor, group)) return reject('des vivres à offrir manquent')
-      } else {
-        robRefugees(state, actor, group)
       }
       return
     }

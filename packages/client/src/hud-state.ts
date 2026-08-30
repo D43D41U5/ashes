@@ -253,10 +253,6 @@ export interface HudState {
    *  par WorldScene chaque frame ; lu par UIScene, qui affiche alors la fenêtre du
    *  bas « Fonder un village ici ? ». Le clic Oui envoie `found_village`. */
   foundableFire: { structureId: number } | null
-  /** LES RÉFUGIÉS À PORTÉE (V2-25, GDD §520) : le groupe le plus proche à portée. WorldScene
-   *  le pose ; UIScene en tire la fenêtre à trois gestes (recruter/nourrir/dépouiller).
-   *  `null` = aucun groupe à portée. */
-  refugeesNearby: { groupId: number; count: number } | null
   /** LE FEU AMÉLIORABLE (V0-3) : je suis Chef, à portée de MON Feu, palier < max.
    *  Posé par WorldScene chaque frame ; UIScene en tire la fenêtre « Améliorer le
    *  Feu ». `affordable` grise le bouton et fait APPRENDRE le coût (on le voit avant
@@ -481,7 +477,7 @@ export const CLES_HUD: Record<keyof HudState, true> = {
   craftQueue: true, stationsInRange: true, seen: true, hunger: true, temperature: true, skills: true, pecheCarnet: true, carnetEncyclo: true,
   hp: true, stamina: true, exhausted: true, wounds: true, selected: true, buildMaterial: true, buildEdge: true, demolir: true,
   marteau: true,
-  foundableFire: true, refugeesNearby: true, upgradableFire: true, deathMoment: true, deathVeilOpen: true, corpseHint: true,
+  foundableFire: true, upgradableFire: true, deathMoment: true, deathVeilOpen: true, corpseHint: true,
   alertes: true, conseils: true, decouvertes: true,
   characterMenuOpen: true, characterTab: true, uiTyping: true, chatTyping: true, debugTyping: true, chatLog: true,
   chatDraft: true, openContainer: true, openContainerView: true, openFire: true, openFireView: true,

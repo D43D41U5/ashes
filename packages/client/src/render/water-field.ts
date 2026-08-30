@@ -359,6 +359,9 @@ export function buildFondField(
 /** Les régimes d'eau du canal B (geste 10). */
 export const REGIME_NORMAL = 0
 export const REGIME_LAC_MORT = 2
+/** LE BIEF SOUILLÉ (spec `cendre.md` R26d) — l'eau que la coulée de suie a prise : grise,
+ *  molle, le ciel s'y éteint. Canal B à 100 (le lac mort tient 200 — deux seuils du shader). */
+export const REGIME_SUIE = 3
 
 export function buildWaterField(
   terrain: ArrayLike<number>,
@@ -378,7 +381,7 @@ export function buildWaterField(
     const o = i * 4
     data[o] = wet ? 255 : 0 // masque BINAIRE — voir l'en-tête
     // G (profondeur) : 0 par défaut — la 2e passe pose le profond et sa frontière.
-    data[o + 2] = regime?.[i] === REGIME_LAC_MORT ? 200 : 0
+    data[o + 2] = regime?.[i] === REGIME_LAC_MORT ? 200 : regime?.[i] === REGIME_SUIE ? 100 : 0
     data[o + 3] = 255
   }
 

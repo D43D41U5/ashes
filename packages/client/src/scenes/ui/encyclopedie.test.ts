@@ -233,8 +233,9 @@ describe('l’encyclopédie — la couverture des tables', () => {
     // Matières intermédiaires : on les fabrique pour fabriquer autre chose.
     // (`components` n'est PAS ici : il se récolte dans les décombres — la garde l'a dit.)
     'rope', 'iron_ingot', 'steel_ingot', 'leather', 'raw_hide', 'bone',
-    // Semences : elles se mettent en terre, elles ne se rencontrent pas.
-    'graine', 'graine_verte', 'graine_fruit', 'graine_tubercule',
+    // Semences : elles se mettent en terre, elles ne se rencontrent pas. La graine de braise
+    // (agriculture.md J1) est du même sang — le murmure la donne, la suie la boit.
+    'graine', 'graine_verte', 'graine_fruit', 'graine_tubercule', 'graine_de_braise',
     // ⚠ LE CHARBON DE BOIS EST SORTI D'ICI LE 2026-08-27, et la garde l'a exigé toute seule.
     // Il y était parce que la section « ressources » se dérive de `NODE_DEFS` — ce qui se
     // RÉCOLTE — et qu'il ne se récoltait pas : il tombait dans les sorties d'un feu entretenu.
@@ -250,6 +251,14 @@ describe('l’encyclopédie — la couverture des tables', () => {
     // LE BÂTI et les composants posables — leur section reste à ouvrir.
     'campfire', 'chest', 'sechoir', 'enclume', 'furnace', 'four_acier', 'workshop',
     'tour_meca', 'atelier_lourd', 'silo', 'cave', 'reserve', 'parcelle', 'serre', 'terroir',
+    'parcelle_de_suie',
+    // LA BRAISE-MÈRE (cendre.md R28) est du bâti posable, comme le séchoir ; LE CŒUR DE BRAISE
+    // (R29) est une matière intermédiaire — un composant d'Ouvrage, pas une rencontre. Le jour
+    // où le bestiaire notera les butins des morts, la garde exigera sa sortie d'ici.
+    'braise_mere', 'coeur_de_braise',
+    // LE CUIR CENDRÉ (R30c) : matière intermédiaire, comme la peau brute — l'ingrédient de
+    // la tenue cendrée (R29b), pas une rencontre.
+    'cuir_cendre',
   ]
 
   it('AUCUN OBJET N’EST ORPHELIN PAR ACCIDENT : tout `ItemId` a une section, ou est déclaré hors', () => {

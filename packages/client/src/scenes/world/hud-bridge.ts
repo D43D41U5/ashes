@@ -6,6 +6,8 @@
 import {
   capaciteStation,
   BALANCE,
+  braiseBurnProgress,
+  braiseFuelTicksRemaining,
   chronicleFromEvents,
   meteoFeuConso,
   volumesDeChronique,
@@ -25,7 +27,6 @@ import {
   type ItemId,
   type PlayerAction,
   type SimEvent,
-  type RefugeeGroup,
   type SkillId,
   type StationFonction,
   type Structure,
@@ -164,28 +165,6 @@ export function publishFoundableFire(
   const found = id === null ? null : { structureId: id }
   const before = getHud(registry, 'foundableFire') ?? null
   if (before?.structureId !== found?.structureId) setHud(registry, 'foundableFire', found)
-}
-
-/** LES RÉFUGIÉS À PORTÉE (V2-25) : le groupe le plus proche à portée d'interaction, ou `null`. */
-export function publishRefugeesNearby(
-  registry: Registry,
-  player: { x: number; y: number },
-  groups: RefugeeGroup[],
-): void {
-  const r = BALANCE.INTERACT_RANGE
-  let near: { groupId: number; count: number } | null = null
-  let bestD = r * r
-  for (const g of groups) {
-    const dx = g.tx + 0.5 - player.x
-    const dy = g.ty + 0.5 - player.y
-    const d = dx * dx + dy * dy
-    if (d <= bestD) {
-      bestD = d
-      near = { groupId: g.id, count: g.count }
-    }
-  }
-  const before = getHud(registry, 'refugeesNearby') ?? null
-  if (before?.groupId !== near?.groupId) setHud(registry, 'refugeesNearby', near)
 }
 
 /**
@@ -327,7 +306,8 @@ export function publishOpenFire(
   })
   // LE SÉCHOIR ET LE FOUR N'ONT PAS DE COMBUSTIBLE : `fireZoneInventory` le dit (elle rend
   // `undefined` pour leur zone `fuel`), et le panneau efface la section entière.
-  const brule = s.type === 'fire'
+  // La BRAISE-MÈRE a une soute comme le feu libre (cendre.md R28b) — du charbon, pas du bois.
+  const brule = s.type === 'fire' || s.type === 'braise_mere'
   // Le bouton contextuel (S19), même logique de disponibilité que les fenêtres flottantes retirées.
   let action: FireView['action'] = null
   // ⚠ FONDER / AMÉLIORER NE CONCERNE QUE LE FEU. Sans cette porte, un séchoir proposait
@@ -369,12 +349,13 @@ export function publishOpenFire(
     fuel,
     fuelZone: brule,
     verbe: s.type === 'sechoir' ? 'secher' : 'cuire',
-    fuelTimeRemaining: village ? Math.round(village.fuel / FIRE_UPKEEP.DRAIN_PER_TICK) : fuelTicksRemaining(tick, s),
+    fuelTimeRemaining: village ? Math.round(village.fuel / FIRE_UPKEEP.DRAIN_PER_TICK)
+      : s.type === 'braise_mere' ? braiseFuelTicksRemaining(tick, s) : fuelTicksRemaining(tick, s),
     // LA PLUIE MANGE LE BOIS (spec meteo.md R5) : la sim accélère la consommation sous un
     // front mouillé (`fire.ts`) — sans cette ligne, le joueur voyait son bois fondre sans
     // explication. Relu par la MÊME fonction pure que l'autorité, au point du FEU.
     meteoConso: brule && etat ? meteoFeuConso(etat, s.tx + 0.5, s.ty + 0.5) : 1,
-    fuelBurnProgress: village ? 0 : fuelBurnProgress(tick, s),
+    fuelBurnProgress: village ? 0 : s.type === 'braise_mere' ? braiseBurnProgress(tick, s) : fuelBurnProgress(tick, s),
     fuelBurnSlot: village ? -1 : s.burnSlot ?? -1, // la case ANCRÉE qui brûle (source unique : la sim)
     cookIn,
     cookOut,

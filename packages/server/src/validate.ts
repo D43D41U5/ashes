@@ -52,6 +52,7 @@ import {
   WALL_TIERS,
   type AccessLevel,
   BARRIER_TYPES,
+  TRACTABLES,
   type BarrierType,
   type FireZone,
   type PlayerAction,
@@ -216,9 +217,6 @@ const FORMES: { [T in ActionJouable]: FormeDe<Extract<PlayerAction, { type: T }>
   plant: { structureId: req(ID) },
   harvest_crop: { structureId: req(ID) },
   give: { targetEntityId: req(ID), item: req(clef(ITEM_WEIGHT)), count: req(QUANTITE) },
-  recruit_refugees: { groupId: req(ID) },
-  feed_refugees: { groupId: req(ID) },
-  rob_refugees: { groupId: req(ID) },
   build: {
     structure: req(clef(BARRIERES)),
     tx: req(TUILE),
@@ -250,6 +248,10 @@ const FORMES: { [T in ActionJouable]: FormeDe<Extract<PlayerAction, { type: T }>
   // LE LANCER DE LIGNE (spec `peche.md` D9/E1) : une TUILE, pas un nœud — on pêche l'eau.
   // Bornée comme toute coordonnée reçue du réseau : `TUILE` refuse le hors-carte.
   cast_line: { tx: req(TUILE), ty: req(TUILE) },
+  // LA TRACTION (spec `traction.md` T1) : le registre des tractables tient la clef — une
+  // charge ajoutée demain (le chariot) valide sans une ligne d'ici.
+  atteler: { kind: req({ g: 'clef', table: TRACTABLES }), id: req(ID) },
+  detacher: {},
   // LE DÉPEÇAGE (spec `depecage.md` G1/G4) : le maintien porte `hold`, comme la jauge.
   butcher_start: { corpseId: req(ID), hold: opt({ g: 'booleen' }) },
   butcher_stop: {},

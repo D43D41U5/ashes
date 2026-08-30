@@ -84,7 +84,7 @@ export function axeOppose(x: number, y: number, fromX: number, fromY: number): {
 }
 
 interface Gouttelette {
-  img: Phaser.GameObjects.Rectangle
+  img: Phaser.GameObjects.Image
   /** Position au SOL (monde), et hauteur au-dessus de lui. */
   x: number
   y: number
@@ -99,8 +99,15 @@ interface Gouttelette {
   posee: boolean
 }
 
+// Des IMAGES `__WHITE` teintées, pas des `Rectangle` : les Shapes n'ont pas le composant
+// Lighting, or le sang est de la MATIÈRE du monde — il prend sa nuit (le voile d'ambiance
+// passe SOUS les sprites, seule l'ambiante fait leur nuit ; leçon des empreintes, 2026-08-16).
 export class SangFx {
   private readonly gouttelettes: Gouttelette[] = []
+
+  /** L'éclairage dynamique est-il armé ? (posé par WorldScene) — lu à la naissance de chaque
+   *  goutte : une gouttelette vit moins d'une seconde, pas besoin de réarmer le pool. */
+  lighting = true
 
   constructor(private readonly scene: Phaser.Scene) {}
 
@@ -145,8 +152,11 @@ export class SangFx {
     const ton = SANG_TONS[i % SANG_TONS.length]!
     const cote = rnd() < 0.25 ? 3 : 2
     const img = this.scene.add
-      .rectangle(Math.round(x), Math.round(y - z), cote, cote, ton)
+      .image(Math.round(x), Math.round(y - z), '__WHITE')
+      .setDisplaySize(cote, cote)
+      .setTint(ton)
       .setDepth(ySortDepth(y / TILE_PX, TILE_PX, TIE_ACTOR))
+    img.setLighting(this.lighting)
     this.gouttelettes.push({
       img,
       x,
@@ -190,7 +200,9 @@ export class SangFx {
         e.vz = 0
         if (!e.posee) {
           e.posee = true
-          e.img.setDisplaySize(e.img.width + 1, Math.max(1, e.img.height - 1))
+          // `displayWidth`, pas `width` : sur une image `__WHITE`, `width` est la taille de la
+          // TEXTURE (4 px), pas celle de la tache — l'écrasement se mesure sur l'affiché.
+          e.img.setDisplaySize(e.img.displayWidth + 1, Math.max(1, e.img.displayHeight - 1))
         }
       }
       const k = age / e.vie

@@ -6,6 +6,7 @@
  */
 import { describe, expect, it } from 'vitest'
 import { BALANCE, GEL, TERRAIN_DEEP_WATER, TERRAIN_GRASS, TERRAIN_ROAD, TERRAIN_SHALLOW_WATER, TERRAINS, TICK_DT_S } from './balance'
+import { calculeChampDeCendre, tuileCendree } from './cendre'
 import { moveAvatar } from './collision'
 import {
   NEIGE_GENOUX, NEIGE_NUE, NEIGE_POUDREUSE, neigeAuSol, niveauDeNeige, niveauPourCouverture, seuilDeNeige, vitesseSurNeige,
@@ -160,6 +161,34 @@ describe('le niveau d’une tuile du monde', () => {
     // Et la prémisse de la règle « quel que soit le terrain » : une route ET une herbe sous la
     // neige ont été comparées (sinon la garde ne garde que l'herbe).
     expect([...vus.keys()].some((k) => k.startsWith('route-') && !k.endsWith('-0'))).toBe(true)
+  })
+
+  it('G7bis — la cendre boit la neige : une tuile cendrée n’en porte jamais', () => {
+    const { sim, tx } = simEnneige()
+    // TÉMOIN : la colonne traversée, relevée AVANT la cendre — la prémisse du test.
+    const avant: number[] = []
+    for (let ty = 0; ty < sim.map.height; ty++) avant.push(neigeAuSol(sim, tx, ty))
+    expect(Math.max(...avant), 'pas de neige sur la colonne : la prémisse est morte').toBeGreaterThan(0)
+    // Un charnier en HAUT de la même colonne — le VRAI champ de coût (`calculeChampDeCendre`,
+    // l'écrivain unique), jamais un champ écrit à la main. Âge nul : la tache `R0` seule, donc
+    // le haut de la colonne est pris et le bas épargné — les deux populations existent.
+    sim.map.cendreCout = calculeChampDeCendre(sim.map.width, sim.map.height, sim.map.terrain, [{ tx, ty: 0 }])
+    sim.cendreAge = [0]
+    let cendrees = 0
+    let temoins = 0
+    for (let ty = 0; ty < sim.map.height; ty++) {
+      if (tuileCendree(sim, tx, ty)) {
+        cendrees++
+        expect(neigeAuSol(sim, tx, ty), `tuile cendrée (${tx}, ${ty})`).toBe(0)
+        expect(niveauDeNeige(sim, tx, ty)).toBe(NEIGE_NUE)
+      } else if (avant[ty]! > 0) {
+        // Le froid de la cendre (R22) ne peut que RETENIR la neige alentour, jamais l'effacer.
+        temoins++
+        expect(neigeAuSol(sim, tx, ty), `tuile épargnée (${tx}, ${ty})`).toBeGreaterThan(0)
+      }
+    }
+    expect(cendrees, 'aucune tuile cendrée : la prémisse est morte').toBeGreaterThan(0)
+    expect(temoins, 'aucune tuile épargnée enneigée : le témoin est mort').toBeGreaterThan(0)
   })
 
   it('sans neige, le terrain garde son pas (la route est plus rapide)', () => {

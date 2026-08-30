@@ -25,7 +25,6 @@ import {
   type Monster,
   type FunctionId,
   type Npc,
-  type RefugeeGroup,
   type ResourceNode,
   type NodeType,
   type Structure,
@@ -298,6 +297,16 @@ function berryDots(node: ResourceNode): number {
   const full = Math.max(1, Math.floor(NODE_DEFS.berry_bush.stock * forageRichness(node.id)))
   // Au moins 1 point tant qu'il reste des baies ; jamais plus que la capacité l'exige.
   return Math.max(1, Math.min(BERRY_TEX_MAX, Math.round((BERRY_TEX_MAX * node.stock) / full)))
+}
+/** FUMEROLLE (Alexis, 2026-08-29) : jusqu'à 3 BANDES DE SEL le long de la colonne
+ *  (`nd-fumerolle-0..3`), proportionnelles au stock — la même grammaire que les baies. À `-0`
+ *  la colonne reste dessinée NUE, pleine taille : le repère survit à la récolte, comme la
+ *  charbonnière. La capacité de référence est le stock de base ; une bouche enrichie par le
+ *  caractère de sa fosse (la Salée, ×3) garde simplement ses 3 bandes plus longtemps. */
+const FUM_TEX_MAX = 3
+function fumerolleBandes(node: ResourceNode): number {
+  if (node.stock <= 0) return 0
+  return Math.max(1, Math.min(FUM_TEX_MAX, Math.round((FUM_TEX_MAX * node.stock) / NODE_DEFS.fumerolle.stock)))
 }
 /** GAP DU BAS DE L'ART d'un nœud, en TEXELS : combien de rangées transparentes sous la silhouette,
  *  jusqu'au bord bas de sa tuile (16×N). L'ombre de contact se pose sur cette base VISIBLE, pas sur
@@ -773,8 +782,6 @@ export class SnapshotView {
   corpses: Corpse[] = []
   /** LES RÉFUGIÉS (V2-25) : groupes de survivants sur les routes — WorldScene y branche la
    *  fenêtre à trois gestes, et on les dessine ici en huddle. */
-  refugeeGroups: RefugeeGroup[] = []
-  private refugeeSprites = new Map<number, Phaser.GameObjects.Image>()
   npcs: Npc[] = []
   monsters: Monster[] = []
   /** LES SOLS QUI TRAVAILLENT du dernier snapshot. Ils partaient jusqu'ici DIRECTEMENT dans
@@ -910,7 +917,7 @@ export class SnapshotView {
 
   /** Le tick et l'heure du dernier snapshot — la posture des bêtes en dépend
    * (sentinelle dérivée du tick, cerf couché hors de ses heures). */
-  private tick = 0
+  tick = 0 // le tick de sim du dernier snapshot — public : les FX dérivés (murmures R27d) lisent le cycle dessus
   /**
    * LES BATTANTS EN MOUVEMENT (spec construction R26) — quelle frame de porte montrer, à cet
    * instant. Il vit ICI et pas dans `WorldScene` parce que c'est ici qu'on peint : le fait
@@ -1036,7 +1043,6 @@ export class SnapshotView {
     this.syncStructures(msg.structures, self ? { x: self.x, y: self.y } : undefined)
     this.applyNodeDeltas(msg.nodeDeltas, now)
     this.syncCorpses(msg.corpses)
-    this.syncRefugees(msg.refugeeGroups)
     this.syncEntities(msg.entities, playerId, now)
     this.syncGroundItems()
   }
@@ -1152,6 +1158,7 @@ export class SnapshotView {
    * ne se peint donc jamais par-dessus ce qu'il laisse sortir.
    */
   renderReveils(now: number): void {
+    if (this.reveilFx) this.reveilFx.lighting = this.lighting // les mottes projetées suivent
     let used = 0
     for (const m of this.reveilFx?.monticules(now) ?? []) {
       let g = this.reveilPool[used]
@@ -1160,7 +1167,10 @@ export class SnapshotView {
         this.reveilPool[used] = g
       }
       const lift = this.warp?.lift(m.x, m.y) ?? 0
-      g.setTexture(`fx-reveil-${m.stade}`)
+      // En rendu éclairé, la paire `_lit` (reveil-fx) : le tertre vit sous la lumière du
+      // monde — sans elle, un trou de Cendreux restait pleine valeur en pleine nuit.
+      g.setTexture(this.lighting ? cleLit(`fx-reveil-${m.stade}`) : `fx-reveil-${m.stade}`)
+      g.setLighting(this.lighting) // pooled : réarmé chaque frame, comme les nœuds
       g.setPosition(m.x * TILE_PX, m.y * TILE_PX - lift)
       g.setDepth(corpseDepth(m.y, TILE_PX) - 3) // sous les terriers, sous les gouttes, sous tout
       g.setScale(m.echelle)
@@ -1180,13 +1190,17 @@ export class SnapshotView {
     for (const p of this.groundItems) {
       seen.add(p.id)
       let sprite = this.groundSprites.get(p.id)
+      // En rendu éclairé, l'icône `_lit` (item-art) : une pile posée au sol vit sous la lumière
+      // du monde — sans la bascule, elle brillait en pleine nuit comme en plein jour.
+      const cle = this.lighting ? cleLit(`it-${p.item}`) : `it-${p.item}`
       if (!sprite) {
         const lift = this.warp?.lift(p.x, p.y) ?? 0
         sprite = this.scene.add
-          .image(p.x * TILE_PX, p.y * TILE_PX - lift, `it-${p.item}`)
+          .image(p.x * TILE_PX, p.y * TILE_PX - lift, cle)
           .setOrigin(0.5, 0.5)
           .setDepth(corpseDepth(p.y, TILE_PX))
           .setScale(0.8)
+        sprite.setLighting(this.lighting)
         // ═══ UNE FLÈCHE EST PLANTÉE, ELLE N'EST PAS POSÉE (décision d'Alexis) ═══
         //
         // Couchée à plat comme les autres piles, elle lisait comme une icône d'inventaire
@@ -1202,6 +1216,9 @@ export class SnapshotView {
             .setScale(0.95)
         }
         this.groundSprites.set(p.id, sprite)
+      } else if (sprite.texture.key !== cle) {
+        sprite.setTexture(cle) // le toggle DEV a basculé : la pile suit
+        sprite.setLighting(this.lighting)
       }
     }
     for (const [id, sprite] of this.groundSprites) {
@@ -2319,6 +2336,10 @@ export class SnapshotView {
         // aux autres plantes). Il reste dessiné à taille pleine (échelle 1), et c'est le NOMBRE DE
         // BAIES qui suit le stock — `min(BERRY_TEX_MAX, stock)` points, 0 quand il est vidé.
         const isBerry = n.type === 'berry_bush'
+        // LA FUMEROLLE est MINÉRALE ET PERMANENTE : vidée, elle ne rétrécit pas — la colonne
+        // reste pleine taille et ce sont ses BANDES DE SEL qui suivent le stock (comme les
+        // baies). La laisser dans la boucle d'échelle l'aurait fait fondre à 14 % à la récolte.
+        const isFum = n.type === 'fumerolle'
         // LA FLORE GÉLIVE (voir `DORMANT_TINT`) : gelée d'après la couche du gel (une lecture de
         // signature, la même que le fouillis — jamais `floreGelee` par nœud et par image).
         const gelif = NODE_DEFS[n.type].gelif === true
@@ -2337,7 +2358,7 @@ export class SnapshotView {
           echX = pose.sx
           echY = pose.sy
         }
-        const g = isBerry || dep === undefined
+        const g = isBerry || isFum || dep === undefined
           ? 1
           : Math.min(1, Math.max(GROWTH_MIN, (this.tick - dep.since) / Math.max(1, dep.until - dep.since)))
         // ESSAI éclairage : l'arbre ORDINAIRE adulte passe sur son albédo UNIFORME `_lit`
@@ -2367,6 +2388,10 @@ export class SnapshotView {
           ? (this.lighting
             ? litNodeTextureKey(`nd-berry_bush-${gele ? 0 : berryDots(n)}`, mir)
             : `nd-berry_bush-${gele ? 0 : berryDots(n)}`)
+          : isFum
+          ? (this.lighting
+            ? litNodeTextureKey(`nd-fumerolle-${fumerolleBandes(n)}`, mir)
+            : `nd-fumerolle-${fumerolleBandes(n)}`)
           : growing && isTree
             ? (this.lighting ? litNodeTextureKey('nd-sapling', mir) : 'nd-sapling')
             : isTree
@@ -2772,7 +2797,10 @@ export class SnapshotView {
       seen.add(c.id)
       // LA CARCASSE (spec `depecage.md` R1c) : une bête reste la bête, couchée, et son art suit
       // ce qui lui RESTE — pleine, entamée, dépouillée. Une dépouille humaine : les ossements.
-      const cle = c.carcass ? cleCarcasse(c.carcass.species, etatCarcasse(c)) : 'spr-corpse'
+      // En rendu éclairé, la paire `_lit` (carcasse-art) : un cadavre vit sous la lumière du
+      // monde — sans elle, il restait pleine couleur en pleine nuit (le voile passe SOUS lui).
+      const base = c.carcass ? cleCarcasse(c.carcass.species, etatCarcasse(c)) : 'spr-corpse'
+      const cle = this.lighting ? cleLit(base) : base
       const existant = this.corpseSprites.get(c.id)
       if (existant === undefined) {
         // À plat : centrés sur la position de l'entité (pas d'ancrage pieds), mais dans
@@ -2782,40 +2810,17 @@ export class SnapshotView {
           .image(c.x * TILE_PX, c.y * TILE_PX - lift, cle)
           .setOrigin(0.5, 0.5)
           .setDepth(corpseDepth(c.y, TILE_PX))
+        sprite.setLighting(this.lighting)
         this.corpseSprites.set(c.id, sprite)
       } else if (existant.texture.key !== cle) {
-        existant.setTexture(cle) // une coupe a porté : la carcasse change d'état
+        existant.setTexture(cle) // une coupe a porté : la carcasse change d'état (ou le toggle DEV)
+        existant.setLighting(this.lighting)
       }
     }
     for (const [id, sprite] of this.corpseSprites) {
       if (!seen.has(id)) {
         sprite.destroy()
         this.corpseSprites.delete(id)
-      }
-    }
-  }
-
-  /** LES RÉFUGIÉS (V2-25) : un marqueur PNJ par groupe, posé au centre du groupe (pieds).
-   *  Modèle groupe-objet : ils ne bougent pas — on crée/détruit le sprite selon les groupes. */
-  private syncRefugees(groups: RefugeeGroup[]): void {
-    this.refugeeGroups = groups
-    const seen = new Set<number>()
-    for (const g of groups) {
-      seen.add(g.id)
-      if (!this.refugeeSprites.has(g.id)) {
-        const lift = this.warp?.lift(g.tx + 0.5, g.ty + 0.5) ?? 0
-        const sprite = this.scene.add
-          .image((g.tx + 0.5) * TILE_PX, (g.ty + 1) * TILE_PX - lift, 'spr-npc')
-          .setOrigin(0.5, 1)
-          .setDepth(corpseDepth(g.ty + 1, TILE_PX) + 1)
-          .setTint(0xcbb98a) // teinte terne : des survivants en haillons, pas des villageois
-        this.refugeeSprites.set(g.id, sprite)
-      }
-    }
-    for (const [id, sprite] of this.refugeeSprites) {
-      if (!seen.has(id)) {
-        sprite.destroy()
-        this.refugeeSprites.delete(id)
       }
     }
   }

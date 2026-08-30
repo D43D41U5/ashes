@@ -19,12 +19,12 @@
  * AUCUNE logique de jeu ici : de l'habillage, et rien d'autre.
  */
 import Phaser from 'phaser'
-import { TERRAIN_DEEP_WATER, TERRAIN_SHALLOW_WATER, zoneSlugAt, type WorldMap } from '@ashes/sim'
+import { eauSouillee, TERRAIN_DEEP_WATER, TERRAIN_SHALLOW_WATER, zoneSlugAt, type EtatDeCendre, type WorldMap } from '@ashes/sim'
 import { buildFlowField, COURANT_VITESSE, TAPER_RIVE_MAX, TAPER_RIVE_MIN, type FlowField } from '../../render/flow-field'
 import { GROUND_MAP_DEPTH, TILE_PX } from '../../render/framing'
-import { sunDirection, moonDirection, clarteDeLune, LUNE_PLEINE_JOUR } from '../../render/lighting'
+import { sunDirection, moonDirection, clarteDeLune, lueurDeLune, LUNE_PLEINE_JOUR } from '../../render/lighting'
 import type { HeureSolaire } from '../../render/lighting'
-import { buildFondField, buildRiveField, buildWaterField, MILIEU_VASE, REGIME_LAC_MORT, type RiveField } from '../../render/water-field'
+import { buildFondField, buildRiveField, buildWaterField, MILIEU_VASE, REGIME_LAC_MORT, REGIME_SUIE, type RiveField } from '../../render/water-field'
 
 /** Période du cycle d'advection dual-phase (s). Courte À DESSEIN : sur la rampe du taper
  *  de berge, les deux couches divergent d'au plus 0,25·T·vitesse — à 3 s l'écart (0,41
@@ -104,6 +104,8 @@ uniform float uReliefH;
 uniform float uTime;         // secondes
 uniform vec3 uSun;           // le soleil, en 3D — voir sunVector()
 uniform float uDay;          // 0 nuit · 1 plein jour
+uniform float uLune;         // la lueur de lune (phase × altitude), 0..1 — voir lueurDeLune()
+uniform vec3 uMoonV;         // la lune, en 3D — même recette que uSun (voir astreVector())
 
 // LES FEUX SUR L'EAU. Une poignée de foyers, poussés chaque frame depuis l'état sim (même
 // fireGlow que la flaque au sol et le trou du voile → en phase). xy = tuile du foyer,
@@ -342,6 +344,9 @@ void main() {
   // LE LAC MORT : « parfaitement immobile, trop claire, sans un poisson ». Le malaise
   // vient de l'EXCÈS de clarté — jamais d'un filtre sombre.
   float lacMort = step(0.63, field.b);
+  // LE BIEF SOUILLÉ (cendre.md R26d) : canal B à ~0,39 — entre le rien et le lac mort.
+  // La suie est un LAVAGE, pas un régime d'immobilité : l'eau bouge encore, mais grise.
+  float suie = step(0.30, field.b) * (1.0 - lacMort);
   vec3 rf = riveFlow(tile); // x : distance à la rive (+eau/−terre) · yz : le courant
   float dRive = rf.x;
   // (Le marnage — la ligne d'eau qui respirait par crans — a été RETIRÉ : regardé,
@@ -380,6 +385,7 @@ void main() {
   // Le clapot meurt sur les hauts-fonds : on ne clapote pas dans deux doigts d'eau.
   float amp = 0.35 + 0.65 * smoothstep(0.0, 0.45, open);
   amp *= 1.0 - 0.95 * lacMort; // le Lac Mort est PARFAITEMENT immobile (geste 10)
+  amp *= 1.0 - 0.45 * suie; // l'eau CHARGÉE est molle (R26d) — elle coule, elle ne danse plus
   vec2 p = tile * PLANE; // le plan de l'eau, redressé (voir YSQUASH)
 
   // ═══ LA TURBIDITÉ (geste 07, eau-fond) — l'eau garde la trace du passage ═══
@@ -513,7 +519,12 @@ void main() {
   // de réflexion (la doctrine R45) est intact, mais le large cesse d'être plus CLAIR que le
   // gué — c'est lui qui plafonnait le contraste de lisibilité (mesuré 1,29:1 puis 1,11:1).
   vec3 daySky = vec3(0.34, 0.45, 0.56);
-  vec3 nightSky = vec3(0.05, 0.08, 0.13);
+  // LE CIEL DE NUIT SUIT LA LUNE. Une eau de pleine lune est le miroir le plus clair du
+  // paysage ; une eau de nouvelle lune, un trou noir — plus sombre que l'ancienne constante,
+  // c'est le noir qui est l'écart. uLune = lueurDeLune (phase × altitude), la MÊME loi que le
+  // voile : la nappe ne s'argente jamais quand la terre reste noire. Pente CONTINUE en uLune,
+  // et la teinte qui monte est l'os du couloir lunaire (uAstreCol) — une seule lune.
+  vec3 nightSky = vec3(0.03, 0.05, 0.09) + uLune * 0.22 * vec3(0.75, 0.8, 0.88);
   vec3 sky = mix(nightSky, daySky, uDay);
   sky += vec3(0.12, 0.05, -0.03) * uDay * max(0.0, 1.0 - uSun.z); // chaleur au ras du matin/soir
 
@@ -522,8 +533,13 @@ void main() {
   // uniforme — le fond reste brun là où on le voit, le large prend la lumière du ciel.
   float skyMix = clamp(0.16 + 0.69 * deep, 0.0, 0.9);
   skyMix = mix(skyMix, 0.06, lacMort); // le Lac Mort : on regarde À TRAVERS (geste 10)
+  skyMix *= 1.0 - 0.6 * suie; // la suie ÉTEINT le ciel : l'eau ne reflète plus, elle porte
   vec3 col = mix(bottom, sky, skyMix);
   col = mix(col, col * vec3(0.88, 1.05, 1.04), lacMort); // la froideur irréelle du Lac Mort
+  // LE LAVAGE DE SUIE (cendre.md R26d) : vers le gris de la cendre fraîche — désaturé, un
+  // rien plus chaud que le lac mort. La couleur se calibre contre son fond : le sol cendré
+  // fait ~#5c5854, le bief doit s'en séparer d'un cran de valeur, pas de teinte.
+  col = mix(col, vec3(dot(col, vec3(0.333))) * vec3(0.78, 0.74, 0.72), 0.55 * suie);
 
   // ═══ LE CLAPOT PIXEL : la houle POSTERISÉE en paliers francs ═══
   //
@@ -547,6 +563,14 @@ void main() {
   float glint = step(0.55, h) * step(0.15, lambert);
   // Au Lac Mort les reflets sont PARFAITS — plus durs qu'ailleurs (geste 10).
   col += vec3(1.0, 0.97, 0.88) * glint * 0.38 * uDay * (1.0 + 0.6 * lacMort);
+
+  // L'ÉCLAT DE LUNE (2026-08-29) : le même éclat dur et RARE, la nuit, du côté de la LUNE —
+  // même porte de crête (jamais un lobe continu : c'est le lobe qui repeignait le marbre et
+  // faisait grésiller la nappe), teinte d'OS (celle du couloir), et ∝ lueurDeLune : un
+  // scintillement froid sous la pleine lune, rien du tout sous la neuve.
+  vec3 Lm = normalize(vec3(uMoonV.x, uMoonV.y / YSQUASH, uMoonV.z));
+  float glintLune = step(0.55, h) * step(0.15, dot(n, Lm));
+  col += vec3(0.75, 0.8, 0.88) * glintLune * 0.34 * (1.0 - uDay) * uLune * (1.0 + 0.6 * lacMort);
 
   // ═══ LE FEU SUR L'EAU ═══
   //
@@ -786,8 +810,10 @@ export function cheminDeLAstre(hour: HeureSolaire, day: number, jourLune = LUNE_
   return { force: lune, col: [0.75, 0.8, 0.88], dirX: moonDirection(hour, jourLune).x || -0.4 }
 }
 
-function sunVector(hour: HeureSolaire): { x: number; y: number; z: number } {
-  const gx = sunDirection(hour).x // la source UNIQUE : est(+) → ouest(−), |gx| = force au ras
+/** La direction PLANE d'un astre (`sunDirection`/`moonDirection`) relevée en VRAIE direction
+ *  3D pour le spéculaire — une seule recette pour les deux astres, sinon leurs éclats
+ *  divergeraient d'une constante qu'on ne saurait plus calibrer. */
+function astreVector(gx: number): { x: number; y: number; z: number } {
   const alt = Math.sqrt(Math.max(0, 1 - gx * gx)) // sin(azimut) : 0 à l'horizon, 1 au zénith
   const grazing = 1 - 0.7 * alt
   return {
@@ -795,6 +821,11 @@ function sunVector(hour: HeureSolaire): { x: number; y: number; z: number } {
     y: -0.3 * grazing, // biais NORD fixe (comme le SUN_NORTH du pipeline) : la lumière vient d'en haut
     z: 0.3 + 0.85 * alt,
   }
+}
+
+function sunVector(hour: HeureSolaire): { x: number; y: number; z: number } {
+  // la source UNIQUE : est(+) → ouest(−), |x| = force au ras
+  return astreVector(sunDirection(hour).x)
 }
 
 export class WaterLayer {
@@ -814,6 +845,51 @@ export class WaterLayer {
   /** La période du fondu dual-phase (s) — la sonde smoke mesure l'advection entre deux
    *  instants espacés d'exactement T (même état de fondu : seule la translation reste). */
   readonly dualT = DUAL_T
+  /** Le dernier jour de saison dont le BIEF SOUILLÉ a été recuit (cendre.md R26d). */
+  private jourDeSuie = Number.NaN
+
+  /**
+   * ═══ LE RÉGIME DE L'EAU (geste 10 + cendre.md R26d) ═══
+   * LE LAC MORT : « une eau parfaitement immobile, trop claire, sans un poisson » — l'EAU de
+   * la zone porte son régime, une lecture du terrain, zéro changement /sim. ET LE BIEF
+   * SOUILLÉ : la loi `eauSouillee` de la sim, lue TELLE QUELLE (`EtatDeCendre` est la forme
+   * que le rendu tient déjà pour `tuileCendree`) — jamais une recopie. Sans état de cendre
+   * (le premier bake, avant le premier snapshot), seul le lac mort est posé.
+   */
+  private regimeDe(etat?: EtatDeCendre): Uint8Array {
+    const { width, height } = this.map
+    const terr = this.map.terrain
+    const regime = new Uint8Array(width * height)
+    for (let ty = 0; ty < height; ty++) {
+      for (let tx = 0; tx < width; tx++) {
+        const i = ty * width + tx
+        const t = terr[i]
+        if (t !== TERRAIN_SHALLOW_WATER && t !== TERRAIN_DEEP_WATER) continue
+        if (zoneSlugAt(this.map, tx, ty) === 'lac_mort') regime[i] = REGIME_LAC_MORT
+        else if (etat && eauSouillee(etat, tx, ty)) regime[i] = REGIME_SUIE
+      }
+    }
+    return regime
+  }
+
+  /**
+   * LA RECUISSON DU BIEF (cendre.md R26d) — une fois par bascule de jour de saison : la
+   * souillure suit l'âge des foyers, qui n'avance qu'au jour. Repeint le canal B du champ
+   * dans SA texture — le masque, la profondeur et les anneaux repartent du même bake.
+   */
+  recuireSuie(etat: EtatDeCendre, jour: number): void {
+    if (!this.fieldKey || jour === this.jourDeSuie) return
+    this.jourDeSuie = jour
+    const { width, height } = this.map
+    const field = buildWaterField(this.map.terrain, width, height, this.regimeDe(etat))
+    const tex = this.scene.textures.get(this.fieldKey) as Phaser.Textures.CanvasTexture
+    if (!tex || !('getContext' in tex)) return
+    const ctx = tex.getContext()
+    const img = ctx.createImageData(width, height)
+    img.data.set(field.data)
+    ctx.putImageData(img, 0, 0)
+    tex.refresh()
+  }
 
   constructor(
     private readonly scene: Phaser.Scene,
@@ -827,17 +903,11 @@ export class WaterLayer {
     // (worldgen.md, case fantastique). L'EAU de la zone porte son régime — le rendu
     // seul : le lore reste une décision d'Alexis. (L'eau morte du marais a été retirée :
     // regardée, refusée le 2026-07-26.) Zéro changement /sim : une lecture du terrain.
-    const terr = map.terrain
-    const regime = new Uint8Array(width * height)
-    for (let ty = 0; ty < height; ty++) {
-      for (let tx = 0; tx < width; tx++) {
-        const i = ty * width + tx
-        const t = terr[i]
-        if (t !== TERRAIN_SHALLOW_WATER && t !== TERRAIN_DEEP_WATER) continue
-        if (zoneSlugAt(map, tx, ty) === 'lac_mort') regime[i] = REGIME_LAC_MORT
-      }
-    }
     // Carte plate : le canal G du champ porte la profondeur case à case (geste 01).
+    // (Le régime du PREMIER bake ne porte que le lac mort — la suie arrive au premier
+    //  snapshot, par `recuireSuie` ; le fond, lui, garde le régime statique : la teinte du
+    //  bief est l'affaire du champ d'eau, pas du lit.)
+    const regime = this.regimeDe()
     const field = buildWaterField(map.terrain, width, height, regime)
     if (!field.hasWater) return // une carte sèche ne paie pas une couche d'eau
 
@@ -943,6 +1013,8 @@ export class WaterLayer {
             setUniform('uTime', this.timeS)
             setUniform('uSun', [this.sun.x, this.sun.y, this.sun.z])
             setUniform('uDay', this.day)
+            setUniform('uLune', this.lune)
+            setUniform('uMoonV', [this.moon.x, this.moon.y, this.moon.z])
             setUniform('uFireCount', this.fireCount)
             setTableau('uFires', this.fireData)
             setUniform('uWaderCount', this.waderCount)
@@ -974,7 +1046,10 @@ export class WaterLayer {
   private adv0 = -0.5 * DUAL_T * COURANT_VITESSE
   private adv1 = 0
   private sun = { x: 0, y: 0.3, z: 1 }
+  private moon = { x: 0, y: 0.3, z: 1 }
   private day = 1
+  /** La lueur de lune (phase × altitude) — le ciel nocturne réfléchi et l'éclat la suivent. */
+  private lune = 0
   private cam = { x: 0, y: 0 }
   private astre: { force: number; col: [number, number, number]; dirX: number } = {
     force: 0,
@@ -1012,7 +1087,9 @@ export class WaterLayer {
     this.adv0 = (this.ph0 - 0.5) * DUAL_T * COURANT_VITESSE
     this.adv1 = (((this.ph0 + 0.5) % 1) - 0.5) * DUAL_T * COURANT_VITESSE
     this.sun = sunVector(hour)
+    this.moon = astreVector(moonDirection(hour, jourLune).x)
     this.day = daylight
+    this.lune = lueurDeLune(hour, jourLune)
     this.astre = cheminDeLAstre(hour, daylight, jourLune)
     if (camTile) this.cam = camTile
     const n = Math.min(MAX_FIRES, fires.length)

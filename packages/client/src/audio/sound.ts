@@ -157,14 +157,6 @@ export function soundForEvent(event: SimEvent, onMe: boolean): SoundSpec | null 
     // Les verbes CHAUDS montent (triangle/sine), les verbes FROIDS descendent (sawtooth).
     case 'gift_given':
       return { wave: 'triangle', freq: 330, freqEnd: 494, dur: 0.28, gain: 0.065 }
-    case 'refugees_arrived':
-      return { wave: 'triangle', freq: 392, freqEnd: 523, dur: 0.3, gain: 0.06 }
-    case 'refugees_fed':
-      return { wave: 'triangle', freq: 294, freqEnd: 392, dur: 0.26, gain: 0.06 }
-    case 'refugees_recruited':
-      return { wave: 'sine', freq: 262, freqEnd: 440, dur: 0.5, gain: 0.075 } // le plus large des chauds : ils entrent
-    case 'refugees_robbed':
-      return { wave: 'sawtooth', freq: 330, freqEnd: 165, dur: 0.34, gain: 0.075, lowpass: 1600 }
     case 'member_banished':
       return { wave: 'sawtooth', freq: 262, freqEnd: 131, dur: 0.4, gain: 0.07, lowpass: 1200 }
     // LA CHUTE D'UN VILLAGE : plus lourde et plus longue qu'une mort d'homme — c'est plus
@@ -175,8 +167,7 @@ export function soundForEvent(event: SimEvent, onMe: boolean): SoundSpec | null 
     case 'village_archetype_changed':
       return { wave: 'sine', freq: 330, freqEnd: 294, dur: 0.7, gain: 0.07 }
     // MUETS ici, et par décision : `village_founded` (la fondation a déjà sa cérémonie à
-    // l'écran), `member_joined` (discret par nature), `refugees_left` (il ne s'est RIEN passé
-    // — c'est l'absence de geste, et une absence ne se sonne pas).
+    // l'écran) et `member_joined` (discret par nature).
 
     // ── LES BATTEMENTS DE LA SAISON ──────────────────────────────────────────────────────
     case 'night_started':
@@ -217,6 +208,19 @@ export function soundForEvent(event: SimEvent, onMe: boolean): SoundSpec | null 
     // ── LA BRUME (spec brume.md) — le froid qui vient, la matière qui couvre, l'ouverture ──
     // L'ANNONCE : le monde en cérémonie (sine) qui DESCEND — le froid s'annonce, comme la
     // nuit mais d'ailleurs. Tant que la nappe n'a pas son rendu, c'est LE préavis (§9bis).
+    // LA CORDE CASSE (traction.md T2bis) : un claquement sec et bref — square haut, très
+    // court. Le tireur doit savoir SANS regarder que la charge n'est plus derrière lui.
+    case 'attelage_rompu':
+      return { wave: 'square', freq: 520, freqEnd: 260, dur: 0.12, gain: 0.07 }
+    // LE RITUEL DU BÛCHER (cendre.md R31b) : la grammaire des présages INVERSÉE — une sine
+    // qui MONTE, longue : le monde rend, pour une fois. Le seul recul mérite la seule montée.
+    case 'bucher_rituel':
+      return { wave: 'sine', freq: 98, freqEnd: 196, dur: 1.6, gain: 0.09 }
+    // LE MURMURE SE DONNE (cendre.md R27c) : un souffle qui RETOMBE — la grammaire des
+    // cérémonies du monde (sine, hauteur qui descend), mais tout bas et court : c'est un
+    // secret reçu, pas un présage. Gain plancher — à rejuger au banc d'écoute, doctrine.
+    case 'murmure_recueilli':
+      return { wave: 'sine', freq: 220, freqEnd: 110, dur: 0.7, gain: 0.05 }
     case 'brume_annonce':
       return { wave: 'sine', freq: 294, freqEnd: 147, dur: 1.0, gain: 0.08 }
     // LE BLIZZARD S'ANNONCE LA VEILLE (meteo.md R9) : le jumeau grave du préavis de Brume —

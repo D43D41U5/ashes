@@ -213,6 +213,13 @@ export interface PieceDef {
    */
   coutObjet?: ItemBag
   acces: AccessLevel
+  /** SE POSE HORS VILLAGE ET HORS CARRÉ (le statut du feu de camp) — la braise-mère et la
+   *  parcelle de suie (`cendre.md` R28a, `agriculture.md` J1) : leur place est à la FRANGE,
+   *  loin du Feu. Toutes les autres portes de pose les jugent comme tout le monde. */
+  horsVillage?: true
+  /** NE SE POSE QUE SUR SOL CENDRÉ (`tuileCendree`, l'écrivain unique) — la parcelle de
+   *  suie : sa terre EST la cendre (J1). */
+  surCendre?: true
   /** L'eau libre est INCONSTRUCTIBLE, sauf ce qui porte sa propre assise (R4). */
   eau: boolean
   /**
@@ -323,6 +330,22 @@ export const PIECES = {
   sechoir: {
     label: 'Séchoir', fam: 'mobilier', pose: 'objet', occupe: 'tuile', arete: 'interdite',
     bloque: 'oui', pv: 80, cout: { wood: 6, rope: 2 }, acces: 'village', eau: false, usurable: true,
+  },
+  braise_mere: {
+    // LA PARADE QUI SE NOURRIT (spec `cendre.md` R28) : posée près d'une frange, nourrie au
+    // charbon, elle tient le foyer de cendre de sa cellule tant qu'elle brûle. Ses PV en font
+    // une cible de siège qui se défend — plus que le séchoir, moins qu'un Feu.
+    label: 'Braise-mère', fam: 'mobilier', pose: 'objet', occupe: 'tuile', arete: 'interdite',
+    bloque: 'oui', pv: 400, cout: { stone: 8, iron_ingot: 2, coeur_de_braise: 1 }, acces: 'village',
+    eau: false, usurable: true, horsVillage: true,
+  },
+  parcelle_de_suie: {
+    // LE JARDIN DE SUIE (spec `agriculture.md` J1) : la seule terre qui travaille en plein
+    // Grand Froid — sur SOL CENDRÉ seulement, hors village, et son coût mange la CENDRE
+    // (l'item `ash` trouve son consommateur). Un PLOT : les gestes du potager la portent.
+    label: 'Parcelle de suie', fam: 'mobilier', pose: 'objet', occupe: 'tuile', arete: 'interdite',
+    bloque: 'oui', pv: 60, cout: { wood: 4, ash: 4 }, acces: 'village',
+    eau: false, usurable: false, horsVillage: true, surCendre: true,
   },
   workshop: {
     label: 'Établi', fam: 'composant', pose: 'objet', occupe: 'tuile', arete: 'interdite',

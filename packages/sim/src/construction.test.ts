@@ -810,6 +810,8 @@ describe('l’eau peu profonde est inconstructible, sauf le sol', () => {
     roof: false,
     chest: false,
     sechoir: false, // une claie ne tient pas sur le gué (`peche.md` S1)
+    braise_mere: false, // un brasero sur l'eau — non (et `eau: false` au registre)
+    parcelle_de_suie: false, // sa terre EST la cendre (`surCendre`) — jamais le gué
     workshop: false,
     furnace: false,
     house: false,

@@ -321,12 +321,6 @@ export type SimEvent =
   | { type: 'evacuation_opened'; tick: number; tx: number; ty: number }
   /** L'ARCHE A LEVÉ L'ANCRE (V2-24) : `saved` = combien étaient à bord. */
   | { type: 'ark_departed'; tick: number; tx: number; ty: number; saved: number }
-  // LES RÉFUGIÉS (V2-25, GDD §520) — l'événement d'alignement par excellence.
-  | { type: 'refugees_arrived'; tick: number; groupId: number; tx: number; ty: number; count: number }
-  | { type: 'refugees_recruited'; tick: number; groupId: number; villageId: number; byEntityId: number; count: number }
-  | { type: 'refugees_fed'; tick: number; groupId: number; byEntityId: number }
-  | { type: 'refugees_robbed'; tick: number; groupId: number; byEntityId: number }
-  | { type: 'refugees_left'; tick: number; groupId: number }
   | { type: 'cendreux_risen'; tick: number; entityId: number; x: number; y: number }
   /**
    * LE FEU A ÉTOUFFÉ UN RÉVEIL (spec `cendreux.md` R21) — la parade de S4, enfin quotidienne.
@@ -341,6 +335,20 @@ export type SimEvent =
   /** ON A BRÛLÉ LE LIEU (décision ⑧, 2026-08-21) : un charnier ou un repaire assaini au feu —
    *  la densité des morts tombe autour, pour un temps. */
   | { type: 'charnier_brule'; tick: number; zone: number; x: number; y: number }
+  /** UN MURMURE RECUEILLI (spec `cendre.md` R27) — un visiteur calme a reçu une scène des
+   *  morts, en vieille cendre, la nuit. La chronique en fait une ligne ; le pan de carte et
+   *  la trouvaille sont la tranche 2. */
+  | { type: 'murmure_recueilli'; tick: number; entityId: number; tx: number; ty: number }
+  /** UNE BÊTE RELEVÉE PAR LA CENDRE (spec `cendre.md` R30a) — le tertre a rendu la bête,
+   *  grise. Émis au moment où la logique l'exécute (doctrine des événements de domaine). */
+  | { type: 'bete_cendreuse_levee'; tick: number; entityId: number; espece: string; x: number; y: number }
+  /** LA LONGE A CASSÉ (spec `traction.md` T2bis) — la charge est restée où elle était. */
+  | { type: 'attelage_rompu'; tick: number; entityId: number; x: number; y: number }
+  /** UN MORT RENDU À LA FOSSE (spec `cendre.md` R31a) — le bûcher l'a consumé, le compte monte. */
+  | { type: 'cadavre_rendu'; tick: number; zone: number; x: number; y: number }
+  /** LE RITUEL DU BÛCHER (spec `cendre.md` R31b) — le SEUL recul du monde : l'âge du foyer
+   *  vient de reculer de plusieurs jours. La chronique le tient. */
+  | { type: 'bucher_rituel'; tick: number; zone: number; jours: number; x: number; y: number }
   | {
       type: 'season_ended'
       tick: number
@@ -370,12 +378,6 @@ export type SimEvent =
    * de la découverte, pas celle du fait.
    */
   | { type: 'poi_first_visit'; tick: number; poiId: number; kind: string; name: string; byEntityId: number; faits?: { ere: 0 | 1 | 2 | 3; type: string; cause?: string; saillant: boolean }[]; stele?: { lignes: string[] } }
-  /**
-   * LA RUMEUR DU RÉFUGIÉ (annales.md R12) : nourrir un groupe révèle au nourricier le lieu
-   * porteur d'annales inconnu le plus proche DU GROUPE — leur route, leur mémoire. Le nom est
-   * porté pour la chronique (« Pour un repas, des réfugiés ont dit où trouver X. »).
-   */
-  | { type: 'refugee_rumeur'; tick: number; groupId: number; byEntityId: number; poiId: number; kind: string; name: string }
   /**
    * LE VILLAGE PNJ MONTE DE PALIER DE BÂTI (spec `village-pnj-evolution.md` R6) :
    * campement → hameau de bois → bourg de pierre. Émis à l'aube, au surplus — jamais

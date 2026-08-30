@@ -94,30 +94,59 @@ function drawLeafPile(ctx: CanvasRenderingContext2D): void {
 /** LE CHICOT FERREUX (16×32) — l'aiguille rouillée du sommet : assez haute pour accrocher
  *  l'œil en marchant, SOUS la canopée (les repères du §1 gardent le monopole de l'horizon). */
 /**
- * ═══ LA FUMEROLLE — un TROU, pas une bosse (décision d'Alexis, 2026-08-24) ═══
+ * ═══ LA FUMEROLLE — une COLONNE qui crache par le haut (décision d'Alexis, 2026-08-29) ═══
  *
- * Tout le décor du jeu se dresse ; celle-ci s'enfonce, et c'est ce qui doit se lire d'un coup
- * d'œil. Trois anneaux concentriques qui vont du clair au NOIR vers le centre : la lèvre de sel
- * (le plus clair — c'est elle qu'on récolte), la vasque, puis la gueule. Un croissant sombre au
- * nord de la lèvre pose l'ombre interne : sans lui, l'œil lit un caillou plat.
+ * *(Elle a d'abord été un TROU — « des trous qui émettent de la fumée froide », 2026-08-24 —
+ * puis Alexis l'a redressée : une cheminée minérale, la fumée sort de la gueule au sommet et
+ * RETOMBE vers le sol — la fumée reste froide, seule l'origine monte.)*
  *
- * Les rects, pas un dégradé : c'est la grammaire cubique du reste (`CHICOT_RECTS`, `FUMEROLLE_RECTS`).
+ * Les rects, pas un dégradé : c'est la grammaire cubique du reste (`CHICOT_RECTS`).
  */
-export const FUMEROLLE_RECTS: readonly (readonly [number, number, number, number, string])[] = [
-  // ⚠ CONTRASTE POUSSÉ APRÈS CAPTURE : la première version tenait dans une bande de gris et se
-  //   perdait complètement dans le sol de cendre — on ne la voyait pas à trois tuiles, alors
-  //   qu'elle doit se repérer à un ÉCRAN. La lèvre de sel est donc presque blanche, la gueule
-  //   franchement noire : c'est l'écart de VALEUR qui la signale, pas sa taille.
-  [2, 5, 12, 9, '#cfcabb'],  // la couronne de sel — le point le plus clair de tout le biome
-  [3, 4, 10, 2, '#e4dfd0'],  // le bourrelet nord, en pleine lumière
-  [3, 6, 10, 7, '#7a7268'],  // la vasque
-  [4, 7, 8, 5, '#3a3631'],   // la paroi interne
-  [5, 8, 6, 4, '#0e0d0c'],   // la gueule : un vrai NOIR, sinon le trou n'en est pas un
-  [3, 5, 10, 1, '#5a544c'],  // l'ombre sous le bourrelet — c'est elle qui CREUSE
-  [1, 13, 4, 1, '#d6d1c2'],  // les dépôts de sel qui débordent sur le sol
-  [11, 13, 4, 1, '#d6d1c2'],
-  [6, 14, 4, 1, '#c2bcae'],
+export const FUMEROLLE_COLONNE_RECTS: readonly (readonly [number, number, number, number, string])[] = [
+  // ⚠ UNE COLONNE, PLUS UN TROU (Alexis, 2026-08-29 : « des colonnes qui crachent de la fumée
+  //   grise par le haut »). 16×32 comme le chicot : elle se DRESSE, la fumée sort de sa gueule
+  //   au sommet et retombe le long du fût (fumée froide — la chute reste). Le fût est un gris
+  //   minéral plus SOMBRE que le sol de cendre (~#6a6660) : c'est l'écart de valeur qui la
+  //   signale, comme la charbonnière — et le sel presque blanc (voir `FUMEROLLE_SEL_BANDES`)
+  //   fait l'écart inverse. Nue (récoltée), elle RESTE : le repère ne disparaît jamais.
+  [4, 26, 8, 4, '#3f3c39'],   // l'assise évasée (bas rangée 29 → gap 2, comme le chicot)
+  [5, 10, 6, 17, '#4a4744'],  // le fût
+  [6, 5, 5, 6, '#524e4a'],    // le col, plus étroit — la silhouette se resserre vers la gueule
+  [5, 10, 1, 16, '#5c5854'],  // l'arête ouest, prise par la lumière
+  [10, 10, 1, 16, '#2e2c2a'], // l'arête est, dans l'ombre : c'est elle qui donne le VOLUME
+  [11, 18, 1, 6, '#454240'],  // un renflement bas côté est — une concrétion, pas une cheminée d'usine
+  [6, 5, 5, 1, '#6b6660'],    // la lèvre, au ras de la gueule
+  [6, 3, 5, 2, '#0e0d0c'],    // la gueule au sommet : un vrai NOIR, sinon le trou n'en est pas un
 ]
+/**
+ * LES BANDES DE SEL — ce qu'on vient RÉCOLTER, donc ce qui suit le stock (même grammaire que les
+ * baies du buisson : jusqu'à 3 bandes, proportionnelles, variantes `nd-fumerolle-0..3`). Elles
+ * COURENT LE LONG de la colonne — des coulées verticales, comme la rouille du chicot — et restent
+ * le point le plus clair de tout le biome : c'est l'écart de VALEUR qui dit « ça se ramasse ».
+ * À `-0` (vidée), la colonne reste nue, telle quelle — le patron de la charbonnière.
+ */
+export const FUMEROLLE_SEL_BANDES: readonly (readonly (readonly [number, number, number, number, string])[])[] = [
+  // ⚠ LARGES ET PRESQUE BLANCHES, calibré sur planche rendue : à 1 px de large les coulées
+  //   disparaissaient à trois tuiles et les 4 états étaient indiscernables. Le sel garde le rôle
+  //   que le trou lui donnait — le point le plus clair du biome, celui qui dit « ça se ramasse ».
+  [
+    [5, 5, 7, 2, '#e4dfd0'],   // la couronne : le col entier s'encroûte sous la gueule, et déborde
+    [7, 7, 2, 10, '#dcd7c8'],  // la grande coulée centrale
+  ],
+  [
+    [5, 10, 1, 12, '#cfcabb'], // la coulée ouest, sur l'arête éclairée
+    [3, 27, 4, 2, '#d6d1c2'],  // le dépôt qui déborde au pied ouest
+  ],
+  [
+    [10, 7, 1, 16, '#cfcabb'], // la coulée est, la plus longue — du col jusqu'au bas du fût
+    [10, 27, 4, 2, '#c2bcae'], // le dépôt au pied est
+  ],
+]
+/** LA HAUTEUR DE LA GUEULE au-dessus du bas de tuile, en px monde — là où la fumée NAÎT.
+ *  DÉRIVÉE de l'art (gueule à la rangée 3 d'un sprite de 32) : le FX et le sprite ne peuvent
+ *  pas diverger. `FumerolleFx` s'en sert aussi pour calibrer la chute (la bouffée doit
+ *  atteindre le sol avant de mourir). */
+export const FUMEROLLE_BOUCHE_PX = 32 - 3
 
 /**
  * ═══ LA CHARBONNIÈRE (spec `cendre.md` R25) — un FÛT ROMPU, pas un tas ═══
@@ -256,9 +285,23 @@ const PROPS: LitProp[] = [
   // dessinée par `SnapshotView` comme n'importe quel nœud, et pas par le décor. ⚠ Les deux à la
   // fois auraient fait un DOUBLON sur la même tuile — et sans le `nd-`, le nœud demandait une
   // texture inexistante : le carré vert de Phaser, en plein milieu de la cendre (vu au navigateur).
+  // QUATRE ÉTATS DE STOCK, comme le buisson à baies : `-n` porte n bandes de sel (0 = colonne
+  // nue, récoltée — elle RESTE, comme la charbonnière). Branche spéciale de SnapshotView
+  // (`fumerolleBandes`), donc HORS `LIT_NODE_TYPES`, exactement comme `berry_bush`.
   // `passes: 1` / `k: 3.5` comme les autres silhouettes cubiques franches : elle prend la lumière
   // comme un objet TAILLÉ, pas comme une tache peinte.
-  { key: 'nd-fumerolle', dresse: true, w: 16, h: 16, draw: drawRects(FUMEROLLE_RECTS), passes: 1, k: 3.5 },
+  ...([0, 1, 2, 3] as const).map((n) => ({
+    key: `nd-fumerolle-${n}`,
+    dresse: true,
+    w: 16,
+    h: 32,
+    passes: 1,
+    k: 3.5,
+    draw: (c: CanvasRenderingContext2D) => {
+      drawRects(FUMEROLLE_COLONNE_RECTS)(c)
+      for (let b = 0; b < n; b++) drawRects(FUMEROLLE_SEL_BANDES[b]!)(c)
+    },
+  })),
   // LA CHARBONNIÈRE (R25) — un nœud, donc `nd-`, exactement pour la même raison que la
   // fumerolle : sans elle, `SnapshotView` demanderait `nd-charbonniere` et Phaser rendrait son
   // carré vert au milieu de la cendre.
@@ -344,14 +387,14 @@ export const FLOWERS: readonly FlowerVariant[] = [
   // fenêtres de floraison, nappes) ; ici seulement la silhouette et la couleur-matériau.
   // Même recette cubique que les quatre premières (`passes:1`/`k:3.5`, tige commune). ═══
   // 4 — tête frangée (deux éclats latéraux), bleu bleuet : le bleu qui manquait à la palette
-  { bloom: '#5b7fc4', stem: [7, 9, 2, 5], rects: [[6, 4, 4, 4], [5, 5, 1, 2], [10, 5, 1, 2], [7, 3, 2, 1]] },
+  { bloom: '#5b7fc4', stem: [7, 8, 2, 6], rects: [[6, 4, 4, 4], [5, 5, 1, 2], [10, 5, 1, 2], [7, 3, 2, 1]] },
   // 5 — trompette dressée, bleu profond (gentiane — la signature d'altitude)
-  { bloom: '#3a56a8', stem: [7, 10, 2, 4], rects: [[6, 2, 4, 3], [7, 5, 2, 4]] },
+  { bloom: '#3a56a8', stem: [7, 9, 2, 5], rects: [[6, 2, 4, 3], [7, 5, 2, 4]] },
   // 6 — calice évasé vers le haut, rose pâle (colchique — la fleur de l'ouverture, j61)
-  { bloom: '#c9a0c4', stem: [7, 10, 2, 4], rects: [[5, 3, 6, 3], [6, 6, 4, 2], [7, 8, 2, 1]] },
+  { bloom: '#c9a0c4', stem: [7, 9, 2, 5], rects: [[5, 3, 6, 3], [6, 6, 4, 2], [7, 8, 2, 1]] },
   // 7 — touffe basse en grappes, pourpre FONCÉ (bruyère ; foncée sur planche : sur la lande
   // rousse d'automne, à valeur égale seule la teinte la séparait du sol — il faut l'écart de valeur)
-  { bloom: '#7d3459', stem: [7, 12, 2, 2], rects: [[4, 8, 3, 3], [8, 7, 3, 3], [6, 10, 4, 2], [11, 9, 2, 2]] },
+  { bloom: '#7d3459', stem: [7, 12, 2, 2], rects: [[4, 8, 4, 3], [8, 7, 3, 3], [6, 10, 5, 2], [11, 9, 2, 2]] },
 ]
 /** Dessine une variété de fleur (tige + tête) sur un contexte Canvas2D — l'albédo `_lit`. La version
  *  peinte de BootScene rejoue la MÊME donnée `FLOWERS` (autre backend), d'où silhouette identique. */
@@ -473,8 +516,10 @@ export const LIT_CLUTTER_KINDS: ReadonlySet<string> = new Set([
 /** Les nœuds dont la variante `_lit` est une masse pâteuse de ce module. Les SOCLES minéraux
  *  (`socle-mineral.ts`) n'y sont pas : ils ont leurs propres clés, à trois hauteurs. */
 export const LIT_NODE_TYPES: ReadonlySet<string> = new Set([
-  'champignon', 'fiber_plant', 'leaf_pile', 'fumerolle', 'charbonniere',
+  'champignon', 'fiber_plant', 'leaf_pile', 'charbonniere',
   'branche_au_sol', 'pierre_au_sol',
+  // (`fumerolle` n'y est PLUS : ses 4 états de stock passent par la branche spéciale de
+  //  SnapshotView (`fumerolleBandes`) — exactement le statut de `berry_bush`.)
 ])
 /** Les `kind` de clutter qui SE TIENNENT DEBOUT — donc ceux dont le retourné existe. Dérivé de
  *  `dresse`, jamais recopié : la table qui décide de la génération est la table qui décide de la

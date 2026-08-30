@@ -970,15 +970,198 @@ vacillement par l'alpha et non par la taille.
 
 ---
 
+## R26 — Les coulées de suie : l'eau raconte l'amont (chantier ② des dix, 2026-08-30)
+
+*(Décision d'Alexis : « on suit tes recos » sur `superpowers/plans/2026-08-30-dix-chantiers-de-la-cendre.md`.
+R12 TIENT — l'eau ne brûle pas : elle se SALIT.)*
+
+- **R26a — La souillure descend le fil.** Un point du fil de rivière (`map.fil`, amont → aval,
+  eau-vivante R15) est une SOURCE si une tuile cendrée (`tuileCendree` — l'écrivain unique du
+  sol cendré, comme G7bis) se trouve à ≤ `COULEE.PORTEE_SOURCE` Chebyshev de lui. ⚠ Cette
+  portée est DÉRIVÉE du lit (`RIVIERE_DEMI_LIT + 2`), et c'est une leçon payée au banc : le
+  champ de cendre ne traverse pas l'eau (R4), donc aucune tuile du lit n'est jamais cendrée —
+  une portée plus courte que la demi-largeur du lit ne pouvait toucher AUCUNE source, sur
+  aucune rivière du jeu. La portée atteint la berge. Un point est
+  SOUILLÉ s'il existe une source à ≤ `COULEE.DILUTION_PAS` pas de fil EN AMONT (lui compris) —
+  au-delà, la rivière se lave. Une tuile d'eau est souillée si un point de fil souillé est à
+  ≤ `COULEE.DEMI_LIT` Chebyshev. Fonction pure de l'avancée du jour + `cendreAge` (les brûlages
+  R16 qui figent un foyer figent aussi sa coulée) — mémoïsée par jour, ZÉRO état de sim, patron
+  `avanceeDeCendre`/`effetsDuJour`. Le réglage vit dans `COULEE` (`coulee.ts`) : il se calibre
+  en regardant une carte.
+- **R26b — L'eau souillée SE PÊCHE, et la table le fait sentir** (le patron du lac mort : la
+  géographie module, elle n'autorise jamais). `Conditions` gagne l'axe `souille` ; une espèce
+  déclare `souillee: true` pour ne mordre QUE là, et l'eau souillée ne retient QUE ces
+  espèces-là — l'échange est total dans les deux sens. Une seule espèce au v1 : **la lamproie
+  de suie** (`lamproie`, classe petit, rivière, toute saison) — un SIGNAL qui se pêche, pas un
+  garde-manger. Elle est AJOUTÉE EN FIN de `FISH_SPECIES` : l'ordre de la table EST le tirage
+  (T7), et les tables d'eau claire doivent rester identiques au bit près.
+- **R26c — La ligne posée ne rentre PAS quand la souillure arrive** : la liste des morts de
+  l'eau (E4 de `peche.md`) reste FERMÉE — l'eau souillée est une eau qui pêche mal, pas une
+  eau morte. C'est la table de la touche qui change, à la touche.
+- **R26d — Le rendu vient APRÈS la sim** (invariant §7) : la teinte grise du bief et des berges
+  est une tranche à part, différée le temps que le chantier eau/gel de l'autre session se pose
+  (`water-layer.ts` est en cours ailleurs). La loi `eauSouillee` est écrite pour être lue par le
+  rendu telle quelle.
+- **Différé (2ᵉ temps, décision du plan)** : le cran FAUNE — l'eau souillée qui invalide
+  l'organe eau d'un coin de chasse (mécanisme R27 de `faune.md`). Et les LACS souillés restent
+  à la piste ⑨ (eau morte) : la coulée est une loi de RIVIÈRE.
+
+### Critères d'acceptation de R26
+
+| # | Critère |
+|---|---|
+| **A29** | **La souillure est un balayage du fil, monotone et bornée** : sur une carte d'essai (fil posé, foyer réel via `calculeChampDeCendre`), tout point à ≤ `DILUTION_PAS` en aval d'une source est souillé, le point à `DILUTION_PAS + 1` ne l'est plus ; sans cendre, rien ; l'amont d'une source reste propre. |
+| **A30** | **L'échange d'espèces est total** : `tableDePrises(souille)` ne retient que les espèces `souillee` (la lamproie), `tableDePrises(propre)` ne la retient jamais — et la table d'eau claire est IDENTIQUE (lignes et poids) avant/après l'ajout de l'espèce. |
+| **A31** | **La coulée suit le foyer** : l'avancée qui atteint la berge souille (jour avant/jour après), et un foyer GELÉ (R16) fige sa coulée. |
+
+## R27 — Les Murmures : la cendre se souvient (chantier ③ des dix, 2026-08-30)
+
+*(Version (a) du plan — la banque de scènes ; la version (b), rejouer les morts RÉELS de la
+partie, reste l'horizon et demande de persister les lieux de mort.)*
+
+- **R27a — Ils se DÉRIVENT, ils ne se stockent pas** (le patron du semis des fumerolles). Par
+  NUIT (le cycle) et par maille de `MURMURE_MAILLE` tuiles, `hash2(cycle, maille)` élit au plus
+  un site — retenu seulement si la tuile est en bande VIEILLE (`bandeDeCendre`) et si
+  `densiteDesMorts` y dépasse `MURMURE.SEUIL_MORTS` (les morts font le murmure). ZÉRO tirage du
+  PRNG d'état, ZÉRO octet de `SimState` pour l'existence : même seed ⇒ mêmes murmures, et le
+  flux RNG de tout le reste ne bouge pas. Le site vit TOUTE sa nuit (`isNight`).
+- **R27b — Le murmure se donne à qui vient DOUCEMENT.** À ≤ `MURMURE.RAYON_DON` du site, la
+  nuit, si le STIMULUS du visiteur (`stimulusPourLesMorts` — la même lecture que la chasse et
+  la traque, entrée UNE fois) reste sous `MURMURE.SEUIL_CALME` : `murmure_recueilli` est émis
+  (une fois par site et par nuit et par visiteur — le seul état est `entity.murmure`, le
+  dernier site recueilli, JSON-sérialisable). Un Cendreux à ≤ `RAYON_DON` du site le rend MUET
+  — courir vers un murmure, c'est amener ce qui le dissipe.
+- **R27c — Ce qu'il donne, v1 : la CHRONIQUE.** `murmure_recueilli` entre dans
+  `CHRONICLE_EVENT_TYPES` avec ses phrases de veillée — la cendre raconte ses morts. Le pan de
+  carte révélé et la trouvaille (piste ⑩) sont la tranche 2, avec le système de carte.
+- **R27d — Le rendu vient APRÈS la sim** (invariant §7) : la silhouette-fantôme, sa scène de
+  5-10 s et son fondu sont un chantier `da-rendu` à part (avec la teinte des coulées R26d — un
+  seul chantier visuel de la cendre), vérifié au harnais smoke, de nuit.
+
+### Critères d'acceptation de R27
+
+| # | Critère |
+|---|---|
+| **A32** | **Dérivé et stable** : deux sims de même seed ont les mêmes sites la même nuit ; un site exige bande VIEILLE + morts ≥ seuil ; de JOUR, aucun site ne se donne ; le flux RNG d'état est intact (aucun tirage consommé par l'existence des murmures). |
+| **A33** | **Le calme donne, le bruit ne donne pas** : un visiteur discret à portée reçoit `murmure_recueilli` UNE fois (pas un par tick) ; le même site la même nuit ne redonne pas ; un sprinteur à portée ne reçoit rien ; un Cendreux à portée rend le site muet. |
+
+## R28 — La Braise-mère : la parade qui se nourrit (chantier ④ des dix, 2026-08-30)
+
+*(La première structure qui négocie avec la cendre. R3ter est respecté au mot : elle repousse le
+SEUIL — l'avancée du foyer —, jamais le CLIMAT de ce qui est déjà cendré.)*
+
+- **R28a — Une pièce du registre, et rien d'autre.** `braise_mere` dans `PIECES` (pose `objet`,
+  comme le séchoir), fabriquée à la Forge N2. **Son coût EST l'amorce** : un `coeur_de_braise`
+  (R29) entre dans la recette — la défense du village se paie d'abord en courage, pas en pierre.
+  **Et elle se pose À LA FRANGE** : exemptée du village, du carré du Feu et du palier dans
+  `place_component` (sa serrure est sa recette) — le statut du feu de camp, `villageId: 0` sans
+  village. Toutes les autres portes (main, portée, sous-pieds, terrain, tuile, nœud) la jugent
+  comme tout le monde.
+- **R28b — Elle mange du CHARBON, et tant qu'elle brûle, le foyer de sa cellule ne vieillit
+  pas.** Zone combustible (la machinerie du feu, `fireZoneInventory`), un charbon consommé par
+  `BRAISE_MERE.TICKS_PAR_CHARBON` ; le prédicat « ardente » = du charbon en soute OU l'unité en
+  cours. À la bascule de jour, `avancerLaCendre` traite le foyer de `foyerDeLaTuile(sa tuile)`
+  comme une fosse brûlée R16 — même porte, même effet, idempotent (deux braises-mères sur un
+  foyer n'en gèlent qu'un). Éteinte : la cendre REPREND SA MARCHE, **sans rattrapage** — le
+  temps gagné est acquis, comme R16.
+- **R28c — Zéro octet d'état cendre.** Le combustible vit dans la structure (le patron du feu
+  libre) ; la bascule de jour DÉRIVE l'ensemble des foyers tenus en balayant les structures.
+- **R28d — La contrepartie est due, en tranche 2** : cible prioritaire des sièges de Cendreux
+  (la grammaire des buveurs de foyer) et `FEU_CONSO` du vent de cendre sur sa soute. Sans ces
+  deux morsures la défense n'a pas de drame — nommé ici pour ne pas être perdu.
+
+## R29 — Le cœur de braise : le cœur paie (chantier ④ des dix, 2026-08-30)
+
+- **R29a — Un Cendreux tué CHEZ LUI laisse parfois un cœur.** À sa mort, si sa tuile est
+  au-delà de la bande croûte (`bandeDeCendre ≥ BANDE_CROUTE` — la serrure anti-farm : les
+  sièges qui viennent à vous ne paient RIEN, seule l'expédition paie), un `coeur_de_braise`
+  tombe au butin avec une part de `BRAISE_MERE.PART_COEUR` (~1/3). **Par HACHAGE, jamais
+  au PRNG** (`hash2(entityId, tick)`) — la doctrine du butin (« ItemBag fixe, aucun tirage
+  RNG ») tient, et le flux RNG du reste du jeu ne bouge pas d'un cran.
+- **R29b — Les Ouvrages suivent** (tranche 2, dans l'ordre acté) : la tenue cendrée (suspend le
+  froid R22, chaleur perçue ÷2 à la traque), la lanterne de braise (insensible au `FEU_CONSO`).
+  L'amorce de la Braise-mère (R28a) est le premier débouché, livré avec ce chantier.
+
+### Critères d'acceptation de R28/R29
+
+| # | Critère |
+|---|---|
+| **A34** | **La braise-mère tient la ligne** : ardente à la bascule de jour → l'âge de SON foyer ne monte pas (les autres foyers vieillissent) ; éteinte → il reprend au rythme normal, sans rattraper les jours gelés ; deux braises-mères sur le même foyer = le même gel (idempotent). |
+| **A35** | **Elle mange, et s'éteint en silence** : un charbon consommé toutes les `TICKS_PAR_CHARBON` ; soute vide → plus ardente au jour suivant ; le charbon se dépose et se reprend (zone combustible, verrou sur l'unité en cours). |
+| **A36** | **Le cœur ne se paie qu'au cœur** : un Cendreux tué au-delà de la croûte laisse un cœur sur sa part de hachage (déterministe : même seed, même mort → même butin) ; tué sur la frange ou hors cendre → jamais ; le tirage ne consomme PAS le PRNG d'état. |
+
+## R30 — Les bêtes cendreuses : la faune corrompue (chantier ⑤ des dix, 2026-08-30)
+
+*(Par CONVERSION, jamais par semis — ce qui la distingue du nécrophage (piste ⑤ du catalogue) :
+c'est la faune du monde, celle qu'on a rabattue ou laissée mourir dans la cendre, qui revient.)*
+
+- **R30a — La cendre relève ce qu'elle tue.** Une bête de faune morte par cause `'cendre'` (la
+  morsure R25 — donc déjà au-delà de la frange) a `CENDREUSE.PART` (~1/3, par HACHAGE, jamais le
+  PRNG — la doctrine du butin) de se relever après `CENDREUSE.RISE_TICKS` : la MÊME espèce,
+  drapeau **`cendreuse`** sur le `Monster` (le patron du `petit` du loup — pas un `MonsterType`
+  neuf : pas de rayonnement sprites/tables, une teinte grise à l'écran). Le cadavre marqué
+  garde les grammaires du réveil : un feu à portée le VEILLE (l'annulation du Cendreux), et le
+  plafond `CENDREUSE.MAX` se lit À LA LEVÉE (la leçon R8 : un plafond lu à la mort ne borne
+  rien). À la levée, le cadavre est REPRIS — viande et carcasse partent avec lui : la cendre ne
+  rend pas ce qu'elle relève.
+- **R30b — La corrompue ne sort JAMAIS.** Le mur R25 s'inverse au drapeau : le pas dont un axe
+  quitterait le sol cendré perd cet axe — la lisière est une frontière à double sens, lisible
+  des deux côtés. Et la morsure l'épargne (elle est chez elle). Son CARACTÈRE d'espèce ne change
+  pas au v1 : le cerf cendreux fuit, le sanglier cendreux charge quand on le provoque —
+  l'agressivité de jour du sanglier est la tranche 2, nommée ici.
+- **R30c — Elle se chasse, et rend le CUIR CENDRÉ.** À sa mort : son butin d'espèce + un
+  `cuir_cendre` — le composant de la tenue cendrée (R29b) qui ne vient pas des Cendreux.
+  Jamais de peau propre (`slainClean` sans objet — ce n'est plus un gibier).
+
+### Critères d'acceptation de R30
+
+| # | Critère |
+|---|---|
+| **A37** | **La conversion est un hachage plafonné et veillé** : sur des morts par cendre en série, une part se relève (déterministe : même seed → mêmes levées), jamais au-delà de `CENDREUSE.MAX` vivantes ; un feu actif à portée du cadavre annule la levée ; une mort par arme ou par froid ne convertit jamais. |
+| **A38** | **La frontière à double sens** : une cendreuse ne pose jamais un axe de pas hors du sol cendré (balayage de pas contre la lisière) ; la morsure R25 ne la touche pas ; à sa mort son cadavre porte `cuir_cendre` en plus du butin d'espèce. |
+
+## R31 — Le Bûcher rituel : la seule inversion (chantier ⑥ des dix, 2026-08-30)
+
+*(Le plus gros interdit, cassé en conscience : l'avancée RECULE — locale, bornée, hors de prix.
+Sisyphe assumé : on tient une LIGNE, on n'éradique pas. Le verbe qui l'ouvre — TIRER un
+cadavre — est un système à part entière : spec `traction.md`.)*
+
+- **R31a — On REND les morts à la fosse.** Un cadavre de CENDREUX (marqué `cendreux` à la
+  mort — décision actée : les Cendreux seuls, le thème pur « rendre à la fosse ce qui en est
+  sorti ») déposé — détaché ou décomposé — à ≤ `BUCHER.RAYON` du centre d'un charnier est
+  RENDU : il se consume (retiré des cadavres), `cadavre_rendu` est émis, et le compte de la
+  fosse monte. Le compte est de l'ÉTAT (`state.buchers`, le patron de `lieuxBrules`) — c'est
+  le premier état que la cendre possède, et il est minuscule : `{ zone, rendus,
+  dernierRituelJour }` par fosse nourrie.
+- **R31b — Le rituel EST le brûlage.** Pas de geste neuf : quand le feu de jour de R16 marque
+  la fosse (la grammaire existante — le feu, le jour, la fosse) ET que ses `rendus ≥
+  BUCHER.CADAVRES` (10) ET que la dernière fois date d'au moins `LUNAISON_JOURS` (une lune
+  par fosse) : le RECUL — `cendreAge[foyer] −= BUCHER.JOURS_RENDUS` (3), plancher 0 (l'âge 0
+  est la tache R0 : la fosse d'origine est éternelle), les rendus consommés,
+  `bucher_rituel` émis — la chronique tient LE seul recul du monde. D'un coup, pas étalé :
+  le moment se VOIT (décision actée).
+- **R31c — Le recul rend un DÉSERT, jamais du vivant.** Les nœuds tombés ne se relèvent pas
+  (R15 intact) : le terrain redevient marchable et constructible, c'est tout. On reconquiert
+  du SOL. (Dérivé par construction : la cendre ne mute rien, reculer l'âge recule la
+  comparaison — rien d'autre à écrire, et c'est le point.)
+
+### Critères d'acceptation de R31
+
+| # | Critère |
+|---|---|
+| **A39** | **La fosse compte ses morts** : un cadavre de Cendreux laissé à ≤ `RAYON` du centre est consumé et compté ; un cadavre d'HOMME ou de BÊTE, jamais ; à > `RAYON`, jamais ; l'événement `cadavre_rendu` sort au moment du fait. |
+| **A40** | **Le rituel recule, borné et cadencé** : fosse nourrie (≥ CADAVRES) + brûlage R16 → l'âge du foyer recule de `JOURS_RENDUS` et des tuiles cendrées REDEVIENNENT saines (mesuré sur `tuileCendree` avant/après) ; jamais sous 0 ; les rendus retombent à 0 ; un second brûlage dans la même lune ne recule RIEN ; fosse affamée (< CADAVRES) : le brûlage R16 garde son effet normal, sans recul. |
+
 ## Ouvert, à trancher plus tard
 
-- Les **techniques alternatives** pour tenir un foyer (décision d'Alexis : plus tard).
+- ~~Les **techniques alternatives** pour tenir un foyer~~ — **la Braise-mère est construite**
+  (R28) ; restent ses morsures de tranche 2 (R28d).
 - Ce que la cendre fait au **froid**, à la **faune** et aux **Cendreux** — l'ancien cortège portait
   une bande froide et une hantise ; rien n'est décidé ici.
 - L'**art** des trois terrains de cendre (couleur, grain, sol dessiné, clutter de troncs calcinés) —
   c'est les deux tiers du travail de ce chantier, largement devant la propagation.
 - Si un foyer peut **naître** en cours de partie (un charnier neuf après une bataille).
-- Ce que le **sel** des fumerolles sert à faire (la conservation ? le troc ?) — le nœud existe, sa
-  place dans l'économie n'est pas tranchée.
+- ~~Ce que le **sel** des fumerolles sert à faire~~ — **soldé le 2026-08-30** : la claie salée
+  (`peche.md` S4bis) ; le sel rachète la perte du séchage, la salaison ne pourrit jamais.
 - Si une fumerolle doit rester **visitable** : elle est au cœur de la cendre, donc de plus en plus
   loin du vivant à mesure que la corruption avance.

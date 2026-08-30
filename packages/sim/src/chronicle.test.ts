@@ -250,17 +250,6 @@ describe('chronicleFromEvents — entrées structurées {jour, texte, poids}', (
     expect(entries).toEqual([{ day: 12, text: 'On a lu la Stèle II. « Ici les chemins se répondaient. Nous guettions le sud. »', weight: 'recit', lieu: 20 }])
   })
 
-  it('la rumeur du réfugié se raconte — le prix est dit, jamais un conseil', () => {
-    const entries = chronicleFromEvents(
-      [at(17, { type: 'refugee_rumeur', groupId: 3, byEntityId: 7, poiId: 4, kind: 'ferme_ruinee', name: 'la Ferme brûlée I' })],
-      SCALE,
-      DEPART,
-      NAMES,
-      CARTE,
-    )
-    expect(entries).toEqual([{ day: 17, text: 'Pour un repas, des réfugiés ont dit où trouver la Ferme brûlée I.', weight: 'recit', lieu: 4 }])
-  })
-
   it('un intact SANS fondation se tait — l\u2019arrière-pays intact est un décor, pas une ligne', () => {
     const entries = chronicleFromEvents(
       [at(3, { type: 'poi_first_visit', poiId: 12, kind: 'bivouac', name: 'le Vieux bivouac I', byEntityId: 7, faits: [{ ere: 3, type: 'sort', cause: 'intact', saillant: true }] })],
@@ -429,13 +418,13 @@ describe('la fiche par lieu — annales et chronique interfeuillées par la clef
       { ere: 1, type: 'fondation', x: 11, y: 11, lieu: 'ferme_ruinee', cause: 'eau' },
       { ere: 3, type: 'sort', x: 11, y: 11, lieu: 'ferme_ruinee', cause: 'brule' },
     ]
-    // Une visite de l'an 1, une rumeur de l'an 2 : la fiche doit les rendre dans cet ordre,
+    // Une visite de l'an 1, une stèle lue l'an 2 : la fiche doit les rendre dans cet ordre,
     // an par an — l'année fait `YEAR_DAYS` jours (S1), donc le second est au-delà.
     const anDeux = YEAR_DAYS + 40
     const volumes = volumesDeChronique(
       [
         at(9, { type: 'poi_first_visit', poiId: 0, kind: 'ferme_ruinee', name: 'la Ferme brûlée I', byEntityId: 7, faits: [{ ere: 1, type: 'fondation', cause: 'eau', saillant: true }] }),
-        at(anDeux, { type: 'refugee_rumeur', groupId: 1, byEntityId: 7, poiId: 0, kind: 'ferme_ruinee', name: 'la Ferme brûlée I' }),
+        at(anDeux, { type: 'poi_first_visit', poiId: 0, kind: 'ferme_ruinee', name: 'la Ferme brûlée I', byEntityId: 7, stele: { lignes: ['Ici l’eau tenait.'] } }),
         at(anDeux + 1, { type: 'poi_first_visit', poiId: 1, kind: 'sanctuaire', name: 'le Sanctuaire', byEntityId: 7 }), // un AUTRE lieu
       ],
       SCALE,
@@ -449,7 +438,7 @@ describe('la fiche par lieu — annales et chronique interfeuillées par la clef
     // …le joueur écrit les suivantes, an par an — et rien d'un autre lieu ne s'y glisse.
     expect(fiche.lignes.map((l) => [l.an, l.entree.day])).toEqual([[1, 9], [2, anDeux]])
     expect(fiche.lignes[0]!.entree.text).toContain("pour l'eau")
-    expect(fiche.lignes[1]!.entree.text).toContain('réfugiés')
+    expect(fiche.lignes[1]!.entree.text).toContain('On a lu')
   })
 
   it('un poiId inconnu rend une fiche vide, jamais une erreur', () => {

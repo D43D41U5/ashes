@@ -16,6 +16,7 @@
  * est un module qu'on ne peut pas tester sans état.
  */
 import { FISHING, FISH_SPECIES, TROUVAILLES, type CreneauDePeche, type FishSpecies, type NomDeNature, type Trouvaille } from './balance'
+import { eauSouillee } from './coulee'
 import { estInonde, porteDeLEau } from './eau'
 import { zoneSlugAt } from './map'
 import { NATURE_MARAIS, NATURE_RIEN, NOM_DE_NATURE, type NatureEau } from './peche-nature'
@@ -104,13 +105,15 @@ export interface TableDePrises {
   total: number
 }
 
-/** L'endroit et l'instant, tels que la table les lit — quatre axes, plus le coin. */
+/** L'endroit et l'instant, tels que la table les lit — quatre axes, plus le coin, plus la
+ *  SUIE (`cendre.md` R26b) : une eau souillée par une coulée échange sa table entière. */
 export interface Conditions {
   nature: NomDeNature
   zone: string | undefined
   saison: number
   creneau: CreneauDePeche
   surCoin: boolean
+  souille: boolean
 }
 
 /** Une condition ABSENTE ne filtre rien (T2) : c'est ce qui rend la table extensible. */
@@ -123,6 +126,10 @@ function retient<T>(declare: readonly T[] | undefined, valeur: T): boolean {
  * Exportée : la garde A8 la balaie sur tout le domaine au lieu d'échantillonner des touches.
  */
 export function especeRetenue(sp: FishSpecies, c: Conditions): boolean {
+  // LA SUIE ÉCHANGE LA TABLE, dans les DEUX sens (R26b) : l'eau souillée ne retient que les
+  // espèces `souillee`, l'eau claire ne les retient jamais. Avant les autres axes : c'est un
+  // échange de MONDE, pas un filtre de plus.
+  if ((sp.souillee === true) !== c.souille) return false
   if (!sp.eaux.includes(c.nature)) return false
   if (!retient(sp.zones, c.zone ?? '')) return false
   if (!retient(sp.saisons, c.saison)) return false
@@ -196,5 +203,6 @@ export function conditionsAt(state: SimState, tx: number, ty: number, surCoin: b
     saison: phaseForDay(jourDeSaison(state)),
     creneau: creneauAt(state),
     surCoin,
+    souille: eauSouillee(state, tx, ty),
   }
 }

@@ -22,6 +22,7 @@ import {
   FOOD_VALUES,
   COOK_SLOT,
   DRY_SLOT,
+  SALAISON_DU_SECHE,
   SPOIL_CYCLES,
   NODE_DEFS,
   RECIPES,
@@ -31,7 +32,7 @@ import {
   TERRAIN_SHALLOW_WATER,
   type NodeType,
 } from './balance'
-import { castRejection, coinIndisponible, coinPris, eauIndisponible, fishingWindowTicks, portionsDe, porteeDuNoeud, type ResourceNode } from './economy'
+import { castRejection, coinIndisponible, coinPris, eauIndisponible, fishingWindowTicks, portionsDe, porteeDuNoeud, profondVoisin, type ResourceNode } from './economy'
 import { NATURE_LAC, NATURE_MARAIS, NATURE_MARE, NATURE_RIEN, NATURE_RIVIERE, deriverNatureDeLEau } from './peche-nature'
 import { conditionsAt, creneauAt, especeRetenue, natureDeLEau, poidsDuRien, tableDePrises } from './peche-table'
 import { VRAIES_ZONES } from './zonegraph'
@@ -103,6 +104,20 @@ const COEUR_DU_GRAND_FROID = coeurDe(4)
 /** LE DERNIER TIERS DES PLUIES : le gué a déjà pris la nuit (fenêtre ~j73 → j17) et le profond
  *  pas encore — c'est là, et seulement là, que « le lac ferme en dernier » se voit. */
 const NUITS_DES_PLUIES = coeurDe(3) + BALANCE.ACT_DAYS / 5
+/**
+ * LE MOMENT DU BANC PAR DÉFAUT : MIDI au cœur des Pluies — chaud (8 °C sur la carte d'essai),
+ * humide (l'assèchement, c'est l'Ardeur — A15), l'eau est LIBRE.
+ *
+ * ⚠ IL ÉTAIT AU TICK 0 DU JOUR 1, ET C'ÉTAIT UN GUÉ GELÉ (mesuré le 2026-08-30 : −8,5 °C au
+ * lever sur la tuile du coin, `estGele` VRAI). Tous les lancers du banc partaient donc D'UNE
+ * TUILE PRISE — toléré par l'ancienne règle D7 ① (seul le profond comptait), et c'est le trou
+ * même que le durcissement ferme (« on ne doit pas pêcher dans la glace »). Et le lever ne
+ * suffit pas : même au cœur des Pluies, la carte d'essai relève −2 °C à l'aube — un banc de
+ * pêche se pose à MIDI. La glace a ses propres cas (A10, `gel: true`), qui choisissent leur
+ * jour ; l'assèchement les siens (A15).
+ */
+const JOUR_DOUX = coeurDe(3)
+const MIDI_DOUX = Math.floor(dayTicksPourJour(JOUR_DOUX) / 2)
 
 interface Banc {
   sim: SimState
@@ -121,8 +136,10 @@ function banc(
     faunaCap: 0,
     worldEvents: false,
     meteoActive: false,
-    ...(opts.gel ? { calendarScale: SCALE } : {}),
+    // Les bancs de gel gardent le jour 1 : `tickDe(jour)` compte ses cycles depuis lui.
+    ...(opts.gel ? { calendarScale: SCALE } : { jourDeDepart: JOUR_DOUX }),
   })
+  if (!opts.gel) sim.tick = MIDI_DOUX
   const id = spawnEntity(sim, PECHEUR.x, PECHEUR.y)
   const e = sim.entities.find((x) => x.id === id)!
   if (opts.canne !== false) {
@@ -410,12 +427,16 @@ describe('A8 — la table ne retient que ce qui est déclaré, sur TOUT le domai
   const ZONES = [...VRAIES_ZONES.map((z) => z.slug), undefined]
 
   /** Le domaine ENTIER : 5 × 13 × 4 × 4 × 2 = 2 080 conditions. */
-  function* domaine(): Generator<{ nature: NomDeNature; zone: string | undefined; saison: number; creneau: CreneauDePeche; surCoin: boolean }> {
+  function* domaine(): Generator<{ nature: NomDeNature; zone: string | undefined; saison: number; creneau: CreneauDePeche; surCoin: boolean; souille: boolean }> {
     for (const nature of NATURES) {
       for (const zone of ZONES) {
         for (const saison of [1, 2, 3, 4]) {
           for (const creneau of CRENEAUX) {
-            for (const surCoin of [false, true]) yield { nature, zone, saison, creneau, surCoin }
+            for (const surCoin of [false, true]) {
+              // L'axe de la SUIE (R26b) entre dans le balayage : sans lui, la lamproie serait
+              // une ligne morte aux yeux de la garde « toute espèce mord quelque part ».
+              for (const souille of [false, true]) yield { nature, zone, saison, creneau, surCoin, souille }
+            }
           }
         }
       }
@@ -468,12 +489,12 @@ describe('A8 — la table ne retient que ce qui est déclaré, sur TOUT le domai
     // La géographie module, elle n'autorise jamais : l'exclure du geste aurait rendu le
     // mécanisme MUET là-bas. Une table stérile dit la même chose en la faisant sentir.
     for (const creneau of CRENEAUX) {
-      const t = tableDePrises({ nature: 'lac', zone: 'lac_mort', saison: 2, creneau, surCoin: true })
+      const t = tableDePrises({ nature: 'lac', zone: 'lac_mort', saison: 2, creneau, surCoin: true, souille: false })
       expect(t.lignes.some((l) => l.kind === 'poisson')).toBe(false)
       expect(t.lignes.some((l) => l.kind === 'trouvaille')).toBe(true)
     }
     // …et la MÊME eau, hors Lac Mort, en donne : sinon la garde ne prouverait rien.
-    expect(tableDePrises({ nature: 'lac', zone: 'pres_bas', saison: 2, creneau: 'jour', surCoin: true }).lignes.some((l) => l.kind === 'poisson')).toBe(true)
+    expect(tableDePrises({ nature: 'lac', zone: 'pres_bas', saison: 2, creneau: 'jour', surCoin: true, souille: false }).lignes.some((l) => l.kind === 'poisson')).toBe(true)
   })
 })
 
@@ -508,16 +529,25 @@ describe('A10 — la glace ferme, le lac en dernier, et le stock repousse dessou
     expect((rejets[0] as { reason: string }).reason).toBe("l'eau est prise")
     expect(entity(b).fishing).toBeUndefined()
   })
-  it('fin des Pluies, de nuit (le gué prend, le profond non) : le coin se pêche encore — c’est le PROFOND qui compte', () => {
+  it('fin des Pluies, de nuit (le gué prend, le profond non) : refus quand même — jamais de flotteur sur la glace', () => {
+    // D7 ① DURCI le 2026-08-30 (décision d'Alexis : « on ne doit pas pêcher dans la glace »).
+    // Ce cas affirmait l'inverse (« c'est le PROFOND qui compte ») : un gué pris avec du
+    // profond ouvert derrière se pêchait, et le flotteur tombait sur une tuile peinte en glace.
     const b = banc('fishing_spot_lake', { gel: true })
     b.sim.tick = tickDe(NUITS_DES_PLUIES, true)
-    // LA PRÉMISSE D'ABORD : sans un gué RÉELLEMENT pris, ce cas passerait au vert sur une nuit
-    // tiède et ne dirait plus rien du « lac en dernier ». Le socle est une courbe (`saisons.md`
-    // S4) : la fenêtre où le gué gèle sans le profond n'est plus un numéro d'acte, elle se prouve.
+    // LES DEUX PRÉMISSES D'ABORD : sans un gué RÉELLEMENT pris ce cas passerait au vert sur une
+    // nuit tiède, et sans un profond RÉELLEMENT ouvert il ne dirait rien du durcissement — il
+    // mesurerait l'ancienne règle. Le socle est une courbe (`saisons.md` S4) : la fenêtre où le
+    // gué gèle sans le profond se prouve, elle ne se suppose pas.
     expect(estGele(b.sim, COIN.tx, COIN.ty), 'le gué du coin, lui, a bien pris').toBe(true)
-    expect(coinPris(b.sim, b.node)).toBe(false)
+    const profond = profondVoisin(b.sim.map, COIN.tx, COIN.ty)!
+    expect(estGele(b.sim, profond.tx, profond.ty), 'le profond, lui, est encore ouvert').toBe(false)
+    expect(coinPris(b.sim, b.node)).toBe(true)
     lancer(b)
-    expect(entity(b).fishing).toBeDefined()
+    const rejets = des(drainEvents(b.sim), 'action_rejected')
+    expect(rejets).toHaveLength(1)
+    expect((rejets[0] as { reason: string }).reason).toBe("l'eau est prise")
+    expect(entity(b).fishing).toBeUndefined()
   })
   it('un coin vidé repousse SOUS la glace : au dégel, il rouvre plein', () => {
     const b = banc('fishing_spot_lake', { gel: true, stock: 0 })
@@ -861,7 +891,7 @@ describe('A17 — un coin épuisé ne ferme plus l’eau (le corollaire dur de D
 
 // ── A18 — LE COIN AMÉLIORE ───────────────────────────────────────────────────
 describe('A18 — le coin ne conditionne plus, il améliore', () => {
-  const cond = (surCoin: boolean) => ({ nature: 'lac' as NomDeNature, zone: 'pres_bas', saison: 2, creneau: 'jour' as CreneauDePeche, surCoin })
+  const cond = (surCoin: boolean) => ({ nature: 'lac' as NomDeNature, zone: 'pres_bas', saison: 2, creneau: 'jour' as CreneauDePeche, surCoin, souille: false })
 
   it('le poids du « rien » est DIVISÉ sur un coin — c’est là qu’est son vrai cadeau', () => {
     expect(poidsDuRien(cond(false))).toBe(FISHING.RIEN_PAR_EAU.lac)
@@ -889,7 +919,7 @@ describe('A18 — le coin ne conditionne plus, il améliore', () => {
     const seules = FISH_SPECIES.filter((sp) => sp.coinSeul === true)
     expect(seules.length).toBeGreaterThan(0)
     for (const sp of seules) {
-      const c = { nature: sp.eaux[0]!, zone: sp.zones?.[0], saison: sp.saisons?.[0] ?? 2, creneau: sp.creneaux?.[0] ?? ('nuit' as CreneauDePeche), surCoin: false }
+      const c = { nature: sp.eaux[0]!, zone: sp.zones?.[0], saison: sp.saisons?.[0] ?? 2, creneau: sp.creneaux?.[0] ?? ('nuit' as CreneauDePeche), surCoin: false, souille: sp.souillee === true }
       expect(especeRetenue(sp, { ...c, surCoin: false })).toBe(false)
       expect(especeRetenue(sp, { ...c, surCoin: true })).toBe(true)
     }
@@ -1024,7 +1054,7 @@ describe('A20 — ça mordille, ça ne mord pas', () => {
 
 // ── A21 — LA TABLE BOUGE AVEC LA SAISON ET L'HEURE ───────────────────────────
 describe('A21 — la saison et le créneau font et défont la table', () => {
-  const base = { nature: 'riviere' as NomDeNature, zone: 'pres_bas', creneau: 'jour' as CreneauDePeche, surCoin: false }
+  const base = { nature: 'riviere' as NomDeNature, zone: 'pres_bas', creneau: 'jour' as CreneauDePeche, surCoin: false, souille: false }
   const idsDe = (c: Parameters<typeof tableDePrises>[0]) => tableDePrises(c).lignes.filter((l) => l.kind === 'poisson').map((l) => (l as { species: { id: string } }).species.id)
 
   it('LE SAUMON n’existe qu’aux Pluies — un événement de calendrier, pas une ligne de table', () => {
@@ -1040,7 +1070,7 @@ describe('A21 — la saison et le créneau font et défont la table', () => {
   })
 
   it('LE CORÉGONE ouvre le Grand Froid au lac — la saison où la rivière se ferme par le gel', () => {
-    const lac = { nature: 'lac' as NomDeNature, zone: 'pres_bas', creneau: 'jour' as CreneauDePeche, surCoin: false }
+    const lac = { nature: 'lac' as NomDeNature, zone: 'pres_bas', creneau: 'jour' as CreneauDePeche, surCoin: false, souille: false }
     expect(idsDe({ ...lac, saison: 4 })).toContain('coregone')
     expect(idsDe({ ...lac, saison: 2 })).not.toContain('coregone')
   })
@@ -1048,7 +1078,8 @@ describe('A21 — la saison et le créneau font et défont la table', () => {
   it('LES QUATRE CRÉNEAUX se suivent dans l’ordre du cycle, et l’aube ouvre le jour', () => {
     const b = banc()
     const debut = b.sim.tick - (b.sim.tick % TICKS_PER_CYCLE)
-    const jour = dayTicksPourJour(1)
+    // La longueur du jour est celle du jour DU BANC (le banc vit au cœur des Pluies, plus au jour 1).
+    const jour = dayTicksPourJour(JOUR_DOUX)
     expect(creneauAt(b.sim, debut)).toBe('aube')
     expect(creneauAt(b.sim, debut + Math.floor(jour / 2))).toBe('jour')
     expect(creneauAt(b.sim, debut + jour - 1)).toBe('crepuscule')
@@ -1380,6 +1411,52 @@ describe('A27 — le séchoir conserve, sans feu et sans surveillance', () => {
     expect(fireZoneAccepts(poste, 'cookIn', 'raw_meat')).toBe(true)
     expect(fireZoneAccepts(poste, 'cookIn', 'wood'), 'on n’y accroche pas une bûche').toBe(false)
     expect(fireZoneAccepts(poste, 'cookOut', 'dried_fish_gros')).toBe(true)
+  })
+
+  it('A28 — LA CLAIE SALÉE (S4bis) : sel + poisson → salaison, et UN sel consommé', () => {
+    const { b, poste } = avecSechoir()
+    const entree = fireZoneInventory(poste, 'cookIn')!
+    expect(fireZoneAccepts(poste, 'cookIn', 'salt'), 'la claie accepte le sel').toBe(true)
+    addItems(entree, { gudgeon: 2, salt: 1 })
+    attendre(b, DRY_SLOT.sechoir!.gudgeon!.ticks + 2)
+    // Première unité : salée, le sel est parti.
+    expect(countOf(poste.cookOut!, 'salted_fish_petit'), 'la première sort SALÉE').toBe(1)
+    expect(countOf(entree, 'salt'), 'et le sel est consommé').toBe(0)
+    // Seconde unité : plus de sel — elle sort SÉCHÉE, la claie ne se bloque pas.
+    attendre(b, DRY_SLOT.sechoir!.gudgeon!.ticks + 2)
+    expect(countOf(poste.cookOut!, 'dried_fish_petit'), 'la seconde sort séchée').toBe(1)
+    // La salaison se REPOSE dans la sortie (le filtre la connaît).
+    expect(fireZoneAccepts(poste, 'cookOut', 'salted_fish_petit')).toBe(true)
+  })
+
+  it('A28 — le sel seul ne sèche pas, ne se consomme pas, et ne bloque pas la claie', () => {
+    const { b, poste } = avecSechoir()
+    const entree = fireZoneInventory(poste, 'cookIn')!
+    addItems(entree, { salt: 2 })
+    attendre(b, DRY_SLOT.sechoir!.gudgeon!.ticks + 2)
+    expect(countOf(entree, 'salt'), 'le sel attend, intact').toBe(2)
+    expect(poste.cookOut === undefined || countOf(poste.cookOut, 'salted_fish_petit') === 0).toBe(true)
+    // Et la claie sèche toujours autour de lui.
+    addItems(entree, { raw_meat: 1 })
+    attendre(b, DRY_SLOT.sechoir!.raw_meat!.ticks + 2)
+    expect(countOf(poste.cookOut!, 'salted_meat'), 'la viande sort salée (le sel attendait ça)').toBe(1)
+    expect(countOf(entree, 'salt')).toBe(1)
+  })
+
+  it('A28 — la table des salaisons est exhaustive, et le sel rachète EXACTEMENT la perte', () => {
+    // Toute sortie de DRY_SLOT a sa salaison — une sortie ajoutée sans salaison rougit ICI.
+    for (const regle of Object.values(DRY_SLOT.sechoir!)) {
+      const sale = SALAISON_DU_SECHE[regle.output]
+      expect(sale, `${regle.output} a sa salaison`).toBeDefined()
+      // Pleine valeur du CUIT (S4bis) : salé = cuit, au point près.
+      const cuitDe: Partial<Record<string, ItemId>> = {
+        dried_fish_petit: 'cooked_fish_petit', dried_fish_moyen: 'cooked_fish_moyen',
+        dried_fish_gros: 'cooked_fish_gros', dried_meat: 'cooked_meat',
+      }
+      expect(FOOD_VALUES[sale!]).toBe(FOOD_VALUES[cuitDe[regle.output]!])
+      // Et ça ne pourrit JAMAIS : absent de la table, comme le tubercule.
+      expect(SPOIL_CYCLES[sale!], `${sale} ne pourrit pas`).toBeUndefined()
+    }
   })
 
   it('LE FOUR CUIT AUSSI (S5) — il fondait le minerai et ne savait pas griller un poisson', () => {

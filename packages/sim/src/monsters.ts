@@ -227,6 +227,11 @@ export interface Monster {
    * Le drapeau voyage dans le snapshot : le client en tire sa petite silhouette.
    */
   petit?: true
+  /** LA BÊTE CENDREUSE (spec `cendre.md` R30) — relevée par la cendre, même espèce, grise à
+   *  l'écran. Le mur R25 s'INVERSE pour elle (elle ne quitte jamais le sol cendré), la
+   *  morsure l'épargne, et sa mort rend le cuir cendré. Le drapeau voyage dans le snapshot
+   *  (le patron du `petit`). */
+  cendreuse?: true
   /**
    * LA FAIM (L6) — la jauge d'un ADULTE, 0 (repu) → 1 (affamé). Elle remplace
    * `satedUntil` chez le loup : c'est elle qui décide du départ en chasse (via
@@ -644,13 +649,18 @@ export function moveToward(
   // AVANT la lisière, elle ne la tangente pas. Et la diagonale est testée aussi :
   // la collision sépare les axes, un pas diagonal dont les deux flancs sont sains
   // pourrait sinon se recomposer dans le coin cendré.
-  if ((sx !== 0 || sy !== 0) && (def.habitat?.length ?? 0) > 0) {
+  // …ET IL S'INVERSE AU DRAPEAU (spec `cendre.md` R30b) : la CENDREUSE ne quitte jamais le
+  // sol cendré — le pas dont un axe sortirait le perd. La lisière est une frontière à double
+  // sens, lisible des deux côtés : le vivant n'entre pas, le corrompu ne sort pas.
+  if ((sx !== 0 || sy !== 0) && ((def.habitat?.length ?? 0) > 0 || monster.cendreuse === true)) {
     const tx0 = Math.floor(entity.x)
     const ty0 = Math.floor(entity.y)
-    const cendree = (x: number, y: number): boolean => profondeurNueDeCendre(state, x, y) >= 0
-    if (sx !== 0 && cendree(tx0 + sx, ty0)) sx = 0
-    if (sy !== 0 && cendree(tx0, ty0 + sy)) sy = 0
-    if (sx !== 0 && sy !== 0 && cendree(tx0 + sx, ty0 + sy)) sy = 0
+    const interdite = monster.cendreuse === true
+      ? (x: number, y: number): boolean => profondeurNueDeCendre(state, x, y) < 0
+      : (x: number, y: number): boolean => profondeurNueDeCendre(state, x, y) >= 0
+    if (sx !== 0 && interdite(tx0 + sx, ty0)) sx = 0
+    if (sy !== 0 && interdite(tx0, ty0 + sy)) sy = 0
+    if (sx !== 0 && sy !== 0 && interdite(tx0 + sx, ty0 + sy)) sy = 0
   }
 
   // Le pas ORIENTE la bête (spec chasse C4) : sa perception est directionnelle,

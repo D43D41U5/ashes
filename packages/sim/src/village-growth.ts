@@ -4,7 +4,7 @@
  *
  * Tout s'ancre sur les bords du cycle (le cycle DÉMARRE à l'aube : `cycleTick 0`),
  * jamais sur une date de saison — décision n°2, purement économique. Et rien ici ne
- * tire sur `state.rng` (patron `advanceRefugees`) : les positions sont des
+ * tire sur `state.rng` (position par `hash2`, comme les convois) : les positions sont des
  * emplacements de plan, les décisions des comparaisons de stocks.
  *
  * Trois gestes, villages PNJ seulement (`chiefId === 0`) :

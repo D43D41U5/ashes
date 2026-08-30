@@ -35,6 +35,13 @@ export const HEX = {
    */
   bodyWarm: '#c0a074',
   /**
+   * LE GRIS DE SUIE — la valeur du SOL CENDRÉ, celle contre laquelle tout ce qui vit dans la
+   * cendre se calibre (mémoire « la couleur se calibre contre son fond »). NOMMÉE le
+   * 2026-08-30 : la colonne de fumerolle la peint, la teinte des bêtes cendreuses et le
+   * lavage du bief souillé s'en écartent d'un cran — trois fichiers la portaient en dur.
+   */
+  grisDeSuie: '#5c5854',
+  /**
    * LE LISERÉ SOMBRE — la bordure des éléments en RETRAIT : le champ de recherche du
    * catalogue, la croix de fermeture et le reset des options du menu, et la tuile neutre
    * de l'Atelier (le repli « sans albédo »). NOMMÉE le 2026-08-10 : trois écrans la

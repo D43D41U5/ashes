@@ -1153,7 +1153,13 @@ export function tuileCendree(
   const c = coutDe(champ, i)
   if (c < 0) return false
   const a = avanceeDeCendre(state.cendreAge[foyerDe(champ, i)] ?? 0)
-  return c <= a * CENDRE.ORTHO * (1 + grainDeCendre(state.seed, tx, ty))
+  const s = a * CENDRE.ORTHO
+  // Le grain vaut ±WARP_PART au plus : hors de cette bande la réponse est acquise sans le payer
+  // (quatre `fbm2`). `neigeAuSol` interroge cette fonction sur tout le cadre à chaque recuisson
+  // du gel — seule la lisière paie le bruit, et elle rend au bit près la même chose qu'avant.
+  if (c > s * (1 + CENDRE.WARP_PART)) return false
+  if (c <= s * (1 - CENDRE.WARP_PART)) return true
+  return c <= s * (1 + grainDeCendre(state.seed, tx, ty))
 }
 
 /**

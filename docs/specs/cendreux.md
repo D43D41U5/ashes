@@ -237,6 +237,29 @@ mesure qui donne leur forme aux règles ci-dessous.
   réveil autour de lui, donc plus de siège — l'exact bug qu'A4 venait de fermer.
   Et c'est aussi le chemin le moins cher : ni index d'occupation à bâtir, ni A\* qui butte sur un
   mur jusqu'à épuiser son budget.
+- **R19quater — ON NE NAÎT PAS DANS L'EAU, et le lac n'est pas un sanctuaire (Alexis,
+  2026-08-30 : « je les vois parfois sortir sur la glace, c'est pas normal si ? »).** La couronne
+  se jugeait par « marchable » — or le **lac gelé est marchable** (la vallée change de forme en
+  Grand Froid) et le **gué** l'est toute l'année hors crue : la banquise était donc un site
+  d'apparition parfaitement éligible, et le sol se soulevait au milieu de l'eau. Ce que le réveil
+  raconte, c'est la **terre** qui s'ouvre — le champ des morts est un sol, pas une nappe (R15).
+  `isWater` écarte désormais la tuile, **prise ou libre** (la règle est « pas dans l'eau », pas
+  « pas sur la glace » : un mort sortant d'un gué à la belle saison serait la même faute).
+  ⚠ **Ça vaut aussi pour le LOUP**, qui partage cette couronne — il ne creuse rien, mais il
+  « vient du bois », et le bois ne pousse pas sur l'eau : une seule règle plutôt qu'une exception
+  par espèce.
+  **Et la couronne noyée POUSSE VERS LA RIVE** (`MORTS.POUSSEES_RIVE`, 3 anneaux) : camper au
+  milieu de la banquise achète les secondes de marche que vaut la position, **jamais l'immunité**
+  — c'est mot pour mot la ligne du Feu (⑦), et sans elle on rouvrait par l'autre bout le
+  sanctuaire qu'A4 venait de fermer. Le mort naît sur la berge et **marche sur la glace** (la
+  joignabilité la traverse déjà : c'est le même terrain marchable). Au-delà des trois poussées,
+  la nuit passe son tour (A22bis) — un lac de quarante tuiles de large mérite sa paix (les
+  trois poussées portent la couronne du mort de 7 à 11, 15 puis **19** tuiles, bord extérieur
+  à 21). Aucun tirage de plus : le même tirage traverse la récursion (A23/A28 tiennent).
+  ⚠ **La poussée d'EAU passe avant celle du WARD** quand une couronne a les deux : le chemin
+  d'échappement de ⑦ change alors de forme (11/15/19 au lieu d'un saut à `ward + 1 + ring`).
+  A27 passe, la terminaison est garantie (les deux compteurs sont bornés et monotones), mais
+  cette combinaison-là n'a pas de garde propre — elle est notée, pas prouvée.
 - **R19ter — Le repli est BORNÉ.** Écarter une tuile bloquée est gratuit ; vérifier qu'elle mène
   à la proie coûte un A\*, et un A\* qui **échoue** coûte son budget entier (4 096 tuiles).
   MESURÉ sans plafond, sur une proie ceinte de roche : **1 593 ms pour un seul réveil**, soit
@@ -627,6 +650,22 @@ faux-mort, lui, existe déjà en mieux : la carcasse torpide qui se réveille so
 - **A22ter — Une enceinte ne disqualifie rien.** Une proie ceinte de murs reçoit quand même un
   site de réveil, et le Cendreux ira frapper à la porte (R19bis, A4). **Coût borné : 1 593 ms →
   33 ms dans le pire cas, 0,61 ms en cas normal.**
+- **A29 / A29bis — Aucun site dans l'eau, et la PRÉMISSE est prouvée d'abord.** Sur un lac
+  **gelé** (nuit du Grand Froid) et sur un **gué** ouvert (cœur des Pluies), la garde affirme
+  d'abord que la tuile est bien **marchable** — sans quoi elle serait verte pour la mauvaise
+  raison, l'eau libre étant déjà bloquée avant le correctif. *Éprouvée en la neutralisant : les
+  quatre gardes rougissent.*
+  **MESURÉ sur le monde joué** (seed 2026, nuit du Grand Froid, 786 points de banquise,
+  6 288 tirages) : la couronne d'une proie sur la glace était de l'eau **marchable à 70,9 %**
+  — le défaut était dominant près d'un lac. Après : **0,0 %** de sites dans l'eau, **99,9 %**
+  de sites trouvés. Témoin à terre intact (0,86 % d'eau marchable dans sa couronne : la règle
+  n'y mord pas ; son 19,7 % de refus est celui de la roche, il est antérieur). Coût 0,24 ms
+  par tirage quand la poussée mord, 0,08 ms sinon — pour 50 ms de budget de tick.
+- **A30 / A30bis / A30ter — Le lac n'est pas un sanctuaire, la poussée est bornée et muette.**
+  Proie au centre d'un lac de rayon 11 (la couronne entière noyée) : un site est trouvé, **sur la
+  rive** (au-delà de 11 tuiles, en deçà de la portée des trois poussées) ; un lac qui couvre tout
+  ce que les poussées atteignent rend `undefined` — jamais une récursion sans fond ; et
+  `rngState` ne bouge pas, deux appels de même tirage rendent le même site.
 - **A23 — Un seul tirage, et il est PASSÉ, pas pris.** `siteDansLaCouronne` ne touche pas
   `state.rngState` ; même tirage → même site.
 - **A24 — La pondération n'est pas décorative.** Sur une carte mi-t2 mi-t0, les réveils

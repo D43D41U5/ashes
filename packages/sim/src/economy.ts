@@ -630,9 +630,10 @@ export function fishingWindowTicks(species: FishSpecies, level: number): number 
   return Math.max(1, Math.floor(species.windowTicks * mult))
 }
 
-/** La tuile PROFONDE voisine (P2) — celle dont le GEL ferme la pêche. `null` s'il n'y en a pas :
- *  on juge alors la tuile elle-même. */
-function profondVoisin(map: WorldMap, tx: number, ty: number): { tx: number; ty: number } | null {
+/** La tuile PROFONDE voisine (P2) — celle dont le GEL ferme AUSSI la pêche (D7 ①). `null` s'il
+ *  n'y en a pas : on juge alors la tuile elle-même. Exportée : la garde A10 prouve sa prémisse
+ *  (« le profond, lui, est encore ouvert ») sur la MÊME loi de voisinage, pas sur une recopie. */
+export function profondVoisin(map: WorldMap, tx: number, ty: number): { tx: number; ty: number } | null {
   const d = [
     [1, 0],
     [-1, 0],
@@ -653,10 +654,14 @@ function profondVoisin(map: WorldMap, tx: number, ty: number): { tx: number; ty:
  *
  * DEUX FAÇONS DE PERDRE UNE EAU, ET ELLES NE SE JUGENT PAS SUR LA MÊME TUILE.
  *
- * ① **LA GLACE** se juge sur le PROFOND voisin, pas sur le gué : le gué gèle avant le profond
- *    (`gel.ts`, `SEUIL_GUE` < `SEUIL_PROFOND`) et l'intention de D7 est « la rivière ferme
- *    avant le lac » — une tuile de gué gelée avec du profond ouvert derrière se pêche encore,
- *    les pieds sur la glace du bord. Sans profond voisin, la tuile elle-même.
+ * ① **LA GLACE** se juge sur la tuile VISÉE **et** sur le PROFOND voisin — l'une ou l'autre
+ *    prise refuse. RENVERSÉ le 2026-08-30 (décision d'Alexis : « on ne doit pas pêcher dans la
+ *    glace, ça devrait être impossible ») : la première écriture ne jugeait QUE le profond
+ *    (« la rivière ferme avant le lac ») et laissait donc pêcher « les pieds sur la glace du
+ *    bord » — le flotteur tombait sur une tuile peinte en glace, tout le jour d'acte III (gué
+ *    pris à `SEUIL_GUE`, profond encore ouvert au-dessus de `SEUIL_PROFOND`). L'intention
+ *    « la rivière avant le lac » tient toujours, portée par l'écart des seuils, pas par le
+ *    choix de la tuile jugée.
  *
  * ② **L'EAU RETIRÉE** se juge sur la tuile PÊCHÉE, et il le faut : `estAsseche` ne mord que sur
  *    du haut-fond (`eau.ts`) — le profond ne sèche jamais dans ce modèle, donc porter ce test
@@ -681,6 +686,7 @@ export function eauIndisponible(state: SimState, tx: number, ty: number, niveauC
     if (estTerrainDeMarais(t)) return 'on ne pêche pas dans la vase'
     return estTerrainDEau(t) ? "l'eau s'est retirée" : "il n'y a pas d'eau ici"
   }
+  if (estGele(state, tx, ty)) return "l'eau est prise" // D7 ① durci : jamais de flotteur sur la glace
   const p = profondVoisin(state.map, tx, ty) ?? { tx, ty }
   return estGele(state, p.tx, p.ty) ? "l'eau est prise" : null
 }

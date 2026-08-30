@@ -30,6 +30,7 @@ import type Phaser from 'phaser'
 import { type ItemId, type ResourceNode } from '@ashes/sim'
 import { OVERLAY_DEPTH, TILE_PX } from '../../render/framing'
 import { itemIconKey } from '../../render/item-art'
+import { cleLit } from '../../render/normal-map'
 import type { Warp } from '../../render/warp'
 
 /** Une ligne tendue, lue du snapshot — position RENDUE (px monde) des pieds de celui qui pêche. */
@@ -134,9 +135,14 @@ const EAU_CLAIR = 0xe9e7da
 export class PecheFx {
   private readonly g: Phaser.GameObjects.Graphics
   private readonly lignes = new Map<number, Ligne>()
+  /** L'éclairage dynamique est-il armé ? (posé par WorldScene, comme `eau-events`). Canne, fil,
+   *  flotteur et poisson sont des objets du MONDE : sans `setLighting`, ils restaient pleine
+   *  couleur en pleine nuit — le voile d'ambiance passe SOUS les sprites. */
+  lighting = true
 
   constructor(private readonly scene: Phaser.Scene) {
     this.g = scene.add.graphics().setDepth(OVERLAY_DEPTH - 12)
+    this.g.setLighting(true)
   }
 
   // ── Les trois faits de domaine (WorldScene les relaie depuis `processEvents`) ──
@@ -191,7 +197,9 @@ export class PecheFx {
     // comme tout le reste. On dessine donc l'item remonté, quel qu'il soit.
     if (this.scene.textures.exists(itemIconKey(item))) {
       l.poisson?.destroy()
-      l.poisson = this.scene.add.image(l.flotX, l.flotY, itemIconKey(item)).setDepth(OVERLAY_DEPTH - 11)
+      const cle = this.lighting ? cleLit(itemIconKey(item)) : itemIconKey(item)
+      l.poisson = this.scene.add.image(l.flotX, l.flotY, cle).setDepth(OVERLAY_DEPTH - 11)
+      l.poisson.setLighting(this.lighting)
     }
   }
 
@@ -266,6 +274,7 @@ export class PecheFx {
     }
 
     this.g.clear()
+    this.g.setLighting(this.lighting) // réarmé chaque frame (toggle DEV), comme les nœuds
     for (const [id, l] of this.lignes) {
       const age = now - l.t0
       const fini =

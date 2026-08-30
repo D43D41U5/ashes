@@ -1103,7 +1103,7 @@ export const VILLAGE_GROWTH = {
    *  (31-33) suffisait encore à faire entrer une bouche qui mangeait exactement la marge
    *  (mort à J11, quand le témoin sans chantier tient J12 à nourriture 15-20). La
    *  prospérité qui attire est un GRAS que seule une zone riche soutient — la géographie
-   *  module la croissance, l'accueil de réfugiés reste le levier fiable partout. */
+   *  module la croissance. */
   ATTRACT_FOOD: 40,
   /** Effectif maximal par palier de bâti — un campement ne loge pas sept personnes.
    *  7 au plafond : c'est le nombre de logis 4×4 que l'enceinte loge en gardant la
@@ -1621,9 +1621,10 @@ export type CreneauDePeche = 'aube' | 'jour' | 'crepuscule' | 'nuit'
  *  qui garantit qu'aucune ligne ne peut le déclarer par erreur : le compilateur refuse. */
 export type NomDeNature = 'riviere' | 'lac' | 'mare' | 'crue'
 
-/** Les dix-huit espèces, par leur id — qui EST l'id de leur item cru (D12 : l'espèce voyage). */
+/** Les dix-neuf espèces (la lamproie de suie depuis R26b), par leur id — qui EST l'id de leur
+ *  item cru (D12 : l'espèce voyage). */
 export type FishId =
-  | 'gudgeon' | 'vairon' | 'gardon' | 'loche' | 'ecrevisse'
+  | 'gudgeon' | 'vairon' | 'gardon' | 'loche' | 'ecrevisse' | 'lamproie'
   | 'trout' | 'ombre' | 'chevesne' | 'tanche' | 'perche' | 'anguille' | 'coregone'
   | 'pike' | 'barbeau' | 'saumon' | 'sandre' | 'carpe' | 'silure'
 
@@ -1641,6 +1642,9 @@ export interface FishSpecies {
   creneaux?: readonly CreneauDePeche[]
   /** Elle ne mord QUE sur un coin de pêche (E3) : la récompense d'avoir trouvé le coin. */
   coinSeul?: boolean
+  /** Elle ne mord QUE dans une eau souillée par une coulée de suie (`cendre.md` R26b) — et
+   *  l'eau souillée ne retient QUE ces espèces-là : l'échange est total, dans les deux sens. */
+  souillee?: boolean
   /** Poids ENTIER du tirage, parmi les lignes que le filtre a retenues. */
   weight: number
   /** La fenêtre de ferrage à niveau 0, en ticks — c'est là que vit une part de la rareté (D5). */
@@ -1690,6 +1694,12 @@ export const FISH_SPECIES: readonly FishSpecies[] = [
   // porte. Sans `mare`, une zone sans grand lac l'aurait rendu injoignable — le défaut qu'on
   // vient de payer sur le marais, recréé d'un cran plus bas.
   { id: 'silure', classe: 'gros', eaux: ['lac', 'mare'], zones: ['tourbiere', 'ruines'], creneaux: ['nuit'], coinSeul: true, weight: 1, windowTicks: 5, tailleMinMm: 700, tailleMaxMm: 2000, label: 'silure' },
+
+  // ⚠ LA LAMPROIE DE SUIE (`cendre.md` R26b) — EN FIN DE TABLE, ET ÇA NE SE DÉPLACE PAS :
+  //   l'ordre des déclarations EST le tirage cumulatif (T7) ; ajoutée en queue, elle ne change
+  //   les tables QUE là où elle est retenue — l'eau souillée, où elle est SEULE à mordre.
+  //   Un signal qui se pêche, pas un garde-manger : petite, souvent, partout où la suie passe.
+  { id: 'lamproie', classe: 'petit', eaux: ['riviere'], souillee: true, weight: 8, windowTicks: 14, tailleMinMm: 150, tailleMaxMm: 400, label: 'lamproie de suie' },
 ]
 
 /**
@@ -2054,6 +2064,9 @@ export const FOOD_VALUES: Partial<Record<import('./items').ItemId, number>> = {
   fruit_sec: 8,
   tubercule: 10,
   raw_meat: 8,
+  // L'ORGE-DE-BRAISE (`agriculture.md` J2) : médiocre par DESIGN (§8bis) — entre la baie et
+  // le champignon. Sa valeur n'est pas sa richesse, c'est sa SAISON : elle pousse en hiver.
+  orge_de_braise: 9,
   quartier: 20, // V0-5 : un gros repas cru (plus que raw_meat) — le gros gibier nourrit longtemps
   cooked_meat: 40,
   stew: 60,
@@ -2076,6 +2089,12 @@ export const FOOD_VALUES: Partial<Record<import('./items').ItemId, number>> = {
   dried_fish_moyen: 14,
   dried_fish_gros: 21,
   dried_meat: 28,
+  // LA SALAISON (S4bis) — LE SEL RACHÈTE LA PERTE : pleine valeur du cuit, au sel près.
+  // Une garde (A28) tient l'égalité salé = cuit ; si le cuit bouge, elle rougit ici.
+  salted_fish_petit: 12,
+  salted_fish_moyen: 20,
+  salted_fish_gros: 30,
+  salted_meat: 40,
 }
 
 /**
@@ -2124,6 +2143,10 @@ export const AGRICULTURE = {
     tubercule: { phase: 3, graine: 'graine_tubercule', recolte: 'tubercule', pousse: 0.9, rendement: 6 },
     /** Le Grand Froid, sous serre : lente et maigre — la culture d'avant, à sa vraie place. */
     hiver: { phase: 4, graine: 'graine', recolte: 'legume', pousse: 1, rendement: 4 },
+    /** LA CULTURE DE BRAISE (`agriculture.md` J2) — la seule que la cendre porte, et la cendre
+     *  seule : `phase: 0` = AUCUNE fenêtre de parcelle (la compatibilité vit dans
+     *  `cultureAdmise`, pas ici). Lente, médiocre (§8bis), et elle pousse en plein hiver. */
+    braise: { phase: 0, graine: 'graine_de_braise', recolte: 'orge_de_braise', pousse: 0.8, rendement: 4 },
   },
 } as const
 
@@ -2151,6 +2174,7 @@ export const SPOIL_CYCLES: Partial<Record<import('./items').ItemId, number>> = {
   // il traverse le Grand Froid sans pourrir, et c'est tout son intérêt.
   pousse_verte: 2,
   fruit_sec: 6,
+  orge_de_braise: 6, // comme le fruit sec — une récolte d'hiver se mange dans sa semaine
   raw_meat: 1.5, // la viande crue est une bombe à retardement : on la cuit, ou on la perd
   quartier: 1.5, // V0-5 : périme comme la viande crue (le dilemme du retour : poids ET péremption)
   cooked_meat: 4,
@@ -2166,6 +2190,9 @@ export const SPOIL_CYCLES: Partial<Record<import('./items').ItemId, number>> = {
   dried_fish_moyen: 20,
   dried_fish_gros: 20,
   dried_meat: 20,
+  // ⚠ LES SALAISONS (`salted_*`, S4bis) SONT ABSENTES EXPRÈS : le sel conserve POUR DE BON —
+  // elles ne pourrissent jamais, comme le tubercule. C'est leur raison d'être face au séché
+  // (gratuit, −30 %, 20 cycles) : la salaison coûte un voyage au cœur de la cendre.
 }
 
 /** Les crans de fraîcheur, et ce qu'ils font à la valeur nutritive. */
@@ -2188,6 +2215,7 @@ export type RecipeId =
   | 'crude_rod'
   | 'torche'
   | 'sechoir'
+  | 'braise_mere'
   | 'crude_knife'
   | 'bow'
   | 'arrow'
@@ -2224,6 +2252,7 @@ export type RecipeId =
   | 'parcelle'
   | 'serre'
   | 'terroir'
+  | 'parcelle_de_suie'
   | 'chest'
 
 export interface Recipe {
@@ -2300,6 +2329,9 @@ export const RECIPES: Record<RecipeId, Recipe> = {
   // demande pas d'atelier, ça demande d'y penser la veille. Bois et corde, les deux matières
   // de la première nuit.
   sechoir: { requiert: null, inputs: { wood: 6, rope: 2 }, output: 'sechoir', seconds: 8 },
+  // LA BRAISE-MÈRE (spec `cendre.md` R28a) — Forge N2, et SON COÛT EST L'AMORCE : le cœur de
+  // braise (R29) entre dans la recette. La défense se paie d'abord en courage.
+  braise_mere: { requiert: FORGE_N2, inputs: { stone: 8, iron_ingot: 2, coeur_de_braise: 1 }, output: 'braise_mere', seconds: 14 },
 
   // ── La couche 1 : à mains nues, sans poste, dès la minute 0 (spec craft-fortune).
   // Tout y passe par la CORDE : le goulot est volontaire (C8) — la fibre cesse
@@ -2415,6 +2447,9 @@ export const RECIPES: Record<RecipeId, Recipe> = {
   parcelle: { requiert: FEU, inputs: COMPONENTS.parcelle.cost, output: 'parcelle', seconds: 8 },
   serre: { requiert: FEU, inputs: COMPONENTS.serre.cost, output: 'serre', seconds: 12 },
   terroir: { requiert: FEU, inputs: COMPONENTS.terroir.cost, output: 'terroir', seconds: 16 },
+  // LE JARDIN DE SUIE (agriculture.md J1) : bois + CENDRE — le premier consommateur de l'item
+  // `ash`. Au Feu comme la parcelle ; la serrure du système est le sol cendré, pas la recette.
+  parcelle_de_suie: { requiert: FEU, inputs: { wood: 4, ash: 4 }, output: 'parcelle_de_suie', seconds: 8 },
 }
 
 /**
@@ -4489,6 +4524,23 @@ export const VENT = {
 } as const
 
 /** La levée des Cendreux (spec 2026-07-08). Ordres de grandeur, calibrage playtest. */
+/**
+ * ═══ LES BÊTES CENDREUSES (spec `cendre.md` R30) — la faune que la cendre relève ═══
+ *
+ * Par CONVERSION : une bête morte de la morsure R25 peut se relever, même espèce, drapeau
+ * `cendreuse` (le patron du `petit`). Ces trois nombres se calibrent en JOUANT — ils sont ici.
+ */
+export const CENDREUSE = {
+  /** La part des morts par cendre qui se relèvent — par hachage, jamais le PRNG (doctrine du butin). */
+  PART: 1 / 3,
+  /** Le délai avant la levée — celui du Cendreux (`CENDREUX.RISE_DELAY`, ~5 min) : le tertre
+   *  se voit venir, et c'est la fenêtre de LA COURSE — dépecer la carcasse avant que la
+   *  cendre la reprenne. (La revue ⑤ a attrapé un 4 s qui contredisait cette promesse.) */
+  RISE_TICKS: ticksFor(300),
+  /** Le plafond de corrompues VIVANTES — lu À LA LEVÉE (la leçon R8 : lu à la mort, il ne borne rien). */
+  MAX: 12,
+} as const
+
 export const CENDREUX = {
   WITNESS_RADIUS: 8, // « seul » : aucun allié vivant dans ce rayon à la mort
   HEARTH_WARD_RADIUS: 12, // « loin d'un feu » : aucune structure feu (mort ET réveil)
@@ -5370,6 +5422,22 @@ export const DRY_SLOT: Partial<
   },
 }
 
+/**
+ * ═══ LA CLAIE SALÉE (spec `peche.md` S4bis, 2026-08-30) ═══
+ *
+ * La salaison de chaque SORTIE de séchage : une unité qui finit de sécher pendant que la claie
+ * porte du sel sort SALÉE, et consomme UN sel (`advanceCook`). Indexée par la sortie SÉCHÉE et
+ * non par l'entrée crue : les ~18 espèces convergent déjà vers 3 classes dans `DRY_SLOT`, la
+ * salaison n'a pas à les reconnaître une deuxième fois. Une garde (A28) affirme que TOUTE
+ * sortie de `DRY_SLOT` a sa salaison — la table est exhaustive par construction ou rougit.
+ */
+export const SALAISON_DU_SECHE: Partial<Record<import('./items').ItemId, import('./items').ItemId>> = {
+  dried_fish_petit: 'salted_fish_petit',
+  dried_fish_moyen: 'salted_fish_moyen',
+  dried_fish_gros: 'salted_fish_gros',
+  dried_meat: 'salted_meat',
+}
+
 /** Hordes & événements du monde (spec événements). */
 export const WORLD_EVENTS = {
   REPAIR_WOOD_COST: 1,
@@ -5997,39 +6065,6 @@ export const FLORE = {
   SEUIL_MORTEL: -9.2,
 } as const
 
-/**
- * LES RÉFUGIÉS (V2-25, GDD §520) — « l'événement d'alignement par excellence, et la seule
- * source de PNJ supplémentaires hors paliers du Feu ». Un groupe de survivants arrive sur une
- * route ; on les RECRUTE (+PNJ, Foyer), les NOURRIT (Foyer), les refoule (rien) ou les
- * DÉPOUILLE (Meute). Ordres de grandeur, à caler en playtest.
- */
-export const REFUGEES = {
-  /** Un groupe tous les N jours de saison (plus rare que les convois, ×2). */
-  PERIOD_DAYS: 6,
-  /** Survivants par groupe — autant de PNJ si on les recrute. */
-  COUNT: 3,
-  /** Ils stationnent ~1 cycle, puis repartent (refouler = ne rien faire). */
-  STAY_TICKS: ticksForCycles(1),
-  /** LA FENÊTRE DU JOUEUR (spec village-pnj-evolution R12) : passé ce délai d'attente
-   *  (un demi-séjour), un village PNJ sous son effectif de fondation recrute le groupe —
-   *  le joueur garde la main s'il agit d'abord. Décision d'Alexis, 2026-08-17 : le banc
-   *  de saison a montré 10 groupes/saison, 0 recrutés, et des villages morts d'attrition. */
-  NPC_CLAIM_TICKS: ticksForCycles(0.5),
-  /** LE GRENIER QUI PEUT NOURRIR (R12, β-garde) : un village sous ce score de nourriture
-   *  ne recrute pas — le piège MESURÉ au banc de saison (2026-08-17) : trois recrues
-   *  arrivées au j24 dans un grenier vide, mortes de faim au j25. Deux baies par tête
-   *  de groupe : de quoi tenir le premier jour, pas un label de prospérité (ça, c'est
-   *  ATTRACT_FOOD). */
-  NPC_CLAIM_MIN_FOOD: 6,
-  /** Chaleur (Foyer) à les recruter/nourrir ; froid (Meute) à les dépouiller. */
-  WARMTH_SAVE: 12,
-  WARMTH_ROB: -12,
-  /** Ce qu'un nourrissage COÛTE (des vivres offerts). */
-  FEED_COST: { berries: 4 } as import('./items').ItemBag,
-  /** Leur maigre bien (pour qui les dépouille). */
-  LOOT: { fiber: 4, berries: 3 } as import('./items').ItemBag,
-} as const
-
 export const CONVOY_LOOT: import('./items').ItemBag = {
   components: 2,
   iron_ingot: 3,
@@ -6335,6 +6370,21 @@ export const MORTS = {
    */
   ESSAIS_MAX: 12,
   /**
+   * COMBIEN DE FOIS LA COURONNE S'ÉLARGIT QUAND ELLE EST ENTIÈREMENT NOYÉE (2026-08-30).
+   *
+   * On ne naît pas dans l'eau (`siteDansLaCouronne`) — mais un lac ne doit pas devenir un
+   * SANCTUAIRE : campé au milieu de la banquise, le joueur gagne les secondes de marche que
+   * lui vaut sa position, jamais l'immunité (la ligne du Feu, ⑦). Chaque poussée élargit d'un
+   * anneau plein (`+ 2 × ring`) : à la couronne du mort (7 ± 2), les trois poussées portent la
+   * recherche à 11, 15 puis **19** tuiles (bord extérieur à 21), soit un lac de quarante de
+   * large tout autour de la proie.
+   * Au-delà, la nuit passe son tour (A22bis) — et un lac aussi vaste mérite sa paix.
+   *
+   * Le prix est un balayage d'anneau de plus par poussée (de l'arithmétique ; les A\* restent
+   * bornés par `ESSAIS_MAX`), et il n'est payé QUE dans le cas rare qui le déclenche.
+   */
+  POUSSEES_RIVE: 3,
+  /**
    * COMBIEN DE TEMPS LE SOL SE SOULÈVE avant que le Cendreux n'en sorte.
    *
    * C'est ce délai qui achète le droit de naître PRÈS (`NIGHT_HUNT.SPAWN_DIST_UNDEAD`), et
@@ -6544,6 +6594,15 @@ export const ITEM_WEIGHT: Record<import('./items').ItemId, number> = {
   torche_vive: 1,
   // Le SÉCHOIR en objet : une claie encombrante, comme le coffre (`peche.md` S1).
   sechoir: 5,
+  // LA BRAISE-MÈRE en objet : un brasero de pierre et de fer — la pièce la plus lourde qu'on
+  // porte, et elle se porte LOIN (la frange n'attend pas au village).
+  braise_mere: 7,
+  // LE CŒUR DE BRAISE : dense comme une pierre, et on n'en porte jamais deux sans le sentir.
+  coeur_de_braise: 1.5,
+  // LE CUIR CENDRÉ : la peau brute, séchée par la cendre — un peu plus légère qu'une fraîche.
+  cuir_cendre: 1.2,
+  graine_de_braise: 0.1,
+  orge_de_braise: 0.3,
   wood: 1,
   stone: 2,
   fiber: 0.2,
@@ -6570,6 +6629,11 @@ export const ITEM_WEIGHT: Record<import('./items').ItemId, number> = {
   dried_fish_moyen: 0.4,
   dried_fish_gros: 0.8,
   dried_meat: 0.6,
+  // La salaison pèse comme le séché : le sel ne rend pas l'eau au poisson.
+  salted_fish_petit: 0.2,
+  salted_fish_moyen: 0.4,
+  salted_fish_gros: 0.8,
+  salted_meat: 0.6,
   crude_rod: 1,
   crude_knife: 0.5,
   bone: 0.8, // un os pèse — deux par cerf, ça compte dans le retour de chasse
@@ -6637,6 +6701,7 @@ export const ITEM_WEIGHT: Record<import('./items').ItemId, number> = {
   parcelle: 6,
   serre: 9,
   terroir: 11,
+  parcelle_de_suie: 5,
   chest: 5,
 }
 
@@ -6706,6 +6771,10 @@ export const TICK_DT_S = 1 / BALANCE.TICK_RATE_HZ
  */
 export const STACK_DEFAULT = 20
 export const STACK_SIZES: Partial<Record<import('./items').ItemId, number>> = {
+  // La braise-mère se porte UNE par case ; le cœur s'empile petit — trois trophées, pas un sac.
+  braise_mere: 1,
+  coeur_de_braise: 3,
+  cuir_cendre: 5,
   wood: 20,
   stone: 20,
   fiber: 20,
@@ -6732,6 +6801,10 @@ export const STACK_SIZES: Partial<Record<import('./items').ItemId, number>> = {
   dried_fish_moyen: 5,
   dried_fish_gros: 5,
   dried_meat: 5,
+  salted_fish_petit: 5,
+  salted_fish_moyen: 5,
+  salted_fish_gros: 5,
+  salted_meat: 5,
   // Outils et armes : un par case (l'usure est portée par la case).
   crude_axe: 1,
   crude_pickaxe: 1,
@@ -6759,6 +6832,7 @@ export const STACK_SIZES: Partial<Record<import('./items').ItemId, number>> = {
   parcelle: 1,
   serre: 1,
   terroir: 1,
+  parcelle_de_suie: 1,
   chest: 1,
 }
 

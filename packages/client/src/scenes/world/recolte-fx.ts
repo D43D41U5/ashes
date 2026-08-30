@@ -273,7 +273,7 @@ export function semis(graine: number): () => number {
 }
 
 interface Eclat {
-  img: Phaser.GameObjects.Rectangle
+  img: Phaser.GameObjects.Image
   /** Position au SOL (monde), et hauteur au-dessus de lui. */
   x: number
   y: number
@@ -300,6 +300,10 @@ export class RecolteFx {
   /** Le dernier coup ÉCLATÉ par nœud : la boucle de nœuds repasse chaque frame, la gerbe
    *  ne part qu'une fois par frappe. */
   private readonly vus = new Map<number, number>()
+
+  /** L'éclairage dynamique est-il armé ? (posé par WorldScene) — lu à la naissance de chaque
+   *  éclat : un éclat vit moins de deux secondes, pas besoin de réarmer après coup. */
+  lighting = true
 
   constructor(private readonly scene: Phaser.Scene) {}
 
@@ -557,9 +561,14 @@ export class RecolteFx {
     if (this.eclats.length >= MAX_ECLATS) {
       this.eclats.shift()?.img.destroy() // le plus vieux s'éteint : la gerbe neuve prime
     }
+    // Une IMAGE `__WHITE` teintée, pas un `Rectangle` : les Shapes n'ont pas le composant
+    // Lighting, or un éclat de récolte est de la MATIÈRE du monde — il prend sa nuit.
     const img = this.scene.add
-      .rectangle(Math.round(g.x), Math.round(g.y - g.z), g.cote, g.cote, g.ton)
+      .image(Math.round(g.x), Math.round(g.y - g.z), '__WHITE')
+      .setDisplaySize(g.cote, g.cote)
+      .setTint(g.ton)
       .setDepth(ySortDepth(g.y / TILE_PX, TILE_PX, TIE_ACTOR))
+    img.setLighting(this.lighting)
     this.eclats.push({ img, x: g.x, y: g.y, z: g.z, vx: g.vx, vy: g.vy, vz: g.vz, g: g.g, ne: g.ne, vie: g.vie, flotte: g.flotte, phase: g.phase })
   }
 

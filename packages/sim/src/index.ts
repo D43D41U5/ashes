@@ -10,7 +10,7 @@
 
 // ─── Noyau : état, tick, événements ───────────────────────────────────────
 export { createSim, spawnEntity, despawnAvatar, speedScaleFor, carrySpeedFactor, step, snapshot } from './sim'
-export type { SimState, SimOptions, Entity, MoveInput, PlayerAction, RefugeeGroup } from './sim'
+export type { SimState, SimOptions, Entity, MoveInput, PlayerAction } from './sim'
 export { drainEvents } from './events'
 export type { SimEvent } from './events'
 export { createReplayLog, recordAndStep, runReplay } from './replay'
@@ -99,6 +99,7 @@ export { POI,
   STACK_DEFAULT,
   DRYING,
   DRY_SLOT,
+  SALAISON_DU_SECHE,
   FISHING,
   FISH_SPECIES,
   BUTCHER,
@@ -446,6 +447,11 @@ export { PROTOCOL_VERSION, CHAT_RADIUS_TILES, CHAT_MAX_LEN } from './protocol'
 // (serveur LAN et worker Veillée) pour qu'ils ne puissent plus en diverger.
 export { collectNodeDeltas, createNodeShadow, seedNodeShadow, type NodeShadow } from './node-shadow'
 // LA ZONE D'INTÉRÊT : chacun ne reçoit que ce qui l'entoure (bande passante ET anti-ESP).
+export { advanceBraiseMeres, BRAISE_MERE, braiseBurnProgress, braiseFuelTicksRemaining, braiseMereArdente, foyersTenusParBraise } from './braise-mere'
+export { advanceTraction, applyTractionAction, facteurDAttelage, isTractionAction, TRACTABLES, TRACTION, type TractableKind, type TractionAction } from './traction'
+export { advanceBuchers, BUCHER, tenterLeRituel } from './bucher'
+export { COULEE, eauSouillee, type EtatDeCendre } from './coulee'
+export { advanceMurmures, MURMURE, sitesDeCycle, sitesDeLaNuit, type EtatDeMurmure } from './murmure'
 export { filtreParInteret, INTEREST_RADIUS_TILES } from './interest'
 export type {
   ClientToHost,

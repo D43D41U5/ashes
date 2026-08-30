@@ -6,7 +6,7 @@
  * ═══ ZÉRO TIRAGE SUR LE PRNG D'ÉTAT ═══
  *
  * Occurrence, corridor, type du filon : tout se dérive du JOUR DE SAISON par `hash2` (patron
- * réfugiés) — activer la Brume ne décale aucun tirage existant, donc ne casse aucun test de
+ * convois) — activer la Brume ne décale aucun tirage existant, donc ne casse aucun test de
  * déterminisme sans rapport (leçon RNG connue). Les deux seuls pas de PRNG consommés sont les
  * pas DÉLIBÉRÉS de `spawnEntity` pour les traînards, au retrait — exactement comme les gardes
  * de convoi.

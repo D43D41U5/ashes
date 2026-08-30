@@ -88,15 +88,14 @@ export const CHRONICLE_EVENT_TYPES: ReadonlySet<SimEvent['type']> = new Set([
   'act_started',
   'cendre_avance',
   'cendre_prend',
+  'murmure_recueilli',
+  'bucher_rituel',
   'village_archetype_changed',
   'horde_spawned',
   'convoy_spawned',
   'brume_annonce',
   'filon_decouvert',
   'blizzard_annonce',
-  'refugees_arrived',
-  'refugee_rumeur',
-  'refugees_recruited',
   'gift_given',
   'entity_died',
   'evacuation_opened',
@@ -128,11 +127,12 @@ export function chronicleFromEvents(
   // formateur, locale et pure — l'état vit dans la passe, jamais dans la sim.
   let cendreDite = false
   const cendreChez = new Set<number>()
+  let murmureEntendu = false
 
   for (const e of events) {
     const d = day(e.tick)
     // LA CLEF DE LIEU SE POSE ICI, EN UN SEUL POINT (R13) : ou bien l'appelant la connaît
-    // (`poi_first_visit`, `refugee_rumeur` — ils PORTENT un `poiId`), ou bien on la DÉRIVE de
+    // (`poi_first_visit` — il PORTE un `poiId`), ou bien on la DÉRIVE de
     // la position du fait. Un événement de chronique qui gagnera demain un (tx, ty) entrera
     // dans les fiches sans qu'on y touche ; un fait sans position n'appartient à aucun lieu,
     // et c'est un fait sur la donnée, pas un oubli.
@@ -229,12 +229,6 @@ export function chronicleFromEvents(
       case 'blizzard_annonce':
         push(`Le vent du nord se lève — un blizzard couvrira la vallée demain. Rentrez le bois.`, 'battement')
         break
-      case 'refugees_arrived':
-        push(`Des réfugiés (${e.count}) sont apparus sur une route.`, 'recit')
-        break
-      case 'refugees_recruited':
-        push(`${name(e.villageId)} a recueilli des réfugiés — la communauté grandit.`, 'recit')
-        break
       case 'gift_given': {
         const key = `${e.byEntityId}:${e.toVillageId}`
         if (!giftPairs.has(key) && e.toVillageId !== 0) {
@@ -256,10 +250,6 @@ export function chronicleFromEvents(
           'battement',
         )
         break
-      case 'refugee_rumeur':
-        // Le prix est dit (un repas), le reste est un constat — jamais un conseil.
-        push(`Pour un repas, des réfugiés ont dit où trouver ${e.name}.`, 'recit', e.poiId)
-        break
       case 'cendre_avance':
         // LE PREMIER MORS SEULEMENT. Le front avance ensuite chaque jour — quarante lignes
         // identiques ne raconteraient rien (le « rare se dit » des annales, appliqué au monde
@@ -280,6 +270,22 @@ export function chronicleFromEvents(
           push(`La Cendre est entrée chez « ${name(e.villageId)} ».`, 'intime')
         } else {
           push(`La Cendre a pris d’autres ouvrages à « ${name(e.villageId)} ».`, 'recit')
+        }
+        break
+      case 'bucher_rituel':
+        // R31b — LE SEUL RECUL DU MONDE. Toujours « intime » : ça n'arrive pas deux fois par
+        // veillée, et quand ça arrive, c'est l'histoire de la soirée.
+        push('Le bûcher a rendu les morts à la fosse — et la Cendre, pour une fois, a reculé.', 'intime')
+        break
+      case 'murmure_recueilli':
+        // R27c — LA CENDRE RACONTE SES MORTS. Le premier murmure CHUCHOTE (on découvre que la
+        // vieille cendre parle), les suivants sont des lignes de récit — jamais de compte ni
+        // de coordonnées : un murmure est un moment, pas un relevé.
+        if (!murmureEntendu) {
+          murmureEntendu = true
+          push('Dans la vieille cendre, cette nuit-là, quelque chose a murmuré — et s’est laissé écouter.', 'intime')
+        } else {
+          push('Un autre murmure s’est donné, dans la cendre qui se souvient.', 'recit')
         }
         break
       case 'poi_first_visit':

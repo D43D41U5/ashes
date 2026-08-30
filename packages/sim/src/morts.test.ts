@@ -8,14 +8,22 @@
  * moins de 74 tuiles, zéro Repaire à moins de 110.
  */
 import { describe, it, expect } from 'vitest'
-import { BALANCE, CENDREUX, MORTS, NIGHT_HUNT, TERRAIN_GRASS, TERRAIN_ROCK } from './balance'
-import { createEmptyMap } from './map'
+import {
+  BALANCE, CENDREUX, MORTS, NIGHT_HUNT,
+  TERRAIN_DEEP_WATER, TERRAIN_GRASS, TERRAIN_ROCK, TERRAIN_SHALLOW_WATER,
+} from './balance'
+import { isBlockedAt } from './collision'
+import { estGele } from './gel'
+import { createEmptyMap, isWater, setTile } from './map'
 import { advanceReveils, densiteDesMorts, rodeursPortes, siteDansLaCouronne } from './morts'
 import { createSim, spawnEntity, step, type SimState } from './sim'
 import { drainEvents } from './events'
 import { die } from './combat'
 import { advanceCendreux } from './cendreux'
-import { cycleOffsetForStartHour, gameTimeAt, TICKS_PER_CYCLE, TICKS_PER_SEASON_DAY } from './time'
+import {
+  calendarScaleForSeasonCycles, cycleOffsetForStartHour, dayTicksPourJour, gameTimeAt,
+  TICKS_PER_CYCLE, TICKS_PER_SEASON_DAY,
+} from './time'
 
 /** Le cœur d'une saison, en jour de l'année — DÉRIVÉ d'`ACT_DAYS` (`saisons.md` S1 : quatre
  *  saisons de trente jours), jamais écrit. Un montage se pose sur une saison, pas sur un jour. */
@@ -326,5 +334,140 @@ describe('le réveil : le sol travaille, puis il rend son mort (R14, R21)', () =
     const rng = state.rngState
     advanceReveils(state) // mûrit ou pas, peu importe
     expect(state.rngState).toEqual(rng)
+  })
+})
+
+/**
+ * ═══ ON NE NAÎT PAS DANS L'EAU (Alexis, 2026-08-30 : « je les vois parfois sortir sur la
+ *     glace, c'est pas normal si ? ») ═══
+ *
+ * La couronne se jugeait par `isBlockedAt` — « marchable ». Or le lac GELÉ est marchable (la
+ * vallée change de forme en Grand Froid) et le gué l'est toute l'année : la banquise et le gué
+ * étaient donc des sites d'apparition parfaitement éligibles, et le sol se soulevait au milieu
+ * de l'eau. Ces gardes tiennent les deux moitiés de la règle — l'eau est écartée, ET le lac ne
+ * devient pas un sanctuaire.
+ */
+describe('la couronne ne naît pas dans l’eau (2026-08-30)', () => {
+  /** Le cœur du Grand Froid, en ticks — l'échelle est celle du jeu (un cycle = un jour). */
+  const SCALE_GEL = calendarScaleForSeasonCycles(BALANCE.SEASON_DAYS)
+  const JOUR_GEL = Math.round(3.5 * BALANCE.ACT_DAYS) // le cœur de la 4ᵉ saison
+  /** Le tick d'un jour de saison — au CŒUR du jour ou de la nuit, jamais à leur frontière
+   *  (l'hystérésis du gel relit en arrière : au ras de l'aube, on lirait la nuit d'avant). */
+  const tickDeJour = (jour: number, nuit = false): number => {
+    const base = (jour - 1) * TICKS_PER_CYCLE
+    const jourTicks = dayTicksPourJour(jour)
+    return base + (nuit ? jourTicks + Math.floor((TICKS_PER_CYCLE - jourTicks) / 2) : Math.floor(jourTicks / 2))
+  }
+
+  /** Une carte d'herbe avec un LAC circulaire centré sur la proie, de rayon `rayon`. */
+  function carteAuLac(rayon: number, terrain = TERRAIN_DEEP_WATER): SimState {
+    const map = createEmptyMap(120, 120, TERRAIN_GRASS)
+    for (let y = 0; y < 120; y++) {
+      for (let x = 0; x < 120; x++) {
+        const dx = x - 60
+        const dy = y - 60
+        if (dx * dx + dy * dy <= rayon * rayon) setTile(map, x, y, terrain)
+      }
+    }
+    const state = createSim(1, { map, calendarScale: SCALE_GEL })
+    // LA NUIT du Grand Froid : le lac a le seuil le plus BAS de la vallée (il gèle après le
+    // gué), et à midi il tient encore. Un montage posé de jour testerait de l'eau libre.
+    state.tick = tickDeJour(JOUR_GEL, true)
+    return state
+  }
+
+  it('A29 — le lac GELÉ est marchable, et pourtant aucun site n’y naît', () => {
+    // ⚠ LA PRÉMISSE D'ABORD, sans quoi la garde serait verte pour la mauvaise raison : sur de
+    // l'eau LIBRE, `isBlockedAt` bloquait déjà — le test passerait avant comme après le
+    // correctif et ne garderait rien. Ce qu'on veut prouver, c'est qu'une tuile MARCHABLE
+    // (la banquise) est refusée quand même.
+    const state = carteAuLac(6)
+    expect(estGele(state, 60, 60), 'le lac doit être PRIS : sinon on teste de l’eau libre').toBe(true)
+    expect(isBlockedAt({ map: state.map, structures: state.structures, nodes: state.nodes, moverVillageId: null, etat: state }, 60, 60),
+      'la banquise doit être MARCHABLE : c’est tout le piège').toBe(false)
+
+    // La proie est au centre du lac, la couronne du mort (7 ± 2) tombe donc en plein dessus.
+    let vus = 0
+    for (let i = 0; i < 120; i++) {
+      const s = siteDansLaCouronne(state, 60.5, 60.5, i / 120, undefined,
+        { dist: NIGHT_HUNT.SPAWN_DIST_UNDEAD, ring: NIGHT_HUNT.SPAWN_RING_UNDEAD })
+      if (!s) continue
+      vus += 1
+      expect(isWater(state.map.terrain[Math.floor(s.y) * state.map.width + Math.floor(s.x)]!),
+        `site (${s.x}, ${s.y}) dans l’eau`).toBe(false)
+    }
+    expect(vus, 'aucun site trouvé : la garde ne prouverait rien').toBeGreaterThan(0)
+  })
+
+  it('A29bis — le GUÉ non plus : la règle est « pas dans l’eau », pas « pas sur la glace »', () => {
+    // Le gué est marchable en toute saison (hors crue) : un mort en sortait à la belle saison
+    // aussi. Même montage, sans une once de gel — la règle ne dépend pas du thermomètre.
+    const map = createEmptyMap(120, 120, TERRAIN_GRASS)
+    for (let y = 0; y < 120; y++) for (let x = 55; x < 66; x++) setTile(map, x, y, TERRAIN_SHALLOW_WATER)
+    const state = createSim(1, { map, calendarScale: SCALE_GEL })
+    // ⚠ HORS ÉCLOSION : l'an 1 tire la CRUE (S10), qui ferme les gués — le gué y est donc
+    // bloqué, et la garde serait creuse (elle l'a dit, la prémisse a rougi la première fois).
+    // Au cœur des Pluies, il est ouvert : c'est là qu'on éprouve la règle.
+    state.tick = tickDeJour(Math.round(2.5 * BALANCE.ACT_DAYS))
+    expect(estGele(state, 60, 60), 'le gué ne doit PAS être pris : on éprouve l’eau libre ici').toBe(false)
+    expect(isBlockedAt({ map, structures: state.structures, nodes: state.nodes, moverVillageId: null, etat: state }, 60, 60),
+      'le gué doit être marchable : sinon la garde est creuse').toBe(false)
+    for (let i = 0; i < 120; i++) {
+      const s = siteDansLaCouronne(state, 60.5, 60.5, i / 120, undefined,
+        { dist: NIGHT_HUNT.SPAWN_DIST_UNDEAD, ring: NIGHT_HUNT.SPAWN_RING_UNDEAD })
+      if (!s) continue
+      expect(isWater(map.terrain[Math.floor(s.y) * map.width + Math.floor(s.x)]!)).toBe(false)
+    }
+  })
+
+  it('A30 — le lac n’est pas un SANCTUAIRE : la couronne pousse jusqu’à la rive', () => {
+    // La moitié dangereuse de la règle. Camper au milieu de la banquise doit coûter au mort
+    // des secondes de marche, jamais lui interdire de venir — la ligne du Feu (⑦).
+    // Un lac de rayon 11 noie la couronne entière (7 ± 2) : sans la poussée, ZÉRO site.
+    const state = carteAuLac(11)
+    expect(estGele(state, 60, 60)).toBe(true)
+    let trouves = 0
+    let dMin = Infinity
+    for (let i = 0; i < 60; i++) {
+      const s = siteDansLaCouronne(state, 60.5, 60.5, i / 60, undefined,
+        { dist: NIGHT_HUNT.SPAWN_DIST_UNDEAD, ring: NIGHT_HUNT.SPAWN_RING_UNDEAD })
+      if (!s) continue
+      trouves += 1
+      expect(isWater(state.map.terrain[Math.floor(s.y) * state.map.width + Math.floor(s.x)]!)).toBe(false)
+      const ex = s.x - 60.5
+      const ey = s.y - 60.5
+      dMin = Math.min(dMin, Math.sqrt(ex * ex + ey * ey))
+    }
+    expect(trouves, 'le lac est devenu un sanctuaire : plus personne ne vient').toBeGreaterThan(0)
+    // …et il naît bien SUR LA RIVE, donc au-delà du lac — pas téléporté au loin non plus.
+    expect(dMin).toBeGreaterThan(11)
+    expect(dMin).toBeLessThan(11 + 4 * NIGHT_HUNT.SPAWN_RING_UNDEAD * MORTS.POUSSEES_RIVE)
+  })
+
+  it('A30bis — un lac SANS rive à portée : il refuse, et il ne boucle pas', () => {
+    // La borne de `POUSSEES_RIVE`. Une mer qui couvre tout ce que les poussées peuvent
+    // atteindre doit rendre `undefined` (la nuit passe son tour, A22bis) — jamais une
+    // récursion sans fond, jamais un site posé dans l'eau par dépit.
+    const state = carteAuLac(60) // toute la carte utile est noyée
+    for (let i = 0; i < 20; i++) {
+      expect(siteDansLaCouronne(state, 60.5, 60.5, i / 20, undefined,
+        { dist: NIGHT_HUNT.SPAWN_DIST_UNDEAD, ring: NIGHT_HUNT.SPAWN_RING_UNDEAD })).toBeUndefined()
+    }
+  })
+
+  it('A30ter — la poussée ne consomme AUCUN tirage (A23/A28 tiennent)', () => {
+    // Le même contrat que la poussée du Feu : élargir la couronne est une DÉCISION, pas un
+    // tirage. Sinon un lac déplacerait le flux seedé et deux parties identiques divergeraient.
+    const state = carteAuLac(11)
+    const rng = state.rngState
+    siteDansLaCouronne(state, 60.5, 60.5, 0.42, undefined,
+      { dist: NIGHT_HUNT.SPAWN_DIST_UNDEAD, ring: NIGHT_HUNT.SPAWN_RING_UNDEAD })
+    expect(state.rngState).toBe(rng)
+    // …et il est REPRODUCTIBLE : même tirage, même site.
+    const a = siteDansLaCouronne(state, 60.5, 60.5, 0.42, undefined,
+      { dist: NIGHT_HUNT.SPAWN_DIST_UNDEAD, ring: NIGHT_HUNT.SPAWN_RING_UNDEAD })
+    const b = siteDansLaCouronne(state, 60.5, 60.5, 0.42, undefined,
+      { dist: NIGHT_HUNT.SPAWN_DIST_UNDEAD, ring: NIGHT_HUNT.SPAWN_RING_UNDEAD })
+    expect(a).toEqual(b)
   })
 })

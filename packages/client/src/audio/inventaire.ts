@@ -101,12 +101,6 @@ export const INVENTAIRE: Inventaire = {
 
   // ── LE SOCIAL — l'axe d'alignement : les verbes chauds montent, les froids tombent ─
   gift_given: { voix: 'voix', ou: 'auteur', famille: 'social', quoi: 'on DONNE à un voisin (le verbe chaud du Foyer)' },
-  refugees_arrived: { voix: 'voix', ou: 'tuile', famille: 'social', quoi: 'un groupe de réfugiés se pose près de chez vous' },
-  refugees_fed: { voix: 'voix', ou: 'auteur', famille: 'social', quoi: 'on nourrit les réfugiés' },
-  refugee_rumeur: { voix: 'muet', famille: 'social', quoi: 'les réfugiés nourris disent où trouver un lieu — muet : le geste de nourrir parle déjà, le renseignement se lit dans la chronique' },
-  refugees_recruited: { voix: 'voix', ou: 'village', famille: 'social', quoi: 'on accueille les réfugiés au village' },
-  refugees_robbed: { voix: 'voix', ou: 'auteur', famille: 'social', quoi: 'on DÉPOUILLE les réfugiés (le verbe froid)' },
-  refugees_left: { voix: 'muet', famille: 'social', quoi: 'les réfugiés repartent — on n’a rien fait' },
   village_founded: { voix: 'muet', famille: 'social', quoi: 'un village naît autour d’un Feu' },
   village_fell: { voix: 'voix', ou: 'village', famille: 'social', quoi: 'un village TOMBE — il n’est plus qu’une ruine pillable' },
   village_archetype_changed: { voix: 'voix', ou: 'village', famille: 'social', quoi: 'un Feu vire au bleu ou au rouge — Foyer, Meute' },
@@ -131,6 +125,24 @@ export const INVENTAIRE: Inventaire = {
   horde_spawned: { voix: 'voix', ou: 'monde', famille: 'saison', quoi: 'une horde se forme et marche sur un feu — village ou camp (décision ⑬)' },
   presage_horde: { voix: 'voix', ou: 'monde', famille: 'saison', quoi: 'le préavis de la veille — au loin, le sol travaille, la faune se tait (décision ⑱)' },
   charnier_brule: { voix: 'voix', ou: 'xy', famille: 'saison', quoi: 'un charnier ou un repaire assaini au feu — la densité des morts tombe autour (décision ⑧)' },
+  // SILENCE PROVISOIRE, PAS UN OUBLI (spec cendre.md R27d) : le murmure aura sa voix AVEC son
+  // fantôme — le chantier de rendu des Murmures porte les deux ensemble ; un son sans image
+  // serait un préavis que rien ne tient.
+  // SA VOIX EST ARRIVÉE AVEC SON FANTÔME (lot visuel du 2026-08-30, R27d) : un souffle qui
+  // retombe, tout bas — le secret reçu. Gain plancher, à rejuger au banc d'écoute.
+  murmure_recueilli: { voix: 'voix', ou: 'tuile', famille: 'saison', quoi: 'un murmure de la vieille cendre s’est donné — un souffle qui retombe, reçu de près (R27c)' },
+  // MUET DÉCIDÉ : la levée d'une bête est lointaine et rare — sa voix viendra avec l'art du
+  // tertre (le lot visuel de la cendre), comme le murmure. Le Cendreux, lui, crie déjà.
+  bete_cendreuse_levee: { voix: 'muet', famille: 'saison', quoi: 'la cendre relève une bête, grise — le tertre rend ce qu’il a pris (cendre.md R30)' },
+  // LA CORDE QUI CASSE PARLE (traction.md T2bis) : la charge est restée derrière, et le
+  // tireur qui avance sans regarder doit l'ENTENDRE — un claquement sec, rien d'autre.
+  attelage_rompu: { voix: 'voix', ou: 'xy', famille: 'registre', quoi: 'la longe casse — la charge est restée où elle était (traction.md T2bis)' },
+  // MUET DÉCIDÉ : rendre un mort à la fosse se VOIT (le cadavre se consume sous vos yeux) —
+  // et dix rendus feraient dix sons pour un seul geste de fond.
+  cadavre_rendu: { voix: 'muet', famille: 'saison', quoi: 'un mort rendu à la fosse — le bûcher le consume, le compte monte (cendre.md R31a)' },
+  // LE SEUL RECUL DU MONDE (R31b) : une cérémonie qui S'OUVRE — la grammaire des présages
+  // inversée, une voix qui MONTE. S'il ne devait rester qu'un son de la cendre, ce serait lui.
+  bucher_rituel: { voix: 'voix', ou: 'xy', famille: 'saison', quoi: 'le rituel du bûcher — l’avancée de la cendre RECULE (cendre.md R31b)' },
   horde_dispersed: { voix: 'muet', famille: 'saison', quoi: 'la horde se dissipe à l’aube' },
   convoy_spawned: { voix: 'muet', famille: 'saison', quoi: 'une carcasse de convoi apparaît sur la route' },
   // LA BRUME (spec brume.md, 2026-08-18). L'annonce et la levée SONNENT : le §9bis exige que
@@ -161,7 +173,7 @@ export const INVENTAIRE: Inventaire = {
   // LA PÊCHE (spec peche.md R3/R4) : la TOUCHE sonne — c'est LE télégraphe, il doit se lire en un
   // dixième de seconde, et l'oreille est plus vite que l'œil sur un flotteur ; la FUITE sonne —
   // un plouf mou, le raté qui se voit doit s'entendre ; la PRISE est MUETTE parce qu'elle tombe
-  // sur `resource_harvested`, qui parle déjà au même tick (le patron de `refugee_rumeur`).
+  // sur `resource_harvested`, qui parle déjà au même tick (un fait qui double un autre reste muet).
   fish_bite: { voix: 'voix', ou: 'tuile', famille: 'batir', quoi: 'ça mord — le flotteur plonge (moi seul)' },
   fish_caught: { voix: 'muet', famille: 'batir', quoi: 'le poisson sort de l’eau (la récolte parle déjà)' },
   fish_escaped: { voix: 'voix', ou: 'tuile', famille: 'batir', quoi: 'le poisson file — ferré trop tard (moi seul)' },

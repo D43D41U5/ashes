@@ -413,6 +413,7 @@ function inHabitat(state: SimState, type: MonsterType, tx: number, ty: number): 
  */
 export function morsureDeLaCendre(state: SimState, monster: Monster, entity: Entity): boolean {
   if (!isWild(monster.type)) return false
+  if (monster.cendreuse === true) return false // la corrompue est chez elle (R30b)
   const p = profondeurNueDeCendre(state, Math.floor(entity.x), Math.floor(entity.y))
   if (p <= CENDRE.FRANGE_TUILES) return false // hors cendre (−1) ou sur la frange : rien
   entity.hp -= FAUNA.CENDRE_DOT_HP_S * TICK_DT_S
@@ -456,7 +457,9 @@ export function gaitNoise(e: Entity): number {
     : e.gait === 'sprint' ? HUNT.NOISE_SPRINT
     : HUNT.NOISE_WALK
   const tier = carryTier(carryRatio(e.inventory))
-  const heavy = tier !== 'light' && tier !== 'medium'
+  // …ET LA TRACTION NON PLUS (traction.md T3/A4) : une charge au bout d'une longe s'entend
+  // comme un dos chargé — on n'approche pas une fosse en silence avec un mort derrière soi.
+  const heavy = (tier !== 'light' && tier !== 'medium') || e.attelage !== undefined
   return heavy ? Math.max(raw, HUNT.NOISE_WALK) : raw
 }
 

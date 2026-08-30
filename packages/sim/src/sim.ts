@@ -19,6 +19,10 @@ import { advanceSeparation } from './separation'
 import { advanceImpasse } from './impasse'
 import { advanceCendreux } from './cendreux'
 import { avanceesDepuisAges, avancerLaCendre, foyersDeLaCarte, jourDuReveilDeLaCendre, tomberLesMortsDeLaCendre } from './cendre'
+import { advanceBraiseMeres, foyersTenusParBraise } from './braise-mere'
+import { advanceBuchers } from './bucher'
+import { advanceTraction, applyTractionAction, detacherPourLeGeste, facteurDAttelage, isTractionAction, type TractionAction } from './traction'
+import { advanceMurmures } from './murmure'
 import { FUMEROLLE, ouvrirLesFumerolles } from './fumerolle'
 import { ouvrirLesCharbonnieres } from './charbonniere'
 import { effetsDuJour } from './modificateur'
@@ -44,7 +48,6 @@ import { createEmptyMap, type WorldMap } from './map'
 import { advanceAlignment, type Aggression } from './alignment'
 import { advanceMonsters, type Monster } from './monsters'
 import { advanceWorldEvents, type Horde, type Presage } from './worldevents'
-import { advanceRefugees } from './refugees'
 import { clarteSurSoi } from './nuit'
 import { advanceBrume } from './brume'
 import { advanceFoudre } from './foudre'
@@ -68,7 +71,7 @@ import { advanceUpkeep, applyVillageAction, getVillageOf, type VillageAction, ty
  * capturée par le replay log), mais elle est INERTE hors sim de debug — voir
  * `debug.ts`, garde `state.debug`.
  */
-export type PlayerAction = VillageAction | EconomyAction | CombatAction | InventoryAction | DebugAction
+export type PlayerAction = VillageAction | EconomyAction | CombatAction | InventoryAction | DebugAction | TractionAction
 
 export interface Entity {
   id: number
@@ -80,6 +83,12 @@ export interface Entity {
   hunger: number
   /** Jauge 0-100 (spec température). 100 = au chaud, 0 = gelé (hypothermie). */
   temperature: number
+  /** Le dernier MURMURE recueilli (spec `cendre.md` R27b) — l'id dérivé du site, pour ne pas
+   *  émettre un événement par tick en restant à portée. Absent tant qu'aucun ne s'est donné. */
+  murmure?: number
+  /** L'ATTELAGE (spec `traction.md` T1) — la charge que ce corps tire. L'état vit sur le
+   *  TIREUR seul ; la charge ne sait rien. Absent : les mains sont libres. */
+  attelage?: { kind: import('./traction').TractableKind; id: number }
   /** XP par métier (niveau dérivé — voir skillLevel). */
   skills: Partial<Record<SkillId, number>>
   /**
@@ -293,25 +302,6 @@ export interface Entity {
   knownGrounds?: { x: number; y: number }[]
 }
 
-/**
- * UN GROUPE DE RÉFUGIÉS (V2-25, GDD §520) — des survivants arrêtés sur une route. On peut les
- * RECRUTER (ils rejoignent son village en PNJ — la seule source de population hors paliers du
- * Feu), les NOURRIR (chaleur/Foyer), les REFOULER (ne rien faire, ils repartent) ou les
- * DÉPOUILLER (prendre leur maigre butin — prédation/Meute). C'est un OBJET D'ÉTAT, pas un PNJ
- * qui pense : il stationne, puis s'en va à `until`. Sérialisable (invariant §2).
- */
-export interface RefugeeGroup {
-  id: number
-  tx: number
-  ty: number
-  /** Combien de survivants — autant de PNJ si on les recrute. */
-  count: number
-  /** Leur maigre bien (pour qui les dépouille). */
-  inventory: Inventory
-  /** Tick auquel ils repartent si personne ne les a pris en charge. */
-  until: number
-}
-
 export interface SimState {
   /** Numéro de tick — l'unique notion de temps dans /sim. */
   tick: number
@@ -372,6 +362,9 @@ export interface SimState {
   /** LES LIEUX BRÛLÉS (décision ⑧, 2026-08-21) : charniers/repaires assainis au feu — la
    *  densité des morts tombe autour, la respiration se suspend, jusqu'à `until`. */
   lieuxBrules: { zone: number; until: number }[]
+  /** LES BÛCHERS (spec `cendre.md` R31) — le compte des morts rendus par fosse nourrie. Le
+   *  premier état que la cendre possède, et il est minuscule (le patron de `lieuxBrules`). */
+  buchers: { zone: number; rendus: number; dernierRituelJour: number }[]
   /**
    * L'ÂGE EFFECTIF DE CHAQUE FOYER DE CENDRE, en jours, indexé comme `foyersDeLaCarte(map)`
    * (spec `cendre.md`). **Le seul état de toute la mécanique** — tout le reste se dérive du tick.
@@ -415,13 +408,6 @@ export interface SimState {
    *  départ). L'évacuation n'est plus un marqueur passif — elle LÈVE L'ANCRE : seuls les
    *  embarqués comptent au verdict Foyer, pas ceux qui traînent près à la fin. */
   evacuatedIds: number[]
-  /** LES RÉFUGIÉS (V2-25, GDD §520) — groupes de survivants arrivés sur les routes, en
-   *  attente d'être recrutés/nourris/dépouillés/refoulés. Objets d'état (comme l'évacuation),
-   *  pas des PNJ : ils attendent, puis repartent. `nextRefugeeGroupId`/`lastRefugeeDay`
-   *  cadencent l'arrivée (comme les convois). */
-  refugeeGroups: RefugeeGroup[]
-  nextRefugeeGroupId: number
-  lastRefugeeDay: number
   /** Lieux déjà atteints par un joueur, tous joueurs confondus (spec lieux R12).
    *  Global : il n'y a qu'un premier — en multi, c'est une course. */
   visitedPois: number[]
@@ -651,13 +637,11 @@ export function createSim(seed: number, options: SimOptions = {}): SimState {
     corpses: [],
     reveils: [],
     lieuxBrules: [],
+    buchers: [],
     cendreAge: [],
     cendreJour: 0,
     nextCorpseId: 1,
     hordes: [],
-    refugeeGroups: [],
-    nextRefugeeGroupId: 1,
-    lastRefugeeDay: 0,
     nextHordeId: 1,
     lastConvoyDay: 0,
     aggressions: [],
@@ -830,7 +814,7 @@ export function carrySpeedFactor(ratio: number): number {
  * chose que le joueur sent, avant même de regarder une jauge.
  */
 export function speedScaleFor(
-  entity: Pick<Entity, 'hunger' | 'wounds' | 'stamina' | 'temperature' | 'inventory'> & { exhausted?: true | undefined },
+  entity: Pick<Entity, 'hunger' | 'wounds' | 'stamina' | 'temperature' | 'inventory' | 'attelage'> & { exhausted?: true | undefined },
   input: { sprint: boolean; block: boolean; moving: boolean; charging?: boolean; sneak?: boolean; drawing?: boolean },
   /** LA MÉTÉO SOUS LES PIEDS (spec meteo.md R7) : `meteoSpeedFactor(state, x, y)` du
    *  marcheur, fourni par l'appelant — la formule reste pure d'état, la prédiction client
@@ -902,11 +886,13 @@ export function speedScaleFor(
   // (R1ter). `stamina > 0` seul rendait la course DÈS le premier point regagné, d'où une
   // oscillation sprint/marche à 10 Hz qui laissait fuir à 5 t/s pour toujours.
   const sprinting =
-    !blocking && !charging && !sneaking && input.sprint && entity.stamina > 0 && !entity.exhausted && input.moving && canSprint
+    !blocking && !charging && !sneaking && input.sprint && entity.stamina > 0 && !entity.exhausted && input.moving && canSprint &&
+    entity.attelage === undefined // ON NE SPRINTE PAS ATTELÉ (traction.md T3) — la charge borne le pas
   if (blocking) scale *= COMBAT.BLOCK_MOVE_FACTOR
   else if (sprinting) scale *= COMBAT.SPRINT_FACTOR
   else if (sneaking) scale *= HUNT.SNEAK_SPEED_FACTOR
   if (charging) scale *= COMBAT.CHARGE_MOVE_FACTOR
+  scale *= facteurDAttelage(entity) // le PRIX de la charge (traction.md T3) — 1 sans attelage
   return { scale, sprinting, sneaking }
 }
 
@@ -942,6 +928,7 @@ export function step(state: SimState, inputs: MoveInput[]): void {
         action.type === 'cancel_craft' ||
         action.type === 'eat'
       ) {
+        detacherPourLeGeste(entity) // les mains ne font qu'une chose (traction.md T5)
         applyEconomyAction(state, input.entityId, action)
       } else if (
         action.type === 'attack' ||
@@ -951,7 +938,10 @@ export function step(state: SimState, inputs: MoveInput[]): void {
         action.type === 'bandage' ||
         action.type === 'loot_corpse'
       ) {
+        detacherPourLeGeste(entity) // idem — un coup porté lâche la longe (traction.md T5)
         applyCombatAction(state, input.entityId, action)
+      } else if (isTractionAction(action)) {
+        applyTractionAction(state, input.entityId, action)
       } else {
         applyVillageAction(state, input.entityId, action)
       }
@@ -1044,9 +1034,6 @@ export function step(state: SimState, inputs: MoveInput[]): void {
   // Le monde d'abord (spawns/alarmes), puis PNJ, monstres, résolution.
   if (state.worldEvents) {
     advanceWorldEvents(state)
-    // LES RÉFUGIÉS (V2-25) : un événement du monde comme les convois — même interrupteur.
-    // Arrivée positionnée par hash2 (aucun tirage RNG), donc pas de décalage du flux seedé.
-    advanceRefugees(state)
     // LA BRUME (spec brume.md) : même interrupteur — annonce au crépuscule (hash2, aucun
     // tirage), nappe de l'aube au crépuscule, filon gardé au retrait.
     advanceBrume(state)
@@ -1070,7 +1057,7 @@ export function step(state: SimState, inputs: MoveInput[]): void {
   // LES VILLAGES PNJ VIVENT AUX BORDS DU CYCLE (spec village-pnj-evolution) : à
   // l'aube la porte s'ouvre, le palier monte au surplus, la prospérité attire un
   // colon ; au crépuscule la porte se ferme. Avant la passe PNJ : le village se
-  // réveille, PUIS ses habitants agissent. Aucun tirage RNG (patron refugees).
+  // réveille, PUIS ses habitants agissent. Aucun tirage RNG (position par hash2, comme les convois).
   advanceVillageGrowth(state)
   advanceNpcs(state)
   advanceMonsters(state)
@@ -1115,8 +1102,17 @@ export function step(state: SimState, inputs: MoveInput[]): void {
     if (jour > reveil) {
       const foyers = foyersDeLaCarte(state.map)
       const brulees = state.lieuxBrules
+      // LA BRAISE-MÈRE TIENT SON FOYER (cendre.md R28b) — même porte que la fosse brûlée R16,
+      // même effet, idempotent. Dérivé des structures à l'instant de la bascule (R28c).
+      // ⚠ `estGelee` parle en ZONE de charnier ; `foyersTenusParBraise` rend des INDEX de
+      // foyer (`foyerDeLaTuile`) — la conversion passe par la liste `foyers`, jamais devinée.
+      const zonesTenues = new Set<number>()
+      for (const k of foyersTenusParBraise(state)) {
+        const f = foyers[k]
+        if (f) zonesTenues.add(f.zone)
+      }
       const gelee = (zone: number): boolean =>
-        brulees.some((lb) => lb.zone === zone && state.tick < lb.until)
+        zonesTenues.has(zone) || brulees.some((lb) => lb.zone === zone && state.tick < lb.until)
       // ⚠ ON AVANCE DU NOMBRE DE JOURS FRANCHIS, PAS D'UN. Un tick n'enjambe qu'un jour en marche
       // normale — mais `debug_set_season_day` en saute des centaines, et un serveur qui rattrape
       // du retard peut en franchir plusieurs. Avancer de 1 rendait alors un âge de 1 au jour 240
@@ -1162,6 +1158,11 @@ export function step(state: SimState, inputs: MoveInput[]): void {
   advanceEconomy(state)
   advanceCultures(state) // F5 — le gel tue le potager de plein air (spec flore-froid)
   advanceTemperature(state)
+  advanceMurmures(state) // R27 — les morts de la vieille cendre se donnent à qui vient doucement
+  advanceBraiseMeres(state) // R28 — la parade mange son charbon
+  advanceTraction(state) // traction.md T2 — la longe tendue tire la charge, ou casse
+  advanceBuchers(state) // cendre.md R31a — la fosse compte les morts qu'on lui rend
+
   // LE DÉGEL NE LAISSE PERSONNE EMMURÉ (spec `gel.md` G8bis). Juste APRÈS la température :
   // c'est elle qui vient de faire fondre la glace, on répare dans le même tick — jamais un
   // tick de jeu passé à l'intérieur d'une tuile non marchable. Inerte dans un monde qui ne

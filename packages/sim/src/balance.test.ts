@@ -102,7 +102,12 @@ describe('les tables de balance se répondent (pas de trou silencieux)', () => {
   // `tubercule` (spec `saisons.md` S16) : **le seul des quatre à traverser le Grand Froid**, et
   // c'est tout son intérêt — ce qu'on sème aux Pluies est ce qu'on mangera en plein hiver. La
   // tension vient de là et de nulle part ailleurs : aucune règle de conservation n'a été écrite.
-  const IMPERISSABLES_ASSUMES: readonly ItemId[] = ['legume', 'tubercule']
+  // Les SALAISONS (spec `peche.md` S4bis, 2026-08-30) : impérissables PAR RÈGLE, pas par oubli —
+  // le sel conserve pour de bon, c'est leur raison d'être face au séché (20 cycles, −30 %). Le
+  // prix n'est pas une horloge, c'est un voyage : le sel vit aux fumerolles, au cœur de la cendre.
+  const IMPERISSABLES_ASSUMES: readonly ItemId[] = [
+    'legume', 'tubercule', 'salted_fish_petit', 'salted_fish_moyen', 'salted_fish_gros', 'salted_meat',
+  ]
 
   it('tout aliment a une durée de péremption (hors exemption nommée)', () => {
     const sansPeremption = (Object.keys(FOOD_VALUES) as ItemId[]).filter((i) => SPOIL_CYCLES[i] === undefined)

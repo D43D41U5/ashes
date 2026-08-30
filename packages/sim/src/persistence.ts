@@ -64,6 +64,7 @@ const REPLIS_EPHEMERES: Readonly<Record<string, () => unknown>> = {
   // LES LIEUX BRÛLÉS (2026-08-21) : une vieille vallée n'a jamais rien brûlé — [] est sa
   // vérité. Les sauvegardes NEUVES, elles, portent la clé : rien ne s'y oublie.
   lieuxBrules: () => [],
+  buchers: () => [],
   // Pas éphémère, mais un repli HONNÊTE existe : une sauvegarde d'avant le champ (2026-08-16)
   // n'a jamais vu l'Arche partir — `false` est la vérité de ce monde-là. Une vallée d'avant
   // sauvée APRÈS le jour 58 portait la boucle ouvre→part du bug : recollée à `false`, l'Arche
@@ -111,12 +112,15 @@ export const SAVE_REQUIRED_KEYS: readonly string[] = [
   // `cendreAge` / `cendreJour` (spec `cendre.md`) : les dix âges de foyer et le dernier jour
   // traité. **Ils DOIVENT être sauvés** — ce sont les seuls octets de la mécanique, et une reprise
   // qui les perdrait rendrait au joueur une vallée revenue à sa tache initiale.
-  'aggressions', 'arkDeparted', 'blood', 'calendarScale', 'cendreAge', 'cendreJour', 'corpses', 'cycleOffset', 'debug', 'denRespawns',
+  'aggressions', 'arkDeparted', 'blood', 'buchers', 'calendarScale', 'cendreAge', 'cendreJour', 'corpses', 'cycleOffset', 'debug', 'denRespawns',
   'dens', 'entities', 'evacuatedIds', 'evacuation', 'events', 'faunaCap', 'faunaQuiet', 'finDeSaison',
-  'functions', 'groundItems', 'grounds', 'home', 'hordes', 'lastConvoyDay', 'lastRefugeeDay',
+  'functions', 'groundItems', 'grounds', 'home', 'hordes', 'lastConvoyDay',
   'jourDeDepart', 'map', 'monsters', 'nextCorpseId', 'nextEntityId', 'nextGroundItemId',
-  'nextHerdId', 'nextHordeId', 'nextRefugeeGroupId', 'nextStructureId', 'nextVillageId',
-  'lieuxBrules', 'nodes', 'npcs', 'presage', 'refugeeGroups', 'reveils', 'rngState', 'seasonEnded', 'seed', 'structures', 'tick',
+  'nextHerdId', 'nextHordeId', 'nextStructureId', 'nextVillageId',
+  // (Les clés des réfugiés — `refugeeGroups`, `nextRefugeeGroupId`, `lastRefugeeDay` — ont
+  // quitté la liste avec le système, 2026-08-30. Une vieille sauvegarde qui les porte encore
+  // recharge sans encombre : la garde exige la présence, elle ne refuse pas l'excédent.)
+  'lieuxBrules', 'nodes', 'npcs', 'presage', 'reveils', 'rngState', 'seasonEnded', 'seed', 'structures', 'tick',
   'villages', 'visitedPois', 'wind', 'windForce', 'worldEvents',
 ]
 

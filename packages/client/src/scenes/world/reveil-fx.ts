@@ -63,6 +63,8 @@
 import Phaser from 'phaser'
 import { BALANCE, MORTS, type Reveil } from '@ashes/sim'
 import { TILE_PX, TIE_ACTOR, ySortDepth } from '../../render/framing'
+import { newCanvas, registerLitPaire } from '../../render/normal-map'
+import { PeintreCanvas, type Peintre } from '../../render/peintre'
 import { TERRAIN_COLORS } from '../../render/terrain-colors'
 import { familleDe, type Famille as GrainFamille } from '../../render/grain-sol'
 import { nuance, semis, VALEURS } from './recolte-fx'
@@ -70,6 +72,107 @@ import { nuance, semis, VALEURS } from './recolte-fx'
 /** Combien de stades de monticule. L'art du jeu est QUANTIFIÉ (règle des FX pixellisés) :
  *  le sol se rompt par crans francs, il ne se dilate pas en continu. */
 export const REVEIL_STADES = 4
+
+// ═══ L'ART DES QUATRE CRANS — écrit contre `Peintre` (peintre.ts), donc rejoué par les DEUX
+// backends : BootScene en Graphics (les `fx-reveil-N` flats) et Canvas2D pour la paire `_lit`
+// (le tertre vit sous la lumière du monde — sans elle il restait pleine valeur en pleine nuit,
+// le voile passant SOUS les sprites). Peint en VALEURS (des gris), teinté par le terrain au
+// rendu : un réveil dans la neige soulève de la neige (règle de la maison, cf. l'en-tête).
+// Toutes à 24 × 18 : les quatre partagent leur centre, les crans se succèdent sans sauter. ═══
+const CLAIR = 0xffffff // la crête, là où la terre remuée prend la lumière
+const CORPS = 0xcfcfcf
+const OMBRE = 0x8e8e8e // le pied du tertre
+const TROU = 0x2a2a2a // le noir du dessous — presque éteint une fois teinté
+const MOTTE = 0xe6e6e6
+const RW = 24
+const RH = 18
+const rcx = 12
+const rcy = 9
+
+export const REVEIL_ART: readonly { key: string; w: number; h: number; draw: (g: Peintre) => void }[] = [
+  // CRAN 0 — LE SOL FRÉMIT. Une fêlure, deux grains soulevés. Presque rien : c'est le
+  // premier instant du préavis, et il doit être vu sans crier.
+  {
+    key: 'fx-reveil-0', w: RW, h: RH,
+    draw: (g) => {
+      g.fillStyle(OMBRE).fillEllipse(rcx, rcy, 10, 4)
+      g.fillStyle(TROU).fillRect(rcx - 3, rcy, 6, 1) // la fêlure
+      g.fillStyle(MOTTE).fillRect(rcx - 6, rcy + 1, 1, 1).fillRect(rcx + 5, rcy - 1, 1, 1)
+    },
+  },
+  // CRAN 1 — LA FENTE S'OUVRE. Le tertre existe, la fêlure devient une entaille.
+  {
+    key: 'fx-reveil-1', w: RW, h: RH,
+    draw: (g) => {
+      g.fillStyle(OMBRE).fillEllipse(rcx, rcy + 1, 16, 7)
+      g.fillStyle(CORPS).fillEllipse(rcx, rcy, 14, 6)
+      g.fillStyle(CLAIR).fillEllipse(rcx, rcy - 1, 9, 3) // la crête
+      g.fillStyle(TROU).fillRect(rcx - 4, rcy, 8, 2) // l'entaille
+      g.fillStyle(MOTTE).fillRect(rcx - 8, rcy + 2, 2, 1).fillRect(rcx + 7, rcy + 1, 2, 1)
+    },
+  },
+  // CRAN 2 — LE TERTRE MONTE ET LE TROU S'OUVRE. On voit qu'il y a un DESSOUS.
+  {
+    key: 'fx-reveil-2', w: RW, h: RH,
+    draw: (g) => {
+      g.fillStyle(OMBRE).fillEllipse(rcx, rcy + 1, 21, 10)
+      g.fillStyle(CORPS).fillEllipse(rcx, rcy, 19, 9)
+      g.fillStyle(CLAIR).fillEllipse(rcx, rcy - 2, 14, 4)
+      g.fillStyle(TROU).fillEllipse(rcx, rcy + 1, 9, 5) // le trou
+      g.fillStyle(MOTTE)
+        .fillRect(rcx - 10, rcy + 3, 2, 2)
+        .fillRect(rcx + 9, rcy + 2, 2, 2)
+        .fillRect(rcx - 6, rcy - 5, 2, 1)
+        .fillRect(rcx + 5, rcy - 5, 2, 1)
+    },
+  },
+  // CRAN 3 — LE SOL EST OUVERT. La couronne est ROMPUE (deux brèches) : un anneau plein
+  // lirait comme un puits maçonné ; ce qui vient de céder n'a pas de bord net.
+  {
+    key: 'fx-reveil-3', w: RW, h: RH,
+    draw: (g) => {
+      g.fillStyle(OMBRE).fillEllipse(rcx, rcy + 1, 24, 13)
+      g.fillStyle(CORPS).fillEllipse(rcx, rcy, 22, 12)
+      g.fillStyle(CLAIR).fillEllipse(rcx, rcy - 3, 17, 5)
+      g.fillStyle(TROU).fillEllipse(rcx, rcy + 1, 14, 7) // la gueule
+      g.fillStyle(TROU).fillRect(rcx - 12, rcy + 3, 4, 2).fillRect(rcx + 8, rcy - 2, 4, 2) // les brèches
+      g.fillStyle(MOTTE)
+        .fillRect(rcx - 11, rcy + 5, 3, 2)
+        .fillRect(rcx + 10, rcy + 4, 2, 2)
+        .fillRect(rcx - 8, rcy - 7, 2, 2)
+        .fillRect(rcx + 7, rcy - 7, 3, 2)
+        .fillRect(rcx - 1, rcy - 8, 2, 1)
+    },
+  },
+]
+
+/**
+ * LE RELIEF SE LIT SUR LES VALEURS DE L'ART — un tertre n'est PAS un dôme (remarque
+ * d'Alexis, 2026-08-30) : c'est un ANNEAU de terre soulevée autour d'un CREUX, et le noir
+ * du centre est un trou, pas une ombre. Or l'art est justement peint en gris qui racontent
+ * la hauteur : `TROU` (0x2a) au fond, `OMBRE` au pied, `CORPS` au flanc, `CLAIR` à la
+ * crête. On lit donc l'albédo lui-même comme CHAMP DE HAUTEUR (`relief` de
+ * `normalFromCanvas`, la voie de l'écorce des troncs) : la couronne monte, le centre
+ * plonge — le lissage fait la pente, et la lumière calculée creuse le trou pour de vrai.
+ */
+function reliefDesValeurs(c: HTMLCanvasElement): Float32Array {
+  const ctx = c.getContext('2d', { willReadFrequently: true })!
+  const d = ctx.getImageData(0, 0, c.width, c.height).data
+  const out = new Float32Array(c.width * c.height)
+  for (let i = 0; i < out.length; i++) out[i] = d[i * 4]! / 255
+  return out
+}
+
+/** LES PAIRES `fx-reveil-N_lit` — albédo rejoué par le peintre, relief lu sur ses VALEURS
+ *  (voir `reliefDesValeurs` : anneau qui monte, trou qui plonge). `dresse: false` (à plat,
+ *  pas de miroir). ⚠ Le relief se prélève AVANT toute ombre bakée — il n'y en a pas ici. */
+export function generateReveilLit(scene: Phaser.Scene): void {
+  for (const a of REVEIL_ART) {
+    const alb = newCanvas(a.w, a.h)
+    a.draw(new PeintreCanvas(alb.ctx))
+    registerLitPaire(scene, a.key, { albedo: alb.c, dresse: false, relief: reliefDesValeurs(alb.c) })
+  }
+}
 
 /** Durée de l'extraction du corps, en ms. Un peu moins d'une seconde : c'est un effort, pas
  *  une cinématique — le Cendreux est déjà en retard sur sa proie quand il sort. */
@@ -202,7 +305,7 @@ interface Residu {
 }
 
 interface Grain {
-  img: Phaser.GameObjects.Rectangle
+  img: Phaser.GameObjects.Image
   x: number
   y: number
   z: number
@@ -506,6 +609,9 @@ export class ReveilFx {
   /** La décision — publique en lecture pour le smoke test, qui interroge l'état réel. */
   readonly sols = new SolsAuTravail()
   private readonly grains: Grain[] = []
+  /** L'éclairage dynamique est-il armé ? — posé par la vue à chaque `renderReveils`, lu à la
+   *  naissance de chaque motte (elles vivent < 1 s, pas besoin de réarmer le pool). */
+  lighting = true
   /** La couleur du sol sous une tuile — posée par la vue, qui seule porte la carte. */
   /** LE TERRAIN sous une tuile — posé par la vue, qui seule porte la carte. On prend l'ID du
    *  terrain et pas sa couleur : c'est sa FAMILLE qui décide de ce qui sort du trou, et la
@@ -592,9 +698,14 @@ export class ReveilFx {
       const cote = LOI_TERRE.taille + (rnd() < 0.3 ? 1 : 0)
       const teinte = nuance(ton, VALEURS[Math.min(VALEURS.length - 1, Math.floor(rnd() * VALEURS.length))]!)
       if (this.grains.length >= MAX_GRAINS) this.grains.shift()?.img.destroy()
+      // Une IMAGE `__WHITE` teintée, pas un `Rectangle` : les Shapes n'ont pas le composant
+      // Lighting, or une motte est de la MATIÈRE du monde — elle prend sa nuit.
       const img = this.scene.add
-        .rectangle(Math.round(px), Math.round(py), cote, cote, teinte)
+        .image(Math.round(px), Math.round(py), '__WHITE')
+        .setDisplaySize(cote, cote)
+        .setTint(teinte)
         .setDepth(ySortDepth(y, TILE_PX, TIE_ACTOR))
+      img.setLighting(this.lighting)
       this.grains.push({
         img,
         x: px,

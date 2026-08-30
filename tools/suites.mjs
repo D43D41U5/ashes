@@ -43,8 +43,10 @@ const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..')
  * dernier — on veut le verdict des suites rapides sans attendre.
  */
 const SUITES = [
-  { nom: 'sim', dir: 'packages/sim', args: ['run', '--exclude', 'src/scenario.test.ts'], plancher: 1950 },
-  { nom: 'client', dir: 'packages/client', args: ['run'], plancher: 715 },
+  // 2026-08-30 : les réfugiés quittent le jeu (refugees.test, prompt-gate.test retirés) — et
+  // les suites ont malgré ça GROSSI (chantiers cendre + garde _lit) : planchers recalés dessus.
+  { nom: 'sim', dir: 'packages/sim', args: ['run', '--exclude', 'src/scenario.test.ts'], plancher: 2045 },
+  { nom: 'client', dir: 'packages/client', args: ['run'], plancher: 1385 },
   { nom: 'serveur', dir: 'packages/server', args: ['run'], plancher: 36 },
   // Le banc pilote le vrai worldgen sur la carte de production : lent, et seul à porter le
   // drapeau qui ignore les erreurs non gérées (voir l'en-tête de `scenario.test.ts`).

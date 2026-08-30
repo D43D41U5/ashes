@@ -34,6 +34,31 @@ describe('câblage des variantes cubiques (_lit / _lit_m)', () => {
     expect(new Set(PEBBLES.map((p) => JSON.stringify(p.rects))).size).toBe(PEBBLES.length) // configs toutes différentes
   })
 
+  it('chaque fleur est UNE masse : la tête TOUCHE la tige, et rien n\'y flotte (vide vu le 2026-08-29)', () => {
+    // Bleuet, gentiane et colchique avaient une rangée vide entre la tête et la tige — visible
+    // en jeu, invisible à tsc. La garde rejoue l'union stem+rects sur la grille 16×16 et exige
+    // UNE seule composante 4-connexe : une tige orpheline la fait rougir (vérifié sur la donnée
+    // fautive). L'échancrure (ouverte sur l'extérieur) reste permise — c'est la silhouette.
+    for (const [i, f] of FLOWERS.entries()) {
+      const filled = new Set<number>()
+      const put = ([x, y, w, h]: readonly [number, number, number, number]) => {
+        for (let j = y; j < y + h; j++) for (let k = x; k < x + w; k++) filled.add(j * 16 + k)
+      }
+      put(f.stem)
+      for (const r of f.rects) put(r)
+      const seen = new Set<number>([f.stem[1] * 16 + f.stem[0]]) // départ : le haut de la tige
+      const queue = [...seen]
+      while (queue.length > 0) {
+        const c = queue.pop()!
+        for (const d of [-1, +1, -16, +16]) {
+          const n = c + d
+          if (filled.has(n) && !seen.has(n)) { seen.add(n); queue.push(n) }
+        }
+      }
+      expect(seen.size, `fleur ${i} : ${filled.size - seen.size} px hors d'atteinte de la tige`).toBe(filled.size)
+    }
+  })
+
   it('couvre les features nommées par Alexis (fleurs, mousse, touffes) + la masse pâteuse', () => {
     for (const kind of ['grass_tuft', 'flower', 'lichen', 'sphagnum', 'bush', 'low_bush', 'boulder', 'reed', 'pebbles'])
       expect(LIT_CLUTTER_KINDS.has(kind)).toBe(true)
@@ -92,13 +117,22 @@ describe('câblage des variantes cubiques (_lit / _lit_m)', () => {
     for (const key of ['nd-berry_bush-0', 'nd-berry_bush-1', 'nd-berry_bush-2', 'nd-berry_bush-3', 'nd-sapling', 'nd-fiber_plant', 'nd-stump', 'nd-scar']) {
       expect(LIT_PROP_KEYS.has(`${key}_lit`), key).toBe(true)
     }
-    // fiber_plant passe par le whitelist générique ; berry_bush et sapling passent par leurs
-    // BRANCHES SPÉCIALES de SnapshotView (berryDots, repousse) — les mettre ici serait du câblage
-    // mort et trompeur (note d'intégration de la vague A). Les gravats, eux, ont rejoint le SOCLE.
+    // fiber_plant passe par le whitelist générique ; berry_bush, sapling et fumerolle passent
+    // par leurs BRANCHES SPÉCIALES de SnapshotView (berryDots, repousse, fumerolleBandes) — les
+    // mettre ici serait du câblage mort et trompeur (note d'intégration de la vague A). Les
+    // gravats, eux, ont rejoint le SOCLE.
     expect(LIT_NODE_TYPES.has('fiber_plant')).toBe(true)
     expect(estUnSocle('rubble')).toBe(true)
     expect(LIT_NODE_TYPES.has('berry_bush')).toBe(false)
     expect(LIT_NODE_TYPES.has('sapling')).toBe(false)
+    expect(LIT_NODE_TYPES.has('fumerolle')).toBe(false)
+    // LA FUMEROLLE-COLONNE (2026-08-29) : 4 états de stock — 0 à 3 bandes de sel le long du fût.
+    for (const n of [0, 1, 2, 3]) {
+      expect(LIT_PROP_KEYS.has(`nd-fumerolle-${n}_lit`), `nd-fumerolle-${n}`).toBe(true)
+    }
+    // L'ancienne clé sans suffixe ne doit plus exister : SnapshotView ne la demande plus, et la
+    // garder cuirait une texture morte.
+    expect(LIT_PROP_KEYS.has('nd-fumerolle_lit')).toBe(false)
   })
 
   /**
@@ -113,7 +147,7 @@ describe('câblage des variantes cubiques (_lit / _lit_m)', () => {
     'cl-bush', 'cl-low_bush', 'cl-boulder', 'cl-sphagnum', 'cl-grass_tuft', 'cl-reed',
     'cl-snowdrift', 'cl-conifer', 'cl-pine', 'cl-larch', 'cl-burnt_trunk', 'cl-big_trunk',
     'cl-stump', 'cl-chicot',
-    'nd-fumerolle', 'nd-fiber_plant', 'nd-sapling', 'nd-stump', 'nd-champignon',
+    'nd-fumerolle-0', 'nd-fumerolle-3', 'nd-fiber_plant', 'nd-sapling', 'nd-stump', 'nd-champignon',
     'nd-berry_bush-0', 'nd-berry_bush-3',
   ] as const
   const COUCHE = [

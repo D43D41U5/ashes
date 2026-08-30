@@ -14,8 +14,8 @@
  *
  * ── CE QUI EST FILTRÉ, ET CE QUI NE L'EST PAS ───────────────────────────────────
  *
- * FILTRÉ (spatial et volumineux) : `entities`, `monsters`, `npcs`, `blood`, `groundItems`,
- * `refugeeGroups`. `monsters` et `npcs` suivent EXACTEMENT le sort de leur entité — garder
+ * FILTRÉ (spatial et volumineux) : `entities`, `monsters`, `npcs`, `blood`, `groundItems`.
+ * `monsters` et `npcs` suivent EXACTEMENT le sort de leur entité — garder
  * la fiche d'une bête dont le corps n'est plus transmis ne dessinerait rien et coûterait
  * quand même.
  *
@@ -88,7 +88,5 @@ export function filtreParInteret<T extends Omit<SnapshotMessage, 'lastProcessedI
     npcs: base.npcs.filter(suitSonCorps),
     blood: base.blood.filter(proche),
     groundItems: base.groundItems.filter(proche),
-    // Les réfugiés sont posés en TUILES (`tx`/`ty`), pas en coordonnées continues.
-    refugeeGroups: base.refugeeGroups.filter((g) => !loin(g.tx, g.ty, centre.x, centre.y, r2)),
   }
 }

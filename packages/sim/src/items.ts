@@ -149,6 +149,10 @@ export type ItemId =
   | 'gardon'
   | 'loche'
   | 'ecrevisse'
+  /** LA LAMPROIE DE SUIE (chantier ② de la cendre, coulées — spec `cendre.md` R26) : la seule
+   *  qui morde dans une eau souillée par la coulée d'un foyer. Petite, amère — un signal qui
+   *  se pêche, pas un garde-manger. */
+  | 'lamproie'
   // ── Les MOYENS : le repas. ──
   | 'trout'
   | 'ombre'
@@ -175,9 +179,36 @@ export type ItemId =
   /** LA VIANDE SÉCHÉE (spec `peche.md` D13/S2) — le séchoir prend le poisson ET la viande.
    *  Conserver en PERDANT : elle traverse l'hiver et nourrit moins que la viande cuite. */
   | 'dried_meat'
+  /** LES SALAISONS (spec `peche.md` S4bis, 2026-08-30) — la claie SALÉE : une unité qui finit
+   *  de sécher pendant que le séchoir porte du sel sort salée, et consomme UN sel. Le sel
+   *  rachète la perte du séchage : pleine valeur du cuit, et ça ne pourrit JAMAIS (absentes
+   *  de `SPOIL_CYCLES` — le précédent est le tubercule). Le prix est géographique : le sel
+   *  vit aux fumerolles, au cœur de la cendre. */
+  | 'salted_fish_petit'
+  | 'salted_fish_moyen'
+  | 'salted_fish_gros'
+  | 'salted_meat'
   /** LE SÉCHOIR EN OBJET (spec `peche.md` D13/S1) : on le fabrique, on le tient, on le pose
    *  (`place_component`) — comme le coffre et l'établi. Bois et corde, sans poste. */
   | 'sechoir'
+  /** LE CŒUR DE BRAISE (spec `cendre.md` R29) — ce qu'un Cendreux tué CHEZ LUI (au-delà de la
+   *  croûte) laisse parfois. Le composant des Ouvrages de la Cendre ; premier débouché :
+   *  l'amorce de la Braise-mère (il entre dans sa recette). */
+  | 'coeur_de_braise'
+  /** LA GRAINE DE BRAISE (`agriculture.md` J3) — glissée par un MURMURE recueilli : la seule
+   *  semence de la culture de braise, celle que la cendre seule porte. */
+  | 'graine_de_braise'
+  /** L'ORGE-DE-BRAISE (`agriculture.md` J2) — la récolte du jardin de suie : médiocre (§8bis),
+   *  mais elle pousse en plein Grand Froid, là où tout le reste dort. */
+  | 'orge_de_braise'
+  /** LE CUIR CENDRÉ (spec `cendre.md` R30c) — la dépouille grise d'une bête cendreuse. Le
+   *  composant de la TENUE cendrée (R29b) qui ne vient pas des Cendreux : chasser le cœur
+   *  corrompu est l'autre chemin vers les Ouvrages. */
+  | 'cuir_cendre'
+  /** LA BRAISE-MÈRE EN OBJET (spec `cendre.md` R28) — la parade qui se nourrit : forgée (N2)
+   *  avec un cœur de braise, posée comme le séchoir, elle mange du charbon et tient le foyer
+   *  de cendre de sa cellule. */
+  | 'braise_mere'
   /** LA CANNE DE FORTUNE (spec `peche.md` D4) : une branche, de la corde — sans poste, dès
    *  la première nuit. Obligatoire EN MAIN pour lancer : le geste EST la ligne. Une seule
    *  marche de canne pour l'instant ; elle s'use d'un cran par ferrage réussi. */
@@ -274,6 +305,9 @@ export type ItemId =
   | 'parcelle'
   | 'serre'
   | 'terroir'
+  /** LE JARDIN DE SUIE (`agriculture.md` J1) : la terre du Grand Froid, fabriquée au Feu
+   *  (bois + cendre — l'item `ash` trouve son consommateur), posée SUR sol cendré. */
+  | 'parcelle_de_suie'
 
 /** Une case occupée. `wear` absent = neuf ; un empilable n'a jamais d'usure. */
 export interface Slot {

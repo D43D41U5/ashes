@@ -91,7 +91,7 @@ import {
   TERRAIN_WILLOW,
   TERRAINS,
 } from './balance'
-import { froidDeCendre } from './cendre'
+import { froidDeCendre, tuileCendree } from './cendre'
 import { terrainAt } from './map'
 import { coldMaximal, frontDuCycle, frontMeteoPos, largeurDe, partDeNeige, type BandeMeteo } from './meteo'
 import { effetsDuJour } from './modificateur'
@@ -433,6 +433,15 @@ const PRECIPITANTS = ['pluie', 'orage']
  */
 export function neigeAuSol(state: SimState, tx: number, ty: number): number {
   if (!state.meteoActive) return 0
+  // ═══ G7bis — LA CENDRE BOIT LA NEIGE (Alexis, 2026-08-29) ═══
+  //
+  // Une tuile cendrée n'en porte JAMAIS : ce qui tombe y est bu en permanence. Le prédicat est
+  // `tuileCendree` — le MÊME que celui qui peint le sol cendré (WorldScene le donne aux couches),
+  // donc la neige s'arrête exactement à la lisière dessinée, grain compris — et par l'écrivain
+  // unique tout en découle : le manteau ne s'y peint pas, le pas y redevient celui du sol cendré
+  // (`solFoule`), les cimes ne s'y coiffent pas. La neige TOMBE toujours à l'écran (l'aspect du
+  // ciel est une autre loi) : elle est bue au sol, pas déviée du ciel.
+  if (tuileCendree(state, tx, ty)) return 0
   const cycle = Math.floor(state.tick / TICKS_PER_CYCLE)
   const { width, height } = state.map
   // ═══ CE QUI NE DÉPEND PAS DU TICK SORT DES DEUX BOUCLES (perf, 2026-08-26) ═══

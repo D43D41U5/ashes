@@ -4,7 +4,7 @@
  * code au boot — aucun asset binaire dans le repo.
  */
 import Phaser from 'phaser'
-import { generateItemIcons } from '../render/item-art'
+import { generateItemIcons, generateItemIconsLit } from '../render/item-art'
 import { generateVitalIcons } from '../render/vital-art'
 import { generateLitTrees } from '../render/lit-trees'
 import { generateEssaiCaillou } from '../render/essai-da-caillou'
@@ -14,7 +14,8 @@ import { generateSocles } from '../render/socle-mineral'
 import { generateFireProp, generateLitProps, FLOWERS, FLOWER_STEM_COLOR, PEBBLES, PEBBLE_TONES, PEBBLE_SHADOW, pebbleShadowRects, variantBase, CHAMPIGNON_RECTS, LEAF_PILE_RECTS, CHICOT_RECTS, POUSSIERE_RECTS, BRANCHE_RECTS, CAILLOU_RECTS } from '../render/lit-props'
 import { makeCliffTextures } from '../render/cliff-art'
 import { ORIENTATIONS_COUCHE, boiteCouchee, cleCouchee, rasterCorpsCouche } from '../render/corps-couche'
-import { makeCarcasseTextures } from '../render/carcasse-art'
+import { generateCarcassesLit, makeCarcasseTextures } from '../render/carcasse-art'
+import { generateReveilLit, REVEIL_ART } from './world/reveil-fx'
 import { makePoiTextures } from './world/poi-art'
 import { makeBorneTextures } from './world/borne-layer'
 import { generateLitErratiques, generateLitPois } from '../render/poi-lit'
@@ -49,14 +50,9 @@ export class BootScene extends Phaser.Scene {
     this.makeSaisons()
 
     const g = this.add.graphics()
-    g.fillStyle(0xcac2b2) // cadavre : ossements
-    g.fillRect(3, 7, 10, 2)
-    g.fillRect(5, 4, 2, 8)
-    g.fillRect(9, 4, 2, 8)
-    g.generateTexture('spr-corpse', 16, 16)
-    g.clear()
     // LES CARCASSES (spec `depecage.md` R1c) : une bête morte reste la bête — couchée, par
-    // espèce, et son art suit ce qui lui reste (pleine, entamée, dépouillée).
+    // espèce, et son art suit ce qui lui reste (pleine, entamée, dépouillée). Les ossements
+    // (`spr-corpse`) vivent dans la même table — voir render/carcasse-art.ts.
     makeCarcasseTextures(g)
     g.destroy()
 
@@ -90,6 +86,9 @@ export class BootScene extends Phaser.Scene {
     this.makeStructures()
     this.makeGlowTexture()
     generateItemIcons(this) // les 16 icônes d'items — voir render/item-art.ts
+    generateItemIconsLit(this) // + leurs paires `it-*_lit` (piles au sol, poisson du ferrage)
+    generateCarcassesLit(this) // + les carcasses et ossements `_lit` — un cadavre vit sous la lumière du monde
+    generateReveilLit(this) // + les tertres de réveil `_lit` — le sol qui travaille vit sous la même nuit
     generateVitalIcons(this) // les 4 icônes des jauges du HUD — voir render/vital-art.ts
     // Les arbres normal-mappés (voir render/lit-trees.ts). Le JOUR n'est pas encore connu ici —
     // le monde n'est pas chargé : on cuit la teinte du jour 1, et `rafraichirCimes` la corrige
@@ -297,6 +296,16 @@ export class BootScene extends Phaser.Scene {
     tile(0x2a1e12, 0x4a3420)
     g.fillStyle(0xd8b24a).fillTriangle(4, 14, 8, 2, 12, 14)
     g.generateTexture('st-terroir', 16, 16)
+    g.clear()
+
+    // Parcelle de suie (agriculture.md J1) : le cadre de bois, la suie en terre — les
+    // sillons GRIS, et un point de braise (la culture qui couve). La teinte du potager
+    // (`cropStage`) fera le reste, comme sur ses sœurs.
+    tile(0x44403c, 0x7a5c38)
+    g.fillStyle(0x2e2a26).fillRect(4, 2, 1, 12)
+    g.fillStyle(0x2e2a26).fillRect(9, 2, 1, 12)
+    g.fillStyle(0xd0722a).fillRect(6, 6, 2, 2)
+    g.generateTexture('st-parcelle_de_suie', 16, 16)
     g.clear()
 
     // Maison : toit pignon + porte.
@@ -1254,60 +1263,12 @@ export class BootScene extends Phaser.Scene {
    * que le tertre ne saute d'un côté.
    */
   private makeReveilMounds(g: Phaser.GameObjects.Graphics): void {
-    const CLAIR = 0xffffff // la crête, là où la terre remuée prend la lumière
-    const CORPS = 0xcfcfcf
-    const OMBRE = 0x8e8e8e // le pied du tertre
-    const TROU = 0x2a2a2a // le noir du dessous — presque éteint une fois teinté
-    const MOTTE = 0xe6e6e6
-    const W = 24
-    const H = 18
-    const cx = 12
-    const cy = 9
-
-    // CRAN 0 — LE SOL FRÉMIT. Une fêlure, deux grains soulevés. Presque rien : c'est le
-    // premier instant du préavis, et il doit être vu sans crier.
-    g.fillStyle(OMBRE).fillEllipse(cx, cy, 10, 4)
-    g.fillStyle(TROU).fillRect(cx - 3, cy, 6, 1) // la fêlure
-    g.fillStyle(MOTTE).fillRect(cx - 6, cy + 1, 1, 1).fillRect(cx + 5, cy - 1, 1, 1)
-    g.generateTexture('fx-reveil-0', W, H)
-    g.clear()
-
-    // CRAN 1 — LA FENTE S'OUVRE. Le tertre existe, la fêlure devient une entaille.
-    g.fillStyle(OMBRE).fillEllipse(cx, cy + 1, 16, 7)
-    g.fillStyle(CORPS).fillEllipse(cx, cy, 14, 6)
-    g.fillStyle(CLAIR).fillEllipse(cx, cy - 1, 9, 3) // la crête
-    g.fillStyle(TROU).fillRect(cx - 4, cy, 8, 2) // l'entaille
-    g.fillStyle(MOTTE).fillRect(cx - 8, cy + 2, 2, 1).fillRect(cx + 7, cy + 1, 2, 1)
-    g.generateTexture('fx-reveil-1', W, H)
-    g.clear()
-
-    // CRAN 2 — LE TERTRE MONTE ET LE TROU S'OUVRE. On voit qu'il y a un DESSOUS.
-    g.fillStyle(OMBRE).fillEllipse(cx, cy + 1, 21, 10)
-    g.fillStyle(CORPS).fillEllipse(cx, cy, 19, 9)
-    g.fillStyle(CLAIR).fillEllipse(cx, cy - 2, 14, 4)
-    g.fillStyle(TROU).fillEllipse(cx, cy + 1, 9, 5) // le trou
-    g.fillStyle(MOTTE)
-      .fillRect(cx - 10, cy + 3, 2, 2)
-      .fillRect(cx + 9, cy + 2, 2, 2)
-      .fillRect(cx - 6, cy - 5, 2, 1)
-      .fillRect(cx + 5, cy - 5, 2, 1)
-    g.generateTexture('fx-reveil-2', W, H)
-    g.clear()
-
-    // CRAN 3 — LE SOL EST OUVERT. La couronne est ROMPUE (deux brèches) : un anneau plein
-    // lirait comme un puits maçonné ; ce qui vient de céder n'a pas de bord net.
-    g.fillStyle(OMBRE).fillEllipse(cx, cy + 1, 24, 13)
-    g.fillStyle(CORPS).fillEllipse(cx, cy, 22, 12)
-    g.fillStyle(CLAIR).fillEllipse(cx, cy - 3, 17, 5)
-    g.fillStyle(TROU).fillEllipse(cx, cy + 1, 14, 7) // la gueule
-    g.fillStyle(TROU).fillRect(cx - 12, cy + 3, 4, 2).fillRect(cx + 8, cy - 2, 4, 2) // les brèches
-    g.fillStyle(MOTTE)
-      .fillRect(cx - 11, cy + 5, 3, 2)
-      .fillRect(cx + 10, cy + 4, 2, 2)
-      .fillRect(cx - 8, cy - 7, 2, 2)
-      .fillRect(cx + 7, cy - 7, 3, 2)
-      .fillRect(cx - 1, cy - 8, 2, 1)
-    g.generateTexture('fx-reveil-3', W, H)
-    g.clear()
+    // L'ART VIT DANS `REVEIL_ART` (reveil-fx.ts), écrit contre `Peintre` : le même dessin
+    // peint ces flats ET l'albédo des paires `_lit` — les deux ne peuvent pas diverger.
+    for (const a of REVEIL_ART) {
+      a.draw(g)
+      g.generateTexture(a.key, a.w, a.h)
+      g.clear()
+    }
   }
 }

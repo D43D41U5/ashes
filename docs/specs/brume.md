@@ -21,7 +21,7 @@ Deux décisions actées la fondent (2026-08-18) :
 
 ### La nappe (R1-R3)
 
-- **R1 — Géométrie : un disque qui fait l'aller-retour.** La nappe est un disque de rayon `BRUME.RAYON` dont le centre suit un segment : point d'entrée sur le front de Cendre → profondeur `BRUME.PROFONDEUR` tuiles dans T0 (aller pendant la première moitié de la fenêtre, retour pendant la seconde). Position **calculée du tick** par une fonction pure `brumeAt(state)` (interpolation linéaire — patron `frontActuel` de `cendre.ts`), partagée sim/client. Le corridor (les deux extrémités du segment) est élu à l'annonce et posé dans `state.brume` (record JSON nullable, purgé au retrait — patron `refugees`).
+- **R1 — Géométrie : un disque qui fait l'aller-retour.** La nappe est un disque de rayon `BRUME.RAYON` dont le centre suit un segment : point d'entrée sur le front de Cendre → profondeur `BRUME.PROFONDEUR` tuiles dans T0 (aller pendant la première moitié de la fenêtre, retour pendant la seconde). Position **calculée du tick** par une fonction pure `brumeAt(state)` (interpolation linéaire — patron `frontActuel` de `cendre.ts`), partagée sim/client. Le corridor (les deux extrémités du segment) est élu à l'annonce et posé dans `state.brume` (record JSON nullable, purgé au retrait — record nullable, le patron des événements du monde).
 - **R2 — Cadence et fenêtre.** Éligibilité du jour de saison par `hash2(jour, seed)` contre `BRUME.CHANCE_PER_DAY[acte]` — la Brume n'existe pas en acte I. Au plus **une nappe à la fois, une par cycle réel**. L'annonce tombe au crépuscule du cycle précédent ; la nappe entre à l'**aube** et se retire au **crépuscule** du même cycle — le jour du passage, la zone est déniée, et le filon se découvre à la nuit tombante : y courir de nuit est le pari, attendre l'aube laisse les traînards s'évaporer. Derrière `state.worldEvents`, comme tout événement du monde.
 - **R3 — Le corridor évite les Feux.** À l'élection, tout corridor dont le SEGMENT passe à moins de `RAYON + GARDE_FEU` d'un Feu de village est rejeté (candidats suivants par hash2) — le bord de la nappe reste donc à ≥ `GARDE_FEU` (= `FIRE_RANGE`) de tout Feu, et la bulle plancherait de toute façon (A5 le prouve). La Brume est un déni de zone sauvage, pas un tueur de villages — le Blizzard (autre événement, carte entière) portera ce rôle-là.
 
@@ -38,7 +38,7 @@ Deux décisions actées la fondent (2026-08-18) :
 
 ### Déterminisme (R9)
 
-- **R9 — Zéro tirage sur le PRNG d'état.** Occurrence, corridor, type et position du filon : tout par `hash2` du jour de saison (patron réfugiés, `refugees.ts:13-14`). Activer la Brume ne décale AUCUN tirage existant — les tests replay/events du dépôt passent inchangés. C'est une exigence, pas une préférence (mémoire projet : le décompte d'entités décale le flux seedé).
+- **R9 — Zéro tirage sur le PRNG d'état.** Occurrence, corridor, type et position du filon : tout par `hash2` du jour de saison (l'ex-patron réfugiés — position par `hash2` du jour, système retiré depuis). Activer la Brume ne décale AUCUN tirage existant — les tests replay/events du dépôt passent inchangés. C'est une exigence, pas une préférence (mémoire projet : le décompte d'entités décale le flux seedé).
 
 ## Critères d'acceptation
 

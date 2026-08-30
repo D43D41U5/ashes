@@ -10,7 +10,7 @@
  * L'upkeep du FOYER (village.fuel) reste dans `village.ts` — migration différée (S16) ; il n'a donc
  * PAS de zone combustible (`fireZoneInventory` rend `undefined`), mais garde entrées/sorties.
  */
-import { CENDREUX, COOK_SLOT, DRY_SLOT, FIRE } from './balance'
+import { CENDREUX, COOK_SLOT, DRY_SLOT, FIRE, SALAISON_DU_SECHE } from './balance'
 import { emitEvent } from './events'
 import { distSq } from './geometry'
 import { addItems, countOf, makeInventory, type Inventory, type ItemId } from './items'
@@ -258,10 +258,22 @@ function advanceCook(state: SimState, s: Structure): void {
     if (rem > 0) continue
     // Unité cuite : verser le résultat en SORTIE (best-effort). Sorties pleines → on reste à 0, on attend.
     if (!s.cookOut) s.cookOut = makeInventory(FIRE.COOK_OUTPUTS)
-    const leftover = addItems(s.cookOut, { [rule.output]: 1 })
-    if ((leftover[rule.output] ?? 0) > 0) continue
+    // LA CLAIE SALÉE (S4bis) : sur un poste qui sèche, si une case d'entrée porte du sel,
+    // l'unité sort SALÉE et consomme UN sel — mais seulement si la sortie ACCEPTE l'unité :
+    // sorties pleines, rien n'est consommé (le sel n'est jamais brûlé pour rien).
+    const selSlot = DRY_SLOT[s.type] !== undefined
+      ? s.cookIn.findIndex((c) => c !== null && c.item === 'salt' && c.count > 0)
+      : -1
+    const sortie = selSlot >= 0 ? (SALAISON_DU_SECHE[rule.output] ?? rule.output) : rule.output
+    const leftover = addItems(s.cookOut, { [sortie]: 1 })
+    if ((leftover[sortie] ?? 0) > 0) continue
+    if (sortie !== rule.output) {
+      const sel = s.cookIn[selSlot]!
+      sel.count -= 1
+      if (sel.count <= 0) s.cookIn[selSlot] = null
+    }
     for (const bp of rule.byproducts ?? []) addItems(s.cookOut, { [bp.item]: bp.count }) // best-effort
-    emitEvent(state, { type: 'meat_cooked', tick: state.tick, structureId: s.id, item: rule.output })
+    emitEvent(state, { type: 'meat_cooked', tick: state.tick, structureId: s.id, item: sortie })
     slot.count -= 1
     if (slot.count <= 0) {
       s.cookIn[i] = null
@@ -281,6 +293,13 @@ export function fireZoneInventory(s: Structure, zone: FireZone): Inventory | und
   // ⚠ TROIS POSTES DEPUIS LE 2026-08-24, plus un seul : le feu, le four et le séchoir. Les
   // deux nouveaux n'ont PAS de zone combustible — le four tient sur le bois du village, le
   // séchoir ne brûle rien. La garde d'entrée est donc « ce poste a-t-il des recettes ? ».
+  // …ET LA BRAISE-MÈRE (R28b) est l'inverse exact : une SOUTE sans recettes — elle brûle,
+  // elle ne cuit rien. Sa seule zone est le combustible.
+  if (s.type === 'braise_mere') {
+    if (zone !== 'fuel') return undefined
+    if (!s.fuel) s.fuel = makeInventory(FIRE.FUEL_SLOTS)
+    return s.fuel
+  }
   if (recettesDuPoste(s.type) === undefined) return undefined
   if (zone === 'fuel') {
     if (s.type !== 'fire') return undefined
@@ -301,7 +320,12 @@ export function fireZoneInventory(s: Structure, zone: FireZone): Inventory | und
  * qui se cuit ici (`COOK_SLOT`) ; SORTIES : les produits cuits de ce feu (résultats + sous-produits).
  */
 export function fireZoneAccepts(s: Structure, zone: FireZone, item: ItemId): boolean {
+  // LA BRAISE-MÈRE (cendre.md R28b) : une soute à CHARBON, rien d'autre — ni bûche ni cuisine.
+  if (s.type === 'braise_mere') return zone === 'fuel' && item === 'charcoal'
   if (zone === 'fuel') return s.type === 'fire' && item === 'wood'
+  // LA CLAIE SALÉE (S4bis) : un poste qui SÈCHE accepte le sel dans ses entrées — il n'y
+  // « sèche » pas (aucune règle ne le prend), il attend l'échéance d'une unité pour la saler.
+  if (zone === 'cookIn' && DRY_SLOT[s.type] !== undefined && item === 'salt') return true
   if (zone === 'cookIn') return recettesDuPoste(s.type)?.[item] !== undefined
   // LE CHARBON DE BOIS (S30) est un sous-produit du feu, mais de sa COMBUSTION et non d'une
   // recette de cuisson : la table des postes ne le connaît pas. Sans cette ligne, un feu
@@ -312,6 +336,9 @@ export function fireZoneAccepts(s: Structure, zone: FireZone, item: ItemId): boo
   if (!rules) return false
   for (const rule of Object.values(rules)) {
     if (rule.output === item) return true
+    // La sortie SALÉE de cette règle est une sortie légitime du poste (S4bis) — sans cette
+    // ligne, on pourrait retirer une salaison de la claie mais jamais l'y reposer.
+    if (DRY_SLOT[s.type] !== undefined && SALAISON_DU_SECHE[rule.output] === item) return true
     for (const bp of rule.byproducts ?? []) if (bp.item === item) return true
   }
   return false
@@ -334,6 +361,13 @@ export function recettesDuPoste(
  * (`cookRemaining`). Une pile se déplace de `count − ce nombre` (spec feu-station, verrou de conso).
  */
 export function fireSlotLocked(s: Structure, zone: FireZone, slot: number): number {
+  // LA BRAISE-MÈRE (R28b/A35) : le charbon EN COURS est verrouillé — le retirer à la 199e
+  // seconde ne rembourse pas la chaleur déjà rendue. C'est la première case pleine qui brûle,
+  // la même que `advanceBraiseMeres` consomme à l'échéance.
+  if (s.type === 'braise_mere') {
+    if (zone !== 'fuel' || s.burnAt === undefined || !s.fuel) return 0
+    return slot === s.fuel.findIndex((c) => c !== null && c.item === 'charcoal' && c.count > 0) ? 1 : 0
+  }
   if (zone === 'fuel') return s.villageId === 0 && s.burnAt !== undefined && slot === s.burnSlot ? 1 : 0
   if (zone === 'cookIn') return s.cookRemaining?.[slot] != null ? 1 : 0
   return 0

@@ -44,7 +44,7 @@ export function foundNpcVillage(
   state.nodes = state.nodes.filter((n) => !reserved.some(([rx, ry]) => n.tx === rx && n.ty === ry))
 
   const village = createVillage(state, { chiefId: 0, tx, ty, npcsArrived: true }) // on peuple nous-mêmes
-  village.foundedSize = count // le plafond de la réparation aux réfugiés (R12)
+  village.foundedSize = count // l'effectif de fondation (mémoire du village, cf. village.ts)
   addStructure(state, 'fire', tx, ty, village.id, 0)
   // Le grenier d'un village PNJ est ouvert aux siens (accès `village`, pas le
   // défaut `private` du coffre) et naît approvisionné.

@@ -16,7 +16,6 @@ import { createHudCharacter, type HudCharacter } from './ui/hud-character'
 import { createBuildMenu, type BuildMenu } from './ui/build-menu'
 import { createCraftQueueView, type CraftQueueView } from './ui/craft-queue'
 import { createFirePanel, type FirePanel } from './ui/fire-panel'
-import { createRefugeePrompt, type RefugeePrompt } from './ui/refugee-prompt'
 import { createBandeaux, type Bandeaux } from './ui/bandeaux'
 import { createDeathVeil, DEATH_VEIL_FILET_MS, type DeathVeil } from './ui/death-veil'
 import { createSeasonVeil, type SeasonVeil } from './ui/season-veil'
@@ -115,7 +114,6 @@ export class UIScene extends Phaser.Scene {
   private craftQueueView!: CraftQueueView
   /** LE MODAL DU FEU (spec feu-station S17-S19) — ouvert à E, il remplace les deux fenêtres flottantes. */
   private firePanel!: FirePanel
-  private refugeePrompt!: RefugeePrompt
   private deathVeil!: DeathVeil
   private seasonVeil!: SeasonVeil
   /** LE TIROIR DU REGISTRE (T5) — ouvert en cliquant une pastille CONNUE de la carte. */
@@ -270,7 +268,6 @@ export class UIScene extends Phaser.Scene {
     // Cachée jusqu'au premier instant jouable : rien du HUD ne doit s'afficher
     // par-dessus l'écran de chargement (même règle que la ceinture, ci-dessus).
     this.craftQueueView.setVisible(false)
-    this.refugeePrompt = createRefugeePrompt(this.hudRoot.board, (action) => queueAction(this.registry, action))
     // LE MODAL DU FEU (spec feu-station S17-S19) : ouvert à E (viser un feu + E), il REMPLACE
     // les deux fenêtres flottantes « Fonder un village » / « Monter le Feu » — leurs boutons
     // vivent désormais dedans. Il POSE ses actions ; WorldScene les draine (spec R22).
@@ -943,7 +940,6 @@ export class UIScene extends Phaser.Scene {
     // …et le MODE DÉMOLIR avec eux (décision d'Alexis, 2026-08-01) : WorldScene en tire le
     // surlignage rouge de ce qu'on détruirait, et le clic l'action. Faux hors marteau en main.
     setHud(this.registry, 'demolir', building && this.buildMenu.demolir())
-    this.refugeePrompt.update(getHud(this.registry, 'refugeesNearby') ?? null)
     // LE MODAL DU FEU (spec feu-station S18) : WorldScene a résolu `openFireView` contre le
     // snapshot (état, combustible, cuisson, bouton) ; l'UI n'a qu'à le montrer avec le sac.
     this.firePanel.update({ view: getHud(this.registry, 'openFireView') ?? null, inv, activeSlot })

@@ -30,7 +30,6 @@ const base = (): Omit<SnapshotMessage, 'lastProcessedInput'> =>
     npcs: [{ entityId: 2 }, { entityId: 5 }] as never,
     monsters: [{ entityId: 3 }, { entityId: 4 }] as never,
     corpses: [{ id: 1, x: 2000, y: 2000 }] as never,
-    refugeeGroups: [{ id: 1, tx: 101, ty: 100 }, { id: 2, tx: 900, ty: 900 }] as never,
     blood: [{ x: 100, y: 101, tick: 1 }, { x: 900, y: 900, tick: 1 }] as never,
     wind: { x: 0, y: 0 },
     groundItems: [{ id: 1, x: 102, y: 100 }, { id: 2, x: 900, y: 900 }] as never,
@@ -53,11 +52,10 @@ describe('la zone d\'intérêt — ce qui arrive au client, et ce qui reste au s
     expect(vu.npcs.map((n) => n.entityId)).toEqual([2]) // 5 aussi
   })
 
-  it('rogne aussi le sang, les piles au sol et les réfugiés', () => {
+  it('rogne aussi le sang et les piles au sol', () => {
     const vu = filtreParInteret(base(), moi)
     expect(vu.blood).toHaveLength(1)
     expect(vu.groundItems.map((g) => g.id)).toEqual([1])
-    expect(vu.refugeeGroups.map((g) => g.id)).toEqual([1])
   })
 
   it('NE ROGNE PAS ce qui n\'est pas spatial — deltas, événements, bâti', () => {

@@ -48,7 +48,7 @@
  * ═══ ZÉRO TIRAGE SUR LE PRNG D'ÉTAT ═══
  *
  * Occurrence, type, bord, fenêtre : tout se dérive du CYCLE par `hash2` (patron
- * Brume/réfugiés — le jour de saison, lui, désigne l'ACTE) — armer la météo ne décale AUCUN tirage existant, donc les suites replay
+ * Brume/convois — le jour de saison, lui, désigne l'ACTE) — armer la météo ne décale AUCUN tirage existant, donc les suites replay
  * et events passent inchangées (spec R10 : une exigence, pas une préférence — leçon RNG
  * connue : le décompte d'entités décale le flux seedé).
  *

@@ -124,7 +124,6 @@ import {
   publishDecouverte,
   publishLevelUp,
   publishOpenFire,
-  publishRefugeesNearby,
   publishOpenContainer,
   publishPickup,
   publishPlayerVitals,
@@ -178,7 +177,7 @@ import {
 } from '../render/fog'
 import { peindreCarteArt, type CarteArt } from '../render/carte-art'
 import { cellulesDuDisque, peindreSavoirRegion } from '../render/carte-savoir'
-import { eauPechable, estUnCoinDePeche, porteDeLEau, FISH_SPECIES, niveauDEau, torcheVive, partDeFlamme, clarteSurSoiAt, NUIT, MONSTER_DEFS, POI_CHARGES, TERRAIN_DEEP_WATER, TERRAIN_SHALLOW_WATER, CREUX, TERRAINS_BOISES_MASSIF, ventForceAt, VENT, type EtatVent } from '@ashes/sim'
+import { TRACTION, eauPechable, estUnCoinDePeche, porteDeLEau, FISH_SPECIES, niveauDEau, torcheVive, partDeFlamme, clarteSurSoiAt, NUIT, MONSTER_DEFS, POI_CHARGES, TERRAIN_DEEP_WATER, TERRAIN_SHALLOW_WATER, CREUX, TERRAINS_BOISES_MASSIF, ventForceAt, VENT, type EtatVent } from '@ashes/sim'
 
 /** L'assombrissement du sol au plafond de profondeur (§2quater R42) : au cœur d'un massif,
  *  le sol perd jusqu'à 14 % de luminance — en PENTE CONTINUE, jamais par bande. */
@@ -220,6 +219,7 @@ import { HitFx } from './world/hit-fx'
 import { RecolteFx } from './world/recolte-fx'
 import { SprintFx } from './world/sprint-fx'
 import { ChuteArbre } from './world/chute-arbre'
+import { MurmureFx } from './world/murmure-fx'
 import { ReveilFx } from './world/reveil-fx'
 import { BRISURES_CENDRE, createAttackFx, type AttackFx, type Zone } from './world/attack-fx'
 import { secousseDuCoup, SECOUSSE_PORTE_MS } from './world/encaissement'
@@ -713,6 +713,7 @@ export class WorldScene extends Phaser.Scene {
   private chuteArbre!: ChuteArbre
   /** LE SOL QUI TRAVAILLE, et le Cendreux qui s'en extrait (spec `cendreux.md` R21/R22). */
   private reveilFx!: ReveilFx
+  private murmureFx!: MurmureFx
   /** La silhouette de ce qu'on va poser, quand le mode construction est armé. */
   private buildGhost!: BuildGhost
   /** Le carré du Feu : liseré, tapis, extinction du dehors (spec construction R2). */
@@ -893,6 +894,28 @@ export class WorldScene extends Phaser.Scene {
         publishHint(this.registry, muted ? `Son coupé (${t}).` : `Son rétabli (${t}).`, this.time.now)
       })
     }
+    // LA TRACTION (traction.md T1) : R attelle le cadavre le plus proche, ou détache. La
+    // sim seule juge (portée, déjà attelée) — ici on ne fait qu'ENVOYER, et dire le geste.
+    this.input.keyboard?.addKey(Phaser.Input.Keyboard.KeyCodes.R, false).on('down', () => {
+      if (this.registry.get('chatTyping') === true) return
+      const moi = this.lastEntities.find((e) => e.id === this.playerId)
+      if (moi?.attelage !== undefined) {
+        this.sendAction({ type: 'detacher' })
+        publishHint(this.registry, 'Longe relâchée.', this.time.now)
+        return
+      }
+      let proche: { id: number; d2: number } | null = null
+      for (const c of this.view.corpses) {
+        const d2 = (c.x - this.predicted.x) ** 2 + (c.y - this.predicted.y) ** 2
+        if (!proche || d2 < proche.d2) proche = { id: c.id, d2 }
+      }
+      if (!proche || proche.d2 > TRACTION.PORTEE * TRACTION.PORTEE) {
+        publishHint(this.registry, 'Rien à traîner à portée.', this.time.now)
+        return
+      }
+      this.sendAction({ type: 'atteler', kind: 'corpse', id: proche.id })
+      publishHint(this.registry, 'On traîne (R pour relâcher) — lentement, et ça s’entend.', this.time.now)
+    })
     // Le VOLUME maître (curseur du menu pause) : on publie l'état courant du moteur, et on
     // l'observe ensuite (le moteur vit ici ; le menu, dans UIScene, ne peut que poser la valeur).
     setHud(this.registry, 'audioVolume', this.audioFx.getVolume())
@@ -917,6 +940,7 @@ export class WorldScene extends Phaser.Scene {
     this.view.setChuteArbre(this.chuteArbre) // …et la chute, qui a besoin de la MÊME tuile qu'avant la dérive
     this.reveilFx = new ReveilFx(this)
     this.view.setReveilFx(this.reveilFx) // …et le sol qui travaille, qui a besoin du TERRAIN de la tuile
+    this.murmureFx = new MurmureFx(this) // les fantômes de la vieille cendre (cendre.md R27d)
     this.sangFx = new SangFx(this)
     this.view.setSangFx(this.sangFx) // …et le goutte-à-goutte des plaies, qui a besoin du sprite qui saigne
     this.buildGhost = new BuildGhost(this)
@@ -1422,6 +1446,14 @@ export class WorldScene extends Phaser.Scene {
     this.pois.lighting = litFrame // le bloc erratique (couche POI cubique) suit le même toggle
     this.bornes?.setLighting(litFrame) // les bornes de seuil aussi (da-feeling R5)
     if (this.eauEvents) this.eauEvents.lighting = litFrame // et les empreintes au sol (leur creux EST la lumière)
+    // La MATIÈRE éphémère prend la même nuit que le monde : gerbes de coup, sang, éclats de
+    // récolte, fumée des fumerolles, ligne de pêche. Les SIGNAUX (télégraphe, étincelle,
+    // chiffre, sang-écran) restent pleine couleur — la nuit ne doit pas manger une affordance.
+    this.pecheFx.lighting = litFrame
+    if (this.fumerolleFx) this.fumerolleFx.lighting = litFrame
+    this.sangFx.lighting = litFrame
+    this.recolteFx.lighting = litFrame
+    this.attackFx.setLighting(litFrame)
     // L'AVATAR bascule sur son _lit (R9 — un humain est un chip symétrique). Une fois par
     // changement de toggle : setTexture par frame réinitialiserait la frame pour rien.
     if (this.playerLit !== litFrame) {
@@ -1617,8 +1649,6 @@ export class WorldScene extends Phaser.Scene {
     // craft. Miroir pur du client — la sim revalide tout, à l'enfilage et à chaque
     // tick (spec craft-file F7, F14).
     publishStationsInRange(this.registry, this.predicted, this.view.structures)
-    // Un groupe de réfugiés à portée → la fenêtre à trois gestes (V2-25). Étouffée en overlay.
-    publishRefugeesNearby(this.registry, this.predicted, overlay ? [] : this.view.refugeeGroups)
     // LE MODAL DU FEU (spec feu-station S17-S19) : un feu OUVERT (F) résout son état / combustible /
     // cuisson + le BOUTON contextuel « Fonder » / « Améliorer » — qui REMPLACENT les deux fenêtres
     // flottantes d'avant. Jamais étouffé par l'overlay : le modal EST l'overlay.
@@ -1851,6 +1881,9 @@ export class WorldScene extends Phaser.Scene {
         this.paves.jourDeLAnnee = this.lastTime.seasonDay
         this.paves.saisonABouge()
       }
+      // LE BIEF SOUILLÉ SUIT LE JOUR (cendre.md R26d) : la souillure n'avance qu'avec l'âge
+      // des foyers — une recuisson du champ d'eau par bascule, la même loi que la sim.
+      this.water?.recuireSuie({ map: this.map, cendreAge: this.cendreAge, seed: this.worldSeed }, this.lastTime.seasonDay)
     }
     this.clutter?.update(this.cameras.main, time) // le vent : le décor plie
     this.view.renderNodes(this.cameras.main, this.predicted.x, this.predicted.y, time)
@@ -1877,6 +1910,15 @@ export class WorldScene extends Phaser.Scene {
     // LA TERRE DU RÉVEIL vole, retombe et se pose (spec `cendreux.md` R21) — même horloge et
     // même `dt` borné que la gerbe de récolte : l'horloge headless saute.
     this.reveilFx.update(time, deltaMs)
+    // LES FANTÔMES DES MURMURES (cendre.md R27d) — la nuit seulement, la même loi que la sim.
+    if (this.lastTime) {
+      this.murmureFx.update(
+        this.cameras.main,
+        { map: this.map, cendreAge: this.cendreAge, seed: this.worldSeed, tick: this.view.tick, lieuxBrules: [] },
+        this.lastTime.isNight,
+        time,
+      )
+    }
     // LE SANG vole, retombe et s'écrase — même horloge, même `dt` borné.
     this.sangFx.update(time, deltaMs)
     // LE SANG AU SOL (spec chasse C9) : la piste, et son horloge — les gouttes
@@ -3166,7 +3208,7 @@ export class WorldScene extends Phaser.Scene {
     // Le champ déclaré manque, ou le sujet n'est pas dans le snapshot : dans les deux cas il
     // est au-delà du rayon d'intérêt (le type garantit que le champ EXISTE sur ce fait-là).
     // L'ACTEUR ZÉRO N'EST PAS « LOIN », IL EST « PERSONNE ». `/sim` écrit `byEntityId: 0`
-    // quand c'est LE VILLAGE qui agit, pas quelqu'un (`refugees.ts`, `village-growth.ts` :
+    // quand c'est LE VILLAGE qui agit, pas quelqu'un (`village-growth.ts` :
     // « patron porte rituelle »). Le résoudre échouerait, et l'échec serait lu comme « hors
     // du rayon d'intérêt » — un fait qui se passe peut-être sous vos yeux, tu en silence.
     const parActeur = (id: number | undefined): { x: number; y: number } | 'monde' | 'hors' =>
@@ -3514,6 +3556,10 @@ export class WorldScene extends Phaser.Scene {
         // l'émergence d'un réveil. `emerger` les distingue sur le SITE (il rend `false` pour
         // la levée) : la sim n'a pas à porter un second nom pour un seul fait, et on ne
         // touche pas à /sim pour une question de rendu.
+        this.reveilFx.emerger(event.x, event.y, event.entityId, this.time.now)
+      } else if (event.type === 'bete_cendreuse_levee') {
+        // LA BÊTE SORT DE TERRE (cendre.md R30a) — le MÊME tertre que le Cendreux : la cendre
+        // rend ce qu'elle a pris par le même geste, l'œil n'a pas deux grammaires à apprendre.
         this.reveilFx.emerger(event.x, event.y, event.entityId, this.time.now)
       } else if (event.type === 'reveil_etouffe') {
         // LE FEU A GAGNÉ (R21). Le tertre s'affaisse et se tait : c'est le RETOUR DE GESTE
