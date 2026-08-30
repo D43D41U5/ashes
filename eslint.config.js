@@ -51,7 +51,12 @@ const simRestrictedGlobals = [
 ]
 
 export default tseslint.config(
-  { ignores: ['**/dist/**', '**/node_modules/**', 'scratchpad/**'] },
+  // `tools/__*` : LES SONDES JETABLES. Elles sont déjà hors du dépôt (`.gitignore` les
+  // exclut), et le lint les voyait quand même — une cinquantaine de fichiers d'une autre
+  // session faisaient donc rougir `pnpm lint` pour du code que personne ne relira jamais et
+  // qui ne sera jamais commité. Ce qui n'est pas versionné n'a pas à tenir la barre du dépôt ;
+  // les deux listes disent désormais la même chose.
+  { ignores: ['**/dist/**', '**/node_modules/**', 'scratchpad/**', 'tools/__*'] },
   ...tseslint.configs.recommended,
 
   // ── Garde-fou n°1 du projet : /sim est PUR (GDD §11) ──────────────────
