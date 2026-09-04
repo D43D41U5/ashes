@@ -126,9 +126,14 @@ describe('le terrain, à la taille de production', () => {
    * le temps est le numéro de tick, et un test impur finit toujours par contaminer le code
    * qu'il teste ; le journal du projet porte déjà un commit « /sim reste PUR, même dans ses
    * tests »). Le timeout de vitest fait donc office de chronomètre : si une carte de production
-   * met plus de quinze secondes à naître, ce test échoue — et c'est exactement le contrat.
+   * met plus de vingt secondes à naître, ce test échoue — et c'est exactement le contrat.
+   *
+   * Relevé de 15 à 20 s le 2026-09-04 (Alexis) : MESURÉ sur la machine de dev, la graine 909
+   * naît en 11,3 s brute, identique à HEAD~1 — mais 16,3 s sous vitest (transform + collect
+   * du même processus), et la garde rougissait sur un HEAD vierge, machine calme. Le budget
+   * garde une marge de 4 s au-dessus du relevé : une régression franche rougit encore.
    */
-  it('A13 — une carte de production naît en moins de 15 s', { timeout: 15_000 }, () => {
+  it('A13 — une carte de production naît en moins de 20 s', { timeout: 20_000 }, () => {
     const c = generateZonedTerrain(909)
     expect(c.map.terrain.length).toBe(c.map.width * c.map.height)
   })

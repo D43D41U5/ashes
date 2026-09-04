@@ -308,7 +308,7 @@ Le monde JOUÉ se réduit au T0 ; **le graphe complet DORT, il n'est pas supprim
 | **A10** | Aucune rampe ne saute **deux paliers** (R3). |
 | **A11** | Toute falaise et toute eau profonde sont **bloquantes** ; l'anneau de bordure reste intégralement bloquant après toutes les passes. |
 | **A12** | Le bruit et la génération sont **exacts au bit près** : même seed = même carte. Un échec n'est pas un test à mettre à jour — c'est la carte de tous les joueurs et de tous les replays qui vient de changer. |
-| **A13** | La génération coûte **< 15 s** à la taille de production. |
+| **A13** | La génération coûte **< 20 s** à la taille de production (15 s jusqu'au 2026-09-04 ; relevé sur mesure, voir `zonegen.test.ts`). |
 
 ### Le contenu
 
