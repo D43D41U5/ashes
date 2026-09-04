@@ -128,6 +128,13 @@ export function soundForEvent(event: SimEvent, onMe: boolean): SoundSpec | null 
       return event.parried
         ? { wave: 'triangle', freq: 900, freqEnd: 1500, dur: 0.14, gain: 0.09 }
         : { wave: 'noise', freq: 0, dur: 0.1, gain: 0.07, lowpass: 2200 }
+    // LE COUP BRISÉ : un geste qui S'AFFAISSE — la hauteur TOMBE, là où le raté monte vers
+    // l'aigu. Les deux disent « ce coup n'aura pas lieu », et l'oreille doit les séparer :
+    // le raté est un souffle qui s'ouvre, le brisé est quelque chose qu'on coupe. Court et
+    // bas de gain : il arrive TOUJOURS collé à l'impact qui l'a causé (`entity_damaged`),
+    // et il ne doit pas le doubler — il le suit, il ne le remplace pas.
+    case 'attack_interrupted':
+      return { wave: 'triangle', freq: 420, freqEnd: 150, dur: 0.12, gain: 0.06, lowpass: 2000 }
 
     // ── LE FEU — l'organe vital ──────────────────────────────────────────────────────────
     // À SEC : le fait qui condamne les murs, et qui se produisait sans un bruit. Grave,

@@ -281,6 +281,7 @@ function pointsDeSpawnDuMonde(c: ReturnType<typeof carteDeTest>, nodes: Resource
     c,
     emplacementsDeVillage(c, nodes, { coinsDeChasse: placeHuntingGrounds(c.map, c.graphe.seed), nids: nidsAMonstre(c.map) }),
     Math.ceil(MONDE.JOUEURS_CIBLE / MONDE.JOUEURS_PAR_VILLAGE),
+    c.graphe.seed,
   )
 }
 

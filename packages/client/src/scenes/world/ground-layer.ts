@@ -49,11 +49,13 @@ export class GroundLayer {
   render(camera: Phaser.Cameras.Scene2D.Camera): void {
     const { width, height } = this.map
     const v = camera.worldView
-    // Carte plate : le sol ne se soulève plus, une simple marge d'une tuile suffit dans les deux sens.
+    // Une marge d'une tuile de chaque côté — et AU SUD, le lift en plus : une tuile de terrasse se
+    // dessine `liftMaxPx` au plus au-dessus de sa rangée logique, donc une rangée sous le bas de
+    // l'écran peut encore y montrer son sol (spec `terrasses.md` T-R7).
     const tx0 = Math.max(0, Math.floor(v.x / TILE_PX) - 1)
     const ty0 = Math.max(0, Math.floor(v.y / TILE_PX) - 1)
     const tx1 = Math.min(width - 1, Math.ceil((v.x + v.width) / TILE_PX) + 1)
-    const ty1 = Math.min(height - 1, Math.ceil((v.y + v.height) / TILE_PX) + 1)
+    const ty1 = Math.min(height - 1, Math.ceil((v.y + v.height + this.warp.liftMaxPx) / TILE_PX) + 1)
     const m = gridMesh(tx0, ty0, tx1, ty1, (x, y) => this.warp.lift(x, y), TILE_PX, width, height)
     // Réassignation directe : par défaut Mesh2D lit `vertices`/`indices` à
     // chaque rendu (pas d'`useOrderedIndices` sans appel explicite à

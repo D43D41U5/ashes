@@ -1052,7 +1052,7 @@ describe('la chair procédurale (A6)', () => {
       else expect(inMine).toBe(false)
     }
     expect(a.some((n) => n.type === 'iron_vein')).toBe(true)
-    expect(nodeAt(a, a[0]!.tx, a[0]!.ty)).toBe(a[0])
+    expect(nodeAt(map, a, a[0]!.tx, a[0]!.ty)).toBe(a[0])
   })
 
   it('placement positionnel : rendre une tuile lointaine non-marchable ne redistribue pas les nœuds ailleurs', () => {
@@ -1138,7 +1138,7 @@ describe('nodeAt indexé O(1) (densité-nœuds 2026-07-09)', () => {
     // Toutes les tuiles (occupées ET vides) doivent coïncider avec le find.
     for (let ty = 0; ty < map.height; ty++) {
       for (let tx = 0; tx < map.width; tx++) {
-        expect(nodeAt(nodes, tx, ty)).toBe(linear(tx, ty))
+        expect(nodeAt(map, nodes, tx, ty)).toBe(linear(tx, ty))
       }
     }
     expect(nodes.length).toBeGreaterThan(0)
@@ -1148,12 +1148,12 @@ describe('nodeAt indexé O(1) (densité-nœuds 2026-07-09)', () => {
     const map = createEmptyMap(20, 20, TERRAIN_FOREST)
     const nodes = generateNodes(map, 7)
     const first = nodes[0]!
-    const found = nodeAt(nodes, first.tx, first.ty)
+    const found = nodeAt(map, nodes, first.tx, first.ty)
     expect(found).toBe(first)
     found!.stock = 0
     // La même référence est renvoyée : le stock mis à 0 est visible (la collision
     // lit stock>0 en direct, donc un arbre épuisé cesse de bloquer).
-    expect(nodeAt(nodes, first.tx, first.ty)!.stock).toBe(0)
+    expect(nodeAt(map, nodes, first.tx, first.ty)!.stock).toBe(0)
   })
 })
 

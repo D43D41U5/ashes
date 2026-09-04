@@ -22,7 +22,19 @@ import {
   nodeDepth,
   OVERLAY_DEPTH,
   structureDepth,
+  decalageDEtage,
+  strateDEtage,
+  ETAGE_STRATE,
+  LIFT_TUILES,
+  plateauAlpha,
+  PLATEAU_ALPHA_MIN,
+  PLATEAU_R_IN,
+  PLATEAU_R_OUT,
+  alphaDeDecouvert,
+  ROOF_DEPTH,
   TIE_ACTOR,
+  TIE_SOCLE,
+  TIE_STRUCTURE,
   VISIBLE_TILES_TALL,
   Y_SORT_BASE,
   ySortDepth,
@@ -368,5 +380,147 @@ describe('une barrière trie sur sa BANDE, pas sur sa tuile', () => {
     expect(barriereDepth(18, S, TILE, DEMI)).toBe(structureDepth(18, TILE))
     expect(barriereDepth(18, E, TILE, DEMI)).toBe(structureDepth(18, TILE))
     expect(barriereDepth(18, N | E, TILE, DEMI), 'un angle descend aussi').toBe(structureDepth(18, TILE))
+  })
+})
+
+/* ═══ LES ÉTAGES — LA STRATE, ET LE DISQUE DE DÉCOUVERT ══════════════════════
+ *
+ * CE QUI FAIT ROUGIR CE BLOC, et c'est le défaut qu'on ferme (Alexis, 2026-09-01 : « on le voit
+ * comme s'il était SUR la mesa par transparence ») : que la profondeur d'un plancher d'étage
+ * retombe sous celle d'un corps de l'étage du dessous. C'était le cas EXACT d'avant — le plateau
+ * triait entre 0 et 1, les corps à partir de 1 000 — et aucune garde ne le voyait, parce
+ * qu'aucune ne confrontait les deux échelles.
+ *
+ * On balaie donc la vallée canonique (3 600 tuiles) au lieu d'échantillonner : la propriété est
+ * de BANDE, pas de cas particulier, et c'est ce qui la rend prouvable.
+ */
+describe('étages : une strate se peint par-dessus l’autre, en entier', () => {
+  const solDEtage = (ty: number, niveau: number): number => strateDEtage(niveau) + ySortDepth(ty, TILE, 0)
+  const acteur = (feetY: number, niveau: number): number => strateDEtage(niveau) + ySortDepth(feetY, TILE, TIE_ACTOR)
+
+  it('AUCUN corps de l’étage 0 ne passe devant le plancher de l’étage 1, où qu’ils soient tous deux', () => {
+    // Le plancher LE PLUS AU NORD (rangée 0, donc le moins profond de sa strate) contre le corps
+    // LE PLUS AU SUD (le plus profond de la sienne) : si celui-là gagne, tous gagnent.
+    const leMoinsProfondDesPlanchers = solDEtage(0, 1)
+    for (let feet = 0; feet <= 3600; feet += 1) {
+      expect(acteur(feet, 0)).toBeLessThan(leMoinsProfondDesPlanchers)
+    }
+  })
+
+  it('un corps POSÉ sur le plateau reste devant le plancher qui le porte', () => {
+    // ⚠ C'est ce qui interdit de trier le plancher sur `ty + 1` : les pieds d'un corps debout sur
+    // la tuile `ty` sont en `ty + AVATAR_HITBOX_DEPTH_TILES / 2` (0,1875), pas en `ty + 1`. Sur
+    // `ty + 1`, le plancher passerait devant celui qui se tient dessus.
+    for (let ty = 0; ty <= 3600; ty += 7) {
+      expect(acteur(ty + 0.1875, 1)).toBeGreaterThan(solDEtage(ty, 1))
+      // …et voici l'autre branche, celle qu'on a écartée : sur `ty + 1`, le plancher REPASSE
+      // devant. C'est ce qu'il faut voir pour croire la ligne du dessus.
+      expect(ySortDepth(ty + 1, TILE, 0)).toBeGreaterThan(ySortDepth(ty + 0.1875, TILE, TIE_ACTOR))
+    }
+  })
+
+  it('à l’intérieur d’une strate, le tri en Y départage comme partout ailleurs', () => {
+    expect(solDEtage(11, 1)).toBeGreaterThan(solDEtage(10, 1))
+    expect(acteur(11, 1)).toBeGreaterThan(acteur(10, 1))
+  })
+
+  it('la strate dépasse toute la bande Y, et reste sous les toits et la canopée', () => {
+    expect(ETAGE_STRATE).toBeGreaterThan(ySortDepth(3600, TILE, TIE_ACTOR))
+    const leBasDuPalier = acteur(3600, 1)
+    expect(leBasDuPalier).toBeLessThan(ROOF_DEPTH)
+    expect(leBasDuPalier).toBeLessThan(CANOPY_DEPTH)
+    expect(leBasDuPalier).toBeLessThan(OVERLAY_DEPTH)
+  })
+
+  it('le dessin monte, le tri change de monde — les deux nombres ne se confondent pas', () => {
+    // Le défaut d'avant tenait en une ligne : `depth = p.depth + decalageDEtage(etage)`, c'est-à-
+    // dire trier un corps du haut à la rangée où il est DESSINÉ. Il repassait alors derrière son
+    // propre plancher dès que le lift dépassait sa demi-hitbox.
+    expect(decalageDEtage(1)).toBeLessThan(0) // à l'écran, on monte
+    expect(strateDEtage(1)).toBeGreaterThan(0) // en profondeur, on passe devant
+  })
+})
+
+describe('étages : le disque de découvert (Alexis, 2026-09-01)', () => {
+  it('sous le plateau (d ≤ R_IN) il s’efface, au-delà de R_OUT il est plein', () => {
+    expect(plateauAlpha(0)).toBe(PLATEAU_ALPHA_MIN)
+    expect(plateauAlpha(PLATEAU_R_IN)).toBe(PLATEAU_ALPHA_MIN)
+    expect(plateauAlpha(PLATEAU_R_OUT)).toBe(1)
+    expect(plateauAlpha(PLATEAU_R_OUT + 50)).toBe(1)
+  })
+
+  it('la pente est continue et monotone — sinon la découpe CLIGNOTE quand on marche', () => {
+    let precedent = -1
+    for (let d = 0; d <= PLATEAU_R_OUT + 1; d += 0.05) {
+      const a = plateauAlpha(d)
+      expect(a).toBeGreaterThanOrEqual(precedent)
+      precedent = a
+    }
+  })
+
+  it('le rayon clair COUVRE toute la portée d’occultation d’un plateau', () => {
+    // ⚠ LA GARDE QUI COMPTE, et elle s'énonce sur la position DESSINÉE : le centre d'une tuile
+    // capable de recouvrir un corps tombe dans `[f − 1 ; f + 0,5]` en Y et à ±0,9 en X — au plus
+    // ~1,2 tuile de lui. Un `R_IN` plus court laisserait, à la lisière, des tuiles à demi opaques
+    // par-dessus le joueur : le défaut qu'on prétend corriger, en moins visible.
+    const porteeReelle = Math.sqrt(0.9 * 0.9 + 1 * 1)
+    expect(PLATEAU_R_IN).toBeGreaterThanOrEqual(porteeReelle)
+    expect(PLATEAU_R_OUT).toBeGreaterThan(PLATEAU_R_IN)
+    // …et il reste NETTEMENT plus court que le disque du houppier : à six tuiles, le trou aurait
+    // fait douze tuiles de diamètre sur un cadre qui en montre vingt.
+    expect(PLATEAU_R_OUT).toBeLessThan(VISIBLE_TILES_TALL / 2)
+  })
+
+  it('le découvert se lit sur la position DESSINÉE, et se tait sans regard d’en bas', () => {
+    const corps = { x: 10, y: 20, niveau: 0 }
+    expect(alphaDeDecouvert(corps, 10.5, 20.5)).toBe(PLATEAU_ALPHA_MIN)
+    expect(alphaDeDecouvert(corps, 10.5 + PLATEAU_R_OUT, 20.5)).toBe(1)
+    expect(alphaDeDecouvert(null, 10.5, 20.5)).toBe(1)
+    expect(alphaDeDecouvert(undefined, 10.5, 20.5)).toBe(1)
+  })
+
+  it('le découvert ne part que vers le HAUT : une pièce à son niveau ou dessous reste opaque', () => {
+    // Un joueur au palier 1 d'une terrasse (spec `terrasses.md` T-R8) : la touffe du palier 1
+    // et celle du palier 0 sous lui ne cèdent pas, celle de la mesa au niveau 2 cède.
+    const corps = { x: 10, y: 20, niveau: 1 }
+    expect(alphaDeDecouvert(corps, 10.5, 20.5, 1)).toBe(1)
+    expect(alphaDeDecouvert(corps, 10.5, 20.5, 0)).toBe(1)
+    expect(alphaDeDecouvert(corps, 10.5, 20.5, 2)).toBe(PLATEAU_ALPHA_MIN)
+    // Sans niveau de pièce, l'appelant a déjà trié : elle est réputée plus haute.
+    expect(alphaDeDecouvert(corps, 10.5, 20.5)).toBe(PLATEAU_ALPHA_MIN)
+  })
+})
+
+describe('étages : le socle noir encadre le corps découvert (Alexis, 2026-09-01)', () => {
+  const socle = (yDessine: number): number => ySortDepth(yDessine, TILE, TIE_SOCLE)
+  const acteur = (feetY: number): number => ySortDepth(feetY, TILE, TIE_ACTOR)
+
+  it('le socle passe DERRIÈRE tout corps qu’il pourrait couvrir', () => {
+    // ⚠ CE QUI FERAIT ROUGIR : un socle qui passe devant le personnage — on aurait bouché la
+    // transparence au lieu de lui donner un fond. La propriété se balaie sur toute la vallée
+    // canonique : une pièce dessinée à la rangée `r` ne peut chevaucher un corps que si `r ≤ f`
+    // (elle occupe `[r, r+1]`, le sprite `[f−1,5 ; f]`), et là elle doit perdre.
+    for (let f = 0; f <= 3600; f += 1) {
+      expect(socle(f)).toBeLessThan(acteur(f)) // le cas SERRÉ : même rangée, 0,05 d'écart
+      expect(socle(f - 1)).toBeLessThan(acteur(f))
+    }
+  })
+
+  it('mais DEVANT le décor, les nœuds et le bâti — sinon il ne bouche rien', () => {
+    expect(TIE_SOCLE).toBeGreaterThan(TIE_STRUCTURE)
+    expect(TIE_SOCLE).toBeLessThan(TIE_ACTOR)
+    for (const r of [0, 10, 3600]) {
+      expect(socle(r)).toBeGreaterThan(clutterDepth(r, TILE))
+      expect(socle(r)).toBeGreaterThan(nodeDepth(r - 1, TILE))
+      expect(socle(r)).toBeGreaterThan(structureDepth(r - 1, TILE))
+    }
+  })
+
+  it('et SOUS le plancher de sa propre tuile : les deux encadrent le corps', () => {
+    // Le plancher est dans la strate du haut, le socle dans celle du bas — l'écart ne peut pas
+    // se refermer, quelle que soit la rangée.
+    for (const ty of [0, 100, 3600]) {
+      expect(socle(ty - LIFT_TUILES)).toBeLessThan(strateDEtage(1) + ySortDepth(ty, TILE, 0))
+    }
   })
 })

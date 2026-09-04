@@ -199,6 +199,24 @@ export const CRUE = 107
 export const PRIORITE_PAVE: Record<number, number> = {
   // Les rangs 0 et 1 sont aux SURFACES (eau, marais) : toute terre commence à 2.
   2: 2, // road — la sente, battue, sous toute terre (et sur le marais : une chaussée)
+  /**
+   * ═══ LE LAYON EST UN CHEMIN CREUSÉ — il passe SOUS le bois, exprès ═══
+   *
+   * *Correction d'Alexis, 2026-08-31 : « le layon devrait être plus bas que la forêt (c'est un
+   * chemin creusé) ».*
+   *
+   * Le premier jet l'avait mis au rang de la clairière (8), pour qu'il ANNONCE son bord. C'était
+   * raisonner comme une trouée, or un layon n'est pas une trouée : c'est une entaille. Au rang 3
+   * — sous la litière (4), au-dessus de la chaussée (2) — le rapport s'inverse et c'est LA FORÊT
+   * qui déborde sur LUI : sa frange de litière passe par-dessus le bord du chemin, son liseré en
+   * marque l'épaisseur, et son OMBRE PORTÉE tombe dedans. C'est cette ombre qui fait la
+   * profondeur : le chemin est en contrebas parce que le bois le surplombe, et non parce qu'on
+   * l'aurait dessiné plus sombre.
+   *
+   * Il ne disparaît pas pour autant : sa COULEUR le porte (`terrain-colors`, terre foulée claire
+   * contre la litière brune). C'est le bord qui change de camp, pas le sol.
+   */
+  31: 3, // layon — creusé : le bois le surplombe
   5: 3, // rock
   9: 3, // scree
   16: 3, // boulders
@@ -218,6 +236,7 @@ export const PRIORITE_PAVE: Record<number, number> = {
   // ce qui se lisait comme une coupe. Elle déborde donc d'une frange sur le sous-bois et sur
   // le pré, comme la fleuraie déborde sur l'herbe.
   30: 8, // clairiere
+
   11: 7, // heath
   10: 7, // snow
   15: 7, // glacier
@@ -275,8 +294,22 @@ export const SURFACES: Record<number, number> = {
 /** Les terrains STRUCTURELS : jamais propriétaires par débordement, transparents dans le chunk. */
 const STRUCTURELS = new Set<number>([0, 7, 23]) // void, wall, cliff
 
+/**
+ * LE SOL D'UN AUTRE PALIER (spec `terrasses.md` T-R7) — ce que `pave-layer` rend, dans la part
+ * du palier `p`, pour une tuile qui n'en est pas. Pas un terrain de /sim : un code de cuisson.
+ *
+ * Structurel — transparent, jamais envahi d'une frange — mais SANS LE BORD que le pavé garde
+ * contre un mur (R10) : la coupe entre deux paliers est franche à la tuile, et rien ne la
+ * souligne. MESURÉ le 2026-09-03 (smoke `terrasses`, graine 2026) : traité en mur, chaque pas
+ * est-ouest de palier portait un liseré de chaque côté — un trait ×0,55 de 2 px, tous les huit
+ * pavés (la maille des socles de `terrasses.ts`), qu'on lisait comme une couture de chunk. Au
+ * sud, la paroi (`cliff-layer`) couvre la coupe et porte sa propre arête ; au nord, le palier
+ * haut recouvre le bas ; à l'est et à l'ouest, les deux sols se touchent, à deux hauteurs.
+ */
+export const HORS_PALIER = -1
+
 export function estStructurel(t: number): boolean {
-  return STRUCTURELS.has(t)
+  return t === HORS_PALIER || STRUCTURELS.has(t)
 }
 
 /** L'eau — elle cède à toute terre, et ce qui tombe sur elle va au SURPLOMB. */
@@ -363,7 +396,7 @@ export function marqueDe(t: number): Marque | null {
 /** La priorité d'un terrain : −1 pour un structurel, le rang de surface pour l'eau et le marais,
  *  0 pour un terrain sans rang (il ne recouvre rien), sinon la table. */
 export function prioriteDe(t: number): number {
-  if (STRUCTURELS.has(t)) return -1
+  if (estStructurel(t)) return -1
   const surface = SURFACES[t]
   if (surface !== undefined) return surface
   return PRIORITE_PAVE[t] ?? 0
@@ -1006,10 +1039,13 @@ export function cuireChunk(p: CuissonChunk): ChunkCuit {
       // Le pavé du DESSOUS se lit au terrain (deux tuiles de même terrain ne font pas de bord),
       // celui du DESSUS aussi.
       const iU = i - LP, iD = i + LP, iL = i - 1, iR = i + 1
-      const basU = ownT[iU] !== t && ownP[iU]! < pk
-      const basD = ownT[iD] !== t && ownP[iD]! < pk
-      const basL = ownT[iL] !== t && ownP[iL]! < pk
-      const basR = ownT[iR] !== t && ownP[iR]! < pk
+      // Un pixel plus BAS que celui-ci : un autre terrain, de rang inférieur — le sol d'un autre
+      // palier n'en est pas un (`HORS_PALIER`) : ce bord-là n'est pas au pavé, il est à la paroi.
+      const bas = (j: number): boolean => ownT[j] !== t && ownP[j]! < pk && ownT[j] !== HORS_PALIER
+      const basU = bas(iU)
+      const basD = bas(iD)
+      const basL = bas(iL)
+      const basR = bas(iR)
       let f: number
       // LES FACTEURS PAR CANAL — neutres partout sauf dans le joint du lapiaz, qui se réchauffe
       // à peine (une fissure de calcaire est grise). Une luminance seule ne saurait pas le dire.
@@ -1022,7 +1058,7 @@ export function cuireChunk(p: CuissonChunk): ChunkCuit {
       // ressac — d'un pavé à épaisseur seulement : la boue qui glisse sur l'eau n'ombre rien.
       if (!tSurf && (basD || basL || basR)) f = PAVE.LISERE
       else if (!tSurf && basU) f = PAVE.ARETE_HAUTE
-      else if (!tSurf && ownT[iD + LP] !== t && ownP[iD + LP]! < pk) f = PAVE.TRANCHE
+      else if (!tSurf && bas(iD + LP)) f = PAVE.TRANCHE
       else if (domine(iU) || domine(iU - LP)) f = PAVE.OMBRE
       else if (domine(iU - 2 * LP)) f = PAVE.PENOMBRE
       // Le ressac : sur l'eau et la boue — jamais sur le dessous ni sur la glace (ça ne clapote pas).

@@ -13,12 +13,15 @@
  * (`isBlockedAt`, `makeIndexedIsBlockedAt` — pathfinding, IA, spawns) répondent
  * « cette tuile porte-t-elle un obstacle ? » ; les requêtes SOUS-TUILE (le
  * déplacement, `overlapsBlocking`) répondent « ce point est-il dans un
- * obstacle ? ». Un arbre bloque sa tuile pour l'A* et son seul tronc pour l'avatar.
+ * obstacle ? ». Un arbre bloque sa tuile pour l'A* et les 6 sous-tuiles centrales (0,75 tuile)
+ * pour l'avatar : les deux réponses ne se contredisent plus qu'au dernier huitième de tuile,
+ * là où l'on ne peut de toute façon pas loger un corps de 0,75 (2026-08-31).
  */
 import { BALANCE, NODE_DEFS, TERRAIN_DEEP_WATER, TERRAIN_GRASS, TERRAIN_SHALLOW_WATER, TERRAINS, TICK_DT_S } from './balance'
 import { solFoule } from './cendre'
-import { nodeAt, treeJitter, type ResourceNode } from './economy'
+import { nodeAt, type ResourceNode } from './economy'
 import { estAsseche, estGueBloque } from './eau'
+import { connecteurAt, marchableAEtage, palierDuSol, rampeQuiMonte } from './etages'
 import { estGele, gelPossible, vitesseSurGlace, vitesseSurNeige } from './gel'
 import { EDGE_E, EDGE_N, EDGE_O, EDGE_S } from './geometry'
 import { MARCHABLE, terrainAt, type WorldMap } from './map'
@@ -71,6 +74,17 @@ export interface MoveWorld {
    * s'arrêteraient sans que rien ne le dise (`npc.ts`, `moveWorldFor`).
    */
   opensDoors?: boolean
+  /**
+   * LES ÉTAGES QUE CE PAS PEUT OCCUPER (spec `etages.md` E-R1), dans l'ordre — le courant
+   * d'abord. Absent = **l'étage 0 seul**, et c'est le chemin d'aujourd'hui, au bit près : c'est
+   * `etagesDuPas` (`etages.ts`) qui décide de le remplir, et il ne le remplit que pour un
+   * marcheur en l'air ou posé sur un connecteur.
+   *
+   * Deux valeurs — le cas de la rampe — veulent dire que la tuile est franchissable si elle
+   * porte à L'UN des deux. L'étage retenu à l'arrivée, lui, est l'affaire d'`etageApresLePas` :
+   * la collision dit ce qui est possible, elle ne décide pas où l'on est.
+   */
+  etages?: readonly number[]
   /**
    * L'ÉTAT, ET POUR UNE SEULE RAISON : LE GEL (spec `gel.md` G4).
    *
@@ -152,6 +166,47 @@ function edgeDeborde(world: MoveWorld, tx: number, ty: number, bit: number): boo
  * ⚠ COORDONNÉES DE TUILE, TOUJOURS. Les appelants sous-tuile plancher avant d'appeler.
  */
 function terrainBloque(world: MoveWorld, tx: number, ty: number): boolean {
+  // ═══ L'ÉTAGE, ET IL S'ARRÊTE ICI (spec `etages.md` E-R1) ═══
+  //
+  // `etages` absent — 100 % des déplaceurs du jeu d'aujourd'hui, et tous ceux d'un monde sans
+  // étage — repart au chemin d'en dessous, au bit près. C'est ce qui rend la couche gratuite :
+  // rien n'est ajouté au balayage par sous-tuile tant que personne n'est monté.
+  //
+  // Quand il est là, la question change de sujet : elle n'est plus « le sol du monde bloque-t-il ? »
+  // mais « bloque-t-il À TOUS LES ÉTAGES QUE CE PAS PEUT OCCUPER ? ». Sur une rampe (deux étages
+  // ouverts), la tuile du chapeau est donc franchissable alors qu'elle est de la roche au sol :
+  // c'est ce franchissement-là, et lui seul, qui fait monter sur une mesa.
+  //
+  // « Le sol » d'une tuile, c'est SON PALIER (spec `terrasses.md` T-R2) — 0 sur une carte sans
+  // terrasses, donc le monde d'avant au bit près. Un pas au niveau p vers une tuile de palier q ≠ p
+  // ne lit plus le sol : il cherche une grille creuse au niveau p (une rampe, un chapeau), et n'en
+  // trouve pas devant un mur de terrasse. C'est ce refus-là, et lui seul, qui fait la paroi.
+  const etages = world.etages
+  if (etages !== undefined) {
+    const sol = palierDuSol(world.map, tx, ty)
+    for (const e of etages) {
+      if (e === sol ? !terrainBloqueAuSol(world, tx, ty) : marchableAEtage(world.map, e, tx, ty)) return false
+    }
+    return true
+  }
+  return terrainBloqueAuSol(world, tx, ty)
+}
+
+/**
+ * LE TERRAIN DE L'ÉTAGE 0 — le corps historique, inchangé, et le seul qui connaisse le TEMPS
+ * (le gel, la crue). Un étage supérieur est de la roche à l'air libre : ni gué à fermer, ni lac
+ * à geler. Le jour où un étage portera de l'eau, c'est ici que les deux se rejoindront.
+ */
+/**
+ * L'ÉTAGE OÙ CE DÉPLACEUR SE TIENT — le premier de `etages` (la liste est ordonnée, le courant en
+ * tête), 0 par défaut. C'est LUI qui décide de quels nœuds et de quelles structures on parle : un
+ * rocher du pierrier ne barre pas le pas de celui qui marche vingt pixels au-dessus de lui.
+ */
+function etageCourant(world: MoveWorld): number {
+  return world.etages?.[0] ?? 0
+}
+
+function terrainBloqueAuSol(world: MoveWorld, tx: number, ty: number): boolean {
   // UNE SEULE LECTURE DE TERRAIN, et par `MARCHABLE` plutôt que par `TERRAINS` — la table
   // existe pour ça (« la poser à TERRAINS coûte un accès de propriété, la poser à un
   // Uint8Array coûte une lecture », `map.ts`). L'équivalence est celle qu'annonce sa doc :
@@ -194,6 +249,12 @@ export function isBlockedAt(world: MoveWorld, tx: number, ty: number): boolean {
  * question que la collision se pose vraiment.
  */
 function bloquantAt(world: MoveWorld, tx: number, ty: number, pleineTuile: boolean): Structure | undefined {
+  // ⚠ **LE BÂTI VIT AU SOL — celui de SA tuile** (specs `etages.md`, `terrasses.md` T-R2) : rien
+  // ne se construit encore sur un étage, donc un mur de ferme ne barre pas le dessus d'une mesa ;
+  // et une ferme posée sur la terrasse haute bloque bien qui marche sur cette terrasse. Le jour où
+  // l'on bâtira là-haut, c'est `Structure` qui gagnera son `etage` — et le palier de la tuile,
+  // ici, deviendra `s.etage ?? palierDuSol(…)`.
+  if (etageCourant(world) !== palierDuSol(world.map, tx, ty)) return undefined
   const mover = world.moverVillageId ?? null
   const portes = world.opensDoors ?? false
   for (const s of world.structures ?? []) {
@@ -221,6 +282,7 @@ function bloquantAt(world: MoveWorld, tx: number, ty: number, pleineTuile: boole
  * exhaustive sur les paires ordonnées × toutes les sous-tuiles.
  */
 function bloqueSousTuile(world: MoveWorld, tx: number, ty: number, sx: number, sy: number): boolean {
+  if (etageCourant(world) !== palierDuSol(world.map, tx, ty)) return false // le bâti vit au sol de sa tuile — voir `bloquantAt`
   const mover = world.moverVillageId ?? null
   const portes = world.opensDoors ?? false
   for (const s of world.structures ?? []) {
@@ -244,7 +306,10 @@ function blockedAt(world: MoveWorld, tx: number, ty: number): boolean {
     if (bloquantAt(world, tx, ty, true) !== undefined) return true
   }
   if (world.nodes) {
-    const n = nodeAt(world.nodes, tx, ty)
+    // ⚠ **À SON ÉTAGE.** Sans le paramètre, un bloc posé sur le pierrier d'en bas barrait le pas
+    // de qui marche sur le plateau — un obstacle invisible, sans un mot : exactement la classe de
+    // défaut que le gel de l'avatar reposé a déjà coûtée.
+    const n = nodeAt(world.map, world.nodes, tx, ty, etageCourant(world))
     if (n !== undefined && n.stock > 0 && NODE_DEFS[n.type].blockHalfSub > 0) return true
   }
   return false
@@ -349,6 +414,13 @@ function occupancyOf(world: MoveWorld): Map<number, Occupant> {
   if (world.nodes) {
     for (const n of world.nodes) {
       if (n.tx < 0 || n.ty < 0 || n.tx >= width || n.ty >= height) continue
+      // ⚠ **L'INDEX EST CELUI DU SOL** (spec `etages.md`) : un bloc posé sur le dessus d'une mesa
+      // n'a rien à barrer au pied de la butte. Sans ce filtre, il bloquait l'A* et le champ de
+      // flux d'un marcheur qui passe DESSOUS — un obstacle invisible, à douze mètres de là.
+      // Les étages ont leur propre prédicat (`makeIsBlockedAtEtage`), bâti à la demande : ils
+      // portent trois ordres de grandeur de tuiles en moins, un index plein n'y a pas de sens.
+      // « Le sol », c'est le palier de la tuile du nœud (T-R2) : un nœud sans `etage` y est.
+      if ((n.etage ?? palierDuSol(world.map, n.tx, n.ty)) !== palierDuSol(world.map, n.tx, n.ty)) continue
       const entry = entryAt(n.tx, n.ty)
       if (entry.node === undefined) entry.node = n
     }
@@ -363,8 +435,35 @@ function occupancyOf(world: MoveWorld): Map<number, Occupant> {
   return occupancy
 }
 
-export function makeIndexedIsBlockedAt(world: MoveWorld): (tx: number, ty: number) => boolean {
+/**
+ * ═══ LE MÊME PRÉDICAT, MAIS POUR UN ÉTAGE — et il est BÂTI À LA DEMANDE ═══
+ *
+ * L'index de `makeIndexedIsBlockedAt` matérialise l'occupation de TOUTE la carte : c'est le bon
+ * geste pour un plan de 3,75 M de tuiles interrogé des centaines de milliers de fois. Un étage,
+ * lui, porte cinq mille tuiles et une centaine de nœuds — trois ordres de grandeur en dessous.
+ * On ne lui bâtit donc rien : un `Set` des tuiles bloquées, monté une fois par recherche, et la
+ * marchabilité se lit à la source (`marchableAEtage`, dichotomie sur `idx`).
+ *
+ * ⚠ **NI STRUCTURES NI GEL** : rien ne se bâtit encore sur un étage, et un plateau n'a pas d'eau
+ * à geler. Le jour où l'un des deux arrive, c'est ici qu'il entre — en un point, comme le gel est
+ * entré dans `terrainBloque`.
+ */
+export function makeIsBlockedAtEtage(world: MoveWorld, etage: number): (tx: number, ty: number) => boolean {
+  return makeIndexedIsBlockedAt(world, etage)
+}
+
+/**
+ * LE PRÉDICAT INDEXÉ, À UN NIVEAU DONNÉ — le niveau du marcheur (`etageCourant`) par défaut.
+ *
+ * Une tuile a UN sol, à SON palier (spec `terrasses.md` T-R2). Interrogée à ce niveau-là, elle
+ * répond par le chemin historique — terrain (le gel compris), index d'occupation. Interrogée à un
+ * autre niveau, elle n'a que ce qu'une grille creuse y porte (une rampe, un chapeau, une cave) et
+ * les nœuds posés à cet étage : ni bâti, ni gel — rien de tout cela n'y monte encore. Sans
+ * terrasses, `etage` vaut 0 partout où l'on marche au sol : le monde d'avant, au bit près.
+ */
+export function makeIndexedIsBlockedAt(world: MoveWorld, etage: number = etageCourant(world)): (tx: number, ty: number) => boolean {
   const { width, height } = world.map
+  const map = world.map
   const occupancy = occupancyOf(world)
   const moverVillageId = world.moverVillageId ?? null
   const portes = world.opensDoors ?? false
@@ -372,9 +471,27 @@ export function makeIndexedIsBlockedAt(world: MoveWorld): (tx: number, ty: numbe
   // pas de la tuile, et un champ de flux pose la question des centaines de milliers de fois.
   // Le tick ne bouge pas pendant un BFS : hisser la réponse ne change donc aucun résultat.
   const gel = world.etat !== undefined && gelPossible(world.etat)
+  // LES NŒUDS HORS SOL, à cet étage : un `Set` monté une fois par prédicat — un étage porte cent
+  // nœuds, trois ordres de grandeur sous l'index plein, qui n'aurait aucun sens ici.
+  let horsSol: Set<number> | undefined
+  const bloqueHorsSol = (tx: number, ty: number): boolean => {
+    if (horsSol === undefined) {
+      horsSol = new Set<number>()
+      for (const n of world.nodes ?? []) {
+        if (n.etage === undefined || n.etage !== etage || n.etage === palierDuSol(map, n.tx, n.ty)) continue
+        if (n.stock > 0 && NODE_DEFS[n.type].blockHalfSub > 0) horsSol.add(n.ty * width + n.tx)
+      }
+    }
+    return horsSol.has(ty * width + tx)
+  }
+  // Un monde sans paliers ni étages : le prédicat d'avant, sans un test de plus par tuile.
+  const plat = map.palier === undefined && map.etages === undefined
   return (tx: number, ty: number): boolean => {
     if (tx < 0 || ty < 0 || tx >= width || ty >= height) return blockedAt(world, tx, ty)
-    if (gel ? terrainBloque(world, tx, ty) : MARCHABLE[terrainAt(world.map, tx, ty)] !== 1) return true
+    if (!plat && palierDuSol(map, tx, ty) !== etage) {
+      return !marchableAEtage(map, etage, tx, ty) || bloqueHorsSol(tx, ty)
+    }
+    if (gel ? terrainBloqueAuSol(world, tx, ty) : MARCHABLE[terrainAt(world.map, tx, ty)] !== 1) return true
     const entry = occupancy.get(ty * width + tx)
     if (entry === undefined) return false
     if (entry.structures !== undefined) {
@@ -408,20 +525,18 @@ function blockedSubAt(world: MoveWorld, sx: number, sy: number): boolean {
     if (lx >= SUB - WALL_HALF && edgeDeborde(world, tx + 1, ty, EDGE_O)) return true
   }
   if (world.nodes) {
-    const n = nodeAt(world.nodes, tx, ty)
+    const n = nodeAt(world.map, world.nodes, tx, ty, etageCourant(world))
     if (n !== undefined && n.stock > 0) {
       const h = NODE_DEFS[n.type].blockHalfSub
       if (h > 0) {
-        // Un arbre est décalé dans sa tuile (spec décalage d'origine) ; les
-        // autres nœuds restent centrés. La borne J + h/SUB ≤ 0,5 garantit que le
-        // carré décalé reste dans la tuile, donc regarder le seul nœud d'ici suffit.
-        let cx = tx * SUB + SUB / 2
-        let cy = ty * SUB + SUB / 2
-        if (n.type === 'tree') {
-          const { dx, dy } = treeJitter(tx, ty)
-          cx += dx * SUB
-          cy += dy * SUB
-        }
+        // TOUS LES NŒUDS SONT CENTRÉS SUR LEUR TUILE (2026-08-31). L'arbre l'était seul à ne pas
+        // l'être : son décalage d'origine déplaçait sprite ET bande bloquante du même flottant,
+        // et c'est ce qui rendait l'obstacle imprévisible — le tronc vivait dans une fenêtre de
+        // ±0,3 tuile qu'aucun repère ne montrait. Le décalage est remonté sur le HOUPPIER
+        // (`TREE_JITTER_TILES`), qui ne bloque rien. Le carré est donc toujours dans sa tuile :
+        // regarder le seul nœud d'ici suffit, sans borne à tenir.
+        const cx = tx * SUB + SUB / 2
+        const cy = ty * SUB + SUB / 2
         if (sx >= cx - h && sx < cx + h && sy >= cy - h && sy < cy + h) return true
       }
     }
@@ -642,7 +757,138 @@ export function moveAvatar(
   const factor = glace ?? neige ?? (asseche ? TERRAINS[TERRAIN_GRASS]!.speedFactor : terrain?.walkable ? terrain.speedFactor : 1)
   const speed = BALANCE.WALK_SPEED_TILES_PER_S * dtS * factor * speedScale
   const norm = dx !== 0 && dy !== 0 ? Math.SQRT1_2 : 1
-  return resolveMove(world, x, y, dx * speed * norm, dy * speed * norm)
+  const pasX = dx * speed * norm
+  const pasY = dy * speed * norm
+  return resolveMove(
+    world, x, y,
+    brideDeLaJoue(world, x, y, pasX),
+    distanceSurLaRampe(world, x, y, dy, pasY, speed * norm),
+  )
+}
+
+/**
+ * ═══ UNE RAMPE EST UNE ENTAILLE : ON NE SORT PAS PAR SES JOUES ═══
+ *
+ * *Alexis, 2026-09-01 : « j'arrive à sortir de la rampe par les côtés, on ne peut traverser que
+ * dans le sens de la rampe ».* Et il a raison contre le code : le DESSIN peint déjà des JOUES de
+ * roche de part et d'autre de l'entaille (`plateau-art.ts` — `JOUE`, `JOUE_LEVRE`), donc on
+ * traversait de la pierre. Pire, on en sortait **à mi-hauteur** : le corps, dessiné une tuile
+ * plus haut, retombait d'un coup au niveau du pierrier.
+ *
+ * ⚠ **LA RÈGLE SE LIT SUR LE DESSIN, elle ne s'invente pas.** `EtageLayer.poserLaRampe` peint une
+ * joue exactement là où la tuile voisine n'est PAS une rampe (`cotes = (ouest ? 4 : 0) | (est ?
+ * 2 : 0)`). La fermeture est donc le même prédicat, à la lettre : **on passe d'une tuile de rampe
+ * à l'autre — la porte fait `CREUX.RAMPE_LARGEUR` tuiles de large — et jamais au-delà.** Deux
+ * écritures d'une même géométrie divergeraient ; celle-ci est la traduction directe de l'autre.
+ *
+ * Et elle est SYMÉTRIQUE : on n'entre pas non plus dans l'entaille par le flanc. Sans quoi on
+ * pénétrerait la joue au niveau du sol pour se retrouver soulevé — le même saut, à l'envers.
+ *
+ * ⚠ **AUCUN PIÈGE** : le nord et le sud restent ouverts, donc une rampe se quitte toujours par où
+ * l'on est venu. Et rien ne change hors d'une rampe : sortie immédiate sans connecteur.
+ */
+function brideDeLaJoue(world: MoveWorld, x: number, y: number, pasX: number): number {
+  if (pasX === 0 || world.map.connecteurs === undefined) return pasX
+  const ty = Math.floor(y)
+  const dedans = (tx: number): boolean => connecteurAt(world.map, tx, ty) !== undefined
+  const cible = x + pasX
+  // L'ENTAILLE QUI CONCERNE CE PAS : celle que le corps touche déjà, ou celle qu'il aborde. Au
+  // plus quatre sondes — les deux bords, avant et après — puis on étend au RUN contigu, parce
+  // qu'une porte fait `CREUX.RAMPE_LARGEUR` tuiles et qu'on passe librement de l'une à l'autre.
+  let ancre = -1
+  for (const t of [
+    Math.floor(x - HALF_X), Math.floor(x + HALF_X),
+    Math.floor(cible - HALF_X), Math.floor(cible + HALF_X),
+  ]) {
+    if (dedans(t)) { ancre = t; break }
+  }
+  if (ancre < 0) return pasX
+  let x0 = ancre
+  while (dedans(x0 - 1)) x0 -= 1
+  let x1 = ancre + 1
+  while (dedans(x1)) x1 += 1
+  // ⚠ **LA RÈGLE PORTE SUR LE CORPS ENTIER, PAS SUR SON BORD AVANT.** Première écriture : on
+  // bridait le bord qui attaque. Il venait alors se poser PILE sur la limite — et au pas suivant
+  // ce bord-là était « dedans », donc le pas repartait, et le corps traversait en deux temps. Ce
+  // qu'on veut dire est plus simple et ne se contourne pas : *une entaille se traverse tout
+  // entier ou pas du tout* — dedans, le corps y tient en entier ; dehors, il ne la mord pas.
+  if (x - HALF_X >= x0 && x + HALF_X <= x1) {
+    return Math.max(x0 + HALF_X, Math.min(x1 - HALF_X, cible)) - x
+  }
+  if (x + HALF_X <= x0) return Math.min(cible, x0 - HALF_X) - x
+  if (x - HALF_X >= x1) return Math.max(cible, x1 + HALF_X) - x
+  // À CHEVAL — inatteignable en jeu (on ne peut ni entrer ni sortir à moitié), mais un respawn ou
+  // un TP de debug peut l'y mettre : on laisse alors le pas libre plutôt que d'en faire une
+  // prison. C'est le même choix que le repli d'`etageApresLePas` : on ne fige jamais un corps.
+  return pasX
+}
+
+/**
+ * ═══ LA RAMPE NE RALENTIT QUE CE QUI LA GRAVIT — et elle le fait SANS À-COUP ═══
+ *
+ * *Alexis, 2026-09-01, en trois temps : « le personnage va trop vite en montant ou en descendant »,
+ * puis « il y a un petit bump vers le haut en bas et haut de la rampe », puis « le ralentissement
+ * ne doit avoir lieu que dans la direction de la rampe ».* Les trois se répondent ici.
+ *
+ * **① SEUL L'AXE NORD-SUD RALENTIT.** Une rampe monte vers le nord (« le nord est le haut ») : ce
+ * qui coûte, c'est de la GRAVIR. Longer sa rangée d'est en ouest ne gagne pas un pouce de hauteur
+ * et ne doit rien coûter — un facteur posé sur la vitesse ENTIÈRE faisait patauger celui qui
+ * passe simplement devant. En diagonale, la composante qui monte est ralentie, l'autre non.
+ *
+ * **② LE PAS QUI FRANCHIT LA LIMITE EST INTÉGRÉ, il n'est pas approché.** `moveAvatar` lit son
+ * allure à la tuile où le pas COMMENCE. Sur une frontière ordinaire (herbe → route) l'écart de
+ * facteur est petit et personne ne le voit ; ici l'allure change d'un facteur trois ET la pente
+ * dessinée aussi, dans le même sens — le tick qui chevauche la limite parcourait donc tout son
+ * chemin à l'allure d'un côté en étant dessiné avec la pente de l'autre. MESURÉ, sur la mesa de
+ * laboratoire : **−6,39 px à l'entrée** (le double d'un pas) et **−2,17 px à la sortie** (les deux
+ * tiers), quand le régime de croisière fait −3,20 px. C'est exactement le « petit bump » — un en
+ * bas, un en haut, tous deux vers le haut de l'écran.
+ *
+ * On répartit donc le TEMPS du tick entre les deux allures, au point où la limite est franchie :
+ * on court jusqu'au bord à l'allure d'ici, et le temps qui reste se dépense à l'allure de là-bas.
+ * Deux tronçons suffisent — un pas fait quelques centièmes de tuile, il ne peut pas en traverser
+ * deux. C'est de l'intégration exacte, pas un lissage : à l'arrêt, en marche arrière et à
+ * n'importe quelle fraction de tuile, la vitesse À L'ÉCRAN est la même partout.
+ *
+ * ⚠ **ET LE MONDE SANS MESA NE PAIE RIEN, au bit près.** Sortie immédiate sans connecteur, et
+ * sortie immédiate quand ni la tuile de départ ni celle qu'on entame n'est une rampe qui monte :
+ * le pas rendu est alors `pasY` lui-même, l'objet que l'appelant aurait calculé de toute façon.
+ * C'est ce qui interdit à ce correctif de déplacer le moindre pas ailleurs sur la carte.
+ */
+function distanceSurLaRampe(
+  world: MoveWorld,
+  x: number,
+  y: number,
+  dy: -1 | 0 | 1,
+  pasY: number,
+  /** Ce qu'un tick parcourt SUR LE SOL d'ici (facteur de terrain et diagonale compris) — c'est
+   *  l'allure de référence, et la rampe en prend le tiers : le ralentissement est RELATIF au pas
+   *  du lieu, donc la neige ou la glace d'une rampe comptent encore, et le rapport de trois avec
+   *  la rangée d'à côté tient quel que soit le sol. */
+  pasDuSol: number,
+): number {
+  if (dy === 0 || world.map.connecteurs === undefined) return pasY
+  const tx = Math.floor(x)
+  const arrivee = Math.floor(y + pasY)
+  const rampeDepart = rampeQuiMonte(world.map, tx, Math.floor(y)) !== undefined
+  const rampeArrivee = arrivee === Math.floor(y) ? rampeDepart : rampeQuiMonte(world.map, tx, arrivee) !== undefined
+  if (!rampeDepart && !rampeArrivee) return pasY
+  // L'allure de chaque côté : la rampe, ou celle que l'appelant a calculée pour le sol.
+  const solV = pasDuSol
+  const rampeV = pasDuSol * BALANCE.RAMPE_VITESSE
+  const vDepart = rampeDepart ? rampeV : solV
+  if (!rampeDepart || !rampeArrivee) {
+    // On CHANGE d'allure en chemin : on court jusqu'au bord, puis on dépense le temps qui reste.
+    // `bord` = ce qui reste de la tuile courante dans le sens du pas.
+    const bord = dy < 0 ? y - Math.floor(y) : Math.floor(y) + 1 - y
+    if (vDepart > 0 && bord < vDepart) {
+      const vArrivee = rampeArrivee ? rampeV : solV
+      // La part du tick déjà dépensée pour atteindre le bord, puis ce que l'autre allure en fait.
+      const reste = 1 - bord / vDepart
+      return dy * (bord + vArrivee * reste)
+    }
+  }
+  return dy * vDepart
 }
 
 /**

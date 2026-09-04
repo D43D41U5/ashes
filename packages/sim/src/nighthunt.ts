@@ -24,6 +24,7 @@
  */
 import { BALANCE, MORTS, NIGHT_HUNT } from './balance'
 import { emitEvent } from './events'
+import { atteignableEntreEtages, niveauDuCorps, palierDuSol } from './etages'
 import { distSq } from './geometry'
 import { placeSousPlafondGlobal, spawnMonster } from './monsters'
 import { densiteDesMorts, rodeursPortes, siteDansLaCouronne } from './morts'
@@ -173,14 +174,22 @@ export function advanceNightHunt(state: SimState): void {
   }
 }
 
-/** La distance à laquelle un rôdeur est « sur nous » — pour l'UI, pas pour la sim. */
-export function prowlerNear(state: SimState, x: number, y: number, radius: number): boolean {
+/**
+ * La distance à laquelle un rôdeur est « sur nous » — pour l'UI, pas pour la sim.
+ *
+ * ⚠ **`etage` N'EST PAS DÉCORATIF ICI, MÊME POUR DE L'UI** (spec `etages.md` E-R5) : un bandeau
+ * qui annonce un rôdeur qu'un plancher sépare de vous ment, et il ment au pire moment — celui
+ * où l'on décide de rester ou de fuir. Absent ≡ 0, donc tout l'existant.
+ */
+export function prowlerNear(state: SimState, x: number, y: number, radius: number, etage = palierDuSol(state.map, Math.floor(x), Math.floor(y))): boolean {
   for (const m of state.monsters) {
     // Depuis le basculement d'espèce (R11), un rôdeur de nuit peut être un mort : ne compter
     // que les loups aurait rendu l'acte III muet à l'UI, exactement quand elle sert le plus.
     if (m.type !== 'wolf' && !(m.type === 'cendreux' && m.nightHunter === true)) continue
     const e = state.entities.find((en) => en.id === m.entityId)
-    if (e && distSq(e.x, e.y, x, y) <= radius * radius) return true
+    if (e === undefined || distSq(e.x, e.y, x, y) > radius * radius) continue
+    if (!atteignableEntreEtages(state.map, e.x, e.y, niveauDuCorps(state.map, e), x, y, etage)) continue
+    return true
   }
   return false
 }

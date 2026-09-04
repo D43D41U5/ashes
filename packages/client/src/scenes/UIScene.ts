@@ -129,6 +129,9 @@ export class UIScene extends Phaser.Scene {
   /** Le compte à rebours qui fait retomber le voile — un timer PHASER (`this.time`,
    *  piloté par la boucle de jeu, pausable), pas un `window.setTimeout` peu fiable ici. */
   private deathHideTimer?: Phaser.Time.TimerEvent
+  /** A-t-on VU l'avatar à terre ? Tant que non, l'absence de `playerDown` n'est pas
+   *  « relevé » mais « pas encore su » — sans quoi le voile clignoterait. */
+  private vuATerre = false
   private chatPanel!: ChatPanel
   private journalPanel!: Phaser.GameObjects.Container
   private journalText!: Phaser.GameObjects.Text
@@ -279,6 +282,12 @@ export class UIScene extends Phaser.Scene {
     // `deathMoment` (one-shot horodaté).
     this.bandeaux = createBandeaux()
     this.deathVeil = createDeathVeil()
+    // LE GESTE QUI REFERME — branché ICI, à la construction, et une seule fois. Il ne
+    // l'était NULLE PART : « SE RELEVER » était un bouton mort, et la seule sortie de
+    // l'écran de mort était le filet de 30 s. On ne le branche surtout pas dans le
+    // one-shot de `update` (`onRelever` empile ses écouteurs sans les retirer : la
+    // N-ième mort aurait rappelé le geste N fois).
+    this.deathVeil.onRelever(() => this.demanderARelever())
     // La stèle de fin de saison (finition GATE 1) : SŒUR du voile de mort, terminale.
     // WorldScene pose `seasonVerdicts` au jour 61 (sa non-nullité = fin de saison) ; on la lève une fois.
     // ROUVRIR LA VALLÉE : la case et la seed du monde en cours (posées au `ready` par
@@ -780,6 +789,29 @@ export class UIScene extends Phaser.Scene {
   }
 
   /**
+   * ON DEMANDE À SE RELEVER — le geste, ou le filet. Un SEUL chemin, pour que le bouton et le
+   * minuteur de secours fassent exactement la même chose.
+   *
+   * ⚠ IL NE REFERME RIEN LUI-MÊME (décision d'Alexis, 2026-08-31). Depuis que la sim laisse le
+   * corps à terre, se relever est une ACTION, pas un effet d'écran : on la POSE, et le voile
+   * ne retombe qu'au snapshot où l'avatar est vraiment debout (`refermerLeVoile`). Fondre le
+   * voile tout de suite rendrait le monde à l'œil pendant l'aller-retour — on regarderait son
+   * propre cadavre en attendant. La sim est autoritative jusque sur le rideau.
+   */
+  private demanderARelever(): void {
+    this.deathHideTimer?.remove()
+    queueAction(this.registry, { type: 'respawn' })
+  }
+
+  /** Le voile retombe — la sim a confirmé le réveil. WorldScene lit `deathVeilOpen` pour
+   *  reposer la caméra au Feu et rendre la main, dans la frame où le fondu commence. */
+  private refermerLeVoile(): void {
+    this.deathHideTimer?.remove()
+    this.deathVeil.hide()
+    setHud(this.registry, 'deathVeilOpen', false)
+  }
+
+  /**
    * LES DEUX BANDEAUX — l'alerte et le conseil (audit UX 2026-08-20, P0.2, défaut cardinal).
    *
    * Ils étaient deux `Phaser.GameObjects.Text` lisant chacun UNE CASE du registre. Deux
@@ -954,11 +986,24 @@ export class UIScene extends Phaser.Scene {
       // ON SE RELÈVE, ON N'EST PAS REMIS EN JEU (décision d'Alexis, question ⑥). Le voile
       // attend le GESTE ; ce timer n'est plus qu'un FILET, dix fois plus long — un écran
       // modal dont la seule sortie est un bouton devient un piège si ce bouton se tait.
+      // Depuis que la sim garde le corps à terre, ce filet POSE l'action lui aussi : un
+      // bouton muet ne condamnerait plus trente secondes, il condamnerait la partie.
       this.deathHideTimer?.remove()
-      this.deathHideTimer = this.time.delayedCall(DEATH_VEIL_FILET_MS, () => {
-        this.deathVeil.hide()
-        setHud(this.registry, 'deathVeilOpen', false)
-      })
+      this.deathHideTimer = this.time.delayedCall(DEATH_VEIL_FILET_MS, () => this.demanderARelever())
+    }
+    // LE VOILE SUIT LA SIM (décision d'Alexis, 2026-08-31) : il tient tant que l'avatar est à
+    // terre, et ne retombe qu'au snapshot où il s'est vraiment relevé — pas sur le clic, qui
+    // ne fait que le DEMANDER. C'est aussi ce qui rattrape la partie rechargée en gisant :
+    // aucun événement à attendre, l'état suffit.
+    //
+    // ⚠ IL FAUT L'AVOIR VU À TERRE. `playerDown` est posé par WorldScene ; tant qu'on ne l'a
+    // pas vu vrai, son absence ne veut pas dire « relevé » mais « pas encore su ». Sans cette
+    // mémoire, le voile se lèverait et retomberait dans la même image.
+    const aTerre = getHud(this.registry, 'playerDown') === true
+    if (aTerre) this.vuATerre = true
+    if (this.vuATerre && !aTerre && getHud(this.registry, 'deathVeilOpen') === true) {
+      this.vuATerre = false
+      this.refermerLeVoile()
     }
     // La file, elle, se voit TOUJOURS : une file bouchée (sac plein) ou en pause
     // (station quittée) doit se remarquer sans aller ouvrir un menu (spec F15).

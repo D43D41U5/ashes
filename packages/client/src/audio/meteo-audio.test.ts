@@ -81,15 +81,23 @@ describe('R9 — on l’entend avant de le voir (intensiteEntendue)', () => {
 })
 
 /** Une nappe espionne : retient chaque `regler`, pour compter et relire. */
-function nappeEspion(): { nappe: Nappe; appels: { niveau: number; hz: number; fonduS: number }[] } {
+function nappeEspion(): {
+  nappe: Nappe
+  appels: { niveau: number; hz: number; fonduS: number }[]
+  arrets: number[]
+} {
   const appels: { niveau: number; hz: number; fonduS: number }[] = []
+  const arrets: number[] = []
   return {
     appels,
+    arrets,
     nappe: {
       regler: (niveau, hz, fonduS) => {
         appels.push({ niveau, hz, fonduS })
       },
-      arreter: () => {},
+      arreter: () => {
+        arrets.push(1)
+      },
     },
   }
 }
@@ -116,6 +124,33 @@ describe('SonsDuCiel — la machine à états des nappes', () => {
     expect(pluie.appels.length).toBe(2)
     expect(vent.appels[vent.appels.length - 1]!.niveau).toBeCloseTo(LITS.blizzard.vent.gain / 2, 10)
     expect(sons.sonde.gainVent).toBeCloseTo(LITS.blizzard.vent.gain / 2, 10)
+  })
+
+  it('TAIRE arrête les deux nappes — sans quoi la pluie survit à la partie', () => {
+    // LE DÉFAUT QU'ON FERME (Alexis, 2026-08-31 : « ça reste même sur l'écran d'accueil pendant
+    // des minutes ») : une nappe est une source BOUCLÉE sur le master du MOTEUR, qui survit au
+    // `shutdown` de la scène. Sans extinction explicite, quitter une partie sous l'averse
+    // laissait la pluie tourner sur le menu, pour toujours.
+    const pluie = nappeEspion()
+    const vent = nappeEspion()
+    const sons = new SonsDuCiel()
+    const ouvre = (forme: 'pluie' | 'vent'): Nappe => (forme === 'pluie' ? pluie.nappe : vent.nappe)
+    sons.update(ouvre, 'orage', 1)
+    expect(pluie.appels.length).toBe(1) // PRÉMISSE : il pleut vraiment avant qu'on se taise
+    expect(pluie.arrets.length).toBe(0)
+
+    sons.taire()
+    expect(pluie.arrets.length).toBe(1)
+    expect(vent.arrets.length).toBe(1)
+    expect(sons.sonde.gainPluie).toBe(0)
+
+    // ET LA VEILLÉE SUIVANTE REPART DU SILENCE : les nappes sont relâchées, donc `update`
+    // en REDEMANDE au moteur (une cible mémorisée sur des nœuds morts ne se reposerait jamais).
+    const pluie2 = nappeEspion()
+    const vent2 = nappeEspion()
+    sons.update((f) => (f === 'pluie' ? pluie2.nappe : vent2.nappe), 'orage', 1)
+    expect(pluie2.appels.length).toBe(1)
+    expect(pluie.appels.length).toBe(1) // l'ancienne nappe ne reçoit plus rien
   })
 })
 

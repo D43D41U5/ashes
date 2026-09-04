@@ -5,7 +5,7 @@
  * propriété affirmée à chaque fois est UNE propriété de l'image cuite — jamais un pixel choisi.
  */
 import { describe, expect, it } from 'vitest'
-import { COTE_E, COTE_N, COTE_O, COTE_S, LAPIAZ, soleilDuPavement, PAVE, PAVE_COTE, PAVE_COTE_BAVE, PAVE_PX, PRIORITE_PAVE, SURFACES, cuireChunk, engrenageGagne, estEau, mouchetureIci, estStructurel, estSurface, frange, prioriteDe } from './paves'
+import { COTE_E, COTE_N, COTE_O, COTE_S, HORS_PALIER, LAPIAZ, soleilDuPavement, PAVE, PAVE_COTE, PAVE_COTE_BAVE, PAVE_PX, PRIORITE_PAVE, SURFACES, cuireChunk, engrenageGagne, estEau, mouchetureIci, estStructurel, estSurface, frange, prioriteDe } from './paves'
 import { TERRAIN_BOULDERS, TERRAINS } from '@ashes/sim'
 
 const N = PAVE.CHUNK
@@ -163,6 +163,29 @@ describe('la cuisson d’un chunk', () => {
     expect(falaiseOpaque).toBe(0)
     expect(herbeTransparente).toBe(0)
     expect(cuit.surplomb).toBeNull() // pas d'eau : pas de surplomb
+  })
+
+  it('T-R7 — le sol d’un autre palier est transparent comme une falaise, mais sans liseré', () => {
+    // Moitié gauche herbe, moitié droite : un mur (R10) puis l'autre palier. Même colonne de bord.
+    const bord = (N / 2) * PAVE_PX - 1
+    const mur = cuire((tx) => (tx < N / 2 ? 1 : 7))
+    const palier = cuire((tx) => (tx < N / 2 ? 1 : HORS_PALIER))
+    expect(estStructurel(HORS_PALIER)).toBe(true)
+    expect(prioriteDe(HORS_PALIER)).toBe(-1)
+    let autreOpaque = 0
+    let bordMur = 0
+    let bordPalier = 0
+    let interieur = 0
+    for (let y = 1; y < S - 1; y++) {
+      for (let x = (N / 2) * PAVE_PX; x < S; x++) if (px(palier, x, y)[3] !== 0) autreOpaque++
+      bordMur += px(mur, bord, y)[0]
+      bordPalier += px(palier, bord, y)[0]
+      interieur += px(palier, bord - 4, y)[0]
+    }
+    expect(autreOpaque).toBe(0)
+    // Contre le mur, le liseré assombrit la colonne de bord ; contre l'autre palier, rien.
+    expect(bordMur / interieur).toBeLessThan(0.7)
+    expect(Math.abs(bordPalier / interieur - 1)).toBeLessThan(0.05)
   })
 
   it('LA BERGE — la terre déborde sur l’eau dans le SURPLOMB, l’eau nue reste au shader', () => {

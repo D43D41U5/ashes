@@ -126,6 +126,23 @@ export interface WorldMap {
    */
   fil?: number[]
   /**
+   * TOUS LES FLEUVES du pays, du plus gros au plus petit — `fil` est le premier d'entre eux.
+   *
+   * Depuis le 2026-08-30, l'hydrologie est DÉRIVÉE du drainage : il y a autant de fleuves que le
+   * relief en fabrique de gros troncs, et « la » rivière n'existe plus comme entité. Le champ est
+   * ADDITIF : absent quand le pays n'en porte qu'un, et une carte d'avant se relit sans.
+   */
+  fils?: number[][]
+  /**
+   * LES LACS (2026-09-03) : les tuiles que les passes d'eau ont inondées EN NAPPE — cuvettes
+   * de la Racine, mares et grand lac des zones —, par opposition à l'eau qui coule. C'est la
+   * donnée qui dit ce qui est PLAT : une nappe tient sur un palier de terrasse, un fleuve
+   * descend en cascades (`terrasses.ts`, T-A3). Index de tuile ; une tuile listée peut ne plus
+   * être de l'eau (isthme comblé, seuil rouvert) — le terrain a le dernier mot. ADDITIF : omis
+   * sans lac, et une carte d'avant se relit sans.
+   */
+  lacs?: number[]
+  /**
    * LA PROFONDEUR INTRA-MASSIF (spec t0-exploration §2quater R38) : par tuile, la distance au
    * bord de son massif boisé de la Racine (érosion 8-connexe, plafonnée à `CREUX.PROF_CAP`),
    * 0 partout ailleurs. **Donnée STATIQUE, gelée à l'amorce** — comme `cendre` : calculée une
@@ -176,6 +193,41 @@ export interface WorldMap {
    * à teinter. Aucune règle de sim ne la lit.
    */
   affleurements?: { x: number; y: number; w: number; h: number; ressource: 'fer' | 'charbon' }[]
+  /**
+   * ═══ LES ÉTAGES (spec `etages.md` E-R1/E-R2) — les couches superposées à ce plan ═══
+   *
+   * L'étage 0, c'est `terrain` : le tableau plein, ci-dessus, et il ne change PAS de forme.
+   * `etages` ne porte que les autres — des grilles CREUSES (le chapeau d'une mesa, demain une
+   * galerie), superposées à la MÊME grille de coordonnées, chacune avec son propre terrain.
+   *
+   * **C'est ce champ qui satisfait « le souterrain n'apparaît pas sur la carte générale » par
+   * construction** : tout ce qui lit `terrain` — `vignette.ts`, le champ de cendre, le bake du
+   * sol — continue de ne voir que l'étage 0, sans une exception à écrire.
+   *
+   * Donnée STATIQUE, gelée à l'amorce, comme `distEau` et `profondeur`. Additive : une carte
+   * d'avant se relit sans (il n'y a alors qu'un étage, et rien d'autre ne change).
+   */
+  etages?: import('./etages').EtageCreux[]
+  /**
+   * ═══ LE PALIER DU SOL (spec `terrasses.md` T-R1) — les terrasses intrazone ═══
+   *
+   * Par tuile, row-major comme `terrain` : l'ÉTAGE que le sol porte ici (`0..PALIERS−1`). La tuile
+   * `(x,y)` est marchable à cet étage-là et à lui seul ; deux voisines de paliers différents sont
+   * séparées par une paroi que rien ne repeint — `terrain` ne bouge pas d'une tuile, la carte
+   * générale et tout ce qui la lit voient le même plan (E-A6, par construction).
+   *
+   * Absent ≡ 0 partout : une carte d'avant, et le monde complet (`'vallee'`), se relisent sans un
+   * bit de différence. Lu par `palierDuSol` (`etages.ts`), jamais à la main. Donnée STATIQUE,
+   * gelée à l'amorce, comme `distEau` et `profondeur`.
+   */
+  palier?: number[]
+  /**
+   * LES CONNECTEURS (E-R7/E-R8) — rampes, gueules, escaliers. Une DONNÉE, jamais une devinette
+   * du terrain, et le SEUL passage entre deux étages (comme le seuil entre deux zones). C'est
+   * eux que lit la règle d'atteignabilité (`atteignableEntreEtages`), et c'est en les bouchant
+   * qu'on prouve qu'un étage est bien une île (E-A4). Additive, comme `etages`.
+   */
+  connecteurs?: import('./etages').Connecteur[]
 }
 
 /**

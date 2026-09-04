@@ -26,6 +26,15 @@ export function lerpColor(c1: number, c2: number, t: number): number {
   return (rr << 16) | (gg << 8) | bb
 }
 
+/** Le PRODUIT de deux teintes plates, canal par canal — ce que fait une lumière colorée qui
+ *  traverse un filtre (la lumière de l'heure, puis la nuit du plateau). */
+export function produitCouleurs(c1: number, c2: number): number {
+  const rr = Math.round((((c1 >> 16) & 0xff) * ((c2 >> 16) & 0xff)) / 255)
+  const gg = Math.round((((c1 >> 8) & 0xff) * ((c2 >> 8) & 0xff)) / 255)
+  const bb = Math.round(((c1 & 0xff) * (c2 & 0xff)) / 255)
+  return (rr << 16) | (gg << 8) | bb
+}
+
 /** Paire de keyframes encadrant `hour` (horloge murale) + facteur d'interpolation. */
 function bracket<T extends { hour: number }>(keys: T[], hour: number): { lo: T; hi: T; t: number } {
   const h = ((hour % 24) + 24) % 24

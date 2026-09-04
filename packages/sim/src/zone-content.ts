@@ -33,6 +33,7 @@ import {
   TERRAIN_OLD_GROWTH,
   TERRAIN_PINE,
   TERRAIN_ROAD,
+  TERRAIN_CLIFF,
   TERRAIN_ROCK,
   TERRAIN_SCREE,
   TERRAIN_BOULDERS,
@@ -44,14 +45,17 @@ import {
   type NodeType,
   TERRAIN_CLAIRIERE,
 } from './balance'
+import { palierDuSol } from './etages'
 import { CENDRE, coutDe } from './cendre'
+import { walkableComponents, type WalkableComponents } from './connectivity'
 import type { ResourceNode } from './economy'
 import { distSq } from './geometry'
 import { profondeurAt, terrainAt, type WorldMap } from './map'
 import { fbm2, hash2 } from './noise'
 import { estCoeur, TERRAINS_BOISES_MASSIF, TERRAINS_FEUILLUS } from './profondeur'
 import { CREUX } from './racine-relief'
-import { type CarteZonee } from './zonegen'
+import { rngRoll } from './rng'
+import { RELIEF, type CarteZonee } from './zonegen'
 import { EAU, estUnCoude } from './zonegen-water'
 import { MONDE } from './zonegraph'
 
@@ -97,7 +101,28 @@ export const CONTENU = {
    *
    * `ECHELLE` = la taille des groupes quand les arbres se rassemblent. `PAS` GRAND = rare.
    */
-  ARBRES_FORET_PAS: 5,
+  /**
+   * ⚠ **5 → 3,5 le 2026-08-31** *(Alexis : « il faut que la forêt soit plus dense »)*, et c'est
+   * l'arrivée des LAYONS qui le rend tenable : densifier une forêt où le vide est du bruit, c'est
+   * la rendre pénible ; densifier une forêt qui a des CHEMINS, c'est lui donner ses murs.
+   *
+   * MESURÉ (monde joué, graine 2026, layons en place) — la part des tuiles boisées portant un
+   * arbre, la surface effectivement MURÉE (à `blockHalfSub` 3, chaque arbre prend 0,75 × 0,75
+   * tuile), et la part des tuiles libres tenant dans la composante connexe géante :
+   *
+   *   | PAS | tuiles avec arbre | surface murée | composante géante |
+   *   |-----|-------------------|---------------|-------------------|
+   *   |  5  |      22,2 %       |    12,5 %     |      99,37 %      |  ← avant
+   *   |  4  |      27,3 %       |    15,3 %     |      99,34 %      |
+   *   | 3,5 |      30,9 %       |    17,4 %     |      99,30 %      |  ← ici
+   *   |  3  |      35,8 %       |    20,1 %     |      99,16 %      |
+   *   | 2,5 |      42,5 %       |    23,9 %     |      98,74 %      |  ← la connexité décroche
+   *
+   * LA COLONNE QUI COMMANDE EST LA DERNIÈRE. Jusqu'à 3 la carte reste d'un seul tenant ; à 2,5
+   * elle commence à faire des poches, et une poche est un joueur enfermé. C'est là qu'est le
+   * plancher, pas dans le goût qu'on a de la densité.
+   */
+  ARBRES_FORET_PAS: 3.5,
   ARBRES_PRE_PAS: 90,
   ARBRES_ECHELLE: 22,
 
@@ -597,6 +622,16 @@ export function placeZoneNodes(c: CarteZonee): ResourceNode[] {
   // TOUTES les passes appendues l'héritent par l'ensemencement de leurs `occupees` — une
   // passe future ne peut pas l'oublier.
   const steriles = (c.map.coulees ?? []).filter((i) => i >= 0)
+  // ⚠ **UNE PORTE D'ÉTAGE NE NOURRIT RIEN NON PLUS** (2026-09-02) — la rampe de mesa et la gueule
+  // de cave sont des seuils au même titre que `c.rampe`, et le semis tourne APRÈS le worldgen
+  // sans rien en savoir. MESURÉ avant cette ligne : un rocher SUR la gueule (293,106) de la
+  // graine 2026 — le corps de 0,75 ne passait plus qu'à 294,5 —, un arbre ET une branche sur les
+  // deux tuiles de la gueule (1112..1113, 275) de la graine 99 : une cave scellée ; et deux des
+  // trois tuiles d'une rampe (1315..1316, 85) plantées d'arbres sur la graine 4242. La rampe
+  // avait été ÉLARGIE plutôt que protégée (`zonegen.ts`, « rampe murée ») pour ne pas toucher au
+  // décompte des nœuds ; la gueule fait deux tuiles par décision d'Alexis et n'a pas cette marge.
+  // Coût : ≤ 10 nœuds sur 60 000 par graine.
+  const portes = (c.map.connecteurs ?? []).map((k) => k.y * width + k.x)
   // LA TUILE DU SOMMET d'une butte reste NUE (§2sexies R48bis) : le client y dresse le chicot.
   // Réservée ICI, à la source — le semis principal passait AVANT les passes de butte et pouvait
   // y poser un rocher de la table ordinaire (attrapé par la garde A29, seed 7).
@@ -606,15 +641,15 @@ export function placeZoneNodes(c: CarteZonee): ResourceNode[] {
   // `blocsDuChaos` seul y repose la pierre, sur ses galeries. Sans ce masque, le semis ordinaire
   // aurait laissé ses rochers au milieu des masses, où le bloc les aurait emmurés.
   const chaos = tuilesDuChaos(c)
-  const sterileSet = new Set([...steriles, ...sommets, ...chaos])
+  const sterileSet = new Set([...steriles, ...portes, ...sommets, ...chaos])
   // ⚠ `occupeesPlus` PORTE LE CHAOS, `occupeesDuChaos` NE LE PORTE PAS — et c'est toute la
   // différence. Le chaos appartient à `blocsDuChaos` seul : sans le masque ici, les passes
   // appendues (le pierrier du pré, le glanage, la carrière) y déposaient encore des nœuds au
   // milieu des masses — MESURÉ avant de le poser : 8 rochers, 31 branches et 3 pierres au sol
   // injoignables, exactement le défaut qu'« on doit pouvoir spawn des nodes accessibles »
   // interdit. Et le glanage cesse du même coup de coucher du bois mort sur la roche nue.
-  const occupeesPlus = (): Set<number> => new Set([...nodes.map((n) => n.ty * width + n.tx), ...steriles, ...sommets, ...chaos])
-  const occupeesDuChaos = (): Set<number> => new Set([...nodes.map((n) => n.ty * width + n.tx), ...steriles, ...sommets])
+  const occupeesPlus = (): Set<number> => new Set([...nodes.map((n) => n.ty * width + n.tx), ...steriles, ...portes, ...sommets, ...chaos])
+  const occupeesDuChaos = (): Set<number> => new Set([...nodes.map((n) => n.ty * width + n.tx), ...steriles, ...portes, ...sommets])
   const seed = (c.graphe.seed ^ 0x51ab3f77) | 0
   let id = 1
 
@@ -661,6 +696,66 @@ export function placeZoneNodes(c: CarteZonee): ResourceNode[] {
       // Le stock d'un ARBRE passe par `stockDArbre` (§2quater R40) : au cœur d'un massif,
       // le vieux fût — partout ailleurs, le défaut du type, à l'identique d'avant.
       nodes.push({ id, type, tx, ty, stock: type === 'tree' ? stockDArbre(c.map, tx, ty) : NODE_DEFS[type].stock, regrowAt: 0 })
+      id += 1
+    }
+  }
+
+  /** La roche pleine d'une tuile — le même prédicat que le rendu de falaise, hors carte compris. */
+  const estRocheDure = (m: typeof c.map, x: number, y: number): boolean => {
+    if (x < 0 || y < 0 || x >= m.width || y >= m.height) return true
+    const tt = m.terrain[y * m.width + x]
+    return tt === TERRAIN_ROCK || tt === TERRAIN_CLIFF
+  }
+
+  // ═══ LE SEMIS DES ÉTAGES — « comme le reste de la map » (spec `etages.md`) ═══════════════
+  //
+  // Décision d'Alexis, 2026-09-01 : *« on doit appliquer le terrain, les nodes, POI etc. comme le
+  // reste de la map — on construit une map en terrasse »*. Le dessus d'une mesa porte donc ses
+  // nœuds, tirés de la MÊME table que le sol, sur le terrain que l'étage porte vraiment.
+  //
+  // ⚠ **UNE PASSE APPENDUE, ET C'EST DÉLIBÉRÉ.** Elle vient APRÈS la boucle principale et ne
+  // touche pas une ligne d'elle : les identifiants de l'étage 0 ne bougent pas d'un cran, et son
+  // semis reste octet pour octet celui d'avant. (Ce fichier ne tire d'ailleurs rien du PRNG : tout
+  // est hash POSITIONNEL. Ce qui change ici, c'est le NOMBRE de nœuds — et c'est assumé, c'est
+  // très exactement ce qu'on est venu ajouter.)
+  //
+  // ⚠ **LES TUILES DE RAMPE NE NOURRISSENT RIEN**, exactement comme `c.rampe` pour les seuils :
+  // une porte est un passage, pas un jardin — et un bloc posé là murait la seule entrée du
+  // plateau, ce que `CREUX.RAMPE_LARGEUR` a déjà eu à réparer une fois.
+  //
+  // TOUS LES ÉTAGES QUI SONT UN DESSUS DE BUTTE (spec `terrasses.md` T-R4) : un étage est une
+  // grille creuse à un niveau, et une tuile n'est un chapeau que là où ce niveau est « le palier
+  // du sol + 1 ». Les caves (palier − 1) ne poussent rien ; les rampes des terrasses, au niveau du
+  // haut, sont des portes. Le nœud est ESTAMPILLÉ de son niveau : il n'est pas au sol.
+  const portesSet = new Set(portes)
+  for (const etage of c.map.etages ?? []) {
+    const selEtage = (seed ^ 0x45544147) | 0 // 'ETAG'
+    for (let k = 0; k < etage.idx.length; k++) {
+      const i = etage.idx[k]!
+      if (portesSet.has(i)) continue
+      const t = etage.terrain[k]!
+      if (!TERRAINS[t]?.walkable) continue
+      const tx = i % width
+      const ty = (i - tx) / width
+      if (etage.niveau !== palierDuSol(c.map, tx, ty) + 1) continue
+      // ⚠ **RIEN NE POUSSE SUR LA LÈVRE SUD D'UN PLATEAU.** C'est une règle de monde avant
+      // d'être une règle de dessin : les `PAROI_RANGEES` dernières rangées d'un chapeau sont son
+      // BORD — la roche y tombe à pic, il n'y a ni terre ni abri. Et c'est ce même bord que le
+      // rendu montre de FACE (`roleDeFalaise`) : un bloc semé là flotterait sur le mur. Un seul
+      // fait, deux conséquences qui tombent ensemble.
+      let sousLaLevre = 0
+      while (sousLaLevre < RELIEF.PAROI_RANGEES && estRocheDure(c.map, tx, ty + sousLaLevre + 1)) sousLaLevre += 1
+      if (sousLaLevre < RELIEF.PAROI_RANGEES) continue
+      const bosquet = fbm2(tx, ty, CONTENU.ECHELLE_BOSQUET, (selEtage ^ 0x2f9e) | 0)
+      const chance = (1 / CONTENU.PAS_SEMIS) * (0.35 + 1.6 * bosquet)
+      if (hash2(tx, ty, selEtage) >= chance) continue
+      const type = tirerType(c, c.zone[i]!, t, tx, ty, selEtage)
+      if (!type) continue
+      nodes.push({
+        id, type, tx, ty, etage: etage.niveau,
+        stock: type === 'tree' ? stockDArbre(c.map, tx, ty) : NODE_DEFS[type].stock,
+        regrowAt: 0,
+      })
       id += 1
     }
   }
@@ -2434,13 +2529,19 @@ export function emplacementsDeVillage(c: CarteZonee, nodes: ResourceNode[], dang
   return out
 }
 
-/** Un carré tout marchable autour du point : la place nette d'un foyer. */
+/**
+ * Un carré tout marchable autour du point : la place nette d'un foyer. **Et d'UN SEUL PALIER**
+ * (spec `terrasses.md` T-A4) : un village ne se coupe pas d'un mur de terrasse, et le spawn —
+ * qui se choisit parmi ces sites — naît sur du plat.
+ */
 function degage(c: CarteZonee, tx: number, ty: number): boolean {
   const { width, terrain } = c.map
   const r = CONTENU.DEGAGEMENT
+  const palier = palierDuSol(c.map, tx, ty)
   for (let y = ty - r; y <= ty + r; y++) {
     for (let x = tx - r; x <= tx + r; x++) {
       if (!TERRAINS[terrain[y * width + x]!]?.walkable) return false
+      if (palierDuSol(c.map, x, y) !== palier) return false
     }
   }
   return true
@@ -2454,11 +2555,41 @@ function degage(c: CarteZonee, tx: number, ty: number): boolean {
  * tuile, ce sont cinquante joueurs qui se disputent le même arbre à la minute deux. On les
  * disperse sur les emplacements viables de la racine, les plus écartés qu'on trouve — un semis
  * glouton max-min, déterministe.
+ *
+ * ═══ LE PREMIER POINT SE TIRE, IL NE SE CALCULE PLUS (décision d'Alexis, 2026-08-31) ═══
+ *
+ * *« On choisit aléatoirement un spawn sur la map, mais sur la landmass principale. »*
+ *
+ * Le point d'ancrage était *le plus proche du cœur de la racine* — un choix parfaitement
+ * déterministe, et parfaitement immobile : MESURÉ sur dix graines, le premier spawn tombait
+ * toujours dans le mouchoir `x ∈ [720, 920], y ∈ [352, 640]` d'une carte de 1581×852. Changer de
+ * graine changeait la vallée, jamais l'endroit où l'on ouvrait les yeux. Le vivier, lui, couvre
+ * TOUTE la carte (39 à 46 sites, `x ∈ [72, 1512]`) — le tirage ne fait que s'en servir.
+ *
+ * Le tirage suit la GRAINE DU MONDE (flux dédié `^ 'SPWN'`, invariant n°2) : deux parties de même
+ * graine s'ouvrent au même endroit, comme elles ouvrent sur la même vallée. Le semis max-min qui
+ * suit est inchangé — il part simplement d'ailleurs.
+ *
+ * ═══ ET JAMAIS SUR UNE ÎLE (même décision) ═══
+ *
+ * `emplacementsDeVillage` ne sait dire que *marchable* : un carré dégagé au milieu d'un lac est
+ * un site viable à ses yeux. Depuis que l'hydrologie est DÉRIVÉE (`zonegen-hydro.ts`), la carte
+ * porte 21 à 70 composantes marchables — la principale en fait 97,5 à 99,5 %, le reste est fait
+ * d'îlots. **MESURÉ le 2026-08-31 : sur la graine 2026 — la vallée canonique, celle de `?solo` et
+ * de tous les smokes — le premier spawn tombait sur une poche de 1 499 tuiles**, coupée des
+ * 99,4 % du monde. Le joueur naissait dans un enclos, sans un mot.
+ *
+ * La règle n'a pas d'exception : un point de naissance appartient à la plus grande composante
+ * marchable, ou n'est pas un point de naissance.
  */
 export function pointsDeSpawn(
   c: CarteZonee,
   emplacements: Emplacement[],
   combien: number,
+  /** La graine du monde : le tirage du premier point en dérive (flux dédié). */
+  seed: number,
+  /** Les composantes du marchable, si l'appelant les a déjà — sinon on les calcule (O(tuiles)). */
+  comp?: WalkableComponents,
 ): Emplacement[] {
   /**
    * ═══ ON NE NAÎT PAS SUR LE PAS D'UNE FOSSE (spec `cendre.md` R10) ═══
@@ -2484,20 +2615,27 @@ export function pointsDeSpawn(
     return d < 0 || d >= CENDRE.ECART_SPAWN * CENDRE.ORTHO
   }
   const dansLaRacine = emplacements.filter((e) => e.zone === c.graphe.racine)
-  const loin = dansLaRacine.filter(assezLoin)
+
+  // LA LANDMASS PRINCIPALE, D'ABORD — avant même la fosse : on ne naît pas sur une île.
+  const composantes = comp ?? walkableComponents(c.map)
+  const surLeContinent = dansLaRacine.filter(
+    (e) => composantes.label[e.ty * c.map.width + e.tx] === composantes.main,
+  )
+  // ⚠ REPLI EXPLICITE, comme celui de la fosse : une carte dégénérée (tout en poches, aucun
+  // marchable) rend ses sites plutôt que RIEN — mieux vaut naître sur un îlot que ne pas naître.
+  const continent = surLeContinent.length > 0 ? surLeContinent : dansLaRacine
+
+  const loin = continent.filter(assezLoin)
   // ⚠ REPLI EXPLICITE : si l'écart ne laisse rien (carte dégénérée, monde minuscule), on rend les
   // sites de la racine plutôt que RIEN — mieux vaut naître près d'une fosse que ne pas naître.
-  const dans = loin.length > 0 ? loin : dansLaRacine
+  const dans = loin.length > 0 ? loin : continent
   if (dans.length === 0) return []
 
-  const r = c.graphe.zones[c.graphe.racine]!
-  // On part du plus proche du cœur de la racine — un point d'ancrage déterministe…
-  let depart = dans[0]!
-  let bestD = Infinity
-  for (const e of dans) {
-    const d = distSq(e.tx, e.ty, r.x, r.y)
-    if (d < bestD) { bestD = d; depart = e }
-  }
+  // On part d'un site TIRÉ AU SORT dans le vivier — la graine du monde décide, et elle seule.
+  // (`rngFloat` rend un flottant de [0, 1) : l'index reste dans les bornes ; la garde `min` ne
+  // sert qu'à rendre l'invariant lisible sur place.)
+  const tirage = rngRoll((seed ^ 0x5350574e /* 'SPWN' */) >>> 0)
+  const depart = dans[Math.min(dans.length - 1, Math.floor(tirage.value * dans.length))]!
   const out = [depart]
   // …puis chaque suivant est celui qui est le PLUS LOIN de tous les déjà pris.
   while (out.length < combien && out.length < dans.length) {

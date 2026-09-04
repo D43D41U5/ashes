@@ -97,6 +97,8 @@ interface Gouttelette {
   vie: number
   /** Déjà posée ? La tache ne s'écrase qu'une fois. */
   posee: boolean
+  /** La strate du corps touché (`strateDeProfondeur`) : le sang naît dans son monde. */
+  strate: number
 }
 
 // Des IMAGES `__WHITE` teintées, pas des `Rectangle` : les Shapes n'ont pas le composant
@@ -114,9 +116,10 @@ export class SangFx {
   /**
    * LA GICLÉE d'un coup porté. `x/y` : le pied du sprite touché (px monde) ;
    * `fromX/fromY` : d'où le coup est venu. Sans origine, pas de giclée — même règle
-   * que la gerbe d'impact, mêmes raisons.
+   * que la gerbe d'impact, mêmes raisons. `strate` : celle du sprite touché
+   * (`strateDeProfondeur(sprite.depth)`), 0 sur une carte plate.
    */
-  gicler(x: number, y: number, amount: number, now: number, fromX?: number, fromY?: number): void {
+  gicler(x: number, y: number, amount: number, now: number, fromX?: number, fromY?: number, strate = 0): void {
     if (fromX === undefined || fromY === undefined) return
     const axe = axeOppose(x, y, fromX, fromY)
     if (!axe) return
@@ -128,7 +131,7 @@ export class SangFx {
       // trou dans un jet de six gouttes se voit (leçon de la gerbe de récolte).
       const part = n === 1 ? 0.5 : i / (n - 1)
       const a = base + (part - 0.5 + (rnd() - 0.5) * 0.3) * 2 * DEMI_EVENTAIL
-      this.pousser(x, y, a, GICLEE, rnd, now, i)
+      this.pousser(x, y, a, GICLEE, rnd, now, i, strate)
     }
   }
 
@@ -137,13 +140,13 @@ export class SangFx {
    * pour chaque acteur qui saigne. `x/y` : le pied du sprite (px monde). `graine` :
    * l'identité de l'acteur, pour que deux bêtes ne gouttent pas à l'identique.
    */
-  goutter(x: number, y: number, now: number, graine: number): void {
+  goutter(x: number, y: number, now: number, graine: number, strate = 0): void {
     const rnd = semis((graine ^ Math.round(now)) | 1)
     // La goutte naît un peu à côté de l'axe du corps — une plaie n'est pas au centre.
-    this.pousser(x + (rnd() - 0.5) * 7, y, rnd() * Math.PI * 2, GOUTTE, rnd, now, 0)
+    this.pousser(x + (rnd() - 0.5) * 7, y, rnd() * Math.PI * 2, GOUTTE, rnd, now, 0, strate)
   }
 
-  private pousser(x: number, y: number, angle: number, loi: LoiSang, rnd: () => number, now: number, i: number): void {
+  private pousser(x: number, y: number, angle: number, loi: LoiSang, rnd: () => number, now: number, i: number, strate: number): void {
     if (this.gouttelettes.length >= MAX_GOUTTELETTES) {
       this.gouttelettes.shift()?.img.destroy() // la plus vieille s'efface : le sang neuf prime
     }
@@ -155,7 +158,7 @@ export class SangFx {
       .image(Math.round(x), Math.round(y - z), '__WHITE')
       .setDisplaySize(cote, cote)
       .setTint(ton)
-      .setDepth(ySortDepth(y / TILE_PX, TILE_PX, TIE_ACTOR))
+      .setDepth(strate + ySortDepth(y / TILE_PX, TILE_PX, TIE_ACTOR))
     img.setLighting(this.lighting)
     this.gouttelettes.push({
       img,
@@ -171,6 +174,7 @@ export class SangFx {
       ne: now, // la vie court depuis le DESSIN, pas depuis l'événement (leçon recolte-fx)
       vie: loi.vie,
       posee: false,
+      strate,
     })
   }
 
@@ -210,7 +214,7 @@ export class SangFx {
       // de la brume rose, pas du sang.
       e.img.setAlpha(k < 0.65 ? 1 : 1 - (k - 0.65) / 0.35)
       e.img.setPosition(Math.round(e.x), Math.round(e.y - e.z))
-      e.img.setDepth(ySortDepth(e.y / TILE_PX, TILE_PX, TIE_ACTOR))
+      e.img.setDepth(e.strate + ySortDepth(e.y / TILE_PX, TILE_PX, TIE_ACTOR))
     }
   }
 

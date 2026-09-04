@@ -152,6 +152,12 @@ export interface GrainFut {
  */
 export function champDeHauteur(
   e: Ecorce, W: number, H: number, x0: number, x1: number, tons: TonsFut, seed = 7,
+  /**
+   * L'EMPATTEMENT — la demi-extension de la collerette, rangée par rangée EN PARTANT DU BAS
+   * (`empattementRangs` d'`arbre-art`, la seule écriture de cette forme). Absent : un fût nu,
+   * comme avant le 2026-08-31.
+   */
+  empattement: readonly number[] = [],
 ): GrainFut {
   const Wc = x1 - x0
   const relief = new Float32Array(W * H)
@@ -208,6 +214,34 @@ export function champDeHauteur(
         if (col >= debut && col < debut + longueur) t = tons.sombre
       }
       ton[i] = t
+    }
+  }
+
+  /* ═══ L'EMPATTEMENT — la collerette de racines, et c'est ELLE qui montre la hitbox ═══
+   *
+   * Elle est peinte APRÈS la colonne et DÉBORDE de part et d'autre : sa rangée du sol fait
+   * exactement le carré bloquant (`empattementW`). Sans elle, le fût dessiné (mince, à sa
+   * proportion d'arbre) sous-estimait l'obstacle d'un facteur deux, et rien à l'écran ne disait
+   * où l'on butait — la flaque de contact seule ne fait pas une forme lisible sous une canopée.
+   *
+   * SON RELIEF DESCEND VERS L'EXTÉRIEUR (`0.75 → 0.3`) : une racine n'est pas un socle carré,
+   * elle plonge. C'est ce qui la fait lire comme du bois qui s'enfonce plutôt que comme un
+   * piédestal — et la normale cubique (`passes:1, k:3.5`) en tire une facette franche.
+   */
+  for (let k = 0; k < empattement.length; k++) {
+    const ext = empattement[k]!
+    const y = H - 1 - k
+    if (y < 0) break
+    for (let d = 1; d <= ext; d++) {
+      // Le fondu vers le bord : plein contre le fût, presque plat à l'extrémité.
+      const h = 0.75 - 0.45 * ((d - 1) / Math.max(1, ext))
+      for (const x of [x0 - d, x1 - 1 + d]) {
+        if (x < 0 || x >= W) continue
+        const i = y * W + x
+        relief[i] = h
+        // La collerette prend la terre : ton de CORPS, jamais le pan clair du fût.
+        ton[i] = tons.corps
+      }
     }
   }
   return { relief, ton }

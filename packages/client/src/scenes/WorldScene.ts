@@ -100,18 +100,22 @@ import { getHud, setHud, type Placeable } from '../hud-state'
 import {
   AMBIENT_DEPTH,
   AMBIENT_DEPTH_LIT,
+  LIFT_TUILES,
   lookaheadOffset,
   OVERLAY_DEPTH,
+  strateDeProfondeur,
   TILE_PX,
   VISIBLE_TILES_TALL,
   zoomForFraming,
 } from '../render/framing'
+import { deplierLeLift } from '../render/deplier-etage'
 import { MUR_HT } from '../render/bati-art'
 import { rafraichirCimes } from '../render/lit-trees'
 import { cranDeSaison } from '../render/teinte-saison'
-import { airSansLune, ambientTint, daylight, fireGlow, fireHoleRadius, heureCanonique, heureSolaire, lerpColor, lueurDeLune, partSansLune, plancherDeNuit, voileDeNuit, LUNE_PLEINE_JOUR } from '../render/lighting'
+import { airSansLune, ambientTint, daylight, fireGlow, fireHoleRadius, flicker, heureCanonique, heureSolaire, lerpColor, lueurDeLune, multiplicateurDuVoile, partSansLune, plancherDeNuit, produitCouleurs, voileDeNuit, LUNE_PLEINE_JOUR } from '../render/lighting'
 import { partDeNuitDesLucioles } from '../render/couvre-feu-lucioles'
 import { createWarp, type Warp } from '../render/warp'
+import { creerRelief, type Relief } from '../render/relief'
 import { axesFeu } from '../render/feu-variante'
 import {
   drainQueuedActions,
@@ -142,6 +146,7 @@ import { ambianceDe, moduler } from '../render/zone-ambiance'
 import { TERRAIN_COLORS } from '../render/terrain-colors'
 import { contexteDesButtes, fondDeButte, tacheDeButte } from '../render/buttes'
 import { CliffLayer } from './world/cliff-layer'
+import { EtageLayer } from './world/etage-layer'
 import { PoiLayer } from './world/poi-layer'
 import { BorneLayer } from './world/borne-layer'
 import { CombeMist } from './world/combe-mist'
@@ -177,7 +182,7 @@ import {
 } from '../render/fog'
 import { peindreCarteArt, type CarteArt } from '../render/carte-art'
 import { cellulesDuDisque, peindreSavoirRegion } from '../render/carte-savoir'
-import { TRACTION, eauPechable, estUnCoinDePeche, porteDeLEau, FISH_SPECIES, niveauDEau, torcheVive, partDeFlamme, clarteSurSoiAt, NUIT, MONSTER_DEFS, POI_CHARGES, TERRAIN_DEEP_WATER, TERRAIN_SHALLOW_WATER, CREUX, TERRAINS_BOISES_MASSIF, ventForceAt, VENT, type EtatVent } from '@ashes/sim'
+import { etagesDuPas, niveauDuCorps, TRACTION, eauPechable, estUnCoinDePeche, porteDeLEau, FISH_SPECIES, niveauDEau, torcheVive, partDeFlamme, clarteSurSoiAt, clarteDuCiel, partDuCiel, NUIT, MONSTER_DEFS, POI_CHARGES, TERRAIN_DEEP_WATER, TERRAIN_SHALLOW_WATER, CREUX, TERRAINS_BOISES_MASSIF, ventForceAt, VENT, type EtatVent } from '@ashes/sim'
 
 /** L'assombrissement du sol au plafond de profondeur (§2quater R42) : au cœur d'un massif,
  *  le sol perd jusqu'à 14 % de luminance — en PENTE CONTINUE, jamais par bande. */
@@ -197,7 +202,7 @@ function revealRadiusOf(kind: string): number {
   return charge && charge.devise === 'savoir' && charge.reveal === 'radius' ? charge.radiusTiles : 0
 }
 import { NightVeil } from './world/night-veil'
-import { DynamicLighting, deriveDOmbre, facteurDuFeu, forceDeLOmbre } from './world/dynamic-lighting'
+import { DynamicLighting, couleurDuCiel, deriveDOmbre, facteurDuFeu, forceDeLOmbre } from './world/dynamic-lighting'
 import { WaterLayer, type WaterWader } from './world/water-layer'
 import { flowAt } from '../render/flow-field'
 import { AmbientLife } from './world/ambient-life'
@@ -231,7 +236,6 @@ import { demolishTargetAt } from './world/aim'
 import { GAZE_PX, GAZE_REACH, INTERP_DELAY_MULTI_MS, SnapshotView, type InterpolatedSprite } from './world/snapshot-view'
 import { silhouetteDepuisSprite } from './world/visee-corps'
 import { suivreAngle } from './world/visee-lissee'
-import { DEATH_FADE_MS, DEATH_VEIL_FILET_MS } from './ui/death-veil'
 import { corpseArrow, corpseSecondsLeft } from './world/corpse-arrow'
 import { SoundEngine } from '../audio/engine'
 import { INVENTAIRE } from '../audio/inventaire'
@@ -524,6 +528,10 @@ export class WorldScene extends Phaser.Scene {
    *  les pavés le sèment à 4 px (`mouchetureIci`). Zéro partout ailleurs. */
   private solMoucheture!: Uint32Array
   private cliffs!: CliffLayer
+  /** LES ÉTAGES (spec `etages.md`) : le sol d'un plateau, et la rampe qui l'ouvre. */
+  /** Publique pour le hook `__BRAISES__` : le smoke relève le BUDGET de la couche (E-A7 —
+   *  combien de sprites vivent dans la vue), comme il lit `others.size` et `lastEntities`. */
+  etages!: EtageLayer
   private pois!: PoiLayer
   /** Les bornes de seuil (worldgen R21) et la brume de la Combe — décor dérivé de la carte. */
   private bornes: BorneLayer | null = null
@@ -578,14 +586,18 @@ export class WorldScene extends Phaser.Scene {
   /** LE REGARD (audit UI/UX P3-11) : pion d'orientation posé au bord de l'avatar. */
   private gaze!: Phaser.GameObjects.Image
   /** LE MOMENT DE MORT (mort-suite 1+5) : entre la chute et le réveil au Feu, on TIENT la
-   *  caméra sur la tuile où l'on tombe (on voit sa dépouille), on coupe l'input, et le
-   *  saut au respawn se fait CACHÉ sous le voile opaque. Faux hors de cette fenêtre. Les
-   *  transitions (snap sous le voile, main rendue) sont pilotées DANS `update` à partir de
-   *  `dyingAt` — un test de NIVEAU, robuste aux sauts d'horloge (là où un `delayedCall`,
-   *  déclenché sur FRONT, se perd quand le pas d'horloge bondit). */
+   *  caméra sur la tuile où l'on tombe (on voit sa dépouille) et on coupe l'input. Le saut
+   *  au Feu et la main reviennent ENSEMBLE, au geste « SE RELEVER ». Faux hors de cette
+   *  fenêtre. Les transitions sont pilotées DANS `update` en NIVEAU (état du voile, et
+   *  `dyingAt` pour le filet) — robuste aux sauts d'horloge, là où un `delayedCall`,
+   *  déclenché sur FRONT, se perd quand le pas d'horloge bondit. */
   private dying = false
-  private dyingAt = 0
-  private dyingSnapped = false
+  /** A-t-on VU le voile levé ? UIScene le pose à son update, une frame après la chute : tant
+   *  qu'on ne l'a pas vu, son absence n'est pas « retombé » mais « pas encore levé ». */
+  private dyingVeilVu = false
+  /** LE TICK DE LA CHUTE qu'on a déjà voilée (`downedAt` de la sim) — l'identité d'une mort.
+   *  Elle empêche le rattrapage par l'ÉTAT de relever le voile en boucle sur la même. */
+  private dyingChute?: number
   /** Le nombre de morts RAPPROCHÉES (streak V2-21) au moment de la chute — lu du snapshot,
    *  sert au bandeau de réveil à rendre LISIBLE l'épuisement croissant (sinon invisible). */
   private dyingDeaths = 1
@@ -605,6 +617,16 @@ export class WorldScene extends Phaser.Scene {
   private get predicted(): { x: number; y: number } {
     return this.prediction.base
   }
+  /**
+   * L'ÉTAGE DU JOUEUR, tel que l'AUTORITÉ le dit (spec `etages.md`). Il traverse déjà le
+   * protocole — `SnapshotMessage.entities` porte l'`Entity` de /sim, `etage` compris — mais la
+   * PRÉDICTION doit le connaître, sinon elle se trompe exactement là où le pas compte : sur la
+   * rampe, elle jugerait le chapeau de mesa infranchissable (c'est de la roche à l'étage 0) là
+   * où l'autorité le franchit, et chaque pas vers le plateau serait un rollback. C'est le même
+   * raisonnement que le gel deux fonctions plus bas — la prédiction rejoue `moveAvatar`, elle
+   * doit donc voir le même monde. 0 partout tant que personne n'est monté.
+   */
+  private etageJoueur = 0
   /**
    * Miroir client des règles de POSE (place_campfire / build) : à portée de BÂTI, DANS LE
    * CARRÉ du Feu, sur terrain constructible, hors landmark pour le feu de camp. La sim
@@ -863,6 +885,9 @@ export class WorldScene extends Phaser.Scene {
   private lastTeleportAt = 0
   /** Relief continu (Y-shear vertical) — source du rendu et du picking, créé au boot. */
   private warp!: Warp
+  /** LE RELIEF cuit une fois (`render/relief.ts`) : palier + chapeau par tuile, lu par toutes
+   *  les couches qui lèvent quelque chose à l'écran (spec `terrasses.md` §4). */
+  private relief!: Relief
 
   constructor() {
     super('world')
@@ -1028,7 +1053,13 @@ export class WorldScene extends Phaser.Scene {
       // Les handlers d'input sont posés dès `create`, mais `this.warp` n'existe
       // qu'après `onReady` (génération de carte). Avant, on renvoie le point plat :
       // de toute façon les actions sont des no-op sur structures/nodes vides.
-      unproject: (px, py) => (this.warp ? this.warp.unproject(px, py) : { x: px, y: py }),
+      // PUIS LE LIFT DE L'ÉTAGE SE DÉPLIE (`deplierLeLift`) : un plateau se dessine deux
+      // rangées plus haut que sa tuile, le curseur doit viser ce qu'on VOIT — sinon la pierre
+      // d'une mesa se récolte deux tuiles sous son image (Alexis, 2026-09-02).
+      unproject: (px, py) => {
+        const plat = this.warp ? this.warp.unproject(px, py) : { x: px, y: py }
+        return this.relief ? deplierLeLift(this.relief, plat.x, plat.y, this.etages?.souterrain ?? false) : plat
+      },
       simTick: () => this.lastSnapshotTick,
     })
 
@@ -1099,6 +1130,11 @@ export class WorldScene extends Phaser.Scene {
       // détruit) : sans ce `taire()`, quitter vers les Mondes laissait le morceau tourner
       // par-dessus le menu, sans un objet à l'écran pour dire d'où il venait.
       this.theme.taire()
+      // MÊME PIÈGE, MÊME REMÈDE : les nappes de pluie et de vent (`meteo-audio.ts`) sont des
+      // sources BOUCLÉES branchées sur le master du moteur, qui survit lui aussi. Sans ça, on
+      // quittait une partie sous l'averse et la pluie continuait par-dessus le menu — vu par
+      // Alexis le 2026-08-31, « ça reste même sur l'écran d'accueil pendant des minutes ».
+      this.sonsCiel.taire()
       // CE QUI NE VIT PAS DANS LA LISTE D'AFFICHAGE, le shutdown de scène ne le détruit PAS :
       // les GameObjects tombent tout seuls, mais les TEXTURES appartiennent au gestionnaire du
       // JEU et lui survivent. Chacune de ces couches a un `destroy()` qui rend ses clés — il
@@ -1187,9 +1223,11 @@ export class WorldScene extends Phaser.Scene {
     // désaccorder en silence de ce qu'elle compte.
     const steps: Record<BuildPhase, () => void> = {
       relief: () => {
-        // Carte PLATE (pivot RimWorld) : le warp est un no-op (lift ≡ 0, unproject ≡ identité). On
-        // le garde pour ne pas churner les couches qui l'appellent ; il ne soulève plus rien.
-        this.warp = createWarp()
+        // LE RELIEF EN TERRASSES (spec `terrasses.md`, T-R7) : le sol lui-même a des paliers, et le
+        // warp les lève d'un LIFT par palier — sur une carte plate, il reste le no-op d'avant
+        // (lift ≡ 0, unproject ≡ identité). Le relief est cuit UNE fois, les couches le lisent.
+        this.relief = creerRelief(this.map)
+        this.warp = createWarp(this.relief)
         this.view.setWarp(this.warp)
       },
       // Terrain baké à 1 px/tuile (texture = map.width×map.height px, sous la limite
@@ -1201,7 +1239,7 @@ export class WorldScene extends Phaser.Scene {
         // LES PAVÉS DESSINÉS (décision d'Alexis 2026-08-22, spec sol-dessine R8-R10) : le sol
         // cuit à 16 px/tuile par chunks, grain de famille compris — la passe MULTIPLY d'hier
         // est dedans. Le bake reste le lit de l'eau et la source de la minicarte.
-        this.paves = new PaveLayer(this, this.map, this.solCouleurs, this.worldSeed, this.solMoucheture)
+        this.paves = new PaveLayer(this, this.map, this.solCouleurs, this.worldSeed, this.solMoucheture, this.relief)
         // LA CENDRE PASSE PAR LE SOL DESSINÉ (spec `cendre.md` R11) : elle y gagne sa frange, son
         // liseré et son ombre portée comme n'importe quel terrain, au lieu d'être un calque posé
         // par-dessus. Le sol lit la MÊME fonction que la sim — écrivain unique.
@@ -1212,7 +1250,7 @@ export class WorldScene extends Phaser.Scene {
         // L'eau, par-dessus le sol : un shader qui défait le cisaillement du relief et
         // réfracte le fond (le bake `map-demo` lui sert de lit).
         const bootEau0 = performance.now()
-        this.water = new WaterLayer(this, this.map, 'map-demo')
+        this.water = new WaterLayer(this, this.map, 'map-demo', this.relief)
         this.view.rive = this.water.rive // une seule vérité de « où est l'eau » (eau-vivante R2)
         // …et une seule de « où est la vase » (peche.md R13) : le SDF du marais, cuit par la
         // même fonction que la rive. L'acteur s'y enfonce en PENTE, comme dans l'eau.
@@ -1243,7 +1281,13 @@ export class WorldScene extends Phaser.Scene {
         this.view.reflets = this.reflets
         // LA SONDE A10 (eau-vivante) : le boot de l'eau se CHRONOMÈTRE, il ne s'affirme pas.
         this.bootEauMs = Math.round(performance.now() - bootEau0)
-        this.cliffs = new CliffLayer(this, this.map)
+        this.cliffs = new CliffLayer(this, this.map, this.relief)
+        // LE PLATEAU par-dessus la falaise : elle lui donne déjà son FLANC (E-R12), il ne
+        // manquait que son SOL et l'entaille de la rampe. Muet sur une vallée sans mesa.
+        this.etages = new EtageLayer(this, this.map, this.relief)
+        // LA RAMPE EST UN PLAN INCLINÉ (Alexis, 2026-09-01) : l'acteur lit sa hauteur à la couche
+        // qui la PEINT, jamais à une seconde écriture de la même géométrie.
+        this.view.niveauAt = (x, y, e) => this.etages.niveauDuCorps(x, y, e)
       },
       pois: () => {
         this.pois = new PoiLayer(this, this.map, this.warp) // les lieux se voient enfin
@@ -1310,7 +1354,7 @@ export class WorldScene extends Phaser.Scene {
         // LE GEL (spec gel.md) : la neige qui tient au sol et la glace praticable. Comme la
         // cendre, RIEN n'est transmis — le client relit les fonctions pures de /sim sur un
         // état reconstitué du snapshot.
-        this.gelLayer = new GelLayer(this, this.map, String(this.map.width), this.worldSeed)
+        this.gelLayer = new GelLayer(this, this.map, String(this.map.width), this.worldSeed, this.relief)
         // SUR LA GLACE, ON MARCHE : l'immersion des acteurs lit la glace peinte (même signature).
         const gel = this.gelLayer
         this.view.glaceAt = (tx, ty) => gel.etatAt(tx, ty) >= TUILE_GLACE_GUE
@@ -1344,7 +1388,7 @@ export class WorldScene extends Phaser.Scene {
         if (this.clutter) this.clutter.hauteurNeigeAt = hauteurNeige
         this.cameras.main.setBounds(0, 0, worldW, worldH)
         this.prediction = createPrediction(msg.playerSpawn.x, msg.playerSpawn.y)
-        this.view.syncActor(this.playerSprite, this.predicted.x, this.predicted.y, 'spr-player')
+        this.view.syncActor(this.playerSprite, this.predicted.x, this.predicted.y, 'spr-player', false, 0, 0, this.etageJoueur)
         // Bornes posées et avatar au spawn : le suivi peut s'ancrer sans panoramique.
         this.cameras.main.startFollow(this.playerSprite, true, 0.16, 0.16)
         // La carte plein écran (M, rendue par UIScene) a besoin de la carte : pour
@@ -1731,7 +1775,9 @@ export class WorldScene extends Phaser.Scene {
       const progress = Math.max(0, Math.min(1, 1 - w.ticksLeft / Math.max(1, w.strike.windupTicks)))
       const zone = zoneOf(w.strike)
       const ay = sprite.y - ANCRE_SOL_PX
-      this.attackFx.telegraph(sprite.x, ay, w.dx, w.dy, progress, zone, w.id === this.playerId, w.side, w.charged, w.ranged)
+      // `w.strike.lourd` : le coup est INANNULABLE (R4nonies). Lu du snapshot, jamais
+      // reconstitué côté client — le télégraphe montre la règle que la sim appliquera.
+      this.attackFx.telegraph(sprite.x, ay, w.dx, w.dy, progress, zone, w.id === this.playerId, w.side, w.charged, w.strike.lourd === true, w.ranged)
       this.armes.set(w.id, { x: sprite.x, y: ay, dx: w.dx, dy: w.dy, zone, charged: w.charged, ranged: w.ranged, portee: w.strike.range * TILE_PX })
       this.designerLesCibles(w, spriteOf)
       // CE QUE COÛTERAIT UN RATÉ, retenu tant que le coup est armé : l'événement
@@ -1946,6 +1992,73 @@ export class WorldScene extends Phaser.Scene {
         this.paves.soleilABouge()
       }
       this.cliffs.render(this.cameras.main) // les parois, auto-raccordées à la vue
+      // …et le dessus des mesas. LE DÉCOUVERT NE PART QUE VERS LE HAUT (décision d'Alexis,
+      // 2026-09-01) : c'est ici, et pas dans la couche, qu'on décide à qui elle doit céder — un
+      // plateau ne s'efface que pour un joueur d'un étage PLUS BAS que lui. Sur le plateau, ou
+      // au-dessus, il reste plein : on ne fond jamais le sol que l'on foule.
+      // ⚠ **UN SEUL POINT DE DÉCISION, TROIS CONSOMMATEURS.** Le plancher, le décor et les nœuds
+      // d'un étage cèdent ENSEMBLE ou pas du tout : deux d'entre eux se sont d'abord tus, et l'on
+      // a vu des fleurs de mesa flotter, opaques, dans le creux que le fondu venait d'ouvrir.
+      // DEPUIS LES TERRASSES (spec `terrasses.md` T-R9), le découvert porte le CENTRE DESSINÉ du
+      // joueur — là où son corps est à l'écran, palier et étage déduits — et son NIVEAU : c'est
+      // la pièce qui, en lisant les deux, sait si elle est au-dessus de lui (`alphaDeDecouvert`).
+      // Un joueur au palier 2 n'a rien au-dessus de lui que le chapeau d'une mesa de palier 2.
+      const txJ = Math.floor(this.predicted.x)
+      const tyJ = Math.floor(this.predicted.y)
+      const palierJ = this.relief.palier(txJ, tyJ)
+      const niveauDessine = this.etages.niveauDuCorps(this.predicted.x, this.predicted.y, this.etageJoueur)
+      const yDessine = this.predicted.y - Math.max(niveauDessine, palierJ) * LIFT_TUILES
+      const decouvert = { x: this.predicted.x, y: yDessine, niveau: this.etageJoueur }
+      this.view.decouvert = decouvert
+      if (this.clutter) this.clutter.decouvert = decouvert
+      // ═══ SOUS LA ROCHE : la salle prend l'écran, et E-R13 s'y VOIT ═══
+      // Le drapeau se pose ici parce que c'est `WorldScene` qui sait où le regard se tient —
+      // la couche ne DÉCIDE rien, elle obéit (le patron du découvert, deux lignes plus haut).
+      // « Sous » se lit du PALIER de la tuile, pas de zéro : la salle d'une mesa de palier 2 est
+      // à l'étage 1, et elle est tout autant sous la roche.
+      const souterrain = this.etageJoueur < palierJ
+      this.etages.souterrain = souterrain
+      // ═══ LA LUMIÈRE DE LA CAVE — une structure par image, et la loi de /sim une fois par tuile ═══
+      //
+      // La première version tenait une fermeture par tuile (`clarteAt`) qui MÉLANGEAIT le ciel
+      // et la torche en un gris multiplicatif : des carrés éclairés, et une torche qui allumait
+      // des TUILES. Depuis, la couche porte un VOILE (`CaveVeil`, le patron du voile de nuit) que
+      // la lumière perce : le jour à la gueule, la torche autour de la main, un souffle autour du
+      // corps. `WorldScene` ne lui donne que ce qu'elle seule sait — l'heure, la torche, le corps —
+      // et la loi de /sim (`partDuCiel`, E-R13), que la couche mémorise par tuile : la géométrie
+      // d'une cave ne change jamais, il serait absurde de la relire soixante fois par seconde.
+      //
+      // ⚠ **LA TORCHE BAT SUR L'ALPHA, jamais sur le rayon** (`flicker`, le battement étalon de
+      // tout le jeu) — un halo qui change de taille se lit comme un objet qui respire, celui qui
+      // change d'intensité comme une flamme.
+      //
+      // ⚠ Les CORPS ne prennent plus de clarté à part (`view.clarteAt = null`) : ils vivent sous
+      // le voile, dans la même strate que le sol, et prennent la même lumière que lui — c'est le
+      // voile qui les éteint, pas une teinte recopiée. Un homme au fond d'une salle noire est
+      // noir, et sa torche le sort du noir avec le sol qu'il foule.
+      this.view.clarteAt = null
+      if (this.etatGel !== null && this.etages.partDuCielAt === null) {
+        const gel = this.etatGel
+        this.etages.partDuCielAt = (tx, ty) => partDuCiel(gel, tx, ty, this.relief.palier(tx, ty) - 1)
+      }
+      if (souterrain || this.etages.lumiere === null) {
+        const moi = this.lastEntities.find((e) => e.id === this.playerId)
+        const slot = moi ? torcheVive(moi) : null
+        this.etages.lumiere = {
+          ciel: this.etatGel ? clarteDuCiel(this.etatGel, this.lastSnapshotTick) : 1,
+          // La couleur du dehors vu par la gueule = la nuit du plateau, DÉRIVÉE du voile (posée
+          // plus bas dans cette même passe, donc d'une image de retard — même change que `teinte`).
+          teinteDuJour: this.etages.teinte,
+          couleurDuJour: produitCouleurs(couleurDuCiel(daylight(hour)), this.etages.teinte),
+          // En px DESSINÉS : la salle d'une mesa de palier `p` est levée de `p × LIFT`, le corps
+          // qui s'y tient aussi — la torche perce le voile là où le corps est à l'écran.
+          torche: slot !== null
+            ? { x: this.predicted.x * TILE_PX, y: yDessine * TILE_PX, force: partDeFlamme(slot) * flicker(time, 0.37) }
+            : null,
+          joueur: { x: this.predicted.x * TILE_PX, y: yDessine * TILE_PX },
+        }
+      }
+      if (this.etages.actif) this.etages.render(this.cameras.main, decouvert, deltaMs)
       // Les lieux ont besoin de savoir OÙ est le joueur (le nom grossit quand on
       // approche) et CE QU'IL CONNAÎT (on ne nomme pas un lieu qu'on n'a pas vu).
       // LA FUMÉE FROIDE : on ne lui donne que les bouches VISIBLES — elle ne connaît ni la carte
@@ -1984,6 +2097,21 @@ export class WorldScene extends Phaser.Scene {
       // des sprites) : les faire calculer chacune la sienne, c'est très exactement le défaut
       // qu'on a corrigé sur le soleil — deux chaînes d'éclairage pas à la même heure.
       const lueurLune = lueurDeLune(hour, jourLune)
+      // LA NUIT DU PLATEAU, en teinte plate (voir `EtageLayer.teinte`) : depuis qu'il trie dans la
+      // bande Y, le voile ne l'atteint plus. On lui repose le multiplicateur que le voile lui
+      // appliquait, DÉRIVÉ de ce même voile. Posé ici, il servira à l'image SUIVANTE (la couche se
+      // rend plus haut dans `update`) — un décalage d'une image sur une nuit qui met des minutes à
+      // tomber, contre une ligne d'éclairage recopiée : le change est bon.
+      // …et BLANCHE en rendu à plat (debug) : là, le voile remonte au-dessus de toute la scène
+      // et l'assombrit déjà — la teinter en plus, ce serait deux nuits l'une sur l'autre.
+      // …et LA MÊME NUIT AUX PALIERS HAUTS : le sol des terrasses (`PaveLayer.teinte`) trie dans
+      // sa strate, au-dessus du voile, exactement comme le chapeau.
+      const teinteDesHauteurs = this.lit ? multiplicateurDuVoile(voileDeNuit(amb, lueurLune)) : 0xffffff
+      if (this.etages) this.etages.teinte = teinteDesHauteurs
+      if (this.paves) this.paves.teinte = teinteDesHauteurs
+      if (this.gelLayer) this.gelLayer.teinte = teinteDesHauteurs
+      if (this.water) this.water.teinte = teinteDesHauteurs
+      if (this.cliffs) this.cliffs.teinte = teinteDesHauteurs
       // ═══ LA SOUS-LISTE DES FEUX, DÉRIVÉE UNE FOIS PAR IMAGE (PERF-08) ═══
       //
       // Quatre passes complètes sur `structures` cherchaient le même petit sous-ensemble à
@@ -2297,7 +2425,12 @@ export class WorldScene extends Phaser.Scene {
         // remesuré ; qui voudra le retirer devra d'abord le regarder.
         true,
       )
-      this.dynLight?.update(lit, this.cameras.main, feux, this.view.villages, hour, day, time, jourLune, lueurLune, porteurs, this.lastSnapshotTick)
+      // SOUS TERRE, le ciel n'entre pas et la gueule éclaire (`SousTerre`) : `etages.render` a
+      // tourné plus haut dans cette même image, ses gueules visibles sont celles de l'écran.
+      const sousTerre = this.etages.souterrain
+        ? { gueules: this.etages.gueulesPx, ciel: this.etages.lumiere?.ciel ?? 1 }
+        : null
+      this.dynLight?.update(lit, this.cameras.main, feux, this.view.villages, hour, day, time, jourLune, lueurLune, porteurs, this.lastSnapshotTick, sousTerre)
       // La vie ambiante : les oiseaux traversent, les lucioles ne sortent qu'à la nuit — et
       // depuis le 2026-08-26 elles ÉCLAIRENT, d'où le `lit` (le mode à plat les éteint avec
       // toutes les autres sources).
@@ -2560,9 +2693,13 @@ export class WorldScene extends Phaser.Scene {
           this.predicted.x,
           this.predicted.y,
           this.itemTenu() === 'torche_vive',
+          // LE PLANCHER : sous la roche le jour n'entre que par la gueule (E-R13, branche B1).
+          this.etageJoueur,
         )
       : 1
-    this.direLeNoir(clarte, sprint || block)
+    // Le sprint est sorti de la règle du noir (Alexis, 2026-09-02) : seule la GARDE la
+    // rencontre encore, donc seul un joueur qui a levé sa garde a un refus à s'expliquer.
+    this.direLeNoir(clarte, block)
     const { scale, sprinting } = speedScaleFor(
       {
         hunger: this.myHunger,
@@ -2594,11 +2731,11 @@ export class WorldScene extends Phaser.Scene {
       // la façade d'état du gel, qui porte exactement ce que la sim lirait. Avant la première
       // façade (la toute première image), pas de front connu : facteur neutre.
       this.etatGel ? meteoSpeedFactorAt(this.etatGel, this.lastSnapshotTick, this.predicted.x, this.predicted.y) : 1,
-      // LE PRIX DU NOIR (2026-08-26) — 4ᵉ argument, et il compte pour la MÊME raison que le
-      // 3ᵉ : sous `NUIT.SEUIL_NOIR`, l'autorité REFUSE le sprint. Un client qui l'ignore
-      // prédit une course de 6 t/s que la sim n'accorde pas, et l'avatar est rappelé en
-      // arrière à chaque snapshot — la nuit, poursuivi, c'est-à-dire au pire moment. On lit
-      // la MÊME fonction, sur la façade d'état, avec la main qu'on tient vraiment.
+      // LE PRIX DU NOIR (2026-08-26, **amendé le 2026-09-02**) — 4ᵉ argument. Il ne décide plus
+      // de la VITESSE : le sprint est sorti de la règle, la clarté ne commande plus aucune allure
+      // (`sim.ts`). Il reste passé parce que la formule est PARTAGÉE et qu'elle en tire encore la
+      // parade — le client doit prédire la même chose que l'autorité, capacité par capacité, et
+      // une seconde formule ici serait le défaut qu'on évite depuis le début.
       clarte,
     )
     const speedScale = this.myWindup ? 0 : scale
@@ -2616,7 +2753,13 @@ export class WorldScene extends Phaser.Scene {
     const render = renderPosition(this.prediction, world, input, speedScale)
     // La silhouette du rampeur se TASSE (spec chasse C19) — la sienne aussi :
     // le joueur doit SENTIR sa posture sans regarder une jauge.
-    this.view.syncActor(this.playerSprite, render.x, render.y, 'spr-player', sneak || this.myButchering)
+    this.view.syncActor(this.playerSprite, render.x, render.y, 'spr-player', sneak || this.myButchering, 0, 0, this.etageJoueur)
+    // ON NE SE VOIT PAS DEBOUT SUR SA PROPRE DÉPOUILLE (2026-08-31). Depuis que le corps reste
+    // au sol, la caméra tient la tuile de chute pendant tout le voile — lequel est SEMI-opaque,
+    // le monde y transparaît à dessein. L'avatar y restait planté, intact, à côté du cadavre
+    // dont le voile dit « votre dépouille repose là où vous êtes tombé ». On l'efface : ce qui
+    // reste à l'écran est la dépouille, et c'est exactement ce qu'on raconte.
+    this.playerSprite.setVisible(!this.dying)
     // LA COURSE SE VOIT (Alexis, 2026-08-01) — la foulée soulève le sol, le souffle qui
     // manque tasse la silhouette, et le mur la fait broncher. APRÈS `syncActor` : c'est
     // lui qui vient de poser les pieds (relief du warp compris), et c'est sa hauteur
@@ -2647,6 +2790,8 @@ export class WorldScene extends Phaser.Scene {
       teinteSol: WorldScene.EAU.has(this.map.terrain[solIdx] ?? 0)
         ? undefined
         : TERRAIN_COLORS[this.map.terrain[solIdx] ?? 0],
+      // La poussière naît dans le monde du coureur : sur une terrasse, au-dessus de ses pavés.
+      strate: strateDeProfondeur(this.playerSprite.depth),
     })
     if (course > 0) this.dernierCap = { x: dx / course, y: dy / course }
     // Le tassement se pose SUR la hauteur que `syncActor` vient de calculer (emprise,
@@ -2890,7 +3035,7 @@ export class WorldScene extends Phaser.Scene {
     publishOpenContainer(this.registry, this.view.structures, this.view.corpses, this.predicted)
     this.processEvents(msg, structuresAvant)
     this.updateCorpseTracker(msg)
-
+    this.publierMonEtatAuSol(msg)
 
     this.lastEntities = msg.entities
     // QUI ARME UN COUP, cette frame — moi comme les bêtes. Lu du snapshot, avec LA
@@ -3022,10 +3167,11 @@ export class WorldScene extends Phaser.Scene {
   /**
    * LE NOIR SE DIT UNE FOIS, ET IL SE REDIT LA NUIT SUIVANTE.
    *
-   * Le refus du sprint et de la parade (`NUIT.SEUIL_NOIR`) est une règle qu'on sent avant de
-   * la comprendre : on appuie, le corps ne suit pas. Un joueur qui ne l'a jamais rencontrée
-   * lirait ça comme une touche cassée — donc on le DIT, mais une seule fois par plongée dans
-   * le noir, et seulement s'il a VRAIMENT essayé (sprint ou garde). Ce n'est pas un tutoriel
+   * Le refus de la parade (`NUIT.SEUIL_NOIR`) est une règle qu'on sent avant de la comprendre :
+   * on appuie, le corps ne suit pas. Un joueur qui ne l'a jamais rencontrée lirait ça comme une
+   * touche cassée — donc on le DIT, mais une seule fois par plongée dans le noir, et seulement
+   * s'il a VRAIMENT essayé (la garde ; **le sprint est sorti de la règle le 2026-09-02**, la
+   * phrase ne doit donc plus le nommer ni se déclencher dessus). Ce n'est pas un tutoriel
    * (2026-08-25) : c'est le canal de REFUS, celui qui explique un geste qui vient d'échouer.
    *
    * Le drapeau se relève dès que la clarté repasse le seuil — au feu, à la torche, à l'aube :
@@ -3040,7 +3186,7 @@ export class WorldScene extends Phaser.Scene {
     }
     if (!aEssaye || this.noirDit) return
     this.noirDit = true
-    publishHint(this.registry, 'Trop noir pour courir ou parer — il faut une flamme.', this.time.now)
+    publishHint(this.registry, 'Trop noir pour parer — il faut une flamme.', this.time.now)
   }
 
   /** Le menu pause est-il ouvert ? (miroir de `menuOpen` — fige/reprend l'hôte, cf. syncPause) */
@@ -3355,7 +3501,7 @@ export class WorldScene extends Phaser.Scene {
         // n'est que le mien.
         const ou = this.view.corpsePx(event.corpseId)
         const qui = event.entityId === this.playerId ? this.playerSprite : (this.view.others.get(event.entityId)?.sprite ?? null)
-        if (ou && qui) this.sangFx.gicler(ou.x, ou.y, 4, this.time.now, qui.x, qui.y)
+        if (ou && qui) this.sangFx.gicler(ou.x, ou.y, 4, this.time.now, qui.x, qui.y, strateDeProfondeur(qui.depth))
         if (event.entityId === this.playerId) publishPickup(this.registry, event.item, 1)
       } else if (event.type === 'resource_harvested' && event.entityId === this.playerId) {
         // LE COUP A PORTÉ — et on ne le sait QUE parce que la sim le dit (G9). Rien
@@ -3467,7 +3613,7 @@ export class WorldScene extends Phaser.Scene {
           const monstre = this.view.monsters.find((m) => m.entityId === event.entityId)
           const chair = monstre === undefined || (MONSTER_DEFS[monstre.type].habitat?.length ?? 0) > 0
           this.attackFx.spark(cible.x, cible.y, event.amount, onMe, now, frappeur?.x, frappeur?.y, chair ? null : BRISURES_CENDRE)
-          if (chair) this.sangFx.gicler(cible.x, cible.y, event.amount, now, frappeur?.x, frappeur?.y)
+          if (chair) this.sangFx.gicler(cible.x, cible.y, event.amount, now, frappeur?.x, frappeur?.y, strateDeProfondeur(cible.depth))
         }
         if (onMe) {
           this.attackFx.hurt(now) // l'écran saigne…
@@ -3641,14 +3787,12 @@ export class WorldScene extends Phaser.Scene {
    * LE MOMENT DE MORT (mort-suite 1+5) : de la chute au réveil au Feu. On FIGE la caméra
    * là où elle est — sur la tuile de chute, où la dépouille va se poser — et on COUPE
    * l'input (on ne joue pas pendant qu'on tombe). Le respawn au Feu (un saut à travers la
-   * carte) est neutralisé le temps que le voile devienne opaque, puis SNAPPÉ dessous
-   * (`DEATH_FADE_MS`) : le saut ne se voit jamais. À la fin du voile, on rend la main et
-   * la caméra reprend l'avatar, réveillé au Feu.
+   * carte) reste neutralisé TOUT le temps du voile : la sim, elle, a déjà relevé l'avatar
+   * là-bas, mais on ne le montre pas avant que le joueur l'ait demandé.
    */
   private enterDying(): void {
     this.dying = true
-    this.dyingAt = this.time.now
-    this.dyingSnapped = false
+    this.dyingVeilVu = false
     this.cameras.main.stopFollow() // gèle la caméra sur la tuile de chute
     this.input.enabled = false // plus de clic (pas d'attaque en tombant)
     if (this.input.keyboard) this.input.keyboard.enabled = false // les touches gelées → input neutre
@@ -3660,31 +3804,46 @@ export class WorldScene extends Phaser.Scene {
   }
 
   /**
-   * Les transitions du moment de mort, testées EN NIVEAU (voir `dying`). Appelé chaque
-   * frame tant qu'on tombe : au passage du fondu opaque, on snappe la caméra au respawn
-   * (caché) ; à la fin du voile, on rend la main. Robuste à un pas d'horloge qui bondit —
-   * un seuil franchi reste franchi, là où un timer sur front raterait le saut.
+   * Les transitions du moment de mort, testées EN NIVEAU (voir `dying`). Appelé chaque frame
+   * tant qu'on tombe : quand le voile retombe — c'est-à-dire quand la SIM a confirmé le réveil
+   * — on snappe la caméra au Feu ET on rend la main. Le même instant, parce que c'est le même
+   * événement.
    */
   private tickDying(): void {
     if (!this.dying) return
-    const age = this.time.now - this.dyingAt
-    if (!this.dyingSnapped && age >= DEATH_FADE_MS + 80) {
-      // Sous le voile OPAQUE : on repose la caméra sur l'avatar (désormais au Feu) et on
-      // reprend le suivi. Invisible — le voile couvre tout à cet instant.
-      this.dyingSnapped = true
-      this.recenterCamera()
-      this.cameras.main.startFollow(this.playerSprite, true, 0.16, 0.16)
-    }
     // LA MAIN REVIENT AVEC LE VOILE, PAS AVANT (décision d'Alexis, 2026-08-20, question ⑥).
     //
     // Elle était rendue à `DEATH_VEIL_MS` — exactement l'instant où le voile se retirait : les
     // deux n'étaient qu'un seul événement. Depuis que le voile attend le geste « SE RELEVER »,
-    // les deux doivent le rester, sinon on se remet à marcher DERRIÈRE un voile opaque qui
-    // couvre tout l'écran. On lit donc l'état RÉEL du voile, avec le même filet que lui : un
-    // écran modal qui ne rendrait jamais la main serait pire que le rythme qu'on corrige.
+    // les deux doivent le rester, sinon on se remet à marcher DERRIÈRE un voile qui couvre
+    // tout l'écran. On lit donc l'état RÉEL du voile.
+    //
+    // ⚠ PLUS DE FILET ICI (2026-08-31). Il y en avait un, à `DEATH_VEIL_FILET_MS`, jumeau de
+    // celui d'UIScene : deux minuteurs partis du même instant pour deux sorties différentes.
+    // Depuis que la sim garde le corps à terre, celui-ci ne rendait qu'une main que la sim
+    // REFUSE (`step` jette tout input d'un tombé) — et s'il gagnait la course d'une image, le
+    // rattrapage par l'état relevait le voile sur une cause perdue. Un seul filet subsiste,
+    // celui d'UIScene, et il pose ce qui débloque VRAIMENT : l'action `respawn`.
+    //
+    // ⚠ IL FAUT AVOIR VU LE VOILE LEVÉ. UIScene ne pose `deathVeilOpen` qu'à son propre update ;
+    // entre la chute (lue dans le handler de snapshot) et ce moment-là, l'absence du drapeau
+    // ne veut PAS dire « voile retombé », elle veut dire « pas encore levé ». Sans cette
+    // mémoire, une frame malchanceuse rendrait la main — et, depuis que le saut de caméra
+    // pend à la même condition, ferait le saut À L'AIR LIBRE.
     const voileLeve = getHud(this.registry, 'deathVeilOpen') === true
-    if (!voileLeve || age >= DEATH_VEIL_FILET_MS) {
-      // Fin du voile : le monde réapparaît au Feu, jouable — on rend la main.
+    if (voileLeve) this.dyingVeilVu = true
+    if (this.dyingVeilVu && !voileLeve) {
+      // ON NE SE RELÈVE QU'APRÈS L'AVOIR DEMANDÉ (2026-08-31). Le saut au Feu se faisait à
+      // `DEATH_FADE_MS + 80` — sous un voile qu'on croyait opaque. Il ne l'est pas : il est à
+      // 86 % et le monde y « transparaît en fantôme », À DESSEIN. On voyait donc son avatar
+      // debout au Feu pendant les trente secondes du voile, relevé sans l'avoir demandé. Le
+      // saut appartient au GESTE, comme la main : la caméra reste sur la tuile de chute (où
+      // gît la dépouille dont le voile parle), et ne repart au Feu qu'à cet instant — DANS LA
+      // MÊME FRAME que le début du fondu de sortie, donc encore couvert.
+      this.recenterCamera()
+      this.cameras.main.startFollow(this.playerSprite, true, 0.16, 0.16)
+      // Fin du voile : le monde réapparaît au Feu, jouable — on rend la main. (`dying` retombe
+      // ICI, donc ce bloc ne peut pas rejouer : le saut n'a pas besoin d'un verrou à lui.)
       this.dying = false
       this.input.enabled = true
       if (this.input.keyboard) {
@@ -3710,6 +3869,50 @@ export class WorldScene extends Phaser.Scene {
         this.time.now,
       )
     }
+  }
+
+  /**
+   * SUIS-JE À TERRE ? — l'état, publié à chaque snapshot (décision d'Alexis, 2026-08-31).
+   *
+   * `downedAt` vient de la sim, qui laisse désormais le corps au sol jusqu'au geste. UIScene
+   * en tire la tenue du voile ; c'est LE signal qui referme, parce que c'est le seul qui dit
+   * qu'on est vraiment debout.
+   *
+   * Il porte aussi le RATTRAPAGE : une partie rechargée alors qu'on gisait n'a plus d'événement
+   * `entity_died` à recevoir — il est passé avec la session d'avant. Sans ce chemin, on
+   * revenait dans un corps qui ne marche pas, sans voile, sans bouton, sans un mot. On lève
+   * donc le moment de mort sur l'ÉTAT, cause « inconnue » (on ne l'invente pas : la cause,
+   * elle, n'a pas survécu).
+   */
+  private publierMonEtatAuSol(msg: SnapshotMessage): void {
+    const moi = msg.entities.find((e) => e.id === this.playerId)
+    const tombeA = moi?.downedAt
+    setHud(this.registry, 'playerDown', tombeA !== undefined)
+    if (tombeA === undefined) return
+    // ⚠ UNE CHUTE, UN VOILE. `downedAt` est le TICK de la chute : il identifie la mort, et
+    // c'est lui qu'on retient. Sans cette identité, ce rattrapage se rallumait en boucle —
+    // il suffit d'une image où l'on est encore à terre et où `dying` est déjà retombé pour
+    // qu'il relève le voile, ÉCRASE la vraie cause par « sans témoin », recoupe l'input et
+    // rearme le filet. Un joueur absent y serait resté pour toujours.
+    //
+    // Le chemin par ÉVÉNEMENT (`entity_died`) tourne juste avant, dans le même snapshot : il
+    // a donc déjà posé la vraie cause, et la ligne ci-dessous ne fait qu'en prendre note.
+    if (this.dyingChute === tombeA) return
+    const dejaLeve = this.dyingChute === undefined && this.dying
+    this.dyingChute = tombeA
+    if (dejaLeve) return // l'événement vient de le lever, avec sa cause : on n'y touche pas
+    // LE RATTRAPAGE — une partie RECHARGÉE alors qu'on gisait. Aucun `entity_died` à recevoir,
+    // il est passé avec la session d'avant : la cause est perdue et on le DIT (« inconnue »),
+    // au lieu d'en inventer une. La dépouille, elle, se lit sur le monde : elle est là où l'on
+    // gît. On la donne aussi au traqueur — la flèche de bord retrouve le sac au réveil.
+    const dep = msg.corpses.find((c) => (c.x - (moi?.x ?? 0)) ** 2 + (c.y - (moi?.y ?? 0)) ** 2 <= 2.5 * 2.5)
+    publishDeath(this.registry, 'inconnue', 0, null, dep !== undefined, this.time.now)
+    if (dep) {
+      this.myCorpseId = dep.id
+      this.corpseDeathPos = null
+    }
+    this.dyingDeaths = moi?.deathCount ?? 1
+    this.enterDying()
   }
 
   /**
@@ -3785,16 +3988,24 @@ export class WorldScene extends Phaser.Scene {
     structures: SnapshotMessage['structures']
     nodes: ResourceNode[]
     moverVillageId: number | null
+    etages?: readonly number[]
     etat?: EtatGel
   } {
     // LE GEL SOUS LES PIEDS (gel.md G2, G9) : la glace et la neige changent le pas, et la
     // prédiction doit le savoir — sinon chaque tuile enneigée est un rollback. La façade est
     // celle du rendu (`etat-gel.ts`) : mêmes fonctions, même snapshot.
+    // L'ÉTAGE SOUS LES PIEDS (spec `etages.md`) : même geste que `sim.ts`, et il le FAUT — la
+    // prédiction rejoue `moveAvatar`, donc elle doit voir le même monde. `undefined` partout
+    // sauf sur un connecteur : sur une carte sans étage, c'est le chemin d'avant, au bit près.
+    const etages = etagesDuPas(
+      this.map, this.etageJoueur, Math.floor(this.predicted.x), Math.floor(this.predicted.y),
+    )
     const monde = {
       map: this.map,
       structures: this.view.structures,
       nodes: this.view.nodes,
       moverVillageId: this.myVillageId,
+      ...(etages !== undefined ? { etages } : {}),
     }
     return this.etatGel ? { ...monde, etat: this.etatGel } : monde
   }
@@ -3806,6 +4017,11 @@ export class WorldScene extends Phaser.Scene {
    * rendu), et au-delà du seuil de snap c'est un vrai téléport (respawn au Feu).
    */
   private reconcile(authoritative: Entity, lastProcessedInput: number): void {
+    // L'ÉTAGE VIENT DE L'AUTORITÉ, AVANT LE REJEU — la prédiction ne le calcule pas, elle le
+    // LIT (invariant n°3 : le client est bête, il ne prédit que sa position). Posé ici, il est
+    // en place pour tous les `predictionWorld()` du rejeu qui suit.
+    // …et « absent » vaut LE PALIER DU SOL, pas zéro (T-R3) : la même lecture que /sim.
+    this.etageJoueur = niveauDuCorps(this.map, authoritative)
     // Mesuré AVANT le rejeu : au-delà du seuil de snap, l'avatar n'a pas marché,
     // il a sauté (TP de debug, respawn) — la caméra doit sauter avec lui.
     const jumped =

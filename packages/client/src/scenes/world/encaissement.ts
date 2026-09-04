@@ -22,6 +22,14 @@
  *   3. IL N'Y AVAIT PAS DE TEMPS D'ARRÊT. Rien ne s'arrêtait jamais : le corps encaissait
  *      en glissant, sans une image d'immobilité. Or c'est l'ARRÊT qui fait le poids d'un
  *      coup — le reste n'en est que la retombée.
+ *   4. LA TEINTE NE POUVAIT PAS BLANCHIR (corrigé le 2026-08-31). `peindreRecul` posait
+ *      `setTint(0xff8877)` en laissant le MODE à `MULTIPLY` — or multiplier des texels par
+ *      (1 · 0,53 · 0,47) ne sait qu'ASSOMBRIR et rougir. Sur un loup déjà sombre, le
+ *      « flash » ne montait pas au-dessus du sprite : il s'y enfonçait. Un flash est de la
+ *      LUMIÈRE, et la lumière se pose en `FILL` — l'aplat garde l'alpha, donc la
+ *      silhouette (`peindreBande` le prouve sur l'archer depuis toujours). Le corps est
+ *      donc BLANC tant qu'il est cloué, puis il reprend sa silhouette et la teinte se
+ *      retire par `teinte` — qui était calculée et jetée.
  *
  * ═══ LA FRONTIÈRE, INCHANGÉE (attack-fx, « la règle du jus ») ═══
  *
@@ -47,15 +55,43 @@ export const DEGATS_PLEIN = 18
 /** L'écrasement au plus tassé, en fraction de la taille : le corps se ramasse sous le coup. */
 export const ECRASE_MAX = 0.13
 
+/** LE FLASH — l'aplat posé sur le corps cloué. Blanc franc : c'est de la lumière, pas une
+ *  couleur d'équipe ; toute autre teinte se lirait comme une INFORMATION (le rouge est
+ *  déjà pris par l'arc de l'en-face, la crème par le sien). */
+export const FLASH_BLANC = 0xffffff
+/** LA TEINTE DE LA RETOMBÉE, en `MULTIPLY` : le sang monte sous la peau après le coup. */
+export const IMPACT_TINT = 0xff8877
+
+/**
+ * LA TEINTE DE RETOMBÉE À `part` DE SON PLEIN — et le blanc est le ZÉRO de cette échelle.
+ *
+ * En mode `MULTIPLY`, 0xffffff est l'IDENTITÉ : multiplier par 1 ne change rien. Une teinte
+ * qui se retire ne va donc pas vers le noir (ce serait une ombre) mais vers le BLANC.
+ * L'inverse — la faute naturelle — éteindrait le corps au lieu de le rendre.
+ */
+export function teinteImpact(part: number): number {
+  const p = part <= 0 ? 0 : part >= 1 ? 1 : part
+  let couleur = 0
+  for (let d = 16; d >= 0; d -= 8) {
+    const cible = (IMPACT_TINT >> d) & 0xff
+    couleur = (couleur << 8) | Math.round(255 + (cible - 255) * p)
+  }
+  return couleur
+}
+
 /** L'état peint d'un corps frappé, à un instant donné. */
 export interface Encaissement {
   /** Part de l'écart de recul, 1 au plein écart puis résorbée. */
   recul: number
   /** Part de l'écrasement, 1 au plus tassé. Le corps s'aplatit ET s'élargit. */
   ecrase: number
-  /** Le corps est-il encore dans le temps d'arrêt ? (c'est là que la teinte est pleine) */
+  /**
+   * Le corps est-il encore dans le temps d'arrêt ? C'est là — et LÀ SEULEMENT — qu'il est
+   * un APLAT BLANC : cloué ET blanc, un seul événement pour l'œil. Passé l'arrêt, il
+   * retrouve sa silhouette et la teinte se retire (`teinte`).
+   */
   arret: boolean
-  /** Part de la teinte d'impact, 1 pleine puis fondue. */
+  /** Part de la teinte d'impact APRÈS le flash, 1 pleine puis fondue jusqu'à rien. */
   teinte: number
 }
 

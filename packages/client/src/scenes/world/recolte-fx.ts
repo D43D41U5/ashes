@@ -286,6 +286,9 @@ interface Eclat {
   vie: number
   flotte: boolean
   phase: number
+  /** La strate du nœud frappé (`strateDEtage` / `strateDeProfondeur`) : l'éclat naît dans son
+   *  monde — sur une terrasse, au-dessus de ses pavés et de sa paroi. */
+  strate: number
 }
 
 /**
@@ -362,6 +365,7 @@ export class RecolteFx {
     fromY: number,
     count: number,
     clean: boolean,
+    strate = 0,
   ): void {
     if (this.vus.get(nodeId) === at) return
     this.vus.set(nodeId, at)
@@ -382,6 +386,7 @@ export class RecolteFx {
       // Le coup qui rapporte le plus est celui qui arrache le plus.
       surplus: Math.min(3, Math.max(0, count - 1)) + (clean ? 2 : 0),
       force: 1,
+      strate,
     })
   }
 
@@ -395,7 +400,7 @@ export class RecolteFx {
    * le même sprite, même loi de vol. Une gerbe plus fournie (`force`), parce que ce coup-là
    * est le dernier et qu'il vaut d'être vu.
    */
-  eclatement(type: NodeType, texture: string, px: number, py: number, hauteur: number, now: number): void {
+  eclatement(type: NodeType, texture: string, px: number, py: number, hauteur: number, now: number, strate = 0): void {
     this.gerbe({
       // Semé sur l'INSTANT seul : un épuisement n'arrive qu'une fois par nœud, il n'a pas
       // de frappe à reconnaître.
@@ -410,6 +415,7 @@ export class RecolteFx {
       demiEventail: Math.PI, // le tour complet
       surplus: 0,
       force: 2,
+      strate,
     })
   }
 
@@ -429,7 +435,7 @@ export class RecolteFx {
    * s'éparpillent à 360° — une feuille qu'on décroche ne part pas dans une direction, elle
    * descend en tournoyant.
    */
-  feuillage(nodeId: number, at: number, now: number, textureHouppier: string, px: number, py: number, hauteur: number, rayon: number): void {
+  feuillage(nodeId: number, at: number, now: number, textureHouppier: string, px: number, py: number, hauteur: number, rayon: number, strate = 0): void {
     // Sa propre marque : sans elle, la garde anti-doublon de `eclater` étoufferait l'une
     // des deux gerbes du même coup — elles portent le même `nodeId` et le même `at`.
     const marque = nodeId + FEUILLAGE_MARQUE
@@ -451,6 +457,7 @@ export class RecolteFx {
       // vertes SUR DU VERT et il leur faudrait presque toute leur vie pour sortir de la
       // silhouette : on ne verrait rien. Nées au bord, elles s'en détachent tout de suite.
       rayon,
+      strate,
     })
   }
 
@@ -466,7 +473,7 @@ export class RecolteFx {
    * dégel (des éclats verts). Famille `feuille` : légers, ils flottent — ce n'est pas un choc.
    * Les tons sont DONNÉS, pas lus sur une texture : le givre n'a pas la couleur de la plante.
    */
-  givre(x: number, y: number, hauteur: number, now: number, graine: number, degel: boolean): void {
+  givre(x: number, y: number, hauteur: number, now: number, graine: number, degel: boolean, strate = 0): void {
     this.gerbe({
       graine,
       famille: 'feuille',
@@ -480,6 +487,7 @@ export class RecolteFx {
       demiEventail: Math.PI,
       surplus: 0,
       force: 0.8,
+      strate,
     })
   }
 
@@ -505,6 +513,8 @@ export class RecolteFx {
      * sa silhouette (vert sur vert) et s'éteignent avant d'en sortir.
      */
     rayon?: number
+    /** La strate où la gerbe naît (0 : le palier du sol, carte plate). */
+    strate: number
   }): void {
     const loi = LOIS[o.famille]
     const tons = o.tons ?? this.tonsDe(o.texture)
@@ -539,6 +549,7 @@ export class RecolteFx {
         phase: rnd() * 6.28,
         ton,
         cote,
+        strate: o.strate,
       })
     }
   }
@@ -557,6 +568,7 @@ export class RecolteFx {
     phase: number
     ton: number
     cote: number
+    strate: number
   }): void {
     if (this.eclats.length >= MAX_ECLATS) {
       this.eclats.shift()?.img.destroy() // le plus vieux s'éteint : la gerbe neuve prime
@@ -567,9 +579,9 @@ export class RecolteFx {
       .image(Math.round(g.x), Math.round(g.y - g.z), '__WHITE')
       .setDisplaySize(g.cote, g.cote)
       .setTint(g.ton)
-      .setDepth(ySortDepth(g.y / TILE_PX, TILE_PX, TIE_ACTOR))
+      .setDepth(g.strate + ySortDepth(g.y / TILE_PX, TILE_PX, TIE_ACTOR))
     img.setLighting(this.lighting)
-    this.eclats.push({ img, x: g.x, y: g.y, z: g.z, vx: g.vx, vy: g.vy, vz: g.vz, g: g.g, ne: g.ne, vie: g.vie, flotte: g.flotte, phase: g.phase })
+    this.eclats.push({ img, x: g.x, y: g.y, z: g.z, vx: g.vx, vy: g.vy, vz: g.vz, g: g.g, ne: g.ne, vie: g.vie, flotte: g.flotte, phase: g.phase, strate: g.strate })
   }
 
   /**
@@ -611,7 +623,7 @@ export class RecolteFx {
       // Position ARRONDIE : l'art est sur une grille de pixels, un éclat en sous-pixel
       // scintillerait (règle des FX pixellisés).
       e.img.setPosition(Math.round(e.x), Math.round(e.y - e.z))
-      e.img.setDepth(ySortDepth(e.y / TILE_PX, TILE_PX, TIE_ACTOR))
+      e.img.setDepth(e.strate + ySortDepth(e.y / TILE_PX, TILE_PX, TIE_ACTOR))
     }
     // La mémoire des coups s'oublie — elle ne sert qu'à ne pas éclater deux fois.
     if (this.vus.size > 64) {

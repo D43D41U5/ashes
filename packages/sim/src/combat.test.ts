@@ -1,8 +1,8 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
-import { BALANCE, COMBAT, MONSTER_DEFS, SLOTS, TEMPERATURE, TERRAIN_GRASS, TERRAIN_ROCK, WEAPON_DAMAGE, WEAPON_PROFILES, type MonsterType } from './balance'
+import { BALANCE, COMBAT, FAUNA, MONSTER_DEFS, SLOTS, TEMPERATURE, TERRAIN_GRASS, TERRAIN_ROCK, WEAPON_DAMAGE, WEAPON_PROFILES, type MonsterType } from './balance'
 import { drainEvents, type SimEvent } from './events'
 import { countOf, inventoryOf, makeInventory, stackSize, type Inventory, type ItemBag, type ItemId } from './items'
-import { die, staminaCapFor, startAttack, weaponDamage } from './combat'
+import { applyDamage, die, respawn, staminaCapFor, startAttack, weaponDamage } from './combat'
 import { createEmptyMap } from './map'
 import { spawnMonster } from './monsters'
 import { foundNpcVillage } from './worldgen'
@@ -882,10 +882,13 @@ describe('le coût de mort croissant (V2-21)', () => {
   it('les morts RAPPROCHÉES coûtent plus cher, puis une longue survie les OUBLIE', () => {
     const sim = makeSim()
     const p = spawnEntity(sim, 10, 10)
+    // TOMBER PUIS SE RELEVER — les deux moitiés (2026-08-31) : `die` tient le COMPTE,
+    // `respawn` en tire la DURÉE. Lire `exhaustedUntil` juste après `die` ne dirait plus rien.
     const kill = (): number => {
       const e = entity(sim, p)
       e.hp = 0
       die(sim, e, 0)
+      respawn(sim, e)
       return entity(sim, p).exhaustedUntil - sim.tick // durée d'épuisement infligée
     }
     const exh1 = kill() // 1re mort : épuisement de base
@@ -970,7 +973,12 @@ describe('la mort (A5)', () => {
     const killer = spawnEntity(sim, 21, 20)
     strike(sim, killer, -1, 0)
 
-    // Respawn au Feu (10,10), épuisé, compétences gardées, mains vides.
+    // ⚠ ON RESTE À TERRE (décision d'Alexis, 2026-08-31) : la mort ne relève plus toute seule.
+    expect(victim.hp).toBe(0)
+    expect(victim.x).toBeCloseTo(20, 5) // là où il est tombé, pas au Feu
+    tick(sim, [{ entityId: a, dx: 0, dy: 0, action: { type: 'respawn' } }])
+
+    // Réveil au Feu (10,10), épuisé, compétences gardées, mains vides.
     expect(victim.x).toBeCloseTo(10.5, 5)
     expect(victim.hp).toBe(COMBAT.RESPAWN_HP)
     expect(victim.exhaustedUntil).toBeGreaterThan(sim.tick)
@@ -984,6 +992,122 @@ describe('la mort (A5)', () => {
     tick(sim, [{ entityId: killer, dx: 0, dy: 0, action: { type: 'loot_corpse', corpseId: corpse.id } }])
     expect(countOf(entity(sim, killer).inventory, 'berries')).toBe(7)
     expect(sim.corpses).toHaveLength(0)
+  })
+})
+
+/**
+ * ═══ ON NE SE RELÈVE QU'EN LE DEMANDANT (décision d'Alexis, 2026-08-31) ═══
+ *
+ * `die` faisait la mort ET la résurrection dans le même tick. Le client ne pouvait donc que
+ * MASQUER un saut déjà fait, et le bouton « SE RELEVER » du voile de mort ne commandait rien.
+ * La seconde moitié de la mort appartient désormais au joueur : le corps reste où il tombe,
+ * à `hp = 0`, jusqu'à l'action `respawn`.
+ */
+describe('la mort attend le geste (2026-08-31)', () => {
+  /** Un avatar avec un Feu à lui en (10,10), tué net en (20,20). Rend son id. */
+  function tombeLoinDeSonFeu(sim: ReturnType<typeof makeSim>): number {
+    const a = spawnEntity(sim, 10, 10)
+    grantHeld(sim, a, 'spear', { wood: 10 })
+    tick(sim, [{ entityId: a, dx: 0, dy: 0, action: { type: 'light_fire' } }])
+    const victim = entity(sim, a)
+    victim.x = 20
+    victim.y = 20
+    victim.hp = 1
+    const killer = spawnEntity(sim, 21, 20)
+    strike(sim, killer, -1, 0)
+    return a
+  }
+
+  it('la chute laisse le corps SUR PLACE, à zéro — et n’émet aucun réveil', () => {
+    const sim = makeSim()
+    drainEvents(sim)
+    const a = tombeLoinDeSonFeu(sim)
+    const evts = drainEvents(sim)
+    expect(evts.some((e) => e.type === 'entity_died' && e.entityId === a)).toBe(true)
+    expect(evts.some((e) => e.type === 'entity_respawned')).toBe(false)
+    expect(entity(sim, a).hp).toBe(0)
+    expect(entity(sim, a).x).toBeCloseTo(20, 5)
+  })
+
+  it('le mort ne bouge pas, ne frappe pas, ne se retourne pas — quoi qu’on lui envoie', () => {
+    const sim = makeSim()
+    const a = tombeLoinDeSonFeu(sim)
+    const mort = entity(sim, a)
+    const ou = { x: mort.x, y: mort.y }
+    const cap = { ...mort.facing }
+    // Dix ticks de course, de garde et de coups : la sim est autoritative, elle ne doit
+    // rien accepter d'un corps à terre — pas même le `facing` ou la fenêtre de parade,
+    // qui s'écrivent APRÈS l'aiguillage des actions.
+    for (let i = 0; i < 10; i++) {
+      tick(sim, [{ entityId: a, dx: -1, dy: -1, block: true, action: { type: 'attack', dx: -1, dy: 0 } }])
+    }
+    expect(entity(sim, a).x).toBeCloseTo(ou.x, 5)
+    expect(entity(sim, a).y).toBeCloseTo(ou.y, 5)
+    expect(entity(sim, a).facing).toEqual(cap)
+    expect(entity(sim, a).windup).toBeUndefined()
+    expect(entity(sim, a).parryUntil).toBeUndefined()
+    expect(entity(sim, a).hp).toBe(0) // et il n'est toujours pas debout
+  })
+
+  it('`respawn` relève AU FEU, et se refuse à un vivant', () => {
+    const sim = makeSim()
+    const a = tombeLoinDeSonFeu(sim)
+    drainEvents(sim)
+    tick(sim, [{ entityId: a, dx: 0, dy: 0, action: { type: 'respawn' } }])
+    expect(entity(sim, a).hp).toBe(COMBAT.RESPAWN_HP)
+    expect(entity(sim, a).x).toBeCloseTo(10.5, 5)
+    expect(drainEvents(sim).some((e) => e.type === 'entity_respawned' && e.entityId === a)).toBe(true)
+    // Une seconde demande, debout : refusée, et sans rien remettre à neuf.
+    entity(sim, a).hp = 12
+    tick(sim, [{ entityId: a, dx: 0, dy: 0, action: { type: 'respawn' } }])
+    const evts = drainEvents(sim)
+    expect(evts.some((e) => e.type === 'entity_respawned')).toBe(false)
+    expect(evts.some((e) => e.type === 'action_rejected' && e.reason === 'debout')).toBe(true)
+    expect(entity(sim, a).hp).toBeLessThan(COMBAT.RESPAWN_HP)
+  })
+
+  it('un coup porté sur un corps à terre ne le RETUE pas : ni second `entity_died`, ni dépouille vide', () => {
+    const sim = makeSim()
+    const a = tombeLoinDeSonFeu(sim)
+    const corpsesApresLaMort = sim.corpses.length
+    drainEvents(sim)
+    // Le tueur est toujours là, à côté : il frappe encore.
+    const killer = sim.entities.find((e) => e.id !== a && e.hp > 0)!
+    for (let i = 0; i < 3; i++) strike(sim, killer.id, -1, 0)
+    const evts = drainEvents(sim)
+    expect(evts.some((e) => e.type === 'entity_died' && e.entityId === a)).toBe(false)
+    expect(sim.corpses).toHaveLength(corpsesApresLaMort)
+  })
+
+  /**
+   * LES DEUX MOITIÉS DU COÛT DE MORT (V2-21), de part et d'autre du geste.
+   *
+   * Le COMPTE se tient à la CHUTE : il mesure le temps VÉCU entre deux morts, et le temps
+   * passé à terre n'en est pas. L'ÉPUISEMENT part du RÉVEIL : sinon il se consumerait
+   * pendant qu'on gît. Mettre les deux du même côté ouvre une faute dans un sens ou dans
+   * l'autre — et rester mort deviendrait, au choix, gratuit ou reposant.
+   */
+  it('traîner devant le voile n’efface pas la dette, et n’use pas l’épuisement', () => {
+    const sim = makeSim()
+    const a = tombeLoinDeSonFeu(sim)
+    tick(sim, [{ entityId: a, dx: 0, dy: 0, action: { type: 'respawn' } }])
+    const premier = entity(sim, a).exhaustedUntil - sim.tick
+    expect(entity(sim, a).deathCount).toBe(1)
+    // Deuxième mort, RAPPROCHÉE (on vient de se relever) — puis on laisse le voile levé
+    // très longtemps, bien au-delà de la fenêtre d'oubli.
+    entity(sim, a).x = 20
+    entity(sim, a).y = 20
+    entity(sim, a).hp = 1
+    const killer = spawnEntity(sim, 21, 20)
+    strike(sim, killer, -1, 0)
+    expect(entity(sim, a).hp).toBe(0)
+    expect(entity(sim, a).deathCount).toBe(2) // la dette est comptée dès la chute
+    sim.tick += COMBAT.DEATH_FORGET_TICKS + 1
+    tick(sim, [{ entityId: a, dx: 0, dy: 0, action: { type: 'respawn' } }])
+    // ① la dette tient : gésir n'est pas survivre.
+    expect(entity(sim, a).deathCount).toBe(2)
+    // ② …et elle se paie EN ENTIER au réveil : l'épuisement n'a pas coulé pendant ce temps.
+    expect(entity(sim, a).exhaustedUntil - sim.tick).toBeGreaterThan(premier)
   })
 })
 
@@ -1740,10 +1864,27 @@ describe('le coup LOURD repousse (A16, R4sexies)', () => {
     expect(entity(sim, c).x).toBeLessThan(21.2 + COMBAT.KNOCKBACK_TILES)
   })
 
-  it('le recul n’INTERROMPT pas le coup de celui qui le prend', () => {
-    // Deux corps qui s'arment en même temps : le tourbillon de `a` repousse `b`, et `b`
-    // frappe QUAND MÊME. Sans cette retenue, marteler verrouillerait n'importe quoi et le
-    // combat de coût deviendrait un combat de cadence.
+})
+
+/**
+ * ═══ A16bis (R4octies) — LE COUP QUI PORTE BRISE LE COUP D'EN FACE ═══
+ *
+ * ⚑ RENVERSEMENT DU 2026-08-31 (décision d'Alexis). A16 affirmait l'INVERSE jusqu'à cette
+ * date — « le recul n'INTERROMPT pas le coup de celui qui le prend » — au motif que
+ * marteler verrouillerait n'importe quoi. Ce n'est pas le recul qui interrompt (il ne l'a
+ * jamais fait, et il ne le fait toujours pas) : c'est le COUP QUI PORTE, chargé ou non,
+ * de mêlée ou de trait, et pour tout le monde.
+ *
+ * Le frein au martèlement n'est donc pas l'absence d'interruption, c'est l'ENDURANCE prise
+ * à l'ARMEMENT (`startAttack`) et la CADENCE que les IA se posent au départ de leur coup :
+ * les deux gardes ci-dessous les affirment, sans quoi le motif de R4sexies reviendrait
+ * intact et cette section serait un aveu à moitié écrit.
+ */
+describe('le coup qui porte BRISE le coup d’en face (A16bis, R4octies)', () => {
+  /** `b` s'arme d'un coup LONG (il ne se résoudra jamais tout seul dans la fenêtre). */
+  const LONG = 40
+
+  it('un corps touché en plein wind-up LÂCHE son geste — et le fait se dit', () => {
     const sim = makeSim()
     const a = spawnEntity(sim, 20, 20)
     const b = spawnEntity(sim, 20.9, 20)
@@ -1751,18 +1892,222 @@ describe('le coup LOURD repousse (A16, R4sexies)', () => {
       entity(sim, id).stamina = 100
       entity(sim, id).hp = 1000
     }
-    grantHeld(sim, a, 'iron_axe')
-    const hold = WEAPON_PROFILES.iron_axe.chargeTicks + 2
-    for (let t = 0; t < hold; t++) {
-      tick(sim, [{ entityId: a, dx: 0, dy: 0, action: { type: 'attack_charge', dx: 1, dy: 0, hold: t > 0 } }])
+    // `b` arme un coup qui met deux secondes à venir ; `a` frappe simple, bien plus vite.
+    startAttack(sim, entity(sim, b), -1, 0, { windupTicks: LONG, damage: 10 })
+    drainEvents(sim)
+    const dits: SimEvent[] = []
+    tick(sim, [{ entityId: a, dx: 0, dy: 0, action: { type: 'attack', dx: 1, dy: 0 } }])
+    dits.push(...drainEvents(sim))
+    for (let t = 0; t < LONG + 4; t++) {
+      tick(sim)
+      dits.push(...drainEvents(sim))
     }
-    // `b` arme son coup simple pile au relâchement du tourbillon.
-    tick(sim, [
-      { entityId: a, dx: 0, dy: 0, action: { type: 'attack_release', dx: 1, dy: 0 } },
-      { entityId: b, dx: 0, dy: 0, action: { type: 'attack', dx: -1, dy: 0 } },
-    ])
-    for (let t = 0; t < 30; t++) tick(sim)
-    expect(entity(sim, b).hp).toBeLessThan(1000) // b a bien encaissé le tourbillon…
-    expect(entity(sim, a).hp).toBeLessThan(1000) // …et a rendu son coup malgré le recul
+    expect(entity(sim, b).hp).toBeLessThan(1000) // le coup de `a` a bien PORTÉ…
+    expect(entity(sim, b).windup).toBeUndefined() // …le geste est LÂCHÉ, pas mis en attente…
+    expect(entity(sim, a).hp).toBe(1000) // …et il ne se résout JAMAIS : `a` ne prend rien.
+    // LE FAIT SE DIT — sinon le télégraphe s'éteindrait sans un son ni une image (le
+    // défaut même qu'`attack_whiffed` avait corrigé sur le coup raté).
+    const brisé = dits.filter((e) => e.type === 'attack_interrupted')
+    expect(brisé).toHaveLength(1)
+    expect(brisé[0]).toMatchObject({ entityId: b, byEntityId: a })
+  })
+
+  it('CAMP-AVEUGLE : la bête brise le coup du joueur exactement comme il brise le sien', () => {
+    // « Personne ne triche » (invariant §7). En 1v3 on se fait donc briser trois fois plus
+    // qu'on ne brise : la règle penche du côté du NOMBRE, ce que le GDD §7 demande.
+    // Balayé sur toutes les espèces qui frappent — une seule qui ne briserait pas, et la
+    // symétrie serait un vœu au lieu d'une propriété.
+    let espècesÉprouvées = 0
+    for (const [type, def] of Object.entries(MONSTER_DEFS)) {
+      if (def.damage <= 0) continue // les herbivores ne frappent pas
+      const sim = makeSim()
+      const joueur = spawnEntity(sim, 20, 20)
+      entity(sim, joueur).hp = 1000
+      entity(sim, joueur).stamina = 100
+      const bête = entity(sim, spawnMonster(sim, type as MonsterType, 19.1, 20))
+      bête.stamina = 100
+      // Le joueur s'arme d'un coup long, vers l'ouest (la bête est à l'ouest) ; la bête
+      // frappe vers l'est et le touche avant que son geste à lui n'aboutisse.
+      startAttack(sim, entity(sim, joueur), -1, 0, { windupTicks: LONG, damage: 10 })
+      startAttack(sim, bête, 1, 0, { windupTicks: def.windupTicks, damage: def.damage })
+      for (let t = 0; t < def.windupTicks + 2; t++) tick(sim)
+      expect(entity(sim, joueur).hp).toBeLessThan(1000) // la morsure a PORTÉ…
+      expect(entity(sim, joueur).windup).toBeUndefined() // …et elle a brisé le geste
+      espècesÉprouvées++
+    }
+    expect(espècesÉprouvées).toBeGreaterThanOrEqual(3) // la garde prouve sa prémisse
+  })
+
+  it('un coup BRISÉ a coûté son endurance — le frein au martèlement, moitié une', () => {
+    // `startAttack` prend l'endurance à l'ARMEMENT : un coup brisé est un coup PAYÉ, et se
+    // faire briser en boucle essouffle. On l'affirme sur la BARRE, jamais sur la constante.
+    const sim = makeSim()
+    const a = spawnEntity(sim, 20, 20)
+    const b = spawnEntity(sim, 20.9, 20)
+    for (const id of [a, b]) {
+      entity(sim, id).stamina = 100
+      entity(sim, id).hp = 1000
+    }
+    startAttack(sim, entity(sim, b), -1, 0, { windupTicks: LONG, damage: 10 })
+    const armé = entity(sim, b).stamina
+    expect(armé).toBeLessThan(100) // l'armement a déjà pris
+    tick(sim, [{ entityId: a, dx: 0, dy: 0, action: { type: 'attack', dx: 1, dy: 0 } }])
+    for (let t = 0; t < 3; t++) tick(sim)
+    expect(entity(sim, b).windup).toBeUndefined() // brisé…
+    expect(entity(sim, b).stamina).toBeLessThanOrEqual(armé + 100 / BALANCE.TICK_RATE_HZ) // …et rien n'est RENDU
+  })
+
+  it('la CADENCE d’une IA est posée à l’armement : la briser ne lui rend pas son coup', () => {
+    // Le frein, moitié deux — et c'est lui qui répond au motif de R4sexies pour les bêtes.
+    // Bêtes, Cendreux, PNJ et milice écrivent tous `cooldownUntil` juste APRÈS `startAttack` :
+    // briser la morsure d'un loup ne la lui rend pas, il attend sa cadence quand même.
+    const sim = makeSim()
+    const proie = spawnEntity(sim, 20, 20)
+    entity(sim, proie).hp = 1000
+    entity(sim, proie).stamina = 100
+    const def = MONSTER_DEFS.wolf
+    const loup = entity(sim, spawnMonster(sim, 'wolf', 19.1, 20))
+    loup.stamina = 100
+    startAttack(sim, loup, 1, 0, { windupTicks: def.windupTicks, damage: def.damage })
+    loup.cooldownUntil = sim.tick + def.attackCooldownTicks // ce que fait `faune.ts` au départ du coup
+    tick(sim, [{ entityId: proie, dx: 0, dy: 0, action: { type: 'attack', dx: -1, dy: 0 } }])
+    for (let t = 0; t < 3; t++) tick(sim)
+    expect(loup.windup).toBeUndefined() // le coup est brisé…
+    expect(loup.cooldownUntil).toBeGreaterThan(sim.tick) // …et la cadence court toujours
+  })
+
+  it('un corps brisé peut se réarmer AU TICK SUIVANT — et le repaie', () => {
+    // La brisure supprime `windup` PENDANT `advanceCombat`, qui court APRÈS les actions du
+    // tick. Il faut donc affirmer que le tick d'après voit une ardoise propre : sans ça, le
+    // refus « déjà en train de frapper » (`checkCanAttack`) pourrait survivre à un geste qui
+    // n'existe plus, et un corps brisé resterait muet sans que rien ne le dise. On l'éprouve
+    // sur `step()` entier, jamais sur une phase seule — le défaut vit entre les deux.
+    const sim = makeSim()
+    const a = spawnEntity(sim, 20, 20)
+    const b = spawnEntity(sim, 20.9, 20)
+    for (const id of [a, b]) {
+      entity(sim, id).stamina = 100
+      entity(sim, id).hp = 1000
+    }
+    startAttack(sim, entity(sim, b), -1, 0, { windupTicks: LONG, damage: 10 })
+    tick(sim, [{ entityId: a, dx: 0, dy: 0, action: { type: 'attack', dx: 1, dy: 0 } }])
+    for (let t = 0; t < 4; t++) tick(sim)
+    expect(entity(sim, b).windup).toBeUndefined() // brisé…
+    const avant = entity(sim, b).stamina
+    tick(sim, [{ entityId: b, dx: 0, dy: 0, action: { type: 'attack', dx: -1, dy: 0 } }])
+    expect(entity(sim, b).windup).toBeDefined() // …et il se réarme au tick suivant…
+    expect(entity(sim, b).stamina).toBeLessThan(avant) // …en repayant son souffle.
+  })
+
+  it('UN COUP LOURD NE SE BRISE PAS — la borne, et elle est visible (R4nonies)', () => {
+    // La borne que la règle nue n'avait pas. On l'affirme sur le CHAMP du coup, jamais sur
+    // l'espèce ni sur le camp : `lourd` est une propriété du `Strike`, donc la même en PvE
+    // et en PvP, et le télégraphe la lit dans le snapshot (aplat contre contour).
+    const sim = makeSim()
+    const a = spawnEntity(sim, 20, 20)
+    const b = spawnEntity(sim, 20.9, 20)
+    for (const id of [a, b]) {
+      entity(sim, id).stamina = 100
+      entity(sim, id).hp = 1000
+    }
+    // `b` arme un coup LOURD et long ; `a` le frappe pendant l'armement.
+    startAttack(sim, entity(sim, b), -1, 0, {
+      strike: { ...WEAPON_PROFILES.unarmed.light, windupTicks: LONG, lourd: true },
+    })
+    tick(sim, [{ entityId: a, dx: 0, dy: 0, action: { type: 'attack', dx: 1, dy: 0 } }])
+    for (let t = 0; t < 4; t++) tick(sim)
+    expect(entity(sim, b).hp).toBeLessThan(1000) // le coup de `a` a bien PORTÉ…
+    expect(entity(sim, b).windup).toBeDefined() // …et le geste lourd TIENT
+    // …et il finit par se résoudre : `a` le prend.
+    for (let t = 0; t < LONG + 4; t++) tick(sim)
+    expect(entity(sim, a).hp).toBeLessThan(1000)
+  })
+
+  it('LE COUP CHARGÉ DE TOUTE ARME DE MÊLÉE EST LOURD, ET AUCUN COUP LÉGER NE L’EST', () => {
+    // Balayage exhaustif sur `WEAPON_PROFILES` : la grammaire ne vaut que si elle est vraie
+    // de TOUTE la table. Une arme dont le coup chargé serait annulable rendrait la règle
+    // mensongère au moment précis où le joueur a le plus investi (34 d'endurance).
+    // LES ARCS SONT L'EXCEPTION ASSUMÉE : une corde tendue n'est pas un coup lourd, et
+    // couper la visée d'un archer est très exactement l'échange qu'on veut garder.
+    let mêléeÉprouvée = 0
+    for (const [nom, profil] of Object.entries(WEAPON_PROFILES)) {
+      expect({ [nom]: profil.light.lourd }).toEqual({ [nom]: undefined }) // aucun coup léger n'est lourd
+      if (profil.ranged === true) {
+        expect({ [nom]: profil.charged.lourd }).toEqual({ [nom]: undefined })
+        continue
+      }
+      expect({ [nom]: profil.charged.lourd }).toEqual({ [nom]: true })
+      mêléeÉprouvée++
+    }
+    expect(mêléeÉprouvée).toBeGreaterThanOrEqual(4) // la garde prouve sa prémisse
+  })
+
+  it('L’ALPHA MORD ROUGE, LA MEUTE MORD JAUNE — le mélange qui fait la règle', () => {
+    // Le cœur de la décision du 2026-08-31 : une espèce toute jaune rend le martèlement
+    // invincible (2/6 morts en 24 s, mesuré), une espèce toute rouge retire au joueur
+    // l'échange qu'on vient de lui donner. C'est le MÉLANGE au sein de l'espèce qui
+    // enseigne — « je coupe les suivants, j'esquive le chef ».
+    //
+    // On l'affirme sur ce que le loup ARME PAR LE VRAI CHEMIN (la boucle de faune), et non
+    // en rappelant `startAttack` à la main : c'est le câblage qu'on éprouve, pas le champ.
+    // D'où le banc de `loup.test.ts` — NUIT et faune ambiante coupée, sans quoi le loup ne
+    // chasse pas et la garde serait verte pour n'avoir rien mesuré.
+    // LE BANC EST CELUI DE `diag-recul.mts` — une MEUTE (alpha + trois) sur une proie, la
+    // nuit, faune ambiante coupée. C'est le seul montage dont on sache qu'il fait mordre :
+    // un loup SEUL ne chasse pas, et la riposte de clan veut un clan. Un banc qui
+    // n'arrache aucune morsure rendrait cette garde verte pour n'avoir rien mesuré.
+    const map = createEmptyMap(160, 160, TERRAIN_GRASS)
+    const sim = createSim(0, { map, faunaCap: 0, worldEvents: false, cycleOffset: cycleOffsetForStartHour(2, 1) })
+    const herdId = sim.nextHerdId++
+    const alphaId = spawnMonster(sim, 'wolf', 80.5, 80.5)
+    const chef = sim.monsters.find((z) => z.entityId === alphaId)!
+    chef.herdId = herdId
+    chef.alpha = true
+    entity(sim, alphaId).hp = MONSTER_DEFS.wolf.hp * FAUNA.ALPHA_HP
+    const suivants: number[] = []
+    for (let k = 1; k <= 3; k++) {
+      const id = spawnMonster(sim, 'wolf', 80.5 + k * 1.2, 80.5)
+      const m = sim.monsters.find((z) => z.entityId === id)!
+      m.herdId = herdId
+      m.alphaId = alphaId
+      suivants.push(id)
+    }
+    const proie = spawnEntity(sim, 84.5, 80.5)
+    entity(sim, proie).hp = 100000 // il doit TENIR le temps que tout le monde ait mordu
+    // On relève la couleur de CHAQUE morsure armée, par le vrai chemin de la faune.
+    let chefRouge: boolean | undefined
+    let suivantJaune: boolean | undefined
+    for (let t = 0; t < 30 * BALANCE.TICK_RATE_HZ; t++) {
+      tick(sim, [{ entityId: proie, dx: 0, dy: 0 }])
+      const wc = entity(sim, alphaId).windup
+      if (wc && chefRouge === undefined) chefRouge = wc.strike.lourd === true
+      for (const id of suivants) {
+        const w = entity(sim, id).windup
+        if (w && suivantJaune === undefined) suivantJaune = w.strike.lourd === undefined
+      }
+      if (chefRouge !== undefined && suivantJaune !== undefined) break
+    }
+    // La prémisse, séparément : les deux ont bien ARMÉ. Sans ça, `undefined` vaudrait
+    // « jaune » comme « n'a rien fait », et la moitié de la garde passerait par accident.
+    expect(chefRouge, 'le chef a bien armé une morsure').toBeDefined()
+    expect(suivantJaune, 'un suivant a bien armé une morsure').toBeDefined()
+    expect(chefRouge).toBe(true) // le chef : ROUGE, inannulable
+    expect(suivantJaune).toBe(true) // la meute : JAUNE, on peut la couper
+  })
+
+  it('un dégât qui ne vient d’AUCUN coup ne brise rien (le saignement, la foudre)', () => {
+    // La règle vit dans `resolveStrike`, jamais dans `applyDamage` — qui est l'ÉVIER des
+    // dégâts : la plaie de chasse, la foudre et le froid y passent aussi. Un wind-up brisé
+    // par un tick de saignement serait une interruption que PERSONNE n'a portée.
+    const sim = makeSim()
+    const seul = spawnEntity(sim, 20, 20)
+    entity(sim, seul).hp = 1000
+    entity(sim, seul).stamina = 100
+    startAttack(sim, entity(sim, seul), 1, 0, { windupTicks: LONG, damage: 10 })
+    drainEvents(sim)
+    applyDamage(sim, entity(sim, seul), 25, 0)
+    expect(entity(sim, seul).hp).toBeLessThan(1000) // le dégât a bien eu lieu…
+    expect(entity(sim, seul).windup).toBeDefined() // …et le geste TIENT
+    expect(drainEvents(sim).filter((e) => e.type === 'attack_interrupted')).toHaveLength(0)
   })
 })

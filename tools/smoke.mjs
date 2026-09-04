@@ -450,6 +450,693 @@ const SCENARIOS = {
   },
 
   /**
+   * ═══ LA PLANCHE DU RELIEF — scénario `relief` (2026-09-01) — de quoi juger le rendu final ═══
+   *
+   * Demande d'Alexis : *« fais des printscreens de différentes falaises, mesas, etc. pour que je
+   * me rende bien compte du rendu final. »* Quatre mesas prises dans des entourages différents
+   * (relevées offline, `tools/__planche-sites.mts` — elles font toutes 99 tuiles, c'est leur
+   * VOISINAGE qui change), vues du sud puis du dessus, plus la nuit et le grand froid.
+   *
+   * ⚠ Chaque vue passe par `poser()` : en headless le sprite traîne de plusieurs tuiles derrière
+   * l'autorité tant qu'on n'a pas fait converger `renderOffset`. `--dev`.
+   */
+  async relief(page) {
+    if (!dev) { console.error('!! relief exige --dev'); return }
+    const agirP = async (action, ms) => {
+      await page.evaluate((a) => window.__BRAISES__.scene.sendAction(a), action)
+      await page.waitForTimeout(ms)
+    }
+    const poserP = async (nom) => {
+      await page.evaluate(() => window.__BRAISES__.scene.game.loop.sleep())
+      // CONVERGÉ = `renderOffset` résorbé — pas « le sprite est à la hauteur du corps » : sur un
+      // palier ou une mesa le sprite est dessiné LIFTÉ de plusieurs tuiles au-dessus de sa
+      // rangée, et cette mesure-là criait « à −4 tuiles » sur un corps parfaitement posé.
+      const ecart = await page.evaluate(() => {
+        const sc = window.__BRAISES__.scene
+        const reste = () => Math.max(Math.abs(sc.prediction.renderOffset.x), Math.abs(sc.prediction.renderOffset.y))
+        for (let k = 0; k < 240; k++) {
+          sc.game.step(k * 16, 16)
+          if (reste() < 0.1) break
+        }
+        return Math.round(reste() * 100) / 100
+      })
+      if (Math.abs(ecart) >= 0.1) console.error(`!! ${nom} : sprite à ${ecart} tuile de l'autorité`)
+      await page.waitForTimeout(200)
+    }
+    const vue = async (nom, x, y) => {
+      await agirP({ type: 'debug_teleport', x: x + 0.5, y: y + 0.5 }, 2400)
+      await poserP(nom)
+      await page.screenshot({ timeout: 120000, path: `${OUT}/${nom}.png` })
+      await page.evaluate(() => window.__BRAISES__.scene.game.loop.wake())
+      await page.waitForTimeout(250)
+    }
+    await agirP({ type: 'debug_god' }, 400)
+    await agirP({ type: 'debug_set_hour', hour: 11 }, 1500)
+
+    // ── QUATRE MESAS, du SUD : la paroi en face, la rampe, la surface liftée au-dessus.
+    // Postés SUR la rampe (relevée offline) : la mesa remplit alors le haut du cadre, quel que
+    // soit le décalage de visée de la caméra.
+    const mesas = [[1467, 83], [700, 82], [1287, 439], [602, 800]]
+    let k = 0
+    for (const [x, y] of mesas) { await vue(`mesa${k}-sud`, x, y); k += 1 }
+    // ── ET DE LOIN, pour la silhouette : quinze tuiles plus au sud.
+    await vue('mesa0-loin', mesas[0][0], mesas[0][1] + 7)
+    // ── DU DESSUS : sur le plateau (god mode : on s'y pose).
+    await vue('mesa0-dessus', 1470, 76)
+    await vue('mesa2-dessus', 1285, 430)
+    // ── LA BORDURE DU PAYS — l'autre roche de la carte.
+    await vue('bordure', 780, 40)
+
+    // ── LA NUIT, puis LE GRAND FROID : la même mesa sous deux autres lumières.
+    await agirP({ type: 'debug_set_hour', hour: 1 }, 1800)
+    await vue('mesa0-nuit', mesas[0][0], mesas[0][1])
+    await agirP({ type: 'debug_set_hour', hour: 11 }, 1200)
+    await agirP({ type: 'debug_set_season_day', day: 110 }, 3000)
+    await vue('mesa0-froid', mesas[0][0], mesas[0][1])
+    console.log(`   → ${OUT}/ : 4 mesas du sud, 1 de loin, 2 du dessus, la bordure, la nuit, le froid`)
+  },
+
+  /**
+   * ═══ LES TERRASSES INTRA-ZONE (2026-09-03, spec `terrasses.md` T-A9) — trois paliers, la
+   * paroi déduite, la rampe de terrasse, un corps qui la monte, l'eau d'un palier haut. `--dev`. ═══
+   *
+   * Sites relevés offline sur la graine 2026, monde joué (sonde jetable `sites-terrasses`,
+   * relevés le 2026-09-03 après les côtes de fleuve et la fermeture de `monter`) :
+   *   • rampe de terrasse 1→2 en (1425,656) — la fenêtre 60×40 autour montre 33/30/36 % de
+   *     paliers 0/1/2, et une poche à 0 juste à l'ouest, sous une rampe 0→1 ;
+   *   • lac au palier 2 autour de (1382,520), rive est en (1394,544) — l'eau haute (T-R8ter) ;
+   *   • cascade 1→0 d'un fleuve, ligne (1062-1067, 655-657) qui tombe vers le sud ; on se tient
+   *     au pied, à (1059,660), palier 0 — la seule cascade face sud de la graine avec du sol
+   *     marchable au pied (un lac de palier 2 n'a plus d'exutoire qui cascade à sa bouche : sa
+   *     première côte suit le lac, la chute est plus bas sur le cours).
+   * ⚠ CIBLES DATÉES : sur une autre graine il n'y a rien là. Chaque vue converge le sprite
+   * (`poser`) avant la capture, comme `relief`.
+   */
+  async terrasses(page) {
+    if (!dev) { console.error('!! terrasses exige --dev'); return }
+    const agirT = async (action, ms) => {
+      await page.evaluate((a) => window.__BRAISES__.scene.sendAction(a), action)
+      await page.waitForTimeout(ms)
+    }
+    const estRampe = await page.evaluate(() => {
+      const map = window.__BRAISES__.scene.map
+      return (map.connecteurs ?? []).some((c) => c.x === 1425 && c.y === 656 && c.type === 'rampe' && c.de === 1 && c.vers === 2) && (map.palier?.[656 * map.width + 1425] ?? -1) === 1
+    })
+    if (!estRampe) { console.error('!! terrasses : (1425,656) n’est pas une rampe de terrasse 1→2 — écrit pour la graine 2026'); return }
+    const poserT = async (nom) => {
+      await page.evaluate(() => window.__BRAISES__.scene.game.loop.sleep())
+      // CONVERGÉ = `renderOffset` résorbé — pas « le sprite est à la hauteur du corps » : sur un
+      // palier ou une mesa le sprite est dessiné LIFTÉ de plusieurs tuiles au-dessus de sa
+      // rangée, et cette mesure-là criait « à −4 tuiles » sur un corps parfaitement posé.
+      const ecart = await page.evaluate(() => {
+        const sc = window.__BRAISES__.scene
+        const reste = () => Math.max(Math.abs(sc.prediction.renderOffset.x), Math.abs(sc.prediction.renderOffset.y))
+        for (let k = 0; k < 240; k++) {
+          sc.game.step(k * 16, 16)
+          if (reste() < 0.1) break
+        }
+        return Math.round(reste() * 100) / 100
+      })
+      if (Math.abs(ecart) >= 0.1) console.error(`!! ${nom} : sprite à ${ecart} tuile de l'autorité`)
+      await page.waitForTimeout(200)
+    }
+    const compter = async () => page.evaluate(() => {
+      const sc = window.__BRAISES__.scene
+      const vis = (pool) => (pool ?? []).filter((o) => o.visible).length
+      return { parois: vis(sc.cliffs?.tops), ombres: vis(sc.cliffs?.ombres), eau: sc.water?.shaders?.length ?? 0 }
+    })
+    // L'HEURE SE REPOSE À CHAQUE VUE : une capture coûte ~5 min réelles en headless sous charge,
+    // et l'horloge du jeu file — la 4e vue d'un run parti à 11 h s'est prise à 23 h, de nuit.
+    const vue = async (nom, x, y, heure = 11) => {
+      await agirT({ type: 'debug_set_hour', hour: heure }, 1200)
+      await agirT({ type: 'debug_teleport', x: x + 0.5, y: y + 0.5 }, 2400)
+      await poserT(nom)
+      await page.screenshot({ timeout: 120000, path: `${OUT}/${nom}.png` })
+      console.log(`   ${nom} : ${JSON.stringify(await compter())}`)
+      await page.evaluate(() => window.__BRAISES__.scene.game.loop.wake())
+      await page.waitForTimeout(250)
+    }
+    await agirT({ type: 'debug_god' }, 400)
+    // ── LE PIED DE LA RAMPE (palier 1) : la paroi 1→2 en face, le palier 0 en bas du cadre.
+    await vue('terrasse-pied', 1425, 658)
+    // ── SUR LA RAMPE : le corps à mi-pente.
+    await vue('terrasse-rampe', 1425, 656)
+    // ── EN HAUT (palier 2), le dos aux deux paliers du bas.
+    await vue('terrasse-haut', 1425, 653)
+    // ── DE LOIN, du sud (palier 0) : l'escalier des trois paliers.
+    await vue('terrasse-loin', 1425, 665)
+    // ── L'EAU HAUTE : le lac du palier 2, depuis sa rive est.
+    await vue('terrasse-lac', 1394, 544)
+    // ── LA CASCADE : un fleuve qui tombe de 1 à 0 vers le sud, vu du pied.
+    await vue('terrasse-cascade', 1059, 660)
+    // ── LA NUIT au pied de la rampe : les paliers hauts prennent la même nuit que le sol.
+    await vue('terrasse-nuit', 1425, 658, 1)
+    console.log(`   → ${OUT}/terrasse-*.png : pied, rampe, haut, loin, lac, cascade, nuit`)
+  },
+
+  /**
+   * ═══ LA MESA (2026-09-01) — voir le plateau, sa paroi et sa rampe. `--dev`. ═══
+   *
+   * Rampes relevées offline (`tools/__rampe-proche.mts`, graine 2026, monde joué) : la plus
+   * proche du spawn est en (291,106), à 77 tuiles — hors de tout ce qu'une caméra peut montrer,
+   * donc TÉLÉPORTATION (la caméra ne déplace pas les nœuds).
+   */
+  /**
+   * ═══ LA PENTE DE LA RAMPE (jetable, 2026-09-01) — « le personnage se téléporte en haut » ═══
+   * Colonne 291 de la mesa de la graine 2026 : on se pose à quatre hauteurs le long de la tuile
+   * de rampe (y=106) et on RELÈVE où la scène dessine le corps. `--dev` obligatoire (TP).
+   */
+  async pente(page) {
+    if (!dev) { console.error('!! pente exige --dev'); return }
+    const agirP = async (action, ms) => {
+      await page.evaluate((a) => window.__BRAISES__.scene.sendAction(a), action)
+      await page.waitForTimeout(ms)
+    }
+    const poserP = async (nom) => {
+      await page.evaluate(() => window.__BRAISES__.scene.game.loop.sleep())
+      // ⚠ ON CONVERGE SUR LE SPRITE LUI-MÊME, et sur sa STABILITÉ — pas sur `predicted` : le
+      // `renderOffset` se résorbe image par image, et en headless une image dure ~800 ms. Et pas
+      // sur « le sprite a rejoint ses pieds » non plus : depuis la pente, il est LÉGITIMEMENT
+      // au-dessus d'eux sur une rampe — ce critère-là ne convergerait jamais.
+      const ecart = await page.evaluate(() => {
+        const sc = window.__BRAISES__.scene
+        let avant = sc.playerSprite.y
+        let bouge = 99
+        for (let k = 0; k < 400; k++) {
+          sc.game.step(k * 16, 16)
+          bouge = Math.abs(sc.playerSprite.y - avant)
+          avant = sc.playerSprite.y
+          if (k > 4 && bouge < 0.05) break
+        }
+        return Math.round(bouge * 100) / 100
+      })
+      if (ecart >= 0.05) console.error(`!! ${nom} : le sprite n'est pas stabilisé (${ecart} px/image)`)
+    }
+    const estRampe = await page.evaluate(() => (window.__BRAISES__.scene.map.connecteurs ?? [])
+      .some((c) => c.x === 291 && c.y === 106))
+    if (!estRampe) { console.error('!! pente : (291,106) n’est pas une rampe — écrit pour la graine 2026'); return }
+    await agirP({ type: 'debug_set_hour', hour: 11 }, 1500)
+    await agirP({ type: 'debug_god' }, 400)
+    const releve = []
+    for (const [nom, y] of [['0-pied', 107.5], ['1-bas', 106.9], ['2-mi', 106.5], ['3-haut', 106.05]]) {
+      await agirP({ type: 'debug_teleport', x: 291.5, y }, 2200)
+      await poserP(nom)
+      const vu = await page.evaluate(() => {
+        const sc = window.__BRAISES__.scene
+        const me = (sc.lastEntities ?? []).find((en) => en.id === sc.playerId)
+        // La RANGÉE D'ÉCRAN où la scène pose les pieds du sprite, et celle où elle peint la rampe.
+        const rampes = (sc.etages?.rampes ?? []).filter((im) => im.visible && Math.floor(im.x / 16) === 291)
+          .map((im) => Math.round(im.y / 16 * 100) / 100).sort((a, b) => a - b)
+        return {
+          y: Math.round((me?.y ?? 0) * 100) / 100,
+          etage: me?.etage ?? 0,
+          sprY: Math.round((sc.playerSprite?.y ?? -1) / 16 * 100) / 100,
+          rangeesDeRampe: rampes,
+        }
+      })
+      releve.push([nom, vu])
+      await page.screenshot({ timeout: 120000, path: `${OUT}/pente-${nom}.png` })
+      await page.evaluate(() => window.__BRAISES__.scene.game.loop.wake())
+      await page.waitForTimeout(300)
+    }
+    // ═══ LE CAS DU RETARD, RENDU OBSERVABLE (2026-09-01) ═══
+    // `debug_teleport` EFFACE l'étage : posé sur le chapeau, le corps a donc `etage = 0` alors
+    // qu'il est sur de la roche — exactement l'état transitoire du client quand la position
+    // prédite arrive sur le plateau avant que l'autorité n'ait dit +1. Avant le correctif il
+    // était dessiné 2 tuiles trop bas (le plongeon) ; après, la carte tranche : la roche ne porte
+    // personne à l'étage 0, donc on dessine à +1.
+    await agirP({ type: 'debug_teleport', x: 291.5, y: 103.5 }, 2200)
+    await poserP('5-retard')
+    const retard = await page.evaluate(() => {
+      const sc = window.__BRAISES__.scene
+      const me = (sc.lastEntities ?? []).find((en) => en.id === sc.playerId)
+      return { y: Math.round((me?.y ?? 0) * 100) / 100, etage: me?.etage ?? 0,
+               sprY: Math.round((sc.playerSprite?.y ?? -1) / 16 * 100) / 100 }
+    })
+    releve.push(['5-retard(etage=0 sur le chapeau)', retard])
+    await page.screenshot({ timeout: 120000, path: `${OUT}/pente-5-retard.png` })
+    await page.evaluate(() => window.__BRAISES__.scene.game.loop.wake())
+    await page.waitForTimeout(300)
+
+    // Et le sommet : on y MARCHE (le TP efface l'étage — il viserait le sol, donc la roche).
+    await agirP({ type: 'debug_teleport', x: 291.5, y: 106.5 }, 2000)
+    await page.keyboard.down('KeyW')
+    await page.waitForTimeout(3000)
+    await page.keyboard.up('KeyW')
+    await page.waitForTimeout(600)
+    await poserP('4-plateau')
+    const haut = await page.evaluate(() => {
+      const sc = window.__BRAISES__.scene
+      const me = (sc.lastEntities ?? []).find((en) => en.id === sc.playerId)
+      return { y: Math.round((me?.y ?? 0) * 100) / 100, etage: me?.etage ?? 0,
+               sprY: Math.round((sc.playerSprite?.y ?? -1) / 16 * 100) / 100 }
+    })
+    releve.push(['4-plateau', haut])
+    await page.screenshot({ timeout: 120000, path: `${OUT}/pente-4-plateau.png` })
+    await page.evaluate(() => window.__BRAISES__.scene.game.loop.wake())
+    for (const [nom, v] of releve) console.log(`   → ${nom} : ${JSON.stringify(v)}`)
+    // LA PENTE SE LIT EN UN NOMBRE : l'écart entre la rangée d'écran du sprite et sa rangée
+    // logique. Il doit croître CONTINÛMENT de 0 (au pied) à LIFT_TUILES = 2 (en haut).
+    const lifts = releve.map(([nom, v]) => [nom, Math.round((v.y + 0.1875 - v.sprY) * 100) / 100])
+    console.log(`   → lift dessiné (tuiles) : ${JSON.stringify(lifts)}`)
+  },
+
+  /**
+   * ═══ LA CAVE (2026-09-02) — l'étage −1, et l'obscurité qui s'y gagne ═══
+   * Mesa de la graine 2026 : rampe en 290-292/106, gueule en 294/106 — la MÊME butte.
+   * On photographie le dehors, le seuil, puis le fond de la salle. `--dev` obligatoire.
+   */
+  async cave(page) {
+    if (!dev) { console.error('!! cave exige --dev'); return }
+    const agirC = async (a, ms) => {
+      await page.evaluate((x) => window.__BRAISES__.scene.sendAction(x), a)
+      await page.waitForTimeout(ms)
+    }
+    const stabiliser = async (nom) => {
+      await page.evaluate(() => window.__BRAISES__.scene.game.loop.sleep())
+      const bouge = await page.evaluate(() => {
+        const sc = window.__BRAISES__.scene
+        let avant = sc.playerSprite.y
+        let d = 99
+        for (let k = 0; k < 400; k++) {
+          sc.game.step(k * 16, 16)
+          d = Math.abs(sc.playerSprite.y - avant)
+          avant = sc.playerSprite.y
+          if (k > 4 && d < 0.05) break
+        }
+        // Le seuil se juge sur la valeur BRUTE : arrondie à deux décimales, une convergence à
+        // 0,046 se lisait « 0.05 » et rougissait un sprite qui venait de s'arrêter.
+        return { d: Math.round(d * 1000) / 1000, ok: d < 0.05 }
+      })
+      if (!bouge.ok) console.error(`!! ${nom} : sprite non stabilisé (${bouge.d})`)
+    }
+    const releve = async () => page.evaluate(() => {
+      const sc = window.__BRAISES__.scene
+      const me = (sc.lastEntities ?? []).find((e) => e.id === sc.playerId)
+      const cave = (sc.etages?.cave ?? []).filter((im) => im.visible)
+      // Ce que la couche a POSÉ, par famille de texture (`cv-<famille>-…`) : le sol, les parois,
+      // les ombres, les lèvres, les lichens, la nappe de jour, le dehors — la cave en pièces.
+      const familles = {}
+      for (const im of cave) {
+        const f = String(im.texture?.key ?? '?').split('-')[1] ?? '?'
+        familles[f] = (familles[f] ?? 0) + 1
+      }
+      const veil = sc.children.list.find((o) => o.type === 'RenderTexture' && o.depth > 2_000_000 && o.depth < 2_100_000)
+      return {
+        y: Math.round((me?.y ?? 0) * 100) / 100, etage: me?.etage ?? 0,
+        etageJoueur: sc.etageJoueur, souterrain: sc.etages?.souterrain ?? null,
+        tuilesDeCaveVisibles: familles.sol ?? 0,
+        familles,
+        ciel: Math.round((sc.etages?.lumiere?.ciel ?? -1) * 100) / 100,
+        torche: sc.etages?.lumiere?.torche ? Math.round(sc.etages.lumiere.torche.force * 100) / 100 : null,
+        voileVisible: veil ? veil.visible : null,
+        rocheVisible: (sc.children.list.some((o) => o.type === 'TileSprite' && o.visible && o.depth > 1_900_000)),
+      }
+    })
+    const gueule = await page.evaluate(() => (window.__BRAISES__.scene.map.connecteurs ?? [])
+      .some((c) => c.x === 294 && c.y === 106 && c.type === 'gueule'))
+    // La gueule est une PAIRE (293,106)+(294,106) : on vise son centre, x = 294.0.
+    if (!gueule) { console.error('!! cave : (294,106) n’est pas une gueule — écrit pour la graine 2026'); return }
+    await agirC({ type: 'debug_set_hour', hour: 12 }, 1500)
+    await agirC({ type: 'debug_god' }, 400)
+
+    // ① DEHORS, devant la butte : la cave n'existe pas à l'écran (E-R1 au rendu).
+    await agirC({ type: 'debug_teleport', x: 294, y: 109.5 }, 2200)
+    await stabiliser('dehors')
+    console.log(`   → dehors : ${JSON.stringify(await releve())}`)
+    await page.screenshot({ timeout: 120000, path: `${OUT}/cave-0-dehors.png` })
+    await page.evaluate(() => window.__BRAISES__.scene.game.loop.wake())
+    await page.waitForTimeout(300)
+
+    // ② ON ENTRE — par la gueule, en marchant (le TP efface l'étage : il viserait le sol).
+    // ⚠ ON MARCHE JUSQU'À UNE LIGNE, PAS PENDANT UNE DURÉE : en headless une image dure ~800 ms,
+    // et 2,5 s de touche menaient au mur du fond — le « seuil » était le fond (vu le 2026-09-02).
+    // Et même ainsi, le PREMIER relevé n'arrive qu'une image après le départ (~2,4 tuiles à
+    // l'allure de marche) : sous SwiftShader le « seuil » atterrit souvent au fond. Le verdict
+    // porte sur `etage`, pas sur y ; `cave-1-seuil.png` se lit avec cette réserve.
+    const marcherNord = async (jusquA, maxMs) => {
+      const t0 = Date.now()
+      await page.keyboard.down('KeyW')
+      while (Date.now() - t0 < maxMs) {
+        await page.waitForTimeout(150)
+        const y = (await releve()).y
+        if (y > 0 && y <= jusquA) break
+      }
+      await page.keyboard.up('KeyW')
+      await page.waitForTimeout(600)
+    }
+    await agirC({ type: 'debug_teleport', x: 294, y: 107.4 }, 2000)
+    await marcherNord(105.2, 8000)
+    await stabiliser('seuil')
+    console.log(`   → seuil : ${JSON.stringify(await releve())}`)
+    await page.screenshot({ timeout: 120000, path: `${OUT}/cave-1-seuil.png` })
+    await page.evaluate(() => window.__BRAISES__.scene.game.loop.wake())
+    await page.waitForTimeout(300)
+
+    // ③ AU FOND — on continue vers le nord, sous le chapeau, jusqu'au mur.
+    await marcherNord(97.5, 8000)
+    await stabiliser('fond')
+    const fond = await releve()
+    console.log(`   → fond : ${JSON.stringify(fond)}`)
+    await page.screenshot({ timeout: 120000, path: `${OUT}/cave-2-fond.png` })
+    await page.evaluate(() => window.__BRAISES__.scene.game.loop.wake())
+    await page.waitForTimeout(300)
+
+    // ④ LA TORCHE — elle rend la salle, c'est ce qui en fait un outil.
+    await agirC({ type: 'debug_grant', item: 'torche_vive', count: 1 }, 800)
+    await page.evaluate(() => {
+      const sc = window.__BRAISES__.scene
+      const me = (sc.lastEntities ?? []).find((e) => e.id === sc.playerId)
+      const i = (me?.inventory ?? []).findIndex((sl) => sl && sl.item === 'torche_vive')
+      if (i >= 0) sc.sendAction({ type: 'set_active_slot', slot: i })
+    })
+    await page.waitForTimeout(1500)
+    await stabiliser('torche')
+    console.log(`   → torche : ${JSON.stringify(await releve())}`)
+    await page.screenshot({ timeout: 120000, path: `${OUT}/cave-3-torche.png` })
+    await page.evaluate(() => window.__BRAISES__.scene.game.loop.wake())
+    await page.waitForTimeout(300)
+
+    // ⑤ LA NUIT — la gueule ne donne plus de jour : la torche est la seule lumière, et les
+    //    lichens du fond la seule autre. C'est la cave la plus inquiétante, et la plus belle.
+    await agirC({ type: 'debug_set_hour', hour: 0 }, 2500)
+    await stabiliser('nuit')
+    console.log(`   → nuit : ${JSON.stringify(await releve())}`)
+    await page.screenshot({ timeout: 120000, path: `${OUT}/cave-4-nuit.png` })
+    await page.evaluate(() => window.__BRAISES__.scene.game.loop.wake())
+    await page.waitForTimeout(300)
+
+    // ⑥ ET LA GUEULE, DE DEHORS, LA NUIT — le souffle et le trou dans une paroi sans jour.
+    await agirC({ type: 'debug_set_hour', hour: 12 }, 1500)
+    await agirC({ type: 'debug_teleport', x: 294, y: 109.5 }, 2200)
+    await stabiliser('dehors-2')
+    console.log(`   → dehors (retour) : ${JSON.stringify(await releve())}`)
+    await page.screenshot({ timeout: 120000, path: `${OUT}/cave-5-dehors-retour.png` })
+    await page.evaluate(() => window.__BRAISES__.scene.game.loop.wake())
+    console.log(fond.etage === -1
+      ? `   ✓ on est DANS la cave (étage ${fond.etage}), ${fond.tuilesDeCaveVisibles} tuiles peintes`
+      : `   ✗ on n'est pas entré (étage ${fond.etage})`)
+  },
+
+  async mesa(page) {
+    if (!dev) { console.error('!! mesa exige --dev'); return }
+    /**
+     * ═══ LAISSER LE SPRITE RATTRAPER L'AUTORITÉ AVANT DE PHOTOGRAPHIER ═══
+     *
+     * ⚠ **SANS ÇA, LA CAPTURE MENT DE PLUSIEURS TUILES.** MESURÉ le 2026-09-01 : après une marche,
+     * `playerSprite.y` valait **93,67** quand l'autorité rendait **96,81** — 3,33 tuiles d'écart,
+     * et Alexis a eu raison de dire « il n'est pas collé, il est à plusieurs tuiles ». Ce n'est
+     * pas un défaut du jeu : c'est `renderOffset`, l'écart prédiction↔autorité que la scène LISSE
+     * sur plusieurs images (`decayRenderOffset`). En headless une image dure ~800 ms, donc trois
+     * secondes de marche n'en donnent que quatre : l'offset n'a pas où se résorber.
+     *
+     * On endort donc la boucle et on avance À LA MAIN jusqu'à ce que le sprite ait rejoint les
+     * pieds de l'entité — et l'on DIT s'il n'y arrive pas, plutôt que de photographier un
+     * mensonge. Même famille que « figer la boucle pour capturer un toast » : en headless, ce
+     * qu'on voit n'est pas ce qui est, tant qu'on ne l'a pas fait converger.
+     */
+    const poser = async (nom) => {
+      await page.evaluate(() => window.__BRAISES__.scene.game.loop.sleep())
+      const ecart = await page.evaluate(() => {
+        const sc = window.__BRAISES__.scene
+        const me = (sc.lastEntities ?? []).find((en) => en.id === sc.playerId)
+        const pieds = (me?.y ?? 0) + 0.1875 // AVATAR_HITBOX_DEPTH_TILES / 2
+        for (let k = 0; k < 240; k++) {
+          sc.game.step(k * 16, 16)
+          if (Math.abs(sc.playerSprite.y / 16 - pieds) < 0.1) break
+        }
+        return Math.round((sc.playerSprite.y / 16 - pieds) * 100) / 100
+      })
+      if (Math.abs(ecart) >= 0.1) console.error(`!! ${nom} : le sprite n'a pas rejoint l'autorité (${ecart} tuile)`)
+      await page.waitForTimeout(200)
+    }
+    const agirM = async (action, ms) => {
+      await page.evaluate((a) => window.__BRAISES__.scene.sendAction(a), action)
+      await page.waitForTimeout(ms)
+    }
+    // ⚠ LA CIBLE EST DATÉE (graine 2026, monde joué) : sur une autre graine il n'y a pas de mesa
+    // là, et le scénario photographierait un pré en silence. On le DIT plutôt que de le taire.
+    const estRampe = await page.evaluate(() => (window.__BRAISES__.scene.map.connecteurs ?? [])
+      .some((c) => c.x === 291 && c.y === 106))
+    if (!estRampe) {
+      console.error('!! mesa : (291,106) n’est pas une rampe dans ce monde — scénario écrit pour la graine 2026')
+      return
+    }
+    await agirM({ type: 'debug_set_hour', hour: 11 }, 1500)
+    await agirM({ type: 'debug_god' }, 400)
+    // Le pied de la rampe, puis le sommet du plateau : deux points de vue sur la même butte.
+    const vues = [
+      ['pied', 291, 110],   // en dessous, la paroi sud en face
+      ['rampe', 291, 106],  // sur la rampe elle-même
+      ['dessus', 291, 100], // au milieu du chapeau
+    ]
+    for (const [nom, x, y] of vues) {
+      await agirM({ type: 'debug_teleport', x: x + 0.5, y: y + 0.5 }, 2600)
+      await page.evaluate(() => window.__BRAISES__.scene.game.loop.sleep())
+      await page.waitForTimeout(300)
+      await page.screenshot({ timeout: 120000, path: `${OUT}/mesa-${nom}.png` })
+      await page.evaluate(() => window.__BRAISES__.scene.game.loop.wake())
+      await page.waitForTimeout(300)
+    }
+    // ═══ LE DÉNIVELÉ — trois points au hasard du pays, pour voir les TERRASSES ═══
+    // Question d'Alexis (2026-09-01) : « le dénivelé sur l'ensemble de la carte ». On ne va plus
+    // à une mesa : on se pose ailleurs, là où il n'y avait rien avant, et on regarde le relief.
+    let nT = 0
+    // Points relevés offline (tools/__ou-terrasse.mts) : de vraies barres de terrasse est-ouest.
+    for (const [x, y] of [[676, 208], [922, 266], [1088, 290]]) {
+      await agirM({ type: 'debug_teleport', x: x + 0.5, y: y + 0.5 }, 2600)
+      await poser(`terrasse${nT}`)
+      await page.screenshot({ timeout: 120000, path: `${OUT}/terrasse-${nT}.png` })
+      await page.evaluate(() => window.__BRAISES__.scene.game.loop.wake())
+      await page.waitForTimeout(300)
+      nT += 1
+    }
+
+    // ═══ COLLÉ AU NORD DE LA MASSE — on descend jusqu'à l'arrêt, et on regarde ═══
+    // Question d'Alexis (2026-09-01) : au NORD, la projection ne dresse aucune paroi — le bord
+    // se rend en DESSUS. Que voit-on, et où s'arrête-t-on ?
+    {
+      // Colonne x=293 : la roche commence à y=97 et l'approche est LIBRE de nœuds
+      // (relevé offline, tools/__nord-mesa.mts — à x=291 un arbre barre le chemin).
+      // ⚠ **ON SE POSE AU CONTACT, ON N'Y MARCHE PLUS.** La marche au clavier tenait 3 s d'horloge
+      // murale, or en headless une image dure ~800 ms et leur nombre varie d'un run à l'autre : le
+      // joueur arrivait au pied de la paroi une fois sur deux, et à cinq tuiles de là l'autre fois
+      // — la capture montrait alors un pré, sans rien dire. `96,81` n'est pas un nombre choisi :
+      // c'est la position d'arrêt RELEVÉE par cette marche quand elle aboutissait (pieds à 97,0,
+      // soit `y + AVATAR_HITBOX_DEPTH_TILES / 2`, contre la roche de la rangée 97). La garde
+      // `auSud` ci-dessous vérifie qu'il y a bien de la roche là — sans quoi on photographierait
+      // un pré en croyant tenir une façade.
+      await agirM({ type: 'debug_teleport', x: 293.5, y: 96.81 }, 2200)
+      // ⚠ **CONVERGER AVANT DE LIRE LES ALPHAS.** Le découvert se calcule dans `render()`, à
+      // partir de la position PRÉDITE de l'image en cours — et en headless une image dure ~800 ms.
+      // Six cents millisecondes après le relâchement, il peut n'y avoir eu AUCUN rendu depuis
+      // l'arrivée : on relèverait alors le fondu d'avant le pas. MESURÉ : mêmes 96,81 tuiles
+      // d'autorité, alphas [0,22 ×4] avec la convergence, [0,69 0,69 0,95 1] sans — le verdict
+      // s'inversait sur le seul hasard du cadencement. Même famille que le sprite qui traîne :
+      // en headless, ce qu'on lit n'est pas ce qui est tant qu'on ne l'a pas fait converger.
+      await poser('collenord')
+      const vu = await page.evaluate(() => {
+        const sc = window.__BRAISES__.scene
+        const me = (sc.lastEntities ?? []).find((en) => en.id === sc.playerId)
+        const tx = Math.floor(me?.x ?? 0)
+        const ty = Math.floor(me?.y ?? 0)
+        const t = (yy) => sc.map.terrain[yy * sc.map.width + tx]
+        const dedans = new Set(sc.map.etages?.[0]?.idx ?? [])
+        // ⚠ ON LIT LA POSITION RÉELLE DES OBJETS, pas une conversion faite à la main : c'est
+        // l'écart entre les deux qui répondrait à « il est à plusieurs tuiles » (Alexis).
+        const sols = (sc.etages?.sols ?? []).filter((im) => im.visible)
+        const colonne = sols.filter((im) => Math.floor(im.x / 16) === tx).map((im) => im.y / 16).sort((a, b) => a - b)
+        // ═══ LE DISQUE DE DÉCOUVERT — on LIT l'alpha des sprites, on ne juge pas la capture ═══
+        //
+        // ⚠ CE QUI FERAIT ROUGIR : que le plancher au-dessus du joueur reste OPAQUE. C'est le cas
+        // exact d'avant (aucun fondu), et c'est aussi ce qu'on obtiendrait si `etageJoueur` était
+        // mal lu, ou si la distance était prise à la rangée LOGIQUE au lieu de la rangée dessinée
+        // — trois causes distinctes, un seul symptôme, que cette mesure attrape toutes les trois.
+        // On ne retient QUE les sprites de la bande de tri (le plancher) : la paroi vit sous le
+        // sol (`CLIFF_DEPTH`, négatif) et ne cède jamais, c'est réglé.
+        const pieds = (me?.y ?? 0) + 0.1875
+        const couvrants = sols.filter((im) => im.depth > 1
+          && Math.abs(im.x / 16 + 0.5 - (me?.x ?? 0)) < 1
+          && im.y / 16 + 0.5 >= pieds - 1.5 && im.y / 16 <= pieds)
+        const alphas = couvrants.map((im) => Math.round(im.alpha * 100) / 100).sort((a, b) => a - b)
+        // Le sprite du joueur, tel que la scène le pose.
+        let joueurY = null
+        sc.children.list.forEach((o) => {
+          if (o.texture && o.texture.key === 'spr-player' && o.visible) joueurY = o.y / 16
+        })
+        return { y: Math.round((me?.y ?? 0) * 100) / 100, etage: me?.etage ?? 0,
+                 sousLesPieds: t(ty), auSud: t(ty + 1), deuxAuSud: t(ty + 2),
+                 sudEstUnEtage: dedans.has((ty + 1) * sc.map.width + tx),
+                 spriteJoueurY: joueurY === null ? null : Math.round(joueurY * 100) / 100,
+                 // ⚠ LA PRÉDICTION CONTRE L'AUTORITÉ : c'est l'écart entre les deux qui
+                 // expliquerait un sprite posé loin de la position que la sim rend.
+                 predY: Math.round((sc.predicted?.y ?? -1) * 100) / 100,
+                 // LE SPRITE LUI-MÊME, tel que la scène l'a posé — la seule mesure qui tranche.
+                 sprY: Math.round((sc.playerSprite?.y ?? -1) / 16 * 100) / 100,
+                 sprH: Math.round(sc.playerSprite?.displayHeight ?? -1),
+                 sprOrigY: sc.playerSprite?.originY,
+                 etageJoueur: sc.etageJoueur,
+                 solsDeLaColonne: colonne.slice(0, 4).map((v) => Math.round(v * 100) / 100),
+                 planchersCouvrants: couvrants.length, alphas: alphas.slice(0, 6),
+                 decouvertOuvert: couvrants.length > 0 && alphas[0] <= 0.3,
+                 camY: Math.round(sc.cameras.main.worldView.y / 16 * 100) / 100,
+                 camH: Math.round(sc.cameras.main.worldView.height / 16 * 100) / 100,
+                 canvas: `${sc.game.canvas.width}x${sc.game.canvas.height}`,
+                 css: `${sc.game.canvas.clientWidth}x${sc.game.canvas.clientHeight}`,
+                 zoom: Math.round(sc.cameras.main.zoom * 100) / 100 }
+      })
+      await page.screenshot({ timeout: 120000, path: `${OUT}/mesa-collenord.png` })
+      await page.evaluate(() => window.__BRAISES__.scene.game.loop.wake())
+      await page.waitForTimeout(300)
+      console.log(`   → collenord : ${JSON.stringify(vu)}`)
+      console.log(vu.decouvertOuvert
+        ? `   ✓ le découvert s'ouvre : ${vu.planchersCouvrants} planchers couvrent le joueur, alpha min ${vu.alphas[0]}`
+        : `   ✗ le plateau reste OPAQUE au-dessus du joueur (${vu.planchersCouvrants} planchers, alphas ${JSON.stringify(vu.alphas)})`)
+    }
+
+    // ═══ COLLÉ À LA PAROI — on pousse au nord jusqu'à ce que ça bloque, et on regarde ═══
+    // Question d'Alexis (2026-09-01). On vise une colonne de MUR (pas la rampe) et on avance
+    // jusqu'à l'arrêt : ce qu'on veut voir, c'est ce que le corps recouvre de la paroi.
+    for (const [nom, x, y0] of [['colle', 297, 109]]) {
+      await agirM({ type: 'debug_teleport', x: x + 0.5, y: y0 + 0.5 }, 2200)
+      await page.keyboard.down('KeyW')
+      await page.waitForTimeout(3000)
+      await page.keyboard.up('KeyW')
+      await page.waitForTimeout(600)
+      // ⚠ **CONVERGER AVANT DE MESURER, et pas seulement avant de photographier** : la sonde lit
+      // `playerSprite`, or il traîne de plusieurs tuiles derrière l'autorité tant que
+      // `renderOffset` n'a pas eu d'images pour se résorber. Mesurer avant, c'est éprouver le
+      // recouvrement d'un corps qui n'est pas là.
+      await poser(nom)
+      const vu = await page.evaluate(() => {
+        const sc = window.__BRAISES__.scene
+        const me = (sc.lastEntities ?? []).find((en) => en.id === sc.playerId)
+        const tx = Math.floor(me?.x ?? 0)
+        const ty = Math.floor(me?.y ?? 0)
+        const t = (yy) => sc.map.terrain[yy * sc.map.width + tx]
+        // ═══ LA PAROI N'AVALE PAS CELUI QUI EST À SON PIED ═══
+        //
+        // Le symétrique exact du découvert, et le piège de la refonte du 2026-09-01 : monter la
+        // paroi dans la strate de l'étage aurait recouvert le corps collé à son pied sud — on
+        // aurait échangé un défaut contre l'autre. On ne juge donc PAS sur la photo (le sprite y
+        // traîne derrière l'autorité), on lit les profondeurs : AUCUNE pièce de la couche ne doit
+        // à la fois passer devant l'acteur ET chevaucher sa boîte à l'écran.
+        const dActeur = sc.playerSprite?.depth ?? 0
+        const hautSprite = (sc.playerSprite?.y ?? 0) - (sc.playerSprite?.displayHeight ?? 0)
+        const basSprite = sc.playerSprite?.y ?? 0
+        const avalent = [...(sc.etages?.sols ?? []), ...(sc.etages?.rampes ?? [])]
+          .filter((im) => im.visible && im.depth > dActeur
+            && Math.abs(im.x + 8 - (sc.playerSprite?.x ?? 0)) < 12
+            && im.y + 16 > hautSprite && im.y < basSprite)
+        return { y: Math.round((me?.y ?? 0) * 100) / 100, etage: me?.etage ?? 0,
+                 sousLesPieds: t(ty), auNord: t(ty - 1), deuxAuNord: t(ty - 2),
+                 avalent: avalent.length, depthsAvalent: avalent.slice(0, 4).map((im) => Math.round(im.depth)) }
+      })
+      console.log(vu.avalent === 0
+        ? `   ✓ ${nom} : rien de la couche ne recouvre le corps collé au pied sud`
+        : `   ✗ ${nom} : ${vu.avalent} pièce(s) de plateau passent DEVANT le joueur (${JSON.stringify(vu.depthsAvalent)})`)
+      await page.screenshot({ timeout: 120000, path: `${OUT}/mesa-${nom}.png` })
+      await page.evaluate(() => window.__BRAISES__.scene.game.loop.wake())
+      await page.waitForTimeout(300)
+      console.log(`   → ${nom} : ${JSON.stringify(vu)}`)
+    }
+
+    // ═══ DERRIÈRE LA FALAISE, AU NORD — que voit-on, et est-on caché ? ═══
+    // La question d'Alexis (2026-09-01). On se place AU NORD du chapeau (il n'y a pas de paroi
+    // de ce côté : la projection ne dresse que le flanc SUD), puis au ras du bord SUD du plateau,
+    // là où le corps chevauche la paroi dessinée.
+    for (const [nom, x, y, e] of [['nord', 291, 93, 0], ['bordsud', 291, 104, 1]]) {
+      await agirM({ type: 'debug_teleport', x: x + 0.5, y: y + 0.5 }, 2600)
+      if (e === 1) {
+        // On y monte par la rampe plutôt que d'y être posé : l'étage doit venir de l'AUTORITÉ.
+        await agirM({ type: 'debug_teleport', x: 291.5, y: 107.5 }, 1800)
+        // Court : on veut s'arrêter SUR les rangées que le rendu montre de face (la lèvre sud),
+        // pas au milieu du plateau — c'est là que la question se pose.
+        await page.keyboard.down('KeyW')
+        await page.waitForTimeout(1500)
+        await page.keyboard.up('KeyW')
+        await page.waitForTimeout(600)
+      }
+      const vu = await page.evaluate(() => {
+        const sc = window.__BRAISES__.scene
+        const me = (sc.lastEntities ?? []).find((en) => en.id === sc.playerId)
+        return { x: Math.round((me?.x ?? 0) * 10) / 10, y: Math.round((me?.y ?? 0) * 10) / 10, etage: me?.etage ?? 0 }
+      })
+      await page.evaluate(() => window.__BRAISES__.scene.game.loop.sleep())
+      await page.waitForTimeout(300)
+      await page.screenshot({ timeout: 120000, path: `${OUT}/mesa-${nom}.png` })
+      await page.evaluate(() => window.__BRAISES__.scene.game.loop.wake())
+      await page.waitForTimeout(300)
+      console.log(`   → ${nom} : ${JSON.stringify(vu)}`)
+    }
+
+    // ═══ ET ON Y MONTE POUR DE VRAI — la tranche est VERTICALE ou elle n'est rien ═══
+    // Le pied de la rampe, puis plein nord. On lit l'ÉTAGE que l'autorité rend, pas la position :
+    // c'est lui qui dit qu'on est passé d'un plancher à l'autre.
+    await agirM({ type: 'debug_teleport', x: 291.5, y: 107.5 }, 2200)
+    const avant = await page.evaluate(() => {
+      const sc = window.__BRAISES__.scene
+      return (sc.lastEntities ?? []).find((e) => e.id === sc.playerId)?.etage ?? 0
+    })
+    await page.keyboard.down('KeyW')
+    await page.waitForTimeout(4000)
+    await page.keyboard.up('KeyW')
+    await page.waitForTimeout(600)
+    const apres = await page.evaluate(() => {
+      const sc = window.__BRAISES__.scene
+      const me = (sc.lastEntities ?? []).find((e) => e.id === sc.playerId)
+      return { etage: me?.etage ?? 0, y: Math.round((me?.y ?? 0) * 10) / 10 }
+    })
+    await page.evaluate(() => window.__BRAISES__.scene.game.loop.sleep())
+    await page.waitForTimeout(300)
+    await page.screenshot({ timeout: 120000, path: `${OUT}/mesa-monte.png` })
+    await page.evaluate(() => window.__BRAISES__.scene.game.loop.wake())
+    await page.waitForTimeout(300)
+    console.log(`   ${apres.etage === 1 ? '✓' : '✗'} la montée : étage ${avant} → ${apres.etage} (y ${apres.y})`)
+
+    // ET LE GRAND FROID — la saison RETEINTE le sol (`teinte-saison`), et l'on vérifie que le
+    // plateau tient sa lecture quand tout change de couleur autour de lui. ⚠ On n'a PAS réussi
+    // à faire tomber la neige au sol dans le temps du scénario (un front doit passer et déposer) :
+    // le rapport de la neige à cette couche s'argumente donc par les PROFONDEURS, pas par la
+    // photo — le manteau vit à `GEL_DEPTH` (+0,30), le dessus d'ardoise passait DÉJÀ dessus
+    // (+0,32) avant que cette couche existe, et le sol du plateau (+0,33) hérite du même rapport.
+    await agirM({ type: 'debug_set_season_day', day: 110 }, 3000)
+    await agirM({ type: 'debug_set_hour', hour: 11 }, 1200)
+    await agirM({ type: 'debug_meteo', meteo: 'pluie' }, 1500)
+    await agirM({ type: 'debug_teleport', x: 291.5, y: 103.5 }, 2600)
+    for (let k = 0; k < 12; k++) await page.waitForTimeout(1200)
+    await page.evaluate(() => window.__BRAISES__.scene.game.loop.sleep())
+    await page.waitForTimeout(400)
+    await page.screenshot({ timeout: 120000, path: `${OUT}/mesa-froid.png` })
+    await page.evaluate(() => window.__BRAISES__.scene.game.loop.wake())
+    await page.waitForTimeout(300)
+
+    // ET LA NUIT — le voile est à `AMBIENT_DEPTH_LIT` (8), bien au-dessus du sol du plateau
+    // (−0,67) : il DOIT le couvrir comme le reste. On le vérifie au lieu de le supposer (la
+    // leçon « nuit peinte : mesurer sur l'objet » — un préréglage ne pilote que les sprites lit).
+    await agirM({ type: 'debug_set_hour', hour: 1 }, 2200)
+    await agirM({ type: 'debug_teleport', x: 291.5, y: 100.5 }, 2600)
+    await page.evaluate(() => window.__BRAISES__.scene.game.loop.sleep())
+    await page.waitForTimeout(400)
+    await page.screenshot({ timeout: 120000, path: `${OUT}/mesa-nuit.png` })
+    await page.evaluate(() => window.__BRAISES__.scene.game.loop.wake())
+    await page.waitForTimeout(300)
+    const etat = await page.evaluate(() => {
+      const sc = window.__BRAISES__.scene
+      const me = (sc.view.entities ?? []).find((e) => e.id === sc.playerId)
+      // E-A7 — LE BUDGET, RELEVÉ ET NON SUPPOSÉ. Aucun chunk n'est cuit pour l'étage (voir
+      // `etage-layer.ts`) : le coût est le nombre de SPRITES vivants, borné par la vue.
+      const et = sc.etages
+      return { x: me?.x, y: me?.y, etage: me?.etage ?? 0, etages: sc.map.etages?.[0]?.idx?.length ?? 0,
+               connecteurs: sc.map.connecteurs?.length ?? 0,
+               spritesSol: et?.sols?.filter((s2) => s2.visible).length ?? -1,
+               spritesRampe: et?.rampes?.filter((s2) => s2.visible).length ?? -1,
+               chunksPaves: sc.paves?.chunksVivants?.() ?? -1 }
+    })
+    console.log(`   → ${OUT}/mesa-{pied,rampe,dessus,monte,froid,nuit}.png · ${JSON.stringify(etat)}`)
+  },
+
+  /**
    * ═══ LE BIEF SOUILLÉ (jetable, 2026-08-30) — voir la teinte de coulée R26d en jeu.
    * Saut au jour 300 (cendre mûre), TP sur la rivière au droit des taches. `--dev`. ═══
    */
@@ -10613,7 +11300,57 @@ Depuis le spawn (${depart.x.toFixed(0)}, ${depart.y.toFixed(0)}) :`)
     if (dom.display !== 'flex' || Number(dom.opacity) < 0.8 || !dom.cause.includes('froid')) {
       console.error(`!! LE VOILE NE SE LÈVE PAS : ${JSON.stringify(dom)}`)
     }
-    return dom
+
+    // …ET LE BOUTON POSE-T-IL LE GESTE ? (2026-08-31)
+    //
+    // Ce scénario s'arrêtait à la PRÉSENTATION, et c'est ce qui a laissé passer le défaut le
+    // plus bête possible : `onRelever` était déclaré, implémenté, le bouton mis au focus — et
+    // JAMAIS branché. Cliquer « SE RELEVER » ne faisait rien. Un écran dont on vérifie qu'il
+    // se lève sans vérifier ce que fait son bouton est un piège à moitié testé.
+    //
+    // ⚠ ON N'ATTEND PAS QUE LE VOILE TOMBE, et c'est voulu : depuis que la sim garde le corps
+    // à terre (`respawn`), le clic ne referme rien lui-même — il POSE une action, et le voile
+    // ne retombe qu'au snapshot où l'avatar est debout. Ici la mort est INJECTÉE dans le
+    // registre : aucun corps n'est réellement tombé, donc aucune sim ne confirmera rien. Ce
+    // que le client doit à ce clic, et tout ce qu'il lui doit, c'est l'action dans la file.
+    const btn = await page.evaluate(() => {
+      const b = document.querySelector('.dv-btn')
+      if (!b) return null
+      const r = b.getBoundingClientRect()
+      const sc = window.__BRAISES__.scene
+      // On VIDE la file d'abord : sans ça un `respawn` déjà en attente ferait passer la
+      // garde sans que le bouton ait rien fait.
+      sc.registry.set('pendingActions', [])
+      return {
+        x: r.x + r.width / 2,
+        y: r.y + r.height / 2,
+        texte: (b.textContent ?? '').trim(),
+        // LA PRÉMISSE : le voile doit être LEVÉ avant le clic, sinon on cliquerait dans le vide.
+        veilOpenAvant: sc.registry.get('deathVeilOpen') === true,
+      }
+    })
+    if (!btn) {
+      console.error('!! pas de bouton « SE RELEVER » à l’écran')
+      return dom
+    }
+    if (!btn.veilOpenAvant) {
+      console.error('!! le voile n’était pas levé AVANT le clic : la garde du geste ne mesure rien')
+    }
+    await page.mouse.click(btn.x, btn.y)
+    let sortie = null
+    for (let essai = 0; essai < 40; essai++) {
+      sortie = await page.evaluate(() => {
+        const q = window.__BRAISES__.scene.registry.get('pendingActions') ?? []
+        return { pose: q.some((a) => a && a.type === 'respawn'), file: q.map((a) => a && a.type) }
+      })
+      if (sortie.pose) break
+      await page.waitForTimeout(120)
+    }
+    console.log(`clic « ${btn.texte} » : ${JSON.stringify(sortie)}`)
+    if (!sortie.pose) {
+      console.error(`!! LE BOUTON « SE RELEVER » NE POSE RIEN : ${JSON.stringify(sortie)}`)
+    }
+    return { ...dom, sortie }
   },
 
   /**
@@ -16924,7 +17661,8 @@ Depuis le spawn (${depart.x.toFixed(0)}, ${depart.y.toFixed(0)}) :`)
       window.__ENC = null
       const vrai = s.attackFx.impact.bind(s.attackFx)
       s.attackFx.impact = (sprite, now, fx, fy, deg) => {
-        if (window.__ENC === null) window.__ENC = { now, degats: deg ?? null }
+        // ON GARDE LE SPRITE : c'est le seul moyen de relever sa teinte SANS ATTENDRE.
+        if (window.__ENC === null) window.__ENC = { now, degats: deg ?? null, sprite }
         return vrai(sprite, now, fx, fy, deg)
       }
       const near = () => {
@@ -16956,7 +17694,20 @@ Depuis le spawn (${depart.x.toFixed(0)}, ${depart.y.toFixed(0)}) :`)
         s.game.step(t, 40)
         if (window.__ENC !== null) {
           const enc = s.attackFx.enEncaissement(s.time.now)
-          return { gele: true, corps: enc.corps, cloues: enc.cloues, coups, plusProche, degats: window.__ENC.degats }
+          // ═══ LA TEINTE SE RELÈVE ICI, ET NULLE PART AILLEURS ═══
+          //
+          // Un `page.evaluate` de plus la lirait AU PASSÉ : la boucle de rendu dort, mais le
+          // Worker de sim, lui, continue de poster ses snapshots, et `syncEntities` repose
+          // `beastTint` sur chaque bête à leur arrivée. Mesuré : la sonde rendait 0xff9d54
+          // (`BEAST_TINTS.alert`) sur un corps que la frame avait bel et bien peint en blanc.
+          // Ici, aucun `await` ne sépare le pas de la lecture — la couleur est celle qui a
+          // été RENDUE. (Le MODE, lui, survit : `syncEntities` ne le touche jamais, et c'est
+          // précisément pourquoi `blanchis` doit le rendre à la main.)
+          const sp = window.__ENC.sprite
+          return {
+            gele: true, corps: enc.corps, cloues: enc.cloues, coups, plusProche, degats: window.__ENC.degats,
+            teinteRendue: sp.tintTopLeft >>> 0, modeRendu: sp.tintMode,
+          }
         }
         // On laisse la sim (dans son Worker) avancer entre deux images : sans ce souffle,
         // on stepperait trois cents fois sur le même snapshot.
@@ -16999,6 +17750,69 @@ Depuis le spawn (${depart.x.toFixed(0)}, ${depart.y.toFixed(0)}) :`)
       }
       return { vus, ecartPx: 0 }
     })
+    // ═══ ET LE FLASH ? LA TEINTE PEUT TENIR SANS ÉCLAIRER ═══
+    //
+    // Ce qui précède prouve que le sprite est TEINTÉ, et `gel.modeRendu` que l'aplat est
+    // bien celui qui a été RENDU. Ça ne dit toujours pas ce que la peinture FAIT à l'écran.
+    // On compte donc, sur le cadre du corps FRAPPÉ, les pixels QUASI BLANCS.
+    //
+    // CE QUI FERAIT ROUGIR : le rendu d'avant le 2026-08-31 posait 0xff8877 en `MULTIPLY`,
+    // mode qui MULTIPLIE les texels — il ne peut, par construction, jamais rapprocher un
+    // pixel du blanc, et il en fabriquait donc zéro. Un aplat, lui, met la silhouette
+    // entière au plafond. Entre « aucun » et « toute la silhouette » il n'y a pas de
+    // réglage à deviner : le seuil est là pour séparer deux ordres de grandeur.
+    //
+    // ⚠ UNE SEULE IMAGE, ET C'EST DÉLIBÉRÉ. Deux tentatives de TÉMOIN ont échoué, toutes
+    // deux parce que le monde ne s'arrête pas entre deux captures : le même corps 1,4 s plus
+    // tard rendait un verdict NON MONOTONE (+22,5 puis −53,0 de luminance selon le lancer —
+    // fond, caméra et heure avaient changé) ; et le rejouer à l'ancienne sur une image de
+    // 1 ms n'a pas mieux marché, le Worker de sim continuant de pousser ses snapshots
+    // pendant les secondes que dure une capture sous SwiftShader (139 000 pixels d'écart,
+    // un second coup porté entre les deux photos). Ici, rien à comparer : on lit le corps
+    // là où il est, à l'image où il flashe.
+    const cadre = await page.evaluate(() => {
+      const s = window.__BRAISES__.scene
+      const sp = window.__ENC?.sprite // LE CORPS FRAPPÉ LUI-MÊME, pas « celui qui a bougé »
+      if (!sp) return null
+      const cam = s.cameras.main
+      const c = s.scale.canvas.getBoundingClientRect()
+      const k = c.width / s.scale.width // jeu → CSS (le canvas est mis à l'échelle)
+      const gx = (sp.x - cam.worldView.x) * cam.zoom
+      const gy = (sp.y - cam.worldView.y) * cam.zoom
+      const w = sp.displayWidth * cam.zoom * k
+      const h = sp.displayHeight * cam.zoom * k
+      // origine (0.5, 1) : le sprite PEND au-dessus de son point d'ancrage.
+      return {
+        x: Math.max(0, Math.round(c.left + gx * k - w / 2)),
+        y: Math.max(0, Math.round(c.top + gy * k - h)),
+        width: Math.max(1, Math.round(w)),
+        height: Math.max(1, Math.round(h)),
+      }
+    })
+
+    /**
+     * CE QUE LE CADRE DU CORPS A DE LUMIÈRE — moyenne, et part de pixels QUASI BLANCS.
+     *
+     * La moyenne seule ne tranche pas : une silhouette ne remplit pas son rectangle, et le
+     * fond pèse autant qu'elle. Ce qu'un aplat blanc fait de PARTICULIER, c'est poser des
+     * pixels au PLAFOND — c'est cela qu'on compte.
+     */
+    const lumCadre = async (clip) => {
+      const r = await regionAt(page, clip)
+      if (!r) return null
+      let somme = 0
+      let clairs = 0
+      for (let y = 0; y < r.h; y++)
+        for (let x = 0; x < r.w; x++) {
+          const [rr, vv, bb] = r.px(x, y)
+          const l = 0.2126 * rr + 0.7152 * vv + 0.0722 * bb
+          somme += l
+          if (l >= 200) clairs++
+        }
+      return { moyenne: somme / (r.w * r.h), partClaire: clairs / (r.w * r.h) }
+    }
+
+    const lumFlash = cadre ? await lumCadre(cadre) : null
     await page.screenshot({ path: `${OUT}/encaissement.png` })
 
     console.log(`\n── L’ENCAISSEMENT (${gel.corps} corps encaissent, ${gel.cloues} cloués) ──`)
@@ -17006,12 +17820,27 @@ Depuis le spawn (${depart.x.toFixed(0)}, ${depart.y.toFixed(0)}) :`)
       console.log(`   ✗ aucun sprite déplacé (${m?.vus ?? 0} corps suivis) : le recul peint n’atteint pas l’écran`)
     } else {
       console.log(`   ✓ le corps est DÉPLACÉ de ${m.ecartPx.toFixed(1)} px (le recul peint, à l’opposé du frappeur)`)
-      console.log(`   ${m.teinté ? '✓' : '✗'} il est TEINTÉ (0x${m.teinte.toString(16)}) — et la teinte TIENT au-delà d’une image`)
+      console.log(`   ${m.teinté ? '✓' : '✗'} il est TEINTÉ — et la teinte TIENT au-delà d’une image`)
       console.log(`   sa taille peinte : ${m.largeur.toFixed(1)} × ${m.hauteur.toFixed(1)} px`)
+    }
+    // ── LE FLASH : un APLAT BLANC pendant l'arrêt, et il doit ÉCLAIRER ──
+    if (gel.modeRendu !== undefined) {
+      const blanc = gel.teinteRendue === 0xffffff
+      console.log(
+        `   ${gel.modeRendu === 1 && blanc ? '✓' : '✗'} l’APLAT : teinte 0x${gel.teinteRendue.toString(16)} en mode ${gel.modeRendu === 1 ? 'FILL' : `MULTIPLY (${gel.modeRendu}) — un mode qui multiplie ne peut QUE l’assombrir`}`,
+      )
+    }
+    if (lumFlash) {
+      console.log(`   son cadre : luminance moyenne ${lumFlash.moyenne.toFixed(1)} · ${(lumFlash.partClaire * 100).toFixed(1)} % de pixels quasi blancs`)
+      console.log(
+        lumFlash.partClaire > 0.25
+          ? `   ✓ le corps S’ALLUME : l’aplat atteint l’écran (un mode qui MULTIPLIE n’en fabrique aucun)`
+          : `   ✗ le flash n’éclaire pas — teinte posée trop tôt dans la frame, ou mode qui assombrit`,
+      )
     }
     console.log(`   capture : encaissement.png`)
 
-    return { ...gel, ...(m ?? {}), ...(tremble ?? {}) }
+    return { ...gel, ...(m ?? {}), ...(tremble ?? {}), modeFlash: gel.modeRendu ?? null, lumFlash }
   },
 
   async combat(page) {

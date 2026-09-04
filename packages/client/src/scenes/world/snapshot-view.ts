@@ -73,6 +73,11 @@ import {
   corpseDepth,
   crownAlpha,
   crownDepth,
+  alphaDeDecouvert,
+  decalageDEtage,
+  type Decouvert,
+  LIFT_TUILES,
+  strateDEtage,
   DEMI_BANDE_TUILES,
   FLOOR_DEPTH,
   GROUND_FIRE_DEPTH,
@@ -81,6 +86,7 @@ import {
   barriereDepth,
   ROOF_DEPTH,
   seuilDepth,
+  strateDeProfondeur,
   structureDepth,
   TIE_SEUIL,
   tileFeetAnchor,
@@ -136,6 +142,7 @@ import type { ReveilFx } from './reveil-fx'
 import { createContactShadow, poserOmbreDeSocle, positionShadow, SHADOW_ALPHA } from './contact-shadow'
 import { riveAt, type RiveField } from '../../render/water-field'
 import { coupeDeNeige, enfoncement, enfoncementDUnNoeud, epaisseurQuiSEnfonce } from '../../render/enfoncement'
+import { epinglerLaTuile } from '../../render/tuile-epinglee'
 import { cleDeTuile, indexerParTuile } from './index-noeuds'
 
 /** Le nœud VISÉ à portée s'éclaire d'or ; hors de portée, il se grise (G4). */
@@ -270,7 +277,10 @@ const SAPLING_WIND_TAKE = 0.4
  * POSTURES (`beastTexture`) ; seul l'alpha garde l'écrasement (sa silhouette
  * propre n'a pas de variante tapie, et c'est lui qu'on doit reconnaître).
  */
-export const CROUCH_FACTOR = 0.72
+export /** Ce qu'un corps garde de sa couleur au plus noir — on perd de vue ce qui nous entoure,
+ *  jamais soi. */
+const CORPS_MIN = 0.45
+const CROUCH_FACTOR = 0.72
 
 function isCrouched(monster: Monster | undefined, entity: Entity): boolean {
   // QUI DÉPÈCE SE PENCHE (spec `depecage.md` R2c) : la même silhouette tassée que le furtif —
@@ -353,6 +363,10 @@ export interface InterpolatedSprite {
   textureKey: string
   /** Silhouette TASSÉE ce snapshot (rampeur, tapi, fougeur) — lue par `interpolate`. */
   crouch: boolean
+  /** L'ÉTAGE de l'autorité au dernier snapshot (spec `etages.md`) — absent ≡ le palier du sol.
+   *  Lu par `interpolate`, qui le passe à `syncActor` : un villageois sur un chapeau de mesa se
+   *  dessine et se trie avec le plateau, pas avec le pied de la falaise. */
+  etage?: number | undefined
   /**
    * L'ENVOL (spec faune R21) : la fenêtre du bond, EN MILLISECONDES D'HORLOGE DE RENDU.
    *
@@ -538,6 +552,10 @@ export class SnapshotView {
    *  F5), l'arbre ORDINAIRE de la Racine passe sur ses textures normal-mappées
    *  (`*_lit`) éclairées par le LightsManager. Piloté par WorldScene. */
   lighting = false
+  /** LE DÉCOUVERT D'UN ÉTAGE (spec `etages.md` E-R20) : la position du regard quand il vient
+   *  d'un étage PLUS BAS, `null` sinon. Posé par `WorldScene`, comme `lighting` — c'est
+   *  l'appelant qui tranche l'appartenance, la vue ne fait qu'appliquer. */
+  decouvert: Decouvert | null = null
   /** Le champ de rive (spec eau-vivante R1-R2), posé par WorldScene après la couche d'eau —
    *  la MÊME distance que le shader : l'immersion des acteurs ne peut pas la contredire. */
   rive: RiveField | null = null
@@ -580,6 +598,21 @@ export class SnapshotView {
    * continuait de s'y enfoncer sur un sol de poussière.
    */
   cendreIci: ((tx: number, ty: number) => boolean) | null = null
+  /**
+   * LA HAUTEUR À LAQUELLE DESSINER UN CORPS POSÉ LÀ (spec `etages.md` ; Alexis, 2026-09-01 : « le
+   * personnage se téléporte en haut », puis « il y a un saut pendant le changement d'étage »).
+   *
+   * Posée par WorldScene sur `EtageLayer.niveauDuCorps` — le patron exact de `glaceAt` : la couche
+   * qui PEINT la rampe est celle qui dit sa hauteur, et l'acteur ne fait que la lire. `null`
+   * partout ailleurs, donc le monde d'avant, au pixel près.
+   */
+  niveauAt: ((x: number, y: number, etage: number) => number) | null = null
+  /**
+   * LA CLARTÉ DU LIEU où un corps se tient, dans [0, 1] — `null` hors souterrain, et c'est le
+   * chemin d'avant au pixel près. Posé par `WorldScene` : la vue ne DÉCIDE pas où la lumière
+   * manque, elle l'applique. (Le patron de `niveauAt` juste au-dessus.)
+   */
+  clarteAt: ((x: number, y: number, etage: number) => number | undefined) | null = null
   /** Les bascules gel/dégel des nœuds gélifs (voir `render/flore-gel.ts`). */
   private readonly transitionsFlore = new TransitionsFlore()
   /** Les reflets du monde (R13) — pool par frame, posé par WorldScene avec la couche d'eau. */
@@ -685,12 +718,12 @@ export class SnapshotView {
 
   /** Une goutte se détache du corps de l'acteur `id` s'il est l'heure — `x/y` : le
    *  pied de son sprite, en px monde (relief compris). */
-  private goutteDe(id: number, x: number, y: number, now: number): void {
+  private goutteDe(id: number, x: number, y: number, now: number, strate: number): void {
     if (!this.sangFx) return
     const prochaine = this.prochaineGoutte.get(id)
     if (prochaine !== undefined && now < prochaine) return
     this.prochaineGoutte.set(id, now + GOUTTE_CADENCE_MS * (0.75 + ((Math.imul(id, 2654435761) >>> 16) % 100) / 200))
-    this.sangFx.goutter(x, y, now, id)
+    this.sangFx.goutter(x, y, now, id, strate)
   }
 
   /**
@@ -777,6 +810,8 @@ export class SnapshotView {
   setReveilFx(fx: ReveilFx): void {
     this.reveilFx = fx
     fx.setTerrainSous((x, y) => (this.carte !== null ? terrainAt(this.carte, Math.floor(x), Math.floor(y)) : null))
+    // …et au RELIEF : sur une terrasse, la terre sort de la surface liftée, dans sa strate.
+    fx.setReliefSous((x, y) => ({ lift: this.warp?.liftSol(x, y) ?? 0, strate: this.warp?.strateSol(x, y) ?? 0 }))
   }
   nodes: ResourceNode[] = []
   corpses: Corpse[] = []
@@ -1037,8 +1072,8 @@ export class SnapshotView {
     // un demi-pas derrière le sprite en pleine course, et c'est juste : le sang tombe
     // où l'on était.
     if (self?.wounds.bleeding === true) {
-      const lift = this.warp?.lift(self.x, self.y) ?? 0
-      this.goutteDe(playerId, self.x * TILE_PX, self.y * TILE_PX - lift, now)
+      const lift = this.warp?.liftSol(self.x, self.y) ?? 0
+      this.goutteDe(playerId, self.x * TILE_PX, self.y * TILE_PX - lift, now, this.warp?.strateSol(self.x, self.y) ?? 0)
     }
     this.syncStructures(msg.structures, self ? { x: self.x, y: self.y } : undefined)
     this.applyNodeDeltas(msg.nodeDeltas, now)
@@ -1080,11 +1115,11 @@ export class SnapshotView {
         g = this.scene.add.image(0, 0, 'fx-blood').setOrigin(0.5, 0.5)
         this.bloodPool[used] = g
       }
-      const lift = this.warp?.lift(b.x, b.y) ?? 0
+      const lift = this.warp?.liftSol(b.x, b.y) ?? 0
       g.setTexture(SANG_TEXTURES[d.variante]!)
       g.setPosition(b.x * TILE_PX, b.y * TILE_PX - lift)
       g.setRotation(d.angle)
-      g.setDepth(corpseDepth(b.y, TILE_PX) - 1) // au sol, sous tout le reste
+      g.setDepth(corpseDepth(b.y, TILE_PX) - 1 + (this.warp?.strateSol(b.x, b.y) ?? 0)) // au sol, sous tout le reste
       // Elle sèche : de l'écarlate au brun (la teinte), et elle s'efface (l'alpha).
       const age = Math.max(0, Math.min(1, (this.tick - b.tick) / HUNT.BLOOD_TTL))
       g.setAlpha(0.85 * (1 - age * 0.8))
@@ -1127,9 +1162,9 @@ export class SnapshotView {
         g = this.scene.add.image(0, 0, 'fx-burrow').setOrigin(0.5, 0.5)
         this.burrowPool[used] = g
       }
-      const lift = this.warp?.lift(x, y) ?? 0
+      const lift = this.warp?.liftSol(x, y) ?? 0
       g.setPosition(x * TILE_PX, y * TILE_PX - lift)
-      g.setDepth(corpseDepth(y, TILE_PX) - 2) // à même le sol, sous les gouttes
+      g.setDepth(corpseDepth(y, TILE_PX) - 2 + (this.warp?.strateSol(x, y) ?? 0)) // à même le sol, sous les gouttes
       g.setAlpha(alpha)
       g.setVisible(true)
       used++
@@ -1166,13 +1201,13 @@ export class SnapshotView {
         g = this.scene.add.image(0, 0, 'fx-reveil-0').setOrigin(0.5, 0.5)
         this.reveilPool[used] = g
       }
-      const lift = this.warp?.lift(m.x, m.y) ?? 0
+      const lift = this.warp?.liftSol(m.x, m.y) ?? 0
       // En rendu éclairé, la paire `_lit` (reveil-fx) : le tertre vit sous la lumière du
       // monde — sans elle, un trou de Cendreux restait pleine valeur en pleine nuit.
       g.setTexture(this.lighting ? cleLit(`fx-reveil-${m.stade}`) : `fx-reveil-${m.stade}`)
       g.setLighting(this.lighting) // pooled : réarmé chaque frame, comme les nœuds
       g.setPosition(m.x * TILE_PX, m.y * TILE_PX - lift)
-      g.setDepth(corpseDepth(m.y, TILE_PX) - 3) // sous les terriers, sous les gouttes, sous tout
+      g.setDepth(corpseDepth(m.y, TILE_PX) - 3 + (this.warp?.strateSol(m.x, m.y) ?? 0)) // sous les terriers, sous les gouttes, sous tout
       g.setScale(m.echelle)
       g.setAlpha(m.alpha)
       // LA TERRE EST CELLE DU SOL : la texture est peinte en VALEURS, la teinte lui donne
@@ -1194,11 +1229,11 @@ export class SnapshotView {
       // du monde — sans la bascule, elle brillait en pleine nuit comme en plein jour.
       const cle = this.lighting ? cleLit(`it-${p.item}`) : `it-${p.item}`
       if (!sprite) {
-        const lift = this.warp?.lift(p.x, p.y) ?? 0
+        const lift = this.warp?.liftSol(p.x, p.y) ?? 0
         sprite = this.scene.add
           .image(p.x * TILE_PX, p.y * TILE_PX - lift, cle)
           .setOrigin(0.5, 0.5)
-          .setDepth(corpseDepth(p.y, TILE_PX))
+          .setDepth(corpseDepth(p.y, TILE_PX) + (this.warp?.strateSol(p.x, p.y) ?? 0))
           .setScale(0.8)
         sprite.setLighting(this.lighting)
         // ═══ UNE FLÈCHE EST PLANTÉE, ELLE N'EST PAS POSÉE (décision d'Alexis) ═══
@@ -1256,7 +1291,7 @@ export class SnapshotView {
         avanceAllure(o.allure, p.x, p.y)
         hVol = this.syncCerf(o, id, now)
       }
-      this.syncActor(o.sprite, p.x, p.y, o.textureKey, o.crouch, this.reveilFx?.enfouissementDe(id, now) ?? 0, hVol)
+      this.syncActor(o.sprite, p.x, p.y, o.textureKey, o.crouch, this.reveilFx?.enfouissementDe(id, now) ?? 0, hVol, o.etage)
     }
   }
 
@@ -1307,11 +1342,45 @@ export class SnapshotView {
      *  rien d'autre : la profondeur de tri et l'ombre restent AU SOL, sinon l'oiseau passerait
      *  devant ce qu'il survole et son ombre décollerait avec lui. */
     hauteurVol = 0,
+    /** L'ÉTAGE du corps (spec `etages.md`). Absent ≡ LE PALIER DU SOL de sa tuile (T-R3, la
+     *  même lecture que `niveauDuCorps` de /sim) — donc tout l'existant. Contrairement au bond,
+     *  il déplace le sprite ET son tri : on se tient VRAIMENT plus haut. */
+    etage?: number,
   ): void {
     const footprint = ACTOR_FOOTPRINTS[textureKey] ?? DEFAULT_FOOTPRINT
     const p = actorPlacement(x, y, footprint, TILE_PX, BALANCE.AVATAR_HITBOX_DEPTH_TILES)
     const feetY = y + BALANCE.AVATAR_HITBOX_DEPTH_TILES / 2
-    const lift = this.warp?.lift(x, feetY) ?? 0
+    // ═══ LE PALIER SOUS LE CORPS (spec `terrasses.md` T-R7) — lu au CENTRE, comme la sim ═══
+    // Pas aux pieds : `feetY` mord sur la tuile du sud, et au bord d'une terrasse celle-là est
+    // deux étages plus bas — le corps y tomberait d'une marche une demi-tuile trop tôt.
+    const palier = this.warp?.palier(x, y) ?? 0
+    const niveauAutorite = etage ?? palier
+    // ═══ UN CORPS MONTE AVEC SON PLANCHER (spec `etages.md`) ═══
+    //
+    // Le décalage vient de `decalageDEtage`, **et de là seulement** : la couche du plateau, le
+    // corps, son ombre et le tri en profondeur le lisent tous à la même source. Deux écritures,
+    // et l'on obtient un homme posé à côté du sol qu'il foule.
+    //
+    // ⚠ **LA POSITION ET LE TRI NE PRENNENT PAS LE MÊME NOMBRE** (refonte du 2026-09-01) :
+    //
+    //  • à l'ÉCRAN, le corps monte de `decalageDEtage` — il se tient plus haut, littéralement ;
+    //  • en PROFONDEUR, il change de STRATE (`strateDEtage`) et garde sa rangée logique.
+    //
+    // Retrancher le lift de la profondeur, comme on le faisait, revenait à trier le corps du haut
+    // à la rangée où il est DESSINÉ : il repassait alors derrière le plancher qui le porte. Un
+    // étage n'est pas un décalage dans un même tri, c'est un tri au-dessus de l'autre.
+    // ⚠ **LA HAUTEUR SE PREND SUR `y`, LE CENTRE — pas sur `feetY`.** C'est le centre que la sim
+    // planche pour commuter d'étage (`etageApresLePas(…, Math.floor(moved.y))`) : la pente doit
+    // atteindre son sommet À L'INSTANT où l'entier bascule, sinon on aurait remplacé une marche
+    // de 32 px par une marche de quelques-uns — plus petite, mais toujours une marche.
+    const dEtage = decalageDEtage(this.niveauAt?.(x, y, niveauAutorite) ?? niveauAutorite, palier)
+    // ⚠ **LE TRI, LUI, RESTE SUR L'ENTIER DE L'AUTORITÉ.** Une strate est un MONDE qu'on peint
+    // par-dessus l'autre (voir `strateDEtage`) : elle n'a pas de demi. Le corps monte donc en
+    // continu tout en restant trié avec le plancher que la sim lui donne — et c'est le fondu du
+    // découvert qui le laisse voir pendant la montée.
+    const dTri = strateDEtage(niveauAutorite, palier)
+    // Et le sol lui-même monte avec son palier : les deux décalages s'additionnent (`warp.ts`).
+    const lift = this.warp?.lift(x, y) ?? 0
     // ═══ DANS QUOI LE CORPS ENTRE — eau, neige, vase, terre (`render/enfoncement.ts`) ═══
     //
     // La composition a QUITTÉ cette méthode le 2026-08-24 : elle mêlait quatre milieux, deux
@@ -1373,8 +1442,11 @@ export class SnapshotView {
     //   côté est horizontal), donc rien ne le fait sortir de la neige — une ombre qui remonterait
     //   quand même se détacherait de lui, le défaut exact que la ligne du dessus a corrigé ailleurs.
     const coupeNeige = coucheEnY ? 0 : coupeDeNeige(this.hauteurNeigeAt?.(x, feetY) ?? 0, hauteurQuiSEnfonce)
-    sprite.setPosition(p.px, p.py - lift - hauteurVol * TILE_PX + descente + 2 * immersion)
-    sprite.setDepth(p.depth)
+    sprite.setPosition(p.px, p.py - lift - hauteurVol * TILE_PX + descente + 2 * immersion + dEtage)
+    // Le TRI suit le corps : `p.depth` sort de `ySortDepth(feetY)`, donc d'une position au sol.
+    // Il garde cette rangée-là et change de STRATE — un étage se peint par-dessus l'autre, en
+    // entier (voir `strateDEtage`), et le tri en Y ne départage qu'à l'intérieur d'un étage.
+    sprite.setDepth(p.depth + dTri)
     sprite.setDisplaySize(p.displayW, displayH)
     if (coupe > 0) {
       const frame = sprite.frame
@@ -1382,6 +1454,25 @@ export class SnapshotView {
       sprite.setCrop(0, 0, frame.width, Math.max(1, frame.height - coupeTexels))
     } else if (sprite.isCropped) {
       sprite.setCrop()
+    }
+    // ═══ UN CORPS PREND LA LUMIÈRE DU LIEU OÙ IL SE TIENT ═══
+    //
+    // ⚠ **VU À LA CAPTURE : un homme en pleine couleur au fond d'une cave noire.** Il ne se
+    // tenait pas dans la salle, il flottait devant. Le voile d'ambiance ne peut rien pour lui —
+    // il est plein écran et horaire, et le souterrain se peint au-dessus de lui, exprès
+    // (`strateDEtage`). C'est donc ICI que la lumière locale l'atteint, par la MÊME clarté qui
+    // teinte le sol sous ses pieds.
+    //
+    // ⚠ **AVEC UN PLANCHER, ET C'EST DE LA JOUABILITÉ, pas de la timidité** : au plus noir, le
+    // corps garde `CORPS_MIN` de sa couleur. On perd de vue ce qui nous entoure, jamais soi —
+    // un joueur qui ne se trouve plus à l'écran ne joue plus, il cherche son curseur.
+    const clarteDuLieu = this.clarteAt?.(x, y, niveauAutorite)
+    if (clarteDuLieu !== undefined) {
+      const f = CORPS_MIN + (1 - CORPS_MIN) * Math.max(0, Math.min(1, clarteDuLieu))
+      const k = Math.max(0, Math.min(255, Math.round(255 * f)))
+      sprite.setTint((k << 16) | (k << 8) | k)
+    } else if (sprite.isTinted) {
+      sprite.clearTint()
     }
     sprite.setLighting(this.lighting) // couche 1 : acteurs (PNJ, faune, avatar) éclairés eux aussi
     // L'OMBRE DE CONTACT suit l'acteur (rattachée par `setData` à la création). `syncActor`
@@ -1394,7 +1485,7 @@ export class SnapshotView {
       // SUR LA NEIGE : l'ombre remonte de la hauteur du manteau (le gap de l'art, pour une fois).
       // ⚠ LA VASE N'Y ENTRE PAS : l'ombre ne remonte que pour ce qui MONTE (la neige). Sur un
       // sol qui cède, le corps descend et l'ombre reste au sol — comme dans l'eau.
-      positionShadow(shadow, p.px, p.py, p.displayW, p.depth, coupeNeige)
+      positionShadow(shadow, p.px, p.py - lift + dEtage, p.displayW, p.depth + dTri, coupeNeige)
       // ELLE SE FOND AUSSI SOUS TERRE. Sans `enfoui` ici, un corps encore aux trois quarts
       // enfoui projetait l'ombre de contact d'un CORPS ENTIER autour du tertre — une ombre
       // pleine sous une tête qui perce, et le trou perdait toute sa profondeur.
@@ -1414,10 +1505,10 @@ export class SnapshotView {
     if (gaze) {
       const f = sprite.getData('facing') as { x: number; y: number } | undefined
       if (f && enfoui <= 0) {
-        const headY = p.py - lift + coupe - displayH * 0.6
+        const headY = p.py - lift + coupe - displayH * 0.6 + dEtage
         gaze
           .setPosition(p.px + f.x * GAZE_REACH, headY + f.y * GAZE_REACH)
-          .setDepth(p.depth + 0.1)
+          .setDepth(p.depth + dTri + 0.1)
           .setDisplaySize(GAZE_PX, GAZE_PX)
           .setVisible(true)
         if (sprite.getData('aggro') === true) gaze.setTint(BEAST_TINTS.menace)
@@ -1426,7 +1517,7 @@ export class SnapshotView {
         gaze.setVisible(false)
       }
     }
-    this.syncFlottaison(sprite, p.px, p.py - lift, p.displayW, p.depth, immersion)
+    this.syncFlottaison(sprite, p.px, p.py - lift + dEtage, p.displayW, p.depth + dTri, immersion)
     // LES ÉVÉNEMENTS D'EAU (R3/R7) : la gerbe au franchissement, les pas mouillés en sortant.
     // LE RAMPANT TRAÎNE AU LIEU DE MARCHER (Alexis, 2026-08-25) — et c'est SA TEXTURE qui le dit,
     // pas un drapeau de plus à faire descendre : un corps est couché parce qu'il se dessine
@@ -1514,7 +1605,7 @@ export class SnapshotView {
         // le snapshot de son émergence qui crée son sprite — et le poser à pleine hauteur
         // pour se reposer sur `interpolate` à la frame suivante ferait dépendre la géométrie
         // d'un ordre d'appels. Elle doit être juste par construction.
-        this.syncActor(sprite, entity.x, entity.y, 'spr-npc', false, this.reveilFx?.enfouissementDe(entity.id, now) ?? 0)
+        this.syncActor(sprite, entity.x, entity.y, 'spr-npc', false, this.reveilFx?.enfouissementDe(entity.id, now) ?? 0, 0, entity.etage)
         record = {
           sprite, shadow, textureKey: 'spr-npc', crouch: false,
           buffer: [{ at: now, x: entity.x, y: entity.y }],
@@ -1602,6 +1693,7 @@ export class SnapshotView {
         record.sprite.setFlipX(majMiroir(record.miroir, facesRight ? entity.facing.x < 0 : entity.facing.x > 0, now))
       }
       record.crouch = isCrouched(monster, entity)
+      record.etage = entity.etage
       // L'ENVOL (spec faune R21) : on convertit la fenêtre du bond en millisecondes de
       // l'horloge de RENDU, une fois par snapshot. Le calcul est IDEMPOTENT — il repart du
       // décollage à chaque fois, donc il se recale tout seul si un snapshot se perd, au lieu
@@ -1620,7 +1712,7 @@ export class SnapshotView {
       // `saigneBete`, ou `wounds.bleeding` pour un humain) laisse TOMBER son sang —
       // la piste au sol, elle, reste l'affaire de la sim (C9) : ici on peint la chute.
       if (monster ? saigneBete(monster, this.tick) : entity.wounds.bleeding === true) {
-        this.goutteDe(entity.id, record.sprite.x, record.sprite.y, now)
+        this.goutteDe(entity.id, record.sprite.x, record.sprite.y, now, strateDeProfondeur(record.sprite.depth))
       }
     }
     for (const [id, o] of this.others) {
@@ -1699,10 +1791,13 @@ export class SnapshotView {
       let sprite = this.structureSprites.get(s.id)
       if (!sprite) {
         const a = tileFeetAnchor(s.tx, s.ty, TILE_PX)
-        const lift = this.warp?.lift(s.tx + 0.5, s.ty + 1) ?? 0
+        // AU CENTRE de sa tuile, pas à son pied (`warp.ts`) : le pied mord sur la tuile du sud,
+        // qui au bord d'une terrasse est deux étages plus bas.
+        const lift = this.warp?.liftSol(s.tx + 0.5, s.ty + 0.5) ?? 0
         // LES COUCHES (décision d'Alexis) : le SOL au ras du sol (sous les acteurs),
         // le TOIT au-dessus (comme un houppier, il se révèle au loin), le reste trié.
-        const depth =
+        // …ET LA STRATE DE SON PALIER (T-R7) : un mur au palier 2 se trie avec le sol du palier 2.
+        const depth = (this.warp?.strateSol(s.tx + 0.5, s.ty + 0.5) ?? 0) + (
           s.type === 'fire'
             ? GROUND_FIRE_DEPTH
             : isRoof
@@ -1727,14 +1822,14 @@ export class SnapshotView {
                       s.type === 'encadrement' || s.type === 'door' ? TIE_SEUIL : undefined)
                   : s.type === 'encadrement'
                     ? seuilDepth(s.ty, TILE_PX)
-                    : structureDepth(s.ty, TILE_PX)
+                    : structureDepth(s.ty, TILE_PX))
         // LE TOIT SE DESSINE À LA CRÊTE DU MUR (calage mesuré, smoke `toits` 2026-08-10) :
         // levé de `MUR_HT`, son bord bas rejoint la crête de la façade sud à −2 px (le demi-
         // débord de bande) et son plan coiffe la face du mur nord. Ancré au sol, il était un
         // TAPIS : couture mesurée à −34 px — le toit recouvrait la façade au lieu de la
         // coiffer, et la face grise du mur nord dominait le lieu.
         const leve = isRoof ? MUR_HT : 0
-        sprite = this.scene.add.image(a.px, a.py - lift - leve, `st-${s.type}`).setOrigin(0.5, 1).setDepth(depth)
+        sprite = epinglerLaTuile(this.scene.add.image(a.px, a.py - lift - leve, `st-${s.type}`).setOrigin(0.5, 1).setDepth(depth))
         this.structureSprites.set(s.id, sprite)
       }
       sprite.setLighting(this.lighting) // couche 1 : murs, portes, ateliers… éclairés (pooled → chaque frame)
@@ -2121,7 +2216,7 @@ export class SnapshotView {
         this.functionLabels[used] = t
       }
       const a = tileFeetAnchor(f.tx, f.ty, TILE_PX)
-      const lift = this.warp?.lift(f.tx + 0.5, f.ty) ?? 0
+      const lift = this.warp?.liftSol(f.tx + 0.5, f.ty + 0.5) ?? 0
       t.setText(`${FUNCTION_LABEL[f.functionId]} · N${f.tier}${f.enclosed ? ' ✦' : ''}`)
         .setColor(f.enclosed ? '#e8c66a' : '#cfe0d0')
         .setPosition(a.px, a.py - lift - TILE_PX)
@@ -2352,7 +2447,7 @@ export class SnapshotView {
           const pose = this.transitionsFlore.pose(n.id, gele, now, retardDe(n.tx, n.ty))
           if (pose.eclat) {
             const a0 = tileFeetAnchor(tx, ty, TILE_PX)
-            this.recolteFx?.givre(a0.px, a0.py - (this.warp?.lift(tx + 0.5, ty + 1) ?? 0), TILE_PX * 0.6, now, n.id * 7919, !gele)
+            this.recolteFx?.givre(a0.px, a0.py - (this.warp?.liftSol(tx + 0.5, ty + 0.5) ?? 0), TILE_PX * 0.6, now, n.id * 7919, !gele, this.warp?.strateSol(tx + 0.5, ty + 0.5) ?? 0)
           }
           if (!pose.visible) continue
           echX = pose.sx
@@ -2413,10 +2508,15 @@ export class SnapshotView {
           sprite = this.scene.add.image(0, 0, texture).setOrigin(0.5, 1)
           this.nodePool[used] = sprite
         }
-        // Un arbre est décalé dans sa tuile (spec décalage d'origine) — MÊME
-        // fonction pure que la collision, donc sprite et hitbox coïncident au bit
-        // près. Les autres nœuds restent centrés sur leur tuile.
-        const j = isTree ? treeJitter(tx, ty) : { dx: 0, dy: 0 }
+        // LE FÛT EST CENTRÉ SUR SA TUILE, comme tous les nœuds (2026-08-31). Le décalage
+        // d'origine ne bouge plus que le HOUPPIER (`jCime` plus bas) : il déplaçait le sprite ET
+        // la collision du même flottant, et c'est ce qui rendait l'obstacle imprévisible — le
+        // tronc vivait dans une fenêtre de ±0,3 tuile qu'aucun repère ne montrait.
+        // LE DÉCALAGE D'ORIGINE NE BOUGE PLUS QUE LA CIME. Elle porte tout l'organique (42 px,
+        // elle déborde largement sur ses voisines) et ne bloque rien — alors que sur le fût, le
+        // même décalage déplaçait AUSSI la bande de collision, et c'est ce qui rendait
+        // l'obstacle imprévisible. Le fût et sa flaque restent donc au centre de leur tuile.
+        const jCime = isTree ? treeJitter(tx, ty) : { dx: 0, dy: 0 }
         const a = tileFeetAnchor(tx, ty, TILE_PX)
         // LA PIERRE PLANTÉE DANS LE GUÉ A LE PIED SOUS L'EAU. Les blocs d'un passage à gué
         // (`zone-content.ts`, `pierresDuGue`) sont les seuls nœuds que le monde pose SUR de l'eau
@@ -2435,15 +2535,26 @@ export class SnapshotView {
         // ne touche ni la tuile, ni la profondeur, ni l'emprise logique.
         const coup = this.hitFx?.coup(n.id)
         const shake = coup === undefined ? 0 : shakeOffset(now, coup.at)
-        const px = a.px + j.dx * TILE_PX + shake
-        const py = a.py + j.dy * TILE_PX
-        const lift = this.warp?.lift(tx + 0.5 + j.dx, ty + 1 + j.dy) ?? 0
+        const px = a.px + shake
+        const py = a.py
+        const lift = this.warp?.lift(tx + 0.5, ty + 0.5) ?? 0
+        const palierDuNoeud = this.warp?.palier(tx + 0.5, ty + 0.5) ?? 0
+        // ═══ UN NŒUD POUSSE À SON ÉTAGE (spec `etages.md`) ═══
+        //
+        // OUBLIÉ à la première livraison, et ça se voyait : les nœuds semés sur une mesa étaient
+        // dessinés à leur rangée LOGIQUE, c'est-à-dire `LIFT_TUILES` rangées au sud de la surface
+        // qui les porte — plantés dans la paroi, en apesanteur. Même geste qu'un corps, et pour la
+        // même raison : le dessin monte (`decalageDEtage`), le tri change de STRATE.
+        // « Absent » vaut LE PALIER DU SOL (T-R3) — la même lecture que `nodeAt` dans /sim.
+        const etageDuNoeud = n.etage ?? palierDuNoeud
         const pyDessin = py - lift + (immerge ? enfoncementDUnNoeud(true).descente : 0)
+          + decalageDEtage(etageDuNoeud, palierDuNoeud)
         sprite.setPosition(px, pyDessin)
         // Le sprite est POOLÉ : sa depth suit la tuile qu'il occupe cette frame,
         // jamais celle où il a été créé. Le pied réel intègre le décalage Y, pour
         // que deux arbres proches se trient par leur vrai pied, pas par le pool.
-        sprite.setDepth(nodeDepth(ty + j.dy, TILE_PX))
+        const strateDuNoeud = strateDEtage(etageDuNoeud, palierDuNoeud)
+        sprite.setDepth(nodeDepth(ty, TILE_PX) + strateDuNoeud)
         sprite.setTexture(texture)
         sprite.setLighting(this.lighting) // couche 1 : TOUS les nœuds sont éclairés (arbres, blocs, buissons…)
         // LA SURBRILLANCE DIT CE QUI VA SE PASSER (spec recolte.md G4) : le nœud
@@ -2469,7 +2580,14 @@ export class SnapshotView {
         if (n.id === idSurvole) this.contourNodeSprite = sprite
         // Plus de fantôme à 25 % (spec recolte-vivante D2) : un nœud est TOUJOURS opaque.
         // Épuisé, il n'est pas « à moitié là » — il REPOUSSE, et c'est son échelle qui le dit.
-        sprite.setAlpha(1)
+        // ⚠ **UNE SEULE EXCEPTION : LE DÉCOUVERT D'UN ÉTAGE** (spec `etages.md` E-R20). Un bloc
+        // planté sur une mesa cède AVEC le plancher qui le porte — sinon il flotte, opaque, dans
+        // le creux que le fondu vient d'ouvrir. Le nœud du SOL, lui, reste plein : il n'a jamais
+        // rien caché de l'étage courant.
+        // Depuis les terrasses (T-R9), c'est `alphaDeDecouvert` qui tranche « au-dessus » : un
+        // buisson du palier 2 cède pour le joueur du palier 0 caché sous la terrasse, comme le
+        // bloc de la mesa cédait pour celui du sol. Le centre DESSINÉ, comme pour le regard.
+        sprite.setAlpha(alphaDeDecouvert(this.decouvert, tx + 0.5, ty + 0.5 - LIFT_TUILES * etageDuNoeud, etageDuNoeud))
         // LE STRETCH DU VENT NORD-SUD (essai, 2026-08-25) — voir `windStretch`. Multiplié à
         // l'échelle de repousse et à celle du gel : les trois gestes se composent, aucun ne
         // remplace l'autre. Posé CHAQUE image comme la rotation (le sprite est poolé).
@@ -2487,6 +2605,7 @@ export class SnapshotView {
             n.id, coup.at, now, n.type, texture,
             px, pyDessin, sprite.displayHeight,
             coup.fromX, coup.fromY, coup.count, coup.clean,
+            strateDuNoeud, // la gerbe naît dans le monde du nœud (terrasse comprise)
           )
           // ET LE HOUPPIER LÂCHE DES FEUILLES (demande d'Alexis, 2026-07-29). La hache mord
           // le fût à hauteur de ceinture ; le choc, lui, remonte l'arbre — et ce qui se
@@ -2510,6 +2629,7 @@ export class SnapshotView {
               // et le parasol du vieux pin sont plus larges que hauts). Les feuilles d'un saule
               // tombaient dans un rayon de cime carrée, donc trop serré pour la sienne.
               px, pyDessin, ancrageHouppierPx(m) + m.houppierS * 0.3, houppierLargeur(m) * 0.4,
+              strateDuNoeud,
             )
           }
         }
@@ -2518,7 +2638,7 @@ export class SnapshotView {
         // remis DROIT, jamais la rotation d'un voisin héritée. Pivot aux pieds (origine 0.5,1) → il
         // plie depuis sa base, comme le houppier et les touffes du décor.
         const windTake = growing && isTree ? SAPLING_WIND_TAKE : (NODE_WIND_TAKE[n.type] ?? 0)
-        sprite.setRotation(windSway(tx + j.dx, ty + j.dy, now, windTake, this.ventDuDecor, this.windForce, this.wind))
+        sprite.setRotation(windSway(tx, ty, now, windTake, this.ventDuDecor, this.windForce, this.wind))
         sprite.setVisible(true)
         // LE REFLET DE L'ARBRE (eau-vivante R13) : un fût de la rive nord se redit dans
         // l'eau au sud de son pied — la couche découpe elle-même à la course d'eau.
@@ -2541,7 +2661,7 @@ export class SnapshotView {
         // LA NEIGE MONTE SUR LE PIED DU NŒUD (gel.md G9) : le bas du sprite se coupe de sa
         // hauteur (la découpe révèle le manteau), l'ombre remonte d'autant. Jamais sur un coin
         // de pêche (il est sur l'eau, qui n'en porte pas).
-        const coupeNeige = coupeDeNeige(this.hauteurNeigeAt?.(tx + 0.5 + j.dx, ty + 1 + j.dy) ?? 0, sprite.displayHeight)
+        const coupeNeige = coupeDeNeige(this.hauteurNeigeAt?.(tx + 0.5, ty + 1) ?? 0, sprite.displayHeight)
         const { coupe, descente } = enfoncementDUnNoeud(immerge, coupeNeige)
         if (coupe > 0) {
           const frame = sprite.frame
@@ -2605,9 +2725,25 @@ export class SnapshotView {
           // posée sur la terre. La flaque, elle, sait déjà le faire par son gap.
           const gapWorld = nodeArtGap(texture) * sprite.scaleY + coupe
             - (socle ? SOCLE_OMBRE_DESCENTE * sprite.scaleY : 0)
+          // ═══ SOUS UN ARBRE, LA FLAQUE FAIT LA LARGEUR DE CE QUI BLOQUE (2026-08-31) ═══
+          //
+          // La règle générale prend `displayWidth` — le CADRE du sprite — et la majore de 20 %
+          // pour épouser une base qui déborde de sa boîte. Sur un arbre elle donnait 19,2 px
+          // (cadre 16) pour une colonne bloquante de 6 : le seul repère POSÉ AU SOL, celui qui
+          // dit « le pied est ici », était trois fois trop large. Or c'est lui qui doit porter la
+          // vérité : le houppier fait 42 px et ne peut pas rétrécir, le fût est un billboard
+          // debout — au sol, il n'y a que cette flaque.
+          //
+          // ELLE VAUT DONC L'EMPATTEMENT, ET C'EST PLUS QUE DE LA MESURE : le fût monte MINCE
+          // (6 px, sa proportion d'arbre) tandis que l'obstacle en fait 12 — la flaque EST la
+          // collerette de racines, la seule chose qui puisse dire au sol « on ne passe pas
+          // ici » sans faire du tronc un poteau. (`largeurMonde` court-circuite le plancher
+          // `MIN_WIDTH`, c'est voulu.) Mise à l'échelle comme le sprite : une pousse porte la
+          // sienne, à sa taille.
+          const largeurTronc = isTree ? variante.mesures.empattementW * sprite.scaleX : undefined
           positionShadow(
             nodeShadow, px, py, sprite.displayWidth, sprite.depth, gapWorld,
-            socle ? TILE_PX * SOCLE_OMBRE_TUILES * sprite.scaleX : undefined,
+            socle ? TILE_PX * SOCLE_OMBRE_TUILES * sprite.scaleX : largeurTronc,
             socle ? this.deriveOmbre * TILE_PX * SOCLE_OMBRE_DERIVE * sprite.scaleX : 0,
           )
         }
@@ -2659,7 +2795,11 @@ export class SnapshotView {
         const dy = feetY - (ty + 1)
         const d = Math.sqrt(dx * dx + dy * dy)
         const alphaCanopee = this.canopeePleine ? 1 : crownAlpha(d)
-        const depth = crownDepth(ty + 1 + j.dy, TILE_PX)
+        // La cime se TRIE sur le pied de son tronc, qui est centré : son propre décalage est
+        // purement visuel et ne doit pas la faire changer de rang.
+        const depth = crownDepth(ty + 1, TILE_PX)
+        const pxCime = px + jCime.dx * TILE_PX
+        const pyCime = py + jCime.dy * TILE_PX
         /** LA POSE D'UNE CIME — écrite UNE fois et appliquée aux deux sprites du fondu. Deux
          *  écritures d'un même placement finiraient par différer d'un pixel, et le fondu se
          *  verrait comme un tremblement au lieu d'un passage. */
@@ -2671,7 +2811,7 @@ export class SnapshotView {
           img.setLighting(this.lighting) // pooled : réarmé chaque frame (cf. le tronc)
           // L'ANCRAGE SE DÉRIVE, il ne s'écrit plus (cf. `arbre-art`). `px` porte déjà le
           // tressaillement et le décalage d'arbre.
-          img.setPosition(px, py - ancrageHouppierPx(mesures) - lift)
+          img.setPosition(pxCime, pyCime - ancrageHouppierPx(mesures) - lift)
           img.setDepth(depth + dz)
           // Un arbre visé s'éclaire ENTIER : teinter le tronc seul donnerait un houppier
           // flottant, détaché de ce qu'on vise.
@@ -2681,7 +2821,7 @@ export class SnapshotView {
           // La canopée prend le vent, elle aussi. Sans ça, la forêt reste une photo posée sur
           // un sol qui remue — et c'est le contraste qui trahit le décor. Origine (0.5, 1) : le
           // houppier bascule autour du haut du tronc.
-          img.setRotation(windSway(tx + j.dx, ty + j.dy, now, CROWN_WIND_TAKE, this.ventDuDecor, this.windForce, this.wind))
+          img.setRotation(windSway(tx + jCime.dx, ty + jCime.dy, now, CROWN_WIND_TAKE, this.ventDuDecor, this.windForce, this.wind))
           // Et la cime s'étire ou se tasse sous un vent nord-sud, comme les tiges du sol.
           img.setScale(1, windStretch(CROWN_WIND_TAKE, this.ventDuDecor, this.windForce))
           img.setVisible(true)
@@ -2726,10 +2866,13 @@ export class SnapshotView {
     for (const e of this.epuisements) {
       if (e.tx < tx0 || e.tx > tx1 || e.ty < ty0 || e.ty > ty1) continue
       const arbre = e.type === 'tree' || e.type === 'old_tree'
-      const j = arbre ? treeJitter(e.tx, e.ty) : { dx: 0, dy: 0 }
+      // L'arbre tombe depuis son pied CENTRÉ (2026-08-31) : le décalage d'origine ne bouge
+      // plus que la cime, et un fût qui s'abattrait d'ailleurs que d'où il se dressait
+      // sauterait à l'image de sa mort.
       const a = tileFeetAnchor(e.tx, e.ty, TILE_PX)
-      const px = a.px + j.dx * TILE_PX
-      const py = a.py + j.dy * TILE_PX - (this.warp?.lift(e.tx + 0.5 + j.dx, e.ty + 1 + j.dy) ?? 0)
+      const px = a.px
+      const py = a.py - (this.warp?.liftSol(e.tx + 0.5, e.ty + 0.5) ?? 0)
+      const strate = this.warp?.strateSol(e.tx + 0.5, e.ty + 0.5) ?? 0
       if (arbre) {
         // L'ARBRE TOMBE — À L'OPPOSÉ DU BÛCHERON, comme la gerbe (correction d'Alexis du
         // 29/07 : un arbre ne s'abat pas sur celui qui le coupe). La mémoire du dernier
@@ -2744,7 +2887,7 @@ export class SnapshotView {
         const variante = this.carte !== null
           ? varianteArbre(this.carte, e.tx, e.ty, this.worldSeed, e.type === 'old_tree')
           : VARIANTES[e.type === 'old_tree' ? 'old_tree' : 'tree']!
-        this.chuteArbre?.tomber(px, py, variante, this.lighting, dir.dx, dir.dy, now, cimeDe(e.tx, e.ty), this.etatDeCime(variante.slug, e.tx, e.ty), miroirDeTuile(e.tx, e.ty))
+        this.chuteArbre?.tomber(px, py, variante, this.lighting, dir.dx, dir.dy, now, cimeDe(e.tx, e.ty), this.etatDeCime(variante.slug, e.tx, e.ty), miroirDeTuile(e.tx, e.ty), strate)
       } else {
         // LA PIERRE S'EFFONDRE, LE VÉGÉTAL LÂCHE SES FEUILLES : une gerbe à 360°, de la
         // couleur du nœud — la même texture que celle qu'il affichait, donc la même
@@ -2755,7 +2898,7 @@ export class SnapshotView {
           : this.lighting && LIT_NODE_TYPES.has(e.type)
             ? `nd-${e.type}_lit`
             : `nd-${e.type}`
-        this.recolteFx?.eclatement(e.type, texture, px, py, TILE_PX, now)
+        this.recolteFx?.eclatement(e.type, texture, px, py, TILE_PX, now, strate)
       }
     }
     this.epuisements.length = 0
@@ -2780,8 +2923,8 @@ export class SnapshotView {
           : this.lighting ? 'nd-scar_lit' : 'nd-scar', // la cicatrice est COUCHÉE : pas de retourné
       )
       g.setLighting(this.lighting) // pooled : réarmé chaque frame, comme les nœuds
-      g.setPosition(a.px, a.py)
-      g.setDepth(nodeDepth(s.ty, TILE_PX))
+      g.setPosition(a.px, a.py - (this.warp?.liftSol(s.tx + 0.5, s.ty + 0.5) ?? 0))
+      g.setDepth(nodeDepth(s.ty, TILE_PX) + (this.warp?.strateSol(s.tx + 0.5, s.ty + 0.5) ?? 0))
       g.setScale(1)
       g.setAlpha(1 - (now - s.at) / STUMP_FADE_MS) // pâlit sur sa durée de vie
       g.setVisible(true)
@@ -2806,10 +2949,18 @@ export class SnapshotView {
         // À plat : centrés sur la position de l'entité (pas d'ancrage pieds), mais dans
         // la bande de tri — un buisson au sud les recouvre.
         const lift = this.warp?.lift(c.x, c.y) ?? 0
+        const palierDuCorps = this.warp?.palier(c.x, c.y) ?? 0
+        // ═══ UN CORPS TOMBÉ SUR UN PLATEAU Y RESTE (spec `etages.md` E-R22) ═══
+        // `Corpse.etage` traverse le protocole sans une ligne à écrire (le snapshot porte le
+        // `Corpse` entier). Sans ces deux nombres, une dépouille laissée là-haut se dessinait
+        // deux tuiles trop bas et se triait dans le monde d'en dessous — on l'aurait vue
+        // flotter au pied de la butte, à côté de la carcasse qu'on venait d'y laisser.
+        // Un cadavre ne bouge plus : son étage se pose une fois, à sa naissance.
+        const etageDuCorps = c.etage ?? palierDuCorps
         const sprite = this.scene.add
-          .image(c.x * TILE_PX, c.y * TILE_PX - lift, cle)
+          .image(c.x * TILE_PX, c.y * TILE_PX - lift + decalageDEtage(etageDuCorps, palierDuCorps), cle)
           .setOrigin(0.5, 0.5)
-          .setDepth(corpseDepth(c.y, TILE_PX))
+          .setDepth(corpseDepth(c.y, TILE_PX) + strateDEtage(etageDuCorps, palierDuCorps))
         sprite.setLighting(this.lighting)
         this.corpseSprites.set(c.id, sprite)
       } else if (existant.texture.key !== cle) {

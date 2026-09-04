@@ -45,8 +45,15 @@ const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 const SUITES = [
   // 2026-08-30 : les réfugiés quittent le jeu (refugees.test, prompt-gate.test retirés) — et
   // les suites ont malgré ça GROSSI (chantiers cendre + garde _lit) : planchers recalés dessus.
-  { nom: 'sim', dir: 'packages/sim', args: ['run', '--exclude', 'src/scenario.test.ts'], plancher: 2045 },
-  { nom: 'client', dir: 'packages/client', args: ['run'], plancher: 1385 },
+  // 2026-08-31 : +22 gardes avec les ÉTAGES (`etages.test.ts`, spec `etages.md`) — le plancher
+  // suit, en gardant la marge de quelques pourcents que décrit le commentaire ci-dessous.
+  // 2026-09-03 : +89 gardes avec les TERRASSES (`terrasses.test.ts`, spec `terrasses.md`) —
+  //   suite à 2169, plancher relevé quelques pourcents dessous.
+  { nom: 'sim', dir: 'packages/sim', args: ['run', '--exclude', 'src/scenario.test.ts'], plancher: 2140 },
+  // 2026-09-01 : +10 gardes avec le RENDU des étages (`plateau-art.test.ts`).
+  // 2026-09-01 : +9 gardes avec le TRI DES ÉTAGES (strate, découvert — `framing.test.ts`),
+  //   suite relevée à 1429 ✓, plancher recalé quelques pourcents dessous.
+  { nom: 'client', dir: 'packages/client', args: ['run'], plancher: 1420 },
   { nom: 'serveur', dir: 'packages/server', args: ['run'], plancher: 36 },
   // Le banc pilote le vrai worldgen sur la carte de production : lent, et seul à porter le
   // drapeau qui ignore les erreurs non gérées (voir l'en-tête de `scenario.test.ts`).

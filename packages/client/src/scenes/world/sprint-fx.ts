@@ -134,6 +134,8 @@ interface Grain {
   vz: number
   ne: number
   vie: number
+  /** La strate du coureur (`strateDeProfondeur`) : la poussière naît dans son monde. */
+  strate: number
 }
 
 const GRAVITE = 26
@@ -187,6 +189,9 @@ export class SprintFx {
     exhausted: true | undefined
     /** Absente (terrain inconnu hors carte) : on retombe sur le ton de poussière neutre. */
     teinteSol: number | undefined
+    /** La strate du sprite du coureur (`strateDeProfondeur(sprite.depth)`) — 0 sur une carte
+     *  plate. Sans elle, la poussière d'une terrasse passe sous ses pavés. */
+    strate?: number
   }): number {
     const essouffle = essoufflement(o.stamina)
 
@@ -195,7 +200,7 @@ export class SprintFx {
     // faute ; et le verrou ne se pose qu'à sec.
     if (o.exhausted && !this.epuise) {
       this.broncheA = o.now
-      this.bouffee(o.now, o.x, o.y, -o.dirX, -o.dirY, MUR_GRAINS, MUR_FORCE, o.teinteSol)
+      this.bouffee(o.now, o.x, o.y, -o.dirX, -o.dirY, MUR_GRAINS, MUR_FORCE, o.teinteSol, o.strate ?? 0)
     }
     this.epuise = o.exhausted === true
 
@@ -210,7 +215,7 @@ export class SprintFx {
       const pas = longueurFoulee(essouffle)
       if (this.depuisLaFoulee >= pas) {
         this.depuisLaFoulee = 0
-        this.bouffee(o.now, o.x, o.y, -o.dirX, -o.dirY, grainsParFoulee(essouffle), 1, o.teinteSol)
+        this.bouffee(o.now, o.x, o.y, -o.dirX, -o.dirY, grainsParFoulee(essouffle), 1, o.teinteSol, o.strate ?? 0)
       }
     } else {
       this.depuisLaFoulee = 0
@@ -239,7 +244,8 @@ export class SprintFx {
     dy: number,
     combien: number,
     force: number,
-    teinteSol?: number,
+    teinteSol: number | undefined,
+    strate: number,
   ): void {
     const rnd = semis((this.graine = (this.graine * 1103515245 + 12345) & 0x7fffffff))
     const angle = Math.atan2(dy, dx)
@@ -263,6 +269,7 @@ export class SprintFx {
         vie: VIE_MS,
         ton: nuance(base, VALEURS[Math.min(VALEURS.length - 1, Math.floor(rnd() * VALEURS.length))]!),
         cote: force > 1 ? 3 : 2,
+        strate,
       })
     }
   }
@@ -271,8 +278,8 @@ export class SprintFx {
     if (this.grains.length >= MAX_GRAINS) this.grains.shift()?.img.destroy()
     const img = this.scene.add
       .rectangle(Math.round(g.x), Math.round(g.y - g.z), g.cote, g.cote, g.ton)
-      .setDepth(ySortDepth(g.y / TILE_PX, TILE_PX, TIE_ACTOR))
-    this.grains.push({ img, x: g.x, y: g.y, z: g.z, vx: g.vx, vy: g.vy, vz: g.vz, ne: g.ne, vie: g.vie })
+      .setDepth(g.strate + ySortDepth(g.y / TILE_PX, TILE_PX, TIE_ACTOR))
+    this.grains.push({ img, x: g.x, y: g.y, z: g.z, vx: g.vx, vy: g.vy, vz: g.vz, ne: g.ne, vie: g.vie, strate: g.strate })
   }
 
   /** `dt` est BORNÉ : l'horloge headless saute (règle maison), et une frame de 400 ms
@@ -300,7 +307,7 @@ export class SprintFx {
       g.img.setAlpha((1 - k) * 0.75)
       // Position ARRONDIE : l'art est sur une grille de pixels (règle des FX pixellisés).
       g.img.setPosition(Math.round(g.x), Math.round(g.y - g.z))
-      g.img.setDepth(ySortDepth(g.y / TILE_PX, TILE_PX, TIE_ACTOR))
+      g.img.setDepth(g.strate + ySortDepth(g.y / TILE_PX, TILE_PX, TIE_ACTOR))
     }
   }
 

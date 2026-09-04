@@ -18,6 +18,7 @@ import {
   ancrageHouppierPx,
   colonneX,
   demiTroncAppele,
+  empattementRangs,
   hauteurPx,
   hauteurTuiles,
   houppierOpaque,
@@ -58,19 +59,67 @@ describe('l’échelle verticale : ce qui est déclaré est ce qui est dessiné'
       // plus s'écarter en silence. `/sim` reste la seule vérité de la collision.
       expect(ARBRES[t].demiTroncSub).toBe(NODE_DEFS[t].blockHalfSub)
     }
-    // L'ARBRE : sa colonne dessinée EST son cœur bloquant, à la sous-tuile près.
-    expect(demiTroncAppele(ARBRES.tree, SUB)).toBe(NODE_DEFS.tree.blockHalfSub)
-    // LE GROS BOIS : dérogation ASSUMÉE — il se dessine bien plus large qu'il ne bloque, pour
-    // que la Vieille Sylve reste traversable et que sa bande reste centrée (il n'est pas
-    // décalé). On affirme le SENS de l'écart : il bloque MOINS qu'il ne paraît, jamais plus.
-    expect(demiTroncAppele(ARBRES.old_tree, SUB)).toBeGreaterThan(NODE_DEFS.old_tree.blockHalfSub)
+    // PLUS AUCUNE DÉROGATION depuis le 2026-08-31, mais ce n'est plus la COLONNE qui répond :
+    // c'est l'EMPATTEMENT. Le fût monte mince (sa proportion d'arbre) et la collerette de
+    // racines, au sol, EST l'obstacle — c'est elle que la flaque de contact dessine. Le gros
+    // bois se dessinait à 14 px pour un cœur de 4 : le plus gros écart art/collision du jeu,
+    // et il tombait dans la Vieille Sylve, là où on ne peut pas se permettre de ne pas croire
+    // ses yeux.
+    for (const t of TYPES) {
+      expect(demiTroncAppele(ARBRES[t], SUB), `${t} : l'empattement ment sur ce qu'il bloque`)
+        .toBe(NODE_DEFS[t].blockHalfSub)
+    }
   })
 
-  it('E4 — la borne dure du décalage d’origine tient pour l’arbre', () => {
-    // Le carré bloquant d'un arbre décalé doit rester DANS sa tuile, sinon il échappe à la
-    // collision. C'est la borne que l'épaississement du tronc a failli manger.
-    const h = NODE_DEFS.tree.blockHalfSub / BALANCE.SUBTILES_PER_TILE
-    expect(BALANCE.TREE_JITTER_TILES + h).toBeLessThanOrEqual(0.5)
+  it('E4 — LA COLONNE EST ASSEZ LARGE POUR QUE DEUX VOISINS NE PASSENT JAMAIS, et pas plus', () => {
+    // Ce qui remplace la borne du décalage d'origine (celui-ci ne bouge plus que le houppier).
+    // La largeur de colonne n'est plus un goût de dessin : c'est elle qui rend le verdict
+    // BINAIRE, et les deux bornes doivent tenir ENSEMBLE.
+    const SUB = BALANCE.SUBTILES_PER_TILE
+    for (const t of TYPES) {
+      const h = ARBRES[t].demiTroncSub / SUB
+      // ① JAMAIS FRANCHISSABLE entre deux voisins — sur l'axe le plus FIN du corps, donc a
+      //    fortiori sur l'autre. Sans ①, la forêt redevient un cas par cas.
+      expect(1 - 2 * h, `${t} : deux voisins laissent passer`).toBeLessThan(BALANCE.AVATAR_HITBOX_DEPTH_TILES)
+      // ② L'ARBRE NE MURE PAS SA TUILE : il reste au moins une sous-tuile libre de chaque côté.
+      //    Sans ②, on aurait pu tenir ① en bloquant tout, et le bois perdrait 22 % de sa
+      //    surface au lieu de 12,4 % — même lisibilité, deux fois l'encombrement.
+      expect(ARBRES[t].demiTroncSub, `${t} : mure sa tuile`).toBeLessThanOrEqual(SUB / 2 - 1)
+      // ③ UN FÛT NE SURPLOMBE PAS SES RACINES. Sans cette borne, la colonne dessinée pourrait
+      //    repasser DEVANT l'empattement — c'est-à-dire redevenir plus large que ce qui bloque,
+      //    le mensonge exact qu'on vient de fermer sur le gros bois.
+      expect(ARBRES[t].colonneW, `${t} : le fût déborde de son empattement`)
+        .toBeLessThanOrEqual(ARBRES[t].empattementW)
+      // ④ ENTIER : le centre de la bande est entier (plus de décalage), donc un demi-entier la
+      //    décentrerait d'une sous-tuile vers l'est — le verdict dépendrait du côté d'arrivée.
+      expect(Number.isInteger(ARBRES[t].demiTroncSub), `${t} : demi-entier sur un centre entier`).toBe(true)
+    }
+  })
+
+  it('E4bis — LA RANGÉE DU SOL DESSINE EXACTEMENT LA HITBOX (c\u2019est tout le propos)', () => {
+    // LE DÉFAUT QU'ON FERME, et il a été relevé DEUX FOIS à l'écran : « les troncs alignés
+    // gênent toujours la lisibilité de là où est leur hitbox ». Le fût monte mince (sa
+    // proportion d'arbre) ; si la collerette ne descend pas jusqu'aux 12 px du carré bloquant,
+    // plus RIEN de dessiné ne dit où l'on bute — et une flaque de contact seule, sous une
+    // canopée, ne fait pas une forme qu'on lit.
+    for (const t of TYPES) {
+      const m = ARBRES[t]
+      const rangs = empattementRangs(m)
+      expect(rangs.length, `${t} : pas d'empattement du tout`).toBe(m.empattementH)
+      // La rangée DU SOL (k = 0) porte la pleine extension : largeur dessinée = largeur bloquée.
+      expect(m.colonneW + 2 * rangs[0]!, `${t} : le pied dessiné ne vaut pas la hitbox`)
+        .toBe(m.empattementW)
+      // Et elle DÉCROÎT en montant — une collerette, pas un socle carré (qui relirait « poteau »,
+      // le défaut d'avant). Jamais croissante, jamais nulle.
+      for (let k = 1; k < rangs.length; k++) {
+        expect(rangs[k]!, `${t} : l'empattement remonte au rang ${k}`).toBeLessThanOrEqual(rangs[k - 1]!)
+        expect(rangs[k]!).toBeGreaterThan(0)
+      }
+      // ET LA COLLERETTE TIENT DANS SA TEXTURE : sinon elle serait rognée d'un côté, donc
+      // décentrée, donc menteuse — exactement ce qu'on vient de fermer.
+      expect(m.empattementW, `${t} : la collerette déborde du cadre`).toBeLessThanOrEqual(m.futW)
+      expect((m.futW - m.empattementW) % 2, `${t} : collerette non centrable au pixel`).toBe(0)
+    }
   })
 
   it('E5 — la colonne du fût est centrée sur la texture, au pixel entier', () => {

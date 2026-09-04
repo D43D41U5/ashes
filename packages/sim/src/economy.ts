@@ -56,6 +56,7 @@ import { estTerrainDEau, estTerrainDeMarais } from './peche-nature'
 import { conditionsAt, natureDeLEau, tableDePrises, tirerLigne, type Conditions } from './peche-table'
 import { estGele, floreEntierementGelee, floreGelee } from './gel'
 import { effetsDuJour } from './modificateur'
+import { atteignableEntreEtages, niveauDeLaTuile, niveauDuCorps, palierDuSol } from './etages'
 import { distSq } from './geometry'
 import { heldSlot, wearHeld } from './inventory-actions'
 import {
@@ -85,6 +86,13 @@ export interface ResourceNode {
   type: NodeType
   tx: number
   ty: number
+  /**
+   * L'ÉTAGE OÙ CE NŒUD POUSSE (spec `etages.md`). Absent ≡ **0**, le sol du monde — donc tout ce
+   * qui existe aujourd'hui et tout ce qu'une vieille sauvegarde contient. Le pendant exact de
+   * `Entity.etage` : depuis que le dessus d'une mesa est une carte à part entière, une tuile
+   * porte un nœud PAR PLANCHER, et c'est l'étage qui les sépare (voir `cleDeNoeud`).
+   */
+  etage?: number
   stock: number
   /** Tick auquel un nœud épuisé repousse à plein (0 = jamais épuisé). */
   regrowAt: number
@@ -182,13 +190,42 @@ export type EconomyAction =
 // jamais dans SimState → invariant d'état sérialisable préservé, GC avec le tableau).
 // Même sémantique que l'ancien `find` : ≤1 nœud par tuile, premier gagnant.
 const NODE_INDEX_STRIDE = 1_000_000 // > toute coordonnée de tuile
+/**
+ * ⚠ **L'ÉTAGE ENTRE DANS LA CLÉ, et ce n'est pas décoratif** (spec `etages.md` — *« on construit
+ * une map en terrasse »*). Depuis que le dessus d'une mesa porte ses propres nœuds, **deux nœuds
+ * partagent légitimement une tuile** : le rocher du pierrier en bas, la pierre du plateau en haut.
+ * Avec l'ancienne clé, le second était rendu invisible par le premier (`if (!idx.has(key))`) — un
+ * arbre qu'on ne peut pas couper, un bloc qui bloque le mauvais étage, et chaque symptôme aval
+ * remonterait ici en ayant l'air d'autre chose.
+ *
+ * ⚠ **ET LE FACTEUR D'ÉTAGE EST LE CARRÉ DU PAS, PAS SEIZE FOIS LE PAS.** Écrit `16 *
+ * NODE_INDEX_STRIDE` (2026-08-31) sous la foi d'un « un cran de plus que la portée des tuiles »
+ * qui était faux : seize fois le pas, ce n'est pas seize fois la carte, c'est **seize tuiles de
+ * `tx`**. La clé de `(tx, ty, e)` valait donc exactement celle de `(tx + 16, ty, e − 1)`, et
+ * l'index rendait, pour une tuile de plateau vide, le rocher ou l'arbre posé SEIZE TUILES À
+ * L'EST un étage plus bas. MESURÉ sur le monde joué : **184 fantômes BLOQUANTS sur les 4 950
+ * tuiles d'étage de la graine 2026** (136 à 231 sur cinq graines) — dont un pile à la tête de la
+ * rampe de la mesa (577..579, 377), où l'on montait pour se cogner à rien.
+ *
+ * Le pas porte déjà son contrat — « > toute coordonnée de tuile » — donc son CARRÉ est hors
+ * d'atteinte de `tx * NODE_INDEX_STRIDE` par construction, et non par un réglage à re-vérifier le
+ * jour où la carte grandit. Clé maximale : 15 × 10¹² + 2 × 10⁹, exacte en double (2⁵³ ≈ 9 × 10¹⁵),
+ * et toujours des `+ * ` entiers — l'invariant §2 ne bouge pas d'un bit. L'étage reste décalé de
+ * 8 : de −8 à +7 tiennent, très au-delà de ce que la carte fera jamais.
+ */
+const NODE_INDEX_ETAGE = NODE_INDEX_STRIDE * NODE_INDEX_STRIDE
+function cleDeNoeud(tx: number, ty: number, etage: number): number {
+  return (etage + 8) * NODE_INDEX_ETAGE + tx * NODE_INDEX_STRIDE + ty
+}
 const nodeIndexCache = new WeakMap<ResourceNode[], Map<number, ResourceNode>>()
-function nodeIndexFor(nodes: ResourceNode[]): Map<number, ResourceNode> {
+// ⚠ LA CARTE FAIT PARTIE DE LA CLÉ (spec `terrasses.md` T-R3) : un nœud sans `etage` est « au sol,
+// là où il est », et le sol a un PALIER — c'est `niveauDeLaTuile` qui le dit, pas `?? 0`.
+function nodeIndexFor(map: WorldMap, nodes: ResourceNode[]): Map<number, ResourceNode> {
   let idx = nodeIndexCache.get(nodes)
   if (idx === undefined) {
     idx = new Map()
     for (const n of nodes) {
-      const key = n.tx * NODE_INDEX_STRIDE + n.ty
+      const key = cleDeNoeud(n.tx, n.ty, niveauDeLaTuile(map, n))
       if (!idx.has(key)) idx.set(key, n)
     }
     nodeIndexCache.set(nodes, idx)
@@ -196,18 +233,22 @@ function nodeIndexFor(nodes: ResourceNode[]): Map<number, ResourceNode> {
   return idx
 }
 
-export function nodeAt(nodes: ResourceNode[], tx: number, ty: number): ResourceNode | undefined {
-  return nodeIndexFor(nodes).get(tx * NODE_INDEX_STRIDE + ty)
+/** Le nœud d'une tuile, À UN ÉTAGE DONNÉ. `etage` absent = le SOL de la tuile — son palier (T-R2). */
+export function nodeAt(map: WorldMap, nodes: ResourceNode[], tx: number, ty: number, etage?: number): ResourceNode | undefined {
+  return nodeIndexFor(map, nodes).get(cleDeNoeud(tx, ty, etage ?? palierDuSol(map, tx, ty)))
 }
 
 /** Reflète un déménagement de nœud dans l'index mémoïsé (O(1)) : l'ancienne tuile se
  *  libère, la nouvelle pointe le nœud. Ne fait rien si l'index n'est pas encore bâti
  *  (il naîtra à jour). Suppose la tuile cible libre (garanti par `relocateNode`). */
-function relocateInIndex(nodes: ResourceNode[], node: ResourceNode, oldTx: number, oldTy: number): void {
+function relocateInIndex(map: WorldMap, nodes: ResourceNode[], node: ResourceNode, oldTx: number, oldTy: number): void {
   const idx = nodeIndexCache.get(nodes)
   if (idx === undefined) return
-  idx.delete(oldTx * NODE_INDEX_STRIDE + oldTy)
-  idx.set(node.tx * NODE_INDEX_STRIDE + node.ty, node)
+  // L'étage ne bouge PAS dans un déménagement (un nœud glisse d'une tuile à l'autre du même
+  // plancher, `relocateNode` refuse de changer de palier) — mais il fait partie de la clé, donc
+  // les deux côtés doivent le porter, chacun lu sur SA tuile.
+  idx.delete(cleDeNoeud(oldTx, oldTy, node.etage ?? palierDuSol(map, oldTx, oldTy)))
+  idx.set(cleDeNoeud(node.tx, node.ty, niveauDeLaTuile(map, node)), node)
 }
 
 
@@ -265,13 +306,17 @@ function relocateNode(state: SimState, node: ResourceNode): void {
     // repeupleraient donc la cendre tout seuls, un abattage à la fois. Même forme que le refus
     // d'emprise juste au-dessus, et pour la même raison : c'est le vecteur principal.
     if (tuileCendree(state, tx, ty)) continue
-    if (nodeAt(state.nodes, tx, ty) !== undefined) continue // couvre aussi la tuile d'origine
+    // À SON ÉTAGE : un nœud déménage sur SON plancher, et ce qui occupe l'autre ne le concerne
+    // pas — sinon un bloc du plateau interdirait à un arbre du pied de glisser sous lui.
+    if (nodeAt(map, state.nodes, tx, ty, node.etage) !== undefined) continue // couvre la tuile d'origine
+    // SUR SON PALIER (spec `terrasses.md` T-R3) : un nœud ne glisse pas par-dessus un mur de terrasse.
+    if (palierDuSol(map, tx, ty) !== palierDuSol(map, node.tx, node.ty)) continue
     if (structureAt(state.structures, tx, ty) !== undefined) continue
     const oldTx = node.tx
     const oldTy = node.ty
     node.tx = tx
     node.ty = ty
-    relocateInIndex(state.nodes, node, oldTx, oldTy)
+    relocateInIndex(map, state.nodes, node, oldTx, oldTy)
     return
   }
   // Aucune tuile libre trouvée : on garde l'ancien comportement (repousse sur place).
@@ -571,6 +616,16 @@ function strikeRejection(state: SimState, actor: Entity, node: ResourceNode | un
   // ferrage) passent par ici : une seule ligne tient la portée du geste entier.
   const portee = Math.max(range, porteeDuNoeud(node.type))
   if (distSq(actor.x, actor.y, node.tx + 0.5, node.ty + 0.5) > portee * portee) return 'trop loin'
+  // ═══ UN PLANCHER SE TRAVERSE PAR UNE RAMPE, PAS PAR LA ROCHE (spec `etages.md` E-R5) ═══
+  //
+  // Le DEUXIÈME appelant réel de la règle, après la chasse du loup — et le point est le même :
+  // elle s'écrit UNE fois, dans `atteignableEntreEtages`, et les sites l'appellent. Sans elle, on
+  // minait depuis le pied de la mesa le bloc posé sur son dessus, à travers douze mètres de
+  // roche. Elle sort sur la première comparaison quand les deux sont au même étage — donc tous
+  // les gestes d'aujourd'hui la paient au prix d'un `===`.
+  if (!atteignableEntreEtages(
+    state.map, actor.x, actor.y, niveauDuCorps(state.map, actor), node.tx + 0.5, node.ty + 0.5, niveauDeLaTuile(state.map, node),
+  )) return 'trop loin'
   const def = NODE_DEFS[node.type]
   // F3 — UNE PLANTE GELÉE NE REND RIEN (spec `flore-froid.md`). Ne mord QUE sur les nœuds
   // `gelif` : baies, champignons, vers — ce que la plante produit FRAIS. Deux exclusions
@@ -1287,7 +1342,7 @@ export function applyEconomyAction(state: SimState, actorId: number, action: Eco
       // suite après une prise est le geste normal — le poisson suivant se fera attendre.
       const bad = castRejection(state, actor, action.tx, action.ty)
       if (bad) return reject(bad)
-      const node = nodeAt(state.nodes, action.tx, action.ty)
+      const node = nodeAt(state.map, state.nodes, action.tx, action.ty, niveauDuCorps(state.map, actor))
       castLine(state, actor, action.tx, action.ty, node !== undefined && estUnCoinDePeche(node.type) && node.stock > 0 ? node : undefined)
       return
     }

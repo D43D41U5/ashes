@@ -1235,6 +1235,32 @@ describe('R5 — le Feu sous la pluie (A4)', () => {
     expect(structureAt(sim.structures, 125, 21)?.type).toBe('fire')
   })
 
+  it('R5 abri — LE TOIT RÉVEILLE L’ÉCHAPPÉE : sous un toit, un feu neuf prend SOUS LA PLUIE', () => {
+    /**
+     * ⚠ **LA GARDE D’À CÔTÉ DIT QUE CETTE ÉCHAPPÉE EST « DORMANTE », ET ELLE NE L’EST PLUS.**
+     * Elle l’était pour une raison qui n’a rien à voir avec R5 : les deux seuls abris que
+     * `isSheltered` connaissait refusaient la pose par une AUTRE porte — la `house` occupe sa
+     * tuile (« tuile occupée »), la Grotte est un landmark. On ne pouvait donc jamais OBSERVER
+     * le contrat, seulement constater qu’un autre motif sortait avant lui.
+     *
+     * Depuis que le TOIT abrite (2026-09-02), il existe enfin un abri qui ne ferme aucune de ces
+     * portes : `roof` est `bloque: 'non'` et `occupe: 'toit'` — il ne prend pas la tuile, il n’est
+     * pas un landmark. La pose DOIT donc passer, sous la pluie, et c’est R5 qui tient debout pour
+     * la première fois. Ce qui ferait rougir : retirer `roofAt` d’`isSheltered` — le motif météo
+     * ressort, et l’échappée se rendort.
+     */
+    const sim = simCalme()
+    const id = poseur(sim, 125, 20, 1)
+    addStructure(sim, 'roof', 125, 21, 0, 0)
+    poseFront(sim, 'pluie', 95.5)
+    expect(meteoMouille(sim, 125, 21), 'la prémisse : il pleut bien là').toBe(true)
+    expect(isSheltered(sim, 125, 21), 'et la tuile est couverte').toBe(true)
+    drainEvents(sim)
+    act(sim, id, { type: 'place_campfire', tx: 125, ty: 21 })
+    expect(refus(sim), 'aucun refus : le feu prend sous le toit').toEqual([])
+    expect(structureAt(sim.structures, 125, 21)?.type ?? 'rien').not.toBe('rien')
+  })
+
   it('R5 abri — sur une tuile abritée le refus météo ne mord JAMAIS : maison et grotte le prouvent chacune par sa porte', () => {
     // Les deux abris d'`isSheltered` (maison, grotte) refusent AUJOURD'HUI la pose par des
     // portes pré-existantes (tuile occupée, landmark) : l'échappée abritée du contrat R5
@@ -1706,7 +1732,10 @@ describe('R8 — la foudre (A6)', () => {
     const evts = drainEvents(sim)
     const mort = evts.find((ev) => ev.type === 'entity_died')
     expect(mort).toMatchObject({ entityId: id, byEntityId: 0, wasMonster: false, cause: 'lightning' })
-    expect(evts.some((ev) => ev.type === 'entity_respawned' && ev.entityId === id)).toBe(true) // le chemin de mort EXISTANT
+    // …et l'avatar RESTE À TERRE (2026-08-31) : la foudre passe par le chemin de mort
+    // EXISTANT, lequel ne relève plus tout seul. Le réveil appartient au geste du joueur.
+    expect(evts.some((ev) => ev.type === 'entity_respawned')).toBe(false)
+    expect(sim.entities.find((en) => en.id === id)!.downedAt).toBe(sim.tick)
     expect(sim.rngState).toBe(rng0) // `die` ne tire rien : le flux seedé est intact jusque dans la mort
   })
 

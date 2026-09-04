@@ -53,6 +53,7 @@ import {
 } from './construction'
 import { cendreuxVivantsPositions } from './fire'
 import { emitEvent } from './events'
+import { atteintLeSol } from './etages'
 import { chebyshev, distSq, isSingleEdge } from './geometry'
 import {
   addItems,
@@ -1068,6 +1069,8 @@ export function applyVillageAction(state: SimState, actorId: number, action: Vil
       if (s.ownerId !== actorId) return reject('ce n’est pas votre feu')
       const range = BALANCE.INTERACT_RANGE
       if (distSq(actor.x, actor.y, s.tx + 0.5, s.ty + 0.5) > range * range) return reject('trop loin')
+      // LE BÂTI VIT AU SOL (spec `etages.md` E-R5) : un bras ne le rejoint pas depuis un plateau.
+      if (!atteintLeSol(state.map, actor, s.tx, s.ty)) return reject('trop loin')
       // Fondation R1 : ≥ 2·R_max (Chebyshev) d'un autre Feu — zéro chevauchement des carrés.
       const min = BALANCE.FIRE_MIN_DISTANCE
       if (state.villages.some((v) => chebyshev(v.fireTx, v.fireTy, s.tx, s.ty) < min)) {
@@ -1101,6 +1104,8 @@ export function applyVillageAction(state: SimState, actorId: number, action: Vil
       // fait une demi-tuile de zone morte, muette (voir le bloc sous `TORCHE`, balance.ts).
       const range = BALANCE.INTERACT_RANGE
       if (distSq(actor.x, actor.y, s.tx + 0.5, s.ty + 0.5) > range * range) return reject('trop loin')
+      // LE BÂTI VIT AU SOL (spec `etages.md` E-R5) : un bras ne le rejoint pas depuis un plateau.
+      if (!atteintLeSol(state.map, actor, s.tx, s.ty)) return reject('trop loin')
       if (!foyerDonneLeFeu(state.tick, s)) return reject('ce feu est éteint')
       const held = heldSlot(actor)
       if (held === null || held.item !== 'torche') return reject('pas de torche en main')
@@ -1216,6 +1221,7 @@ export function applyVillageAction(state: SimState, actorId: number, action: Vil
       if (village.tier >= BALANCE.FIRE_RADIUS_BY_TIER.length) return reject('palier maximal atteint')
       const range = BALANCE.INTERACT_RANGE
       if (distSq(actor.x, actor.y, village.fireTx + 0.5, village.fireTy + 0.5) > range * range) return reject('trop loin du Feu')
+      if (!atteintLeSol(state.map, actor, village.fireTx, village.fireTy)) return reject('trop loin du Feu')
       const cost = BALANCE.FIRE_UPGRADE_COST[village.tier]
       if (cost === undefined) return reject('palier maximal atteint')
       if (!removeItems(actor.inventory, cost)) return reject('matériaux insuffisants')
@@ -1252,6 +1258,7 @@ export function applyVillageAction(state: SimState, actorId: number, action: Vil
       const village = getVillageOf(state, actorId)
       if (village) {
         if (distSq(actor.x, actor.y, village.fireTx + 0.5, village.fireTy + 0.5) > range * range) return reject('trop loin du Feu')
+      if (!atteintLeSol(state.map, actor, village.fireTx, village.fireTy)) return reject('trop loin du Feu')
         const r = feedVillageFire(state, actor, actorId, village)
         if (r) return reject(r)
         return
@@ -1284,6 +1291,8 @@ export function applyVillageAction(state: SimState, actorId: number, action: Vil
       if (s.ownerId !== actorId && getVillageOf(state, actorId)?.id !== s.villageId) return reject('pas votre village')
       const range = BALANCE.BUILD_RANGE
       if (distSq(actor.x, actor.y, s.tx + 0.5, s.ty + 0.5) > range * range) return reject('trop loin')
+      // LE BÂTI VIT AU SOL (spec `etages.md` E-R5) : un bras ne le rejoint pas depuis un plateau.
+      if (!atteintLeSol(state.map, actor, s.tx, s.ty)) return reject('trop loin')
       const current = s.material ?? 'wood'
       const next = WALL_MATERIAL_ORDER[WALL_MATERIAL_ORDER.indexOf(current) + 1]
       if (next === undefined) return reject('palier de matériau maximal')
@@ -1313,6 +1322,8 @@ export function applyVillageAction(state: SimState, actorId: number, action: Vil
       if (!hasAccess(state, actorId, s)) return reject('cette porte n’est pas à vous')
       const range = BALANCE.INTERACT_RANGE
       if (distSq(actor.x, actor.y, s.tx + 0.5, s.ty + 0.5) > range * range) return reject('trop loin')
+      // LE BÂTI VIT AU SOL (spec `etages.md` E-R5) : un bras ne le rejoint pas depuis un plateau.
+      if (!atteintLeSol(state.map, actor, s.tx, s.ty)) return reject('trop loin')
       // `open` reste ABSENT quand elle se referme : `undefined` EST « close » (voir `Structure`),
       // et un `false` explicite alourdirait chaque snapshot d'un champ qui ne dit rien de neuf.
       const ouverte = s.open !== true
@@ -1346,6 +1357,8 @@ export function applyVillageAction(state: SimState, actorId: number, action: Vil
       if (s.hp >= max) return reject('rien à réparer')
       const range = BALANCE.INTERACT_RANGE
       if (distSq(actor.x, actor.y, s.tx + 0.5, s.ty + 0.5) > range * range) return reject('trop loin')
+      // LE BÂTI VIT AU SOL (spec `etages.md` E-R5) : un bras ne le rejoint pas depuis un plateau.
+      if (!atteintLeSol(state.map, actor, s.tx, s.ty)) return reject('trop loin')
       if (!removeItems(actor.inventory, { wood: WORLD_EVENTS.REPAIR_WOOD_COST })) return reject('il faut du bois')
       s.hp = Math.min(max, s.hp + WORLD_EVENTS.REPAIR_HP)
       actor.cooldownUntil = state.tick + BALANCE.GATHER_COOLDOWN_TICKS
@@ -1379,6 +1392,8 @@ export function applyVillageAction(state: SimState, actorId: number, action: Vil
       }
       const range = BALANCE.INTERACT_RANGE
       if (distSq(actor.x, actor.y, s.tx + 0.5, s.ty + 0.5) > range * range) return reject('trop loin')
+      // LE BÂTI VIT AU SOL (spec `etages.md` E-R5) : un bras ne le rejoint pas depuis un plateau.
+      if (!atteintLeSol(state.map, actor, s.tx, s.ty)) return reject('trop loin')
       // S16 — UNE PLANTE PAR SAISON : on sème la graine qu'on a, si sa FENÊTRE est ouverte.
       // Hors fenêtre, la graine n'est PAS consommée — elle attend son heure, et c'est ce qui
       // rend la règle lisible sans être punitive. La serre affranchit de la fenêtre.
@@ -1419,6 +1434,8 @@ export function applyVillageAction(state: SimState, actorId: number, action: Vil
       if (s.ownerId !== actorId && getVillageOf(state, actorId)?.id !== s.villageId) return reject('pas votre village')
       const range = BALANCE.INTERACT_RANGE
       if (distSq(actor.x, actor.y, s.tx + 0.5, s.ty + 0.5) > range * range) return reject('trop loin')
+      // LE BÂTI VIT AU SOL (spec `etages.md` E-R5) : un bras ne le rejoint pas depuis un plateau.
+      if (!atteintLeSol(state.map, actor, s.tx, s.ty)) return reject('trop loin')
       if (!isCropMature(s, state.tick)) return reject('pas encore mûr')
       // Le TERROIR (meilleur palier) rend plus que la parcelle/serre.
       // S16 — chaque culture rend SON fruit, et **une graine de sa propre espèce** : la boucle
@@ -1488,6 +1505,8 @@ export function applyVillageAction(state: SimState, actorId: number, action: Vil
       if (!s || s.inventory === undefined) return reject('pas un conteneur')
       const range = BALANCE.INTERACT_RANGE
       if (distSq(actor.x, actor.y, s.tx + 0.5, s.ty + 0.5) > range * range) return reject('trop loin')
+      // LE BÂTI VIT AU SOL (spec `etages.md` E-R5) : un bras ne le rejoint pas depuis un plateau.
+      if (!atteintLeSol(state.map, actor, s.tx, s.ty)) return reject('trop loin')
       // Le dépôt est ouvert à tous (la boîte aux dons, spec alignement R11) ;
       // seul le RETRAIT exige l'accès.
       if (action.type === 'withdraw' && !hasAccess(state, actorId, s)) return reject('accès refusé')
@@ -1540,6 +1559,8 @@ export function applyVillageAction(state: SimState, actorId: number, action: Vil
       if (s.ownerId !== actorId) return reject('pas le propriétaire')
       const range = BALANCE.INTERACT_RANGE
       if (distSq(actor.x, actor.y, s.tx + 0.5, s.ty + 0.5) > range * range) return reject('trop loin')
+      // LE BÂTI VIT AU SOL (spec `etages.md` E-R5) : un bras ne le rejoint pas depuis un plateau.
+      if (!atteintLeSol(state.map, actor, s.tx, s.ty)) return reject('trop loin')
       if (s.access === action.access) return
       s.access = action.access
       // Changer une serrure est un fait de gouvernance (réputation, tribunal).

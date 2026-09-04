@@ -35,9 +35,18 @@ export function foundNpcVillage(
   // sols se posent en ignorant les nœuds (spec construction R23), et le plan SAUTE
   // les emplacements pris. Raser tout le disque de l'enceinte affamerait les tests
   // (et les villages) dont les buissons vivent à six tuiles du Feu.
+  //
+  // ET LE PAS DEVANT LE FEU ET LE GRENIER — leurs quatre voisins de côté. Un PNJ n'agit qu'à
+  // `INTERACT_RANGE − 0,2` = 1,3 tuile : la diagonale (1,41) ne suffit pas, il lui faut UN côté
+  // libre. Or l'anneau d'accueil n'en dégage aucun, et une forêt dense les prend tous les
+  // quatre — MESURÉ le 2026-09-03 (graine 2026, après les terrasses qui redistribuent le
+  // semis) : le grenier du Clan du Levant emmuré par des arbres, 3/3 PNJ « sans chemin », et
+  // chacun rejouait son A* jusqu'au bout (4 cibles × 4 096 nœuds) À CHAQUE TICK — 42 ms/tick
+  // pour 1,2 à nu, ×35. Huit tuiles de plus, toutes dans le campement.
   const reserved = [
     [tx, ty],
     [tx, ty - 2],
+    ...([[1, 0], [-1, 0], [0, 1], [0, -1]] as const).flatMap(([dx, dy]) => [[tx + dx, ty + dy], [tx + dx, ty - 2 + dy]]),
     ...RING_OFFSETS.slice(0, count + 2).map(([dx, dy]) => [tx + dx, ty + dy]),
     ...HUT_SPOTS.map((spot) => bedAnchor(tx, ty, spot)),
   ]

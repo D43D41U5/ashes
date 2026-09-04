@@ -7,9 +7,12 @@ import {
   ENCAISSE_MS,
   RECUL_MAX_PX,
   RECUL_MIN_PX,
+  FLASH_BLANC,
+  IMPACT_TINT,
   secousseDuCoup,
   SECOUSSE_PORTE_MAX,
   SECOUSSE_PORTE_MIN,
+  teinteImpact,
 } from './encaissement'
 
 /**
@@ -94,6 +97,42 @@ describe('secousseDuCoup — le cadre confirme sans disputer', () => {
       expect(s).toBeLessThan(0.006)
       expect(s).toBeGreaterThanOrEqual(precedent - 1e-12)
       precedent = s
+    }
+  })
+})
+
+/**
+ * CE QUI FERAIT ROUGIR ICI — et c'est la faute NATURELLE, celle qu'on écrit sans y penser :
+ * une teinte qui se retire vers le NOIR. En `MULTIPLY`, 0x000000 éteint le corps et
+ * 0xffffff est l'identité ; interpoler « vers zéro » comme on le fait pour une alpha
+ * plongerait le sprite dans le noir au moment précis où il devait redevenir lui-même.
+ * Le balayage l'attrape sur TOUT le domaine, pas aux deux bouts.
+ */
+describe('teinteImpact — la teinte se retire vers le blanc, jamais vers le noir', () => {
+  const canaux = (c: number): [number, number, number] => [(c >> 16) & 0xff, (c >> 8) & 0xff, c & 0xff]
+
+  it('les deux bouts sont exacts : plein = la teinte d’impact, rien = l’identité du mode', () => {
+    expect(teinteImpact(1)).toBe(IMPACT_TINT)
+    expect(teinteImpact(0)).toBe(FLASH_BLANC)
+    // Hors domaine, on plafonne — un `e.teinte` négatif ne doit pas fabriquer une couleur.
+    expect(teinteImpact(-3)).toBe(FLASH_BLANC)
+    expect(teinteImpact(9)).toBe(IMPACT_TINT)
+  })
+
+  it('chaque canal va de sa valeur pleine vers 255, sans jamais redescendre ni sortir de l’octet', () => {
+    const pleins = canaux(IMPACT_TINT)
+    const precedents: [number, number, number] = [-Infinity, -Infinity, -Infinity]
+    for (let part = 1; part >= 0; part -= 0.005) {
+      const c = canaux(teinteImpact(part))
+      for (let i = 0 as 0 | 1 | 2; i < 3; i++) {
+        expect(c[i]).toBeGreaterThanOrEqual(0)
+        expect(c[i]).toBeLessThanOrEqual(255)
+        // Le canal ne peut que MONTER vers 255 à mesure que la teinte se retire : un canal
+        // qui descend, c'est un corps qui s'assombrit en guérissant.
+        expect(c[i]).toBeGreaterThanOrEqual(precedents[i])
+        expect(c[i]).toBeGreaterThanOrEqual(pleins[i])
+        precedents[i] = c[i]
+      }
     }
   })
 })

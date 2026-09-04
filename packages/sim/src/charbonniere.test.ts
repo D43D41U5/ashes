@@ -56,9 +56,13 @@ describe('A30 — le semis ne tombe QUE sur l’ancienne forêt, et dans le cœu
     const attendues = new Set(futs.map((f) => f.ty * map.width + f.tx))
     for (const f of futs) expect(charbonniereIci(map, f.tx, f.ty, av, SEED), `${f.tx},${f.ty}`).toBe(true)
     // …et l'inverse, sur un échantillon large de la carte : rien d'autre n'en porte.
+    // ⚑ LE PAS PASSE DE 5 À 2 le 2026-08-30, et c'est la PRÉMISSE qu'il sauve, pas la règle : le
+    // pays endoréique a rebrassé la vieille forêt, les fûts sont moins nombreux et un tamis de 5
+    // n'en croisait plus AUCUN — la moitié « rien d'autre n'en porte » devenait vide de sens.
+    // Un tamis de 2 en croise (garde ci-dessous), et il balaie quatre fois plus de carte.
     let vues = 0
-    for (let ty = 0; ty < map.height; ty += 5) {
-      for (let tx = 0; tx < map.width; tx += 5) {
+    for (let ty = 0; ty < map.height; ty += 2) {
+      for (let tx = 0; tx < map.width; tx += 2) {
         const ici = charbonniereIci(map, tx, ty, av, SEED)
         if (ici) vues++
         expect(ici, `${tx},${ty}`).toBe(attendues.has(ty * map.width + tx))

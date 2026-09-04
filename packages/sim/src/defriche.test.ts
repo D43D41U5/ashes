@@ -292,8 +292,8 @@ describe('l’index des nœuds reste juste', () => {
     const arbre = sim.nodes[0]!
     const id = spawnEntity(sim, 0, 0)
     fonder(sim, FEU_X, FEU_Y)
-    expect(nodeAt(sim.nodes, arbre.tx, arbre.ty)).toBe(arbre)
+    expect(nodeAt(sim.map, sim.nodes, arbre.tx, arbre.ty)).toBe(arbre)
     vider(sim, id, arbre)
-    expect(nodeAt(sim.nodes, FEU_X + 4, FEU_Y)).toBe(arbre)
+    expect(nodeAt(sim.map, sim.nodes, FEU_X + 4, FEU_Y)).toBe(arbre)
   })
 })

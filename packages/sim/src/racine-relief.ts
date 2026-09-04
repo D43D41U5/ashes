@@ -222,7 +222,20 @@ export const CREUX = {
    *  C'est le « de manière équilibrée » : la couverture est garantie par la grille, et c'est le
    *  RELIEF qui choisit où dans la case — jamais un tirage. */
   CRETE_PAS: 36,
-  /** Épaisseur du chapeau sous le sommet, en unités d'altitude. Le miroir de `LAME`. */
+  /**
+   * Épaisseur du chapeau sous le sommet, en unités d'altitude. Le miroir de `LAME`.
+   *
+   * ⚠ **CE NOMBRE EST UN CHOIX DE RENDU EN ATTENTE, et il est chiffré** (2026-08-30). Le socle
+   * érodé (pays endoréique) taille des sommets plus étroits que les bosses molles du fbm : la
+   * MÊME épaisseur y coiffe deux fois moins de terrain — MESURÉ sur le monde joué, les conifères
+   * (`pine`+`larch`+`old_growth`) tombent de **2,1 % à 0,95 %** de la carte. À `0.1` ils
+   * reviennent à 1,9-2,2 %, la part d'avant le chantier. On GARDE 0,045 parce que c'est la carte
+   * qu'Alexis a validée sur planches rendues, et qu'on ne change pas un rendu approuvé par un
+   * effet de bord ; le rendre à sa part d'avant est une décision de DA à prendre à l'œil.
+   * *(Éprouvé et écarté comme correctif du tétras : à 0,1, l'oiseau reste absent d'une graine
+   * sur quatre — ce n'est pas la surface de bois qui manque, ce sont les coins de chasse au
+   * bois. Voir `envol.test.ts` R21.)*
+   */
   CHAPEAU: 0.045,
   /** Taille maximale d'un bosquet, en cellules de motif (× 64 tuiles). 20 → ~1 280 tuiles,
    *  36 de côté : un bois qu'on traverse en un écran, pas une seconde Sylve. */
@@ -250,6 +263,47 @@ export const CREUX = {
    *  neuves s'APPENDENT : les trois premières buttes gardent leurs sommets sur toute seed
    *  existante, et le charbon (le goulot) prend le meilleur des nouveaux rangs. */
   AFFL_IDENTITES: ['fer', 'fer', 'charbon', 'charbon', 'fer'] as const,
+
+  /**
+   * ═══ LES BUTTES NUES — celles qui ne promettent rien ═══
+   *
+   * *Décision d'Alexis, 2026-08-31 : « vas-y pour les buttes nues, on veut A26 à 90 % ».* Les
+   * cinq buttes à minerai ne suffisent pas à peupler le pays : une fois leur sommet mué en roche,
+   * la garde **A26** — *« depuis n'importe où, une paroi est à moins de quatre écrans »* — passait
+   * de 53,3 % à 67,1 % des tuiles seulement (MESURÉ, monde joué, graine 2026). Cinq buttes
+   * achètent quatorze points ; il en faut donc d'autres, et elles ne peuvent pas porter de
+   * minerai — sans quoi le monde réduit deviendrait une mine à ciel ouvert.
+   *
+   * Une butte nue est le MÊME objet, sans son registre : même élection au plus haut sommet libre,
+   * même croissance à la tuile, même chapeau de roche, même jupe de pierrier — mais elle n'entre
+   * pas dans `map.affleurements`, donc ni minerai, ni blocs, ni mouchetures de rouille côté
+   * client. C'est un accident de terrain, pas une promesse de gisement.
+   *
+   * ⚠ **ELLES S'APPENDENT, ET C'EST LA RÈGLE DE LA MAISON** : les buttes à minerai s'élisent
+   * d'abord, dans leur ordre, et gardent donc leurs sommets sur toute graine. Monter ce nombre ne
+   * déplace pas une mine.
+   *
+   * ⚠ **LEUR SEUL CRAN EST « TOUTE ROCHE »** : le fer veut du granite et la houille de l'argile,
+   * mais une butte qui ne donne rien n'a aucune raison de préférer une province. Elle prend le
+   * plus haut sommet qui reste, point.
+   */
+  AFFL_NUES: 60,
+
+  /**
+   * L'écartement des buttes NUES, en cellules de motif — plus serré que celui des mines.
+   *
+   * MESURÉ, et c'est ce qui a fait exister cette constante : à `AFFL_ECART` (30 cellules = 240
+   * tuiles), **A26 sature à 81 %** dès dix buttes nues — en ajouter douze, ou vingt-quatre, ne
+   * change plus rien : le pays est plein, l'élection ne trouve plus de sommet assez loin des
+   * précédents. Le plafond n'est pas un compte, c'est une GÉOMÉTRIE : à l'écartement `e`, le
+   * point le plus mal loti d'un maillage est à `e/√2` d'une butte ; pour tenir quatre écrans
+   * (142 tuiles) il faut donc `e ≤ 200` tuiles, soit 25 cellules.
+   *
+   * On ne touche PAS à `AFFL_ECART` : deux mines qui se touchent, c'est une décision de jeu
+   * (*« deux affleurements de la même ressource ne se touchent pas »*). Les buttes nues, elles,
+   * ne promettent rien — elles peuvent se serrer.
+   */
+  AFFL_ECART_NUES: 15,
   /** Épaisseur du chapeau sous le sommet. Plus mince que `CHAPEAU` : la roche ne perce qu'au
    *  ras de l'os, une rocaille n'est pas une colline entière. */
   AFFL_CHAPEAU: 0.03,
@@ -266,6 +320,67 @@ export const CREUX = {
    * de toute la crête. C'est le rôle que tenait `AFFL_MAX_CELLULES`.
    */
   AFFL_TUILES: 320,
+
+  /**
+   * ═══ LE SOMMET EST DE LA ROCHE : la butte redevient une MESA ═══
+   *
+   * *Décision d'Alexis, 2026-08-31 : « vas-y pour les buttes ».* Elles existaient déjà — cinq
+   * affleurements semés dans le monde joué, le plus proche à **74 tuiles du spawn (2,1 écrans)**
+   * — mais **entièrement MARCHABLES** : MESURÉ, 0 tuile bloquante sur les 442 à 936 de leur boîte.
+   * C'était de la géologie posée à plat, pas du relief. Rien à voir de loin, rien à contourner,
+   * rien à longer.
+   *
+   * Les `AFFL_SOMMET_TUILES` premières tuiles de la croissance — donc les plus HAUTES, et connexes
+   * par construction (la croissance part du sommet) — deviennent de la roche infranchissable. Le
+   * reste garde son pierrier : la butte a un chapeau et une jupe, exactement la silhouette d'une
+   * mesa, et c'est la jupe qui porte le minerai (les nœuds se posent sur du marchable).
+   *
+   * 96 sur 320, soit un chapeau d'une dizaine de tuiles de côté : assez large pour que son bord
+   * sud porte une paroi (il faut trois rangées de roche, `RELIEF.PAROI_RANGEES` + 1), assez petit
+   * pour qu'on en fasse le tour sans s'ennuyer. ⚠ Une butte est CONVEXE : elle ne coupe rien, à la
+   * différence d'une terrasse dont la ligne de niveau se referme (MESURÉ : murer les paliers du
+   * monde joué laisse 70 poches et une composante principale à 27 %).
+   */
+  AFFL_SOMMET_TUILES: 96,
+  /**
+   * LA LARGEUR DE LA RAMPE d'une mesa, en tuiles (spec `etages.md` §9) — le seul réglage des
+   * étages qui se calibre EN REGARDANT UNE CARTE, donc il vit ici et non dans `balance.ts`.
+   *
+   * ⚠ **3 ET NON 1, ET C'EST MESURÉ.** À une tuile, le semis des nœuds — qui tourne APRÈS le
+   * worldgen et ne sait donc rien des rampes — posait un rocher ou un arbre SUR la porte :
+   * **0 / 1 / 3 / 1** rampes murées sur les graines 2026 / 7 / 4242 / 99, et un nœud bloquant
+   * scelle un passage d'une tuile pour un corps de 0,75. E-R9 (« tout étage est atteignable »)
+   * tombait alors en silence, sur une mesa sur cinquante. Élargir coûte zéro tuile repeinte et
+   * zéro tirage ; retirer des tuiles au semis aurait décalé le flux RNG.
+   *
+   * Impair : la rampe est centrée sur la tuile élue (la plus au sud, puis la plus à l'ouest).
+   */
+  RAMPE_LARGEUR: 3,
+
+  /**
+   * ═══ LA CAVE — ce qu'une mesa cache sous son chapeau (spec `etages.md`, la branche B1) ═══
+   *
+   * *« On est dehors, une gueule s'ouvre dans la paroi »* — c'est la phrase de §10, et elle
+   * décrivait déjà l'objet. La cave se creuse donc DANS CE QU'ON A : une butte a un chapeau de
+   * roche, une paroi tournée au sud, et une jupe où l'on marche. On lui ajoute une **gueule** dans
+   * cette paroi et une salle à l'étage **−1** sous son chapeau. Aucune géométrie neuve, aucun lieu
+   * posé ailleurs : la mesa cesse d'avoir une seule réponse (*on la monte*) pour en avoir deux
+   * (*on la monte, ou on y entre*).
+   *
+   * ⚠ **AUCUN TIRAGE** (E-R15) : le choix des buttes creusées et la forme de la salle sortent
+   * d'un hash POSITIONNEL salé (`'CAVE'`), jamais du PRNG de la partie — un décompte d'entités
+   * qui change décale le flux et casse des tests sans rapport, c'est le piège documenté du dépôt.
+   */
+  /** Une butte sur quatre est creuse. Assez pour qu'on en rencontre, assez peu pour qu'en
+   *  trouver une compte — sur les ~50 mesas du monde joué, une douzaine de caves. */
+  CAVE_PART: 0.25,
+  /**
+   * La salle, en tuiles. ⚠ **ELLE DOIT DÉPASSER `TEMPERATURE.CIEL_PENETRATION` DANS TOUTES LES
+   * DIRECTIONS**, sinon le jour la traverse de part en part et la loi d'obscurité (E-R13) n'a
+   * rien à mordre : une cave qu'on éclaire depuis le seuil n'est pas une cave, c'est un porche.
+   * 40 sur les 96 tuiles d'un chapeau : une salle qu'on explore, pas un couloir.
+   */
+  CAVE_TUILES: 40,
   /** L'amplitude du grain de contour, en unités d'altitude — ce qui DENTELLE la ligne de niveau.
    *  Calibrée en mesurant la dentelle EN TUILES (le grain d'`altLarge` n'est pas celui de la
    *  marge du lapiaz : la même amplitude n'y donne pas la même ondulation). */
@@ -283,10 +398,27 @@ export const CREUX = {
    * la ligne de niveau garde le dernier mot sur la forme locale — ce qui est haut et proche est
    * pris avant ce qui est haut et loin.
    */
-  AFFL_COMPACITE: 0.02,
+  AFFL_COMPACITE: 0.05,
   /** Écart minimal entre deux buttes, en cellules de motif. 30 → 240 tuiles : deux affleurements
    *  dans le même écran seraient un seul gisement qui ment. */
   AFFL_ECART: 30,
+  /**
+   * Combien de sommets on essaie avant de se contenter du meilleur (2026-08-30). Un sommet cerné
+   * par l'eau ne peut pas faire pousser son chapeau : la croissance s'arrête faute de frontière
+   * et la butte sort en confetti (MESURÉ : 92 tuiles sur 320, graine 2026, et pas une pierre de
+   * taille dedans). On ré-élit, en brûlant le bassin essayé — la TAILLE d'une butte ne cède pas,
+   * au même titre que le COMPTE (l'ordre des crans de `poserLesAffleurements`).
+   */
+  AFFL_ESSAIS: 8,
+  /**
+   * Le remplissage minimal de sa boîte englobante qu'on exige d'une butte pour l'accepter
+   * (2026-08-30). Même cause que `AFFL_ESSAIS`, autre symptôme : contre une rive, la croissance
+   * CONTOURNE l'eau — la butte fait bien ses 320 tuiles, mais en croissant, et sa boîte tombe à
+   * **17-20 % de remplissage** (MESURÉ, graines 2026 et 42). Monter `AFFL_COMPACITE` ne l'a pas
+   * corrigé (0,02 → 0,08 : la médiane monte de 44 à 52 %, les deux buttes cernées restent à 17 %) :
+   * ce n'est pas un défaut de poids, c'est un mauvais ENDROIT. On ré-élit, comme pour la taille.
+   */
+  AFFL_REMPLISSAGE: 0.28,
 } as const
 
 /**

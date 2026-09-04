@@ -37,6 +37,7 @@
  * (double génération, zones comprises) l'exige.
  */
 import { TERRAIN_FLOWER_MEADOW, TERRAIN_FOREST, TERRAIN_MARSH, TERRAIN_OLD_GROWTH, TERRAIN_REED_MARSH, TERRAIN_SHALLOW_WATER, TERRAIN_WET_MEADOW } from './balance'
+import { isWater } from './map'
 import { composantesDeMasque, eroderMasque } from './profondeur'
 import type { GrapheZones } from './zonegraph'
 
@@ -47,6 +48,10 @@ export const SET_PIECES = {
    *  budget : compacte, organique, exacte (MESURÉ : les ensembles de niveau d'un massif
    *  réel se fragmentent en lobes — un seuil global rendait 448 tuiles sur la seed 2026). */
   COURONNE_BOIS: 1920,
+  /** Le rayon (Chebyshev) où l'on cherche la forêt de part et d'autre d'une tuile d'eau, pour
+   *  décider si elle sert de PONT à la couronne du Bois Noir. 2 → une eau de cinq tuiles au
+   *  plus est enjambée ; au-delà (la rivière), l'eau coupe le massif, et c'est voulu. */
+  PONT_RAYON: 2,
   /** Budget de la couronne de la Combe, sur le masque du PAYS HUMIDE (marais ∪ roselière ∪
    *  prairie humide — MESURÉ : le plus grand marais nu fait 11 à 83 tuiles de cœur, le seul
    *  « marais-endroit » était le tampon ; les grandes auréoles humides des lacs, elles,
@@ -118,6 +123,7 @@ function couronner(
   height: number,
   budget: number,
   profMin: number,
+  adoptable?: Uint8Array,
 ): Couronne | null {
   const prof = eroderMasque(masque, width, height, SET_PIECES.CAP_EROSION)
   const comp = composantesDeMasque(masque, width, height)
@@ -155,7 +161,10 @@ function couronner(
     if (d < 1) break // le massif est épuisé avant le budget
     const i = godets[d]![curseurs[d]!]!
     curseurs[d]! += 1
-    tuiles.push(i)
+    // TRAVERSÉE SANS ADOPTION : une tuile du masque qui n'est pas `adoptable` sert de PONT — la
+    // couronne passe par-dessus sans la prendre, ni au budget ni à la bbox. C'est ce qui permet
+    // à un ruisseau de traverser le Bois Noir sans le couper en deux (2026-08-30).
+    if (!adoptable || adoptable[i] === 1) tuiles.push(i)
     const x = i % width
     const y = (i - x) / width
     for (let dy = -1; dy <= 1; dy++) {
@@ -182,6 +191,9 @@ export function placerLesSetPieces(
   g: GrapheZones,
   width: number,
   height: number,
+  /** L'épaisseur que la falaise prendra vers le sud (`RELIEF.PAROI_RANGEES`) — passée plutôt
+   *  qu'importée : `zonegen` nous appelle déjà, et un import en retour ferait un cycle. */
+  margeDuMur: number,
 ): SetPiece[] {
   const racineId = g.racine
   const r = g.zones[racineId]!.rect
@@ -200,10 +212,77 @@ export function placerLesSetPieces(
     return m
   }
 
-  // ── LE BOIS NOIR : la couronne du plus grand massif de forêt devient futaie ancienne ──
+  /**
+   * ═══ LA COURONNE NE S'ÉLIT PAS SUR CE QUE LE MUR VA PRENDRE ═══
+   *
+   * *Décision d'Alexis, 2026-08-31 : « élire la couronne après le murage ».* Le Bois Noir est un
+   * LIEU budgété — `COURONNE_BOIS` tuiles, exactement (garde A25). Depuis que la falaise
+   * s'épaissit à trois tuiles (`epaissirLesFalaises`), le mur en mangeait **45** au bord de la
+   * Racine : 1 875 au lieu de 1 920, sur la graine 2026.
+   *
+   * ⚠ **ON N'A PAS DÉPLACÉ LA PASSE, ET IL FAUT LE DIRE.** Élire vraiment *après* le murage
+   * voudrait dire déplacer `placerLesSetPieces` derrière la passe 3 — or les sentes (passe 1.7)
+   * la consomment pour contourner les set-pieces, et les clairières (1.62) pour ne pas trouer la
+   * futaie. On obtient la MÊME garantie en amont, et sans rien réordonner : la couronne s'élit
+   * sur les tuiles qui **survivront** au mur, c'est-à-dire hors de la bande où il tombera.
+   *
+   * La bande se lit sur le GRAPHE, pas sur le terrain : le mur suit une arête entre deux zones,
+   * puis descend de `RELIEF.PAROI_RANGEES` rangées vers le sud. Une tuile est donc menacée si une
+   * tuile d'une autre zone se trouve à une case autour d'elle, ou jusqu'à deux rangées AU NORD.
+   * C'est un sur-ensemble du mur réel — on préfère un bois qui recule d'une tuile à un budget qui
+   * ment.
+   *
+   * Dans le monde JOUÉ (une seule zone), aucune tuile n'est menacée : ce chemin n'y change rien,
+   * pas même le flux du PRNG.
+   */
+  const menaceParLeMur = (x: number, y: number): boolean => {
+    const z = zone[y * width + x]!
+    for (let dy = -margeDuMur; dy <= 1; dy++) {
+      const ny = y + dy
+      if (ny < 0 || ny >= height) continue
+      for (let dx = -1; dx <= 1; dx++) {
+        const nx = x + dx
+        if (nx < 0 || nx >= width) continue
+        if (zone[ny * width + nx] !== z) return true
+      }
+    }
+    return false
+  }
+
+  // ══ LE BOIS NOIR : la couronne du plus grand massif de forêt devient futaie ancienne ══
+  //
+  // ⚠ UN RUISSEAU NE COUPE PAS UN BOIS (2026-08-30). Depuis que la Racine a son drainage
+  // (`zonegen-rus.ts`), des filets d'eau traversent les massifs — et le masque de forêt, lui,
+  // s'y coupait en morceaux : la couronne devait SERPENTER pour dépenser son budget. MESURÉ sur
+  // les trois graines de garde : le taux de remplissage de sa bbox tombait de 0,344 à 0,156
+  // (seed 2026 : bbox 57×98 → 113×109). Une futaie qu'on voit de loin ne serpente pas.
+  //
+  // L'eau ÉTROITE entre donc dans le masque comme PONT (traversée, jamais adoptée : elle reste
+  // de l'eau, elle ne coûte pas un tuile de budget). « Étroite » se lit sur place : deux tuiles
+  // de forêt à `PONT_RAYON` — un ru de trois à cinq tuiles passe, la rivière (sept à onze) non,
+  // et c'est juste : un fleuve, lui, coupe vraiment un bois.
+  const forets = masqueDe((t, x, y) => t === TERRAIN_FOREST && !menaceParLeMur(x, y))
+  const avecPonts = new Uint8Array(forets)
+  {
+    const R = SET_PIECES.PONT_RAYON
+    for (let y = R; y < height - R; y++) {
+      for (let x = R; x < width - R; x++) {
+        const i = y * width + x
+        if (forets[i] === 1 || zone[i] !== racineId) continue
+        if (!isWater(terrain[i]!)) continue
+        let voisins = 0
+        for (let dy = -R; dy <= R && voisins < 2; dy++) {
+          for (let dx = -R; dx <= R; dx++) {
+            if (forets[(y + dy) * width + x + dx] === 1) { voisins += 1; break }
+          }
+        }
+        if (voisins >= 2) avecPonts[i] = 1
+      }
+    }
+  }
   const bois = couronner(
-    masqueDe((t) => t === TERRAIN_FOREST),
-    width, height, SET_PIECES.COURONNE_BOIS, 2,
+    avecPonts,
+    width, height, SET_PIECES.COURONNE_BOIS, 2, forets,
   )
   if (bois) {
     for (const i of bois.tuiles) terrain[i] = TERRAIN_OLD_GROWTH

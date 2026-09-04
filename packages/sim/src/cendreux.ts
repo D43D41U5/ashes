@@ -4,6 +4,7 @@
 import { BALANCE, CENDREUSE, CENDREUX, COMBAT, MONSTER_DEFS, MORTS, NIGHT_HUNT, SLOTS } from './balance'
 import { startAttack } from './combat'
 import { distSq } from './geometry'
+import { poserLEtageDuCorps } from './etages'
 import { emitEvent } from './events'
 import { fireActive, fireState } from './fire'
 import { baselineTemperature, eveilPourTemperature } from './temperature'
@@ -85,6 +86,19 @@ export function willRiseAsCendreux(state: SimState, entity: Entity): boolean {
 }
 
 /** Réveil : les cadavres marqués se lèvent en Cendreux (ou sont annulés par un feu). */
+/**
+ * LE PLANCHER SE TRANSMET DU MORT À CE QU'IL DEVIENT (spec `etages.md`).
+ *
+ * Un cadavre porte son `etage` depuis qu'un corps peut tomber sur un plateau ; ce qui se lève
+ * de lui doit le porter aussi. Absent ou 0 : on ne touche à rien — le champ reste absent, une
+ * sauvegarde d'avant ne gagne pas un octet, et le monde sans mesa est inchangé au bit près.
+ */
+function leverAuMemePlancher(state: SimState, entityId: number, etage: number | undefined): void {
+  if (etage === undefined) return
+  const ne = state.entities.find((e) => e.id === entityId)
+  if (ne !== undefined) poserLEtageDuCorps(state.map, ne, etage)
+}
+
 export function advanceCendreux(state: SimState): void {
   const ward = CENDREUX.HEARTH_WARD_RADIUS
   for (const corpse of [...state.corpses]) {
@@ -113,6 +127,11 @@ export function advanceCendreux(state: SimState): void {
         continue
       }
       const id = spawnMonster(state, corpse.bete, corpse.x, corpse.y)
+      // ⚠ **ON SE RELÈVE SUR SON PLANCHER** (spec `etages.md`). Sans cette ligne, une bête morte
+      // sur un plateau renaissait à l'étage 0 — c'est-à-dire DANS la roche du chapeau : toutes
+      // ses tuiles bloquées, figée sur place et invisible à la règle d'étage. C'est mot pour mot
+      // le défaut que le repli d'`etageApresLePas` a été écrit pour empêcher, un cran plus loin.
+      leverAuMemePlancher(state, id, corpse.etage)
       state.monsters.find((m) => m.entityId === id)!.cendreuse = true
       emitEvent(state, { type: 'bete_cendreuse_levee', tick: state.tick, entityId: id, espece: corpse.bete, x: corpse.x, y: corpse.y })
       state.corpses = state.corpses.filter((c) => c.id !== corpse.id)
@@ -147,6 +166,7 @@ export function advanceCendreux(state: SimState): void {
     // hérite d'un cadavre entier ; ceux des hordes et des convois naissent les mains vides
     // (sac d'espèce à 0) et n'ont pas à traîner un inventaire vide dans chaque snapshot.
     const id = spawnMonster(state, 'cendreux', corpse.x, corpse.y, SLOTS.NPC)
+    leverAuMemePlancher(state, id, corpse.etage) // on se relève là où l'on est tombé
     const ent = state.entities.find((e) => e.id === id)!
     state.monsters.find((m) => m.entityId === id)!.risen = true // il compte dans le plafond (R8)
     // Les CASES passent au Cendreux (spec inventaire R6) : la levée n'est pas un
@@ -438,6 +458,11 @@ export function cendreuxStep(state: SimState, monster: Monster, entity: Entity, 
       startAttack(state, entity, target.x - entity.x, target.y - entity.y, {
         windupTicks: def.windupTicks,
         damage: def.damage,
+        // LE CENDREUX FRAPPE JAUNE — son coup SE BRISE (décision d'Alexis, 2026-08-31 ;
+        // il avait été posé rouge, et c'est ce retour arrière qui est la règle). Il est
+        // lent et c'est l'école de guerre du jeu (`combat.md` R11) : c'est très exactement
+        // sur lui qu'on doit pouvoir apprendre à couper un geste. Le rouge reste à l'ALPHA,
+        // qui est l'exception, pas la norme.
       })
     ) {
       entity.cooldownUntil = state.tick + def.attackCooldownTicks

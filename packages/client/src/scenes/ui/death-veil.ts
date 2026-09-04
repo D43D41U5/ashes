@@ -25,7 +25,7 @@
 import { ensureGameFont, GAME_FONT } from './game-font'
 
 /** La cause de la chute, telle que la porte l'événement `entity_died` de la sim. */
-export type DeathCause = 'cold' | 'hunger' | 'lightning' | 'cendre' | null
+export type DeathCause = 'cold' | 'hunger' | 'lightning' | 'cendre' | 'inconnue' | null
 
 /**
  * LA LIGNE DE CAUSE (pure, testée) — résolue du vrai flux d'événements. `killerType`
@@ -33,6 +33,12 @@ export type DeathCause = 'cold' | 'hunger' | 'lightning' | 'cendre' | null
  * connu. Toujours au passé, factuel, sans point d'exclamation.
  */
 export function deathLine(cause: DeathCause, byEntityId: number, killerType: string | null): string {
+  // LA CAUSE PERDUE (2026-08-31). Depuis que le corps reste à terre, on peut RECHARGER une
+  // partie en gisant : le voile se lève alors sur l'ÉTAT, et l'événement `entity_died` — le
+  // seul à porter la cause — est passé depuis longtemps. Sans cette branche, le repli
+  // `byEntityId === 0` aurait affirmé un saignement à qui était mort de froid. On ne sait
+  // pas : on le dit, avec la ligne qui existe déjà pour l'ignorance.
+  if (cause === 'inconnue') return 'Vous êtes tombé, sans témoin.'
   if (cause === 'cold') return 'Le froid vous a pris.'
   if (cause === 'hunger') return 'La faim vous a emporté.'
   if (cause === 'lightning') return 'La foudre vous a frappé.'
@@ -77,9 +83,10 @@ export interface DeathVeil {
  * qu'on ne reste pas coincé.
  */
 export const DEATH_VEIL_FILET_MS = 30000
-/** Durée du fondu CSS (entrée ET sortie de l'opacité/translation). Exporté : WorldScene
- *  s'en sert pour SNAPPER la caméra au respawn pile quand le voile est OPAQUE (le saut
- *  reste caché), pas avant (on verrait le monde traverser). */
+/** Durée du fondu CSS (entrée ET sortie de l'opacité/translation). Le saut de caméra au Feu
+ *  ne s'y accroche PLUS : ce voile n'est pas opaque (86 %, le monde y transparaît à dessein),
+ *  donc un saut fait pendant qu'il tient se VOIT. Il appartient au geste « SE RELEVER », dans
+ *  la frame où le fondu de sortie commence — voir `tickDying` (WorldScene). */
 export const DEATH_FADE_MS = 550
 const FADE_MS = DEATH_FADE_MS
 

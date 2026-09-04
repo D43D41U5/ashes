@@ -15,6 +15,7 @@ import type { ResourceNode } from './economy'
 import { startAttack } from './combat'
 import { moveAvatar } from './collision'
 import { separationPush } from './ecart'
+import { atteignableEntreEtages, etageApresLePas, etagesDuPas, niveauDuCorps, poserLEtageDuCorps } from './etages'
 import { distSq } from './geometry'
 import { spawnEntity, type Entity, type SimState } from './sim'
 import { computeFlowField, computeFlowFieldMulti, solidesEternels } from './pathfinding'
@@ -39,7 +40,9 @@ export interface Monster {
   wanderDy: -1 | 0 | 1
   fleeing: boolean
   lastAttackerId: number | null
-  path?: { tx: number; ty: number }[]
+  /** Les jalons du chemin. `etage` absent ≡ 0 — un chemin de plain-pied est celui d'avant, et
+   *  un jalon qui en porte un est le pas de rampe (spec `etages.md`). */
+  path?: { tx: number; ty: number; etage?: number }[]
   /**
    * Bête du peuplement ambiant (spec faune R1) : elle se dissipe quand plus
    * personne n'est là pour la voir. Les bêtes de lieu (tanière) ne le sont pas —
@@ -566,6 +569,12 @@ export function nearestPrey(
     if (opts?.plancher !== undefined && reach < opts.plancher) reach = opts.plancher
     const d = distSq(entity.x, entity.y, e.x, e.y)
     if (d >= reach * reach) continue
+    // ═══ UN PLANCHER NE SE VOIT PAS À TRAVERS (spec `etages.md` E-R5) ═══
+    // La règle ne se recopie pas : elle vit dans `atteignableEntreEtages`, et ce site l'appelle.
+    // Sans elle, la bête d'en bas ÉLIT une proie posée douze mètres au-dessus d'elle, puis passe
+    // le reste de sa vie à pousser contre la roche. Sortie sur un `===` quand les deux sont au
+    // même étage — c'est-à-dire dans la totalité du jeu d'aujourd'hui.
+    if (!atteignableEntreEtages(state.map, entity.x, entity.y, niveauDuCorps(state.map, entity), e.x, e.y, niveauDuCorps(state.map, e))) continue
     if (d < bestD || (d === bestD && best && e.id < best.id)) {
       best = e
       bestD = d
@@ -670,8 +679,20 @@ export function moveToward(
     const len = Math.sqrt(sx * sx + sy * sy)
     entity.facing = { x: sx / len, y: sy / len }
   }
+  // ═══ LA BÊTE MONTE (spec `etages.md` — décision d'Alexis, 2026-09-01) ═══
+  //
+  // Le même geste que l'avatar (`sim.ts`), au même endroit du pas : une bête sur une rampe a le
+  // droit d'atterrir des deux côtés, et elle adopte l'étage de la tuile où elle pose la patte.
+  // Sans ça, un plateau était un REFUGE PARFAIT — on y montait, rien ne suivait, et la récompense
+  // d'en haut ne se payait d'aucun risque.
+  const etageAvant = niveauDuCorps(state.map, entity)
+  const etages = etagesDuPas(state.map, etageAvant, Math.floor(entity.x), Math.floor(entity.y))
   const moved = moveAvatar(
-    { map: state.map, structures: state.structures, nodes: state.nodes, moverVillageId: null, etat: state },
+    {
+      map: state.map, structures: state.structures, nodes: state.nodes, moverVillageId: null,
+      ...(etages !== undefined ? { etages } : {}),
+      etat: state,
+    },
     entity.x,
     entity.y,
     sx,
@@ -682,6 +703,8 @@ export function moveToward(
   entity.moved = moved.x !== entity.x || moved.y !== entity.y
   entity.x = moved.x
   entity.y = moved.y
+  const etageApres = etageApresLePas(state.map, etages, etageAvant, Math.floor(moved.x), Math.floor(moved.y))
+  poserLEtageDuCorps(state.map, entity, etageApres)
 }
 
 /**

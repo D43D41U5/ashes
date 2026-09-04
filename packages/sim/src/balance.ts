@@ -352,6 +352,24 @@ export const TEMPERATURE = {
    * dérive du corps (~4 min) : la pente est assez longue pour que le corps la suive.
    */
   NIGHT_RAMP_HOURS: 1.5,
+
+  /**
+   * ═══ JUSQU'OÙ LE JOUR ENTRE SOUS UN TOIT — la profondeur de pénétration, en tuiles ═══
+   *
+   * *Décision d'Alexis du 2026-09-02 (`etages.md` §10, branche **B1**) : « ce qu'on voit d'un
+   * étage voisin, c'est ce que la LUMIÈRE atteint ».* La conséquence annoncée du choix, c'est
+   * E-R13 : **« il fait noir dedans à midi » n'existait pas** — l'obscurité du jeu était globale
+   * et horaire (une rampe sur l'heure, la même pour toute la carte). B1 en fait une grandeur
+   * LOCALE : le jour perce de quelques tuiles par une ouverture, une torche va plus loin, et la
+   * nuit la gueule est noire. **La profondeur se gagne.**
+   *
+   * ⚠ **QUATRE, ET C'EST UNE GRANDEUR DE JEU, PAS DE PHYSIQUE.** Le nombre doit être plus grand
+   * que ce qu'on traverse par accident (une maison de 3 tuiles reste habitable de jour, sinon
+   * bâtir un toit revient à se punir) et plus petit que ce qu'on explore (une galerie de dix
+   * tuiles doit exiger une flamme, sinon la torche est un décor). Il se calibre en JOUANT — il
+   * vit donc ici, et pas à côté d'un générateur.
+   */
+  CIEL_PENETRATION: 4,
   /**
    * LE SOCLE DE L'ANNÉE — la température de jour, en plaine à découvert, par jour de
    * l'année (spec `saisons.md` S4). **Remplace `ACT_COLD`**, qui était une marche par acte :
@@ -698,13 +716,16 @@ export const BALANCE = {
    * donc l'exactitude au bit près face à l'ancienne collision en tuiles pleines
    * (invariant 2).
    *
-   * CE QUE 8 ACHÈTE, AU 2026-07-28 : un tronc de 3 sous-tuiles (0,375 tuile, 6 px) ne laisse
-   * que 0,625 tuile entre deux troncs voisins NON décalés — moins que l'avatar (0,75). C'est
-   * le DÉCALAGE D'ORIGINE qui ouvre les couloirs, et il ne les ouvre pas tous : MESURÉ sur
-   * 360 000 tuiles, l'avatar se faufile entre **31,3 %** des paires d'arbres voisines d'est en
-   * ouest et **83,1 %** du nord au sud (il n'est profond que de 0,375). Avant l'épaississement
-   * du tronc : 50,1 % et 93,0 %. La forêt est un couvert qui accroche — et ces deux nombres
-   * sont ceux qu'on relit le jour où l'on trouvera qu'elle accroche trop. */
+   * CE QUE 8 ACHÈTE, AU 2026-08-31 : le carré bloquant d'un arbre fait 6 sous-tuiles sur 8
+   * (0,75 tuile, 12 px) et laisse {0} et {7} libres de chaque côté — c'est cette granularité-là
+   * qui permet d'énoncer « deux arbres voisins, jamais » (écart 0,25) SANS murer la tuile
+   * entière, donc en ne bloquant que 12,4 % de la surface du bois au lieu de 22 %.
+   *
+   * CE QUE 8 A COÛTÉ, ET QU'ON A FERMÉ : à 3 sous-tuiles (le réglage du 2026-07-28), l'écart
+   * entre deux arbres valait 0,625 quand l'avatar en fait 0,75 — le passage était nominalement
+   * trop étroit et n'était ouvert que par le décalage d'origine, invisible. MESURÉ alors :
+   * 31,5 % des paires franchissables d'est en ouest, 82,7 % du nord au sud. Une forêt qu'on
+   * traverse à pile ou face. Voir `NODE_DEFS.tree`. */
   SUBTILES_PER_TILE: 8,
 
   /**
@@ -726,18 +747,65 @@ export const BALANCE = {
    */
   WALL_EDGE_SUB: 2,
 
-  /** Amplitude du décalage pseudo-aléatoire de l'origine d'un arbre, en tuiles
-   * (spec décalage d'origine). Chaque arbre est décalé de ±cette valeur en X et
-   * en Y pour casser l'alignement des troncs en grille. BORNE DURE :
-   * `TREE_JITTER_TILES + blockHalfSub(tree)/SUBTILES_PER_TILE ≤ 0.5`, sinon le
-   * carré bloquant d'un arbre décalé déborde dans la tuile voisine et échappe à
-   * la collision (testé). Avec blockHalfSub **1,5** et SUB 8 : plafond **0,3125**.
-   * Calibré en jeu (départ 0,22 ; 0,3 depuis).
+  /**
+   * LA PORTÉE D'UN CONNECTEUR, en tuiles (spec `etages.md` E-R5) — le `N` de la règle
+   * d'atteignabilité : *deux points à des étages différents s'atteignent si l'UN des deux est à
+   * moins de `N` tuiles d'un connecteur qui les relie.*
    *
-   * LA MARGE EST DEVENUE MINCE — 0,3 sous un plafond de 0,3125 : le tronc épais du 2026-07-28
-   * a mangé le reste. Épaissir encore (blockHalfSub 1,75) EXIGERAIT de baisser ce décalage,
-   * donc de réaligner les troncs sur la grille — ce que ce nombre existe précisément pour
-   * empêcher. Les deux ne peuvent plus monter ensemble. */
+   * ⚠ **VALEUR PROVISOIRE, NON CALIBRÉE.** La spec dit « à calibrer en jouant, pas à poser », et
+   * elle a raison : ce nombre décide de la largeur du seuil — trop petit, le loup vous lâche au
+   * pied de la rampe qu'il est en train de monter ; trop grand, il mord à travers la roche parce
+   * qu'une rampe est dans le quartier. 3 tuiles est un ordre de grandeur (la rampe, plus le pas
+   * qui la précède et celui qui la suit), pas un réglage : il attend un playtest.
+   *
+   * Il vit ICI et non dans le worldgen parce qu'il se règle en JOUANT, pas en regardant une
+   * carte — c'est très exactement la ligne de partage de l'en-tête de ce fichier.
+   */
+  ETAGE_PORTEE_CONNECTEUR: 3,
+
+  /**
+   * ═══ ON GRAVIT UNE RAMPE, ON N'Y COURT PAS — le facteur de vitesse du pas (Alexis, 2026-09-01 :
+   * *« le personnage va trop vite en montant ou en descendant »*) ═══
+   *
+   * ⚠ **CE NOMBRE N'EST PAS UN GOÛT, IL EST DÉRIVÉ — et voici de quoi.** À l'écran, une tuile de
+   * rampe fait `1 + LIFT_TUILES` RANGÉES : une de monde (on avance vers le nord) plus les deux du
+   * lift (on monte d'un plancher). Le dessin le dit déjà, `RAMPE_RANGEES = LIFT_TUILES + 1` = 3
+   * rangées d'entaille. Un corps qui la traversait à l'allure de la plaine parcourait donc **trois
+   * fois plus d'écran par seconde** que partout ailleurs : la marche était juste, c'est l'œil qui
+   * avait raison. `1 / (1 + LIFT_TUILES)` = ⅓ rend à la montée la vitesse APPARENTE du plat.
+   *
+   * ⚠ Il vaut donc pour la DESCENTE aussi, et c'est délibéré : la dévalée couvre le même écran.
+   * (Une descente plus rapide que la montée serait un second réglage, à demander.)
+   *
+   * ⚠ **LES DEUX ÉCRITURES SONT ATTACHÉES** : `LIFT_TUILES` vit dans le rendu (`render/framing.ts`
+   * — c'est une hauteur de PIXELS, `/sim` n'en connaît pas), ce facteur vit ici (il se règle en
+   * JOUANT). Une garde du client affirme leur accord (`rampe-pente.test.ts`) : les laisser dériver,
+   * c'est retrouver le « trop vite » sans savoir d'où il revient.
+   *
+   * CONSÉQUENCE DE JEU, dite pour qu'elle soit arbitrable : la traversée d'une rampe passe
+   * d'environ 0,3 s à 0,9 s. Elle vaut pour TOUT LE MONDE — avatar, PNJ, bêtes passent tous par
+   * `moveAvatar` — donc la rampe n'est ni un piège ni une échappatoire : on y est simplement
+   * exposé trois fois plus longtemps.
+   */
+  RAMPE_VITESSE: 1 / 3,
+
+  /**
+   * Amplitude du décalage pseudo-aléatoire d'un arbre, en tuiles — **le HOUPPIER seul depuis le
+   * 2026-08-31**. Chaque arbre décale sa cime de ±cette valeur en X et en Y pour casser
+   * l'alignement de la canopée en grille. Calibré en jeu (départ 0,22 ; 0,3 depuis).
+   *
+   * IL A CHANGÉ D'OBJET, ET C'EST LE CŒUR DU CHANGEMENT. Il déplaçait le sprite ET la collision
+   * du même flottant (2026-07-10) — c'est ce qui rendait l'obstacle IMPRÉVISIBLE : le tronc était
+   * quelque part dans une fenêtre de ±0,3 tuile qu'aucun repère ne montrait, et l'on passait
+   * entre deux arbres 31,5 % du temps sans pouvoir le prévoir. Le fût et sa bande bloquante sont
+   * donc rendus au CENTRE de leur tuile, et le décalage remonte sur la cime : elle porte tout
+   * l'organique (42 px, elle déborde largement sur ses voisines) et n'a AUCUNE conséquence de
+   * collision. La grille qu'il combattait est précisément ce qui rend la forêt lisible.
+   *
+   * LA BORNE DURE EST TOMBÉE AVEC : `TREE_JITTER_TILES + blockHalfSub/SUB ≤ 0,5` protégeait un
+   * carré bloquant décalé de déborder sur la tuile voisine. Plus rien n'est décalé côté
+   * collision, donc ce nombre ne borne plus que du dessin — il se règle à l'œil, seul.
+   */
   TREE_JITTER_TILES: 0.3,
 
   /** Accélération du calendrier : jours de saison écoulés par jour réel. */
@@ -1300,6 +1368,24 @@ export const TERRAINS: Record<number, TerrainDef> = {
    * `speedFactor: 1` — le sol est ouvert, on y marche comme au pré.
    */
   30: { name: 'clairiere', walkable: true, speedFactor: 1, cover: 1 },
+  /**
+   * ═══ LE LAYON — la terre foulée d'un chemin de bois (`layons.ts`) ═══
+   *
+   * *Choix d'Alexis, 2026-08-31 : « la terre foulée d'une sente mais un autre terrain spécifique
+   * pour ça ». Un terrain à lui, PAS `road` : la sente de la Racine est une route du pays
+   * d'avant, avec ses gués et ses set-pieces ; un layon est un passage que la forêt garde.*
+   *
+   * `speedFactor: 1.15` — **on gagne à le suivre, et c'est le seul argument qui le rend
+   * vivant.** La forêt est à plein régime (1) depuis la décision du 2026-07-18, donc un layon
+   * qui n'irait pas plus vite ne serait qu'une couleur. Il reste SOUS la sente (1,25) : la
+   * route du pays d'avant demeure la voie rapide.
+   *
+   * `cover: 0.85` — entre la futaie (0,6, on s'y cache) et le découvert (1). Un chemin est une
+   * trouée dans le couvert : on y voit venir, et **on s'y fait voir**. C'est ce qui empêche le
+   * layon d'être un cadeau sans revers — le suivre est plus rapide et plus exposé, et cette
+   * tension-là est le sujet. (Bouton d'équilibrage : il se tourne.)
+   */
+  31: { name: 'layon', walkable: true, speedFactor: 1.15, cover: 0.85 },
 }
 
 export const TERRAIN_VOID = 0
@@ -1336,6 +1422,7 @@ export const TERRAIN_CENDRE_BOIS = 28
 export const TERRAIN_CENDRE_MIN = 29
 /** La clairière de forêt (2026-08-25) — un biome, borné, qui ne vit QUE dans un massif boisé. */
 export const TERRAIN_CLAIRIERE = 30
+export const TERRAIN_LAYON = 31
 
 /**
  * VUE DÉRIVÉE du registre (`pieces.ts`) — ce que coûte chaque pièce : pose au marteau,
@@ -1911,9 +1998,32 @@ export interface NodeDef {
 }
 
 export const NODE_DEFS: Record<NodeType, NodeDef> = {
-  // LE TRONC S'ÉPAISSIT (décision d'Alexis, 2026-07-28) : 1 → 1,5, soit 0,375 tuile (6 px),
-  // la largeur de la colonne dessinée (`client/render/arbre-art.ts`, qui confronte les deux).
-  tree: { item: 'wood', stock: 10, blockHalfSub: 1.5, skill: 'woodcutting', tool: 'axe', minTool: 'crude', vivant: true },
+  // ═══ UN ARBRE NE SE FAUFILE PLUS (décision d'Alexis, 2026-08-31) : 1,5 → 3 ═══
+  //
+  // LE DÉFAUT QU'ON FERME est de LISIBILITÉ, et il était arithmétique : à `h = 1,5` deux arbres
+  // voisins laissent `1 − 2×0,1875 = 0,625` tuile, quand l'avatar en fait **0,75** de large. Le
+  // passage était donc nominalement TROP ÉTROIT, et l'on ne passait que si le décalage d'origine
+  // — invisible — l'ouvrait : MESURÉ 31,5 % du temps d'est en ouest, 82,7 % du nord au sud (les
+  // deux axes diffèrent parce que le corps est un rectangle, 0,75 × 0,375). Une forêt qu'on
+  // traverse à pile ou face ne se dessine pas mieux : elle se règle. *(Premier retour de
+  // playtest : « je ne vois pas bien où sont les troncs et j'ai du mal à me faufiler ».)*
+  //
+  // LA RÈGLE, ÉNONCÉE UNE FOIS : c'est illisible quand la plage d'écarts ENJAMBE la dimension du
+  // corps. À `h = 3` l'écart tombe à 0,25 tuile sur les deux axes — sous 0,375 comme sous 0,75,
+  // donc JAMAIS franchissable. Un arbre est un mur, une tuile vide est un passage ; il n'y a
+  // plus rien à juger. MESURÉ sur le monde joué : le bois garde 77,4 % de tuiles libres, la
+  // carte perd 3,7 % de tuiles libres et sa composante connexe géante ne bouge pas
+  // (99,38 % → 99,37 %). Ce qui MEURT et qui était réel : la faufilade nord-sud (82,7 %) et le
+  // fourré pincé du 2026-07-10. Aucun réglage ne gardait l'une en rendant l'autre déterministe.
+  //
+  // CE QUE LE RESTE DE `/sim` FAISAIT DÉJÀ : A*, champs de flux, faune, PNJ, morts et placement
+  // de village passent tous par `isBlockedAt`, qui bloque la TUILE dès `blockHalfSub > 0`. Le
+  // loup contournait un bois où l'avatar entrait ; ils jouent enfin la même règle.
+  //
+  // ENTIER OBLIGATOIRE : le décalage d'origine est retiré de la collision (voir
+  // `TREE_JITTER_TILES`), donc le centre est entier et un demi-entier décentrerait la bande.
+  // `h = 3` bloque les sous-tuiles {1..6} et laisse {0} et {7} — symétrique.
+  tree: { item: 'wood', stock: 10, blockHalfSub: 3, skill: 'woodcutting', tool: 'axe', minTool: 'crude', vivant: true },
   rock: { item: 'stone', stock: 12, blockHalfSub: 4, skill: 'mining', tool: 'pickaxe', minTool: 'crude' },
   // Le stock du BLOC est un DÉFAUT : la pose le remplace par celui de sa taille (`tailleDeBloc`
   // — 8/12/18), même patron que `stockDArbre`. La boîte pleine (`blockHalfSub: 4`) fait la règle.
@@ -1957,11 +2067,12 @@ export const NODE_DEFS: Record<NodeType, NodeDef> = {
   // ── LES STRUCTURANTES. Toutes exigent l'outil d'ATELIER (`basic`) : la ressource d'une zone
   //    T1 ne se prend pas à mains nues. L'outil est la porte du palier, pas un bonus — et la
   //    ZONE est la porte de l'outil. Les deux verrous se répondent.
-  // Le gros bois GARDE le cœur d'un tronc mince, alors qu'il se dessine bien plus large : il
-  // n'a pas de décalage d'origine (un demi-entier lui décentrerait sa bande), et à 30 % de la
-  // Vieille Sylve un cœur d'une demi-tuile y rendrait deux voisins infranchissables. On se
-  // faufile au pied d'un géant. Voir `client/render/arbre-art.ts` pour la dérogation déclarée.
-  old_tree: { item: 'hardwood', stock: 6, blockHalfSub: 1, skill: 'woodcutting', tool: 'axe', minTool: 'basic', vivant: true },
+  // LE GROS BOIS REJOINT LA RÈGLE (2026-08-31) : 1 → 3, comme l'arbre. Sa dérogation
+  // (« on se faufile au pied d'un géant ») était le plus gros écart art/collision du jeu — fût
+  // DESSINÉ à 14 px, cœur bloquant à 4 — et dans la Vieille Sylve, à 30 % de gros bois, c'est
+  // exactement ce que le playtest a heurté. Le motif qui la justifiait a disparu avec elle :
+  // « deux voisins infranchissables » est désormais la RÈGLE, plus un effet de bord.
+  old_tree: { item: 'hardwood', stock: 6, blockHalfSub: 3, skill: 'woodcutting', tool: 'axe', minTool: 'basic', vivant: true },
   peat_cut: { item: 'peat', stock: 10, blockHalfSub: 0, skill: 'foraging', tool: null, minTool: 'none' },
   quarry: { item: 'cut_stone', stock: 6, blockHalfSub: 4, skill: 'mining', tool: 'pickaxe', minTool: 'basic' },
   ash_heap: { item: 'ash', stock: 8, blockHalfSub: 0, skill: 'foraging', tool: null, minTool: 'none' },
@@ -2504,6 +2615,28 @@ export interface Strike {
    * porte pas, ni un coup de mêlée qui ne prendrait qu'un corps.
    */
   single?: true
+  /**
+   * LE COUP EST LOURD — donc INANNULABLE (spec combat R4octies/R4nonies, décision
+   * d'Alexis du 2026-08-31 : « jaune attaque légère / annulable, rouge attaque lourde /
+   * pas annulable »).
+   *
+   * C'est la moitié SIM d'une grammaire visuelle : un wind-up marqué `lourd` ne se fait
+   * pas briser par le coup d'en face (`briserLeCoup`), et le client peint sa zone au sol
+   * PLEINE là où une zone annulable est contourée. Les deux moitiés lisent le MÊME
+   * champ — le `Strike` voyage entier dans le snapshot, donc rien à ajouter au protocole,
+   * et le télégraphe ne peut pas mentir sur ce que la règle fera.
+   *
+   * ⚠ IL VIT SUR LE COUP, PAS SUR L'ARME NI SUR L'ESPÈCE, et c'est ce qui rend la
+   * grammaire enseignable : une même bête peut mordre jaune et frapper rouge, et c'est
+   * précisément ce mélange qui donne le rythme (« celle-là je la coupe, celle-là je
+   * l'esquive »). Une règle par espèce n'aurait rien appris au joueur.
+   *
+   * La TEINTE, elle, reste ce qu'elle était — crème = à moi, rouge = à l'en-face
+   * (`attack-fx.ts`, « l'information la plus chère du combat ») : l'annulabilité est un
+   * SECOND axe, porté par le remplissage, pour ne pas écraser le premier et pour rester
+   * lisible sans distinguer les couleurs.
+   */
+  lourd?: true
 }
 
 /** Les deux coups d'une arme, et le temps de maintien qui bascule de l'un à l'autre. */
@@ -2575,6 +2708,7 @@ export const WEAPON_PROFILES: Record<WeaponKind, WeaponProfile> = {
       weave: true,
     },
     charged: {
+      lourd: true, // ROUGE : le coup chargé ne se fait pas briser (R4nonies)
       shape: 'disc',
       range: 1.2,
       arcCos: 0,
@@ -2604,6 +2738,7 @@ export const WEAPON_PROFILES: Record<WeaponKind, WeaponProfile> = {
       weave: false,
     },
     charged: {
+      lourd: true, // ROUGE : le coup chargé ne se fait pas briser (R4nonies)
       shape: 'cone',
       range: 2.5,
       arcCos: COS_10,
@@ -2633,6 +2768,7 @@ export const WEAPON_PROFILES: Record<WeaponKind, WeaponProfile> = {
       weave: false,
     },
     charged: {
+      lourd: true, // ROUGE : le coup chargé ne se fait pas briser (R4nonies)
       shape: 'cone',
       range: 3.1,
       arcCos: COS_10,
@@ -2668,6 +2804,7 @@ export const WEAPON_PROFILES: Record<WeaponKind, WeaponProfile> = {
       weave: false,
     },
     charged: {
+      lourd: true, // ROUGE : le coup chargé ne se fait pas briser (R4nonies)
       // LE TOURBILLON : un cône de 360°, donc pas une troisième géométrie. Et une zone
       // LARGE — 2,6 tuiles tout autour du corps. À 1,8 (premier jet) il ne se distinguait
       // pas du disque des poings : deux ellipses de même taille, et le joueur ne lisait
@@ -2703,6 +2840,7 @@ export const WEAPON_PROFILES: Record<WeaponKind, WeaponProfile> = {
       weave: false,
     },
     charged: {
+      lourd: true, // ROUGE : le coup chargé ne se fait pas briser (R4nonies)
       shape: 'cone',
       range: 2.6,
       arcCos: -1,
@@ -5318,7 +5456,19 @@ export const TORCHE = {
  * flamme, quinze où la lune suffit. C'est le rythme qu'on règle ici, et il se règle en JOUANT.
  */
 export const NUIT = {
-  /** Sous cette clarté sur soi (`nuit.ts`), plus de sprint et plus de parade. */
+  /**
+   * Sous cette clarté sur soi (`nuit.ts`), **plus de parade**.
+   *
+   * ⚠ **LE SPRINT EN EST SORTI le 2026-09-02** (Alexis : *« je veux que tu cut le ralentissement
+   * dans le noir, tout simplement »*). Des deux capacités que la règle du 2026-08-26 refusait,
+   * la mesure ci-dessus n'en défend plus qu'une : contre le CENDREUX, qui rampe à 1,3 t/s, c'est
+   * la parade qui décide (34 dégâts → 10) et les jambes ne servent à rien. Contre le LOUP à
+   * 4,8 t/s, le sprint était *« exactement ce qui permet de le semer »* — le lui retirer dans le
+   * noir ne rendait pas la nuit dure, ça rendait le loup inévitable : on n'y répondait plus par
+   * un geste, on le subissait. Et cette sortie a un second effet, voulu : **la clarté ne commande
+   * plus aucune vitesse**, donc `partDuCiel` (E-R13) peut assombrir un intérieur sans ralentir en
+   * silence celui qui s'y tient.
+   */
   SEUIL_NOIR: 0.3,
 } as const
 

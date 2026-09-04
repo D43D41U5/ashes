@@ -12,6 +12,7 @@
  */
 import { BALANCE, CARRY, COMBAT, HUNT, NODE_DEFS, NUIT, SLOTS, TEMPERATURE, TERRAIN_GRASS, TICK_DT_S, VENT, type FishId, type NodeType, type RecipeId, type Strike } from './balance'
 import { moveAvatar } from './collision'
+import { etageApresLePas, etagesDuPas, niveauDuCorps, poserLEtageDuCorps } from './etages'
 import { advanceDegel } from './gel'
 import { advanceEnvols, entretienDesCoins } from './faune'
 import { advanceCombat, applyCombatAction, tientUnArc, type CombatAction, type Corpse } from './combat'
@@ -78,6 +79,15 @@ export interface Entity {
   /** Position du centre, en tuiles (déplacement continu, spec monde R5). */
   x: number
   y: number
+  /**
+   * L'ÉTAGE OÙ CE CORPS SE TIENT (spec `etages.md` E-R3). Absent ≡ **le palier du sol de sa tuile** (`terrasses.md` T-R3) — donc
+   * tout ce qui vit aujourd'hui, et tout ce qu'une vieille sauvegarde contient. Un entier signé :
+   * +1 sur un plateau de mesa, −1 dans une galerie le jour où il y en aura.
+   *
+   * C'est la TROISIÈME coordonnée, et elle n'est pas continue : on ne se tient jamais « entre »
+   * deux étages. Elle bascule au pas, sur un connecteur, et nulle part ailleurs (E-R8).
+   */
+  etage?: number
   inventory: Inventory
   /** Jauge 0-100. À 0 : vitesse ÷2 (spec économie R7-R8). */
   hunger: number
@@ -186,6 +196,20 @@ export interface Entity {
    *  spirale. Le respawn n'est plus gratuit sans devenir une punition sèche. */
   deathCount: number
   lastDeathAt: number
+  /**
+   * À TERRE DEPUIS (décision d'Alexis, 2026-08-31) — le tick de la chute, tant que l'avatar
+   * n'a pas demandé à se relever. Absent = debout.
+   *
+   * C'est un ÉTAT DE JEU, pas une commodité : depuis que `die` s'arrête à la mort et laisse
+   * le corps au sol, « mort » est une situation qui DURE, et il faut pouvoir la distinguer
+   * de `hp <= 0` — qui, dans `die`, est déjà vrai à l'instant de la chute et ne dit donc pas
+   * si l'on tombe MAINTENANT ou si l'on gisait déjà. Le client s'en sert aussi : c'est lui
+   * qui tient le voile de mort levé, y compris sur une partie RECHARGÉE alors qu'on gisait —
+   * cas où l'événement `entity_died`, lui, est passé depuis longtemps.
+   *
+   * Ne concerne que les avatars : monstres et PNJ quittent `state.entities` en mourant.
+   */
+  downedAt?: number
   /**
    * LE COUP QUI S'ARME. Il porte SA FORME (`strike`) : c'est ce qui permet au
    * télégraphe de dessiner la zone RÉELLEMENT frappée — un pic de lance ne se lit
@@ -848,16 +872,28 @@ export function speedScaleFor(
   const ratio = carryRatio(entity.inventory)
   const tier = carryTier(ratio)
   scale *= carrySpeedFactor(ratio)
-  // ═══ ON NE COURT PAS, ET ON NE PARE PAS, DANS LE NOIR ═══
-  // (décision d'Alexis, 2026-08-26 : « la sortie dehors la nuit doit être dure ». Le pourquoi
-  // de ces deux capacités-là — et la mesure qui les désigne — vit dans le bloc `NUIT` de
-  // `balance.ts`.) REFUSÉES, pas dégradées : c'est le patron du palier LOURD juste en dessous,
-  // et c'est ce qui rend la règle lisible sans une ligne d'interface — on appuie, le corps ne
-  // suit pas. Elle se répare d'un geste que le joueur possède déjà : une torche, un feu, ou
-  // simplement attendre que la lune revienne.
+  // ═══ ON NE PARE PAS DANS LE NOIR — MAIS ON Y COURT (Alexis, 2026-09-02) ═══
+  //
+  // *« je veux que tu cut le ralentissement dans le noir, tout simplement. »* La règle du
+  // 2026-08-26 (*« la sortie dehors la nuit doit être dure »*) refusait DEUX capacités sous
+  // `NUIT.SEUIL_NOIR` : le sprint et la parade. **Les jambes sortent de la règle** ; la garde
+  // reste.
+  //
+  // ⚠ **ET CE N'EST PAS UN DEMI-RENIEMENT, C'EST LA MOITIÉ QUI TENAIT ENCORE.** Le bloc `NUIT`
+  // de `balance.ts` désigne les deux prédateurs par la MESURE, et ils ne se sèment pas de la
+  // même façon : le CENDREUX rampe à 1,3 t/s — on le sème d'une marche, ce qui décide contre lui
+  // c'est la parade (34 dégâts → 10) ; le LOUP court à 4,8 quand on marche à 4 — le sprint était
+  // « exactement ce qui permet de le semer ». Retirer le sprint la nuit revenait donc à faire du
+  // loup un verdict, pas une menace : on n'y répondait plus par un geste, on subissait. La garde,
+  // elle, reste la réponse au mort qui frappe fort — et elle se répare toujours d'une flamme.
+  //
+  // ⚠ **CONSÉQUENCE QUI SORT D'ICI, et c'est pour elle que la question s'est posée** : la clarté
+  // ne commande plus AUCUNE vitesse. `partDuCiel` (E-R13) peut donc assombrir un intérieur sans
+  // qu'un joueur se retrouve ralenti chez lui à midi, en silence.
   const voitClair = clarte >= NUIT.SEUIL_NOIR
-  // On ne sprinte plus dès le palier LOURD (spec P6) : refusé, pas ralenti.
-  const canSprint = (tier === 'light' || tier === 'medium') && voitClair
+  // On ne sprinte plus dès le palier LOURD (spec P6) : refusé, pas ralenti. Le NOIR, lui, n'y
+  // entre plus.
+  const canSprint = tier === 'light' || tier === 'medium'
   const blocking = input.block && entity.stamina > 0 && voitClair
   // ON NE CHARGE PAS EN COURANT (spec R4ter) : armer un coup lourd, c'est se planter
   // sur ses appuis. Le sprint est refusé, pas seulement ralenti — sans quoi la charge
@@ -910,6 +946,22 @@ export function step(state: SimState, inputs: MoveInput[]): void {
   for (const input of inputs) {
     const entity = state.entities.find((e) => e.id === input.entityId)
     if (!entity) continue
+    // ═══ UN MORT NE FAIT RIEN QUE SE RELEVER (décision d'Alexis, 2026-08-31) ═══
+    //
+    // Depuis que `die` laisse l'avatar À TERRE en attendant son geste, un état qui n'existait
+    // pas apparaît : un joueur à `hp = 0` qui reçoit encore des inputs. Le client lui coupe
+    // la main, mais c'est une politesse de client — la sim est autoritative, et rien ici ne
+    // l'aurait empêché de marcher, de frapper ou de bâtir couché.
+    //
+    // On sort AVANT tout le reste du corps de boucle, pas seulement avant l'action : la suite
+    // écrit `facing`, arme la fenêtre de parade (`parryUntil`) et calcule le pas. Un cadavre
+    // qui tient une touche de direction se serait retourné dans sa chute, et une garde
+    // maintenue à la mort aurait paré depuis le sol.
+    if (entity.downedAt !== undefined) {
+      if (input.action?.type === 'respawn') applyCombatAction(state, input.entityId, input.action)
+      entity.gait = 'still'
+      continue
+    }
     // L'action d'abord (un mur bâti ce tick bloque dès ce tick), le pas ensuite.
     const action = input.action
     if (action) {
@@ -936,7 +988,8 @@ export function step(state: SimState, inputs: MoveInput[]): void {
         action.type === 'attack_release' ||
         action.type === 'attack_cancel' ||
         action.type === 'bandage' ||
-        action.type === 'loot_corpse'
+        action.type === 'loot_corpse' ||
+        action.type === 'respawn'
       ) {
         detacherPourLeGeste(entity) // idem — un coup porté lâche la longe (traction.md T5)
         applyCombatAction(state, input.entityId, action)
@@ -1012,11 +1065,17 @@ export function step(state: SimState, inputs: MoveInput[]): void {
     if (sprinting) {
       entity.stamina = Math.max(0, entity.stamina - COMBAT.SPRINT_STAMINA_PER_S / BALANCE.TICK_RATE_HZ)
     }
+    // L'ÉTAGE SOUS LES PIEDS (spec `etages.md` §9) : sur une rampe, le pas a le droit
+    // d'atterrir des deux côtés — c'est la seule façon de monter sur un chapeau de mesa, dont
+    // la tuile reste de la roche au sol. `undefined` partout ailleurs, donc le monde d'avant.
+    const etageAvant = niveauDuCorps(state.map, entity)
+    const etages = etagesDuPas(state.map, etageAvant, Math.floor(entity.x), Math.floor(entity.y))
     const world = {
       map: state.map,
       structures: state.structures,
       nodes: state.nodes,
       moverVillageId: getVillageOf(state, input.entityId)?.id ?? null,
+      ...(etages !== undefined ? { etages } : {}),
       // LE GEL SOUS LES PIEDS (spec `gel.md` G4) : la glace ouvre le lac et change la
       // vitesse du gué — la marchabilité et le pas se décident dans `collision.ts`, ici on
       // ne fait que donner l'heure du monde.
@@ -1026,6 +1085,11 @@ export function step(state: SimState, inputs: MoveInput[]): void {
     entity.moved = moved.x !== entity.x || moved.y !== entity.y
     entity.x = moved.x
     entity.y = moved.y
+    // ON ADOPTE L'ÉTAGE DE LA TUILE OÙ L'ON ATTERRIT — on garde le sien tant qu'il porte, sinon
+    // on prend celui qui porte. C'est ce qui fait qu'une rampe se monte et se descend sans un
+    // bouton, et le champ reste ABSENT au sol : une sauvegarde d'avant ne gagne pas un octet.
+    const etageApres = etageApresLePas(state.map, etages, etageAvant, Math.floor(moved.x), Math.floor(moved.y))
+    poserLEtageDuCorps(state.map, entity, etageApres)
   }
   // La découverte est la conséquence du pas qu'on vient de faire (spec lieux R6).
   advancePois(state)

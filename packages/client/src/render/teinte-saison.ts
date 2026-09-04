@@ -282,6 +282,10 @@ export const TERRAINS_VIVANTS: ReadonlySet<number> = new Set([
 export const TERRAINS_HORS_SAISON: ReadonlySet<number> = new Set([
   0, // le vide
   2, // route — taillée, pas poussée
+  // LE LAYON — de la terre FOULÉE : ce qui la tient nue, c'est le passage, pas la saison. Un
+  // chemin ne roussit pas et ne reverdit pas ; il s'efface si l'on cesse d'y marcher, et ce
+  // n'est pas la même horloge. Même famille que la route, pour la même raison.
+  31, // layon
   4, 6, // eaux
   5, 9, 16, 23, // roche, éboulis, chaos, falaise — le minéral est hors du temps
   7, // mur

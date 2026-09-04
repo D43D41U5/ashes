@@ -387,7 +387,7 @@ export class CarreVillage {
         // Un nœud DÉFRICHÉ n'occupe plus rien : c'est une souche, et la sim l'a déjà
         // libérée (`poseLibre`). Le tapis doit dire la même chose, sinon on montre rouge
         // ce que le marteau accepte — juste sur la tuile qu'on vient de dégager.
-        const noeud = nodeAt(e.nodes, tx, ty)
+        const noeud = nodeAt(e.map, e.nodes, tx, ty)
         const occupee = prises.has(k) || (noeud !== undefined && !noeudDefriche(emprise, noeud))
         occupees[(ty - b.y0) * cote + (tx - b.x0)] = occupee ? 1 : 0
         if (occupee) sig = (sig + Math.imul(k, 2654435761)) | 0

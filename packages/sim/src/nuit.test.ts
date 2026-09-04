@@ -243,42 +243,53 @@ describe('le prix du noir — on ne court pas, on ne pare pas', () => {
     expect(ent(sim, id).gait).toBe('sprint')
   })
 
-  it('P2 — SOUS LA NOUVELLE LUNE, le sprint est REFUSÉ (pas ralenti : refusé)', () => {
+  it('P2 — SOUS LA NOUVELLE LUNE, ON COURT QUAND MÊME (Alexis, 2026-09-02)', () => {
+    /**
+     * ⚠ **CETTE GARDE AFFIRMAIT L'INVERSE, et c'est une décision d'Alexis qui l'a retournée** :
+     * *« je veux que tu cut le ralentissement dans le noir, tout simplement. »* Des deux
+     * capacités que la règle du 2026-08-26 refusait sous `NUIT.SEUIL_NOIR`, **les jambes sont
+     * sorties** ; la parade reste (P5). Le motif tient dans les nombres de P7, qui n'ont pas
+     * bougé : le loup court à 4,8 quand on marche à 4 — lui retirer le sprint ne rendait pas la
+     * nuit dure, ça rendait le loup INÉVITABLE.
+     *
+     * On l'affirme sur la MÊME mesure qu'avant, dans l'autre sens : la nouvelle lune couvre
+     * exactement autant de terrain que la pleine.
+     */
     const { sim, id } = nuitAvec(Math.floor(NOUVELLE_LUNE_JOUR))
     const x0 = ent(sim, id).x
     step(sim, marcher(id))
     const e = ent(sim, id)
-    expect(e.gait).toBe('walk')
-    // Et il a MARCHÉ, pas glissé : le pas reste entier, seule la course manque.
-    expect(e.x - x0).toBeGreaterThan(0)
-    // Le même tick sous la pleine lune couvre `SPRINT_FACTOR` fois plus de terrain.
+    expect(e.gait, 'on court dans le noir').toBe('sprint')
     const clair = nuitAvec(LUNE_PLEINE_JOUR)
     const xc = ent(clair.sim, clair.id).x
     step(clair.sim, marcher(clair.id))
-    expect((ent(clair.sim, clair.id).x - xc) / (e.x - x0)).toBeCloseTo(COMBAT.SPRINT_FACTOR, 2)
+    expect((ent(clair.sim, clair.id).x - xc) / (e.x - x0), 'le même terrain, à la lune près')
+      .toBeCloseTo(1, 6)
   })
 
-  it('P3 — LA TORCHE VIVE rend les jambes, la torche éteinte non', () => {
+  it('P3 — LA TORCHE VIVE rend LA GARDE, la torche éteinte non', () => {
+    // La flamme ne rend plus les JAMBES (elles ne se perdaient plus, P2) : elle rend la GARDE,
+    // et c'est désormais la seule chose que le noir retire.
     const { sim, id } = nuitAvec(Math.floor(NOUVELLE_LUNE_JOUR))
     const e = ent(sim, id)
     e.inventory[0] = { item: 'torche_vive', count: 1, wear: 0 }
     e.activeSlot = 0
-    step(sim, marcher(id))
-    expect(ent(sim, id).gait).toBe('sprint')
+    step(sim, [{ entityId: id, dx: 0, dy: 0, block: true }])
+    expect(ent(sim, id).blocking).toBe(true)
 
     const eteint = nuitAvec(Math.floor(NOUVELLE_LUNE_JOUR))
     const f = ent(eteint.sim, eteint.id)
     f.inventory[0] = { item: 'torche', count: 1 }
     f.activeSlot = 0
-    step(eteint.sim, marcher(eteint.id))
-    expect(ent(eteint.sim, eteint.id).gait).toBe('walk')
+    step(eteint.sim, [{ entityId: eteint.id, dx: 0, dy: 0, block: true }])
+    expect(ent(eteint.sim, eteint.id).blocking, 'une torche éteinte n’éclaire rien').toBe(false)
   })
 
   it('P4 — LE COIN DU FEU aussi : la lumière est la lumière, d’où qu’elle vienne', () => {
     const { sim, id } = nuitAvec(Math.floor(NOUVELLE_LUNE_JOUR))
     feu(sim, 1)
-    step(sim, marcher(id))
-    expect(ent(sim, id).gait).toBe('sprint')
+    step(sim, [{ entityId: id, dx: 0, dy: 0, block: true }])
+    expect(ent(sim, id).blocking).toBe(true)
   })
 
   it('P5 — LA PARADE tombe avec les jambes, et revient avec la flamme', () => {
@@ -310,13 +321,15 @@ describe('le prix du noir — on ne court pas, on ne pare pas', () => {
     expect(ent(sim, id).gait).toBe('sprint')
   })
 
-  it('P7 — LA PRÉMISSE : sans le sprint, le loup rattrape — c’est ce qui rend la règle mortelle', () => {
+  it('P7 — LA PRÉMISSE, ET ELLE EXPLIQUE MAINTENANT POURQUOI LES JAMBES SONT SORTIES', () => {
     const marche = BALANCE.WALK_SPEED_TILES_PER_S
     const course = marche * COMBAT.SPRINT_FACTOR
     const loup = MONSTER_DEFS.wolf.speed
-    // La règle ne vaut que dans cette fenêtre-là : le loup doit être PLUS RAPIDE qu'un
-    // marcheur et PLUS LENT qu'un coureur. Le jour où l'un des trois nombres bouge, c'est
-    // ici qu'on l'apprend — et pas dans une partie où la nuit serait devenue inoffensive.
+    // Les trois nombres n'ont pas bougé, c'est la CONCLUSION qu'on en tire qui a changé
+    // (Alexis, 2026-09-02). Le loup est plus rapide qu'un marcheur et plus lent qu'un coureur :
+    // c'est exactement ce qui faisait du sprint la réponse au loup — donc lui retirer le sprint
+    // dans le noir ne rendait pas la nuit dure, ça rendait le loup INÉVITABLE. Le jour où l'un
+    // des trois bouge, c'est ici qu'on l'apprend.
     expect(loup).toBeGreaterThan(marche)
     expect(loup).toBeLessThan(course)
     // Le Cendreux, lui, se sème à la marche : ce n'est PAS les jambes qui le rendent

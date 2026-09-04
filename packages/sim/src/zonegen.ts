@@ -50,16 +50,19 @@ import {
 } from './balance'
 import { isWater, MARCHABLE, type WorldMap, type Zone as ZoneRect } from './map'
 import { calculeChampDeCendre, computeCendreField, foyersDeLaCarte } from './cendre'
+import { construireEtage, terrainDeCave, terrainDeDessus, type Connecteur, type EtageCreux } from './etages'
+import { aDesPaliers, poserLesTerrasses, quantifierLesPaliers } from './terrasses'
 import { distSq } from './geometry'
 import { placeCharniers, placeGitesLoup, placePois, placeSteles } from './poi'
 import { placeHuntingGrounds } from './faune'
 import { peindreLesClairieres } from './clairieres'
+import { tracerLesLayons } from './layons'
 import { densiteDeBase } from './morts'
 import { fbm2, hash2 } from './noise'
 import { deriverDistanceEau, deriverProfondeur } from './profondeur'
 import { deriverNatureDeLEau } from './peche-nature'
 import { tracerLesCoulees } from './zonegen-coulees'
-import { masqueDesSeuils, paintWaterRacine, type Riviere } from './zonegen-water'
+import { comblerLesIsthmes, masqueDesSeuils, paintWaterRacine, type Riviere } from './zonegen-water'
 import { assainirLeProfondHorsRacine, peindreLesEauxDesZones } from './zonegen-eaux-zones'
 import {
   CREUX,
@@ -77,7 +80,7 @@ import {
   type Creux,
 } from './racine-relief'
 import { batirLeSocle, type Socle } from './socle'
-import { forcerLesGues, tracerLesSentes } from './zonegen-sentes'
+import { forcerLesGues, percerLeCoeur, tracerLesSentes } from './zonegen-sentes'
 import { placerLesSetPieces } from './zonegen-setpieces'
 import {
   deriveGrapheZones,
@@ -144,6 +147,30 @@ export const RELIEF = {
    * eux (une tuile de couloir contre une tuile d'une autre zone), se murent par la règle générale.
    * *Le goulot se creuse tout seul.* On n'écrit pas une ligne pour ça.
    */
+
+  /**
+   * ═══ …ET ELLE SE DRESSE : DEUX RANGÉES DE PAROI SOUS SON DESSUS ═══
+   *
+   * *Décision d'Alexis, 2026-08-31 — proposition « P2 · la marche », puis « continue avec le mur à
+   * 3 tuiles ».* Le monde redevient une pile de TERRASSES. Le mur d'UNE tuile ne pouvait pas le
+   * montrer : une paroi lisible fait 24 à 32 px (MESURÉ contre le cadrage — la caméra montre 20
+   * tuiles de haut, soit 320 px), donc deux rangées. Le mur passe à trois : le DESSUS garde son
+   * liseré, les deux rangées du dessous se dressent en paroi (`render/cliff-art.ts`).
+   *
+   * ⚠ **ON ÉPAISSIT VERS LE SUD, ET C'EST LA PROJECTION QUI L'IMPOSE.** En vue de dessus, seule
+   * une paroi tournée vers le BAS de l'écran tient dans les tuiles qu'elle mure : une paroi
+   * tournée au nord devrait déborder sur la terrasse d'en face — c'est la proposition « surplomb »,
+   * refusée parce qu'elle peint de la roche sur de l'herbe qu'on foule. Le monde adopte donc la
+   * convention de Zelda LTTP : **le nord est le haut**. Ce n'est pas gratuit, et le chiffre est au
+   * dossier — MESURÉ sur 60 graines, le tier supérieur est au nord dans **71,4 %** des seuils (les
+   * ordonnées moyennes disent la même chose : T0 à 0,79 du haut, T1 à 0,49, T2 à 0,29), tandis que
+   * l'altitude ÉRODÉE, elle, ne tranche pas (49,9 % — un pile ou face). C'est la progression du
+   * joueur qui porte la lecture, pas le champ du socle.
+   *
+   * Le coût : MESURÉ à **0,56 % des tuiles marchables** (10 graines, vallée), zéro poche isolée, et
+   * les couloirs de seuil intacts — `rampe` n'est jamais murée.
+   */
+  PAROI_RANGEES: 2,
 
   /** Anneau bloquant au bord de la carte. La vallée est CLOSE : on n'en sort pas. */
   BORDURE: 12,
@@ -421,6 +448,14 @@ export interface CarteZonee {
    * complet. Donnée de GÉNÉRATION : elle ne va ni dans `WorldMap` ni dans `SimState`.
    */
   affleurements: Affleurement[]
+  /**
+   * LE SOCLE de génération (`socle.ts`) — le champ d'altitude, de flux et de roche-mère, sur
+   * TOUTE la carte. Donnée de GÉNÉRATION : elle ne va ni dans `WorldMap` ni dans `SimState`, et
+   * le monde la relit en la RECALCULANT. Exposée ici pour les passes qui en dérivent (le
+   * DÉNIVELÉ des terrasses, spec `etages.md` §10) et pour les sondes qui la mesurent — sans quoi
+   * il faudrait la rebâtir à côté, donc en deux exemplaires qui divergeraient.
+   */
+  socle: Socle | null
 }
 
 /**
@@ -531,7 +566,7 @@ export function generateZonedTerrain(
   //
   // Les lacs sont désormais des CUVETTES INONDÉES (le creux commande) : ils épousent le fond du
   // pays au lieu d'être des rectangles tirés au sort.
-  const { riviere, chenaux } = paintWaterRacine(terrain, zone, g, width, height, seed, RELIEF.BORDURE, creux)
+  const { riviere, chenaux, fils, lacs: lacsRacine } = paintWaterRacine(terrain, zone, g, width, height, seed, RELIEF.BORDURE, creux)
 
   // ── PASSE 1.52 : LES EAUX DES ZONES — l'eau dérivée hors Racine (stratigraphie, couche II) ──
   //
@@ -539,7 +574,19 @@ export function generateZonedTerrain(
   // et tracés sur les champs du socle (altitude, récepteurs D8), là où `solDe` a déjà posé la
   // roselière : l'eau arrive exactement où le sol l'annonçait. Avant les seuils (la porte gagne)
   // et avant le murage (l'assainissement R45 interne au module précède la déduction des arêtes).
-  peindreLesEauxDesZones(terrain, zone, g, width, height, creux)
+  const lacsDesZones = peindreLesEauxDesZones(terrain, zone, g, width, height, creux)
+  // LES LACS, DONNÉE : l'eau que les deux passes ont posée EN NAPPE (cuvettes de la Racine,
+  // mares et grand lac des zones) — par opposition à l'eau qui COULE. Les terrasses nivellent
+  // une nappe et laissent un fleuve descendre ; rien à la tuile ne distingue les deux, seule
+  // la passe qui les a peints le sait. Index de tuile, ordre d'inondation (déterministe).
+  const lacs = [...lacsRacine, ...lacsDesZones]
+
+  // ── PASSE 1.53 : LES ISTHMES D'UNE TUILE (règle d'Alexis, 2026-08-30) ────────────────────
+  //
+  // Après TOUTE l'eau — celle de la Racine et celle des zones — parce que la règle regarde le
+  // résultat, pas les intentions : deux eaux qui ne se touchent pas d'une tuile peuvent venir
+  // de deux passes différentes (un ru de zone et un lac de la Racine, par exemple).
+  comblerLesIsthmes(terrain, zone, width, height, masqueDesSeuils(creux, g, g.racine), creux)
 
   // ── PASSE 1.55 : LA VÉGÉTATION DE LA RACINE — dérivée de l'eau qu'on vient de poser ───────
   //
@@ -580,7 +627,7 @@ export function generateZonedTerrain(
 
   // ── PASSE 1.6 : LES SET-PIECES — trois endroits à grande empreinte, COURONNÉS et non plus
   //    posés (spec t0-exploration R9, révisé §2quinquies : élection pure, aucun tirage) ──
-  const setPieces = placerLesSetPieces(terrain, zone, g, width, height)
+  const setPieces = placerLesSetPieces(terrain, zone, g, width, height, RELIEF.PAROI_RANGEES)
 
   // ── PASSE 1.62 : LES CLAIRIÈRES — le biome des trouées (décision d'Alexis, 2026-08-25) ──
   //
@@ -590,12 +637,49 @@ export function generateZonedTerrain(
   // La passe ne mord QUE du boisé, tuile par tuile — voir `clairieres.ts` : c'est ce qui laisse
   // `deriverProfondeur` bit à bit identique.
   peindreLesClairieres(terrain, zone, g.racine, width, height, seed)
+  // ── LES LAYONS (`layons.ts`) — les COULOIRS, après les SALLES et avant les ROUTES ──
+  // Après les clairières : un layon ne recouvre pas une salle, il y débouche (il ne se peint que
+  // sur du bois). Avant les sentes : la route du pays d'avant recouvre un layon comme elle
+  // recouvre une clairière ou une forêt — elle est passée là avant que le bois ne reprenne.
+  tracerLesLayons(terrain, zone, g.racine, width, height, seed)
 
   // ── PASSE 1.7 : LES SENTES — les routes du pays d'avant, et leurs gués (R17, R7) ──
   // Elles CONTOURNENT les set-pieces (R18 : un lieu se poste au bord du chemin) ; et la
   // garantie « au moins deux gués » vit à part, indépendante des aléas du traceur.
-  const { gues, croisees } = tracerLesSentes(terrain, zone, g, width, height, seed, riviere, setPieces, creux)
-  forcerLesGues(terrain, riviere, gues, width, height)
+  // ── LES PALIERS DES TERRASSES, PAR CELLULE (spec `terrasses.md` §3.1) — AVANT LES SENTES ──
+  //
+  // Le champ quantifié se calcule ici, une fois, et sert deux lecteurs : le tracé des sentes
+  // (une route cherche l'endroit où l'on monte DE FACE — `SENTES.COUT_PALIER`) et la passe des
+  // terrasses elle-même, après les lieux. MONDE RÉDUIT SEUL, comme toute passe de contenu.
+  const cellulesPalier = g.monde === 'racine' && creux ? quantifierLesPaliers(creux, terrain, width, height) : null
+  const { gues, croisees } = tracerLesSentes(terrain, zone, g, width, height, seed, riviere, setPieces, creux, cellulesPalier)
+  // ═══ CHAQUE FLEUVE A SES GUÉS ═══
+  //
+  // `forcerLesGues` s'arrête à `SENTES.GUES_MIN` — un plafond écrit pour LA rivière. Le pays en
+  // porte sept à neuf depuis que l'hydrologie est dérivée : servis dans un pool commun, les deux
+  // premiers auraient mangé le quota et les autres seraient restés infranchissables. On force
+  // donc par fleuve, sur une liste locale, puis on verse dans le pot commun.
+  for (const f of fils) {
+    if (!riviere) break
+    const siens: typeof gues = []
+    forcerLesGues(terrain, { fil: f, coeur: riviere.coeur }, siens, width, height)
+    for (const q of siens) if (gues.every((p) => Math.abs(p.x - q.x) + Math.abs(p.y - q.y) >= 24)) gues.push(q)
+  }
+  // ═══ UN GUÉ SE TRAVERSE, OU IL N'EST PAS UN GUÉ (2026-08-30) ═══
+  //
+  // Les gués viennent de DEUX sources — le croisement d'une sente et le forçage — et seule la
+  // seconde perçait. Depuis que le pays porte plusieurs fleuves ET des lacs profonds, un
+  // croisement pouvait enregistrer un « le Gué » sur du mur d'eau : le toponyme promettait un
+  // passage qui n'existait pas (garde A3, seed 2026, gué infranchissable en (174,1912)). On
+  // perce donc au centre de CHAQUE gué, et l'on retire ceux qu'on n'a pas su ouvrir — mieux
+  // vaut un gué de moins qu'un gué qui ment.
+  if (riviere) {
+    for (const q of gues) percerLeCoeur(terrain, riviere, q.x, q.y, width, height)
+    for (let k = gues.length - 1; k >= 0; k--) {
+      const q = gues[k]!
+      if (MARCHABLE[terrain[q.y * width + q.x]!] !== 1) gues.splice(k, 1)
+    }
+  }
 
   // ── PASSE 1.8 : L'ASSAINISSEMENT DU PROFOND — l'anneau de R45, CONSTATÉ ──
   //
@@ -625,6 +709,7 @@ export function generateZonedTerrain(
 
   for (let tour = 0; tour < 2; tour++) {
     murerLesAretes(terrain, zone, rampe, width, height)
+    epaissirLesFalaises(terrain, rampe, width, height)
     garantirLaConnexite(g, terrain, zone, rampe, width, height, creux, regles)
   }
 
@@ -687,7 +772,7 @@ export function generateZonedTerrain(
   // ELLE NE LIT PLUS LE CHAMP DE CENDRE (2026-08-24) : sa clause « hors d'atteinte du front »
   // (R48/R49 — un gisement que la cendre avale à mi-saison est une économie confisquée) n'a plus
   // d'objet, puisque plus rien n'avale. Le pré nu suffit à la porter.
-  const affleurements = poserLesAffleurements(terrain, zone, g, width, height, creux)
+  const { affleurements, plateaux } = poserLesAffleurements(terrain, zone, g, width, height, creux)
 
   // ── LES STADES DU VERSANT BRÛLÉ (stratigraphie, couche IV) : la reprise, datée par le champ
   //    de cendre qu'on vient de poser. AVANT les lieux — le semis lit le terrain des stades.
@@ -725,6 +810,15 @@ export function generateZonedTerrain(
     // coule. Le client en dérive le courant (feuilles qui dérivent) ; demain, un courant
     // qui pousse serait une décision de design à part (consignée, pas ouverte).
     ...(riviere ? { fil: riviere.fil.slice() } : {}),
+    // ET TOUS LES FLEUVES (2026-08-30) : le pays en porte ce que son relief donne, pas « un ».
+    // `fil` reste le plus gros — additive, une vieille sauvegarde se relit sans, et le client
+    // qui ne connaît que `fil` continue de marcher.
+    ...(fils.length > 1 ? { fils: fils.map((f) => f.slice()) } : {}),
+    // LES LACS (2026-09-03) : l'eau PLATE, telle que les passes d'eau l'ont inondée — ce que
+    // les terrasses nivellent (T-A3 le relit sur la carte). Additive : omise sans lac, et une
+    // carte d'avant se relit sans. Une tuile listée peut ne plus être de l'eau (un isthme
+    // comblé, un seuil rouvert) : la liste dit d'où l'eau vient, le terrain dit ce qu'elle est.
+    ...(lacs.length > 0 ? { lacs: lacs.slice() } : {}),
     // LES AFFLEUREMENTS (t0-exploration §2sexies), donnée de premier ordre : le client en tire
     // teinte, dalles et chicot — patron « seuils → bornes ». Omis quand il n'y en a pas (le
     // plan complet, les cartes d'avant) : additive, une vieille sauvegarde se relit sans.
@@ -741,7 +835,21 @@ export function generateZonedTerrain(
     // Sans elle, la table de prises n'aurait aucun moyen de savoir ce qu'est l'eau qu'on pêche.
     natureEau: deriverNatureDeLEau(terrain, riviere?.fil, width, height),
   }
-  const carte: CarteZonee = { map, graphe: g, zone, rampe, affleurements }
+  const carte: CarteZonee = { map, graphe: g, zone, rampe, affleurements, socle: creux }
+
+  // ── PASSE 4.4 : L'ANNEAU DE R45, LE DERNIER MOT ───────────────────────────
+  //
+  // ⚠ IL FAUT LE REFAIRE ICI, ET PAS SEULEMENT EN 1.8/3.5. Trois passes postérieures créent de
+  // la terre marchable au bord de l'eau : les SENTES (une route longe volontiers une rive), le
+  // PERCEMENT des seuils, et la garantie de connexité. MESURÉ (garde A2bis, seed 2026) : 168
+  // tuiles de profond au contact d'une terre sèche survivaient à l'assainissement de 3.5.
+  //
+  // Et surtout, l'EXCEPTION D'ÎLE se recalcule sur la carte TELLE QU'ELLE SERA : une poche que
+  // les passes intermédiaires ont fini par relier au continent n'est plus une île, et son
+  // profond doit rendre son anneau. Assainir tôt sur des îles d'alors, c'était garder une
+  // exception pour une géographie qui n'existe plus.
+  assainirLeProfond(terrain, zone, g.racine, width, height)
+  assainirLeProfondHorsRacine(terrain, zone, g.racine, width, height, true)
 
   // ── PASSE 4.5 : LES SET-PIECES ET LES GUÉS ENTRENT DANS LA CARTE ──────────
   //
@@ -806,6 +914,91 @@ export function generateZonedTerrain(
   // LES STÈLES (annales.md R8) : en DERNIER — elles se posent au bord des faits de l'ère 2 en
   // respectant les empreintes de tous les lieux déjà placés.
   placeSteles(map, champDeCreusement)
+
+  // ── LES TERRASSES (spec `terrasses.md`) — APRÈS LES LIEUX, parce qu'ils sont des ASSISES ──
+  //
+  // Un lieu ne se coupe pas d'une falaise : l'empreinte de chaque set-piece, de chaque lieu
+  // posé par `placePois` (et la Louvière, les charniers, les stèles), de chaque mesa (chapeau,
+  // jupe, rampe, gueule) prend UN palier. Il faut donc connaître les lieux avant de poser les
+  // paliers — et rien de ce qui suit ne touche au marchable (les coulées et la cendre sont des
+  // champs). MONDE RÉDUIT SEUL : le plan complet n'a ni socle ni lieux bâtis en pièces, et le
+  // chemin 'vallee' reste octet-identique (T-A1).
+  //
+  // ⚠ LE PALIER SE POSE SUR `map` APRÈS SA CONSTRUCTION, comme `coulees` et `cendreCout` : la
+  // carte est un objet, ses champs additifs arrivent quand leur passe a tourné.
+  const terrasses = cellulesPalier && creux
+    ? poserLesTerrasses(
+        terrain, width, height, creux, cellulesPalier, lacs,
+        assisesDesTerrasses(map, plateaux, width, height),
+        new Set(plateaux.flatMap((p) => [...p.rampes, ...p.gueule])),
+      )
+    : null
+  if (terrasses && aDesPaliers(terrasses.palier)) map.palier = Array.from(terrasses.palier)
+  const palierDe = (i: number): number => terrasses ? terrasses.palier[i]! : 0
+
+  // ── LES ÉTAGES (spec `etages.md`, la TRANCHE VERTICALE §9) ───────────────────────────────
+  //
+  // Les buttes NUES ont un chapeau de roche infranchissable depuis le 2026-08-31 : on les
+  // CONTOURNE. Elles gagnent ici un dessus — un étage marchable sur la MÊME empreinte, atteint
+  // par une rampe. **Le sol ne bouge pas d'une tuile** : le chapeau reste `TERRAIN_ROCK`, la
+  // mesa reste un obstacle vue d'en bas, et tout ce qui lit `map.terrain` rend exactement l'image
+  // d'avant (E-R1, E-A6).
+  //
+  // TOUS LES PLATEAUX D'UN MÊME NIVEAU TIENNENT DANS UN SEUL ÉTAGE, et c'est le modèle : un étage
+  // est une CARTE, pas un lieu. Soixante mesas disjointes qui sont toutes « un cran plus haut »,
+  // c'est un étage troué, pas soixante étages. **Et « un cran plus haut » se compte depuis le
+  // PALIER de l'assise (T-R4)** : une mesa posée sur la terrasse 1 a son dessus au niveau 2, sa
+  // cave au niveau 0 — le niveau 0 est alors une grille creuse comme une autre. Les tuiles de
+  // rampe y ajoutent les leurs — elles appartiennent aux deux étages à la fois, c'est ce qui fait
+  // d'une rampe une rampe ; et les rampes des terrasses, au niveau du HAUT, exactement de même.
+  const parNiveau = new Map<number, number[]>()
+  const ajouter = (niveau: number, tuiles: readonly number[]): void => {
+    let l = parNiveau.get(niveau)
+    if (l === undefined) { l = []; parNiveau.set(niveau, l) }
+    for (const i of tuiles) l.push(i)
+  }
+  const connecteurs: Connecteur[] = []
+  const xy = (i: number): { x: number; y: number } => ({ x: i % width, y: (i - (i % width)) / width })
+  // UN SEUL ÉTAGE PAR NIVEAU, quoi qu'il porte : le dessus d'une mesa posée au palier 0 et la
+  // cave d'une mesa posée au palier 2 sont tous deux « le niveau 1 », donc la même grille creuse
+  // (`etageDe` en cherche UNE). Ce qui distingue une tuile de cave, c'est son SOL, pas son étage.
+  const caves = new Set<number>()
+  for (const p of plateaux) {
+    // L'assise est plate (une assise des terrasses) : le palier de la première tuile du chapeau
+    // est celui de toute l'empreinte.
+    const base = palierDe(p.tuiles[0]!)
+    ajouter(base + 1, p.tuiles)
+    ajouter(base + 1, p.rampes)
+    for (const r of p.rampes) connecteurs.push({ ...xy(r), de: base, vers: base + 1, type: 'rampe' })
+    if (p.cave.length > 0) {
+      ajouter(base - 1, p.cave)
+      for (const i of p.cave) caves.add(i)
+      for (const q of p.gueule) connecteurs.push({ ...xy(q), de: base, vers: base - 1, type: 'gueule' })
+    }
+  }
+  for (const r of terrasses?.rampes ?? []) {
+    ajouter(r.vers, [r.y * width + r.x])
+    connecteurs.push({ x: r.x, y: r.y, de: r.de, vers: r.vers, type: 'rampe' })
+  }
+  const etages: EtageCreux[] = []
+  // Le terrain d'une tuile d'étage : celui du SOL sur une rampe (on marche sur la jupe, ou sur
+  // la terrasse du bas), la roche nue d'une cave, la composition d'un dessus de butte ailleurs.
+  const rampesSet = new Set(connecteurs.filter((c) => c.type === 'rampe').map((c) => c.y * width + c.x))
+  const terrainDEtage = (tx: number, ty: number): number => {
+    const i = ty * width + tx
+    if (rampesSet.has(i)) return terrain[i]!
+    return caves.has(i) ? terrainDeCave(tx, ty) : terrainDeDessus(tx, ty)
+  }
+  for (const niveau of [...parNiveau.keys()].sort((a, b) => a - b)) {
+    etages.push(construireEtage(niveau, parNiveau.get(niveau)!, width, terrainDEtage))
+  }
+  // LES ÉTAGES ET LEURS CONNECTEURS (spec `etages.md` E-R1/E-R7) — omis quand le pays n'en
+  // porte pas (le plan complet, les cartes d'avant) : additifs, une vieille sauvegarde se
+  // relit sans, et le monde n'a alors qu'un seul étage, comme il en a toujours eu un.
+  if (etages.length > 0) {
+    map.etages = etages
+    map.connecteurs = connecteurs
+  }
 
   // ── LES COULÉES (forêts-vivantes §4) — APRÈS LES LIEUX, et ce n'est pas un détail ─────────
   //
@@ -873,6 +1066,63 @@ const LISIERE_SUD = {
   DITHER: 16,
 } as const
 
+/**
+ * (doc historique conservée dans `estUneIle`.) LES ÎLES — TOUT CE QUI N'EST PAS LE CONTINENT.
+ *
+ * ⚠ La définition a changé le 2026-08-30, et l'écriture d'avant valait la leçon : « composante
+ * dont TOUT le pourtour non marchable est de l'eau » se DÉFAIT pendant qu'on l'applique —
+ * l'assainissement transforme du profond en haut-fond, qui est marchable, et peut donc relier
+ * une île au continent APRÈS qu'on l'a marquée. La carte finissait alors avec du profond
+ * exempté au bord d'une terre qui n'était plus une île (168 tuiles, garde A2bis).
+ *
+ * « Ce qui n'appartient pas à la plus grande composante marchable » ne se défait pas : c'est la
+ * même question que pose la connexité, donc la même réponse. Bornée en taille — au-delà de
+ * `ILE_MAX`, ce n'est plus une île mais un morceau de pays coupé en deux, et l'anneau reprend
+ * ses droits.
+ */
+const ILE_MAX = 4000
+
+/**
+ * LA TUILE `depart` APPARTIENT-ELLE À UNE ÎLE ? — c'est-à-dire à une composante marchable
+ * BORNÉE, donc qui n'est pas le continent.
+ *
+ * ⚠ EXPLORATION LOCALE, ET C'EST UNE QUESTION DE COÛT. La première écriture étiquetait TOUTES
+ * les composantes de la carte (3,75 M de tuiles) à chaque assainissement, et il y en a quatre :
+ * la génération de la vallée passait de 10,6 à 13,2 s, à 15 s de budget (A13). Ici on ne part
+ * que de la terre qui BORDE du profond, et l'on s'arrête dès que la composante dépasse
+ * `ILE_MAX` — le continent est alors reconnu en quelques milliers de pas au lieu d'un million.
+ *
+ * `cache` mémorise le verdict par tuile visitée : deux tuiles de la même île ne se paient pas
+ * deux fois, et le continent une seule fois par assainissement.
+ */
+function estUneIle(
+  terrain: number[], depart: number, width: number, height: number, cache: Map<number, boolean>,
+): boolean {
+  const connu = cache.get(depart)
+  if (connu !== undefined) return connu
+  const walk = (i: number): boolean => MARCHABLE[terrain[i]!] === 1
+  const comp: number[] = [depart]
+  const vus = new Set<number>([depart])
+  let ile = true
+  for (let h = 0; h < comp.length; h++) {
+    if (comp.length > ILE_MAX) { ile = false; break }
+    const i = comp[h]!
+    const x = i % width
+    const y = (i - x) / width
+    if (x === 0 || y === 0 || x === width - 1 || y === height - 1) { ile = false; break }
+    for (const j of [x + 1 < width ? i + 1 : -1, x > 0 ? i - 1 : -1, y + 1 < height ? i + width : -1, y > 0 ? i - width : -1]) {
+      if (j < 0 || vus.has(j) || !walk(j)) continue
+      vus.add(j)
+      comp.push(j)
+    }
+  }
+  // On ne mémorise que ce qu'on a EXPLORÉ EN ENTIER : une exploration coupée au plafond n'a
+  // visité qu'un bout du continent, et ses tuiles n'ont pas toutes le même sort par accident.
+  if (ile) for (const i of comp) cache.set(i, true)
+  else cache.set(depart, false)
+  return ile
+}
+
 /** L'anneau de R45, tenu au point fixe : le profond de la Racine ne touche jamais la terre.
  *  `memeZone` restreint le déclencheur aux voisins secs DE LA RACINE — la variante d'après
  *  murage, qui ne rouvre jamais une frontière (le profond y est un mur légitime, R5). */
@@ -884,23 +1134,47 @@ function assainirLeProfond(
   height: number,
   memeZone = false,
 ): void {
+  const ileCache = new Map<number, boolean>()
+  // ⚑ ON BALAIE LA LISTE DU PROFOND, PLUS LA CARTE (2026-08-30). Huit passes sur 1,35 M de
+  // tuiles coûtaient 0,80 s à elles seules depuis que le pays endoréique porte 40 % d'eau de
+  // plus (MESURÉ, passe 1.8, graine 909 : 0,08 → 0,88 s, et la fonction est appelée trois fois).
+  // La liste se relit dans le MÊME ORDRE (y croissant, puis x) : une correction voit les
+  // voisines déjà corrigées de la même passe, exactement comme avant — résultat au bit près.
+  let n = 0
+  const candidates = new Int32Array(width * height)
+  for (let y = 1; y < height - 1; y++) {
+    for (let x = 1; x < width - 1; x++) {
+      const i = y * width + x
+      if (terrain[i] === TERRAIN_DEEP_WATER && zone[i] === racineId) candidates[n++] = i
+    }
+  }
   for (let passe = 0; passe < 8; passe++) {
     let corriges = 0
-    for (let y = 1; y < height - 1; y++) {
-      for (let x = 1; x < width - 1; x++) {
-        const i = y * width + x
-        if (terrain[i] !== TERRAIN_DEEP_WATER || zone[i] !== racineId) continue
+    let reste = 0 // compaction EN PLACE : zéro allocation par passe (le profil à froid le voit)
+    for (let c = 0; c < n; c++) {
+      const i = candidates[c]!
+      {
+        if (terrain[i] !== TERRAIN_DEEP_WATER) continue
+        let corrige = false
         for (const j of [i - 1, i + 1, i - width, i + width]) {
           const t = terrain[j]!
           if (isWater(t)) continue
           if (TERRAINS[t]?.walkable !== true) continue
           if (memeZone && zone[j] !== racineId) continue
+          // ⚠ L'EXCEPTION D'ÎLE (2026-08-30) — R45 amendée. L'anneau de haut-fond existe pour
+          // qu'aucune poche de terre ne soit enclavée ; une ÎLE est précisément une poche qu'on
+          // veut enclavée. Le profond a donc le droit de toucher sa rive : sans quoi
+          // l'assainissement rouvrait un gué tout autour et l'île redevenait un cap.
+          if (estUneIle(terrain, j, width, height, ileCache)) continue
           terrain[i] = TERRAIN_SHALLOW_WATER
           corriges++
+          corrige = true
           break
         }
+        if (!corrige) candidates[reste++] = i
       }
     }
+    n = reste
     if (corriges === 0) return
   }
 }
@@ -1181,11 +1455,190 @@ export interface Affleurement {
   ressource: 'fer' | 'charbon'
 }
 
+/**
+ * UN PLATEAU DE MESA — l'empreinte de l'étage +1, et sa rampe (spec `etages.md` §9).
+ *
+ * C'est la TRANCHE VERTICALE : le chapeau de roche d'une butte nue, qu'on ne faisait jusqu'ici
+ * que contourner, devient un sol qu'on parcourt d'un étage plus haut. `tuiles` est l'empreinte
+ * (les mêmes tuiles que le chapeau, à l'identique — aucune n'est repeinte à l'étage 0), `rampes`
+ * les tuiles de jupe par lesquelles on y monte — vide si la butte n'en offre aucune.
+ *
+ * Donnée de GÉNÉRATION : elle est consommée sur place pour bâtir `map.etages`.
+ */
+interface Plateau {
+  tuiles: number[]
+  rampes: number[]
+  /**
+   * LA CAVE — l'empreinte de l'étage **−1**, sous le chapeau, et sa **gueule** (spec `etages.md`,
+   * branche B1). Vides quand la butte n'est pas creuse : une butte sur `CREUX.CAVE_PART`.
+   * La gueule appartient aux DEUX étages, exactement comme une rampe — c'est ce qui fait d'un
+   * connecteur un connecteur.
+   */
+  cave: number[]
+  gueule: number[]
+}
+
+/**
+ * LES ASSISES DES TERRASSES (spec `terrasses.md` §3.3) — les empreintes qui prennent UN palier.
+ *
+ * Tout lieu inscrit dans `map.zones` avec un `kind` (les set-pieces, les lieux de `placePois`, la
+ * Louvière, les charniers, les stèles) : son rectangle. Toute mesa : le chapeau, sa jupe (l'anneau
+ * des 8 voisines — c'est là que la rampe s'appuie et que la paroi se dessine), ses rampes et sa
+ * gueule. « Le Gué » n'a pas de `kind` et n'en a pas besoin : la rivière est déjà une nappe.
+ */
+function assisesDesTerrasses(map: WorldMap, plateaux: readonly Plateau[], width: number, height: number): number[][] {
+  const assises: number[][] = []
+  for (const z of map.zones) {
+    if (z.kind === undefined) continue
+    const l: number[] = []
+    for (let y = Math.max(0, z.y); y < Math.min(height, z.y + z.h); y++) {
+      for (let x = Math.max(0, z.x); x < Math.min(width, z.x + z.w); x++) l.push(y * width + x)
+    }
+    if (l.length > 0) assises.push(l)
+  }
+  for (const p of plateaux) {
+    const vu = new Set<number>()
+    for (const i of p.tuiles) {
+      const ix = i % width
+      const iy = (i - ix) / width
+      for (let dy = -1; dy <= 1; dy++) {
+        for (let dx = -1; dx <= 1; dx++) {
+          const x = ix + dx, y = iy + dy
+          if (x >= 0 && y >= 0 && x < width && y < height) vu.add(y * width + x)
+        }
+      }
+    }
+    for (const i of p.rampes) vu.add(i)
+    for (const i of p.gueule) vu.add(i)
+    for (const i of p.cave) vu.add(i)
+    assises.push([...vu])
+  }
+  return assises
+}
+
+/** L'aire de la boîte englobante d'un paquet de tuiles — de quoi juger si une tache est compacte. */
+function aireDeLaBoite(tuiles: readonly number[], width: number): number {
+  let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity
+  for (const i of tuiles) {
+    const ix = i % width
+    const iy = (i - ix) / width
+    if (ix < x0) x0 = ix
+    if (iy < y0) y0 = iy
+    if (ix + 1 > x1) x1 = ix + 1
+    if (iy + 1 > y1) y1 = iy + 1
+  }
+  return Math.max(1, (x1 - x0) * (y1 - y0))
+}
+
 /** Le rayon qu'aurait une butte parfaitement ronde, en tuiles — l'unité dans laquelle se compte
  *  l'éloignement au sommet (`AFFL_COMPACITE`). √(320/π) ≈ 10,1 ; écrit en dur parce qu'il DÉRIVE
  *  de `AFFL_TUILES` et que `/sim` n'a pas droit à `Math.PI ** 0.5` — la constante suffit, et le
  *  test de forme (R6sexies ①) verrait tout de suite un réglage qui ne tient plus. */
 const RAYON_DE_BUTTE = 10.1
+
+/**
+ * ═══ CREUSER UNE CAVE SOUS UNE MESA (spec `etages.md`, branche B1 — Alexis, 2026-09-02) ═══
+ *
+ * *« On est dehors, une gueule s'ouvre dans la paroi : que voit-on de l'étage d'en face ? »* —
+ * §10 décrivait déjà l'objet avant qu'il existe. Il se creuse dans ce qu'on a : une butte porte un
+ * chapeau de roche, une paroi tournée au sud (« le nord est le haut ») et une jupe où l'on marche.
+ * On lui ajoute **une gueule dans cette paroi** et **une salle à l'étage −1 sous son chapeau**.
+ *
+ * ⚠ **LA GUEULE EST UNE TUILE DE JUPE, comme la rampe — et pour la même raison** : le connecteur
+ * doit être marchable à l'étage 0, sans quoi on ne pourrait pas s'y rendre. **Aucune tuile de
+ * l'étage 0 n'est repeinte** (E-R1) : la mesa vue d'en bas est exactement celle d'hier.
+ *
+ * ⚠ **ET ELLE FAIT DEUX TUILES DE LARGE** (Alexis, 2026-09-02 : « la gueule de 2, ça me va »).
+ * Une fente d'une tuile se lisait comme une fissure, pas comme une entrée — et un corps qui la
+ * franchit (hitbox à cheval sur deux tuiles) en heurtait les joues. La gueule est donc une PAIRE
+ * de tuiles de jupe voisines, `[ouest, est]`, sur la même rangée, toutes deux sous le chapeau :
+ * deux connecteurs, une seule porte. Le client la dessine en une image de 32 px depuis l'ouest.
+ *
+ * ⚠ **ET JAMAIS SUR UNE COLONNE DE RAMPE.** `connecteurAt` rend le PREMIER connecteur d'une tuile :
+ * deux portes sur la même tuile, c'est l'une des deux qui devient muette, en silence. On écarte
+ * donc les colonnes de la rampe — et ça se dit bien : *on monte d'un côté, on entre de l'autre*.
+ *
+ * ⚠ **AUCUN TIRAGE** (E-R15) : le choix de la butte et la forme de la salle sortent d'un hash
+ * positionnel salé `'CAVE'`. Le flux du PRNG de la partie n'est pas touché d'un bit.
+ *
+ * LA SALLE se creuse par croissance depuis la tuile de chapeau qui suit la gueule, en restant
+ * SOUS le chapeau — un dessous de butte, pas un tunnel qui sort par l'autre versant. La croissance
+ * est un parcours en largeur ordonné par index de tuile : deux moteurs JS rendent la même salle,
+ * au bit près (invariant §2).
+ */
+const SEL_CAVE = 0x43415645 // 'CAVE'
+
+function creuserLaCave(
+  terrain: number[],
+  chapeau: readonly number[],
+  dansChapeau: ReadonlySet<number>,
+  rampes: readonly number[],
+  width: number,
+  height: number,
+): { cave: number[]; gueule: number[] } {
+  const vide = { cave: [], gueule: [] }
+  if (chapeau.length === 0) return vide
+  const colonnesDeRampe = new Set(rampes.map((j) => j % width))
+
+  /** Une tuile de jupe au SUD d'une roche du chapeau : c'est là qu'une gueule peut s'ouvrir. */
+  const seuilPossible = (vx: number, vy: number): boolean => {
+    if (vx < 0 || vy < 1 || vx >= width || vy >= height) return false
+    if (colonnesDeRampe.has(vx)) return false
+    const j = vy * width + vx
+    if (dansChapeau.has(j) || MARCHABLE[terrain[j]!] !== 1) return false
+    return dansChapeau.has((vy - 1) * width + vx)
+  }
+  // La PAIRE la plus au SUD, puis la plus à l'EST — le miroir exact du départage de la rampe
+  // (sud puis ouest). Les deux portes d'une même butte s'écartent ainsi d'elles-mêmes. `gx` est
+  // la tuile EST de la paire ; sa jumelle est `gx − 1`, et les deux doivent pouvoir s'ouvrir.
+  let gx = -1
+  let gy = -1
+  for (const i of chapeau) {
+    const ix = i % width
+    const iy = (i - ix) / width
+    const vy = iy + 1
+    if (!seuilPossible(ix, vy) || !seuilPossible(ix - 1, vy)) continue
+    if (vy > gy || (vy === gy && ix > gx)) { gx = ix; gy = vy }
+  }
+  if (gy < 0) return vide
+  // UNE BUTTE SUR QUATRE : le hash de la porte décide, donc la même butte est creuse à chaque
+  // génération de la même graine, et aucune autre passe n'en est décalée.
+  if (hash2(gx, gy, SEL_CAVE) >= CREUX.CAVE_PART) return vide
+
+  // ── LA SALLE : croissance sous le chapeau, depuis les deux tuiles de roche qui coiffent la
+  //    gueule — l'ouest d'abord (le plus petit index), l'est ensuite : un ordre total. ──
+  const departO = (gy - 1) * width + gx - 1
+  const departE = (gy - 1) * width + gx
+  const dedans = new Set<number>([departO, departE])
+  const file: number[] = [departO, departE]
+  const cave: number[] = [departO, departE]
+  while (file.length > 0 && cave.length < CREUX.CAVE_TUILES) {
+    // Le front se prend par la PLUS PETITE tuile : un ordre total, donc une salle reproductible.
+    let meilleur = 0
+    for (let k = 1; k < file.length; k++) if (file[k]! < file[meilleur]!) meilleur = k
+    const j = file[meilleur]!
+    file.splice(meilleur, 1)
+    const jx = j % width
+    const jy = (j - jx) / width
+    for (const [vx, vy] of [[jx, jy - 1], [jx + 1, jy], [jx, jy + 1], [jx - 1, jy]] as const) {
+      if (vx < 0 || vy < 0 || vx >= width || vy >= height) continue
+      const k = vy * width + vx
+      if (dedans.has(k) || !dansChapeau.has(k)) continue
+      dedans.add(k)
+      file.push(k)
+      cave.push(k)
+      if (cave.length >= CREUX.CAVE_TUILES) break
+    }
+  }
+  // ⚠ UNE SALLE TROP PETITE N'EST PAS UNE CAVE, c'est un porche : le jour la traverserait de part
+  // en part (`TEMPERATURE.CIEL_PENETRATION`) et il n'y aurait rien à éclairer. On n'en émet pas.
+  if (cave.length < CREUX.CAVE_TUILES) return vide
+  // La gueule appartient aux deux étages — c'est ce qui fait d'un connecteur un connecteur.
+  // Les deux tuiles de la paire, ouest puis est.
+  const gueule = [gy * width + gx - 1, gy * width + gx]
+  cave.push(...gueule)
+  return { cave, gueule }
+}
 
 function poserLesAffleurements(
   terrain: number[],
@@ -1194,8 +1647,8 @@ function poserLesAffleurements(
   width: number,
   height: number,
   creux: Creux | null,
-): Affleurement[] {
-  if (g.monde !== 'racine' || !creux) return []
+): { affleurements: Affleurement[]; plateaux: Plateau[] } {
+  if (g.monde !== 'racine' || !creux) return { affleurements: [], plateaux: [] }
   const M = RELIEF.MOTIF
   const n = creux.cols * creux.rows
 
@@ -1235,7 +1688,36 @@ function poserLesAffleurements(
   const pris = new Uint8Array(n)
   const sommets: { kx: number; ky: number }[] = []
   const affs: Affleurement[] = []
-  for (const ressource of CREUX.AFFL_IDENTITES) {
+  const plateaux: Plateau[] = []
+  /** Les CELLULES que ces tuiles recouvrent passent « prises » — l'écartement des buttes et
+   *  l'élection se raisonnent toujours à la maille du motif. */
+  const marquerPris = (tuiles: readonly number[]): void => {
+    for (const i of tuiles) {
+      const kx = Math.floor((i % width) / M) - creux.mx0
+      const ky = Math.floor(((i - (i % width)) / width) / M) - creux.my0
+      if (kx < 0 || ky < 0 || kx >= creux.cols || ky >= creux.rows) continue
+      pris[ky * creux.cols + kx] = 1
+    }
+  }
+  // Les buttes à minerai d'abord (leur ordre est un contrat), les NUES ensuite — voir
+  // `CREUX.AFFL_NUES` : même objet, sans registre, donc sans gisement.
+  const identites: readonly ('fer' | 'charbon' | null)[] = [
+    ...CREUX.AFFL_IDENTITES,
+    ...Array.from({ length: CREUX.AFFL_NUES }, () => null),
+  ]
+  for (const ressource of identites) {
+    /**
+     * ⚑ 2026-08-30 — **LA TAILLE NE CÈDE PAS NON PLUS.** L'ordre des crans ci-dessous disait
+     * « la sécheresse cède avant la roche, la roche cède avant le compte » ; il manquait un
+     * cran, et l'endoréisme du socle l'a révélé : un sommet CERNÉ PAR L'EAU ne peut pas faire
+     * pousser son chapeau — la croissance s'arrête faute de frontière, et la butte sort à 92
+     * tuiles au lieu de 320 (MESURÉ, graine 2026, butte de fer @932,175 : une mine de fer
+     * réduite à un confetti, sans une seule pierre de taille). On ré-élit donc jusqu'à ce
+     * qu'un sommet porte une butte ENTIÈRE, en brûlant à chaque échec le bassin essayé ; à
+     * court de tentatives, on garde la meilleure — jamais pire qu'avant.
+     */
+    let meilleur: { cap: number[]; sommet: number; score: number } | null = null
+    for (let essai = 0; essai < CREUX.AFFL_ESSAIS; essai++) {
     // ── LE SOMMET : le plus haut du pays parmi les candidates écartées des buttes déjà prises.
     //    Deux tours : la bande sèche d'abord ; si elle est vide, le plancher R51 relâche `sec`.
     // ═══ LA ROCHE DONNE LE MINERAI (spec `roche-mere.md` R12-R13) ═══
@@ -1258,14 +1740,17 @@ function poserLesAffleurements(
     // avant le compte, et le compte ne cède jamais.** R51 disait déjà la moitié de cette phrase.
     // `familleDeCellule` : −1 calcaire · 0 granite · +1 argile.
     const famVoulue = ressource === 'fer' ? 0 : 1
-    const CRANS: { roche: 'voulue' | 'hors_calcaire' | 'toute'; sec: boolean }[] = [
-      { roche: 'voulue', sec: true },
-      { roche: 'voulue', sec: false },
-      { roche: 'hors_calcaire', sec: true },
-      { roche: 'hors_calcaire', sec: false },
-      { roche: 'toute', sec: true },
-      { roche: 'toute', sec: false },
-    ]
+    // Une butte NUE ne cherche aucune province : elle n'a rien à donner (voir `AFFL_NUES`).
+    const CRANS: { roche: 'voulue' | 'hors_calcaire' | 'toute'; sec: boolean }[] = ressource === null
+      ? [{ roche: 'toute', sec: true }, { roche: 'toute', sec: false }]
+      : [
+        { roche: 'voulue', sec: true },
+        { roche: 'voulue', sec: false },
+        { roche: 'hors_calcaire', sec: true },
+        { roche: 'hors_calcaire', sec: false },
+        { roche: 'toute', sec: true },
+        { roche: 'toute', sec: false },
+      ]
     let sommet = -1
     for (const cran of CRANS) {
       const exigeSec = cran.sec
@@ -1282,7 +1767,9 @@ function poserLesAffleurements(
         for (const s of sommets) {
           const dx = kx - s.kx
           const dy = ky - s.ky
-          if (dx * dx + dy * dy < CREUX.AFFL_ECART * CREUX.AFFL_ECART) { loin = false; break }
+          // L'écartement se lit sur la butte QU'ON ÉLIT : une nue se serre, une mine non.
+          const ecart = ressource === null ? CREUX.AFFL_ECART_NUES : CREUX.AFFL_ECART
+          if (dx * dx + dy * dy < ecart * ecart) { loin = false; break }
         }
         if (!loin) continue
         const a = creux.altLarge[k]!
@@ -1290,7 +1777,7 @@ function poserLesAffleurements(
       }
       if (sommet >= 0) break
     }
-    if (sommet < 0) continue // plus une cellule libre dans tout le pays — la garde A28 le verra
+    if (sommet < 0) break // plus une cellule libre dans tout le pays — la garde A28 le verra
 
     // ══ LE CHAPEAU SE FAIT À LA TUILE, PLUS À LA CELLULE (R6bis étendu aux buttes, 2026-08-27)
     //
@@ -1363,8 +1850,24 @@ function poserLesAffleurements(
         enFront.add(v)
       }
     }
-    front = []
-    if (capT.length === 0) continue // le sommet lui-même n'était pas peignable — A28 le verra
+      front = []
+      if (capT.length === 0) break // le sommet lui-même n'était pas peignable — A28 le verra
+      // DEUX CONDITIONS, et la seconde est de FORME : entière (elle a ses 320 tuiles) et
+      // COMPACTE (elle remplit sa boîte). Contre une rive, la croissance contourne l'eau et
+      // rend un croissant : 320 tuiles dans une boîte de 47×35, soit 19 % — « un genou de roche
+      // qu'on remarque dans le pré » ne se remarque plus. Le score départage les échecs :
+      // l'entière d'abord, la plus compacte ensuite.
+      const remplissage = capT.length / aireDeLaBoite(capT, width)
+      const entiere = capT.length >= CREUX.AFFL_TUILES
+      const score = (entiere ? 1 : 0) + remplissage
+      if (!meilleur || score > meilleur.score) meilleur = { cap: capT, sommet, score }
+      if (entiere && remplissage >= CREUX.AFFL_REMPLISSAGE) break
+      marquerPris(capT) // cernée ou étirée : ce bassin ne fait pas une butte, on cherche ailleurs
+    }
+    if (!meilleur) continue
+    const { cap: capFinal, sommet: sommetFinal } = meilleur
+    const skxF = sommetFinal % creux.cols
+    const skyF = (sommetFinal - skxF) / creux.cols
 
     // ── LA PEINTURE, et le REGISTRE : la boîte englobante des TUILES peintes (plus des motifs).
     //    A29 exige que chaque nœud de minerai tombe dans un rect registré ; une tuile dentelée
@@ -1373,8 +1876,25 @@ function poserLesAffleurements(
     let y0 = Infinity
     let x1 = -Infinity
     let y1 = -Infinity
-    for (const i of capT) {
-      terrain[i] = TERRAIN_SCREE
+    /** LE CHAPEAU, tuile par tuile — l'empreinte de l'étage +1 (spec `etages.md` §9). */
+    const chapeau: number[] = []
+    for (let k = 0; k < capFinal.length; k++) {
+      const i = capFinal[k]!
+      // LE CHAPEAU D'ABORD : les tuiles les plus hautes de la croissance sont de la roche, le
+      // reste est la jupe de pierrier (voir `CREUX.AFFL_SOMMET_TUILES`).
+      //
+      // ⚠ **UNE MINE RESTE PLATE, UNE BUTTE NUE SE DRESSE.** Coiffer AUSSI les affleurements à
+      // minerai a fait rougir trois contrats d'un coup, et ils avaient raison : la butte est
+      // registrée comme une composante CONNEXE DE PIERRIER que le client propage depuis son
+      // sommet (le sommet devenait de la roche : il n'y avait plus rien à propager), la pierre
+      // de taille s'y range PAR HAUTEUR depuis l'échine (l'échine devenait inatteignable — une
+      // butte sortait sans une seule pierre), et le remplissage de sa boîte tombait sous son
+      // plancher. On ne coiffe donc que les buttes NUES : elles n'ont ni registre, ni minerai,
+      // ni art client. Et la règle se dit bien — *on marche sur une mine, on contourne une
+      // mesa* : l'une, on y vient pour creuser ; l'autre n'est qu'un accident de terrain.
+      const coiffee = ressource === null && k < CREUX.AFFL_SOMMET_TUILES
+      terrain[i] = coiffee ? TERRAIN_ROCK : TERRAIN_SCREE
+      if (coiffee) chapeau.push(i)
       const ix = i % width
       const iy = (i - ix) / width
       if (ix < x0) x0 = ix
@@ -1392,10 +1912,128 @@ function poserLesAffleurements(
         pris[ky * creux.cols + kx] = 1
       }
     }
-    sommets.push({ kx: skx0, ky: sky0 })
-    affs.push({ rect: { x: x0, y: y0, w: x1 - x0, h: y1 - y0 }, ressource })
+    // ══ LA RAMPE — L'INTENTION, POSÉE (spec `etages.md` E-R7/E-R9) ═══════════════════════
+    //
+    // Le chapeau devient un ÉTAGE +1 marchable ; encore faut-il y monter. La rampe est une
+    // tuile de la JUPE de pierrier — déjà marchable à l'étage 0, donc **aucune tuile de
+    // l'étage 0 n'est repeinte** : la garde A26, la connexité et l'image de `vignette.ts`
+    // sortent d'ici rigoureusement inchangées, ce qui est très exactement ce qu'exige E-A6.
+    //
+    // ON L'ÉLIT AU SUD, et c'est une phrase de mise en scène avant d'être une règle : « le
+    // nord est le haut » (2026-08-31), la projection n'admet qu'une paroi tournée vers le bas
+    // de l'écran — une rampe au nord serait une rampe DERRIÈRE la mesa, qu'on ne verrait
+    // jamais monter. Départage : la plus au sud, puis la plus à l'ouest. **Aucun tirage** — le
+    // flux RNG n'est pas touché d'un bit (E-R15, et le piège documenté du dépôt : changer un
+    // décompte d'entités décale le flux et casse des tests sans rapport).
+    //
+    // E-R9 — LA CONNEXITÉ SE GARANTIT : sans candidate, il n'y a pas de rampe, donc **pas
+    // d'étage**. On n'émet jamais une île (un plateau où l'on ne monte pas est une promesse
+    // qu'on ne tient pas), et A-R9 se prouve alors par construction.
+    if (chapeau.length > 0) {
+      const dansChapeau = new Set(chapeau)
+      /** Une tuile de jupe qui touche le chapeau : marchable au sol, et voisine d'une roche du cap. */
+      const candidate = (vx: number, vy: number): boolean => {
+        if (vx < 0 || vy < 0 || vx >= width || vy >= height) return false
+        const j = vy * width + vx
+        if (dansChapeau.has(j) || MARCHABLE[terrain[j]!] !== 1) return false
+        return [[vx, vy - 1], [vx + 1, vy], [vx, vy + 1], [vx - 1, vy]].some(([wx, wy]) =>
+          wx! >= 0 && wy! >= 0 && wx! < width && wy! < height && dansChapeau.has(wy! * width + wx!))
+      }
+      /**
+       * ⚠ **LES TROIS COLONNES DOIVENT MONTER, PAS SEULEMENT CELLE DU MILIEU** (Alexis,
+       * 2026-09-01 : *« la colonne 577 de cette rampe semble cassée, le comportement est
+       * bizarre »*).
+       *
+       * L'élection ne regardait QUE la tuile élue : les flancs étaient pris pour leur contiguïté,
+       * sans qu'on demande à leur nord d'être du chapeau. Sur la mesa (574..584, 365..377) de la
+       * graine 2026, la colonne 577 avait donc du PIERRIER au nord — le dessin y peignait la
+       * pente sur toute la largeur de l'entaille, et l'on gravissait une rampe pour ressortir au
+       * niveau du sol, sans avoir monté. Une colonne qui ne mène nulle part n'est pas une porte,
+       * c'est un trompe-l'œil.
+       *
+       * On préfère donc l'élue dont TOUTES les colonnes de `RAMPE_LARGEUR` touchent le chapeau
+       * par le nord. **Une préférence, pas une exigence** : le bord sud d'un chapeau est dentelé,
+       * et sur une butte étroite un tel alignement peut ne pas exister — on retombe alors sur
+       * l'ancienne règle plutôt que de laisser la mesa sans porte (E-R9 : jamais d'île). Le
+       * départage reste le même à qualité égale : la plus au sud, puis la plus à l'ouest, et
+       * toujours **aucun tirage**.
+       */
+      const demiLargeur = CREUX.RAMPE_LARGEUR >> 1
+      const monteVraiment = (vx: number, vy: number): boolean =>
+        vy > 0 && dansChapeau.has((vy - 1) * width + vx)
+      const largeurQuiMonte = (vx: number, vy: number): boolean => {
+        for (let d = -demiLargeur; d <= demiLargeur; d++) {
+          const wx = vx + d
+          if (wx < 0 || wx >= width) return false
+          // Un flanc doit être praticable ET mener au chapeau : c'est la même exigence que pour
+          // l'élue, appliquée à toute la porte.
+          const j = vy * width + wx
+          if (dansChapeau.has(j) || MARCHABLE[terrain[j]!] !== 1) return false
+          if (!monteVraiment(wx, vy)) return false
+        }
+        return true
+      }
+      let rx = -1
+      let ry = -1
+      let pleine = false
+      for (const i of chapeau) {
+        const ix = i % width
+        const iy = (i - ix) / width
+        for (const [vx, vy] of [[ix, iy - 1], [ix + 1, iy], [ix, iy + 1], [ix - 1, iy]] as const) {
+          if (!candidate(vx, vy)) continue
+          const large = largeurQuiMonte(vx, vy)
+          // Une porte ENTIÈRE bat toujours une porte partielle ; à qualité égale, le sud puis
+          // l'ouest, exactement comme avant.
+          if (large !== pleine) { if (!large) continue; rx = vx; ry = vy; pleine = true; continue }
+          if (vy > ry || (vy === ry && vx < rx)) { rx = vx; ry = vy }
+        }
+      }
+      // ⚠ **ELLE FAIT `RAMPE_LARGEUR` TUILES, ET C'EST UNE CORRECTION MESURÉE.** À une tuile,
+      // le semis des nœuds (`placeZoneNodes`, qui tourne APRÈS le worldgen et ne peut donc rien
+      // savoir de nos rampes) posait un rocher, un arbre ou une carrière **SUR la porte** —
+      // MESURÉ : 0 / 1 / 3 / 1 rampes murées sur les graines 2026 / 7 / 4242 / 99, et un nœud
+      // bloquant scelle un passage d'une tuile pour un corps de 0,75. E-R9 (« tout étage est
+      // atteignable ») tombait alors en silence, sur une mesa sur cinquante. On l'élargit au
+      // lieu de retirer des tuiles au semis : retirer changerait le décompte des nœuds, donc le
+      // FLUX RNG, donc des tests sans rapport — le piège documenté du dépôt. Et une rampe large
+      // se dit mieux qu'un trou de souris : on monte sur une mesa, on ne s'y faufile pas.
+      //
+      // Les FLANCS n'ont pas à toucher le chapeau : ils sont CONTIGUS à la tuile élue, sur la
+      // même ligne, et ils entrent dans la même grille d'étage — la marche à +1 les joint donc
+      // au plateau par la tuile du milieu. (Exiger d'eux qu'ils touchent la roche rendait la
+      // rampe large de 1,7 tuile en moyenne : le bord sud d'un chapeau est dentelé, sa tuile la
+      // plus au sud est presque toujours un éperon isolé.) La propriété qui compte — *toute
+      // tuile d'étage est jointe à un connecteur* — reste affirmée en bloc par le parcours de
+      // E-A5, et pas par une condition recopiée ici.
+      const rampes: number[] = []
+      if (ry >= 0) {
+        for (let dx = -demiLargeur; dx <= demiLargeur; dx++) {
+          const vx = rx + dx
+          if (vx < 0 || vx >= width) continue
+          const j = ry * width + vx
+          if (dansChapeau.has(j) || MARCHABLE[terrain[j]!] !== 1) continue
+          // ⚠ **ET UNE COLONNE QUI NE MONTE PAS N'EST PAS UNE COLONNE DE RAMPE** (Alexis,
+          // 2026-09-01). L'élection PRÉFÈRE désormais une porte entière, mais sur une butte
+          // étroite le bord sud du chapeau peut n'offrir aucun alignement de trois — le flanc
+          // restant serait alors peint comme une rampe, ralenti comme une rampe et fermé comme
+          // une rampe, pour ne mener qu'au pierrier. MESURÉ avant les deux correctifs : **0 porte
+          // entière sur 50** (graine 2026), c'est-à-dire que le cas était la RÈGLE ; après
+          // l'élection seule, 39/50 ; en retirant les flancs morts, la porte peinte, la porte
+          // marchée et la porte qui monte sont enfin le même objet.
+          if (!monteVraiment(vx, ry)) continue
+          rampes.push(j)
+        }
+      }
+      if (rampes.length > 0) {
+        const { cave, gueule } = creuserLaCave(terrain, chapeau, dansChapeau, rampes, width, height)
+        plateaux.push({ tuiles: chapeau, rampes, cave, gueule })
+      }
+    }
+    sommets.push({ kx: skxF, ky: skyF })
+    // Une butte NUE n'entre pas au registre : pas de minerai, pas de blocs, pas de mouchetures.
+    if (ressource !== null) affs.push({ rect: { x: x0, y: y0, w: x1 - x0, h: y1 - y0 }, ressource })
   }
-  return affs
+  return { affleurements: affs, plateaux }
 }
 
 /**
@@ -1832,7 +2470,13 @@ function percerSeuil(
       }
       const i = y * width + x
       // ON DÉGAGE TOUT CE QUI BLOQUE — le vide comme le rocher. **Une porte est une porte.**
-      if (TERRAINS[terrain[i]!]?.walkable !== true) {
+      //
+      // ⚠ ET TOUTE EAU, MÊME MARCHABLE (2026-08-30). Le haut-fond est marchable : le couloir
+      // l'acceptait donc, et la porte gardait les pieds dans l'eau. Ça ne s'était jamais vu tant
+      // que l'eau faisait 3 % du pays ; depuis que l'hydrologie est dérivée elle en fait 14, et
+      // la garde A16 l'a trouvé (seed 7 : 15 tuiles de couloir mouillé). *Un seuil ne nourrit
+      // rien, pas même à boire* — worldgen R10.3, et ça vaut pour le gué comme pour le lac.
+      if (TERRAINS[terrain[i]!]?.walkable !== true || isWater(terrain[i]!)) {
         terrain[i] = solMarchableDe(g, vers, x, y, socle, regles)
         zone[i] = vers
       }
@@ -1944,6 +2588,69 @@ function murerLesAretes(
 }
 
 /**
+ * ═══ ÉPAISSIR LA FALAISE — la marche, et pourquoi elle ne pousse QUE vers le sud ═══
+ *
+ * *Décision d'Alexis, 2026-08-31 (proposition « P2 · la marche »).* Une falaise d'une tuile ne peut
+ * pas se dresser : le rendu en tire 16 px, et une paroi ne se lit qu'à partir de 24. On donne donc
+ * deux rangées de plus à tout segment de roche **tourné vers le sud** — c'est-à-dire dont la tuile
+ * du dessous se marche. Le dessus garde son liseré, les deux rangées neuves deviennent la paroi.
+ *
+ * ⚠ **LE SEGMENT TOURNÉ AU SUD, ET LUI SEUL.** La règle est locale et ne connaît ni zone ni palier :
+ * elle regarde sous elle. Un mur qui court est-ouest s'épaissit donc sur toute sa longueur ; un mur
+ * qui court nord-sud ne s'allonge que par son extrémité sud, là où il fait vraiment face au joueur.
+ * Le pourquoi de cette convention (« le nord est le haut ») et ses chiffres sont dans `RELIEF`.
+ *
+ * ⚠ **JAMAIS UNE `rampe`.** Le couloir d'un seuil est le seul passage entre deux pays : le murer
+ * refermerait le monde. La boucle s'arrête au premier obstacle — une tuile de couloir, de l'eau, de
+ * la roche déjà là : on n'enjambe rien, sinon la paroi flotterait au-dessus d'un trou.
+ *
+ * ⚠ **ELLE VISE UNE ÉPAISSEUR, ELLE N'AJOUTE PAS DES RANGÉES — donc elle est IDEMPOTENTE.** La
+ * première écriture ajoutait deux rangées à tout bord sud ; comme la passe tourne DEUX FOIS (le
+ * couple murer/connexité), les murs sortaient à cinq tuiles et la carte perdait 40 591 tuiles
+ * marchables au lieu des 16 916 annoncées (MESURÉ, graine 1000). On compte donc la roche déjà
+ * présente au nord et on complète jusqu'à `PAROI_RANGEES + 1` : un mur d'une tuile en gagne deux,
+ * une masse déjà épaisse (les marges de la vallée) n'en gagne aucune — elle a déjà de quoi se
+ * dresser.
+ *
+ * ⚠ **AVANT `garantirLaConnexite`, ET C'EST LE POINT.** Épaissir peut couper une poche ; la passe
+ * qui suit la rouvre. C'est pour ça que cette fonction vit DANS la boucle des deux tours, jamais
+ * après. MESURÉ (10 graines, vallée) : la plus grande composante marchable perd exactement les
+ * tuiles murées, et pas une de plus.
+ *
+ * Pur, déterministe, sans tirage : un balayage de grille et des comparaisons d'entiers. Le flux du
+ * PRNG n'est pas touché ici — il l'est en aval, par le terrain que les passes suivantes lisent.
+ */
+function epaissirLesFalaises(
+  terrain: number[],
+  rampe: Uint8Array,
+  width: number,
+  height: number,
+): void {
+  const cible = RELIEF.PAROI_RANGEES + 1 // le dessus, plus ses rangées de paroi
+  const aMurer: number[] = []
+  for (let y = 0; y < height - 1; y++) {
+    for (let x = 0; x < width; x++) {
+      const i = y * width + x
+      if (terrain[i] !== TERRAIN_CLIFF) continue
+      const sous = (y + 1) * width + x
+      if (rampe[sous] === 1 || TERRAINS[terrain[sous]!]?.walkable !== true) continue // pas un bord SUD
+      // Combien de roche cette masse a-t-elle déjà, en comptant vers le nord depuis ici ?
+      let ep = 1
+      while (ep < cible && y - ep >= 0 && terrain[(y - ep) * width + x] === TERRAIN_CLIFF) ep += 1
+      for (let k = 1; k <= cible - ep; k++) {
+        const ny = y + k
+        if (ny >= height) break
+        const j = ny * width + x
+        if (rampe[j] === 1) break
+        if (TERRAINS[terrain[j]!]?.walkable !== true) break
+        aMurer.push(j)
+      }
+    }
+  }
+  for (const i of aMurer) terrain[i] = TERRAIN_CLIFF
+}
+
+/**
  * LA CONNEXITÉ, GARANTIE — et non plus espérée.
  *
  * Dernière passe. On inonde depuis la racine ; toute POCHE marchable de taille conséquente qui
@@ -2043,6 +2750,28 @@ function garantirLaConnexite(
       }
       if (poche.length < POCHE_MIN) continue // du décor, pas un défaut
 
+      // ═══ UNE ÎLE N'EST PAS UNE POCHE (décision d'Alexis, 2026-08-30) ═══
+      //
+      // La distinction est dans le POURTOUR, et elle dit tout : une poche ceinte de ROCHE est un
+      // défaut de génération — personne n'a voulu ce cul-de-sac, on perce. Une poche ceinte
+      // d'EAU est une ÎLE : quelqu'un l'a voulue, elle se mérite. On n'y creuse donc pas de
+      // chemin — elle s'ouvrira au GRAND FROID, quand la glace rendra le profond marchable
+      // (`collision.ts` : le profond bloque *sauf s'il est gelé*).
+      // …et bornée : au-delà de `ILE_MAX`, ce n'est plus une île mais un pays coupé en deux —
+      // là, le percement reprend ses droits. Même borne que `marquerLesIles`, une seule idée.
+      let ceinteDEau = poche.length <= ILE_MAX
+      for (const i of poche) {
+        if (!ceinteDEau) break
+        const x = i % width
+        const y = (i - x) / width
+        for (const j of [x + 1 < width ? i + 1 : -1, x > 0 ? i - 1 : -1, y + 1 < height ? i + width : -1, y > 0 ? i - width : -1]) {
+          if (j < 0 || walk(j)) continue
+          if (!isWater(terrain[j]!)) { ceinteDEau = false; break }
+        }
+        if (!ceinteDEau) break
+      }
+      if (ceinteDEau) continue
+
       if (percerVersLeMonde(g, poche, monde, terrain, zone, rampe, width, height, socle, regles)) ouvert = true
     }
 
@@ -2121,7 +2850,11 @@ function percerVersLeMonde(
         }
         const i = y * width + x
         if (zone[i] !== zid) continue // on ne déborde jamais chez le voisin
-        if (TERRAINS[terrain[i]!]?.walkable !== true) terrain[i] = solMarchableDe(g, zid, x, y, socle, regles)
+        // Même règle que `percerSeuil` : un couloir n'a pas les pieds dans l'eau, fût-elle du
+        // haut-fond (marchable). Il est marqué `rampe`, donc STÉRILE — et A16 le mesure.
+        if (TERRAINS[terrain[i]!]?.walkable !== true || isWater(terrain[i]!)) {
+          terrain[i] = solMarchableDe(g, zid, x, y, socle, regles)
+        }
         rampe[i] = 1
       }
     }

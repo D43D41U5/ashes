@@ -75,7 +75,7 @@ import {
   type SimState,
   type WorldMap,
 } from '@ashes/sim'
-import { GROUND_MAP_DEPTH, TILE_PX } from '../../render/framing'
+import { GROUND_MAP_DEPTH, LIFT_TUILES, strateDEtage, TILE_PX } from '../../render/framing'
 import { GRAIN_CELLS, grainFacteur } from '../../render/grain-sol'
 import {
   TUILE_ASSEC, TUILE_CRUE, TUILE_EAU_LIBRE, TUILE_GLACE_GUE, TUILE_GLACE_LAC, TUILE_GUE_FERME,
@@ -85,6 +85,7 @@ import {
 import { PAVE, PAVE_PX, estStructurel } from '../../render/paves'
 import { ambianceDe } from '../../render/zone-ambiance'
 import { poserChunk } from './pave-layer'
+import type { Relief } from '../../render/relief'
 
 /** Le sol du manteau : sous le surplomb de la berge (+0,29), au-dessus des reflets (+0,28). */
 export const GEL_SOL_DEPTH = GROUND_MAP_DEPTH + 0.285
@@ -111,9 +112,17 @@ const MAX_VIVANTS = 96
 /** Un chunk de 16 tuiles, marge d'une tuile comprise : 18 × 18 états. */
 const L = PAVE.CHUNK + 2
 
-interface ChunkGel {
+/** Le manteau d'UN PALIER du chunk — même découpe que les pavés (`pave-layer.ts`, `Part`) : chaque
+ *  palier se cuit à part, se pose à sa hauteur et trie dans sa strate. */
+interface PartGel {
+  palier: number
   sol: { image: Phaser.GameObjects.Image; cle: string } | null
   surplomb: { image: Phaser.GameObjects.Image; cle: string } | null
+}
+
+interface ChunkGel {
+  /** Une part par palier présent dans le chunk (vide : rien à peindre). */
+  parts: PartGel[]
   /** La signature : l'état de chaque tuile locale (marge comprise). */
   etats: Int8Array
   /** Le gel de la flore, tuile par tuile (marge comprise) : 1 gelé, 0 non. */
@@ -145,6 +154,26 @@ export class GelLayer {
    * que la couche a VRAIMENT peint : une capture qui ne montre rien et une couche qui n'a
    * rien à montrer sont deux pannes différentes, et il faut pouvoir les séparer.
    */
+  /** De combien, au plus, une tuile se dessine plus haut que sa rangée (px) — la marge SUD des
+   *  bornes de la vue (voir `pave-layer.ts`). */
+  private readonly liftMaxPx: number
+  /** LA NUIT AUX PALIERS HAUTS — la même teinte plate que les pavés (`PaveLayer.teinte`) : le
+   *  voile ne monte pas jusqu'aux strates des terrasses, le manteau y porte sa nuit lui-même. */
+  private _teinte = 0xffffff
+  get teinte(): number {
+    return this._teinte
+  }
+  set teinte(v: number) {
+    if (v === this._teinte) return
+    this._teinte = v
+    for (const c of this.chunks.values()) for (const part of c.parts) this.teinterLaPart(part)
+  }
+  private teinterLaPart(part: PartGel): void {
+    if (part.palier === 0) return
+    part.sol?.image.setTint(this._teinte)
+    part.surplomb?.image.setTint(this._teinte)
+  }
+
   readonly sonde = {
     actif: false,
     gelPossible: false,
@@ -168,7 +197,11 @@ export class GelLayer {
     private readonly map: WorldMap,
     private readonly suffixe = '',
     seed = 0,
+    /** Le relief cuit (`render/relief.ts`) : le palier de chaque tuile. Absent ou inactif, tout
+     *  est au palier 0 et le chunk se cuit en une part, comme avant les terrasses. */
+    private readonly relief?: Relief,
   ) {
+    this.liftMaxPx = relief?.actif ? relief.hauteurMax * LIFT_TUILES * TILE_PX : 0
     this.trameNeige = new Float32Array(GRAIN_CELLS * GRAIN_CELLS)
     for (let cy = 0; cy < GRAIN_CELLS; cy++) {
       for (let cx = 0; cx < GRAIN_CELLS; cx++) this.trameNeige[cy * GRAIN_CELLS + cx] = grainFacteur(cx, cy, 'neige', seed)
@@ -267,11 +300,13 @@ export class GelLayer {
     const cxMax = Math.ceil((this.map.width * TILE_PX) / cotePx) - 1
     const cyMax = Math.ceil((this.map.height * TILE_PX) / cotePx) - 1
     const cx1 = Math.min(cxMax, Math.floor((v.x + v.width) / cotePx) + COURONNE)
-    const cy1 = Math.min(cyMax, Math.floor((v.y + v.height) / cotePx) + COURONNE)
+    // Vers le SUD, la borne prend le lift des terrasses (voir `pave-layer.ts`).
+    const lift = this.liftMaxPx
+    const cy1 = Math.min(cyMax, Math.floor((v.y + v.height + lift) / cotePx) + COURONNE)
     const m = MARGE_VISIBLE_PX
     const visible = (cx: number, cy: number): boolean =>
       cx * cotePx < v.x + v.width + m && (cx + 1) * cotePx > v.x - m
-      && cy * cotePx < v.y + v.height + m && (cy + 1) * cotePx > v.y - m
+      && cy * cotePx - lift < v.y + v.height + m && (cy + 1) * cotePx > v.y - m
 
     // ① Les chunks qui MANQUENT : le visible tout de suite, la couronne au compte-gouttes.
     let budgetCouronne = CUISSONS_COURONNE_PAR_FRAME
@@ -329,7 +364,7 @@ export class GelLayer {
   /** Un chunk neuf : signé, cuit, posé. */
   private naitre(cx: number, cy: number, k: number, tick: number, offset: number): void {
     const c: ChunkGel = {
-      sol: null, surplomb: null,
+      parts: [],
       etats: new Int8Array(L * L), flore: new Uint8Array(L * L),
       tickSigne: tick, offsetSigne: offset,
       neige: 0, glace: 0, glaceProfonde: 0, sommeCouverture: 0, couvertureMax: 0,
@@ -450,39 +485,71 @@ export class GelLayer {
     let vide = true
     for (let i = 0; i < L * L && vide; i++) vide = c.etats[i]! <= TUILE_NUE
     if (vide) { this.sonde.recuissons++; this.sonde.msRecuisson = performance.now() - t0; return }
-    const cuit = cuireManteau({
-      cx, cy, etatAt,
-      trameNeige: this.trameNeige, trameGlace: this.trameGlace,
-      trameVase: this.trameVase, trameCrue: this.trameCrue,
-      solDeZone: this.solDeZone,
-    })
     const cle = `gel-${this.suffixe}-${cx}-${cy}`
     // Le manteau cuit par `cuireChunk` : ses tampons portent le même DÉBORD d'un pixel, et ses
     // images se posent donc du même décalage. Sans ça, la neige serait décalée d'un pixel du sol.
     const x0 = cx * S - PAVE.BAVE
     const y0 = cy * S - PAVE.BAVE
-    const sol = poserChunk(this.scene, cle, cuit.sol, x0, y0, GEL_SOL_DEPTH)
-    if (sol) c.sol = { image: sol, cle }
-    if (cuit.surplomb) {
-      const cleSur = cle + '-surplomb'
-      const sur = poserChunk(this.scene, cleSur, cuit.surplomb, x0, y0, GEL_DEPTH)
-      if (sur) c.surplomb = { image: sur, cle: cleSur }
+    // UNE PART PAR PALIER PRÉSENT (T-R7, même découpe que `pave-layer`) : les tuiles des autres
+    // paliers sont structurelles pour cette cuisson — transparentes, jamais envahies.
+    const relief = this.relief?.actif ? this.relief : null
+    for (const p of this.paliersDuChunk(cx, cy)) {
+      const etatDuPalier = relief === null
+        ? etatAt
+        : (tx: number, ty: number): EtatTuile => (relief.palier(tx, ty) === p ? etatAt(tx, ty) : TUILE_STRUCTURELLE)
+      const cuit = cuireManteau({
+        cx, cy, etatAt: etatDuPalier,
+        trameNeige: this.trameNeige, trameGlace: this.trameGlace,
+        trameVase: this.trameVase, trameCrue: this.trameCrue,
+        solDeZone: this.solDeZone,
+      })
+      const clePart = p === 0 ? cle : `${cle}-p${p}`
+      const y = y0 - p * LIFT_TUILES * TILE_PX
+      const part: PartGel = { palier: p, sol: null, surplomb: null }
+      const sol = poserChunk(this.scene, clePart, cuit.sol, x0, y, GEL_SOL_DEPTH + strateDEtage(p))
+      if (sol) part.sol = { image: sol, cle: clePart }
+      if (cuit.surplomb) {
+        const cleSur = clePart + '-surplomb'
+        const sur = poserChunk(this.scene, cleSur, cuit.surplomb, x0, y, GEL_DEPTH + strateDEtage(p))
+        if (sur) part.surplomb = { image: sur, cle: cleSur }
+      }
+      this.teinterLaPart(part)
+      c.parts.push(part)
     }
     this.sonde.recuissons++
     this.sonde.msRecuisson = performance.now() - t0
   }
 
+  /** Les paliers présents DANS le chunk, croissants — `[0]` sans relief (voir `pave-layer.ts`). */
+  private paliersDuChunk(cx: number, cy: number): number[] {
+    const relief = this.relief
+    if (!relief?.actif) return [0]
+    const N = PAVE.CHUNK
+    let presents = 0
+    const tx0 = cx * N
+    const ty0 = cy * N
+    const txFin = Math.min(this.map.width, tx0 + N)
+    const tyFin = Math.min(this.map.height, ty0 + N)
+    for (let ty = ty0; ty < tyFin; ty++) {
+      for (let tx = tx0; tx < txFin; tx++) presents |= 1 << relief.palier(tx, ty)
+    }
+    const paliers: number[] = []
+    for (let p = 0; presents >> p; p++) if (presents & (1 << p)) paliers.push(p)
+    return paliers
+  }
+
   private detruire(c: ChunkGel): void {
-    if (c.sol) {
-      c.sol.image.destroy()
-      this.scene.textures.remove(c.sol.cle)
-      c.sol = null
+    for (const part of c.parts) {
+      if (part.sol) {
+        part.sol.image.destroy()
+        this.scene.textures.remove(part.sol.cle)
+      }
+      if (part.surplomb) {
+        part.surplomb.image.destroy()
+        this.scene.textures.remove(part.surplomb.cle)
+      }
     }
-    if (c.surplomb) {
-      c.surplomb.image.destroy()
-      this.scene.textures.remove(c.surplomb.cle)
-      c.surplomb = null
-    }
+    c.parts = []
   }
 
   private rendre(k: number, c: ChunkGel): void {

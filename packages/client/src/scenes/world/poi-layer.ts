@@ -22,7 +22,7 @@
  */
 import Phaser from 'phaser'
 import { BUILT_KINDS, POI, type WorldMap } from '@ashes/sim' // POI : SET_PIECE_KINDS (R10)
-import { crownDepth, TILE_PX, TIE_NODE, ySortDepth } from '../../render/framing'
+import { crownDepth, strateDEtage, TILE_PX, TIE_NODE, ySortDepth } from '../../render/framing'
 import { poiCrownKey, poiTextureKey, POI_ART } from './poi-art'
 import { erratiqueVariantFor, litErratiqueKey, POI_LIT_KINDS, poiLitCrownKey, poiLitKey } from '../../render/poi-lit'
 import type { Warp } from '../../render/warp'
@@ -73,7 +73,12 @@ export class PoiLayer {
       const feetX = z.x + z.w / 2
       const feetY = z.y + z.h
       const px = feetX * TILE_PX
-      const py = feetY * TILE_PX - warp.lift(feetX, feetY)
+      // Le lift et la strate se lisent au CENTRE de la tuile des pieds : `feetY` est le bord sud
+      // de l'emprise, et la tuile juste au sud peut être un palier plus bas (voir `warp.ts`).
+      // Un lieu est à plat (spec `terrasses.md` T-R5) : un seul palier pour toute l'emprise.
+      const lift = warp.lift(feetX, feetY - 0.5)
+      const strate = strateDEtage(warp.palier(feetX, feetY - 0.5))
+      const py = feetY * TILE_PX - lift
 
       // UN SET-PIECE N'A PAS DE CORPS (spec t0-exploration R10) : le Bois Noir EST ses arbres,
       // la Combe EST son marais — un sprite-centre mentirait. UN LIEU BÂTI non plus : son
@@ -94,7 +99,7 @@ export class PoiLayer {
             const a = (k / N) * Math.PI * 2 - Math.PI / 2
             const sx = (z.x + z.w / 2) * TILE_PX + Math.cos(a) * rx
             const sty = z.y + z.h / 2 + Math.sin(a) * ry
-            const sy = sty * TILE_PX - warp.lift(sx / TILE_PX, sty)
+            const sy = sty * TILE_PX - lift
             // _lit / _lit_m pré-retournée (R5) : un setFlipX casserait le canal X de la normale.
             const mir = k % 2 === 1
             const stone = scene.add
@@ -102,7 +107,7 @@ export class PoiLayer {
               .setOrigin(0.5, 1)
               .setScale(0.66 + ((k * 37) % 5) * 0.05)
             stone.setLighting(this.lighting)
-            stone.setDepth(ySortDepth(sty, TILE_PX, TIE_NODE))
+            stone.setDepth(strate + ySortDepth(sty, TILE_PX, TIE_NODE))
             this.decor.push(stone)
             this.decorMir.push(mir)
           }
@@ -121,7 +126,7 @@ export class PoiLayer {
       if (lit) body.setLighting(this.lighting)
       // Même bande que les acteurs et les nœuds : à pieds égaux, un lieu se
       // comporte comme un nœud (on passe devant en descendant vers le sud).
-      body.setDepth(ySortDepth(feetY, TILE_PX, TIE_NODE))
+      body.setDepth(strate + ySortDepth(feetY, TILE_PX, TIE_NODE))
 
       const entry: Placed = { body, poiId, tx: feetX, ty: feetY, lit, kind: z.kind }
 

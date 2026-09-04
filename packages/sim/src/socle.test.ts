@@ -2,10 +2,11 @@
  * LE SOCLE — les gardes de la couche I (spec `stratigraphie.md` S-A1/S-A3/S-A4).
  *
  * On ne juge pas la BEAUTÉ du relief ici (elle se juge sur PNG, méthode §5 de la spec) — on
- * garde les PROPRIÉTÉS : le déterminisme au bit près, le drainage total (toute cellule hors
- * niveau de base a un récepteur), la variable d'ordre partout (aucune zone au champ plat),
- * le treillis maître (le socle ne touche ni zone ni terrain), et le contrat de compatibilité
- * de la Racine (son champ historique, mêmes sels, mêmes valeurs).
+ * garde les PROPRIÉTÉS : le déterminisme au bit près, le drainage sans boucle d'un pays
+ * ENDORÉIQUE (toute chaîne descend et finit dans une cuvette — amendement du 2026-08-30), la
+ * variable d'ordre partout (aucune zone au champ plat), le treillis maître (le socle ne touche
+ * ni zone ni terrain), et le contrat d'ÉCHELLE de la Racine (son champ érodé garde les bornes
+ * du champ de juillet — la forme change, jamais l'échelle).
  */
 import { describe, expect, it } from 'vitest'
 import { batirLeSocle, type Socle } from './socle'
@@ -55,12 +56,32 @@ describe('le socle', () => {
     }
   })
 
-  it('S-R3 — TOUT draine : hors niveau de base, chaque cellule a un récepteur', () => {
-    for (let k = 0; k < socle.recepteur.length; k++) {
-      if (socle.dedans[k] === 1) {
-        expect(socle.recepteur[k], `la base ${k} ne draine pas`).toBe(-1)
+  it('S-R3 — le pays est ENDORÉIQUE : tout descend, et finit dans une cuvette (jamais en boucle)', () => {
+    // ⚑ 2026-08-30 : la garde disait « hors niveau de base, chaque cellule a un récepteur ». Le
+    // niveau de base n'existe plus (`socle.ts` ②) — une cellule sans récepteur est désormais un
+    // TERMINUS légitime, celui que l'hydrologie inondera en lac. Ce qui reste NON négociable, et
+    // que cette garde prouve : la pente accompagne le récepteur, et aucune chaîne ne boucle
+    // (sans quoi la pile de Braun-Willett serait fausse et le flux, du bruit).
+    const n = socle.recepteur.length
+    let terminus = 0
+    for (let k = 0; k < n; k++) {
+      const r = socle.recepteur[k]!
+      if (r < 0) {
+        terminus++
+        expect(socle.pente[k], `terminus ${k} : une pente sans récepteur`).toBe(0)
       } else {
-        expect(socle.recepteur[k], `la cellule ${k} n'a pas d'exutoire`).toBeGreaterThanOrEqual(0)
+        expect(socle.pente[k], `cellule ${k} : un récepteur sans pente`).toBeGreaterThan(0)
+      }
+    }
+    expect(terminus, 'aucune cuvette : le pays draine vers un bord').toBeGreaterThan(0)
+    expect(terminus / n, 'trop de terminus — le champ est plat, pas endoréique').toBeLessThan(0.1)
+    // AUCUNE BOUCLE : depuis chaque cellule, on descend et on aboutit — en moins de n pas.
+    for (let s = 0; s < n; s += 37) {
+      let k = s
+      let pas = 0
+      while (socle.recepteur[k]! >= 0) {
+        k = socle.recepteur[k]!
+        expect(++pas, `boucle de récepteurs depuis ${s}`).toBeLessThan(n)
       }
     }
   })
@@ -93,31 +114,60 @@ describe('le socle', () => {
     expect(Array.from(zone.slice(0, 4096))).toEqual(avant)
   })
 
-  it('la Racine garde son champ historique : altLarge = l\'ondulation de juillet, par tuile', () => {
+  it('la Racine S\'ÉRODE, et garde l\'ÉTENDUE de juillet : la forme change, jamais l\'échelle', () => {
+    // ⚑ 2026-08-30 : la garde disait « altLarge = l'ondulation de juillet, par tuile ». La Racine
+    // n'est plus épinglée (`socle.ts` ①) — mais son champ érodé se RECALE sur le min/max du champ
+    // historique, et c'est ce contrat-là qui protège tout l'aval : les seuils qui le lisent
+    // (`CREUX.LAME` pour la lame des lacs, les quantiles de végétation) sont en unités de ce champ.
     const M = CREUX.MOTIF
-    let verifiees = 0
-    for (let k = 0; k < socle.altLarge.length && verifiees < 200; k++) {
-      if (socle.dedans[k] !== 1) continue
+    const juillet = (k: number): number => {
       const kx = k % socle.cols
       const ky = (k - kx) / socle.cols
-      const attendu = fbm2(kx * M + M / 2, ky * M + M / 2, CREUX.ECHELLE_LARGE, (7 ^ 0x43524555) | 0)
-      expect(socle.altLarge[k]).toBe(attendu)
-      verifiees++
+      return fbm2(kx * M + M / 2, ky * M + M / 2, CREUX.ECHELLE_LARGE, (7 ^ 0x43524555) | 0)
     }
-    expect(verifiees).toBeGreaterThan(100)
+    let dedans = 0
+    let bougees = 0
+    let jMin = Infinity, jMax = -Infinity, aMin = Infinity, aMax = -Infinity
+    for (let k = 0; k < socle.altLarge.length; k++) {
+      if (socle.dedans[k] !== 1) continue
+      dedans++
+      const j = juillet(k)
+      if (socle.altLarge[k] !== j) bougees++
+      if (j < jMin) jMin = j
+      if (j > jMax) jMax = j
+      if (socle.altLarge[k]! < aMin) aMin = socle.altLarge[k]!
+      if (socle.altLarge[k]! > aMax) aMax = socle.altLarge[k]!
+    }
+    expect(dedans, 'pas de Racine échantillonnée — la garde ne prouve rien').toBeGreaterThan(100)
+    // L'ÉROSION A EU LIEU : le champ n'est plus celui de juillet, presque nulle part.
+    expect(bougees / dedans, 'le champ de la Racine est resté celui de juillet').toBeGreaterThan(0.9)
+    // L'ÉCHELLE, ELLE, EST INTACTE : mêmes bornes, au bit près.
+    expect(aMin, 'le plancher du champ a bougé').toBe(jMin)
+    expect(aMax, 'le plafond du champ a bougé').toBe(jMax)
   })
 
-  it('les cellules de la Racine sont le niveau de base : plus basses que le reste, en rang', () => {
-    // La physique interne (pas altLarge, qui mélange deux échelles pour compatibilité) se lit
-    // par le drainage : le flux TOTAL déversé dans la racine domine tout autre puits.
+  it('le monde s\'écoule VERS la Racine : c\'est elle qui reçoit, et le plus gros terminus y est', () => {
+    // ⚑ 2026-08-30 : la garde exigeait « zéro puits hors de la Racine », ce que l'endoréisme
+    // abroge (une cuvette de montagne est un terminus légitime). Ce qui doit rester vrai, c'est le
+    // SENS de la pente à l'échelle du monde : la Racine est le fond de la vallée.
     let versRacine = 0
-    let ailleurs = 0
+    const parZone = new Map<number, number>()
     for (let k = 0; k < socle.recepteur.length; k++) {
       const r = socle.recepteur[k]!
-      if (r >= 0 && socle.dedans[r] === 1) versRacine += socle.flux[k]!
-      else if (r === -1 && socle.dedans[k] === 0) ailleurs += socle.flux[k]!
+      if (r >= 0 && socle.dedans[r] === 1 && socle.dedans[k] === 0) versRacine += socle.flux[k]!
+      if (r === -1) {
+        const z = socle.dedans[k] === 1 ? -1 : socle.zoneCell[k]!
+        parZone.set(z, (parZone.get(z) ?? 0) + socle.flux[k]!)
+      }
     }
     expect(versRacine, 'rien ne se déverse dans la Racine').toBeGreaterThan(0)
-    expect(ailleurs, 'des puits hors niveau de base').toBe(0)
+    // Le flux qui TERMINE dans la Racine domine celui qui termine dans n'importe quelle autre
+    // zone : les cuvettes de montagne existent (endoréisme), mais le fond de la vallée reçoit
+    // le pays. C'est le SENS de la pente à l'échelle du monde, pas l'absence de puits ailleurs.
+    const racine = parZone.get(-1) ?? 0
+    let meilleureAutre = 0
+    for (const [z, f] of parZone) if (z !== -1 && f > meilleureAutre) meilleureAutre = f
+    expect(racine, `la Racine ne reçoit pas le plus gros bassin (${racine} contre ${meilleureAutre})`)
+      .toBeGreaterThan(meilleureAutre)
   })
 })

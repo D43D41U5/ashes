@@ -19,6 +19,7 @@ import { die } from './combat'
 import { countOf } from './items'
 import { terrainAt } from './map'
 import { meteoColdAt } from './meteo'
+import { roofAt } from './village'
 import { avanceesDepuisAges, froidDeCendre } from './cendre'
 import { froidDeFumerolle } from './fumerolle'
 import { isOnPoiKind } from './poi-discovery'
@@ -71,8 +72,27 @@ export function cibleCorporelle(ambiant: number): number {
  */
 const BIOME_MAX = Math.max(0, ...Object.values(T.BIOME_OFFSET))
 
-/** Sur l'empreinte d'une structure à toit (maison) — ou d'une Grotte → abrité. */
+/**
+ * ═══ CETTE TUILE EST-ELLE COUVERTE ? — un TOIT, une maison d'héritage, ou une Grotte ═══
+ *
+ * ⚠ **LE TOIT A ÉTÉ AJOUTÉ le 2026-09-02, et il manquait depuis toujours.** La fonction ne
+ * connaissait que `house` et la Grotte, et la spec `etages.md` (E-R14) affirmait pourtant qu'elle
+ * *« reconnaît déjà les toits »*. Elle ne les reconnaissait pas — or `house` est une pièce
+ * d'**héritage** (`fam: 'heritage'`, `pose: 'monde'`) que le worldgen dépose et **que le joueur
+ * ne peut pas bâtir**, et la Grotte exige les zones `karst`/`gouffre`, **absentes du monde joué**.
+ * Conséquence, mesurée : **rien de ce qu'un joueur construit ne l'abritait** — ni de la pluie, ni
+ * du froid, et 0 tuile couverte sur toute la carte, trois graines.
+ *
+ * `roof` est pourtant la pièce dont c'est tout le métier (`occupe: 'toit'`, label « Toit »),
+ * posable au marteau pour une bûche. On la lit par `roofAt`, qui EXISTE et qui est déjà la
+ * réponse à « qu'est-ce qui couvre cette tuile ? » — pas un second prédicat écrit à côté.
+ *
+ * ⚠ **TROIS SYSTÈMES EN DÉPENDENT D'UN COUP**, et c'est voulu : le FROID (`ambientAt`), la
+ * MÉTÉO (R5 — un feu neuf prend sous un toit) et, depuis la branche B1, la LUMIÈRE
+ * (`partDuCiel`). Un toit qui n'abritait de rien était une pièce qu'on posait pour la forme.
+ */
 export function isSheltered(state: SimState, tx: number, ty: number): boolean {
+  if (roofAt(state.structures, tx, ty) !== undefined) return true
   if (state.structures.some((s) => s.tx === tx && s.ty === ty && s.type === 'house')) return true
   return isOnPoiKind(state, tx, ty, 'grotte')
 }

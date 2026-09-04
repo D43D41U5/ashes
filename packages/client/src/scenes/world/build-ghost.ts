@@ -172,7 +172,7 @@ export class BuildGhost {
           // geste normal d'ADOSSER un four à son propre mur, que la sim accepte.
           : fullTileAt(structures, tx, ty) !== undefined
     const a = tileFeetAnchor(tx, ty, TILE_PX)
-    const lift = warp?.lift(tx + 0.5, ty + 1) ?? 0
+    const lift = warp?.lift(tx + 0.5, ty + 0.5) ?? 0
     // LA PORTE DOUBLE SE PRÉDIT (R27) : si l'arête armée complète une paire colinéaire avec une
     // porte déjà là, le fantôme montre la MOITIÉ de cadre qui sera vraiment dessinée. C'est
     // l'affordance qui APPREND la règle au joueur — deux portes mitoyennes fusionnent — avant

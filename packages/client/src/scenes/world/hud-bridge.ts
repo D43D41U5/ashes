@@ -560,7 +560,9 @@ export function publishHint(registry: Registry, text: string, at: number): void 
  *  mort (le même patron que `publishError`). */
 export function publishDeath(
   registry: Registry,
-  cause: 'cold' | 'hunger' | 'lightning' | 'cendre' | undefined,
+  /** `'inconnue'` : le voile est levé sur l'ÉTAT (partie rechargée en gisant), pas sur
+   *  l'événement — la cause, elle, n'a pas survécu à la session. Voir `deathLine`. */
+  cause: 'cold' | 'hunger' | 'lightning' | 'cendre' | 'inconnue' | undefined,
   byEntityId: number,
   killerType: string | null,
   hadLoot: boolean,

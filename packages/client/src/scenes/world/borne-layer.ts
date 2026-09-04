@@ -18,7 +18,7 @@ import Phaser from 'phaser'
 import type { WorldMap } from '@ashes/sim'
 import { type Crack, cleLit, mirrorCanvas, mirrorCracks, newCanvas, normalFromCanvas, poserPaire } from '../../render/normal-map'
 import { STONE_B } from '../../render/matiere'
-import { crownDepth, TILE_PX, TIE_NODE, ySortDepth } from '../../render/framing'
+import { crownDepth, strateDEtage, TILE_PX, TIE_NODE, ySortDepth } from '../../render/framing'
 import type { Warp } from '../../render/warp'
 
 /** Écart latéral borne↔centre du couloir, en tuiles : la demi-largeur du couloir + 2 — les
@@ -150,7 +150,11 @@ export class BorneLayer {
         const tx = s.x + perpX * ecart * cote + 0.5
         const ty = s.y + perpY * ecart * cote + 1
         const px = tx * TILE_PX
-        const py = ty * TILE_PX - warp.lift(tx, ty)
+        // Le lift et la strate se lisent au CENTRE de la tuile des pieds (`ty` est son bord sud,
+        // et la tuile du sud peut être un palier plus bas — voir `warp.ts`).
+        const lift = warp.lift(tx, ty - 0.5)
+        const strate = strateDEtage(warp.palier(tx, ty - 0.5))
+        const py = ty * TILE_PX - lift
         const key = s.secours ? BORNE_BRISEE_KEY : BORNE_KEY
         // Nominal : la variante _lit (albédo aplati + normale) — le toggle debug rebascule.
         // LES DEUX FLANCS D'UN SEUIL NE SONT PLUS JUMEAUX : celui de droite porte le retourné.
@@ -159,7 +163,7 @@ export class BorneLayer {
         const mir = cote === 1
         const body = scene.add.image(px, py, cleLit(key, mir)).setOrigin(0.5, 1)
         body.setLighting(true)
-        body.setDepth(ySortDepth(ty, TILE_PX, TIE_NODE))
+        body.setDepth(strate + ySortDepth(ty, TILE_PX, TIE_NODE))
         this.sprites.push({ img: body, base: key, mir })
         if (!s.secours) {
           // La tête perce la canopée — même superposition au pixel près que les lieux.

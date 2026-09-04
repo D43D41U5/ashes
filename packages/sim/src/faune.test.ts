@@ -1356,10 +1356,22 @@ describe('la satiété (A16 — R15) — un prédateur mange', () => {
     const a = spawnEntity(sim, 79.5, 80.5)
 
     strike(sim, a, 1, 0) // on le frappe
-    for (let t = 0; t < 8 * BALANCE.TICK_RATE_HZ; t++) tick(sim)
 
-    expect(pack[0]!.targetId).toBe(a) // il a pris son agresseur pour cible
-    expect(entity(sim, a).hp).toBeLessThan(100) // et il a rendu le coup
+    // ⚠ ON OBSERVE TANT QUE LE SUJET TIENT DEBOUT (2026-08-31). Huit secondes collé à un
+    // loup, à mains nues, c'est une mort — et depuis que le mort RESTE à terre, la meute
+    // le lâche (la faune ne prend pas pour cible ce qui est à `hp = 0`). Le test lisait
+    // donc l'état d'APRÈS : il ne passait que parce que la mort relevait aussitôt son
+    // homme sur place, à deux pas du loup, indéfiniment. La riposte, elle, se mesure de
+    // son vivant — c'est ce qu'A16 affirme.
+    let riposte = false
+    for (let t = 0; t < 8 * BALANCE.TICK_RATE_HZ && entity(sim, a).hp > 0; t++) {
+      tick(sim)
+      if (pack[0]!.targetId === a && entity(sim, a).hp < 100) {
+        riposte = true // il a pris son agresseur pour cible ET rendu le coup
+        break
+      }
+    }
+    expect(riposte).toBe(true)
   })
 
   it('CONSERVATION — une carcasse MIXTE mangée jusqu’à l’os garde son bois et sa hache', () => {
@@ -2520,7 +2532,16 @@ describe('le quota de prédateurs (A26 — R18)', () => {
       cycleOffset: cycleOffsetForStartHour(2, 1), // 2 h du matin : l'heure du loup
     })
     const a = spawnEntity(sim, 200.5, 200.5)
-    for (let t = 0; t < 150 * BALANCE.TICK_RATE_HZ; t++) tick(sim, [{ entityId: a, dx: 0, dy: 0 }])
+    // ⚠ L'OBSERVATEUR DOIT RESTER DEBOUT (2026-08-31). Le peuplement ambiant se fait autour
+    // des avatars VIVANTS : planté deux minutes et demie dans une forêt à l'heure du loup, le
+    // nôtre se fait tuer, et depuis que le mort RESTE à terre la clairière se vide — on
+    // mesurerait alors le vide, pas le quota. Jusqu'ici la mort relevait toute seule et ce
+    // montage tenait sans le dire ; il le dit.
+    for (let t = 0; t < 150 * BALANCE.TICK_RATE_HZ; t++) {
+      tick(sim, [entity(sim, a).downedAt !== undefined
+        ? { entityId: a, dx: 0, dy: 0, action: { type: 'respawn' } }
+        : { entityId: a, dx: 0, dy: 0 }])
+    }
 
     const ambient = sim.monsters.filter((m) => m.ambient)
     const loups = ambient.filter((m) => m.type === 'wolf').length

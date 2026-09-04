@@ -46,8 +46,15 @@ export function taperRive(d: number): number {
   return t * t * (3 - 2 * t)
 }
 
-/** Demi-largeur du couloir de courant autour du fil — la demi-largeur du lit de la
- *  worldgen (EAU.RIVIERE_DEMI_LIT = 3). */
+/** Demi-largeur du couloir de courant PLEIN autour du fil — la demi-largeur NOMINALE du lit
+ *  (`EAU.RIVIERE_DEMI_LIT` = 3).
+ *
+ *  ⚠ Depuis le 2026-08-30, le lit n'a plus de largeur unique : il croît vers l'aval (rayon 2,4
+ *  à la source → 4,4 à l'embouchure, plus un battement de berge). On garde délibérément le
+ *  couloir plein au NOMINAL : les tuiles du lit au-delà reçoivent le courant par l'exhalaison
+ *  (les `PASSES` de moyenne), donc en s'affaiblissant vers la berge — ce que `taperRive` fait
+ *  déjà et ce que fait une vraie rivière. Élargir le couloir à la largeur maximale donnerait
+ *  au contraire du courant à PLEINE vitesse contre la rive de l'embouchure. */
 const DEMI_LIT = 3
 /** Passes de moyenne 3×3 : lissent les coutures ET exhalent le courant sur ~PASSES
  *  tuiles au-delà du couloir, en expirant. */

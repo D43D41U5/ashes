@@ -18,7 +18,7 @@
 import type Phaser from 'phaser'
 import { mirrorCanvas, mirrorRelief, newCanvas, normalFromCanvas, poserPaire, registerLitPaire } from './normal-map'
 import {
-  cleFut, cleHouppier, colonneX, estRamure, houppierLargeur, pariteDeCime, prendLaSaison, tonsMorts,
+  cleFut, cleHouppier, colonneX, empattementRangs, estRamure, houppierLargeur, pariteDeCime, prendLaSaison, tonsMorts,
   CIMES_PAR_ARBRE, CHARGE_NEIGE, etatsDeCime,
   TOUTES_VARIANTES, TONS_HOUPPIER_VIEUX,
   type EtatCime, type MesuresArbre, type TonsFut, type VarianteArbre,
@@ -91,9 +91,14 @@ function futAlbedo(m: MesuresArbre, tons: TonsFut, e: Ecorce, grain: GrainFut): 
   const { c, ctx } = newCanvas(m.futW, m.futH)
   const x = colonneX(m)
   const creux = rgb(tons.sombre)
+  // LA BOUCLE BALAIE L'EMPATTEMENT, pas la seule colonne : `champDeHauteur` a posé un ton hors
+  // du fût sur les rangées de la collerette, et le borner à `colonneW` l'aurait laissé invisible
+  // — le grain sait déjà où il a peint (`ton[i] === null` ailleurs), il suffit de l'écouter.
+  const xe = Math.floor((m.futW - m.empattementW) / 2)
+  const x1e = xe + m.empattementW
   for (let y = 0; y < m.futH; y++) {
     const k = facteurPied(e, y, m.futH)
-    for (let px = x; px < x + m.colonneW; px++) {
+    for (let px = Math.min(x, xe); px < Math.max(x + m.colonneW, x1e); px++) {
       const t = grain.ton[y * m.futW + px]
       if (t === null || t === undefined) continue
       ctx.fillStyle = k > 0 ? melanger(rgb(t), creux, k) : t
@@ -252,7 +257,7 @@ export function generateLitTrees(scene: Phaser.Scene, jour = 1): void {
     // c'est le manteau au sol qui le dit (`coupeDeNeige` remonte le pied du sprite).
     const e = ecorceDe(v.slug)
     const x0 = colonneX(m)
-    const grain = champDeHauteur(e, m.futW, m.futH, x0, x0 + m.colonneW, v.fut)
+    const grain = champDeHauteur(e, m.futW, m.futH, x0, x0 + m.colonneW, v.fut, 7, empattementRangs(m))
     const alb = futAlbedo(m, v.fut, e, grain)
     // LE FÛT EST DRESSÉ, et c'est même la partie ASYMÉTRIQUE de l'arbre : son écorce a un grain,
     // et la cuire une seule fois donnait douze fûts identiques dans une futaie.
@@ -279,7 +284,7 @@ export function generateLitTrees(scene: Phaser.Scene, jour = 1): void {
      */
     if (etatsDeCime(v.slug).includes('mort')) {
       const futMort = tonsMorts(v.fut)
-      const grainMort = champDeHauteur(e, m.futW, m.futH, x0, x0 + m.colonneW, futMort)
+      const grainMort = champDeHauteur(e, m.futW, m.futH, x0, x0 + m.colonneW, futMort, 7, empattementRangs(m))
       registerLitPaire(scene, cleFutBase(v.slug, true), {
         albedo: futAlbedo(m, futMort, e, grainMort), dresse: true,
         passes: 1, k: 3.5, cell: 2, relief: grainMort.relief,

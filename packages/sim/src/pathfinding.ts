@@ -5,7 +5,8 @@
  * Déterministe : coûts entiers, heuristique Manhattan, départage des égalités
  * par ordre d'insertion. Arithmétique + - * / uniquement.
  */
-import { isBlockedAt, makeIndexedIsBlockedAt, type MoveWorld } from './collision'
+import { makeIndexedIsBlockedAt, type MoveWorld } from './collision'
+import { connecteurAt, franchitUneJoue, niveauDeLaTuile, palierDuSol, type Connecteur } from './etages'
 import type { ResourceNode } from './economy'
 import { distSq } from './geometry'
 import type { WorldMap } from './map'
@@ -18,6 +19,8 @@ interface HeapNode {
   order: number
   tx: number
   ty: number
+  /** L'ÉTAGE du nœud ouvert (spec `etages.md`). Absent ≡ 0 — le sol, donc tout l'existant. */
+  etage?: number
 }
 
 /** Tas binaire min sur (f, order) — départage stable. */
@@ -151,63 +154,108 @@ const DIRS = [
  */
 export function findPath(
   world: MoveWorld,
-  from: { tx: number; ty: number },
-  to: { tx: number; ty: number },
+  from: { tx: number; ty: number; etage?: number },
+  to: { tx: number; ty: number; etage?: number },
   maxExplored = 4096,
-): { tx: number; ty: number }[] | null {
-  if (from.tx === to.tx && from.ty === to.ty) return []
-  // Index d'occupation bâti une fois : l'A* interroge des milliers de tuiles.
-  const isBlocked = makeIndexedIsBlockedAt(world)
-  if (isBlocked(to.tx, to.ty)) return null
+): { tx: number; ty: number; etage?: number }[] | null {
+  // « Au sol » = le palier de la tuile (spec `terrasses.md` T-R3) — 0 sans terrasses.
+  const eFrom = niveauDeLaTuile(world.map, from)
+  const eTo = niveauDeLaTuile(world.map, to)
+  if (from.tx === to.tx && from.ty === to.ty && eFrom === eTo) return []
   const width = world.map.width
   const height = world.map.height
   const inBounds = (tx: number, ty: number): boolean => tx >= 0 && ty >= 0 && tx < width && ty < height
   if (!inBounds(to.tx, to.ty)) return null
 
-  const key = (tx: number, ty: number): number => ty * width + tx
+  /**
+   * ═══ LA RECHERCHE EST À TROIS DIMENSIONS (spec `etages.md`) ═══
+   *
+   * Le loup doit pouvoir MONTER, donc l'espace de recherche est `(tx, ty, étage)` et non `(tx, ty)`.
+   * Le prédicat de blocage devient une famille — un par étage —, bâti PARESSEUSEMENT : sur un
+   * monde sans étage, ou pour une recherche qui reste au sol, on ne monte que celui de l'étage 0,
+   * c'est-à-dire exactement l'index d'avant, au bit près.
+   */
+  const bloque: (((tx: number, ty: number) => boolean) | undefined)[] = []
+  const isBlocked = (e: number, tx: number, ty: number): boolean => {
+    const i = e + 8
+    // L'index d'occupation, bâti une fois : l'A* interroge des milliers de tuiles.
+    const f = bloque[i] ?? (bloque[i] = makeIndexedIsBlockedAt(world, e))
+    return f(tx, ty)
+  }
+  if (isBlocked(eTo, to.tx, to.ty)) return null
+
+  /** LES CONNECTEURS SOUS LA MAIN : un point de bascule d'étage, indexé par tuile. */
+  const portes = new Map<number, Connecteur>()
+  for (const c of world.map.connecteurs ?? []) portes.set(c.y * width + c.x, c)
+
+  const PLAN = width * height
+  const key = (tx: number, ty: number, e: number): number => (e + 8) * PLAN + ty * width + tx
   const masque = preparerTable(maxExplored)
   const heap = new MinHeap()
   let order = 0
+  // L'heuristique ignore l'étage : elle doit rester ADMISSIBLE (ne jamais surestimer), et un
+  // changement d'étage coûte 1 comme un pas. Manhattan sur x,y minore donc toujours le vrai coût.
   const h = (tx: number, ty: number): number => Math.abs(tx - to.tx) + Math.abs(ty - to.ty)
 
-  const kDepart = key(from.tx, from.ty)
+  const kDepart = key(from.tx, from.ty, eFrom)
   const c0 = caseDe(kDepart, masque)
   tableStamp[c0] = tableGen
   tableKeys[c0] = kDepart
   tableG[c0] = 0
   tableParent[c0] = -1
-  heap.push({ f: h(from.tx, from.ty), order: order++, tx: from.tx, ty: from.ty })
+  heap.push({ f: h(from.tx, from.ty), order: order++, tx: from.tx, ty: from.ty, etage: eFrom })
   let explored = 0
 
   while (heap.size > 0 && explored < maxExplored) {
     const current = heap.pop()!
     explored += 1
-    const kCourant = key(current.tx, current.ty)
-    if (current.tx === to.tx && current.ty === to.ty) {
-      const path: { tx: number; ty: number }[] = []
+    const eCur = current.etage ?? 0 // posé explicitement à l'empilement, jamais absent
+    const kCourant = key(current.tx, current.ty, eCur)
+    if (current.tx === to.tx && current.ty === to.ty && eCur === eTo) {
+      const path: { tx: number; ty: number; etage?: number }[] = []
       let k = kCourant
       while (k !== kDepart) {
-        path.push({ tx: k % width, ty: Math.floor(k / width) })
+        const e = Math.floor(k / PLAN) - 8
+        const reste = k - (e + 8) * PLAN
+        const pas: { tx: number; ty: number; etage?: number } = { tx: reste % width, ty: Math.floor(reste / width) }
+        // ADDITIF : un pas au sol reste `{tx, ty}`, exactement comme avant — les appelants qui
+        // ne connaissent pas les étages continuent de lire ce qu'ils lisaient.
+        if (e !== 0) pas.etage = e
+        path.push(pas)
         k = tableParent[caseDe(k, masque)]!
       }
       path.reverse()
       return path
     }
     const g = tableG[caseDe(kCourant, masque)]!
-    for (const [dx, dy] of DIRS) {
-      const nx = current.tx + dx
-      const ny = current.ty + dy
-      if (!inBounds(nx, ny) || isBlocked(nx, ny)) continue
-      const nk = key(nx, ny)
+    /** Ouvre un voisin — même géométrie pour un pas de côté et pour un pas d'étage. */
+    const ouvrir = (nx: number, ny: number, ne: number): void => {
+      const nk = key(nx, ny, ne)
       const ng = g + 1
       const c = caseDe(nk, masque)
       // Case libre (estampille périmée) ⇔ `gScore.get(nk) === undefined` dans l'ancienne version.
-      if (tableStamp[c] === tableGen && tableG[c]! <= ng) continue
+      if (tableStamp[c] === tableGen && tableG[c]! <= ng) return
       tableStamp[c] = tableGen
       tableKeys[c] = nk
       tableG[c] = ng
       tableParent[c] = kCourant
-      heap.push({ f: ng + h(nx, ny), order: order++, tx: nx, ty: ny })
+      heap.push({ f: ng + h(nx, ny), order: order++, tx: nx, ty: ny, etage: ne })
+    }
+    for (const [dx, dy] of DIRS) {
+      const nx = current.tx + dx
+      const ny = current.ty + dy
+      if (!inBounds(nx, ny) || isBlocked(eCur, nx, ny)) continue
+      // LA JOUE (`franchitUneJoue`) : une rampe s'aborde par le nord ou le sud, jamais par le
+      // flanc — la collision refuse ce pas-là, donc le chemin ne doit pas le promettre.
+      if (franchitUneJoue(world.map, current.tx, current.ty, dx)) continue
+      ouvrir(nx, ny, eCur)
+    }
+    // ── LE PAS D'ÉTAGE : sur un connecteur, et NULLE PART AILLEURS (E-R8). Il coûte un pas,
+    //    comme un pas de côté — une rampe se monte, elle ne se paie pas d'un détour imaginaire.
+    const porte = portes.get(current.ty * width + current.tx)
+    if (porte !== undefined) {
+      const autre = porte.de === eCur ? porte.vers : porte.vers === eCur ? porte.de : undefined
+      if (autre !== undefined && !isBlocked(autre, current.tx, current.ty)) ouvrir(current.tx, current.ty, autre)
     }
   }
   return null
@@ -236,20 +284,28 @@ export function pathToward(
    * Le budget CHOISIT donc ce que la bête est capable de comprendre.
    */
   maxExplored?: number,
-): { tx: number; ty: number }[] | null {
-  const from = { tx: Math.floor(fromX), ty: Math.floor(fromY) }
-  const targets = isBlockedAt(world, tx, ty)
+  /** L'ÉTAGE du chercheur et celui de sa cible (spec `etages.md`). Absents ≡ « au sol, là où
+   *  il est » — le palier de la tuile (T-R3), 0 sans terrasses : tout l'existant, et le chemin
+   *  rendu est alors celui d'avant, jalon pour jalon. */
+  etageFrom = palierDuSol(world.map, Math.floor(fromX), Math.floor(fromY)),
+  etageTo = palierDuSol(world.map, tx, ty),
+): { tx: number; ty: number; etage?: number }[] | null {
+  const from = { tx: Math.floor(fromX), ty: Math.floor(fromY), etage: etageFrom }
+  // Le voisin de repli se cherche À L'ÉTAGE DE LA CIBLE : se poster à côté d'un bloc du plateau,
+  // c'est se tenir sur le plateau — le chercher au sol mettrait le loup douze mètres plus bas.
+  const bloque = makeIndexedIsBlockedAt(world, etageTo)
+  const targets = bloque(tx, ty)
     ? ([
         [tx + 1, ty],
         [tx - 1, ty],
         [tx, ty + 1],
         [tx, ty - 1],
       ] as const)
-        .filter(([nx, ny]) => !isBlockedAt(world, nx, ny))
+        .filter(([nx, ny]) => !bloque(nx, ny))
         .sort((a, b) => distSq(a[0] + 0.5, a[1] + 0.5, fromX, fromY) - distSq(b[0] + 0.5, b[1] + 0.5, fromX, fromY))
     : [[tx, ty] as const]
   for (const [gx, gy] of targets) {
-    const path = findPath(world, from, { tx: gx, ty: gy }, maxExplored)
+    const path = findPath(world, from, { tx: gx, ty: gy, etage: etageTo }, maxExplored)
     if (path) return path
   }
   return null
@@ -289,15 +345,60 @@ export function pathToward(
  * orthogonales doivent l'être aussi, sinon un corps de `AVATAR_HITBOX_TILES` s'y coincerait.
  * Conservateur par construction : au pire on garde un jalon de trop, jamais un de moins.
  *
+ * ═══ ET « VOIR », C'EST VOIR LE TRAJET QUE LE CORPS FERA — pas la corde ═══
+ *
+ * Le marcheur ne suit pas la corde : `moveToward` et `followPath` prennent le SIGNE de chaque
+ * axe, donc il part en DIAGONALE (45°) jusqu'à ce qu'un axe soit aligné, puis finit tout droit.
+ * Une corde de pente 1/4 qui frôle le sud d'une rampe est libre ; le trajet réel, lui, monte à
+ * 45° dans la rangée de la rampe et repart de côté — dans sa joue. MESURÉ sur la terrasse de
+ * laboratoire (`terrasses.test.ts` T-A6bis) : corps collé en x = 11,375, le bord ouest, chemin en
+ * poche. On sonde donc les DEUX tronçons du vrai trajet, la diagonale puis l'axe — POUR LA JOUE
+ * SEULEMENT : les obstacles restent jugés sur la corde (voir `trajetDegage`), sinon tous les
+ * chemins de toutes les cartes changent, rampe ou pas.
+ *
+ * LA JOUE (`franchitUneJoue`) : une rampe s'aborde par le nord ou le sud, jamais par le flanc —
+ * la collision ferme ce pas-là (`brideDeLaJoue`), donc aucun tronçon ne doit le promettre. Et
+ * comme le corps n'entame un tronçon qu'à `WAYPOINT_RADIUS` près du centre du jalon, le trajet
+ * réel peut décaler d'une rangée : on juge la joue sur la rangée traversée ET ses deux voisines.
+ * Conservateur à un tuile près d'une rampe, et là seulement — ailleurs, aucune joue, rien ne change.
+ *
  * Le coût est payé UNE FOIS PAR CALCUL DE CHEMIN (pas par tick) et il est petit devant l'A* qui
  * vient de tourner : le même index d'occupation, et au plus `LISSAGE_PORTEE` tuiles balayées par
  * jalon. Pur : + - * / et comparaisons (invariant #2 — pas de `hypot`, pas de trigonométrie).
  */
 const LISSAGE_PORTEE = 16
 
-/** La ligne (x0,y0)→(x1,y1) ne traverse-t-elle que des tuiles libres ? (avec la règle du coin) */
+const JAMAIS = (): boolean => false
+
+/**
+ * Le tronçon (x0,y0)→(x1,y1) est-il franchissable ? Deux questions, deux géométries :
+ *  - les OBSTACLES se jugent sur la corde, comme avant les terrasses — au bit près, c'est le
+ *    lissage que tout le jeu a calibré (raids, corvées, hordes) ; le juger sur le vrai trajet
+ *    changeait tous les chemins de toutes les cartes, et deux gardes sans rampe ont rougi
+ *    (alignment A7(b), session « cueillette ») ;
+ *  - la JOUE se juge sur le vrai trajet d'un marcheur au signe par axe : la diagonale, puis
+ *    l'axe qui reste — c'est là, et pas sur la corde, qu'il entre dans le flanc d'une rampe.
+ * Sans connecteur sur la carte, la joue est inerte et seule la corde compte : rien ne change.
+ */
+function trajetDegage(
+  bloque: (tx: number, ty: number) => boolean,
+  joue: (tx: number, ty: number, dx: number) => boolean,
+  x0: number, y0: number, x1: number, y1: number,
+): boolean {
+  if (!vueDegagee(bloque, JAMAIS, x0, y0, x1, y1)) return false
+  const dx = x1 - x0
+  const dy = y1 - y0
+  const m = Math.min(Math.abs(dx), Math.abs(dy))
+  const xm = x0 + (dx > 0 ? m : -m)
+  const ym = y0 + (dy > 0 ? m : -m)
+  return vueDegagee(JAMAIS, joue, x0, y0, xm, ym) && vueDegagee(JAMAIS, joue, xm, ym, x1, y1)
+}
+
 function vueDegagee(
   bloque: (tx: number, ty: number) => boolean,
+  /** LA JOUE : ce pas de côté franchit-il le bord d'une rampe, sur cette rangée ou ses deux
+   *  voisines ? (`franchitUneJoue`) — voir l'en-tête. */
+  joue: (tx: number, ty: number, dx: number) => boolean,
   x0: number, y0: number, x1: number, y1: number,
 ): boolean {
   let tx = Math.floor(x0)
@@ -318,14 +419,16 @@ function vueDegagee(
   for (let garde = 0; garde < 2 * LISSAGE_PORTEE + 4; garde++) {
     if (tx === finX && ty === finY) return true
     if (tMaxX < tMaxY) {
+      if (joue(tx, ty, sx)) return false
       tx += sx
       tMaxX += dtX
     } else if (tMaxY < tMaxX) {
       ty += sy
       tMaxY += dtY
     } else {
-      // PILE UN COIN : le corps ne passe qu'entre deux tuiles libres.
+      // PILE UN COIN : le corps ne passe qu'entre deux tuiles libres — et sans joue.
       if (bloque(tx + sx, ty) || bloque(tx, ty + sy)) return false
+      if (joue(tx, ty, sx)) return false
       tx += sx
       ty += sy
       tMaxX += dtX
@@ -348,7 +451,15 @@ export function lisserLeChemin(
   chemin: readonly { tx: number; ty: number }[],
 ): { tx: number; ty: number }[] {
   if (chemin.length < 2) return chemin.map((w) => ({ tx: w.tx, ty: w.ty }))
-  const bloque = makeIndexedIsBlockedAt(world)
+  // AU NIVEAU DU MARCHEUR : une tuile d'un autre palier est « bloquée » pour lui, donc la
+  // ligne droite s'arrête au pied d'une rampe et le chemin s'y suit jalon par jalon — l'A*
+  // seul sait monter (spec `terrasses.md` T-R2).
+  const niveau = world.etages?.[0] ?? palierDuSol(world.map, Math.floor(fromX), Math.floor(fromY))
+  const bloque = makeIndexedIsBlockedAt(world, niveau)
+  // La rangée traversée et ses deux voisines : le corps entame chaque tronçon à `WAYPOINT_RADIUS`
+  // du centre, pas au centre — voir l'en-tête.
+  const joue = (tx: number, ty: number, dx: number): boolean =>
+    franchitUneJoue(world.map, tx, ty, dx) || franchitUneJoue(world.map, tx, ty - 1, dx) || franchitUneJoue(world.map, tx, ty + 1, dx)
   const out: { tx: number; ty: number }[] = []
   let x = fromX
   let y = fromY
@@ -362,7 +473,7 @@ export function lisserLeChemin(
       const cx = chemin[k]!.tx + 0.5
       const cy = chemin[k]!.ty + 0.5
       if (distSq(cx, cy, x, y) > LISSAGE_PORTEE * LISSAGE_PORTEE) break
-      if (!vueDegagee(bloque, x, y, cx, cy)) break
+      if (!trajetDegage(bloque, joue, x, y, cx, cy)) break
       j = k
     }
     const garde = chemin[j]!
@@ -435,7 +546,23 @@ export function computeFlowFieldMulti(
   const world: MoveWorld = { map, nodes, structures: solides, moverVillageId: null } // la roche seule, jamais le bâti
   if (etat !== undefined) world.etat = etat
   // Index d'occupation bâti une fois : le BFS balaie toute la carte.
-  const isBlocked = makeIndexedIsBlockedAt(world)
+  //
+  // ═══ LES TERRASSES (spec `terrasses.md` T-R2) : le champ reste À DEUX DIMENSIONS ═══
+  // Chaque tuile a UN sol, à son palier — c'est là qu'on lit si elle bloque. Et le gradient ne
+  // franchit un changement de palier que par une RAMPE (un connecteur qui relie les deux, sur
+  // l'une des deux tuiles) : sans elle, le mur de terrasse coupe le champ comme la falaise. Un
+  // monde sans paliers ne paie rien de plus — `paliers` absent, le pas d'avant.
+  const paliers = map.palier
+  const isBlockedAu: (((tx: number, ty: number) => boolean) | undefined)[] = []
+  const isBlocked = (tx: number, ty: number): boolean => {
+    const p = paliers === undefined ? 0 : paliers[ty * width + tx]!
+    const f = isBlockedAu[p] ?? (isBlockedAu[p] = makeIndexedIsBlockedAt(world, p))
+    return f(tx, ty)
+  }
+  const relie = (tx: number, ty: number, a: number, b: number): boolean => {
+    const c = connecteurAt(map, tx, ty)
+    return c !== undefined && ((c.de === a && c.vers === b) || (c.de === b && c.vers === a))
+  }
   const queue: number[] = []
   for (const s of sources) {
     const startKey = s.ty * width + s.tx
@@ -461,6 +588,13 @@ export function computeFlowFieldMulti(
       const nk = ny * width + nx
       if (field[nk] !== -1) continue
       if (isBlocked(nx, ny)) continue
+      if (paliers !== undefined) {
+        const pa = paliers[key]!
+        const pb = paliers[nk]!
+        if (pa !== pb && !relie(kx, ky, pa, pb) && !relie(nx, ny, pa, pb)) continue
+      }
+      // LA JOUE, comme dans l'A* : le gradient ne mène pas la horde dans le flanc d'une rampe.
+      if (franchitUneJoue(map, kx, ky, dx)) continue
       if (d + 1 > maxDist) continue // hors de portée : la vallée s'arrête là
       field[nk] = d + 1
       queue.push(nk)

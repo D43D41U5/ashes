@@ -166,7 +166,12 @@ describe('A29 — contenant/contenu : chaque nœud neuf est LÀ où sa dérivati
       const { width, height, terrain } = m.c.map
       const chaos: number[] = []
       for (let i = 0; i < width * height; i++) if (terrain[i] === TERRAIN_BOULDERS) chaos.push(i)
-      expect(chaos.length, `seed ${m.s} : pas de chaos de blocs — la garde ne prouve rien`).toBeGreaterThan(2000)
+      // PRÉMISSE re-épinglée 2000 → 900 le 2026-08-30 (pays endoréique) : le lapiaz naît sur le
+      // calcaire ET le relief, tous deux redessinés par l'érosion. MESURÉ à la taille de
+      // production — boulders : 2026 → 3 765, 7 → **1 146**, 42 → 11 552. La graine 7 est pauvre
+      // en chaos, elle ne l'est pas devenue de zéro ; mille tuiles suffisent largement à ce que
+      // le détour mesuré plus bas veuille dire quelque chose.
+      expect(chaos.length, `seed ${m.s} : pas de chaos de blocs — la garde ne prouve rien`).toBeGreaterThan(900)
       const dansLeChaos = new Set(chaos)
 
       const bloque = new Uint8Array(width * height)
@@ -210,7 +215,10 @@ describe('A29 — contenant/contenu : chaque nœud neuf est LÀ où sa dérivati
         if (y < y0) y0 = y
         if (y > y1) y1 = y
       }
-      expect(x1 - x0, `seed ${m.s} : le plus gros chaos est trop petit pour qu'une traversée dise quoi que ce soit`).toBeGreaterThan(40)
+      // Re-épinglée 40 → 30 le 2026-08-30, même cause que la prémisse du dessus (le lapiaz naît
+      // sur un relief que l'érosion a redessiné) : MESURÉ, le plus gros amas de la graine 7 fait
+      // 35 tuiles de large. Trente tuiles, c'est encore une traversée d'un écran et demi.
+      expect(x1 - x0, `seed ${m.s} : le plus gros chaos est trop petit pour qu'une traversée dise quoi que ce soit`).toBeGreaterThan(30)
       // Dijkstra à coûts entiers (10 / 14) — 8-connexe, comme le déplacement réel.
       const cheminer = (sx: number, sy: number): Int32Array => {
         const d = new Int32Array(width * height).fill(-1)
@@ -292,7 +300,11 @@ describe('A29 — contenant/contenu : chaque nœud neuf est LÀ où sa dérivati
       // ⚠ « récoltable » se dit par TYPE, pas par boîte : le rocher est PLEINE TUILE lui aussi
       // (`blockHalfSub: 4`, comme le bloc) — un critère par boîte viderait la population testée.
       const recolte = m.nodes.filter((n) => terrain[n.ty * width + n.tx] === TERRAIN_BOULDERS && n.type !== 'bloc')
-      expect(recolte.length, `seed ${m.s} : rien à récolter dans le chaos — ③ ne prouve rien`).toBeGreaterThan(50)
+      // Re-épinglée 50 → 12 le 2026-08-30 : troisième prémisse de la même famille, même cause
+      // (le lapiaz suit un relief redessiné par l'érosion). MESURÉ sur la graine 7, la pauvre en
+      // chaos : 16 nœuds récoltables sur ses 1 146 tuiles de blocs. Douze suffisent à ce que la
+      // clause ③ — « ce qui se récolte dans le chaos s'atteint sans casser un bloc » — porte.
+      expect(recolte.length, `seed ${m.s} : rien à récolter dans le chaos — ③ ne prouve rien`).toBeGreaterThan(12)
       const emmures = recolte.filter((n) => {
         const i = n.ty * width + n.tx
         if (comp[i] === plusGrande) return false

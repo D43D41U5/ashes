@@ -58,9 +58,20 @@ const CHAMPS_HACHES = ['terrain', 'cendre', 'profondeur', 'distEau', 'natureEau'
 /** Le reste de la carte — quelques dizaines de ko, couverts par leur JSON. */
 const CHAMPS_JSON = [
   'width', 'height', 'zones', 'zoneGrid', 'zonePas', 'zoneDefs', 'seuils', 'fil',
+  'fils', // TOUS les fleuves (2026-08-30) — `fil` n'est que le plus gros ; A0 l'a exigé à la
+          // seconde où le champ est né, ce qui est très exactement son travail
+
   'annales', // l'état civil du monde d'avant (stratigraphie S-R16) — immuable comme le reste
   'coulees', // les chemins du gibier (forêts-vivantes §4) — gelés à l'amorce, comme le fil
+  'lacs', // l'eau EN NAPPE (terrasses §2, 2026-09-03) — la donnée qui dit ce qui est plat ; A0
+          // l'a exigé à la seconde où le champ est né, et c'est bien : le palier des terrasses
+          // en dépend, et une nappe qui bougerait déplacerait une cuvette entière
 ] as const
+// ⚠ `etages` et `connecteurs` (spec `etages.md`) NE SONT PAS DANS CETTE LISTE, pour la raison
+// EXACTE qui a sorti `cendreCout` : ce fichier fait vivre le plan COMPLET, qui n'a pas de buttes
+// nues, donc pas de mesa, donc pas d'étage — les nommer ici ferait rougir A0 en réclamant des
+// clés que cette carte-là ne porte pas. Ils sont gelés à l'amorce comme le reste de la carte, et
+// c'est `etages.test.ts` qui le garde, sur le monde joué — la carte qui les porte.
 
 /**
  * L'EMPREINTE DE LA CARTE. On ne garde pas une copie (7,5 M de nombres, ~60 Mo) : on somme.

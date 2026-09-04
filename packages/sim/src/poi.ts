@@ -1007,27 +1007,73 @@ export function placeCharniers(
   }
 
   const used = new Map<string, number>()
-  for (const groupe of groupes.values()) {
+  for (const [cle, groupe] of groupes) {
     // LE QUOTA — la somme des densités, pas la moyenne fois le compte : si le champ gagne un jour
     // un terme qui varie DANS une zone, la formule tient toujours.
     let somme = 0
     for (const p of groupe) somme += densite(Math.floor(p.x), Math.floor(p.y))
     const quota = Math.max(MORTS.CHARNIER_MIN_PAR_ZONE, Math.round(somme))
 
+    /** Le point porte-t-il un charnier ? Rend faux pour toutes les raisons de refus. */
+    const posable = (tx: number, ty: number): boolean => {
+      // De plain-pied sur le monde : ni percement, ni poche murée (voir l'en-tête).
+      if (field.dist[ty * map.width + tx] !== 0) return false
+      // Pas DANS l'empreinte d'un autre lieu — mais le voisinage est permis, et c'est voulu : un
+      // charnier au pied des Ruines est une histoire. L'écart entre charniers, lui, est déjà tenu
+      // par le semis de Poisson ; ce rayon-ci ne le borne jamais.
+      if (tropPres(map, tx, ty, MORTS.CHARNIER_ECART_LIEU)) return false
+      // ⚠ ET LE RECOUVREMENT DE RECTANGLES, qui n'est PAS impliqué par l'écart des centres —
+      // corrigé le 2026-08-30, sur un vrai cas. `tropPres` ne connaît que les CENTRES, or un
+      // set-piece est vaste : le Bois Noir fait 48 tuiles de large, donc une demi-diagonale de
+      // 33,9 > `CHARNIER_ECART_LIEU` (32). Un charnier posé en diagonale à 32 tuiles de son
+      // centre tombe DANS son coin, et `poisAt` rend alors DEUX lieux pour ces tuiles. La garde
+      // de `charniers.test.ts` le disait déjà mot pour mot — « vérifié à 0 sur la seed du jeu,
+      // mais PAR CHANCE et non par construction ». La chance a tourné quand l'eau neuve a
+      // déplacé le semis : le Charnier XLVII s'est posé dans le Bois Noir. Voici la construction.
+      const z = footprintAt(map, t, tx, ty)
+      for (const a of map.zones) {
+        if (a.kind === undefined) continue
+        if (z.x < a.x + a.w && a.x < z.x + z.w && z.y < a.y + a.h && a.y < z.y + z.h) return false
+      }
+      return isEligible(map, field, t, tx, ty, used, zoneDe)
+    }
+
     let poses = 0
     for (const p of groupe) {
       if (poses >= quota) break
       const tx = Math.floor(p.x)
       const ty = Math.floor(p.y)
-      // De plain-pied sur le monde : ni percement, ni poche murée (voir l'en-tête).
-      if (field.dist[ty * map.width + tx] !== 0) continue
-      // Pas DANS l'empreinte d'un autre lieu — mais le voisinage est permis, et c'est voulu : un
-      // charnier au pied des Ruines est une histoire. L'écart entre charniers, lui, est déjà tenu
-      // par le semis de Poisson ; ce rayon-ci ne le borne jamais.
-      if (tropPres(map, tx, ty, MORTS.CHARNIER_ECART_LIEU)) continue
-      if (!isEligible(map, field, t, tx, ty, used, zoneDe)) continue
+      if (!posable(tx, ty)) continue
       placeOne(map, field, t, tx, ty, used)
       poses += 1
+    }
+
+    // ═══ LE MINIMUM EST UN MINIMUM (2026-08-30) ═══
+    //
+    // `CHARNIER_MIN_PAR_ZONE` porte son nom depuis toujours, et pourtant rien ne le tenait : le
+    // quota bornait le HAUT, jamais le bas — si aucun point du semis de Poisson ne passait les
+    // refus, la zone repartait avec ZÉRO charnier, en silence. MESURÉ le 2026-08-30 : sur le
+    // monde joué réduit (632×372, seed 2026), la carte est passée de 1 charnier à 0 le jour où
+    // les rus ont mangé quelques tuiles sèches — et avec eux la Brume et les fumerolles, qui
+    // n'ont plus de foyer. La marge était d'un seul charnier ; ce n'était pas une marge.
+    //
+    // On resème donc PLUS FIN sur la même zone, et seulement là où le compte n'y est pas : une
+    // zone qui a rempli son quota ne voit pas passer un seul point de plus — la carte de
+    // production reste bit à bit celle d'avant.
+    if (poses < MORTS.CHARNIER_MIN_PAR_ZONE) {
+      const fins = shuffled(
+        poissonPoints(map.width, map.height, seed ^ 0x46494e53 /* 'FINS' */, Math.max(4, Math.floor(MORTS.CHARNIER_ESPACEMENT / 3))),
+        seed,
+      )
+      for (const p of fins) {
+        if (poses >= MORTS.CHARNIER_MIN_PAR_ZONE) break
+        const tx = Math.floor(p.x)
+        const ty = Math.floor(p.y)
+        if ((zoneDe?.(tx, ty) ?? '') !== cle) continue // chacun chez soi : c'est un quota PAR zone
+        if (!posable(tx, ty)) continue
+        placeOne(map, field, t, tx, ty, used)
+        poses += 1
+      }
     }
   }
 }

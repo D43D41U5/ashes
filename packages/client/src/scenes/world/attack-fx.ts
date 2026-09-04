@@ -57,7 +57,7 @@
 import Phaser from 'phaser'
 import { FONT } from '../ui/typography'
 import { eclatAt } from './bande'
-import { amplitudeRecul, ECRASE_MAX, encaissement, ENCAISSE_MS } from './encaissement'
+import { amplitudeRecul, ECRASE_MAX, encaissement, ENCAISSE_MS, FLASH_BLANC, teinteImpact } from './encaissement'
 import { contourZone } from '../../render/zone-frappe'
 import { desequilibre, INCLINE_MAX, PENCHE_MAX_PX, SEUIL_MS } from './desequilibre'
 
@@ -72,7 +72,6 @@ const SPARK_MS = 220
 const NUMBER_MS = 620
 
 const BLADE = 0xf0e6d2
-const IMPACT_TINT = 0xff8877
 const BLEED = 0xc0503e
 /** LE CENDREUX S'EFFRITE — il n'a pas de sang à donner (la sim ne le fait jamais
  *  saigner au sol : pas d'`habitat`, pas de plaie de chasse). Sa gerbe est sa
@@ -205,6 +204,18 @@ export interface AttackFx {
     mine: boolean,
     side: 1 | -1,
     charged: boolean,
+    /**
+     * LE COUP EST INANNULABLE (`Strike.lourd`, spec combat R4nonies) — la MOITIÉ VISIBLE
+     * de la règle. Une zone qu'on peut interrompre se peint en CONTOUR ; une zone qu'on ne
+     * peut que fuir se peint PLEINE. C'est un second axe, orthogonal à la teinte : celle-ci
+     * dit toujours À QUI est le coup (crème = à moi, rouge = à l'en-face), et il ne fallait
+     * surtout pas la lui reprendre — c'est « l'information la plus chère du combat ».
+     *
+     * Porté par le REMPLISSAGE et non par une couleur de plus : ça se lit sans distinguer
+     * les teintes (un joueur daltonien lit un aplat contre un contour), et ça s'empile avec
+     * l'ampleur que `charged` donne déjà à la zone.
+     */
+    inannulable: boolean,
     /** L'arme est un ARC : le télégraphe est une LIGNE, pas un cône (voir `paintLigne`). */
     ranged?: boolean,
   ): void
@@ -559,6 +570,17 @@ export function createAttackFx(scene: Phaser.Scene, depth: number): AttackFx {
    *  L'axe est nul quand on ignore d'où le coup venait — on blanchit alors sans reculer,
    *  plutôt que de reculer au hasard. */
   const impacts = new Map<Phaser.GameObjects.Image, { at: number; rx: number; ry: number; px: number }>()
+  /**
+   * LES CORPS ACTUELLEMENT EN APLAT BLANC — et cette table n'est pas un confort, c'est la
+   * seule chose qui empêche un sprite de rester une silhouette pleine POUR TOUJOURS.
+   *
+   * `syncActor` repose la COULEUR de chaque acteur à chaque image, jamais le MODE. Un
+   * `setTintMode(FILL)` posé ici et non repris survit donc à tout : l'espèce d'une bête,
+   * la marque d'un wind-up, l'estompe du dormeur seraient rendues en aplat blanc jusqu'à
+   * la mort du sprite. C'est exactement la garde que `peindreBande` tient déjà avec
+   * `clignotants`, pour la même raison et sur les mêmes corps.
+   */
+  const blanchis = new Set<Phaser.GameObjects.Image>()
   /** Les corps qui se rattrapent d'un coup manqué (spec R4quater — `desequilibre.ts`). */
   const rates = new Map<Phaser.GameObjects.Image, { at: number; dx: number; dy: number; duree: number }>()
   /**
@@ -690,7 +712,7 @@ export function createAttackFx(scene: Phaser.Scene, depth: number): AttackFx {
      * seule frame. Un coup CHARGÉ se peint plus fort : il ne se confond pas avec un
      * coup simple, sans quoi la charge serait un secret bien gardé.
      */
-    telegraph(x, y, dx, dy, progress, zone, mine, side, charged, ranged) {
+    telegraph(x, y, dx, dy, progress, zone, mine, side, charged, inannulable, ranged) {
       const len = Math.sqrt(dx * dx + dy * dy)
       if (len < 0.0001) return
       const teinte = mine ? BLADE : THREAT
@@ -700,19 +722,26 @@ export function createAttackFx(scene: Phaser.Scene, depth: number): AttackFx {
         paintLigne(x, y, dx, dy, zone, teinte, 0.45 + 0.5 * progress, 2)
         return
       }
-      const lourd = charged ? 1.6 : 1
-      paintZone(
-        x,
-        y,
-        dx,
-        dy,
-        zone,
-        teinte,
-        ((mine ? 0.06 : 0.1) + 0.16 * progress) * lourd,
-        Math.min(1, (0.25 + 0.5 * progress) * lourd),
-        (mine ? 1.5 : 2) * lourd,
-      )
-      paintGesture(x, y, dx, dy, zone, progress, teinte, Math.min(1, (0.55 + 0.45 * progress) * lourd), side)
+      const ampleur = charged ? 1.6 : 1
+      // ═══ PLEIN = INANNULABLE, CONTOUR = ANNULABLE (R4nonies) ═══
+      //
+      // La différence est CATÉGORIELLE et non graduelle, et c'est tout le point : un
+      // remplissage simplement « un peu plus fort » se lit « un peu plus fort », pas
+      // « autre chose ». Une zone annulable est donc à peine teintée — on voit son
+      // CONTOUR ; une zone inannulable est un APLAT qu'on ne peut pas prendre pour autre
+      // chose. L'ampleur de `charged` s'empile par-dessus sans brouiller la lecture,
+      // parce qu'elle joue sur l'échelle et non sur la nature du remplissage.
+      // ⚠ LE PLAFOND EST TENU PAR LA COUCHE, pas par le goût : `blade` vit à
+      // `OVERLAY_DEPTH − 10`, donc AU-DESSUS des corps — un aplat trop dense laverait le
+      // loup qu'on demande justement au joueur d'esquiver. 0,32 au plus fort contre 0,12
+      // pour l'annulable : le rapport reste catégoriel (près du triple), la silhouette
+      // reste lisible. C'est un nombre de FEEL, à rejuger à l'œil.
+      const fond = inannulable
+        ? 0.28 + 0.12 * progress
+        : ((mine ? 0.04 : 0.07) + 0.08 * progress) * ampleur
+      const trait = inannulable ? 4 : (mine ? 1.5 : 2) * ampleur
+      paintZone(x, y, dx, dy, zone, teinte, fond, Math.min(1, (0.25 + 0.5 * progress) * ampleur), trait)
+      paintGesture(x, y, dx, dy, zone, progress, teinte, Math.min(1, (0.55 + 0.45 * progress) * ampleur), side)
     },
 
     /**
@@ -835,6 +864,11 @@ export function createAttackFx(scene: Phaser.Scene, depth: number): AttackFx {
       // d'une bête, la marque d'un wind-up — c'est-à-dire une silhouette pleine à la place
       // du sprite, indéfiniment.
       for (const sprite of clignotants) {
+        // ⚠ SAUF S'IL ENCAISSE. `peindreBande` passe APRÈS `peindreRecul` dans la frame :
+        // rendre ici le mode d'un corps qu'on vient de blanchir volerait son flash pour
+        // une image entière (celle qui suit une bande). `peindreRecul` le rendra lui-même
+        // à la fin de son arrêt — il est le seul à savoir quand.
+        if (blanchis.has(sprite)) continue
         sprite.clearTint()
         sprite.setTintMode(Phaser.TintModes.MULTIPLY)
       }
@@ -855,11 +889,29 @@ export function createAttackFx(scene: Phaser.Scene, depth: number): AttackFx {
           const c = ECRASE_MAX * e.ecrase
           sprite.setDisplaySize(sprite.displayWidth * (1 + c), sprite.displayHeight * (1 - c))
         }
-        // ③ IL BLANCHIT — et cette fois ça se voit. `setTint` (et non l'aplat plein) : la
-        //    bête garde sa silhouette et vire au rouge ; un aplat en ferait un carré de
-        //    couleur. Reposé CHAQUE image tant que dure l'encaissement, parce que
-        //    `syncActor` vient de le reposer lui aussi.
-        sprite.setTint(IMPACT_TINT)
+        // ③ IL BLANCHIT — POUR DE BON. Deux temps, et c'est la même frontière que ①/② :
+        //
+        //    · CLOUÉ → APLAT BLANC (`FILL`). Un flash est de la LUMIÈRE. Le mode `MULTIPLY`
+        //      — celui de toutes les autres teintes du jeu — ne sait qu'assombrir : il
+        //      multiplie les texels, donc 0xff8877 rendait un loup sombre PLUS sombre et
+        //      un peu rouge. C'était un hématome, pas un éclat. `FILL` remplace la couleur
+        //      en gardant l'ALPHA : la silhouette tient, c'est elle qui s'allume.
+        //    · PUIS LA RETOMBÉE (`MULTIPLY`) : le corps reprend son dessin et la teinte se
+        //      RETIRE, de `IMPACT_TINT` vers le blanc — l'identité du mode. `e.teinte` était
+        //      calculée et jetée ; l'interface promettait « 1 pleine puis fondue » et rendait
+        //      un créneau. Elle fond enfin.
+        //
+        //    Reposé CHAQUE image tant que dure l'encaissement, parce que `syncActor` vient
+        //    de reposer la couleur juste avant nous — mais jamais le mode : c'est `blanchis`
+        //    qui le rend, et lui seul.
+        if (e.arret) {
+          sprite.setTint(FLASH_BLANC)
+          sprite.setTintMode(Phaser.TintModes.FILL)
+          blanchis.add(sprite)
+        } else {
+          if (blanchis.delete(sprite)) sprite.setTintMode(Phaser.TintModes.MULTIPLY)
+          sprite.setTint(teinteImpact(e.teinte))
+        }
       }
       // ═══ ET CEUX QUI SE RATTRAPENT D'UN COUP MANQUÉ ═══
       //
@@ -1051,6 +1103,13 @@ export function createAttackFx(scene: Phaser.Scene, depth: number): AttackFx {
         // On rend la teinte au sprite : `snapshot-view` la repose de toute façon au
         // snapshot suivant (elle encode le wind-up et l'espèce) — on ne fait donc
         // que lever le voile rouge, sans lui voler son état.
+        //
+        // ⚠ ET LE MODE AVEC, si le corps a été blanchi : `clearTint` efface la COULEUR, pas
+        // le mode. Un sprite dont l'encaissement expire pendant l'aplat (une image très
+        // longue enjambe les 70 ms — le rendu logiciel du banc le fait tout le temps) resterait
+        // une silhouette pleine indéfiniment. C'est le même oubli que `peindreBande` avait
+        // eu à réparer, et il ne se voit qu'au cas limite.
+        if (blanchis.delete(sprite)) sprite.setTintMode(Phaser.TintModes.MULTIPLY)
         sprite.clearTint()
         impacts.delete(sprite)
       }

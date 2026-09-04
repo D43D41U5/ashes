@@ -275,7 +275,7 @@ describe('le contenu, sur la vraie carte', () => {
   it('A18 — le SPAWN est éparpillé : personne ne naît sur la tête du voisin', () => {
     for (const { c, emplacements } of mondes) {
       const n = Math.ceil(MONDE.JOUEURS_CIBLE / MONDE.JOUEURS_PAR_VILLAGE)
-      const spawns = pointsDeSpawn(c, emplacements, n)
+      const spawns = pointsDeSpawn(c, emplacements, n, c.graphe.seed)
       expect(spawns.length, `seed ${c.graphe.seed}`).toBe(n)
       for (const s of spawns) {
         // Tous dans la racine, tous marchables, aucun dans un seuil.

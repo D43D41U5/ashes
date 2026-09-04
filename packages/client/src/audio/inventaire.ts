@@ -228,6 +228,10 @@ export const INVENTAIRE: Inventaire = {
   // s'entend d'où il a lieu, et la distance dit s'il me concerne.
   attack_whiffed: { voix: 'voix', ou: 'entite', famille: 'registre', quoi: 'un coup fend l’air — et cloue son porteur sur place' },
   attack_blocked: { voix: 'voix', ou: 'entite', famille: 'registre', quoi: 'la garde a tenu (et si elle était posée à temps, elle fut gratuite)' },
+  // Le troisième geste qui n'aura pas lieu : le coup BRISÉ. Il se dit du corps qui LÂCHE
+  // (comme le raté se dit de qui a fendu l'air) — c'est là que le télégraphe s'éteint, et
+  // c'est ce que l'œil suivait. Son endurance est perdue comme celle du raté.
+  attack_interrupted: { voix: 'voix', ou: 'entite', famille: 'registre', quoi: 'un coup armé est BRISÉ par le coup d’en face — le geste est lâché' },
 
   // ── MUET PAR NATURE — haute fréquence, ou pure plomberie d'interface ──────────────
   // Le silence tient — mais sa RAISON était fausse jusqu'au 2026-08-20. « Déjà un toast »

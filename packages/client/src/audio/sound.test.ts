@@ -66,7 +66,7 @@ describe('la table de routage audio (soundForEvent)', () => {
     expect(desaccords).toEqual([])
   })
 
-  it("l'inventaire tranché de GATE 1 : 97 faits, 56 voix", () => {
+  it("l'inventaire tranché de GATE 1 : 98 faits, 57 voix", () => {
     // Un compte, pas un jugement. S'il bouge, c'est qu'un fait de domaine est né ou qu'une
     // voix a changé — dans les deux cas, quelqu'un doit le savoir.
     const total = Object.keys(VOIX).length
@@ -121,7 +121,10 @@ describe('la table de routage audio (soundForEvent)', () => {
     // (décision d'Alexis) — leurs six faits partent avec eux (4 voix, 2 silences).
     // 100 → 103 faits et 58 → 60 voix le 2026-08-30 : la traction et le Bûcher —
     // la corde qui casse claque, le rituel MONTE (l'inverse des présages), le rendu se voit.
-    expect(total).toBe(97)
+    // 97 → 98 faits et 56 → 57 voix le 2026-08-31 : `attack_interrupted` naît (combat R4octies) —
+    // le coup BRISÉ est le troisième geste qui n'aura pas lieu, après le raté et la parade, et
+    // c'est celui qui décide de l'échange : il ne pouvait pas rester muet.
+    expect(total).toBe(98)
     // 34 → 35 le 2026-07-29 : `node_depleted` a gagné sa voix (trois, selon la matière).
     // 61 → 62 faits et 35 → 36 voix le 2026-07-30 : `door_toggled` naît (spec construction R26).
     // 62 → 63 faits et 36 → 37 voix le 2026-07-31 : `cendreux_prowl` naît (spec cendreux R11bis) —
@@ -137,7 +140,7 @@ describe('la table de routage audio (soundForEvent)', () => {
     // le jumeau grave du préavis de Brume ; `entre`/`passe` restent à la nappe du vent.
     // 57 → 58 le 2026-08-30 : `murmure_recueilli` — le souffle qui retombe (R27c), arrivé avec
     // son fantôme.
-    expect(voix).toBe(56)
+    expect(voix).toBe(57)
   })
 
   it('L’AXE D’ALIGNEMENT S’ENTEND : les verbes chauds montent, les froids tombent', () => {

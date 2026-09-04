@@ -13,16 +13,33 @@
  *   flux) → des VALLÉES DENDRITIQUES, des bassins versants, des cols réels — ce que le bruit
  *   ne sait pas fabriquer, parce que le bruit n'a pas d'histoire.
  *
- * ═══ LA RACINE EST LE NIVEAU DE BASE, ET ELLE GARDE SON CHAMP ═══
+ * ═══ LA RACINE S'ÉRODE, ET LE PAYS EST ENDORÉIQUE ═══
  *
- * Les cellules de la Racine gardent le champ HISTORIQUE (`ondulation`/`grain` de
- * `racine-relief.ts`, mêmes sels, mêmes valeurs par tuile) et sont ÉPINGLÉES pendant l'érosion :
- * le T0 réglé à l'œil en juillet — cuvettes, rivière, végétation ordonnée — garde sa géographie.
- * Deux tirages INDEXÉS SUR LA GRILLE glissent, et c'est assumé : la lame des lacs
- * (`hash2(graine, …)` dans `placerLacs`) et l'ancrage des carrés de crête changent d'alignement
- * avec la grille devenue globale — mêmes cuvettes, lame re-tirée ; les invariants (R45, A14)
- * tiennent par construction. Pour la physique, ces cellules sont le fond de la vallée : tout le
- * reste du monde s'érode VERS elles. « L'eau descend vers le feu » devient un fait de terrain.
+ * *(Décision d'Alexis, 2026-08-30, sur l'A/B rendu — « je veux que tu fasses tout pour que j'aie le
+ * même rendu », et la mer intérieure qui vient avec est ACCEPTÉE : « la mer me va bien ». Journal :
+ * `docs/decisions.md`.)*
+ *
+ * Jusqu'ici la Racine était le NIVEAU DE BASE : ses cellules gardaient le champ fbm de juillet et
+ * étaient épinglées pendant l'érosion. Comme le monde joué EST la Racine, ça revenait à ne rien
+ * éroder du tout — MESURÉ sur trois graines à la taille de production : **100 % des tuiles
+ * marchables reposaient sur une cellule épinglée**, 0 cellule érodée sous les pieds du joueur. Le
+ * solveur stream-power tournait sur la roche du pourtour ; l'hydrologie dérivée (priority-flood,
+ * `r ∝ √flux`) lisait un BRUIT — ni vallée qui contienne la rivière, ni crête entre deux bassins.
+ *
+ * Deux clauses le remplacent, et la seconde est le vrai sujet :
+ *
+ *   ① LA RACINE S'ÉRODE. Son champ de juillet devient l'UPLIFT que `UPLIFT` maintient : les
+ *     grandes formes réglées à l'œil survivent, l'incision les dissèque. Le champ final se recale
+ *     sur l'étendue de juillet (voir plus bas) — l'érosion change la forme, jamais l'échelle.
+ *
+ *   ② LE PAYS N'A PAS D'EXUTOIRE — il est ENDORÉIQUE, et c'est la vérité de fiction : la Racine
+ *     est un fond de vallée fermé par ses montagnes, son eau ne va pas à la mer, elle s'assemble
+ *     dans des cuvettes. Donc **aucune cellule n'est niveau de base** et le routage se fait sur la
+ *     surface NUE : pas de remplissage ε, pas de drainage forcé vers un bord. Chaque minimum local
+ *     est un terminus, le flux s'y accumule, et l'incision creuse les vallons qui y descendent.
+ *     Ce sont ces cuvettes que `zonegen-hydro.ts` inonde ensuite en lacs — le grand bassin en fait
+ *     une mer intérieure, acceptée en connaissance de cause (l'eau profonde est un mur, R5).
+ *     *Un pays qui draine vers un bord n'a pas de lac : il a des rivières qui s'en vont.*
  *
  * ═══ MUET, LOCAL, DÉTERMINISTE ═══
  *
@@ -59,7 +76,8 @@ export const SOCLE = {
   /** Ré-uplift par itération, en part de l'uplift initial : maintient les crêtes pendant que
    *  les vallées se creusent (sans lui, tout relaxe vers le niveau de base). */
   UPLIFT: 0.005,
-  /** L'ε du Priority-Flood — la pente infime qui garantit que TOUT draine. */
+  /** L'ε du Priority-Flood — la pente infime qui garantissait que TOUT draine. Il ne sert plus à
+   *  l'érosion (le pays est ENDORÉIQUE, voir plus bas) ; `zonegen-hydro.ts` a le sien. */
   EPSILON: 1e-6,
 
   // ══ LA MOUILLE — l'humidité physique que `solDe` lit (couche II) ═══════════════════════════
@@ -124,7 +142,7 @@ const SQRT2 = Math.sqrt(2)
  * à file de priorité — un tas départagé par ordre d'insertion serait un générateur de
  * divergences silencieuses.
  */
-class TasPF {
+export class TasPF {
   private h: Float64Array
   private idx: Int32Array
   private n = 0
@@ -220,10 +238,12 @@ export function batirLeSocle(
       const ond = ondulation(tx, ty, seed)
       racineRaw[k] = ond
       if (!vide && z === g.racine) {
-        // LA RACINE : son champ de juillet, calé dans l'étage bas — et ÉPINGLÉ (niveau de base).
+        // LA RACINE : son champ de juillet, calé dans l'étage bas. Il n'est plus ÉPINGLÉ — il
+        // devient l'uplift que le ré-uplift maintient pendant que l'incision le dissèque
+        // (`SOCLE.EXUTOIRE_BANDE`). Le domaine des quantiles T0 (`dedans`), lui, ne bouge pas.
         dedans[k] = 1
         h[k] = SOCLE.RACINE_BASE + SOCLE.RACINE_AMP * ond
-        uplift0[k] = 0
+        uplift0[k] = h[k]!
       } else if (vide) {
         h[k] = SOCLE.ALT_VIDE + (bruitUplift(tx, ty, seed) - 0.5) * SOCLE.RELIEF_AMP
         uplift0[k] = h[k]!
@@ -243,13 +263,11 @@ export function batirLeSocle(
     }
   }
 
-  // ── L'ÉROSION : Priority-Flood → récepteurs → accumulation → solveur implicite ──
-  const filled = new Float64Array(n)
+  // ── L'ÉROSION : récepteurs → accumulation → solveur implicite ──
   const recepteur = new Int32Array(n)
   const flux = new Float64Array(n)
   const pente = new Float64Array(n)
-  const ferme = new Uint8Array(n)
-  const pile = new Int32Array(n) //     l'ordre de Braun-Willett : les bases d'abord, l'amont après
+  const pile = new Int32Array(n) //     l'ordre de Braun-Willett : les terminus d'abord, l'amont après
   const nDonneurs = new Int32Array(n)
   const debutDonneurs = new Int32Array(n + 1)
   const donneurs = new Int32Array(n)
@@ -260,54 +278,28 @@ export function batirLeSocle(
   const VDX = new Int32Array([0, 0, -1, 1, -1, 1, -1, 1])
   const VDY = new Int32Array([-1, 1, 0, 0, -1, -1, 1, 1])
   const VDIST = new Float64Array([1, 1, 1, 1, SQRT2, SQRT2, SQRT2, SQRT2])
-  const tas = new TasPF(n)
 
   const uneIteration = (eroder: boolean): void => {
-    // 1. PRIORITY-FLOOD+ε depuis le niveau de base (les cellules de la Racine) : toute
-    //    dépression se remplit à son col, toute cellule draine.
-    ferme.fill(0)
-    tas.vide()
-    for (let k = 0; k < n; k++) {
-      filled[k] = h[k]!
-      if (dedans[k] === 1) {
-        ferme[k] = 1
-        tas.pousse(h[k]!, k)
-      }
-    }
-    while (tas.taille > 0) {
-      const k = tas.tire()
-      const kx = k % cols
-      const ky = (k - kx) / cols
-      const fk = filled[k]! + SOCLE.EPSILON
-      for (let d = 0; d < 8; d++) {
-        const vx = kx + VDX[d]!
-        const vy = ky + VDY[d]!
-        if (vx < 0 || vy < 0 || vx >= cols || vy >= rows) continue
-        const v = vy * cols + vx
-        if (ferme[v] === 1) continue
-        ferme[v] = 1
-        const fv = h[v]! > fk ? h[v]! : fk
-        filled[v] = fv
-        tas.pousse(fv, v)
-      }
-    }
+    // 1. PAS DE REMPLISSAGE, PAS DE NIVEAU DE BASE — le pays est ENDORÉIQUE (en-tête ②) : on route
+    //    sur la surface NUE. Une dépression n'est pas une anomalie à combler, c'est un TERMINUS ;
+    //    c'est elle qui deviendra un lac. `filled` disparaît : la surface EST `h`.
 
-    // 2. LES RÉCEPTEURS D8, sur la surface remplie : le voisin de pente maximale. Strictement
-    //    plus raide pour battre le tenant — à égalité, l'ordre du tableau puis l'index gagnent.
+    // 2. LES RÉCEPTEURS D8 : le voisin de pente maximale. Strictement plus raide pour battre le
+    //    tenant — à égalité, l'ordre du tableau puis l'index gagnent. Une cellule sans voisin plus
+    //    bas n'a pas de récepteur : c'est un TERMINUS (le fond d'une cuvette, ou le bord du monde).
     for (let k = 0; k < n; k++) {
       recepteur[k] = -1
       pente[k] = 0
-      if (dedans[k] === 1) continue // le niveau de base ne draine pas : il REÇOIT
       const kx = k % cols
       const ky = (k - kx) / cols
-      const fk = filled[k]!
+      const fk = h[k]!
       let meilleure = 0
       for (let d = 0; d < 8; d++) {
         const vx = kx + VDX[d]!
         const vy = ky + VDY[d]!
         if (vx < 0 || vy < 0 || vx >= cols || vy >= rows) continue
         const v = vy * cols + vx
-        const s = (fk - filled[v]!) / VDIST[d]!
+        const s = (fk - h[v]!) / VDIST[d]!
         if (s > meilleure) {
           meilleure = s
           recepteur[k] = v
@@ -317,7 +309,7 @@ export function batirLeSocle(
     }
 
     // 3. LA PILE de Braun-Willett : les donneurs de chaque cellule, puis un parcours depuis les
-    //    bases — l'aval TOUJOURS avant l'amont. Les donneurs se rangent par index croissant
+    //    TERMINUS — l'aval TOUJOURS avant l'amont. Les donneurs se rangent par index croissant
     //    (une seule passe croissante), l'ordre est donc total.
     nDonneurs.fill(0)
     for (let k = 0; k < n; k++) if (recepteur[k]! >= 0) nDonneurs[recepteur[k]!]!++
@@ -340,9 +332,10 @@ export function batirLeSocle(
         pile[sommet++] = donneurs[d]!
       }
     }
-    // TOUTE cellule est soit base, soit descendante d'une base (les chaînes de récepteurs
-    // décroissent strictement en `filled`) : la pile DOIT être pleine. Un trou serait un
-    // résultat faux mais reproductible — le pire genre de faux. On préfère tomber ici.
+    // TOUTE cellule est soit un terminus, soit descendante d'un terminus (les chaînes de
+    // récepteurs décroissent STRICTEMENT en `h`, donc elles ne bouclent pas et finissent sur un
+    // minimum local) : la pile DOIT être pleine. Un trou serait un résultat faux mais
+    // reproductible — le pire genre de faux. On préfère tomber ici.
     if (sommet !== n) throw new Error(`socle : pile de drainage incomplète (${sommet}/${n})`)
 
     // 4. L'ACCUMULATION : chaque cellule apporte 1, l'amont se déverse dans l'aval.
@@ -372,7 +365,14 @@ export function batirLeSocle(
   for (let it = 0; it < SOCLE.ITERATIONS; it++) uneIteration(true)
   uneIteration(false) // la passe finale : drainage et flux de la surface DÉFINITIVE
 
-  // ── LES CHAMPS DU CREUX : la Racine garde ses valeurs de juillet AU BIT PRÈS ──
+  // ── LES CHAMPS DU CREUX ──
+  //
+  // ⚠ LA RACINE SE RECALE SUR L'ÉTENDUE DE SON CHAMP DE JUILLET, et ce n'est pas de la nostalgie :
+  // tous les seuils qui la lisent sont en UNITÉS DE CE CHAMP (`CREUX.LAME` pour la lame des lacs,
+  // les quantiles pour la végétation). L'érosion change la FORME du champ ; si on la laissait
+  // aussi en changer l'ÉCHELLE — le solveur comprime l'amplitude d'un facteur cinq —, la lame de
+  // lac deviendrait un plafond et la Racine sortirait sans une goutte. On normalise donc l'érodé
+  // sur le min/max du champ historique, mesurés sur le même domaine.
   let hMin = Infinity
   let hMax = -Infinity
   for (let k = 0; k < n; k++) {
@@ -380,6 +380,15 @@ export function batirLeSocle(
     if (h[k]! > hMax) hMax = h[k]!
   }
   const etendue = hMax - hMin || 1
+  let rMin = Infinity, rMax = -Infinity, eMin = Infinity, eMax = -Infinity
+  for (let k = 0; k < n; k++) {
+    if (dedans[k] !== 1) continue
+    if (racineRaw[k]! < rMin) rMin = racineRaw[k]!
+    if (racineRaw[k]! > rMax) rMax = racineRaw[k]!
+    if (h[k]! < eMin) eMin = h[k]!
+    if (h[k]! > eMax) eMax = h[k]!
+  }
+  const eEtendue = (eMax - eMin) || 1
   const alt = new Float64Array(n)
   const altLarge = new Float64Array(n)
   for (let k = 0; k < n; k++) {
@@ -387,9 +396,9 @@ export function batirLeSocle(
     const ky = (k - kx) / cols
     const gr = grainFin(kx * M + M / 2, ky * M + M / 2, seed)
     if (dedans[k] === 1) {
-      // Le contrat de compatibilité : mêmes valeurs que `releverLeCreux`, au bit près.
-      altLarge[k] = racineRaw[k]!
-      alt[k] = racineRaw[k]! * (1 - CREUX.POIDS_FINE) + gr * CREUX.POIDS_FINE
+      const norme = rMin + ((h[k]! - eMin) / eEtendue) * (rMax - rMin)
+      altLarge[k] = norme
+      alt[k] = norme * (1 - CREUX.POIDS_FINE) + gr * CREUX.POIDS_FINE
     } else {
       const norme = (h[k]! - hMin) / etendue
       altLarge[k] = norme

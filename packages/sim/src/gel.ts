@@ -626,6 +626,7 @@ export function advanceDegel(state: SimState): void {
     if (!berge) continue // aucune issue dans le rayon : on ne téléporte pas au hasard
     entity.x = berge.tx + 0.5
     entity.y = berge.ty + 0.5
+    delete entity.etage // une berge est au SOL (spec `etages.md`) — comme le respawn et le TP
   }
 }
 

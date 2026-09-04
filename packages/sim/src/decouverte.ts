@@ -29,6 +29,7 @@
  * d'événements, ce que `replay.test.ts` garde.
  */
 import { BALANCE, RECIPES, type RecipeId } from './balance'
+import { atteintLeSol } from './etages'
 import { emitEvent } from './events'
 import { distSq } from './geometry'
 import type { ItemId } from './items'
@@ -74,6 +75,8 @@ function revelerParFonction(state: SimState, e: Entity): void {
   const r = BALANCE.INTERACT_RANGE
   for (const s of state.structures) {
     if (distSq(e.x, e.y, s.tx + 0.5, s.ty + 0.5) > r * r) continue
+    // On n'apprend pas d'un établi qu'un plancher sépare de soi (spec `etages.md` E-R5).
+    if (!atteintLeSol(state.map, e, s.tx, s.ty)) continue
     for (const id of Object.keys(RECIPES) as RecipeId[]) {
       const besoin = RECIPES[id].requiert
       if (besoin !== null && sertExigence(s.type, besoin)) reveler(state, e, id)

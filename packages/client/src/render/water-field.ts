@@ -5,12 +5,16 @@
  * Pur : aucun import Phaser, donc testable en Node. Le wrapper qui en fait une
  * texture WebGL vit dans `scenes/world/water-layer.ts`.
  *
- *   R — LE MASQUE, et il est BINAIRE : 1 dans l'eau, 0 sur la terre. Rien entre
+ *   R — LE MASQUE, et il est BINAIRE : ≥ 128 dans l'eau, 0 sur la terre. Rien entre
  *       les deux, et c'est essentiel. En filtrage linéaire, un masque binaire
  *       croise 0,5 EXACTEMENT sur la frontière entre deux tuiles : le shader tient
  *       donc son trait de rive au bon endroit, au pixel près. La première version
  *       encodait la profondeur dans ce canal (0,45 pour un haut-fond) — l'eau
  *       débordait alors d'une demi-tuile sur l'herbe, et son écume avec elle.
+ *       Les 7 bits SOUS le masque portent LES CHUTES (spec `terrasses.md` T-R8quater,
+ *       `chutesDe`) : qui est lèvre d'une marche d'eau, qui en est le pied — décidé ici,
+ *       une fois, pour que le shader n'ait pas à sonder ses voisines à chaque pixel.
+ *       Le shader lit le masque en `step(0,25, R)` : les drapeaux ne le déplacent pas.
  *   G — PROFONDEUR CASE À CASE (geste 01, eau-fond) : 0 sur le haut-fond, 255 au
  *       cœur profond, et la TUILE FRONTIÈRE (profonde, touchant un haut-fond) porte
  *       un poids intermédiaire biaisé profond (0,70 ± 0,08, ondulé par hash de
@@ -356,6 +360,103 @@ export function buildFondField(
   return data
 }
 
+/** Le masque d'eau du canal R : l'eau vaut `MASQUE_EAU + drapeaux`, la terre 0. */
+export const MASQUE_EAU = 128
+
+/**
+ * LES DRAPEAUX DE CHUTE (spec `terrasses.md` T-R8quater) — les 7 bits sous le masque.
+ *
+ * Une marche d'eau dont la paroi regarde le nord, l'est ou l'ouest n'a pas de face à peindre :
+ * la projection (`LIFT_TUILES` = 2 tuiles par palier, tri par strate) la réduit à un pli d'un
+ * pixel. Ce qui se voit d'une chute vue de haut, c'est SA LÈVRE — le bourrelet blanc là où l'eau
+ * bascule, sur la tuile HAUTE — et SON PIED — l'écume et les bulles sur l'eau BASSE, là où l'écran
+ * la montre à côté de la lèvre. La géométrie du « à côté » est celle de la projection, pas du
+ * monde : une tuile de palier p se dessine `2p` rangs plus haut. D'où, pour une tuile basse (x, y)
+ * au palier q :
+ *   • RIDEAU_E — la chute qui regarde l'EST tombe de (x−1, y+k), k ∈ {1, 2}, au palier q+1 : sa
+ *     paroi de 2 tuiles de haut occupe, à l'écran, les rangs de (x, y+1) et (x, y+2)… c'est-à-dire
+ *     de MOI, une ou deux tuiles au nord du pied réel (x, y+k), lequel est caché sous le quad haut.
+ *   • PIED_N — la lèvre nord de (x, y+3) au palier q+1 se dessine JUSTE SOUS mon bord sud (rang
+ *     y+3−2(q+1) = y−2q+1) : l'écume et les bulles se posent sur moi ; et (x, y+4) une tuile plus
+ *     loin (PIED_N = 2) porte la brume, plus haut encore.
+ * Seul l'écart d'UN palier est une chute (T-A3 : ±1 entre voisines) ; un décroché de deux
+ * paliers n'a pas de lèvre — sa paroi (4 tuiles) n'est pas celle qu'on a dessinée.
+ */
+export const CHUTE_LEVRE_N = 1 // je suis haute ; l'eau au NORD est un palier plus bas
+export const CHUTE_LEVRE_E = 2 // … à l'EST
+export const CHUTE_LEVRE_O = 4 // … à l'OUEST
+export const CHUTE_RIDEAU_E = 8 // je suis basse, à l'est d'une chute qui regarde l'est : rideau sur mon bord OUEST
+export const CHUTE_RIDEAU_O = 16 // … à l'ouest d'une chute qui regarde l'ouest : rideau sur mon bord EST
+export const CHUTE_PIED_N = 32 // ×1 : la lèvre nord est sous mon bord sud · ×2 : une tuile plus loin (la brume)
+/** Une lèvre est/ouest ne compte que sur une couture d'au moins tant de tuiles (voir `chutesDe`). */
+export const CHUTE_RUN_MIN = 3
+
+/** Les drapeaux de chute de chaque tuile (0 partout sur une carte plate). Exporté pour les tests. */
+export function chutesDe(
+  terrain: ArrayLike<number>,
+  width: number,
+  height: number,
+  palier: ArrayLike<number>,
+): Uint8Array {
+  const flags = new Uint8Array(width * height)
+  const wet = (x: number, y: number): boolean => {
+    if (x < 0 || y < 0 || x >= width || y >= height) return false
+    const t = terrain[y * width + x]
+    return t === SHALLOW || t === DEEP
+  }
+  const pal = (x: number, y: number): number => palier[y * width + x] ?? 0
+  // Une lèvre : de l'eau, dont la voisine est de l'eau UN palier plus bas.
+  const levreBrute = (x: number, y: number, dx: number, dy: number): boolean =>
+    wet(x, y) && wet(x + dx, y + dy) && pal(x + dx, y + dy) === pal(x, y) - 1
+  for (let y = 0; y < height; y++) {
+    for (let x = 0; x < width; x++) {
+      if (!wet(x, y)) continue
+      let f = 0
+      if (levreBrute(x, y, 0, -1)) f |= CHUTE_LEVRE_N
+      if (levreBrute(x, y, 1, 0)) f |= CHUTE_LEVRE_E
+      if (levreBrute(x, y, -1, 0)) f |= CHUTE_LEVRE_O
+      flags[y * width + x] = f
+    }
+  }
+  // LES LÈVRES EST/OUEST NE VALENT QUE SUR UNE COUTURE QUI COURT (≥ CHUTE_RUN_MIN tuiles du nord
+  // au sud). Une marche en ESCALIER (la lisière d'une terrasse suit une courbe de niveau : des
+  // lèvres nord d'une ou deux tuiles, des lèvres est d'une tuile, en diagonale) n'a pas de paroi
+  // dressée — la couche des parois n'en dresse que sous les faces sud — et son rideau de deux
+  // tuiles y peignait un mur que le sol ne montre pas : regardé le 2026-09-03 (marche nord de la
+  // graine 2026), un nuage blanc de trois tuiles. Là, seule la lèvre nord dessine la marche.
+  for (let x = 0; x < width; x++) {
+    for (const bit of [CHUTE_LEVRE_E, CHUTE_LEVRE_O]) {
+      let debut = -1
+      for (let y = 0; y <= height; y++) {
+        const a = y < height && (flags[y * width + x]! & bit) !== 0
+        if (a && debut < 0) debut = y
+        if (!a && debut >= 0) {
+          if (y - debut < CHUTE_RUN_MIN) for (let k = debut; k < y; k++) flags[k * width + x]! &= ~bit
+          debut = -1
+        }
+      }
+    }
+  }
+  const levre = (x: number, y: number, bit: number): boolean =>
+    x >= 0 && y >= 0 && x < width && y < height && (flags[y * width + x]! & bit) !== 0
+  for (let y = 0; y < height; y++) {
+    for (let x = 0; x < width; x++) {
+      if (!wet(x, y)) continue
+      let f = flags[y * width + x]!
+      const q = pal(x, y)
+      // Le pied d'une chute latérale : la lèvre est UN palier au-dessus, une ou deux tuiles au sud.
+      for (let k = 1; k <= 2; k++) {
+        if (levre(x - 1, y + k, CHUTE_LEVRE_E) && pal(x - 1, y + k) === q + 1) f |= CHUTE_RIDEAU_E
+        if (levre(x + 1, y + k, CHUTE_LEVRE_O) && pal(x + 1, y + k) === q + 1) f |= CHUTE_RIDEAU_O
+      }
+      if (levre(x, y + 3, CHUTE_LEVRE_N) && pal(x, y + 3) === q + 1) f |= CHUTE_PIED_N
+      else if (levre(x, y + 4, CHUTE_LEVRE_N) && pal(x, y + 4) === q + 1) f |= CHUTE_PIED_N * 2
+      flags[y * width + x] = f
+    }
+  }
+  return flags
+}
+
 /** Les régimes d'eau du canal B (geste 10). */
 export const REGIME_NORMAL = 0
 export const REGIME_LAC_MORT = 2
@@ -369,9 +470,17 @@ export function buildWaterField(
   height: number,
   /** Régime par tuile (REGIME_*) — absent : tout est eau normale. */
   regime?: ArrayLike<number>,
+  /**
+   * LE PALIER de chaque tuile (spec `terrasses.md` T-R7), 0..3 — absent : tout au palier 0.
+   * Il se range dans les UNITÉS du canal B, sous le régime (0 / 100 / 200) : le shader lit
+   * `mod(B × 255, 100)` pour le palier, et ses seuils de régime (0,30 · 0,63) ne voient pas
+   * trois unités. Un canal à soi aurait coûté une cinquième texture pour deux bits.
+   */
+  palier?: ArrayLike<number>,
 ): WaterField {
   const data = new Uint8ClampedArray(width * height * 4)
   let hasWater = false
+  const chutes = palier ? chutesDe(terrain, width, height, palier) : null
 
   for (let i = 0; i < width * height; i++) {
     const t = terrain[i]
@@ -379,9 +488,9 @@ export function buildWaterField(
     if (wet) hasWater = true
 
     const o = i * 4
-    data[o] = wet ? 255 : 0 // masque BINAIRE — voir l'en-tête
+    data[o] = wet ? MASQUE_EAU + (chutes?.[i] ?? 0) : 0 // masque BINAIRE + drapeaux de chute — voir l'en-tête
     // G (profondeur) : 0 par défaut — la 2e passe pose le profond et sa frontière.
-    data[o + 2] = regime?.[i] === REGIME_LAC_MORT ? 200 : regime?.[i] === REGIME_SUIE ? 100 : 0
+    data[o + 2] = (regime?.[i] === REGIME_LAC_MORT ? 200 : regime?.[i] === REGIME_SUIE ? 100 : 0) + (palier?.[i] ?? 0)
     data[o + 3] = 255
   }
 

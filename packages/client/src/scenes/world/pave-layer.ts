@@ -21,14 +21,16 @@
  */
 import Phaser from 'phaser'
 import { ancienneteDeCendre, auCoeurDeLaCendre, avanceesDepuisAges, terrainCendre, type WorldMap } from '@ashes/sim'
-import { GROUND_MAP_DEPTH, TILE_PX } from '../../render/framing'
+import { GROUND_MAP_DEPTH, LIFT_TUILES, TILE_PX, strateDEtage } from '../../render/framing'
 import { GRAIN_CELLS, familleDe, grainFacteur, type Famille } from '../../render/grain-sol'
-import { PAVE, PAVE_COTE, PAVE_PX, cuireChunk, soleilDuPavement } from '../../render/paves'
+import { HORS_PALIER, PAVE, PAVE_COTE, PAVE_PX, cuireChunk, soleilDuPavement } from '../../render/paves'
 import { sunDirection, type HeureSolaire } from '../../render/lighting'
 import { cendreARemue, signatureCendre, type SignatureCendre } from '../../render/cendre-chunk'
 import { cranDeSaison, teinteDuTerrain, teinter } from '../../render/teinte-saison'
 import { TERRAIN_COLORS } from '../../render/terrain-colors'
 import { contexteDesButtes, densiteDeMoucheture, type ButteContexte } from '../../render/buttes'
+import { epinglerLaTuile } from '../../render/tuile-epinglee'
+import type { Relief } from '../../render/relief'
 
 /**
  * LA CENDRE FRAÎCHE EST CHAUDE, LA VIEILLE EST FROIDE (spec `cendre.md`). Sans ce dégradé, la
@@ -107,14 +109,31 @@ export function poserChunk(
   ctx.putImageData(img, 0, 0)
   tex.refresh()
   tex.setFilter(Phaser.Textures.FilterMode.NEAREST)
-  return scene.add.image(x, y, cle).setOrigin(0, 0).setDepth(depth)
+  return epinglerLaTuile(scene.add.image(x, y, cle).setOrigin(0, 0).setDepth(depth))
+}
+
+/**
+ * UNE PART DE CHUNK — le sol d'UN PALIER (spec `terrasses.md` T-R7).
+ *
+ * Un chunk qui chevauche une paroi porte des tuiles de deux (ou trois) paliers, et chacune se
+ * dessine à SA hauteur (`liftDuPalier`) dans SA strate (`strateDEtage`) : une seule image ne
+ * peut pas faire ça. Le chunk se cuit donc UNE FOIS PAR PALIER PRÉSENT, avec un `terrainAt` qui
+ * rend `HORS_PALIER` (transparent, jamais envahi par une frange, et SANS liseré — voir `paves.ts`)
+ * pour les tuiles des autres paliers — chaque part ne montre que les siennes, et la coupe entre
+ * deux paliers est franche à la tuile, là où la paroi (`cliff-layer`) vient la couvrir. Sur une
+ * carte sans terrasse : une seule part, au palier 0, cuite comme avant.
+ */
+interface Part {
+  palier: number
+  image: Phaser.GameObjects.Image
+  cle: string
+  /** Le surplomb de berge, s'il y a de l'eau à ce palier dans le chunk. */
+  surplomb?: { image: Phaser.GameObjects.Image; cle: string }
 }
 
 interface Chunk {
-  image: Phaser.GameObjects.Image
-  cle: string
-  /** Le surplomb de berge, s'il y a de l'eau dans le chunk. */
-  surplomb?: { image: Phaser.GameObjects.Image; cle: string }
+  /** Une part par palier présent dans le chunk, du bas vers le haut. */
+  parts: Part[]
   /** Dernière frame où le chunk était dans la vue ou sa couronne. */
   vu: number
   /** Ce chunk porte du pavement de lapiaz : lui seul se périme quand le soleil tourne. */
@@ -196,8 +215,40 @@ export class PaveLayer {
      *  par les mêmes passes que le premier. Les pavés le sèment à 4 px (`mouchetureIci`).
      *  Absent sur une carte sans butte : la moucheture ne coûte alors rien du tout. */
     private mouchetures?: Uint32Array,
+    /** Le relief cuit (`render/relief.ts`) : le palier de chaque tuile. Absent ou inactif, tout
+     *  est au palier 0 et le chunk se cuit en une part. */
+    private relief?: Relief,
   ) {
     if (mouchetures) this.buttes = contexteDesButtes(map)
+    this.liftMaxPx = relief?.actif ? relief.hauteurMax * LIFT_TUILES * TILE_PX : 0
+  }
+
+  /** De combien, au plus, une tuile de la carte se dessine plus haut que sa rangée logique (px) :
+   *  la marge que les bornes de la vue doivent prendre vers le SUD pour ne pas oublier un chunk
+   *  dont les tuiles hautes remontent dans l'écran. */
+  private readonly liftMaxPx: number
+
+  /**
+   * ═══ LA NUIT AUX PALIERS HAUTS ═══
+   *
+   * Le voile de nuit (`night-veil`) se pose à une profondeur qui couvre le SOL du palier 0 et lui
+   * seul : une part de palier ≥ 1 vit dans une strate au-dessus de lui et ne le reçoit pas. Elle
+   * porte donc sa nuit ELLE-MÊME, par une teinte plate — la même que la scène pousse au chapeau
+   * de mesa (`EtageLayer.teinte`), donc la même nuit d'un palier à l'autre. Blanc = jour.
+   */
+  private _teinte = 0xffffff
+  get teinte(): number {
+    return this._teinte
+  }
+  set teinte(v: number) {
+    if (v === this._teinte) return
+    this._teinte = v
+    for (const c of this.chunks.values()) for (const part of c.parts) this.teinterLaPart(part)
+  }
+  private teinterLaPart(part: Part): void {
+    if (part.palier === 0) return
+    part.image.setTint(this._teinte)
+    part.surplomb?.image.setTint(this._teinte)
   }
 
   /**
@@ -404,14 +455,17 @@ export class PaveLayer {
     const cxMax = Math.ceil((this.map.width * TILE_PX) / cotePx) - 1
     const cyMax = Math.ceil((this.map.height * TILE_PX) / cotePx) - 1
     const cx1 = Math.min(cxMax, Math.floor((v.x + v.width) / cotePx) + COURONNE)
-    const cy1 = Math.min(cyMax, Math.floor((v.y + v.height) / cotePx) + COURONNE)
+    // Vers le SUD, la borne prend le lift : un chunk sous le bas de l'écran peut y remonter par
+    // ses tuiles de palier haut, dessinées `liftMaxPx` plus haut que leur rangée.
+    const lift = this.liftMaxPx
+    const cy1 = Math.min(cyMax, Math.floor((v.y + v.height + lift) / cotePx) + COURONNE)
 
     // Le VISIBLE d'abord, sans budget : l'écran ne doit jamais montrer un trou. La couronne
     // ensuite, au compte-gouttes.
     const m = MARGE_VISIBLE_PX
     const visible = (cx: number, cy: number): boolean =>
       cx * cotePx < v.x + v.width + m && (cx + 1) * cotePx > v.x - m
-      && cy * cotePx < v.y + v.height + m && (cy + 1) * cotePx > v.y - m
+      && cy * cotePx - lift < v.y + v.height + m && (cy + 1) * cotePx > v.y - m
     let budgetCouronne = CUISSONS_COURONNE_PAR_FRAME
     for (const passeVisible of [true, false]) {
       for (let cy = cy0; cy <= cy1; cy++) {
@@ -473,7 +527,8 @@ export class PaveLayer {
     const cxMax = Math.ceil((this.map.width * TILE_PX) / cotePx) - 1
     const cyMax = Math.ceil((this.map.height * TILE_PX) / cotePx) - 1
     let trous = 0
-    for (let cy = Math.max(0, Math.floor(v.y / cotePx)); cy <= Math.min(cyMax, Math.floor((v.y + v.height) / cotePx)); cy++) {
+    const cyFin = Math.min(cyMax, Math.floor((v.y + v.height + this.liftMaxPx) / cotePx))
+    for (let cy = Math.max(0, Math.floor(v.y / cotePx)); cy <= cyFin; cy++) {
       for (let cx = Math.max(0, Math.floor(v.x / cotePx)); cx <= Math.min(cxMax, Math.floor((v.x + v.width) / cotePx)); cx++) {
         if (!this.chunks.has(cy * 65536 + cx)) trous++
       }
@@ -494,15 +549,29 @@ export class PaveLayer {
     const tSig = performance.now()
     const cendre = signatureCendre(this.map, this.seed, cx, cy, this.cendreAge)
     this.derniereSignatureMs = performance.now() - tSig
-    const cuit = cuireChunk({ cx, cy, seed: this.seed, soleil: this.soleil, terrainAt: this.terrainAt, couleurAt: this.couleurAt, trameDe: this.trameDe, moucheture: this.moucheture })
-    const image = this.poser(cle, cuit.sol, x0, y0, PAVE_DEPTH)
-    if (!image) return
-    const chunk: Chunk = { image, cle, vu: this.frame, cendre, relief: cuit.relief }
-    if (cuit.surplomb) {
-      const cleSur = cle + '-surplomb'
-      const sur = this.poser(cleSur, cuit.surplomb, x0, y0, SURPLOMB_DEPTH)
-      if (sur) chunk.surplomb = { image: sur, cle: cleSur }
+    const chunk: Chunk = { parts: [], vu: this.frame, cendre, relief: false }
+    const relief = this.relief?.actif ? this.relief : null
+    // UNE PART PAR PALIER PRÉSENT (voir `Part`). Sans relief : le palier 0 seul, `terrainAt` nu.
+    for (const p of this.paliersDuChunk(cx, cy)) {
+      const terrainAt = relief === null
+        ? this.terrainAt
+        : (tx: number, ty: number): number => (relief.palier(tx, ty) === p ? this.terrainAt(tx, ty) : HORS_PALIER)
+      const cuit = cuireChunk({ cx, cy, seed: this.seed, soleil: this.soleil, terrainAt, couleurAt: this.couleurAt, trameDe: this.trameDe, moucheture: this.moucheture })
+      const clePart = p === 0 ? cle : `${cle}-p${p}`
+      const y = y0 - p * LIFT_TUILES * TILE_PX
+      const image = this.poser(clePart, cuit.sol, x0, y, PAVE_DEPTH + strateDEtage(p))
+      if (!image) continue
+      const part: Part = { palier: p, image, cle: clePart }
+      if (cuit.surplomb) {
+        const cleSur = clePart + '-surplomb'
+        const sur = this.poser(cleSur, cuit.surplomb, x0, y, SURPLOMB_DEPTH + strateDEtage(p))
+        if (sur) part.surplomb = { image: sur, cle: cleSur }
+      }
+      this.teinterLaPart(part)
+      chunk.parts.push(part)
+      chunk.relief ||= cuit.relief
     }
+    if (chunk.parts.length === 0) return
     this.chunks.set(k, chunk)
     this.cuits++
     this.derniereCuissonMs = performance.now() - t0
@@ -513,12 +582,36 @@ export class PaveLayer {
     return poserChunk(this.scene, cle, rgba, x, y, depth)
   }
 
+  /**
+   * Les paliers présents DANS le chunk, croissants — `[0]` sans relief. Seul l'intérieur compte :
+   * une tuile de marge d'un autre palier ne déborde jamais dans une part qui ne la porte pas (elle
+   * y est structurelle), et dans la sienne elle ne rencontre que des tuiles structurelles.
+   */
+  private paliersDuChunk(cx: number, cy: number): number[] {
+    const relief = this.relief
+    if (!relief?.actif) return [0]
+    const N = PAVE.CHUNK
+    let presents = 0
+    const tx0 = cx * N
+    const ty0 = cy * N
+    const txFin = Math.min(this.map.width, tx0 + N)
+    const tyFin = Math.min(this.map.height, ty0 + N)
+    for (let ty = ty0; ty < tyFin; ty++) {
+      for (let tx = tx0; tx < txFin; tx++) presents |= 1 << relief.palier(tx, ty)
+    }
+    const paliers: number[] = []
+    for (let p = 0; presents >> p; p++) if (presents & (1 << p)) paliers.push(p)
+    return paliers
+  }
+
   private rendre(k: number, c: Chunk): void {
-    c.image.destroy()
-    this.scene.textures.remove(c.cle)
-    if (c.surplomb) {
-      c.surplomb.image.destroy()
-      this.scene.textures.remove(c.surplomb.cle)
+    for (const part of c.parts) {
+      part.image.destroy()
+      this.scene.textures.remove(part.cle)
+      if (part.surplomb) {
+        part.surplomb.image.destroy()
+        this.scene.textures.remove(part.surplomb.cle)
+      }
     }
     this.chunks.delete(k)
   }
@@ -526,7 +619,16 @@ export class PaveLayer {
   /** Combien de chunks portent un surplomb de berge — la sonde du smoke. */
   surplombsVivants(): number {
     let n = 0
-    for (const c of this.chunks.values()) if (c.surplomb) n++
+    for (const c of this.chunks.values()) if (c.parts.some((part) => part.surplomb)) n++
+    return n
+  }
+
+  /** Combien de PARTS sont posées, tous paliers confondus — la sonde des terrasses : sur une
+   *  carte plate elle vaut `chunksVivants()`, sur une carte à paliers elle le dépasse d'autant de
+   *  chunks qui chevauchent une paroi. */
+  partsVivantes(): number {
+    let n = 0
+    for (const c of this.chunks.values()) n += c.parts.length
     return n
   }
 

@@ -43,7 +43,9 @@ export const TERRAIN_COLORS: Record<number, number> = {
    * palette : presque noire, très froide, sans le moindre parent visuel dans la roche (0x6d6d70)
    * ni le mur (0x4a4038). À l'écran, on ne doit pas pouvoir hésiter une seconde.
    */
-  23: 0x4b4852, // falaise — le 1 px cuit SOUS les sprites de paroi : la teinte du dessus d'ardoise
+  23: 0x6d6d70, // falaise — le 1 px cuit SOUS les sprites de paroi : la PIERRE, comme la roche
+  //     (2026-09-01 : c'était `0x4b4852`, l'ardoise inventée. Une falaise est de la roche, et le
+  //      jeu sait de quelle couleur est sa roche — `cliff-art` en dérive toute sa palette.)
   // Le vocabulaire du pré (spec t0-exploration §2ter) — trois teintes qui ne se confondent
   // ni entre elles ni avec leurs voisines : la saulaie plus claire et plus froide que la
   // forêt, la prairie humide bleutée entre l'herbe et le marais, la lande à genévriers en
@@ -88,4 +90,13 @@ export const TERRAIN_COLORS: Record<number, number> = {
    * les autres, quantifiée au motif de 8 comme toute la carte (R32).
    */
   30: 0x6b8f3e, // clairière — l'herbe au soleil, dans le bois
+  /**
+   * LE LAYON — de la terre FOULÉE, pas du gravier de route (0xb2996a) ni de la litière.
+   *
+   * Il se calibre contre ce qu'il traverse, jamais dans l'absolu : le sol d'une futaie est rendu
+   * BRUN (famille `litiere`), donc un layon vert ou gris n'y dirait rien. On le prend plus CLAIR
+   * et plus SEC que la litière — la terre qu'on a tassée en marchant, où plus rien ne pousse —
+   * et un cran sous la route, qui reste la voie du pays d'avant.
+   */
+  31: 0x9a855e, // layon — la terre foulée d'un chemin de bois
 }

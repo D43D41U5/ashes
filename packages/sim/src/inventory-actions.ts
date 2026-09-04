@@ -16,6 +16,7 @@
  * Recopier l'une ou l'autre ici, ce serait signer leur divergence.
  */
 import { BALANCE, HUNT, SLOTS } from './balance'
+import { atteintLeSol } from './etages'
 import { emitEvent } from './events'
 import { fireSlotLocked, fireZoneAccepts, fireZoneInventory, type FireZone } from './fire'
 import { distSq } from './geometry'
@@ -238,6 +239,8 @@ export function applyInventoryAction(state: SimState, actorId: number, action: I
       const cx = structure ? structure.tx + 0.5 : corpse!.x
       const cy = structure ? structure.ty + 0.5 : corpse!.y
       if (distSq(actor.x, actor.y, cx, cy) > range * range) return reject('trop loin')
+      // Le contenant vit au sol (spec `etages.md` E-R5) : pas de bras à travers un plancher.
+      if (!atteintLeSol(state.map, actor, Math.floor(cx), Math.floor(cy))) return reject('trop loin')
 
       // Permissions INCHANGÉES (spec village R10-R12) : DÉPOSER est ouvert à tous —
       // c'est la boîte aux dons, un mécanisme d'alignement — et seul RETIRER exige
@@ -328,6 +331,8 @@ export function applyInventoryAction(state: SimState, actorId: number, action: I
       if (!pile) return reject('rien à ramasser')
       const range = BALANCE.INTERACT_RANGE
       if (distSq(actor.x, actor.y, pile.x, pile.y) > range * range) return reject('trop loin')
+      // Une pile gît au sol : on ne la ramasse pas depuis le dessus d'une mesa (E-R5).
+      if (!atteintLeSol(state.map, actor, Math.floor(pile.x), Math.floor(pile.y))) return reject('trop loin')
 
       // `addItems` rend ce qui N'A PAS tenu (le reste), pas ce qui est entré :
       // ce qui rentre est donc la différence. Un sac plein ne fait pas

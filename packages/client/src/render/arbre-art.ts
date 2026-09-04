@@ -38,8 +38,45 @@ export interface MesuresArbre {
   futW: number
   /** Hauteur du fût (px), des pieds au sommet. */
   futH: number
-  /** Largeur de la COLONNE dessinée du fût (px) — c'est le tronc qu'on voit, et qu'on heurte. */
+  /** Largeur de la COLONNE dessinée du fût (px) — le tronc qu'on voit MONTER. Ce n'est plus ce
+   *  qu'on heurte depuis le 2026-08-31 : voir `empattementW`. */
   colonneW: number
+  /**
+   * L'EMPATTEMENT (px) — la largeur de la collerette de racines au SOL, et donc EXACTEMENT ce
+   * que l'arbre bloque (`demiTroncSub`, confronté à `/sim` par le test E3).
+   *
+   * IL EXISTE PARCE QUE LES DEUX NE PEUVENT PAS ÊTRE LE MÊME NOMBRE. L'obstacle doit faire
+   * 12 px — c'est le minimum qui garantit que deux arbres voisins ne laissent jamais passer
+   * (écart 0,25 tuile, sous les 0,375 de profondeur du corps). Mais 12 px de colonne sur un
+   * arbre de 64 donnent un rapport de 1/5,3 quand un arbre réel tient entre 1/15 et 1/30 :
+   * « les troncs sont disproportionnés entre leur épaisseur et leur hauteur » (Alexis, à
+   * l'écran, 2026-08-31 — c'était une colonnade, pas un bois).
+   *
+   * La résolution est botanique autant que graphique : ce qu'on ne peut pas franchir, c'est la
+   * BASE. Le fût monte mince (`colonneW`), et l'empattement se lit AU SOL — porté par la flaque
+   * de contact, qui est de toute façon le seul repère posé à terre (le houppier fait 42 px et
+   * ne peut pas rétrécir ; le fût est un billboard debout). `snapshot-view` dimensionne donc la
+   * flaque d'un arbre sur CE nombre, et non plus sur le cadre de son sprite.
+   *
+   * INVARIANT : `colonneW ≤ empattementW` — un fût ne surplombe pas ses racines (testé).
+   */
+  empattementW: number
+  /**
+   * HAUTEUR de l'empattement (px) — sur combien de rangées, au pied du fût, la collerette
+   * s'évase de `colonneW` jusqu'à `empattementW`.
+   *
+   * ELLE EXISTE PARCE QUE LA FLAQUE NE SUFFISAIT PAS. Le premier jet laissait l'ombre de contact
+   * porter seule les 12 px : à l'écran, sous une canopée, une ellipse noire à 0,42 d'alpha ne
+   * fait pas une FORME qu'on lit — le tronc dessiné (6 px) sous-estimait alors l'obstacle d'un
+   * facteur deux, et Alexis l'a relevé deux fois (« les troncs alignés gênent toujours la
+   * lisibilité de là où est leur hitbox »). Ce qui bloque doit être DESSINÉ, pas suggéré.
+   *
+   * Et elle répare la seconde plainte du même coup : des fûts tous identiques, tous au centre de
+   * leur tuile, ne donnaient à l'œil aucune prise au SOL — là où l'on regarde quand on se
+   * faufile. L'évasement rend au pied une silhouette large et étagée, à l'endroit exact du
+   * verdict.
+   */
+  empattementH: number
   /**
    * HAUTEUR du houppier (px). C'est elle qui entre dans la hauteur totale.
    *
@@ -73,26 +110,33 @@ export interface MesuresArbre {
 /**
  * ═══ LES DEUX ARBRES ═══
  *
- * L'ARBRE (4 tuiles). Fût de 6 px — il faisait 4, élargi sur demande d'Alexis (2026-07-28), et
- * la collision suit : 6 px = 3 sous-tuiles, donc `blockHalfSub` 1,5. C'est le maximum que la
- * borne dure autorise sans toucher au décalage d'origine (`TREE_JITTER_TILES + h ≤ 0,5` →
- * 0,3 + 0,1875 = 0,4875). MESURÉ : la part des paires d'arbres voisins où l'avatar se faufile
- * encore d'est en ouest passe de 50,1 % à 31,3 % (nord-sud, où il n'est profond que de 0,375 :
- * 93 % → 83 %). La forêt se resserre — c'est le prix du tronc épais, et il est assumé.
+ * ═══ LA COLONNE EST L'OBSTACLE, ET C'EST TOUT LE SUJET (2026-08-31) ═══
  *
- * LE GROS BOIS (6 tuiles). Son fût DESSINÉ fait 14 px, mais son cœur bloquant reste celui d'un
- * arbre ordinaire d'avant (`demiTroncSub` 1). DEUX raisons, et aucune n'est un oubli :
- *   • la bande bloquante est testée sur des index ENTIERS de sous-tuile ; le gros bois n'a pas
- *     de décalage d'origine, donc son centre est entier, et un demi-entier lui donnerait une
- *     bande DÉCENTRÉE d'un pixel vers l'est (vérifié). L'arbre, lui, est décalé : sa bande fait
- *     toujours 3 sous-tuiles pleines, quel que soit le décalage ;
- *   • à 30 % de gros bois dans la Vieille Sylve, un cœur d'une demi-tuile rendrait deux voisins
- *     infranchissables (couloir 0,5 < avatar 0,75) et la Sylve deviendrait un labyrinthe.
- * On se faufile donc au pied d'un géant : il domine au-dessus, pas aux chevilles.
+ * `colonneW` **12 px** sur TOUS les arbres, `demiTroncSub` **3** — et les deux disent la même
+ * chose parce qu'un test les confronte (E3). Ils faisaient 6 px et 1,5 jusqu'ici, et 14 px pour
+ * un cœur de 4 sur le gros bois : c'est ce dernier écart qui a été relevé en playtest (« je ne
+ * vois pas bien où sont les troncs »).
+ *
+ * POURQUOI 12 ET PAS 6. Le nombre ne vient pas d'une proportion d'arbre, il vient du CORPS :
+ * deux arbres voisins doivent laisser un écart qui ne se DISCUTE pas. À 12 px l'écart vaut
+ * 0,25 tuile — sous les 0,375 de profondeur du corps comme sous ses 0,75 de largeur, donc
+ * jamais franchissable, sur les deux axes. À 6 px il valait 0,625 pour un corps de 0,75 : trop
+ * étroit en principe, ouvert en pratique une fois sur trois par un décalage qu'on ne voyait
+ * pas. Un tronc gras n'est pas un choix de dessin ici, c'est la seule largeur qui rend le
+ * verdict lisible. Voir `NODE_DEFS.tree` pour la mesure complète.
+ *
+ * ET LE DÉCALAGE D'ORIGINE A QUITTÉ LE FÛT : il ne bouge plus que le HOUPPIER
+ * (`TREE_JITTER_TILES`). Le fût, sa flaque de contact et sa bande bloquante sont au centre de
+ * leur tuile — c'est ce qui permet à l'œil de lire l'obstacle sur la grille.
+ *
+ * LE GROS BOIS (6 tuiles) rejoint la règle : 14 → 12 px de colonne, cœur 1 → 3. Sa dérogation
+ * (« on se faufile au pied d'un géant ») disait qu'il bloquait moins qu'il ne paraissait ; à
+ * 30 % de la Vieille Sylve, c'était le pire endroit du jeu pour ne pas croire ses yeux. Il
+ * reste un géant par tout le reste : fût de 22 px de cadre, 40 px de haut, cime de 64.
  */
 export const ARBRES = {
-  tree: { futW: 16, futH: 30, colonneW: 6, houppierS: 42, recouvrementPx: 8, demiTroncSub: 1.5 },
-  old_tree: { futW: 22, futH: 40, colonneW: 14, houppierS: 64, recouvrementPx: 8, demiTroncSub: 1 },
+  tree: { futW: 16, futH: 30, colonneW: 6, empattementW: 12, empattementH: 5, houppierS: 42, recouvrementPx: 8, demiTroncSub: 3 },
+  old_tree: { futW: 22, futH: 40, colonneW: 10, empattementW: 12, empattementH: 5, houppierS: 64, recouvrementPx: 8, demiTroncSub: 3 },
 } as const satisfies Record<string, MesuresArbre>
 
 export type TypeArbre = keyof typeof ARBRES
@@ -120,6 +164,30 @@ export function ancrageHouppierPx(m: MesuresArbre): number {
   return m.futH - m.recouvrementPx
 }
 
+/**
+ * ═══ LES RANGÉES DE L'EMPATTEMENT — une seule écriture pour les DEUX chemins de rendu ═══
+ *
+ * Rend, du BAS vers le haut, la demi-extension (en px) de la collerette au-delà de la colonne.
+ * `[3, 2, 2, 1, 1]` sur l'arbre : la rangée du sol fait `colonneW + 2×3 = 12` px — exactement le
+ * carré bloquant — puis la collerette se resserre en escalier jusqu'au fût.
+ *
+ * PURE ET PARTAGÉE, et ce n'est pas du rangement : `futRects` (chemin peint) et `lit-trees`
+ * (chemin éclairé, celui qu'on voit) doivent dessiner LA MÊME base au pixel près. Deux écritures
+ * d'une même forme finissent toujours par différer — c'est la leçon que la silhouette `_lit` a
+ * déjà coûtée une fois (2026-07-28), et ici l'écart se paierait en hitbox qui ment.
+ */
+export function empattementRangs(m: MesuresArbre): number[] {
+  const demi = (m.empattementW - m.colonneW) / 2
+  if (demi <= 0 || m.empattementH <= 0) return []
+  const rangs: number[] = []
+  for (let k = 0; k < m.empattementH; k++) {
+    // Décroissance linéaire du bas vers le haut, ARRONDIE : la rangée du sol porte la pleine
+    // extension (donc la vérité de la collision), la dernière n'en garde qu'un pixel.
+    rangs.push(Math.max(1, Math.round(demi * (1 - k / m.empattementH))))
+  }
+  return rangs
+}
+
 /** Abscisse de la colonne du fût dans sa texture. Entière par construction (futW − colonneW pair). */
 export function colonneX(m: MesuresArbre): number {
   return (m.futW - m.colonneW) / 2
@@ -131,7 +199,7 @@ export function colonneX(m: MesuresArbre): number {
  * moitié de la colonne exprimée là-dedans. Le gros bois y DÉROGE, et le déclare (cf. `ARBRES`).
  */
 export function demiTroncAppele(m: MesuresArbre, subtilesParTuile: number): number {
-  return m.colonneW / (TILE_PX / subtilesParTuile) / 2
+  return m.empattementW / (TILE_PX / subtilesParTuile) / 2
 }
 
 /* ═══ LE DESSIN ═══════════════════════════════════════════════════════════════
@@ -299,6 +367,14 @@ function futRectsCommuns(m: MesuresArbre, tons: TonsFut, slug: string): RectTon[
   if (tons.coeur !== undefined) {
     const y = Math.round(m.futH * 0.125)
     out.push([[x + 2, y, m.colonneW - 4, Math.max(2, Math.round(m.futH * 0.08))], tons.coeur])
+  }
+  // ── L'EMPATTEMENT — en DERNIER, donc par-dessus tout le reste : c'est du bois qui vient
+  //    DEVANT le fût, pas une bordure qu'on glisse dessous. Ton `corps` : la collerette est à
+  //    l'ombre du fût et prend la terre, elle ne brille jamais comme un pan éclairé.
+  const rangs = empattementRangs(m)
+  for (let k = 0; k < rangs.length; k++) {
+    const e = rangs[k]!
+    out.push([[x - e, m.futH - 1 - k, m.colonneW + 2 * e, 1], tons.corps])
   }
   return out
 }
@@ -476,7 +552,7 @@ export const TONS_MELEZE: TonsHouppier = { masse: '#3a4a1e', corps: '#4a5c26', l
  */
 /** LE HÊTRE DE FUTAIE — 53 % de fût nu contre 39 %, et l'inversion la plus nette du relevé :
  *  il avait le fût le plus COURT des feuillus quand la futaie lui donne le plus LONG. */
-const B_HETRE: MesuresArbre = { futW: 16, futH: 48, colonneW: 6, houppierS: 30, recouvrementPx: 14, demiTroncSub: 1.5 }
+const B_HETRE: MesuresArbre = { futW: 16, futH: 48, colonneW: 6, empattementW: 12, empattementH: 5, houppierS: 30, recouvrementPx: 14, demiTroncSub: 3 }
 /**
  * LE SAULE — cime BASSE et LARGE, là où la boîte carrée plafonnait à 0,56 de la hauteur.
  * La photo de ripisylve donne 1,15 ; on s'arrête à **60 px**, et le nombre n'est pas un goût :
@@ -484,23 +560,23 @@ const B_HETRE: MesuresArbre = { futW: 16, futH: 48, colonneW: 6, houppierS: 30, 
  * plus large que l'espacement souderait la ripisylve en nappe — le défaut exact qu'on a corrigé
  * sur les pins le 2026-07-29.
  */
-const B_SAULE: MesuresArbre = { futW: 16, futH: 24, colonneW: 6, houppierS: 52, houppierW: 60, recouvrementPx: 12, demiTroncSub: 1.5 }
+const B_SAULE: MesuresArbre = { futW: 16, futH: 24, colonneW: 6, empattementW: 12, empattementH: 5, houppierS: 52, houppierW: 60, recouvrementPx: 12, demiTroncSub: 3 }
 /** LE BOULEAU — 63 % de fût nu, c'était un bouleau de futaie serrée. Sur un versant brûlé les
  *  tiges sont jeunes : 44 %, et la cime s'élargit d'autant. */
-const B_BOULEAU: MesuresArbre = { futW: 16, futH: 38, colonneW: 6, houppierS: 38, recouvrementPx: 12, demiTroncSub: 1.5 }
+const B_BOULEAU: MesuresArbre = { futW: 16, futH: 38, colonneW: 6, empattementW: 12, empattementH: 5, houppierS: 38, recouvrementPx: 12, demiTroncSub: 3 }
 /** LE BALIVEAU — une jeune tige n'a pas encore élagué ses branches basses : le feuillage
  *  descend presque au sol (23 % de fût nu contre 40 %). C'est ce qui la distingue d'un arbre
  *  simplement RÉTRÉCI. */
-const B_BALIVEAU: MesuresArbre = { futW: 16, futH: 18, colonneW: 6, houppierS: 38, recouvrementPx: 8, demiTroncSub: 1.5 }
+const B_BALIVEAU: MesuresArbre = { futW: 16, futH: 18, colonneW: 6, empattementW: 12, empattementH: 5, houppierS: 38, recouvrementPx: 8, demiTroncSub: 3 }
 /** Le conifère : 5 tuiles, et son fût NU ne fait qu'une tuile — un conifère porte bas. */
-const B_CONIFERE: MesuresArbre = { futW: 16, futH: 30, colonneW: 6, houppierS: 64, recouvrementPx: 14, demiTroncSub: 1.5 }
+const B_CONIFERE: MesuresArbre = { futW: 16, futH: 30, colonneW: 6, empattementW: 12, empattementH: 5, houppierS: 64, recouvrementPx: 14, demiTroncSub: 3 }
 /** LE VIEUX PIN — 57 % de fût nu et une cime PLUS LARGE QUE LONGUE : le parasol. Un pin
  *  sylvestre mûr n'est pas un grand jeune pin, c'est une autre silhouette (photos Skuleskogen
  *  et Beinn a' Bhuird : un fût nu sur plus de la moitié, coiffé d'une ombelle plate). */
-const B_VIEUX_PIN: MesuresArbre = { futW: 16, futH: 50, colonneW: 6, houppierS: 44, houppierW: 56, recouvrementPx: 14, demiTroncSub: 1.5 }
+const B_VIEUX_PIN: MesuresArbre = { futW: 16, futH: 50, colonneW: 6, empattementW: 12, empattementH: 5, houppierS: 44, houppierW: 56, recouvrementPx: 14, demiTroncSub: 3 }
 /** LE CHÊNE DU PRÉ — la forme de plein champ : fût court (23 %), cime large (0,75 de la
  *  hauteur). Elle n'existe que sur l'herbe, où les troncs sont à 4,12 tuiles l'un de l'autre. */
-const B_CHENE_PRE: MesuresArbre = { futW: 16, futH: 26, colonneW: 6, houppierS: 50, recouvrementPx: 12, demiTroncSub: 1.5 }
+const B_CHENE_PRE: MesuresArbre = { futW: 16, futH: 26, colonneW: 6, empattementW: 12, empattementH: 5, houppierS: 50, recouvrementPx: 12, demiTroncSub: 3 }
 
 /**
  * LA TABLE DES VARIANTES. `tree` et `old_tree` y figurent avec leurs rects et leurs tons

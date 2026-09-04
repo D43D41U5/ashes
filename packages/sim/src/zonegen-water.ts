@@ -31,8 +31,10 @@
  */
 import { TERRAINS, TERRAIN_BOULDERS, TERRAIN_DEEP_WATER, TERRAIN_MARSH, TERRAIN_PEAT_BOG, TERRAIN_REED_MARSH, TERRAIN_SCREE, TERRAIN_SHALLOW_WATER } from './balance'
 import { isWater } from './map'
+import { estamperDisque } from './zonegen-trace'
 import { fbm2, hash2 } from './noise'
-import { CREUX, ROCHE, altitudeAt, celluleDe, familleDeCellule, lireLeChampAt, seuilParQuantile, type Creux } from './racine-relief'
+import { tracerLHydrologie } from './zonegen-hydro'
+import { CREUX, ROCHE, celluleDe, familleDeCellule, lireLeChampAt, seuilParQuantile, type Creux } from './racine-relief'
 import type { GrapheZones } from './zonegraph'
 
 /**
@@ -67,8 +69,33 @@ export const EAU = {
 
   /** Taille maximale d'un lac, en CELLULES de motif (× 64 tuiles). Le plafond de l'inondation :
    *  une grande cuvette ne doit pas noyer un quart du pays (A17 — la Racine porte les villages).
-   *  44 → jusqu'à 2 816 tuiles, environ 53 de côté : un lac qu'on contourne, pas une mare. */
-  LAC_MAX_CELLULES: 44,
+   *  64 → jusqu'à 4 096 tuiles, environ 64 de côté : un lac qu'on contourne, pas une mare.
+   *  RELEVÉ de 44 à 64 le 2026-08-30 : depuis que le plafond se TIRE par lac (voir
+   *  `LAC_MIN_CELLULES`), il n'est plus la taille de tous les lacs mais celle du plus grand —
+   *  et un pays qui n'a que des mares n'a pas de lac. */
+  LAC_MAX_CELLULES: 64,
+  /**
+   * TAILLE MINIMALE d'un lac, en cellules — et surtout : LE PLAFOND SE TIRE PAR LAC.
+   *
+   * MESURÉ le 2026-08-30 sur trois graines : 8 à 11 cuvettes par carte tenaient dans 4 % d'écart
+   * autour de 2 100 tuiles, et plusieurs masses d'eau faisaient EXACTEMENT 2 816 tuiles — soit
+   * `LAC_MAX_CELLULES × 64`, au tuile près. Le plafond était SATURÉ : la variété que la lame
+   * d'eau (`LAC_LAME_MIN/MAX`) devait donner était mangée par la butée. Des jumeaux, encore —
+   * le grief de juillet, un cran plus bas.
+   *
+   * Le plafond est donc TIRÉ par lac, entre ce minimum et le maximum, avec un biais vers le
+   * petit (le carré du tirage) : beaucoup de mares, quelques vrais lacs. C'est la distribution
+   * d'un pays, pas celle d'un semis.
+   */
+  LAC_MIN_CELLULES: 13,
+  /** L'échelle du grain de rive, en tuiles : la taille des dentelures de la berge. */
+  LAC_RIVE_ECHELLE: 26,
+  /** L'amplitude de ce grain, en unités d'altitude. Il mord l'iso-contour du niveau : petit
+   *  devant la LAME (0,05), sinon il ferait des confettis au lieu d'une rive. */
+  LAC_RIVE_GRAIN: 0.012,
+  /** La part de l'emprise que le lac remplit vraiment. Ce qui manque, ce sont les COINS : la
+   *  différence entre le polygone en escalier d'avant et la forme molle d'aujourd'hui. */
+  LAC_REMPLISSAGE: 0.86,
   /** Écart minimal entre deux points bas retenus, en CELLULES (× 8 tuiles). 14 → 112 tuiles :
    *  deux lacs distincts, jamais deux lobes de la même cuvette comptés deux fois. */
   LAC_ECART_CELLULES: 14,
@@ -91,6 +118,8 @@ export const EAU = {
 
   /** Demi-largeur d'un ruisseau (0 → 1 tuile, 1 → 3 tuiles). */
   RUISSEAU_DEMI_LARGEUR: 1,
+  /** L'écart d'un chenal à sa ligne de drainage, en tuiles — même rôle que `RUS.MEANDRE`. */
+  CHENAL_MEANDRE: 4,
   /** Longueur d'un tronçon droit avant un coude, en tuiles (marche de l'escalier Manhattan). */
   TRONCON: 24,
 
@@ -105,6 +134,10 @@ export const EAU = {
    *  seule rendrait un losange, cf. `frangeDeMarais`). Toujours du haut-fond marchable : aucune
    *  incidence sur la connexité. */
   MARAIS_FLAQUE: 0.015,
+  /** Le rayon d'une flaque, en tuiles. Le minimum tient la raison d'être de l'ancien 2×2 : une
+   *  tuile SEULE se rend en losange (le champ d'eau est filtré), il en faut deux de large. */
+  FLAQUE_RAYON_MIN: 1.1,
+  FLAQUE_RAYON_MAX: 2.6,
 
   /**
    * Rayon d'exclusion de l'EAU DORMANTE autour d'un seuil de la Racine, en tuiles (Manhattan).
@@ -125,10 +158,44 @@ export const EAU = {
   // garde sa lettre (l'eau est le marqueur de la zone basse), on n'a pas ressuscité le
   // fleuve traversant abrogé — c'est la zone qu'elle traverse, pas la carte.
 
-  /** Demi-largeur du LIT (haut-fond marchable). 3 → 7 tuiles : une rivière, pas un fossé. */
+  /** Demi-largeur NOMINALE du LIT (haut-fond marchable). 3 → 7 tuiles : une rivière, pas un
+   *  fossé. C'est la valeur de référence dont les AUTRES systèmes se servent (les coulées de
+   *  suie, la portée des coins de pêche, le couloir de courant du client) ; la largeur
+   *  RÉELLEMENT peinte, elle, varie le long du fil — voir `RIVIERE_RAYON_*`. */
   RIVIERE_DEMI_LIT: 3,
   /** Demi-largeur du CŒUR profond. 1 → 3 tuiles de mur d'eau (R5), toujours ceint du lit. */
   RIVIERE_DEMI_COEUR: 1,
+
+  // ══ LA RIVIÈRE N'EST PLUS UN CANAL (décision d'Alexis, 2026-08-30) ═══════════════════════
+  //
+  // MESURÉ le 2026-08-30, deux crops à l'échelle d'un écran (60×40 tuiles) pris en amont et en
+  // aval : même largeur, berges parallèles au cordeau sur soixante tuiles, coins à 90°. Trois
+  // défauts, une seule cause — le lit se peignait en BANDES perpendiculaires d'une demi-largeur
+  // CONSTANTE le long d'une polyligne de Manhattan.
+  //
+  // Depuis, l'eau est sortie de R32 (« arrête les angles droits pour les lacs et rivières ») :
+  // le fil MÉANDRE (bruit sur la normale, puis lissage de Chaikin), et le lit s'ESTAMPE AU
+  // DISQUE — l'union de disques le long d'une courbe donne une berge lisse, et le « coude
+  // équerré » (le carré posé sur le pivot, et sa garde) n'a plus lieu d'être : un disque n'a
+  // pas de coin extérieur à rater.
+
+  /** Rayon du lit à la SOURCE, en tuiles (2,4 → ~5 tuiles de large). */
+  RIVIERE_RAYON_SOURCE: 2.4,
+  /** Rayon du lit à l'EMBOUCHURE (4,4 → ~9 tuiles). La rivière GROSSIT en descendant : c'est
+   *  la hiérarchie du réseau, et c'est ce qui dit au joueur dans quel sens l'eau va. */
+  RIVIERE_RAYON_BOUCHE: 4.4,
+  /** Le battement de berge, en tuiles (±). Sans lui, deux berges parallèles au cordeau. */
+  RIVIERE_RAYON_BRUIT: 0.85,
+  /** Le retrait du CŒUR sous le lit, en tuiles. Le profond est né ceint de son propre lit —
+   *  l'anneau de R45 tient par construction, comme avant. */
+  RIVIERE_COEUR_RETRAIT: 2.2,
+  /** L'amplitude du méandre, en tuiles, pour un tronçon de `RIVIERE_MEANDRE_ETALON` de long.
+   *  Elle croît avec la longueur du tronçon : un long bief serpente plus large. */
+  RIVIERE_MEANDRE: 95,
+  RIVIERE_MEANDRE_ETALON: 400,
+  /** Marge gardée entre le fil et le bord du rectangle de la Racine : un méandre ne doit pas
+   *  aller mourir hors du pays (le lit y serait clippé, et la rivière cesserait de traverser). */
+  RIVIERE_MARGE_BORD: 16,
   /** Le cœur s'arrête à N pas de chaque bout : la source et la bouche sont des hauts-fonds. */
   RIVIERE_BOUCHE: 8,
   /** Écart minimal (tuiles) entre l'embouchure/la source et tout seuil : une porte n'a pas
@@ -154,27 +221,69 @@ export interface Riviere {
  *  Les chenaux vivent HORS de `Riviere` par construction : une Racine sans rivière garde
  *  ses ruisseaux — et sa saulaie. */
 export interface EauxDeLaRacine {
+  /** LE plus gros fleuve — celui que `map.fil` publie. `null` si le pays n'en porte aucun. */
   riviere: Riviere | null
-  /** Les tuiles d'eau des CHENAUX entre lacs (les ruisseaux du drainage). */
+  /** Les tuiles d'eau COURANTE qui comptent — la saulaie les longe (fil ET affluents). */
   chenaux: number[]
+  /** TOUS les fleuves du pays, du plus gros au plus petit. Il y en a ce que le relief donne. */
+  fils: number[][]
+  /** Les tuiles des LACS de la Racine — l'eau plate, celle que les terrasses nivellent. */
+  lacs: number[]
 }
+
+/** Le fenêtrage de la courbure — voir `estUnCoude`. */
+export const COUDE = {
+  /** Sur combien de pas de fil on mesure la direction, de part et d'autre. */
+  FENETRE: 14,
+  /** |sin θ| minimal entre l'amont et l'aval pour parler de coude. 0,45 → environ 27°. */
+  SINUS_MIN: 0.45,
+} as const
 
 /**
  * Le fil TOURNE-T-IL en `fil[k]` ? — LA définition du coude, et il n'y en a qu'une.
  *
- * Comparaison COMPOSANTE PAR COMPOSANTE des deux pas, et non « le pas est-il horizontal ? » :
- * la garde de test et les sondes énumèrent les coudes avec cette règle-là. Deux définitions du
- * coude qui divergeraient, et on chercherait un fantôme.
+ * ⚠ ELLE A CHANGÉ DE NATURE le 2026-08-30, avec la rivière organique. L'ancienne comparait les
+ * DEUX PAS voisins : sur une polyligne de Manhattan, un coude était un angle droit, et il n'y
+ * en avait qu'aux pivots. Sur une courbe rastérisée en pas de Manhattan, le pas change de
+ * direction à peu près partout — l'ancienne règle aurait déclaré coude une tuile sur deux, et
+ * les coins de pêche de la rivière se seraient posés tout du long.
+ *
+ * La règle est donc devenue une COURBURE FENÊTRÉE : on compare la direction sur ±`FENETRE` pas,
+ * et l'on ne retient que les MAXIMUMS LOCAUX du virage (départage par index — ordre total). Un
+ * coude, c'est le sommet d'un méandre : il y en a une poignée par rivière, comme avant, mais
+ * cette fois ce sont les vrais.
+ *
+ * Sans trigonométrie (invariant n°2) : |sin θ| se lit dans le produit vectoriel normalisé.
  */
 export function estUnCoude(fil: readonly number[], k: number, width: number): boolean {
-  const a = fil[k - 1]!
-  const b = fil[k]!
-  const c = fil[k + 1]!
-  const ax = a % width
-  const bx = b % width
-  const cx = c % width
-  if (bx - ax !== cx - bx) return true
-  return (b - bx) / width - (a - ax) / width !== (c - cx) / width - (b - bx) / width
+  const virage = (j: number): number => {
+    const F = COUDE.FENETRE
+    if (j - F < 0 || j + F >= fil.length) return -1
+    const a = fil[j - F]!
+    const b = fil[j]!
+    const c = fil[j + F]!
+    const ax = a % width
+    const bx = b % width
+    const cx = c % width
+    const ux = bx - ax
+    const uy = (b - bx) / width - (a - ax) / width
+    const vx = cx - bx
+    const vy = (c - cx) / width - (b - bx) / width
+    const lu = Math.sqrt(ux * ux + uy * uy)
+    const lv = Math.sqrt(vx * vx + vy * vy)
+    if (lu === 0 || lv === 0) return -1
+    return Math.abs(ux * vy - uy * vx) / (lu * lv)
+  }
+  const ici = virage(k)
+  if (ici < COUDE.SINUS_MIN) return false
+  // Maximum local STRICT dans la fenêtre, l'index départageant les ex æquo : un méandre ne
+  // rend qu'un coude, et toujours le même quel que soit l'ordre d'interrogation.
+  for (let j = k - COUDE.FENETRE; j <= k + COUDE.FENETRE; j++) {
+    if (j === k) continue
+    const v = virage(j)
+    if (v > ici || (v === ici && j < k)) return false
+  }
+  return true
 }
 
 /**
@@ -205,14 +314,6 @@ export function masqueDesSeuils(creux: Creux | null, g: GrapheZones, racineId: n
   return masque
 }
 
-interface Lac {
-  cx: number
-  cy: number
-  hw: number
-  hh: number
-  /** Les CELLULES de motif que l'inondation a prises. C'est par là qu'on cherche le déversoir. */
-  cellules: number[]
-}
 
 /**
  * Pose l'eau de la Racine, EN PLACE, sur le terrain déjà peint par la passe des biomes.
@@ -231,39 +332,29 @@ export function paintWaterRacine(
   bordure: number,
   creux: Creux | null,
 ): EauxDeLaRacine {
-  const N = width * height
   const racineId = g.racine
-
-  // La SURFACE marchable de la Racine — c'est elle qui dose le nombre de lacs.
-  let surface = 0
-  for (let i = 0; i < N; i++) {
-    if (zone[i] === racineId && TERRAINS[terrain[i]!]?.walkable === true) surface++
-  }
-  if (surface === 0) return { riviere: null, chenaux: [] }
-
-  const nLacs = Math.round(surface * EAU.DENSITE_LACS)
   const s = seed ^ 0x45415500 /* 'EAU' */
 
-  // On COLLECTE les tuiles d'eau peintes au fil de l'eau : la frange de marais les relit sans avoir
-  // à rebalayer la carte entière (une passe de 3,75 M de tuiles épargnée par génération).
-  const eaux: number[] = []
   // ═══ AUCUNE EAU AUX ABORDS D'UNE PORTE (worldgen R10.3, garde A16) ═══
   //
-  // *Un seuil ne nourrit rien — pas même à boire.* La règle valait déjà pour la source et
-  // l'embouchure de la rivière (`RIVIERE_MARGE_SEUIL`) ; elle ne valait pas pour les lacs, qui
-  // n'en avaient pas besoin tant qu'ils étaient de petits rectangles tenus loin des frontières
-  // par `rectPosable`. Les cuvettes inondées sont plus grandes et vont là où le terrain descend
-  // — et le terrain descend parfois vers une porte. MESURÉ (seed 2026, garde A6 rouge) : un lac
-  // noyait la bouche du seuil 4 sur quarante tuiles d'eau profonde, la sente n'avait plus où se
-  // poser, et la porte devenait une plage. On exclut donc explicitement.
+  // *Un seuil ne nourrit rien — pas même à boire.* MESURÉ (seed 2026, garde A6 rouge, 2026-07-29) :
+  // un lac noyait la bouche du seuil 4 sur quarante tuiles d'eau profonde, la sente n'avait plus
+  // où se poser, et la porte devenait une plage.
   const horsSeuils = masqueDesSeuils(creux, g, racineId)
-  const lacs = placerLacs(terrain, zone, racineId, width, height, bordure, s, nLacs, eaux, creux, horsSeuils)
-  // LA RIVIÈRE D'ABORD, les ruisseaux ensuite : elle réclame les lacs de sa route, et c'est
-  // elle qui porte désormais le titre — la « plus longue liaison » de l'ancien réseau redevient
-  // un simple ruisseau (le titre se GAGNE en traversant, pas en étant long).
-  const riviere = tracerLaRiviere(terrain, zone, g, width, height, s, lacs, eaux, creux)
-  const chenaux: number[] = []
-  relierLesLacs(terrain, zone, racineId, width, height, lacs, eaux, creux, horsSeuils, chenaux)
+
+  // ═══ L'HYDROLOGIE — DÉRIVÉE, PLUS POSÉE (décision d'Alexis, 2026-08-30) ═══
+  //
+  // Il n'y a plus ici ni compte de lacs, ni « la » rivière, ni chenaux entre perles : une seule
+  // passe lit le drainage du relief et en tire tout — les cuvettes qui retiennent l'eau, les
+  // lignes qui la portent, la largeur qui suit le débit, le profond là où c'est profond. Voir
+  // `zonegen-hydro.ts`, qui porte la démonstration ; ici on ne fait que l'appeler et lui donner
+  // ses voisins (le lapiaz, la frange de marais, les résurgences).
+  const hydro = tracerLHydrologie(terrain, zone, racineId, width, height, creux, horsSeuils, s)
+  const eaux = hydro.eaux
+  // Le FIL au singulier reste le plus gros fleuve : c'est lui que `map.fil` publie, et tout ce
+  // qui le lit (le courant du client, la nature de l'eau) n'a pas à savoir qu'il y en a d'autres.
+  const riviere = hydro.fils.length > 0 ? { fil: hydro.fils[0]!, coeur: hydro.coeur } : null
+
   // LE LAPIAZ puis LES RÉSURGENCES — la face sèche et la face humide du même karst. Avant la
   // frange de marais, exprès : une source reçoit ses joncs comme n'importe quelle eau, et rien
   // dans le monde ne dit qu'elle est d'une autre nature.
@@ -271,13 +362,11 @@ export function paintWaterRacine(
   frangeDeMarais(terrain, zone, racineId, width, height, s, eaux)
   // LES RÉSURGENCES EN DERNIER, DONC SANS FRANGE DE MARAIS — et ce n'est pas un détail d'ordre.
   // ① Une source karstique est de l'eau CLAIRE qui sort de la roche, pas une vasque de boue :
-  //    lui coller des joncs serait faux. ② Et la garde A11 l'a exigé : la frange des ~35 mares
-  //    inversait le rang à l'eau au bout mouillé (seed 7 : marais 5,28 > roselière 4,83), en
-  //    diluant les deux SEULS terrains du T0 qui savent où est l'eau. Les servir en dernier
-  //    règle les deux d'un coup, et `eaux` n'a alors plus de lecteur — la source ne s'y ajoute
-  //    donc pas.
+  //    lui coller des joncs serait faux. ② Et la garde A11 l'a exigé : la frange des mares
+  //    inversait le rang à l'eau au bout mouillé, en diluant les deux SEULS terrains du T0 qui
+  //    savent où est l'eau. Les servir en dernier règle les deux d'un coup.
   poserLesResurgences(terrain, zone, racineId, width, height, bordure, creux, horsSeuils)
-  return { riviere, chenaux }
+  return { riviere, chenaux: hydro.chenaux, fils: hydro.fils, lacs: hydro.lacs }
 }
 
 /**
@@ -537,174 +626,6 @@ function poserLesResurgences(
   }
 }
 
-/**
- * ═══ LES LACS — ON POSE UN NIVEAU D'EAU, ET ON INONDE ═══
- *
- * Trois gestes, et c'est toute la réparation du grief « l'eau est posée sur le patchwork » :
- *
- *   1. Le point le plus BAS encore libre du pays devient un lac (le champ d'altitude est trié une
- *      fois, croissant — les cuvettes se servent avant les dos).
- *   2. On pose un niveau d'eau `LAME` au-dessus de ce point, et on INONDE par proche-en-proche
- *      tout ce qui est dessous, à concurrence de `LAC_MAX_CELLULES`. Le lac épouse donc sa
- *      cuvette : sa forme est un polygone rectiligne (union de motifs de 8), jamais un carré.
- *   3. Le cœur profond est ÉRODÉ depuis la rive, au niveau de la TUILE. L'invariant de R45
- *      (« jamais de profond sans anneau de haut-fond marchable ») tient donc sur une forme
- *      quelconque — là où l'ancien « rectangle rétréci de trois » ne tenait que sur un rectangle.
- *
- * Rend la liste des lacs (centre + demi-étendues de la boîte englobante), de quoi tisser le
- * réseau de cours d'eau ensuite.
- */
-function placerLacs(
-  terrain: number[],
-  zone: Int32Array,
-  racineId: number,
-  width: number,
-  height: number,
-  bordure: number,
-  s: number,
-  nLacs: number,
-  eaux: number[],
-  creux: Creux | null,
-  horsSeuils: Uint8Array,
-): Lac[] {
-  const lacs: Lac[] = []
-  if (!creux || nLacs <= 0) return lacs
-  const M = CREUX.MOTIF
-
-  // ── UNE CELLULE EST-ELLE INONDABLE ? ────────────────────────────────────────────────────
-  // Ses 64 tuiles doivent être de la Racine, marchables, et dans la bordure. La marge de
-  // frontière (qui tient l'eau loin des seuils) se paie ensuite en exigeant que les VOISINES
-  // le soient aussi — `MARGE_FRONTIERE` valant 6 tuiles, une cellule de garde suffit.
-  const propre = new Uint8Array(creux.cols * creux.rows)
-  for (let my = 0; my < creux.rows; my++) {
-    for (let mx = 0; mx < creux.cols; mx++) {
-      const tx0 = (creux.mx0 + mx) * M
-      const ty0 = (creux.my0 + my) * M
-      if (tx0 < bordure || ty0 < bordure || tx0 + M >= width - bordure || ty0 + M >= height - bordure) continue
-      let ok = 1
-      for (let dy = 0; dy < M && ok === 1; dy++) {
-        for (let dx = 0; dx < M; dx++) {
-          const i = (ty0 + dy) * width + tx0 + dx
-          if (zone[i] !== racineId || TERRAINS[terrain[i]!]?.walkable !== true) { ok = 0; break }
-        }
-      }
-      propre[my * creux.cols + mx] = ok
-    }
-  }
-  const inondable = (k: number): boolean => {
-    if (propre[k] !== 1) return false
-    if (horsSeuils[k] === 0) return false // un seuil ne nourrit rien, pas même à boire (A16)
-    // ═══ LE CALCAIRE N'INONDE PAS (spec `roche-mere.md` R4) ═══
-    //
-    // Une cuvette karstique ne retient rien : l'eau s'infiltre. Le lac ne DISPARAÎT pas pour
-    // autant — `candidats` est trié du plus creux au moins creux et l'on en prend `nLacs` :
-    // écarter le calcaire fait simplement DESCENDRE LA LISTE. Même compte, autres adresses.
-    // C'est là toute la différence avec « il y a moins d'eau » : il y en a autant, ailleurs.
-    //
-    // ⚠ LA RIVIÈRE, ELLE, EST EXEMPTE (R5) — mais elle ne passe pas par ici : son fil se trace
-    // dans sa propre passe, qui ne lit pas `inondable`. Un cours pérenne colmate son lit dans
-    // n'importe quelle roche, et §2 R5 promet qu'on peut LE SUIVRE du nord au sud.
-    if (familleDeCellule(creux, k) === -1) return false
-    const kx = k % creux.cols
-    const ky = (k - kx) / creux.cols
-    if (kx === 0 || ky === 0 || kx + 1 >= creux.cols || ky + 1 >= creux.rows) return false
-    for (let dy = -1; dy <= 1; dy++) {
-      for (let dx = -1; dx <= 1; dx++) {
-        if (propre[(ky + dy) * creux.cols + kx + dx] !== 1) return false
-      }
-    }
-    return true
-  }
-
-  // ── LES POINTS BAS, du plus creux au moins creux ────────────────────────────────────────
-  // Comparateur TOTAL (l'altitude, puis l'index) : l'ordre ne doit rien à la stabilité du tri
-  // du moteur JS — invariant n°2, une carte identique au bit près sur Node et au navigateur.
-  const candidats: number[] = []
-  for (let k = 0; k < creux.altLarge.length; k++) {
-    if (creux.dedans[k] === 1 && creux.altLarge[k]! < creux.seuilBassin && inondable(k)) candidats.push(k)
-  }
-  candidats.sort((a, b) => (creux.altLarge[a]! - creux.altLarge[b]!) || (a - b))
-
-  const pris = new Uint8Array(creux.cols * creux.rows)
-  for (const graine of candidats) {
-    if (lacs.length >= nLacs) break
-    if (pris[graine] === 1) continue
-    const gx = graine % creux.cols
-    const gy = (graine - gx) / creux.cols
-    // L'écart entre points bas : deux lobes d'une même cuvette ne font pas deux lacs.
-    let tropPres = false
-    for (const l of lacs) {
-      const lx = Math.floor(l.cx / M) - creux.mx0
-      const ly = Math.floor(l.cy / M) - creux.my0
-      if (Math.abs(lx - gx) + Math.abs(ly - gy) < EAU.LAC_ECART_CELLULES) { tropPres = true; break }
-    }
-    if (tropPres) continue
-
-    // ── L'INONDATION — le niveau est posé, on prend tout ce qui est dessous ────────────────
-    // La LAME varie : une cuvette se remplit plus ou moins. Le tirage porte sur le NIVEAU,
-    // jamais sur la forme — c'est le terrain qui garde la main sur le dessin du lac.
-    const r = hash2(graine, lacs.length, s)
-    const niveau = creux.altLarge[graine]! + CREUX.LAME * (EAU.LAC_LAME_MIN + r * (EAU.LAC_LAME_MAX - EAU.LAC_LAME_MIN))
-    const bassin: number[] = [graine]
-    const vu = new Set<number>([graine])
-    for (let t = 0; t < bassin.length && bassin.length < EAU.LAC_MAX_CELLULES; t++) {
-      const k = bassin[t]!
-      const kx = k % creux.cols
-      const ky = (k - kx) / creux.cols
-      const voisins = [
-        kx > 0 ? k - 1 : -1,
-        kx + 1 < creux.cols ? k + 1 : -1,
-        ky > 0 ? k - creux.cols : -1,
-        ky + 1 < creux.rows ? k + creux.cols : -1,
-      ]
-      for (const v of voisins) {
-        if (v < 0 || vu.has(v)) continue
-        vu.add(v)
-        if (creux.dedans[v] !== 1 || creux.altLarge[v]! > niveau || !inondable(v) || pris[v] === 1) continue
-        bassin.push(v)
-        if (bassin.length >= EAU.LAC_MAX_CELLULES) break
-      }
-    }
-
-    // ── LA PEINTURE — haut-fond partout, et la boîte englobante pour le réseau ─────────────
-    const tuiles: number[] = []
-    const dansLeLac = new Set<number>()
-    let x0 = width
-    let x1 = 0
-    let y0 = height
-    let y1 = 0
-    for (const k of bassin) {
-      pris[k] = 1
-      const kx = k % creux.cols
-      const ky = (k - kx) / creux.cols
-      const tx0 = (creux.mx0 + kx) * M
-      const ty0 = (creux.my0 + ky) * M
-      if (tx0 < x0) x0 = tx0
-      if (ty0 < y0) y0 = ty0
-      if (tx0 + M - 1 > x1) x1 = tx0 + M - 1
-      if (ty0 + M - 1 > y1) y1 = ty0 + M - 1
-      for (let dy = 0; dy < M; dy++) {
-        for (let dx = 0; dx < M; dx++) {
-          const i = (ty0 + dy) * width + tx0 + dx
-          terrain[i] = TERRAIN_SHALLOW_WATER
-          tuiles.push(i)
-          dansLeLac.add(i)
-          eaux.push(i)
-        }
-      }
-    }
-
-    creuserLeCoeur(terrain, tuiles, dansLeLac, width)
-    lacs.push({
-      cx: Math.floor((x0 + x1) / 2),
-      cy: Math.floor((y0 + y1) / 2),
-      hw: Math.floor((x1 - x0) / 2),
-      hh: Math.floor((y1 - y0) / 2),
-      cellules: bassin.slice(),
-    })
-  }
-  return lacs
-}
 
 /**
  * LE CŒUR PROFOND, ÉRODÉ DEPUIS LA RIVE — l'invariant de R45 sur une forme quelconque.
@@ -714,7 +635,7 @@ function placerLacs(
  * elle est donc ceinte d'au moins trois tuiles de haut-fond marchable, par construction. Un lac
  * trop étroit n'a aucune tuile assez loin : il reste un plan d'eau franchissable, sans mur.
  */
-function creuserLeCoeur(terrain: number[], tuiles: readonly number[], dansLeLac: ReadonlySet<number>, width: number): void {
+export function creuserLeCoeur(terrain: number[], tuiles: readonly number[], dansLeLac: ReadonlySet<number>, width: number): void {
   const dist = new Map<number, number>()
   let file: number[] = []
   for (const i of tuiles) {
@@ -740,235 +661,15 @@ function creuserLeCoeur(terrain: number[], tuiles: readonly number[], dansLeLac:
   }
 }
 
-/**
- * ═══ LE RÉSEAU — UN RUISSEAU DESCEND LA PENTE. IL NE VISE PAS UNE CIBLE. ═══
- *
- * *(Réécrit deux fois le 2026-07-29, et les deux échecs valent d'être gardés.)*
- *
- * D'ABORD on reliait chaque lac à son plus PROCHE voisin, sans regarder la hauteur : sur la carte
- * rendue, des traits coupaient franchement un vallonnement pour joindre deux cuvettes — de l'eau
- * qui monte. Défaut invisible tant que les lacs étaient jetés au hasard : sans haut ni bas,
- * aucune liaison ne pouvait avoir l'air fausse.
- *
- * ENSUITE on a visé « l'eau la plus proche strictement plus basse », rivière comprise. L'eau
- * cessait de remonter — mais le tracé restait une POLYLIGNE DE MANHATTAN VERS UN POINT, et deux
- * lacs presque à la même latitude se retrouvaient joints par un canal parfaitement droit de deux
- * cent cinquante tuiles. C'est géométriquement irréprochable et ça ne ressemble à rien : un
- * chemin le plus court n'est pas un cours d'eau.
- *
- * LA TROISIÈME EST LA BONNE, et elle est plus simple que les deux autres : **on ne choisit pas
- * une destination, on suit la pente.** Depuis le DÉVERSOIR du lac (le point le plus bas de son
- * pourtour — c'est là que l'eau déborde), on descend de cellule en cellule vers la voisine la
- * plus basse, jusqu'à tomber dans une eau. Le tracé n'est plus une droite entre deux points :
- * c'est la trace du terrain, et il serpente comme le pays le veut — en angles droits (R32), la
- * grille du motif ne sait rien dire d'autre.
- *
- * DEUX PROPRIÉTÉS TOMBENT GRATUITEMENT :
- *
- *   — **Pas de cycle possible.** L'altitude décroît STRICTEMENT à chaque pas ; le réseau est donc
- *     une forêt de drainage, sans qu'on ait à le vérifier.
- *   — **Pas de moignon.** On trace le chemin À BLANC d'abord, et on ne le peint QUE s'il aboutit
- *     dans une eau. Un ruisseau qui s'enlise dans un creux fermé n'est jamais peint — la règle
- *     historique (*« on ne sème pas de moignons qui partent de l'herbe pour finir dans l'herbe »*)
- *     tient donc par construction au lieu d'être promise.
- *
- * Un lac dont le déversoir ne mène nulle part est une CUVETTE FERMÉE. C'est une réponse juste,
- * pas un échec : c'est ce qu'est le point bas d'un pays.
- */
-function relierLesLacs(
-  terrain: number[],
-  zone: Int32Array,
-  racineId: number,
-  width: number,
-  height: number,
-  lacs: Lac[],
-  eaux: number[],
-  creux: Creux | null,
-  horsSeuils: Uint8Array,
-  chenaux: number[],
-): void {
-  if (!creux) return // sans relief, aucune pente : la rivière reste seule (repli honnête)
-  const M = CREUX.MOTIF
-  const nCell = creux.cols * creux.rows
 
-  // LA CARTE D'EAU, à la maille de la cellule — lacs ET rivière, puisque `eaux` porte les deux.
-  const celluleEau = new Uint8Array(nCell)
-  for (const i of eaux) {
-    const k = celluleDe(creux, i % width, (i - (i % width)) / width)
-    if (k >= 0) celluleEau[k] = 1
-  }
-
-  const voisines = (k: number): number[] => {
-    const kx = k % creux.cols
-    const ky = (k - kx) / creux.cols
-    const out: number[] = []
-    if (kx > 0) out.push(k - 1)
-    if (kx + 1 < creux.cols) out.push(k + 1)
-    if (ky > 0) out.push(k - creux.cols)
-    if (ky + 1 < creux.rows) out.push(k + creux.cols)
-    return out
-  }
-
-  for (const lac of lacs) {
-    // ── LE DÉVERSOIR : la cellule la plus basse du POURTOUR du lac. L'eau déborde par là. ──
-    const sien = new Set(lac.cellules)
-    let deversoir = -1
-    let basse = Infinity
-    for (const k of lac.cellules) {
-      for (const v of voisines(k)) {
-        if (sien.has(v) || creux.dedans[v] !== 1) continue
-        const a = creux.altLarge[v]!
-        // Comparaison STRICTE puis index : ordre total, donc déterministe (invariant n°2).
-        if (a < basse || (a === basse && v < deversoir)) { basse = a; deversoir = v }
-      }
-    }
-    if (deversoir < 0) continue
-    // DÉJÀ JOINT : le déversoir touche une eau (un autre lac, ou la rivière qui l'a enfilé au
-    // passage). Il n'y a pas de ruisseau à creuser entre deux eaux qui se touchent déjà.
-    if (celluleEau[deversoir] === 1) continue
-
-    // ── LE CHEMIN DE SORTIE — par le COL LE PLUS BAS, et on ne peint qu'à l'arrivée. ──
-    const chemin = cheminDeSortie(creux, celluleEau, deversoir, lac.cellules, M, horsSeuils)
-    if (!chemin) continue // cuvette fermée : rien à peindre, et c'est une réponse juste
-
-    // ── LA PEINTURE — deux cellules consécutives sont 4-adjacentes : on relie leurs centres. ──
-    for (let k = 0; k + 1 < chemin.length; k++) {
-      peindreSegment(terrain, zone, racineId, width, height, creux, chemin[k]!, chemin[k + 1]!, eaux, chenaux)
-    }
-  }
-}
-
-/**
- * ═══ LE CHEMIN DE SORTIE — ON CHERCHE LE COL LE PLUS BAS, ON NE DESCEND PAS AU HASARD ═══
- *
- * *(Troisième et dernière écriture du drainage, 2026-07-29. Les deux précédentes sont racontées
- * au-dessus de `relierLesLacs` ; celle-ci est celle qui marche, et la MESURE dit pourquoi.)*
- *
- * La version gloutonne — « à chaque pas, la voisine la plus basse sous un plafond » — a été
- * instrumentée sur la seed 1 : sur six pièces d'eau, **une seule** trouvait de l'eau ; deux
- * s'enlisaient, trois épuisaient leurs trente-sept pas sans rien atteindre. Le défaut est celui
- * de toute marche gloutonne sur un champ lisse : elle SERPENTE le long d'une courbe de niveau.
- * Elle ne cherche rien — elle ne fait que ne pas monter.
- *
- * La bonne question n'est pas « où descendre ? », c'est **« par où l'eau peut-elle sortir en
- * franchissant le point le plus bas possible ? »**. C'est un plus-court-chemin DE GOULOT
- * (bottleneck) : le coût d'un chemin n'est pas sa longueur, c'est **l'altitude MAXIMALE qu'il
- * faut franchir**. Dijkstra le donne exactement, avec `cout(v) = max(cout(u), altitude(v))`.
- *
- * Et le résultat est physiquement juste, pas seulement joli : un lac déborde par son point de
- * selle le plus bas, et le ruisseau qui en sort épouse ensuite le fond du vallon — puisque tout
- * détour par un point plus haut serait, par définition, un chemin de goulot pire.
- *
- * Treize mille cellules, quatre voisines : le coût est négligeable devant les 3,75 M de tuiles
- * de la génération. Déterministe (invariant n°2) : le tas ordonne sur (goulot, index de
- * cellule) — un ordre TOTAL, donc l'ordre d'extraction ne doit rien au moteur.
- *
- * Rend le chemin `déversoir → eau` (cellules 4-adjacentes), ou `null` s'il faudrait escalader
- * plus haut que `CREUX.FRANCHISSEMENT` lames au-dessus du déversoir — auquel cas le lac est une
- * CUVETTE FERMÉE, ce qui est la bonne réponse pour un fond de pays.
- */
-function cheminDeSortie(
-  creux: Creux,
-  celluleEau: Uint8Array,
-  deversoir: number,
-  cellulesDuLac: readonly number[],
-  motif: number,
-  horsSeuils: Uint8Array,
-): number[] | null {
-  const n = creux.cols * creux.rows
-  const plafond = creux.altLarge[deversoir]! + CREUX.LAME * CREUX.FRANCHISSEMENT
-  const maxCell = Math.ceil(EAU.RUISSEAU_PORTEE / motif)
-
-  const goulot = new Float64Array(n).fill(Infinity)
-  const parent = new Int32Array(n).fill(-1)
-  const clos = new Uint8Array(n)
-  // Le lac lui-même est hors jeu : on part de son bord, on n'y retourne pas.
-  for (const k of cellulesDuLac) clos[k] = 1
-
-  // Un tas binaire minimal, ordonné sur (goulot, index) — ordre TOTAL, donc déterministe.
-  const tasCell: number[] = []
-  const tasCle: number[] = []
-  const avant = (a: number, b: number): boolean =>
-    tasCle[a] !== tasCle[b] ? tasCle[a]! < tasCle[b]! : tasCell[a]! < tasCell[b]!
-  const echanger = (a: number, b: number): void => {
-    const c = tasCell[a]!; tasCell[a] = tasCell[b]!; tasCell[b] = c
-    const l = tasCle[a]!; tasCle[a] = tasCle[b]!; tasCle[b] = l
-  }
-  const empiler = (cell: number, cle: number): void => {
-    tasCell.push(cell)
-    tasCle.push(cle)
-    let i = tasCell.length - 1
-    while (i > 0) {
-      const p = (i - 1) >> 1
-      if (!avant(i, p)) break
-      echanger(i, p)
-      i = p
-    }
-  }
-  const depiler = (): number => {
-    const tete = tasCell[0]!
-    const dernier = tasCell.length - 1
-    echanger(0, dernier)
-    tasCell.pop()
-    tasCle.pop()
-    let i = 0
-    for (;;) {
-      const g = 2 * i + 1
-      const d = g + 1
-      let m = i
-      if (g < tasCell.length && avant(g, m)) m = g
-      if (d < tasCell.length && avant(d, m)) m = d
-      if (m === i) break
-      echanger(i, m)
-      i = m
-    }
-    return tete
-  }
-
-  goulot[deversoir] = creux.altLarge[deversoir]!
-  empiler(deversoir, goulot[deversoir]!)
-  let arrivee = -1
-  while (tasCell.length > 0) {
-    const k = depiler()
-    if (clos[k] === 1) continue
-    clos[k] = 1
-    if (celluleEau[k] === 1 && k !== deversoir) { arrivee = k; break }
-    const kx = k % creux.cols
-    const ky = (k - kx) / creux.cols
-    const voisines = [
-      kx > 0 ? k - 1 : -1,
-      kx + 1 < creux.cols ? k + 1 : -1,
-      ky > 0 ? k - creux.cols : -1,
-      ky + 1 < creux.rows ? k + creux.cols : -1,
-    ]
-    for (const v of voisines) {
-      if (v < 0 || clos[v] === 1 || creux.dedans[v] !== 1) continue
-      if (horsSeuils[v] === 0) continue // on ne fait pas couler un ruisseau dans une porte (A16)
-      const a = creux.altLarge[v]!
-      if (a > plafond) continue // au-delà, ce n'est plus un col : c'est une colline
-      const cle = Math.max(goulot[k]!, a)
-      if (cle >= goulot[v]!) continue
-      goulot[v] = cle
-      parent[v] = k
-      empiler(v, cle)
-    }
-  }
-  if (arrivee < 0) return null
-
-  // On remonte les parents, puis on retourne : le fil part du lac et va vers l'eau qu'il rejoint.
-  const chemin: number[] = []
-  for (let k = arrivee; k !== -1; k = parent[k]!) {
-    chemin.push(k)
-    if (chemin.length > maxCell) return null // trop long pour être un ruisseau de cette zone
-    if (k === deversoir) break
-  }
-  chemin.reverse()
-  return chemin
-}
 
 /** Peint le filet d'eau entre les centres de deux cellules 4-adjacentes, à la demi-largeur du
- *  ruisseau. Les mêmes refus que partout : hors Racine, eau déjà là, mur — on ne noie rien. */
-function peindreSegment(
+ *  ruisseau. Les mêmes refus que partout : hors Racine, eau déjà là, mur — on ne noie rien.
+ *
+ *  `demi` par défaut vaut `EAU.RUISSEAU_DEMI_LARGEUR` : les chenaux entre lacs gardent leur
+ *  largeur au bit près. Les rus (`zonegen-rus.ts`) le passent, eux — un réseau de drainage se
+ *  lit à sa hiérarchie, et c'est la seule raison pour laquelle ce paramètre existe. */
+export function peindreSegment(
   terrain: number[],
   zone: Int32Array,
   racineId: number,
@@ -979,9 +680,9 @@ function peindreSegment(
   b: number,
   eaux: number[],
   chenaux: number[],
+  demi: number = EAU.RUISSEAU_DEMI_LARGEUR,
 ): void {
   const M = CREUX.MOTIF
-  const demi = EAU.RUISSEAU_DEMI_LARGEUR
   const centre = (k: number): { x: number; y: number } => {
     const kx = k % creux.cols
     return { x: (creux.mx0 + kx) * M + M / 2, y: (creux.my0 + (k - kx) / creux.cols) * M + M / 2 }
@@ -1010,218 +711,73 @@ function peindreSegment(
   }
 }
 
+
+
 /**
- * ═══ LA RIVIÈRE — elle naît au mur de la ceinture, elle meurt au mur du feu ═══
+ * ═══ LES ISTHMES D'UNE TUILE — deux eaux que rien ne sépare vraiment ═══
  *
- * (Spec t0-exploration R5-R8.) Le tracé : une COLONNE d'entrée au nord (au pied de la
- * frontière T1), une colonne de sortie au sud (la frontière de la Cendrière), les lacs qui
- * sont à moins de `RIVIERE_DETOUR_MAX` de la ligne enfilés comme des perles, et des marches
- * Manhattan entre chaque étape (R32 : rien ne serpente, tout est rectiligne).
+ * *(Règle d'Alexis, 2026-08-30 : « si 2 cases d'eau ne sont séparées que par une unique case de
+ * terre ferme, tu mets une case d'eau entre les 2, à la bonne profondeur ».)*
  *
- * DEUX PASSES DE PEINTURE, et l'ordre est l'invariant : le LIT d'abord (haut-fond, demi-
- * largeur 3), le CŒUR ensuite (profond, demi-largeur 1) — et le cœur ne repeint QUE des
- * tuiles que le lit vient de poser (jamais un lac, jamais un ruisseau). L'anneau de
- * haut-fond de R45 tient donc par construction : le profond de la rivière est né entouré
- * de son propre lit. Le cœur s'arrête à `RIVIERE_BOUCHE` pas des deux bouts — la source et
- * l'embouchure se traversent à gué.
+ * Une tuile de terre coincée entre deux eaux ne raconte rien : ce n'est ni une berge, ni un
+ * passage — c'est un accident de rastérisation. Elle se voyait partout depuis que l'eau est
+ * courbe : deux disques estampés qui se frôlent, un ru qui rejoint son lac à une tuile près, une
+ * anse dont les deux lèvres se touchent presque. MESURÉ avant la règle (monde joué, 3 graines) :
+ * 29 à 35 paires de masses d'eau distinctes séparées par une ou deux tuiles sèches.
  *
- * L'embouchure et la source évitent les seuils de `RIVIERE_MARGE_SEUIL` : une porte n'a
- * pas les pieds dans l'eau (worldgen R10 — un seuil ne nourrit rien, pas même à boire).
+ * ═══ « À LA BONNE PROFONDEUR » ═══
+ *
+ * La tuile comblée prend le HAUT-FOND dès que l'un de ses deux voisins est du haut-fond ; elle
+ * ne devient profonde que si les deux le sont. C'est le sens de R45, pas une prudence : le
+ * profond est un MUR, et transformer un isthme marchable en mur fermerait un chemin que
+ * personne n'a décidé de fermer. `assainirLeProfond` repasse derrière, comme toujours.
+ *
+ * ═══ UNE SEULE PASSE, SUR UN INSTANTANÉ ═══
+ *
+ * On lit le terrain d'AVANT et l'on écrit à côté : combler un isthme peut en fabriquer un autre
+ * (deux tuiles sèches en diagonale), et une règle qui se relit elle-même s'emballerait le long
+ * d'une berge. Une passe, le motif d'origine — déterministe, borné, sans ordre de balayage qui
+ * compte.
  */
-function tracerLaRiviere(
+export function comblerLesIsthmes(
   terrain: number[],
   zone: Int32Array,
-  g: GrapheZones,
   width: number,
   height: number,
-  s: number,
-  lacs: Lac[],
-  eaux: number[],
+  horsSeuils: Uint8Array,
   creux: Creux | null,
-): Riviere | null {
-  const racineId = g.racine
-  const r = g.zones[racineId]!.rect
-  if (!r) return null
-  const sel = s ^ 0x52495645 /* 'RIVE' */
-
-  // Les seuils de la Racine — la source et la bouche s'en écartent.
-  const seuils = g.seuils.filter((x) => x.a === racineId || x.b === racineId)
-  const loinDesSeuils = (x: number, y: number): boolean =>
-    seuils.every((q) => Math.abs(q.x - x) + Math.abs(q.y - y) >= EAU.RIVIERE_MARGE_SEUIL)
-
-  // Une colonne candidate doit TOUCHER la Racine : on descend depuis le haut du rectangle
-  // (les ceintures mordent dedans — la première tuile Racine marchable est le pied du mur),
-  // ou l'on remonte depuis le bas (la Cendrière). Rendu : la tuile de départ, ou -1.
-  const descendre = (x: number): number => {
-    for (let y = r.y; y < r.y + r.h; y++) {
+): number {
+  // On relève d'abord, on écrit ensuite : combler un isthme peut en fabriquer un autre, et une
+  // règle qui se relit s'emballerait le long d'une berge. On garde donc la LISTE au lieu de
+  // copier la carte — `terrain.slice()` sur 3,75 M de tuiles pesait dans le budget A13.
+  const aCombler: { i: number; profond: boolean }[] = []
+  const eau = (i: number): boolean => isWater(terrain[i]!)
+  let combles = 0
+  for (let y = 1; y < height - 1; y++) {
+    for (let x = 1; x < width - 1; x++) {
       const i = y * width + x
-      if (zone[i] === racineId && TERRAINS[terrain[i]!]?.walkable === true) return y
-    }
-    return -1
-  }
-  const remonter = (x: number): number => {
-    for (let y = r.y + r.h - 1; y >= r.y; y--) {
-      const i = y * width + x
-      if (zone[i] === racineId && TERRAINS[terrain[i]!]?.walkable === true) return y
-    }
-    return -1
-  }
-
-  // ═══ ON N'ENTRE PLUS N'IMPORTE OÙ : ON ENTRE PAR LE POINT LE PLUS BAS ═══
-  //
-  // (2026-07-29, avec le micro-relief muet.) Les deux colonnes étaient tirées au sort — vingt
-  // essais, le PREMIER valide gagnait. Une rivière qui naît sur un dos et meurt sur un autre ne
-  // raconte rien : c'est l'eau posée sur le décor. On évalue donc les vingt candidates et l'on
-  // garde la PLUS BASSE — la source s'ouvre dans le col du mur de la ceinture, l'embouchure se
-  // vide par le point bas du sud. La rivière descend, et ça se voit.
-  //
-  // Le tirage reste le même (mêmes `hash2`, mêmes bornes) : c'est le CHOIX parmi les candidates
-  // qui change. Sans relief (`creux` nul), on retombe exactement sur l'ancien comportement.
-  const choisirColonne = (canal: number, bord: (x: number) => number): { x: number; y: number } => {
-    let bx = -1
-    let by = -1
-    let basse = Infinity
-    for (let essai = 0; essai < 20; essai++) {
-      const x = Math.round(r.x + (0.18 + 0.64 * hash2(essai, canal, sel)) * r.w)
-      const y = bord(x)
-      if (y < 0 || !loinDesSeuils(x, y)) continue
-      const a = creux ? altitudeAt(creux, x, y) : 0
-      if (a < basse) { basse = a; bx = x; by = y }
-      if (!creux) break // sans relief : le premier valide gagne, comme avant
-    }
-    return { x: bx, y: by }
-  }
-  const source = choisirColonne(0, descendre)
-  const bouche = choisirColonne(1, remonter)
-  const x0 = source.x
-  const y0 = source.y
-  const x1 = bouche.x
-  const y1 = bouche.y
-  if (x0 < 0 || x1 < 0 || y1 <= y0) return null // une Racine dégénérée n'a pas de rivière
-
-  // LES PERLES : les lacs proches de la ligne source→bouche, enfilés du nord au sud.
-  const perles = lacs
-    .filter((l) => l.cy > y0 + 8 && l.cy < y1 - 8)
-    .filter((l) => {
-      const t = (l.cy - y0) / Math.max(1, y1 - y0)
-      return Math.abs(l.cx - (x0 + (x1 - x0) * t)) <= EAU.RIVIERE_DETOUR_MAX
-    })
-    .sort((a, b) => a.cy - b.cy)
-    .slice(0, 3)
-
-  // LE FIL : les étapes, reliées en marches de Manhattan. On note chaque pas dans l'ordre.
-  const etapes = [{ cx: x0, cy: y0 }, ...perles.map((l) => ({ cx: l.cx, cy: l.cy })), { cx: x1, cy: y1 }]
-  const fil: number[] = []
-  let px = x0
-  let py = y0
-  fil.push(py * width + px)
-  for (const e of etapes.slice(1)) {
-    let garde = 0
-    // ═══ ON AVANCE SUR L'AXE LE MOINS AVANCÉ, PAS SUR LE PLUS LONG ═══
-    //
-    // (2026-07-29, sur la carte rendue.) « L'axe où il reste le plus de chemin » épuise
-    // entièrement le grand côté avant de toucher au petit : entre deux perles écartées en X et
-    // proches en Y, la rivière sortait en BARRE HORIZONTALE de deux cents tuiles, puis un
-    // crochet. Un canal, pas un cours d'eau — et c'était le défaut le plus voyant de la zone.
-    //
-    // On compare donc les deux axes en FRACTION DU TOTAL de l'étape : après un tronçon
-    // horizontal, c'est le vertical qui est le moins avancé, et il passe. L'escalier s'entrelace
-    // le long de la vraie diagonale sans qu'on écrive d'alternance. Rectiligne (R32) : ce sont
-    // toujours deux droites et un angle droit, simplement plus courtes et plus nombreuses.
-    const totalX = Math.max(1, Math.abs(e.cx - px))
-    const totalY = Math.max(1, Math.abs(e.cy - py))
-    while ((px !== e.cx || py !== e.cy) && garde < width + height) {
-      const dx = e.cx - px
-      const dy = e.cy - py
-      // À avancement égal, l'axe VERTICAL gagne : la rivière descend vers le feu.
-      const horiz = Math.abs(dx) / totalX > Math.abs(dy) / totalY
-      const step = horiz ? Math.sign(dx) : Math.sign(dy)
-      const troncon = Math.min(EAU.TRONCON, horiz ? Math.abs(dx) : Math.abs(dy))
-      for (let t = 0; t < troncon; t++) {
-        if (horiz) px += step
-        else py += step
-        fil.push(py * width + px)
-        garde++
+      if (eau(i)) continue
+      if ((zone[i] ?? -1) < 0) continue //             hors pays : on ne comble pas le vide
+      if (TERRAINS[terrain[i]!]?.walkable !== true) continue // un mur n'est pas un isthme
+      // A16 : un seuil ne nourrit rien, pas même à boire.
+      if (creux) {
+        const k = celluleDe(creux, x, y)
+        if (k >= 0 && horsSeuils[k] === 0) continue
       }
+      // L'isthme : deux eaux qui se font face, à l'horizontale ou à la verticale.
+      const h = eau(i - 1) && eau(i + 1)
+      const v = eau(i - width) && eau(i + width)
+      if (!h && !v) continue
+      const voisins = h ? [i - 1, i + 1] : [i - width, i + width]
+      aCombler.push({ i, profond: voisins.every((j) => terrain[j] === TERRAIN_DEEP_WATER) })
     }
   }
-
-  // PASSE 1 — LE LIT : haut-fond, demi-largeur RIVIERE_DEMI_LIT, perpendiculaire au fil.
-  // On ne note dans `litNeuf` QUE ce que la rivière vient de poser : le cœur n'aura le droit
-  // de creuser QUE là-dedans (jamais un lac, jamais un chenal — leur anneau ne nous doit rien).
-  const litNeuf = new Set<number>()
-  /** Une tuile de lit — les mêmes refus partout : hors carte, hors Racine, eau déjà là, mur. */
-  const poser = (bx: number, by: number): void => {
-    if (bx < 0 || by < 0 || bx >= width || by >= height) return
-    const i = by * width + bx
-    if (zone[i] !== racineId) return // la rivière ne sort JAMAIS de la Racine
-    const cur = terrain[i]!
-    if (isWater(cur)) return // eau existante : intacte
-    if (TERRAINS[cur]?.walkable !== true) return // on ne noie pas un mur
-    terrain[i] = TERRAIN_SHALLOW_WATER
-    litNeuf.add(i)
-    eaux.push(i)
+  for (const { i, profond } of aCombler) {
+    terrain[i] = profond ? TERRAIN_DEEP_WATER : TERRAIN_SHALLOW_WATER
+    combles += 1
   }
-  const peindreBande = (cx: number, cy: number, horiz: boolean, demi: number): void => {
-    for (let w = -demi; w <= demi; w++) poser(horiz ? cx : cx + w, horiz ? cy + w : cy)
-  }
-  /** LE COUDE ÉQUERRÉ — le carré plein de côté `2·demi+1` centré sur le PIVOT. */
-  const peindreCarre = (cx: number, cy: number, demi: number): void => {
-    for (let dy = -demi; dy <= demi; dy++) {
-      for (let dx = -demi; dx <= demi; dx++) poser(cx + dx, cy + dy)
-    }
-  }
-  for (let k = 1; k < fil.length; k++) {
-    const i = fil[k]!
-    const cx = i % width
-    const cy = (i - cx) / width
-    // le pas était horizontal → la bande est verticale
-    peindreBande(cx, cy, Math.abs(i - fil[k - 1]!) === 1, EAU.RIVIERE_DEMI_LIT)
-  }
-  // LES COUDES, en passe à part — et le PIVOT est l'index de boucle. C'est tout le correctif :
-  // l'ancienne version équerrait `fil[k]`, un pas APRÈS le virage, si bien qu'elle repeignait
-  // une bande déjà couverte pendant que le coin EXTÉRIEUR restait sec (MESURÉ le 2026-07-26 :
-  // portée de l'eau sur la diagonale extérieure, médiane 0,00 tuile contre 4,24 à l'intérieur).
-  // Poser le carré plein sur le pivot revient EXACTEMENT à prolonger chaque bras de `demi`
-  // tuiles au-delà : la berge extérieure tourne son angle droit au lieu de couper le virage.
-  for (let k = 1; k + 1 < fil.length; k++) {
-    if (!estUnCoude(fil, k, width)) continue
-    const cx = fil[k]! % width
-    peindreCarre(cx, (fil[k]! - cx) / width, EAU.RIVIERE_DEMI_LIT)
-  }
-
-  // PASSE 2 — LE CŒUR : profond, demi-largeur RIVIERE_DEMI_COEUR, en retrait des deux bouts.
-  const coeur = new Set<number>()
-  const creuser = (bx: number, by: number): void => {
-    if (bx < 0 || by < 0 || bx >= width || by >= height) return
-    const i2 = by * width + bx
-    if (!litNeuf.has(i2)) return // le cœur ne creuse QUE le lit de la rivière
-    terrain[i2] = TERRAIN_DEEP_WATER
-    coeur.add(i2)
-  }
-  for (let k = EAU.RIVIERE_BOUCHE; k < fil.length - EAU.RIVIERE_BOUCHE; k++) {
-    const i = fil[k]!
-    const cx = i % width
-    const cy = (i - cx) / width
-    const horiz = Math.abs(i - fil[k - 1]!) === 1
-    for (let w = -EAU.RIVIERE_DEMI_COEUR; w <= EAU.RIVIERE_DEMI_COEUR; w++) {
-      creuser(horiz ? cx : cx + w, horiz ? cy + w : cy)
-    }
-    // Le cœur s'équerre comme le lit : le fil sombre tourne l'angle, il ne le coupe pas. Sans
-    // risque pour l'anneau de R45 — ce carré de 3 vit au centre du carré de 7 que le lit vient
-    // de poser, et `creuser` ne touche de toute façon que `litNeuf`.
-    if (k + 1 < fil.length && estUnCoude(fil, k, width)) {
-      for (let dy = -EAU.RIVIERE_DEMI_COEUR; dy <= EAU.RIVIERE_DEMI_COEUR; dy++) {
-        for (let dx = -EAU.RIVIERE_DEMI_COEUR; dx <= EAU.RIVIERE_DEMI_COEUR; dx++) {
-          creuser(cx + dx, cy + dy)
-        }
-      }
-    }
-  }
-
-  return { fil, coeur }
+  return combles
 }
-
 
 /**
  * LE MARAIS — une frange de boue autour de TOUTE l'eau, avec parcimonie. Pour chaque tuile d'eau,
@@ -1263,22 +819,23 @@ function frangeDeMarais(
         // Gate quantifié au motif : toute la plaque de 8 partage le verdict.
         if (hash2(Math.floor(x / M), Math.floor(y / M), sel) < EAU.MARAIS_COUVERTURE) {
           // Très rarement, une flaque d'eau libre au milieu des roseaux (gate PAR TUILE → éparse).
-          // Elle fait 2×2 et NON une case seule : le champ d'eau du shader est filtré linéairement,
-          // et l'iso-contour d'un texel isolé est un LOSANGE (carré pivoté à 45°) — un petit carré,
-          // lui, se rend proprement. Ne noie que de la terre marchable de la Racine.
+          //
+          // ⚠ ELLE N'EST PLUS UN CARRÉ DE 2×2 (2026-08-30, décision d'Alexis sur l'eau) : c'est
+          // un DISQUE de rayon tiré (`FLAQUE_RAYON_MIN`..`MAX`), donc une tache ronde de taille
+          // variable. La raison du 2×2 tenait — une case SEULE se rend en losange, le champ
+          // d'eau du shader étant filtré — et elle tient toujours : le rayon minimal garantit au
+          // moins deux tuiles de large dans les deux axes. Ne noie que de la terre marchable.
           if (hash2(x, y, selFlaque) < EAU.MARAIS_FLAQUE) {
-            for (let fy = 0; fy <= 1; fy++) {
-              for (let fx = 0; fx <= 1; fx++) {
-                const px = x + fx
-                const py = y + fy
-                if (px < 0 || py < 0 || px >= width || py >= height) continue
-                const k = py * width + px
-                if (zone[k] !== racineId) continue
-                if (terrain[k] === TERRAIN_DEEP_WATER) continue
-                if (TERRAINS[terrain[k]!]?.walkable !== true) continue
-                terrain[k] = TERRAIN_SHALLOW_WATER
-              }
-            }
+            const rf = EAU.FLAQUE_RAYON_MIN
+              + hash2(x, y, (selFlaque ^ 0x52414459) | 0 /* 'RADY' */) * (EAU.FLAQUE_RAYON_MAX - EAU.FLAQUE_RAYON_MIN)
+            estamperDisque(x, y, rf, (px, py) => {
+              if (px < 0 || py < 0 || px >= width || py >= height) return
+              const k = py * width + px
+              if (zone[k] !== racineId) return
+              if (terrain[k] === TERRAIN_DEEP_WATER) return
+              if (TERRAINS[terrain[k]!]?.walkable !== true) return
+              terrain[k] = TERRAIN_SHALLOW_WATER
+            })
           } else {
             terrain[j] = TERRAIN_MARSH
           }

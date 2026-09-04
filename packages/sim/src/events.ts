@@ -186,6 +186,15 @@ export type SimEvent =
    */
   | { type: 'attack_whiffed'; tick: number; entityId: number; charged: boolean }
   /**
+   * LE COUP A ÉTÉ BRISÉ (spec combat R4octies, 2026-08-31). `entityId` est le corps qui
+   * LÂCHE son geste — touché en plein wind-up — et `byEntityId` celui qui l'a touché.
+   *
+   * Symétrique du raté : les deux disent qu'un coup armé n'aura pas lieu, et pour deux
+   * raisons opposées (l'un a fendu l'air, l'autre s'est fait couper). L'endurance de
+   * l'armement est perdue dans les deux cas — c'est ce que le son doit apprendre.
+   */
+  | { type: 'attack_interrupted'; tick: number; entityId: number; byEntityId: number }
+  /**
    * LA PARADE A TENU (spec combat R6, R6bis). `prevented` : les dégâts que la garde a
    * mangés — c'est LUI qui distingue une parade d'un coup faible, indiscernables tant que
    * seul `entity_damaged` sortait, avec son montant DÉJÀ réduit. `parried` : la garde était

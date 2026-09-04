@@ -31,7 +31,10 @@
  */
 import { TERRAINS, TERRAIN_DEEP_WATER, TERRAIN_MARSH, TERRAIN_SHALLOW_WATER } from './balance'
 import { isWater } from './map'
-import { CREUX } from './racine-relief'
+import { fbm2 } from './noise'
+import { CREUX, lireLeChampGraine } from './racine-relief'
+import { creuserLeCoeur } from './zonegen-water'
+import { meandrer, peindreCoursDEau, type Point } from './zonegen-trace'
 import type { Socle } from './socle'
 import type { GrapheZones } from './zonegraph'
 
@@ -65,8 +68,32 @@ export const EAUX_ZONES = {
   RU_PART_FLUX: 0.02,
   /** Longueur maximale d'un ru, en cellules — au-delà, il s'enfonce dans la tourbe. */
   RU_MAX_CELLULES: 60,
+  /** Rayon d'un ru de zone, en tuiles (1,2 → 3 tuiles de large) : un ru n'est pas un canal. */
+  RU_RAYON: 1.2,
+  /** Son écart à la ligne de drainage, en tuiles : de quoi ne pas suivre la grille au cordeau. */
+  RU_MEANDRE: 3.5,
   /** Marge d'exclusion autour de TOUT seuil, en tuiles (Manhattan) — A16, généralisé. */
   MARGE_SEUIL: 84,
+
+  // ══ LA FORME DE L'EAU DORMANTE — plus des blocs de motif (2026-08-30) ═══════════════════
+  //
+  // Les mares se peignaient CELLULE PAR CELLULE : un « T » de carrés de 8×8, avec sa frange de
+  // marais en carrés autour. Alexis l'a vu sur la carte rendue (« les mares sont toujours
+  // carrées ou je me trompe ? ») — la Racine avait reçu la nouvelle grammaire, pas les zones.
+
+  /** La part de l'emprise que la mare remplit vraiment : ce qui manque, ce sont les COINS. */
+  REMPLISSAGE: 0.86,
+  /** L'échelle du grain de rive, en tuiles — la taille des dentelures de la berge. */
+  RIVE_ECHELLE: 26,
+  /** L'amplitude de ce grain, en unités d'altitude : petit devant la profondeur des cuvettes,
+   *  sinon il ferait des confettis au lieu d'une rive. */
+  RIVE_GRAIN: 0.012,
+  /** Rayon de la frange de marais autour de la mare, en tuiles. */
+  MARAIS_RAYON: 4,
+  /** L'échelle du bruit qui troue cette frange : elle respire, elle ne borde pas. */
+  MARAIS_ECHELLE: 18,
+  /** Sous cette valeur du bruit, la tuile devient marais. Bas = parcimonie. */
+  MARAIS_COUVERTURE: 0.52,
 } as const
 
 /** Une tuile que l'eau des zones a le droit de repeindre : marchable, sèche, du pays. */
@@ -88,8 +115,10 @@ export function peindreLesEauxDesZones(
   width: number,
   height: number,
   socle: Socle | null,
-): void {
-  if (!socle) return
+): number[] {
+  /** Les tuiles des MARES et du grand lac — l'eau plate des zones, rendue aux terrasses. */
+  const lacs: number[] = []
+  if (!socle) return lacs
   const M = CREUX.MOTIF
   const n = socle.cols * socle.rows
 
@@ -108,30 +137,12 @@ export function peindreLesEauxDesZones(
     }
   }
 
-  /** Peint toutes les tuiles peignables d'une cellule. Rend le nombre de tuiles peintes. */
-  const peindreCellule = (k: number, zid: number, t: number): number => {
-    const kx = k % socle.cols
-    const ky = (k - kx) / socle.cols
-    let peintes = 0
-    for (let dy = 0; dy < M; dy++) {
-      const y = ky * M + dy
-      if (y >= height) break
-      for (let dx = 0; dx < M; dx++) {
-        const x = kx * M + dx
-        if (x >= width) break
-        const i = y * width + x
-        if (!peignable(terrain, zone, i, zid)) continue
-        terrain[i] = t
-        peintes++
-      }
-    }
-    return peintes
-  }
-
   for (const z of g.zones) {
     if (z.id === g.racine) continue
     const regime = EAUX_ZONES.PAR_ZONE[z.def.slug]
     if (!regime) continue
+    /** Le sel du grain de rive — propre à la zone : deux mares voisines ne se copient pas. */
+    const selRive = (g.seed ^ (z.id * 0x9e3779b1) ^ 0x52495645) | 0 /* 'RIVE' */
 
     // Les cellules du pays : dans la zone, hors vide, hors marge de seuil.
     const duPays = new Uint8Array(n)
@@ -225,59 +236,130 @@ export function peindreLesEauxDesZones(
         bassin.push(meilleur)
         dansBassin.add(meilleur)
       }
-      // La peinture : le POURTOUR du bassin en haut-fond, l'INTÉRIEUR du grand lac en profond
-      // (une mare n'a pas de cœur : trop petite pour porter un anneau honnête).
-      const dedansBassin = new Set(bassin)
+      // ═══ LA PEINTURE — À LA TUILE, sur l'iso-contour du niveau (2026-08-30) ═══
+      //
+      // *(Décision d'Alexis : plus d'angles droits pour l'eau — et sa relance, « les mares sont
+      // toujours carrées ou je me trompe ? ». Il ne se trompait pas : la Racine avait reçu la
+      // nouvelle grammaire, les AUTRES ZONES non. Une mare de la Tourbière était un « T » de
+      // blocs de 8×8, sa frange de marais un autre « T » de blocs autour.)*
+      //
+      // Même recette que les lacs de la Racine (`placerLacs`) : on trie les tuiles de l'emprise
+      // par altitude lue en BILINÉAIRE plus un grain de bord, on garde les `REMPLISSAGE` plus
+      // basses, et l'on inonde en 4-connexité depuis le point bas. Ce qui manque, ce sont les
+      // COINS — la différence entre le polygone en escalier et la forme molle.
+      for (const k of bassin) pris[k] = 1
+      const champDe = (x: number, y: number): number => lireLeChampGraine(
+        socle, socle.altLarge, x, y,
+        (fbm2(x, y, EAUX_ZONES.RIVE_ECHELLE, selRive) - 0.5) * EAUX_ZONES.RIVE_GRAIN,
+      )
+      // Même élargissement d'un anneau que pour les lacs de la Racine : sans lui, l'iso-ligne
+      // est clippée au bord des cellules et la rive garde les angles droits de la grille.
+      const dansEmprise = new Set(bassin)
+      const emprise = bassin.slice()
       for (const k of bassin) {
-        pris[k] = 1
         const kx = k % socle.cols
         const ky = (k - kx) / socle.cols
-        const interieur = grand
-          && dedansBassin.has(k - 1) && dedansBassin.has(k + 1)
-          && dedansBassin.has(k - socle.cols) && dedansBassin.has(k + socle.cols)
-          && kx > 0 && ky > 0 && kx + 1 < socle.cols && ky + 1 < socle.rows
-        peindreCellule(k, z.id, interieur ? TERRAIN_DEEP_WATER : TERRAIN_SHALLOW_WATER)
+        for (const v of [
+          kx > 0 ? k - 1 : -1, kx + 1 < socle.cols ? k + 1 : -1,
+          ky > 0 ? k - socle.cols : -1, ky + 1 < socle.rows ? k + socle.cols : -1,
+        ]) {
+          if (v < 0 || dansEmprise.has(v) || duPays[v] !== 1 || pris[v] === 1) continue
+          dansEmprise.add(v)
+          emprise.push(v)
+        }
       }
-      // La frange de marais : l'anneau de cellules autour du bassin.
-      for (const k of bassin) {
+      const tuilesEmprise: number[] = []
+      for (const k of emprise) {
         const kx = k % socle.cols
-        for (const v of [k - 1, k + 1, k - socle.cols, k + socle.cols]) {
-          const vx = v % socle.cols
-          if (v < 0 || v >= n || Math.abs(vx - kx) > 1) continue
-          if (dedansBassin.has(v) || duPays[v] !== 1 || pris[v] === 1) continue
-          peindreCellule(v, z.id, TERRAIN_MARSH)
+        const ky = (k - kx) / socle.cols
+        for (let dy = 0; dy < M; dy++) {
+          const yy = ky * M + dy
+          if (yy >= height) break
+          for (let dx = 0; dx < M; dx++) {
+            const xx = kx * M + dx
+            if (xx >= width) break
+            if (peignable(terrain, zone, yy * width + xx, z.id)) tuilesEmprise.push(yy * width + xx)
+          }
+        }
+      }
+      const valeurs = new Map<number, number>()
+      for (const j of tuilesEmprise) valeurs.set(j, champDe(j % width, (j - (j % width)) / width))
+      tuilesEmprise.sort((a, b) => (valeurs.get(a)! - valeurs.get(b)!) || (a - b))
+      const eligible = new Set<number>()
+      const cible = Math.round(bassin.length * M * M * EAUX_ZONES.REMPLISSAGE)
+      for (let t = 0; t < cible && t < tuilesEmprise.length; t++) {
+        eligible.add(tuilesEmprise[t]!)
+      }
+      const kx0 = plusBas % socle.cols
+      const depart = (((plusBas - kx0) / socle.cols) * M + M / 2) * width + kx0 * M + M / 2
+      const dansLEau = new Set<number>()
+      if (eligible.size > 0) {
+        eligible.add(depart) // le point bas est dans sa mare, quoi qu'en dise le quantile
+        const file = [depart]
+        dansLEau.add(depart)
+        for (let t = 0; t < file.length; t++) {
+          const i = file[t]!
+          const ix = i % width
+          const iy = (i - ix) / width
+          terrain[i] = TERRAIN_SHALLOW_WATER
+          for (const [dx, dy] of [[1, 0], [-1, 0], [0, 1], [0, -1]] as const) {
+            const nx = ix + dx
+            const ny = iy + dy
+            if (nx < 0 || ny < 0 || nx >= width || ny >= height) continue
+            const j = ny * width + nx
+            if (dansLEau.has(j) || !eligible.has(j)) continue
+            dansLEau.add(j)
+            file.push(j)
+          }
+        }
+      }
+      for (const i of dansLEau) lacs.push(i)
+      // LE CŒUR du grand lac : les tuiles à `BERGE` pas ou plus de la rive — l'anneau de R45
+      // tient donc sur une forme quelconque, exactement comme pour les lacs de la Racine.
+      if (grand && dansLEau.size > 0) creuserLeCoeur(terrain, [...dansLEau], dansLEau, width)
+      // LA FRANGE DE MARAIS — dérivée de l'EAU, plus des cellules : l'anneau de tuiles à
+      // `MARAIS_RAYON` de la mare, gaté par un bruit pour qu'il respire au lieu de border.
+      for (const i of dansLEau) {
+        const ix = i % width
+        const iy = (i - ix) / width
+        for (let dy = -EAUX_ZONES.MARAIS_RAYON; dy <= EAUX_ZONES.MARAIS_RAYON; dy++) {
+          for (let dx = -EAUX_ZONES.MARAIS_RAYON; dx <= EAUX_ZONES.MARAIS_RAYON; dx++) {
+            const nx = ix + dx
+            const ny = iy + dy
+            if (nx < 0 || ny < 0 || nx >= width || ny >= height) continue
+            const j = ny * width + nx
+            if (dansLEau.has(j) || !peignable(terrain, zone, j, z.id)) continue
+            if (fbm2(nx, ny, EAUX_ZONES.MARAIS_ECHELLE, selRive ^ 0x4d415241 /* 'MARA' */) > EAUX_ZONES.MARAIS_COUVERTURE) continue
+            terrain[j] = TERRAIN_MARSH
+          }
         }
       }
     }
 
     // ── LES RUS : le drainage rendu visible ────────────────────────────────
+    //
     // Un ru part d'une cellule à fort flux et SUIT les récepteurs D8 du socle — le chemin que
-    // l'eau prend vraiment — jusqu'à une eau, au bord du pays, ou à bout de course. Il se
-    // peint en POLYLIGNE Manhattan de demi-largeur 1 entre centres de cellules (la grammaire
-    // des ruisseaux de la Racine — un ru n'est pas un canal de huit tuiles). Deux rus qui se
-    // rejoignent partagent leur aval : la CONFLUENCE émerge, on ne la dessine pas.
+    // l'eau prend vraiment — jusqu'à une eau, au bord du pays, ou à bout de course. Deux rus qui
+    // se rejoignent partagent leur aval : la CONFLUENCE émerge, on ne la dessine pas.
+    //
+    // ⚠ LE TRACÉ EST UNE COURBE depuis le 2026-08-30 (R32 ne gouverne plus l'eau) : la ligne de
+    // drainage est écartée d'un bruit, lissée par Chaikin, estampée au disque — la MÊME grammaire
+    // que la rivière et que les rus de la Racine (`zonegen-trace.ts`). Avant, c'était une
+    // polyligne de Manhattan de demi-largeur 1 : sur la carte rendue, la Tourbière portait une
+    // barre verticale de largeur constante et des escaliers à angle droit, au milieu de mares
+    // qui, elles, étaient déjà molles.
     if (regime.rus !== undefined && regime.rus > 0) {
-      /** Le tronçon Manhattan entre deux centres de cellules : x d'abord, y ensuite. */
-      const peindreTroncon = (de: number, vers: number): void => {
-        const dx0 = (de % socle.cols) * M + M / 2
-        const dy0 = ((de - (de % socle.cols)) / socle.cols) * M + M / 2
-        const vx0 = (vers % socle.cols) * M + M / 2
-        const vy0 = ((vers - (vers % socle.cols)) / socle.cols) * M + M / 2
-        const points: [number, number][] = []
-        const pasX = dx0 <= vx0 ? 1 : -1
-        for (let x = dx0; x !== vx0; x += pasX) points.push([x, dy0])
-        const pasY = dy0 <= vy0 ? 1 : -1
-        for (let y = dy0; y !== vy0 + pasY; y += pasY) points.push([vx0, y])
-        for (const [cx, cy] of points) {
-          for (let dy = -1; dy <= 1; dy++) {
-            for (let dx = -1; dx <= 1; dx++) {
-              const x = cx + dx
-              const y = cy + dy
-              if (x < 0 || y < 0 || x >= width || y >= height) continue
-              const i = y * width + x
-              if (peignable(terrain, zone, i, z.id)) terrain[i] = TERRAIN_SHALLOW_WATER
-            }
-          }
+      const poser = (x: number, y: number): void => {
+        if (x < 0 || y < 0 || x >= width || y >= height) return
+        const i = y * width + x
+        if (peignable(terrain, zone, i, z.id)) terrain[i] = TERRAIN_SHALLOW_WATER
+      }
+      const centrePoint = (k: number): Point => {
+        const kx = k % socle.cols
+        return {
+          x: kx * M + M / 2,
+          y: ((k - kx) / socle.cols) * M + M / 2,
+          r: EAUX_ZONES.RU_RAYON,
         }
       }
       const parFlux = cellules.slice().sort((a, b) => (socle.flux[b]! - socle.flux[a]!) || (a - b))
@@ -289,23 +371,30 @@ export function peindreLesEauxDesZones(
       }
       const enEau = new Uint8Array(n)
       for (const source of sources) {
+        const chemin: number[] = [source]
         let k = source
         for (let pas = 0; pas < EAUX_ZONES.RU_MAX_CELLULES; pas++) {
           const r = socle.recepteur[k]!
           if (r < 0) break
           if (duPays[r] !== 1) break //   le ru quitterait le pays : il s'enfonce avant
-          peindreTroncon(k, r)
+          chemin.push(r)
           enEau[k] = 1
           if (enEau[r] === 1) break //    la confluence : l'aval est déjà peint
           if (pris[r] === 1) break //     il se jette dans une mare
           k = r
         }
+        if (chemin.length < 2) continue
+        peindreCoursDEau(
+          meandrer(chemin.map(centrePoint), EAUX_ZONES.RU_MEANDRE, (selRive ^ source) | 0),
+          2, poser,
+        )
       }
     }
   }
 
   // ── R45, CONSTATÉ : aucun profond au contact d'une terre marchable sèche ──
   assainirLeProfondHorsRacine(terrain, zone, g.racine, width, height)
+  return lacs
 }
 
 /**

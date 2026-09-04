@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest'
 import { BALANCE, COMBAT, TEMPERATURE } from './balance'
+import { respawn } from './combat'
 import { drainEvents } from './events'
 import { addItems } from './items'
 import { createEmptyMap } from './map'
@@ -165,8 +166,11 @@ describe('hypothermie', () => {
     const died = state.events.find((ev) => ev.type === 'entity_died')
     expect(died).toBeDefined()
     expect((died as { cause?: string }).cause).toBe('cold')
-    // L'avatar meurt puis respawn au Feu de son village (R10) : hp remonte à RESPAWN_HP,
-    // il ne reste pas figé à 0.
+    // …et il RESTE à terre (2026-08-31) : le froid tue, il ne relève pas. Le réveil au Feu
+    // (R10) appartient au geste du joueur — c'est `respawn` qui remonte les PV.
+    expect(e.hp).toBe(0)
+    expect(e.downedAt).toBe(state.tick)
+    respawn(state, e)
     expect(e.hp).toBe(COMBAT.RESPAWN_HP)
   })
 
@@ -189,12 +193,13 @@ describe('hypothermie', () => {
     expect(e.hp).toBeLessThan(100)
   })
 
-  it('le respawn au Feu dégèle la température (fix #1)', () => {
+  it('le réveil au Feu dégèle la température (fix #1)', () => {
     const state = createSim(1)
     const e = spawn(state, 5, 5)
     e.temperature = TEMPERATURE.CORPS_MORTEL
     e.hp = 0.2
-    advanceTemperature(state)
+    advanceTemperature(state) // le froid l'emporte…
+    respawn(state, e) // …et c'est le RÉVEIL qui dégèle (2026-08-31), pas la mort
     expect(e.temperature).toBe(COMBAT.RESPAWN_TEMPERATURE)
   })
 })

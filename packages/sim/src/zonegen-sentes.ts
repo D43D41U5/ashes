@@ -24,6 +24,7 @@ import { TERRAINS, TERRAIN_DEEP_WATER, TERRAIN_ROAD, TERRAIN_SHALLOW_WATER } fro
 import { isWater } from './map'
 import { hash2 } from './noise'
 import type { Socle } from './socle'
+import { franchitUnPalier } from './terrasses'
 import type { Riviere } from './zonegen-water'
 import type { GrapheZones } from './zonegraph'
 
@@ -38,6 +39,12 @@ export const SENTES = {
   GUES_MIN: 2,
   /** Deux gués à moins de N tuiles ne comptent que pour un (dédoublonnage des toponymes). */
   GUE_ECART: 24,
+  /**
+   * Passer d'une cellule à une autre d'un PALIER différent (spec `terrasses.md` §3.7) — sauf en
+   * montant vers le NORD, le seul sens où une rampe peut exister. Cinq socles : la route cherche
+   * le col, elle ne longe pas le mur pour rien, mais elle ne fait pas non plus le tour du pays.
+   */
+  COUT_PALIER: 60,
 } as const
 
 export interface Gue {
@@ -63,6 +70,8 @@ export function tracerLesSentes(
   riviere: Riviere | null,
   setPieces: readonly { x: number; y: number; w: number; h: number }[] = [],
   socle: Socle | null = null,
+  /** Le palier de chaque cellule (`quantifierLesPaliers`), sur la MÊME grille que le socle. */
+  cellules: Int8Array | null = null,
 ): { gues: Gue[]; croisees: { x: number; y: number }[] } {
   const racineId = g.racine
   const r = g.zones[racineId]!.rect
@@ -228,6 +237,8 @@ export function tracerLesSentes(
       // La pente se paie à la montée comme à la descente : une route de fond de vallon.
       cout += Math.min(48, Math.floor(dAlt * 800))
     }
+    // Le mur d'une terrasse : on ne le passe que de face, en montant — là où une rampe se pose.
+    if (cellules && franchitUnPalier(cellules, cols8, de, v)) cout += SENTES.COUT_PALIER
     return cout
   }
 
@@ -392,7 +403,7 @@ export function tracerLesSentes(
  * enregistrait le toponyme sans condition, et la seed du jeu affichait « le Gué » sur de l'eau
  * infranchissable (mesuré par la revue — un gué fantôme).
  */
-function percerLeCoeur(
+export function percerLeCoeur(
   terrain: number[],
   riviere: Riviere,
   x: number,

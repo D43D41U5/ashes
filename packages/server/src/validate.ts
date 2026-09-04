@@ -269,6 +269,9 @@ const FORMES: { [T in ActionJouable]: FormeDe<Extract<PlayerAction, { type: T }>
   attack_cancel: {},
   bandage: { targetEntityId: opt(ID) },
   loot_corpse: { corpseId: req(ID) },
+  // JE ME RELÈVE : sans champ. La sim refuse elle-même un vivant (`respawn`), donc rien
+  // à valider ici — le pire qu'un client mal intentionné en tire est un `action_rejected`.
+  respawn: {},
 
   // ── Inventaire ──
   set_active_slot: { slot: req(CASE) },

@@ -311,6 +311,52 @@ const TORCHE_INTENSITE = 0.45
 // un galbe cylindrique lisible, sans noyer le bois. Négligeable pour le halo alentour (rayon >>).
 const FEU_LIFT = TILE_PX * 0.3
 
+/**
+ * ═══ SOUS TERRE — le ciel n'entre pas, la gueule l'apporte ═══
+ * *(spec `etages.md` §17 — « ce que l'on voit, c'est ce que la LUMIÈRE atteint »)*
+ *
+ * **VU À LA CAPTURE, ET MESURÉ : un corps à [253, 246, 197] au fond d'une cave**, sous un voile
+ * qui laissait le sol à [46, 48, 57]. Le voile (`cave-veil.ts`) multipliait bien le corps —
+ * ce n'est pas lui qui manquait — mais il multipliait un corps que le SOLEIL venait de blanchir :
+ * la pipeline Light2D ne sait pas qu'on est descendu, le point-light du zénith éclaire un sprite
+ * lit où qu'il se tienne. Un homme éclairé à midi dans une salle noire flotte devant la salle.
+ *
+ * Donc, à l'étage −1 : le soleil et la lune s'ÉTEIGNENT, l'ambiante devient celle d'une cave
+ * — FROIDE et À MI-HAUTEUR : c'est le voile qui fait la nuit de la salle (il tombe sur tout ce
+ * qui y vit, corps compris), une ambiante noire PAR-DESSUS ferait disparaître le joueur dans son
+ * propre souffle (`SOI_PIC`) ; mais une ambiante presque pleine (0xc4ccdc, essayée d'abord)
+ * DÉLAVAIT la torche : un corps à [210, 205, 112] — jaune, pas ambre — sous une flamme, mesuré
+ * le 2026-09-02 contre [182, 140, 79] à 0x808898. Et le jour entre par la GUEULE : une source par
+ * gueule visible, posée sur elle, basse (elle RASE : le côté du corps qui regarde la sortie
+ * s'allume, l'autre reste dans la salle), de la couleur de l'heure, à la force de `clarteDuCiel`.
+ * Les feux ne changent pas ; les torches brûlent à leur force de NUIT (voir la boucle des
+ * torches) : sous terre, il n'y a pas de midi pour les éteindre.
+ */
+export interface SousTerre {
+  /** Les gueules VISIBLES, en px monde — celles par où le jour entre (`EtageLayer.gueulesPx`). */
+  gueules: readonly { x: number; y: number }[]
+  /** La clarté du ciel à cette heure (`clarteDuCiel`), dans [0, 1]. */
+  ciel: number
+}
+/**
+ * LA COULEUR DE LA LUMIÈRE DU CIEL à un facteur de jour donné : ambre rasant → blanc de midi le
+ * jour, clair de lune la nuit — le relais est celui de `intensitesDuCiel` (la lune ne se lève
+ * qu'une fois le soleil couché). C'est la couleur que prend la source posée sur une gueule, ET
+ * celle dont la cave teinte sa nappe de jour : deux branchements d'une même heure.
+ */
+export function couleurDuCiel(day: number): number {
+  const d = Math.max(0, Math.min(1, day))
+  return lerpColor(MOON_COLOR, lerpColor(GOLDEN, WHITE, d), Math.min(1, d / MOON_DAWN))
+}
+const AMBIENT_CAVE = 0x808898 // froide, à mi-hauteur : le voile fait la nuit, la torche fait l'ambre
+const GUEULE_MAX = 4 // gueules éclairées par image (budget du manager : 40, voir TORCHE_MAX)
+const GUEULE_INTENSITE = 0.9
+/** La source du jour à la gueule est BASSE : elle rase la salle depuis le seuil. */
+const GUEULE_Z = TILE_PX * 0.8
+/** Portée : la pénétration du jour (`JOUR_TUILES` du voile) et une tuile de plus — l'atténuation
+ *  de Light2D est quadratique, la source doit porter au-delà de là où le voile s'éteint. */
+const GUEULE_RAYON_TUILES = 6
+
 function setLightColor(light: Phaser.GameObjects.Light, rgb: number, scale = 1): void {
   const r = ((rgb >> 16) & 0xff) / 255 * scale
   const g = ((rgb >> 8) & 0xff) / 255 * scale
@@ -323,6 +369,8 @@ export class DynamicLighting {
   private moon: Phaser.GameObjects.Light
   private feux = new Map<number, Phaser.GameObjects.Light>()
   private torches = new Map<number, Phaser.GameObjects.Light>()
+  /** Les sources du jour aux gueules, par rang de gueule visible (voir `SousTerre`). */
+  private gueules: Phaser.GameObjects.Light[] = []
   private wasActive = false
 
   constructor(private scene: Phaser.Scene) {
@@ -364,6 +412,9 @@ export class DynamicLighting {
      *  Défaut 0 pour l'Atelier des plans, dont les feux naissent avec leur bois (`addStructure`)
      *  et valent donc « allumé » à tout tick. */
     tick = 0,
+    /** SOUS TERRE (le joueur à l'étage −1) : le ciel s'éteint, les gueules éclairent — voir
+     *  `SousTerre`. `null` dehors, et c'est le défaut : l'Atelier des plans ne descend pas. */
+    sousTerre: SousTerre | null = null,
   ): void {
     if (!active) {
       if (this.wasActive) {
@@ -371,6 +422,7 @@ export class DynamicLighting {
         this.moon.intensity = 0
         for (const f of this.feux.values()) f.intensity = 0
         for (const t of this.torches.values()) t.intensity = 0
+        for (const g of this.gueules) g.intensity = 0
       }
       this.wasActive = false
       return
@@ -379,8 +431,8 @@ export class DynamicLighting {
 
     // Ambiante : lit les arbres même sans lumière directe ; sombre la nuit pour que les Feux
     // ressortent — et elle SUIT LA LUNE, sans quoi les sprites resteraient éclairés au-dessus
-    // d'un sol devenu noir (cf. l'en-tête d'`AMBIENT_SANS_LUNE`).
-    this.scene.lights.setAmbientColor(ambianteDuCiel(day, lueur))
+    // d'un sol devenu noir (cf. l'en-tête d'`AMBIENT_SANS_LUNE`). Sous terre, celle de la cave.
+    this.scene.lights.setAmbientColor(sousTerre ? AMBIENT_CAVE : ambianteDuCiel(day, lueur))
 
     // LE SOLEIL — point lointain dans la direction du soleil, centré sur la vue.
     const v = cam.worldView
@@ -388,7 +440,7 @@ export class DynamicLighting {
     const dir = sunDirection(hour) // x est+ (aube) → ouest (couchant) : le balayage droite→gauche
     this.sun.x = cx + dir.x * SUN_FAR
     this.sun.y = cy - SUN_NORTH // EN HAUT : la source reste au nord de la vue (haut de l'écran)
-    this.sun.intensity = intensitesDuCiel(day).soleil
+    this.sun.intensity = sousTerre ? 0 : intensitesDuCiel(day).soleil
     setLightColor(this.sun, lerpColor(GOLDEN, WHITE, day))
 
     // LA LUNE — un voile FROID venu d'EN HAUT, bien plus faible que le soleil, qui ne vit que la
@@ -402,7 +454,24 @@ export class DynamicLighting {
     const dirL = moonDirection(hour, jourLune)
     this.moon.x = cx + dirL.x * SUN_FAR
     this.moon.y = cy - SUN_NORTH // EN HAUT, comme le soleil : le biais nord est celui de la DA
-    this.moon.intensity = intensitesDuCiel(day, lueur).lune
+    this.moon.intensity = sousTerre ? 0 : intensitesDuCiel(day, lueur).lune
+
+    // LE JOUR AUX GUEULES (voir `SousTerre`) — réconcilié par rang, comme les torches par id.
+    const gueules = sousTerre ? sousTerre.gueules.slice(0, GUEULE_MAX) : []
+    const nG = gueules.length
+    gueules.forEach((g, i) => {
+      let light = this.gueules[i]
+      if (!light) {
+        light = this.scene.lights.addLight(0, 0, 0, 0xffffff, 0, GUEULE_Z)
+        this.gueules[i] = light
+      }
+      light.x = g.x
+      light.y = g.y
+      light.radius = GUEULE_RAYON_TUILES * TILE_PX
+      setLightColor(light, couleurDuCiel(day))
+      light.intensity = GUEULE_INTENSITE * Math.max(0, Math.min(1, sousTerre?.ciel ?? 0))
+    })
+    for (const g of this.gueules.splice(nG)) this.scene.lights.removeLight(g)
 
     // LES FEUX — un point light chaud par structure `fire` (réconcilié par id).
     const seen = new Set<number>()
@@ -484,7 +553,10 @@ export class DynamicLighting {
     let nT = 0
     for (const p of torches) {
       if (nT >= TORCHE_MAX) break
-      const force = forceDeTorche(p.part, day, now, p.id * 2.3)
+      // SOUS TERRE IL FAIT NUIT À TOUTE HEURE : sans ce `0`, la torche du joueur n'éclairait son
+      // corps qu'après le coucher du soleil — à midi, dans le noir de la salle, elle était éteinte
+      // pour Light2D (mesuré le 2026-09-02 : un corps blanc-gris sous une flamme).
+      const force = forceDeTorche(p.part, sousTerre ? 0 : day, now, p.id * 2.3)
       if (force <= 0) continue
       nT++
       vus.add(p.id)
@@ -514,5 +586,7 @@ export class DynamicLighting {
     this.feux.clear()
     for (const t of this.torches.values()) this.scene.lights.removeLight(t)
     this.torches.clear()
+    for (const g of this.gueules) this.scene.lights.removeLight(g)
+    this.gueules.length = 0
   }
 }

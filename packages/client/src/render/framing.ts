@@ -39,7 +39,187 @@ export const VISIBLE_TILES_TALL = 20
  */
 
 /** Sol plat, jamais trié. */
+/**
+ * ═══ LE LIFT D'UN ÉTAGE — de combien un plancher se DESSINE plus haut ═══
+ *
+ * *Décision d'Alexis, 2026-09-01 : « chaque palier doit lifter de 3 tuiles le terrain en haut de
+ * chaque falaise ; deux maps séparées entre le haut et le bas de la falaise. »* Et c'est la
+ * décision d'août reprise mot pour mot (`zonegen.ts` : « continue avec le mur à 3 tuiles… le monde
+ * redevient une pile de TERRASSES »).
+ *
+ * ⚠ **CE LIFT REND LE MUR GRATUIT, et c'est sa vraie raison d'être.** Sans lui, les rangées sud
+ * d'un plateau servaient DEUX FOIS : on y marchait (la sim le permet) et on les dessinait en
+ * paroi — d'où un corps posé DEVANT le mur au lieu d'être dessus, le défaut relevé le
+ * 2026-09-01. Décalée vers le haut, la surface libère exactement les rangées d'écran que la paroi
+ * occupe : plus rien n'est sacrifié, et le plateau se dessine sur TOUTES ses tuiles.
+ *
+ * ⚠ **DEUX TUILES, ET C'EST `PAROI_RANGEES` — abaissé de trois le 2026-09-01 (Alexis).** Le motif
+ * n'est PAS de rendre une tête au personnage collé à la façade nord : mesuré, son sprite fait
+ * 1,5 tuile et tient tout entier dans la bande masquée, qu'elle fasse trois rangées ou deux. Seul
+ * le fondu le découvre (`plateauAlpha`). Le motif est de COHÉRENCE : `roleDeFalaise` ne peint que
+ * `PAROI_RANGEES` rangées de paroi sur une falaise ordinaire, et les mesas en peignaient trois —
+ * les deux falaises du jeu n'avaient pas la même hauteur.
+ *
+ * Le mur reste sans trou, et c'est ce qui borne le nombre par le bas : surface en `ty − 2`, paroi
+ * en `ty − 1` et `ty`, sol du bas en `ty + 1`. Un lift plus GRAND que la paroi rouvrirait le trou.
+ */
+export const LIFT_TUILES = 2
+/** Le décalage d'écran, en pixels, d'un plancher donné. NÉGATIF : un étage haut se dessine haut.
+ *  ⚠ UNE SEULE ÉCRITURE — la couche, l'acteur, l'ombre, le tri et le clic la LISENT tous. Deux
+ *  copies de cette ligne, et un corps se tient à côté du sol qu'il foule.
+ *
+ *  ⚠ `niveau` peut être FRACTIONNAIRE, et c'est tout l'objet de `niveauSurLaRampe` : un corps qui
+ *  gravit une rampe est entre deux planchers. Les tuiles, elles, l'appellent toujours sur un
+ *  entier — un plancher ne se pose pas à mi-hauteur. */
+export function decalageDEtage(niveau: number, palierDuSol = 0): number {
+  // ⚠ **UN SOUTERRAIN NE SE DÉCALE PAS** (2026-09-02). Le lift existe pour libérer les rangées
+  // d'écran que la PAROI d'un plateau occupe — sans lui, un corps posé sur les rangées sud d'un
+  // chapeau se dessinait DEVANT le mur au lieu d'être dessus. Une cave n'a pas de paroi tournée
+  // vers nous : elle est dans la masse, on la regarde d'aplomb. La décaler vers le bas ne
+  // libérerait rien et déplacerait la salle de deux tuiles sous la butte qui la contient.
+  //
+  // ═══ DEPUIS LES TERRASSES (spec `terrasses.md` T-R7), CE DÉCALAGE EST RELATIF AU SOL ═══
+  //
+  // Le sol lui-même a des paliers, et il MONTE avec eux : c'est `warp.lift` qui porte cette
+  // part-là (`liftDuPalier`), pour TOUT ce qui se pose sur une tuile — sol, pavés, feux, sang,
+  // nœuds, corps. Ce qu'on rend ici n'est plus que la part PROPRE à l'étage : ce qu'un chapeau
+  // de mesa ajoute AU-DESSUS du palier qui le porte. Sur une carte sans palier (`palierDuSol`
+  // absent ≡ 0) le nombre est celui d'avant, au bit près. Et « souterrain » se dit désormais
+  // *sous le sol de sa tuile* : la cave creusée sous une mesa posée au palier 2 vit au niveau 1.
+  if (niveau < palierDuSol) return 0
+  return -(niveau - palierDuSol) * LIFT_TUILES * TILE_PX
+}
+/** LE LIFT DU SOL — de combien de pixels une tuile de palier `p` se dessine plus haut que sa
+ *  rangée (T-R7). ⚠ UNE SEULE ÉCRITURE, comme `decalageDEtage` : `warp.lift` la sert à toutes
+ *  les couches, et la profondeur des parois (`EtageLayer`) et le dépliage du clic
+ *  (`deplierLeLift`) la relisent. C'est le MÊME pas que l'étage — un palier de terrasse et un
+ *  chapeau de mesa ont la même hauteur, sinon une rampe ne raccorderait pas les deux. */
+export function liftDuPalier(palier: number): number {
+  return palier * LIFT_TUILES * TILE_PX
+}
+
+/**
+ * ═══ LA RAMPE EST UN PLAN INCLINÉ, PAS UNE MARCHE (Alexis, 2026-09-01 : « le personnage se
+ * téléporte en haut ») ═══
+ *
+ * L'étage de /sim est un ENTIER et il commute d'un tick à l'autre, quand le centre du corps
+ * franchit la limite de tuile entre la rampe et le chapeau. Le sprite sautait donc de
+ * `LIFT_TUILES` tuiles — 32 px — en une image. C'est la marche qu'on remplace par la pente.
+ *
+ * ⚠ **UNE GÉOMÉTRIE CONTINUE SUR TOUTE LA RAMPE, PAS UN FONDU DANS LE TEMPS.** Une interpolation
+ * temporelle (« monte en 200 ms ») décrocherait le corps du sol dès qu'on s'arrête au milieu, et
+ * se rejouerait à chaque aller-retour sur la limite. Ici la hauteur est une FONCTION DE LA
+ * POSITION : à `y = ty + 1` (le bord sud de la tuile de rampe) on est en bas, à `y = ty` (le bord
+ * nord, là où la sim commute) on est exactement en haut. Elle est donc juste à l'arrêt, juste en
+ * marche arrière, et raccordée aux deux bouts SANS discontinuité — c'est ce qui la rend
+ * inattaquable, pas sa durée.
+ *
+ * ⚠ **ET ELLE TOMBE PILE SUR LE DESSIN DE LA RAMPE.** `RAMPE_RANGEES` = `LIFT_TUILES + 1` = 3
+ * rangées d'écran, du tablier posé au sol (rangée `ty`) au haut de l'entaille (rangée `ty − 2`).
+ * Un corps qui traverse la tuile du sud au nord parcourt 1 rangée de monde ET monte de 2 : son
+ * pied descend donc les 3 rangées du dessin, une pour une. La pente peinte et la pente marchée
+ * sont la même.
+ */
+export function niveauSurLaRampe(y: number, bas: number, haut: number): number {
+  const part = Math.max(0, Math.min(1, Math.floor(y) + 1 - y))
+  return bas + (haut - bas) * part
+}
+
+
+/**
+ * ═══ UN ÉTAGE EST UNE STRATE DE PROFONDEUR — « 2 map séparée » (Alexis, 2026-09-01) ═══
+ *
+ * LE DÉFAUT QU'ON FERME, et il se lisait en deux nombres : la couche du plateau triait entre 0 et
+ * 1 (elle était née « le sol d'une mesa », donc rangée avec les tapis — bake, pavés, eau), quand
+ * tout ce qui a des pieds trie à partir de 1 000. **Le plateau ne pouvait occulter STRICTEMENT
+ * RIEN.** Un corps au pied de la façade nord était donc peint PAR-DESSUS la mesa, c'est-à-dire
+ * dessus — le « je vois l'arrière de la mesa par transparence » d'Alexis. Et le clutter (2), les
+ * nœuds et les cadavres crevaient le plateau pour la même raison.
+ *
+ * Pourquoi une STRATE et pas un tri unifié : sur une seule échelle en Y, les deux exigences se
+ * contredisent. Le sol de la tuile `ty` doit passer DEVANT un corps du bas dont les pieds sont en
+ * `ty` (il le cache), et DERRIÈRE un corps du haut posé dessus, dont les pieds sont en `ty` + un
+ * poil. Un seul scalaire par rangée ne peut pas les deux. C'est la solution classique du 2,5D à
+ * paliers (Zomboid, Tibia) : **on peint étage par étage, du bas vers le haut**, et le tri en Y ne
+ * départage qu'à l'intérieur d'un étage. C'est aussi, mot pour mot, ce qu'Alexis demande.
+ *
+ * L'artefact assumé : un objet HAUT de l'étage 0 planté juste au sud d'une falaise (un gros bois)
+ * est recouvert par elle au lieu de la masquer. C'est le prix connu de ces moteurs-là.
+ *
+ * Le pas doit dépasser toute la bande Y (`Y_SORT_BASE + 3600 × 16` ≈ 58 600 sur la vallée
+ * canonique) et laisser de la place sous les toits (800 000) : 100 000 tient sept paliers.
+ */
+export const ETAGE_STRATE = 100_000
+
+/**
+ * LA STRATE D'UNE PROFONDEUR DÉJÀ POSÉE — ce qu'un FX né d'un sprite (la poussière du coureur,
+ * le sang d'un coup, la gerbe d'une récolte) reprend pour naître dans le MÊME monde que lui :
+ * sans elle, un éclat né sur une terrasse se trie à la strate 0 et passe sous les pavés et la
+ * paroi de son propre palier. Vaut parce que tout tri en Y d'une strate tient dans
+ * `[0, ETAGE_STRATE)` (`Y_SORT_BASE + y × TILE_PX + tie`, carte comprise) : la partie entière
+ * du quotient est la strate, exactement.
+ */
+export function strateDeProfondeur(depth: number): number {
+  return Math.floor(depth / ETAGE_STRATE) * ETAGE_STRATE
+}
+/** ⚠ UNE SEULE ÉCRITURE, comme `decalageDEtage` : la couche, l'acteur, le nœud et le décor la
+ *  LISENT tous. Deux copies, et un corps se trierait dans un autre monde que son plancher. */
+export function strateDEtage(niveau: number, palierDuSol = 0): number {
+  // ═══ UN SOUTERRAIN SE PEINT AU-DESSUS DU SOL, PAS EN DESSOUS ═══
+  //
+  // ⚠ **CE N'EST PAS UNE INCOHÉRENCE, C'EST CE QUE VOIT UN ŒIL QUI EST DEDANS.** Un multiple
+  // signé mettrait l'étage −1 à −100 000, c'est-à-dire sous le bake, les pavés et l'eau : on
+  // entrerait dans une cave et l'on continuerait de voir le pré, avec le joueur enseveli dessous.
+  // Le rang d'une strate ne dit pas une ALTITUDE, il dit *dans quel ordre on peint* — et l'on
+  // peint toujours le monde où l'on se tient par-dessus celui qu'on a quitté (Zomboid, Tibia :
+  // on cull les étages au-dessus du regard).
+  //
+  // La couche du souterrain ne se dessine QUE si le regard y est (`EtageLayer.souterrain`) :
+  // depuis dehors, une cave n'existe pas à l'écran, et la butte reste pleine. C'est le pendant
+  // au rendu de ce que E-R1 dit à la carte.
+  //
+  // Le rang : sol 0 · plateau 100 000 · houppiers 900 000 · voile 1 100 000 · **cave 2 000 000**.
+  // La cave passe donc au-dessus de TOUT ce que le monde d'en haut sait dessiner — c'est la seule
+  // position qui tienne, parce qu'un houppier ne pousse pas dans une grotte. Deux paliers ne se
+  // disputent jamais : ils ne sont jamais visibles ensemble.
+  //
+  // DEPUIS LES TERRASSES (T-R7) : « souterrain » = SOUS LE SOL DE SA TUILE, et la strate du sol
+  // est celle de son PALIER — un homme au palier 2 se peint par-dessus tout le palier 1, comme
+  // le chapeau d'une mesa se peint par-dessus le pré. Sans palier (≡ 0), le nombre d'avant.
+  if (niveau < palierDuSol) return SOUTERRAIN_STRATE + (niveau - palierDuSol) * ETAGE_STRATE
+  return niveau * ETAGE_STRATE
+}
+/**
+ * Le socle du souterrain : `−1` atterrit à `SOUTERRAIN_STRATE − ETAGE_STRATE` = **2 000 000**.
+ *
+ * ⚠ **AU-DESSUS DU VOILE D'AMBIANCE (1 100 000), ET C'EST OBLIGATOIRE.** Premier essai à 90 000 :
+ * la roche passait bien devant le sol et le décor, mais **les houppiers (900 000), les toits
+ * (800 000) et le voile lui-même la crevaient** — on voyait des arbres pousser dans la cave, à la
+ * capture. Et ce n'est pas qu'une affaire de rang : une cave a **sa propre obscurité**, locale et
+ * sans heure (E-R13). Le voile de nuit est plein écran et horaire ; le laisser passer par-dessus,
+ * ce serait assombrir deux fois — exactement l'argument qui sort déjà le plateau du voile.
+ * Sous `OVERLAY_DEPTH` (l'UI reste au-dessus de tout, évidemment).
+ */
+export const SOUTERRAIN_STRATE = 2_100_000
+/** LA ROCHE — le plein écran opaque qui efface le dehors quand on est dedans. Juste sous la
+ *  couche de la cave, donc au-dessus de TOUT ce que le monde d'en haut sait dessiner. */
+export const ROCHE_DEPTH = SOUTERRAIN_STRATE - ETAGE_STRATE - 1_000
+
 export const GROUND_MAP_DEPTH = -1
+/**
+ * ═══ LA ROCHE DRESSÉE, ET SON OMBRE — UNE SEULE ÉCRITURE POUR DEUX COUCHES ═══
+ *
+ * Ces deux nombres vivaient en privé dans `cliff-layer`. Ils sont remontés ici le 2026-09-01,
+ * quand la paroi d'une MESA (`etage-layer`) a dû les relire : c'est la même roche, dessinée par le
+ * même `cliff-art`, et deux profondeurs pour un même objet finissent toujours par diverger.
+ *
+ * ⚠ **ELLES RESTENT TOUT EN BAS, ET C'EST LA RÈGLE, PAS UN OUBLI.** Une paroi est tournée vers le
+ * SUD : tout ce qui la chevauche à l'écran se tient DEVANT elle, en contrebas. Montée dans la
+ * bande de tri, elle avalerait le corps collé à son pied — le défaut même que `TIE_CLIFF` énonce
+ * (« à pieds égaux, tout la recouvre »).
+ */
+export const CLIFF_DEPTH = GROUND_MAP_DEPTH + 0.32
+export const CLIFF_OMBRE_DEPTH = GROUND_MAP_DEPTH + 0.31
 /** La flaque de chaleur au sol d'un Feu : POSÉE SUR LE SOL, sous tout ce qui s'y tient — y compris
  *  LES BÛCHES DU FOYER (`GROUND_FIRE_DEPTH = 5`) et le sol bâti, sinon la flaque additive LAVE le
  *  bois et il disparaît. Au-dessus du seul sol nu (et eau/cendre/falaise). C'est une lueur
@@ -66,6 +246,20 @@ export const TIE_STRUCTURE = 0.6
  *  chez ses voisins (c'est ce qui la recoud) : sans ce départage, la pierre du mur d'à côté
  *  mordait le bois de la porte. Reste SOUS les acteurs — on entre par la porte, pas derrière. */
 export const TIE_SEUIL = 0.7
+/**
+ * ═══ LE SOCLE D'UN ÉTAGE — JUSTE SOUS LES CORPS, ET C'EST TOUTE SA DÉFINITION ═══
+ *
+ * *Alexis, 2026-09-01 : « le socle de l'étage doit être noir lorsque je suis en transparence. »*
+ * Le dessous de la masse se peint DERRIÈRE le corps qu'on découvre et DEVANT le sol qui est
+ * derrière la mesa — c'est très exactement ce que dit un tie compris entre `TIE_STRUCTURE` et
+ * `TIE_ACTOR`, sur la rangée où la pièce est DESSINÉE.
+ *
+ * ⚠ **LA RANGÉE DESSINÉE, ET PAS LA LOGIQUE** — contrairement au plancher. Le plancher trie sur sa
+ * rangée logique parce qu'il doit passer DEVANT les corps du bas ; le socle doit passer DERRIÈRE
+ * eux, et sa rangée logique (au sud) l'aurait mis devant. Les deux pièces d'une même tuile
+ * encadrent donc le corps, l'une dessous, l'autre dessus — c'est ça, voir à travers la roche.
+ */
+export const TIE_SOCLE = 0.75
 export const TIE_ACTOR = 0.8
 
 /** Coiffent le monde : canopée, voile de nuit, halos des Feux. */
@@ -386,6 +580,78 @@ export function crownAlpha(distTiles: number): number {
   if (distTiles >= CROWN_R_OUT) return 1
   const t = (distTiles - CROWN_R_IN) / (CROWN_R_OUT - CROWN_R_IN)
   return CROWN_ALPHA_MIN + (1 - CROWN_ALPHA_MIN) * t
+}
+
+/**
+ * ═══ LE DISQUE DE DÉCOUVERT D'UN PLATEAU (décision d'Alexis, 2026-09-01) ═══
+ *
+ * *« Faire en sorte qu'on voie tout ce qui est présent à l'étage courant quoi qu'il arrive ; si le
+ * contenu d'un étage supérieur gêne la visibilité, on alterne son affichage. »* C'est la recette du
+ * houppier, appliquée à la mesa : un alpha par sprite, fonction CONTINUE de la distance au joueur
+ * — pas de masque, pas de `RenderTexture`, pas d'`erase`, donc aucun scintillement quand on marche.
+ *
+ * ⚠ **UN DISQUE, ET PAS L'EMPRISE EXACTE DE CE QUI MASQUE** (Alexis, 2026-09-01, après un essai
+ * dans l'autre sens) : réduire le fondu aux six tuiles qui recouvrent vraiment le sprite donne une
+ * lucarne à la taille d'un homme, et l'on ne voit plus RIEN de ce qu'on approche. Ce qu'on ouvre
+ * n'est pas une découpe, c'est un champ de vision. **Ce qui se règle finement, c'est ce qu'on voit
+ * PAR le fondu** — la base de l'étage y est noire (`SOCLE_TEINTE`), le vrai sol non.
+ *
+ * La PORTÉE, elle, se dérive au lieu de se reprendre. Un houppier peut te couvrir depuis un tronc
+ * situé jusqu'à sa propre hauteur au sud (d'où `CROWN_R_IN` = le plus haut arbre). Une tuile de
+ * plateau se compare là où elle se POSE, par-dessus le corps : son centre dessiné tombe dans
+ * `[f − 1 ; f + 0,5]`, donc aucune tuile capable de couvrir un corps n'est à plus de ~1,2 tuile de
+ * lui. Reprendre les six tuiles de la cime aurait ouvert un trou de douze tuiles de diamètre sur un
+ * cadre qui en fait vingt : le fondu local serait devenu le fondu du plateau entier.
+ */
+export const PLATEAU_R_IN = LIFT_TUILES
+/** Trois tuiles de dégradé : assez pour que le bord ne se lise pas comme un disque découpé, assez
+ *  peu pour que la mesa garde sa masse à deux pas de là. */
+export const PLATEAU_R_OUT = LIFT_TUILES + 3
+/**
+ * ⚠ **PLUS BAS QUE SOUS UNE CIME (0,22), ET C'EST LE SOCLE QUI L'AUTORISE.** Un houppier n'a rien
+ * derrière lui : son alpha résiduel est tout ce qui reste de l'arbre. Un plancher, lui, a son
+ * SOCLE opaque en dessous (`SOCLE_TEINTE`, quasi noir) — la masse est portée par le socle, et
+ * l'opacité qui reste au plancher n'est plus que de la TEXTURE. MESURÉ : à 0,22 le creux tenait
+ * une luminance de **49** (sombre, pas noir) ; à 0,12 il tombe à **30-34**, contre 160 pour le
+ * plateau plein — noir à l'œil, en gardant un souffle de la roche qu'on traverse.
+ */
+export const PLATEAU_ALPHA_MIN = 0.12
+
+/**
+ * L'alpha d'une pièce d'étage dont le CENTRE DESSINÉ est en `(xCentre, yCentre)`, en tuiles — la
+ * position à l'écran, lift déjà retranché. LE POINT UNIQUE où le découvert se calcule : le
+ * plancher, le décor et les nœuds d'un même étage cèdent ENSEMBLE ou pas du tout. Trois copies de
+ * ce calcul, et une fleur resterait opaque au-dessus d'un sol devenu creux — vu à la capture.
+ *
+ * `decouvert` est la position du corps, donnée seulement si le regard vient d'un étage plus bas ;
+ * c'est l'appelant qui en décide, jamais la couche.
+ */
+export interface Decouvert {
+  /** Le centre DESSINÉ du corps, en tuiles — lift retranché, comme les pièces qu'on lui compare. */
+  x: number
+  y: number
+  /** Le niveau (entier, celui de l'autorité) d'où le regard vient : seul ce qui est PLUS HAUT
+   *  cède (décision d'Alexis, 2026-09-01 : « le découvert ne part que vers le haut »). */
+  niveau: number
+}
+export function alphaDeDecouvert(
+  decouvert: Decouvert | null | undefined, xCentre: number, yCentre: number,
+  /** Le niveau de la pièce comparée. Absent : elle est réputée au-dessus du regard (l'appelant
+   *  a déjà trié — le cas des couches d'avant les terrasses). */
+  niveauDeLaPiece?: number,
+): number {
+  if (decouvert === null || decouvert === undefined) return 1
+  if (niveauDeLaPiece !== undefined && niveauDeLaPiece <= decouvert.niveau) return 1
+  const dx = decouvert.x - xCentre
+  const dy = decouvert.y - yCentre
+  return plateauAlpha(Math.sqrt(dx * dx + dy * dy))
+}
+
+export function plateauAlpha(distTiles: number): number {
+  if (distTiles <= PLATEAU_R_IN) return PLATEAU_ALPHA_MIN
+  if (distTiles >= PLATEAU_R_OUT) return 1
+  const t = (distTiles - PLATEAU_R_IN) / (PLATEAU_R_OUT - PLATEAU_R_IN)
+  return PLATEAU_ALPHA_MIN + (1 - PLATEAU_ALPHA_MIN) * t
 }
 
 /** Un cadavre est à plat : ses « pieds » sont sa propre position. */

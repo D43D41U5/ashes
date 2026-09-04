@@ -21,7 +21,8 @@
 import Phaser from 'phaser'
 import { eauSouillee, TERRAIN_DEEP_WATER, TERRAIN_SHALLOW_WATER, zoneSlugAt, type EtatDeCendre, type WorldMap } from '@ashes/sim'
 import { buildFlowField, COURANT_VITESSE, TAPER_RIVE_MAX, TAPER_RIVE_MIN, type FlowField } from '../../render/flow-field'
-import { GROUND_MAP_DEPTH, TILE_PX } from '../../render/framing'
+import { GROUND_MAP_DEPTH, LIFT_TUILES, strateDEtage, TILE_PX } from '../../render/framing'
+import type { Relief } from '../../render/relief'
 import { sunDirection, moonDirection, clarteDeLune, lueurDeLune, LUNE_PLEINE_JOUR } from '../../render/lighting'
 import type { HeureSolaire } from '../../render/lighting'
 import { buildFondField, buildRiveField, buildWaterField, MILIEU_VASE, REGIME_LAC_MORT, REGIME_SUIE, type RiveField } from '../../render/water-field'
@@ -93,7 +94,7 @@ precision mediump float;
 
 varying vec2 outTexCoord;
 
-uniform sampler2D uField;    // R masque (binaire) · G profondeur CASE À CASE (geste 01) · B régime (06/10)
+uniform sampler2D uField;    // R masque (≥ 128) + drapeaux de chute · G profondeur CASE À CASE (geste 01) · B régime (06/10) + palier (unités)
 uniform sampler2D uSeabed;   // le bake du terrain : la couleur de RIVE (l'écume s'y teinte)
 uniform sampler2D uFond;     // le LIT réel (geste 03) : sable, galets, vase — vu à travers l'eau
 uniform sampler2D uRive;     // R : distance SIGNÉE à la rive (128 = la rive) · G/B : le COURANT (128 = nul)
@@ -133,6 +134,14 @@ uniform float uPh0;  // phase de la couche 0, 0..1 (couche 1 : +0,5, wrap)
 uniform float uAdv0; // (ph0 − 0,5) · T · vitesse — l'offset d'advection (tuiles), pré-multiplié
 uniform float uAdv1; // idem couche 1
 
+// LES TERRASSES (spec « terrasses.md » T-R7) : UN QUAD PAR PALIER qui porte de l'eau, posé
+// « palier × lift » plus haut que le monde et trié dans la strate du palier. Chaque quad ne
+// peint que les tuiles de SON palier (les autres : discard) — l'eau du palier 2 se dessine
+// ainsi au-dessus du sol du palier 1, jamais dessous. Et comme le voile de nuit ne monte pas
+// jusqu'aux strates hautes, le quad y porte sa nuit lui-même (« uTeinte », blanc au palier 0).
+uniform float uPalierVu;
+uniform vec3 uTeinte;
+
 /**
  * LA PERSPECTIVE. Le monde ne se lit PAS à la verticale : les arbres sont debout,
  * les acteurs sont des billboards, le relief est un cisaillement — tout dit une
@@ -163,7 +172,8 @@ const vec2 PLANE = vec2(1.0, YSQUASH);
  */
 vec2 texUv(vec2 tile) { return vec2(tile.x / uMapTiles.x, 1.0 - tile.y / uMapTiles.y); }
 
-float maskAt(vec2 tile) { return texture2D(uField, texUv(tile)).r; }
+// Le masque se lit en SEUIL : l'eau vaut ≥ 128 (les 7 bits du dessous portent les chutes).
+float maskAt(vec2 tile) { return step(0.25, texture2D(uField, texUv(tile)).r); }
 // CARTE PLATE (R35 caduque) : le canal G porte désormais la PROFONDEUR (geste 01), plus
 // l'élévation. Si le relief revenait, il lui faudrait son propre canal — d'ici là, la
 // bissection (gatée par uReliefH > 0, jamais vrai) lit un monde plat, ce qui est vrai.
@@ -298,6 +308,51 @@ float chopCourant(vec2 ps, float t, vec2 adv0, vec2 adv1, float gate, float wD, 
 // CELLULE de 4 px : c'est ce qui la rend pixel-art, du même monde que le reste.
 const float GRAIN = 4.0;
 
+// ═══ LES CHUTES QUI NE FONT PAS FACE (spec terrasses.md T-R8quater) ═══
+//
+// Une marche d'eau dont la paroi regarde le nord, l'est ou l'ouest n'a PAS de face à peindre :
+// la projection la réduit à un pli d'un pixel. Ce qui se voit d'une chute vue de haut, c'est SA
+// LÈVRE (le bourrelet blanc où l'eau bascule, sur la tuile haute) et SON PIED (l'écume, les
+// bulles, la brume sur l'eau basse, là où l'écran la montre à côté de la lèvre). QUI est lèvre et
+// QUI est pied se décide au CPU (water-field.ts, « chutesDe » — les 7 bits sous le masque) : ici
+// on ne fait que peindre, sur la grille de l'ART (cellules de 2 px monde, la moitié du grain de
+// l'eau : à 4 px la lèvre ferait 9 px d'écran, une barre), en crans d'alpha fixes et au pas de
+// temps — jamais un dégradé, jamais un glissé. La nappe qui FAIT face (paroi sud) reste un
+// sprite de la paroi (T-R8) : le quad d'eau se dessine SOUS elle, il ne peut pas la peindre.
+const float GRAIN_CHUTE = 2.0;
+const float CHUTE_HZ = 10.0; // le pas de temps des tirets qui tombent
+// Les normales des faces, K = 3,5 comme le versant (la lèvre regarde le nord ET le haut).
+const vec3 N_LEVRE = vec3(0.0, -0.9615, 0.2747);
+const vec3 N_EST = vec3(0.9615, 0.0, 0.2747);
+const vec3 N_OUEST = vec3(-0.9615, 0.0, 0.2747);
+// La lumière d'une face : ambiante + soleil (lambert, de jour) + lune (de nuit) — la même loi
+// que le versant, donc le blanc de la lèvre est chaud le matin sur une chute qui regarde l'est.
+float eclaireFace(vec3 N) {
+  float s = max(dot(N, normalize(uSun)), 0.0) * uDay;
+  float m = max(dot(N, normalize(uMoonV)), 0.0) * uLune * (1.0 - uDay);
+  return 0.62 + 0.38 * clamp(s + m, 0.0, 1.0);
+}
+// Le PIED d'une chute latérale, à k cellules du rideau (k = 0 : le rideau lui-même) :
+// des tirets qui tombent (une phase par colonne), deux cellules d'écume trouée (la seconde à
+// moitié), puis des bulles qui dérivent en s'éloignant. « graine » distingue les chutes d'un même rang.
+vec3 pied(vec3 col, float k, float cx, float cy, float fr, float graine, vec3 blanc, vec3 clair, vec3 sombre) {
+  if (k < 0.5) {
+    float phase = floor(cellHash(vec2(cx, 23.0)) * 7.0);
+    float ph = mod(cy - fr + phase, 7.0);
+    if (ph < 2.0) return mix(col, blanc, 0.9);
+    if (ph < 4.0) return mix(col, clair, 0.9);
+    return mix(col, sombre, 0.6);
+  }
+  // Le pied tient en CINQ cellules (10 px monde, moins d'une tuile) : la maquette en avait dix
+  // sur une grille 2,25 fois plus fine — à l'échelle de l'art, la même largeur d'écume bordait
+  // chaque côte d'une tuile entière de blanc, et deux côtes se touchaient. UNE cellule d'écume
+  // pleine (trouée un quart), une seconde à moitié (trouée de moitié), puis trois de bulles.
+  if (k < 1.5) return cellHash(vec2(cx + 97.0 * mod(fr, 3.0), cy)) > 0.25 ? mix(col, blanc, 0.85) : col;
+  if (k < 2.5) return cellHash(vec2(cx + 97.0 * mod(fr, 3.0), cy)) > 0.5 ? mix(col, blanc, 0.4) : col;
+  if (k < 5.5 && cellHash(vec2(k - fr + graine, cy)) < 0.1667) return mix(col, blanc, 0.35 - 0.1 * (k - 3.0));
+  return col;
+}
+
 void main() {
   // Pixel du quad → position monde PLATE, PUIS PLANCHÉE sur la grille de 4 px MONDE.
   // On REMET LE MONDE À L'ENDROIT ici (V est bottom-up, cf. texUv). On plancher en espace
@@ -338,7 +393,11 @@ void main() {
   if (uv.x < 0.0 || uv.x > 1.0 || uv.y < 0.0 || uv.y > 1.0) discard;
 
   vec4 field = texture2D(uField, texUv(tile));
-  float mask = field.r;
+  // LE PALIER de la tuile, dans les unités du canal B (voir « buildWaterField ») : pas le nôtre,
+  // pas notre affaire — un autre quad la peint, à sa hauteur.
+  float palierTuile = mod(floor(field.b * 255.0 + 0.5), 100.0);
+  if (abs(palierTuile - uPalierVu) > 0.5) discard;
+  float mask = step(0.25, field.r);
   // LE RÉGIME (geste 10) : 0 = eau normale · ~0,78 = LAC MORT. (L'eau morte du marais,
   // régime 120, a été RETIRÉE — regardée, refusée par Alexis le 2026-07-26.)
   // LE LAC MORT : « parfaitement immobile, trop claire, sans un poisson ». Le malaise
@@ -369,7 +428,7 @@ void main() {
     float cran = floor(humide * 3.0 + 0.5) / 3.0;
     if (cran <= 0.0) discard;
     float aH = 0.26 * cran;
-    gl_FragColor = vec4(vec3(0.16, 0.14, 0.09) * aH, aH);
+    gl_FragColor = vec4(vec3(0.16, 0.14, 0.09) * aH * uTeinte, aH);
     return;
   }
 
@@ -757,6 +816,63 @@ void main() {
   col = mix(col, ecumeCol * 0.82, clamp(dansEcume * 0.38 + bande2 * 0.2, 0.0, 0.6) * (1.0 - lacMort));
   col = mix(col, ecumeCol, crete2 * 0.55 * (1.0 - lacMort));
 
+  // ═══ LES CHUTES QUI NE FONT PAS FACE (T-R8quater) — voir les fonctions au-dessus de main ═══
+  float drapeaux = max(floor(field.r * 255.0 + 0.5) - 128.0, 0.0);
+  if (drapeaux > 0.5) {
+    float levreN = mod(drapeaux, 2.0); drapeaux = floor(drapeaux * 0.5);
+    float levreE = mod(drapeaux, 2.0); drapeaux = floor(drapeaux * 0.5);
+    float levreO = mod(drapeaux, 2.0); drapeaux = floor(drapeaux * 0.5);
+    float rideauE = mod(drapeaux, 2.0); drapeaux = floor(drapeaux * 0.5);
+    float rideauO = mod(drapeaux, 2.0); drapeaux = floor(drapeaux * 0.5);
+    float piedN = drapeaux; // 0 · 1 · 2
+    vec2 tl = floor(tile);
+    vec2 cel = floor(rawPx / GRAIN_CHUTE);                          // la cellule de 2 px, monde
+    vec2 dans = floor((rawPx - tl * uTilePx) / GRAIN_CHUTE);         // 0..7 dans la tuile
+    float cN = dans.y, cS = 7.0 - dans.y, cO = dans.x, cE = 7.0 - dans.x;
+    float fr = floor(t * CHUTE_HZ);
+    // Les trois tons du mock « Quatre chutes » : le blanc de l'écume (qui prend la braise des
+    // foyers, comme le reste de la nappe), le clair, le sombre du pli.
+    vec3 blanc = ecumeCol + vec3(1.0, 0.52, 0.20) * clamp(fireWash, 0.0, 1.2) * 0.35;
+    vec3 clair = mix(col, blanc, 0.42);
+    vec3 sombre = mix(col, vec3(0.04, 0.08, 0.16), 0.45);
+    // LA LÈVRE NORD (tuile haute) : le bourrelet sur deux cellules, et, en amont, l'eau qui
+    // ACCÉLÈRE — des traînées claires qui remontent vers la lèvre, plus denses en approchant.
+    if (levreN > 0.5) {
+      float lit = eclaireFace(N_LEVRE);
+      if (cN < 0.5) col = blanc * lit;
+      else if (cN < 1.5) col = (cellHash(vec2(cel.x, 1.0)) < 0.66 ? clair : blanc) * lit; // regardé le 2026-09-03 : à mi-mélange la 2e cellule ne se lisait pas
+      else if (cN < 5.5) {
+        float tt = 1.0 - (cN - 2.0) / 4.0;
+        float phase = floor(cellHash(vec2(cel.x, 22.0)) * 7.0);
+        if (cellHash(vec2(cel.x, floor((cel.y + fr + phase) / 3.0))) < 0.3 * tt) col = mix(col, clair, 0.7);
+      }
+    }
+    // LES LÈVRES EST / OUEST (tuile haute) : une colonne d'une cellule, blanche aux trois quarts,
+    // éclairée comme un flanc — chaude à l'aube côté est, au couchant côté ouest.
+    if (levreE > 0.5 && cE < 0.5) col = (cellHash(vec2(1.0, cel.y)) < 0.75 ? blanc : clair) * eclaireFace(N_EST);
+    if (levreO > 0.5 && cO < 0.5) col = (cellHash(vec2(2.0, cel.y)) < 0.75 ? blanc : clair) * eclaireFace(N_OUEST);
+    // LE PIED (tuile basse) : rideau, écume et bulles depuis le bord qui touche la chute.
+    if (rideauE > 0.5) col = pied(col, cO, cel.x, cel.y, fr, 13.0 * tl.x, blanc, clair, sombre);
+    if (rideauO > 0.5) col = pied(col, cE, cel.x, cel.y, fr, 17.0 * tl.x, blanc, clair, sombre);
+    // LE PIED NORD (tuile basse) : la lèvre est juste sous mon bord sud (ou une tuile plus loin) ;
+    // le même profil que le pied latéral — une cellule d'écume pleine, une à moitié, trois de
+    // bulles qui dérivent vers le nord — puis la brume : une colonne sur quatre, un point qui
+    // monte au ralenti.
+    if (piedN > 0.5) {
+      float d = cS + 1.0 + (piedN - 1.0) * 8.0; // cellules depuis la lèvre, 1..16
+      if (d < 1.5) {
+        if (cellHash(vec2(cel.x + 97.0 * mod(fr, 3.0), cel.y)) > 0.25) col = mix(col, blanc, 0.85);
+      } else if (d < 2.5) {
+        if (cellHash(vec2(cel.x + 97.0 * mod(fr, 3.0), cel.y)) > 0.5) col = mix(col, blanc, 0.4);
+      } else if (d < 5.5) {
+        if (cellHash(vec2(cel.x, d - fr + 13.0 * tl.y)) < 0.1667) col = mix(col, blanc, 0.35 - 0.1 * (d - 3.0));
+      } else if (cellHash(vec2(cel.x, 7.0)) < 0.25) {
+        float m = mod(floor(fr * 0.5) + floor(cellHash(vec2(cel.x, 8.0)) * 9.0), 9.0);
+        if (abs(d - 6.0 - m) < 0.5) col = mix(col, blanc, 0.35 - 0.1 * floor(m / 3.0));
+      }
+    }
+  }
+
   // (Le « tombant » — liseré sombre + écume qui casse sur la tuile frontière — a été
   //  RETIRÉ avec la reprise de la transition : il durcissait un bord qu'Alexis voulait
   //  fondu. La rampe bilinéaire de depthBilin porte seule la lecture du profond.)
@@ -767,7 +883,7 @@ void main() {
   // On garde donc l'eau assez opaque jusqu'à sa ligne de coupe, bord net.
   float a = mix(0.88, 0.96, deep);
   a = mix(a, 0.90, lacMort); // le Lac Mort laisse TOUT voir (geste 10)
-  gl_FragColor = vec4(col, a);
+  gl_FragColor = vec4(col * uTeinte, a);
 }
 `
 
@@ -829,7 +945,14 @@ function sunVector(hour: HeureSolaire): { x: number; y: number; z: number } {
 }
 
 export class WaterLayer {
-  private shader: Phaser.GameObjects.Shader | null = null
+  /** Un quad par palier qui porte de l'eau (voir `uPalierVu`) — un seul sur une carte plate. */
+  private shaders: { palier: number; shader: Phaser.GameObjects.Shader }[] = []
+  /** LA NUIT AUX PALIERS HAUTS — la même teinte plate que les pavés (`PaveLayer.teinte`) : le
+   *  voile ne monte pas jusqu'aux strates des terrasses, l'eau y porte sa nuit elle-même. */
+  teinte = 0xffffff
+  /** Le palier de chaque tuile, cuit dans le canal B du champ — regardé à la recuisson de la
+   *  suie, qui rebâtit le champ entier. */
+  private readonly palierParTuile: Uint8Array | null
   private fieldKey: string | null = null
   private riveKey: string | null = null
   private fondKey: string | null = null
@@ -881,7 +1004,7 @@ export class WaterLayer {
     if (!this.fieldKey || jour === this.jourDeSuie) return
     this.jourDeSuie = jour
     const { width, height } = this.map
-    const field = buildWaterField(this.map.terrain, width, height, this.regimeDe(etat))
+    const field = buildWaterField(this.map.terrain, width, height, this.regimeDe(etat), this.palierParTuile ?? undefined)
     const tex = this.scene.textures.get(this.fieldKey) as Phaser.Textures.CanvasTexture
     if (!tex || !('getContext' in tex)) return
     const ctx = tex.getContext()
@@ -889,6 +1012,14 @@ export class WaterLayer {
     img.data.set(field.data)
     ctx.putImageData(img, 0, 0)
     tex.refresh()
+    // `refresh()` RÉUPLOADE via canvasToTexture, qui REMET LE FILTRE À LINEAR dès que le jeu
+    // tourne en `antialias` (Phaser 4, WebGLRenderer.canvasToTexture) : le NEAREST posé à la
+    // création ne survit pas à la première recuisson. Vu le 2026-09-03 sur les drapeaux de
+    // chute — le canal R interpolé entre deux tuiles (1 et 32, 32 et 64) fabriquait des bits
+    // de rideau sur toute la tuile, et le shader peignait des tirets là où il n'y a pas de
+    // rideau. Le masque de rive y perdait aussi ses coins carrés. Le filtre se REPOSE après
+    // chaque refresh.
+    tex.setFilter(Phaser.Textures.FilterMode.NEAREST)
   }
 
   constructor(
@@ -896,8 +1027,29 @@ export class WaterLayer {
     private readonly map: WorldMap,
     /** La texture du terrain baké (1 px/tuile) — elle sert de FOND réfracté. */
     seabedKey: string,
+    /** Le relief cuit (`render/relief.ts`) : le palier de chaque tuile. Absent ou inactif, un
+     *  seul quad au palier 0, comme avant les terrasses. */
+    relief?: Relief,
   ) {
     const { width, height } = map
+    // LES PALIERS QUI PORTENT DE L'EAU (T-R7) : un quad chacun, pas un de plus — un quad plein
+    // écran qui ne peint rien coûte quand même son passage sur chaque pixel.
+    let palierParTuile: Uint8Array | null = null
+    let paliersMouilles = 1 // masque de bits : le palier 0 toujours
+    if (relief?.actif) {
+      palierParTuile = new Uint8Array(width * height)
+      paliersMouilles = 0
+      for (let ty = 0; ty < height; ty++) {
+        for (let tx = 0; tx < width; tx++) {
+          const i = ty * width + tx
+          const p = relief.palier(tx, ty)
+          palierParTuile[i] = p
+          const t = map.terrain[i]
+          if (t === TERRAIN_SHALLOW_WATER || t === TERRAIN_DEEP_WATER) paliersMouilles |= 1 << p
+        }
+      }
+    }
+    this.palierParTuile = palierParTuile
     // ═══ LE RÉGIME DE L'EAU (geste 10) ═══
     // LE LAC MORT : « une eau parfaitement immobile, trop claire, sans un poisson »
     // (worldgen.md, case fantastique). L'EAU de la zone porte son régime — le rendu
@@ -908,7 +1060,7 @@ export class WaterLayer {
     //  snapshot, par `recuireSuie` ; le fond, lui, garde le régime statique : la teinte du
     //  bief est l'affaire du champ d'eau, pas du lit.)
     const regime = this.regimeDe()
-    const field = buildWaterField(map.terrain, width, height, regime)
+    const field = buildWaterField(map.terrain, width, height, regime, palierParTuile ?? undefined)
     if (!field.hasWater) return // une carte sèche ne paie pas une couche d'eau
 
     // Le champ vit dans une texture canvas : 1 px/tuile, comme le bake du sol.
@@ -983,7 +1135,23 @@ export class WaterLayer {
     const worldW = width * TILE_PX
     const worldH = height * TILE_PX
 
-    this.shader = this.scene.add
+    // Le quad du palier `p` se pose `p × lift` plus haut que le monde : son pixel (x, y) montre
+    // la tuile logique (x, y + p × lift), exactement comme une part de pavés (`pave-layer.ts`).
+    // Le shader, lui, travaille en tuiles LOGIQUES (les feux, les marcheurs, la caméra lui
+    // arrivent ainsi) : rien à défaire, seule la position du quad change.
+    for (let p = 0; paliersMouilles >> p; p++) {
+      if (!(paliersMouilles & (1 << p))) continue
+      const shader = this.creerQuad(p, worldW, worldH, key, seabedKey, riveKey, fondKey)
+      this.shaders.push({ palier: p, shader })
+    }
+  }
+
+  private creerQuad(
+    palier: number, worldW: number, worldH: number,
+    key: string, seabedKey: string, riveKey: string, fondKey: string,
+  ): Phaser.GameObjects.Shader {
+    const { width, height } = this.map
+    return this.scene.add
       .shader(
         {
           name: 'braises-water',
@@ -1028,16 +1196,33 @@ export class WaterLayer {
             setUniform('uPh0', this.ph0)
             setUniform('uAdv0', this.adv0)
             setUniform('uAdv1', this.adv1)
+            setUniform('uPalierVu', palier)
+            setUniform('uTeinte', palier === 0 ? [1, 1, 1] : this.teinteVec())
           },
         },
         0,
-        0,
+        -palier * LIFT_TUILES * TILE_PX,
         worldW,
         worldH,
         [key, seabedKey, riveKey, fondKey],
       )
       .setOrigin(0, 0)
-      .setDepth(WATER_DEPTH)
+      .setDepth(WATER_DEPTH + strateDEtage(palier))
+  }
+
+  /** La teinte de nuit en vec3, mémoïsée sur sa valeur (poussée à chaque rendu de chaque quad). */
+  private teinteCache: { teinte: number; vec: [number, number, number] } = { teinte: 0xffffff, vec: [1, 1, 1] }
+  private teinteVec(): [number, number, number] {
+    const t = this.teinte
+    if (t !== this.teinteCache.teinte) {
+      this.teinteCache = { teinte: t, vec: [((t >> 16) & 255) / 255, ((t >> 8) & 255) / 255, (t & 255) / 255] }
+    }
+    return this.teinteCache.vec
+  }
+
+  /** Combien de quads d'eau sont posés — la sonde des terrasses (un par palier mouillé). */
+  quadsVivants(): number {
+    return this.shaders.length
   }
 
   private timeS = 0
@@ -1081,7 +1266,7 @@ export class WaterLayer {
     /** Le jour de saison AVEC ses décimales — la phase de la lune, pour le couloir lunaire. */
     jourLune = LUNE_PLEINE_JOUR,
   ): void {
-    if (!this.shader) return
+    if (this.shaders.length === 0) return
     this.timeS = nowMs / 1000
     this.ph0 = (this.timeS / DUAL_T) % 1
     this.adv0 = (this.ph0 - 0.5) * DUAL_T * COURANT_VITESSE
@@ -1130,8 +1315,8 @@ export class WaterLayer {
   }
 
   destroy(): void {
-    this.shader?.destroy()
-    this.shader = null
+    for (const q of this.shaders) q.shader.destroy()
+    this.shaders = []
     if (this.fieldKey) this.scene.textures.remove(this.fieldKey)
     if (this.riveKey) this.scene.textures.remove(this.riveKey)
     if (this.fondKey) this.scene.textures.remove(this.fondKey)

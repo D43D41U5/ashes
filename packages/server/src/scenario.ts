@@ -79,7 +79,7 @@ export function createZone(): LanWorld {
   // Le solo (`worker/veillee.ts`) est plus explicite encore : « c'est le MÊME semis qu'en
   // multi : cinquante joueurs y naîtraient sans se marcher dessus ». Le semis était donc
   // dimensionné POUR ce serveur, et ce serveur était le seul à ne pas s'en servir.
-  const spawns = pointsDeSpawn(carte, emplacements, SPAWN_SITES)
+  const spawns = pointsDeSpawn(carte, emplacements, SPAWN_SITES, LAN_SEED)
   const base = spawns[0] ?? emplacements[0]
   if (!base) throw new Error('scenario: la vallée ne porte aucun emplacement viable — carte dégénérée')
 

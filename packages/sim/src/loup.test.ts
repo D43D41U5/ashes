@@ -222,9 +222,20 @@ describe('L5 + L15 — la vie du gîte : le repos, la ronde, le jeu — et la d�
     const e = entity(sim, cible.entityId)
     e.hp -= 5
     cible.lastAttackerId = a
-    for (let t = 0; t < 4 * BALANCE.TICK_RATE_HZ; t++) tick(sim, [{ entityId: a, dx: 0, dy: 0 }])
-    expect(cible.targetId).toBe(a) // il a pris son agresseur pour cible
-    expect(entity(sim, a).hp).toBeLessThan(100) // et il a rendu le coup
+    // ⚠ ON MESURE DU VIVANT DU SUJET (2026-08-31). Quatre secondes plantées au milieu d'un
+    // gîte, c'est une mort — et depuis que le mort RESTE à terre, le clan lâche sa cible
+    // (la faune ne vise pas ce qui est à `hp = 0`). Le test lisait l'état d'APRÈS : il ne
+    // passait que parce que la mort relevait aussitôt son homme SUR PLACE, au milieu des
+    // loups, indéfiniment. La riposte, elle, se constate avant la chute.
+    let riposte = false
+    for (let t = 0; t < 4 * BALANCE.TICK_RATE_HZ && entity(sim, a).hp > 0; t++) {
+      tick(sim, [{ entityId: a, dx: 0, dy: 0 }])
+      if (cible.targetId === a && entity(sim, a).hp < 100) {
+        riposte = true // il a pris son agresseur pour cible ET rendu le coup
+        break
+      }
+    }
+    expect(riposte).toBe(true)
   })
 
   it('L15 — un petit ne mord JAMAIS : harcelé dix secondes, pas un seul coup armé', () => {

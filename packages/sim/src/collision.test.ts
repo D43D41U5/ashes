@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { BALANCE, NODE_DEFS, TERRAIN_GRASS, TERRAIN_ROAD, TERRAIN_ROCK, TICK_DT_S } from './balance'
 import { isBlockedAt, makeIndexedIsBlockedAt, moveAvatar, moveAvatarStepped, overlapsBlocking } from './collision'
-import { treeJitter, type ResourceNode } from './economy'
+import { type ResourceNode } from './economy'
 import { EDGE_E, EDGE_N, EDGE_O, EDGE_S } from './geometry'
 import { createEmptyMap, type WorldMap } from './map'
 import { rngRoll } from './rng'
@@ -9,6 +9,8 @@ import { createSim, spawnEntity, step, type MoveInput } from './sim'
 
 const SPEED = BALANCE.WALK_SPEED_TILES_PER_S * TICK_DT_S
 const HALF = BALANCE.AVATAR_HITBOX_TILES / 2
+/** L'autre demi-mesure : le corps est un RECTANGLE (0,75 large × 0,375 profond). */
+const HALF_Y = BALANCE.AVATAR_HITBOX_DEPTH_TILES / 2
 
 function setTile(map: WorldMap, tx: number, ty: number, id: number): void {
   map.terrain[ty * map.width + tx] = id
@@ -263,127 +265,116 @@ describe('arbres hauts : la collision se limite au tronc', () => {
   })
 })
 
-describe('décalage d’origine des arbres : la collision suit le tronc', () => {
+describe('l’arbre est un mur : le verdict est binaire, jamais un tirage', () => {
   const SUB = BALANCE.SUBTILES_PER_TILE
-  const J = BALANCE.TREE_JITTER_TILES
-  const H_TREE = NODE_DEFS.tree.blockHalfSub / SUB // demi-côté du tronc, en tuiles (0,125)
-  const treeWorld = (trees: Array<[number, number]>, width = 16): { map: WorldMap; nodes: ResourceNode[] } => ({
-    map: createEmptyMap(width, 16, TERRAIN_GRASS),
+  const H_TREE = NODE_DEFS.tree.blockHalfSub / SUB // demi-côté du tronc, en tuiles (0,375)
+  const treeWorld = (trees: Array<[number, number]>, width = 16, height = 16): { map: WorldMap; nodes: ResourceNode[] } => ({
+    map: createEmptyMap(width, height, TERRAIN_GRASS),
     nodes: trees.map(([tx, ty], i) => ({ id: i + 1, type: 'tree' as const, tx, ty, stock: 10, regrowAt: 0 })),
   })
-  /** Le couloir vertical (tuiles) entre les arbres (tx,ty) et (tx+1,ty).
-   *  DÉRIVÉ du demi-tronc : deux centres à une tuile l'un de l'autre, moins les deux
-   *  demi-troncs, plus l'écart des décalages. La constante 0,75 qui traînait ici valait
-   *  `1 − 2h` pour h = 0,125, et serait devenue fausse en silence à l'épaississement du tronc. */
-  const corridor = (tx: number, ty: number): number =>
-    1 - 2 * H_TREE + treeJitter(tx + 1, ty).dx - treeJitter(tx, ty).dx
-  /** Centre X du couloir, face droite du tronc gauche → face gauche du tronc droit. */
-  const corridorCenter = (tx: number, ty: number): number => {
-    const left = tx + 0.5 + treeJitter(tx, ty).dx + H_TREE
-    const right = tx + 1.5 + treeJitter(tx + 1, ty).dx - H_TREE
-    return (left + right) / 2
-  }
 
-  it('B1 — borne de non-débordement : le carré d’un arbre décalé reste dans sa tuile', () => {
-    // Garde-fou contre un futur recalibrage de J OU de blockHalfSub : la borne DOIT tenir.
-    expect(J + H_TREE).toBeLessThanOrEqual(0.5)
-    // Et concrètement, sur un échantillon : les bords du carré ∈ [tx,tx+1[ × [ty,ty+1[.
-    for (let ty = 0; ty < 30; ty++) {
-      for (let tx = 0; tx < 30; tx++) {
-        const { dx, dy } = treeJitter(tx, ty)
-        const cx = tx + 0.5 + dx
-        const cy = ty + 0.5 + dy
-        expect(cx - H_TREE).toBeGreaterThanOrEqual(tx)
-        expect(cx + H_TREE).toBeLessThanOrEqual(tx + 1)
-        expect(cy - H_TREE).toBeGreaterThanOrEqual(ty)
-        expect(cy + H_TREE).toBeLessThanOrEqual(ty + 1)
-      }
+  it('B1 — le carré bloquant est CENTRÉ dans sa tuile : les quatre arrêts sont symétriques', () => {
+    // C'EST LA PRÉMISSE DE TOUT LE RESTE. Un carré décentré d'une seule sous-tuile rendrait le
+    // verdict dépendant du côté par lequel on arrive — c'est-à-dire de nouveau illisible — et
+    // rien d'autre ne l'attraperait : un `blockHalfSub` demi-entier le faisait sur un centre
+    // entier (cf. sa doc), et c'est la raison pour laquelle 3 est le réglage et non 3,5.
+    // On mesure sur la SORTIE du vrai déplaceur, aux QUATRE approches — pas sur la table.
+    const TX = 8, TY = 4
+    const world = treeWorld([[TX, TY]])
+    const cx = TX + 0.5, cy = TY + 0.5
+    const glisse = (x0: number, y0: number, dx: -1 | 0 | 1, dy: -1 | 0 | 1): { x: number; y: number } => {
+      let p = { x: x0, y: y0 }
+      for (let t = 0; t < 120; t++) p = moveAvatar(world, p.x, p.y, dx, dy, TICK_DT_S)
+      return p
     }
+    const ouest = glisse(cx - 3, cy, 1, 0).x
+    const est = glisse(cx + 3, cy, -1, 0).x
+    const nord = glisse(cx, cy - 3, 0, 1).y
+    const sud = glisse(cx, cy + 3, 0, -1).y
+    // Chaque approche s'arrête à la face du carré, moins la demi-emprise DE CET AXE (le corps
+    // est un rectangle : 0,75 de large, 0,375 de profond).
+    expect(cx - ouest).toBeCloseTo(H_TREE + HALF, 9)
+    expect(est - cx).toBeCloseTo(H_TREE + HALF, 9)
+    expect(cy - nord).toBeCloseTo(H_TREE + HALF_Y, 9)
+    expect(sud - cy).toBeCloseTo(H_TREE + HALF_Y, 9)
   })
 
-  it('B2 — un avatar bute sur le tronc DÉCALÉ, pas sur le centre de la tuile', () => {
+  it('B2 — l’avatar bute sur le CENTRE de la tuile, plus sur un tronc décalé', () => {
     const TX = 8, TY = 4
-    const { dx } = treeJitter(TX, TY)
     const world = treeWorld([[TX, TY]])
-    const expected = TX + 0.5 + dx - H_TREE - HALF // face gauche du tronc décalé − demi-avatar
+    // Face ouest du tronc centré, moins le demi-avatar. Tout est sur la grille des sous-tuiles
+    // depuis que le décalage a quitté la collision : l'arrêt est EXACT, plus une borne.
+    const expected = TX + 0.5 - H_TREE - HALF
     let p = { x: 5.5, y: TY + 0.5 }
     for (let t = 0; t < 60; t++) p = moveAvatar(world, p.x, p.y, 1, 0, TICK_DT_S)
-    // Le cœur de collision ne repose l'avatar que sur la grille de sous-tuiles
-    // (pas = 1/SUB) ; le jitter est continu, donc `expected` (calcul continu)
-    // n'est en général pas un point de grille. Le clamp réel est le premier
-    // point de grille À L'EST de `expected` (ceil), donc p.x ∈ [expected,
-    // expected + 1/SUB) — jamais avant (jamais dans le tronc), au plus 1
-    // sous-tuile plus loin. Borne prouvée, pas un artefact de cette seed.
-    expect(p.x).toBeGreaterThanOrEqual(expected - 1e-9)
-    expect(p.x).toBeLessThan(expected + 1 / SUB)
+    expect(p.x).toBeCloseTo(expected, 9)
     expect(p.y).toBe(TY + 0.5)
   })
 
-  it('B3 — le fourré est réel : une paire pincée bloque l’avatar qui descend à travers', () => {
-    const TY = 4
-    let best = { tx: -1, gap: Infinity }
-    for (let tx = 0; tx < 400; tx++) {
-      const g = corridor(tx, TY)
-      if (g < best.gap) best = { tx, gap: g }
-    }
-    // Au J calibré, des fourrés existent forcément (sinon le choix « franc » serait vide).
-    expect(best.gap).toBeLessThan(BALANCE.AVATAR_HITBOX_TILES)
-    const world = treeWorld([[best.tx, TY], [best.tx + 1, TY]], best.tx + 3)
-    let p = { x: corridorCenter(best.tx, TY), y: TY - 1.5 }
-    for (let t = 0; t < 120; t++) p = moveAvatar(world, p.x, p.y, 0, 1, TICK_DT_S)
-    // Les troncs sont AUSSI décalés en Y (dy) : la bande bloquante d'un arbre
-    // peut se situer n'importe où dans [ty, ty+1), pas forcément au bord nord
-    // de la tuile. L'avatar peut donc entamer la rangée avant de buter — mais
-    // il ne la franchit jamais (gap < largeur d’avatar sur toute la traversée en X). Le fourré
-    // bloque : « ne franchit pas », pas « s'arrête avant le bord nord ».
-    expect(p.y).toBeLessThan(TY + 1)
-  })
-
-  it('B4 — au couloir large, l’avatar se faufile entre deux arbres voisins', () => {
-    const TY = 4
-    let best = { tx: -1, gap: -Infinity }
-    for (let tx = 0; tx < 400; tx++) {
-      const g = corridor(tx, TY)
-      if (g > best.gap) best = { tx, gap: g }
-    }
-    expect(best.gap).toBeGreaterThan(BALANCE.AVATAR_HITBOX_TILES) // des passages existent
-    const world = treeWorld([[best.tx, TY], [best.tx + 1, TY]], best.tx + 3)
-    let p = { x: corridorCenter(best.tx, TY), y: TY - 1.5 }
-    for (let t = 0; t < 60; t++) p = moveAvatar(world, p.x, p.y, 0, 1, TICK_DT_S)
-    expect(p.y).toBeGreaterThan(TY + 1) // passé au sud de la rangée
-  })
-
-  it('B6 — LA FORÊT SE FAUFILE-T-ELLE ENCORE ? le nombre cité en balance.ts est tenu', () => {
-    // `SUBTILES_PER_TILE` justifie sa valeur par DEUX pourcentages MESURÉS le 2026-07-28, quand
-    // le tronc est passé de 4 à 6 px. Un commentaire qui cite un nombre mesuré périme en
-    // silence : on le rend vérifiable. Tout est déterministe (le décalage est un hash pur),
-    // donc ces parts sont des CONSTANTES du jeu, pas un échantillon.
-    const LARGEUR = BALANCE.AVATAR_HITBOX_TILES // est-ouest : ce qu'il faut pour passer entre deux colonnes
-    const PROFONDEUR = BALANCE.AVATAR_HITBOX_DEPTH_TILES // nord-sud : le corps est un rectangle
-    const N = 600
-    let eo = 0, ns = 0
-    for (let ty = 0; ty < N; ty++) {
-      for (let tx = 0; tx < N; tx++) {
-        const a = treeJitter(tx, ty)
-        if (1 - 2 * H_TREE + treeJitter(tx + 1, ty).dx - a.dx >= LARGEUR) eo++
-        if (1 - 2 * H_TREE + treeJitter(tx, ty + 1).dy - a.dy >= PROFONDEUR) ns++
+  it('B3 — DEUX ARBRES VOISINS NE PASSENT JAMAIS, sur les deux axes, partout', () => {
+    // La promesse du 2026-08-31, et elle ne souffre aucune exception : c'est de son caractère
+    // ABSOLU que vient la lisibilité. Un seul couple franchissable et le joueur redevient
+    // obligé de juger au cas par cas. On balaie donc des paires à des coordonnées variées —
+    // le décalage a beau avoir quitté la collision, un futur retour se verrait ici.
+    for (let ty = 3; ty < 9; ty++) {
+      for (let tx = 3; tx < 9; tx++) {
+        // EST-OUEST : on descend dans le couloir vertical entre les deux troncs.
+        const eo = treeWorld([[tx, ty], [tx + 1, ty]], tx + 4, ty + 4)
+        let p = { x: tx + 1, y: ty - 1.5 }
+        for (let t = 0; t < 120; t++) p = moveAvatar(eo, p.x, p.y, 0, 1, TICK_DT_S)
+        expect(p.y, `paire E-O en (${tx},${ty}) franchie`).toBeLessThan(ty + 1)
+        // NORD-SUD : on traverse d'ouest en est le couloir horizontal. C'est l'axe qui passait
+        // encore 82,7 % du temps avant le 2026-08-31 — sa mort est la contrepartie assumée.
+        const ns = treeWorld([[tx, ty], [tx, ty + 1]], tx + 4, ty + 4)
+        let q = { x: tx - 1.5, y: ty + 1 }
+        for (let t = 0; t < 120; t++) q = moveAvatar(ns, q.x, q.y, 1, 0, TICK_DT_S)
+        expect(q.x, `paire N-S en (${tx},${ty}) franchie`).toBeLessThan(tx + 1)
       }
     }
-    const part = (n: number): number => (n / (N * N)) * 100
-    expect(part(eo)).toBeCloseTo(31.3, 1)
-    expect(part(ns)).toBeCloseTo(83.1, 1)
-    // ET LA PROPRIÉTÉ QUI COMPTE VRAIMENT, au-delà du chiffre exact : une forêt doit rester
-    // traversable. Si une retouche du tronc ou du décalage fermait la moitié des couloirs
-    // est-ouest restants, c'est ici qu'on l'apprendrait — pas en playtest.
-    expect(part(eo)).toBeGreaterThan(20)
   })
 
-  it('B5 — contrat SOUS-TUILE : overlapsBlocking suit le tronc décalé', () => {
+  it('B4 — une TUILE LIBRE entre deux arbres passe TOUJOURS, sur les deux axes', () => {
+    // L'autre moitié du verdict binaire, et sans elle B3 serait tenu par une forêt murée : le
+    // couloir vaut `2 − 2h = 1,25` tuile, donc il passe pour un corps de 0,75 comme de 0,375.
+    for (let ty = 3; ty < 9; ty++) {
+      for (let tx = 3; tx < 9; tx++) {
+        const eo = treeWorld([[tx, ty], [tx + 2, ty]], tx + 5, ty + 4)
+        let p = { x: tx + 1.5, y: ty - 1.5 }
+        for (let t = 0; t < 120; t++) p = moveAvatar(eo, p.x, p.y, 0, 1, TICK_DT_S)
+        expect(p.y, `couloir E-O en (${tx},${ty}) fermé`).toBeGreaterThan(ty + 1)
+        const ns = treeWorld([[tx, ty], [tx, ty + 2]], tx + 4, ty + 5)
+        let q = { x: tx - 1.5, y: ty + 1.5 }
+        for (let t = 0; t < 120; t++) q = moveAvatar(ns, q.x, q.y, 1, 0, TICK_DT_S)
+        expect(q.x, `couloir N-S en (${tx},${ty}) fermé`).toBeGreaterThan(tx + 1)
+      }
+    }
+  })
+
+  it('B5 — contrat SOUS-TUILE : overlapsBlocking répond sur le tronc centré', () => {
     const TX = 8, TY = 4
-    const { dx, dy } = treeJitter(TX, TY)
     const world = treeWorld([[TX, TY]])
-    expect(overlapsBlocking(world, TX + 0.5 + dx, TY + 0.5 + dy)).toBe(true) // sur le tronc décalé
+    expect(overlapsBlocking(world, TX + 0.5, TY + 0.5)).toBe(true) // le centre bloque
     expect(overlapsBlocking(world, TX + 0.5, TY - 2)).toBe(false) // deux tuiles au nord : rien
+  })
+
+  it('B6 — LE VERDICT EST BINAIRE : 0 % de paires voisines franchissables, 100 % à une tuile', () => {
+    // Ce qui remplace les 31,5 % / 82,7 % que `SUBTILES_PER_TILE` citait : le nombre à tenir
+    // n'est plus une part, c'est son ABSENCE de dispersion. Géométrie pure sur 600 × 600
+    // couples — si un jour un décalage revenait dans la collision, ces deux constantes
+    // cesseraient d'être des constantes, et c'est exactement ce qu'on veut apprendre ici.
+    const LARGEUR = BALANCE.AVATAR_HITBOX_TILES // est-ouest
+    const PROFONDEUR = BALANCE.AVATAR_HITBOX_DEPTH_TILES // nord-sud (le corps est un rectangle)
+    const ecartVoisin = 1 - 2 * H_TREE // 0,25
+    const ecartUneTuile = 2 - 2 * H_TREE // 1,25
+    expect(ecartVoisin).toBeLessThan(PROFONDEUR) // donc a fortiori sous LARGEUR
+    expect(ecartUneTuile).toBeGreaterThanOrEqual(LARGEUR) // donc a fortiori au-dessus de PROFONDEUR
+    // Et la propriété qui compte vraiment : la forêt reste TRAVERSABLE. Mesuré sur le monde
+    // joué au moment du changement — 22 % des tuiles boisées portent un arbre, donc 77,4 %
+    // restent libres et la composante connexe géante de la carte ne bouge pas (99,38 → 99,37 %).
+    // Ici on ne peut affirmer que la géométrie ; la densité, elle, vit dans `zone-content`.
+    expect(NODE_DEFS.tree.blockHalfSub).toBeLessThan(SUB / 2) // l'arbre ne mure PAS sa tuile
+    expect(Number.isInteger(NODE_DEFS.tree.blockHalfSub)).toBe(true) // centre entier ⇒ h entier
+    expect(NODE_DEFS.old_tree.blockHalfSub).toBe(NODE_DEFS.tree.blockHalfSub) // même règle pour tous
   })
 })
 

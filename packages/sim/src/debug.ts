@@ -150,6 +150,9 @@ export function applyDebugAction(state: SimState, entityId: number, action: Debu
     entity.y = clamp(action.y, 0.5, state.map.height - 0.5)
     // Un wind-up en cours frapperait depuis l'ancienne position : on l'annule.
     delete entity.windup
+    // …et l'ÉTAGE avec (spec `etages.md`) : le TP vise un point du SOL. Le garder mettrait
+    // l'avatar à +1 hors de tout plateau — toutes ses tuiles bloquées, figé sans un mot.
+    delete entity.etage
   } else if (action.type === 'debug_set_hour') {
     // hourOfCycle dérive de (tick + cycleOffset) : pour viser une heure sans
     // toucher au tick (qui porte le calendrier, les cooldowns, les wind-ups),

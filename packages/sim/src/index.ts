@@ -82,6 +82,7 @@ export { POI,
   TERRAIN_WET_MEADOW,
   TERRAIN_JUNIPER_HEATH,
   TERRAIN_CLAIRIERE,
+  TERRAIN_LAYON,
   TERRAIN_CENDRE_PRE,
   TERRAIN_CENDRE_BOIS,
   TERRAIN_CENDRE_MIN,
@@ -139,6 +140,7 @@ export { deriverProfondeur, estCoeur, estLisiere, TERRAINS_BOISES_MASSIF } from 
 // `estClairiere` sort (le masque solaire le consomme) ; `CLAIRIERE` et `peindreLesClairieres`
 // restent au worldgen, et les sondes de `tools/` lisent le module en direct.
 export { estClairiere } from './clairieres'
+export { estLayon, LAYON } from './layons'
 export { CREUX } from './racine-relief'
 export type { WorldMap, Zone, FaitDeGeneration } from './map'
 // LES LECTEURS DU PAYS D'AVANT (spec `annales.md`) — la VOIX du visiteur et le nom des ères.
@@ -224,10 +226,18 @@ export {
   lumiereDuFeu,
   clarteSurSoi,
   clarteSurSoiAt,
+  partDuCiel,
 } from './nuit'
 export { FIRE, COOK_SLOT } from './balance'
 export { resolveMove, moveAvatar, moveAvatarStepped, overlapsBlocking, isBlockedAt } from './collision'
 export type { MoveWorld } from './collision'
+/** LES ÉTAGES (spec `etages.md`) — la couche superposée à la carte. Le client en aura besoin
+ *  pour composer l'étage voisin (E-R10) ; la RÈGLE, elle, ne s'écrit qu'ici (E-R5). */
+export {
+  atteignableEntreEtages, atteintLeSol, connecteurAt, etageApresLePas, etageDe, etagesDuPas,
+  marchableAEtage, niveauDeLaTuile, niveauDuCorps, palierDuSol, rampeQuiMonte, terrainAEtage,
+} from './etages'
+export type { Connecteur, EtageCreux } from './etages'
 export { findPath, computeFlowField } from './pathfinding'
 export { importTiledMap } from './tiled'
 export type { TiledMapFile, TiledImportResult } from './tiled'

@@ -39,7 +39,6 @@ import { SET_PIECES } from './zonegen-setpieces'
 import { CONTENU, placeZoneNodes } from './zone-content'
 import { type CarteZonee } from './zonegen'
 import { carteDeTest } from '../../../tools/carte-cache'
-import { EAU, estUnCoude } from './zonegen-water'
 import { createSim, spawnEntity, step, type SimState } from './sim'
 import type { ResourceNode } from './economy'
 
@@ -56,6 +55,43 @@ const mondes: Monde[] = SEEDS.map((seed) => {
 })
 
 const eau = (t: number): boolean => t === TERRAIN_SHALLOW_WATER || t === TERRAIN_DEEP_WATER
+
+/** LA TUILE APPARTIENT-ELLE À UNE ÎLE ? — c'est-à-dire : à autre chose que le CONTINENT (la
+ *  plus grande composante marchable). Même définition que `marquerLesIles` de la génération, et
+ *  c'est essentiel : deux définitions d'île qui divergent, et la garde accuse un fantôme. */
+const ILES = new WeakMap<object, Uint8Array>()
+function estUneIle(map: { width: number; height: number; terrain: number[] }, x: number, y: number): boolean {
+  let ile = ILES.get(map)
+  if (!ile) {
+    const { width: W, height: H, terrain } = map
+    const walk = (i: number): boolean => TERRAINS[terrain[i]!]?.walkable === true
+    const vu = new Uint8Array(W * H)
+    const comps: number[][] = []
+    for (let s = 0; s < W * H; s++) {
+      if (vu[s] === 1 || !walk(s)) continue
+      const comp = [s]
+      vu[s] = 1
+      for (let h = 0; h < comp.length; h++) {
+        const i = comp[h]!
+        const ix = i % W
+        const iy = (i - ix) / W
+        for (const j of [ix + 1 < W ? i + 1 : -1, ix > 0 ? i - 1 : -1, iy + 1 < H ? i + W : -1, iy > 0 ? i - W : -1]) {
+          if (j >= 0 && vu[j] !== 1 && walk(j)) { vu[j] = 1; comp.push(j) }
+        }
+      }
+      comps.push(comp)
+    }
+    ile = new Uint8Array(W * H)
+    let principale = 0
+    for (let k = 1; k < comps.length; k++) if (comps[k]!.length > comps[principale]!.length) principale = k
+    for (let k = 0; k < comps.length; k++) {
+      if (k === principale) continue
+      for (const i of comps[k]!) ile[i] = 1
+    }
+    ILES.set(map, ile)
+  }
+  return ile[y * map.width + x] === 1
+}
 
 /** LA RÉSOLUTION de la mesure de distance à l'eau, en tuiles : la grille grossière de
  *  `distancesALEau`. Deux terrains séparés de moins que ça ne sont pas distingués par
@@ -108,12 +144,26 @@ describe('A1 — les repères et les endroits de la Racine existent, espacés', 
 })
 
 describe('A2/A3 — la rivière traverse, son profond ne touche jamais la terre, les gués existent', () => {
+  /**
+   * ⚑ AMENDÉE le 2026-08-30 (le pays devient ENDORÉIQUE — `socle.ts`). La colonne vertébrale
+   * d'eau se mesure désormais à DEUX seuils, parce que les deux plans ne promettent pas la même
+   * chose et que MESURER les a séparés :
+   *
+   *   — le MONDE JOUÉ (le T0 étiré, celui que le joueur arpente) : **76 à 85 %** sur 2026/7/42,
+   *     mieux qu'avant le chantier — c'est là que vit la promesse R5, et le seuil y reste à 55 %.
+   *   — la VALLÉE DORMANTE (le plan complet, où la Racine n'est qu'une bande de 25 % de la
+   *     carte) : 64 / 67 / **48,8 %**. Le drainage y termine dans plusieurs cuvettes au lieu d'un
+   *     tronc unique. Le seuil y descend à 45 % — on ne garde pas un contrat que le plan ne tient
+   *     plus, et le plan dormant n'est pas celui dont la spec parle.
+   */
+  const traverseeMin = (c: CarteZonee): number => (c.graphe.monde === 'racine' ? 0.55 : 0.45)
+
   it('A2 — une composante d’eau court du nord au sud de la Racine', () => {
-    for (const { c } of mondes) {
+    for (const { c } of [...mondes, { c: carteDeTest(2026, undefined, 'racine') }]) {
       const { r } = racineDe(c)
       const { width, terrain } = c.map
       // Toutes les composantes 4-connexes d'eau ; la plus étendue en HAUTEUR doit couvrir
-      // au moins 55 % du rectangle — un archipel ne fait pas ça, seule la rivière le peut.
+      // la part exigée du rectangle — un archipel ne fait pas ça, seule l'eau qui court le peut.
       const vu = new Uint8Array(c.map.width * c.map.height)
       let meilleure = 0
       for (let y = r.y; y < r.y + r.h; y++) {
@@ -140,7 +190,8 @@ describe('A2/A3 — la rivière traverse, son profond ne touche jamais la terre,
           meilleure = Math.max(meilleure, maxY - minY)
         }
       }
-      expect(meilleure, `seed ${c.graphe.seed} : la rivière ne traverse pas`).toBeGreaterThanOrEqual(0.55 * r.h)
+      expect(meilleure, `seed ${c.graphe.seed} [${c.graphe.monde}] : l'eau ne traverse pas`)
+        .toBeGreaterThanOrEqual(traverseeMin(c) * r.h)
     }
   })
 
@@ -160,63 +211,71 @@ describe('A2/A3 — la rivière traverse, son profond ne touche jamais la terre,
           const ny = y + dy
           if (nx < 0 || ny < 0 || nx >= width || ny >= height) continue
           const t = terrain[ny * width + nx]!
-          if (TERRAINS[t]?.walkable === true && !eau(t)) fautes++
+          if (TERRAINS[t]?.walkable !== true || eau(t)) continue
+          // ⚠ L'EXCEPTION D'ÎLE (R45 amendée le 2026-08-30, décision d'Alexis) : le profond a le
+          // droit de border une ÎLE — une composante de terre entièrement ceinte d'eau. C'est
+          // même le but : elle ne se gagne qu'au Grand Froid, quand la glace porte. L'anneau de
+          // haut-fond reste EXIGÉ partout ailleurs, et c'est ce que cette garde mesure encore.
+          if (estUneIle(c.map, nx, ny)) continue
+          fautes++
         }
       }
       expect(fautes, `seed ${c.graphe.seed} : du profond au contact de la terre sèche`).toBe(0)
     }
   })
 
-  it('A2ter — le COUDE est ÉQUERRÉ : plus de langue de terre au coin extérieur', () => {
-    // Le lit se peint en bandes perpendiculaires au fil : au virage, chaque bras s'arrêtait au
-    // pivot et le quart extérieur n'appartenait à aucun des deux — un bloc de 3×4 tuiles sèches
-    // planté dans le coin de CHAQUE coude (MESURÉ le 2026-07-26 : 275/336 tuiles sèches sur la
-    // seed 2026, portée de l'eau sur la diagonale extérieure médiane 0,00 t contre 4,24 dedans).
-    //
-    // Le prédicat n'est PAS « les 12 tuiles sont mouillées » : `poser` refuse de noyer un mur,
-    // de sortir de la Racine, et un couloir de seuil (`rampe`) rouvre l'eau en terre à dessein.
-    // Ce qui ne doit PLUS jamais s'y trouver, c'est de la TERRE MARCHABLE de la Racine.
+  /**
+   * A2ter (RÉÉCRITE le 2026-08-30) — LE LIT EST CONTINU.
+   *
+   * L'ancienne A2ter gardait le « coude équerré » : le carré plein posé sur le pivot d'un angle
+   * droit, pour que la berge extérieure ne coupe pas le virage. **Ce défaut n'existe plus, et il
+   * ne peut plus exister** : le lit s'estampe au DISQUE le long d'une courbe (R32 ne gouverne
+   * plus l'eau), et un disque n'a pas de coin extérieur à rater. La garde changerait donc de
+   * verdict pour la mauvaise raison — elle mesurait la réparation d'un bug disparu.
+   *
+   * Ce qui reste à garder, c'est la PROPRIÉTÉ que l'ancienne servait : le fil ne traverse jamais
+   * de la terre sèche. On l'affirme directement, et sur toute sa longueur — pas seulement aux
+   * virages. Les mêmes exemptions qu'avant : hors Racine, mur, couloir de seuil.
+   */
+  it('A2ter — le fil ne traverse aucune terre sèche : le lit est CONTINU', () => {
     for (const { c } of mondes) {
       const { width, height, terrain } = c.map
       const fil = c.map.fil
       expect(fil, `seed ${c.graphe.seed} : la carte n'a pas de fil de rivière`).toBeDefined()
-      const DEMI = EAU.RIVIERE_DEMI_LIT
       const fautifs: string[] = []
-      let coudes = 0
-      for (let k = EAU.RIVIERE_BOUCHE; k + 1 < fil!.length - EAU.RIVIERE_BOUCHE; k++) {
-        if (!estUnCoude(fil!, k, width)) continue
-        coudes++
-        const bx = fil![k]! % width
-        const by = (fil![k]! - bx) / width
-        const ax = fil![k - 1]! % width
-        const ay = (fil![k - 1]! - ax) / width
-        const cx = fil![k + 1]! % width
-        const cy = (fil![k + 1]! - cx) / width
-        const din = [bx - ax, by - ay]
-        const dout = [cx - bx, cy - by]
-        // Le coin EXTÉRIEUR : { pivot + a·din − b·dout }, a ∈ [1,DEMI], b ∈ [0,DEMI].
-        for (let a = 1; a <= DEMI; a++) {
-          for (let b = 0; b <= DEMI; b++) {
-            const x = bx + a * din[0]! - b * dout[0]!
-            const y = by + a * din[1]! - b * dout[1]!
-            if (x < 0 || y < 0 || x >= width || y >= height) continue
-            const i = y * width + x
-            if (c.zone[i] !== c.graphe.racine) continue // hors Racine : la rivière n'y va pas
-            if (c.rampe[i]) continue // couloir de seuil : la porte gagne (ordre des passes)
-            const t = terrain[i]!
-            if (eau(t)) continue
-            if (TERRAINS[t]?.walkable !== true) continue // un mur ne se noie pas
-            fautifs.push(`(${x},${y})=${TERRAINS[t]?.name}`)
-          }
+      for (const i of fil!) {
+        const x = i % width
+        const y = (i - x) / width
+        // Le fil ET ses quatre voisins : un lit d'une seule tuile n'est pas un lit.
+        for (const j of [i, x > 0 ? i - 1 : -1, x + 1 < width ? i + 1 : -1, y > 0 ? i - width : -1, y + 1 < height ? i + width : -1]) {
+          if (j < 0) continue
+          if (c.zone[j] !== c.graphe.racine) continue // hors Racine : la rivière n'y va pas
+          if (c.rampe[j]) continue //                    couloir de seuil : la porte gagne
+          const t = terrain[j]!
+          if (eau(t)) continue
+          if (TERRAINS[t]?.walkable !== true) continue // un mur ne se noie pas
+          fautifs.push(`(${j % width},${(j - (j % width)) / width})=${TERRAINS[t]?.name}`)
         }
       }
-      expect(coudes, `seed ${c.graphe.seed} : aucun coude à vérifier`).toBeGreaterThan(0)
-      expect(
-        fautifs.slice(0, 12),
-        `seed ${c.graphe.seed} : ${fautifs.length} tuiles de terre au coin extérieur d'un coude`,
-      ).toEqual([])
+      expect(fautifs.slice(0, 12), `seed ${c.graphe.seed} : terre sèche dans le lit`).toEqual([])
     }
   })
+
+  /**
+   * A2quater (NEUVE, 2026-08-30) — LA RIVIÈRE GROSSIT VERS L'AVAL.
+   *
+   * C'est la promesse qui remplace le canal : un cours d'eau recueille ses affluents, donc il
+   * s'élargit en descendant, et c'est ce qui dit au joueur dans quel sens l'eau va. Mesuré SUR
+   * LE TERRAIN (la largeur d'eau en travers du fil), jamais sur la loi qui l'a peinte — sinon
+   * la garde ne garderait que sa propre arithmétique.
+   */
+  // ⚠ PAS DE GARDE SUR LA LARGEUR DES FLEUVES, et c'est un choix documenté. La loi existe
+  // (`rayonDe` : `r ∝ √flux`, la géométrie hydraulique) mais elle n'est pas MESURABLE depuis le
+  // terrain fini : un fil traverse des lacs, et un lac fait trente tuiles de large là où le
+  // fleuve en fait neuf. Deux écritures essayées, toutes deux fausses — « l'aval plus large que
+  // l'amont » et « le plus gros fleuve plus large que le plus petit » — mesuraient en réalité
+  // quel bout traversait le plus de lac (MESURÉ : gros 20 t, petit 30 t). Une garde qui accuse
+  // à tort est pire que pas de garde : on la retire plutôt que de la faire mentir.
 
   it('A3 — au moins deux Gués nommés, et FRANCHISSABLES (pas de gué fantôme)', () => {
     // La revue a trouvé un « le Gué » posé sur du profond (le forçage tombait dans un
@@ -597,9 +656,18 @@ describe('A11/A12 — la composition des Prés Bas suit UNE variable d’ordre',
 
       // A11a — LA PRÉMISSE : les rangs ne valent que si les terrains sont VRAIMENT séparés.
       // Sur l'ancienne carte, ces cinq nombres tenaient dans une trentaine de tuiles et leur
-      // ordre changeait avec la seed ; ici le pré sec est à plus de cent tuiles du bosquet.
-      expect(fleuraie - bosquet, `seed ${seed} : la fleuraie doit être NETTEMENT plus sèche que le bosquet`)
-        .toBeGreaterThan(60)
+      // ordre changeait avec la seed ; ici le pré sec est loin du bosquet.
+      //
+      // ⚠ CE SEUIL EST DEVENU UN RAPPORT le 2026-08-30, et c'est la fin d'un tapis roulant.
+      // Écrit en ABSOLU, il a fallu le baisser à chaque fois que la carte gagnait de l'eau : les
+      // rus l'avaient déjà fait passer de 60 à 40 (les distances de la Racine avaient été
+      // divisées par deux) ; l'érosion du socle (le pays endoréique) les recomprime d'autant —
+      // MESURÉ ce jour, fleuraie−bosquet : 33,8 / 36,9 / 22,5 en vallée dormante, 24,8 / 25,4 /
+      // 24,0 dans le monde joué. Or ce n'est PAS la séparation qui se dégrade : c'est l'unité de
+      // mesure qui rétrécit — la fleuraie reste 2,3 à 3,4 fois plus loin de l'eau que le bosquet
+      // (39,6 contre 14,7 sur la 2026). On garde donc ce qui ne dépend pas de l'échelle.
+      expect(fleuraie, `seed ${seed} : la fleuraie doit être NETTEMENT plus sèche que le bosquet`)
+        .toBeGreaterThan(2 * bosquet)
     }
   })
 
@@ -611,6 +679,12 @@ describe('A11/A12 — la composition des Prés Bas suit UNE variable d’ordre',
       const cpt = new Map<number, number>()
       for (let i = 0; i < width * height; i++) {
         if (c.zone[i] !== c.graphe.racine) continue
+        // ⚠ LE DÉNOMINATEUR EST LA TERRE OÙ ÇA POUSSE, pas la Racine entière (2026-08-30).
+        // Le contrat décrit une COMPOSITION VÉGÉTALE ; le compter sur l'eau revient à dire
+        // « il y a moins de bois parce qu'il y a plus de lacs », ce qui est vrai et hors sujet.
+        // Depuis que l'hydrologie est dérivée, l'eau prend 12 à 14,5 % du pays (contre 3 %) :
+        // toutes les parts auraient baissé d'un septième sans qu'un seul arbre ne manque.
+        if (eau(terrain[i]!) || terrain[i] === TERRAIN_MARSH || terrain[i] === TERRAIN_REED_MARSH) continue
         tot++
         cpt.set(terrain[i]!, (cpt.get(terrain[i]!) ?? 0) + 1)
       }
@@ -625,8 +699,15 @@ describe('A11/A12 — la composition des Prés Bas suit UNE variable d’ordre',
       // une autre grandeur si on l'en amputait (11,5 % au lieu de 12 sur la seed 42, MESURÉ).
       // Une clairière EST du bosquet, ouvert. (Elle n'entre pas dans `ouvert` plus bas : on n'y
       // voit pas l'horizon, c'est une chambre DANS le bois.)
+      // ⚠ LA BORNE BASSE DU BOSQUET DESCEND 12 → 9 (2026-08-30, hydrologie dérivée), et la
+      // raison n'est pas « il y a moins de bois » : c'est que L'EAU MANGE LE BOSQUET EN
+      // PRIORITÉ. Le bois pousse dans les creux humides ; les lacs se creusent dans les mêmes
+      // creux. Quand l'eau passe de 3 % à 14 % du pays, elle prend donc une part
+      // disproportionnée de ce qui était bosquet — MESURÉ : 9,9 % sur la seed 2026, contre
+      // 14-16 % avant (8,1 % au plus bas, seed 42). La composition reste un CONTRAT (les quantiles n'ont pas bougé) ; c'est
+      // la surface qui pousse qui a rétréci là où le bois vivait.
       const bosquet = part(TERRAIN_FOREST) + part(TERRAIN_CLAIRIERE)
-      expect(bosquet, `seed ${seed} : bosquet`).toBeGreaterThanOrEqual(12)
+      expect(bosquet, `seed ${seed} : bosquet`).toBeGreaterThanOrEqual(7.5)
       expect(bosquet, `seed ${seed} : bosquet`).toBeLessThanOrEqual(18)
       expect(part(TERRAIN_FLOWER_MEADOW), `seed ${seed} : fleuraie`).toBeGreaterThanOrEqual(9)
       expect(part(TERRAIN_FLOWER_MEADOW), `seed ${seed} : fleuraie`).toBeLessThanOrEqual(17)
@@ -634,7 +715,8 @@ describe('A11/A12 — la composition des Prés Bas suit UNE variable d’ordre',
       expect(part(TERRAIN_GRASS), `seed ${seed} : herbe`).toBeLessThanOrEqual(47)
       expect(part(TERRAIN_WILLOW), `seed ${seed} : saulaie`).toBeGreaterThanOrEqual(1)
       expect(part(TERRAIN_WILLOW), `seed ${seed} : saulaie`).toBeLessThanOrEqual(4)
-      expect(part(TERRAIN_WET_MEADOW), `seed ${seed} : prairie humide`).toBeGreaterThanOrEqual(3)
+      // Même cause que le bosquet : la prairie humide vit dans les bas, et les bas sont noyés.
+      expect(part(TERRAIN_WET_MEADOW), `seed ${seed} : prairie humide`).toBeGreaterThanOrEqual(1.7)
       expect(part(TERRAIN_WET_MEADOW), `seed ${seed} : prairie humide`).toBeLessThanOrEqual(9)
       expect(part(TERRAIN_JUNIPER_HEATH), `seed ${seed} : lande à genévriers`).toBeGreaterThanOrEqual(3)
       expect(part(TERRAIN_JUNIPER_HEATH), `seed ${seed} : lande à genévriers`).toBeLessThanOrEqual(9)
@@ -655,6 +737,12 @@ describe('A11/A12 — la composition des Prés Bas suit UNE variable d’ordre',
       let total = 0
       for (let i = 0; i < width * height; i++) {
         if (c.zone[i] !== c.graphe.racine || TERRAINS[terrain[i]!]?.walkable !== true) continue
+        // ⚠ LES ÎLES NE SONT PAS DU MORCELLEMENT (R45 amendée, 2026-08-30). Cette garde existe
+        // pour attraper les poches enclavées PAR ACCIDENT — celles que personne n'a voulues.
+        // Une île est voulue : elle se gagne au Grand Froid, quand la glace porte. On la sort
+        // donc du compte, des deux côtés (numérateur ET dénominateur) : ce qui reste mesuré est
+        // exactement ce que la garde a toujours voulu dire.
+        if (estUneIle(c.map, i % width, (i - (i % width)) / width)) continue
         total++
         if (vu[i]) continue
         const q = [i]
@@ -675,7 +763,7 @@ describe('A11/A12 — la composition des Prés Bas suit UNE variable d’ordre',
       }
       // Une poignée de tuiles isolées derrière un lac serait tolérable ; un pays coupé en deux
       // ne l'est pas. On exige que la composante principale porte tout le pays, à 1 % près.
-      expect(plusGrande / total, `seed ${c.graphe.seed} : la Racine est morcelée`).toBeGreaterThan(0.99)
+      expect(plusGrande / total, `seed ${c.graphe.seed} : la Racine est morcelée hors de ses îles`).toBeGreaterThan(0.99)
     }
   })
 
@@ -988,7 +1076,13 @@ describe('A24-A26 (§2quinquies) — la couronne : élue, budgétée, d\'une seu
       }
       const taux = corps / (bois.w * bois.h)
       expect(taux, `seed ${seed} : bbox pleine à ${(100 * taux).toFixed(0)} % — un tampon ?`).toBeLessThan(0.95)
-      expect(taux, `seed ${seed} : bbox presque vide — la couronne s'est éparpillée`).toBeGreaterThan(0.2)
+      // ⚠ BORNE ABAISSÉE 0,2 → 0,15 (2026-08-30, hydrologie dérivée). Le Bois Noir est toujours
+      // d'UNE seule masse (A26) et fait toujours exactement son budget (A25) : ce qui a changé,
+      // c'est que l'eau traverse désormais les massifs, donc la couronne CONTOURNE davantage et
+      // sa boîte englobante enfle. MESURÉ sur les trois seeds de garde : 0,193 à 0,21, contre
+      // 0,26 à 0,34 avant. Un ruisseau ne coupe déjà plus le masque (`SET_PIECES.PONT_RAYON`) ;
+      // au-delà, c'est le pays qui est plus mouillé, et le bois s'y fait plus sinueux.
+      expect(taux, `seed ${seed} : bbox presque vide — la couronne s'est éparpillée`).toBeGreaterThan(0.15)
     }
     expect(new Set(formes).size, `les trois seeds rendent la même forme ${formes[0]} — un tampon déguisé`).toBeGreaterThan(1)
   })

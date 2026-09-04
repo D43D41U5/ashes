@@ -49,7 +49,9 @@ describe('l’inventaire des 97 faits', () => {
     // 100 → 103 le 2026-08-30 : la traction et le Bûcher (traction.md, cendre.md R31) —
     // `attelage_rompu` (voix : le claquement), `cadavre_rendu` (muet : ça se voit),
     // `bucher_rituel` (voix : le seul recul du monde, la seule montée).
-    expect(somme).toBe(97)
+    // 97 → 98 le 2026-08-31 : `attack_interrupted` (combat R4octies), famille `registre` —
+    // il rejoint le raté et la parade, les gestes qui n'auront pas lieu.
+    expect(somme).toBe(98)
   })
 
   it('chaque fait DIT ce qu’il raconte — pas son identifiant', () => {
@@ -116,7 +118,9 @@ describe('l’inventaire des 97 faits', () => {
     // 57 → 58 voix et 43 → 42 silences le 2026-08-30 : `murmure_recueilli` a pris sa voix
     // avec son fantôme (R27d) — le souffle qui retombe, gain plancher, à rejuger au banc.
     // 60 → 56 voix le 2026-08-30 : les réfugiés quittent le jeu (4 voix, 2 silences en moins).
-    expect(SONORES.length).toBe(56)
+    // 56 → 57 le 2026-08-31 : `attack_interrupted` — le coup brisé décide de l'échange,
+    // il ne pouvait pas rester muet (voir `sound.test.ts`).
+    expect(SONORES.length).toBe(57)
     // 33 → 34 le 2026-08-21 : `refugee_rumeur` naît MUET (annales.md R12) — le geste de
     // nourrir parle déjà, le renseignement se lit dans la chronique.
     // 34 → 35 le 2026-08-21 : `cendre_prend` naît MUET (P5a) — la perte se lit et se voit.

@@ -13,6 +13,8 @@ import { generateBatiArt } from '../render/bati-art'
 import { generateSocles } from '../render/socle-mineral'
 import { generateFireProp, generateLitProps, FLOWERS, FLOWER_STEM_COLOR, PEBBLES, PEBBLE_TONES, PEBBLE_SHADOW, pebbleShadowRects, variantBase, CHAMPIGNON_RECTS, LEAF_PILE_RECTS, CHICOT_RECTS, POUSSIERE_RECTS, BRANCHE_RECTS, CAILLOU_RECTS } from '../render/lit-props'
 import { makeCliffTextures } from '../render/cliff-art'
+import { makePlateauTextures } from '../render/plateau-art'
+import { makeCaveTextures } from '../render/cave-art'
 import { ORIENTATIONS_COUCHE, boiteCouchee, cleCouchee, rasterCorpsCouche } from '../render/corps-couche'
 import { generateCarcassesLit, makeCarcasseTextures } from '../render/carcasse-art'
 import { generateReveilLit, REVEIL_ART } from './world/reveil-fx'
@@ -330,6 +332,8 @@ export class BootScene extends Phaser.Scene {
     generateLitErratiques(this)
     generateLitPois(this) // les lieux basculés (vague B, da-feeling §3) — table POI_LIT_DEFS // ESSAI DA cubique sur les POI : 3 variantes du bloc erratique (poi-erratique-<i>_lit) — voir render/poi-lit.ts
     makeCliffTextures(this) // les bandes de roche plate des frontières — voir render/cliff-art.ts
+    makePlateauTextures(this) // le sol d'un plateau de mesa et l'entaille de sa rampe (etages.md)
+    makeCaveTextures(this) // la cave sous la butte et sa gueule (etages.md §17) — voir render/cave-art.ts
   }
 
   /** Textures des nœuds de ressources.

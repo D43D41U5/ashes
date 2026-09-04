@@ -72,7 +72,7 @@ export class FlankGlow {
       if ((cxT - player.x) ** 2 + (cyT - player.y) ** 2 > rangeSq) continue
 
       const good = mineGoodFlank(node.id, node.stock)
-      const lift = warp?.lift(cxT, node.ty + 1) ?? 0
+      const lift = warp?.lift(cxT, node.ty + 0.5) ?? 0
       const ox = cxT * TILE_PX
       const oy = cyT * TILE_PX - lift
 

@@ -61,6 +61,9 @@ export const PART_DU_NOEUD: Record<keyof ResourceNode, 'fixe' | 'mobile'> = {
   type: 'fixe',
   tx: 'fixe',
   ty: 'fixe',
+  // L'ÉTAGE (spec `etages.md`) : la TROISIÈME coordonnée, donc fixe comme les deux autres. Un
+  // nœud ne change pas de plancher — le dessus d'une mesa n'échange rien avec son pied.
+  etage: 'fixe',
   // La taille d'un bloc de butte (R6septies) : décidée à la pose, d'après la forme de la butte,
   // et jamais retouchée — un bloc ne rapetisse pas quand on le mine, il perd du stock. Elle naît
   // donc avec la carte, comme `type`.

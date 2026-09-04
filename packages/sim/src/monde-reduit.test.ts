@@ -13,10 +13,14 @@
  *   A-MR3 — le plan réduit est DÉTERMINISTE, au bit près, comme l'autre (A12).
  *   A-MR4 — le banc joue LE MONDE JOUÉ : `construireMondeDuBanc` porte `MONDE_JOUE`, pas un choix
  *           local — un banc qui calibrerait la vallée entière mesurerait un jeu que personne ne joue.
+ *   A-MR5 — on ne naît JAMAIS sur une île : les points de naissance sont sur la landmass principale.
+ *   A-MR6 — le premier point se TIRE (graine du monde), et le tirage est déterministe.
  */
 import { describe, expect, it } from 'vitest'
 import { TERRAIN_ROAD, TERRAINS } from './balance'
+import { walkableComponents } from './connectivity'
 import { placeHuntingGrounds } from './faune'
+import { distSq } from './geometry'
 import { nidsAMonstre } from './poi'
 import { BANC_JOUEURS, construireMondeDuBanc } from './scenario'
 import { emplacementsDeVillage, placeZoneNodes, pointsDeSpawn } from './zone-content'
@@ -93,13 +97,107 @@ describe('A-MR1 — le monde réduit tient : la boucle de saison a tous ses orga
       const emplacements = emplacementsDeVillage(c, nodes, { coinsDeChasse: grounds, nids: nidsAMonstre(c.map) })
       // La Veillée fonde le joueur + un Foyer + une Meute : il faut au moins trois sites tenables.
       expect(emplacements.length, `seed ${s}`).toBeGreaterThanOrEqual(3)
-      const spawns = pointsDeSpawn(c, emplacements, Math.ceil(MONDE.JOUEURS_CIBLE / MONDE.JOUEURS_PAR_VILLAGE))
+      const spawns = pointsDeSpawn(c, emplacements, Math.ceil(MONDE.JOUEURS_CIBLE / MONDE.JOUEURS_PAR_VILLAGE), s)
       expect(spawns.length, `seed ${s}`).toBeGreaterThan(0)
       for (const e of [...emplacements, ...spawns]) {
         const zid = c.zone[e.ty * c.map.width + e.tx]!
         expect(c.graphe.zones[zid]!.def.slug, `seed ${s} : site hors racine à ${e.tx},${e.ty}`).toBe('pres_bas')
       }
     }
+  })
+
+  /**
+   * ═══ A-MR5 — ON NE NAÎT JAMAIS SUR UNE ÎLE ═══
+   *
+   * `emplacementsDeVillage` ne sait dire que *marchable* — et depuis que l'hydrologie est dérivée
+   * (`zonegen-hydro.ts`), le monde joué porte 21 à 70 composantes marchables : une principale qui
+   * en fait 97,5 à 99,5 %, et des îlots. Un carré dégagé sur un îlot est un site parfaitement
+   * viable à ses yeux.
+   *
+   * **MESURÉ AVANT la règle (2026-08-31, `tools/__sonde-spawn-ile.mts`) : sur la graine 2026 — LA
+   * vallée canonique, celle de `?solo` et de tous les smokes — le premier point de naissance
+   * tombait sur une poche de 1 499 tuiles**, coupée des 99,4 % du monde ; la graine 7 en avait un
+   * autre plus loin dans le semis. Le joueur naissait dans un enclos, sans un mot : rien ne le
+   * dit, aucun type ne l'attrape, et il faut ouvrir la carte pour le voir.
+   *
+   * La garde porte sur les DIX-SEPT points, pas sur le premier : c'est le même semis qui sert au
+   * multi (`server/scenario.ts`), où le 12ᵉ arrivant compte autant que le 1ᵉʳ.
+   */
+  it('A-MR5 — les points de naissance sont TOUS sur la landmass principale', () => {
+    for (const { s, c } of reduits) {
+      const nodes = placeZoneNodes(c)
+      const grounds = placeHuntingGrounds(c.map, s)
+      const emplacements = emplacementsDeVillage(c, nodes, { coinsDeChasse: grounds, nids: nidsAMonstre(c.map) })
+      const spawns = pointsDeSpawn(c, emplacements, Math.ceil(MONDE.JOUEURS_CIBLE / MONDE.JOUEURS_PAR_VILLAGE), s)
+      const comp = walkableComponents(c.map)
+      // La prémisse de la garde : il Y A des poches sur cette carte. Sans elle, un monde d'une
+      // seule composante rendrait ce test vert sans jamais l'éprouver.
+      expect(comp.sizes.length, `seed ${s} : aucune poche — la garde ne prouve rien`).toBeGreaterThan(1)
+      for (const e of spawns) {
+        const label = comp.label[e.ty * c.map.width + e.tx]
+        expect(
+          label,
+          `seed ${s} : naissance à (${e.tx},${e.ty}) sur une poche de ${comp.sizes[label!] ?? 0} tuiles, ` +
+          `coupée du monde (${comp.sizes[comp.main]} tuiles)`,
+        ).toBe(comp.main)
+      }
+    }
+  })
+
+  /**
+   * ═══ A-MR6 — LE PREMIER POINT SE TIRE (décision d'Alexis, 2026-08-31) ═══
+   *
+   * *« On choisit aléatoirement un spawn sur la map. »* L'ancre était *le site le plus proche du
+   * cœur de la racine* : MESURÉ sur dix graines, le premier spawn tombait toujours dans le
+   * mouchoir `x ∈ [720, 920], y ∈ [352, 640]` d'une carte de 1581×852. Deux choses à garder, et
+   * elles tirent en sens contraire — c'est pour ça qu'il en faut deux :
+   *
+   *   ① le tirage est bien un TIRAGE : la graine décide, et l'ancre n'est plus celle du cœur ;
+   *   ② il reste DÉTERMINISTE (invariant n°2) : même graine, même point, deux fois de suite.
+   *
+   * ⚠ ① SE LIT SUR LES POINTS RENDUS, ET SUR L'ENSEMBLE DES GRAINES. Deux précautions, chacune
+   * pour une panne de garde distincte :
+   *
+   *   — *sur les points rendus*, parce que le vivier du tirage (racine ∩ continent ∩ écart de
+   *     fosse) ne se reconstitue pas depuis le dehors sans RECOPIER les trois règles — et une
+   *     garde qui recopie la règle qu'elle teste ne garde rien. Or les dix-sept points rendus
+   *     SONT tous tirés de ce vivier : si l'ancre en est le plus proche du cœur, elle est le
+   *     plus proche du cœur des dix-sept. La propriété se lit donc sans rien reconstruire.
+   *     *(Écrite sur `emplacements` — le vivier d'avant filtrage — la garde passait au VERT
+   *     contre l'ancienne règle : mesuré, 46 sites contre 31 après l'écart de fosse, et deux
+   *     « cœurs » différents.)*
+   *   — *sur l'ensemble des graines*, parce qu'un tirage honnête PEUT sortir l'ancre la plus
+   *     proche du cœur : une chance sur dix-sept par graine. Graine par graine, la garde
+   *     rougirait 6 % du temps contre du code juste. Sur l'ensemble, elle demande que TOUTES y
+   *     retombent — ce que l'ancienne règle faisait par construction, et un vrai tirage une
+   *     fois sur ~290.
+   */
+  it('A-MR6 — le premier point est tiré au sort, et le tirage est déterministe', () => {
+    const combien = Math.ceil(MONDE.JOUEURS_CIBLE / MONDE.JOUEURS_PAR_VILLAGE)
+    const releve = reduits.map(({ s, c }) => {
+      const nodes = placeZoneNodes(c)
+      const grounds = placeHuntingGrounds(c.map, s)
+      const emplacements = emplacementsDeVillage(c, nodes, { coinsDeChasse: grounds, nids: nidsAMonstre(c.map) })
+      const a = pointsDeSpawn(c, emplacements, combien, s)
+      const b = pointsDeSpawn(c, emplacements, combien, s)
+      // ② même graine, même semis — au point près, et sur les dix-sept.
+      expect(a, `seed ${s} : le semis n'est pas reproductible`).toEqual(b)
+
+      // ① l'ancre est-elle le plus proche du cœur de la racine PARMI LES POINTS RENDUS ?
+      // (cf. l'en-tête : c'est la lecture qui n'exige pas de reconstituer le vivier.)
+      const r = c.graphe.zones[c.graphe.racine]!
+      const auCoeur = a.reduce((meilleur, e) =>
+        distSq(e.tx, e.ty, r.x, r.y) < distSq(meilleur.tx, meilleur.ty, r.x, r.y) ? e : meilleur)
+      return { s, ancre: a[0]!, surLeCoeur: a[0]! === auCoeur, rendus: a.length }
+    })
+    // ① l'ancre n'est plus CELLE DU CŒUR — affirmé sur l'ensemble (cf. l'en-tête).
+    expect(
+      releve.every((x) => x.surLeCoeur),
+      `sur toutes les graines l'ancre est le point le plus proche du cœur de la racine ` +
+      `(${releve.map((x) => `${x.s}: 1er de ${x.rendus}`).join(', ')}) — le tirage ne tire plus`,
+    ).toBe(false)
+    // ① bis : deux graines, deux ancres — le tirage suit bien la graine du monde.
+    expect(releve[0]!.ancre.tx !== releve[1]!.ancre.tx || releve[0]!.ancre.ty !== releve[1]!.ancre.ty).toBe(true)
   })
 
   it('le balayage d\'échelles — le plan réduit génère à toutes les tailles, comme l\'autre', () => {

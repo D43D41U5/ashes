@@ -46,7 +46,8 @@
  * numérique (0,0042 au pire) n'en est qu'une conséquence.
  */
 import { TEMPERATURE } from './balance'
-import { fireBubble } from './temperature'
+import { fireBubble, isSheltered } from './temperature'
+import { connecteurAt, niveauDuCorps, palierDuSol } from './etages'
 import { heldSlot } from './inventory-actions'
 import { estTorcheVive } from './torche'
 import { dayTicksAt, gameTimeAt, NIGHT_RAMP_TICKS, partDeNuit, TICKS_PER_CYCLE } from './time'
@@ -148,6 +149,90 @@ export function lumiereDuFeu(state: SimState, x: number, y: number): number {
 }
 
 /**
+ * ═══ E-R13 — LA PART DU CIEL QUI ATTEINT CE POINT, dans [0, 1] ═══
+ *
+ * *Décision d'Alexis du 2026-09-02 (`etages.md` §10, branche **B1**).* C'est LA loi que ce choix
+ * engage, et le préalable de tout ce qui est souterrain : ni cave, ni galerie, ni gueule de
+ * grotte ne se bâtit avant elle.
+ *
+ * **1 à l'air libre** — donc partout dans le jeu d'aujourd'hui, et le monde d'avant est inchangé
+ * au bit près. Sous un couvert, elle DÉCROÎT avec la distance à la première tuile ouverte : à la
+ * gueule on y voit presque comme dehors, quatre tuiles plus loin il fait noir à midi.
+ *
+ * ⚠ **UNE DISTANCE, PAS UN BOOLÉEN — et c'est tout B1.** `isSheltered` répond oui/non (il a été
+ * écrit pour le FROID, où c'est la bonne question : on est à l'abri ou on ne l'est pas). La
+ * lumière, elle, n'a jamais de front : *la profondeur se gagne*. Un couvert binaire donnerait un
+ * mur noir dès le pas de la porte — exactement la branche B3, qu'Alexis a écartée.
+ *
+ * ⚠ **ELLE NE CONNAÎT NI LE SOLEIL NI L'HEURE**, et c'est ce qui la rend composable : elle dit
+ * quelle PART du ciel arrive, `clarteDuCiel` dit ce que le ciel vaut à cette heure-là. La nuit,
+ * une gueule est noire sans qu'on ait à l'écrire — le produit s'en charge.
+ *
+ * ⚠ **CHEBYSHEV, pas la distance euclidienne** : on cherche le premier anneau ouvert autour du
+ * point, et un anneau de Chebyshev est un carré — c'est la forme que le balayage parcourt, donc
+ * la seule qui ne mente pas sur ce qu'il a vu. Et le balayage est BORNÉ par `TEMPERATURE.CIEL_PENETRATION` :
+ * au-delà, il fait noir, il n'y a plus rien à mesurer.
+ *
+ * COÛT : sortie immédiate à l'air libre (un `isSheltered`, ce que l'appelant paierait de toute
+ * façon). Sous un couvert seulement, jusqu'à `(2·P+1)²` sondes — 81 à P = 4 — et un intérieur est
+ * par nature petit. Aucun appelant par PNJ ni par monstre : le même périmètre que `clarteSurSoi`.
+ */
+export function partDuCiel(state: SimState, tx: number, ty: number, etage?: number): number {
+  const P = TEMPERATURE.CIEL_PENETRATION
+  // ═══ UN ÉTAGE SOUS LA ROCHE : LE JOUR N'ENTRE QUE PAR LA GUEULE ═══
+  //
+  // C'est la MÊME loi, lue sur l'autre ouverture. Au-dessus du sol on cherche la première tuile
+  // que rien ne couvre ; sous la roche il n'y en a aucune — ce qui ouvre, c'est le connecteur.
+  // *La profondeur se gagne*, ici littéralement : quatre tuiles après le seuil, il fait noir, et
+  // c'est ce qui fait de la torche un outil au lieu d'un décor.
+  //
+  // ⚠ **UN ÉTAGE AU-DESSUS DU SOL REÇOIT LE CIEL ENTIER** : un dessus de mesa est à l'air libre,
+  // rien ne le couvre. Sans cette ligne, `isSheltered` — qui ne lit que le sol — répondrait
+  // pour le sol SOUS le plateau, c'est-à-dire pour une autre tuile que celle où l'on se tient.
+  //
+  // ⚠ « AU-DESSUS » ET « SOUS » SE COMPTENT DEPUIS LE PALIER DU SOL (spec `terrasses.md` T-R2),
+  // pas depuis 0 : la cave d'une mesa posée au palier 2 vit au niveau 1, sous deux crans de
+  // roche — et le niveau 1 est le sol, à l'air libre, une terrasse plus loin.
+  const sol = palierDuSol(state.map, tx, ty)
+  if (etage === undefined) etage = sol
+  if (etage > sol) return 1
+  if (etage < sol) {
+    for (let d = 0; d <= P; d++) {
+      for (let oy = -d; oy <= d; oy++) {
+        for (let ox = -d; ox <= d; ox++) {
+          if (d > 0 && !(ox === -d || ox === d || oy === -d || oy === d)) continue
+          const c = connecteurAt(state.map, tx + ox, ty + oy)
+          if (c === undefined) continue
+          // Une porte de CET étage, qui ouvre vers le HAUT — le jour vient d'en haut. La rampe
+          // de terrasse 0→1 qui passe à trois tuiles d'une cave au niveau 1 n'éclaire rien.
+          const autre = c.de === etage ? c.vers : c.vers === etage ? c.de : undefined
+          if (autre === undefined || autre <= etage) continue
+          // Sur la gueule même (`d` = 0) on voit comme dehors ; au fond, plus rien.
+          return d === 0 ? 1 : 1 - d / (P + 1)
+        }
+      }
+    }
+    return 0
+  }
+  if (!isSheltered(state, tx, ty)) return 1
+  for (let d = 1; d <= P; d++) {
+    // L'ANNEAU de rayon `d`, et lui seul : les couronnes intérieures ont déjà répondu non.
+    for (let oy = -d; oy <= d; oy++) {
+      for (let ox = -d; ox <= d; ox++) {
+        // Le bord du carré : l'un des deux écarts vaut exactement `d`.
+        const bord = ox === -d || ox === d || oy === -d || oy === d
+        if (!bord) continue
+        if (!isSheltered(state, tx + ox, ty + oy)) {
+          // À la distance `d` du ciel : plein à la gueule (`d` = 1 → presque 1), nul au-delà.
+          return 1 - d / (P + 1)
+        }
+      }
+    }
+  }
+  return 0
+}
+
+/**
  * LA CLARTÉ EN UN POINT, dans [0, 1] — LA fonction, et celle que LA PRÉDICTION DU CLIENT
  * APPELLE (le patron de `meteoSpeedFactorAt`, spec `meteo.md` R7).
  *
@@ -163,9 +248,25 @@ export function clarteSurSoiAt(
   y: number,
   /** Ce corps tient-il une torche ALLUMÉE ? Le porteur est au centre de sa propre flamme. */
   torche: boolean,
+  /** LE PLANCHER DU CORPS (spec `etages.md`). Absent ≡ le sol de la tuile (T-R3), donc tout
+   *  l'existant. Sous la roche, le jour n'entre que par la gueule ; au-dessus, le ciel entier. */
+  etage?: number,
 ): number {
   if (torche) return 1 // à bout de bras : rien n'éclaire plus près
-  const ciel = clarteDuCiel(state, tick)
+  // ═══ LE CIEL N'ENTRE PAS SOUS UN TOIT (E-R13, branche B1 — Alexis, 2026-09-02) ═══
+  //
+  // C'est le seul endroit où la loi s'applique, et c'est voulu : `clarteDuCiel` reste ce que le
+  // CIEL vaut à cette heure — une grandeur du monde —, `partDuCiel` dit quelle PART en arrive
+  // ici. Le produit se lit tout seul : dehors on multiplie par 1 (le monde d'avant, au bit
+  // près) ; au fond d'un couvert, midi ne vaut pas mieux que minuit ; et la nuit, une gueule est
+  // noire sans qu'on ait rien à écrire de plus.
+  //
+  // ⚠ **CE QUE ÇA CHANGE AU JEU, ET C'EST TOUT** : depuis qu'Alexis a coupé le sprint de la règle
+  // du noir (même jour), la clarté ne commande plus AUCUNE vitesse — elle ne décide plus que de
+  // la PARADE. Un intérieur sombre et sans feu refuse donc la garde en plein midi. C'est la
+  // conséquence voulue de B1 (*la profondeur se gagne*), et elle se répare du geste qu'on a déjà :
+  // une flamme. Un feu dans la pièce y suffit — `lumiereDuFeu` est prise au max juste en dessous.
+  const ciel = clarteDuCiel(state, tick) * partDuCiel(state, Math.floor(x), Math.floor(y), etage)
   const feu = lumiereDuFeu(state, x, y)
   return feu > ciel ? feu : ciel
 }
@@ -178,5 +279,5 @@ export function clarteSurSoiAt(
  * que la chasse nocturne, et pour la même raison (`nighthunt.preys`).
  */
 export function clarteSurSoi(state: SimState, entity: Entity): number {
-  return clarteSurSoiAt(state, state.tick, entity.x, entity.y, estTorcheVive(heldSlot(entity)))
+  return clarteSurSoiAt(state, state.tick, entity.x, entity.y, estTorcheVive(heldSlot(entity)), niveauDuCorps(state.map, entity))
 }

@@ -3,7 +3,7 @@ import { BALANCE, COMBAT, MONSTER_DEFS, CENDREUX, METEO, SLOTS, TERRAIN_GRASS, W
 import { meteoVisionFactor } from './meteo'
 import { createSim, spawnEntity, step, type MoveInput, type SimState } from './sim'
 import { countOf, inventoryOf } from './items'
-import { die, startAttack } from './combat'
+import { die, respawn, startAttack } from './combat'
 import { advanceCendreux, risenAlive } from './cendreux'
 import { secouerLeSol } from './sens'
 import { advanceReveils, partRampante } from './morts'
@@ -519,7 +519,11 @@ describe('le critère « joueur » (A7) — respawn au Feu ET cadavre marqué au
 
     die(state, entity, 0, 'cold')
 
-    // Effet 1 : respawn au Feu du village, PV de respawn.
+    // Effet 1 : réveil au Feu du village, PV de respawn — MAIS SUR DEMANDE (2026-08-31) :
+    // `die` laisse désormais le corps où il tombe, et c'est `respawn` qui le relève.
+    expect(entity.x).toBe(deathX) // à terre, sur place, tant qu'on n'a rien demandé
+    expect(entity.hp).toBe(0)
+    respawn(state, entity)
     const respawned = state.entities.find((e) => e.id === player)!
     expect(respawned.x).toBe(village.fireTx + 0.5)
     expect(respawned.y).toBe(village.fireTy + 0.5)

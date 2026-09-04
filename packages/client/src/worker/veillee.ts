@@ -139,7 +139,7 @@ export function createVeillee(
   // des loups, loin des nids, des baies à portée) lit les mêmes coins que la faune jouera.
   const grounds = placeHuntingGrounds(map, seed)
   const emplacements = emplacementsDeVillage(carte, nodes, { coinsDeChasse: grounds, nids: nidsAMonstre(map) })
-  const spawns = pointsDeSpawn(carte, emplacements, Math.ceil(MONDE.JOUEURS_CIBLE / MONDE.JOUEURS_PAR_VILLAGE))
+  const spawns = pointsDeSpawn(carte, emplacements, Math.ceil(MONDE.JOUEURS_CIBLE / MONDE.JOUEURS_PAR_VILLAGE), seed)
   const premier = spawns[0] ?? emplacements[0]
   if (!premier) throw new Error('veillee: la vallée ne porte aucun emplacement viable — carte dégénérée')
   const spawn = { x: premier.tx + 0.5, y: premier.ty + 0.5 }

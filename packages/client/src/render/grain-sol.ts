@@ -171,6 +171,9 @@ export const FAMILLE_PAR_TERRAIN: Record<number, Famille | null> = {
   28: 'cendre', // cendre_bois
   29: 'cendre', // cendre_min
   30: 'herbe', // clairiere — de l'herbe, pas de la litière : c'est tout le propos du biome
+  // Le layon prend le grain de la ROUTE (terre battue) et non celui de la litière : c'est
+  // exactement ce qui le distingue du sous-bois qu'il traverse — un sol tassé, sans feuilles.
+  31: 'mineral', // layon
 }
 
 /** L'index de bloc d'une famille dans l'atlas (son UV horizontal). */

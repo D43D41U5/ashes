@@ -34,6 +34,7 @@ import { ligneDegagee, resolveMove, traitLibre } from './collision'
 import { secouerLeSol } from './sens'
 import { isInvulnerable } from './debug'
 import { emitEvent } from './events'
+import { atteignableEntreEtages, atteintLeSol, niveauDuCorps } from './etages'
 import { distSq } from './geometry'
 import { heldSlot, poserAuSol, wearHeld } from './inventory-actions'
 import { addItems, addSlot, countOf, isEmpty, makeInventory, pourInto, removeItems, carryRatio } from './items'
@@ -49,6 +50,13 @@ export interface Corpse {
   x: number
   y: number
   inventory: Entity['inventory']
+  /**
+   * LE PLANCHER OÙ IL GÎT (spec `etages.md`). Absent ≡ **0**, le sol du monde — donc toute
+   * sauvegarde d'avant et tout cadavre du jeu d'aujourd'hui. Le pendant exact d'`Entity.etage`
+   * et de `ResourceNode.etage` : un corps tombé sur un plateau y reste, et l'on ne le dépèce
+   * pas depuis le pied de la butte.
+   */
+  etage?: number
   decayAt: number
   risesAt?: number
   /** LA BÊTE QUI SE RELÈVERA (spec `cendre.md` R30a) — l'espèce à lever CENDREUSE quand
@@ -102,6 +110,19 @@ export type CombatAction =
   | { type: 'attack_cancel' }
   | { type: 'bandage'; targetEntityId?: number }
   | { type: 'loot_corpse'; corpseId: number }
+  /**
+   * JE ME RELÈVE (décision d'Alexis, 2026-08-31).
+   *
+   * La mort d'un avatar ne renvoyait plus au Feu : elle Y ÉTAIT DÉJÀ. `die` reposait le
+   * corps là-bas dans le tick même de la chute, et le client se contentait de cacher le
+   * saut sous son voile. Le geste « SE RELEVER » ne commandait donc rien — il levait un
+   * rideau sur une résurrection déjà faite. Il la COMMANDE maintenant : `die` laisse le
+   * corps à terre, à `hp = 0`, là où il est tombé, et c'est CETTE action qui le relève.
+   *
+   * Refusée sur un vivant (on ne se relève pas debout). Elle ne consomme aucun tirage et
+   * n'ajoute aucune entité : le flux du PRNG ne bouge pas d'un cran.
+   */
+  | { type: 'respawn' }
 
 /**
  * L'ARME TENUE décide de TOUT (spec inventaire R9) : pas la meilleure du sac. Une
@@ -202,8 +223,9 @@ function isChargeFull(entity: Entity, profile: WeaponProfile): boolean {
  * rien ». Une bête ne tient pas d'arme : lui faire suivre WEAPON_PROFILES lui
  * donnerait la portée d'un poing, et la nuit qu'on vient de calibrer s'effondrerait.
  */
-function beastStrike(damage: number, windupTicks: number): Strike {
+function beastStrike(damage: number, windupTicks: number, lourd?: boolean): Strike {
   return {
+    ...(lourd === true ? { lourd: true as const } : {}),
     shape: 'cone',
     range: COMBAT.ATTACK_RANGE,
     arcCos: COMBAT.ATTACK_ARC_COS,
@@ -374,6 +396,10 @@ export function applyCombatAction(state: SimState, actorId: number, action: Comb
           : actor
       if (!target) return reject('cible inconnue')
       if (distSq(actor.x, actor.y, target.x, target.y) > BALANCE.INTERACT_RANGE * BALANCE.INTERACT_RANGE) return reject('trop loin')
+      // Le plancher, comme partout : une portée de bras ne traverse pas la roche (E-R5).
+      if (!atteignableEntreEtages(
+        state.map, actor.x, actor.y, niveauDuCorps(state.map, actor), target.x, target.y, niveauDuCorps(state.map, target),
+      )) return reject('trop loin')
       if (!target.wounds.bleeding && !target.wounds.leg && !target.wounds.arm) return reject('rien à soigner')
       if (!removeItems(actor.inventory, { fiber: COMBAT.BANDAGE_FIBER_COST })) return reject('il faut des fibres')
       // Une blessure par bandage : le saignement d'abord (il tue).
@@ -389,10 +415,20 @@ export function applyCombatAction(state: SimState, actorId: number, action: Comb
       return
     }
 
+    /** JE ME RELÈVE — le geste qui rend la seconde moitié de la mort au joueur. */
+    case 'respawn': {
+      if (!respawn(state, actor)) return reject('debout')
+      return
+    }
+
     case 'loot_corpse': {
       const corpse = state.corpses.find((c) => c.id === action.corpseId)
       if (!corpse) return reject('rien ici')
       if (distSq(actor.x, actor.y, corpse.x, corpse.y) > BALANCE.INTERACT_RANGE * BALANCE.INTERACT_RANGE) return reject('trop loin')
+      // Un cadavre gît sur SON plancher : on ne le dépèce pas depuis celui d'en dessous (E-R5).
+      if (!atteignableEntreEtages(
+        state.map, actor.x, actor.y, niveauDuCorps(state.map, actor), corpse.x, corpse.y, niveauDuCorps(state.map, corpse),
+      )) return reject('trop loin')
       // UNE BÊTE NE SE FOUILLE PAS, ELLE SE DÉPÈCE (spec `depecage.md` R3) : le clic de coffre
       // est réservé aux dépouilles humaines. Le raider PNJ passe ici aussi — il rentre bredouille.
       if (corpse.carcass !== undefined) return reject('il faut le dépecer')
@@ -428,6 +464,12 @@ export interface StartAttackOptions {
   strike?: Strike
   /** Le coup est CHARGÉ (le client le peint autrement ; la sim le transporte). */
   charged?: boolean
+  /**
+   * LE COUP EST LOURD, donc INANNULABLE (R4nonies) — pour une BÊTE, dont le coup se
+   * fabrique ici (`beastStrike`) plutôt que de se lire dans `WEAPON_PROFILES`. Les
+   * avatars n'en ont pas besoin : leur `charged` porte déjà `lourd: true` dans la table.
+   */
+  lourd?: boolean
 }
 
 /** Démarre un wind-up d'attaque (utilisé par joueurs, PNJ et monstres). */
@@ -438,7 +480,7 @@ export function startAttack(
   dy: number,
   opts: StartAttackOptions = {},
 ): boolean {
-  const { reject, windupTicks, damage, structureId, charged } = opts
+  const { reject, windupTicks, damage, structureId, charged, lourd } = opts
   if (actor.windup) {
     reject?.('déjà en train de frapper')
     return false
@@ -451,7 +493,7 @@ export function startAttack(
   // (dégâts imposés) > l'arme tenue. Une bête garde l'arc historique : elle ne
   // tient rien, et lui donner le profil des poings lui volerait sa portée.
   const base =
-    opts.strike ?? (damage !== undefined ? beastStrike(damage, windupTicks ?? COMBAT.WINDUP_TICKS) : weaponProfile(actor).light)
+    opts.strike ?? (damage !== undefined ? beastStrike(damage, windupTicks ?? COMBAT.WINDUP_TICKS, lourd) : weaponProfile(actor).light)
   const strike: Strike = windupTicks !== undefined && opts.strike === undefined ? { ...base, windupTicks } : base
 
   if (actor.stamina < strike.stamina) {
@@ -552,10 +594,9 @@ function advanceLunge(state: SimState, entity: Entity): void {
  * C'est la seule direction qui ait un sens pour le tourbillon (qui n'a pas d'axe), et
  * c'est celle que l'œil attend — « il recule », pas « il glisse de côté ».
  *
- * Il passe par `resolveMove` : un mur l'arrête, exactement comme un pas. Et il
- * n'INTERROMPT RIEN — une bête repoussée en plein wind-up frappera quand même. Sans
- * cette retenue, marteler suffirait à verrouiller n'importe quoi sur place, et le
- * combat de coût du GDD §7 deviendrait un combat de cadence.
+ * Il passe par `resolveMove` : un mur l'arrête, exactement comme un pas. Et il n'est PAS
+ * ce qui interrompt : l'interruption est le fait du COUP QUI PORTE, pas de la poussée —
+ * voir `briserLeCoup` ci-dessous, qui vaut pour tout coup qui touche, chargé ou non.
  *
  * IL SE JOUE AVANT LES DÉGÂTS, et c'est une correction payée d'une mesure. Placé après,
  * il poussait le RESSUSCITÉ : `die()` ne retire pas un joueur de `state.entities`, il le
@@ -624,6 +665,73 @@ function knockback(
   target.y = poussé.y
 }
 
+/**
+ * ═══ LE COUP QUI PORTE BRISE LE COUP D'EN FACE (décision d'Alexis, 2026-08-31) ═══
+ *
+ * Un corps touché en plein wind-up LÂCHE son geste. Le télégraphe s'éteint, le coup ne
+ * se résout jamais, et l'endurance déjà payée au départ (`startAttack` la prend à
+ * l'armement) est perdue. C'est un renversement assumé de R4sexies, qui refusait
+ * l'interruption au motif que « marteler verrouillerait n'importe quoi, et le combat de
+ * coût deviendrait un combat de cadence ».
+ *
+ * ⚠ CE MOTIF ÉTAIT JUSTE, ET IL A FALLU LE MESURER POUR LE SAVOIR. On a d'abord cru que
+ * deux freins déjà en place le désamorçaient : l'ENDURANCE est prise à l'ARMEMENT et non
+ * à la résolution (`startAttack`, pour tous, `beastStrike` comprise — un coup brisé est un
+ * coup PAYÉ), et la CADENCE des IA est posée au DÉBUT du coup (`cooldownUntil` dans
+ * `faune.ts`, `monsters.ts`, `cendreux.ts`, `npc.ts` — briser une morsure ne la rend pas).
+ * Les deux sont vrais, et les deux NE SUFFISENT PAS : `tools/diag-recul.mts`, 6 graines,
+ * l'homme désarmé qui martèle face à quatre loups passe de 5/6 morts en 3,4-4,3 s à
+ * **2/6 en 24,3 s**. Le martèlement devient un bouclier, et `faune.md` R13 tombe. C'est
+ * `Strike.lourd` (R4nonies, la garde juste en dessous) qui borne enfin la règle — pas les
+ * freins qu'on lui prêtait.
+ *
+ * L'AVATAR N'A PAS DE CADENCE À L'ARMEMENT — sa récupération (`recoveryHit` /
+ * `recoveryWhiff`) est posée à la RÉSOLUTION, qui n'a jamais lieu. Un joueur interrompu ne
+ * paie donc que son endurance et peut relancer aussitôt. C'est la lecture de R1 : la barre
+ * reine est le prix du geste, et qui se fait briser trois fois est à bout de souffle.
+ *
+ * CAMP-AVEUGLE, COMME TOUT CE PIPELINE (« personne ne triche », invariant §7). Aucune
+ * garde d'espèce, aucune garde de camp : le loup brise le coup du joueur exactement
+ * comme le joueur brise le sien. En 1v3 on se fait donc briser trois fois plus qu'on ne
+ * brise — la règle penche du côté du NOMBRE, ce que le GDD §7 demande (« on ne gagne
+ * pas un 1v3 »).
+ *
+ * ⚠ ELLE VIT ICI ET NON DANS `applyDamage`. `applyDamage` est l'ÉVIER des dégâts — le
+ * saignement de chasse, la foudre, le froid y passent aussi. Un wind-up brisé par un
+ * tick de saignement serait une interruption que personne n'a portée.
+ *
+ * L'INVULNÉRABILITÉ DE DEV la court-circuite, comme elle court-circuite `applyDamage` :
+ * un mode dieu dont le coup se fait briser est un outil qui ment (le raisonnement exact
+ * du vol de chaleur des Cendreux, `CENDREUX.BOIRE`).
+ */
+function briserLeCoup(state: SimState, target: Entity, byEntityId: number): void {
+  if (target.windup === undefined) return
+  // ═══ LE COUP LOURD NE SE BRISE PAS (R4nonies, décision d'Alexis du 2026-08-31) ═══
+  //
+  // La borne que la règle nue n'avait pas, et elle est VISIBLE — c'est tout son intérêt.
+  // Sans elle, MESURÉ : l'homme désarmé qui martèle face à quatre loups passe de 5/6 morts
+  // en 3,4-4,3 s à 2/6 en 24,3 s (`tools/diag-recul.mts`, 6 graines) — le martèlement
+  // devient un bouclier permanent, et `faune.md` R13 (« la mort doit être l'issue
+  // probable ») tombe. Trois leviers de bestiaire ont été éprouvés AVANT d'en arriver là,
+  // et aucun ne pouvait servir : durcir les DÉGÂTS ramène bien la létalité (×2,9 pour
+  // retrouver 5/6) mais tue le joueur qui NE martèle pas en 0,6 s ; la CADENCE fait
+  // pareil ; la VITESSE est inerte (aucune valeur, jusqu'au double, n'approche la cible).
+  // On ne borne pas une règle sans borne en tournant un bouton ailleurs : le sur-durcissement
+  // qu'il faut pour compenser le bouclier tombe sur ceux qui n'ont pas le bouclier.
+  //
+  // La borne vit donc DANS la règle, portée par le coup lui-même (`Strike.lourd`) — donc
+  // par une propriété que le télégraphe MONTRE, plutôt que par un verrou d'historique que
+  // personne ne pourrait voir. Le joueur apprend « celle-là je la coupe, celle-là je
+  // l'esquive », et c'est la même phrase en PvE et en PvP.
+  if (target.windup.strike.lourd === true) return
+  if (isInvulnerable(state, target)) return
+  // Le fait est DIT (règle des événements de domaine) : sans lui, le geste le plus
+  // décisif du nouvel échange se produirait sans un son ni une image — le défaut même
+  // que `attack_whiffed` avait été écrit pour corriger sur le coup raté.
+  emitEvent(state, { type: 'attack_interrupted', tick: state.tick, entityId: target.id, byEntityId })
+  delete target.windup
+}
+
 /** Résout le coup à la fin du wind-up : la ZONE du `strike` porté (spec R4). */
 function resolveStrike(state: SimState, attacker: Entity): void {
   const windup = attacker.windup!
@@ -632,7 +740,9 @@ function resolveStrike(state: SimState, attacker: Entity): void {
   // Coup porté à une structure (les hordes frappent les murs, spec événements R1).
   if (windup.structureId !== undefined) {
     const s = state.structures.find((st) => st.id === windup.structureId)
-    if (s && distSq(attacker.x, attacker.y, s.tx + 0.5, s.ty + 0.5) <= COMBAT.STRUCTURE_STRIKE_RANGE * COMBAT.STRUCTURE_STRIKE_RANGE) {
+    if (s && distSq(attacker.x, attacker.y, s.tx + 0.5, s.ty + 0.5) <= COMBAT.STRUCTURE_STRIKE_RANGE * COMBAT.STRUCTURE_STRIKE_RANGE
+      // Le bâti vit au sol : on ne démolit pas une palissade depuis un plateau (E-R5).
+      && atteintLeSol(state.map, attacker, s.tx, s.ty)) {
       applyStructureDamage(state, s.id, strike.damage, attacker.id)
       // L'IMPACT PORTE (spec cendreux R25) : un VIVANT qui frappe du bâti — le raider qui
       // défonce un grenier — ébranle le sol jusqu'aux morts. Jamais un monstre (décision ⑤ :
@@ -714,6 +824,14 @@ function resolveStrike(state: SimState, attacker: Entity): void {
   for (const target of state.entities) {
     if (target.id === attacker.id || target.hp <= 0) continue
     if (!inStrikeZone(strike, attacker.x, attacker.y, windup.dx, windup.dy, target.x, target.y)) continue
+    // ═══ ON NE COGNE PAS À TRAVERS UN PLANCHER (spec `etages.md` E-R5) ═══
+    // Une zone de frappe est une géométrie PLANE : sans cette ligne, on fauchait depuis le pied
+    // d'une mesa celui qui se tient sur son dessus, à travers douze mètres de roche — et l'arc
+    // touchait aussi bien vers le haut que vers le bas. La règle ne se recopie pas, elle
+    // s'appelle ; elle sort sur un `===` quand les deux corps partagent leur plancher.
+    if (!atteignableEntreEtages(
+      state.map, attacker.x, attacker.y, niveauDuCorps(state.map, attacker), target.x, target.y, niveauDuCorps(state.map, target),
+    )) continue
     // UN SEUL relevé du monstre-cible sert les deux alliances ET la mise à mort propre
     // plus bas : c'était deux `find` sur `state.monsters` par cible, c'en est un — et il
     // ne se paye plus que sur ce qui est réellement dans l'arc.
@@ -836,6 +954,13 @@ function resolveStrike(state: SimState, attacker: Entity): void {
     // sanglier. La règle est indépendante de l'arbitrage en cours sur `KNOCKBACK_TILES`
     // — quel que soit le nombre qu'il fixera, il ne vaudra que pour la mêlée.
     if (!ranged) knockback(state, attacker, target, tx, ty, dist, windup.charged === true, dealt)
+    // LE COUP BRISE LE COUP (2026-08-31) — AVANT `applyDamage`, pour la raison qui met
+    // déjà le recul avant lui : `die()` ne sort pas un joueur de `state.entities`, et
+    // briser après aurait éteint le premier geste d'une vie qui vient de renaître au Feu.
+    // LE TRAIT BRISE AUSSI (à la différence du recul, `tir.md` T10 : une flèche ne pousse
+    // pas un sanglier — mais elle lui fait lâcher sa charge). C'est la réponse de l'arc à
+    // ce qui s'arme, et le prix en est la flèche.
+    briserLeCoup(state, target, attacker.id)
     applyDamage(state, target, dealt, attacker.id)
     // ═══ IL BOIT LA CHALEUR DU CORPS (décision d'Alexis ⑯, 2026-08-21) ═══
     //
@@ -1079,6 +1204,15 @@ function rendDesParts(type: MonsterType): boolean {
 export function die(state: SimState, entity: Entity, byEntityId: number, cause?: 'cold' | 'hunger' | 'lightning' | 'cendre'): void {
   delete entity.attelage // la mort lâche la longe (traction.md T5)
   const monster = state.monsters.find((m) => m.entityId === entity.id)
+  // ⚠ ON NE MEURT QU'UNE FOIS (2026-08-31). Depuis que l'avatar RESTE à terre en attendant son
+  // geste, il repasse dans les chemins qui tuent. Les fronts (`before > 0 && hp <= 0` du
+  // saignement, de la faim) s'en gardaient seuls ; `resolveStrike`, lui, appelle `die` sur un
+  // simple `hp <= 0` — un coup porté sur un corps à terre aurait émis un SECOND `entity_died`
+  // (le voile se relève, la cause change) et posé une seconde dépouille, vide.
+  //
+  // La garde se lit sur `downedAt`, JAMAIS sur `hp <= 0` : `die` est appelé une fois les PV
+  // déjà retombés à zéro, donc `hp` ne distingue pas « il tombe » de « il gisait ».
+  if (entity.downedAt !== undefined) return
   emitEvent(state, {
     type: 'entity_died',
     tick: state.tick,
@@ -1138,6 +1272,7 @@ export function die(state: SimState, entity: Entity, byEntityId: number, cause?:
       id: state.nextCorpseId,
       x: entity.x,
       y: entity.y,
+      ...(entity.etage !== undefined ? { etage: entity.etage } : {}),
       inventory: loot,
       decayAt: state.tick + COMBAT.CORPSE_TICKS,
       diedAt: state.tick,
@@ -1159,6 +1294,10 @@ export function die(state: SimState, entity: Entity, byEntityId: number, cause?:
       id: state.nextCorpseId,
       x: entity.x,
       y: entity.y,
+      // ON MEURT SUR SON PLANCHER — le cadavre hérite de l'étage du corps (spec `etages.md`).
+      // Tel quel, 0 compris : depuis les terrasses (T-R3), le champ n'est écrit que hors du sol
+      // de la tuile, et « 0 » sur un sol de palier 1 est une CAVE, pas le sol.
+      ...(entity.etage !== undefined ? { etage: entity.etage } : {}),
       inventory: loot,
       decayAt: state.tick + COMBAT.CORPSE_TICKS,
       diedAt: state.tick,
@@ -1240,28 +1379,66 @@ export function die(state: SimState, entity: Entity, byEntityId: number, cause?:
     return
   }
 
-  // Joueur : respawn au Feu de son village, épuisé, compétences intactes (R10).
-  const village = state.villages.find((v) => v.memberIds.includes(entity.id))
+  // ═══ LE JOUEUR RESTE À TERRE (décision d'Alexis, 2026-08-31) ═══
+  //
+  // Il était renvoyé au Feu ICI MÊME, dans le tick de sa chute : `die` faisait la mort ET la
+  // résurrection. Le client ne pouvait donc que MASQUER un saut déjà fait, et le bouton
+  // « SE RELEVER » ne commandait rien. Désormais `die` s'arrête à la mort : le corps reste
+  // où il tombe, à `hp = 0`, et c'est l'action `respawn` (le geste du joueur, ou le filet du
+  // client) qui le relève — voir `respawn` ci-dessous.
+  //
+  // Le reste du monde n'a rien à apprendre : `hp <= 0` est DÉJÀ la marque du mort partout
+  // dans /sim (la faune ne le prend plus pour cible, la régén le saute, la faim et le froid
+  // ne le frappent plus, l'encyclopédie l'ignore). C'est ce qui rend ce changement petit.
+  //
+  // La dépouille, elle, est déjà posée plus haut, avec tout ce qu'il portait.
   entity.inventory = makeInventory(entity.inventory.length)
   entity.activeSlot = -1 // la mort lâche tout, et rengaine (spec inventaire R12)
   entity.wounds = {}
   delete entity.windup
   delete entity.charge
-  // La mort lâche aussi la jauge d'abattage et LA LIGNE (peche.md) : `hp` repasse > 0 dans ce
-  // même appel, la garde `hp <= 0` d'`advanceFishing` ne verrait jamais le mort — et un respawné
-  // au Feu recevrait la touche d'un lac à l'autre bout de la vallée.
+  // La mort lâche aussi la jauge d'abattage et LA LIGNE (peche.md) : sans ça un noyé
+  // relevé au Feu recevrait la touche d'un lac à l'autre bout de la vallée.
   delete entity.harvestCharge
   delete entity.fishing
   delete entity.butchering
+  entity.hp = 0
+  entity.downedAt = state.tick
+  // LE COÛT DE MORT CROISSANT (V2-21) : les morts RAPPROCHÉES rallongent l'épuisement, mais
+  // une longue survie fait OUBLIER le compte (pas de spirale). Plafonné.
+  //
+  // ⚠ LE COMPTE SE TIENT À LA CHUTE, la DURÉE se compte au réveil (`respawn`). Les deux
+  // moitiés doivent rester de part et d'autre, et c'est mesuré : tout stamper au réveil
+  // ferait entrer le temps passé À TERRE dans l'écart entre deux morts — traîner devant le
+  // voile aurait « oublié » la mort précédente, et rester mort serait devenu la façon la
+  // moins chère de mourir. Tout stamper à la chute ferait l'inverse : l'épuisement se
+  // consumerait pendant qu'on gît, et l'on se réveillerait frais.
+  if (state.tick - entity.lastDeathAt > COMBAT.DEATH_FORGET_TICKS) entity.deathCount = 0
+  entity.deathCount += 1
+  entity.lastDeathAt = state.tick
+}
+
+/**
+ * ON SE RELÈVE — la seconde moitié de la mort, rendue au JOUEUR (décision d'Alexis, 2026-08-31).
+ *
+ * Réveil au Feu de son village (ou au point d'apparition, sans village), épuisé, compétences
+ * intactes (R10). Tout ce qui suit vivait dans `die` : ce n'est pas un mécanisme neuf, c'est
+ * le même, déplacé derrière un geste. Refuse un vivant — se relever n'a de sens qu'à terre.
+ *
+ * Zéro tirage, zéro entité créée ou détruite : le flux du PRNG est intact (invariant n°2).
+ */
+export function respawn(state: SimState, entity: Entity): boolean {
+  if (entity.downedAt === undefined) return false
+  const village = state.villages.find((v) => v.memberIds.includes(entity.id))
+  delete entity.downedAt
   entity.hp = COMBAT.RESPAWN_HP
   entity.hunger = COMBAT.RESPAWN_HUNGER
   entity.stamina = COMBAT.RESPAWN_STAMINA
   entity.temperature = COMBAT.RESPAWN_TEMPERATURE
-  // LE COÛT DE MORT CROISSANT (V2-21) : les morts RAPPROCHÉES rallongent l'épuisement,
-  // mais une longue survie fait OUBLIER le compte (pas de spirale). Plafonné.
-  if (state.tick - entity.lastDeathAt > COMBAT.DEATH_FORGET_TICKS) entity.deathCount = 0
-  entity.deathCount += 1
-  entity.lastDeathAt = state.tick
+  // L'ÉPUISEMENT PART D'ICI (V2-21) — de la seconde où l'on rouvre les yeux, pas de la chute.
+  // Le COMPTE, lui, a été tenu par `die` (voir la note là-bas) : assis à la chute, il mesure
+  // le temps VÉCU entre deux morts ; parti du réveil, l'épuisement ne se consume pas pendant
+  // qu'on gît. Chaque moitié est du côté qu'elle mesure.
   const streak = Math.min(entity.deathCount - 1, COMBAT.DEATH_EXHAUSTION_CAP)
   entity.exhaustedUntil = state.tick + Math.round(COMBAT.EXHAUSTION_TICKS * (1 + streak * COMBAT.DEATH_EXHAUSTION_GROWTH))
   if (village) {
@@ -1271,7 +1448,14 @@ export function die(state: SimState, entity: Entity, byEntityId: number, cause?:
     entity.x = entity.homeX
     entity.y = entity.homeY
   }
+  // ON SE RELÈVE AU SOL (spec `etages.md`) : le Feu du village et le point d'apparition sont à
+  // l'étage 0, toujours. Sans cette ligne, mourir sur un plateau de mesa ressuscitait un corps
+  // encore marqué étage +1 au milieu du village — donc dans un monde où rien n'est marchable à
+  // cet étage-là, gelé sur place et invisible aux loups. Le repli d'`etageApresLePas` le
+  // rattraperait au pas suivant ; on ne fabrique pas l'état faux pour le corriger après.
+  delete entity.etage
   emitEvent(state, { type: 'entity_respawned', tick: state.tick, entityId: entity.id })
+  return true
 }
 
 /** Passe combat du tick : wind-ups, saignements, régénérations, cadavres. */

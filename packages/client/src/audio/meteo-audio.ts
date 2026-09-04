@@ -149,6 +149,37 @@ export class SonsDuCiel {
     this.nappeVent?.regler(c.vent.gain, c.vent.hz, FONDU_NAPPE_S)
   }
 
+  /**
+   * ═══ TAIRE LE CIEL — et pourquoi il ne se taisait pas tout seul ═══
+   *
+   * *(Alexis, 2026-08-31 : « j'entends un son en boucle là… la pluie ? ça reste même sur
+   * l'écran d'accueil pendant des minutes ».)*
+   *
+   * Une nappe est un `AudioBufferSourceNode` en `loop`, branché sur le `master` du MOTEUR — et
+   * le moteur, lui, SURVIT au `shutdown` de `WorldScene` (rien ne le détruit : c'est l'audio de
+   * toute la page). Quitter une partie démontait donc les couches de rendu, terminait le Worker,
+   * taisait le thème… et laissait la pluie tourner sur le menu, pour toujours.
+   *
+   * C'EST EXACTEMENT LE PIÈGE QUE `this.theme.taire()` FERMAIT DÉJÀ, à trois lignes de là, avec
+   * son avertissement écrit en toutes lettres (« LA MUSIQUE NE MEURT PAS AVEC LA SCÈNE »). Il
+   * n'avait été fermé que pour la musique, parce qu'en 2026-08-30 la nappe météo n'existait pas
+   * encore : toute chose branchée sur le master du moteur doit avoir son extinction, et la
+   * règle vaut pour ce qui viendra après.
+   *
+   * On REMET AUSSI la machine à zéro (`derniere = null`, nappes `null`) : la Veillée suivante
+   * rouvre ses nappes sur le contexte réveillé et repose sa cible depuis le silence, au lieu
+   * d'hériter d'une cible mémorisée pour des nœuds qui n'existent plus.
+   */
+  taire(): void {
+    this.nappePluie?.arreter()
+    this.nappeVent?.arreter()
+    this.nappePluie = null
+    this.nappeVent = null
+    this.derniere = null
+    this.sonde.gainPluie = 0
+    this.sonde.gainVent = 0
+  }
+
   /** LA FRAPPE — appelée par `FoudreFx.onFrappe` (l'écrivain de la loi d'abri). Un impact
    *  supprimé par l'abri garde son tonnerre : l'éclair a déchiré le ciel, il n'a juste rien
    *  touché — et c'est le ciel qu'on entend. */

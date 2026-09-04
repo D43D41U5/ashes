@@ -131,6 +131,8 @@ interface Chute {
   alpha: number
   ancrage: number
   ne: number
+  /** La strate de l'arbre debout : il tombe dans son monde (terrasse comprise). */
+  strate: number
 }
 
 /** Plafond de troncs en train de tomber. Une coupe rase reste une coupe, pas une avalanche. */
@@ -161,8 +163,9 @@ export class ChuteArbre {
   /**
    * UN ARBRE S'ABAT. `px/py` : le PIED du fût, tel que la boucle de nœuds le posait
    * (relief compris). `dx/dy` : la direction de chute — celle qui l'éloigne du bûcheron.
+   * `strate` : celle de l'arbre debout (`strateSol` de sa tuile), 0 sur une carte plate.
    */
-  tomber(px: number, py: number, variante: VarianteArbre, lit: boolean, dx: number, dy: number, now: number, cime = 0, etat: EtatCime = 'feuillu', miroir = false): void {
+  tomber(px: number, py: number, variante: VarianteArbre, lit: boolean, dx: number, dy: number, now: number, cime = 0, etat: EtatCime = 'feuillu', miroir = false, strate = 0): void {
     if (this.chutes.length >= MAX_CHUTES) {
       const vieille = this.chutes.shift()
       vieille?.fut.destroy()
@@ -179,7 +182,7 @@ export class ChuteArbre {
       // que pour les variantes qui en ont une, et seulement en mode éclairé.
       .image(px, py, cleFutPose(this.scene, variante.slug, lit, etat === 'mort', miroir))
       .setOrigin(0.5, 1)
-      .setDepth(ySortDepth(py / TILE_PX, TILE_PX, TIE_NODE))
+      .setDepth(strate + ySortDepth(py / TILE_PX, TILE_PX, TIE_NODE))
     fut.setLighting(lit)
     // LE HOUPPIER SORT DE LA BANDE CANOPÉE dès la première image (voir l'en-tête) : couché,
     // il doit passer SOUS les acteurs, pas coiffer le monde.
@@ -191,9 +194,9 @@ export class ChuteArbre {
       // de neige perdrait sa coiffe à l'instant où il tombe, et un feuillu nu reverdirait.
       .image(px, py - ancrageHouppierPx(m), cleHouppier(variante.slug, lit, cime, etat, 0, miroir))
       .setOrigin(0.5, 1)
-      .setDepth(ySortDepth(py / TILE_PX, TILE_PX, TIE_CLUTTER))
+      .setDepth(strate + ySortDepth(py / TILE_PX, TILE_PX, TIE_CLUTTER))
     houppier.setLighting(lit)
-    this.chutes.push({ fut, houppier, px, py, alpha, ancrage: ancrageHouppierPx(m), ne: now })
+    this.chutes.push({ fut, houppier, px, py, alpha, ancrage: ancrageHouppierPx(m), ne: now, strate })
   }
 
   update(now: number): void {
@@ -215,7 +218,7 @@ export class ChuteArbre {
         const hx = c.px + Math.sin(a) * c.ancrage
         const hy = c.py - Math.cos(a) * c.ancrage
         c.houppier.setPosition(hx, hy).setRotation(a)
-        c.houppier.setDepth(ySortDepth(hy / TILE_PX, TILE_PX, TIE_CLUTTER))
+        c.houppier.setDepth(c.strate + ySortDepth(hy / TILE_PX, TILE_PX, TIE_CLUTTER))
       }
       // Il reste COUCHÉ un instant avant que la forêt le reprenne : c'est ce temps d'arrêt
       // qui fait lire « il est tombé » plutôt que « il a disparu en tournant ».

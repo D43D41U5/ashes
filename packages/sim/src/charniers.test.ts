@@ -68,7 +68,7 @@ describe('la loterie des lieux ne bouge pas', () => {
     expect(map.terrain).toEqual(avantTerrain)
   })
 
-  it('la vallée de production porte toujours ses 139 autres lieux', () => {
+  it('la vallée de production porte toujours ses 138 autres lieux', () => {
     // Non-régression grossière mais parlante : si `horsSemis` fuyait dans la loterie, les autres
     // types en perdraient — le tirage est à somme nulle.
     // RÉ-ÉPINGLÉ 138 → 136 → 134 (Stratigraphie, 2026-08-09) : la grille du socle devenue
@@ -99,10 +99,28 @@ describe('la loterie des lieux ne bouge pas', () => {
     // la passe court APRÈS `placePois` (la loterie ne bouge pas d'un tirage) et AVANT
     // charniers/stèles, qui n'en perdent aucun (stèles 4, repaires 9 — inchangés, gardés
     // juste en dessous). MESURÉ (seed 2026) : 153 = 143 + 10 louvières, au lieu près.
-    expect(lieuxDe(CARTE.map).length).toBe(153)
-    expect(lieuxDe(CARTE.map).filter((z) => z.kind === 'louviere').length).toBe(10)
-    expect(lieuxDe(CARTE.map).filter((z) => z.kind === 'stele').length).toBe(4)
-    expect(lieuxDe(CARTE.map).filter((z) => z.kind !== 'stele' && z.kind !== 'louviere').length).toBe(139)
+    // RE-ÉPINGLÉ 153 → 156 (L'HYDROLOGIE DÉRIVÉE, 2026-08-30) : l'eau n'est plus posée en
+    // nombre décidé mais tirée du drainage (`zonegen-hydro.ts`), et la loterie — qui lit le
+    // terrain — se rebrasse avec elle. MESURÉ par kind (seed 2026, vallée complète) :
+    // **louvière +2** (un gîte se pose en lisière d'un coin de chasse, et un coin de chasse
+    // exige de l'eau à `GROUND_WATER_NEAR` : la capillarité en ouvre de nouveaux — la
+    // conséquence qu'on cherchait, lue à l'autre bout de la chaîne) ; **stèle +1** (elles se
+    // posent au bord des croisées et des gués saillants, et le pays porte désormais sept à neuf
+    // fleuves au lieu d'un) ; ferme ruinée +1, erratique +1, charrette +1, carrière +1 ;
+    // tanière −4, mine −1. Aucun type ne meurt (A19 reste vert). ⚠ **Les DEUX louvières de plus ne sont pas du bruit** :
+    // un gîte à loups se pose en lisière d'un COIN DE CHASSE, et un coin de chasse exige de l'eau
+    // à `GROUND_WATER_NEAR` — la capillarité en ouvre donc de nouveaux. C'est la conséquence
+    // qu'on cherchait, lue à l'autre bout de la chaîne. Aucun type ne meurt (A19 reste vert).
+    // RE-ÉPINGLÉ 156 → 155 (LE PAYS DEVIENT ENDORÉIQUE, 2026-08-30) : la Racine s'érode, ses
+    // cuvettes deviennent de vrais bassins, et **la même chaîne que la ligne du dessus rejoue** —
+    // la capillarité ouvre encore des coins de chasse, donc des LOUVIÈRES : 13 → **16** (+3), et
+    // stèle 5 → 6 (les gués saillants se multiplient avec les fleuves). Le semis, lui, perd 5 au
+    // net (somme nulle : carrière, oratoire et verger −1 chacun…). Aucun type ne meurt : A19
+    // reste vert.
+    expect(lieuxDe(CARTE.map).length).toBe(155)
+    expect(lieuxDe(CARTE.map).filter((z) => z.kind === 'louviere').length).toBe(16)
+    expect(lieuxDe(CARTE.map).filter((z) => z.kind === 'stele').length).toBe(6)
+    expect(lieuxDe(CARTE.map).filter((z) => z.kind !== 'stele' && z.kind !== 'louviere').length).toBe(133)
     expect(lieuxDe(CARTE.map).filter((z) => z.kind === 'repaire').length).toBe(9)
   })
 })

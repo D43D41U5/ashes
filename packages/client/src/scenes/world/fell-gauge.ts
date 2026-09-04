@@ -60,7 +60,7 @@ export class FellGauge {
       // en LOCAL autour de (0,0) : la caméra transforme (scroll + zoom) sans décalage —
       // et un objet positionné à une tuile visible n'est jamais culé (comme un sprite).
       const a = tileFeetAnchor(node.tx, node.ty, TILE_PX)
-      const baseWorldY = a.py - (warp?.lift(node.tx + 0.5, node.ty + 1) ?? 0)
+      const baseWorldY = a.py - (warp?.lift(node.tx + 0.5, node.ty + 0.5) ?? 0)
       this.g.setPosition(a.px, baseWorldY + BELOW_WORLD)
 
       const x = -BAR_W / 2

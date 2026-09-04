@@ -51,6 +51,7 @@ import { isBlockedAt, makeIndexedIsBlockedAt } from './collision'
 import { applyDamage, die, startAttack, weaponKind, type Corpse } from './combat'
 import { emitEvent } from './events'
 import { fireState } from './fire'
+import { atteignableEntreEtages, niveauDuCorps, palierDuSol } from './etages'
 import { distSq } from './geometry'
 import { carryRatio, carryTier, countOf, isEmpty, removeItems, type ItemId } from './items'
 import { profondeurAt, terrainAt, zoneTierAt, type WorldMap } from './map'
@@ -288,15 +289,62 @@ export function placeHuntingGrounds(map: WorldMap, seed: number): { x: number; y
 
   const pts = poissonPoints(map.width, map.height, seed ^ 0x47524e44 /* 'GRND' */, FAUNA.GROUND_SPACING)
   const grounds: { x: number; y: number }[] = []
-  for (const p of pts) {
+  const servis = new Uint8Array(pts.length)
+  for (let k = 0; k < pts.length; k++) {
     // LE COIN DE CHASSE EST UN LIEU LOGIQUE (retour utilisateur) : le gibier ne
     // vit pas sur un éboulis. Il lui faut de l'HERBE (un biome ouvert, où l'on
     // broute) et de l'EAU (on boit tous les jours). Le semis de Poisson donne
     // l'ESPACEMENT ; ces deux conditions donnent l'ADRESSE.
+    const p = pts[k]!
     const sx = Math.floor(p.x)
     const sy = Math.floor(p.y)
     const g = snapCoin(sx, sy, FAUNA.GROUND_SNAP, paysVoulu(sx, sy))
-    if (g) grounds.push(g)
+    if (g) {
+      grounds.push(g)
+      servis[k] = 1
+    }
+  }
+
+  /**
+   * ═══ CHAQUE FAMILLE DE BIOME A SON COIN — le repêchage (décision d'Alexis, 2026-08-31) ═══
+   *
+   * Le semis ci-dessus tire AU PRORATA DES SURFACES : `paysVoulu` regarde ce qui domine autour de
+   * la graine, et le pré domine partout. MESURÉ sur huit graines du monde joué (après l'érosion
+   * du socle) : les centres tombent sur l'herbe 8 à 12 fois sur 17, le BOIS n'en obtient 0 à 2 —
+   * et **deux graines sur huit n'ont AUCUN coin au bois**. Or l'espèce d'un coin se décide au
+   * terrain de son CENTRE (`spawnAtGround`) : sur ces cartes-là, ni tétras ni sanglier de
+   * sous-bois ne naissent de la saison. La garde d'atteignabilité (`envol.test.ts` R21) tenait
+   * jusque-là sur trois graines choisies — c'était la chance, pas une règle.
+   *
+   * *Une espèce dont l'habitat existe sur la carte doit avoir un endroit où naître.* On ne touche
+   * donc ni au semis, ni au prorata : on REPÊCHE. Si une famille n'a aucun coin, on reprend les
+   * graines de Poisson que le premier tour n'a pas servies, dans l'ordre, et l'on donne la
+   * première qui sait porter cette famille — mêmes conditions (eau, dortoir, terrain), même
+   * espacement (une graine de Poisson est déjà écartée des autres), aucun tirage neuf.
+   *
+   * ⚠ Ça ne se déclenche QUE sur les cartes qui manquaient d'une famille : une carte déjà
+   * complète sort au coin près comme avant.
+   *
+   * ⚠⚠ ET IL CHERCHE PLUS LOIN QUE LE PREMIER TOUR, parce que la mesure l'a exigé : à
+   * `GROUND_SNAP` (30 tuiles), les seules graines qui ont du bois à portée sont précisément
+   * celles que le premier tour a déjà servies (17 sur 17, graine 909) — le repêchage ne trouvait
+   * rien. À `GROUND_SNAP × 3`, **toutes** les graines en ont. On élargit donc le rayon, et l'on
+   * garde l'écartement à la main : le coin repêché reste à une demi-maille des autres, sans quoi
+   * on doublerait un coin existant au lieu d'en ouvrir un nouveau.
+   */
+  const ECART2 = (FAUNA.GROUND_SPACING / 2) * (FAUNA.GROUND_SPACING / 2)
+  for (const veut of [OPEN_TERRAINS, WOOD_TERRAINS] as const) {
+    const dejaLa = grounds.some((g) => veut.includes(terrainAt(map, Math.floor(g.x), Math.floor(g.y))))
+    if (dejaLa) continue
+    for (let k = 0; k < pts.length; k++) {
+      const p = pts[k]!
+      const g = snapCoin(Math.floor(p.x), Math.floor(p.y), FAUNA.GROUND_SNAP * 3, veut)
+      if (!g) continue
+      if (grounds.some((q) => distSq(q.x, q.y, g.x, g.y) < ECART2)) continue
+      grounds.push(g)
+      servis[k] = 1
+      break
+    }
   }
   return grounds
 }
@@ -1153,6 +1201,22 @@ function damageOf(monster: Monster): number {
 }
 
 /** Le chef prend sa taille : ses PV montent, et ils sont pleins. */
+/**
+ * ═══ L'ALPHA FRAPPE ROUGE (spec combat R4nonies, décision d'Alexis du 2026-08-31) ═══
+ *
+ * Sa morsure est LOURDE, donc inannulable ; celle des loups de meute reste légère et se
+ * brise. C'est ce MÉLANGE au sein d'une même espèce qui fait la règle enseignable — « je
+ * coupe les suivants, j'esquive le chef » — là où une espèce toute jaune rendait le
+ * martèlement invincible (2/6 morts en 24 s) et une espèce toute rouge retirait au joueur
+ * l'échange qu'on venait de lui donner.
+ *
+ * Écrit en PRÉDICAT et non recopié aux trois points d'appel : la morsure d'une bête part
+ * de trois endroits (la traque, la riposte de clan, l'engagement), et une règle recopiée
+ * trois fois est une règle qui divergera. `alpha` est déjà porté par le monstre et voyage
+ * dans le snapshot — le télégraphe du client lit le même bit que la sim.
+ */
+const coupLourd = (monster: Monster): boolean => monster.alpha === true
+
 function promoteToAlpha(state: SimState, entityId: number, type: MonsterType): void {
   const e = state.entities.find((x) => x.id === entityId)
   if (e) e.hp = MONSTER_DEFS[type].hp * FAUNA.ALPHA_HP
@@ -1551,6 +1615,12 @@ function goHome(state: SimState, monster: Monster, entity: Entity): boolean {
   monster.wanderDx = 0
   monster.wanderDy = 0
 
+  // DE PLAIN-PIED SEULEMENT (spec `terrasses.md` T-A5) : elle rentre en ligne droite, et une
+  // ligne droite ne monte pas un mur de terrasse. La forêt d'en bas, vue du palier d'au-dessus,
+  // n'est pas « chez elle » — MESURÉ le 2026-09-03 (graine 2026) : un sanglier de palier 1 poussé
+  // contre la paroi vers une lisière de palier 0 à UNE tuile, 2 000 ticks sur 2 000 en `homing`,
+  // et l'anneau de 24 rebalayé à chaque tick.
+  const palier = palierDuSol(state.map, tx, ty)
   for (let r = 1; r <= FAUNA.HOMING_SEEK; r++) {
     let bestX = -1
     let bestY = -1
@@ -1563,6 +1633,7 @@ function goHome(state: SimState, monster: Monster, entity: Entity): boolean {
         const ny = ty + oy
         if (!inHabitat(state, monster.type, nx, ny)) continue
         if (!TERRAINS[terrainAt(state.map, nx, ny)]?.walkable) continue
+        if (palierDuSol(state.map, nx, ny) !== palier) continue
         const d = distSq(entity.x, entity.y, nx + 0.5, ny + 0.5)
         if (d < bestD || (d === bestD && (nx < bestX || (nx === bestX && ny < bestY)))) {
           bestD = d
@@ -2661,7 +2732,7 @@ export function faunaStep(
     delete monster.fleeFromY
     const d2 = distSq(entity.x, entity.y, attacker.x, attacker.y)
     if (d2 <= COMBAT.MELEE_ENGAGE_RANGE * COMBAT.MELEE_ENGAGE_RANGE) {
-      if (startAttack(state, entity, attacker.x - entity.x, attacker.y - entity.y, { windupTicks: def.windupTicks, damage: def.damage })) {
+      if (startAttack(state, entity, attacker.x - entity.x, attacker.y - entity.y, { windupTicks: def.windupTicks, damage: def.damage, lourd: coupLourd(monster) })) {
         entity.cooldownUntil = state.tick + def.attackCooldownTicks
       }
     } else {
@@ -3512,7 +3583,9 @@ function noteBlocked(
   // lectures sur l'index d'occupation (caché par carte), soit mille fois moins qu'un
   // A* — et c'est la question exacte que le chemin existe pour résoudre.
   const world = { map: state.map, structures: state.structures, nodes: state.nodes, moverVillageId: null, etat: state }
-  const bloque = makeIndexedIsBlockedAt(world)
+  // AU NIVEAU DU LOUP : une tuile d'un autre palier lui est barrée (T-R2) — la droite bute sur le
+  // mur de terrasse comme sur un rocher, et c'est l'A* qui trouve la rampe.
+  const bloque = makeIndexedIsBlockedAt(world, niveauDuCorps(state.map, entity))
   const vx = target.x - entity.x
   const vy = target.y - entity.y
   const pas = Math.max(1, Math.floor(Math.sqrt(vx * vx + vy * vy)))
@@ -3534,7 +3607,7 @@ function noteBlocked(
       if (distSq(entity.x, entity.y, oe.x, oe.y) > FAUNA.PACK_CALL_RADIUS * FAUNA.PACK_CALL_RADIUS) continue
       // Copie profonde : deux loups qui partagent le MÊME tableau se le consomment
       // mutuellement — le second suivrait les jalons que le premier a déjà mangés.
-      monster.path = chemin.map((p) => ({ tx: p.tx, ty: p.ty }))
+      monster.path = chemin.map((p) => (p.etage === undefined ? { tx: p.tx, ty: p.ty } : { tx: p.tx, ty: p.ty, etage: p.etage }))
       return
     }
   }
@@ -3543,8 +3616,15 @@ function noteBlocked(
   monster.pathAt = state.tick
   if (pack) for (const o of pack) o.pathAt = state.tick // la meute a payé, pas lui seul
 
+  // ⚠ **ET IL CHERCHE À TRAVERS LES ÉTAGES** (spec `etages.md` — décision d'Alexis, 2026-09-01).
+  // C'est ICI que « la faune monte » devient vrai : sans les deux étages, l'A* refusait la tuile
+  // d'arrivée (de la roche, au sol) et rendait `null` — le loup restait à tourner au pied de la
+  // butte. Avec eux, la rampe est un pas comme un autre et la meute s'y enfile.
   monster.path =
-    pathToward(world, entity.x, entity.y, Math.floor(target.x), Math.floor(target.y), FAUNA.PATH_EXPLORE) ?? []
+    pathToward(
+      world, entity.x, entity.y, Math.floor(target.x), Math.floor(target.y), FAUNA.PATH_EXPLORE,
+      niveauDuCorps(state.map, entity), niveauDuCorps(state.map, target),
+    ) ?? []
 }
 
 /* ── Le prédateur : la meute de loups (spec faune R11) ────────────────────── */
@@ -4096,7 +4176,7 @@ export function wolfStep(
       monster.targetId = aggressor.id
       const d2 = distSq(entity.x, entity.y, aggressor.x, aggressor.y)
       if (d2 <= COMBAT.MELEE_ENGAGE_RANGE * COMBAT.MELEE_ENGAGE_RANGE) {
-        if (startAttack(state, entity, aggressor.x - entity.x, aggressor.y - entity.y, { windupTicks: def.windupTicks, damage: damageOf(monster) })) {
+        if (startAttack(state, entity, aggressor.x - entity.x, aggressor.y - entity.y, { windupTicks: def.windupTicks, damage: damageOf(monster), lourd: coupLourd(monster) })) {
           entity.cooldownUntil = state.tick + def.attackCooldownTicks
         }
       } else {
@@ -4234,7 +4314,7 @@ export function wolfStep(
 
     // À portée de crocs : il mord. Plus rien à calculer. (L'alpha mord plus fort.)
     if (d2 <= COMBAT.MELEE_ENGAGE_RANGE * COMBAT.MELEE_ENGAGE_RANGE) {
-      if (startAttack(state, entity, target.x - entity.x, target.y - entity.y, { windupTicks: def.windupTicks, damage: damageOf(monster) })) {
+      if (startAttack(state, entity, target.x - entity.x, target.y - entity.y, { windupTicks: def.windupTicks, damage: damageOf(monster), lourd: coupLourd(monster) })) {
         entity.cooldownUntil = state.tick + def.attackCooldownTicks
       }
       return
@@ -4529,6 +4609,23 @@ function chooseQuarry(
   let bestScore = Infinity
   for (const q of quarry) {
     if (q.id === entity.id || q.hp <= 0) continue
+    // ═══ UN PLANCHER SE TRAVERSE PAR UNE RAMPE, PAS PAR LA ROCHE (spec `etages.md` E-R5) ═══
+    //
+    // Le loup au pied de la mesa ne CHOISIT pas celui qui est dessus — et parce que la cible
+    // est le verrou de tout le pas du loup (pas de cible : pas de hurlement, pas de traque,
+    // pas de bond, pas de morsure), gater ici gate toute la chasse d'un seul geste. La règle
+    // n'est PAS recopiée : elle vit dans `atteignableEntreEtages`, et c'est délibéré — une
+    // seconde écriture, c'est le jour où le loup mord à travers la roche parce qu'un escalier
+    // est à côté. Elle sort sur la première comparaison quand les deux sont au même étage,
+    // donc tous les appels d'aujourd'hui la paient au prix d'un `===`.
+    // …ET ELLE NE VAUT QUE POUR L'ACQUISITION. La proie qu'on TIENT DÉJÀ ne se perd pas parce
+    // qu'elle a monté une rampe — c'est la doctrine de cette fonction, écrite quatre lignes plus
+    // bas pour la furtivité et la pluie : *« une meute qui vous a choisi ne vous perd ni parce que
+    // vous rampez, ni parce qu'il pleut sur vous »*. Un plateau n'est donc pas un sanctuaire : il
+    // est un DÉTOUR — la meute repart par la rampe (l'A* la trouve, `pathToward` traverse les
+    // étages), et le temps qu'elle met à en faire le tour est ce que la hauteur vous achète.
+    if (q.id !== monster.targetId
+      && !atteignableEntreEtages(state.map, entity.x, entity.y, niveauDuCorps(state.map, entity), q.x, q.y, niveauDuCorps(state.map, q))) continue
     // Qui se tient au Feu est intouchable : la meute ne le choisit pas, et
     // l'abandonne s'il l'atteint en fuyant.
     if (isAvatar(q.id) && underFireWard(state, q)) continue

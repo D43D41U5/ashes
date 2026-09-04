@@ -262,7 +262,19 @@ export interface HudState {
    *  `error`) : UIScene lève le voile de mort quand `at` change. `cause` : froid/faim/
    *  null (combat) ; `byEntityId` + `killerType` (le monstre du snapshot, ou null)
    *  résolvent la ligne exacte. `null` = pas de mort en attente. */
-  deathMoment: { cause: 'cold' | 'hunger' | 'lightning' | 'cendre' | null; byEntityId: number; killerType: string | null; hadLoot: boolean; at: number } | null
+  deathMoment: { cause: 'cold' | 'hunger' | 'lightning' | 'cendre' | 'inconnue' | null; byEntityId: number; killerType: string | null; hadLoot: boolean; at: number } | null
+  /**
+   * JE SUIS À TERRE — l'état, pas l'événement (décision d'Alexis, 2026-08-31).
+   *
+   * Depuis que la sim laisse le corps au sol jusqu'au geste « SE RELEVER », « mort » est une
+   * situation qui DURE, lue du snapshot (`downedAt`). C'est elle qui tient le voile levé, et
+   * c'est sa retombée — donc la sim CONFIRMANT le réveil — qui le fait tomber : le voile ne
+   * s'en va plus sur une décision locale, il s'en va quand on est vraiment debout.
+   *
+   * Elle rattrape aussi le cas que l'événement ne peut pas voir : une partie RECHARGÉE alors
+   * qu'on gisait. `entity_died` est passé depuis longtemps ; l'état, lui, est encore là.
+   */
+  playerDown: boolean
   /**
    * LE VOILE DE MORT EST-IL ENCORE LEVÉ ? (décision d'Alexis, 2026-08-20, question ⑥)
    *
@@ -477,7 +489,7 @@ export const CLES_HUD: Record<keyof HudState, true> = {
   craftQueue: true, stationsInRange: true, seen: true, hunger: true, temperature: true, skills: true, pecheCarnet: true, carnetEncyclo: true,
   hp: true, stamina: true, exhausted: true, wounds: true, selected: true, buildMaterial: true, buildEdge: true, demolir: true,
   marteau: true,
-  foundableFire: true, upgradableFire: true, deathMoment: true, deathVeilOpen: true, corpseHint: true,
+  foundableFire: true, upgradableFire: true, deathMoment: true, deathVeilOpen: true, playerDown: true, corpseHint: true,
   alertes: true, conseils: true, decouvertes: true,
   characterMenuOpen: true, characterTab: true, uiTyping: true, chatTyping: true, debugTyping: true, chatLog: true,
   chatDraft: true, openContainer: true, openContainerView: true, openFire: true, openFireView: true,

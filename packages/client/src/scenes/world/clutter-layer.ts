@@ -5,8 +5,9 @@
  * ici on ne fait que du pooling Phaser et du placement.
  */
 import Phaser from 'phaser'
-import { poiClearings, VENT, type Structure, type WorldMap } from '@ashes/sim'
-import { clutterDepth, GROUND_PROP_DEPTH, TILE_PX } from '../../render/framing'
+import { poiClearings, TERRAIN_CLIFF, TERRAIN_ROCK, terrainAEtage, VENT, type Structure, type WorldMap } from '@ashes/sim'
+import { roleDeFalaise } from '../../render/cliff-art'
+import { alphaDeDecouvert, clutterDepth, decalageDEtage, GROUND_PROP_DEPTH, LIFT_TUILES, strateDEtage, TILE_PX, type Decouvert } from '../../render/framing'
 import { PROP_ASPECT, type PropKind, type SampleTerrain } from '../../render/clutter'
 import { MemoireDuDecor } from '../../render/clutter-memo'
 import { terrainCendre } from '@ashes/sim'
@@ -89,6 +90,16 @@ export class ClutterLayer {
    *  désynchroniserait un index partagé et laisserait une ombre orpheline allumée. */
   private readonly shadowPool: Phaser.GameObjects.Image[] = []
   private readonly sample: SampleTerrain
+  /**
+   * LE DÉCOUVERT, quand le regard vient d'un étage plus bas (spec `etages.md` E-R20). Posé par
+   * `WorldScene`, à `null` sinon — **c'est l'appelant qui tranche l'appartenance**, comme pour
+   * la couche du plateau. Sans lui, une touffe de mesa restait OPAQUE au-dessus d'un plancher
+   * devenu creux : des fleurs en suspension dans le noir, vues à la capture.
+   */
+  decouvert: Decouvert | null = null
+  /** Cette tuile est-elle un DESSUS de plateau ? (voir le constructeur — la même condition
+   *  décide de ce qui y pousse et de la rangée où on le peint.) */
+  private readonly surLEtage!: (tx: number, ty: number) => boolean
   /** Les clairières des lieux — MÊME fonction que celle qui bannit les nœuds côté
    *  sim (`poiClearings`). Une source unique : deux calculs divergents feraient
    *  pousser des touffes dans une clairière vide d'arbres. */
@@ -113,8 +124,37 @@ export class ClutterLayer {
     private readonly seed: number,
     private readonly warp: Warp,
   ) {
+    // ⚠ **LE DÉCOR LIT L'ÉTAGE OÙ IL Y EN A UN** (spec `etages.md` — *« on construit une map en
+    // terrasse »*, Alexis 2026-09-01). Sans cette ligne, un plateau de mesa restait NU : son
+    // terrain d'étage 0 est `TERRAIN_ROCK`, qui n'a même pas d'entrée dans la table du décor —
+    // pendant que l'éboulis et le genévrier qu'il porte VRAIMENT à l'étage +1 en ont une depuis
+    // toujours. Ce n'était pas un manque d'art, c'était un lecteur qui regardait au mauvais étage.
+    // ⚠ **MAIS PAS SUR CE QU'ON VOIT DE FACE** — Alexis, 2026-09-01 : *« je vois du clutter de
+    // champs sur les falaises »*, et c'était exactement ça. Les `PAROI_RANGEES` dernières rangées
+    // d'un chapeau sont son BORD : la sim y laisse marcher, le rendu les montre en PAROI, et le
+    // décor de l'étage y semait donc genévrier et cailloux **sur le mur**, en apesanteur. C'est
+    // la même règle qu'au semis des nœuds (`zone-content.ts`, « rien ne pousse sur la lèvre sud
+    // d'un plateau ») : un seul fait de monde, deux conséquences qui tombent ensemble.
+    const roche = (x: number, y: number): boolean => {
+      if (x < 0 || y < 0 || x >= map.width || y >= map.height) return true
+      const t = map.terrain[y * map.width + x]
+      return t === TERRAIN_CLIFF || t === TERRAIN_ROCK
+    }
+    // ⚠ **ET CE QUI POUSSE LÀ-HAUT SE DESSINE LÀ-HAUT.** Le prédicat est SORTI de `sample` pour
+    // être relu au dessin : sans lui, un genévrier de mesa était peint à sa rangée LOGIQUE, donc
+    // `LIFT_TUILES` rangées au sud de la surface qui le porte — planté dans la paroi. Une seule
+    // condition, deux lectures : ce qui décide où ça pousse décide où ça se voit.
+    // DEPUIS LES TERRASSES (spec `terrasses.md` T-R7) : le chapeau d'une mesa est l'étage
+    // `palier + 1` de sa tuile, pas l'étage 1 — une mesa posée sur la terrasse du palier 2 porte
+    // son plateau au niveau 3. Le palier se lit AU CENTRE de la tuile (`warp.ts`).
+    this.surLEtage = (tx, ty) => {
+      if (tx < 0 || ty < 0 || tx >= map.width || ty >= map.height) return false
+      const chapeau = warp.palier(tx + 0.5, ty + 0.5) + 1
+      return terrainAEtage(map, chapeau, tx, ty) !== 0 && roleDeFalaise(roche, tx, ty).role === 'dessus'
+    }
     this.sample = (tx, ty) => {
       if (tx < 0 || ty < 0 || tx >= map.width || ty >= map.height) return -1
+      if (this.surLEtage(tx, ty)) return terrainAEtage(map, warp.palier(tx + 0.5, ty + 0.5) + 1, tx, ty)
       return map.terrain[ty * map.width + tx] ?? -1
     }
     this.memoire = new MemoireDuDecor(seed, this.sample)
@@ -208,7 +248,7 @@ export class ClutterLayer {
           //
           // ⚠ La première version TAISAIT tout : le sol devenait parfaitement lisse au milieu d'un
           //   monde dense, ce qui se lit comme un bug d'affichage, pas comme une terre morte.
-          const brut = this.map.terrain[idx] ?? -1
+          const brut = this.sample(tx, ty)
           const cendree = this.tuileCendree?.(tx, ty) === true
           const terrain = cendree ? (terrainCendre(brut) ?? brut) : brut
           // ⚠ LA FUMEROLLE N'EST PAS DU DÉCOR : c'est un NŒUD (on y récolte du sel), donc
@@ -223,6 +263,14 @@ export class ClutterLayer {
           // `null` : la couche du gel n'a pas encore relevé cette tuile — on dessine tel quel, sans
           // inscrire de bascule (sinon chaque arrivée jouerait un gel sur un pré déjà gelé).
           const gele = this.floreGeleeAt === null ? null : this.floreGeleeAt(tx, ty)
+          // LE SOL DE LA TUILE (T-R7) : son palier et le lift qui va avec, lus AU CENTRE de la
+          // tuile — le pied d'un prop (`ty + 1`) mord sur la tuile du sud, qui au bord d'une
+          // terrasse est deux étages plus bas (`warp.ts`). Et l'ÉTAGE du décor : le palier, plus
+          // un si la tuile est un dessus de mesa — même geste qu'un corps et qu'un nœud.
+          const palier = this.warp.palier(tx + 0.5, ty + 0.5)
+          const lift = this.warp.lift(tx + 0.5, ty + 0.5)
+          const eProp = palier + (this.surLEtage(tx, ty) ? 1 : 0)
+          const strate = strateDEtage(eProp, palier)
           let rang = 0
           for (const p of props) {
             if (used >= MAX_SPRITES) break
@@ -244,7 +292,7 @@ export class ClutterLayer {
                 if (pose.eclat) {
                   // La gerbe : GIVRE quand c'est le gel qui prend, SÈVE dans tous les autres
                   // sens — une colchique qui se ferme aux Pluies ne givre pas.
-                  this.onGivre?.((tx + 0.5 + p.ox) * TILE_PX, (ty + 1 + p.oy) * TILE_PX - this.warp.lift(tx + 0.5 + p.ox, ty + 1 + p.oy),
+                  this.onGivre?.((tx + 0.5 + p.ox) * TILE_PX, (ty + 1 + p.oy) * TILE_PX - lift + decalageDEtage(eProp, palier),
                     TILE_PX * p.scale, now, idx * 31 + r + 1, gele !== true)
                 }
                 if (!pose.visible) continue
@@ -289,7 +337,10 @@ export class ClutterLayer {
             // les acteurs. Sans ce lift, un prop est dessiné à sa position PLATE :
             // sur un versant à 0,8 d'élévation il glisse de 120 px vers le bas —
             // les touffes de la berge finissent par flotter sur l'eau.
-            const sy = feetY * TILE_PX - this.warp.lift(feetX, feetY)
+            // L'ÉTAGE (spec `etages.md`) : le décor d'un dessus de mesa monte avec son plancher,
+            // et change de STRATE — même geste qu'un corps et qu'un nœud, à la même source.
+            // Le lift du PALIER et le décalage PROPRE à l'étage s'additionnent (`warp.ts`).
+            const sy = feetY * TILE_PX - lift + decalageDEtage(eProp, palier)
             sprite.setPosition(feetX * TILE_PX, sy)
             // LE STRETCH DU VENT NORD-SUD (essai, 2026-08-25) : une rotation ne sait pencher
             // qu'à gauche ou à droite, la HAUTEUR APPARENTE dit le reste. Il se multiplie à
@@ -342,7 +393,13 @@ export class ClutterLayer {
             // s'ordonnent par leur décalage sub-tuile, pas par l'ordre du pool.
             // (INV-2 : ce qui distingue le décor des nœuds est la teinte, pas la
             // couche ; à pieds égaux le nœud passe devant.)
-            sprite.setDepth(FLAT_PROPS.has(p.kind) ? GROUND_PROP_DEPTH : clutterDepth(feetY, TILE_PX))
+            sprite.setDepth((FLAT_PROPS.has(p.kind) ? GROUND_PROP_DEPTH : clutterDepth(feetY, TILE_PX)) + strate)
+            // ⚠ POSÉ CHAQUE IMAGE : le sprite est POOLÉ, et un slot qui a servi une touffe de mesa
+            // fondue repeindrait la suivante à 0,22 au milieu du pré. Le niveau du prop est passé
+            // au découvert, qui ne cède que pour ce qui est PLUS HAUT que le regard (T-R8) : au
+            // niveau du joueur ou dessous, la réponse est 1 sans calcul.
+            // ⚠ Le CENTRE DESSINÉ de la case du prop, comme la couche : `feetY` est son PIED.
+            sprite.setAlpha(alphaDeDecouvert(this.decouvert, feetX, feetY - 0.5 - LIFT_TUILES * eProp, eProp))
             sprite.setVisible(true)
             // L'OMBRE DE CONTACT — même flaque, même règle (grand diamètre sur le pixel le plus bas)
             // et même depth-under que nœuds/acteurs, mais pool et compteur À PART (tous les props
@@ -363,7 +420,7 @@ export class ClutterLayer {
               // la flaque d'un prop mince. Les props pleins (absents de la table) gardent `displayWidth`.
               const artW = SHADOW_PROP_WIDTH[p.kind]
               const widthBasis = artW !== undefined ? artW * sprite.scaleX : sprite.displayWidth
-              positionShadow(shadow, feetX * TILE_PX, sy, widthBasis, clutterDepth(feetY, TILE_PX), gapWorld)
+              positionShadow(shadow, feetX * TILE_PX, sy, widthBasis, clutterDepth(feetY, TILE_PX) + strate, gapWorld)
               shadowsUsed++
             }
           }

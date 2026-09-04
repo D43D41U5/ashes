@@ -27,6 +27,20 @@ function act(sim: SimState, id: number, action: PlayerAction): void {
   step(sim, [{ entityId: id, dx: 0, dy: 0, action }])
 }
 
+/**
+ * SE RELEVER, PARCE QUE C'EST CE QU'UN JOUEUR FAIT (2026-08-31).
+ *
+ * `die` laisse désormais le corps À TERRE : c'est le geste « SE RELEVER » qui le relève, et
+ * le bot joue avec les mêmes actions qu'un humain. Sans ce geste, un seul accident de nuit
+ * le clouerait au sol pour tout le reste du banc — et l'on mesurerait un cadavre en croyant
+ * mesurer une session. Rend `true` s'il a fallu se relever (le tick est consommé par là).
+ */
+function debout(sim: SimState, id: number): boolean {
+  if (me(sim).downedAt === undefined) return false
+  act(sim, id, { type: 'respawn' })
+  return true
+}
+
 /** Récolte un nœud jusqu'à `want`, en respectant le rechargement. On se PLANTE sur le
  *  nœud avant chaque coup : le monde BOUGE désormais (un buisson/arbre épuisé rouvre
  *  ailleurs, spec recolte-vivante) — « qui joue bien » SUIT la ressource, il ne reste pas
@@ -35,6 +49,11 @@ function recolter(sim: SimState, id: number, nodeId: number, item: 'wood' | 'ber
   for (let g = 0; g < 400 && countOf(me(sim).inventory, item) < want; g++) {
     const node = sim.nodes.find((n) => n.id === nodeId)!
     if (node.stock <= 0) break
+    // ⚠ UN CORPS À TERRE NE CUEILLE PAS (2026-08-31). La sim refuse désormais toute action
+    // à un avatar tombé : sans cette sortie, la tournée continuait de frapper dans le vide
+    // — 400 tours × le rechargement, PAR NŒUD. Mesuré : le banc de la cueillette passait de
+    // ~40 s à 263 s, et mourait sur son propre chronomètre.
+    if (me(sim).downedAt !== undefined) break
     me(sim).x = node.tx + 0.5
     me(sim).y = node.ty + 0.5
     act(sim, id, { type: 'harvest', nodeId })
@@ -129,6 +148,7 @@ describe('LA SESSION SOLO — le jeu est-il jouable ?', () => {
     //    quelqu'un qui ne subit pas.
     let ragouts = 0
     for (let t = 0; t < 2 * TICKS_PER_CYCLE; t++) {
+      if (debout(sim, id)) continue // tombé cette nuit : on se relève, comme un joueur
       // La tournée des nœuds, toutes les ~30 s : c'est ce que fait n'importe qui
       // qui n'a pas envie de mourir. Les buissons repoussent lentement — il faut
       // donc y retourner SOUVENT, et ne rien laisser derrière soi.
@@ -186,7 +206,10 @@ describe('LA SESSION SOLO — le jeu est-il jouable ?', () => {
     // penser : la faim ne tuait pas, et un buisson valait trois heures de survie.
     let morts = 0
     for (let t = 0; t < 2 * TICKS_PER_CYCLE; t++) {
-      step(sim, [])
+      // Il ne fait rien D'UTILE — mais il se relève : c'est le seul geste qui reste à qui
+      // n'en fait aucun, et sans lui la « boucle de mort » gardée plus bas ne pourrait même
+      // pas se produire (on compterait une mort, puis un cadavre immobile).
+      if (!debout(sim, id)) step(sim, [])
       for (const e of drainEvents(sim)) {
         if (e.type === 'entity_died' && e.entityId === 1 && e.cause === 'hunger') morts += 1
       }
@@ -217,9 +240,18 @@ describe('LA SESSION SOLO — le jeu est-il jouable ?', () => {
     // AVANT (un buisson = 171 minutes de survie).
     let baiesMangees = 0
     let morts = 0
+    // « Il a rasé ses buissons » se relève PENDANT le banc, pas à la fin (2026-09-04) : voir
+    // le commentaire de la garde, en bas.
+    const rases = new Set<number>()
     for (let t = 0; t < 2 * TICKS_PER_CYCLE; t++) {
+      for (const n of sim.nodes) if (n.type === 'berry_bush' && n.stock === 0) rases.add(n.id)
+      // ⚠ CE `break` ÉTAIT MORT, ET IL EST DEVENU VIVANT (2026-08-31). Tant que `die`
+      // relevait tout seul, `hp <= 0` n'était jamais VU d'un tick à l'autre : la garde ne
+      // coupait rien. Depuis que le corps reste à terre, elle arrêtait le banc à la première
+      // nuit — et l'on mesurait un cadavre au lieu d'une cueillette. Il se relève, comme un
+      // joueur, et continue de cueillir : c'est bien ça qu'on veut voir échouer.
+      if (debout(sim, id)) continue
       const e = me(sim)
-      if (e.hp <= 0) break
       if (e.hunger < 40 && countOf(e.inventory, 'berries') > 0) {
         act(sim, id, { type: 'eat', item: 'berries' })
         baiesMangees += 1
@@ -255,6 +287,17 @@ describe('LA SESSION SOLO — le jeu est-il jouable ?', () => {
     expect(baiesMangees).toBeGreaterThanOrEqual(1)
     expect(morts).toBeGreaterThanOrEqual(1) // la nuit sans feu n'a pas pardonné
     expect(me(sim).hunger).toBeLessThan(60) // il vit sur le fil, jamais rassasié
-    expect(sim.nodes.filter((n) => n.type === 'berry_bush').reduce((s, n) => s + n.stock, 0)).toBe(0)
+    // IL A RASÉ SES BUISSONS — CHACUN, AU MOINS UNE FOIS (2026-09-04 ; c'était « stock total
+    // nul À LA FIN »). Le stock final n'est pas une mesure de la cueillette : dès la première
+    // nuit, ce montage est une BOUCLE DE MORT — quelque 3 000 morts en deux cycles, ses propres
+    // Cendreux campent le point de naissance et le tuent en une dizaine de ticks (relevé à la
+    // sonde, à HEAD 99b9654 comme après le lot étages/terrasses). Un buisson qui repousse le
+    // deuxième jour n'est alors rasé QUE si le bot se trouve debout à l'instant exact d'une
+    // fenêtre `t % 300` : à HEAD la phase de la boucle le voulait bien (5 graines sur 5) ; le
+    // lot du 30 août → 3 sept. décale le flux RNG et 2 graines sur 4 laissent 2 ou 7 baies sur
+    // un buisson — une garde qui mesurait la PHASE d'une boucle de mort, pas l'économie. Ce qui
+    // porte le propos, c'est qu'il a vidé chaque buisson au moins une fois : la cueillette a
+    // été faite à fond, et elle n'a pas suffi.
+    for (const n of sim.nodes) if (n.type === 'berry_bush') expect(rases.has(n.id), `buisson ${n.id} jamais rasé`).toBe(true)
   })
 })

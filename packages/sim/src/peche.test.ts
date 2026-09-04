@@ -219,7 +219,20 @@ describe('A1/A2 — les coins de pêche existent, sont joignables, et viennent e
     // la rivière se creusent dans le socle, que ce chantier ne touche pas). C'est le SEMIS qui
     // s'est rebrassé : le terrain a changé partout, donc le flux du PRNG des nœuds avec lui, et
     // le compte a re-tiré dans le même régime (une poignée sur la rivière, un à trois par lac).
-    expect(coins.length).toBeLessThanOrEqual(45)
+    // 45 → 90 le 2026-08-30 (HYDROLOGIE DÉRIVÉE) : là, c'est bien LA PÊCHERIE QUI S'EST
+    // AGRANDIE, et pas le semis qui s'est rebrassé. L'eau de la Racine passe de 3 % à 14 % du
+    // pays, avec sept à neuf fleuves au lieu d'un et des lacs de la taille de leur cuvette : le
+    // compte MESURÉ monte à 82 sur la seed 2026. La borne reste un plafond de LISIBILITÉ (elle
+    // dit « on n'a pas semé un coin tous les dix mètres »), pas un réglage.
+    // 90 → 130 le 2026-08-30 (LE PAYS DEVIENT ENDORÉIQUE — `socle.ts`) : la Racine s'érode, ses
+    // cuvettes deviennent de vrais bassins, et le compte MESURÉ passe de 82 à **127** sur la
+    // seed 2026. Même nature que la ligne du dessus : c'est la pêcherie qui s'agrandit, pas le
+    // semis qui se rebrasse.
+    // ⚠ CONSÉQUENCE D'ÉQUILIBRAGE À TRANCHER, signalée et TOUJOURS PAS décidée (elle s'aggrave :
+    // 45 → 82 → 127 en trois chantiers) : le joueur a désormais près de TROIS FOIS plus
+    // d'endroits où pêcher qu'au calibrage d'août. Si la pêche en devient trop facile, ce sont
+    // `CONTENU.PECHE_*` (espacement, coins par lac) qu'il faut resserrer — pas cette borne.
+    expect(coins.length).toBeLessThanOrEqual(130)
     const maxAutre = Math.max(...autres.map((n) => n.id))
     for (const k of coins) {
       expect(k.id, 'en queue : aucun nœud d’avant ne bouge (P5)').toBeGreaterThan(maxAutre)

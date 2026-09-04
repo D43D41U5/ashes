@@ -111,8 +111,8 @@ describe('la dérive du bosquet (D1)', () => {
     expect(Math.abs(tree.tx - 24)).toBeLessThanOrEqual(BALANCE.RELOCATE_RADIUS)
     expect(Math.abs(tree.ty - 24)).toBeLessThanOrEqual(BALANCE.RELOCATE_RADIUS)
     // …et l'index tuile→nœud suit : l'ancienne libre, la nouvelle occupée.
-    expect(nodeAt(sim.nodes, 24, 24)).toBeUndefined()
-    expect(nodeAt(sim.nodes, tree.tx, tree.ty)).toBe(tree)
+    expect(nodeAt(sim.map, sim.nodes, 24, 24)).toBeUndefined()
+    expect(nodeAt(sim.map, sim.nodes, tree.tx, tree.ty)).toBe(tree)
   })
 
   it('A3 : un nœud de PIERRE ne bouge jamais (repousse sur place)', () => {

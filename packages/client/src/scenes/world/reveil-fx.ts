@@ -313,6 +313,8 @@ interface Grain {
   vy: number
   vz: number
   ne: number
+  /** La strate du sol qui se rompt : la terre vole dans son monde (terrasse comprise). */
+  strate: number
 }
 
 /** Ce qu'il faut pour peindre un monticule — la vue le poole, comme les terriers. */
@@ -617,8 +619,16 @@ export class ReveilFx {
    *  terrain et pas sa couleur : c'est sa FAMILLE qui décide de ce qui sort du trou, et la
    *  famille ne se retrouve pas dans une couleur. */
   private terrainSous: ((x: number, y: number) => number | null) | undefined
+  /** LE RELIEF sous une tuile — posé par la vue : le décalage écran du sol (px) et sa strate,
+   *  pour que la terre d'une terrasse sorte de SA surface, pas deux rangées plus bas. */
+  private reliefSous: ((x: number, y: number) => { lift: number; strate: number }) | undefined
 
   constructor(private readonly scene: Phaser.Scene) {}
+
+  /** La vue donne son accès au relief (`Warp.liftSol` / `strateSol`). */
+  setReliefSous(f: (x: number, y: number) => { lift: number; strate: number }): void {
+    this.reliefSous = f
+  }
 
   /** La vue donne son accès au terrain : c'est elle qui porte la carte (`setPeuplement`). */
   setTerrainSous(f: (x: number, y: number) => number | null): void {
@@ -687,8 +697,9 @@ export class ReveilFx {
     const rnd = semis(Math.round(x * 977) + Math.round(y * 3571) + stade * 7919 + 1)
     const ton = this.terre(x, y)
     const combien = Math.max(2, Math.round(LOI_TERRE.n * force))
+    const relief = this.reliefSous?.(x, y) ?? { lift: 0, strate: 0 }
     const px = x * TILE_PX
-    const py = y * TILE_PX
+    const py = y * TILE_PX - relief.lift
     for (let i = 0; i < combien; i++) {
       // L'éventail est ÉTALÉ, pas tiré au sort (même raison que la gerbe de récolte : un
       // trou dans une poignée de grains se voit). Le désalignement seul est aléatoire.
@@ -704,7 +715,7 @@ export class ReveilFx {
         .image(Math.round(px), Math.round(py), '__WHITE')
         .setDisplaySize(cote, cote)
         .setTint(teinte)
-        .setDepth(ySortDepth(y, TILE_PX, TIE_ACTOR))
+        .setDepth(relief.strate + ySortDepth(y, TILE_PX, TIE_ACTOR))
       img.setLighting(this.lighting)
       this.grains.push({
         img,
@@ -717,6 +728,7 @@ export class ReveilFx {
         vy: Math.sin(a) * v * 0.6,
         vz,
         ne: now,
+        strate: relief.strate,
       })
     }
   }
@@ -749,7 +761,7 @@ export class ReveilFx {
         g.vz = 0
       }
       g.img.setPosition(Math.round(g.x), Math.round(g.y - g.z))
-      g.img.setDepth(ySortDepth(g.y / TILE_PX, TILE_PX, TIE_ACTOR))
+      g.img.setDepth(g.strate + ySortDepth(g.y / TILE_PX, TILE_PX, TIE_ACTOR))
       // Elle ne s'éteint que sur le dernier tiers : une motte qui pâlit dès son départ lit
       // comme de la fumée, pas comme de la terre.
       g.img.setAlpha(Math.min(1, (1 - age / LOI_TERRE.vie) * 3))
