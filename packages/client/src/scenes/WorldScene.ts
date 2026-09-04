@@ -1961,6 +1961,14 @@ export class WorldScene extends Phaser.Scene {
     // ET ELLE S'ÉTEINT AVEC L'ASTRE QUI LA JETTE (Alexis : « elle devrait disparaître en fade au
     // crépuscule »). Sans snapshot : pleine, comme avant.
     this.view.forceOmbre = this.lastTime ? forceDeLOmbre(hour, jourLune) : 1
+    // ET LES FALAISES PRENNENT LE MÊME ASTRE (2026-09-04) : pied et flanc à la force de l'ombre,
+    // flanc du côté que dicte la dérive. Même ligne, même heure — jusque-là la terrasse restait
+    // figée « soleil au nord-ouest, pleine à toute heure » pendant que le rocher à son pied
+    // couchait son ombre à l'ouest le matin : deux soleils sur le même sol.
+    if (this.cliffs) {
+      this.cliffs.deriveOmbre = this.view.deriveOmbre
+      this.cliffs.forceOmbre = this.view.forceOmbre
+    }
     if (this.lastTime) {
       rafraichirCimes(this, this.lastTime.seasonDay)
       // ET LE RENDU LIT LE MÊME CRAN QUE LA CUISSON — un seul écrivain (cf. `cranSaison`).

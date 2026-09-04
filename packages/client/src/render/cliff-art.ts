@@ -57,6 +57,7 @@ import type Phaser from 'phaser'
 import { hash2, RELIEF, TERRAIN_ROCK } from '@ashes/sim'
 import { COTE_E, COTE_N, COTE_O, COTE_S, PAVE } from './paves'
 import { CHUTE_FRAMES, CHUTE_PHASES, CHUTE_RANGEES, dessinDeChute, dessinDEcume, ECUME_FRAMES } from './chute-art'
+import { CRANS } from './ombre-socle'
 import { TERRAIN_COLORS } from './terrain-colors'
 
 /**
@@ -288,6 +289,8 @@ export function dessinDeParoi(mask: number, variant: number): RectArt[] {
  * d'aérographe nulle part). Elle se pose sur la tuile de sol qui suit le pied.
  */
 export const OMBRE_CRANS: readonly (readonly [number, number])[] = [[8, 0.46], [6, 0.22], [2, 0.1]]
+/** Le ton de toute ombre de falaise (pied et flanc) — un noir bleuté, pas un noir. */
+export const OMBRE_TON = 0x0a090e
 
 /** Le rôle d'une tuile de falaise, lu du terrain — jamais stocké. */
 export type RoleFalaise = 'dessus' | 'paroi'
@@ -365,14 +368,49 @@ export const LEVRE = {
   ARETE_N_PX: 2,
   ARETE_LAT_PX: 1,
   /**
-   * L'OMBRE DU FLANC EST sur le sol du bas — LA MÊME que l'ombre du pied (`OMBRE_CRANS`), couchée
-   * vers l'est : le soleil est au nord-ouest à ~45°, une ombre jetée à l'est est aussi large que
-   * celle jetée au sud. Elle a d'abord été la moitié (4/3/1) ; à l'A/B (2026-09-04) l'œil prenait
-   * ce liseré pour le contour de la lèvre, et le bord est se lisait plat, pas en chute. Trois
-   * crans, jamais un dégradé. Le flanc OUEST, lui, prend le jour : rien.
+   * L'OMBRE DU FLANC sur le sol du bas, À SON PLEIN — LA MÊME que l'ombre du pied
+   * (`OMBRE_CRANS`), couchée : une ombre jetée de côté est aussi large que celle jetée au sud.
+   * Elle a d'abord été la moitié (4/3/1) ; à l'A/B (2026-09-04) l'œil prenait ce liseré pour le
+   * contour de la lèvre, et le bord est se lisait plat, pas en chute. Trois crans, jamais un
+   * dégradé.
+   *
+   * ⚠ **QUEL FLANC, ET QUELLE LARGEUR, C'EST L'ASTRE QUI LE DIT** (2026-09-04, seconde décision
+   * du jour). La table ci-dessus est le plein ; `dessinDuFlanc(cran)` la couche sur `2 × |cran|`
+   * pixels, où `cran` est **le cran de cisaillement des socles** (`ombre-socle.cranDeDerive`,
+   * `CRANS` = 8) : même loi, même quantification, même image de bascule. Négatif = l'ombre part
+   * à l'OUEST (matin), positif = à l'EST (soir), zéro au zénith = pas de flanc. Jusqu'à cette
+   * décision le flanc était figé « soleil au nord-ouest, flanc est, plein à toute heure » :
+   * MESURÉ (graine 2026, rocher au pied d'une marche), à 9 h la coulée du rocher partait 8 texels
+   * à l'ouest quand la bande de la marche restait plantée à l'est, alpha 1,00 quand le socle
+   * s'éteignait à 0,30 au couchant — deux soleils sur le même sol.
    */
   OMBRE_FLANC: OMBRE_CRANS,
 } as const
+
+/** Les crans du flanc = ceux du cisaillement des socles : `cliffKey('flanc', k, 0)`, `k ∈ 1..CRANS`. */
+export const FLANC_CRANS = CRANS
+
+/**
+ * L'ombre du flanc pour un cran `1..FLANC_CRANS` : les crans de `LEVRE.OMBRE_FLANC` couchés sur
+ * `2 × cran` pixels depuis le bord OUEST de la tuile (le flanc est ; le flanc ouest est son
+ * miroir, `flipX` côté couche). Les frontières se tiennent en CUMUL arrondi, pas cran par cran :
+ * arrondir chaque cran séparément aurait fait dériver la largeur totale d'un pixel selon le cran.
+ */
+export function dessinDuFlanc(cran: number): RectArt[] {
+  const k = Math.max(0, Math.min(FLANC_CRANS, Math.round(Math.abs(cran))))
+  const plein = LEVRE.OMBRE_FLANC.reduce((acc, [w]) => acc + w, 0)
+  const largeur = (plein * k) / FLANC_CRANS
+  const r: RectArt[] = []
+  let cumul = 0
+  let x = 0
+  for (const [w, a] of LEVRE.OMBRE_FLANC) {
+    cumul += w
+    const fin = Math.round((cumul * largeur) / plein)
+    if (fin > x) r.push({ x, y: 0, w: fin - x, h: CLIFF_TILE_PX, c: OMBRE_TON, a })
+    x = fin
+  }
+  return r
+}
 
 const P = CLIFF_TILE_PX
 
@@ -538,7 +576,7 @@ export function varianteDeLevre(tx: number, ty: number): number {
 
 /** Clé d'une texture de falaise. `top` = le dessus, `face` = la paroi, `ombre` = l'ombre portée au
  *  pied, `levre` = le bord d'un palier vu de dessus, `coin` = son coin rentrant, `flanc` = l'ombre
- *  que le flanc est jette sur le sol du bas, `chute` = la nappe d'eau qui remplace la paroi sous
+ *  qu'un flanc jette sur le sol du bas (mask = le cran de l'astre, `dessinDuFlanc`), `chute` = la nappe d'eau qui remplace la paroi sous
  *  un fleuve (`chute-art`, mask = la rangée, variant = phase × pas), `ecume` = son écume au pied. */
 export function cliffKey(family: 'top' | 'face' | 'ombre' | 'levre' | 'coin' | 'flanc' | 'chute' | 'ecume', mask: number, variant: number): string {
   return `cf-${family}-${mask}-${variant}`
@@ -555,7 +593,7 @@ export function varianteDEcume(phase: number, frame: number): number {
 
 /**
  * Génère les textures de falaise — appelé une fois au boot, comme les nœuds et les lieux.
- * Dessus : 8 masques × 2 variantes. Paroi : 16 masques × 4 variantes. Ombre : 1.
+ * Dessus : 8 masques × 2 variantes. Paroi : 16 masques × 4 variantes. Ombre du pied : 1 ; du flanc : `FLANC_CRANS`.
  */
 export function makeCliffTextures(scene: Phaser.Scene): void {
   const g = scene.add.graphics()
@@ -590,19 +628,14 @@ export function makeCliffTextures(scene: Phaser.Scene): void {
 
   let y = 0
   for (const [h, a] of OMBRE_CRANS) {
-    g.fillStyle(0x0a090e, a).fillRect(0, y, CLIFF_TILE_PX, h)
+    g.fillStyle(OMBRE_TON, a).fillRect(0, y, CLIFF_TILE_PX, h)
     y += h
   }
   g.generateTexture(cliffKey('ombre', 0, 0), CLIFF_TILE_PX, CLIFF_TILE_PX)
   g.clear()
-  // L'ombre du flanc est : les mêmes crans, couchés — elle part du bord OUEST de la tuile du bas.
-  let x = 0
-  for (const [w, a] of LEVRE.OMBRE_FLANC) {
-    g.fillStyle(0x0a090e, a).fillRect(x, 0, w, CLIFF_TILE_PX)
-    x += w
-  }
-  g.generateTexture(cliffKey('flanc', 0, 0), CLIFF_TILE_PX, CLIFF_TILE_PX)
-  g.clear()
+  // L'ombre du flanc : une texture par cran de l'astre, couchée depuis le bord OUEST de la tuile
+  // du bas (le flanc est) — la couche la retourne pour le flanc ouest.
+  for (let k = 1; k <= FLANC_CRANS; k++) rejouer(dessinDuFlanc(k), cliffKey('flanc', k, 0))
 
   g.destroy()
 }

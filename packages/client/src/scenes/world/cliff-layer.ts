@@ -60,6 +60,7 @@ import { hash2, TERRAIN_CLIFF, TERRAIN_ROCK, type Connecteur, type WorldMap } fr
 import { CHUTE_FRAMES, CHUTE_HZ, CHUTE_PHASES, ECUME_FRAMES } from '../../render/chute-art'
 import { cliffKey, levreDe, PAROI_RANGEES, PHASES_PAROI, roleDeFalaise, varianteDeChute, varianteDEcume, varianteDeLevre, VARIANTES_DESSUS } from '../../render/cliff-art'
 import { CLIFF_DEPTH, CLIFF_OMBRE_DEPTH, LIFT_TUILES, strateDEtage, TILE_PX } from '../../render/framing'
+import { cranDeDerive } from '../../render/ombre-socle'
 import { estEau } from '../../render/paves'
 import type { Relief } from '../../render/relief'
 import { epinglerLaTuile } from '../../render/tuile-epinglee'
@@ -96,6 +97,18 @@ export class CliffLayer {
    * l'appelant — c'est lui qu'on passe.
    */
   teinte = 0xffffff
+  /**
+   * L'ASTRE QUI JETTE L'OMBRE — les deux mêmes nombres que les socles minéraux reçoivent
+   * (`view.deriveOmbre`/`view.forceOmbre`), poussés par `WorldScene` depuis la MÊME ligne, à la
+   * même heure. `force` est l'alpha du pied et du flanc : 1 à midi comme sous la pleine lune,
+   * 0 au crépuscule et à la nouvelle lune — l'ombre s'éteint avec ce qui la jette, exactement
+   * comme la coulée d'un rocher (`forceDeLOmbre`). `derive` choisit le FLANC : négative (l'astre
+   * à l'est, le matin) l'ombre part à l'ouest, positive (le soir) à l'est, et sa largeur suit
+   * le cran (`cranDeDerive`, le même que le cisaillement des socles) — au zénith, aucun flanc.
+   * Sans snapshot : plein, centré — le rendu d'avant, flanc compris.
+   */
+  forceOmbre = 1
+  deriveOmbre = 0
 
   constructor(
     private scene: Phaser.Scene,
@@ -150,6 +163,10 @@ export class CliffLayer {
 
     let nTop = 0
     let nOmbre = 0
+    // Le flanc que l'astre ombre à cette image : côté, largeur (le cran), et la clé de sa texture.
+    const cran = cranDeDerive(this.deriveOmbre)
+    const dxFlanc = cran < 0 ? -1 : 1
+    const keyFlanc = cliffKey('flanc', Math.abs(cran), 0)
 
     for (let ty = ty0; ty <= ty1; ty++) {
       for (let tx = tx0; tx <= tx1; tx++) {
@@ -227,9 +244,11 @@ export class CliffLayer {
             if ((levre.coins & (1 << c)) !== 0) nTop = this.poser(this.tops, nTop, cliffKey('coin', c, vl), tx, ty - lift, profondeur, h)
           }
         }
-        // ── L'OMBRE DU FLANC EST, sur le sol du bas : au ras de la lèvre, à la rangée d'écran du
-        //    dessus — puis le long de chaque bande de paroi dont la joue est exposée, plus bas.
-        if (hE < h && !surface) nOmbre = this.poserLeFlanc(nOmbre, tx + 1, ty - h * L, hE)
+        // ── L'OMBRE DU FLANC, sur le sol du bas — du côté OPPOSÉ à l'astre (`cran`, voir
+        //    `deriveOmbre`) : au ras de la lèvre, à la rangée d'écran du dessus — puis le long de
+        //    chaque bande de paroi dont la joue est exposée, plus bas.
+        const hF = dxFlanc < 0 ? hW : hE
+        if (cran !== 0 && hF < h && !surface) nOmbre = this.poserLeFlanc(nOmbre, tx + dxFlanc, ty - h * L, hF, keyFlanc, cran < 0)
         // ── LA PAROI COMMUNE : sous toute tuile plus haute que sa voisine sud (T-R8).
         if (hs >= h) continue
         if (rampeMonte) continue
@@ -260,7 +279,8 @@ export class CliffLayer {
               + PHASES_PAROI * (hash2(tx, ty + (h - j) * L + k) < 0.5 ? 0 : 1)
             const key = cliffKey('face', (arete ? 1 : 0) | e | w | (pied ? 8 : 0), variant)
             nTop = this.poser(this.tops, nTop, key, tx, ty - (j + 1) * L + 1 + k, strate, j)
-            if (e !== 0 && !surface) nOmbre = this.poserLeFlanc(nOmbre, tx + 1, ty - (j + 1) * L + 1 + k, hE)
+            const joueOmbree = dxFlanc < 0 ? w !== 0 : e !== 0
+            if (cran !== 0 && joueOmbree && !surface) nOmbre = this.poserLeFlanc(nOmbre, tx + dxFlanc, ty - (j + 1) * L + 1 + k, hF, keyFlanc, cran < 0)
           }
         }
         // L'ombre au pied, sur le sol du palier bas — à sa hauteur à lui.
@@ -290,24 +310,34 @@ export class CliffLayer {
     return n + 1
   }
 
+  /** Une ombre (pied ou flanc) : posée comme le reste, puis À LA FORCE DE L'ASTRE — et retournée
+   *  pour le flanc ouest (`miroir`). Force nulle : rien à poser, pas même un sprite invisible.
+   *  ⚠ Alpha et miroir se REPOSENT à chaque image, comme la profondeur : le pool est partagé. */
+  private poserUneOmbre(n: number, key: string, tx: number, ty: number, depth: number, niveau: number, miroir: boolean): number {
+    if (this.forceOmbre <= 0) return n
+    const n1 = this.poser(this.ombres, n, key, tx, ty, depth, niveau)
+    this.ombres[n]!.setAlpha(this.forceOmbre).setFlipX(miroir)
+    return n1
+  }
+
   private poserLOmbre(n: number, tx: number, ty: number, depth: number, niveau: number): number {
-    return this.poser(this.ombres, n, cliffKey('ombre', 0, 0), tx, ty, depth, niveau)
+    return this.poserUneOmbre(n, cliffKey('ombre', 0, 0), tx, ty, depth, niveau, false)
   }
 
   /**
-   * L'ombre du flanc est, à la RANGÉE D'ÉCRAN `sy` de la colonne `sx` — sur le sol qui s'y
-   * DESSINE, et dans SA strate. Ce sol n'est pas forcément celui de la voisine est : à cette
-   * rangée d'écran, ce qui se dessine est la tuile `(sx, sy + q × LIFT)` du palier `q` le plus
-   * haut qui y monte — jamais plus haut que la voisine (`qMax`), sinon on ombrerait un sol qui
-   * domine le flanc. Rien ne s'y dessine à ce niveau : pas d'ombre.
+   * L'ombre du flanc, à la RANGÉE D'ÉCRAN `sy` de la colonne `sx` (la voisine du côté de
+   * l'ombre) — sur le sol qui s'y DESSINE, et dans SA strate. Ce sol n'est pas forcément celui de
+   * la voisine : à cette rangée d'écran, ce qui se dessine est la tuile `(sx, sy + q × LIFT)` du
+   * palier `q` le plus haut qui y monte — jamais plus haut que la voisine (`qMax`), sinon on
+   * ombrerait un sol qui domine le flanc. Rien ne s'y dessine à ce niveau : pas d'ombre.
    */
-  private poserLeFlanc(n: number, sx: number, sy: number, qMax: number): number {
-    if (sx >= this.map.width) return n
+  private poserLeFlanc(n: number, sx: number, sy: number, qMax: number, key: string, miroir: boolean): number {
+    if (sx < 0 || sx >= this.map.width) return n
     const L = LIFT_TUILES
     for (let q = qMax; q >= 0; q--) {
       const ly = sy + q * L
       if (ly < 0 || ly >= this.map.height || this.relief.hauteur(sx, ly) !== q) continue
-      return this.poser(this.ombres, n, cliffKey('flanc', 0, 0), sx, sy, strateDEtage(q) + CLIFF_OMBRE_DEPTH, q)
+      return this.poserUneOmbre(n, key, sx, sy, strateDEtage(q) + CLIFF_OMBRE_DEPTH, q, miroir)
     }
     return n
   }

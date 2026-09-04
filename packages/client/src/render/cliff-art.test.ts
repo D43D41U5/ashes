@@ -6,6 +6,8 @@ import {
   dessinDeLevre,
   dessinDeParoi,
   dessinDuDessus,
+  dessinDuFlanc,
+  FLANC_CRANS,
   LEVRE,
   levreDe,
   OMBRE_CRANS,
@@ -14,6 +16,7 @@ import {
   VARIANTES_PAROI,
   type RectArt,
 } from './cliff-art'
+import { cranDeDerive, CRANS } from './ombre-socle'
 import { PAVE } from './paves'
 
 /**
@@ -320,3 +323,63 @@ describe('LEVRE.OMBRE_FLANC — l’ombre du flanc est, celle du pied couchée',
   })
 })
 
+describe('dessinDuFlanc — le flanc suit l’astre, au cran des socles', () => {
+  /**
+   * Décision du 2026-09-04 : l'ombre du flanc n'est plus figée « soleil au nord-ouest, flanc est,
+   * pleine à toute heure ». Elle se couche sur `2 × |cran|` px, où `cran` est le cisaillement des
+   * socles (`cranDeDerive`) — même loi, même quantification. MESURÉ avant : à 9 h le rocher
+   * couchait sa coulée 8 texels à l'ouest, la marche à côté restait ombrée à l'est.
+   */
+  /** L'alpha d'une colonne, relu des rects (le dernier rect qui couvre le pixel gagne). */
+  const alphaEn = (rects: readonly RectArt[], x: number): number => {
+    let a = 0
+    for (const r of rects) if (x >= r.x && x < r.x + r.w) a = r.a ?? 1
+    return a
+  }
+  const largeur = (rects: readonly RectArt[]): number => {
+    let fin = 0
+    for (const r of rects) fin = Math.max(fin, r.x + r.w)
+    return fin
+  }
+
+  it('les crans du flanc SONT ceux des socles : une seule quantification pour les deux ombres', () => {
+    expect(FLANC_CRANS).toBe(CRANS)
+    // Le cran extrême de la dérive remplit exactement le plein.
+    expect(Math.abs(cranDeDerive(1))).toBe(FLANC_CRANS)
+    expect(Math.abs(cranDeDerive(-1))).toBe(FLANC_CRANS)
+  })
+
+  it('au plein, c’est LEVRE.OMBRE_FLANC, pixel pour pixel ; au zénith, rien', () => {
+    const plein = dessinDuFlanc(FLANC_CRANS)
+    peindre(plein)
+    expect(largeur(plein)).toBe(CLIFF_TILE_PX)
+    let x = 0
+    for (const [w, a] of LEVRE.OMBRE_FLANC) {
+      for (let i = x; i < x + w; i++) expect(alphaEn(plein, i), `colonne ${i}`).toBe(a)
+      x += w
+    }
+    expect(dessinDuFlanc(0)).toEqual([])
+  })
+
+  it('la largeur est une pente continue du cran (2 px par cran), et l’ombre part du bord ouest', () => {
+    for (let k = 1; k <= FLANC_CRANS; k++) {
+      const r = dessinDuFlanc(k)
+      peindre(r)
+      expect(largeur(r), `cran ${k}`).toBe((CLIFF_TILE_PX * k) / FLANC_CRANS)
+      expect(Math.min(...r.map((q) => q.x))).toBe(0)
+      // Pleine hauteur : le flanc est une bande verticale, jamais un coin.
+      for (const q of r) expect([q.y, q.h]).toEqual([0, CLIFF_TILE_PX])
+      // Et les alphas s'éteignent en s'éloignant du mur — le même ordre que le plein.
+      let prev = Infinity
+      for (let x = 0; x < largeur(r); x++) {
+        const a = alphaEn(r, x)
+        expect(a, `cran ${k}, colonne ${x}`).toBeLessThanOrEqual(prev)
+        prev = a
+      }
+    }
+  })
+
+  it('le signe ne change pas le dessin — le miroir est l’affaire de la couche (flipX)', () => {
+    for (let k = 1; k <= FLANC_CRANS; k++) expect(dessinDuFlanc(-k)).toEqual(dessinDuFlanc(k))
+  })
+})
