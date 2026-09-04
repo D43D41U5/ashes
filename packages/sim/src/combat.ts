@@ -1027,7 +1027,10 @@ function resolveStrike(state: SimState, attacker: Entity): void {
         ax = fin.x
         ay = fin.y
       }
-      poserAuSol(state, ax, ay, 'arrow', 1)
+      // La flèche gît sur le plancher de ce qu'elle a touché — ou de l'archer, au bout de sa
+      // course (`traitLibre` la retient dans SON monde d'étage) : E-R22, comme une pile lâchée.
+      const gisant = struck && touche !== undefined ? touche.target : attacker
+      poserAuSol(state, ax, ay, 'arrow', 1, niveauDuCorps(state.map, gisant))
     }
   }
 

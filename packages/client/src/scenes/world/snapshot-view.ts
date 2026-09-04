@@ -651,7 +651,7 @@ export class SnapshotView {
    * prendre, et donc la seule où l'animation a un sens. Consignés par `applyNodeDeltas`
    * (à la réception du snapshot), joués et VIDÉS par `renderNodes`.
    */
-  private epuisements: { id: number; tx: number; ty: number; type: NodeType; at: number }[] = []
+  private epuisements: { id: number; tx: number; ty: number; type: NodeType; at: number; etage: number | undefined }[] = []
 
   /** Ce que le curseur vise MAINTENANT. Purement de l'affichage : la sim revalide. */
   setAim(nodeId: number | null, inRange: boolean): void {
@@ -919,7 +919,8 @@ export class SnapshotView {
   /** SOUCHES (spec recolte-vivante D1) : la marque qu'un nœud de bois/plante a laissée
    * en DÉRIVANT ailleurs. Transitoire CLIENT pur (aucun état de sim) — s'efface tout
    * seul. `at` en ms client. */
-  private stumps: { tx: number; ty: number; type: NodeType; at: number }[] = []
+  /** `etage` : celui du nœud qu'elle remplace (E-R22) — une souche de mesa reste sur la mesa. */
+  private stumps: { tx: number; ty: number; type: NodeType; at: number; etage: number | undefined }[] = []
   private corpseSprites = new Map<number, Phaser.GameObjects.Image>()
 
   /** Où le sprite d'un cadavre est posé cette frame (px monde) — pour y faire gicler une coupe. */
@@ -1072,8 +1073,9 @@ export class SnapshotView {
     // un demi-pas derrière le sprite en pleine course, et c'est juste : le sang tombe
     // où l'on était.
     if (self?.wounds.bleeding === true) {
-      const lift = this.warp?.liftSol(self.x, self.y) ?? 0
-      this.goutteDe(playerId, self.x * TILE_PX, self.y * TILE_PX - lift, now, this.warp?.strateSol(self.x, self.y) ?? 0)
+      // À SON étage (E-R22) : le sang d'un blessé sur le chapeau tombe à ses pieds, pas au palier.
+      const lift = this.warp?.liftAEtage(self.x, self.y, self.etage) ?? 0
+      this.goutteDe(playerId, self.x * TILE_PX, self.y * TILE_PX - lift, now, this.warp?.strateAEtage(self.x, self.y, self.etage) ?? 0)
     }
     this.syncStructures(msg.structures, self ? { x: self.x, y: self.y } : undefined)
     this.applyNodeDeltas(msg.nodeDeltas, now)
@@ -1115,11 +1117,12 @@ export class SnapshotView {
         g = this.scene.add.image(0, 0, 'fx-blood').setOrigin(0.5, 0.5)
         this.bloodPool[used] = g
       }
-      const lift = this.warp?.liftSol(b.x, b.y) ?? 0
+      // La goutte porte l'étage de qui a saigné (E-R22) : absent, le sol de sa tuile.
+      const lift = this.warp?.liftAEtage(b.x, b.y, b.etage) ?? 0
       g.setTexture(SANG_TEXTURES[d.variante]!)
       g.setPosition(b.x * TILE_PX, b.y * TILE_PX - lift)
       g.setRotation(d.angle)
-      g.setDepth(corpseDepth(b.y, TILE_PX) - 1 + (this.warp?.strateSol(b.x, b.y) ?? 0)) // au sol, sous tout le reste
+      g.setDepth(corpseDepth(b.y, TILE_PX) - 1 + (this.warp?.strateAEtage(b.x, b.y, b.etage) ?? 0)) // au sol, sous tout le reste
       // Elle sèche : de l'écarlate au brun (la teinte), et elle s'efface (l'alpha).
       const age = Math.max(0, Math.min(1, (this.tick - b.tick) / HUNT.BLOOD_TTL))
       g.setAlpha(0.85 * (1 - age * 0.8))
@@ -1229,11 +1232,14 @@ export class SnapshotView {
       // du monde — sans la bascule, elle brillait en pleine nuit comme en plein jour.
       const cle = this.lighting ? cleLit(`it-${p.item}`) : `it-${p.item}`
       if (!sprite) {
-        const lift = this.warp?.liftSol(p.x, p.y) ?? 0
+        // ═══ CE QU'ON LÂCHE SUR UN PLATEAU Y RESTE (E-R22) ═══
+        // La pile porte l'étage de qui l'a lâchée (`groundItems[].etage`, le pendant de
+        // `Corpse.etage`) ; sans lui, le sol de sa tuile. Une pile ne bouge pas : posée une fois.
+        const lift = this.warp?.liftAEtage(p.x, p.y, p.etage) ?? 0
         sprite = this.scene.add
           .image(p.x * TILE_PX, p.y * TILE_PX - lift, cle)
           .setOrigin(0.5, 0.5)
-          .setDepth(corpseDepth(p.y, TILE_PX) + (this.warp?.strateSol(p.x, p.y) ?? 0))
+          .setDepth(corpseDepth(p.y, TILE_PX) + (this.warp?.strateAEtage(p.x, p.y, p.etage) ?? 0))
           .setScale(0.8)
         sprite.setLighting(this.lighting)
         // ═══ UNE FLÈCHE EST PLANTÉE, ELLE N'EST PAS POSÉE (décision d'Alexis) ═══
@@ -2333,11 +2339,11 @@ export class SnapshotView {
       // à stock 0 repasse. Borné : une file qui grossit sans fin serait une fuite, et
       // personne ne verrait la millième chute.
       if (!this.depleted.has(d.id) && this.epuisements.length < MAX_EPUISEMENTS) {
-        this.epuisements.push({ id: d.id, tx: n.tx, ty: n.ty, type: n.type, at: now })
+        this.epuisements.push({ id: d.id, tx: n.tx, ty: n.ty, type: n.type, at: now, etage: n.etage })
       }
       // Épuisement. Déménagement éventuel (bois/plante qui dérive).
       if (d.tx !== undefined && d.ty !== undefined && (d.tx !== n.tx || d.ty !== n.ty)) {
-        this.stumps.push({ tx: n.tx, ty: n.ty, type: n.type, at: now })
+        this.stumps.push({ tx: n.tx, ty: n.ty, type: n.type, at: now, etage: n.etage })
         this.nodeByTile.delete(cleDeTuile(n.tx, n.ty))
         n.tx = d.tx
         n.ty = d.ty
@@ -2351,7 +2357,7 @@ export class SnapshotView {
       // DÉFRICHÉ : le nœud ne sera plus dessiné (`renderNodes` l'écarte), mais un tronc qui
       // s'évapore ne raconte rien. On pose la SOUCHE — le même transitoire que la dérive, à
       // sa propre tuile puisqu'il n'a pas bougé : la trace de ce qu'on vient de dégager.
-      else if (noeudDefriche(this.villages, n)) this.stumps.push({ tx: n.tx, ty: n.ty, type: n.type, at: now })
+      else if (noeudDefriche(this.villages, n)) this.stumps.push({ tx: n.tx, ty: n.ty, type: n.type, at: now, etage: n.etage })
     }
   }
 
@@ -2447,7 +2453,7 @@ export class SnapshotView {
           const pose = this.transitionsFlore.pose(n.id, gele, now, retardDe(n.tx, n.ty))
           if (pose.eclat) {
             const a0 = tileFeetAnchor(tx, ty, TILE_PX)
-            this.recolteFx?.givre(a0.px, a0.py - (this.warp?.liftSol(tx + 0.5, ty + 0.5) ?? 0), TILE_PX * 0.6, now, n.id * 7919, !gele, this.warp?.strateSol(tx + 0.5, ty + 0.5) ?? 0)
+            this.recolteFx?.givre(a0.px, a0.py - (this.warp?.liftAEtage(tx + 0.5, ty + 0.5, n.etage) ?? 0), TILE_PX * 0.6, now, n.id * 7919, !gele, this.warp?.strateAEtage(tx + 0.5, ty + 0.5, n.etage) ?? 0)
           }
           if (!pose.visible) continue
           echX = pose.sx
@@ -2537,7 +2543,6 @@ export class SnapshotView {
         const shake = coup === undefined ? 0 : shakeOffset(now, coup.at)
         const px = a.px + shake
         const py = a.py
-        const lift = this.warp?.lift(tx + 0.5, ty + 0.5) ?? 0
         const palierDuNoeud = this.warp?.palier(tx + 0.5, ty + 0.5) ?? 0
         // ═══ UN NŒUD POUSSE À SON ÉTAGE (spec `etages.md`) ═══
         //
@@ -2547,8 +2552,14 @@ export class SnapshotView {
         // même raison : le dessin monte (`decalageDEtage`), le tri change de STRATE.
         // « Absent » vaut LE PALIER DU SOL (T-R3) — la même lecture que `nodeAt` dans /sim.
         const etageDuNoeud = n.etage ?? palierDuNoeud
-        const pyDessin = py - lift + (immerge ? enfoncementDUnNoeud(true).descente : 0)
-          + decalageDEtage(etageDuNoeud, palierDuNoeud)
+        // LE PIED RÉEL DU NŒUD À L'ÉCRAN — lift du palier ET décalage d'étage réunis
+        // (`warp.liftAEtage`). ⚠ UNE SEULE ÉCRITURE : le sprite, son ombre de contact, le
+        // houppier et le reflet la LISENT tous. L'ombre et le houppier prenaient `py` nu — la
+        // rangée LOGIQUE : sur un chapeau, la flaque restait deux rangées sous un bloc levé de
+        // deux tuiles, et la cime d'un arbre de mesa flottait deux tuiles sous son fût (vu sur
+        // `terrasse-1`, poche de palier 1, 2026-09-04).
+        const pyPied = py - (this.warp?.liftAEtage(tx + 0.5, ty + 0.5, n.etage) ?? 0)
+        const pyDessin = pyPied + (immerge ? enfoncementDUnNoeud(true).descente : 0)
         sprite.setPosition(px, pyDessin)
         // Le sprite est POOLÉ : sa depth suit la tuile qu'il occupe cette frame,
         // jamais celle où il a été créé. Le pied réel intègre le décalage Y, pour
@@ -2643,12 +2654,13 @@ export class SnapshotView {
         // LE REFLET DE L'ARBRE (eau-vivante R13) : un fût de la rive nord se redit dans
         // l'eau au sud de son pied — la couche découpe elle-même à la course d'eau.
         if (this.reflets && isTree && !growing) {
-          this.reflets.miroir(texture, false, px, py - lift, sprite.displayWidth, sprite.displayHeight, now)
+          this.reflets.miroir(texture, false, px, pyPied, sprite.displayWidth, sprite.displayHeight, now)
         }
         // L'OMBRE DE CONTACT du nœud, au MÊME index de pool que lui (servie/libérée ensemble).
         // La largeur se lit sur `displayWidth` APRÈS `setScale` : une pousse qui repousse porte
         // donc une flaque qui grandit avec elle, sans calcul en plus. Posée au pied réel (`px`,
-        // `py` — décalage d'arbre et tressaillement compris), juste sous la depth du nœud.
+        // `pyPied` — décalage d'arbre, tressaillement, lift et étage compris), juste sous la
+        // depth du nœud.
         let nodeShadow = this.nodeShadowPool[used]
         if (!nodeShadow) {
           nodeShadow = createContactShadow(this.scene)
@@ -2716,7 +2728,7 @@ export class SnapshotView {
         // alors sur la flaque générique, sans chemin de code en plus (le témoin de la planche).
         const socle = SOCLE_KEYS.has(texture)
         const pose = socle && coupe === 0 && poserOmbreDeSocle(
-          nodeShadow, px, py, cranDeDerive(this.deriveOmbre), sprite.scaleX, sprite.scaleY, sprite.depth,
+          nodeShadow, px, pyPied, cranDeDerive(this.deriveOmbre), sprite.scaleX, sprite.scaleY, sprite.depth,
           this.forceOmbre,
         )
         if (!pose) {
@@ -2742,7 +2754,7 @@ export class SnapshotView {
           // sienne, à sa taille.
           const largeurTronc = isTree ? variante.mesures.empattementW * sprite.scaleX : undefined
           positionShadow(
-            nodeShadow, px, py, sprite.displayWidth, sprite.depth, gapWorld,
+            nodeShadow, px, pyPied, sprite.displayWidth, sprite.depth, gapWorld,
             socle ? TILE_PX * SOCLE_OMBRE_TUILES * sprite.scaleX : largeurTronc,
             socle ? this.deriveOmbre * TILE_PX * SOCLE_OMBRE_DERIVE * sprite.scaleX : 0,
           )
@@ -2799,7 +2811,7 @@ export class SnapshotView {
         // purement visuel et ne doit pas la faire changer de rang.
         const depth = crownDepth(ty + 1, TILE_PX)
         const pxCime = px + jCime.dx * TILE_PX
-        const pyCime = py + jCime.dy * TILE_PX
+        const pyCime = pyPied + jCime.dy * TILE_PX // le pied RÉEL : lift et étage compris
         /** LA POSE D'UNE CIME — écrite UNE fois et appliquée aux deux sprites du fondu. Deux
          *  écritures d'un même placement finiraient par différer d'un pixel, et le fondu se
          *  verrait comme un tremblement au lieu d'un passage. */
@@ -2810,8 +2822,8 @@ export class SnapshotView {
           img.setTexture(cle)
           img.setLighting(this.lighting) // pooled : réarmé chaque frame (cf. le tronc)
           // L'ANCRAGE SE DÉRIVE, il ne s'écrit plus (cf. `arbre-art`). `px` porte déjà le
-          // tressaillement et le décalage d'arbre.
-          img.setPosition(pxCime, pyCime - ancrageHouppierPx(mesures) - lift)
+          // tressaillement et le décalage d'arbre ; `pyCime` le lift et l'étage.
+          img.setPosition(pxCime, pyCime - ancrageHouppierPx(mesures))
           img.setDepth(depth + dz)
           // Un arbre visé s'éclaire ENTIER : teinter le tronc seul donnerait un houppier
           // flottant, détaché de ce qu'on vise.
@@ -2871,8 +2883,10 @@ export class SnapshotView {
       // sauterait à l'image de sa mort.
       const a = tileFeetAnchor(e.tx, e.ty, TILE_PX)
       const px = a.px
-      const py = a.py - (this.warp?.liftSol(e.tx + 0.5, e.ty + 0.5) ?? 0)
-      const strate = this.warp?.strateSol(e.tx + 0.5, e.ty + 0.5) ?? 0
+      // Au pied du nœud qui meurt, À SON ÉTAGE (E-R22) : l'arbre d'une mesa tombe de là-haut,
+      // pas de deux tuiles sous son fût.
+      const py = a.py - (this.warp?.liftAEtage(e.tx + 0.5, e.ty + 0.5, e.etage) ?? 0)
+      const strate = this.warp?.strateAEtage(e.tx + 0.5, e.ty + 0.5, e.etage) ?? 0
       if (arbre) {
         // L'ARBRE TOMBE — À L'OPPOSÉ DU BÛCHERON, comme la gerbe (correction d'Alexis du
         // 29/07 : un arbre ne s'abat pas sur celui qui le coupe). La mémoire du dernier
@@ -2923,8 +2937,8 @@ export class SnapshotView {
           : this.lighting ? 'nd-scar_lit' : 'nd-scar', // la cicatrice est COUCHÉE : pas de retourné
       )
       g.setLighting(this.lighting) // pooled : réarmé chaque frame, comme les nœuds
-      g.setPosition(a.px, a.py - (this.warp?.liftSol(s.tx + 0.5, s.ty + 0.5) ?? 0))
-      g.setDepth(nodeDepth(s.ty, TILE_PX) + (this.warp?.strateSol(s.tx + 0.5, s.ty + 0.5) ?? 0))
+      g.setPosition(a.px, a.py - (this.warp?.liftAEtage(s.tx + 0.5, s.ty + 0.5, s.etage) ?? 0))
+      g.setDepth(nodeDepth(s.ty, TILE_PX) + (this.warp?.strateAEtage(s.tx + 0.5, s.ty + 0.5, s.etage) ?? 0))
       g.setScale(1)
       g.setAlpha(1 - (now - s.at) / STUMP_FADE_MS) // pâlit sur sa durée de vie
       g.setVisible(true)

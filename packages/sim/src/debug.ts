@@ -25,6 +25,8 @@ import { densiteDesMorts, siteDansLaCouronne } from './morts'
 import type { Entity, SimState } from './sim'
 import { TICKS_PER_CYCLE, TICKS_PER_SEASON_DAY, cycleOffsetForStartHour, getGameTime, jourDeSaison, seasonRamp } from './time'
 import { addStructure } from './village'
+import { marchableAEtage, palierDuSol, poserLEtageDuCorps } from './etages'
+import type { WorldMap } from './map'
 import { desiredOrders } from './village-plan'
 
 export type DebugAction =
@@ -133,6 +135,28 @@ export type DebugAction =
    */
   | { type: 'debug_meteo'; meteo: import('./meteo').MeteoType | null; edge?: 0 | 1 | 2 | 3; phase?: number }
 
+/**
+ * L'ÉTAGE OÙ UN TP DE DEBUG POSE LES PIEDS, à cette tuile : le sol (son palier) s'il est
+ * marchable, sinon le plus HAUT étage creux qui y porte un sol — le chapeau avant la cave,
+ * parce que c'est lui qu'on voit et qu'on vise. Sans sol nulle part (une roche pleine), le
+ * palier : le TP traverse la roche, c'est à ça qu'il sert, et `poserLEtageDuCorps` n'écrit
+ * alors rien (T-R3).
+ */
+function etageDAtterrissage(map: WorldMap, tx: number, ty: number): number {
+  const p = palierDuSol(map, tx, ty)
+  if (marchableAEtage(map, p, tx, ty)) return p
+  let choix = p
+  let trouve = false
+  for (const e of map.etages ?? []) {
+    if (!marchableAEtage(map, e.niveau, tx, ty)) continue
+    if (!trouve || e.niveau > choix) {
+      choix = e.niveau
+      trouve = true
+    }
+  }
+  return choix
+}
+
 export function isDebugAction(action: { type: string }): action is DebugAction {
   return action.type.startsWith('debug_')
 }
@@ -150,9 +174,13 @@ export function applyDebugAction(state: SimState, entityId: number, action: Debu
     entity.y = clamp(action.y, 0.5, state.map.height - 0.5)
     // Un wind-up en cours frapperait depuis l'ancienne position : on l'annule.
     delete entity.windup
-    // …et l'ÉTAGE avec (spec `etages.md`) : le TP vise un point du SOL. Le garder mettrait
-    // l'avatar à +1 hors de tout plateau — toutes ses tuiles bloquées, figé sans un mot.
-    delete entity.etage
+    // …et l'ÉTAGE SE RELIT DU LIEU D'ARRIVÉE (spec `etages.md`, terrasses T-R3). On l'EFFAÇAIT :
+    // le TP visait « un point du sol », et garder l'ancien étage mettait l'avatar en l'air hors
+    // de tout plateau. Mais effacer le met au palier de la tuile — sur le chapeau d'une mesa,
+    // c'est DANS la roche (toutes ses tuiles bloquées, figé sans un mot : vu au smoke `mesa`,
+    // le 2026-09-04). On vise donc le sol de la tuile s'il en porte un, sinon le plus haut
+    // étage qui en porte — ce qu'on VOIT à cette tuile.
+    poserLEtageDuCorps(state.map, entity, etageDAtterrissage(state.map, Math.floor(entity.x), Math.floor(entity.y)))
   } else if (action.type === 'debug_set_hour') {
     // hourOfCycle dérive de (tick + cycleOffset) : pour viser une heure sans
     // toucher au tick (qui porte le calendrier, les cooldowns, les wind-ups),

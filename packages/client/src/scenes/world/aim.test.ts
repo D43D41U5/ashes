@@ -922,3 +922,37 @@ describe('le coin de pêche se prend de loin (nodeInRange)', () => {
     expect(clickToAction(t, null, { held: null, ...versLest })).toEqual({ type: 'attack', dx: 1, dy: 0 })
   })
 })
+
+/**
+ * ═══ UN NŒUD D'UN AUTRE ÉTAGE N'EST PAS « À PORTÉE » (spec `etages.md` E-R5) ═══
+ *
+ * La sim refuse (`strikeRejection` → « trop loin ») le bloc du chapeau miné depuis le pied de
+ * la mesa : douze mètres de roche entre les deux. La visée, elle, ne comptait que la distance —
+ * le bloc se dorait sous le curseur, et `F` rendait un refus. L'affordance mentait. On INJECTE
+ * la joignabilité, comme l'eau du jour : `aim.ts` ne lit pas la carte, c'est la scène qui
+ * appelle `atteignableEntreEtages` avec l'étage du joueur.
+ *
+ * Ce qui ferait rougir : un `nodeInRange` vrai sur un nœud que le prédicat refuse, ou un
+ * `inRange` (le sol, les piles, le bâti) qui ignorerait le prédicat sur la tuile.
+ */
+describe('aimAt — la joignabilité d’étage borne la portée (E-R5)', () => {
+  const surLeChapeau = { ...node(9, 10, 10), etage: 1 } as ResourceNode
+  const refuseLesEtages = (_tx: number, _ty: number, etage?: number): boolean => etage === undefined
+
+  it('le nœud du chapeau, à distance de bras, n’est PAS à portée quand le prédicat le refuse', () => {
+    const t = aimAt(10, 10, PLAYER, [surLeChapeau], [], RANGE, [], [], 0, [], () => false, undefined, refuseLesEtages)
+    expect(t.nodeId).toBe(9) // on le VOIT (la teinte grise le dit), on ne l'atteint pas
+    expect(t.nodeInRange).toBe(false)
+    expect(clickToAction(t, null)).toBeNull() // et le clic n'émet pas un `harvest` perdu d'avance
+  })
+
+  it('le même nœud, prédicat muet (défaut) : la distance seule décide, comme avant', () => {
+    expect(aimAt(10, 10, PLAYER, [surLeChapeau], [], RANGE).nodeInRange).toBe(true)
+  })
+
+  it('le sol de la tuile visée passe aussi par le prédicat (`inRange`)', () => {
+    const jamais = (): boolean => false
+    expect(aimAt(11, 11, PLAYER, [], [], RANGE, [], [], 0, [], () => false, undefined, jamais).inRange).toBe(false)
+    expect(aimAt(11, 11, PLAYER, [], [], RANGE).inRange).toBe(true)
+  })
+})

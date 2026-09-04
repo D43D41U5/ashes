@@ -289,6 +289,16 @@ export function aimAt(
    *
    *  Absent (tests) : on retombe sur le balayage. */
   noeudA?: (tx: number, ty: number) => ResourceNode | undefined,
+  /** ═══ LA JOIGNABILITÉ D'ÉTAGE (spec `etages.md` E-R5), injectée comme l'eau du jour ═══
+   *
+   *  La sim refuse (« trop loin ») le bloc du chapeau miné depuis le pied de la mesa — douze
+   *  mètres de roche entre les deux — et le bâti, les piles, les cadavres se prennent « au
+   *  sol » de leur tuile (`atteintLeSol`). La visée ne comptait que la distance : le bloc se
+   *  dorait sous le curseur, et `F` rendait un refus. `aim.ts` ne lit pas la carte : c'est la
+   *  scène qui répond, avec `atteignableEntreEtages` et l'étage du joueur. `etage` absent = le
+   *  SOL de la tuile (son palier). Par défaut « toujours » : un appelant sans relief n'a rien
+   *  à fournir, et la distance seule décide, comme avant. */
+  atteignable: (tx: number, ty: number, etage?: number) => boolean = () => true,
 ): AimTarget {
   const corpse = corpses.find((c) => Math.floor(c.x) === tx && Math.floor(c.y) === ty)
   // LA PILE de la tuile visée. Comme le cadavre : on la cherche à la TUILE, parce qu'une
@@ -369,10 +379,13 @@ export function aimAt(
     plantableId: plantable?.id ?? null,
     harvestableId: harvestable?.id ?? null,
     pileId: pile?.id ?? null,
-    inRange: dx * dx + dy * dy <= range * range,
+    // …ET le sol de la tuile doit être joignable depuis mon étage (E-R5) : la même règle que
+    // `atteintLeSol` côté sim, pour tout ce qui se prend au sol.
+    inRange: dx * dx + dy * dy <= range * range && atteignable(tx, ty),
     // La portée du NŒUD vient de /sim (`porteeDuNoeud`), jamais recopiée : c'est la même
     // règle que la sim revalidera. `Math.max` parce qu'un nœud allonge le bras, ne le coupe pas.
-    nodeInRange: node !== undefined && dx * dx + dy * dy <= porteeNoeud * porteeNoeud,
+    // Et le nœud se juge à SON étage (`strikeRejection` : `niveauDeLaTuile(node)`).
+    nodeInRange: node !== undefined && dx * dx + dy * dy <= porteeNoeud * porteeNoeud && atteignable(tx, ty, node.etage),
     // ON PÊCHE L'EAU, PAS LE COIN (D9) : la portée de la pêche est la sienne, jamais le bras.
     waterInRange: dx * dx + dy * dy <= FISHING.RANGE * FISHING.RANGE && porteEau(tx, ty),
   }
@@ -680,7 +693,10 @@ export function clickToAction(
   if (target.inRange) {
     // UNE BÊTE NE SE FOUILLE PAS (`depecage.md` R3) : sans couteau, la carcasse est muette.
     if (target.corpseId !== null) return target.carcass ? null : { type: 'loot_corpse', corpseId: target.corpseId }
-    if (target.nodeId !== null) return { type: 'harvest', nodeId: target.nodeId }
+    // À cette distance (≤ `range` ≤ `porteeNoeud`), `nodeInRange` ne peut être faux que par
+    // l'ÉTAGE (E-R5) : le nœud du chapeau, à un bras de sa paroi, n'est pas à prendre. On ne
+    // retombe pas sur la frappe — on frapperait un rocher pour avoir visé une baie.
+    if (target.nodeId !== null) return target.nodeInRange ? { type: 'harvest', nodeId: target.nodeId } : null
     // RÉCOLTER LE POTAGER (agriculture voie A) : une parcelle MÛRE, mains libres → on cueille
     // (comme un nœud). La sim revalide la maturité, l'appartenance, la portée.
     if (target.harvestableId !== null) return { type: 'harvest_crop', structureId: target.harvestableId }

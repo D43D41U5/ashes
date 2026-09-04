@@ -145,6 +145,7 @@ import { PaveLayer } from './world/pave-layer'
 import { ambianceDe, moduler } from '../render/zone-ambiance'
 import { TERRAIN_COLORS } from '../render/terrain-colors'
 import { contexteDesButtes, fondDeButte, tacheDeButte } from '../render/buttes'
+import { CascadeFx } from './world/cascade-fx'
 import { CliffLayer } from './world/cliff-layer'
 import { EtageLayer } from './world/etage-layer'
 import { PoiLayer } from './world/poi-layer'
@@ -182,7 +183,7 @@ import {
 } from '../render/fog'
 import { peindreCarteArt, type CarteArt } from '../render/carte-art'
 import { cellulesDuDisque, peindreSavoirRegion } from '../render/carte-savoir'
-import { etagesDuPas, niveauDuCorps, TRACTION, eauPechable, estUnCoinDePeche, porteDeLEau, FISH_SPECIES, niveauDEau, torcheVive, partDeFlamme, clarteSurSoiAt, clarteDuCiel, partDuCiel, NUIT, MONSTER_DEFS, POI_CHARGES, TERRAIN_DEEP_WATER, TERRAIN_SHALLOW_WATER, CREUX, TERRAINS_BOISES_MASSIF, ventForceAt, VENT, type EtatVent } from '@ashes/sim'
+import { atteignableEntreEtages, etagesDuPas, niveauDuCorps, palierDuSol, TRACTION, eauPechable, estUnCoinDePeche, porteDeLEau, FISH_SPECIES, niveauDEau, torcheVive, partDeFlamme, clarteSurSoiAt, clarteDuCiel, partDuCiel, NUIT, MONSTER_DEFS, POI_CHARGES, TERRAIN_DEEP_WATER, TERRAIN_SHALLOW_WATER, CREUX, TERRAINS_BOISES_MASSIF, ventForceAt, VENT, type EtatVent } from '@ashes/sim'
 
 /** L'assombrissement du sol au plafond de profondeur (§2quater R42) : au cœur d'un massif,
  *  le sol perd jusqu'à 14 % de luminance — en PENTE CONTINUE, jamais par bande. */
@@ -395,6 +396,8 @@ export class WorldScene extends Phaser.Scene {
   private airAlpha = 0
   private airCible: { color: number; alpha: number } = { color: 0x000000, alpha: 0 }
   private fireFx: FireFx | null = null
+  /** Les gouttes, la brume et la lueur au pied des cascades (T-A9) — sur `cliffs.chutes`. */
+  private cascadeFx: CascadeFx | null = null
   /** La chaleur du Feu tombée au sol — cosmétique, cf. world/fire-ground-glow.ts. */
   private fireGround: FireGroundGlow | null = null
   /** La lumière de la torche tombée au sol — le MÊME rôle, mais elle marche (spec `torche.md`). */
@@ -477,13 +480,32 @@ export class WorldScene extends Phaser.Scene {
    * l'entité du snapshot, `partDeFlamme` relit son `wear`. Le client n'a pas d'horloge de torche
    * — il n'en aurait qu'une deuxième, qui dériverait de l'autorité.
    */
+  /**
+   * LE Y DESSINÉ D'UN CORPS (en tuiles) : sa rangée logique, moins son palier et son étage —
+   * continu sur une rampe (`EtageLayer.niveauDuCorps`), le chapeau d'une mesa au-dessus de son
+   * palier, la cave à la hauteur du palier qui la coiffe (`max`, comme `decalageDEtage`).
+   *
+   * ⚠ UNE SEULE ÉCRITURE pour tout ce qui se pose LÀ OÙ LE CORPS EST À L'ÉCRAN : le découvert,
+   * la torche (sa flaque, son trou dans le voile, son point light). Le sprite lui-même suit la
+   * même loi dans `snapshot-view` (`decalageDEtage` + `warp.lift`, sur l'entité interpolée).
+   * `etage` absent ≡ le palier du sol (T-R3).
+   */
+  private yDessineDuCorps(x: number, y: number, etage: number | undefined): number {
+    const palier = this.relief.palier(Math.floor(x), Math.floor(y))
+    const niveau = this.etages.niveauDuCorps(x, y, etage ?? palier)
+    return y - Math.max(niveau, palier) * LIFT_TUILES
+  }
+
   private porteursDeTorche(): PorteurDeTorche[] {
     const out: PorteurDeTorche[] = []
     for (const e of this.lastEntities) {
       const slot = torcheVive(e)
       if (slot === null) continue
       const pos = e.id === this.playerId && this.predicted ? this.predicted : e
-      out.push({ id: e.id, x: pos.x * TILE_PX, y: pos.y * TILE_PX, part: partDeFlamme(slot) })
+      // LÀ OÙ LE CORPS EST À L'ÉCRAN, pas à sa rangée logique : sur une terrasse de palier 2, la
+      // flaque, le trou du voile et le point light de la torche étaient posés quatre tuiles au
+      // sud du porteur (MESURÉ le 2026-09-04 sur le feu 474 de la graine 2026 — même défaut).
+      out.push({ id: e.id, x: pos.x * TILE_PX, y: this.yDessineDuCorps(pos.x, pos.y, e.etage) * TILE_PX, part: partDeFlamme(slot) })
     }
     return out
   }
@@ -1022,6 +1044,16 @@ export class WorldScene extends Phaser.Scene {
       // de curseur. C'est la même précaution que la couche de gel, pour la même raison.
       porteDeLEau: (tx, ty) =>
         this.etatGel !== null && eauPechable(this.etatGel as unknown as Parameters<typeof eauPechable>[0], tx, ty, this.niveauEauDuTick),
+      // ═══ LA JOIGNABILITÉ D'ÉTAGE (spec `etages.md` E-R5) ═══
+      //
+      // La MÊME loi que la sim (`strikeRejection`, `atteintLeSol`) : depuis MON étage
+      // (`etageJoueur`, relu de l'autorité à chaque snapshot) vers le sol de la tuile visée
+      // ou l'étage du nœud qu'elle porte. Sans elle, le bloc d'un chapeau se dorait depuis
+      // le pied de la mesa, et `F` rendait « trop loin ».
+      atteignable: (tx, ty, etage) => atteignableEntreEtages(
+        this.map, this.predicted.x, this.predicted.y, this.etageJoueur,
+        tx + 0.5, ty + 0.5, etage ?? palierDuSol(this.map, tx, ty),
+      ),
       // L'ACCUSÉ DE RÉCEPTION DU DÉCOCHAGE : ma charge telle que le dernier SNAPSHOT la
       // connaît. Tant qu'elle est là, la sim n'a pas vu l'`attack_release` — et rebander
       // l'écraserait (une seule action par tick).
@@ -1146,7 +1178,7 @@ export class WorldScene extends Phaser.Scene {
       // il échoue sur toute clé déjà prise, donc sur la couche qu'on oublierait ici demain.
       for (const couche of [
         this.nightVeil, this.water, this.combeMist, this.morningMist, this.mistBanks,
-        this.fireFx, this.fireGround, this.poissons, this.feuilles,
+        this.fireFx, this.cascadeFx, this.fireGround, this.poissons, this.feuilles,
         this.meteoLayer, this.ventLayer, this.foudreFx, this.gelLayer, this.paves,
       ]) couche?.destroy()
     })
@@ -1324,9 +1356,18 @@ export class WorldScene extends Phaser.Scene {
       world: () => {
         this.nightVeil = new NightVeil(this)
         this.fireFx = new FireFx(this)
+        this.cascadeFx = new CascadeFx(this, this.map.width)
         this.fireGround = new FireGroundGlow(this)
         this.torcheGround = new TorcheGroundGlow(this)
         this.dynLight = new DynamicLighting(this)
+        // UN FEU EST UNE STRUCTURE : il se dessine à la hauteur de sa tuile (`liftSol`, comme
+        // son sprite dans `snapshot-view`), et ses flammes, sa flaque et son point light avec
+        // lui — sans quoi, au palier 2, les trois vivaient quatre tuiles au sud des rondins.
+        // Même patron que `reveil-fx` : la couche reçoit le relief, elle ne lit pas la carte.
+        const reliefSous = (x: number, y: number) => ({ lift: this.warp.liftSol(x, y), strate: this.warp.strateSol(x, y) })
+        this.fireFx.setReliefSous(reliefSous)
+        this.fireGround.setReliefSous(reliefSous)
+        this.dynLight.setReliefSous(reliefSous)
         // LE SOL **VU**, cendre comprise — et non `map.terrain` : la carte n'est jamais mutée
         // (`carte-immuable.test.ts`), la cendre est dérivée au rendu, donc `map.terrain` rend
         // encore `grass` sur un sol cendré. Sans ce détour, le « sans cendre » de
@@ -1560,6 +1601,10 @@ export class WorldScene extends Phaser.Scene {
         // Le versement GPU ne se paie que devant témoin : la carte ouverte.
         if (this.carteSale && this.carteSavoirTex && Boolean(getHud(this.registry, 'mapOpen'))) {
           this.carteSavoirTex.refresh()
+          // `refresh()` REMET LE FILTRE À LINEAR en `antialias` (Phaser 4, `canvasToTexture`) —
+          // le même piège que le champ d'eau (`water-layer.ts`) : le savoir à trois états,
+          // quantifié à la cellule, se lissait entre deux cellules. Reposé après chaque versement.
+          this.carteSavoirTex.setFilter(Phaser.Textures.FilterMode.NEAREST)
           this.carteSale = false
         }
       }
@@ -1991,7 +2036,7 @@ export class WorldScene extends Phaser.Scene {
         this.paves.heureSolaire = hour
         this.paves.soleilABouge()
       }
-      this.cliffs.render(this.cameras.main) // les parois, auto-raccordées à la vue
+      this.cliffs.render(this.cameras.main, time) // les parois, auto-raccordées à la vue — et les cascades au pas de `time`
       // …et le dessus des mesas. LE DÉCOUVERT NE PART QUE VERS LE HAUT (décision d'Alexis,
       // 2026-09-01) : c'est ici, et pas dans la couche, qu'on décide à qui elle doit céder — un
       // plateau ne s'efface que pour un joueur d'un étage PLUS BAS que lui. Sur le plateau, ou
@@ -2003,11 +2048,7 @@ export class WorldScene extends Phaser.Scene {
       // joueur — là où son corps est à l'écran, palier et étage déduits — et son NIVEAU : c'est
       // la pièce qui, en lisant les deux, sait si elle est au-dessus de lui (`alphaDeDecouvert`).
       // Un joueur au palier 2 n'a rien au-dessus de lui que le chapeau d'une mesa de palier 2.
-      const txJ = Math.floor(this.predicted.x)
-      const tyJ = Math.floor(this.predicted.y)
-      const palierJ = this.relief.palier(txJ, tyJ)
-      const niveauDessine = this.etages.niveauDuCorps(this.predicted.x, this.predicted.y, this.etageJoueur)
-      const yDessine = this.predicted.y - Math.max(niveauDessine, palierJ) * LIFT_TUILES
+      const yDessine = this.yDessineDuCorps(this.predicted.x, this.predicted.y, this.etageJoueur)
       const decouvert = { x: this.predicted.x, y: yDessine, niveau: this.etageJoueur }
       this.view.decouvert = decouvert
       if (this.clutter) this.clutter.decouvert = decouvert
@@ -2016,6 +2057,7 @@ export class WorldScene extends Phaser.Scene {
       // la couche ne DÉCIDE rien, elle obéit (le patron du découvert, deux lignes plus haut).
       // « Sous » se lit du PALIER de la tuile, pas de zéro : la salle d'une mesa de palier 2 est
       // à l'étage 1, et elle est tout autant sous la roche.
+      const palierJ = this.relief.palier(Math.floor(this.predicted.x), Math.floor(this.predicted.y))
       const souterrain = this.etageJoueur < palierJ
       this.etages.souterrain = souterrain
       // ═══ LA LUMIÈRE DE LA CAVE — une structure par image, et la loi de /sim une fois par tuile ═══
@@ -2355,6 +2397,13 @@ export class WorldScene extends Phaser.Scene {
         this.view.windForce,
         day, time,
       )
+      // Les cascades (T-A9) : gouttes, brume et lueur au pied des chutes que `cliffs` vient de
+      // poser à cette image — même vent que le feu, même nuit des hauteurs que la paroi.
+      this.cascadeFx?.update(
+        this.cliffs.chutes, time, day, lueurLune, teinteDesHauteurs,
+        this.view.wind.x === 0 && this.view.wind.y === 0 ? this.view.wind : this.ventRendu,
+        this.view.windForce,
+      )
       // La chaleur du Feu au sol : cosmétique, ∝ nuit (voir world/fire-ground-glow.ts).
       this.fireGround?.update(feux, this.view.villages, day, time, this.lastSnapshotTick)
       // L'ÉCLAIRAGE a été posé EN TÊTE D'IMAGE (voir le bloc du haut d'`update`) : ici on le LIT,
@@ -2374,9 +2423,11 @@ export class WorldScene extends Phaser.Scene {
       // flamme atteint LE SOL — le sol est un `Mesh2D` hors pipeline Light2D, la source du Feu
       // ne l'éclaire pas.
       const axFeu = axesFeu()
+      // …ET À LA HAUTEUR DE SA TUILE (`liftSol`, comme le sprite du feu) : au palier 2, le trou
+      // se creusait quatre tuiles au sud des rondins (MESURÉ le 2026-09-04, feu 474, graine 2026).
       const veilFires = litFires.map(({ s, factor, g }) => ({
         worldX: (s.tx + 0.5) * TILE_PX,
-        worldY: (s.ty + 0.5) * TILE_PX,
+        worldY: (s.ty + 0.5) * TILE_PX - this.warp.liftSol(s.tx + 0.5, s.ty + 0.5),
         radiusTiles: fireHoleRadius(time, s.id * 1.7) * factor,
         force: axFeu.respiration || axFeu.coeurBlanc ? 1 + (g.beat - 1) * 0.7 : 1,
       }))
@@ -4091,6 +4142,7 @@ export class WorldScene extends Phaser.Scene {
       img.data.set(this.carteArt.vive)
       lecture.context.putImageData(img, 0, 0)
       lecture.refresh()
+      lecture.setFilter(Phaser.Textures.FilterMode.NEAREST) // `refresh()` remet LINEAR (cf. plus haut)
     }
     const savoir = this.textures.createCanvas('carte-savoir', width, height)
     if (savoir) {

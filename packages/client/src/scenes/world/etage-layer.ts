@@ -37,7 +37,7 @@ import {
   caveKey, DEHORS_KEY, GUEULE_KEY, JOUR_KEY, PERIODE_CAVE, ROCHE_CAVE_KEY,
   SIGNES_DE_CAVE, TERRAINS_DE_CAVE, VARIANTES_LUEUR,
 } from '../../render/cave-art'
-import { PHASES_PAROI, VARIANTES_PAROI } from '../../render/cliff-art'
+import { cliffKey, levreDe, PHASES_PAROI, varianteDeLevre, VARIANTES_PAROI } from '../../render/cliff-art'
 import {
   alphaDeDecouvert, CLIFF_DEPTH, LIFT_TUILES, niveauSurLaRampe, ROCHE_DEPTH,
   SOUTERRAIN_STRATE, strateDEtage, TIE_SOCLE, TILE_PX, ySortDepth, type Decouvert,
@@ -113,7 +113,8 @@ const TERRAIN_DE_CAVE_DEFAUT = TERRAIN_SCREE
  * Sur `ty + 1`, le plancher passerait devant celui qui se tient dessus.
  */
 const TIE_SOL = 0
-const TIE_LISERE = 0.1
+/** Le bord de roche du plateau passe juste devant son plancher, jamais devant un corps qui s'y tient. */
+const TIE_BORD = 0.1
 function profondeurDuPlancher(hauteur: number, ty: number, tie: number): number {
   return strateDEtage(hauteur) + ySortDepth(ty, TILE_PX, tie)
 }
@@ -377,13 +378,27 @@ export class EtageLayer {
             nSol = this.poser(this.sols, nSol, cleSol, tx, ty - lift, profondeurDuSocle(h, ty - L), 1, SOCLE_TEINTE)
           }
           nSol = this.poser(this.sols, nSol, cleSol, tx, ty - lift, profondeurDuPlancher(h, ty, TIE_SOL), a, this.teinte)
-          // ── LE LISERÉ, sur le POURTOUR : la silhouette du plateau vue d'en bas — là où la
-          //    voisine ne monte pas aussi haut (une terrasse du même niveau s'y raccorde sans trait).
-          for (const [bit, dx, dy] of [[1, 0, -1], [2, 1, 0], [4, -1, 0]] as const) {
-            if (this.relief.hauteur(tx + dx, ty + dy) >= h) continue
-            nSol = this.poser(this.sols, nSol, plateauKey('lisere', t, bit), tx, ty - lift, profondeurDuPlancher(h, ty, TIE_LISERE), a, this.teinte)
+          // ── LA LÈVRE, sur le POURTOUR : la silhouette du plateau vue d'en bas — là où la
+          //    voisine ne monte pas aussi haut (une terrasse du même niveau s'y raccorde sans
+          //    trait). C'est la lèvre de roche de `cliff-art` (2026-09-04), la même que celle des
+          //    paliers de pré ; elle se pose ICI et non dans `cliff-layer` parce que le plancher
+          //    d'un chapeau trie avec les corps (`profondeurDuPlancher`), pas sous le sol — une
+          //    lèvre à `CLIFF_DEPTH` passerait dessous. Elle CÈDE avec lui, au même alpha.
+          const rampeAuSud = this.portes.get((ty + 1) * width + tx)
+          const rampeMonte = rampeAuSud !== undefined && rampeAuSud.type === 'rampe'
+            && Math.max(rampeAuSud.de, rampeAuSud.vers) === h
+          const levre = levreDe((dx, dy) =>
+            !(dx === 0 && dy === 1 && rampeMonte) && this.relief.hauteur(tx + dx, ty + dy) < h)
+          const vl = varianteDeLevre(tx, ty)
+          if (levre.cotes !== 0) {
+            nSol = this.poser(this.sols, nSol, cliffKey('levre', levre.cotes, vl), tx, ty - lift, profondeurDuPlancher(h, ty, TIE_BORD), a, this.teinte)
           }
-          // La PAROI sud et son ombre : `cliff-layer`, pour toute tuile plus haute que sa voisine.
+          for (let c = 0; c < 4; c++) {
+            if ((levre.coins & (1 << c)) === 0) continue
+            nSol = this.poser(this.sols, nSol, cliffKey('coin', c, vl), tx, ty - lift, profondeurDuPlancher(h, ty, TIE_BORD), a, this.teinte)
+          }
+          // La PAROI sud, son ombre et l'ombre du flanc est : `cliff-layer`, pour toute tuile
+          // plus haute que sa voisine.
         }
       }
       // ── LES GUEULES — UNE PASSE À PART, ET IL LE FAUT ────────────────────────────────────

@@ -373,6 +373,13 @@ export class DynamicLighting {
   private gueules: Phaser.GameObjects.Light[] = []
   private wasActive = false
 
+  /** LE RELIEF sous une tuile — posé par `WorldScene` (`Warp.liftSol` / `strateSol`) ; absent dans l'Atelier. */
+  private reliefSous: ((x: number, y: number) => { lift: number; strate: number }) | undefined
+
+  setReliefSous(f: (x: number, y: number) => { lift: number; strate: number }): void {
+    this.reliefSous = f
+  }
+
   constructor(private scene: Phaser.Scene) {
     scene.lights.enable()
     this.sun = scene.lights.addLight(0, 0, SUN_RADIUS, WHITE, 0, SUN_Z)
@@ -501,7 +508,9 @@ export class DynamicLighting {
         this.feux.set(s.id, light)
       }
       light.x = s.tx * TILE_PX + TILE_PX / 2
-      light.y = s.ty * TILE_PX + TILE_PX / 2 - FEU_LIFT // décalé au NORD : la flamme est au-dessus des rondins (voir FEU_LIFT)
+      // …à la hauteur de son palier (`liftSol`), puis décalé au NORD : la flamme est au-dessus
+      // des rondins (voir FEU_LIFT). L'Atelier n'a pas de relief : `reliefSous` y est absent.
+      light.y = s.ty * TILE_PX + TILE_PX / 2 - (this.reliefSous?.(s.tx + 0.5, s.ty + 0.5).lift ?? 0) - FEU_LIFT
       // ═══ LE LISERÉ CHAUD — la source qui sculpte ═══
       // La source du Feu est aujourd'hui LARGE et FAIBLE (rayon ×2,4, intensité calmée) : elle
       // baigne la canopée d'un ambre uniforme, donc elle ne SCULPTE rien — un volume éclairé de

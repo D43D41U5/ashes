@@ -7,7 +7,9 @@ import { describe, expect, it } from 'vitest'
 import { applyDamage } from './combat'
 import { createEmptyMap } from './map'
 import { createSim, spawnEntity, step, type PlayerAction, type SimState } from './sim'
-import { ACTS_PER_YEAR, BALANCE, CENDREUX, EAU, MORTS, NIGHT_HUNT, TEMPERATURE, TERRAIN_GRASS } from './balance'
+import { ACTS_PER_YEAR, BALANCE, CENDREUX, EAU, MORTS, NIGHT_HUNT, TEMPERATURE, TERRAIN_GRASS, TERRAIN_ROCK, TERRAIN_SCREE } from './balance'
+import { isBlockedAt } from './collision'
+import { niveauDuCorps, type EtageCreux } from './etages'
 import { niveauDEau } from './eau'
 import { drainEvents } from './events'
 import { coeurDeLaSaisonSuivante, getGameTime, jourDeSaison, phaseForDay, TICKS_PER_CYCLE, TICKS_PER_SEASON_DAY } from './time'
@@ -46,6 +48,70 @@ describe('debug — téléportation', () => {
     const e = sim.entities.find((x) => x.id === player)!
     expect(e.x).toBe(10)
     expect(e.y).toBe(10)
+  })
+
+  /**
+   * ═══ LE TP VISE UNE TUILE, PAS UN ÉTAGE — et il se pose sur le sol qui S'Y TROUVE ═══
+   *
+   * Vu (2026-09-04, `smoke --scenario mesa`, vue « dessus ») : téléporté au milieu d'un chapeau,
+   * l'avatar atterrissait DANS la roche du sol (étage effacé → palier du sol → roche), figé sans
+   * un mot, alors qu'un plancher de scree l'attendait un étage plus haut. Le TP de debug traverse
+   * les murs par contrat, mais il n'a aucune raison de préférer la roche à un sol marchable.
+   * Règle : le palier du sol s'il est marchable (le cas d'avant, inchangé) ; sinon l'étage
+   * marchable le plus HAUT qui couvre la tuile (chapeau avant cave) ; sinon la roche, comme avant.
+   */
+  const laboDEtages = (): { sim: SimState; player: number } => {
+    const map = createEmptyMap(32, 32, TERRAIN_GRASS)
+    const chapeau: number[] = []
+    const cave: number[] = []
+    // Une mesa 4×4 en (10..13, 10..13) : roche au sol, scree à +1 — et une cave à −1 sous ses
+    // deux colonnes de l'ouest seulement ; à (20,20) une tuile de roche SANS étage.
+    for (let y = 10; y < 14; y++) {
+      for (let x = 10; x < 14; x++) {
+        map.terrain[y * map.width + x] = TERRAIN_ROCK
+        chapeau.push(y * map.width + x)
+        if (x < 12) cave.push(y * map.width + x)
+      }
+    }
+    map.terrain[20 * map.width + 20] = TERRAIN_ROCK
+    const haut: EtageCreux = { niveau: 1, idx: chapeau, terrain: chapeau.map(() => TERRAIN_SCREE), x0: 10, y0: 10, x1: 14, y1: 14 }
+    const bas: EtageCreux = { niveau: -1, idx: cave, terrain: cave.map(() => TERRAIN_SCREE), x0: 10, y0: 10, x1: 12, y1: 14 }
+    map.etages = [haut, bas]
+    const sim = createSim(1, { map, debug: true })
+    return { sim, player: spawnEntity(sim, 5, 5) }
+  }
+
+  it('posé sur un chapeau, l’avatar est SUR le chapeau — et il peut marcher', () => {
+    const { sim, player } = laboDEtages()
+    act(sim, player, { type: 'debug_teleport', x: 12.5, y: 12.5 })
+    const e = sim.entities.find((x) => x.id === player)!
+    expect(niveauDuCorps(sim.map, e)).toBe(1)
+    expect(isBlockedAt({ map: sim.map, etages: [niveauDuCorps(sim.map, e)] }, 12, 12)).toBe(false)
+  })
+
+  it('chapeau ET cave sous la même tuile : le plus haut gagne', () => {
+    const { sim, player } = laboDEtages()
+    act(sim, player, { type: 'debug_teleport', x: 10.5, y: 11.5 })
+    const e = sim.entities.find((x) => x.id === player)!
+    expect(niveauDuCorps(sim.map, e)).toBe(1)
+  })
+
+  it('posé sur le sol marchable, rien d’écrit : le palier du sol, comme avant', () => {
+    const { sim, player } = laboDEtages()
+    // D'abord sur le chapeau (étage écrit), puis sur le pré : l'étage doit s'effacer.
+    act(sim, player, { type: 'debug_teleport', x: 12.5, y: 12.5 })
+    act(sim, player, { type: 'debug_teleport', x: 5.5, y: 5.5 })
+    const e = sim.entities.find((x) => x.id === player)!
+    expect(e.etage).toBeUndefined()
+    expect(niveauDuCorps(sim.map, e)).toBe(0)
+  })
+
+  it('roche sans aucun étage : dans la roche, comme avant (le TP traverse les murs par contrat)', () => {
+    const { sim, player } = laboDEtages()
+    act(sim, player, { type: 'debug_teleport', x: 20.5, y: 20.5 })
+    const e = sim.entities.find((x) => x.id === player)!
+    expect(e.etage).toBeUndefined()
+    expect(e.x).toBeCloseTo(20.5)
   })
 })
 

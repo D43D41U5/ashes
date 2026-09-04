@@ -243,7 +243,7 @@ export interface SnapshotMessage {
    *  par entrée, une poignée d'entrées à la fois — le plafond de l'acte les borne. */
   reveils: Reveil[]
   /** LE SANG AU SOL (spec chasse C9) : les gouttes que le client dessine et efface. */
-  blood: { x: number; y: number; tick: number }[]
+  blood: { x: number; y: number; tick: number; etage?: number }[]
   /** LE CAP DU VENT (C17, `vent.md`) : il doit SE VOIR — une règle invisible est une injustice.
    *  Le client le LIT, il ne le recompose jamais de `front.edge` (écrivain unique, A8). */
   wind: { x: number; y: number }
@@ -252,7 +252,7 @@ export interface SnapshotMessage {
    *  La force LOCALE se recalcule de la fonction pure partagée `ventForceAt`. */
   windForce: number
   /** LES PILES AU SOL (C18) : l'appât posé, la viande jetée, la charge larguée. */
-  groundItems: { id: number; x: number; y: number; item: string; count: number; expiresAt: number }[]
+  groundItems: { id: number; x: number; y: number; item: string; count: number; expiresAt: number; etage?: number }[]
   /**
    * LE FRONT MÉTÉO EN COURS (spec `meteo.md` — « le contrat sim est prêt : `state.meteo`
    * dans le snapshot »), ou `null`. CINQ champs plats, une fois par snapshot : c'est le

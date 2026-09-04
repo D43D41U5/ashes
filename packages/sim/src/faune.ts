@@ -1404,8 +1404,10 @@ function advanceBlood(state: SimState, byId: Map<number, Entity>): void {
     state.blood = state.blood.filter((b) => state.tick - b.tick < HUNT.BLOOD_TTL)
   }
 
-  const drop = (x: number, y: number): void => {
-    state.blood.push({ x, y, tick: state.tick })
+  // La goutte porte l'étage de qui saigne (E-R22 : absent au palier, comme `Entity.etage`) :
+  // sans lui, le sang d'un blessé sur le chapeau se dessinait deux tuiles sous ses pieds.
+  const drop = (x: number, y: number, etage: number | undefined): void => {
+    state.blood.push({ x, y, tick: state.tick, ...(etage !== undefined ? { etage } : {}) })
     // Plafond FIFO : la plus vieille goutte s'efface. L'état reste petit, et le
     // snapshot avec — c'est la même discipline que la faune ambiante.
     if (state.blood.length > HUNT.BLOOD_CAP) state.blood.shift()
@@ -1428,7 +1430,7 @@ function advanceBlood(state: SimState, byId: Map<number, Entity>): void {
 
     if (m.bleedDropAt === undefined || state.tick >= m.bleedDropAt) {
       m.bleedDropAt = state.tick + HUNT.BLOOD_EVERY_TICKS
-      drop(e.x, e.y)
+      drop(e.x, e.y, e.etage)
     }
     // La MORTELLE draine jusqu'au bout. Une bête qui meurt de sa plaie meurt de
     // la main de qui l'a blessée : `lastAttackerId` porte la mise à mort — la
@@ -1445,7 +1447,7 @@ function advanceBlood(state: SimState, byId: Map<number, Entity>): void {
     if (e.hp <= 0 || !avatarBleeds(e)) continue
     if (state.monsters.some((m) => m.entityId === e.id)) continue
     if (state.tick % HUNT.BLOOD_EVERY_TICKS !== 0) continue
-    drop(e.x, e.y)
+    drop(e.x, e.y, e.etage)
   }
 }
 
@@ -2378,6 +2380,10 @@ function nearestPile(
     const portee = range * ((p.surCoulee ??= surUneCoulee(state, p.x, p.y)) ? HUNT.BAIT_COULEE_FACTEUR : 1)
     const d = distSq(entity.x, entity.y, p.x, p.y)
     if (d > portee * portee) continue
+    // Une pile sur un plateau ne se flaire pas à travers la roche (E-R5 — la règle de la proie,
+    // celle de `nearestPrey`) : la bête au pied de la mesa marcherait dans la paroi vers un
+    // appât qu'elle ne peut pas atteindre. Un `===` quand les deux sont au sol.
+    if (!atteignableEntreEtages(state.map, entity.x, entity.y, niveauDuCorps(state.map, entity), p.x, p.y, niveauDuCorps(state.map, p))) continue
     if (d < bestD || (d === bestD && best && p.id < best.id)) {
       best = { id: p.id, x: p.x, y: p.y }
       bestD = d

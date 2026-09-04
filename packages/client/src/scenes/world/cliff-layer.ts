@@ -46,18 +46,38 @@
  * (+ `CLIFF_DEPTH`, sous les corps de ce palier), et pas dans celle du haut — montée là-haut, elle
  * avalerait le corps collé à son pied ; restée en bas, un corps du palier intermédiaire passerait
  * devant une paroi qui est derrière lui. C'est la correction de T-R8 (« à la strate de p »).
+ *
+ * ═══ LA CASCADE — la paroi cède la place à l'eau (T-A9, décision d'Alexis du 2026-09-04) ═══
+ *
+ * Là où la tuile haute ET la tuile du pied sont de l'eau, à UN cran d'écart (T-A3), ce n'est pas
+ * de la roche qui sépare les deux nappes : c'est la chute. La colonne prend alors les sprites de
+ * `chute-art` — la nappe qui tombe, AU PAS DE TEMPS du shader d'eau (`CHUTE_HZ`) — et son pied
+ * reçoit l'écume au lieu de l'ombre portée. La couche ne fait que POSER ; ce qui vit au pied
+ * (les gouttes, la brume, la lueur) est à `cascade-fx`, qui relit `chutes` après chaque rendu.
  */
 import type Phaser from 'phaser'
 import { hash2, TERRAIN_CLIFF, TERRAIN_ROCK, type Connecteur, type WorldMap } from '@ashes/sim'
-import { cliffKey, PAROI_RANGEES, PHASES_PAROI, roleDeFalaise, VARIANTES_DESSUS } from '../../render/cliff-art'
+import { CHUTE_FRAMES, CHUTE_HZ, CHUTE_PHASES, ECUME_FRAMES } from '../../render/chute-art'
+import { cliffKey, levreDe, PAROI_RANGEES, PHASES_PAROI, roleDeFalaise, varianteDeChute, varianteDEcume, varianteDeLevre, VARIANTES_DESSUS } from '../../render/cliff-art'
 import { CLIFF_DEPTH, CLIFF_OMBRE_DEPTH, LIFT_TUILES, strateDEtage, TILE_PX } from '../../render/framing'
+import { estEau } from '../../render/paves'
 import type { Relief } from '../../render/relief'
 import { epinglerLaTuile } from '../../render/tuile-epinglee'
 
 
+/** Une chute VISIBLE à cette image : la tuile haute `(tx, ty)`, le palier `hs` de l'eau du pied
+ *  `(tx, ty + 1)` — ce que `cascade-fx` habille. */
+export interface ChuteVue {
+  tx: number
+  ty: number
+  hs: number
+}
+
 export class CliffLayer {
   private tops: Phaser.GameObjects.Image[] = []
   private ombres: Phaser.GameObjects.Image[] = []
+  /** Les chutes posées au dernier `render` — vidé et rempli à chaque image, dans l'ordre de balayage. */
+  readonly chutes: ChuteVue[] = []
   /** Les rampes par tuile (`y * width + x`) : une paroi ne se peint pas là où une rampe l'entaille. */
   private readonly rampes = new Map<number, Connecteur>()
   /**
@@ -109,10 +129,16 @@ export class CliffLayer {
     return n >= PAROI_RANGEES + 1
   }
 
-  render(camera: Phaser.Cameras.Scene2D.Camera): void {
+  /** `nowMs` : l'horloge de rendu (celle du shader d'eau) — la nappe des cascades saute au pas
+   *  `CHUTE_HZ` dessus ; sans elle, la cascade est figée au pas 0. */
+  render(camera: Phaser.Cameras.Scene2D.Camera, nowMs = 0): void {
     const v = camera.worldView
     const { width, height } = this.map
     const L = LIFT_TUILES
+    const pas = Math.floor(nowMs / (1000 / CHUTE_HZ))
+    const pasChute = ((pas % CHUTE_FRAMES) + CHUTE_FRAMES) % CHUTE_FRAMES
+    const pasEcume = ((pas % ECUME_FRAMES) + ECUME_FRAMES) % ECUME_FRAMES
+    this.chutes.length = 0
     const tx0 = Math.max(0, Math.floor(v.x / TILE_PX) - 1)
     const ty0 = Math.max(0, Math.floor(v.y / TILE_PX) - 1)
     const tx1 = Math.min(width - 1, Math.ceil((v.x + v.width) / TILE_PX) + 1)
@@ -169,16 +195,56 @@ export class CliffLayer {
             nOmbre = this.poserLOmbre(nOmbre, tx, ty + 1 - lift, strateDEtage(p) + CLIFF_OMBRE_DEPTH, p)
           }
         }
-        // ── LA PAROI COMMUNE : sous toute tuile plus haute que sa voisine sud (T-R8).
         if (h === 0) continue
         const hs = this.relief.hauteur(tx, ty + 1)
-        if (hs >= h) continue
-        // La rampe ENTAILLE la paroi : là où le connecteur du sud monte jusqu'à cette hauteur,
-        // c'est `EtageLayer` qui peint le plan incliné, sur toute la hauteur du mur.
-        const rampe = this.rampes.get((ty + 1) * width + tx)
-        if (rampe !== undefined && Math.max(rampe.de, rampe.vers) === h) continue
         const hE = this.relief.hauteur(tx + 1, ty)
         const hW = this.relief.hauteur(tx - 1, ty)
+        // La rampe ENTAILLE la paroi : là où le connecteur du sud monte jusqu'à cette hauteur,
+        // c'est `EtageLayer` qui peint le plan incliné, sur toute la hauteur du mur — et la lèvre
+        // s'y ouvre aussi : la rampe est le passage, pas un bord.
+        const rampe = this.rampes.get((ty + 1) * width + tx)
+        const rampeMonte = rampe !== undefined && Math.max(rampe.de, rampe.vers) === h
+        // L'eau ne se borde pas : ce qui tombe d'un palier, c'est le shader d'eau qui le dit
+        // (ses chutes) — une lèvre de roche autour d'un lac ferait un bassin maçonné.
+        // ⚠ L'EAU SEULE, pas `estSurface` : le marais et la tourbière sont des surfaces pour les
+        // PAVÉS (sans épaisseur, pas de frange), mais ce sont des TERRES pour le pas — un marais
+        // au palier 1 est un mur, et le shader d'eau ne dessine rien sur lui. Jugée à `estSurface`,
+        // la lèvre manquait sur tout bord nord/est/ouest de marais : MESURÉ le 2026-09-04
+        // (`tools/diag-falaises.mts`, graines 2026/7/4242/909), 4 300 à 6 000 pas refusés par
+        // graine sans un pixel pour le dire — 80 % des falaises invisibles du monde joué, et le
+        // « marais contre haut-fond » qu'Alexis butait.
+        const surface = estEau(this.map.terrain[ty * width + tx]!)
+        // ── LA LÈVRE : le bord du palier, sur tout son pourtour (`cliff-art`, 2026-09-04). Pas
+        //    sur la roche dressée (elle a ses propres arêtes), pas sur un chapeau (`EtageLayer` la
+        //    pose à la profondeur de son plancher, qui trie avec les corps).
+        if (!rocheDressee && !surface && !this.relief.chapeau(tx, ty)) {
+          const levre = levreDe((dx, dy) =>
+            !(dx === 0 && dy === 1 && rampeMonte) && this.relief.hauteur(tx + dx, ty + dy) < h)
+          const vl = varianteDeLevre(tx, ty)
+          const profondeur = strateDEtage(h) + CLIFF_DEPTH
+          if (levre.cotes !== 0) nTop = this.poser(this.tops, nTop, cliffKey('levre', levre.cotes, vl), tx, ty - lift, profondeur, h)
+          for (let c = 0; c < 4; c++) {
+            if ((levre.coins & (1 << c)) !== 0) nTop = this.poser(this.tops, nTop, cliffKey('coin', c, vl), tx, ty - lift, profondeur, h)
+          }
+        }
+        // ── L'OMBRE DU FLANC EST, sur le sol du bas : au ras de la lèvre, à la rangée d'écran du
+        //    dessus — puis le long de chaque bande de paroi dont la joue est exposée, plus bas.
+        if (hE < h && !surface) nOmbre = this.poserLeFlanc(nOmbre, tx + 1, ty - h * L, hE)
+        // ── LA PAROI COMMUNE : sous toute tuile plus haute que sa voisine sud (T-R8).
+        if (hs >= h) continue
+        if (rampeMonte) continue
+        // ── LA CASCADE (voir l'en-tête) : de l'eau en haut, de l'eau au pied, un cran — la
+        //    nappe remplace la roche, l'écume remplace l'ombre.
+        if (h - hs === 1 && ty + 1 < height && estEau(this.map.terrain[ty * width + tx]!) && estEau(this.map.terrain[(ty + 1) * width + tx]!)) {
+          const phase = ((tx % CHUTE_PHASES) + CHUTE_PHASES) % CHUTE_PHASES
+          const strate = strateDEtage(hs) + CLIFF_DEPTH
+          for (let k = 0; k < L; k++) {
+            nTop = this.poser(this.tops, nTop, cliffKey('chute', k, varianteDeChute(phase, pasChute)), tx, ty - h * L + 1 + k, strate, hs)
+          }
+          nTop = this.poser(this.tops, nTop, cliffKey('ecume', 0, varianteDEcume(phase, pasEcume)), tx, ty + 1 - hs * L, strate, hs)
+          this.chutes.push({ tx, ty, hs })
+          continue
+        }
         let premiere = true
         for (let j = h - 1; j >= hs; j--) {
           const strate = strateDEtage(j) + CLIFF_DEPTH
@@ -194,6 +260,7 @@ export class CliffLayer {
               + PHASES_PAROI * (hash2(tx, ty + (h - j) * L + k) < 0.5 ? 0 : 1)
             const key = cliffKey('face', (arete ? 1 : 0) | e | w | (pied ? 8 : 0), variant)
             nTop = this.poser(this.tops, nTop, key, tx, ty - (j + 1) * L + 1 + k, strate, j)
+            if (e !== 0 && !surface) nOmbre = this.poserLeFlanc(nOmbre, tx + 1, ty - (j + 1) * L + 1 + k, hE)
           }
         }
         // L'ombre au pied, sur le sol du palier bas — à sa hauteur à lui.
@@ -225,6 +292,24 @@ export class CliffLayer {
 
   private poserLOmbre(n: number, tx: number, ty: number, depth: number, niveau: number): number {
     return this.poser(this.ombres, n, cliffKey('ombre', 0, 0), tx, ty, depth, niveau)
+  }
+
+  /**
+   * L'ombre du flanc est, à la RANGÉE D'ÉCRAN `sy` de la colonne `sx` — sur le sol qui s'y
+   * DESSINE, et dans SA strate. Ce sol n'est pas forcément celui de la voisine est : à cette
+   * rangée d'écran, ce qui se dessine est la tuile `(sx, sy + q × LIFT)` du palier `q` le plus
+   * haut qui y monte — jamais plus haut que la voisine (`qMax`), sinon on ombrerait un sol qui
+   * domine le flanc. Rien ne s'y dessine à ce niveau : pas d'ombre.
+   */
+  private poserLeFlanc(n: number, sx: number, sy: number, qMax: number): number {
+    if (sx >= this.map.width) return n
+    const L = LIFT_TUILES
+    for (let q = qMax; q >= 0; q--) {
+      const ly = sy + q * L
+      if (ly < 0 || ly >= this.map.height || this.relief.hauteur(sx, ly) !== q) continue
+      return this.poser(this.ombres, n, cliffKey('flanc', 0, 0), sx, sy, strateDEtage(q) + CLIFF_OMBRE_DEPTH, q)
+    }
+    return n
   }
 
   destroy(): void {

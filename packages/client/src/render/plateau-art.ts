@@ -119,12 +119,6 @@ export const SOCLE_TEINTE = ((): number => {
  * honnête de la leçon du métal — le grain se mesure en RELATIF.
  */
 const GRAIN_FENTE = 0.65
-/** Le liseré du bord ouvert : le soleil est au NORD-OUEST (convention de `cliff-art`). Le nord et
- *  l'ouest prennent le jour, l'est passe dans l'ombre. Facteurs, pour la même raison. */
-const LISERE_N = 1.32
-const LISERE_N2 = 1.16
-const LISERE_W = 1.22
-const LISERE_E = 0.58
 
 /** La roche restée debout de part et d'autre de l'entaille — la JOUE. Froide : c'est la paroi. */
 const JOUE = 0x46434d
@@ -297,27 +291,12 @@ export function dessinDuSolDePlateau(phase: number, terrainId: number): RectArt[
   return r
 }
 
-/**
- * LE LISERÉ D'UN BORD OUVERT, en sprite À PART — et c'est une question de BUDGET, pas de goût.
- * Cuit dans la tuile, il multipliait les figures par huit (les combinaisons de bords) ; croisé
- * avec les seize phases de dalle ET les trois terrains, on montait à des centaines de textures
- * générées au boot pour un trait de deux pixels. Il vit donc seul, transparent ailleurs, et ne se
- * pose que sur le POURTOUR d'un plateau — quelques dizaines de sprites par mesa.
- *
- * `cote` : 1 = nord, 2 = est, 4 = ouest. Le soleil est au NORD-OUEST (convention de `cliff-art`) :
- * le nord et l'ouest prennent le jour, l'est passe dans l'ombre et ASSOMBRIT.
+/*
+ * Le liseré du bord ouvert (deux pixels de dessus éclairés) a vécu ici jusqu'au 2026-09-04 ; le
+ * bord d'un plateau est désormais la LÈVRE DE ROCHE de `cliff-art` (`dessinDeLevre`), la même
+ * que celle des paliers de pré — `EtageLayer` la pose sur le pourtour, à la profondeur du
+ * plancher.
  */
-export function dessinDuLisere(cote: number, terrainId: number): RectArt[] {
-  const base = souLeCiel(terrainId)
-  if (cote === 1) {
-    return [
-      { x: 0, y: 0, w: P, h: 1, c: teindre(base, LISERE_N) },
-      { x: 0, y: 1, w: P, h: 1, c: teindre(base, LISERE_N2) },
-    ]
-  }
-  if (cote === 4) return [{ x: 0, y: 0, w: 1, h: P, c: teindre(base, LISERE_W) }]
-  return [{ x: P - 1, y: 0, w: 1, h: P, c: teindre(base, LISERE_E) }]
-}
 
 /**
  * LA RAMPE — une entaille dans la paroi.
@@ -367,9 +346,8 @@ export function dessinDeRampe(rang: number, cotes: number): RectArt[] {
   return r
 }
 
-/** Clé d'une texture de plateau. `sol` = le dessus marchable, `lisere` = son arête éclairée,
- *  `rampe` = l'entaille. */
-export function plateauKey(family: 'sol' | 'lisere' | 'rampe', a: number, b: number): string {
+/** Clé d'une texture de plateau. `sol` = le dessus marchable, `rampe` = l'entaille. */
+export function plateauKey(family: 'sol' | 'rampe', a: number, b: number): string {
   return `pl-${family}-${a}-${b}`
 }
 
@@ -398,7 +376,6 @@ export function makePlateauTextures(scene: Phaser.Scene): void {
     for (let phase = 0; phase < VARIANTES_SOL; phase++) {
       rejouer(dessinDuSolDePlateau(phase, t), plateauKey('sol', t, phase))
     }
-    for (const cote of [1, 2, 4]) rejouer(dessinDuLisere(cote, t), plateauKey('lisere', t, cote))
   }
   for (let rang = 0; rang < RAMPE_RANGEES; rang++) {
     for (const cotes of [0, 2, 4, 6]) rejouer(dessinDeRampe(rang, cotes), plateauKey('rampe', cotes, rang))

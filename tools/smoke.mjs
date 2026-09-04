@@ -563,7 +563,15 @@ const SCENARIOS = {
     const compter = async () => page.evaluate(() => {
       const sc = window.__BRAISES__.scene
       const vis = (pool) => (pool ?? []).filter((o) => o.visible).length
-      return { parois: vis(sc.cliffs?.tops), ombres: vis(sc.cliffs?.ombres), eau: sc.water?.shaders?.length ?? 0 }
+      const cle = (pool, fam) => (pool ?? []).filter((o) => o.visible && o.texture?.key?.startsWith(`cf-${fam}-`)).length
+      // Les cascades (T-A9) : les colonnes que la couche a posées, les sprites de nappe/écume
+      // réellement visibles, et les particules EN VIE au pied (gouttes + brume, toutes unités).
+      let vivantes = 0
+      for (const u of sc.cascadeFx?.units?.values?.() ?? []) vivantes += (u.gouttes?.alive?.length ?? 0) + (u.brume?.alive?.length ?? 0)
+      return {
+        parois: vis(sc.cliffs?.tops), ombres: vis(sc.cliffs?.ombres), eau: sc.water?.shaders?.length ?? 0,
+        chutes: sc.cliffs?.chutes?.length ?? 0, nappe: cle(sc.cliffs?.tops, 'chute'), ecume: cle(sc.cliffs?.tops, 'ecume'), gouttes: vivantes,
+      }
     })
     // L'HEURE SE REPOSE À CHAQUE VUE : une capture coûte ~5 min réelles en headless sous charge,
     // et l'horloge du jeu file — la 4e vue d'un run parti à 11 h s'est prise à 23 h, de nuit.
@@ -572,9 +580,11 @@ const SCENARIOS = {
       await agirT({ type: 'debug_teleport', x: x + 0.5, y: y + 0.5 }, 2400)
       await poserT(nom)
       await page.screenshot({ timeout: 120000, path: `${OUT}/${nom}.png` })
-      console.log(`   ${nom} : ${JSON.stringify(await compter())}`)
+      const c = await compter()
+      console.log(`   ${nom} : ${JSON.stringify(c)}`)
       await page.evaluate(() => window.__BRAISES__.scene.game.loop.wake())
       await page.waitForTimeout(250)
+      return c
     }
     await agirT({ type: 'debug_god' }, 400)
     // ── LE PIED DE LA RAMPE (palier 1) : la paroi 1→2 en face, le palier 0 en bas du cadre.
@@ -588,10 +598,118 @@ const SCENARIOS = {
     // ── L'EAU HAUTE : le lac du palier 2, depuis sa rive est.
     await vue('terrasse-lac', 1394, 544)
     // ── LA CASCADE : un fleuve qui tombe de 1 à 0 vers le sud, vu du pied.
-    await vue('terrasse-cascade', 1059, 660)
+    // CE QUI FERAIT ROUGIR : la ligne (1062-1067, 655-657) n'est plus détectée comme chute (0
+    // colonne — de la roche à la place de la nappe, le « barrage » d'avant) ; une colonne comptée
+    // sans ses sprites (nappe < LIFT_TUILES × colonnes, ou pas d'écume) ; ou un pied sans une
+    // seule particule vivante après `fastForward`.
+    const casc = await vue('terrasse-cascade', 1059, 660)
+    if (casc.chutes < 1) console.error(`!! cascade : aucune colonne de chute posée (attendu ≥ 1, la ligne 1062-1067 × 655-657)`)
+    else if (casc.nappe < casc.chutes * 2 || casc.ecume < casc.chutes) console.error(`!! cascade : ${casc.chutes} colonnes mais nappe=${casc.nappe} écume=${casc.ecume}`)
+    else if (casc.gouttes < 1) console.error(`!! cascade : ${casc.chutes} colonnes et aucune particule vivante au pied`)
+    else console.log(`   ✓ cascade : ${casc.chutes} colonnes, ${casc.nappe} sprites de nappe, ${casc.ecume} d'écume, ${casc.gouttes} particules vivantes`)
     // ── LA NUIT au pied de la rampe : les paliers hauts prennent la même nuit que le sol.
     await vue('terrasse-nuit', 1425, 658, 1)
     console.log(`   → ${OUT}/terrasse-*.png : pied, rampe, haut, loin, lac, cascade, nuit`)
+  },
+
+  // ═══ SONDE JETABLE (2026-09-04) : la cascade seule, jour et nuit — pour itérer à l'œil sans
+  //     repayer les six autres vues de `terrasses`. Mêmes cibles datées (graine 2026). ═══
+  async __cascade(page) {
+    if (!dev) { console.error('!! exige --dev'); return }
+    const agirT = async (action, ms) => {
+      await page.evaluate((a) => window.__BRAISES__.scene.sendAction(a), action)
+      await page.waitForTimeout(ms)
+    }
+    const vue = async (nom, heure) => {
+      await agirT({ type: 'debug_set_hour', hour: heure }, 1200)
+      await agirT({ type: 'debug_teleport', x: 1059.5, y: 660.5 }, 2400)
+      await page.evaluate(() => window.__BRAISES__.scene.game.loop.sleep())
+      // Converger le sprite ET laisser vivre les particules : 90 images à 16 ms = 1,4 s de FX.
+      const c = await page.evaluate(() => {
+        const sc = window.__BRAISES__.scene
+        const t0 = sc.time.now
+        for (let k = 1; k <= 90; k++) sc.game.step(t0 + k * 16, 16)
+        let vivantes = 0
+        for (const u of sc.cascadeFx?.units?.values?.() ?? []) vivantes += (u.gouttes?.alive?.length ?? 0) + (u.brume?.alive?.length ?? 0)
+        const lueurs = [...(sc.cascadeFx?.units?.values?.() ?? [])].map((u) => Math.round(u.lueur.alpha * 100) / 100)
+        return { chutes: sc.cliffs?.chutes?.length ?? 0, vivantes, lueur: lueurs[0] ?? null }
+      })
+      await page.screenshot({ timeout: 120000, path: `${OUT}/${nom}.png` })
+      console.log(`   ${nom} : ${JSON.stringify(c)}`)
+      await page.evaluate(() => window.__BRAISES__.scene.game.loop.wake())
+      await page.waitForTimeout(250)
+    }
+    await agirT({ type: 'debug_god' }, 400)
+    // Ciel dégagé : sous les PLUIES du jour 61, la sonde de nuit a photographié un éclair (écran
+    // crème vignetté) au lieu de la cascade.
+    await agirT({ type: 'debug_meteo', meteo: null }, 600)
+    await vue('cascade-jour', 11)
+    await vue('cascade-nuit', 1)
+  },
+
+  // ═══ MAQUETTE JETABLE (2026-09-04) : l'étage du regard contre ceux d'au-dessus et d'en dessous ═══
+  async __mock_etages(page) {
+    if (!dev) { console.error('!! exige --dev'); return }
+    const agirT = async (action, ms) => {
+      await page.evaluate((a) => window.__BRAISES__.scene.sendAction(a), action)
+      await page.waitForTimeout(ms)
+    }
+    const dormir = () => page.evaluate(() => window.__BRAISES__.scene.game.loop.sleep())
+    const stepper = (n) => page.evaluate((n) => {
+      const sc = window.__BRAISES__.scene
+      for (let k = 0; k < n; k++) sc.game.step(k * 16, 16)
+    }, n)
+    const converger = () => page.evaluate(() => {
+      const sc = window.__BRAISES__.scene
+      const reste = () => Math.max(Math.abs(sc.prediction.renderOffset.x), Math.abs(sc.prediction.renderOffset.y))
+      for (let k = 0; k < 240; k++) { sc.game.step(k * 16, 16); if (reste() < 0.1) break }
+    })
+    const photo = (nom) => page.screenshot({ timeout: 120000, path: `${OUT}/${nom}.png` })
+    // La teinte « au-dessus » : on SHADOWE `teinte` sur chaque couche pour que la scène ne la
+    // remette pas à blanc à l'image suivante (maquette : le vrai câblage viendra par niveau).
+    const teinter = (c) => page.evaluate((c) => {
+      const sc = window.__BRAISES__.scene
+      for (const l of [sc.etages, sc.cliffs, sc.water]) if (l) Object.defineProperty(l, 'teinte', { get: () => c, set() {}, configurable: true })
+      for (const l of [sc.paves, sc.gelLayer]) {
+        if (!l) continue
+        l._teinte = c
+        for (const ch of l.chunks.values()) for (const part of ch.parts) l.teinterLaPart(part)
+        Object.defineProperty(l, 'teinte', { get: () => c, set() {}, configurable: true })
+      }
+    }, c)
+    const deteinter = () => page.evaluate(() => {
+      const sc = window.__BRAISES__.scene
+      for (const l of [sc.etages, sc.cliffs, sc.water, sc.paves, sc.gelLayer]) if (l) delete l.teinte
+      for (const l of [sc.paves, sc.gelLayer]) { if (!l) continue; l._teinte = 0xffffff; for (const ch of l.chunks.values()) for (const part of ch.parts) l.teinterLaPart(part) }
+    })
+    // Le voile « en dessous » : un plein écran MULTIPLY juste sous le sol de la strate `niveau`.
+    const voiler = (niveau, c) => page.evaluate(({ niveau, c }) => {
+      const sc = window.__BRAISES__.scene
+      const v = sc.cameras.main.worldView
+      const r = sc.add.rectangle(v.x - 64, v.y - 64, v.width + 128, v.height + 128, c).setOrigin(0).setBlendMode(2).setDepth(niveau * 100000 - 5)
+      ;(window.__MOCK ??= []).push(r)
+    }, { niveau, c })
+    const devoiler = () => page.evaluate(() => { for (const r of window.__MOCK ?? []) r.destroy(); window.__MOCK = [] })
+    const vue = async (x, y) => {
+      await agirT({ type: 'debug_set_hour', hour: 11 }, 1200)
+      await agirT({ type: 'debug_teleport', x: x + 0.5, y: y + 0.5 }, 2400)
+      await dormir()
+      await converger()
+    }
+    await agirT({ type: 'debug_god' }, 400)
+    await vue(1425, 665)
+    await teinter(0xd8d4cc); await stepper(3); await photo('mock2-loin-dessus-085')
+    await deteinter(); await stepper(3)
+    await page.evaluate(() => window.__BRAISES__.scene.game.loop.wake())
+    await vue(1425, 658)
+    await voiler(1, 0xc4ccdc); await stepper(2); await photo('mock2-pied-dessous-077')
+    await devoiler(); await stepper(2)
+    await page.evaluate(() => window.__BRAISES__.scene.game.loop.wake())
+    await vue(1425, 653)
+    await voiler(2, 0xc4ccdc); await voiler(1, 0xc4ccdc); await stepper(2); await photo('mock2-haut-dessous-077')
+    await devoiler(); await stepper(2)
+    await page.evaluate(() => window.__BRAISES__.scene.game.loop.wake())
+    console.log(`   → ${OUT}/mock-*.png`)
   },
 
   /**
@@ -744,6 +862,9 @@ const SCENARIOS = {
       const veil = sc.children.list.find((o) => o.type === 'RenderTexture' && o.depth > 2_000_000 && o.depth < 2_100_000)
       return {
         y: Math.round((me?.y ?? 0) * 100) / 100, etage: me?.etage ?? 0,
+        // La cave vit UN palier sous la mesa qui la coiffe : sous une mesa posée au palier 2,
+        // c'est le niveau 1 — l'attendu se LIT sur le relief, il ne s'écrit pas « -1 ».
+        etageAttendu: sc.relief.palier(294, 100) - 1,
         etageJoueur: sc.etageJoueur, souterrain: sc.etages?.souterrain ?? null,
         tuilesDeCaveVisibles: familles.sol ?? 0,
         familles,
@@ -833,9 +954,9 @@ const SCENARIOS = {
     console.log(`   → dehors (retour) : ${JSON.stringify(await releve())}`)
     await page.screenshot({ timeout: 120000, path: `${OUT}/cave-5-dehors-retour.png` })
     await page.evaluate(() => window.__BRAISES__.scene.game.loop.wake())
-    console.log(fond.etage === -1
+    console.log(fond.souterrain && fond.etage === fond.etageAttendu
       ? `   ✓ on est DANS la cave (étage ${fond.etage}), ${fond.tuilesDeCaveVisibles} tuiles peintes`
-      : `   ✗ on n'est pas entré (étage ${fond.etage})`)
+      : `   ✗ on n'est pas entré (étage ${fond.etage}, attendu ${fond.etageAttendu}, souterrain ${fond.souterrain})`)
   },
 
   async mesa(page) {
@@ -860,7 +981,13 @@ const SCENARIOS = {
       const ecart = await page.evaluate(() => {
         const sc = window.__BRAISES__.scene
         const me = (sc.lastEntities ?? []).find((en) => en.id === sc.playerId)
-        const pieds = (me?.y ?? 0) + 0.1875 // AVATAR_HITBOX_DEPTH_TILES / 2
+        // Les pieds DESSINÉS : l'autorité, moins le LIFT de l'étage (2 tuiles par niveau, la
+        // formule de `WorldScene` : max(niveau du corps, palier du sol)). Sans ce retrait, un
+        // avatar de palier 2 « n'arrivait jamais » — −4 tuiles, exactement le lift.
+        const y = me?.y ?? 0
+        const x = me?.x ?? 0
+        const niveau = me ? Math.max(sc.etages.niveauDuCorps(x, y, sc.etageJoueur), sc.relief.palier(Math.floor(x), Math.floor(y))) : 0
+        const pieds = y + 0.1875 - niveau * 2 // AVATAR_HITBOX_DEPTH_TILES / 2, LIFT_TUILES
         for (let k = 0; k < 240; k++) {
           sc.game.step(k * 16, 16)
           if (Math.abs(sc.playerSprite.y / 16 - pieds) < 0.1) break
@@ -954,7 +1081,10 @@ const SCENARIOS = {
         // — trois causes distinctes, un seul symptôme, que cette mesure attrape toutes les trois.
         // On ne retient QUE les sprites de la bande de tri (le plancher) : la paroi vit sous le
         // sol (`CLIFF_DEPTH`, négatif) et ne cède jamais, c'est réglé.
-        const pieds = (me?.y ?? 0) + 0.1875
+        // Les pieds DESSINÉS (le lift du joueur retranché) : les planchers sont eux aussi des
+        // positions d'écran, c'est entre positions d'écran que « au-dessus de lui » se juge.
+        const niveauJ = me ? Math.max(sc.etages.niveauDuCorps(me.x, me.y, sc.etageJoueur), sc.relief.palier(Math.floor(me.x), Math.floor(me.y))) : 0
+        const pieds = (me?.y ?? 0) + 0.1875 - niveauJ * 2
         const couvrants = sols.filter((im) => im.depth > 1
           && Math.abs(im.x / 16 + 0.5 - (me?.x ?? 0)) < 1
           && im.y / 16 + 0.5 >= pieds - 1.5 && im.y / 16 <= pieds)
@@ -1082,17 +1212,20 @@ const SCENARIOS = {
     await page.waitForTimeout(4000)
     await page.keyboard.up('KeyW')
     await page.waitForTimeout(600)
+    // L'ÉTAGE ATTENDU SE LIT SUR LA CARTE, pas en dur : depuis les terrasses (T-R2) la mesa est
+    // posée sur un palier, et son chapeau vit à `palier + 1` — `relief.hauteur` (le plancher le
+    // plus haut de la tuile) le dit. Le `=== 1` d'avant rougissait sur un chapeau à 3.
     const apres = await page.evaluate(() => {
       const sc = window.__BRAISES__.scene
       const me = (sc.lastEntities ?? []).find((e) => e.id === sc.playerId)
-      return { etage: me?.etage ?? 0, y: Math.round((me?.y ?? 0) * 10) / 10 }
+      return { etage: me?.etage ?? 0, y: Math.round((me?.y ?? 0) * 10) / 10, attendu: sc.relief.hauteur(291, 104) }
     })
     await page.evaluate(() => window.__BRAISES__.scene.game.loop.sleep())
     await page.waitForTimeout(300)
     await page.screenshot({ timeout: 120000, path: `${OUT}/mesa-monte.png` })
     await page.evaluate(() => window.__BRAISES__.scene.game.loop.wake())
     await page.waitForTimeout(300)
-    console.log(`   ${apres.etage === 1 ? '✓' : '✗'} la montée : étage ${avant} → ${apres.etage} (y ${apres.y})`)
+    console.log(`   ${apres.etage === apres.attendu ? '✓' : '✗'} la montée : étage ${avant} → ${apres.etage} (attendu ${apres.attendu}, y ${apres.y})`)
 
     // ET LE GRAND FROID — la saison RETEINTE le sol (`teinte-saison`), et l'on vérifie que le
     // plateau tient sa lecture quand tout change de couleur autour de lui. ⚠ On n'a PAS réussi

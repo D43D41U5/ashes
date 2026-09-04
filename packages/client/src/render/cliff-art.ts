@@ -54,7 +54,9 @@
  * l'a payé ailleurs dans ce dépôt ; il n'y en a qu'un ici.
  */
 import type Phaser from 'phaser'
-import { RELIEF, TERRAIN_ROCK } from '@ashes/sim'
+import { hash2, RELIEF, TERRAIN_ROCK } from '@ashes/sim'
+import { COTE_E, COTE_N, COTE_O, COTE_S, PAVE } from './paves'
+import { CHUTE_FRAMES, CHUTE_PHASES, CHUTE_RANGEES, dessinDeChute, dessinDEcume, ECUME_FRAMES } from './chute-art'
 import { TERRAIN_COLORS } from './terrain-colors'
 
 /**
@@ -143,13 +145,16 @@ export const CLIFF_TILE_PX = 16
  */
 export const PAROI_RANGEES = RELIEF.PAROI_RANGEES
 
-/** Un rectangle plein — l'unité du dessin. Tout l'art de la falaise en est fait. */
+/** Un rectangle plein — l'unité du dessin. Tout l'art de la falaise en est fait. `a` : l'alpha,
+ *  absent = opaque. Seule la LÈVRE s'en sert — ses liserés se posent SUR le sol du palier, qu'elle
+ *  ne connaît pas (voir `dessinDeLevre`) ; la roche, elle, est toujours pleine. */
 export interface RectArt {
   x: number
   y: number
   w: number
   h: number
   c: number
+  a?: number
 }
 
 /**
@@ -314,9 +319,238 @@ export function roleDeFalaise(
   return { role: 'paroi', arete: hautDeParoi, pied: sous === 0 }
 }
 
-/** Clé d'une texture de falaise. `top` = le dessus, `face` = la paroi, `ombre` = l'ombre portée. */
-export function cliffKey(family: 'top' | 'face' | 'ombre', mask: number, variant: number): string {
+/**
+ * ═══ LA LÈVRE — LE BORD D'UN PALIER VU DE DESSUS, DANS LA GRAMMAIRE DU PAVÉ (2026-09-04) ═══
+ *
+ * *Alexis : « je ne vois pas du tout la délimitation entre les étages si les falaises ne font pas
+ * face à la caméra — inspiré du design liseré pour le sol ».* Et c'était exact : seule la PAROI
+ * (face sud) se dessinait ; au nord, à l'est et à l'ouest, deux paliers se touchaient à deux
+ * hauteurs sans qu'un pixel ne le dise — `HORS_PALIER` avait même retiré le liseré de pavé qui
+ * y restait, parce qu'il se lisait comme une couture de chunk. Une terrasse n'avait donc de
+ * silhouette qu'à l'endroit où elle nous regarde.
+ *
+ * Le bord d'un palier est de la ROCHE NUE — c'est le rebord de la marche de LTTP : une bande de
+ * pierre court sur tout le POURTOUR du dessus, et le sol du palier (herbe, éboulis) vient
+ * MORDRE dedans avec la frange irrégulière des pavés. Trois choses s'y lisent, de l'extérieur
+ * vers l'intérieur :
+ *
+ *  • **l'ARÊTE**, au ras du vide — celle du dessus de falaise, telle quelle : deux rangées
+ *    claires au nord (`RIM_N`, `RIM_N2`), un pixel clair à l'ouest, un pixel sombre à l'est. Au
+ *    SUD, la paroi porte déjà la sienne : la lèvre s'y arrête à la roche.
+ *  • **la ROCHE**, `FRANGE_MIN..FRANGE_MAX` px de pierre par colonne de 4 px (la maille de la
+ *    frange des pavés, `PAVE.FRANGE_*`), avec le grain du dessus.
+ *  • **le CONTOUR du sol**, dans les mots exacts du pavé : le sol est un pavé posé SUR la roche
+ *    — son bord bas et ses bords latéraux prennent le `LISERE`, son bord haut l'`ARETE_HAUTE`,
+ *    la rangée au-dessus d'un bord bas la `TRANCHE` ; et la roche sous lui reçoit son `OMBRE`,
+ *    sa `PENOMBRE`, son `OMBRE_LATERALE`. Rien n'est inventé : mêmes facteurs, même maille.
+ *
+ * ⚠ **LA LÈVRE NE CONNAÎT PAS LE SOL.** Elle se pose en sprite sur le sol du palier, quel qu'il
+ * soit (pavé de pré, dessus de mesa) : la roche est OPAQUE, et le contour du sol est un VOILE
+ * d'alpha (`RectArt.a`) — noir pour assombrir, blanc pour éclairer — qui teinte ce qui est
+ * dessous. C'est ce qui la rend unique pour tous les terrains : 15 masques × 8 franges, et non
+ * autant par matière.
+ *
+ * ⚠ **LE COIN RENTRANT EST UNE PIÈCE À PART.** Deux bandes qui se rejoignent à l'angle CONVEXE
+ * d'un plateau se recouvrent dans la même tuile (masque à deux côtés). Mais à l'angle RENTRANT,
+ * la bande nord d'une tuile et la bande ouest de sa voisine se touchent par un seul pixel de
+ * diagonale : l'anneau se rompt. La tuile de l'angle porte donc un CARRÉ de roche dans son coin
+ * (`dessinDeCoin`), et seulement quand aucun de ses deux côtés n'est déjà ouvert — un côté
+ * ouvert couvre le coin de sa bande.
+ */
+export const LEVRE = {
+  /** Franges par masque : la lèvre d'un long bord ne doit pas se répéter à l'œil. Tirée au hash
+   *  de la tuile, comme le semis de strate de la paroi. */
+  VARIANTES: 8,
+  /** L'arête nord de la lèvre : les deux rangées du dessus de falaise. Est et ouest : un pixel. */
+  ARETE_N_PX: 2,
+  ARETE_LAT_PX: 1,
+  /**
+   * L'OMBRE DU FLANC EST sur le sol du bas — LA MÊME que l'ombre du pied (`OMBRE_CRANS`), couchée
+   * vers l'est : le soleil est au nord-ouest à ~45°, une ombre jetée à l'est est aussi large que
+   * celle jetée au sud. Elle a d'abord été la moitié (4/3/1) ; à l'A/B (2026-09-04) l'œil prenait
+   * ce liseré pour le contour de la lèvre, et le bord est se lisait plat, pas en chute. Trois
+   * crans, jamais un dégradé. Le flanc OUEST, lui, prend le jour : rien.
+   */
+  OMBRE_FLANC: OMBRE_CRANS,
+} as const
+
+const P = CLIFF_TILE_PX
+
+/** La profondeur de roche d'une colonne (ou ligne) de 4 px d'un côté, `FRANGE_MIN..FRANGE_MAX`,
+ *  par le hash de la variante — la même loi que la frange des pavés, dans l'espace des variantes
+ *  plutôt que dans celui de la carte (la lèvre est une texture, pas une cuisson). */
+function frangeDeLevre(variant: number, cote: number, along: number): number {
+  const n = PAVE.FRANGE_MAX - PAVE.FRANGE_MIN + 1
+  return PAVE.FRANGE_MIN + Math.floor(hash2(variant * 16 + cote, along, 0x1e7e) * n)
+}
+
+/** Le masque de roche d'une lèvre : 1 = roche, 0 = le sol du palier, qu'on laisse voir. `cotes` :
+ *  bit 1 = nord, 2 = est, 4 = ouest, 8 = sud. */
+function rocheDeLevre(cotes: number, variant: number): Uint8Array {
+  const m = new Uint8Array(P * P)
+  for (let x = 0; x < P; x++) {
+    const c = x >> 2
+    if (cotes & 1) {
+      const d = LEVRE.ARETE_N_PX + frangeDeLevre(variant, COTE_N, c)
+      for (let y = 0; y < d; y++) m[y * P + x] = 1
+    }
+    if (cotes & 8) {
+      const d = frangeDeLevre(variant, COTE_S, c)
+      for (let y = P - d; y < P; y++) m[y * P + x] = 1
+    }
+  }
+  for (let y = 0; y < P; y++) {
+    const r = y >> 2
+    if (cotes & 4) {
+      const d = LEVRE.ARETE_LAT_PX + frangeDeLevre(variant, COTE_O, r)
+      for (let x = 0; x < d; x++) m[y * P + x] = 1
+    }
+    if (cotes & 2) {
+      const d = LEVRE.ARETE_LAT_PX + frangeDeLevre(variant, COTE_E, r)
+      for (let x = P - d; x < P; x++) m[y * P + x] = 1
+    }
+  }
+  return m
+}
+
+/** Les quatre coins rentrants, dans l'ordre des bits de `levreDe(...).coins`. */
+export const COINS = ['nw', 'ne', 'sw', 'se'] as const
+
+/** Le carré de roche d'un coin rentrant : il prolonge la bande nord (ou sud) de la voisine ouest
+ *  et la bande ouest (ou est) de la voisine nord, à leur profondeur nominale. */
+function rocheDeCoin(coin: number, variant: number): Uint8Array {
+  const m = new Uint8Array(P * P)
+  const nord = coin < 2
+  const ouest = (coin & 1) === 0
+  const hh = (nord ? LEVRE.ARETE_N_PX : 0) + frangeDeLevre(variant, 4 + coin, 0)
+  const ww = LEVRE.ARETE_LAT_PX + frangeDeLevre(variant, 4 + coin, 1)
+  for (let y = 0; y < hh; y++) {
+    for (let x = 0; x < ww; x++) m[(nord ? y : P - 1 - y) * P + (ouest ? x : P - 1 - x)] = 1
+  }
+  return m
+}
+
+/**
+ * HABILLER un masque de roche : la pierre et son grain, l'ombre que le sol lui porte, les arêtes
+ * des côtés ouverts — puis, sur le sol, le contour en voile d'alpha. Une tuile 16 × 16 émise en
+ * RUNS par rangée (même couleur, même alpha), pas en pixels : c'est ce qu'on rejoue au boot.
+ */
+function habiller(roche: Uint8Array, cotes: number, variant: number): RectArt[] {
+  const dedans = (x: number, y: number): boolean => x >= 0 && y >= 0 && x < P && y < P
+  // Hors tuile, on ne sait rien : ni roche ni sol — aucun bord n'y naît. (La voisine porte les
+  // siens ; au pire, la marche de frange à la couture des tuiles perd son pixel de contour.)
+  const estRoche = (x: number, y: number): boolean => dedans(x, y) && roche[y * P + x] === 1
+  const estSol = (x: number, y: number): boolean => dedans(x, y) && roche[y * P + x] === 0
+  // Le grain du dessus — les deux semis fixes de `dessinDuDessus`, sur la roche seulement.
+  const v = variant & 1
+  const grainSombre = new Set((v === 0
+    ? [[3, 4], [9, 2], [13, 7], [5, 11], [11, 13], [7, 8]]
+    : [[2, 6], [8, 4], [12, 10], [4, 13], [14, 3], [6, 2]]).flatMap(([x, y]) => [y! * P + x!, y! * P + x! + 1]))
+  const grainClair = new Set((v === 0
+    ? [[6, 5], [12, 3], [2, 10], [10, 11], [14, 14]]
+    : [[4, 3], [10, 7], [13, 12], [3, 8], [7, 14]]).map(([x, y]) => y! * P + x!))
+
+  const r: RectArt[] = []
+  for (let y = 0; y < P; y++) {
+    let run: RectArt | null = null
+    for (let x = 0; x < P; x++) {
+      let c = -1
+      let a = 1
+      if (estRoche(x, y)) {
+        const i = y * P + x
+        c = grainSombre.has(i) ? TOP_DARK : grainClair.has(i) ? TOP_LIGHT : TOP_BASE
+        // L'OMBRE DU SOL SUR LA ROCHE — le pavé sur le terrain du dessous, mot pour mot.
+        if (estSol(x, y - 1) || estSol(x, y - 2)) c = assombrir(c, PAVE.OMBRE)
+        else if (estSol(x, y - 3)) c = assombrir(c, PAVE.PENOMBRE)
+        else if (estSol(x - 1, y) || estSol(x + 1, y)) c = assombrir(c, PAVE.OMBRE_LATERALE)
+        // L'ARÊTE, par-dessus tout : c'est le bord qui prend le jour (ou l'ombre, à l'est).
+        if ((cotes & 1) !== 0 && y < LEVRE.ARETE_N_PX) c = y === 0 ? RIM_N : RIM_N2
+        else if ((cotes & 4) !== 0 && x < LEVRE.ARETE_LAT_PX) c = RIM_W
+        else if ((cotes & 2) !== 0 && x >= P - LEVRE.ARETE_LAT_PX) c = RIM_E
+      } else if (estRoche(x, y + 1) || estRoche(x - 1, y) || estRoche(x + 1, y)) {
+        // LE CONTOUR DU SOL — le pavé, mot pour mot : liseré en bas et sur les côtés…
+        c = 0x000000
+        a = 1 - PAVE.LISERE
+      } else if (estRoche(x, y - 1)) {
+        // … arête haute, éclairée, en haut…
+        c = 0xffffff
+        a = PAVE.ARETE_HAUTE - 1
+      } else if (estRoche(x, y + 2)) {
+        // … et la tranche, une rangée au-dessus du bord bas.
+        c = 0x000000
+        a = 1 - PAVE.TRANCHE
+      }
+      if (c < 0) {
+        run = null
+        continue
+      }
+      if (run !== null && run.c === c && (run.a ?? 1) === a) {
+        run.w += 1
+        continue
+      }
+      run = a < 1 ? { x, y, w: 1, h: 1, c, a } : { x, y, w: 1, h: 1, c }
+      r.push(run)
+    }
+  }
+  return r
+}
+
+/** LA LÈVRE d'une tuile de palier : `cotes` = ses côtés OUVERTS (bit 1 = nord, 2 = est, 4 = ouest,
+ *  8 = sud — les trois premiers comme `dessinDuDessus`), `variant` sa frange. Transparente là où
+ *  le sol du palier reste à voir. */
+export function dessinDeLevre(cotes: number, variant: number): RectArt[] {
+  return habiller(rocheDeLevre(cotes & 15, variant), cotes & 15, variant)
+}
+
+/** LE COIN RENTRANT d'une tuile de palier (`coin` : l'indice dans `COINS`) : le carré de roche
+ *  qui referme l'anneau entre la bande d'une voisine et celle de l'autre. */
+export function dessinDeCoin(coin: number, variant: number): RectArt[] {
+  return habiller(rocheDeCoin(coin & 3, variant), 0, variant)
+}
+
+/**
+ * OÙ VA LA LÈVRE — lu des hauteurs voisines, jamais stocké. `plusBas(dx, dy)` dit si la voisine
+ * à cet offset est PLUS BASSE que la tuile (l'appelant y met ce qu'il sait : une rampe qui monte
+ * jusqu'ici n'ouvre pas le sud, elle est le passage).
+ *
+ * `cotes` : les bits de `dessinDeLevre`. `coins` : bit 1 = nord-ouest, 2 = nord-est, 4 = sud-ouest,
+ * 8 = sud-est (l'ordre de `COINS`) — un coin ne se pose que si sa DIAGONALE est plus basse et
+ * qu'AUCUN de ses deux côtés ne l'est : sinon la bande du côté le couvre déjà.
+ */
+export function levreDe(plusBas: (dx: number, dy: number) => boolean): { cotes: number; coins: number } {
+  const n = plusBas(0, -1)
+  const e = plusBas(1, 0)
+  const w = plusBas(-1, 0)
+  const s = plusBas(0, 1)
+  const cotes = (n ? 1 : 0) | (e ? 2 : 0) | (w ? 4 : 0) | (s ? 8 : 0)
+  let coins = 0
+  if (!n && !w && plusBas(-1, -1)) coins |= 1
+  if (!n && !e && plusBas(1, -1)) coins |= 2
+  if (!s && !w && plusBas(-1, 1)) coins |= 4
+  if (!s && !e && plusBas(1, 1)) coins |= 8
+  return { cotes, coins }
+}
+
+/** La variante de lèvre d'une tuile : au hash de sa position — pur, stable, sans état. */
+export function varianteDeLevre(tx: number, ty: number): number {
+  return Math.floor(hash2(tx, ty, 0x1e7e) * LEVRE.VARIANTES)
+}
+
+/** Clé d'une texture de falaise. `top` = le dessus, `face` = la paroi, `ombre` = l'ombre portée au
+ *  pied, `levre` = le bord d'un palier vu de dessus, `coin` = son coin rentrant, `flanc` = l'ombre
+ *  que le flanc est jette sur le sol du bas, `chute` = la nappe d'eau qui remplace la paroi sous
+ *  un fleuve (`chute-art`, mask = la rangée, variant = phase × pas), `ecume` = son écume au pied. */
+export function cliffKey(family: 'top' | 'face' | 'ombre' | 'levre' | 'coin' | 'flanc' | 'chute' | 'ecume', mask: number, variant: number): string {
   return `cf-${family}-${mask}-${variant}`
+}
+
+/** La variante d'une texture de chute : la phase de colonne (`tx % CHUTE_PHASES`) et le pas de
+ *  temps, en un seul entier — c'est ce que la couche demande à chaque image. */
+export function varianteDeChute(phase: number, frame: number): number {
+  return phase * CHUTE_FRAMES + frame
+}
+export function varianteDEcume(phase: number, frame: number): number {
+  return phase * ECUME_FRAMES + frame
 }
 
 /**
@@ -326,7 +560,7 @@ export function cliffKey(family: 'top' | 'face' | 'ombre', mask: number, variant
 export function makeCliffTextures(scene: Phaser.Scene): void {
   const g = scene.add.graphics()
   const rejouer = (rects: readonly RectArt[], key: string): void => {
-    for (const r of rects) g.fillStyle(r.c).fillRect(r.x, r.y, r.w, r.h)
+    for (const r of rects) g.fillStyle(r.c, r.a ?? 1).fillRect(r.x, r.y, r.w, r.h)
     g.generateTexture(key, CLIFF_TILE_PX, CLIFF_TILE_PX)
     g.clear()
   }
@@ -337,6 +571,22 @@ export function makeCliffTextures(scene: Phaser.Scene): void {
   for (let mask = 0; mask < 16; mask++) {
     for (let v = 0; v < VARIANTES_PAROI; v++) rejouer(dessinDeParoi(mask, v), cliffKey('face', mask, v))
   }
+  // La lèvre : 15 masques de côtés × 8 franges ; le coin rentrant : 4 × 8.
+  for (let cotes = 1; cotes < 16; cotes++) {
+    for (let v = 0; v < LEVRE.VARIANTES; v++) rejouer(dessinDeLevre(cotes, v), cliffKey('levre', cotes, v))
+  }
+  for (let coin = 0; coin < 4; coin++) {
+    for (let v = 0; v < LEVRE.VARIANTES; v++) rejouer(dessinDeCoin(coin, v), cliffKey('coin', coin, v))
+  }
+  // La cascade : `CHUTE_RANGEES` rangées × 4 phases × 7 pas ; son écume : 4 phases × 6 pas.
+  for (let k = 0; k < CHUTE_RANGEES; k++) {
+    for (let p = 0; p < CHUTE_PHASES; p++) {
+      for (let f = 0; f < CHUTE_FRAMES; f++) rejouer(dessinDeChute(k, f, p), cliffKey('chute', k, varianteDeChute(p, f)))
+    }
+  }
+  for (let p = 0; p < CHUTE_PHASES; p++) {
+    for (let f = 0; f < ECUME_FRAMES; f++) rejouer(dessinDEcume(f, p), cliffKey('ecume', 0, varianteDEcume(p, f)))
+  }
 
   let y = 0
   for (const [h, a] of OMBRE_CRANS) {
@@ -344,6 +594,14 @@ export function makeCliffTextures(scene: Phaser.Scene): void {
     y += h
   }
   g.generateTexture(cliffKey('ombre', 0, 0), CLIFF_TILE_PX, CLIFF_TILE_PX)
+  g.clear()
+  // L'ombre du flanc est : les mêmes crans, couchés — elle part du bord OUEST de la tuile du bas.
+  let x = 0
+  for (const [w, a] of LEVRE.OMBRE_FLANC) {
+    g.fillStyle(0x0a090e, a).fillRect(x, 0, w, CLIFF_TILE_PX)
+    x += w
+  }
+  g.generateTexture(cliffKey('flanc', 0, 0), CLIFF_TILE_PX, CLIFF_TILE_PX)
   g.clear()
 
   g.destroy()

@@ -17,7 +17,7 @@
  * garde verte ne dirait que « ce système ne fait rien ».
  */
 import { describe, expect, it } from 'vitest'
-import { FAUNA, TERRAIN_GRASS, TERRAIN_ROCK, TERRAIN_SCREE } from './balance'
+import { BALANCE, FAUNA, HUNT, TERRAIN_GRASS, TERRAIN_ROCK, TERRAIN_SCREE } from './balance'
 import { createEmptyMap, type WorldMap } from './map'
 import { type EtageCreux } from './etages'
 import { createSim, spawnEntity, step, type SimState } from './sim'
@@ -209,5 +209,84 @@ describe('E-A3 — la porte, et ce qui se relève', () => {
     const corps = state.entities.find((e) => e.id === leve!.entityId)!
     expect(corps.etage, 'il se relève à +1, pas dans la roche').toBe(1)
     void CENDREUX
+  })
+})
+
+/* ══════════ E-R22 — CE QU'ON LÂCHE SUR LE PLATEAU Y RESTE ══════════
+ *
+ * Avant : une pile n'avait pas d'étage, elle vivait « au sol » — et lâchée depuis le chapeau,
+ * ce sol était l'intérieur de la roche : E-R5 la disait « trop loin » à qui venait de la poser.
+ * Le même patron que `Corpse.etage`, éprouvé des deux côtés : la pile d'en haut se reprend d'en
+ * haut et pas d'en bas ; et la pile d'en bas (le test d'avant) reste hors de portée d'en haut.
+ */
+describe('E-R22 — ce qu’on lâche sur le plateau y reste', () => {
+  /** Un corps posé avec son étage, une bûche en main. */
+  function porteur(state: SimState, at: { x: number; y: number }, etage: number): number {
+    const id = poser(state, at, etage)
+    const e = state.entities.find((k) => k.id === id)!
+    e.inventory[e.activeSlot] = { item: 'wood', count: 1 }
+    return id
+  }
+
+  it('LA PILE lâchée sur le plateau porte son étage : elle se reprend de là-haut, pas du pied', () => {
+    const state = monde()
+    const haut = porteur(state, HAUT, 1)
+    applyInventoryAction(state, haut, { type: 'drop_held' })
+    const pile = state.groundItems[0]!
+    expect(pile.etage, 'la pile gît sur le plancher de qui l’a lâchée').toBe(1)
+    // Du pied, une tuile à l'ouest : douze mètres de roche entre la main et la pile.
+    const bas = poser(state, BAS, 0)
+    applyInventoryAction(state, bas, { type: 'pick_up', pileId: pile.id })
+    expect(state.groundItems, 'd’en bas : rien à prendre').toHaveLength(1)
+    applyInventoryAction(state, haut, { type: 'pick_up', pileId: pile.id })
+    expect(state.groundItems, 'd’en haut : on la reprend').toHaveLength(0)
+  })
+
+  it('AU SOL, rien ne change : la pile lâchée au palier n’a pas de champ (les sauvegardes d’avant)', () => {
+    const state = monde()
+    const bas = porteur(state, BAS, 0)
+    applyInventoryAction(state, bas, { type: 'drop_held' })
+    expect(state.groundItems[0]!.etage).toBeUndefined()
+    applyInventoryAction(state, bas, { type: 'pick_up', pileId: state.groundItems[0]!.id })
+    expect(state.groundItems).toHaveLength(0)
+  })
+
+  it('DEUX PILES, pas une : ce qui gît au sol ne fusionne pas avec ce qui gît sur le plateau', () => {
+    const state = monde()
+    poserAuSol(state, HAUT.x, HAUT.y, 'wood', 1, 1)
+    poserAuSol(state, HAUT.x, HAUT.y, 'wood', 1, 0)
+    expect(state.groundItems).toHaveLength(2)
+    poserAuSol(state, HAUT.x, HAUT.y, 'wood', 1, 1)
+    expect(state.groundItems).toHaveLength(2)
+    expect(state.groundItems.find((p) => p.etage === 1)?.count, 'le tas d’en haut se renouvelle').toBe(2)
+  })
+
+  it('L’APPÂT sur le plateau ne se flaire pas du pied — la bête ne marche pas dans la paroi', () => {
+    const r = lesDeuxSens((etageDeLaBete) => {
+      const state = monde()
+      poserAuSol(state, HAUT.x, HAUT.y, 'berries', 1, 1)
+      // Au sol : une tuile à l'ouest de l'appât, à portée de bouchée — sans la roche entre les deux.
+      // Sur le plateau : deux tuiles à l'est, à portée de flair (`BAIT_SEEK`), le même sol.
+      const at = etageDeLaBete === 0 ? BAS : { x: HAUT.x + 2, y: HAUT.y }
+      const id = spawnMonster(state, 'rabbit', at.x, at.y)
+      const m = state.monsters.find((mm) => mm.entityId === id)!
+      delete m.burrowX
+      delete m.burrowY
+      if (etageDeLaBete !== 0) state.entities.find((e) => e.id === id)!.etage = etageDeLaBete
+      for (let t = 0; t < 20 * BALANCE.TICK_RATE_HZ && m.baitUntil === undefined; t++) step(state, [])
+      return m.baitUntil !== undefined
+    })
+    expect(r.temoin, 'témoin : sur le plateau, le lapin vient aux baies').toBe(true)
+    expect(r.aTravers, 'du pied : il ne les flaire pas à travers la roche').toBe(false)
+    void HUNT
+  })
+
+  it('LE SANG d’un blessé sur le plateau porte son étage', () => {
+    const state = monde()
+    const id = poser(state, HAUT, 1)
+    state.entities.find((e) => e.id === id)!.wounds.bleeding = true
+    for (let t = 0; t < HUNT.BLOOD_EVERY_TICKS + 1 && state.blood.length === 0; t++) step(state, [])
+    expect(state.blood.length).toBeGreaterThan(0)
+    expect(state.blood[0]!.etage).toBe(1)
   })
 })

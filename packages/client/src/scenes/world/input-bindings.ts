@@ -62,6 +62,12 @@ export interface InputDeps {
    * reste pur et n'ouvre jamais la carte.
    */
   porteDeLEau(tx: number, ty: number): boolean
+  /**
+   * CETTE TUILE (son sol, ou l'étage `etage` qu'on y vise) EST-ELLE JOIGNABLE DEPUIS MON
+   * ÉTAGE ? (spec `etages.md` E-R5) La règle vit dans /sim (`atteignableEntreEtages`) et la
+   * sim la revalidera ; la visée la lit pour ne pas dorer un nœud qu'un `F` refusera.
+   */
+  atteignable(tx: number, ty: number, etage?: number): boolean
   /** Les autres ENTITÉS (PNJ/joueurs) — SANS soi ni les monstres : les cibles d'un DON.
    *  Position LOGIQUE (tuiles), pour viser dans le même repère que les nœuds. */
   others(): { id: number; x: number; y: number }[]
@@ -432,6 +438,7 @@ export function bindInputs(scene: Phaser.Scene, deps: InputDeps): MovementBindin
       deps.piles(), // les tas au sol : flèches retombées, appâts, charge larguée
       deps.porteDeLEau, // l'eau du jour (peche.md D9) : où la ligne peut tomber
       deps.noeudALaTuile, // l'index tuile→nœud : O(1) au lieu des ~62 000 du tableau
+      deps.atteignable, // la joignabilité d'étage (E-R5) : pas de nœud doré à travers la roche
     )
     viseeMemo = { frame, tx, ty, cible }
     return cible

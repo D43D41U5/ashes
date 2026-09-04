@@ -15,7 +15,7 @@ import { describe, expect, it } from 'vitest'
 import { PAROI_RANGEES, dessinDeParoi, dessinDuDessus, type RectArt } from './cliff-art'
 import {
   PERIODE_DALLE, RAMPE_RANGEES, TERRAINS_DE_PLATEAU, VARIANTES_SOL,
-  dessinDeRampe, dessinDuLisere, dessinDuSolDePlateau, souLeCiel,
+  dessinDeRampe, dessinDuSolDePlateau, souLeCiel,
 } from './plateau-art'
 import { TERRAIN_BOULDERS, TERRAIN_JUNIPER_HEATH, TERRAIN_SCREE } from '@ashes/sim'
 import { LIFT_TUILES } from './framing'
@@ -144,24 +144,6 @@ describe('le sol du plateau — la valeur dit la hauteur', () => {
         }
       }
     }
-  })
-
-  it('le liseré est un sprite À PART, transparent ailleurs — donc il ne peut pas cadrer la tuile', () => {
-    // Cuit dans la tuile, il multipliait les figures par huit ; croisé aux phases et aux terrains,
-    // c'étaient des centaines de textures pour un trait de deux pixels. Chaque côté ne peint donc
-    // QUE sa bande, et rien d'autre : c'est ce qui permet de le poser seulement sur le pourtour.
-    for (const [cote, x, y] of [[1, 8, 0], [4, 0, 8], [2, 15, 8]] as const) {
-      const d = dessinDuLisere(cote, TERRAIN_SCREE)
-      expect(pixel(d, x, y), `côté ${cote} peint sa bande`).toBeGreaterThanOrEqual(0)
-      expect(pixel(d, 8, 8), `côté ${cote} laisse le cœur VIDE`).toBe(-1)
-    }
-  })
-
-  it('le liseré nord ÉCLAIRE et le liseré est ASSOMBRIT — le soleil est au nord-ouest', () => {
-    const fond = lum(pixel(SOL_PLEIN, 8, 8))
-    expect(lum(pixel(dessinDuLisere(1, TERRAIN_SCREE), 8, 0)), 'nord').toBeGreaterThan(fond)
-    expect(lum(pixel(dessinDuLisere(4, TERRAIN_SCREE), 0, 8)), 'ouest').toBeGreaterThan(fond)
-    expect(lum(pixel(dessinDuLisere(2, TERRAIN_SCREE), 15, 8)), 'est').toBeLessThan(fond)
   })
 
   it('LE TERRAIN SE VOIT : trois terrains, trois teintes distinctes — à valeur ÉGALE', () => {

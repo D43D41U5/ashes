@@ -16,7 +16,7 @@
  * Recopier l'une ou l'autre ici, ce serait signer leur divergence.
  */
 import { BALANCE, HUNT, SLOTS } from './balance'
-import { atteintLeSol } from './etages'
+import { atteignableEntreEtages, atteintLeSol, niveauDuCorps, poserLEtageDuCorps } from './etages'
 import { emitEvent } from './events'
 import { fireSlotLocked, fireZoneAccepts, fireZoneInventory, type FireZone } from './fire'
 import { distSq } from './geometry'
@@ -119,14 +119,26 @@ export function isInventoryAction(action: { type: string }): action is Inventory
  * l'alignement consomme), une flèche qui retombe n'en est pas un. C'est à l'appelant
  * de dire si son geste compte, pas à la pile de le supposer.
  */
-export function poserAuSol(state: SimState, x: number, y: number, item: ItemId, count: number): void {
-  const near = state.groundItems.find((p) => p.item === item && distSq(x, y, p.x, p.y) <= 0.5 * 0.5)
+export function poserAuSol(state: SimState, x: number, y: number, item: ItemId, count: number, niveau?: number): void {
+  // ═══ CE QU'ON LÂCHE SUR UN PLATEAU Y RESTE (spec `etages.md` E-R22) ═══
+  //
+  // `niveau` est l'étage de QUI lâche (`niveauDuCorps`) ; absent, la pile est au palier de sa
+  // tuile — le sol, comme toujours. Sans ce nombre, une pile lâchée depuis le chapeau d'une mesa
+  // vivait « au sol », c'est-à-dire DANS la roche du chapeau : E-R5 la disait « trop loin » à
+  // qui venait de la poser, et elle attendait là son expiration. Le pendant exact de
+  // `Corpse.etage`, normalisé de la même main (`poserLEtageDuCorps` : absent au palier).
+  const etage = niveau ?? niveauDuCorps(state.map, { x, y })
+  const near = state.groundItems.find(
+    (p) => p.item === item && distSq(x, y, p.x, p.y) <= 0.5 * 0.5 && niveauDuCorps(state.map, p) === etage,
+  )
   if (near) {
     near.count += count
     near.expiresAt = state.tick + HUNT.GROUND_TTL // le tas se renouvelle
     return
   }
-  state.groundItems.push({ id: state.nextGroundItemId, x, y, item, count, expiresAt: state.tick + HUNT.GROUND_TTL })
+  const pile = { id: state.nextGroundItemId, x, y, item, count, expiresAt: state.tick + HUNT.GROUND_TTL }
+  poserLEtageDuCorps(state.map, pile, etage)
+  state.groundItems.push(pile)
   state.nextGroundItemId += 1
 }
 
@@ -317,7 +329,7 @@ export function applyInventoryAction(state: SimState, actorId: number, action: I
       if (held === null) return reject('rien en main')
       const item = held.item
 
-      poserAuSol(state, actor.x, actor.y, item, 1)
+      poserAuSol(state, actor.x, actor.y, item, 1, niveauDuCorps(state.map, actor))
 
       held.count -= 1
       if (held.count <= 0) actor.inventory[actor.activeSlot] = null
@@ -331,8 +343,11 @@ export function applyInventoryAction(state: SimState, actorId: number, action: I
       if (!pile) return reject('rien à ramasser')
       const range = BALANCE.INTERACT_RANGE
       if (distSq(actor.x, actor.y, pile.x, pile.y) > range * range) return reject('trop loin')
-      // Une pile gît au sol : on ne la ramasse pas depuis le dessus d'une mesa (E-R5).
-      if (!atteintLeSol(state.map, actor, Math.floor(pile.x), Math.floor(pile.y))) return reject('trop loin')
+      // Une pile gît sur SON plancher (E-R22) : on ne la ramasse pas à travers la roche (E-R5) —
+      // ni depuis le plateau ce qui est au sol, ni depuis le sol ce qu'on a lâché là-haut.
+      if (!atteignableEntreEtages(state.map, actor.x, actor.y, niveauDuCorps(state.map, actor), pile.x, pile.y, niveauDuCorps(state.map, pile))) {
+        return reject('trop loin')
+      }
 
       // `addItems` rend ce qui N'A PAS tenu (le reste), pas ce qui est entré :
       // ce qui rentre est donc la différence. Un sac plein ne fait pas

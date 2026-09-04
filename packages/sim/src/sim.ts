@@ -477,7 +477,7 @@ export interface SimState {
    * personne d'autre ne les consomme. Borné des deux côtés (TTL + plafond FIFO) :
    * le snapshot reste petit.
    */
-  blood: { x: number; y: number; tick: number }[]
+  blood: { x: number; y: number; tick: number; etage?: number }[]
   /**
    * LE CAP DU VENT (spec `vent.md` V1/V4 ; l'odorat, chasse C17), un des huit relèvements —
    * DÉRIVÉ du front météo qui traverse, ou du relèvement d'ambiance entre deux fronts. L'odeur
@@ -504,8 +504,11 @@ export interface SimState {
    * larguée en fuite. Périssables — le monde ne se jonche pas.
    */
   /** `surCoulee` (forêts-vivantes §4) : mémorisé à la PREMIÈRE lecture d'appât — fonction
-   *  pure de la position, même tick même valeur partout : déterministe et rejouable. */
-  groundItems: { id: number; x: number; y: number; item: ItemId; count: number; expiresAt: number; surCoulee?: boolean }[]
+   *  pure de la position, même tick même valeur partout : déterministe et rejouable.
+   *  `etage` (spec `etages.md` E-R22) : LE PLANCHER OÙ LA PILE GÎT, le pendant de `Corpse.etage` —
+   *  absent ≡ le palier de sa tuile (`niveauDuCorps`), donc toute sauvegarde d'avant. Ce qu'on
+   *  lâche sur un plateau y reste ; le sang (`blood`) porte le même champ, pour la même raison. */
+  groundItems: { id: number; x: number; y: number; item: ItemId; count: number; expiresAt: number; surCoulee?: boolean; etage?: number }[]
   nextGroundItemId: number
   /**
    * Les LIEUX que l'hôte a peuplés d'une bête (index de `map.zones`). Le
