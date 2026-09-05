@@ -365,8 +365,6 @@ export function tracerLHydrologie(
     altT = new Float64Array(n)
     for (let k = 0; k < n; k++) altT[k] = creux.alt[k]! - lo + palierDeCellule(k) * H
   }
-  /** Le terme d'escalier d'une TUILE : sa cellule, rectiligne — comme les falaises (R32). */
-  const marcheDeTuile = (x: number, y: number): number => (escalier !== null ? palierDeCellule(celluleDeTuile(x, y)) * H - lo : 0)
 
   // ══ 2. LE PRIORITY-FLOOD — chaque dépression se remplit jusqu'à SON col ═════════════════
   /**
@@ -375,11 +373,11 @@ export function tracerLHydrologie(
    * ensembles de sources — le bord du pays seul (le drainage), le bord PLUS le calcaire (les
    * lacs, voir 2b). L'ordre du tas est total (hauteur, puis index) : déterministe.
    */
-  const inonder = (source: Uint8Array): { filled: Float64Array; ferme: Uint8Array } => {
+  const inonder = (source: Uint8Array, champ: Float64Array = altT): { filled: Float64Array; ferme: Uint8Array } => {
     const filled = new Float64Array(n)
     const ferme = new Uint8Array(n)
     const tas = new TasPF(n)
-    for (let k = 0; k < n; k++) filled[k] = altT[k]!
+    for (let k = 0; k < n; k++) filled[k] = champ[k]!
     for (let k = 0; k < n; k++) {
       if (source[k] !== 1) continue
       ferme[k] = 1
@@ -397,7 +395,7 @@ export function tracerLHydrologie(
         const v = vy * cols + vx
         if (ferme[v] === 1 || dansLePays[v] !== 1) continue
         ferme[v] = 1
-        filled[v] = altT[v]! > fk ? altT[v]! : fk
+        filled[v] = champ[v]! > fk ? champ[v]! : fk
         tas.pousse(filled[v]!, v)
       }
     }
@@ -428,15 +426,15 @@ export function tracerLHydrologie(
   // deux inondations sont la même : `filledLac` EST `filled`, au bit près.
   let filledLac = filled
   let fermeLac = ferme
+  const sourceLac = new Uint8Array(estBase)
   {
-    const source = new Uint8Array(estBase)
     let puits = 0
     for (let k = 0; k < n; k++) {
       if (dansLePays[k] !== 1 || estBase[k] === 1 || familleDeCellule(creux, k) !== -1) continue
-      source[k] = 1
+      sourceLac[k] = 1
       puits++
     }
-    if (puits > 0) ({ filled: filledLac, ferme: fermeLac } = inonder(source))
+    if (puits > 0) ({ filled: filledLac, ferme: fermeLac } = inonder(sourceLac))
   }
 
   // ══ 3. LES CUVETTES — et lesquelles sont des LACS ═══════════════════════════════════════
@@ -449,6 +447,15 @@ export function tracerLHydrologie(
   const marge = CREUX.LAME * 0.25
   const noye = new Uint8Array(n)
   for (let k = 0; k < n; k++) if (fermeLac[k] === 1 && filledLac[k]! - altT[k]! > marge) noye[k] = 1
+  // LA CUVETTE NATURELLE — le même flood, sur `alt` NU (sans l'escalier). Sur l'escalier seulement :
+  // c'est le garde-fou de la morsure d'un lac dans la terrasse du dessus (voir 4) — le col naturel
+  // n'est jamais noyé, donc un lac ne déborde jamais dans le vallon d'à côté. Sans escalier, inutile.
+  let noyeNat: Uint8Array | null = null
+  if (escalier !== null) {
+    const nat = inonder(sourceLac, creux.alt)
+    noyeNat = new Uint8Array(n)
+    for (let k = 0; k < n; k++) if (nat.ferme[k] === 1 && nat.filled[k]! - creux.alt[k]! > marge) noyeNat[k] = 1
+  }
   const vu = new Uint8Array(n)
   const lacs: { cellules: number[]; niveau: number; creux: number }[] = []
   for (let s = 0; s < n; s++) {
@@ -509,17 +516,6 @@ export function tracerLHydrologie(
       + (fbm2(x, y, HYDRO.ILOTS_LARGE_ECHELLE, (selRive ^ 0x4247494c) | 0 /* 'BGIL' */) - 0.5) * part * 0.8
   }
   for (const lac of lacs) {
-    // L'emprise : les cellules de la cuvette PLUS leur anneau — sans quoi l'iso-ligne serait
-    // clippée au bord des cellules et la rive hériterait des angles droits de la grille.
-    const dansLaCuvette = new Set(lac.cellules)
-    const emprise = new Set(lac.cellules)
-    for (const k of lac.cellules) {
-      const kx = k % cols
-      const ky = (k - kx) / cols
-      for (const v of [kx > 0 ? k - 1 : -1, kx + 1 < cols ? k + 1 : -1, ky > 0 ? k - cols : -1, ky + 1 < rows ? k + cols : -1]) {
-        if (v >= 0 && dansLePays[v] === 1) emprise.add(v)
-      }
-    }
     // L'inondation part du point BAS de la cuvette, en 4-connexité : le lac est d'un seul
     // tenant, et une bosse restée sèche au milieu devient une ÎLE.
     let bas = lac.cellules[0]!
@@ -527,6 +523,55 @@ export function tracerLHydrologie(
     const bx = (creux.mx0 + (bas % cols)) * M + M / 2
     const by = (creux.my0 + ((bas - (bas % cols)) / cols)) * M + M / 2
     if (!libre(bx, by)) continue
+    // UN LAC TIENT SUR UN PALIER, celui de son fond : chaque tuile du lac le reçoit, quelle que
+    // soit sa cellule. Sa MARCHE est le terme d'escalier de ce palier — le même pour toutes ses
+    // tuiles (sans escalier, zéro : pas un bit ne bouge).
+    const pLac = palierDeCellule(bas)
+    const marcheDuLac = pLac * H - lo
+    /** Le niveau du lac dans le champ NU — ce que lit la cellule d'une terrasse plus haute. */
+    const niveauNat = lac.niveau - marcheDuLac
+    // ═══ L'EMPRISE — la cuvette, LA MORSURE DANS LA TERRASSE DU DESSUS, et l'anneau ═══
+    //
+    // *(Alexis, 2026-09-05 : « beaucoup de lacs ont des frontières carrées et ça ne me plaît
+    // pas ».)* Sur l'escalier, la cuvette se lit sur `altT` : elle s'arrête net à la cellule où
+    // le palier monte, donc à la grille de 8 — et le lac, clippé dessus, en héritait les angles
+    // droits (MESURÉ graine 2026, monde joué : 47 % des arêtes de rive sur la grille de 8,
+    // contre 19 % avant N3 ; 31 % des arêtes contre un mur). Or la rive haute qui tombe à pic
+    // dans l'eau est LE dessin voulu (`terrasses.ts`, 2026-09-03 : « la falaise au bord du lac,
+    // le pied dans l'eau »). Le lac épouse donc son iso-ligne NATURELLE dans les cellules plus
+    // hautes que son palier — de proche en proche, tant que la cellule est sous son niveau nu
+    // ET dans la même cuvette naturelle (`noyeNat` : un col naturel n'est jamais noyé, donc le
+    // lac ne déborde pas dans le vallon d'à côté ; le calcaire non plus, puits du flood nu — R4).
+    // Une cellule PLUS BASSE reste interdite (`surSaMarche`) : l'eau y serait perchée. Le
+    // contrat de N3 tient à la tuile : le lac prend `pLac`, toute terre qu'il touche est à
+    // `pLac` ou plus — il mord la terrasse EN CUVETTE, jamais une terre plus basse.
+    const dansLaCuvette = new Set(lac.cellules)
+    const emprise = new Set(lac.cellules)
+    const corps = lac.cellules.slice()
+    if (noyeNat !== null) {
+      for (let t = 0; t < corps.length; t++) {
+        const k = corps[t]!
+        const kx = k % cols
+        const ky = (k - kx) / cols
+        for (const v of [kx > 0 ? k - 1 : -1, kx + 1 < cols ? k + 1 : -1, ky > 0 ? k - cols : -1, ky + 1 < rows ? k + cols : -1]) {
+          if (v < 0 || emprise.has(v) || dansLePays[v] !== 1) continue
+          if (palierDeCellule(v) <= pLac) continue //   son palier ou plus bas : la cuvette a dit
+          if (noye[v] === 1 || noyeNat[v] !== 1) continue // une autre cuvette, ou hors de la nôtre
+          if (creux.alt[v]! >= niveauNat) continue //  au-dessus du niveau : sec
+          emprise.add(v)
+          corps.push(v)
+        }
+      }
+    }
+    // L'anneau — sans quoi l'iso-ligne serait clippée au bord des cellules et la rive
+    // hériterait des angles droits de la grille.
+    for (const k of corps) {
+      const kx = k % cols
+      const ky = (k - kx) / cols
+      for (const v of [kx > 0 ? k - 1 : -1, kx + 1 < cols ? k + 1 : -1, ky > 0 ? k - cols : -1, ky + 1 < rows ? k + cols : -1]) {
+        if (v >= 0 && dansLePays[v] === 1) emprise.add(v)
+      }
+    }
     // LE CARACTÈRE DU LAC — tiré de son point bas, donc stable et sans PRNG d'état.
     // ═══ LE RELIEF DE FOND N'AGIT QU'AU LARGE ═══
     //
@@ -619,7 +664,7 @@ export function tracerLHydrologie(
       const cle = y * width + x
       const vu2 = cache.get(cle)
       if (vu2 !== undefined) return vu2
-      let v = champLac(x, y, lac.creux, largeEn(x, y)) + marcheDeTuile(x, y)
+      let v = champLac(x, y, lac.creux, largeEn(x, y)) + marcheDuLac
       // LES DÔMES — ajoutés au fond, atténués par le même fondu que le reste : une île ne se
       // colle jamais à la rive, elle sort du large.
       if (domes.length > 0) {
@@ -648,7 +693,13 @@ export function tracerLHydrologie(
     // restait alors un carré de terre de 8 × 8 au milieu de l'eau — une île par accident, hors
     // d'atteinte (MESURÉ : 64 tuiles perdues sur 2026 et 909, T-A2). Et un lac tient sur UN
     // palier, celui de son fond : chaque tuile du lac le reçoit, quelle que soit sa cellule.
-    const pLac = palierDeCellule(bas)
+    // Et DEUX LACS DE PALIERS DIFFÉRENTS NE SE TOUCHENT PAS : depuis que le lac mord la
+    // terrasse du dessus, sa rive peut arriver contre un lac de ce palier-là — tuile contre
+    // tuile. `epouserLEscalier` fondrait alors les deux en une nappe et descendrait le haut au
+    // palier du bas, sous sa propre frange de marais (MESURÉ graine 7 : 29 tuiles de marais
+    // perchées, T-A11). Une tuile de berge reste entre eux : celle-ci n'est pas peinte si une
+    // de ses quatre voisines est déjà une eau d'un autre palier — dans un sens comme dans
+    // l'autre, les lacs se peignant l'un après l'autre.
     const surSaMarche = (x: number, y: number): boolean => {
       if (escalier === null) return true
       const kc = celluleDeTuile(x, y)
@@ -656,6 +707,11 @@ export function tracerLHydrologie(
       for (const [dx, dy] of [[1, 0], [-1, 0], [0, 1], [0, -1]] as const) {
         const kv = celluleDeTuile(x + dx, y + dy)
         if (kv >= 0 && palierDeCellule(kv) < pLac) return false
+        const vx = x + dx
+        const vy = y + dy
+        if (vx < 0 || vy < 0 || vx >= width || vy >= height) continue
+        const j = vy * width + vx
+        if (isWater(terrain[j]!) && escalier.palierTuile[j] !== pLac) return false
       }
       return true
     }

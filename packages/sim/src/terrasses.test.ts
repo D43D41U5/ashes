@@ -36,6 +36,7 @@ import { computeFlowFieldMulti, findPath, lisserLeChemin } from './pathfinding'
 import { buildPoiStructures } from './poi-batis'
 import { nidsAMonstre, spawnPoiMonsters } from './poi'
 import { createSim, spawnEntity, step, type SimState } from './sim'
+import { CREUX } from './racine-relief'
 import { TERRASSES } from './terrasses'
 import { cycleOffsetForStartHour } from './time'
 import { renderVignette } from './vignette'
@@ -469,6 +470,51 @@ describe('T-A11 — aucune eau ne domine une terre qu’elle touche (N3, 2026-09
         }
       }
       expect(perches.length, perches.slice(0, 8).join(' | ')).toBeLessThanOrEqual(5)
+    })
+  }
+})
+
+/* ─────────── T-A12 — LA RIVE HAUTE TOMBE À PIC DANS L'EAU, SUR SON ISO-LIGNE — PAS SUR LA GRILLE ─────────── */
+
+describe('T-A12 — un lac mord la terrasse du dessus en cuvette : sa rive à pic n’est pas la grille de 8 (2026-09-05)', () => {
+  // Alexis : « beaucoup de lacs ont des frontières carrées et ça ne me plaît pas ». Depuis N3 la
+  // cuvette d'un lac se lit sur `alt − lo + palier·H` : elle s'arrête net à la cellule où le
+  // palier monte, et le lac, clippé dessus, héritait des angles droits de la grille de 8 —
+  // MESURÉ avant : 100 % des arêtes de rive contre un mur (palier voisin > lac) posées sur la
+  // grille, sur les quatre graines. Depuis, le lac gagne les cellules plus hautes de SA cuvette
+  // naturelle sous son niveau nu, et sa rive y suit l'iso-ligne (36 / 33 / 63 / 37 %). Le reste
+  // sur la grille est le BARRAGE : la cellule où la cuvette naturelle déborderait par le haut de
+  // la marche — la mordre ferait fuir le lac dans le vallon d'à côté ; là, la paroi tient l'eau
+  // et reste droite. La borne laisse un quart de marge sur la pire graine.
+  for (const graine of GRAINES) {
+    it(`graine ${graine} : au plus 75 % des arêtes de rive contre un mur sont sur la grille de 8`, () => {
+      const map = carteDeTest(graine, MONDE.JOUEURS_CIBLE, MONDE_JOUE).map
+      const { width, height, terrain } = map
+      const p = map.palier!
+      const lac = new Uint8Array(width * height)
+      for (const i of map.lacs ?? []) lac[i] = 1
+      let mur = 0
+      let murSurGrille = 0
+      for (let y = 0; y < height; y++) {
+        for (let x = 0; x < width; x++) {
+          const i = y * width + x
+          if (lac[i] !== 1) continue
+          for (const [dx, dy] of [[1, 0], [-1, 0], [0, 1], [0, -1]] as const) {
+            const vx = x + dx
+            const vy = y + dy
+            if (vx < 0 || vy < 0 || vx >= width || vy >= height) continue
+            const j = vy * width + vx
+            if (isWater(terrain[j]!) || p[j]! <= p[i]!) continue
+            mur++
+            // L'arête entre (x,y) et sa voisine est sur la grille si la ligne qui les sépare
+            // est un multiple de CREUX.MOTIF — la cellule du creux, alignée sur l'origine.
+            const ligne = dx !== 0 ? (dx > 0 ? vx : x) : (dy > 0 ? vy : y)
+            if (ligne % CREUX.MOTIF === 0) murSurGrille++
+          }
+        }
+      }
+      expect(mur).toBeGreaterThan(1_000) // la prémisse : des lacs touchent la terrasse du dessus
+      expect(murSurGrille / mur, `${murSurGrille} / ${mur}`).toBeLessThanOrEqual(0.75)
     })
   }
 })
