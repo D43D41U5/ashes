@@ -33,7 +33,7 @@ import { TERRAINS, TERRAIN_BOULDERS, TERRAIN_DEEP_WATER, TERRAIN_MARSH, TERRAIN_
 import { isWater } from './map'
 import { estamperDisque } from './zonegen-trace'
 import { fbm2, hash2 } from './noise'
-import { tracerLHydrologie } from './zonegen-hydro'
+import { surLaMarche, tracerLHydrologie, type Escalier } from './zonegen-hydro'
 import { CREUX, ROCHE, celluleDe, familleDeCellule, lireLeChampAt, seuilParQuantile, type Creux } from './racine-relief'
 import type { GrapheZones } from './zonegraph'
 
@@ -331,6 +331,7 @@ export function paintWaterRacine(
   seed: number,
   bordure: number,
   creux: Creux | null,
+  escalier: Escalier | null = null,
 ): EauxDeLaRacine {
   const racineId = g.racine
   const s = seed ^ 0x45415500 /* 'EAU' */
@@ -349,7 +350,14 @@ export function paintWaterRacine(
   // lignes qui la portent, la largeur qui suit le débit, le profond là où c'est profond. Voir
   // `zonegen-hydro.ts`, qui porte la démonstration ; ici on ne fait que l'appeler et lui donner
   // ses voisins (le lapiaz, la frange de marais, les résurgences).
-  const hydro = tracerLHydrologie(terrain, zone, racineId, width, height, creux, horsSeuils, s)
+  // ═══ SUR L'ESCALIER (N3, décision du 2026-09-05) ═══
+  //
+  // Quand `escalier` est là, les paliers des terrasses sont posés AVANT l'eau : l'hydrologie
+  // naît dessus (`alt + palier · H`), chaque eau connaît son palier en naissant, et tout ce qui
+  // se pose ici après elle (marais, flaques, sources, isthmes) reste SUR LA MARCHE de l'eau
+  // qu'il prolonge — jamais au-dessus d'une terre plus basse. C'est l'escalier que
+  // `poserLesTerrasses` reprend ensuite, l'eau figée.
+  const hydro = tracerLHydrologie(terrain, zone, racineId, width, height, creux, horsSeuils, s, escalier)
   const eaux = hydro.eaux
   // Le FIL au singulier reste le plus gros fleuve : c'est lui que `map.fil` publie, et tout ce
   // qui le lit (le courant du client, la nature de l'eau) n'a pas à savoir qu'il y en a d'autres.
@@ -359,13 +367,13 @@ export function paintWaterRacine(
   // frange de marais, exprès : une source reçoit ses joncs comme n'importe quelle eau, et rien
   // dans le monde ne dit qu'elle est d'une autre nature.
   poserLesLapiaz(terrain, zone, racineId, width, height, bordure, creux, s)
-  frangeDeMarais(terrain, zone, racineId, width, height, s, eaux)
+  frangeDeMarais(terrain, zone, racineId, width, height, s, eaux, escalier)
   // LES RÉSURGENCES EN DERNIER, DONC SANS FRANGE DE MARAIS — et ce n'est pas un détail d'ordre.
   // ① Une source karstique est de l'eau CLAIRE qui sort de la roche, pas une vasque de boue :
   //    lui coller des joncs serait faux. ② Et la garde A11 l'a exigé : la frange des mares
   //    inversait le rang à l'eau au bout mouillé, en diluant les deux SEULS terrains du T0 qui
   //    savent où est l'eau. Les servir en dernier règle les deux d'un coup.
-  poserLesResurgences(terrain, zone, racineId, width, height, bordure, creux, horsSeuils)
+  poserLesResurgences(terrain, zone, racineId, width, height, bordure, creux, horsSeuils, escalier)
   return { riviere, chenaux: hydro.chenaux, fils: hydro.fils, lacs: hydro.lacs }
 }
 
@@ -560,6 +568,7 @@ function poserLesResurgences(
   bordure: number,
   creux: Creux | null,
   horsSeuils: Uint8Array,
+  escalier: Escalier | null = null,
 ): void {
   if (!creux) return
   const M = CREUX.MOTIF
@@ -615,6 +624,9 @@ function poserLesResurgences(
           const i = ty * width + tx
           if (zone[i] !== racineId) continue
           if (TERRAINS[terrain[i]!]?.walkable !== true || estMouille(terrain[i]!)) continue
+          // Sur l'escalier, la source reste sur la marche de sa cellule : au bord d'une cellule
+          // plus basse, elle perd sa rangée plutôt que de dominer la terre d'en bas.
+          if (escalier !== null && !surLaMarche(escalier, width, height, i, escalier.cellules[k]!)) continue
           terrain[i] = TERRAIN_SHALLOW_WATER
           posees++
         }
@@ -746,11 +758,12 @@ export function comblerLesIsthmes(
   height: number,
   horsSeuils: Uint8Array,
   creux: Creux | null,
+  escalier: Escalier | null = null,
 ): number {
   // On relève d'abord, on écrit ensuite : combler un isthme peut en fabriquer un autre, et une
   // règle qui se relit s'emballerait le long d'une berge. On garde donc la LISTE au lieu de
   // copier la carte — `terrain.slice()` sur 3,75 M de tuiles pesait dans le budget A13.
-  const aCombler: { i: number; profond: boolean }[] = []
+  const aCombler: { i: number; profond: boolean; p: number }[] = []
   const eau = (i: number): boolean => isWater(terrain[i]!)
   let combles = 0
   for (let y = 1; y < height - 1; y++) {
@@ -769,14 +782,89 @@ export function comblerLesIsthmes(
       const v = eau(i - width) && eau(i + width)
       if (!h && !v) continue
       const voisins = h ? [i - 1, i + 1] : [i - width, i + width]
-      aCombler.push({ i, profond: voisins.every((j) => terrain[j] === TERRAIN_DEEP_WATER) })
+      // Sur l'escalier, on ne comble qu'entre deux eaux DU MÊME PALIER, et la tuile comblée le
+      // prend — si elle n'en domine pas une terre plus basse (les deux autres voisines).
+      let p = -1
+      if (escalier !== null) {
+        const T = escalier.palierTuile
+        p = T[voisins[0]!]!
+        if (T[voisins[1]!] !== p || T[i]! < p) continue
+        const travers = h ? [i - width, i + width] : [i - 1, i + 1]
+        if (travers.some((j) => !eau(j) && T[j]! < p)) continue
+      }
+      aCombler.push({ i, profond: voisins.every((j) => terrain[j] === TERRAIN_DEEP_WATER), p })
     }
   }
-  for (const { i, profond } of aCombler) {
+  for (const { i, profond, p } of aCombler) {
     terrain[i] = profond ? TERRAIN_DEEP_WATER : TERRAIN_SHALLOW_WATER
+    if (escalier !== null) escalier.palierTuile[i] = p
     combles += 1
   }
   return combles
+}
+
+/**
+ * ═══ L'EAU ÉPOUSE L'ESCALIER (N3) — la dernière passe d'eau, après TOUTES les eaux ═══
+ *
+ * L'invariant de l'escalier tient en une phrase : **aucune eau ne domine une terre qu'elle
+ * touche.** L'hydrologie de la Racine le respecte en naissant ; les eaux des zones (mares, rus,
+ * grand lac), elles, naissent sur les champs du socle sans connaître l'escalier, à leur palier de
+ * cellule — et une mare à cheval sur deux cellules dominerait la terre de la plus basse. On les
+ * y ramène ici, sans bouger une tuile de terrain : une NAPPE (composante 4-connexe de `lacs`)
+ * prend le palier le plus bas de ses tuiles et des terres qu'elle touche — un lac tient sur UN
+ * palier ; toute autre eau descend au plus bas de ses quatre voisines de terre. Idempotent sur
+ * ce que l'hydrologie a déjà posé.
+ */
+export function epouserLEscalier(
+  terrain: readonly number[],
+  escalier: Escalier,
+  lacs: readonly number[],
+  width: number,
+  height: number,
+): void {
+  const T = escalier.palierTuile
+  const N = width * height
+  const lac = new Uint8Array(N)
+  for (const i of lacs) lac[i] = 1
+  const terreVoisineLaPlusBasse = (i: number, q: number): number => {
+    const x = i % width
+    const y = (i - x) / width
+    if (x > 0 && !isWater(terrain[i - 1]!) && T[i - 1]! < q) q = T[i - 1]!
+    if (x + 1 < width && !isWater(terrain[i + 1]!) && T[i + 1]! < q) q = T[i + 1]!
+    if (y > 0 && !isWater(terrain[i - width]!) && T[i - width]! < q) q = T[i - width]!
+    if (y + 1 < height && !isWater(terrain[i + width]!) && T[i + width]! < q) q = T[i + width]!
+    return q
+  }
+  const vu = new Uint8Array(N)
+  const file: number[] = []
+  for (const dep of lacs) {
+    if (vu[dep] === 1) continue
+    file.length = 0
+    file.push(dep)
+    vu[dep] = 1
+    let q = T[dep]!
+    for (let h = 0; h < file.length; h++) {
+      const i = file[h]!
+      if (T[i]! < q) q = T[i]!
+      q = terreVoisineLaPlusBasse(i, q)
+      const x = i % width
+      const y = (i - x) / width
+      for (const [dx, dy] of [[1, 0], [-1, 0], [0, 1], [0, -1]] as const) {
+        const nx = x + dx
+        const ny = y + dy
+        if (nx < 0 || ny < 0 || nx >= width || ny >= height) continue
+        const j = ny * width + nx
+        if (lac[j] !== 1 || vu[j] === 1) continue
+        vu[j] = 1
+        file.push(j)
+      }
+    }
+    for (const i of file) T[i] = q
+  }
+  for (let i = 0; i < N; i++) {
+    if (lac[i] === 1 || !isWater(terrain[i]!)) continue
+    T[i] = terreVoisineLaPlusBasse(i, T[i]!)
+  }
 }
 
 /**
@@ -797,6 +885,7 @@ function frangeDeMarais(
   height: number,
   s: number,
   eaux: readonly number[],
+  escalier: Escalier | null = null,
 ): void {
   const R = EAU.MARAIS_RAYON
   const M = EAU.MOTIF
@@ -816,6 +905,18 @@ function frangeDeMarais(
         const cur = terrain[j]
         if (isWater(cur!) || cur === TERRAIN_MARSH) continue
         if (TERRAINS[cur!]?.walkable !== true) continue
+        // Sur l'escalier, la frange reste sur la marche de son eau, et ne domine aucune eau : pas
+        // de marais en haut de la falaise qui tombe dans l'eau — ni celle qui l'a fait naître, ni
+        // une autre en contrebas.
+        if (escalier !== null) {
+          const T = escalier.palierTuile
+          const pj = T[j]!
+          if (pj !== T[i]) continue
+          if ((x > 0 && isWater(terrain[j - 1]!) && T[j - 1]! < pj)
+            || (x + 1 < width && isWater(terrain[j + 1]!) && T[j + 1]! < pj)
+            || (y > 0 && isWater(terrain[j - width]!) && T[j - width]! < pj)
+            || (y + 1 < height && isWater(terrain[j + width]!) && T[j + width]! < pj)) continue
+        }
         // Gate quantifié au motif : toute la plaque de 8 partage le verdict.
         if (hash2(Math.floor(x / M), Math.floor(y / M), sel) < EAU.MARAIS_COUVERTURE) {
           // Très rarement, une flaque d'eau libre au milieu des roseaux (gate PAR TUILE → éparse).
@@ -834,6 +935,7 @@ function frangeDeMarais(
               if (zone[k] !== racineId) return
               if (terrain[k] === TERRAIN_DEEP_WATER) return
               if (TERRAINS[terrain[k]!]?.walkable !== true) return
+              if (escalier !== null && !surLaMarche(escalier, width, height, k, escalier.palierTuile[i]!)) return
               terrain[k] = TERRAIN_SHALLOW_WATER
             })
           } else {

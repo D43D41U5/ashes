@@ -82,6 +82,16 @@ sec où il n'y a rien aujourd'hui.
   | **argile / marne** | conservé, ruissellement fort | les fonds se remplissent bas → **mares et marais** en dehors des grands bassins |
   | contact calcaire → marne | le flux ressort | **la résurgence** (R7) |
 
+  ⚠ **MORTE DEPUIS LE 2026-08-30, VU LE 2026-09-05 — À TRANCHER.** L'hydrologie dérivée
+  (`zonegen-hydro.ts`) a remplacé les lacs posés, et la clause `inondable` qui portait « le
+  calcaire n'inonde pas » est partie avec eux : rien dans le priority-flood ne lit la roche.
+  Personne ne l'a vu parce que la doline de la graine 7 restait sèche par la chance de son col ;
+  N3 (`terrasses.md` §1 — un lac se remplit jusqu'au col DE SON PALIER) l'a mise sous un lac.
+  MESURÉ : 24 à 41 % de l'eau profonde des quatre graines de référence repose SUR du calcaire.
+  Les trois issues (puits du flood / abrogation / taux d'absorption) et la reco sont dans
+  `docs/decisions.md` (2026-09-05, ④). Jusque-là, R6 et R6ter se lisent « là où le flood laisse
+  la cuvette sèche ».
+
   ⚠ **CE N'EST PAS UN SECOND HASARD.** L'infiltration entre dans une chaîne physique existante
   (uplift → érosion → D8 → accumulation), au seul endroit où elle a un sens. La doctrine de
   §2bis tient : *ce qui se lit comme logique, c'est ce qui est DÉRIVÉ.*

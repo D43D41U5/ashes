@@ -211,6 +211,37 @@ export interface Hydrologie {
   lacs: number[]
 }
 
+/**
+ * L'ESCALIER — ce que l'hydrologie reçoit des terrasses (N3, décision du 2026-09-05) : le
+ * palier de chaque CELLULE, et le palier de chaque TUILE qu'elle met à jour pour l'eau qu'elle
+ * pose. Absent (le monde sans terrasses), elle rend, au bit près, ce qu'elle rendait.
+ */
+export interface Escalier {
+  /** Le palier de chaque cellule du socle, `0..PALIERS−1`. */
+  cellules: Int8Array
+  /** Le palier de chaque tuile — la cellule pour la terre ; l'hydrologie y écrit celui de
+   *  l'eau courante qu'elle pose (`min(cellule, cours)`, jamais au-dessus de la terre à côté). */
+  palierTuile: Int8Array
+}
+
+/**
+ * SUR L'ESCALIER : cette tuile peut-elle recevoir de l'eau au palier `p` ? Il faut qu'elle y
+ * soit, et qu'aucune de ses quatre voisines ne soit plus basse — l'eau posée ici ne dominerait
+ * alors aucune terre. Sans escalier, toujours oui.
+ */
+export function surLaMarche(escalier: Escalier | null, width: number, height: number, i: number, p: number): boolean {
+  if (escalier === null) return true
+  const T = escalier.palierTuile
+  if (T[i] !== p) return false
+  const x = i % width
+  const y = (i - x) / width
+  if (x > 0 && T[i - 1]! < p) return false
+  if (x + 1 < width && T[i + 1]! < p) return false
+  if (y > 0 && T[i - width]! < p) return false
+  if (y + 1 < height && T[i + width]! < p) return false
+  return true
+}
+
 /** Les 8 voisins, cardinaux d'abord : l'ordre du tableau EST le départage des ex æquo. */
 const VDX = [0, 0, -1, 1, -1, 1, -1, 1]
 const VDY = [-1, 1, 0, 0, -1, -1, 1, 1]
@@ -229,6 +260,7 @@ export function tracerLHydrologie(
   creux: Creux | null,
   horsSeuils: Uint8Array,
   seed: number,
+  escalier: Escalier | null = null,
 ): Hydrologie {
   const vide: Hydrologie = { fils: [], coeur: new Set(), chenaux: [], eaux: [], lacs: [] }
   if (!creux) return vide
@@ -305,11 +337,42 @@ export function tracerLHydrologie(
     }
   }
 
+  // ══ 1b. L'ESCALIER (N3) — l'eau naît SUR les terrasses, pas avant elles ═════════════════
+  //
+  // Le champ que l'hydrologie remplit n'est plus `alt` mais `alt_T = alt + palier · H`, avec
+  // `H` plus grand que toute l'amplitude de `alt` : un bord de terrasse qui DESCEND est une
+  // chute libre (l'eau s'y jette, la cascade), un bord qui MONTE est un mur (rien ne le
+  // franchit). Conséquences, toutes prouvées par la construction du palier (non croissant le
+  // long de tout drainage, voir `quantifierLEscalier`) : une cuvette tient sur UN palier, son
+  // col aussi (`niveau < (p+1)·H`), donc un lac ne mord jamais la terrasse du dessus ni ne
+  // borde une terre plus basse ; et un cours suit des cellules de palier non croissant — il ne
+  // remonte jamais. Sans escalier, `altT` EST `creux.alt` : pas un bit ne bouge.
+  let altT: Float64Array = creux.alt
+  const palierDeCellule = (k: number): number => (escalier !== null && k >= 0 ? escalier.cellules[k]! : 0)
+  let H = 0
+  let lo = 0
+  if (escalier !== null) {
+    let hi = -Infinity
+    lo = Infinity
+    for (let k = 0; k < n; k++) {
+      if (dansLePays[k] !== 1) continue
+      const a = creux.alt[k]!
+      if (a < lo) lo = a
+      if (a > hi) hi = a
+    }
+    if (!(lo < Infinity)) { lo = 0; hi = 0 }
+    H = hi - lo + 1
+    altT = new Float64Array(n)
+    for (let k = 0; k < n; k++) altT[k] = creux.alt[k]! - lo + palierDeCellule(k) * H
+  }
+  /** Le terme d'escalier d'une TUILE : sa cellule, rectiligne — comme les falaises (R32). */
+  const marcheDeTuile = (x: number, y: number): number => (escalier !== null ? palierDeCellule(celluleDeTuile(x, y)) * H - lo : 0)
+
   // ══ 2. LE PRIORITY-FLOOD — chaque dépression se remplit jusqu'à SON col ═════════════════
   const filled = new Float64Array(n)
   const ferme = new Uint8Array(n)
   const tas = new TasPF(n)
-  for (let k = 0; k < n; k++) filled[k] = creux.alt[k]!
+  for (let k = 0; k < n; k++) filled[k] = altT[k]!
   for (let k = 0; k < n; k++) {
     if (estBase[k] !== 1) continue
     ferme[k] = 1
@@ -327,7 +390,7 @@ export function tracerLHydrologie(
       const v = vy * cols + vx
       if (ferme[v] === 1 || dansLePays[v] !== 1) continue
       ferme[v] = 1
-      filled[v] = creux.alt[v]! > fk ? creux.alt[v]! : fk
+      filled[v] = altT[v]! > fk ? altT[v]! : fk
       tas.pousse(filled[v]!, v)
     }
   }
@@ -340,7 +403,7 @@ export function tracerLHydrologie(
   const seuilLac = CREUX.LAME * HYDRO.LAC_PROFONDEUR_MIN
   const marge = CREUX.LAME * 0.25
   const noye = new Uint8Array(n)
-  for (let k = 0; k < n; k++) if (ferme[k] === 1 && filled[k]! - creux.alt[k]! > marge) noye[k] = 1
+  for (let k = 0; k < n; k++) if (ferme[k] === 1 && filled[k]! - altT[k]! > marge) noye[k] = 1
   const vu = new Uint8Array(n)
   const lacs: { cellules: number[]; niveau: number; creux: number }[] = []
   for (let s = 0; s < n; s++) {
@@ -351,7 +414,7 @@ export function tracerLHydrologie(
     let niveau = 0
     for (let t = 0; t < comp.length; t++) {
       const k = comp[t]!
-      const p = filled[k]! - creux.alt[k]!
+      const p = filled[k]! - altT[k]!
       if (p > creuxMax) creuxMax = p
       if (filled[k]! > niveau) niveau = filled[k]!
       const kx = k % cols
@@ -495,7 +558,7 @@ export function tracerLHydrologie(
         const cx = (creux.mx0 + kx) * M + M / 2
         const cy = (creux.my0 + ky) * M + M / 2
         if (domes.some((d) => Math.abs(d.cx - cx) + Math.abs(d.cy - cy) < rIle * 3)) continue
-        const prof = lac.niveau - creux.alt[k]!
+        const prof = lac.niveau - altT[k]!
         if (prof <= 0) continue // déjà émergé : le terrain a fait l'île tout seul
         // R = 2r et H = 4/3 · prof : le dôme `H·(1 − (d/R)²)` dépasse alors le niveau
         // exactement jusqu'à `d = r`. C'est toute l'arithmétique, et elle se vérifie à la main.
@@ -511,7 +574,7 @@ export function tracerLHydrologie(
       const cle = y * width + x
       const vu2 = cache.get(cle)
       if (vu2 !== undefined) return vu2
-      let v = champLac(x, y, lac.creux, largeEn(x, y))
+      let v = champLac(x, y, lac.creux, largeEn(x, y)) + marcheDeTuile(x, y)
       // LES DÔMES — ajoutés au fond, atténués par le même fondu que le reste : une île ne se
       // colle jamais à la rive, elle sort du large.
       if (domes.length > 0) {
@@ -531,6 +594,26 @@ export function tracerLHydrologie(
     const creuxLames = lac.creux / CREUX.LAME
     const mur = Math.min(1, Math.max(0, (creuxLames - HYDRO.LAC_PROFONDEUR_MIN) / (HYDRO.CREUX_MUR - HYDRO.LAC_PROFONDEUR_MIN)))
     const seuilIci = CREUX.LAME * HYDRO.PROFOND_LAME * (1 - mur * (1 - HYDRO.PROFOND_PLANCHER))
+    // SUR L'ESCALIER, LE LAC NE DÉBORDE PAS SOUS SA MARCHE : une tuile d'une cellule plus basse
+    // que le palier du lac, ou qui en touche une, reste berge, même sous le niveau — sinon l'eau
+    // du lac toucherait une terre plus basse (l'eau perchée), là où c'est le déversoir qui doit
+    // tomber. Une cellule PLUS HAUTE, elle, se noie : le lac y est en cuvette, sa rive y tombe à
+    // pic — permis (l'eau est sous sa terre). ⚠ On avait d'abord exigé la cellule du fond
+    // exactement ; une cellule de `altLarge` un rien plus haute mais sous le niveau du lac
+    // restait alors un carré de terre de 8 × 8 au milieu de l'eau — une île par accident, hors
+    // d'atteinte (MESURÉ : 64 tuiles perdues sur 2026 et 909, T-A2). Et un lac tient sur UN
+    // palier, celui de son fond : chaque tuile du lac le reçoit, quelle que soit sa cellule.
+    const pLac = palierDeCellule(bas)
+    const surSaMarche = (x: number, y: number): boolean => {
+      if (escalier === null) return true
+      const kc = celluleDeTuile(x, y)
+      if (kc < 0 || palierDeCellule(kc) < pLac) return false
+      for (const [dx, dy] of [[1, 0], [-1, 0], [0, 1], [0, -1]] as const) {
+        const kv = celluleDeTuile(x + dx, y + dy)
+        if (kv >= 0 && palierDeCellule(kv) < pLac) return false
+      }
+      return true
+    }
     const dansLeLac = new Set<number>([by * width + bx])
     const file = [by * width + bx]
     for (let t = 0; t < file.length; t++) {
@@ -539,6 +622,7 @@ export function tracerLHydrologie(
       const iy = (i - ix) / width
       const prof = lac.niveau - champIci(ix, iy)
       terrain[i] = prof >= seuilIci ? TERRAIN_DEEP_WATER : TERRAIN_SHALLOW_WATER
+      if (escalier !== null) escalier.palierTuile[i] = pLac
       eaux.push(i)
       tuilesDeLac.push(i)
       for (const [dx, dy] of [[1, 0], [-1, 0], [0, 1], [0, -1]] as const) {
@@ -549,6 +633,7 @@ export function tracerLHydrologie(
         if (!emprise.has(celluleDeTuile(nx, ny))) continue // jamais hors de l'emprise
         if (!libre(nx, ny)) continue
         if (champIci(nx, ny) >= lac.niveau) continue //       au-dessus du col : c'est la berge
+        if (!surSaMarche(nx, ny)) continue
         dansLeLac.add(j)
         file.push(j)
       }
@@ -603,8 +688,16 @@ export function tracerLHydrologie(
       x: (creux.mx0 + kx) * M + M / 2,
       y: (creux.my0 + (k - kx) / cols) * M + M / 2,
       r: rayonDe(k),
+      p: escalier !== null ? palierDeCellule(k) : undefined,
     }
   }
+  /** Le méandre reste sur le palier de sa cellule de drainage (voir `meandrer`). */
+  const surSonPalier = escalier === null
+    ? undefined
+    : (x: number, y: number, p: number | undefined): boolean => {
+      const k = celluleDeTuile(Math.floor(x), Math.floor(y))
+      return k >= 0 && palierDeCellule(k) === p
+    }
   const peint = new Uint8Array(n)
   const cours: { chemin: number[]; fluxMax: number; jusquALExutoire: boolean }[] = []
   for (const tete of ordre) {
@@ -635,18 +728,32 @@ export function tracerLHydrologie(
   const courbes = new Map<number, Point[]>()
   for (const { chemin, fluxMax } of cours) {
     const grand = fluxMax >= HYDRO.FLUX_SAULAIE
-    const poser = (x: number, y: number): void => {
+    const poser = (x: number, y: number, p: number | undefined): void => {
       if (!libre(x, y)) return
       const i = y * width + x
       terrain[i] = TERRAIN_SHALLOW_WATER
       litNeuf.add(i)
       eaux.push(i)
       if (grand) chenaux.push(i)
+      // LE PALIER DE L'EAU COURANTE : celui du cours, et JAMAIS au-dessus de la terre qu'elle
+      // touche — sa cellule et les quatre voisines de la tuile (une berge est dans l'une
+      // d'elles). Plus bas que sa terre, c'est une gorge, et c'est permis ; plus haut, c'est
+      // l'eau perchée qu'on est venu tuer.
+      if (escalier !== null && p !== undefined) {
+        let q = p
+        const kc = celluleDeTuile(x, y)
+        if (kc >= 0 && palierDeCellule(kc) < q) q = palierDeCellule(kc)
+        for (const [dx, dy] of [[1, 0], [-1, 0], [0, 1], [0, -1]] as const) {
+          const kv = celluleDeTuile(x + dx, y + dy)
+          if (kv >= 0 && palierDeCellule(kv) < q) q = palierDeCellule(kv)
+        }
+        escalier.palierTuile[i] = q
+      }
     }
     // Le méandre croît avec le débit : un fleuve divague, un filet obéit à sa pente.
     const t = Math.min(1, Math.sqrt(fluxMax / HYDRO.FLUX_PLEIN))
     const ampl = HYDRO.MEANDRE_MIN + (HYDRO.MEANDRE_MAX - HYDRO.MEANDRE_MIN) * t
-    const points = meandrer(chemin.map(centrePoint), ampl, (selRive ^ chemin[0]!) | 0)
+    const points = meandrer(chemin.map(centrePoint), ampl, (selRive ^ chemin[0]!) | 0, surSonPalier)
     courbes.set(chemin[0]!, points) // ⚠ LE FIL SE TIRE DE LA MÊME COURBE QUE LE LIT — sinon il
     // suit la ligne de drainage brute pendant que le lit serpente, et il SORT de son lit (vu sur
     // la carte rendue : des pointillés de fil en plein pré, à côté de l'eau).
@@ -669,7 +776,7 @@ export function tracerLHydrologie(
     const bouts = Math.max(1, Math.round(points.length * 0.06))
     const pointsCoeur: Point[] = points
       .slice(bouts, points.length - bouts)
-      .map((p) => ({ x: p.x, y: p.y, r: (p.r ?? 0) - HYDRO.COEUR_RETRAIT }))
+      .map((p) => ({ x: p.x, y: p.y, r: (p.r ?? 0) - HYDRO.COEUR_RETRAIT, p: p.p }))
     if (pointsCoeur.length >= 2) peindreCoursDEau(pointsCoeur, 2, creuser)
   }
 

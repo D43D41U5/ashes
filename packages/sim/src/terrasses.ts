@@ -20,9 +20,12 @@
  * REGARDANT UNE CARTE vit avec le générateur).
  */
 import { CREUX } from './racine-relief'
-import type { Socle } from './socle'
+import { TasPF, type Socle } from './socle'
 import { isWater, MARCHABLE } from './map'
 import { TERRAIN_ROAD } from './balance'
+import type { Escalier } from './zonegen-hydro'
+
+export type { Escalier } from './zonegen-hydro'
 
 export const TERRASSES = {
   /** Combien de paliers — trois, aux terciles de `altLarge` (décision du 2026-09-03). */
@@ -49,6 +52,17 @@ export const TERRASSES = {
    * érode d'une marche une région sans côte sud ; la borne est large, la sortie est précoce.
    */
   TOURS: 32,
+  /**
+   * SUR L'ESCALIER, LA NATURE ENJAMBE LES TERRASSES : les deux couronnes (le Bois Noir, la Combe
+   * brumeuse) sont des massifs de 3 000 à 13 000 tuiles dont le corps est le TERRAIN — ils ne
+   * sont pas des assises. Aplanir un bois de 13 000 tuiles sur un palier soulevait 4 097 tuiles
+   * de rive au-dessus de la rivière qui le traverse (graine 2026 : la rivière, figée sur
+   * l'escalier, restait à 0 dans un bois monté à 1 — sa frange de marais perchée). Les lieux
+   * BÂTIS et le monument (le Cercle, 24 × 24) restent des assises : un bâti ne se coupe pas
+   * d'une falaise. (L'alternative — garder les couronnes en assise et laisser l'eau suivre —
+   * revenait à la côte, l'eau perchée qu'on est venu tuer ; consigné le 2026-09-05.)
+   */
+  KINDS_SANS_ASSISE: ['bois_noir', 'combe_brumeuse'] as readonly string[],
 } as const
 
 /** Une rampe de terrasse : une COLONNE de connecteur, tuile du palier `de` sous une tuile du
@@ -119,6 +133,115 @@ export function quantifierLesPaliers(
 }
 
 /**
+ * ═══ 1b. L'ESCALIER (N3, décision du 2026-09-05) — les paliers AVANT l'eau ═══
+ *
+ * Même partage que `quantifierLesPaliers` (terciles, échantillon marchable), sur un champ qui
+ * diffère en un seul point : `altLarge` REMPLIE (priority-flood depuis le bord du pays, comme
+ * l'hydrologie remplit `alt`), pas `altLarge` nue. Une cuvette de la grande ondulation est
+ * ainsi relevée à son col avant qu'on ne la coupe — d'où LA propriété dont tout le reste
+ * découle : de toute cellule part vers le bord un chemin de valeur non croissante, donc de
+ * PALIER NON CROISSANT. Aucune terrasse n'est close par des terrasses plus hautes : l'eau qui
+ * y tombe a toujours une sortie sans monter. C'est ce qui permet à l'hydrologie de naître SUR
+ * l'escalier (`alt + palier · H`) sans jamais faire un lac qui chevauche deux paliers.
+ *
+ * Ce que ça change par rapport aux terciles nus (l'alternative, consignée) : rien hors des
+ * cuvettes closes de `altLarge` — là, les terciles nus donnaient un palier bas ENFERMÉ dans du
+ * haut, et l'eau qui y naissait devenait un méga-lac au col, chevauchant les paliers.
+ *
+ * Rend le palier par CELLULE (ce que lisent les sentes) et par TUILE (ce que l'hydrologie
+ * complète pour l'eau qu'elle pose, puis ce dont `poserLesTerrasses` part).
+ */
+export function quantifierLEscalier(
+  socle: Socle,
+  terrain: readonly number[],
+  width: number,
+  height: number,
+  paliers: number = TERRASSES.PALIERS,
+): Escalier {
+  const M = CREUX.MOTIF
+  const { cols, rows } = socle
+  const n = cols * rows
+  // Le pays et son bord : la définition de `tracerLHydrologie`, à l'identique.
+  const dansLePays = new Uint8Array(n)
+  for (let k = 0; k < n; k++) {
+    if (socle.dedans[k] !== 1) continue
+    const kx = k % cols
+    const x = (socle.mx0 + kx) * M + M / 2
+    const y = (socle.my0 + (k - kx) / cols) * M + M / 2
+    if (x < 0 || y < 0 || x >= width || y >= height) continue
+    dansLePays[k] = 1
+  }
+  const rempli = new Float64Array(n)
+  const ferme = new Uint8Array(n)
+  const tas = new TasPF(n)
+  for (let k = 0; k < n; k++) rempli[k] = socle.altLarge[k]!
+  for (let k = 0; k < n; k++) {
+    if (dansLePays[k] !== 1) continue
+    const kx = k % cols
+    const ky = (k - kx) / cols
+    let base = false
+    for (let dy = -1; dy <= 1 && !base; dy++) {
+      for (let dx = -1; dx <= 1; dx++) {
+        if (dx === 0 && dy === 0) continue
+        const vx = kx + dx
+        const vy = ky + dy
+        if (vx < 0 || vy < 0 || vx >= cols || vy >= rows || dansLePays[vy * cols + vx] !== 1) { base = true; break }
+      }
+    }
+    if (!base) continue
+    ferme[k] = 1
+    tas.pousse(rempli[k]!, k)
+  }
+  // ⚠ SANS L'EPSILON de l'hydrologie. Elle en met un (`filled[k] + ε`) pour que chaque cellule
+  // d'une cuvette ait un exutoire strict ; ici il ferait le contraire de ce qu'on veut : une
+  // cuvette remplie devient un PLAT — toutes ses cellules au col, à la même valeur — et un
+  // tercile qui tombe DANS ce plat (grand lac : des dizaines de cellules à col + k·ε) coupait le
+  // lac en deux paliers, d'où des îles de 8 × 8 à un cran au-dessus de leur lac (MESURÉ graine
+  // 7 : 4 972 tuiles de terre hors d'atteinte, T-A2). Un plat entier tombe du même côté.
+  while (tas.taille > 0) {
+    const k = tas.tire()
+    const kx = k % cols
+    const ky = (k - kx) / cols
+    const fk = rempli[k]!
+    for (let dy = -1; dy <= 1; dy++) {
+      for (let dx = -1; dx <= 1; dx++) {
+        if (dx === 0 && dy === 0) continue
+        const vx = kx + dx
+        const vy = ky + dy
+        if (vx < 0 || vy < 0 || vx >= cols || vy >= rows) continue
+        const v = vy * cols + vx
+        if (ferme[v] === 1 || dansLePays[v] !== 1) continue
+        ferme[v] = 1
+        rempli[v] = socle.altLarge[v]! > fk ? socle.altLarge[v]! : fk
+        tas.pousse(rempli[v]!, v)
+      }
+    }
+  }
+  const vals: number[] = []
+  for (let y = 0; y < height; y += 2) {
+    for (let x = 0; x < width; x += 2) {
+      if (MARCHABLE[terrain[y * width + x]!] !== 1) continue
+      vals.push(rempli[celluleDe(socle, x, y)]!)
+    }
+  }
+  vals.sort((a, b) => a - b)
+  const seuils: number[] = []
+  for (let k = 1; k < paliers; k++) seuils.push(vals.length > 0 ? vals[Math.floor((k / paliers) * (vals.length - 1))]! : Infinity)
+  const cellules = new Int8Array(n)
+  for (let k = 0; k < n; k++) {
+    const a = rempli[k]!
+    let p = 0
+    while (p < seuils.length && a >= seuils[p]!) p++
+    cellules[k] = p
+  }
+  const palierTuile = new Int8Array(width * height)
+  for (let y = 0; y < height; y++) {
+    for (let x = 0; x < width; x++) palierTuile[y * width + x] = cellules[celluleDe(socle, x, y)]!
+  }
+  return { cellules, palierTuile }
+}
+
+/**
  * LE SURCOÛT D'UN PAS DE SENTE ENTRE DEUX CELLULES DE PALIERS DIFFÉRENTS — sauf en montant vers
  * le NORD (ou en descendant vers le sud : la même arête), là où une rampe peut exister. Une
  * route réelle cherche le col ; celle-ci cherche l'endroit où l'on monte de face.
@@ -165,11 +288,26 @@ export function poserLesTerrasses(
   lacs: readonly number[],
   assises: readonly (readonly number[])[],
   reservees: ReadonlySet<number> = new Set(),
+  palierTuile: Int8Array | null = null,
 ): Terrasses {
   const N = width * height
   const palier = new Int8Array(N)
-  for (let y = 0; y < height; y++) {
-    for (let x = 0; x < width; x++) palier[y * width + x] = cellules[celluleDe(socle, x, y)]!
+  // ═══ L'ESCALIER (N3, 2026-09-05) : L'EAU EST NÉE SUR LES TERRASSES, ELLE NE BOUGE PLUS ═══
+  //
+  // Quand `palierTuile` est là, l'hydrologie a déjà posé chaque eau sur SON palier — le lac
+  // sur celui de sa cuvette, le cours sur celui de sa cellule et jamais au-dessus de la terre
+  // qu'il touche. Alors la passe ne DEVINE plus le palier de l'eau (ni `niveler`, ni les
+  // côtes, ni les orphelins d'eau) : l'eau est FIGÉE, et la seule règle qui la concerne est
+  // qu'aucune passe ne rabaisse une terre SOUS l'eau qu'elle borde — l'eau perchée, c'est
+  // exactement le défaut qu'on est venu tuer. Ce qui peut encore bouger l'eau : ±1 et les
+  // descentes de terre, qui ABAISSENT l'eau courante voisine avec la terre (une cascade se
+  // déplace) — jamais l'eau d'un lac, jamais vers le haut.
+  const escalier = palierTuile !== null
+  if (palierTuile !== null) palier.set(palierTuile)
+  else {
+    for (let y = 0; y < height; y++) {
+      for (let x = 0; x < width; x++) palier[y * width + x] = cellules[celluleDe(socle, x, y)]!
+    }
   }
   const marchable = (i: number): boolean => MARCHABLE[terrain[i]!] === 1
   const eau = (i: number): boolean => isWater(terrain[i]!)
@@ -238,11 +376,71 @@ export function poserLesTerrasses(
     const b = blocDe[i]!
     return b >= 0 && blocEstNappe[b] === 1
   }
-  /** Pose un palier sur une tuile — et sur tout son bloc, si elle en a un. */
-  const poser = (i: number, p: number): void => {
+  /** L'eau qu'aucune miette ni garantie ne déplace : sur l'escalier, TOUTE l'eau ; sinon la nappe. */
+  const figee = (i: number): boolean => (escalier ? eau(i) : deLaNappe(i))
+  /** Le palier du lac que borde cette tuile (le plus haut), −1 si elle n'en borde aucun. */
+  const plancherLac = (i: number): number => {
+    let haut = -1
+    const x = i % width
+    const y = (i - x) / width
+    for (const [dx, dy] of VOISINS4) {
+      const nx = x + dx
+      const ny = y + dy
+      if (nx < 0 || ny < 0 || nx >= width || ny >= height) continue
+      const j = ny * width + nx
+      if (deLaNappe(j) && palier[j]! > haut) haut = palier[j]!
+    }
+    return haut
+  }
+  /** Une terre descend à `q` : l'eau COURANTE qu'elle borde, si plus haute, descend avec elle
+   *  (une cascade se déplace ; l'eau ne reste jamais au-dessus de sa rive). Escalier seulement. */
+  const abaisserLEauVoisine = (i: number, q: number): void => {
+    const x = i % width
+    const y = (i - x) / width
+    for (const [dx, dy] of VOISINS4) {
+      const nx = x + dx
+      const ny = y + dy
+      if (nx < 0 || ny < 0 || nx >= width || ny >= height) continue
+      const j = ny * width + nx
+      if (eau(j) && !deLaNappe(j) && palier[j]! > q) palier[j] = q
+    }
+  }
+  /** La plus basse eau (nappe ou courante) que borde la tuile, −1 s'il n'y en a pas. Une terre
+   *  ne monte jamais au-dessus : c'est L'INVARIANT de l'escalier (aucune eau ne domine une terre
+   *  qu'elle touche — et réciproquement, une terre qui monte au-dessus de son eau la perche). */
+  const eauVoisineLaPlusBasse = (i: number): number => {
+    let bas = -1
+    const x = i % width
+    const y = (i - x) / width
+    for (const [dx, dy] of VOISINS4) {
+      const nx = x + dx
+      const ny = y + dy
+      if (nx < 0 || ny < 0 || nx >= width || ny >= height) continue
+      const j = ny * width + nx
+      if (eau(j) && (bas < 0 || palier[j]! < bas)) bas = palier[j]!
+    }
+    return bas
+  }
+  /** Pose un palier sur une tuile — et sur tout son bloc, si elle en a un. Rend `true` si
+   *  quelque chose a bougé. Sur l'escalier : l'eau d'un lac ne bouge pas, une terre ne descend
+   *  jamais sous le lac qu'elle borde (tout le bloc reste alors), et l'eau courante suit la
+   *  terre qui descend. */
+  const poser = (i: number, p: number): boolean => {
     const b = blocDe[i]!
-    if (b < 0) { palier[i] = p; return }
-    for (const j of tuilesDuBloc[b]!) palier[j] = p
+    const tuiles: readonly number[] = b < 0 ? [i] : tuilesDuBloc[b]!
+    if (escalier) {
+      for (const j of tuiles) if (!eau(j) && palier[j]! > p && plancherLac(j) > p) return false
+    }
+    let bouge = false
+    for (const j of tuiles) {
+      if (escalier && deLaNappe(j)) continue
+      if (palier[j] === p) continue
+      const descend = palier[j]! > p
+      palier[j] = p
+      bouge = true
+      if (escalier && descend && !eau(j)) abaisserLEauVoisine(j, p)
+    }
+    return bouge
   }
 
   // ── 2. LES NAPPES — une eau de LAC connexe prend UN palier, le plus bas ──────────────────
@@ -318,6 +516,7 @@ export function poserLesTerrasses(
    * vote pour son lieu) ; seule l'eau de la nappe bouge. Rend le nombre de nappes déplacées.
    */
   const niveler = (): number => {
+    if (escalier) return 0 // le lac est né sur son palier (voir l'en-tête) : rien à deviner
     let n = 0
     for (const { eau: tuiles, rive, bloc } of nappes) {
       let bas: number = TERRASSES.PALIERS
@@ -384,7 +583,10 @@ export function poserLesTerrasses(
   /** La côte d'AVAL de chaque côte (−1 pour celle de l'embouchure) : le repli sans contact. */
   const coteAval: number[] = []
   const blocDeCote: number[] = []
-  {
+  // SUR L'ESCALIER, PAS DE CÔTES : l'eau courante tient déjà le palier que l'hydrologie lui a
+  // donné le long de son cours (non croissant par construction) ; deviner ses fronts ne
+  // ferait que le défaire.
+  if (!escalier) {
     const DROIT = 5
     const DIAG = 7
     const dist = new Int32Array(N).fill(-1)
@@ -561,10 +763,12 @@ export function poserLesTerrasses(
       ilots.push(piece)
     }
   }
+  // Sur l'escalier, l'îlot suit l'eau LA PLUS HAUTE qu'il borde (toute eau, pas seulement la
+  // nappe) : un banc entre deux marches d'une cascade ne peut pas être sous l'eau d'amont.
   const suivreLEau = (): number => {
     let n = 0
     for (const piece of ilots) {
-      let bas: number = TERRASSES.PALIERS
+      let bas: number = escalier ? -1 : TERRASSES.PALIERS
       for (const i of piece) {
         const x = i % width
         const y = (i - x) / width
@@ -573,10 +777,11 @@ export function poserLesTerrasses(
           const ny = y + dy
           if (nx < 0 || ny < 0 || nx >= width || ny >= height) continue
           const j = ny * width + nx
-          if (deLaNappe(j) && palier[j]! < bas) bas = palier[j]!
+          if (escalier) { if (eau(j) && palier[j]! > bas) bas = palier[j]! }
+          else if (deLaNappe(j) && palier[j]! < bas) bas = palier[j]!
         }
       }
-      if (bas >= TERRASSES.PALIERS) continue
+      if (bas >= TERRASSES.PALIERS || bas < 0) continue
       let bouge = false
       for (const i of piece) if (palier[i] !== bas) { palier[i] = bas; bouge = true }
       if (bouge) n++
@@ -600,6 +805,25 @@ export function poserLesTerrasses(
     if (tuiles.length === 0) continue
     let cible = 0
     for (let p = 1; p < votes.length; p++) if (votes[p]! > votes[cible]!) cible = p
+    // SUR L'ESCALIER, UN LIEU N'EST JAMAIS SOUS SON EAU : l'eau de son emprise et celle que sa
+    // terre borde tiennent leur palier (figées) ; s'il en est plus haute que la majorité, le
+    // lieu monte à elle — une mare dans un creux du lieu est permise, un lieu au fond de son
+    // étang ne l'est pas. (L'alternative — le lieu suit son eau la plus basse — perchait
+    // l'autre eau ; consigné.)
+    if (escalier) {
+      for (const i of a) if (i >= 0 && i < N && eau(i) && palier[i]! > cible) cible = palier[i]!
+      for (const i of tuiles) {
+        const x = i % width
+        const y = (i - x) / width
+        for (const [dx, dy] of VOISINS4) {
+          const nx = x + dx
+          const ny = y + dy
+          if (nx < 0 || ny < 0 || nx >= width || ny >= height) continue
+          const j = ny * width + nx
+          if (eau(j) && palier[j]! > cible) cible = palier[j]!
+        }
+      }
+    }
     for (const i of tuiles) palier[i] = cible
     enregistrerLeBloc(tuiles)
   }
@@ -664,6 +888,7 @@ export function poserLesTerrasses(
         if (j >= 0 && palier[j]! < bas) bas = palier[j]!
       }
       const i = orphelins[o]!
+      if (escalier && eau(i)) continue // l'eau profonde est née sur son palier, elle y reste
       if (bas < TERRASSES.PALIERS && palier[i] !== bas) { palier[i] = bas; n++ }
     }
     return n
@@ -696,7 +921,7 @@ export function poserLesTerrasses(
             const nx = x + dx
             if (nx < 0 || nx >= width) continue
             const j = ny * width + nx
-            if (palier[j]! > bas + 1) { poser(j, bas + 1); n++ }
+            if (palier[j]! > bas + 1 && poser(j, bas + 1)) n++
           }
         }
       }
@@ -732,7 +957,7 @@ export function poserLesTerrasses(
       comp[dep] = id
       for (let h = 0; h < file.length; h++) {
         const i = file[h]!
-        if (!deLaNappe(i)) pure = 0
+        if (!figee(i)) pure = 0
         const x = i % width
         const y = (i - x) / width
         for (const [dx, dy] of VOISINS4) {
@@ -804,13 +1029,33 @@ export function poserLesTerrasses(
   // coupe de tout) RESTE au lac — seul `niveler` déplace l'eau d'un lac, et il la déplace
   // entière (T-A3, sans exception). Ce qu'on fondait avant se tenait au palier de ce qui le
   // rejoignait et versait dans la nappe : une paroi en pleine eau, une tuile au large.
-  const fondre = (id: number, cible: number): void => {
+  // Sur l'escalier : toute l'eau reste (figée) ; une terre qui DESCEND ne passe pas sous un lac
+  // qu'elle borde (la composante reste alors), et l'eau courante qu'elle borde descend avec.
+  const fondre = (id: number, cible: number): boolean => {
+    const descend = cible < palierDe[id]!
+    if (escalier) {
+      // Sur l'escalier, une miette ne quitte pas son eau : elle ne descend pas sous la nappe
+      // qu'elle borde, et ne MONTE pas au-dessus d'une eau qu'elle touche (MESURÉ graine 2026 :
+      // la ceinture de marais d'un lac en cuvette, fondue dans le plateau voisin, faisait 13
+      // plaques de marais perchées au-dessus de leur lac).
+      for (let m = debut[id]!; m < debut[id + 1]!; m++) {
+        const i = membres[m]!
+        if (eau(i)) continue
+        if (descend) { if (plancherLac(i) > cible) return false }
+        else {
+          const b = eauVoisineLaPlusBasse(i)
+          if (b >= 0 && b < cible) return false
+        }
+      }
+    }
     for (let m = debut[id]!; m < debut[id + 1]!; m++) {
       const i = membres[m]!
-      if (deLaNappe(i)) continue
+      if (figee(i)) continue
       blocDe[i] = -1
       palier[i] = cible
+      if (escalier && descend) abaisserLEauVoisine(i, cible)
     }
+    return true
   }
 
   // ── 4b. LES MIETTES — fondues dans le palier voisin majoritaire ───────────────────────────
@@ -824,8 +1069,7 @@ export function poserLesTerrasses(
       if (deNappe[id] === 1) continue
       const cible = palierVoisinMajoritaire(id)
       if (cible < 0 || cible === palierDe[id]) continue
-      fondre(id, cible)
-      n++
+      if (fondre(id, cible)) n++
     }
     return n
   }
@@ -963,15 +1207,26 @@ export function poserLesTerrasses(
   // Les tuiles creusées sont de la terre marchable, hors lieu et hors bloc, au palier p+1 et
   // de la composante atteinte ; et tout le halo d'une tuile reste entre p et p+1 — on ne creuse
   // pas contre une marche que ±1 aurait ensuite à refaire.
-  const creuserUneDescente = (terre: number[], p: number, atteinte: Uint8Array): boolean => {
+  //
+  // ET LE MIROIR, SUR L'ESCALIER (`piece` donnée) : le plateau hors d'atteinte est AU SUD d'une
+  // terre atteinte plus basse — ses faces vers elle regardent le nord ou l'est, aucune rampe
+  // ne peut y descendre (§5). On creuse la même ravine, depuis la terre atteinte, DANS la pièce :
+  // le chenal en descend au palier atteint, la langue reste à la pièce, et la rampe s'élit sur
+  // sa face sud. MESURÉ graine 2026 : sans ce miroir, la garantie fondait la presqu'île entière
+  // (1176-1199, 68-95) d'un cran — et la mesa bâtie dessus gardait son chapeau à 2 sur une jupe
+  // à 0 (T-A4). Le contrat des terrasses N3, c'est que l'escalier reste : on creuse avant de
+  // fondre.
+  const creuserUneDescente = (
+    terre: number[], p: number, atteinte: Uint8Array, piece: ((j: number) => boolean) | null = null,
+  ): boolean => {
     const L = CREUX.RAMPE_LARGEUR
     const terreDuPlateau = (j: number): boolean =>
-      atteinte[j] === 1 && palier[j] === p + 1 && marchable(j) && !eau(j) && !reservees.has(j) && blocDe[j]! < 0
+      (piece === null ? atteinte[j] === 1 : piece(j)) && palier[j] === p + 1 && marchable(j) && !eau(j) && !reservees.has(j) && blocDe[j]! < 0
     for (const i of terre) {
       const x = i % width
       const y = (i - x) / width
       if (y + 6 >= height) continue
-      if (atteinte[i + width] === 0 || palier[i + width] !== p + 1) continue
+      if (!terreDuPlateau(i + width)) continue
       for (const sens of [1, -1]) {
         if (x - 1 < 0 || x + 1 >= width || x + sens * (2 * L) < 0 || x + sens * (2 * L) >= width) continue
         const col = (k: number): number => x + sens * k
@@ -979,8 +1234,11 @@ export function poserLesTerrasses(
         // Le halo : colonnes −1..2L, rangées y..y+5, tout entre p et p+1.
         for (let k = -1; k <= 2 * L && ok; k++) {
           for (let r = 0; r <= 5; r++) {
-            const q = palier[(y + r) * width + col(k)]!
+            const j = (y + r) * width + col(k)
+            const q = palier[j]!
             if (q < p || q > p + 1) { ok = false; break }
+            // Sur l'escalier, on ne creuse pas contre une eau à p+1 : elle resterait perchée.
+            if (escalier && q === p + 1 && eau(j)) { ok = false; break }
           }
         }
         if (!ok) continue
@@ -994,6 +1252,110 @@ export function poserLesTerrasses(
         for (let k = 0; k < 2 * L; k++) {
           for (let r = 1; r <= 4; r++) if (r >= 3 || k < L) palier[(y + r) * width + col(k)] = p
         }
+        return true
+      }
+    }
+    return false
+  }
+
+  // ET L'ENTAILLE PAR LE FLANC, sur l'escalier : la terre atteinte plus basse borde la pièce par
+  // l'EST ou l'OUEST (le cas du contact nord est la ravine miroir ci-dessus). On creuse dans la
+  // pièce un chenal de `RAMPE_LARGEUR` colonnes sur deux rangées, au palier atteint, depuis le
+  // flanc : sa rangée du haut est une FACE SUD du plateau — la rampe s'y élit toute seule, avec
+  // les deux rangées de plateau qu'elle veut au-dessus (`colonneMonte`).
+  //
+  //        plateau  plateau  plateau   (p)   ← nn puis tête de rampe, deux rangées
+  //   ⟶  chenal   chenal   chenal    (p−1) ← creusé depuis la terre atteinte à gauche
+  //        chenal   chenal   chenal    (p−1)
+  //        plateau  plateau  plateau   (p)
+  //
+  // Même discipline que la ravine : que de la terre marchable de la pièce, hors lieu et hors bloc,
+  // et tout le halo entre p−1 et p, sans eau à p.
+  const creuserUneEntaille = (terre: number[], p: number, atteinte: Uint8Array, piece: (j: number) => boolean): boolean => {
+    const L = CREUX.RAMPE_LARGEUR
+    const terreDeLaPiece = (j: number): boolean =>
+      piece(j) && palier[j] === p && marchable(j) && !eau(j) && !reservees.has(j) && blocDe[j]! < 0
+    for (const t of terre) {
+      const xt = t % width
+      const y = (t - xt) / width
+      if (y < 3 || y + 2 >= height) continue
+      for (const sens of [1, -1]) {
+        const x0 = xt - sens // la terre atteinte, d'où l'on creuse
+        if (x0 < 0 || x0 >= width || x0 + sens * (L + 1) < 0 || x0 + sens * (L + 1) >= width) continue
+        const j0 = y * width + x0
+        if (atteinte[j0] === 0 || palier[j0] !== p - 1 || eau(j0)) continue
+        let ok = true
+        // Le halo : colonnes x0..x0+sens·(L+1), rangées y−3..y+2, tout entre p−1 et p.
+        for (let k = 0; k <= L + 1 && ok; k++) {
+          for (let r = -3; r <= 2; r++) {
+            const j = (y + r) * width + x0 + sens * k
+            const q = palier[j]!
+            if (q < p - 1 || q > p) { ok = false; break }
+            if (q === p && eau(j)) { ok = false; break }
+          }
+        }
+        if (!ok) continue
+        // Le chenal (rangées y, y+1) à creuser ; au-dessus, deux rangées de la pièce qui restent.
+        for (let k = 1; k <= L && ok; k++) {
+          for (let r = -2; r <= 1; r++) {
+            if (!terreDeLaPiece((y + r) * width + x0 + sens * k)) { ok = false; break }
+          }
+        }
+        if (!ok) continue
+        for (let k = 1; k <= L; k++) for (let r = 0; r <= 1; r++) palier[(y + r) * width + x0 + sens * k] = p - 1
+        return true
+      }
+    }
+    return false
+  }
+
+  // ET L'ENCOCHE DANS LE PLATEAU, le miroir de l'entaille : la pièce est la POCHE, plus basse que
+  // la terre atteinte qui la borde par l'est ou l'ouest (une bande de marais au fond d'une gorge
+  // dont le nord est roche : aucune face sud, ni au plateau ni à la poche). On creuse dans le
+  // plateau atteint un chenal de `RAMPE_LARGEUR` colonnes sur deux rangées, AU PALIER DE LA
+  // POCHE, depuis son flanc : la rangée du haut du chenal est une face sud du plateau, et les
+  // deux rangées de plateau au-dessus sont la tête que la rampe demande. MESURÉ avant (graine
+  // 2026) : 27 tuiles de marais et de berge à 0 le long d'un bras du grand lac, entre le plateau
+  // à 1 et l'eau, sous la roche du bord du pays — hors d'atteinte, rien à monter (l'eau à 0 les
+  // borde), rien à creuser vers le sud (l'eau continue).
+  //
+  //        plateau  plateau  plateau   (p+1) ← nn puis tête de rampe, deux rangées
+  //   ⟵  chenal   chenal   chenal    (p)   ← creusé dans le plateau, depuis la poche à gauche
+  //        chenal   chenal   chenal    (p)
+  //        plateau  plateau  plateau   (p+1)
+  //
+  // Même discipline : que du plateau atteint, marchable, hors lieu et hors bloc ; le halo entre
+  // p et p+1, sans eau à p+1 (elle resterait perchée sur le chenal).
+  const creuserUneEncoche = (terre: number[], p: number, atteinte: Uint8Array): boolean => {
+    const L = CREUX.RAMPE_LARGEUR
+    const terreDuPlateau = (j: number): boolean =>
+      atteinte[j] === 1 && palier[j] === p + 1 && marchable(j) && !eau(j) && !reservees.has(j) && blocDe[j]! < 0
+    for (const t of terre) {
+      const xt = t % width
+      const y = (t - xt) / width
+      if (y < 3 || y + 2 >= height) continue
+      for (const sens of [1, -1]) {
+        if (xt + sens * (L + 1) < 0 || xt + sens * (L + 1) >= width) continue
+        if (!terreDuPlateau(y * width + xt + sens)) continue
+        let ok = true
+        // Le halo : colonnes xt..xt+sens·(L+1), rangées y−3..y+2, tout entre p et p+1.
+        for (let k = 0; k <= L + 1 && ok; k++) {
+          for (let r = -3; r <= 2; r++) {
+            const j = (y + r) * width + xt + sens * k
+            const q = palier[j]!
+            if (q < p || q > p + 1) { ok = false; break }
+            if (q === p + 1 && eau(j)) { ok = false; break }
+          }
+        }
+        if (!ok) continue
+        // Le chenal (rangées y, y+1) à creuser ; au-dessus, deux rangées de plateau qui restent.
+        for (let k = 1; k <= L && ok; k++) {
+          for (let r = -2; r <= 1; r++) {
+            if (!terreDuPlateau((y + r) * width + xt + sens * k)) { ok = false; break }
+          }
+        }
+        if (!ok) continue
+        for (let k = 1; k <= L; k++) for (let r = 0; r <= 1; r++) palier[(y + r) * width + xt + sens * k] = p
         return true
       }
     }
@@ -1090,6 +1452,37 @@ export function poserLesTerrasses(
       const filePieces = [pieceDe[depart]!]
       dansFermeture.add(pieceDe[depart]!)
       const fileBlocs: number[] = []
+      // SUR L'ESCALIER, L'EAU SUIT TUILE À TUILE, ET SEULEMENT AVEC TOUTES SES BERGES. Une eau à p
+      // que borde une pièce qui monte DOIT monter avec elle — sinon la pièce se retrouverait en
+      // gorge au-dessus d'elle, avec sa frange de marais perchée ; et elle ne le peut que si
+      // chaque terre qu'elle touche est de la fermeture ou déjà plus haute (un lac ne bouge jamais :
+      // la pièce qui le borde ne monte pas, elle attend sa rampe ou sa descente). D'une eau à
+      // l'eau voisine, on suit tant qu'on peut — la marche se fait là où la rivière quitte ce qui
+      // monte, pas au milieu d'un lit.
+      const eauxSuivies = new Set<number>()
+      const fileEaux: number[] = []
+      let impossible = false
+      const eauPeutSuivre = (j: number): boolean => {
+        if (deLaNappe(j)) return false
+        const x = j % width
+        const y = (j - x) / width
+        for (const [dx, dy] of VOISINS4) {
+          const nx = x + dx
+          const ny = y + dy
+          if (nx < 0 || ny < 0 || nx >= width || ny >= height) continue
+          const v = ny * width + nx
+          if (palier[v]! < p) return false
+          if (palier[v]! > p || eau(v) || !marchable(v)) continue
+          if (comp[v] !== comp[depart] || pieceDe[v]! < 0 || plusBasQue(pieces[pieceDe[v]!]!, p)) return false
+        }
+        return true
+      }
+      const surEau = (j: number, depuisLaTerre: boolean): void => {
+        if (eauxSuivies.has(j)) return
+        if (!eauPeutSuivre(j)) { if (depuisLaTerre) impossible = true; return }
+        eauxSuivies.add(j)
+        fileEaux.push(j)
+      }
       const voisinsDe = (tuiles: readonly number[], surTuile: (j: number) => void): void => {
         for (const i of tuiles) {
           const x = i % width
@@ -1102,9 +1495,10 @@ export function poserLesTerrasses(
           }
         }
       }
-      const surVoisin = (j: number): void => {
+      const surVoisin = (j: number, depuisLaTerre = true): void => {
         if (contactHaut(j, p + 1)) { amorce = true; return }
         if (palier[j] !== p) return
+        if (escalier && eau(j)) { surEau(j, depuisLaTerre); return }
         if (deLaNappe(j)) {
           const b = blocDe[j]!
           if (blocsMontes.has(b) || !peutSuivre(b)) return
@@ -1117,12 +1511,15 @@ export function poserLesTerrasses(
         dansFermeture.add(pieceDe[j]!)
         filePieces.push(pieceDe[j]!)
       }
-      while (filePieces.length > 0 || fileBlocs.length > 0) {
+      const surVoisinDEau = (j: number): void => surVoisin(j, false)
+      while ((filePieces.length > 0 || fileBlocs.length > 0 || fileEaux.length > 0) && !impossible) {
         const k = filePieces.pop()
         if (k !== undefined) { voisinsDe(pieces[k]!, surVoisin); continue }
+        const e = fileEaux.pop()
+        if (e !== undefined) { voisinsDe([e], surVoisinDEau); continue }
         voisinsDe(tuilesDuBloc[fileBlocs.pop()!]!, surVoisin)
       }
-      if (!amorce) return false
+      if (!amorce || impossible) return false
       for (const k of dansFermeture) {
         decidee[k] = 1
         for (const i of pieces[k]!) {
@@ -1134,6 +1531,7 @@ export function poserLesTerrasses(
       for (const b of blocsMontes) {
         for (const i of tuilesDuBloc[b]!) { palier[i] = p + 1; if (marchable(i)) atteinte[i] = 1 }
       }
+      for (const i of eauxSuivies) { palier[i] = p + 1; if (marchable(i)) atteinte[i] = 1 }
       return true
     }
     /** Découpe la pièce de terre (4-connexe, hors nappe, même composante) qui porte `graine`. */
@@ -1154,7 +1552,7 @@ export function poserLesTerrasses(
           const ny = y + dy
           if (nx < 0 || ny < 0 || nx >= width || ny >= height) continue
           const j = ny * width + nx
-          if (comp[j] !== id || deLaNappe(j) || vu[j] === 1) continue
+          if (comp[j] !== id || figee(j) || vu[j] === 1) continue
           vu[j] = 1
           pieceDe[j] = k
           terre.push(j)
@@ -1178,7 +1576,7 @@ export function poserLesTerrasses(
       const premiere = pieces.length
       for (let m = debut[id]!; m < debut[id + 1]!; m++) {
         const graine = membres[m]!
-        if (!deLaNappe(graine) && vu[graine] === 0) decouper(graine)
+        if (!figee(graine) && vu[graine] === 0) decouper(graine)
       }
       for (let k = premiere; k < pieces.length; k++) {
         if (decidee[k] === 1) continue
@@ -1205,14 +1603,48 @@ export function poserLesTerrasses(
             if (palier[j]! < bas) bas = palier[j]!
           }
         }
-        if (bas < p) {
+        // L'ÎLE DANS SON LAC (escalier) : aucune terre atteinte ne la touche — mais sa ceinture
+        // de haut-fond (la même composante : l'eau du lac à p, que le gué traverse) touche
+        // peut-être un plateau atteint au sud. On y creuse la descente (§6b) : la rampe aura le
+        // pied dans l'eau, et l'île se rejoint par sa ceinture. MESURÉ avant : une cellule de
+        // 8 × 8 qui émerge d'un lac (le palier au-dessus du sien) faisait 64 tuiles de terre
+        // hors d'atteinte sur les graines 2026 et 909 (T-A2), sa ceinture avec.
+        if (escalier && bas === TERRASSES.PALIERS) {
+          const ceinture: number[] = []
+          for (let m = debut[id]!; m < debut[id + 1]!; m++) {
+            const j = membres[m]!
+            if (eau(j) && atteinte[j] === 0) ceinture.push(j)
+          }
+          if (ceinture.length > 0 && creuserUneDescente(ceinture, p, atteinte)) n++
+          continue
+        }
+        // Sur l'escalier, LA PIÈCE AU-DESSUS D'UNE TERRE ATTEINTE SE CREUSE AVANT DE FONDRE : la
+        // ravine miroir (voir `creuserUneDescente`), depuis les tuiles atteintes à p − 1 qui la
+        // bordent par le nord. La garantie ne rabote un palier qu'à défaut.
+        if (escalier && bas === p - 1) {
+          const seuil: number[] = []
+          for (const i of terre) {
+            if (i < width) continue
+            const j = i - width
+            if (atteinte[j] === 1 && palier[j] === bas && !eau(j)) seuil.push(j)
+          }
+          const dansLaPiece = (j: number): boolean => pieceDe[j] === k
+          if (seuil.length > 0 && creuserUneDescente(seuil, bas, atteinte, dansLaPiece)) { n++; continue }
+          if (creuserUneEntaille(terre, p, atteinte, dansLaPiece)) { n++; continue }
+        }
+        // Sur l'escalier, on ne descend pas sous un lac qu'on borde : la pièce attend sa rampe
+        // ou sa descente creusée, comme une banquette.
+        let sousUnLac = false
+        if (escalier && bas < p) for (const i of terre) if (plancherLac(i) > bas) { sousUnLac = true; break }
+        if (bas < p && !sousUnLac) {
           // FONDRE DÉTACHE (voir `fondre`) : la terre quitte son bloc et prend le palier de la
           // voisine ; rejointe, elle est atteinte. L'eau qu'elle bordait suit ses votants au tour
-          // suivant (`aplanir`, `niveler`).
+          // suivant (`aplanir`, `niveler`) — ou, sur l'escalier, descend avec elle tout de suite.
           for (const i of terre) {
             blocDe[i] = -1
             palier[i] = bas
             atteinte[i] = 1
+            if (escalier) abaisserLEauVoisine(i, bas)
           }
           n++
           continue
@@ -1222,8 +1654,15 @@ export function poserLesTerrasses(
         // plateau battait ainsi jusqu'à la borne (2 composantes × 32 tours, graine 4242). Elle
         // attend sa rampe vers le bas (le gué, §5), ou la descente creusée (§6b) si un plateau
         // atteint la domine, ou reste ce qu'elle est.
+        // Sur l'escalier, LA POCHE SOUS UN PLATEAU ATTEINT SE CREUSE AVANT DE MONTER : la descente
+        // (§6b) depuis le plateau au sud, sinon l'encoche depuis le plateau à l'est ou à l'ouest
+        // (`creuserUneEncoche`) — l'une et l'autre ne touchent que la lisière du plateau atteint
+        // et laissent l'eau de la poche où elle est née.
+        if (escalier && bas === p + 1) {
+          if (creuserUneDescente(terre, p, atteinte) || creuserUneEncoche(terre, p, atteinte)) { n++; continue }
+        }
         if (plusBasQue(terre, p)) {
-          if (bas === p + 1 && creuserUneDescente(terre, p, atteinte)) n++
+          if (!escalier && bas === p + 1 && creuserUneDescente(terre, p, atteinte)) n++
           continue
         }
         if (monter(terre[0]!, p)) n++

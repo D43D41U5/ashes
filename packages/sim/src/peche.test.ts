@@ -232,7 +232,12 @@ describe('A1/A2 — les coins de pêche existent, sont joignables, et viennent e
     // 45 → 82 → 127 en trois chantiers) : le joueur a désormais près de TROIS FOIS plus
     // d'endroits où pêcher qu'au calibrage d'août. Si la pêche en devient trop facile, ce sont
     // `CONTENU.PECHE_*` (espacement, coins par lac) qu'il faut resserrer — pas cette borne.
-    expect(coins.length).toBeLessThanOrEqual(130)
+    // 130 → 140 le 2026-09-05 (L'EAU NAÎT SUR L'ESCALIER, N3 — `terrasses.md` §1) : ce n'est ni
+    // plus d'eau (la Racine en a MOINS : 16,3 % → 15,0 %) ni le semis qui se rebrasse — c'est la
+    // pêcherie qui se REDÉCOUPE. Un lac vit désormais sur UN palier : celui qui enjambait une
+    // marche devient deux lacs, chacun avec son quota (mesuré : 92 → 103 plans d'eau profonde
+    // sur la seed 2026, et 127 → 138 coins). Même plafond de lisibilité, même consigne.
+    expect(coins.length).toBeLessThanOrEqual(140)
     const maxAutre = Math.max(...autres.map((n) => n.id))
     for (const k of coins) {
       expect(k.id, 'en queue : aucun nœud d’avant ne bouge (P5)').toBeGreaterThan(maxAutre)

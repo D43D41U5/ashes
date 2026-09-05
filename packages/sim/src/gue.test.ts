@@ -40,8 +40,28 @@ const guesDe = (c: CarteZonee): Emprise[] =>
 const dedans = (z: Emprise, n: { tx: number; ty: number }): boolean =>
   n.tx >= z.x && n.tx < z.x + z.w && n.ty >= z.y && n.ty < z.y + z.h
 
+/**
+ * LES PIERRES DU GUÉ, IDENTIFIÉES PAR CONSTRUCTION — pas « tout rocher dans l'emprise ».
+ *
+ * La première écriture prenait tout `rock` de l'emprise pour une pierre de gué, et c'est un
+ * rocher de RIVE qui l'a fait rougir (N3, graine 3 : la nappe de pierrier a posé un rocher sur
+ * une saulaie de la bordure du gué — six « pierres », dont une « hors de l'eau »). Or l'emprise
+ * est 7×7 autour du passage, ses bords sont de la berge, et la berge a le droit d'être
+ * pierreuse. La passe `pierresDuGue` émet ses pierres D'UN BLOC, après le glanage (qui ne pose
+ * que des `*_au_sol`) et juste avant la pêche (P5 : ses ids en queue) : le dernier run de `rock`
+ * contigu avant le premier coin de pêche, c'est ELLE, et rien d'autre. G3 garde ainsi son sens —
+ * une pierre DE GUÉ sur la rive rougit ; un caillou de berge dans l'emprise, non.
+ */
+const pierresDuGueDe = (nodes: readonly ResourceNode[]): ResourceNode[] => {
+  let fin = nodes.findIndex((n) => n.type === 'fishing_spot_river' || n.type === 'fishing_spot_lake')
+  if (fin < 0) fin = nodes.length
+  let debut = fin
+  while (debut > 0 && nodes[debut - 1]!.type === 'rock') debut--
+  return nodes.slice(debut, fin)
+}
+
 const pierresDe = (m: (typeof mondes)[number], z: Emprise): ResourceNode[] =>
-  m.nodes.filter((n) => n.type === 'rock' && dedans(z, n))
+  pierresDuGueDe(m.nodes).filter((n) => dedans(z, n))
 
 /**
  * LE BORD DE HAUT-FOND DU GUÉ EST-IL D'UN SEUL TENANT, une fois `murees` murées ?

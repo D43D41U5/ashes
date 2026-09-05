@@ -24,7 +24,7 @@
  * vingt secondes de plus pour le redire ici.
  */
 import { describe, expect, it } from 'vitest'
-import { BALANCE, FAUNA, TERRAIN_GRASS, TICK_DT_S } from './balance'
+import { BALANCE, FAUNA, TERRAIN_GRASS, TERRAIN_MARSH, TERRAIN_PEAT_BOG, TERRAIN_REED_MARSH, TICK_DT_S } from './balance'
 import { carteDeTest } from '../../../tools/carte-cache'
 import { moveAvatar, type MoveWorld } from './collision'
 import {
@@ -400,10 +400,75 @@ describe('T-A3bis — pas de digue en pleine eau : une cascade est courte', () =
         }
         if (file.length > MARCHE_MAX) longues.push(`${file.length} tuiles depuis (${dep % width},${(dep - (dep % width)) / width})`)
       }
-      // La garde ne peut pas passer à vide : les rivières cascadent bien (§2b), en lignes courtes.
-      expect(marches).toBeGreaterThan(20)
-      expect(lignes).toBeGreaterThan(10)
+      // La garde ne peut pas passer à vide : les rivières cascadent bien, en lignes courtes.
+      // SUR L'ESCALIER (N3, 2026-09-05) l'eau naît sur ses marches et n'y cascade qu'où son cours
+      // franchit une cellule plus basse — la rivière ne suit plus ses berges par côtes, elle EST
+      // la marche. MESURÉ : 12 / 7 / 15 / 18 tuiles de marche profonde sur 2026 / 7 / 4242 / 909
+      // (contre plus de 20 quand la côte cascadait tuile à tuile) — le plancher descend à 5 et à
+      // 2 lignes : ce qu'il garde, c'est qu'une rivière DESCEND encore d'une terrasse à l'autre.
+      expect(marches).toBeGreaterThan(5)
+      expect(lignes).toBeGreaterThan(2)
       expect(longues, longues.join(' | ')).toHaveLength(0)
+    })
+  }
+})
+
+/* ─────────── T-A11 — L'INVARIANT DE L'ESCALIER : AUCUNE EAU NE DOMINE UNE TERRE QU'ELLE TOUCHE ─────────── */
+
+describe('T-A11 — aucune eau ne domine une terre qu’elle touche (N3, 2026-09-05)', () => {
+  // C'EST LE CONTRAT DE N3 : les terrasses sont posées AVANT l'hydrologie, l'eau naît sur ses
+  // marches et n'en bouge plus ; ce qui descend ensuite (miettes, garantie, ravines) ne descend
+  // jamais une terre sous l'eau qu'elle borde, et ce qui monte ne monte jamais une terre au-dessus
+  // d'une eau qu'elle touche. L'inverse — une eau PLUS BASSE que la terre qu'elle touche — est
+  // une gorge, et c'est permis. Avant N3, l'eau était posée à plat puis les terrasses la
+  // découpaient : une falaise donnait sur un lac avec une tache de marais EN HAUT (le défaut que
+  // ce chantier répare, vu par Alexis sur la carte). Ici la borne est ZÉRO, pas un pourcentage.
+  const marais = (t: number): boolean => t === TERRAIN_MARSH || t === TERRAIN_PEAT_BOG || t === TERRAIN_REED_MARSH
+  for (const graine of GRAINES) {
+    it(`graine ${graine} : aucune tuile d’eau n’a de terre marchable plus basse à côté`, () => {
+      const map = carteDeTest(graine, MONDE.JOUEURS_CIBLE, MONDE_JOUE).map
+      const { width, height, terrain } = map
+      const p = map.palier!
+      const perchees: string[] = []
+      let eaux = 0
+      for (let y = 0; y < height; y++) {
+        for (let x = 0; x < width; x++) {
+          const i = y * width + x
+          if (!isWater(terrain[i]!)) continue
+          eaux++
+          for (const [vx, vy] of [[x + 1, y], [x - 1, y], [x, y + 1], [x, y - 1]] as const) {
+            if (vx < 0 || vy < 0 || vx >= width || vy >= height) continue
+            const j = vy * width + vx
+            if (isWater(terrain[j]!) || MARCHABLE[terrain[j]!] !== 1) continue
+            if (p[j]! < p[i]!) { if (perchees.length < 8) perchees.push(`(${x},${y}) p${p[i]} sur (${vx},${vy}) p${p[j]}`); break }
+          }
+        }
+      }
+      expect(eaux).toBeGreaterThan(50_000) // la garde ne peut pas passer à vide
+      expect(perchees, perchees.join(' | ')).toHaveLength(0)
+    })
+    // LE MARAIS EST L'EAU QUI AFFLEURE : un marais au-dessus de l'eau qu'il touche, c'est la
+    // tache perchée en haut de la falaise. MESURÉ après N3 : 0 / 1 / 1 / 0 tuiles isolées sur
+    // 2026 / 7 / 4242 / 909, nées telles quelles de la frange du worldgen, jamais une plaque —
+    // la borne est une poignée, et une PLAQUE (13 sur la seule graine 2026 avant que `fondre`
+    // refuse de monter une miette au-dessus de son eau) la passe.
+    it(`graine ${graine} : au plus 5 tuiles de marais au-dessus d’une eau qu’elles touchent`, () => {
+      const map = carteDeTest(graine, MONDE.JOUEURS_CIBLE, MONDE_JOUE).map
+      const { width, height, terrain } = map
+      const p = map.palier!
+      const perches: string[] = []
+      for (let y = 0; y < height; y++) {
+        for (let x = 0; x < width; x++) {
+          const i = y * width + x
+          if (!marais(terrain[i]!)) continue
+          for (const [vx, vy] of [[x + 1, y], [x - 1, y], [x, y + 1], [x, y - 1]] as const) {
+            if (vx < 0 || vy < 0 || vx >= width || vy >= height) continue
+            const j = vy * width + vx
+            if (isWater(terrain[j]!) && p[j]! < p[i]!) { perches.push(`(${x},${y}) p${p[i]} sur l’eau p${p[j]}`); break }
+          }
+        }
+      }
+      expect(perches.length, perches.slice(0, 8).join(' | ')).toBeLessThanOrEqual(5)
     })
   }
 })
@@ -415,8 +480,11 @@ describe('T-A4 — un lieu ne se coupe pas d’une falaise : chaque assise tient
   const map = carte.map
 
   it('chaque lieu (zone à `kind`) tient sur un seul palier, sur tout son marchable', () => {
-    const lieux = map.zones.filter((z) => z.kind !== undefined)
+    // Sauf les couronnes de nature (`KINDS_SANS_ASSISE`) : un bois de 7 000 tuiles enjambe les
+    // terrasses et la rivière qui le traverse — il n'est pas une assise (2026-09-05).
+    const lieux = map.zones.filter((z) => z.kind !== undefined && !TERRASSES.KINDS_SANS_ASSISE.includes(z.kind))
     expect(lieux.length).toBeGreaterThan(5)
+    expect(map.zones.filter((z) => z.kind !== undefined && TERRASSES.KINDS_SANS_ASSISE.includes(z.kind)).length, 'les couronnes existent').toBe(2)
     for (const z of lieux) {
       const paliers = new Set<number>()
       for (let y = z.y; y < z.y + z.h; y++) {

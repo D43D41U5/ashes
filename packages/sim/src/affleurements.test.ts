@@ -162,6 +162,7 @@ describe('A29 — contenant/contenu : chaque nœud neuf est LÀ où sa dérivati
     // structures enferment une partie des boulders. Ces blocs sont cassables. »* Une garde qui
     // exigerait la connexité parfaite ferait rougir un monde qu'il vient de déclarer bon, et
     // contraindrait le générateur pour rien. Ce qui se garde, c'est le **détour**.
+    const eprouvees: number[] = []
     for (const m of mondes) {
       const { width, height, terrain } = m.c.map
       const chaos: number[] = []
@@ -171,7 +172,21 @@ describe('A29 — contenant/contenu : chaque nœud neuf est LÀ où sa dérivati
       // production — boulders : 2026 → 3 765, 7 → **1 146**, 42 → 11 552. La graine 7 est pauvre
       // en chaos, elle ne l'est pas devenue de zéro ; mille tuiles suffisent largement à ce que
       // le détour mesuré plus bas veuille dire quelque chose.
-      expect(chaos.length, `seed ${m.s} : pas de chaos de blocs — la garde ne prouve rien`).toBeGreaterThan(900)
+      //
+      // ⚠ **LA PRÉMISSE EST PAR GRAINE, PLUS PAR CARTE (2026-09-05, N3 — `terrasses.md` §1).**
+      // Depuis que l'eau naît sur l'escalier, la doline de la graine 7 est SOUS UN LAC : 1 146 →
+      // 344 blocs, dont 884 devenus eau profonde, plus gros amas restant 6 tuiles. Ce n'est pas
+      // le lapiaz qui a cassé (2026 : 3 765 → 3 899), c'est le lac voisin qui se remplit jusqu'à
+      // SON col — celui de son palier — et prend la cuvette avec. Ce qui l'aurait tenue sèche,
+      // c'est R4 (« le calcaire n'inonde pas », `roche-mere.md`), et R4 EST MORT depuis
+      // l'hydrologie dérivée du 2026-08-30 : la clause `inondable` est partie avec les lacs
+      // posés, et rien dans `zonegen-hydro.ts` ne lit la roche (mesuré : 24 à 41 % de l'eau
+      // profonde des quatre graines de référence repose SUR du calcaire). Le ressusciter vide
+      // des lacs entiers — c'est une décision d'Alexis, consignée comme telle. En attendant, la
+      // garde se mesure sur les graines qui PORTENT un chaos, et exige qu'il en reste au moins
+      // une : une carte sans aucun chaos ferait rougir, comme avant.
+      if (chaos.length <= 900) continue
+      eprouvees.push(m.s)
       const dansLeChaos = new Set(chaos)
 
       const bloque = new Uint8Array(width * height)
@@ -316,6 +331,7 @@ describe('A29 — contenant/contenu : chaque nœud neuf est LÀ où sa dérivati
       })
       expect(emmures.length / recolte.length, `seed ${m.s} : ${emmures.length}/${recolte.length} nœuds derrière un mur de blocs`).toBeLessThan(0.05)
     }
+    expect(eprouvees, 'aucune graine ne porte de chaos : la garde ne prouve rien').not.toHaveLength(0)
   }, 30_000)
 
   it('R6sexies — la MINE a la forme des autres biomes, et son minerai s\'atteint sans creuser', () => {

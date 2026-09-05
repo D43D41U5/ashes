@@ -39,6 +39,7 @@
 import { TERRAIN_FLOWER_MEADOW, TERRAIN_FOREST, TERRAIN_MARSH, TERRAIN_OLD_GROWTH, TERRAIN_REED_MARSH, TERRAIN_SHALLOW_WATER, TERRAIN_WET_MEADOW } from './balance'
 import { isWater } from './map'
 import { composantesDeMasque, eroderMasque } from './profondeur'
+import { surLaMarche, type Escalier } from './zonegen-hydro'
 import type { GrapheZones } from './zonegraph'
 
 export const SET_PIECES = {
@@ -76,6 +77,8 @@ export const SET_PIECES = {
 export interface SetPiece {
   kind: 'bois_noir' | 'cercle_pierres' | 'combe_brumeuse'
   nom: string
+  /** La Combe seule : les tuiles de sa mare — une nappe pour les terrasses (`map.lacs`). */
+  mare?: number[]
   x: number
   y: number
   w: number
@@ -194,6 +197,10 @@ export function placerLesSetPieces(
   /** L'épaisseur que la falaise prendra vers le sud (`RELIEF.PAROI_RANGEES`) — passée plutôt
    *  qu'importée : `zonegen` nous appelle déjà, et un import en retour ferait un cycle. */
   margeDuMur: number,
+  /** L'escalier des terrasses (N3, 2026-09-05) : la mare de la Combe naît SUR une marche, et sa
+   *  roselière comme son marais ne se posent jamais au-dessus d'une eau plus basse. Absent (le
+   *  monde plat), la passe rend, au bit près, ce qu'elle rendait. */
+  escalier: Escalier | null = null,
 ): SetPiece[] {
   const racineId = g.racine
   const r = g.zones[racineId]!.rect
@@ -296,13 +303,36 @@ export function placerLesSetPieces(
     width, height, SET_PIECES.COURONNE_COMBE, 2,
   )
   if (combe) {
+    // LA MARE D'ABORD, sur la marche de son pic : les `MARE_BUDGET` premières tuiles de l'ordre
+    // d'adoption qui tiennent au palier du pic sans voisine plus basse (une eau ne domine jamais
+    // une terre) ; celles qu'on saute restent de la roselière. Puis la roselière et le marais —
+    // sauf au bord d'une eau plus basse, où le terrain reste ce qu'il est : un marais perché
+    // au-dessus d'un lac, c'est le défaut qu'on est venu tuer.
+    const pMare = escalier ? escalier.palierTuile[combe.tuiles[0]!]! : 0
+    const mare: number[] = []
+    for (let k = 0; k < combe.tuiles.length && mare.length < SET_PIECES.MARE_BUDGET; k++) {
+      const i = combe.tuiles[k]!
+      if (surLaMarche(escalier, width, height, i, pMare)) mare.push(i)
+    }
+    const estMare = new Set(mare)
+    for (const i of mare) terrain[i] = TERRAIN_SHALLOW_WATER
+    const surUneEauPlusBasse = (i: number): boolean => {
+      if (escalier === null) return false
+      const T = escalier.palierTuile
+      const x = i % width
+      const y = (i - x) / width
+      const p = T[i]!
+      return (x > 0 && isWater(terrain[i - 1]!) && T[i - 1]! < p)
+        || (x + 1 < width && isWater(terrain[i + 1]!) && T[i + 1]! < p)
+        || (y > 0 && isWater(terrain[i - width]!) && T[i - width]! < p)
+        || (y + 1 < height && isWater(terrain[i + width]!) && T[i + width]! < p)
+    }
     for (let k = 0; k < combe.tuiles.length; k++) {
       const i = combe.tuiles[k]!
-      terrain[i] = k < SET_PIECES.MARE_BUDGET ? TERRAIN_SHALLOW_WATER
-        : k < SET_PIECES.ROSELIERE_BUDGET ? TERRAIN_REED_MARSH
-          : TERRAIN_MARSH
+      if (estMare.has(i) || isWater(terrain[i]!) || surUneEauPlusBasse(i)) continue
+      terrain[i] = k < SET_PIECES.ROSELIERE_BUDGET ? TERRAIN_REED_MARSH : TERRAIN_MARSH
     }
-    out.push({ kind: 'combe_brumeuse', nom: 'la Combe brumeuse', ...combe.bbox })
+    out.push({ kind: 'combe_brumeuse', nom: 'la Combe brumeuse', ...combe.bbox, mare })
   }
 
   // ── LE CERCLE DE PIERRES : le monument sur la plus grande fleuraie du NORD, sans peinture ──

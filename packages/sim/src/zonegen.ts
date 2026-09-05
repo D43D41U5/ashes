@@ -51,7 +51,7 @@ import {
 import { isWater, MARCHABLE, type WorldMap, type Zone as ZoneRect } from './map'
 import { calculeChampDeCendre, computeCendreField, foyersDeLaCarte } from './cendre'
 import { construireEtage, terrainDeCave, terrainDeDessus, type Connecteur, type EtageCreux } from './etages'
-import { aDesPaliers, poserLesTerrasses, quantifierLesPaliers } from './terrasses'
+import { aDesPaliers, poserLesTerrasses, quantifierLEscalier, TERRASSES } from './terrasses'
 import { distSq } from './geometry'
 import { placeCharniers, placeGitesLoup, placePois, placeSteles } from './poi'
 import { placeHuntingGrounds } from './faune'
@@ -62,7 +62,7 @@ import { fbm2, hash2 } from './noise'
 import { deriverDistanceEau, deriverProfondeur } from './profondeur'
 import { deriverNatureDeLEau } from './peche-nature'
 import { tracerLesCoulees } from './zonegen-coulees'
-import { comblerLesIsthmes, masqueDesSeuils, paintWaterRacine, type Riviere } from './zonegen-water'
+import { comblerLesIsthmes, epouserLEscalier, masqueDesSeuils, paintWaterRacine, type Riviere } from './zonegen-water'
 import { assainirLeProfondHorsRacine, peindreLesEauxDesZones } from './zonegen-eaux-zones'
 import {
   CREUX,
@@ -566,7 +566,18 @@ export function generateZonedTerrain(
   //
   // Les lacs sont désormais des CUVETTES INONDÉES (le creux commande) : ils épousent le fond du
   // pays au lieu d'être des rectangles tirés au sort.
-  const { riviere, chenaux, fils, lacs: lacsRacine } = paintWaterRacine(terrain, zone, g, width, height, seed, RELIEF.BORDURE, creux)
+  //
+  // ═══ L'ESCALIER D'ABORD (N3, décision d'Alexis du 2026-09-05) ═══
+  //
+  // Les paliers des terrasses se quantifient ICI, sur le socle, AVANT l'eau — et l'eau naît
+  // dessus. Avant ce jour, les terrasses venaient après toute l'eau et devaient DEVINER le
+  // palier de chaque nappe (`niveler`, côtes, orphelins) ; ce qu'elles ne pouvaient pas deviner
+  // devenait une flaque ou un marais perché en haut d'une falaise, au-dessus de l'eau qui l'avait
+  // fait naître. Désormais une seule source de vérité : le palier d'une cellule (les sentes le
+  // lisent), le palier d'une tuile (l'eau y écrit le sien en naissant, les terrasses en partent).
+  // MONDE RÉDUIT SEUL — le chemin 'vallee' reste octet-identique (T-A1).
+  const escalier = g.monde === 'racine' && creux ? quantifierLEscalier(creux, terrain, width, height) : null
+  const { riviere, chenaux, fils, lacs: lacsRacine } = paintWaterRacine(terrain, zone, g, width, height, seed, RELIEF.BORDURE, creux, escalier)
 
   // ── PASSE 1.52 : LES EAUX DES ZONES — l'eau dérivée hors Racine (stratigraphie, couche II) ──
   //
@@ -586,7 +597,10 @@ export function generateZonedTerrain(
   // Après TOUTE l'eau — celle de la Racine et celle des zones — parce que la règle regarde le
   // résultat, pas les intentions : deux eaux qui ne se touchent pas d'une tuile peuvent venir
   // de deux passes différentes (un ru de zone et un lac de la Racine, par exemple).
-  comblerLesIsthmes(terrain, zone, width, height, masqueDesSeuils(creux, g, g.racine), creux)
+  comblerLesIsthmes(terrain, zone, width, height, masqueDesSeuils(creux, g, g.racine), creux, escalier)
+  // Et l'eau des zones, née sans connaître l'escalier, l'épouse (N3) : aucune eau ne domine une
+  // terre qu'elle touche, un lac tient sur un palier. Rien au terrain ne bouge.
+  if (escalier) epouserLEscalier(terrain, escalier, lacs, width, height)
 
   // ── PASSE 1.55 : LA VÉGÉTATION DE LA RACINE — dérivée de l'eau qu'on vient de poser ───────
   //
@@ -627,7 +641,10 @@ export function generateZonedTerrain(
 
   // ── PASSE 1.6 : LES SET-PIECES — trois endroits à grande empreinte, COURONNÉS et non plus
   //    posés (spec t0-exploration R9, révisé §2quinquies : élection pure, aucun tirage) ──
-  const setPieces = placerLesSetPieces(terrain, zone, g, width, height, RELIEF.PAROI_RANGEES)
+  const setPieces = placerLesSetPieces(terrain, zone, g, width, height, RELIEF.PAROI_RANGEES, escalier)
+  // La mare de la Combe est une NAPPE pour les terrasses : elle tient sur un palier, ses berges
+  // ne descendent pas sous elle (N3).
+  for (const sp of setPieces) if (sp.mare) lacs.push(...sp.mare)
 
   // ── PASSE 1.62 : LES CLAIRIÈRES — le biome des trouées (décision d'Alexis, 2026-08-25) ──
   //
@@ -648,10 +665,10 @@ export function generateZonedTerrain(
   // garantie « au moins deux gués » vit à part, indépendante des aléas du traceur.
   // ── LES PALIERS DES TERRASSES, PAR CELLULE (spec `terrasses.md` §3.1) — AVANT LES SENTES ──
   //
-  // Le champ quantifié se calcule ici, une fois, et sert deux lecteurs : le tracé des sentes
-  // (une route cherche l'endroit où l'on monte DE FACE — `SENTES.COUT_PALIER`) et la passe des
-  // terrasses elle-même, après les lieux. MONDE RÉDUIT SEUL, comme toute passe de contenu.
-  const cellulesPalier = g.monde === 'racine' && creux ? quantifierLesPaliers(creux, terrain, width, height) : null
+  // Le champ quantifié vient de l'escalier (posé avant l'eau, passe 1.5) et sert deux lecteurs :
+  // le tracé des sentes (une route cherche l'endroit où l'on monte DE FACE — `SENTES.COUT_PALIER`)
+  // et la passe des terrasses elle-même, après les lieux. MONDE RÉDUIT SEUL, comme toute passe de contenu.
+  const cellulesPalier = escalier?.cellules ?? null
   const { gues, croisees } = tracerLesSentes(terrain, zone, g, width, height, seed, riviere, setPieces, creux, cellulesPalier)
   // ═══ CHAQUE FLEUVE A SES GUÉS ═══
   //
@@ -829,7 +846,7 @@ export function generateZonedTerrain(
     // qui coupent un bois y creusent leur lisière), gelée à l'amorce, statique ensuite.
     profondeur: deriverProfondeur(terrain, zone, g.racine, width, height),
     // LA DISTANCE À L'EAU (S10) : ce qui permet à la crue de monter depuis les rives.
-    distEau: deriverDistanceEau(terrain, width, height),
+    distEau: deriverDistanceEau(terrain, width, height, escalier?.palierTuile ?? null),
     // LA NATURE DE L'EAU (`peche.md` T1) : rivière / lac / mare / marais, par tuile. Dérivée du
     // terrain FINAL et du fil — donc APRÈS que les gués et les set-pieces ont fini de creuser.
     // Sans elle, la table de prises n'aurait aucun moyen de savoir ce qu'est l'eau qu'on pêche.
@@ -926,11 +943,12 @@ export function generateZonedTerrain(
   //
   // ⚠ LE PALIER SE POSE SUR `map` APRÈS SA CONSTRUCTION, comme `coulees` et `cendreCout` : la
   // carte est un objet, ses champs additifs arrivent quand leur passe a tourné.
-  const terrasses = cellulesPalier && creux
+  const terrasses = escalier && creux
     ? poserLesTerrasses(
-        terrain, width, height, creux, cellulesPalier, lacs,
+        terrain, width, height, creux, escalier.cellules, lacs,
         assisesDesTerrasses(map, plateaux, width, height),
         new Set(plateaux.flatMap((p) => [...p.rampes, ...p.gueule])),
+        escalier.palierTuile,
       )
     : null
   if (terrasses && aDesPaliers(terrasses.palier)) map.palier = Array.from(terrasses.palier)
@@ -1481,15 +1499,16 @@ interface Plateau {
 /**
  * LES ASSISES DES TERRASSES (spec `terrasses.md` §3.3) — les empreintes qui prennent UN palier.
  *
- * Tout lieu inscrit dans `map.zones` avec un `kind` (les set-pieces, les lieux de `placePois`, la
- * Louvière, les charniers, les stèles) : son rectangle. Toute mesa : le chapeau, sa jupe (l'anneau
+ * Tout lieu inscrit dans `map.zones` avec un `kind` (le Cercle, les lieux de `placePois`, la
+ * Louvière, les charniers, les stèles) : son rectangle — SAUF les couronnes de nature
+ * (`TERRASSES.KINDS_SANS_ASSISE`), qui enjambent les terrasses. Toute mesa : le chapeau, sa jupe (l'anneau
  * des 8 voisines — c'est là que la rampe s'appuie et que la paroi se dessine), ses rampes et sa
  * gueule. « Le Gué » n'a pas de `kind` et n'en a pas besoin : la rivière est déjà une nappe.
  */
 function assisesDesTerrasses(map: WorldMap, plateaux: readonly Plateau[], width: number, height: number): number[][] {
   const assises: number[][] = []
   for (const z of map.zones) {
-    if (z.kind === undefined) continue
+    if (z.kind === undefined || TERRASSES.KINDS_SANS_ASSISE.includes(z.kind)) continue
     const l: number[] = []
     for (let y = Math.max(0, z.y); y < Math.min(height, z.y + z.h); y++) {
       for (let x = Math.max(0, z.x); x < Math.min(width, z.x + z.w); x++) l.push(y * width + x)

@@ -108,7 +108,7 @@ const PROBE = () => {
     player: reg.get('playerPos'),
     knownPois: reg.get('knownPois') ?? [],
     pois: map.zones
-      .map((z, poiId) => ({ poiId, kind: z.kind, name: z.name, x: z.x + z.w / 2, y: z.y + z.h / 2 }))
+      .map((z, poiId) => ({ poiId, kind: z.kind, name: z.name, x: z.x + z.w / 2, y: z.y + z.h / 2, x0: z.x, y0: z.y, w: z.w, h: z.h }))
       .filter((z) => z.kind !== undefined),
     chronicle: reg.get('chronicle') ?? [],
   }
@@ -521,14 +521,18 @@ const SCENARIOS = {
    * paroi déduite, la rampe de terrasse, un corps qui la monte, l'eau d'un palier haut. `--dev`. ═══
    *
    * Sites relevés offline sur la graine 2026, monde joué (sonde jetable `sites-terrasses`,
-   * relevés le 2026-09-03 après les côtes de fleuve et la fermeture de `monter`) :
+   * relevés le 2026-09-03 après les côtes de fleuve et la fermeture de `monter` ; REVUS LE
+   * 2026-09-05 après N3 — l'eau naît sur l'escalier, `tools/__sites-n3.mts`) :
    *   • rampe de terrasse 1→2 en (1425,656) — la fenêtre 60×40 autour montre 33/30/36 % de
-   *     paliers 0/1/2, et une poche à 0 juste à l'ouest, sous une rampe 0→1 ;
+   *     paliers 0/1/2, et une poche à 0 juste à l'ouest (x 1416-1423), sous une rampe 0→1 ;
+   *     depuis N3 la rangée 665 est au palier 1, la vue de loin se prend dans la poche, en
+   *     (1420,665) ;
    *   • lac au palier 2 autour de (1382,520), rive est en (1394,544) — l'eau haute (T-R8ter) ;
-   *   • cascade 1→0 d'un fleuve, ligne (1062-1067, 655-657) qui tombe vers le sud ; on se tient
-   *     au pied, à (1059,660), palier 0 — la seule cascade face sud de la graine avec du sol
-   *     marchable au pied (un lac de palier 2 n'a plus d'exutoire qui cascade à sa bouche : sa
-   *     première côte suit le lac, la chute est plus bas sur le cours).
+   *   • cascade 1→0, cinq colonnes (700-704, 278-279) qui tombent vers le sud ; on se tient au
+   *     pied, à (701,282), palier 0. (Avant N3 c'était la ligne (1062-1067, 655-657) : ce fleuve
+   *     coule maintenant tout entier au palier 0, sa rive nord au palier 1 — une gorge, la forme
+   *     normale de N3, plus une chute. 11 des 18 cascades face sud de la graine ont un pied
+   *     marchable ; celle-ci est la plus large.)
    * ⚠ CIBLES DATÉES : sur une autre graine il n'y a rien là. Chaque vue converge le sprite
    * (`poser`) avant la capture, comme `relief`.
    */
@@ -594,16 +598,17 @@ const SCENARIOS = {
     // ── EN HAUT (palier 2), le dos aux deux paliers du bas.
     await vue('terrasse-haut', 1425, 653)
     // ── DE LOIN, du sud (palier 0) : l'escalier des trois paliers.
-    await vue('terrasse-loin', 1425, 665)
+    // ── DE LOIN, du sud-ouest (la poche au palier 0) : l'escalier des trois paliers.
+    await vue('terrasse-loin', 1420, 665)
     // ── L'EAU HAUTE : le lac du palier 2, depuis sa rive est.
     await vue('terrasse-lac', 1394, 544)
     // ── LA CASCADE : un fleuve qui tombe de 1 à 0 vers le sud, vu du pied.
-    // CE QUI FERAIT ROUGIR : la ligne (1062-1067, 655-657) n'est plus détectée comme chute (0
+    // CE QUI FERAIT ROUGIR : la ligne (700-704, 278-279) n'est plus détectée comme chute (0
     // colonne — de la roche à la place de la nappe, le « barrage » d'avant) ; une colonne comptée
     // sans ses sprites (nappe < LIFT_TUILES × colonnes, ou pas d'écume) ; ou un pied sans une
     // seule particule vivante après `fastForward`.
-    const casc = await vue('terrasse-cascade', 1059, 660)
-    if (casc.chutes < 1) console.error(`!! cascade : aucune colonne de chute posée (attendu ≥ 1, la ligne 1062-1067 × 655-657)`)
+    const casc = await vue('terrasse-cascade', 701, 282)
+    if (casc.chutes < 1) console.error(`!! cascade : aucune colonne de chute posée (attendu ≥ 1, la ligne 700-704 × 278-279)`)
     else if (casc.nappe < casc.chutes * 2 || casc.ecume < casc.chutes) console.error(`!! cascade : ${casc.chutes} colonnes mais nappe=${casc.nappe} écume=${casc.ecume}`)
     else if (casc.gouttes < 1) console.error(`!! cascade : ${casc.chutes} colonnes et aucune particule vivante au pied`)
     else console.log(`   ✓ cascade : ${casc.chutes} colonnes, ${casc.nappe} sprites de nappe, ${casc.ecume} d'écume, ${casc.gouttes} particules vivantes`)
@@ -613,7 +618,8 @@ const SCENARIOS = {
   },
 
   // ═══ SONDE JETABLE (2026-09-04) : la cascade seule, jour et nuit — pour itérer à l'œil sans
-  //     repayer les six autres vues de `terrasses`. Mêmes cibles datées (graine 2026). ═══
+  //     repayer les six autres vues de `terrasses`. Mêmes cibles datées (graine 2026, relevé
+  //     du 2026-09-05 : la cascade (700-704, 278-279), pied (701,282)). ═══
   async __cascade(page) {
     if (!dev) { console.error('!! exige --dev'); return }
     const agirT = async (action, ms) => {
@@ -622,7 +628,7 @@ const SCENARIOS = {
     }
     const vue = async (nom, heure) => {
       await agirT({ type: 'debug_set_hour', hour: heure }, 1200)
-      await agirT({ type: 'debug_teleport', x: 1059.5, y: 660.5 }, 2400)
+      await agirT({ type: 'debug_teleport', x: 701.5, y: 282.5 }, 2400)
       await page.evaluate(() => window.__BRAISES__.scene.game.loop.sleep())
       // Converger le sprite ET laisser vivre les particules : 90 images à 16 ms = 1,4 s de FX.
       const c = await page.evaluate(() => {
@@ -20806,9 +20812,16 @@ Depuis le spawn (${depart.x.toFixed(0)}, ${depart.y.toFixed(0)}) :`)
     // (poi-discovery, SIGHT_TILES = 30), pas une fuite de brouillard. Constaté sur le monde
     // réduit (2026-08-18) : le spawn de la seed 2026 naît à 24 tuiles d'un erratique. La
     // sonde n'exige donc plus « zéro connu » mais « rien de connu HORS DE VUE ».
+    // AU BORD DE L'EMPRISE, comme `advancePois` — pas au centre : le Grand Chêne de la graine 2026
+    // (N3, 2026-09-05) est à 29,0 tuiles de son bord et 30,4 de son centre, et la sonde criait à
+    // la fuite sur un lieu que la mécanique a bien vu.
     const SIGHT = 30
     const enVue = new Set(s.pois
-      .filter((p) => (p.x - s.player.x) ** 2 + (p.y - s.player.y) ** 2 <= SIGHT * SIGHT)
+      .filter((p) => {
+        const dx = Math.max(p.x0 - s.player.x, 0, s.player.x - (p.x0 + p.w))
+        const dy = Math.max(p.y0 - s.player.y, 0, s.player.y - (p.y0 + p.h))
+        return dx * dx + dy * dy <= SIGHT * SIGHT
+      })
       .map((p) => p.poiId))
     const fuites = s.knownPois.filter((id) => !enVue.has(id))
     console.log(`   ${s.pois.length} lieux existent, ${s.knownPois.length} connus du joueur, ${enVue.size} en vue du spawn`)
@@ -20898,7 +20911,13 @@ Depuis le spawn (${depart.x.toFixed(0)}, ${depart.y.toFixed(0)}) :`)
 
     await page.keyboard.press('m')
     await page.waitForTimeout(700)
-    await page.screenshot({ path: `${OUT}/carte-apres-decouvertes.png` })
+    // BOUCLE ENDORMIE pour la capture : après les téléportations, une image du monde dure des
+    // minutes en headless (SwiftShader) et la capture attendait derrière — 120 s ne suffisaient
+    // pas, et le scénario mourait APRÈS ses trois ✓ (2026-09-05). Même recette que
+    // `carte-debug-brouillard`.
+    await page.evaluate(() => window.__BRAISES__.scene.game.loop.sleep())
+    await page.screenshot({ timeout: 120000, path: `${OUT}/carte-apres-decouvertes.png` })
+    await page.evaluate(() => window.__BRAISES__.scene.game.loop.wake())
     return b
   },
 

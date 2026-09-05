@@ -29,7 +29,9 @@ import { fbm2 } from './noise'
 /** Un point du plan, en tuiles. Flottant : le lissage travaille entre les tuiles.
  *  `r` — le rayon du cours d'eau EN CE POINT (tuiles) — voyage avec lui : il est lissé et
  *  interpolé par les mêmes poids que la position, sinon la largeur sauterait aux jointures. */
-export interface Point { x: number; y: number; r?: number | undefined }
+/** Un point de tracé : position, rayon du disque, et — sur l'escalier des terrasses — le
+ *  PALIER de la cellule d'où il vient (`p`), que `peindreCoursDEau` transmet à `poser`. */
+export interface Point { x: number; y: number; r?: number | undefined; p?: number | undefined }
 
 /**
  * LE LISSAGE DE CHAIKIN — une passe remplace chaque segment [A,B] par [¾A+¼B, ¼A+¾B].
@@ -46,8 +48,9 @@ export function lisserChaikin(points: readonly Point[], passes: number): Point[]
       const rb = b.r
       const r1 = ra === undefined || rb === undefined ? ra : ra * 0.75 + rb * 0.25
       const r2 = ra === undefined || rb === undefined ? rb : ra * 0.25 + rb * 0.75
-      q.push({ x: a.x * 0.75 + b.x * 0.25, y: a.y * 0.75 + b.y * 0.25, r: r1 })
-      q.push({ x: a.x * 0.25 + b.x * 0.75, y: a.y * 0.25 + b.y * 0.75, r: r2 })
+      // Le palier ne s'interpole pas : chaque point neuf prend celui de l'extrémité la plus proche.
+      q.push({ x: a.x * 0.75 + b.x * 0.25, y: a.y * 0.75 + b.y * 0.25, r: r1, p: a.p })
+      q.push({ x: a.x * 0.25 + b.x * 0.75, y: a.y * 0.25 + b.y * 0.75, r: r2, p: b.p })
     }
     q.push(p[p.length - 1]!)
     p = q
@@ -62,7 +65,12 @@ export function lisserChaikin(points: readonly Point[], passes: number): Point[]
  * `amplitude` est en tuiles. Le bruit se lit sur l'abscisse curviligne (le rang du point), pas
  * sur la position : deux rivières parallèles ne se copieront donc pas l'une l'autre.
  */
-export function meandrer(points: readonly Point[], amplitude: number, sel: number): Point[] {
+export function meandrer(
+  points: readonly Point[],
+  amplitude: number,
+  sel: number,
+  admis?: (x: number, y: number, p: number | undefined) => boolean,
+): Point[] {
   const n = points.length
   if (n < 3 || amplitude <= 0) return points.slice()
   const out: Point[] = []
@@ -82,8 +90,19 @@ export function meandrer(points: readonly Point[], amplitude: number, sel: numbe
     const fenetre = 4 * t * (1 - t)
     const u = fbm2(i, 0, 24, sel) - 0.5
     const v = fbm2(i, 137, 7, sel ^ 0x6d65616e /* 'mean' */) - 0.5
-    const e = amplitude * fenetre * (u * 1.4 + v * 0.45)
-    out.push({ x: points[i]!.x - ty * e, y: points[i]!.y + tx * e, r: rayon })
+    let e = amplitude * fenetre * (u * 1.4 + v * 0.45)
+    // SUR L'ESCALIER, LE MÉANDRE RESTE SUR SON PALIER : si l'écart mène le point là où `admis`
+    // dit non (une cellule d'un autre palier), on le réduit de moitié — trois fois, puis zéro.
+    // Le cours divague dans sa terrasse, il ne va pas se percher sur la voisine ni s'y jeter
+    // avant que sa pente ne l'y mène.
+    if (admis !== undefined) {
+      for (let essai = 0; essai < 4; essai++) {
+        if (essai === 3) { e = 0; break }
+        if (admis(points[i]!.x - ty * e, points[i]!.y + tx * e, points[i]!.p)) break
+        e *= 0.5
+      }
+    }
+    out.push({ x: points[i]!.x - ty * e, y: points[i]!.y + tx * e, r: rayon, p: points[i]!.p })
   }
   return out
 }
@@ -146,7 +165,11 @@ export function estamperDisque(cx: number, cy: number, r: number, poser: (x: num
  * côté — c'est voulu (l'eau ne suit pas une grille), et c'est sans danger : `poser` refuse tout
  * ce qui ne doit pas être noyé.
  */
-export function peindreCoursDEau(points: readonly Point[], passes: number, poser: (x: number, y: number) => void): void {
+export function peindreCoursDEau(
+  points: readonly Point[],
+  passes: number,
+  poser: (x: number, y: number, p: number | undefined) => void,
+): void {
   if (points.length === 0) return
   const lisse = lisserChaikin(points, passes)
   for (let i = 0; i + 1 < lisse.length; i++) {
@@ -156,8 +179,10 @@ export function peindreCoursDEau(points: readonly Point[], passes: number, poser
     const n = Math.max(1, tuiles.length - 1)
     const ra = a.r ?? 1
     const rb = b.r ?? 1
+    // Le palier d'un segment est celui de son AMONT (`a`) : l'eau descend, elle ne monte pas.
+    const pa = a.p
     for (let t = 0; t < tuiles.length; t++) {
-      estamperDisque(tuiles[t]!.x, tuiles[t]!.y, ra + (rb - ra) * (t / n), poser)
+      estamperDisque(tuiles[t]!.x, tuiles[t]!.y, ra + (rb - ra) * (t / n), (x, y) => poser(x, y, pa))
     }
   }
 }

@@ -49,7 +49,9 @@ const SUITES = [
   // suit, en gardant la marge de quelques pourcents que décrit le commentaire ci-dessous.
   // 2026-09-03 : +89 gardes avec les TERRASSES (`terrasses.test.ts`, spec `terrasses.md`) —
   //   suite à 2169, plancher relevé quelques pourcents dessous.
-  { nom: 'sim', dir: 'packages/sim', args: ['run', '--exclude', 'src/scenario.test.ts'], plancher: 2140 },
+  // 2026-09-05 : +8 gardes avec L'EAU SUR L'ESCALIER (T-A11, `terrasses.test.ts`, N3) —
+  //   suite à 2195, plancher recalé quelques pourcents dessous.
+  { nom: 'sim', dir: 'packages/sim', args: ['run', '--exclude', 'src/scenario.test.ts'], plancher: 2165 },
   // 2026-09-01 : +10 gardes avec le RENDU des étages (`plateau-art.test.ts`).
   // 2026-09-01 : +9 gardes avec le TRI DES ÉTAGES (strate, découvert — `framing.test.ts`),
   //   suite relevée à 1429 ✓, plancher recalé quelques pourcents dessous.

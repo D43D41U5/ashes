@@ -176,14 +176,74 @@ export function composantesDeMasque(masque: Uint8Array, width: number, height: n
  * tuiles du pourtour lisent donc 1 sans être au bord d'une eau. Sans conséquence — la vallée
  * est ceinte de roche, et la crue n'inonde que du MARCHABLE.
  */
-export function deriverDistanceEau(terrain: readonly number[], width: number, height: number): number[] {
+export function deriverDistanceEau(
+  terrain: readonly number[],
+  width: number,
+  height: number,
+  palier: ArrayLike<number> | null = null,
+): number[] {
   const N = width * height
   const terre = new Uint8Array(N)
   for (let i = 0; i < N; i++) {
     const t = terrain[i]!
     if (t !== TERRAIN_SHALLOW_WATER && t !== TERRAIN_DEEP_WATER) terre[i] = 1
   }
-  return eroderMasque(terre, width, height, EAU.PORTEE_CRUE + 1)
+  if (palier === null) return eroderMasque(terre, width, height, EAU.PORTEE_CRUE + 1)
+
+  // ═══ SUR L'ESCALIER (N3, 2026-09-05), LA CRUE NE MONTE PAS UNE MARCHE ═══
+  //
+  // Même érosion, mais une eau ne mouille que la terre DE SON PALIER, et la distance ne se
+  // propage qu'entre terres du même palier : une rivière au fond d'une gorge n'inonde pas le
+  // plateau qui la domine, et un lac ne déborde pas par-dessus sa falaise. Ce qu'aucune eau du
+  // même palier n'atteint porte le plafond — comme le cœur du massif dans `eroderMasque`.
+  const cap = EAU.PORTEE_CRUE + 1
+  const prof = new Array<number>(N).fill(0)
+  const file = new Int32Array(N)
+  let tete = 0
+  let queue = 0
+  for (let y = 0; y < height; y++) {
+    for (let x = 0; x < width; x++) {
+      const i = y * width + x
+      if (!terre[i]) continue
+      const p = palier[i]!
+      let bord = false
+      for (let dy = -1; dy <= 1 && !bord; dy++) {
+        for (let dx = -1; dx <= 1; dx++) {
+          if (dx === 0 && dy === 0) continue
+          const nx = x + dx
+          const ny = y + dy
+          if (nx < 0 || ny < 0 || nx >= width || ny >= height) { bord = true; break }
+          const j = ny * width + nx
+          if (!terre[j] && palier[j] === p) { bord = true; break }
+        }
+      }
+      if (bord) {
+        prof[i] = 1
+        file[queue++] = i
+      }
+    }
+  }
+  while (tete < queue) {
+    const i = file[tete++]!
+    const d = prof[i]!
+    const p = palier[i]!
+    const x = i % width
+    const y = (i - x) / width
+    for (let dy = -1; dy <= 1; dy++) {
+      for (let dx = -1; dx <= 1; dx++) {
+        if (dx === 0 && dy === 0) continue
+        const nx = x + dx
+        const ny = y + dy
+        if (nx < 0 || ny < 0 || nx >= width || ny >= height) continue
+        const j = ny * width + nx
+        if (!terre[j] || prof[j] !== 0 || palier[j] !== p) continue
+        prof[j] = Math.min(d + 1, cap)
+        file[queue++] = j
+      }
+    }
+  }
+  for (let i = 0; i < N; i++) if (terre[i] && prof[i] === 0) prof[i] = cap
+  return prof
 }
 
 /** L'érosion du masque BOISÉ de la Racine — le champ `map.profondeur` (§2quater R38). */
