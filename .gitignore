@@ -24,3 +24,6 @@ art-export/
 # Sondes jetables de session dans tools/ : le préfixe `__` dit « je meurs avec la session ».
 # Un instrument qui a fait ses preuves se RENOMME sans le préfixe et se commite.
 tools/__*
+
+# Contexte propre à la machine (CLAUDE.local.md), jamais partagé
+CLAUDE.local.md

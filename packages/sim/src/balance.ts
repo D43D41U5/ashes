@@ -5,9 +5,11 @@
  *
  * ── OÙ VIT QUOI, EXACTEMENT (audit du 2026-08-02) ──
  * « Ici et seulement ici » a UNE exception, et elle est délibérée : **le réglage d'un
- * générateur de carte vit à côté de son générateur**. `MONDE` (zonegraph) · `RELIEF`
- * (zonegen) · `EAU` (zonegen-water) · `SENTES` · `SET_PIECES` · `CREUX` (racine-relief) ·
- * `CONTENU` (zone-content) · `POI_PLACEMENT` (poi) · `CENDRE`.
+ * générateur de carte vit à côté de son générateur** — le bloc `export const X = {` en tête
+ * du fichier. `MONDE` (zonegraph) · `RELIEF` (zonegen) · `EAU` (zonegen-water) · `SENTES` ·
+ * `SET_PIECES` · `CREUX` et `ROCHE` (racine-relief) · `SOCLE` (socle) · `EAUX_ZONES` ·
+ * `COULEES` · `CLAIRIERE` (clairieres) · `CONTENU` (zone-content) · `POI_PLACEMENT` (poi) ·
+ * `CENDRE`… — une nouvelle strate amène le sien.
  *
  * La ligne de partage n'est pas le sujet, c'est **comment on calibre** :
  *   • ce fichier = ce qui se règle EN JOUANT (vitesses, dégâts, faim, portées, prix) ;

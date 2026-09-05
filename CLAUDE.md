@@ -59,12 +59,21 @@ Le jeu s'expose via `window.__BRAISES__.scene` : le smoke test **lit** l'état, 
 **Avant tout commit : `pnpm check`, `pnpm test`, `pnpm lint`** — les trois passent, plus le
 `smoke --scenario` du système touché s'il se voit. Rapides : les lancer souvent.
 
+**Pièges connus** (chacun a coûté une session) :
+- Après un edit de `/sim`, des « timed out 30000ms » au 1er `pnpm test` sont le cache de cartes
+  froid, pas des défauts : rejouer le fichier. Et ne jamais éditer `/sim` PENDANT qu'une suite
+  tourne — elle écrirait une carte périmée sous une empreinte à jour.
+- `smoke --dev` : éditer `packages/client` pendant le run déclenche le HMR, recharge la page et
+  tue le scénario. Ne toucher que `tools/`.
+- Une autre session peut tourner sur cet arbre : jamais `pkill -f <motif>` — garder le PID ou
+  `fuser -k <port>/tcp`.
+
 ## Structure
 
 ```
 packages/sim      ← TOUTE la logique de jeu. TypeScript pur, testé en unitaire.
 packages/client   ← Phaser 4 + Vite. Rendu ISO, input, interpolation, HUD/menus DOM, prédiction locale.
-                    scenes/ (le plus gros : WorldScene + scenes/ui/ en DOM) · render/ (couches,
+                    scenes/ (le plus gros : WorldScene + scenes/world/ ses couches et FX ; scenes/ui/ en DOM) · render/ (couches,
                     éclairage, art procédural) · worker/ (la sim en Veillée) · audio/ · assets/
 packages/server   ← Node + Colyseus. Boucle autoritative, rooms, replay-log (L1 fait). Persistance PostgreSQL encore à venir (Vallée).
 tools/            ← les instruments. `smoke.mjs` (navigateur), `suites.mjs` (les 4 suites),
@@ -74,6 +83,8 @@ tools/            ← les instruments. `smoke.mjs` (navigateur), `suites.mjs` (l
                     `apercu-carte`, `trace-corvee`…). Ils vivent ICI et non dans /sim parce que le
                     lint y interdit `Date`/`performance`, or c'est de chronométrage qu'on a
                     besoin. `node --import tsx tools/profil-tick.mts`.
+                    Une sonde JETABLE de session se nomme `tools/__*.mts` : gitignorée, elle meurt
+                    avec la session ; ce qui doit survivre perd son préfixe et prend un nom.
 docs/specs/       ← specs par système, extraites du GDD, avec critères d'acceptation
 docs/gate1-finition.md ← le backlog de finition solo priorisé (P0/P1/P2) — ce qui reste vraiment à construire
 docs/decisions.md ← journal des décisions (ADR léger) — à tenir à jour
@@ -97,7 +108,7 @@ Ils viennent du GDD §11 et §14 (« décisions actées »). Ne pas les rouvrir 
 
 ## Règles de travail
 
-- **Équilibrage** : tout nombre d'équilibrage vit dans `packages/sim/src/balance.ts`, **jamais en dur dans un corps de fonction** — un nombre qu'on ne peut trouver qu'en lisant le code n'est pas réglable. Les valeurs sont des ordres de grandeur (GDD §15), calibrées en playtest. **Une exception, délibérée** : le réglage d'un générateur de carte vit à côté de son générateur (`MONDE`, `RELIEF`, `EAU`, `SENTES`, `SET_PIECES`, `CREUX`, `CONTENU`, `POI_PLACEMENT`, `CENDRE`) — la ligne de partage est *comment on calibre* : `balance.ts` = ce qui se règle en JOUANT, les blocs du worldgen = ce qui se règle en REGARDANT UNE CARTE. Détail dans l'en-tête de `balance.ts`.
+- **Équilibrage** : tout nombre d'équilibrage vit dans `packages/sim/src/balance.ts`, **jamais en dur dans un corps de fonction** — un nombre qu'on ne peut trouver qu'en lisant le code n'est pas réglable. Les valeurs sont des ordres de grandeur (GDD §15), calibrées en playtest. **Une exception, délibérée** : le réglage d'un générateur de carte vit à côté de son générateur — le bloc `export const X = {` en tête du fichier (`MONDE`, `RELIEF`, `EAU`, `SENTES`, `SET_PIECES`, `CREUX`, `ROCHE`, `SOCLE`, `EAUX_ZONES`, `COULEES`, `CLAIRIERE`, `CONTENU`, `POI_PLACEMENT`, `CENDRE`…) ; une nouvelle strate amène le sien — la ligne de partage est *comment on calibre* : `balance.ts` = ce qui se règle en JOUANT, les blocs du worldgen = ce qui se règle en REGARDANT UNE CARTE. Détail dans l'en-tête de `balance.ts`.
 - **Catalogue du bâti** : toute pièce posable est UNE entrée du registre `PIECES` (`packages/sim/src/pieces.ts`) — `StructureType` en est dérivé (`keyof typeof PIECES`), et collision, client et Atelier en découlent. Ajouter une pièce = compléter le registre, pas toucher quinze fichiers (décision 2026-08-01 ; la palissade d'avant-registre avait coûté 19 fichiers). Les lieux (POI, grottes…) se COMPOSENT de ces pièces via les plans `packages/sim/src/plans/*.plan` — « tout en pièces, partout » (2026-08-10).
 - **Événements de domaine** : tout fait de jeu discret et signifiant (spawn, récolte, don, premier sang, pacte…) est émis comme `SimEvent` (`events.ts`) au moment où la logique l'exécute. L'alignement, la chronique de saison, le tableau du village et la réputation sont des *consommateurs* de ce flux — on n'instrumente jamais la logique après coup. Haute fréquence ≠ domaine : un déplacement n'est pas un événement.
 - **État de sim JSON-sérialisable** : pas de classes, pas de `Map`/`Set` dans `SimState` — snapshot, transport Worker et persistance en dépendent.
