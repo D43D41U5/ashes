@@ -52,7 +52,7 @@
 import { TERRAINS, TERRAIN_DEEP_WATER, TERRAIN_SHALLOW_WATER } from './balance'
 import { isWater } from './map'
 import { fbm2 } from './noise'
-import { CREUX, lireLeChampGraine, type Creux } from './racine-relief'
+import { CREUX, familleDeCellule, lireLeChampGraine, type Creux } from './racine-relief'
 import { TasPF } from './socle'
 import { lisserChaikin, meandrer, peindreCoursDEau, rasteriser4, type Point } from './zonegen-trace'
 
@@ -369,41 +369,86 @@ export function tracerLHydrologie(
   const marcheDeTuile = (x: number, y: number): number => (escalier !== null ? palierDeCellule(celluleDeTuile(x, y)) * H - lo : 0)
 
   // ══ 2. LE PRIORITY-FLOOD — chaque dépression se remplit jusqu'à SON col ═════════════════
-  const filled = new Float64Array(n)
-  const ferme = new Uint8Array(n)
-  const tas = new TasPF(n)
-  for (let k = 0; k < n; k++) filled[k] = altT[k]!
-  for (let k = 0; k < n; k++) {
-    if (estBase[k] !== 1) continue
-    ferme[k] = 1
-    tas.pousse(filled[k]!, k)
-  }
-  while (tas.taille > 0) {
-    const k = tas.tire()
-    const kx = k % cols
-    const ky = (k - kx) / cols
-    const fk = filled[k]! + HYDRO.EPSILON
-    for (let d = 0; d < 8; d++) {
-      const vx = kx + VDX[d]!
-      const vy = ky + VDY[d]!
-      if (vx < 0 || vy < 0 || vx >= cols || vy >= rows) continue
-      const v = vy * cols + vx
-      if (ferme[v] === 1 || dansLePays[v] !== 1) continue
-      ferme[v] = 1
-      filled[v] = altT[v]! > fk ? altT[v]! : fk
-      tas.pousse(filled[v]!, v)
+  /**
+   * L'inondation depuis un ensemble de SOURCES fermées à leur propre altitude : chaque cellule
+   * du pays finit au niveau du col le plus bas qui la relie à une source. Deux appels, deux
+   * ensembles de sources — le bord du pays seul (le drainage), le bord PLUS le calcaire (les
+   * lacs, voir 2b). L'ordre du tas est total (hauteur, puis index) : déterministe.
+   */
+  const inonder = (source: Uint8Array): { filled: Float64Array; ferme: Uint8Array } => {
+    const filled = new Float64Array(n)
+    const ferme = new Uint8Array(n)
+    const tas = new TasPF(n)
+    for (let k = 0; k < n; k++) filled[k] = altT[k]!
+    for (let k = 0; k < n; k++) {
+      if (source[k] !== 1) continue
+      ferme[k] = 1
+      tas.pousse(filled[k]!, k)
     }
+    while (tas.taille > 0) {
+      const k = tas.tire()
+      const kx = k % cols
+      const ky = (k - kx) / cols
+      const fk = filled[k]! + HYDRO.EPSILON
+      for (let d = 0; d < 8; d++) {
+        const vx = kx + VDX[d]!
+        const vy = ky + VDY[d]!
+        if (vx < 0 || vy < 0 || vx >= cols || vy >= rows) continue
+        const v = vy * cols + vx
+        if (ferme[v] === 1 || dansLePays[v] !== 1) continue
+        ferme[v] = 1
+        filled[v] = altT[v]! > fk ? altT[v]! : fk
+        tas.pousse(filled[v]!, v)
+      }
+    }
+    return { filled, ferme }
+  }
+  const { filled, ferme } = inonder(estBase)
+
+  // ══ 2b. LE CALCAIRE EST UN PUITS — « le calcaire n'inonde pas » (`roche-mere.md` R4) ═════
+  //
+  // *(Décision d'Alexis, 2026-09-05 : R4 au sens du spec, option (i) de `decisions.md` ④.)*
+  //
+  // Une cellule calcaire (`familleDeCellule` = −1) ne retient rien : l'eau s'y infiltre. Dans
+  // le priority-flood des LACS, elle est donc une SOURCE de plus, fermée à sa propre altitude —
+  // exactement ce qu'est le bord du pays. Ce qui en découle, sans une règle de plus :
+  //   — une cuvette calcaire ne se remplit jamais : c'est la DOLINE SÈCHE, que `poserLesLapiaz`
+  //     pave (R6) ;
+  //   — un lac qui touche du calcaire ne monte pas au-dessus du calcaire le plus bas qu'il
+  //     touche : la roche est son déversoir (le gouffre, le point où le bilan se referme en
+  //     résurgence, R7) ;
+  //   — un lac qui n'en touche aucun ne bouge pas d'un bit.
+  //
+  // ⚠ LE DRAINAGE, LUI, NE LIT PAS LA ROCHE. Les récepteurs, le débit et les cours d'eau (5, 6)
+  // se lisent sur `filled`, l'inondation SANS puits : un cours d'eau garde son cours dans
+  // n'importe quelle roche — R5 étend l'exemption du fil à tout ce qui coule (« un cours
+  // pérenne colmate son lit »). Le karst ne mord que sur les LACS ; le ruisseau qui traverse
+  // une doline sèche la traverse, il ne s'y perd pas — la perte est l'affaire de l'absorption
+  // au fil des cellules (option (iii)), qui n'est pas ouverte. Sans calcaire dans le pays, les
+  // deux inondations sont la même : `filledLac` EST `filled`, au bit près.
+  let filledLac = filled
+  let fermeLac = ferme
+  {
+    const source = new Uint8Array(estBase)
+    let puits = 0
+    for (let k = 0; k < n; k++) {
+      if (dansLePays[k] !== 1 || estBase[k] === 1 || familleDeCellule(creux, k) !== -1) continue
+      source[k] = 1
+      puits++
+    }
+    if (puits > 0) ({ filled: filledLac, ferme: fermeLac } = inonder(source))
   }
 
   // ══ 3. LES CUVETTES — et lesquelles sont des LACS ═══════════════════════════════════════
   //
   // Une cellule est NOYÉE si la surface remplie dépasse son altitude. Les composantes de
   // noyées sont les cuvettes ; on garde celles dont le fond descend de `LAC_PROFONDEUR_MIN`
-  // sous leur col. Le NIVEAU du lac est le maximum de `filled` sur sa composante : le col.
+  // sous leur col. Le NIVEAU du lac est le maximum de `filledLac` sur sa composante : le col —
+  // ou le calcaire le plus bas qu'il touche (2b).
   const seuilLac = CREUX.LAME * HYDRO.LAC_PROFONDEUR_MIN
   const marge = CREUX.LAME * 0.25
   const noye = new Uint8Array(n)
-  for (let k = 0; k < n; k++) if (ferme[k] === 1 && filled[k]! - altT[k]! > marge) noye[k] = 1
+  for (let k = 0; k < n; k++) if (fermeLac[k] === 1 && filledLac[k]! - altT[k]! > marge) noye[k] = 1
   const vu = new Uint8Array(n)
   const lacs: { cellules: number[]; niveau: number; creux: number }[] = []
   for (let s = 0; s < n; s++) {
@@ -414,9 +459,9 @@ export function tracerLHydrologie(
     let niveau = 0
     for (let t = 0; t < comp.length; t++) {
       const k = comp[t]!
-      const p = filled[k]! - altT[k]!
+      const p = filledLac[k]! - altT[k]!
       if (p > creuxMax) creuxMax = p
-      if (filled[k]! > niveau) niveau = filled[k]!
+      if (filledLac[k]! > niveau) niveau = filledLac[k]!
       const kx = k % cols
       const ky = (k - kx) / cols
       for (const v of [kx > 0 ? k - 1 : -1, kx + 1 < cols ? k + 1 : -1, ky > 0 ? k - cols : -1, ky + 1 < rows ? k + cols : -1]) {

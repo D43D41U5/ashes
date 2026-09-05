@@ -7,7 +7,8 @@ spec : **« je ne veux pas qu'on ajoute de nouvelles ressources maintenant »** 
 neuf, aucun `ItemId` neuf, aucun id de terrain neuf. Statut : **IMPLÉMENTÉE le 2026-08-26** —
 `racine-relief.ts` (bloc `ROCHE`, `composerLaRoche`, `familleDeCellule`), `socle.ts` (les trois
 champs, neutres avant composition), `zonegen.ts` (passe 1b-bis + le minerai par province),
-`zonegen-water.ts` (le karst dans `inondable`, `poserLesLapiaz`, `poserLesResurgences`). Deux
+`zonegen-water.ts` (`poserLesLapiaz`, `poserLesResurgences`), `zonegen-hydro.ts` §2b (le karst
+en PUITS du priority-flood des lacs — R4, refaite le 2026-09-05 après une mort de six jours). Deux
 gardes se réénoncent avec leur mesure (R11, R11bis). Le calibrage fin reste à trancher à l'œil.
 Jalon : chantier worldgen / avant GATE 1.
 Prolonge `t0-exploration.md` §2bis-§2ter (étage 4 du vocabulaire) et amende `stratigraphie.md`
@@ -82,15 +83,34 @@ sec où il n'y a rien aujourd'hui.
   | **argile / marne** | conservé, ruissellement fort | les fonds se remplissent bas → **mares et marais** en dehors des grands bassins |
   | contact calcaire → marne | le flux ressort | **la résurgence** (R7) |
 
-  ⚠ **MORTE DEPUIS LE 2026-08-30, VU LE 2026-09-05 — À TRANCHER.** L'hydrologie dérivée
-  (`zonegen-hydro.ts`) a remplacé les lacs posés, et la clause `inondable` qui portait « le
-  calcaire n'inonde pas » est partie avec eux : rien dans le priority-flood ne lit la roche.
-  Personne ne l'a vu parce que la doline de la graine 7 restait sèche par la chance de son col ;
-  N3 (`terrasses.md` §1 — un lac se remplit jusqu'au col DE SON PALIER) l'a mise sous un lac.
-  MESURÉ : 24 à 41 % de l'eau profonde des quatre graines de référence repose SUR du calcaire.
-  Les trois issues (puits du flood / abrogation / taux d'absorption) et la reco sont dans
-  `docs/decisions.md` (2026-09-05, ④). Jusque-là, R6 et R6ter se lisent « là où le flood laisse
-  la cuvette sèche ».
+  ⚠ **MORTE DU 2026-08-30 AU 2026-09-05, RESSUSCITÉE EN (i) — décision d'Alexis.** L'hydrologie
+  dérivée (`zonegen-hydro.ts`) avait remplacé les lacs posés, et la clause `inondable` qui
+  portait « le calcaire n'inonde pas » était partie avec eux : rien dans le priority-flood ne
+  lisait la roche. Personne ne l'a vu parce que la doline de la graine 7 restait sèche par la
+  chance de son col ; N3 (`terrasses.md` §1 — un lac se remplit jusqu'au col DE SON PALIER)
+  l'a mise sous un lac. MESURÉ : 24 à 41 % de l'eau profonde des quatre graines de référence
+  reposait SUR du calcaire. Les trois issues et la reco sont dans `docs/decisions.md`
+  (2026-09-05, ④) ; Alexis a pris **(i), le puits du priority-flood**, contre la reco (ii).
+
+  **CE QUE (i) VEUT DIRE, EXACTEMENT** (`zonegen-hydro.ts` §2b) : dans l'inondation qui décide
+  des LACS, chaque cellule calcaire du pays est une SOURCE de plus, fermée à sa propre altitude
+  — ce qu'est déjà le bord du pays. Il en découle, sans une règle de plus : une cuvette calcaire
+  ne se remplit jamais (la doline sèche, R6) ; **un lac ne monte jamais au-dessus du calcaire le
+  plus bas qu'il touche** — la roche est son déversoir, le gouffre ; un lac qui n'en touche aucun
+  ne bouge pas d'un bit. **Le DRAINAGE, lui, ne lit pas la roche** : récepteurs, débit et cours
+  d'eau se lisent sur l'inondation SANS puits, donc un cours d'eau garde son cours dans
+  n'importe quelle roche — R5 étend l'exemption du fil à tout ce qui coule. Le karst ne mord
+  que sur les lacs ; « le ruisseau qui y entre se perd » (la ligne de la table ci-dessus) n'est
+  PAS livré — c'est l'absorption au fil des cellules, l'option (iii), un chantier de calibrage à
+  part. Sous-décision signalée comme telle dans `decisions.md`.
+
+  **MESURÉ (2026 · 7 · 4242 · 909, monde joué)** : l'eau des lacs dont la cellule est calcaire
+  **29,9 · 24,2 · 37,6 · 33,4 % → 0,0 · 0,1 · 0,0 · 0,0 %** (le reste du profond sur calcaire
+  est le cœur des fleuves, R5) ; la doline de la graine 7 est ressortie (344 → 1 592 blocs ;
+  2026 : 3 899 → 6 632). Et le prix annoncé : **des lacs entiers se vident** — eau de la Racine
+  202 → 106 k tuiles (2026), 228 → 160 k (7), 302 → 140 k (4242), 186 → 121 k (909) ; l'eau des
+  lacs −65 % sur 2026. Un tiers du pays est calcaire (R2) et presque tout grand bassin en touche :
+  le lac s'arrête à la première cellule calcaire de son flanc. Garde : A11.
 
   ⚠ **CE N'EST PAS UN SECOND HASARD.** L'infiltration entre dans une chaîne physique existante
   (uplift → érosion → D8 → accumulation), au seul endroit où elle a un sens. La doctrine de
@@ -566,6 +586,16 @@ Avec un décalage de drainage de ±0,8 rang **puis re-quantile** :
   implémentation (10 seeds) : **49 buttes sur 50 sont fidèles à leur province** — 9 seeds rendent
   exactement `3 fer@granite + 2 charbon@argile`, et la seule exception est un fer sur calcaire à
   la seed 99, quand l'écart minimal entre buttes ne laissait plus de sommet libre ailleurs.
+
+- **A11 — LE CALCAIRE N'INONDE PAS, ET LA GARDE PROUVE SA PRÉMISSE** (`hydro.test.ts`, R4). Sur
+  toute graine de garde : **< 1 %** de l'eau des LACS DE LA RACINE (`map.lacs` ∩ zone Racine) a
+  sa cellule dans le calcaire (mesuré 0,0 / 0,0 / 0,3 % — le demi-motif du col-déversoir), ET au
+  moins une tuile de lac touche du calcaire (sinon la garde ne prouve rien), ET la Racine a
+  encore des lacs. **Sur la Racine seulement** : cette spec est une loi de la Racine, et les eaux
+  des ZONES (mares de la tourbière, grand lac du Lac Mort — `peindreLesEauxDesZones`) ne passent
+  pas par le flood des lacs ; elles se posent où leur zone est, calcaire ou non (mesuré 60 à
+  100 % sur les zones 7 et 11 de la graine 2026). Les cours d'eau ne sont pas comptés : R5. Et
+  R6ter reprend sa prémisse par CARTE (> 900 blocs sur chaque graine).
 
 ---
 

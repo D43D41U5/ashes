@@ -145,9 +145,13 @@ describe('A3/A4 — le calendrier tient, et la cendre ne recule jamais', () => {
     // au lieu de la moitié. ⚠ CONSÉQUENCE DE DESIGN SIGNALÉE, non décidée : si la pression du
     // 6ᵉ hiver doit rester « la moitié », c'est `A` qu'il faut redériver (la doctrine de
     // `cendre.ts` : « c'est la contrainte qui est stable, jamais le nombre »).
+    // ⚑ RE-MESURÉ le 2026-09-05 (le calcaire vide les lacs, `roche-mere.md` R4 (i)) : 33,5 % →
+    // **42,0 %**. La même géométrie, dans l'autre sens : l'eau de la Racine recule de 16 à 11 %,
+    // la cendre contourne moins, et le 6ᵉ hiver remonte vers la moitié d'origine (46 % avant
+    // l'hydrologie dérivée). `A` toujours intact ; la fenêtre suit la mesure, à ±20 % près.
     const part = partCendree(720)
-    expect(part).toBeGreaterThan(0.28)
-    expect(part).toBeLessThan(0.42)
+    expect(part).toBeGreaterThan(0.34)
+    expect(part).toBeLessThan(0.50)
     const nodes = placeZoneNodes(monde)
     const empl = emplacementsDeVillage(monde, nodes, {
       coinsDeChasse: placeHuntingGrounds(map, SEED), nids: nidsAMonstre(map),

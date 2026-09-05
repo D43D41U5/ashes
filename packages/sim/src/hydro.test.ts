@@ -13,6 +13,7 @@ import { FAUNA, TERRAIN_DEEP_WATER, TERRAIN_SHALLOW_WATER, TERRAINS } from './ba
 import { carteDeTest } from '../../../tools/carte-cache'
 import { type CarteZonee } from './zonegen'
 import { COUDE, estUnCoude } from './zonegen-water'
+import { familleAt } from './racine-relief'
 
 const SEEDS = [2026, 7, 42]
 const cartes: CarteZonee[] = SEEDS.map((s) => carteDeTest(s))
@@ -152,5 +153,50 @@ describe('estUnCoude — la courbure fenêtrée', () => {
     let n = 0
     for (let k = 0; k < fil.length; k++) if (estUnCoude(fil, k, W)) n++
     expect(n, 'une diagonale en escalier est une DROITE, pas cent coudes').toBe(0)
+  })
+})
+
+/**
+ * R4 — LE CALCAIRE N'INONDE PAS (`roche-mere.md`, option (i) du 2026-09-05 : le calcaire est
+ * un PUITS du priority-flood des lacs).
+ *
+ * MORTE du 2026-08-30 (l'hydrologie dérivée, sans la clause `inondable`) au 2026-09-05 : 24 à
+ * 41 % de l'eau profonde des graines de référence reposait SUR du calcaire, et la doline de la
+ * graine 7 était sous un lac. APRÈS : 0,0 à 0,1 % de l'eau des LACS a sa cellule dans le
+ * calcaire (le demi-motif du col, là où l'iso-ligne effleure la cellule-déversoir) — et les
+ * cours d'eau, eux, ne sont PAS comptés : R5 les exempte (« un cours pérenne colmate son lit »).
+ *
+ * ⚠ La garde prouve sa prémisse : un lac qui ne TOUCHE aucun calcaire ne prouverait rien.
+ */
+describe('R4 (roche-mere) — le calcaire n’inonde pas : le lac s’arrête au calcaire qu’il touche', () => {
+  it('sur toute graine de garde, l’eau des lacs DE LA RACINE n’a (presque) jamais sa cellule dans le calcaire — et au moins un lac touche du calcaire', () => {
+    for (const c of cartes) {
+      const creux = c.socle
+      if (!creux) continue
+      const { width: W, height: H } = c.map
+      // SUR LA RACINE SEULEMENT. `roche-mere.md` est une loi de la Racine (le lapiaz et les
+      // résurgences y sont posés) ; les eaux des ZONES (`peindreLesEauxDesZones` : mares de la
+      // tourbière, grand lac du Lac Mort) ne passent pas par le flood des lacs et se posent où
+      // leur zone est, calcaire ou non. MESURÉ (2026-09-05) : Racine 0,0 / 0,0 / 0,3 % ; zones
+      // 7 et 11 (leurs propres eaux) 60 à 100 % — compter tout `map.lacs` accusait à tort.
+      const lacs = (c.map.lacs ?? []).filter((i) => c.zone[i] === c.graphe.racine)
+      expect(lacs.length, `seed ${c.graphe.seed} : la Racine n'a plus de lac`).toBeGreaterThan(0)
+      let surCalcaire = 0
+      let touche = 0
+      for (const i of lacs) {
+        const x = i % W
+        const y = (i - x) / W
+        if (familleAt(creux, x, y) === -1) { surCalcaire++; continue }
+        for (const [dx, dy] of [[1, 0], [-1, 0], [0, 1], [0, -1]] as const) {
+          const nx = x + dx
+          const ny = y + dy
+          if (nx < 0 || ny < 0 || nx >= W || ny >= H) continue
+          if (familleAt(creux, nx, ny) === -1) { touche++; break }
+        }
+      }
+      const part = surCalcaire / lacs.length
+      expect(touche, `seed ${c.graphe.seed} : aucun lac ne touche de calcaire — la garde ne prouve rien`).toBeGreaterThan(0)
+      expect(part, `seed ${c.graphe.seed} : ${(100 * part).toFixed(2)} % de l'eau des lacs a sa cellule dans le calcaire`).toBeLessThan(0.01)
+    }
   })
 })

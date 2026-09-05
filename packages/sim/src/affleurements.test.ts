@@ -173,19 +173,17 @@ describe('A29 — contenant/contenu : chaque nœud neuf est LÀ où sa dérivati
       // en chaos, elle ne l'est pas devenue de zéro ; mille tuiles suffisent largement à ce que
       // le détour mesuré plus bas veuille dire quelque chose.
       //
-      // ⚠ **LA PRÉMISSE EST PAR GRAINE, PLUS PAR CARTE (2026-09-05, N3 — `terrasses.md` §1).**
-      // Depuis que l'eau naît sur l'escalier, la doline de la graine 7 est SOUS UN LAC : 1 146 →
-      // 344 blocs, dont 884 devenus eau profonde, plus gros amas restant 6 tuiles. Ce n'est pas
-      // le lapiaz qui a cassé (2026 : 3 765 → 3 899), c'est le lac voisin qui se remplit jusqu'à
-      // SON col — celui de son palier — et prend la cuvette avec. Ce qui l'aurait tenue sèche,
-      // c'est R4 (« le calcaire n'inonde pas », `roche-mere.md`), et R4 EST MORT depuis
-      // l'hydrologie dérivée du 2026-08-30 : la clause `inondable` est partie avec les lacs
-      // posés, et rien dans `zonegen-hydro.ts` ne lit la roche (mesuré : 24 à 41 % de l'eau
-      // profonde des quatre graines de référence repose SUR du calcaire). Le ressusciter vide
-      // des lacs entiers — c'est une décision d'Alexis, consignée comme telle. En attendant, la
-      // garde se mesure sur les graines qui PORTENT un chaos, et exige qu'il en reste au moins
-      // une : une carte sans aucun chaos ferait rougir, comme avant.
-      if (chaos.length <= 900) continue
+      // ⚠ **LA PRÉMISSE A FAILLI DEVENIR « PAR GRAINE » (2026-09-05, N3 — `terrasses.md` §1),
+      // et c'est R4 qui l'a sauvée.** Quand l'eau a commencé à naître sur l'escalier, la doline
+      // de la graine 7 est passée SOUS UN LAC : 1 146 → 344 blocs, 884 devenus eau profonde. Ce
+      // n'était pas le lapiaz qui cassait (2026 : 3 765 → 3 899), c'était le lac voisin qui se
+      // remplissait jusqu'à SON col et prenait la cuvette avec — parce que R4 (« le calcaire
+      // n'inonde pas », `roche-mere.md`) ÉTAIT MORT depuis l'hydrologie dérivée du 2026-08-30
+      // (la clause `inondable` partie avec les lacs posés, 24 à 41 % de l'eau profonde SUR du
+      // calcaire). Alexis a tranché (i) : le calcaire est un PUITS du priority-flood des lacs.
+      // MESURÉ après : 2026 → 6 632 blocs, 7 → 1 592 — la doline est ressortie de l'eau, et la
+      // prémisse redevient ce qu'elle était : TOUTE carte de garde porte un chaos.
+      expect(chaos.length, `seed ${m.s} : ${chaos.length} blocs — le chaos a disparu (la doline est-elle sous un lac ? R4)`).toBeGreaterThan(900)
       eprouvees.push(m.s)
       const dansLeChaos = new Set(chaos)
 

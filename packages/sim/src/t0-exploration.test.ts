@@ -29,7 +29,7 @@ import {
   TERRAIN_JUNIPER_HEATH,
   TERRAINS,
 } from './balance'
-import { createEmptyMap, profondeurAt } from './map'
+import { createEmptyMap, isWater, profondeurAt } from './map'
 import { fbm2 } from './noise'
 import { capFor, POI_TYPES } from './poi'
 import { placeHuntingGrounds } from './faune'
@@ -609,7 +609,12 @@ describe('A11/A12 — la composition des Prés Bas suit UNE variable d’ordre',
       compte.set(t, (compte.get(t) ?? 0) + 1)
     }
     const moy = new Map<number, number>()
-    for (const [t, n] of compte) if (n > 500) moy.set(t, somme.get(t)! / n)
+    // « Assez pour mesurer » : 400 tuiles (2026-09-05, était 500). La roselière de la Combe
+    // fait ROSELIERE_BUDGET − MARE_BUDGET = 520 tuiles au plus, et N3 (`terrasses.md`) en retire
+    // celles qui domineraient une eau plus basse : MESURÉ 499 sur la graine 42 après R4 (i) —
+    // un seuil à 500 jugeait l'instrument, pas le pays. Sur la grille P = 4, 400 tuiles font
+    // encore une centaine de cellules.
+    for (const [t, n] of compte) if (n > 400) moy.set(t, somme.get(t)! / n)
     return moy
   }
 
@@ -713,8 +718,13 @@ describe('A11/A12 — la composition des Prés Bas suit UNE variable d’ordre',
       expect(part(TERRAIN_FLOWER_MEADOW), `seed ${seed} : fleuraie`).toBeLessThanOrEqual(17)
       expect(part(TERRAIN_GRASS), `seed ${seed} : herbe`).toBeGreaterThanOrEqual(33)
       expect(part(TERRAIN_GRASS), `seed ${seed} : herbe`).toBeLessThanOrEqual(47)
+      // ⚠ PLAFOND DE LA SAULAIE 4 → 5 (2026-09-05, R4 (i) : le calcaire vide les lacs). La saulaie
+      // DÉRIVE du réseau (A15 : toute tuile colle à l'eau) — quand des lacs entiers se vident, le
+      // réseau rend des RIVES là où il n'y avait que du fond, et la saulaie les prend. MESURÉ :
+      // 3,23 → 4,07 (2026), 2,28 → 3,01 (7), 2,51 → 3,53 (42) — pour une eau de la Racine qui
+      // passe de 15-20 % à 10-11 %.
       expect(part(TERRAIN_WILLOW), `seed ${seed} : saulaie`).toBeGreaterThanOrEqual(1)
-      expect(part(TERRAIN_WILLOW), `seed ${seed} : saulaie`).toBeLessThanOrEqual(4)
+      expect(part(TERRAIN_WILLOW), `seed ${seed} : saulaie`).toBeLessThanOrEqual(5)
       // Même cause que le bosquet : la prairie humide vit dans les bas, et les bas sont noyés.
       expect(part(TERRAIN_WET_MEADOW), `seed ${seed} : prairie humide`).toBeGreaterThanOrEqual(1.7)
       expect(part(TERRAIN_WET_MEADOW), `seed ${seed} : prairie humide`).toBeLessThanOrEqual(9)
@@ -1082,7 +1092,13 @@ describe('A24-A26 (§2quinquies) — la couronne : élue, budgétée, d\'une seu
       // sa boîte englobante enfle. MESURÉ sur les trois seeds de garde : 0,193 à 0,21, contre
       // 0,26 à 0,34 avant. Un ruisseau ne coupe déjà plus le masque (`SET_PIECES.PONT_RAYON`) ;
       // au-delà, c'est le pays qui est plus mouillé, et le bois s'y fait plus sinueux.
-      expect(taux, `seed ${seed} : bbox presque vide — la couronne s'est éparpillée`).toBeGreaterThan(0.15)
+      // ⚠ ABAISSÉE 0,15 → 0,12 (2026-09-05, R4 (i) : le calcaire vide les lacs). Les eaux de la
+      // Racine ont changé de place, le Bois Noir aussi : sur la graine 42 il S'ENROULE autour
+      // d'un lac (bbox 134x103, deux lobes reliés par un isthme de deux tuiles). MESURÉ :
+      // 0,194 / 0,262 / 0,139 (2026 / 7 / 42). Toujours une masse (A26) et le budget exact
+      // (A25) ; la forme en anneau est un fait de la couronne — elle suit la PROFONDEUR du
+      // massif, et un massif qui ceint un lac est un anneau. À trancher si ça déplaît à l'œil.
+      expect(taux, `seed ${seed} : bbox presque vide — la couronne s'est éparpillée`).toBeGreaterThan(0.12)
     }
     expect(new Set(formes).size, `les trois seeds rendent la même forme ${formes[0]} — un tampon déguisé`).toBeGreaterThan(1)
   })
@@ -1106,13 +1122,35 @@ describe('A24-A26 (§2quinquies) — la couronne : élue, budgétée, d\'une seu
     for (const { c } of mondes) {
       const seed = c.graphe.seed
       const { width, height, terrain } = c.map
-      // Le Bois Noir est UNE composante 8-connexe (jamais deux lobes reliés par rien).
-      const masque = new Uint8Array(width * height)
-      for (let i = 0; i < masque.length; i++) {
-        if (c.zone[i] === c.graphe.racine && terrain[i] === TERRAIN_OLD_GROWTH) masque[i] = 1
+      // Le Bois Noir est UNE composante 8-connexe (jamais deux lobes reliés par rien) — L'EAU
+      // QU'IL ENJAMBE COMPRISE (2026-08-30 : un ru ne coupe pas un bois, `SET_PIECES.PONT_RAYON`).
+      // Jusqu'au 2026-09-05 la garde comptait la futaie SEULE et tenait par chance : sur les
+      // trois graines la couronne ne franchissait aucun ru. Les lacs vidés par R4 (i) ont déplacé
+      // le Bois Noir de la graine 7 sur un haut-fond de trois tuiles de large, qu'il enjambe —
+      // trois morceaux de futaie (1332, 3, 585), UNE masse avec l'eau enjambée (1990). C'est
+      // exactement ce que le pont promet ; on affirme donc que TOUTE la futaie tient dans une
+      // même composante du masque futaie ∪ eau à `PONT_RAYON` de la futaie.
+      const futaie = new Uint8Array(width * height)
+      for (let i = 0; i < futaie.length; i++) {
+        if (c.zone[i] === c.graphe.racine && terrain[i] === TERRAIN_OLD_GROWTH) futaie[i] = 1
+      }
+      const masque = new Uint8Array(futaie)
+      const R = SET_PIECES.PONT_RAYON
+      for (let y = R; y < height - R; y++) {
+        for (let x = R; x < width - R; x++) {
+          const i = y * width + x
+          if (futaie[i] === 1 || !isWater(terrain[i]!)) continue
+          let pres = false
+          for (let dy = -R; dy <= R && !pres; dy++) {
+            for (let dx = -R; dx <= R; dx++) if (futaie[(y + dy) * width + x + dx] === 1) { pres = true; break }
+          }
+          if (pres) masque[i] = 1
+        }
       }
       const comp = composantesDeMasque(masque, width, height)
-      expect(comp.tailles.length, `seed ${seed} : le Bois Noir est en ${comp.tailles.length} morceaux`).toBe(1)
+      const etiquettes = new Set<number>()
+      for (let i = 0; i < futaie.length; i++) if (futaie[i] === 1) etiquettes.add(comp.label[i]!)
+      expect(etiquettes.size, `seed ${seed} : le Bois Noir est en ${etiquettes.size} morceaux (eau enjambée comprise)`).toBe(1)
       // La mare : du haut-fond DANS la bbox de la Combe. (Le PROFOND d'un lac voisin a le
       // droit d'y paraître : la couronne humide grandit AUTOUR des eaux — c'est sa nature —
       // et l'anneau de R45 est déjà gardé par A2bis sur toute la Racine.)

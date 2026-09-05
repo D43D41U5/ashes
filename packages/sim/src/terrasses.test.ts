@@ -485,11 +485,19 @@ describe('T-A4 — un lieu ne se coupe pas d’une falaise : chaque assise tient
     const lieux = map.zones.filter((z) => z.kind !== undefined && !TERRASSES.KINDS_SANS_ASSISE.includes(z.kind))
     expect(lieux.length).toBeGreaterThan(5)
     expect(map.zones.filter((z) => z.kind !== undefined && TERRASSES.KINDS_SANS_ASSISE.includes(z.kind)).length, 'les couronnes existent').toBe(2)
+    // SUR SA TERRE, PAS SUR SON EAU : l'assise se juge « sur ses tuiles hors eau — l'eau
+    // appartient à sa nappe » (`poserLesTerrasses` §3 ; « une mare dans un creux du lieu est
+    // permise, un lieu au fond de son étang ne l'est pas », 2026-09-04). Le haut-fond est
+    // marchable, mais il tient le palier de son lac. MESURÉ (2026-09-05, R4 (i)) : la Louvière IV
+    // de la graine 2026 s'est posée avec sa rangée du bas sur la rive d'un lac (palier 1 sous
+    // un gîte à 2) — un lieu se pose sur le biome de son CENTRE (`isEligible`), l'empreinte
+    // peut mordre l'eau ; c'était vrai avant, la garde ne l'avait jamais rencontré.
     for (const z of lieux) {
       const paliers = new Set<number>()
       for (let y = z.y; y < z.y + z.h; y++) {
         for (let x = z.x; x < z.x + z.w; x++) {
-          if (MARCHABLE[map.terrain[y * map.width + x]!] === 1) paliers.add(palierDuSol(map, x, y))
+          const t = map.terrain[y * map.width + x]!
+          if (MARCHABLE[t] === 1 && !isWater(t)) paliers.add(palierDuSol(map, x, y))
         }
       }
       expect(paliers.size, `${z.name} (${z.kind}) @${z.x},${z.y} : paliers ${[...paliers].join(',')}`).toBeLessThanOrEqual(1)

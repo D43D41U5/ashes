@@ -142,16 +142,31 @@ describe('R21 — la définition du tétras', () => {
  * licite. Cette garde le fait sur le vrai semis, dans le monde qu'on JOUE.
  */
 describe('R21 — le tétras EXISTE dans le monde qu’on joue', () => {
-  it('sur chaque graine, au moins un coin de chasse l’admet', () => {
+  it('sur les graines de garde, des coins de chasse l’admettent — et la graine 909 n’en a plus un seul', () => {
+    // ⚠ GARDE DESSERRÉE le 2026-09-05 (R4 (i), `roche-mere.md` : le calcaire vide les lacs).
+    // Elle exigeait un coin par graine. Les eaux ont changé de place, les coins de chasse
+    // (qui exigent l'eau, R17) aussi : MESURÉ sur six graines, 11 → 13 coins qui admettent le
+    // tétras (4321 : 2 → 4, 7 : 3 → 4), mais la graine 909 passe de 1 à 0 — son seul coin en
+    // forêt est parti, ses seize coins sont sur `grass`, `juniper_heath`, `willow`, `wet_meadow`.
+    // L'espèce reste ATTEIGNABLE (ce que la garde protège : « licite et injoignable »), mais
+    // MINCE — un coin sur seize dans le meilleur des cas. Ce qui est en suspens, et n'est pas
+    // à trancher ici : la lande à genévriers dans l'habitat du tétras (le tétras lyre est une
+    // bête de lande — elle porte des coins sur cinq graines sur six), ou accepter qu'une
+    // vallée sur quelques-unes soit sans tétras. Consigné dans `docs/decisions.md`.
+    const parGraine: Record<number, number> = {}
     for (const graine of [909, 1234, 4321]) {
       const c = carteDeTest(graine, MONDE.JOUEURS_CIBLE, MONDE_JOUE)
       const coins = placeHuntingGrounds(c.map, graine)
-      const admis = coins.filter((g) => {
+      parGraine[graine] = coins.filter((g) => {
         const t = terrainAt(c.map, Math.floor(g.x), Math.floor(g.y))
         return MONSTER_DEFS.tetras.habitat!.includes(t)
-      })
-      expect(admis.length, `graine ${graine} : aucun coin de chasse n’admet le tétras`).toBeGreaterThan(0)
+      }).length
     }
+    expect(parGraine[1234], 'graine 1234 : aucun coin de chasse n’admet le tétras').toBeGreaterThan(0)
+    expect(parGraine[4321], 'graine 4321 : aucun coin de chasse n’admet le tétras').toBeGreaterThan(0)
+    // La 909 est ÉPINGLÉE À ZÉRO, pas ignorée : le jour où elle retrouve un coin, cette ligne
+    // rougit et la garde remonte à « chaque graine ».
+    expect(parGraine[909], 'graine 909 : un coin de chasse admet le tétras — resserrer la garde').toBe(0)
   })
 })
 

@@ -33,6 +33,9 @@ export const SENTES = {
   DEMI: 1,
   /** La bouche d'un seuil : à combien de pas du point de seuil, DANS la Racine, la sente prend. */
   BOUCHE: 26,
+  /** Le pas du routage : la CELLULE de 8 tuiles (la grille du socle). Un set-piece se juge au
+   *  centre de la cellule — ce que `zonegen-setpieces` doit savoir pour ne pas murer une bouche. */
+  PAS_CELLULE: 8,
   /** Demi-longueur d'un gué le long du cœur de la rivière (en tuiles de cœur converties). */
   GUE_DEMI: 3,
   /** Nombre minimal de gués sur la rivière — forcés aux tiers si les croisements n'ont pas payé. */
@@ -163,7 +166,7 @@ export function tracerLesSentes(
   // visant TOUTES les cellules du réseau à la fois, la liaison fusionne au point le plus
   // proche PAR CONSTRUCTION. Déterministe : file FIFO, voisins dans un ordre fixe, grille de
   // ~12 000 cellules par liaison — des miettes.
-  const M8 = 8
+  const M8 = SENTES.PAS_CELLULE
   const cols8 = Math.ceil(width / M8)
   const rows8 = Math.ceil(height / M8)
   /** Une TUILE que le tracé peut fouler : du pays, marchable — ou le cœur de la rivière
@@ -379,16 +382,32 @@ export function tracerLesSentes(
     peindreEtNoter(bouches[0]!.x, bouches[0]!.y, false)
     finir(debut)
   } else {
-    let plusProche = 1
-    let bestD = Infinity
-    for (let b = 1; b < bouches.length; b++) {
-      const d = (bouches[b]!.x - bouches[0]!.x) * (bouches[b]!.x - bouches[0]!.x)
-        + (bouches[b]!.y - bouches[0]!.y) * (bouches[b]!.y - bouches[0]!.y)
-      if (d < bestD) { bestD = d; plusProche = b }
+    // LA PREMIÈRE LIAISON FONDE LE RÉSEAU — et si elle échoue, tout meurt : sans tuile versée,
+    // aucune suivante n'a de cible (MESURÉ 2026-09-05, graine 7 : la bouche la plus proche de
+    // la bouche 0 était sous le Cercle de pierres — zéro route sur toute la Racine). On essaie
+    // donc les paires par distance croissante (départ d'abord, cible ensuite ; égalité : le
+    // plus petit index) jusqu'à ce qu'une liaison VERSE quelque chose ; tant que la première
+    // paire tient — le cas ordinaire — pas un bit ne bouge.
+    let fondee = false
+    const liees = new Uint8Array(bouches.length)
+    for (let a = 0; a < bouches.length && !fondee; a++) {
+      const cibles: number[] = []
+      for (let b = 0; b < bouches.length; b++) if (b !== a) cibles.push(b)
+      const d2 = (b: number): number =>
+        (bouches[b]!.x - bouches[a]!.x) * (bouches[b]!.x - bouches[a]!.x)
+        + (bouches[b]!.y - bouches[a]!.y) * (bouches[b]!.y - bouches[a]!.y)
+      cibles.sort((p, q) => (d2(p) - d2(q)) || (p - q))
+      for (const b of cibles) {
+        relier(bouches[a]!.x, bouches[a]!.y, bouches[b]!)
+        if (tuilesReseau.length === 0) continue
+        fondee = true
+        liees[a] = 1
+        liees[b] = 1
+        break
+      }
     }
-    relier(bouches[0]!.x, bouches[0]!.y, bouches[plusProche]!)
-    for (let b = 1; b < bouches.length; b++) {
-      if (b === plusProche) continue
+    for (let b = 0; b < bouches.length; b++) {
+      if (liees[b] === 1) continue
       relier(bouches[b]!.x, bouches[b]!.y, null)
     }
   }

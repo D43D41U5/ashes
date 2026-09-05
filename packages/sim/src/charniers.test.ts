@@ -117,10 +117,16 @@ describe('la loterie des lieux ne bouge pas', () => {
     // stèle 5 → 6 (les gués saillants se multiplient avec les fleuves). Le semis, lui, perd 5 au
     // net (somme nulle : carrière, oratoire et verger −1 chacun…). Aucun type ne meurt : A19
     // reste vert.
-    expect(lieuxDe(CARTE.map).length).toBe(155)
+    // RE-ÉPINGLÉ 155 → 160 (LE CALCAIRE VIDE LES LACS, `roche-mere.md` R4 (i), 2026-09-05) : un
+    // lac ne monte plus au-dessus de la doline qu'il touche, l'eau de la Racine recule de 16 à
+    // 11 %, et la loterie — qui lit le terrain — se rebrasse avec la terre rendue. MESURÉ par
+    // kind (seed 2026) : carrière, erratique, oratoire, saline, verger +1 chacun ; stèle 6 → 7
+    // (une croisée saillante de plus) ; tanière −1. Louvières 16 (inchangé : les coins de chasse
+    // tiennent), repaires 9. Aucun type ne meurt : A19 reste vert.
+    expect(lieuxDe(CARTE.map).length).toBe(160)
     expect(lieuxDe(CARTE.map).filter((z) => z.kind === 'louviere').length).toBe(16)
-    expect(lieuxDe(CARTE.map).filter((z) => z.kind === 'stele').length).toBe(6)
-    expect(lieuxDe(CARTE.map).filter((z) => z.kind !== 'stele' && z.kind !== 'louviere').length).toBe(133)
+    expect(lieuxDe(CARTE.map).filter((z) => z.kind === 'stele').length).toBe(7)
+    expect(lieuxDe(CARTE.map).filter((z) => z.kind !== 'stele' && z.kind !== 'louviere').length).toBe(137)
     expect(lieuxDe(CARTE.map).filter((z) => z.kind === 'repaire').length).toBe(9)
   })
 })

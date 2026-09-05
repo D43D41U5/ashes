@@ -40,6 +40,7 @@ import { TERRAIN_FLOWER_MEADOW, TERRAIN_FOREST, TERRAIN_MARSH, TERRAIN_OLD_GROWT
 import { isWater } from './map'
 import { composantesDeMasque, eroderMasque } from './profondeur'
 import { surLaMarche, type Escalier } from './zonegen-hydro'
+import { SENTES } from './zonegen-sentes'
 import type { GrapheZones } from './zonegraph'
 
 export const SET_PIECES = {
@@ -277,13 +278,24 @@ export function placerLesSetPieces(
         const i = y * width + x
         if (forets[i] === 1 || zone[i] !== racineId) continue
         if (!isWater(terrain[i]!)) continue
-        let voisins = 0
-        for (let dy = -R; dy <= R && voisins < 2; dy++) {
+        // DE PART ET D'AUTRE, vraiment (2026-09-05) : la première écriture comptait deux RANGÉES
+        // portant de la forêt, et une rive suffisait — la couronne longeait alors la berge d'un
+        // lac DANS l'eau et ressortait sur l'autre rive : trois morceaux sur la graine 7 (A26)
+        // après que R4 a drainé ses lacs. Un pont a de la forêt des deux côtés, sur un axe.
+        let ouest = false
+        let est = false
+        let nord = false
+        let sud = false
+        for (let dy = -R; dy <= R; dy++) {
           for (let dx = -R; dx <= R; dx++) {
-            if (forets[(y + dy) * width + x + dx] === 1) { voisins += 1; break }
+            if (forets[(y + dy) * width + x + dx] !== 1) continue
+            if (dx < 0) ouest = true
+            if (dx > 0) est = true
+            if (dy < 0) nord = true
+            if (dy > 0) sud = true
           }
         }
-        if (voisins >= 2) avecPonts[i] = 1
+        if ((ouest && est) || (nord && sud)) avecPonts[i] = 1
       }
     }
   }
@@ -345,6 +357,30 @@ export function placerLesSetPieces(
     const dy = Math.abs(p.y + p.h / 2 - cy)
     return dx + dy >= SET_PIECES.ECART_MIN
   })
+  // ⚠ UN MONUMENT NE S'ASSIED PAS SUR LA BOUCHE D'UN SEUIL (2026-09-05). La sente d'un seuil
+  // prend à sa bouche — la première tuile marchable de la Racine à `SENTES.BOUCHE`..+40 pas du
+  // point de seuil, sur son axe — et le tracé CONTOURNE tout set-piece (son rect, +1 de marge).
+  // Un Cercle posé là rend la bouche injoignable, et comme la PREMIÈRE liaison vise la bouche
+  // la plus proche, c'est tout le réseau qui meurt : MESURÉ sur la graine 7 après R4 (le
+  // calcaire draine, la fleuraie du nord change), Cercle en (765,1722) sur la bouche (760,1722)
+  // — zéro tuile de route sur toute la Racine, A6 rouge, la Charrette morte. On refuse donc
+  // toute pose dont le rect élargi touche la CELLULE (le pas du tracé, 8 tuiles) d'une tuile de
+  // la bande de bouche d'un seuil — la même bande que le tracé parcourt, dérivée de ses
+  // constantes, jamais recopiée. À la cellule, pas à la tuile : le tracé juge un set-piece au
+  // CENTRE de la cellule, et un Cercle à cinq tuiles de la bouche la murait encore (mesuré).
+  const portes = g.seuils.filter((s) => s.a === racineId || s.b === racineId)
+  const surUneBouche = (x: number, y: number, w: number, h: number): boolean => {
+    const M = SENTES.PAS_CELLULE
+    for (const s of portes) {
+      const vers = s.a === racineId ? -1 : 1
+      for (let k = SENTES.BOUCHE; k < SENTES.BOUCHE + 40; k++) {
+        const cx0 = Math.floor((s.x + s.ax * vers * k) / M) * M
+        const cy0 = Math.floor((s.y + s.ay * vers * k) / M) * M
+        if (cx0 + M > x - 1 && cx0 < x + w + 1 && cy0 + M > y - 1 && cy0 < y + h + 1) return true
+      }
+    }
+    return false
+  }
   // Les candidates, grandes d'abord (égalité : étiquette plus petite) — la première dont le
   // pic est assez loin des couronnes gagne.
   const ordre = compFleur.tailles.map((taille, c) => ({ taille, c }))
@@ -364,6 +400,7 @@ export function placerLesSetPieces(
     // Clampé au rect de la RACINE (pas de la carte) : un monument ne chevauche pas le mur.
     const x = Math.min(Math.max(r.x, cx - w / 2), r.x + r.w - w)
     const y = Math.min(Math.max(r.y, cy - h / 2), r.y + r.h - h)
+    if (surUneBouche(x, y, w, h)) continue
     out.push({ kind: 'cercle_pierres', nom: 'le Cercle de pierres', x, y, w, h })
     break
   }
