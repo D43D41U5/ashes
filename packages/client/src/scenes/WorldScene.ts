@@ -597,6 +597,35 @@ export class WorldScene extends Phaser.Scene {
     return { x, y: yDessine, niveau, ouverture }
   }
 
+  /**
+   * ═══ LE REGARD EST-IL SOUS LA ROCHE ? — un seul point de décision, DEUX consommateurs ═══
+   *
+   * C'est `WorldScene` qui sait où le regard se tient ; les couches obéissent (le patron du
+   * découvert). « Sous » se lit du PALIER de la tuile, pas de zéro — depuis G-R1 (`grottes.md`)
+   * un souterrain est NÉGATIF (`−(p + 1)` sous une gueule de palier `p`), donc `niveau < palier`
+   * reste la lecture juste, sous une mesa comme sous une terrasse.
+   *
+   * ⚠ **SUR LE NIVEAU DESSINÉ, PAS SUR L'ENTIER DE L'AUTORITÉ** (Alexis, 2026-09-05 : « j'ai un
+   * flash noir lorsque j'arrive à un étage supérieur »). La position prédite pose le pied sur le
+   * palier haut quelques images AVANT que le snapshot ne rende l'étage : `etageJoueur` (0) <
+   * palier (1), et le voile de la cave prenait l'écran entier — MESURÉ : 9 images sur la terrasse
+   * (1425,661) de la graine 2026, smoke `rampe-monte`. `Decouvert.niveau` est le monde où le
+   * corps est DESSINÉ (`EtageLayer.niveauDuCorps`), lu au même endroit que tout ce qui cède — E-R27.
+   *
+   * ⚠ **ET IL SE POSE EN TÊTE D'IMAGE**, avec le découvert, jamais au milieu du rendu : les deux
+   * consommateurs sont la salle (`etages.render`) et son MOBILIER (`view.renderNodes` →
+   * `montrerLaRoche`), et `renderNodes` passe le premier. Posé après lui, le mobilier avait une
+   * image de retard sur sa salle — voir le commentaire de l'appelant pour la mesure.
+   */
+  private poserLeRegardSousLaRoche(decouvert: Decouvert): void {
+    const palierJ = this.relief.palier(Math.floor(this.predicted.x), Math.floor(this.predicted.y))
+    const souterrain = decouvert.niveau < palierJ
+    this.etages.souterrain = souterrain
+    // Les nœuds semés dans la salle et le bivouac (G-R7) ne se voient ni ne se visent que sous
+    // la roche (`SnapshotView.sousRoche`) : la MÊME valeur, au MÊME instant.
+    this.view.sousRoche = souterrain
+  }
+
   private porteursDeTorche(): PorteurDeTorche[] {
     const out: PorteurDeTorche[] = []
     for (const e of this.lastEntities) {
@@ -2021,6 +2050,20 @@ export class WorldScene extends Phaser.Scene {
     this.paves.decouvert = this.decouvert
     this.cliffs.decouvert = this.decouvert
     if (this.gelLayer) this.gelLayer.decouvert = this.decouvert
+    // …ET LE REGARD SOUS LA ROCHE AVEC LUI, POUR LA MÊME RAISON (couture, 2026-09-06).
+    //
+    // Le drapeau se posait 190 lignes plus bas, à côté de la lumière de la cave — donc APRÈS
+    // `view.renderNodes`, qui ouvre sur `montrerLaRoche()` et décide de la visibilité des
+    // sprites du bâti souterrain. La salle (`etages.render`) basculait donc une image AVANT
+    // son mobilier. MESURÉ image par image (`game.step` un à un, en franchissant la gueule de
+    // la Grotte XXVI) : **en entrant**, une image de grotte NUE — la salle est peinte, ses 548
+    // vignettes, coffres et feux n'y sont pas ; **en sortant**, une image où ces 548 sprites
+    // FLOTTENT sur l'herbe en plein soleil, la roche déjà retirée.
+    //
+    // C'est le même défaut que le découvert deux lignes plus haut, et il se corrige au même
+    // endroit : le regard se pose UNE fois, en tête d'image, et tout ce qui le lit lit la
+    // valeur de CETTE image. La couche ne décide toujours rien — voir `poserLeRegardSousLaRoche`.
+    if (this.decouvert) this.poserLeRegardSousLaRoche(this.decouvert)
     this.ground.render(this.cameras.main)
     this.paves.render(this.cameras.main)
     // LE VENT DE LA SIM (spec chasse C17) : le décor plie DANS SON SENS. C'est
@@ -2187,25 +2230,10 @@ export class WorldScene extends Phaser.Scene {
       this.view.decouvert = decouvert
       if (this.clutter) this.clutter.decouvert = decouvert
       // ═══ SOUS LA ROCHE : la salle prend l'écran, et E-R13 s'y VOIT ═══
-      // Le drapeau se pose ici parce que c'est `WorldScene` qui sait où le regard se tient —
-      // la couche ne DÉCIDE rien, elle obéit (le patron du découvert, deux lignes plus haut).
-      // « Sous » se lit du PALIER de la tuile, pas de zéro — et depuis G-R1 (`grottes.md`) un
-      // souterrain est NÉGATIF (`−(p + 1)` sous une gueule de palier `p`) : `niveau < palier`
-      // reste la lecture juste, sous une mesa comme sous une terrasse.
-      // ⚠ **SUR LE NIVEAU DESSINÉ, PAS SUR L'ENTIER DE L'AUTORITÉ** (Alexis, 2026-09-05 : « j'ai un
-      // flash noir lorsque j'arrive à un étage supérieur »). La position prédite pose le pied sur
-      // le palier haut quelques images AVANT que le snapshot ne rende l'étage : `etageJoueur` (0)
-      // < palier (1), et le voile de la cave prenait l'écran entier — MESURÉ : 9 images sur la
-      // terrasse (1425,661) de la graine 2026, smoke `rampe-monte`. `Decouvert.niveau` est le
-      // monde où le corps est dessiné (`EtageLayer.niveauDuCorps` : une tuile qui n'est pas
-      // marchable à l'étage d'autorité rend son plancher le plus haut), lu au même endroit que
-      // tout ce qui cède — E-R27.
-      const palierJ = this.relief.palier(Math.floor(this.predicted.x), Math.floor(this.predicted.y))
-      const souterrain = decouvert.niveau < palierJ
-      this.etages.souterrain = souterrain
-      // …et la vue le lit au même point : les nœuds semés dans la salle et le bivouac (G-R7) ne se
-      // voient ni ne se visent que sous la roche (`SnapshotView.sousRoche`).
-      this.view.sousRoche = souterrain
+      // Le drapeau a été POSÉ en tête d'image (`poserLeRegardSousLaRoche`), avec le découvert et
+      // pour la même raison : tout ce qui le lit — la salle ici, le mobilier dans `renderNodes` —
+      // doit lire la valeur de CETTE image. On ne fait donc que le relire.
+      const souterrain = this.etages.souterrain
       // ═══ LA LUMIÈRE DE LA CAVE — une structure par image, et la loi de /sim une fois par tuile ═══
       //
       // La première version tenait une fermeture par tuile (`clarteAt`) qui MÉLANGEAIT le ciel
