@@ -127,6 +127,15 @@ export class EauEvents {
     /** CE CORPS RAMPE-T-IL ? (le Cendreux au sol, spec `cendreux.md` R26ter). Il ne laisse
      *  alors pas des pas mais une TRAÎNÉE — il n'a pas de pieds. */
     rampe = false,
+    /** DE COMBIEN LE CORPS EST DESSINÉ AU-DESSUS DE SES PIEDS LOGIQUES (px, positif = plus haut),
+     *  et DANS QUELLE STRATE il se trie (spec `etages.md` E-R22 : « deux nombres, jamais un »).
+     *  `px`/`py`/`depth` restent PLATS — la tuile de la trace, la foulée et l'hystérésis d'eau
+     *  se comptent dans le monde logique ; c'est l'IMAGE seule qui monte avec son palier.
+     *  MESURÉ le 2026-09-05 (smoke `pasEtage`, jour 112, terrasse (80,68) h 1) : 6 traces sur 6
+     *  posées à la rangée logique, 32 px au sud des pieds dessinés, en strate 0 sous les pavés
+     *  du palier (depth 2 100 pour un corps à 102 100) — la piste passait sous le sol. */
+    montee = 0,
+    strate = 0,
   ): void {
     let e = this.etats.get(sprite)
     if (!e) {
@@ -136,7 +145,7 @@ export class EauEvents {
     }
     if (!e.dansLEau && dRive > HYSTERESIS) {
       e.dansLEau = true
-      this.plouf(px, py, depth, now, largeur)
+      this.plouf(px, py, depth, now, largeur, montee, strate)
       this.onSplash?.(sprite === this.joueur)
     } else if (e.dansLEau && dRive < -HYSTERESIS) {
       e.dansLEau = false
@@ -171,17 +180,17 @@ export class EauEvents {
         e.sx = px
         e.sy = py
         if (trainee) {
-          this.traceSol(poseTrainee(px, py, dx, dy), surNeige ? 'neige' : 'cendre', now)
+          this.traceSol(poseTrainee(px, py, dx, dy), surNeige ? 'neige' : 'cendre', now, montee, strate)
         } else {
           e.pied = e.pied === 0 ? 1 : 0
           // LE PAS SE POSE DANS LE SENS DE LA MARCHE, et de son côté de la ligne (`empreintes.ts`) :
           // le vecteur de foulée EST le cap, mesuré, jamais nul (on ne vient qu'au-delà de PAS_PX).
           const pose = posePas(px, py, dx, dy, e.pied)
-          if (surNeige) this.traceSol(pose, 'neige', now)
-          else if (surCendre) this.traceSol(pose, 'cendre', now)
+          if (surNeige) this.traceSol(pose, 'neige', now, montee, strate)
+          else if (surCendre) this.traceSol(pose, 'cendre', now, montee, strate)
           else {
             e.pasRestants--
-            this.traceHumide(pose, now)
+            this.traceHumide(pose, now, montee, strate)
           }
         }
       }
@@ -193,40 +202,54 @@ export class EauEvents {
     }
   }
 
-  private plouf(px: number, py: number, depth: number, now: number, largeur: number): void {
+  private plouf(px: number, py: number, depth: number, now: number, largeur: number, montee: number, strate: number): void {
     const echelle = Math.max(0.8, Math.min(2, largeur / 16))
     const img = this.scene.add
-      .image(px, py - 1, 'fx-plouf-0')
+      .image(px, py - montee - 1, 'fx-plouf-0')
       .setOrigin(0.5, 1)
       .setDisplaySize(28 * echelle, 24 * echelle)
-      .setDepth(depth + 0.02)
+      .setDepth(strate + depth + 0.02)
     this.ploufs.push({ img, bornAt: now })
   }
 
-  /** Le décalque d'une empreinte, quelle que soit sa matière — au sol, orienté, éclairé. */
-  private poser(cle: string, pose: { orient: number; px: number; py: number }, alpha: number): Phaser.GameObjects.Image {
+  /** Le décalque d'une empreinte, quelle que soit sa matière — au sol, orienté, éclairé.
+   *  AU SOL DE SON PALIER : l'image monte de `montee` et se trie dans `strate`, le rang restant
+   *  celui de la rangée LOGIQUE (`pose.py`) — la même règle que le corps qui l'a laissée. */
+  private poser(
+    cle: string,
+    pose: { orient: number; px: number; py: number },
+    alpha: number,
+    montee: number,
+    strate: number,
+  ): Phaser.GameObjects.Image {
     const img = this.scene.add
-      .image(Math.round(pose.px), Math.round(pose.py), `${cle}-${pose.orient % ORIENTATIONS}`)
+      .image(Math.round(pose.px), Math.round(pose.py - montee), `${cle}-${pose.orient % ORIENTATIONS}`)
       .setOrigin(0.5, 0.5) // l'empreinte tourne autour d'ELLE-MÊME : son centre, pas ses « pieds »
       .setAlpha(alpha)
-      .setDepth(corpseDepth(pose.py / TILE_PX, TILE_PX) - 1)
+      .setDepth(strate + corpseDepth(pose.py / TILE_PX, TILE_PX) - 1)
     img.setLighting(this.lighting)
     return img
   }
 
-  private traceHumide(pose: { orient: number; px: number; py: number }, now: number): void {
+  private traceHumide(pose: { orient: number; px: number; py: number }, now: number, montee: number, strate: number): void {
     if (this.traces.length >= MAX_TRACES) {
       this.traces.shift()?.img.destroy()
     }
-    this.traces.push({ img: this.poser('fx-pas-humide', pose, 0.5), bornAt: now })
+    this.traces.push({ img: this.poser('fx-pas-humide', pose, 0.5, montee, strate), bornAt: now })
   }
 
-  private traceSol(pose: { orient: number; px: number; py: number }, matiere: 'neige' | 'cendre', now: number): void {
+  private traceSol(
+    pose: { orient: number; px: number; py: number },
+    matiere: 'neige' | 'cendre',
+    now: number,
+    montee: number,
+    strate: number,
+  ): void {
     if (this.tracesSol.length >= MAX_TRACES_SOL) {
       this.tracesSol.shift()?.img.destroy()
     }
     this.tracesSol.push({
-      img: this.poser(`fx-pas-${matiere}`, pose, 1),
+      img: this.poser(`fx-pas-${matiere}`, pose, 1, montee, strate),
       bornAt: now,
       tx: Math.floor(pose.px / TILE_PX),
       ty: Math.floor(pose.py / TILE_PX),

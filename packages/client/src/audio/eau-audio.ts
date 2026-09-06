@@ -14,8 +14,9 @@ import type { SoundSpec } from './sound'
 const PAS_MS = 340
 const LAP_MS_MIN = 900
 const LAP_MS_JITTER = 800
-/** Portée du clapotis, en tuiles de distance à l'eau. */
-const LAP_PORTEE = 6
+/** Portée du clapotis, en tuiles de distance à l'eau. Exportée : sous la roche, `WorldScene`
+ *  cherche la nappe de la salle jusqu'à cette distance — au-delà, rien à entendre. */
+export const LAP_PORTEE = 6
 
 export class SonsDeLEau {
   private prochainPas = 0

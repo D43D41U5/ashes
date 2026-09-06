@@ -336,8 +336,9 @@ tout ce qui est présent à l'étage courant quoi qu'il arrive. »*
   met. C'est la convention du houppier, et c'est ce qui trie juste un bord dentelé.
 - **E-R19 — La PAROI ne monte pas dans la strate.** Elle est tournée vers le sud : tout ce qui la
   chevauche se tient devant elle. Elle prend `CLIFF_DEPTH`, celle de la falaise ordinaire — c'est la
-  même roche, du même `cliff-art`. Idem pour la rampe (le grimpeur est encore à l'étage 0 tant que
-  le connecteur n'a pas commuté) et pour l'ombre portée.
+  même roche, du même `cliff-art`. Idem pour la rampe et pour l'ombre portée. (Le grimpeur, lui,
+  change de monde à MI-RAMPE — E-R27 ; jusqu'au 2026-09-05 il restait dans la strate de l'étage
+  d'autorité, c'est-à-dire en bas jusqu'à ce que le connecteur commute.)
 - **E-R20 — Le découvert ne part que vers le HAUT.** Un plancher ne s'efface que pour un corps d'un
   étage PLUS BAS que lui (`plateauAlpha`, la recette de `crownAlpha` avec sa portée propre : le
   centre dessiné d'une tuile capable de couvrir un corps est à ~1,2 tuile de lui, jamais six). Sur
@@ -347,7 +348,28 @@ tout ce qui est présent à l'étage courant quoi qu'il arrive. »*
   dans la bande de tri doit donc reposer sa nuit lui-même, **dérivée du voile**
   (`multiplicateurDuVoile`) et jamais écrite à côté de lui.
 - **E-R22 — Tout ce qui se tient à un étage monte avec lui.** Corps, nœuds, décor : le dessin prend
-  `decalageDEtage`, le tri prend `strateDEtage`. Deux nombres, jamais un.
+  `decalageDEtage`, le tri prend `strateDEtage`. Deux nombres, jamais un. Pour un CORPS, les deux
+  se lisent sur son niveau DESSINÉ (`EtageLayer.niveauDuCorps`, fractionnaire sur une rampe) :
+  le dessin le prend tel quel, le tri l'arrondit (`strateDuCorps`, E-R27).
+  **La vie ambiante aussi** (2026-09-05) : un essaim de lucioles lit `liftSol`/`strateSol` sous son
+  ANCRE à la naissance (`AmbientLife.setReliefSous`), et ses mouches, sa flaque et sa source le
+  partagent — une mouche qui dérive au-delà du bord garde la hauteur de son essaim plutôt que de
+  sauter de 32 px. MESURÉ avant : au palier 1, flaque à 9 et mouches à ~11 500, sous les pavés à
+  99 999, deux rangées sous le sol dessiné. Garde : `smoke --scenario luciolesEtage`.
+  **Les flaques du feu et de la torche** (même jour) avaient le lift mais pas la strate — MESURÉ
+  (feu 474, palier 2) : profondeur 4 sous des pavés à ~199 999, la chaleur cuite sous le sol.
+  Celle du feu prend `strateSol` ; celle de la torche prend la strate du CORPS
+  (`PorteurDeTorche.strate`, la lecture de `syncActor`), relue à chaque image — sur une rampe
+  elle change de monde avec lui. Garde : `smoke --scenario flaquesEtage`.
+
+  **Les traces et la gerbe** (même jour) n'avaient ni l'un ni l'autre — MESURÉ (jour 112,
+  terrasse (80,68) h 1) : 6 empreintes sur 6 à la rangée logique, 32 px au sud des pieds
+  dessinés, en strate 0 (2 100 pour un corps à 102 100) — sous les pavés, invisibles.
+  `EauEvents.track` prend désormais la MONTÉE et la STRATE du corps (`lift − dEtage`, `dTri` —
+  les nombres de son ombre) : l'image monte, le tri change de monde, mais la tuile de la trace,
+  la foulée et l'hystérésis d'eau restent dans le monde PLAT (`px`/`py`/`depth`). Garde :
+  `smoke --scenario pasEtage` — au jour 112, la neige au sol étant un fait de région et de
+  jour (aucune terrasse enneigée au 105).
 
 ### Le LIFT vaut `PAROI_RANGEES` (2), et pas un de plus
 
@@ -368,10 +390,16 @@ elles ne se traitent pas pareil :
   noire** (`SOCLE_TEINTE`, teinte multiplicative dérivée de la pierre, jamais un aplat : un noir pur
   ferait un trou découpé) vient la boucher.
 
-Le prédicat est celui qui DÉFINIT l'étage, appliqué à la tuile `(tx, ty − lift)` — celle qui est
-sous la pièce dessinée. Le socle trie sur la rangée **dessinée** (`TIE_SOCLE`, entre
-`TIE_STRUCTURE` et `TIE_ACTOR`) quand le plancher trie sur la **logique** : les deux pièces d'une
-même tuile encadrent le corps, l'une dessous, l'autre dessus.
+Le prédicat est `solVisibleSous(relief, tx, ty, h)` (`framing.ts`, 2026-09-05, quand les
+terrasses ont pris le découvert — T-R9) : une pièce de hauteur `h` se dessine `h × LIFT` rangées
+au-dessus de sa tuile ; à la même rangée d'écran, la tuile `(tx, ty − (h − q) × LIFT)` de palier
+`q` y dessine SON sol. On descend `q = h − 1 … 0` et la première dont le palier vaut `q` répond :
+son sol s'il n'est pas un chapeau, sinon rien ; aucune → l'intérieur de la masse. Pour une mesa de
+palier 0, c'est la tuile `(tx, ty − lift)` d'avant. Le socle trie sur la rangée **dessinée**
+(`TIE_SOCLE`, entre `TIE_STRUCTURE` et `TIE_ACTOR`) **dans la strate du REGARD**
+(`profondeurDuSocle` : `strateDEtage(niveau) + …`) quand le plancher trie sur la **logique** : les
+deux pièces d'une même tuile encadrent le corps, l'une dessous, l'autre dessus — même quand il se
+tient deux paliers plus bas.
 
 ⚠ **Le disque, lui, ne se resserre pas.** Réduit à l'emprise exacte du recouvrement, il donne une
 lucarne à la taille d'un homme et l'on ne voit plus rien de ce qu'on approche. Le découvert est un
@@ -382,6 +410,111 @@ champ de vision, pas une découpe ; ce qui se règle finement, c'est ce qu'on vo
 Un seul point de décision (`WorldScene`), une seule distance (`alphaDeDecouvert`), trois
 consommateurs. Un contenu qui ne cède pas avec son plancher flotte, opaque, dans le creux que le
 fondu vient d'ouvrir — constaté à la capture.
+
+### E-R25 — Le découvert est un DEMI-disque : seul ce qui est dessiné DEVANT le corps cède (2026-09-04)
+
+*Alexis : « je vois au travers lorsque j'approche depuis le sud alors que ça devrait le faire
+uniquement pour les tuiles plus bas que le personnage à l'écran ».* Le disque était symétrique
+autour des pieds dessinés : au pied de la paroi sud, il fondait la première rangée du chapeau —
+dessinée 2,7 tuiles au-dessus des pieds, DERRIÈRE sa paroi, incapable de couvrir quoi que ce soit.
+MESURÉ (graine 2026, coin SE de la mesa, `smoke --scenario mesa` bloc `colle`) : 29 planchers sur
+48 fondus, jusqu'à 0,12, et le socle noir de E-R23 apparaissait en tache au-dessus de la tête.
+
+- **Une pièce ne cède que si elle est dessinée SOUS la ligne de la tête.** `partDevantLeCorps(dy)`
+  (dy = pieds dessinés − centre dessiné de la pièce) pondère l'ouverture du disque : 0 au-delà de
+  `PLATEAU_PIVOT + ½`, 1 en deçà de `PLATEAU_PIVOT − ½`, pente continue d'une tuile
+  (`PLATEAU_TRANSITION`) entre les deux — pas de pas, pas de saut (mémoire « feel = pente
+  continue »).
+- **Le pivot est la rangée LOGIQUE des pieds** : `PLATEAU_PIVOT = LIFT_TUILES`. Une pièce de
+  chapeau se dessine `LIFT` rangées au-dessus de sa tuile logique ; dy = LIFT ⇔ même rangée que les
+  pieds. Les bornes se DÉRIVENT, elles ne se choisissent pas : depuis le SUD, la première rangée
+  du chapeau est à dy = LIFT + ½ + (demi-profondeur de hitbox) = 2,69 ≥ 2,5 → pleine ; depuis le
+  NORD, la tuile du torse est à dy = LIFT − ½ − 0,19 = 1,31 ≤ 1,5 → cède entièrement, celle des
+  jambes à 0,31 aussi. Les marges sont exactement la demi-hitbox (0,19) de chaque côté : changer
+  la hitbox ou le LIFT déplace les deux à la fois (mémoire « le corps et le pas se dérivent »).
+- **Le disque ne se resserre pas pour autant** (E-R23) : dans la moitié qui cède, la portée reste
+  `PLATEAU_R_OUT`.
+
+### E-R26 — Le disque ne s'ouvre que si la butte CACHE le corps (2026-09-05)
+
+*Alexis : « on ne masque la butte que si on est plus au nord et qu'on est occulté par un bout de
+la butte ».* Le demi-disque disait QUELLES pièces cèdent, pas SI : sur le flanc d'une butte, les
+tuiles de chapeau dans la rangée des pieds et au sud cédaient encore (MESURÉ, coin SE de la mesa
+de la graine 2026 : 11 planchers sur 35, de 0,29 à 0,84), et en approchant par le nord le chapeau
+fondait dès qu'il entrait dans la portée — trois tuiles avant de cacher quoi que ce soit.
+
+- **Le découvert porte son OUVERTURE** (`Decouvert.ouverture`, 0..1), calculée une fois par image
+  dans `WorldScene` (E-R24 : un seul point de décision) : `ouvertureDuDecouvert` somme, en
+  géométrie d'écran, l'aire du corps dessiné (`CORPS_HAUTEUR_TUILES` = 1,5 sur la largeur de la
+  hitbox) que recouvrent les tuiles de chapeau d'une hauteur supérieure à la sienne, chacune
+  dessinée `h × LIFT` rangées au-dessus de sa tuile ; divisée par la largeur, c'est une hauteur
+  couverte, pleine à `COUVERTURE_PLEINE` (une tuile). `alphaDeDecouvert` la multiplie.
+- **Rien ne cache le corps : rien ne cède.** Sud, flanc, approche par le nord jusqu'à deux tuiles
+  du bord : ouverture 0, la butte est entière. Passé sous le bord, l'ouverture monte de 0 à 1 sur
+  UNE tuile de marche (la première rangée du chapeau passe sur la tête), continûment — le long
+  d'un bord dentelé le fondu respire d'une colonne à l'autre, il ne saute pas.
+- **« Plus au nord » se déduit, il ne s'écrit pas** : une pièce logiquement au nord des pieds se
+  dessine `LIFT` rangées trop haut pour toucher un corps d'1,5 tuile ; seule une pièce de la
+  rangée des pieds ou du sud peut être dessinée sur lui — et le tri la met dessus. Pour la tuile
+  du bord, le recouvrement et `partDevantLeCorps` sont le même nombre : on ne pondère pas deux
+  fois.
+- **Ce qui recouvre** : `Relief.hauteur` — le palier, plus un pour le chapeau (depuis le
+  2026-09-05 ; la veille, seuls les chapeaux comptaient, et le sol d'une terrasse cachait le corps
+  sans que rien ne cède — T-R9). Une pièce de hauteur `h` se dessine `h × LIFT` rangées au-dessus
+  de sa tuile, et ne compte que si `h` dépasse le niveau du regard : le sol qu'on foule et ce
+  qui est dessous ne cachent rien. Les cimes des arbres d'un plateau gardent leur propre
+  `crownAlpha`. Ouvert, le disque garde sa portée (E-R23) : un champ de vision, pas une lucarne.
+
+Gardes : `framing.test.ts` (« un demi-disque » ; « l'ouverture est nulle depuis le SUD et sur le
+FLANC », « pleine sous le bord nord, en une tuile de marche, continûment », « pondère le disque »)
+et le smoke `mesa` (`colle` : coin SE, ouverture 0 et aucun plancher fondu à portée ; `sud` : au
+pied de la paroi, aucun fondu ; `nord-loin` / `nord-sous` : entière à deux tuiles du bord, ouverte
+une tuile plus loin ; `collenord` : au contact, le découvert s'ouvre).
+
+### E-R27 — Un corps en pente change de monde à MI-RAMPE, et ne demande jamais de fondu (2026-09-05)
+
+*Alexis : « ça affiche la transparence quand je suis en haut d'une rampe que je suis en train de
+monter », « j'ai un flash noir lorsque j'arrive à un étage supérieur ».* Le corps se DESSINE en
+continu sur la rampe (`niveauSurLaRampe`, E-R22) mais se TRIAIT et se JUGEAIT sur l'entier de
+l'autorité — l'étage de la sim, qui reste celui du bas pendant toute la montée (la loi de « celui
+qui porte », asymétrique). Dans la moitié haute, le corps dessiné entrait donc sous le sol du haut
+tout en étant classé « en bas » : le découvert le tenait pour caché et ouvrait le disque — la
+transparence — puis, l'autorité commutant à l'arrivée, niveau et strate sautaient d'un coup et le
+socle noir de E-R23 passait une image sous les pieds — le flash.
+
+- **Une seule lecture** : `strateDuCorps(niveauDessine) = round(niveauDessine)`. C'est ce nombre
+  qui trie le sprite (`snapshot-view.syncActor`) ET qui dit au découvert quel est SON niveau
+  (`WorldScene.calculerLeDecouvert`) — donc ce qui peut le recouvrir (E-R26). Deux nombres ici,
+  et le corps se trierait dans un monde pendant que le découvert en fondrait un autre.
+- **Le point de bascule est le point de CONTACT, et il se dérive.** Un corps de
+  `CORPS_HAUTEUR_TUILES` (1,5) monte d'une tuile de rampe pendant que sa tête franchit
+  `1 + LIFT` rangées d'écran ; le sol du haut touche sa tête à la fraction
+  `(1 + LIFT − 1,5) / (1 + LIFT)` = **0,5**. En deçà, rien ne le cache et il trie en bas ; au-delà,
+  il trie en haut — au-dessus du sol du haut — et rien de ce sol ne compte plus. L'ouverture est
+  donc nulle des DEUX côtés : la montée ne fond rien, la descente non plus (symétrique, alors que
+  l'autorité ne l'est pas).
+- **Sous terre, l'ouverture est 0** (`niveau < palier`) : une cave n'a rien au-dessus d'elle qui
+  cède — c'est le voile du souterrain qui la ferme (§8). **Et « sous terre » se lit sur CE
+  niveau-là, pas sur l'entier de l'autorité** : c'était la seconde cause du flash noir, celle
+  qui prenait l'écran ENTIER. La position prédite pose le pied sur le palier haut quelques images
+  avant que le snapshot ne rende l'étage — `etageJoueur` 0 < palier 1, et le voile de la cave se
+  levait (MESURÉ : 9 images sur la terrasse (1425,661), soit ~150 ms à 60 Hz). `niveauDuCorps`
+  rend, pour une tuile qui n'est pas marchable à l'étage d'autorité, son plancher le plus haut :
+  le corps est dessiné dans le monde du haut, et le voile ne se lève pas. Une vraie cave (tuile
+  marchable à `palier − 1`) le lève toujours (smoke `cave`).
+- **Ce qui suit encore d'un tick** : le découvert se calcule en tête d'`update` sur la position
+  PRÉDITE (qui avance au tick), le sprite se trie sur sa position de RENDU (extrapolée entre deux
+  ticks) ; au passage, le niveau du découvert suit la strate de 4 images au plus (MESURÉ). C'est
+  muet : l'ouverture est nulle des deux côtés du contact. Et une CORRECTION du serveur qui ramène
+  le corps sous la mi-rampe fait redescendre la strate d'un cran le temps qu'il la repasse — le
+  corps a reculé, la règle n'a pas bougé (pas d'hystérésis : à ajouter si ça se voit en jeu).
+
+Gardes : `framing.test.ts` (« rampe : un corps qui la gravit change de monde à mi-pente… » —
+seuils de `strateDuCorps`, ouverture 0 sur 41 points de la rampe avec témoin > 0,5 au niveau
+d'autorité, contact = 0,5 dérivé) et le smoke `rampe-monte` (deux sites de la graine 2026, la
+terrasse 0→1→2 en (1425,661) et la mesa (291,106) : ~230 images par montée relevées à chaque
+`update`, ouverture 0 partout, aucune trouée ni socle, jamais le voile de la cave, chaque cran de
+strate pris sur une rampe à sa mi-tuile).
 
 ---
 
@@ -396,6 +529,8 @@ fondu vient d'ouvrir — constaté à la capture.
 - **Ce qui se relève d'un cadavre n'héritait pas de son plancher.** Un Cendreux levé là-haut serait né *dans* la roche du chapeau : toutes ses tuiles bloquées, figé sur place, invisible à la règle d'étage. C'est mot pour mot le défaut que le repli d'`etageApresLePas` avait été écrit pour empêcher, un cran plus loin.
 
 **`atteintLeSol(map, acteur, tx, ty)`** nomme le cas qui revient vingt fois — le bâti, les piles, les stations, les feux vivent tous à l'étage 0 (`collision.ts` le déclare). Ce n'est pas une seconde écriture de E-R5 : c'est l'accesseur avec ses deux derniers arguments déjà remplis. Le jour où l'on bâtira à un étage, `Structure` gagnera son champ et cette fonction un argument — en un seul endroit.
+
+**Le corps POUSSÉ (2026-09-06)** — Alexis : *« lorsque je fais une attaque lourde dans le mur d'une grotte, je monte d'un étage »*. Trois déplacements qui ne sont pas un pas — l'ÉLAN d'un coup (`advanceLunge`), le RECUL d'un coup lourd reçu (`knockback`) et la SÉPARATION des corps (`separation.ts`) — résolvaient leur `resolveMove` **sans `etages`** : la collision jugeait alors le SOL. Sous une terrasse, le sol est la surface de la terrasse, marchable partout — la charge traversait la paroi du karst, et le pas suivant, sans plancher à −2 sous le corps, retombait « au palier du sol » : à la surface. Sous une mesa, l'inverse — le sol est de la roche, l'élan était cloué. Les trois passent désormais par **`pousserLeCorps`** (`poussee.ts`) : lire l'étage, résoudre AVEC lui, reposer l'étage à l'arrivée — les trois gestes du pas de `sim.ts` et de `monsters.ts`, écrits une fois. Et la séparation **ne pousse plus à travers un plancher** (E-A3, l'accesseur en filtre de paire, relevé une fois par corps et évalué sur les seules paires qui se recouvrent). Gardes : `etages-etancheite.test.ts`, la grotte de laboratoire — charge, recul et séparation contre la paroi ouest (marchable au sol, mur à −1), et le pied de la mesa qui ne bouscule pas le plateau. Le témoin de LA FRAPPE se tient maintenant SUR le plateau : posé « à l'étage 1 » sur le pré, il était en l'air, et l'élan de son coup le repose au sol comme il doit.
 
 ### ② E-R13 — la part du ciel : BÂTIE, GARDÉE, et DORMANTE
 
@@ -450,3 +585,7 @@ Captures : `scratchpad/cave/` — dehors (la butte, ses marches et son trou), le
 ### Ce qui reste
 
 1. **Elle est VIDE.** `placeZoneNodes` ne sème pas à −1 : ni butin, ni bête, ni raison d'y aller. Le *test de destination* de la Stratigraphie (§5 : *« un individu mémorable, une raison d'y aller, une chose à en rapporter »*) n'est pas passé — et une zone qui n'a que du tileset est du remplissage.
+
+---
+
+*2026-09-05 — **Les grottes de TERRASSE** (karsts bornés, à identité `−H`, trois temps, nappe du calcaire, vignettes ancrées, bivouac, plancher, trace sur le palier) ont leur spec : **`grottes.md`**. Elle reprend la cave de mesa B1 dans le même régime de souterrain (G-R1) et retire la Grotte POI de surface (G-R10).*

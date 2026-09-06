@@ -1244,7 +1244,7 @@ export function advanceMonsters(state: SimState): void {
       // l'éveil qui fait la menace, et il ne fait AUCUN bruit (noise 0 : un mort ne respire
       // pas, il n'a pas de canal sourd). Là où les morts s'accumulent, le gibier DÉSERTE :
       // la faim et les morts racontent enfin la même histoire.
-      const eveil = eveilCendreuxAt(state, e.x, e.y, state.tick)
+      const eveil = eveilCendreuxAt(state, e.x, e.y, state.tick, e.etage) // à SON étage : sous la roche, 13 °C l'endort
       if (eveil > 0.25) threats.push({ e, vision: eveil * coverAt(state, e.x, e.y), noise: 0 })
     } else if (isPrey(m.type)) quarry.push(e)
   }

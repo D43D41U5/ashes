@@ -30,7 +30,7 @@ import { BRAISE_MERE } from './braise-mere'
 import { avanceesDepuisAges, BANDE_CROUTE, bandeDeCendre } from './cendre'
 import { willRiseAsCendreux } from './cendreux'
 import { hash2 } from './noise'
-import { ligneDegagee, resolveMove, traitLibre } from './collision'
+import { ligneDegagee, traitLibre } from './collision'
 import { secouerLeSol } from './sens'
 import { isInvulnerable } from './debug'
 import { emitEvent } from './events'
@@ -39,6 +39,7 @@ import { distSq } from './geometry'
 import { heldSlot, poserAuSol, wearHeld } from './inventory-actions'
 import { addItems, addSlot, countOf, isEmpty, makeInventory, pourInto, removeItems, carryRatio } from './items'
 import { staminaPoiFactor } from './poi-discovery'
+import { pousserLeCorps } from './poussee'
 import { rngRoll } from './rng'
 import { enVol } from './vol'
 import type { Entity, SimState } from './sim'
@@ -575,16 +576,9 @@ function advanceLunge(state: SimState, entity: Entity): void {
     dy = windup.dx * s + windup.dy * c
   }
   const step = strike.lunge / strike.windupTicks
-  const world = {
-    map: state.map,
-    structures: state.structures,
-    nodes: state.nodes,
-    moverVillageId: getVillageOf(state, entity.id)?.id ?? null,
-    etat: state,
-  }
-  const moved = resolveMove(world, entity.x, entity.y, dx * step, dy * step)
-  entity.x = moved.x
-  entity.y = moved.y
+  // À SON étage (`poussee.ts`) : la paroi de la grotte arrête l'élan, elle ne le laisse pas
+  // ressortir à la surface.
+  pousserLeCorps(state, entity, dx * step, dy * step)
 }
 
 /**
@@ -653,16 +647,7 @@ function knockback(
   // Corps confondus : faute d'axe, on pousse dans le sens du coup.
   const kx = dist > 0 ? tx / dist : attacker.windup!.dx
   const ky = dist > 0 ? ty / dist : attacker.windup!.dy
-  const world = {
-    map: state.map,
-    structures: state.structures,
-    nodes: state.nodes,
-    moverVillageId: getVillageOf(state, target.id)?.id ?? null,
-    etat: state,
-  }
-  const poussé = resolveMove(world, target.x, target.y, kx * poussée, ky * poussée)
-  target.x = poussé.x
-  target.y = poussé.y
+  pousserLeCorps(state, target, kx * poussée, ky * poussée)
 }
 
 /**

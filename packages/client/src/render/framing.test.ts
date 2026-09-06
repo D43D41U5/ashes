@@ -28,9 +28,18 @@ import {
   LIFT_TUILES,
   plateauAlpha,
   PLATEAU_ALPHA_MIN,
+  PLATEAU_PIVOT,
   PLATEAU_R_IN,
   PLATEAU_R_OUT,
+  PLATEAU_TRANSITION,
   alphaDeDecouvert,
+  partDevantLeCorps,
+  ouvertureDuDecouvert,
+  solVisibleSous,
+  strateDuCorps,
+  niveauSurLaRampe,
+  COUVERTURE_PLEINE,
+  CORPS_HAUTEUR_TUILES,
   ROOF_DEPTH,
   TIE_ACTOR,
   TIE_SOCLE,
@@ -472,7 +481,7 @@ describe('étages : le disque de découvert (Alexis, 2026-09-01)', () => {
   })
 
   it('le découvert se lit sur la position DESSINÉE, et se tait sans regard d’en bas', () => {
-    const corps = { x: 10, y: 20, niveau: 0 }
+    const corps = { x: 10, y: 20, niveau: 0, ouverture: 1 }
     expect(alphaDeDecouvert(corps, 10.5, 20.5)).toBe(PLATEAU_ALPHA_MIN)
     expect(alphaDeDecouvert(corps, 10.5 + PLATEAU_R_OUT, 20.5)).toBe(1)
     expect(alphaDeDecouvert(null, 10.5, 20.5)).toBe(1)
@@ -482,15 +491,229 @@ describe('étages : le disque de découvert (Alexis, 2026-09-01)', () => {
   it('le découvert ne part que vers le HAUT : une pièce à son niveau ou dessous reste opaque', () => {
     // Un joueur au palier 1 d'une terrasse (spec `terrasses.md` T-R8) : la touffe du palier 1
     // et celle du palier 0 sous lui ne cèdent pas, celle de la mesa au niveau 2 cède.
-    const corps = { x: 10, y: 20, niveau: 1 }
+    const corps = { x: 10, y: 20, niveau: 1, ouverture: 1 }
     expect(alphaDeDecouvert(corps, 10.5, 20.5, 1)).toBe(1)
     expect(alphaDeDecouvert(corps, 10.5, 20.5, 0)).toBe(1)
     expect(alphaDeDecouvert(corps, 10.5, 20.5, 2)).toBe(PLATEAU_ALPHA_MIN)
     // Sans niveau de pièce, l'appelant a déjà trié : elle est réputée plus haute.
     expect(alphaDeDecouvert(corps, 10.5, 20.5)).toBe(PLATEAU_ALPHA_MIN)
   })
+
+  it('un demi-disque : depuis le SUD, le chapeau reste plein — sa paroi est entre lui et le corps (Alexis, 2026-09-04)', () => {
+    // ⚠ CE QUI FERAIT ROUGIR : le disque symétrique d'avant, qui fondait le chapeau sous les yeux
+    // d'un joueur au pied de la paroi sud — un trou ouvert sur rien, puisque LIFT rangées de mur
+    // séparent le corps du chapeau. Les deux bornes se DÉRIVENT de la géométrie du jeu, à la
+    // hitbox près : au contact depuis le sud, la tuile la plus proche est dessinée
+    // `LIFT + 0,5 + demi-hitbox` au-dessus des pieds ; depuis le nord, `LIFT − 0,5 − demi-hitbox`.
+    const demiHitbox = 0.1875 // AVATAR_HITBOX_DEPTH_TILES / 2
+    const f = 20
+    const corps = { x: 10, y: f, niveau: 0, ouverture: 1 }
+    // Depuis le sud, collé à la paroi : la première rangée du chapeau et toutes celles derrière.
+    for (let r = 0; r < 6; r++) {
+      expect(alphaDeDecouvert(corps, 10.5, f - LIFT_TUILES - 0.5 - demiHitbox - r, 1)).toBe(1)
+    }
+    // Depuis le nord, collé à la façade : la rangée qui couvre le torse, puis celle des jambes.
+    expect(alphaDeDecouvert(corps, 10.5, f - LIFT_TUILES + 0.5 + demiHitbox, 1)).toBe(PLATEAU_ALPHA_MIN)
+    expect(alphaDeDecouvert(corps, 10.5, f - LIFT_TUILES + 1.5 + demiHitbox, 1)).toBe(PLATEAU_ALPHA_MIN)
+  })
+
+  it('la transition du demi-disque est une pente continue d’une tuile, centrée sur le pivot', () => {
+    // On longe le flanc d'une butte : la pièce d'à côté s'efface en un pas, elle ne saute pas.
+    // `partDevantLeCorps` va de 0 (pivot + ½) à 1 (pivot − ½), monotone, et l'alpha la suit.
+    expect(partDevantLeCorps(PLATEAU_PIVOT + PLATEAU_TRANSITION / 2)).toBe(0)
+    expect(partDevantLeCorps(PLATEAU_PIVOT)).toBeCloseTo(0.5, 9)
+    expect(partDevantLeCorps(PLATEAU_PIVOT - PLATEAU_TRANSITION / 2)).toBe(1)
+    const corps = { x: 10, y: 20, niveau: 0, ouverture: 1 }
+    let prev = 1
+    for (let dy = PLATEAU_PIVOT + 1; dy >= PLATEAU_PIVOT - 1; dy -= 0.05) {
+      const a = alphaDeDecouvert(corps, 10.5, corps.y - dy, 1)
+      expect(a).toBeLessThanOrEqual(prev + 1e-9)
+      expect(a).toBeGreaterThanOrEqual(PLATEAU_ALPHA_MIN)
+      expect(a).toBeLessThanOrEqual(1)
+      prev = a
+    }
+    // Au pivot, à mi-chemin : ni plein ni au creux.
+    const auPivot = alphaDeDecouvert(corps, 10.5, corps.y - PLATEAU_PIVOT, 1)
+    expect(auPivot).toBeGreaterThan(PLATEAU_ALPHA_MIN)
+    expect(auPivot).toBeLessThan(1)
+  })
+
+  // ═══ L'OUVERTURE : le disque ne joue que si la butte cache le corps (Alexis, 2026-09-05) ═══
+  //
+  // Une mesa de palier 0 (chapeau au niveau 1, lift 2) : rangées 30..33, colonnes 8..12. Le corps
+  // est donné par son CENTRE dessiné (ce que `WorldScene` porte) ; ses pieds sont une demi-hitbox
+  // plus bas, sa tête 1,5 tuile plus haut.
+  const mesa = (tx: number, ty: number): number => (tx >= 8 && tx <= 12 && ty >= 30 && ty <= 33 ? 1 : 0)
+  const demiHitbox = 0.1875
+  const ouverture = (x: number, y: number, niveau = 0): number => ouvertureDuDecouvert(mesa, x, y, niveau, 1)
+
+  it('l’ouverture est nulle depuis le SUD et sur le FLANC : rien ne recouvre le corps', () => {
+    // ⚠ CE QUI FERAIT ROUGIR : le disque d'avant, ouvert partout dans sa portée — sur le flanc,
+    // 11 planchers sur 35 fondaient (MESURÉ, coin SE de la mesa de la graine 2026).
+    // Collé à la paroi sud (rangée 34, hitbox contre la roche de la rangée 33) et plus loin.
+    for (let r = 0; r < 4; r++) expect(ouverture(10, 34 + demiHitbox + r)).toBe(0)
+    // Le long du flanc est, sur toutes les rangées de la mesa, hitbox contre la colonne 12.
+    for (let y = 29.5; y <= 34.5; y += 0.25) expect(ouverture(13 + 0.375, y)).toBe(0)
+    // Un corps SUR le chapeau (niveau 1) : rien au-dessus de lui.
+    expect(ouverture(10, 31.5, 1)).toBe(0)
+  })
+
+  it('l’ouverture est pleine sous le bord nord, et s’ouvre en une tuile de marche, continûment', () => {
+    // Pieds à deux tuiles du bord (rangée 30 dessinée en [28, 29]) : la tête (pieds − 1,5) ne
+    // touche pas encore le chapeau. Une tuile plus au sud : une tuile entière du corps est
+    // couverte, le disque est ouvert en entier. Au contact (hitbox contre la rangée 30) : entier.
+    const centre = (pieds: number): number => pieds - demiHitbox
+    expect(ouverture(10, centre(28))).toBe(0)
+    expect(ouverture(10, centre(29))).toBe(1)
+    expect(ouverture(10, centre(30 - demiHitbox))).toBe(1)
+    // Monotone et continue entre les deux, par pas d'un vingtième de tuile.
+    let prev = 0
+    for (let pieds = 28; pieds <= 29; pieds += 0.05) {
+      const o = ouverture(10, centre(pieds))
+      expect(o).toBeGreaterThanOrEqual(prev - 1e-9)
+      expect(o - prev).toBeLessThan(0.06 / COUVERTURE_PLEINE)
+      prev = o
+    }
+    // La géométrie du corps est celle du sprite : 1,5 tuile.
+    expect(CORPS_HAUTEUR_TUILES).toBe(1.5)
+  })
+
+  it('l’ouverture pondère le disque : fermé, rien ne cède ; à moitié, à moitié', () => {
+    const ferme = { x: 10, y: 20, niveau: 0, ouverture: 0 }
+    const moitie = { x: 10, y: 20, niveau: 0, ouverture: 0.5 }
+    const plein = { x: 10, y: 20, niveau: 0, ouverture: 1 }
+    expect(alphaDeDecouvert(ferme, 10.5, 20.5, 1)).toBe(1)
+    expect(alphaDeDecouvert(plein, 10.5, 20.5, 1)).toBe(PLATEAU_ALPHA_MIN)
+    expect(alphaDeDecouvert(moitie, 10.5, 20.5, 1)).toBeCloseTo(1 - 0.5 * (1 - PLATEAU_ALPHA_MIN), 9)
+  })
 })
 
+describe('terrasses : le sol d’un palier haut recouvre et cède comme un chapeau (T-R9 ; Alexis, 2026-09-05)', () => {
+  // Une terrasse de palier 1 (lift 2) : rangées 40..49, colonnes 5..15, sur un sol de palier 0.
+  // Pas de chapeau : c'est la HAUTEUR (= le palier) qui recouvre.
+  const terrasse = (tx: number, ty: number): number => (tx >= 5 && tx <= 15 && ty >= 40 && ty <= 49 ? 1 : 0)
+  const demiHitbox = 0.1875
+  const centre = (pieds: number): number => pieds - demiHitbox
+  const ouverture = (x: number, y: number, niveau = 0): number => ouvertureDuDecouvert(terrasse, x, y, niveau, 1)
+
+  it('sous les rangées nord de la terrasse, l’ouverture est pleine ; à deux tuiles au nord, nulle', () => {
+    // ⚠ CE QUI FERAIT ROUGIR : l'ancien `hauteurCouvrante` ne comptait que les chapeaux — MESURÉ
+    // (smoke `terrasse-nord`, graine 2026) : le corps à (1451,5 ; 655,31) sous la terrasse de
+    // palier 1 de la rangée 656, ouverture 0, joueur entièrement caché par `pave-…-p1`.
+    // La rangée 40 se dessine en [38, 39] : des pieds en 38, la tête est à 36,5 — rien.
+    expect(ouverture(10, centre(38))).toBe(0)
+    // Pieds en 39,5 (tuile 39, palier 0, la dernière avant la paroi nord) : une tuile de corps
+    // couverte, disque ouvert en entier.
+    expect(ouverture(10, centre(39.5))).toBe(1)
+    // Et depuis le SUD (pieds contre la paroi sud, rangée 50) : rien ne recouvre, comme la mesa.
+    expect(ouverture(10, centre(50 + demiHitbox))).toBe(0)
+    // Un corps SUR la terrasse (niveau 1) : rien au-dessus de lui.
+    expect(ouverture(10, centre(45), 1)).toBe(0)
+  })
+
+  it('ce qui se dessine SOUS une tuile fondue : le vrai sol du palier bas, ou rien (socle)', () => {
+    // Le relief : la terrasse ci-dessus, plus une mesa (chapeau) sur son palier en (20..22, 60..63).
+    const relief = {
+      palier: terrasse,
+      chapeau: (tx: number, ty: number): boolean => tx >= 20 && tx <= 22 && ty >= 60 && ty <= 63,
+    }
+    // Rangée nord de la terrasse (40, hauteur 1) : dessinée en 38, où le palier 0 pose sa tuile
+    // 38 → vrai sol, on laisse voir. Idem la rangée 41 (sur la tuile 39).
+    expect(solVisibleSous(relief, 10, 40, 1)).toBe(true)
+    expect(solVisibleSous(relief, 10, 41, 1)).toBe(true)
+    // Rangée 42 : dessinée en 40, où le palier 0 ne pose rien (la tuile 40 est au palier 1) —
+    // on verrait l'intérieur de la terrasse : socle.
+    expect(solVisibleSous(relief, 10, 42, 1)).toBe(false)
+    expect(solVisibleSous(relief, 10, 49, 1)).toBe(false)
+    // La mesa (hauteur 1 sur palier 0) : la même règle qu'avant — la tuile LIFT rangées au nord
+    // est-elle du chapeau ? Rangée 60 (sous elle la tuile 58, du pré) : vrai sol. Rangée 62 (sous
+    // elle la tuile 60, du chapeau) : socle.
+    expect(solVisibleSous(relief, 21, 60, 1)).toBe(true)
+    expect(solVisibleSous(relief, 21, 62, 1)).toBe(false)
+    // Hauteur 0 : rien en dessous, jamais — la question ne se pose pas au sol plat.
+    expect(solVisibleSous(relief, 10, 30, 0)).toBe(false)
+  })
+
+  it('un palier 2 fondu peut laisser voir le palier 0, deux lifts plus au nord', () => {
+    const relief = {
+      palier: (_tx: number, ty: number): number => (ty >= 70 ? 2 : ty >= 68 ? 1 : 0),
+      chapeau: (): boolean => false,
+    }
+    // Tuile 70 (palier 2) dessinée en 66 : le palier 1 y poserait la tuile 68 → en 66 ✓ vrai sol.
+    expect(solVisibleSous(relief, 3, 70, 2)).toBe(true)
+    // Tuile 72 (palier 2) dessinée en 68 : le palier 1 y poserait la tuile 70 — au palier 2, non ;
+    // le palier 0 y pose la tuile 68 — au palier 1, non. Rien : socle.
+    expect(solVisibleSous(relief, 3, 72, 2)).toBe(false)
+    // Tuile 71 dessinée en 67 : le palier 1 poserait 69 (palier 1 ✓) → vrai sol.
+    expect(solVisibleSous(relief, 3, 71, 2)).toBe(true)
+  })
+})
+
+
+describe('rampe : un corps qui la gravit change de monde à mi-pente et ne demande jamais de fondu (Alexis, 2026-09-05)', () => {
+  // La terrasse du bloc précédent (palier 1, rangées 40..49), et une rampe sur la tuile (10, 50) :
+  // au sud le sol du bas (51), au nord le sol du haut (49). `niveauSurLaRampe` monte de 0 à 1 du
+  // bord sud au bord nord. Le corps se dessine en `y − niveau × LIFT` (`yDessineDuCorps`), et le
+  // découvert lit son niveau à `strateDuCorps` — le même entier que le tri du sprite.
+  const terrasse = (tx: number, ty: number): number => (tx >= 5 && tx <= 15 && ty >= 40 && ty <= 49 ? 1 : 0)
+  const corps = (y: number): { niveau: number; ouverture: number } => {
+    const frac = niveauSurLaRampe(y, 0, 1)
+    const niveau = strateDuCorps(frac)
+    const yDessine = y - frac * LIFT_TUILES
+    return { niveau, ouverture: ouvertureDuDecouvert(terrasse, 10, yDessine, niveau, 1) }
+  }
+
+  it('la moitié basse est dans le monde du bas, la moitié haute dans celui du haut', () => {
+    expect(strateDuCorps(0)).toBe(0)
+    expect(strateDuCorps(0.49)).toBe(0)
+    expect(strateDuCorps(0.5)).toBe(1)
+    expect(strateDuCorps(1)).toBe(1)
+    expect(strateDuCorps(1.5)).toBe(2)
+    // Sur la rampe : centre en 50,75 (un quart gravi) → bas ; en 50,25 (trois quarts) → haut.
+    expect(corps(50.75).niveau).toBe(0)
+    expect(corps(50.25).niveau).toBe(1)
+  })
+
+  it('tout au long de la rampe, l’ouverture reste nulle : rien du haut ne recouvre un corps qui n’y est pas, et il se dessine SUR ce qu’il a rejoint', () => {
+    // ⚠ CE QUI FERAIT ROUGIR : le niveau du découvert lu sur l'ENTIER DE L'AUTORITÉ (0 pendant
+    // toute la montée). Un corps au centre 50,2 (frac 0,8) se dessine en 50,2 − 1,6 = 48,6, sa
+    // tête en 47,1 ; la rangée 49 de la terrasse se dessine en [47, 48] : 0,9 tuile de corps
+    // couverte, ouverture 0,9 → la terrasse fondait sur le corps qui la gravissait. Au niveau du
+    // monde du corps (1) : 0.
+    for (let k = 0; k <= 40; k++) {
+      const y = 51 - k / 40
+      expect(corps(y).ouverture, `centre ${y}`).toBe(0)
+    }
+    // Le témoin, sans quoi le zéro ne prouve rien : le même corps, jugé au niveau de l'autorité
+    // (0), est bien recouvert aux trois quarts de la montée.
+    const y = 50.2
+    const frac = niveauSurLaRampe(y, 0, 1)
+    expect(ouvertureDuDecouvert(terrasse, 10, y - frac * LIFT_TUILES, 0, 1)).toBeGreaterThan(0.5)
+  })
+
+  it('le contact de la tête avec le sol du haut se fait exactement à mi-rampe (lift 2, corps 1,5)', () => {
+    // Le corps à la part `frac` a sa tête en `ty + 1 − frac × (1 + LIFT) − CORPS` ; le sol du haut
+    // finit en `ty − LIFT`. Contact à `frac = (1 + LIFT − CORPS) / (1 + LIFT)` — et c'est 0,5 :
+    // la règle « moitié basse = monde du bas » ne laisse jamais la tête passer SOUS le sol du
+    // haut. Si `LIFT_TUILES` ou `CORPS_HAUTEUR_TUILES` bougent, ce contact se déplace et
+    // `strateDuCorps` doit suivre.
+    const contact = (1 + LIFT_TUILES - CORPS_HAUTEUR_TUILES) / (1 + LIFT_TUILES)
+    expect(contact).toBe(0.5)
+    // Juste sous la moitié : dans le monde du bas, et rien ne recouvre encore la tête.
+    const frac = contact - 1e-6
+    expect(strateDuCorps(frac)).toBe(0)
+    expect(ouvertureDuDecouvert(terrasse, 10, 51 - frac - frac * LIFT_TUILES, 0, 1)).toBeCloseTo(0, 4)
+    // Juste au-dessus : monde du haut — la tête y touche le sol, et le corps se dessine dessus.
+    expect(strateDuCorps(contact)).toBe(1)
+  })
+
+  it('arrivé sur le sol du haut avant que l’autorité ne le confirme : monde du haut, ouverture nulle', () => {
+    // La couche (`niveauDuCorps`) donne « celui qui porte » : sur la tuile 49 (palier 1) avec un
+    // étage d'autorité 0, le niveau dessiné est 1 — `strateDuCorps(1)` = 1, rien au-dessus.
+    const niveau = strateDuCorps(1)
+    expect(ouvertureDuDecouvert(terrasse, 10, 49.5 - LIFT_TUILES, niveau, 1)).toBe(0)
+  })
+})
 describe('étages : le socle noir encadre le corps découvert (Alexis, 2026-09-01)', () => {
   const socle = (yDessine: number): number => ySortDepth(yDessine, TILE, TIE_SOCLE)
   const acteur = (feetY: number): number => ySortDepth(feetY, TILE, TIE_ACTOR)

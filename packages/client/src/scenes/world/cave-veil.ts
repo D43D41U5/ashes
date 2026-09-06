@@ -70,7 +70,7 @@ export interface LumiereDeCave {
  * deviner la matière, ce qui est très exactement ce qu'on veut : *une forme, pas un contenu*.
  */
 const NOIR = 0x0b0e18
-const NOIR_ALPHA = 0.93
+const NOIR_ALPHA = 0.62
 /** Un texel de lumière : 4 px monde, le grain de tous les halos du jeu. */
 const GRAIN_PX = 4
 
@@ -79,7 +79,7 @@ const GRAIN_PX = 4
 export const JOUR_TUILES = TEMPERATURE.CIEL_PENETRATION + 1
 /** La portée d'une torche SOUS TERRE. Plus courte que dehors (`TORCHE_HOLE_TILES` = 4) : il n'y a
  *  pas de ciel pour l'aider, et c'est ce qui fait de la torche un outil et de la cave un lieu. */
-export const TORCHE_CAVE_TUILES = 3
+export const TORCHE_CAVE_TUILES = 6
 /** LE FEU DE BIVOUAC sous la roche : la clairière d'un Feu dans la nuit (`HOLE_RADIUS_TILES`, 6)
  *  ramenée à l'échelle de la cave — celle que la torche y prend déjà (3 pour 4 dehors). Dérivé,
  *  pas posé : la cave n'a pas de règle à elle, elle serre les mêmes lumières. */
@@ -87,7 +87,7 @@ export const FEU_CAVE_TUILES = HOLE_RADIUS_TILES * (TORCHE_CAVE_TUILES / TORCHE_
 /** Le souffle autour du corps. */
 const SOI_TUILES = 1.25
 const JOUR_PIC = 1
-const TORCHE_PIC = 0.85
+const TORCHE_PIC = 1
 const SOI_PIC = 0.45
 /** LA CHALEUR DU JOUR AU SOL — en ADD sous le voile, comme la braise de la torche : le trou du
  *  voile montre le sol tel qu'il est peint (froid), cette nappe lui rend la couleur de la lumière

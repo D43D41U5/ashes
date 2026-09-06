@@ -45,9 +45,15 @@ import { TORCHE_POOL_TILES, forceDeTorche } from '../../render/torche'
 /** Un porteur de torche à l'image : où il est, et où en est sa flamme. */
 export interface PorteurDeTorche {
   id: number
-  /** Position MONDE en pixels (interpolée — pas la tuile : une torche suit les pas). */
+  /** Position MONDE en pixels (interpolée — pas la tuile : une torche suit les pas). `y` est
+   *  la rangée DESSINÉE du corps (palier et étage déduits, `yDessineDuCorps`). */
   x: number
   y: number
+  /** LA STRATE DU CORPS (`strateDEtage(strateDuCorps(niveau))`, E-R22) : la flaque se trie dans
+   *  le monde où le porteur se dessine. Sans elle — MESURÉ le 2026-09-05, palier 2, graine 2026 :
+   *  flaque à y 9320 pour un corps à 9323 (juste), profondeur 4 pour un corps à 210 388, sous
+   *  les pavés du palier (~199 999). Elle change sur une rampe : lue à chaque image. */
+  strate: number
   /** `partDeFlamme` du slot tenu : 1 neuve → 0 morte. */
   part: number
 }
@@ -113,12 +119,13 @@ export class TorcheGroundGlow {
         glow = this.scene.add
           .image(p.x, p.y, TEX_KEY)
           .setOrigin(0.5, 0.5)
-          .setDepth(FIRE_GROUND_DEPTH)
           .setBlendMode('ADD')
           .setDisplaySize(TEX_SIDE * LIGHT_PX, TEX_SIDE * LIGHT_PX) // 1 texel = 4 px monde
         this.glows.set(p.id, glow)
       }
-      glow.setPosition(p.x, p.y)
+      // La strate suit le corps à chaque image : un porteur qui gravit une rampe change de monde
+      // à mi-pente (`strateDuCorps`), et sa flaque avec lui.
+      glow.setPosition(p.x, p.y).setDepth(p.strate + FIRE_GROUND_DEPTH)
       glow.setAlpha(Math.min(1, force * GLOW_ALPHA_SCALE))
     }
     for (const [id, glow] of this.glows) {

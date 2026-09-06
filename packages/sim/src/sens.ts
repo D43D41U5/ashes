@@ -23,7 +23,7 @@ import { eveilCendreuxAt } from './temperature'
  * s'affaisse »). La satiété s'ajoute au froid du monde comme des degrés portés sur soi.
  */
 export function eveilDuCendreux(state: SimState, monster: Monster, entity: Entity): number {
-  const brut = eveilCendreuxAt(state, entity.x, entity.y, state.tick)
+  const brut = eveilCendreuxAt(state, entity.x, entity.y, state.tick, entity.etage) // à SON étage (G-R5 : 13 °C sous la roche)
   const satiete = monster.satiete ?? 0
   if (satiete <= 0) return brut
   // Plein (SATIETE_MAX), il porte (CHAUD − FROID) degrés de trop : amorphe partout où le

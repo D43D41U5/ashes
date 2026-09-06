@@ -50,8 +50,8 @@
  * consomme pas le PRNG, donc elle ne décale aucun flux existant par elle-même.
  */
 import { BALANCE, COMBAT, MONSTER_DEFS } from './balance'
-import { resolveMove } from './collision'
-import { getVillageOf } from './village'
+import { atteignableEntreEtages, niveauDuCorps } from './etages'
+import { pousserLeCorps } from './poussee'
 import type { SimState } from './sim'
 import { enVol } from './vol'
 
@@ -113,6 +113,9 @@ export function advanceSeparation(state: SimState): void {
   // `state.monsters` par PAIRE, soit O(n²·m) là où la règle tient en O(n²).
   const demiX = new Float64Array(n)
   const demiY = new Float64Array(n)
+  // L'étage de chaque corps, relevé une fois : un plancher sépare deux corps comme il sépare
+  // tout le reste (E-A3), et la question ne se pose qu'aux paires qui se recouvrent.
+  const etage = new Float64Array(n)
   const especeDe = new Map<number, number>()
   for (const m of state.monsters) especeDe.set(m.entityId, MONSTER_DEFS[m.type].corps ?? 1)
   for (let i = 0; i < n; i++) {
@@ -121,6 +124,7 @@ export function advanceSeparation(state: SimState): void {
     const k = especeDe.get(e.id) ?? 1 // un avatar ou un PNJ : l'emprise d'un homme
     demiX[i] = DEMI_X * k
     demiY[i] = DEMI_Y * k
+    etage[i] = niveauDuCorps(state.map, e)
   }
 
   for (let i = 0; i < n; i++) {
@@ -152,6 +156,9 @@ export function advanceSeparation(state: SimState): void {
       // jusqu'au contact PLEIN. Un corps qui vient d'être écarté ne peut donc pas
       // re-déclencher au tick suivant — sans quoi il oscille, et c'est mesuré.
       if (d2 >= REPOS_2) continue
+      // UN PLANCHER ENTRE LES DEUX : le pied de la mesa ne bouscule pas le plateau, ni la grotte
+      // la terrasse qui la coiffe — sauf à portée d'un connecteur qui les relie, où l'on se croise.
+      if (!atteignableEntreEtages(state.map, a.x, a.y, etage[i]!, b.x, b.y, etage[j]!)) continue
       let nx: number
       let ny: number
       let chevauchement: number
@@ -196,16 +203,7 @@ export function advanceSeparation(state: SimState): void {
       dx *= k
       dy *= k
     }
-    const e = corps[i]!
-    const world = {
-      map: state.map,
-      structures: state.structures,
-      nodes: state.nodes,
-      moverVillageId: getVillageOf(state, e.id)?.id ?? null,
-      etat: state,
-    }
-    const pousse = resolveMove(world, e.x, e.y, dx, dy)
-    e.x = pousse.x
-    e.y = pousse.y
+    // À SON étage (`poussee.ts`) : le mur de la grotte arrête la poussée comme un pas.
+    pousserLeCorps(state, corps[i]!, dx, dy)
   }
 }

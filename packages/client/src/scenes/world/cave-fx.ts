@@ -47,6 +47,12 @@ function quad(scene: Phaser.Scene, c: number, depth: number): Phaser.GameObjects
 }
 
 export class CaveFx {
+  /**
+   * LA GOUTTE TOUCHE LE SOL — appelé à l'impact, avec le point en TUILES (la rangée LOGIQUE, sans
+   * le lift : c'est là que l'auditeur se tient). `WorldScene` y branche `SonsDeLaGrotte` : le son
+   * part de là où l'œil voit l'éclat, et de nulle part ailleurs.
+   */
+  onGoutte: ((x: number, y: number) => void) | null = null
   private gouttes: Goutte[] = []
   private gouttesImg: Phaser.GameObjects.Image[] = []
   private prochaineGoutte = 0.4
@@ -125,7 +131,12 @@ export class CaveFx {
         continue
       }
       g.y += CHUTE_PX_S * dt
-      if (g.y >= g.solY) { g.eclat = 0.24; g.y = g.solY; continue }
+      if (g.y >= g.solY) {
+        g.eclat = 0.24
+        g.y = g.solY
+        this.onGoutte?.(g.x / TILE_PX, g.ty + 0.5)
+        continue
+      }
       q.setPosition(Math.round(g.x), Math.round(g.y)).setDisplaySize(1, 3).setAlpha(0.6).setDepth(depth).setVisible(true)
     }
   }

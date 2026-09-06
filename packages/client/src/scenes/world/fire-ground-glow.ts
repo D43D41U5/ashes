@@ -197,11 +197,15 @@ export class FireGroundGlow {
         // cellules tombe pile sur la grille de 2 px de l'art (aucun décalage d'un demi-pixel).
         // …et à la HAUTEUR de sa tuile (le lift de son palier, `liftSol`) : la flaque restait
         // à la rangée logique, quatre tuiles sous les rondins d'un feu de palier 2.
-        const lift = this.reliefSous?.(s.tx + 0.5, s.ty + 0.5, s.etage).lift ?? 0
+        // ET DANS SA STRATE (E-R22, « deux nombres, jamais un ») : le lift seul la posait à la
+        // bonne rangée d'écran mais en strate 0 — MESURÉ le 2026-09-05 (feu 474, palier 2,
+        // graine 2026) : y 9288 juste, profondeur 4, sous les pavés du palier à ~199 999. Une
+        // flaque invisible, cuite sous le sol qu'elle devait chauffer.
+        const { lift, strate } = this.reliefSous?.(s.tx + 0.5, s.ty + 0.5, s.etage) ?? { lift: 0, strate: 0 }
         glow = this.scene.add
           .image((s.tx + 0.5) * TILE_PX, (s.ty + 0.5) * TILE_PX - lift, texKey(ax.coeurBlanc))
           .setOrigin(0.5, 0.5)
-          .setDepth(FIRE_GROUND_DEPTH)
+          .setDepth(strate + FIRE_GROUND_DEPTH)
           .setBlendMode('ADD')
           .setDisplaySize(TEX_SIDE * LIGHT_PX, TEX_SIDE * LIGHT_PX) // 1 texel = 4 px monde
         this.glows.set(s.id, glow)

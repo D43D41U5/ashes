@@ -434,12 +434,25 @@ export function toponymeAt(map: WorldMap, x: number, y: number): string | undefi
  * Le nom rendu porte déjà le SORT du lieu (« la Mine pillée », « les Ruines brûlées ») :
  * `poi.ts` le baptise à la génération via `nomSelonSort`. Rien à recomposer à l'affichage.
  */
-export function lieuAt(map: WorldMap, x: number, y: number): Zone | undefined {
+export function lieuAt(map: WorldMap, x: number, y: number, etage?: number): Zone | undefined {
   let best: Zone | undefined
   let bestAire = Infinity
+  // Sous la roche, la même règle que `poisAt` (G-R2) : c'est l'emprise creusée qui répond, à
+  // SON étage — et la plus petite emprise tranche (en tuiles, non en rectangle). Sans cela, la
+  // barre nommait le sol au-dessus de la tête (« le Bosquet ») à qui marchait dans la Grotte VI.
+  // `etage` absent ou ≥ 0 : le sol — le jeu d'avant, au bit près.
+  const sousLaRoche = etage !== undefined && etage < 0
+  const tuile = sousLaRoche ? Math.floor(y) * map.width + Math.floor(x) : -1
   for (const z of map.zones) {
-    if (z.kind === undefined || !dansLZone(z, x, y)) continue
-    const aire = z.w * z.h
+    if (z.kind === undefined) continue
+    let aire: number
+    if (sousLaRoche) {
+      if (z.etage !== etage || z.tuiles === undefined || !contientLaTuile(z.tuiles, tuile)) continue
+      aire = z.tuiles.length
+    } else {
+      if (!dansLZone(z, x, y)) continue
+      aire = z.w * z.h
+    }
     if (aire < bestAire) {
       best = z
       bestAire = aire

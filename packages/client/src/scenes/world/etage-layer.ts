@@ -34,18 +34,18 @@ import {
   type Connecteur, type WorldMap,
 } from '@ashes/sim'
 import {
-  caveKey, DEHORS_KEY, GUEULE_KEY, JOUR_KEY, PERIODE_CAVE, ROCHE_CAVE_KEY,
+  BRAISE_GUEULE_KEY, caveKey, DEHORS_KEY, GUEULE_KEY, JOUR_KEY, PERIODE_CAVE, ROCHE_CAVE_KEY,
   EAUX_DE_CAVE, SIGNES_DE_CAVE, TERRAINS_DE_CAVE, VARIANTES_LUEUR,
 } from '../../render/cave-art'
 import { cliffKey, levreDe, PHASES_PAROI, varianteDeLevre, VARIANTES_PAROI } from '../../render/cliff-art'
 import {
-  alphaDeDecouvert, CLIFF_DEPTH, LIFT_TUILES, niveauSurLaRampe, ROCHE_DEPTH,
+  alphaDeDecouvert, CLIFF_DEPTH, LIFT_TUILES, niveauSurLaRampe, ROCHE_DEPTH, solVisibleSous,
   SOUTERRAIN_STRATE, strateDEtage, TIE_SOCLE, TILE_PX, ySortDepth, type Decouvert,
 } from '../../render/framing'
-import { PERIODE_DALLE, plateauKey, RAMPE_RANGEES, SOCLE_TEINTE } from '../../render/plateau-art'
+import { PERIODE_DALLE, plateauKey, RAMPE_RANGEES, SOCLE_TEINTE, TERRAINS_DE_PLATEAU } from '../../render/plateau-art'
 import type { Relief } from '../../render/relief'
 import { CaveFx, type TuileDeCave } from './cave-fx'
-import { CaveVeil, type LumiereDeCave } from './cave-veil'
+import { CaveVeil, FEU_CAVE_TUILES, type LumiereDeCave } from './cave-veil'
 import { epinglerLaTuile } from '../../render/tuile-epinglee'
 
 /**
@@ -137,9 +137,16 @@ function profondeurDuPlancher(hauteur: number, ty: number, tie: number): number 
  *
  * Aucune teinte de nuit : elle est déjà à 10 % de la pierre, et c'est une OMBRE — une ombre ne
  * s'assombrit pas quand le jour tombe, elle se confond avec lui.
+ *
+ * Elle vit dans la strate du REGARD (`niveau`, celui du corps qu'on découvre — pour une mesa vue
+ * de son palier, la strate juste sous le chapeau : le nombre d'avant), et trie sur la rangée où
+ * elle se dessine, LUE DANS CETTE STRATE : une tuile de hauteur `h` dessinée en `ty − h × LIFT`
+ * est, pour la strate `niveau`, la rangée logique `ty − (h − niveau) × LIFT`. Depuis les
+ * terrasses (T-R9), le sol d'un palier fondu a aussi son socle, par la même formule avec `h` = le
+ * palier — et un corps deux paliers plus bas reste devant lui.
  */
-function profondeurDuSocle(hauteur: number, yDessine: number): number {
-  return strateDEtage(hauteur - 1) + ySortDepth(yDessine, TILE_PX, TIE_SOCLE)
+function profondeurDuSocle(niveau: number, ty: number, h: number): number {
+  return strateDEtage(niveau) + ySortDepth(ty - (h - niveau) * LIFT_TUILES, TILE_PX, TIE_SOCLE)
 }
 
 /**
@@ -158,8 +165,9 @@ export class EtageLayer {
   private roche: Phaser.GameObjects.TileSprite | undefined
   /** Le voile de la cave et ses trous de lumière — `null` dans un monde sans cave. */
   private veil: CaveVeil | null = null
-  /** Les gouttes, la poussière, le souffle — même condition. */
-  private fx: CaveFx | null = null
+  /** Les gouttes, la poussière, le souffle — même condition. Publique : `WorldScene` branche
+   *  le son de la goutte sur son impact (`CaveFx.onGoutte`). */
+  fx: CaveFx | null = null
   /** Les tuiles de salle vues à cette image (les gouttes y tombent) — réutilisé, jamais réalloué. */
   private readonly tuilesVues: TuileDeCave[] = []
   /** Les gueules vues à cette image, en tuiles, et leurs centres en px monde (pour le voile). */
@@ -197,6 +205,13 @@ export class EtageLayer {
    */
   partDuCielAt: ((tx: number, ty: number) => number) | null = null
   lumiere: LumiereDeCave | null = null
+  /**
+   * Les feux allumés SOUS LA ROCHE, en tuiles et par étage, avec leur force de l'image (0..1 :
+   * le régime du foyer × son vacillement) — posés par `WorldScene` à chaque image, DEHORS
+   * COMME DEDANS. C'est ce qui permet à une gueule de rougir depuis le palier (G-A13) : `lumiere`
+   * ne vit que sous la roche, or c'est de dehors qu'on regarde par la fente.
+   */
+  feuxSousRoche: readonly { tx: number; ty: number; etage: number; force: number }[] = []
   /** Les rampes et gueules par tuile : `y * width + x` de chaque tuile de connecteur. */
   private portes: Map<number, Connecteur>
   /**
@@ -346,8 +361,23 @@ export class EtageLayer {
             nRampe = this.poserLaRampe(tx, ty, Math.min(porte.de, porte.vers), nRampe)
             continue
           }
-          if (!this.relief.chapeau(tx, ty)) continue
           const p = this.relief.palier(tx, ty)
+          if (!this.relief.chapeau(tx, ty)) {
+            // ── LE SOCLE D'UNE TERRASSE FONDUE (T-R9 ; Alexis, 2026-09-05). Le sol d'un palier
+            //    plus haut que le regard se creuse dans les pavés (`pave-layer`, `Trouee`) ; là où
+            //    rien de réel ne se dessine dessous (`solVisibleSous` : pas le sol du palier bas,
+            //    mais l'intérieur de la terrasse), on bouche au noir, comme sous une mesa. La
+            //    texture n'importe pas à 10 % : celle du premier terrain de plateau.
+            if (p > 0 && decouvert && decouvert.ouverture > 0 && p > decouvert.niveau) {
+              const a = alphaDeDecouvert(decouvert, tx + 0.5, ty - p * L + 0.5, p)
+              if (a < 1 && !solVisibleSous(this.relief, tx, ty, p)) {
+                const phase = (((tx % PERIODE_DALLE) + PERIODE_DALLE) % PERIODE_DALLE)
+                  + PERIODE_DALLE * (((ty % PERIODE_DALLE) + PERIODE_DALLE) % PERIODE_DALLE)
+                nSol = this.poser(this.sols, nSol, plateauKey('sol', TERRAINS_DE_PLATEAU[0]!, phase), tx, ty - p * L, profondeurDuSocle(decouvert.niveau, ty, p), 1, SOCLE_TEINTE)
+              }
+            }
+            continue
+          }
           const h = p + 1
           const lift = h * L
           // ── LE SOL, SUR TOUTES SES TUILES. C'est le lift qui l'autorise : les rangées sud ne
@@ -376,9 +406,10 @@ export class EtageLayer {
           // La question se pose donc à la tuile du sol qui se DESSINE sous la pièce — celle qui,
           // `LIFT` rangées au nord et au MÊME palier, se lève juste sous elle : `(tx, ty − LIFT)` —
           // et pas au fondu : est-elle, elle aussi, du chapeau ? Alors on bouche, au noir. Sinon
-          // on laisse voir. Un seul prédicat, celui qui définit l'étage.
-          if (a < 1 && this.relief.chapeau(tx, ty - L) && this.relief.palier(tx, ty - L) === p) {
-            nSol = this.poser(this.sols, nSol, cleSol, tx, ty - lift, profondeurDuSocle(h, ty - L), 1, SOCLE_TEINTE)
+          // on laisse voir. Un seul prédicat, celui qui définit l'étage — `solVisibleSous`, le
+          // même que celui des terrasses, qui descend aussi les paliers du dessous.
+          if (a < 1 && decouvert && !solVisibleSous(this.relief, tx, ty, h)) {
+            nSol = this.poser(this.sols, nSol, cleSol, tx, ty - lift, profondeurDuSocle(decouvert.niveau, ty, h), 1, SOCLE_TEINTE)
           }
           nSol = this.poser(this.sols, nSol, cleSol, tx, ty - lift, profondeurDuPlancher(h, ty, TIE_SOL), a, this.teinte)
           // ── LA LÈVRE, sur le POURTOUR : la silhouette du plateau vue d'en bas — là où la
@@ -430,8 +461,9 @@ export class EtageLayer {
    *  une autre grotte non plus : entre deux, il y a la roche, et l'on peint sa paroi. */
   private salle = (niveau: number, tx: number, ty: number): boolean => this.relief.niveauDeSalle(tx, ty) === niveau
 
-  /** La part du ciel d'une tuile de cave, mémorisée (la loi de /sim, lue une fois par tuile). */
-  private cielDe(tx: number, ty: number): number {
+  /** La part du ciel d'une tuile de cave, mémorisée (la loi de /sim, lue une fois par tuile).
+   *  Publique : `WorldScene` y lit ce que le dehors envoie au joueur (`dehorsIci`). */
+  cielDe(tx: number, ty: number): number {
     const idx = ty * this.map.width + tx
     const m = this.cielMemo.get(idx)
     if (m !== undefined) return m
@@ -657,11 +689,38 @@ export class EtageLayer {
     const depth = strateDEtage(palier) + CLIFF_DEPTH
     const teinte = palier >= 1 ? this.teinte : 0xffffff // même règle que la rampe : la nuit au niveau
     n = this.poser(this.rampes, n, GUEULE_KEY, tx, yl - LIFT_TUILES, depth + 0.01, 1, teinte)
+    // Un feu au vestibule : la fente rougit (G-A13). En ADD, sans teinte de nuit — un feu ne
+    // s'éteint pas parce qu'il fait nuit, c'est même là qu'il se voit.
+    const lueur = this.lueurDeGueule(tx, ty)
+    if (lueur > 0) {
+      n = this.poser(this.rampes, n, BRAISE_GUEULE_KEY, tx, yl - LIFT_TUILES, depth + 0.012, lueur, 0xffffff, Phaser.BlendModes.ADD)
+    }
     for (let k = 0; k < LIFT_TUILES; k++) {
       n = this.poser(this.rampes, n, caveKey('flanc', 4), tx - 1, yl - LIFT_TUILES + k, depth + 0.015, 1, teinte)
       n = this.poser(this.rampes, n, caveKey('flanc', 2), tx + 2, yl - LIFT_TUILES + k, depth + 0.015, 1, teinte)
     }
     return n
+  }
+
+  /**
+   * Ce qu'un feu de la salle envoie par la gueule (`tx`, `ty` = la tuile ouest de la paire) :
+   * le plus fort des feux DE CET ÉTAGE, pondéré par la distance à la paire (Chebyshev, en
+   * tuiles) sur la même portée que la braise du voile — `FEU_CAVE_TUILES`. Un feu au fond de la
+   * salle ne se voit pas de dehors ; un feu au vestibule, oui, et fort. 0 : rien à poser.
+   */
+  private lueurDeGueule(tx: number, ty: number): number {
+    if (this.feuxSousRoche.length === 0) return 0
+    const etage = this.relief.niveauDeSalle(tx, ty)
+    let lueur = 0
+    for (const f of this.feuxSousRoche) {
+      if (f.etage !== etage) continue
+      const dx = f.tx < tx ? tx - f.tx : f.tx > tx + 1 ? f.tx - tx - 1 : 0
+      const dy = f.ty < ty ? ty - f.ty : f.ty - ty
+      const d = dx > dy ? dx : dy
+      const l = f.force * Math.max(0, 1 - d / FEU_CAVE_TUILES)
+      if (l > lueur) lueur = l
+    }
+    return Math.min(1, lueur)
   }
 
   /** La tuile OUEST d'une paire de gueule : celle dont la voisine de gauche n'en est pas une.

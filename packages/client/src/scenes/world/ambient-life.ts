@@ -148,6 +148,14 @@ interface Swarm {
   light: Phaser.GameObjects.Light | null
   /** La flaque verte au sol — le seul des deux qui touche le terrain. */
   flaque: Phaser.GameObjects.Image
+  /** LE RELIEF SOUS L'ANCRE (spec `etages.md` E-R22, `terrasses.md` T-R7) : de combien de px le
+   *  sol qu'il survole se dessine plus haut que sa rangée logique, et dans quelle STRATE ce sol
+   *  se peint. Lus UNE FOIS à la naissance — l'ancre ne bouge jamais — et partagés par les trois
+   *  objets de l'essaim (mouches, flaque, source) : un essaim est UNE chose, elle vit à UNE
+   *  hauteur. Une mouche qui dérive au-delà du bord garde la hauteur de son essaim (elle plane
+   *  au-dessus de la chute) plutôt que de sauter de deux tuiles en franchissant une ligne. */
+  lift: number
+  strate: number
 }
 
 export class AmbientLife {
@@ -167,6 +175,23 @@ export class AmbientLife {
     private readonly sample: (tx: number, ty: number) => number,
   ) {
     ensureFireflyGroundTexture(scene)
+  }
+
+  /**
+   * LE RELIEF sous un point du monde — posé par la scène (`Warp.liftSol` / `strateSol`), même
+   * patron que `fire-fx` et `fire-ground-glow` : la couche reçoit le relief, elle ne lit pas la
+   * carte. Sans lui (Atelier, carte plate), tout vaut 0 : le nombre d'avant, au bit près.
+   *
+   * ⚠ MESURÉ le 2026-09-05 (graine 2026, terrasse de (1425,653), 1 h du matin) avant ce
+   * branchement : un essaim ancré au palier 1 (`liftSol` 32, `strateSol` 100 000) posait sa
+   * flaque à la profondeur 9 et ses mouches à ~11 500, sous les pavés de son palier (99 999),
+   * à la rangée LOGIQUE — deux tuiles sous le sol dessiné. Invisible, sauf sa source, qui
+   * éclairait la paroi deux tuiles au sud. « Les lucioles sur un étage ne fonctionnent pas. »
+   */
+  private reliefSous: ((x: number, y: number) => { lift: number; strate: number }) | undefined
+
+  setReliefSous(f: (x: number, y: number) => { lift: number; strate: number }): void {
+    this.reliefSous = f
   }
 
   /**
@@ -368,7 +393,7 @@ export class AmbientLife {
       const souffle = souffleDEssaim(nowS, s.phase)
       if (s.light) {
         s.light.x = s.x * TILE_PX
-        s.light.y = s.y * TILE_PX
+        s.light.y = s.y * TILE_PX - s.lift
         // Le point light, lui, s'éteint AVEC les autres sources en mode à plat ; la flaque non,
         // elle est cosmétique et additive, comme celle du Feu qui survit au même toggle.
         s.light.intensity = lit ? FIREFLY_LIGHT_INTENSITY * nuit * souffle * fondu : 0
@@ -388,14 +413,17 @@ export class AmbientLife {
         // (puissance 3 : la lueur est un événement, pas un régime).
         const pulse = 0.5 + 0.5 * Math.sin(nowS * 2.2 + f.phase)
         const fy = s.y + f.oy
-        f.sprite.setPosition((s.x + f.ox) * TILE_PX, fy * TILE_PX)
+        // À LA HAUTEUR DE SON ESSAIM (`lift`) : sur une terrasse, la rangée logique est deux
+        // tuiles par palier sous le sol qu'on voit.
+        f.sprite.setPosition((s.x + f.ox) * TILE_PX, fy * TILE_PX - s.lift)
         // Le fondu multiplie l'alpha COMPLET, plancher compris : 0,05 est un terme, pas un
         // facteur, et douze halos additifs à 0,05 sur une nuit noire, ça s'allume.
         f.sprite.setAlpha((0.05 + 0.85 * pulse * pulse * pulse) * fonduLuciole(s.fade, f.retard))
         // ELLE TRIE À CHAQUE IMAGE, puisqu'elle dérive : une luciole qui remonte d'une rangée
         // doit repasser DERRIÈRE le fût qu'elle vient de croiser. La profondeur posée une fois
-        // à la naissance l'aurait figée au premier rang de l'essaim.
-        f.sprite.setDepth(fireflyDepth(fy, TILE_PX))
+        // à la naissance l'aurait figée au premier rang de l'essaim. ET DANS LA STRATE de son
+        // essaim (E-R22) : le tri en Y ne départage qu'à l'intérieur d'un étage.
+        f.sprite.setDepth(s.strate + fireflyDepth(fy, TILE_PX))
       }
     }
   }
@@ -420,6 +448,7 @@ export class AmbientLife {
   }
 
   private makeSwarm(x: number, y: number): Swarm {
+    const { lift, strate } = this.reliefSous?.(x, y) ?? { lift: 0, strate: 0 }
     const [lo, hi] = FLIES_PER_SWARM
     const count = lo + Math.floor(Math.random() * (hi - lo + 1))
     const flies: Firefly[] = []
@@ -451,7 +480,7 @@ export class AmbientLife {
     // l'image suivante, et un essaim posé en plein crépuscule ne s'allume pas d'un coup.
     const light = this.scene.lights?.addLight(
       x * TILE_PX,
-      y * TILE_PX,
+      y * TILE_PX - lift,
       FIREFLY_LIGHT_RADIUS * TILE_PX,
       FIREFLY_TINT,
       0,
@@ -459,14 +488,18 @@ export class AmbientLife {
     ) ?? null
     // La flaque au sol. Centrée sur un multiple de 2 px (l'ancre est un flottant : on la CALE
     // sur la grille de l'art, sinon les carrés de 4 px tomberaient à cheval et grouilleraient).
+    // Le lift est un multiple de 32 : il ne dérange pas la grille. Et JUSTE AU-DESSUS DES PAVÉS
+    // DE SON PALIER (`strate + FIREFLY_GROUND_DEPTH`) : au palier 0 c'est « juste au-dessus du
+    // voile », comme avant ; à un palier haut, le voile ne monte pas (les parts hautes prennent
+    // leur nuit par teinte) mais les pavés, eux, y vivent à `PAVE_DEPTH + strate`.
     const flaque = this.scene.add
-      .image(Math.round((x * TILE_PX) / 2) * 2, Math.round((y * TILE_PX) / 2) * 2, FIREFLY_POOL_KEY)
+      .image(Math.round((x * TILE_PX) / 2) * 2, Math.round((y * TILE_PX) / 2) * 2 - lift, FIREFLY_POOL_KEY)
       .setOrigin(0.5, 0.5)
-      .setDepth(FIREFLY_GROUND_DEPTH)
+      .setDepth(strate + FIREFLY_GROUND_DEPTH)
       .setBlendMode('ADD')
       .setAlpha(0)
       .setDisplaySize(FIREFLY_POOL_SIZE_PX, FIREFLY_POOL_SIZE_PX)
-    return { x, y, flies, phase: Math.random() * Math.PI * 2, fade: 0, dying: false, light, flaque }
+    return { x, y, flies, phase: Math.random() * Math.PI * 2, fade: 0, dying: false, light, flaque, lift, strate }
   }
 
   /** LE SEUL endroit où un essaim disparaît — les TROIS sites passent par ici, et ils sont

@@ -31,6 +31,8 @@ import { TERRAIN_COLORS } from '../../render/terrain-colors'
 import { contexteDesButtes, densiteDeMoucheture, type ButteContexte } from '../../render/buttes'
 import { epinglerLaTuile } from '../../render/tuile-epinglee'
 import type { Relief } from '../../render/relief'
+import type { Decouvert } from '../../render/framing'
+import { Trouee } from './trouee'
 
 /**
  * LA CENDRE FRAÎCHE EST CHAUDE, LA VIEILLE EST FROIDE (spec `cendre.md`). Sans ce dégradé, la
@@ -221,6 +223,20 @@ export class PaveLayer {
   ) {
     if (mouchetures) this.buttes = contexteDesButtes(map)
     this.liftMaxPx = relief?.actif ? relief.hauteurMax * LIFT_TUILES * TILE_PX : 0
+    this.trouee = relief?.actif ? new Trouee(scene, relief) : null
+  }
+
+  /**
+   * LE DÉCOUVERT (spec `terrasses.md` T-R9 ; Alexis, 2026-09-05) : le centre dessiné du joueur,
+   * son niveau et l'ouverture du disque — posé par `WorldScene` AVANT `render`. Les parts d'un
+   * palier plus haut que lui, à portée, sont CREUSÉES tuile par tuile (`Trouee`) : c'est ce qui
+   * laisse voir un corps passé sous la rangée nord d'une terrasse. `null` sur une carte plate.
+   */
+  decouvert: Decouvert | null = null
+  private readonly trouee: Trouee | null
+  /** Combien de parts sont trouées à cet instant — la sonde du smoke. */
+  get troueesActives(): number {
+    return this.trouee?.actives ?? 0
   }
 
   /** De combien, au plus, une tuile de la carte se dessine plus haut que sa rangée logique (px) :
@@ -517,6 +533,21 @@ export class PaveLayer {
         this.rendre(k, c)
       }
     }
+
+    // LA TROUÉE DU DÉCOUVERT : sur les parts d'un palier plus haut que le regard (le sol ET le
+    // surplomb de berge, qui se dessinent au même endroit). `Trouee` décide de la portée et
+    // repose l'original quand le disque s'en va — ici on ne fait que présenter chaque part.
+    const d = this.decouvert
+    if (this.trouee && (this.trouee.actives > 0 || (d !== null && d.ouverture > 0))) {
+      for (const [k, c] of this.chunks) {
+        const cx = k % 65536
+        const cy = (k - cx) / 65536
+        for (const part of c.parts) {
+          this.trouee.appliquer(part.cle, cx, cy, part.palier, d)
+          if (part.surplomb) this.trouee.appliquer(part.surplomb.cle, cx, cy, part.palier, d)
+        }
+      }
+    }
   }
 
   /** Combien de chunks VISIBLES manquent à l'écran en ce moment — la sonde du smoke : doit
@@ -606,9 +637,13 @@ export class PaveLayer {
 
   private rendre(k: number, c: Chunk): void {
     for (const part of c.parts) {
+      // L'original que la trouée gardait de cette texture ne vaut plus rien : la clé peut être
+      // reprise à l'identique par la recuisson qui suit (cendre, saison).
+      this.trouee?.oublier(part.cle)
       part.image.destroy()
       this.scene.textures.remove(part.cle)
       if (part.surplomb) {
+        this.trouee?.oublier(part.surplomb.cle)
         part.surplomb.image.destroy()
         this.scene.textures.remove(part.surplomb.cle)
       }

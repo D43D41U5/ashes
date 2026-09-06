@@ -86,6 +86,8 @@ import { PAVE, PAVE_PX, estStructurel } from '../../render/paves'
 import { ambianceDe } from '../../render/zone-ambiance'
 import { poserChunk } from './pave-layer'
 import type { Relief } from '../../render/relief'
+import type { Decouvert } from '../../render/framing'
+import { Trouee } from './trouee'
 
 /** Le sol du manteau : sous le surplomb de la berge (+0,29), au-dessus des reflets (+0,28). */
 export const GEL_SOL_DEPTH = GROUND_MAP_DEPTH + 0.285
@@ -202,11 +204,17 @@ export class GelLayer {
     private readonly relief?: Relief,
   ) {
     this.liftMaxPx = relief?.actif ? relief.hauteurMax * LIFT_TUILES * TILE_PX : 0
+    this.trouee = relief?.actif ? new Trouee(scene, relief) : null
     this.trameNeige = new Float32Array(GRAIN_CELLS * GRAIN_CELLS)
     for (let cy = 0; cy < GRAIN_CELLS; cy++) {
       for (let cx = 0; cx < GRAIN_CELLS; cx++) this.trameNeige[cy * GRAIN_CELLS + cx] = grainFacteur(cx, cy, 'neige', seed)
     }
   }
+
+  /** LE DÉCOUVERT, posé par `WorldScene` avant `update` — même trouée que les pavés
+   *  (`pave-layer.ts`, T-R9) : le manteau d'un palier haut cède sur le corps qu'il recouvre. */
+  decouvert: Decouvert | null = null
+  private readonly trouee: Trouee | null
 
   /**
    * LA TEINTE DU PAYS d'une tuile — la modulation de zone du bake (`zone-ambiance`), mémoïsée
@@ -356,6 +364,18 @@ export class GelLayer {
       for (const [k, c] of parAge) {
         if (this.chunks.size <= MAX_VIVANTS || c.vu === this.frame) break
         this.rendre(k, c)
+      }
+    }
+    // ④ La trouée du découvert, sur les parts d'un palier plus haut que le regard.
+    const d = this.decouvert
+    if (this.trouee && (this.trouee.actives > 0 || (d !== null && d.ouverture > 0))) {
+      for (const [k, c] of this.chunks) {
+        const cx = k % 65536
+        const cy = Math.floor(k / 65536)
+        for (const part of c.parts) {
+          if (part.sol) this.trouee.appliquer(part.sol.cle, cx, cy, part.palier, d)
+          if (part.surplomb) this.trouee.appliquer(part.surplomb.cle, cx, cy, part.palier, d)
+        }
       }
     }
     this.relever()
@@ -541,10 +561,12 @@ export class GelLayer {
   private detruire(c: ChunkGel): void {
     for (const part of c.parts) {
       if (part.sol) {
+        this.trouee?.oublier(part.sol.cle)
         part.sol.image.destroy()
         this.scene.textures.remove(part.sol.cle)
       }
       if (part.surplomb) {
+        this.trouee?.oublier(part.surplomb.cle)
         part.surplomb.image.destroy()
         this.scene.textures.remove(part.surplomb.cle)
       }

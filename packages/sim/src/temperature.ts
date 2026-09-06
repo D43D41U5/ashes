@@ -96,14 +96,22 @@ export function isSheltered(state: SimState, tx: number, ty: number, etage?: num
   // ═══ SOUS LA ROCHE, ON EST À L'ABRI (spec `grottes.md` G-R5 ; décision du 2026-09-05 :
   // « `isSheltered` apprend “sous la roche” ») ═══
   //
-  // Un étage négatif est CREUSÉ sous son palier (`−(p + 1)`, G-R1) : toute tuile qui y existe a
-  // la roche au-dessus de la tête — la salle d'un karst comme la cave d'une mesa. Une tuile qui
-  // n'y existe pas (terrain 0) EST la roche : personne ne s'y tient, et « une tuile dehors »
-  // répond faux. Le bâti du sol ne couvre rien ici, et rien ne s'y pose qui enferme (G-R7).
-  if (etage !== undefined && etage < 0) return terrainAEtage(state.map, etage, tx, ty) !== 0
+  // Le bâti du sol ne couvre rien ici, et rien ne s'y pose qui enferme (G-R7). Une tuile qui
+  // n'existe pas à l'étage (terrain 0) EST la roche : personne ne s'y tient, « dehors » est faux.
+  if (etage !== undefined && etage < 0) return sousLaRoche(state, tx, ty, etage)
   if (roofAt(state.structures, tx, ty) !== undefined) return true
   if (state.structures.some((s) => s.tx === tx && s.ty === ty && s.type === 'house')) return true
   return isOnPoiKind(state, tx, ty, 'grotte')
+}
+
+/**
+ * CETTE TUILE EST-ELLE SOUS LA ROCHE ? — un étage négatif est CREUSÉ sous son palier (`−(p + 1)`,
+ * G-R1) : toute tuile qui y existe a la roche au-dessus de la tête, la salle d'un karst comme
+ * la cave d'une mesa. Le sol (`etage` absent ou ≥ 0) répond faux. C'est LE prédicat de la
+ * grotte pour le froid : l'abri (`isSheltered`) et l'air fixe (`GROTTE_AMBIANT`) le partagent.
+ */
+export function sousLaRoche(state: SimState, tx: number, ty: number, etage?: number): boolean {
+  return etage !== undefined && etage < 0 && terrainAEtage(state.map, etage, tx, ty) !== 0
 }
 
 /** Réchauffement du feu le plus proche : FIRE_WARMTH au contact, linéaire → 0 à FIRE_RANGE.
@@ -131,7 +139,10 @@ export function fireBubble(state: SimState, x: number, y: number, etage?: number
  * max au contact → 0 au bord du rayon). C'est un feu qu'on n'a pas allumé :
  * sur une carte où le Grand Froid mord, il réécrit les itinéraires.
  */
-export function naturalWarmth(state: SimState, x: number, y: number): number {
+export function naturalWarmth(state: SimState, x: number, y: number, etage?: number): number {
+  // La source est au SOL ; son rayon ne traverse pas la roche jusqu'à la salle du dessous (G-R7,
+  // le même mot que `fireBubble`).
+  if (etage !== undefined && etage < 0) return 0
   let best = 0
   for (const z of state.map.zones) {
     if (z.kind !== 'source_chaude') continue
@@ -173,6 +184,15 @@ export function baselineTemperature(state: SimState, x: number, y: number, etage
  * une glace qui n'a pas existé.
  */
 export function baselineTemperatureAt(state: SimState, x: number, y: number, tick: number, cst?: ConstantesDeTuile, etage?: number): number {
+  // ═══ DANS UNE GROTTE, IL FAIT 13 °C — TOUJOURS (décision d'Alexis, 2026-09-06) ═══
+  //
+  // Une grotte n'AMORTIT pas le froid du monde comme un toit : elle l'IGNORE. Ni l'heure, ni
+  // l'acte, ni le front, ni le biome du dessus, ni la Brume, ni la cendre n'y entrent — l'air y
+  // est la moyenne annuelle du pays, `T.GROTTE_AMBIANT`, et il n'en bouge pas. Décidé ICI, avant
+  // toute lecture de l'horloge, parce que c'est l'écrivain unique du froid du monde : le corps,
+  // les Cendreux, l'encyclopédie et le HUD le lisent tous par cette porte. Seuls le feu et la
+  // tenue, qui PLANCHENT l'ambiant après coup, peuvent encore le lever.
+  if (sousLaRoche(state, Math.floor(x), Math.floor(y), etage)) return T.GROTTE_AMBIANT
   const shelter = cst?.abri ?? abriDeTuile(state, x, y, etage)
   return froidDuMonde(state, x, y, tick, shelter, cst)
 }
@@ -399,7 +419,7 @@ export function ambientTemperature(state: SimState, x: number, y: number, etage?
   let t = baselineTemperature(state, x, y, etage)
   const feu = fireBubble(state, x, y, etage)
   if (feu > 0 && feu > t) t = feu
-  const source = naturalWarmth(state, x, y)
+  const source = naturalWarmth(state, x, y, etage)
   if (source > 0 && source > t) t = source
   return t
 }
@@ -428,8 +448,8 @@ export function driftStep(current: number, ambient: number, insulation: number):
  * brume, front, cendre). La saison refroidit la vallée : la montée tombe de la table du
  * froid, elle n'est plus décrétée.
  */
-export function eveilCendreuxAt(state: SimState, x: number, y: number, tick: number): number {
-  return eveilPourTemperature(baselineTemperatureAt(state, x, y, tick))
+export function eveilCendreuxAt(state: SimState, x: number, y: number, tick: number, etage?: number): number {
+  return eveilPourTemperature(baselineTemperatureAt(state, x, y, tick, undefined, etage))
 }
 
 /** La pente seule, pour qui a déjà la température en main (un tick de `cendreuxStep` la lit

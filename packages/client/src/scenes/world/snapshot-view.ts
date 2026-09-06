@@ -78,6 +78,7 @@ import {
   type Decouvert,
   LIFT_TUILES,
   strateDEtage,
+  strateDuCorps,
   DEMI_BANDE_TUILES,
   FLOOR_DEPTH,
   GROUND_FIRE_DEPTH,
@@ -1390,12 +1391,20 @@ export class SnapshotView {
     // planche pour commuter d'étage (`etageApresLePas(…, Math.floor(moved.y))`) : la pente doit
     // atteindre son sommet À L'INSTANT où l'entier bascule, sinon on aurait remplacé une marche
     // de 32 px par une marche de quelques-uns — plus petite, mais toujours une marche.
-    const dEtage = decalageDEtage(this.niveauAt?.(x, y, niveauAutorite) ?? niveauAutorite, palier)
-    // ⚠ **LE TRI, LUI, RESTE SUR L'ENTIER DE L'AUTORITÉ.** Une strate est un MONDE qu'on peint
-    // par-dessus l'autre (voir `strateDEtage`) : elle n'a pas de demi. Le corps monte donc en
-    // continu tout en restant trié avec le plancher que la sim lui donne — et c'est le fondu du
-    // découvert qui le laisse voir pendant la montée.
-    const dTri = strateDEtage(niveauAutorite, palier)
+    const niveauDessine = this.niveauAt?.(x, y, niveauAutorite) ?? niveauAutorite
+    const dEtage = decalageDEtage(niveauDessine, palier)
+    // ⚠ **LE TRI SUIT LE NIVEAU DESSINÉ, À L'ENTIER LE PLUS PROCHE** (`strateDuCorps`). Une strate
+    // est un MONDE qu'on peint par-dessus l'autre (voir `strateDEtage`) : elle n'a pas de demi ;
+    // le corps monte en continu et change de monde à MI-RAMPE. Jusqu'au 2026-09-05 le tri restait
+    // sur l'entier de l'AUTORITÉ, et « c'est le fondu du découvert qui le laisse voir pendant la
+    // montée » : à la fin de la montée, la tête passait sous le sol du haut et le découvert
+    // s'ouvrait — puis, arrivé en haut, le temps que l'autorité confirme l'étage, le corps se
+    // tenait en strate basse sur un socle noir (Alexis : « ça affiche la transparence quand je
+    // suis en haut d'une rampe », « un flash noir lorsque j'arrive à un étage supérieur »).
+    // `niveauAt` applique déjà la loi de /sim (« celui qui porte ») à la position PRÉDITE : la
+    // strate suit donc le sol qu'on foule sans attendre le snapshot — et la descente est le
+    // miroir de la montée.
+    const dTri = strateDEtage(strateDuCorps(niveauDessine), palier)
     // Et le sol lui-même monte avec son palier : les deux décalages s'additionnent (`warp.ts`).
     const lift = this.warp?.lift(x, y) ?? 0
     // ═══ DANS QUOI LE CORPS ENTRE — eau, neige, vase, terre (`render/enfoncement.ts`) ═══
@@ -1539,8 +1548,21 @@ export class SnapshotView {
     // LE RAMPANT TRAÎNE AU LIEU DE MARCHER (Alexis, 2026-08-25) — et c'est SA TEXTURE qui le dit,
     // pas un drapeau de plus à faire descendre : un corps est couché parce qu'il se dessine
     // couché, et les deux axes (`-rampant`, `-rampant-v`) partagent le même préfixe.
+    // ET LA TRACE MONTE AVEC SON PALIER (2026-09-05) : la gerbe et l'empreinte prennent la montée
+    // et la strate du corps — les mêmes nombres que son ombre, pas un calcul de plus.
     if (this.rive) {
-      this.eau?.track(sprite, p.px, p.py, p.depth, dRive, this.scene.time.now, p.displayW, textureKey.startsWith('spr-cendreux-rampant'))
+      this.eau?.track(
+        sprite,
+        p.px,
+        p.py,
+        p.depth,
+        dRive,
+        this.scene.time.now,
+        p.displayW,
+        textureKey.startsWith('spr-cendreux-rampant'),
+        lift - dEtage,
+        dTri,
+      )
     }
     // LE REFLET (R13) : un acteur dans l'eau se redit tête-bêche sur la nappe sous lui.
     if (this.reflets && immersion > 0.05) {

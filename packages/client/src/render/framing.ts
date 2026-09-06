@@ -205,6 +205,33 @@ export function strateDEtage(niveau: number, palierDuSol = 0): number {
   if (niveau < palierDuSol) return SOUTERRAIN_STRATE - ETAGE_STRATE
   return niveau * ETAGE_STRATE
 }
+
+/**
+ * ═══ LE MONDE D'UN CORPS EN PENTE — l'entier le plus proche de son niveau dessiné (2026-09-05) ═══
+ *
+ * Un corps sur une rampe a un niveau FRACTIONNAIRE (`niveauSurLaRampe`) ; une strate n'a pas de
+ * demi. Il change de monde à MI-RAMPE : dans la moitié basse il trie avec le sol du bas, dans la
+ * moitié haute avec celui du haut — et c'est le même nombre qui dit au découvert quel est SON
+ * niveau, donc ce qui peut le recouvrir. Deux nombres ici, et le corps se trierait dans un monde
+ * pendant que le découvert en fondrait un autre.
+ *
+ * Jusque-là le tri restait sur l'ENTIER DE L'AUTORITÉ et l'on comptait sur le découvert pendant
+ * la montée : sur la seconde moitié de la rampe la tête passait sous le sol du haut, le disque
+ * s'ouvrait ; puis, arrivé en haut, le temps que l'autorité confirme l'étage, le corps prédit se
+ * tenait en strate basse sur son socle noir — « un flash noir ». Alexis, 2026-09-05.
+ *
+ * ⚠ La moitié BASSE reste dans le monde du bas, et ce n'est pas un arrondi de commodité. Sur la
+ * tuile de rampe `ty`, à la part `frac` gravie, le corps est dessiné en `ty + 1 − frac − frac × LIFT`
+ * et sa tête `CORPS_HAUTEUR_TUILES` plus haut ; le sol du haut (tuile `ty − 1`) finit en
+ * `ty − LIFT`. Ils se touchent à `frac = (LIFT − 0,5) / (1 + LIFT)` — 0,5 pour un lift de 2 et
+ * un corps d'1,5 : en dessous, rien du haut ne recouvre le corps, il n'y a pas de fondu à
+ * demander ; à partir de là, il est dans le monde du haut et se dessine SUR son sol. Que la
+ * mi-rampe soit exactement le point de contact tient à ces deux nombres — `framing.test.ts` le
+ * garde (« un corps qui gravit une rampe ne demande jamais de fondu »).
+ */
+export function strateDuCorps(niveauDessine: number): number {
+  return Math.round(niveauDessine)
+}
 /**
  * Le socle du souterrain : `−1` atterrit à `SOUTERRAIN_STRATE − ETAGE_STRATE` = **2 000 000**.
  *
@@ -618,8 +645,52 @@ export function crownAlpha(distTiles: number): number {
  * `[f − 1 ; f + 0,5]`, donc aucune tuile capable de couvrir un corps n'est à plus de ~1,2 tuile de
  * lui. Reprendre les six tuiles de la cime aurait ouvert un trou de douze tuiles de diamètre sur un
  * cadre qui en fait vingt : le fondu local serait devenu le fondu du plateau entier.
+ *
+ * ═══ UN DEMI-DISQUE : SEUL CE QUI EST DEVANT LE CORPS CÈDE (Alexis, 2026-09-04) ═══
+ *
+ * *« Je vois au travers lorsque j'approche depuis le sud, alors que ça devrait le faire uniquement
+ * pour les tuiles plus bas que le personnage à l'écran. »* Depuis le sud, entre le corps et le
+ * chapeau il y a la PAROI — `LIFT_TUILES` rangées de mur, plus hautes que le sprite (1,5 tuile) :
+ * aucune tuile du chapeau ne peut le couvrir, et fondre le chapeau ouvrait un trou sur rien.
+ * Depuis le nord, c'est l'inverse : le chapeau se dessine PAR-DESSUS le corps (strate d'étage),
+ * et c'est là que le découvert a un objet.
+ *
+ * Ce qui sépare les deux cas est la RANGÉE LOGIQUE DES PIEDS, et c'est le lift qui le dit : une
+ * pièce d'un étage plus haut, logiquement au sud des pieds, se dessine sur le corps ; une pièce
+ * logiquement au nord des pieds se dessine derrière sa propre paroi. En positions D'ÉCRAN (celles
+ * que la fonction reçoit), le pivot est donc la tuile dessinée `LIFT_TUILES` rangées au-dessus des
+ * pieds (`PLATEAU_PIVOT`) — et la transition tient sur UNE tuile (`PLATEAU_TRANSITION`), pas sur
+ * un front : la pièce d'à côté qu'on longe s'efface en un pas au lieu de sauter. Les deux bornes
+ * sont EXACTES, pas choisies : au contact depuis le sud, la tuile la plus proche est à
+ * `pivot − 0,5 − demi-hitbox` (pleine) ; au contact depuis le nord, à `pivot + 0,5 + demi-hitbox`
+ * (cède en entier). La hitbox laisse 0,19 tuile de marge de chaque côté, et pas plus.
+ *
+ * ═══ ET LE DISQUE NE S'OUVRE QUE SI LA BUTTE CACHE LE CORPS (Alexis, 2026-09-05) ═══
+ *
+ * *« On ne masque la butte que si on est plus au nord et qu'on est occulté par un bout de la
+ * butte. »* Le demi-disque disait QUELLES pièces cèdent ; il ne disait pas SI. Sur le flanc d'une
+ * butte, ou en approchant par le nord à trois tuiles du bord, rien ne cache le corps — et le
+ * disque fondait pourtant les tuiles à sa portée. Désormais le découvert porte son OUVERTURE
+ * (`Decouvert.ouverture`, 0..1) : la part du corps dessiné que des pièces d'un étage plus haut
+ * recouvrent VRAIMENT (`ouvertureDuDecouvert`), pleine dès `COUVERTURE_PLEINE` tuile de hauteur
+ * couverte. Rien ne le cache : rien ne cède, la butte est entière. On passe sous son bord : le
+ * disque s'ouvre sur une tuile de marche, continûment — pas de front, pas de saut.
+ *
+ * Le recouvrement se lit en GÉOMÉTRIE D'ÉCRAN, et c'est ce qui le rend juste sans autre règle :
+ * une pièce logiquement au nord des pieds se dessine `LIFT` rangées trop haut pour toucher un
+ * corps d'1,5 tuile ; une pièce de la rangée des pieds ou du sud se dessine dessus, et le tri la
+ * met dessus. Le recouvrement et `partDevantLeCorps` sont donc le même nombre pour la tuile du
+ * bord — on ne pondère pas deux fois. « Plus au nord » se déduit : seul ce qui est au sud des
+ * pieds peut être dessiné sur eux. Le disque, lui, garde sa portée (`PLATEAU_R_OUT`) : ouvert, il
+ * reste un champ de vision, pas une lucarne (2026-09-01).
  */
 export const PLATEAU_R_IN = LIFT_TUILES
+/** Le pivot du demi-disque, en rangées d'écran AU-DESSUS des pieds dessinés : la tuile d'un étage
+ *  plus haut qui est dans la rangée logique des pieds. Au-delà (plus haut à l'écran), derrière sa
+ *  paroi ; en deçà (plus bas), sur le corps. */
+export const PLATEAU_PIVOT = LIFT_TUILES
+/** La largeur de la transition autour du pivot, en tuiles — une tuile, la rangée qu'on traverse. */
+export const PLATEAU_TRANSITION = 1
 /** Trois tuiles de dégradé : assez pour que le bord ne se lise pas comme un disque découpé, assez
  *  peu pour que la mesa garde sa masse à deux pas de là. */
 export const PLATEAU_R_OUT = LIFT_TUILES + 3
@@ -632,6 +703,12 @@ export const PLATEAU_R_OUT = LIFT_TUILES + 3
  * plateau plein — noir à l'œil, en gardant un souffle de la roche qu'on traverse.
  */
 export const PLATEAU_ALPHA_MIN = 0.12
+/** La hauteur DESSINÉE du corps, en tuiles : le sprite du joueur fait 24 px, pieds à l'origine. */
+export const CORPS_HAUTEUR_TUILES = 1.5
+/** Le recouvrement (en tuiles de hauteur, moyenné sur la largeur de la hitbox) à partir duquel le
+ *  disque est ouvert en entier : une tuile — la première rangée du chapeau passée sur la tête. Un
+ *  corps qui dépasse d'une demi-tuile est déjà « caché » pour le regard, et le disque plein. */
+export const COUVERTURE_PLEINE = 1
 
 /**
  * L'alpha d'une pièce d'étage dont le CENTRE DESSINÉ est en `(xCentre, yCentre)`, en tuiles — la
@@ -649,6 +726,10 @@ export interface Decouvert {
   /** Le niveau (entier, celui de l'autorité) d'où le regard vient : seul ce qui est PLUS HAUT
    *  cède (décision d'Alexis, 2026-09-01 : « le découvert ne part que vers le haut »). */
   niveau: number
+  /** L'OUVERTURE du disque, 0..1 : la part du corps que des pièces d'un étage plus haut recouvrent
+   *  vraiment (`ouvertureDuDecouvert` ; Alexis, 2026-09-05). À 0, rien ne cache le corps et rien
+   *  ne cède — la butte reste entière, de quelque côté qu'on l'approche. */
+  ouverture: number
 }
 export function alphaDeDecouvert(
   decouvert: Decouvert | null | undefined, xCentre: number, yCentre: number,
@@ -657,10 +738,106 @@ export function alphaDeDecouvert(
   niveauDeLaPiece?: number,
 ): number {
   if (decouvert === null || decouvert === undefined) return 1
+  if (decouvert.ouverture <= 0) return 1
   if (niveauDeLaPiece !== undefined && niveauDeLaPiece <= decouvert.niveau) return 1
   const dx = decouvert.x - xCentre
   const dy = decouvert.y - yCentre
-  return plateauAlpha(Math.sqrt(dx * dx + dy * dy))
+  const devant = partDevantLeCorps(dy)
+  if (devant <= 0) return 1
+  return 1 - decouvert.ouverture * devant * (1 - plateauAlpha(Math.sqrt(dx * dx + dy * dy)))
+}
+
+/**
+ * L'OUVERTURE du découvert (0..1) : la part du corps dessiné que recouvrent les pièces d'un étage
+ * plus haut que lui — en géométrie d'écran, la seule qui dise ce que l'œil voit.
+ *
+ * Le corps : `CORPS_HAUTEUR_TUILES` de haut sur la largeur de la hitbox, pieds dessinés à
+ * `yDessine + demi-profondeur` (le centre dessiné est ce que `WorldScene` porte). Une pièce
+ * d'étage de hauteur `h` sur la tuile `(tx, ty)` se dessine `h × LIFT` rangées plus haut que sa
+ * position logique ; on somme l'aire de chaque recouvrement, on divise par la largeur du corps
+ * (une hauteur, en tuiles), et `COUVERTURE_PLEINE` en fait un nombre entre 0 et 1. Continu en x
+ * comme en y : le long d'un bord dentelé le fondu respire, il ne saute pas.
+ *
+ * `hauteurCouvrante(tx, ty)` : la hauteur à laquelle cette tuile se DESSINE — son palier, plus
+ * un si elle porte un chapeau (`Relief.hauteur`) ; 0 au sol plat. Le sol d'une terrasse recouvre
+ * un corps du palier d'en dessous exactement comme un chapeau de mesa (T-R9 ; Alexis,
+ * 2026-09-05) : c'est le même lift, la même géométrie. Une pièce à la hauteur du corps ou dessous
+ * ne le couvre jamais (E-R20). Le balayage tient sur deux colonnes et trois rangées par hauteur.
+ */
+export function ouvertureDuDecouvert(
+  hauteurCouvrante: (tx: number, ty: number) => number,
+  x: number, yDessine: number, niveau: number, hauteurMax: number,
+): number {
+  if (hauteurMax <= niveau) return 0
+  const demiLargeur = BALANCE.AVATAR_HITBOX_TILES / 2
+  const pieds = yDessine + BALANCE.AVATAR_HITBOX_DEPTH_TILES / 2
+  const tete = pieds - CORPS_HAUTEUR_TUILES
+  const xa = x - demiLargeur
+  const xb = x + demiLargeur
+  const tx0 = Math.floor(xa)
+  const tx1 = Math.floor(xb)
+  let aire = 0
+  for (let h = niveau + 1; h <= hauteurMax; h++) {
+    const lift = h * LIFT_TUILES
+    // Les rangées logiques dont la tuile dessinée `[ty − lift, ty − lift + 1]` touche le corps.
+    const ty0 = Math.floor(tete + lift)
+    const ty1 = Math.floor(pieds + lift)
+    for (let ty = ty0; ty <= ty1; ty++) {
+      const haut = ty - lift
+      const dh = Math.min(haut + 1, pieds) - Math.max(haut, tete)
+      if (dh <= 0) continue
+      for (let tx = tx0; tx <= tx1; tx++) {
+        if (hauteurCouvrante(tx, ty) !== h) continue
+        const dw = Math.min(tx + 1, xb) - Math.max(tx, xa)
+        if (dw > 0) aire += dw * dh
+      }
+    }
+  }
+  const couverture = aire / (2 * demiLargeur)
+  const t = couverture / COUVERTURE_PLEINE
+  return t <= 0 ? 0 : t >= 1 ? 1 : t
+}
+
+/**
+ * ═══ CE QUI SE DESSINE SOUS UNE PIÈCE QU'ON FOND : LE VRAI SOL, OU L'INTÉRIEUR DE LA MASSE ═══
+ *
+ * Une tuile de hauteur `h` se dessine `h × LIFT` rangées au-dessus de sa rangée logique. Quand
+ * elle cède, ce qu'on voit à sa place est ce que les paliers du DESSOUS dessinent à cette même
+ * rangée d'écran : la tuile `(tx, ty − (h − q) × LIFT)` si elle est au palier `q` — le sol et les
+ * pavés d'un palier se posent à SON lift, pas au lift de ce qui le recouvre. On descend les
+ * paliers du plus haut au plus bas ; le premier qui y pose une tuile est celui qu'on voit.
+ *
+ * Est-ce du VRAI sol ? Oui, sauf si cette tuile porte un chapeau : alors ce qu'on verrait est le
+ * pré sous une mesa — l'intérieur d'une masse (Alexis, 2026-09-01 : « ça ne doit être que la
+ * BASE de l'étage qui gêne la vue qui doit être noir »). Et si aucun palier n'y pose rien, c'est
+ * la même chose : rien de réel dessous. Dans les deux cas l'appelant BOUCHE au socle.
+ *
+ * UN SEUL prédicat pour la mesa (`h = palier + 1`, `etage-layer`) et pour la terrasse (`h =
+ * palier`, la trouée des pavés — Alexis, 2026-09-05 : « fais la même chose pour les falaises
+ * des terrasses »). Pour la mesa, c'est exactement l'ancienne règle « la tuile `LIFT` rangées au
+ * nord est-elle aussi du chapeau ? » — étendue aux paliers du dessous.
+ */
+export interface ReliefLu {
+  palier(tx: number, ty: number): number
+  chapeau(tx: number, ty: number): boolean
+}
+export function solVisibleSous(relief: ReliefLu, tx: number, ty: number, h: number): boolean {
+  for (let q = h - 1; q >= 0; q--) {
+    const ty2 = ty - (h - q) * LIFT_TUILES
+    if (relief.palier(tx, ty2) === q) return !relief.chapeau(tx, ty2)
+  }
+  return false
+}
+
+/**
+ * La part d'une pièce qui est DEVANT le corps, de 0 (entièrement derrière sa paroi, elle reste
+ * pleine) à 1 (sur le corps, le disque joue en entier). `dy` = pieds dessinés − centre dessiné de
+ * la pièce : positif quand la pièce est plus haut à l'écran. Rampe continue d'une tuile autour du
+ * pivot (voir `PLATEAU_PIVOT`).
+ */
+export function partDevantLeCorps(dy: number): number {
+  const t = (PLATEAU_PIVOT + PLATEAU_TRANSITION / 2 - dy) / PLATEAU_TRANSITION
+  return t <= 0 ? 0 : t >= 1 ? 1 : t
 }
 
 export function plateauAlpha(distTiles: number): number {

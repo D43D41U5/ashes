@@ -10,7 +10,7 @@ import { carteDeTest } from '../../../tools/carte-cache'
 import { MONDE, MONDE_JOUE } from './zonegraph'
 import { BALANCE, TEMPERATURE } from './balance'
 import { atteignableEntreEtages, connecteurAt, niveauDuCorps, palierDuSol, terrainAEtage } from './etages'
-import { isWater, MARCHABLE, poisAt, type WorldMap } from './map'
+import { isWater, lieuAt, MARCHABLE, poisAt, type WorldMap } from './map'
 import { TERRAIN_DEEP_WATER, TERRAIN_SHALLOW_WATER } from './balance'
 import { generateZonedTerrain, type CarteZonee } from './zonegen'
 import { emplacementsDeVillage, placeZoneNodes, pointsDeSpawn } from './zone-content'
@@ -19,7 +19,7 @@ import { fondDuLieu, nidsAMonstre, spawnPoiMonsters } from './poi'
 import { placeHuntingGrounds } from './faune'
 import { creuserLePlancher } from './grottes-plancher'
 import { isOnPoiKind } from './poi-discovery'
-import { ambientTemperature, baselineTemperatureAt, isSheltered } from './temperature'
+import { ambientTemperature, baselineTemperatureAt, eveilCendreuxAt, fireBubble, isSheltered } from './temperature'
 import { partDuCiel } from './nuit'
 import { createSim, spawnEntity, step } from './sim'
 import { PIECES, STRUCTURE_TYPES, type BarrierType } from './pieces'
@@ -509,29 +509,76 @@ describe('G-A5 — un lieu : la Grotte est le karst', () => {
       for (const id of poisAt(map, ox + 0.5, oy + 0.5, k.niveau)) {
         if (map.zones[id]!.kind !== 'grotte') fautes.push(`(${ox},${oy}) à l'étage ${k.niveau} foule ${map.zones[id]!.name}`)
       }
+      // Et LE LIEU nommé (`lieuAt`, ce que la barre affiche) : sur TOUTE tuile creusée à son
+      // étage, c'est cette Grotte — jamais le sol au-dessus de la tête. Au sol, la loi d'avant.
+      const grotte = map.zones.find((z) => z.kind === 'grotte' && z.etage === k.niveau && z.x === ox && z.y === oy)
+      for (const t of k.tuiles) {
+        const [x, y] = xyDe(map, t)
+        const lieu = lieuAt(map, x + 0.5, y + 0.5, k.niveau)
+        if (lieu !== grotte) fautes.push(`(${x},${y}) à l'étage ${k.niveau} : la barre dirait « ${lieu?.name ?? '—'} », pas « ${grotte?.name ?? '?'} »`)
+      }
+      if (lieuAt(map, ox + 0.5, oy + 1.5, k.niveau) !== undefined) fautes.push(`(${ox},${oy + 1}) devant la gueule, à l'étage ${k.niveau} : un lieu sous la roche pleine`)
+      const auSol = lieuAt(map, ox + 0.5, oy + 0.5)
+      if (auSol !== lieuAt(map, ox + 0.5, oy + 0.5, 0)) fautes.push(`(${ox},${oy}) : l'étage 0 ne rend pas le sol`)
     }
     expect(fautes.slice(0, 12), fautes.join('\n')).toHaveLength(0)
   })
 
-  it('l’abri est une température STABLE, et le fond est noir à midi : la conséquence voulue de G-R5', () => {
+  /** Le tick de MIDI et celui du CŒUR DE LA NUIT d'un jour de saison (calendrier ×1, départ au jour 1). */
+  const midiDe = (jour: number): number => (jour - 1) * TICKS_PER_CYCLE + Math.floor(dayTicksPourJour(jour) / 2)
+  const nuitDe = (jour: number): number => (jour - 1) * TICKS_PER_CYCLE + dayTicksPourJour(jour) + Math.floor((TICKS_PER_CYCLE - dayTicksPourJour(jour)) / 2)
+
+  it('il fait 13 °C dans une grotte — TOUJOURS — et le fond est noir à midi : la conséquence voulue de G-R5', () => {
     const c = carteDeTest(2026, MONDE.JOUEURS_CIBLE, MONDE_JOUE)
     const { map } = c
     const sim = createSim(2026, { map, worldEvents: false, faunaCap: 0 })
+    // ⚠ CETTE GARDE ROUGIT SUR LE CODE D'AVANT (l'abri qui AMORTIT) : au bit près, l'ancienne
+    // loi rendait `baselineTemperatureAt(…, { abri: SHELTER_FACTOR })`, qui bouge avec l'heure.
+    // On relit chaque fond à quatre instants de la saison — midi d'acte I, nuit d'acte III… —
+    // et l'on exige le MÊME nombre, alors que le dessus de la terrasse, lui, bouge.
+    // Midi et 3 h du matin de quatre jours : l'Ardeur, les Pluies, le Grand Froid, la Fonte.
+    const jours = [1, 20, 40, 59] as const
+    const instants = jours.flatMap((j) => [midiDe(j), nuitDe(j)])
     let vus = 0
     for (const k of c.karsts) {
       const [fx, fy] = xyDe(map, k.fond)
       const [gx, gy] = xyDe(map, k.gueules[0]![0])
-      // L'abri : le froid du monde y est amorti par `SHELTER_FACTOR` — LA MÊME LOI que sous un
-      // toit, au bit près : lire le fond à son étage, c'est lire cette tuile avec l'abri posé.
-      // Et le même corps lu AU SOL de cette tuile (le dessus de la terrasse) est à découvert.
-      const dedans = ambientTemperature(sim, fx + 0.5, fy + 0.5, k.niveau)
-      expect(dedans, `fond de (${gx},${gy})`).toBe(baselineTemperatureAt(sim, fx + 0.5, fy + 0.5, sim.tick, { abri: TEMPERATURE.SHELTER_FACTOR }))
-      expect(ambientTemperature(sim, fx + 0.5, fy + 0.5), `dessus de (${gx},${gy})`).toBe(baselineTemperatureAt(sim, fx + 0.5, fy + 0.5, sim.tick, { abri: 1 }))
+      const dessus = new Set<number>()
+      for (const t of instants) {
+        expect(baselineTemperatureAt(sim, fx + 0.5, fy + 0.5, t, undefined, k.niveau), `fond de (${gx},${gy}) au tick ${t}`).toBe(TEMPERATURE.GROTTE_AMBIANT)
+        dessus.add(baselineTemperatureAt(sim, fx + 0.5, fy + 0.5, t))
+      }
+      // Le témoin : le même corps lu AU SOL de cette tuile (le dessus de la terrasse) vit le
+      // temps qu'il fait — sinon la garde ne prouverait pas que la grotte l'ignore.
+      expect(dessus.size, `dessus de (${gx},${gy}) : ${[...dessus].join(', ')}`).toBeGreaterThan(1)
+      // Et l'ambiant fini, sans feu : le même 13 (rien ne plancher, rien ne tire).
+      expect(ambientTemperature(sim, fx + 0.5, fy + 0.5, k.niveau), `ambiant du fond de (${gx},${gy})`).toBe(TEMPERATURE.GROTTE_AMBIANT)
       // Le fond est à ≥ FOND_DISTANCE de toute gueule : le jour n'y entre pas (E-R13).
       expect(partDuCiel(sim, fx, fy, k.niveau), `fond de (${gx},${gy}) à ${cheb([fx, fy], [gx, gy])} tuiles`).toBe(0)
       vus++
     }
     expect(vus).toBeGreaterThan(0)
+  })
+
+  it('un bivouac ne change rien à l’air de la grotte, et un Cendreux y est amorphe : les conséquences de 13 °C', () => {
+    const c = carteDeTest(2026, MONDE.JOUEURS_CIBLE, MONDE_JOUE)
+    const { map } = c
+    const sim = createSim(2026, { map, worldEvents: false, faunaCap: 0 })
+    const k = c.karsts[0]!
+    const [fx, fy] = xyDe(map, k.fond)
+    // Le feu PLANCHE : 14 °C au contact > 13, la grotte se lève d'un degré à la flamme.
+    // Un feu libre forgé à la main (sans slot `fuel`) vaut ALLUMÉ (`fireStateAt`). Au plus près
+    // qu'un corps s'en tienne (la demi-tuile), il vaut 14 × (1 − 0,71/6) = 12,3 °C < 13 : le
+    // `max` de l'ambiant ne le lève pas — sous la roche, un feu est une station, pas une chaleur.
+    sim.structures.push({ id: 9_999, type: 'fire', tx: fx, ty: fy, villageId: 0, ownerId: 0, access: 'public', hp: 100, etage: k.niveau })
+    expect(fireBubble(sim, fx + 0.5, fy + 0.5, k.niveau)).toBeGreaterThan(0) // le feu chauffe bien, à cet étage
+    expect(ambientTemperature(sim, fx + 0.5, fy + 0.5, k.niveau)).toBe(TEMPERATURE.GROTTE_AMBIANT)
+    // Le même feu ne chauffe pas la terrasse au-dessus (G-R7) : le dessus reste le froid du monde.
+    expect(ambientTemperature(sim, fx + 0.5, fy + 0.5)).toBe(baselineTemperatureAt(sim, fx + 0.5, fy + 0.5, sim.tick))
+    // La traque thermique : 13 > CHAUD (6), l'éveil est nul toute l'année, même la nuit du Grand Froid.
+    const nuitDuGrandFroid = nuitDe(40)
+    expect(eveilCendreuxAt(sim, fx + 0.5, fy + 0.5, nuitDuGrandFroid, k.niveau)).toBe(0)
+    expect(eveilCendreuxAt(sim, fx + 0.5, fy + 0.5, nuitDuGrandFroid)).toBeGreaterThan(0) // le témoin : dehors, la nuit d'hiver éveille
   })
 
   it.each(GRAINES)('graine %i — la tanière : `populateDen` pose UN sanglier au fond de 100 % des karsts, à l’étage', (seed) => {

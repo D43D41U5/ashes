@@ -421,6 +421,21 @@ export const TEMPERATURE = {
   FIRE_WARMTH: 14, // cible au contact d'un feu : +14 °C (ex-jauge 80)
   FIRE_RANGE: 6, // tuiles
   SHELTER_FACTOR: 0.5, // sous toit : nuit+biome × 0.5
+  /**
+   * L'AIR D'UNE GROTTE — **13 °C, toujours** (décision d'Alexis, 2026-09-06 : *« il doit
+   * toujours faire 13 °C dans une grotte »*). Une vraie grotte est à la moyenne annuelle de
+   * son pays, et n'en bouge pas : ni la saison, ni la nuit, ni le front, ni le biome du dessus
+   * n'y entrent. Ce n'est pas un abri qui AMORTIT (`SHELTER_FACTOR`), c'est un lieu qui FIXE.
+   *
+   * Conséquences, voulues : au-dessus de `AMBIANT_DOUX` (6) — la thermogenèse n'y coûte rien,
+   * l'hypothermie n'y existe pas ; au-dessus de `CENDREUX.TORPEUR.CHAUD` (6) — les Cendreux y
+   * sont amorphes toute l'année ; et un bivouac n'y change RIEN à l'air (`FIRE_WARMTH` = 14 au
+   * contact, 12,3 à la demi-tuile où l'on se tient : sous 13, le `max` ne le lève pas) — sous
+   * la roche, le feu est une station, pas une chaleur. En Ardeur (+26 dehors), la grotte est
+   * la fraîcheur. Lu par `baselineTemperatureAt`, donc par tout le froid du monde (corps,
+   * Cendreux, encyclopédie, HUD).
+   */
+  GROTTE_AMBIANT: 13,
   /** Fraction de l'écart à la CIBLE CORPORELLE comblée par tick (÷ isolation). Calibrage
    *  inchangé par le passage en °C — une dérive proportionnelle à l'écart est invariante par
    *  application affine : ~2 min réelles vers l'engourdissement, ~6 min vers l'hypothermie

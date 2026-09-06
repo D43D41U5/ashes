@@ -59,7 +59,7 @@ import type Phaser from 'phaser'
 import { hash2, TERRAIN_CLIFF, TERRAIN_ROCK, type Connecteur, type WorldMap } from '@ashes/sim'
 import { CHUTE_FRAMES, CHUTE_HZ, CHUTE_PHASES, ECUME_FRAMES } from '../../render/chute-art'
 import { cliffKey, levreDe, PAROI_RANGEES, PHASES_PAROI, roleDeFalaise, varianteDeChute, varianteDEcume, varianteDeLevre, VARIANTES_DESSUS } from '../../render/cliff-art'
-import { CLIFF_DEPTH, CLIFF_OMBRE_DEPTH, LIFT_TUILES, strateDEtage, TILE_PX } from '../../render/framing'
+import { alphaDeDecouvert, CLIFF_DEPTH, CLIFF_OMBRE_DEPTH, LIFT_TUILES, strateDEtage, TILE_PX, type Decouvert } from '../../render/framing'
 import { cranDeDerive } from '../../render/ombre-socle'
 import { estEau } from '../../render/paves'
 import type { Relief } from '../../render/relief'
@@ -109,6 +109,9 @@ export class CliffLayer {
    */
   forceOmbre = 1
   deriveOmbre = 0
+  /** LE DÉCOUVERT (T-R9 ; Alexis, 2026-09-05), posé par `WorldScene` avant `render` : la lèvre
+   *  d'un palier plus haut que le regard cède avec son sol, au même alpha (`alphaDeDecouvert`). */
+  decouvert: Decouvert | null = null
 
   constructor(
     private scene: Phaser.Scene,
@@ -239,9 +242,13 @@ export class CliffLayer {
             !(dx === 0 && dy === 1 && rampeMonte) && this.relief.hauteur(tx + dx, ty + dy) < h)
           const vl = varianteDeLevre(tx, ty)
           const profondeur = strateDEtage(h) + CLIFF_DEPTH
-          if (levre.cotes !== 0) nTop = this.poser(this.tops, nTop, cliffKey('levre', levre.cotes, vl), tx, ty - lift, profondeur, h)
+          // Elle CÈDE avec le sol qu'elle borde (T-R9 ; Alexis, 2026-09-05) : le même alpha que
+          // la trouée des pavés à cette tuile — sans quoi un trait de roche resterait suspendu
+          // au-dessus du corps qu'on vient de découvrir.
+          const a = alphaDeDecouvert(this.decouvert, tx + 0.5, ty - lift + 0.5, h)
+          if (levre.cotes !== 0) nTop = this.poser(this.tops, nTop, cliffKey('levre', levre.cotes, vl), tx, ty - lift, profondeur, h, a)
           for (let c = 0; c < 4; c++) {
-            if ((levre.coins & (1 << c)) !== 0) nTop = this.poser(this.tops, nTop, cliffKey('coin', c, vl), tx, ty - lift, profondeur, h)
+            if ((levre.coins & (1 << c)) !== 0) nTop = this.poser(this.tops, nTop, cliffKey('coin', c, vl), tx, ty - lift, profondeur, h, a)
           }
         }
         // ── L'OMBRE DU FLANC, sur le sol du bas — du côté OPPOSÉ à l'astre (`cran`, voir
@@ -294,7 +301,7 @@ export class CliffLayer {
 
   /** `niveau` : la strate où vit le sprite (palier du dessus, bande `j` d'une paroi, palier du sol
    *  sous une ombre) — ≥ 1 échappe au voile de nuit et prend la teinte (voir `teinte`). */
-  private poser(pool: Phaser.GameObjects.Image[], n: number, key: string, tx: number, ty: number, depth: number, niveau: number): number {
+  private poser(pool: Phaser.GameObjects.Image[], n: number, key: string, tx: number, ty: number, depth: number, niveau: number, alpha = 1): number {
     let img = pool[n]
     if (!img) {
       img = epinglerLaTuile(this.scene.add.image(0, 0, key).setOrigin(0).setDepth(depth))
@@ -303,7 +310,9 @@ export class CliffLayer {
     img.setTexture(key)
     // ⚠ LA PROFONDEUR SE REPOSE À CHAQUE FRAME : le même emplacement du pool sert une face au
     // palier 0 puis une bande au palier 2 d'une image à l'autre, selon ce que la vue contient.
+    // L'alpha aussi : une lèvre fondue hier ne doit pas fondre la face qui prend sa place.
     img.setDepth(depth)
+    img.setAlpha(alpha)
     img.setTint(niveau >= 1 ? this.teinte : 0xffffff)
     img.setPosition(tx * TILE_PX, ty * TILE_PX)
     img.setVisible(true)

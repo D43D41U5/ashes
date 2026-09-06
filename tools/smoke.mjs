@@ -139,6 +139,48 @@ const canopeePleine = (page) => page.evaluate(() => {
  * qu'il impose, et on s'arrête dès que la sonde a vu naître l'animation. Rend `false` si
  * le nœud n'est pas mort dans le nombre de coups imparti — jamais un faux vert.
  */
+/**
+ * TENIR UNE DIRECTION, CADENCÉ À LA MAIN — la seule marche fiable en headless (2026-09-05).
+ *
+ * Une image headless dure ~1 s (SwiftShader) et plusieurs sous charge : un `keyboard.down`
+ * suivi d'un `waitForTimeout` tombe entre deux images, le `keyup` est traité avec le `keydown`
+ * et la touche « n'a pas pris » (MESURÉ : la montée de la mesa restée en y 107,5 trois fois de
+ * suite à load 6). On endort donc la boucle et l'on STEPPE LA SCÈNE SEULE (`sys.step`, sans
+ * rendu — position, sprite, découvert et trouées se posent dans `update`), au temps RÉEL écoulé
+ * par pas (borné à 50 ms, comme la boucle de Phaser) pour que le Worker (20 Hz sur sa propre
+ * horloge) et la prédiction restent d'accord — à dt fixe, la prédiction prend de l'avance et
+ * la correction du snapshot suivant ramène le corps en arrière. La touche : le `Key.isDown`
+ * que `axis()` lit, forcé — la lecture exacte d'un vrai appui, sans la file clavier que la
+ * boucle endormie ne vide pas. `avant` pas immobiles d'abord (le sprite rattrape une
+ * téléportation), `apres` pas après le relâchement. Rend ce que `releve` a relevé à chaque pas.
+ */
+async function tenirLaDirection(page, direction, pas, { avant = 60, apres = 10 } = {}) {
+  return page.evaluate(async ([direction, pas, avant, apres]) => {
+    const sc = window.__BRAISES__.scene
+    sc.game.loop.sleep()
+    let t = sc.game.loop.now || 0
+    const step = (dt) => { t += dt; sc.sys.step(t, dt) }
+    for (let k = 0; k < avant; k++) step(16)
+    if (sc.__releve) sc.__releve.length = 0
+    const key = sc.inputs.keys[direction][0]
+    key.isDown = true
+    await new Promise((res) => {
+      let n = 0
+      let prev = performance.now()
+      const iv = setInterval(() => {
+        const now = performance.now()
+        step(Math.min(50, now - prev))
+        prev = now
+        if (++n >= pas) { clearInterval(iv); res() }
+      }, 16)
+    })
+    key.isDown = false
+    for (let k = 0; k < apres; k++) step(16)
+    sc.game.loop.wake()
+    return sc.__releve ? sc.__releve.slice() : []
+  }, [direction, pas, avant, apres])
+}
+
 async function frapperJusquAMort(page, nodeId, action, intervalle, coups, sonde, whole = false) {
   const cle = sonde()
   for (let i = 0; i < coups; i++) {
@@ -597,7 +639,6 @@ const SCENARIOS = {
     await vue('terrasse-rampe', 1425, 656)
     // ── EN HAUT (palier 2), le dos aux deux paliers du bas.
     await vue('terrasse-haut', 1425, 653)
-    // ── DE LOIN, du sud (palier 0) : l'escalier des trois paliers.
     // ── DE LOIN, du sud-ouest (la poche au palier 0) : l'escalier des trois paliers.
     await vue('terrasse-loin', 1420, 665)
     // ── L'EAU HAUTE : le lac du palier 2, depuis sa rive est.
@@ -1056,9 +1097,23 @@ const SCENARIOS = {
             if (tuiles.has(t) && v !== undefined && v !== 6 && v !== 4 && v !== 0) { bivouac = { tx: fond.tx + dx, ty: fond.ty + dy }; break }
           }
         }
+        // Le vestibule (G-A13) : une tuile SÈCHE de la salle juste derrière la gueule — la plus
+        // proche de la paire, à une ou deux rangées au nord, où un feu se voit de dehors.
+        let vestibuleSec = null
+        {
+          const tuiles = new Set(z.tuiles)
+          let meilleur = 1e9
+          for (let dy = 1; dy <= 2; dy++) for (let dx = -1; dx <= 2; dx++) {
+            const t = (gy - dy) * W + gx + dx
+            const v = terr.get(t)
+            if (!tuiles.has(t) || v === undefined || v === 6 || v === 4 || v === 0) continue
+            const d = dy * 2 + Math.abs(dx - 0.5)
+            if (d < meilleur) { meilleur = d; vestibuleSec = { tx: gx + dx, ty: gy - dy } }
+          }
+        }
         return {
           nom: z.name, gx, gy, etage: z.etage, palier, tuiles: z.tuiles.length, profond, peuProfond,
-          fond, dFond, bord, bivouac, trace: trace.slice(0, 12), sec: sec.slice(0, 12),
+          fond, dFond, bord, bivouac, vestibuleSec, trace: trace.slice(0, 12), sec: sec.slice(0, 12),
           dJoueur: me ? Math.round(Math.hypot(me.x - gx, me.y - gy)) : null,
         }
       }
@@ -1095,7 +1150,8 @@ const SCENARIOS = {
     // ⚠ BOUCLE ENDORMIE (`stabiliser`) : un `renderer.snapshot` ne se résout qu'à la prochaine
     // image rendue — sans `game.step` à la main, il attend pour toujours (10 min perdues le
     // 2026-09-06). On demande la capture PUIS on avance une image.
-    const luminances = async (points) => page.evaluate(async (pts) => {
+    // `rgb` : rendre le triplet [r, g, b] plutôt que la luminance — pour juger une CHALEUR (r − b).
+    const luminances = async (points, rgb = false) => page.evaluate(async ({ pts, rgb }) => {
       const sc = window.__BRAISES__.scene
       const cam = sc.cameras.main
       const shots = []
@@ -1115,9 +1171,9 @@ const SCENARIOS = {
         const fy = (y * 16 - cam.worldView.y) / cam.worldView.height
         if (fx < 0 || fx > 1 || fy < 0 || fy > 1) return null
         const px = ctx.getImageData(Math.round(fx * shots[0].width), Math.round(fy * shots[0].height), 1, 1).data
-        return Math.round(0.2126 * px[0] + 0.7152 * px[1] + 0.0722 * px[2])
+        return rgb ? [px[0], px[1], px[2]] : Math.round(0.2126 * px[0] + 0.7152 * px[1] + 0.0722 * px[2])
       })
-    }, points)
+    }, { pts: points, rgb })
     const moyenne = (xs) => { const v = xs.filter((q) => q !== null); return v.length ? Math.round(v.reduce((a, b) => a + b, 0) / v.length) : null }
 
     await agirG({ type: 'debug_set_hour', hour: 12 }, 1500)
@@ -1271,6 +1327,58 @@ const SCENARIOS = {
       bivouac = { feu, lDedansAvant, lDedansApres, lDehorsAvant, lDehorsApres, dehorsAvant, dehorsApres, dehorsSprite }
     } else console.log('   → pas de tuile sèche contre le fond : pas de cadrage bivouac')
 
+    // ⑥ LE FEU DE VESTIBULE, VU DU PALIER (G-A13 : « un feu posé au vestibule se voit par la
+    //    gueule depuis le palier — et pas ailleurs »). À 23 h, depuis le palier : la fente AVANT,
+    //    puis on entre poser un feu juste derrière la gueule, on ressort, la fente APRÈS — elle
+    //    doit s'éclairer ET rougir (r − b) ; la paroi témoin et le sol sec du palier, eux, ne
+    //    bougent pas : la lueur passe par le trou, pas à travers la roche.
+    let gueuleFeu = null
+    if (k.vestibuleSec) {
+      const v = k.vestibuleSec
+      const chaleur = (rgbs) => { const q = rgbs.filter(Boolean); return q.length ? Math.round(q.reduce((a, [r, , b]) => a + (r - b), 0) / q.length) : null }
+      const lum = (rgbs) => moyenne(rgbs.map((c) => c ? Math.round(0.2126 * c[0] + 0.7152 * c[1] + 0.0722 * c[2]) : null))
+      const fentePts = rangees.flatMap((r) => [[k.gx + 0.7, r], [k.gx + 1, r], [k.gx + 1.3, r]])
+      const paroiPts = rangees.flatMap((r) => [[k.gx - 3.5, r], [k.gx + 5.5, r]])
+      const secPts = k.sec.map(([tx, ty]) => [tx + 0.5, ty + 0.5 - lift])
+      await agirG({ type: 'debug_grant', item: 'campfire', count: 1 }, 800)
+      await page.evaluate(() => {
+        const sc = window.__BRAISES__.scene
+        const me = (sc.lastEntities ?? []).find((e) => e.id === sc.playerId)
+        const i = (me?.inventory ?? []).findIndex((sl) => sl && sl.item === 'campfire')
+        if (i >= 0) sc.sendAction({ type: 'set_active_slot', slot: i })
+      })
+      await page.waitForTimeout(800)
+      await agirG({ type: 'debug_teleport', x: k.gx + 1, y: k.gy + 2.5 }, 2200)
+      await agirG({ type: 'debug_set_hour', hour: 23 }, 1500)
+      await stabiliser('gueule-avant')
+      const fenteAvant = await luminances(fentePts, true), paroiAvant = await luminances(paroiPts, true), secAvant = await luminances(secPts, true)
+      await page.evaluate(() => window.__BRAISES__.scene.game.loop.wake())
+      await agirG({ type: 'debug_teleport', x: v.tx + 0.5, y: v.ty + 1.5, etage: k.etage }, 2200)
+      await agirG({ type: 'place_campfire', tx: v.tx, ty: v.ty }, 2000)
+      await stabiliser('vestibule-feu')
+      const feuV = await page.evaluate(({ tx, ty }) => {
+        const sc = window.__BRAISES__.scene
+        const f = (sc.view.structures ?? []).find((s) => s.type === 'fire' && s.tx === tx && s.ty === ty)
+        return f ? { id: f.id, etage: f.etage ?? 0 } : null
+      }, v)
+      await page.evaluate(() => window.__BRAISES__.scene.game.loop.wake())
+      await agirG({ type: 'debug_teleport', x: k.gx + 1, y: k.gy + 2.5 }, 2200)
+      await agirG({ type: 'debug_set_hour', hour: 23 }, 1500)
+      await stabiliser('gueule-apres')
+      const fenteApres = await luminances(fentePts, true), paroiApres = await luminances(paroiPts, true), secApres = await luminances(secPts, true)
+      const lueur = await page.evaluate(() => (window.__BRAISES__.scene.etages?.feuxSousRoche ?? []).map((f) => ({ tx: f.tx, ty: f.ty, etage: f.etage, force: Math.round(f.force * 100) / 100 })))
+      console.log(`   → feu de vestibule (${v.tx},${v.ty}) : ${JSON.stringify(feuV)} ; feux sous roche vus de dehors : ${JSON.stringify(lueur)}`)
+      console.log(`   → fente ${lum(fenteAvant)} → ${lum(fenteApres)} (chaleur ${chaleur(fenteAvant)} → ${chaleur(fenteApres)}) ; paroi ${lum(paroiAvant)} → ${lum(paroiApres)} ; sol sec ${lum(secAvant)} → ${lum(secApres)}`)
+      await page.screenshot({ timeout: 120000, path: `${OUT}/grotte-6-gueule-feu.png` })
+      await page.screenshot({ timeout: 120000, path: `${OUT}/grotte-6-gueule-feu-zoom.png`, clip: { x: 520, y: 200, width: 320, height: 300 } })
+      await page.evaluate(() => window.__BRAISES__.scene.game.loop.wake())
+      await page.waitForTimeout(300)
+      gueuleFeu = {
+        feuV, fenteAvant: lum(fenteAvant), fenteApres: lum(fenteApres), chaudAvant: chaleur(fenteAvant), chaudApres: chaleur(fenteApres),
+        paroiAvant: lum(paroiAvant), paroiApres: lum(paroiApres), secAvant: lum(secAvant), secApres: lum(secApres), lueur,
+      }
+    } else console.log('   → pas de tuile sèche derrière la gueule : pas de cadrage feu-de-vestibule')
+
     const dedans = seuil.souterrain && seuil.etage === k.etage && vestibule.souterrain && vestibule.etage === k.etage
     console.log(dedans
       ? `   ✓ entré par la gueule à pied (étage ${seuil.etage}), ${vestibule.familles.sol ?? 0} tuiles de salle, ${vestibule.eau} d'eau`
@@ -1290,6 +1398,21 @@ const SCENARIOS = {
         console.log(dehorsSprite === false ? `   ✓ le feu n'existe pas pour la terrasse (sprite caché)` : `   ✗ le feu se voit depuis la terrasse (sprite visible : ${dehorsSprite})`)
         if (lDehorsAvant !== null && lDehorsApres !== null) console.log(Math.abs(lDehorsApres - lDehorsAvant) <= 3 ? `   ✓ ni flamme ni flaque à l'aplomb (sol ${lDehorsAvant} → ${lDehorsApres})` : `   ✗ le feu fuit à la surface (sol ${lDehorsAvant} → ${lDehorsApres})`)
       }
+    }
+    if (gueuleFeu) {
+      const g = gueuleFeu
+      console.log(g.feuV && g.feuV.etage === k.etage ? `   ✓ le feu de vestibule est posé sous la roche (étage ${g.feuV.etage})` : `   ✗ pas de feu au vestibule (${JSON.stringify(g.feuV)})`)
+      if (g.fenteAvant !== null && g.fenteApres !== null) {
+        const chauffe = g.chaudApres !== null && g.chaudAvant !== null && g.chaudApres >= g.chaudAvant + 8
+        console.log(g.fenteApres >= g.fenteAvant + 8 && chauffe
+          ? `   ✓ la gueule rougit du feu de vestibule (fente ${g.fenteAvant} → ${g.fenteApres}, chaleur ${g.chaudAvant} → ${g.chaudApres})`
+          : `   ✗ la gueule ne montre pas le feu (fente ${g.fenteAvant} → ${g.fenteApres}, chaleur ${g.chaudAvant} → ${g.chaudApres})`)
+      }
+      const paroiStable = g.paroiAvant === null || g.paroiApres === null || Math.abs(g.paroiApres - g.paroiAvant) <= 3
+      const secStable = g.secAvant === null || g.secApres === null || Math.abs(g.secApres - g.secAvant) <= 3
+      console.log(paroiStable && secStable
+        ? `   ✓ et pas ailleurs (paroi ${g.paroiAvant} → ${g.paroiApres}, sol sec ${g.secAvant} → ${g.secApres})`
+        : `   ✗ le feu fuit hors de la gueule (paroi ${g.paroiAvant} → ${g.paroiApres}, sol sec ${g.secAvant} → ${g.secApres})`)
     }
   },
 
@@ -1326,9 +1449,11 @@ const SCENARIOS = {
           sc.game.step(k * 16, 16)
           if (Math.abs(sc.playerSprite.y / 16 - pieds) < 0.1) break
         }
-        return Math.round((sc.playerSprite.y / 16 - pieds) * 100) / 100
+        return sc.playerSprite.y / 16 - pieds
       })
-      if (Math.abs(ecart) >= 0.1) console.error(`!! ${nom} : le sprite n'a pas rejoint l'autorité (${ecart} tuile)`)
+      // ⚠ Juger sur la valeur BRUTE : arrondie au centième, 0,096 devient « 0,1 » et un sprite
+      // arrivé (la boucle a rompu) était accusé de traîner — vu le 2026-09-04, à chaque run.
+      if (Math.abs(ecart) >= 0.1) console.error(`!! ${nom} : le sprite n'a pas rejoint l'autorité (${Math.round(ecart * 100) / 100} tuile)`)
       await page.waitForTimeout(200)
     }
     const agirM = async (action, ms) => {
@@ -1467,6 +1592,16 @@ const SCENARIOS = {
       await page.waitForTimeout(3000)
       await page.keyboard.up('KeyW')
       await page.waitForTimeout(600)
+      // ⚠ EN HEADLESS, LA TOUCHE NE PREND PAS TOUJOURS (même famille que la montée de `bordsud`) :
+      // un run sur deux, le corps n'a pas bougé de (297, 109,5) et la sonde mesurait le pré. La
+      // marche s'arrête MESURÉE à y = 104,19 (hitbox contre la roche de (297,103)) — si elle n'a
+      // pas eu lieu, on pose le corps là, et on le DIT.
+      const yApresMarche = await page.evaluate(() => (window.__BRAISES__.scene.lastEntities ?? [])
+        .find((en) => en.id === window.__BRAISES__.scene.playerId)?.y ?? 0)
+      if (yApresMarche > y0) {
+        console.log(`   → ${nom} : la marche au nord n'a pas pris (y ${yApresMarche}), on pose le corps au contact (104,19)`)
+        await agirM({ type: 'debug_teleport', x: x + 0.5, y: 104.19 }, 2200)
+      }
       // ⚠ **CONVERGER AVANT DE MESURER, et pas seulement avant de photographier** : la sonde lit
       // `playerSprite`, or il traîne de plusieurs tuiles derrière l'autorité tant que
       // `renderOffset` n'a pas eu d'images pour se résorber. Mesurer avant, c'est éprouver le
@@ -1492,17 +1627,112 @@ const SCENARIOS = {
           .filter((im) => im.visible && im.depth > dActeur
             && Math.abs(im.x + 8 - (sc.playerSprite?.x ?? 0)) < 12
             && im.y + 16 > hautSprite && im.y < basSprite)
+        // ═══ RIEN NE CACHE LE CORPS : RIEN NE CÈDE (Alexis, 2026-09-04 puis 2026-09-05) ═══
+        //
+        // « Je vois au travers lorsque j'approche depuis le sud. » Ici on est au coin SUD-EST de
+        // la mesa, au pied de la paroi de (297,103) : le chapeau logiquement au NORD des pieds se
+        // dessine derrière sa paroi, et rien de lui ne peut couvrir le corps. Le demi-disque
+        // (`PLATEAU_PIVOT`, 09-04) ne fondait plus que ce qui est dessiné SOUS la ligne de la
+        // tête — mais encore les tuiles d'à côté, dans la rangée des pieds et au sud. Depuis
+        // l'OUVERTURE (09-05 : « on ne masque la butte que si on est occulté par un bout de la
+        // butte »), le disque ne s'ouvre qu'à proportion de ce qui recouvre le corps : ici, rien.
+        // ⚠ CE QUI FERAIT ROUGIR : le disque symétrique d'origine — MESURÉ, 29 planchers sur 48
+        // fondus, jusqu'à 0,12 ; le demi-disque seul — 11 sur 35, de 0,29 à 0,84. On lit l'alpha
+        // des sprites de plancher (bande de tri, `depth > 1`) dans la portée du disque autour des
+        // pieds dessinés : tous à 1, et l'ouverture à 0, ou la butte fond sans raison.
+        const niveauJ = me ? Math.max(sc.etages.niveauDuCorps(me.x, me.y, sc.etageJoueur), sc.relief.palier(Math.floor(me.x), Math.floor(me.y))) : 0
+        const pieds = (me?.y ?? 0) - niveauJ * 2 // ce que `WorldScene` donne au découvert
+        const dansLeDisque = (sc.etages?.sols ?? []).filter((im) => im.visible && im.depth > 1
+          && Math.hypot(im.x / 16 + 0.5 - (me?.x ?? 0), im.y / 16 + 0.5 - pieds) < 5)
+        const auDessusDeLaTete = dansLeDisque.filter((im) => pieds - (im.y / 16 + 0.5) >= 2.5)
+        const fondus = auDessusDeLaTete.filter((im) => im.alpha < 0.999)
+        const fondusEnTout = dansLeDisque.filter((im) => im.alpha < 0.999)
         return { y: Math.round((me?.y ?? 0) * 100) / 100, etage: me?.etage ?? 0,
                  sousLesPieds: t(ty), auNord: t(ty - 1), deuxAuNord: t(ty - 2),
-                 avalent: avalent.length, depthsAvalent: avalent.slice(0, 4).map((im) => Math.round(im.depth)) }
+                 avalent: avalent.length, depthsAvalent: avalent.slice(0, 4).map((im) => Math.round(im.depth)),
+                 ouverture: Math.round((sc.view?.decouvert?.ouverture ?? -1) * 100) / 100,
+                 planchersDansLeDisque: dansLeDisque.length, planchersAuDessusDeLaTete: auDessusDeLaTete.length,
+                 fondusAuDessusDeLaTete: fondus.length, fondusEnTout: fondusEnTout.length,
+                 alphasFondus: fondusEnTout.map((im) => Math.round(im.alpha * 100) / 100).sort((a, b) => a - b).slice(0, 6) }
       })
       console.log(vu.avalent === 0
         ? `   ✓ ${nom} : rien de la couche ne recouvre le corps collé au pied sud`
         : `   ✗ ${nom} : ${vu.avalent} pièce(s) de plateau passent DEVANT le joueur (${JSON.stringify(vu.depthsAvalent)})`)
+      if (vu.planchersDansLeDisque === 0) console.error(`!! ${nom} : aucun plancher dans le disque — la sonde ne mesure rien`)
+      else if (vu.fondusEnTout === 0 && vu.ouverture === 0) console.log(`   ✓ ${nom} : rien ne cache le corps, rien ne cède (ouverture 0 ; ${vu.planchersDansLeDisque} planchers à portée, aucun fondu)`)
+      else console.error(`!! ${nom} : la butte fond sans rien cacher — ouverture ${vu.ouverture}, ${vu.fondusEnTout}/${vu.planchersDansLeDisque} planchers fondus, alphas ${JSON.stringify(vu.alphasFondus)}`)
       await page.screenshot({ timeout: 120000, path: `${OUT}/mesa-${nom}.png` })
       await page.evaluate(() => window.__BRAISES__.scene.game.loop.wake())
       await page.waitForTimeout(300)
       console.log(`   → ${nom} : ${JSON.stringify(vu)}`)
+    }
+
+    // ═══ PLEIN SUD, AU PIED DE LA PAROI — le chapeau reste plein, tout entier ═══
+    // La position exacte de la plainte d'Alexis (2026-09-04) : on regarde la butte depuis le sud,
+    // paroi en face. Tout le chapeau est logiquement au NORD des pieds : par le demi-disque, il ne
+    // cède nulle part. `293,106.19` : pieds contre la roche de (293,105) — le bord sud du chapeau
+    // de la graine 2026 (rangée 105, x 290-294), hitbox comprise ; le ramp est deux colonnes à
+    // l'ouest, on n'y est pas.
+    {
+      await agirM({ type: 'debug_teleport', x: 293.5, y: 106.19 }, 2600)
+      await poser('sud')
+      const vu = await page.evaluate(() => {
+        const sc = window.__BRAISES__.scene
+        const me = (sc.lastEntities ?? []).find((en) => en.id === sc.playerId)
+        const tx = Math.floor(me?.x ?? 0)
+        const ty = Math.floor(me?.y ?? 0)
+        const niveauJ = me ? Math.max(sc.etages.niveauDuCorps(me.x, me.y, sc.etageJoueur), sc.relief.palier(tx, ty)) : 0
+        const pieds = (me?.y ?? 0) - niveauJ * 2
+        const dansLeDisque = (sc.etages?.sols ?? []).filter((im) => im.visible && im.depth > 1
+          && Math.hypot(im.x / 16 + 0.5 - (me?.x ?? 0), im.y / 16 + 0.5 - pieds) < 5)
+        const fondus = dansLeDisque.filter((im) => im.alpha < 0.999)
+        return { y: Math.round((me?.y ?? 0) * 100) / 100, etage: me?.etage ?? 0,
+                 rocheAuNord: sc.relief.chapeau(tx, ty - 1), sousLesPieds: sc.relief.chapeau(tx, ty),
+                 planchersDansLeDisque: dansLeDisque.length, planchersFondus: fondus.length,
+                 alphasFondus: fondus.map((im) => Math.round(im.alpha * 100) / 100).sort((a, b) => a - b).slice(0, 6) }
+      })
+      await page.screenshot({ timeout: 120000, path: `${OUT}/mesa-sud.png` })
+      await page.evaluate(() => window.__BRAISES__.scene.game.loop.wake())
+      await page.waitForTimeout(300)
+      console.log(`   → sud : ${JSON.stringify(vu)}`)
+      if (!vu.rocheAuNord || vu.sousLesPieds) console.error('!! sud : pas au pied de la paroi — scénario écrit pour la graine 2026')
+      else if (vu.planchersDansLeDisque === 0) console.error('!! sud : aucun plancher dans le disque — la sonde ne mesure rien')
+      else if (vu.planchersFondus === 0) console.log(`   ✓ sud : depuis le sud, le chapeau reste plein (${vu.planchersDansLeDisque} planchers dans le disque, aucun fondu)`)
+      else console.error(`!! sud : on voit AU TRAVERS depuis le sud — ${vu.planchersFondus}/${vu.planchersDansLeDisque} planchers fondus, alphas ${JSON.stringify(vu.alphasFondus)}`)
+    }
+
+    // ═══ L'APPROCHE PAR LE NORD : la butte reste entière jusqu'à passer sous son bord ═══
+    // (Alexis, 2026-09-05). Le bord nord du chapeau est la rangée 97 (x 289-295, graine 2026),
+    // dessinée deux rangées plus haut que le corps qui s'en approche. Pieds à deux tuiles du bord
+    // (y 94,5) : la tête ne le touche pas, ouverture 0, aucun plancher fondu. Pieds à une demi-
+    // tuile (y 96,31) : une tuile du corps est couverte, ouverture 1. ⚠ CE QUI FERAIT ROUGIR :
+    // le disque d'avant, ouvert dès que le chapeau entrait dans sa portée — trois tuiles avant.
+    for (const [nom, y, attendu] of [['nord-loin', 94.5, 0], ['nord-sous', 96.31, 1]]) {
+      await agirM({ type: 'debug_teleport', x: 293.5, y }, 2400)
+      await poser(nom)
+      const vu = await page.evaluate(() => {
+        const sc = window.__BRAISES__.scene
+        const me = (sc.lastEntities ?? []).find((en) => en.id === sc.playerId)
+        const tx = Math.floor(me?.x ?? 0)
+        const ty = Math.floor(me?.y ?? 0)
+        const niveauJ = me ? Math.max(sc.etages.niveauDuCorps(me.x, me.y, sc.etageJoueur), sc.relief.palier(tx, ty)) : 0
+        const pieds = (me?.y ?? 0) - niveauJ * 2
+        const dansLeDisque = (sc.etages?.sols ?? []).filter((im) => im.visible && im.depth > 1
+          && Math.hypot(im.x / 16 + 0.5 - (me?.x ?? 0), im.y / 16 + 0.5 - pieds) < 5)
+        const fondus = dansLeDisque.filter((im) => im.alpha < 0.999)
+        return { y: Math.round((me?.y ?? 0) * 100) / 100, chapeauAuNord: sc.relief.chapeau(tx, 97),
+                 ouverture: Math.round((sc.view?.decouvert?.ouverture ?? -1) * 100) / 100,
+                 planchersDansLeDisque: dansLeDisque.length, planchersFondus: fondus.length,
+                 alphaMin: Math.round(Math.min(1, ...fondus.map((im) => im.alpha)) * 100) / 100 }
+      })
+      await page.evaluate(() => window.__BRAISES__.scene.game.loop.wake())
+      await page.waitForTimeout(300)
+      console.log(`   → ${nom} : ${JSON.stringify(vu)}`)
+      if (!vu.chapeauAuNord) console.error(`!! ${nom} : pas de chapeau en (293,97) — scénario écrit pour la graine 2026`)
+      else if (vu.planchersDansLeDisque === 0) console.error(`!! ${nom} : aucun plancher dans le disque — la sonde ne mesure rien`)
+      else if (attendu === 0 && vu.ouverture === 0 && vu.planchersFondus === 0) console.log(`   ✓ ${nom} : à deux tuiles du bord, la butte est entière (${vu.planchersDansLeDisque} planchers à portée, aucun fondu)`)
+      else if (attendu === 1 && vu.ouverture >= 0.99 && vu.planchersFondus > 0) console.log(`   ✓ ${nom} : sous le bord, le disque est ouvert (ouverture ${vu.ouverture}, ${vu.planchersFondus} planchers fondus, alpha min ${vu.alphaMin})`)
+      else console.error(`!! ${nom} : ouverture ${vu.ouverture} (attendu ${attendu}), ${vu.planchersFondus}/${vu.planchersDansLeDisque} planchers fondus`)
     }
 
     // ═══ DERRIÈRE LA FALAISE, AU NORD — que voit-on, et est-on caché ? ═══
@@ -1542,9 +1772,8 @@ const SCENARIOS = {
       const sc = window.__BRAISES__.scene
       return (sc.lastEntities ?? []).find((e) => e.id === sc.playerId)?.etage ?? 0
     })
-    await page.keyboard.down('KeyW')
-    await page.waitForTimeout(4000)
-    await page.keyboard.up('KeyW')
+    // Cadencé à la main : le hold clavier tombait entre deux images sous charge (2026-09-05).
+    await tenirLaDirection(page, 'up', 250)
     await page.waitForTimeout(600)
     // L'ÉTAGE ATTENDU SE LIT SUR LA CARTE, pas en dur : depuis les terrasses (T-R2) la mesa est
     // posée sur un palier, et son chapeau vit à `palier + 1` — `relief.hauteur` (le plancher le
@@ -1601,6 +1830,236 @@ const SCENARIOS = {
                chunksPaves: sc.paves?.chunksVivants?.() ?? -1 }
     })
     console.log(`   → ${OUT}/mesa-{pied,rampe,dessus,monte,froid,nuit}.png · ${JSON.stringify(etat)}`)
+  },
+
+  /**
+   * ═══ LA MONTÉE D'UNE RAMPE, IMAGE PAR IMAGE (2026-09-05, Alexis : « ça affiche la transparence
+   * quand je suis en haut d'une rampe que je suis en train de monter », « un flash noir lorsque
+   * j'arrive à un étage supérieur ») ═══
+   *
+   * Deux sites de la graine 2026 : la terrasse 0→1 en (1425,661) (sonde `__rampe-01`, sol droit
+   * 3 rangées au sud, 4 au nord, puis une SECONDE rampe 1→2 en 656 que la montée enchaîne) et la
+   * mesa (291,106). On part deux tuiles au sud, on tient le nord (`tenirLaDirection` : la boucle
+   * endormie, la scène steppée au temps réel), et un crochet sur `sys.sceneUpdate` RELÈVE CHAQUE
+   * PAS : la position prédite, l'étage d'autorité, la strate du sprite, le niveau et l'ouverture
+   * du découvert, les trouées, les socles visibles.
+   *
+   * Le verdict est STRUCTUREL, pas temporel : à chaque image, l'ouverture est nulle, aucune
+   * trouée, aucun socle — et la strate ne fait que monter, un cran par rampe, pris à mi-tuile
+   * (hors fenêtres de correction du serveur, voir plus bas). Le « flash noir » (le corps prédit sur le sol du haut
+   * avant que le snapshot ne confirme l'étage) tient en une ou deux images à 60 Hz et peut
+   * tomber entre deux images headless : c'est la RÈGLE qui le produisait (strate et niveau lus
+   * sur l'entier de l'autorité) que les images de la seconde moitié de rampe attrapent — avec
+   * elle, elles montrent ouverture > 0, strate basse et socles. `--dev`.
+   */
+  async 'rampe-monte'(page) {
+    if (!dev) { console.error('!! rampe-monte exige --dev'); return }
+    const agirR = async (action, ms) => {
+      await page.evaluate((a) => window.__BRAISES__.scene.sendAction(a), action)
+      await page.waitForTimeout(ms)
+    }
+    await agirR({ type: 'debug_set_hour', hour: 11 }, 1500)
+    await agirR({ type: 'debug_god' }, 400)
+    for (const [nom, x, y] of [['terrasse', 1425, 661], ['mesa', 291, 106]]) {
+      const site = await page.evaluate(([x, y]) => {
+        const sc = window.__BRAISES__.scene
+        return sc.etages.penteAt(x, y) ?? null
+      }, [x, y])
+      if (!site) { console.error(`!! rampe-monte/${nom} : (${x},${y}) n'est pas une rampe qui monte — écrit pour la graine 2026`); continue }
+      await agirR({ type: 'debug_teleport', x: x + 0.5, y: y + 2.5 }, 2600)
+      // Le crochet : après chaque `update` de la scène, une ligne.
+      await page.evaluate(() => {
+        const sc = window.__BRAISES__.scene
+        if (sc.__releve) return
+        sc.__releve = []
+        // Phaser copie `scene.update` dans `sys.sceneUpdate` au boot : c'est LÀ qu'on se greffe,
+        // une réassignation de `sc.update` après coup ne serait jamais appelée.
+        const orig = sc.sys.sceneUpdate
+        sc.sys.sceneUpdate = function (t, d) {
+          orig.call(this, t, d)
+          const me = (sc.lastEntities ?? []).find((en) => en.id === sc.playerId)
+          const d0 = sc.decouvert
+          sc.__releve.push({
+            y: Math.round(sc.predicted.y * 100) / 100,
+            // Le sprite se trie sur sa position de RENDU (prédite + extrapolation sous-tick +
+            // reliquat de correction) : on la relève aussi, en tuiles brutes (lift compris).
+            ys: Math.round(sc.playerSprite.y / 16 * 100) / 100,
+            etage: me?.etage ?? 'palier',
+            strate: Math.floor(sc.playerSprite.depth / 100000),
+            niveau: d0?.niveau ?? null,
+            ouverture: Math.round((d0?.ouverture ?? 0) * 100) / 100,
+            pente: sc.etages.penteAt(Math.floor(sc.predicted.x), Math.floor(sc.predicted.y)) !== undefined,
+            // LE VOILE DE LA CAVE — s'il se lève pendant une montée, c'est l'écran entier qui
+            // passe au noir (le « flash noir », deuxième cause : l'étage d'autorité en retard
+            // sur la position prédite, qui a déjà posé le pied sur le palier haut).
+            voile: sc.etages.souterrain,
+            trouees: sc.paves.troueesActives,
+            // Un socle : une pièce de sol de plateau visible, teintée très sombre (`SOCLE_TEINTE`
+            // ≈ 10 % de la pierre) — le jour, tout autre sol de plateau est blanc.
+            socles: sc.etages.sols.filter((im) => im.visible && (im.tintTopLeft & 0xff) < 0x40 && ((im.tintTopLeft >> 16) & 0xff) < 0x40).length,
+          })
+        }
+      })
+      // La montée, cadencée à la main (`tenirLaDirection`) : 240 pas de temps réel, ~3,8 s.
+      const r = await tenirLaDirection(page, 'up', 240)
+      writeFileSync(`${OUT}/rampe-monte-${nom}.json`, JSON.stringify(r))
+      const yFin = r.at(-1)?.y ?? 99999
+      const arrive = yFin < y + 0.5
+      if (!arrive) { console.error(`!! rampe-monte/${nom} : le corps n'a pas passé la rampe (y final ${yFin}, ${r.length} images) — la touche n'a pas pris ?`); continue }
+      // Les images SUR la rampe et au-delà (y < bas de la rampe) : celles qui jugent.
+      const surEtApres = r.filter((s) => s.y < y + 1)
+      const fautes = surEtApres.filter((s) => s.ouverture > 0 || s.trouees > 0 || s.socles > 0 || s.voile)
+      // Le découvert se calcule en tête d'`update` sur la position PRÉDITE de l'image d'avant
+      // (qui n'avance qu'au tick, 50 ms), le sprite se trie sur sa position de RENDU, extrapolée
+      // entre deux ticks : au passage, le découvert suit la strate d'un tick au plus — 4 images
+      // ici (MESURÉ). C'est la règle, pas une faute, et elle est MUETTE : l'ouverture est nulle
+      // des deux côtés du point de contact (`framing.test.ts`, « contact = 0,5 »).
+      // UNE CORRECTION DU SERVEUR (le y prédit RECULE vers le sud alors qu'on tient le nord) peut
+      // ramener le corps en deçà de la mi-rampe : la strate y redescend puis remonte — c'est le
+      // corps qui a reculé, pas la règle (MESURÉ : 0,2 à 0,6 tuile, une fois sur trois sous
+      // charge headless). Les images à ±6 d'un recul ne jugent ni la bascule ni le désaccord.
+      const reculs = new Set()
+      for (let i = 1; i < surEtApres.length; i++) if (surEtApres[i].y > surEtApres[i - 1].y + 1e-9) reculs.add(i)
+      const sousCorrection = (i) => { for (let k = i - 6; k <= i + 6; k++) if (reculs.has(k)) return true; return false }
+      const desaccords = surEtApres.filter((s, i) => s.strate !== s.niveau && !sousCorrection(i)).length
+      // La strate : elle ne fait que MONTER, d'un cran à la fois, et chaque cran se prend SUR une
+      // rampe, à sa mi-tuile — lue sur le y PRÉDIT, qui suit le rendu d'un tick au plus (0,07
+      // tuile), donc entre 0,40 et 0,60. Le site de la terrasse enchaîne deux rampes (0→1 en 661,
+      // 1→2 en 656) : deux crans attendus ; la mesa, un seul.
+      const bascules = []
+      for (let i = 1; i < surEtApres.length; i++) {
+        const a = surEtApres[i - 1], b = surEtApres[i]
+        if (b.strate !== a.strate) bascules.push({ de: a.strate, a: b.strate, y: b.y, pente: b.pente, frac: Math.round((b.y - Math.floor(b.y)) * 100) / 100, correction: sousCorrection(i) })
+      }
+      const cranNet = (b) => b.a === b.de + 1 && b.pente && b.frac >= 0.4 && b.frac <= 0.6
+      const crans = bascules.filter((b) => !b.correction)
+      // Au moins UN cran net (fût-il dans une fenêtre de correction — une correction n'ôte rien
+      // à un cran pris sur la rampe à sa mi-tuile), aucun cran hors correction qui ne le soit pas.
+      const basculeOk = bascules.some(cranNet) && crans.every(cranNet) && surEtApres.at(-1).strate >= site.haut
+      const ok = fautes.length === 0 && desaccords <= 5 && basculeOk
+      const dit = bascules.map((b) => `${b.de}→${b.a} en y ${b.y}${b.pente ? '' : ' HORS RAMPE'}${b.correction ? ' (sous correction)' : ''}`).join(', ')
+      console.log(ok
+        ? `   ✓ ${nom} : ${surEtApres.length} images sur la rampe et après, ouverture 0 partout, aucune trouée ni socle, jamais le voile de la cave, strate ${dit} (${desaccords} image(s) où le découvert suit encore l'image d'avant, ${reculs.size} recul(s) de correction)`
+        : `   ✗ ${nom} : ${fautes.length} image(s) en faute sur ${surEtApres.length} ${JSON.stringify(fautes.slice(0, 4))} ; ${desaccords} désaccord(s) strate/niveau ; crans ${dit || 'aucun'} ; ${reculs.size} recul(s)`)
+      // À l'œil : trois quarts de la rampe, boucle endormie, sprite convergé — par des pas de
+      // scène SANS rendu (une image rendue coûte ~1 s ici : 120 `game.step` dépassaient le
+      // budget du harnais), puis trois images rendues pour la photo.
+      await agirR({ type: 'debug_teleport', x: x + 0.5, y: y + 0.25 }, 2600)
+      await page.evaluate(() => {
+        const sc = window.__BRAISES__.scene
+        sc.game.loop.sleep()
+        let t = sc.game.loop.now || 0
+        for (let k = 0; k < 90; k++) { t += 16; sc.sys.step(t, 16) }
+        for (let k = 0; k < 3; k++) { t += 16; sc.game.step(t, 16) }
+      })
+      await page.screenshot({ timeout: 120000, path: `${OUT}/rampe-monte-${nom}.png` })
+      await page.evaluate(() => window.__BRAISES__.scene.game.loop.wake())
+      await page.waitForTimeout(300)
+    }
+  },
+
+  /**
+   * ═══ LE MUR DE TERRASSE QUI REGARDE LE NORD (2026-09-05, « fais la même chose pour les
+   * falaises des terrasses ») — un corps au palier bas, sous les rangées nord d'un palier haut.
+   * Site daté (graine 2026, monde joué, sonde `__ou-mur-nord`) : bord nord du palier 1 en
+   * (1451,656), palier 0 sur les quatre rangées au nord. `--dev`. ═══
+   */
+  async 'terrasse-nord'(page) {
+    if (!dev) { console.error('!! terrasse-nord exige --dev'); return }
+    const agirM = async (action, ms) => {
+      await page.evaluate((a) => window.__BRAISES__.scene.sendAction(a), action)
+      await page.waitForTimeout(ms)
+    }
+    const poser = async (nom) => {
+      await page.evaluate(() => window.__BRAISES__.scene.game.loop.sleep())
+      const ecart = await page.evaluate(() => {
+        const sc = window.__BRAISES__.scene
+        const me = (sc.lastEntities ?? []).find((en) => en.id === sc.playerId)
+        const y = me?.y ?? 0
+        const x = me?.x ?? 0
+        const niveau = me ? Math.max(sc.etages.niveauDuCorps(x, y, sc.etageJoueur), sc.relief.palier(Math.floor(x), Math.floor(y))) : 0
+        const pieds = y + 0.1875 - niveau * 2
+        for (let k = 0; k < 240; k++) {
+          sc.game.step(k * 16, 16)
+          if (Math.abs(sc.playerSprite.y / 16 - pieds) < 0.1) break
+        }
+        return sc.playerSprite.y / 16 - pieds
+      })
+      if (Math.abs(ecart) >= 0.1) console.error(`!! ${nom} : le sprite n'a pas rejoint l'autorité (${Math.round(ecart * 100) / 100} tuile)`)
+      await page.waitForTimeout(200)
+    }
+    const site = await page.evaluate(() => {
+      const sc = window.__BRAISES__.scene
+      return { haut: sc.relief.palier(1451, 656), bas: sc.relief.palier(1451, 655), chapeau: sc.relief.chapeau(1451, 656) }
+    })
+    if (site.haut !== 1 || site.bas !== 0 || site.chapeau) {
+      console.error(`!! terrasse-nord : (1451,656) n'est pas un bord nord de palier 1 sur du palier 0 (${JSON.stringify(site)}) — écrit pour la graine 2026`)
+      return
+    }
+    await agirM({ type: 'debug_set_hour', hour: 11 }, 1500)
+    await agirM({ type: 'debug_god' }, 400)
+    for (const [nom, y] of [['loin', 653.5], ['sous', 655.31]]) {
+      await agirM({ type: 'debug_teleport', x: 1451.5, y }, 2600)
+      await poser(nom)
+      const vu = await page.evaluate(() => {
+        const sc = window.__BRAISES__.scene
+        const me = (sc.lastEntities ?? []).find((en) => en.id === sc.playerId)
+        const spr = sc.playerSprite
+        // Tout ce qui est dessiné PAR-DESSUS le sprite du joueur et chevauche son corps : image,
+        // profondeur, alpha, clé de texture.
+        const corps = { x0: spr.x - 6, x1: spr.x + 6, y0: spr.y - 24, y1: spr.y }
+        const dessus = []
+        for (const go of sc.children.list) {
+          if (!go.visible || go === spr || go.depth <= spr.depth) continue
+          const b = go.getBounds?.()
+          if (!b) continue
+          if (b.right < corps.x0 || b.left > corps.x1 || b.bottom < corps.y0 || b.top > corps.y1) continue
+          if (b.width > 4000) continue
+          dessus.push({ type: go.type, cle: go.texture?.key?.slice?.(0, 40), cleEntiere: go.texture?.key, depth: Math.round(go.depth), alpha: Math.round(go.alpha * 100) / 100, w: Math.round(b.width), h: Math.round(b.height) })
+        }
+        dessus.sort((a, b) => a.depth - b.depth)
+        // La preuve au PIXEL : le pavé du palier haut qui recouvre le corps n'a pas d'alpha
+        // (la trouée est creusée dans sa texture, `trouee.ts`) — on lit donc le canvas de sa
+        // texture au droit du torse, et l'on rapporte l'alpha du texel.
+        const paveDessus = dessus.find((d) => d.cle?.startsWith('pave-'))
+        let texel = null
+        if (paveDessus) {
+          const go = sc.children.list.find((g) => g.texture?.key === paveDessus.cleEntiere)
+          const b = go.getBounds()
+          const src = sc.textures.get(paveDessus.cleEntiere).getSourceImage()
+          const k = src.width / b.width
+          const px = Math.floor((spr.x - b.left) * k)
+          const py = Math.floor((spr.y - 8 - b.top) * k)
+          texel = src.getContext('2d').getImageData(px, py, 1, 1).data[3]
+        }
+        return { y: me?.y, etage: me?.etage ?? 0, depthJoueur: Math.round(spr.depth),
+                 ouverture: Math.round((sc.view?.decouvert?.ouverture ?? -1) * 100) / 100,
+                 trouees: sc.paves.troueesActives,
+                 levres: dessus.filter((d) => d.cle?.startsWith('cf-')).map((d) => d.alpha),
+                 texel,
+                 dessus: dessus.slice(0, 12).map((d) => ({ ...d, cleEntiere: undefined })), nDessus: dessus.length }
+      })
+      await page.screenshot({ timeout: 120000, path: `${OUT}/terrasse-nord-${nom}.png` })
+      await page.evaluate(() => window.__BRAISES__.scene.game.loop.wake())
+      await page.waitForTimeout(300)
+      // Une image de pavé couvre son CHUNK entier (258 px) : elle ne recouvre le corps que si
+      // son texel y est peint — un texel à 0 sans trouée, c'est du palier bas, pas la terrasse.
+      const couvrants = vu.dessus.filter((d) => d.cle?.startsWith('cf-') || (d.cle?.startsWith('pave-') && vu.texel !== 0))
+      if (nom === 'loin') {
+        const ok = vu.ouverture === 0 && vu.trouees === 0 && couvrants.length === 0
+        console.log(ok
+          ? `   ✓ loin : rien de la terrasse ne recouvre le corps, rien ne cède (ouverture 0, ${vu.trouees} trouée)`
+          : `   ✗ loin : ouverture ${vu.ouverture}, ${vu.trouees} trouée(s), ${couvrants.length} pièce(s) de terrasse sur le corps ${JSON.stringify(couvrants)}`)
+      } else {
+        const levresCedent = vu.levres.length > 0 && vu.levres.every((a) => a < 1)
+        const perce = vu.texel !== null && vu.texel === 0
+        const ok = vu.ouverture >= 0.99 && vu.trouees > 0 && perce && levresCedent
+        console.log(ok
+          ? `   ✓ sous : la terrasse cède (ouverture ${vu.ouverture}, ${vu.trouees} trouées, texel du pavé alpha ${vu.texel} au torse, lèvres ${JSON.stringify(vu.levres)})`
+          : `   ✗ sous : ouverture ${vu.ouverture}, ${vu.trouees} trouée(s), texel ${vu.texel}, lèvres ${JSON.stringify(vu.levres)} — ${JSON.stringify(vu.dessus)}`)
+      }
+      console.log(`   → ${nom} : ${JSON.stringify(vu)}`)
+    }
   },
 
   /**
@@ -25822,6 +26281,259 @@ Depuis le spawn (${depart.x.toFixed(0)}, ${depart.y.toFixed(0)}) :`)
     console.log(`  photo → lucioles-fondu.png`)
     await page.evaluate(() => { window.__BRAISES__.scene.game.loop.wake() })
     return { nes: nes.length, partis: partis.length }
+  },
+
+  /**
+   * ═══ LES FLAQUES DU FEU ET DE LA TORCHE SUR UN ÉTAGE (Alexis, 2026-09-05 : « mesure et
+   * corrige aussi les flaques de feu et de torche ») ═══
+   *
+   * La sœur du défaut des lucioles (`luciolesEtage`). Les deux flaques prenaient le LIFT de leur
+   * palier (juste à l'écran) mais restaient en STRATE 0 — MESURÉ (feu 474, palier 2, graine
+   * 2026) : flaque du feu y 9288 (juste), profondeur 4 ; flaque de torche y 9320 pour un corps
+   * à 9323, profondeur 4 pour un corps à 210 388 — toutes deux sous les pavés du palier
+   * (~199 999). Une chaleur cuite sous le sol qu'elle devait chauffer.
+   *
+   * CE QUI FERAIT ROUGIR : une flaque dont la strate (le multiple de 100 000 de sa profondeur)
+   * n'est pas celle du sol du feu (`warp.strateSol`) ni celle du corps du porteur (le sprite
+   * du joueur) ; ou une flaque qui quitte la rangée dessinée. Le feu 474 est CELUI de la graine
+   * par défaut ; sur une autre graine on prend le premier feu du monde posé sur un palier ≥ 1,
+   * et s'il n'y en a aucun, la sonde le dit — elle n'a rien éprouvé.
+   */
+  async flaquesEtage(page) {
+    if (!dev) { console.log('\n(les flaques sur un étage exigent --dev : l’heure, le TP, la torche)'); return {} }
+    await page.waitForFunction(() => Boolean(window.__BRAISES__?.scene?.registry?.get('worldReady')), null, { timeout: 150000 })
+    await page.waitForTimeout(1200)
+    const agir = async (action, ms = 300) => {
+      await page.evaluate((a) => { window.__BRAISES__.scene.sendAction(a) }, action)
+      await page.waitForTimeout(ms)
+    }
+    await agir({ type: 'debug_god', on: true }, 200)
+    const feux = await page.evaluate(() => {
+      const sc = window.__BRAISES__.scene
+      return sc.view.structures.filter((s) => s.type === 'fire').map((s) => ({ id: s.id, tx: s.tx, ty: s.ty, h: sc.relief.hauteur(s.tx, s.ty) })).filter((f) => f.h >= 1)
+    })
+    const feu = feux.find((f) => f.id === 474) ?? feux[0]
+    if (!feu) { console.log('   (aucun feu du monde sur un palier ≥ 1 : la sonde n’a rien éprouvé)'); return { feux: 0 } }
+    console.log(`   feu ${feu.id} en (${feu.tx},${feu.ty}), hauteur ${feu.h}`)
+    // Le porteur se pose deux tuiles au sud du foyer, sur le même palier ; minuit passé ; torche en main.
+    await agir({ type: 'debug_teleport', x: feu.tx + 0.5, y: feu.ty + 2.5 }, 2400)
+    await agir({ type: 'debug_set_hour', hour: 1 }, 800)
+    await agir({ type: 'debug_grant', item: 'torche_vive' }, 900)
+    const releve = await page.evaluate((feuId) => {
+      const sc = window.__BRAISES__.scene
+      sc.game.loop.sleep()
+      for (let k = 0; k < 90; k++) sc.game.step(k * 16, 16)
+      const f = sc.view.structures.find((s) => s.id === feuId)
+      const g = sc.fireGround?.glows.get(feuId)
+      const tg = sc.torcheGround?.glows.get(sc.playerId)
+      const me = sc.predicted
+      const tx = Math.floor(me.x), ty = Math.floor(me.y)
+      return {
+        feu: f ? { hauteur: sc.relief.hauteur(f.tx, f.ty), liftSol: sc.warp.liftSol(f.tx + 0.5, f.ty + 0.5), strateSol: sc.warp.strateSol(f.tx + 0.5, f.ty + 0.5),
+          yPlat: (f.ty + 0.5) * 16, glow: g ? { y: g.y, depth: g.depth } : null } : null,
+        torche: { hauteur: sc.relief.hauteur(tx, ty), etage: sc.etageJoueur,
+          spriteY: Math.round(sc.playerSprite?.y ?? -1), spriteDepth: Math.round(sc.playerSprite?.depth ?? -1),
+          tenue: (sc.registry.get('inv') ?? [])[sc.registry.get('activeSlot')]?.item ?? null,
+          glow: tg ? { y: Math.round(tg.y), depth: Math.round(tg.depth) } : null },
+      }
+    }, feu.id)
+    const strateDe = (depth) => Math.floor(depth / 100000) * 100000
+    let faux = 0
+    const F = releve.feu
+    if (F?.glow) {
+      const ok = Math.abs(F.glow.y - (F.yPlat - F.liftSol)) <= 1 && strateDe(F.glow.depth) === F.strateSol
+      if (!ok) faux++
+      console.log(`   ${ok ? '✓' : '✗'} flaque du feu (hauteur ${F.hauteur}) : y ${F.glow.y} (attendu ${F.yPlat - F.liftSol}) · strate ${strateDe(F.glow.depth)} (sol ${F.strateSol})`)
+    } else { faux++; console.error('!! pas de flaque de feu (feu éteint, ou hors écran ?)') }
+    const T = releve.torche
+    if (T.glow) {
+      const strateCorps = strateDe(T.spriteDepth)
+      const ok = Math.abs(T.glow.y - T.spriteY) <= 12 && strateDe(T.glow.depth) === strateCorps
+      if (!ok) faux++
+      console.log(`   ${ok ? '✓' : '✗'} flaque de torche (hauteur ${T.hauteur}, étage ${T.etage}) : y ${T.glow.y} (corps ${T.spriteY}) · strate ${strateDe(T.glow.depth)} (corps ${strateCorps})`)
+    } else { faux++; console.error(`!! pas de flaque de torche (en main : ${T.tenue})`) }
+    if (faux) console.error(`!! ${faux} flaque(s) hors de la strate de leur sol`)
+    else console.log('✓ les deux flaques se trient dans le monde de leur palier')
+    await page.screenshot({ timeout: 120000, path: `${OUT}/flaques-etage.png` })
+    console.log(`  photo → flaques-etage.png`)
+    await page.evaluate(() => window.__BRAISES__.scene.game.loop.wake())
+    return { feu: feu.id, faux }
+  },
+
+  /**
+   * ═══ LES PAS DANS LA NEIGE SUR UN ÉTAGE (Alexis, 2026-09-05 : « les traces dans la neige ne
+   * fonctionnent pas à tous les étages non plus ») ═══
+   *
+   * La troisième sœur (`luciolesEtage`, `flaquesEtage`). Une empreinte est un décalque AU SOL DE
+   * SON PALIER : elle se dessine `liftSol` px au-dessus de sa rangée logique et se trie dans la
+   * strate de ce palier — les mêmes deux nombres que le corps qui l'a laissée (E-R22).
+   * MESURÉ avant le correctif (graine 2026, jour 112, terrasse (80,68) h 1) : 6 traces sur 6
+   * posées à la rangée logique (y 1101 pour un corps dessiné à 1067 : 32 px au sud des pieds) en
+   * strate 0 (depth 2 100 pour un corps à 102 100) — sous les pavés du palier, invisibles.
+   *
+   * LE JOUR : la neige au sol est un fait de RÉGION et de JOUR, pas de terrasse — au jour 105
+   * aucune des 14 terrasses dispersées n'en portait. Le 112 en couvre 117 343 sur 117 913
+   * (relevé headless, graine 2026) ; 116 et 224 aussi. `SMOKE_JOUR` le change.
+   *
+   * CE QUI FERAIT ROUGIR : une trace dont `floor((y + liftSol) / 16)` n'est pas sa tuile ; une
+   * trace dont la strate (depth ÷ 100 000) n'est pas `strateSol`. Si aucune terrasse enneigée
+   * n'est trouvée, la sonde le DIT — elle n'a alors rien éprouvé.
+   */
+  async pasEtage(page) {
+    if (!dev) { console.log('\n(les pas sur un étage exigent --dev : le jour, l’heure et le TP)'); return {} }
+    const JOUR = Number(process.env.SMOKE_JOUR ?? 112)
+    await page.waitForFunction(() => Boolean(window.__BRAISES__?.scene?.registry?.get('worldReady')), null, { timeout: 150000 })
+    await page.waitForTimeout(1200)
+    const agir = async (action, ms = 300) => {
+      await page.evaluate((a) => { window.__BRAISES__.scene.sendAction(a) }, action)
+      await page.waitForTimeout(ms)
+    }
+    await agir({ type: 'debug_god', on: true }, 200)
+    await agir({ type: 'debug_set_season_day', day: JOUR }, 400)
+    await page.waitForFunction((j) => (window.__BRAISES__.scene.lastTime?.seasonDay ?? 0) >= j, JOUR, { timeout: 30000, polling: 200 }).catch(() => {})
+    await agir({ type: 'debug_set_hour', hour: 12 }, 600)
+    // Des terrasses OUVERTES : la tuile et ses 8 voisines à la même hauteur ≥ 1, terrain ouvert.
+    const candidats = await page.evaluate(() => {
+      const s = window.__BRAISES__.scene
+      const { width: W, height: H, terrain } = s.map
+      const OUVERT = new Set([1, 11, 17, 12, 20, 26])
+      const out = []
+      for (let y = 8; y < H - 8; y += 2) for (let x = 8; x < W - 8; x += 2) {
+        const h = s.relief.hauteur(x, y)
+        if (h < 1 || !OUVERT.has(terrain[y * W + x])) continue
+        let ok = 0
+        for (let dy = -3; dy <= 3; dy++) for (let dx = -6; dx <= 6; dx++) if (s.relief.hauteur(x + dx, y + dy) === h && OUVERT.has(terrain[(y + dy) * W + x + dx])) ok++
+        if (ok >= 80) out.push({ x, y, h, ok })
+      }
+      // Dispersés sur la carte (≥ 120 tuiles entre deux) : la neige est un fait de RÉGION, pas
+      // de terrasse — dix candidats de la même rangée mesurent dix fois le même climat.
+      out.sort((a, b) => b.ok - a.ok)
+      const choisis = []
+      for (const c of out) { if (choisis.every((d) => Math.abs(d.x - c.x) + Math.abs(d.y - c.y) >= 120)) choisis.push(c); if (choisis.length >= 14) break }
+      return choisis
+    })
+    console.log(`  · terrasses ouvertes : ${JSON.stringify(candidats.slice(0, 5))}`)
+    let site = null
+    for (const c of candidats) {
+      await agir({ type: 'debug_teleport', x: c.x + 0.5, y: c.y + 0.5 }, 1600)
+      await page.waitForFunction(() => (window.__BRAISES__.scene.gelLayer?.sonde?.recuissons ?? 0) > 0, null, { timeout: 20000, polling: 150 }).catch(() => {})
+      await page.waitForTimeout(600)
+      const ici = await page.evaluate(() => {
+        const sc = window.__BRAISES__.scene
+        const p = sc.registry.get('playerPos')
+        const tx = Math.floor(p.x), ty = Math.floor(p.y)
+        return { etat: sc.gelLayer.etatConnuAt(tx, ty), h: sc.relief.hauteur(tx, ty), etage: sc.etageJoueur, pos: [Math.round(p.x * 10) / 10, Math.round(p.y * 10) / 10] }
+      })
+      console.log(`  · essai (${c.x}, ${c.y}) h ${c.h} : état ${ici.etat} · hauteur réelle ${ici.h} · étage ${ici.etage} · pos ${ici.pos}`)
+      if ((ici.etat === 1 || ici.etat === 2) && ici.h >= 1) { site = { ...c, ...ici }; break }
+    }
+    if (!site) { console.error('!! aucune terrasse enneigée trouvée'); return {} }
+    await page.evaluate(() => { window.__BRAISES__.scene.eauEvents.destroy() })
+    await page.keyboard.down('KeyD')
+    let n = 0
+    for (let k = 0; k < 30; k++) { await page.waitForTimeout(400); n = await page.evaluate(() => window.__BRAISES__.scene.eauEvents.tracesNeigeVivantes); if (n >= 6) break }
+    await page.keyboard.up('KeyD')
+    await page.waitForTimeout(300)
+    const releve = await page.evaluate(() => {
+      const sc = window.__BRAISES__.scene
+      const e = sc.eauEvents
+      const p = sc.registry.get('playerPos')
+      return {
+        joueur: { pos: [Math.round(p.x * 10) / 10, Math.round(p.y * 10) / 10], spriteY: Math.round(sc.playerSprite.y), spriteDepth: Math.round(sc.playerSprite.depth) },
+        traces: e.tracesSol.map((t) => ({ m: t.matiere, tx: t.tx, ty: t.ty, x: Math.round(t.img.x), y: Math.round(t.img.y), depth: Math.round(t.img.depth), hauteur: sc.relief.hauteur(t.tx, t.ty),
+          liftSol: sc.warp.liftSol(t.tx + 0.5, t.ty + 0.5), strateSol: sc.warp.strateSol(t.tx + 0.5, t.ty + 0.5) })),
+      }
+    })
+    console.log(`  joueur ${JSON.stringify(releve.joueur)}`)
+    let faux = 0
+    for (const t of releve.traces) {
+      const rangee = Math.floor((t.y + t.liftSol) / 16) === t.ty
+      const strate = Math.floor(t.depth / 100000) * 100000 === t.strateSol
+      if (!(rangee && strate)) faux++
+      console.log(`   ${rangee && strate ? '✓' : '✗'} trace ${t.m} tuile (${t.tx},${t.ty}) h ${t.hauteur} lift ${t.liftSol} : y ${t.y} (${rangee ? 'rangée ok' : 'RANGÉE LOGIQUE, ' + t.liftSol + ' px trop au sud'}) · depth ${t.depth} (${strate ? 'strate ok' : 'strate FAUSSE, sol à ' + t.strateSol})`)
+    }
+    console.log(faux ? `!! ${faux}/${releve.traces.length} traces hors du sol de leur palier` : `✓ ${releve.traces.length} traces à la hauteur et dans la strate de leur palier`)
+    await page.evaluate(() => window.__BRAISES__.scene.game.loop.sleep())
+    await page.screenshot({ timeout: 120000, path: `${OUT}/pas-etage.png` })
+    await page.evaluate(() => window.__BRAISES__.scene.game.loop.wake())
+    return { faux, n: releve.traces.length }
+  },
+
+  /**
+   * ═══ LES LUCIOLES SUR UN ÉTAGE (Alexis, 2026-09-05 : « les lucioles sur un étage ne
+   * fonctionnent pas correctement ») ═══
+   *
+   * Un essaim vit à la HAUTEUR du sol qu'il survole (T-R7 / E-R22) : ses mouches, sa flaque et
+   * sa source se dessinent `liftSol` px au-dessus de leur rangée logique, et se trient dans la
+   * strate de leur palier. MESURÉ avant le correctif (graine 2026, terrasse de (1425,653)) : un
+   * essaim au palier 1 posait sa flaque à la profondeur 9 et ses mouches à ~11 500 — sous les
+   * pavés de son palier (99 999) — à la rangée logique, deux tuiles sous le sol dessiné.
+   *
+   * CE QUI FERAIT ROUGIR : une mouche à `y = yPlat` sur un palier ≥ 1 ; une flaque dont la
+   * strate n'est pas celle du sol ; une source à la rangée logique. Les essaims se posent au
+   * hasard à 10-28 tuiles : si aucun ne tombe sur un palier ≥ 1, la sonde le DIT (elle n'a alors
+   * rien éprouvé) — relancer, ou viser ailleurs par SMOKE_X / SMOKE_Y.
+   */
+  async luciolesEtage(page) {
+    if (!dev) { console.log('\n(les lucioles sur un étage exigent --dev : l’heure et le TP)'); return {} }
+    await page.waitForFunction(() => Boolean(window.__BRAISES__?.scene?.registry?.get('worldReady')), null, { timeout: 150000 })
+    await page.waitForTimeout(1200)
+    const agir = async (action, ms = 300) => {
+      await page.evaluate((a) => { window.__BRAISES__.scene.sendAction(a) }, action)
+      await page.waitForTimeout(ms)
+    }
+    const X = Number(process.env.SMOKE_X ?? 1425), Y = Number(process.env.SMOKE_Y ?? 653)
+    await agir({ type: 'debug_god', on: true }, 200)
+    await agir({ type: 'debug_teleport', x: X + 0.5, y: Y + 0.5 }, 2400)
+    await agir({ type: 'debug_set_hour', hour: 1 }, 800)
+    // La nuit pose ses essaims — boucle endormie, images steppées à la main jusqu'au plein fondu.
+    const releve = await page.evaluate(() => {
+      const sc = window.__BRAISES__.scene
+      sc.game.loop.sleep()
+      for (let k = 0; k < 400; k++) {
+        sc.game.step(k * 16, 16)
+        if ((sc.ambientLife?.swarms.length ?? 0) >= 3 && sc.ambientLife.swarms.every((s) => s.fade >= 0.99)) break
+      }
+      const rel = sc.relief, warp = sc.warp
+      return (sc.ambientLife?.swarms ?? []).map((s) => {
+        const tx = Math.floor(s.x), ty = Math.floor(s.y)
+        const f0 = s.flies[0]
+        return {
+          ancre: [Math.round(s.x * 10) / 10, Math.round(s.y * 10) / 10],
+          hauteur: rel.hauteur(tx, ty), liftSol: warp.liftSol(s.x, s.y), strateSol: warp.strateSol(s.x, s.y),
+          flaque: { y: s.flaque.y, yPlat: Math.round(s.y * 16), depth: s.flaque.depth },
+          light: s.light ? { y: s.light.y } : null,
+          mouche0: f0 ? { y: Math.round(f0.sprite.y), yPlat: Math.round((s.y + f0.oy) * 16), depth: Math.round(f0.sprite.depth) } : null,
+        }
+      })
+    })
+    let hauts = 0, faux = 0
+    for (const sw of releve) {
+      const okM = sw.mouche0 && sw.mouche0.y === sw.mouche0.yPlat - sw.liftSol && Math.floor(sw.mouche0.depth / 100000) * 100000 === sw.strateSol
+      const okF = sw.flaque.depth === sw.strateSol + 9 && Math.abs(sw.flaque.y - (sw.flaque.yPlat - sw.liftSol)) <= 1
+      const okL = !sw.light || Math.abs(sw.light.y - (sw.ancre[1] * 16 - sw.liftSol)) < 2
+      if (sw.hauteur >= 1) hauts++
+      if (!(okM && okF && okL)) faux++
+      console.log(`   ${okM && okF && okL ? '✓' : '✗'} essaim (${sw.ancre}) hauteur ${sw.hauteur} lift ${sw.liftSol} strate ${sw.strateSol} — mouche ${okM ? 'ok' : 'FAUX'} flaque ${okF ? 'ok' : 'FAUX'} source ${okL ? 'ok' : 'FAUX'}`)
+    }
+    if (faux) console.error(`!! ${faux} essaim(s) ne sont pas à la hauteur de leur sol`)
+    if (hauts === 0) console.log('   (aucun essaim sur un palier ≥ 1 : la sonde n’a rien éprouvé — relancer, ou changer SMOKE_X/SMOKE_Y)')
+    else console.log(`✓ ${hauts} essaim(s) sur un palier haut, dessinés et triés à sa hauteur`)
+    // ON VA VOIR : le joueur se pose à côté du premier essaim d'un palier haut, et on capture.
+    const cible = releve.find((sw) => sw.hauteur >= 1)
+    await page.evaluate(() => window.__BRAISES__.scene.game.loop.wake())
+    if (cible) {
+      await agir({ type: 'debug_teleport', x: cible.ancre[0] - 5, y: cible.ancre[1] + 3 }, 2400)
+      await page.evaluate(() => {
+        const sc = window.__BRAISES__.scene
+        sc.game.loop.sleep()
+        for (let k = 0; k < 120; k++) sc.game.step(100000 + k * 16, 16)
+      })
+      await page.screenshot({ timeout: 120000, path: `${OUT}/lucioles-etage.png` })
+      console.log(`  photo → lucioles-etage.png`)
+      await page.evaluate(() => window.__BRAISES__.scene.game.loop.wake())
+    }
+    return { essaims: releve.length, hauts, faux }
   },
 
   /**

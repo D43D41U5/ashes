@@ -497,6 +497,55 @@ function fondDeSol(t: number): number {
 }
 
 /**
+ * LA BRAISE DE LA GUEULE — un feu de vestibule vu du palier (spec G-A13 : « un feu posé au
+ * vestibule se voit par la gueule depuis le palier — et pas ailleurs »). Une image de la taille
+ * de la gueule, posée PAR-DESSUS elle en ADD, dont `EtageLayer` règle l'alpha sur la force du
+ * feu le plus proche de la gueule (`feuxSousRoche`). Elle ne remplit que l'INTÉRIEUR de la
+ * fente (un pixel en retrait des lèvres : la roche ne s'allume pas) : chaude et franche en bas,
+ * là où le sol de la salle prend le feu, presque éteinte en haut, où la voûte ne renvoie qu'un
+ * reflet. Puis, sur le seuil, la lueur qui SORT du trou — plus étroite à mesure qu'elle
+ * s'éloigne, à l'inverse de l'ombre du seuil qu'elle recouvre.
+ *
+ * Même palette que la braise du voile (`cave-veil.ts`) : cœur (255,176,88), bord (224,108,28).
+ * Quantifiée par BANDES de quatre lignes, au grain de l'art du feu — jamais un dégradé lisse.
+ */
+export const BRAISE_GUEULE_COEUR = 0xffb058
+export const BRAISE_GUEULE_BORD = 0xe06c1c
+export function dessinDeLaBraiseDeGueule(): RectArtA[] {
+  const r: RectArtA[] = []
+  const premiere = PROFIL.findIndex((p) => p !== null)
+  const derniere = PROFIL.length - 1
+  for (let abs = premiere; abs <= derniere; abs++) {
+    const p = PROFIL[abs]
+    if (!p) continue
+    const [g, d] = p
+    if (d - g < 2) continue
+    // t = 0 en haut de la fente, 1 au ras du seuil — par bandes de 4 lignes.
+    const bande = Math.floor((abs - premiere) / 4)
+    const bandes = Math.floor((derniere - premiere) / 4)
+    const t = bandes <= 0 ? 1 : bande / bandes
+    const c = mixer(BRAISE_GUEULE_BORD, BRAISE_GUEULE_COEUR, t)
+    r.push({ x: g + 1, y: abs, w: d - g - 1, h: 1, c, a: 0.12 + t * t * 0.78 })
+  }
+  // Le seuil : la lueur qui sort, trois paliers qui rétrécissent en s'éloignant du trou.
+  const y0 = GUEULE_RANGEES * P - P
+  r.push({ x: 5, y: y0, w: 22, h: 3, c: BRAISE_GUEULE_COEUR, a: 0.42 })
+  r.push({ x: 8, y: y0 + 3, w: 16, h: 3, c: BRAISE_GUEULE_COEUR, a: 0.22 })
+  r.push({ x: 11, y: y0 + 6, w: 10, h: 3, c: BRAISE_GUEULE_BORD, a: 0.1 })
+  return r
+}
+
+/** Mélange linéaire de deux couleurs 0xRRGGBB (t = 0 → `a`, 1 → `b`), canal par canal. */
+function mixer(a: number, b: number, t: number): number {
+  let c = 0
+  for (const dec of [16, 8, 0]) {
+    const va = (a >> dec) & 0xff, vb = (b >> dec) & 0xff
+    c |= Math.round(va + (vb - va) * t) << dec
+  }
+  return c >>> 0
+}
+
+/**
  * LE FLANC — ce que la gueule fait à la paroi qui la borde. `cote` : 4 = la tuile à l'OUEST de la
  * gueule, 2 = celle à l'EST. Une bande sombre contre l'ouverture (la roche y est humide, et dans
  * l'ombre du trou) et deux fissures qui en partent : le mur s'est fendu, il n'a pas été percé.
@@ -574,6 +623,7 @@ export const ROCHE_CAVE_KEY = 'cv-roche'
 export const JOUR_KEY = 'cv-jour'
 export const DEHORS_KEY = 'cv-dehors'
 export const GUEULE_KEY = caveKey('gueule')
+export const BRAISE_GUEULE_KEY = caveKey('braise-gueule')
 
 /** Le nombre de masques de paroi utiles : {arête, pied, arête+pied} × {est, ouest ouverts}. */
 const MASQUES_PAROI: readonly number[] = ((): number[] => {
@@ -585,7 +635,7 @@ const MASQUES_PAROI: readonly number[] = ((): number[] => {
 /**
  * Génère les textures de la cave — appelé une fois au boot, après `makeCliffTextures`. Sol :
  * 2 terrains × 16 phases. Signes : 5. Paroi : 12 masques × 8 variantes. Ombres et lèvres : 4 + 4.
- * Gueule : 1 (32×48), flancs : 2, jour (32×48), dehors (32×16), roche (64×64), lueurs : 2. **~170 images**,
+ * Gueule : 1 (32×48) + sa braise : 1, flancs : 2, jour (32×48), dehors (32×16), roche (64×64), lueurs : 2. **~170 images**,
  * presque toutes de 16×16.
  */
 export function makeCaveTextures(scene: Phaser.Scene): void {
@@ -610,6 +660,7 @@ export function makeCaveTextures(scene: Phaser.Scene): void {
     rejouer(dessinDeLevre(cote), caveKey('levre', cote))
   }
   rejouer(dessinDeLaGueuleEntiere(), GUEULE_KEY, GUEULE_LARGEUR, GUEULE_RANGEES * P)
+  rejouer(dessinDeLaBraiseDeGueule(), BRAISE_GUEULE_KEY, GUEULE_LARGEUR, GUEULE_RANGEES * P)
   for (const cote of [2, 4]) rejouer(dessinDuFlanc(cote), caveKey('flanc', cote))
   rejouer(dessinDuJour(), JOUR_KEY, GUEULE_LARGEUR, JOUR_RANGEES * P)
   rejouer(dessinDuDehors(), DEHORS_KEY, GUEULE_LARGEUR, P)

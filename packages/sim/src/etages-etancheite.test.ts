@@ -17,9 +17,9 @@
  * garde verte ne dirait que « ce système ne fait rien ».
  */
 import { describe, expect, it } from 'vitest'
-import { BALANCE, FAUNA, HUNT, TERRAIN_GRASS, TERRAIN_ROCK, TERRAIN_SCREE } from './balance'
+import { BALANCE, FAUNA, HUNT, TERRAIN_GRASS, TERRAIN_ROCK, TERRAIN_SCREE, WEAPON_PROFILES } from './balance'
 import { createEmptyMap, type WorldMap } from './map'
-import { type EtageCreux } from './etages'
+import { type EtageCreux, niveauDuCorps } from './etages'
 import { createSim, spawnEntity, step, type SimState } from './sim'
 import { nearestPrey, spawnMonster } from './monsters'
 import { prowlerNear } from './nighthunt'
@@ -119,13 +119,16 @@ describe('E-A3 — un plancher ne se traverse que par un connecteur', () => {
   it('LA FRAPPE : on ne cogne pas quelqu’un à travers douze mètres de roche', () => {
     const r = lesDeuxSens((etageDuBas) => {
       const state = monde()
-      const frappeur = poser(state, BAS, etageDuBas)
+      // Le témoin se tient SUR le plateau, à une tuile de l'autre côté : un corps « à l'étage 1 »
+      // posé sur le pré serait en l'air, et l'élan du coup (`poussee.ts`) le reposerait au sol.
+      const surLePlateau = etageDuBas !== 0
+      const frappeur = poser(state, surLePlateau ? { x: HAUT.x + 1, y: HAUT.y } : BAS, etageDuBas)
       const cible = poser(state, HAUT, 1)
       const avant = state.entities.find((k) => k.id === cible)!.hp
       // Le wind-up puis sa résolution : une phase seule ne résout aucun coup.
       for (let t = 0; t < 40; t++) {
-        // Le geste réel : une frappe est DIRIGÉE (`combat.test.ts`), ici plein est.
-        step(state, [{ entityId: frappeur, dx: 0, dy: 0, action: { type: 'attack', dx: 1, dy: 0 } }])
+        // Le geste réel : une frappe est DIRIGÉE (`combat.test.ts`) — vers la cible.
+        step(state, [{ entityId: frappeur, dx: 0, dy: 0, action: { type: 'attack', dx: surLePlateau ? -1 : 1, dy: 0 } }])
       }
       return state.entities.find((k) => k.id === cible)!.hp < avant
     })
@@ -288,5 +291,84 @@ describe('E-R22 — ce qu’on lâche sur le plateau y reste', () => {
     for (let t = 0; t < HUNT.BLOOD_EVERY_TICKS + 1 && state.blood.length === 0; t++) step(state, [])
     expect(state.blood.length).toBeGreaterThan(0)
     expect(state.blood[0]!.etage).toBe(1)
+  })
+})
+
+/* ══════════ LA GROTTE DE LABORATOIRE — un plancher au-dessus, un mur autour ══════════
+ *
+ * Le chapeau de la mesa reste (roche au sol), et une CAVE à −1 vit dessous, sur les mêmes
+ * tuiles. Sa paroi ouest est la tuile 9 : à −1 elle n'existe pas (un mur) ; au sol c'est du pré,
+ * marchable. C'est exactement le piège rapporté par Alexis le 2026-09-06 (« lorsque je fais une
+ * attaque lourde dans le mur d'une grotte, je monte d'un étage ») : une poussée résolue SANS
+ * l'étage du corps voit le pré, traverse la paroi, et le pas suivant — ne trouvant plus de sol à
+ * −1 — retombe au palier du sol, c'est-à-dire À LA SURFACE.
+ */
+function grotteDeLabo(): WorldMap {
+  const map = mesaDeLabo()
+  const tuiles: number[] = []
+  for (let dy = 0; dy < CAP_N; dy++) for (let dx = 0; dx < CAP_N; dx++) tuiles.push((CAP_Y0 + dy) * map.width + CAP_X0 + dx)
+  const cave: EtageCreux = {
+    niveau: -1, idx: tuiles, terrain: tuiles.map(() => TERRAIN_SCREE),
+    x0: CAP_X0, y0: CAP_Y0, x1: CAP_X0 + CAP_N, y1: CAP_Y0 + CAP_N,
+  }
+  map.etages = [...map.etages!, cave]
+  return map
+}
+
+function grotte(): SimState {
+  return createSim(1, { map: grotteDeLabo(), worldEvents: false, faunaCap: 0, meteoActive: false, nightHunt: false })
+}
+
+/** Collé à la paroi ouest de la cave, le bord du corps à un cheveu de la tuile 9. */
+const CONTRE_LA_PAROI = { x: CAP_X0 + BALANCE.AVATAR_HITBOX_TILES / 2 + 0.025, y: CAP_Y0 + 2.5 }
+
+/** Le corps est-il encore dans la cave, à son étage ? (le pas idle qui suit relit l'étage) */
+function toujoursDansLaCave(state: SimState, id: number): { tuile: number; etage: number } {
+  step(state, [{ entityId: id, dx: 0, dy: 0 }])
+  const e = state.entities.find((k) => k.id === id)!
+  return { tuile: Math.floor(e.x - BALANCE.AVATAR_HITBOX_TILES / 2), etage: niveauDuCorps(state.map, e) }
+}
+
+/** Le vrai geste du coup lourd : maintenir, relâcher vers l'ouest, laisser le coup se résoudre. */
+function chargeVersLOuest(state: SimState, id: number): void {
+  step(state, [{ entityId: id, dx: 0, dy: 0, action: { type: 'attack_charge', dx: -1, dy: 0 } }])
+  for (let t = 0; t < WEAPON_PROFILES.unarmed.chargeTicks + 1; t++) step(state, [])
+  step(state, [{ entityId: id, dx: 0, dy: 0, action: { type: 'attack_release', dx: -1, dy: 0 } }])
+  for (let t = 0; t < 2 * BALANCE.TICK_RATE_HZ; t++) step(state, [])
+}
+
+describe('E-A3 — un corps POUSSÉ reste à son étage (charge, recul, séparation)', () => {
+  it('LA CHARGE dans la paroi de la grotte : on cogne le mur, on ne remonte pas à la surface', () => {
+    const state = grotte()
+    const id = poser(state, CONTRE_LA_PAROI, -1)
+    chargeVersLOuest(state, id)
+    expect(toujoursDansLaCave(state, id)).toEqual({ tuile: CAP_X0, etage: -1 })
+  })
+
+  it('LE RECUL d’un coup lourd reçu contre la paroi : le mur l’arrête', () => {
+    const state = grotte()
+    const cible = poser(state, CONTRE_LA_PAROI, -1)
+    const frappeur = poser(state, { x: CONTRE_LA_PAROI.x + 0.9, y: CONTRE_LA_PAROI.y }, -1)
+    chargeVersLOuest(state, frappeur)
+    expect(state.entities.find((k) => k.id === cible)!.hp).toBeLessThan(100)
+    expect(toujoursDansLaCave(state, cible)).toEqual({ tuile: CAP_X0, etage: -1 })
+  })
+
+  it('LA SÉPARATION de deux corps confondus contre la paroi : celui du mur n’y entre pas', () => {
+    const state = grotte()
+    const contre = poser(state, CONTRE_LA_PAROI, -1)
+    poser(state, { x: CONTRE_LA_PAROI.x + 0.2, y: CONTRE_LA_PAROI.y }, -1)
+    step(state, [])
+    expect(toujoursDansLaCave(state, contre)).toEqual({ tuile: CAP_X0, etage: -1 })
+  })
+
+  it('LA SÉPARATION ne traverse pas un plancher : le pied et le plateau ne se bousculent pas', () => {
+    const state = monde()
+    const pied = poser(state, { x: HAUT.x - 0.6, y: HAUT.y }, 0)
+    const plateau = poser(state, HAUT, 1)
+    const avant = state.entities.filter((k) => k.id === pied || k.id === plateau).map((k) => k.x)
+    step(state, [])
+    const apres = state.entities.filter((k) => k.id === pied || k.id === plateau).map((k) => k.x)
+    expect(apres).toEqual(avant)
   })
 })

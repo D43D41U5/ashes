@@ -102,8 +102,12 @@ import {
   AMBIENT_DEPTH_LIT,
   LIFT_TUILES,
   lookaheadOffset,
+  ouvertureDuDecouvert,
+  type Decouvert,
   OVERLAY_DEPTH,
   strateDeProfondeur,
+  strateDEtage,
+  strateDuCorps,
   TILE_PX,
   VISIBLE_TILES_TALL,
   zoomForFraming,
@@ -158,7 +162,8 @@ import { EauEvents } from './world/eau-events'
 import { PoissonsOmbres } from './world/poissons-ombres'
 import { FeuillesDerive } from './world/feuilles-derive'
 import { RefletsLayer } from './world/reflets'
-import { SonsDeLEau } from '../audio/eau-audio'
+import { LAP_PORTEE, SonsDeLEau } from '../audio/eau-audio'
+import { SonsDeLaGrotte } from '../audio/grotte-audio'
 import { AVANCE_S, intensiteEntendue, SonsDuCiel } from '../audio/meteo-audio'
 import { riveAt } from '../render/water-field'
 import { FumerolleFx } from './world/fumerolle-fx'
@@ -183,7 +188,7 @@ import {
 } from '../render/fog'
 import { peindreCarteArt, type CarteArt } from '../render/carte-art'
 import { cellulesDuDisque, peindreSavoirRegion } from '../render/carte-savoir'
-import { atteignableEntreEtages, etagesDuPas, niveauDuCorps, palierDuSol, TRACTION, eauPechable, estUnCoinDePeche, porteDeLEau, FISH_SPECIES, niveauDEau, torcheVive, partDeFlamme, clarteSurSoiAt, clarteDuCiel, partDuCiel, NUIT, MONSTER_DEFS, POI_CHARGES, TERRAIN_DEEP_WATER, TERRAIN_SHALLOW_WATER, CREUX, TERRAINS_BOISES_MASSIF, ventForceAt, VENT, type EtatVent } from '@ashes/sim'
+import { atteignableEntreEtages, etagesDuPas, niveauDuCorps, palierDuSol, terrainAEtage, TRACTION, eauPechable, estUnCoinDePeche, porteDeLEau, FISH_SPECIES, niveauDEau, torcheVive, partDeFlamme, clarteSurSoiAt, clarteDuCiel, partDuCiel, NUIT, MONSTER_DEFS, POI_CHARGES, TERRAIN_DEEP_WATER, TERRAIN_SHALLOW_WATER, CREUX, TERRAINS_BOISES_MASSIF, ventForceAt, VENT, type EtatVent } from '@ashes/sim'
 
 /** L'assombrissement du sol au plafond de profondeur (§2quater R42) : au cœur d'un massif,
  *  le sol perd jusqu'à 14 % de luminance — en PENTE CONTINUE, jamais par bande. */
@@ -293,6 +298,8 @@ const RENDER_OFFSET_DECAY = 0.85
  * persistance.
  */
 const EVENT_LOG_CAP = 500
+/** Aucun feu sous la roche — le tableau partagé qu'on pose à `EtageLayer` plutôt qu'un neuf par image. */
+const SANS_FEU: readonly { tx: number; ty: number; etage: number; force: number }[] = []
 
 /**
  * Nos étapes de montage du monde, dans l'ordre (voir `onReady`) — la barre de chargement
@@ -421,6 +428,15 @@ export class WorldScene extends Phaser.Scene {
    *  d'une bande. Relevée avec le reste du vent, à chaque image (une lecture de `ventForceAt`,
    *  sans garde de cadence — contrairement au thermo, qui balaie plus large). */
   private ventPartIci = 0
+  /**
+   * LA PART DU DEHORS QUI ARRIVE AU JOUEUR — 1 à l'air libre ; sous la roche, `partDuCiel` à
+   * sa tuile (spec `grottes.md` §4bis) : 1 sur la gueule, 0 à `CIEL_PENETRATION` + 1 tuiles.
+   * C'est la loi qui fait entrer le JOUR dans la salle (`EtageLayer.partDuCielAt`), relue pour
+   * tout ce que le dehors envoie d'autre — les nappes du ciel, les oiseaux, l'icône du ciel,
+   * l'aiguille du vent : un seul nombre, dérivé, pas un réglage de plus. Publique : le smoke
+   * la lit (« au fond, le ciel se tait »).
+   */
+  dehorsIci = 1
   /** LA FOUDRE (R8) — le télégraphe au sol, puis l'éclair. Publique, même raison. */
   foudreFx: FoudreFx | null = null
   /** LE PAYSAGE GELÉ (spec gel.md G5/G7) — la neige au sol et la glace. Publique : le smoke
@@ -470,6 +486,39 @@ export class WorldScene extends Phaser.Scene {
   private readonly eauIci = (tx: number, ty: number): boolean =>
     this.etatGel !== null && porteDeLEau(this.etatGel, tx, ty, this.niveauEauDuTick)
 
+  /** La dernière rive de salle relevée : par tuile, parce que la nappe d'une cave ne bouge pas. */
+  private riveDeSalleMemo: { idx: number; d: number } = { idx: -1, d: -Infinity }
+  /**
+   * LA DISTANCE SIGNÉE À L'EAU DE LA SALLE (+ dans l'eau, − à terre), la lecture que `SonsDeLEau`
+   * attend — la même convention que `riveAt` sur le champ du sol. La nappe d'un karst (G-R4)
+   * n'a pas de champ de rive : on cherche la première tuile d'eau de la grille creuse, en
+   * anneaux de Chebyshev jusqu'à `LAP_PORTEE` (au-delà, le clapotis est nul : rien à chercher).
+   * Sous une salle sèche, `−(LAP_PORTEE + 1)` — hors de portée, et c'est la bonne réponse.
+   */
+  private dRiveDeLaSalle(tx: number, ty: number): number {
+    const idx = ty * this.map.width + tx
+    if (this.riveDeSalleMemo.idx === idx) return this.riveDeSalleMemo.d
+    const niveau = this.relief.niveauDeSalle(tx, ty)
+    let d = -(LAP_PORTEE + 1)
+    if (niveau < 0) {
+      cherche: for (let r = 0; r <= LAP_PORTEE; r++) {
+        for (let oy = -r; oy <= r; oy++) {
+          for (let ox = -r; ox <= r; ox++) {
+            if (r > 0 && !(ox === -r || ox === r || oy === -r || oy === r)) continue
+            const t = terrainAEtage(this.map, niveau, tx + ox, ty + oy)
+            if (t === TERRAIN_SHALLOW_WATER || t === TERRAIN_DEEP_WATER) {
+              // Sur la tuile même : dans l'eau (une demi-tuile, comme un gué peu profond).
+              d = r === 0 ? 0.5 : -r
+              break cherche
+            }
+          }
+        }
+      }
+    }
+    this.riveDeSalleMemo = { idx, d }
+    return d
+  }
+
   /**
    * QUI PORTE UNE FLAMME, À L'IMAGE (spec `torche.md`) — position MONDE en pixels et part de
    * flamme, pour les trois branchements de lumière.
@@ -498,7 +547,54 @@ export class WorldScene extends Phaser.Scene {
   private yDessineDuCorps(x: number, y: number, etage: number | undefined): number {
     const palier = this.relief.palier(Math.floor(x), Math.floor(y))
     const niveau = this.etages.niveauDuCorps(x, y, etage ?? palier)
-    return y - Math.max(niveau, palier) * LIFT_TUILES
+    const hauteur = niveau < 0 ? -niveau - 1 : Math.max(niveau, palier)
+    return y - hauteur * LIFT_TUILES
+  }
+
+  /**
+   * La hauteur à laquelle une tuile se DESSINE, pour `ouvertureDuDecouvert` : son palier, plus le
+   * chapeau de mesa s'il y en a un (`Relief.hauteur`). Le sol d'un palier HAUT recouvre un corps
+   * du palier bas passé sous sa rangée nord exactement comme un chapeau (T-R9 ; Alexis,
+   * 2026-09-05 : « fais la même chose pour les falaises des terrasses ») — c'est le même lift.
+   * Ce qui est au niveau du corps ou dessous ne compte pas : `ouvertureDuDecouvert` ne balaie
+   * que les hauteurs au-dessus du regard.
+   */
+  private readonly hauteurCouvrante = (tx: number, ty: number): number => this.relief.hauteur(tx, ty)
+
+  /**
+   * ═══ LE DÉCOUVERT DE L'IMAGE — calculé UNE FOIS, AVANT le premier sol qu'il creuse ═══
+   *
+   * Il se calculait au milieu d'`update`, après `paves.render` : depuis que les pavés d'un palier
+   * haut se creusent sur le corps (`Trouee`, T-R9), tout ce qui cède — pavés, manteau, lèvres,
+   * chapeaux, nœuds, décor — doit lire LA MÊME valeur de LA MÊME image, sinon la trouée des pavés
+   * a une image de retard sur le chapeau qu'elle borde. `null` tant qu'aucun snapshot n'a posé le
+   * corps : rien ne cède pour un regard qui n'existe pas encore.
+   *
+   * C'est ici, et pas dans les couches, qu'on décide à qui le monde doit céder : LE DÉCOUVERT NE
+   * PART QUE VERS LE HAUT (décision d'Alexis, 2026-09-01) — un plateau ne s'efface que pour un
+   * joueur d'un niveau PLUS BAS que lui ; sur le plateau, il reste plein : on ne fond jamais le
+   * sol que l'on foule. Il porte le CENTRE DESSINÉ du joueur (là où son corps est à l'écran,
+   * palier et étage déduits — `yDessineDuCorps`), son NIVEAU, et son OUVERTURE (Alexis,
+   * 2026-09-05) : le disque ne joue qu'à proportion de ce qui RECOUVRE le corps, en géométrie
+   * d'écran. Rien dessus, rien ne cède : la butte qu'on longe ou qu'on approche par le nord reste
+   * entière jusqu'à passer sous elle.
+   */
+  private decouvert: Decouvert | null = null
+  private calculerLeDecouvert(): Decouvert {
+    const { x, y } = this.predicted
+    const yDessine = this.yDessineDuCorps(x, y, this.etageJoueur)
+    // LE NIVEAU DU REGARD EST CELUI DU MONDE OÙ LE CORPS SE DESSINE (`strateDuCorps`, 2026-09-05)
+    // — pas l'entier de l'autorité. Sur une rampe, le corps change de monde à mi-pente ; arrivé
+    // sur le sol du haut avant que le snapshot ne le confirme, `niveauDuCorps` de la couche lui
+    // donne déjà « celui qui porte ». Lu sur l'autorité, le disque s'ouvrait en haut de la rampe
+    // et le corps arrivait sur un socle noir (Alexis : « flash noir »). Et sous la roche
+    // (`souterrain`), rien à découvrir : la salle a son voile, et le sol du dessus n'est pas
+    // « au-dessus du regard », il est le plafond — ouverture nulle.
+    const palier = this.relief.palier(Math.floor(x), Math.floor(y))
+    const niveau = strateDuCorps(this.etages.niveauDuCorps(x, y, this.etageJoueur))
+    const ouverture = niveau < palier ? 0
+      : ouvertureDuDecouvert(this.hauteurCouvrante, x, yDessine, niveau, this.relief.hauteurMax)
+    return { x, y: yDessine, niveau, ouverture }
   }
 
   private porteursDeTorche(): PorteurDeTorche[] {
@@ -510,7 +606,12 @@ export class WorldScene extends Phaser.Scene {
       // LÀ OÙ LE CORPS EST À L'ÉCRAN, pas à sa rangée logique : sur une terrasse de palier 2, la
       // flaque, le trou du voile et le point light de la torche étaient posés quatre tuiles au
       // sud du porteur (MESURÉ le 2026-09-04 sur le feu 474 de la graine 2026 — même défaut).
-      out.push({ id: e.id, x: pos.x * TILE_PX, y: this.yDessineDuCorps(pos.x, pos.y, e.etage) * TILE_PX, part: partDeFlamme(slot) })
+      // …ET DANS LA STRATE DU CORPS (2026-09-05) : la même lecture que `syncActor` — le niveau
+      // dessiné, arrondi par `strateDuCorps` — sinon la flaque, juste à l'écran, se triait en
+      // strate 0 sous les pavés du palier (voir `PorteurDeTorche.strate`).
+      const palier = this.relief.palier(Math.floor(pos.x), Math.floor(pos.y))
+      const strate = strateDEtage(strateDuCorps(this.etages.niveauDuCorps(pos.x, pos.y, e.etage ?? palier)), palier)
+      out.push({ id: e.id, x: pos.x * TILE_PX, y: this.yDessineDuCorps(pos.x, pos.y, e.etage) * TILE_PX, strate, part: partDeFlamme(slot) })
     }
     return out
   }
@@ -579,6 +680,9 @@ export class WorldScene extends Phaser.Scene {
   /** LES SONS DU CIEL (chantier audio météo, 2026-08-28) — les nappes de pluie et de vent,
    *  le tonnerre et le grésillement du télégraphe. Publique : le smoke lit sa sonde. */
   readonly sonsCiel = new SonsDuCiel()
+  /** LES SONS DE LA GROTTE (spec `grottes.md` §4bis) — la goutte, là où elle tombe. Publique :
+   *  le smoke lit sa sonde. */
+  readonly sonsGrotte = new SonsDeLaGrotte()
   private lastSonPos: { x: number; y: number } | null = null
   /** Les poissons-ombres (R14) — décor assumé tant que la pêche n'existe pas. */
   private poissons: PoissonsOmbres | null = null
@@ -1322,6 +1426,11 @@ export class WorldScene extends Phaser.Scene {
         // LE PLATEAU par-dessus la falaise : elle lui donne déjà son FLANC (E-R12), il ne
         // manquait que son SOL et l'entaille de la rampe. Muet sur une vallée sans mesa.
         this.etages = new EtageLayer(this, this.map, this.relief)
+        // LA GOUTTE S'ENTEND LÀ OÙ ELLE TOMBE (spec `grottes.md` §4bis) : le son part de l'impact
+        // que l'œil voit, spatialisé par le moteur — un seul écrivain de la géométrie, le FX.
+        if (this.etages.fx) {
+          this.etages.fx.onGoutte = (x, y) => this.sonsGrotte.goutte(x, y, (sp, d2, at) => this.audioFx.play(sp, d2, at))
+        }
         // LA RAMPE EST UN PLAN INCLINÉ (Alexis, 2026-09-01) : l'acteur lit sa hauteur à la couche
         // qui la PEINT, jamais à une seconde écriture de la même géométrie.
         this.view.niveauAt = (x, y, e) => this.etages.niveauDuCorps(x, y, e)
@@ -1391,6 +1500,9 @@ export class WorldScene extends Phaser.Scene {
             ? -1
             : (this.paves?.terrainAffiche(tx, ty) ?? this.map.terrain[ty * this.map.width + tx] ?? -1),
         )
+        // …et un essaim vit à la HAUTEUR du sol qu'il survole (T-R7) : sur une terrasse, sans
+        // ce relief, ses mouches et sa flaque se dessinaient sous les pavés de leur palier.
+        this.ambientLife.setReliefSous(reliefSous)
         // LA MÉTÉO (spec meteo.md) : la bande du front et la foudre. Le record d'élection
         // arrive par le snapshot ; TOUT le reste — bande, gradient, instants et points
         // d'impact — se recalcule ici des fonctions pures de /sim.
@@ -1903,6 +2015,12 @@ export class WorldScene extends Phaser.Scene {
       }),
     )
 
+    // Le découvert d'abord (voir `calculerLeDecouvert`) : les pavés qu'on rend juste après
+    // s'y creusent, et chaque couche qui cède en lit la même valeur.
+    this.decouvert = this.lastTime ? this.calculerLeDecouvert() : null
+    this.paves.decouvert = this.decouvert
+    this.cliffs.decouvert = this.decouvert
+    if (this.gelLayer) this.gelLayer.decouvert = this.decouvert
     this.ground.render(this.cameras.main)
     this.paves.render(this.cameras.main)
     // LE VENT DE LA SIM (spec chasse C17) : le décor plie DANS SON SENS. C'est
@@ -2063,12 +2181,9 @@ export class WorldScene extends Phaser.Scene {
       // ⚠ **UN SEUL POINT DE DÉCISION, TROIS CONSOMMATEURS.** Le plancher, le décor et les nœuds
       // d'un étage cèdent ENSEMBLE ou pas du tout : deux d'entre eux se sont d'abord tus, et l'on
       // a vu des fleurs de mesa flotter, opaques, dans le creux que le fondu venait d'ouvrir.
-      // DEPUIS LES TERRASSES (spec `terrasses.md` T-R9), le découvert porte le CENTRE DESSINÉ du
-      // joueur — là où son corps est à l'écran, palier et étage déduits — et son NIVEAU : c'est
-      // la pièce qui, en lisant les deux, sait si elle est au-dessus de lui (`alphaDeDecouvert`).
-      // Un joueur au palier 2 n'a rien au-dessus de lui que le chapeau d'une mesa de palier 2.
-      const yDessine = this.yDessineDuCorps(this.predicted.x, this.predicted.y, this.etageJoueur)
-      const decouvert = { x: this.predicted.x, y: yDessine, niveau: this.etageJoueur }
+      // La valeur est celle de l'image, calculée en tête d'`update` (`calculerLeDecouvert`) —
+      // la même que les pavés, le manteau et les lèvres ont déjà lue.
+      const decouvert = this.decouvert ?? this.calculerLeDecouvert()
       this.view.decouvert = decouvert
       if (this.clutter) this.clutter.decouvert = decouvert
       // ═══ SOUS LA ROCHE : la salle prend l'écran, et E-R13 s'y VOIT ═══
@@ -2077,8 +2192,16 @@ export class WorldScene extends Phaser.Scene {
       // « Sous » se lit du PALIER de la tuile, pas de zéro — et depuis G-R1 (`grottes.md`) un
       // souterrain est NÉGATIF (`−(p + 1)` sous une gueule de palier `p`) : `niveau < palier`
       // reste la lecture juste, sous une mesa comme sous une terrasse.
+      // ⚠ **SUR LE NIVEAU DESSINÉ, PAS SUR L'ENTIER DE L'AUTORITÉ** (Alexis, 2026-09-05 : « j'ai un
+      // flash noir lorsque j'arrive à un étage supérieur »). La position prédite pose le pied sur
+      // le palier haut quelques images AVANT que le snapshot ne rende l'étage : `etageJoueur` (0)
+      // < palier (1), et le voile de la cave prenait l'écran entier — MESURÉ : 9 images sur la
+      // terrasse (1425,661) de la graine 2026, smoke `rampe-monte`. `Decouvert.niveau` est le
+      // monde où le corps est dessiné (`EtageLayer.niveauDuCorps` : une tuile qui n'est pas
+      // marchable à l'étage d'autorité rend son plancher le plus haut), lu au même endroit que
+      // tout ce qui cède — E-R27.
       const palierJ = this.relief.palier(Math.floor(this.predicted.x), Math.floor(this.predicted.y))
-      const souterrain = this.etageJoueur < palierJ
+      const souterrain = decouvert.niveau < palierJ
       this.etages.souterrain = souterrain
       // …et la vue le lit au même point : les nœuds semés dans la salle et le bivouac (G-R7) ne se
       // voient ni ne se visent que sous la roche (`SnapshotView.sousRoche`).
@@ -2107,6 +2230,14 @@ export class WorldScene extends Phaser.Scene {
         // Au NIVEAU de la salle creusée sous la tuile (G-R1) — plus « le palier moins un ».
         this.etages.partDuCielAt = (tx, ty) => partDuCiel(gel, tx, ty, this.relief.niveauDeSalle(tx, ty))
       }
+      // ═══ SOUS LA ROCHE, LE DEHORS S'EFFACE (spec `grottes.md` §4bis) ═══
+      // Le rendu était déjà juste sans qu'on l'écrive : la roche (`ROCHE_DEPTH`) coiffe toutes
+      // les couches du dehors, la pluie, la brume et les rubans du vent se peignent sous elle.
+      // Mais l'OREILLE et la BARRE, elles, n'ont pas de strate : au fond d'une salle noire on
+      // entendait la pluie du plateau au plein, les oiseaux de l'aube, le clapotis du lac
+      // au-dessus de sa tête, et l'icône du ciel disait « il neige ». Une seule part, la même
+      // loi que le jour qui entre : à la gueule tout arrive, quatre tuiles plus loin plus rien.
+      this.dehorsIci = souterrain ? this.etages.cielDe(Math.floor(this.predicted.x), Math.floor(this.predicted.y)) : 1
       if (souterrain || this.etages.lumiere === null) {
         const moi = this.lastEntities.find((e) => e.id === this.playerId)
         const slot = moi ? torcheVive(moi) : null
@@ -2119,9 +2250,9 @@ export class WorldScene extends Phaser.Scene {
           // En px DESSINÉS : la salle d'une mesa de palier `p` est levée de `p × LIFT`, le corps
           // qui s'y tient aussi — la torche perce le voile là où le corps est à l'écran.
           torche: slot !== null
-            ? { x: this.predicted.x * TILE_PX, y: yDessine * TILE_PX, force: partDeFlamme(slot) * flicker(time, 0.37) }
+            ? { x: this.predicted.x * TILE_PX, y: decouvert.y * TILE_PX, force: partDeFlamme(slot) * flicker(time, 0.37) }
             : null,
-          joueur: { x: this.predicted.x * TILE_PX, y: yDessine * TILE_PX },
+          joueur: { x: this.predicted.x * TILE_PX, y: decouvert.y * TILE_PX },
           // LE BIVOUAC (G-R7) : chaque feu de la salle, à la hauteur où son sprite se dessine
           // (`reliefSous`, l'étage compris), et sa flamme selon l'ÉTAT du foyer — le même
           // `facteurDuFeu` que la flaque et le trou du voile de nuit, un feu mort n'éclaire rien.
@@ -2132,6 +2263,17 @@ export class WorldScene extends Phaser.Scene {
           }),
         }
       }
+      // LE FEU VU DE DEHORS (G-A13) : les mêmes feux, par tuile et par étage, posés dehors comme
+      // dedans — c'est depuis le palier qu'une gueule rougit. Rien à faire tant qu'aucun feu
+      // n'est sous la roche (le cas de presque toutes les images).
+      let feuxSousRoche: { tx: number; ty: number; etage: number; force: number }[] | null = null
+      for (const s of this.view.structures) {
+        if (s.type !== 'fire' || !sousLaRoche(s)) continue
+        const force = facteurDuFeu(this.lastSnapshotTick, s) * flicker(time, s.id * 1.7)
+        if (force <= 0) continue
+        ;(feuxSousRoche ??= []).push({ tx: s.tx, ty: s.ty, etage: s.etage ?? 0, force })
+      }
+      this.etages.feuxSousRoche = feuxSousRoche ?? SANS_FEU
       if (this.etages.actif) this.etages.render(this.cameras.main, decouvert, deltaMs)
       // Les lieux ont besoin de savoir OÙ est le joueur (le nom grossit quand on
       // approche) et CE QU'IL CONNAÎT (on ne nomme pas un lieu qu'on n'a pas vu).
@@ -2371,7 +2513,12 @@ export class WorldScene extends Phaser.Scene {
         // LA MÊME CONDITION QUE LA MARÉE : un seul phénomène, deux objets — voir `mist-banks`.
         this.morningMist?.part ?? 1,
       )
-      this.aube.update(time, hour, (sp, d2) => this.audioFx.play(sp, d2)) // les oiseaux, fenêtre de l'aube
+      // Les oiseaux, fenêtre de l'aube — au gain du DEHORS : entiers sur le plateau, à demi au
+      // seuil d'une gueule, muets au fond (un pépiement par seconde ou deux : le spread est gratuit).
+      if (this.dehorsIci > 0) {
+        const dehors = this.dehorsIci
+        this.aube.update(time, hour, (sp, d2) => this.audioFx.play(dehors < 1 ? { ...sp, gain: sp.gain * dehors } : sp, d2))
+      }
       // LE THÈME D'AMBIANCE : un passage espacé au hasard, coupé net par le danger. La position
       // lue est la PRÉDITE quand on l'a — c'est là qu'est le joueur à l'écran, et une portée qui
       // coupe la musique doit se mesurer d'où il se voit.
@@ -2416,7 +2563,13 @@ export class WorldScene extends Phaser.Scene {
         vent,
       )
       if (this.water?.rive && this.predicted) {
-        const dR = riveAt(this.water.rive, this.predicted.x, this.predicted.y + BALANCE.AVATAR_HITBOX_TILES / 2)
+        // SOUS LA ROCHE, LA RIVE EST CELLE DE LA SALLE (G-R4) : le champ de rive est celui du
+        // sol, et au fond d'un karst il disait le lac de la terrasse au-dessus — on entendait
+        // clapoter un lac qu'on avait sur la tête. La nappe de la cave est une tuile de la
+        // grille creuse : on la cherche à la distance du clapotis, et pas plus loin.
+        const dR = this.etages.souterrain
+          ? this.dRiveDeLaSalle(Math.floor(this.predicted.x), Math.floor(this.predicted.y + BALANCE.AVATAR_HITBOX_TILES / 2))
+          : riveAt(this.water.rive, this.predicted.x, this.predicted.y + BALANCE.AVATAR_HITBOX_TILES / 2)
         const bouge =
           this.lastSonPos !== null &&
           (Math.abs(this.predicted.x - this.lastSonPos.x) > 0.008 ||
@@ -2600,10 +2753,12 @@ export class WorldScene extends Phaser.Scene {
       // (le mur qui approche est déjà de neige ou de pluie), mais un pictogramme plein sous un
       // ciel encore sec mentait pendant des heures — l'icône s'estompe hors de la bande, comme
       // l'aiguille du vent s'estompe par force faible. Le cadran dev, lui, dit « clair ».
+      // …et SOUS LA ROCHE, le ciel ne couvre plus rien passé la gueule (`dehorsIci` = 0) : le
+      // pictogramme s'estompe comme hors de la bande — au fond d'un karst, il ne neige pas.
       setHud(
         this.registry,
         'cielCouvre',
-        meteoFront !== null
+        meteoFront !== null && this.dehorsIci > 0
           && meteoIntensityAt(meteoFront, this.lastTime.tick, this.map.width, this.map.height, this.predicted.x, this.predicted.y) > 0,
       )
 
@@ -2636,7 +2791,9 @@ export class WorldScene extends Phaser.Scene {
         //   décor et l'aiguille disent maintenant le même vent, de la même façon.
         //   `force` reste celle de la SIM, mesurée AU POINT DU JOUEUR — elle ne se rallie pas.
         const capIcone = this.ventLisse.cap
-        setHud(this.registry, 'vent', { x: capIcone.x, y: capIcone.y, force })
+        // …à la part du DEHORS : sous la roche, l'aiguille s'estompe comme par vent faible —
+        // un blizzard du plateau ne souffle pas au fond d'une salle (`dehorsIci`, §4bis).
+        setHud(this.registry, 'vent', { x: capIcone.x, y: capIcone.y, force: force * this.dehorsIci })
       }
 
       // ── LE CADRAN THERMIQUE (DEV) ── quatre fois par seconde de jeu, et par les fonctions
@@ -2651,10 +2808,10 @@ export class WorldScene extends Phaser.Scene {
         const couverture = neigeAuSol(etat, tx, ty)
         this.debugPanel.majThermo({
           monde: dehorsSansMeteo(etat, x, y, this.lastTime.tick),
-          lieu: baselineTemperature(etat, x, y),
-          ressenti: ambientTemperature(etat, x, y),
+          lieu: baselineTemperature(etat, x, y, this.etageJoueur),
+          ressenti: ambientTemperature(etat, x, y, this.etageJoueur),
           corps: this.myTemperature,
-          cibleCorps: cibleCorporelle(ambientTemperature(etat, x, y)),
+          cibleCorps: cibleCorporelle(ambientTemperature(etat, x, y, this.etageJoueur)),
           ciel: meteoAspectAt(etat, x, y, this.lastTime.tick),
           intensite: meteoFront ? meteoIntensityAt(meteoFront, this.lastTime.tick, this.map.width, this.map.height, x, y) : 0,
           froidDuFront: meteoColdAt(etat, x, y, this.lastTime.tick),
@@ -2681,9 +2838,12 @@ export class WorldScene extends Phaser.Scene {
               this.map.width, this.map.height, this.predicted.x, this.predicted.y,
             )
           : 0
-        this.sonsCiel.update((forme) => this.audioFx.nappe(forme), aspect, intensiteEntendue(iCiel, iAvance))
+        // …au gain du DEHORS (`dehorsIci`, spec `grottes.md` §4bis) : la pluie s'entend pleine
+        // sur la gueule, à demi au seuil du vestibule, plus du tout au fond. Le tonnerre, lui,
+        // n'est pas touché : un grondement traverse la roche, et il porte à `CRI`.
+        this.sonsCiel.update((forme) => this.audioFx.nappe(forme), aspect, intensiteEntendue(iCiel, iAvance) * this.dehorsIci)
         const tel = this.foudreFx?.sonde
-        if (tel && tel.ticksLeft > 0) {
+        if (tel && tel.ticksLeft > 0 && this.dehorsIci > 0) {
           this.sonsCiel.gresille(time, tel.x, tel.y, tel.alpha, (sp, d2, at) => this.audioFx.play(sp, d2, at))
         }
       }
@@ -2943,14 +3103,18 @@ export class WorldScene extends Phaser.Scene {
     // rangs, ils ne peuvent pas partager une lecture ambiguë. `zone` reste écrite telle
     // quelle : la carte plein écran et le survol s'en servent encore.
     setHud(this.registry, 'toponyme', toponymeAt(this.map, this.predicted.x, this.predicted.y))
-    setHud(this.registry, 'lieu', lieuAt(this.map, this.predicted.x, this.predicted.y)?.name)
+    // Sous la roche, c'est la Grotte qui répond (l'emprise creusée à l'étage du corps, G-R2) —
+    // pas le rectangle du dessus : « le Bosquet » à qui marchait dans la Grotte VI.
+    setHud(this.registry, 'lieu', lieuAt(this.map, this.predicted.x, this.predicted.y, this.etageJoueur)?.name)
     // L'AIR QU'IL FAIT ICI, sur la MÊME façade que le gel et la neige (`etatGel`) : le nombre
     // ne peut donc jamais contredire la glace qu'on voit au sol. La façade ignore la Brume
     // (trou nommé dans `etat-gel.ts`) — le monde peint l'ignore aussi, les deux restent
     // d'accord, et c'est ce qui compte pour un HUD.
     if (this.etatGel && this.lastTime !== null && this.lastTime.tick - this.airAuTick >= AIR_PAS_TICKS) {
       this.airAuTick = this.lastTime.tick
-      setHud(this.registry, 'ambiant', ambientTemperature(this.etatGel, this.predicted.x, this.predicted.y))
+      // À L'ÉTAGE du joueur : sous la roche il fait 13 °C (`GROTTE_AMBIANT`), et le thermomètre
+      // doit le dire — lu au sol, il montrait l'air de la terrasse au-dessus de la tête.
+      setHud(this.registry, 'ambiant', ambientTemperature(this.etatGel, this.predicted.x, this.predicted.y, this.etageJoueur))
     }
     // Le marqueur « tu es ici » de la carte plein écran suit l'ancre autorité.
     setHud(this.registry, 'playerPos', { x: this.predicted.x, y: this.predicted.y })
