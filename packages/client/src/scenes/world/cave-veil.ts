@@ -46,6 +46,18 @@ export const BRAISE_DEPTH = CAVE_VEIL_DEPTH - 1
 /** La chaleur de la torche — le MULTIPLY qui ôte le bleu — passe juste avant la braise. */
 const CHALEUR_DEPTH = BRAISE_DEPTH - 1
 
+/**
+ * UNE BANDE HORIZONTALE DU MASQUE DE LA MASSE, en tuiles MONDE : la rangée `r` est une rangée
+ * DESSINÉE (celle de l'écran, lift compris), `a` et `b` les colonnes extrêmes, incluses.
+ * `EtageLayer` en produit deux listes — la masse, où la roche se pose, et son complément, où le
+ * voile s'ouvre parce qu'il n'y a rien à assombrir.
+ */
+export interface BandeDeMasque {
+  r: number
+  a: number
+  b: number
+}
+
 /** Ce que WorldScene sait de la lumière, en une structure — pas trois fermetures. */
 export interface LumiereDeCave {
   /** La clarté du ciel à cette heure, dans [0, 1] (`clarteDuCiel`) : la force du jour à la gueule. */
@@ -254,6 +266,19 @@ function ensureJourSol(scene: Phaser.Scene): number {
   return side
 }
 
+/** LA GOMME : un texel blanc opaque, étiré à la bande qu'on ouvre. Elle n'est jamais DESSINÉE —
+ *  elle ne sert qu'à `erase`, où seule sa couverture compte. */
+const GOMME_KEY = 'fx-cave-gomme'
+function ensureGomme(scene: Phaser.Scene): void {
+  if (scene.textures.exists(GOMME_KEY)) return
+  const tex = scene.textures.createCanvas(GOMME_KEY, 1, 1)
+  if (!tex) return
+  const ctx = tex.getContext()
+  ctx.fillStyle = '#ffffff'
+  ctx.fillRect(0, 0, 1, 1)
+  tex.refresh()
+}
+
 export class CaveVeil {
   private rt: Phaser.GameObjects.RenderTexture
   private dt: Phaser.Textures.DynamicTexture
@@ -266,6 +291,9 @@ export class CaveVeil {
   /** UNE BROSSE PAR TROU (voir `night-veil.ts` : la commande DRAW ne retient qu'une référence, et
    *  relit texture, taille et alpha au `render()`). Jamais dans la liste d'affichage. */
   private brushes: Phaser.GameObjects.Image[] = []
+  /** Une gomme par bande ouverte — même règle que les brosses : la commande `erase` ne retient
+   *  qu'une RÉFÉRENCE et relit taille et position au `render()`, donc jamais un objet partagé. */
+  private gommes: Phaser.GameObjects.Image[] = []
   private jour: { key: string; side: number }
   private pres: { key: string; side: number }
   private torche: { key: string; side: number }
@@ -284,6 +312,7 @@ export class CaveVeil {
     this.soi = brosse(scene, 'fx-cave-soi', SOI_TUILES, 'rond')
     this.braiseSide = ensureBraise(scene)
     this.jourSolSide = ensureJourSol(scene)
+    ensureGomme(scene)
     this.w = scene.scale.width
     this.h = scene.scale.height
     this.rt = scene.add
@@ -306,6 +335,15 @@ export class CaveVeil {
       .setDepth(CHALEUR_DEPTH)
       .setDisplaySize(this.braiseSide * GRAIN_PX, this.braiseSide * GRAIN_PX)
       .setVisible(false)
+  }
+
+  private gommeDe(i: number): Phaser.GameObjects.Image {
+    let g = this.gommes[i]
+    if (!g) {
+      g = new Phaser.GameObjects.Image(this.scene, 0, 0, GOMME_KEY).setOrigin(0, 0)
+      this.gommes[i] = g
+    }
+    return g
   }
 
   private brosseDe(i: number, key: string): Phaser.GameObjects.Image {
@@ -334,7 +372,11 @@ export class CaveVeil {
    * Redessine le voile pour cette image. `gueules` : les centres des gueules en px monde (le jour
    * entre par chacune) ; `lum` : ce que la scène sait de la lumière.
    */
-  update(lum: LumiereDeCave, gueules: readonly { x: number; y: number }[], camera: Phaser.Cameras.Scene2D.Camera): void {
+  update(
+    lum: LumiereDeCave, gueules: readonly { x: number; y: number }[],
+    camera: Phaser.Cameras.Scene2D.Camera,
+    trouees: readonly BandeDeMasque[] = [], nTrouees = 0,
+  ): void {
     const sw = this.scene.scale.width
     const sh = this.scene.scale.height
     if (sw !== this.w || sh !== this.h) {
@@ -356,6 +398,25 @@ export class CaveVeil {
     // joueur connu, le voile est uniforme à `NOIR_ALPHA`, comme avant.
     this.dt.fill(NOIR, lum.joueur ? 1 : NOIR_ALPHA)
     const v = camera.worldView
+    // ═══ LÀ OÙ RIEN NE SURPLOMBE, IL N'Y A RIEN À ASSOMBRIR ═══
+    //
+    // Le voile couvrait le CADRE, comme la roche qu'il double ; depuis qu'elle se borne à la
+    // masse (`EtageLayer.ouvrirLeMasque`), le laisser plein rendrait NOIR tout ce qu'elle vient
+    // de découvrir — on aurait troqué une roche menteuse contre un trou. Il s'ouvre donc sur le
+    // complément du masque, bande par bande.
+    //
+    // ⚠ **PAR EFFACEMENT, ET NON PAR UNE `fill` PAR BANDE.** Un effacement est idempotent : deux
+    // bandes peuvent se chevaucher d'un pixel sans laisser de trace, et c'est ce chevauchement
+    // qui garantit l'absence de couture au zoom fractionnaire. Vingt `fill` à 0,62 posées bord à
+    // bord auraient tracé, elles, une ligne plus sombre à chaque jointure.
+    for (let i = 0; i < nTrouees; i++) {
+      const t = trouees[i]!
+      const g = this.gommeDe(i)
+      const w = (t.b - t.a + 1) * TILE_PX * zoom
+      const h = TILE_PX * zoom
+      g.setDisplaySize(w + 2, h + 2)
+      this.dt.erase(g, (t.a * TILE_PX - v.x) * zoom - 1, (t.r * TILE_PX - v.y) * zoom - 1)
+    }
     let n = 0
     const percer = (b: { key: string; side: number }, wx: number, wy: number, alpha: number): void => {
       if (alpha <= 0.002) return
@@ -440,6 +501,7 @@ export class CaveVeil {
     this.braise.destroy()
     this.chaleur.destroy()
     for (const b of this.brushes) b.destroy()
+    for (const g of this.gommes) g.destroy()
     for (const j of this.joursSol) j.destroy()
     for (const f of this.braisesFeu) {
       f.braise.destroy()

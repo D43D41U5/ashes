@@ -45,7 +45,7 @@ import {
 import { PERIODE_DALLE, plateauKey, RAMPE_RANGEES, SOCLE_TEINTE, TERRAINS_DE_PLATEAU } from '../../render/plateau-art'
 import type { Relief } from '../../render/relief'
 import { CaveFx, type TuileDeCave } from './cave-fx'
-import { CaveVeil, FEU_CAVE_TUILES, type LumiereDeCave } from './cave-veil'
+import { CaveVeil, FEU_CAVE_TUILES, type BandeDeMasque, type LumiereDeCave } from './cave-veil'
 import { epinglerLaTuile } from '../../render/tuile-epinglee'
 
 /**
@@ -161,8 +161,25 @@ export class EtageLayer {
   readonly rampes: Phaser.GameObjects.Image[] = []
   /** La cave — sol, signes, parois, ombres, lèvres, nappe de jour : un pool, plusieurs ties. */
   readonly cave: Phaser.GameObjects.Image[] = []
-  /** La roche qui efface le dehors quand on est dedans. Une seule image tuilée. */
-  private roche: Phaser.GameObjects.TileSprite | undefined
+  /** La roche qui efface le dehors quand on est dedans — UNE BANDE TUILÉE PAR RUN du masque
+   *  (`masqueDeLaMasse`), toutes à `ROCHE_DEPTH` : une seule profondeur, comme l'image unique
+   *  qu'elles remplacent. */
+  private readonly roches: Phaser.GameObjects.TileSprite[] = []
+  /** Le masque « il y a de la masse au-dessus », une cellule par tuile du cadre — réalloué
+   *  seulement quand le cadre grandit. */
+  private masque = new Uint8Array(0)
+  /** Le cadre du masque, en tuiles : coin nord-ouest et dimensions. */
+  private mx0 = 0
+  private my0 = 0
+  private mw = 0
+  private mh = 0
+  /** Les bandes du masque et leur complément, en tuiles MONDE (rangée DESSINÉE, colonne de
+   *  début, colonne de fin) : la roche se pose sur les premières, le voile s'ouvre sur les
+   *  secondes. Deux pools, remplis par une seule passe — jamais réalloués. */
+  private readonly bandes: BandeDeMasque[] = []
+  private nBandes = 0
+  private readonly trouees: BandeDeMasque[] = []
+  private nTrouees = 0
   /** Le voile de la cave et ses trous de lumière — `null` dans un monde sans cave. */
   private veil: CaveVeil | null = null
   /** Les gouttes, la poussière, le souffle — même condition. Publique : `WorldScene` branche
@@ -326,18 +343,36 @@ export class EtageLayer {
    * cèdent (`alphaDeDecouvert`) : l'appelant tranche le niveau, la couche ne DÉCIDE rien.
    */
   render(camera: Phaser.Cameras.Scene2D.Camera, decouvert?: Decouvert, dtMs = 0): void {
-    let nSol = 0
-    let nRampe = 0
-    // ── LE SOUTERRAIN PREND TOUTE LA PLACE, ou n'existe pas ────────────────────────────────
+    // ── LE SOUTERRAIN NE PREND PLUS LE CADRE : IL PREND LA MASSE ───────────────────────────
+    //
+    // ⚠ **ET LA SURFACE CONTINUE DONC DE SE PEINDRE.** La roche se borne à ce qui est vraiment
+    // au-dessus (`masqueDeLaMasse`) ; là où elle s'arrête, on voit le dehors — et un plateau
+    // privé de son plancher y laisserait son mobilier flotter, puisque `clutter` et les
+    // structures de surface, eux, n'ont jamais cessé de se rendre sous la roche. Tout ce que
+    // cette passe pose vit dans les strates de surface (≤ 300 000), très loin sous `ROCHE_DEPTH`
+    // (1 999 000) : là où la roche reste, elle le couvre, sans qu'on ait un seul tri à revoir.
+    //
+    // **Sans découvert** : le disque ne fond que ce qui est PLUS HAUT que le regard, et sous la
+    // roche le regard est au-dessous de tout — on se serait creusé un trou dans la masse qu'on
+    // habite, à l'endroit précis où elle doit être pleine.
     if (this.souterrain) {
+      this.rendreLaSurface(camera, undefined)
       this.rendreLaCave(camera, dtMs)
-      for (const im of this.sols) im.setVisible(false)
-      for (const im of this.rampes) im.setVisible(false)
       return
     }
-    this.roche?.setVisible(false)
+    for (const s of this.roches) s.setVisible(false)
     this.veil?.cacher()
     for (const im of this.cave) im.setVisible(false)
+    this.rendreLaSurface(camera, decouvert)
+    // Le souffle froid sort des gueules qu'on voit — et de rien d'autre, dehors.
+    this.fx?.update(dtMs, false, this.tuilesVues, this.gueulesVues, this.lumiere?.ciel ?? 1)
+  }
+
+  /** Le sol des plateaux, les rampes et les gueules vues du dehors — la passe de SURFACE, qui
+   *  tourne dedans comme dehors (voir `render`). */
+  private rendreLaSurface(camera: Phaser.Cameras.Scene2D.Camera, decouvert?: Decouvert): void {
+    let nSol = 0
+    let nRampe = 0
     this.gueulesVues.length = 0
     if (this.relief.actif) {
       const v = camera.worldView
@@ -451,8 +486,6 @@ export class EtageLayer {
         if (this.estOuestDeGueule(c.x, c.y)) nRampe = this.poserLaGueule(c.x, c.y, p, nRampe)
       }
     }
-    // Le souffle froid sort des gueules qu'on voit — et de rien d'autre, dehors.
-    this.fx?.update(dtMs, false, this.tuilesVues, this.gueulesVues, this.lumiere?.ciel ?? 1)
     for (let i = nSol; i < this.sols.length; i++) this.sols[i]!.setVisible(false)
     for (let i = nRampe; i < this.rampes.length; i++) this.rampes[i]!.setVisible(false)
   }
@@ -510,23 +543,8 @@ export class EtageLayer {
   private rendreLaCave(camera: Phaser.Cameras.Scene2D.Camera, dtMs: number): void {
     const v = camera.worldView
     const { width, height } = this.map
-    // ① LA ROCHE
-    if (this.roche === undefined) {
-      // ⚠ **UN `TileSprite`, PAS UN RECTANGLE** : un aplat uni faisait flotter la salle dans le
-      // vide (vu à la capture). Ce noir-là n'est pas du vide, c'est la BUTTE vue du dedans, et
-      // une masse a du grain. Une seule image tuilée : un objet, une profondeur.
-      this.roche = this.scene.add.tileSprite(0, 0, 1, 1, ROCHE_CAVE_KEY).setOrigin(0)
-      this.roche.setDepth(ROCHE_DEPTH)
-    }
-    const rx = v.x - TILE_PX
-    const ry = v.y - TILE_PX
-    this.roche.setPosition(rx, ry)
-    this.roche.setSize(v.width + TILE_PX * 2, v.height + TILE_PX * 2)
-    // ⚠ LA TUILE SUIT LE MONDE, PAS L'ÉCRAN : sans ce décalage, le grain GLISSE sous la caméra —
-    // la roche nagerait au lieu de tenir en place, et c'est le genre de mouvement qu'on voit sans
-    // savoir le nommer.
-    this.roche.setTilePosition(rx, ry)
-    this.roche.setVisible(true)
+    // ① LA ROCHE — le masque d'abord (il se remplit avec la salle), les bandes ensuite.
+    this.ouvrirLeMasque(v)
 
     const lum: LumiereDeCave = this.lumiere ?? { ciel: 1, teinteDuJour: 0xffffff, couleurDuJour: 0xffffff, torche: null, joueur: null, feux: [] }
     this.tLueur += Math.min(100, Math.max(0, dtMs)) / 1000
@@ -545,6 +563,10 @@ export class EtageLayer {
     const ty1 = Math.min(height - 1, Math.ceil((v.y + v.height) / TILE_PX) + 1 + (1 + this.relief.hauteurMax) * LIFT_TUILES)
     // `strateDEtage` rend le même nombre pour tout niveau négatif : LA strate du souterrain.
     const strate = strateDEtage(SOUS)
+    // Le palier de la salle qu'on voit — celui d'où le masque compte la masse. Le PLUS BAS des
+    // paliers visibles : deux salles de paliers différents dans un même cadre n'existent pas
+    // aujourd'hui, et si elles existaient, le plus bas couvre le plus, donc ne laisse rien fuir.
+    let pSalle = Number.POSITIVE_INFINITY
     for (let ty = ty0; ty <= ty1; ty++) {
       for (let tx = tx0; tx <= tx1; tx++) {
         // ═══ LE NIVEAU VIENT DU RELIEF, LE LIFT DE LA GUEULE (spec `grottes.md` G-R1) ═══
@@ -557,6 +579,9 @@ export class EtageLayer {
         if (niveau === 0) continue
         const p = -niveau - 1
         const lift = p * LIFT_TUILES
+        if (p < pSalle) pSalle = p
+        // ② LA SALLE DANS LE MASQUE (voir `ouvrirLeMasque`) : son sol, sa paroi et le seuil.
+        this.marquer(tx, ty - 2 - lift, ty + 1 - lift)
         const t = terrainAEtage(this.map, niveau, tx, ty)
         // LA NAPPE (G-R4) : l'eau de la grille creuse est une tuile de la cave, pas le shader
         // de surface — elle n'a ni ciel à refléter ni heure ; le voile la noie, la torche la rend.
@@ -631,9 +656,154 @@ export class EtageLayer {
       }
     }
     for (let i = n; i < this.cave.length; i++) this.cave[i]!.setVisible(false)
-    // ② LE VOILE, et ⑧ ce qui bouge.
-    this.veil?.update(lum, this.gueulesPx, camera)
+    // ① LA ROCHE, une fois la salle connue. Sans salle visible (le cas ne devrait pas se
+    // produire — on est DEDANS), on couvre tout : le repli est l'ancien comportement, jamais
+    // une fuite de jour.
+    if (pSalle === Number.POSITIVE_INFINITY) {
+      for (let tx = this.mx0; tx < this.mx0 + this.mw; tx++) this.marquer(tx, this.my0, this.my0 + this.mh - 1)
+    } else this.semerLaMasse(pSalle)
+    this.taillerLesBandes()
+    this.poserLaRoche()
+    // ② LE VOILE, et ⑧ ce qui bouge. Le voile s'ouvre sur le COMPLÉMENT du masque : là où rien
+    // ne surplombe, il n'y a pas de cave à assombrir — c'est le dehors, et il a déjà sa nuit.
+    this.veil?.update(lum, this.gueulesPx, camera, this.trouees, this.nTrouees)
     this.fx?.update(dtMs, true, this.tuilesVues, this.gueulesVues, lum.ciel)
+  }
+
+  /**
+   * ═══ LE MASQUE DE LA MASSE — « la roche se borne à ce qui est VRAIMENT au-dessus » ═══
+   *
+   * *(Alexis, 2026-09-06, sur la couture du dedans et du dehors.)*
+   *
+   * La roche couvrait LE CADRE. MESURÉ au seuil de la Grotte XXVI, sur les 814 tuiles visibles
+   * d'un 37×22 : 121 de salle (15 %), 521 de vraie masse au-dessus (64 %) — et **172 de ciel nu
+   * peintes en noir (21 %)**. Depuis le fond, encore 8 %. C'est cette part-là qui fait la
+   * couture : on entre dans une grotte et le monde s'éteint jusqu'aux bords de l'écran, alors
+   * qu'à quatre tuiles de là il n'y a rien du tout au-dessus de soi.
+   *
+   * Le masque dit, pour chaque tuile DESSINÉE du cadre, s'il y a de la matière entre le ciel et
+   * le regard. Deux apports, et le OU des deux :
+   *
+   *  ① **LA MASSE** — une colonne de hauteur `h ≥ p + 1` (`p` = le palier de la gueule, la salle
+   *    étant à `−(p + 1)`, G-R1) se dessine de sa rangée `tyw − h × LIFT` (son dessus) jusqu'à
+   *    `tyw − p × LIFT` (le plan où la salle est peinte). C'est un SEMIS, pas un test : une tuile
+   *    de masse hors cadre par le sud, levée de `h × LIFT`, couvre l'écran alors que sa rangée
+   *    logique n'y est pas — d'où la boucle qui descend `hauteurMax × LIFT` rangées plus bas.
+   *    Les `LIFT + 1` rangées d'une masse d'un seul cran sont exactement sa PAROI : sans elles le
+   *    jour entrerait par le flanc de la butte, et c'est le seul défaut qui compte ici.
+   *  ② **LA SALLE elle-même** — son sol, sa paroi (deux rangées au nord) et le seuil de la gueule
+   *    (une rangée au sud, où se tamponne le dehors). La gueule s'ouvre au BORD de la masse : sa
+   *    rangée appartient au palier, pas au chapeau, et sans cet apport le jour l'inonderait —
+   *    or c'est la nappe de la gueule, calibrée, qui doit y entrer, et elle seule.
+   *
+   * Hors carte, on couvre : le bord du monde n'est pas une ouverture sur le ciel.
+   */
+  private ouvrirLeMasque(v: Phaser.Geom.Rectangle): void {
+    this.mx0 = Math.floor(v.x / TILE_PX) - 1
+    this.my0 = Math.floor(v.y / TILE_PX) - 1
+    this.mw = Math.ceil((v.x + v.width) / TILE_PX) + 1 - this.mx0 + 1
+    this.mh = Math.ceil((v.y + v.height) / TILE_PX) + 1 - this.my0 + 1
+    const n = this.mw * this.mh
+    if (this.masque.length < n) this.masque = new Uint8Array(n)
+    this.masque.fill(0, 0, n)
+  }
+
+  /** Couvre, dans la colonne `tx`, les rangées dessinées de `r0` à `r1` (bornes incluses). */
+  private marquer(tx: number, r0: number, r1: number): void {
+    const i = tx - this.mx0
+    if (i < 0 || i >= this.mw) return
+    const a = Math.max(0, r0 - this.my0)
+    const b = Math.min(this.mh - 1, r1 - this.my0)
+    for (let r = a; r <= b; r++) this.masque[r * this.mw + i] = 1
+  }
+
+  /** ① Le semis de la masse, une fois le palier de la salle connu (voir `ouvrirLeMasque`). */
+  private semerLaMasse(p: number): void {
+    const { width, height } = this.map
+    const L = LIFT_TUILES
+    const hMin = p + 1
+    const my1 = this.my0 + this.mh - 1
+    // La rangée logique la plus au sud qui puisse encore lever une tuile dans le cadre.
+    const wy1 = my1 + this.relief.hauteurMax * L
+    for (let tx = this.mx0; tx < this.mx0 + this.mw; tx++) {
+      if (tx < 0 || tx >= width) {
+        this.marquer(tx, this.my0, my1)
+        continue
+      }
+      for (let tyw = Math.max(0, this.my0); tyw <= Math.min(height - 1, wy1); tyw++) {
+        const h = this.relief.hauteur(tx, tyw)
+        if (h < hMin) continue
+        this.marquer(tx, tyw - h * L, tyw - p * L)
+      }
+    }
+  }
+
+  /**
+   * Taille le masque en BANDES horizontales : la masse (où la roche se pose) et son complément
+   * (où le voile s'ouvre). Deux listes d'une seule passe, en pools — un `run` par rangée.
+   */
+  private taillerLesBandes(): void {
+    this.nBandes = 0
+    this.nTrouees = 0
+    const pousser = (pool: BandeDeMasque[], n: number, r: number, a: number, b: number): number => {
+      const e = pool[n]
+      if (e) { e.r = r; e.a = a; e.b = b } else pool[n] = { r, a, b }
+      return n + 1
+    }
+    const mx1 = this.mx0 + this.mw - 1
+    for (let j = 0; j < this.mh; j++) {
+      const r = this.my0 + j
+      let debut = -1
+      let valeur = 0
+      for (let i = 0; i < this.mw; i++) {
+        const bit = this.masque[j * this.mw + i]!
+        if (i === 0) { debut = this.mx0; valeur = bit; continue }
+        if (bit === valeur) continue
+        if (valeur === 1) this.nBandes = pousser(this.bandes, this.nBandes, r, debut, this.mx0 + i - 1)
+        else this.nTrouees = pousser(this.trouees, this.nTrouees, r, debut, this.mx0 + i - 1)
+        debut = this.mx0 + i
+        valeur = bit
+      }
+      if (valeur === 1) this.nBandes = pousser(this.bandes, this.nBandes, r, debut, mx1)
+      else this.nTrouees = pousser(this.trouees, this.nTrouees, r, debut, mx1)
+    }
+  }
+
+  /**
+   * Pose la roche sur les bandes du masque.
+   *
+   * ⚠ **UN `TileSprite`, PAS UN RECTANGLE** : un aplat uni faisait flotter la salle dans le vide
+   * (vu à la capture). Ce noir-là n'est pas du vide, c'est la BUTTE vue du dedans, et une masse a
+   * du grain. ⚠ **ET LA TUILE SUIT LE MONDE, PAS L'ÉCRAN** : sans le décalage, le grain GLISSE
+   * sous la caméra — la roche nagerait au lieu de tenir en place, et c'est le genre de mouvement
+   * qu'on voit sans savoir le nommer. Chaque bande cale donc son motif sur SA position monde : la
+   * découpe en bandes est invisible, le grain reste d'un seul tenant.
+   *
+   * ⚠ **ELLES SE CHEVAUCHENT D'UN PIXEL.** L'image unique d'avant n'avait aucun bord intérieur ;
+   * celles-ci en ont une vingtaine, empilées, sur une texture POT donc en `gl.REPEAT` — la recette
+   * exacte de la couture d'un pixel au zoom 2,25 (`tuile-epinglee`). Plutôt qu'arrondir les
+   * sommets, on déborde : la roche est OPAQUE et son motif est calé sur le monde, donc le pixel
+   * dessiné deux fois est le même pixel — le recouvrement ne peut pas se voir, et il ne peut pas
+   * y avoir de vide entre deux bandes.
+   */
+  private poserLaRoche(): void {
+    let n = 0
+    for (let i = 0; i < this.nBandes; i++) {
+      const m = this.bandes[i]!
+      let s = this.roches[n]
+      if (!s) {
+        s = this.scene.add.tileSprite(0, 0, 1, 1, ROCHE_CAVE_KEY).setOrigin(0).setDepth(ROCHE_DEPTH)
+        this.roches[n] = s
+      }
+      const x = m.a * TILE_PX
+      const y = m.r * TILE_PX
+      s.setPosition(x, y)
+      s.setSize((m.b - m.a + 1) * TILE_PX + 1, TILE_PX + 1)
+      s.setTilePosition(x, y)
+      s.setVisible(true)
+      n++
+    }
+    for (let i = n; i < this.roches.length; i++) this.roches[i]!.setVisible(false)
   }
 
   /**
@@ -762,7 +932,7 @@ export class EtageLayer {
     for (const s of this.sols) s.destroy()
     for (const s of this.rampes) s.destroy()
     for (const s of this.cave) s.destroy()
-    this.roche?.destroy()
+    for (const s of this.roches) s.destroy()
     this.veil?.destroy()
     this.fx?.destroy()
   }

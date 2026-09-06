@@ -2047,9 +2047,6 @@ export class WorldScene extends Phaser.Scene {
     // Le découvert d'abord (voir `calculerLeDecouvert`) : les pavés qu'on rend juste après
     // s'y creusent, et chaque couche qui cède en lit la même valeur.
     this.decouvert = this.lastTime ? this.calculerLeDecouvert() : null
-    this.paves.decouvert = this.decouvert
-    this.cliffs.decouvert = this.decouvert
-    if (this.gelLayer) this.gelLayer.decouvert = this.decouvert
     // …ET LE REGARD SOUS LA ROCHE AVEC LUI, POUR LA MÊME RAISON (couture, 2026-09-06).
     //
     // Le drapeau se posait 190 lignes plus bas, à côté de la lumière de la cave — donc APRÈS
@@ -2064,6 +2061,17 @@ export class WorldScene extends Phaser.Scene {
     // endroit : le regard se pose UNE fois, en tête d'image, et tout ce qui le lit lit la
     // valeur de CETTE image. La couche ne décide toujours rien — voir `poserLeRegardSousLaRoche`.
     if (this.decouvert) this.poserLeRegardSousLaRoche(this.decouvert)
+    // ═══ SOUS LA ROCHE, RIEN À DÉCOUVRIR ═══
+    //
+    // Le disque existe pour montrer ce qui se cache SOUS une masse qu'on longe d'en bas ; sous la
+    // roche, c'est la roche elle-même qui fait ce travail, et le regard est plus bas que TOUT
+    // (`niveau` négatif) — le disque fondrait donc la terrasse entière autour de soi. Tant que la
+    // roche couvrait le cadre, ce fondu ne se voyait pas ; depuis qu'elle se borne à la masse
+    // (`EtageLayer.ouvrirLeMasque`), il ouvrirait un trou dans le dehors qu'on vient de rendre.
+    const decouvertDeSurface = this.etages.souterrain ? null : this.decouvert
+    this.paves.decouvert = decouvertDeSurface
+    this.cliffs.decouvert = decouvertDeSurface
+    if (this.gelLayer) this.gelLayer.decouvert = decouvertDeSurface
     this.ground.render(this.cameras.main)
     this.paves.render(this.cameras.main)
     // LE VENT DE LA SIM (spec chasse C17) : le décor plie DANS SON SENS. C'est
@@ -2227,8 +2235,11 @@ export class WorldScene extends Phaser.Scene {
       // La valeur est celle de l'image, calculée en tête d'`update` (`calculerLeDecouvert`) —
       // la même que les pavés, le manteau et les lèvres ont déjà lue.
       const decouvert = this.decouvert ?? this.calculerLeDecouvert()
-      this.view.decouvert = decouvert
-      if (this.clutter) this.clutter.decouvert = decouvert
+      // Les nœuds et le décor de SURFACE suivent la même règle que les pavés et les lèvres :
+      // sous la roche, rien à découvrir (voir le commentaire en tête d'image).
+      const surface = this.etages.souterrain ? null : decouvert
+      this.view.decouvert = surface
+      if (this.clutter) this.clutter.decouvert = surface
       // ═══ SOUS LA ROCHE : la salle prend l'écran, et E-R13 s'y VOIT ═══
       // Le drapeau a été POSÉ en tête d'image (`poserLeRegardSousLaRoche`), avec le découvert et
       // pour la même raison : tout ce qui le lit — la salle ici, le mobilier dans `renderNodes` —

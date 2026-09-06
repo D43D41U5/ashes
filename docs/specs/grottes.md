@@ -60,7 +60,7 @@ Réglages de CARTE, à côté du générateur (`export const KARST = {` en tête
 
 ## 4. Le rendu
 
-- **Dedans** : la couche souterraine d'`etages.md` (roche opaque plein écran, salle par-dessus, voile de cave, jour par la gueule, torche, soi) — la strate `−H` se peint comme la `−1` d'aujourd'hui. L'eau d'une salle est une **tuile statique** de la couche souterraine (`cv-eau-…`, `cave-art.ts`), pas un second `water-field` : sans teinte de jour ni reflet de ciel, noire dans le noir, révélée par la torche (MESURÉ au smoke `grotte` ③ : 8 → 55 de luminance). Le shader d'eau reste à la surface — un champ de plus par niveau négatif aurait coûté une passe plein écran pour quelques dizaines de tuiles.
+- **Dedans** : la couche souterraine d'`etages.md` (roche opaque sur LA MASSE — §4ter —, salle par-dessus, voile de cave, jour par la gueule, torche, soi) — la strate `−H` se peint comme la `−1` d'aujourd'hui. L'eau d'une salle est une **tuile statique** de la couche souterraine (`cv-eau-…`, `cave-art.ts`), pas un second `water-field` : sans teinte de jour ni reflet de ciel, noire dans le noir, révélée par la torche (MESURÉ au smoke `grotte` ③ : 8 → 55 de luminance). Le shader d'eau reste à la surface — un champ de plus par niveau négatif aurait coûté une passe plein écran pour quelques dizaines de tuiles.
 - **Les structures** à `etage < 0` se peignent dans la couche souterraine et nulle part ailleurs — **convention client** : `sousLaRoche(s)` (`index-noeuds.ts`) partout où le rendu lit un `etage`, le sprite prend le lift et la strate de sa salle (`Warp.liftAEtage` / `strateAEtage`) et se cache dès que le regard remonte (`SnapshotView.montrerLaRoche`) — le regard se pose **en tête d'image**, avec le découvert (`WorldScene.poserLeRegardSousLaRoche`), parce que la salle et son mobilier le lisent à deux moments du rendu et doivent basculer sur la MÊME image ; l'index des nœuds est à deux mondes (`cleDeTuile(tx, ty, sousRoche)`), une tuile peut porter un nœud de salle ET un nœud de terrasse, et `noeudVu` suit le regard. Le feu de la salle perce le voile de cave à `FEU_CAVE_TUILES` (= `HOLE_RADIUS_TILES × TORCHE_CAVE_TUILES / TORCHE_HOLE_TILES`, 4,5 tuiles — dérivé, pas posé), avec braise et chaleur ; ses flammes, sa flaque et son point de lumière (`feux`, `WorldScene`) n'existent que sous la roche. Depuis le palier, un feu de vestibule se voit par la gueule (§4bis, `feuxSousRoche`) ; les feux de la surface, eux, restent listés depuis la salle.
 - **La gueule dans une paroi de terrasse** : l'image de la mesa (`dessinDeLaGueuleEntiere`, 32×48, trois rangées sur deux colonnes) sur les rangées de paroi de `cliff-layer.ts` — passe à part, comme pour la mesa (la boucle de la couche ne visite pas les connecteurs). Toute tuile de grille pleine reste épinglée (`epinglerLaTuile`).
 - **La trace** est de la surface : l'eau par `water-layer`, la coulée par le dessin des coulées, le seuil piétiné et l'éboulis par `cliff-art`. Rien de neuf à inventer, tout à brancher.
@@ -75,6 +75,40 @@ Le rendu était juste sans qu'on l'écrive : la roche (`ROCHE_DEPTH`) coiffe tou
 - **Ce que la cave ajoute** : la goutte SONNE là où elle tombe (`SonsDeLaGrotte`, `CaveFx.onGoutte`) — un ploc qui monte, son écho un dixième de seconde après, spatialisés à `PORTEE.GESTE` sur la tuile d'impact. Aucune nappe : le silence entre deux gouttes est le son de la grotte. Esthétique **à valider à l'oreille** (banc `#son`).
 - **La barre nomme la Grotte** : `lieuAt(map, x, y, etage)` — sous la roche, la règle de `poisAt` (G-R2, l'emprise creusée à son étage, la plus petite tranche) ; au sol, au bit près le jeu d'avant. Avant : « le Bosquet » à qui marchait dans la Grotte VI.
 - **Le feu de vestibule vu du palier** (G-A13) : `EtageLayer.feuxSousRoche` (posé par `WorldScene` à chaque image, dehors comme dedans) ; la gueule reçoit une image de braise (`dessinDeLaBraiseDeGueule`, même palette que la braise du voile, par bandes de 4 lignes, ADD) dont l'alpha est le plus fort des feux DE CET ÉTAGE pondéré par la distance à la paire sur `FEU_CAVE_TUILES`. Un feu au fond ne se voit pas de dehors, un feu au vestibule oui — et par le trou seulement (la paroi et le sol du palier ne bougent pas : mesuré au smoke `grotte` ⑥).
+
+## 4ter. La roche se borne à la masse (2026-09-06)
+
+*« La roche doit se borner à la masse réellement au-dessus, pas au cadre »* (Alexis, sur la
+couture du dedans et du dehors).
+
+La roche couvrait LE CADRE — un `TileSprite` à la taille de `camera.worldView`. MESURÉ au seuil
+de la Grotte XXVI, sur les 814 tuiles d'un écran de 37×22 : 95 de salle (12 %), 499 de vraie
+masse au-dessus (61 %) — et **220 de ciel nu peintes en noir (27 %)** ; encore 12 % à six tuiles
+de profondeur. C'est cette part-là qui faisait la couture : on entrait dans une grotte et le monde
+s'éteignait jusqu'aux bords de l'écran, alors qu'à quatre tuiles de là il n'y avait rien du tout
+au-dessus de soi.
+
+`EtageLayer.ouvrirLeMasque` tient désormais, par image, une cellule par tuile de l'écran : la
+MASSE (une colonne de hauteur `h ≥ p + 1` couvre les rangées dessinées `tyw − h × LIFT` à
+`tyw − p × LIFT` — un semis, pas un test) OU la SALLE (son sol, sa paroi au nord, le seuil de la
+gueule au sud). Hors carte, on couvre. Le masque se taille en bandes horizontales et sert DEUX
+fois : la roche s'y pose (une bande tuilée par run, toutes à `ROCHE_DEPTH`, chevauchées d'un
+pixel), et le **voile de cave s'ouvre sur son complément** — là où rien ne surplombe, il n'y a
+pas de cave à assombrir. Le voile seul aurait rendu noir ce que la roche venait de découvrir.
+Conséquence : **la passe de surface tourne aussi sous la roche** (sans découvert : le regard y est
+plus bas que tout, le disque fondrait la terrasse qu'on habite), sans quoi un plateau découvert
+laisserait son mobilier flotter — `clutter` et les structures de surface, eux, n'ont jamais cessé
+de se rendre sous la roche.
+
+**MESURÉ après** (sonde de couverture sur la géométrie rendue, Grotte XXVI) : ciel nu peint en
+roche **27 % → 1 %** au seuil, 12 % → 1 % au fond ; **fuite 0** — aucune des 95 à 158 tuiles de
+salle à l'écran n'est laissée sans roche. Et A/B **dans la même image** (bascule du masque entre
+deux rendus, même monde, même position) : au fond, luminance moyenne 22 contre 22 ; au vestibule,
+50 contre 52. Le voile ne fuit pas.
+
+**À trancher (look, pas géométrie)** : la lisière est FRANCHE — la masse s'arrête sur une rangée,
+et le dehors qu'on découvre est en plein jour pendant que la salle est dans le noir. Le fondu
+gradué de cette lisière, calé sur `dehorsIci` (§4bis), est le pas suivant ; il n'est pas fait.
 
 ## 5. Critères d'acceptation
 
