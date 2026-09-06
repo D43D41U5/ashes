@@ -16,8 +16,8 @@
  *     (sa propre rangée, prise par la règle 1 à la hauteur du bas) jusqu'au haut de l'entaille :
  *     ses rangées levées ne tombent sous aucune tuile de hauteur `h` — elles sont la rampe ;
  *  3. sinon, la hauteur d'en dessous, jusqu'au sol plat tel quel.
- * Et SOUS TERRE la salle se regarde d'aplomb, au lift de son palier (`decalageDEtage` ne
- * décale pas un souterrain) : le monde d'en haut n'est pas à l'écran.
+ * Et SOUS TERRE la salle se regarde d'aplomb, au lift de sa GUEULE — le palier `−niveau − 1`
+ * (G-R1, `decalageDEtage`) : le monde d'en haut n'est pas à l'écran.
  *
  * ⚠ L'ambiguïté est assumée dans le même sens que le rendu : au nord d'un mur, la surface
  * levée recouvre `LIFT_TUILES` rangées de vrai sol par étage de dénivelé — on ne les voit pas,
@@ -41,8 +41,10 @@ export function deplierLeLift(
   const ty = Math.floor(wy / TILE_PX)
   const L = LIFT_TUILES
   if (souterrain) {
+    // Une salle se peint au lift de sa GUEULE, le palier `−niveau − 1` (spec `grottes.md` G-R1,
+    // `EtageLayer.rendreLaCave`) — pas au palier de la tuile qui la coiffe.
     for (let p = relief.hauteurMax; p >= 1; p--) {
-      if (relief.salle(tx, ty + p * L) && relief.palier(tx, ty + p * L) === p) return { x: wx, y: wy + p * L * TILE_PX }
+      if (-relief.niveauDeSalle(tx, ty + p * L) - 1 === p) return { x: wx, y: wy + p * L * TILE_PX }
     }
     return { x: wx, y: wy }
   }

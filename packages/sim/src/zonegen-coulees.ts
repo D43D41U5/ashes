@@ -31,6 +31,9 @@ import { composantesDeMasque, eroderMasque, TERRAINS_BOISES_MASSIF } from './pro
 import { altitudeAt, CREUX, type Creux } from './racine-relief'
 import type { GrapheZones } from './zonegraph'
 
+/** Les quatre voisins, dans l'ordre historique (E, O, S, N) — hissés : le champ les lit un million de fois. */
+const VOISINS4: readonly (readonly [number, number])[] = [[1, 0], [-1, 0], [0, 1], [0, -1]]
+
 export const COULEES = {
   /** Portée d'eau du gibier, en tuiles : un massif dont le PIC est plus loin que ça de
    *  toute eau est un bois SEC — pas de coulée. */
@@ -41,82 +44,83 @@ export const COULEES = {
 } as const
 
 /**
- * Trace les coulées de la Racine. Rend la liste d'index (chemins séparés par -1), vide si
- * aucune — le champ ne s'écrit alors pas (patron `fil`).
+ * LE CHAMP DE DESCENTE de la Racine — la distance BFS à l'eau sur la terre marchable, et LA
+ * descente qui le suit pas à pas. Partagé entre les coulées de génération (`tracerLesCoulees`)
+ * et celles posées APRÈS coup par les grottes du plancher (`tracerLesCouleesDepuis`, spec
+ * `grottes.md` G-R8/G-R9) : même champ, même descente, mêmes départages — une coulée de grotte
+ * est une coulée de coin, tracée plus tard.
  */
-export function tracerLesCoulees(
+function champDeDescente(
   terrain: readonly number[],
   zone: Int32Array,
   g: GrapheZones,
   width: number,
   height: number,
-  profondeur: readonly number[],
   creux: Creux | null,
-  /** LES COINS DE CHASSE (faune R24/R26) : chacun sème SA descente gagnage → eau. */
-  coins: readonly { x: number; y: number }[] = [],
-): number[] {
+): {
+  dEau: Int32Array
+  descendre: (depart: number) => number[] | null
+  INF: number
+  /** Remplit le champ dans une boîte (bornes INCLUSES, rognées à la carte) ; rend les tuiles touchées. */
+  remplir: (x0: number, y0: number, x1: number, y1: number) => Int32Array
+} | null {
   const racineId = g.racine
   const r = g.zones[racineId]!.rect
-  if (!r) return []
+  if (!r) return null
   const N = width * height
 
   // ── LE CHAMP D'EAU : BFS multi-source sur la terre marchable de la Racine (4-connexe :
-  //    la descente a besoin d'un voisin à d-1 exactement). Une passe, tous les massifs. ──
+  //    la descente a besoin d'un voisin à d-1 exactement). Une passe, tous les massifs — ou,
+  //    pour une coulée posée après coup, une BOÎTE autour de son départ (`tracerLesCouleesDepuis`)
+  //    : le champ y est EXACT partout où la descente lit (voir là-bas la preuve), et on ne
+  //    paie pas 1,2 M de tuiles pour un chemin de soixante. ──
   const INF = 0x7fffffff
   const dEau = new Int32Array(N).fill(INF)
   const file = new Int32Array(N)
-  let tete = 0
-  let queue = 0
-  for (let y = r.y; y < r.y + r.h; y++) {
-    for (let x = r.x; x < r.x + r.w; x++) {
-      const i = y * width + x
-      if (zone[i] !== racineId || MARCHABLE[terrain[i]!] !== 1 || isWater(terrain[i]!)) continue
-      let bord = false
-      for (const [dx, dy] of [[1, 0], [-1, 0], [0, 1], [0, -1]] as const) {
-        const t = terrain[(y + dy) * width + (x + dx)]
-        if (t !== undefined && isWater(t)) {
-          bord = true
-          break
+  const remplir = (bx0: number, by0: number, bx1: number, by1: number): Int32Array => {
+    const xa = Math.max(0, bx0)
+    const ya = Math.max(0, by0)
+    const xb = Math.min(width - 1, bx1)
+    const yb = Math.min(height - 1, by1)
+    let tete = 0
+    let queue = 0
+    for (let y = Math.max(ya, r.y); y < Math.min(yb + 1, r.y + r.h); y++) {
+      for (let x = Math.max(xa, r.x); x < Math.min(xb + 1, r.x + r.w); x++) {
+        const i = y * width + x
+        if (zone[i] !== racineId || MARCHABLE[terrain[i]!] !== 1 || isWater(terrain[i]!)) continue
+        let bord = false
+        for (const [dx, dy] of VOISINS4) {
+          const t = terrain[(y + dy) * width + (x + dx)]
+          if (t !== undefined && isWater(t)) {
+            bord = true
+            break
+          }
+        }
+        if (bord) {
+          dEau[i] = 1
+          file[queue++] = i
         }
       }
-      if (bord) {
-        dEau[i] = 1
-        file[queue++] = i
+    }
+    while (tete < queue) {
+      const i = file[tete++]!
+      const d = dEau[i]!
+      const x = i % width
+      const y = (i - x) / width
+      for (const [dx, dy] of VOISINS4) {
+        const nx = x + dx
+        const ny = y + dy
+        if (nx < xa || ny < ya || nx > xb || ny > yb) continue
+        const j = ny * width + nx
+        if (dEau[j] !== INF || zone[j] !== racineId) continue
+        if (MARCHABLE[terrain[j]!] !== 1 || isWater(terrain[j]!)) continue
+        dEau[j] = d + 1
+        file[queue++] = j
       }
     }
-  }
-  while (tete < queue) {
-    const i = file[tete++]!
-    const d = dEau[i]!
-    const x = i % width
-    const y = (i - x) / width
-    for (const [dx, dy] of [[1, 0], [-1, 0], [0, 1], [0, -1]] as const) {
-      const nx = x + dx
-      const ny = y + dy
-      if (nx < 0 || ny < 0 || nx >= width || ny >= height) continue
-      const j = ny * width + nx
-      if (dEau[j] !== INF || zone[j] !== racineId) continue
-      if (MARCHABLE[terrain[j]!] !== 1 || isWater(terrain[j]!)) continue
-      dEau[j] = d + 1
-      file[queue++] = j
-    }
+    return file.subarray(0, queue)
   }
 
-  // ── L'ÉLECTION : chaque massif boisé à cœur (le masque exact de la profondeur), son pic. ──
-  const boise = new Uint8Array(N)
-  for (let i = 0; i < N; i++) {
-    if (zone[i] === racineId && TERRAINS_BOISES_MASSIF.includes(terrain[i]!)) boise[i] = 1
-  }
-  const comp = composantesDeMasque(boise, width, height)
-  const prof = profondeur.length === N ? profondeur : eroderMasque(boise, width, height, CREUX.PROF_CAP)
-  const coeurs = new Array<number>(comp.tailles.length).fill(0)
-  const pics = new Array<number>(comp.tailles.length).fill(-1)
-  for (let i = 0; i < N; i++) {
-    const c = comp.label[i]!
-    if (c === -1) continue
-    if (prof[i]! >= CREUX.PROF_COEUR) coeurs[c]! += 1
-    if (pics[c]! === -1 || prof[i]! > prof[pics[c]!]!) pics[c] = i
-  }
 
   const alt = (i: number): number => {
     if (!creux) return 0
@@ -135,7 +139,7 @@ export function tracerLesCoulees(
       const x = i % width
       const y = (i - x) / width
       let suivant = -1
-      for (const [dx, dy] of [[1, 0], [-1, 0], [0, 1], [0, -1]] as const) {
+      for (const [dx, dy] of VOISINS4) {
         const j = (y + dy) * width + (x + dx)
         if (dEau[j] !== dEau[i]! - 1) continue
         // À égalité de distance : hors-sente d'abord (le gibier longe la route, il ne la
@@ -158,6 +162,89 @@ export function tracerLesCoulees(
     }
     if (chemin.length === 0 || dEau[i]! > 1) return null
     return chemin
+  }
+
+  return { dEau, descendre, INF, remplir }
+}
+
+/**
+ * LES COULÉES DES DÉPARTS (grottes G-R9, karst SEC) : depuis chaque tuile de départ, la descente
+ * des coins — rend la liste au format `map.coulees` (chemins séparés par -1), vide si aucune.
+ * Un départ hors du champ (roche, eau, hors Racine) ou dont l'eau est hors de portée se tait.
+ */
+export function tracerLesCouleesDepuis(
+  terrain: readonly number[],
+  zone: Int32Array,
+  g: GrapheZones,
+  width: number,
+  height: number,
+  creux: Creux | null,
+  departs: readonly number[],
+): number[] {
+  const champ = champDeDescente(terrain, zone, g, width, height, creux)
+  if (!champ) return []
+  const { dEau, descendre, INF, remplir } = champ
+  // LA BOÎTE, ET POURQUOI ELLE REND LE MÊME CHEMIN QUE LE CHAMP ENTIER : la descente ne part que
+  // si `dEau ≤ PORTEE_EAU`, fait au plus `PORTEE_EAU + 8` pas, et ne lit que ses voisins. Une
+  // tuile visitée est donc à ≤ P + 8 du départ (Chebyshev), son eau à ≤ P de plus ; un voisin à
+  // d − 1 a la sienne plus près encore. Dans une boîte de demi-côté 2P + 9, toute valeur lue est
+  // EXACTE ; hors de portée, une BFS rognée ne peut que SURESTIMER, jamais fabriquer un « d − 1 ».
+  // MESURÉ : 662 ms pour le champ entier, une boîte vaut moins d'une tuile de 257².
+  const demi = 2 * COULEES.PORTEE_EAU + 9
+  const out: number[] = []
+  for (const i0 of departs) {
+    if (i0 < 0 || i0 >= dEau.length) continue
+    const x0 = i0 % width
+    const y0 = (i0 - x0) / width
+    const touchees = remplir(x0 - demi, y0 - demi, x0 + demi, y0 + demi)
+    if (dEau[i0]! !== INF && dEau[i0]! <= COULEES.PORTEE_EAU) {
+      const chemin = descendre(i0)
+      if (chemin) {
+        if (out.length > 0) out.push(-1)
+        for (const t of chemin) out.push(t)
+      }
+    }
+    for (const t of touchees) dEau[t] = INF
+  }
+  return out
+}
+
+/**
+ * Trace les coulées de la Racine. Rend la liste d'index (chemins séparés par -1), vide si
+ * aucune — le champ ne s'écrit alors pas (patron `fil`).
+ */
+export function tracerLesCoulees(
+  terrain: readonly number[],
+  zone: Int32Array,
+  g: GrapheZones,
+  width: number,
+  height: number,
+  profondeur: readonly number[],
+  creux: Creux | null,
+  /** LES COINS DE CHASSE (faune R24/R26) : chacun sème SA descente gagnage → eau. */
+  coins: readonly { x: number; y: number }[] = [],
+): number[] {
+  const champ = champDeDescente(terrain, zone, g, width, height, creux)
+  if (!champ) return []
+  const { dEau, descendre, INF } = champ
+  champ.remplir(0, 0, width - 1, height - 1)
+  const racineId = g.racine
+  const N = width * height
+
+  // ── L'ÉLECTION : chaque massif boisé à cœur (le masque exact de la profondeur), son pic. ──
+  const boise = new Uint8Array(N)
+  for (let i = 0; i < N; i++) {
+    if (zone[i] === racineId && TERRAINS_BOISES_MASSIF.includes(terrain[i]!)) boise[i] = 1
+  }
+  const comp = composantesDeMasque(boise, width, height)
+  const prof = profondeur.length === N ? profondeur : eroderMasque(boise, width, height, CREUX.PROF_CAP)
+  const coeurs = new Array<number>(comp.tailles.length).fill(0)
+  const pics = new Array<number>(comp.tailles.length).fill(-1)
+  for (let i = 0; i < N; i++) {
+    const c = comp.label[i]!
+    if (c === -1) continue
+    if (prof[i]! >= CREUX.PROF_COEUR) coeurs[c]! += 1
+    if (pics[c]! === -1 || prof[i]! > prof[pics[c]!]!) pics[c] = i
   }
 
   const out: number[] = []

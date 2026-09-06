@@ -259,7 +259,7 @@ export function cendreuxStep(state: SimState, monster: Monster, entity: Entity, 
   //
   // Le froid ne le rend JAMAIS plus rapide que ses 1,3 tuile/s nominaux : on le distance
   // toujours (R10) — l'éveil plafonne à 1, il n'est pas un multiplicateur de fureur.
-  const T = baselineTemperature(state, entity.x, entity.y)
+  const T = baselineTemperature(state, entity.x, entity.y, entity.etage)
   const eveil = Math.max(0, eveilPourTemperature(T) - (monster.satiete ?? 0) / CENDREUX.BOIRE.SATIETE_MAX)
   // L'allure d'un cendreux QUI A UN BUT : jamais sous GAIT_MIN — « presque amorphe » n'est
   // pas « statue » (l'acte I garde ses marcheurs lents, décision ① : statu quo à 20 tuiles).

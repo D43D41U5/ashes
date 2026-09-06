@@ -53,7 +53,7 @@ import {
 } from './construction'
 import { cendreuxVivantsPositions } from './fire'
 import { emitEvent } from './events'
-import { atteintLeSol } from './etages'
+import { atteintLeSol, auMemeEtage, marchableAEtage, niveauDuCorps, terrainAEtage } from './etages'
 import { chebyshev, distSq, isSingleEdge } from './geometry'
 import {
   addItems,
@@ -80,7 +80,7 @@ import { terrainAt, zoneAt } from './map'
 import { isSheltered } from './temperature'
 import { floreGelee } from './gel'
 import { actForDay, jourDeSaison } from './time'
-import type { SimState } from './sim'
+import type { Entity, SimState } from './sim'
 
 /** Sentinelle « jamais » pour les champs en ticks (finie : JSON-sérialisable). */
 export const TICK_NEVER = -999999
@@ -125,6 +125,15 @@ export interface Structure {
    * mur, un âtre ouvre sa gueule vers la pièce.
    */
   facing?: number
+  /**
+   * L'ÉTAGE OÙ ELLE VIT (spec `grottes.md` G-R7 — le bivouac). ABSENT = AU SOL, le palier de
+   * sa tuile (T-R3) : tout le bâti d'avant, au bit près. NÉGATIF = SOUS LA ROCHE, dans la salle
+   * d'un karst ou la cave d'une mesa : la structure vit sur la grille de cet étage, et **elle
+   * n'existe pas pour la surface** — ni pour sa collision, ni pour `roofAt`, ni pour l'œil de
+   * qui marche sur la terrasse au-dessus. Jamais positif : rien ne se bâtit sur une mesa (E-R5),
+   * et `auMemeEtage` ne connaît que ces deux mondes. Écrit à la pose, jamais après.
+   */
+  etage?: number
   /**
    * LE PALIER DE MATÉRIAU (spec construction R8) — mur/porte seulement : bois →
    * pierre → métal. Absent = bois (défaut) ou pièce sans palier. Améliorable sur
@@ -400,8 +409,12 @@ const DEFAULT_ACCESS: Record<StructureType, AccessLevel> = parPiece((t) => piece
  *  VUE DÉRIVÉE : la capacité est une propriété de la pièce (`capacite`). */
 const CONTAINER_TYPES: Record<StructureType, number | undefined> = parPiece((t) => piece(t).capacite)
 
-export function structureAt(structures: readonly Structure[], tx: number, ty: number): Structure | undefined {
-  return structures.find((s) => s.tx === tx && s.ty === ty)
+// L'ÉTAGE DU DEMANDEUR (spec `grottes.md` G-R7) : absent ou ≥ 0, l'accesseur regarde LE SOL —
+// tout ce qui existait avant, au bit près ; négatif, il ne voit que ce qui vit sous la roche à
+// ce même étage (`auMemeEtage`, etages.ts). Un feu allumé dans la salle ne fait donc ni « tuile
+// occupée » à qui bâtit sur la terrasse au-dessus, ni toit.
+export function structureAt(structures: readonly Structure[], tx: number, ty: number, etage?: number): Structure | undefined {
+  return structures.find((s) => s.tx === tx && s.ty === ty && auMemeEtage(s, etage))
 }
 
 /**
@@ -414,16 +427,16 @@ export function structureAt(structures: readonly Structure[], tx: number, ty: nu
 // Les trois couches se LISENT AU REGISTRE (`occupe`) depuis l'étage 2 du vocabulaire
 // (2026-08-10) : le `roc` est un second SOL — écrit en toutes lettres, il aurait été compté
 // SOLIDE par `solidAt` et invisible à `floorAt`, et un dallage se serait empilé dessus.
-export function solidAt(structures: readonly Structure[], tx: number, ty: number): Structure | undefined {
-  return structures.find((s) => s.tx === tx && s.ty === ty && piece(s.type).occupe === 'tuile')
+export function solidAt(structures: readonly Structure[], tx: number, ty: number, etage?: number): Structure | undefined {
+  return structures.find((s) => s.tx === tx && s.ty === ty && auMemeEtage(s, etage) && piece(s.type).occupe === 'tuile')
 }
 
-export function floorAt(structures: readonly Structure[], tx: number, ty: number): Structure | undefined {
-  return structures.find((s) => s.tx === tx && s.ty === ty && piece(s.type).occupe === 'sol')
+export function floorAt(structures: readonly Structure[], tx: number, ty: number, etage?: number): Structure | undefined {
+  return structures.find((s) => s.tx === tx && s.ty === ty && auMemeEtage(s, etage) && piece(s.type).occupe === 'sol')
 }
 
-export function roofAt(structures: readonly Structure[], tx: number, ty: number): Structure | undefined {
-  return structures.find((s) => s.tx === tx && s.ty === ty && piece(s.type).occupe === 'toit')
+export function roofAt(structures: readonly Structure[], tx: number, ty: number, etage?: number): Structure | undefined {
+  return structures.find((s) => s.tx === tx && s.ty === ty && auMemeEtage(s, etage) && piece(s.type).occupe === 'toit')
 }
 
 export function getVillageOf(state: SimState, entityId: number): Village | undefined {
@@ -460,6 +473,9 @@ export type BuildReject =
   /** La palissade vit SUR l'arête, toujours : née après R23, elle n'a aucune forme
    *  pleine-tuile historique à honorer — et le rendu n'en connaît aucune. */
   | 'edge_required'
+  /** SOUS LA ROCHE, le bivouac, pas la maison (spec `grottes.md` G-R7) : cette pièce clôt ou
+   *  couvre, et le registre (`sousRoche`) la refuse dans une salle. */
+  | 'sous_roche'
 
 /** Le verdict d'une pose au marteau. `cost` est TOUJOURS renseigné (palier appliqué),
  *  même sur refus de placement — le panneau affiche le coût quoi qu'il arrive. */
@@ -468,6 +484,8 @@ export interface BuildEval {
   reason?: BuildReject
   cost: ItemBag
   material?: WallMaterial
+  /** L'ÉTAGE à écrire sur la structure — SOUS LA ROCHE seulement (G-R7) ; absent au sol. */
+  etage?: number
 }
 
 /** Le placement est-il géométriquement valide, coût mis à part ? — le « vert » du
@@ -525,8 +543,11 @@ export function evaluateBuild(
   if (chebyshev(village.fireTx, village.fireTy, tx, ty) > fireRadius(village.tier)) return fail('out_of_square')
   if (distSq(actor.x, actor.y, tx + 0.5, ty + 0.5) > BALANCE.BUILD_RANGE * BALANCE.BUILD_RANGE) return fail('too_far')
   // Le terrain juge PAR PIÈCE depuis que l'eau peu profonde refuse tout sauf le sol
-  // (`terrainConstructible`) : le gué porte des planches, pas un mur ni une porte.
-  if (!terrainConstructible(terrainAt(state.map, tx, ty), structure)) return fail('unbuildable')
+  // (`terrainConstructible`) : le gué porte des planches, pas un mur ni une porte. Et il est
+  // celui de l'ÉTAGE du bâtisseur (G-R7) — au marteau, sous la roche, presque tout se refuse.
+  const sol = solDeLaPose(state, actor, tx, ty, structure)
+  if (typeof sol === 'string') return fail(sol)
+  if (!terrainConstructible(sol.terrain, structure)) return fail('unbuildable')
   // L'ARÊTE VISÉE (R23), et c'est LA PIÈCE qui dit ce qu'elle en fait (`arete`, registre) :
   // `possible` pour le mur et la porte, `requise` pour la palissade (née après R23, elle n'a
   // aucune forme pleine-tuile historique à honorer), `interdite` pour le sol et le toit, MOUS —
@@ -542,10 +563,10 @@ export function evaluateBuild(
   const occupant = surArete
     ? edgeBarrierAt(state.structures, tx, ty, edges)
     : couche === 'sol'
-      ? floorAt(state.structures, tx, ty)
+      ? floorAt(state.structures, tx, ty, sol.etage)
       : couche === 'toit'
-        ? roofAt(state.structures, tx, ty)
-        : fullTileAt(state.structures, tx, ty)
+        ? roofAt(state.structures, tx, ty, sol.etage)
+        : fullTileAt(state.structures, tx, ty, sol.etage)
   if (occupant) return fail(surArete ? 'edge_taken' : 'occupied')
   // Récolter = défricher (R5) : pas de mur/porte PLEINE TUILE sur un nœud (le sol/toit mou, si ;
   // et l'ARÊTE aussi — elle court sur le trait, elle ne prend pas le buisson). Un nœud
@@ -570,7 +591,28 @@ export function evaluateBuild(
     if (!okNav) return fail('blocks_nav')
   }
   if (!hasItems(actor.inventory, cost)) return fail('unaffordable')
-  return make(true)
+  const ok = make(true)
+  if (sol.etage !== undefined) ok.etage = sol.etage
+  return ok
+}
+
+/**
+ * ═══ OÙ L'ON POSE : LE SOL DE SA TUILE, OU LA SALLE OÙ L'ON SE TIENT (G-R7) ═══
+ *
+ * La pose lit L'ÉTAGE DU BÂTISSEUR : au sol (niveau ≥ 0), la structure naît sans `etage` et le
+ * terrain jugé est celui de la carte — tout l'existant, au bit près. Sous la roche (niveau < 0),
+ * la tuile visée doit être CREUSÉE à ce même étage (une tuile qui n'y existe pas est la roche,
+ * et la salle d'à côté est un autre étage), le terrain jugé est celui de la salle, et la pièce
+ * doit s'y accepter (`sousRoche`). Rend l'étage à ÉCRIRE sur la structure (`undefined` au sol)
+ * ou un code de refus.
+ */
+function solDeLaPose(state: SimState, actor: Entity, tx: number, ty: number, type: StructureType):
+  { etage: number | undefined; terrain: number } | BuildReject {
+  const niveau = niveauDuCorps(state.map, actor)
+  if (niveau >= 0) return { etage: undefined, terrain: terrainAt(state.map, tx, ty) }
+  if (!piece(type).sousRoche) return 'sous_roche'
+  if (!marchableAEtage(state.map, niveau, tx, ty)) return 'unbuildable'
+  return { etage: niveau, terrain: terrainAEtage(state.map, niveau, tx, ty) }
 }
 
 /** Le message de refus, mappé depuis le code — les chaînes exactes qu'attendent les tests. */
@@ -588,6 +630,7 @@ const BUILD_REJECT_REASON: Record<BuildReject, string> = {
   edge_taken: 'cette arête porte déjà un mur',
   no_edge: 'cette pièce prend la tuile, pas une arête',
   edge_required: 'la palissade se pose sur une arête',
+  sous_roche: 'cela ne se bâtit pas sous la roche',
 }
 
 /**
@@ -993,6 +1036,8 @@ export function applyVillageAction(state: SimState, actorId: number, action: Vil
       if (getVillageOf(state, actorId)) return reject('déjà membre d’un village')
       if (!hasItems(actor.inventory, STRUCTURE_COSTS.fire)) return reject('matériaux insuffisants')
       if (zoneAt(state.map, actor.x, actor.y)) return reject('les landmarks sont inconstructibles')
+      // Un Feu FONDE : sous la roche on bivouaque, on ne fonde pas (G-R7 — voir `found_village`).
+      if (niveauDuCorps(state.map, actor) < 0) return reject('un bivouac, pas un foyer')
       if (!terrainConstructible(terrainAt(state.map, tx, ty), 'fire')) return reject('terrain inconstructible')
       if (structureAt(state.structures, tx, ty)) return reject('tuile occupée')
       const min = BALANCE.FIRE_MIN_DISTANCE
@@ -1027,8 +1072,11 @@ export function applyVillageAction(state: SimState, actorId: number, action: Vil
       // braises. On le plante devant soi, jamais dessous.
       if (Math.floor(actor.x) === tx && Math.floor(actor.y) === ty) return reject('pas sous ses pieds')
       if (zoneAt(state.map, tx + 0.5, ty + 0.5)) return reject('les landmarks sont inconstructibles')
-      // Roche, falaise, eau — le gué compris : on ne plante pas son feu dans la rivière.
-      if (!terrainConstructible(terrainAt(state.map, tx, ty), 'fire')) return reject('terrain inconstructible')
+      // Roche, falaise, eau — le gué compris : on ne plante pas son feu dans la rivière. Le
+      // terrain est celui de l'ÉTAGE du poseur : sous la roche, celui de la salle (G-R7).
+      const sol = solDeLaPose(state, actor, tx, ty, 'fire')
+      if (typeof sol === 'string') return reject(BUILD_REJECT_REASON[sol])
+      if (!terrainConstructible(sol.terrain, 'fire')) return reject('terrain inconstructible')
       // R5 MÉTÉO — un feu NEUF ne prend pas sous l'eau qui tombe : refusé à découvert sous
       // front mouillé, au point de POSE (l'abri d'`isSheltered` — maison, grotte — lève le
       // refus). SEULE la naissance est gardée : nourrir, rallumer ou charger un feu
@@ -1036,23 +1084,23 @@ export function applyVillageAction(state: SimState, actorId: number, action: Vil
       // rallume sous l'orage. NB : les deux abris d'`isSheltered` (maison, grotte) refusent
       // AUJOURD'HUI la pose par d'autres portes (tuile occupée, landmark) — l'échappée
       // abritée est du contrat R5, elle s'ouvrira avec eux.
-      if (meteoMouille(state, tx, ty) && !isSheltered(state, tx, ty)) {
+      if (meteoMouille(state, tx, ty) && !isSheltered(state, tx, ty, sol.etage)) {
         return reject('un feu neuf ne prend pas sous la pluie')
       }
       // TUILE LIBRE, au sens LARGE (décision utilisateur) : ni structure, ni ressource
       // (arbre, filon, buisson…), ni personne (animal, PNJ, autre joueur) dessus. On ne
       // pose pas un foyer sur ce qui est déjà là. « Prise ENTIÈRE », depuis R23 : un mur
       // d'arête borde la tuile sans l'occuper — on plante son feu contre sa clôture.
-      if (fullTileAt(state.structures, tx, ty)) return reject('tuile occupée')
-      if (!poseLibre(state.villages, state.nodes, tx, ty)) return reject('tuile occupée')
-      if (state.entities.some((e) => e.id !== actorId && e.hp > 0 && Math.floor(e.x) === tx && Math.floor(e.y) === ty)) {
+      if (fullTileAt(state.structures, tx, ty, sol.etage)) return reject('tuile occupée')
+      if (!poseLibre(state.villages, state.nodes, tx, ty, sol.etage)) return reject('tuile occupée')
+      if (state.entities.some((e) => e.id !== actorId && e.hp > 0 && Math.floor(e.x) === tx && Math.floor(e.y) === ty && auMemeEtage(e, sol.etage))) {
         return reject('tuile occupée')
       }
       // L'objet tenu se consomme (une unité) : il DEVIENT la structure.
       held.count -= 1
       if (held.count <= 0) actor.inventory[actor.activeSlot] = null
       // villageId 0 = feu libre ; le poseur en est propriétaire (il cuisine, il démolit).
-      addStructure(state, 'fire', tx, ty, 0, actorId)
+      addStructure(state, 'fire', tx, ty, 0, actorId, DEFAULT_ACCESS.fire, undefined, undefined, sol.etage)
       return
     }
 
@@ -1067,10 +1115,14 @@ export function applyVillageAction(state: SimState, actorId: number, action: Vil
       if (!s || s.type !== 'fire') return reject('pas un feu')
       if (s.villageId !== 0) return reject('ce feu est déjà un foyer')
       if (s.ownerId !== actorId) return reject('ce n’est pas votre feu')
+      // LE BIVOUAC, PAS LA MAISON (G-R7) : un feu sous la roche chauffe, cuit, éclaire — il ne
+      // fonde pas. Un village a un carré, des PNJ, des maisons ; rien de cela ne tient dans une
+      // salle sans ciel. (Conséquence de jeu signalée à Alexis, à trancher si elle déplaît.)
+      if (s.etage !== undefined && s.etage < 0) return reject('un bivouac, pas un foyer')
       const range = BALANCE.INTERACT_RANGE
       if (distSq(actor.x, actor.y, s.tx + 0.5, s.ty + 0.5) > range * range) return reject('trop loin')
       // LE BÂTI VIT AU SOL (spec `etages.md` E-R5) : un bras ne le rejoint pas depuis un plateau.
-      if (!atteintLeSol(state.map, actor, s.tx, s.ty)) return reject('trop loin')
+      if (!atteintLeSol(state.map, actor, s.tx, s.ty, s.etage)) return reject('trop loin')
       // Fondation R1 : ≥ 2·R_max (Chebyshev) d'un autre Feu — zéro chevauchement des carrés.
       const min = BALANCE.FIRE_MIN_DISTANCE
       if (state.villages.some((v) => chebyshev(v.fireTx, v.fireTy, s.tx, s.ty) < min)) {
@@ -1105,7 +1157,7 @@ export function applyVillageAction(state: SimState, actorId: number, action: Vil
       const range = BALANCE.INTERACT_RANGE
       if (distSq(actor.x, actor.y, s.tx + 0.5, s.ty + 0.5) > range * range) return reject('trop loin')
       // LE BÂTI VIT AU SOL (spec `etages.md` E-R5) : un bras ne le rejoint pas depuis un plateau.
-      if (!atteintLeSol(state.map, actor, s.tx, s.ty)) return reject('trop loin')
+      if (!atteintLeSol(state.map, actor, s.tx, s.ty, s.etage)) return reject('trop loin')
       if (!foyerDonneLeFeu(state.tick, s)) return reject('ce feu est éteint')
       const held = heldSlot(actor)
       if (held === null || held.item !== 'torche') return reject('pas de torche en main')
@@ -1129,7 +1181,7 @@ export function applyVillageAction(state: SimState, actorId: number, action: Vil
       // Placement ET coût validés (evaluateBuild a fait `hasItems`) : le débit passe.
       const village = getVillageOf(state, actorId)!
       removeItems(actor.inventory, ev.cost)
-      addStructure(state, structure, action.tx, action.ty, village.id, actorId, DEFAULT_ACCESS[structure], ev.material, action.edges)
+      addStructure(state, structure, action.tx, action.ty, village.id, actorId, DEFAULT_ACCESS[structure], ev.material, action.edges, ev.etage)
       // LE CHANTIER S'ENTEND (spec cendreux R25) : poser une pièce ébranle le sol jusqu'aux
       // morts, de plus loin qu'un coup (`SENS.BATIR`). Bâtir de nuit devient un choix.
       secouerLeSol(state, action.tx + 0.5, action.ty + 0.5, CENDREUX.SENS.BATIR)
@@ -1178,18 +1230,23 @@ export function applyVillageAction(state: SimState, actorId: number, action: Vil
       if (distSq(actor.x, actor.y, tx + 0.5, ty + 0.5) > BALANCE.BUILD_RANGE * BALANCE.BUILD_RANGE) return reject('trop loin')
       // Un composant/coffre BLOQUE : pas sous ses pieds (on s'y emmurerait), comme le Feu.
       if (Math.floor(actor.x) === tx && Math.floor(actor.y) === ty) return reject('pas sous ses pieds')
-      if (!terrainConstructible(terrainAt(state.map, tx, ty), placeType)) return reject('terrain inconstructible')
+      // Le terrain de l'ÉTAGE du poseur, et la pièce doit s'accepter sous la roche (G-R7).
+      const sol = solDeLaPose(state, actor, tx, ty, placeType)
+      if (typeof sol === 'string') return reject(BUILD_REJECT_REASON[sol])
+      if (!terrainConstructible(sol.terrain, placeType)) return reject('terrain inconstructible')
       // LA TERRE DE LA SUIE (agriculture.md J1) : la pièce qui l'exige ne se pose que là —
       // et le prédicat est l'écrivain unique du sol cendré, jamais une recopie.
       if (piece(placeType).surCendre === true && !tuileCendree(state, tx, ty)) return reject('il faut un sol cendré')
       // « Prise ENTIÈRE » (R23) : un mur d'arête borde la tuile sans l'occuper — on ADOSSE
       // donc son four à son propre mur, ce que `solidAt` refusait dès la première arête posée.
-      if (fullTileAt(state.structures, tx, ty)) return reject('tuile occupée')
-      if (!poseLibre(state.villages, state.nodes, tx, ty)) return reject('un nœud occupe la tuile')
+      if (fullTileAt(state.structures, tx, ty, sol.etage)) return reject('tuile occupée')
+      if (!poseLibre(state.villages, state.nodes, tx, ty, sol.etage)) return reject('un nœud occupe la tuile')
       // Invariant de navigabilité (R7) : un composant/coffre bloque, comme un mur. Il est
       // scopé au CARRÉ du Feu — une braise-mère posée à la frange, hors carré, n'a pas de
-      // carré à préserver (le feu de camp ne passe pas non plus par cette porte).
-      if (village && !braise) {
+      // carré à préserver (le feu de camp ne passe pas non plus par cette porte). SOUS LA
+      // ROCHE non plus (G-R7) : le carré est à la surface, et la salle n'a ni Feu ni PNJ à
+      // ne pas murer — le bivouaqueur reste « libre de s'emmurer », comme le bâtisseur.
+      if (village && !braise && sol.etage === undefined) {
         const ok = placementKeepsNavigable(
           state.map,
           state.structures,
@@ -1204,7 +1261,7 @@ export function applyVillageAction(state: SimState, actorId: number, action: Vil
       // L'objet tenu se consomme (une unité) : il DEVIENT la structure.
       held.count -= 1
       if (held.count <= 0) actor.inventory[actor.activeSlot] = null
-      addStructure(state, placeType, tx, ty, village?.id ?? 0, actorId)
+      addStructure(state, placeType, tx, ty, village?.id ?? 0, actorId, DEFAULT_ACCESS[placeType], undefined, undefined, sol.etage)
       // LE CHANTIER S'ENTEND (spec cendreux R25) — même règle que `build`, même portée.
       secouerLeSol(state, tx + 0.5, ty + 0.5, CENDREUX.SENS.BATIR)
       return
@@ -1292,7 +1349,7 @@ export function applyVillageAction(state: SimState, actorId: number, action: Vil
       const range = BALANCE.BUILD_RANGE
       if (distSq(actor.x, actor.y, s.tx + 0.5, s.ty + 0.5) > range * range) return reject('trop loin')
       // LE BÂTI VIT AU SOL (spec `etages.md` E-R5) : un bras ne le rejoint pas depuis un plateau.
-      if (!atteintLeSol(state.map, actor, s.tx, s.ty)) return reject('trop loin')
+      if (!atteintLeSol(state.map, actor, s.tx, s.ty, s.etage)) return reject('trop loin')
       const current = s.material ?? 'wood'
       const next = WALL_MATERIAL_ORDER[WALL_MATERIAL_ORDER.indexOf(current) + 1]
       if (next === undefined) return reject('palier de matériau maximal')
@@ -1323,7 +1380,7 @@ export function applyVillageAction(state: SimState, actorId: number, action: Vil
       const range = BALANCE.INTERACT_RANGE
       if (distSq(actor.x, actor.y, s.tx + 0.5, s.ty + 0.5) > range * range) return reject('trop loin')
       // LE BÂTI VIT AU SOL (spec `etages.md` E-R5) : un bras ne le rejoint pas depuis un plateau.
-      if (!atteintLeSol(state.map, actor, s.tx, s.ty)) return reject('trop loin')
+      if (!atteintLeSol(state.map, actor, s.tx, s.ty, s.etage)) return reject('trop loin')
       // `open` reste ABSENT quand elle se referme : `undefined` EST « close » (voir `Structure`),
       // et un `false` explicite alourdirait chaque snapshot d'un champ qui ne dit rien de neuf.
       const ouverte = s.open !== true
@@ -1358,7 +1415,7 @@ export function applyVillageAction(state: SimState, actorId: number, action: Vil
       const range = BALANCE.INTERACT_RANGE
       if (distSq(actor.x, actor.y, s.tx + 0.5, s.ty + 0.5) > range * range) return reject('trop loin')
       // LE BÂTI VIT AU SOL (spec `etages.md` E-R5) : un bras ne le rejoint pas depuis un plateau.
-      if (!atteintLeSol(state.map, actor, s.tx, s.ty)) return reject('trop loin')
+      if (!atteintLeSol(state.map, actor, s.tx, s.ty, s.etage)) return reject('trop loin')
       if (!removeItems(actor.inventory, { wood: WORLD_EVENTS.REPAIR_WOOD_COST })) return reject('il faut du bois')
       s.hp = Math.min(max, s.hp + WORLD_EVENTS.REPAIR_HP)
       actor.cooldownUntil = state.tick + BALANCE.GATHER_COOLDOWN_TICKS
@@ -1393,7 +1450,7 @@ export function applyVillageAction(state: SimState, actorId: number, action: Vil
       const range = BALANCE.INTERACT_RANGE
       if (distSq(actor.x, actor.y, s.tx + 0.5, s.ty + 0.5) > range * range) return reject('trop loin')
       // LE BÂTI VIT AU SOL (spec `etages.md` E-R5) : un bras ne le rejoint pas depuis un plateau.
-      if (!atteintLeSol(state.map, actor, s.tx, s.ty)) return reject('trop loin')
+      if (!atteintLeSol(state.map, actor, s.tx, s.ty, s.etage)) return reject('trop loin')
       // S16 — UNE PLANTE PAR SAISON : on sème la graine qu'on a, si sa FENÊTRE est ouverte.
       // Hors fenêtre, la graine n'est PAS consommée — elle attend son heure, et c'est ce qui
       // rend la règle lisible sans être punitive. La serre affranchit de la fenêtre.
@@ -1435,7 +1492,7 @@ export function applyVillageAction(state: SimState, actorId: number, action: Vil
       const range = BALANCE.INTERACT_RANGE
       if (distSq(actor.x, actor.y, s.tx + 0.5, s.ty + 0.5) > range * range) return reject('trop loin')
       // LE BÂTI VIT AU SOL (spec `etages.md` E-R5) : un bras ne le rejoint pas depuis un plateau.
-      if (!atteintLeSol(state.map, actor, s.tx, s.ty)) return reject('trop loin')
+      if (!atteintLeSol(state.map, actor, s.tx, s.ty, s.etage)) return reject('trop loin')
       if (!isCropMature(s, state.tick)) return reject('pas encore mûr')
       // Le TERROIR (meilleur palier) rend plus que la parcelle/serre.
       // S16 — chaque culture rend SON fruit, et **une graine de sa propre espèce** : la boucle
@@ -1506,7 +1563,7 @@ export function applyVillageAction(state: SimState, actorId: number, action: Vil
       const range = BALANCE.INTERACT_RANGE
       if (distSq(actor.x, actor.y, s.tx + 0.5, s.ty + 0.5) > range * range) return reject('trop loin')
       // LE BÂTI VIT AU SOL (spec `etages.md` E-R5) : un bras ne le rejoint pas depuis un plateau.
-      if (!atteintLeSol(state.map, actor, s.tx, s.ty)) return reject('trop loin')
+      if (!atteintLeSol(state.map, actor, s.tx, s.ty, s.etage)) return reject('trop loin')
       // Le dépôt est ouvert à tous (la boîte aux dons, spec alignement R11) ;
       // seul le RETRAIT exige l'accès.
       if (action.type === 'withdraw' && !hasAccess(state, actorId, s)) return reject('accès refusé')
@@ -1560,7 +1617,7 @@ export function applyVillageAction(state: SimState, actorId: number, action: Vil
       const range = BALANCE.INTERACT_RANGE
       if (distSq(actor.x, actor.y, s.tx + 0.5, s.ty + 0.5) > range * range) return reject('trop loin')
       // LE BÂTI VIT AU SOL (spec `etages.md` E-R5) : un bras ne le rejoint pas depuis un plateau.
-      if (!atteintLeSol(state.map, actor, s.tx, s.ty)) return reject('trop loin')
+      if (!atteintLeSol(state.map, actor, s.tx, s.ty, s.etage)) return reject('trop loin')
       if (s.access === action.access) return
       s.access = action.access
       // Changer une serrure est un fait de gouvernance (réputation, tribunal).
@@ -1633,6 +1690,8 @@ export function addStructure(
   /** LES ARÊTES PORTÉES (R23) — mur mince. Absent = la structure prend sa tuile entière,
    *  et c'est ce qui rend la migration SILENCIEUSE : tout ce qui existait est inchangé. */
   edges?: number,
+  /** L'ÉTAGE (G-R7) — NÉGATIF, sous la roche, seulement ; absent = au sol, tout l'existant. */
+  etage?: number,
 ): Structure {
   const id = state.nextStructureId
   state.nextStructureId += 1
@@ -1661,6 +1720,9 @@ export function addStructure(
   // On n'écrit `edges` que s'il y en a : `undefined` EST le comportement historique, et un
   // `edges: 0` posé par mégarde ferait un mur qui ne bloque plus rien nulle part.
   if (edges !== undefined && edges !== 0) structure.edges = edges
+  // On n'écrit `etage` que SOUS LA ROCHE : « absent = au sol » est le contrat de `auMemeEtage`,
+  // et un `etage: 0` posé par mégarde ne dirait rien de plus que l'absence.
+  if (etage !== undefined && etage < 0) structure.etage = etage
   const containerSlots = CONTAINER_TYPES[type]
   if (containerSlots !== undefined) structure.inventory = makeInventory(containerSlots)
   // LE FEU LIBRE naît avec 10 bois dans son slot combustible, la première allumée maintenant.

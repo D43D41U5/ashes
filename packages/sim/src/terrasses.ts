@@ -9,7 +9,7 @@
  * Ce fichier ne fait qu'UNE chose : il rend `palier[i]` pour chaque tuile, et la liste des
  * rampes qui relient un palier au suivant. Il ne repeint aucune tuile de `terrain` — le sol
  * d'avant est intact au bit près (T-R1 : la donnée est ADDITIVE). Les étages creux qui en
- * découlent (le dessus des mesas à `palier + 1`, les caves à `palier − 1`, les tuiles de rampe
+ * découlent (le dessus des mesas à `palier + 1`, les caves à `−(palier + 1)` — G-R1, les tuiles de rampe
  * au niveau du haut) se construisent dans `zonegen.ts`, à partir de ce que l'on rend ici.
  *
  * ⚠ **AUCUN TIRAGE.** Tout est lecture du socle et du terrain, balayages row-major, départages

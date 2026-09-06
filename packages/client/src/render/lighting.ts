@@ -801,7 +801,8 @@ export function fireGlow(
  * battent en phase avec la flamme, sinon la clairière respirerait à contretemps du feu qui la
  * creuse. L'appelant module encore par l'ÉTAT du foyer (braises, éteint).
  */
-const HOLE_RADIUS_TILES = 6
+/** …et la clairière d'un Feu sous la roche s'en dérive (`cave-veil.ts`, `FEU_CAVE_TUILES`). */
+export const HOLE_RADIUS_TILES = 6
 
 export function fireHoleRadius(timeMs = 0, seed = 0): number {
   return HOLE_RADIUS_TILES * flicker(timeMs, seed)

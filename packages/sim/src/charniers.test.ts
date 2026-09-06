@@ -123,10 +123,17 @@ describe('la loterie des lieux ne bouge pas', () => {
     // kind (seed 2026) : carrière, erratique, oratoire, saline, verger +1 chacun ; stèle 6 → 7
     // (une croisée saillante de plus) ; tanière −1. Louvières 16 (inchangé : les coins de chasse
     // tiennent), repaires 9. Aucun type ne meurt : A19 reste vert.
-    expect(lieuxDe(CARTE.map).length).toBe(160)
+    // RE-ÉPINGLÉ 160 → 157 (LE KARST EST LA GROTTE, `grottes.md` G-R10, 2026-09-06) : la Grotte
+    // sort de la loterie (`horsSemis`) — le worldgen la creuse lui-même dans une paroi de
+    // terrasse, et la vallée complète n'a pas de terrasse. MESURÉ par kind (seed 2026) :
+    // **grotte 3 → 0**, et RIEN d'autre ne bouge (le tirage des 36 autres types est
+    // octet-identique : un lieu `horsSemis` ne consomme aucun tirage). Louvières 16, stèles 7,
+    // repaires 9. Le monde joué ('racine'), lui, porte des dizaines de Grottes : G-A5.
+    expect(lieuxDe(CARTE.map).length).toBe(157)
     expect(lieuxDe(CARTE.map).filter((z) => z.kind === 'louviere').length).toBe(16)
     expect(lieuxDe(CARTE.map).filter((z) => z.kind === 'stele').length).toBe(7)
-    expect(lieuxDe(CARTE.map).filter((z) => z.kind !== 'stele' && z.kind !== 'louviere').length).toBe(137)
+    expect(lieuxDe(CARTE.map).filter((z) => z.kind === 'grotte').length).toBe(0)
+    expect(lieuxDe(CARTE.map).filter((z) => z.kind !== 'stele' && z.kind !== 'louviere').length).toBe(134)
     expect(lieuxDe(CARTE.map).filter((z) => z.kind === 'repaire').length).toBe(9)
   })
 })

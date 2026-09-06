@@ -151,7 +151,7 @@ export function handleOrage(state: SimState, village: Village, npc: Npc, entity:
   if (!front || front.type !== 'orage') return false
   if (meteoIntensity(state, entity.x, entity.y) <= 0) return false
   // Déjà sur une tuile abritée (maison, grotte) : on y RESTE — la foudre n'y frappe pas.
-  if (isSheltered(state, Math.floor(entity.x), Math.floor(entity.y))) {
+  if (isSheltered(state, Math.floor(entity.x), Math.floor(entity.y), entity.etage)) {
     npc.path = []
     return true
   }
@@ -160,7 +160,7 @@ export function handleOrage(state: SimState, village: Village, npc: Npc, entity:
   const target = abri ?? state.structures.find((s) => s.type === 'fire' && s.villageId === village.id)
   if (!target) return false // ni maison ni Feu : on travaille sous l'orage
   // Replié au Feu (la cible SANS tuile abritée) : arrivé dans sa bulle, on attend là.
-  if (abri === undefined && fireBubble(state, entity.x, entity.y) > 0) {
+  if (abri === undefined && fireBubble(state, entity.x, entity.y, entity.etage) > 0) {
     npc.path = []
     return true
   }
@@ -183,7 +183,7 @@ export function handleCold(state: SimState, village: Village, npc: Npc, entity: 
     return false
   }
   // Déjà en train de se réchauffer ? → on laisse manger/travailler au coin du feu.
-  if (fireBubble(state, entity.x, entity.y) > 0 || isSheltered(state, Math.floor(entity.x), Math.floor(entity.y))) {
+  if (fireBubble(state, entity.x, entity.y, entity.etage) > 0 || isSheltered(state, Math.floor(entity.x), Math.floor(entity.y), entity.etage)) {
     npc.seekingWarmth = false
     return false
   }

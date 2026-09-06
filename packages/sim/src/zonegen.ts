@@ -53,7 +53,7 @@ import { calculeChampDeCendre, computeCendreField, foyersDeLaCarte } from './cen
 import { construireEtage, terrainDeCave, terrainDeDessus, type Connecteur, type EtageCreux } from './etages'
 import { aDesPaliers, poserLesTerrasses, quantifierLEscalier, TERRASSES } from './terrasses'
 import { distSq } from './geometry'
-import { placeCharniers, placeGitesLoup, placePois, placeSteles } from './poi'
+import { placeCharniers, placeGitesLoup, placePois, placeSteles, POI_TYPES, roman } from './poi'
 import { placeHuntingGrounds } from './faune'
 import { peindreLesClairieres } from './clairieres'
 import { tracerLesLayons } from './layons'
@@ -62,6 +62,7 @@ import { fbm2, hash2 } from './noise'
 import { deriverDistanceEau, deriverProfondeur } from './profondeur'
 import { deriverNatureDeLEau } from './peche-nature'
 import { tracerLesCoulees } from './zonegen-coulees'
+import { creuserLesKarsts, masqueDesLieux, type ChampDeKarst, type Karst } from './zonegen-karst'
 import { comblerLesIsthmes, epouserLEscalier, masqueDesSeuils, paintWaterRacine, type Riviere } from './zonegen-water'
 import { assainirLeProfondHorsRacine, peindreLesEauxDesZones } from './zonegen-eaux-zones'
 import {
@@ -456,6 +457,42 @@ export interface CarteZonee {
    * il faudrait la rebâtir à côté, donc en deux exemplaires qui divergeraient.
    */
   socle: Socle | null
+  /**
+   * LES KARSTS — les grottes de terrasse (spec `grottes.md`), dans l'ordre du creusement. Donnée
+   * de GÉNÉRATION comme les affleurements : le semis y lit la pierre du cœur et la stérilité de
+   * la trace, le plancher (G-R8a) y AJOUTE les siens, les gardes y lisent l'arbre. Le monde ne
+   * garde d'eux que leur grille creuse, leurs gueules et leur zone.
+   */
+  karsts: Karst[]
+}
+
+/**
+ * POSER UN KARST SUR LA CARTE (grottes G-R2/G-R5) : ses tuiles dans la grille creuse de son
+ * niveau, son terrain (la nappe comprise), une paire de connecteurs `gueule` par gueule, et sa
+ * zone — dont le rectangle EST la gueule principale (`x, y` = la tuile ouest) et dont l'emprise
+ * exacte est `tuiles`, à l'étage `niveau`. Partagé entre la génération et le plancher (G-R8a).
+ */
+export function poserLeKarst(
+  map: WorldMap,
+  k: Karst,
+  ajouter: (niveau: number, tuiles: readonly number[]) => void,
+  connecteurs: Connecteur[],
+  terrainKarst: Map<number, number>,
+): void {
+  const width = map.width
+  ajouter(k.niveau, k.tuiles)
+  for (let i = 0; i < k.tuiles.length; i++) terrainKarst.set(k.tuiles[i]!, k.terrain[i]!)
+  for (const paire of k.gueules) {
+    for (const i of paire) connecteurs.push({ x: i % width, y: (i - (i % width)) / width, de: k.palier, vers: k.niveau, type: 'gueule' })
+  }
+  const nom = POI_TYPES.find((t) => t.slug === 'grotte')?.name ?? 'la Grotte'
+  const n = map.zones.filter((z) => z.kind === 'grotte').length + 1
+  const o = k.gueules[0]![0]
+  map.zones.push({
+    name: `${nom} ${roman(n)}`,
+    x: o % width, y: (o - (o % width)) / width, w: 2, h: 1,
+    kind: 'grotte', etage: k.niveau, tuiles: k.tuiles,
+  })
 }
 
 /**
@@ -852,7 +889,8 @@ export function generateZonedTerrain(
     // Sans elle, la table de prises n'aurait aucun moyen de savoir ce qu'est l'eau qu'on pêche.
     natureEau: deriverNatureDeLEau(terrain, riviere?.fil, width, height),
   }
-  const carte: CarteZonee = { map, graphe: g, zone, rampe, affleurements, socle: creux }
+  const karsts: Karst[] = []
+  const carte: CarteZonee = { map, graphe: g, zone, rampe, affleurements, socle: creux, karsts }
 
   // ── PASSE 4.4 : L'ANNEAU DE R45, LE DERNIER MOT ───────────────────────────
   //
@@ -965,10 +1003,17 @@ export function generateZonedTerrain(
   // TOUS LES PLATEAUX D'UN MÊME NIVEAU TIENNENT DANS UN SEUL ÉTAGE, et c'est le modèle : un étage
   // est une CARTE, pas un lieu. Soixante mesas disjointes qui sont toutes « un cran plus haut »,
   // c'est un étage troué, pas soixante étages. **Et « un cran plus haut » se compte depuis le
-  // PALIER de l'assise (T-R4)** : une mesa posée sur la terrasse 1 a son dessus au niveau 2, sa
-  // cave au niveau 0 — le niveau 0 est alors une grille creuse comme une autre. Les tuiles de
-  // rampe y ajoutent les leurs — elles appartiennent aux deux étages à la fois, c'est ce qui fait
-  // d'une rampe une rampe ; et les rampes des terrasses, au niveau du HAUT, exactement de même.
+  // PALIER de l'assise (T-R4)** : une mesa posée sur la terrasse 1 a son dessus au niveau 2. Les
+  // tuiles de rampe y ajoutent les leurs — elles appartiennent aux deux étages à la fois, c'est
+  // ce qui fait d'une rampe une rampe ; et les rampes des terrasses, au niveau du HAUT, de même.
+  //
+  // **UN SOUTERRAIN A SON IDENTITÉ À LUI : `−H`, H la hauteur de la masse creusée (G-R1).** La
+  // cave d'une mesa posée au palier `base` est creusée dans un chapeau de niveau `base + 1` :
+  // elle vit à `−(base + 1)`. Avant (2026-09-05), elle vivait à `base − 1` — et une mesa posée
+  // au palier 1 avait sa cave AU NIVEAU 0, l'entier de TOUT le sol du palier 0 : E-R5 sort sur
+  // `ae === be`, le loup l'atteignait à travers la roche (MESURÉ graine 2026 : 16 838 couples
+  // (surface, cave) à ≤ 8 tuiles atteints sans gueule). Les karsts de terrasse
+  // (`zonegen-karst.ts`) prennent le même régime : creusés dans la terrasse `p + 1`, à `−(p + 1)`.
   const parNiveau = new Map<number, number[]>()
   const ajouter = (niveau: number, tuiles: readonly number[]): void => {
     let l = parNiveau.get(niveau)
@@ -989,21 +1034,55 @@ export function generateZonedTerrain(
     ajouter(base + 1, p.rampes)
     for (const r of p.rampes) connecteurs.push({ ...xy(r), de: base, vers: base + 1, type: 'rampe' })
     if (p.cave.length > 0) {
-      ajouter(base - 1, p.cave)
+      const sous = -(base + 1)
+      ajouter(sous, p.cave)
       for (const i of p.cave) caves.add(i)
-      for (const q of p.gueule) connecteurs.push({ ...xy(q), de: base, vers: base - 1, type: 'gueule' })
+      for (const q of p.gueule) connecteurs.push({ ...xy(q), de: base, vers: sous, type: 'gueule' })
     }
   }
   for (const r of terrasses?.rampes ?? []) {
     ajouter(r.vers, [r.y * width + r.x])
     connecteurs.push({ x: r.x, y: r.y, de: r.de, vers: r.vers, type: 'rampe' })
   }
+
+  // ── LES KARSTS — les grottes de terrasse (spec `grottes.md`) ─────────────────────────────
+  //
+  // APRÈS les mesas et les terrasses, forcément : un karst se creuse dans la roche que personne
+  // n'a prise (`reserve` = toute tuile d'étage, tout connecteur), et ses gueules s'ouvrent sur
+  // une paroi de terrasse. Élus par le relief (`hash2` salé 'KARS' contre la part de leur
+  // roche), jamais tirés : le flux du PRNG ne bouge pas d'un bit (G-A2). Leur zone est posée
+  // ICI, après tous les lieux de `placePois` : l'index des zones — `homePoi` — ne glisse pas.
+  // Leur trace (G-R9) se peint sur `terrain` AVANT les coins de chasse, qui lisent l'eau.
+  const terrainKarst = new Map<number, number>()
+  const rect = g.zones[g.racine]?.rect
+  if (terrasses && creux && rect) {
+    const reserve = new Uint8Array(N)
+    for (const l of parNiveau.values()) for (const i of l) reserve[i] = 1
+    const portes = new Set<number>()
+    for (const c of connecteurs) {
+      const i = c.y * width + c.x
+      portes.add(i)
+      reserve[i] = 1
+    }
+    const champ: ChampDeKarst = {
+      terrain, width, height, palier: terrasses.palier, creux, rect, reserve,
+      lieux: masqueDesLieux(map.zones, width, height), portes,
+    }
+    for (const k of creuserLesKarsts(champ)) {
+      karsts.push(k)
+      poserLeKarst(map, k, ajouter, connecteurs, terrainKarst)
+    }
+  }
+
   const etages: EtageCreux[] = []
   // Le terrain d'une tuile d'étage : celui du SOL sur une rampe (on marche sur la jupe, ou sur
-  // la terrasse du bas), la roche nue d'une cave, la composition d'un dessus de butte ailleurs.
+  // la terrasse du bas), la roche nue d'une cave, celui que le karst a fixé (sa nappe comprise),
+  // la composition d'un dessus de butte ailleurs.
   const rampesSet = new Set(connecteurs.filter((c) => c.type === 'rampe').map((c) => c.y * width + c.x))
   const terrainDEtage = (tx: number, ty: number): number => {
     const i = ty * width + tx
+    const tk = terrainKarst.get(i)
+    if (tk !== undefined) return tk
     if (rampesSet.has(i)) return terrain[i]!
     return caves.has(i) ? terrainDeCave(tx, ty) : terrainDeDessus(tx, ty)
   }
@@ -1033,9 +1112,12 @@ export function generateZonedTerrain(
   // coins des Louvières, l'hôte une liste AVEC : l'invariant « les mêmes coins, au bit près »
   // était rompu, et 100 % des coins de Louvière naissaient sans coulée (mesuré, revue
   // déterminisme du 2026-08-28 : 3 à 4 coins muets par carte, précisément ceux des meutes).
+  //
+  // ET UNE PAR KARST SEC (grottes G-R9) : le karst sans nappe n'a pas de trace d'eau ; sa gueule
+  // sème une coulée — même champ, même descente — qui dit le passage des bêtes vers l'abri.
   const coulees = tracerLesCoulees(
     terrain, zone, g, width, height, map.profondeur!, creux,
-    placeHuntingGrounds(map, seed),
+    [...placeHuntingGrounds(map, seed), ...karsts.filter((k) => !k.noye).map((k) => xy(k.gueules[0]![1]))],
   )
   if (coulees.length > 0) map.coulees = coulees
 

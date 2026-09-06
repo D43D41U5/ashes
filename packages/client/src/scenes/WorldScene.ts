@@ -235,6 +235,7 @@ import { bindInputs, type MovementBindings } from './world/input-bindings'
 import { ciblesDesignees } from './world/cibles'
 import { demolishTargetAt } from './world/aim'
 import { GAZE_PX, GAZE_REACH, INTERP_DELAY_MULTI_MS, SnapshotView, type InterpolatedSprite } from './world/snapshot-view'
+import { sousLaRoche } from './world/index-noeuds'
 import { silhouetteDepuisSprite } from './world/visee-corps'
 import { suivreAngle } from './world/visee-lissee'
 import { corpseArrow, corpseSecondsLeft } from './world/corpse-arrow'
@@ -396,6 +397,9 @@ export class WorldScene extends Phaser.Scene {
   private airAlpha = 0
   private airCible: { color: number; alpha: number } = { color: 0x000000, alpha: 0 }
   private fireFx: FireFx | null = null
+  /** La hauteur et la strate où une chose posée sur une tuile se DESSINE — au sol ou, avec son
+   *  `etage`, dans sa salle (G-R7). Posé avec les couches de FX, qui la reçoivent aussi. */
+  private reliefSous: ((x: number, y: number, etage?: number) => { lift: number; strate: number }) | null = null
   /** Les gouttes, la brume et la lueur au pied des cascades (T-A9) — sur `cliffs.chutes`. */
   private cascadeFx: CascadeFx | null = null
   /** La chaleur du Feu tombée au sol — cosmétique, cf. world/fire-ground-glow.ts. */
@@ -483,7 +487,8 @@ export class WorldScene extends Phaser.Scene {
   /**
    * LE Y DESSINÉ D'UN CORPS (en tuiles) : sa rangée logique, moins son palier et son étage —
    * continu sur une rampe (`EtageLayer.niveauDuCorps`), le chapeau d'une mesa au-dessus de son
-   * palier, la cave à la hauteur du palier qui la coiffe (`max`, comme `decalageDEtage`).
+   * palier, la cave à la hauteur de sa GUEULE — le palier `−niveau − 1` (spec `grottes.md` G-R1 ;
+   * la même loi que `decalageDEtage`, sous une terrasse comme sous une mesa).
    *
    * ⚠ UNE SEULE ÉCRITURE pour tout ce qui se pose LÀ OÙ LE CORPS EST À L'ÉCRAN : le découvert,
    * la torche (sa flaque, son trou dans le voile, son point light). Le sprite lui-même suit la
@@ -1364,7 +1369,13 @@ export class WorldScene extends Phaser.Scene {
         // son sprite dans `snapshot-view`), et ses flammes, sa flaque et son point light avec
         // lui — sans quoi, au palier 2, les trois vivaient quatre tuiles au sud des rondins.
         // Même patron que `reveil-fx` : la couche reçoit le relief, elle ne lit pas la carte.
-        const reliefSous = (x: number, y: number) => ({ lift: this.warp.liftSol(x, y), strate: this.warp.strateSol(x, y) })
+        // …ET UN FEU SOUS LA ROCHE (G-R7, le bivouac) vit à la hauteur et dans la strate de SA
+        // salle (`liftAEtage`/`strateAEtage`, comme son sprite dans `snapshot-view`) : ses flammes
+        // et sa flaque se dessinent avec le plancher de la grotte, au-dessus du voile de nuit.
+        const reliefSous = (x: number, y: number, etage?: number) => sousLaRoche({ etage })
+          ? { lift: this.warp.liftAEtage(x, y, etage), strate: this.warp.strateAEtage(x, y, etage) }
+          : { lift: this.warp.liftSol(x, y), strate: this.warp.strateSol(x, y) }
+        this.reliefSous = reliefSous
         this.fireFx.setReliefSous(reliefSous)
         this.fireGround.setReliefSous(reliefSous)
         this.dynLight.setReliefSous(reliefSous)
@@ -2063,11 +2074,15 @@ export class WorldScene extends Phaser.Scene {
       // ═══ SOUS LA ROCHE : la salle prend l'écran, et E-R13 s'y VOIT ═══
       // Le drapeau se pose ici parce que c'est `WorldScene` qui sait où le regard se tient —
       // la couche ne DÉCIDE rien, elle obéit (le patron du découvert, deux lignes plus haut).
-      // « Sous » se lit du PALIER de la tuile, pas de zéro : la salle d'une mesa de palier 2 est
-      // à l'étage 1, et elle est tout autant sous la roche.
+      // « Sous » se lit du PALIER de la tuile, pas de zéro — et depuis G-R1 (`grottes.md`) un
+      // souterrain est NÉGATIF (`−(p + 1)` sous une gueule de palier `p`) : `niveau < palier`
+      // reste la lecture juste, sous une mesa comme sous une terrasse.
       const palierJ = this.relief.palier(Math.floor(this.predicted.x), Math.floor(this.predicted.y))
       const souterrain = this.etageJoueur < palierJ
       this.etages.souterrain = souterrain
+      // …et la vue le lit au même point : les nœuds semés dans la salle et le bivouac (G-R7) ne se
+      // voient ni ne se visent que sous la roche (`SnapshotView.sousRoche`).
+      this.view.sousRoche = souterrain
       // ═══ LA LUMIÈRE DE LA CAVE — une structure par image, et la loi de /sim une fois par tuile ═══
       //
       // La première version tenait une fermeture par tuile (`clarteAt`) qui MÉLANGEAIT le ciel
@@ -2089,7 +2104,8 @@ export class WorldScene extends Phaser.Scene {
       this.view.clarteAt = null
       if (this.etatGel !== null && this.etages.partDuCielAt === null) {
         const gel = this.etatGel
-        this.etages.partDuCielAt = (tx, ty) => partDuCiel(gel, tx, ty, this.relief.palier(tx, ty) - 1)
+        // Au NIVEAU de la salle creusée sous la tuile (G-R1) — plus « le palier moins un ».
+        this.etages.partDuCielAt = (tx, ty) => partDuCiel(gel, tx, ty, this.relief.niveauDeSalle(tx, ty))
       }
       if (souterrain || this.etages.lumiere === null) {
         const moi = this.lastEntities.find((e) => e.id === this.playerId)
@@ -2106,6 +2122,14 @@ export class WorldScene extends Phaser.Scene {
             ? { x: this.predicted.x * TILE_PX, y: yDessine * TILE_PX, force: partDeFlamme(slot) * flicker(time, 0.37) }
             : null,
           joueur: { x: this.predicted.x * TILE_PX, y: yDessine * TILE_PX },
+          // LE BIVOUAC (G-R7) : chaque feu de la salle, à la hauteur où son sprite se dessine
+          // (`reliefSous`, l'étage compris), et sa flamme selon l'ÉTAT du foyer — le même
+          // `facteurDuFeu` que la flaque et le trou du voile de nuit, un feu mort n'éclaire rien.
+          feux: this.view.structures.flatMap((s) => {
+            if (s.type !== 'fire' || !sousLaRoche(s)) return []
+            const force = facteurDuFeu(this.lastSnapshotTick, s) * flicker(time, s.id * 1.7)
+            return [{ x: (s.tx + 0.5) * TILE_PX, y: (s.ty + 0.5) * TILE_PX - (this.reliefSous?.(s.tx + 0.5, s.ty + 0.5, s.etage).lift ?? 0), force }]
+          }),
         }
       }
       if (this.etages.actif) this.etages.render(this.cameras.main, decouvert, deltaMs)
@@ -2176,7 +2200,10 @@ export class WorldScene extends Phaser.Scene {
       //   éclairent. (Que ce plafond prenne les premiers plutôt que les plus proches est un
       //   défaut connu — `FX-03` de l'audit du 2026-08-20 — mais c'est un défaut de RÈGLE,
       //   pas de coût : on ne le déplace pas en passant.)
-      const feux = this.view.structures.filter((s) => s.type === 'fire')
+      // ⚠ UN FEU SOUS LA ROCHE (G-R7) N'EXISTE QUE SOUS LA ROCHE : dehors, ses flammes se seraient
+      //   dessinées dans la strate de la grotte — au-dessus de la terrasse qui le recouvre. Les
+      //   feux de la surface restent dans la liste depuis la salle : on les voit par la gueule.
+      const feux = this.view.structures.filter((s) => s.type === 'fire' && (!sousLaRoche(s) || this.etages.souterrain))
       // Les Feux, résolus UNE fois : même `fireGlow` (seed/heure) pour la flaque au sol, le trou
       // du voile ET le reflet sur l'eau → les trois battent EN PHASE avec la flamme.
       const litFires = feux
@@ -2435,7 +2462,7 @@ export class WorldScene extends Phaser.Scene {
       // se creusait quatre tuiles au sud des rondins (MESURÉ le 2026-09-04, feu 474, graine 2026).
       const veilFires = litFires.map(({ s, factor, g }) => ({
         worldX: (s.tx + 0.5) * TILE_PX,
-        worldY: (s.ty + 0.5) * TILE_PX - this.warp.liftSol(s.tx + 0.5, s.ty + 0.5),
+        worldY: (s.ty + 0.5) * TILE_PX - (this.reliefSous?.(s.tx + 0.5, s.ty + 0.5, s.etage).lift ?? 0),
         radiusTiles: fireHoleRadius(time, s.id * 1.7) * factor,
         force: axFeu.respiration || axFeu.coeurBlanc ? 1 + (g.beat - 1) * 0.7 : 1,
       }))

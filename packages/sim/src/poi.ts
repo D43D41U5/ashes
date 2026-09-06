@@ -5,7 +5,8 @@
  */
 import { hash2 } from './noise'
 import { poissonPoints } from './poisson'
-import { isWater, terrainAt, isBlockingTile, type FaitDeGeneration, type WorldMap, type Zone } from './map'
+import { MARCHABLE, contientLaTuile, isWater, terrainAt, isBlockingTile, type FaitDeGeneration, type WorldMap, type Zone } from './map'
+import { poserLEtageDuCorps, terrainAEtage } from './etages'
 import { spawnMonster } from './monsters'
 import type { SimState } from './sim'
 import { setTile } from './map'
@@ -296,10 +297,18 @@ export const POI_TYPES: PoiType[] = [
    * était inatteignable sous ce `minElev` — une ligne qui mentait.
    */
   { slug: 'belvedere', zones: ['alpages', 'aiguilles'], name: 'le Belvédère', family: 'reward', biomes: [SCREE, ROCK], minElev: 0.66, weight: 3, cap: 4, reserve: 1, footprint: 2 },
-  // Élargie 2→5 à la promotion en plan (étage 3, le précédent des sept de l'étage 1) : la
-  // grotte est ENTRABLE — son plan creuse un antre derrière la gueule, et un antre exige la
-  // marge des régions. Sous garde de recensement : si la Grotte cesse de naître, on resserre.
-  { slug: 'grotte', zones: ['karst', 'gouffre'], name: 'la Grotte', family: 'reward', biomes: [ROCK, SCREE], weight: 4, cap: 5, reserve: 1, footprint: 7 },
+  /**
+   * LA GROTTE — LE KARST (spec `grottes.md` G-R2/G-R10, décision d'Alexis du 2026-09-05 : « le
+   * karst est la Grotte »). `horsSemis` : elle n'est ni tirée ni réservée par `placePois` — le
+   * WORLDGEN l'enregistre lui-même (`zonegen-karst.ts` → `Zone` avec `etage` et `tuiles`), une par
+   * karst creusé dans une paroi de terrasse. Son rectangle est sa gueule (deux tuiles du sol) ;
+   * son emprise vit à `−(p + 1)`. Le fond est une tanière de sanglier au régime d'aujourd'hui
+   * (G-R5 : résident, `DEN_RESPAWN_TICKS`) — `populateDen` le pose sur la tuile creusée la plus
+   * loin de toute gueule, pas dans le rectangle. Ni `zones` ni `reserve` ni `cap` qui borne :
+   * le compte de Grottes n'a pas de plafond, un plancher (G-R8a). Les `biomes` n'ont plus de
+   * rôle (un lieu `horsSemis` ne passe pas `isEligible`) — gardés pour l'encyclopédie.
+   */
+  { slug: 'grotte', name: 'la Grotte', family: 'reward', horsSemis: true, weight: 0, cap: 0, footprint: 2, biomes: [ROCK, SCREE], monster: 'boar' },
   { slug: 'cascade', zones: ['alpages', 'karst', 'aiguilles'], name: 'la Cascade', family: 'reward', biomes: [ROCK, SCREE], minElev: 0.4, weight: 2, cap: 4, reserve: 1, footprint: 2 },
   { slug: 'erratique', zones: ['pres_bas', 'alpages', 'ruines'], name: 'le Bloc erratique', family: 'reward', biomes: [BOULDERS, AL_MEADOW, GRASS, FLOWER], weight: 4, cap: 5, reserve: 1, footprint: 2 },
   { slug: 'arbre', zones: ['sylve'], name: "l'Arbre remarquable", family: 'reward', biomes: [OLD_GROWTH], weight: 2, cap: 3, reserve: 1, footprint: 2 },
@@ -1167,7 +1176,7 @@ const ROMANS: readonly (readonly [number, string])[] = [
   [1000, 'M'], [900, 'CM'], [500, 'D'], [400, 'CD'], [100, 'C'], [90, 'XC'],
   [50, 'L'], [40, 'XL'], [10, 'X'], [9, 'IX'], [5, 'V'], [4, 'IV'], [1, 'I'],
 ]
-function roman(n: number): string {
+export function roman(n: number): string {
   let reste = n
   let out = ''
   for (const [valeur, signe] of ROMANS) {
@@ -1275,6 +1284,24 @@ function populateDen(state: SimState, zone: number, seed: number): boolean {
   if (!z) return false
   const t = POI_TYPES.find((p) => p.slug === z.kind)
   if (!t?.monster) return false
+  // ═══ UN LIEU SOUS LA ROCHE : LA BÊTE NAÎT AU FOND (spec `grottes.md` G-R5) ═══
+  //
+  // Son rectangle est la gueule, deux tuiles du SOL — y poser la bête, c'est la poser sur le
+  // seuil, à l'air libre. La tanière est la tuile creusée la plus loin de toute gueule, à
+  // l'étage de la grotte ; `FOND_DISTANCE` ≥ `DEN_SPAWN_CLEARANCE` (24) fait qu'elle ne naît
+  // jamais dans le vestibule, ni sous les yeux de qui entre.
+  if (z.etage !== undefined && z.tuiles !== undefined) {
+    const fond = fondDuLieu(state.map, z)
+    if (fond < 0) return false
+    const fx = fond % state.map.width
+    const fy = (fond - fx) / state.map.width
+    const id = spawnMonster(state, t.monster, fx + 0.5, fy + 0.5)
+    const born = state.monsters.find((m) => m.entityId === id)
+    if (born) born.homePoi = zone
+    const corps = state.entities.find((e) => e.id === id)
+    if (corps) poserLEtageDuCorps(state.map, corps, z.etage)
+    return true
+  }
   const candidates = walkableTilesFor(state.map, z)
   if (candidates.length === 0) return false // aucune tuile praticable dans/autour de l'empreinte
   if (t.monster === 'wolf') return populateLouviere(state, zone, candidates, seed)
@@ -1285,6 +1312,43 @@ function populateDen(state: SimState, zone: number, seed: number): boolean {
   const born = state.monsters.find((m) => m.entityId === id)
   if (born) born.homePoi = zone // elle appartient à ce lieu, et elle y reviendra
   return true
+}
+
+/**
+ * LE FOND D'UN LIEU CREUSÉ — la tanière (spec `grottes.md` G-R3/G-R5) : la tuile sèche de
+ * l'emprise la plus loin (Chebyshev) de toute gueule, la première dans l'ordre des tuiles à
+ * égalité. C'est la loi de `creuserUnKarst` (le `fond` du karst), relue sur la ZONE : l'état ne
+ * porte pas le karst, seulement son emprise et ses connecteurs — et une gueule est un
+ * connecteur `gueule` de l'emprise qui ouvre sur cet étage. −1 si l'emprise n'a pas de sol sec.
+ */
+export function fondDuLieu(map: WorldMap, z: Pick<Zone, 'etage' | 'tuiles'>): number {
+  const { etage, tuiles } = z
+  if (etage === undefined || tuiles === undefined) return -1
+  const gueules: { x: number; y: number }[] = []
+  for (const c of map.connecteurs ?? []) {
+    if (c.type !== 'gueule' || c.vers !== etage) continue
+    if (contientLaTuile(tuiles, c.y * map.width + c.x)) gueules.push({ x: c.x, y: c.y })
+  }
+  const gueuleSet = new Set(gueules.map((g) => g.y * map.width + g.x))
+  let fond = -1
+  let dFond = -1
+  for (const t of tuiles) {
+    if (gueuleSet.has(t)) continue
+    const terrain = terrainAEtage(map, etage, t % map.width, (t - (t % map.width)) / map.width)
+    if (MARCHABLE[terrain] !== 1 || isWater(terrain)) continue
+    const tx = t % map.width
+    const ty = (t - tx) / map.width
+    let d = Infinity
+    for (const g of gueules) {
+      const dd = Math.max(Math.abs(g.x - tx), Math.abs(g.y - ty))
+      if (dd < d) d = dd
+    }
+    if (d > dFond) {
+      dFond = d
+      fond = t
+    }
+  }
+  return fond
 }
 
 /**
@@ -1417,9 +1481,18 @@ export function advanceDens(state: SimState, seed: number): void {
     }
     if (state.tick < pending.at) continue
 
-    // L'heure est venue — mais pas devant témoin.
-    const cx = z.x + z.w / 2
-    const cy = z.y + z.h / 2
+    // L'heure est venue — mais pas devant témoin. Sous la roche, le témoin se compte depuis le
+    // FOND (là où la bête naît), pas depuis la gueule : le rectangle est le seuil, et un avatar
+    // qui campe le seuil à 30 tuiles du fond n'y voit rien — c'est la nuit noire (E-R13).
+    let cx = z.x + z.w / 2
+    let cy = z.y + z.h / 2
+    if (z.etage !== undefined && z.tuiles !== undefined) {
+      const fond = fondDuLieu(state.map, z)
+      if (fond >= 0) {
+        cx = (fond % state.map.width) + 0.5
+        cy = (fond - (fond % state.map.width)) / state.map.width + 0.5
+      }
+    }
     let watched = false
     for (const a of avatars) {
       if (distSq(a.x, a.y, cx, cy) <= FAUNA.DEN_SPAWN_CLEARANCE * FAUNA.DEN_SPAWN_CLEARANCE) {

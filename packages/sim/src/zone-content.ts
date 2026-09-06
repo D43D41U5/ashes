@@ -56,6 +56,7 @@ import { estCoeur, TERRAINS_BOISES_MASSIF, TERRAINS_FEUILLUS } from './profondeu
 import { CREUX } from './racine-relief'
 import { rngRoll } from './rng'
 import { RELIEF, type CarteZonee } from './zonegen'
+import { pierreDuKarst, type Karst } from './zonegen-karst'
 import { EAU, estUnCoude } from './zonegen-water'
 import { MONDE } from './zonegraph'
 
@@ -621,7 +622,11 @@ export function placeZoneNodes(c: CarteZonee): ResourceNode[] {
   // où l'on voit venir. Le prédicat vit ICI, en un point : le semis principal le teste, et
   // TOUTES les passes appendues l'héritent par l'ensemencement de leurs `occupees` — une
   // passe future ne peut pas l'oublier.
-  const steriles = (c.map.coulees ?? []).filter((i) => i >= 0)
+  // ⚠ ET LA TRACE D'UNE GROTTE NOYÉE AUSSI (spec `grottes.md` G-R9) : le fil d'eau qui sort de la
+  // gueule est peint EN HAUT-FOND sur `map.terrain`, et le semis doit le laisser lisible — un
+  // roseau ou une pierre dessus en ferait une mare parmi d'autres. Même patron : stérile ici, à
+  // la source, et toutes les passes appendues l'héritent.
+  const steriles = [...(c.map.coulees ?? []).filter((i) => i >= 0), ...c.karsts.flatMap((k) => k.trace)]
   // ⚠ **UNE PORTE D'ÉTAGE NE NOURRIT RIEN NON PLUS** (2026-09-02) — la rampe de mesa et la gueule
   // de cave sont des seuils au même titre que `c.rampe`, et le semis tourne APRÈS le worldgen
   // sans rien en savoir. MESURÉ avant cette ligne : un rocher SUR la gueule (293,106) de la
@@ -725,7 +730,7 @@ export function placeZoneNodes(c: CarteZonee): ResourceNode[] {
   //
   // TOUS LES ÉTAGES QUI SONT UN DESSUS DE BUTTE (spec `terrasses.md` T-R4) : un étage est une
   // grille creuse à un niveau, et une tuile n'est un chapeau que là où ce niveau est « le palier
-  // du sol + 1 ». Les caves (palier − 1) ne poussent rien ; les rampes des terrasses, au niveau du
+  // du sol + 1 ». Les caves (niveau négatif, G-R1) ne poussent rien ; les rampes des terrasses, au niveau du
   // haut, sont des portes. Le nœud est ESTAMPILLÉ de son niveau : il n'est pas au sol.
   const portesSet = new Set(portes)
   for (const etage of c.map.etages ?? []) {
@@ -833,6 +838,15 @@ export function placeZoneNodes(c: CarteZonee): ResourceNode[] {
   const glane = glanageAuSol(c, nodes, occupeesPlus(), id)
   for (const g of glane) nodes.push(g)
   id += glane.length
+
+  // ── LA PIERRE DES GROTTES (spec `grottes.md` G-R5) — dans le CŒUR des karsts, à leur étage.
+  //    APRÈS le glanage : il lit `map.terrain` autour de ses parents, or ces nœuds vivent sous le
+  //    sol — il aurait couché des pierres au sol, au-dessus d'un rocher qu'on ne voit pas. AVANT
+  //    les gués : `gue.test.ts` reconnaît leurs pierres comme le dernier run de `rock` AU SOL
+  //    avant la pêche. ──
+  const grottes = pierreDesGrottes(c, id)
+  for (const p of grottes) nodes.push(p)
+  id += grottes.length
 
   // ── LES PIERRES DU GUÉ — après le glanage (il coucherait des branches sur l'eau), avant la
   //    pêche (elle veut ses ids en queue). Un gué n'a ni arbre ni rocher : rien à glaner ici. ──
@@ -1485,7 +1499,10 @@ function mineraisDesAffleurements(c: CarteZonee, occupees: Set<number>, id: numb
     const n = Math.min(CONTENU.AFFL_NOEUDS, libres.length)
     if (n === 0) continue
     const depart = Math.floor(hash2(aff.rect.x, aff.rect.y, (c.graphe.seed ^ 0x4146464c) | 0) * (libres.length / n))
-    semerSurLaButte(libres, n, depart, type, width, occupees, id + out.length, out)
+    // ⚠ `id` NU : le semeur ajoute déjà `out.length` à chaque nœud. Écrit `id + out.length`, la
+    // deuxième butte doublait le décalage et ses filons sautaient dans les ids des blocs de la
+    // passe suivante — 24 ids en double par carte, attrapés par G-A7 (2026-09-06).
+    semerSurLaButte(libres, n, depart, type, width, occupees, id, out)
   }
   return out
 }
@@ -1749,6 +1766,37 @@ function blocsDuChaos(c: CarteZonee, chaos: readonly number[], occupees: Set<num
     if (fbm2(tx, ty, CHAOS.ECHELLE_MASSE, selMasse) <= CHAOS.SEUIL_MASSE) continue
     occupees.add(i)
     out.push({ id: id + out.length, type: 'bloc', tx, ty, stock: BLOC_STOCKS[tailleDeBloc(tx, ty)], regrowAt: 0 })
+  }
+  return out
+}
+
+/**
+ * ═══ LA PIERRE DES GROTTES (spec `grottes.md` G-R5) — le cœur d'un karst porte la pierre ═══
+ *
+ * Le tirage vit dans `zonegen-karst.ts` (`pierreDuKarst`, sels 'PIER'/'BLOC' : positionnel, aucun
+ * flux RNG) ; ICI on n'en fait que des nœuds, ESTAMPILLÉS de l'étage du karst comme les nœuds
+ * d'une mesa (`etage: niveau`) — ils ne sont pas au sol, et `poisAt` ne les verra que sous terre.
+ * Un rocher ou un bloc, dans le cœur seulement (le vestibule est un abri, le fond une tanière) —
+ * et jamais sur l'eau ni sur une gueule. Les karsts de PLANCHER (G-R8a) reçoivent leur pierre
+ * par la même fonction, depuis la passe tardive de l'hôte.
+ */
+function pierreDesGrottes(c: CarteZonee, idStart: number): ResourceNode[] {
+  const out: ResourceNode[] = []
+  for (const k of c.karsts) for (const n of pierreDUnKarst(k, c.map.width, idStart + out.length)) out.push(n)
+  return out
+}
+
+/** Les nœuds de pierre d'UN karst, ids consécutifs depuis `idStart` — le plancher en crée aussi. */
+export function pierreDUnKarst(k: Karst, width: number, idStart: number): ResourceNode[] {
+  const out: ResourceNode[] = []
+  for (const { tuile, bloc } of pierreDuKarst(k, width)) {
+    const tx = tuile % width
+    const ty = (tuile - tx) / width
+    out.push(
+      bloc
+        ? { id: idStart + out.length, type: 'bloc', tx, ty, etage: k.niveau, stock: BLOC_STOCKS[tailleDeBloc(tx, ty)], regrowAt: 0 }
+        : { id: idStart + out.length, type: 'rock', tx, ty, etage: k.niveau, stock: NODE_DEFS.rock.stock, regrowAt: 0 },
+    )
   }
   return out
 }

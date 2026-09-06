@@ -56,7 +56,9 @@ const pierresDuGueDe = (nodes: readonly ResourceNode[]): ResourceNode[] => {
   let fin = nodes.findIndex((n) => n.type === 'fishing_spot_river' || n.type === 'fishing_spot_lake')
   if (fin < 0) fin = nodes.length
   let debut = fin
-  while (debut > 0 && nodes[debut - 1]!.type === 'rock') debut--
+  // AU SOL SEULEMENT : la pierre des grottes (`grottes.md` G-R5) est aussi un run de `rock`, mais
+  // ESTAMPILLÉ de son étage — et la passe des gués vient après elle, juste avant la pêche.
+  while (debut > 0 && nodes[debut - 1]!.type === 'rock' && nodes[debut - 1]!.etage === undefined) debut--
   return nodes.slice(debut, fin)
 }
 

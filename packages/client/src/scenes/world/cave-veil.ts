@@ -36,6 +36,8 @@
 import Phaser from 'phaser'
 import { TEMPERATURE } from '@ashes/sim'
 import { SOUTERRAIN_STRATE, TILE_PX } from '../../render/framing'
+import { HOLE_RADIUS_TILES } from '../../render/lighting'
+import { TORCHE_HOLE_TILES } from '../../render/torche'
 
 /** Le voile au-dessus de TOUTE la strate −1, sous la lisière de la strate suivante. */
 export const CAVE_VEIL_DEPTH = SOUTERRAIN_STRATE - 1
@@ -57,6 +59,9 @@ export interface LumiereDeCave {
   torche: { x: number; y: number; force: number } | null
   /** Le corps du joueur, en px monde. */
   joueur: { x: number; y: number } | null
+  /** LES FEUX DE LA SALLE (G-R7, le bivouac), en px MONDE dessinés, avec le battement de leur
+   *  flamme (0 = éteint) : chacun perce le voile comme une torche posée, en plus grand. */
+  feux: readonly { x: number; y: number; force: number }[]
 }
 
 /**
@@ -75,6 +80,10 @@ export const JOUR_TUILES = TEMPERATURE.CIEL_PENETRATION + 1
 /** La portée d'une torche SOUS TERRE. Plus courte que dehors (`TORCHE_HOLE_TILES` = 4) : il n'y a
  *  pas de ciel pour l'aider, et c'est ce qui fait de la torche un outil et de la cave un lieu. */
 export const TORCHE_CAVE_TUILES = 3
+/** LE FEU DE BIVOUAC sous la roche : la clairière d'un Feu dans la nuit (`HOLE_RADIUS_TILES`, 6)
+ *  ramenée à l'échelle de la cave — celle que la torche y prend déjà (3 pour 4 dehors). Dérivé,
+ *  pas posé : la cave n'a pas de règle à elle, elle serre les mêmes lumières. */
+export const FEU_CAVE_TUILES = HOLE_RADIUS_TILES * (TORCHE_CAVE_TUILES / TORCHE_HOLE_TILES)
 /** Le souffle autour du corps. */
 const SOI_TUILES = 1.25
 const JOUR_PIC = 1
@@ -260,7 +269,10 @@ export class CaveVeil {
   private jour: { key: string; side: number }
   private pres: { key: string; side: number }
   private torche: { key: string; side: number }
+  private feu: { key: string; side: number }
   private soi: { key: string; side: number }
+  /** La braise et la chaleur de chaque feu de la salle (pool, comme `joursSol`). */
+  private braisesFeu: { braise: Phaser.GameObjects.Image; chaleur: Phaser.GameObjects.Image }[] = []
   private w = 0
   private h = 0
 
@@ -268,6 +280,7 @@ export class CaveVeil {
     this.jour = brosse(scene, 'fx-cave-jour', JOUR_TUILES, 'carre')
     this.pres = { key: PRES_KEY, side: ensurePres(scene) }
     this.torche = brosse(scene, 'fx-cave-torche', TORCHE_CAVE_TUILES, 'rond')
+    this.feu = brosse(scene, 'fx-cave-feu', FEU_CAVE_TUILES, 'rond')
     this.soi = brosse(scene, 'fx-cave-soi', SOI_TUILES, 'rond')
     this.braiseSide = ensureBraise(scene)
     this.jourSolSide = ensureJourSol(scene)
@@ -312,6 +325,9 @@ export class CaveVeil {
     this.braise.setVisible(false)
     this.chaleur.setVisible(false)
     for (const j of this.joursSol) j.setVisible(false)
+    // Les braises des feux aussi (G-R7) : un disque ADD oublié ici éclairait la terrasse à
+    // l'aplomb du bivouac — MESURÉ au smoke `grotte` ④ (sol 42 → 101 sans feu à la surface).
+    for (const b of this.braisesFeu) { b.braise.setVisible(false); b.chaleur.setVisible(false) }
   }
 
   /**
@@ -363,6 +379,9 @@ export class CaveVeil {
     // une lumière, elle porte plus loin que l'œil dans le noir.
     if (lum.joueur) percer(this.pres, lum.joueur.x, lum.joueur.y, 1 - NOIR_ALPHA)
     if (lum.torche) percer(this.torche, lum.torche.x, lum.torche.y, TORCHE_PIC * lum.torche.force)
+    // Le bivouac (G-R7) : un feu de la salle perce comme la torche, en plus grand, et BAT par son
+    // alpha (`force`, le battement de sa flamme) — jamais par sa taille.
+    for (const f of lum.feux) percer(this.feu, f.x, f.y, TORCHE_PIC * f.force)
     if (lum.joueur) percer(this.soi, lum.joueur.x, lum.joueur.y, SOI_PIC)
     this.dt.render()
 
@@ -379,6 +398,26 @@ export class CaveVeil {
     } else {
       this.braise.setVisible(false)
       this.chaleur.setVisible(false)
+    }
+    // La braise et la chaleur de chaque feu de la salle — le même disque que la torche, à
+    // l'échelle du feu ; éteint (`force` 0), le feu ne réchauffe plus rien.
+    const echelleFeu = FEU_CAVE_TUILES / TORCHE_CAVE_TUILES
+    lum.feux.forEach((f, i) => {
+      let b = this.braisesFeu[i]
+      if (!b) {
+        const cote = this.braiseSide * GRAIN_PX * echelleFeu
+        b = {
+          braise: this.scene.add.image(0, 0, BRAISE_KEY).setOrigin(0.5, 0.5).setBlendMode(Phaser.BlendModes.ADD).setDepth(BRAISE_DEPTH).setDisplaySize(cote, cote),
+          chaleur: this.scene.add.image(0, 0, BRAISE_KEY).setOrigin(0.5, 0.5).setBlendMode(Phaser.BlendModes.MULTIPLY).setDepth(CHALEUR_DEPTH).setDisplaySize(cote, cote),
+        }
+        this.braisesFeu[i] = b
+      }
+      b.braise.setPosition(f.x, f.y).setAlpha(Math.min(1, BRAISE_ALPHA * f.force)).setVisible(f.force > 0)
+      b.chaleur.setPosition(f.x, f.y).setAlpha(Math.min(1, CHALEUR_ALPHA * Math.min(1, f.force))).setVisible(f.force > 0)
+    })
+    for (let i = lum.feux.length; i < this.braisesFeu.length; i++) {
+      this.braisesFeu[i]?.braise.setVisible(false)
+      this.braisesFeu[i]?.chaleur.setVisible(false)
     }
     // La chaleur du jour au sol, une par gueule — teintée de la lumière qui entre.
     gueules.forEach((g, i) => {
@@ -402,5 +441,9 @@ export class CaveVeil {
     this.chaleur.destroy()
     for (const b of this.brushes) b.destroy()
     for (const j of this.joursSol) j.destroy()
+    for (const f of this.braisesFeu) {
+      f.braise.destroy()
+      f.chaleur.destroy()
+    }
   }
 }

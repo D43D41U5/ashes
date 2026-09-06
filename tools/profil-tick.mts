@@ -9,7 +9,7 @@
  */
 import {
   MONDE, MONDE_JOUE, createSim, step, placeZoneNodes, placeHuntingGrounds, spawnPoiMonsters,
-  emplacementsDeVillage, pointsDeSpawn, generateZonedTerrain, foundNpcVillage, FAUNA, nidsAMonstre,
+  creuserLePlancher, emplacementsDeVillage, pointsDeSpawn, generateZonedTerrain, foundNpcVillage, FAUNA, nidsAMonstre,
 } from '../packages/sim/src/index'
 
 const joueurs = Number(process.argv[2] ?? 8)
@@ -25,6 +25,7 @@ const emplacements = emplacementsDeVillage(carte, nodes, {
   nids: nidsAMonstre(carte.map),
 })
 const spawns = pointsDeSpawn(carte, emplacements, Math.ceil(MONDE.JOUEURS_CIBLE / MONDE.JOUEURS_PAR_VILLAGE))
+creuserLePlancher(carte, nodes, [...spawns, ...emplacements]) // le plancher des grottes (G-R8a), comme les hôtes
 const premier = spawns[0] ?? emplacements[0]
 if (!premier) throw new Error('carte dégénérée')
 

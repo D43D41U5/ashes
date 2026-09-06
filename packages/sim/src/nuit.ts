@@ -144,8 +144,8 @@ export function clarteDuCiel(state: SimState, tick: number = state.tick): number
  * loi (facteur d'état × décroissance linéaire jusqu'à `TEMPERATURE.FIRE_RANGE`), et son rayon de 6
  * tuiles est celui du trou que le client perce dans le voile.
  */
-export function lumiereDuFeu(state: SimState, x: number, y: number): number {
-  return fireBubble(state, x, y) / TEMPERATURE.FIRE_WARMTH
+export function lumiereDuFeu(state: SimState, x: number, y: number, etage?: number): number {
+  return fireBubble(state, x, y, etage) / TEMPERATURE.FIRE_WARMTH
 }
 
 /**
@@ -267,7 +267,7 @@ export function clarteSurSoiAt(
   // conséquence voulue de B1 (*la profondeur se gagne*), et elle se répare du geste qu'on a déjà :
   // une flamme. Un feu dans la pièce y suffit — `lumiereDuFeu` est prise au max juste en dessous.
   const ciel = clarteDuCiel(state, tick) * partDuCiel(state, Math.floor(x), Math.floor(y), etage)
-  const feu = lumiereDuFeu(state, x, y)
+  const feu = lumiereDuFeu(state, x, y, etage)
   return feu > ciel ? feu : ciel
 }
 

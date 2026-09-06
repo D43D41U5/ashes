@@ -93,9 +93,10 @@ function composantePrincipale(map: WorldMap): Uint8Array {
 function atteintEnEtages(map: WorldMap, depart: number): Uint8Array {
   const { width, height } = map
   const N = width * height
-  const NIVEAUX = TERRASSES.PALIERS + 2 // −1 (les caves) … PALIERS (le chapeau du palier haut)
+  // −PALIERS (la cave d'une mesa du palier haut, à −H — G-R1) … PALIERS (le chapeau du palier haut)
+  const NIVEAUX = 2 * TERRASSES.PALIERS + 1
   const vu = new Uint8Array(N * NIVEAUX)
-  const cle = (i: number, n: number): number => (n + 1) * N + i
+  const cle = (i: number, n: number): number => (n + TERRASSES.PALIERS) * N + i
   const atteint = new Uint8Array(N)
   const x0 = depart % width
   const n0 = palierDuSol(map, x0, (depart - x0) / width)
@@ -561,7 +562,7 @@ describe('T-A4 — un lieu ne se coupe pas d’une falaise : chaque assise tient
         const x = i % map.width
         const y = (i - x) / map.width
         // Un CHAPEAU se tient AU-DESSUS du sol de sa tuile ; au niveau du sol, c'est le sol de ce
-        // palier ; en dessous, une cave (niveau base − 1) — ni l'un ni l'autre n'a de jupe.
+        // palier ; en dessous, une cave (niveau −(base + 1), G-R1) — ni l'un ni l'autre n'a de jupe.
         if (palierDuSol(map, x, y) >= e.niveau) continue
         for (let dy = -1; dy <= 1; dy++) {
           for (let dx = -1; dx <= 1; dx++) {

@@ -118,7 +118,16 @@ describe('A29 — contenant/contenu : chaque nœud neuf est LÀ où sa dérivati
     expect(NODE_DEFS.bloc.blockHalfSub).toBe(4)
     for (const m of mondes) {
       const { width, terrain } = m.c.map
-      const blocs = m.nodes.filter((n) => n.type === 'bloc')
+      // TROISIÈME population depuis les grottes (`grottes.md` G-R5, 2026-09-06) : un bloc SOUS
+      // LA ROCHE, estampillé de son étage, dans le cœur d'un karst — son contenant est la grille
+      // creuse, pas le terrain de surface au-dessus de lui (une prairie de terrasse, souvent).
+      const karsts = m.c.karsts.map((k) => ({ k, tuiles: new Set(k.tuiles) }))
+      for (const n of m.nodes) {
+        if (n.type !== 'bloc' || n.etage === undefined) continue
+        const dedans = karsts.some(({ k, tuiles }) => k.niveau === n.etage && tuiles.has(n.ty * width + n.tx))
+        expect(dedans, `seed ${m.s} : bloc à l'étage ${n.etage} hors de tout karst @${n.tx},${n.ty}`).toBe(true)
+      }
+      const blocs = m.nodes.filter((n) => n.type === 'bloc' && n.etage === undefined)
       const surUneButte = (n: ResourceNode): boolean => m.c.affleurements.some((a) =>
         n.tx >= a.rect.x && n.tx < a.rect.x + a.rect.w && n.ty >= a.rect.y && n.ty < a.rect.y + a.rect.h)
       for (const n of blocs) {

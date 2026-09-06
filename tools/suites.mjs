@@ -51,11 +51,15 @@ const SUITES = [
   //   suite à 2169, plancher relevé quelques pourcents dessous.
   // 2026-09-05 : +8 gardes avec L'EAU SUR L'ESCALIER (T-A11, `terrasses.test.ts`, N3) —
   //   suite à 2195, plancher recalé quelques pourcents dessous.
-  { nom: 'sim', dir: 'packages/sim', args: ['run', '--exclude', 'src/scenario.test.ts'], plancher: 2165 },
+  // 2026-09-06 : +58 gardes avec LES GROTTES DE TERRASSE (`grottes.test.ts`, spec `grottes.md`) —
+  //   suite à 2253, plancher relevé quelques pourcents dessous.
+  { nom: 'sim', dir: 'packages/sim', args: ['run', '--exclude', 'src/scenario.test.ts'], plancher: 2220 },
   // 2026-09-01 : +10 gardes avec le RENDU des étages (`plateau-art.test.ts`).
   // 2026-09-01 : +9 gardes avec le TRI DES ÉTAGES (strate, découvert — `framing.test.ts`),
   //   suite relevée à 1429 ✓, plancher recalé quelques pourcents dessous.
-  { nom: 'client', dir: 'packages/client', args: ['run'], plancher: 1420 },
+  // 2026-09-06 : +68 gardes avec les GROTTES (index à deux mondes, `index-noeuds.test.ts`…) —
+  //   suite à 1497, plancher relevé quelques pourcents dessous.
+  { nom: 'client', dir: 'packages/client', args: ['run'], plancher: 1470 },
   { nom: 'serveur', dir: 'packages/server', args: ['run'], plancher: 36 },
   // Le banc pilote le vrai worldgen sur la carte de production : lent, et seul à porter le
   // drapeau qui ignore les erreurs non gérées (voir l'en-tête de `scenario.test.ts`).

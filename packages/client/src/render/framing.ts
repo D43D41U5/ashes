@@ -84,8 +84,17 @@ export function decalageDEtage(niveau: number, palierDuSol = 0): number {
   // part-là (`liftDuPalier`), pour TOUT ce qui se pose sur une tuile — sol, pavés, feux, sang,
   // nœuds, corps. Ce qu'on rend ici n'est plus que la part PROPRE à l'étage : ce qu'un chapeau
   // de mesa ajoute AU-DESSUS du palier qui le porte. Sur une carte sans palier (`palierDuSol`
-  // absent ≡ 0) le nombre est celui d'avant, au bit près. Et « souterrain » se dit désormais
-  // *sous le sol de sa tuile* : la cave creusée sous une mesa posée au palier 2 vit au niveau 1.
+  // absent ≡ 0) le nombre est celui d'avant, au bit près.
+  //
+  // ═══ UN SOUTERRAIN SE DESSINE AU LIFT DE SA GUEULE (spec `grottes.md` G-R1, 2026-09-06) ═══
+  //
+  // Le niveau `−(p + 1)` s'ouvre sur le palier `p`. Sous une MESA posée au palier `p`, c'est le
+  // palier de la tuile : décalage nul, le nombre d'avant. Sous la TERRASSE `p + 1` (un karst), la
+  // tuile est au palier `p + 1` et le sol de la salle se dessine un cran PLUS BAS que le sol qui
+  // la coiffe — au niveau de sa gueule, sinon le seuil et la première tuile de salle seraient à
+  // `LIFT_TUILES` rangées l'un de l'autre. Positif : on descend. La couche de la cave prend le
+  // même lift (`EtageLayer.rendreLaCave`, `p = −niveau − 1`), et `warp.lift` porte le reste.
+  if (niveau < 0) return (palierDuSol - (-niveau - 1)) * LIFT_TUILES * TILE_PX
   if (niveau < palierDuSol) return 0
   return -(niveau - palierDuSol) * LIFT_TUILES * TILE_PX
 }
@@ -186,7 +195,14 @@ export function strateDEtage(niveau: number, palierDuSol = 0): number {
   // DEPUIS LES TERRASSES (T-R7) : « souterrain » = SOUS LE SOL DE SA TUILE, et la strate du sol
   // est celle de son PALIER — un homme au palier 2 se peint par-dessus tout le palier 1, comme
   // le chapeau d'une mesa se peint par-dessus le pré. Sans palier (≡ 0), le nombre d'avant.
-  if (niveau < palierDuSol) return SOUTERRAIN_STRATE + (niveau - palierDuSol) * ETAGE_STRATE
+  //
+  // ⚠ **LE SOUTERRAIN EST UNE SEULE STRATE, QUELLE QUE SOIT SA PROFONDEUR** (G-R1, 2026-09-06).
+  // Un niveau vaut `−(p + 1)` sous une gueule de palier `p` : en multiple signé, la cave d'une
+  // mesa de palier 1 (−2 sous 1) tombait à 1 800 000 — SOUS la roche (`ROCHE_DEPTH`, 1 999 000),
+  // invisible. On n'en voit jamais qu'un : la roche efface tout le reste, et le corps, ses nœuds
+  // et le sol qu'il foule doivent se trier dans le même monde. Le rang de l'ancien « −1 sous 0 »,
+  // 2 000 000, au bit près.
+  if (niveau < palierDuSol) return SOUTERRAIN_STRATE - ETAGE_STRATE
   return niveau * ETAGE_STRATE
 }
 /**

@@ -154,8 +154,8 @@ function applyKnowledge(state: SimState, entityId: number, knownPois: number[], 
 }
 
 /** Le point est-il sur l'empreinte d'un POI de ce `kind` ? (effets continus de terrain) */
-export function isOnPoiKind(state: SimState, x: number, y: number, kind: string): boolean {
-  return poisAt(state.map, x, y).some((poiId) => state.map.zones[poiId]?.kind === kind)
+export function isOnPoiKind(state: SimState, x: number, y: number, kind: string, etage?: number): boolean {
+  return poisAt(state.map, x, y, etage).some((poiId) => state.map.zones[poiId]?.kind === kind)
 }
 
 /** Multiplicateur de régén d'endurance dû au lieu — le Tarn est une halte. 1 partout ailleurs. */
@@ -201,7 +201,7 @@ export function advancePois(state: SimState): void {
     }
 
     // ── ATTEINDRE : la charge, et la première visite ──
-    for (const poiId of poisAt(state.map, entity.x, entity.y)) {
+    for (const poiId of poisAt(state.map, entity.x, entity.y, entity.etage)) {
       // La charge ne joue qu'une fois. `reachedPois` la garde — `knownPois` ne
       // peut plus servir de garde, puisqu'on connaît désormais le lieu AVANT de
       // l'atteindre (on l'a vu venir).

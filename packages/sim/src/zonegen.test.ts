@@ -293,6 +293,16 @@ describe('le terrain, à la taille de production', () => {
         parNom.set(z.kind, (parNom.get(z.kind) ?? 0) + 1)
       }
       for (const t of POI_TYPES) {
+        // LA GROTTE A UNE ADRESSE QUI N'EST PAS UN BIOME : une paroi de terrasse (`grottes.md`
+        // G-R2, « le karst est la Grotte »). Sans palier — le chemin 'vallee' n'en a pas — il n'y
+        // a pas de paroi, donc pas de Grotte, et ce n'est PAS une ligne morte : c'est la
+        // propriété inverse qui se garde ici. Le monde joué ('racine') la fait naître par
+        // dizaines : `grottes.test.ts` G-A5 le compte.
+        if (t.slug === 'grotte') {
+          expect((parNom.get(t.slug) ?? 0) > 0, `seed ${c.graphe.seed} : la Grotte naît exactement là où il y a des parois`)
+            .toBe(c.map.palier !== undefined)
+          continue
+        }
         expect(
           parNom.get(t.slug) ?? 0,
           `seed ${c.graphe.seed} : « ${t.name} » (zones : ${t.zones?.join(', ') ?? 'toutes'} ; ` +

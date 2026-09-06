@@ -83,10 +83,10 @@ const CAS: readonly { kind: string; minBandes: number; minDeparts: number }[] = 
   { kind: 'ruines', minBandes: 10, minDeparts: 150 },
   // La ROCHE des antres (2026-08-11) : le massif est une PLEINE-TUILE (rect entier, pas une
   // bande d'arête) — « non traversable sur au moins une tuile complète » se prouve ici, par
-  // le même balayage exhaustif que les murs. Mine : 11 massifs + chevalement + wagonnet ;
-  // grotte : 15 massifs.
+  // le même balayage exhaustif que les murs. Mine : 11 massifs + chevalement + wagonnet.
+  // La grotte n'est plus un lieu bâti (spec `grottes.md` G-R10, 2026-09-06) : le karst EST la
+  // Grotte, et sa roche est la roche du monde (`grottes.test.ts` G-A3 prouve qu'elle ferme).
   { kind: 'mine', minBandes: 12, minDeparts: 150 },
-  { kind: 'grotte', minBandes: 14, minDeparts: 150 },
 ]
 
 describe.each(CAS)('$kind bâti ne se traverse pas', ({ kind, minBandes, minDeparts }) => {

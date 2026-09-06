@@ -133,10 +133,10 @@ export class FireFx {
   private varianteEnCours: VarianteFeu | null = null
 
   /** LE RELIEF sous une tuile — posé par la scène : le décalage écran du sol (px) et sa strate. */
-  private reliefSous: ((x: number, y: number) => { lift: number; strate: number }) | undefined
+  private reliefSous: ((x: number, y: number, etage?: number) => { lift: number; strate: number }) | undefined
 
   /** La scène donne son accès au relief (`Warp.liftSol` / `strateSol`) — même patron que `reveil-fx`. */
-  setReliefSous(f: (x: number, y: number) => { lift: number; strate: number }): void {
+  setReliefSous(f: (x: number, y: number, etage?: number) => { lift: number; strate: number }): void {
     this.reliefSous = f
   }
 
@@ -181,7 +181,7 @@ export class FireFx {
       if (!unit) {
         // AU CENTRE de sa tuile, à la hauteur de son palier et dans SA strate (T-R7) — comme
         // le sprite des rondins. Un feu ne bouge pas : le relief se lit une fois, à la naissance.
-        const relief = this.reliefSous?.(s.tx + 0.5, s.ty + 0.5) ?? { lift: 0, strate: 0 }
+        const relief = this.reliefSous?.(s.tx + 0.5, s.ty + 0.5, s.etage) ?? { lift: 0, strate: 0 }
         const cx = s.tx * TILE_PX + TILE_PX / 2
         const cy = s.ty * TILE_PX + TILE_PX / 2 - relief.lift
         unit = this.spawn(cx, cy, relief.strate + structureDepth(s.ty, TILE_PX), ax)

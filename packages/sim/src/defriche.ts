@@ -49,6 +49,7 @@ export interface NoeudSitue {
   tx: number
   ty: number
   stock: number
+  etage?: number
 }
 
 /**
@@ -101,9 +102,14 @@ export function noeudDefriche(villages: readonly FoyerDeVillage[], node: NoeudSi
  * c'est précisément là qu'on veut bâtir. Sans cette exception, la règle se retournerait
  * contre elle-même : on abat l'arbre pour faire place, et la place ne vient jamais.
  */
-export function poseLibre(villages: readonly FoyerDeVillage[], nodes: readonly NoeudSitue[], tx: number, ty: number): boolean {
+export function poseLibre(villages: readonly FoyerDeVillage[], nodes: readonly NoeudSitue[], tx: number, ty: number, etage?: number): boolean {
+  // SOUS LA ROCHE (G-R7), seuls les nœuds de CETTE salle comptent ; au sol, tout ce qui n'est
+  // pas sous la roche — le monde d'avant, au bit près (les nœuds d'un chapeau de mesa inclus).
+  const sousRoche = etage !== undefined && etage < 0
   for (const n of nodes) {
     if (n.tx !== tx || n.ty !== ty) continue
+    const nSousRoche = n.etage !== undefined && n.etage < 0
+    if (sousRoche ? n.etage !== etage : nSousRoche) continue
     return noeudDefriche(villages, n)
   }
   return true

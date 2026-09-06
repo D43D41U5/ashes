@@ -81,7 +81,7 @@ export function advanceNightHunt(state: SimState): void {
     // parade de `tension.md` est intacte. Le mort, lui, VIENT — et le feu lui achète de
     // la DISTANCE et du TEMPS, jamais l'immunité : son site de réveil se plante hors de
     // la bulle (voir `siteDansLaCouronne`), plus loin, plus tard — pas nulle part.
-    if (!undead && fireBubble(state, prey.x, prey.y) > 0) continue
+    if (!undead && fireBubble(state, prey.x, prey.y, prey.etage) > 0) continue
 
     // LE TIRAGE DE SITE SE CONSOMME AVANT LES PLAFONDS, ET C'EST STRUCTUREL (panel C2) :
     // un plafond consulté AVANT sautait le tirage, donc le NOMBRE de pas de PRNG de la nuit

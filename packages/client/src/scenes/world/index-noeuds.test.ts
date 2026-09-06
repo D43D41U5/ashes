@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import type { ResourceNode } from '@ashes/sim'
 import { noeudDefriche, poseLibre } from '@ashes/sim'
-import { cleDeTuile, indexerParTuile } from './index-noeuds'
+import { cleDeTuile, indexerParTuile, noeudVu, sousLaRoche } from './index-noeuds'
 
 const noeud = (id: number, tx: number, ty: number, stock: number, type = 'tree'): ResourceNode =>
   ({ id, tx, ty, stock, type, regrowAt: 0 }) as ResourceNode
@@ -30,6 +30,44 @@ describe('indexerParTuile — premier gagnant, comme /sim', () => {
   it('la clé ne collisionne pas sur une carte de production (1 581 × 2 372)', () => {
     expect(cleDeTuile(1580, 2371)).not.toBe(cleDeTuile(1581, 1371))
     expect(cleDeTuile(0, 999_999)).not.toBe(cleDeTuile(1, 0))
+    // …ni entre les deux MONDES d'une tuile (G-R7) : la salle et la terrasse qui la coiffe.
+    expect(cleDeTuile(1580, 2371, true)).not.toBe(cleDeTuile(1580, 2371))
+    expect(cleDeTuile(0, 0, true)).not.toBe(cleDeTuile(0, 0))
+  })
+})
+
+/**
+ * ═══ UNE TUILE, DEUX MONDES (spec `grottes.md` G-R7) ═══
+ *
+ * Sous une terrasse, la salle d'une grotte est semée (G-R4) et la terrasse au-dessus l'est
+ * aussi : deux nœuds à la même (tx, ty), que la sim sépare par l'étage. « Premier gagnant » sur
+ * la tuile seule effaçait l'un des deux — invisible, et un clic dessus ne faisait rien.
+ */
+describe('noeudVu — le monde du regard (G-R7)', () => {
+  const salle = { ...noeud(1, 7, 7, 10, 'mushroom'), etage: -2 } as ResourceNode
+  const terrasse = noeud(2, 7, 7, 10)
+  const mesa = { ...noeud(3, 8, 8, 10), etage: 1 } as ResourceNode
+  const idx = indexerParTuile([salle, terrasse, mesa])
+
+  it('un niveau négatif est sous la roche ; le sol, une terrasse, un chapeau de mesa sont la surface', () => {
+    expect(sousLaRoche(salle)).toBe(true)
+    expect(sousLaRoche(terrasse)).toBe(false)
+    expect(sousLaRoche(mesa)).toBe(false)
+    expect(sousLaRoche({})).toBe(false)
+  })
+
+  it('l’index garde les DEUX nœuds d’une tuile', () => {
+    expect(idx.get(cleDeTuile(7, 7, true))).toBe(salle)
+    expect(idx.get(cleDeTuile(7, 7))).toBe(terrasse)
+    expect(idx.get(cleDeTuile(8, 8))).toBe(mesa)
+  })
+
+  it('à la surface on voit la terrasse, sous la roche la salle — et par la gueule, le dehors', () => {
+    expect(noeudVu(idx, 7, 7, false)).toBe(terrasse)
+    expect(noeudVu(idx, 7, 7, true)).toBe(salle)
+    // Hors de la salle, sous la roche, la surface reste ce qu'on voit par la gueule.
+    expect(noeudVu(idx, 8, 8, true)).toBe(mesa)
+    expect(noeudVu(idx, 9, 9, true)).toBeUndefined()
   })
 })
 

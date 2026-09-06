@@ -68,6 +68,13 @@ export class PoiLayer {
       if (z.kind === undefined) return
       const a = art.get(z.kind)
       if (!a) return
+      // UNE GROTTE DE TERRASSE N'A PAS DE CORPS NON PLUS (spec `grottes.md` G-R2/G-R10) : son
+      // emprise est une grille creuse à `−(p + 1)`, et ce qu'on voit d'elle dehors est sa GUEULE
+      // dans la paroi — l'image de `cave-art`, posée par `EtageLayer.poserLaGueule`. Le sprite de
+      // l'ancienne Grotte de surface (une butte beige trouée) se plantait DEVANT la paroi
+      // bleu-gris, par-dessus la gueule : un rocher posé contre le mur, vu à la capture du
+      // 2026-09-06. Le lieu se reconnaît à son étage : seul un karst en porte un négatif.
+      if (z.etage !== undefined && z.etage < 0) return
 
       // Les pieds : bas-centre de l'empreinte. Le sprite monte de là.
       const feetX = z.x + z.w / 2

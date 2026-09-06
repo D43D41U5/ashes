@@ -742,7 +742,7 @@ function resolveStrike(state: SimState, attacker: Entity): void {
     const s = state.structures.find((st) => st.id === windup.structureId)
     if (s && distSq(attacker.x, attacker.y, s.tx + 0.5, s.ty + 0.5) <= COMBAT.STRUCTURE_STRIKE_RANGE * COMBAT.STRUCTURE_STRIKE_RANGE
       // Le bâti vit au sol : on ne démolit pas une palissade depuis un plateau (E-R5).
-      && atteintLeSol(state.map, attacker, s.tx, s.ty)) {
+      && atteintLeSol(state.map, attacker, s.tx, s.ty, s.etage)) {
       applyStructureDamage(state, s.id, strike.damage, attacker.id)
       // L'IMPACT PORTE (spec cendreux R25) : un VIVANT qui frappe du bâti — le raider qui
       // défonce un grenier — ébranle le sol jusqu'aux morts. Jamais un monstre (décision ⑤ :

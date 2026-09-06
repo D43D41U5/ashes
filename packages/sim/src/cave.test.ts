@@ -16,7 +16,7 @@ import { carteDeTest } from '../../../tools/carte-cache'
 import { MONDE, MONDE_JOUE } from './zonegraph'
 import { CREUX } from './racine-relief'
 import { NUIT, TEMPERATURE, TERRAIN_ROCK } from './balance'
-import { connecteurAt, marchableAEtage, niveauDuCorps, palierDuSol } from './etages'
+import { connecteurAt, marchableAEtage, niveauDuCorps } from './etages'
 import { MARCHABLE, terrainAt } from './map'
 import { partDuCiel, clarteSurSoiAt } from './nuit'
 import { createSim, spawnEntity, step, type SimState } from './sim'
@@ -26,19 +26,22 @@ const carte = carteDeTest(SEED, MONDE.JOUEURS_CIBLE, MONDE_JOUE)
 const map = carte.map
 
 /**
- * Les salles, en composantes connexes — UN CRAN SOUS LE SOL, quel que soit le sol. Depuis les
- * terrasses (T-R4), une mesa posée au palier 2 a sa cave au niveau 1 : « la cave » n'est plus
- * l'étage −1, c'est toute tuile d'étage dont le sol est un cran plus HAUT (le chapeau au-dessus
- * de la tête). Chaque salle porte son niveau, et les gardes le lisent au lieu de dire −1.
+ * Les salles, en composantes connexes — SOUS LE SOL, à l'identité `−H` (grottes.md G-R1) : une
+ * mesa posée au palier `base` a son chapeau au niveau `base + 1` et sa cave à `−(base + 1)`.
+ * « La cave » n'est donc plus l'étage −1 : c'est toute tuile d'un étage NÉGATIF (le chapeau
+ * au-dessus de la tête, le sol de la gueule au palier `−niveau − 1`). Chaque salle porte son
+ * niveau, et les gardes le lisent au lieu de dire −1.
  */
 function salles(): { niveau: number; idx: number[] }[] {
   const out: { niveau: number; idx: number[] }[] = []
+  // ⚠ LES KARSTS PARTAGENT CES GRILLES (grottes.md G-R1 : une grotte de terrasse vit à −(p+1),
+  // le même niveau que la cave d'une mesa du palier p). Ce ne sont pas des salles de mesa —
+  // plusieurs gueules, un arbre à tronc, de l'eau — et leurs gardes vivent dans grottes.test.ts.
+  // On les retire par leur emprise (`Zone.tuiles`, G-R2), pas par leur forme.
+  const karst = new Set<number>(map.zones.flatMap((z) => (z.kind === 'grotte' && z.tuiles) || []))
   for (const et of map.etages ?? []) {
-    const dedans = new Set<number>()
-    for (const i of et.idx) {
-      const x = i % map.width
-      if (palierDuSol(map, x, (i - x) / map.width) === et.niveau + 1) dedans.add(i)
-    }
+    if (et.niveau >= 0) continue
+    const dedans = new Set<number>(et.idx.filter((i) => !karst.has(i)))
     const vu = new Set<number>()
     for (const depart of dedans) {
       if (vu.has(depart)) continue
@@ -67,12 +70,13 @@ describe('la cave — le premier étage NÉGATIF', () => {
   it('LE MONDE JOUÉ EN PORTE, et chacune a UNE gueule — de DEUX tuiles, côte à côte', () => {
     const s = salles()
     expect(s.length, 'des caves existent').toBeGreaterThan(4)
-    const gueules = (map.connecteurs ?? []).filter((c) => c.type === 'gueule')
+    const karst = new Set<number>(map.zones.flatMap((z) => (z.kind === 'grotte' && z.tuiles) || []))
+    const gueules = (map.connecteurs ?? []).filter((c) => c.type === 'gueule' && !karst.has(c.y * map.width + c.x))
     // Une gueule = une PAIRE de connecteurs (Alexis, 2026-09-02 : une fente d'une tuile se lisait
     // comme une fissure, et le corps qui la franchit en heurtait les joues).
     expect(gueules.length, 'deux connecteurs de gueule par salle').toBe(s.length * 2)
-    expect(s.map((c) => c.niveau), 'la cave du monde joué vit sous les trois paliers').toEqual(
-      expect.arrayContaining([-1, 0, 1]),
+    expect(s.map((c) => c.niveau), 'la cave du monde joué vit sous les trois paliers — à −H').toEqual(
+      expect.arrayContaining([-1, -2, -3]),
     )
     for (const { idx: comp } of s) {
       const portes = comp.filter((j) => connecteurAt(map, j % map.width, (j - (j % map.width)) / map.width)?.type === 'gueule')
@@ -164,7 +168,7 @@ describe('la cave — le premier étage NÉGATIF', () => {
     for (let t = 0; t < 120; t++) step(sim, [{ entityId: id, dx: 0, dy: 1 }])
     const dehors = sim.entities.find((e) => e.id === id)!
     expect(dehors.etage, 'on est ressorti au sol — et « au sol » ne s’écrit pas (T-R3)').toBeUndefined()
-    expect(niveauDuCorps(map, dehors), 'au palier de la gueule').toBe(niveau + 1)
+    expect(niveauDuCorps(map, dehors), 'au palier de la gueule (−H = −(palier + 1))').toBe(-niveau - 1)
     expect(dehors.y, 'et on a repassé le seuil vers le sud').toBeGreaterThan(py)
   })
 })

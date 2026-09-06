@@ -9,6 +9,7 @@ import {
   BALANCE,
   calendarScaleForSeasonCycles,
   createSim,
+  creuserLePlancher,
   cycleOffsetForStartHour,
   emplacementsDeVillage,
   FAUNA,
@@ -140,6 +141,10 @@ export function createVeillee(
   const grounds = placeHuntingGrounds(map, seed)
   const emplacements = emplacementsDeVillage(carte, nodes, { coinsDeChasse: grounds, nids: nidsAMonstre(map) })
   const spawns = pointsDeSpawn(carte, emplacements, Math.ceil(MONDE.JOUEURS_CIBLE / MONDE.JOUEURS_PAR_VILLAGE), seed)
+  // LE PLANCHER DES GROTTES (spec `grottes.md` G-R8a) — APRÈS les naissances et les sites, qui
+  // disent où l'on vit : chacun aura une Grotte à portée, creusée s'il le faut. Même passe, même
+  // moment, dans les trois hôtes (parité d'amorce) ; elle mute la carte et les nœuds.
+  creuserLePlancher(carte, nodes, [...spawns, ...emplacements])
   const premier = spawns[0] ?? emplacements[0]
   if (!premier) throw new Error('veillee: la vallée ne porte aucun emplacement viable — carte dégénérée')
   const spawn = { x: premier.tx + 0.5, y: premier.ty + 0.5 }

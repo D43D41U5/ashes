@@ -15,6 +15,7 @@ import { STRUCTURE_TYPES, bloqueNavigation, isComponent, piece } from './pieces'
 import { emitEvent } from './events'
 import { chebyshev, EDGE_E, EDGE_N, EDGE_S, edgeBits, edgeStep, isSingleEdge, oppositeEdge } from './geometry'
 import { terrainAt, type WorldMap } from './map'
+import { auMemeEtage } from './etages'
 import type { StructureType } from './items'
 import type { SimState } from './sim'
 
@@ -106,13 +107,15 @@ export interface EdgeAware {
   ty: number
   type: StructureType
   edges?: number
+  etage?: number
 }
 
-/** La structure qui prend cette tuile ENTIÈRE — ni sol, ni toit, ni mur d'arête. */
-export function fullTileAt<T extends EdgeAware>(structures: readonly T[], tx: number, ty: number): T | undefined {
+/** La structure qui prend cette tuile ENTIÈRE — ni sol, ni toit, ni mur d'arête — à l'étage du
+ *  demandeur (absent : le sol ; négatif : sous la roche, G-R7). */
+export function fullTileAt<T extends EdgeAware>(structures: readonly T[], tx: number, ty: number, etage?: number): T | undefined {
   // « Prend la tuile ENTIÈRE » = la COUCHE déclarée au registre est `tuile` (ni sol, ni toit),
   // et la pièce ne vit pas sur une arête.
-  return structures.find((s) => s.tx === tx && s.ty === ty && piece(s.type).occupe === 'tuile' && s.edges === undefined)
+  return structures.find((s) => s.tx === tx && s.ty === ty && auMemeEtage(s, etage) && piece(s.type).occupe === 'tuile' && s.edges === undefined)
 }
 
 /**
@@ -282,11 +285,14 @@ function crossingBlocked(
 }
 
 /** Les deux tables que les remplissages consultent : arêtes par tuile, et tuiles pleines. */
-function murs(map: WorldMap, structures: readonly { tx: number; ty: number; type: StructureType; edges?: number }[],
+function murs(map: WorldMap, structures: readonly { tx: number; ty: number; type: StructureType; edges?: number; etage?: number }[],
   bloque: (t: StructureType) => boolean): { parEdges: Map<number, number>; pleines: Set<number> } {
   const parEdges = new Map<number, number>()
   const pleines = new Set<number>()
   for (const s of structures) {
+    // LE REMPLISSAGE EST CELUI DU SOL — le carré du Feu vit à la surface : un bivouac sous la
+    // roche (G-R7) n'y est pas un mur, il n'y a pas de tuile.
+    if (s.etage !== undefined && s.etage < 0) continue
     if (!bloque(s.type)) continue
     const i = tileIndex(map, s.tx, s.ty)
     if (s.edges === undefined) pleines.add(i)

@@ -57,7 +57,7 @@
 import {
   BALANCE,
   MONDE, MONDE_JOUE, createSim, step, snapshot, drainEvents, placeZoneNodes, placeHuntingGrounds,
-  spawnPoiMonsters, spawnEntity, emplacementsDeVillage, pointsDeSpawn, generateZonedTerrain, nidsAMonstre,
+  spawnPoiMonsters, spawnEntity, emplacementsDeVillage, pointsDeSpawn, creuserLePlancher, generateZonedTerrain, nidsAMonstre,
   foundNpcVillage, FAUNA, SLOTS, dayTicksPourJour, addItems,
   type SimState, type MoveInput,
 } from '../packages/sim/src/index'
@@ -84,6 +84,7 @@ function mondeJoue(seed: number, cycleOffset: number): { sim: SimState; avatar: 
     nids: nidsAMonstre(carte.map),
   })
   const spawns = pointsDeSpawn(carte, emplacements, Math.ceil(MONDE.JOUEURS_CIBLE / MONDE.JOUEURS_PAR_VILLAGE))
+  creuserLePlancher(carte, nodes, [...spawns, ...emplacements]) // le plancher des grottes (G-R8a), comme les hôtes
   const premier = spawns[0] ?? emplacements[0]
   if (!premier) throw new Error(`carte dégénérée (seed ${seed})`)
   const sim = createSim(seed, {

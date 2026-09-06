@@ -47,6 +47,7 @@ import { TICKS_PER_CYCLE, TICKS_PER_SEASON_DAY } from './time'
 import { FAUNA } from './balance'
 import { foundNpcVillage } from './worldgen'
 import { emplacementsDeVillage, placeZoneNodes, pointsDeSpawn, type Emplacement } from './zone-content'
+import { creuserLePlancher } from './grottes-plancher'
 import { MONDE, MONDE_JOUE } from './zonegraph'
 import { generateZonedTerrain } from './zonegen'
 
@@ -216,6 +217,9 @@ export function construireMondeDuBanc(seed: number, joueurs: number = BANC_JOUEU
   // dans des zones qui peuvent n'avoir aucun buisson — et un village PNJ n'a QU'UNE source de
   // nourriture (les baies : il ne chasse pas). On mesurait alors une famine de placement.
   const spawns = pointsDeSpawn(carte, emplacements, Math.ceil(MONDE.JOUEURS_CIBLE / MONDE.JOUEURS_PAR_VILLAGE), seed)
+  // LE PLANCHER DES GROTTES (spec `grottes.md` G-R8a) — même passe, même moment que la Veillée
+  // et le LAN : le banc joue un monde où chaque naissance et chaque site a sa Grotte.
+  creuserLePlancher(carte, nodes, [...spawns, ...emplacements])
   const sites = troisVillages(emplacements, spawns[0] ?? emplacements[0])
   const base = sites[0]
   if (!base) throw new Error('scenario: la vallée ne porte aucun emplacement viable — carte dégénérée')

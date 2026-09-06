@@ -16,6 +16,15 @@ export interface Zone {
   h: number
   /** Rôle mécanique optionnel (ex. 'gisement' : accueille le T2 — spec économie R3). */
   kind?: string
+  /**
+   * L'ÉTAGE QUI PORTE L'EMPRISE (spec `grottes.md` G-R2) — absent : le sol. Une grotte de
+   * terrasse vit dans une grille creuse à `−(p + 1)` ; son rectangle est sa gueule (deux tuiles
+   * du sol, donc `x, y` EST la gueule ouest — c'est là qu'on la découvre à vue, et là que
+   * `poiCenter` pointe), et son emprise exacte est `tuiles`, à cet étage.
+   */
+  etage?: number
+  /** L'emprise EXACTE, indices de tuiles triés croissant, quand elle n'est pas le rectangle. */
+  tuiles?: number[]
 }
 
 /**
@@ -446,14 +455,44 @@ export function zoneAt(map: WorldMap, x: number, y: number): Zone | undefined {
  * On retourne toutes les zones, pas la première (contrairement à `zoneAt`) :
  * deux empreintes de POI peuvent se recouvrir.
  */
-export function poisAt(map: WorldMap, x: number, y: number): number[] {
+export function poisAt(map: WorldMap, x: number, y: number, etage?: number): number[] {
   const out: number[] = []
+  // ═══ SOUS LA ROCHE, C'EST L'EMPRISE CREUSÉE QUI RÉPOND (spec `grottes.md` G-R2) ═══
+  //
+  // Une grotte de terrasse a deux corps : son RECTANGLE — la gueule, deux tuiles du sol, où l'on
+  // la découvre et l'atteint comme tout lieu — et ses `tuiles`, à SON étage `−(p + 1)`. Un corps
+  // sous la roche ne foule aucun rectangle du sol : la Stèle posée au-dessus de sa tête n'est pas
+  // sous ses pieds, et le rectangle de la gueule ne dit rien de la salle vingt tuiles derrière.
+  // `etage` absent ou ≥ 0 : le sol — le jeu d'avant, au bit près.
+  const sousLaRoche = etage !== undefined && etage < 0
+  const tuile = sousLaRoche ? Math.floor(y) * map.width + Math.floor(x) : -1
   for (let i = 0; i < map.zones.length; i += 1) {
     const z = map.zones[i]!
     if (z.kind === undefined) continue
+    if (sousLaRoche) {
+      if (z.etage === etage && z.tuiles !== undefined && contientLaTuile(z.tuiles, tuile)) out.push(i)
+      continue
+    }
     if (x >= z.x && x < z.x + z.w && y >= z.y && y < z.y + z.h) out.push(i)
   }
   return out
+}
+
+/**
+ * La tuile est-elle dans une emprise triée croissant ? Dichotomie : l'emprise d'un karst fait
+ * des centaines de tuiles, et `poisAt` court par corps et par tick (`isSheltered`).
+ */
+export function contientLaTuile(tuiles: readonly number[], t: number): boolean {
+  let lo = 0
+  let hi = tuiles.length - 1
+  while (lo <= hi) {
+    const mid = (lo + hi) >> 1
+    const v = tuiles[mid]!
+    if (v === t) return true
+    if (v < t) lo = mid + 1
+    else hi = mid - 1
+  }
+  return false
 }
 
 /**

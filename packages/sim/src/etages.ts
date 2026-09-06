@@ -131,6 +131,21 @@ export function niveauDuCorps(map: WorldMap, corps: { x: number; y: number; etag
   return corps.etage ?? palierDuSol(map, Math.floor(corps.x), Math.floor(corps.y))
 }
 
+/**
+ * ═══ DEUX MONDES, PAS UN PAR ÉTAGE (spec `grottes.md` G-R7 — le bivouac) ═══
+ *
+ * Une structure est AU SOL (`etage` absent) ou SOUS LA ROCHE (`etage < 0`) ; rien ne se bâtit
+ * sur une mesa (E-R5). La question posée porte l'étage du DEMANDEUR : absent ou ≥ 0, il regarde
+ * le sol — un marcheur sur la terrasse, un plan de village, la brume, tout ce qui existait
+ * avant ; négatif, il ne voit QUE ce qui vit à ce même étage. Le défaut (pas d'argument) est
+ * donc « la surface », et c'est ce qui rend les trente-cinq appelants d'avant muets sur le
+ * bivouac sans qu'on les touche.
+ */
+export function auMemeEtage(s: { etage?: number }, etage: number | undefined): boolean {
+  const demande = etage !== undefined && etage < 0 ? etage : 0
+  return (s.etage ?? 0) === demande
+}
+
 /** Le même, pour ce qui se tient sur une TUILE (`tx`,`ty`) : un nœud, une structure, un lieu. */
 export function niveauDeLaTuile(map: WorldMap, chose: { tx: number; ty: number; etage?: number }): number {
   return chose.etage ?? palierDuSol(map, chose.tx, chose.ty)
@@ -375,9 +390,13 @@ export function atteintLeSol(
   acteur: { x: number; y: number; etage?: number },
   tx: number,
   ty: number,
+  /** L'ÉTAGE DE LA CHOSE visée — celui d'une structure (`s.etage`, G-R7). Absent : le sol. */
+  etage?: number,
 ): boolean {
-  // « Le sol » de cette tuile est son PALIER (T-R2), et l'acteur sans étage est au sol sous lui (T-R3).
-  return atteignableEntreEtages(map, acteur.x, acteur.y, niveauDuCorps(map, acteur), tx + 0.5, ty + 0.5, palierDuSol(map, tx, ty))
+  // « Le sol » de cette tuile est son PALIER (T-R2), et l'acteur sans étage est au sol sous lui
+  // (T-R3). Une chose SOUS LA ROCHE se rejoint depuis son étage — ou depuis la gueule, qui est un
+  // connecteur comme une rampe : `atteignableEntreEtages` le sait déjà.
+  return atteignableEntreEtages(map, acteur.x, acteur.y, niveauDuCorps(map, acteur), tx + 0.5, ty + 0.5, etage ?? palierDuSol(map, tx, ty))
 }
 
 /**
@@ -505,8 +524,16 @@ export function terrainDeDessus(tx: number, ty: number): number {
 const SEL_CAVE_SOL = 0x43415653 // 'CAVS'
 /** Un quart de blocs, comme en haut : c'est la même roche, éboulée de la même façon. */
 const SEUIL_BLOCS_CAVE = 0.619
+/**
+ * LE RELIEF DU SOL CREUX, dans [0, 1) — la même tache que `terrainDeCave` lit pour éparpiller
+ * ses blocs. Les karsts (`zonegen-karst.ts`, G-R4) y lisent le POINT BAS de chaque salle pour y
+ * asseoir la nappe : l'eau dort là où le sol est le plus bas, et les blocs affleurent au haut.
+ */
+export function reliefDeCave(tx: number, ty: number): number {
+  return fbm2(tx, ty, ECHELLE_TACHE, SEL_CAVE_SOL)
+}
 export function terrainDeCave(tx: number, ty: number): number {
-  const n = fbm2(tx, ty, ECHELLE_TACHE, SEL_CAVE_SOL)
+  const n = reliefDeCave(tx, ty)
   const grain = hash2(tx, ty, SEL_CAVE_SOL ^ 0x5bf03635) * 0.12 - 0.06
   return n + grain > SEUIL_BLOCS_CAVE ? TERRAIN_BOULDERS : TERRAIN_SCREE
 }

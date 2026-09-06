@@ -209,7 +209,7 @@ export function advanceEncyclopedie(state: SimState, depuis: number): void {
     // Une fois par seconde suffit : le froid du monde est une rampe lente (l'heure, l'acte, la
     // bande météo), et rater une seconde ne peut pas rater un extrême. Arrondi au dixième de
     // degré — le snapshot n'a pas à porter dix-sept décimales d'un flottant.
-    const t = Math.round(baselineTemperature(state, e.x, e.y) * 10) / 10
+    const t = Math.round(baselineTemperature(state, e.x, e.y, e.etage) * 10) / 10
     noterExtreme(carnet, 'froid', String(saison), t, -1)
     noterExtreme(carnet, 'chaud', String(saison), t, 1)
   }

@@ -143,7 +143,7 @@ import { createContactShadow, poserOmbreDeSocle, positionShadow, SHADOW_ALPHA } 
 import { riveAt, type RiveField } from '../../render/water-field'
 import { coupeDeNeige, enfoncement, enfoncementDUnNoeud, epaisseurQuiSEnfonce } from '../../render/enfoncement'
 import { epinglerLaTuile } from '../../render/tuile-epinglee'
-import { cleDeTuile, indexerParTuile } from './index-noeuds'
+import { cleDeTuile, indexerParTuile, noeudVu, sousLaRoche } from './index-noeuds'
 
 /** Le nœud VISÉ à portée s'éclaire d'or ; hors de portée, il se grise (G4). */
 const AIM_TINT = 0xffe9a8
@@ -556,6 +556,17 @@ export class SnapshotView {
    *  d'un étage PLUS BAS, `null` sinon. Posé par `WorldScene`, comme `lighting` — c'est
    *  l'appelant qui tranche l'appartenance, la vue ne fait qu'appliquer. */
   decouvert: Decouvert | null = null
+  /**
+   * LE REGARD EST SOUS LA ROCHE (spec `grottes.md` G-R7) — posé par `WorldScene` au même point que
+   * `EtageLayer.souterrain`, la seule décision. Ce qui vit dans une salle (nœuds semés, bivouac)
+   * ne se voit ni ne se vise que d'ici ; à la surface, la roche le recouvre. Lu à l'image, donc
+   * d'une image de retard sur le plancher de la salle : le patron du `decouvert` juste au-dessus.
+   */
+  sousRoche = false
+  /** Les sprites des structures SOUS LA ROCHE — pour les montrer ou les cacher d'un coup quand
+   *  `sousRoche` bascule, sans balayer les six cents sprites du village. */
+  private readonly spritesSousRoche = new Set<number>()
+  private sousRocheDessine = false
   /** Le champ de rive (spec eau-vivante R1-R2), posé par WorldScene après la couche d'eau —
    *  la MÊME distance que le shader : l'immersion des acteurs ne peut pas la contredire. */
   rive: RiveField | null = null
@@ -1799,11 +1810,16 @@ export class SnapshotView {
         const a = tileFeetAnchor(s.tx, s.ty, TILE_PX)
         // AU CENTRE de sa tuile, pas à son pied (`warp.ts`) : le pied mord sur la tuile du sud,
         // qui au bord d'une terrasse est deux étages plus bas.
-        const lift = this.warp?.liftSol(s.tx + 0.5, s.ty + 0.5) ?? 0
+        // …ET SOUS LA ROCHE (G-R7), à la hauteur de sa salle : un bivouac posé dans une grotte
+        // (`s.etage < 0`) se lève comme le plancher de la salle (`liftAEtage`) et se trie dans
+        // SA strate (`strateAEtage`) — au-dessus des houppiers, des toits et du voile de nuit,
+        // avec les nœuds de la salle. Au sol, le chemin d'avant, au pixel près.
+        const sousRoche = sousLaRoche(s)
+        const lift = (sousRoche ? this.warp?.liftAEtage(s.tx + 0.5, s.ty + 0.5, s.etage) : this.warp?.liftSol(s.tx + 0.5, s.ty + 0.5)) ?? 0
         // LES COUCHES (décision d'Alexis) : le SOL au ras du sol (sous les acteurs),
         // le TOIT au-dessus (comme un houppier, il se révèle au loin), le reste trié.
         // …ET LA STRATE DE SON PALIER (T-R7) : un mur au palier 2 se trie avec le sol du palier 2.
-        const depth = (this.warp?.strateSol(s.tx + 0.5, s.ty + 0.5) ?? 0) + (
+        const depth = ((sousRoche ? this.warp?.strateAEtage(s.tx + 0.5, s.ty + 0.5, s.etage) : this.warp?.strateSol(s.tx + 0.5, s.ty + 0.5)) ?? 0) + (
           s.type === 'fire'
             ? GROUND_FIRE_DEPTH
             : isRoof
@@ -1837,6 +1853,12 @@ export class SnapshotView {
         const leve = isRoof ? MUR_HT : 0
         sprite = epinglerLaTuile(this.scene.add.image(a.px, a.py - lift - leve, `st-${s.type}`).setOrigin(0.5, 1).setDepth(depth))
         this.structureSprites.set(s.id, sprite)
+        // Une pièce de salle ne se voit que de la salle (le patron des nœuds, `noeudVu`) : née
+        // pendant qu'on est dehors, elle naît cachée — `montrerLaRoche` la révélera à l'entrée.
+        if (sousRoche) {
+          this.spritesSousRoche.add(s.id)
+          sprite.setVisible(this.sousRocheDessine)
+        }
       }
       sprite.setLighting(this.lighting) // couche 1 : murs, portes, ateliers… éclairés (pooled → chaque frame)
       // Les CHIPS dressés basculent sur leur albédo aplati + normale (da-feeling R4). Les murs,
@@ -2090,9 +2112,21 @@ export class SnapshotView {
       if (!seen.has(id)) {
         sprite.destroy()
         this.structureSprites.delete(id)
+        this.spritesSousRoche.delete(id)
       }
     }
     if (!haloVu) this.demolishHalo?.setVisible(false)
+  }
+
+  /**
+   * LES PIÈCES DE SALLE SUIVENT LE REGARD (G-R7) — à l'image, pas au snapshot : le drapeau
+   * bascule entre deux snapshots, et un coffre qui resterait une image de plus au-dessus de la
+   * terrasse se verrait. Ne touche les sprites qu'à la BASCULE : le reste du temps, rien.
+   */
+  private montrerLaRoche(): void {
+    if (this.sousRocheDessine === this.sousRoche) return
+    this.sousRocheDessine = this.sousRoche
+    for (const id of this.spritesSousRoche) this.structureSprites.get(id)?.setVisible(this.sousRoche)
   }
 
   /**
@@ -2288,7 +2322,7 @@ export class SnapshotView {
    *   de pose s'en sert au contraire pour savoir que la tuile est prise.
    */
   noeudALaTuile(tx: number, ty: number): ResourceNode | undefined {
-    return this.nodeByTile.get(cleDeTuile(tx, ty))
+    return noeudVu(this.nodeByTile, tx, ty, this.sousRoche)
   }
 
   /** LE NŒUD D'UN ID, en O(1) — même index, même raison que `noeudALaTuile`. Les
@@ -2322,7 +2356,7 @@ export class SnapshotView {
         const ne: ResourceNode = { id: d.id, type: d.neuf, tx: d.tx, ty: d.ty, stock: d.stock, regrowAt: d.regrowAt ?? 0 }
         this.nodes.push(ne)
         this.nodeById.set(ne.id, ne)
-        this.nodeByTile.set(cleDeTuile(ne.tx, ne.ty), ne)
+        this.nodeByTile.set(cleDeTuile(ne.tx, ne.ty, sousLaRoche(ne)), ne)
         continue
       }
       const n = this.nodeById.get(d.id)
@@ -2344,10 +2378,10 @@ export class SnapshotView {
       // Épuisement. Déménagement éventuel (bois/plante qui dérive).
       if (d.tx !== undefined && d.ty !== undefined && (d.tx !== n.tx || d.ty !== n.ty)) {
         this.stumps.push({ tx: n.tx, ty: n.ty, type: n.type, at: now, etage: n.etage })
-        this.nodeByTile.delete(cleDeTuile(n.tx, n.ty))
+        this.nodeByTile.delete(cleDeTuile(n.tx, n.ty, sousLaRoche(n)))
         n.tx = d.tx
         n.ty = d.ty
-        this.nodeByTile.set(cleDeTuile(n.tx, n.ty), n)
+        this.nodeByTile.set(cleDeTuile(n.tx, n.ty, sousLaRoche(n)), n)
       }
       n.stock = 0
       // `regrowAt > 0`, comme `setNodes` : à 0 la sim dit « aucune repousse en cours » — le
@@ -2370,6 +2404,7 @@ export class SnapshotView {
    * la position LOGIQUE de l'avatar en tuiles : le disque suit l'avatar, pas la
    * caméra, sinon il glisserait avec le lookahead du pointeur. */
   renderNodes(camera: Phaser.Cameras.Scene2D.Camera, playerX: number, playerY: number, now: number): void {
+    this.montrerLaRoche()
     const v = camera.worldView
     // La fenêtre s'élargit vers le BAS pour les cimes qui débordent (un houppier planté sous
     // l'écran survole encore la vue). Colonnes ±2 pour le débord de houppier.
@@ -2405,7 +2440,9 @@ export class SnapshotView {
     const idSurvole = this.interactTarget?.kind === 'node' ? this.interactTarget.id : -1
     for (let ty = ty0; ty <= ty1; ty++) {
       for (let tx = tx0; tx <= tx1; tx++) {
-        const n = this.nodeByTile.get(cleDeTuile(tx, ty))
+        // LE MONDE DU REGARD (G-R7) : un nœud de salle ne se dessine que sous la roche, et il y
+        // prime sur celui de la terrasse au-dessus — que le plancher de la salle recouvre.
+        const n = noeudVu(this.nodeByTile, tx, ty, this.sousRoche)
         if (n === undefined) continue
         // DÉFRICHÉ : la sim ne le fera jamais repousser (`defriche.ts`), donc on ne le
         // dessine plus — le sol est dégagé, et c'est ce que le joueur vient de faire. Le

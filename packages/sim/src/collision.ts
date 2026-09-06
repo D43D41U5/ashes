@@ -21,7 +21,7 @@ import { BALANCE, NODE_DEFS, TERRAIN_DEEP_WATER, TERRAIN_GRASS, TERRAIN_SHALLOW_
 import { solFoule } from './cendre'
 import { nodeAt, type ResourceNode } from './economy'
 import { estAsseche, estGueBloque } from './eau'
-import { connecteurAt, marchableAEtage, palierDuSol, rampeQuiMonte } from './etages'
+import { auMemeEtage, connecteurAt, marchableAEtage, palierDuSol, rampeQuiMonte } from './etages'
 import { estGele, gelPossible, vitesseSurGlace, vitesseSurNeige } from './gel'
 import { EDGE_E, EDGE_N, EDGE_O, EDGE_S } from './geometry'
 import { MARCHABLE, terrainAt, type WorldMap } from './map'
@@ -249,16 +249,17 @@ export function isBlockedAt(world: MoveWorld, tx: number, ty: number): boolean {
  * question que la collision se pose vraiment.
  */
 function bloquantAt(world: MoveWorld, tx: number, ty: number, pleineTuile: boolean): Structure | undefined {
-  // ⚠ **LE BÂTI VIT AU SOL — celui de SA tuile** (specs `etages.md`, `terrasses.md` T-R2) : rien
-  // ne se construit encore sur un étage, donc un mur de ferme ne barre pas le dessus d'une mesa ;
-  // et une ferme posée sur la terrasse haute bloque bien qui marche sur cette terrasse. Le jour où
-  // l'on bâtira là-haut, c'est `Structure` qui gagnera son `etage` — et le palier de la tuile,
-  // ici, deviendra `s.etage ?? palierDuSol(…)`.
-  if (etageCourant(world) !== palierDuSol(world.map, tx, ty)) return undefined
+  // ⚠ **LE BÂTI VIT AU SOL — celui de SA tuile — OU SOUS LA ROCHE** (specs `etages.md`,
+  // `terrasses.md` T-R2, `grottes.md` G-R7). Rien ne se construit sur un étage POSITIF : un mur de
+  // ferme ne barre pas le dessus d'une mesa, et une ferme posée sur la terrasse haute bloque bien
+  // qui marche sur cette terrasse. Sous la roche, le bivouac porte son `etage` : il ne bloque que
+  // qui marche dans la même salle — jamais la terrasse au-dessus.
+  const etage = etageCourant(world)
+  if (etage >= 0 && etage !== palierDuSol(world.map, tx, ty)) return undefined
   const mover = world.moverVillageId ?? null
   const portes = world.opensDoors ?? false
   for (const s of world.structures ?? []) {
-    if (s.tx !== tx || s.ty !== ty) continue
+    if (s.tx !== tx || s.ty !== ty || !auMemeEtage(s, etage)) continue
     if (pleineTuile && s.edges !== undefined) continue
     if (structureBlocks(s, mover, portes)) return s
   }
@@ -282,11 +283,12 @@ function bloquantAt(world: MoveWorld, tx: number, ty: number, pleineTuile: boole
  * exhaustive sur les paires ordonnées × toutes les sous-tuiles.
  */
 function bloqueSousTuile(world: MoveWorld, tx: number, ty: number, sx: number, sy: number): boolean {
-  if (etageCourant(world) !== palierDuSol(world.map, tx, ty)) return false // le bâti vit au sol de sa tuile — voir `bloquantAt`
+  const etage = etageCourant(world)
+  if (etage >= 0 && etage !== palierDuSol(world.map, tx, ty)) return false // le bâti vit au sol de sa tuile, ou sous la roche — voir `bloquantAt`
   const mover = world.moverVillageId ?? null
   const portes = world.opensDoors ?? false
   for (const s of world.structures ?? []) {
-    if (s.tx !== tx || s.ty !== ty) continue
+    if (s.tx !== tx || s.ty !== ty || !auMemeEtage(s, etage)) continue
     if (!structureBlocks(s, mover, portes)) continue
     // Sans `edges`, la structure prend sa tuile entière (comportement historique) ; avec,
     // elle ne prend que les bandes déclarées — et le reste de la tuile reste praticable.
@@ -401,6 +403,10 @@ function occupancyOf(world: MoveWorld): Map<number, Occupant> {
       // tuile portant une palissade — « ce qui ferait fuir la faune d'une salle parfaitement
       // praticable », dit le commentaire d'à côté, qui décrivait précisément ce qu'il subissait.
       if (s.edges !== undefined) continue
+      // ⚠ **L'INDEX EST CELUI DU SOL** — comme pour les nœuds, plus bas : le bivouac d'une salle
+      // (`etage < 0`, G-R7) ne barre rien à qui marche sur la terrasse au-dessus. Il a son propre
+      // prédicat, bâti à la demande dans `makeIndexedIsBlockedAt`.
+      if (s.etage !== undefined && s.etage < 0) continue
       if (!structureBlocks(s, null, false)) continue
       const entry = entryAt(s.tx, s.ty)
       // ⚠ ET ON LES GARDE TOUTES. N'en retenir qu'une rejouait « le premier occupant » un
@@ -480,6 +486,14 @@ export function makeIndexedIsBlockedAt(world: MoveWorld, etage: number = etageCo
       for (const n of world.nodes ?? []) {
         if (n.etage === undefined || n.etage !== etage || n.etage === palierDuSol(map, n.tx, n.ty)) continue
         if (n.stock > 0 && NODE_DEFS[n.type].blockHalfSub > 0) horsSol.add(n.ty * width + n.tx)
+      }
+      // ET LE BIVOUAC (G-R7) : sous la roche, le bâti vit sur la grille de la salle. Même
+      // filtre que l'index du sol (pleine tuile, ce qui bloque CE marcheur) — un feu, un coffre.
+      if (etage < 0) {
+        for (const s of world.structures ?? []) {
+          if (s.etage !== etage || s.edges !== undefined) continue
+          if (structureBlocks(s, moverVillageId, portes)) horsSol.add(s.ty * width + s.tx)
+        }
       }
     }
     return horsSol.has(ty * width + tx)

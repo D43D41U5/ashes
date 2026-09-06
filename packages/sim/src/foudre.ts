@@ -48,7 +48,7 @@ export function advanceFoudre(state: SimState): void {
     if (entity.hp <= 0) continue
     if (distSq(entity.x, entity.y, impact.x, impact.y) > r2) continue
     // Le corps sous un toit est épargné aussi — l'abri immunise, période.
-    if (isSheltered(state, Math.floor(entity.x), Math.floor(entity.y))) continue
+    if (isSheltered(state, Math.floor(entity.x), Math.floor(entity.y), entity.etage)) continue
     if (isInvulnerable(state, entity)) continue
     const before = entity.hp
     entity.hp = Math.max(0, entity.hp - METEO.FOUDRE_DEGATS)

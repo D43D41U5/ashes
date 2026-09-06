@@ -435,9 +435,14 @@ describe('le monde joué porte ses mesas', () => {
     // Sur TOUS les étages creux (depuis les terrasses, une mesa posée au palier 2 a son dessus
     // au niveau 3, sa cave au niveau 1 — et un étage mêle dessus, caves et rampes de terrasse).
     const cs = new Set((map.connecteurs ?? []).map((c) => c.y * map.width + c.x))
+    // Sauf l'emprise des grottes de terrasse (grottes.md G-R1/G-R2) : creusées SOUS un palier,
+    // leur plafond est le sol de la terrasse — lande, herbe, ce qu'il était —, et c'est
+    // grottes.test.ts (G-A3) qui garde que ce sol n'a pas bougé.
+    const karst = new Set<number>(map.zones.flatMap((z) => (z.kind === 'grotte' && z.tuiles) || []))
     let roche = 0
     for (const etage of map.etages ?? []) {
       for (const i of etage.idx) {
+        if (karst.has(i)) continue
         const x = i % map.width
         const y = (i - x) / map.width
         const marchableAuSol = MARCHABLE[terrainAt(map, x, y)] === 1

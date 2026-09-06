@@ -15,7 +15,7 @@
  *   node --import tsx tools/mesure-glanage.mts [seed…]
  */
 import {
-  generateZonedTerrain, placeZoneNodes, emplacementsDeVillage, pointsDeSpawn,
+  generateZonedTerrain, placeZoneNodes, emplacementsDeVillage, pointsDeSpawn, creuserLePlancher,
   MONDE, MONDE_JOUE, NODE_DEFS, placeHuntingGrounds, nidsAMonstre, type NodeType,
 } from '../packages/sim/src/index'
 
@@ -68,6 +68,7 @@ for (const seed of SEEDS) {
     nids: nidsAMonstre(carte.map),
   })
   const spawns = pointsDeSpawn(carte, emplacements, Math.ceil(MONDE.JOUEURS_CIBLE / MONDE.JOUEURS_PAR_VILLAGE))
+  creuserLePlancher(carte, nodes, [...spawns, ...emplacements]) // le plancher des grottes (G-R8a), comme les hôtes
   const r1 = spawns.map((s) => rayonPour(glane, s.tx, s.ty, HACHEREAU)).filter((r) => r >= 0).sort((a, b) => a - b)
   const r2 = spawns.map((s) => rayonPour(glane, s.tx, s.ty, LES_DEUX)).filter((r) => r >= 0).sort((a, b) => a - b)
   const med = (xs: number[]): string => (xs.length === 0 ? '  —' : String(xs[Math.floor(xs.length / 2)]).padStart(3))

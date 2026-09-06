@@ -160,9 +160,9 @@ export class FireGroundGlow {
   private varianteEnCours: VarianteFeu | null = null
 
   /** LE RELIEF sous une tuile — posé par la scène (`Warp.liftSol` / `strateSol`). */
-  private reliefSous: ((x: number, y: number) => { lift: number; strate: number }) | undefined
+  private reliefSous: ((x: number, y: number, etage?: number) => { lift: number; strate: number }) | undefined
 
-  setReliefSous(f: (x: number, y: number) => { lift: number; strate: number }): void {
+  setReliefSous(f: (x: number, y: number, etage?: number) => { lift: number; strate: number }): void {
     this.reliefSous = f
   }
 
@@ -197,7 +197,7 @@ export class FireGroundGlow {
         // cellules tombe pile sur la grille de 2 px de l'art (aucun décalage d'un demi-pixel).
         // …et à la HAUTEUR de sa tuile (le lift de son palier, `liftSol`) : la flaque restait
         // à la rangée logique, quatre tuiles sous les rondins d'un feu de palier 2.
-        const lift = this.reliefSous?.(s.tx + 0.5, s.ty + 0.5).lift ?? 0
+        const lift = this.reliefSous?.(s.tx + 0.5, s.ty + 0.5, s.etage).lift ?? 0
         glow = this.scene.add
           .image((s.tx + 0.5) * TILE_PX, (s.ty + 0.5) * TILE_PX - lift, texKey(ax.coeurBlanc))
           .setOrigin(0.5, 0.5)

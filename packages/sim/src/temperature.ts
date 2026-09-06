@@ -18,6 +18,7 @@ import { fireWarmthFactor } from './fire'
 import { die } from './combat'
 import { countOf } from './items'
 import { terrainAt } from './map'
+import { auMemeEtage, terrainAEtage } from './etages'
 import { meteoColdAt } from './meteo'
 import { roofAt } from './village'
 import { avanceesDepuisAges, froidDeCendre } from './cendre'
@@ -91,17 +92,27 @@ const BIOME_MAX = Math.max(0, ...Object.values(T.BIOME_OFFSET))
  * MÉTÉO (R5 — un feu neuf prend sous un toit) et, depuis la branche B1, la LUMIÈRE
  * (`partDuCiel`). Un toit qui n'abritait de rien était une pièce qu'on posait pour la forme.
  */
-export function isSheltered(state: SimState, tx: number, ty: number): boolean {
+export function isSheltered(state: SimState, tx: number, ty: number, etage?: number): boolean {
+  // ═══ SOUS LA ROCHE, ON EST À L'ABRI (spec `grottes.md` G-R5 ; décision du 2026-09-05 :
+  // « `isSheltered` apprend “sous la roche” ») ═══
+  //
+  // Un étage négatif est CREUSÉ sous son palier (`−(p + 1)`, G-R1) : toute tuile qui y existe a
+  // la roche au-dessus de la tête — la salle d'un karst comme la cave d'une mesa. Une tuile qui
+  // n'y existe pas (terrain 0) EST la roche : personne ne s'y tient, et « une tuile dehors »
+  // répond faux. Le bâti du sol ne couvre rien ici, et rien ne s'y pose qui enferme (G-R7).
+  if (etage !== undefined && etage < 0) return terrainAEtage(state.map, etage, tx, ty) !== 0
   if (roofAt(state.structures, tx, ty) !== undefined) return true
   if (state.structures.some((s) => s.tx === tx && s.ty === ty && s.type === 'house')) return true
   return isOnPoiKind(state, tx, ty, 'grotte')
 }
 
-/** Réchauffement du feu le plus proche : FIRE_WARMTH au contact, linéaire → 0 à FIRE_RANGE. */
-export function fireBubble(state: SimState, x: number, y: number): number {
+/** Réchauffement du feu le plus proche : FIRE_WARMTH au contact, linéaire → 0 à FIRE_RANGE.
+ *  À L'ÉTAGE du corps (G-R7) : un bivouac sous la roche ne chauffe pas la terrasse au-dessus,
+ *  et le Feu du village ne traverse pas la roche jusqu'à la salle. */
+export function fireBubble(state: SimState, x: number, y: number, etage?: number): number {
   let best = 0
   for (const s of state.structures) {
-    if (s.type !== 'fire') continue
+    if (s.type !== 'fire' || !auMemeEtage(s, etage)) continue
     // Un feu éteint ne chauffe plus ; les braises chauffent atténué (spec feu-station S3).
     const factor = fireWarmthFactor(state, s)
     if (factor <= 0) continue
@@ -140,8 +151,8 @@ export function naturalWarmth(state: SimState, x: number, y: number): number {
  * Cendreux (spec feu-station S5) : surtout PAS l'ambiant fini (qui inclut le feu), sinon un
  * Cendreux qui s'approche se réchaufferait, franchirait le seuil et oscillerait à la lisière.
  */
-export function baselineTemperature(state: SimState, x: number, y: number): number {
-  return baselineTemperatureAt(state, x, y, state.tick)
+export function baselineTemperature(state: SimState, x: number, y: number, etage?: number): number {
+  return baselineTemperatureAt(state, x, y, state.tick, undefined, etage)
 }
 
 /**
@@ -161,8 +172,8 @@ export function baselineTemperature(state: SimState, x: number, y: number): numb
  * L'erreur va dans le sens du dégel : elle peut raccourcir une hystérésis, jamais inventer
  * une glace qui n'a pas existé.
  */
-export function baselineTemperatureAt(state: SimState, x: number, y: number, tick: number, cst?: ConstantesDeTuile): number {
-  const shelter = cst?.abri ?? abriDeTuile(state, x, y)
+export function baselineTemperatureAt(state: SimState, x: number, y: number, tick: number, cst?: ConstantesDeTuile, etage?: number): number {
+  const shelter = cst?.abri ?? abriDeTuile(state, x, y, etage)
   return froidDuMonde(state, x, y, tick, shelter, cst)
 }
 
@@ -216,8 +227,8 @@ export interface ConstantesDeTuile {
  * rendait la passe de recuisson PLUS LENTE qu'avant le correctif. Chacun se relève donc quand
  * il est vraiment demandé, et pas avant.
  */
-export function abriDeTuile(state: SimState, x: number, y: number): number {
-  return isSheltered(state, Math.floor(x), Math.floor(y)) ? T.SHELTER_FACTOR : 1
+export function abriDeTuile(state: SimState, x: number, y: number, etage?: number): number {
+  return isSheltered(state, Math.floor(x), Math.floor(y), etage) ? T.SHELTER_FACTOR : 1
 }
 
 /**
@@ -376,7 +387,7 @@ export function climatMaximal(state: SimState, tick: number): number {
 
 /** Température ambiante cible (°C) au lieu (x,y) : le froid de base, PLANCHERÉ par un feu /
  *  une source chaude. */
-export function ambientTemperature(state: SimState, x: number, y: number): number {
+export function ambientTemperature(state: SimState, x: number, y: number, etage?: number): number {
   // Ni le feu ni la source chaude ne peuvent refroidir : ils ne font que plancher.
   //
   // ⚠ LE ZÉRO DE CES DEUX-LÀ EST UNE ABSENCE, PAS UNE TEMPÉRATURE. `fireBubble` et
@@ -385,8 +396,8 @@ export function ambientTemperature(state: SimState, x: number, y: number): numbe
   // Depuis le passage en °C (2026-08-22), 0 est le gel du gué, en plein milieu du domaine :
   // le même `max` planchait TOUT le monde à 0 °C, et plus rien ne pouvait tuer de froid.
   // On ne plancher donc que sur une source RÉELLE.
-  let t = baselineTemperature(state, x, y)
-  const feu = fireBubble(state, x, y)
+  let t = baselineTemperature(state, x, y, etage)
+  const feu = fireBubble(state, x, y, etage)
   if (feu > 0 && feu > t) t = feu
   const source = naturalWarmth(state, x, y)
   if (source > 0 && source > t) t = source
@@ -468,7 +479,7 @@ export function advanceTemperature(state: SimState): void {
   // Copie défensive (comme advanceCombat) : die() peut réassigner state.entities.
   for (const entity of [...state.entities]) {
     if (monsterIds.has(entity.id)) continue // pas de température pour les monstres
-    let ambient = ambientTemperature(state, entity.x, entity.y)
+    let ambient = ambientTemperature(state, entity.x, entity.y, entity.etage)
     // LA TENUE D'HIVER PLAFONNE LE FROID (spec cuir/température) : la porter plancher
     // l'ambiant ressenti — au-dessus de l'hypothermie, donc survivable. C'est ce qui
     // donne une raison à toute la chaîne chasse→cuir→couture, et rend la plaine

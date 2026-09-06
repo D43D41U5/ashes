@@ -234,7 +234,7 @@ export type { MoveWorld } from './collision'
 /** LES ÉTAGES (spec `etages.md`) — la couche superposée à la carte. Le client en aura besoin
  *  pour composer l'étage voisin (E-R10) ; la RÈGLE, elle, ne s'écrit qu'ici (E-R5). */
 export {
-  atteignableEntreEtages, atteintLeSol, connecteurAt, etageApresLePas, etageDe, etagesDuPas,
+  atteignableEntreEtages, atteintLeSol, auMemeEtage, connecteurAt, etageApresLePas, etageDe, etagesDuPas,
   marchableAEtage, niveauDeLaTuile, niveauDuCorps, palierDuSol, rampeQuiMonte, terrainAEtage,
 } from './etages'
 export type { Connecteur, EtageCreux } from './etages'
@@ -402,6 +402,8 @@ export {
   type GrapheZones, type MondeGen, type Seuil, type Tier, type Zone as ZoneDef,
 } from './zonegraph'
 export { generateZonedTerrain, RELIEF, type CarteZonee } from './zonegen'
+export { creuserLePlancher, type PointACouvrir, type RapportDuPlancher } from './grottes-plancher'
+export { KARST, type Karst } from './zonegen-karst'
 // LA CENDRE (spec `cendre.md`) — elle sourd des fosses et elle COULE. Tout est DÉRIVÉ : le client
 // repeint le sol cendré en relisant EXACTEMENT ces fonctions (écrivain unique, patron du gel et du
 // niveau d'eau), sans qu'une seule tuile ne transite.

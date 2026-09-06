@@ -39,7 +39,7 @@
  * elles ne la remplacent pas.
  */
 import type Phaser from 'phaser'
-import { TERRAIN_BOULDERS, TERRAIN_ROCK, TERRAIN_SCREE } from '@ashes/sim'
+import { TERRAIN_BOULDERS, TERRAIN_DEEP_WATER, TERRAIN_ROCK, TERRAIN_SCREE, TERRAIN_SHALLOW_WATER } from '@ashes/sim'
 import { CLIFF_TILE_PX, dessinDeParoi, VARIANTES_PAROI, type RectArt } from './cliff-art'
 import { TERRAIN_COLORS } from './terrain-colors'
 
@@ -87,6 +87,9 @@ const D = PERIODE_CAVE * P
 
 /** Le sol de cave se cuit pour ces terrains-là (`terrainDeCave` ne rend que ces deux-là). */
 export const TERRAINS_DE_CAVE: readonly number[] = [TERRAIN_SCREE, TERRAIN_BOULDERS]
+/** LA NAPPE (spec `grottes.md` G-R4) : l'eau d'un karst, sur la grille creuse. Une tuile posée,
+ *  pas le shader de surface — noire dans le noir, révélée par la torche, sans ciel à refléter. */
+export const EAUX_DE_CAVE: readonly number[] = [TERRAIN_SHALLOW_WATER, TERRAIN_DEEP_WATER]
 
 // ═══ ① LE SOL ═══════════════════════════════════════════════════════════════════════════════
 
@@ -177,6 +180,44 @@ export function dessinDuSolDeCave(phase: number, terrainId: number): RectArtA[] 
     poser(x + 1, y + h - 1, w - 2, 1, bleu)
     poser(x + 1, y + 1, 2, 1, teindre(bleu, REFLET))
   }
+  return r
+}
+
+/**
+ * ═══ ①bis LA NAPPE — l'eau qui n'a jamais vu le ciel (G-R4) ═══
+ *
+ * Le haut-fond laisse voir son lit : le gravier du sol, noyé, plus sombre et bleui ; le profond
+ * est une eau presque noire où seuls un ou deux reflets d'un pixel disent que c'est de l'eau et
+ * non de la roche. Plus SOMBRE que le sol (la salle est un lieu, l'eau y est un trou de plus),
+ * mais jamais aussi sombre que la roche de la masse : on doit voir qu'on peut y tomber.
+ */
+const NAPPE_VALEUR: Readonly<Record<number, number>> = { [TERRAIN_SHALLOW_WATER]: 0.62, [TERRAIN_DEEP_WATER]: 0.42 }
+const NAPPE_BLEU: Readonly<Record<number, number>> = { [TERRAIN_SHALLOW_WATER]: 1.22, [TERRAIN_DEEP_WATER]: 1.34 }
+/** Les reflets de la période : `[x, y]` en espace de période — deux par tuile au plus. */
+const REFLETS: readonly (readonly [number, number])[] = [
+  [5, 3], [21, 9], [38, 6], [55, 13], [11, 27], [29, 36], [47, 30], [60, 44], [3, 52], [24, 58], [43, 50],
+]
+export function dessinDeLEauDeCave(phase: number, terrainId: number): RectArtA[] {
+  const sol = froid(PIERRE, SOL_VALEUR[TERRAIN_SCREE]!)
+  const eau = froid(sol, NAPPE_VALEUR[terrainId] ?? NAPPE_VALEUR[TERRAIN_DEEP_WATER]!)
+  const base = (((eau >> 16) & 255) << 16) | (((eau >> 8) & 255) << 8) | canal(eau, 0, NAPPE_BLEU[terrainId] ?? NAPPE_BLEU[TERRAIN_DEEP_WATER]!)
+  const px0 = (phase % PERIODE_CAVE) * P
+  const py0 = Math.floor(phase / PERIODE_CAVE) * P
+  const r: RectArtA[] = [{ x: 0, y: 0, w: P, h: P, c: teindre(base, tacheDe(phase)) }]
+  const poser = (x: number, y: number, w: number, h: number, c: number): void => {
+    const x0 = Math.max(x, px0)
+    const y0 = Math.max(y, py0)
+    const x1 = Math.min(x + w, px0 + P)
+    const y1 = Math.min(y + h, py0 + P)
+    if (x1 > x0 && y1 > y0) r.push({ x: x0 - px0, y: y0 - py0, w: x1 - x0, h: y1 - y0, c })
+  }
+  // Le lit du haut-fond : le gravier du sol, vu à travers — un cran de moins que sous l'air.
+  if (terrainId === TERRAIN_SHALLOW_WATER) {
+    for (const [x, y, w, clair] of GRAVIERS[phase & 1]!) {
+      poser(x, y, w, 1, teindre(base, clair === 1 ? 1.1 : 0.86))
+    }
+  }
+  for (const [x, y] of REFLETS) poser(x, y, 2, 1, teindre(base, REFLET))
   return r
 }
 
@@ -556,6 +597,9 @@ export function makeCaveTextures(scene: Phaser.Scene): void {
   }
   for (const t of TERRAINS_DE_CAVE) {
     for (let phase = 0; phase < PERIODE_CAVE * PERIODE_CAVE; phase++) rejouer(dessinDuSolDeCave(phase, t), caveKey('sol', t, phase))
+  }
+  for (const t of EAUX_DE_CAVE) {
+    for (let phase = 0; phase < PERIODE_CAVE * PERIODE_CAVE; phase++) rejouer(dessinDeLEauDeCave(phase, t), caveKey('eau', t, phase))
   }
   for (const s of SIGNES_DE_CAVE) rejouer(dessinDuSigne(s), caveKey('signe', s))
   for (const mask of MASQUES_PAROI) {

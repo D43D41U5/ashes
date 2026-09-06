@@ -24,7 +24,7 @@
 import { deflateSync } from 'node:zlib'
 import { writeFileSync } from 'node:fs'
 import {
-  generateZonedTerrain, placeZoneNodes, emplacementsDeVillage, pointsDeSpawn, MONDE, MONDE_JOUE,
+  generateZonedTerrain, placeZoneNodes, emplacementsDeVillage, pointsDeSpawn, creuserLePlancher, MONDE, MONDE_JOUE,
   placeHuntingGrounds, nidsAMonstre,
   TERRAIN_VOID, TERRAIN_GRASS, TERRAIN_ROAD, TERRAIN_FOREST, TERRAIN_SHALLOW_WATER,
   TERRAIN_ROCK, TERRAIN_DEEP_WATER, TERRAIN_MARSH, TERRAIN_SCREE, TERRAIN_SNOW,
@@ -129,6 +129,7 @@ const emplacements = emplacementsDeVillage(carte, nodes, {
 })
 for (const e of emplacements) carre(e.tx, e.ty, 3, 255, 0, 0)
 const spawns = pointsDeSpawn(carte, emplacements, Math.ceil(MONDE.JOUEURS_CIBLE / MONDE.JOUEURS_PAR_VILLAGE))
+creuserLePlancher(carte, nodes, [...spawns, ...emplacements]) // le plancher des grottes (G-R8a), comme les hôtes
 for (const s of spawns) carre(s.tx, s.ty, 2, 255, 255, 255)
 
 // ── L'économie du monde réduit (t0-exploration §2sexies) : les buttes en CONTOUR (le

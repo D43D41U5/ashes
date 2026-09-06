@@ -223,6 +223,16 @@ export interface PieceDef {
   /** L'eau libre est INCONSTRUCTIBLE, sauf ce qui porte sa propre assise (R4). */
   eau: boolean
   /**
+   * SE POSE-T-ELLE SOUS LA ROCHE ? (spec `grottes.md` G-R7 — le bivouac, pas la maison.)
+   * Vrai pour ce qui n'enferme pas (le feu, le coffre, le mobilier, les vestiges des
+   * vignettes) ; faux pour ce qui CLÔT ou COUVRE (mur, porte, sol, toit, maison, encadrement),
+   * pour les ateliers lourds et pour ce qui pousse (rien ne pousse sans ciel). OBLIGATOIRE —
+   * pas d'`?` : `tsc` prouve que chaque pièce a répondu (G-A9), et une pièce neuve ne peut pas
+   * glisser sous la roche par oubli. Ne juge que la POSE par un joueur : les plans posés à
+   * l'amorce (pièces `monde`) ne passent pas par cette porte.
+   */
+  sousRoche: boolean
+  /**
    * VIEILLIT-ELLE ? Un mur, une table, un âtre portent leur usure dans leurs PV — le
    * client les assombrit d'autant, et la ruine se voit. Une meule de foin ou un carré
    * de friche, non : « à 30 % de PV » n'y veut rien dire.
@@ -280,12 +290,14 @@ export const PIECES = {
   // ── L'ANCRE ────────────────────────────────────────────────────────────────
   fire: {
     label: 'Feu', fam: 'ancre', pose: 'feu', occupe: 'tuile', arete: 'interdite',
+    sousRoche: true,
     bloque: 'oui', pv: 900, cout: { wood: 10 }, acces: 'village', eau: false, usurable: false,
   },
 
   // ── LES BARRIÈRES DU MARTEAU (R8, R20) ─────────────────────────────────────
   wall: {
     label: 'Mur', fam: 'structure', pose: 'marteau', occupe: 'tuile', arete: 'possible',
+    sousRoche: false,
     bloque: 'oui', pv: 200, cout: { wood: 2 }, acces: 'village', eau: false, usurable: true,
     matieres: ['wood', 'stone', 'metal'], matiereChiffre: true,
   },
@@ -293,26 +305,31 @@ export const PIECES = {
     // Des rondins dressés : l'enceinte d'un village n'est pas le mur d'un bâtiment.
     // Sans palier de matériau — le bois est son essence (décision d'Alexis, 2026-08-01).
     label: 'Palissade', fam: 'structure', pose: 'marteau', occupe: 'tuile', arete: 'requise',
+    sousRoche: false,
     bloque: 'oui', pv: 300, cout: { wood: 3 }, acces: 'village', eau: false, usurable: false,
   },
   door: {
     label: 'Porte', fam: 'structure', pose: 'marteau', occupe: 'tuile', arete: 'possible',
+    sousRoche: false,
     bloque: 'porte', pv: 150, cout: { wood: 3 }, acces: 'village', eau: false, usurable: false,
     matieres: ['wood', 'stone', 'metal'], matiereChiffre: true,
   },
   floor: {
     // La SEULE pièce qui porte sa propre assise : des planches sur l'eau (R4).
     label: 'Sol', fam: 'structure', pose: 'marteau', occupe: 'sol', arete: 'interdite',
+    sousRoche: false,
     bloque: 'non', pv: 60, cout: { wood: 1 }, acces: 'village', eau: true, usurable: true,
   },
   roof: {
     label: 'Toit', fam: 'structure', pose: 'marteau', occupe: 'toit', arete: 'interdite',
+    sousRoche: false,
     bloque: 'non', pv: 60, cout: { wood: 1 }, acces: 'village', eau: false, usurable: true,
   },
 
   // ── CE QU'ON TIENT ET QU'ON POSE ───────────────────────────────────────────
   chest: {
     label: 'Coffre', fam: 'mobilier', pose: 'objet', occupe: 'tuile', arete: 'interdite',
+    sousRoche: true,
     bloque: 'oui', pv: 100, cout: { wood: 4 }, acces: 'private', eau: false, usurable: false,
     capacite: 24,
   },
@@ -329,6 +346,7 @@ export const PIECES = {
    */
   sechoir: {
     label: 'Séchoir', fam: 'mobilier', pose: 'objet', occupe: 'tuile', arete: 'interdite',
+    sousRoche: true,
     bloque: 'oui', pv: 80, cout: { wood: 6, rope: 2 }, acces: 'village', eau: false, usurable: true,
   },
   braise_mere: {
@@ -336,6 +354,7 @@ export const PIECES = {
     // charbon, elle tient le foyer de cendre de sa cellule tant qu'elle brûle. Ses PV en font
     // une cible de siège qui se défend — plus que le séchoir, moins qu'un Feu.
     label: 'Braise-mère', fam: 'mobilier', pose: 'objet', occupe: 'tuile', arete: 'interdite',
+    sousRoche: false,
     bloque: 'oui', pv: 400, cout: { stone: 8, iron_ingot: 2, coeur_de_braise: 1 }, acces: 'village',
     eau: false, usurable: true, horsVillage: true,
   },
@@ -344,16 +363,19 @@ export const PIECES = {
     // Grand Froid — sur SOL CENDRÉ seulement, hors village, et son coût mange la CENDRE
     // (l'item `ash` trouve son consommateur). Un PLOT : les gestes du potager la portent.
     label: 'Parcelle de suie', fam: 'mobilier', pose: 'objet', occupe: 'tuile', arete: 'interdite',
+    sousRoche: false,
     bloque: 'oui', pv: 60, cout: { wood: 4, ash: 4 }, acces: 'village',
     eau: false, usurable: false, horsVillage: true, surCendre: true,
   },
   workshop: {
     label: 'Établi', fam: 'composant', pose: 'objet', occupe: 'tuile', arete: 'interdite',
+    sousRoche: true,
     bloque: 'oui', pv: 100, cout: { wood: 6, stone: 4 }, acces: 'village', eau: false, usurable: false,
     unlockTier: 1, fonction: 'atelier', palier: 1,
   },
   furnace: {
     label: 'Four', fam: 'composant', pose: 'objet', occupe: 'tuile', arete: 'interdite',
+    sousRoche: false,
     bloque: 'oui', pv: 100, cout: { stone: 8 }, coutObjet: { stone: 10 },
     acces: 'village', eau: false, usurable: false,
     unlockTier: 1, fonction: 'forge', palier: 2,
@@ -361,6 +383,7 @@ export const PIECES = {
   house: {
     // Héritage V3 : on en franchit le seuil, et le flood-fill la traverse.
     label: 'Maison', fam: 'heritage', pose: 'monde', occupe: 'tuile', arete: 'interdite',
+    sousRoche: false,
     bloque: 'enjambe', pv: 100, cout: { wood: 8 }, acces: 'village',
     eau: false, usurable: false,
   },
@@ -369,54 +392,64 @@ export const PIECES = {
   // Forge : enclume (fer de récup, dès P1) → four → four d'acier (exige P3).
   enclume: {
     label: 'Enclume', fam: 'composant', pose: 'objet', occupe: 'tuile', arete: 'interdite',
+    sousRoche: true,
     bloque: 'oui', pv: 120, cout: { stone: 6, iron_ore: 2 }, acces: 'village', eau: false, usurable: false,
     unlockTier: 1, fonction: 'forge', palier: 1,
   },
   four_acier: {
     label: "Four d'acier", fam: 'composant', pose: 'objet', occupe: 'tuile', arete: 'interdite',
+    sousRoche: false,
     bloque: 'oui', pv: 150, cout: { cut_stone: 8, iron_ingot: 5 }, acces: 'village', eau: false, usurable: false,
     unlockTier: 3, fonction: 'forge', palier: 3,
   },
   // Atelier : établi (= `workshop`, plus haut) → tour méca → atelier lourd (P3).
   tour_meca: {
     label: 'Tour mécanique', fam: 'composant', pose: 'objet', occupe: 'tuile', arete: 'interdite',
+    sousRoche: false,
     bloque: 'oui', pv: 120, cout: { wood: 8, iron_ingot: 3 }, acces: 'village', eau: false, usurable: false,
     unlockTier: 2, fonction: 'atelier', palier: 2,
   },
   atelier_lourd: {
     label: 'Atelier lourd', fam: 'composant', pose: 'objet', occupe: 'tuile', arete: 'interdite',
+    sousRoche: false,
     bloque: 'oui', pv: 150, cout: { cut_stone: 6, iron_ingot: 6 }, acces: 'village', eau: false, usurable: false,
     unlockTier: 3, fonction: 'atelier', palier: 3,
   },
   // Grenier : des CONTENEURS anti-pourriture, réserve COMMUNE du village.
   silo: {
     label: 'Silo', fam: 'composant', pose: 'objet', occupe: 'tuile', arete: 'interdite',
+    sousRoche: false,
     bloque: 'oui', pv: 100, cout: { wood: 8, fiber: 4 }, acces: 'village', eau: false, usurable: false,
     capacite: 36, unlockTier: 1, fonction: 'grenier', palier: 1,
   },
   cave: {
     label: 'Cave', fam: 'composant', pose: 'objet', occupe: 'tuile', arete: 'interdite',
+    sousRoche: false,
     bloque: 'oui', pv: 130, cout: { stone: 8, cut_stone: 4 }, acces: 'village', eau: false, usurable: false,
     capacite: 36, unlockTier: 2, fonction: 'grenier', palier: 2,
   },
   reserve: {
     label: 'Réserve', fam: 'composant', pose: 'objet', occupe: 'tuile', arete: 'interdite',
+    sousRoche: false,
     bloque: 'oui', pv: 160, cout: { cut_stone: 8, iron_ingot: 3 }, acces: 'village', eau: false, usurable: false,
     capacite: 36, unlockTier: 3, fonction: 'grenier', palier: 3,
   },
   // Ferme : parcelle (de saison) → serre (cultures d'hiver) → terroir. En plein air.
   parcelle: {
     label: 'Parcelle', fam: 'composant', pose: 'objet', occupe: 'tuile', arete: 'interdite',
+    sousRoche: false,
     bloque: 'oui', pv: 60, cout: { wood: 4, fiber: 4 }, acces: 'village', eau: false, usurable: false,
     unlockTier: 1, fonction: 'ferme', palier: 1,
   },
   serre: {
     label: 'Serre', fam: 'composant', pose: 'objet', occupe: 'tuile', arete: 'interdite',
+    sousRoche: false,
     bloque: 'oui', pv: 80, cout: { wood: 8, fiber: 6 }, acces: 'village', eau: false, usurable: false,
     unlockTier: 2, fonction: 'ferme', palier: 2,
   },
   terroir: {
     label: 'Terroir', fam: 'composant', pose: 'objet', occupe: 'tuile', arete: 'interdite',
+    sousRoche: false,
     bloque: 'oui', pv: 100, cout: { cut_stone: 6, hardwood: 4 }, acces: 'village', eau: false, usurable: false,
     unlockTier: 3, fonction: 'ferme', palier: 3,
   },
@@ -424,34 +457,41 @@ export const PIECES = {
   // ── LE MONDE BÂTI — ce qui dit qu'on VIVAIT là (`poi-batis.ts`) ─────────────
   table: {
     label: 'Table', fam: 'mobilier', pose: 'monde', occupe: 'tuile', arete: 'interdite',
+    sousRoche: true,
     bloque: 'oui', pv: 60, cout: { wood: 4 }, acces: 'village', eau: false, usurable: true,
   },
   banc: {
     label: 'Banc', fam: 'mobilier', pose: 'monde', occupe: 'tuile', arete: 'interdite',
+    sousRoche: true,
     bloque: 'enjambe', pv: 40, cout: { wood: 2 }, acces: 'village', eau: false, usurable: true,
   },
   paillasse: {
     // Un couchage au ras du sol : le dormeur s'y tient DESSUS, et un campement dont
     // chaque lit bloque ferait de l'anneau du Feu un piège à hordes.
     label: 'Paillasse', fam: 'mobilier', pose: 'monde', occupe: 'tuile', arete: 'interdite',
+    sousRoche: true,
     bloque: 'enjambe', pv: 40, cout: { fiber: 6, wood: 2 }, acces: 'village',
     eau: false, usurable: false,
   },
   etagere: {
     label: 'Étagère', fam: 'mobilier', pose: 'monde', occupe: 'tuile', arete: 'interdite',
+    sousRoche: true,
     bloque: 'oui', pv: 50, cout: { wood: 3 }, acces: 'private', eau: false, usurable: true,
   },
   tonneau: {
     label: 'Tonneau', fam: 'mobilier', pose: 'monde', occupe: 'tuile', arete: 'interdite',
+    sousRoche: true,
     bloque: 'oui', pv: 60, cout: { wood: 5 }, acces: 'village', eau: false, usurable: true,
   },
   friche: {
     label: 'Friche', fam: 'ferme', pose: 'monde', occupe: 'tuile', arete: 'interdite',
+    sousRoche: false,
     bloque: 'enjambe', pv: 30, cout: { fiber: 2 }, acces: 'village', eau: false, usurable: false,
   },
   terre: {
     // Le sol d'une cour : sans elle, un enclos n'est qu'une clôture posée dans l'herbe.
     label: 'Terre battue', fam: 'structure', pose: 'monde', occupe: 'tuile', arete: 'interdite',
+    sousRoche: true,
     bloque: 'enjambe', pv: 40, cout: { stone: 1 }, acces: 'village', eau: false, usurable: false,
   },
   cloture: {
@@ -459,14 +499,17 @@ export const PIECES = {
     // elle se bâtit en matériaux bruts. Elle avait coût, PV et dessin depuis le monde bâti
     // — il ne lui manquait qu'une route vers le joueur, et c'est ce champ.
     label: 'Clôture', fam: 'structure', pose: 'marteau', occupe: 'tuile', arete: 'interdite',
+    sousRoche: false,
     bloque: 'oui', pv: 80, cout: { wood: 1 }, acces: 'village', eau: false, usurable: true,
   },
   abreuvoir: {
     label: 'Abreuvoir', fam: 'ferme', pose: 'monde', occupe: 'tuile', arete: 'interdite',
+    sousRoche: false,
     bloque: 'oui', pv: 120, cout: { stone: 4 }, acces: 'village', eau: false, usurable: true,
   },
   meule: {
     label: 'Meule de foin', fam: 'ferme', pose: 'monde', occupe: 'tuile', arete: 'interdite',
+    sousRoche: false,
     bloque: 'oui', pv: 40, cout: { fiber: 8 }, acces: 'village', eau: false, usurable: false,
   },
   encadrement: {
@@ -475,10 +518,12 @@ export const PIECES = {
     // AU MARTEAU depuis D1 : un seuil EST le bâtiment. Il ne ferme rien (`enjambe`) — c'est
     // ce qui le distingue d'une porte, et ce qui donne une entrée à un bâtiment sans serrure.
     label: 'Encadrement', fam: 'structure', pose: 'marteau', occupe: 'tuile', arete: 'interdite',
+    sousRoche: false,
     bloque: 'enjambe', pv: 120, cout: { wood: 4 }, acces: 'village', eau: false, usurable: false,
   },
   atre: {
     label: 'Âtre', fam: 'mobilier', pose: 'monde', occupe: 'tuile', arete: 'interdite',
+    sousRoche: true,
     bloque: 'oui', pv: 250, cout: { stone: 8 }, acces: 'village', eau: false, usurable: true,
   },
   // ── CE QUI RESTE `monde`, ET POURQUOI (D1) ────────────────────────────────
@@ -489,10 +534,12 @@ export const PIECES = {
   // revêtement de sol, donc posée par un joueur elle interdirait tout meuble sur sa case.
   poutre: {
     label: 'Poutre tombée', fam: 'vestige', pose: 'monde', occupe: 'tuile', arete: 'interdite',
+    sousRoche: false,
     bloque: 'enjambe', pv: 60, cout: { wood: 3 }, acces: 'village', eau: false, usurable: true,
   },
   mur_bas: {
     label: 'Mur bas', fam: 'vestige', pose: 'monde', occupe: 'tuile', arete: 'interdite',
+    sousRoche: false,
     bloque: 'enjambe', pv: 150, cout: { stone: 2 }, acces: 'village', eau: false, usurable: true,
   },
   charrette: {
@@ -500,11 +547,13 @@ export const PIECES = {
     // Elle BLOQUE — un chariot n'est pas un débris qu'on enjambe, c'est un obstacle qu'on
     // contourne, et c'est ce qui donne enfin un corps solide à un lieu qui n'était qu'un sprite.
     label: 'Charrette', fam: 'vestige', pose: 'monde', occupe: 'tuile', arete: 'interdite',
+    sousRoche: true,
     bloque: 'oui', pv: 80, cout: { wood: 4 }, acces: 'village', eau: false, usurable: true,
   },
   autel: {
     // La pierre dressée d'un oratoire. Debout, elle — un autel ne tombe pas, il s'oublie.
     label: 'Autel', fam: 'mobilier', pose: 'monde', occupe: 'tuile', arete: 'interdite',
+    sousRoche: true,
     bloque: 'oui', pv: 250, cout: { stone: 6 }, acces: 'village', eau: false, usurable: true,
   },
   // ── LE VOCABULAIRE NATUREL (spec lieux-batis, étage 2 — décision d'Alexis 2026-08-10) ──
@@ -514,6 +563,7 @@ export const PIECES = {
     // Le plancher de pierre nue d'un antre. Un SOL (R14) : occupe 'sol' — fullTileAt
     // l'ignore, la couche sol le juge, le rendu le couche à FLOOR_DEPTH.
     label: 'Roc', fam: 'structure', pose: 'monde', occupe: 'sol', arete: 'interdite',
+    sousRoche: true,
     bloque: 'non', pv: 60, cout: { stone: 1 }, acces: 'village', eau: false, usurable: false,
   },
   massif: {
@@ -521,17 +571,20 @@ export const PIECES = {
     // dans la grille, jamais dérivée). INCASSABLE : de la vraie roche, pas un mur — les
     // hordes la contournent, rien ne la mâche, rien ne naît derrière.
     label: 'Massif rocheux', fam: 'structure', pose: 'monde', occupe: 'tuile', arete: 'interdite',
+    sousRoche: true,
     bloque: 'oui', pv: 500, cout: { stone: 3 }, acces: 'village', eau: false, usurable: false,
     incassable: true,
   },
   rocher: {
     // Le bloc erratique de poche : plein-tuile, on le CONTOURNE — le corps solide du minéral.
     label: 'Rocher', fam: 'vestige', pose: 'monde', occupe: 'tuile', arete: 'interdite',
+    sousRoche: true,
     bloque: 'oui', pv: 250, cout: { stone: 6 }, acces: 'village', eau: false, usurable: false,
   },
   eboulis: {
     // Les pierres croulées : basses, on passe PAR-DESSUS — le mur_bas du minéral.
     label: 'Éboulis', fam: 'vestige', pose: 'monde', occupe: 'tuile', arete: 'interdite',
+    sousRoche: true,
     bloque: 'enjambe', pv: 150, cout: { stone: 2 }, acces: 'village', eau: false, usurable: false,
   },
   // ── LE VOCABULAIRE MINIER (spec lieux-batis, étage 3 REVU — décision d'Alexis
@@ -540,23 +593,27 @@ export const PIECES = {
   chevalement: {
     // La tour du puits — la silhouette qui dit « mine » de loin, en PIÈCE haute.
     label: 'Chevalement', fam: 'vestige', pose: 'monde', occupe: 'tuile', arete: 'interdite',
+    sousRoche: true,
     bloque: 'oui', pv: 400, cout: { wood: 8 }, acces: 'village', eau: false, usurable: true,
   },
   galerie: {
     // La bouche boisée d'une galerie — MOLLE : c'est un porche, on la franchit. Posée
     // devant le passage d'un antre, elle est l'entrée qu'on lit comme une porte.
     label: 'Entrée de galerie', fam: 'vestige', pose: 'monde', occupe: 'tuile', arete: 'interdite',
+    sousRoche: true,
     bloque: 'non', pv: 300, cout: { wood: 4, stone: 2 }, acces: 'village', eau: false, usurable: true,
   },
   etai: {
     // Le poteau de boisage : bas, on passe PAR-DESSUS ses calages — le mur_bas du mineur.
     label: 'Étai', fam: 'vestige', pose: 'monde', occupe: 'tuile', arete: 'interdite',
+    sousRoche: true,
     bloque: 'enjambe', pv: 80, cout: { wood: 2 }, acces: 'village', eau: false, usurable: true,
   },
   wagonnet: {
     // La berline échouée sur son bout de voie : elle BLOQUE, on la contourne (la
     // charrette du sous-sol).
     label: 'Wagonnet', fam: 'vestige', pose: 'monde', occupe: 'tuile', arete: 'interdite',
+    sousRoche: true,
     bloque: 'oui', pv: 120, cout: { wood: 2, iron_ingot: 1 }, acces: 'village', eau: false, usurable: true,
   },
 } as const satisfies Record<string, PieceDef>

@@ -12,6 +12,7 @@ import {
   buildPoiStructures,
   createSim,
   cycleOffsetForStartHour,
+  creuserLePlancher,
   emplacementsDeVillage,
   FAUNA,
   generateZonedTerrain,
@@ -80,6 +81,9 @@ export function createZone(): LanWorld {
   // multi : cinquante joueurs y naîtraient sans se marcher dessus ». Le semis était donc
   // dimensionné POUR ce serveur, et ce serveur était le seul à ne pas s'en servir.
   const spawns = pointsDeSpawn(carte, emplacements, SPAWN_SITES, LAN_SEED)
+  // LE PLANCHER DES GROTTES (spec `grottes.md` G-R8a) — même passe, même moment que la Veillée
+  // et le banc (parité d'amorce) : elle mute la carte et les nœuds AVANT `createSim`.
+  creuserLePlancher(carte, nodes, [...spawns, ...emplacements])
   const base = spawns[0] ?? emplacements[0]
   if (!base) throw new Error('scenario: la vallée ne porte aucun emplacement viable — carte dégénérée')
 

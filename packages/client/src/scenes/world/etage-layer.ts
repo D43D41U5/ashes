@@ -35,7 +35,7 @@ import {
 } from '@ashes/sim'
 import {
   caveKey, DEHORS_KEY, GUEULE_KEY, JOUR_KEY, PERIODE_CAVE, ROCHE_CAVE_KEY,
-  SIGNES_DE_CAVE, TERRAINS_DE_CAVE, VARIANTES_LUEUR,
+  EAUX_DE_CAVE, SIGNES_DE_CAVE, TERRAINS_DE_CAVE, VARIANTES_LUEUR,
 } from '../../render/cave-art'
 import { cliffKey, levreDe, PHASES_PAROI, varianteDeLevre, VARIANTES_PAROI } from '../../render/cliff-art'
 import {
@@ -51,13 +51,16 @@ import { epinglerLaTuile } from '../../render/tuile-epinglee'
 /**
  * ═══ DEPUIS LES TERRASSES (spec `terrasses.md`, T-R7) : TOUT SE COMPTE DEPUIS LE PALIER DU SOL ═══
  *
- * Le chapeau d'une mesa posée au palier `p` est au niveau `p + 1`, sa cave au niveau `p − 1` ; la
- * tuile se dessine à sa HAUTEUR (`Relief.hauteur` = palier + chapeau), `LIFT_TUILES` rangées plus
- * haut par cran. Les constantes `NIVEAU = 1` / `SOUS = −1` d'avant sont devenues des DÉCALAGES
- * relatifs au palier ; sur une carte sans palier (≡ 0 partout) c'est le nombre d'avant, au bit près.
+ * Le chapeau d'une mesa posée au palier `p` est au niveau `p + 1`, sa cave au niveau `−(p + 1)`
+ * (spec `grottes.md` G-R1 : un souterrain se compte depuis sa GUEULE, et un karst sous la terrasse
+ * `p + 1` est au même niveau) ; la tuile se dessine à sa HAUTEUR (`Relief.hauteur` = palier +
+ * chapeau), `LIFT_TUILES` rangées plus haut par cran. La constante `NIVEAU = 1` d'avant est
+ * devenue un DÉCALAGE relatif au palier ; sur une carte sans palier (≡ 0 partout) c'est le
+ * nombre d'avant, au bit près.
  * La PAROI, elle, a quitté cette couche : `cliff-layer` la peint pour toute tuile plus haute que sa
  * voisine sud, mesa ou terrasse — une seule écriture du même mur.
  */
+/** Le souterrain : un niveau négatif — n'importe lequel, `strateDEtage` n'en fait qu'une strate. */
 const SOUS = -1
 /**
  * ═══ CE QUE LA CAVE POSE PAR TUILE, ET À QUEL RANG ═══
@@ -423,8 +426,9 @@ export class EtageLayer {
     for (let i = nRampe; i < this.rampes.length; i++) this.rampes[i]!.setVisible(false)
   }
 
-  /** Une tuile de salle (l'étage sous le palier) ? Le hors-carte n'en est pas. */
-  private salle = (tx: number, ty: number): boolean => this.relief.salle(tx, ty)
+  /** Une tuile de LA MÊME salle (le même niveau souterrain) ? Le hors-carte n'en est pas, et
+   *  une autre grotte non plus : entre deux, il y a la roche, et l'on peint sa paroi. */
+  private salle = (niveau: number, tx: number, ty: number): boolean => this.relief.niveauDeSalle(tx, ty) === niveau
 
   /** La part du ciel d'une tuile de cave, mémorisée (la loi de /sim, lue une fois par tuile). */
   private cielDe(tx: number, ty: number): number {
@@ -492,7 +496,7 @@ export class EtageLayer {
     this.roche.setTilePosition(rx, ry)
     this.roche.setVisible(true)
 
-    const lum: LumiereDeCave = this.lumiere ?? { ciel: 1, teinteDuJour: 0xffffff, couleurDuJour: 0xffffff, torche: null, joueur: null }
+    const lum: LumiereDeCave = this.lumiere ?? { ciel: 1, teinteDuJour: 0xffffff, couleurDuJour: 0xffffff, torche: null, joueur: null, feux: [] }
     this.tLueur += Math.min(100, Math.max(0, dtMs)) / 1000
     this.tuilesVues.length = 0
     this.gueulesVues.length = 0
@@ -507,23 +511,33 @@ export class EtageLayer {
     // …ET LE LIFT DU PALIER : la salle d'une mesa posée au palier `p` se dessine `p × LIFT`
     // rangées plus haut, comme le corps qui s'y tient (T-R7 — la roche efface tout le reste).
     const ty1 = Math.min(height - 1, Math.ceil((v.y + v.height) / TILE_PX) + 1 + (1 + this.relief.hauteurMax) * LIFT_TUILES)
-    // `strateDEtage(p − 1, p)` vaut le même nombre pour tout `p` : LA strate du souterrain.
+    // `strateDEtage` rend le même nombre pour tout niveau négatif : LA strate du souterrain.
     const strate = strateDEtage(SOUS)
     for (let ty = ty0; ty <= ty1; ty++) {
       for (let tx = tx0; tx <= tx1; tx++) {
-        if (!this.salle(tx, ty)) continue
-        const p = this.relief.palier(tx, ty)
+        // ═══ LE NIVEAU VIENT DU RELIEF, LE LIFT DE LA GUEULE (spec `grottes.md` G-R1) ═══
+        // Un souterrain est à `−(p + 1)` quand sa gueule s'ouvre sur le palier `p` — et c'est à
+        // CE lift-là qu'on le peint, pas à celui de la tuile qui le coiffe : sous une mesa les
+        // deux se confondent, sous une terrasse (un karst) la tuile est un palier plus haut, et
+        // la salle dessinée à sa hauteur laisserait deux rangées entre le seuil et son sol.
+        // Même loi que le corps qui s'y tient (`decalageDEtage`).
+        const niveau = this.relief.niveauDeSalle(tx, ty)
+        if (niveau === 0) continue
+        const p = -niveau - 1
         const lift = p * LIFT_TUILES
-        const t = terrainAEtage(this.map, p + SOUS, tx, ty)
+        const t = terrainAEtage(this.map, niveau, tx, ty)
+        // LA NAPPE (G-R4) : l'eau de la grille creuse est une tuile de la cave, pas le shader
+        // de surface — elle n'a ni ciel à refléter ni heure ; le voile la noie, la torche la rend.
+        const eau = EAUX_DE_CAVE.includes(t)
         const tt = TERRAINS_DE_CAVE.includes(t) ? t : TERRAIN_DE_CAVE_DEFAUT
         const phase = (((tx % PERIODE_CAVE) + PERIODE_CAVE) % PERIODE_CAVE)
           + PERIODE_CAVE * (((ty % PERIODE_CAVE) + PERIODE_CAVE) % PERIODE_CAVE)
         const estGueule = this.portes.get(ty * width + tx)?.type === 'gueule'
         const sol = strate + ySortDepth(ty, TILE_PX, TIE_SOL)
         this.tuilesVues.push({ tx, ty, lift })
-        // ③ LE SOL, et son signe.
-        n = this.poser(this.cave, n, caveKey('sol', tt, phase), tx, ty - lift, sol, 1, 0xffffff)
-        if (!estGueule) {
+        // ③ LE SOL (ou l'eau), et son signe — pas de signe sur l'eau.
+        n = this.poser(this.cave, n, eau ? caveKey('eau', t, phase) : caveKey('sol', tt, phase), tx, ty - lift, sol, 1, 0xffffff)
+        if (!estGueule && !eau) {
           const hs = hash2(tx, ty, SEL_SIGNE)
           if (hs < SIGNE_PART) {
             const signe = SIGNES_DE_CAVE[Math.floor((hs / SIGNE_PART) * SIGNES_DE_CAVE.length) % SIGNES_DE_CAVE.length]!
@@ -533,13 +547,13 @@ export class EtageLayer {
         // ④ LA PAROI, au nord — la roche (tx, ty − 1) montre sa face. Deux rangées si la roche
         //    est épaisse, une seule (arête et pied confondus) si c'est une crête d'une tuile entre
         //    deux salles : la rangée du dessus est alors du sol, et on ne le couvre pas.
-        if (!this.salle(tx, ty - 1)) {
-          const e = this.salle(tx + 1, ty - 1) ? 2 : 0
-          const w = this.salle(tx - 1, ty - 1) ? 4 : 0
+        if (!this.salle(niveau, tx, ty - 1)) {
+          const e = this.salle(niveau, tx + 1, ty - 1) ? 2 : 0
+          const w = this.salle(niveau, tx - 1, ty - 1) ? 4 : 0
           const variant = (((tx % PHASES_PAROI) + PHASES_PAROI) % PHASES_PAROI)
             + PHASES_PAROI * (hash2(tx, ty - 1, SEL_PAROI) < 0.5 ? 0 : 1)
           const dParoi = strate + ySortDepth(ty - 1, TILE_PX, TIE_PAROI)
-          if (this.salle(tx, ty - 2)) {
+          if (this.salle(niveau, tx, ty - 2)) {
             n = this.poser(this.cave, n, caveKey('paroi', 1 | 8 | e | w, variant % VARIANTES_PAROI), tx, ty - 1 - lift, dParoi, 1, 0xffffff)
           } else {
             n = this.poser(this.cave, n, caveKey('paroi', 1 | e | w, variant % VARIANTES_PAROI), tx, ty - 2 - lift, dParoi, 1, 0xffffff)
@@ -548,7 +562,7 @@ export class EtageLayer {
         }
         // ④ L'OMBRE que chaque roche voisine jette sur la tuile, et ⑤ LA LÈVRE au même bord.
         for (const [cote, dx, dy] of [[1, 0, -1], [2, 1, 0], [4, -1, 0], [8, 0, 1]] as const) {
-          if (this.salle(tx + dx, ty + dy)) continue
+          if (this.salle(niveau, tx + dx, ty + dy)) continue
           // Le seuil de la gueule s'ouvre au sud : ni ombre ni lèvre de ce côté-là, c'est le jour.
           if (estGueule && cote === 8) continue
           n = this.poser(this.cave, n, caveKey('ombre', cote), tx, ty - lift, strate + ySortDepth(ty, TILE_PX, TIE_OMBRE), 1, 0xffffff)
@@ -574,7 +588,7 @@ export class EtageLayer {
           }
         }
         // ⑦ LES LICHENS — là où le ciel n'entre jamais, et là seulement.
-        if (!estGueule && this.cielDe(tx, ty) === 0) {
+        if (!estGueule && !eau && this.cielDe(tx, ty) === 0) {
           const hl = hash2(tx, ty, SEL_LUEUR)
           if (hl < LUEUR_PART) {
             const variant = Math.floor((hl / LUEUR_PART) * VARIANTES_LUEUR) % VARIANTES_LUEUR

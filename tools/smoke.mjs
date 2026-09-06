@@ -868,9 +868,9 @@ const SCENARIOS = {
       const veil = sc.children.list.find((o) => o.type === 'RenderTexture' && o.depth > 2_000_000 && o.depth < 2_100_000)
       return {
         y: Math.round((me?.y ?? 0) * 100) / 100, etage: me?.etage ?? 0,
-        // La cave vit UN palier sous la mesa qui la coiffe : sous une mesa posée au palier 2,
-        // c'est le niveau 1 — l'attendu se LIT sur le relief, il ne s'écrit pas « -1 ».
-        etageAttendu: sc.relief.palier(294, 100) - 1,
+        // La cave vit à `−(p + 1)` sous une mesa posée au palier `p` (grottes.md G-R1,
+        // 2026-09-06) : l'attendu se LIT sur le relief, il ne s'écrit pas « -1 ».
+        etageAttendu: -(sc.relief.palier(294, 100) + 1),
         etageJoueur: sc.etageJoueur, souterrain: sc.etages?.souterrain ?? null,
         tuilesDeCaveVisibles: familles.sol ?? 0,
         familles,
@@ -963,6 +963,334 @@ const SCENARIOS = {
     console.log(fond.souterrain && fond.etage === fond.etageAttendu
       ? `   ✓ on est DANS la cave (étage ${fond.etage}), ${fond.tuilesDeCaveVisibles} tuiles peintes`
       : `   ✗ on n'est pas entré (étage ${fond.etage}, attendu ${fond.etageAttendu}, souterrain ${fond.souterrain})`)
+  },
+
+  /**
+   * ═══ LA GROTTE DE TERRASSE (spec `grottes.md` G-A13, 2026-09-06) — quatre cadrages ═══
+   *
+   * Le karst se CHERCHE sur la carte jouée (`map.zones`, `kind: 'grotte'` à un étage négatif) :
+   * le plus proche du joueur, calcaire de préférence — c'est la nappe (G-R4) qu'on veut voir
+   * sous la torche. Rien n'est écrit pour une graine.
+   *
+   *  ⓪ le palier devant la gueule : la FENTE dans la paroi et la TRACE d'eau à son pied ;
+   *  ① le vestibule, de jour — le jour entre par la gueule ;
+   *  ② le fond — noir, la forme seule ;
+   *  ③ la torche sur l'eau.
+   *
+   * Le TP de debug porte un `etage` (G-A13) : en headless une image dure ~800 ms, et marcher
+   * vingt tuiles de boyau jusqu'au fond n'est pas une mesure. On MARCHE l'entrée (le seuil se
+   * juge en marchant, comme `cave`), on se TÉLÉPORTE au fond. `--dev` obligatoire.
+   */
+  async grotte(page) {
+    if (!dev) { console.error('!! grotte exige --dev'); return }
+    const agirG = async (a, ms) => {
+      await page.evaluate((x) => window.__BRAISES__.scene.sendAction(x), a)
+      await page.waitForTimeout(ms)
+    }
+    const stabiliser = async (nom) => {
+      await page.evaluate(() => window.__BRAISES__.scene.game.loop.sleep())
+      const bouge = await page.evaluate(() => {
+        const sc = window.__BRAISES__.scene
+        let avant = sc.playerSprite.y
+        let d = 99
+        for (let k = 0; k < 400; k++) {
+          sc.game.step(k * 16, 16)
+          d = Math.abs(sc.playerSprite.y - avant)
+          avant = sc.playerSprite.y
+          if (k > 4 && d < 0.05) break
+        }
+        return { d: Math.round(d * 1000) / 1000, ok: d < 0.05 }
+      })
+      if (!bouge.ok) console.error(`!! ${nom} : sprite non stabilisé (${bouge.d})`)
+    }
+    // Le karst élu, et sa géométrie — tout vient de la donnée, rien du dessin.
+    const karst = await page.evaluate(() => {
+      const sc = window.__BRAISES__.scene
+      const m = sc.map
+      const me = (sc.lastEntities ?? []).find((e) => e.id === sc.playerId)
+      const W = m.width
+      const grottes = (m.zones ?? []).filter((z) => z.kind === 'grotte' && (z.etage ?? 0) < 0 && z.tuiles)
+      if (grottes.length === 0) return null
+      const decrire = (z) => {
+        const e = (m.etages ?? []).find((q) => q.niveau === z.etage)
+        const terr = new Map()
+        if (e) for (let i = 0; i < e.idx.length; i++) terr.set(e.idx[i], e.terrain[i])
+        let profond = 0, peuProfond = 0
+        for (const t of z.tuiles) { const v = terr.get(t); if (v === 6) profond++; else if (v === 4) peuProfond++ }
+        const gx = z.x, gy = z.y
+        const palier = -z.etage - 1
+        // Le fond : la tuile marchable la plus loin de la gueule (en tuiles, à vol d'oiseau).
+        let fond = null, dFond = -1
+        // Le bord de l'eau : une tuile marchable (sèche ou peu profonde) contiguë au PROFOND,
+        // à défaut au peu profond — là où la torche se penche sur la nappe.
+        let bord = null, bordProfond = false
+        const voisins = (t) => [t - 1, t + 1, t - W, t + W]
+        for (const t of z.tuiles) {
+          const v = terr.get(t)
+          if (v === 6 || v === 0 || v === undefined) continue
+          const tx = t % W, ty = (t - tx) / W
+          const d = Math.abs(tx - (gx + 1)) + Math.abs(ty - gy)
+          if (d > dFond) { dFond = d; fond = { tx, ty } }
+          for (const n of voisins(t)) {
+            const w = terr.get(n)
+            if (w === 6 && !bordProfond) { bord = { tx, ty, eau: { tx: n % W, ty: (n - (n % W)) / W } }; bordProfond = true }
+            else if (w === 4 && v !== 4 && bord === null) bord = { tx, ty, eau: { tx: n % W, ty: (n - (n % W)) / W } }
+          }
+        }
+        // La trace au pied de la gueule, sur LA CARTE (G-R9) : les tuiles d'eau peu profonde
+        // dans un rayon de 4 sous la gueule, et leurs voisines sèches — la paire qu'on contraste.
+        const trace = [], sec = []
+        for (let dy = 0; dy <= 5; dy++) for (let dx = -4; dx <= 5; dx++) {
+          const tx = gx + dx, ty = gy + dy
+          const v = m.terrain[ty * W + tx]
+          if (v === 4) trace.push([tx, ty]); else if (v !== 6 && v !== 0 && dy >= 1) sec.push([tx, ty])
+        }
+        // Le bivouac (G-R7) : une tuile SÈCHE de la salle contre le fond — le feu s'y pose, le
+        // joueur reste au fond (« pas sous ses pieds »).
+        let bivouac = null
+        if (fond) {
+          const tuiles = new Set(z.tuiles)
+          for (const [dx, dy] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
+            const t = (fond.ty + dy) * W + fond.tx + dx
+            const v = terr.get(t)
+            if (tuiles.has(t) && v !== undefined && v !== 6 && v !== 4 && v !== 0) { bivouac = { tx: fond.tx + dx, ty: fond.ty + dy }; break }
+          }
+        }
+        return {
+          nom: z.name, gx, gy, etage: z.etage, palier, tuiles: z.tuiles.length, profond, peuProfond,
+          fond, dFond, bord, bivouac, trace: trace.slice(0, 12), sec: sec.slice(0, 12),
+          dJoueur: me ? Math.round(Math.hypot(me.x - gx, me.y - gy)) : null,
+        }
+      }
+      const tous = grottes.map(decrire)
+      // Calcaire (une nappe) d'abord, puis le plus proche.
+      tous.sort((a, b) => (b.profond > 0) - (a.profond > 0) || (a.dJoueur ?? 1e9) - (b.dJoueur ?? 1e9))
+      return { elu: tous[0], n: tous.length, calcaires: tous.filter((k) => k.profond > 0).length }
+    })
+    if (!karst) { console.error('!! grotte : aucun karst sur cette carte (map.zones sans kind « grotte » à étage négatif)'); return }
+    const k = karst.elu
+    console.log(`   → ${karst.n} grottes de terrasse (${karst.calcaires} calcaires) ; élue : ${k.nom} — gueule (${k.gx},${k.gy}) palier ${k.palier} → étage ${k.etage}, ${k.tuiles} tuiles (${k.profond} profondes, ${k.peuProfond} peu profondes), fond à ${k.dFond} t, trace ${k.trace.length} t`)
+
+    const releve = async () => page.evaluate(() => {
+      const sc = window.__BRAISES__.scene
+      const me = (sc.lastEntities ?? []).find((e) => e.id === sc.playerId)
+      const cave = (sc.etages?.cave ?? []).filter((im) => im.visible)
+      const familles = {}
+      for (const im of cave) {
+        const f = String(im.texture?.key ?? '?').split('-')[1] ?? '?'
+        familles[f] = (familles[f] ?? 0) + 1
+      }
+      // L'eau de la salle : les tuiles `cv-eau-…` posées — la nappe est peinte (G-R4).
+      const eau = cave.filter((im) => String(im.texture?.key ?? '').startsWith('cv-eau')).length
+      return {
+        x: Math.round((me?.x ?? 0) * 100) / 100, y: Math.round((me?.y ?? 0) * 100) / 100, etage: me?.etage ?? 0,
+        souterrain: sc.etages?.souterrain ?? null, familles, eau,
+        ciel: Math.round((sc.etages?.lumiere?.ciel ?? -1) * 100) / 100,
+        torche: sc.etages?.lumiere?.torche ? Math.round(sc.etages.lumiere.torche.force * 100) / 100 : null,
+      }
+    })
+    // LA LUMINANCE D'UN POINT DU MONDE, EN COORDONNÉES D'ÉCRAN-MONDE (x en tuiles, y en RANGÉES
+    // DESSINÉES — le lift déjà retranché) : projection de la vue caméra sur un snapshot du
+    // renderer, comme `feeling` le fait pour le gué. Moyenne de 3 captures.
+    // ⚠ BOUCLE ENDORMIE (`stabiliser`) : un `renderer.snapshot` ne se résout qu'à la prochaine
+    // image rendue — sans `game.step` à la main, il attend pour toujours (10 min perdues le
+    // 2026-09-06). On demande la capture PUIS on avance une image.
+    const luminances = async (points) => page.evaluate(async (pts) => {
+      const sc = window.__BRAISES__.scene
+      const cam = sc.cameras.main
+      const shots = []
+      for (let k = 0; k < 3; k++) {
+        shots.push(await new Promise((ok) => {
+          sc.game.renderer.snapshot((img) => ok(img))
+          sc.game.step(1e6 + k * 16, 16)
+        }))
+      }
+      const cv = document.createElement('canvas')
+      cv.width = shots[0].width; cv.height = shots[0].height
+      const ctx = cv.getContext('2d', { willReadFrequently: true })
+      for (let k = 0; k < 3; k++) { ctx.globalAlpha = 1 / (k + 1); ctx.drawImage(shots[k], 0, 0) }
+      ctx.globalAlpha = 1
+      return pts.map(([x, y]) => {
+        const fx = (x * 16 - cam.worldView.x) / cam.worldView.width
+        const fy = (y * 16 - cam.worldView.y) / cam.worldView.height
+        if (fx < 0 || fx > 1 || fy < 0 || fy > 1) return null
+        const px = ctx.getImageData(Math.round(fx * shots[0].width), Math.round(fy * shots[0].height), 1, 1).data
+        return Math.round(0.2126 * px[0] + 0.7152 * px[1] + 0.0722 * px[2])
+      })
+    }, points)
+    const moyenne = (xs) => { const v = xs.filter((q) => q !== null); return v.length ? Math.round(v.reduce((a, b) => a + b, 0) / v.length) : null }
+
+    await agirG({ type: 'debug_set_hour', hour: 12 }, 1500)
+    // ⚠ `on: true` — sans lui, `debug_god` ÉTEINT l'invulnérabilité (le handler lit `action.on`).
+    // Le sanglier du fond a encorné la première prise, capture d'un écran de mort à l'appui.
+    await agirG({ type: 'debug_god', on: true }, 400)
+
+    // ⓪ LE PALIER DEVANT LA GUEULE — la fente et la trace.
+    // À deux tuiles et demie du seuil, PAS plus : la terrasse `p` devant la gueule peut n'avoir
+    // que trois rangées avant la marche du dessous (vu graine du monde joué : la Grotte VI, à
+    // 4,5 rangées on était déjà au palier 0).
+    await agirG({ type: 'debug_teleport', x: k.gx + 1, y: k.gy + 2.5 }, 2200)
+    await stabiliser('palier')
+    const palier = await releve()
+    console.log(`   → palier : ${JSON.stringify(palier)}`)
+    // La fente : les deux rangées de PAROI au-dessus du pied de la gueule, dessinées au lift du
+    // palier `p` ; la paroi témoin : les mêmes rangées, quatre tuiles à l'ouest et à l'est.
+    const lift = k.palier * 2
+    // Le TROU de l'image (32 px de large, l'ouverture court de x=3 à 29 sur sa rangée basse et de
+    // 8 à 24 au milieu) : trois colonnes au cœur de la paire, deux hauteurs — jamais les lèvres.
+    const rangees = [k.gy - lift - 1.2, k.gy - lift - 0.5]
+    const fente = await luminances(rangees.flatMap((r) => [[k.gx + 0.7, r], [k.gx + 1, r], [k.gx + 1.3, r]]))
+    const paroi = await luminances(rangees.flatMap((r) => [[k.gx - 3.5, r], [k.gx + 5.5, r]]))
+    const trace = await luminances(k.trace.map(([tx, ty]) => [tx + 0.5, ty + 0.5 - lift]))
+    const sec = await luminances(k.sec.map(([tx, ty]) => [tx + 0.5, ty + 0.5 - lift]))
+    await page.screenshot({ timeout: 120000, path: `${OUT}/grotte-0-palier.png` })
+    await page.evaluate(() => window.__BRAISES__.scene.game.loop.wake())
+    await page.waitForTimeout(300)
+    const lFente = moyenne(fente), lParoi = moyenne(paroi), lTrace = moyenne(trace), lSec = moyenne(sec)
+    console.log(`   → fente ${lFente} vs paroi ${lParoi} (Δ ${lFente !== null && lParoi !== null ? lParoi - lFente : '?'}) ; trace ${lTrace} vs sol ${lSec} (n=${trace.filter(Boolean).length}/${sec.filter(Boolean).length})`)
+
+    // ① LE VESTIBULE, DE JOUR — on ENTRE en marchant, par la gueule (le seuil se juge ainsi).
+    const marcherNord = async (jusquA, maxMs) => {
+      const t0 = Date.now()
+      await page.keyboard.down('KeyW')
+      while (Date.now() - t0 < maxMs) {
+        await page.waitForTimeout(150)
+        const r = await releve()
+        if (r.y > 0 && r.y <= jusquA) break
+      }
+      await page.keyboard.up('KeyW')
+      await page.waitForTimeout(600)
+    }
+    await agirG({ type: 'debug_teleport', x: k.gx + 1, y: k.gy + 1.4 }, 2000)
+    await marcherNord(k.gy - 0.2, 8000)
+    const seuil = await releve()
+    console.log(`   → seuil franchi à pied : ${JSON.stringify({ y: seuil.y, etage: seuil.etage, souterrain: seuil.souterrain })}`)
+    // Le cadrage du vestibule se fait À TROIS RANGÉES du seuil (dans `VESTIBULE_RANGEES` et
+    // `CIEL_PENETRATION`) : une image marchée en headless dure 800 ms, la marche ne s'arrête pas
+    // où on le lui dit (12 rangées de trop à la première prise) — on se pose par TP à l'étage.
+    await agirG({ type: 'debug_teleport', x: k.gx + 1, y: k.gy - 2.5, etage: k.etage }, 2000)
+    await stabiliser('vestibule')
+    const vestibule = await releve()
+    // La nappe de jour : le sol des trois rangées derrière le seuil, contre le sol du fond.
+    const autour = (cx, cy) => [[-1, 0], [1, 0], [0, -1], [0, 1], [-1, -1], [1, 1]].map(([dx, dy]) => [cx + dx, cy + dy - lift])
+    const lVestibule = moyenne(await luminances(autour(k.gx + 1, k.gy - 2.5)))
+    console.log(`   → vestibule : ${JSON.stringify(vestibule)}`)
+    await page.screenshot({ timeout: 120000, path: `${OUT}/grotte-1-vestibule.png` })
+    await page.evaluate(() => window.__BRAISES__.scene.game.loop.wake())
+    await page.waitForTimeout(300)
+
+    // ② LE FOND — noir, la forme seule. Téléporté À L'ÉTAGE (le TP porte `etage`).
+    await agirG({ type: 'debug_teleport', x: k.fond.tx + 0.5, y: k.fond.ty + 0.5, etage: k.etage }, 2200)
+    await stabiliser('fond')
+    const fond = await releve()
+    const lFond = moyenne(await luminances(autour(k.fond.tx + 0.5, k.fond.ty + 0.5)))
+    console.log(`   → fond : ${JSON.stringify(fond)} ; sol du fond ${lFond} vs vestibule ${lVestibule}`)
+    await page.screenshot({ timeout: 120000, path: `${OUT}/grotte-2-fond.png` })
+    await page.evaluate(() => window.__BRAISES__.scene.game.loop.wake())
+    await page.waitForTimeout(300)
+
+    // ③ LA TORCHE SUR L'EAU — au bord de la nappe, sans puis avec la torche : la même tuile
+    //    d'eau, deux luminances. C'est « noire dans le noir, révélée par la torche » mesuré.
+    let eauSansTorche = null, eauAvecTorche = null
+    if (k.bord) {
+      const pEau = [[k.bord.eau.tx + 0.5, k.bord.eau.ty + 0.5 - lift]]
+      await agirG({ type: 'debug_teleport', x: k.bord.tx + 0.5, y: k.bord.ty + 0.5, etage: k.etage }, 2200)
+      await stabiliser('bord')
+      eauSansTorche = (await luminances(pEau))[0]
+      await page.evaluate(() => window.__BRAISES__.scene.game.loop.wake())
+      await agirG({ type: 'debug_grant', item: 'torche_vive', count: 1 }, 800)
+      await page.evaluate(() => {
+        const sc = window.__BRAISES__.scene
+        const me = (sc.lastEntities ?? []).find((e) => e.id === sc.playerId)
+        const i = (me?.inventory ?? []).findIndex((sl) => sl && sl.item === 'torche_vive')
+        if (i >= 0) sc.sendAction({ type: 'set_active_slot', slot: i })
+      })
+      await page.waitForTimeout(1500)
+      await stabiliser('torche')
+      eauAvecTorche = (await luminances(pEau))[0]
+      const torche = await releve()
+      console.log(`   → torche : ${JSON.stringify(torche)} ; eau ${k.bord.eau.tx},${k.bord.eau.ty} : ${eauSansTorche} → ${eauAvecTorche}`)
+      await page.screenshot({ timeout: 120000, path: `${OUT}/grotte-3-torche.png` })
+      await page.evaluate(() => window.__BRAISES__.scene.game.loop.wake())
+      await page.waitForTimeout(300)
+    } else console.log('   → pas de nappe dans ce karst (roche sèche) : pas de cadrage torche-sur-l’eau')
+
+    // ④ LE BIVOUAC (G-R7) — un feu de camp posé au fond de la salle, DE NUIT (à midi, la lueur
+    //    d'un feu est ∝ nuit et une fuite ne se verrait pas : la sonde ne pourrait pas rougir).
+    //    Dedans : le sol autour du feu s'éclaire (le voile de la cave se perce, avant/après).
+    //    Dehors, à l'APLOMB du feu sur la terrasse qui coiffe la salle : rien ne change — ni
+    //    sprite (caché), ni flamme, ni flaque, ni trou dans le voile de nuit (luminance égale).
+    let bivouac = null
+    if (k.bivouac) {
+      const b = k.bivouac
+      const liftSurface = (k.palier + 1) * 2
+      const aplomb = [[-1, 0], [1, 0], [0, 1], [-1, 1], [1, 1], [0, 2]].map(([dx, dy]) => [b.tx + 0.5 + dx, b.ty + 0.5 + dy - liftSurface])
+      // Le feu de camp EN MAIN dès maintenant : la torche de ③ s'éteint, et les deux relevés
+      // de l'aplomb se font sans torche ET à la même heure (la nuit bouge avec la lune : sans
+      // recaler l'heure, +16 de luminance étaient le ciel, pas le feu — 1re prise).
+      await agirG({ type: 'debug_grant', item: 'campfire', count: 1 }, 800)
+      await page.evaluate(() => {
+        const sc = window.__BRAISES__.scene
+        const me = (sc.lastEntities ?? []).find((e) => e.id === sc.playerId)
+        const i = (me?.inventory ?? []).findIndex((sl) => sl && sl.item === 'campfire')
+        if (i >= 0) sc.sendAction({ type: 'set_active_slot', slot: i })
+      })
+      await page.waitForTimeout(800)
+      await agirG({ type: 'debug_teleport', x: b.tx + 0.5, y: b.ty + 0.5 }, 2200)
+      await agirG({ type: 'debug_set_hour', hour: 23 }, 1500)
+      await stabiliser('aplomb-avant')
+      const dehorsAvant = await releve()
+      const lDehorsAvant = moyenne(await luminances(aplomb))
+      await page.evaluate(() => window.__BRAISES__.scene.game.loop.wake())
+      await agirG({ type: 'debug_teleport', x: k.fond.tx + 0.5, y: k.fond.ty + 0.5, etage: k.etage }, 2200)
+      await stabiliser('bivouac-avant')
+      const lDedansAvant = moyenne(await luminances(autour(b.tx + 0.5, b.ty + 0.5)))
+      await page.evaluate(() => window.__BRAISES__.scene.game.loop.wake())
+      await agirG({ type: 'place_campfire', tx: b.tx, ty: b.ty }, 2000)
+      await stabiliser('bivouac')
+      const feu = await page.evaluate(() => {
+        const sc = window.__BRAISES__.scene
+        const f = (sc.view.structures ?? []).find((s) => s.type === 'fire' && (s.etage ?? 0) < 0)
+        return f ? { id: f.id, etage: f.etage, visible: sc.view.structureSprites?.get(f.id)?.visible ?? null, feux: sc.etages?.lumiere?.feux?.length ?? null } : null
+      })
+      const lDedansApres = moyenne(await luminances(autour(b.tx + 0.5, b.ty + 0.5)))
+      console.log(`   → bivouac (${b.tx},${b.ty}) : ${JSON.stringify(feu)} ; sol autour ${lDedansAvant} → ${lDedansApres}`)
+      await page.screenshot({ timeout: 120000, path: `${OUT}/grotte-4-bivouac.png` })
+      await page.screenshot({ timeout: 120000, path: `${OUT}/grotte-4-bivouac-zoom.png`, clip: { x: 520, y: 260, width: 320, height: 300 } })
+      await page.evaluate(() => window.__BRAISES__.scene.game.loop.wake())
+      await agirG({ type: 'debug_teleport', x: b.tx + 0.5, y: b.ty + 0.5 }, 2200)
+      await agirG({ type: 'debug_set_hour', hour: 23 }, 1500)
+      await stabiliser('aplomb-apres')
+      const dehorsApres = await releve()
+      const lDehorsApres = moyenne(await luminances(aplomb))
+      const dehorsSprite = await page.evaluate((id) => window.__BRAISES__.scene.view.structureSprites?.get(id)?.visible ?? null, feu?.id ?? -1)
+      console.log(`   → aplomb : ${JSON.stringify({ avant: dehorsAvant, apres: dehorsApres })} ; sol ${lDehorsAvant} → ${lDehorsApres} ; sprite du feu visible : ${dehorsSprite}`)
+      await page.screenshot({ timeout: 120000, path: `${OUT}/grotte-5-aplomb.png` })
+      await page.evaluate(() => window.__BRAISES__.scene.game.loop.wake())
+      await page.waitForTimeout(300)
+      bivouac = { feu, lDedansAvant, lDedansApres, lDehorsAvant, lDehorsApres, dehorsAvant, dehorsApres, dehorsSprite }
+    } else console.log('   → pas de tuile sèche contre le fond : pas de cadrage bivouac')
+
+    const dedans = seuil.souterrain && seuil.etage === k.etage && vestibule.souterrain && vestibule.etage === k.etage
+    console.log(dedans
+      ? `   ✓ entré par la gueule à pied (étage ${seuil.etage}), ${vestibule.familles.sol ?? 0} tuiles de salle, ${vestibule.eau} d'eau`
+      : `   ✗ pas entré (seuil : étage ${seuil.etage}, souterrain ${seuil.souterrain} ; attendu ${k.etage})`)
+    // « Le fond : noir, la forme seule » — le sol du fond sous 24 de luminance, et plus sombre
+    // que le vestibule de jour (la nappe entre par la gueule, pas jusqu'au fond).
+    if (lFond !== null && lVestibule !== null) console.log(lFond <= 24 && lFond < lVestibule ? `   ✓ le fond est noir (${lFond} ≤ 24, vestibule ${lVestibule})` : `   ✗ le fond n'est pas noir (${lFond}, vestibule ${lVestibule})`)
+    if (lFente !== null && lParoi !== null) console.log(lParoi - lFente >= 20 ? `   ✓ la fente se lit (Δ ${lParoi - lFente} ≥ 20)` : `   ✗ la fente ne se détache pas de la paroi (Δ ${lParoi - lFente})`)
+    if (k.profond > 0 && eauSansTorche !== null && eauAvecTorche !== null) console.log(eauAvecTorche > eauSansTorche + 5 ? `   ✓ la torche révèle l'eau (${eauSansTorche} → ${eauAvecTorche})` : `   ✗ la torche ne révèle pas l'eau (${eauSansTorche} → ${eauAvecTorche})`)
+    if (bivouac) {
+      const { feu, lDedansAvant, lDedansApres, lDehorsAvant, lDehorsApres, dehorsAvant, dehorsApres, dehorsSprite } = bivouac
+      console.log(feu && feu.etage === k.etage ? `   ✓ le feu de camp est posé sous la roche (étage ${feu.etage}, ${feu.feux} feu(x) dans la lumière de la cave)` : `   ✗ pas de feu sous la roche (${JSON.stringify(feu)})`)
+      if (lDedansAvant !== null && lDedansApres !== null) console.log(lDedansApres >= lDedansAvant + 10 ? `   ✓ le bivouac éclaire la salle (${lDedansAvant} → ${lDedansApres})` : `   ✗ le bivouac n'éclaire pas la salle (${lDedansAvant} → ${lDedansApres})`)
+      const dehors = dehorsAvant.souterrain === false && dehorsApres.souterrain === false
+      if (!dehors) console.log(`   ✗ l'aplomb n'est pas à la surface (souterrain ${dehorsAvant.souterrain} / ${dehorsApres.souterrain}) — le cadrage dehors ne juge rien`)
+      else {
+        console.log(dehorsSprite === false ? `   ✓ le feu n'existe pas pour la terrasse (sprite caché)` : `   ✗ le feu se voit depuis la terrasse (sprite visible : ${dehorsSprite})`)
+        if (lDehorsAvant !== null && lDehorsApres !== null) console.log(Math.abs(lDehorsApres - lDehorsAvant) <= 3 ? `   ✓ ni flamme ni flaque à l'aplomb (sol ${lDehorsAvant} → ${lDehorsApres})` : `   ✗ le feu fuit à la surface (sol ${lDehorsAvant} → ${lDehorsApres})`)
+      }
+    }
   },
 
   async mesa(page) {

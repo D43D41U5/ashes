@@ -30,8 +30,11 @@ import type { WorldMap } from './map'
 import { desiredOrders } from './village-plan'
 
 export type DebugAction =
-  /** Poser l'avatar sur une tuile, sans se soucier des obstacles ni de la distance. */
-  | { type: 'debug_teleport'; x: number; y: number }
+  /** Poser l'avatar sur une tuile, sans se soucier des obstacles ni de la distance. `etage` :
+   *  viser un étage PRÉCIS qui porte un sol à cette tuile — un souterrain, que le TP ne
+   *  choisirait jamais seul (spec `grottes.md` G-A13 : le fond d'un karst se photographie, il
+   *  ne se marche pas en headless). Absent ou sans sol là : l'étage d'atterrissage. */
+  | { type: 'debug_teleport'; x: number; y: number; etage?: number }
   /** Forcer l'heure murale du cycle (0-24) — décale la PHASE, jamais le calendrier. */
   | { type: 'debug_set_hour'; hour: number }
   /**
@@ -180,7 +183,10 @@ export function applyDebugAction(state: SimState, entityId: number, action: Debu
     // c'est DANS la roche (toutes ses tuiles bloquées, figé sans un mot : vu au smoke `mesa`,
     // le 2026-09-04). On vise donc le sol de la tuile s'il en porte un, sinon le plus haut
     // étage qui en porte — ce qu'on VOIT à cette tuile.
-    poserLEtageDuCorps(state.map, entity, etageDAtterrissage(state.map, Math.floor(entity.x), Math.floor(entity.y)))
+    const tx = Math.floor(entity.x)
+    const ty = Math.floor(entity.y)
+    const vise = action.etage !== undefined && marchableAEtage(state.map, action.etage, tx, ty) ? action.etage : etageDAtterrissage(state.map, tx, ty)
+    poserLEtageDuCorps(state.map, entity, vise)
   } else if (action.type === 'debug_set_hour') {
     // hourOfCycle dérive de (tick + cycleOffset) : pour viser une heure sans
     // toucher au tick (qui porte le calendrier, les cooldowns, les wind-ups),
