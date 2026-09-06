@@ -26,7 +26,8 @@
  * zone (positionnel et salé), comme tout le worldgen. Même seed → mêmes murs, à la tuile près.
  */
 import { hash2 } from './noise'
-import { isBlockingTile } from './map'
+import { isBlockingTile, isWater } from './map'
+import { fondDuLieu, terrainAEtage } from './etages'
 import { NODE_DEFS, type NodeType } from './balance'
 import { STRUCTURE_TYPES, piece } from './pieces'
 import type { StructureType } from './items'
@@ -34,7 +35,7 @@ import type { SimState } from './sim'
 import { addStructure } from './village'
 import { SORT_DES_LIEUX, type SortDuLieu, sortDuLieu, usureSelonSort } from './sort-des-lieux'
 import type { Plan } from './plan-format'
-import { PLANS } from './plans-batis.genere'
+import { PLANS, VIGNETTES } from './plans-batis.genere'
 
 /**
  * LE TYPE `Plan` ET SA GRAMMAIRE vivent dans `plan-format.ts` (spec `atelier-plans.md`) :
@@ -159,6 +160,9 @@ export function verifierPlans(footprintDe: (kind: string) => number | undefined)
  */
 export function verifierPlan(kind: string, plan: Plan, fp: number | undefined): string[] {
   const fautes: string[] = []
+  // UN LIEU N'A PAS D'ANCRE : l'ancre est le mot des vignettes (G-R6), et un plan ancré posé
+  // comme un lieu ignorerait sa clé en silence — la faute le dit.
+  if (plan.ancre !== undefined) fautes.push(`${kind} : « ancre » — un lieu n'a pas d'ancre (c'est une vignette : plans/vignettes/)`)
   {
     const n = plan.grille.length
     if (fp !== undefined && fp !== n) fautes.push(`${kind} : plan ${n}×${n}, empreinte ${fp}`)
@@ -270,7 +274,7 @@ function tournerTriplet(k: string, quart: number, n: number): string {
   return `${x},${y},${dir}`
 }
 
-function rotate(plan: readonly string[], n: number): string[] {
+export function rotate(plan: readonly string[], n: number): string[] {
   let g = plan.map((row) => row.split(''))
   for (let k = 0; k < n; k++) {
     const size = g.length
@@ -317,7 +321,7 @@ const DIRS: readonly [string, number, number, number, number][] = [
  *
  * L'ordre de parcours est celui de `map.zones`, donc celui de `placePois`, donc déterministe.
  */
-export function buildPoiStructures(state: SimState, seed: number): void {
+export function buildPoiStructures(state: SimState, seed: number): RapportDeVignettes {
   const map = state.map
   for (const z of map.zones) {
     if (z.kind === undefined) continue
@@ -336,6 +340,8 @@ export function buildPoiStructures(state: SimState, seed: number): void {
 
     batirLieu(state, plan, z.x, z.y, sort, quart)
   }
+  // LES GROTTES N'ONT PAS DE PLAN : elles se meublent (G-R6), après les lieux, et le rapport remonte.
+  return meublerLesGrottes(state, seed)
 }
 
 /** Jusqu'où la gueule regarde pour juger son souffle. Réglage worldgen (se calibre en
@@ -518,4 +524,281 @@ function semer(state: SimState, type: NodeType, tx: number, ty: number, sort: So
 function poser(state: SimState, type: StructureType, tx: number, ty: number, usure: number): void {
   const s = addStructure(state, type, tx, ty, 0, 0, 'public')
   if (USURABLE.has(type)) s.hp = Math.max(1, Math.floor(s.hp * usure))
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════════════════
+// L'AMEUBLEMENT DES GROTTES — DES VIGNETTES ANCRÉES (spec `grottes.md` G-R6, G-A8)
+// ═══════════════════════════════════════════════════════════════════════════════════════════
+//
+// Une Grotte n'a pas de plan : sa forme vient du karst (`zonegen-karst.ts`), salle par salle.
+// Ce qui la MEUBLE est une composition de vignettes — de petits `.plan` (3×3 à 5×5) SANS
+// région (aucun mur dérivé : rien ne clôt, G-R7), chacun portant une ANCRE qui dit où il a un
+// sens : contre la paroi, au bord de l'eau, au centre de la salle, ou contre une porte. Par
+// salle, 2 à 4 vignettes élues au hachage positionnel parmi celles dont l'ancre est disponible ;
+// chacune se pose là où elle tient À 100 % sur du creusé sec et libre — ou ne se pose pas.
+// L'intention ne se rogne jamais, et ce qui n'a pas trouvé sa place se COMPTE (G-A8).
+
+/** Une vignette posée : où, laquelle, tournée de combien — ce que la garde et le smoke relisent. */
+export interface PoseDeVignette {
+  /** L'index de la zone `grotte` dans `map.zones`, et celui de la salle dans `Zone.salles`. */
+  zone: number
+  salle: number
+  nom: string
+  /** Le coin haut-gauche de l'empreinte, et le quart de tour appliqué. */
+  x: number
+  y: number
+  quart: number
+}
+
+/** Ce que la passe rapporte — le compte des vignettes sans place n'est pas caché (G-A8). */
+export interface RapportDeVignettes {
+  /** Les salles parcourues (toutes les salles de toutes les Grottes). */
+  salles: number
+  /** Les vignettes ÉLUES puis posées. */
+  posees: PoseDeVignette[]
+  /** Les vignettes élues qui n'ont trouvé aucune place : rapportées, jamais rognées. */
+  nonPosees: { zone: number; salle: number; nom: string }[]
+}
+
+/** Les vignettes habitent « packages/sim/src/plans/vignettes/<nom>.plan » (même compilateur). */
+export { VIGNETTES }
+
+/** Le côté d'une vignette : de 3 à 5 tuiles — assez pour composer, jamais une salle entière. */
+const VIGNETTE_COTE = { MIN: 3, MAX: 5 }
+
+/** De 2 à 4 vignettes par salle (G-R6). */
+const VIGNETTES_PAR_SALLE = { MIN: 2, MAX: 4 }
+
+/** Le sel de l'élection et de la pose — positionnel, jamais le PRNG partagé. */
+const SEL_VIGNETTE = 0x56494e47 // 'VING'
+
+/**
+ * LA GARDE D'UNE VIGNETTE — au compilateur (`pnpm plans`) et dans la suite, la même loi.
+ *
+ * Carrée, petite, ANCRÉE, et hors région : un `.` ou un `r` y dériverait un mur ou un dallage
+ * que le poseur des Grottes ne sait pas poser — une vignette n'a pas de pourtour. Ses pièces
+ * sont celles du bivouac (`sousRoche`, G-R7) et son seul nœud est la fouille (`rubble`) : la
+ * pierre du karst se sème ailleurs (`pierreDuKarst`), et rien de vivant ne pousse sous la roche.
+ */
+export function verifierVignette(nom: string, plan: Plan): string[] {
+  const fautes: string[] = []
+  const n = plan.grille.length
+  if (n < VIGNETTE_COTE.MIN || n > VIGNETTE_COTE.MAX) fautes.push(`${nom} : ${n} rangées — une vignette fait de ${VIGNETTE_COTE.MIN} à ${VIGNETTE_COTE.MAX} de côté`)
+  if (plan.ancre === undefined) fautes.push(`${nom} : sans « ancre » — une vignette dit où elle a un sens (eau, paroi, centre, porte)`)
+  for (const cle of ['breches', 'seuils', 'passages'] as const) {
+    if (plan[cle]?.length) fautes.push(`${nom} : « ${cle} » — une vignette n'a pas de contour`)
+  }
+  let contenu = 0
+  for (const [i, row] of plan.grille.entries()) {
+    if (row.length !== n) fautes.push(`${nom} : rangée ${i} fait ${row.length} caractères, pas ${n}`)
+    for (const [j, c] of [...row].entries()) {
+      if (c === '·') continue
+      const cas = LEGENDE[c]
+      if (c === '#' || cas === undefined) { fautes.push(`${nom} : caractère inconnu « ${c} » en (${j},${i})`); continue }
+      if (cas.region !== undefined) fautes.push(`${nom} : « ${c} » en (${j},${i}) est une région (${cas.region}) — une vignette n'en a pas`)
+      if (cas.piece !== undefined && !piece(cas.piece).sousRoche) fautes.push(`${nom} : « ${c} » (${cas.piece}) ne se pose pas sous la roche (G-R7)`)
+      if (cas.noeud !== undefined && cas.noeud !== 'rubble') fautes.push(`${nom} : « ${c} » (${cas.noeud}) — le seul nœud d'une vignette est la fouille (rubble)`)
+      contenu += 1
+    }
+  }
+  if (contenu === 0) fautes.push(`${nom} : vignette vide`)
+  return fautes
+}
+
+/**
+ * MEUBLE LES GROTTES — appelée par `buildPoiStructures`, après les lieux bâtis.
+ *
+ * Pour chaque salle de chaque Grotte (`Zone.salles`, posé par le karst), dans l'ordre de
+ * `map.zones` : on élit `2 + hash·3` vignettes parmi celles dont l'ancre est DISPONIBLE (une
+ * salle sans eau n'offre pas `eau` ; toute salle a une paroi, un centre et au moins une porte),
+ * en partant d'un rang haché ; chaque élue cherche, sur les quatre quarts de tour et toutes les
+ * positions de la salle rangées au hachage (au centre : par distance au germe), la première
+ * empreinte qui TIENT :
+ *   • à 100 % sur des tuiles de la salle, sèches, sans nœud, sans structure, sans corps ;
+ *   • à ≥ 1 tuile de toute vignette déjà posée (la circulation ENTRE elles) ;
+ *   • jamais sur une porte, et sans en isoler aucune : les portes de la salle restent reliées
+ *     entre elles par du sol libre autant qu'avant la pose (la circulation VERS chaque porte) ;
+ *   • et qui honore son ancre — `paroi` touche la roche, `eau` touche la nappe (sans y tremper),
+ *     `centre` ne touche ni l'une ni l'autre, `porte` touche une porte.
+ * Une élue sans place se compte et ne se pose pas.
+ */
+export function meublerLesGrottes(state: SimState, seed: number): RapportDeVignettes {
+  const map = state.map
+  const width = map.width
+  const total = width * map.height
+  const rapport: RapportDeVignettes = { salles: 0, posees: [], nonPosees: [] }
+  const noms = Object.keys(VIGNETTES).sort()
+  if (noms.length === 0) return rapport
+  const sel = seed ^ SEL_VIGNETTE
+  for (const [iz, z] of map.zones.entries()) {
+    if (z.kind !== 'grotte' || z.etage === undefined || z.salles === undefined) continue
+    const niveau = z.etage
+    // CE QUI OCCUPE DÉJÀ L'ÉTAGE : la pierre semée par le karst, tout bâti — et LA TANIÈRE, la
+    // tuile du fond où naît la bête (`fondDuLieu`, une lecture de la carte). Jamais les corps :
+    // l'ameublement est POSITIONNEL (contrat A5/A6 de `lieux-batis.md` — la parité d'amorce
+    // solo/LAN se juge sur les structures au bit près), et un sanglier se lit dans le PRNG.
+    const occupees = new Set<number>()
+    for (const nd of state.nodes) if (nd.etage === niveau) occupees.add(nd.ty * width + nd.tx)
+    for (const s of state.structures) if (s.etage === niveau) occupees.add(s.ty * width + s.tx)
+    const taniere = fondDuLieu(map, z)
+    if (taniere >= 0) occupees.add(taniere)
+    const terrain = (i: number): number => terrainAEtage(map, niveau, i % width, (i - (i % width)) / width)
+    // Creusé = un terrain d'étage POSÉ et non nul ; un trou de grille (jamais attendu, mais la
+    // paroi l'a été un jour) est de la roche, pas du creusé.
+    const creusee = (i: number): boolean => Number.isInteger(terrain(i)) && terrain(i) !== 0
+    const voisines = (i: number): number[] => {
+      const x = i % width
+      const v: number[] = []
+      if (x > 0) v.push(i - 1)
+      if (x < width - 1) v.push(i + 1)
+      if (i >= width) v.push(i - width)
+      if (i + width < total) v.push(i + width)
+      return v
+    }
+    for (const [is, salle] of z.salles.entries()) {
+      rapport.salles += 1
+      const dans = new Set(salle.tuiles)
+      const seche = (i: number): boolean => dans.has(i) && creusee(i) && !isWater(terrain(i))
+      // LES PORTES : les tuiles de la salle qui touchent du creusé hors salle (boyau, gueule).
+      const portes = new Set(salle.tuiles.filter((i) => voisines(i).some((j) => !dans.has(j) && creusee(j))))
+      const aDeLEau = salle.tuiles.some((i) => isWater(terrain(i)))
+      const gx = salle.germe % width
+      const gy = (salle.germe - gx) / width
+      // LE SOL LIBRE — pour juger la circulation vers les portes ; les empreintes posées s'en retirent.
+      const libre = new Set(salle.tuiles.filter((i) => seche(i) && !occupees.has(i)))
+      // Les PAIRES de portes reliées par du sol libre (une porte occupée par la pierre du karst
+      // reste un départ : on en sort par ses voisines). Une pose ne doit en rompre aucune.
+      const portesReliees = (): number => {
+        const liste = [...portes]
+        let n = 0
+        for (let a = 0; a < liste.length; a++) {
+          const vu = new Set<number>([liste[a]!])
+          const pile = [liste[a]!]
+          while (pile.length) {
+            const i = pile.pop()!
+            for (const j of voisines(i)) if (libre.has(j) && !vu.has(j)) { vu.add(j); pile.push(j) }
+          }
+          for (let b = a + 1; b < liste.length; b++) if (vu.has(liste[b]!)) n += 1
+        }
+        return n
+      }
+      const reliees = portesReliees()
+      // LA COURONNE des vignettes posées : une tuile de circulation entre deux (8 voisines).
+      const couronne = new Set<number>()
+      // La boîte de la salle — les positions candidates y restent.
+      let x0 = width, y0 = map.height, x1 = 0, y1 = 0
+      for (const i of salle.tuiles) {
+        const x = i % width
+        const y = (i - x) / width
+        if (x < x0) x0 = x
+        if (x > x1) x1 = x
+        if (y < y0) y0 = y
+        if (y > y1) y1 = y
+      }
+
+      const placer = (plan: Plan, nom: string): PoseDeVignette | undefined => {
+        const n = plan.grille.length
+        const q0 = Math.min(3, Math.floor(hash2(gx + n, gy, sel + 2) * 4))
+        const candidates: { x: number; y: number; cle: number }[] = []
+        // L'EMPREINTE d'une vignette, ce sont ses CASES PLEINES — une case vide (`·`) est de la
+        // composition, pas de l'occupation : elle peut être de la roche ou de l'eau (la rive
+        // se compose autour de l'eau). D'où une boîte de candidats qui déborde de la salle de n − 1.
+        for (let y = Math.max(0, y0 - n + 1); y <= y1; y++) {
+          for (let x = Math.max(0, x0 - n + 1); x <= x1 && x + n <= width; x++) {
+            const cx = x + (n - 1) / 2
+            const cy = y + (n - 1) / 2
+            const cle = plan.ancre === 'centre'
+              ? (cx - gx) * (cx - gx) + (cy - gy) * (cy - gy) + hash2(x, y, sel) * 0.5
+              : hash2(x, y, sel)
+            candidates.push({ x, y, cle })
+          }
+        }
+        candidates.sort((a, b) => (a.cle - b.cle) || (a.y - b.y) || (a.x - b.x))
+        for (let dq = 0; dq < 4; dq++) {
+          const quart = (q0 + dq) % 4
+          const g = rotate(plan.grille, quart)
+          const pleines: number[] = []
+          for (let ry = 0; ry < n; ry++) for (let rx = 0; rx < n; rx++) if (LEGENDE[g[ry]![rx]!] !== undefined) pleines.push(ry * width + rx)
+          for (const c of candidates) {
+            const origine = c.y * width + c.x
+            const empreinte = pleines.map((d) => origine + d)
+            if (!empreinte.every((i) => libre.has(i) && !couronne.has(i) && !portes.has(i))) continue
+            // L'ANCRE — jugée sur le voisinage à 4 de l'empreinte.
+            let paroi = false, eau = false, porte = false
+            for (const i of empreinte) {
+              for (const j of voisines(i)) {
+                if (!creusee(j)) paroi = true
+                else if (isWater(terrain(j))) eau = true
+                if (portes.has(j)) porte = true
+              }
+            }
+            const ancre = plan.ancre
+            if (ancre === 'paroi' && !paroi) continue
+            if (ancre === 'eau' && !eau) continue
+            if (ancre === 'centre' && (paroi || eau)) continue
+            if (ancre === 'porte' && !porte) continue
+            // LA CIRCULATION VERS CHAQUE PORTE — on retire l'empreinte et l'on recompte.
+            for (const i of empreinte) libre.delete(i)
+            if (portes.size > 0 && portesReliees() < reliees) {
+              for (const i of empreinte) libre.add(i)
+              continue
+            }
+            // ÇA TIENT : on pose, tourné, à l'étage.
+            for (let ry = 0; ry < n; ry++) {
+              for (let rx = 0; rx < n; rx++) {
+                const cas = LEGENDE[g[ry]![rx]!]
+                if (cas === undefined) continue
+                const tx = c.x + rx
+                const ty = c.y + ry
+                if (cas.piece) {
+                  const s = addStructure(state, cas.piece, tx, ty, 0, 0, 'public', undefined, undefined, niveau)
+                  if (USURABLE.has(cas.piece)) s.hp = Math.max(1, Math.floor(s.hp * plan.usure))
+                }
+                if (cas.noeud) semerAEtage(state, cas.noeud, tx, ty, niveau)
+              }
+            }
+            for (const i of empreinte) {
+              occupees.add(i)
+              const x = i % width
+              for (let dy = -1; dy <= 1; dy++) {
+                for (let dx = -1; dx <= 1; dx++) {
+                  if (x + dx < 0 || x + dx >= width) continue
+                  const j = i + dy * width + dx
+                  if (j >= 0 && j < total) couronne.add(j)
+                }
+              }
+            }
+            return { zone: iz, salle: is, nom, x: c.x, y: c.y, quart }
+          }
+        }
+        return undefined
+      }
+
+      // L'ÉLECTION : 2 à 4, parmi les ancres disponibles, depuis un rang haché.
+      const nb = VIGNETTES_PAR_SALLE.MIN + Math.min(
+        VIGNETTES_PAR_SALLE.MAX - VIGNETTES_PAR_SALLE.MIN,
+        Math.floor(hash2(gx, gy, sel) * (VIGNETTES_PAR_SALLE.MAX - VIGNETTES_PAR_SALLE.MIN + 1)),
+      )
+      const depart = Math.min(noms.length - 1, Math.floor(hash2(gx, gy, sel + 1) * noms.length))
+      let elues = 0
+      for (let k = 0; k < noms.length && elues < nb; k++) {
+        const nom = noms[(depart + k) % noms.length]!
+        const plan = VIGNETTES[nom]!
+        if (plan.ancre === 'eau' && !aDeLEau) continue //     l'ancre n'est pas disponible : pas élue
+        if (plan.ancre === 'porte' && portes.size === 0) continue
+        elues += 1
+        const pose = placer(plan, nom)
+        if (pose) rapport.posees.push(pose)
+        else rapport.nonPosees.push({ zone: iz, salle: is, nom })
+      }
+    }
+  }
+  return rapport
+}
+
+/** Semer un nœud À L'ÉTAGE — même règle d'identifiant que `semer` (au-dessus de tous). */
+function semerAEtage(state: SimState, type: NodeType, tx: number, ty: number, etage: number): void {
+  let id = 1
+  for (const nd of state.nodes) if (nd.id >= id) id = nd.id + 1
+  state.nodes.push({ id, type, tx, ty, etage, stock: NODE_DEFS[type].stock, regrowAt: 0 })
 }

@@ -5,8 +5,9 @@
  */
 import { hash2 } from './noise'
 import { poissonPoints } from './poisson'
-import { MARCHABLE, contientLaTuile, isWater, terrainAt, isBlockingTile, type FaitDeGeneration, type WorldMap, type Zone } from './map'
-import { poserLEtageDuCorps, terrainAEtage } from './etages'
+import { isWater, terrainAt, isBlockingTile, type FaitDeGeneration, type WorldMap, type Zone } from './map'
+import { fondDuLieu, poserLEtageDuCorps } from './etages'
+export { fondDuLieu }
 import { spawnMonster } from './monsters'
 import type { SimState } from './sim'
 import { setTile } from './map'
@@ -1314,42 +1315,6 @@ function populateDen(state: SimState, zone: number, seed: number): boolean {
   return true
 }
 
-/**
- * LE FOND D'UN LIEU CREUSÉ — la tanière (spec `grottes.md` G-R3/G-R5) : la tuile sèche de
- * l'emprise la plus loin (Chebyshev) de toute gueule, la première dans l'ordre des tuiles à
- * égalité. C'est la loi de `creuserUnKarst` (le `fond` du karst), relue sur la ZONE : l'état ne
- * porte pas le karst, seulement son emprise et ses connecteurs — et une gueule est un
- * connecteur `gueule` de l'emprise qui ouvre sur cet étage. −1 si l'emprise n'a pas de sol sec.
- */
-export function fondDuLieu(map: WorldMap, z: Pick<Zone, 'etage' | 'tuiles'>): number {
-  const { etage, tuiles } = z
-  if (etage === undefined || tuiles === undefined) return -1
-  const gueules: { x: number; y: number }[] = []
-  for (const c of map.connecteurs ?? []) {
-    if (c.type !== 'gueule' || c.vers !== etage) continue
-    if (contientLaTuile(tuiles, c.y * map.width + c.x)) gueules.push({ x: c.x, y: c.y })
-  }
-  const gueuleSet = new Set(gueules.map((g) => g.y * map.width + g.x))
-  let fond = -1
-  let dFond = -1
-  for (const t of tuiles) {
-    if (gueuleSet.has(t)) continue
-    const terrain = terrainAEtage(map, etage, t % map.width, (t - (t % map.width)) / map.width)
-    if (MARCHABLE[terrain] !== 1 || isWater(terrain)) continue
-    const tx = t % map.width
-    const ty = (t - tx) / map.width
-    let d = Infinity
-    for (const g of gueules) {
-      const dd = Math.max(Math.abs(g.x - tx), Math.abs(g.y - ty))
-      if (dd < d) d = dd
-    }
-    if (d > dFond) {
-      dFond = d
-      fond = t
-    }
-  }
-  return fond
-}
 
 /**
  * LE CLAN D'UNE LOUVIÈRE (spec `loup.md` L2-L3) : 1 alpha + `FAUNA.DEN_ADULTES`

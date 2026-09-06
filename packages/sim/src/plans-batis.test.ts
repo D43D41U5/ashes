@@ -5,10 +5,12 @@
  * une seule grammaire, lue trois fois.
  */
 import { describe, expect, it } from 'vitest'
-import { BUILT_KINDS, LEGENDE, PLANS } from './poi-batis'
+import { BUILT_KINDS, LEGENDE, PLANS, VIGNETTES, verifierVignette } from './poi-batis'
 import { CLES, parserPlan, serialiserPlan } from './plan-format'
 
 const SOURCES = import.meta.glob('./plans/*.plan', { query: '?raw', import: 'default', eager: true }) as Record<string, string>
+// LES VIGNETTES DES GROTTES (spec `grottes.md` G-R6) : même grammaire, autre dossier, autre registre.
+const VIGNETTES_SRC = import.meta.glob('./plans/vignettes/*.plan', { query: '?raw', import: 'default', eager: true }) as Record<string, string>
 
 describe('plans-batis.genere', () => {
   it('est À JOUR : chaque .plan reparsé ≡ le module importé, ni plus ni moins', () => {
@@ -22,8 +24,22 @@ describe('plans-batis.genere', () => {
     expect([...BUILT_KINDS].sort()).toEqual(Object.keys(attendu).sort())
   })
 
+  it('les VIGNETTES sont à jour : chaque plans/vignettes/*.plan reparsé ≡ VIGNETTES, et chacune passe sa garde', () => {
+    expect(Object.keys(VIGNETTES_SRC).length).toBeGreaterThan(0)
+    const attendu: Record<string, unknown> = {}
+    for (const [chemin, texte] of Object.entries(VIGNETTES_SRC)) {
+      const nom = chemin.replace('./plans/vignettes/', '').replace('.plan', '')
+      const plan = parserPlan(texte)
+      expect(verifierVignette(nom, plan), nom).toEqual([])
+      attendu[nom] = plan
+    }
+    expect(VIGNETTES).toEqual(attendu)
+    // Une vignette n'est jamais un lieu, un lieu jamais une vignette : les deux registres sont disjoints.
+    for (const nom of Object.keys(attendu)) expect(PLANS[nom], nom).toBeUndefined()
+  })
+
   it('round-trip chirurgical : sérialiser sans rien changer préserve données ET prose', () => {
-    for (const [chemin, texte] of Object.entries(SOURCES)) {
+    for (const [chemin, texte] of [...Object.entries(SOURCES), ...Object.entries(VIGNETTES_SRC)]) {
       const plan = parserPlan(texte)
       const reecrit = serialiserPlan(texte, plan)
       expect(parserPlan(reecrit), chemin).toEqual(plan)
@@ -41,6 +57,10 @@ describe('parserPlan — les fautes parlent, jamais un silence', () => {
     expect(() => parserPlan('usure: 0.5\nportes: 1,1,N\ngrille:\n··\n··')).toThrowError(/clé inconnue/)
     expect(() => parserPlan('usure: 2\ngrille:\n··\n··')).toThrowError(/usure/)
     expect(() => parserPlan('usure: 0.5')).toThrowError(/grille/)
+    // L'ANCRE (grottes G-R6) : l'un des quatre mots, ou une faute — et elle survit au round-trip.
+    expect(parserPlan('usure: 1\nancre: paroi\ngrille:\n·R\n··').ancre).toBe('paroi')
+    expect(() => parserPlan('usure: 1\nancre: plafond\ngrille:\n·R\n··')).toThrowError(/ancre/)
+    expect(parserPlan(serialiserPlan('usure: 1\ngrille:\n·R\n··', { usure: 1, ancre: 'eau', grille: ['·R', '··'] })).ancre).toBe('eau')
   })
 
   it('refuse les doublons, la clé après la grille et le nombre déguisé (revue 2026-08-10)', () => {

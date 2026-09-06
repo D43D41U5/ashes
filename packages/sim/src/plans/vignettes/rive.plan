@@ -1,0 +1,11 @@
+# ═══ LA RIVE — ce que la nappe a déposé (spec `grottes.md` G-R6) ═══
+#
+# `ancre: eau` : la vignette touche la nappe du cœur (elle n'existe que dans un karst noyé — une
+# salle sans eau ne l'offre pas, G-A8). Un tonneau échoué, des éboulis lavés, et une fouille (G,
+# le nœud `rubble`) : ce que l'eau charrie finit ici.
+usure: 0.6
+ancre: eau
+grille:
+e·t
+·G·
+e··

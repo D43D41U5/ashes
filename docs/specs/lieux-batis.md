@@ -197,12 +197,25 @@ RETIRÉES ; un lieu naturel se COMPOSE, avec le vocabulaire des pièces — c'es
   caractères en légende avec thème ET aide (garde N6).
 - **C3** — la mine se bâtit : antre joignable par la gueule, trois `rubble`, déterminisme
   double-génération — et se JUGE à l'œil (capture smoke).
-- **C4** — la grotte composée : antre joignable, ceinture de massif, entrée praticable.
+- **C4** — **RÉÉCRIT le 2026-09-06 (spec `grottes.md`, G-R10/G-A11 : « le karst est la
+  Grotte »)** : la Grotte n'est plus un lieu bâti par plan — c'est un **karst** creusé dans
+  une paroi de terrasse (`zonegen-karst.ts`), à l'étage `−(p + 1)`, et `grotte.plan` est un
+  BROUILLON hors registre (`plans/brouillons/`). Ce que C4 gardait se garde désormais là-bas :
+  l'antre joignable = la salle atteignable par la gueule (G-A4, `atteignableEntreEtages`) ; la
+  ceinture de massif = la roche elle-même (G-A3 : « −H » ferme, rien à peindre) ; l'entrée
+  praticable = une paire de connecteurs `gueule` marchables des deux côtés (G-A4). Son
+  ameublement (G-R6) est une composition de **vignettes ancrées** — des `.plan` de 3×3 à 5×5
+  SANS région, avec la clé `ancre: eau | paroi | centre | porte`, compilées dans `VIGNETTES`
+  (`plans/vignettes/`) par le même émetteur ; l'antre de l'ancien plan en est la première
+  `ancre: paroi`. Garde : `verifierVignette` — carrée, sans région ni triplet, chaque pièce
+  `sousRoche` (G-R7), G-A8 pour la pose.
 - **C5** — le probe N7 du smoke peint galerie/chevalement/wagonnet ET l'anneau de massif
   (garde de clôture oblige) et valide à zéro faute.
 - **C6** — le siège respecte la roche (2026-08-11) : un monstre dont le gradient traverse
   l'antre ne frappe JAMAIS un `massif` (testé : dégâts inertes, cible jamais désignée) et
-  re-route par la gueule ; la garde de non-pénétration (`wall-solid`) balaie mine et grotte.
+  re-route par la gueule ; la garde de non-pénétration (`wall-solid`) balaie mine et grotte
+  (depuis le 2026-09-06, la mine seule : la Grotte n'a plus de massif, sa roche est le monde).
 - **C7** — recensement A7/A19 re-mesuré (≥ 4 seeds) après le passage des empreintes à 7 :
   mine et grotte naissent partout, effectifs rapportés MESURÉS ; s'ils s'effondrent, on
-  resserre (la loi écrite de l'élargissement).
+  resserre (la loi écrite de l'élargissement). (La grotte sort de ce recensement le
+  2026-09-06 : elle est élue par le relief, G-A7 la compte.)

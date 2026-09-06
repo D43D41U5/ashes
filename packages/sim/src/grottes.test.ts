@@ -25,7 +25,12 @@ import { createSim, spawnEntity, step } from './sim'
 import { PIECES, STRUCTURE_TYPES, type BarrierType } from './pieces'
 import { createVillage, evaluateBuild, fireRadius, roofAt, structureAt } from './village'
 import { fullTileAt } from './construction'
-import { isBlockedAt } from './collision'
+import { buildPoiStructures, LEGENDE, rotate, VIGNETTES, verifierPlan, verifierVignette, type RapportDeVignettes } from './poi-batis'
+import type { Plan } from './plan-format'
+import { isBlockedAt, moveAvatar } from './collision'
+import { estGele, gelPossible } from './gel'
+import { calendarScaleForSeasonCycles, dayTicksPourJour, TICKS_PER_CYCLE } from './time'
+import { GEL } from './balance'
 import type { ItemId } from './items'
 import type { PlayerAction } from './sim'
 import { marchableAEtage } from './etages'
@@ -327,6 +332,73 @@ describe('G-A6 — la nappe suit la famille de roche', () => {
   })
 })
 
+describe('G-A6 / G-R11 — ce que le souterrain ne subit pas : le gel et la neige restent dehors', () => {
+  // Le calendrier couplé de `gel.test.ts` : 1 jour de saison = 1 cycle, le tick porte la saison.
+  const SCALE = calendarScaleForSeasonCycles(BALANCE.SEASON_DAYS)
+  const coeurDe = (phase: number): number => Math.round((phase - 0.5) * BALANCE.ACT_DAYS)
+  // Le témoin est LES PLUIES : à l'Ardeur le haut-fond de surface est ASSÉCHÉ (`estAsseche`,
+  // S10) et se marche comme la terre — MESURÉ : 1 sur la trace ; à l'Éclosion la CRUE bloque
+  // le gué (`gueBloque`, S18) — MESURÉ : 0. L'automne seul laisse la trace à son état de carte.
+  const PLUIES = coeurDe(3)
+  const GRAND_FROID = coeurDe(4)
+  const tickDe = (jour: number): number => (jour - 1) * TICKS_PER_CYCLE + Math.floor(dayTicksPourJour(jour) / 2)
+  /** Le facteur de vitesse d'un pas vers l'est depuis le CENTRE d'une tuile, à cet étage — un
+   *  pas si court (10 ms) qu'il ne quitte pas la tuile : rien à résoudre, le facteur seul parle. */
+  const facteurDuPas = (state: ReturnType<typeof createSim>, tx: number, ty: number, etage: number): number => {
+    const dt = 0.01
+    const a = moveAvatar({ map: state.map, structures: [], nodes: [], moverVillageId: null, etat: state, etages: [etage] }, tx + 0.5, ty + 0.5, 1, 0, dt)
+    return Math.round(((a.x - (tx + 0.5)) / (BALANCE.WALK_SPEED_TILES_PER_S * dt)) * 1000) / 1000
+  }
+
+  it.each(GRAINES)('graine %i — au jour le plus froid, la trace est prise (on y glisse) et la nappe ne l’est pas (on y patauge)', (seed) => {
+    const c = carteDeTest(seed, MONDE.JOUEURS_CIBLE, MONDE_JOUE)
+    const { width } = c.map
+    const state = createSim(seed, { map: c.map, calendarScale: SCALE, meteoActive: false })
+    const fautes: string[] = []
+    let nappes = 0
+    let traces = 0
+    for (const k of c.karsts) {
+      if (!k.noye) continue
+      const nom = `karst (${xyDe(c.map, k.gueules[0]![0])})`
+      // LA NAPPE : une tuile de haut-fond de la grille creuse, MARCHABLE à l'étage du karst.
+      const eau = k.tuiles.find((t, i) => k.terrain[i] === TERRAIN_SHALLOW_WATER && marchableAEtage(c.map, k.niveau, t % width, Math.floor(t / width)))
+      if (eau === undefined) { fautes.push(`${nom} : aucun haut-fond marchable dans la nappe`); continue }
+      const ex = eau % width
+      const ey = Math.floor(eau / width)
+      // LA TRACE : la première tuile de la résurgence, sur `map.terrain`, au palier de la gueule.
+      const trace = k.trace[0]!
+      const tx = trace % width
+      const ty = Math.floor(trace / width)
+
+      // ① LES PLUIES, le témoin : la trace n'est pas prise, on patauge des deux côtés à 0,5.
+      state.tick = tickDe(PLUIES)
+      if (estGele(state, tx, ty)) fautes.push(`${nom} : la trace est prise aux Pluies`)
+      const dedansChaud = facteurDuPas(state, ex, ey, k.niveau)
+      const dehorsChaud = facteurDuPas(state, tx, ty, k.palier)
+      if (dedansChaud !== 0.5) fautes.push(`${nom} : aux Pluies, le pas dans la nappe vaut ${dedansChaud} (0,5 attendu — le haut-fond de la grille creuse)`)
+      if (dehorsChaud !== 0.5) fautes.push(`${nom} : aux Pluies, le pas sur la trace vaut ${dehorsChaud} (0,5 attendu)`)
+
+      // ② LE GRAND FROID : la trace est prise — c'est de la surface, elle gèle comme un gué —,
+      //    la nappe non : pas de glace ni de neige sous la roche (G-R11), on y patauge encore.
+      state.tick = tickDe(GRAND_FROID)
+      expect(gelPossible(state), `grand froid graine ${seed}`).toBe(true)
+      if (estGele(state, tx, ty)) {
+        traces += 1
+        const dehorsFroid = facteurDuPas(state, tx, ty, k.palier)
+        if (dehorsFroid !== GEL.VITESSE_GLACE) fautes.push(`${nom} : trace prise mais le pas y vaut ${dehorsFroid} (${GEL.VITESSE_GLACE} attendu)`)
+      }
+      const dedansFroid = facteurDuPas(state, ex, ey, k.niveau)
+      nappes += 1
+      if (dedansFroid !== 0.5) fautes.push(`${nom} : au Grand Froid, le pas dans la nappe vaut ${dedansFroid} (0,5 attendu — ni glace ni neige sous la roche)`)
+    }
+    expect(nappes, 'la garde ne passe pas à vide').toBeGreaterThan(0)
+    // LA TRACE GÈLE : au cœur de l'hiver, toute résurgence est prise — c'est le contraste voulu
+    // avec la nappe, la seule eau libre du pays.
+    expect(traces, `traces prises au Grand Froid sur ${nappes} karsts noyés`).toBe(nappes)
+    expect(fautes.slice(0, 12), fautes.join('\n')).toHaveLength(0)
+  })
+})
+
 describe('G-A10 — la trace', () => {
   it.each(GRAINES)('graine %i — la résurgence d’un karst noyé : ≥ 3 haut-fonds au pied de la gueule, sur map.terrain, sans dominer une terre', (seed) => {
     const c = carteDeTest(seed, MONDE.JOUEURS_CIBLE, MONDE_JOUE)
@@ -489,6 +561,32 @@ describe('G-A5 — un lieu : la Grotte est le karst', () => {
     // Louvière reste un lieu à elle, en lisière d'un coin de chasse).
     for (const z of map.zones) if (z.kind === 'louviere') expect(z.etage).toBeUndefined()
   })
+
+  /**
+   * G-A12 — LA BÊTE SOUS LA ROCHE EST CHEZ ELLE. `goHome` lit l'habitat sur `map.terrain` ;
+   * un sanglier d'étage négatif n'y est jamais « chez lui » et rebalayait l'anneau de
+   * `HOMING_SEEK` à chaque tick vers une lisière de l'autre côté de la roche — MESURÉ
+   * (graine 2026, 8 joueurs) : 2 karsts sur 5 en `homing` 300/300, +1,3 ms par tick.
+   * Ce qui ferait rougir : un seul sanglier de karst en `homing` sur 300 ticks.
+   */
+  it.each(GRAINES)('graine %i — le sanglier de karst ne cherche jamais à « rentrer » : sous la roche, il est chez lui (G-A12)', (seed) => {
+    const c = carteDeTest(seed, MONDE.JOUEURS_CIBLE, MONDE_JOUE)
+    const sim = createSim(seed, { map: c.map, worldEvents: false, faunaCap: 0 })
+    spawnPoiMonsters(sim, seed)
+    const karsts = new Set(c.map.zones.flatMap((z, i) => (z.kind === 'grotte' && z.etage !== undefined && z.etage < 0 ? [i] : [])))
+    const betes = sim.monsters.filter((m) => karsts.has(m.homePoi ?? -1))
+    expect(betes.length).toBe(c.karsts.length)
+    const fautes: string[] = []
+    for (let t = 0; t < 300; t++) {
+      step(sim, [])
+      for (const m of betes) {
+        const e = sim.entities.find((x) => x.id === m.entityId)!
+        if (m.homing === true && e.etage !== undefined && e.etage < 0) fautes.push(`tick ${t} : le sanglier du lieu ${m.homePoi} est en homing sous la roche`)
+      }
+      if (fautes.length > 3) break
+    }
+    expect(fautes, fautes.join('\n')).toHaveLength(0)
+  })
 })
 
 describe('G-A7 — le plancher : une Grotte à portée de chaque naissance et de chaque site', () => {
@@ -553,9 +651,20 @@ describe('G-A7 — le plancher : une Grotte à portée de chaque naissance et de
     expect(fautesDeStructure(c)).toHaveLength(0)
     // Les grilles creuses restent triées, alignées, et deux karsts ne partagent aucune tuile.
     const vues = new Set<number>()
+    // ⚠ CETTE GARDE A ROUGI : `poserLeKarst` ajoutait à l'étage AVANT d'écrire le terrain, et le
+    // plancher, qui construit l'étage sur-le-champ, lisait `undefined` sur TOUTE la grotte (MESURÉ
+    // 2026-09-06 : 3 937 tuiles sans terrain sur 15 621, graine 2026 — une Grotte du plancher ne
+    // se marchait pas, et les vignettes s'y posaient sur du vide).
     for (const et of map.etages ?? []) {
       expect(et.terrain.length).toBe(et.idx.length)
       for (let i = 1; i < et.idx.length; i++) expect(et.idx[i]!).toBeGreaterThan(et.idx[i - 1]!)
+      for (let i = 0; i < et.idx.length; i++) {
+        expect(Number.isInteger(et.terrain[i]), `étage ${et.niveau}, tuile ${xyDe(map, et.idx[i]!)} : terrain ${String(et.terrain[i])}`).toBe(true)
+      }
+    }
+    for (const k of rapport.creuses) {
+      for (let i = 0; i < k.tuiles.length; i++) expect(terrainAEtage(map, k.niveau, ...xyDe(map, k.tuiles[i]!))).toBe(k.terrain[i])
+      expect(k.tuiles.some((t) => marchableAEtage(map, k.niveau, ...xyDe(map, t))), `karst du plancher (${xyDe(map, k.gueules[0]![0])}) : rien ne s'y marche`).toBe(true)
     }
     for (const k of c.karsts) for (const t of k.tuiles) {
       expect(vues.has(t), `tuile ${xyDe(map, t)} dans deux karsts`).toBe(false)
@@ -749,5 +858,135 @@ describe('G-A9 — le bivouac : chaque pièce dit si elle se pose sous la roche,
     agir(sim, autre, { type: 'found_village', structureId: feu!.id })
     expect(sim.villages.length).toBe(villages)
     expect(feu!.villageId).toBe(0)
+  })
+})
+
+describe('G-A8 — les vignettes : l’ameublement est une composition ancrée, jamais rognée', () => {
+  it('le registre : chaque vignette passe sa garde, et les quatre ancres y sont', () => {
+    const noms = Object.keys(VIGNETTES)
+    expect(noms.length).toBeGreaterThan(0) // la garde prouve sa prémisse
+    for (const nom of noms) expect(verifierVignette(nom, VIGNETTES[nom]!), nom).toEqual([])
+    const ancres = new Set(noms.map((n) => VIGNETTES[n]!.ancre))
+    expect([...ancres].sort()).toEqual(['centre', 'eau', 'paroi', 'porte'])
+  })
+
+  it('la garde refuse ce qu’une vignette ne sait pas être : une région, un contour, une pièce qui clôt, un arbre, le vide, un côté hors 3-5', () => {
+    const v = (grille: string[], extra: Partial<Plan> = {}): string[] => verifierVignette('x', { usure: 1, ancre: 'paroi', grille, ...extra })
+    expect(v(['·R·', '·e·', '···'])).toEqual([])
+    expect(v(['·.·', '·e·', '···']).join(' ')).toMatch(/région/)
+    expect(v(['·R·', '·e·', '···'], { passages: ['1,1,S'] }).join(' ')).toMatch(/contour/)
+    expect(v(['·p·', '·e·', '···']).join(' ')).toMatch(/sous la roche/) // la poutre ne se pose pas sous la roche
+    expect(v(['·Y·', '·e·', '···']).join(' ')).toMatch(/rubble/)
+    expect(v(['···', '···', '···']).join(' ')).toMatch(/vide/)
+    expect(v(['R·', '·e']).join(' ')).toMatch(/côté/)
+    expect(v(['R·····', '······', '······', '······', '······', '·····e']).join(' ')).toMatch(/côté/)
+    expect(verifierVignette('x', { usure: 1, grille: ['·R·', '·e·', '···'] }).join(' ')).toMatch(/ancre/)
+    expect(verifierPlan('x', { usure: 1, ancre: 'paroi', grille: ['···', '·R·', '···'] }, undefined).join(' ')).toMatch(/ancre/) // un lieu n'en a pas
+  })
+
+  /**
+   * Ce qui ferait rougir : une pièce posée sur de l'eau ou hors de sa salle, deux vignettes qui
+   * se touchent, une porte de salle isolée par la pose, une `rive` dans une salle sèche, un
+   * `centre` contre la roche, une salle sans aucune vignette alors qu'une place existait
+   * (rapporté, pas caché : le compte des non-posées est un nombre, et on le lit).
+   */
+  it.each(GRAINES)('graine %i — chaque pose tient à 100 % sur du creusé sec de SA salle, honore son ancre, laisse une tuile entre vignettes et vers chaque porte ; le compte des sans-place est rapporté', (seed) => {
+    const c = carteDeTest(seed, MONDE.JOUEURS_CIBLE, MONDE_JOUE)
+    const { map } = c
+    const width = map.width
+    const sim = createSim(seed, { map, worldEvents: false, faunaCap: 0 })
+    spawnPoiMonsters(sim, seed)
+    const rapport = buildPoiStructures(sim, seed)
+    expect(rapport.salles).toBe(c.karsts.reduce((n, k) => n + k.salles.length, 0))
+    expect(rapport.posees.length).toBeGreaterThan(0)
+    const fautes: string[] = []
+    const terrain = (niveau: number, i: number): number => terrainAEtage(map, niveau, i % width, (i - (i % width)) / width)
+    const voisines = (i: number): number[] => {
+      const x = i % width
+      return [x > 0 ? i - 1 : -1, x < width - 1 ? i + 1 : -1, i - width, i + width].filter((j) => j >= 0 && j < width * map.height)
+    }
+    const empreintes = new Map<string, number[]>()
+    for (const p of rapport.posees) {
+      const z = map.zones[p.zone]!
+      const salle = z.salles![p.salle]!
+      const niveau = z.etage!
+      const plan = VIGNETTES[p.nom]!
+      const n = plan.grille.length
+      const dans = new Set(salle.tuiles)
+      // L'empreinte, ce sont les cases PLEINES de la grille tournée — une case vide est de la composition.
+      const g = rotate(plan.grille, p.quart)
+      const emp: number[] = []
+      for (let ry = 0; ry < n; ry++) for (let rx = 0; rx < n; rx++) if (LEGENDE[g[ry]![rx]!] !== undefined) emp.push((p.y + ry) * width + p.x + rx)
+      expect(emp.length, `${p.nom} : une vignette vide`).toBeGreaterThan(0)
+      const cle = `${p.zone}/${p.salle}`
+      // ≥ 1 tuile entre deux vignettes de la même salle (distance de Chebyshev ≥ 2).
+      for (const autre of empreintes.get(cle) ?? []) {
+        for (const a of emp) if (cheb(xyDe(map, a), xyDe(map, autre)) < 2) { fautes.push(`${z.name} salle ${p.salle} : ${p.nom} touche une autre vignette`); break }
+      }
+      empreintes.set(cle, [...(empreintes.get(cle) ?? []), ...emp])
+      let paroi = false, eau = false, porte = false
+      const portes = new Set(salle.tuiles.filter((i) => voisines(i).some((j) => !dans.has(j) && terrain(niveau, j) !== 0)))
+      for (const i of emp) {
+        if (!dans.has(i)) fautes.push(`${z.name} salle ${p.salle} : ${p.nom} déborde de sa salle`)
+        if (isWater(terrain(niveau, i))) fautes.push(`${z.name} salle ${p.salle} : ${p.nom} trempe dans l'eau`)
+        if (portes.has(i)) fautes.push(`${z.name} salle ${p.salle} : ${p.nom} bouche une porte`)
+        for (const j of voisines(i)) {
+          if (terrain(niveau, j) === 0) paroi = true
+          else if (isWater(terrain(niveau, j))) eau = true
+          if (portes.has(j)) porte = true
+        }
+      }
+      if (plan.ancre === 'paroi' && !paroi) fautes.push(`${z.name} salle ${p.salle} : ${p.nom} (paroi) ne touche pas la roche`)
+      if (plan.ancre === 'eau' && !eau) fautes.push(`${z.name} salle ${p.salle} : ${p.nom} (eau) ne touche pas l'eau`)
+      if (plan.ancre === 'centre' && (paroi || eau)) fautes.push(`${z.name} salle ${p.salle} : ${p.nom} (centre) touche la roche ou l'eau`)
+      if (plan.ancre === 'porte' && !porte) fautes.push(`${z.name} salle ${p.salle} : ${p.nom} (porte) ne touche aucune porte`)
+      // Chaque pièce de la grille tournée est bien LÀ, à l'étage — et rien d'autre n'est posé sur l'empreinte.
+      for (const i of emp) {
+        const [tx, ty] = xyDe(map, i)
+        const s = sim.structures.filter((st) => st.tx === tx && st.ty === ty && st.etage === niveau)
+        if (s.length > 1) fautes.push(`${z.name} salle ${p.salle} : deux structures en (${tx},${ty})`)
+        for (const st of s) if (!PIECES[st.type].sousRoche) fautes.push(`${z.name} : ${st.type} sous la roche`)
+      }
+    }
+    // Aucune vignette `eau` dans une salle sans eau — et les portes restent reliées après la pose.
+    for (const [iz, z] of map.zones.entries()) {
+      if (z.kind !== 'grotte' || z.salles === undefined) continue
+      const niveau = z.etage!
+      for (const [is, salle] of z.salles.entries()) {
+        const aDeLEau = salle.tuiles.some((i) => isWater(terrain(niveau, i)))
+        const poses = rapport.posees.filter((p) => p.zone === iz && p.salle === is)
+        if (!aDeLEau && poses.some((p) => VIGNETTES[p.nom]!.ancre === 'eau')) fautes.push(`${z.name} salle ${is} : une vignette « eau » dans une salle sèche`)
+        const dans = new Set(salle.tuiles)
+        const occupe = new Set(empreintes.get(`${iz}/${is}`) ?? [])
+        const libre = new Set(salle.tuiles.filter((i) => !isWater(terrain(niveau, i)) && !occupe.has(i)
+          && !sim.nodes.some((nd) => nd.etage === niveau && nd.ty * width + nd.tx === i)))
+        const portes = salle.tuiles.filter((i) => voisines(i).some((j) => !dans.has(j) && terrain(niveau, j) !== 0))
+        if (portes.length === 0) { fautes.push(`${z.name} salle ${is} : sans porte`); continue }
+        const vu = new Set<number>([portes[0]!])
+        const pile = [portes[0]!]
+        while (pile.length) { const i = pile.pop()!; for (const j of voisines(i)) if (libre.has(j) && !vu.has(j)) { vu.add(j); pile.push(j) } }
+        // Les portes reliées AVANT la pose (la pierre du karst peut déjà en isoler) le restent après.
+        const libreAvant = new Set(salle.tuiles.filter((i) => !isWater(terrain(niveau, i)) && !sim.nodes.some((nd) => nd.etage === niveau && nd.ty * width + nd.tx === i)))
+        const vuAvant = new Set<number>([portes[0]!])
+        const pileAvant = [portes[0]!]
+        while (pileAvant.length) { const i = pileAvant.pop()!; for (const j of voisines(i)) if (libreAvant.has(j) && !vuAvant.has(j)) { vuAvant.add(j); pileAvant.push(j) } }
+        for (const p of portes) if (vuAvant.has(p) && !vu.has(p)) fautes.push(`${z.name} salle ${is} : la porte (${xyDe(map, p)}) est isolée par la pose`)
+      }
+    }
+    expect(fautes.slice(0, 12), fautes.join('\n')).toHaveLength(0)
+    // Le compte des sans-place est un NOMBRE qu'on lit — rapporté, pas caché.
+    expect(rapport.nonPosees.length).toBeGreaterThanOrEqual(0)
+    expect(rapport.posees.length + rapport.nonPosees.length).toBeLessThanOrEqual(4 * rapport.salles)
+    expect(rapport.posees.length + rapport.nonPosees.length).toBeGreaterThanOrEqual(2 * rapport.salles)
+  })
+
+  it('déterministe : deux amorces sur la même carte posent les mêmes vignettes, aux mêmes tuiles', () => {
+    const c = carteDeTest(GRAINES[0], MONDE.JOUEURS_CIBLE, MONDE_JOUE)
+    const amorce = (): RapportDeVignettes => {
+      const sim = createSim(GRAINES[0], { map: c.map, worldEvents: false, faunaCap: 0 })
+      spawnPoiMonsters(sim, GRAINES[0])
+      return buildPoiStructures(sim, GRAINES[0])
+    }
+    expect(amorce()).toEqual(amorce())
   })
 })

@@ -1591,6 +1591,18 @@ function stepStaysHome(state: SimState, monster: Monster, entity: Entity, step: 
  * consommé son tick (elle est dehors, et elle marche).
  */
 function goHome(state: SimState, monster: Monster, entity: Entity): boolean {
+  // ═══ SOUS LA ROCHE, LA BÊTE EST CHEZ ELLE (spec `grottes.md` G-R5 : le fond est une tanière) ═══
+  //
+  // L'habitat se lit sur `map.terrain`, le SOL — or une bête d'étage négatif n'est sur aucun
+  // sol : la pinède au-dessus de sa tête n'est pas « chez elle », et la lisière du palier
+  // qu'elle vise en ligne droite est de l'autre côté de la roche. MESURÉ (G-A12, graine 2026,
+  // 8 joueurs) : deux sangliers de karst sur cinq en `homing` 300 ticks sur 300, l'anneau de
+  // 24 rebalayé chaque tick — le tick passait de 2,2 à 3,5 ms. Le sanglier d'une grotte broute
+  // sa salle ; s'il en sort par la gueule, il est un sanglier de palier comme les autres.
+  if (entity.etage !== undefined && entity.etage < 0) {
+    delete monster.homing
+    return false
+  }
   const tx = Math.floor(entity.x)
   const ty = Math.floor(entity.y)
   const home = inHabitat(state, monster.type, tx, ty)

@@ -25,6 +25,13 @@ export interface Zone {
   etage?: number
   /** L'emprise EXACTE, indices de tuiles triés croissant, quand elle n'est pas le rectangle. */
   tuiles?: number[]
+  /**
+   * LES SALLES D'UNE GROTTE (spec `grottes.md` G-R4/G-R6) — ce que le karst a creusé, salle par
+   * salle : le rôle (vestibule, cœur, fond), le germe (l'index de la tuile d'où elle a poussé) et
+   * ses tuiles, triées croissant, à l'étage `etage`. L'ameublement (`meublerLesGrottes`) les lit ;
+   * la carte ne connaît pas le karst, qui vit sur `CarteZonee` — la zone porte ce qu'il en reste.
+   */
+  salles?: { role: 'vestibule' | 'coeur' | 'fond'; germe: number; tuiles: number[] }[]
 }
 
 /**

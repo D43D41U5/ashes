@@ -440,7 +440,8 @@ export {
 } from './zone-content'
 export { nidsAMonstre, placePois, POI_TYPES, POI_PLACEMENT, spawnPoiMonsters } from './poi'
 export { buildPoiStructures, batirLieu, BUILT_KINDS, PLANS, LEGENDE, regionDe, verifierPlan, verifierPlans, type Plan, type Case } from './poi-batis'
-export { parserPlan, serialiserPlan } from './plan-format'
+export { VIGNETTES, verifierVignette, meublerLesGrottes, type RapportDeVignettes, type PoseDeVignette } from './poi-batis'
+export { parserPlan, serialiserPlan, ANCRES, type Ancre } from './plan-format'
 export { sortDuLieu, usureSelonSort, type SortDuLieu } from './sort-des-lieux'
 // Où le monde commence, et ce qui communique avec quoi — le client LIT le spawn,
 // il ne le recalcule pas (il le faisait, et sans vérifier la connexité).

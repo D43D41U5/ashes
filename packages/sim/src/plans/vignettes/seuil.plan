@@ -1,0 +1,11 @@
+# ═══ LE SEUIL — ce que le boyau laisse tomber à l'entrée de la salle (spec `grottes.md` G-R6) ═══
+#
+# `ancre: porte` : contre le passage qui mène au boyau — sans jamais le boucher (G-A8 : une tuile
+# de circulation reste vers chaque porte). Des éboulis (e) et une fouille (G) : le boyau s'effrite,
+# et ce qu'il lâche s'entasse là où l'on entre.
+usure: 1
+ancre: porte
+grille:
+·e·
+e·G
+···

@@ -480,8 +480,10 @@ export function poserLeKarst(
   terrainKarst: Map<number, number>,
 ): void {
   const width = map.width
-  ajouter(k.niveau, k.tuiles)
+  // Le terrain AVANT d'ajouter : la génération le relit plus tard, mais le plancher construit
+  // l'étage sur-le-champ — appelé dans l'autre ordre, il lisait `undefined` sur toute la grotte.
   for (let i = 0; i < k.tuiles.length; i++) terrainKarst.set(k.tuiles[i]!, k.terrain[i]!)
+  ajouter(k.niveau, k.tuiles)
   for (const paire of k.gueules) {
     for (const i of paire) connecteurs.push({ x: i % width, y: (i - (i % width)) / width, de: k.palier, vers: k.niveau, type: 'gueule' })
   }
@@ -492,6 +494,7 @@ export function poserLeKarst(
     name: `${nom} ${roman(n)}`,
     x: o % width, y: (o - (o % width)) / width, w: 2, h: 1,
     kind: 'grotte', etage: k.niveau, tuiles: k.tuiles,
+    salles: k.salles.map((s) => ({ role: s.role, germe: s.germe, tuiles: s.tuiles })),
   })
 }
 

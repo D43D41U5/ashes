@@ -115,3 +115,52 @@ export const PLANS: Record<string, Plan> = {
     breches: ['4,2,E', '2,4,S'],
   },
 }
+
+/** LES VIGNETTES DES GROTTES (spec `grottes.md` G-R6) — packages/sim/src/plans/vignettes/<nom>.plan. */
+export const VIGNETTES: Record<string, Plan> = {
+  chaos: {
+    usure: 1,
+    ancre: 'paroi',
+    grille: [
+      'R·e',
+      '·e·',
+      'e·R',
+    ],
+  },
+  foyer: {
+    usure: 0.6,
+    ancre: 'centre',
+    grille: [
+      '·e·',
+      'eFe',
+      '···',
+    ],
+  },
+  halte: {
+    usure: 0.6,
+    ancre: 'paroi',
+    grille: [
+      'l·t',
+      '·F·',
+      '···',
+    ],
+  },
+  rive: {
+    usure: 0.6,
+    ancre: 'eau',
+    grille: [
+      'e·t',
+      '·G·',
+      'e··',
+    ],
+  },
+  seuil: {
+    usure: 1,
+    ancre: 'porte',
+    grille: [
+      '·e·',
+      'e·G',
+      '···',
+    ],
+  },
+}

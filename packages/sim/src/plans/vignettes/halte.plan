@@ -1,0 +1,12 @@
+# ═══ LA HALTE — quelqu'un a dormi ici, dos à la paroi (spec `grottes.md` G-R6) ═══
+#
+# Le feu froid (F, l'âtre de camp), la paillasse (l) et le tonneau (t) : ce qu'on trouve d'un
+# passage antérieur. `ancre: paroi` — on ne dort pas au milieu d'une salle, on se colle à la
+# roche. C'est la halte — le bivouac de G-R7, pas la maison : rien ne clôt. (« halte » et non
+# « bivouac » : ce nom-là est déjà celui du lieu de surface, plans/bivouac.plan.)
+usure: 0.6
+ancre: paroi
+grille:
+l·t
+·F·
+···

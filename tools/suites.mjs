@@ -53,7 +53,9 @@ const SUITES = [
   //   suite à 2195, plancher recalé quelques pourcents dessous.
   // 2026-09-06 : +58 gardes avec LES GROTTES DE TERRASSE (`grottes.test.ts`, spec `grottes.md`) —
   //   suite à 2253, plancher relevé quelques pourcents dessous.
-  { nom: 'sim', dir: 'packages/sim', args: ['run', '--exclude', 'src/scenario.test.ts'], plancher: 2220 },
+  // 2026-09-06 : +18 gardes avec LES VIGNETTES G-R6 et le gel sous la roche (G-A6/G-A8/G-A12,
+  //   `grottes.test.ts`, `plans-batis.test.ts`) — suite à 2271, plancher relevé quelques pourcents dessous.
+  { nom: 'sim', dir: 'packages/sim', args: ['run', '--exclude', 'src/scenario.test.ts'], plancher: 2240 },
   // 2026-09-01 : +10 gardes avec le RENDU des étages (`plateau-art.test.ts`).
   // 2026-09-01 : +9 gardes avec le TRI DES ÉTAGES (strate, découvert — `framing.test.ts`),
   //   suite relevée à 1429 ✓, plancher recalé quelques pourcents dessous.

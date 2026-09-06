@@ -21,7 +21,7 @@ import { BALANCE, NODE_DEFS, TERRAIN_DEEP_WATER, TERRAIN_GRASS, TERRAIN_SHALLOW_
 import { solFoule } from './cendre'
 import { nodeAt, type ResourceNode } from './economy'
 import { estAsseche, estGueBloque } from './eau'
-import { auMemeEtage, connecteurAt, marchableAEtage, palierDuSol, rampeQuiMonte } from './etages'
+import { auMemeEtage, connecteurAt, marchableAEtage, palierDuSol, rampeQuiMonte, terrainAEtage } from './etages'
 import { estGele, gelPossible, vitesseSurGlace, vitesseSurNeige } from './gel'
 import { EDGE_E, EDGE_N, EDGE_O, EDGE_S } from './geometry'
 import { MARCHABLE, terrainAt, type WorldMap } from './map'
@@ -743,10 +743,20 @@ export function moveAvatar(
   // points différents.
   const tx = Math.floor(x)
   const ty = Math.floor(y)
-  const glace = world.etat !== undefined ? vitesseSurGlace(world.etat, tx, ty) : undefined
+  // ═══ SOUS LA ROCHE, LE CIEL NE TOMBE PAS (spec `grottes.md` G-R11) ═══
+  // La glace, la neige, la cendre et l'assèchement sont des états de la SURFACE (`map.terrain`
+  // et les champs du dessus) : un pas dans la nappe d'un karst ne les consulte pas — on y
+  // patauge en plein hiver, c'est le contraste voulu avec la trace qui gèle dehors. Et le sol
+  // foulé est celui de SON étage (`terrainAEtage`) : le haut-fond de la grille creuse ralentit
+  // comme un gué, là où la lecture au sol donnait le terrain de la terrasse au-dessus — MESURÉ
+  // (graine 2026, karst (1443,144)) : 0,85 de pinède pour un pas dans l'eau.
+  const etage = etageCourant(world)
+  const sousLaRoche = etage < 0
+  const dessus = !sousLaRoche && world.etat !== undefined ? world.etat : undefined
+  const glace = dessus !== undefined ? vitesseSurGlace(dessus, tx, ty) : undefined
   // LA NEIGE COMMANDE LE PAS après la glace et avant le terrain (spec `gel.md` G9) : quel que
   // soit le sol dessous, on foule de la poudreuse (×0,95) ou on enfonce jusqu'aux genoux (×0,75).
-  const neige = glace === undefined && world.etat !== undefined ? vitesseSurNeige(world.etat, tx, ty) : undefined
+  const neige = glace === undefined && dessus !== undefined ? vitesseSurNeige(dessus, tx, ty) : undefined
   // LA CENDRE COMMANDE LE PAS après la neige et avant le terrain (`solFoule`, décision d'Alexis
   // 2026-08-25 : « la cendre remplace les caractéristiques de la tuile sous-jacente »). Un marais
   // cendré n'est plus un marais : on ne patauge pas dans une boue qui a brûlé. Elle vient APRÈS
@@ -756,10 +766,10 @@ export function moveAvatar(
   // ⚠ CE N'EST PAS SUR LE CHEMIN CHAUD. `moveAvatar` est appelé une fois par acteur et par tick ;
   //   c'est `blockedSubAt` qui est balayé par sous-tuile, et il ne passe pas par ici. `solFoule`
   //   sort d'ailleurs immédiatement sur une carte sans champ de cendre (banc, worldgen).
-  const cendre = glace === undefined && neige === undefined && world.etat !== undefined
-    ? solFoule(world.etat, tx, ty)
+  const cendre = glace === undefined && neige === undefined && dessus !== undefined
+    ? solFoule(dessus, tx, ty)
     : undefined
-  const terrainId = cendre ?? terrainAt(world.map, tx, ty)
+  const terrainId = cendre ?? (sousLaRoche ? terrainAEtage(world.map, etage, tx, ty) : terrainAt(world.map, tx, ty))
   const terrain = TERRAINS[terrainId]
   // LE GUÉ EN POUSSIÈRE MARCHE COMME LA TERRE (spec `saisons.md` S10 : « l'eau peu profonde
   // se comporte comme de la terre ») — l'assèchement retirait déjà l'eau à la marchabilité,
@@ -767,7 +777,7 @@ export function moveAvatar(
   // point que le reste (la tuile du marcheur), et pas de coût caché : `estAsseche` sort en
   // O(1) hors chaleur d'été (le même raisonnement que la sortie précoce de la crue).
   const asseche = glace === undefined && neige === undefined && terrainId === TERRAIN_SHALLOW_WATER
-    && world.etat !== undefined && estAsseche(world.etat, tx, ty)
+    && dessus !== undefined && estAsseche(dessus, tx, ty)
   const factor = glace ?? neige ?? (asseche ? TERRAINS[TERRAIN_GRASS]!.speedFactor : terrain?.walkable ? terrain.speedFactor : 1)
   const speed = BALANCE.WALK_SPEED_TILES_PER_S * dtS * factor * speedScale
   const norm = dx !== 0 && dy !== 0 ? Math.SQRT1_2 : 1

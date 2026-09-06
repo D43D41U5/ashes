@@ -1,0 +1,12 @@
+# ═══ LE CHAOS — la roche recrachée par la montagne, contre la paroi (spec `grottes.md` G-R6) ═══
+#
+# La première vignette `ancre: paroi` : l'antre de l'ancienne Grotte de surface (brouillons/
+# grotte.plan) réduit à ce qui en compte — les blocs erratiques (R, on les contourne) et les
+# éboulis (e, on les enjambe). Rien n'y tient au feu ni au marteau : c'est de la pierre, et
+# c'est ce que la paroi a lâché.
+usure: 1
+ancre: paroi
+grille:
+R·e
+·e·
+e·R

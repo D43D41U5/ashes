@@ -61,12 +61,16 @@ describe('la vallée LAN — le monde de production', () => {
    * LAN doit porter LES MÊMES MURS. Elle ne les portait pas : en multi, la Ferme ruinée
    * était un sprite traversant — les joueurs LAN ne jouaient pas le monde du solo.
    *
-   * On rejoue ici l'amorce de RÉFÉRENCE sur la même carte, dans le même ordre, avec le
-   * même seed. Les deux peuplements sont POSITIONNELS (hash de la carte, jamais le PRNG
-   * partagé — contrat A6) : les structures doivent être identiques au bit près, ids compris.
+   * On rejoue ici l'amorce de RÉFÉRENCE sur la même carte et le même semis de nœuds, dans le
+   * même ordre, avec le même seed. Les deux peuplements sont POSITIONNELS (hash de la carte,
+   * jamais le PRNG partagé — contrat A6) : les structures doivent être identiques au bit près,
+   * ids compris. Le semis entre dans la référence depuis 2026-09-06 : les vignettes des grottes
+   * (G-R6) se posent AUTOUR de la pierre semée par le karst, une référence sans nœuds meublait
+   * des salles plus vides que le vrai monde. Rien de la faune n'y entre : l'ameublement ne lit
+   * jamais un corps.
    */
   it("porte les mêmes murs qu'un monde solo — la parité d'amorce", () => {
-    const ref = createSim(LAN_SEED, { map: monde.carte.map })
+    const ref = createSim(LAN_SEED, { map: monde.carte.map, nodes: monde.nodes })
     spawnPoiMonsters(ref, LAN_SEED)
     buildPoiStructures(ref, LAN_SEED)
     expect(ref.structures.length, 'la référence ne bâtit rien : ce test ne garderait rien').toBeGreaterThan(0)

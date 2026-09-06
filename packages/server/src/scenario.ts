@@ -22,6 +22,7 @@ import {
   nidsAMonstre,
   placeHuntingGrounds,
   pointsDeSpawn,
+  type ResourceNode,
   placeZoneNodes,
   spawnPoiMonsters,
   type SimState,
@@ -50,6 +51,12 @@ export interface LanWorld {
   spawns: { tx: number; ty: number; zone: number }[]
   /** Tous les emplacements viables, et la carte zonée : la matière de `pointsDeSpawn`. */
   carte: ReturnType<typeof generateZonedTerrain>
+  /**
+   * Le semis de nœuds tel qu'il entre dans `createSim` (après le plancher, AVANT les vignettes
+   * des grottes que `buildPoiStructures` y ajoute) — `createSim` le copie, celui-ci reste intact.
+   * C'est l'entrée positionnelle qu'une amorce de référence doit reprendre (parité, A5).
+   */
+  nodes: ResourceNode[]
   emplacements: ReturnType<typeof emplacementsDeVillage>
 }
 
@@ -109,7 +116,7 @@ export function createZone(): LanWorld {
   // d'amorce, spec lieux-batis A5). Sans cet appel, la zone LAN servait une Ferme ruinée
   // SANS MURS : les joueurs multi ne jouaient pas le monde que le solo joue.
   buildPoiStructures(sim, LAN_SEED)
-  return { sim, base: { tx: base.tx, ty: base.ty }, spawns, carte, emplacements }
+  return { sim, base: { tx: base.tx, ty: base.ty }, spawns, carte, emplacements, nodes }
 }
 
 /**

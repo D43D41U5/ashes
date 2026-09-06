@@ -1,0 +1,10 @@
+# ═══ LE FOYER — le cercle de pierres au milieu de la salle (spec `grottes.md` G-R6) ═══
+#
+# `ancre: centre` : loin de la paroi et de l'eau, là où l'on s'assied en rond. L'âtre de camp (F)
+# et ses pierres (e) : le feu du dernier occupant, froid depuis longtemps.
+usure: 0.6
+ancre: centre
+grille:
+·e·
+eFe
+···

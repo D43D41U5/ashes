@@ -11,7 +11,8 @@
  * La grammaire, volontairement petite :
  *   - `#` en tête de ligne = commentaire ; ligne vide = rien ;
  *   - `cle: valeur` — `usure` (nombre, requis), `breches`/`seuils`/`passages` (triplets
- *     `x,y,D` séparés d'espaces), `fixe` (`oui`) ;
+ *     `x,y,D` séparés d'espaces), `fixe` (`oui`), `ancre` (`eau|paroi|centre|porte`, vignettes
+ *     des Grottes seulement — spec `grottes.md` G-R6) ;
  *   - `grille:` en DERNIER : toutes les lignes non vides / non-`#` qui suivent sont les
  *     rangées, verbatim.
  */
@@ -50,13 +51,24 @@ export interface Plan {
    * et il est alors écrit dans le sens où on le verra.
    */
   readonly fixe?: boolean
+  /**
+   * L'ANCRE D'UNE VIGNETTE (spec `grottes.md` G-R6) — là où ce petit plan a un sens dans une
+   * salle de Grotte : contre la paroi, au bord de l'eau, au centre, contre une porte. Une
+   * vignette n'a pas de région (rien ne se dérive), et un LIEU n'a pas d'ancre : la garde de
+   * chacun (`verifierVignette`, `verifierPlan`) refuse l'autre.
+   */
+  readonly ancre?: Ancre
 }
+
+/** Les quatre ancres d'une vignette — l'ordre est celui de la spec, la garde lit la liste. */
+export const ANCRES = ['eau', 'paroi', 'centre', 'porte'] as const
+export type Ancre = (typeof ANCRES)[number]
 
 /** Les clés de métadonnées connues — tout le reste est une faute, jamais un silence.
  *  EXPORTÉES pour la garde d'ÉPELLATION (`plans-batis.test.ts`) : aucune clé ne doit être
  *  épelable avec les caractères minuscules de la LÉGENDE, sinon une rangée de grille
  *  pourrait passer pour une métadonnée. */
-export const CLES = new Set(['usure', 'breches', 'seuils', 'passages', 'fixe', 'grille'])
+export const CLES = new Set(['usure', 'breches', 'seuils', 'passages', 'fixe', 'ancre', 'grille'])
 
 /** Une ligne de MÉTADONNÉE connue (`usure: …`) — et jamais une rangée de grille : les
  *  caractères de légende ne forment pas `motminuscule:`. */
@@ -85,6 +97,7 @@ export function parserPlan(texte: string): Plan {
   let seuils: readonly string[] | undefined
   let passages: readonly string[] | undefined
   let fixe = false
+  let ancre: Ancre | undefined
   const grille: string[] = []
   const vues = new Set<string>()
   let dansGrille = false
@@ -114,6 +127,9 @@ export function parserPlan(texte: string): Plan {
       } else if (cle === 'fixe') {
         if (valeur !== 'oui') throw new Error(`« fixe » : « ${valeur} » (la seule valeur admise est « oui » — l'absence de la ligne dit « ça tourne »)`)
         fixe = true
+      } else if (cle === 'ancre') {
+        if (!(ANCRES as readonly string[]).includes(valeur)) throw new Error(`« ancre » : « ${valeur} » (les ancres : ${ANCRES.join(', ')})`)
+        ancre = valeur as Ancre
       } else if (cle === 'breches') breches = triplets(valeur, cle)
       else if (cle === 'seuils') seuils = triplets(valeur, cle)
       else if (cle === 'passages') passages = triplets(valeur, cle)
@@ -130,6 +146,7 @@ export function parserPlan(texte: string): Plan {
   if (seuils?.length) plan.seuils = seuils
   if (passages?.length) plan.passages = passages
   if (fixe) plan.fixe = true
+  if (ancre !== undefined) plan.ancre = ancre
   return plan as Plan
 }
 
@@ -148,6 +165,7 @@ export function serialiserPlan(texteOriginal: string, plan: Plan): string {
     ['seuils', plan.seuils?.length ? plan.seuils.join(' ') : undefined],
     ['passages', plan.passages?.length ? plan.passages.join(' ') : undefined],
     ['fixe', plan.fixe ? 'oui' : undefined],
+    ['ancre', plan.ancre],
   ])
   const sorties: string[] = []
   const vues = new Set<string>()
