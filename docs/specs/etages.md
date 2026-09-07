@@ -695,7 +695,7 @@ Ces sites SONT des perceptions. Les corriger change le jeu : ce ne sont pas des 
 ### Ce qui reste
 
 - ~~Les sept questions.~~ — **tranchées le 2026-09-07**, §21.
-- `alarmeDEnvol` est branché et couvert par le lint, **pas gardé behavioralement** : le mettre en scène demande un ENVOL, c'est-à-dire un tétras posé, alerté, et son vol résolu — la seule des deux excuses qui ait tenu. *(`underFireWard`, lui, est gardé : voir ci-dessous.)*
+- ~~`alarmeDEnvol` est branché et couvert par le lint, **pas gardé behavioralement**~~ — **gardé le 2026-09-07, §22. L'excuse était fausse elle aussi**, la troisième du même jour : on croyait qu'il fallait « un tétras posé, alerté, et son vol résolu », alors que l'autre appelant d'`alarmeDEnvol` est la nuée d'une **LISIÈRE**, qui n'a pas d'oiseau — pas une entité, pas un monstre, rien qu'un fait. Trois excuses posées le même jour, trois fausses.
 
 ### LE FEU DU DESSUS, GARDÉ — et l'excuse qui l'avait différé
 
@@ -930,3 +930,36 @@ la terrasse qui coupe, pas la grotte.
 lequel toute la chasse repose — applique cette loi depuis qu'E-R5 existe. Le lot ① l'étend au
 reste de la famille, il ne l'invente pas. Mais la divergence d'empreinte est réelle et attendue :
 une seule élection qui change décale le flux seedé, et tout ce qui suit avec (`rng-fragile`).
+
+---
+
+## 22. LE DERNIER SITE DU LOT ① (2026-09-07) — la nuée de la lisière
+
+`alarmeDEnvol` était le seul site branché du lot ① à n'avoir pas sa garde behaviorale. Le §20
+l'avait différé sur une excuse — *« il y faudrait un ENVOL : un tétras posé, alerté, et son vol
+résolu »* — et cette excuse était **fausse comme les deux autres du même jour**. `alarmeDEnvol` a
+DEUX appelants : le bond du tétras (`envolerLe`), cher à monter, et **`advanceEnvols`, la nuée
+d'une lisière**, qui n'a pas d'oiseau du tout — pas une entité, pas un monstre, rien qu'un fait
+émis quand un pas bruyant tombe sur une tuile de bord de bois. Elle n'exige de la forêt qu'une
+chose, `estLisiere(profondeurAt(…))`, et la profondeur est **un champ qu'on pose** (`map.profondeur`,
+0 sans le champ, un tableau ordinaire). Il n'a fallu ni massif, ni tétras, ni vol.
+
+**Trois excuses posées le même jour, trois fausses** — le murmure (« il faudrait monter une bande
+de cendre »), le feu du dessus (« il faudrait un camp allumé sur la mesa »), et celle-ci. Ce qui
+les rend fausses est chaque fois la même chose : on décrit le montage par le CHEMIN DE JEU qui y
+mène (allumer un feu, faire vieillir la cendre, alerter un oiseau) au lieu de l'ÉTAT que la
+fonction lit vraiment.
+
+**LA GARDE** (`etages-etancheite.test.ts`) — le marcheur est au pré, contre la paroi ouest du
+chapeau ; la bête est sous le chapeau, à UNE tuile, dans la salle (−1) ou au sol (0) : même
+position, même distance, seul l'étage change.
+
+⚠ **La passe est appelée SEULE, jamais `step`.** Sous un tick entier, la bête posée à une tuile du
+marcheur le verrait aussi de ses propres yeux : le témoin passerait au vert pour la mauvaise cause
+et ne prouverait plus que la méfiance vient de l'envol. Et la prémisse affirme que **la nuée se
+lève dans LES DEUX jambes** (`bird_flush` émis), plus que le pas est bruyant et la bête dans le
+rayon d'alarme — ce qui diffère est ce qui l'ENTEND, pas ce qui la lève.
+
+**Rougissement éprouvé** : `atteignableEntreEtages` neutralisée en `return true` → **25 des 32**
+tombent, dont la neuve, et sur la bonne jambe (`0,35` de méfiance gagnée sous la roche, le témoin
+du pré intact).

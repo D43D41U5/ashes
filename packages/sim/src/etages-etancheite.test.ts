@@ -24,7 +24,8 @@ import { createSim, spawnEntity, step, type SimState } from './sim'
 import { nearestPrey, spawnMonster } from './monsters'
 import { prowlerNear } from './nighthunt'
 import { advanceDecouverte } from './decouverte'
-import { advanceCoinsConnus } from './faune'
+import { advanceCoinsConnus, advanceEnvols, bruitDuSol, gaitNoise } from './faune'
+import { drainEvents } from './events'
 import { butcherRejection, castRejection } from './economy'
 import { near } from './npc'
 import { advanceUpkeep, applyVillageAction, createVillage, evaluateBuild, grantItems } from './village'
@@ -645,6 +646,55 @@ describe('E-A3 — les huit décisions d’Alexis du 2026-09-07 (Q1..Q7)', () =>
     }
     expect(essai(-1), 'témoin : dans la salle, il va au repas').toBe(true)
     expect(essai(1), 'd’un étage plus haut, il ne la sent pas — Q4').toBe(false)
+  })
+
+  // ─── L'ENVOL · la nuée prévient le bois, jamais la salle ─────────────────────
+  /**
+   * LE DERNIER SITE DU LOT ① À N'AVOIR PAS SA GARDE, et l'excuse était fausse — la troisième
+   * du même jour. Le §20 disait « le mettre en scène demande un ENVOL, donc un tétras posé,
+   * alerté, et son vol résolu ». Non : `advanceEnvols` est la nuée d'une LISIÈRE, qui n'a pas
+   * d'oiseau — pas une entité, pas un monstre, rien qu'un fait. Elle n'exige du bois qu'une
+   * chose, `estLisiere(profondeurAt(…))`, et la profondeur est un champ qu'on POSE.
+   *
+   * ⚠ On appelle la passe SEULE, jamais `step` : sous un tick entier, la bête posée à une tuile
+   * du marcheur le verrait aussi de ses propres yeux, et le témoin passerait au vert pour la
+   * mauvaise cause — il ne prouverait plus que la méfiance vient de l'envol.
+   */
+  it('L’ENVOL — la nuée de la lisière ne prévient pas la bête terrée dessous', () => {
+    /** Au pré, contre la paroi ouest du chapeau : le sol y est de l'herbe, donc marchable. */
+    const PERCHOIR = { x: CAP_X0 - 0.5, y: CAP_Y0 + 1.5 }
+    /** Sous le chapeau, à UNE tuile — la salle à −1, la roche au sol : seul l'étage change. */
+    const BETE = { x: CAP_X0 + 0.5, y: CAP_Y0 + 1.5 }
+    const essai = (etageDeLaBete: number): { nuee: boolean; mefiance: number } => {
+      const state = grotte()
+      const tx = Math.floor(PERCHOIR.x)
+      const ty = Math.floor(PERCHOIR.y)
+      // La lisière, posée à la main : le bord pénétrable du bois (d = 1), rien de plus.
+      const prof = (state.map.profondeur ??= new Array<number>(state.map.width * state.map.height).fill(0))
+      prof[ty * state.map.width + tx] = 1
+      const bete = spawnMonster(state, 'deer', BETE.x, BETE.y)
+      const m = state.monsters.find((k) => k.entityId === bete)!
+      state.entities.find((k) => k.id === bete)!.etage = etageDeLaBete
+      m.suspicion = 0
+      // LE MARCHEUR : posé sur le perchoir, au sol. Sa marche suffit — mais on l'AFFIRME.
+      const marcheurId = poser(state, PERCHOIR, 0)
+      const marcheur = state.entities.find((k) => k.id === marcheurId)!
+      expect(gaitNoise(marcheur) * bruitDuSol(state, tx, ty), 'la prémisse : son pas est BRUYANT')
+        .toBeGreaterThanOrEqual(HUNT.ENVOL_SEUIL)
+      const dx = BETE.x - (tx + 0.5)
+      const dy = BETE.y - (ty + 0.5)
+      expect(Math.sqrt(dx * dx + dy * dy), 'la prémisse : la bête est DANS le rayon d’alarme')
+        .toBeLessThan(HUNT.ENVOL_ALARME_RAYON)
+      advanceEnvols(state)
+      return { nuee: drainEvents(state).some((e) => e.type === 'bird_flush'), mefiance: m.suspicion }
+    }
+    const dansLaSalle = essai(-1)
+    const auPre = essai(0)
+    // La nuée part dans LES DEUX cas : ce qui diffère est ce qui l'ENTEND, pas ce qui la lève.
+    expect([auPre.nuee, dansLaSalle.nuee], 'la prémisse : la nuée se lève des deux côtés').toEqual([true, true])
+    expect(auPre.mefiance, 'témoin : au pré, la bête prend l’alarme')
+      .toBeGreaterThanOrEqual(HUNT.ENVOL_SUSPICION - 0.01)
+    expect(dansLaSalle.mefiance, 'terrée sous la roche, elle n’entend rien claquer').toBe(0)
   })
 
   // ─── Q6 · on ne boit pas un feu qu'on ne peut pas toucher ────────────────────
