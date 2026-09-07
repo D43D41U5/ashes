@@ -17,6 +17,7 @@
 import { avanceesDepuisAges, BANDE_VIEILLE, bandeDeCendre } from './cendre'
 import type { EtatDeCendre } from './coulee'
 import { emitEvent } from './events'
+import { atteintLeSol } from './etages'
 import { addItems } from './items'
 import { stimulusPourLesMorts } from './faune'
 import { densiteDesMorts } from './morts'
@@ -109,7 +110,10 @@ function cendreuxPres(state: SimState, tx: number, ty: number): boolean {
     if (!corps) continue
     const dx = corps.x - (tx + 0.5)
     const dy = corps.y - (ty + 0.5)
-    if (dx * dx + dy * dy <= r2) return true
+    if (dx * dx + dy * dy > r2) continue
+    // E-R5 : un Cendreux SOUS LA ROCHE ne dissipe rien à la surface — « courir vers un murmure
+    // amène ce qui le dissipe » n'a de sens que si ce qui vient peut vous atteindre.
+    if (atteintLeSol(state.map, corps, tx, ty)) return true
   }
   return false
 }
@@ -142,6 +146,9 @@ export function advanceMurmures(state: SimState): void {
         const dx = e.x - (site.tx + 0.5)
         const dy = e.y - (site.ty + 0.5)
         if (dx * dx + dy * dy > r2) continue
+        // E-R5 : le site se lit de la CENDRE, donc de la surface — on ne le reçoit pas d'une
+        // salle qui passe dessous.
+        if (!atteintLeSol(state.map, e, site.tx, site.ty)) continue
         if (stimulusPourLesMorts(state, e) > MURMURE.SEUIL_CALME) continue
         if (cendreuxPres(state, site.tx, site.ty)) continue
         e.murmure = site.id

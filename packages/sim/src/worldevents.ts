@@ -8,6 +8,7 @@
 import { isThreatTo } from './alignment'
 import { BALANCE, CENDREUX, COMBAT, CONVOY_LOOT, FAUNA, LOOT_VALUES, MONSTER_DEFS, SEASON, SLOTS, TERRAIN_ROAD, WORLD_EVENTS } from './balance'
 import { distSq } from './geometry'
+import { atteintLeSol } from './etages'
 import { computeFlowField, solidesEternels } from './pathfinding'
 import { inventoryOf, toBag } from './items'
 import { rngRoll } from './rng'
@@ -409,7 +410,11 @@ export function advanceWorldEvents(state: SimState): void {
       if (!isThreatTo(state, e.id, village)) return false
       const dx = e.x - (village.fireTx + 0.5)
       const dy = e.y - (village.fireTy + 0.5)
-      return dx * dx + dy * dy <= radius * radius
+      if (dx * dx + dy * dy > radius * radius) return false
+      // E-R5 : un Cendreux terré SOUS le village n'est pas une menace POUR lui — sans quoi
+      // l'alarme sonne pour ce qu'aucune milice ne peut aller combattre, et son délai de garde
+      // (`ALARM_COOLDOWN_TICKS`) se consomme pour rien.
+      return atteintLeSol(state.map, e, village.fireTx, village.fireTy)
     })
     if (threatened) {
       village.lastAlarmAt = state.tick
@@ -457,7 +462,12 @@ export function advanceWorldEvents(state: SimState): void {
       if (e.hp <= 0) continue
       const dx = e.x - (evac.tx + 0.5)
       const dy = e.y - (evac.ty + 0.5)
-      if (dx * dx + dy * dy <= SEASON.EVAC_RADIUS * SEASON.EVAC_RADIUS) state.evacuatedIds.push(e.id)
+      if (dx * dx + dy * dy > SEASON.EVAC_RADIUS * SEASON.EVAC_RADIUS) continue
+      // E-R5 : ON N'EMBARQUE PAS DEPUIS UNE GROTTE. « Qui est À BORD part sauvé » — être sous
+      // le quai à la verticale n'est pas être à bord, et c'est le verdict de fin de saison qui
+      // se jouerait sur un plancher.
+      if (!atteintLeSol(state.map, e, evac.tx, evac.ty)) continue
+      state.evacuatedIds.push(e.id)
     }
     emitEvent(state, { type: 'ark_departed', tick: state.tick, tx: evac.tx, ty: evac.ty, saved: state.evacuatedIds.length })
     state.evacuation = null // partie : le marqueur disparaît

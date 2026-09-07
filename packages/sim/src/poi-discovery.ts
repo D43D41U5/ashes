@@ -15,6 +15,7 @@
 import { POI } from './balance'
 import { faitsDuLieu, saillant, texteDeStele } from './annales'
 import { emitEvent } from './events'
+import { atteintLeSol } from './etages'
 import { poiCenter, poisAt } from './map'
 import { POI_TYPES, type PoiType } from './poi'
 import type { SimState } from './sim'
@@ -197,6 +198,15 @@ export function advancePois(state: SimState): void {
       const dx = Math.max(zone.x - entity.x, 0, entity.x - (zone.x + zone.w))
       const dy = Math.max(zone.y - entity.y, 0, entity.y - (zone.y + zone.h))
       if (dx * dx + dy * dy > sight2) continue
+      // ⚠ **E-R5 — ON NE VOIT PAS À TRAVERS UN PLANCHER.** Le pendant ATTEINDRE, deux lignes
+      // plus bas, passe déjà l'étage à `poisAt` ; la VUE, elle, portait à travers la roche —
+      // on découvrait le fond d'un karst depuis la terrasse qui le coiffe. Le point visé est
+      // celui de l'empreinte le plus proche du regard (le même que la distance ci-dessus) :
+      // une gueule ÉTANT un connecteur, s'en approcher suffit — la grotte se découvre de son
+      // seuil, plus de soixante tuiles au-dessus.
+      const vx = Math.min(Math.max(entity.x, zone.x), zone.x + zone.w)
+      const vy = Math.min(Math.max(entity.y, zone.y), zone.y + zone.h)
+      if (!atteintLeSol(state.map, entity, Math.floor(vx), Math.floor(vy), zone.etage)) continue
       know(state, entity.id, entity.knownPois, poiId)
     }
 

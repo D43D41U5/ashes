@@ -615,3 +615,32 @@ Le modèle décidé le 2026-08-31 (§2, *« chaque étage est une carte à part 
 
 - Les couches (`EtageLayer`) posent encore leurs passes par type (la passe des gueules, la lèvre du sud d'une rampe) : c'est du DESSIN, pas de la traduction écran ↔ tuile, et l'accesseur ne le couvre pas.
 - `niveauDuCorps` répond à une autre question (« quelle strate porte un corps arrivé de l'étage `n` ? ») : elle partage désormais `palierDUneSalle` avec le reste, pas la loi entière.
+
+## 19. LES SITES DE PORTÉE (2026-09-07) — E-A3 disait vrai de deux, pas de soixante-sept
+
+*Alexis : « go ».*
+
+E-A3 affirmait que *« les 67 sites sont couverts »*. **Ils étaient 25** (11 `atteignableEntreEtages`, 14 `atteintLeSol`). MESURÉ le 2026-09-07 par balayage des motifs de distance (`Math.hypot`, le carré, Chebyshev) : **64 sites dans 31 fichiers** de `packages/sim/src`, hors tests — le même ordre de grandeur que les 67 de 2026-08-31, avec un instrument un peu différent.
+
+**LA LIGNE DE PARTAGE, et elle n'est pas « tout ce qui calcule une distance »** : la règle d'étage ne concerne QUE les sites où **un corps perçoit ou subit quelque chose d'autre**. Un anneau de tuiles qu'on balaie pour choisir un site de spawn, un waypoint de son PROPRE chemin, un test d'appartenance à une zone (« suis-je dans le carré du feu ? ») n'ont pas de second corps : leur donner une garde d'étage rendrait le mécanisme muet sans rien protéger — c'est le piège de *« la géographie module, elle n'autorise jamais »*.
+
+**LES CINQ SITES REPRIS** :
+
+| site | ce qui traversait le plancher |
+|---|---|
+| `poi-discovery.ts` — VOIR | on découvrait à vue le fond d'un karst depuis la terrasse qui le coiffe (le pendant ATTEINDRE, lui, passait déjà l'étage à `poisAt`) |
+| `worldevents.ts` — l'alarme | un Cendreux terré SOUS le village la déclenchait, et consommait son délai de garde |
+| `worldevents.ts` — l'Arche | on embarquait depuis une salle passant sous le quai : le verdict de fin de saison se jouait sur un plancher |
+| `murmure.ts` — le Cendreux | un Cendreux sous la roche faisait taire un site de surface |
+| `murmure.ts` — le visiteur | on recevait d'une salle un murmure qui se lit de la CENDRE, donc de la surface |
+
+**LES SITES LAISSÉS DEHORS, nommés pour qu'on ne les re-litige pas** : `cendreux.ts:488` et `npc.ts:214` (waypoint de son propre chemin) · `worldevents.ts:144` et `morts.ts:347` (anneau de tuiles pour choisir un spawn — la marchabilité tranche déjà) · `npc.ts:1244` et `defriche.ts:72` (Chebyshev au feu = « suis-je dans le village ? », un test de zone) · `poi.ts:1249`, `poisson.ts:32`, `zonegen*`, `layons.ts`, `village-plan.ts`, `connectivity.ts`, `zonegraph.ts`, `zone-content.ts`, `geometry.ts` (worldgen : aucun corps vivant) · `annales.ts` (densité de deux ANNALES entre elles) · `fumerolle.ts:254` (un CHAMP échantillonné en un point — c'est E-R13, pas E-R5) · `traction.ts:98` (un corps et SA propre charge, que la distance de rupture règle déjà).
+
+⚠ **`interest.ts` n'est PAS un helper de portée** — malgré son nom, c'est l'*interest management* réseau (le rognage du snapshot au rayon de caméra). Le filtrer par étage serait un défaut : le client doit RECEVOIR l'étage voisin pour le composer (E-R10).
+
+**Gardes** : trois cas behavioraux de plus dans `etages-etancheite.test.ts` (voir un lieu, l'alarme, l'Arche), chacun avec son témoin au même étage. Neutraliser `atteignableEntreEtages` en `return true` fait rougir **12 cas sur 19** — les 9 d'avant et les 3 neufs.
+
+### Ce qui reste
+
+- **Les deux sites de `murmure.ts` sont branchés, pas gardés behavioralement** : un site de murmure naît d'une porte de hachage, de la bande VIEILLE de cendre et d'une densité de morts — le monter sur la mesa de laboratoire coûterait plus que le site ne vaut. Ils sont couverts par `tsc`, par le lint et par les tests de `murmure.ts` (qui exercent le chemin à l'étage 0). À reprendre le jour où le banc saura poser une bande de cendre.
+- **La garde STRUCTURELLE d'E-A3** — *« la garde échoue si un site nouveau apparaît sans passer par l'accesseur »* — n'existe toujours pas : rien n'empêche un 65ᵉ site de distance de naître aveugle à l'étage.

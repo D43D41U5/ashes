@@ -28,6 +28,10 @@ import { applyVillageAction } from './village'
 import { advanceCendreux } from './cendreux'
 import { CENDREUX, COMBAT } from './balance'
 import { applyInventoryAction, poserAuSol } from './inventory-actions'
+import { advancePois } from './poi-discovery'
+import { advanceWorldEvents } from './worldevents'
+import { foundNpcVillage } from './worldgen'
+import { POI, SEASON } from './balance'
 
 /* ══════════ LA MESA DE LABORATOIRE — et le point AVEUGLE qu'elle offre ══════════
  *
@@ -370,5 +374,76 @@ describe('E-A3 — un corps POUSSÉ reste à son étage (charge, recul, séparat
     step(state, [])
     const apres = state.entities.filter((k) => k.id === pied || k.id === plateau).map((k) => k.x)
     expect(apres).toEqual(avant)
+  })
+})
+
+describe('E-A3 — les sites de PORTÉE repris le 2026-09-07', () => {
+  /* ══════════ LA PASSE DU 2026-09-07 — les sites de PORTÉE qui ignoraient encore l'étage ══════
+   *
+   * *Alexis : « et bien traite la gestion d'une carte par niveau ».* MESURÉ le 2026-09-07 : 64
+   * calculs de distance dans 31 fichiers de `/sim`, dont **25 seulement** passaient par
+   * l'accesseur — E-A3 promettait les 67. Les sites repris ici sont ceux où **un corps perçoit
+   * ou subit quelque chose d'autre** ; les anneaux de choix de tuile, les waypoints de son
+   * PROPRE chemin et les tests d'appartenance de zone n'ont pas de second corps et restent
+   * hors de la règle (ils sont nommés dans `docs/decisions.md`).
+   * ═══════════════════════════════════════════════════════════════════════════════════════ */
+
+  it('VOIR UN LIEU : on ne découvre pas à vue ce qu’un plancher cache', () => {
+    // Le pendant ATTEINDRE (`poisAt`) connaissait déjà l'étage ; la VUE portait à travers la
+    // roche — on lisait le fond d'un karst depuis la terrasse qui le coiffe.
+    const r = lesDeuxSens((etageDuRegard) => {
+      const state = monde()
+      state.map.zones = [{ name: 'la Salle', kind: 'grotte', x: CAP_X0, y: CAP_Y0, w: 1, h: 1, etage: 1 }]
+      const id = poser(state, BAS, etageDuRegard)
+      advancePois(state)
+      return state.entities.find((k) => k.id === id)!.knownPois.includes(0)
+    })
+    // Le témoin est le regard AU MÊME ÉTAGE que le lieu (1) ; l'autre sens est le sol (0).
+    expect(r.temoin, 'témoin : au même étage, et à moins de SIGHT_TILES, le lieu se voit').toBe(true)
+    expect(r.aTravers, 'à travers le plancher : il ne se voit pas').toBe(false)
+    // Et la prémisse du témoin : les deux corps SONT à portée de vue (sinon la garde est vide).
+    expect(Math.abs(BAS.x - CAP_X0)).toBeLessThan(POI.SIGHT_TILES)
+  })
+
+  it('L’ALARME D’UN VILLAGE : ce qui rôde SOUS lui ne la déclenche pas', () => {
+    const r = lesDeuxSens((etageDeLaMenace) => {
+      const state = monde()
+      // Le feu au SOL, à l'ouest de la mesa ; la menace sur le plateau, dans DEFEND_RADIUS.
+      foundNpcVillage(state, 5, 10, 2)
+      const village = state.villages[0]!
+      village.lastAlarmAt = -1_000_000 // le délai de garde ne doit pas masquer le cas
+      const bete = spawnMonster(state, 'cendreux', HAUT.x, HAUT.y)
+      const corps = state.entities.find((k) => k.id === bete)!
+      if (etageDeLaMenace !== 0) corps.etage = etageDeLaMenace
+      const avant = state.events.length
+      advanceWorldEvents(state)
+      return state.events.slice(avant).some((e) => e.type === 'alarm_raised')
+    })
+    // Ici le TÉMOIN est la menace au sol (0) — celle qui doit bien sonner ; le sens « à travers »
+    // est la menace sur le plateau (1).
+    expect(r.aTravers, 'témoin : au sol, la bête déclenche l’alarme').toBe(true)
+    expect(r.temoin, 'sur le plateau, un plancher entre les deux : pas d’alarme').toBe(false)
+  })
+
+  it('L’ARCHE : on n’embarque pas depuis l’étage d’en dessous', () => {
+    const r = lesDeuxSens((etageDuPassager) => {
+      const state = monde()
+      // Le quai sur le PLATEAU, le passager au sol juste à côté — dans EVAC_RADIUS.
+      // L'Arche n'existe QUE dans une saison qui finit (`finDeSaison`, saison-sans-fin T4), et
+      // son jour se compte DEPUIS la fin. On pose donc les deux, et le jour de départ.
+      state.finDeSaison = BALANCE.SEASON_DAYS
+      const jourEvac = state.finDeSaison - (BALANCE.SEASON_DAYS - SEASON.EVAC_DAY)
+      state.jourDeDepart = jourEvac + SEASON.EVAC_DEPART_DAYS
+      state.evacuation = { tx: CAP_X0, ty: CAP_Y0 }
+      state.arkDeparted = false
+      state.evacuatedIds = []
+      const id = poser(state, BAS, etageDuPassager)
+      advanceWorldEvents(state)
+      return state.evacuatedIds.includes(id)
+    })
+    // Le quai est au SOL (le chapeau est un ÉTAGE, pas un palier : `palierDuSol` y vaut 0),
+    // donc c'est le passager du sol qui est le TÉMOIN, et celui du plateau le cas de la règle.
+    expect(r.aTravers, 'témoin : au même étage que le quai, on embarque').toBe(true)
+    expect(r.temoin, 'depuis le plateau, un plancher entre les deux : on reste').toBe(false)
   })
 })
