@@ -39,7 +39,7 @@ import {
 } from '../../render/cave-art'
 import { cliffKey, levreDe, PHASES_PAROI, varianteDeLevre, VARIANTES_PAROI } from '../../render/cliff-art'
 import {
-  alphaDeDecouvert, CLIFF_DEPTH, LIFT_TUILES, ROCHE_DEPTH, solVisibleSous,
+  alphaDeDecouvert, CLIFF_DEPTH, LIFT_TUILES, palierDUneSalle, ROCHE_DEPTH, solVisibleSous,
   SOUTERRAIN_STRATE, strateDEtage, TIE_SOCLE, TILE_PX, ySortDepth, type Decouvert,
 } from '../../render/framing'
 import { PERIODE_DALLE, plateauKey, RAMPE_RANGEES, SOCLE_TEINTE, TERRAINS_DE_PLATEAU } from '../../render/plateau-art'
@@ -553,7 +553,7 @@ export class EtageLayer {
         // Même loi que le corps qui s'y tient (`decalageDEtage`).
         const niveau = this.relief.niveauDeSalle(tx, ty)
         if (niveau === 0) continue
-        const p = -niveau - 1
+        const p = palierDUneSalle(niveau)
         const lift = p * LIFT_TUILES
         if (p < pSalle) pSalle = p
         // ② LA SALLE DANS LE MASQUE (voir `ouvrirLeMasque`) : son sol, sa paroi et le seuil.

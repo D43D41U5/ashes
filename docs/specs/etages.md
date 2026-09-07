@@ -589,3 +589,29 @@ Captures : `scratchpad/cave/` — dehors (la butte, ses marches et son trou), le
 ---
 
 *2026-09-05 — **Les grottes de TERRASSE** (karsts bornés, à identité `−H`, trois temps, nappe du calcaire, vignettes ancrées, bivouac, plancher, trace sur le palier) ont leur spec : **`grottes.md`**. Elle reprend la cave de mesa B1 dans le même régime de souterrain (G-R1) et retire la Grotte POI de surface (G-R10).*
+
+## 18. L'ACCESSEUR D'ÉTAGE DU RENDU (2026-09-07)
+
+*Alexis : « tu confirmes l'empilement de map ou pas ? » — puis « et bien traite la gestion d'une carte par niveau ».*
+
+Le modèle décidé le 2026-08-31 (§2, *« chaque étage est une carte à part entière, l'ensemble est une superposition »*) n'est pas en cause : la donnée est bien une carte par niveau, superposée en coordonnées, stockée dans sa propre grille creuse. Ce qui manquait, c'est la **gestion** — côté RENDU.
+
+**`/sim` avait son accesseur, le rendu n'en avait pas.** E-R5 dit *« la règle s'écrit UNE FOIS et les sites l'APPELLENT »* : `atteignableEntreEtages` a dix-huit appelants depuis le 2026-09-02. Mais les lois qui traduisent **écran ↔ tuile** — celles qui répondent « quelle carte se dessine ici ? » — énuméraient chacune à la main ce qui se dresse. Deux d'entre elles ont oublié la GUEULE le jour où les grottes sont arrivées, et **le même défaut est sorti deux fois en deux jours** :
+
+| loi | ce qu'elle a oublié | ce que ça donnait |
+|---|---|---|
+| `deplierLeLift` | l'arche d'une gueule | viser l'entrée lisait la roche 1 à 4 tuiles derrière — « les murs invisibles » |
+| `niveauDuCorps` | la salle sous le seuil | le corps dessiné sur le TOIT de la terrasse, 32 px trop haut — « le saut d'un étage » |
+
+- **E-R28 — UNE SEULE LOI DIT QUELLE CARTE SE DESSINE À UNE RANGÉE D'ÉCRAN.** `strateDessineeA(relief, tx, ligne) → { ty, etage }` (`render/strates.ts`). Ses trois règles — le chapeau, le connecteur, le sol — ne sont écrites que là ; `deplierLeLift` ne fait plus que l'habiller en pixels monde.
+- **E-R29 — LA LOI NE REGARDE JAMAIS LE TYPE D'UN CONNECTEUR.** Elle lit le palier de sa TUILE (`palierDAcces = relief.palier(c.x, c.y)`) : un connecteur est posé là où on l'atteint. C'est ce qui rend un type neuf gratuit — et le type `Connecteur` en déclare déjà un, **`'escalier'`, que rien ne construit encore**. Une garde le pose et exige que ses rangées levées se dévoilent comme celles d'une rampe, sans une ligne de plus.
+- **E-R30 — G-R1 NE S'ÉCRIT QU'UNE FOIS.** « Une salle de niveau `n` s'ouvre sur le palier `−n − 1` » était écrite **cinq fois** dans le client (`decalageDEtage`, `EtageLayer.rendreLaCave`, `deplierLeLift`, `niveauDuCorps`, `WorldScene.yDessineDuCorps`). C'est `palierDUneSalle(niveau)` (`framing.ts`, le module le plus bas), et les cinq l'appellent.
+
+**MESURÉ — la prémisse d'E-R29, sur le monde JOUÉ et non sur un montage** : les **1 227 connecteurs** de la carte (963 rampes, 264 gueules) ont tous `relief.palier(c.x, c.y)` égal à leur palier d'accès — `min(de, vers)` pour une rampe, `de` pour une gueule. Si le worldgen posait un jour une rampe sur sa tuile haute, `strates.test.ts` rougirait avant tout le reste.
+
+**Les gardes et leurs témoins** (`strates.test.ts`, 16 cas) : `palierDAcces := c.de` fait rougir la rampe descendante ; `:= min(de, vers)` fait rougir la gueule ; `strateDessineeA := { ty: ligne, etage: 0 }` fait rougir les trois règles — chapeau, rampe et gueule — et pas une seule.
+
+### Ce qui reste
+
+- Les couches (`EtageLayer`) posent encore leurs passes par type (la passe des gueules, la lèvre du sud d'une rampe) : c'est du DESSIN, pas de la traduction écran ↔ tuile, et l'accesseur ne le couvre pas.
+- `niveauDuCorps` répond à une autre question (« quelle strate porte un corps arrivé de l'étage `n` ? ») : elle partage désormais `palierDUneSalle` avec le reste, pas la loi entière.

@@ -94,9 +94,21 @@ export function decalageDEtage(niveau: number, palierDuSol = 0): number {
   // la coiffe — au niveau de sa gueule, sinon le seuil et la première tuile de salle seraient à
   // `LIFT_TUILES` rangées l'un de l'autre. Positif : on descend. La couche de la cave prend le
   // même lift (`EtageLayer.rendreLaCave`, `p = −niveau − 1`), et `warp.lift` porte le reste.
-  if (niveau < 0) return (palierDuSol - (-niveau - 1)) * LIFT_TUILES * TILE_PX
+  if (niveau < 0) return (palierDuSol - palierDUneSalle(niveau)) * LIFT_TUILES * TILE_PX
   if (niveau < palierDuSol) return 0
   return -(niveau - palierDuSol) * LIFT_TUILES * TILE_PX
+}
+/**
+ * LE PALIER SUR LEQUEL S'OUVRE UNE SALLE de niveau `niveau` (négatif) — G-R1, `−niveau − 1`.
+ *
+ * ⚠ **UNE SEULE ÉCRITURE.** Cette arithmétique-là était écrite CINQ fois dans le client au
+ * 2026-09-07 (`decalageDEtage` ici, `EtageLayer.rendreLaCave`, `deplierLeLift`, `niveauDuCorps`,
+ * `WorldScene`) — c'est la loi qui dit à quelle carte appartient une salle, et cinq copies d'une
+ * loi finissent toujours par diverger. Elle vit au plus bas (`framing.ts` n'importe rien de
+ * `render/`), pour que l'accesseur de strates comme les couches la lisent au même endroit.
+ */
+export function palierDUneSalle(niveau: number): number {
+  return -niveau - 1
 }
 /** LE LIFT DU SOL — de combien de pixels une tuile de palier `p` se dessine plus haut que sa
  *  rangée (T-R7). ⚠ UNE SEULE ÉCRITURE, comme `decalageDEtage` : `warp.lift` la sert à toutes

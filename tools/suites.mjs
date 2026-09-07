@@ -65,7 +65,9 @@ const SUITES = [
   //   d'`etage-layer` pour être testable) — suite à 1524, plancher relevé quelques pourcents dessous.
   // 2026-09-07 : +7 gardes avec LA VISÉE D'UNE GUEULE (`deplier-etage.test.ts` : l'arche se
   //   déplie comme une rampe) — suite à 1531, plancher relevé quelques pourcents dessous.
-  { nom: 'client', dir: 'packages/client', args: ['run'], plancher: 1519 },
+  // 2026-09-07 : +16 gardes avec L'ACCESSEUR D'ÉTAGE DU RENDU (`strates.test.ts`, E-R28/29/30)
+  //   — suite à 1547, plancher relevé quelques pourcents dessous.
+  { nom: 'client', dir: 'packages/client', args: ['run'], plancher: 1534 },
   { nom: 'serveur', dir: 'packages/server', args: ['run'], plancher: 36 },
   // Le banc pilote le vrai worldgen sur la carte de production : lent, et seul à porter le
   // drapeau qui ignore les erreurs non gérées (voir l'en-tête de `scenario.test.ts`).

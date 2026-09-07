@@ -30,7 +30,7 @@
  * le palier du sol — la hauteur à laquelle la tuile se dessine, et rien d'autre.
  */
 import { marchableAEtage, rampeQuiMonte, type WorldMap } from '@ashes/sim'
-import { niveauSurLaRampe } from '../../render/framing'
+import { niveauSurLaRampe, palierDUneSalle } from '../../render/framing'
 import type { Relief } from '../../render/relief'
 
 export function niveauDuCorpsDessine(map: WorldMap, relief: Relief, x: number, y: number, etageAutorite: number): number {
@@ -59,6 +59,6 @@ export function niveauDuCorpsDessine(map: WorldMap, relief: Relief, x: number, y
   // qui est du palier et porte la salle, ferait basculer le regard sous la roche une tuile
   // avant d'y être.
   const salle = relief.niveauDeSalle(tx, ty)
-  if (salle !== 0 && -salle - 1 === etageAutorite && relief.hauteur(tx, ty) > etageAutorite) return salle
+  if (salle !== 0 && palierDUneSalle(salle) === etageAutorite && relief.hauteur(tx, ty) > etageAutorite) return salle
   return relief.hauteur(tx, ty)
 }

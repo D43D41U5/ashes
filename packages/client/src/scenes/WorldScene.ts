@@ -105,6 +105,7 @@ import {
   ouvertureDuDecouvert,
   type Decouvert,
   OVERLAY_DEPTH,
+  palierDUneSalle,
   strateDeProfondeur,
   strateDEtage,
   strateDuCorps,
@@ -547,7 +548,7 @@ export class WorldScene extends Phaser.Scene {
   private yDessineDuCorps(x: number, y: number, etage: number | undefined): number {
     const palier = this.relief.palier(Math.floor(x), Math.floor(y))
     const niveau = this.etages.niveauDuCorps(x, y, etage ?? palier)
-    const hauteur = niveau < 0 ? -niveau - 1 : Math.max(niveau, palier)
+    const hauteur = niveau < 0 ? palierDUneSalle(niveau) : Math.max(niveau, palier)
     return y - hauteur * LIFT_TUILES
   }
 
