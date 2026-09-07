@@ -77,7 +77,8 @@ packages/client   ← Phaser 4 + Vite. Rendu ISO, input, interpolation, HUD/menu
                     éclairage, art procédural) · worker/ (la sim en Veillée) · audio/ · assets/
 packages/server   ← Node + Colyseus. Boucle autoritative, rooms, replay-log (L1 fait). Persistance PostgreSQL encore à venir (Vallée).
 tools/            ← les instruments. `smoke.mjs` (navigateur), `suites.mjs` (les 4 suites),
-                    `plans-compile.mts` (= pnpm plans), et une batterie de sondes headless :
+                    `plans-compile.mts` (= pnpm plans), `decisions-index.mjs` (l'index du
+                    journal), et une batterie de sondes headless :
                     profileurs (`profil-tick`, `profil-banc`, `empreinte-sim`), diagnostics par
                     système (`diag-loup`, `diag-raid`, `diag-recolte`…), mesures (`mesure-bande`,
                     `apercu-carte`, `trace-corvee`…). Ils vivent ICI et non dans /sim parce que le
@@ -87,7 +88,14 @@ tools/            ← les instruments. `smoke.mjs` (navigateur), `suites.mjs` (l
                     avec la session ; ce qui doit survivre perd son préfixe et prend un nom.
 docs/specs/       ← specs par système, extraites du GDD, avec critères d'acceptation
 docs/gate1-finition.md ← le backlog de finition solo priorisé (P0/P1/P2) — ce qui reste vraiment à construire
-docs/decisions.md ← journal des décisions (ADR léger) — à tenir à jour
+docs/decisions.md ← L'INDEX du journal des décisions (ADR léger). Les entrées vivent dans
+                    docs/decisions/ — CINQ VOLETS par thème (monde-worldgen, rendu-da,
+                    gameplay-systemes, interface-outillage, architecture-infra). L'index
+                    chronologique de decisions.md est ce qui garde résolubles les renvois du
+                    code, qui citent une DATE : `grep 2026-07-05 docs/decisions.md` rend les
+                    entrées du jour, et la lettre de la bonne ligne dit le volet. ⚠ Les « ci-dessus »
+                    du journal (32 entrées, supersession encodée par la POSITION) ne désignent PLUS
+                    la ligne du dessus : pour 11 d'entre elles l'antécédent est dans un autre volet.
 docs/superpowers/ ← notes et plans de conception détaillés (juillet 06→11, puis au fil des gros
                     chantiers), COMPLÉMENT de docs/specs/ :
                     encore amendés quand le système bouge (bannière « chiffres révisés » en tête) — donc
@@ -113,7 +121,7 @@ Ils viennent du GDD §11 et §14 (« décisions actées »). Ne pas les rouvrir 
 - **Événements de domaine** : tout fait de jeu discret et signifiant (spawn, récolte, don, premier sang, pacte…) est émis comme `SimEvent` (`events.ts`) au moment où la logique l'exécute. L'alignement, la chronique de saison, le tableau du village et la réputation sont des *consommateurs* de ce flux — on n'instrumente jamais la logique après coup. Haute fréquence ≠ domaine : un déplacement n'est pas un événement.
 - **État de sim JSON-sérialisable** : pas de classes, pas de `Map`/`Set` dans `SimState` — snapshot, transport Worker et persistance en dépendent.
 - **Specs avant systèmes** : avant d'implémenter un système de jeu (combat, alignement, économie…), extraire/compléter sa spec dans `docs/specs/` avec des critères d'acceptation testables, puis implémenter contre ces critères.
-- **Décisions** : toute décision de design ou d'architecture prise en session s'ajoute en une ligne dans `docs/decisions.md`. Les 14 décisions fondatrices sont dans le GDD §14.
+- **Décisions** : toute décision de design ou d'architecture prise en session s'ajoute **en une ligne** — le format déclaré, `AAAA-MM-JJ — [domaine] Décision. (pourquoi, en quelques mots)` — à la fin de son volet dans `docs/decisions/`, puis `node tools/decisions-index.mjs` régénère `docs/decisions.md` (ne pas l'éditer à la main). Les 14 décisions fondatrices sont dans le GDD §14. *(Le format a dérivé : à la coupe du 2026-09-07, 34 entrées sur 740 tenaient en une ligne, la médiane pesait 2 Ko. Le journal est EN AJOUT SEUL — on ne réécrit pas l'existant, mais on ne l'aggrave pas.)*
 - **Travail en équipe de spécialistes** : six rôles ont une définition permanente dans `.claude/agents/` (`perf`, `da-rendu`, `determinisme-sim`, `systemes-jeu`, `ui-access`, `eclaireur-etat`), chacun avec l'instrument qu'il possède. Le protocole — **contrat `MESURÉ`/`SUSPECTÉ`** (seul `MESURÉ` entre au journal), worktree obligatoire pour qui écrit, et la liste de ce qu'on ne sait PAS encore mesurer — vit dans `docs/sprint-aaa.md` § L'ÉQUIPE. On convoque un spécialiste quand il y a un instrument à lancer ou une spec à confronter, jamais pour brainstormer. **Tout item de backlog repris commence par `eclaireur-etat`** (lecture seule) : le backlog est souvent pessimiste — trois items donnés « à faire » étaient déjà construits.
 - **Tests** : l'effort de test se concentre sur `/sim`. Chaque système livré arrive avec ses tests headless. Les bugs se reproduisent par un test `seed + inputs → état attendu` avant d'être corrigés.
 - Le code et les docs du projet sont en **français** (comme le GDD) ; les identifiants de code en anglais.
