@@ -2816,23 +2816,10 @@ export function faunaStep(
   // entre deux silhouettes. On n'écoute donc que les cris FRAIS. La vague se
   // propage toujours de proche en proche (chaque bête levée devient à son tour
   // un cri frais) — c'est la levée en chaîne de R9, et elle est intacte.
-  let alarmed = false
-  let alarmFromX: number | undefined
-  let alarmFromY: number | undefined
-  if (herd) {
-    for (const other of herd) {
-      if (other.entityId === monster.entityId || other.fleeSince < 0) continue
-      if (state.tick - other.fleeSince > FAUNA.HERD_ALARM_TICKS) continue
-      const oe = byId.get(other.entityId)
-      if (!oe) continue
-      if (distSq(entity.x, entity.y, oe.x, oe.y) <= FAUNA.HERD_ALARM_RADIUS * FAUNA.HERD_ALARM_RADIUS) {
-        alarmed = true
-        alarmFromX = other.fleeFromX ?? oe.x
-        alarmFromY = other.fleeFromY ?? oe.y
-        break
-      }
-    }
-  }
+  const cri = crisFrais(state, entity, monster, herd, byId)
+  const alarmed = cri !== null
+  const alarmFromX = cri?.fromX
+  const alarmFromY = cri?.fromY
 
   // LA MÉFIANCE (chasse C1) : la jauge poursuit le stimulus. C'est elle — et
   // plus un rayon — qui décide de la suite. Un coup reçu (hunted) ou l'alarme
@@ -3420,6 +3407,9 @@ function leapStep(
         const om = monsterByEntity.get(other.id)
         if (om !== undefined && om.herdId !== undefined && om.herdId === monster.herdId) continue
         if (distSq(entity.x, entity.y, other.x, other.y) > reach * reach) continue
+        // E-R5, Q3bis : un bond ne franchit pas un plancher — il frappe ce qui est
+        // à portée DE SON ÉTAGE, comme toute mêlée.
+        if (!atteignableEntreEtages(state.map, entity.x, entity.y, niveauDuCorps(state.map, entity), other.x, other.y, niveauDuCorps(state.map, other))) continue
         monster.leapHit = true
         applyDamage(state, other, damageOf(monster), entity.id)
         break
@@ -3626,6 +3616,10 @@ function noteBlocked(
       const oe = byId.get(other.entityId)
       if (!oe || oe.hp <= 0) continue
       if (distSq(entity.x, entity.y, oe.x, oe.y) > FAUNA.PACK_CALL_RADIUS * FAUNA.PACK_CALL_RADIUS) continue
+      // E-R5, Q3 : UN PLANCHER COUPE LE GROUPE (décision d'Alexis, 2026-09-07). On ne
+      // reprend pas le chemin d'un congénère qu'un plancher sépare — ses jalons partent
+      // d'un autre étage et ne mènent nulle part d'ici.
+      if (!atteignableEntreEtages(state.map, entity.x, entity.y, niveauDuCorps(state.map, entity), oe.x, oe.y, niveauDuCorps(state.map, oe))) continue
       // Copie profonde : deux loups qui partagent le MÊME tableau se le consomment
       // mutuellement — le second suivrait les jalons que le premier a déjà mangés.
       monster.path = chemin.map((p) => (p.etage === undefined ? { tx: p.tx, ty: p.ty } : { tx: p.tx, ty: p.ty, etage: p.etage }))
@@ -3651,7 +3645,7 @@ function noteBlocked(
 /* ── Le prédateur : la meute de loups (spec faune R11) ────────────────────── */
 
 /** Les frères de meute vivants, à portée de cohésion — la mesure du courage. */
-function packNearby(herd: Monster[] | undefined, monster: Monster, entity: Entity, byId: Map<number, Entity>): number {
+function packNearby(map: WorldMap, herd: Monster[] | undefined, monster: Monster, entity: Entity, byId: Map<number, Entity>): number {
   if (!herd) return 0
   let n = 0
   for (const other of herd) {
@@ -3659,7 +3653,10 @@ function packNearby(herd: Monster[] | undefined, monster: Monster, entity: Entit
     if (other.petit === true) continue // un petit ne donne pas de courage (loup.md L15)
     const e = byId.get(other.entityId)
     if (!e || e.hp <= 0) continue
-    if (distSq(entity.x, entity.y, e.x, e.y) <= FAUNA.PACK_COHESION_RADIUS * FAUNA.PACK_COHESION_RADIUS) n++
+    // E-R5, Q3 : le courage se prend aux congénères qu'on peut REJOINDRE. Une sœur
+    // sur la terrasse ne donne pas de courage au loup de la salle du dessous.
+    if (distSq(entity.x, entity.y, e.x, e.y) > FAUNA.PACK_COHESION_RADIUS * FAUNA.PACK_COHESION_RADIUS) continue
+    if (atteignableEntreEtages(map, entity.x, entity.y, niveauDuCorps(map, entity), e.x, e.y, niveauDuCorps(map, e))) n++
   }
   return n
 }
@@ -3736,6 +3733,11 @@ function feedStep(state: SimState, monster: Monster, entity: Entity): boolean {
     const reach = fresh ? HUNT.CARCASS_SEEK_FRESH : FAUNA.CARCASS_SEEK
     const d = distSq(entity.x, entity.y, c.x, c.y)
     if (d > reach * reach) continue
+    // E-R5, Q4 (décision d'Alexis, 2026-09-07) : l'odeur ne traverse pas la roche. Le
+    // charognard n'élit qu'une charogne qu'il peut REJOINDRE — sinon il camperait sous
+    // un cadavre du dessus sans jamais l'atteindre. (Le BIAIS du sang, lui, reste un
+    // CHAMP lu en un point — E-R13, même étagère que la brume : voir `bloodBias`.)
+    if (!atteignableEntreEtages(state.map, entity.x, entity.y, niveauDuCorps(state.map, entity), c.x, c.y, niveauDuCorps(state.map, c))) continue
     if (d < bestD || (d === bestD && best && c.id < best.id)) {
       best = { id: c.id, x: c.x, y: c.y, pile: false }
       bestD = d
@@ -3855,15 +3857,19 @@ function clanAggressor(
   byId: Map<number, Entity>,
 ): Entity | undefined {
   const reach = FAUNA.PURSUIT_RANGE * FAUNA.PURSUIT_RANGE
+  // E-R5, Q3 : on n'élit un agresseur — le sien ou celui d'un frère — que si on peut
+  // l'atteindre. Prendre pour cible quelqu'un qu'un plancher sépare planterait la bête.
   const own = monster.lastAttackerId !== null ? byId.get(monster.lastAttackerId) : undefined
-  if (own && own.hp > 0 && distSq(entity.x, entity.y, own.x, own.y) <= reach) return own
+  if (own && own.hp > 0 && distSq(entity.x, entity.y, own.x, own.y) <= reach &&
+    atteignableEntreEtages(state.map, entity.x, entity.y, niveauDuCorps(state.map, entity), own.x, own.y, niveauDuCorps(state.map, own))) return own
   if (!pack) return undefined
   for (const w of pack) {
     if (w.entityId === monster.entityId || w.lastAttackerId === null) continue
     const we = byId.get(w.entityId)
     if (!we || we.hp <= 0) continue
     const agg = byId.get(w.lastAttackerId)
-    if (agg && agg.hp > 0 && distSq(entity.x, entity.y, agg.x, agg.y) <= reach) return agg
+    if (agg && agg.hp > 0 && distSq(entity.x, entity.y, agg.x, agg.y) <= reach &&
+      atteignableEntreEtages(state.map, entity.x, entity.y, niveauDuCorps(state.map, entity), agg.x, agg.y, niveauDuCorps(state.map, agg))) return agg
   }
   return undefined
 }
@@ -3960,6 +3966,10 @@ function pupStep(
   for (const q of quarry) {
     if (!isAvatar(q.id) || q.hp <= 0) continue
     const d = distSq(entity.x, entity.y, q.x, q.y)
+    // E-R5, Q3bis : le petit ne s'alarme que de ce qui vient VERS LUI — un joueur sur la
+    // terrasse au-dessus du gîte n'est pas une menace. (Les trois autres distances de
+    // cette fonction sont son propre gîte : sa trajectoire, pas une perception.)
+    if (d <= menaceD && !atteignableEntreEtages(state.map, entity.x, entity.y, niveauDuCorps(state.map, entity), q.x, q.y, niveauDuCorps(state.map, q))) continue
     if (d < menaceD || (d === menaceD && menace !== undefined && q.id < menace.id)) {
       menace = q
       menaceD = d
@@ -4051,7 +4061,12 @@ function sortieTravel(
     let watched = false
     for (const q of quarry) {
       if (!isAvatar(q.id) || q.hp <= 0) continue
-      if (distSq(entity.x, entity.y, q.x, q.y) <= FAUNA.CHASSE_REELLE * FAUNA.CHASSE_REELLE) {
+      // E-R5, Q3bis : la chasse ne devient RÉELLE que si un joueur peut la voir se
+      // jouer. Sous la roche, ou une terrasse plus haut, il ne regarde pas — la sortie
+      // reste abstraite. (La distance au-dessus est le waypoint de la sortie : sa
+      // trajectoire.)
+      if (distSq(entity.x, entity.y, q.x, q.y) <= FAUNA.CHASSE_REELLE * FAUNA.CHASSE_REELLE &&
+        atteignableEntreEtages(state.map, entity.x, entity.y, niveauDuCorps(state.map, entity), q.x, q.y, niveauDuCorps(state.map, q))) {
         watched = true
         break
       }
@@ -4148,7 +4163,7 @@ export function wolfStep(
     monster.stalking = false
     oublieLeChemin(monster)
     const attacker = monster.lastAttackerId !== null ? byId.get(monster.lastAttackerId) : undefined
-    const from = attacker ?? nearestOf(quarry, entity, FAUNA.SAFE_RANGE)
+    const from = attacker ?? nearestOf(state.map, quarry, entity, FAUNA.SAFE_RANGE)
     if (from) {
       if (monster.fleeSince < 0) monster.fleeSince = state.tick
       const phase = (state.tick - monster.fleeSince) % (FAUNA.BURST_RUN_TICKS + FAUNA.BURST_PAUSE_TICKS)
@@ -4265,7 +4280,7 @@ export function wolfStep(
       !isAvatar(target.id) ||
       monster.nightHunter === true || // la nuit ne pèse pas un homme : elle est venue pour lui
       monster.rageUntil !== undefined ||
-      packNearby(pack, monster, entity, byId) >= FAUNA.PACK_COURAGE
+      packNearby(state.map, pack, monster, entity, byId) >= FAUNA.PACK_COURAGE
     const d2 = distSq(entity.x, entity.y, target.x, target.y)
 
     if (!brave) {
@@ -4353,7 +4368,7 @@ export function wolfStep(
     // LA RUÉE. Quand tout le monde est en place — ou que la proie a compris et
     // détale — le camouflage tombe et la meute se rue à pleine vitesse.
     const aware = targetAware(entity, target, monsterByEntity, isAvatar)
-    const ready = packInPlace(pack, target, byId)
+    const ready = packInPlace(state.map, pack, target, byId)
 
     // LA RAGE NE RAMPE PAS (L13) : plus de traque, plus de camouflage — il fonce.
     if (monster.rageUntil !== undefined || ready || aware || d2 <= FAUNA.COMMIT_RANGE * FAUNA.COMMIT_RANGE) {
@@ -4468,7 +4483,7 @@ function targetAware(
  * poste est de l'autre côté finit par PASSER sur la proie et s'engage au contact.
  * L'encerclement est l'affaire de ceux qui encerclent.
  */
-function packInPlace(pack: Monster[] | undefined, target: Entity, byId: Map<number, Entity>): boolean {
+function packInPlace(map: WorldMap, pack: Monster[] | undefined, target: Entity, byId: Map<number, Entity>): boolean {
   if (!pack) return true // un loup seul n'a personne à attendre
   const reach = FAUNA.ENCIRCLE_RADIUS + FAUNA.POST_TOLERANCE
   let alive = 0
@@ -4476,6 +4491,10 @@ function packInPlace(pack: Monster[] | undefined, target: Entity, byId: Map<numb
     if (w.targetId !== target.id) continue // il chasse autre chose : il ne compte pas
     const e = byId.get(w.entityId)
     if (!e || e.hp <= 0) continue
+    // E-R5, Q3 : un plancher COUPE le groupe — un loup séparé de la proie ne compte pas
+    // dans cet encerclement (comme celui qui chasse autre chose). Le compter aurait
+    // suspendu l'assaut pour toujours : il ne peut pas venir se poster.
+    if (!atteignableEntreEtages(map, e.x, e.y, niveauDuCorps(map, e), target.x, target.y, niveauDuCorps(map, target))) continue
     alive++
     if (distSq(e.x, e.y, target.x, target.y) > reach * reach) return false
   }
@@ -4746,6 +4765,8 @@ function packQuarry(
     const oe = byId.get(other.entityId)
     if (!oe || oe.hp <= 0) continue
     if (distSq(entity.x, entity.y, oe.x, oe.y) > FAUNA.PACK_CALL_RADIUS * FAUNA.PACK_CALL_RADIUS) continue
+    // E-R5, Q3 : le cri du congénère ne traverse pas le plancher…
+    if (!atteignableEntreEtages(state.map, entity.x, entity.y, niveauDuCorps(state.map, entity), oe.x, oe.y, niveauDuCorps(state.map, oe))) continue
 
     const t = byId.get(other.targetId)
     if (!t || t.hp <= 0) continue
@@ -4753,19 +4774,56 @@ function packQuarry(
     // et pas réfugiée au Feu ?
     const reach = FAUNA.PURSUIT_RANGE * vigor
     if (distSq(entity.x, entity.y, t.x, t.y) > reach * reach) continue
+    // …et la proie reprise doit être à MA portée de roche, pas seulement à ma distance.
+    if (!atteignableEntreEtages(state.map, entity.x, entity.y, niveauDuCorps(state.map, entity), t.x, t.y, niveauDuCorps(state.map, t))) continue
     if (isAvatar(t.id) && underFireWard(state, t)) continue
     return other.targetId
   }
   return null
 }
 
-/** Le plus proche d'une liste — sans préférence, sans pondération. */
-function nearestOf(list: Entity[], entity: Entity, range: number): Entity | undefined {
+/**
+ * LE CRI FRAIS D'UNE SŒUR (chasse R9) — extrait de `faunaStep` le 2026-09-07, et ce n'est
+ * pas cosmétique : `faunaStep` porte huit distances, dont SEPT sont de la trajectoire (le
+ * point de peur, son propre attaquant, le centre de sa harde, son ancrage de pâture). Sceller
+ * l'alarme dans le corps du dispatcher aurait exempté les sept autres de la garde E-A3 sans
+ * qu'une ligne le dise. Ici, la loi vit avec sa perception, et le dispatcher reste sous garde.
+ *
+ * E-R5, Q3 (décision d'Alexis, 2026-09-07) : UN PLANCHER COUPE LE GROUPE. La sœur qui fuit
+ * sur la terrasse ne lève pas celle de la salle du dessous.
+ */
+function crisFrais(
+  state: SimState,
+  entity: Entity,
+  monster: Monster,
+  herd: Monster[] | undefined,
+  byId: Map<number, Entity>,
+): { fromX: number; fromY: number } | null {
+  if (!herd) return null
+  for (const other of herd) {
+    if (other.entityId === monster.entityId || other.fleeSince < 0) continue
+    if (state.tick - other.fleeSince > FAUNA.HERD_ALARM_TICKS) continue
+    const oe = byId.get(other.entityId)
+    if (!oe) continue
+    if (distSq(entity.x, entity.y, oe.x, oe.y) > FAUNA.HERD_ALARM_RADIUS * FAUNA.HERD_ALARM_RADIUS) continue
+    if (!atteignableEntreEtages(state.map, entity.x, entity.y, niveauDuCorps(state.map, entity), oe.x, oe.y, niveauDuCorps(state.map, oe))) continue
+    return { fromX: other.fleeFromX ?? oe.x, fromY: other.fleeFromY ?? oe.y }
+  }
+  return null
+}
+
+/** Le plus proche d'une liste — sans préférence, sans pondération.
+ *
+ *  E-R5, Q3bis : et jamais à travers un plancher. Son unique appelant est la FUITE d'un
+ *  loup qui rompt (« de qui je m'éloigne ? ») — fuir quelqu'un qu'on ne peut pas atteindre
+ *  n'a aucun sens, et le loup partirait droit dans la paroi. */
+function nearestOf(map: WorldMap, list: Entity[], entity: Entity, range: number): Entity | undefined {
   let best: Entity | undefined
   let bestD = range * range
   for (const e of list) {
     if (e.id === entity.id || e.hp <= 0) continue
     const d = distSq(entity.x, entity.y, e.x, e.y)
+    if (d <= bestD && !atteignableEntreEtages(map, entity.x, entity.y, niveauDuCorps(map, entity), e.x, e.y, niveauDuCorps(map, e))) continue
     if (d < bestD || (d === bestD && best && e.id < best.id)) {
       best = e
       bestD = d

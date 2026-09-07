@@ -142,8 +142,23 @@ const HORS_REGLE = {
     densiteDesMorts: 'un champ (la densité) lu en un point — E-R13',
     advanceLieuxBrules: 'appartenance d’un bûcher à la zone charnier',
   },
+  'sens.ts': {
+    secouerLeSol: 'Q7 tranchée (Alexis, 2026-09-07) : LA ROCHE PORTE LA SECOUSSE. Un choc au sol '
+      + 'se propage par la masse — c’est le seul sens du jeu qui traverse un plancher, et c’est '
+      + 'voulu : marteler au-dessus d’une salle réveille ce qui y dort. (`eveilDuCendreux` lit '
+      + 'déjà `entity.etage`, G-R5 : la chaleur, elle, est bien par étage.)',
+  },
   'faune.ts': {
+    faunaStep: 'ses SEPT distances restantes sont de la TRAJECTOIRE ou un centroïde : son point '
+      + 'de peur, son propre attaquant (déjà au contact), le centre de sa harde, son ancrage de '
+      + 'pâture. La seule PERCEPTION du dispatcher — l’alarme de harde — vit depuis le '
+      + '2026-09-07 dans `crisFrais`, scellée (Q3) ; elle en est sortie exprès, pour que sceller '
+      + 'l’alarme n’exempte pas les sept autres en silence.',
     predatorBias: 'un champ (le biais géographique depuis le Feu) lu en un point — E-R13',
+    bloodBias: 'Q4 tranchée (Alexis, 2026-09-07) : le SANG reste un CHAMP lu en un point — E-R13, '
+      + 'la même étagère que la brume, les fumerolles et `naturalWarmth`. Un charnier PÈSE sur '
+      + 'le tirage de peuplement alentour ; il n’élit personne. (`feedStep`, qui ÉLIT une '
+      + 'charogne, est scellé.)',
     isQuiet: 'un champ (les zones apaisées) lu en un point — E-R13',
     advanceEnvols: 'un envol contre les envols récents — le cooldown d’un lieu, pas une vue',
     trySpawnNear: 'anneau de spawn — la marchabilité tranche',
@@ -180,40 +195,8 @@ const HORS_REGLE = {
  * `docs/specs/etages.md` §19 ; la raison ci-dessous dit à laquelle chaque site répond.
  */
 const A_TRANCHER = {
-  // ── Q1 · Le ward d'un feu traverse-t-il un plancher ? (tranché NON pour la faune,
-  //         `underFireWard` — reste à rendre cohérent le reste de la famille) ──
-  'cendreux.ts': {
-    willRiseAsCendreux: 'Q1 — un feu du dessus empêche-t-il une levée dessous ? (et le témoin allié)',
-    advanceCendreux: 'Q1 — le feu qui VEILLE un cadavre : à travers un plancher ?',
-    // ── Q2 · La perception de chaleur du Cendreux ──
-    nearestGibier: 'Q2 — il élit un gibier VIVANT sans demander le plancher (`nearestPrey`, lui, le demande)',
-    nearestWarmth: 'Q2 — un feu allumé lui sert de PHARE à travers la roche',
-  },
-  'morts.ts': {
-    siteDansLaCouronne: 'Q1 — le ward des feux autour d’un site de réveil',
-    advanceReveils: 'Q1 — le feu qui VEILLE un site de réveil, et le déplace',
-  },
-
-  // ── Q3 · La meute et la harde se parlent-elles à travers un plancher ? ──
-  'combat.ts': {
-    applyDamage: 'Q3 — la sœur frappée alarme sa harde',
-    die: 'Q3 — la meute prend en rage le tueur d’un des siens',
-  },
+  // ── Q5 · L'interaction à portée : l'établi, la ligne, le dépeçage, le bâti, les PNJ ──
   'faune.ts': {
-    faunaStep: 'Q3 — l’alarme de harde (`HERD_ALARM_RADIUS`) ; les 7 autres sites y sont de la trajectoire',
-    noteBlocked: 'Q3 — l’appel de meute qui PARTAGE un chemin (`PACK_CALL_RADIUS`)',
-    packNearby: 'Q3 — le courage compté sur les congénères à portée',
-    packInPlace: 'Q3 — « toute la meute est-elle en place autour de la proie ? »',
-    packQuarry: 'Q3 — la proie d’un congénère, reprise à MA portée de poursuite',
-    clanAggressor: 'Q3 — l’agresseur d’un des siens, élu à portée',
-    leapStep: 'Q3bis — un BOND qui touche : il frappe qui est à portée, plancher ou non',
-    pupStep: 'Q3bis — le petit élit une menace parmi le gibier convoité (les 3 autres sites : son gîte)',
-    sortieTravel: 'Q3bis — « un joueur regarde-t-il ? » décide d’une chasse RÉELLE',
-    nearestOf: 'Q3bis — helper d’élection générique (le plus proche d’une liste, dans un rayon)',
-    // ── Q4 · L'odorat ──
-    bloodBias: 'Q4 — le SANG (charogne fraîche, blessé qui saigne) attire les prédateurs',
-    feedStep: 'Q4 — la charogne cherchée à l’odeur (le tas jeté, lui, passe par `nearestPile`, scellé)',
-    // ── Q5 · L'interaction à portée ──
     advanceCoinsConnus: 'Q5 — un joueur APPREND un coin de chasse en passant près',
   },
   'economy.ts': {
@@ -232,9 +215,6 @@ const A_TRANCHER = {
     handleDefense: 'Q5 — la milice élit une menace autour du Feu, puis l’engage',
   },
   'npc-errands.ts': { handleErrand: 'Q5 — la rencontre d’un étranger, et la fouille d’un cadavre' },
-
-  // ── Q7 · Le tremblement du sol — celui-là traverse peut-être, justement ──
-  'sens.ts': { secouerLeSol: 'Q7 — un choc au sol réveille les Cendreux à portée : la roche le porte, ou l’arrête ?' },
 }
 
 /** `dx * dx + dy * dy` — le carré de la distance, l'idiome du dépôt (jamais `hypot` dans /sim). */

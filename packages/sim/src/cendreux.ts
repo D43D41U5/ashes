@@ -4,7 +4,7 @@
 import { BALANCE, CENDREUSE, CENDREUX, COMBAT, MONSTER_DEFS, MORTS, NIGHT_HUNT, SLOTS } from './balance'
 import { startAttack } from './combat'
 import { distSq } from './geometry'
-import { poserLEtageDuCorps } from './etages'
+import { atteignableEntreEtages, atteintLeSol, niveauDuCorps, poserLEtageDuCorps } from './etages'
 import { emitEvent } from './events'
 import { fireActive, fireState } from './fire'
 import { baselineTemperature, eveilPourTemperature } from './temperature'
@@ -67,18 +67,26 @@ export function willRiseAsCendreux(state: SimState, entity: Entity): boolean {
   // de pression. R8 borne la contagion entre elle ; le global borne la SOMME que le joueur subit.
   if (!placeSousPlafondGlobal(state)) return false
   // Loin d'un feu : aucune structure feu dans HEARTH_WARD_RADIUS.
+  //
+  // E-R5, Q1 (décision d'Alexis, 2026-09-07) : LE FEU S'ARRÊTE AU PLANCHER. Un camp qui brûle
+  // sur la terrasse ne veille pas le mort de la salle du dessous — sinon bâtir un feu en haut
+  // stériliserait la contagion partout dessous, et rien à l'écran ne le dirait.
   const hearthWardR = CENDREUX.HEARTH_WARD_RADIUS
   const nearFire = state.structures.some(
-    (s) => s.type === 'fire' && fireActive(state, s) && distSq(s.tx + 0.5, s.ty + 0.5, entity.x, entity.y) <= hearthWardR * hearthWardR,
+    (s) => s.type === 'fire' && fireActive(state, s) && distSq(s.tx + 0.5, s.ty + 0.5, entity.x, entity.y) <= hearthWardR * hearthWardR &&
+      atteintLeSol(state.map, entity, s.tx, s.ty, s.etage),
   )
   if (nearFire) return false
   // Seul : aucun allié vivant (même village) dans WITNESS_RADIUS.
   const witnessR = CENDREUX.WITNESS_RADIUS
   const village = state.villages.find((v) => v.memberIds.includes(entity.id))
   if (village) {
+    // Et le TÉMOIN suit le feu (même décision) : on ne veille pas un mourant à travers un
+    // plancher. « Seul » veut dire seul de son étage.
     const hasAlly = state.entities.some(
       (e) => e.id !== entity.id && e.hp > 0 && village.memberIds.includes(e.id) &&
-        distSq(e.x, e.y, entity.x, entity.y) <= witnessR * witnessR,
+        distSq(e.x, e.y, entity.x, entity.y) <= witnessR * witnessR &&
+        atteignableEntreEtages(state.map, e.x, e.y, niveauDuCorps(state.map, e), entity.x, entity.y, niveauDuCorps(state.map, entity)),
     )
     if (hasAlly) return false
   }
@@ -104,8 +112,11 @@ export function advanceCendreux(state: SimState): void {
   for (const corpse of [...state.corpses]) {
     if (corpse.risesAt === undefined || state.tick < corpse.risesAt) continue
     // Veillé par un feu à portée → annulation.
+    // E-R5, Q1 : le feu ne veille que SON étage (voir `willRiseAsCendreux`). Le cadavre porte
+    // son `etage` depuis qu'un corps peut tomber sur un plateau — c'est lui qu'on interroge.
     const warded = state.structures.some(
-      (s) => s.type === 'fire' && fireActive(state, s) && distSq(s.tx + 0.5, s.ty + 0.5, corpse.x, corpse.y) <= ward * ward,
+      (s) => s.type === 'fire' && fireActive(state, s) && distSq(s.tx + 0.5, s.ty + 0.5, corpse.x, corpse.y) <= ward * ward &&
+        atteintLeSol(state.map, corpse, s.tx, s.ty, s.etage),
     )
     if (warded) {
       delete corpse.risesAt
@@ -191,6 +202,9 @@ function nearestGibier(state: SimState, entity: Entity, range: number): Entity |
     const e = state.entities.find((en) => en.id === m.entityId)
     if (!e || e.hp <= 0) continue
     const d = distSq(entity.x, entity.y, e.x, e.y)
+    // E-R5, Q2 : un Cendreux n'élit pas une bête qu'un plancher lui interdit (`nearestPrey`
+    // pose déjà la même question pour les vivants — ici c'est la chair chaude, décision ⑩).
+    if (d <= bestD && !atteignableEntreEtages(state.map, entity.x, entity.y, niveauDuCorps(state.map, entity), e.x, e.y, niveauDuCorps(state.map, e))) continue
     if (d < bestD || (d === bestD && best && e.id < best.id)) {
       best = e
       bestD = d
@@ -212,11 +226,16 @@ export function nearestWarmth(
     if (s.type !== 'fire') continue
     if (fireState(state, s) !== 'lit') continue // seul un feu ALLUMÉ est un phare (spec feu-station S5)
     const d = distSq(s.tx + 0.5, s.ty + 0.5, entity.x, entity.y)
+    // E-R5, Q2 : un feu allumé n'est un PHARE que pour ce qui peut le rejoindre. À travers la
+    // roche il n'appelle rien — sinon le froid pousserait la horde contre une paroi.
+    if (d < bestD && !atteintLeSol(state.map, entity, s.tx, s.ty, s.etage)) continue
     if (d < bestD) {
       bestD = d
       best = { x: s.tx + 0.5, y: s.ty + 0.5 }
     }
   }
+  // La branche PROIE n'a pas besoin de garde ICI : `nearestPrey` appelle déjà l'accesseur
+  // avant d'élire (E-R5, vérifié à la source, pas au dire de la table).
   const prey = nearestPrey(state, entity, range)
   if (prey) {
     const d = distSq(prey.x, prey.y, entity.x, entity.y)

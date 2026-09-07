@@ -1104,6 +1104,11 @@ export function applyDamage(state: SimState, target: Entity, damage: number, byE
         const oe = state.entities.find((e) => e.id === other.entityId)
         if (!oe || oe.hp <= 0) continue
         if (distSq(target.x, target.y, oe.x, oe.y) > r * r) continue
+        // E-R5, Q3 (décision d'Alexis, 2026-09-07) : UN PLANCHER COUPE LE GROUPE. Le cri de
+        // mort ne traverse pas la roche — la sœur restée sur la terrasse n'apprend rien de
+        // celle qu'on égorge dans la salle du dessous. Conséquence assumée : on peut égrener
+        // une harde SÉPARÉE bête par bête, et c'est ce que la séparation doit valoir.
+        if (!atteignableEntreEtages(state.map, target.x, target.y, niveauDuCorps(state.map, target), oe.x, oe.y, niveauDuCorps(state.map, oe))) continue
         other.suspicion = 1
         if (other.alertSince === undefined) other.alertSince = state.tick
         // LE POINT DE PEUR se transmet (faune R9bis) : toute la harde fuira CE
@@ -1329,7 +1334,12 @@ export function die(state: SimState, entity: Entity, byEntityId: number, cause?:
         delete w.sortieY
         delete w.chasseAbstraiteAt
         const we = state.entities.find((e) => e.id === w.entityId)
-        if (killer && we && we.hp > 0 && distSq(we.x, we.y, killer.x, killer.y) <= FAUNA.PURSUIT_RANGE_RAGE * FAUNA.PURSUIT_RANGE_RAGE) {
+        // E-R5, Q3 : la RAGE se transmet à toute la meute (elle n'a pas de portée), mais la
+        // CIBLE se prend à vue de roche — et donc le hurlement avec elle. Tuer un louveteau
+        // sous terre ne fait plus hurler le clan resté dehors : décision d'Alexis du
+        // 2026-09-07, prise en connaissance de ce qu'elle retire.
+        if (killer && we && we.hp > 0 && distSq(we.x, we.y, killer.x, killer.y) <= FAUNA.PURSUIT_RANGE_RAGE * FAUNA.PURSUIT_RANGE_RAGE &&
+          atteignableEntreEtages(state.map, we.x, we.y, niveauDuCorps(state.map, we), killer.x, killer.y, niveauDuCorps(state.map, killer))) {
           w.targetId = killer.id
           hurle = true
         }

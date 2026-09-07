@@ -25,7 +25,8 @@ import { nearestPrey, spawnMonster } from './monsters'
 import { prowlerNear } from './nighthunt'
 import { advanceDecouverte } from './decouverte'
 import { applyVillageAction } from './village'
-import { advanceCendreux } from './cendreux'
+import { advanceCendreux, nearestWarmth, willRiseAsCendreux } from './cendreux'
+import { applyDamage } from './combat'
 import { CENDREUX, COMBAT } from './balance'
 import { applyInventoryAction, poserAuSol } from './inventory-actions'
 import { advancePois } from './poi-discovery'
@@ -496,5 +497,149 @@ describe('E-A3 — les sites de PORTÉE repris le 2026-09-07', () => {
     expect(essai(1, true), 'au même étage que le feu, la proie est intouchable').toBe(false)
     expect(essai(-1, false), 'témoin de la cave : le loup y élit aussi bien qu’ailleurs').toBe(true)
     expect(essai(-1, true), 'et le feu du dessus n’y change RIEN — la salle n’est pas interdite').toBe(true)
+  })
+})
+
+describe('E-A3 — les huit décisions d’Alexis du 2026-09-07 (Q1..Q7)', () => {
+  /** Un feu ALLUMÉ posé à l'étage voulu, au cœur du chapeau. Un feu sans `fuel` brûle
+   *  (`fireStateAt`) : c'est le camp le moins cher qu'on puisse mettre debout. */
+  function feuA(state: SimState, etage: number, id = 9400): { tx: number; ty: number } {
+    const tx = CAP_X0 + 1
+    const ty = CAP_Y0 + 1
+    const feu = { id, type: 'fire', tx, ty, villageId: 0, hp: 100, etage } as never
+    state.structures.push(feu)
+    expect(fireState(state, feu), 'la prémisse : le feu BRÛLE').toBe('lit')
+    return { tx, ty }
+  }
+
+  // ─── Q1 · le feu s'arrête au plancher ────────────────────────────────────────
+  it('Q1 — le feu de la terrasse n’empêche pas une levée dans la salle du dessous', () => {
+    const essai = (etageDuMort: number, avecFeu: boolean): boolean => {
+      const state = grotte()
+      // Le corps meurt À UNE TUILE du feu — bien à l'intérieur du ward de 12.
+      const MORT = { x: CAP_X0 + 1.5, y: CAP_Y0 + 2.5 }
+      if (avecFeu) {
+        const f = feuA(state, 1)
+        const dx = f.tx + 0.5 - MORT.x
+        const dy = f.ty + 0.5 - MORT.y
+        expect(dx * dx + dy * dy, 'le mort est DANS le ward du feu')
+          .toBeLessThan(CENDREUX.HEARTH_WARD_RADIUS * CENDREUX.HEARTH_WARD_RADIUS)
+      }
+      const id = poser(state, MORT, etageDuMort)
+      const e = state.entities.find((k) => k.id === id)!
+      return willRiseAsCendreux(state, e)
+    }
+    expect(essai(1, false), 'témoin du plateau : sans feu, la vallée relève').toBe(true)
+    expect(essai(1, true), 'au même étage que le feu, la veille annule la levée').toBe(false)
+    expect(essai(-1, false), 'témoin de la cave : elle relève aussi bien').toBe(true)
+    expect(essai(-1, true), 'et le feu du DESSUS ne veille rien dessous — Q1').toBe(true)
+  })
+
+  // ─── Q2 · le feu n'est un phare que pour qui peut le rejoindre ───────────────
+  it('Q2 — le feu allumé du dessus n’appelle pas le Cendreux de la salle', () => {
+    const essai = (etageDuCendreux: number): boolean => {
+      const state = grotte()
+      const f = feuA(state, 1)
+      const OU = { x: CAP_X0 + 2.5, y: CAP_Y0 + 3.5 }
+      const id = poser(state, OU, etageDuCendreux)
+      const e = state.entities.find((k) => k.id === id)!
+      const dx = f.tx + 0.5 - OU.x
+      const dy = f.ty + 0.5 - OU.y
+      expect(Math.sqrt(dx * dx + dy * dy), 'le feu est dans la portée de quête de chaleur')
+        .toBeLessThan(CENDREUX.WARMTH_SEEK_RANGE)
+      const chaud = nearestWarmth(state, e, CENDREUX.WARMTH_SEEK_RANGE)
+      return chaud !== undefined && chaud.x === f.tx + 0.5 && chaud.y === f.ty + 0.5
+    }
+    expect(essai(1), 'témoin : au même étage, le feu EST le phare').toBe(true)
+    expect(essai(-1), 'sous la roche, il n’appelle rien — Q2').toBe(false)
+  })
+
+  // ─── Q3 · un plancher coupe le groupe ───────────────────────────────────────
+  it('Q3 — le cri de mort ne lève pas la sœur restée de l’autre côté du plancher', () => {
+    const essai = (etageDeLaSoeur: number): boolean => {
+      const state = grotte()
+      // Deux biches de la MÊME harde, à une tuile l'une de l'autre. La frappée reste au
+      // plateau ; la sœur descend (ou non) dans la salle.
+      const a = spawnMonster(state, 'deer', CAP_X0 + 1.5, CAP_Y0 + 1.5)
+      const b = spawnMonster(state, 'deer', CAP_X0 + 2.5, CAP_Y0 + 1.5)
+      const ma = state.monsters.find((m) => m.entityId === a)!
+      const mb = state.monsters.find((m) => m.entityId === b)!
+      mb.herdId = ma.herdId = 1
+      const ea = state.entities.find((k) => k.id === a)!
+      const eb = state.entities.find((k) => k.id === b)!
+      ea.etage = 1
+      eb.etage = etageDeLaSoeur
+      const dx = ea.x - eb.x
+      const dy = ea.y - eb.y
+      expect(Math.sqrt(dx * dx + dy * dy), 'la sœur est DANS le rayon d’alarme')
+        .toBeLessThan(FAUNA.HERD_ALARM_RADIUS)
+      expect(mb.suspicion ?? 0, 'la prémisse : elle ne se méfie de rien').toBeLessThan(1)
+      const chasseur = poser(state, { x: CAP_X0 + 1.5, y: CAP_Y0 + 2.5 }, 1)
+      applyDamage(state, ea, 1, chasseur)
+      return (mb.suspicion ?? 0) >= 1
+    }
+    expect(essai(1), 'témoin : au même étage, le cri la lève').toBe(true)
+    expect(essai(-1), 'un plancher coupe le groupe — Q3').toBe(false)
+  })
+
+  it('Q3 — tuer un louveteau sous terre ne fait plus hurler le clan resté dehors', () => {
+    const essai = (etageDuClan: number): boolean => {
+      const state = grotte()
+      const petit = spawnMonster(state, 'wolf', CAP_X0 + 1.5, CAP_Y0 + 1.5)
+      const adulte = spawnMonster(state, 'wolf', CAP_X0 + 2.5, CAP_Y0 + 1.5)
+      const mp = state.monsters.find((m) => m.entityId === petit)!
+      const ma = state.monsters.find((m) => m.entityId === adulte)!
+      mp.herdId = ma.herdId = 2
+      mp.petit = true
+      const ep = state.entities.find((k) => k.id === petit)!
+      const ea = state.entities.find((k) => k.id === adulte)!
+      ep.etage = -1
+      ea.etage = etageDuClan
+      // LE TUEUR est dans la salle avec le petit : c'est la meute du DESSUS qu'on éprouve.
+      const tueur = poser(state, { x: CAP_X0 + 1.5, y: CAP_Y0 + 2.5 }, -1)
+      const et = state.entities.find((k) => k.id === tueur)!
+      const dx = ea.x - et.x
+      const dy = ea.y - et.y
+      expect(Math.sqrt(dx * dx + dy * dy), 'le tueur est dans la portée de rage du clan')
+        .toBeLessThan(FAUNA.PURSUIT_RANGE_RAGE)
+      const avant = state.events.length
+      applyDamage(state, ep, 9999, tueur)
+      expect(ep.hp, 'la prémisse : le petit est bien mort').toBeLessThanOrEqual(0)
+      return state.events.slice(avant).some((ev) => ev.type === 'wolf_howl')
+    }
+    expect(essai(-1), 'témoin : dans la salle avec lui, le clan hurle').toBe(true)
+    expect(essai(1), 'resté dehors, il n’apprend rien — Q3, et c’est un moment de jeu en moins').toBe(false)
+  })
+
+  // ─── Q4 · l'odorat s'arrête au plancher, le CHAMP du sang non ───────────────
+  it('Q4 — la charogne de la salle n’attire pas le charognard du plateau', () => {
+    const essai = (etageDuRenard: number): boolean => {
+      const state = grotte()
+      const CADAVRE = { x: CAP_X0 + 1.5, y: CAP_Y0 + 1.5 }
+      const proie = spawnMonster(state, 'deer', CADAVRE.x, CADAVRE.y)
+      const ep = state.entities.find((k) => k.id === proie)!
+      ep.etage = -1
+      const tueur = poser(state, { x: CADAVRE.x, y: CADAVRE.y + 1 }, -1)
+      applyDamage(state, ep, 9999, tueur)
+      const corpse = state.corpses.find((c) => c.x === CADAVRE.x && c.y === CADAVRE.y)
+      expect(corpse, 'la prémisse : le cadavre est là, dans la salle').toBeDefined()
+      expect(corpse!.etage, 'et il porte l’étage de sa mort').toBe(-1)
+      // Un LOUP affamé, à portée de gueule de la charogne (`EAT_RANGE`) : c'est le seul
+      // état où l'élection se LIT sur le monstre (`mealCorpseId`) plutôt qu'en marche.
+      const loup = spawnMonster(state, 'wolf', CADAVRE.x + 1, CADAVRE.y)
+      const ml = state.monsters.find((m) => m.entityId === loup)!
+      const el = state.entities.find((k) => k.id === loup)!
+      el.etage = etageDuRenard
+      ml.faim = 1
+      const dx = el.x - CADAVRE.x
+      const dy = el.y - CADAVRE.y
+      expect(Math.sqrt(dx * dx + dy * dy), 'la charogne est sous sa gueule')
+        .toBeLessThan(FAUNA.EAT_RANGE)
+      expect(state.tick - corpse!.diedAt, 'et elle est FRAÎCHE').toBeLessThan(HUNT.CARCASS_FRESH_TICKS)
+      step(state, [])
+      return state.monsters.find((m) => m.entityId === loup)!.mealCorpseId === corpse!.id
+    }
+    expect(essai(-1), 'témoin : dans la salle, il va au repas').toBe(true)
+    expect(essai(1), 'd’un étage plus haut, il ne la sent pas — Q4').toBe(false)
   })
 })

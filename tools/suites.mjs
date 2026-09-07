@@ -58,7 +58,10 @@ const SUITES = [
   // 2026-09-07 : +3 gardes E-A3 — le murmure ne traverse pas un plancher (`murmure.test.ts`, 2),
   //   et le feu n'écarte le loup que de SON étage (`etages-etancheite.test.ts`, 1)
   //   — suite à 2280, plancher relevé quelques pourcents dessous.
-  { nom: 'sim', dir: 'packages/sim', args: ['run', '--exclude', 'src/scenario.test.ts'], plancher: 2251 },
+  // 2026-09-07 (lot ①, Q1..Q4) : +5 gardes E-A3 — les décisions d'Alexis sur le feu, la
+  //   perception du Cendreux, le cri de la harde, le hurlement du clan et l'odorat
+  //   (`etages-etancheite.test.ts`) — suite à 2285.
+  { nom: 'sim', dir: 'packages/sim', args: ['run', '--exclude', 'src/scenario.test.ts'], plancher: 2256 },
   // 2026-09-01 : +10 gardes avec le RENDU des étages (`plateau-art.test.ts`).
   // 2026-09-01 : +9 gardes avec le TRI DES ÉTAGES (strate, découvert — `framing.test.ts`),
   //   suite relevée à 1429 ✓, plancher recalé quelques pourcents dessous.

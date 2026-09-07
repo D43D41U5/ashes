@@ -34,6 +34,7 @@ import {
 import { tenterLeRituel } from './bucher'
 import { isBlockedAt } from './collision'
 import { emitEvent } from './events'
+import { atteignableEntreEtages, atteintLeSol, palierDuSol } from './etages'
 import { effetsDuJour } from './modificateur'
 import { fireActive, fireState } from './fire'
 import { distSq } from './geometry'
@@ -325,14 +326,23 @@ export function siteDansLaCouronne(
   // les secondes de marche qui vont avec, jamais l'immunité. A27 est renversée sciemment ;
   // c'est aussi la ligne de la bible (L1bis : le Feu n'a aucune vertu propre, il OCCUPE).
   const ward = CENDREUX.HEARTH_WARD_RADIUS
-  const feux: { x: number; y: number }[] = []
+  //
+  // E-R5, Q1 (décision d'Alexis, 2026-09-07) : LE FEU S'ARRÊTE AU PLANCHER — il ne repousse
+  // que les tuiles de SON étage. Un camp sur la terrasse ne pousse pas les réveils de la
+  // salle du dessous ; chaque feu porte donc son niveau jusqu'au test de ward.
+  const feux: { x: number; y: number; etage: number }[] = []
   const portee = (dMax + ward + 1) * (dMax + ward + 1)
   for (const s of state.structures) {
     if (s.type !== 'fire' || !fireActive(state, s)) continue
-    if (distSq(s.tx + 0.5, s.ty + 0.5, px, py) <= portee) feux.push({ x: s.tx + 0.5, y: s.ty + 0.5 })
+    if (distSq(s.tx + 0.5, s.ty + 0.5, px, py) <= portee) {
+      feux.push({ x: s.tx + 0.5, y: s.ty + 0.5, etage: s.etage ?? palierDuSol(state.map, s.tx, s.ty) })
+    }
   }
   const dansUnWard = (x: number, y: number): boolean => {
-    for (const f of feux) if (distSq(f.x, f.y, x + 0.5, y + 0.5) <= ward * ward) return true
+    for (const f of feux) {
+      if (distSq(f.x, f.y, x + 0.5, y + 0.5) > ward * ward) continue
+      if (atteignableEntreEtages(state.map, f.x, f.y, f.etage, x + 0.5, y + 0.5, palierDuSol(state.map, x, y))) return true
+    }
     return false
   }
 
@@ -478,8 +488,12 @@ export function advanceReveils(state: SimState): void {
     //
     // AUCUN TIRAGE : le site déplacé s'élit sur un pseudo-tirage `hash2` du réveil lui-même
     // (site + heure de terme) — allumer un feu ne déplace pas le flux seedé du monde (A28).
+    //
+    // E-R5, Q1 : et il ne veille que SON étage (voir `siteDansLaCouronne`). Le site du réveil
+    // est une position de SOL — c'est son palier qu'on interroge, comme partout ailleurs.
     const veille = state.structures.some(
-      (s) => s.type === 'fire' && fireActive(state, s) && distSq(s.tx + 0.5, s.ty + 0.5, r.x, r.y) <= ward * ward,
+      (s) => s.type === 'fire' && fireActive(state, s) && distSq(s.tx + 0.5, s.ty + 0.5, r.x, r.y) <= ward * ward &&
+        atteintLeSol(state.map, { x: r.x, y: r.y }, s.tx, s.ty, s.etage),
     )
     if (veille) {
       emitEvent(state, { type: 'reveil_etouffe', tick: state.tick, x: r.x, y: r.y })

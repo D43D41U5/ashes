@@ -673,6 +673,8 @@ E-A3 promet deux choses. La garde behaviorale de §19 tient la première (*« le
 
 ### LES SEPT QUESTIONS — pour Alexis, une à la fois
 
+> ✅ **TOUTES TRANCHÉES LE 2026-09-07 — voir le §21.** La table ci-dessous reste telle qu'elle a été posée : c'est l'énoncé, pas la réponse.
+
 Ces sites SONT des perceptions. Les corriger change le jeu : ce ne sont pas des correctifs techniques. Ils sont déclarés dans `A_TRANCHER`, le lint est vert, et **les trous sont nommés au lieu d'être cachés**.
 
 | # | la question | les sites |
@@ -692,8 +694,8 @@ Ces sites SONT des perceptions. Les corriger change le jeu : ce ne sont pas des 
 
 ### Ce qui reste
 
+- ~~Les sept questions.~~ — **tranchées le 2026-09-07**, §21.
 - `alarmeDEnvol` est branché et couvert par le lint, **pas gardé behavioralement** : le mettre en scène demande un ENVOL, c'est-à-dire un tétras posé, alerté, et son vol résolu — la seule des deux excuses qui ait tenu. *(`underFireWard`, lui, est gardé : voir ci-dessous.)*
-- Les sept questions.
 
 ### LE FEU DU DESSUS, GARDÉ — et l'excuse qui l'avait différé
 
@@ -713,3 +715,103 @@ La garde ne pose donc pas de mesa : elle prend un site réel et met le corps à 
 | LE CENDREUX | qu'un Cendreux terré sous la roche fasse taire un site de surface — « ce qui vient » doit pouvoir vous atteindre |
 
 **Rougissement éprouvé** : `atteignableEntreEtages` neutralisé en `return true` → les deux cas neufs échouent, les 8 autres passent.
+
+---
+
+## 21. LES HUIT DÉCISIONS D'ALEXIS (2026-09-07) — les sept questions, tranchées
+
+*Alexis : « pose moi les questions une à une », puis « oui vas-y ».*
+
+Les sept questions du §20 lui ont été posées une par une, chacune avec son impact concret et
+ma recommandation. **Voici ce qu'il a décidé — et ce n'est pas partout ce que je recommandais.**
+
+| # | la question | LA DÉCISION | sites |
+|---|---|---|---|
+| **Q1** | le ward d'un feu | **« Non — il s'arrête au plancher »** | 4 + le témoin allié |
+| **Q2** | la perception du Cendreux | **« Non — sceller les deux »** | 2 |
+| **Q3** | la meute et la harde | **« Tout sceller — un plancher coupe le groupe »** *(je recommandais de DÉCOUPER : le cri passe, la géométrie non — Alexis a tranché plus net)* | 8 |
+| **Q3bis** | le bond, les petits, la sortie | **« Non — sceller les quatre »** | 4 |
+| **Q4** | l'odorat | **« Sceller `feedStep`, laisser `bloodBias` »** | 1 scellé, 1 ouvert |
+| **Q5** | l'interaction à portée | **« Non — sceller les 9 en bloc »** | 9 |
+| **Q6** | le contact des buveurs | **« Non — sceller les deux »** | 2 |
+| **Q7** | la secousse | **« Oui — la roche PORTE la secousse »** | 1, ouvert par décision |
+
+**28 sites scellés, 2 laissés ouverts EXPRÈS** — et les deux ouverts ne disparaissent pas de la
+garde : ils passent d'`A_TRANCHER` à `HORS_REGLE`, avec la décision écrite dans leur raison. Une
+clé supprimée aurait rendu le lint vert pour la mauvaise cause, et le lecteur suivant n'aurait pas
+su que c'était décidé.
+
+> ⚠ **CE QUE LA TABLE DIT ≠ CE QUE L'ARBRE PORTE.** La table ci-dessus est la DÉCISION, prise en
+> une fois ; la livraison se fait en trois lots. **Lot ① (Q1–Q4, 20 sites) : livré le 2026-09-07.**
+> Lot ② (Q6, 2 sites) et lot ③ (Q5, 9 sites) restent à venir — leurs clés sont encore dans
+> `A_TRANCHER`. Le lint dit lequel : ce qu'il reste à trancher est ce qu'il liste.
+
+### CE QUE Q3 RETIRE — dit avant de le livrer
+
+« Tout sceller » **inclut le cri**. C'est la seule des huit décisions qui *retire* un moment de
+jeu : **un loup tué dans une grotte ne fait plus hurler le clan resté dehors** (`combat.die` →
+`wolf_howl`). Alexis l'a tranché en connaissance de cause ; c'est consigné tel quel, sans y
+revenir. La garde behaviorale le dit dans son propre libellé (*« et c'est un moment de jeu en
+moins »*) pour que personne ne le « répare » un jour par accident.
+
+Deux nuances de forme, prises en technique et pas en design :
+
+- **`packInPlace`** — un loup séparé de la proie par un plancher ne compte plus dans
+  l'encerclement (il est SAUTÉ, comme celui qui chasse autre chose). Le faire échouer aurait
+  suspendu l'assaut pour toujours : il ne peut pas venir se poster.
+- **`combat.die`** — la RAGE se transmet toujours à toute la meute (elle n'a pas de portée) ;
+  c'est la CIBLE, et donc le hurlement, qui se prennent à vue de roche.
+
+### LE DISPATCHER RESTE SOUS GARDE — `crisFrais`
+
+`faunaStep` portait **huit** distances, dont une seule est une perception (l'alarme de harde) ;
+les sept autres sont de la trajectoire ou un centroïde. La règle exempte une fonction **entière**
+dès qu'elle appelle l'accesseur : sceller l'alarme dans le corps du dispatcher aurait donc
+désarmé les sept autres **sans qu'une ligne le dise**, et un site neuf écrit demain dans
+`faunaStep` serait passé sans bruit. L'alarme est donc sortie dans **`crisFrais`**, qui porte sa
+loi ; `faunaStep` garde son entrée `HORS_REGLE` avec la liste de ce qui lui reste.
+
+### LES GARDES DU LOT ① (la faune — Q1..Q4)
+
+`etages-etancheite.test.ts`, cinq cas, chacun avec **son témoin au même étage** :
+
+| garde | ce qu'elle refuse |
+|---|---|
+| **Q1** | qu'un feu de la terrasse annule une levée dans la salle du dessous (4 jambes : chaque étage a son témoin sans feu) |
+| **Q2** | qu'un feu allumé du dessus serve de PHARE au Cendreux terré |
+| **Q3** | que le cri de mort lève la sœur restée de l'autre côté du plancher |
+| **Q3** | que tuer un louveteau sous terre fasse hurler le clan resté dehors |
+| **Q4** | que la charogne de la salle attire le charognard du plateau |
+
+Les prémisses sont **calculées sur les positions posées** (le mort dans le ward, la sœur dans le
+rayon d'alarme, la charogne sous la gueule et FRAÎCHE) — jamais des constantes recopiées : bouger
+la mesa doit faire tomber la prémisse, pas la masquer.
+
+**Rougissement éprouvé** : `atteignableEntreEtages` neutralisée en `return true` → **18 des 25**
+tombent, dont les cinq neufs, et chaque fois sur la jambe « à travers », jamais sur le témoin.
+
+### ⚠ CE QUE ÇA DÉPLACE DANS LE MONDE JOUÉ — mesuré, pas supposé
+
+L'empreinte de `/sim` (`tools/empreinte-sim.mts`, 12 runs, 3 graines × 4 régimes) **bouge** :
+**114 champs sur 594**. Le §20 disait *« le cas à deux corps sur deux étages est rare — 0,87 % du
+plan »*, et **c'était trompeur** : les 11 084 tuiles d'étage ne sont que l'axe CREUX. E-R5 se lit
+sur `niveauDuCorps`, c'est-à-dire sur l'étage **ou, à défaut, sur le PALIER** — l'axe dense, celui
+des terrasses, qui couvre toute la carte.
+
+Balayage de 400 000 paires de tuiles marchables sur la carte jouée (graine 2026, `MONDE_JOUE`) :
+
+| rayon | paires | niveaux différents | **coupées par E-R5** |
+|---|---|---|---|
+| 1,6 (contact, `EAT_RANGE`) | 362 458 | 2,09 % | **1,97 %** |
+| 8 (`FIRE_WARD`) | 354 215 | 8,22 % | **7,62 %** |
+| 12 (`aggroRange` du loup) | 350 053 | 10,97 % | **10,37 %** |
+| 26 (`PURSUIT_RANGE`) | 340 756 | 17,73 % | **17,15 %** |
+
+L'écart entre les deux dernières colonnes est l'œuvre des **1 131 connecteurs** : ils ne rattrapent
+qu'un demi-point. **Une perception sur dix à portée de loup est coupée par un dénivelé** — et c'est
+la terrasse qui coupe, pas la grotte.
+
+**Ce n'est pas un régime neuf** : `nearestPrey` — l'élection de proie du prédateur, LE site sur
+lequel toute la chasse repose — applique cette loi depuis qu'E-R5 existe. Le lot ① l'étend au
+reste de la famille, il ne l'invente pas. Mais la divergence d'empreinte est réelle et attendue :
+une seule élection qui change décale le flux seedé, et tout ce qui suit avec (`rng-fragile`).
