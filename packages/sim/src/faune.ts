@@ -51,7 +51,7 @@ import { isBlockedAt, makeIndexedIsBlockedAt } from './collision'
 import { applyDamage, die, startAttack, weaponKind, type Corpse } from './combat'
 import { emitEvent } from './events'
 import { fireState } from './fire'
-import { atteignableEntreEtages, niveauDuCorps, palierDuSol } from './etages'
+import { atteignableEntreEtages, atteintLeSol, niveauDuCorps, palierDuSol } from './etages'
 import { distSq } from './geometry'
 import { carryRatio, carryTier, countOf, isEmpty, removeItems, type ItemId } from './items'
 import { profondeurAt, terrainAt, zoneTierAt, type WorldMap } from './map'
@@ -636,6 +636,9 @@ function alarmeDEnvol(state: SimState, tx: number, ty: number): void {
     const dx = em.x - (tx + 0.5)
     const dy = em.y - (ty + 0.5)
     if (dx * dx + dy * dy > rayon2) continue
+    // E-R5 : l'envol part de la SURFACE — une bête sous la roche ne voit pas les oiseaux
+    // jaillir au-dessus d'elle, et n'a donc rien à soupçonner.
+    if (!atteintLeSol(state.map, em, tx, ty)) continue
     m.suspicion = Math.min(1, m.suspicion + HUNT.ENVOL_SUSPICION)
   }
 }
@@ -4577,7 +4580,11 @@ function underFireWard(state: SimState, e: Entity): boolean {
     if (fireState(state, s) !== 'lit') continue
     const dx = s.tx + 0.5 - e.x
     const dy = s.ty + 0.5 - e.y
-    if (dx * dx + dy * dy <= FAUNA.FIRE_WARD * FAUNA.FIRE_WARD) return true
+    if (dx * dx + dy * dy > FAUNA.FIRE_WARD * FAUNA.FIRE_WARD) continue
+    // E-R5 : un feu ne tient à distance que ce qui pourrait l'atteindre. Sous une terrasse,
+    // le feu du dessus n'écarte rien — sans quoi une salle entière deviendrait interdite à la
+    // faune parce qu'un camp brûle au-dessus, et rien ne le dirait.
+    if (atteintLeSol(state.map, e, s.tx, s.ty, s.etage)) return true
   }
   return false
 }

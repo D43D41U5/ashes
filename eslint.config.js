@@ -1,4 +1,5 @@
 import tseslint from 'typescript-eslint'
+import pluginEtage from './tools/eslint-regle-etage.mjs'
 
 // Globals interdits dans /sim (déterminisme + pureté Web Worker). Liste
 // partagée entre le code et les tests — les tests n'en assouplissent que
@@ -66,6 +67,7 @@ export default tseslint.config(
   // source de non-déterminisme (Math.random, Date, horloges).
   {
     files: ['packages/sim/src/**/*.ts'],
+    plugins: { etage: pluginEtage },
     rules: {
       'no-restricted-imports': [
         'error',
@@ -100,6 +102,10 @@ export default tseslint.config(
         },
       ],
       'no-restricted-globals': ['error', ...simRestrictedGlobals],
+      // E-A3 (spec `etages.md` §19) : un calcul de distance qui ne demande jamais si un
+      // PLANCHER sépare les deux points doit être TRIÉ — couvert par l'accesseur, ou déclaré
+      // hors règle avec sa raison. La garde behaviorale ne peut pas attraper un site NEUF.
+      'etage/distance-aveugle-a-l-etage': 'error',
       'no-restricted-properties': [
         'error',
         {

@@ -643,4 +643,52 @@ E-A3 affirmait que *« les 67 sites sont couverts »*. **Ils étaient 25** (11 `
 ### Ce qui reste
 
 - **Les deux sites de `murmure.ts` sont branchés, pas gardés behavioralement** : un site de murmure naît d'une porte de hachage, de la bande VIEILLE de cendre et d'une densité de morts — le monter sur la mesa de laboratoire coûterait plus que le site ne vaut. Ils sont couverts par `tsc`, par le lint et par les tests de `murmure.ts` (qui exercent le chemin à l'étage 0). À reprendre le jour où le banc saura poser une bande de cendre.
-- **La garde STRUCTURELLE d'E-A3** — *« la garde échoue si un site nouveau apparaît sans passer par l'accesseur »* — n'existe toujours pas : rien n'empêche un 65ᵉ site de distance de naître aveugle à l'étage.
+- ~~**La garde STRUCTURELLE d'E-A3**~~ — livrée le 2026-09-07, §20.
+
+
+## 20. LA GARDE STRUCTURELLE D'E-A3 (2026-09-07) — et les sept questions qu'elle a levées
+
+*Alexis : « continue ».*
+
+E-A3 promet deux choses. La garde behaviorale de §19 tient la première (*« les sites sont couverts »*) ; elle ne peut pas tenir la seconde (*« la garde échoue si un site NOUVEAU apparaît sans passer par l'accesseur »*) — un site qu'on écrirait demain n'a personne pour le mettre en scène. C'est une règle ESLint qui la tient : **`tools/eslint-regle-etage.mjs`**, armée sur `packages/sim/src/**` seul.
+
+**CE QU'ELLE VOIT** : une distance **comparée à un seuil** — `dx * dx + dy * dy`, `Math.max(Math.abs(…), Math.abs(…))`, `Math.hypot`, et **`distSq(a, b, c, d)`**, directement (`if (d2 > r2)`) ou par la variable qui la reçoit. **Ce qu'elle ne voit pas** : une distance rendue par un helper autre que `distSq`. C'est un tripwire, pas une preuve.
+
+**CE QU'ELLE EXIGE** — l'une de trois issues, sans quoi le lint rougit :
+
+1. la fonction englobante appelle l'accesseur (`atteignableEntreEtages`, `atteintLeSol`, `auMemeEtage`) ;
+2. elle est nommée dans **`HORS_REGLE`**, AVEC SA RAISON — pas de second corps (anneau de tuiles, waypoint de son propre chemin, champ lu en un point, appartenance de zone, worldgen), ou étanchéité déjà assurée autrement ;
+3. elle est nommée dans **`A_TRANCHER`** — c'est une vraie perception, et la réponse change le jeu.
+
+**ET UNE EXEMPTION QUI NE COUVRE PLUS RIEN ROUGIT AUSSI** (`morte`). C'est ce qui empêche les deux tables de pourrir en gardes mortes : la clé est un NOM de fonction, pas un numéro de ligne, et un renommage la fait tomber. *(Éprouvé : une clé `fonctionQuiNExistePas` glissée dans `impasse.ts` rougit bien.)*
+
+**LA LEÇON DE SON SECOND PASSAGE — `distSq`.** Bornée à l'idiome écrit à la main, la règle était aveugle à **139 des ~163** sites du dépôt. Dans ce trou, deux vraies perceptions trouvées par accident en cinq minutes : `nearestGibier` (le Cendreux élit un gibier vivant à travers la roche) et le phare-feu de `nearestWarmth`. `distSq` **est** `dx * dx + dy * dy` — l'exclure, c'était exclure l'idiome. Couverte, elle relève **152 sites**, tous triés.
+
+**DEUX SITES REPRIS** (correction technique, la garde d'étage y va dans le sens sûr) :
+
+| site | ce qui traversait le plancher |
+|---|---|
+| `faune.ts` — `alarmeDEnvol` | l'envol d'oiseaux à la surface mettait en alerte une bête terrée dessous |
+| `faune.ts` — `underFireWard` | un feu allumé au-dessus rendait toute une salle interdite à la faune, sans que rien ne le dise |
+
+### LES SEPT QUESTIONS — pour Alexis, une à la fois
+
+Ces sites SONT des perceptions. Les corriger change le jeu : ce ne sont pas des correctifs techniques. Ils sont déclarés dans `A_TRANCHER`, le lint est vert, et **les trous sont nommés au lieu d'être cachés**.
+
+| # | la question | les sites |
+|---|---|---|
+| **Q1** | **Le ward d'un feu traverse-t-il un plancher ?** (tranché NON pour la faune ce jour, `underFireWard` — reste la cohérence du reste de la famille) | `cendreux.ts` `willRiseAsCendreux` · `advanceCendreux` · `morts.ts` `advanceReveils` · `siteDansLaCouronne` |
+| **Q2** | **La perception de chaleur du Cendreux** — `nearestPrey` est scellé, le gibier et le phare-feu ne le sont pas | `cendreux.ts` `nearestGibier` · `nearestWarmth` |
+| **Q3** | **La meute et la harde se parlent-elles à travers un plancher ?** (alarme de harde, appel de meute, courage, rage sur le tueur d'un des siens) | `faune.ts` `faunaStep` · `noteBlocked` · `packNearby` · `packInPlace` · `packQuarry` · `clanAggressor` · `combat.ts` `applyDamage` · `die` |
+| **Q3bis** | le bond qui touche, les petits, la sortie, l'élection générique | `faune.ts` `leapStep` · `pupStep` · `sortieTravel` · `nearestOf` |
+| **Q4** | **L'odorat** — le sang et la charogne | `faune.ts` `bloodBias` · `feedStep` |
+| **Q5** | **L'interaction à portée** — pêcher, dépecer, bâtir, glaner, défendre, apprendre un coin | `economy.ts` `stationFor` · `castRejection` · `butcherRejection` · `village.ts` `evaluateBuild` · `npc.ts` `near` · `nearestAliveNode` · `handleDefense` · `npc-errands.ts` `handleErrand` · `faune.ts` `advanceCoinsConnus` |
+| **Q6** | **Le contact des buveurs** — le Cendreux qui boit au feu | `fire.ts` `advanceFire` · `village.ts` `advanceUpkeep` |
+| **Q7** | **Le tremblement du sol** — celui-là traverse peut-être, justement : la roche le PORTE, ou elle l'arrête ? | `sens.ts` `secouerLeSol` |
+
+⚠ **Aucune de ces sept n'est urgente aujourd'hui** : les 6 étages du monde joué couvrent **0,87 %** du plan, tous des intérieurs de grotte atteints par une gueule. Le cas à deux corps sur deux étages y est rare. Elles deviennent urgentes le jour où le souterrain s'étend.
+
+### Ce qui reste
+
+- Les deux sites de `faune.ts` repris ci-dessus, comme les deux de `murmure.ts`, sont branchés et couverts par le lint, **pas gardés behavioralement** (ni `alarmeDEnvol` ni `underFireWard` n'est exporté ; les mettre en scène demande un envol ou un camp allumé sur la mesa de laboratoire).
+- Les sept questions.
