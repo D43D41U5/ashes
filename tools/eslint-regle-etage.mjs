@@ -30,6 +30,10 @@
  * ⚠ La clé est le nom de la FONCTION qui entoure, jamais un numéro de ligne : un numéro se
  * périme au premier edit, et une exemption périmée est une garde morte. **Et une exemption qui
  * ne couvre plus rien rougit AUSSI** (`morte`) : c'est ce qui empêche cette table de pourrir.
+ *   — Sa PORTÉE, énoncée : `morte` se rend en `Program:exit`, donc pour les fichiers qu'ESLint
+ *     VISITE. Renommer une fonction rougit ; renommer ou supprimer un FICHIER qui porte une
+ *     entrée `'*'` ne rougit pas — plus personne ne visite ce fichier, plus personne ne relève
+ *     son entrée. C'est le seul trou connu de cette table, et il est petit (onze fichiers).
  *
  * ⚠ **ELLE NE VISE QUE LES DISTANCES COMPARÉES À UN SEUIL**, et c'est la leçon de son premier
  * passage : elle relevait 45 sites, dont l'écrasante majorité étaient des NORMALISATIONS

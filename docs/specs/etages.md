@@ -642,7 +642,7 @@ E-A3 affirmait que *« les 67 sites sont couverts »*. **Ils étaient 25** (11 `
 
 ### Ce qui reste
 
-- **Les deux sites de `murmure.ts` sont branchés, pas gardés behavioralement** : un site de murmure naît d'une porte de hachage, de la bande VIEILLE de cendre et d'une densité de morts — le monter sur la mesa de laboratoire coûterait plus que le site ne vaut. Ils sont couverts par `tsc`, par le lint et par les tests de `murmure.ts` (qui exercent le chemin à l'étage 0). À reprendre le jour où le banc saura poser une bande de cendre.
+- ~~**Les deux sites de `murmure.ts` sont branchés, pas gardés behavioralement**~~ — gardés le 2026-09-07, §20. **La prémisse était fausse** : on croyait devoir monter une bande de cendre sur la mesa de laboratoire, alors que le banc de `murmure.test.ts` joue DÉJÀ la vraie carte mûre (`carteDeTest`, 200 jours d'âge). Il ne manquait qu'un corps sous la roche.
 - ~~**La garde STRUCTURELLE d'E-A3**~~ — livrée le 2026-09-07, §20.
 
 
@@ -677,7 +677,7 @@ Ces sites SONT des perceptions. Les corriger change le jeu : ce ne sont pas des 
 
 | # | la question | les sites |
 |---|---|---|
-| **Q1** | **Le ward d'un feu traverse-t-il un plancher ?** (tranché NON pour la faune ce jour, `underFireWard` — reste la cohérence du reste de la famille) | `cendreux.ts` `willRiseAsCendreux` · `advanceCendreux` · `morts.ts` `advanceReveils` · `siteDansLaCouronne` |
+| **Q1** | **Le ward d'un feu traverse-t-il un plancher ?** ⚠ **UN QUART DE CETTE QUESTION A ÉTÉ TRANCHÉ SANS ALEXIS** — voir l'encadré sous la table | `cendreux.ts` `willRiseAsCendreux` · `advanceCendreux` · `morts.ts` `advanceReveils` · `siteDansLaCouronne` |
 | **Q2** | **La perception de chaleur du Cendreux** — `nearestPrey` est scellé, le gibier et le phare-feu ne le sont pas | `cendreux.ts` `nearestGibier` · `nearestWarmth` |
 | **Q3** | **La meute et la harde se parlent-elles à travers un plancher ?** (alarme de harde, appel de meute, courage, rage sur le tueur d'un des siens) | `faune.ts` `faunaStep` · `noteBlocked` · `packNearby` · `packInPlace` · `packQuarry` · `clanAggressor` · `combat.ts` `applyDamage` · `die` |
 | **Q3bis** | le bond qui touche, les petits, la sortie, l'élection générique | `faune.ts` `leapStep` · `pupStep` · `sortieTravel` · `nearestOf` |
@@ -686,9 +686,30 @@ Ces sites SONT des perceptions. Les corriger change le jeu : ce ne sont pas des 
 | **Q6** | **Le contact des buveurs** — le Cendreux qui boit au feu | `fire.ts` `advanceFire` · `village.ts` `advanceUpkeep` |
 | **Q7** | **Le tremblement du sol** — celui-là traverse peut-être, justement : la roche le PORTE, ou elle l'arrête ? | `sens.ts` `secouerLeSol` |
 
+⚠ **CE QUE J'AI TRANCHÉ SEUL DANS Q1, ET QU'IL FAUT RELIRE.** `underFireWard` a été repris ce jour comme une correction technique — or c'est le PREMIER MEMBRE de la famille Q1, dont les trois autres sont différés. Depuis, dans le jeu livré : **le cercle d'un feu allumé s'arrête à un plancher pour la FAUNE, et le traverse encore** pour `willRiseAsCendreux`, `advanceCendreux`, `advanceReveils` et `siteDansLaCouronne`. Cette asymétrie n'existait pas avant. Elle ne demande pas d'être annulée — le sens sûr est bien celui-là, et il est maintenant gardé — mais elle demande qu'Alexis tranche les trois autres dans le MÊME sens, ou dise pourquoi le feu écarte un mort à travers la roche et pas un loup.
+
 ⚠ **Aucune de ces sept n'est urgente aujourd'hui** : les 6 étages du monde joué couvrent **0,87 %** du plan, tous des intérieurs de grotte atteints par une gueule. Le cas à deux corps sur deux étages y est rare. Elles deviennent urgentes le jour où le souterrain s'étend.
 
 ### Ce qui reste
 
-- Les deux sites de `faune.ts` repris ci-dessus, comme les deux de `murmure.ts`, sont branchés et couverts par le lint, **pas gardés behavioralement** (ni `alarmeDEnvol` ni `underFireWard` n'est exporté ; les mettre en scène demande un envol ou un camp allumé sur la mesa de laboratoire).
+- `alarmeDEnvol` est branché et couvert par le lint, **pas gardé behavioralement** : le mettre en scène demande un ENVOL, c'est-à-dire un tétras posé, alerté, et son vol résolu — la seule des deux excuses qui ait tenu. *(`underFireWard`, lui, est gardé : voir ci-dessous.)*
 - Les sept questions.
+
+### LE FEU DU DESSUS, GARDÉ — et l'excuse qui l'avait différé
+
+La même leçon que pour le murmure, le même jour : *« les mettre en scène demande un camp allumé sur la mesa »* était **faux**. Un camp allumé n'est qu'une structure, et `fireStateAt` rend `'lit'` à tout feu libre sans slot combustible — « un feu forgé à la main dans un test ». Il n'a fallu ni bois, ni allumage, ni PNJ.
+
+La garde (`etages-etancheite.test.ts`) pose le feu sur le plateau, puis le couple loup + proie soit AU feu, soit dans la cave qui passe dessous — même tuile, même distance, seul l'étage change. **QUATRE jambes : deux cas, chacun avec SON témoin sans feu.** Un témoin unique ne suffirait pas — il prouverait que le loup élit sur le PLATEAU, jamais qu'il élit dans la CAVE, et le jour où une régression casserait la chasse sous la roche, la jambe « cave + feu » tomberait en accusant le feu, le mauvais coupable. Les deux prémisses sont calculées sur les positions POSÉES (la proie dans le cercle du feu, le loup à portée d'acquisition **à toute heure**, `aggroRange × WOLF_DAY_FLOOR`), jamais sur des constantes recopiées : bouger la mesa doit faire tomber la prémisse, pas la masquer. *(Rougissement éprouvé : `atteignableEntreEtages` neutralisée, la jambe « dans la cave, avec feu » tombe, les autres tiennent.)*
+
+### LES DEUX SITES DE `murmure.ts`, GARDÉS
+
+Le §19 les laissait ouverts en croyant qu'un site de murmure était cher à monter — **la prémisse était fausse**. Le banc de `murmure.test.ts` joue déjà la VRAIE carte avec 200 jours d'âge de cendre : les sites existent pour de bon, il ne manquait qu'un corps sous la roche.
+
+La garde ne pose donc pas de mesa : elle prend un site réel et met le corps à `etage = −1`. **Et elle AFFIRME sa prémisse** au lieu de la supposer — le site retenu est le premier qui n'a aucun connecteur à `ETAGE_PORTEE_CONNECTEUR + 1`, sans quoi la salle d'en dessous rejoindrait la surface par une gueule et la garde mesurerait l'inverse de ce qu'elle croit. Chaque cas garde son témoin au même étage (les cas d'A33, rejoués).
+
+| cas | ce qu'il refuse |
+|---|---|
+| LE VISITEUR | recevoir d'une salle un murmure qui se lit de la CENDRE, donc de la surface |
+| LE CENDREUX | qu'un Cendreux terré sous la roche fasse taire un site de surface — « ce qui vient » doit pouvoir vous atteindre |
+
+**Rougissement éprouvé** : `atteignableEntreEtages` neutralisé en `return true` → les deux cas neufs échouent, les 8 autres passent.

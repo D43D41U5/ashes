@@ -17,7 +17,7 @@
  * garde verte ne dirait que « ce système ne fait rien ».
  */
 import { describe, expect, it } from 'vitest'
-import { BALANCE, FAUNA, HUNT, TERRAIN_GRASS, TERRAIN_ROCK, TERRAIN_SCREE, WEAPON_PROFILES } from './balance'
+import { BALANCE, FAUNA, HUNT, MONSTER_DEFS, TERRAIN_GRASS, TERRAIN_ROCK, TERRAIN_SCREE, WEAPON_PROFILES } from './balance'
 import { createEmptyMap, type WorldMap } from './map'
 import { type EtageCreux, niveauDuCorps } from './etages'
 import { createSim, spawnEntity, step, type SimState } from './sim'
@@ -30,6 +30,7 @@ import { CENDREUX, COMBAT } from './balance'
 import { applyInventoryAction, poserAuSol } from './inventory-actions'
 import { advancePois } from './poi-discovery'
 import { advanceWorldEvents } from './worldevents'
+import { fireState } from './fire'
 import { foundNpcVillage } from './worldgen'
 import { POI, SEASON } from './balance'
 
@@ -445,5 +446,55 @@ describe('E-A3 — les sites de PORTÉE repris le 2026-09-07', () => {
     // donc c'est le passager du sol qui est le TÉMOIN, et celui du plateau le cas de la règle.
     expect(r.aTravers, 'témoin : au même étage que le quai, on embarque').toBe(true)
     expect(r.temoin, 'depuis le plateau, un plancher entre les deux : on reste').toBe(false)
+  })
+  /**
+   * LE FEU (R13) — repris parce que l'excuse qui l'avait différé était fausse. §20 disait ces
+   * deux sites « impossibles à mettre en scène : il y faudrait un envol ou un camp allumé sur la
+   * mesa ». Un camp allumé n'est qu'une STRUCTURE : `fireStateAt` rend `'lit'` à tout feu libre
+   * sans slot combustible — « un feu forgé à la main dans un test ». L'excuse ne valait que pour
+   * l'envol, qui la garde.
+   *
+   * Le montage : le feu SUR LE PLATEAU (étage 1), la proie et le loup ENSEMBLE — soit au feu,
+   * soit dans la cave qui passe dessous. Même tuile, même distance au feu, seul l'étage change.
+   *
+   * QUATRE JAMBES — deux cas, chacun avec SON témoin sans feu. Un seul témoin ne suffirait pas :
+   * il prouverait que le loup élit sur le PLATEAU, jamais qu'il élit dans la CAVE. Le jour où
+   * une régression casserait la chasse sous la roche, la jambe « dans la cave, avec feu »
+   * tomberait et accuserait le feu — le mauvais coupable, exactement.
+   */
+  it('LE FEU n’écarte le loup que de SON étage — la salle du dessous n’est pas interdite', () => {
+    const essai = (etageDuCouple: number, avecFeu: boolean): boolean => {
+      const state = grotte()
+      const FEU = { tx: CAP_X0 + 1, ty: CAP_Y0 + 1 }
+      const PROIE = { x: CAP_X0 + 1.5, y: CAP_Y0 + 1.5 }
+      const LOUP = { x: CAP_X0 + 2.5, y: CAP_Y0 + 2.5 }
+      if (avecFeu) {
+        // Feu libre SANS `fuel` = ALLUMÉ (`fireStateAt`) ; son `etage` est celui du plateau.
+        const feu = { id: 9300, type: 'fire', ...FEU, villageId: 0, hp: 100, etage: 1 } as never
+        state.structures.push(feu)
+        expect(fireState(state, feu), 'la prémisse : le feu BRÛLE').toBe('lit')
+        // …et la proie est DANS son cercle — mesuré sur les positions POSÉES, pas sur des
+        // constantes recopiées : bouger la mesa doit faire tomber la prémisse, pas la masquer.
+        const dx = FEU.tx + 0.5 - PROIE.x
+        const dy = FEU.ty + 0.5 - PROIE.y
+        expect(dx * dx + dy * dy, 'la proie est dans le cercle du feu').toBeLessThan(FAUNA.FIRE_WARD * FAUNA.FIRE_WARD)
+      }
+      const proie = poser(state, PROIE, etageDuCouple)
+      const loup = spawnMonster(state, 'wolf', LOUP.x, LOUP.y)
+      state.entities.find((k) => k.id === loup)!.etage = etageDuCouple
+      // Et le loup la voit même ASSOUPI : `wolfVigor` ne descend jamais sous `WOLF_DAY_FLOOR`,
+      // donc l'acquisition porte au pire à `aggroRange × FLOOR`. Sans cette prémisse, la garde
+      // dépendrait de l'heure que le banc tire, et rougirait un jour sans rien avoir à dire.
+      const ex = LOUP.x - PROIE.x
+      const ey = LOUP.y - PROIE.y
+      expect(Math.sqrt(ex * ex + ey * ey), 'la proie est à portée d’acquisition à TOUTE heure')
+        .toBeLessThan(MONSTER_DEFS.wolf.aggroRange * FAUNA.WOLF_DAY_FLOOR)
+      step(state, [])
+      return state.monsters.find((m) => m.entityId === loup)!.targetId === proie
+    }
+    expect(essai(1, false), 'témoin du plateau : sans feu, le loup choisit la proie').toBe(true)
+    expect(essai(1, true), 'au même étage que le feu, la proie est intouchable').toBe(false)
+    expect(essai(-1, false), 'témoin de la cave : le loup y élit aussi bien qu’ailleurs').toBe(true)
+    expect(essai(-1, true), 'et le feu du dessus n’y change RIEN — la salle n’est pas interdite').toBe(true)
   })
 })
