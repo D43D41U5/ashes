@@ -11,6 +11,7 @@
  * PAS de zone combustible (`fireZoneInventory` rend `undefined`), mais garde entrées/sorties.
  */
 import { CENDREUX, COOK_SLOT, DRY_SLOT, FIRE, SALAISON_DU_SECHE } from './balance'
+import { atteintLeSol } from './etages'
 import { emitEvent } from './events'
 import { distSq } from './geometry'
 import { addItems, countOf, makeInventory, type Inventory, type ItemId } from './items'
@@ -80,23 +81,28 @@ export function fuelBurnProgress(tick: number, s: Structure): number {
  * (les feux libres ici, le Foyer dans `advanceUpkeep`). Rendus vides sans un seul cendreux :
  * un monde sans morts ne paie pas un octet de ce chantier.
  */
-const BUVEURS_DU_TICK = new WeakMap<SimState, { tick: number; liste: { m: Monster; x: number; y: number }[] }>()
+/** Un buveur : son esprit, sa position — et SON CORPS, parce qu'E-R5 se lit sur l'étage. */
+export type Buveur = { m: Monster; x: number; y: number; corps: SimState['entities'][number] }
 
-export function cendreuxVivantsPositions(state: SimState): { m: Monster; x: number; y: number }[] {
+const BUVEURS_DU_TICK = new WeakMap<SimState, { tick: number; liste: Buveur[] }>()
+
+export function cendreuxVivantsPositions(state: SimState): Buveur[] {
   // MÉMO DU TICK (pur : même état, même tick → même liste) — `advanceFire` et
   // `advanceUpkeep` la demandent tous les deux, chaque tick ; l'index d'entités ne se
   // construit qu'une fois. MESURÉ au profil : le chantier 2026-08-21 coûtait +14 % de tick
   // sur le banc, et ce doublon en était la part la plus bête.
   const memo = BUVEURS_DU_TICK.get(state)
   if (memo && memo.tick === state.tick) return memo.liste
-  const out: { m: Monster; x: number; y: number }[] = []
+  const out: Buveur[] = []
   if (state.monsters.some((m) => m.type === 'cendreux')) {
-    const byId = new Map<number, { x: number; y: number; hp: number }>()
+    const byId = new Map<number, SimState['entities'][number]>()
     for (const e of state.entities) byId.set(e.id, e)
     for (const m of state.monsters) {
       if (m.type !== 'cendreux') continue
       const e = byId.get(m.entityId)
-      if (e && e.hp > 0) out.push({ m, x: e.x, y: e.y })
+      // Le CORPS voyage avec la position : E-R5 se pose sur `corps.etage`, et le relever
+      // ici est gratuit — l'index d'entités est déjà en main (il l'était déjà pour `hp`).
+      if (e && e.hp > 0) out.push({ m, x: e.x, y: e.y, corps: e })
     }
   }
   BUVEURS_DU_TICK.set(state, { tick: state.tick, liste: out })
@@ -147,8 +153,8 @@ export function advanceFire(state: SimState): void {
   // tant qu'il reste du bois — un feu bu tombe en braises et y reste le temps des braises,
   // le ward tient (le plancher de la décision ⑯ : le feu achète, il ne trahit jamais tout).
   // Et boire RASSASIE (⑰) : la chaleur bue endort son buveur — le feu abandonné est un leurre.
-  let buveurs: { m: Monster; x: number; y: number }[] | null = null
-  const lesBuveurs = (): { m: Monster; x: number; y: number }[] => (buveurs ??= cendreuxVivantsPositions(state))
+  let buveurs: Buveur[] | null = null
+  const lesBuveurs = (): Buveur[] => (buveurs ??= cendreuxVivantsPositions(state))
   const contact2 = CENDREUX.BOIRE.CONTACT * CENDREUX.BOIRE.CONTACT
 
   for (const s of state.structures) {
@@ -172,6 +178,10 @@ export function advanceFire(state: SimState): void {
       let soif = 0
       for (const b of lesBuveurs()) {
         if (distSq(b.x, b.y, s.tx + 0.5, s.ty + 0.5) > contact2) continue
+        // E-R5, Q6 tranchée par Alexis (2026-09-07) : « sceller les deux sites ». Boire est un
+        // CONTACT — un Cendreux dans la salle du dessous ne boit pas le feu de la terrasse, même
+        // si la verticale les superpose. Le feu de la salle, lui, se boit normalement.
+        if (!atteintLeSol(state.map, b.corps, s.tx, s.ty, s.etage)) continue
         soif += CENDREUX.BOIRE.CONSO
         b.m.satiete = Math.min(CENDREUX.BOIRE.SATIETE_MAX, (b.m.satiete ?? 0) + CENDREUX.BOIRE.SATIETE_FEU_PAR_TICK)
       }

@@ -206,9 +206,7 @@ const A_TRANCHER = {
   },
   'village.ts': {
     evaluateBuild: 'Q5 — bâtir à `BUILD_RANGE` (or « le bâti vit au sol », E-R5)',
-    advanceUpkeep: 'Q6 — le Cendreux qui BOIT au feu du village, au contact',
   },
-  'fire.ts': { advanceFire: 'Q6 — le Cendreux qui boit au feu, au contact' },
   'npc.ts': {
     near: 'Q5 — LE prédicat d’interaction des PNJ, générique',
     nearestAliveNode: 'Q5 — le glanage élit un nœud à portée',

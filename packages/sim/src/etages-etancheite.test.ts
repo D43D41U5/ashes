@@ -19,19 +19,20 @@
 import { describe, expect, it } from 'vitest'
 import { BALANCE, FAUNA, HUNT, MONSTER_DEFS, TERRAIN_GRASS, TERRAIN_ROCK, TERRAIN_SCREE, WEAPON_PROFILES } from './balance'
 import { createEmptyMap, type WorldMap } from './map'
-import { type EtageCreux, niveauDuCorps } from './etages'
+import { type EtageCreux, niveauDuCorps, palierDuSol } from './etages'
 import { createSim, spawnEntity, step, type SimState } from './sim'
 import { nearestPrey, spawnMonster } from './monsters'
 import { prowlerNear } from './nighthunt'
 import { advanceDecouverte } from './decouverte'
-import { applyVillageAction } from './village'
+import { advanceUpkeep, applyVillageAction, createVillage } from './village'
 import { advanceCendreux, nearestWarmth, willRiseAsCendreux } from './cendreux'
 import { applyDamage } from './combat'
-import { CENDREUX, COMBAT } from './balance'
+import { CENDREUX, COMBAT, FIRE } from './balance'
+import { addItems, makeInventory } from './items'
 import { applyInventoryAction, poserAuSol } from './inventory-actions'
 import { advancePois } from './poi-discovery'
 import { advanceWorldEvents } from './worldevents'
-import { fireState } from './fire'
+import { advanceFire, fireState } from './fire'
 import { foundNpcVillage } from './worldgen'
 import { POI, SEASON } from './balance'
 
@@ -641,5 +642,58 @@ describe('E-A3 — les huit décisions d’Alexis du 2026-09-07 (Q1..Q7)', () =>
     }
     expect(essai(-1), 'témoin : dans la salle, il va au repas').toBe(true)
     expect(essai(1), 'd’un étage plus haut, il ne la sent pas — Q4').toBe(false)
+  })
+
+  // ─── Q6 · on ne boit pas un feu qu'on ne peut pas toucher ────────────────────
+  it('Q6 — le Cendreux de la salle ne boit pas le feu libre de la terrasse', () => {
+    const essai = (etageDuCendreux: number): number => {
+      const state = grotte()
+      const tx = CAP_X0 + 1
+      const ty = CAP_Y0 + 1
+      const fuel = makeInventory(FIRE.FUEL_SLOTS)
+      addItems(fuel, { wood: 3 })
+      const feu = { id: 9420, type: 'fire', tx, ty, villageId: 0, hp: 100, etage: 1, fuel, burnAt: state.tick, burnSlot: 0 }
+      state.structures.push(feu as never)
+      expect(fireState(state, feu as never), 'la prémisse : le feu BRÛLE').toBe('lit')
+      const id = spawnMonster(state, 'cendreux', tx + 0.5, ty + 0.5)
+      const corps = state.entities.find((k) => k.id === id)!
+      corps.etage = etageDuCendreux
+      const m = state.monsters.find((k) => k.entityId === id)!
+      m.satiete = 0
+      const dx = corps.x - (tx + 0.5)
+      const dy = corps.y - (ty + 0.5)
+      expect(dx * dx + dy * dy, 'la prémisse : il est DANS le contact')
+        .toBeLessThan(CENDREUX.BOIRE.CONTACT * CENDREUX.BOIRE.CONTACT)
+      advanceFire(state)
+      return m.satiete ?? 0
+    }
+    expect(essai(1), 'témoin de la terrasse : au contact du feu, il boit').toBeGreaterThan(0)
+    expect(essai(-1), 'sous le plancher, le feu du dessus ne se boit pas — Q6').toBe(0)
+  })
+
+  it('Q6 — la horde qui passe SOUS le Foyer n’en draine pas le stock', () => {
+    const essai = (etageDuCendreux: number | null): number => {
+      const state = grotte()
+      const tx = CAP_X0 + 1
+      const ty = CAP_Y0 + 1
+      // ⚠ LE FOYER N'A PAS D'ÉTAGE (`Village` n'en porte pas) : il se tient au SOL de sa tuile,
+      // et le sol de la mésa de labo est le palier 0 — la plaine SOUS le chapeau. Le témoin est
+      // donc le buveur de la plaine, et le scellé celui de la salle (niveau −1, sans connecteur).
+      const v = createVillage(state, { chiefId: 0, tx, ty, npcsArrived: true })
+      expect(v.fuel, 'la prémisse : le Foyer a de quoi être bu').toBeGreaterThan(CENDREUX.BOIRE.FOYER_PLANCHER)
+      expect(palierDuSol(state.map, tx, ty), 'la prémisse : le Foyer est au sol de la plaine').toBe(0)
+      if (etageDuCendreux !== null) {
+        const id = spawnMonster(state, 'cendreux', tx + 0.5, ty + 0.5)
+        const corps = state.entities.find((k) => k.id === id)!
+        if (etageDuCendreux !== 0) corps.etage = etageDuCendreux
+        expect(niveauDuCorps(state.map, corps), 'la prémisse : le buveur est bien où on le veut').toBe(etageDuCendreux)
+      }
+      advanceUpkeep(state)
+      return v.fuel
+    }
+    const sansPersonne = essai(null)
+    expect(essai(0), 'témoin de la plaine : au contact du Foyer, la bouche draine').toBeLessThan(sansPersonne)
+    expect(essai(-1), 'de la salle du dessous, elle ne draine rien — Q6').toBe(sansPersonne)
+    expect(essai(1), 'et du chapeau au-dessus non plus — Q6').toBe(sansPersonne)
   })
 })

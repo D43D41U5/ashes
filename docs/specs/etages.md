@@ -742,8 +742,8 @@ clé supprimée aurait rendu le lint vert pour la mauvaise cause, et le lecteur 
 su que c'était décidé.
 
 > ⚠ **CE QUE LA TABLE DIT ≠ CE QUE L'ARBRE PORTE.** La table ci-dessus est la DÉCISION, prise en
-> une fois ; la livraison se fait en trois lots. **Lot ① (Q1–Q4, 20 sites) : livré le 2026-09-07.**
-> Lot ② (Q6, 2 sites) et lot ③ (Q5, 9 sites) restent à venir — leurs clés sont encore dans
+> une fois ; la livraison se fait en trois lots. **Lot ① (Q1–Q4, 20 sites) et lot ② (Q6, 2 sites) :
+> livrés le 2026-09-07.** Lot ③ (Q5, 9 sites) reste à venir — ses clés sont encore dans
 > `A_TRANCHER`. Le lint dit lequel : ce qu'il reste à trancher est ce qu'il liste.
 
 ### CE QUE Q3 RETIRE — dit avant de le livrer
@@ -789,6 +789,29 @@ la mesa doit faire tomber la prémisse, pas la masquer.
 
 **Rougissement éprouvé** : `atteignableEntreEtages` neutralisée en `return true` → **18 des 25**
 tombent, dont les cinq neufs, et chaque fois sur la jambe « à travers », jamais sur le témoin.
+
+### LES GARDES DU LOT ② (les buveurs — Q6)
+
+Boire est un **CONTACT** (`CENDREUX.BOIRE.CONTACT` = 1,5 tuile) : la question n'est pas « le
+voit-il ? » mais « le touche-t-il ? ». Deux gardes, un site chacune.
+
+| garde | ce qu'elle interdit |
+|---|---|
+| **Q6a** `fire.advanceFire` | qu'un Cendreux de la salle boive le bois du feu libre posé sur la terrasse (témoin : le même buveur SUR la terrasse boit) |
+| **Q6b** `village.advanceUpkeep` | qu'une horde passant SOUS le Foyer en draine le stock (témoin : la bouche de la plaine draine ; deux jambes scellées, la salle et le chapeau) |
+
+⚠ **Le Foyer n'a pas d'étage** — `Village` n'en porte pas : il se tient au SOL de sa tuile. Dans la
+mésa de labo ce sol est le palier **0**, la plaine sous le chapeau ; le témoin de Q6b est donc le
+buveur de la PLAINE, pas celui du plateau. La garde le dit et le prouve
+(`palierDuSol(map, tx, ty) === 0` en prémisse) — c'est ce qui l'a fait rougir à la première écriture.
+
+Le buveur transporte désormais **son corps** (`Buveur.corps`, `fire.ts`) et non seulement sa
+position : `cendreuxVivantsPositions` tenait déjà l'index d'entités pour lire `hp`, relever
+l'étage y est gratuit — et `exactOptionalPropertyTypes` interdisait de recopier un `etage?`
+optionnel dans un littéral.
+
+**Rougissement éprouvé** : accesseur neutralisé → **20 des 27** tombent, dont les deux neuves,
+toujours sur la jambe « à travers ».
 
 ### ⚠ CE QUE ÇA DÉPLACE DANS LE MONDE JOUÉ — mesuré, pas supposé
 

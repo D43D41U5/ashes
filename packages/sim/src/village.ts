@@ -898,6 +898,10 @@ export function advanceUpkeep(state: SimState): void {
       let bouches = 0
       for (const b of buveurs) {
         if (distSq(b.x, b.y, village.fireTx + 0.5, village.fireTy + 0.5) > contact2) continue
+        // E-R5, Q6 (Alexis, 2026-09-07) : la MÊME loi que sur le feu libre (`fire.ts`) — une
+        // horde qui passe SOUS le Foyer n'en draine pas le stock. Le Foyer se tient au sol de
+        // sa tuile (un village n'a pas d'étage) : `atteintLeSol` sans étage visé dit exactement ça.
+        if (!atteintLeSol(state.map, b.corps, village.fireTx, village.fireTy)) continue
         bouches += 1
         b.m.satiete = Math.min(CENDREUX.BOIRE.SATIETE_MAX, (b.m.satiete ?? 0) + CENDREUX.BOIRE.SATIETE_FEU_PAR_TICK)
       }
