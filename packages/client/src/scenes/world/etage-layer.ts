@@ -30,7 +30,7 @@
  */
 import Phaser from 'phaser'
 import {
-  hash2, marchableAEtage, rampeQuiMonte, TERRAIN_SCREE, terrainAEtage,
+  hash2, rampeQuiMonte, TERRAIN_SCREE, terrainAEtage,
   type Connecteur, type WorldMap,
 } from '@ashes/sim'
 import {
@@ -39,13 +39,14 @@ import {
 } from '../../render/cave-art'
 import { cliffKey, levreDe, PHASES_PAROI, varianteDeLevre, VARIANTES_PAROI } from '../../render/cliff-art'
 import {
-  alphaDeDecouvert, CLIFF_DEPTH, LIFT_TUILES, niveauSurLaRampe, ROCHE_DEPTH, solVisibleSous,
+  alphaDeDecouvert, CLIFF_DEPTH, LIFT_TUILES, ROCHE_DEPTH, solVisibleSous,
   SOUTERRAIN_STRATE, strateDEtage, TIE_SOCLE, TILE_PX, ySortDepth, type Decouvert,
 } from '../../render/framing'
 import { PERIODE_DALLE, plateauKey, RAMPE_RANGEES, SOCLE_TEINTE, TERRAINS_DE_PLATEAU } from '../../render/plateau-art'
 import type { Relief } from '../../render/relief'
 import { CaveFx, type TuileDeCave } from './cave-fx'
 import { CaveVeil, FEU_CAVE_TUILES, type BandeDeMasque, type LumiereDeCave } from './cave-veil'
+import { niveauDuCorpsDessine } from './niveau-du-corps'
 import { epinglerLaTuile } from '../../render/tuile-epinglee'
 
 /**
@@ -278,39 +279,14 @@ export class EtageLayer {
   }
 
   /**
-   * ═══ LA HAUTEUR À LAQUELLE ON DESSINE UN CORPS POSÉ LÀ ═══
+   * ═══ LA HAUTEUR À LAQUELLE ON DESSINE UN CORPS POSÉ LÀ — voir `niveau-du-corps.ts` ═══
    *
-   * ⚠ **ELLE SE DÉRIVE DE LA TUILE OÙ LE CORPS EST DESSINÉ, PAS DU SEUL ENTIER DE L'AUTORITÉ —
-   * et c'est le second saut, celui qui ne se voit sur aucune image fixe** (*Alexis, 2026-09-01 :
-   * « il y a un saut pendant le changement d'étage »*).
-   *
-   * Le client dessine à la position PRÉDITE et avec l'étage de l'AUTORITÉ : `etageJoueur` n'est
-   * posé qu'à la réconciliation (« la prédiction ne le calcule pas, elle le LIT », `WorldScene`).
-   * Il y a donc au moins un tick entre les deux. À l'image où la position prédite quitte la rampe
-   * pour le chapeau, la pente n'a plus lieu d'être et l'étage vaut encore 0 : le corps retombait
-   * de tout le lift, puis remontait quand l'autorité rattrapait. **MESURÉ : 25,6 px d'aller-retour
-   * pour UN tick de retard**, au moment précis du changement d'étage.
-   *
-   * ⚠ **CE N'EST PAS PRÉDIRE L'ÉTAGE, et la distinction est celle de l'invariant n°3.** La
-   * prédiction, elle, continue de LIRE l'autorité : sa collision, son pas, son `predictionWorld`
-   * ne changent pas d'un bit. Ce qu'on répond ici est une question de RENDU — *« à quelle hauteur
-   * dessine-t-on un corps qui est à CET endroit ? »* — et la carte y répond seule : un corps posé
-   * sur le chapeau d'une mesa ne peut être qu'à +1, la roche ne porte personne à l'étage 0.
-   *
-   * La règle est celle d'`etageApresLePas` de /sim, mot pour mot : *on garde l'étage qu'on nous
-   * donne tant que la tuile le PORTE ; sinon on prend celui qui porte.* Deux écritures d'une même
-   * loi finissent toujours par diverger — celle-ci est la même phrase, appliquée au dessin.
-   *
-   * Depuis les terrasses, « celui qui porte » se lit du relief : le chapeau s'il y en a un, sinon
-   * le palier du sol — la hauteur à laquelle la tuile se dessine, et rien d'autre.
+   * La loi vit à côté, pure, parce qu'elle DOIT avoir ses gardes et que cette couche-ci tient un
+   * pool de sprites : dès qu'un monde a des salles, le constructeur alloue le voile de cave et
+   * ses FX, et la scène ne peut plus être `undefined` (le montage de `rampe-pente.test.ts`).
    */
   niveauDuCorps(x: number, y: number, etageAutorite: number): number {
-    const tx = Math.floor(x)
-    const ty = Math.floor(y)
-    const pente = this.penteAt(tx, ty)
-    if (pente !== undefined) return niveauSurLaRampe(y, pente.bas, pente.haut)
-    if (marchableAEtage(this.map, etageAutorite, tx, ty)) return etageAutorite
-    return this.relief.hauteur(tx, ty)
+    return niveauDuCorpsDessine(this.map, this.relief, x, y, etageAutorite)
   }
 
   /**

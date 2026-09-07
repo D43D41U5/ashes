@@ -61,7 +61,9 @@ const SUITES = [
   //   suite relevée à 1429 ✓, plancher recalé quelques pourcents dessous.
   // 2026-09-06 : +68 gardes avec les GROTTES (index à deux mondes, `index-noeuds.test.ts`…) —
   //   suite à 1497, plancher relevé quelques pourcents dessous.
-  { nom: 'client', dir: 'packages/client', args: ['run'], plancher: 1500 },
+  // 2026-09-07 : +12 gardes avec LE SEUIL D'UNE GUEULE (`niveau-du-corps.test.ts`, la loi sortie
+  //   d'`etage-layer` pour être testable) — suite à 1524, plancher relevé quelques pourcents dessous.
+  { nom: 'client', dir: 'packages/client', args: ['run'], plancher: 1512 },
   { nom: 'serveur', dir: 'packages/server', args: ['run'], plancher: 36 },
   // Le banc pilote le vrai worldgen sur la carte de production : lent, et seul à porter le
   // drapeau qui ignore les erreurs non gérées (voir l'en-tête de `scenario.test.ts`).

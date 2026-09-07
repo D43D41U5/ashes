@@ -110,6 +110,32 @@ deux rendus, même monde, même position) : au fond, luminance moyenne 22 contre
 et le dehors qu'on découvre est en plein jour pendant que la salle est dans le noir. Le fondu
 gradué de cette lisière, calé sur `dehorsIci` (§4bis), est le pas suivant ; il n'est pas fait.
 
+## 4quater. Le seuil ne fait pas sauter le corps (2026-09-07)
+
+*« Mon personnage fait un saut d'un étage lorsque je rentre dans une grotte (ça dure quelques
+frames) »* (Alexis).
+
+Le client dessine à la position **prédite** et avec l'étage de l'**autorité** — `etageJoueur` n'est
+posé qu'à la réconciliation. Pendant les quelques images où la prédiction a franchi le seuil et où
+le snapshot dit encore « dehors », la tuile atteinte n'est marchable ni au palier `p` ni nulle part
+que l'autorité connaisse : le repli de `niveauDuCorps`, né des rampes (« celui qui porte est
+toujours au-dessus »), rendait `relief.hauteur` — le TOIT de la terrasse `p + 1`.
+
+La salle porte le corps dès qu'elle est **sous lui** : `niveauDeSalle` non nul, ouverte sur le
+palier de l'autorité (`−salle − 1 === etageAutorite`, G-R1) **et** surface plus haute que lui —
+cette dernière clause évite que la tuile de la gueule elle-même, qui est du palier ET porte la
+salle, ne fasse basculer le regard une tuile trop tôt.
+
+**MESURÉ** (monde joué, les six grottes les plus proches du spawn — XXVI, VI, III, XXX, XXXI,
+XXXVI ; paliers 0 et 1) : aux trois rangées derrière chaque seuil, le repli rendait `p + 1` là où
+la salle est à `−(p + 1)` — lift 4 au lieu de 2, **32 px vers le haut, exactement un étage**.
+Dehors (les rangées `dy ≥ 0`, la tuile de la gueule comprise), pas un bit ne change.
+
+La loi vit dans `niveau-du-corps.ts`, pur : `etage-layer.ts` alloue le voile de cave dès qu'un
+monde a des salles, et n'était donc plus constructible sans Phaser (le montage de
+`rampe-pente.test.ts`). Gardes dans `niveau-du-corps.test.ts`, avec leurs deux témoins de
+rougissement — garde retirée, garde inconditionnelle.
+
 ## 5. Critères d'acceptation
 
 - **G-A1 — Déterminisme** : deux générations directes (`generateZonedTerrain`, jamais le cache) rendent les mêmes grilles creuses, connecteurs, zones et traces, au bit près ; le chemin `'vallee'` (sans `palier`) ne porte aucun karst.
