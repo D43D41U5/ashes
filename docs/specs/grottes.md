@@ -136,6 +136,34 @@ monde a des salles, et n'était donc plus constructible sans Phaser (le montage 
 `rampe-pente.test.ts`). Gardes dans `niveau-du-corps.test.ts`, avec leurs deux témoins de
 rougissement — garde retirée, garde inconditionnelle.
 
+## 4quinquies. Le curseur vise l'arche, pas la roche derrière (2026-09-07)
+
+*« L'entrée d'une grotte sort d'une case par rapport au sprite de l'entrée, ce qui donne des murs
+invisibles quand on est dehors »* (Alexis).
+
+**La géométrie du passage, elle, est juste** — et c'est mesuré : sur les graines 2026, 99 et 4242,
+**359 paires de gueule, 0 mal appariée, 0 collée à une paire voisine, 0 tuile de passage murée**
+(terrain, nœud bloquant ou structure) ; l'image `GUEULE_KEY` se pose exactement sur les deux
+colonnes des connecteurs. Ce qui sortait d'une case, c'est **la VISÉE**.
+
+`poserLaGueule` pose l'image de 32×48 à `ty − palier × LIFT_TUILES − LIFT_TUILES`, et `PROFIL`
+(`cave-art.ts`) n'ouvre rien sur sa troisième rangée : **tout le noir de l'arche vit sur les
+`LIFT_TUILES` rangées d'écran AU-DESSUS du seuil**, sur la paroi — le seuil, lui, n'est qu'une
+tache. Or `deplierLeLift` (`render/deplier-etage.ts`) ne connaissait que les chapeaux et les
+rampes : viser le trou noir retombait sur le monde plat, dans la masse.
+
+**MESURÉ** (monde joué, les six grottes les plus proches du spawn) : les deux rangées de l'arche
+rendaient la tuile de leur propre rangée d'écran — **une à deux tuiles au nord du seuil au palier
+0, trois à quatre au palier 1**, de la roche pleine à chaque fois. On visait l'entrée, le jeu
+lisait le mur : c'est le « mur invisible ». Après correctif, **36/36** visées (arche haute, arche
+basse et seuil × les deux colonnes × six grottes) tombent sur la tuile du seuil, et les colonnes
+voisines (le flanc `cv-flanc`, qui n'est qu'un encadrement) gardent leur ancien sens.
+
+La règle s'écrit comme celle de la rampe, à un champ près : une rampe monte **vers** `h` (son bas
+est `min(de, vers)`), une gueule s'ouvre **sur** son palier et descend (`vers` est le niveau
+négatif de la salle) — donc `de === bas`. Gardes dans `deplier-etage.test.ts`, avec leurs deux
+témoins de rougissement : branche retirée, et branche écrite avec le `min` de la rampe.
+
 ## 5. Critères d'acceptation
 
 - **G-A1 — Déterminisme** : deux générations directes (`generateZonedTerrain`, jamais le cache) rendent les mêmes grilles creuses, connecteurs, zones et traces, au bit près ; le chemin `'vallee'` (sans `palier`) ne porte aucun karst.

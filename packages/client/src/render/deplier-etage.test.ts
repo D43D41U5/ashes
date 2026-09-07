@@ -108,3 +108,82 @@ describe('deplierLeLift — les terrasses lèvent le sol lui-même', () => {
     expect(tuile(m, 6, 8)).toEqual({ tx: 6, ty: 8 })
   })
 })
+
+/* ═══════════════════════════════════════════════════════════════════════════════════════════
+ * LA GUEULE D'UNE GROTTE — l'arche est peinte SUR LA PAROI, au-dessus du seuil qu'on foule
+ *
+ * *(Alexis, 2026-09-06 : « l'entrée d'une grotte sort d'une case par rapport au sprite de
+ * l'entrée, ce qui donne des murs invisibles quand on est dehors ».)*
+ *
+ * `poserLaGueule` pose l'image de 32×48 à `ty − palier × LIFT − LIFT` et `PROFIL` (`cave-art.ts`)
+ * n'ouvre RIEN sur sa troisième rangée : tout le noir vit donc sur les `LIFT` rangées d'écran
+ * AU-DESSUS du seuil. Viser ce noir tombait sur le monde plat — dans la masse.
+ *
+ * ⚠ **CE QUI FERAIT ROUGIR** : retirer la branche `gueule` de `deplierLeLift` doit faire rougir
+ * « l'arche » aux DEUX paliers (les rangées rendraient leur propre rangée). Et remplacer le test
+ * `c.de === bas` par un `Math.min(c.de, c.vers) === bas` (la règle de la rampe, dont `vers` est
+ * négatif ici) doit le faire rougir aussi : la garde tient les deux bords.
+ * ═══════════════════════════════════════════════════════════════════════════════════════════ */
+const LIGNE = 12
+const GX = 10
+
+/** Le karst de laboratoire : la terrasse `p + 1` au nord de `LIGNE`, le sol `p` au sud, une salle
+ *  de niveau `−(p + 1)` sous la masse, et la PAIRE de connecteurs `gueule` sur la rangée `LIGNE`. */
+function karst(p: number): WorldMap {
+  const N = 24
+  const m = createEmptyMap(N, N, TERRAIN_GRASS)
+  const niveau = -(p + 1)
+  m.palier = new Array<number>(N * N).fill(p)
+  const idx: number[] = []
+  for (let y = LIGNE; y >= LIGNE - 4; y--) for (let x = GX; x <= GX + 1; x++) {
+    if (y < LIGNE) m.terrain[y * N + x] = TERRAIN_ROCK
+    idx.push(y * N + x)
+  }
+  for (let y = 0; y < LIGNE; y++) for (let x = 0; x < N; x++) {
+    m.palier[y * N + x] = p + 1
+    if (x < GX || x > GX + 1) m.terrain[y * N + x] = TERRAIN_ROCK
+  }
+  idx.sort((a, b) => a - b)
+  m.etages = [{ niveau, idx, terrain: idx.map(() => TERRAIN_SCREE), x0: GX, y0: LIGNE - 4, x1: GX + 2, y1: LIGNE + 1 }]
+  m.connecteurs = [GX, GX + 1].map((x) => ({ x, y: LIGNE, de: p, vers: niveau, type: 'gueule' as const }))
+  return m
+}
+
+describe('deplierLeLift — viser une gueule de grotte depuis le dehors', () => {
+  for (const p of [0, 1]) {
+    const yl = LIGNE - p * LIFT_TUILES // la rangée d’écran du SEUIL
+
+    it(`palier ${p} : les deux rangées de l’arche désignent le seuil, pas la masse`, () => {
+      const m = karst(p)
+      for (const x of [GX, GX + 1]) {
+        expect(tuile(m, x, yl - 2), `haut de l’arche, colonne ${x}`).toEqual({ tx: x, ty: LIGNE })
+        expect(tuile(m, x, yl - 1), `bas de l’arche, colonne ${x}`).toEqual({ tx: x, ty: LIGNE })
+      }
+    })
+
+    it(`palier ${p} : le seuil et le dehors ne bougent pas`, () => {
+      const m = karst(p)
+      expect(tuile(m, GX, yl), 'la rangée du seuil').toEqual({ tx: GX, ty: LIGNE })
+      expect(tuile(m, GX, yl + 1), 'une rangée au sud').toEqual({ tx: GX, ty: LIGNE + 1 })
+      expect(tuile(m, GX, yl + 3), 'trois rangées au sud').toEqual({ tx: GX, ty: LIGNE + 3 })
+    })
+
+    it(`palier ${p} : hors de la paire, la paroi reste la paroi`, () => {
+      // Le flanc (`cv-flanc`) n’est qu’un encadrement : la colonne voisine n’a pas de connecteur,
+      // et sa rangée d’écran retombe sur la tuile que la paroi cache (T-R8, comme partout).
+      const m = karst(p)
+      for (const x of [GX - 1, GX + 2]) {
+        expect(tuile(m, x, yl - 1), `colonne ${x}`).toEqual({ tx: x, ty: yl - 1 })
+      }
+    })
+  }
+
+  it('la gueule ne vole pas les rangées d’une rampe voisine', () => {
+    // `de` d’une gueule est son palier et `vers` le niveau de sa salle (négatif) ; celui d’une
+    // rampe encadre deux paliers. Les deux branches se lisent sur des champs différents.
+    const m = karst(0)
+    m.connecteurs = [...m.connecteurs!, { x: GX + 5, y: LIGNE, de: 0, vers: 1, type: 'rampe' }]
+    expect(tuile(m, GX + 5, LIGNE - 2), 'le haut de l’entaille de la rampe').toEqual({ tx: GX + 5, ty: LIGNE })
+    expect(tuile(m, GX + 5, LIGNE - 1), 'la rangée du milieu').toEqual({ tx: GX + 5, ty: LIGNE })
+  })
+})

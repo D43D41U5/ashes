@@ -15,6 +15,16 @@
  *  2. une RAMPE qui monte vers `h` se dessine sur `LIFT_TUILES + 1` rangées, du tablier au sol
  *     (sa propre rangée, prise par la règle 1 à la hauteur du bas) jusqu'au haut de l'entaille :
  *     ses rangées levées ne tombent sous aucune tuile de hauteur `h` — elles sont la rampe ;
+ *  2bis. une GUEULE de grotte se dessine EXACTEMENT COMME ELLE : `poserLaGueule` pose son image
+ *     de 32×48 à `ty − palier × LIFT_TUILES − LIFT_TUILES`, donc l'arche noire — tout ce que
+ *     `PROFIL` ouvre (`cave-art.ts`) — occupe les `LIFT_TUILES` rangées d'écran AU-DESSUS du
+ *     seuil, sur la paroi ; le seuil lui-même n'est qu'une tache. Sans cette règle, viser le
+ *     trou noir tombait sur le monde plat, DANS la masse : *« l'entrée d'une grotte sort d'une
+ *     case par rapport au sprite de l'entrée, ce qui donne des murs invisibles quand on est
+ *     dehors »* (Alexis, 2026-09-06). MESURÉ sur les six grottes les plus proches du spawn :
+ *     les deux rangées de l'arche rendaient la tuile de leur propre rangée d'écran (« repli
+ *     plat »), soit **une à deux tuiles au nord du seuil au palier 0, trois à quatre au palier
+ *     1** — de la roche pleine à chaque fois ;
  *  3. sinon, la hauteur d'en dessous, jusqu'au sol plat tel quel.
  * Et SOUS TERRE la salle se regarde d'aplomb, au lift de sa GUEULE — le palier `−niveau − 1`
  * (G-R1, `decalageDEtage`) : le monde d'en haut n'est pas à l'écran.
@@ -55,9 +65,12 @@ export function deplierLeLift(
     const bas = h - 1
     for (let d = L; d >= 1; d--) {
       const c = connecteurAt(relief.map, tx, ty + bas * L + d)
-      if (c !== undefined && c.type === 'rampe' && Math.min(c.de, c.vers) === bas) {
-        return { x: wx, y: wy + (bas * L + d) * TILE_PX }
-      }
+      if (c === undefined) continue
+      // La rampe monte VERS `h` : le bas de son entaille est le palier `bas`.
+      // La gueule, elle, s'ouvre SUR le palier `bas` et descend (`de` = le palier, `vers` = le
+      // niveau de la salle, négatif) — c'est `de` qu'on compare, jamais le min.
+      const porte = c.type === 'rampe' ? Math.min(c.de, c.vers) === bas : c.type === 'gueule' && c.de === bas
+      if (porte) return { x: wx, y: wy + (bas * L + d) * TILE_PX }
     }
   }
   return { x: wx, y: wy }
