@@ -56,7 +56,7 @@ import { estTerrainDEau, estTerrainDeMarais } from './peche-nature'
 import { conditionsAt, natureDeLEau, tableDePrises, tirerLigne, type Conditions } from './peche-table'
 import { estGele, floreEntierementGelee, floreGelee } from './gel'
 import { effetsDuJour } from './modificateur'
-import { atteignableEntreEtages, niveauDeLaTuile, niveauDuCorps, palierDuSol } from './etages'
+import { atteignableEntreEtages, atteintLeSol, niveauDeLaTuile, niveauDuCorps, palierDuSol } from './etages'
 import { distSq } from './geometry'
 import { heldSlot, wearHeld } from './inventory-actions'
 import {
@@ -427,6 +427,8 @@ function stationFor(state: SimState, actor: Entity, recipe: Recipe): Structure |
     (s: Structure) =>
       sertExigence(s.type, besoin) &&
       distSq(actor.x, actor.y, s.tx + 0.5, s.ty + 0.5) <= range * range &&
+      // E-R5, Q5 (Alexis, 2026-09-07) : on n'utilise pas l'établi du plateau depuis le pied.
+      atteintLeSol(state.map, actor, s.tx, s.ty, s.etage) &&
       hasAccess(state, actor.id, s),
   )
 }
@@ -772,6 +774,8 @@ export function castRejection(state: SimState, actor: Entity, tx: number, ty: nu
   if (TOOL_RANK[tier] < TOOL_RANK.crude) return 'il faut une canne en main' // D4 : le geste EST la ligne
   const r = FISHING.RANGE
   if (distSq(actor.x, actor.y, tx + 0.5, ty + 0.5) > r * r) return 'trop loin'
+  // E-R5, Q5 : la ligne ne traverse pas un plancher. L'eau visée est une TUILE, donc son sol.
+  if (!atteintLeSol(state.map, actor, tx, ty)) return 'trop loin'
   return eauIndisponible(state, tx, ty, niveauConnu)
 }
 
@@ -998,6 +1002,10 @@ export function butcherRejection(state: SimState, actor: Entity, corpse: Corpse 
   if (corpse === undefined || corpse.carcass === undefined) return 'rien à dépecer'
   const r = BALANCE.INTERACT_RANGE
   if (distSq(actor.x, actor.y, corpse.x, corpse.y) > r * r) return 'trop loin'
+  // E-R5, Q5 : « un corps tombé sur un plateau y reste, et l'on ne le dépèce pas d'en bas »
+  // (la doc de `Corpse.etage`, écrite avant que le site ne soit branché).
+  if (!atteignableEntreEtages(state.map, actor.x, actor.y, niveauDuCorps(state.map, actor), corpse.x, corpse.y, niveauDuCorps(state.map, corpse)))
+    return 'trop loin'
   if (isEmpty(corpse.inventory)) return 'rien à dépecer'
   if (toolTier(heldSlot(actor)?.item ?? null, 'knife') === 'none') return 'il faut une lame'
   // Il ne reste que ce que CE chasseur ne sait pas prendre (l'os du novice, D5) : on le dit à

@@ -193,27 +193,15 @@ const HORS_REGLE = {
  * une correction technique : c'est une décision d'Alexis (mémoire « pas de décision de design
  * tout seul »), et elles se posent UNE À LA FOIS. Les questions sont énumérées en clair dans
  * `docs/specs/etages.md` §19 ; la raison ci-dessous dit à laquelle chaque site répond.
+ *
+ * ✅ **VIDE DEPUIS LE 2026-09-07 — les sept questions ont été posées à Alexis une à une, et les
+ * huit décisions sont livrées** (`docs/specs/etages.md` §21). Les 28 sites qu'elle contenait sont
+ * scellés ; les deux laissés ouverts par décision (`faune.bloodBias`, `sens.secouerLeSol`) sont
+ * passés dans `HORS_REGLE` avec la décision écrite dans leur raison — jamais supprimés, sinon le
+ * lint serait vert pour la mauvaise cause. Une table vide N'EST PAS un état transitoire : c'est
+ * l'état sain. Un site NOUVEAU qui atterrit ici est une question de plus à poser, pas une dette.
  */
-const A_TRANCHER = {
-  // ── Q5 · L'interaction à portée : l'établi, la ligne, le dépeçage, le bâti, les PNJ ──
-  'faune.ts': {
-    advanceCoinsConnus: 'Q5 — un joueur APPREND un coin de chasse en passant près',
-  },
-  'economy.ts': {
-    stationFor: 'Q5 — l’établi utilisé à portée (puis `hasAccess`)',
-    castRejection: 'Q5 — la ligne lancée à `FISHING.RANGE`',
-    butcherRejection: 'Q5 — le dépeçage à `INTERACT_RANGE`',
-  },
-  'village.ts': {
-    evaluateBuild: 'Q5 — bâtir à `BUILD_RANGE` (or « le bâti vit au sol », E-R5)',
-  },
-  'npc.ts': {
-    near: 'Q5 — LE prédicat d’interaction des PNJ, générique',
-    nearestAliveNode: 'Q5 — le glanage élit un nœud à portée',
-    handleDefense: 'Q5 — la milice élit une menace autour du Feu, puis l’engage',
-  },
-  'npc-errands.ts': { handleErrand: 'Q5 — la rencontre d’un étranger, et la fouille d’un cadavre' },
-}
+const A_TRANCHER = {}
 
 /** `dx * dx + dy * dy` — le carré de la distance, l'idiome du dépôt (jamais `hypot` dans /sim). */
 function estSommeDeCarres(node) {

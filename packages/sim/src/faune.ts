@@ -1688,6 +1688,9 @@ export function advanceCoinsConnus(state: SimState, avatars: Entity[]): void {
     if (npc.has(a.id)) continue
     for (const g of state.grounds) {
       if (distSq(a.x, a.y, g.x, g.y) > sight2) continue
+      // E-R5, Q5 (Alexis, 2026-09-07) : un coin de chasse s'APPREND en le voyant. Sous la roche,
+      // la clairière du dessus ne s'apprend pas — et l'inverse non plus.
+      if (!atteintLeSol(state.map, a, g.x, g.y)) continue
       const connus = (a.knownGrounds ??= [])
       let deja = false
       for (const k of connus) {
@@ -1705,6 +1708,9 @@ export function advanceCoinsConnus(state: SimState, avatars: Entity[]): void {
     for (let i = connus.length - 1; i >= 0; i--) {
       const k = connus[i]!
       if (distSq(a.x, a.y, k.x, k.y) > sight2) continue
+      // Et la carte ne se corrige QU'AU CONSTAT (le commentaire de tête de la fonction) : ce
+      // qu'un plancher cache n'est pas constaté, donc la pastille survit jusqu'au vrai passage.
+      if (!atteintLeSol(state.map, a, k.x, k.y)) continue
       let vivant = false
       for (const g of state.grounds) {
         if (g.x === k.x && g.y === k.y) {

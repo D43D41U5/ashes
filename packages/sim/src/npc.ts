@@ -35,6 +35,8 @@ import {
 import { isBlockedAt, moveAvatar, type MoveWorld } from './collision'
 import { engageRange, startAttack, weaponProfile } from './combat'
 import { poseLibre } from './defriche'
+import { atteignableEntreEtages, atteintLeSol, niveauDuCorps } from './etages'
+import type { WorldMap } from './map'
 import { applyEconomyAction, toolRank, type ResourceNode } from './economy'
 import { sertExigence } from './pieces'
 import { emitEvent } from './events'
@@ -184,6 +186,10 @@ function nearestAliveNode(state: SimState, entity: Entity, type: NodeType, porte
     // 35 % du temps CPU. Avec, il reste plat. Un villageois ne traverse pas le pays pour une
     // brindille : s'il n'y en a pas dans son voisinage, la corvée quitte le tableau.
     if (d > porteeMax2) continue
+    // E-R5, Q5 (Alexis, 2026-09-07) : on ne glane pas ce qu'un plancher sépare de soi. Le test
+    // vient APRÈS la portée — il ne se paie que sur les nœuds déjà candidats — et AVANT toute
+    // élection, sinon l'égalité de distance ferait gagner un nœud inatteignable au départage.
+    if (!atteintLeSol(state.map, entity, n.tx, n.ty, n.etage)) continue
     if (maZone >= 0 && zoneIdAt(state.map, n.tx, n.ty) !== maZone) {
       if (d < horsD || (d === horsD && hors && n.id < hors.id)) {
         hors = n
@@ -245,8 +251,16 @@ export function setPathTo(state: SimState, npc: Npc, entity: Entity, tx: number,
   return path !== null
 }
 
-export function near(entity: Entity, tx: number, ty: number, r = RANGE): boolean {
-  return distSq(entity.x, entity.y, tx + 0.5, ty + 0.5) <= r * r
+export function near(map: WorldMap, entity: Entity, tx: number, ty: number, etage: number | undefined, r = RANGE): boolean {
+  // E-R5, Q5 tranchée par Alexis (2026-09-07) : « sceller les 9 en bloc ». C'EST LE PRÉDICAT
+  // D'INTERACTION DES PNJ — vingt-cinq appels en dépendent, et un plancher ne se manipule pas
+  // plus qu'il ne se voit. `etage` est POSITIONNEL ET OBLIGATOIRE, avant `r` : un site qui
+  // l'oublierait retomberait en silence sur le palier du sol, et `tsc` doit le refuser plutôt
+  // que le jeu s'en accommoder. Ce qu'on vise porte son étage (`Structure.etage`,
+  // `ResourceNode.etage`) ; `undefined` = le SOL de la tuile, et c'est la bonne réponse pour
+  // un Foyer de village, qui n'a pas d'étage.
+  if (distSq(entity.x, entity.y, tx + 0.5, ty + 0.5) > r * r) return false
+  return atteintLeSol(map, entity, tx, ty, etage)
 }
 
 // ─── La main du PNJ (spec inventaire R8-R9) ───────────────────────────────
@@ -534,7 +548,7 @@ function executeGather(state: SimState, village: Village, npc: Npc, entity: Enti
       else dropTask(village, npc, true)
       return
     }
-    if (near(entity, node.tx, node.ty)) {
+    if (near(state.map, entity, node.tx, node.ty, node.etage)) {
       if (canAct(state, entity)) {
         // La main d'abord : sans outil EN MAIN, la récolte tombe à ×1 (R9).
         equipBestTool(entity, NODE_DEFS[node.type].tool)
@@ -562,7 +576,7 @@ function executeGather(state: SimState, village: Village, npc: Npc, entity: Enti
     dropTask(village, npc, false)
     return
   }
-  if (near(entity, chest.tx, chest.ty)) {
+  if (near(state.map, entity, chest.tx, chest.ty, chest.etage)) {
     const keep = def.item === 'berries' ? NPC_AI.FOOD_KEEP : 0
     const count = countOf(entity.inventory, def.item) - keep
     if (count > 0) deposit(state, entity, chest.id, def.item, count)
@@ -614,7 +628,7 @@ function progressCraft(state: SimState, village: Village, npc: Npc, entity: Enti
   if (besoin !== null && station === undefined) return 'failed'
   if (entity.craftQueue.some((o) => o.recipeId === recipeId)) {
     // La file travaille : on reste à portée de la station, on ne fait rien d'autre.
-    if (station && !near(entity, station.tx, station.ty)) {
+    if (station && !near(state.map, entity, station.tx, station.ty, station.etage)) {
       if (npc.path.length === 0 && !setPathTo(state, npc, entity, station.tx, station.ty)) return 'failed'
       followPath(state, npc, entity)
     }
@@ -627,7 +641,7 @@ function progressCraft(state: SimState, village: Village, npc: Npc, entity: Enti
     if (need <= 0) continue
     const chest = granaries(state, village.id).find((c) => countOf(c.inventory ?? [], item) > 0)
     if (!chest) return 'failed'
-    if (near(entity, chest.tx, chest.ty)) {
+    if (near(state.map, entity, chest.tx, chest.ty, chest.etage)) {
       if (withdraw(state, entity, chest.id, item, Math.min(need, countOf(chest.inventory ?? [], item))) === 0) {
         return 'failed'
       }
@@ -638,7 +652,7 @@ function progressCraft(state: SimState, village: Village, npc: Npc, entity: Enti
     return 'busy'
   }
   // Tout est en poche : à la station, et on enfile.
-  if (station && !near(entity, station.tx, station.ty)) {
+  if (station && !near(state.map, entity, station.tx, station.ty, station.etage)) {
     if (npc.path.length === 0 && !setPathTo(state, npc, entity, station.tx, station.ty)) return 'failed'
     followPath(state, npc, entity)
     return 'busy'
@@ -652,7 +666,7 @@ function ensureHammer(state: SimState, village: Village, npc: Npc, entity: Entit
   if (countOf(entity.inventory, 'hammer') > 0) return 'ready'
   const chest = granaries(state, village.id).find((c) => countOf(c.inventory ?? [], 'hammer') > 0)
   if (chest) {
-    if (near(entity, chest.tx, chest.ty)) {
+    if (near(state.map, entity, chest.tx, chest.ty, chest.etage)) {
       return withdraw(state, entity, chest.id, 'hammer', 1) > 0 ? 'busy' : 'failed'
     }
     if (npc.path.length === 0 && !setPathTo(state, npc, entity, chest.tx, chest.ty)) return 'failed'
@@ -686,7 +700,7 @@ function ensureOutil(
   for (const p of acceptes) {
     const chest = granaries(state, village.id).find((c) => countOf(c.inventory ?? [], p) > 0)
     if (!chest) continue
-    if (near(entity, chest.tx, chest.ty)) {
+    if (near(state.map, entity, chest.tx, chest.ty, chest.etage)) {
       return withdraw(state, entity, chest.id, p, 1) > 0 ? 'busy' : 'failed'
     }
     if (npc.path.length === 0 && !setPathTo(state, npc, entity, chest.tx, chest.ty)) return 'failed'
@@ -799,7 +813,7 @@ function executeBuild(state: SimState, village: Village, npc: Npc, entity: Entit
         // Le grenier s'est vidé depuis que le tableau a jugé le coût couvert : empêchement
         // de VILLAGE, pas de PNJ — la corvée quitte le tableau, il la repostera garni.
         if (!chest) return dropTask(village, npc, true)
-        if (near(entity, chest.tx, chest.ty)) {
+        if (near(state.map, entity, chest.tx, chest.ty, chest.etage)) {
           if (withdraw(state, entity, chest.id, item, Math.min(need, countOf(chest.inventory ?? [], item))) === 0) {
             return dropTask(village, npc, false) // sac plein : propre à CE PNJ
           }
@@ -846,7 +860,7 @@ function executeBuild(state: SimState, village: Village, npc: Npc, entity: Entit
       if (r !== 'ready') return
     }
   }
-  if (near(entity, tx, ty, portee)) {
+  if (near(state.map, entity, tx, ty, undefined, portee)) {
     // Un composant BLOQUE et refuse « pas sous ses pieds » : on s'écarte d'un pas.
     if (order.action === 'place' && Math.floor(entity.x) === tx && Math.floor(entity.y) === ty) {
       const sx = (village.fireTx + 0.5 > entity.x ? 1 : -1) as -1 | 1
@@ -946,7 +960,7 @@ function executeCook(state: SimState, village: Village, npc: Npc, entity: Entity
       npc.path = []
       return
     }
-    if (near(entity, chest.tx, chest.ty)) {
+    if (near(state.map, entity, chest.tx, chest.ty, chest.etage)) {
       const inv = chest.inventory ?? []
       // Un retrait qui ne rapporte rien (sac plein) : on lâche la tâche — elle
       // retourne au tableau, pour un PNJ qui a de la place. Celui-ci ne la
@@ -973,7 +987,7 @@ function executeCook(state: SimState, village: Village, npc: Npc, entity: Entity
     }
     const fire = state.structures.find((s) => s.type === 'fire' && s.villageId === village.id)
     if (!fire) return dropTask(village, npc, false)
-    if (near(entity, fire.tx, fire.ty)) {
+    if (near(state.map, entity, fire.tx, fire.ty, fire.etage)) {
       // LE RAGOÛT MIJOTE (spec craft-file F17) : depuis la file, le craft n'est
       // plus instantané. Le PNJ ATTEND au Feu — et il y reste, car s'en éloigner
       // METTRAIT LA FILE EN PAUSE (F7). Sans cette garde, il réenfilerait une
@@ -1001,7 +1015,7 @@ function executeCook(state: SimState, village: Village, npc: Npc, entity: Entity
   }
 
   // stage 'store' — grenier plein : le PNJ garde le ragoût et lâche la corvée.
-  if (near(entity, chest.tx, chest.ty)) {
+  if (near(state.map, entity, chest.tx, chest.ty, chest.etage)) {
     const count = countOf(entity.inventory, 'stew')
     if (count > 0) deposit(state, entity, chest.id, 'stew', count)
     dropTask(village, npc, true)
@@ -1025,7 +1039,7 @@ function executeRepair(state: SimState, village: Village, npc: Npc, entity: Enti
   if (task.stage === 'fetch' && !enoughWood()) {
     const chest = granaries(state, village.id).find((c) => countOf(c.inventory ?? [], 'wood') > 0)
     if (!chest) return dropTask(village, npc, false) // pas de bois : on abandonne
-    if (near(entity, chest.tx, chest.ty)) {
+    if (near(state.map, entity, chest.tx, chest.ty, chest.etage)) {
       const got = withdraw(
         state,
         entity,
@@ -1047,7 +1061,7 @@ function executeRepair(state: SimState, village: Village, npc: Npc, entity: Enti
   }
   task.stage = 'work'
 
-  if (near(entity, target.tx, target.ty)) {
+  if (near(state.map, entity, target.tx, target.ty, target.etage)) {
     if (state.tick >= entity.cooldownUntil) {
       applyVillageAction(state, entity.id, { type: 'repair', structureId: target.id })
       if (!enoughWood()) task.stage = 'fetch'
@@ -1069,7 +1083,7 @@ function executeFeedFire(state: SimState, village: Village, npc: Npc, entity: En
   if (task.stage === 'fetch' && !hasWood()) {
     const chest = granaries(state, village.id).find((c) => countOf(c.inventory ?? [], 'wood') > 0)
     if (!chest) return dropTask(village, npc, false) // pas de bois au grenier : on abandonne
-    if (near(entity, chest.tx, chest.ty)) {
+    if (near(state.map, entity, chest.tx, chest.ty, chest.etage)) {
       const got = withdraw(state, entity, chest.id, 'wood', Math.min(NPC_AI.REPAIR_WOOD_WITHDRAW, countOf(chest.inventory ?? [], 'wood')))
       if (got === 0) return dropTask(village, npc, false)
       task.stage = 'work'
@@ -1081,7 +1095,7 @@ function executeFeedFire(state: SimState, village: Village, npc: Npc, entity: En
   }
   task.stage = 'work'
 
-  if (near(entity, village.fireTx, village.fireTy)) {
+  if (near(state.map, entity, village.fireTx, village.fireTy, undefined)) {
     if (state.tick >= entity.cooldownUntil) {
       applyVillageAction(state, entity.id, { type: 'feed_fire' })
       if (!hasWood()) task.stage = 'fetch'
@@ -1101,10 +1115,18 @@ function handleDefense(state: SimState, village: Village, npc: Npc, entity: Enti
   for (const e of state.entities) {
     if (e.id === entity.id || e.hp <= 0 || !isThreatTo(state, e.id, village)) continue
     const d = distSq(e.x, e.y, village.fireTx + 0.5, village.fireTy + 0.5)
-    if (d < bestD) {
-      threat = e
-      bestD = d
-    }
+    // `d >= bestD` est EXACTEMENT le complément de l'élection ci-dessous (`d < bestD`) : le
+    // sortir ici ne change pas un bit et garde l'accesseur hors du chemin chaud. MESURÉ au banc
+    // (1 jour, graine 2026) : le test posé AVANT la distance coûtait 8,3 MILLIONS d'appels à
+    // `atteintLeSol` — il les voyait tous, y compris les menaces à l'autre bout de la carte.
+    if (d >= bestD) continue
+    // E-R5, Q5 : ce qui rôde SOUS le Foyer ne menace pas le Foyer (le pendant exact de l'alarme
+    // du village, déjà scellée). Le Foyer n'a pas d'étage : il se tient au sol de sa tuile. Placé
+    // ICI et non dans le `if` d'élection : conditionné à `d < bestD` une seconde fois, une égalité
+    // de distance pourrait élire un intrus inatteignable.
+    if (!atteintLeSol(state.map, e, village.fireTx, village.fireTy)) continue
+    threat = e
+    bestD = d
   }
   if (!threat) {
     npc.defendStuck = 0
@@ -1124,7 +1146,10 @@ function handleDefense(state: SimState, village: Village, npc: Npc, entity: Enti
   equipBestWeapon(entity)
   const reach = engageRange(entity)
   const d2 = distSq(entity.x, entity.y, threat.x, threat.y)
-  if (d2 <= reach * reach) {
+  // E-R5, Q5 : on n'engage pas à travers la roche. (Le troisième `distSq` de cette fonction,
+  // `after`, mesure le PROGRÈS du milicien vers SA menace — même acteur, même cible, aucune
+  // seconde perception : il reste une distance nue, et l'élection ci-dessus l'a déjà filtrée.)
+  if (d2 <= reach * reach && atteignableEntreEtages(state.map, entity.x, entity.y, niveauDuCorps(state.map, entity), threat.x, threat.y, niveauDuCorps(state.map, threat))) {
     npc.defendStuck = 0 // au contact : on se bat (la faim critique, elle, décroche)
     npc.defendBest = -1
     if (state.tick >= entity.cooldownUntil && entity.stamina >= weaponProfile(entity).light.stamina) {

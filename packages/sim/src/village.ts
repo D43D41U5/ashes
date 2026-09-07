@@ -547,6 +547,12 @@ export function evaluateBuild(
   // celui de l'ÉTAGE du bâtisseur (G-R7) — au marteau, sous la roche, presque tout se refuse.
   const sol = solDeLaPose(state, actor, tx, ty, structure)
   if (typeof sol === 'string') return fail(sol)
+  // E-R5, Q5 (Alexis, 2026-09-07) : bâtir est une INTERACTION, et `BUILD_RANGE` seule est
+  // aveugle au dénivelé — un bâtisseur du plateau posait un mur quatre tuiles plus bas, dans
+  // la plaine. `solDeLaPose` a déjà dit à quel étage la pose se ferait ; on demande donc si le
+  // bâtisseur ATTEINT cet étage-là (sous la roche, c'est le sien : la question devient vraie
+  // d'elle-même, et c'est juste — on bâtit sa propre salle).
+  if (!atteintLeSol(state.map, actor, tx, ty, sol.etage)) return fail('too_far')
   if (!terrainConstructible(sol.terrain, structure)) return fail('unbuildable')
   // L'ARÊTE VISÉE (R23), et c'est LA PIÈCE qui dit ce qu'elle en fait (`arete`, registre) :
   // `possible` pour le mur et la porte, `requise` pour la palissade (née après R23, elle n'a

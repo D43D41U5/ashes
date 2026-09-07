@@ -44,7 +44,7 @@ export function handleWounds(state: SimState, village: Village, npc: Npc, entity
     (c) => countOf(c.inventory ?? [], 'fiber') >= COMBAT.BANDAGE_FIBER_COST,
   )
   if (!chest) return false
-  if (near(entity, chest.tx, chest.ty)) {
+  if (near(state.map, entity, chest.tx, chest.ty, chest.etage)) {
     return withdraw(state, entity, chest.id, 'fiber', COMBAT.BANDAGE_FIBER_COST) > 0
   }
   if (npc.path.length === 0 && !setPathTo(state, npc, entity, chest.tx, chest.ty)) return false
@@ -77,7 +77,7 @@ export function handleHunger(state: SimState, village: Village, npc: Npc, entity
   }
   const chest = granaries(state, village.id).find((c) => eatable(c) !== null)
   if (!chest) return false // rien à manger (ou plus une case pour le porter) : on travaille
-  if (near(entity, chest.tx, chest.ty)) {
+  if (near(state.map, entity, chest.tx, chest.ty, chest.etage)) {
     const item = eatable(chest)
     if (item === null) return false
     const count = item === 'stew' ? 1 : Math.min(NPC_AI.EAT_BERRIES_WITHDRAW, countOf(chest.inventory ?? [], 'berries'))
@@ -108,7 +108,7 @@ export function handleSleep(state: SimState, npc: Npc, entity: Entity): boolean 
   const night = getGameTime(state).isNight
   if (npc.sleeping) {
     const home = npc.homeId !== null ? state.structures.find((s) => s.id === npc.homeId) : undefined
-    const atHome = home !== undefined && near(entity, home.tx, home.ty, NPC_AI.HOME_ARRIVAL_RANGE)
+    const atHome = home !== undefined && near(state.map, entity, home.tx, home.ty, home.etage, NPC_AI.HOME_ARRIVAL_RANGE)
     const perHour = atHome ? BALANCE.SLEEP_RECOVERY_HOME_PER_HOUR : BALANCE.SLEEP_RECOVERY_FIRE_PER_HOUR
     npc.energy = Math.min(100, npc.energy + perHour / TICKS_PER_HOUR)
     if (!night) npc.sleeping = false
@@ -119,7 +119,7 @@ export function handleSleep(state: SimState, npc: Npc, entity: Entity): boolean 
     const village = state.villages.find((v) => v.id === npc.villageId)
     const target = home ?? state.structures.find((s) => s.type === 'fire' && s.villageId === village?.id)
     if (!target) return false
-    if (near(entity, target.tx, target.ty, NPC_AI.HOME_ARRIVAL_RANGE)) {
+    if (near(state.map, entity, target.tx, target.ty, target.etage, NPC_AI.HOME_ARRIVAL_RANGE)) {
       npc.sleeping = true
       npc.path = []
       return true

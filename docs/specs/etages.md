@@ -742,9 +742,10 @@ clé supprimée aurait rendu le lint vert pour la mauvaise cause, et le lecteur 
 su que c'était décidé.
 
 > ⚠ **CE QUE LA TABLE DIT ≠ CE QUE L'ARBRE PORTE.** La table ci-dessus est la DÉCISION, prise en
-> une fois ; la livraison se fait en trois lots. **Lot ① (Q1–Q4, 20 sites) et lot ② (Q6, 2 sites) :
-> livrés le 2026-09-07.** Lot ③ (Q5, 9 sites) reste à venir — ses clés sont encore dans
-> `A_TRANCHER`. Le lint dit lequel : ce qu'il reste à trancher est ce qu'il liste.
+> une fois ; la livraison s'est faite en trois lots, **tous livrés le 2026-09-07** : ① la faune
+> (Q1–Q4, 20 sites), ② les buveurs (Q6, 2 sites), ③ l'interaction (Q5, 9 clés / **13 sites** —
+> le lint en comptait plus que la table). **`A_TRANCHER` EST VIDE**, et c'est l'état sain : un
+> site nouveau qui y atterrit est une question de plus à poser, pas une dette.
 
 ### CE QUE Q3 RETIRE — dit avant de le livrer
 
@@ -812,6 +813,97 @@ optionnel dans un littéral.
 
 **Rougissement éprouvé** : accesseur neutralisé → **20 des 27** tombent, dont les deux neuves,
 toujours sur la jambe « à travers ».
+
+### LES GARDES DU LOT ③ (l'interaction — Q5)
+
+**Neuf clés dans la table, TREIZE sites dans le code.** Le compte n'est pas celui qu'on croyait :
+`advanceCoinsConnus` en portait 2 (apprendre un coin, corriger la pastille), `handleErrand` 2
+(l'étranger frappé en chemin, le cadavre fouillé), `handleDefense` 3. On ne les a pas comptés à
+la main — **on a vidé `A_TRANCHER` et laissé le lint énumérer**, exactement comme `tsc` avait
+trouvé 43 variantes de `PlayerAction` là où le grep en voyait 37.
+
+#### `near` — le pivot, et pourquoi sa signature change
+
+`npc.near` n'est pas un site : c'est **LE prédicat d'interaction des PNJ**, appelé **25 fois** dans
+`npc.ts`, `npc-needs.ts` et `npc-errands.ts` (coffres, établis, Foyer, maison, nœud, cible de
+réparation, grenier étranger…). Sa signature devient :
+
+```ts
+near(map, entity, tx, ty, etage, r = RANGE)
+```
+
+**`etage` est positionnel et OBLIGATOIRE, avant `r`** — pas optionnel. Un site qui l'oublierait
+retomberait en silence sur le palier du sol : vert au lint, vert aux tests, faux au niveau. En le
+rendant obligatoire, c'est `tsc` qui a énuméré les 25 sites et forcé une décision à chacun. Ce
+qu'on vise porte son étage (`Structure.etage`, `ResourceNode.etage`) ; `undefined` = le SOL de la
+tuile, et c'est la BONNE réponse pour un Foyer de village, qui n'a pas d'étage.
+
+#### Les quatre gardes
+
+| garde | ce qu'elle interdit |
+|---|---|
+| **Q5a** `npc.near` | qu'un coffre du pied se manipule depuis le plateau (le témoin prouve que la distance, elle, passe) |
+| **Q5b** `economy.castRejection` + `butcherRejection` | qu'on lance la ligne dans l'eau d'un autre étage, qu'on dépèce la carcasse du dessous (la doc de `Corpse.etage` le promettait déjà : *« un corps tombé sur un plateau y reste »*) |
+| **Q5c** `faune.advanceCoinsConnus` | qu'un coin de chasse s'apprenne à travers un plancher |
+| **Q5d** `village.evaluateBuild` | qu'on bâtisse quatre tuiles plus bas depuis le plateau |
+
+**Rougissement éprouvé** : accesseur neutralisé → **24 des 31** tombent, dont les quatre neuves,
+toujours sur la jambe « du plateau ».
+
+#### Les neuf autres sites, et où leur loi est écrite
+
+- `economy.stationFor` — l'établi du plateau ne s'utilise pas du pied (avant `hasAccess`).
+- `npc.nearestAliveNode` — le glanage n'élit pas un nœud séparé. Le test vient **après** la portée
+  (il ne se paie que sur les candidats) et **avant** l'élection : conditionné à `d < bestD`, une
+  égalité de distance aurait fait gagner un nœud inatteignable au départage.
+- `npc.handleDefense` — la milice n'élit pas une menace qui rôde SOUS le Foyer (test
+  **inconditionnel**, même raison), et n'engage pas à travers la roche. Le TROISIÈME `distSq` de
+  cette fonction (`after`) mesure le PROGRÈS du milicien vers SA menace : même acteur, même cible,
+  aucune seconde perception — il reste une distance nue, et l'élection l'a déjà filtrée.
+- `npc-errands.handleErrand` — le raider ne frappe pas l'étranger qui passe sous lui, et ne
+  fouille pas un cadavre d'un autre étage.
+- `village.evaluateBuild` — le test est posé **après `solDeLaPose`**, qui a déjà dit à quel étage
+  la pose se ferait : on demande si le bâtisseur atteint CET étage-là. Sous la roche c'est le
+  sien, la question devient vraie d'elle-même — et c'est juste, on bâtit sa propre salle.
+
+⚠ **`BuildEval.reason`, pas `reject`.** La garde du bâti est passée au vert avec un champ qui
+n'existe pas (`undefined !== 'too_far'` des deux côtés) : `vitest` ne typecheck pas. C'est
+`pnpm check` qui l'aurait dit — le témoin de rougissement l'a dit avant lui.
+
+#### ⚠ CE QUE Q5 DÉPLACE — mesuré site par site, un jour joué
+
+`npc.near` était désigné comme LE site risqué (25 appels, toute la vie des PNJ). **Il ne l'était
+pas.** Compteur posé dans chaque garde, banc d'un jour (36 000 ticks), graines 2026 et 4242 :
+
+| site | coupés / vus (2026) | coupés / vus (4242) | part |
+|---|---|---|---|
+| `near` | 0 / 41 966 | 0 / 98 102 | **0,000 %** |
+| `handleDefense` | 0 / 434 | 0 / 0 | **0,000 %** |
+| `nearestAliveNode` | 64 670 / 118 138 | 15 280 / 28 961 | **54,7 % · 52,8 %** |
+
+`near` ne coupe rien : **un village se fonde sur du plat**, ses coffres, son Foyer et ses postes
+sont au même palier que ses PNJ. La livelock redoutée (un PNJ qui marche vers un coffre qu'il
+n'atteindra jamais) n'existe pas dans le monde joué. Idem pour la milice.
+
+**`nearestAliveNode`, lui, coupe un nœud sur deux** — et c'est lui, pas `near`, qui déplace le
+banc (bois 36 → 20 sur un village, un avatar de plus mort, sur la graine 2026).
+
+> ❓ **QUESTION OUVERTE POUR ALEXIS — `nearestAliveNode` élit une DESTINATION, pas une
+> interaction.** L'élection est suivie d'un `setPathTo`, et `findPath` est **à trois dimensions**
+> (`pathfinding.ts` : la recherche traverse les étages par les connecteurs) : le PNJ SAIT monter
+> une rampe. Or E-R5 répond *« ces deux points peuvent-ils se toucher MAINTENANT »*, pas *« puis-je
+> y aller »* — appliquée à une élection de voyage, elle retire aux villages la moitié de leurs
+> nœuds, ceux des terrasses, que le pathfinder aurait su rejoindre. Livré tel que tranché
+> (« sceller les 9 en bloc ») ; **une ligne le rouvre** si l'on veut que les PNJ montent — la
+> bonne loi serait alors « le chemin tranche l'accès », celle qui vaut déjà pour `nearestGround`
+> dans `HORS_REGLE`.
+
+**PERF — l'ordre du test compte.** Le premier jet posait la garde AVANT la distance dans
+`handleDefense` : **8,3 millions** d'appels à `atteintLeSol` par jour joué (une par menace, par
+tick, sur la carte entière). `d >= bestD` est le complément EXACT de l'élection (`d < bestD`) :
+le sortir devant ne change pas un bit et ramène le compte à **434**. La règle générale : la
+distance est bon marché, l'accesseur ne l'est pas — et l'accesseur doit rester **hors** du `if`
+d'élection, sinon une égalité de distance élirait un candidat inatteignable.
 
 ### ⚠ CE QUE ÇA DÉPLACE DANS LE MONDE JOUÉ — mesuré, pas supposé
 

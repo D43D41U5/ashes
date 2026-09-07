@@ -8,6 +8,7 @@
  */
 import { ALIGNMENT, BALANCE, COMBAT, NPC_AI } from './balance'
 import { applyCombatAction, engageRange, startAttack, weaponProfile } from './combat'
+import { atteignableEntreEtages, niveauDuCorps } from './etages'
 import { distSq } from './geometry'
 import { countOf, itemsIn } from './items'
 import { deposit, dropTask, equipBestWeapon, followPath, near, setPathTo, withdraw, type Npc } from './npc'
@@ -110,7 +111,7 @@ export function handleErrand(state: SimState, village: Village, npc: Npc, entity
         npc.path = []
         return true
       }
-      if (near(entity, own.tx, own.ty)) {
+      if (near(state.map, entity, own.tx, own.ty, own.etage)) {
         // Retrait MESURÉ : sac plein (ou grenier vidé entre-temps) → rien ne sort.
         // Partir « donner » les mains vides, c'est une expédition à vide qui se
         // fera refuser son dépôt à l'arrivée. On décroche ici.
@@ -125,7 +126,7 @@ export function handleErrand(state: SimState, village: Village, npc: Npc, entity
     if (errand.stage === 'go') {
       const target = foreignGranary(state, errand.targetVillageId)
       if (!target) return done()
-      if (near(entity, target.tx, target.ty)) {
+      if (near(state.map, entity, target.tx, target.ty, target.etage)) {
         // Le dépôt est ouvert (spec R11) : le don du Foyer. Mesuré, et jamais à
         // vide : un `count: 0` ne serait qu'un `action_rejected` de plus.
         const count = countOf(entity.inventory, 'berries')
@@ -140,7 +141,7 @@ export function handleErrand(state: SimState, village: Village, npc: Npc, entity
       return true
     }
     // home
-    if (near(entity, village.fireTx, village.fireTy, 2)) return done()
+    if (near(state.map, entity, village.fireTx, village.fireTy, undefined, 2)) return done()
     if (npc.path.length === 0 && !setPathTo(state, npc, entity, village.fireTx, village.fireTy)) return done()
     followPath(state, npc, entity)
     return true
@@ -162,7 +163,9 @@ export function handleErrand(state: SimState, village: Village, npc: Npc, entity
       e.hp > 0 &&
       !village.memberIds.includes(e.id) &&
       !state.monsters.some((m) => m.entityId === e.id) &&
-      distSq(e.x, e.y, entity.x, entity.y) <= reach * reach,
+      distSq(e.x, e.y, entity.x, entity.y) <= reach * reach &&
+      // E-R5, Q5 (Alexis, 2026-09-07) : le raider ne frappe pas l'étranger qui passe SOUS lui.
+      atteignableEntreEtages(state.map, entity.x, entity.y, niveauDuCorps(state.map, entity), e.x, e.y, niveauDuCorps(state.map, e)),
   )
   if (foe && !entity.windup && state.tick >= entity.cooldownUntil && entity.stamina >= weaponProfile(entity).light.stamina) {
     if (startAttack(state, entity, foe.x - entity.x, foe.y - entity.y)) {
@@ -175,7 +178,7 @@ export function handleErrand(state: SimState, village: Village, npc: Npc, entity
   if (errand.stage === 'go') {
     const target = foreignGranary(state, errand.targetVillageId)
     if (!target) return done()
-    if (near(entity, target.tx, target.ty)) {
+    if (near(state.map, entity, target.tx, target.ty, target.etage)) {
       errand.stage = 'smash'
       npc.path = []
       return true
@@ -200,7 +203,13 @@ export function handleErrand(state: SimState, village: Village, npc: Npc, entity
     return true
   }
   if (errand.stage === 'loot') {
-    const corpse = state.corpses.find((c) => distSq(c.x, c.y, entity.x, entity.y) <= NPC_AI.CORPSE_SEARCH_RANGE * NPC_AI.CORPSE_SEARCH_RANGE)
+    // E-R5, Q5 : et il ne fouille pas un cadavre d'un autre étage — `Corpse.etage` existe
+    // précisément pour ça (« un corps tombé sur un plateau y reste »).
+    const corpse = state.corpses.find(
+      (c) =>
+        distSq(c.x, c.y, entity.x, entity.y) <= NPC_AI.CORPSE_SEARCH_RANGE * NPC_AI.CORPSE_SEARCH_RANGE &&
+        atteignableEntreEtages(state.map, entity.x, entity.y, niveauDuCorps(state.map, entity), c.x, c.y, niveauDuCorps(state.map, c)),
+    )
     if (corpse) {
       applyCombatLoot(state, entity.id, corpse.id)
     }
@@ -210,7 +219,7 @@ export function handleErrand(state: SimState, village: Village, npc: Npc, entity
   }
   // home : rentrer et déposer le butin au grenier.
   const own = granaries(state, village.id)[0]
-  if (own && near(entity, own.tx, own.ty)) {
+  if (own && near(state.map, entity, own.tx, own.ty, own.etage)) {
     for (const item of itemsIn(entity.inventory)) {
       if (item === 'spear') continue
       const count = countOf(entity.inventory, item)

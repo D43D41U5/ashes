@@ -24,7 +24,10 @@ import { createSim, spawnEntity, step, type SimState } from './sim'
 import { nearestPrey, spawnMonster } from './monsters'
 import { prowlerNear } from './nighthunt'
 import { advanceDecouverte } from './decouverte'
-import { advanceUpkeep, applyVillageAction, createVillage } from './village'
+import { advanceCoinsConnus } from './faune'
+import { butcherRejection, castRejection } from './economy'
+import { near } from './npc'
+import { advanceUpkeep, applyVillageAction, createVillage, evaluateBuild, grantItems } from './village'
 import { advanceCendreux, nearestWarmth, willRiseAsCendreux } from './cendreux'
 import { applyDamage } from './combat'
 import { CENDREUX, COMBAT, FIRE } from './balance'
@@ -695,5 +698,87 @@ describe('E-A3 — les huit décisions d’Alexis du 2026-09-07 (Q1..Q7)', () =>
     expect(essai(0), 'témoin de la plaine : au contact du Foyer, la bouche draine').toBeLessThan(sansPersonne)
     expect(essai(-1), 'de la salle du dessous, elle ne draine rien — Q6').toBe(sansPersonne)
     expect(essai(1), 'et du chapeau au-dessus non plus — Q6').toBe(sansPersonne)
+  })
+
+  // ─── Q5 · l'interaction à portée : les neuf sites, en bloc ───────────────────
+  it('Q5 — `near`, LE prédicat des PNJ : le coffre du pied ne se manipule pas du plateau', () => {
+    const essai = (etageDuCorps: number): boolean => {
+      const state = monde()
+      const tx = Math.floor(BAS.x)
+      const ty = Math.floor(BAS.y)
+      const coffre = { id: 9500, type: 'chest', tx, ty, hp: 100, villageId: null, ownerId: null, access: 'public' }
+      state.structures.push(coffre as never)
+      const id = poser(state, etageDuCorps === 0 ? BAS : HAUT, etageDuCorps)
+      const corps = state.entities.find((k) => k.id === id)!
+      return near(state.map, corps, tx, ty, undefined)
+    }
+    expect(essai(0), 'témoin : au pied, le coffre est à portée').toBe(true)
+    expect(essai(1), 'du plateau, la même tuile ne se manipule plus — Q5').toBe(false)
+  })
+
+  it('Q5 — la LIGNE ne se lance pas d’un étage à l’autre, et le DÉPEÇAGE ne s’y fait pas', () => {
+    const ligne = (etageDuCorps: number): string | null => {
+      const state = monde()
+      const id = poser(state, etageDuCorps === 0 ? BAS : HAUT, etageDuCorps)
+      grantItems(state, id, { crude_rod: 1 })
+      const corps = state.entities.find((k) => k.id === id)!
+      corps.activeSlot = corps.inventory.findIndex((sl) => sl !== null && sl.item === 'crude_rod')
+      expect(corps.activeSlot, 'la prémisse : la canne est EN MAIN').toBeGreaterThanOrEqual(0)
+      return castRejection(state, corps, Math.floor(BAS.x), Math.floor(BAS.y))
+    }
+    expect(ligne(0), 'témoin : au pied, la portée ne refuse rien').not.toBe('trop loin')
+    expect(ligne(1), 'du plateau, l’eau du dessous est « trop loin » — Q5').toBe('trop loin')
+
+    const depecage = (etageDuCorps: number): string | null => {
+      const state = monde()
+      const id = poser(state, etageDuCorps === 0 ? BAS : HAUT, etageDuCorps)
+      const corps = state.entities.find((k) => k.id === id)!
+      const carcasse = {
+        id: 9501, x: BAS.x, y: BAS.y, inventory: [{ item: 'raw_meat', count: 2 }],
+        decayAt: state.tick + COMBAT.CORPSE_TICKS, diedAt: state.tick, carcass: 'deer',
+      }
+      state.corpses.push(carcasse as never)
+      return butcherRejection(state, corps, state.corpses.find((c) => c.id === 9501))
+    }
+    expect(depecage(0), 'témoin : au pied, la portée ne refuse rien').not.toBe('trop loin')
+    expect(depecage(1), 'du plateau, la carcasse du dessous est hors d’atteinte — Q5').toBe('trop loin')
+  })
+
+  it('Q5 — un coin de chasse s’APPREND en le voyant, pas à travers un plancher', () => {
+    const essai = (etageDuCorps: number): number => {
+      const state = monde()
+      state.grounds.push({ x: Math.floor(BAS.x), y: Math.floor(BAS.y) })
+      const id = poser(state, etageDuCorps === 0 ? BAS : HAUT, etageDuCorps)
+      const corps = state.entities.find((k) => k.id === id)!
+      const dx = corps.x - state.grounds[0]!.x
+      const dy = corps.y - state.grounds[0]!.y
+      expect(dx * dx + dy * dy, 'la prémisse : le coin est DANS la vue de sol')
+        .toBeLessThan(FAUNA.GROUND_SIGHT * FAUNA.GROUND_SIGHT)
+      advanceCoinsConnus(state, [corps])
+      return corps.knownGrounds?.length ?? 0
+    }
+    expect(essai(0), 'témoin : au pied, le coin s’apprend').toBe(1)
+    expect(essai(1), 'du plateau, la clairière du dessous ne s’apprend pas — Q5').toBe(0)
+  })
+
+  it('Q5 — on ne BÂTIT pas quatre tuiles plus bas depuis le plateau', () => {
+    const essai = (etageDuCorps: number): string | undefined => {
+      const state = monde()
+      const id = poser(state, etageDuCorps === 0 ? BAS : HAUT, etageDuCorps)
+      const corps = state.entities.find((k) => k.id === id)!
+      createVillage(state, { chiefId: id, tx: Math.floor(BAS.x), ty: Math.floor(BAS.y), npcsArrived: true })
+      grantItems(state, id, { hammer: 1, wood: 20 })
+      corps.activeSlot = corps.inventory.findIndex((sl) => sl !== null && sl.item === 'hammer')
+      expect(corps.activeSlot, 'la prémisse : le marteau est EN MAIN').toBeGreaterThanOrEqual(0)
+      const tx = Math.floor(BAS.x)
+      const ty = Math.floor(BAS.y) + 1
+      const dx = corps.x - (tx + 0.5)
+      const dy = corps.y - (ty + 0.5)
+      expect(dx * dx + dy * dy, 'la prémisse : la tuile est DANS `BUILD_RANGE`')
+        .toBeLessThan(BALANCE.BUILD_RANGE * BALANCE.BUILD_RANGE)
+      return evaluateBuild(state, id, 'wall', tx, ty).reason
+    }
+    expect(essai(0), 'témoin : au pied, la portée ne refuse rien').not.toBe('too_far')
+    expect(essai(1), 'du plateau, la tuile du dessous est « too_far » — Q5').toBe('too_far')
   })
 })
