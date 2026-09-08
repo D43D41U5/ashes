@@ -888,6 +888,9 @@ n'atteindra jamais) n'existe pas dans le monde joué. Idem pour la milice.
 **`nearestAliveNode`, lui, coupe un nœud sur deux** — et c'est lui, pas `near`, qui déplace le
 banc (bois 36 → 20 sur un village, un avatar de plus mort, sur la graine 2026).
 
+> ✅ **TRANCHÉE LE 2026-09-08 — « rouvrir pour les terrasses », voir le §23.** L'énoncé qui suit
+> reste tel qu'il a été posé.
+>
 > ❓ **QUESTION OUVERTE POUR ALEXIS — `nearestAliveNode` élit une DESTINATION, pas une
 > interaction.** L'élection est suivie d'un `setPathTo`, et `findPath` est **à trois dimensions**
 > (`pathfinding.ts` : la recherche traverse les étages par les connecteurs) : le PNJ SAIT monter
@@ -963,3 +966,121 @@ rayon d'alarme — ce qui diffère est ce qui l'ENTEND, pas ce qui la lève.
 **Rougissement éprouvé** : `atteignableEntreEtages` neutralisée en `return true` → **25 des 32**
 tombent, dont la neuve, et sur la bonne jambe (`0,35` de méfiance gagnée sous la roche, le témoin
 du pré intact).
+
+---
+
+## 23. E-R5 ROUVERT POUR LES TERRASSES (2026-09-08) — le glanage élit ce que le CHEMIN rejoint
+
+*Alexis, après la question posée avec ses chiffres : « rouvrir pour les terrasses ».*
+
+Le §21 laissait une question ouverte sous Q5 : `npc.nearestAliveNode` n'élit pas un CONTACT, il
+élit une **DESTINATION**, suivie d'un `setPathTo` — or E-R5 répond *« ces deux points peuvent-ils
+se toucher MAINTENANT »*, jamais *« puis-je y aller »*. Appliquée là, elle retirait aux villages
+des nœuds que le pathfinder du jeu, lui, savait rejoindre.
+
+### CE QUI A ÉTÉ MESURÉ AVANT DE POSER LA QUESTION
+
+`tools/__noeuds-coupes.mts` (jetable) : monde joué, 8 joueurs, tick 600, **tous** les nœuds dans
+40 tuiles de chaque PNJ, et pour chaque nœud coupé par E-R5 la question « `pathToward` —
+exactement ce qu'appelle `setPathTo` — y mène-t-il ? »
+
+| graine | coupés par E-R5 | qu'un chemin rejoint |
+|---|---|---|
+| 2026 | 9,1 % | 97,2 % |
+| 4242 | 9,9 % | 96,9 % |
+| 31337 | 33,4 % | 91,9 % |
+| 999 | 29,7 % | 64,7 % |
+| 1234 | 5,5 % | 63,2 % |
+| 7 | 21,1 % | 35,1 % |
+
+**Entre un tiers et la quasi-totalité** de ce que le sceau retirait était joignable. La dispersion
+est le TERRAIN, pas du bruit : sur une carte pauvre en rampes, sceller coûte peu ; ailleurs, on
+retirait aux villages la moitié de leur voisinage.
+
+⚠ **CE 9,1 % N'EST PAS LE 54,7 % DU §21 — les deux dénominateurs sont différents, et les deux sont
+vrais.** Le §21 comptait au COMPTEUR DE LA GARDE, sur un jour joué : une part des *élections
+vues*, donc pondérée par la fréquence d'appel et bornée par la portée de glanage. Celui-ci compte
+les *nœuds du voisinage*, à un instant, sans pondération. Le premier dit ce que le sceau coupe à
+l'usage ; le second, sur quoi il coupe.
+
+⚠ **LA SONDE A DÛ ÊTRE RÉPARÉE AVANT DE SERVIR.** Son premier jet appelait `findPath` en direct et
+répondait « injoignable » sur **100 % des arbres et des rochers** — un arbre n'est pas marchable,
+on ne va pas DANS un arbre. C'est `pathToward` qui se poste au voisin libre, et c'est lui que le
+jeu appelle. Un chiffre uniforme à 0 % sur toute une famille est la signature d'un instrument
+cassé, pas d'un monde hostile.
+
+### LA LIGNE DE PARTAGE : LA TERRASSE AU CHEMIN, LE CREUX À E-R5
+
+**94 % des coupés sont de la TERRASSE** (le palier), 6 % seulement dans un creux. Et c'est
+exactement la frontière de ce que la navigation sait faire : **`setPathTo` ne passe AUCUN argument
+d'étage à `pathToward`** — la recherche tourne sur `palierDuSol`. Pour une terrasse, c'est juste.
+Pour une salle, non : mesuré sur la graine 2026, elle rend un vrai chemin de **~30 jalons** qui
+mène au **TOIT** de la salle.
+
+Ce que ça donnerait sans garde, mesuré dans le banc de la garde elle-même : le PNJ élit la branche
+de la salle, marche, et **se plante à 0,05 tuile du toit**. Il y resterait — `near` refuse le geste
+(Q5), et le garde-fou qui relâche la corvée (`dropTask`) ne se déclenche que si AUCUN chemin
+n'existe. La livelock que l'on redoutait pour `near` est réelle, mais elle est ICI, et seulement
+pour les creux.
+
+D'où l'accesseur **`dansUnCreux`** (`etages.ts`) : porter un étage explicite, c'est ne pas être au
+palier de sa tuile (`poserLEtageDuCorps` ne l'écrit qu'à cette condition). Une seule loi, un seul
+endroit, les sites l'appellent — comme E-R5 elle-même.
+
+```ts
+if ((dansUnCreux(n) || dansUnCreux(entity)) && !atteintLeSol(state.map, entity, n.tx, n.ty, n.etage)) continue
+```
+
+### LES TROIS GARDES (`etages-etancheite.test.ts`)
+
+Une terrasse de laboratoire (palier 1 au nord, palier 0 au sud, **une** rampe), le village nu
+d'`A10..A12` de `glanage.test.ts` posé en bas, et UNE branche en haut.
+
+| garde | ce qu'elle affirme |
+|---|---|
+| LA PRÉMISSE | le village est au palier 0, la branche au palier 1, et E-R5 **dit non** à cette paire |
+| LA TERRASSE | la branche du haut **se glane** — le PNJ prend la rampe pour de bon |
+| LE CREUX | la branche de la salle ne s'élit pas — **et on ne s'en approche même pas** |
+
+⚠ **LA JAMBE DU CREUX A DÛ CHANGER DE MESURE : sa première version ne pouvait pas échouer.** Elle
+affirmait « la branche n'est pas glanée » — or `near` scelle l'interaction de toute façon, donc un
+PNJ qui l'élirait, marcherait douze tuiles et se planterait sur le toit rendrait le MÊME stock
+intact. Éprouvé : sceau retiré, la jambe passait au vert. C'est l'**APPROCHE** qui la fait
+échouer — scellé, le village ne descend jamais sous **10,5 tuiles** ; sceau retiré, un PNJ vient à
+**0,05**. Le seuil est posé entre les deux.
+
+**Rougissement éprouvé, deux sens** : rendre le sceau à TOUS les nœuds (la loi d'avant) → la jambe
+TERRASSE tombe, et elle seule ; le retirer entièrement → la jambe CREUX tombe, et elle seule.
+
+### CE QUI RESTE
+
+- **La navigation ne porte pas l'étage** (`setPathTo` → `pathToward` sans `etageFrom`/`etageTo`).
+  Tant que c'est vrai, aucune élection de destination ne peut viser un creux. Le jour où on la
+  corrige, la moitié creuse de la garde devient rouvrable — et c'est elle qui le dira.
+
+### CE QUE ÇA DÉPLACE AU BANC — **RIEN QU'ON PUISSE LIRE À UN JOUR**, et c'est une leçon
+
+Six graines, `runScenario` d'UN jour (36 000 ticks, 8 joueurs, le vrai worldgen), avant/après,
+bois total des trois greniers :
+
+| graine | avant | après | Δ | morts avant → après |
+|---|---|---|---|---|
+| 2026 | 9 | 23 | **+14** | 4 → 2 |
+| 4242 | 22 | 49 | **+27** | 0 → 0 |
+| 999 | 18 | 9 | **−9** | 0 → 0 |
+| 7 | 77 | 37 | **−40** | 0 → 0 |
+| 1234 | 71 | 71 | **0** | 0 → 0 |
+| 31337 | 15 | 15 | **0** | 1 → 2 |
+
+Somme des écarts : **−8 sur 212**. Les balancements par graine (±40) écrasent la moyenne : à un
+jour, le banc **ne sait pas résoudre cet effet** — ce qu'il montre est du flux seedé
+(`rng-fragile`), pas une direction. Deux graines ne bougent même pas d'une bûche : sur ces
+cartes-là, les villages n'avaient pas de terrasse à portée.
+
+⚠ **ET ÇA VAUT AUSSI POUR LE CHIFFRE QUI A OUVERT LA QUESTION.** Le §21 disait *« bois 36 → 20 sur
+un village »* pour justifier que le sceau coûtait cher — **une graine, un village**. Le même
+instrument, joué six fois, produit des écarts de ce calibre **dans les deux sens** à partir du
+même changement. Ce nombre-là ne prouvait donc rien ; ce qui fonde la décision, c'est la mesure
+d'ÉLECTION (quels nœuds sont coupés, et lesquels un chemin rejoint), pas le banc.
+
+*Le banc reste vert : 0 affamé sur les six graines, avant comme après.*

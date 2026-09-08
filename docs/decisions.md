@@ -11,7 +11,7 @@ volets, chacun en ajout seul et en ordre chronologique. Ce fichier-ci est l'INDE
 |---|---|---|---|---|
 | **M** | [Monde & worldgen](decisions/monde-worldgen.md) | worldgen, relief, eau, biomes, lieux, cendre, étages | 160 | 321 Ko |
 | **R** | [Rendu & DA](decisions/rendu-da.md) | lumière, couleur, sprites, FX, art du sol, son | 170 | 498 Ko |
-| **G** | [Gameplay & systèmes](decisions/gameplay-systemes.md) | faune, combat, récolte, craft, saisons, météo, construction, design | 284 | 733 Ko |
+| **G** | [Gameplay & systèmes](decisions/gameplay-systemes.md) | faune, combat, récolte, craft, saisons, météo, construction, design | 285 | 736 Ko |
 | **I** | [Interface & outillage](decisions/interface-outillage.md) | HUD, menus, encyclopédie, carte, smoke, bancs, process | 84 | 183 Ko |
 | **A** | [Architecture & infra](decisions/architecture-infra.md) | pureté et déterminisme de /sim, protocole, serveur, persistance, perf | 65 | 117 Ko |
 
@@ -31,7 +31,7 @@ retrouve ici, à la même date, jamais à la ligne du dessus dans son volet.
 
 ---
 
-## Index chronologique — 763 entrées, 1852 Ko
+## Index chronologique — 764 entrées, 1855 Ko
 
 - 2026-07-05 · **M** · Spec monde validée par Alexis : déplacement continu type Binding of Isaac (jamais de case par c…
 - 2026-07-05 · **M** · Convention d'import Tiled : l'index local de la tuile dans le premier tileset = l'id de terrain…
@@ -796,3 +796,4 @@ retrouve ici, à la même date, jamais à la ligne du dessus dans son volet.
 - 2026-09-07 · **I** · E-A3 A ENFIN SA GARDE STRUCTURELLE : UN SITE DE DISTANCE NOUVEAU NE PEUT PLUS NAÎTRE AVEUGLE À…
 - 2026-09-07 · **I** · LE JOURNAL SE DÉCOUPE EN CINQ VOLETS THÉMATIQUES, ET `decisions.md` DEVIENT SON INDEX. Le fichi…
 - 2026-09-07 · **A** · LE RENDU A ENFIN SON ACCESSEUR D'ÉTAGE (spec `etages.md` §18, E-R28/29/30). Le modèle décidé le…
+- 2026-09-08 · **G** · E-R5 NE SCELLE PLUS `nearestAliveNode` QUE POUR LES CREUX (spec `etages.md` §23). Q5 avait scel…

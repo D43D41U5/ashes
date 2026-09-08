@@ -19,7 +19,7 @@
 import { describe, expect, it } from 'vitest'
 import { BALANCE, FAUNA, HUNT, MONSTER_DEFS, TERRAIN_GRASS, TERRAIN_ROCK, TERRAIN_SCREE, WEAPON_PROFILES } from './balance'
 import { createEmptyMap, type WorldMap } from './map'
-import { type EtageCreux, niveauDuCorps, palierDuSol } from './etages'
+import { atteintLeSol, type EtageCreux, niveauDuCorps, palierDuSol } from './etages'
 import { createSim, spawnEntity, step, type SimState } from './sim'
 import { nearestPrey, spawnMonster } from './monsters'
 import { prowlerNear } from './nighthunt'
@@ -38,7 +38,7 @@ import { advancePois } from './poi-discovery'
 import { advanceWorldEvents } from './worldevents'
 import { advanceFire, fireState } from './fire'
 import { foundNpcVillage } from './worldgen'
-import { POI, SEASON } from './balance'
+import { POI, SEASON, SLOTS } from './balance'
 
 /* ══════════ LA MESA DE LABORATOIRE — et le point AVEUGLE qu'elle offre ══════════
  *
@@ -830,5 +830,109 @@ describe('E-A3 — les huit décisions d’Alexis du 2026-09-07 (Q1..Q7)', () =>
     }
     expect(essai(0), 'témoin : au pied, la portée ne refuse rien').not.toBe('too_far')
     expect(essai(1), 'du plateau, la tuile du dessous est « too_far » — Q5').toBe('too_far')
+  })
+})
+
+/* ══════════ E-R5 ROUVERT POUR LES TERRASSES — le glanage suit le CHEMIN ══════════
+ *
+ * *Décision d'Alexis, 2026-09-08.* Q5 avait scellé les neuf sites d'interaction en bloc,
+ * `nearestAliveNode` compris. Mais celui-là n'élit pas un CONTACT — il élit une DESTINATION,
+ * suivie d'un `setPathTo`, et le A* du jeu est à trois dimensions. MESURÉ sur six graines du
+ * monde joué : le sceau coupait 5 à 33 % des candidats, dont **35 à 97 % étaient joignables**
+ * par le chemin lui-même. Le CREUX, lui, reste scellé — `setPathTo` ne porte aucun étage, donc
+ * une route vers une salle mène au TOIT (mesuré : ~30 jalons, graine 2026).
+ *
+ * ⚠ CE QUI FERAIT ROUGIR : rendre le sceau à TOUS les nœuds (la branche de la terrasse ne se
+ * glane plus) ; le retirer AUSSI aux creux (le PNJ part se planter sur le toit de la salle) ; ou
+ * casser la rampe — et alors c'est la jambe TERRASSE qui tombe, ce qu'on veut : elle affirme que
+ * le PNJ MONTE, pas seulement qu'il élit.
+ */
+describe('E-R5 — le glanage élit ce que le CHEMIN rejoint, pas ce que la main touche', () => {
+  /** Au nord de cette ligne, le palier 1 ; au sud, le palier 0. Une seule montée. */
+  const BORD = 10
+  const RAMPE_T = { x: 12, y: BORD }
+  /** La branche : sur la terrasse, à douze tuiles du village — et derrière la rampe. */
+  const BRANCHE = { tx: 12, ty: 6 }
+
+  function terrasseDeLabo(): WorldMap {
+    const map = createEmptyMap(28, 28, TERRAIN_GRASS)
+    const w = map.width
+    map.palier = Array.from({ length: w * map.height }, (_, i) => ((i - (i % w)) / w < BORD ? 1 : 0))
+    const i = RAMPE_T.y * w + RAMPE_T.x
+    map.etages = [{ niveau: 1, idx: [i], terrain: [TERRAIN_GRASS], x0: RAMPE_T.x, y0: RAMPE_T.y, x1: RAMPE_T.x + 1, y1: RAMPE_T.y + 1 }]
+    map.connecteurs = [{ x: RAMPE_T.x, y: RAMPE_T.y, de: 0, vers: 1, type: 'rampe' }]
+    return map
+  }
+
+  /**
+   * Le patron du village nu de `glanage.test.ts` (A10..A12), posé sur la terrasse : grenier
+   * vide, aucun outil, et UNE branche à glaner — celle qu'on éprouve.
+   */
+  function villageEtUneBranche(etageDeLaBranche: number | undefined): SimState {
+    const nodes = [
+      { id: 1, type: 'tree' as const, tx: 12, ty: 20, stock: 20, regrowAt: 0 },
+      { id: 2, type: 'berry_bush' as const, tx: 14, ty: 18, stock: 20, regrowAt: 0 },
+      {
+        id: 3, type: 'branche_au_sol' as const, tx: BRANCHE.tx, ty: BRANCHE.ty, stock: 1, regrowAt: 0,
+        ...(etageDeLaBranche === undefined ? {} : { etage: etageDeLaBranche }),
+      },
+    ]
+    const sim = createSim(11, { map: terrasseDeLabo(), nodes, worldEvents: false, jourDeDepart: BALANCE.JOUR_DE_DEPART })
+    foundNpcVillage(sim, 12, 18, 2)
+    const coffre = sim.structures.find((s) => s.type === 'chest')!
+    coffre.inventory = makeInventory(SLOTS.CHEST)
+    return sim
+  }
+
+  /**
+   * Ce que le village fait de la branche : l'a-t-il glanée, et s'en est-il seulement APPROCHÉ ?
+   *
+   * ⚠ **LES DEUX MESURES, ET IL FAUT LES DEUX.** « Pas glanée » ne prouve RIEN sur l'élection
+   * d'un nœud de creux : `near` scelle l'interaction de toute façon (Q5), donc un PNJ qui
+   * élirait la branche de la salle, marcherait douze tuiles et se planterait sur le toit rendrait
+   * exactement le même « stock intact ». Éprouvé : sceau retiré, la jambe du creux passait quand
+   * même au vert — une garde qui ne pouvait pas échouer. C'est l'APPROCHE qui la fait échouer.
+   */
+  function courseALaBranche(sim: SimState): { glanee: boolean; approche: number } {
+    let approche = Infinity
+    for (let t = 0; t < 200 * BALANCE.TICK_RATE_HZ; t++) {
+      step(sim, [])
+      for (const npc of sim.npcs) {
+        const e = sim.entities.find((k) => k.id === npc.entityId)
+        if (e === undefined || e.hp <= 0) continue
+        const dx = e.x - (BRANCHE.tx + 0.5)
+        const dy = e.y - (BRANCHE.ty + 0.5)
+        const d = Math.sqrt(dx * dx + dy * dy)
+        if (d < approche) approche = d
+      }
+    }
+    return { glanee: sim.nodes.find((n) => n.id === 3)!.stock === 0, approche }
+  }
+
+  it('LA PRÉMISSE — le village est au palier 0, la branche au palier 1, et E-R5 les sépare', () => {
+    const sim = villageEtUneBranche(undefined)
+    const npc = sim.entities.find((e) => sim.npcs.some((n) => n.entityId === e.id))!
+    expect(palierDuSol(sim.map, Math.floor(npc.x), Math.floor(npc.y)), 'le village est en bas').toBe(0)
+    expect(palierDuSol(sim.map, BRANCHE.tx, BRANCHE.ty), 'la branche est en haut').toBe(1)
+    expect(niveauDuCorps(sim.map, npc), 'et le PNJ n’a pas d’étage : il est au sol de sa tuile').toBe(0)
+    // C'est bien E-R5 qui les séparait : la garde d'avant refusait cette élection.
+    expect(atteintLeSol(sim.map, npc, BRANCHE.tx, BRANCHE.ty, undefined), 'E-R5 dit non').toBe(false)
+  })
+
+  it('LA TERRASSE : la branche du haut se glane — le PNJ prend la rampe', () => {
+    const r = courseALaBranche(villageEtUneBranche(undefined))
+    expect(r.glanee, 'la branche de la terrasse est restée par terre').toBe(true)
+  })
+
+  it('LE CREUX : la branche de la salle ne s’élit pas — on ne s’en approche même pas', () => {
+    const r = courseALaBranche(villageEtUneBranche(-1))
+    expect(r.glanee, 'la branche de la salle a été glanée').toBe(false)
+    // LA MESURE QUI PORTE, et ses deux valeurs : scellé, le village ne s'approche jamais à moins
+    // de **10,5 tuiles** ; sceau retiré, un PNJ vient se planter à **0,05 tuile** — c'est-à-dire
+    // SUR le toit de la salle, `setPathTo` ne portant pas d'étage. Il y resterait : `near` refuse
+    // le geste, et le garde-fou qui relâche la corvée ne se déclenche que si AUCUN chemin
+    // n'existe. Le seuil est posé entre les deux, du côté de l'arrivée.
+    expect(r.approche, 'il s’est mis en route vers une branche qu’il ne peut pas atteindre')
+      .toBeGreaterThan(4)
   })
 })

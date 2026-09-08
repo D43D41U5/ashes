@@ -35,7 +35,7 @@ import {
 import { isBlockedAt, moveAvatar, type MoveWorld } from './collision'
 import { engageRange, startAttack, weaponProfile } from './combat'
 import { poseLibre } from './defriche'
-import { atteignableEntreEtages, atteintLeSol, niveauDuCorps } from './etages'
+import { atteignableEntreEtages, atteintLeSol, dansUnCreux, niveauDuCorps } from './etages'
 import type { WorldMap } from './map'
 import { applyEconomyAction, toolRank, type ResourceNode } from './economy'
 import { sertExigence } from './pieces'
@@ -186,10 +186,28 @@ function nearestAliveNode(state: SimState, entity: Entity, type: NodeType, porte
     // 35 % du temps CPU. Avec, il reste plat. Un villageois ne traverse pas le pays pour une
     // brindille : s'il n'y en a pas dans son voisinage, la corvée quitte le tableau.
     if (d > porteeMax2) continue
-    // E-R5, Q5 (Alexis, 2026-09-07) : on ne glane pas ce qu'un plancher sépare de soi. Le test
-    // vient APRÈS la portée — il ne se paie que sur les nœuds déjà candidats — et AVANT toute
-    // élection, sinon l'égalité de distance ferait gagner un nœud inatteignable au départage.
-    if (!atteintLeSol(state.map, entity, n.tx, n.ty, n.etage)) continue
+    // ─── E-R5 ICI NE VAUT QUE POUR LES CREUX (Alexis, 2026-09-08 — il rouvre les terrasses) ───
+    //
+    // Q5 avait scellé les neuf sites d'interaction en bloc, celui-ci compris. Or E-R5 répond
+    // « ces deux points se TOUCHENT-ils maintenant », et ce site-ci n'élit pas un contact : il
+    // élit une DESTINATION, suivie d'un `setPathTo`. La bonne loi est donc celle de
+    // `nearestGround` — « le chemin tranche l'accès » —, et le chemin, lui, SAIT monter : le A*
+    // est à trois dimensions et `pathToward` se poste au voisin libre.
+    //
+    // MESURÉ avant de rouvrir (6 graines, monde joué, tous les nœuds dans 40 tuiles) : le sceau
+    // coupait 5 à 33 % des candidats, et **35 à 97 % de ces coupés étaient joignables** par le
+    // chemin du jeu lui-même. On les rendait aux villages contre rien.
+    //
+    // MAIS PAS LE CREUX, et c'est mesuré aussi : `setPathTo` ne passe aucun étage à `pathToward`,
+    // donc la recherche tourne sur les PALIERS. Vers une salle, elle rend un vrai chemin — de
+    // ~30 jalons, graine 2026 — qui mène au TOIT. Le PNJ y marcherait, `near` resterait faux, et
+    // le garde-fou d'à côté (`dropTask` quand AUCUN chemin n'existe) ne se déclencherait pas :
+    // il tournerait là-haut sans jamais relâcher sa corvée. Tant que la navigation ne porte pas
+    // l'étage, un nœud de creux ne s'élit que depuis son creux.
+    //
+    // Le test vient APRÈS la portée — il ne se paie que sur les nœuds déjà candidats — et AVANT
+    // toute élection, sinon l'égalité de distance ferait gagner un nœud inatteignable.
+    if ((dansUnCreux(n) || dansUnCreux(entity)) && !atteintLeSol(state.map, entity, n.tx, n.ty, n.etage)) continue
     if (maZone >= 0 && zoneIdAt(state.map, n.tx, n.ty) !== maZone) {
       if (d < horsD || (d === horsD && hors && n.id < hors.id)) {
         hors = n

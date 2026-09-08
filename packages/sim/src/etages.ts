@@ -152,6 +152,23 @@ export function niveauDeLaTuile(map: WorldMap, chose: { tx: number; ty: number; 
 }
 
 /**
+ * ═══ VIT-IL DANS UN CREUX ? — LA QUESTION QUE LA NAVIGATION NE SAIT PAS POSER ═══
+ *
+ * Un étage EXPLICITE veut dire « pas au palier de sa tuile » (`poserLEtageDuCorps` ne l'écrit
+ * qu'à cette condition) : un chapeau, une rampe, une salle. Et c'est exactement l'angle mort du
+ * chemin — `setPathTo` appelle `pathToward` SANS argument d'étage, donc la recherche tourne sur
+ * les paliers : une route vers une salle mène au TOIT de la salle.
+ *
+ * D'où la ligne de partage tranchée par Alexis le 2026-09-08 pour les élections de DESTINATION :
+ * la TERRASSE se laisse au chemin (il la rejoint pour de bon, mesuré), le CREUX reste scellé par
+ * E-R5 tant que la navigation ne porte pas l'étage. Un seul endroit le dit, et les sites
+ * l'appellent — comme pour E-R5 elle-même.
+ */
+export function dansUnCreux(chose: { etage?: number }): boolean {
+  return chose.etage !== undefined
+}
+
+/**
  * ÉCRIRE L'ÉTAGE D'UN CORPS — et ne l'écrire QUE s'il n'est pas « au sol, là où il est » (T-R3).
  *
  * Le champ reste ABSENT quand le corps se tient sur le sol de sa tuile : une sauvegarde d'avant
