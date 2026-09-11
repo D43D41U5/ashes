@@ -4539,12 +4539,24 @@ export const HUNT = {
    * marche, trahit même le prudent : le retour de chasse fait lever les nuées. Le gibier
    * dans le rayon d'alarme prend un coup de méfiance ; les perchoirs se REPOSENT (un envol
    * par zone de COOLDOWN_RAYON tous les COOLDOWN_TICKS) — la forêt n'est pas une sirène.
+   *
+   * ⚠ DES DEUX NOMBRES, UN SEUL BLOQUE (mesuré le 2026-09-08). Le compte de ticks ne refuse
+   * RIEN : sa branche ne fait qu'OUBLIER un perchoir. Ce qui bloque est le rayon, et lui
+   * seul — donc pour qui MARCHE la cadence est une distance, un envol par COOLDOWN_RAYON
+   * parcouru (24 tuiles se couvrent en 13 s, jamais en 45). Le piétineur, lui, reste bloqué
+   * par le rayon jusqu'à ce que l'oubli le libère : c'est le seul cas où COOLDOWN_TICKS donne
+   * la cadence. Régler la FRÉQUENCE pour un joueur qui avance, c'est donc régler le RAYON ;
+   * monter COOLDOWN_TICKS seul serait un no-op pour lui.
+   * RAYON 24 → 45 (« diminue la fréquence d'envol », Alexis 2026-09-08) : en longeant un bois,
+   * un envol toutes les ~25 s au lieu de ~13 (mesuré, `__envol-freq`). Ce qu'on paie : la nuée
+   * est un canal d'INFORMATION de chasse (elle prévient le gibier avant la bête) — l'approche
+   * bruyante est désormais moins souvent dénoncée, la chasse un cran plus permissive.
    */
   ENVOL_SEUIL: 0.9,
   ENVOL_ALARME_RAYON: 14,
   ENVOL_SUSPICION: 0.35,
-  ENVOL_COOLDOWN_RAYON: 24,
-  ENVOL_COOLDOWN_TICKS: 900, // 45 s à 20 Hz
+  ENVOL_COOLDOWN_RAYON: 45,
+  ENVOL_COOLDOWN_TICKS: 900, // 45 s à 20 Hz — n'OUBLIE, ne bloque pas (cf. ci-dessus)
   /** L'APPÂT SUR UNE COULÉE porte plus loin (forêts-vivantes §4) : le chemin du gibier
    *  amène le nez dessus. Multiplie BAIT_SEEK pour les piles posées sur un chemin. */
   BAIT_COULEE_FACTEUR: 1.5,

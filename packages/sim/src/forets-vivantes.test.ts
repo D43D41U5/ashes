@@ -151,6 +151,46 @@ describe('A3 (§3) — l\'envol de la lisière : la forêt répond au bruit', ()
     expect(faits).toHaveLength(1)
   })
 
+  it('LE FREIN EST SPATIAL, pas temporel : qui longe le bois lève une nuée tous les COOLDOWN_RAYON', () => {
+    // Ce que cette garde protège : les perchoirs ne sont purgés qu'à l'EXPIRATION, donc pour
+    // un joueur qui AVANCE la cadence est une distance, jamais une durée — 45 tuiles se
+    // couvrent bien avant les 45 s du compte de ticks. Le jour où quelqu'un veut espacer les
+    // envols en montant `ENVOL_COOLDOWN_TICKS`, il livrera un no-op ; cette garde le dit.
+    // Une lisière DROITE et LONGUE (le massif 24×24 n'offre pas 45 tuiles de bord).
+    const map = createEmptyMap(120, 400, TERRAIN_GRASS)
+    for (let ty = 20; ty < 380; ty++) {
+      for (let tx = 60; tx < 84; tx++) map.terrain[ty * map.width + tx] = TERRAIN_FOREST
+    }
+    const zone = new Int32Array(map.width * map.height)
+    map.profondeur = deriverProfondeur(map.terrain, zone, 0, map.width, map.height)
+    const sim = createSim(1234, { map, faunaCap: 0, worldEvents: false, cycleOffset: cycleOffsetForStartHour(12, 1) })
+    const id = spawnEntity(sim, 60.5, 25.5)
+    const e = sim.entities.find((x) => x.id === id)!
+
+    const ou: number[] = [] //  l'ORDONNÉE de chaque envol : c'est l'écart qu'on mesure
+    const quand: number[] = []
+    for (let t = 0; t < 4000; t++) {
+      tick(sim, [{ entityId: id, dx: 0, dy: 1 }])
+      e.x = 60.5 // il LONGE la lisière, tout droit — on n'éprouve pas le pathfinding
+      for (const v of drainEvents(sim).filter((f) => f.type === 'bird_flush')) {
+        ou.push(v.y)
+        quand.push(v.tick)
+      }
+    }
+    expect(ou.length, 'aucun envol : le montage ne longe plus une lisière').toBeGreaterThan(3)
+    for (let i = 1; i < ou.length; i++) {
+      // ① L'écart vaut le RAYON (à une tuile près : le pas est continu, la garde est à la tuile).
+      expect(ou[i]! - ou[i - 1]!, `envols à ${ou[i - 1]} puis ${ou[i]}`).toBeGreaterThanOrEqual(
+        HUNT.ENVOL_COOLDOWN_RAYON - 1,
+      )
+      expect(ou[i]! - ou[i - 1]!).toBeLessThan(HUNT.ENVOL_COOLDOWN_RAYON + 3)
+      // ② …et il tombe BIEN AVANT que le compte de ticks n'ait rien à dire. C'est cette
+      //    ligne qui prouve que le temporel ne mord pas — sans elle, ① passerait aussi
+      //    dans un monde où c'est l'horloge qui commande.
+      expect(quand[i]! - quand[i - 1]!).toBeLessThan(HUNT.ENVOL_COOLDOWN_TICKS)
+    }
+  })
+
   it('le gibier alentour prend l\'alarme — la méfiance monte d\'un coup', () => {
     const sim = makeSim(6)
     const id = spawnMonster(sim, 'deer', 66.5, 72.5) // à 6 tuiles du perchoir, dans le bois
