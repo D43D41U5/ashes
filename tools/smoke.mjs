@@ -26056,9 +26056,13 @@ Depuis le spawn (${depart.x.toFixed(0)}, ${depart.y.toFixed(0)}) :`)
       const s = window.__BRAISES__.scene
       const p = s.registry.get('playerPos')
       s.game.loop.sleep()
+      const avant = s.ambientLife.birds.length
       s.ambientLife.envol(Math.floor(p.x) + 3, Math.floor(p.y))
-      return { x: p.x, y: p.y }
+      return { x: p.x, y: p.y, avant, apres: s.ambientLife.birds.length }
     })
+    if (pos.apres <= pos.avant) {
+      console.error(`  !! AUCUNE NUÉE — envol() n’a rien levé (${pos.avant} oiseaux avant, ${pos.apres} après) : plafond atteint ?`)
+    }
     await page.evaluate((p) => {
       const c = window.__BRAISES__.scene.cameras.main
       c.setZoom(2.6)
@@ -26083,8 +26087,13 @@ Depuis le spawn (${depart.x.toFixed(0)}, ${depart.y.toFixed(0)}) :`)
       }
     }
     console.log(`  la nuée MONTE (écart corps↔ombre, par images cumulées 0/1/4/14/44) : ${montee.map((m) => `${m.min}→${m.max}`).join(' · ')}`)
+    // ⚠ ON JUGE SUR LE `min`, ET C'EST TOUT LE POINT. Le ciel de l'aube n'est pas vide : une
+    // dizaine d'oiseaux y CROISENT déjà, à 10,8 px d'ombre. Le `max` est donc épinglé au plafond
+    // dès la première image par des vols qui n'ont rien à voir avec la nuée qu'on vient de lever
+    // — un `max` qui ne monte jamais accusait le jeu d'un défaut qui n'existait pas. Les jeunes,
+    // eux, sont les SEULS bas : leur altitude EST le minimum du ciel, et c'est elle qu'on suit.
     if (montee[0].min !== null && montee[0].min > 2) console.error('  !! ELLE NAÎT DÉJÀ EN L’AIR — l’ombre ne décroche pas, la nuée « apparaît »')
-    if (montee[4].max !== null && montee[0].max !== null && montee[4].max <= montee[0].max) console.error('  !! ELLE NE MONTE PAS — l’altitude ne change pas d’une image à l’autre')
+    if (montee[4].min !== null && montee[0].min !== null && montee[4].min <= montee[0].min) console.error('  !! ELLE NE MONTE PAS — l’altitude des jeunes ne bouge pas d’une image à l’autre')
     await page.evaluate(() => { const s = window.__BRAISES__.scene; s.cameras.main.setZoom(1.3); s.game.loop.wake() })
     await page.waitForTimeout(300)
     const nuee = await releve()
