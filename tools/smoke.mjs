@@ -25887,6 +25887,248 @@ Depuis le spawn (${depart.x.toFixed(0)}, ${depart.y.toFixed(0)}) :`)
   },
 
   /**
+   * ═══ LES OISEAUX DU DÉCOR (DA du 2026-09-08) — trois espèces, et une ombre qui décroche ═══
+   *
+   * Le rendu est passé de deux triangles à `render/oiseau-art.ts` : trois espèces, trois images
+   * d'aile, une ombre portée au sol. Les 18 gardes de `vol-des-oiseaux.test.ts` prouvent les
+   * LOIS (l'heure, la teinte, l'espèce d'un terrain) ; ce qui ne se prouve QUE dans le jeu,
+   * c'est la SILHOUETTE — le premier jet rendait une étoile à quatre branches et il a fallu la
+   * voir pour le savoir.
+   *
+   * TROIS RELEVÉS, dont un qui peut rougir :
+   *   ① À L'AUBE (6 h 30, plein chœur) : des vols existent, et on lit leur espèce, leur
+   *      texture d'aile et surtout **l'écart sprite↔ombre** — l'altitude est le seul indice
+   *      qu'un oiseau VOLE plutôt qu'il ne glisse au sol.
+   *   ② LA PLANCHE, boucle endormie et zoom ×4 sur le vol le plus proche : la silhouette à
+   *      l'œil, plus la nuée d'`envol()` levée à la main (gerbe qui monte, ombres collées).
+   *   ③ **LA CONTRE-ÉPREUVE DE L'HEURE, À 2 H DU MATIN** : plus une seule TRAVERSÉE ne naît
+   *      (`densiteDeVol` = 0) — mais `envol()` continue de partir, parce que la nuée suit un
+   *      fait de la sim et que la faire taire rendrait le défaut retourné (on entendrait la
+   *      nuée sans la voir). Sans ce relevé, ① serait vert même si l'heure ne commandait rien.
+   */
+  async oiseaux(page) {
+    if (!dev) { console.log('\n(les oiseaux exigent --dev : l’heure)'); return {} }
+    await page.waitForFunction(() => Boolean(window.__BRAISES__?.scene?.registry?.get('worldReady')), null, { timeout: 150000 })
+    await page.waitForTimeout(1200)
+    const agir = async (action, ms = 300) => {
+      await page.evaluate((a) => { window.__BRAISES__.scene.sendAction(a) }, action)
+      await page.waitForTimeout(ms)
+    }
+
+    /** Ce que le ciel porte VRAIMENT, lu à la source — et l'altitude en pixels d'écran.
+     *
+     *  ⚠ L'ombre est le seul indice d'altitude, donc c'est elle qu'on mesure : `sprite.y`
+     *  monte quand l'oiseau monte, `ombre.y` reste au sol. Un écart NUL sur tout un vol,
+     *  c'est une nuée qui rampe — le défaut qu'on ne verrait pas sur une capture fixe. */
+    const releve = () => page.evaluate(() => {
+      const s = window.__BRAISES__.scene
+      const al = s.ambientLife
+      if (!al) return { absent: true }
+      const t = s.lastTime
+      return {
+        n: al.birds.length,
+        vols: al.flocks?.length ?? -1,
+        oiseaux: al.birds.map((b) => ({
+          espece: b.espece,
+          cle: b.sprite.texture?.key ?? '?',
+          // L'ALTITUDE, en pixels d'écran : de combien le corps a quitté son ombre.
+          altitude: Math.round((b.ombre.y - b.sprite.y) * 10) / 10,
+          alphaOmbre: Math.round(b.ombre.alpha * 100) / 100,
+          teinte: b.sprite.tintTopLeft,
+          x: Math.round(b.x * 10) / 10,
+          y: Math.round(b.y * 10) / 10,
+        })),
+        heure: t ? Math.round(t.hourOfCycle * 100) / 100 : null,
+      }
+    })
+
+    /** Attend qu'il y ait au moins `n` oiseaux — ou rend ce qu'il a trouvé au bout du compte. */
+    const attendre = async (n, tours = 30) => {
+      let r = await releve()
+      for (let i = 0; i < tours && !r.absent && r.n < n; i++) {
+        await page.waitForTimeout(1000)
+        r = await releve()
+      }
+      return r
+    }
+
+    const resume = (r, quoi) => {
+      if (r.absent) { console.error(`!! ${quoi} : pas d’AmbientLife dans la scène`); return }
+      const par = {}
+      for (const o of r.oiseaux) par[o.espece] = (par[o.espece] ?? 0) + 1
+      const alts = r.oiseaux.map((o) => o.altitude)
+      const haut = alts.length ? Math.max(...alts) : 0
+      console.log(`  ${quoi} (h=${r.heure}) : ${r.n} oiseau(x) en ${r.vols} vol(s) — ${JSON.stringify(par)}`)
+      if (r.n > 0) {
+        console.log(`    ailes : ${[...new Set(r.oiseaux.map((o) => o.cle))].join(' · ')}`)
+        console.log(`    altitude (écart corps↔ombre) : ${Math.min(...alts)} → ${haut} px · alpha d’ombre ${r.oiseaux[0].alphaOmbre}`)
+        if (haut <= 0.5) console.error('    !! AUCUN OISEAU N’A QUITTÉ SON OMBRE — la nuée rampe')
+      }
+    }
+
+    // ── ⓪ LA PLANCHE DES TEXTURES, D'ABORD — et c'est elle qui a tout attrapé. ──
+    //
+    // Deux fois de suite, la silhouette a été déclarée bonne sur la foi du code et démentie par
+    // la planche : d'abord une **pointe de flèche** (le rapace était `fx-arrow` en marron), puis,
+    // corrigé trop loin, un **avion de tôle**. À 12-24 px rendus à 2,25× de zoom, aucune capture
+    // de jeu ne tranche ça — il faut voir l'ART, grossi, sur les deux fonds qu'un oiseau
+    // traverse (le sous-bois sombre et l'herbe claire). C'est le pendant de `tetras-art`.
+    const planche = await page.evaluate(() => {
+      const s = window.__BRAISES__.scene
+      const cles = s.textures.getTextureKeys().filter((k) => k.startsWith('bird-')).sort()
+      if (cles.length === 0) return null
+      const K = 10
+      let W = 0
+      for (const c of cles) W = Math.max(W, s.textures.get(c).getSourceImage().width)
+      const col = Math.min(5, cles.length)
+      const lig = Math.ceil(cles.length / col)
+      const cell = { w: (W + 4) * K, h: (W + 4) * K + 22 }
+      const cv = document.createElement('canvas')
+      cv.width = cell.w * col
+      cv.height = cell.h * lig
+      const g = cv.getContext('2d')
+      g.imageSmoothingEnabled = false
+      g.fillStyle = '#2a2f22'
+      g.fillRect(0, 0, cv.width / 2, cv.height)
+      g.fillStyle = '#7d8c5a'
+      g.fillRect(cv.width / 2, 0, cv.width / 2, cv.height)
+      g.font = '12px monospace'
+      cles.forEach((c, i) => {
+        const src = s.textures.get(c).getSourceImage()
+        const cx = (i % col) * cell.w
+        const cy = Math.floor(i / col) * cell.h
+        g.drawImage(src, 0, 0, src.width, src.height, cx + 2 * K, cy + 2 * K, src.width * K, src.height * K)
+        g.fillStyle = '#ffffff'
+        g.fillText(`${c} ${src.width}×${src.height}`, cx + 4, cy + cell.h - 6)
+      })
+      return { png: cv.toDataURL('image/png').slice(22), n: cles.length }
+    })
+    if (planche === null) console.error('!! aucune texture `bird-*` — les oiseaux ne sont pas cuits')
+    else {
+      writeFileSync(`${OUT}/oiseaux-planche.png`, Buffer.from(planche.png, 'base64'))
+      console.log(`  capture : oiseaux-planche.png (${planche.n} textures)`)
+    }
+
+    // ── ① L'AUBE : le plein chœur (6 h – 7 h 30), là où le ciel est le plus habité. ──
+    await agir({ type: 'debug_god', on: true }, 200)
+    await agir({ type: 'debug_set_hour', hour: 6.5 }, 1500)
+    const aube = await attendre(3)
+    resume(aube, 'à l’aube')
+    if (aube.n === 0) console.error('!! AUCUN VOL À L’AUBE — l’heure du plein chœur devrait en porter')
+
+    // ── ② LA PLANCHE. Boucle endormie : sans GPU, la capture expire pendant que Phaser tourne. ──
+    await page.evaluate(() => window.__BRAISES__.scene.game.loop.sleep())
+    await page.screenshot({ path: `${OUT}/oiseaux-aube.png`, timeout: 180000 })
+    await page.evaluate(() => window.__BRAISES__.scene.game.loop.wake())
+    console.log('  capture : oiseaux-aube.png')
+
+    // La SILHOUETTE, à ×4 — c'est l'échelle à laquelle on juge une aile, pas celle du jeu.
+    if (aube.n > 0) {
+      const cible = await page.evaluate(() => {
+        const s = window.__BRAISES__.scene
+        const p = s.registry.get('playerPos')
+        let best = null
+        for (const b of s.ambientLife.birds) {
+          const d = (b.x - p.x) * (b.x - p.x) + (b.y - p.y) * (b.y - p.y)
+          if (best === null || d < best.d) best = { d, x: b.x, y: b.y }
+        }
+        s.cameras.main.setZoom(4)
+        if (best) s.cameras.main.centerOn(best.x * 16, best.y * 16)
+        return best
+      })
+      // Des images DOIVENT passer : le zoom et le recentrage ne se voient qu'au rendu suivant.
+      await page.waitForTimeout(2500)
+      await page.evaluate(() => window.__BRAISES__.scene.game.loop.sleep())
+      await page.screenshot({ path: `${OUT}/oiseaux-silhouette.png`, timeout: 180000 })
+      await page.evaluate(() => { const s = window.__BRAISES__.scene; s.game.loop.wake(); s.cameras.main.setZoom(1.3) })
+      console.log(`  capture : oiseaux-silhouette.png (vol à ${cible ? `${cible.x.toFixed(1)},${cible.y.toFixed(1)}` : '?'})`)
+    }
+
+    // LA NUÉE LEVÉE À LA MAIN — `envol()` est le geste de la sim (`bird_flush`), pris à la
+    // source. On la photographie JEUNE : la gerbe qui monte, ombres encore collées au sol.
+    //
+    // ⚠ BOUCLE ENDORMIE, PUIS `game.step` IMAGE PAR IMAGE. Une attente de 900 ms n'est PAS une
+    // image de moins ici : sans GPU une frame coûte des secondes et Phaser plafonne son delta,
+    // si bien que le premier relevé après un `waitForTimeout` trouve déjà toute la nuée à son
+    // altitude de croisière (10,8 px) — le décrochage, qui est TOUT le propos de l'ombre, ne
+    // se lit jamais. On avance donc d'un nombre CONNU d'images et on relève la courbe.
+    const pos = await page.evaluate(() => {
+      const s = window.__BRAISES__.scene
+      const p = s.registry.get('playerPos')
+      s.game.loop.sleep()
+      s.ambientLife.envol(Math.floor(p.x) + 3, Math.floor(p.y))
+      return { x: p.x, y: p.y }
+    })
+    await page.evaluate((p) => {
+      const c = window.__BRAISES__.scene.cameras.main
+      c.setZoom(2.6)
+      c.centerOn((p.x + 3) * 16, p.y * 16)
+    }, pos)
+    const montee = []
+    for (const images of [0, 1, 3, 10, 30]) {
+      montee.push(await page.evaluate((n) => {
+        const s = window.__BRAISES__.scene
+        let t = s.lastFrameTime ?? 0
+        for (let i = 0; i < n; i++) { t += 16.7; s.game.step(t, 16.7) }
+        s.lastFrameTime = t
+        const al = s.ambientLife
+        const h = al.birds.map((b) => Math.round((b.ombre.y - b.sprite.y) * 10) / 10)
+        return { n: al.birds.length, min: h.length ? Math.min(...h) : null, max: h.length ? Math.max(...h) : null }
+      }, images))
+      // La PHOTO de la gerbe jeune : 4 images après le fait, quand les ombres sont encore
+      // sous les corps. Plus tard, c'est un vol de croisière comme un autre.
+      if (images === 3) {
+        await page.screenshot({ path: `${OUT}/oiseaux-envol.png`, timeout: 180000 })
+        console.log(`  capture : oiseaux-envol.png (nuée levée en ${pos.x.toFixed(1)},${pos.y.toFixed(1)}, 4 images après)`)
+      }
+    }
+    console.log(`  la nuée MONTE (écart corps↔ombre, par images cumulées 0/1/4/14/44) : ${montee.map((m) => `${m.min}→${m.max}`).join(' · ')}`)
+    if (montee[0].min !== null && montee[0].min > 2) console.error('  !! ELLE NAÎT DÉJÀ EN L’AIR — l’ombre ne décroche pas, la nuée « apparaît »')
+    if (montee[4].max !== null && montee[0].max !== null && montee[4].max <= montee[0].max) console.error('  !! ELLE NE MONTE PAS — l’altitude ne change pas d’une image à l’autre')
+    await page.evaluate(() => { const s = window.__BRAISES__.scene; s.cameras.main.setZoom(1.3); s.game.loop.wake() })
+    await page.waitForTimeout(300)
+    const nuee = await releve()
+    resume(nuee, 'nuée levée')
+
+    // ── ③ LA CONTRE-ÉPREUVE : 2 h du matin. Le ciel se vide, la nuée part quand même. ──
+    //
+    // ⚠ Reculer l'HEURE est sans danger — `debug_set_hour` ne bouge que `cycleOffset`, jamais
+    // le tick (c'est `debug_set_season_day` qui rembobine et fige le client, pas celle-ci).
+    await agir({ type: 'debug_set_hour', hour: 2 }, 1500)
+    // ⚠ ON VIDE LE CIEL POUR DE BON — et ce n'est pas du confort, c'est ce qui rend les DEUX
+    // relevés de nuit capables d'échouer. `MAX_BIRDS` vaut 16 : le premier jet a laissé le
+    // ciel de l'aube saturé, donc aucune traversée ne POUVAIT naître (le plafond refusait) et
+    // `envol()` sortait au premier `if` — un ✓ obtenu par accident, suivi d'un ✗ qui accusait
+    // l'heure là où c'était le plafond. On repart d'un ciel nu, plafond hors de cause.
+    await page.evaluate(() => {
+      const al = window.__BRAISES__.scene.ambientLife
+      for (const b of al.birds) { b.sprite.destroy(); b.ombre.destroy() }
+      al.birds.length = 0
+      al.flocks.length = 0
+    })
+    // Puis on laisse le temps à des traversées de naître : ce qui apparaît au bout de 20 s,
+    // l'heure ne l'a pas refusé.
+    const avant = await releve()
+    if (avant.n !== 0) console.error(`!! le ciel n’a pas été vidé (${avant.n}) — les relevés de nuit ne prouvent rien`)
+    await page.waitForTimeout(20000)
+    const nuit = await releve()
+    resume(nuit, 'à 2 h')
+    const nes = nuit.n - avant.n
+    if (nes > 0) console.error(`!! ${nes} OISEAU(X) DE PLUS EN PLEINE NUIT — densiteDeVol ne commande pas les traversées`)
+    else console.log('  ✓ la nuit ne fait naître aucune traversée')
+    await page.evaluate(() => {
+      const s = window.__BRAISES__.scene
+      s.ambientLife.envol(Math.floor(s.registry.get('playerPos').x) + 3, Math.floor(s.registry.get('playerPos').y))
+    })
+    await page.waitForTimeout(900)
+    const nuitNuee = await releve()
+    if (nuitNuee.n > nuit.n) console.log(`  ✓ la nuée de lisière part quand même (${nuitNuee.n - nuit.n} oiseaux) — elle suit la sim, pas l’heure`)
+    else console.error('!! LA NUÉE NE PART PLUS LA NUIT — on entendrait le cri sans voir l’oiseau')
+
+    return { aube: aube.n, nuit: nuit.n }
+  },
+
+  /**
    * ═══ LES LUCIOLES SONT-ELLES SORTIES DU BOIS ? (Alexis, 2026-08-26) ═══
    *
    * *« déplace les lucioles vers les biomes sans arbres, sans neige et sans cendre »*. La

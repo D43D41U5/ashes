@@ -77,7 +77,10 @@ const SUITES = [
   //   déplie comme une rampe) — suite à 1531, plancher relevé quelques pourcents dessous.
   // 2026-09-07 : +16 gardes avec L'ACCESSEUR D'ÉTAGE DU RENDU (`strates.test.ts`, E-R28/29/30)
   //   — suite à 1547, plancher relevé quelques pourcents dessous.
-  { nom: 'client', dir: 'packages/client', args: ['run'], plancher: 1534 },
+  // 2026-09-08 : +18 gardes avec LES OISEAUX (`vol-des-oiseaux.test.ts` : l'heure du vol est
+  //   celle du chant, l'aube n'appartient qu'aux passereaux, l'aile fait l'aller-retour)
+  //   — suite à 1565, plancher relevé quelques pourcents dessous.
+  { nom: 'client', dir: 'packages/client', args: ['run'], plancher: 1550 },
   { nom: 'serveur', dir: 'packages/server', args: ['run'], plancher: 36 },
   // Le banc pilote le vrai worldgen sur la carte de production : lent, et seul à porter le
   // drapeau qui ignore les erreurs non gérées (voir l'en-tête de `scenario.test.ts`).

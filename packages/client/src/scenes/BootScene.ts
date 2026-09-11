@@ -6,6 +6,7 @@
 import Phaser from 'phaser'
 import { generateItemIcons, generateItemIconsLit } from '../render/item-art'
 import { generateVitalIcons } from '../render/vital-art'
+import { generateBirdTextures } from '../render/oiseau-art'
 import { generateLitTrees } from '../render/lit-trees'
 import { generateEssaiCaillou } from '../render/essai-da-caillou'
 import { generateLitStructures } from '../render/lit-structures'
@@ -26,6 +27,10 @@ import {
 } from '../render/arbre-art'
 
 export class BootScene extends Phaser.Scene {
+  /** Les clés des ombres d'oiseaux — les seules textures d'ici, avec le halo des Feux, qui
+   *  doivent rester LINEAR. Remplies par `generateBirdTextures`, relues au passage NEAREST. */
+  private ombresDOiseaux: string[] = []
+
   constructor() {
     super('boot')
   }
@@ -76,14 +81,12 @@ export class BootScene extends Phaser.Scene {
     arw.generateTexture('fx-arrow', 14, 14)
     arw.destroy()
 
-    // L'oiseau vu de dessus : un chevron. À cette échelle, c'est tout ce que
-    // l'œil retient d'un vol — et ça suffit à savoir que quelque chose vit.
-    const b = this.add.graphics()
-    b.fillStyle(0x2e2a26)
-    b.fillTriangle(0, 0, 5, 3, 0, 2)
-    b.fillTriangle(10, 0, 5, 3, 10, 2)
-    b.generateTexture('fx-bird', 10, 4)
-    b.destroy()
+    // LES OISEAUX — trois espèces, trois images d'aile chacune, et leurs ombres portées
+    // (`render/oiseau-art.ts`). Le chevron 10×4 d'avant tenait dans ces six lignes ; il était
+    // aussi la seule texture du jeu affichée en `displaySize` non entier, et il violait les
+    // trois règles de silhouette que le tétras avait pourtant payées d'une planche ratée.
+    // Les clés d'OMBRES sont rendues ici parce qu'elles doivent rester LINEAR (voir plus bas).
+    this.ombresDOiseaux = generateBirdTextures(this)
 
     this.makeStructures()
     this.makeGlowTexture()
@@ -109,6 +112,9 @@ export class BootScene extends Phaser.Scene {
       this.textures.get(key).setFilter(Phaser.Textures.FilterMode.NEAREST)
     }
     this.textures.get('glow').setFilter(Phaser.Textures.FilterMode.LINEAR) // le halo des Feux reste doux
+    // Et les ombres d'oiseaux : une tache molle. À bord dur sur de l'herbe, elle se lit comme
+    // un caillou — c'est le même arbitrage que le halo ci-dessus, pas une exception.
+    for (const cle of this.ombresDOiseaux) this.textures.get(cle).setFilter(Phaser.Textures.FilterMode.LINEAR)
 
     // L'écran principal choisit solo/multi (ou un deep-link `?solo`/`?server=` le saute).
     this.scene.start('menu')

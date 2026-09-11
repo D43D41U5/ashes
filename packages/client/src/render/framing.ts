@@ -350,6 +350,14 @@ export const AMBIENT_DEPTH_LIT = 8
  */
 export const FIREFLY_GROUND_DEPTH = AMBIENT_DEPTH_LIT + 1
 /**
+ * L'OMBRE PORTÉE D'UN OISEAU — au sol, comme la flaque des lucioles, et pour la même raison :
+ * juste AU-DESSUS du voile éclairé (sinon la nuit la mangerait) et SOUS tout ce qui a des
+ * pieds (un houppier doit la cacher — une ombre qui passe par-dessus la cime est une tache
+ * collée sur l'objectif). ⚠ Elle s'ajoute à la STRATE du sol qu'elle survole, relue à chaque
+ * image : un oiseau bouge, contrairement à l'ancre d'un essaim.
+ */
+export const BIRD_SHADOW_DEPTH = AMBIENT_DEPTH_LIT + 1
+/**
  * ═══ UNE LUCIOLE VIT DANS LE SOUS-BOIS, DONC ELLE TRIE AVEC LUI (Alexis, 2026-08-26) ═══
  *
  * Elles vivaient à `SPARK_DEPTH` (1 250 000), au-dessus de TOUT — canopée, houppiers, voile de

@@ -28,7 +28,16 @@ import Phaser from 'phaser'
 import { souffleDEssaim } from '../../render/souffle-essaim'
 import { FIREFLY_TERRAINS } from './firefly-biomes'
 import { adoucir, fonduLuciole, FONDU_ENTREE_S, FONDU_SORTIE_S } from '../../render/fondu-essaim'
-import { fireflyDepth, FIREFLY_GROUND_DEPTH, FLYER_DEPTH, TILE_PX } from '../../render/framing'
+import { BIRD_SHADOW_DEPTH, fireflyDepth, FIREFLY_GROUND_DEPTH, FLYER_DEPTH, TILE_PX } from '../../render/framing'
+import { cleOiseau, cleOmbreOiseau, GABARITS } from '../../render/oiseau-art'
+import {
+  altitudeDeMontee,
+  densiteDeVol,
+  especeDuVol,
+  imageDAile,
+  teinteDuVol,
+  type EspeceOiseau,
+} from '../../render/vol-des-oiseaux'
 import {
   ensureFireflyGroundTexture,
   FIREFLY_POOL_ALPHA,
@@ -36,13 +45,67 @@ import {
   FIREFLY_POOL_SIZE_PX,
 } from './firefly-ground-glow'
 
-/** Vols simultanés au plus, et oiseaux par vol. */
+/** Vols simultanés au plus. La TAILLE d'un vol, elle, appartient à l'espèce (`GABARITS`). */
 const MAX_FLOCKS = 2
-const BIRDS_PER_FLOCK = 5
-/** Un vol traverse en ~14 s, à cette vitesse (tuiles/s). */
-const BIRD_SPEED = 7
-/** Secondes entre deux vols (tiré dans cette fourchette). */
+/** Oiseaux vivants au plus, toutes espèces et tous vols confondus — le plafond de sécurité
+ *  qui remplace l'ancien `MAX_FLOCKS × BIRDS_PER_FLOCK` (les vols n'ont plus tous la même
+ *  taille, et une nuée de lisière peut naître par-dessus deux traversées). */
+const MAX_BIRDS = 16
+/** Secondes entre deux vols À DENSITÉ PLEINE (tiré dans cette fourchette) — l'intervalle réel
+ *  est DIVISÉ par `densiteDeVol(heure)` : le plein jour (0,4) espace les passages deux fois et
+ *  demie plus que le chœur de l'aube. Une densité nulle ne les espace pas, elle les REFUSE. */
 const FLOCK_GAP_S: [number, number] = [9, 26]
+/** Densité nulle : on ne replanifie pas au hasard, on revient voir dans quelques secondes. */
+const CIEL_VIDE_RECHECK_S = 4
+
+/* ── ④ LE VOL EST UN VOL, PAS CINQ SPRITES EN FILE ──────────────────────────────────────
+ *
+ * Avant : cinq oiseaux à vitesse identique, en ligne droite, décalés d'un `lag`. Rien ne les
+ * reliait — c'était un peigne qui glisse. Un vol a maintenant une ANCRE VIRTUELLE (pas un
+ * meneur : un meneur qui sort du champ emporterait la formation avec lui), un cap qui
+ * s'INFLÉCHIT, et chaque oiseau tient SA PLACE avec du retard. Ce sont les écarts qui
+ * respirent qui font un vol ; la ligne droite ne fait qu'un motif.
+ */
+/** L'inflexion du cap : amplitude (rad/s) et lenteur (rad/s de l'oscillateur). */
+const CAP_INFLEXION = 0.5
+const CAP_INFLEXION_HZ = 0.35
+/** Le rapace ne traverse pas, il TIENT : un virage constant, un tour en ~11 s. */
+const CAP_VIRAGE_RAPACE = 0.55
+/** Avec quelle vigueur un oiseau rejoint sa place (1/s). Trop haut = une grille rigide. */
+const PRISE_DE_PLACE = 1.8
+/** L'écart de la formation : recul entre deux rangs, décalage latéral, en tuiles. */
+const RANG_RECUL = 1.3
+const RANG_COTE = 0.95
+/** La nuée levée met ce temps à cesser de gicler pour redevenir un vol (s). */
+const RASSEMBLEMENT_S = 1.4
+
+/* ── ② L'ALTITUDE SE VOIT — l'ombre portée ──────────────────────────────────────────────
+ *
+ * De combien l'ombre se décroche de l'oiseau à pleine altitude (tuiles), et ce que l'altitude
+ * retire au sprite et à l'ombre. Le décalage est vers le SUD : c'est la convention de ce jeu
+ * vu de dessus (le soleil est derrière l'épaule), et c'est le seul sens où l'ombre ne se cache
+ * pas sous l'oiseau.
+ */
+const OMBRE_ECART_X = 0.3
+const OMBRE_ECART_Y = 1.5
+/** Un oiseau haut est plus petit et son ombre plus large et plus pâle. */
+const ALT_RETRAIT = 0.25
+/**
+ * ⚠ **CALIBRÉ EN PIXELS, ET LA PREMIÈRE CALIBRATION ÉTAIT FAUSSE** (`__voir-oiseaux`,
+ * 2026-09-08). L'A/B — ombres masquées, même image — rendait 3,3 de luminance, ce qui donnait
+ * l'ombre pour noyée dans le grain du sol (qui varie d'une vingtaine entre deux points
+ * voisins) ; on l'avait donc montée à 0,85. **Le nombre était un artefact de cadrage** : le
+ * canvas 720 est centré dans une fenêtre de 800, la capture est décalée de 40 px, et la sonde
+ * mesurait deux morceaux d'herbe à côté de la tache. Corrigé, 0,85 pesait **34 de luminance sur
+ * cinq tuiles d'herbe nue** — un trou noir, pas une ombre. 0,5 la ramène à ~20, du même ordre
+ * que la variation propre du terrain : présente, jamais une flaque de goudron.
+ */
+const OMBRE_ALPHA = 0.5
+/** Ce que l'altitude RETIRE à l'ombre. Faible : une ombre haute est plus large et plus douce
+ *  (c'est `OMBRE_ETALEMENT` qui le dit), pas transparente — la faire disparaître en montant
+ *  supprimerait l'indice précisément quand il compte le plus. */
+const OMBRE_ALPHA_ALT = 0.3
+const OMBRE_ETALEMENT = 0.5
 
 /**
  * Les lucioles ne se répandent pas : elles s'AGRÈGENT. Un semis uniforme sur
@@ -105,14 +168,45 @@ const FIREFLY_TINT = 0xc8e87a
  *  plutôt qu'un métronome (« organique en intensité », Alexis 2026-08-26). Pur, donc prouvé.
  *  Et le JEU DE BIOMES vit dans `firefly-biomes.ts`, pour la même raison : pur, donc gardé. */
 
+/**
+ * UN VOL — l'ancre virtuelle que les oiseaux suivent, et rien d'autre. Elle n'a pas de sprite :
+ * c'est un point qui avance, s'infléchit, et sort du champ sans que personne ne meure avec lui.
+ */
+interface Flock {
+  espece: EspeceOiseau
+  x: number
+  y: number
+  /** Cap, en radians. */
+  cap: number
+  vitesse: number
+  /** Virage imposé (rad/s) — nul pour qui traverse, constant pour le rapace qui tourne. */
+  virage: number
+  /** Déphasage de l'inflexion : deux vols ne serpentent pas ensemble. */
+  phase: number
+}
+
 interface Bird {
   sprite: Phaser.GameObjects.Image
+  /** L'ombre portée, au SOL : le seul indice d'altitude (voir `oiseau-art.dessinerOmbre`). */
+  ombre: Phaser.GameObjects.Image
+  vol: Flock
+  espece: EspeceOiseau
   x: number
   y: number
   vx: number
   vy: number
+  /** Sa place dans la formation, en repère du vol : recul derrière l'ancre, décalage latéral. */
+  recul: number
+  cote: number
   /** Déphasage du battement d'ailes : un vol n'est pas un métronome. */
   phase: number
+  /** Instant de naissance (s de scène) — commande la montée d'altitude et le rassemblement. */
+  neS: number
+  /** Altitude de croisière de son espèce, dans [0, 1]. */
+  altCible: number
+  /** Vrai pour une nuée LEVÉE : elle part du sol (altitude 0) et monte. Un vol de traversée,
+   *  lui, entre en scène à son altitude — il vient de loin. */
+  monte: boolean
 }
 
 /** Une luciole tourne autour de l'ancre de SON essaim — elle ne vagabonde pas. */
@@ -162,7 +256,13 @@ export class AmbientLife {
   /** Lus par le smoke test (`--scenario faune`) : il OBSERVE le jeu, il ne le fabrique pas. */
   readonly birds: Bird[] = []
   readonly swarms: Swarm[] = []
+  /** Les ancres virtuelles. Purgées quand leur dernier oiseau est recyclé — un vol sans
+   *  oiseau est une fuite silencieuse, exactement comme une lumière d'essaim oubliée. */
+  private readonly flocks: Flock[] = []
   private nextFlockAt = 3
+  /** La dernière horloge vue par `update` — `envol()` est appelée par la scène SUR UN FAIT,
+   *  hors de la boucle, et un oiseau qui naît doit connaître sa date pour monter. */
+  private nowS = 0
 
   /** `sample` rend l'id du terrain VU d'une tuile (-1 hors carte) : les lucioles choisissent
    *  leur biome, elles ne se posent pas n'importe où. **VU, et non `map.terrain`** : la cendre
@@ -212,96 +312,234 @@ export class AmbientLife {
     darkness: number,
     nuitLucioles: number,
     lit = true,
+    hourOfCycle = 12,
   ): void {
-    this.updateBirds(camera, nowS, dtS)
+    this.nowS = nowS
+    this.updateBirds(camera, nowS, dtS, hourOfCycle)
     this.updateFireflies(camera, nowS, dtS, darkness, nuitLucioles, lit)
   }
 
   /* ── Les oiseaux ──────────────────────────────────────────────────────── */
 
-  private updateBirds(camera: Phaser.Cameras.Scene2D.Camera, nowS: number, dtS: number): void {
-    if (nowS >= this.nextFlockAt && this.birds.length + BIRDS_PER_FLOCK <= MAX_FLOCKS * BIRDS_PER_FLOCK) {
-      this.launchFlock(camera)
-      const [lo, hi] = FLOCK_GAP_S
-      this.nextFlockAt = nowS + lo + Math.random() * (hi - lo)
+  private updateBirds(
+    camera: Phaser.Cameras.Scene2D.Camera,
+    nowS: number,
+    dtS: number,
+    hourOfCycle: number,
+  ): void {
+    // ③ L'HEURE COMMANDE LE PASSAGE — et elle ne commande QUE lui. `envol()` (la nuée de
+    // lisière) naît d'un fait de la sim et se moque de l'heure : la museler la nuit rendrait
+    // le défaut qu'on corrige, retourné (on entendrait la nuée sans la voir).
+    const densite = densiteDeVol(hourOfCycle)
+    if (nowS >= this.nextFlockAt) {
+      if (densite <= 0 || this.flocks.length >= MAX_FLOCKS || this.birds.length >= MAX_BIRDS) {
+        this.nextFlockAt = nowS + CIEL_VIDE_RECHECK_S
+      } else {
+        this.launchFlock(camera, hourOfCycle)
+        const [lo, hi] = FLOCK_GAP_S
+        this.nextFlockAt = nowS + (lo + Math.random() * (hi - lo)) / densite
+      }
     }
 
-    const v = camera.worldView
-    const marginPx = 6 * TILE_PX
+    // LES ANCRES D'ABORD : un oiseau vise la place que son vol occupe CETTE image.
+    const vue = camera.worldView
+    for (const f of this.flocks) {
+      // LE VIRAGE DU RAPACE NE S'ARME QU'À L'ÉCRAN. Un planeur qui tourne dès son entrée
+      // boucle hors champ et se fait recycler sans qu'on l'ait vu : il entre droit, et il ne
+      // se met en cercles qu'une fois arrivé. L'inflexion molle, elle, vaut partout.
+      const px = f.x * TILE_PX
+      const py = f.y * TILE_PX
+      const dedans = px >= vue.x && px <= vue.x + vue.width && py >= vue.y && py <= vue.y + vue.height
+      f.cap += ((dedans ? f.virage : 0) + Math.sin(nowS * CAP_INFLEXION_HZ + f.phase) * CAP_INFLEXION) * dtS
+      f.x += Math.cos(f.cap) * f.vitesse * dtS
+      f.y += Math.sin(f.cap) * f.vitesse * dtS
+    }
+
+    const teinte = teinteDuVol(hourOfCycle)
+    const marginPx = 8 * TILE_PX
     for (let i = this.birds.length - 1; i >= 0; i--) {
       const b = this.birds[i]!
+      const gab = GABARITS[b.espece]
+      // ── SA PLACE : l'ancre du vol, plus son rang tourné dans le repère du cap.
+      const cs = Math.cos(b.vol.cap)
+      const sn = Math.sin(b.vol.cap)
+      const cibleX = b.vol.x - cs * b.recul - sn * b.cote
+      const cibleY = b.vol.y - sn * b.recul + cs * b.cote
+      // LA PRISE monte de 0 à 1 : une nuée qui vient de gicler FINIT SA GERBE avant de
+      // rejoindre sa place. Un vol de traversée naît rassemblé — il vient de loin.
+      const age = nowS - b.neS
+      const prise = b.monte ? Math.min(1, age / RASSEMBLEMENT_S) : 1
+      const vxVoulu = (cibleX - b.x) * PRISE_DE_PLACE + cs * b.vol.vitesse
+      const vyVoulu = (cibleY - b.y) * PRISE_DE_PLACE + sn * b.vol.vitesse
+      const k = Math.min(1, PRISE_DE_PLACE * prise * dtS)
+      b.vx += (vxVoulu - b.vx) * k
+      b.vy += (vyVoulu - b.vy) * k
       b.x += b.vx * dtS
       b.y += b.vy * dtS
-      b.sprite.setPosition(b.x * TILE_PX, b.y * TILE_PX)
-      // Le battement d'ailes, vu de dessus : l'envergure se pince et s'ouvre.
-      const flap = 0.55 + 0.45 * Math.abs(Math.sin(nowS * 9 + b.phase))
-      b.sprite.setScale(1, flap)
+
+      // ② L'ALTITUDE, et tout ce qu'elle fait voir.
+      const alt = b.altCible * (b.monte ? altitudeDeMontee(age) : 1)
+      const bx = b.x * TILE_PX
+      const by = b.y * TILE_PX
+      b.sprite.setPosition(bx, by)
+      // ① LE BATTEMENT EST UNE IMAGE D'AILE, plus une compression du sprite entier.
+      b.sprite.setTexture(cleOiseau(b.espece, imageDAile(nowS, gab.cadence, b.phase)))
+      // LE CAP : la source pointe vers +X, on la TOURNE. Plus aucun `setFlipX` — un oiseau
+      // retourné vole de travers dès que le vol dérive en diagonale.
+      b.sprite.setRotation(Math.atan2(b.vy, b.vx))
+      // ④ L'ÉCHELLE RESTE ENTIÈRE : le seul redimensionnement est celui de l'altitude, et il
+      // est assumé (un oiseau haut est plus petit). Aucun `setDisplaySize`.
+      b.sprite.setScale(1 - ALT_RETRAIT * alt)
+      b.sprite.setAlpha(gab.alpha)
+      b.sprite.setTint(teinte)
+
+      // L'OMBRE CONSULTE LE RELIEF À CHAQUE IMAGE — un oiseau BOUGE, contrairement à l'ancre
+      // d'un essaim qui le lit une fois pour toutes. Sans ça, elle se peindrait à sa rangée
+      // LOGIQUE et passerait sous les pavés du palier au-dessus duquel elle glisse : le défaut
+      // mesuré des lucioles sur un étage (E-R22 / T-R7), transposé à un objet mobile.
+      const ox = b.x + OMBRE_ECART_X * alt
+      const oy = b.y + OMBRE_ECART_Y * alt
+      const { lift, strate } = this.reliefSous?.(ox, oy) ?? { lift: 0, strate: 0 }
+      b.ombre.setPosition(ox * TILE_PX, oy * TILE_PX - lift)
+      b.ombre.setDepth(strate + BIRD_SHADOW_DEPTH)
+      b.ombre.setRotation(b.sprite.rotation)
+      b.ombre.setScale(1 + OMBRE_ETALEMENT * alt)
+      b.ombre.setAlpha(OMBRE_ALPHA * (1 - OMBRE_ALPHA_ALT * alt))
 
       // Sorti du champ (avec marge) : recyclé. Un oiseau ne survit pas à sa traversée.
-      const px = b.x * TILE_PX
-      const py = b.y * TILE_PX
-      if (px < v.x - marginPx || px > v.x + v.width + marginPx || py < v.y - marginPx || py > v.y + v.height + marginPx) {
-        b.sprite.destroy()
+      if (bx < vue.x - marginPx || bx > vue.x + vue.width + marginPx || by < vue.y - marginPx || by > vue.y + vue.height + marginPx) {
+        this.dropBird(b)
         this.birds.splice(i, 1)
       }
     }
+
+    // UN VOL SANS OISEAU EST UNE FUITE — silencieuse, comme la lumière d'essaim oubliée que
+    // `dropSwarm` existe pour empêcher. Les ancres orphelines partent ICI, et nulle part ailleurs.
+    for (let i = this.flocks.length - 1; i >= 0; i--) {
+      const f = this.flocks[i]!
+      if (!this.birds.some((b) => b.vol === f)) this.flocks.splice(i, 1)
+    }
+  }
+
+  /**
+   * LE SEUL ENDROIT OÙ UNE PAIRE (oiseau, ombre) NAÎT. Le rang commande la place dans la
+   * formation : le 0 tient l'ancre, les suivants s'échelonnent en V derrière elle, alternés
+   * d'un côté puis de l'autre — un vol n'est pas une file.
+   */
+  private naitre(vol: Flock, rang: number, x: number, y: number, vx: number, vy: number, nowS: number, monte: boolean): void {
+    const gab = GABARITS[vol.espece]
+    const sprite = this.scene.add
+      .image(x * TILE_PX, y * TILE_PX, cleOiseau(vol.espece, 0))
+      .setDepth(FLYER_DEPTH)
+      .setAlpha(gab.alpha)
+    const ombre = this.scene.add
+      .image(x * TILE_PX, y * TILE_PX, cleOmbreOiseau(vol.espece))
+      .setDepth(BIRD_SHADOW_DEPTH)
+      // ÉTEINTE À LA NAISSANCE, comme une luciole : `updateBirds` lui rend son alpha la même
+      // image, mais un sprite Phaser naît à 1 — l'oublier, c'est une image d'ombre à pleine
+      // force sous un oiseau encore posé.
+      .setAlpha(0)
+    this.birds.push({
+      sprite,
+      ombre,
+      vol,
+      espece: vol.espece,
+      x,
+      y,
+      vx,
+      vy,
+      recul: rang * RANG_RECUL,
+      cote: rang === 0 ? 0 : (rang % 2 === 1 ? 1 : -1) * Math.ceil(rang / 2) * RANG_COTE,
+      phase: Math.random(),
+      neS: nowS,
+      altCible: gab.altitude,
+      monte,
+    })
+  }
+
+  /** L'oiseau ET son ombre — deux objets, une vie. Le second se fuite en silence. */
+  private dropBird(b: Bird): void {
+    b.sprite.destroy()
+    b.ombre.destroy()
   }
 
   /**
    * L'ENVOL DE LA LISIÈRE (forêts-vivantes §3) — le SEUL cas où des oiseaux naissent à
    * l'écran, et c'est le point : ils giclent DES arbres, au fait de domaine `bird_flush`
-   * que la sim vient d'émettre (l'en-tête de ce fichier promettait exactement cette
-   * évolution). La nuée éclate du perchoir vers le haut, en éventail, puis les oiseaux
-   * rejoignent le régime commun (dérive, culling) — rien d'autre à gérer.
+   * que la sim vient d'émettre.
+   *
+   * ⚠ **AUCUNE CONDITION D'HEURE ICI**, et c'est délibéré : la sim émet le fait sur un pas
+   * bruyant à trois heures du matin comme à midi, et `soundForEvent` fait partir le cri avec.
+   * Ce que l'heure lui accorde, c'est sa TEINTE, jamais son existence.
+   *
+   * ILS PARTENT DU SOL (`monte`) : leur ombre est collée sous eux à la première image et se
+   * décroche pendant qu'ils montent — c'est ÇA qui fait une nuée qui quitte un arbre, au lieu
+   * de sept sprites qui apparaissent. Puis la gerbe se RASSEMBLE et le vol file (④).
    */
   envol(tx: number, ty: number): void {
-    for (let i = 0; i < BIRDS_PER_FLOCK + 2; i++) {
-      const angle = -Math.PI / 2 + (i / (BIRDS_PER_FLOCK + 1) - 0.5) * 1.6 // l'éventail vers le haut
-      const vitesse = BIRD_SPEED * (1.6 + Math.random() * 0.8) //             plus vif qu'un vol de croisière
-      const sprite = this.scene.add
-        .image(0, 0, 'fx-bird')
-        .setDepth(FLYER_DEPTH)
-        .setAlpha(0.9)
-        .setFlipX(Math.cos(angle) < 0)
-        .setDisplaySize(TILE_PX * 0.55, TILE_PX * 0.35)
-      this.birds.push({
-        sprite,
-        x: tx + (Math.random() - 0.5) * 1.5,
-        y: ty + (Math.random() - 0.5) * 1.5,
-        vx: Math.cos(angle) * vitesse,
-        vy: Math.sin(angle) * vitesse * 0.6,
-        phase: Math.random() * Math.PI * 2,
-      })
+    if (this.birds.length >= MAX_BIRDS) return
+    const gab = GABARITS.passereau
+    // Une nuée levée est faite de PASSEREAUX par définition : ce sont les petits oiseaux du
+    // sous-bois qui giclent d'un bois, pas un corbeau ni un planeur.
+    const vol: Flock = {
+      espece: 'passereau',
+      x: tx,
+      y: ty,
+      cap: Math.random() * Math.PI * 2, // elle fuit le perchoir, direction tirée
+      vitesse: gab.vitesse,
+      virage: 0,
+      phase: Math.random() * Math.PI * 2,
+    }
+    this.flocks.push(vol)
+    const n = gab.parVol + 2
+    for (let i = 0; i < n && this.birds.length < MAX_BIRDS; i++) {
+      // L'ÉVENTAIL PART VERS LE HAUT : ce que le joueur voit d'abord, c'est la gerbe qui monte
+      // de l'arbre. Le cap du vol ne se lit qu'après, une fois la nuée rassemblée.
+      const angle = -Math.PI / 2 + (i / (n - 1) - 0.5) * 1.6
+      const vitesse = gab.vitesse * (1.6 + Math.random() * 0.8) // plus vif qu'un vol de croisière
+      this.naitre(
+        vol,
+        i,
+        tx + (Math.random() - 0.5) * 1.5,
+        ty + (Math.random() - 0.5) * 1.5,
+        Math.cos(angle) * vitesse,
+        Math.sin(angle) * vitesse * 0.6,
+        this.nowS,
+        true,
+      )
     }
   }
 
-  /** Un vol entre par un bord et sort par l'autre, en diagonale molle. */
-  private launchFlock(camera: Phaser.Cameras.Scene2D.Camera): void {
+  /** Un vol entre par un bord et traverse. Son ESPÈCE vient du lieu et de l'heure (⑤). */
+  private launchFlock(camera: Phaser.Cameras.Scene2D.Camera, hourOfCycle: number): void {
     const v = camera.worldView
+    // ⑤ ON INTERROGE LE SOL SOUS LE CENTRE DU CHAMP, pas le point d'entrée hors champ : c'est
+    // le biome que le joueur TRAVERSE qui doit se voir dans le ciel, pas celui d'à côté. Et
+    // c'est le terrain VU (`PaveLayer.terrainAffiche`), donc la cendre compte — le corbeau de
+    // la Cendrière n'est pas un accident.
+    const terrain = this.sample(Math.floor(camera.midPoint.x / TILE_PX), Math.floor(camera.midPoint.y / TILE_PX))
+    const espece = especeDuVol(terrain, hourOfCycle, Math.random())
+    const gab = GABARITS[espece]
+
     const leftToRight = Math.random() < 0.5
     // Le point d'entrée est HORS champ : un oiseau ne se matérialise jamais à l'écran.
-    const x0 = (leftToRight ? v.x - 5 * TILE_PX : v.x + v.width + 5 * TILE_PX) / TILE_PX
+    const x0 = (leftToRight ? v.x - 6 * TILE_PX : v.x + v.width + 6 * TILE_PX) / TILE_PX
     const y0 = (v.y + Math.random() * v.height) / TILE_PX
-    const heading = (leftToRight ? 1 : -1) * BIRD_SPEED
-    const drift = (Math.random() - 0.5) * BIRD_SPEED * 0.5
-
-    for (let i = 0; i < BIRDS_PER_FLOCK; i++) {
-      // Une formation lâche : les retardataires traînent derrière et de biais.
-      const lag = i * 1.5 + Math.random()
-      const sprite = this.scene.add
-        .image(0, 0, 'fx-bird')
-        .setDepth(FLYER_DEPTH)
-        .setAlpha(0.75)
-        .setFlipX(!leftToRight)
-        .setDisplaySize(TILE_PX * 0.55, TILE_PX * 0.35)
-      this.birds.push({
-        sprite,
-        x: x0 - (leftToRight ? lag : -lag),
-        y: y0 + (Math.random() - 0.5) * 3,
-        vx: heading,
-        vy: drift,
-        phase: Math.random() * Math.PI * 2,
-      })
+    const cap = (leftToRight ? 0 : Math.PI) + (Math.random() - 0.5) * 0.5
+    const vol: Flock = {
+      espece,
+      x: x0,
+      y: y0,
+      cap,
+      vitesse: gab.vitesse,
+      // Le rapace TIENT au lieu de traverser — mais son virage ne s'arme qu'à l'écran (voir
+      // `updateBirds`), sans quoi il bouclerait hors champ sans qu'on l'ait jamais vu.
+      virage: espece === 'rapace' ? CAP_VIRAGE_RAPACE * (Math.random() < 0.5 ? 1 : -1) : 0,
+      phase: Math.random() * Math.PI * 2,
+    }
+    this.flocks.push(vol)
+    for (let i = 0; i < gab.parVol && this.birds.length < MAX_BIRDS; i++) {
+      this.naitre(vol, i, x0, y0, Math.cos(cap) * gab.vitesse, Math.sin(cap) * gab.vitesse, this.nowS, false)
     }
   }
 
@@ -515,9 +753,10 @@ export class AmbientLife {
   }
 
   destroy(): void {
-    for (const b of this.birds) b.sprite.destroy()
+    for (const b of this.birds) this.dropBird(b)
     for (const s of this.swarms) this.dropSwarm(s)
     this.birds.length = 0
+    this.flocks.length = 0
     this.swarms.length = 0
   }
 }

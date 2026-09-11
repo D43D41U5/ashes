@@ -2726,6 +2726,10 @@ export class WorldScene extends Phaser.Scene {
         1 - day,
         partDeNuitDesLucioles(this.lastTime.hourOfCycle, this.lastTime.lever),
         lit,
+        // ET L'HEURE MURALE, pour les OISEAUX (2026-09-08) : elle commande combien le ciel en
+        // porte et de quelle teinte le moment les habille. C'est la MÊME horloge que
+        // `audio/aube.ts`, et c'est tout l'intérêt — le chœur qu'on entend, on le voit.
+        this.lastTime.hourOfCycle,
       )
       // ── LA MÉTÉO (spec meteo.md) — EN DERNIER : le ciel se pose devant tout le reste. ──
       // La foudre parle d'abord (elle rend l'embrasement que le ciel consomme le même frame ;
