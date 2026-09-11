@@ -1052,11 +1052,62 @@ intact. Éprouvé : sceau retiré, la jambe passait au vert. C'est l'**APPROCHE*
 **Rougissement éprouvé, deux sens** : rendre le sceau à TOUS les nœuds (la loi d'avant) → la jambe
 TERRASSE tombe, et elle seule ; le retirer entièrement → la jambe CREUX tombe, et elle seule.
 
+### ✅ CE QUI RESTAIT — LA NAVIGATION PORTE L'ÉTAGE DEPUIS LE 2026-09-11
+
+L'énoncé d'origine : *« La navigation ne porte pas l'étage (`setPathTo` → `pathToward` sans
+`etageFrom`/`etageTo`). Tant que c'est vrai, aucune élection de destination ne peut viser un creux.
+Le jour où on la corrige, la moitié creuse de la garde devient rouvrable — et c'est elle qui le
+dira. »*
+
+**`setPathTo` prend désormais `etage` en SIXIÈME argument, positionnel et obligatoire** — la
+grammaire de `near` (Q5), et pour la même raison : un site qui l'oublierait retomberait en silence
+sur le palier du sol, et `tsc` doit le refuser. Les **27 sites** le passent, et chacun passe
+*exactement* ce que passe le `near` qui garde son geste, à un pas de là : `chest.etage`,
+`station.etage`, `node.etage`, `fire.etage`, `target.etage`, `own.etage` — et `undefined` pour le
+Foyer d'un village (il n'a pas d'étage) comme pour une corvée du tableau (elle vise la cour, au
+sol, et la voisine libre élue juste avant l'a été par un `isBlockedAt` qui juge au palier).
+
+**Le monde d'aujourd'hui est rendu jalon pour jalon.** `etage ?? palierDuSol(tx, ty)` EST le défaut
+qu'avait `pathToward`, et `niveauDuCorps` sur un corps sans étage est le palier de sa tuile,
+c'est-à-dire l'autre. Et le champ n'est renseigné que **sous la roche** : `village.ts` le dit —
+*« au sol (niveau ≥ 0), la structure naît sans `etage` »*. Une terrasse, un chapeau de mesa, un
+Foyer : tous `undefined`. Ce qui change, c'est donc *uniquement* ce qui était faux.
+
+**Ce que ça répare, concrètement** : vers une cible d'un creux, l'A* ne repart plus au palier du
+sol pour rendre un chemin de ~30 jalons **vers le toit**. Il vise l'étage réel — il rend `null`
+quand rien n'y mène, et ce `null` fait relâcher la corvée chez les 27 appelants (`dropTask`,
+`return false`, `done()`). Un refus franc au lieu d'un villageois figé à 0,05 tuile de sa cible.
+
+**La garde (`etages-etancheite.test.ts`, bloc « E-R5 §23 »)** — une plaine nue, un village à
+l'ouest, une salle à l'étage −1 à l'est, et la gueule posée ou non :
+
+| jambe | ce qu'elle affirme |
+|---|---|
+| LA PRÉMISSE | la salle est bien sous la plaine, le villageois au sol, E-R5 dit non à la paire |
+| LE TÉMOIN | la **même tuile**, visée à la surface, se rejoint sans détour — la garde ne peut pas passer au vert parce que « rien n'est joignable par ici » |
+| LA SALLE SCELLÉE | sans gueule, `setPathTo` **refuse** et ne laisse pas un bout de chemin en poche |
+| LE DÉFAUT D'AVANT | l'appel exact d'avant (`pathToward` à ses défauts) rendait un vrai chemin dont le **dernier jalon est à la surface** — le toit |
+| LA SALLE OUVERTE | une gueule suffit : le chemin arrive sur la tuile visée **par le bas** (`etage === -1`) |
+
+**Rougissement éprouvé** : rendre `setPathTo` de nouveau muet (`undefined, undefined` à
+`pathToward`) → SALLE SCELLÉE et SALLE OUVERTE tombent, **et elles seules** ; prémisse, témoin et
+défaut-d'avant restent verts.
+
+`Npc.path` déclare maintenant `etage?: number`. **Additif au TYPE seulement** : `findPath` posait
+déjà ce champ (*« un pas au sol reste `{tx, ty}` »*), le runtime ne bouge pas d'un bit.
+
 ### CE QUI RESTE
 
-- **La navigation ne porte pas l'étage** (`setPathTo` → `pathToward` sans `etageFrom`/`etageTo`).
-  Tant que c'est vrai, aucune élection de destination ne peut viser un creux. Le jour où on la
-  corrige, la moitié creuse de la garde devient rouvrable — et c'est elle qui le dira.
+- **`followPath` est aveugle à l'étage** — il ne remplit pas `etages` dans son `MoveWorld` et
+  n'appelle pas `poserLEtageDuCorps`, contrairement à l'avatar (`sim.ts`) et à la bête
+  (`monsters.ts`, décision du 2026-09-01). **Le PNJ est donc le seul corps du jeu qui ne monte
+  pas** : son chemin peut désormais descendre dans une salle, son corps ne l'y suivrait pas. C'est
+  sans conséquence aujourd'hui — rien n'élit de cible dans un creux (E-R5 scelle l'élection, et le
+  bâti n'y naît que si un joueur descend bâtir). **C'est une décision d'Alexis** : faire marcher
+  les villageois entre les étages se VOIT (on les verrait prendre les rampes, entrer dans les
+  grottes), et ce n'est pas une correction technique.
+- **L'élection reste fermée aux creux** (E-R5, `dansUnCreux`) — rouverte pour les terrasses le
+  2026-09-08, pas pour les salles.
 
 ### CE QUE ÇA DÉPLACE AU BANC — **RIEN QU'ON PUISSE LIRE À UN JOUR**, et c'est une leçon
 

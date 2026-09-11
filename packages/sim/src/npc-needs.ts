@@ -47,7 +47,7 @@ export function handleWounds(state: SimState, village: Village, npc: Npc, entity
   if (near(state.map, entity, chest.tx, chest.ty, chest.etage)) {
     return withdraw(state, entity, chest.id, 'fiber', COMBAT.BANDAGE_FIBER_COST) > 0
   }
-  if (npc.path.length === 0 && !setPathTo(state, npc, entity, chest.tx, chest.ty)) return false
+  if (npc.path.length === 0 && !setPathTo(state, npc, entity, chest.tx, chest.ty, chest.etage)) return false
   followPath(state, npc, entity)
   return true
 }
@@ -89,7 +89,7 @@ export function handleHunger(state: SimState, village: Village, npc: Npc, entity
   // de roche) laisse `path` vide — `followPath` ne ferait rien et le tick serait
   // consommé quand même, à l'identique, pour toujours. On rend la main : il ne
   // mangera pas, mais il travaillera, dormira, se défendra. La faim ne tue pas.
-  if (npc.path.length === 0 && !setPathTo(state, npc, entity, chest.tx, chest.ty)) return false
+  if (npc.path.length === 0 && !setPathTo(state, npc, entity, chest.tx, chest.ty, chest.etage)) return false
   followPath(state, npc, entity)
   return true
 }
@@ -126,7 +126,7 @@ export function handleSleep(state: SimState, npc: Npc, entity: Entity): boolean 
     }
     // ANTI-LIVELOCK (même garde que handleCold et handleHunger) : un lit inatteignable
     // ne doit pas consommer le tick à vide jusqu'au matin.
-    if (npc.path.length === 0 && !setPathTo(state, npc, entity, target.tx, target.ty)) return false
+    if (npc.path.length === 0 && !setPathTo(state, npc, entity, target.tx, target.ty, target.etage)) return false
     followPath(state, npc, entity)
     return true
   }
@@ -164,7 +164,7 @@ export function handleOrage(state: SimState, village: Village, npc: Npc, entity:
     npc.path = []
     return true
   }
-  if (npc.path.length === 0 && !setPathTo(state, npc, entity, target.tx, target.ty)) return false // ANTI-LIVELOCK
+  if (npc.path.length === 0 && !setPathTo(state, npc, entity, target.tx, target.ty, target.etage)) return false // ANTI-LIVELOCK
   followPath(state, npc, entity)
   return true
 }
@@ -193,7 +193,7 @@ export function handleCold(state: SimState, village: Village, npc: Npc, entity: 
   const target = home ?? state.structures.find((s) => s.type === 'fire' && s.villageId === village.id)
   if (!target) return false
   if (npc.path.length === 0) {
-    if (!setPathTo(state, npc, entity, target.tx, target.ty)) return false // ANTI-LIVELOCK
+    if (!setPathTo(state, npc, entity, target.tx, target.ty, target.etage)) return false // ANTI-LIVELOCK
   }
   followPath(state, npc, entity)
   return true

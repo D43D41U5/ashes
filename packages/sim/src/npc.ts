@@ -35,7 +35,7 @@ import {
 import { isBlockedAt, moveAvatar, type MoveWorld } from './collision'
 import { engageRange, startAttack, weaponProfile } from './combat'
 import { poseLibre } from './defriche'
-import { atteignableEntreEtages, atteintLeSol, dansUnCreux, niveauDuCorps } from './etages'
+import { atteignableEntreEtages, atteintLeSol, dansUnCreux, niveauDuCorps, palierDuSol } from './etages'
 import type { WorldMap } from './map'
 import { applyEconomyAction, toolRank, type ResourceNode } from './economy'
 import { sertExigence } from './pieces'
@@ -71,7 +71,14 @@ export interface Npc {
   /** En cours de repli vers un feu à cause du froid (hystérésis, spec IA chaleur). */
   seekingWarmth: boolean
   task: NpcTaskState | null
-  path: { tx: number; ty: number }[]
+  /**
+   * Les jalons. **`etage` est ADDITIF** (`findPath` : « un pas au sol reste `{tx, ty}` ») : le
+   * champ n'apparaît que sur un jalon hors du sol, donc une sauvegarde d'avant ne gagne pas un
+   * octet et le runtime ne change pas d'un bit — l'A* posait déjà ce champ, seul le TYPE
+   * l'ignorait. Le déclarer, c'est rendre lisible ce que le chemin sait déjà : `followPath`,
+   * lui, ne le lit pas encore (spec `etages.md` §23).
+   */
+  path: { tx: number; ty: number; etage?: number }[]
   stuck: number
   /** Ticks passés à ne PAS progresser vers une menace (bloqué contre un obstacle).
    *  Au-delà de `DEFENSE_GIVE_UP_TICKS`, on lâche la garde — sinon le PNJ monte
@@ -259,12 +266,44 @@ export function followPath(state: SimState, npc: Npc, entity: Entity): boolean {
   return true
 }
 
-/** Calcule un chemin vers une tuile (ou une voisine marchable si elle bloque). */
-export function setPathTo(state: SimState, npc: Npc, entity: Entity, tx: number, ty: number): boolean {
+/**
+ * Calcule un chemin vers une tuile (ou une voisine marchable si elle bloque).
+ *
+ * ═══ `etage` EST POSITIONNEL ET OBLIGATOIRE, comme pour `near` (spec `etages.md` §23) ═══
+ *
+ * L'APPROCHE DOIT VISER CE QUE L'INTERACTION EXIGE. Les deux vont par paire dans tout ce
+ * fichier — `near(map, entity, X.tx, X.ty, X.etage)` garde le geste, `setPathTo(…, X.etage)`
+ * fait la marche —, et tant que la seconde ignorait l'étage de la première, elles pouvaient
+ * parler de deux endroits différents. Le cas mesuré (`etages-etancheite.test.ts`, jambe du
+ * creux) : vers un coffre d'une salle sous la roche, `pathToward` repartait au palier du SOL,
+ * trouvait un vrai chemin d'une trentaine de jalons, et le PNJ venait se planter **sur le toit
+ * de la salle, à 0,05 tuile** de sa cible. Il y restait pour toujours : `near` refusait le
+ * geste, et le garde-fou qui relâche la corvée ne se déclenche QUE si aucun chemin n'existe.
+ * Désormais l'A* vise l'étage réel : il rend `null`, la corvée est relâchée, le PNJ fait autre
+ * chose. Un refus franc au lieu d'un villageois figé.
+ *
+ * `undefined` = LE SOL DE LA TUILE, et c'est la bonne réponse pour presque tout : un Foyer de
+ * village n'a pas d'étage, et une structure bâtie debout non plus (`village.ts` : « au sol
+ * (niveau ≥ 0), la structure naît sans `etage` »). Le champ n'est renseigné que sous la roche.
+ * Le monde d'aujourd'hui est donc rendu jalon pour jalon — `etage ?? palierDuSol(tx, ty)` EST
+ * le défaut qu'avait `pathToward`, et `niveauDuCorps` sur un corps sans étage est le palier de
+ * sa tuile, c'est-à-dire l'autre défaut. Ce qui change, c'est ce qui était faux.
+ *
+ * Obligatoire, donc : un site qui l'oublierait retomberait en silence sur le palier du sol, et
+ * `tsc` doit le refuser plutôt que le jeu s'en accommoder.
+ */
+export function setPathTo(
+  state: SimState, npc: Npc, entity: Entity, tx: number, ty: number, etage: number | undefined,
+): boolean {
   const world = moveWorldFor(state, npc.villageId)
   // Cible bloquée (Feu à hitbox, mur…) → on se poste au voisin libre le plus
   // proche. Logique partagée avec la dérive du Cendreux (`pathToward`).
-  const path = pathToward(world, entity.x, entity.y, tx, ty)
+  const path = pathToward(
+    world, entity.x, entity.y, tx, ty,
+    undefined, // le budget d'exploration : celui de `pathToward`, inchangé
+    niveauDuCorps(state.map, entity),
+    etage ?? palierDuSol(state.map, tx, ty),
+  )
   npc.path = path ?? []
   return path !== null
 }
@@ -574,7 +613,7 @@ function executeGather(state: SimState, village: Village, npc: Npc, entity: Enti
       }
       return
     }
-    if (npc.path.length === 0 && !setPathTo(state, npc, entity, node.tx, node.ty)) {
+    if (npc.path.length === 0 && !setPathTo(state, npc, entity, node.tx, node.ty, node.etage)) {
       // INACCESSIBLE — et là encore, la corvée QUITTE le tableau. Un nœud qu'aucune route ne
       // rejoint depuis le village n'est pas plus atteignable pour le voisin. Relâchée libre, elle
       // était reprise au tick suivant et **chaque reprise brûle une recherche de chemin complète**
@@ -605,7 +644,7 @@ function executeGather(state: SimState, village: Village, npc: Npc, entity: Enti
     dropTask(village, npc, true)
     return
   }
-  if (npc.path.length === 0 && !setPathTo(state, npc, entity, chest.tx, chest.ty)) {
+  if (npc.path.length === 0 && !setPathTo(state, npc, entity, chest.tx, chest.ty, chest.etage)) {
     dropTask(village, npc, false)
     return
   }
@@ -647,7 +686,7 @@ function progressCraft(state: SimState, village: Village, npc: Npc, entity: Enti
   if (entity.craftQueue.some((o) => o.recipeId === recipeId)) {
     // La file travaille : on reste à portée de la station, on ne fait rien d'autre.
     if (station && !near(state.map, entity, station.tx, station.ty, station.etage)) {
-      if (npc.path.length === 0 && !setPathTo(state, npc, entity, station.tx, station.ty)) return 'failed'
+      if (npc.path.length === 0 && !setPathTo(state, npc, entity, station.tx, station.ty, station.etage)) return 'failed'
       followPath(state, npc, entity)
     }
     return 'busy'
@@ -665,13 +704,13 @@ function progressCraft(state: SimState, village: Village, npc: Npc, entity: Enti
       }
       return 'busy'
     }
-    if (npc.path.length === 0 && !setPathTo(state, npc, entity, chest.tx, chest.ty)) return 'failed'
+    if (npc.path.length === 0 && !setPathTo(state, npc, entity, chest.tx, chest.ty, chest.etage)) return 'failed'
     followPath(state, npc, entity)
     return 'busy'
   }
   // Tout est en poche : à la station, et on enfile.
   if (station && !near(state.map, entity, station.tx, station.ty, station.etage)) {
-    if (npc.path.length === 0 && !setPathTo(state, npc, entity, station.tx, station.ty)) return 'failed'
+    if (npc.path.length === 0 && !setPathTo(state, npc, entity, station.tx, station.ty, station.etage)) return 'failed'
     followPath(state, npc, entity)
     return 'busy'
   }
@@ -687,7 +726,7 @@ function ensureHammer(state: SimState, village: Village, npc: Npc, entity: Entit
     if (near(state.map, entity, chest.tx, chest.ty, chest.etage)) {
       return withdraw(state, entity, chest.id, 'hammer', 1) > 0 ? 'busy' : 'failed'
     }
-    if (npc.path.length === 0 && !setPathTo(state, npc, entity, chest.tx, chest.ty)) return 'failed'
+    if (npc.path.length === 0 && !setPathTo(state, npc, entity, chest.tx, chest.ty, chest.etage)) return 'failed'
     followPath(state, npc, entity)
     return 'busy'
   }
@@ -721,7 +760,7 @@ function ensureOutil(
     if (near(state.map, entity, chest.tx, chest.ty, chest.etage)) {
       return withdraw(state, entity, chest.id, p, 1) > 0 ? 'busy' : 'failed'
     }
-    if (npc.path.length === 0 && !setPathTo(state, npc, entity, chest.tx, chest.ty)) return 'failed'
+    if (npc.path.length === 0 && !setPathTo(state, npc, entity, chest.tx, chest.ty, chest.etage)) return 'failed'
     followPath(state, npc, entity)
     return 'busy'
   }
@@ -837,7 +876,7 @@ function executeBuild(state: SimState, village: Village, npc: Npc, entity: Entit
           }
           return
         }
-        if (npc.path.length === 0 && !setPathTo(state, npc, entity, chest.tx, chest.ty)) {
+        if (npc.path.length === 0 && !setPathTo(state, npc, entity, chest.tx, chest.ty, chest.etage)) {
           return dropTask(village, npc, false)
         }
         followPath(state, npc, entity)
@@ -961,7 +1000,14 @@ function executeBuild(state: SimState, village: Village, npc: Npc, entity: Entit
     // Aucune voisine libre : l'arbre est enclavé, la corvée n'a rien à faire là.
     if (best === Infinity) return dropTask(village, npc, true)
   }
-  if (npc.path.length === 0 && !setPathTo(state, npc, entity, cx, cy)) return dropTask(village, npc, true)
+  // L'ÉTAGE DE LA CORVÉE EST `undefined`, ET CE N'EST PAS UN REPLI PAR DÉFAUT : c'est la
+  // réponse que donne déjà le `near` qui garde ce geste (`near(state.map, entity, tx, ty,
+  // undefined, portee)`, plus haut dans cette même fonction). Une corvée du tableau de village
+  // vise une tuile de la COUR, au sol ; et la voisine libre élue juste au-dessus a été trouvée
+  // par un `isBlockedAt` qui juge lui aussi au palier. Les trois parlent du même endroit — le
+  // jour où une corvée se posera sous la roche, c'est le tableau qui portera l'étage, et les
+  // trois sites le liront ensemble.
+  if (npc.path.length === 0 && !setPathTo(state, npc, entity, cx, cy, undefined)) return dropTask(village, npc, true)
   followPath(state, npc, entity)
 }
 
@@ -992,7 +1038,7 @@ function executeCook(state: SimState, village: Village, npc: Npc, entity: Entity
       }
       return
     }
-    if (npc.path.length === 0 && !setPathTo(state, npc, entity, chest.tx, chest.ty)) return dropTask(village, npc, false)
+    if (npc.path.length === 0 && !setPathTo(state, npc, entity, chest.tx, chest.ty, chest.etage)) return dropTask(village, npc, false)
     followPath(state, npc, entity)
     return
   }
@@ -1027,7 +1073,7 @@ function executeCook(state: SimState, village: Village, npc: Npc, entity: Entity
       }
       return
     }
-    if (npc.path.length === 0 && !setPathTo(state, npc, entity, fire.tx, fire.ty)) return dropTask(village, npc, false)
+    if (npc.path.length === 0 && !setPathTo(state, npc, entity, fire.tx, fire.ty, fire.etage)) return dropTask(village, npc, false)
     followPath(state, npc, entity)
     return
   }
@@ -1039,7 +1085,7 @@ function executeCook(state: SimState, village: Village, npc: Npc, entity: Entity
     dropTask(village, npc, true)
     return
   }
-  if (npc.path.length === 0 && !setPathTo(state, npc, entity, chest.tx, chest.ty)) return dropTask(village, npc, false)
+  if (npc.path.length === 0 && !setPathTo(state, npc, entity, chest.tx, chest.ty, chest.etage)) return dropTask(village, npc, false)
   followPath(state, npc, entity)
 }
 
@@ -1073,7 +1119,7 @@ function executeRepair(state: SimState, village: Village, npc: Npc, entity: Enti
       task.stage = 'work'
       return
     }
-    if (npc.path.length === 0 && !setPathTo(state, npc, entity, chest.tx, chest.ty)) return dropTask(village, npc, false)
+    if (npc.path.length === 0 && !setPathTo(state, npc, entity, chest.tx, chest.ty, chest.etage)) return dropTask(village, npc, false)
     followPath(state, npc, entity)
     return
   }
@@ -1086,7 +1132,7 @@ function executeRepair(state: SimState, village: Village, npc: Npc, entity: Enti
     }
     return
   }
-  if (npc.path.length === 0 && !setPathTo(state, npc, entity, target.tx, target.ty)) return dropTask(village, npc, false)
+  if (npc.path.length === 0 && !setPathTo(state, npc, entity, target.tx, target.ty, target.etage)) return dropTask(village, npc, false)
   followPath(state, npc, entity)
 }
 
@@ -1107,7 +1153,7 @@ function executeFeedFire(state: SimState, village: Village, npc: Npc, entity: En
       task.stage = 'work'
       return
     }
-    if (npc.path.length === 0 && !setPathTo(state, npc, entity, chest.tx, chest.ty)) return dropTask(village, npc, false)
+    if (npc.path.length === 0 && !setPathTo(state, npc, entity, chest.tx, chest.ty, chest.etage)) return dropTask(village, npc, false)
     followPath(state, npc, entity)
     return
   }
@@ -1120,7 +1166,7 @@ function executeFeedFire(state: SimState, village: Village, npc: Npc, entity: En
     }
     return
   }
-  if (npc.path.length === 0 && !setPathTo(state, npc, entity, village.fireTx, village.fireTy)) return dropTask(village, npc, false)
+  if (npc.path.length === 0 && !setPathTo(state, npc, entity, village.fireTx, village.fireTy, undefined)) return dropTask(village, npc, false)
   followPath(state, npc, entity)
 }
 
@@ -1286,7 +1332,7 @@ export function advanceNpcs(state: SimState): void {
         // Anti-livelock (patron handleSleep) : Feu inatteignable → oisif sur place.
         const dFeu = Math.max(Math.abs(entity.x - (village.fireTx + 0.5)), Math.abs(entity.y - (village.fireTy + 0.5)))
         if (getGameTime(state).isNight && dFeu > NPC_AI.NIGHT_RALLY_TILES) {
-          if (npc.path.length > 0 || setPathTo(state, npc, entity, village.fireTx, village.fireTy)) {
+          if (npc.path.length > 0 || setPathTo(state, npc, entity, village.fireTx, village.fireTy, undefined)) {
             followPath(state, npc, entity)
           }
         } else {

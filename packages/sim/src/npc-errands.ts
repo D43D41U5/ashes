@@ -119,7 +119,7 @@ export function handleErrand(state: SimState, village: Village, npc: Npc, entity
         errand.stage = 'go'
         return true
       }
-      if (npc.path.length === 0 && !setPathTo(state, npc, entity, own.tx, own.ty)) return done()
+      if (npc.path.length === 0 && !setPathTo(state, npc, entity, own.tx, own.ty, own.etage)) return done()
       followPath(state, npc, entity)
       return true
     }
@@ -136,13 +136,13 @@ export function handleErrand(state: SimState, village: Village, npc: Npc, entity
         npc.path = []
         return true
       }
-      if (npc.path.length === 0 && !setPathTo(state, npc, entity, target.tx, target.ty)) return done()
+      if (npc.path.length === 0 && !setPathTo(state, npc, entity, target.tx, target.ty, target.etage)) return done()
       followPath(state, npc, entity)
       return true
     }
     // home
     if (near(state.map, entity, village.fireTx, village.fireTy, undefined, 2)) return done()
-    if (npc.path.length === 0 && !setPathTo(state, npc, entity, village.fireTx, village.fireTy)) return done()
+    if (npc.path.length === 0 && !setPathTo(state, npc, entity, village.fireTx, village.fireTy, undefined)) return done()
     followPath(state, npc, entity)
     return true
   }
@@ -183,7 +183,7 @@ export function handleErrand(state: SimState, village: Village, npc: Npc, entity
       npc.path = []
       return true
     }
-    if (npc.path.length === 0 && !setPathTo(state, npc, entity, target.tx, target.ty)) return done()
+    if (npc.path.length === 0 && !setPathTo(state, npc, entity, target.tx, target.ty, target.etage)) return done()
     followPath(state, npc, entity)
     return true
   }
@@ -234,8 +234,9 @@ export function handleErrand(state: SimState, village: Village, npc: Npc, entity
     }
     return done()
   }
-  const homeTarget = own ?? { tx: village.fireTx, ty: village.fireTy }
-  if (npc.path.length === 0 && !setPathTo(state, npc, entity, homeTarget.tx, homeTarget.ty)) return done()
+  // Le repli est le FOYER du village, qui n'a pas d'étage : `undefined` = le sol de sa tuile.
+  const homeTarget = own ?? { tx: village.fireTx, ty: village.fireTy, etage: undefined }
+  if (npc.path.length === 0 && !setPathTo(state, npc, entity, homeTarget.tx, homeTarget.ty, homeTarget.etage)) return done()
   followPath(state, npc, entity)
   return true
 }

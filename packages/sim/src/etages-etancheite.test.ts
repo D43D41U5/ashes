@@ -27,7 +27,8 @@ import { advanceDecouverte } from './decouverte'
 import { advanceCoinsConnus, advanceEnvols, bruitDuSol, gaitNoise } from './faune'
 import { drainEvents } from './events'
 import { butcherRejection, castRejection } from './economy'
-import { near } from './npc'
+import { near, setPathTo } from './npc'
+import { pathToward } from './pathfinding'
 import { advanceUpkeep, applyVillageAction, createVillage, evaluateBuild, grantItems } from './village'
 import { advanceCendreux, nearestWarmth, willRiseAsCendreux } from './cendreux'
 import { applyDamage } from './combat'
@@ -928,11 +929,122 @@ describe('E-R5 — le glanage élit ce que le CHEMIN rejoint, pas ce que la main
     const r = courseALaBranche(villageEtUneBranche(-1))
     expect(r.glanee, 'la branche de la salle a été glanée').toBe(false)
     // LA MESURE QUI PORTE, et ses deux valeurs : scellé, le village ne s'approche jamais à moins
-    // de **10,5 tuiles** ; sceau retiré, un PNJ vient se planter à **0,05 tuile** — c'est-à-dire
-    // SUR le toit de la salle, `setPathTo` ne portant pas d'étage. Il y resterait : `near` refuse
+    // de **10,5 tuiles** ; sceau retiré, un PNJ venait se planter à **0,05 tuile** — c'est-à-dire
+    // SUR le toit de la salle, `setPathTo` ne portant pas d'étage. Il y restait : `near` refuse
     // le geste, et le garde-fou qui relâche la corvée ne se déclenche que si AUCUN chemin
     // n'existe. Le seuil est posé entre les deux, du côté de l'arrivée.
+    //
+    // ⚠ **LE 2026-09-11, LA MOITIÉ QUI PLANTAIT SUR LE TOIT A ÉTÉ RÉPARÉE** (§23, le bloc en bas
+    // de ce fichier) : `setPathTo` porte l'étage, donc sceau retiré, l'A* rendrait `null` et la
+    // corvée serait relâchée au lieu de figer un villageois. Le sceau d'E-R5, lui, n'a pas bougé
+    // — c'est l'ÉLECTION du nœud qui reste fermée aux creux, et c'est une décision d'Alexis.
     expect(r.approche, 'il s’est mis en route vers une branche qu’il ne peut pas atteindre')
       .toBeGreaterThan(4)
+  })
+})
+
+/* ══════════ §23 — L'APPROCHE PORTE L'ÉTAGE QUE L'INTERACTION EXIGE ══════════
+ *
+ * Le dernier point ouvert de la spec, mot pour mot : *« La navigation ne porte pas l'étage
+ * (`setPathTo` → `pathToward` sans `etageFrom`/`etageTo`). Tant que c'est vrai, aucune élection
+ * de destination ne peut viser un creux. Le jour où on la corrige, la moitié creuse de la garde
+ * devient rouvrable — et c'est elle qui le dira. »*
+ *
+ * ⚠ **CE QUI FERAIT ROUGIR CETTE GARDE, énoncé avant d'accepter son vert** : rendre l'étage à
+ * `setPathTo` de nouveau muet (repasser `undefined` à `pathToward`) — la jambe de la salle
+ * rendrait alors `true`, et son chemin finirait au PLAFOND. C'est précisément l'état d'avant, et
+ * c'est pourquoi le TÉMOIN de chaque jambe est la MÊME tuile visée à la surface : si la garde
+ * passait au vert parce que « rien n'est joignable par ici », le témoin rougirait avec elle.
+ */
+describe('E-R5 §23 — l’approche vise l’étage de sa cible, pas le sol sous elle', () => {
+  /** La salle : un carré sous la plaine, à l'étage −1, à douze tuiles du village. */
+  const SALLE = { x0: 14, y0: 10, x1: 18, y1: 14 }
+  /** La tuile visée DANS la salle — et sa jumelle à la surface, qui est le témoin. */
+  const CIBLE = { tx: 16, ty: 11 }
+  /** La gueule : le seul passage entre le sol et la salle, quand on la pose. */
+  const GUEULE = { x: SALLE.x0, y: SALLE.y0 }
+
+  /**
+   * Une plaine nue, un village à l'ouest, et une salle sous la roche à l'est.
+   *
+   * `avecGueule` pose (ou non) le connecteur — c'est TOUTE la différence entre « la salle est
+   * inatteignable » et « la salle se rejoint », et rien d'autre ne change dans la carte.
+   */
+  function salleDeLabo(avecGueule: boolean): SimState {
+    const map = createEmptyMap(28, 28, TERRAIN_GRASS)
+    const idx: number[] = []
+    for (let y = SALLE.y0; y < SALLE.y1; y++) {
+      for (let x = SALLE.x0; x < SALLE.x1; x++) idx.push(y * map.width + x)
+    }
+    if (avecGueule) idx.push(GUEULE.y * map.width + GUEULE.x)
+    idx.sort((a, b) => a - b)
+    const etage: EtageCreux = {
+      niveau: -1, idx: [...new Set(idx)], terrain: [...new Set(idx)].map(() => TERRAIN_GRASS),
+      x0: SALLE.x0, y0: SALLE.y0, x1: SALLE.x1, y1: SALLE.y1,
+    }
+    map.etages = [etage]
+    if (avecGueule) map.connecteurs = [{ x: GUEULE.x, y: GUEULE.y, de: 0, vers: -1, type: 'gueule' }]
+    const sim = createSim(23, { map, nodes: [], worldEvents: false, faunaCap: 0, meteoActive: false, nightHunt: false })
+    foundNpcVillage(sim, 5, 12, 1)
+    return sim
+  }
+
+  /** Le premier villageois et son corps — c'est lui qui marche. */
+  function leVillageois(sim: SimState): { npc: (typeof sim.npcs)[number]; e: ReturnType<typeof leCorps> } {
+    const npc = sim.npcs[0]!
+    return { npc, e: leCorps(sim, npc.entityId) }
+  }
+  function leCorps(sim: SimState, id: number) {
+    return sim.entities.find((k) => k.id === id)!
+  }
+
+  it('LA PRÉMISSE — la salle est bien sous la plaine, et le villageois est au sol', () => {
+    const sim = salleDeLabo(false)
+    const { e } = leVillageois(sim)
+    expect(niveauDuCorps(sim.map, e), 'le villageois marche au sol').toBe(0)
+    expect(palierDuSol(sim.map, CIBLE.tx, CIBLE.ty), 'la tuile visée est une plaine, en surface').toBe(0)
+    expect(atteintLeSol(sim.map, e, CIBLE.tx, CIBLE.ty, -1), 'E-R5 : douze mètres de roche les séparent').toBe(false)
+  })
+
+  it('LE TÉMOIN — la MÊME tuile, visée à la surface, se rejoint sans détour', () => {
+    const sim = salleDeLabo(false)
+    const { npc, e } = leVillageois(sim)
+    expect(setPathTo(sim, npc, e, CIBLE.tx, CIBLE.ty, undefined), 'la plaine est traversable').toBe(true)
+    expect(npc.path.length, 'et le chemin mène quelque part').toBeGreaterThan(0)
+    expect(npc.path[npc.path.length - 1]).toMatchObject({ tx: CIBLE.tx, ty: CIBLE.ty })
+  })
+
+  it('LA SALLE SCELLÉE — l’approche REFUSE, elle ne mène plus au plafond', () => {
+    const sim = salleDeLabo(false)
+    const { npc, e } = leVillageois(sim)
+    // Sans gueule, il n'y a AUCUN passage : l'A* doit rendre `null`, et c'est ce `null` qui fait
+    // relâcher la corvée chez tous les appelants (`dropTask`, `return false`, `done()`).
+    expect(setPathTo(sim, npc, e, CIBLE.tx, CIBLE.ty, -1), 'il s’est mis en route vers une salle close').toBe(false)
+    expect(npc.path.length, 'et il ne garde pas un bout de chemin en poche').toBe(0)
+  })
+
+  it('LE DÉFAUT D’AVANT — sans l’étage, le chemin existait et finissait SUR LE PLAFOND', () => {
+    const sim = salleDeLabo(false)
+    const { e } = leVillageois(sim)
+    // C'est l'appel EXACT que faisait `setPathTo` avant le 2026-09-11 : les défauts de
+    // `pathToward`, c'est-à-dire le palier du sol des deux côtés. Il rend un vrai chemin — vers
+    // la surface. Le PNJ s'y plantait, `near` refusait le geste, et rien ne relâchait la corvée.
+    const monde = { map: sim.map, structures: sim.structures, nodes: sim.nodes, moverVillageId: sim.npcs[0]!.villageId, opensDoors: true, etat: sim }
+    const chemin = pathToward(monde, e.x, e.y, CIBLE.tx, CIBLE.ty)
+    expect(chemin, 'le chemin d’avant existait bel et bien').not.toBeNull()
+    expect(chemin![chemin!.length - 1]!.etage, 'et son dernier jalon était à la SURFACE').toBeUndefined()
+  })
+
+  it('LA SALLE OUVERTE — une gueule suffit, et le chemin DESCEND', () => {
+    const sim = salleDeLabo(true)
+    const { npc, e } = leVillageois(sim)
+    expect(setPathTo(sim, npc, e, CIBLE.tx, CIBLE.ty, -1), 'la salle a pourtant une entrée').toBe(true)
+    const dernier = npc.path[npc.path.length - 1]!
+    expect(dernier, 'le chemin arrive bien sur la tuile visée').toMatchObject({ tx: CIBLE.tx, ty: CIBLE.ty })
+    expect(dernier.etage, 'et il y arrive PAR LE BAS — c’est ça, porter l’étage').toBe(-1)
+    // ⚠ Ce que cette jambe NE dit PAS : que le villageois y marche. `followPath` reste aveugle à
+    // l'étage (il ne remplit pas `etages` et ne pose pas `poserLEtageDuCorps`, contrairement à
+    // l'avatar et à la bête) — c'est le point qui reste ouvert en §23, et une décision d'Alexis :
+    // le jour où les villageois descendront, c'est là qu'on le branchera.
   })
 })
