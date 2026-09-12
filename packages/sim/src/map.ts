@@ -201,6 +201,19 @@ export interface WorldMap {
    */
   natureEau?: number[]
   /**
+   * LE DÉBIT (A1 de la reprise de l'eau — décision d'Alexis du 2026-09-12 : persister, par
+   * tuile) : par tuile, un rang 0-7. `0` = terre ou eau DORMANTE (lac, mare, marais, eaux des
+   * zones) ; `1..7` = eau qui COULE, du filet de tête au plus gros fleuve à pleine largeur —
+   * `rangDeDebit` (`zonegen-hydro.ts`) sur le rayon que le peintre a estampé, seule trace du
+   * débit qui survive à la génération. **Donnée STATIQUE, gelée à l'amorce**, comme `distEau`
+   * et `natureEau` (`carte-immuable` la hache). Additive : une carte d'avant se relit sans.
+   *
+   * MESURÉ (graine 2026) : +2,6 Mo de JSON par carte, sans lecteur au runtime le jour de sa
+   * naissance — c'est le « geste zéro » de `docs/reprise-eau.md` : ce qui devinait la taille de
+   * l'eau (B2 le lit qui s'entend, C2 le régime du bief) la lira ici.
+   */
+  debit?: number[]
+  /**
    * LES COULÉES (forêts-vivantes §4 R5) : les chemins de terre du gibier, couche → eau.
    * Index de tuile DANS L'ORDRE du tracé, chemins séparés par -1. Donnée STATIQUE, gelée à
    * l'amorce (hachée par `carte-immuable`), additive : une carte d'avant se relit sans. Le

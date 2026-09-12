@@ -211,6 +211,16 @@ export interface Hydrologie {
    */
   lits: number[]
   /**
+   * LE DÉBIT, PAR TUILE — `map.debit` (A1 de la reprise de l'eau ; décision d'Alexis du
+   * 2026-09-12 : persister, par tuile). Un rang 0-7 : 0 = terre ou eau DORMANTE (lac, mare,
+   * eaux des zones — leur peintre ne connaît pas de débit), 1..7 = eau qui COULE, du filet de
+   * tête (`RAYON_MIN`) au plus gros fleuve à pleine largeur (`RAYON_MAX`), par `rangDeDebit`
+   * sur le rayon LOCAL que le peintre a estampé (`peindreCoursDEau` le tend au poseur). Un
+   * affluent ne repeint pas le tronc où il se jette : la tuile garde le rang du plus gros.
+   * Longueur `width × height` ; `[]` sans hydrologie (le zonegen remplit de zéros).
+   */
+  debit: number[]
+  /**
    * LES TUILES DES LACS SEULS — ce que l'inondation des cuvettes a peint, sans les fleuves ni
    * les chenaux. C'est la DONNÉE qui dit ce qui est plat : une nappe tient sur un palier de
    * terrasse (`terrasses.ts`), un fleuve descend en cascades — et il n'y a qu'ici qu'on le
@@ -218,6 +228,17 @@ export interface Hydrologie {
    * lac, et l'embouchure pour du fleuve). Index de tuile, dans l'ordre de l'inondation.
    */
   lacs: number[]
+}
+
+/**
+ * LE RANG DE DÉBIT D'UN RAYON DE LIT — l'inverse de `rayonDe` (le rayon est la racine du débit,
+ * bornée à `FLUX_PLEIN`), quantifié sur 1..7 : `RAYON_MIN` → 1, `RAYON_MAX` → 7, monotone,
+ * borné. Exporté parce que la garde s'écrit avec, et que le rang s'interprète en un seul
+ * endroit. `Math.round` sur un produit : déterministe (aucune fonction Math approchée).
+ */
+export function rangDeDebit(rayon: number): number {
+  const t = (rayon - HYDRO.RAYON_MIN) / (HYDRO.RAYON_MAX - HYDRO.RAYON_MIN)
+  return 1 + Math.round(6 * Math.max(0, Math.min(1, t)))
 }
 
 /**
@@ -271,7 +292,7 @@ export function tracerLHydrologie(
   seed: number,
   escalier: Escalier | null = null,
 ): Hydrologie {
-  const vide: Hydrologie = { fils: [], coeur: new Set(), chenaux: [], eaux: [], lacs: [], lits: [] }
+  const vide: Hydrologie = { fils: [], coeur: new Set(), chenaux: [], eaux: [], lacs: [], lits: [], debit: [] }
   if (!creux) return vide
   const M = CREUX.MOTIF
   const cols = creux.cols
@@ -838,16 +859,19 @@ export function tracerLHydrologie(
   const courbes = new Map<number, Point[]>()
   // Le lit de CHAQUE cours, à part : seuls ceux qui seront des fleuves (plus bas) sont publiés.
   const litParCours = new Map<number, number[]>()
+  // Le débit par tuile (`Hydrologie.debit`) : 0 partout, le rang du rayon local sur l'eau qui coule.
+  const debit = new Array<number>(width * height).fill(0)
   for (const { chemin, fluxMax } of cours) {
     const grand = fluxMax >= HYDRO.FLUX_SAULAIE
     const litDuCours: number[] = []
     litParCours.set(chemin[0]!, litDuCours)
-    const poser = (x: number, y: number, p: number | undefined): void => {
+    const poser = (x: number, y: number, p: number | undefined, r: number): void => {
       if (!libre(x, y)) return
       const i = y * width + x
       terrain[i] = TERRAIN_SHALLOW_WATER
       litNeuf.add(i)
       litDuCours.push(i)
+      debit[i] = rangDeDebit(r)
       eaux.push(i)
       if (grand) chenaux.push(i)
       // LE PALIER DE L'EAU COURANTE : celui du cours, et JAMAIS au-dessus de la terre qu'elle
@@ -907,7 +931,7 @@ export function tracerLHydrologie(
   const fils = fleuves.map(({ chemin }) => peindreFil(courbes.get(chemin[0]!) ?? chemin.map(centrePoint), width, height))
   const lits: number[] = []
   for (const { chemin } of fleuves) for (const i of litParCours.get(chemin[0]!) ?? []) lits.push(i)
-  return { fils, coeur, chenaux, eaux, lacs: tuilesDeLac, lits }
+  return { fils, coeur, chenaux, eaux, lacs: tuilesDeLac, lits, debit }
 }
 
 /**

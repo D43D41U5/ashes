@@ -13,6 +13,8 @@ import { FAUNA, TERRAIN_DEEP_WATER, TERRAIN_SHALLOW_WATER, TERRAINS } from './ba
 import { carteDeTest } from '../../../tools/carte-cache'
 import { type CarteZonee } from './zonegen'
 import { COUDE, estUnCoude } from './zonegen-water'
+import { HYDRO, rangDeDebit } from './zonegen-hydro'
+import { MONDE, MONDE_JOUE } from './zonegraph'
 import { familleAt } from './racine-relief'
 
 const SEEDS = [2026, 7, 42]
@@ -199,4 +201,61 @@ describe('R4 (roche-mere) — le calcaire n’inonde pas : le lac s’arrête au
       expect(part, `seed ${c.graphe.seed} : ${(100 * part).toFixed(2)} % de l'eau des lacs a sa cellule dans le calcaire`).toBeLessThan(0.01)
     }
   })
+})
+
+/* ─── A1 (reprise de l'eau, 2026-09-12) — LE DÉBIT PERSISTÉ ──────────────────────── */
+
+describe('A1 — le débit survit à la génération (`map.debit`, décision d’Alexis du 2026-09-12 : par tuile)', () => {
+  it('rangDeDebit : l’inverse du rayon, sur 1..7, monotone et borné', () => {
+    expect(rangDeDebit(HYDRO.RAYON_MIN)).toBe(1)
+    expect(rangDeDebit(HYDRO.RAYON_MAX)).toBe(7)
+    expect(rangDeDebit(0)).toBe(1)
+    expect(rangDeDebit(HYDRO.RAYON_MAX * 3)).toBe(7)
+    let precedent = 0
+    for (let r = 0; r <= HYDRO.RAYON_MAX + 1; r += 0.05) {
+      const rang = rangDeDebit(r)
+      expect(Number.isInteger(rang)).toBe(true)
+      expect(rang).toBeGreaterThanOrEqual(Math.max(1, precedent))
+      expect(rang).toBeLessThanOrEqual(7)
+      precedent = rang
+    }
+  })
+
+  it('le monde joué : un rang par tuile, 0 sur la terre et les lacs, > 0 sur tout point de fil hors lac, et le fleuve grossit vers sa bouche', () => {
+    const { map } = carteDeTest(2026, MONDE.JOUEURS_CIBLE, MONDE_JOUE)
+    const { width, height, terrain } = map
+    const debit = map.debit
+    expect(debit, 'la carte porte son débit').toBeDefined()
+    expect(Array.isArray(debit), 'un number[], jamais un tableau typé (carte-immuable)').toBe(true)
+    expect(debit!.length).toBe(width * height)
+    const lacs = new Set(map.lacs ?? [])
+    let terreNonNulle = 0
+    let coule = 0
+    let max = 0
+    for (let i = 0; i < debit!.length; i++) {
+      const d = debit![i]!
+      expect(d >= 0 && d <= 7 && Number.isInteger(d), `tuile ${i} : rang ${d}`).toBe(true)
+      if (!estEau(terrain[i])) { if (d !== 0) terreNonNulle += 1 }
+      else if (d > 0) coule += 1
+      if (d > max) max = d
+    }
+    expect(terreNonNulle, 'la terre n’a pas de débit').toBe(0)
+    let lacNonNul = 0
+    for (const i of lacs) if (debit![i] !== 0) lacNonNul += 1
+    expect(lacNonNul, 'un lac est une eau dormante').toBe(0)
+    // MESURÉ (2026) : 40 406 tuiles d'eau qui coule, le rang 7 atteint par les deux plus gros fleuves.
+    expect(coule).toBeGreaterThan(30_000)
+    expect(max).toBe(7)
+    // Chaque point de fil hors lac coule ; et le plus gros fleuve grossit de la tête à la bouche
+    // (MESURÉ : 1,70 → 7,00 sur les dixièmes extrêmes).
+    const fils = map.fils ?? []
+    expect(fils.length).toBeGreaterThanOrEqual(2)
+    for (const f of fils) for (const i of f) if (!lacs.has(i)) expect(debit![i], `pas ${i}`).toBeGreaterThan(0)
+    const f0 = fils[0]!
+    const dixieme = Math.max(1, Math.floor(f0.length / 10))
+    const moyenne = (pas: readonly number[]): number => pas.reduce((s, i) => s + debit![i]!, 0) / pas.length
+    const tete = moyenne(f0.slice(0, dixieme))
+    const bouche = moyenne(f0.slice(-dixieme))
+    expect(bouche).toBeGreaterThan(tete + 2)
+  }, 60_000)
 })

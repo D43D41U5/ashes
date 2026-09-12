@@ -617,7 +617,7 @@ export function generateZonedTerrain(
   // lisent), le palier d'une tuile (l'eau y écrit le sien en naissant, les terrasses en partent).
   // MONDE RÉDUIT SEUL — le chemin 'vallee' reste octet-identique (T-A1).
   const escalier = g.monde === 'racine' && creux ? quantifierLEscalier(creux, terrain, width, height) : null
-  const { riviere, chenaux, fils, lacs: lacsRacine, lits } = paintWaterRacine(terrain, zone, g, width, height, seed, RELIEF.BORDURE, creux, escalier)
+  const { riviere, chenaux, fils, lacs: lacsRacine, lits, debit: debitRacine } = paintWaterRacine(terrain, zone, g, width, height, seed, RELIEF.BORDURE, creux, escalier)
 
   // ── PASSE 1.52 : LES EAUX DES ZONES — l'eau dérivée hors Racine (stratigraphie, couche II) ──
   //
@@ -895,6 +895,11 @@ export function generateZonedTerrain(
     // sur la graine 2026 — réserve de `docs/reprise-eau.md`). Sans elle, la table de prises
     // n'aurait aucun moyen de savoir ce qu'est l'eau qu'on pêche.
     natureEau: deriverNatureDeLEau(terrain, fils, width, height, lits),
+    // LE DÉBIT (A1 de la reprise de l'eau ; décision d'Alexis du 2026-09-12 : persister, par
+    // tuile) : le rang 0-7 que l'hydrologie a posé sur l'eau qui coule, 0 partout ailleurs —
+    // un monde sans hydrologie (pas de creux) en reçoit un tableau de zéros, jamais rien : la
+    // carte immuable le hache comme `distEau` et `natureEau`.
+    debit: debitRacine.length === width * height ? debitRacine : new Array<number>(width * height).fill(0),
   }
   const karsts: Karst[] = []
   const carte: CarteZonee = { map, graphe: g, zone, rampe, affleurements, socle: creux, karsts }

@@ -54,7 +54,11 @@ import { baseDepuisNoeuds } from './node-baseline'
 // fichier fait vivre le plan COMPLET (`generateZonedTerrain(2026)` sans monde), qui ne porte pas le
 // champ — la passe est réservée au monde joué, son coût sur 3,75 M de tuiles faisant sauter le
 // budget A13. C'est `cendre.test.ts` qui garde son immuabilité, sur la carte qui le porte.
-const CHAMPS_HACHES = ['terrain', 'cendre', 'profondeur', 'distEau', 'natureEau'] as const
+const CHAMPS_HACHES = [
+  'terrain', 'cendre', 'profondeur', 'distEau', 'natureEau',
+  'debit', // le rang de débit par tuile (reprise de l'eau A1, 2026-09-12) — un `number[]`, jamais
+           // un tableau typé (voir la garde plus bas) ; +2,6 Mo de JSON, décidé par Alexis
+] as const
 /** Le reste de la carte — quelques dizaines de ko, couverts par leur JSON. */
 const CHAMPS_JSON = [
   'width', 'height', 'zones', 'zoneGrid', 'zonePas', 'zoneDefs', 'seuils', 'fil',

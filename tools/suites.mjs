@@ -109,6 +109,11 @@ const SUITES = [
   //   n'est plus rien ; et sur le monde joué (dans la garde A1/A2) zéro tuile de `map.lacs` en
   //   rivière, ≥ 1 000 tuiles de rivière hors bande. Suite à 2379 sur l'arbre (2374 sur l'arbre
   //   commité seul) ; plancher inchangé (2360).
+  // 2026-09-12 : +2 gardes A1 — LE DÉBIT PERSISTÉ (`hydro.test.ts` ; décision d'Alexis : `map.debit`,
+  //   un rang 0-7 par tuile) — la loi du rang (l'inverse du rayon, 1..7, monotone, bornée) et le
+  //   monde joué (terre et lacs à 0, tout point de fil hors lac > 0, le fleuve grossit vers sa
+  //   bouche). `carte-immuable.test.ts` hache le champ. Suite à 2381 sur l'arbre (2376 sur l'arbre
+  //   commité seul) ; plancher inchangé (2360).
   { nom: 'sim', dir: 'packages/sim', args: ['run', '--exclude', 'src/scenario.test.ts'], plancher: 2360 },
   // 2026-09-01 : +10 gardes avec le RENDU des étages (`plateau-art.test.ts`).
   // 2026-09-01 : +9 gardes avec le TRI DES ÉTAGES (strate, découvert — `framing.test.ts`),

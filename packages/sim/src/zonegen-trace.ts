@@ -168,7 +168,7 @@ export function estamperDisque(cx: number, cy: number, r: number, poser: (x: num
 export function peindreCoursDEau(
   points: readonly Point[],
   passes: number,
-  poser: (x: number, y: number, p: number | undefined) => void,
+  poser: (x: number, y: number, p: number | undefined, r: number) => void,
 ): void {
   if (points.length === 0) return
   const lisse = lisserChaikin(points, passes)
@@ -182,7 +182,11 @@ export function peindreCoursDEau(
     // Le palier d'un segment est celui de son AMONT (`a`) : l'eau descend, elle ne monte pas.
     const pa = a.p
     for (let t = 0; t < tuiles.length; t++) {
-      estamperDisque(tuiles[t]!.x, tuiles[t]!.y, ra + (rb - ra) * (t / n), (x, y) => poser(x, y, pa))
+      // Le rayon LOCAL du disque est tendu au poseur : c'est la largeur de l'eau ICI, et donc
+      // son débit (`rangDeDebit`, `zonegen-hydro.ts`) — la seule mesure du débit qui survive
+      // à la génération (`map.debit`, A1 de la reprise de l'eau, 2026-09-12).
+      const r = ra + (rb - ra) * (t / n)
+      estamperDisque(tuiles[t]!.x, tuiles[t]!.y, r, (x, y) => poser(x, y, pa, r))
     }
   }
 }

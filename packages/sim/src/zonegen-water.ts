@@ -231,6 +231,8 @@ export interface EauxDeLaRacine {
   lacs: number[]
   /** LE LIT PEINT des fleuves (`Hydrologie.lits`) — ce que la nature de l'eau dit « rivière ». */
   lits: number[]
+  /** LE DÉBIT par tuile (`Hydrologie.debit`, rang 0-7) — `map.debit`. `[]` sans hydrologie. */
+  debit: number[]
 }
 
 /** Le fenêtrage de la courbure — voir `estUnCoude`. */
@@ -377,7 +379,7 @@ export function paintWaterRacine(
   //    inversait le rang à l'eau au bout mouillé, en diluant les deux SEULS terrains du T0 qui
   //    savent où est l'eau. Les servir en dernier règle les deux d'un coup.
   poserLesResurgences(terrain, zone, racineId, width, height, bordure, creux, horsSeuils, escalier)
-  return { riviere, chenaux: hydro.chenaux, fils: hydro.fils, lacs: hydro.lacs, lits: hydro.lits }
+  return { riviere, chenaux: hydro.chenaux, fils: hydro.fils, lacs: hydro.lacs, lits: hydro.lits, debit: hydro.debit }
 }
 
 /**
