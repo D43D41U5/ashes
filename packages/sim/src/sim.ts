@@ -54,6 +54,7 @@ import { clarteSurSoi } from './nuit'
 import { advanceBrume } from './brume'
 import { advanceFoudre } from './foudre'
 import { advanceMeteo, meteoSpeedFactor } from './meteo'
+import { advanceEau } from './eau-evenements'
 import { advanceVent } from './vent'
 import { rngNext } from './rng'
 import { advanceNightHunt } from './nighthunt'
@@ -572,6 +573,13 @@ export interface SimState {
    *  « désactive ce système pour l'instant ») — absent par défaut, posé par l'hôte
    *  (voir SimOptions.nightHunt). */
   nightHuntOff?: boolean
+  /**
+   * LE RÉGIME D'EAU DE LA VALLÉE au dernier jour de saison observé (`eau-evenements.ts`, D1) :
+   * les trois verdicts globaux (à sec, gués fermés, crue) dont les BASCULES font les six
+   * événements d'eau. OPTIONNEL (patron Brume) : une sauvegarde d'avant reprend sans, se
+   * l'initialise au premier tick et n'émet rien.
+   */
+  regimeDEau?: import('./eau-evenements').RegimeDEau
 }
 
 export interface SimOptions {
@@ -1179,6 +1187,9 @@ export function step(state: SimState, inputs: MoveInput[]): void {
   // seconde ne peut pas s'allumer sans la première (spec `torche.md`).
   advanceTorches(state)
   advanceTime(state)
+  // L'EAU DE LA VALLÉE change-t-elle de régime ? Relu au jour de saison franchi, juste après
+  // que `advanceTime` l'a franchi : un fait par bascule (`eau-evenements.ts`, D1). O(1) sinon.
+  advanceEau(state)
   // LA CENDRE VIEILLIT — une fois par bascule de jour de saison, jamais au tick (spec `cendre.md`
   // R9/R16/R18). Elle ne mute aucune tuile : elle avance l'ÂGE de chaque foyer, et l'appartenance
   // d'une tuile s'en dérive par une comparaison. Un foyer dont la fosse brûle aujourd'hui ne

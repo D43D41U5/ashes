@@ -128,7 +128,9 @@ describe('la table de routage audio (soundForEvent)', () => {
     // (`qualite-eau.md` Q10) — l'eau souillée se dit à l'œil, pas à l'oreille.
     // 99 → 100 faits et 57 voix INCHANGÉES le 2026-09-12 : `wolf_on_trail` naît MUET
     // (`piste-de-sang.md` P5, décision d'Alexis) — la piste se remonte en silence.
-    expect(total).toBe(100)
+    // 100 → 106 faits et 57 voix INCHANGÉES le 2026-09-12 : les six bascules d'eau de la vallée
+    // naissent MUETTES (reprise de l'eau D1, `saisons.md` A25) — la vallée qui sèche se voit et se lit.
+    expect(total).toBe(106)
     // 34 → 35 le 2026-07-29 : `node_depleted` a gagné sa voix (trois, selon la matière).
     // 61 → 62 faits et 35 → 36 voix le 2026-07-30 : `door_toggled` naît (spec construction R26).
     // 62 → 63 faits et 36 → 37 voix le 2026-07-31 : `cendreux_prowl` naît (spec cendreux R11bis) —

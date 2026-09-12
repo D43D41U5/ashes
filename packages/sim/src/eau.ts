@@ -190,7 +190,17 @@ export function estGueBloque(state: EtatEau, tx: number, ty: number, niveauConnu
   // paierait le rembobinage autant de fois qu'il y a de tuiles. Même porte que `porteDeLEau`.
   if (niveauConnu === undefined && crueGlobale(state) < EAU.SEUIL_GUE_BLOQUE) return false
   if (terrainAt(state.map, tx, ty) !== TERRAIN_SHALLOW_WATER) return false
-  return (niveauConnu ?? niveauDEau(state)) >= EAU.SEUIL_GUE_BLOQUE
+  return guesFermes(state, niveauConnu)
+}
+
+/**
+ * LES GUÉS SONT-ILS FERMÉS AUJOURD'HUI ? Le corps de `estGueBloque` sans le terrain — comme
+ * `eauASec`, un verdict de VALLÉE (le niveau est global) : c'est ce que l'événement d'eau
+ * observe une fois par jour de saison (`eau-evenements.ts`, D1). Même porte O(1) sur la crue.
+ */
+export function guesFermes(state: EtatEau, niveau?: number): boolean {
+  if (niveau === undefined && crueGlobale(state) < EAU.SEUIL_GUE_BLOQUE) return false
+  return (niveau ?? niveauDEau(state)) >= EAU.SEUIL_GUE_BLOQUE
 }
 
 /**

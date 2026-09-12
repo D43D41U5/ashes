@@ -57,7 +57,11 @@ describe('l’inventaire des 97 faits', () => {
     // 99 → 100 le 2026-09-12 : `wolf_on_trail` (`piste-de-sang.md` P5), famille `registre` — un
     // loup en chasse prend une piste de sang. MUET par décision d'Alexis : en silence jusqu'au
     // contact, le hurlement part à l'acquisition comme avant.
-    expect(somme).toBe(100)
+    // 100 → 106 le 2026-09-12 : LES SIX BASCULES D'EAU DE LA VALLÉE (reprise de l'eau D1, décision
+    // d'Alexis : « la vallée, au jour, sans le gel »), famille `saison` — `eau_a_sec`/`eau_revenue`,
+    // `crue_montee`/`crue_retiree`, `gues_fermes`/`gues_rouverts`. Toutes MUETTES : la vallée qui
+    // sèche ou déborde se VOIT (vase, nappe, gué sombre) et se LIT (chronique), elle ne claque pas.
+    expect(somme).toBe(106)
   })
 
   it('chaque fait DIT ce qu’il raconte — pas son identifiant', () => {
@@ -150,7 +154,9 @@ describe('l’inventaire des 97 faits', () => {
     // sang à l'eau le dira, et elle est un chantier client à part.
     // 42 → 43 le 2026-09-12 : `wolf_on_trail` (`piste-de-sang.md` P5), muet DÉCIDÉ par Alexis —
     // la piste se remonte en silence, l'annonce reste le hurlement du contact.
-    expect(Object.keys(INVENTAIRE).length - SONORES.length).toBe(43)
+    // 43 → 49 le 2026-09-12 : les six bascules d'eau de la vallée (reprise de l'eau D1), muettes
+    // décidées — elles se voient et se lisent ; six one-shots doubleraient le rendu et la chronique.
+    expect(Object.keys(INVENTAIRE).length - SONORES.length).toBe(49)
   })
 
   it('PLUS AUCUNE famille n’est entièrement muette, sauf celle qui l’est par décision', () => {

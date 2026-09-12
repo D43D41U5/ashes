@@ -340,6 +340,21 @@ export type SimEvent =
   | { type: 'blizzard_annonce'; tick: number; day: number }
   | { type: 'blizzard_entre'; tick: number; day: number }
   | { type: 'blizzard_passe'; tick: number; day: number }
+  /**
+   * L'EAU DE LA VALLÉE CHANGE DE RÉGIME (`eau-evenements.ts`, D1 de la reprise de l'eau —
+   * décision d'Alexis du 2026-09-12 : « la vallée, au jour, sans le gel »). Trois verdicts
+   * GLOBAUX (le niveau d'eau n'a pas de terme positionnel : MESURÉ), relus une fois par jour de
+   * saison, un fait par bascule : l'assec (les mares partent / l'eau revient), la crue (elle
+   * monte / elle se retire), les gués (la crue les ferme / ils rouvrent). `day` porte le jour de
+   * saison de la bascule. Rares par construction (4 assecs en 240 jours ; la crue à l'an 11) —
+   * et ils entrent dans la chronique. Le gel n'en est pas : il prend la nuit et rend le jour.
+   */
+  | { type: 'eau_a_sec'; tick: number; day: number }
+  | { type: 'eau_revenue'; tick: number; day: number }
+  | { type: 'crue_montee'; tick: number; day: number }
+  | { type: 'crue_retiree'; tick: number; day: number }
+  | { type: 'gues_fermes'; tick: number; day: number }
+  | { type: 'gues_rouverts'; tick: number; day: number }
   | { type: 'gift_given'; tick: number; byEntityId: number; toVillageId: number; item: ItemId; count: number }
   | { type: 'village_archetype_changed'; tick: number; villageId: number; archetype: 'foyer' | 'meute' | 'neutre' }
   | { type: 'evacuation_opened'; tick: number; tx: number; ty: number }

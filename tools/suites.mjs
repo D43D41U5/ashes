@@ -117,6 +117,11 @@ const SUITES = [
   // 2026-09-12 : +1 garde (`eau-rendu.test.ts`) — la bande morte de l'assec est un verdict de vallée
   //   (`eauASec`), et la porte du client la lit ; l'entrée franche seule manquait 1 aube sur 240.
   //   Suite à 2382 sur l'arbre (2377 sur l'arbre commité seul) ; plancher inchangé (2360).
+  // 2026-09-12 : +5 gardes D1 — LES ÉVÉNEMENTS D'EAU (`eau-evenements.test.ts`, spec `saisons.md`
+  //   A25 ; décision d'Alexis : « la vallée, au jour, sans le gel ») — la mare qui part et revient,
+  //   la saison jouée muette, la crue qui ferme les gués puis rend dans l'ordre, la sauvegarde
+  //   d'avant, la chronique. Suite à 2387 sur l'arbre (2382 sur l'arbre commité seul) ; plancher
+  //   inchangé (2360).
   { nom: 'sim', dir: 'packages/sim', args: ['run', '--exclude', 'src/scenario.test.ts'], plancher: 2360 },
   // 2026-09-01 : +10 gardes avec le RENDU des étages (`plateau-art.test.ts`).
   // 2026-09-01 : +9 gardes avec le TRI DES ÉTAGES (strate, découvert — `framing.test.ts`),

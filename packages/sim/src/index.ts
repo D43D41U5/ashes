@@ -204,6 +204,9 @@ export {
 } from './eau'
 export type { EtatEau } from './eau'
 export { EAU } from './balance'
+// LES ÉVÉNEMENTS D'EAU (D1) : le régime du jour, lisible par qui veut peindre la carte du jour.
+export { regimeDEauDuJour } from './eau-evenements'
+export type { RegimeDEau } from './eau-evenements'
 export { METEO } from './balance'
 // LE FEU-STATION (spec feu-station) : l'état dérivable du snapshot côté client, et la donnée des slots.
 export { fireState, fireStateAt, fireActive, fireWarmthFactor, advanceFire, fuelTicksRemaining, fuelBurnProgress } from './fire'

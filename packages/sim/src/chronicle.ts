@@ -102,6 +102,13 @@ export const CHRONICLE_EVENT_TYPES: ReadonlySet<SimEvent['type']> = new Set([
   'ark_departed',
   'poi_first_visit',
   'season_ended',
+  // L'EAU DE LA VALLÉE (D1, 2026-09-12) : six bascules, rares, toutes racontées.
+  'eau_a_sec',
+  'eau_revenue',
+  'crue_montee',
+  'crue_retiree',
+  'gues_fermes',
+  'gues_rouverts',
 ])
 
 export function chronicleFromEvents(
@@ -228,6 +235,29 @@ export function chronicleFromEvents(
       // qui va serrer la vallée entière, l'étage du Grand Froid et des hordes.
       case 'blizzard_annonce':
         push(`Le vent du nord se lève — un blizzard couvrira la vallée demain. Rentrez le bois.`, 'battement')
+        break
+      // L'EAU DE LA VALLÉE (D1, `eau-evenements.ts`) : six bascules globales, une par jour de
+      // saison au plus, rares (quatre assecs en 240 jours ; la crue à l'an 11). L'ENTRÉE d'un
+      // régime est un BATTEMENT — le monde entier change de règle sous les pas (l'assec ouvre
+      // les mares à la marche, la crue ferme les gués) — et sa SORTIE un récit : le retour
+      // à la normale se note, il ne serre pas.
+      case 'eau_a_sec':
+        push(`Les mares sont parties : la vallée est à sec, on marche où l'on pataugeait.`, 'battement')
+        break
+      case 'eau_revenue':
+        push(`L'eau est revenue dans les mares.`, 'recit')
+        break
+      case 'crue_montee':
+        push(`La crue monte : l'eau déborde des rives.`, 'battement')
+        break
+      case 'crue_retiree':
+        push(`La crue s'est retirée.`, 'recit')
+        break
+      case 'gues_fermes':
+        push(`La crue a fermé les gués : on ne traverse plus.`, 'battement')
+        break
+      case 'gues_rouverts':
+        push(`Les gués ont rouvert.`, 'recit')
         break
       case 'gift_given': {
         const key = `${e.byEntityId}:${e.toVillageId}`

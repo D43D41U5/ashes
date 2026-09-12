@@ -167,6 +167,14 @@ export const INVENTAIRE: Inventaire = {
   blizzard_annonce: { voix: 'voix', ou: 'monde', famille: 'saison', quoi: 'le vent du nord se lève — un blizzard arrivera demain (le préavis de la veille)' },
   blizzard_entre: { voix: 'muet', famille: 'saison', quoi: 'le blizzard entre sur la vallée — la nappe du vent le porte' },
   blizzard_passe: { voix: 'muet', famille: 'saison', quoi: 'le blizzard est passé — la nappe retombe avec lui' },
+  // L'EAU DE LA VALLÉE (D1) : six bascules globales au jour, dites par la chronique. Muettes au
+  // son — la vallée qui sèche ou déborde se VOIT (bande morte, rives), elle ne claque pas.
+  eau_a_sec: { voix: 'muet', famille: 'saison', quoi: 'la vallée est à sec — les mares se marchent' },
+  eau_revenue: { voix: 'muet', famille: 'saison', quoi: 'l’eau est revenue dans les mares' },
+  crue_montee: { voix: 'muet', famille: 'saison', quoi: 'la crue monte — l’eau déborde des rives' },
+  crue_retiree: { voix: 'muet', famille: 'saison', quoi: 'la crue s’est retirée' },
+  gues_fermes: { voix: 'muet', famille: 'saison', quoi: 'la crue a fermé les gués' },
+  gues_rouverts: { voix: 'muet', famille: 'saison', quoi: 'les gués ont rouvert' },
   ark_departed: { voix: 'voix', ou: 'monde', famille: 'saison', quoi: 'l’Arche lève l’ancre — avec ceux qui étaient à bord' },
 
   // ── BÂTIR, CRAFTER, MANGER — 4 voix : poser, perdre, finir, cuire ────────────────
