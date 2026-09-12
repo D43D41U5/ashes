@@ -563,15 +563,21 @@ const SCENARIOS = {
    * paroi déduite, la rampe de terrasse, un corps qui la monte, l'eau d'un palier haut. `--dev`. ═══
    *
    * Sites relevés offline sur la graine 2026, monde joué (sonde jetable `sites-terrasses`,
-   * relevés le 2026-09-03 après les côtes de fleuve et la fermeture de `monter` ; REVUS LE
-   * 2026-09-05 après N3 — l'eau naît sur l'escalier, `tools/__sites-n3.mts`) :
-   *   • rampe de terrasse 1→2 en (1425,656) — la fenêtre 60×40 autour montre 33/30/36 % de
-   *     paliers 0/1/2, et une poche à 0 juste à l'ouest (x 1416-1423), sous une rampe 0→1 ;
-   *     depuis N3 la rangée 665 est au palier 1, la vue de loin se prend dans la poche, en
-   *     (1420,665) ;
-   *   • lac au palier 2 autour de (1382,520), rive est en (1394,544) — l'eau haute (T-R8ter) ;
-   *   • cascade 1→0, cinq colonnes (700-704, 278-279) qui tombent vers le sud ; on se tient au
-   *     pied, à (701,282), palier 0. (Avant N3 c'était la ligne (1062-1067, 655-657) : ce fleuve
+   * relevés le 2026-09-03 après les côtes de fleuve et la fermeture de `monter` ; revus le
+   * 2026-09-05 après N3 ; REVUS LE 2026-09-11 après T-R11 — le bord de terrasse se lit à la
+   * tuile, les paliers se redistribuent, et les trois anciennes cibles n'étaient plus ce
+   * qu'elles décrivaient) :
+   *   • rampe de terrasse 1→2 en (93,739) — la fenêtre 60×40 autour montre 12/66/22 % de
+   *     paliers 0/1/2 ; pied (93,741), haut (93,736), et une poche à 0 au sud-est, en
+   *     (101,752), d'où se prend la vue de loin ;
+   *   • lac au palier 2 de 1 539 tuiles, centre (1381,534) — on s'y poste en (1357,544),
+   *     palier 2, le poste qui met le PLUS d'eau haute dans le cadre — 899 tuiles de nappe
+   *     sur 80×40, MESURÉ (la rive est, en (1400,567), en cadrait zéro). ⚠ À L'ŒIL, à 11 h, la
+   *     nappe d'un palier haut lit PÂLE, presque grise, et non bleue : relevé le 2026-09-11, non
+   *     expliqué, sans rapport avec T-R11 — la vue d'avant le faisait déjà. T-R8ter ;
+   *   • cascade 1→0, la ligne de marche la plus large de la graine (5 tuiles, autour de
+   *     (700-704, 278-279)) — elle a SURVÉCU à T-R11, seul le pied marchable a bougé, en
+   *     (704,281). (Avant N3 c'était la ligne (1062-1067, 655-657) : ce fleuve
    *     coule maintenant tout entier au palier 0, sa rive nord au palier 1 — une gorge, la forme
    *     normale de N3, plus une chute. 11 des 18 cascades face sud de la graine ont un pied
    *     marchable ; celle-ci est la plus large.)
@@ -586,9 +592,9 @@ const SCENARIOS = {
     }
     const estRampe = await page.evaluate(() => {
       const map = window.__BRAISES__.scene.map
-      return (map.connecteurs ?? []).some((c) => c.x === 1425 && c.y === 656 && c.type === 'rampe' && c.de === 1 && c.vers === 2) && (map.palier?.[656 * map.width + 1425] ?? -1) === 1
+      return (map.connecteurs ?? []).some((c) => c.x === 93 && c.y === 739 && c.type === 'rampe' && c.de === 1 && c.vers === 2) && (map.palier?.[739 * map.width + 93] ?? -1) === 1
     })
-    if (!estRampe) { console.error('!! terrasses : (1425,656) n’est pas une rampe de terrasse 1→2 — écrit pour la graine 2026'); return }
+    if (!estRampe) { console.error('!! terrasses : (93,739) n’est pas une rampe de terrasse 1→2 — écrit pour la graine 2026'); return }
     const poserT = async (nom) => {
       await page.evaluate(() => window.__BRAISES__.scene.game.loop.sleep())
       // CONVERGÉ = `renderOffset` résorbé — pas « le sprite est à la hauteur du corps » : sur un
@@ -597,9 +603,14 @@ const SCENARIOS = {
       const ecart = await page.evaluate(() => {
         const sc = window.__BRAISES__.scene
         const reste = () => Math.max(Math.abs(sc.prediction.renderOffset.x), Math.abs(sc.prediction.renderOffset.y))
+        // UN PLANCHER DE 40 IMAGES, MÊME QUAND LE SPRITE EST DÉJÀ POSÉ : la boucle sort dès que
+        // `renderOffset` est résorbé, et sur la PREMIÈRE vue d'un run il l'est tout de suite — la
+        // capture partait alors avant que les pavés du sol n'aient cuit et rendait un cadre NOIR,
+        // 148 parois comptées par-dessus (vu le 2026-09-11, `terrasse-pied`, après le recalage des
+        // sites). Ce qu'on attend ici n'est pas le corps : c'est le monde autour de lui.
         for (let k = 0; k < 240; k++) {
           sc.game.step(k * 16, 16)
-          if (reste() < 0.1) break
+          if (k >= 40 && reste() < 0.1) break
         }
         return Math.round(reste() * 100) / 100
       })
@@ -634,33 +645,33 @@ const SCENARIOS = {
     }
     await agirT({ type: 'debug_god' }, 400)
     // ── LE PIED DE LA RAMPE (palier 1) : la paroi 1→2 en face, le palier 0 en bas du cadre.
-    await vue('terrasse-pied', 1425, 658)
+    await vue('terrasse-pied', 93, 741)
     // ── SUR LA RAMPE : le corps à mi-pente.
-    await vue('terrasse-rampe', 1425, 656)
+    await vue('terrasse-rampe', 93, 739)
     // ── EN HAUT (palier 2), le dos aux deux paliers du bas.
-    await vue('terrasse-haut', 1425, 653)
+    await vue('terrasse-haut', 93, 736)
     // ── DE LOIN, du sud-ouest (la poche au palier 0) : l'escalier des trois paliers.
-    await vue('terrasse-loin', 1420, 665)
+    await vue('terrasse-loin', 101, 752)
     // ── L'EAU HAUTE : le lac du palier 2, depuis sa rive est.
-    await vue('terrasse-lac', 1394, 544)
+    await vue('terrasse-lac', 1357, 544)
     // ── LA CASCADE : un fleuve qui tombe de 1 à 0 vers le sud, vu du pied.
     // CE QUI FERAIT ROUGIR : la ligne (700-704, 278-279) n'est plus détectée comme chute (0
     // colonne — de la roche à la place de la nappe, le « barrage » d'avant) ; une colonne comptée
     // sans ses sprites (nappe < LIFT_TUILES × colonnes, ou pas d'écume) ; ou un pied sans une
     // seule particule vivante après `fastForward`.
-    const casc = await vue('terrasse-cascade', 701, 282)
+    const casc = await vue('terrasse-cascade', 704, 281)
     if (casc.chutes < 1) console.error(`!! cascade : aucune colonne de chute posée (attendu ≥ 1, la ligne 700-704 × 278-279)`)
     else if (casc.nappe < casc.chutes * 2 || casc.ecume < casc.chutes) console.error(`!! cascade : ${casc.chutes} colonnes mais nappe=${casc.nappe} écume=${casc.ecume}`)
     else if (casc.gouttes < 1) console.error(`!! cascade : ${casc.chutes} colonnes et aucune particule vivante au pied`)
     else console.log(`   ✓ cascade : ${casc.chutes} colonnes, ${casc.nappe} sprites de nappe, ${casc.ecume} d'écume, ${casc.gouttes} particules vivantes`)
     // ── LA NUIT au pied de la rampe : les paliers hauts prennent la même nuit que le sol.
-    await vue('terrasse-nuit', 1425, 658, 1)
+    await vue('terrasse-nuit', 93, 741, 1)
     console.log(`   → ${OUT}/terrasse-*.png : pied, rampe, haut, loin, lac, cascade, nuit`)
   },
 
   // ═══ SONDE JETABLE (2026-09-04) : la cascade seule, jour et nuit — pour itérer à l'œil sans
   //     repayer les six autres vues de `terrasses`. Mêmes cibles datées (graine 2026, relevé
-  //     du 2026-09-05 : la cascade (700-704, 278-279), pied (701,282)). ═══
+  //     du 2026-09-11 : la cascade (700-704, 278-279), pied (704,281)). ═══
   async __cascade(page) {
     if (!dev) { console.error('!! exige --dev'); return }
     const agirT = async (action, ms) => {
@@ -669,7 +680,7 @@ const SCENARIOS = {
     }
     const vue = async (nom, heure) => {
       await agirT({ type: 'debug_set_hour', hour: heure }, 1200)
-      await agirT({ type: 'debug_teleport', x: 701.5, y: 282.5 }, 2400)
+      await agirT({ type: 'debug_teleport', x: 704.5, y: 281.5 }, 2400)
       await page.evaluate(() => window.__BRAISES__.scene.game.loop.sleep())
       // Converger le sprite ET laisser vivre les particules : 90 images à 16 ms = 1,4 s de FX.
       const c = await page.evaluate(() => {
