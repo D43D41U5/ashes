@@ -191,6 +191,12 @@ function piedDeGueule(champ: ChampDeKarst, x: number, y: number, roche: number):
   if (MARCHABLE[t] !== 1 || isWater(t) || reserve[i] === 1 || lieux[i] === 1) return false
   const p = palier[i]!
   if (palier[i - width]! !== p + 1) return false
+  // ET IL FAUT POUVOIR SE TENIR DEVANT. La gueule s'ouvre vers le SUD : la tuile au sud est le
+  // seuil qu'on foule pour entrer (G-A4 ⑤ l'exige, `MARCHABLE` sur `map.terrain`). Tant que le
+  // palier était constant par cellule de 8, la face d'une terrasse tenait dans un carré de sol et
+  // le seuil venait gratuitement ; la lecture molle (T-R11) fait passer le bord À LA TUILE, et
+  // une gueule s'est ouverte devant l'eau profonde (karst 250,183, graine 2026). On le demande.
+  if (y + 1 >= height || MARCHABLE[terrain[i + width]!] !== 1) return false
   for (let k = 1; k <= roche; k++) {
     const j = i - k * width
     if (palier[j]! < p + 1 || reserve[j] === 1) return false

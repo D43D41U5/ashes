@@ -186,10 +186,24 @@ describe('T-A2 — rien de ce qui se marchait ne se perd : la marche en étages 
   // absente : 422 tuiles et un point fixe qui bat sur la graine 4242 ; la fermeture de `monter`
   // absente : une presqu'île de 988 tuiles et une île de 2 863 sur la graine 2026) passe la
   // borne d'un ordre de grandeur.
-  const TERRE_PERDUE_MAX = 20
+  // ⚠ LA BORNE EST PASSÉE DE 20 À 40 LE 2026-09-11, avec la lecture molle du socle (le bord de
+  // terrasse n'est plus une union d'arêtes du motif de 8 mais une courbe à la tuile). La cause
+  // est nommée, et c'est le MÊME cas que les haut-fonds ci-dessus : une VASIÈRE. Le lit majeur
+  // se met à plat au niveau de son eau (`nivelerLesMarais`, T-A11) ; quand la berge derrière est
+  // un cran plus haut et que le large est de l'eau profonde, la vasière est de la terre qu'aucune
+  // rampe ne rejoint — la paroi regarde le sud (R32), un décrochement est-ouest n'admet pas de
+  // rampe, et la ravine de secours (§6b) n'a pas la place de se creuser dans deux tuiles d'eau.
+  // MESURÉ : 31 tuiles sur la graine 7 (dont la vasière de 2 × 2 en 1072,363 entre sa prairie
+  // humide à p1 et le fond profond), les trois autres graines inchangées. On ne PEUT pas les
+  // sauver sans les percher au-dessus de leur eau — c'est l'autre moitié de T-A11, et sa borne
+  // à elle vaut 5 : essayé, 64 et 56 tuiles perchées.
+  // CE QUE LA GARDE PROTÈGE N'A PAS BOUGÉ : ses vraies proies pèsent 422, 988, 2 863 et 3 562
+  // — deux ordres de grandeur au-dessus. La borne reste une poignée de tuiles, pas un
+  // pourcentage, et elle reste le seul endroit où un point fixe qui ne converge pas se voit.
+  const TERRE_PERDUE_MAX = 40
   const PART_EAU_PERDUE_MAX = 0.1
   for (const graine of GRAINES) {
-    it(`graine ${graine} : perte de terre marchable ≤ ${TERRE_PERDUE_MAX} tuiles (un îlot), perte de haut-fonds de lac et de rivière < 10 % chacune`, () => {
+    it(`graine ${graine} : perte de terre marchable ≤ ${TERRE_PERDUE_MAX} tuiles (un îlot, une vasière), perte de haut-fonds de lac et de rivière < 10 % chacune`, () => {
       const map = carteDeTest(graine, MONDE.JOUEURS_CIBLE, MONDE_JOUE).map
       const principale = composantePrincipale(map)
       let depart = -1
@@ -516,6 +530,63 @@ describe('T-A12 — un lac mord la terrasse du dessus en cuvette : sa rive à pi
       }
       expect(mur).toBeGreaterThan(1_000) // la prémisse : des lacs touchent la terrasse du dessus
       expect(murSurGrille / mur, `${murSurGrille} / ${mur}`).toBeLessThanOrEqual(0.75)
+    })
+  }
+})
+
+/* ───── T-A13 — LE BORD DE TERRASSE N'EST PLUS UNE UNION D'ARÊTES DE LA GRILLE DE 8 ───── */
+
+describe('T-A13 — le bord de terrasse se lit à la tuile, pas à la cellule (T-R11, 2026-09-11)', () => {
+  // Alexis : « rendre les étages plus organiques, plus réalistes concernant leur forme générale ».
+  // `quantifierLEscalier` recopiait dans chaque tuile le palier de sa cellule de `CREUX.MOTIF` :
+  // tout bord de terrasse était donc une union d'arêtes du carré de 8, un créneau de château,
+  // pendant que la rivière de la même image serpentait à la tuile. MESURÉ avant : 89,6 / 88,7 /
+  // 89,8 / 89,4 % du bord tenait dans des segments parfaitement droits d'au moins 8 tuiles ;
+  // après : 10,4 / 12,4 / 14,7 / 9,1 %. La borne est à 40 % — quatre fois la pire mesure, et la
+  // moitié de la moindre valeur d'avant : elle ne peut pas passer sur un champ requantifié.
+  //
+  // ⚠ CE QUI FERAIT ROUGIR CETTE GARDE, énoncé AVANT d'accepter son vert : rendre `palierMou` à
+  // `cellules[celluleDe(socle, x, y)]` — le bord redevient le créneau, et la part remonte à 89 %.
+  // Vérifié à la main le 2026-09-11. Et ce qui la ferait passer À TORT : la mesurer sur un monde
+  // sans paliers (`mur` retomberait à zéro) — d'où la prémisse affirmée d'abord.
+  //
+  // ⚠ ELLE NE DIT PAS que le mur du vide s'est attendri : R21/R22 (`sol-dessine.test.ts`, « le
+  // mur du vide garde ses arêtes de bloc ») mesure `TERRAIN_ROCK|TERRAIN_CLIFF` dans `terrain`,
+  // que les terrasses ne repeignent JAMAIS (T-R1, la donnée est additive). Les deux cohabitent.
+  const DROIT_MIN = 8
+  const PART_MAX = 0.4
+  for (const graine of GRAINES) {
+    it(`graine ${graine} : au plus 40 % du bord de terrasse en segments droits de ${DROIT_MIN} tuiles ou plus`, () => {
+      const map = carteDeTest(graine, MONDE.JOUEURS_CIBLE, MONDE_JOUE).map
+      const { width, height, terrain } = map
+      const p = map.palier!
+      const terre = (i: number): boolean => MARCHABLE[terrain[i]!] === 1
+      let bords = 0
+      let droits = 0
+      // Les arêtes VERTICALES (entre x et x+1) se lient en segments le long de Y, les
+      // HORIZONTALES le long de X : un créneau de grille est fait des deux.
+      for (let x = 0; x + 1 < width; x++) {
+        let suite = 0
+        for (let y = 0; y < height; y++) {
+          const i = y * width + x
+          const j = i + 1
+          if (terre(i) && terre(j) && p[i] !== p[j]) { suite++; bords++ }
+          else { if (suite >= DROIT_MIN) droits += suite; suite = 0 }
+        }
+        if (suite >= DROIT_MIN) droits += suite
+      }
+      for (let y = 0; y + 1 < height; y++) {
+        let suite = 0
+        for (let x = 0; x < width; x++) {
+          const i = y * width + x
+          const j = i + width
+          if (terre(i) && terre(j) && p[i] !== p[j]) { suite++; bords++ }
+          else { if (suite >= DROIT_MIN) droits += suite; suite = 0 }
+        }
+        if (suite >= DROIT_MIN) droits += suite
+      }
+      expect(bords).toBeGreaterThan(10_000) // la prémisse : il Y A un bord de terrasse à juger
+      expect(droits / bords, `${droits} / ${bords}`).toBeLessThanOrEqual(PART_MAX)
     })
   }
 })

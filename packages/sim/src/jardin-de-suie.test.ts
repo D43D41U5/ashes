@@ -8,6 +8,7 @@ import { describe, expect, it } from 'vitest'
 import { AGRICULTURE, TERRAIN_GRASS } from './balance'
 import { cropStage, cultureAdmise, isCropMature, pousseDe } from './agriculture'
 import { foyersDeLaCarte, tuileCendree } from './cendre'
+import { palierDuSol } from './etages'
 import { drainEvents } from './events'
 import { addItems, countOf } from './items'
 import { advanceMurmures, sitesDeCycle } from './murmure'
@@ -33,6 +34,12 @@ function tuiles(sim: SimState): { cendree: { tx: number; ty: number }; saine: { 
   for (let ty = 40; ty < sim.map.height - 40 && (!cendree || !saine); ty += 5) {
     for (let tx = 40; tx < sim.map.width - 40 && (!cendree || !saine); tx += 5) {
       if (sim.map.terrain[ty * sim.map.width + tx] !== TERRAIN_GRASS) continue
+      // LE SEMEUR SE TIENT UNE TUILE AU SUD (`spawnEntity(…, ty + 1.5)`) : il faut donc que le
+      // sud soit DE PLAIN-PIED, sinon l'interaction est refusée pour cause d'étage (E-R5, Q5) et
+      // le test lit un `action_rejected` qui ne parle pas de suie. La prémisse était tacite tant
+      // que le bord de terrasse suivait la grille de 8 ; la lecture molle (T-R11) la fait tomber
+      // sur une élection au pas de 5. On la dit.
+      if (palierDuSol(sim.map, tx, ty) !== palierDuSol(sim.map, tx, ty + 1)) continue
       if (tuileCendree(sim, tx, ty)) { if (!cendree) cendree = { tx, ty } }
       else if (!saine) saine = { tx, ty }
     }

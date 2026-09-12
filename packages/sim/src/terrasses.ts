@@ -20,9 +20,10 @@
  * REGARDANT UNE CARTE vit avec le générateur).
  */
 import { CREUX } from './racine-relief'
+import { fbmWarp2 } from './noise'
 import { TasPF, type Socle } from './socle'
 import { isWater, MARCHABLE } from './map'
-import { TERRAIN_ROAD } from './balance'
+import { TERRAIN_MARSH, TERRAIN_PEAT_BOG, TERRAIN_REED_MARSH, TERRAIN_ROAD } from './balance'
 import type { Escalier } from './zonegen-hydro'
 
 export type { Escalier } from './zonegen-hydro'
@@ -63,6 +64,20 @@ export const TERRASSES = {
    * revenait à la côte, l'eau perchée qu'on est venu tuer ; consigné le 2026-09-05.)
    */
   KINDS_SANS_ASSISE: ['bois_noir', 'combe_brumeuse'] as readonly string[],
+  /**
+   * ═══ LA LECTURE MOLLE (`remplitLisse`) — de quoi le bord de terrasse est fait ═══
+   *
+   * `GRAIN` : la part du DÉNIVELÉ LOCAL (d'une maille à l'autre) que le grain a le droit de
+   * mordre. C'est une fraction, pas une altitude : sur un socle plat le bord reste franc, sur
+   * une pente il ondule d'autant. À 0, il ne reste que la bilinéaire — le bord est lisse comme
+   * une courbe de niveau ; au-dessus de ~0,5 il se déchire en îlots d'une tuile que les miettes
+   * ravalent aussitôt (T-R6, `MIETTE_TUILES`).
+   */
+  GRAIN: 0.35,
+  /** L'échelle du grain, en tuiles : la longueur d'une anse du bord. */
+  GRAIN_ECHELLE: 14,
+  /** Le warp du grain, en tuiles — ce qui empêche l'anse de se lire comme une sinusoïde. */
+  GRAIN_WARP: 7,
 } as const
 
 /** Une rampe de terrasse : une COLONNE de connecteur, tuile du palier `de` sous une tuile du
@@ -234,11 +249,80 @@ export function quantifierLEscalier(
     while (p < seuils.length && a >= seuils[p]!) p++
     cellules[k] = p
   }
+  // LES MÊMES SEUILS, ET C'EST MESURÉ : `seuils` a été tiré d'un échantillon pris aux positions
+  // de TUILE (`rempli[celluleDe(x, y)]`, une sur deux), pas des cellules une à une — c'est donc
+  // déjà la population des tuiles qu'il coupe aux terciles. La bilinéaire préserve la moyenne de
+  // chaque maille, et le partage ne bouge pas : 33,3 / 33,4 / 33,3 % du marchable, contre les
+  // 33 / 33 / 34 promis en tête. Reprendre les terciles sur le champ lissé (essayé, mesuré) ne
+  // déplaçait rien — 33,3 / 33,3 / 33,3 — pour un balayage de plus.
   const palierTuile = new Int8Array(width * height)
   for (let y = 0; y < height; y++) {
-    for (let x = 0; x < width; x++) palierTuile[y * width + x] = cellules[celluleDe(socle, x, y)]!
+    for (let x = 0; x < width; x++) palierTuile[y * width + x] = palierMou(socle, rempli, x, y, seuils)
   }
   return { cellules, palierTuile }
+}
+
+/**
+ * ═══ LA LECTURE MOLLE DU SOCLE — le même champ, lu À LA TUILE (R23) ═══
+ *
+ * `celluleDe` rend la valeur de la cellule 8 × 8 TELLE QUELLE : toutes les tuiles d'un carré
+ * partagent un palier, donc tout bord de terrasse est une union d'arêtes de ce carré — un
+ * créneau de château, à la marche de 8. MESURÉ (graine 2026) : 89,6 % du bord tient dans des
+ * segments parfaitement droits d'au moins 8 tuiles, 54,9 % d'au moins 16, pendant que la
+ * rivière qui traverse la même image serpente à la tuile.
+ *
+ * On lit donc le MÊME champ `rempli`, aux MÊMES terciles, mais interpolé bilinéairement entre
+ * les centres de cellule, plus un grain positionnel calibré sur l'écart entre deux paliers.
+ * C'est la recette de R23 (le sol dessiné dé-quantifié) et le précédent de T-A12 (la rive de
+ * cuvette, passée de 100 % à 33-63 % hors grille).
+ *
+ * ⚠ CE N'EST PAS DU BRUIT AJOUTÉ À UNE FRONTIÈRE, c'est la frontière lue plus finement :
+ * l'interpolant est continu et monotone le long de tout segment entre deux centres de cellule,
+ * donc LA propriété dont tout dépend survit — de toute cellule part vers le bord un chemin de
+ * valeur non croissante, il reste non croissant à la tuile. Aucune terrasse ne se referme.
+ *
+ * ⚠ AUCUN TIRAGE : `fbm2` est positionnel, il ne touche pas le flux du PRNG (`terrasses.ts`
+ * en tête). `cellules` n'est pas touché — les sentes et l'élection des rampes lisent le même
+ * champ par cellule qu'avant, au bit près.
+ */
+function palierMou(socle: Socle, rempli: Float64Array, x: number, y: number, seuils: readonly number[]): number {
+  const M = CREUX.MOTIF
+  const { cols, rows } = socle
+  // L'indice de cellule FRACTIONNAIRE du centre de la tuile : le centre de la cellule (kx, ky)
+  // est en `(mx0 + kx)·M + M/2`, donc on inverse.
+  const gx = (x + 0.5 - M / 2) / M - socle.mx0
+  const gy = (y + 0.5 - M / 2) / M - socle.my0
+  const kx0 = Math.min(cols - 1, Math.max(0, Math.floor(gx)))
+  const ky0 = Math.min(rows - 1, Math.max(0, Math.floor(gy)))
+  const kx1 = Math.min(cols - 1, kx0 + 1)
+  const ky1 = Math.min(rows - 1, ky0 + 1)
+  const fx = Math.min(1, Math.max(0, gx - kx0))
+  const fy = Math.min(1, Math.max(0, gy - ky0))
+  const a = rempli[ky0 * cols + kx0]!
+  const b = rempli[ky0 * cols + kx1]!
+  const c = rempli[ky1 * cols + kx0]!
+  const d = rempli[ky1 * cols + kx1]!
+  const h0 = a + (b - a) * fx
+  const h1 = c + (d - c) * fx
+  const v = h0 + (h1 - h0) * fy
+  // LE GRAIN — l'amplitude se prend sur la PENTE LOCALE, pas sur une constante : là où le socle
+  // est plat, un grain fixe ferait éclater le bord en confettis ; là où il est raide, il serait
+  // invisible. `GRAIN` est la fraction d'une maille de dénivelé local qu'on autorise à mordre.
+  const amp = (Math.abs(b - a) + Math.abs(c - a)) * TERRASSES.GRAIN
+  // ET ON NE L'ÉVALUE QUE LÀ OÙ IL PEUT CHANGER QUELQUE CHOSE : une tuile à plus d'une amplitude
+  // du seuil le plus proche tombera du même côté, grain ou pas. Le test est EXACT (`≤ amp` des
+  // deux côtés, la borne comprise), donc le champ rendu est identique au bit près — c'est le
+  // bruit qu'on s'épargne, pas une approximation. Le voisinage d'un seuil, c'est le bord de
+  // terrasse : 2 % de la carte.
+  let proche = false
+  for (let k = 0; k < seuils.length && !proche; k++) {
+    const e = v - seuils[k]!
+    if (e <= amp && -e <= amp) proche = true
+  }
+  const a2 = proche ? v + (fbmWarp2(x, y, TERRASSES.GRAIN_ECHELLE, 0x7e44a1, TERRASSES.GRAIN_WARP) * 2 - 1) * amp : v
+  let p = 0
+  while (p < seuils.length && a2 >= seuils[p]!) p++
+  return p
 }
 
 /**
@@ -311,6 +395,101 @@ export function poserLesTerrasses(
   }
   const marchable = (i: number): boolean => MARCHABLE[terrain[i]!] === 1
   const eau = (i: number): boolean => isWater(terrain[i]!)
+  const marais = (i: number): boolean =>
+    terrain[i] === TERRAIN_MARSH || terrain[i] === TERRAIN_PEAT_BOG || terrain[i] === TERRAIN_REED_MARSH
+
+  // ── LE LIT MAJEUR EST PLAT : un marais prend le palier de l'eau qu'il touche ──────────────
+  //
+  // « Le marais est l'eau qui affleure » (T-A11) : une plaque de marais un cran AU-DESSUS de la
+  // rivière qu'elle borde, c'est la tache perchée en haut de la falaise — le défaut même que N3
+  // est venu tuer, et qu'Alexis avait vu sur la carte. Tant que la terre se lisait par cellule de
+  // 8, le cas était rare (0 / 1 / 1 / 0 sur les quatre graines) : la frange d'un cours tenait
+  // dans la cellule même qui avait servi à clamper son eau (`zonegen-hydro`, « le palier de l'eau
+  // courante »). La lecture molle déplace le bord de terrasse À LA TUILE, et il traverse
+  // désormais ces franges — 263 et 405 tuiles perchées (graines 7 et 4242).
+  //
+  // La règle se dit donc ici, une fois, et PAR COMPOSANTE de marais — jamais tuile à tuile :
+  // rabaisser la seule rangée qui touche l'eau dresserait une marche d'un palier EN PLEIN
+  // marécage. Un lit majeur est plat ; sa marche se tient à son BORD. Et elle ne fait que
+  // DESCENDRE : monter un marais, ce serait le percher au-dessus d'une autre eau.
+  const estLacTuile = new Uint8Array(N)
+  for (const i of lacs) estLacTuile[i] = 1
+  const estLac = (i: number): boolean => estLacTuile[i] === 1
+  // LES NAPPES DE MARAIS SE CALCULENT UNE FOIS — le terrain ne bouge plus, seules les hauteurs
+  // bougent. Le balayage complet à chaque tour du point fixe coûtait DOUZE SECONDES de génération
+  // sur la graine 7 (13,4 → 25,4 s, deux générations : E-A2 expirait).
+  const nappesDeMarais: { tuiles: number[]; eaux: number[] }[] = []
+  if (escalier) {
+    const vuM = new Uint8Array(N)
+    for (let dep = 0; dep < N; dep++) {
+      if (vuM[dep] === 1 || !marais(dep)) continue
+      const tuiles = [dep]
+      const eaux = new Set<number>()
+      vuM[dep] = 1
+      for (let h = 0; h < tuiles.length; h++) {
+        const i = tuiles[h]!
+        const x = i % width
+        const y = (i - x) / width
+        for (const [dx, dy] of VOISINS4) {
+          const nx = x + dx
+          const ny = y + dy
+          if (nx < 0 || ny < 0 || nx >= width || ny >= height) continue
+          const j = ny * width + nx
+          if (eau(j)) { eaux.add(j); continue }
+          if (vuM[j] === 1 || !marais(j)) continue
+          vuM[j] = 1
+          tuiles.push(j)
+        }
+      }
+      if (eaux.size > 0) nappesDeMarais.push({ tuiles, eaux: [...eaux] })
+    }
+  }
+  const nivelerLesMarais = (): void => {
+    for (const { tuiles, eaux } of nappesDeMarais) {
+      let bas = -1
+      let hautLac = -1
+      for (const j of eaux) {
+        if (bas < 0 || palier[j]! < bas) bas = palier[j]!
+        if (estLac(j) && palier[j]! > hautLac) hautLac = palier[j]!
+      }
+      // LE NIVEAU DU LIT MAJEUR, C'EST CELUI DE SON EAU — et un LAC ne se déplace pas (il est né
+      // dans sa cuvette, N3). S'il y en a un au bord, c'est lui qui donne le niveau ; sinon c'est
+      // la plus basse eau touchée. Le marais s'y pose EXACTEMENT : plus haut il se perche, plus
+      // bas c'est l'eau qui le domine — les deux moitiés de T-A11, et la borne de la seconde
+      // (l'eau qui domine une terre) vaut ZÉRO.
+      const cible = hautLac >= 0 ? hautLac : bas
+      for (const i of tuiles) palier[i] = cible
+      // ET L'EAU COURANTE QU'IL BORDE SUIT : une cascade se déplace (c'est déjà la règle
+      // d'`abaisserLEauVoisine` plus bas), un lac jamais. Sans cela, rabaisser le marais sur la
+      // plus basse de deux eaux mettait l'autre AU-DESSUS de lui — MESURÉ : 0 → 7 / 185 / 297 /
+      // 17 tuiles d'eau dominante sur les quatre graines.
+      for (const j of eaux) if (!estLac(j) && palier[j]! > cible) palier[j] = cible
+    }
+    // ET LA RIVE A LE DERNIER MOT. Une nappe et un cours d'eau peuvent border la MÊME nappe de
+    // marais à deux paliers — un étang de terrasse qui se vide dans la rivière d'en dessous. Le
+    // lac est immobile, il donne le niveau ; la partie du marais qui touche le COURS, elle, se
+    // retrouve alors un cran au-dessus de lui (MESURÉ graine 4242 : 9 tuiles, une langue de
+    // (943,592) à (945,599)). Elle redescend à la plus HAUTE eau QU'ELLE touche : ce n'est jamais
+    // sous une eau (donc jamais l'eau perchée, borne zéro), et ce n'est plus au-dessus d'une.
+    // La marche passe ainsi DANS le marais, à l'endroit exact où l'étang se déverse — une
+    // cascade, pas une tache perchée en haut d'une falaise.
+    for (const { tuiles } of nappesDeMarais) {
+      for (const i of tuiles) {
+        let haut = -1
+        const x = i % width
+        const y = (i - x) / width
+        for (const [dx, dy] of VOISINS4) {
+          const nx = x + dx
+          const ny = y + dy
+          if (nx < 0 || ny < 0 || nx >= width || ny >= height) continue
+          const j = ny * width + nx
+          if (eau(j) && palier[j]! > haut) haut = palier[j]!
+        }
+        if (haut >= 0 && palier[i]! > haut) palier[i] = haut
+      }
+    }
+  }
+  if (escalier) nivelerLesMarais()
 
   // ── LE CONTINENT — seule la terre qu'on peut ATTEINDRE À PLAT a voix au chapitre ──────────
   //
@@ -378,6 +557,25 @@ export function poserLesTerrasses(
   }
   /** L'eau qu'aucune miette ni garantie ne déplace : sur l'escalier, TOUTE l'eau ; sinon la nappe. */
   const figee = (i: number): boolean => (escalier ? eau(i) : deLaNappe(i))
+  /**
+   * LA GARANTIE EMMÈNE L'ASSISE AVEC ELLE. `garantir` déplace des PIÈCES de terre pour les
+   * rejoindre, et elle détache (`blocDe = −1`) : la joignabilité prime, on ne peut pas lui
+   * refuser le geste comme on le refuse à une miette. Mais un lieu qui se fend, c'est T-A4 — et
+   * la découpe molle fait désormais passer le bord DANS les lieux (la Ferme muette II, graine
+   * 2026 : 11 tuiles d'éboulis à p2 pour 301 à p1). Alors le bloc SUIT, entier, au palier où va
+   * la pièce : c'est la règle de §3 (« tout le bloc bouge avec elle »), appliquée au seul endroit
+   * qui l'ignorait. Rend `true` si un bloc a suivi.
+   */
+  const emmenerLassise = (i: number, q: number, atteinte?: Uint8Array): boolean => {
+    const b = blocDe[i]!
+    if (b < 0 || blocEstNappe[b] === 1) return false
+    for (const j of tuilesDuBloc[b]!) {
+      if (eau(j)) continue
+      palier[j] = q
+      if (atteinte !== undefined && marchable(j)) atteinte[j] = 1
+    }
+    return true
+  }
   /** Le palier du lac que borde cette tuile (le plus haut), −1 si elle n'en borde aucun. */
   const plancherLac = (i: number): number => {
     let haut = -1
@@ -794,7 +992,41 @@ export function poserLesTerrasses(
   // Chaque assise prend son palier MAJORITAIRE (à égalité, le plus bas) sur ses tuiles hors
   // eau — l'eau appartient à sa nappe. Et l'assise reste UN BLOC pour toute la suite : quand
   // une de ses tuiles doit bouger (rabaisser, miette, garantie), tout le bloc bouge avec elle.
-  for (const a of assises) {
+  // DEUX ASSISES QUI SE RECOUVRENT N'EN FONT QU'UNE. Le registre des blocs le supposait déjà
+  // (« deux blocs qui se recouvrent finissent au même palier par transitivité ») — mais §3 POSE
+  // le palier directement, tuile par tuile, et la dernière assise écrite gagne les tuiles
+  // partagées. Le lieu se retrouve alors coupé par l'assise voisine. Tant que le bord suivait les
+  // arêtes du motif de 8, les deux tombaient du même côté ; la lecture molle les sépare — la
+  // Ferme muette II (graine 2026) tenait à p1 avec, le long de son flanc ouest, les 11 tuiles de
+  // la JUPE d'une mesa restées à p2, une diagonale d'éboulis de (834,506) à (836,514). T-A4.
+  const racine = new Int32Array(assises.length)
+  for (let k = 0; k < assises.length; k++) racine[k] = k
+  const trouver = (k: number): number => {
+    let r = k
+    while (racine[r] !== r) r = racine[r]!
+    let c = k
+    while (racine[c] !== r) { const n = racine[c]!; racine[c] = r; c = n }
+    return r
+  }
+  {
+    const proprio = new Int32Array(N).fill(-1)
+    for (let k = 0; k < assises.length; k++) {
+      for (const i of assises[k]!) {
+        if (i < 0 || i >= N) continue
+        const d = proprio[i]!
+        if (d >= 0) { const ra = trouver(d), rb = trouver(k); if (ra !== rb) racine[rb] = ra }
+        else proprio[i] = k
+      }
+    }
+  }
+  const groupes = new Map<number, number[]>()
+  for (let k = 0; k < assises.length; k++) {
+    const r = trouver(k)
+    const g = groupes.get(r)
+    if (g === undefined) groupes.set(r, assises[k]!.slice())
+    else for (const i of assises[k]!) g.push(i)
+  }
+  for (const a of groupes.values()) {
     const votes = new Array<number>(TERRASSES.PALIERS).fill(0)
     const tuiles: number[] = []
     for (const i of a) {
@@ -1047,6 +1279,18 @@ export function poserLesTerrasses(
           if (b >= 0 && b < cible) return false
         }
       }
+    }
+    // UNE ASSISE NE SE FEND PAS, MÊME POUR UNE MIETTE. `fondre` DÉTACHE (`blocDe = −1`) : c'est
+    // ce qu'il faut pour une poche de terrain ordinaire, et c'est la contradiction de §3 quand la
+    // poche mord sur un lieu — « quand une de ses tuiles doit bouger, tout le bloc bouge avec
+    // elle ». Le cas était théorique tant que le bord de terrasse suivait les arêtes du motif de
+    // 8 : un lieu tient dans une poignée de cellules, la découpe passait à côté. La lecture molle
+    // fait passer le bord DANS les lieux, et la Ferme muette II (graine 2026) s'est retrouvée à
+    // cheval sur deux paliers — 11 tuiles d'éboulis à p2 pour 301 à p1, T-A4. La miette renonce.
+    for (let m = debut[id]!; m < debut[id + 1]!; m++) {
+      const i = membres[m]!
+      const b = blocDe[i]!
+      if (b >= 0 && blocEstNappe[b] === 0) return false
     }
     for (let m = debut[id]!; m < debut[id + 1]!; m++) {
       const i = membres[m]!
@@ -1523,6 +1767,7 @@ export function poserLesTerrasses(
       for (const k of dansFermeture) {
         decidee[k] = 1
         for (const i of pieces[k]!) {
+          if (emmenerLassise(i, p + 1, atteinte)) continue
           blocDe[i] = -1
           palier[i] = p + 1
           atteinte[i] = 1
@@ -1641,6 +1886,7 @@ export function poserLesTerrasses(
           // voisine ; rejointe, elle est atteinte. L'eau qu'elle bordait suit ses votants au tour
           // suivant (`aplanir`, `niveler`) — ou, sur l'escalier, descend avec elle tout de suite.
           for (const i of terre) {
+            if (emmenerLassise(i, bas, atteinte)) { if (escalier) abaisserLEauVoisine(i, bas); continue }
             blocDe[i] = -1
             palier[i] = bas
             atteinte[i] = 1
@@ -1692,6 +1938,16 @@ export function poserLesTerrasses(
     // tout de suite si c'était le dernier, pour que le rendu et les rampes voient le champ final.
     if (tour + 1 === TERRASSES.TOURS) calmer()
   }
+  // ET UNE DERNIÈRE FOIS, APRÈS LA GARANTIE — mais APRÈS ELLE SEULEMENT, jamais dans son tour.
+  // `garantir` RELÈVE de la terre pour la rejoindre, et son apparat de montée (`monter`) sait
+  // faire suivre l'eau, pas la frange de marais posée dessus : sans ce rappel final, 38 et 28
+  // tuiles de marais restaient perchées (graines 7 et 4242). Le mettre EN TÊTE du tour, en
+  // revanche, le fait se battre avec elle — chacun défaisant l'autre : MESURÉ graine 7, le point
+  // fixe battait alors jusqu'à la borne de `TOURS` (32 tours contre 2 sur les trois autres
+  // graines), la génération passait de 11,6 à 25,7 s, et E-A2 — qui en fait deux — expirait.
+  // Une remise à plat qui a le DERNIER mot ne coûte rien ; la même, disputée à chaque tour, ne
+  // converge pas. Il reste 1 tuile perchée sur la graine 4242, pour une borne de 5.
+  if (escalier) nivelerLesMarais()
   return { palier, rampes, tours }
 }
 

@@ -63,15 +63,72 @@ Réglages de CARTE, à côté du générateur (`TERRASSES` dans `terrasses.ts`) 
   - **Limites v1**, à l'œil : le shader d'eau d'un palier haut ne se creuse pas (un lac de terrasse reste opaque sur un corps dessous) ; sous une part creusée, le maillage du sol montre le bake de la terrasse (pas le sol du bas) là où les pavés ne couvrent pas — le sol du bas n'est vu que par SES pavés.
   Gardé : `framing.test.ts` (« terrasses : le sol d'un palier haut recouvre et cède comme un chapeau » — ouverture 0 à deux tuiles du mur, 1 sous le bord, 0 depuis le sud, 0 sur la terrasse ; `solVisibleSous` sur les deux rangées nord, l'intérieur, le chapeau, un palier 2) et le smoke `terrasse-nord` (`loin` : ouverture 0, 0 trouée, rien de la terrasse peint sur le corps ; `sous` : ouverture 1, 4 trouées, **texel du pavé à alpha 0 au torse** lu dans le canvas de la texture, lèvre à 0,12). Le smoke `mesa` rend le même verdict qu'avant (9 ✓).
 - **T-R10 — La rampe se dessine comme celle des mesas** (`niveauSurLaRampe`, pente continue sur la tuile).
+- **T-R11 — LE BORD DE TERRASSE SE LIT À LA TUILE, PAS À LA CELLULE** (2026-09-11 ; Alexis :
+  *« rendre les étages plus organiques, plus réalistes concernant leur forme générale »*, et il a
+  tranché « partout, y compris le long de l'eau »). `quantifierLEscalier` posait le palier d'une
+  tuile en recopiant celui de sa cellule de `CREUX.MOTIF` : tout bord de terrasse était donc une
+  union d'arêtes du carré de 8, un créneau de château — pendant que la rivière de la même image
+  serpentait à la tuile. MESURÉ avant (4 graines) : **88,7 à 89,8 % du bord** tenait dans des
+  segments parfaitement droits d'au moins 8 tuiles.
+  On lit désormais le MÊME champ `rempli`, aux MÊMES terciles, mais **interpolé bilinéairement**
+  entre les centres de cellule, plus un **grain positionnel** (`fbmWarp2`) dont l'amplitude est
+  une fraction (`TERRASSES.GRAIN`) du dénivelé LOCAL — franc là où le socle est plat, ondulant là
+  où il est raide. C'est la recette de R23 (le sol dessiné dé-quantifié) et le précédent de T-A12.
+  - **Ce n'est pas du bruit ajouté à une frontière, c'est la frontière lue plus finement.**
+    L'interpolant est continu et monotone le long de tout segment entre deux centres de cellule :
+    LA propriété dont tout dépend survit — de toute cellule part vers le bord un chemin de valeur
+    non croissante, il reste non croissant à la tuile. Aucune terrasse ne se referme.
+  - **Aucun tirage** : `fbmWarp2` est positionnel, le flux du PRNG n'est pas touché d'un bit. Et
+    `cellules` n'est PAS touché — les sentes (`SENTES.COUT_PALIER`) et le drainage lisent le même
+    champ par cellule qu'avant, octet pour octet.
+  - **Le grain ne s'évalue qu'au bord** : une tuile à plus d'une amplitude du seuil le plus proche
+    tombe du même côté, grain ou pas. Le test est exact (bornes comprises), donc le champ rendu est
+    identique au bit près — c'est le bruit qu'on s'épargne. La génération complète retombe à son
+    temps d'avant (11,9-12,2 s contre 13,3-13,7 sans ce saut, graine 2026).
+  - **Le lit majeur est plat** (`nivelerLesMarais`) : la terre bouge maintenant à la tuile alors que
+    l'eau a été FIGÉE à la cellule (`zonegen-hydro`, « le palier de l'eau courante »), et le bord
+    traverse désormais les franges. Chaque nappe de marais (marais, tourbière, roselière) prend donc
+    le palier de son eau — **par composante**, jamais tuile à tuile : rabaisser la seule rangée qui
+    touche l'eau dresserait une marche EN PLEIN marécage. Un lac donne le niveau (il ne se déplace
+    pas) ; sinon c'est la plus basse eau touchée, et l'eau COURANTE bordée descend avec (une cascade
+    se déplace). Enfin **la rive a le dernier mot** : une langue prise entre un étang de terrasse et
+    la rivière d'en dessous redescend à la plus HAUTE eau qu'elle touche — la marche passe DANS le
+    marais, là où l'étang se déverse.
+  - **Deux blocs qui se recouvrent n'en font qu'un** (§3) : le registre le supposait (« ils
+    finissent au même palier par transitivité ») mais §3 POSE le palier directement, et la dernière
+    assise écrite gagnait les tuiles partagées. La découpe molle fait passer le bord DANS les
+    lieux ; les assises se fusionnent donc par union-find avant d'être aplanies.
 
 ## 5. Critères d'acceptation
 
 - **T-A1 — Déterminisme** : même graine → même `palier[]`, mêmes connecteurs, au bit près (deux générations directes, `etages.test.ts` E-A2 — deux graines, ~10 s la génération) ; le chemin `'vallee'` rend un `palier` ABSENT. Et la donnée : un palier par tuile dans `0..PALIERS−1`, les trois peuplés (10-70 % du marchable chacun), sur 4 graines.
-- **T-A2 — Connexité en étages** : sur 4 graines, toute tuile de la composante marchable principale est atteignable par une marche en `(tx,ty,niveau)` qui suit `etagesDuPas` + `etageApresLePas` (la règle du jeu, pas une copie). Perte de TERRE marchable par rapport au monde à plat : **≤ 20 tuiles** (un îlot au milieu d'un lac dont la seule rive est au sud ; une région qui se perd en fait des centaines) ; perte de haut-fonds **< 10 %**, de lac et de rivière chacun (la ceinture sous une rive haute au sud, à l'est ou à l'ouest n'a pas de rampe possible — on la voit, on ne s'y baigne pas). Et le gué : des rampes ont le pied dans l'eau, aucune la tête. Depuis N3 : 0 / 0 / 0 / 0 tuile perdue sur les quatre graines (les îles en eau profonde sont hors de la composante principale à plat, elles ne comptent pas — elles se rejoignent sur la glace, décision du 2026-08-30).
+- **T-A2 — Connexité en étages** : sur 4 graines, toute tuile de la composante marchable principale est atteignable par une marche en `(tx,ty,niveau)` qui suit `etagesDuPas` + `etageApresLePas` (la règle du jeu, pas une copie). Perte de TERRE marchable par rapport au monde à plat : **≤ 40 tuiles depuis T-R11** (20 avant) (un îlot au milieu d'un lac dont la seule rive est au sud ; une région qui se perd en fait des centaines) ; perte de haut-fonds **< 10 %**, de lac et de rivière chacun (la ceinture sous une rive haute au sud, à l'est ou à l'ouest n'a pas de rampe possible — on la voit, on ne s'y baigne pas). Et le gué : des rampes ont le pied dans l'eau, aucune la tête. Depuis N3 : 0 / 0 / 0 / 0 tuile perdue sur les quatre graines (les îles en eau profonde sont hors de la composante principale à plat, elles ne comptent pas — elles se rejoignent sur la glace, décision du 2026-08-30).
 - **T-A3 — ±1** : aucune paire de tuiles marchables voisines ne diffère de plus d'un palier (T-R5) ; toute nappe hors rivière (l'eau de `lacs`) tient sur UN palier — son profond et ses haut-fonds, exactement (0 haut-fond versant sur 4 graines).
 - **T-A3bis — pas de digue en pleine eau** : jugé sans `lacs` ni masque de rivière, exprès — une tuile profonde qui a une profonde plus basse à côté est une marche ; les marches se lient en lignes 8-connexes ; **aucune ligne de plus de 24 tuiles** (une cascade fait la largeur d'un lit ; le coin de 13 × 12 de l'ancien masque en faisait 25). Mesuré : la plus longue, 19 (graine 7, une rivière qui longe une rive de lac un cran au-dessus). *(Première écriture, « chaque composante d'eau libre sur UN palier » : fausse comme garde — une rivière large de douze tuiles est de l'eau libre, et elle cascade.)* La prémisse de la garde (le monde a bien des marches en eau : plus de 5 marches, plus de 2 lignes) est affirmée d'abord — sur l'escalier, l'eau naît sur ses marches et il y en a moins qu'avant (MESURÉ N3 : 12 / 7 / 15 / 18 lignes sur 2026 / 7 / 4242 / 909, contre > 20 avant) ; une garde qui ne peut pas rougir ne garde rien.
 - **T-A4 — Les assises sont plates** : chaque lieu (zone à `kind`) tient sur un seul palier sur tout son marchable (terre et haut-fonds) ; la jupe de chaque mesa est au palier de son chapeau − 1 ; le carré dégagé de chaque point de naissance est d'un seul palier, dans la composante principale.
 - **T-A11 — Aucune eau ne domine une terre qu'elle touche** (N3, 2026-09-05) : sur 4 graines, la prémisse d'abord (plus de 50 000 tuiles d'eau), puis **0 tuile d'eau** dont une voisine orthogonale marchable de terre est plus basse qu'elle ; et le marais (marais, tourbière, roselière — ce qui dérive de l'eau) qui domine une eau qu'il touche : **≤ 5 tuiles** par graine (le résidu d'une frange posée `surLaMarche` contre une eau qu'une descente a abaissée ensuite). L'eau PLUS BASSE que sa rive n'est pas jugée : c'est une gorge, voulue.
+- **T-A13 — Le bord de terrasse n'est plus la grille de 8** (T-R11, 2026-09-11) : sur 4 graines,
+  la part du bord de terrasse (les arêtes entre deux tuiles marchables de paliers différents) qui
+  tient dans des segments parfaitement droits d'au moins 8 tuiles. MESURÉ avant : **89,6 / 88,7 /
+  89,8 / 89,4 %** (2026 / 7 / 4242 / 909) ; après : **10,4 / 12,4 / 14,7 / 9,1 %**. Conséquences
+  relevées au même passage, et qui ne sont PAS des défauts : les rampes tombent d'environ un quart
+  (1 131 → 830, 1 253 → 1 024, 1 210 → 1 133, 1 290 → 822 connecteurs) — `TERRASSES.RAMPE_PAS` est
+  le bouton si l'on en veut davantage ; et T-A2 monte de 20 à 40 tuiles de terre perdue, cause
+  nommée dans le test (la VASIÈRE : un marais mis à plat au niveau de son eau, sous une berge d'un
+  cran plus haut et devant de l'eau profonde, n'a plus de rampe possible — la paroi regarde le sud).
+  Les deux moitiés de T-A11 tiennent : **0 tuile d'eau dominante** partout, et 0 / 0 / 1 / 0 tuile
+  de marais perché pour une borne de 5.
+  ⚠ **ET LE POINT FIXE DOIT CONVERGER, C'EST LA MOITIÉ DU CRITÈRE.** La remise à plat du lit
+  majeur a le DERNIER mot (après `garantir`), jamais un mot à chaque tour : disputée en tête de
+  tour, elle et `garantir` se défont l'une l'autre et le point fixe bat jusqu'à la borne de
+  `TOURS` — MESURÉ graine 7 : **32 tours contre 2** sur les trois autres graines, la génération de
+  11,6 à 25,7 s, et E-A2 (qui en fait deux) expirait. Une génération du monde joué coûte 9 à 12 s
+  par graine ; au-delà, c'est un point fixe qui bat, et ce qu'il laisse en battant est de la terre
+  perdue. **Deux prémisses tacites tombent aussi avec la grille de 8, et sont désormais dites** :
+  ① la gueule d'un karst exige du sol marchable AU SUD (le seuil qu'on foule pour entrer, G-A4 ⑤)
+  — une gueule s'était ouverte devant l'eau profonde (karst 250,183, graine 2026) ; ② le banc du
+  jardin de suie élit une tuile dont le SUD est de plain-pied, sinon le semeur qui s'y tient est
+  refusé pour cause d'étage (E-R5) et le test lit un rejet qui ne parle pas de suie.
 - **T-A12 — Un lac mord la terrasse du dessus en cuvette, sa rive à pic n'est pas la grille de 8** (2026-09-05) : sur 4 graines, la prémisse d'abord (plus de 1 000 arêtes de rive de lac contre un mur — palier voisin > lac), puis **≤ 75 %** de ces arêtes posées sur la grille de `CREUX.MOTIF`. MESURÉ avant : 100 / 100 / 100 / 100 % ; après : 36 / 33 / 63 / 37 % (2026 / 7 / 4242 / 909) — le reste est le barrage, la cellule où la cuvette naturelle déborderait.
 - **T-A2bis — Toute porte est marchable des deux côtés** : chaque connecteur, sans trier, est marchable à `de` et à `vers` ; une rampe de terrasse se tient sur le sol de son `de` et débouche au nord sur le sol de son `vers`. Et **la cave, le ciel et le cadavre comptent depuis le palier** : « sous la roche » = `niveau < palierDuSol` (`partDuCiel`), le dessus d'une mesa posée au palier 2 est l'étage 3, sa cave l'étage 1 ; un cadavre garde `etage: 0` s'il est écrit (sur un sol de palier 1, 0 est une cave).
 - **T-A5 — Les corps et les nœuds savent où ils sont** : à l'amorce, tout nœud se tient sur une tuile qui existe à `niveauDeLaTuile`, et un nœud du sol n'écrit pas d'`etage` ; le monde assemblé comme la Veillée (nœuds, faune, monstres de lieu, bâti) et joué 600 ticks : aucun corps n'est à un niveau où sa tuile n'est pas marchable.

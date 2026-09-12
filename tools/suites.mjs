@@ -65,7 +65,10 @@ const SUITES = [
   //   (feu libre et Foyer de village) — suite à 2287.
   // 2026-09-07 (lot ③, Q5) : +4 gardes E-A3 — l'interaction à portée (`near` et ses 25 appels,
   //   la ligne, le dépeçage, le coin de chasse appris, le bâti) — suite à 2291.
-  { nom: 'sim', dir: 'packages/sim', args: ['run', '--exclude', 'src/scenario.test.ts'], plancher: 2262 },
+  // 2026-09-11 : +5 gardes E-R5 §23 — l'approche vise l'étage de sa cible (`etages-etancheite`),
+  //   puis +4 gardes T-A13 — le bord de terrasse n'est plus la grille de 8 (`terrasses.test.ts`,
+  //   spec T-R11) — suite à 2305, plancher relevé quelques pourcents dessous.
+  { nom: 'sim', dir: 'packages/sim', args: ['run', '--exclude', 'src/scenario.test.ts'], plancher: 2275 },
   // 2026-09-01 : +10 gardes avec le RENDU des étages (`plateau-art.test.ts`).
   // 2026-09-01 : +9 gardes avec le TRI DES ÉTAGES (strate, découvert — `framing.test.ts`),
   //   suite relevée à 1429 ✓, plancher recalé quelques pourcents dessous.
