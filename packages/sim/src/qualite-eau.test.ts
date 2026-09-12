@@ -434,8 +434,10 @@ describe('A2quater — TOUS les fleuves (reprise de l’eau, A2 ; décision d’
     expect(map.fils![0]).toEqual(map.fil)
     const fils = filsDe(map)
     const n1 = map.fil!.length
+    const lacs = new Set(map.lacs ?? [])
     let attaches = 0
     let rivieres = 0
+    let dansUnLac = 0
     let lues = 0
     for (let k = 1; k < map.fils!.length; k++) {
       const f = map.fils![k]!
@@ -447,13 +449,18 @@ describe('A2quater — TOUS les fleuves (reprise de l’eau, A2 ; décision d’
         const pas = attacheAuFil(map, tx, ty)
         if (pas >= n1) attaches += 1
         if (pas >= 0) expect(finDuFleuve(fils, pas)).toBe(fils.fin[k])
-        if (map.natureEau![i] === NATURE_RIVIERE) rivieres += 1
+        // Le lit peint (décision d'Alexis, 2026-09-12) : un point de fil DANS un lac reste du
+        // lac — le fil le traverse, le peintre n'y a rien posé.
+        if (lacs.has(i)) dansUnLac += 1
+        else if (map.natureEau![i] === NATURE_RIVIERE) rivieres += 1
       }
     }
     expect(lues).toBeGreaterThan(200)
-    // Chaque point de fil s'attache à SON fleuve (d2 = 0 : rien de plus proche) et se pêche en rivière.
+    // Chaque point de fil s'attache à SON fleuve (d2 = 0 : rien de plus proche) et, hors des
+    // lacs qu'il traverse, se pêche en rivière.
     expect(attaches).toBe(lues)
-    expect(rivieres).toBe(lues)
+    expect(rivieres + dansUnLac).toBe(lues)
+    expect(rivieres).toBeGreaterThan(dansUnLac)
   }, 60_000)
 })
 

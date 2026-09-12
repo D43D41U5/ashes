@@ -202,6 +202,15 @@ export interface Hydrologie {
   /** Toute l'eau posée par la passe (lacs compris) — pour la frange de marais. */
   eaux: number[]
   /**
+   * LE LIT PEINT DES FLEUVES — les tuiles que le peintre a posées pour les fleuves (ceux des
+   * `fils`), et elles seules : ni les rus, ni les affluents sans exutoire, ni un lac (`poser`
+   * refuse l'eau déjà là — l'exclusion est par construction). C'est ce que la nature de l'eau
+   * dit « rivière » (décision d'Alexis, 2026-09-12 : le lit peint, pas une bande autour du fil —
+   * un lit va jusqu'à `RAYON_MAX` alors que la bande faisait 2, et la bande découpait un ruban
+   * « rivière » dans les lacs qu'un fil traverse). Index de tuile, sans doublon.
+   */
+  lits: number[]
+  /**
    * LES TUILES DES LACS SEULS — ce que l'inondation des cuvettes a peint, sans les fleuves ni
    * les chenaux. C'est la DONNÉE qui dit ce qui est plat : une nappe tient sur un palier de
    * terrasse (`terrasses.ts`), un fleuve descend en cascades — et il n'y a qu'ici qu'on le
@@ -262,7 +271,7 @@ export function tracerLHydrologie(
   seed: number,
   escalier: Escalier | null = null,
 ): Hydrologie {
-  const vide: Hydrologie = { fils: [], coeur: new Set(), chenaux: [], eaux: [], lacs: [] }
+  const vide: Hydrologie = { fils: [], coeur: new Set(), chenaux: [], eaux: [], lacs: [], lits: [] }
   if (!creux) return vide
   const M = CREUX.MOTIF
   const cols = creux.cols
@@ -827,13 +836,18 @@ export function tracerLHydrologie(
   cours.sort((a, b) => (b.fluxMax - a.fluxMax) || (a.chemin[0]! - b.chemin[0]!))
   const litNeuf = new Set<number>()
   const courbes = new Map<number, Point[]>()
+  // Le lit de CHAQUE cours, à part : seuls ceux qui seront des fleuves (plus bas) sont publiés.
+  const litParCours = new Map<number, number[]>()
   for (const { chemin, fluxMax } of cours) {
     const grand = fluxMax >= HYDRO.FLUX_SAULAIE
+    const litDuCours: number[] = []
+    litParCours.set(chemin[0]!, litDuCours)
     const poser = (x: number, y: number, p: number | undefined): void => {
       if (!libre(x, y)) return
       const i = y * width + x
       terrain[i] = TERRAIN_SHALLOW_WATER
       litNeuf.add(i)
+      litDuCours.push(i)
       eaux.push(i)
       if (grand) chenaux.push(i)
       // LE PALIER DE L'EAU COURANTE : celui du cours, et JAMAIS au-dessus de la terre qu'elle
@@ -891,7 +905,9 @@ export function tracerLHydrologie(
     .filter((c) => c.fluxMax >= HYDRO.FLUX_FLEUVE && c.jusquALExutoire)
     .sort((a, b) => (b.fluxMax - a.fluxMax) || (a.chemin[0]! - b.chemin[0]!))
   const fils = fleuves.map(({ chemin }) => peindreFil(courbes.get(chemin[0]!) ?? chemin.map(centrePoint), width, height))
-  return { fils, coeur, chenaux, eaux, lacs: tuilesDeLac }
+  const lits: number[] = []
+  for (const { chemin } of fleuves) for (const i of litParCours.get(chemin[0]!) ?? []) lits.push(i)
+  return { fils, coeur, chenaux, eaux, lacs: tuilesDeLac, lits }
 }
 
 /**

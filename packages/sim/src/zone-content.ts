@@ -350,7 +350,9 @@ export const CONTENU = {
   PECHE_MAX_PAR_LAC: 3,
   /** …et deux coins d'un même lac sont écartés d'au moins ce Chebyshev. */
   PECHE_ESPACEMENT_LAC: 24,
-  /** Une tuile profonde à moins de ce rayon Chebyshev du fil appartient à la RIVIÈRE (pas au lac). */
+  /** Une tuile profonde à moins de ce rayon Chebyshev du fil appartient à la RIVIÈRE (pas au lac)
+   *  — pour les COINS (P4). La nature de l'eau, elle, lit le LIT PEINT des fleuves depuis le
+   *  2026-09-12 (`Hydrologie.lits`, `peche-nature.ts`) et ne retombe sur cette bande que sans lit. */
   PECHE_RAYON_RIVIERE: 2,
 
   /**

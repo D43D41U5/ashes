@@ -103,6 +103,12 @@ const SUITES = [
   //   dans le suivant (revue déterminisme), la table et l'empreinte au bit près à deux fleuves (A11) ;
   //   `peche.test.ts` (1) : un second fleuve est une rivière, pas un lac. Suite à 2378 sur l'arbre
   //   (2373 sur l'arbre commité seul), plancher relevé à 2360.
+  // 2026-09-12 : +1 garde A2bis — LE LIT PEINT (décision d'Alexis : la rivière de la pêche est le lit
+  //   que le peintre a posé, plus une bande à 2 du fil). `peche.test.ts` : le lit à 3 et 4 du fil est
+  //   rivière, le lac qu'un fil traverse reste lac, l'ordre du lit est indifférent, une tuile comblée
+  //   n'est plus rien ; et sur le monde joué (dans la garde A1/A2) zéro tuile de `map.lacs` en
+  //   rivière, ≥ 1 000 tuiles de rivière hors bande. Suite à 2379 sur l'arbre (2374 sur l'arbre
+  //   commité seul) ; plancher inchangé (2360).
   { nom: 'sim', dir: 'packages/sim', args: ['run', '--exclude', 'src/scenario.test.ts'], plancher: 2360 },
   // 2026-09-01 : +10 gardes avec le RENDU des étages (`plateau-art.test.ts`).
   // 2026-09-01 : +9 gardes avec le TRI DES ÉTAGES (strate, découvert — `framing.test.ts`),

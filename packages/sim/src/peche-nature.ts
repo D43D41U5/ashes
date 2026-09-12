@@ -17,9 +17,17 @@
  * du marais, pas de la rivière) :
  *
  *   1. **MARAIS** — le terrain le dit lui-même (`TERRAIN_MARSH`, `TERRAIN_REED_MARSH`).
- *   2. **RIVIÈRE** — eau à ≤ `PECHE_RAYON_RIVIERE` (Chebyshev) d'un point du fil. C'est la
- *      MÊME définition que celle dont `coinsDePeche` se sert pour exclure la rivière des
- *      berges de lac : deux définitions divergeraient, et la pêche mentirait d'un côté.
+ *   2. **RIVIÈRE** — **le LIT PEINT des fleuves** (`Hydrologie.lits` : les tuiles que le peintre a
+ *      posées pour les fleuves, lacs exclus par construction) quand le worldgen le donne ; sinon
+ *      — carte à la main, carte d'avant — l'eau à ≤ `PECHE_RAYON_RIVIERE` (Chebyshev) d'un
+ *      point de fil, de TOUS les fleuves (A2). **Décision d'Alexis, 2026-09-12** (« le lit
+ *      peint ») : la bande à 2 datait d'un lit de demi-largeur 3, or le lit va jusqu'à 4,6 depuis
+ *      l'hydrologie du 30 août — MESURÉ sur la graine 2026 : ≥ 1 810 tuiles du lit (12 % de la
+ *      rivière) passaient pour du lac ou de la mare, et depuis la berge d'un fleuve large c'est
+ *      précisément ce bord qu'on vise avec le flotteur (perche et brochet dans le courant) ; et
+ *      la bande découpait un ruban « rivière » de 3 254 tuiles dans les lacs qu'un fil traverse.
+ *      La bande reste la règle de `coinsDePeche` pour écarter la rivière des berges de lac —
+ *      les coins n'ont pas bougé à la mesure (35 rivière / 77 lac à tout rayon).
  *   3. **LAC** — le reste de l'eau, par composante 4-connexe, à partir de
  *      `EAU_NATURE.LAC_MIN_TUILES` tuiles.
  *   4. **MARE** — toute autre eau permanente : les petites poches, les ruisseaux perdus.
@@ -85,15 +93,23 @@ export function estTerrainDeMarais(t: number | undefined): boolean {
 }
 
 /**
- * LA DÉRIVATION (T1) — `terrain` + les fils des fleuves (tous, A2) → un entier par tuile.
+ * LA DÉRIVATION (T1) — `terrain` + les fils des fleuves (tous, A2) + leur LIT PEINT (`lits`,
+ * quand le worldgen le donne) → un entier par tuile.
  *
  * Coût : un balayage pour le marais et la rivière, un BFS de composantes sur le reste de
  * l'eau. Du même ordre que `deriverDistanceEau`, qui tourne déjà juste à côté à l'amorce.
  *
  * Déterministe et sans PRNG : le balayage est row-major, les composantes se numérotent dans
- * cet ordre — deux générations de la même graine rendent la même carte (garde A21).
+ * cet ordre — deux générations de la même graine rendent la même carte (garde A21). L'ordre
+ * de `lits` ne compte pas non plus : la règle n'écrit RIVIÈRE que sur RIEN (une union).
  */
-export function deriverNatureDeLEau(terrain: number[], fils: readonly (readonly number[])[] | undefined, width: number, height: number): number[] {
+export function deriverNatureDeLEau(
+  terrain: number[],
+  fils: readonly (readonly number[])[] | undefined,
+  width: number,
+  height: number,
+  lits?: readonly number[],
+): number[] {
   const n = width * height
   const out = new Array<number>(n).fill(NATURE_RIEN)
 
@@ -102,19 +118,26 @@ export function deriverNatureDeLEau(terrain: number[], fils: readonly (readonly 
     if (estTerrainDeMarais(terrain[i])) out[i] = NATURE_MARAIS
   }
 
-  // ── 2. LA RIVIÈRE — l'eau au voisinage d'un fil (même rayon que `coinsDePeche`), de TOUS les
-  //    fleuves (A2, décision d'Alexis du 2026-09-12 : un second fleuve passait pour un lac —
-  //    11 840 tuiles sur la graine 2026, 100 % d'entre elles) ──
-  const RR = CONTENU.PECHE_RAYON_RIVIERE
-  for (const fil of fils ?? []) for (const k of fil) {
-    const fx = k % width
-    const fy = (k - fx) / width
-    for (let y = fy - RR; y <= fy + RR; y++) {
-      if (y < 0 || y >= height) continue
-      for (let x = fx - RR; x <= fx + RR; x++) {
-        if (x < 0 || x >= width) continue
-        const i = y * width + x
-        if (out[i] === NATURE_RIEN && estTerrainDEau(terrain[i])) out[i] = NATURE_RIVIERE
+  // ── 2. LA RIVIÈRE — le LIT PEINT des fleuves quand le worldgen le donne (décision d'Alexis,
+  //    2026-09-12) ; sinon l'eau au voisinage d'un fil (le rayon de `coinsDePeche`), de TOUS
+  //    les fleuves (A2, le même jour : un second fleuve passait pour un lac — 11 840 tuiles sur
+  //    la graine 2026, 100 % d'entre elles) ──
+  if (lits !== undefined) {
+    // Une tuile du lit qu'une passe d'après a rendue à la terre (isthme comblé) n'est plus rien :
+    // le terrain a le dernier mot, comme partout.
+    for (const i of lits) if (out[i] === NATURE_RIEN && estTerrainDEau(terrain[i])) out[i] = NATURE_RIVIERE
+  } else {
+    const RR = CONTENU.PECHE_RAYON_RIVIERE
+    for (const fil of fils ?? []) for (const k of fil) {
+      const fx = k % width
+      const fy = (k - fx) / width
+      for (let y = fy - RR; y <= fy + RR; y++) {
+        if (y < 0 || y >= height) continue
+        for (let x = fx - RR; x <= fx + RR; x++) {
+          if (x < 0 || x >= width) continue
+          const i = y * width + x
+          if (out[i] === NATURE_RIEN && estTerrainDEau(terrain[i])) out[i] = NATURE_RIVIERE
+        }
       }
     }
   }

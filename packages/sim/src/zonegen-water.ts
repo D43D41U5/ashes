@@ -229,6 +229,8 @@ export interface EauxDeLaRacine {
   fils: number[][]
   /** Les tuiles des LACS de la Racine — l'eau plate, celle que les terrasses nivellent. */
   lacs: number[]
+  /** LE LIT PEINT des fleuves (`Hydrologie.lits`) — ce que la nature de l'eau dit « rivière ». */
+  lits: number[]
 }
 
 /** Le fenêtrage de la courbure — voir `estUnCoude`. */
@@ -359,8 +361,9 @@ export function paintWaterRacine(
   // `poserLesTerrasses` reprend ensuite, l'eau figée.
   const hydro = tracerLHydrologie(terrain, zone, racineId, width, height, creux, horsSeuils, s, escalier)
   const eaux = hydro.eaux
-  // Le FIL au singulier reste le plus gros fleuve : c'est lui que `map.fil` publie, et tout ce
-  // qui le lit (le courant du client, la nature de l'eau) n'a pas à savoir qu'il y en a d'autres.
+  // Le FIL au singulier reste le plus gros fleuve : c'est lui que `map.fil` publie — mais depuis
+  // A2 (2026-09-12) tout lecteur lit TOUS les fleuves par `map.fils` (`filsDe`) ; `riviere` ne
+  // sert plus qu'aux gués et à la ripisylve.
   const riviere = hydro.fils.length > 0 ? { fil: hydro.fils[0]!, coeur: hydro.coeur } : null
 
   // LE LAPIAZ puis LES RÉSURGENCES — la face sèche et la face humide du même karst. Avant la
@@ -374,7 +377,7 @@ export function paintWaterRacine(
   //    inversait le rang à l'eau au bout mouillé, en diluant les deux SEULS terrains du T0 qui
   //    savent où est l'eau. Les servir en dernier règle les deux d'un coup.
   poserLesResurgences(terrain, zone, racineId, width, height, bordure, creux, horsSeuils, escalier)
-  return { riviere, chenaux: hydro.chenaux, fils: hydro.fils, lacs: hydro.lacs }
+  return { riviere, chenaux: hydro.chenaux, fils: hydro.fils, lacs: hydro.lacs, lits: hydro.lits }
 }
 
 /**

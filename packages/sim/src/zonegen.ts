@@ -617,7 +617,7 @@ export function generateZonedTerrain(
   // lisent), le palier d'une tuile (l'eau y écrit le sien en naissant, les terrasses en partent).
   // MONDE RÉDUIT SEUL — le chemin 'vallee' reste octet-identique (T-A1).
   const escalier = g.monde === 'racine' && creux ? quantifierLEscalier(creux, terrain, width, height) : null
-  const { riviere, chenaux, fils, lacs: lacsRacine } = paintWaterRacine(terrain, zone, g, width, height, seed, RELIEF.BORDURE, creux, escalier)
+  const { riviere, chenaux, fils, lacs: lacsRacine, lits } = paintWaterRacine(terrain, zone, g, width, height, seed, RELIEF.BORDURE, creux, escalier)
 
   // ── PASSE 1.52 : LES EAUX DES ZONES — l'eau dérivée hors Racine (stratigraphie, couche II) ──
   //
@@ -888,10 +888,13 @@ export function generateZonedTerrain(
     // LA DISTANCE À L'EAU (S10) : ce qui permet à la crue de monter depuis les rives.
     distEau: deriverDistanceEau(terrain, width, height, escalier?.palierTuile ?? null),
     // LA NATURE DE L'EAU (`peche.md` T1) : rivière / lac / mare / marais, par tuile. Dérivée du
-    // terrain FINAL et des fils — de TOUS les fleuves (A2, 2026-09-12), donc APRÈS que les gués
-    // et les set-pieces ont fini de creuser. Sans elle, la table de prises n'aurait aucun moyen
-    // de savoir ce qu'est l'eau qu'on pêche.
-    natureEau: deriverNatureDeLEau(terrain, fils, width, height),
+    // terrain tel qu'il est ICI, des fils de TOUS les fleuves (A2, 2026-09-12) et de leur LIT
+    // PEINT (`lits`, décision d'Alexis du même jour : tout le lit est rivière, et rien d'un lac).
+    // ⚠ Ce n'est PAS le terrain final : `assainirLeProfond`, les set-pieces, les gués et
+    // `placePois` écrivent encore après (MESURÉ le 2026-09-12 : 24 tuiles de haut-fond « rien »
+    // sur la graine 2026 — réserve de `docs/reprise-eau.md`). Sans elle, la table de prises
+    // n'aurait aucun moyen de savoir ce qu'est l'eau qu'on pêche.
+    natureEau: deriverNatureDeLEau(terrain, fils, width, height, lits),
   }
   const karsts: Karst[] = []
   const carte: CarteZonee = { map, graphe: g, zone, rampe, affleurements, socle: creux, karsts }

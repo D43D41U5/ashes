@@ -49,7 +49,7 @@ import { addItems } from './items'
 import { foundNpcVillage } from './worldgen'
 import { desiredOrders } from './village-plan'
 import { die } from './combat'
-import { placeZoneNodes } from './zone-content'
+import { CONTENU, placeZoneNodes } from './zone-content'
 import { carteDeTest } from '../../../tools/carte-cache'
 import { MONDE_JOUE } from './zonegraph'
 
@@ -243,6 +243,35 @@ describe('A1/A2 — les coins de pêche existent, sont joignables, et viennent e
     // mesuré +28 — la borne dit qu'on n'est pas retombé au fleuve seul.
     expect(carte.map.fils?.length ?? 1, 'la prémisse : plusieurs fleuves').toBeGreaterThanOrEqual(2)
     expect(coins.filter((n) => n.type === 'fishing_spot_river').length).toBeGreaterThanOrEqual(15)
+    // LE LIT PEINT (décision d'Alexis, 2026-09-12) : la nature « rivière » est le lit que le
+    // peintre a posé, jamais un lac. Prémisse : un fil TRAVERSE un lac quelque part (sinon la
+    // garde ne mord pas) ; loi : aucune tuile de `map.lacs` n'est « rivière » — la bande à
+    // `PECHE_RAYON_RIVIERE` en faisait 3 254 sur la seed 2026.
+    const lacs = new Set(carte.map.lacs ?? [])
+    const nat = carte.map.natureEau!
+    let filsDansUnLac = 0
+    for (const f of carte.map.fils ?? []) for (const i of f) if (lacs.has(i)) filsDansUnLac += 1
+    expect(filsDansUnLac, 'la prémisse : un fil traverse un lac').toBeGreaterThan(0)
+    let lacEnRiviere = 0
+    for (const i of lacs) if (nat[i] === NATURE_RIVIERE) lacEnRiviere += 1
+    expect(lacEnRiviere).toBe(0)
+    // Et le lit va PLUS LOIN que la bande : des tuiles « rivière » sans aucun point de fil à
+    // ≤ PECHE_RAYON_RIVIERE (MESURÉ : 2 178 sur la seed 2026 — 1 718 à 3 du fil, 460 à 4).
+    const surLeFil = new Set<number>()
+    for (const f of carte.map.fils ?? []) for (const i of f) surLeFil.add(i)
+    const RR = CONTENU.PECHE_RAYON_RIVIERE
+    let horsBande = 0
+    for (let i = 0; i < nat.length; i++) {
+      if (nat[i] !== NATURE_RIVIERE) continue
+      const tx = i % width
+      const ty = (i - tx) / width
+      let pres = false
+      for (let dy = -RR; dy <= RR && !pres; dy++) for (let dx = -RR; dx <= RR; dx++) {
+        if (surLeFil.has((ty + dy) * width + tx + dx)) { pres = true; break }
+      }
+      if (!pres) horsBande += 1
+    }
+    expect(horsBande, 'le lit peint déborde la bande').toBeGreaterThan(1000)
     const maxAutre = Math.max(...autres.map((n) => n.id))
     for (const k of coins) {
       expect(k.id, 'en queue : aucun nœud d’avant ne bouge (P5)').toBeGreaterThan(maxAutre)
@@ -1167,6 +1196,53 @@ describe('A22 — la carte de nature d’eau (T1)', () => {
   it('elle est STABLE : deux dérivations de la même carte sont identiques', () => {
     const { terrain, fil, w, h } = jouet()
     expect(deriverNatureDeLEau(terrain, [fil], w, h)).toEqual(deriverNatureDeLEau(terrain, [fil], w, h))
+  })
+
+  it('LE LIT PEINT (décision d’Alexis, 2026-09-12) : tout le lit est rivière, jusqu’à 4 du fil ; et rien d’un lac que le fil traverse', () => {
+    // Un fleuve LARGE : lit de demi-largeur 4 autour d'un fil horizontal (y = 15), plus large que
+    // la bande de `PECHE_RAYON_RIVIERE` (2). Et le fil TRAVERSE le lac (x = 2..11, y = 2..11) :
+    // le peintre n'y pose rien (`poser` refuse l'eau déjà là), donc le lit s'arrête au lac.
+    const w = 40
+    const h = 24
+    const terrain = new Array<number>(w * h).fill(TERRAIN_GRASS)
+    for (let y = 2; y < 12; y++) for (let x = 2; x < 12; x++) terrain[y * w + x] = TERRAIN_DEEP_WATER // le lac
+    const fil: number[] = []
+    const lit: number[] = []
+    const L = CONTENU.PECHE_RAYON_RIVIERE + 2 // 4 : au-delà de la bande
+    for (let x = 14; x < 38; x++) {
+      fil.push(15 * w + x)
+      for (let dy = -L; dy <= L; dy++) {
+        terrain[(15 + dy) * w + x] = dy === 0 ? TERRAIN_DEEP_WATER : TERRAIN_SHALLOW_WATER
+        lit.push((15 + dy) * w + x)
+      }
+    }
+    // Le fil continue dans le lac (un fleuve qui le traverse) : y = 15 n'est pas dans le lac,
+    // on le fait tourner vers le nord à x = 7 puis remonter dans le lac.
+    for (let y = 14; y >= 11; y--) { fil.push(y * w + 7); if (y > 11) { terrain[y * w + 7] = TERRAIN_DEEP_WATER; lit.push(y * w + 7) } }
+    for (let y = 10; y >= 2; y--) fil.push(y * w + 7) // dans le lac : pas de lit peint
+    // Le tableau `fil` doit être amont → aval ; l'ordre n'importe pas à la nature, on le laisse.
+    const parBande = deriverNatureDeLEau(terrain, [fil], w, h)
+    const parLit = deriverNatureDeLEau(terrain, [fil], w, h, lit)
+    // ① Le bord du lit, à 3 et 4 du fil : « lac » ou « mare » par la bande, RIVIÈRE par le lit.
+    expect(parBande[(15 + 3) * w + 25], 'la bande : à 3 du fil, ce n’est plus la rivière').not.toBe(NATURE_RIVIERE)
+    expect(parBande[(15 + 4) * w + 25]).not.toBe(NATURE_RIVIERE)
+    expect(parLit[(15 + 3) * w + 25], 'le lit : à 3 du fil, la rivière').toBe(NATURE_RIVIERE)
+    expect(parLit[(15 + 4) * w + 25], 'le lit : à 4 du fil, la rivière').toBe(NATURE_RIVIERE)
+    expect(parLit[(15 - 4) * w + 30]).toBe(NATURE_RIVIERE)
+    // ② Le lac que le fil traverse : la bande y découpe un ruban « rivière », le lit n'y touche pas.
+    expect(parBande[6 * w + 7], 'la bande : un ruban de rivière dans le lac').toBe(NATURE_RIVIERE)
+    expect(parLit[6 * w + 7], 'le lit : le lac reste un lac, même sur le fil').toBe(NATURE_LAC)
+    expect(parLit[6 * w + 3]).toBe(NATURE_LAC)
+    // ③ Le lit est TOUT rivière, et rien d'autre ne l'est.
+    for (const i of lit) expect(parLit[i], `lit ${i}`).toBe(NATURE_RIVIERE)
+    let rivieres = 0
+    for (let i = 0; i < w * h; i++) if (parLit[i] === NATURE_RIVIERE) rivieres += 1
+    expect(rivieres).toBe(new Set(lit).size)
+    // ④ L'ordre du lit ne compte pas, et une tuile du lit rendue à la terre n'est plus rien.
+    expect(deriverNatureDeLEau(terrain, [fil], w, h, [...lit].reverse())).toEqual(parLit)
+    const comble = terrain.slice()
+    comble[(15 + 4) * w + 25] = TERRAIN_GRASS
+    expect(deriverNatureDeLEau(comble, [fil], w, h, lit)[(15 + 4) * w + 25]).toBe(NATURE_RIEN)
   })
 
   it('A22bis — CHAQUE NATURE EST ATTEIGNABLE AU RUNTIME : aucune n’est du contenu mort', () => {
