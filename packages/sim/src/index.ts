@@ -201,6 +201,8 @@ export type { NiveauDeNeige } from './gel'
 export {
   niveauDEau, ariditeGlobale, crueGlobale, cyclesDepuisPluie,
   estAsseche, eauASec, estInonde, estGueBloque, porteDeLEau, distanceALEau,
+  // Les verdicts de vallée et la terre noyée SANS l'état (C1 : la carte du joueur les relit).
+  guesFermes, terreNoyee,
 } from './eau'
 export type { EtatEau } from './eau'
 export { EAU } from './balance'

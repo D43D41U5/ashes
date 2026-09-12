@@ -27,6 +27,7 @@ import {
   type WorldMap,
 } from '@ashes/sim'
 import { TERRAIN_COLORS } from './terrain-colors'
+import { EAU_PAVE } from './manteau'
 
 /** Les deux matières de la carte — même géométrie, deux états de savoir. */
 export interface CarteArt {
@@ -34,6 +35,10 @@ export interface CarteArt {
   vive: Uint8ClampedArray
   /** RGBA, même taille — ce dont on se SOUVIENT (grisé). */
   grise: Uint8ClampedArray
+  /** LE CHAMP DU CADRE (`champDuCadre`), 1 octet/tuile — gardé pour que l'EAU DU JOUR (C1,
+   *  `carte-savoir`) repeigne une tuile d'eau EXACTEMENT comme le bake l'aurait peinte, fondu
+   *  du bord du monde compris : la carte ne se rebake pas au jour, elle se repeint par tuile. */
+  cadre: Uint8Array
 }
 
 /** L'encre du jeu (#14141a) : le bord du monde et le jamais-vu sont la même matière. */
@@ -56,6 +61,11 @@ const ART = {
    *  pas de reflets, et la rivière en marches d'escalier cesse de crier en bleu vif. */
   EAU_PEU: 0x2c4356,
   EAU_PROFONDE: 0x1e2f3f,
+  /** LA VASE de l'assec (C1, décision d'Alexis 2026-09-12 : « la vase dédiée ») — la référence
+   *  du monde (`EAU_PAVE.ASSEC`), assagie comme un sol : le lit garde sa forme sur la carte,
+   *  la mare partie ne s'efface pas en pré. Luminance 109 vive, 60 grise — au-dessus de l'eau
+   *  (62 / 36), en dessous d'une berge. */
+  VASE: EAU_PAVE.ASSEC,
   /** Le trait d'encre d'une falaise, et l'ombre qu'elle porte au sud (relief à une passe). */
   FALAISE: 0x322f3a,
   OMBRE_FALAISE: 0.7,
@@ -172,6 +182,44 @@ function assagir(r: number, g: number, b: number): [number, number, number] {
 }
 
 /**
+ * ═══ LES TROIS TEINTES QUE L'EAU DU JOUR REPEINT (C1) — partagées avec `carte-savoir` ═══
+ *
+ * La carte ne se rebake pas quand la vallée sèche ou déborde (~2 s pour 1,35 M tuiles) : la
+ * carte-savoir repeint la tuile d'eau avec CES fonctions, celles-là mêmes que le bake appelle —
+ * une tuile d'eau du jour et une tuile d'eau du bake sortent octet pour octet pareilles, et
+ * `carte-savoir.test.ts` le prouve (peindre « comme le bake » = copier le bake).
+ */
+
+/** L'EAU DE LA CARTE : une teinte posée, pas celle du monde — et le liseré de côte (l'eau qui
+ *  touche la terre fonce) dessine la rive sans tracer un trait de plus. Flottants, pas encore
+ *  arrondis : le fondu du cadre et le grisé se composent dessus avant l'écriture. */
+export function couleurEauCarte(profonde: boolean, cote: boolean): [number, number, number] {
+  const c = profonde ? ART.EAU_PROFONDE : ART.EAU_PEU
+  const f = cote ? ART.LISERE_COTE : 1
+  return [((c >> 16) & 0xff) * f, ((c >> 8) & 0xff) * f, (c & 0xff) * f]
+}
+
+/** LA VASE de l'assec (C1) : la référence du monde, assagie comme un sol. Un lit, pas une eau :
+ *  jamais de liseré — c'est l'eau profonde qui la jouxte qui prend le sien. */
+export function couleurVaseCarte(): [number, number, number] {
+  return assagir((ART.VASE >> 16) & 0xff, (ART.VASE >> 8) & 0xff, ART.VASE & 0xff)
+}
+
+/** LE BORD DU MONDE SE FOND DANS L'ENCRE — `dc` est la valeur du champ du cadre (`CarteArt.cadre`)
+ *  pour la tuile : 0 sur le cadre, `n` à n tuiles, 255 la vallée (aucun fondu). */
+export function fondreAuCadre(r: number, g: number, b: number, dc: number): [number, number, number] {
+  if (dc > ART.CADRE_FONDU_TUILES) return [r, g, b]
+  // De `CADRE_RESTE` (sur le cadre) à 1 (la vallée), en S — la terre ne tombe pas dans un
+  // trou d'encre : elle S'ENFONCE vers le bord du monde.
+  const s = dc / ART.CADRE_FONDU_TUILES
+  const f = ART.CADRE_RESTE + (1 - ART.CADRE_RESTE) * s * s * (3 - 2 * s)
+  const encreR = (CARTE_ENCRE >> 16) & 0xff
+  const encreG = (CARTE_ENCRE >> 8) & 0xff
+  const encreB = CARTE_ENCRE & 0xff
+  return [r * f + encreR * (1 - f), g * f + encreG * (1 - f), b * f + encreB * (1 - f)]
+}
+
+/**
  * PEINT LA PAIRE — une passe locale par tuile, deux lectures de voisins orthogonaux, rien
  * d'itératif : O(N) strict, ~130 k tuiles sur une carte de Veillée.
  */
@@ -196,19 +244,9 @@ export function peindreCarteArt(map: WorldMap, solCouleurs: ArrayLike<number>): 
       if (t === TERRAIN_VOID) {
         ;[r, g, b] = [encreR, encreG, encreB]
       } else if (estEau(t)) {
-        // L'EAU DE LA CARTE : une teinte posée, pas celle du monde — et le liseré de côte
-        // (l'eau qui touche la terre fonce) dessine la rive sans tracer un trait de plus.
-        const c = t === TERRAIN_DEEP_WATER ? ART.EAU_PROFONDE : ART.EAU_PEU
-        r = (c >> 16) & 0xff
-        g = (c >> 8) & 0xff
-        b = c & 0xff
         const cote =
           !estEau(terr(tx - 1, ty)) || !estEau(terr(tx + 1, ty)) || !estEau(terr(tx, ty - 1)) || !estEau(terr(tx, ty + 1))
-        if (cote) {
-          r *= ART.LISERE_COTE
-          g *= ART.LISERE_COTE
-          b *= ART.LISERE_COTE
-        }
+        ;[r, g, b] = couleurEauCarte(t === TERRAIN_DEEP_WATER, cote)
       } else if (t === TERRAIN_CLIFF) {
         // LA FALAISE EST LE SQUELETTE DE LA CARTE (spec lieux R2bis : « on suit un mur ») :
         // un trait d'encre froide, le plus franc de la palette carte.
@@ -238,16 +276,7 @@ export function peindreCarteArt(map: WorldMap, solCouleurs: ArrayLike<number>): 
       // LE BORD DU MONDE SE FOND DANS L'ENCRE — la carte flotte sur le panneau au lieu de
       // s'arrêter sur un cadre de béton. Le CADRE (masse minérale connexe au bord) ne garde
       // qu'un fantôme de sa matière ; la terre qui le jouxte fond vers lui en S.
-      const dc = cadre[i]!
-      if (dc <= ART.CADRE_FONDU_TUILES) {
-        // De `CADRE_RESTE` (sur le cadre) à 1 (la vallée), en S — la terre ne tombe pas
-        // dans un trou d'encre : elle S'ENFONCE vers le bord du monde.
-        const s = dc / ART.CADRE_FONDU_TUILES
-        const f = ART.CADRE_RESTE + (1 - ART.CADRE_RESTE) * s * s * (3 - 2 * s)
-        r = r * f + encreR * (1 - f)
-        g = g * f + encreG * (1 - f)
-        b = b * f + encreB * (1 - f)
-      }
+      ;[r, g, b] = fondreAuCadre(r, g, b, cadre[i]!)
 
       const k = i * 4
       vive[k] = r
@@ -261,5 +290,5 @@ export function peindreCarteArt(map: WorldMap, solCouleurs: ArrayLike<number>): 
       grise[k + 3] = 255
     }
   }
-  return { vive, grise }
+  return { vive, grise, cadre }
 }

@@ -152,6 +152,11 @@ const SUITES = [
   // 2026-09-12 : +2 gardes A2 (`flow-field.test.ts`) — un second fleuve a son courant (avant : une eau
   //   morte à l'écran), le fleuve principal ne bouge pas d'un vecteur loin de la confluence et la
   //   confluence prend le point de fil le plus proche. Suite à 1591 ; plancher inchangé (1575).
+  // 2026-09-12 : +5 gardes C1 — LA CARTE MONTRE L'EAU DU JOUR (`carte-eau.test.ts`, spec `saisons.md`
+  //   A26 ; trois décisions d'Alexis) — `null` les jours où la carte du jour est le bake, la
+  //   dérivation par tuile, peindre « comme le bake » = copier le bake (octet pour octet), la vase
+  //   de l'assec et son liseré, la crue aux deux eaux et la rive qui bouge. Suite à 1596 ;
+  //   plancher inchangé (1575).
   { nom: 'client', dir: 'packages/client', args: ['run'], plancher: 1575 },
   { nom: 'serveur', dir: 'packages/server', args: ['run'], plancher: 36 },
   // Le banc pilote le vrai worldgen sur la carte de production : lent, et seul à porter le

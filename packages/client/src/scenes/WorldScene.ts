@@ -190,6 +190,7 @@ import {
 } from '../render/fog'
 import { peindreCarteArt, type CarteArt } from '../render/carte-art'
 import { cellulesDuDisque, peindreSavoirRegion } from '../render/carte-savoir'
+import { cleDuRegime, deriverEauDuJour, regimeDeCarte } from '../render/carte-eau'
 import { atteignableEntreEtages, etagesDuPas, niveauDuCorps, palierDuSol, terrainAEtage, TRACTION, eauPechable, estUnCoinDePeche, porteDeLEau, FISH_SPECIES, niveauDEau, torcheVive, partDeFlamme, clarteSurSoiAt, clarteDuCiel, partDuCiel, NUIT, MONSTER_DEFS, POI_CHARGES, TERRAIN_DEEP_WATER, TERRAIN_SHALLOW_WATER, CREUX, TERRAINS_BOISES_MASSIF, ventForceAt, VENT, type EtatVent, type Souillure } from '@ashes/sim'
 
 /** L'assombrissement du sol au plafond de profondeur (§2quater R42) : au cœur d'un massif,
@@ -667,6 +668,12 @@ export class WorldScene extends Phaser.Scene {
   private carteCellule = -1
   /** Les âges de foyer déjà estampillés (au dixième) — l'estampille ne repasse que si ça bouge. */
   private carteAgesVus = ''
+  /** L'EAU DU JOUR sur la carte (C1, `carte-eau.ts`) : l'état par tuile, ou `null` quand la carte
+   *  du jour est le bake. Relu au changement de JOUR DE SAISON (les verdicts sont constants dans
+   *  le jour), repeint sur tout l'arpenté seulement si la clef du régime a bougé — six fois l'an. */
+  private carteEau: Uint8Array | null = null
+  private carteEauJour = -1
+  private carteEauCle = ''
   /** Les étapes de montage du monde qui restent à jouer — une par frame (voir `onReady`).
    *  Non vide ⇒ le monde est en train de naître : `update` ne fait QUE le monter. */
   private buildQueue: [phase: string, run: () => void][] = []
@@ -1754,6 +1761,9 @@ export class WorldScene extends Phaser.Scene {
       if (neuf || su) {
         setHud(this.registry, 'fogVersion', (getHud(this.registry, 'fogVersion') ?? 0) + 1)
       }
+      // (L'EAU DU JOUR sur la carte — C1 — se relit plus bas, APRÈS `majEtatGel` : ici le
+      // niveau hoisté a encore l'âge de l'image d'avant, et la carte aurait un jour de retard —
+      // MESURÉ dans le vrai jeu le 2026-09-12 : l'assec du 158ᵉ jour peint au saut suivant.)
       // LA CARTE SE REPEINT PAR DISQUES : celui d'ici quand le savoir a changé, et l'ancien
       // quand le disque de VUE a bougé de cellule (ce qu'on ne voit plus se grise derrière soi).
       if (this.carteArt) {
@@ -2803,6 +2813,20 @@ export class WorldScene extends Phaser.Scene {
       else this.etatGel = creerEtatGel(source)
       // Le niveau d'eau du tick, pour la visée de pêche (E5) — une lecture par image.
       this.niveauEauDuTick = niveauDEau(this.etatGel)
+      // L'EAU DU JOUR SUR LA CARTE (C1) : au jour de saison franchi, on relit les trois verdicts
+      // de vallée sur l'état À JOUR (`majEtatGel` vient de passer) et le niveau qu'on vient de
+      // hoister ; si l'image change (clef du régime), TOUT l'arpenté se repeint — 18-96 ms
+      // mesurés en Node, six fois l'an au plus, jamais par image.
+      if (this.carteArt && this.fog && this.lastTime.seasonDay !== this.carteEauJour) {
+        this.carteEauJour = this.lastTime.seasonDay
+        const regime = regimeDeCarte(this.etatGel, this.niveauEauDuTick)
+        const cle = cleDuRegime(regime)
+        if (cle !== this.carteEauCle) {
+          this.carteEauCle = cle
+          this.carteEau = deriverEauDuJour(this.map, regime)
+          this.peindreCarteRegion(0, 0, this.fog.cols - 1, this.fog.rows - 1)
+        }
+      }
 
       // L'ASPECT DU CIEL À L'ŒIL DU JOUEUR (spec meteo.md R11) : `aspectAuPoint` — la loi de
       // la sim, sans le test d'empreinte, pour que le mur qui APPROCHE soit déjà de neige ou
@@ -4439,7 +4463,7 @@ export class WorldScene extends Phaser.Scene {
     const joueur = this.worldReady ? { x: this.predicted.x, y: this.predicted.y } : null
     peindreSavoirRegion(
       this.carteSavoirImg.data, this.carteArt, this.map, fog, this.worldSeed,
-      joueur, FOG_RAYON_TUILES, cx0, cy0, cx1, cy1,
+      joueur, FOG_RAYON_TUILES, cx0, cy0, cx1, cy1, this.carteEau,
     )
     const x = Math.max(0, cx0) * fog.pas
     const y = Math.max(0, cy0) * fog.pas

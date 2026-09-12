@@ -164,11 +164,20 @@ export function estInonde(state: EtatEau, tx: number, ty: number, niveauConnu?: 
   // jours sur 365 — or `niveauDEau` rembobine huit cycles pour connaître l'aridité, dont ce
   // test n'a que faire. `crueGlobale` ne lit qu'un caractère de saison mémoïsé : O(1).
   if (niveauConnu === undefined && crueGlobale(state) <= 0) return false
-  const niveau = niveauConnu ?? niveauDEau(state)
+  return terreNoyee(state.map, tx, ty, niveauConnu ?? niveauDEau(state))
+}
+
+/**
+ * LA TERRE NOYÉE À CE NIVEAU — le corps d'`estInonde` sans l'état (patron `eauASec`,
+ * `guesFermes`) : la carte du joueur (C1, `carte-eau.ts` côté client) le relit par tuile avec
+ * le niveau du jour, sans porter un `SimState`. Une tuile marchable, ni eau ni roche, à
+ * `d ≤ niveau × PORTEE_CRUE` d'une eau.
+ */
+export function terreNoyee(map: WorldMap, tx: number, ty: number, niveau: number): boolean {
   if (niveau <= 0) return false
-  const t = terrainAt(state.map, tx, ty)
+  const t = terrainAt(map, tx, ty)
   if (MARCHABLE[t] !== 1 || t === TERRAIN_SHALLOW_WATER || t === TERRAIN_DEEP_WATER) return false
-  const d = distanceALEau(state.map, tx, ty)
+  const d = distanceALEau(map, tx, ty)
   return d > 0 && d <= Math.round(niveau * EAU.PORTEE_CRUE)
 }
 

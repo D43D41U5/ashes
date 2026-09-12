@@ -14,11 +14,19 @@
  * grain est celui de `grainDeCendre`, appelé tuile à tuile : la carte et le sol du monde tombent
  * d'accord au pixel près, et les repeints sont locaux (un disque, une poignée de cellules).
  *
+ * L'EAU DU JOUR (C1, 2026-09-12) est un quatrième calque, sous les trois états : quand la
+ * vallée est à sec ou en crue, la tuile d'eau (ou noyée) se repeint avec les fonctions du bake
+ * (`couleurEauCarte`, `couleurVaseCarte`, `fondreAuCadre`) et la rive DU JOUR — sur tout
+ * l'arpenté, grisée hors de vue comme le reste (décision d'Alexis : le verdict est global, la
+ * carte ne cache pas ce que la chronique dit). `eau === null` : le bake est la vérité du jour,
+ * aucune branche.
+ *
  * PUR : écrit dans un tampon RGBA fourni — aucune notion de canvas ni de Phaser ici.
  */
-import { CENDRE, coutDe, grainDeCendre, terrainCendre, type WorldMap } from '@ashes/sim'
+import { CENDRE, coutDe, grainDeCendre, terrainCendre, TERRAIN_DEEP_WATER, TERRAIN_SHALLOW_WATER, type WorldMap } from '@ashes/sim'
 import { avanceeVue, type Brouillard } from './fog'
-import { CARTE_ENCRE, couleurCendreCarte, griserPx, type CarteArt } from './carte-art'
+import { CARTE_ENCRE, couleurCendreCarte, couleurEauCarte, couleurVaseCarte, fondreAuCadre, griserPx, type CarteArt } from './carte-art'
+import { EAU_JOUR_ASSEC, EAU_JOUR_BAKE, EAU_JOUR_GUE_FERME, estEauDuJour } from './carte-eau'
 
 /** Bornes de cellules (INCLUSIVES) couvertes par un disque en tuiles — de quoi ne repeindre
  *  que ce qu'un pas ou une estampille a pu changer. */
@@ -55,8 +63,10 @@ export function peindreSavoirRegion(
   cy0: number,
   cx1: number,
   cy1: number,
+  /** L'EAU DU JOUR par tuile (`deriverEauDuJour`), ou `null` : la carte du jour est le bake. */
+  eau: Uint8Array | null = null,
 ): void {
-  const { width, height } = map
+  const { width, height, terrain } = map
   const encreR = (CARTE_ENCRE >> 16) & 0xff
   const encreG = (CARTE_ENCRE >> 8) & 0xff
   const encreB = CARTE_ENCRE & 0xff
@@ -97,9 +107,28 @@ export function peindreSavoirRegion(
             const c = coutDe(champ, i)
             cendre = c >= 0 && c <= av * CENDRE.ORTHO * (1 + grainDeCendre(seed, tx, ty))
           }
+          const t = terrain[i] ?? 0
           if (cendre) {
-            const t = terrainCendre(map.terrain[i] ?? 0, false)
-            let [r, g, bl] = couleurCendreCarte(t ?? map.terrain[i] ?? 0)
+            const tc = terrainCendre(t, false)
+            let [r, g, bl] = couleurCendreCarte(tc ?? t)
+            if (!enVue) [r, g, bl] = griserPx(r, g, bl)
+            data[k] = r
+            data[k + 1] = g
+            data[k + 2] = bl
+          } else if (eau !== null && (eau[i] !== EAU_JOUR_BAKE || t === TERRAIN_SHALLOW_WATER || t === TERRAIN_DEEP_WATER)) {
+            // L'EAU DU JOUR (C1) : la tuile à sec, fermée ou noyée — ET toute tuile d'eau du
+            // bake, dont la RIVE a pu bouger (la vase la jouxte, la nappe l'a rejointe) : on la
+            // repeint comme le bake l'aurait peinte avec les voisins d'aujourd'hui.
+            let r: number, g: number, bl: number
+            if (eau[i] === EAU_JOUR_ASSEC) {
+              ;[r, g, bl] = couleurVaseCarte()
+            } else {
+              const cote =
+                !estEauDuJour(map, eau, tx - 1, ty) || !estEauDuJour(map, eau, tx + 1, ty) ||
+                !estEauDuJour(map, eau, tx, ty - 1) || !estEauDuJour(map, eau, tx, ty + 1)
+              ;[r, g, bl] = couleurEauCarte(t === TERRAIN_DEEP_WATER || eau[i] === EAU_JOUR_GUE_FERME, cote)
+            }
+            ;[r, g, bl] = fondreAuCadre(r, g, bl, art.cadre[i]!)
             if (!enVue) [r, g, bl] = griserPx(r, g, bl)
             data[k] = r
             data[k + 1] = g
