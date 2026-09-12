@@ -109,8 +109,9 @@ export class EauEvents {
 
   constructor(
     private readonly scene: Phaser.Scene,
-    /** Le son de la gerbe — branché sur SonsDeLEau par WorldScene. */
-    private readonly onSplash?: (moi: boolean) => void,
+    /** Le son de la gerbe — branché sur SonsDeLEau par WorldScene. `at` : OÙ le corps plonge
+     *  (tuiles) — le splash d'un autre se panoramique et s'atténue (B3) ; le mien est « ici ». */
+    private readonly onSplash?: (moi: boolean, at: { x: number; y: number }) => void,
   ) {}
 
   /** Appelé par `syncActor` pour CHAQUE acteur, chaque frame, avec sa distance de rive.
@@ -146,7 +147,7 @@ export class EauEvents {
     if (!e.dansLEau && dRive > HYSTERESIS) {
       e.dansLEau = true
       this.plouf(px, py, depth, now, largeur, montee, strate)
-      this.onSplash?.(sprite === this.joueur)
+      this.onSplash?.(sprite === this.joueur, { x: px / TILE_PX, y: py / TILE_PX })
     } else if (e.dansLEau && dRive < -HYSTERESIS) {
       e.dansLEau = false
       e.wetUntil = now + SEMELLE_HUMIDE_MS

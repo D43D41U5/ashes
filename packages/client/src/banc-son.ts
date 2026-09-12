@@ -29,6 +29,8 @@ import type { MeteoAspect, SimEvent } from '@ashes/sim'
 import themeAmbianceUrl from './assets/audio/theme-ambiance.mp3'
 import { SoundEngine } from './audio/engine'
 import { FAMILLES, INVENTAIRE, SONORES, faitsDeFamille, variantesDe, type Voix } from './audio/inventaire'
+import { CASCADE, SonsDeLaCascade, type ColonneDeChute } from './audio/cascade-audio'
+import { SonsDeLEau } from './audio/eau-audio'
 import { SonsDuCiel } from './audio/meteo-audio'
 import { MUSIQUE, type Piste } from './audio/musique'
 import { soundForEvent, type SoundSpec, type Waveform } from './audio/sound'
@@ -467,6 +469,29 @@ racine.innerHTML = `
     <button class="b-btn b-ghost b-mt-tonnerre">TONNERRE</button>
     <button class="b-btn b-ghost b-mt-gresil">GRÉSIL (salve)</button>
     <span class="b-th-etat b-mt-etat"></span>
+  </div>
+</div>
+
+<div class="b-th b-eau">
+  <h2>L’EAU — LA CASCADE, LE SPLASH, LE CLAPOTIS</h2>
+  <p>
+    La reprise de l’eau (2026-09-12) : la <b>cascade a une voix</b> (B1) — une nappe grave qui respire
+    (<code>SoundEngine.nappe('cascade')</code>), dont le niveau, le côté et le voile se recalculent sur toutes les
+    colonnes de chute à portée (<code>cibleDeLaCascade</code>, <code>audio/cascade-audio.ts</code>) ; les colonnes
+    s’ajoutent en puissance (quatre = deux fois une). Et deux voix qui sonnaient au centre <b>se tiennent désormais
+    quelque part</b> (B3) : le splash d’un <b>autre</b> corps, le clapotis sur la <b>rive</b>. Tout se place aux
+    curseurs <b>distance</b> et <b>côté</b> du haut. Les valeurs retenues se recopient dans <code>CASCADE</code>.
+  </p>
+  <div class="b-th-row">
+    <button class="b-btn b-eau-play">▶ LA CASCADE</button>
+    <button class="b-btn b-ghost b-eau-stop">■ couper (fondu ${CASCADE.FONDU_S} s)</button>
+    <label class="b-at-l" style="max-width:300px">largeur
+      <input type="range" class="b-vol b-eau-larg" min="1" max="16" step="1" aria-label="Largeur de la chute, en colonnes">
+      <span class="b-th-v b-eau-larg-v"></span>
+    </label>
+    <button class="b-btn b-ghost b-eau-splash">SPLASH (un autre)</button>
+    <button class="b-btn b-ghost b-eau-clapotis">CLAPOTIS (sur la rive)</button>
+    <span class="b-th-etat b-eau-etat"></span>
   </div>
 </div>
 
@@ -977,6 +1002,80 @@ q<HTMLButtonElement>('.b-mt-gresil').addEventListener('click', () => {
 })
 peindreMeteo()
 
+// ── L'EAU : la cascade placée, le splash d'un autre, le clapotis sur la rive ─────────────────
+//
+// Un VRAI `SonsDeLaCascade` sur la VRAIE nappe du moteur ; la chute est posée au lieu des
+// curseurs du haut (distance, côté), l'auditeur à l'origine — ce qu'on entend est ce que le jeu
+// joue à cette distance d'une chute de cette largeur. Rien ne s'écrit : `CASCADE` se recopie.
+
+const sonsCascade = new SonsDeLaCascade()
+const sonsEauBanc = new SonsDeLEau()
+let largeurBanc = 4
+let cascadeEnLecture = false
+let horlogeCascade = 0
+const eauEtat = q('.b-eau-etat')
+const eauLargV = q('.b-eau-larg-v')
+
+/** La chute du banc : `largeurBanc` colonnes centrées sur le lieu des curseurs, la lèvre une tuile au nord. */
+const chuteDuBanc = (): ColonneDeChute[] => {
+  const { x, y } = lieuCourant()
+  const x0 = Math.round(x - largeurBanc / 2)
+  return Array.from({ length: largeurBanc }, (_, k) => ({ tx: x0 + k, ty: y - 1 }))
+}
+const peindreEau = (): void => {
+  eauLargV.textContent = `${largeurBanc} colonne${largeurBanc > 1 ? 's' : ''}`
+  if (!cascadeEnLecture) {
+    eauEtat.textContent = ''
+    eauEtat.classList.remove('b-on')
+    return
+  }
+  const s = sonsCascade.sonde
+  eauEtat.textContent = s.colonnes === 0
+    ? 'hors de portée : la chute NE S’ENTEND PAS'
+    : `${s.colonnes} colonne(s) à portée — niveau ${round3(s.gain)} · pan ${s.pan.toFixed(2)} · coupe ${Math.round(s.hz)} Hz`
+  eauEtat.classList.add('b-on')
+}
+const poserCascade = (): void => {
+  moteur.resume()
+  // La machine a une cadence (`CADENCE_MS`) : on avance son horloge d'un cran par geste.
+  horlogeCascade += CASCADE.CADENCE_MS
+  sonsCascade.update((forme) => moteur.nappe(forme), chuteDuBanc(), 0, 0, 1, horlogeCascade)
+  peindreEau()
+}
+q<HTMLButtonElement>('.b-eau-play').addEventListener('click', () => {
+  cascadeEnLecture = true
+  poserCascade()
+})
+q<HTMLButtonElement>('.b-eau-stop').addEventListener('click', () => {
+  sonsCascade.taire()
+  cascadeEnLecture = false
+  peindreEau()
+})
+const eauLarg = q<HTMLInputElement>('.b-eau-larg')
+eauLarg.value = String(largeurBanc)
+eauLarg.addEventListener('input', () => {
+  largeurBanc = Number(eauLarg.value)
+  if (cascadeEnLecture) poserCascade()
+  else peindreEau()
+})
+// La chute suit les curseurs du haut PENDANT qu'on les traîne : c'est en s'approchant qu'on juge une nappe.
+for (const ctrl of [dist, coteCtrl]) ctrl.addEventListener('input', () => { if (cascadeEnLecture) poserCascade() })
+// Le splash d'un AUTRE et le clapotis passent par `jouer()`, donc par le lieu des curseurs :
+// c'est exactement ce que B3 a changé — avant, les deux sonnaient au centre et plein.
+q<HTMLButtonElement>('.b-eau-splash').addEventListener('click', () => {
+  moteur.resume()
+  sonsEauBanc.splash(false, (sp, d2) => jouer(sp, d2), lieuCourant())
+})
+q<HTMLButtonElement>('.b-eau-clapotis').addEventListener('click', () => {
+  moteur.resume()
+  // Le clapotis dépend de la proximité de l'eau (`dRive`) : on le pose à deux tuiles de la rive,
+  // et la rive elle-même au lieu des curseurs. Une horloge propre : la machine ne rejoue pas avant `LAP_MIN_MS`.
+  horlogeClapotis += 5000
+  sonsEauBanc.update(horlogeClapotis, -2, false, (sp, d2) => jouer(sp, d2), lieuCourant())
+})
+let horlogeClapotis = 0
+peindreEau()
+
 // Le banc s'interroge de l'extérieur, comme le jeu par `__BRAISES__` : on LIT son état, on ne
 // le fabrique pas. C'est ce qui rend l'outil vérifiable — sinon son rapport ne se prouve
 // qu'en le lisant à l'œil dans un presse-papier.
@@ -988,6 +1087,9 @@ peindreMeteo()
   // Les voix distinctes d'un fait à matières — de quoi PROUVER depuis le navigateur que le
   // coup de récolte en propose bien treize de matière, et lesquelles se partagent un timbre.
   voixDuFait,
+  // La cascade du banc : sa sonde (niveau au tympan, pan, coupe, colonnes à portée) — de quoi
+  // PROUVER depuis le navigateur que la chute se tait hors de portée et penche du bon côté.
+  cascade: sonsCascade.sonde,
 }
 
 poserCurseurs()

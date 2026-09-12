@@ -625,9 +625,14 @@ const SCENARIOS = {
       // réellement visibles, et les particules EN VIE au pied (gouttes + brume, toutes unités).
       let vivantes = 0
       for (const u of sc.cascadeFx?.units?.values?.() ?? []) vivantes += (u.gouttes?.alive?.length ?? 0) + (u.brume?.alive?.length ?? 0)
+      // LA VOIX (B1, 2026-09-12) : ce que la nappe de cascade a DEMANDÉ au moteur depuis ce poste —
+      // niveau au tympan, côté, colonnes à portée. Lisible sans audio : la cible se calcule avant
+      // que le moteur ne l'entende (le contexte dort en headless, personne n'a cliqué).
+      const voix = sc.sonsCascade?.sonde ?? null
       return {
         parois: vis(sc.cliffs?.tops), ombres: vis(sc.cliffs?.ombres), eau: sc.water?.shaders?.length ?? 0,
         chutes: sc.cliffs?.chutes?.length ?? 0, nappe: cle(sc.cliffs?.tops, 'chute'), ecume: cle(sc.cliffs?.tops, 'ecume'), gouttes: vivantes,
+        voix: voix ? { gain: Math.round(voix.gain * 1000) / 1000, pan: Math.round(voix.pan * 100) / 100, hz: Math.round(voix.hz), colonnes: voix.colonnes } : null,
       }
     })
     // L'HEURE SE REPOSE À CHAQUE VUE : une capture coûte ~5 min réelles en headless sous charge,
@@ -664,9 +669,64 @@ const SCENARIOS = {
     else if (casc.nappe < casc.chutes * 2 || casc.ecume < casc.chutes) console.error(`!! cascade : ${casc.chutes} colonnes mais nappe=${casc.nappe} écume=${casc.ecume}`)
     else if (casc.gouttes < 1) console.error(`!! cascade : ${casc.chutes} colonnes et aucune particule vivante au pied`)
     else console.log(`   ✓ cascade : ${casc.chutes} colonnes, ${casc.nappe} sprites de nappe, ${casc.ecume} d'écume, ${casc.gouttes} particules vivantes`)
+    // LA VOIX (B1) : au pied de la chute, la nappe demande un niveau > 0 sur ≥ 1 colonne, et
+    // penche À GAUCHE (les colonnes 700-704 ont leur milieu à l'ouest de 704,5) — ce qui ferait
+    // rougir : 0 colonne (la carte des chutes n'a pas été lue), gain 0 (la machine ne tourne pas),
+    // ou un pan à droite (le côté est inversé).
+    const v = casc.voix
+    if (!v) console.error('!! cascade : pas de sonde de voix (`sonsCascade.sonde`)')
+    else if (v.colonnes < 1 || v.gain <= 0) console.error(`!! cascade : la voix est muette au pied — ${JSON.stringify(v)}`)
+    else if (v.pan > 0.02) console.error(`!! cascade : la voix penche à droite (pan ${v.pan}) alors que la chute est à l'ouest`)
+    else console.log(`   ✓ voix de la cascade : ${v.colonnes} colonnes à portée, niveau ${v.gain}, pan ${v.pan}, coupe ${v.hz} Hz`)
     // ── LA NUIT au pied de la rampe : les paliers hauts prennent la même nuit que le sol.
     await vue('terrasse-nuit', 93, 741, 1)
     console.log(`   → ${OUT}/terrasse-*.png : pied, rampe, haut, loin, lac, cascade, nuit`)
+  },
+
+  // ═══ SONDE JETABLE (2026-09-12) : la VOIX de la cascade (B1) sans capture — la sonde de
+  //     `sonsCascade` lue au pied de la chute (704,281), puis en s'éloignant vers l'est le long
+  //     de la même rangée, puis loin de toute chute (le lac 1357,544). Rapide : pas de screenshot. ═══
+  async __cascadeSon(page) {
+    if (!dev) { console.error('!! __cascadeSon exige --dev'); return }
+    const agir = async (action, ms) => {
+      await page.evaluate((a) => window.__BRAISES__.scene.sendAction(a), action)
+      await page.waitForTimeout(ms)
+    }
+    await agir({ type: 'debug_god' }, 400)
+    await agir({ type: 'debug_set_hour', hour: 11 }, 800)
+    const lire = async (nom, x, y) => {
+      await agir({ type: 'debug_teleport', x: x + 0.5, y: y + 0.5 }, 1500)
+      const r = await page.evaluate(() => {
+        const sc = window.__BRAISES__.scene
+        sc.game.loop.sleep()
+        for (let k = 0; k < 80; k++) sc.game.step(k * 16, 16)
+        const v = sc.sonsCascade?.sonde
+        const out = {
+          chutesCarte: sc.chutesDeLaCarte?.length ?? -1,
+          voix: v ? { gain: Math.round(v.gain * 10000) / 10000, pan: Math.round(v.pan * 100) / 100, hz: Math.round(v.hz), colonnes: v.colonnes } : null,
+          pos: { x: Math.round(sc.predicted.x * 10) / 10, y: Math.round(sc.predicted.y * 10) / 10 },
+        }
+        sc.game.loop.wake()
+        return out
+      })
+      console.log(`   ${nom} ${JSON.stringify(r)}`)
+      return r
+    }
+    const pied = await lire('pied (704,281)     ', 704, 281)
+    const est10 = await lire('est +10 (714,281)  ', 714, 281)
+    const est30 = await lire('est +30 (734,281)  ', 734, 281)
+    const loin = await lire('lac (1357,544)     ', 1357, 544)
+    const ok = (c, m) => (c ? console.log(`   ✓ ${m}`) : console.error(`!! ${m}`))
+    // MESURÉ le 2026-09-12 : 66 colonnes sur la graine 2026 (18 cascades face sud, T-A9) — pas les
+    // 437 « marches sud » de T-R8quater, qui comptent aussi celles dont le pied n'est pas de l'eau.
+    ok(pied.chutesCarte >= 10, `la carte a des chutes : ${pied.chutesCarte} colonnes (66 mesurées sur la graine 2026)`)
+    ok(pied.voix && pied.voix.colonnes >= 1 && pied.voix.gain > 0, `au pied, la voix parle : ${JSON.stringify(pied.voix)}`)
+    ok(pied.voix && pied.voix.pan <= 0.02, `au pied, elle penche à gauche ou au centre (chute 700-704) : pan ${pied.voix?.pan}`)
+    ok(est10.voix && est10.voix.gain > 0 && est10.voix.gain < pied.voix.gain && est10.voix.pan < -0.2, `à +10 à l'est : plus faible (${est10.voix?.gain} < ${pied.voix?.gain}) et à gauche (pan ${est10.voix?.pan})`)
+    // Le VOILE ne mord qu'en bout de queue : à 30 t, `placer` coupe vers 7 kHz, bien au-dessus du
+    // timbre (900 Hz) — le `min` de `buildSound` garde le plus bas. La distance se lit au niveau.
+    ok(est30.voix && est30.voix.gain < est10.voix.gain && est30.voix.hz <= pied.voix.hz, `à +30 : encore plus faible (${est30.voix?.gain}), coupe ${est30.voix?.hz} Hz (≤ ${pied.voix?.hz})`)
+    console.log(`   lac : ${JSON.stringify(loin.voix)} (informatif — d'autres chutes peuvent porter jusque-là)`)
   },
 
   // ═══ SONDE JETABLE (2026-09-04) : la cascade seule, jour et nuit — pour itérer à l'œil sans

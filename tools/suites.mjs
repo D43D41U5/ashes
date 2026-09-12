@@ -116,7 +116,13 @@ const SUITES = [
   //   régime × cran de sang × palier : encodage/décodage exhaustif, aucun cran ne franchit un seuil
   //   de régime (un plafond à 9 crans rougissait : 5), les octets historiques 0/100/200 inchangés,
   //   `buildWaterField` pose les dizaines. Suite à 1570, plancher relevé à 1560.
-  { nom: 'client', dir: 'packages/client', args: ['run'], plancher: 1560 },
+  // 2026-09-12 : +19 gardes avec LES VOIX DE L'EAU (reprise de l'eau, B1 + B3) — la cascade a une
+  //   voix (`cascade-audio.test.ts`, 12 : la loi de la cible — silence, une colonne « ici », √N,
+  //   plafond, côté, voile, monotone ; la machine — pas de nappe sans colonne, cadence, sommeil,
+  //   taire), le splash d'un autre et le clapotis se tiennent quelque part (`eau-audio.test.ts`, 6 :
+  //   le point de rive par le gradient du SDF, ce que chaque voix tend au moteur), et la cascade
+  //   seule a un panner (`engine.test.ts`, 1). Suite à 1589, plancher relevé à 1575.
+  { nom: 'client', dir: 'packages/client', args: ['run'], plancher: 1575 },
   { nom: 'serveur', dir: 'packages/server', args: ['run'], plancher: 36 },
   // Le banc pilote le vrai worldgen sur la carte de production : lent, et seul à porter le
   // drapeau qui ignore les erreurs non gérées (voir l'en-tête de `scenario.test.ts`).

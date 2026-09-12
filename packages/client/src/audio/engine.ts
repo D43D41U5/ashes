@@ -13,10 +13,14 @@ const MASTER_GAIN = 0.6 // le plafond global : le son reste un DÉCOR, jamais au
 
 const clamp01 = (v: number): number => Math.max(0, Math.min(1, v))
 
+/** Les formes d'une nappe — voir `SoundEngine.nappe`. */
+export type FormeDeNappe = 'pluie' | 'vent' | 'cascade'
+
 /** Une nappe ouverte — voir `SoundEngine.nappe`. */
 export interface Nappe {
-  /** Cible de niveau (gain absolu sous le maître) et de coupe/centre (Hz), rampées. */
-  regler(niveau: number, hz: number, fonduS: number): void
+  /** Cible de niveau (gain absolu sous le maître) et de coupe/centre (Hz), rampées. `pan` : le
+   *  côté (−1..1), rampé lui aussi — seule la forme `cascade` en a un ; les autres l'ignorent. */
+  regler(niveau: number, hz: number, fonduS: number, pan?: number): void
   /** Rampe à zéro puis éteint la source — la nappe ne se rouvre pas. */
   arreter(fonduS?: number): void
 }
@@ -190,6 +194,15 @@ export class SoundEngine {
    *   `vent`  — bruit passe-bande étroit dont le centre ONDULE (LFO lent) : la plainte du
    *             vent, jamais un souffle plat — un bandpass fixe sonne comme un ventilateur.
    *
+   *   `cascade` — (B1, reprise de l'eau 2026-09-12) bruit passe-bas GRAVE (le grondement d'une
+   *             masse d'eau qui retombe, pas un crépitement) dont le niveau RESPIRE (LFO lent,
+   *             ±12 %) ; et c'est la seule nappe QUI SE TIENT QUELQUE PART : un panoramique en
+   *             bout de chaîne, réglé par `regler(…, pan)`. Le `StereoPannerNode` sort à
+   *             cos(π/4) par canal au centre, donc le niveau qu'on lui tend porte déjà
+   *             `COMPENSATION_PAN` (c'est `placer` qui le met : la cible de `cascade-audio`
+   *             est la somme des gains placés) — la pluie et le vent, eux, n'ont PAS de
+   *             panoramique et restent byte pour byte ce qu'ils étaient.
+   *
    * Rend `null` tant que l'audio dort (patron `piste()`) : l'appelant repassera chaque
    * image — la machine à états du thème, en plus petit. Le mute et le curseur passent par
    * `master`, comme tout le reste (une seule source de gain effectif).
@@ -197,7 +210,7 @@ export class SoundEngine {
    * ⚠ LES RAMPES REPARTENT DE LA VALEUR COURANTE (le patron de `rampeVers` de la piste) :
    * une cible reposée chaque image ne fait pas sauter le niveau, elle infléchit la pente.
    */
-  nappe(forme: 'pluie' | 'vent'): Nappe | null {
+  nappe(forme: FormeDeNappe): Nappe | null {
     const ctx = this.ctx
     const master = this.master
     if (!ctx || !master || ctx.state !== 'running') return null
@@ -215,13 +228,23 @@ export class SoundEngine {
     src.buffer = buffer
     src.loop = true
     const filtre = ctx.createBiquadFilter()
-    filtre.type = forme === 'pluie' ? 'lowpass' : 'bandpass'
+    filtre.type = forme === 'vent' ? 'bandpass' : 'lowpass'
     if (forme === 'vent') filtre.Q.value = 5 // étroit : la plainte a une hauteur, le souffle non
     const gain = ctx.createGain()
     gain.gain.value = 0
     src.connect(filtre)
     filtre.connect(gain)
-    gain.connect(master)
+    // LE PANORAMIQUE, pour la cascade seule (voir l'en-tête) : la pluie et le vent gardent leur
+    // graphe d'avant — un panner à pan 0 leur ôterait 3 dB, comme `buildSound` l'a appris.
+    let panner: StereoPannerNode | undefined
+    if (forme === 'cascade' && typeof (ctx as { createStereoPanner?: unknown }).createStereoPanner === 'function') {
+      panner = ctx.createStereoPanner()
+      panner.pan.value = 0
+      gain.connect(panner)
+      panner.connect(master)
+    } else {
+      gain.connect(master)
+    }
     let lfoGain: GainNode | undefined
     let lfo: OscillatorNode | undefined
     if (forme === 'vent') {
@@ -232,6 +255,17 @@ export class SoundEngine {
       lfo.connect(lfoGain)
       lfoGain.connect(filtre.frequency)
       lfo.start()
+    } else if (forme === 'cascade') {
+      // La masse d'eau RESPIRE : le niveau ondule lentement (±12 % du niveau, ~1 fois par
+      // 2 s). Sur le GAIN, pas sur la coupe — un grondement ne change pas de hauteur, il
+      // gonfle et retombe. Sans lui, la nappe est un souffle de ventilateur.
+      lfo = ctx.createOscillator()
+      lfo.frequency.value = 0.45
+      lfoGain = ctx.createGain()
+      lfoGain.gain.value = 0
+      lfo.connect(lfoGain)
+      lfoGain.connect(gain.gain)
+      lfo.start()
     }
     src.start()
     const rampe = (p: AudioParam, v: number, secondes: number): void => {
@@ -241,11 +275,13 @@ export class SoundEngine {
       p.linearRampToValueAtTime(v, t + Math.max(0.01, secondes))
     }
     return {
-      regler(niveau: number, hz: number, fonduS: number): void {
+      regler(niveau: number, hz: number, fonduS: number, pan = 0): void {
         rampe(gain.gain, niveau, fonduS)
         rampe(filtre.frequency, hz, fonduS)
         // L'ondulation suit le centre : ±25 % — assez pour vivre, pas assez pour siffler.
-        if (lfoGain) rampe(lfoGain.gain, hz * 0.25, fonduS)
+        // (La cascade, elle, ondule en NIVEAU : ±12 % de ce qu'on lui tend.)
+        if (lfoGain) rampe(lfoGain.gain, forme === 'cascade' ? niveau * 0.12 : hz * 0.25, fonduS)
+        if (panner) rampe(panner.pan, Math.max(-1, Math.min(1, pan)), fonduS)
       },
       arreter(fonduS = 0.4): void {
         rampe(gain.gain, 0, fonduS)

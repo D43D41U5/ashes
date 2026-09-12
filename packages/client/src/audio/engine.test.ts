@@ -60,3 +60,78 @@ describe('SoundEngine et les réglages persistés', () => {
     expect(banc.isMuted()).toBe(false)
   })
 })
+
+/**
+ * LES NAPPES ET LEUR GRAPHE (B1, 2026-09-12). Un `AudioContext` de papier qui note ses nœuds : ce
+ * qu'on garde, c'est que la forme `cascade` seule reçoit un panoramique — la pluie et le vent
+ * gardent leur graphe d'avant (un `StereoPannerNode` à pan 0 sort à cos(π/4) par canal : le leur
+ * poser leur ôterait 3 dB sans que personne l'ait demandé) — et que `regler(…, pan)` le rampe.
+ */
+interface FauxParam {
+  value: number
+  cible: number | undefined
+  cancelScheduledValues(t: number): void
+  setValueAtTime(v: number, t: number): void
+  linearRampToValueAtTime(v: number, t: number): void
+}
+const fauxParam = (v = 0): FauxParam => ({
+  value: v,
+  cible: undefined,
+  cancelScheduledValues() {},
+  setValueAtTime(x) { this.value = x },
+  linearRampToValueAtTime(x) { this.cible = x },
+})
+
+function fauxContexte(): { ctx: unknown; panners: { pan: FauxParam }[]; filtres: { type: string; frequency: FauxParam }[]; gains: { gain: FauxParam }[] } {
+  const panners: { pan: FauxParam }[] = []
+  const filtres: { type: string; frequency: FauxParam }[] = []
+  const gains: { gain: FauxParam }[] = []
+  const noeud = <T extends object>(extra: T): T & { connect(): void } => ({ ...extra, connect() {} })
+  const ctx = {
+    state: 'running',
+    currentTime: 0,
+    sampleRate: 100,
+    destination: {},
+    resume: () => Promise.resolve(),
+    createGain: () => { const g = noeud({ gain: fauxParam() }); gains.push(g); return g },
+    createBuffer: (_c: number, frames: number) => ({ getChannelData: () => new Float32Array(frames) }),
+    createBufferSource: () => noeud({ buffer: null, loop: false, start() {}, stop() {} }),
+    createBiquadFilter: () => { const f = noeud({ type: 'lowpass', Q: fauxParam(1), frequency: fauxParam(350) }); filtres.push(f); return f },
+    createOscillator: () => noeud({ type: 'sine', frequency: fauxParam(440), start() {}, stop() {} }),
+    createStereoPanner: () => { const p = noeud({ pan: fauxParam() }); panners.push(p); return p },
+  }
+  return { ctx, panners, filtres, gains }
+}
+
+describe('SoundEngine.nappe — le graphe de chaque forme', () => {
+  it("la cascade seule a un panoramique, et `regler(…, pan)` le rampe ; la pluie et le vent n'en ont pas", () => {
+    fauxStockage()
+    const { ctx, panners, filtres } = fauxContexte()
+    ;(globalThis as unknown as { window: unknown }).window = { AudioContext: function () { return ctx } }
+    try {
+      const moteur = new SoundEngine({ persist: false })
+      moteur.resume()
+      expect(moteur.isReady()).toBe(true)
+
+      moteur.nappe('pluie')
+      moteur.nappe('vent')
+      expect(panners).toHaveLength(0)
+      expect(filtres.map((f) => f.type)).toEqual(['lowpass', 'bandpass'])
+
+      const cascade = moteur.nappe('cascade')!
+      expect(cascade).not.toBeNull()
+      expect(panners).toHaveLength(1)
+      expect(filtres[2]!.type).toBe('lowpass')
+      cascade.regler(0.04, 900, 0.5, 0.42)
+      expect(panners[0]!.pan.cible).toBeCloseTo(0.42, 9)
+      expect(filtres[2]!.frequency.cible).toBe(900)
+      // Le pan est borné : on ne colle jamais un son dans une seule oreille.
+      cascade.regler(0.04, 900, 0.5, 3)
+      expect(panners[0]!.pan.cible).toBe(1)
+      // Une nappe sans pan (la pluie) accepte toujours `regler` à trois arguments.
+      moteur.nappe('pluie')!.regler(0.02, 1600, 1.2)
+    } finally {
+      delete (globalThis as unknown as { window?: unknown }).window
+    }
+  })
+})

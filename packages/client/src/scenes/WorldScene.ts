@@ -151,7 +151,7 @@ import { ambianceDe, moduler } from '../render/zone-ambiance'
 import { TERRAIN_COLORS } from '../render/terrain-colors'
 import { contexteDesButtes, fondDeButte, tacheDeButte } from '../render/buttes'
 import { CascadeFx } from './world/cascade-fx'
-import { CliffLayer } from './world/cliff-layer'
+import { CliffLayer, type ChuteVue } from './world/cliff-layer'
 import { EtageLayer } from './world/etage-layer'
 import { PoiLayer } from './world/poi-layer'
 import { BorneLayer } from './world/borne-layer'
@@ -163,9 +163,10 @@ import { EauEvents } from './world/eau-events'
 import { PoissonsOmbres } from './world/poissons-ombres'
 import { FeuillesDerive } from './world/feuilles-derive'
 import { RefletsLayer } from './world/reflets'
-import { LAP_PORTEE, SonsDeLEau } from '../audio/eau-audio'
+import { LAP_PORTEE, pointDeRive, SonsDeLEau } from '../audio/eau-audio'
 import { SonsDeLaGrotte } from '../audio/grotte-audio'
 import { AVANCE_S, intensiteEntendue, SonsDuCiel } from '../audio/meteo-audio'
+import { SonsDeLaCascade } from '../audio/cascade-audio'
 import { riveAt } from '../render/water-field'
 import { FumerolleFx } from './world/fumerolle-fx'
 import { MorningMist } from './world/morning-mist'
@@ -714,6 +715,11 @@ export class WorldScene extends Phaser.Scene {
   /** LES SONS DU CIEL (chantier audio météo, 2026-08-28) — les nappes de pluie et de vent,
    *  le tonnerre et le grésillement du télégraphe. Publique : le smoke lit sa sonde. */
   readonly sonsCiel = new SonsDuCiel()
+  /** LA VOIX DE LA CASCADE (B1, reprise de l'eau 2026-09-12) — une nappe placée, recalculée sur
+   *  toutes les chutes de la carte. Publique : le smoke lit sa sonde. */
+  readonly sonsCascade = new SonsDeLaCascade()
+  /** Toutes les colonnes de chute de la carte (`CliffLayer.toutesLesChutes`), lues une fois au boot. */
+  private chutesDeLaCarte: readonly ChuteVue[] = []
   /** LES SONS DE LA GROTTE (spec `grottes.md` §4bis) — la goutte, là où elle tombe. Publique :
    *  le smoke lit sa sonde. */
   readonly sonsGrotte = new SonsDeLaGrotte()
@@ -1310,6 +1316,8 @@ export class WorldScene extends Phaser.Scene {
       // quittait une partie sous l'averse et la pluie continuait par-dessus le menu — vu par
       // Alexis le 2026-08-31, « ça reste même sur l'écran d'accueil pendant des minutes ».
       this.sonsCiel.taire()
+      // …et la chute (B1) : la même nappe bouclée, la même extinction.
+      this.sonsCascade.taire()
       // CE QUI NE VIT PAS DANS LA LISTE D'AFFICHAGE, le shutdown de scène ne le détruit PAS :
       // les GameObjects tombent tout seuls, mais les TEXTURES appartiennent au gestionnaire du
       // JEU et lui survivent. Chacune de ces couches a un `destroy()` qui rend ses clés — il
@@ -1435,7 +1443,9 @@ export class WorldScene extends Phaser.Scene {
         this.view.cendreIci = (tx, ty) =>
           tuileCendree({ map: this.map, cendreAge: this.cendreAge, seed: this.worldSeed }, tx, ty)
         ensureEauFxTextures(this) // anneaux de flottaison, gerbe, empreinte — bakés une fois
-        this.eauEvents = new EauEvents(this, (moi) => this.sonsEau.splash(moi, (sp, d2) => this.audioFx.play(sp, d2)))
+        // B3 : le splash d'un AUTRE corps sonne d'où il plonge (pan, atténuation, silence hors de
+        // portée) ; le mien reste « ici », sans lieu.
+        this.eauEvents = new EauEvents(this, (moi, at) => this.sonsEau.splash(moi, (sp, d2, ou) => this.audioFx.play(sp, d2, ou), at))
         this.eauEvents.joueur = this.playerSprite
         this.view.eau = this.eauEvents
         if (this.water.rive) this.poissons = new PoissonsOmbres(this, this.map, this.water.flow, this.water.rive)
@@ -1457,6 +1467,7 @@ export class WorldScene extends Phaser.Scene {
         // LA SONDE A10 (eau-vivante) : le boot de l'eau se CHRONOMÈTRE, il ne s'affirme pas.
         this.bootEauMs = Math.round(performance.now() - bootEau0)
         this.cliffs = new CliffLayer(this, this.map, this.relief)
+        this.chutesDeLaCarte = this.cliffs.toutesLesChutes()
         // LE PLATEAU par-dessus la falaise : elle lui donne déjà son FLANC (E-R12), il ne
         // manquait que son SOL et l'entaille de la rampe. Muet sur une vallée sans mesa.
         this.etages = new EtageLayer(this, this.map, this.relief)
@@ -2626,7 +2637,18 @@ export class WorldScene extends Phaser.Scene {
           (Math.abs(this.predicted.x - this.lastSonPos.x) > 0.008 ||
             Math.abs(this.predicted.y - this.lastSonPos.y) > 0.008)
         this.lastSonPos = { x: this.predicted.x, y: this.predicted.y }
-        this.sonsEau.update(time, dR, bouge, (sp, d2) => this.audioFx.play(sp, d2))
+        // B3 : le clapotis se tient sur la RIVE la plus proche (le gradient du SDF) — l'eau est
+        // d'un côté, on l'entend de ce côté. Sous la roche, la rive de la salle n'a pas de champ :
+        // il sonne au centre, comme avant.
+        const rive = this.etages.souterrain
+          ? null
+          : pointDeRive(this.water.rive, this.predicted.x, this.predicted.y + BALANCE.AVATAR_HITBOX_TILES / 2)
+        this.sonsEau.update(time, dR, bouge, (sp, d2, ou) => this.audioFx.play(sp, d2, ou), rive)
+        // LA CASCADE (B1) : la nappe suit l'auditeur sur toutes les chutes de la carte — et le
+        // ciel qu'on a au-dessus de soi (`dehorsIci`) : sous la roche, la chute du plateau se tait.
+        this.sonsCascade.update(
+          (f) => this.audioFx.nappe(f), this.chutesDeLaCarte, this.predicted.x, this.predicted.y, this.dehorsIci, time,
+        )
       }
       // Flammes/braises/fumée (∝ état), poussées par le vent — CAP RALLIÉ et FORCE de la sim :
       // sous un front la fumée se couche, et elle tourne sans le saut de 45° de la sim.

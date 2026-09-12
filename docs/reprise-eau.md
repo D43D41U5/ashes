@@ -42,14 +42,14 @@ Spec `piste-de-sang.md`, statut LIVRÉ, 22 gardes (`piste-de-sang.test.ts`). Les
 
 ## 3. Les autres axes de la cartographie — rien de commencé
 
-Ordre recommandé par la page (§6) : **A1 → A2 → B1 + B3 → D1 → C1**.
+Ordre recommandé par la page (§6) : **A1 → A2 → B1 + B3 → D1 → C1**. *(B1 + B3 ont été pris AVANT A1/A2, pendant que l'éclaireur relevait l'état de A1/A2 : ce sont deux correctifs client sans question à poser.)*
 
 - **A1 — Le débit, persisté** (donnée gelée). `map.debit`, un rang 0-7 par tuile, patron `distEau`/`natureEau`, additif, haché par `carte-immuable`. Le « geste zéro » : sans lui, A4, B1, B2 et C2 devinent la taille de l'eau.
 - **A2 — Tous les fleuves.** **Défaut latent** : `natureEau` et les coins de pêche ne reçoivent que `map.fil` (le premier des `fils`) — un second fleuve passe pour un lac. Change combien de coins de pêche se posent, donc le PRNG : seul, empreinte sous les yeux.
 - **A3 — La source devient un fait.** Les résurgences existent au worldgen puis deviennent un haut-fond anonyme : `FaitDeGeneration.type` n'a pas de `'source'`. Un type d'annale, un lieu découvrable.
-- **B1 — La cascade a une voix** (client). `cascade-fx.ts` est parfaitement muet. Banc d'écoute : Atelier, onglet SON.
+- **B1 — La cascade a une voix** (client) — **LIVRÉ le 2026-09-12** (commit B1+B3). Une nappe `cascade` placée (la seule nappe avec un panner), cible recalculée à 5 Hz sur toutes les chutes de la carte (`CliffLayer.toutesLesChutes`, même prédicat que le rendu), colonnes sommées en puissance, `MASSE`, plafond 0,06, tue sous la roche, `taire()` au shutdown. Panneau « L'EAU » au banc (atelier `#son`) : la chute aux curseurs distance/côté, largeur 1-16 colonnes, la sonde en clair. Chiffres : `terrasses.md` T-A9. **À valider à l'oreille** (gains, 900 Hz, la respiration).
 - **B2 — Le lit s'entend** (client). Une nappe qui suit la magnitude du champ de flux (déjà cuit côté client).
-- **B3 — Spatialiser les deux voix d'eau** qui ne passent pas leur position au moteur. **Correctif technique**, sans question à poser.
+- **B3 — Spatialiser les deux voix d'eau** — **LIVRÉ le 2026-09-12** (même commit). Le splash d'un AUTRE corps sonne d'où il plonge (`EauEvents.track` → `onSplash(moi, at)`) ; le clapotis se tient sur le point de rive le plus proche (`pointDeRive`, gradient du SDF). Le splash du joueur et le patauge restent sans lieu (byte pour byte). `eau-vivante.md` R8, addendum.
 - **C1 — La carte du joueur montre l'eau du jour** (client). Elle peint le terrain immuable : ni mare asséchée, ni gué fermé. Même cadence que la cendre sur la carte, au savoir « vu ».
 - **C2 — Le régime du bief généralisé.** Le porteur existe maintenant (§1). Causes suivantes, chacune un geste : la crue turbide, le charnier en amont, le feu de village, **la carcasse dans l'eau** (une source continue, pas une goutte).
 - **D1 — Les événements d'eau** : le bief qui prend, le dégel qui replie un corps, la mare qui part, le gué que la crue ferme. Ce sont des bascules de prédicat : observer au bord de cycle, un événement par bascule (piège : le clignotement dans la bande morte de l'hystérésis).
@@ -67,6 +67,8 @@ Ordre recommandé par la page (§6) : **A1 → A2 → B1 + B3 → D1 → C1**.
 - **Un rembobinage de jour en debug** laisse vivre des souillures « du futur » (même défaut que les gouttes).
 - **La tourbière** n'existe sur aucun monde joué : non tranchée.
 - **La recuisson du sang réuploade la texture ENTIÈRE** (`putImageData` + `refresh()` sur 1581×852 RGBA), même pour trois tuiles changées — Phaser n'expose pas de `texSubImage2D`. Elle ne part que si un cran a bougé (au plus quelques fois par minute par souillure). Si l'upload se voit sur un GPU faible, le geste suivant est un sous-rectangle (`gl.texSubImage2D` sur la boîte des tuiles touchées), pas une cadence plus lente.
+- **La voix de la cascade lit les chutes UNE FOIS au boot** (`toutesLesChutes`, ~1,35 M tuiles balayées) : la carte est immuable, donc la liste aussi — si un jour une chute naît en jeu (E3 « barrer un bief », non recommandé), c'est cette lecture qu'il faudra rejouer. Et la voix ne sait pas le PALIER de l'auditeur : une chute au pied d'une falaise s'entend depuis le haut de la falaise à la même distance plane (SUSPECTÉ acceptable — le son monte).
+- **La recuisson des paliers d'une nappe WebAudio** : une cible reposée à 5 Hz alors qu'on longe une chute est une rampe de 0,5 s qu'on infléchit — aucun clic entendu au banc en SwiftShader n'a pu être vérifié (pas d'oreille ici) : à écouter.
 - **La teinte lit les souillures du snapshot, pas la suie du client** : si un bief est à la fois cendré et saigné, le shader empile les deux lavages (le gris passe par-dessus le rouille) ; la loi, elle, dit « max » — le verdict de pêche est le bon, l'image est un peu plus chargée que la loi. Assumé.
 
 ## 5. Méthode — ce que ce chantier a appris à ses dépens

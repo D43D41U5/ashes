@@ -121,6 +121,40 @@ export class CliffLayer {
     for (const c of map.connecteurs ?? []) if (c.type === 'rampe') this.rampes.set(c.y * map.width + c.x, c)
   }
 
+  /**
+   * LA CHUTE, EN UN SEUL ENDROIT (T-A9 ; B1 l'écoute) : de l'eau en haut, de l'eau au pied, UN cran
+   * (`h − hs === 1`) — et pas une rampe qui monte jusqu'ici (elle entaille la paroi, l'eau n'y tombe
+   * pas). `h`/`hs` : la hauteur de la tuile et de sa voisine sud, que l'appelant a déjà lues.
+   */
+  private estChute(tx: number, ty: number, h: number, hs: number): boolean {
+    if (h - hs !== 1 || ty + 1 >= this.map.height) return false
+    const w = this.map.width
+    if (!estEau(this.map.terrain[ty * w + tx]!) || !estEau(this.map.terrain[(ty + 1) * w + tx]!)) return false
+    const rampe = this.rampes.get((ty + 1) * w + tx)
+    return !(rampe !== undefined && Math.max(rampe.de, rampe.vers) === h)
+  }
+
+  /**
+   * TOUTES LES CHUTES DE LA CARTE, une fois — la voix de la cascade (`audio/cascade-audio.ts`, B1)
+   * les écoute AU-DELÀ DU CADRE, là où `chutes` ne liste que celles de l'image : on entend une chute
+   * avant de la voir, comme le loup (décision du 2026-08-27). Même prédicat que `render`, donc les
+   * deux listes ne peuvent pas diverger. Vide sur une carte plate (`relief.actif`).
+   */
+  toutesLesChutes(): ChuteVue[] {
+    const out: ChuteVue[] = []
+    if (!this.relief.actif) return out
+    const { width, height } = this.map
+    for (let ty = 0; ty + 1 < height; ty++) {
+      for (let tx = 0; tx < width; tx++) {
+        const h = this.relief.hauteur(tx, ty)
+        if (h === 0) continue
+        const hs = this.relief.hauteur(tx, ty + 1)
+        if (this.estChute(tx, ty, h, hs)) out.push({ tx, ty, hs })
+      }
+    }
+    return out
+  }
+
   /** Une tuile est-elle de la roche à dresser ? Falaise ou roche, et le hors-carte en est
    *  (l'anneau de bordure) — sans quoi la dernière rangée du monde ferait une paroi sur le vide. */
   private cliff = (tx: number, ty: number): boolean => {
@@ -260,8 +294,9 @@ export class CliffLayer {
         if (hs >= h) continue
         if (rampeMonte) continue
         // ── LA CASCADE (voir l'en-tête) : de l'eau en haut, de l'eau au pied, un cran — la
-        //    nappe remplace la roche, l'écume remplace l'ombre.
-        if (h - hs === 1 && ty + 1 < height && estEau(this.map.terrain[ty * width + tx]!) && estEau(this.map.terrain[(ty + 1) * width + tx]!)) {
+        //    nappe remplace la roche, l'écume remplace l'ombre. Le prédicat est `estChute`, le
+        //    même que `toutesLesChutes` (sa voix, B1) : une chute qu'on voit est une chute qu'on entend.
+        if (this.estChute(tx, ty, h, hs)) {
           const phase = ((tx % CHUTE_PHASES) + CHUTE_PHASES) % CHUTE_PHASES
           const strate = strateDEtage(hs) + CLIFF_DEPTH
           for (let k = 0; k < L; k++) {
