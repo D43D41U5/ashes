@@ -151,9 +151,11 @@ export type SimEvent =
   /** L'EAU SE SOUILLE (`qualite-eau.md` Q10, 2026-09-12) : du sang vient d'entrer dans une eau
    *  qui était propre. Émis à la CRÉATION de la souillure, jamais à son rafraîchissement — une
    *  tuile ensanglantée mille ticks n'émet qu'une fois (A8). Hors pêche, l'eau n'émettait rien.
-   *  ⚠ Il n'est PAS dans `CHRONICLE_EVENT_TYPES` ni dans les annales (vérifié le 2026-09-12) :
-   *  27 par 4 000 ticks sous un corps qui marche (A4bis) feraient une chronique illisible — son
-   *  entrée dans la chronique demande une agrégation (au jour, au bief), c'est D1. */
+   *  ⚠ Il n'est PAS dans `CHRONICLE_EVENT_TYPES` ni dans les annales, PAR DÉCISION (Alexis,
+   *  2026-09-12, reprise de l'eau D1 : « rien dans la chronique ») : 27 par 4 000 ticks sous un
+   *  corps qui marche (A4bis), et le gibier saigne à l'eau à chaque coin de chasse — la chronique
+   *  se tait, la teinte le montre (lot SANG 2c) et la harde renonce à boire (Q9, qui lit les
+   *  souillures, pas l'événement). Un fait émis pour ceux qui viendront. */
   | { type: 'water_fouled'; tick: number; tx: number; ty: number }
   /** LA LIGNE RENTRE ET ON DIT POURQUOI (E4) : l'eau s'est retirée, l'eau est prise, ou ça ne
    *  mord pas ici. Une ligne qui disparaît sans un mot est un bug aux yeux du joueur. */
