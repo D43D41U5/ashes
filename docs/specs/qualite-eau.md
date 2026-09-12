@@ -6,7 +6,7 @@
 2. *« **Un régime de bief unique** » — `coulee.ts` devient LE porteur de la qualité de l'eau, avec plusieurs causes, plutôt que deux lois qui se contredisent sur la même tuile.*
 3. *« **Il appelle et il repousse** » — le sang versé dans l'eau éloigne le gibier et attire les prédateurs. Donc une force graduée et un point d'origine, pas un booléen.*
 
-*Statut : **décidé, en cours**. Prolonge `cendre.md` R26 (les coulées de suie, livrées le 2026-08-30), `chasse.md` C12 (« le sang appelle »), `peche.md` R26b (la table échangée par la souillure). Cadre acté qui borne tout : `/sim` pur et déterministe, `SimState` JSON-sérialisable (pas de `Map`/`Set`), la carte IMMUABLE pendant la partie, et le chemin chaud de la collision qu'on ne touche pas.*
+*Statut : **LIVRÉ côté `/sim` le 2026-09-12** — le porteur (`81687bf`), Q9 (`e9e4751`), Q8 par la piste (`piste-de-sang.md`, même jour). Reste le chantier client de la teinte (Hors périmètre, et `docs/reprise-eau.md` §2c). Prolonge `cendre.md` R26 (les coulées de suie, livrées le 2026-08-30), `chasse.md` C12 (« le sang appelle »), `peche.md` R26b (la table échangée par la souillure). Cadre acté qui borne tout : `/sim` pur et déterministe, `SimState` JSON-sérialisable (pas de `Map`/`Set`), la carte IMMUABLE pendant la partie, et le chemin chaud de la collision qu'on ne touche pas.*
 
 ## Objectif de design
 

@@ -44,6 +44,7 @@ import {
   TERRAIN_WILLOW,
   TERRAIN_JUNIPER_HEATH,
   TICK_DT_S,
+  PISTE,
   isRangedWeapon,
   type MonsterType,
 } from './balance'
@@ -66,7 +67,7 @@ import { hash2 } from './noise'
 import { poissonPoints } from './poisson'
 import { rngRoll } from './rng'
 import { niveauDEau, porteDeLEau } from './eau'
-import { attacheAuFil, eauSouillee } from './coulee'
+import { attacheAuFil, eauSouillee, type Souillure } from './coulee'
 import { estGele } from './gel'
 import { effetsDuJour } from './modificateur'
 import { getGameTime, jourDeSaison } from './time'
@@ -1428,7 +1429,7 @@ function advanceBlood(state: SimState, byId: Map<number, Entity>): void {
    *   • une tuile, une souillure (Q4) : les gouttes tombent toutes les 0,8 s — une souillure
    *     par goutte noierait l'état. La tuile déjà souillée est RAFRAÎCHIE et montée d'un cran.
    */
-  const souiller = (x: number, y: number, etage: number | undefined): void => {
+  const souiller = (x: number, y: number, etage: number | undefined, homme: boolean): void => {
     if (etage !== undefined) return
     const tx = Math.floor(x)
     const ty = Math.floor(y)
@@ -1446,10 +1447,11 @@ function advanceBlood(state: SimState, byId: Map<number, Entity>): void {
       if (s.i !== i) continue
       s.tick = state.tick
       if (s.crans * SANG.FORCE_PAR_GOUTTE < SANG.FORCE_MAX) s.crans += 1
+      if (homme && s.homme === undefined) s.homme = true // le sang de l'homme s'ajoute, il ne s'efface pas
       return // RAFRAÎCHIE : pas d'événement (Q10 — l'événement ne bégaie pas)
     }
     // L'attache au fil est prise UNE FOIS, à la naissance : elle ne bougera plus (Q6bis).
-    state.souillures.push({ i, tick: state.tick, crans: 1, pas: attacheAuFil(state.map, tx, ty) })
+    state.souillures.push({ i, tick: state.tick, crans: 1, pas: attacheAuFil(state.map, tx, ty), ...(homme ? { homme: true as const } : {}) })
     // LE PLAFOND ÉVINCE LA MOINS RÉCEMMENT NOURRIE (Q5), pas la plus anciennement créée : la
     // rafraîchie reste à sa place dans le tableau, et un `shift()` jetait le gué qu'on saigne
     // encore — recréé à un cran, sous le seuil, ré-annoncé (revue du 2026-09-12). Sans
@@ -1467,12 +1469,14 @@ function advanceBlood(state: SimState, byId: Map<number, Entity>): void {
 
   // La goutte porte l'étage de qui saigne (E-R22 : absent au palier, comme `Entity.etage`) :
   // sans lui, le sang d'un blessé sur le chapeau se dessinait deux tuiles sous ses pieds.
-  const drop = (x: number, y: number, etage: number | undefined): void => {
-    state.blood.push({ x, y, tick: state.tick, ...(etage !== undefined ? { etage } : {}) })
+  // Et QUI saigne (`piste-de-sang.md` P1) : `homme` pour un avatar ou un villageois, rien pour
+  // une bête — le loup ne remonte que le sang de l'homme.
+  const drop = (x: number, y: number, etage: number | undefined, homme: boolean): void => {
+    state.blood.push({ x, y, tick: state.tick, ...(etage !== undefined ? { etage } : {}), ...(homme ? { homme: true as const } : {}) })
     // Plafond FIFO : la plus vieille goutte s'efface. L'état reste petit, et le
     // snapshot avec — c'est la même discipline que la faune ambiante.
     if (state.blood.length > HUNT.BLOOD_CAP) state.blood.shift()
-    souiller(x, y, etage)
+    souiller(x, y, etage, homme)
   }
 
   for (const m of state.monsters) {
@@ -1492,7 +1496,7 @@ function advanceBlood(state: SimState, byId: Map<number, Entity>): void {
 
     if (m.bleedDropAt === undefined || state.tick >= m.bleedDropAt) {
       m.bleedDropAt = state.tick + HUNT.BLOOD_EVERY_TICKS
-      drop(e.x, e.y, e.etage)
+      drop(e.x, e.y, e.etage, false)
     }
     // La MORTELLE draine jusqu'au bout. Une bête qui meurt de sa plaie meurt de
     // la main de qui l'a blessée : `lastAttackerId` porte la mise à mort — la
@@ -1504,12 +1508,13 @@ function advanceBlood(state: SimState, byId: Map<number, Entity>): void {
     }
   }
 
-  // Le sang des AVATARS : la même piste, et elle mène à eux.
+  // Le sang des HOMMES (avatars et villageois — tout corps qui n'est pas une bête) : la même
+  // piste, et elle mène à eux. C'est CELUI-LÀ que le loup remonte.
   for (const e of state.entities) {
     if (e.hp <= 0 || !avatarBleeds(e)) continue
     if (state.monsters.some((m) => m.entityId === e.id)) continue
     if (state.tick % HUNT.BLOOD_EVERY_TICKS !== 0) continue
-    drop(e.x, e.y, e.etage)
+    drop(e.x, e.y, e.etage, true)
   }
 }
 
@@ -4179,6 +4184,289 @@ function sortieTravel(
   graze(state, monster, entity, { x: sx, y: sy })
 }
 
+/* ── LA PISTE DE SANG (spec `piste-de-sang.md` — décisions d'Alexis 2026-09-12) ─────────── */
+
+/** Une goutte au sol, telle que `state.blood` la porte. */
+type Goutte = SimState['blood'][number]
+
+/** Il n'y a plus de piste — ni goutte suivie, ni origine d'eau, ni sang consommé. */
+function oublieLaPiste(monster: Monster): void {
+  if (monster.piste !== undefined) delete monster.piste
+  if (monster.pisteEau !== undefined) delete monster.pisteEau
+  if (monster.pisteVue !== undefined) delete monster.pisteVue
+  nouveauBut(monster)
+}
+
+/** La piste est PERDUE (P6) : ce sang-là est consommé, seul du plus frais relancera. */
+function perdLaPiste(monster: Monster, consomme: number): void {
+  monster.pisteVue = Math.max(monster.pisteVue ?? -1, consomme)
+  delete monster.piste
+  delete monster.pisteEau
+  nouveauBut(monster)
+}
+
+/**
+ * IL SE COGNE, PUIS IL LÂCHE (revue du 2026-09-12). La piste avance par `moveToward` nu, sans
+ * chercher de passage (R20 est pour la proie, pas pour une goutte) : la goutte suivante est
+ * derrière la palissade que l'homme a contournée, et le loup la poussait jusqu'à l'expiration
+ * de la goutte — MESURÉ 170 s immobile, une impasse muette (`impasse.ts` exige un chemin brut,
+ * un corps qui pousse un mur n'en a pas). La même mesure que `noteBlocked` (R20), avec les
+ * mêmes nombres : n'a-t-il pas GAGNÉ `STUCK_PROGRESS` sur son but en `STUCK_TICKS` ? Alors la
+ * piste est perdue — « elle suit son intention si elle peut, sinon elle fait autre chose »
+ * (2026-08-28). Dans SES champs (`pisteDepuis`/`pisteD`) : `stuckSince`/`stuckD` sont jetés à
+ * chaque tick sans cible (`oublieLeChemin`, juste avant nous), ils ne tiendraient pas une
+ * seconde. Rend `true` s'il est retenu.
+ */
+function seCogne(state: SimState, monster: Monster, entity: Entity, butX: number, butY: number): boolean {
+  const d = Math.sqrt(distSq(entity.x, entity.y, butX, butY))
+  if (monster.pisteDepuis === undefined || monster.pisteD === undefined) {
+    monster.pisteDepuis = state.tick
+    monster.pisteD = d
+    return false
+  }
+  if (state.tick - monster.pisteDepuis < FAUNA.STUCK_TICKS) return false
+  if (d < monster.pisteD - FAUNA.STUCK_PROGRESS) {
+    monster.pisteDepuis = state.tick
+    monster.pisteD = d
+    return false
+  }
+  return true
+}
+
+/** Un but NEUF (une autre goutte, une origine), ou plus de but : la fenêtre de progrès s'efface. */
+function nouveauBut(monster: Monster): void {
+  if (monster.pisteDepuis !== undefined) delete monster.pisteDepuis
+  if (monster.pisteD !== undefined) delete monster.pisteD
+}
+
+/**
+ * LA GOUTTE LA PLUS FRAÎCHE à ≤ `rayon` du point `(x, y)`, plus fraîche que `apres` (strictement),
+ * ATTEIGNABLE (P7 : une goutte sur un autre étage ne se suit que si un chemin y mène — la roche
+ * arrête la piste, c'est la garde de `feedStep`). Départage déterministe : le tick, puis la
+ * position dans le tableau (le premier gagne — `>` strict). ET DE L'HOMME SEULEMENT (P1) : la
+ * goutte dit qui saigne (`homme`), et le sang d'une bête n'est pas une piste — deux pistes
+ * d'hommes qui se croisent, on prend la plus fraîche.
+ *
+ * Le Feu (P8) se juge sur la goutte ÉLUE, chez l'appelant, jamais ici sur chaque candidate :
+ * `underFireWard` balaie les structures — une fois par prise ou par avancée, pas par goutte et par tick.
+ */
+function gouttePlusFraiche(state: SimState, entity: Entity, niveau: number, x: number, y: number, rayon: number, apres: number): Goutte | undefined {
+  let best: Goutte | undefined
+  const r2 = rayon * rayon
+  for (const g of state.blood) {
+    if (g.homme !== true) continue
+    if (g.tick <= apres) continue
+    if (best !== undefined && g.tick <= best.tick) continue
+    if (distSq(x, y, g.x, g.y) > r2) continue
+    if (!atteignableEntreEtages(state.map, entity.x, entity.y, niveau, g.x, g.y, niveauDuCorps(state.map, g))) continue
+    best = g
+  }
+  return best
+}
+
+/**
+ * La goutte courante — celle d'homme qui porte ce tick, ou rien si elle a expiré. Deux hommes
+ * qui saignent au même tick (les avatars gouttent tous sur `tick % BLOOD_EVERY_TICKS`) posent
+ * deux gouttes du même tick : c'est la plus PROCHE du loup qui est la sienne — celle qu'il a
+ * élue à ≤ FLAIR ou à ≤ PAS de la précédente, pas celle de l'autre piste à l'autre bout du monde.
+ */
+function goutteDuTick(state: SimState, tick: number, x: number, y: number): Goutte | undefined {
+  let best: Goutte | undefined
+  let d2 = Infinity
+  for (const g of state.blood) {
+    if (g.tick !== tick || g.homme !== true) continue
+    const d = distSq(x, y, g.x, g.y)
+    if (d < d2) { best = g; d2 = d }
+  }
+  return best
+}
+
+/**
+ * L'EAU ENSANGLANTÉE QUE LE LOUP CROISE (P2) : la souillure vivante, plus fraîche que `apres`,
+ * dont la teinte est à ≤ `FLAIR` de sa tuile — en AVAL de son origine sur une rivière (la
+ * traînée, jamais l'amont : c'est la loi de `qualite-eau.md` Q6, relue par la même attache),
+ * dans son disque en eau dormante. La plus fraîche gagne, puis la première du tableau. Et le
+ * sang d'un HOMME seulement (P1) : une eau où seule une bête a saigné n'appelle personne.
+ *
+ * Le pas de fil du loup se cherche UNE fois (`attacheAuFil`, borne élargie du flair : il se
+ * tient sur la berge), et seulement si une souillure de rivière le demande.
+ */
+function souillureCroisee(state: SimState, entity: Entity, apres: number): Souillure | undefined {
+  const map = state.map
+  const width = map.width
+  const tx = Math.floor(entity.x)
+  const ty = Math.floor(entity.y)
+  let monPas: number | undefined
+  let best: Souillure | undefined
+  for (const s of state.souillures) {
+    if (s.homme !== true) continue
+    if (s.tick <= apres) continue
+    if (best !== undefined && s.tick <= best.tick) continue
+    if (state.tick - s.tick >= SANG.TACHE_TICKS) continue
+    const ox = s.i % width
+    const oy = (s.i - ox) / width
+    if (s.pas < 0) {
+      if (Math.max(Math.abs(tx - ox), Math.abs(ty - oy)) > SANG.PORTEE_DORMANTE + PISTE.FLAIR) continue
+    } else {
+      if (monPas === undefined) monPas = attacheAuFil(map, tx, ty, SANG.ATTACHE + PISTE.FLAIR)
+      if (monPas < 0) continue
+      const n = monPas - s.pas
+      if (n < 0 || n > SANG.DILUTION_PAS) continue
+    }
+    // E-R5 : l'origine est une tuile du SOL (l'émission refuse l'étage), et il va y MARCHER —
+    // une eau teinte sur le plateau n'appelle pas le loup qui est au pied de la paroi.
+    if (!atteintLeSol(map, entity, ox, oy)) continue
+    best = s
+  }
+  return best
+}
+
+/**
+ * ═══ LA PISTE DE SANG — LE LOUP REMONTE LE SANG (spec `piste-de-sang.md`) ═══
+ *
+ * *« Saigner doit se payer en distance, pas seulement en proximité. »* Un loup en chasse qui n'a
+ * rien sous la dent CROISE une trace (une goutte à ≤ FLAIR, ou une eau teinte) et la remonte :
+ * de goutte en goutte vers la plus fraîche (le temps donne le sens — jamais vers une plus
+ * vieille), ou droit à l'origine d'une souillure (l'eau porte, mais on ne suit pas le fil : la
+ * médiane est en eau profonde, qui bloque). L'acquisition reste celle d'aujourd'hui
+ * (`chooseQuarry`, le hurlement au contact) : ici on ne fait que MARCHER. Et en silence.
+ *
+ * Trois décisions d'Alexis : sol et eau, une seule règle ; la piste GUIDE, elle ne réveille pas
+ * (l'appelant ne nous convoque qu'en chasse) ; en silence jusqu'au contact (le fait
+ * `wolf_on_trail` est muet).
+ *
+ * LE SANG DE L'HOMME SEULEMENT (P1) — avatar ou villageois, jamais celui d'une bête. MESURÉ sans
+ * ce tri sur le banc A26 de `faune.test.ts` (quatre loups ambiants, un coin de trente bêtes, la
+ * nuit) : les loups pistaient chaque sanglier blessé jusqu'au bout — 9 → 19 sangliers tués en
+ * 150 s, le coin vidé (15 → 5 bêtes), et deux fois plus de loups tués par les sangliers. La règle
+ * R18 (« le reste du coin va au gibier ») tombait ; l'objectif de la spec est l'homme qui saigne
+ * et sa parade (bander, le Feu), pas une nouvelle écologie de la nuit.
+ *
+ * UN LOUP QUI SAIGNE NE PISTE PAS — même si un jour la goutte de bête redevenait une piste : ses
+ * propres gouttes tombent sous ses pieds, toujours les plus fraîches à portée ; il prendrait sa
+ * piste, arriverait aussitôt « au bout », et resterait planté sur son sang tant que la plaie
+ * coule. Le rompu décroche déjà avant nous ; le blessé léger reprend sa vie de chasse sans piste.
+ *
+ * Rend `true` s'il a consommé son tick (il suit), `false` s'il n'a rien à suivre.
+ */
+function pisteStep(state: SimState, monster: Monster, entity: Entity): boolean {
+  if (state.blood.length === 0 && state.souillures.length === 0) {
+    // Rien à flairer nulle part : la porte O(1). Une piste en cours sans plus une trace est perdue.
+    if (monster.piste !== undefined || monster.pisteEau !== undefined) oublieLaPiste(monster)
+    return false
+  }
+  if (isBleeding(monster, state.tick)) {
+    oublieLaPiste(monster)
+    return false
+  }
+  const niveau = niveauDuCorps(state.map, entity)
+  const flair2 = PISTE.FLAIR * PISTE.FLAIR
+
+  // ── ① IL SUIT UNE GOUTTE (P3) : vers elle, puis vers la suivante, plus fraîche, à ≤ PAS. ──
+  if (monster.piste !== undefined) {
+    const courante = goutteDuTick(state, monster.piste, entity.x, entity.y)
+    // Elle a expiré (ou le plafond l'a jetée) : la piste a vieilli — perdue (P6). Ce qui reste est
+    // plus frais qu'elle par construction (le tableau est en ordre de tick). Ou bien elle n'est
+    // plus atteignable d'où il est (il a changé d'étage en chemin — P7) : même perte.
+    if (courante === undefined
+      || !atteignableEntreEtages(state.map, entity.x, entity.y, niveau, courante.x, courante.y, niveauDuCorps(state.map, courante))) {
+      perdLaPiste(monster, monster.piste)
+      return false
+    }
+    if (distSq(entity.x, entity.y, courante.x, courante.y) > flair2) {
+      // Un mur entre deux gouttes : il se cogne une seconde, puis il lâche — ce sang-là est
+      // consommé, la goutte d'après (derrière le mur, à ≤ FLAIR ?) aussi, il ne la reprendra pas.
+      if (seCogne(state, monster, entity, courante.x, courante.y)) {
+        perdLaPiste(monster, monster.piste)
+        return false
+      }
+      moveToward(state, monster, entity, courante.x, courante.y, false)
+      return true
+    }
+    // Il est SUR la goutte : la suivante — la plus fraîche à ≤ PAS d'elle, et plus fraîche qu'elle.
+    const suivante = gouttePlusFraiche(state, entity, niveau, courante.x, courante.y, PISTE.PAS, courante.tick)
+    if (suivante !== undefined && !underFireWard(state, suivante)) {
+      monster.piste = suivante.tick
+      nouveauBut(monster)
+      moveToward(state, monster, entity, suivante.x, suivante.y, false)
+      return true
+    }
+    // Le bout : le blessé a bandé, la piste a vieilli, ou le Feu tient (P8). Perdue (P6) — et ce
+    // sang-là ne relance plus : seule une goutte plus fraîche le fera.
+    perdLaPiste(monster, suivante !== undefined ? suivante.tick : courante.tick)
+    return false
+  }
+
+  // ── ② IL GAGNE UNE ORIGINE D'EAU (P4) : droit dessus, comme vers une carcasse. ──
+  if (monster.pisteEau !== undefined) {
+    const i = monster.pisteEau
+    let s: Souillure | undefined
+    for (const t of state.souillures) if (t.i === i) { s = t; break }
+    if (s === undefined) {
+      delete monster.pisteEau // l'eau s'est lavée : plus d'origine à gagner
+      nouveauBut(monster)
+      return false
+    }
+    const width = state.map.width
+    const ox = (i % width) + 0.5
+    const oy = (i - (i % width)) / width + 0.5
+    if (!atteintLeSol(state.map, entity, i % width, (i - (i % width)) / width)) {
+      perdLaPiste(monster, s.tick) // il a changé d'étage en chemin (E-R5) : l'origine n'est plus à lui
+      return false
+    }
+    if (distSq(entity.x, entity.y, ox, oy) > flair2) {
+      if (seCogne(state, monster, entity, ox, oy)) { // l'eau profonde, un mur : il lâche (P6)
+        perdLaPiste(monster, s.tick)
+        return false
+      }
+      moveToward(state, monster, entity, ox, oy, false)
+      return true
+    }
+    // À l'origine : les gouttes au sol reprennent la piste s'il y en a (P4) — sans seuil de
+    // fraîcheur, on vient d'un sang frais. Sinon, ce sang est consommé.
+    delete monster.pisteEau
+    nouveauBut(monster)
+    const g = gouttePlusFraiche(state, entity, niveau, entity.x, entity.y, PISTE.FLAIR, -1)
+    if (g !== undefined && !underFireWard(state, g)) {
+      monster.piste = g.tick
+      return true
+    }
+    monster.pisteVue = Math.max(monster.pisteVue ?? -1, s.tick)
+    return false
+  }
+
+  // ── ③ PRENDRE LA PISTE (P2) : il faut la CROISER, et plus fraîche que ce qu'il a déjà suivi. ──
+  const apres = monster.pisteVue ?? -1
+  // UNE REPRISE N'EST PAS UNE PRISE (`PISTE.REPRISE_TICKS`) : au bout d'une piste VIVANTE (le
+  // frère de meute qui saigne à côté, dont le sang n'est pas une proie), chaque goutte neuve
+  // relançait la prise — et le fait bégayait à la cadence des gouttes. Du sang à peine plus
+  // frais que le dernier suivi continue la même piste : on la suit, on ne l'annonce pas.
+  const annonce = (tick: number): void => {
+    if (monster.pisteVue !== undefined && tick - monster.pisteVue <= PISTE.REPRISE_TICKS) return
+    emitEvent(state, { type: 'wolf_on_trail', tick: state.tick, entityId: entity.id, x: entity.x, y: entity.y })
+  }
+  const g = gouttePlusFraiche(state, entity, niveau, entity.x, entity.y, PISTE.FLAIR, apres)
+  if (g !== undefined) {
+    if (underFireWard(state, g)) return false // le bord de la lumière : la piste s'arrête là (P8)
+    annonce(g.tick)
+    monster.piste = g.tick
+    nouveauBut(monster)
+    return true // il est dessus : au prochain pas, ① le mène à la suivante
+  }
+  if (state.souillures.length > 0) {
+    const s = souillureCroisee(state, entity, apres)
+    if (s !== undefined) {
+      annonce(s.tick)
+      monster.pisteEau = s.i
+      nouveauBut(monster)
+      const width = state.map.width
+      moveToward(state, monster, entity, (s.i % width) + 0.5, (s.i - (s.i % width)) / width + 0.5, false)
+      return true
+    }
+  }
+  return false
+}
+
 /**
  * LE DOS D'UNE PROIE (L12) — la direction de sa prise à revers, ou `null` si son
  * regard n'est pas lisible. Les bêtes posent `facing` à chaque pas (chasse C4),
@@ -4253,6 +4541,7 @@ export function wolfStep(
     monster.targetId = null
     monster.stalking = false
     oublieLeChemin(monster)
+    oublieLaPiste(monster)
     const attacker = monster.lastAttackerId !== null ? byId.get(monster.lastAttackerId) : undefined
     const from = attacker ?? nearestOf(state.map, quarry, entity, FAUNA.SAFE_RANGE)
     if (from) {
@@ -4317,6 +4606,7 @@ export function wolfStep(
     monster.targetId = null
     monster.stalking = false
     oublieLeChemin(monster)
+    oublieLaPiste(monster) // la fin de la chasse efface la piste (P6) — elle ne réveille pas
     delete monster.alertSince // tranquille : il baisse la garde (C6)
     if (den !== null) {
       denLife(state, monster, entity, pack, byId, hour, den)
@@ -4352,8 +4642,10 @@ export function wolfStep(
   const target = monster.targetId !== null ? byId.get(monster.targetId) : undefined
 
   if (target && target.hp > 0) {
-    // Une cible prise : le loup est ENGAGÉ — plus de coup propre sur lui (C6).
+    // Une cible prise : le loup est ENGAGÉ — plus de coup propre sur lui (C6). Et la piste a
+    // fait son office : le contact efface la mémoire du sang (P6).
     if (monster.alertSince === undefined) monster.alertSince = state.tick
+    oublieLaPiste(monster)
     // Un homme est choisi : la meute hurle. Une fois, et le joueur est prévenu.
     if (isAvatar(target.id)) howlOnce(state, pack, monster, entity, target.id)
 
@@ -4492,9 +4784,14 @@ export function wolfStep(
   // la mise à mort propre vaut aussi sur les prédateurs.
   if (!monster.routed) delete monster.alertSince
 
-  // 5. Rien à chasser SOUS LA DENT — mais la sortie a une DESTINATION (loup.md
-  //    L8-L9) : le résident en chasse fait route vers son coin, et c'est là que
-  //    la chasse abstraite se joue si personne ne regarde.
+  // 5. Rien à chasser SOUS LA DENT — mais du SANG à remonter (spec `piste-de-sang.md`) :
+  //    une piste vivante bat une destination abstraite, elle passe AVANT le coin de sortie.
+  //    Le repas passe avant elle (`feedStep`, plus haut) : une carcasse fraîche à portée vaut
+  //    mieux qu'une piste. Et on n'arrive ici qu'EN CHASSE : la piste guide, elle ne réveille pas.
+  if (pisteStep(state, monster, entity)) return
+
+  // 5bis. La sortie a une DESTINATION (loup.md L8-L9) : le résident en chasse fait route vers
+  //    son coin, et c'est là que la chasse abstraite se joue si personne ne regarde.
   if (monster.sortie === true && den !== null) {
     sortieTravel(state, monster, entity, pack, byId, quarry, isAvatar)
     return
@@ -4682,7 +4979,7 @@ function encirclePost(
  * Que le salut d'une nuit de chasse soit le Foyer n'est pas un hasard : c'est le
  * jeu qui dit son nom.
  */
-function underFireWard(state: SimState, e: Entity): boolean {
+function underFireWard(state: SimState, e: { x: number; y: number; etage?: number }): boolean {
   for (const s of state.structures) {
     if (s.type !== 'fire' || s.hp <= 0) continue
     // Un loup ne fuit qu'un feu ALLUMÉ (faune.md:91, « Feu allumé ») — les braises ne

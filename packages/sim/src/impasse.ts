@@ -93,6 +93,12 @@ function renonce(state: SimState, monster: Monster): void {
   delete monster.regagne
   delete monster.jinkDx
   delete monster.jinkDy
+  // La piste de sang est un projet comme les autres (`piste-de-sang.md` P6) ; le sang déjà
+  // consommé (`pisteVue`) est un fait, il reste — sinon elle repartirait sur les mêmes gouttes.
+  delete monster.piste
+  delete monster.pisteEau
+  delete monster.pisteDepuis
+  delete monster.pisteD
 }
 
 /**

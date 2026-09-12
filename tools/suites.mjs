@@ -82,7 +82,14 @@ const SUITES = [
   //   Suite à 2337 ; +1 avec la roselière (décision d'Alexis, même jour) — suite à 2338.
   // 2026-09-12 : +3 gardes Q9 — LA HARDE RENONCE à boire une eau ensanglantée (A7, son témoin,
   //   le seuil ; `qualite-eau.test.ts`). Suite à 2341.
-  { nom: 'sim', dir: 'packages/sim', args: ['run', '--exclude', 'src/scenario.test.ts'], plancher: 2328 },
+  // 2026-09-12 : +22 gardes avec LA PISTE DE SANG (`piste-de-sang.test.ts`, spec `piste-de-sang.md`)
+  //   — il vient de loin et son témoin, en silence, le sens de la piste, elle guide sans réveiller
+  //   (×4), le loup qui saigne et le frère qui saigne, le sang de l'HOMME seulement (×3 : le tag à
+  //   la source, la piste de bête au sol, l'eau de bête), l'eau qui appelle vers l'amont (×5,
+  //   méandre compris), elle se perd, le mur entre deux gouttes (revue), le Feu tient, la roche
+  //   arrête. Suite à 2363 sur l'arbre (2358 sur l'arbre commité seul : 5 gardes d'étage de
+  //   l'autre session en plus), plancher relevé à 2345.
+  { nom: 'sim', dir: 'packages/sim', args: ['run', '--exclude', 'src/scenario.test.ts'], plancher: 2345 },
   // 2026-09-01 : +10 gardes avec le RENDU des étages (`plateau-art.test.ts`).
   // 2026-09-01 : +9 gardes avec le TRI DES ÉTAGES (strate, découvert — `framing.test.ts`),
   //   suite relevée à 1429 ✓, plancher recalé quelques pourcents dessous.

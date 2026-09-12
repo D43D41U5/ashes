@@ -242,6 +242,14 @@ export type SimEvent =
    */
   | { type: 'wolf_howl'; tick: number; targetEntityId: number; packSize: number; x: number; y: number }
   /**
+   * LE LOUP PREND LA PISTE (spec `piste-de-sang.md` P5, 2026-09-12) : un loup en chasse vient de
+   * CROISER du sang — une goutte au sol ou une eau ensanglantée — et le remonte. Une fois par
+   * prise, par loup. MUET par décision d'Alexis (« en silence jusqu'au contact » : le hurlement
+   * part à l'acquisition, comme avant) — le fait existe pour la chronique et la réputation, pas
+   * pour l'oreille. C'est la dérogation assumée au GDD §9bis, pour ce seul cas.
+   */
+  | { type: 'wolf_on_trail'; tick: number; entityId: number; x: number; y: number }
+  /**
    * ILS T'ONT SENTI (spec `cendreux.md` R11) — le pendant du hurlement pour les morts.
    *
    * La nuit bascule d'espèce avec les actes, et l'avertissement doit basculer avec elle :

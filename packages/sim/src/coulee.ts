@@ -59,6 +59,10 @@ export interface Souillure {
   crans: number
   /** Pas de fil d'attache, ou −1 pour une eau qui ne va nulle part. */
   pas: number
+  /** Un HOMME y a saigné (avatar ou villageois) — la seule eau que le loup remonte
+   *  (`piste-de-sang.md` P1). Posé à la première goutte d'homme, jamais retiré : la souillure
+   *  vit cinq minutes, ce sang-là aussi. Absent pour le sang d'une bête. */
+  homme?: true
 }
 
 /** Ce que la qualité de l'eau lit EN PLUS de la cendre. Les deux champs du sang sont
@@ -183,8 +187,13 @@ function tuileDEau(map: WorldMap, tx: number, ty: number): boolean {
  * jamais dernier écrit, sinon les méandres serrés cousent ») et `couleeStep` la rejoue côté
  * sim. Sans elle, un méandre serré attache la goutte au bief d'en face et le sang traverse
  * le coude. La borne (`SANG.ATTACHE`) dit où le fleuve s'arrête : au-delà, l'eau est dormante.
+ *
+ * `borne` — la portée de la recherche, Chebyshev. `SANG.ATTACHE` par défaut (la goutte dans le
+ * fleuve) ; la piste de sang l'élargit de son flair, parce que le loup qui CROISE une eau teinte
+ * se tient sur la berge, hors du lit (`piste-de-sang.md` P2). La loi ne change pas : le pas le
+ * plus proche, toujours.
  */
-export function attacheAuFil(map: WorldMap, tx: number, ty: number): number {
+export function attacheAuFil(map: WorldMap, tx: number, ty: number, borne: number = SANG.ATTACHE): number {
   const fil = map.fil
   if (!fil || fil.length === 0) return -1
   const width = map.width
@@ -202,7 +211,7 @@ export function attacheAuFil(map: WorldMap, tx: number, ty: number): number {
     // plein milieu d'une rivière. Euclidien pour le classement parce que Chebyshev égalise
     // des pas entiers par paquets, et qu'un départage « au premier » ramènerait exactement le
     // défaut que le plus-proche-point existe pour éviter (les méandres qui cousent).
-    if (Math.max(dx < 0 ? -dx : dx, dy < 0 ? -dy : dy) > SANG.ATTACHE) continue
+    if (Math.max(dx < 0 ? -dx : dx, dy < 0 ? -dy : dy) > borne) continue
     const d2 = dx * dx + dy * dy
     if (d2 < meilleure) {
       meilleure = d2

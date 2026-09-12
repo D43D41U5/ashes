@@ -5384,6 +5384,35 @@ export const COMBAT = {
 } as const
 
 /**
+ * ═══ LA PISTE DE SANG (spec `piste-de-sang.md`, décisions d'Alexis du 2026-09-12) ═══
+ *
+ * Saigner se paie en DISTANCE, pas seulement en proximité : un loup en chasse qui CROISE une
+ * goutte au sol ou une eau ensanglantée remonte le sang jusqu'à qui le verse. Une seule règle
+ * pour le sol et l'eau ; la piste GUIDE, elle ne réveille pas (seul un loup déjà en chasse la
+ * suit) ; et EN SILENCE jusqu'au contact — la dérogation assumée au GDD §9bis. Ce bloc se règle
+ * en jouant : la piste est-elle trop facile à prendre ? trop fragile à suivre ?
+ *
+ * Déclaré APRÈS `COMBAT` parce que `PAS` en dérive (le sprint) — une constante `export const`
+ * lue avant sa déclaration jette au chargement du module.
+ */
+export const PISTE = {
+  /** À quelle distance (tuiles) un loup CROISE une trace — il faut marcher dessus, pas la sentir
+   *  de loin : c'est la seule chose qui sépare une piste d'un radar. */
+  FLAIR: 2.5,
+  /** La distance maximale entre deux gouttes consécutives d'une MÊME piste. DÉRIVÉE, pas posée :
+   *  ce qu'un homme parcourt au sprint en `BLOOD_EVERY_TICKS`, plus une tuile de marge — sinon un
+   *  blessé qui court casserait sa propre piste, et la règle mourrait sur le cas qu'elle vise. */
+  PAS: (BALANCE.WALK_SPEED_TILES_PER_S * COMBAT.SPRINT_FACTOR * HUNT.BLOOD_EVERY_TICKS) / TICK_RATE_HZ + 1,
+  /** UNE REPRISE N'EST PAS UNE PRISE : du sang plus frais que le dernier suivi, mais de moins
+   *  que ceci, continue la MÊME piste — `wolf_on_trail` ne repart pas. MESURÉ (2026-09-12,
+   *  `tools/__frere-qui-saigne.mts`) : un loup au bout d'une piste VIVANTE — un frère de meute
+   *  blessé léger, dont le sang n'est pas une proie — la reperdait et la reprenait à chaque
+   *  goutte, 10 à 23 faits par minute de saignement, sans qu'il bouge autrement. Le fait ne doit
+   *  pas bégayer (la règle de `water_fouled`, A8). Bien plus long qu'une goutte (0,8 s). */
+  REPRISE_TICKS: ticksFor(10),
+} as const
+
+/**
  * PV des structures (spec événements R1). LE FEU EST TUABLE — MAIS SEULEMENT À SEC
  * (V1-12) : `applyStructureDamage` ignore tout dégât tant que `village.fuel > 0` (un
  * Feu nourri est un totem inviolable). À sec, ces PV finis peuvent tomber sous un

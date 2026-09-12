@@ -126,7 +126,9 @@ describe('la table de routage audio (soundForEvent)', () => {
     // c'est celui qui décide de l'échange : il ne pouvait pas rester muet.
     // 98 → 99 faits et 57 voix INCHANGÉES le 2026-09-12 : `water_fouled` naît MUET
     // (`qualite-eau.md` Q10) — l'eau souillée se dit à l'œil, pas à l'oreille.
-    expect(total).toBe(99)
+    // 99 → 100 faits et 57 voix INCHANGÉES le 2026-09-12 : `wolf_on_trail` naît MUET
+    // (`piste-de-sang.md` P5, décision d'Alexis) — la piste se remonte en silence.
+    expect(total).toBe(100)
     // 34 → 35 le 2026-07-29 : `node_depleted` a gagné sa voix (trois, selon la matière).
     // 61 → 62 faits et 35 → 36 voix le 2026-07-30 : `door_toggled` naît (spec construction R26).
     // 62 → 63 faits et 36 → 37 voix le 2026-07-31 : `cendreux_prowl` naît (spec cendreux R11bis) —

@@ -477,8 +477,15 @@ export interface SimState {
    * événements : haute fréquence ≠ domaine. Le client les dessine et les efface,
    * personne d'autre ne les consomme. Borné des deux côtés (TTL + plafond FIFO) :
    * le snapshot reste petit.
+   *
+   * `homme` (spec `piste-de-sang.md` P1) : la goutte d'un AVATAR ou d'un VILLAGEOIS la porte,
+   * celle d'une bête non. Le loup ne remonte que le sang de l'homme — MESURÉ sans ce tri, sur
+   * le banc A26 de `faune.test.ts` : quatre loups ambiants pistaient les sangliers blessés
+   * jusqu'au bout et vidaient le coin (9 → 19 sangliers tués en 150 s), et se faisaient tuer
+   * deux fois plus. Absent plutôt que `false` : le client dessine les gouttes, il n'a pas à
+   * porter un octet de plus par goutte de bête.
    */
-  blood: { x: number; y: number; tick: number; etage?: number }[]
+  blood: { x: number; y: number; tick: number; etage?: number; homme?: true }[]
   /**
    * LE SANG DANS L'EAU (spec `qualite-eau.md`, Alexis 2026-09-12). Le SEUL état que l'eau
    * garde — et c'est une dérogation assumée à la doctrine « tout est dérivé, rien n'est

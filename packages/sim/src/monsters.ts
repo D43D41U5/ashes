@@ -286,6 +286,37 @@ export interface Monster {
    */
   clanAdultes?: number
 
+  /* ── LA PISTE DE SANG (spec `piste-de-sang.md` — décisions d'Alexis 2026-09-12) ── */
+  /**
+   * LA GOUTTE QU'IL SUIT (P3) : le `tick` de la goutte courante de `state.blood` — un nombre,
+   * résolu à chaque pas (deux gouttes d'homme du même tick — deux avatars gouttent au même
+   * instant : la plus PROCHE de lui, départage déterministe). Absent = il ne suit aucune goutte. Effacé à la perte (P6), à l'acquisition
+   * d'une cible, à la fin de la chasse.
+   */
+  piste?: number
+  /**
+   * L'ORIGINE D'EAU qu'il gagne (P4) : l'index de tuile (`Souillure.i`) de la souillure croisée
+   * — elle dit d'où vient le sang, et il y va droit, sans suivre le fil (la médiane, en eau
+   * profonde, qui bloque). Absent = pas de trajet d'eau en cours.
+   */
+  pisteEau?: number
+  /**
+   * LE SANG DÉJÀ SUIVI : le tick de la trace la plus fraîche qu'il a CONSOMMÉE. Une piste perdue
+   * ne se reprend pas sur ses propres gouttes — sans ce seuil, le loup au bout d'une piste la
+   * reprenait au tick suivant (la goutte de tête est à ≤ FLAIR de lui), la reperdait aussitôt,
+   * et `wolf_on_trail` bégayait à 20 Hz. Seul du sang PLUS FRAIS relance. Effacé avec la chasse.
+   */
+  pisteVue?: number
+  /**
+   * LA FENÊTRE DE PROGRÈS sur le but de la piste (revue du 2026-09-12) : le tick d'ouverture et
+   * la distance au but à l'ouverture — la mesure de `noteBlocked` (R20), dans ses propres champs
+   * parce que `stuckSince`/`stuckD` sont jetés à chaque tick sans cible. Un loup qui n'a pas
+   * gagné `STUCK_PROGRESS` en `STUCK_TICKS` se cogne à un mur entre deux gouttes : il lâche.
+   * Présents seulement en route vers une goutte ou une origine.
+   */
+  pisteDepuis?: number
+  pisteD?: number
+
   /* ── Le coin de chasse (spec faune R17) ─────────────────────────────────── */
   /**
    * SON TERRITOIRE : le coin de chasse dont cette bête est. Elle y est née, elle

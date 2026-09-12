@@ -11,7 +11,7 @@ volets, chacun en ajout seul et en ordre chronologique. Ce fichier-ci est l'INDE
 |---|---|---|---|---|
 | **M** | [Monde & worldgen](decisions/monde-worldgen.md) | worldgen, relief, eau, biomes, lieux, cendre, étages | 161 | 325 Ko |
 | **R** | [Rendu & DA](decisions/rendu-da.md) | lumière, couleur, sprites, FX, art du sol, son | 172 | 506 Ko |
-| **G** | [Gameplay & systèmes](decisions/gameplay-systemes.md) | faune, combat, récolte, craft, saisons, météo, construction, design | 296 | 752 Ko |
+| **G** | [Gameplay & systèmes](decisions/gameplay-systemes.md) | faune, combat, récolte, craft, saisons, météo, construction, design | 297 | 760 Ko |
 | **I** | [Interface & outillage](decisions/interface-outillage.md) | HUD, menus, encyclopédie, carte, smoke, bancs, process | 84 | 183 Ko |
 | **A** | [Architecture & infra](decisions/architecture-infra.md) | pureté et déterminisme de /sim, protocole, serveur, persistance, perf | 65 | 117 Ko |
 
@@ -31,7 +31,7 @@ retrouve ici, à la même date, jamais à la ligne du dessus dans son volet.
 
 ---
 
-## Index chronologique — 778 entrées, 1884 Ko
+## Index chronologique — 779 entrées, 1892 Ko
 
 - 2026-07-05 · **M** · Spec monde validée par Alexis : déplacement continu type Binding of Isaac (jamais de case par c…
 - 2026-07-05 · **M** · Convention d'import Tiled : l'index local de la tuile dans le premier tileset = l'id de terrain…
@@ -811,3 +811,4 @@ retrouve ici, à la même date, jamais à la ligne du dessus dans son volet.
 - 2026-09-12 · **G** · Le sang souille un MARAIS toujours, crue ou pas (disque d'eau dormante, `qualite-eau.md` Q7), b…
 - 2026-09-12 · **G** · La roselière (`reed_marsh`) se souille comme le marais, crue ou pas. (un marais à roseaux ; sin…
 - 2026-09-12 · **G** · LA HARDE RENONCE À BOIRE UNE EAU ENSANGLANTÉE (spec `qualite-eau.md` Q9/A7). Au bout de sa coul…
+- 2026-09-12 · **G** · LES LOUPS VIVANTS REMONTENT LE SANG DE L'HOMME — au sol et dans l'eau, une seule règle, en sile…

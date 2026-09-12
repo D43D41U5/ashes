@@ -54,7 +54,10 @@ describe('l’inventaire des 97 faits', () => {
     // 98 → 99 le 2026-09-12 : `water_fouled` (`qualite-eau.md` Q10), famille `saison` — du sang
     // entre dans une eau propre. MUET décidé : le fait naît au milieu d'un combat qui sonne
     // déjà, et il se dira à l'œil quand la teinte du sang arrivera.
-    expect(somme).toBe(99)
+    // 99 → 100 le 2026-09-12 : `wolf_on_trail` (`piste-de-sang.md` P5), famille `registre` — un
+    // loup en chasse prend une piste de sang. MUET par décision d'Alexis : en silence jusqu'au
+    // contact, le hurlement part à l'acquisition comme avant.
+    expect(somme).toBe(100)
   })
 
   it('chaque fait DIT ce qu’il raconte — pas son identifiant', () => {
@@ -145,7 +148,9 @@ describe('l’inventaire des 97 faits', () => {
     // viendra avec l'art du tertre, le lot visuel de la cendre.
     // 41 → 42 le 2026-09-12 : `water_fouled` (`qualite-eau.md` Q10), muet décidé — la teinte du
     // sang à l'eau le dira, et elle est un chantier client à part.
-    expect(Object.keys(INVENTAIRE).length - SONORES.length).toBe(42)
+    // 42 → 43 le 2026-09-12 : `wolf_on_trail` (`piste-de-sang.md` P5), muet DÉCIDÉ par Alexis —
+    // la piste se remonte en silence, l'annonce reste le hurlement du contact.
+    expect(Object.keys(INVENTAIRE).length - SONORES.length).toBe(43)
   })
 
   it('PLUS AUCUNE famille n’est entièrement muette, sauf celle qui l’est par décision', () => {

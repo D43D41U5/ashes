@@ -68,7 +68,7 @@ export type Fait<T = SimEvent> = FaitSonore<T> | FaitMuet<T>
 export type Inventaire = { [K in SimEvent['type']]: Fait<Extract<SimEvent, { type: K }>> }
 
 /**
- * LES 99 FAITS. Exhaustif par le compilateur ; l'ordre d'écriture suit les familles pour
+ * LES 100 FAITS. Exhaustif par le compilateur ; l'ordre d'écriture suit les familles pour
  * qu'une relecture à l'œil reste possible.
  */
 export const INVENTAIRE: Inventaire = {
@@ -77,6 +77,11 @@ export const INVENTAIRE: Inventaire = {
   entity_died: { voix: 'voix', ou: 'entite', famille: 'registre', quoi: 'quelqu’un tombe (le froid et la faim tuent aussi)' },
   monster_slain: { voix: 'voix', ou: 'auteur', famille: 'registre', quoi: 'une bête est abattue' },
   wolf_howl: { voix: 'voix', ou: 'xy', famille: 'registre', quoi: 'une meute a choisi un homme — le seul avertissement' },
+  // LA PISTE DE SANG (`piste-de-sang.md` P5, 2026-09-12) : MUET, et c'est une DÉCISION d'Alexis,
+  // contre ma reco — « en silence jusqu'au contact ». Le hurlement part à l'acquisition, comme
+  // avant ; la prise de piste, elle, ne s'annonce pas : c'est la dérogation assumée au GDD §9bis
+  // « annoncés, pas surprises », pour ce seul cas. Le fait existe pour la chronique.
+  wolf_on_trail: { voix: 'muet', famille: 'registre', quoi: 'un loup en chasse remonte une piste de sang — en silence, par décision' },
   bird_flush: { voix: 'voix', ou: 'xy', famille: 'registre', quoi: 'la nuée gicle de la lisière — la forêt dénonce un pas bruyant' },
   cendreux_prowl: { voix: 'voix', ou: 'xy', famille: 'registre', quoi: 'les morts ont senti un homme — l’avertissement des actes II-III' },
   cendreux_cri: { voix: 'voix', ou: 'xy', famille: 'registre', quoi: 'un cri qui n’a rien d’humain — la fureur du froid appelle le sol (décision ④⑤)' },

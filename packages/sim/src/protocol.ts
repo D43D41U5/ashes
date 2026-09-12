@@ -242,8 +242,9 @@ export interface SnapshotMessage {
    *  soulève, et son extinction sans `cendreux_risen` DIT que le feu a gagné. Quatre nombres
    *  par entrée, une poignée d'entrées à la fois — le plafond de l'acte les borne. */
   reveils: Reveil[]
-  /** LE SANG AU SOL (spec chasse C9) : les gouttes que le client dessine et efface. */
-  blood: { x: number; y: number; tick: number; etage?: number }[]
+  /** LE SANG AU SOL (spec chasse C9) : les gouttes que le client dessine et efface. `homme`
+   *  voyage parce que la goutte voyage entière (`piste-de-sang.md` P1) ; le client ne le lit pas. */
+  blood: { x: number; y: number; tick: number; etage?: number; homme?: true }[]
   /** LE CAP DU VENT (C17, `vent.md`) : il doit SE VOIR — une règle invisible est une injustice.
    *  Le client le LIT, il ne le recompose jamais de `front.edge` (écrivain unique, A8). */
   wind: { x: number; y: number }

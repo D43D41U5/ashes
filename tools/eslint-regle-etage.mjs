@@ -188,6 +188,11 @@ const HORS_REGLE = {
     pathStep: 'la péremption de SON chemin, et SON waypoint',
     boarStep: 'la portée de charge sur une menace déjà élue',
     wolfStep: 'la distance à une cible déjà élue par `chooseQuarry`, scellé',
+    goutteDuTick: 'départage entre deux gouttes d’homme du MÊME tick (deux avatars gouttent au même '
+      + 'instant) : la sienne est la plus proche — une goutte déjà ÉLUE atteignable par '
+      + '`gouttePlusFraiche` (scellé), on ne fait que la RETROUVER',
+    seCogne: 'sa PROGRESSION vers SON but de piste (une goutte élue atteignable, une origine d’eau '
+      + 'déjà scellée par `atteintLeSol`) — la mesure de `noteBlocked`, exempté pour la même raison',
     departDuClan: 'élection d’un coin de départ — un LIEU',
     denLife: 'la distance à SON gîte',
     despawnUnwatched: 'la présence d’un joueur pour DÉSPAWNER — un plancher de plus ne fait que garder la bête en vie, le sens sûr',
