@@ -110,6 +110,9 @@ const HORS_REGLE = {
     // Pas un corps : une TUILE contre les waypoints d'un chemin fixé au worldgen (le fil de SA
     // rivière) — même étagère que `followPath` de `npc.ts`, « waypoint de son propre chemin ».
     attacheAuFil: 'une tuile contre les waypoints du fil de sa rivière — pas de second corps',
+    // La même règle, RETOURNÉE : le fil peint son pas sur les tuiles autour de lui (la table
+    // d'attache, cuite une fois pour le rendu) — mêmes waypoints, même absence de corps.
+    tableDAttache: 'le fil de la rivière contre les tuiles de son lit — la même attache, cuite par le fil ; pas de second corps',
     // La souillure est un champ AU SOL, scellé DEUX fois sans l'accesseur d'étage : ① à
     // l'émission, `souiller` (faune.ts) refuse toute goutte qui porte un étage ; ② à la
     // lecture, tout passe par `terrainAt`, donc par `map.terrain` — la seule strate du sol.

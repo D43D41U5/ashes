@@ -19,7 +19,7 @@ import {
   BALANCE, HUNT, SANG, TERRAIN_DEEP_WATER, TERRAIN_GRASS, TERRAIN_MARSH, TERRAIN_REED_MARSH, TERRAIN_SHALLOW_WATER,
 } from './balance'
 import { calculeChampDeCendre } from './cendre'
-import { attacheAuFil, COULEE, eauSouillee, qualiteDeLEau } from './coulee'
+import { attacheAuFil, COULEE, cranDeSang, eauSouillee, empreinteDuSang, qualiteDeLEau, tableDAttache, type Souillure } from './coulee'
 import { porteDeLEau } from './eau'
 import { drainEvents } from './events'
 import { estGele } from './gel'
@@ -720,5 +720,227 @@ describe('A9 — la forme de l’état : JSON, et la carte reste immuable', () =
     ticks(s, 200)
     expect(s.souillures.length).toBe(1)
     expect(Array.from(s.map.terrain)).toEqual(Array.from(avant))
+  })
+})
+
+/* ─── A11 — LA VOIE EXACTE DU RENDU : la table et l'empreinte SONT la loi ─────────────── */
+
+describe('A11 — la voie exacte du rendu : la table d’attache et l’empreinte rendent la loi au bit près', () => {
+  /** La table contre `attacheAuFil`, sur TOUTES les tuiles d'une carte (terre comprise : −1 aussi). */
+  function tableEstLaLoi(map: WorldMap): void {
+    const table = tableDAttache(map)
+    let ecarts = 0
+    for (let ty = 0; ty < map.height; ty++) {
+      for (let tx = 0; tx < map.width; tx++) {
+        if (table[ty * map.width + tx] !== attacheAuFil(map, tx, ty)) ecarts += 1
+      }
+    }
+    expect(ecarts).toBe(0)
+  }
+
+  /** L'empreinte contre `qualiteDeLEau` (sans cendre, donc sans suie), sur TOUTES les tuiles. */
+  function empreinteEstLaLoi(s: SimState, table: Int32Array, force: Float64Array, touchees: number[]): number {
+    empreinteDuSang(s, table, force, touchees)
+    let teintes = 0
+    for (let ty = 0; ty < s.map.height; ty++) {
+      for (let tx = 0; tx < s.map.width; tx++) {
+        const loi = qualiteDeLEau(s, tx, ty)
+        // `toBe` : l'égalité EXACTE, pas une tolérance — c'est le même calcul, dans le même ordre.
+        expect(force[ty * s.map.width + tx], `(${tx}, ${ty})`).toBe(loi)
+        if (loi > 0) teintes += 1
+      }
+    }
+    // Et la liste des touchées est exactement l'ensemble des forces > 0, sans doublon.
+    expect(new Set(touchees).size).toBe(touchees.length)
+    expect(touchees.length).toBe(teintes)
+    return teintes
+  }
+
+  it('la table d’attache ≡ attacheAuFil sur toute la carte — le fleuve et le lac, puis le méandre', () => {
+    tableEstLaLoi(carteRiviereEtLac())
+    tableEstLaLoi(carteMeandre())
+  })
+
+  it('sans fil, la table ne vaut que −1', () => {
+    const map = carteRiviereEtLac()
+    delete map.fil
+    expect(tableDAttache(map).every((p) => p === -1)).toBe(true)
+  })
+
+  it('sur le vrai monde joué, la table ≡ attacheAuFil sur toute la bande du fleuve — attaches ET orphelines', () => {
+    const { map } = carteDeTest(2026, MONDE.JOUEURS_CIBLE, MONDE_JOUE)
+    const fil = map.fil!
+    const table = tableDAttache(map)
+    const w = map.width
+    const vues = new Set<number>()
+    let attaches = 0
+    let orphelines = 0
+    // Une tuile au-delà de la borne, pour voir aussi des −1 : la table doit dire « pas de fleuve »
+    // exactement là où la loi le dit.
+    const R = SANG.ATTACHE + 1
+    for (const i of fil) {
+      const x0 = i % w
+      const y0 = (i - x0) / w
+      for (let ty = y0 - R; ty <= y0 + R; ty++) {
+        for (let tx = x0 - R; tx <= x0 + R; tx++) {
+          if (tx < 0 || ty < 0 || tx >= w || ty >= map.height) continue
+          const j = ty * w + tx
+          if (vues.has(j)) continue
+          vues.add(j)
+          const loi = attacheAuFil(map, tx, ty)
+          expect(table[j], `(${tx}, ${ty})`).toBe(loi)
+          if (loi < 0) orphelines += 1
+          else attaches += 1
+        }
+      }
+    }
+    expect(attaches).toBeGreaterThan(1000)
+    expect(orphelines, 'la prémisse : le balayage a vu des tuiles hors fleuve').toBeGreaterThan(100)
+  })
+
+  it('l’empreinte ≡ qualiteDeLEau sur toute la carte : fleuve, lac, marais, fraîche, pâlie, expirée, plafond, bout de fil', () => {
+    const map = carteRiviereEtLac()
+    // Un marais au sud, loin du fil : une eau dormante d'un autre terrain (Q7).
+    for (let dy = -2; dy <= 2; dy++) for (let dx = -2; dx <= 2; dx++) setTile(map, 40 + dx, 50 + dy, TERRAIN_MARSH)
+    const s = sim(map)
+    const fil = map.fil!
+    const auFil = (k: number): number => fil[k]!
+    const t = s.tick
+    const taches: Souillure[] = [
+      { i: auFil(10), tick: t, crans: 4, pas: 10, homme: true }, // fraîche, au plafond
+      { i: auFil(30), tick: t - Math.floor(SANG.TACHE_TICKS / 2), crans: 1, pas: 30 }, // pâlie, une goutte
+      { i: auFil(35), tick: t - 10, crans: 9, pas: 35 }, // au-delà du plafond de crans → FORCE_MAX
+      { i: auFil(fil.length - 3), tick: t, crans: 2, pas: fil.length - 3 }, // en bout de fil : l'aval s'arrête
+      { i: auFil(60) - 2 * map.width, tick: t, crans: 3, pas: attacheAuFil(map, X0 + 60, RIVIERE_Y - 2) }, // hors du fil, dans le lit
+      { i: idx(map, LAC_X, LAC_Y), tick: t, crans: 4, pas: -1 }, // le lac : un disque
+      { i: idx(map, LAC_X + LAC_R, LAC_Y), tick: t - 100, crans: 2, pas: -1 }, // le bord du lac : disque tronqué par la terre
+      { i: idx(map, 40, 50), tick: t - 1, crans: 4, pas: -1 }, // le marais
+      { i: auFil(80), tick: t - SANG.TACHE_TICKS, crans: 4, pas: 80 }, // EXPIRÉE : rien
+    ]
+    s.souillures = taches
+    const table = tableDAttache(map)
+    const force = new Float64Array(map.width * map.height)
+    const touchees: number[] = []
+    const teintes = empreinteEstLaLoi(s, table, force, touchees)
+    expect(teintes, 'la prémisse : il y a du sang à peindre').toBeGreaterThan(500)
+    // La souillure hors du fil s'est bien attachée au pas de SA colonne (le fil est peint x
+    // croissant depuis `X0`) : la prémisse du cinquième montage — sinon il doublait le premier.
+    expect(taches[4]!.pas).toBe(60)
+  })
+
+  it('sur le méandre, chaque tuile ne se peint qu’à SON pas : le coude ne coud pas non plus ici', () => {
+    const map = carteMeandre()
+    const s = sim(map)
+    const fil = map.fil!
+    const t = s.tick
+    // Versée dans l'amont, juste avant le coude : l'aval descend le coude et remonte vers l'ouest
+    // à `Y_BAS` — le bief d'en face, à cinq tuiles du bief amont.
+    const pas = fil.indexOf(Y_HAUT * map.width + (X_COUDE - 5))
+    expect(pas).toBeGreaterThan(0)
+    s.souillures = [{ i: fil[pas]!, tick: t, crans: 4, pas }]
+    const table = tableDAttache(map)
+    const force = new Float64Array(map.width * map.height)
+    const touchees: number[] = []
+    empreinteEstLaLoi(s, table, force, touchees)
+    // Et la prémisse : la traînée a bien tourné le coude (du sang à `Y_BAS`)…
+    expect(force[Y_BAS * map.width + (X_COUDE - 3)]).toBeGreaterThan(0)
+    // …sans remonter l'amont de la verse.
+    expect(force[Y_HAUT * map.width + (X_COUDE - 8)]).toBe(0)
+  })
+
+  it('sur le vrai monde joué, l’empreinte ≡ la loi autour de chaque traînée, et elle en peint des milliers de tuiles', () => {
+    const { map } = carteDeTest(2026, MONDE.JOUEURS_CIBLE, MONDE_JOUE)
+    const fil = map.fil!
+    const s = createSim(2026, { map, nodes: [], faunaCap: 0, worldEvents: false, meteoActive: false })
+    s.tick = 5000
+    const taches: Souillure[] = []
+    for (let k = 0; k < 8; k++) {
+      const pas = Math.floor((k + 0.5) * fil.length / 8)
+      taches.push({ i: fil[pas]!, tick: s.tick - k * 400, crans: 1 + k % 4, pas })
+    }
+    s.souillures = taches
+    const table = tableDAttache(map)
+    const force = new Float64Array(map.width * map.height)
+    const touchees: number[] = []
+    empreinteDuSang(s, table, force, touchees)
+    // La loi, lue sur la boîte de chaque traînée élargie d'une tuile (donc AUSSI sur des tuiles
+    // que l'empreinte ne peint pas — elles doivent valoir 0 des deux côtés).
+    const w = map.width
+    const vues = new Set<number>()
+    let lues = 0
+    for (const tache of taches) {
+      for (let p = tache.pas - 1; p <= tache.pas + SANG.DILUTION_PAS + 1 && p < fil.length; p++) {
+        if (p < 0) continue
+        const x0 = fil[p]! % w
+        const y0 = (fil[p]! - x0) / w
+        for (let ty = y0 - COULEE.DEMI_LIT - 1; ty <= y0 + COULEE.DEMI_LIT + 1; ty++) {
+          for (let tx = x0 - COULEE.DEMI_LIT - 1; tx <= x0 + COULEE.DEMI_LIT + 1; tx++) {
+            if (tx < 0 || ty < 0 || tx >= w || ty >= map.height) continue
+            const j = ty * w + tx
+            if (vues.has(j)) continue
+            vues.add(j)
+            lues += 1
+            expect(force[j], `(${tx}, ${ty})`).toBe(qualiteDeLEau(s, tx, ty))
+          }
+        }
+      }
+    }
+    expect(lues, 'huit traînées de 42 pas, dédoublonnées').toBeGreaterThan(2000)
+    expect(touchees.length, 'la prémisse : le fleuve joué porte les traînées').toBeGreaterThan(1000)
+    expect(touchees.every((j) => force[j]! > 0)).toBe(true)
+  })
+
+  it('l’appel précédent s’efface : une souillure partie ne laisse rien derrière elle', () => {
+    const map = carteRiviereEtLac()
+    const s = sim(map)
+    const fil = map.fil!
+    const table = tableDAttache(map)
+    const force = new Float64Array(map.width * map.height)
+    const touchees: number[] = []
+    s.souillures = [{ i: fil[10]!, tick: s.tick, crans: 4, pas: 10 }]
+    empreinteDuSang(s, table, force, touchees)
+    const avant = touchees.length
+    expect(avant).toBeGreaterThan(0)
+    // La souillure s'en va (expirée, ou évincée) : la seconde passe ne doit rien garder d'elle.
+    s.souillures = [{ i: idx(map, LAC_X, LAC_Y), tick: s.tick, crans: 2, pas: -1 }]
+    empreinteDuSang(s, table, force, touchees)
+    expect(touchees.length).toBeLessThan(avant)
+    let restes = 0
+    for (let j = 0; j < force.length; j++) if (force[j]! > 0 && !touchees.includes(j)) restes += 1
+    expect(restes).toBe(0)
+    expect(force[fil[15]!]).toBe(0)
+    // Et sans tick (le client avant son premier snapshot), l'empreinte est vide.
+    empreinteDuSang({ map, cendreAge: [], seed: 1, souillures: s.souillures }, table, force, touchees)
+    expect(touchees.length).toBe(0)
+  })
+
+  it('cranDeSang : rien, la trace, le seuil PILE, les parts égales, le plafond — et une goutte par cran à la source', () => {
+    expect(COULEE.CRANS_SANG).toBe(4)
+    expect(cranDeSang(0)).toBe(0)
+    expect(cranDeSang(-0.1)).toBe(0)
+    expect(cranDeSang(0.01)).toBe(1)
+    expect(cranDeSang(SANG.SEUIL_SOUILLE - 1e-9), 'juste sous le seuil : la trace').toBe(1)
+    expect(cranDeSang(SANG.SEUIL_SOUILLE), 'le seuil PILE : ce que la pêche refuse commence au cran 2').toBe(2)
+    expect(cranDeSang(SANG.FORCE_MAX)).toBe(COULEE.CRANS_SANG)
+    expect(cranDeSang(2)).toBe(COULEE.CRANS_SANG)
+    // À la source et fraîche, une goutte = un cran : 0,25 → 1, 0,5 → 2, 0,75 → 3, 1 → 4.
+    for (let g = 1; g <= 4; g++) {
+      expect(cranDeSang(Math.min(g * SANG.FORCE_PAR_GOUTTE, SANG.FORCE_MAX)), `${g} goutte(s)`).toBe(g)
+    }
+    // Monotone, et tous les crans sont visités.
+    let prec = 0
+    const vus = new Set<number>()
+    for (let k = 0; k <= 1000; k++) {
+      const c = cranDeSang(k / 1000)
+      expect(c).toBeGreaterThanOrEqual(prec)
+      prec = c
+      vus.add(c)
+    }
+    expect([...vus].sort()).toEqual([0, 1, 2, 3, 4])
+    // Le seuil de la pêche est la frontière 1|2, et rien d'autre : `eauSouillee` ⇔ cran ≥ 2.
+    for (let k = 0; k <= 1000; k++) {
+      const f = k / 1000
+      expect(cranDeSang(f) >= 2).toBe(f >= SANG.SEUIL_SOUILLE)
+    }
   })
 })

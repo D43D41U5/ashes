@@ -89,6 +89,12 @@ export const COULEE = {
    *  de la suie est binaire depuis R26 et doit le rester au bit près (spec Q2 / critère A1).
    *  Graduer la suie serait un geste de plus, mesuré contre son relevé d'avant. */
   FORCE_SUIE: 1,
+  /** LES CRANS DE LA TEINTE DU SANG (décision d'Alexis du 2026-09-12 : « elle pâlit, par
+   *  crans », quantifiés à la tuile — jamais un dégradé). Quatre : le cran 1 est la TRACE
+   *  (sous `SANG.SEUIL_SOUILLE`, la pêche mord encore), les crans 2 à 4 se partagent ce qui
+   *  est au-dessus du seuil — le passage du 1 au 2 est exactement ce que la pêche et la buvée
+   *  refusent. À la source et fraîche : une goutte = 1, deux = 2, trois = 3, quatre = 4. */
+  CRANS_SANG: 4,
 } as const
 
 /** Le cache de la journée — mémoïsation pure (voir l'en-tête), jamais dans `SimState`.
@@ -309,5 +315,140 @@ export function qualiteDeLEau(state: EtatQualiteEau, tx: number, ty: number): nu
  */
 export function eauSouillee(state: EtatQualiteEau, tx: number, ty: number): boolean {
   return qualiteDeLEau(state, tx, ty) >= SANG.SEUIL_SOUILLE
+}
+
+/* ═══════════ LA VOIE EXACTE DU RENDU (lot SANG 2c, `qualite-eau.md` A11) ═══════════ */
+/*
+ * Le client veut la force de sang de CHAQUE tuile d'eau, toutes les secondes. Lire la loi tuile
+ * à tuile ne le peut pas : dès qu'une souillure de rivière existe, chaque lecture paie
+ * `attacheAuFil` (le fil entier) — MESURÉ 1 156 ms pour une souillure sur le monde joué
+ * (`tools/mesure-recuisson-sang.mts`). La voie exacte inverse la question : le fil se parcourt
+ * UNE fois pour dire à chaque tuile son pas (la table d'attache), puis chaque souillure PEINT
+ * son empreinte — l'aval pas à pas, le disque en eau dormante. 6 ms une fois, 4 ms au plafond,
+ * et le résultat est la loi au bit près : les deux fonctions ci-dessous s'éprouvent contre
+ * `attacheAuFil` et `qualiteDeLEau` sur toutes les tuiles, pas sur des cas choisis.
+ *
+ * Elles sont PURES et vivent ici, à côté de la loi qu'elles reproduisent, pour que la loi ne
+ * puisse pas bouger sans elles : la sim ne les appelle pas (elle lit la loi), le rendu si.
+ */
+
+/**
+ * LA TABLE D'ATTACHE — le pas de fil de CHAQUE tuile de la carte, ou −1 (Q6bis, cuite une fois).
+ * Exactement `attacheAuFil(map, tx, ty, borne)` pour tout `(tx, ty)` : borne Chebyshev,
+ * plus-proche-point euclidien, et à égalité le PREMIER pas du fil (le `<` strict des deux côtés).
+ * Sans fil, toute la table vaut −1.
+ */
+export function tableDAttache(map: WorldMap, borne: number = SANG.ATTACHE): Int32Array {
+  const { width, height } = map
+  const pas = new Int32Array(width * height).fill(-1)
+  const fil = map.fil
+  if (!fil || fil.length === 0) return pas
+  const meilleure = new Int32Array(width * height).fill(0x7fffffff)
+  for (let k = 0; k < fil.length; k++) {
+    const i = fil[k]!
+    const x = i % width
+    const y = (i - x) / width
+    for (let dy = -borne; dy <= borne; dy++) {
+      const ty = y + dy
+      if (ty < 0 || ty >= height) continue
+      for (let dx = -borne; dx <= borne; dx++) {
+        const tx = x + dx
+        if (tx < 0 || tx >= width) continue
+        const j = ty * width + tx
+        const d2 = dx * dx + dy * dy
+        if (d2 < meilleure[j]!) {
+          meilleure[j] = d2
+          pas[j] = k
+        }
+      }
+    }
+  }
+  return pas
+}
+
+/**
+ * L'EMPREINTE DU SANG — la force de sang de chaque tuile, PEINTE par les souillures au lieu
+ * d'être lue tuile à tuile. `force` reçoit `qualiteDeLEau` SANS la suie, sur toute la carte :
+ * la même base, la même dilution, le même maximum entre causes, dans le même ordre d'opérations
+ * (au bit près — c'est la garde A11). `touchees` liste les index dont la force est > 0 ; elle
+ * arrive avec le contenu de l'appel PRÉCÉDENT, qui est effacé de `force` avant de repeindre —
+ * l'appelant n'a donc rien à remettre à zéro, et ne paie que les tuiles qui ont porté du sang.
+ *
+ * `table` est `tableDAttache(map)` (la borne par défaut : c'est celle de la loi). `force` est en
+ * DOUBLE précision, comme la loi : en simple, une force pile sur une frontière de cran
+ * (`cranDeSang`) pourrait tomber de l'autre côté — et la garde A11 exige l'égalité exacte.
+ */
+export function empreinteDuSang(state: EtatQualiteEau, table: Int32Array, force: Float64Array, touchees: number[]): void {
+  for (let k = 0; k < touchees.length; k++) force[touchees[k]!] = 0
+  touchees.length = 0
+  const taches = state.souillures
+  const tick = state.tick
+  if (!taches || taches.length === 0 || tick === undefined) return
+  const map = state.map
+  const { width, height } = map
+  const fil = map.fil
+  const peins = (j: number, f: number): void => {
+    if (f > force[j]!) {
+      if (force[j] === 0) touchees.push(j)
+      force[j] = f
+    }
+  }
+  for (const s of taches) {
+    const reste = restantDe(s, tick)
+    if (reste <= 0) continue
+    const base = Math.min(s.crans * SANG.FORCE_PAR_GOUTTE, SANG.FORCE_MAX) * reste
+    const ox = s.i % width
+    const oy = (s.i - ox) / width
+    if (s.pas < 0) {
+      // ── L'EAU DORMANTE : le disque (la clause de `forceDUneSouillure`, mot pour mot). ──
+      for (let dy = -SANG.PORTEE_DORMANTE; dy <= SANG.PORTEE_DORMANTE; dy++) {
+        const ty = oy + dy
+        if (ty < 0 || ty >= height) continue
+        for (let dx = -SANG.PORTEE_DORMANTE; dx <= SANG.PORTEE_DORMANTE; dx++) {
+          const tx = ox + dx
+          if (tx < 0 || tx >= width) continue
+          if (!tuileDEau(map, tx, ty)) continue
+          const d = Math.max(Math.abs(tx - ox), Math.abs(ty - oy))
+          peins(ty * width + tx, base * ((SANG.PORTEE_DORMANTE + 1 - d) / (SANG.PORTEE_DORMANTE + 1)))
+        }
+      }
+      continue
+    }
+    // ── LE FLEUVE : l'aval pas à pas, et chaque tuile n'appartient qu'à SON pas. ──
+    if (!fil) continue
+    for (let n = 0; n <= SANG.DILUTION_PAS; n++) {
+      const p = s.pas + n
+      if (p >= fil.length) break
+      const i = fil[p]!
+      const cx = i % width
+      const cy = (i - cx) / width
+      const f = base * ((SANG.DILUTION_PAS + 1 - n) / (SANG.DILUTION_PAS + 1))
+      for (let dy = -COULEE.DEMI_LIT; dy <= COULEE.DEMI_LIT; dy++) {
+        const ty = cy + dy
+        if (ty < 0 || ty >= height) continue
+        for (let dx = -COULEE.DEMI_LIT; dx <= COULEE.DEMI_LIT; dx++) {
+          const tx = cx + dx
+          if (tx < 0 || tx >= width) continue
+          const j = ty * width + tx
+          if (table[j] !== p) continue // la tuile d'un autre pas se peint à SON pas, avec SA force
+          if (!tuileDEau(map, tx, ty)) continue
+          peins(j, f)
+        }
+      }
+    }
+  }
+}
+
+/**
+ * LE CRAN DE TEINTE d'une force de sang (décision d'Alexis du 2026-09-12, `COULEE.CRANS_SANG`).
+ * 0 : rien. 1 : la TRACE — sous `SANG.SEUIL_SOUILLE`, la pêche mord encore. 2 à `CRANS_SANG` :
+ * au-dessus du seuil, en parts égales, le plafond au dernier. Monotone en la force ; le cran 2
+ * commence PILE au seuil — ce que l'œil voit passer du 1 au 2 est ce que `eauSouillee` dit.
+ */
+export function cranDeSang(force: number): number {
+  if (force <= 0) return 0
+  if (force < SANG.SEUIL_SOUILLE) return 1
+  const part = (force - SANG.SEUIL_SOUILLE) / (SANG.FORCE_MAX - SANG.SEUIL_SOUILLE)
+  return Math.min(COULEE.CRANS_SANG, 2 + Math.floor(part * (COULEE.CRANS_SANG - 1)))
 }
 

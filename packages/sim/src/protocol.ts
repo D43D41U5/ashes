@@ -13,6 +13,7 @@ import type { NodeType } from './balance'
  */
 import type { Corpse } from './combat'
 import type { RecognizedFunction } from './construction'
+import type { Souillure } from './coulee'
 import type { ResourceNode } from './economy'
 import type { SimEvent } from './events'
 import type { ChronicleVolume } from './chronicle'
@@ -245,6 +246,12 @@ export interface SnapshotMessage {
   /** LE SANG AU SOL (spec chasse C9) : les gouttes que le client dessine et efface. `homme`
    *  voyage parce que la goutte voyage entière (`piste-de-sang.md` P1) ; le client ne le lit pas. */
   blood: { x: number; y: number; tick: number; etage?: number; homme?: true }[]
+  /** LE SANG DANS L'EAU (spec `qualite-eau.md`, lot 2c) : les souillures vivantes, telles que la
+   *  sim les tient — ≤ `SANG.TACHES_MAX` entrées de quatre nombres et un drapeau (`homme`, que le
+   *  client ne lit pas : il voyage parce que la souillure voyage entière). PAS DE FILTRE D'INTÉRÊT : une
+   *  souillure de rivière teint l'eau jusqu'à `DILUTION_PAS` pas de son origine, et c'est le
+   *  client qui peint cette traînée (`empreinteDuSang`) ; couper à la vue couperait la traînée. */
+  souillures: Souillure[]
   /** LE CAP DU VENT (C17, `vent.md`) : il doit SE VOIR — une règle invisible est une injustice.
    *  Le client le LIT, il ne le recompose jamais de `front.edge` (écrivain unique, A8). */
   wind: { x: number; y: number }

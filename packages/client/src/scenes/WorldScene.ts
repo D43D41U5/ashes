@@ -189,7 +189,7 @@ import {
 } from '../render/fog'
 import { peindreCarteArt, type CarteArt } from '../render/carte-art'
 import { cellulesDuDisque, peindreSavoirRegion } from '../render/carte-savoir'
-import { atteignableEntreEtages, etagesDuPas, niveauDuCorps, palierDuSol, terrainAEtage, TRACTION, eauPechable, estUnCoinDePeche, porteDeLEau, FISH_SPECIES, niveauDEau, torcheVive, partDeFlamme, clarteSurSoiAt, clarteDuCiel, partDuCiel, NUIT, MONSTER_DEFS, POI_CHARGES, TERRAIN_DEEP_WATER, TERRAIN_SHALLOW_WATER, CREUX, TERRAINS_BOISES_MASSIF, ventForceAt, VENT, type EtatVent } from '@ashes/sim'
+import { atteignableEntreEtages, etagesDuPas, niveauDuCorps, palierDuSol, terrainAEtage, TRACTION, eauPechable, estUnCoinDePeche, porteDeLEau, FISH_SPECIES, niveauDEau, torcheVive, partDeFlamme, clarteSurSoiAt, clarteDuCiel, partDuCiel, NUIT, MONSTER_DEFS, POI_CHARGES, TERRAIN_DEEP_WATER, TERRAIN_SHALLOW_WATER, CREUX, TERRAINS_BOISES_MASSIF, ventForceAt, VENT, type EtatVent, type Souillure } from '@ashes/sim'
 
 /** L'assombrissement du sol au plafond de profondeur (§2quater R42) : au cœur d'un massif,
  *  le sol perd jusqu'à 14 % de luminance — en PENTE CONTINUE, jamais par bande. */
@@ -697,6 +697,10 @@ export class WorldScene extends Phaser.Scene {
   fumerolleFx: FumerolleFx | null = null // public : le harnais smoke LIT son compte de bouffées
   /** Les âges des foyers de cendre, tels que le dernier snapshot les a dits (spec `cendre.md`). */
   private cendreAge: number[] = []
+  /** LE SANG DANS L'EAU (spec `qualite-eau.md`, lot 2c) — les souillures vivantes du dernier
+   *  snapshot, telles quelles : la couche d'eau en peint l'empreinte à la seconde (`recuireSang`),
+   *  avec la loi de la sim, jamais une recopie. */
+  private souillures: Souillure[] = []
   private morningMist: MorningMist | null = null
   /** Les bancs voyageurs (brume V2) et le vent lissé qui porte toute la brume. */
   private mistBanks: MistBanks | null = null
@@ -2164,6 +2168,13 @@ export class WorldScene extends Phaser.Scene {
       // LE BIEF SOUILLÉ SUIT LE JOUR (cendre.md R26d) : la souillure n'avance qu'avec l'âge
       // des foyers — une recuisson du champ d'eau par bascule, la même loi que la sim.
       this.water?.recuireSuie({ map: this.map, cendreAge: this.cendreAge, seed: this.worldSeed }, this.lastTime.seasonDay)
+      // ET LE SANG SUIT LA SECONDE (qualite-eau.md, lot 2c) : les souillures vivent cinq minutes
+      // et pâlissent par crans — la couche compare le cran peint au cran dû et ne réuploade que
+      // si l'un a bougé. Le tick est celui du dernier snapshot : la teinte a l'âge de la sim.
+      this.water?.recuireSang(
+        { map: this.map, cendreAge: this.cendreAge, seed: this.worldSeed, tick: this.lastSnapshotTick, souillures: this.souillures },
+        time,
+      )
     }
     this.clutter?.update(this.cameras.main, time) // le vent : le décor plie
     this.view.renderNodes(this.cameras.main, this.predicted.x, this.predicted.y, time)
@@ -3305,6 +3316,7 @@ export class WorldScene extends Phaser.Scene {
     // les chunks de sol qui portent de la cendre : ils se recuiront à la demande, avec elle.
     const avant = this.cendreAge
     this.cendreAge = msg.cendreAge ?? []
+    this.souillures = msg.souillures ?? []
     this.view.cendreAge = this.cendreAge // le rendu applique R13 (l'arbre tombé n'est plus dessiné)
     if (this.paves) {
       this.paves.cendreAge = this.cendreAge

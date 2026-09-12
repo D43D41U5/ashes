@@ -19,13 +19,22 @@
  * AUCUNE logique de jeu ici : de l'habillage, et rien d'autre.
  */
 import Phaser from 'phaser'
-import { eauSouillee, TERRAIN_DEEP_WATER, TERRAIN_SHALLOW_WATER, zoneSlugAt, type EtatDeCendre, type WorldMap } from '@ashes/sim'
+import { COULEE, cranDeSang, eauSouillee, empreinteDuSang, tableDAttache, TERRAIN_DEEP_WATER, TERRAIN_SHALLOW_WATER, zoneSlugAt, type EtatDeCendre, type EtatQualiteEau, type WorldMap } from '@ashes/sim'
 import { buildFlowField, COURANT_VITESSE, TAPER_RIVE_MAX, TAPER_RIVE_MIN, type FlowField } from '../../render/flow-field'
 import { GROUND_MAP_DEPTH, LIFT_TUILES, strateDEtage, TILE_PX } from '../../render/framing'
 import type { Relief } from '../../render/relief'
 import { sunDirection, moonDirection, clarteDeLune, lueurDeLune, LUNE_PLEINE_JOUR } from '../../render/lighting'
 import type { HeureSolaire } from '../../render/lighting'
-import { buildFondField, buildRiveField, buildWaterField, MILIEU_VASE, REGIME_LAC_MORT, REGIME_SUIE, type RiveField } from '../../render/water-field'
+import { buildFondField, buildRiveField, buildWaterField, canalB, MILIEU_VASE, PALIER_UNITES, REGIME_LAC_MORT, REGIME_SUIE, SANG_UNITE, type RiveField } from '../../render/water-field'
+
+/** Les crans de la teinte du sang — celui de la loi (`cranDeSang`), cuit dans le shader. */
+const CRANS_SANG = COULEE.CRANS_SANG
+/** LA CADENCE DE LA RECUISSON DU SANG (ms). Une souillure pâlit sur cinq minutes en quatre
+ *  crans : le cran d'une tuile ne change pas plus vite qu'une fois la minute par le temps, et
+ *  d'un coup par une goutte neuve. Une passe par seconde suffit (4 ms CPU au plafond de 64
+ *  souillures, MESURÉ : `tools/mesure-recuisson-sang.mts`) et l'upload ne part que si un cran a
+ *  bougé — les secondes où rien ne change ne paient que l'empreinte. */
+const SANG_CADENCE_MS = 1000
 
 /** Période du cycle d'advection dual-phase (s). Courte À DESSEIN : sur la rampe du taper
  *  de berge, les deux couches divergent d'au plus 0,25·T·vitesse — à 3 s l'écart (0,41
@@ -393,9 +402,11 @@ void main() {
   if (uv.x < 0.0 || uv.x > 1.0 || uv.y < 0.0 || uv.y > 1.0) discard;
 
   vec4 field = texture2D(uField, texUv(tile));
-  // LE PALIER de la tuile, dans les unités du canal B (voir « buildWaterField ») : pas le nôtre,
-  // pas notre affaire — un autre quad la peint, à sa hauteur.
-  float palierTuile = mod(floor(field.b * 255.0 + 0.5), 100.0);
+  // LE CANAL B EN TROIS CHIFFRES (voir « canalB », water-field.ts) : centaines = régime,
+  // dizaines = cran de sang, unités = palier. L'octet d'abord, exact (NEAREST, jamais lissé).
+  float octetB = floor(field.b * 255.0 + 0.5);
+  // LE PALIER de la tuile : pas le nôtre, pas notre affaire — un autre quad la peint, à sa hauteur.
+  float palierTuile = mod(octetB, ${PALIER_UNITES}.0);
   if (abs(palierTuile - uPalierVu) > 0.5) discard;
   float mask = step(0.25, field.r);
   // LE RÉGIME (geste 10) : 0 = eau normale · ~0,78 = LAC MORT. (L'eau morte du marais,
@@ -406,6 +417,12 @@ void main() {
   // LE BIEF SOUILLÉ (cendre.md R26d) : canal B à ~0,39 — entre le rien et le lac mort.
   // La suie est un LAVAGE, pas un régime d'immobilité : l'eau bouge encore, mais grise.
   float suie = step(0.30, field.b) * (1.0 - lacMort);
+  // LE SANG DANS L'EAU (qualite-eau.md, lot 2c — décisions d'Alexis du 2026-09-12) : un régime
+  // DISTINCT de la suie, rouge-brun, qui pâlit PAR CRANS quantifiés à la tuile (0 rien · 1 la
+  // trace, la pêche mord encore · 2 à ${CRANS_SANG} ce que la pêche refuse). Le cran est lu tel
+  // quel : jamais un dégradé, jamais un lerp entre deux tuiles.
+  float cranSang = floor(mod(octetB, 100.0) / ${SANG_UNITE}.0);
+  float sang = min(cranSang, ${CRANS_SANG}.0) / ${CRANS_SANG}.0;
   vec3 rf = riveFlow(tile); // x : distance à la rive (+eau/−terre) · yz : le courant
   float dRive = rf.x;
   // (Le marnage — la ligne d'eau qui respirait par crans — a été RETIRÉ : regardé,
@@ -593,8 +610,18 @@ void main() {
   float skyMix = clamp(0.16 + 0.69 * deep, 0.0, 0.9);
   skyMix = mix(skyMix, 0.06, lacMort); // le Lac Mort : on regarde À TRAVERS (geste 10)
   skyMix *= 1.0 - 0.6 * suie; // la suie ÉTEINT le ciel : l'eau ne reflète plus, elle porte
+  // LE SANG TROUBLE : une eau chargée reflète moins — mais moins que la suie, elle reste de l'eau.
+  skyMix *= 1.0 - 0.35 * sang;
   vec3 col = mix(bottom, sky, skyMix);
   col = mix(col, col * vec3(0.88, 1.05, 1.04), lacMort); // la froideur irréelle du Lac Mort
+  // LA TEINTE DU SANG (qualite-eau.md 2c) : ROUGE-BRUN — le sang dilué dans une eau de pré n'est
+  // pas rouge vif, c'est un brun chaud qui vire au rouille. Calibrée contre son fond : l'eau
+  // normale tire au bleu-brun (~#3a4a4e au large, ~#5a5040 au gué), le lavage pousse la teinte
+  // vers vec3(0,42, 0,17, 0,10) — plus rouge que toute vase du lit (mud) pour qu'on ne le prenne
+  // pas pour de la turbidité, plus brun que le sang au sol (sang-sol.ts) parce que l'eau le
+  // dilue. Un cran = une marche de 0,16 : quatre marches franches, du soupçon à la mare rouge.
+  vec3 rouille = vec3(0.42, 0.17, 0.10);
+  col = mix(col, rouille * (0.7 + 0.5 * dot(col, vec3(0.333))), 0.64 * sang);
   // LE LAVAGE DE SUIE (cendre.md R26d) : vers le gris de la cendre fraîche — désaturé, un
   // rien plus chaud que le lac mort. La couleur se calibre contre son fond : le sol cendré
   // fait ~#5c5854, le bief doit s'en séparer d'un cran de valeur, pas de teinte.
@@ -970,6 +997,22 @@ export class WaterLayer {
   readonly dualT = DUAL_T
   /** Le dernier jour de saison dont le BIEF SOUILLÉ a été recuit (cendre.md R26d). */
   private jourDeSuie = Number.NaN
+  /** LE CHAMP TEL QU'UPLOADÉ (RGBA, 1 px/tuile) — gardé pour que la recuisson du sang repeigne
+   *  les dizaines du canal B sans rebâtir le masque, la profondeur et les anneaux. */
+  private champ: Uint8ClampedArray | null = null
+  /** Le régime par tuile (REGIME_*), tel que le dernier bake l'a posé : les centaines du canal B. */
+  private regime: Uint8Array | null = null
+  /** LA TABLE D'ATTACHE (`tableDAttache`) — le pas de fil de chaque tuile. Cuite à la première
+   *  souillure vue (6 ms sur le monde joué, MESURÉ), jamais si personne ne saigne dans l'eau. */
+  private tableSang: Int32Array | null = null
+  /** L'empreinte du sang (`empreinteDuSang`) : la force par tuile, et les index qui en portent. */
+  private forceSang: Float64Array | null = null
+  private toucheesSang: number[] = []
+  /** Le cran PEINT de chaque tuile (les dizaines du canal B) et la liste des tuiles à cran > 0 :
+   *  la recuisson ne compare que les tuiles qui portent ou portaient du sang. */
+  private cranSang: Uint8Array | null = null
+  private peintesSang: number[] = []
+  private derniereRecuissonSang = Number.NEGATIVE_INFINITY
 
   /**
    * ═══ LE RÉGIME DE L'EAU (geste 10 + cendre.md R26d) ═══
@@ -1004,12 +1047,79 @@ export class WaterLayer {
     if (!this.fieldKey || jour === this.jourDeSuie) return
     this.jourDeSuie = jour
     const { width, height } = this.map
-    const field = buildWaterField(this.map.terrain, width, height, this.regimeDe(etat), this.palierParTuile ?? undefined)
+    const regime = this.regimeDe(etat)
+    // Le sang déjà peint survit à la recuisson de la suie : le champ se rebâtit AVEC ses crans.
+    const field = buildWaterField(this.map.terrain, width, height, regime, this.palierParTuile ?? undefined, this.cranSang ?? undefined)
+    this.regime = regime
+    this.champ = field.data
+    this.uploadeLeChamp()
+  }
+
+  /**
+   * ═══ LA RECUISSON DU SANG (qualite-eau.md, lot 2c) — à la seconde, et seulement ce qui bouge ═══
+   *
+   * La loi est celle de la sim, au bit près : `empreinteDuSang` peint la force de chaque tuile
+   * (garde A11 : ≡ `qualiteDeLEau` sur toute la carte), `cranDeSang` la quantifie. Ici on ne
+   * fait que COMPARER le cran peint au cran dû, tuile par tuile, sur les seules tuiles qui
+   * portent ou portaient du sang — et réuploader si l'une a changé. Sans souillure et sans
+   * sang à l'écran, la passe ne coûte que ce test.
+   *
+   * Pourquoi pas `regimeDe` à la cadence ? MESURÉ (`tools/mesure-recuisson-sang.mts`) : lire la
+   * loi tuile à tuile coûte 1 156 ms dès qu'UNE souillure de rivière existe (chaque tuile paie
+   * `attacheAuFil`). La table d'attache inverse la question — 6 ms une fois — et l'empreinte
+   * peint 4 ms au plafond de 64 souillures.
+   */
+  recuireSang(etat: EtatQualiteEau, nowMs: number): void {
+    if (!this.fieldKey || !this.champ) return
+    if (nowMs - this.derniereRecuissonSang < SANG_CADENCE_MS) return
+    this.derniereRecuissonSang = nowMs
+    const taches = etat.souillures
+    const rien = !taches || taches.length === 0
+    if (rien && this.peintesSang.length === 0) return // ni sang à peindre, ni sang à effacer
+    const { width, height } = this.map
+    const n = width * height
+    if (!this.tableSang) this.tableSang = tableDAttache(this.map)
+    if (!this.forceSang) this.forceSang = new Float64Array(n)
+    if (!this.cranSang) this.cranSang = new Uint8Array(n)
+    empreinteDuSang(etat, this.tableSang, this.forceSang, this.toucheesSang)
+    const force = this.forceSang
+    const cran = this.cranSang
+    const palier = this.palierParTuile
+    const regime = this.regime
+    const champ = this.champ
+    let bouge = false
+    const compare = (j: number): void => {
+      const du = cranDeSang(force[j]!)
+      if (du === cran[j]) return
+      cran[j] = du
+      champ[j * 4 + 2] = canalB(regime ? regime[j]! : 0, du, palier ? palier[j]! : 0)
+      bouge = true
+    }
+    // Celles qui portaient du sang (à effacer si la force est tombée), puis celles qui en portent.
+    for (const j of this.peintesSang) compare(j)
+    for (const j of this.toucheesSang) compare(j)
+    if (!bouge) return
+    const peintes: number[] = []
+    for (const j of this.toucheesSang) if (cran[j]! > 0) peintes.push(j)
+    this.peintesSang = peintes
+    this.uploadeLeChamp()
+  }
+
+  /** Les tuiles d'eau qui portent une teinte de sang à l'écran — la sonde du smoke lit ça. */
+  get tuilesDeSang(): readonly number[] {
+    return this.peintesSang
+  }
+
+  /** Repeint le champ dans SA texture (le masque, la profondeur, les anneaux et le canal B tels
+   *  que `this.champ` les tient) et le réuploade. */
+  private uploadeLeChamp(): void {
+    if (!this.fieldKey || !this.champ) return
+    const { width, height } = this.map
     const tex = this.scene.textures.get(this.fieldKey) as Phaser.Textures.CanvasTexture
     if (!tex || !('getContext' in tex)) return
     const ctx = tex.getContext()
     const img = ctx.createImageData(width, height)
-    img.data.set(field.data)
+    img.data.set(this.champ)
     ctx.putImageData(img, 0, 0)
     tex.refresh()
     // `refresh()` RÉUPLOADE via canvasToTexture, qui REMET LE FILTRE À LINEAR dès que le jeu
@@ -1062,6 +1172,8 @@ export class WaterLayer {
     const regime = this.regimeDe()
     const field = buildWaterField(map.terrain, width, height, regime, palierParTuile ?? undefined)
     if (!field.hasWater) return // une carte sèche ne paie pas une couche d'eau
+    this.regime = regime
+    this.champ = field.data
 
     // Le champ vit dans une texture canvas : 1 px/tuile, comme le bake du sol.
     const key = 'water-field'

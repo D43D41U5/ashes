@@ -26934,6 +26934,169 @@ Depuis le spawn (${depart.x.toFixed(0)}, ${depart.y.toFixed(0)}) :`)
     await page.evaluate(() => window.__BRAISES__.scene.game.loop.wake())
     console.log(`→ ${OUT}/journal-annees.png`)
   },
+
+  /**
+   * ═══ LE SANG DANS L'EAU (qualite-eau.md, lot 2c — 2026-09-12) : la teinte rouge-brun par crans ═══
+   *
+   * Ce qu'on regarde : une souillure de rivière peint son aval en quatre crans qui pâlissent
+   * (4 → 1 sur DILUTION_PAS = 40 pas), une souillure d'eau dormante peint un disque, et une
+   * souillure vieillie ne monte plus qu'au cran 2. Les souillures sont INJECTÉES (le patron de
+   * `sang` : `Object.defineProperty` sur le champ que le snapshot écrase) — la vraie chaîne
+   * sim → snapshot → scène est tenue par tsc et les gardes ; ici on juge le RENDU et on MESURE
+   * ce que l'instrument CPU ne pouvait pas : l'upload de la texture du champ (1581×852 RGBA).
+   *
+   * CE QUI FERAIT ROUGIR : zéro tuile de sang peinte après deux secondes (la cadence n'a pas
+   * tourné, ou l'empreinte est vide) ; pas plus de pixels ROUILLE (r > b + 40 et r > g + 20) sur
+   * la vue après qu'avant l'injection ; un upload au-delà de 100 ms (un gel à chaque cran).
+   *
+   * `--dev` obligatoire (TP). Cibles : le fil du monde joué (graine 2026), son pas médian ; le lac
+   * du palier 2 (1381,534), poste (1357,544) — la cible datée de `terrasses`.
+   */
+  async sangEau(page) {
+    if (!dev) { console.error('!! sangEau exige --dev (debug_teleport)'); return }
+    await page.waitForFunction(() => Boolean(window.__BRAISES__?.scene?.registry?.get('worldReady')), null, { timeout: 150000 })
+    await page.waitForTimeout(1200)
+    const agirS = async (action, ms) => {
+      await page.evaluate((a) => window.__BRAISES__.scene.sendAction(a), action)
+      await page.waitForTimeout(ms)
+    }
+    const poser = async () => {
+      await page.evaluate(() => window.__BRAISES__.scene.game.loop.sleep())
+      await page.evaluate(() => {
+        const sc = window.__BRAISES__.scene
+        const reste = () => Math.max(Math.abs(sc.prediction.renderOffset.x), Math.abs(sc.prediction.renderOffset.y))
+        for (let k = 0; k < 240; k++) {
+          sc.game.step(k * 16, 16)
+          if (k >= 40 && reste() < 0.1) break
+        }
+      })
+      await page.waitForTimeout(200)
+    }
+    // Le cœur du cadre (640×360 autour du joueur) : une capture plein cadre EXPIRAIT à 90 s sur
+    // SwiftShader (premier run, machine chargée) — le cœur suffit, la souillure est au centre.
+    const rouille = async (nom) => {
+      const r = await regionAt(page, { x: 320, y: 220, width: 640, height: 360 })
+      if (!r) return -1
+      let n = 0
+      for (let y = 0; y < r.h; y += 2) for (let x = 0; x < r.w; x += 2) {
+        const [R, G, B] = r.px(x, y)
+        if (R > B + 40 && R > G + 20) n += 1
+      }
+      console.log(`   ${nom} : ${n} pixels rouille (cœur du cadre, un pixel sur quatre)`)
+      return n
+    }
+    // ── LA CIBLE : le pas médian du fil, et la berge d'où on le regarde. ──
+    const cible = await page.evaluate(() => {
+      const sc = window.__BRAISES__.scene
+      const map = sc.map
+      const fil = map.fil ?? []
+      if (fil.length === 0) return null
+      const k = Math.floor(fil.length / 2)
+      const w = map.width
+      const i = fil[k]
+      const tx = i % w
+      const ty = (i - tx) / w
+      // La berge la plus proche : une tuile qui n'est ni eau ni marais, à ≤ 6 tuiles.
+      let berge = null
+      for (let r = 1; r <= 6 && !berge; r++) {
+        for (let dy = -r; dy <= r && !berge; dy++) for (let dx = -r; dx <= r && !berge; dx++) {
+          if (Math.max(Math.abs(dx), Math.abs(dy)) !== r) continue
+          const t = map.terrain[(ty + dy) * w + tx + dx]
+          if (t !== 4 && t !== 6 && t !== 8 && t !== 19) berge = { x: tx + dx, y: ty + dy }
+        }
+      }
+      return { k, tx, ty, berge, fil: fil.length }
+    })
+    if (!cible || !cible.berge) { console.error('!! sangEau : pas de fil, ou pas de berge à portée du pas médian'); return }
+    console.log(`   cible : pas ${cible.k}/${cible.fil} du fil en (${cible.tx},${cible.ty}), berge (${cible.berge.x},${cible.berge.y})`)
+    await agirS({ type: 'debug_god', on: true }, 300)
+    await agirS({ type: 'debug_set_hour', hour: 11 }, 1000)
+    await agirS({ type: 'debug_teleport', x: cible.berge.x + 0.5, y: cible.berge.y + 0.5 }, 2400)
+    // L'INSTRUMENT : on chronomètre la recuisson et l'upload depuis la page.
+    await page.evaluate(() => {
+      const sc = window.__BRAISES__.scene
+      const w = sc.water
+      window.__SANG_EAU__ = { recuissons: [], uploads: [] }
+      const up = w.uploadeLeChamp.bind(w)
+      w.uploadeLeChamp = () => { const t0 = performance.now(); up(); window.__SANG_EAU__.uploads.push(performance.now() - t0) }
+      const rs = w.recuireSang.bind(w)
+      w.recuireSang = (etat, now) => { const t0 = performance.now(); rs(etat, now); window.__SANG_EAU__.recuissons.push(performance.now() - t0) }
+    })
+    await poser()
+    await page.screenshot({ timeout: 180000, path: `${OUT}/sang-eau-0-avant.png` })
+    const avant = await rouille('avant l’injection')
+    await page.evaluate(() => window.__BRAISES__.scene.game.loop.wake())
+    await page.waitForTimeout(300)
+    // ── L'INJECTION : fraîche au plafond au pas médian ; vieillie (reste 0,45) vingt pas en aval. ──
+    await page.evaluate((c) => {
+      const sc = window.__BRAISES__.scene
+      const fil = sc.map.fil
+      const t = sc.lastSnapshotTick
+      const TACHE_TICKS = 6000 // SANG.TACHE_TICKS (5 min à 20 Hz) — témoin recopié
+      const taches = [
+        { i: fil[c.k], tick: t, crans: 4, pas: c.k, homme: true },
+        { i: fil[c.k + 20], tick: t - Math.floor(TACHE_TICKS * 0.55), crans: 4, pas: c.k + 20 },
+      ]
+      window.__SANG_EAU__.taches = taches
+      Object.defineProperty(sc, 'souillures', { get: () => window.__SANG_EAU__.taches, set: () => {}, configurable: true })
+    }, cible)
+    // La cadence est à la seconde d'horloge Phaser : deux secondes réelles d'images en donnent au moins une.
+    await page.waitForTimeout(2500)
+    await poser()
+    const mesure = await page.evaluate(() => {
+      const sc = window.__BRAISES__.scene
+      const m = window.__SANG_EAU__
+      return { tuiles: sc.water.tuilesDeSang.length, recuissons: m.recuissons.map((v) => Math.round(v * 10) / 10), uploads: m.uploads.map((v) => Math.round(v * 10) / 10) }
+    })
+    console.log(`   ${mesure.tuiles} tuiles de sang peintes · recuissons ${JSON.stringify(mesure.recuissons)} ms · uploads ${JSON.stringify(mesure.uploads)} ms`)
+    await page.screenshot({ timeout: 180000, path: `${OUT}/sang-eau-1-fleuve.png` })
+    const apres = await rouille('après l’injection (fleuve)')
+    console.log(mesure.tuiles > 0 ? '   ✓ l’empreinte a peint le fleuve' : '   ✗ AUCUNE tuile de sang peinte')
+    console.log(apres > avant * 1.2 && apres > avant + 200 ? `   ✓ la teinte SE VOIT : ${avant} → ${apres} pixels rouille` : `   ✗ la teinte ne se voit pas : ${avant} → ${apres} pixels rouille`)
+    const pire = Math.max(0, ...mesure.uploads)
+    console.log(pire <= 100 ? `   ✓ upload ≤ 100 ms (pire ${pire} ms — SwiftShader, un GPU fera mieux)` : `   ✗ upload ${pire} ms : un gel à chaque cran`)
+    await page.evaluate(() => window.__BRAISES__.scene.game.loop.wake())
+    await page.waitForTimeout(300)
+    // ── LE LAC (palier 2) : un disque en eau dormante, cran 4 au centre — DANS LE CADRE. ──
+    // Le poste est la rive ouest (1357,544) ; l'origine est la première tuile d'eau à ≥ 6 tuiles à
+    // l'est du poste (le centre du lac, (1381,534), est HORS CADRE à ce zoom : 24 tuiles = 860 px).
+    // ⚠ La nappe d'un palier haut lit PÂLE et chaude à l'œil (relevé du 2026-09-11, `terrasses`) :
+    // le comptage rouille du lac se fait donc en A/B — AVEC le disque puis SANS, même cadre.
+    const lac = await page.evaluate(() => {
+      const map = window.__BRAISES__.scene.map
+      const w = map.width
+      for (let dx = 6; dx <= 14; dx++) {
+        const t = map.terrain[544 * w + 1357 + dx]
+        if (t === 4 || t === 6) return { x: 1357 + dx, y: 544, palier: map.palier?.[544 * w + 1357 + dx] ?? 0 }
+      }
+      return null
+    })
+    if (!lac) { console.log('   (pas d’eau à l’est de (1357,544) sur cette graine — vue du lac sautée)'); return }
+    console.log(`   lac : origine du disque en (${lac.x},${lac.y}), palier ${lac.palier}`)
+    await agirS({ type: 'debug_teleport', x: 1357.5, y: 544.5 }, 2400)
+    await page.evaluate((o) => {
+      const sc = window.__BRAISES__.scene
+      window.__SANG_EAU__.taches = [{ i: o.y * sc.map.width + o.x, tick: sc.lastSnapshotTick, crans: 4, pas: -1, homme: true }]
+    }, lac)
+    await page.waitForTimeout(2500)
+    await poser()
+    const lacM = await page.evaluate(() => window.__BRAISES__.scene.water.tuilesDeSang.length)
+    console.log(`   lac : ${lacM} tuiles de sang peintes (attendu : le disque, ≤ 81)`)
+    await page.screenshot({ timeout: 180000, path: `${OUT}/sang-eau-2-lac.png` })
+    const lacAvec = await rouille('le lac, AVEC le disque')
+    console.log(lacM > 0 && lacM <= 81 ? '   ✓ le disque de l’eau dormante' : `   ✗ disque : ${lacM} tuiles`)
+    // ── L'EFFACEMENT : plus de souillure → plus une tuile peinte, et le même cadre perd son rouille. ──
+    await page.evaluate(() => { window.__BRAISES__.scene.game.loop.wake(); window.__SANG_EAU__.taches = [] })
+    await page.waitForTimeout(2500)
+    await poser()
+    const efface = await page.evaluate(() => window.__BRAISES__.scene.water.tuilesDeSang.length)
+    const lacSans = await rouille('le lac, SANS le disque')
+    await page.screenshot({ timeout: 180000, path: `${OUT}/sang-eau-3-lac-propre.png` })
+    await page.evaluate(() => window.__BRAISES__.scene.game.loop.wake())
+    console.log(efface === 0 ? '   ✓ l’eau redevient propre quand la souillure s’en va' : `   ✗ ${efface} tuiles restent peintes sans souillure`)
+    console.log(lacAvec > lacSans + 100 ? `   ✓ le disque SE VOIT : ${lacSans} → ${lacAvec} pixels rouille (A/B, même cadre)` : `   ✗ le disque ne se voit pas : ${lacSans} → ${lacAvec} pixels rouille`)
+    console.log(`   → ${OUT}/sang-eau-{0-avant,1-fleuve,2-lac,3-lac-propre}.png`)
+  },
 }
 
 const run = SCENARIOS[scenario]

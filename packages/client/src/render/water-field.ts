@@ -21,8 +21,11 @@
  *       tuile) — le même langage que le lerp de la passe 2 du bake des biomes,
  *       côté profond seulement : les tuiles marchables gardent leur luminance.
  *       (Le canal portait l'élévation, morte avec la carte plate — R35 caduque.)
- *   B — RÉGIME (geste 10, eau-fond) : 0 = eau normale · 200 = LAC MORT (l'eau trop
- *       claire). Le canal portait le profond binaire, redondant depuis que G porte
+ *   B — RÉGIME (geste 10, eau-fond) : 0 = eau normale · 100 = BIEF SOUILLÉ de suie · 200 =
+ *       LAC MORT (l'eau trop claire) — les CENTAINES. Les DIZAINES portent le CRAN DE SANG
+ *       (`qualite-eau.md`, lot 2c : 0 à `COULEE.CRANS_SANG`), les UNITÉS le palier (0..3,
+ *       `terrasses.md` T-R7). Voir `canalB` / `decodeCanalB` — le shader fait la même
+ *       arithmétique. Le canal portait le profond binaire, redondant depuis que G porte
  *       la profondeur. (Le régime 120 — l'eau morte du marais — a existé un soir :
  *       regardé, refusé par Alexis le 2026-07-26.)
  *   A — 1, toujours. Un canal alpha non plein serait prémultiplié à l'upload et
@@ -464,6 +467,40 @@ export const REGIME_LAC_MORT = 2
  *  molle, le ciel s'y éteint. Canal B à 100 (le lac mort tient 200 — deux seuils du shader). */
 export const REGIME_SUIE = 3
 
+/**
+ * ═══ LE CANAL B, EN TROIS CHIFFRES DÉCIMAUX ═══
+ *
+ *   B = régime × 100 + cranSang × 10 + palier
+ *
+ * Les CENTAINES : le régime (0 normal · 1 suie · 2 lac mort) — les deux seuils historiques du
+ * shader, `step(0,30, B)` et `step(0,63, B)`, ne voient qu'elles (76 et 161 sur 255). Les
+ * DIZAINES : le cran de sang (`qualite-eau.md`, lot 2c — 0 à `COULEE.CRANS_SANG` = 4, décision
+ * d'Alexis du 2026-09-12 : « elle pâlit, par crans »). Les UNITÉS : le palier (0..3, T-R7).
+ * Tout tient sous 255 (2×100 + 4×10 + 3 = 243) et un cran de sang ne franchit jamais un seuil
+ * de régime (43 < 76 ; 143 < 161). Un canal à soi aurait coûté une cinquième texture.
+ */
+export const SANG_UNITE = 10
+export const PALIER_UNITES = 10
+/** Le plafond de crans que le canal peut porter SANS FRANCHIR UN SEUIL DE RÉGIME : les seuils du
+ *  shader sont à 0,30 et 0,63 de l'octet (76 et 160), donc 100 + 10 × cran + 3 ≤ 160 → 5. (Un
+ *  premier jet disait 9 : la garde du test l'a attrapé — 93/255 = 0,36, une eau saignée au cran
+ *  9 aurait GRISÉ comme la suie.) */
+export const SANG_CRAN_MAX = 5
+export function canalB(regime: number, cranSang: number, palier: number): number {
+  const base = regime === REGIME_LAC_MORT ? 200 : regime === REGIME_SUIE ? 100 : 0
+  return base + Math.min(SANG_CRAN_MAX, Math.max(0, cranSang | 0)) * SANG_UNITE + Math.min(PALIER_UNITES - 1, Math.max(0, palier | 0))
+}
+/** L'inverse, MOT POUR MOT l'arithmétique du shader (`palierTuile`, `cranSang`, `lacMort`, `suie`) :
+ *  c'est elle qu'on éprouve en test, pas une paraphrase. `b` est l'octet (0..255). */
+export function decodeCanalB(b: number): { regime: number; cranSang: number; palier: number } {
+  const palier = b % PALIER_UNITES
+  const cranSang = Math.floor((b % 100) / SANG_UNITE)
+  const f = b / 255
+  const lacMort = f >= 0.63 ? 1 : 0
+  const suie = f >= 0.3 && !lacMort ? 1 : 0
+  return { regime: lacMort ? REGIME_LAC_MORT : suie ? REGIME_SUIE : REGIME_NORMAL, cranSang, palier }
+}
+
 export function buildWaterField(
   terrain: ArrayLike<number>,
   width: number,
@@ -472,11 +509,16 @@ export function buildWaterField(
   regime?: ArrayLike<number>,
   /**
    * LE PALIER de chaque tuile (spec `terrasses.md` T-R7), 0..3 — absent : tout au palier 0.
-   * Il se range dans les UNITÉS du canal B, sous le régime (0 / 100 / 200) : le shader lit
-   * `mod(B × 255, 100)` pour le palier, et ses seuils de régime (0,30 · 0,63) ne voient pas
-   * trois unités. Un canal à soi aurait coûté une cinquième texture pour deux bits.
+   * Il se range dans les UNITÉS du canal B, sous le sang et le régime (voir `canalB`) : le
+   * shader lit `mod(B × 255, 10)` pour le palier, et ses seuils de régime ne voient pas trois
+   * unités. Un canal à soi aurait coûté une cinquième texture pour deux bits.
    */
   palier?: ArrayLike<number>,
+  /** LE CRAN DE SANG de chaque tuile (`cranDeSang`, 0..`COULEE.CRANS_SANG`) — absent : aucun.
+   *  Les DIZAINES du canal B. La recuisson du sang (`WaterLayer.recuireSang`) ne rebâtit pas le
+   *  champ : elle repeint ces dizaines-là ; ce paramètre sert à la recuisson de la SUIE, qui
+   *  rebâtit tout et ne doit pas effacer le sang au passage. */
+  sang?: ArrayLike<number>,
 ): WaterField {
   const data = new Uint8ClampedArray(width * height * 4)
   let hasWater = false
@@ -490,7 +532,7 @@ export function buildWaterField(
     const o = i * 4
     data[o] = wet ? MASQUE_EAU + (chutes?.[i] ?? 0) : 0 // masque BINAIRE + drapeaux de chute — voir l'en-tête
     // G (profondeur) : 0 par défaut — la 2e passe pose le profond et sa frontière.
-    data[o + 2] = (regime?.[i] === REGIME_LAC_MORT ? 200 : regime?.[i] === REGIME_SUIE ? 100 : 0) + (palier?.[i] ?? 0)
+    data[o + 2] = canalB(regime?.[i] ?? REGIME_NORMAL, sang?.[i] ?? 0, palier?.[i] ?? 0)
     data[o + 3] = 255
   }
 

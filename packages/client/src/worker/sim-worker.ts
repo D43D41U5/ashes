@@ -216,6 +216,7 @@ function tick(): void {
     // LE SANG, LE VENT, LES PILES (spec chasse C9/C17/C18). Trois listes bornées
     // (BLOOD_CAP, un vecteur, des piles qui périssent) : le snapshot ne grossit pas.
     blood: sim.blood,
+    souillures: sim.souillures, // le sang dans l'eau (qualite-eau.md 2c) : ≤ 64 entrées, sans filtre
     wind: sim.wind,
     windForce: sim.windForce,
     groundItems: sim.groundItems,

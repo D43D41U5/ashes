@@ -129,6 +129,7 @@ export function buildSnapshotBase(sim: SimState, nodeDeltas: NodeDelta[]): Omit<
     corpses: sim.corpses,
     reveils: sim.reveils,
     blood: sim.blood,
+    souillures: sim.souillures,
     wind: sim.wind,
     windForce: sim.windForce,
     groundItems: sim.groundItems,

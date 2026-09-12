@@ -89,7 +89,13 @@ const SUITES = [
   //   méandre compris), elle se perd, le mur entre deux gouttes (revue), le Feu tient, la roche
   //   arrête. Suite à 2363 sur l'arbre (2358 sur l'arbre commité seul : 5 gardes d'étage de
   //   l'autre session en plus), plancher relevé à 2345.
-  { nom: 'sim', dir: 'packages/sim', args: ['run', '--exclude', 'src/scenario.test.ts'], plancher: 2345 },
+  // 2026-09-12 : +8 gardes A11 — LA VOIE EXACTE DU RENDU (`qualite-eau.test.ts`, lot SANG 2c) : la
+  //   table d'attache ≡ attacheAuFil (fleuve, méandre, bande du monde joué — attaches ET orphelines),
+  //   l'empreinte ≡ qualiteDeLEau AU BIT PRÈS (neuf souillures mêlées sur toute la carte, le coude,
+  //   huit traînées du monde joué), l'effacement de l'appel d'avant, les crans (une goutte par cran,
+  //   cran ≥ 2 ⇔ eauSouillee). Suite à 2371 sur l'arbre (2366 sur l'arbre commité seul), plancher
+  //   relevé à 2350.
+  { nom: 'sim', dir: 'packages/sim', args: ['run', '--exclude', 'src/scenario.test.ts'], plancher: 2350 },
   // 2026-09-01 : +10 gardes avec le RENDU des étages (`plateau-art.test.ts`).
   // 2026-09-01 : +9 gardes avec le TRI DES ÉTAGES (strate, découvert — `framing.test.ts`),
   //   suite relevée à 1429 ✓, plancher recalé quelques pourcents dessous.
@@ -106,7 +112,11 @@ const SUITES = [
   //   — suite à 1565, plancher relevé quelques pourcents dessous.
   // 2026-09-12 : trois ASSERTIONS modifiées (aucun test ajouté) — les compteurs de l'inventaire audio recalés sur `water_fouled`
   //   (99 faits, 42 silences décidés) : un fait muet est un fait COMPTÉ. Suite à 1565.
-  { nom: 'client', dir: 'packages/client', args: ['run'], plancher: 1556 },
+  // 2026-09-12 : +5 gardes avec LE CANAL B À TROIS CHIFFRES (`water-field.test.ts`, lot SANG 2c) —
+  //   régime × cran de sang × palier : encodage/décodage exhaustif, aucun cran ne franchit un seuil
+  //   de régime (un plafond à 9 crans rougissait : 5), les octets historiques 0/100/200 inchangés,
+  //   `buildWaterField` pose les dizaines. Suite à 1570, plancher relevé à 1560.
+  { nom: 'client', dir: 'packages/client', args: ['run'], plancher: 1560 },
   { nom: 'serveur', dir: 'packages/server', args: ['run'], plancher: 36 },
   // Le banc pilote le vrai worldgen sur la carte de production : lent, et seul à porter le
   // drapeau qui ignore les erreurs non gérées (voir l'en-tête de `scenario.test.ts`).

@@ -5,9 +5,11 @@
  * rive du masque binaire — trois lecteurs, une seule vérité.
  */
 import { describe, expect, it } from 'vitest'
+import { COULEE } from '@ashes/sim'
 import {
   buildRiveField,
   buildWaterField,
+  canalB,
   CHUTE_LEVRE_E,
   CHUTE_LEVRE_N,
   CHUTE_LEVRE_O,
@@ -15,9 +17,14 @@ import {
   CHUTE_RIDEAU_E,
   CHUTE_RIDEAU_O,
   chutesDe,
+  decodeCanalB,
   MASQUE_EAU,
+  REGIME_LAC_MORT,
+  REGIME_NORMAL,
+  REGIME_SUIE,
   riveAt,
   RIVE_MAX_TILES,
+  SANG_CRAN_MAX,
 } from './water-field'
 
 const EAU = 4
@@ -167,5 +174,71 @@ describe('les chutes qui ne font pas face (terrasses.md T-R8quater) — les drap
     // Et sans paliers (la carte plate), aucun drapeau : le masque vaut exactement 128.
     const plat = buildWaterField(terrain, w, h)
     expect(plat.data[(8 * w + 1) * 4]).toBe(MASQUE_EAU)
+  })
+})
+
+/**
+ * LE CANAL B EN TROIS CHIFFRES (`qualite-eau.md`, lot 2c) — centaines = régime, dizaines = cran
+ * de sang, unités = palier. Ce qu'on éprouve ici est l'ARITHMÉTIQUE que le shader recopie
+ * (`decodeCanalB` en est le miroir mot pour mot) : un cran de sang qui franchirait un seuil de
+ * régime ferait griser ou clarifier une eau qui n'est que saignée.
+ */
+describe('le canal B — régime, cran de sang, palier, sans se marcher dessus', () => {
+  it('encode et décode, pour TOUS les régimes × crans × paliers', () => {
+    for (const regime of [REGIME_NORMAL, REGIME_LAC_MORT, REGIME_SUIE]) {
+      for (let cran = 0; cran <= COULEE.CRANS_SANG; cran++) {
+        for (let palier = 0; palier <= 3; palier++) {
+          const b = canalB(regime, cran, palier)
+          expect(b).toBeLessThanOrEqual(255)
+          expect(b).toBe(Math.round(b))
+          expect(decodeCanalB(b)).toEqual({ regime, cranSang: cran, palier })
+        }
+      }
+    }
+  })
+
+  it('un cran de sang ne franchit JAMAIS un seuil de régime du shader (0,30 · 0,63)', () => {
+    // Le pire cas de chaque régime : le plus haut cran que le canal accepte, le palier 3.
+    expect(canalB(REGIME_NORMAL, SANG_CRAN_MAX, 3) / 255).toBeLessThan(0.3)
+    expect(canalB(REGIME_SUIE, SANG_CRAN_MAX, 3) / 255).toBeLessThan(0.63)
+    expect(canalB(REGIME_SUIE, 0, 0) / 255).toBeGreaterThanOrEqual(0.3)
+    expect(canalB(REGIME_LAC_MORT, 0, 0) / 255).toBeGreaterThanOrEqual(0.63)
+    // Et la loi des crans tient dans les dizaines : quatre crans, neuf au plus.
+    expect(COULEE.CRANS_SANG).toBeLessThanOrEqual(SANG_CRAN_MAX)
+  })
+
+  it('les valeurs historiques sont inchangées : 0 / 100 / 200 + palier, sans sang', () => {
+    expect(canalB(REGIME_NORMAL, 0, 0)).toBe(0)
+    expect(canalB(REGIME_SUIE, 0, 0)).toBe(100)
+    expect(canalB(REGIME_LAC_MORT, 0, 2)).toBe(202)
+  })
+
+  it('les bornes se serrent : cran négatif → 0, cran au-delà du plafond → le plafond, palier ≥ 10 → 9', () => {
+    expect(canalB(REGIME_NORMAL, -3, 0)).toBe(0)
+    expect(canalB(REGIME_NORMAL, 40, 0)).toBe(SANG_CRAN_MAX * 10)
+    expect(canalB(REGIME_NORMAL, 0, 12)).toBe(9)
+  })
+
+  it('buildWaterField pose le cran de sang dans les dizaines, par tuile, et garde palier et régime', () => {
+    const { terrain, w, h } = mare()
+    const n = w * h
+    const regime = new Uint8Array(n)
+    const palier = new Uint8Array(n)
+    const sang = new Uint8Array(n)
+    regime[5 * w + 5] = REGIME_SUIE
+    palier[5 * w + 6] = 2
+    sang[5 * w + 4] = 1
+    sang[5 * w + 5] = 4
+    sang[5 * w + 6] = 2
+    const f = buildWaterField(terrain, w, h, regime, palier, sang)
+    const B = (x: number, y: number): number => f.data[(y * w + x) * 4 + 2]!
+    expect(decodeCanalB(B(4, 5))).toEqual({ regime: REGIME_NORMAL, cranSang: 1, palier: 0 })
+    expect(decodeCanalB(B(5, 5))).toEqual({ regime: REGIME_SUIE, cranSang: 4, palier: 0 })
+    expect(decodeCanalB(B(6, 5))).toEqual({ regime: REGIME_NORMAL, cranSang: 2, palier: 2 })
+    expect(B(7, 5)).toBe(0)
+    // Sans le paramètre, rien ne change à l'ancien champ : le même bake, octet pour octet.
+    const sans = buildWaterField(terrain, w, h, regime, palier)
+    const avecZero = buildWaterField(terrain, w, h, regime, palier, new Uint8Array(n))
+    expect(Array.from(avecZero.data)).toEqual(Array.from(sans.data))
   })
 })

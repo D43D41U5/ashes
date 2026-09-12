@@ -7,7 +7,7 @@
  *
  *   node --import tsx tools/mesure-recuisson-sang.mts
  */
-import { attacheAuFil, eauSouillee, qualiteDeLEau, SANG, MONDE, MONDE_JOUE, createSim, generateZonedTerrain, TERRAIN_DEEP_WATER, TERRAIN_SHALLOW_WATER, type Souillure } from '../packages/sim/src/index'
+import { attacheAuFil, cranDeSang, eauSouillee, empreinteDuSang, qualiteDeLEau, SANG, MONDE, MONDE_JOUE, createSim, generateZonedTerrain, tableDAttache, TERRAIN_DEEP_WATER, TERRAIN_SHALLOW_WATER, type Souillure } from '../packages/sim/src/index'
 import { COULEE } from '../packages/sim/src/coulee'
 import { buildWaterField, REGIME_SUIE } from '../packages/client/src/render/water-field'
 
@@ -188,3 +188,19 @@ for (let ty = 0; ty < height; ty++) for (let tx = 0; tx < width; tx++) {
 }
 console.log(`  empreinte exacte ≡ qualiteDeLEau sur les ${eau} tuiles d’eau : ${ecarts === 0 ? 'OUI' : ecarts + ' écarts'} (${teintes} tuiles teintes, ${touchees.length} touchées)`)
 console.log(`  → table ${msTable.toFixed(0)} ms une fois au bake, puis ${msExacte.toFixed(2)} ms par recuisson au plafond, pour ${touchees.length} tuiles à repeindre dans le canal B.`)
+
+// ⑥ CE QUE LE CLIENT APPELLE VRAIMENT (lot 2c livré) : les fonctions de `coulee.ts`, pas le
+//    prototype ci-dessus — la garde A11 les tient identiques à la loi, ici on les chronomètre.
+console.log('\n⑥ les fonctions livrées (coulee.ts : tableDAttache / empreinteDuSang / cranDeSang)')
+let table: Int32Array = new Int32Array(0)
+const msTableLivree = ms('tableDAttache(map)', 3, () => { table = tableDAttache(map) })
+const forceLivree = new Float64Array(width * height)
+const toucheesLivrees: number[] = []
+const msEmpreinteLivree = ms(`empreinteDuSang, ${SANG.TACHES_MAX} souillures`, 20, () => { empreinteDuSang(sim, table, forceLivree, toucheesLivrees) })
+sim.souillures = taches.slice(0, 1)
+const msEmpreinteUne = ms('empreinteDuSang, 1 souillure', 50, () => { empreinteDuSang(sim, table, forceLivree, toucheesLivrees) })
+sim.souillures = taches
+empreinteDuSang(sim, table, forceLivree, toucheesLivrees)
+const parCran = [0, 0, 0, 0, 0]
+for (const j of toucheesLivrees) parCran[cranDeSang(forceLivree[j]!)]! += 1
+console.log(`  → table ${msTableLivree.toFixed(1)} ms · empreinte ${msEmpreinteLivree.toFixed(2)} ms au plafond, ${msEmpreinteUne.toFixed(2)} ms pour une · ${toucheesLivrees.length} tuiles touchées, par cran 1..4 : ${parCran.slice(1).join(' / ')}`)
