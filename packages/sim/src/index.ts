@@ -200,7 +200,7 @@ export type { NiveauDeNeige } from './gel'
 // qui bloque — et un gué qui se ferme sans qu'on le voie est exactement ce que G5 interdit.
 export {
   niveauDEau, ariditeGlobale, crueGlobale, cyclesDepuisPluie,
-  estAsseche, estInonde, estGueBloque, porteDeLEau, distanceALEau,
+  estAsseche, eauASec, estInonde, estGueBloque, porteDeLEau, distanceALEau,
 } from './eau'
 export type { EtatEau } from './eau'
 export { EAU } from './balance'

@@ -125,6 +125,20 @@ export function distanceALEau(map: WorldMap, tx: number, ty: number): number {
  */
 export function estAsseche(state: EtatEau, tx: number, ty: number, niveau?: number): boolean {
   if (terrainAt(state.map, tx, ty) !== TERRAIN_SHALLOW_WATER) return false
+  return eauASec(state, niveau)
+}
+
+/**
+ * LA VALLÉE EST-ELLE À SEC AUJOURD'HUI ? Le verdict de `estAsseche` SANS son terme de terrain —
+ * il n'a aucun terme positionnel (MESURÉ le 2026-09-12 : le niveau est global, la bande morte
+ * aussi), donc il se résout UNE fois par cycle et vaut pour toute eau peu profonde du monde.
+ *
+ * Exporté pour la PORTE du client (`gel-layer.ts`), qui filtrait sur l'entrée franche seule
+ * (`niveau ≤ −SEUIL`) et manquait la bande morte : le 296ᵉ jour (niveau −0,524) la sim disait
+ * « à sec » et le client peignait de l'eau vive — 1 aube sur 240, et le pas, la pêche et
+ * `nearWater` disaient l'inverse de l'image. La porte est désormais CE verdict, exact.
+ */
+export function eauASec(state: EtatEau, niveau?: number): boolean {
   const n = niveau ?? niveauDEau(state)
   const entree = -EAU.SEUIL_ASSECHEMENT
   const sortie = entree + EAU.HYSTERESIS_ASSECHEMENT

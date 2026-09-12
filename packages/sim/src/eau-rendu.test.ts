@@ -17,7 +17,7 @@
  */
 import { describe, expect, it } from 'vitest'
 import { BALANCE, EAU, TERRAIN_SHALLOW_WATER, YEAR_DAYS } from './balance'
-import { crueGlobale, distanceALEau, estAsseche, estGueBloque, estInonde, niveauDEau } from './eau'
+import { crueGlobale, distanceALEau, eauASec, estAsseche, estGueBloque, estInonde, niveauDEau } from './eau'
 import { MARCHABLE, terrainAt } from './map'
 import { modificateurDuJour } from './modificateur'
 import { createSim, type SimState } from './sim'
@@ -99,6 +99,38 @@ describe('S10 — la prémisse du rendu de l’eau', () => {
       if (estAsseche({ ...sim, tick: t }, tx, ty, niveau)) asseches++
     }
     expect(asseches, 'des hauts-fonds à assécher sur la vraie carte').toBeGreaterThan(100)
+  })
+
+  it('LA BANDE MORTE DE L’ASSEC EST UN VERDICT DE VALLÉE : la porte du client la lit (`eauASec`), l’entrée franche seule la manquait', () => {
+    // MESURÉ le 2026-09-12 (éclaireur D1, monde joué) : sur 240 aubes, 5 tombaient dans la bande
+    // morte ; au 296ᵉ jour (niveau −0,524) la sim disait « à sec » et le client, qui ne filtrait
+    // que `niveau ≤ −SEUIL`, peignait de l'eau vive. On cherche ce jour dans la loi, jamais en dur.
+    const sim = vallee()
+    const entree = -EAU.SEUIL_ASSECHEMENT
+    const sortie = entree + EAU.HYSTERESIS_ASSECHEMENT
+    let tx = -1
+    let ty = -1
+    for (let i = 0; i < sim.map.terrain.length && tx < 0; i++) {
+      if (sim.map.terrain[i] === TERRAIN_SHALLOW_WATER) { tx = i % sim.map.width; ty = (i - tx) / sim.map.width }
+    }
+    expect(tx, 'une eau peu profonde à interroger').toBeGreaterThanOrEqual(0)
+    let dansLaBande = 0
+    let secDansLaBande = 0
+    for (let j = sim.jourDeDepart; j < sim.jourDeDepart + YEAR_DAYS; j++) {
+      const t = tickDuJour(sim, j)
+      const etat = { ...sim, tick: t }
+      const n = niveauDEau(etat)
+      if (n <= entree || n >= sortie) continue
+      dansLaBande += 1
+      const sec = eauASec(etat, n)
+      // Le verdict global est EXACTEMENT celui de la tuile : aucun terme positionnel.
+      expect(estAsseche(etat, tx, ty, n)).toBe(sec)
+      // Et l'ancienne porte du client (l'entrée franche) disait « non » sur toute la bande.
+      expect(n <= -EAU.SEUIL_ASSECHEMENT).toBe(false)
+      if (sec) secDansLaBande += 1
+    }
+    expect(dansLaBande, 'la prémisse : l’année traverse la bande morte').toBeGreaterThan(0)
+    expect(secDansLaBande, 'et au moins une aube y est À SEC par mémoire — celle que la porte manquait').toBeGreaterThan(0)
   })
 
   it('sous la Crue, il y a des gués à fermer ET des rives à noyer', () => {

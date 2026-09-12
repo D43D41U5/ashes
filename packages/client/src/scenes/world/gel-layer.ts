@@ -61,7 +61,7 @@ import {
   EAU,
   TERRAIN_DEEP_WATER,
   TERRAIN_SHALLOW_WATER,
-  estAsseche,
+  eauASec,
   estGele,
   estGueBloque,
   estInonde,
@@ -418,7 +418,11 @@ export class GelLayer {
     // sur `crueGlobale <= 0` quand on ne leur passe PAS de niveau — en le passant, on désarme
     // leur sortie et on paierait leur corps sur chaque tuile, 363 jours sur 365 pour rien.
     const niveauEau = niveauDEau(etat)
-    const peutAssecher = niveauEau <= -EAU.SEUIL_ASSECHEMENT
+    // L'ASSEC N'A PAS DE TERME POSITIONNEL : son verdict est celui de la vallée, bande morte
+    // comprise (`eauASec`, le corps de `estAsseche` sans le terrain). La porte filtrait sur
+    // l'entrée franche seule (`niveau ≤ −SEUIL`) et manquait la bande : le 296ᵉ jour la sim
+    // disait « à sec » et l'image montrait de l'eau vive (MESURÉ le 2026-09-12, 1 aube sur 240).
+    const peutAssecher = eauASec(etat, niveauEau)
     const peutInonder = niveauEau > 0
     const peutFermerLesGues = niveauEau >= EAU.SEUIL_GUE_BLOQUE
 
@@ -446,7 +450,8 @@ export class GelLayer {
               // trois régimes qui BLOQUE le pas, donc le seul que G5 rend obligatoire. Les deux
               // sont d'ailleurs exclusifs (un niveau ne peut être à la fois ≥ +0,3 et ≤ −0,6).
               : peutFermerLesGues && estGueBloque(etat, tx, ty, niveauEau) ? TUILE_GUE_FERME
-              : peutAssecher && estAsseche(etat, tx, ty, niveauEau) ? TUILE_ASSEC
+              // (le verdict est déjà celui de la vallée : reste le terrain, `estAsseche` sans le rembobinage)
+              : peutAssecher && terrain === TERRAIN_SHALLOW_WATER ? TUILE_ASSEC
               // L'EAU LIBRE, et non le sol nu : le manteau n'y peint rien non plus, mais c'est
               // sur ELLE que la vase et la glace débordent. Confondues, la mare partie et l'eau
               // profonde étaient à égalité — une couture nue sur toute la rive du lac.

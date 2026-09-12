@@ -61,7 +61,7 @@ Ordre recommandé par la page (§6) : **A1 → A2 → B1 + B3 → D1 → C1**. *
 
 ## 4. Réserves connues
 
-- **Le sang de l'homme seulement** (§1c) est décidé (Alexis, 2026-09-12). La chronique et la réputation consomment `wolf_on_trail` : si un jour le loup doit aussi voler la prise du chasseur, c'est le tag qu'on déplace (posé par l'attaquant), pas la piste qu'on réécrit.
+- **Le sang de l'homme seulement** (§1c) est décidé (Alexis, 2026-09-12). `wolf_on_trail` n'a AUCUN consommateur aujourd'hui (muet dans l'inventaire audio, absent de la chronique et de la réputation — MESURÉ par l'éclaireur D1 le 2026-09-12 ; la ligne d'avant disait le contraire) : c'est un fait émis pour ceux qui viendront. Si un jour le loup doit aussi voler la prise du chasseur, c'est le tag qu'on déplace (posé par l'attaquant), pas la piste qu'on réécrit.
 - **La mémo de la suie est au niveau du module** : deux sims dans un processus (deux rooms) se la voleraient ; et `cendreAge.join(',')` alloue à chaque lecture. Noté, non corrigé.
 - **Le disque ignore les paliers** (SUSPECTÉ) : le sang d'une mare basse pourrait teindre une eau en haut d'une falaise. Sonde à écrire sur le monde joué.
 - **La lecture lit le terrain statique**, l'émission l'eau du jour : un haut-fond qui s'assèche garde sa teinte jusqu'à 5 min. Mineur.

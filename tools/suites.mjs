@@ -114,6 +114,9 @@ const SUITES = [
   //   monde joué (terre et lacs à 0, tout point de fil hors lac > 0, le fleuve grossit vers sa
   //   bouche). `carte-immuable.test.ts` hache le champ. Suite à 2381 sur l'arbre (2376 sur l'arbre
   //   commité seul) ; plancher inchangé (2360).
+  // 2026-09-12 : +1 garde (`eau-rendu.test.ts`) — la bande morte de l'assec est un verdict de vallée
+  //   (`eauASec`), et la porte du client la lit ; l'entrée franche seule manquait 1 aube sur 240.
+  //   Suite à 2382 sur l'arbre (2377 sur l'arbre commité seul) ; plancher inchangé (2360).
   { nom: 'sim', dir: 'packages/sim', args: ['run', '--exclude', 'src/scenario.test.ts'], plancher: 2360 },
   // 2026-09-01 : +10 gardes avec le RENDU des étages (`plateau-art.test.ts`).
   // 2026-09-01 : +9 gardes avec le TRI DES ÉTAGES (strate, découvert — `framing.test.ts`),
