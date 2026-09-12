@@ -1,9 +1,10 @@
 /**
- * ═══ LA QUALITÉ DE L'EAU (spec `qualite-eau.md`) — critères A1-A5, A8, A9 ═══
+ * ═══ LA QUALITÉ DE L'EAU (spec `qualite-eau.md`) — critères A1-A5, A7, A8, A9 ═══
  *
- * A6 et A7 (l'appel au peuplement, la bête qui renonce) ne sont PAS ici : ils touchent la
- * faune, donc le flux du PRNG seedé, et la spec les veut dans un lot séparé — sinon un test
- * sans rapport qui rougit n'a plus de coupable désigné.
+ * A7 (la bête qui renonce à boire) est arrivé dans un lot SÉPARÉ du porteur, et c'est voulu :
+ * il touche la faune, donc le flux du PRNG seedé — un test sans rapport qui rougit doit avoir
+ * un coupable désigné. A6 (l'appel) vit dans `piste-de-sang.test.ts` : Alexis a choisi la
+ * poursuite par les loups vivants, pas un terme d'eau au peuplement.
  *
  * A1 a DEUX moitiés, et seule la seconde vit ici : les huit gardes de `coulee.test.ts` passent
  * sans être modifiées (la première), et l'ensemble des tuiles souillées par la SUIE sur le vrai
@@ -23,10 +24,11 @@ import { porteDeLEau } from './eau'
 import { drainEvents } from './events'
 import { estGele } from './gel'
 import { createEmptyMap, setTile, type WorldMap } from './map'
+import { spawnMonster, type Monster } from './monsters'
 import { MONDE, MONDE_JOUE } from './zonegraph'
 import { deserializeSim, serializeSim } from './persistence'
 import { createSim, spawnEntity, step, type MoveInput, type SimState } from './sim'
-import { calendarScaleForSeasonCycles, dayTicksPourJour, TICKS_PER_CYCLE } from './time'
+import { calendarScaleForSeasonCycles, cycleOffsetForStartHour, dayTicksPourJour, TICKS_PER_CYCLE } from './time'
 import { EAU } from './zonegen-water'
 
 /* ─── LE BANC ─────────────────────────────────────────────────────────────────────── */
@@ -576,6 +578,72 @@ describe('A5 — la glace protège l’eau qu’elle couvre', () => {
     blesse(s, GUE_X + 0.5, GUE_Y + 0.5)
     ticks(s, 200)
     expect(s.souillures.length).toBe(1)
+  })
+})
+
+/* ─── A7 — LE SANG REPOUSSE : LA BÊTE RENONCE À BOIRE (Q9) ─────────────────────────── */
+
+/** La coulée de la harde (`forets-vivantes` §4 R5quater), posée à la main comme dans son banc :
+ *  une ligne de (60,90) vers (60,79). Ici la FIN touche VRAIMENT l'eau — une mare de haut-fond
+ *  au nord, dont (60,78) est le bord — parce que `zonegen-coulees` arrête la descente sur la
+ *  BERGE, à une tuile de l'eau : c'est l'eau voisine qu'on boit, et c'est elle qu'on lit. */
+const MARE_X = 60
+const MARE_Y = 76
+const BOUT_Y = 79
+function bancDeLaCoulee(): { s: SimState; harde: Monster; id: number } {
+  const map = createEmptyMap(160, 160, TERRAIN_GRASS)
+  for (let dy = -2; dy <= 2; dy++) {
+    for (let dx = -2; dx <= 2; dx++) setTile(map, MARE_X + dx, MARE_Y + dy, TERRAIN_SHALLOW_WATER)
+  }
+  const chemin: number[] = []
+  for (let y = 90; y >= BOUT_Y; y--) chemin.push(y * map.width + MARE_X)
+  map.coulees = chemin
+  // L'AUBE : la fenêtre où la harde descend (`HUNT.COULEE_AUBE_DE`). Aucun peuplement ambiant.
+  const s = createSim(1234, { map, faunaCap: 0, worldEvents: false, cycleOffset: cycleOffsetForStartHour(6, 1) })
+  const id = spawnMonster(s, 'deer', 62.5, 92.5)
+  const harde = s.monsters.find((m) => m.entityId === id)!
+  harde.groundX = MARE_X
+  harde.groundY = BOUT_Y + 1 // son coin, contre la fin de la coulée
+  return { s, harde, id }
+}
+
+/** Elle descend jusqu'au bout (ou 60 s) ; rend si elle a atteint la tuile du bout. */
+function descend(s: SimState, harde: Monster, id: number): boolean {
+  let bout = false
+  for (let t = 0; t < 60 * BALANCE.TICK_RATE_HZ && harde.drinkUntil === undefined && harde.couleePas !== -1; t++) {
+    step(s, [])
+    const e = s.entities.find((x) => x.id === id)!
+    if (Math.floor(e.x) === MARE_X && Math.floor(e.y) === BOUT_Y) bout = true
+  }
+  return bout
+}
+
+describe('A7 — la bête renonce : une eau ensanglantée ne se boit pas (Q9)', () => {
+  it('la harde descend sa coulée jusqu’au bord de l’eau saignée — et NE BOIT PAS', () => {
+    const { s, harde, id } = bancDeLaCoulee()
+    // Le sang, à pleine force, dans la mare : un disque d'eau dormante qui couvre tout le bord.
+    s.souillures.push({ i: idx(s.map, MARE_X, MARE_Y + 2), tick: s.tick, crans: 4, pas: -1 })
+    expect(eauSouillee(s, MARE_X, MARE_Y + 2), 'la prémisse : l’eau du bord est souillée').toBe(true)
+    const bout = descend(s, harde, id)
+    expect(bout, 'elle est bien allée jusqu’au bout de la coulée').toBe(true)
+    expect(harde.couleePas, 'la descente est CONSOMMÉE pour cette fenêtre').toBe(-1)
+    expect(harde.drinkUntil, 'et elle n’a pas bu').toBeUndefined()
+  })
+
+  it('LE TÉMOIN : la même coulée, la même mare, l’eau PROPRE — et elle boit', () => {
+    const { s, harde, id } = bancDeLaCoulee()
+    expect(eauSouillee(s, MARE_X, MARE_Y + 2)).toBe(false)
+    const bout = descend(s, harde, id)
+    expect(bout).toBe(true)
+    expect(harde.drinkUntil, 'sans le témoin, la garde passerait sur une harde qui ne descend jamais').toBeDefined()
+  })
+
+  it('une seule goutte ne fait pas renoncer : c’est le SEUIL de `eauSouillee` qui commande', () => {
+    const { s, harde, id } = bancDeLaCoulee()
+    s.souillures.push({ i: idx(s.map, MARE_X, MARE_Y + 2), tick: s.tick, crans: 1, pas: -1 })
+    expect(eauSouillee(s, MARE_X, MARE_Y + 2)).toBe(false)
+    descend(s, harde, id)
+    expect(harde.drinkUntil).toBeDefined()
   })
 })
 

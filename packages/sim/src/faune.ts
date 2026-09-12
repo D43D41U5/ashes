@@ -66,7 +66,7 @@ import { hash2 } from './noise'
 import { poissonPoints } from './poisson'
 import { rngRoll } from './rng'
 import { niveauDEau, porteDeLEau } from './eau'
-import { attacheAuFil } from './coulee'
+import { attacheAuFil, eauSouillee } from './coulee'
 import { estGele } from './gel'
 import { effetsDuJour } from './modificateur'
 import { getGameTime, jourDeSaison } from './time'
@@ -2490,10 +2490,23 @@ function crepuscule(hour: number): boolean {
  * heures crépusculaires, le gibier dont le COIN est proche d'une fin de coulée rejoint le
  * chemin et le DESCEND, pas à pas dans l'ordre du tracé, jusqu'à l'eau — où il BOIT, tête
  * baissée (`drinkUntil` → BAIT_ALERTNESS : la fenêtre d'affût que la géographie enseigne).
- * UNE descente par fenêtre (couleePas = −1 après avoir bu), purge à la sortie du crépuscule.
+ * UNE descente par fenêtre (couleePas = −1 après avoir bu — ou renoncé, `qualite-eau.md` Q9 :
+ * une eau ensanglantée ne se boit pas), purge à la sortie du crépuscule.
  * AUCUN tirage : l'attache est une fonction pure du coin et de la carte (mémorisée), le pas
  * suit l'ordre de la liste — sur une carte sans coulées, la passe est inerte au bit près.
  */
+/** L'eau qu'on boit depuis cette tuile de berge — l'anneau de 1 autour d'elle, elle comprise —
+ *  est-elle souillée ? (`qualite-eau.md` Q9.) `eauSouillee` rend non sur la terre : seules les
+ *  tuiles d'eau pèsent, et il suffit qu'une seule soit sale pour que la bête renonce. */
+function eauDeLaBergeSouillee(state: SimState, tx: number, ty: number): boolean {
+  for (let dy = -1; dy <= 1; dy++) {
+    for (let dx = -1; dx <= 1; dx++) {
+      if (eauSouillee(state, tx + dx, ty + dy)) return true
+    }
+  }
+  return false
+}
+
 function couleeStep(state: SimState, monster: Monster, entity: Entity, hour: number): boolean {
   const coulees = state.map.coulees
   if (!coulees || coulees.length === 0 || !isPrey(monster.type)) return false
@@ -2565,9 +2578,22 @@ function couleeStep(state: SimState, monster: Monster, entity: Entity, hour: num
   const cy = (cible - (cible % width)) / width + 0.5
   if (distSq(entity.x, entity.y, cx, cy) <= 0.6 * 0.6) {
     if (monster.couleePas >= fin - 1) {
-      // Le bout du chemin : l'eau. Elle boit — et ne redescendra pas cette fenêtre.
-      monster.drinkUntil = state.tick + HUNT.COULEE_BOIRE_TICKS
+      // Le bout du chemin : l'eau. Elle ne redescendra pas cette fenêtre, qu'elle boive ou non.
       monster.couleePas = -1
+      // LE SANG REPOUSSE (`qualite-eau.md` Q9) : une eau ensanglantée, elle ne la boit pas —
+      // elle renonce, et le coin qu'on vient de saigner cesse d'être un point d'eau pour un
+      // moment. La coulée s'arrête sur la BERGE (`zonegen-coulees` : la descente cesse à une
+      // tuile de l'eau), donc l'eau bue est celle des tuiles voisines : on lit l'anneau de 1.
+      // `eauSouillee` n'a pas de paramètre d'étage, et la question n'en a pas non plus : elle lit
+      // l'eau du SOL (`map.terrain`), la seule qui se souille (`souiller` refuse l'étage — E-R22),
+      // et TOUT bout de coulée est au sol — MESURÉ par la revue du 2026-09-12 (3 graines, 50
+      // coulées, plancher des grottes compris : 50 bouts marchables au sol, une eau du sol en
+      // 4-voisinage, 0 bout d'étage ; celles des karsts partent de la GUEULE). Un sceau sur
+      // `entity.etage` a été essayé et retiré : sur la gueule d'un karst noyé, un corps venu du
+      // dedans garde son étage négatif et aurait bu l'eau du sol SANS la lire — le sceau se
+      // trompait de sens dans le seul cas où il jouait.
+      if (eauDeLaBergeSouillee(state, cible % width, (cible - (cible % width)) / width)) return false
+      monster.drinkUntil = state.tick + HUNT.COULEE_BOIRE_TICKS
       monster.wanderDx = 0
       monster.wanderDy = 0
       return true

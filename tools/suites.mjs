@@ -80,6 +80,8 @@ const SUITES = [
   //   saigne n'est plus jeté), la portée du booléen que lit la pêche (épinglée en dur), le marais
   //   qui se souille hors crue (décision d'Alexis) et son témoin, la sauvegarde d'avant le champ.
   //   Suite à 2337 ; +1 avec la roselière (décision d'Alexis, même jour) — suite à 2338.
+  // 2026-09-12 : +3 gardes Q9 — LA HARDE RENONCE à boire une eau ensanglantée (A7, son témoin,
+  //   le seuil ; `qualite-eau.test.ts`). Suite à 2341.
   { nom: 'sim', dir: 'packages/sim', args: ['run', '--exclude', 'src/scenario.test.ts'], plancher: 2328 },
   // 2026-09-01 : +10 gardes avec le RENDU des étages (`plateau-art.test.ts`).
   // 2026-09-01 : +9 gardes avec le TRI DES ÉTAGES (strate, découvert — `framing.test.ts`),
