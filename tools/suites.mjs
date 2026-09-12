@@ -95,7 +95,15 @@ const SUITES = [
   //   huit traînées du monde joué), l'effacement de l'appel d'avant, les crans (une goutte par cran,
   //   cran ≥ 2 ⇔ eauSouillee). Suite à 2371 sur l'arbre (2366 sur l'arbre commité seul), plancher
   //   relevé à 2350.
-  { nom: 'sim', dir: 'packages/sim', args: ['run', '--exclude', 'src/scenario.test.ts'], plancher: 2350 },
+  // 2026-09-12 : +7 gardes A2 — TOUS LES FLEUVES (reprise de l'eau ; décision d'Alexis : « tous les
+  //   fils, partout »). `qualite-eau.test.ts` (6) : le fil global et ses fins, l'aval qui ne franchit
+  //   jamais la fin d'un fleuve, le sang du bout du premier qui ne teint pas la source du second, le
+  //   monde joué (chaque point d'un fleuve secondaire s'attache à SON fleuve et se pêche en rivière —
+  //   avant : −1 et « lac »), un fleuve VIDE dans `fils` qui ne fait pas couler la suie d'un fleuve
+  //   dans le suivant (revue déterminisme), la table et l'empreinte au bit près à deux fleuves (A11) ;
+  //   `peche.test.ts` (1) : un second fleuve est une rivière, pas un lac. Suite à 2378 sur l'arbre
+  //   (2373 sur l'arbre commité seul), plancher relevé à 2360.
+  { nom: 'sim', dir: 'packages/sim', args: ['run', '--exclude', 'src/scenario.test.ts'], plancher: 2360 },
   // 2026-09-01 : +10 gardes avec le RENDU des étages (`plateau-art.test.ts`).
   // 2026-09-01 : +9 gardes avec le TRI DES ÉTAGES (strate, découvert — `framing.test.ts`),
   //   suite relevée à 1429 ✓, plancher recalé quelques pourcents dessous.
@@ -122,6 +130,9 @@ const SUITES = [
   //   taire), le splash d'un autre et le clapotis se tiennent quelque part (`eau-audio.test.ts`, 6 :
   //   le point de rive par le gradient du SDF, ce que chaque voix tend au moteur), et la cascade
   //   seule a un panner (`engine.test.ts`, 1). Suite à 1589, plancher relevé à 1575.
+  // 2026-09-12 : +2 gardes A2 (`flow-field.test.ts`) — un second fleuve a son courant (avant : une eau
+  //   morte à l'écran), le fleuve principal ne bouge pas d'un vecteur loin de la confluence et la
+  //   confluence prend le point de fil le plus proche. Suite à 1591 ; plancher inchangé (1575).
   { nom: 'client', dir: 'packages/client', args: ['run'], plancher: 1575 },
   { nom: 'serveur', dir: 'packages/server', args: ['run'], plancher: 36 },
   // Le banc pilote le vrai worldgen sur la carte de production : lent, et seul à porter le

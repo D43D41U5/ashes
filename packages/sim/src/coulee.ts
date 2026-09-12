@@ -97,6 +97,71 @@ export const COULEE = {
   CRANS_SANG: 4,
 } as const
 
+/* ═══════════════ TOUS LES FLEUVES, BOUT À BOUT (A2, reprise de l'eau — 2026-09-12) ═══════════════ */
+/*
+ * Depuis le 2026-08-30 le pays porte AUTANT de fleuves que son relief en fabrique (`map.fils`,
+ * du plus gros au plus petit ; `map.fil` est le premier). Tout ce module ne lisait que `fil` :
+ * une goutte tombée dans un fleuve secondaire s'attachait à rien (`pas = −1`) et se traitait en
+ * eau DORMANTE — un disque au milieu d'une eau qui coule. MESURÉ (éclaireur, graine 2026) :
+ * 11 840 tuiles de fleuves secondaires classées lac, 100 %. Décision d'Alexis du 2026-09-12 :
+ * tous les fils, partout.
+ *
+ * LA FORME : un seul tableau de points, fleuve après fleuve, chacun amont → aval — et la table
+ * `fin` qui dit où chaque fleuve s'arrête. Le `pas` d'une souillure (et de toute lecture)
+ * devient un index dans CE tableau : le fleuve 0 y commence à 0, donc les `pas` d'une
+ * sauvegarde d'avant (qui ne connaissait que `fil`) gardent exactement leur sens. L'aval d'un
+ * pas ne franchit JAMAIS la fin de son fleuve (`pasEnAval`) : le dernier pas d'un fleuve n'a
+ * rien en aval, et surtout pas le premier pas du suivant.
+ *
+ * Mémoïsé sur l'IDENTITÉ des tableaux de la carte (pure : la même carte rend le même objet) —
+ * jamais dans `SimState`.
+ */
+export interface FilsDeLaCarte {
+  /** Tous les points de fil, fleuve après fleuve (amont → aval dans chacun). Vide sans fleuve. */
+  readonly tuiles: readonly number[]
+  /** `fin[k]` : l'index EXCLU où finit le fleuve `k` dans `tuiles` (`fin[k − 1]` est son début). */
+  readonly fin: readonly number[]
+}
+const AUCUN_FLEUVE: FilsDeLaCarte = { tuiles: [], fin: [] }
+let filsEnCacheCle: unknown = undefined
+let filsEnCache: FilsDeLaCarte = AUCUN_FLEUVE
+
+export function filsDe(map: Pick<WorldMap, 'fil' | 'fils'>): FilsDeLaCarte {
+  const cle = map.fils ?? map.fil
+  if (cle === undefined) return AUCUN_FLEUVE
+  if (cle === filsEnCacheCle) return filsEnCache
+  const liste: readonly (readonly number[])[] = map.fils ?? (map.fil ? [map.fil] : [])
+  const tuiles: number[] = []
+  const fin: number[] = []
+  for (const f of liste) {
+    for (let k = 0; k < f.length; k++) tuiles.push(f[k]!)
+    fin.push(tuiles.length)
+  }
+  filsEnCacheCle = cle
+  filsEnCache = { tuiles, fin }
+  return filsEnCache
+}
+
+/** L'index EXCLU où finit le fleuve qui porte le pas `pas` (`tuiles.length` si aucun — jamais le cas d'un pas valide). */
+export function finDuFleuve(fils: FilsDeLaCarte, pas: number): number {
+  const fin = fils.fin
+  for (let k = 0; k < fin.length; k++) if (pas < fin[k]!) return fin[k]!
+  return fils.tuiles.length
+}
+
+/**
+ * COMBIEN DE PAS EN AVAL de `de` se trouve `vers` — ou −1 si `vers` n'est pas en aval de `de` sur
+ * le MÊME fleuve à ≤ `SANG.DILUTION_PAS` pas. C'est la seule façon de dire « en aval » (voir
+ * `forceDUneSouillure`), et la seule qui sache qu'un fleuve finit.
+ */
+export function pasEnAval(fils: FilsDeLaCarte, de: number, vers: number): number {
+  if (de < 0 || vers < 0) return -1
+  const n = vers - de
+  if (n < 0 || n > SANG.DILUTION_PAS) return -1
+  if (vers >= finDuFleuve(fils, de)) return -1
+  return n
+}
+
 /** Le cache de la journée — mémoïsation pure (voir l'en-tête), jamais dans `SimState`.
  *  La GRAINE est dans la clé (revue 2026-08-30) : `tuileCendree` lit le grain de lisière par
  *  `state.seed` — la clé est auto-suffisante, elle ne repose pas sur la copie profonde de
@@ -115,8 +180,9 @@ const AUCUNE: ReadonlySet<number> = new Set()
  * pas en amont). Recalculé au plus une fois par jour et par carte.
  */
 function souillesDuJour(state: EtatDeCendre): ReadonlySet<number> {
-  const fil = state.map.fil
-  if (!fil || fil.length === 0) return AUCUNE
+  const fils = filsDe(state.map)
+  const fil = fils.tuiles
+  if (fil.length === 0) return AUCUNE
   // PAS DE CHAMP DE CENDRE, PAS DE SUIE — et la sortie se prend AVANT le balayage (Q12). Sans
   // cette ligne, un monde sans foyer payait `|fil| × PORTEE_SOURCE²` appels de `tuileCendree`
   // (669 × 81 sur le monde joué) pour que chacun réponde « pas de champ » : le résultat est le
@@ -143,10 +209,19 @@ function souillesDuJour(state: EtatDeCendre): ReadonlySet<number> {
     }
     source[k] = touche
   }
-  // ② LA DESCENTE : souillé s'il existe une source à ≤ DILUTION_PAS pas en AMONT (lui compris).
+  // ② LA DESCENTE : souillé s'il existe une source à ≤ DILUTION_PAS pas en AMONT (lui compris)
+  //    — sur le MÊME fleuve : la source se perd à la fin de chacun (A2, tous les fleuves).
   const souilles = new Set<number>()
   let derniereSource = -Infinity
+  let fleuve = 0
   for (let k = 0; k < fil.length; k++) {
+    // `while`, pas `if` : un fleuve VIDE dans `fils` (fin égale à la précédente) ne doit pas
+    // consommer la frontière du suivant — sinon la suie du fleuve d'avant coule dans celui
+    // d'après (revue du 2026-09-12 ; le worldgen n'en produit pas, une carte à la main si).
+    while (fleuve < fils.fin.length && k === fils.fin[fleuve]) {
+      fleuve += 1
+      derniereSource = -Infinity
+    }
     if (source[k]) derniereSource = k
     if (k - derniereSource > COULEE.DILUTION_PAS) continue
     // ③ LA TEINTE : le lit autour du point souillé — l'EAU seulement. La suie coule, elle ne
@@ -197,11 +272,12 @@ function tuileDEau(map: WorldMap, tx: number, ty: number): boolean {
  * `borne` — la portée de la recherche, Chebyshev. `SANG.ATTACHE` par défaut (la goutte dans le
  * fleuve) ; la piste de sang l'élargit de son flair, parce que le loup qui CROISE une eau teinte
  * se tient sur la berge, hors du lit (`piste-de-sang.md` P2). La loi ne change pas : le pas le
- * plus proche, toujours.
+ * plus proche, toujours — sur TOUS les fleuves (A2) : le pas rendu est un index du fil global
+ * (`filsDe`), et à égalité de distance entre deux fleuves, le premier dans l'ordre des `fils`.
  */
 export function attacheAuFil(map: WorldMap, tx: number, ty: number, borne: number = SANG.ATTACHE): number {
-  const fil = map.fil
-  if (!fil || fil.length === 0) return -1
+  const fil = filsDe(map).tuiles // TOUS les fleuves (A2) : le pas est global, voir `filsDe`
+  if (fil.length === 0) return -1
   const width = map.width
   let pas = -1
   let meilleure = Number.POSITIVE_INFINITY
@@ -258,11 +334,12 @@ function forceDUneSouillure(map: WorldMap, s: Souillure, tx: number, ty: number,
     return base * ((SANG.PORTEE_DORMANTE + 1 - d) / (SANG.PORTEE_DORMANTE + 1))
   }
 
-  // ── LE FLEUVE : la traînée descend, et elle ne remonte JAMAIS. ──
-  const fil = map.fil
-  if (!fil || monPas < 0) return 0
-  const n = monPas - s.pas
-  if (n < 0 || n > SANG.DILUTION_PAS) return 0 // l'amont, et l'aval lavé
+  // ── LE FLEUVE : la traînée descend, et elle ne remonte JAMAIS — ni ne change de fleuve. ──
+  const fils = filsDe(map)
+  const fil = fils.tuiles
+  if (monPas < 0) return 0
+  const n = pasEnAval(fils, s.pas, monPas)
+  if (n < 0) return 0 // l'amont, l'aval lavé, ou un autre fleuve (A2)
   // La tuile doit être dans le LIT de SON pas : `map.fil` est la médiane du fleuve, pas son
   // bord — c'est `DEMI_LIT` qui dit jusqu'où la teinte porte en travers (la clause de la suie).
   const i = fil[monPas]!
@@ -335,14 +412,15 @@ export function eauSouillee(state: EtatQualiteEau, tx: number, ty: number): bool
 /**
  * LA TABLE D'ATTACHE — le pas de fil de CHAQUE tuile de la carte, ou −1 (Q6bis, cuite une fois).
  * Exactement `attacheAuFil(map, tx, ty, borne)` pour tout `(tx, ty)` : borne Chebyshev,
- * plus-proche-point euclidien, et à égalité le PREMIER pas du fil (le `<` strict des deux côtés).
- * Sans fil, toute la table vaut −1.
+ * plus-proche-point euclidien, et à égalité le PREMIER pas du fil global (le `<` strict des deux
+ * côtés — donc, entre deux fleuves à égale distance, le premier des `fils`). Sans fil, toute la
+ * table vaut −1.
  */
 export function tableDAttache(map: WorldMap, borne: number = SANG.ATTACHE): Int32Array {
   const { width, height } = map
   const pas = new Int32Array(width * height).fill(-1)
-  const fil = map.fil
-  if (!fil || fil.length === 0) return pas
+  const fil = filsDe(map).tuiles // le fil global, dans l'ordre des `fils` (A2) — comme `attacheAuFil`
+  if (fil.length === 0) return pas
   const meilleure = new Int32Array(width * height).fill(0x7fffffff)
   for (let k = 0; k < fil.length; k++) {
     const i = fil[k]!
@@ -386,7 +464,8 @@ export function empreinteDuSang(state: EtatQualiteEau, table: Int32Array, force:
   if (!taches || taches.length === 0 || tick === undefined) return
   const map = state.map
   const { width, height } = map
-  const fil = map.fil
+  const fils = filsDe(map)
+  const fil = fils.tuiles
   const peins = (j: number, f: number): void => {
     if (f > force[j]!) {
       if (force[j] === 0) touchees.push(j)
@@ -414,11 +493,12 @@ export function empreinteDuSang(state: EtatQualiteEau, table: Int32Array, force:
       }
       continue
     }
-    // ── LE FLEUVE : l'aval pas à pas, et chaque tuile n'appartient qu'à SON pas. ──
-    if (!fil) continue
+    // ── LE FLEUVE : l'aval pas à pas, jusqu'à la FIN DE SON FLEUVE (A2 — jamais le début du
+    //    suivant : la clause de `pasEnAval`), et chaque tuile n'appartient qu'à SON pas. ──
+    const finF = finDuFleuve(fils, s.pas)
     for (let n = 0; n <= SANG.DILUTION_PAS; n++) {
       const p = s.pas + n
-      if (p >= fil.length) break
+      if (p >= finF) break
       const i = fil[p]!
       const cx = i % width
       const cy = (i - cx) / width

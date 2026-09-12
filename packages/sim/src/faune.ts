@@ -67,7 +67,7 @@ import { hash2 } from './noise'
 import { poissonPoints } from './poisson'
 import { rngRoll } from './rng'
 import { niveauDEau, porteDeLEau } from './eau'
-import { attacheAuFil, eauSouillee, type Souillure } from './coulee'
+import { attacheAuFil, eauSouillee, filsDe, pasEnAval, type Souillure } from './coulee'
 import { estGele } from './gel'
 import { effetsDuJour } from './modificateur'
 import { getGameTime, jourDeSaison } from './time'
@@ -4310,8 +4310,9 @@ function souillureCroisee(state: SimState, entity: Entity, apres: number): Souil
     } else {
       if (monPas === undefined) monPas = attacheAuFil(map, tx, ty, SANG.ATTACHE + PISTE.FLAIR)
       if (monPas < 0) continue
-      const n = monPas - s.pas
-      if (n < 0 || n > SANG.DILUTION_PAS) continue
+      // En aval, sur le MÊME fleuve (A2, tous les fleuves) : la loi de `forceDUneSouillure`.
+      const n = pasEnAval(filsDe(map), s.pas, monPas)
+      if (n < 0) continue
     }
     // E-R5 : l'origine est une tuile du SOL (l'émission refuse l'étage), et il va y MARCHER —
     // une eau teinte sur le plateau n'appelle pas le loup qui est au pied de la paroi.

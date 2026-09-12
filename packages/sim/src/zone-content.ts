@@ -1082,7 +1082,10 @@ function coinsDePeche(c: CarteZonee, occupees: Set<number>, idStart: number): Re
   const out: ResourceNode[] = []
   let id = idStart
   const salt = (c.graphe.seed ^ 0x50454348) | 0 // 'PECH'
-  const fil = c.map.fil ?? []
+  // TOUS LES FLEUVES (A2, décision d'Alexis du 2026-09-12) : les coudes de chacun, dans l'ordre
+  // des `fils` — le premier est `fil`. Avant, 5 coins de rivière contre 101 de lac sur la
+  // graine 2026 : les cinq autres fleuves passaient pour des lacs.
+  const fils: readonly (readonly number[])[] = c.map.fils ?? (c.map.fil ? [c.map.fil] : [])
   const estEnRacine = (i: number): boolean => c.zone[i] === c.graphe.racine
   const slugDe = (i: number): string => c.graphe.zones[c.zone[i]!]?.def.slug ?? ''
   const profondVoisin = (tx: number, ty: number): number => {
@@ -1109,8 +1112,9 @@ function coinsDePeche(c: CarteZonee, occupees: Set<number>, idStart: number): Re
     return profondVoisin(tx, ty)
   }
 
-  // ── LA RIVIÈRE, AUX COUDES ──
+  // ── LA RIVIÈRE, AUX COUDES — fleuve par fleuve ──
   const R = EAU.RIVIERE_DEMI_LIT
+  for (const fil of fils) {
   let dernierCoude = -Infinity
   for (let k = 1; k + 1 < fil.length; k++) {
     if (!estUnCoude(fil, k, width)) continue
@@ -1138,13 +1142,14 @@ function coinsDePeche(c: CarteZonee, occupees: Set<number>, idStart: number): Re
     id += 1
     dernierCoude = k
   }
+  }
 
   // ── LES LACS, CONTRE LEUR CŒUR ──
   // Le voisinage du fil : une tuile profonde à moins de PECHE_RAYON_RIVIERE Chebyshev du fil est
   // de la rivière, pas d'un lac. Un Set, construit une fois : O(fil × rayon²).
   const pres = new Set<number>()
   const RR = CONTENU.PECHE_RAYON_RIVIERE
-  for (const i of fil) {
+  for (const fil of fils) for (const i of fil) {
     const fx = i % width
     const fy = (i - fx) / width
     for (let y = fy - RR; y <= fy + RR; y++) {

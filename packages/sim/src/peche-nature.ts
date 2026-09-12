@@ -85,7 +85,7 @@ export function estTerrainDeMarais(t: number | undefined): boolean {
 }
 
 /**
- * LA DÉRIVATION (T1) — `terrain` + le fil de la rivière → un entier par tuile.
+ * LA DÉRIVATION (T1) — `terrain` + les fils des fleuves (tous, A2) → un entier par tuile.
  *
  * Coût : un balayage pour le marais et la rivière, un BFS de composantes sur le reste de
  * l'eau. Du même ordre que `deriverDistanceEau`, qui tourne déjà juste à côté à l'amorce.
@@ -93,7 +93,7 @@ export function estTerrainDeMarais(t: number | undefined): boolean {
  * Déterministe et sans PRNG : le balayage est row-major, les composantes se numérotent dans
  * cet ordre — deux générations de la même graine rendent la même carte (garde A21).
  */
-export function deriverNatureDeLEau(terrain: number[], fil: number[] | undefined, width: number, height: number): number[] {
+export function deriverNatureDeLEau(terrain: number[], fils: readonly (readonly number[])[] | undefined, width: number, height: number): number[] {
   const n = width * height
   const out = new Array<number>(n).fill(NATURE_RIEN)
 
@@ -102,9 +102,11 @@ export function deriverNatureDeLEau(terrain: number[], fil: number[] | undefined
     if (estTerrainDeMarais(terrain[i])) out[i] = NATURE_MARAIS
   }
 
-  // ── 2. LA RIVIÈRE — l'eau au voisinage du fil (même rayon que `coinsDePeche`) ──
+  // ── 2. LA RIVIÈRE — l'eau au voisinage d'un fil (même rayon que `coinsDePeche`), de TOUS les
+  //    fleuves (A2, décision d'Alexis du 2026-09-12 : un second fleuve passait pour un lac —
+  //    11 840 tuiles sur la graine 2026, 100 % d'entre elles) ──
   const RR = CONTENU.PECHE_RAYON_RIVIERE
-  for (const k of fil ?? []) {
+  for (const fil of fils ?? []) for (const k of fil) {
     const fx = k % width
     const fy = (k - fx) / width
     for (let y = fy - RR; y <= fy + RR; y++) {

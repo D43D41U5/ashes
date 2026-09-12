@@ -136,9 +136,12 @@ export interface WorldMap {
   seuils?: { x: number; y: number; ax: number; ay: number; secours: boolean; vers: string }[]
   /**
    * LE FIL DE LA RIVIÈRE, amont → aval (spec eau-vivante R15) : les index de tuile du fil,
-   * dans l'ordre du tracé. Une DONNÉE sérialisable, additive — aucune règle de sim ne la
-   * lit aujourd'hui ; le client en dérive le SENS DU COURANT (feuilles qui dérivent). Le
-   * jour où le courant POUSSE (objets, nage), ce sera une décision de design à part.
+   * dans l'ordre du tracé. Une DONNÉE sérialisable, additive. Le client en dérive le SENS DU
+   * COURANT (feuilles qui dérivent) ; et depuis le 2026-08-30 la sim la lit aussi — la suie et
+   * le sang descendent le fil (`coulee.ts`), la piste de sang le remonte. Le jour où le courant
+   * POUSSE (objets, nage), ce sera une décision de design à part.
+   * ⚠ LE PREMIER DE `fils` : tout lecteur passe par `filsDe(map)` (A2, 2026-09-12), qui lit
+   * tous les fleuves — ne lire que `fil`, c'est prendre le second fleuve pour un lac.
    */
   fil?: number[]
   /**
@@ -147,6 +150,10 @@ export interface WorldMap {
    * Depuis le 2026-08-30, l'hydrologie est DÉRIVÉE du drainage : il y a autant de fleuves que le
    * relief en fabrique de gros troncs, et « la » rivière n'existe plus comme entité. Le champ est
    * ADDITIF : absent quand le pays n'en porte qu'un, et une carte d'avant se relit sans.
+   * TOUS LES LECTEURS LES LISENT TOUS (A2, décision d'Alexis du 2026-09-12) : la nature de l'eau
+   * et les coins de pêche (au worldgen), l'attache du sang et de la suie (`filsDe`, le fil global
+   * bout à bout), le courant du client (`flow-field`). Le « `fil` reste le plus gros » du 08-30
+   * n'était qu'une transition.
    */
   fils?: number[][]
   /**

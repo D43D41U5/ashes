@@ -238,6 +238,11 @@ describe('A1/A2 — les coins de pêche existent, sont joignables, et viennent e
     // marche devient deux lacs, chacun avec son quota (mesuré : 92 → 103 plans d'eau profonde
     // sur la seed 2026, et 127 → 138 coins). Même plafond de lisibilité, même consigne.
     expect(coins.length).toBeLessThanOrEqual(140)
+    // A2 (reprise de l'eau, 2026-09-12) : les coudes de TOUS les fleuves. Avant, 5 coins de rivière
+    // sur la seed 2026 (les cinq autres fleuves passaient pour des lacs) ; l'éclaireur en a
+    // mesuré +28 — la borne dit qu'on n'est pas retombé au fleuve seul.
+    expect(carte.map.fils?.length ?? 1, 'la prémisse : plusieurs fleuves').toBeGreaterThanOrEqual(2)
+    expect(coins.filter((n) => n.type === 'fishing_spot_river').length).toBeGreaterThanOrEqual(15)
     const maxAutre = Math.max(...autres.map((n) => n.id))
     for (const k of coins) {
       expect(k.id, 'en queue : aucun nœud d’avant ne bouge (P5)').toBeGreaterThan(maxAutre)
@@ -1129,7 +1134,7 @@ describe('A22 — la carte de nature d’eau (T1)', () => {
 
   it('chaque eau reçoit SA nature, la terre n’en reçoit aucune, et le seuil sépare lac et mare', () => {
     const { terrain, fil, w, h } = jouet()
-    const nat = deriverNatureDeLEau(terrain, fil, w, h)
+    const nat = deriverNatureDeLEau(terrain, [fil], w, h)
     expect(nat[5 * w + 5], 'le grand plan d’eau est un LAC').toBe(NATURE_LAC)
     expect(nat[5 * w + 20], 'la flaque est une MARE').toBe(NATURE_MARE)
     expect(nat[15 * w + 30], 'le ruban au fil est une RIVIÈRE').toBe(NATURE_RIVIERE)
@@ -1142,9 +1147,26 @@ describe('A22 — la carte de nature d’eau (T1)', () => {
     }
   })
 
+  it('A2 (reprise de l’eau, 2026-09-12) : un SECOND fleuve est une rivière, pas un lac', () => {
+    const { terrain, fil, w, h } = jouet()
+    // Un second ruban, vertical, de 12 tuiles de profond (≥ LAC_MIN_TUILES ? non : 12 < 40, donc
+    // sans fil il serait une MARE ; avec un lac de 100 il serait un LAC) — on le fait LAC pour que
+    // la garde morde : 45 tuiles de profond en colonne, x = 15..17, y = 13..27… hors carte (h = 20).
+    // Donc : une colonne 3 × 15 = 45 tuiles, y = 2..16, x = 14..16 — au-delà de RR du premier fil.
+    for (let y = 2; y < 17; y++) for (let x = 14; x < 17; x++) terrain[y * w + x] = TERRAIN_DEEP_WATER
+    const fil2: number[] = []
+    for (let y = 2; y < 17; y++) fil2.push(y * w + 15)
+    const sansLui = deriverNatureDeLEau(terrain, [fil], w, h)
+    expect(sansLui[8 * w + 15], 'sans son fil, le second fleuve passe pour un lac').toBe(NATURE_LAC)
+    const avecLui = deriverNatureDeLEau(terrain, [fil, fil2], w, h)
+    expect(avecLui[8 * w + 15], 'avec son fil, c’est une rivière').toBe(NATURE_RIVIERE)
+    expect(avecLui[15 * w + 30], 'le premier fleuve, inchangé').toBe(NATURE_RIVIERE)
+    expect(avecLui[5 * w + 5], 'le lac, inchangé').toBe(NATURE_LAC)
+  })
+
   it('elle est STABLE : deux dérivations de la même carte sont identiques', () => {
     const { terrain, fil, w, h } = jouet()
-    expect(deriverNatureDeLEau(terrain, fil, w, h)).toEqual(deriverNatureDeLEau(terrain, fil, w, h))
+    expect(deriverNatureDeLEau(terrain, [fil], w, h)).toEqual(deriverNatureDeLEau(terrain, [fil], w, h))
   })
 
   it('A22bis — CHAQUE NATURE EST ATTEIGNABLE AU RUNTIME : aucune n’est du contenu mort', () => {

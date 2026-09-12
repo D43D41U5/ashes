@@ -888,9 +888,10 @@ export function generateZonedTerrain(
     // LA DISTANCE À L'EAU (S10) : ce qui permet à la crue de monter depuis les rives.
     distEau: deriverDistanceEau(terrain, width, height, escalier?.palierTuile ?? null),
     // LA NATURE DE L'EAU (`peche.md` T1) : rivière / lac / mare / marais, par tuile. Dérivée du
-    // terrain FINAL et du fil — donc APRÈS que les gués et les set-pieces ont fini de creuser.
-    // Sans elle, la table de prises n'aurait aucun moyen de savoir ce qu'est l'eau qu'on pêche.
-    natureEau: deriverNatureDeLEau(terrain, riviere?.fil, width, height),
+    // terrain FINAL et des fils — de TOUS les fleuves (A2, 2026-09-12), donc APRÈS que les gués
+    // et les set-pieces ont fini de creuser. Sans elle, la table de prises n'aurait aucun moyen
+    // de savoir ce qu'est l'eau qu'on pêche.
+    natureEau: deriverNatureDeLEau(terrain, fils, width, height),
   }
   const karsts: Karst[] = []
   const carte: CarteZonee = { map, graphe: g, zone, rampe, affleurements, socle: creux, karsts }

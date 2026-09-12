@@ -11,7 +11,7 @@ volets, chacun en ajout seul et en ordre chronologique. Ce fichier-ci est l'INDE
 |---|---|---|---|---|
 | **M** | [Monde & worldgen](decisions/monde-worldgen.md) | worldgen, relief, eau, biomes, lieux, cendre, étages | 161 | 325 Ko |
 | **R** | [Rendu & DA](decisions/rendu-da.md) | lumière, couleur, sprites, FX, art du sol, son | 173 | 508 Ko |
-| **G** | [Gameplay & systèmes](decisions/gameplay-systemes.md) | faune, combat, récolte, craft, saisons, météo, construction, design | 301 | 766 Ko |
+| **G** | [Gameplay & systèmes](decisions/gameplay-systemes.md) | faune, combat, récolte, craft, saisons, météo, construction, design | 302 | 769 Ko |
 | **I** | [Interface & outillage](decisions/interface-outillage.md) | HUD, menus, encyclopédie, carte, smoke, bancs, process | 84 | 183 Ko |
 | **A** | [Architecture & infra](decisions/architecture-infra.md) | pureté et déterminisme de /sim, protocole, serveur, persistance, perf | 65 | 117 Ko |
 
@@ -31,7 +31,7 @@ retrouve ici, à la même date, jamais à la ligne du dessus dans son volet.
 
 ---
 
-## Index chronologique — 784 entrées, 1900 Ko
+## Index chronologique — 785 entrées, 1903 Ko
 
 - 2026-07-05 · **M** · Spec monde validée par Alexis : déplacement continu type Binding of Isaac (jamais de case par c…
 - 2026-07-05 · **M** · Convention d'import Tiled : l'index local de la tuile dans le premier tileset = l'id de terrain…
@@ -817,3 +817,4 @@ retrouve ici, à la même date, jamais à la ligne du dessus dans son volet.
 - 2026-09-12 · **G** · LE SANG DANS L'EAU EST UN RÉGIME DISTINCT DE LA SUIE, ROUGE-BRUN (lot SANG 2c, `qualite-eau.md`…
 - 2026-09-12 · **G** · LA TEINTE DU SANG PÂLIT PAR CRANS, QUANTIFIÉS À LA TUILE — quatre crans, jamais un dégradé ; le…
 - 2026-09-12 · **G** · L'EAU SAIGNÉE SE VOIT : rouge-brun, en quatre crans qui pâlissent avec l'aval et les cinq minut…
+- 2026-09-12 · **G** · UN SECOND FLEUVE N'EST PLUS UN LAC. Depuis l'hydrologie dérivée (30 août) le pays porte cinq à…

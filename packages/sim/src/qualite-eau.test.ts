@@ -19,7 +19,8 @@ import {
   BALANCE, HUNT, SANG, TERRAIN_DEEP_WATER, TERRAIN_GRASS, TERRAIN_MARSH, TERRAIN_REED_MARSH, TERRAIN_SHALLOW_WATER,
 } from './balance'
 import { calculeChampDeCendre } from './cendre'
-import { attacheAuFil, COULEE, cranDeSang, eauSouillee, empreinteDuSang, qualiteDeLEau, tableDAttache, type Souillure } from './coulee'
+import { attacheAuFil, COULEE, cranDeSang, eauSouillee, empreinteDuSang, filsDe, finDuFleuve, pasEnAval, qualiteDeLEau, tableDAttache, type Souillure } from './coulee'
+import { NATURE_RIVIERE } from './peche-nature'
 import { porteDeLEau } from './eau'
 import { drainEvents } from './events'
 import { estGele } from './gel'
@@ -106,6 +107,48 @@ function carteMeandre(): WorldMap {
   for (let y = Y_HAUT + 1; y <= Y_BAS; y++) pousse(X_COUDE, y) // le coude
   for (let x = X_COUDE - 1; x >= X0; x--) pousse(x, Y_BAS) // l'aval, vers l'ouest
   map.fil = fil
+  return map
+}
+
+/**
+ * LA CARTE À DEUX FLEUVES (A2 de la reprise de l'eau, 2026-09-12) — la rivière et le lac de
+ * `carteRiviereEtLac`, plus un SECOND fleuve, vertical, loin du premier (9 tuiles > ATTACHE +
+ * DEMI_LIT) : de `AFFLUENT_Y0` (amont) à `AFFLUENT_Y1` (aval) en `AFFLUENT_X`, déclaré dans
+ * `map.fils` derrière le premier. `map.fil` reste le premier : c'est le contrat.
+ */
+const AFFLUENT_X = 60
+const AFFLUENT_Y0 = 42
+const AFFLUENT_Y1 = 58
+
+function carteDeuxFleuves(): WorldMap {
+  const map = carteRiviereEtLac()
+  const fil2: number[] = []
+  for (let y = AFFLUENT_Y0; y <= AFFLUENT_Y1; y++) {
+    for (let dx = -EAU.RIVIERE_DEMI_LIT; dx <= EAU.RIVIERE_DEMI_LIT; dx++) setTile(map, AFFLUENT_X + dx, y, TERRAIN_SHALLOW_WATER)
+    setTile(map, AFFLUENT_X, y, TERRAIN_DEEP_WATER)
+    fil2.push(y * map.width + AFFLUENT_X)
+  }
+  map.fils = [map.fil!, fil2]
+  return map
+}
+
+/**
+ * LA CARTE À TROIS FLEUVES, DONT UN VIDE (revue du 2026-09-12) — les deux fleuves d'au-dessus,
+ * un TROISIÈME vertical en `AFFLUENT2_X` (40 tuiles à l'est du second, hors de toute portée),
+ * et un fleuve VIDE glissé entre le premier et le second : `fils = [fil, [], fil2, fil3]`. Le
+ * worldgen n'en produit pas ; c'est le seul montage où deux fins consécutives sont égales.
+ */
+const AFFLUENT2_X = 100
+
+function carteTroisFleuvesDontUnVide(): WorldMap {
+  const map = carteDeuxFleuves()
+  const fil3: number[] = []
+  for (let y = AFFLUENT_Y0; y <= AFFLUENT_Y1; y++) {
+    for (let dx = -EAU.RIVIERE_DEMI_LIT; dx <= EAU.RIVIERE_DEMI_LIT; dx++) setTile(map, AFFLUENT2_X + dx, y, TERRAIN_SHALLOW_WATER)
+    setTile(map, AFFLUENT2_X, y, TERRAIN_DEEP_WATER)
+    fil3.push(y * map.width + AFFLUENT2_X)
+  }
+  map.fils = [map.fil!, [], map.fils![1]!, fil3]
   return map
 }
 
@@ -297,6 +340,121 @@ describe('A2ter — toute l’eau du fleuve est dans le fleuve (vrai monde joué
     // la carte qui aurait changé de forme — et la garde au-dessus ne prouverait plus rien.
     expect(orphelinesEucl, 'la borne euclidienne, elle, orpheline tout un lit de coins').toBeGreaterThan(100)
   })
+})
+
+describe('A2quater — TOUS les fleuves (reprise de l’eau, A2 ; décision d’Alexis du 2026-09-12)', () => {
+  it('le fil global : le premier fleuve garde ses pas, le second commence où finit le premier, et chacun sait où il finit', () => {
+    const map = carteDeuxFleuves()
+    const fils = filsDe(map)
+    const n1 = map.fil!.length
+    expect(fils.tuiles.length).toBe(n1 + (AFFLUENT_Y1 - AFFLUENT_Y0 + 1))
+    expect(fils.fin).toEqual([n1, fils.tuiles.length])
+    // Le pas d'une tuile du premier fleuve est EXACTEMENT celui d'avant A2 (une sauvegarde
+    // d'hier garde le sens de ses `pas`).
+    expect(attacheAuFil(map, 60, RIVIERE_Y)).toBe(60 - X0)
+    expect(finDuFleuve(fils, 60 - X0)).toBe(n1)
+    // Et une tuile du second s'attache — avant A2 elle rendait −1, une eau dormante.
+    const pas2 = attacheAuFil(map, AFFLUENT_X + 2, 50)
+    expect(pas2).toBe(n1 + (50 - AFFLUENT_Y0))
+    expect(finDuFleuve(fils, pas2)).toBe(fils.tuiles.length)
+    // Le même objet est rendu tant que la carte ne change pas (mémoïsation pure).
+    expect(filsDe(map)).toBe(fils)
+    // Sans `fils`, `fil` seul fait un fleuve ; sans rien, aucun.
+    const seul = carteRiviereEtLac()
+    expect(filsDe(seul).fin).toEqual([seul.fil!.length])
+    expect(filsDe(createEmptyMap(8, 8, TERRAIN_GRASS)).tuiles).toHaveLength(0)
+  })
+
+  it('l’aval ne franchit jamais la fin d’un fleuve : le dernier pas du premier n’a pas le premier pas du second en aval', () => {
+    const map = carteDeuxFleuves()
+    const fils = filsDe(map)
+    const n1 = map.fil!.length
+    expect(pasEnAval(fils, n1 - 1, n1)).toBe(-1) // un pas plus loin dans le tableau — un autre fleuve
+    expect(pasEnAval(fils, n1 - 3, n1 - 1)).toBe(2) // deux pas en aval, même fleuve
+    expect(pasEnAval(fils, n1 - 1, n1 - 3)).toBe(-1) // l'amont
+    const n2 = AFFLUENT_Y1 - AFFLUENT_Y0 + 1 // 17 pas : plus court que DILUTION_PAS (40)
+    expect(pasEnAval(fils, n1, n1 + 10)).toBe(10) // dans le second fleuve
+    expect(pasEnAval(fils, n1, n1 + n2 - 1)).toBe(n2 - 1) // son dernier pas
+    expect(pasEnAval(fils, n1, n1 + n2), 'au-delà du dernier pas : plus rien, même à moins de DILUTION_PAS').toBe(-1)
+    expect(pasEnAval(fils, 0, SANG.DILUTION_PAS)).toBe(SANG.DILUTION_PAS) // le premier fleuve est long
+    expect(pasEnAval(fils, 0, SANG.DILUTION_PAS + 1)).toBe(-1) // lavé
+    expect(pasEnAval(fils, -1, 3)).toBe(-1)
+  })
+
+  it('le sang versé au bout du premier fleuve ne teint pas la source du second ; versé dans le second, il descend le second et lui seul', () => {
+    const map = carteDeuxFleuves()
+    const s = sim(map)
+    // ① Au dernier pas du premier fleuve.
+    s.souillures.push({ i: idx(map, X1, RIVIERE_Y), tick: s.tick, crans: 4, pas: attacheAuFil(map, X1, RIVIERE_Y) })
+    expect(qualiteDeLEau(s, X1, RIVIERE_Y), 'la source même est teinte').toBeGreaterThan(0)
+    expect(qualiteDeLEau(s, AFFLUENT_X, AFFLUENT_Y0), 'la source du second fleuve, elle, non').toBe(0)
+    expect(qualiteDeLEau(s, AFFLUENT_X, AFFLUENT_Y0 + 3)).toBe(0)
+    // ② Dans le second fleuve, à trois pas de sa source.
+    s.souillures.length = 0
+    const yVerse = AFFLUENT_Y0 + 3
+    s.souillures.push({ i: idx(map, AFFLUENT_X, yVerse), tick: s.tick, crans: 4, pas: attacheAuFil(map, AFFLUENT_X, yVerse) })
+    expect(qualiteDeLEau(s, AFFLUENT_X, yVerse + 5), 'cinq pas en aval : teinte').toBeGreaterThan(0)
+    expect(qualiteDeLEau(s, AFFLUENT_X + 2, yVerse + 8), 'le bord du lit, en aval : teinte').toBeGreaterThan(0)
+    expect(qualiteDeLEau(s, AFFLUENT_X, yVerse - 1), 'l’amont : propre').toBe(0)
+    expect(qualiteDeLEau(s, X1, RIVIERE_Y), 'le premier fleuve : propre').toBe(0)
+    expect(qualiteDeLEau(s, X0, RIVIERE_Y)).toBe(0)
+    expect(qualiteDeLEau(s, LAC_X, LAC_Y), 'le lac : propre').toBe(0)
+  })
+
+  it('un fleuve VIDE dans `fils` ne fait pas couler la suie du fleuve d’avant dans celui d’après (revue du 2026-09-12)', () => {
+    const map = carteTroisFleuvesDontUnVide()
+    const fils = filsDe(map)
+    const n1 = map.fil!.length
+    const n2 = AFFLUENT_Y1 - AFFLUENT_Y0 + 1
+    // La prémisse : deux fins consécutives ÉGALES — c'est ce que le `if` d'avant ne savait pas franchir.
+    expect(fils.fin).toEqual([n1, n1, n1 + n2, n1 + 2 * n2])
+    const s = sim(map)
+    // Le charnier sur la berge OUEST du second fleuve, à mi-hauteur : sa cendre touche le fil
+    // (à PORTEE_SOURCE, le montage d'A1), loin du premier (17 tuiles) et du troisième (40).
+    const yFosse = AFFLUENT_Y0 + 8
+    s.map.cendreCout = calculeChampDeCendre(map.width, map.height, map.terrain, [
+      { tx: AFFLUENT_X - EAU.RIVIERE_DEMI_LIT - 2, ty: yFosse },
+    ])
+    s.cendreAge = [0]
+    expect(qualiteDeLEau(s, AFFLUENT_X, yFosse), 'le second fleuve est souillé au droit de la fosse').toBe(COULEE.FORCE_SUIE)
+    expect(qualiteDeLEau(s, AFFLUENT_X, AFFLUENT_Y1), 'et jusqu’à son bout').toBe(COULEE.FORCE_SUIE)
+    // Le troisième fleuve suit dans le fil global, à moins de DILUTION_PAS de la source : sa
+    // source doit être PROPRE — avec le `if`, elle recevait la suie du second (43 tuiles teintes).
+    expect(qualiteDeLEau(s, AFFLUENT2_X, AFFLUENT_Y0), 'la source du troisième fleuve : propre').toBe(0)
+    expect(qualiteDeLEau(s, AFFLUENT2_X, AFFLUENT_Y0 + 5)).toBe(0)
+    expect(qualiteDeLEau(s, AFFLUENT2_X, AFFLUENT_Y1)).toBe(0)
+    expect(qualiteDeLEau(s, X1, RIVIERE_Y), 'le premier fleuve : propre').toBe(0)
+  })
+
+  it('le monde joué : un fleuve secondaire s’attache et se pêche en rivière — avant A2, −1 et « lac »', () => {
+    const { map } = carteDeTest(2026, MONDE.JOUEURS_CIBLE, MONDE_JOUE)
+    // LA PRÉMISSE : le pays a plusieurs fleuves (6 sur la graine 2026, MESURÉ par l'éclaireur).
+    expect(map.fils, 'plusieurs fleuves').toBeDefined()
+    expect(map.fils!.length).toBeGreaterThanOrEqual(2)
+    expect(map.fils![0]).toEqual(map.fil)
+    const fils = filsDe(map)
+    const n1 = map.fil!.length
+    let attaches = 0
+    let rivieres = 0
+    let lues = 0
+    for (let k = 1; k < map.fils!.length; k++) {
+      const f = map.fils![k]!
+      for (let p = 0; p < f.length; p += 7) {
+        const i = f[p]!
+        const tx = i % map.width
+        const ty = (i - tx) / map.width
+        lues += 1
+        const pas = attacheAuFil(map, tx, ty)
+        if (pas >= n1) attaches += 1
+        if (pas >= 0) expect(finDuFleuve(fils, pas)).toBe(fils.fin[k])
+        if (map.natureEau![i] === NATURE_RIVIERE) rivieres += 1
+      }
+    }
+    expect(lues).toBeGreaterThan(200)
+    // Chaque point de fil s'attache à SON fleuve (d2 = 0 : rien de plus proche) et se pêche en rivière.
+    expect(attaches).toBe(lues)
+    expect(rivieres).toBe(lues)
+  }, 60_000)
 })
 
 describe('A3 — l’eau dormante ne coule pas', () => {
@@ -755,6 +913,30 @@ describe('A11 — la voie exacte du rendu : la table d’attache et l’empreint
     expect(touchees.length).toBe(teintes)
     return teintes
   }
+
+  it('A2 (tous les fleuves) : la table et l’empreinte rendent la loi au bit près avec DEUX fleuves, la souillure au bout du premier comprise', () => {
+    const map = carteDeuxFleuves()
+    tableEstLaLoi(map)
+    const s = sim(map)
+    const t = s.tick
+    const n1 = map.fil!.length
+    s.souillures.push(
+      { i: idx(map, X1, RIVIERE_Y), tick: t, crans: 4, pas: n1 - 1 }, // le dernier pas du premier
+      { i: idx(map, AFFLUENT_X, AFFLUENT_Y0), tick: t - 100, crans: 2, pas: n1 }, // la source du second
+      { i: idx(map, AFFLUENT_X - 2, AFFLUENT_Y1 - 4), tick: t - 900, crans: 4, pas: attacheAuFil(map, AFFLUENT_X - 2, AFFLUENT_Y1 - 4) },
+      { i: idx(map, 40, RIVIERE_Y + 1), tick: t - 30, crans: 3, pas: attacheAuFil(map, 40, RIVIERE_Y + 1) },
+      { i: idx(map, LAC_X, LAC_Y), tick: t, crans: 4, pas: -1 },
+    )
+    const table = tableDAttache(map)
+    const force = new Float64Array(map.width * map.height)
+    const touchees: number[] = []
+    const teintes = empreinteEstLaLoi(s, table, force, touchees)
+    expect(teintes).toBeGreaterThan(100)
+    // Et la souillure du bout du premier fleuve n'a rien peint dans le second (sa source est
+    // teinte par SA souillure, à 2 crans — moins que 4 crans frais : on le lit à la force).
+    expect(force[idx(map, AFFLUENT_X, AFFLUENT_Y0)]).toBeLessThan(2 * SANG.FORCE_PAR_GOUTTE + 1e-12)
+    expect(force[idx(map, AFFLUENT_X, AFFLUENT_Y0)]).toBeGreaterThan(0)
+  })
 
   it('la table d’attache ≡ attacheAuFil sur toute la carte — le fleuve et le lac, puis le méandre', () => {
     tableEstLaLoi(carteRiviereEtLac())

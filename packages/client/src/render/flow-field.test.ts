@@ -103,3 +103,46 @@ describe('le champ de courant — le fil élargi en vecteurs (l’eau suit le fl
     expect(taperRive(0.3)).toBeLessThan(taperRive(0.5))
   })
 })
+
+describe('tous les fleuves (A2, 2026-09-12) — un second fleuve a son courant, et la confluence prend le plus proche', () => {
+  /** Le monde de `monde()`, plus un affluent VERTICAL (bande x∈[40..44], fil x=42) qui descend du
+   *  nord (y=2) jusqu'à la rivière (y=13), déclaré dans `fils` derrière le fleuve principal. */
+  function deuxFleuves(): { width: number; height: number; terrain: number[]; fil: number[]; fils: number[][] } {
+    const m = monde()
+    for (let y = 2; y <= 13; y++) for (let x = 40; x <= 44; x++) m.terrain[y * m.width + x] = EAU
+    const affluent: number[] = []
+    for (let y = 2; y <= 13; y++) affluent.push(y * m.width + 42)
+    return { ...m, fils: [m.fil, affluent] }
+  }
+
+  it('avec `fil` seul, l’affluent est une eau MORTE ; avec `fils`, il coule vers le sud', () => {
+    const m = deuxFleuves()
+    const { fils, ...filSeul } = m
+    void fils
+    const avant = buildFlowField(filSeul)!
+    expect(flowAt(avant, 42.5, 6.5), 'sans `fils` : rien ne coule dans l’affluent').toBeNull()
+    const apres = buildFlowField(m)!
+    const v = flowAt(apres, 42.5, 6.5)!
+    expect(v).not.toBeNull()
+    expect(v.y).toBeGreaterThan(0.9) // vers le sud, à pleine vitesse au milieu du lit
+    expect(Math.abs(v.x)).toBeLessThan(0.15)
+  })
+
+  it('le fleuve principal ne change pas d’un vecteur loin de la confluence, et la confluence prend le point le plus proche', () => {
+    const m = deuxFleuves()
+    const { fils, ...filSeul } = m
+    void fils
+    const avant = buildFlowField(filSeul)!
+    const apres = buildFlowField(m)!
+    // Loin de l'affluent (x = 10), le courant du fleuve principal est byte pour byte le même.
+    for (let y = 15; y <= 23; y++) expect(flowAt(apres, 10.5, y + 0.5)).toEqual(flowAt(avant, 10.5, y + 0.5))
+    // À la confluence, sur le fil de l'affluent une tuile au-dessus du fil principal (y = 18) : le
+    // point de fil le plus proche est celui de l'affluent (y=13 → 5) contre le principal (y=19 → 1)
+    // — non : c'est le PRINCIPAL qui gagne ici, à 1 tuile. Et sur y = 15, l'affluent (2) bat le
+    // principal (4) : les deux lois se lisent au même endroit.
+    const bas = flowAt(apres, 42.5, 18.5)!
+    expect(bas.x).toBeGreaterThan(0.5) // le courant du principal, vers l'est
+    const haut = flowAt(apres, 42.5, 15.5)!
+    expect(haut.y).toBeGreaterThan(0.3) // encore du sud dans le vecteur (lissé avec le principal)
+  })
+})

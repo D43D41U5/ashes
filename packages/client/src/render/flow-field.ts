@@ -1,8 +1,10 @@
 /**
  * LE CHAMP DE COURANT — la SOURCE UNIQUE de « où l'eau va » côté rendu.
  *
- * La worldgen garde le FIL de la rivière (`map.fil`, amont → aval, pas unitaires
- * 4-connexes). Ce module l'élargit en un champ de VECTEURS par tuile d'eau :
+ * La worldgen garde le FIL de chaque fleuve (`map.fils`, amont → aval, pas unitaires
+ * 4-connexes ; `map.fil` est le premier — TOUS se lisent depuis A2, 2026-09-12 : avant, seul le
+ * plus gros avait un courant, les autres étaient des lacs à l'écran). Ce module les élargit en
+ * un champ de VECTEURS par tuile d'eau :
  *   1. la TANGENTE LISSÉE du fil (fenêtre ±TANGENTE_FENETRE pas) — les marches de
  *      Manhattan du tracé deviennent des diagonales continues ;
  *   2. la peinture du couloir par PLUS-PROCHE-POINT du fil (min-distance, jamais
@@ -79,10 +81,12 @@ export function flowAt(field: FlowField, x: number, y: number): { x: number; y: 
   return field.courant.get(Math.floor(y) * field.width + Math.floor(x)) ?? null
 }
 
-/** Bâtit le champ depuis `map.fil`. `null` si la carte n'a pas de rivière. */
-export function buildFlowField(map: Pick<WorldMap, 'width' | 'height' | 'terrain' | 'fil'>): FlowField | null {
-  const fil = map.fil
-  if (!fil || fil.length < 2) return null
+/** Bâtit le champ depuis TOUS les fils (`map.fils`, sinon `map.fil`). `null` si la carte n'a
+ *  aucun fleuve d'au moins deux pas. À une confluence, chaque tuile prend la tangente du point
+ *  de fil LE PLUS PROCHE, quel que soit son fleuve — la même loi (plus-proche-point) qu'au méandre. */
+export function buildFlowField(map: Pick<WorldMap, 'width' | 'height' | 'terrain' | 'fil' | 'fils'>): FlowField | null {
+  const fils = (map.fils ?? (map.fil ? [map.fil] : [])).filter((f) => f.length >= 2)
+  if (fils.length === 0) return null
   const { width, height, terrain } = map
   const eau = (tx: number, ty: number): boolean => {
     if (tx < 0 || ty < 0 || tx >= width || ty >= height) return false
@@ -90,50 +94,54 @@ export function buildFlowField(map: Pick<WorldMap, 'width' | 'height' | 'terrain
     return t === SHALLOW || t === DEEP
   }
 
-  // ── 1. Les tangentes lissées, une par point du fil ──
-  const n = fil.length
-  const tangX = new Float32Array(n)
-  const tangY = new Float32Array(n)
-  for (let i = 0; i < n; i++) {
-    const a = fil[Math.max(0, i - TANGENTE_FENETRE)]!
-    const b = fil[Math.min(n - 1, i + TANGENTE_FENETRE)]!
-    const ax = a % width
-    const bx = b % width
-    const dx = bx - ax
-    const dy = (b - bx) / width - (a - ax) / width
-    const norme = Math.sqrt(dx * dx + dy * dy) || 1
-    tangX[i] = dx / norme
-    tangY[i] = dy / norme
-  }
-
-  // ── 2. La peinture par plus-proche-point : chaque tuile d'eau du couloir prend la
-  // tangente du point de fil le plus proche (distance euclidienne au carré — un
-  // dernier-écrit mettrait une couture franche à chaque méandre). Les tuiles jusqu'à
-  // DEMI_LIT + PASSES sont enrôlées comme CANDIDATES du lissage (l'exhalaison). ──
   const RAYON_CANDIDAT = DEMI_LIT + PASSES
-  const meilleure = new Map<number, { d2: number; i: number }>()
+  const meilleure = new Map<number, { d2: number; x: number; y: number }>()
   const candidates = new Set<number>()
-  for (let i = 0; i < n; i++) {
-    const p = fil[i]!
-    const px = p % width
-    const py = (p - px) / width
-    for (let oy = -RAYON_CANDIDAT; oy <= RAYON_CANDIDAT; oy++) {
-      for (let ox = -RAYON_CANDIDAT; ox <= RAYON_CANDIDAT; ox++) {
-        const tx = px + ox
-        const ty = py + oy
-        if (!eau(tx, ty)) continue // un index de fil peut être SEC (peinture sautée) — on revalide
-        const j = ty * width + tx
-        candidates.add(j)
-        if (Math.max(Math.abs(ox), Math.abs(oy)) > DEMI_LIT) continue
-        const d2 = ox * ox + oy * oy
-        const m = meilleure.get(j)
-        if (!m || d2 < m.d2) meilleure.set(j, { d2, i })
+  for (const fil of fils) {
+    // ── 1. Les tangentes lissées, une par point du fil — fleuve par fleuve (la fenêtre ne
+    // franchit pas une fin de fleuve : le dernier pas de l'un n'est pas l'amont du suivant). ──
+    const n = fil.length
+    const tangX = new Float32Array(n)
+    const tangY = new Float32Array(n)
+    for (let i = 0; i < n; i++) {
+      const a = fil[Math.max(0, i - TANGENTE_FENETRE)]!
+      const b = fil[Math.min(n - 1, i + TANGENTE_FENETRE)]!
+      const ax = a % width
+      const bx = b % width
+      const dx = bx - ax
+      const dy = (b - bx) / width - (a - ax) / width
+      const norme = Math.sqrt(dx * dx + dy * dy) || 1
+      tangX[i] = dx / norme
+      tangY[i] = dy / norme
+    }
+
+    // ── 2. La peinture par plus-proche-point : chaque tuile d'eau du couloir prend la
+    // tangente du point de fil le plus proche (distance euclidienne au carré — un
+    // dernier-écrit mettrait une couture franche à chaque méandre, et une couture franche à
+    // chaque confluence). Les tuiles jusqu'à DEMI_LIT + PASSES sont enrôlées comme CANDIDATES
+    // du lissage (l'exhalaison). ──
+    for (let i = 0; i < n; i++) {
+      const p = fil[i]!
+      const px = p % width
+      const py = (p - px) / width
+      for (let oy = -RAYON_CANDIDAT; oy <= RAYON_CANDIDAT; oy++) {
+        for (let ox = -RAYON_CANDIDAT; ox <= RAYON_CANDIDAT; ox++) {
+          const tx = px + ox
+          const ty = py + oy
+          if (!eau(tx, ty)) continue // un index de fil peut être SEC (peinture sautée) — on revalide
+          const j = ty * width + tx
+          candidates.add(j)
+          if (Math.max(Math.abs(ox), Math.abs(oy)) > DEMI_LIT) continue
+          const d2 = ox * ox + oy * oy
+          const m = meilleure.get(j)
+          if (!m || d2 < m.d2) meilleure.set(j, { d2, x: tangX[i]!, y: tangY[i]! })
+        }
       }
     }
   }
   if (meilleure.size === 0) return null
   let courant = new Map<number, { x: number; y: number }>()
-  for (const [j, m] of meilleure) courant.set(j, { x: tangX[m.i]!, y: tangY[m.i]! })
+  for (const [j, m] of meilleure) courant.set(j, { x: m.x, y: m.y })
 
   // ── 3. Les passes de moyenne 3×3 — eau seulement au dénominateur (la berge ne tire
   // pas le vecteur), l'eau sans courant compte pour zéro (le champ y expire). ──
