@@ -24,6 +24,7 @@ import {
   FAUNA,
   HUNT,
   MONSTER_DEFS,
+  SANG,
   TERRAINS,
   TERRAIN_ALPINE_FLOWERS,
   TERRAIN_ALPINE_MEADOW,
@@ -65,6 +66,8 @@ import { hash2 } from './noise'
 import { poissonPoints } from './poisson'
 import { rngRoll } from './rng'
 import { niveauDEau, porteDeLEau } from './eau'
+import { attacheAuFil } from './coulee'
+import { estGele } from './gel'
 import { effetsDuJour } from './modificateur'
 import { getGameTime, jourDeSaison } from './time'
 import type { Entity, SimState } from './sim'
@@ -1406,6 +1409,61 @@ function advanceBlood(state: SimState, byId: Map<number, Entity>): void {
   if (state.blood.length > 0) {
     state.blood = state.blood.filter((b) => state.tick - b.tick < HUNT.BLOOD_TTL)
   }
+  // LES SOUILLURES aussi — même patron, même cadence, même borne (`qualite-eau.md` Q5).
+  if (state.souillures.length > 0) {
+    state.souillures = state.souillures.filter((s) => state.tick - s.tick < SANG.TACHE_TICKS)
+  }
+
+  // LE NIVEAU D'EAU, HISSÉ (`eau.ts` : il est GLOBAL, et le relire par tuile paierait le
+  // rembobinage autant de fois qu'il y a de gouttes). Calculé à la première goutte seulement —
+  // un monde sans blessé ne le paie pas.
+  let niveau: number | undefined
+
+  /**
+   * LE SANG DANS L'EAU (`qualite-eau.md` Q3-Q5). Une goutte qui tombe sur une tuile qui porte
+   * de l'eau AUJOURD'HUI inscrit une souillure. Trois clauses, chacune une règle de la spec :
+   *   • l'étage (E-R22) : le sang versé sur un plancher est SUR le plancher, pas dans l'eau
+   *     d'en dessous — « un étage est une strate » ;
+   *   • la glace (Q3bis) : le sang est sur la glace, pas dans l'eau qu'elle couvre ;
+   *   • une tuile, une souillure (Q4) : les gouttes tombent toutes les 0,8 s — une souillure
+   *     par goutte noierait l'état. La tuile déjà souillée est RAFRAÎCHIE et montée d'un cran.
+   */
+  const souiller = (x: number, y: number, etage: number | undefined): void => {
+    if (etage !== undefined) return
+    const tx = Math.floor(x)
+    const ty = Math.floor(y)
+    // LE MARAIS ET LA ROSELIÈRE se souillent TOUJOURS, crue ou pas (Q7, décisions d'Alexis du
+    // 2026-09-12) : pour la loi de l'eau ils sont de la terre hors crue, et `porteDeLEau` y
+    // dirait non 363 jours sur 365.
+    const sol = terrainAt(state.map, tx, ty)
+    if (sol !== TERRAIN_MARSH && sol !== TERRAIN_REED_MARSH) {
+      if (niveau === undefined) niveau = niveauDEau(state)
+      if (!porteDeLEau(state, tx, ty, niveau)) return
+    }
+    if (estGele(state, tx, ty)) return
+    const i = ty * state.map.width + tx
+    for (const s of state.souillures) {
+      if (s.i !== i) continue
+      s.tick = state.tick
+      if (s.crans * SANG.FORCE_PAR_GOUTTE < SANG.FORCE_MAX) s.crans += 1
+      return // RAFRAÎCHIE : pas d'événement (Q10 — l'événement ne bégaie pas)
+    }
+    // L'attache au fil est prise UNE FOIS, à la naissance : elle ne bougera plus (Q6bis).
+    state.souillures.push({ i, tick: state.tick, crans: 1, pas: attacheAuFil(state.map, tx, ty) })
+    // LE PLAFOND ÉVINCE LA MOINS RÉCEMMENT NOURRIE (Q5), pas la plus anciennement créée : la
+    // rafraîchie reste à sa place dans le tableau, et un `shift()` jetait le gué qu'on saigne
+    // encore — recréé à un cran, sous le seuil, ré-annoncé (revue du 2026-09-12). Sans
+    // rafraîchissement, le `<` strict retombe exactement sur `shift()` ; et la neuve, qui porte
+    // le tick maximal, n'est jamais la victime.
+    if (state.souillures.length > SANG.TACHES_MAX) {
+      let v = 0
+      for (let k = 1; k < state.souillures.length; k++) {
+        if (state.souillures[k]!.tick < state.souillures[v]!.tick) v = k
+      }
+      state.souillures.splice(v, 1)
+    }
+    emitEvent(state, { type: 'water_fouled', tick: state.tick, tx, ty })
+  }
 
   // La goutte porte l'étage de qui saigne (E-R22 : absent au palier, comme `Entity.etage`) :
   // sans lui, le sang d'un blessé sur le chapeau se dessinait deux tuiles sous ses pieds.
@@ -1414,6 +1472,7 @@ function advanceBlood(state: SimState, byId: Map<number, Entity>): void {
     // Plafond FIFO : la plus vieille goutte s'efface. L'état reste petit, et le
     // snapshot avec — c'est la même discipline que la faune ambiante.
     if (state.blood.length > HUNT.BLOOD_CAP) state.blood.shift()
+    souiller(x, y, etage)
   }
 
   for (const m of state.monsters) {

@@ -32,6 +32,7 @@ export { POI,
   FOOD_VALUES,
   HUNT,
   LOOT_VALUES,
+  SANG,
   VENT,
   MONSTER_DEFS,
   MORTS,
@@ -463,7 +464,7 @@ export { collectNodeDeltas, createNodeShadow, seedNodeShadow, type NodeShadow } 
 export { advanceBraiseMeres, BRAISE_MERE, braiseBurnProgress, braiseFuelTicksRemaining, braiseMereArdente, foyersTenusParBraise } from './braise-mere'
 export { advanceTraction, applyTractionAction, facteurDAttelage, isTractionAction, TRACTABLES, TRACTION, type TractableKind, type TractionAction } from './traction'
 export { advanceBuchers, BUCHER, tenterLeRituel } from './bucher'
-export { COULEE, eauSouillee, type EtatDeCendre } from './coulee'
+export { attacheAuFil, COULEE, eauSouillee, qualiteDeLEau, type EtatDeCendre, type EtatQualiteEau, type Souillure } from './coulee'
 export { advanceMurmures, MURMURE, sitesDeCycle, sitesDeLaNuit, type EtatDeMurmure } from './murmure'
 export { filtreParInteret, INTEREST_RADIUS_TILES } from './interest'
 export type {

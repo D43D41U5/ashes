@@ -75,6 +75,11 @@ const REPLIS_EPHEMERES: Readonly<Record<string, () => unknown>> = {
   // finit plus, comme toute Veillée neuve. Bosser la version pour ça aurait rendu illisibles
   // toutes les vallées en cours, pour leur dire une chose qu'un repli dit mieux.
   finDeSaison: () => null,
+  // LE SANG DANS L'EAU (`qualite-eau.md`, 2026-09-12) : une souillure vit cinq minutes. Une
+  // Veillée d'avant le chantier n'en a jamais porté, et `[]` est SA vérité — une eau propre.
+  // Bosser la version pour un état qui s'évapore de lui-même aurait orphelinné toutes les
+  // vallées en cours pour rien.
+  souillures: () => [],
 }
 
 /** Recolle les champs éphémères absents d'une sauvegarde antérieure. Rend les clés manquantes. */
@@ -120,7 +125,7 @@ export const SAVE_REQUIRED_KEYS: readonly string[] = [
   // (Les clés des réfugiés — `refugeeGroups`, `nextRefugeeGroupId`, `lastRefugeeDay` — ont
   // quitté la liste avec le système, 2026-08-30. Une vieille sauvegarde qui les porte encore
   // recharge sans encombre : la garde exige la présence, elle ne refuse pas l'excédent.)
-  'lieuxBrules', 'nodes', 'npcs', 'presage', 'reveils', 'rngState', 'seasonEnded', 'seed', 'structures', 'tick',
+  'lieuxBrules', 'nodes', 'npcs', 'presage', 'reveils', 'rngState', 'seasonEnded', 'seed', 'souillures', 'structures', 'tick',
   'villages', 'visitedPois', 'wind', 'windForce', 'worldEvents',
 ]
 

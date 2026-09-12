@@ -19,6 +19,7 @@ import { advanceCombat, applyCombatAction, tientUnArc, type CombatAction, type C
 import { advanceSeparation } from './separation'
 import { advanceImpasse } from './impasse'
 import { advanceCendreux } from './cendreux'
+import type { Souillure } from './coulee'
 import { avanceesDepuisAges, avancerLaCendre, foyersDeLaCarte, jourDuReveilDeLaCendre, tomberLesMortsDeLaCendre } from './cendre'
 import { advanceBraiseMeres, foyersTenusParBraise } from './braise-mere'
 import { advanceBuchers } from './bucher'
@@ -479,6 +480,17 @@ export interface SimState {
    */
   blood: { x: number; y: number; tick: number; etage?: number }[]
   /**
+   * LE SANG DANS L'EAU (spec `qualite-eau.md`, Alexis 2026-09-12). Le SEUL état que l'eau
+   * garde — et c'est une dérogation assumée à la doctrine « tout est dérivé, rien n'est
+   * stocké » : une souillure est la conséquence d'un ÉVÉNEMENT local, que nul prédicat pur de
+   * `(tick, terrain)` ne saurait retrouver. Même patron que `blood` juste au-dessus (expiration
+   * + plafond FIFO), même raison : la sauvegarde ne doit pas grossir d'une saison à l'autre.
+   *
+   * ⚠ LA CARTE RESTE IMMUABLE : la souillure vit ICI, à côté de `map`, jamais dedans
+   * (`carte-immuable.test.ts` ne bouge pas d'un caractère pour ce chantier).
+   */
+  souillures: Souillure[]
+  /**
    * LE CAP DU VENT (spec `vent.md` V1/V4 ; l'odorat, chasse C17), un des huit relèvements —
    * DÉRIVÉ du front météo qui traverse, ou du relèvement d'ambiance entre deux fronts. L'odeur
    * DESCEND le vent : une menace au vent d'une bête la trahit, quels que soient son allure, son
@@ -691,6 +703,7 @@ export function createSim(seed: number, options: SimOptions = {}): SimState {
     dens: [],
     denRespawns: [],
     blood: [],
+    souillures: [],
     // Le vent de départ : le premier des huit relèvements. Il tournera (C17, `vent.md` V4).
     wind: { x: 1, y: 0 },
     // La force de départ : l'ambiance. La première phase la recalcule (`vent.md` V3).

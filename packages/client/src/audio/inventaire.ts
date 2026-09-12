@@ -68,7 +68,7 @@ export type Fait<T = SimEvent> = FaitSonore<T> | FaitMuet<T>
 export type Inventaire = { [K in SimEvent['type']]: Fait<Extract<SimEvent, { type: K }>> }
 
 /**
- * LES 66 FAITS. Exhaustif par le compilateur ; l'ordre d'écriture suit les familles pour
+ * LES 99 FAITS. Exhaustif par le compilateur ; l'ordre d'écriture suit les familles pour
  * qu'une relecture à l'œil reste possible.
  */
 export const INVENTAIRE: Inventaire = {
@@ -184,6 +184,11 @@ export const INVENTAIRE: Inventaire = {
   fishing_cancelled: { voix: 'voix', ou: 'entite', famille: 'batir', quoi: 'la ligne rentre : l’eau s’est retirée, a pris, ou ne donne rien' },
   fishing_junk: { voix: 'muet', famille: 'batir', quoi: 'on remonte un caillou — la récolte parle déjà' },
   fish_record: { voix: 'voix', ou: 'entite', famille: 'progres', quoi: 'la plus grosse prise de cette espèce — le bestiaire s’écrit' },
+  // L'EAU QUI SE SOUILLE (`qualite-eau.md` Q10, 2026-09-12) : MUET, et c'est décidé. Le fait
+  // est causé par le joueur lui-même (il vient de saigner une bête dans un gué) au milieu d'un
+  // combat qui sonne déjà de partout ; une voix de plus s'y noierait. Il se DIT à l'œil, quand
+  // la teinte du sang arrivera — le chantier client que la spec met hors périmètre.
+  water_fouled: { voix: 'muet', famille: 'saison', quoi: 'du sang entre dans une eau qui était propre' },
   structure_built: { voix: 'voix', ou: 'tuile', famille: 'batir', quoi: 'une pièce est posée' },
   structure_upgraded: { voix: 'muet', famille: 'batir', quoi: 'un mur passe au matériau suivant' },
   // LE PALIER DE BÂTI d'un village PNJ (spec village-pnj-evolution R6) : rare, et c'est LE

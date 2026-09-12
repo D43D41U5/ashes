@@ -68,7 +68,19 @@ const SUITES = [
   // 2026-09-11 : +5 gardes E-R5 §23 — l'approche vise l'étage de sa cible (`etages-etancheite`),
   //   puis +4 gardes T-A13 — le bord de terrasse n'est plus la grille de 8 (`terrasses.test.ts`,
   //   spec T-R11) — suite à 2305, plancher relevé quelques pourcents dessous.
-  { nom: 'sim', dir: 'packages/sim', args: ['run', '--exclude', 'src/scenario.test.ts'], plancher: 2275 },
+  // 2026-09-12 : +18 gardes avec LA QUALITÉ DE L'EAU (`qualite-eau.test.ts`, spec `qualite-eau.md`)
+  //   — la suie au plafond, le sang qui descend le fil, le coude qui ne coud pas, l'eau dormante,
+  //   les deux bornes, la glace qui protège, l'événement qui ne bégaie pas. Suite à 2328,
+  //   plancher relevé quelques pourcents dessous.
+  // 2026-09-12 : +3 gardes de REVUE sur le même lot — l'attache exhaustive sur le vrai monde joué
+  //   (A2ter, avec le témoin de la borne d'avant), le corps qui MARCHE en saignant (A4bis : un
+  //   événement par tuile, plafond et éviction par le vrai chemin) et la re-entrée (A8bis).
+  //   Suite à 2331.
+  // 2026-09-12 : +6 gardes de la revue `determinisme-sim` — l'éviction par le TICK (le gué qu'on
+  //   saigne n'est plus jeté), la portée du booléen que lit la pêche (épinglée en dur), le marais
+  //   qui se souille hors crue (décision d'Alexis) et son témoin, la sauvegarde d'avant le champ.
+  //   Suite à 2337 ; +1 avec la roselière (décision d'Alexis, même jour) — suite à 2338.
+  { nom: 'sim', dir: 'packages/sim', args: ['run', '--exclude', 'src/scenario.test.ts'], plancher: 2328 },
   // 2026-09-01 : +10 gardes avec le RENDU des étages (`plateau-art.test.ts`).
   // 2026-09-01 : +9 gardes avec le TRI DES ÉTAGES (strate, découvert — `framing.test.ts`),
   //   suite relevée à 1429 ✓, plancher recalé quelques pourcents dessous.
@@ -83,7 +95,9 @@ const SUITES = [
   // 2026-09-08 : +18 gardes avec LES OISEAUX (`vol-des-oiseaux.test.ts` : l'heure du vol est
   //   celle du chant, l'aube n'appartient qu'aux passereaux, l'aile fait l'aller-retour)
   //   — suite à 1565, plancher relevé quelques pourcents dessous.
-  { nom: 'client', dir: 'packages/client', args: ['run'], plancher: 1550 },
+  // 2026-09-12 : trois ASSERTIONS modifiées (aucun test ajouté) — les compteurs de l'inventaire audio recalés sur `water_fouled`
+  //   (99 faits, 42 silences décidés) : un fait muet est un fait COMPTÉ. Suite à 1565.
+  { nom: 'client', dir: 'packages/client', args: ['run'], plancher: 1556 },
   { nom: 'serveur', dir: 'packages/server', args: ['run'], plancher: 36 },
   // Le banc pilote le vrai worldgen sur la carte de production : lent, et seul à porter le
   // drapeau qui ignore les erreurs non gérées (voir l'en-tête de `scenario.test.ts`).

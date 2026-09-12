@@ -106,6 +106,15 @@ const HORS_REGLE = {
     cendreuxStep: 'sa mémoire, son arrivée, sa cible déjà élue, son waypoint — pas d’élection ici',
   },
   'impasse.ts': { advanceImpasse: 'le déplacement NET depuis sa propre ancre' },
+  'coulee.ts': {
+    // Pas un corps : une TUILE contre les waypoints d'un chemin fixé au worldgen (le fil de SA
+    // rivière) — même étagère que `followPath` de `npc.ts`, « waypoint de son propre chemin ».
+    attacheAuFil: 'une tuile contre les waypoints du fil de sa rivière — pas de second corps',
+    // La souillure est un champ AU SOL, scellé DEUX fois sans l'accesseur d'étage : ① à
+    // l'émission, `souiller` (faune.ts) refuse toute goutte qui porte un étage ; ② à la
+    // lecture, tout passe par `terrainAt`, donc par `map.terrain` — la seule strate du sol.
+    forceDUneSouillure: 'champ au sol : étage refusé à l’émission, lecture par `map.terrain` seulement',
+  },
   'npc.ts': {
     followPath: 'waypoint de son propre chemin — pas de second corps',
     executeBuild: 'choix d’une tuile libre adjacente — la marchabilité tranche',

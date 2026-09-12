@@ -148,6 +148,11 @@ export type SimEvent =
   /** ÇA MORDILLE (D11/T8) : le tirage n'a rien donné — pas de fenêtre, pas de réflexe à rater,
    *  une nouvelle attente. C'est le SIGNAL d'une eau pauvre : ça mordille sans jamais mordre. */
   | { type: 'fish_nibble'; tick: number; entityId: number; tx: number; ty: number }
+  /** L'EAU SE SOUILLE (`qualite-eau.md` Q10, 2026-09-12) : du sang vient d'entrer dans une eau
+   *  qui était propre. Émis à la CRÉATION de la souillure, jamais à son rafraîchissement — une
+   *  tuile ensanglantée mille ticks n'émet qu'une fois (A8). C'est la première entrée de l'eau
+   *  dans la chronique de saison : hors pêche, elle n'émettait rien. */
+  | { type: 'water_fouled'; tick: number; tx: number; ty: number }
   /** LA LIGNE RENTRE ET ON DIT POURQUOI (E4) : l'eau s'est retirée, l'eau est prise, ou ça ne
    *  mord pas ici. Une ligne qui disparaît sans un mot est un bug aux yeux du joueur. */
   | { type: 'fishing_cancelled'; tick: number; entityId: number; reason: string }

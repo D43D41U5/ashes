@@ -4628,6 +4628,45 @@ export const HUNT = {
 } as const
 
 /**
+ * ═══ LE SANG DANS L'EAU (spec `qualite-eau.md`, Alexis 2026-09-12) ═══
+ *
+ * Le PORTEUR de la qualité de l'eau est `coulee.ts` : une force, plusieurs causes, le
+ * maximum et jamais la somme. Ce bloc règle la cause SANG — celle qui se calibre EN JOUANT
+ * (est-ce qu'un gué saigné se lit ? est-ce que ça dure trop ?). Les trois distances de la
+ * coulée de suie, elles, restent dans `coulee.ts` : elles se calibrent en REGARDANT UNE CARTE.
+ *
+ * Le patron est celui de `HUNT.BLOOD_*` juste au-dessus : expiration + plafond FIFO. C'est
+ * le seul état que l'eau garde, et il est borné des deux côtés par construction.
+ */
+export const SANG = {
+  /** Le plafond FIFO des souillures vivantes. Un quart de `BLOOD_CAP` : une tuile de souillure
+   *  porte bien plus loin qu'une goutte au sol, et une tuile ne se compte qu'une fois (Q4). */
+  TACHES_MAX: 64,
+  /** L'expiration d'une souillure sans nouvelle goutte (~5 min). PLUS LONG que `BLOOD_TTL`
+   *  (3 min) : une rivière se lave plus lentement qu'un sol ne sèche. */
+  TACHE_TICKS: ticksFor(300),
+  /** Ce qu'une goutte ajoute à la force de sa tuile. Quatre gouttes (3,2 s de saignée) pour
+   *  atteindre le plafond — une écorchure ne condamne pas un bief, une mise à mort si. */
+  FORCE_PAR_GOUTTE: 0.25,
+  /** Le plafond de force d'une souillure : l'eau ne devient pas plus rouge que rouge. */
+  FORCE_MAX: 1,
+  /** Combien de PAS DE FIL l'odeur descend avant que la rivière se lave. Le même ordre de
+   *  grandeur que la suie (40) — c'est la même rivière qui charrie. */
+  DILUTION_PAS: 40,
+  /** Le rayon (Chebyshev) du disque en eau dormante. Court : une mare saignée reste sale LÀ. */
+  PORTEE_DORMANTE: 4,
+  /** À quelle distance (CHEBYSHEV, comme tout `coulee.ts`) du fil une goutte est encore « dans
+   *  le fleuve » (Q6bis). Au-delà, elle tombe dans une eau qui ne va nulle part et c'est le
+   *  disque qui s'applique. Dérivé du lit : demi-largeur + 1 — **la borne doit couvrir le lit
+   *  entier, COINS COMPRIS**, sinon un coin de lit se lit comme une mare au milieu d'une
+   *  rivière (c'est pour ça qu'elle se mesure en Chebyshev et non en euclidien). */
+  ATTACHE: 4,
+  /** La force à partir de laquelle `eauSouillee` dit oui — donc à partir de laquelle la pêche
+   *  et la buvée refusent. Sous un demi-cran de plus qu'une goutte : il en faut deux. */
+  SEUIL_SOUILLE: 0.3,
+} as const
+
+/**
  * ═══ L'IMPASSE — LE FILET SOUS TOUTES LES MACHINES À ÉTATS (2026-08-28) ═══
  *
  * Demande d'Alexis, capture `tremblement.png` : « je ne veux plus JAMAIS voir une

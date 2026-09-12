@@ -51,7 +51,10 @@ describe('l’inventaire des 97 faits', () => {
     // `bucher_rituel` (voix : le seul recul du monde, la seule montée).
     // 97 → 98 le 2026-08-31 : `attack_interrupted` (combat R4octies), famille `registre` —
     // il rejoint le raté et la parade, les gestes qui n'auront pas lieu.
-    expect(somme).toBe(98)
+    // 98 → 99 le 2026-09-12 : `water_fouled` (`qualite-eau.md` Q10), famille `saison` — du sang
+    // entre dans une eau propre. MUET décidé : le fait naît au milieu d'un combat qui sonne
+    // déjà, et il se dira à l'œil quand la teinte du sang arrivera.
+    expect(somme).toBe(99)
   })
 
   it('chaque fait DIT ce qu’il raconte — pas son identifiant', () => {
@@ -140,7 +143,9 @@ describe('l’inventaire des 97 faits', () => {
     // fantôme du chantier de rendu, cendre.md R27d).
     // 42 → 43 le 2026-08-30 : `bete_cendreuse_levee` (cendre.md R30), muet décidé — sa voix
     // viendra avec l'art du tertre, le lot visuel de la cendre.
-    expect(Object.keys(INVENTAIRE).length - SONORES.length).toBe(41)
+    // 41 → 42 le 2026-09-12 : `water_fouled` (`qualite-eau.md` Q10), muet décidé — la teinte du
+    // sang à l'eau le dira, et elle est un chantier client à part.
+    expect(Object.keys(INVENTAIRE).length - SONORES.length).toBe(42)
   })
 
   it('PLUS AUCUNE famille n’est entièrement muette, sauf celle qui l’est par décision', () => {
