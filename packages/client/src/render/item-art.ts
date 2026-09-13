@@ -75,6 +75,7 @@ export const ITEM_LABELS: Record<ItemId, string> = {
   salted_fish_gros: 'Gros poisson salé',
   salted_meat: 'Viande salée',
   sechoir: 'Séchoir',
+  fish_trap: 'Nasse',
   crude_rod: 'Canne de fortune',
   crude_knife: 'Couteau de fortune',
   bone: 'Os',
@@ -832,6 +833,36 @@ export const ITEM_PAINTS: Record<ItemId, ItemPaint> = {
     g.fillStyle(0x8a6a42).fillRect(2, 4, 12, 1) // la traverse
     g.fillStyle(0x9a8a6a).fillRect(5, 5, 1, 2).fillRect(10, 5, 1, 2) // les ficelles
     g.fillStyle(0x7a5a3a).fillRect(4, 7, 3, 5).fillRect(9, 7, 3, 5) // deux prises qui sèchent
+  },
+  // LA NASSE EN OBJET (`nasse.md` D3) : un ventre d'osier tressé et son GOULOT noir. Dans le
+  // sac il n'y a pas d'eau — c'est un panier qu'on porte ; c'est posée qu'elle s'immerge.
+  // LA NASSE EN OBJET : le MÊME panier que l'ouvrage posé (`bati-art`), au même dessin d'arceau
+  // ajouré — l'icône et la chose doivent se reconnaître l'une l'autre. Mon premier jet remplissait
+  // un ventre plein de 10×7 : dans la case, ça disait CAISSE, pas piège d'osier. Une seule
+  // différence avec la pièce posée, et elle est voulue : ici l'osier est SEC (ombres brunes),
+  // là-bas il passe sous la surface (ligne d'eau vert d'algue). Dans le sac, rien n'est immergé.
+  fish_trap: (g) => {
+    g.fillStyle(0xb09a72).fillRect(6, 4, 4, 1) // la rive haute, éclairée
+    g.fillStyle(0x8a6a42).fillRect(4, 5, 2, 1)
+    g.fillStyle(0x8a6a42).fillRect(10, 5, 2, 1)
+    g.fillStyle(0x6a5232).fillRect(3, 6, 1, 1)
+    g.fillStyle(0x6a5232).fillRect(12, 6, 1, 1)
+    g.fillStyle(0x4a3520).fillRect(2, 7, 1, 3) // les flancs, les plus sombres
+    g.fillStyle(0x4a3520).fillRect(13, 7, 1, 3)
+    g.fillStyle(0x4a3520).fillRect(3, 10, 1, 1)
+    g.fillStyle(0x4a3520).fillRect(12, 10, 1, 1)
+    g.fillStyle(0x5a4428).fillRect(4, 11, 2, 1) // le dessous, dans l'ombre — SEC, pas immergé
+    g.fillStyle(0x5a4428).fillRect(10, 11, 2, 1)
+    g.fillStyle(0x3a2c1a).fillRect(6, 12, 4, 1)
+    g.fillStyle(0x8a6a42).fillRect(6, 6, 1, 5) // les deux brins en travers…
+    g.fillStyle(0x8a6a42).fillRect(9, 6, 1, 5)
+    g.fillStyle(0xa5875c).fillRect(4, 8, 8, 1) // …et celui du long, qui accroche la lumière
+    // LE GOULOT, au même noir que l'ouvrage posé — `0x1a120c` et non `0x241a10` : la garde des
+    // teintes partagées a refusé celui-là dans `bati-art` (trois écrans le portaient), et l'icône
+    // suit la pièce. La forme `0x` échappe au comptage de la garde, qui ne lit que les `#` : la
+    // suivre quand même est le seul moyen que les deux dessins restent UNE seule idée.
+    g.fillStyle(0x1a120c).fillRect(10, 7, 3, 3)
+    g.fillStyle(0x0d0906).fillRect(11, 8, 1, 1) // son fond, d'où rien ne ressort
   },
   // LA CANNE DE FORTUNE : une branche en diagonale (des marches), une corde qui pend de la
   // pointe, un crochet de deux pixels. Le bois de l'arc de fortune, la corde de la corde.

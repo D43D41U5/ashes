@@ -61,6 +61,9 @@ export const RECIPE_CATEGORY: Record<RecipeId, CraftCategory> = {
   // LE COFFRE (décision d'Alexis) : fabriqué à la main, posé en objet tenu — plus au marteau.
   chest: 'campement',
   sechoir: 'campement', // la claie du bord de l'eau : on la pose à son camp (peche.md S1)
+  // LA NASSE (nasse.md D3) : du campement comme le séchoir, son frère de `peche.md` — mais
+  // elle, on ne la pose PAS au camp : `horsVillage` la veut dans l'eau, là où l'on cueille.
+  fish_trap: 'campement',
   braise_mere: 'composants', // la parade de la cendre : forgée N2, posée à la frange (cendre.md R28)
   crude_axe: 'outils',
   crude_pickaxe: 'outils',

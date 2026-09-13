@@ -308,6 +308,11 @@ export type ItemId =
   /** LE JARDIN DE SUIE (`agriculture.md` J1) : la terre du Grand Froid, fabriquée au Feu
    *  (bois + cendre — l'item `ash` trouve son consommateur), posée SUR sol cendré. */
   | 'parcelle_de_suie'
+  /** LA NASSE EN OBJET (`nasse.md`, reprise de l'eau D3) : on la tresse (8 fibres, à la main),
+   *  on la porte, on la POSE dans les hauts-fonds (`place_component`, comme le coffre et le
+   *  séchoir). C'est cet `ItemId` qui manquait pour qu'un joueur puisse en avoir une : la pièce
+   *  et son système existaient depuis le 2026-09-13, mais rien ne pouvait en produire. */
+  | 'fish_trap'
 
 /** Une case occupée. `wear` absent = neuf ; un empilable n'a jamais d'usure. */
 export interface Slot {

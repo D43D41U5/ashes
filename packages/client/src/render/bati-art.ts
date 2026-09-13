@@ -308,6 +308,83 @@ const PIECES: readonly Piece[] = [
       return [ARETE(yf), { path: [[2, T], [2, yf]] }, { path: [[T - 2, T], [T - 2, yf]] }]
     },
   },
+  // ── LA NASSE : un panier d'osier COUCHÉ dans les hauts-fonds (`nasse.md`, D3) ─
+  // ⚠ LA PREMIÈRE PIÈCE JAMAIS DESSINÉE SUR L'EAU. Le `floor` est l'autre pièce `eau: true`,
+  // mais c'est une couche MOLLE, sans art : le fond de la nasse n'est donc pas de la terre,
+  // c'est le shader d'eau — qui BOUGE et qui est froid. Deux partis en découlent :
+  //   · une PLAGE DE VALEURS QUI LUI APPARTIENT — et c'est une correction, pas le plan d'origine.
+  //     J'avais écrit ici « un osier chaud, à contre-teinte du BLEU-VERT de l'eau ». La prémisse
+  //     était fausse, et c'est le navigateur qui l'a dit (zoom 8, cadrage imposé sur la tuile,
+  //     terrain relevé dans la sim : haut-fond) : le haut-fond des Prés Bas rend PÂLE, gris-sable
+  //     et pas bleu, et mon ocre chaud s'y noyait — valeur contre valeur, seul le goulot noir
+  //     ressortait. Surtout, une nasse se pose sur N'IMPORTE QUELLE rive (`horsVillage` : c'est
+  //     la décision d'Alexis), donc elle n'a PAS un fond à contrer : elle doit porter son
+  //     contraste EN ELLE. D'où l'échelle complète dans 16 px — rive haute claire (elle prend le
+  //     ciel), flancs et dessous les plus sombres du dessin, tressage chaud au milieu, goulot
+  //     noir : ça tient sur une eau pâle comme sur une eau profonde ;
+  //   · un ARCEAU AJOURÉ, et pas une masse. Mon premier jet empilait des rangées PLEINES sur
+  //     toute la largeur : vu à 16× au navigateur, ça ne disait pas « nasse », ça disait POT —
+  //     un pot de terre bombé, avec une trappe noire sur le flanc. Le séchoir, juste au-dessus,
+  //     énonce la règle que j'avais oubliée : « pas de boîte — c'est un cadre ajouré, et le sol
+  //     se voit entre les barres ». Ici, ce qui se voit entre les brins, c'est L'EAU : les
+  //     claires-voies sont ce qui fait lire un corps IMMERGÉ plutôt qu'une caisse POSÉE dessus.
+  //     Une silhouette pleine, sur un fond qui bouge, se lit toujours comme un objet flottant.
+  // ⚠ `dresse: true` — ET J'AVAIS ÉCRIT `false`, en me disant « elle est COUCHÉE, le miroir
+  // n'apporte rien à un panier vu de dessus ». Le tort n'était pas l'esthétique : c'était de
+  // mettre le PREMIER `false` dans une table qui promet le contraire en tête (champ `dresse` :
+  // « Toutes celles de cette table le sont »). Car `snapshot-view` (l.1892) est le SEUL appelant
+  // de `cleLit` du client à passer le bit de miroir NU — `cleLit('st-<type>', mirS)` — quand la
+  // clôture (l.1902), le mur ruiné (l.2051), le fouillis, les nœuds et les POI le conjuguent
+  // tous avec la capacité de leur famille (`mirS && masqueSeRetourne(m)`,
+  // `mirror && CLUTTER_DRESSE.has(kind)`…). Il le peut PARCE QUE l'invariant tient.
+  // Or `mirS` est un HASH DE LA TUILE (`miroirDeTuile = hash2(tx, ty, 0x5117) >= 0,5`) : une
+  // tuile sur deux réclame `st-fish_trap_lit_m`. Mon `false` n'apprenait donc rien au rendu — il
+  // RETIRAIT une clé que le rendu demandait quand même, et la nasse sortait en TEXTURE MANQUANTE
+  // de Phaser (le carré vert barré) sur une rive sur deux. Vu AU NAVIGATEUR, et là seulement :
+  // invisible à `tsc`, au lint, et à la partition `_lit` qui ne connaissait que la clé sans
+  // miroir. Le miroir d'un panier couché est inoffensif ; un `false` ici ne l'est pas.
+  // Une garde de `bati-art.test` affirme désormais le retourné pour toute la table.
+  {
+    type: 'fish_trap', dresse: true,
+    dessiner: (g) => {
+      // LE CERCLE D'OSIER, en ARCEAU et non en masse : c'est un contour d'une tuile de large,
+      // clair au sommet (il prend le ciel) et vert d'algue en bas (il est immergé).
+      rect(g, '#b09a72', 6, 4, 4, 1) //    LA RIVE HAUTE, la plus claire : elle prend le ciel
+      rect(g, '#8a6a42', 4, 5, 2, 1)
+      rect(g, '#8a6a42', 10, 5, 2, 1)
+      rect(g, '#6a5232', 3, 6, 1, 1)
+      rect(g, '#6a5232', 12, 6, 1, 1)
+      rect(g, '#4a3520', 2, 7, 1, 3) //    LES FLANCS, les plus sombres : c'est eux qui tiennent
+      rect(g, '#4a3520', 13, 7, 1, 3) //   la silhouette sur une eau PÂLE
+      rect(g, '#4a3520', 3, 10, 1, 1)
+      rect(g, '#4a3520', 12, 10, 1, 1)
+      rect(g, '#3a4a30', 4, 11, 2, 1) //   LA LIGNE D'EAU : l'osier passe sous la surface
+      rect(g, '#3a4a30', 10, 11, 2, 1)
+      rect(g, '#2e3a24', 6, 12, 4, 1) //   le dessous, sous l'eau — le point le plus bas en valeur
+      // LE TRESSAGE — deux brins en travers, un dans le long : ils laissent quatre claires-voies
+      // par lesquelles L'EAU SE VOIT, et c'est l'eau qui dit « dedans » plutôt que « dessus ».
+      rect(g, '#8a6a42', 6, 6, 1, 5)
+      rect(g, '#8a6a42', 9, 6, 1, 5)
+      rect(g, '#a5875c', 4, 8, 8, 1) //    le brin du long, qui accroche la lumière
+      // LE GOULOT — le seul noir : « piège », pas « corbeille ». ⚠ Et PAS le `0x241a10` que
+      // j'avais écrit d'abord : la garde des teintes partagées (`palette.test`) l'a refusé, et
+      // elle avait raison — l'anneau de chargement le portait déjà en dur dans DEUX écrans
+      // (`menu-dom`, `loading`), ma ligne en faisait le TROISIÈME, et au-delà de trois fichiers
+      // une teinte a gagné son nom. La nommer aurait fait entrer la palette de l'INTERFACE dans
+      // l'art procédural, qui a ses propres constantes : on ne se cogne donc pas, on prend le
+      // noir que ce module possède déjà — plus sombre encore (26,18,12 contre 36,26,16).
+      // ⚠ ET LA GARDE COMPTE LES COMMENTAIRES. Mon premier correctif a échoué EXACTEMENT comme
+      // l'original : j'avais écrit la teinte refusée en toutes lettres, croisillon compris, dans
+      // la phrase qui explique qu'on ne l'emploie plus — or la garde lit la source BRUTE
+      // (`import.meta.glob(… ?raw)`) et cherche `#` + six chiffres, sans distinguer le code du
+      // commentaire. L'explication maintenait donc la couleur en vie pour le compteur. D'où la
+      // forme `0x` ci-dessus : elle échappe au motif, et dit la même chose au lecteur.
+      rect(g, '#1a120c', 10, 7, 3, 3)
+      rect(g, '#0d0906', 11, 8, 1, 1) //   son fond, d'où rien ne ressort
+      // Les brins tressés en JOINTS : le long, puis les deux travers.
+      return [{ path: [[4, 8], [12, 8]] }, { path: [[6, 6], [6, 11]] }, { path: [[9, 6], [9, 11]] }]
+    },
+  },
   // ── LA BRAISE-MÈRE : un brasero — socle de pierre, vasque de fer, la braise ─
   // (spec `cendre.md` R28). Elle doit se lire de LOIN comme une source de chaleur qui n'est
   // pas un feu : la braise AFFLEURE, elle ne flambe pas — un liseré chaud sur du fer sombre.

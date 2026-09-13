@@ -43,6 +43,41 @@ describe('les clés', () => {
     for (const plat of ['friche', 'terre', 'roc', 'floor', 'roof']) expect(BATI_LIT_TYPES.has(plat)).toBe(false)
   })
 
+  /**
+   * ⚠ LE MIROIR N'EST PAS UNE COQUETTERIE : LE RENDU L'EXIGE UNE TUILE SUR DEUX.
+   *
+   * `snapshot-view` (l.1892) peint une pièce avec `cleLit('st-<type>', miroirDeTuile(tx, ty))`,
+   * et `miroirDeTuile` est un HASH DE LA TUILE (`hash2(tx, ty, 0x5117) >= 0,5`) : la moitié du
+   * monde demande donc la clé `_lit_m`. Une pièce déclarée `dresse: false` ne la génère pas —
+   * et elle sort alors en TEXTURE MANQUANTE de Phaser (le carré vert barré) sur ces tuiles-là,
+   * et SEULEMENT sur celles-là.
+   *
+   * C'est arrivé à la NASSE le 2026-09-13, et rien ne l'a vu : ni `tsc` (aucune table
+   * `Record<StructureType, …>` ne couvre les clés de texture), ni le lint, ni la partition
+   * `_lit` de `lit-coverage` — qui exige une `_lit` et ignorait le miroir. Seul le navigateur
+   * l'a dit. D'où cette garde : ce qui s'est vu à l'œil une fois doit rougir tout seul ensuite.
+   *
+   * ⚠ ET VOICI CE QUI LA TUERAIT, écrit pour qui viendra : elle ne vaut QUE TANT QUE
+   * `snapshot-view` l.1892 passe `mirS` NU. Si un jour cet appelant conjugue le bit avec une
+   * capacité — comme le font déjà ses cinq voisins (`mirS && masqueSeRetourne(m)`,
+   * `mirror && CLUTTER_DRESSE.has(kind)`, `mir && POI_LIT_DRESSES.has(slug)`…) — alors plus
+   * personne ne réclamera le retourné d'une pièce couchée, et cette garde deviendra *une loi
+   * livrée sans appelant* : c'est ELLE qu'il faudra retirer, et non le miroir qu'il faudra
+   * conserver pour lui faire plaisir. Une garde doit nommer son demandeur.
+   */
+  it('donnent son MIROIR `_lit_m` à CHAQUE pièce — le rendu le réclame une tuile sur deux', () => {
+    for (const type of BATI_LIT_TYPES) {
+      // `cloture` et `encadrement` sont AUTOTUILÉS, et leurs appelants CONJUGUENT le bit de
+      // miroir avec leur capacité réelle : `mirS && masqueSeRetourne(m)` (snapshot-view l.1902
+      // et 2051). La clôture n'a donc son retourné que sur les SEPT masques que le miroir laisse
+      // en place, l'encadrement n'en a AUCUN — et ni l'une ni l'autre ne peut réclamer une clé
+      // absente. Les PIÈCES, elles, reçoivent `mirS` NU (l.1892) : pour elles le retourné n'est
+      // pas optionnel, et c'est exactement ce que cette garde tient.
+      if (type === 'cloture' || type === 'encadrement') continue
+      expect(BATI_KEYS, `st-${type}_lit_m manque : carré vert sur une tuile sur deux`).toContain(`st-${type}_lit_m`)
+    }
+  })
+
   it('n’ont aucun doublon', () => {
     expect(new Set(BATI_KEYS).size).toBe(BATI_KEYS.length)
   })

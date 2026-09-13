@@ -2436,6 +2436,8 @@ export type RecipeId =
   | 'terroir'
   | 'parcelle_de_suie'
   | 'chest'
+  // LA NASSE (`nasse.md`, reprise de l'eau D3) : à la MAIN, sans poste — voir sa ligne.
+  | 'fish_trap'
 
 export interface Recipe {
   /**
@@ -2511,6 +2513,14 @@ export const RECIPES: Record<RecipeId, Recipe> = {
   // demande pas d'atelier, ça demande d'y penser la veille. Bois et corde, les deux matières
   // de la première nuit.
   sechoir: { requiert: null, inputs: { wood: 6, rope: 2 }, output: 'sechoir', seconds: 8 },
+  // LA NASSE (`nasse.md`, reprise de l'eau D3) — À LA MAIN et SANS PALIER DE CORDE, là où le
+  // séchoir en demande deux : la fibre est son essence (c'est de l'osier tressé, pas du bois
+  // ficelé), et on la veut TÔT — dès qu'on a cueilli à la roselière, sans passer par la corde.
+  // Le coût MIROITE `STRUCTURE_COSTS.fish_trap` (8 fibres) : pour une pièce `pose: 'objet'`,
+  // `place_component` ne prélève RIEN — il consomme l'objet tenu — donc cette ligne est le
+  // SEUL prix de la nasse, et le faire diverger du `cout` du registre mettrait deux chiffres
+  // en circulation pour une seule idée.
+  fish_trap: { requiert: null, inputs: { fiber: 8 }, output: 'fish_trap', seconds: 7 },
   // LA BRAISE-MÈRE (spec `cendre.md` R28a) — Forge N2, et SON COÛT EST L'AMORCE : le cœur de
   // braise (R29) entre dans la recette. La défense se paie d'abord en courage.
   braise_mere: { requiert: FORGE_N2, inputs: { stone: 8, iron_ingot: 2, coeur_de_braise: 1 }, output: 'braise_mere', seconds: 14 },
@@ -6920,6 +6930,10 @@ export const ITEM_WEIGHT: Record<import('./items').ItemId, number> = {
   torche_vive: 1,
   // Le SÉCHOIR en objet : une claie encombrante, comme le coffre (`peche.md` S1).
   sechoir: 5,
+  // LA NASSE en objet (`nasse.md` D3) : de l'osier tressé — ENCOMBRANT mais CREUX. Moins
+  // qu'une claie de bois (5), plus qu'un outil : on la porte jusqu'à la rive sans y penser,
+  // et c'est voulu — la nasse doit être un geste du premier jour, pas une expédition.
+  fish_trap: 3,
   // LA BRAISE-MÈRE en objet : un brasero de pierre et de fer — la pièce la plus lourde qu'on
   // porte, et elle se porte LOIN (la frange n'attend pas au village).
   braise_mere: 7,

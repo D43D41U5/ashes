@@ -371,12 +371,26 @@ export const PIECES = {
    * `fiber` et non un item `roseau` : la roselière en donne déjà (les « roseaux, sphaigne » de
    * `economy.ts`). C'est la réponse à « à quoi sert un roseau » — les roseaux qu'on y cueille
    * deviennent le piège. Aucune matière neuve, aucun nœud neuf, l'empreinte de carte ne bouge pas.
+   *
+   * `horsVillage: true` — DÉCISION D'ALEXIS (2026-09-13, ma reco), et c'est ce qui rend la nasse
+   * atteignable pour de bon. Sans ce drapeau, `place_component` refuse deux fois : « sans village
+   * — fonder un foyer d'abord », puis « hors du carré du Feu » (rayon 10/13/16 tuiles AUTOUR DU
+   * FEU). Or le carré est centré sur le foyer, pas sur l'eau : un village fondé à l'écart d'une
+   * rive n'aurait JAMAIS pu poser de nasse, et l'axe D3 (« pourquoi aller à la roselière »)
+   * mourait — on ne peut pas donner une raison d'aller au bord si le piège ne se pose pas
+   * là-bas. Elle rejoint donc `braise_mere` et `parcelle_de_suie`, les pièces de la FRANGE :
+   * posable sur n'importe quelle eau, même sans foyer (elle naît alors `villageId: 0`, le
+   * statut du feu de camp). ⚠ La propriété tient quand même : `addStructure` inscrit
+   * `ownerId = actorId`, et `hasAccess` teste le propriétaire AVANT le village — une nasse de
+   * rive n'appartient donc à personne d'autre, ce qui est exactement la décision « PERSONNELLE ».
+   * ⚠ Divergence assumée : le SÉCHOIR, son frère de `peche.md` (même `fam`, même `pose`), reste
+   * lui lié au carré du Feu. Le matériel de pêche suit donc deux règles — à rouvrir si ça gêne.
    */
   fish_trap: {
     label: 'Nasse', fam: 'mobilier', pose: 'objet', occupe: 'tuile', arete: 'interdite',
     sousRoche: false,
     bloque: 'non', pv: 40, cout: { fiber: 8 }, acces: 'private', eau: true, usurable: true,
-    eauSeule: true,
+    eauSeule: true, horsVillage: true,
     capacite: 8,
   },
   /**

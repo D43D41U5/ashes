@@ -30,6 +30,8 @@ import {
   BALANCE,
   FISH_SPECIES,
   NASSE,
+  RECIPES,
+  STRUCTURE_COSTS,
   TERRAIN_DEEP_WATER,
   TERRAIN_GRASS,
   TERRAIN_SHALLOW_WATER,
@@ -462,5 +464,111 @@ describe('N13 — déterministe, et MUETTE quand il n’y a pas de nasse', () =>
     advanceNasses(sim)
     expect(sim.rngState).toBe(avant)
     expect(drainEvents(sim)).toHaveLength(0)
+  })
+})
+
+// ── N16 — ATTEIGNABLE POUR DE BON : fibre → nasse tenue → rive ───────────────
+/**
+ * POURQUOI CETTE GARDE EXISTE, ET CE QU'ELLE RATTRAPE.
+ *
+ * Le 2026-09-13, la nasse a été livrée COMPLÈTE, dérivée et gardée — et parfaitement
+ * INJOUABLE : aucune recette ne la produisait, elle n'avait pas d'`ItemId`, et `build` ne
+ * prend qu'un `BarrierType`. Dix-neuf gardes vertes sur une loi que rien n'appelait (*une
+ * loi livrée sans appelant*). Toutes posaient la nasse À LA MAIN dans l'état — ce qui est
+ * légitime pour éprouver la PÊCHE, et incapable de voir que personne ne peut en avoir une.
+ *
+ * Une garde qui BALAIERAIT les tables (« `fish_trap` est-il bien dans `RECIPES` ? ») se
+ * fabriquerait ses propres conditions (*garde d'atteignabilité au runtime*). Celle-ci joue
+ * la CHAÎNE ENTIÈRE avec les actions réelles du joueur — fabriquer, tenir, poser — et elle
+ * rougit si l'une des trois portes se referme, y compris pour une raison qu'on n'a pas prévue.
+ */
+describe('N16 — un joueur peut VRAIMENT en avoir une, et la poser au bord', () => {
+  /** La tuile d'HERBE d'où l'on se penche : le lac d'essai commence à `LAC.x0 - 1` = 19. */
+  const RIVE_TX = 18
+
+  const mondeNu = (): SimState =>
+    createSim(2026, {
+      map: carteDEssai(),
+      nodes: [],
+      faunaCap: 0,
+      worldEvents: false,
+      meteoActive: false,
+      jourDeDepart: JOUR_DOUX,
+    })
+
+  /** Fabrique par l'action RÉELLE, et rend le nombre de nasses en sac. La recette a une durée
+   *  (`seconds`) : on laisse tourner la vraie boucle, borné — un `while(true)` mentirait. */
+  function fabriquer(sim: SimState, id: number): number {
+    const sac = (): number => countOf(sim.entities.find((e) => e.id === id)!.inventory, 'fish_trap')
+    step(sim, [{ entityId: id, dx: 0, dy: 0, action: { type: 'craft', recipeId: 'fish_trap' } }])
+    for (let i = 0; i < 40 * BALANCE.TICK_RATE_HZ && sac() === 0; i++) step(sim, [{ entityId: id, dx: 0, dy: 0 }])
+    return sac()
+  }
+
+  function tenirLaNasse(sim: SimState, id: number): void {
+    const e = sim.entities.find((x) => x.id === id)!
+    e.activeSlot = e.inventory.findIndex((c) => c !== null && c.item === 'fish_trap')
+  }
+
+  it('le PRIX est un seul chiffre : la recette miroite le coût du registre', () => {
+    // `place_component` ne prélève RIEN (il consomme l'objet tenu) : cette ligne est donc le
+    // SEUL prix de la nasse, et deux chiffres pour une idée finiraient par diverger.
+    expect(RECIPES.fish_trap.inputs, 'la recette et le registre disent la même chose').toEqual(STRUCTURE_COSTS.fish_trap)
+    expect(RECIPES.fish_trap.output, 'elle rend bien l’objet du même nom').toBe('fish_trap')
+    expect(RECIPES.fish_trap.requiert, 'à la MAIN : on la veut tôt, sans atelier').toBe(null)
+  })
+
+  it('huit fibres deviennent une nasse posée dans les hauts-fonds — SANS VILLAGE', () => {
+    const sim = mondeNu()
+    const id = spawnEntity(sim, RIVE_TX + 0.5, NASSE_TY + 0.5)
+    const e = sim.entities.find((x) => x.id === id)!
+
+    // ═══ LES PRÉMISSES, AFFIRMÉES ═══ sans elles, tout ce qui suit passerait par accident.
+    expect(sim.villages, 'la prémisse de `horsVillage` : il n’y a AUCUN village dans ce monde').toHaveLength(0)
+    expect(sim.structures.some((s) => s.type === 'fish_trap'), 'et aucune nasse au départ').toBe(false)
+
+    addItems(e.inventory, RECIPES.fish_trap.inputs) // exactement son prix, pas un brin de plus
+    expect(fabriquer(sim, id), 'la fibre est devenue une nasse qu’on TIENT').toBeGreaterThan(0)
+    tenirLaNasse(sim, id)
+
+    drainEvents(sim) // ce qu'on mesure, c'est le refus de LA POSE
+    step(sim, [{ entityId: id, dx: 0, dy: 0, action: { type: 'place_component', tx: NASSE_TX, ty: NASSE_TY } }])
+    for (const ev of drainEvents(sim)) {
+      if (ev.type !== 'action_rejected') continue
+      const raison = (ev as { reason?: string }).reason ?? ''
+      expect(raison.includes('village'), `refus « ${raison} » : l’exemption horsVillage a fui`).toBe(false)
+      expect(raison.includes('carré'), `refus « ${raison} » : l’exemption horsVillage a fui`).toBe(false)
+    }
+
+    const posee = sim.structures.find((s) => s.type === 'fish_trap')
+    expect(posee, 'la nasse est POSÉE, sans foyer, au bord où l’on cueille').toBeDefined()
+    expect(posee!.tx, 'sur la tuile visée').toBe(NASSE_TX)
+    expect(posee!.villageId, 'au statut du feu de camp').toBe(0)
+    // LA PROPRIÉTÉ TIENT MALGRÉ `villageId: 0` — c'est la décision « PERSONNELLE » : `hasAccess`
+    // teste le PROPRIÉTAIRE avant le village, sinon une nasse de rive n'aurait plus de maître.
+    expect(posee!.ownerId, 'et elle a un maître').toBe(id)
+    expect(hasAccess(sim, id, posee!), 'son propriétaire la relève').toBe(true)
+    const autre = spawnEntity(sim, RIVE_TX + 0.5, NASSE_TY + 1.5)
+    expect(hasAccess(sim, autre, posee!), 'un autre n’y touche pas — elle est PERSONNELLE').toBe(false)
+    expect(posee!.inventory, 'et elle est prête à recevoir appât et prise').toBeDefined()
+  })
+
+  it('LE TÉMOIN D’`eauSeule` : la même nasse en main, sur l’herbe, est REFUSÉE', () => {
+    // Sans cette porte, huit fibres se dépenseraient sur un ouvrage mort — un piège à poissons
+    // sur l'herbe ne prendrait jamais rien. Et c'est le témoin qui prouve que la garde d'à côté
+    // ne passe pas au vert parce que « poser marche toujours ».
+    const sim = mondeNu()
+    const id = spawnEntity(sim, RIVE_TX + 0.5, NASSE_TY + 0.5)
+    const e = sim.entities.find((x) => x.id === id)!
+    const HERBE_TX = RIVE_TX - 1 // à portée, jamais sous ses pieds
+    expect(terrainConstructible(sim.map.terrain[NASSE_TY * sim.map.width + HERBE_TX]!, 'fish_trap'),
+      'la prémisse : cette tuile est bien de l’herbe, et l’herbe la refuse').toBe(false)
+
+    addItems(e.inventory, RECIPES.fish_trap.inputs)
+    expect(fabriquer(sim, id), 'elle est bien en sac').toBeGreaterThan(0)
+    tenirLaNasse(sim, id)
+    step(sim, [{ entityId: id, dx: 0, dy: 0, action: { type: 'place_component', tx: HERBE_TX, ty: NASSE_TY } }])
+    expect(sim.structures.some((s) => s.type === 'fish_trap'), 'rien n’est posé sur la terre ferme').toBe(false)
+    expect(countOf(e.inventory, 'fish_trap'), 'et la nasse est TOUJOURS en sac : rien n’a été gaspillé').toBeGreaterThan(0)
   })
 })

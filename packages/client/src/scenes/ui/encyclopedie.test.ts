@@ -252,6 +252,13 @@ describe('l’encyclopédie — la couverture des tables', () => {
     'campfire', 'chest', 'sechoir', 'enclume', 'furnace', 'four_acier', 'workshop',
     'tour_meca', 'atelier_lourd', 'silo', 'cave', 'reserve', 'parcelle', 'serre', 'terroir',
     'parcelle_de_suie',
+    // LA NASSE (`nasse.md`, reprise de l'eau D3) : du bâti posable elle aussi — l'OUVRAGE qu'on
+    // tresse et qu'on pose dans les hauts-fonds, donc un MOYEN et non une rencontre. Elle suit
+    // le séchoir, son frère de `peche.md`. ⚠ Ce qui se rencontre, ce sont ses PRISES, et elles
+    // ont déjà leurs cases (les dix-huit espèces de la table de pêche, section POISSONS) : une
+    // fiche pour la nasse doublerait l'outil, pas le poisson. Elle sortira d'ici le jour où le
+    // bâti aura sa section — avec le coffre, le séchoir et la braise-mère, d'un seul geste.
+    'fish_trap',
     // LA BRAISE-MÈRE (cendre.md R28) est du bâti posable, comme le séchoir ; LE CŒUR DE BRAISE
     // (R29) est une matière intermédiaire — un composant d'Ouvrage, pas une rencontre. Le jour
     // où le bestiaire notera les butins des morts, la garde exigera sa sortie d'ici.
