@@ -408,6 +408,61 @@ export function isWater(t: number): boolean {
   return t === TERRAIN_SHALLOW_WATER || t === TERRAIN_DEEP_WATER
 }
 
+/**
+ * LA BERGE MARCHABLE LA PLUS PROCHE DU FEU — BFS 8-connexe sur les tuiles MARCHABLES depuis
+ * (fromTx,fromTy), rend l'index empaqueté (`ty*width+tx`) de la première tuile marchable BORDÉE
+ * d'eau claire (`isWater` : SHALLOW/DEEP — le marais est trouble et se PATAUGE, on n'y « puise »
+ * pas), ou -1 si aucune n'est atteignable dans le budget. Ordre de balayage fixe → déterministe.
+ *
+ * Vit ICI et non dans `npc.ts` (reprise de l'eau D2, « temps de trajet ») : il ne lit que le
+ * terrain (`MARCHABLE`, `isWater`, `terrainAt`), et le tableau du village (`village-board.ts`) doit
+ * l'appeler pour NE PAS poster de corvée d'eau à un village sans eau atteignable — or `npc.ts`
+ * importe `refreshBoard`, donc le loger là ferait un cycle d'import. La carte est immuable : le
+ * résultat est constant par village ; `executeFetchWater` ne le calcule qu'UNE fois par course
+ * (rangé dans la tâche), et le tableau qu'aux fenêtres de cadence — sans quoi le BFS repartirait
+ * à chaque tick.
+ */
+export function eauLaPlusProcheMarchable(map: WorldMap, fromTx: number, fromTy: number, budget: number): number {
+  const { width, height } = map
+  if (fromTx < 0 || fromTy < 0 || fromTx >= width || fromTy >= height) return -1
+  const start = fromTy * width + fromTx
+  const seen = new Uint8Array(width * height)
+  const queue: number[] = [start]
+  seen[start] = 1
+  let head = 0
+  let visited = 0
+  // Huit directions, ordre FIXE (déterminisme). On étend le BFS dans les tuiles marchables ; on
+  // teste la bordure d'eau sur le même 8-voisinage.
+  const DIRS = [1, 0, -1, 0, 0, 1, 0, -1, 1, 1, 1, -1, -1, 1, -1, -1]
+  while (head < queue.length && visited < budget) {
+    const cur = queue[head++]! // head < queue.length garantit un élément
+    visited += 1
+    const cx = cur % width
+    const cy = (cur - cx) / width
+    if (MARCHABLE[terrainAt(map, cx, cy)] === 1) {
+      for (let d = 0; d < 16; d += 2) {
+        const wx = cx + DIRS[d]!
+        const wy = cy + DIRS[d + 1]!
+        if (wx < 0 || wy < 0 || wx >= width || wy >= height) continue
+        if (isWater(terrainAt(map, wx, wy))) return cur // marchable + bordé d'eau : c'est la berge
+      }
+    }
+    // On ne traverse PAS la roche pour chercher l'eau : le BFS reste sur le marchable (le Feu
+    // lui-même, à hitbox, n'est pas marchable — on part quand même de ses voisins).
+    for (let d = 0; d < 16; d += 2) {
+      const nx = cx + DIRS[d]!
+      const ny = cy + DIRS[d + 1]!
+      if (nx < 0 || ny < 0 || nx >= width || ny >= height) continue
+      const ni = ny * width + nx
+      if (seen[ni] === 1) continue
+      if (MARCHABLE[terrainAt(map, nx, ny)] !== 1) continue
+      seen[ni] = 1
+      queue.push(ni)
+    }
+  }
+  return -1
+}
+
 /** Le point (x, y) est-il dans l'empreinte de cette zone ? La borne haute est EXCLUE — la
  *  même convention que `poisAt`, qui l'écrivait déjà à la main. */
 function dansLZone(z: Zone, x: number, y: number): boolean {

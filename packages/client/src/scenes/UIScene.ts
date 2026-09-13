@@ -52,6 +52,7 @@ export const TASK_LABELS: Record<VillageTask['kind'], string> = {
   repair: 'réparer',
   feed_fire: 'nourrir le Feu',
   build: 'bâtir',
+  fetch_water: "aller puiser de l'eau",
 }
 
 /** Carte plein écran : bornes et pas du zoom (1 = carte ajustée, 8 = gros plan). */

@@ -6750,7 +6750,32 @@ export const NPC_AI = {
      */
     glaner_bois: 2,
     glaner_pierre: 2,
+    /**
+     * LA CORVÉE D'EAU EST UN CHORE DE FOND (reprise de l'eau D2, « temps de trajet ») — au
+     * niveau du bois et de la pierre (1), donc SOUS la cueillette qui nourrit (2), le Feu (5)
+     * et le chantier : un village au ventre creux va aux buissons, pas à la rivière. Assez
+     * haut, quand même, pour que l'aller-retour à l'eau se fasse VRAIMENT (à 0, un village
+     * actif ne puiserait jamais et le mécanisme serait inerte). Se règle en jouant.
+     */
+    fetch_water: 1,
   } as const,
+  /**
+   * LA CADENCE DE LA CORVÉE D'EAU (reprise de l'eau D2, « temps de trajet ») — le tableau
+   * poste UNE course à l'eau tous les `WATER_RUN_PACE_TICKS` (un sixième de cycle ≈ 4 h de
+   * jeu). Pas un seuil de stock : l'eau n'est pas stockée, la corvée EST le trajet. Un chore
+   * de fond, léger — ordre de grandeur, calibré en jouant.
+   */
+  WATER_RUN_PACE_TICKS: ticksForCycles(1 / 6),
+  /** Le temps qu'on PUISE, arrivé à la berge (bras occupés sur place). Ordre de grandeur. */
+  WATER_FETCH_DWELL_TICKS: ticksFor(2),
+  /**
+   * LE BUDGET DE BALAYAGE pour trouver la berge la plus proche — nombre max de tuiles visitées
+   * par le BFS marchable depuis le Feu (une fois par course, pas par tick). MESURÉ sur le monde
+   * joué (sonde `__village-eau`, graines 2026/7/42) : village→eau de médiane 14-17, étendue
+   * 0→75 ; 20000 couvre tout avec marge, et borne le cas pathologique d'un village enclavé
+   * (aucun dans les graines jouées) plutôt que de balayer sa composante entière.
+   */
+  WATER_RUN_SCAN_BUDGET: 20000,
   /**
    * LA ZONE MORTE D'UN PAS DE PNJ — en-deçà de cet écart sur un axe, il ne pousse pas
    * dans cette direction. Sans elle, un PNJ à 0,001 tuile de sa cible pousse quand même

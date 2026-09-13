@@ -14,6 +14,7 @@
  */
 import { BALANCE, FIRE_UPKEEP, NPC_AI, OUTILS_PAR_FAMILLE, RECIPES, STRUCTURE_HP, VILLAGE_GROWTH, WORLD_EVENTS } from './balance'
 import { countOf, type ItemBag } from './items'
+import { eauLaPlusProcheMarchable } from './map'
 import type { SimState } from './sim'
 import type { TaskKind, Village } from './village'
 import {
@@ -207,6 +208,29 @@ export function refreshBoard(state: SimState, village: Village): void {
     village.nextTaskId += 1
   } else if (!needsFuel) {
     village.tasks = village.tasks.filter((t) => !(t.kind === 'feed_fire' && t.claimedBy === null))
+  }
+
+  // LA CORVÉE D'EAU À SA CADENCE (reprise de l'eau D2, « temps de trajet ») : une course à
+  // l'eau tous les `WATER_RUN_PACE_TICKS`, jamais par un seuil — l'eau n'est ni stock ni item,
+  // la corvée EST le coût du trajet. Même fenêtre que la cadence de chantier (refreshBoard ne
+  // tourne qu'aux multiples de `BOARD_REFRESH_TICKS`, donc exactement un post par période). On
+  // ne double-poste pas si une course est déjà en cours ; elle se retire d'elle-même au retour
+  // au Feu via `dropTask(…, true)`.
+  //
+  // ⚠ ON NE POSTE QUE SI DE L'EAU EST ATTEIGNABLE. Sinon la corvée serait réclamée, le chercheur
+  // rendrait -1, `executeFetchWater` la lâcherait aussitôt — un post futile chaque cadence, et
+  // SURTOUT une perturbation gratuite : poster une tâche décale QUI réclame les autres corvées
+  // (MESURÉ — sonde A3 : un post d'eau sur un monde SANS eau suffisait à faire caler un villageois
+  // sur son dépôt de bois). Le BFS ne coûte qu'ICI, dans la fenêtre de cadence (≈ un balayage tous
+  // les `WATER_RUN_PACE_TICKS` par village), jamais à chaque `refreshBoard` — le `&&` court-circuite.
+  const waterOpen = state.tick % NPC_AI.WATER_RUN_PACE_TICKS < BALANCE.BOARD_REFRESH_TICKS
+  if (
+    waterOpen &&
+    !village.tasks.some((t) => t.kind === 'fetch_water') &&
+    eauLaPlusProcheMarchable(state.map, village.fireTx, village.fireTy, NPC_AI.WATER_RUN_SCAN_BUDGET) >= 0
+  ) {
+    village.tasks.push({ id: village.nextTaskId, kind: 'fetch_water', priority: priorities.fetch_water, claimedBy: null })
+    village.nextTaskId += 1
   }
 
   for (const kind of Object.keys(wanted) as TaskKind[]) {

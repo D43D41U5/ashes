@@ -227,6 +227,14 @@ export type TaskKind =
   | 'repair'
   | 'feed_fire'
   | 'build'
+  /**
+   * LA CORVÉE D'EAU (décision d'Alexis, reprise de l'eau D2 : « temps de trajet ») — l'eau
+   * n'est PAS un stock ni un item : la corvée EST le coût du trajet. Un villageois va puiser à
+   * l'eau la plus proche et revient au Feu ; ses bras sont occupés le temps de l'aller-retour,
+   * ∝ à la distance à l'eau. Postée à la CADENCE (`WATER_RUN_PACE_TICKS`), jamais par un seuil
+   * de grenier — rien à déposer, rien à consommer. Ne rouvre pas la soif (actée refusée).
+   */
+  | 'fetch_water'
 
 /**
  * UN ORDRE DE CONSTRUCTION (spec `village-pnj-evolution.md` R3-R4) — la charge d'une

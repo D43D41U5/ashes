@@ -42,7 +42,7 @@ import { sertExigence } from './pieces'
 import { emitEvent } from './events'
 import { floreGelee } from './gel'
 import { distSq } from './geometry'
-import { zoneIdAt } from './map'
+import { eauLaPlusProcheMarchable, zoneIdAt } from './map'
 import { countOf, freeRoomFor, moveSlotWithin, type ItemId } from './items'
 import { handleCold, handleHunger, handleOrage, handleSleep, handleWounds } from './npc-needs'
 import { assignErrands, handleErrand } from './npc-errands'
@@ -59,6 +59,14 @@ export interface NpcTaskState {
   kind: TaskKind
   stage: 'work' | 'fetch' | 'craft' | 'store'
   nodeId: number | null
+  /**
+   * Tick jusqu'auquel l'étape en cours PATIENTE sur place (aujourd'hui : le puisage de la corvée
+   * d'eau, `executeFetchWater`). Son propre porteur, PAS `entity.cooldownUntil` — celui-là est le
+   * délai d'action partagé (faim, combat, `applyVillageAction`) : le détourner en minuteur
+   * d'attente écraserait un cooldown en cours ou verrait le sien rallongé par une autre action.
+   * Additif et JSON-plat : une sauvegarde d'avant se relit sans (les corvées d'alors ne patientent pas).
+   */
+  until?: number
 }
 
 export interface Npc {
@@ -101,7 +109,7 @@ export interface Npc {
 }
 
 const TASK_DEFS: Record<
-  Exclude<TaskKind, 'cook_stew' | 'repair' | 'feed_fire' | 'build'>,
+  Exclude<TaskKind, 'cook_stew' | 'repair' | 'feed_fire' | 'build' | 'fetch_water'>,
   { nodeType: NodeType; item: ItemId; carry: number; portee?: number }
 > = {
   gather_berries: { nodeType: 'berry_bush', item: 'berries', carry: BALANCE.NPC_CARRY_TARGETS.berries },
@@ -464,6 +472,10 @@ const TASK_INTAKE: Record<TaskKind, ItemId[]> = {
   feed_fire: ['wood'],
   // Le chantier fait entrer le marteau ET le coût de la pièce (retirés du grenier).
   build: ['hammer', 'wood', 'stone', 'cut_stone', 'fiber'],
+  // La corvée d'eau ne fait rien entrer dans le sac (« temps de trajet » : pas d'item) — donc
+  // `canTakeInFor` la rend toujours réclamable. Le seul temps mort face à un empêchement qui
+  // vaut pour tous (pas d'eau atteignable) est le `dropTask(true)` de son exécuteur.
+  fetch_water: [],
 }
 
 /** Le sac peut-il recevoir ce que cette corvée va y mettre ? (conservateur : tout ou rien) */
@@ -478,7 +490,11 @@ function claimTask(village: Village, npc: Npc, entity: Entity): void {
   if (!free) return
   free.claimedBy = npc.entityId
   const fetchFirst =
-    free.kind === 'cook_stew' || free.kind === 'repair' || free.kind === 'feed_fire' || free.kind === 'build'
+    free.kind === 'cook_stew' ||
+    free.kind === 'repair' ||
+    free.kind === 'feed_fire' ||
+    free.kind === 'build' ||
+    free.kind === 'fetch_water' // son étape `fetch` = l'ALLER vers l'eau (cf. executeFetchWater)
   npc.task = { id: free.id, kind: free.kind, stage: fetchFirst ? 'fetch' : 'work', nodeId: null }
   npc.path = []
 }
@@ -515,7 +531,7 @@ function canAct(state: SimState, entity: Entity): boolean {
 
 function executeGather(state: SimState, village: Village, npc: Npc, entity: Entity): void {
   const task = npc.task!
-  const def = TASK_DEFS[task.kind as Exclude<TaskKind, 'cook_stew' | 'repair' | 'feed_fire' | 'build'>]
+  const def = TASK_DEFS[task.kind as Exclude<TaskKind, 'cook_stew' | 'repair' | 'feed_fire' | 'build' | 'fetch_water'>]
 
   if (task.stage === 'work') {
     // L'OUTIL AVANT LE NŒUD (spec `glanage.md` G5). La carrière exigeait déjà la pioche
@@ -1170,6 +1186,58 @@ function executeFeedFire(state: SimState, village: Village, npc: Npc, entity: En
   followPath(state, npc, entity)
 }
 
+/**
+ * LA CORVÉE D'EAU (reprise de l'eau D2, décision d'Alexis : « temps de trajet ») — le villageois
+ * va puiser à l'eau la plus proche DU FEU et revient au Feu. PAS d'item, PAS de dépôt : la corvée
+ * EST le COÛT du trajet (bras occupés ∝ distance à l'eau). Trois temps, sur les étapes existantes :
+ *   · `fetch` (aller)  — marcher jusqu'à la berge, calculée UNE fois (BFS marchable depuis le Feu,
+ *     rangée dans `task.nodeId` — index tuile empaqueté ; sans ce cache, le BFS repartirait à
+ *     chaque tick, cf. le ×35 du piège de chemin). Ancrée au FEU, pas au villageois : le résultat
+ *     est constant par village (cachable) ; un villageois qui réclame la course loin du Feu fait
+ *     un détour, mais le coût-du-trajet reste réel.
+ *   · `craft` (puise)  — rester `WATER_FETCH_DWELL_TICKS` sur la berge (le temps du puisage),
+ *     minuté par `task.until` (jamais `entity.cooldownUntil`, partagé — cf. le champ).
+ *   · `work`  (retour) — revenir au Feu, puis la corvée se retire du tableau.
+ *
+ * TOUT empêchement lâche avec `clearFromBoard = true`. La corvée n'a PAS de garde de sac
+ * (`TASK_INTAKE.fetch_water` est vide → `canTakeInFor` toujours vrai) : un `false` la verrait
+ * re-réclamée au tick suivant par LE MÊME villageois, à l'identique, à 20 Hz (le livelock que
+ * `dropTask` décrit). La retirer est le seul temps mort ; la cadence la reposte plus tard.
+ */
+function executeFetchWater(state: SimState, village: Village, npc: Npc, entity: Entity): void {
+  const task = npc.task!
+  const map = state.map
+
+  if (task.stage === 'fetch') {
+    if (task.nodeId === null) {
+      const packed = eauLaPlusProcheMarchable(map, village.fireTx, village.fireTy, NPC_AI.WATER_RUN_SCAN_BUDGET)
+      if (packed < 0) return dropTask(village, npc, true) // aucune eau atteignable (et pas de garde de sac : true)
+      task.nodeId = packed
+    }
+    const bankTx = task.nodeId % map.width
+    const bankTy = (task.nodeId - bankTx) / map.width
+    if (near(map, entity, bankTx, bankTy, undefined)) {
+      task.until = state.tick + NPC_AI.WATER_FETCH_DWELL_TICKS
+      task.stage = 'craft'
+      return
+    }
+    if (npc.path.length === 0 && !setPathTo(state, npc, entity, bankTx, bankTy, undefined)) return dropTask(village, npc, true)
+    followPath(state, npc, entity)
+    return
+  }
+
+  if (task.stage === 'craft') {
+    if (state.tick < (task.until ?? 0)) return // on puise : bras occupés sur la berge
+    task.stage = 'work'
+    return
+  }
+
+  // Retour au Feu — la corvée quitte le tableau (la cadence en reposte une plus tard).
+  if (near(map, entity, village.fireTx, village.fireTy, undefined)) return dropTask(village, npc, true)
+  if (npc.path.length === 0 && !setPathTo(state, npc, entity, village.fireTx, village.fireTy, undefined)) return dropTask(village, npc, true)
+  followPath(state, npc, entity)
+}
+
 // ─── La milice émergente (spec combat R13) ────────────────────────────────
 
 /** Une menace (monstre ou raider agresseur) près du Feu ? Tout PNJ la combat. */
@@ -1350,6 +1418,7 @@ export function advanceNpcs(state: SimState): void {
     else if (npc.task.kind === 'repair') executeRepair(state, village, npc, entity)
     else if (npc.task.kind === 'feed_fire') executeFeedFire(state, village, npc, entity)
     else if (npc.task.kind === 'build') executeBuild(state, village, npc, entity)
+    else if (npc.task.kind === 'fetch_water') executeFetchWater(state, village, npc, entity)
     else executeGather(state, village, npc, entity)
   }
 }
