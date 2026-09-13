@@ -30,6 +30,7 @@
  */
 import { SANG, TERRAIN_DEEP_WATER, TERRAIN_MARSH, TERRAIN_REED_MARSH, TERRAIN_SHALLOW_WATER } from './balance'
 import { tuileCendree } from './cendre'
+import { palierDuSol } from './etages'
 import { terrainAt, type WorldMap } from './map'
 import { EAU } from './zonegen-water'
 
@@ -329,6 +330,14 @@ function forceDUneSouillure(map: WorldMap, s: Souillure, tx: number, ty: number,
 
   if (s.pas < 0) {
     // ── L'EAU DORMANTE : un disque qui se dilue, sans direction (Chebyshev, comme la suie). ──
+    // LE DISQUE RESTE SUR SON PALIER (réserve « le disque ignore les paliers », décision d'Alexis
+    // du 2026-09-13 : « confiner au palier de l'origine ») : le sang d'une mare basse ne teint pas
+    // l'eau d'une terrasse voisine — il ne GRIMPE pas une falaise. MESURÉ avant (sonde, monde joué) :
+    // 865 / 4099 / 1506 origines dormantes (graines 2026/7/42) débordaient vers un palier plus haut,
+    // presque toutes d'un cran, jusqu'à 4 tuiles. Sur une carte sans paliers (`map.palier` absent),
+    // `palierDuSol` rend 0 partout : la clause est inerte, la loi d'avant au bit près. Le même
+    // prédicat, MOT POUR MOT, arme `empreinteDuSang` — A11 exige les deux égales.
+    if (palierDuSol(map, tx, ty) !== palierDuSol(map, ox, oy)) return 0
     const d = Math.max(Math.abs(tx - ox), Math.abs(ty - oy))
     if (d > SANG.PORTEE_DORMANTE) return 0
     return base * ((SANG.PORTEE_DORMANTE + 1 - d) / (SANG.PORTEE_DORMANTE + 1))
@@ -480,6 +489,8 @@ export function empreinteDuSang(state: EtatQualiteEau, table: Int32Array, force:
     const oy = (s.i - ox) / width
     if (s.pas < 0) {
       // ── L'EAU DORMANTE : le disque (la clause de `forceDUneSouillure`, mot pour mot). ──
+      // Confiné au palier de l'origine, comme la loi (voir `forceDUneSouillure`).
+      const po = palierDuSol(map, ox, oy)
       for (let dy = -SANG.PORTEE_DORMANTE; dy <= SANG.PORTEE_DORMANTE; dy++) {
         const ty = oy + dy
         if (ty < 0 || ty >= height) continue
@@ -487,6 +498,7 @@ export function empreinteDuSang(state: EtatQualiteEau, table: Int32Array, force:
           const tx = ox + dx
           if (tx < 0 || tx >= width) continue
           if (!tuileDEau(map, tx, ty)) continue
+          if (palierDuSol(map, tx, ty) !== po) continue
           const d = Math.max(Math.abs(tx - ox), Math.abs(ty - oy))
           peins(ty * width + tx, base * ((SANG.PORTEE_DORMANTE + 1 - d) / (SANG.PORTEE_DORMANTE + 1)))
         }

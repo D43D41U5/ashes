@@ -500,6 +500,49 @@ describe('A3 — l’eau dormante ne coule pas', () => {
     }
     expect(terres, 'tuiles de terre souillées').toBe(0)
   })
+
+  it('LE DISQUE RESTE SUR SON PALIER : le sang d’une mare basse ne teint pas une eau d’une terrasse plus haute (réserve 2026-09-13)', () => {
+    // Deux mares à portée l'une de l'autre, séparées par un bord de terrasse : la BASSE au palier
+    // 0 (x ≤ 12), la HAUTE au palier 1 (x ≥ 13). Une souillure dormante sur la basse. Le monde
+    // joué en portait 865 / 4099 / 1506 (sonde, graines 2026/7/42) AVANT ce correctif : le sang
+    // grimpait le bord. Décision d'Alexis du 2026-09-13 : « confiner au palier de l'origine ».
+    const W = 30, H = 30
+    const map = createEmptyMap(W, H, TERRAIN_GRASS)
+    const pal = new Array<number>(W * H).fill(0)
+    for (let y = 0; y < H; y++) for (let x = 13; x < W; x++) pal[y * W + x] = 1 // la terrasse est
+    map.palier = pal
+    const eau: [number, number][] = []
+    const pose = (x: number, y: number): void => { setTile(map, x, y, TERRAIN_SHALLOW_WATER); eau.push([x, y]) }
+    for (let x = 9; x <= 11; x++) for (let y = 9; y <= 11; y++) pose(x, y) // la mare BASSE, palier 0
+    pose(7, 10)  // témoin MÊME palier, distance 3
+    pose(10, 13) // témoin MÊME palier, distance 3
+    for (let y = 9; y <= 11; y++) { pose(13, y); pose(14, y) } // la mare HAUTE, palier 1, distances 3 et 4
+
+    const s = sim(map)
+    s.souillures.push({ i: idx(map, 10, 10), tick: s.tick, crans: 4, pas: -1 }) // dormante
+
+    expect(qualiteDeLEau(s, 10, 10), 'le centre, sur son palier').toBeGreaterThan(0)
+    const temoin = qualiteDeLEau(s, 7, 10)
+    expect(temoin, 'témoin même palier, distance 3').toBeGreaterThan(0)
+    expect(qualiteDeLEau(s, 10, 13), 'l’autre témoin même palier').toBe(temoin)
+    // (13,10) et (7,10) ne diffèrent QUE par le palier — même distance 3, même eau. Le témoin est
+    // teint, le bord haut NON : c'est bien le palier qui l'annule, pas la distance (garde de prémisse).
+    expect(qualiteDeLEau(s, 13, 10), 'eau plus haute, distance 3 : le sang ne grimpe pas').toBe(0)
+    expect(qualiteDeLEau(s, 14, 10), 'eau plus haute, distance 4 : idem').toBe(0)
+    let hautesTeintes = 0
+    for (const [x, y] of eau) if (pal[y * W + x] === 1 && qualiteDeLEau(s, x, y) > 0) hautesTeintes += 1
+    expect(hautesTeintes, 'eaux du palier haut teintes').toBe(0)
+
+    // Et l'empreinte du CLIENT rend la loi au bit près, clamp compris (A11) :
+    const table = tableDAttache(map)
+    const force = new Float64Array(W * H)
+    const touchees: number[] = []
+    empreinteDuSang(s, table, force, touchees)
+    for (let ty = 0; ty < H; ty++) for (let tx = 0; tx < W; tx++) {
+      expect(force[ty * W + tx], `empreinte (${tx},${ty})`).toBe(qualiteDeLEau(s, tx, ty))
+    }
+    expect(force[idx(map, 13, 10)], 'le client non plus ne fait pas grimper le sang').toBe(0)
+  })
 })
 
 /* ─── A4 — LES BORNES ─────────────────────────────────────────────────────────────── */
