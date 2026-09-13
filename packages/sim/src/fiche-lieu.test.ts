@@ -21,6 +21,7 @@ import { TICKS_PER_SEASON_DAY } from './time'
 const TOUS_LES_TYPES: Record<FaitDeGeneration['type'], true> = {
   fondation: true, gue: true, sort: true, gravure: true, essart: true,
   taille: true, guet: true, porte: true, croisee: true, fosse: true, fuite: true,
+  source: true,
 }
 
 describe('la voix du visiteur — totale, et distincte', () => {
@@ -33,7 +34,7 @@ describe('la voix du visiteur — totale, et distincte', () => {
       textes.set(type, texte)
     }
     // CE QUI FERAIT ROUGIR : une voix copiée-collée d'un type sur l'autre — le défaut exact
-    // qu'une table écrite à la main invite. Onze types, onze phrases.
+    // qu'une table écrite à la main invite. Douze types, douze phrases.
     expect(new Set(textes.values()).size).toBe(textes.size)
   })
 

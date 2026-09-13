@@ -233,6 +233,9 @@ export interface EauxDeLaRacine {
   lits: number[]
   /** LE DÉBIT par tuile (`Hydrologie.debit`, rang 0-7) — `map.debit`. `[]` sans hydrologie. */
   debit: number[]
+  /** LE CENTRE de chaque résurgence karstique posée (A3) — ce que `zonegen` enregistre en Source
+   *  découvrable. `[]` hors Racine (pas de creux). Ordre déterministe (balayage row-major). */
+  resurgences: { x: number; y: number }[]
 }
 
 /** Le fenêtrage de la courbure — voir `estUnCoude`. */
@@ -378,8 +381,8 @@ export function paintWaterRacine(
   //    lui coller des joncs serait faux. ② Et la garde A11 l'a exigé : la frange des mares
   //    inversait le rang à l'eau au bout mouillé, en diluant les deux SEULS terrains du T0 qui
   //    savent où est l'eau. Les servir en dernier règle les deux d'un coup.
-  poserLesResurgences(terrain, zone, racineId, width, height, bordure, creux, horsSeuils, escalier)
-  return { riviere, chenaux: hydro.chenaux, fils: hydro.fils, lacs: hydro.lacs, lits: hydro.lits, debit: hydro.debit }
+  const resurgences = poserLesResurgences(terrain, zone, racineId, width, height, bordure, creux, horsSeuils, escalier)
+  return { riviere, chenaux: hydro.chenaux, fils: hydro.fils, lacs: hydro.lacs, lits: hydro.lits, debit: hydro.debit, resurgences }
 }
 
 /**
@@ -574,8 +577,8 @@ function poserLesResurgences(
   creux: Creux | null,
   horsSeuils: Uint8Array,
   escalier: Escalier | null = null,
-): void {
-  if (!creux) return
+): { x: number; y: number }[] {
+  if (!creux) return []
   const M = CREUX.MOTIF
   const gardees: { x: number; y: number }[] = []
 
@@ -641,6 +644,9 @@ function poserLesResurgences(
       if (posees > 0) gardees.push({ x: cx, y: cy })
     }
   }
+  // Les centres RETENUS (posees > 0) — ce que `zonegen` inscrit en Source découvrable (A3). La
+  // liste est la vérité : pas besoin de re-déduire les positions du terrain fini.
+  return gardees
 }
 
 

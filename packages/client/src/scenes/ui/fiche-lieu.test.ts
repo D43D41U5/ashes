@@ -20,6 +20,7 @@ const SOURCE = import.meta.glob('./fiche-lieu.ts', { query: '?raw', import: 'def
 const TOUS_LES_TYPES: Record<FaitDeGeneration['type'], true> = {
   fondation: true, gue: true, sort: true, gravure: true, essart: true,
   taille: true, guet: true, porte: true, croisee: true, fosse: true, fuite: true,
+  source: true,
 }
 const CAUSES = [undefined, 'eau', 'route', 'brule', 'pille', 'intact', 'fer', 'charbon', 'nord', 'sud', 'est', 'ouest', 'secours']
 

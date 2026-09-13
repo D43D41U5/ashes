@@ -53,12 +53,14 @@ export interface FaitDeGeneration {
    * mangé du bois), `taille` (la mine est là parce que la roche affleure), `guet` (la Tour +
    * la direction de la Cendrière — « ils savaient »), `porte` (le pays d'avant bornait ses
    * seuils), `croisee` (des routes se sont trouvées là — le carrefour émergé), `fosse` (où la
-   * vallée a enterré), `fuite` (la charrette orientée loin du front — l'exode a un sens).
+   * vallée a enterré), `fuite` (la charrette orientée loin du front — l'exode a un sens),
+   * `source` (la résurgence karstique : l'eau que le calcaire a bue ressort au contact — A3).
    */
   type:
     | 'fondation' | 'gue' | 'sort'
     | 'gravure' | 'essart' | 'taille' | 'guet'
     | 'porte' | 'croisee' | 'fosse' | 'fuite'
+    | 'source'
   x: number
   y: number
   /** Le kind du lieu concerné (fondation, sort, et les faits portés par un lieu). */

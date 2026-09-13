@@ -309,6 +309,7 @@ const AU_POINT: Record<string, string> = { nord: 'au nord', sud: 'au sud', est: 
 const VOIX: Record<FaitDeGeneration['type'], (f: FaitDeGeneration) => PhraseDeFait> = {
   // ── Ère 0 : la pierre et l'eau ──
   gravure: () => ({ texte: 'Les pierres portaient une écriture.', poids: 'recit' }),
+  source: () => ({ texte: "L'eau ressortait de la pierre, ici.", poids: 'recit' }),
 
   // ── Ère 1 : l'implantation ──
   fondation: (f) => ({

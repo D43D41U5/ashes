@@ -549,7 +549,11 @@ export const POI = {
    * un endroit dont le contenu est la raison d'être, même logique que gisement/carrière),
    * et pas de sprite-corps côté client (l'étiquette seule — le sol parle).
    */
-  SET_PIECE_KINDS: ['bois_noir', 'cercle_pierres', 'combe_brumeuse'] as readonly string[],
+  // `source` (A3, `qualite-eau.md`, décision d'Alexis 2026-09-13 « le sol parle ») : la
+  // résurgence est un set-piece — son corps est la mare et le bassin karstique déjà dans le
+  // terrain ; on lui laisse pastille et fiche, mais aucun sprite-corps ne se dresse dessus. Sa
+  // clairière est INERTE (mesuré : les résurgences sont sur l'eau/le bassin, zéro nœud à dégager).
+  SET_PIECE_KINDS: ['bois_noir', 'cercle_pierres', 'combe_brumeuse', 'source'] as readonly string[],
 }
 
 export const BALANCE = {

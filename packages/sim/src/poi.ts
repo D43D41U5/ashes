@@ -382,6 +382,15 @@ export const POI_TYPES: PoiType[] = [
   { slug: 'cairn', name: 'le Cairn', family: 'reward', biomes: [GRASS, AL_MEADOW, HEATH, SCREE, ROCK, FLOWER, AL_FLOWERS, FOREST, PINE, CLAIRIERE], weight: 12, cap: 14, reserve: 1, footprint: 1 },
   { slug: 'sanctuaire', zones: ['aiguilles', 'alpages', 'karst'], name: 'le Sanctuaire', family: 'reward', biomes: [SCREE, ROCK, AL_MEADOW], minElev: 0.7, weight: 1, cap: 2, reserve: 1, footprint: 2 },
   { slug: 'source_chaude', zones: ['alpages', 'karst'], name: 'la Source chaude', family: 'reward', biomes: [SCREE, ROCK, AL_MEADOW], minElev: 0.55, weight: 2, cap: 2, reserve: 1, footprint: 2 },
+  /**
+   * LA SOURCE — la RÉSURGENCE karstique, froide, du pays sec (spec `qualite-eau.md` A3). `horsSemis`
+   * comme la Grotte : le WORLDGEN l'enregistre lui-même (`zonegen.ts`, tout à la fin), une par
+   * résurgence que `poserLesResurgences` a su poser — jamais tirée, jamais réservée. Sa mare EXISTE
+   * DÉJÀ dans le terrain (haut-fond) : le `kind` n'ajoute qu'une pastille et une fiche. Famille `eco`
+   * et SANS charge — comme le Bois Noir, le lieu est son propre point (l'eau claire) ; il ne révèle
+   * rien et n'entre pas dans la chronique (le récit reste une décision ouverte, cf. A3). `biomes`
+   * gardés vides comme les set-pieces : `horsSemis` ne passe pas `isEligible`. */
+  { slug: 'source', name: 'la Source', family: 'eco', horsSemis: true, weight: 0, cap: 0, footprint: 2, biomes: [] },
   { slug: 'arche', zones: ['aiguilles', 'karst'], name: "l'Arche de roche", family: 'reward', biomes: [ROCK, SCREE], weight: 2, cap: 2, reserve: 1, footprint: 2 },
   { slug: 'tarn', zones: ['alpages', 'glacier'], name: 'le Tarn', family: 'reward', biomes: [AL_MEADOW, SCREE, AL_FLOWERS], minElev: 0.45, weight: 3, cap: 3, reserve: 1, footprint: 3 },
   { slug: 'petroglyphes', zones: ['karst', 'gouffre', 'aiguilles'], name: 'les Pétroglyphes', family: 'reward', biomes: [ROCK, SCREE], minElev: 0.55, weight: 2, cap: 2, reserve: 1, footprint: 2 },

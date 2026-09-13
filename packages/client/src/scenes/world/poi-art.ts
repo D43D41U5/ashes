@@ -104,6 +104,7 @@ const ART: Record<string, { fp: number; w: number; h: number; crown?: number }> 
   source_chaude: { fp: 2, w: 40, h: 34 }, //        la vapeur déborde la vasque
   arche: { fp: 2, w: 44, h: 82, crown: 42 },
   tarn: { fp: 3, w: 56, h: 26 },
+  source: { fp: 7, w: 16, h: 16 }, //               SET-PIECE : le sol parle (pas de sprite-corps)
   petroglyphes: { fp: 2, w: 40, h: 48, crown: 8 },
 }
 
@@ -714,6 +715,9 @@ export function makePoiTextures(scene: Phaser.Scene): void {
     g.fillStyle(0xe8f4f6, 0.22).fillCircle(c - 4, b - 29, 3)
     g.fillStyle(0xe8f4f6, 0.12).fillCircle(c + 5, b - 32, 2)
   })
+  // `source` : PAS de painter — c'est un set-piece (le sol parle, décision d'Alexis). Comme
+  // bois_noir / combe_brumeuse / cercle_pierres, elle n'a qu'une entrée dans ART (pour la garde
+  // « tout lieu a un corps ») et aucun sprite-corps : `poi-layer` la court-circuite (R10).
   tex('arche', (w, b) => {
     ground(w, b, 0.85)
     // UNE PORTE DE PIERRE. Le sujet, c'est LE VIDE : on doit voir à travers, et

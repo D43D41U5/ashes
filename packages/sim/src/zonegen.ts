@@ -50,7 +50,7 @@ import {
 } from './balance'
 import { isWater, MARCHABLE, type WorldMap, type Zone as ZoneRect } from './map'
 import { calculeChampDeCendre, computeCendreField, foyersDeLaCarte } from './cendre'
-import { construireEtage, terrainDeCave, terrainDeDessus, type Connecteur, type EtageCreux } from './etages'
+import { construireEtage, palierDuSol, terrainDeCave, terrainDeDessus, type Connecteur, type EtageCreux } from './etages'
 import { aDesPaliers, poserLesTerrasses, quantifierLEscalier, TERRASSES } from './terrasses'
 import { distSq } from './geometry'
 import { placeCharniers, placeGitesLoup, placePois, placeSteles, POI_TYPES, roman } from './poi'
@@ -76,6 +76,7 @@ import {
   lireLeChampAt,
   lireLeChampGraine,
   mesurerLaDistanceALEau,
+  ROCHE,
   seuilParQuantile,
   vegetationAt,
   type Creux,
@@ -617,7 +618,7 @@ export function generateZonedTerrain(
   // lisent), le palier d'une tuile (l'eau y écrit le sien en naissant, les terrasses en partent).
   // MONDE RÉDUIT SEUL — le chemin 'vallee' reste octet-identique (T-A1).
   const escalier = g.monde === 'racine' && creux ? quantifierLEscalier(creux, terrain, width, height) : null
-  const { riviere, chenaux, fils, lacs: lacsRacine, lits, debit: debitRacine } = paintWaterRacine(terrain, zone, g, width, height, seed, RELIEF.BORDURE, creux, escalier)
+  const { riviere, chenaux, fils, lacs: lacsRacine, lits, debit: debitRacine, resurgences } = paintWaterRacine(terrain, zone, g, width, height, seed, RELIEF.BORDURE, creux, escalier)
 
   // ── PASSE 1.52 : LES EAUX DES ZONES — l'eau dérivée hors Racine (stratigraphie, couche II) ──
   //
@@ -1150,6 +1151,35 @@ export function generateZonedTerrain(
     if (foyers.length > 0) {
       map.cendreCout = calculeChampDeCendre(width, height, terrain, foyers)
     }
+  }
+
+  // ── LES SOURCES — la résurgence devient un FAIT découvrable (A3, spec `qualite-eau.md`) ────
+  //
+  // EN TOUT DERNIER, et l'invariant tient à cet ordre : la mare EXISTE DÉJÀ dans le terrain
+  // (`poserLesResurgences`, passe 1.5). On n'ajoute ICI ni une tuile ni un tirage — seulement
+  // une `Zone` (la pastille + la fiche) et son annale (ère 0 : la pierre et l'eau). Après les
+  // terrasses, donc SANS assise (une source est de l'eau plate, pas un plancher à niveler —
+  // `assisesDesTerrasses` ne la voit jamais) ; après `placePois` et tous les lieux, donc
+  // l'`poiId` d'aucun POI existant ne glisse (garde A19, discovery). Le centre de la zone
+  // (impair, rayon `SOURCE_RAYON`) retombe EXACTEMENT sur (cx, cy) — la clef de `faitsDuLieu`.
+  const rS = ROCHE.SOURCE_RAYON
+  for (const s of resurgences) {
+    const x0 = s.x - rS, y0 = s.y - rS, cote = 2 * rS + 1
+    // Une source ne devient un LIEU que si son emprise de découverte tient sur un seul palier.
+    // Sinon un marcheur de la terrasse d'AU-DESSUS, sans jamais toucher l'eau, atteindrait la
+    // pastille (`poisAt` ne teste que le rectangle) et brûlerait la première visite — le seul
+    // fait que la source porte. Une mare coupée par une lèvre de terrasse reste dans le terrain
+    // tel quel ; on ne lui pose ni pastille ni annale. (Même prédicat que la garde `terrasses.test.ts`.)
+    const paliers = new Set<number>()
+    for (let y = y0; y < y0 + cote; y++) {
+      for (let x = x0; x < x0 + cote; x++) {
+        const t = map.terrain[y * width + x]!
+        if (MARCHABLE[t] === 1 && !isWater(t)) paliers.add(palierDuSol(map, x, y))
+      }
+    }
+    if (paliers.size > 1) continue
+    map.zones.push({ name: 'la Source', x: x0, y: y0, w: cote, h: cote, kind: 'source' })
+    ;(map.annales ??= []).push({ ere: 0, type: 'source', x: s.x, y: s.y, lieu: 'source' })
   }
 
   return carte
