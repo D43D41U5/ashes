@@ -116,7 +116,9 @@ describe('le registre des pièces — les accords que le type ne garde pas', () 
   it('ce qui tient sur l’EAU porte sa propre assise, donc ne bloque rien', () => {
     const surEau = STRUCTURE_TYPES.filter((t) => piece(t).eau)
     expect(POSABLE_SUR_EAU).toEqual(surEau)
-    expect(surEau, 'des planches sur l’eau, et rien d’autre pour l’instant').toEqual(['floor'])
+    // Des planches sur l'eau — et depuis `nasse.md` (2026-09-13) la NASSE, qui se pose dans les
+    // hauts-fonds et n'y bloque rien : on patauge jusqu'à elle pour la relever.
+    expect(surEau, 'les planches et la nasse').toEqual(['floor', 'fish_trap'])
     for (const t of surEau) expect(piece(t).bloque, `${t}`).toBe('non')
   })
 

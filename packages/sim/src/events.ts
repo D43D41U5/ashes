@@ -166,6 +166,16 @@ export type SimEvent =
   /** UN RECORD (B6) : cette espèce n'a jamais été prise plus grosse par cette entité. Un FAIT,
    *  donc un événement — la chronique et le bandeau s'en nourrissent sans instrumenter après coup. */
   | { type: 'fish_record'; tick: number; entityId: number; species: FishId; mm: number }
+  /**
+   * LA NASSE A PRIS (spec `nasse.md` N15) — la pêche PASSIVE, donc un fait ANCRÉ SUR L'OUVRAGE
+   * et non sur un pêcheur : personne ne tenait la ligne. D'où `structureId` en tête, et `ownerId`
+   * pour l'attribution (c'est SA nasse qui a pris, même s'il était ailleurs).
+   *
+   * ⚠ CE N'EST PAS `fish_caught`, et la distinction est voulue : pas de bestiaire, pas de record,
+   * pas d'XP — une prise qu'on n'a pas ferrée n'est pas un exploit de pêcheur. `species`/`mm` ne
+   * sont là QUE pour un poisson ; une trouvaille ne porte que son `item`.
+   */
+  | { type: 'nasse_caught'; tick: number; structureId: number; ownerId: number; tx: number; ty: number; item: ItemId; count: number; species?: FishId; mm?: number }
   // Le craft a un DÉBUT et une FIN distincts depuis la file (spec craft-file) :
   // `craft_queued` est l'intention (les intrants partent), `item_crafted` reste
   // l'objet qui SORT — et il ne s'émet qu'à la livraison réelle, jamais quand la

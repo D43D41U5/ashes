@@ -223,6 +223,14 @@ export interface PieceDef {
   /** L'eau libre est INCONSTRUCTIBLE, sauf ce qui porte sa propre assise (R4). */
   eau: boolean
   /**
+   * NE SE POSE QUE DANS L'EAU — le pendant de `surCendre` pour les hauts-fonds (spec `nasse.md`
+   * N1). La nasse : un piège à poissons sur la terre ferme ne prendrait JAMAIS rien, et `eau`
+   * seul ne fait qu'AUTORISER l'eau en plus de la terre. Sans cette porte, on laisse le joueur
+   * dépenser huit fibres sur un ouvrage inerte — un refus lisible vaut mieux qu'un objet mort.
+   * Va de pair avec `eau: true` (se poser dans l'eau suppose d'y être admis).
+   */
+  eauSeule?: true
+  /**
    * SE POSE-T-ELLE SOUS LA ROCHE ? (spec `grottes.md` G-R7 — le bivouac, pas la maison.)
    * Vrai pour ce qui n'enferme pas (le feu, le coffre, le mobilier, les vestiges des
    * vignettes) ; faux pour ce qui CLÔT ou COUVRE (mur, porte, sol, toit, maison, encadrement),
@@ -332,6 +340,44 @@ export const PIECES = {
     sousRoche: true,
     bloque: 'oui', pv: 100, cout: { wood: 4 }, acces: 'private', eau: false, usurable: false,
     capacite: 24,
+  },
+  /**
+   * LA NASSE (spec `nasse.md`, reprise de l'eau D3 — quatre décisions d'Alexis du 2026-09-13) —
+   * la pêche qui travaille sans nous. Un panier d'osier posé DANS LES HAUTS-FONDS (`eau: true`,
+   * la seule autre pièce que le `floor` à y aller), appâté, qui prend à la cadence ce que l'eau
+   * du lieu porte — rivière ≠ lac, sans une ligne de plus (`peche-table.ts` fait tout le travail).
+   *
+   * UN OUVRAGE, PAS DU MATÉRIEL DE POCHE (décision (4)) : elle DURE, donc elle se PERD — un
+   * pillard la casse et `spillOnGround` verse sa prise au sol. Une pêche passive qu'on ne pourrait
+   * pas perdre n'aurait aucune tension. `acces: 'private'` : elle est à son poseur (décision (3),
+   * relève à la main), et `capacite` en fait un CONTENEUR — la relève EST le geste du coffre,
+   * l'appât et la prise partagent son panier. `pv` bas : de l'osier, pas un mur.
+   *
+   * ⚠ **`capacite` NE BORNE QUE LES CASES, jamais la prise.** Les poissons crus s'empilent par 5,
+   * donc huit cases valent une TRENTAINE de portions : le plafond de la pêche passive est
+   * `NASSE.CAPACITE` (`balance.ts`), et c'est lui qu'on bouge si une nasse abandonnée rend trop.
+   *
+   * `usurable: true` déclare que ses PV se lisent comme de la VÉTUSTÉ — « à 30 % de PV », sur un
+   * panier d'osier, veut dire quelque chose (au contraire d'une meule de foin : cf. `USURABLE`
+   * dans `poi-batis.ts`, le SEUL lecteur du drapeau). ⚠ Il ne promet aucune décrépitude au fil du
+   * temps : rien dans `advanceNasses` n'use la nasse, et aucun `.plan` n'en pose — pour une nasse
+   * posée par un JOUEUR, il ne change donc rien aujourd'hui.
+   *
+   * `bloque: 'non'` — l'invariant des pièces d'eau (« ce qui tient sur l'eau porte sa propre
+   * assise, donc ne bloque rien ») et le bon geste à la fois : on PATAUGE jusqu'à sa nasse pour
+   * y plonger la main. Un panier d'osier n'est pas un mur, et une pleine tuile bloquante dans
+   * les hauts-fonds saurait emmurer qui se tient dessus.
+   *
+   * `fiber` et non un item `roseau` : la roselière en donne déjà (les « roseaux, sphaigne » de
+   * `economy.ts`). C'est la réponse à « à quoi sert un roseau » — les roseaux qu'on y cueille
+   * deviennent le piège. Aucune matière neuve, aucun nœud neuf, l'empreinte de carte ne bouge pas.
+   */
+  fish_trap: {
+    label: 'Nasse', fam: 'mobilier', pose: 'objet', occupe: 'tuile', arete: 'interdite',
+    sousRoche: false,
+    bloque: 'non', pv: 40, cout: { fiber: 8 }, acces: 'private', eau: true, usurable: true,
+    eauSeule: true,
+    capacite: 8,
   },
   /**
    * LE SÉCHOIR (spec `peche.md` D13/S1, décision d'Alexis 2026-08-24) — une claie de bois et de

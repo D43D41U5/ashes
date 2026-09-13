@@ -80,6 +80,11 @@ export const POSABLE_SUR_EAU: readonly StructureType[] = STRUCTURE_TYPES.filter(
  */
 export function terrainConstructible(terrain: number, type: StructureType): boolean {
   if (!TERRAINS[terrain]?.walkable) return false // roche, falaise, glacier, eau profonde, vide
+  // L'EAU SEULE (spec `nasse.md` N1) — le pendant de `surCendre`. `eau: true` ne fait qu'ADMETTRE
+  // l'eau en plus de la terre ; la nasse, elle, n'a de sens QUE dans l'eau : un piège à poissons
+  // sur l'herbe ne prendrait jamais rien, et le joueur aurait payé ses huit fibres pour un objet
+  // mort. Un refus lisible vaut mieux qu'un ouvrage inerte.
+  if (piece(type).eauSeule === true) return terrain === TERRAIN_SHALLOW_WATER
   if (terrain !== TERRAIN_SHALLOW_WATER) return true // terre ferme (marais compris)
   return POSABLE_SUR_EAU.includes(type)
 }

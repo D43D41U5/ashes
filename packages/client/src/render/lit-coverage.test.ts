@@ -90,6 +90,13 @@ describe('la couverture _lit (garde A1)', () => {
     parcelle: 'le potager se rend par son stade de pousse (`cropStage`), pas par un sprite fixe',
     terroir: 'idem',
     parcelle_de_suie: 'idem — le jardin de suie est un plot (agriculture.md J1)',
+    // LA NASSE (`nasse.md`, reprise de l'eau D3, 2026-09-13) : exemption VÉRIFIÉE, pas différée
+    // par confort — `fish_trap` n'est dans AUCUNE recette (`RecipeId`), n'a pas d'`ItemId`, et
+    // l'action `build` ne prend qu'un `BarrierType` : rien, aujourd'hui, ne peut en poser une,
+    // donc `snapshot-view` ne demande jamais `st-fish_trap` et le damier magenta est hors
+    // d'atteinte. Le jour où une recette la produit, elle aura besoin de son art AVANT — et
+    // c'est cette ligne qu'on viendra retirer.
+    fish_trap: 'rendu différé : aucune recette ne la produit, donc rien ne peut la poser (nasse.md, lot suivant)',
     friche: 'clé PLATE de BATI_KEYS, gardée par bati-art.test',
     terre: 'idem',
     roc: 'idem',

@@ -61,7 +61,11 @@ describe('l’inventaire des 97 faits', () => {
     // d'Alexis : « la vallée, au jour, sans le gel »), famille `saison` — `eau_a_sec`/`eau_revenue`,
     // `crue_montee`/`crue_retiree`, `gues_fermes`/`gues_rouverts`. Toutes MUETTES : la vallée qui
     // sèche ou déborde se VOIT (vase, nappe, gué sombre) et se LIT (chronique), elle ne claque pas.
-    expect(somme).toBe(106)
+    // 106 → 107 le 2026-09-13 : `nasse_caught` (`nasse.md` N15, reprise de l'eau D3), famille
+    // `batir` — MUET pour DEUX raisons : la récolte parle déjà (c'est celle de `fish_caught`), et
+    // la nasse prend SEULE, sans personne au bord de l'eau — une voix sonnerait là où il n'y a
+    // aucune oreille. Le fait existe pour la chronique.
+    expect(somme).toBe(107)
   })
 
   it('chaque fait DIT ce qu’il raconte — pas son identifiant', () => {
@@ -156,7 +160,9 @@ describe('l’inventaire des 97 faits', () => {
     // la piste se remonte en silence, l'annonce reste le hurlement du contact.
     // 43 → 49 le 2026-09-12 : les six bascules d'eau de la vallée (reprise de l'eau D1), muettes
     // décidées — elles se voient et se lisent ; six one-shots doubleraient le rendu et la chronique.
-    expect(Object.keys(INVENTAIRE).length - SONORES.length).toBe(49)
+    // 49 → 50 le 2026-09-13 : `nasse_caught` (reprise de l'eau D3) naît MUET — la récolte parle
+    // déjà, et surtout la nasse prend sans témoin : personne n'est là pour l'entendre.
+    expect(Object.keys(INVENTAIRE).length - SONORES.length).toBe(50)
   })
 
   it('PLUS AUCUNE famille n’est entièrement muette, sauf celle qui l’est par décision', () => {

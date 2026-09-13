@@ -809,6 +809,7 @@ describe('l’eau peu profonde est inconstructible, sauf le sol', () => {
     door: false,
     roof: false,
     chest: false,
+    fish_trap: true, // la NASSE : elle ne se pose QUE là (`eauSeule`, `nasse.md` N1)
     sechoir: false, // une claie ne tient pas sur le gué (`peche.md` S1)
     braise_mere: false, // un brasero sur l'eau — non (et `eau: false` au registre)
     parcelle_de_suie: false, // sa terre EST la cendre (`surCendre`) — jamais le gué
@@ -865,11 +866,20 @@ describe('l’eau peu profonde est inconstructible, sauf le sol', () => {
 
   it('A24 : la terre ferme porte tout, l’eau profonde ne porte rien — sol compris', () => {
     for (const type of TOUS) {
+      // ⚠ UNE EXCEPTION, ET ELLE EST VOULUE : la NASSE (`eauSeule`, `nasse.md` N1) est la
+      // première pièce que la TERRE REFUSE — un piège à poissons sur l'herbe ne prendrait
+      // jamais rien, et le joueur aurait payé ses fibres pour un ouvrage mort. Sa porte se
+      // juge juste en dessous, plutôt que d'affaiblir l'affirmation générale en `toBeDefined`.
+      if (type === 'fish_trap') continue
       expect([type, terrainConstructible(TERRAIN_GRASS, type)]).toEqual([type, true])
       expect([type, terrainConstructible(TERRAIN_DEEP_WATER, type)]).toEqual([type, false])
       // Le MARAIS reste constructible : c'est un sol détrempé, pas de l'eau libre.
       expect([type, terrainConstructible(TERRAIN_MARSH, type)]).toEqual([type, true])
     }
+    // LA NASSE, elle, ne veut que le gué : ni terre ferme, ni vase, ni profond.
+    expect(terrainConstructible(TERRAIN_GRASS, 'fish_trap'), 'la nasse refuse la terre ferme').toBe(false)
+    expect(terrainConstructible(TERRAIN_MARSH, 'fish_trap'), 'et la vase du marais aussi').toBe(false)
+    expect(terrainConstructible(TERRAIN_DEEP_WATER, 'fish_trap'), 'et le profond, où rien ne tient').toBe(false)
   })
 
   /** Une mare de gué à l'est du Feu, dans le carré : (43..46, 38..42). */

@@ -196,6 +196,10 @@ export const INVENTAIRE: Inventaire = {
   fish_nibble: { voix: 'voix', ou: 'tuile', famille: 'batir', quoi: 'ça mordille — l’eau est pauvre, ça ne mordra pas ici (moi seul)' },
   fishing_cancelled: { voix: 'voix', ou: 'entite', famille: 'batir', quoi: 'la ligne rentre : l’eau s’est retirée, a pris, ou ne donne rien' },
   fishing_junk: { voix: 'muet', famille: 'batir', quoi: 'on remonte un caillou — la récolte parle déjà' },
+  // LA NASSE (`nasse.md` N15) : MUET pour la raison de `fish_caught` (la récolte parle déjà) et
+  // pour une deuxième, propre à elle — elle prend SEULE, sans personne au bord. Une voix
+  // sonnerait dans une eau où il n'y a aucune oreille. Le fait existe pour la chronique.
+  nasse_caught: { voix: 'muet', famille: 'batir', quoi: 'une nasse a pris, seule et sans témoin — la récolte parle déjà' },
   fish_record: { voix: 'voix', ou: 'entite', famille: 'progres', quoi: 'la plus grosse prise de cette espèce — le bestiaire s’écrit' },
   // L'EAU QUI SE SOUILLE (`qualite-eau.md` Q10, 2026-09-12) : MUET, et c'est décidé. Le fait
   // est causé par le joueur lui-même (il vient de saigner une bête dans un gué) au milieu d'un

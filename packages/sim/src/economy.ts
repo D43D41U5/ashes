@@ -857,7 +857,7 @@ function rentrerLaLigne(state: SimState, entity: Entity, reason: string): void {
  * ⚠ **TROIS TIRAGES QUELLE QUE SOIT LA BRANCHE.** Un compte de tirages qui dépend d'un résultat
  * décale le flux seedé pour tout ce qui suit — et fait rougir des tests sans aucun rapport.
  */
-function tirerLaTaille(state: SimState, sp: FishSpecies, niveau: number): number {
+export function tirerLaTaille(state: SimState, sp: FishSpecies, niveau: number): number {
   const chance = Math.min(FISHING.GROSSE_CAP, FISHING.GROSSE_BASE + niveau * FISHING.GROSSE_PAR_NIVEAU)
   const a = rngRoll(state.rngState)
   const b = rngRoll(a.next)

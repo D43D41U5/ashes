@@ -64,6 +64,7 @@ import { advancePois } from './poi-discovery'
 import { advanceDens } from './poi'
 import { actForDay, dayTicksAt, TICKS_PER_CYCLE, advanceTime, jourDeSaison } from './time'
 import { advanceCultures } from './agriculture'
+import { advanceNasses } from './nasse'
 import { advanceTemperature, coldSpeedFactor } from './temperature'
 import { advanceUpkeep, applyVillageAction, getVillageOf, type VillageAction, type Structure, type Village } from './village'
 
@@ -1255,6 +1256,7 @@ export function step(state: SimState, inputs: MoveInput[]): void {
   advanceSpoilage(state)
   advanceEconomy(state)
   advanceCultures(state) // F5 — le gel tue le potager de plein air (spec flore-froid)
+  advanceNasses(state) // spec `nasse.md` — la pêche passive prend à la cadence (rien sans nasse posée)
   advanceTemperature(state)
   advanceMurmures(state) // R27 — les morts de la vieille cendre se donnent à qui vient doucement
   advanceBraiseMeres(state) // R28 — la parade mange son charbon

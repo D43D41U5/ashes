@@ -1678,6 +1678,56 @@ export const FISHING = {
 } as const
 
 /**
+ * LA NASSE (spec `nasse.md`, reprise de l'eau D3, quatre décisions d'Alexis du 2026-09-13) — la
+ * pêche PASSIVE. Un ouvrage posé dans les hauts-fonds (`fish_trap`, registre `PIECES`), appâté,
+ * qui tire de la MÊME table que la canne (`peche-table.ts`) sur sa propre tuile, à la cadence.
+ * Elle n'invente aucune matière : la `fiber` de la roselière la bâtit, `worms` l'appâte.
+ *
+ * Nombres d'ÉQUILIBRAGE (se règlent en JOUANT) ; le coût et les PV de l'ouvrage vivent dans son
+ * entrée `PIECES` (le patron de toutes les pièces), pas ici.
+ */
+export const NASSE = {
+  /**
+   * L'intervalle entre deux tentatives de prise (7/30 de cycle ≈ ¼) — plus lent que la canne
+   * active : la relève est un rendez-vous, pas un robinet. La phase est décalée par l'`id` de
+   * structure (`(tick + id) % CADENCE`), donc deux nasses ne battent pas ensemble, sans champ
+   * d'état.
+   *
+   * ⚠ **PAS UN DIVISEUR DU CYCLE, ET C'EST TOUT L'INTÉRÊT DE 7/30.** À ¼ pile, les battements
+   * d'une nasse retombaient sur les MÊMES QUATRE HEURES du jour pour l'éternité : comme la table
+   * de prises a un axe CRÉNEAU (aube/jour/crépuscule/nuit, `peche-table.ts`), une nasse n'aurait
+   * jamais vu certains créneaux — donc jamais pris les espèces de nuit, quel que soit le temps
+   * qu'on l'y laisse. Avec 7/30, les relèves PRÉCESSENT dans la journée (30 tentatives = 7
+   * cycles) et la nasse finit par goûter à toutes les heures. Attrapé par le banc, qui ne
+   * prenait RIEN : ses battements tombaient tous sur un gué gelé.
+   */
+  CADENCE_TICKS: ticksForCycles(7 / 30),
+  /**
+   * LA PRISE QU'UNE NASSE PORTE, en unités et **appât NON compris** — le seul levier qui empêche
+   * la pêche passive de sortir la canne du jeu.
+   *
+   * ⚠ **LA `capacite` DU PANIER NE SUFFIT PAS, et s'en être remis à elle était un plafond
+   * FICTIF.** Les poissons crus s'empilent par 5 (`STACK_SIZES`, `parClasseDePrise(5, 5, 5)`) :
+   * huit cases ne bornent donc pas huit prises mais huit **PILES** — une trentaine de portions,
+   * appât déduit, pour un ouvrage à huit fibres que personne ne surveille. *Un plafond compte ce
+   * qu'il borne*, et celui-ci borne LA PRISE.
+   *
+   * L'appât est hors du compte exprès : garnir sa nasse ne doit pas voler la place du poisson,
+   * sinon « appâter » et « relever » deviendraient le même geste.
+   *
+   * À caler en JOUANT : à ~4,3 tentatives par cycle, une nasse en bonne eau sature en deux ou
+   * trois cycles — un rendez-vous tous les deux jours, pas un robinet.
+   */
+  CAPACITE: 12,
+  /** LES APPÂTS et leur POUVOIR (« où je dépense » — décision (2) « appâtée »). L'appât divise le
+   *  poids du « rien » de la table (le levier de `poidsDuRien`, comme un coin) : plus l'appât est
+   *  riche, plus ça mord par appât dépensé. Ordre = ordre de consommation (le moins cher d'abord).
+   *  `worms` (du tas de feuilles, déjà l'appât de la canne) est la référence ; `raw_meat` détourne
+   *  de la nourriture pour mordre plus. Ajouter un appât est UNE ligne. */
+  APPATS: { worms: { rienDiv: 1 }, raw_meat: { rienDiv: 2 } } as Partial<Record<import('./items').ItemId, { readonly rienDiv: number }>>,
+} as const
+
+/**
  * LE DÉPEÇAGE (spec `depecage.md`, sept décisions d'Alexis du 2026-08-22). Le cadavre d'une bête est
  * un RÉSERVOIR (`Corpse.inventory`, marqué `carcass`) ; le clic MAINTENU, couteau en main, en tire
  * une part toutes les `CUT_TICKS` — tirée au hasard parmi ce qui reste (D3), acquise à l'instant
