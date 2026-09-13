@@ -68,6 +68,6 @@ Saigner doit se payer **en distance**, pas seulement en proximité. Aujourd'hui,
 
 ## Hors périmètre (et où ça revient)
 
-- **La piste dans l'eau ne se voit pas.** La teinte du sang dans l'eau est un chantier client séparé (`qualite-eau.md`). Conséquence à connaître : **dans l'eau, la traque est silencieuse ET invisible** ; sur la berge, la piste se voit.
+- **La piste dans l'eau se voit désormais par la TEINTE** (lot SANG 2c, livré le 2026-09-12 après cette ligne : `qualite-eau.md`, régime rouge-brun distinct de la suie, par crans). Conséquence à connaître, corrigée : **dans l'eau, la traque reste silencieuse** (`wolf_on_trail` est muet et sans consommateur) **mais elle n'est plus invisible** — l'eau rougie dit où le sang est entré ; sur la berge, la piste se voit comme avant.
 - **D'autres prédateurs.** Le loup est le seul `predator: true` du jeu aujourd'hui.
 - **Le gibier qui fuit une piste.** Pas demandé.
