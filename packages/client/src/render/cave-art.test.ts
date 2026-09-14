@@ -12,7 +12,7 @@ import { describe, expect, it } from 'vitest'
 import { TERRAIN_BOULDERS, TERRAIN_SCREE } from '@ashes/sim'
 import { dessinDeParoi, PAROI_RANGEES } from './cliff-art'
 import {
-  dessinDeLaGueule, dessinDeLaGueuleEntiere, dessinDeLaRocheDeCave, dessinDeLevre, dessinDeParoiDeCave, dessinDuJour,
+  ARCHE_RANGEES, dessinDeLArcheDeJour, dessinDeLaGueule, dessinDeLaGueuleEntiere, dessinDeLaRocheDeCave, dessinDeLevre, dessinDeParoiDeCave, dessinDuJour,
   dessinDuSolDeCave, GUEULE_LARGEUR, GUEULE_RANGEES, JOUR_RANGEES, lum, PERIODE_CAVE, ROCHE_PX, type RectArtA,
 } from './cave-art'
 
@@ -146,5 +146,45 @@ describe('cave-art — la nappe de jour', () => {
       prev = a
     }
     expect(alphaA(h - 1)).toBeGreaterThan(alphaA(0) * 5)
+  })
+})
+
+describe('cave-art — l\'arche de jour, la gueule vue de dedans', () => {
+  const arche = dessinDeLArcheDeJour()
+  const alpha = (x: number, y: number): number =>
+    arche.filter((q) => x >= q.x && x < q.x + q.w && y >= q.y && y < q.y + q.h).reduce((m, q) => Math.max(m, q.a ?? 1), 0)
+
+  it('a la forme de la fente de dehors : les mêmes lignes, entre les mêmes lèvres', () => {
+    // Les rangées de paroi que la fente ouvre, pas le seuil (qui n'est, dehors, qu'une tache).
+    expect(ARCHE_RANGEES).toBe(GUEULE_RANGEES - 1)
+    expect(Math.max(...arche.map((q) => q.y + q.h))).toBeLessThanOrEqual(ARCHE_RANGEES * 16)
+    // Rien au-dessus du linteau : les quatre lignes de roche mouillée.
+    for (let y = 0; y < 4; y++) for (let x = 0; x < GUEULE_LARGEUR; x++) expect(alpha(x, y)).toBe(0)
+    // La première ligne ouverte est la fissure étroite, [14, 17].
+    expect(alpha(14, 4)).toBeGreaterThan(0)
+    expect(alpha(17, 4)).toBeGreaterThan(0)
+    expect(alpha(13, 4)).toBe(0)
+    expect(alpha(18, 4)).toBe(0)
+    // Ligne 8 de la rangée 1 (abs 24) : dehors, lèvre en 2 et joue en 29 ; dedans, la lumière
+    // remplit ce qu'elles bordent, et pas un pixel de plus.
+    const fente = dessinDeLaGueule(1)
+    expect(pixel(fente, 2, 8)).toBeGreaterThanOrEqual(0)
+    expect(pixel(fente, 29, 8)).toBeGreaterThanOrEqual(0)
+    expect(alpha(3, 24)).toBeGreaterThan(0)
+    expect(alpha(28, 24)).toBeGreaterThan(0)
+    expect(alpha(2, 24)).toBe(0)
+    expect(alpha(29, 24)).toBe(0)
+  })
+
+  it('s\'éclaire en descendant : c\'est au seuil que le jour entre, et c\'est une lumière', () => {
+    const mx = GUEULE_LARGEUR / 2
+    let prev = 0
+    for (let y = 4; y < ARCHE_RANGEES * 16; y++) {
+      expect(alpha(mx, y)).toBeGreaterThanOrEqual(prev)
+      prev = alpha(mx, y)
+    }
+    expect(alpha(mx, ARCHE_RANGEES * 16 - 1)).toBeGreaterThan(alpha(mx, 4) * 3)
+    // Translucide partout : posée sur le sol, pas une porte peinte par-dessus.
+    expect(Math.max(...arche.map((q) => q.a ?? 1))).toBeLessThan(1)
   })
 })

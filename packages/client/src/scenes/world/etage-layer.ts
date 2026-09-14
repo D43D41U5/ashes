@@ -34,7 +34,7 @@ import {
   type Connecteur, type WorldMap,
 } from '@ashes/sim'
 import {
-  BRAISE_GUEULE_KEY, caveKey, DEHORS_KEY, GUEULE_KEY, JOUR_KEY, PERIODE_CAVE, ROCHE_CAVE_KEY,
+  ARCHE_JOUR_KEY, ARCHE_RANGEES, BRAISE_GUEULE_KEY, caveKey, GUEULE_KEY, JOUR_KEY, PERIODE_CAVE, ROCHE_CAVE_KEY,
   EAUX_DE_CAVE, SIGNES_DE_CAVE, TERRAINS_DE_CAVE, VARIANTES_LUEUR,
 } from '../../render/cave-art'
 import { cliffKey, levreDe, PHASES_PAROI, varianteDeLevre, VARIANTES_PAROI } from '../../render/cliff-art'
@@ -74,6 +74,8 @@ const SOUS = -1
 const TIE_SIGNE = 0.02
 const TIE_OMBRE = 0.05
 const TIE_JOUR = 0.06
+/** L'arche de jour, juste au-dessus de la nappe : la même lumière, avec sa forme. */
+const TIE_ARCHE = 0.061
 /** La paroi trie sur la rangée du PIED de la roche (`ty − 1`) : un corps sur le sol passe devant. */
 const TIE_PAROI = 0.3
 /** La part des tuiles de salle qui portent un signe (os, éboulis, flaque). Assez rare pour que
@@ -206,6 +208,18 @@ export class EtageLayer {
    * paliers, réduit à sa plus simple expression : un booléen, parce qu'il n'y a que deux états.
    */
   souterrain = false
+  /**
+   * ═══ …ET DANS QUEL ÉTAGE — le niveau de la salle où le regard se tient, posé avec `souterrain` ═══
+   *
+   * La cave ne peint que les salles de CET étage, et compte la masse depuis son palier. Elle
+   * peignait toutes les salles du cadre et prenait le plus bas de leurs paliers, sur la foi de
+   * « deux salles de paliers différents dans un même cadre n'existent pas ». MESURÉ le 2026-09-14 :
+   * depuis la Grotte I (étage −2, palier 1), 37 tuiles d'un karst voisin à l'étage −1 dans le
+   * cadre — le palier tombait à 0, la masse se semait dès la hauteur 1, et la terrasse devant la
+   * gueule, le dehors qu'on doit voir, était murée de roche. Une autre grotte ne se voit pas depuis
+   * celle-ci : elle est sous la masse, et la roche la couvre.
+   */
+  niveauDuRegard = 0
   /**
    * ═══ LA LUMIÈRE D'UNE CAVE — posée par `WorldScene`, qui tient la façade d'état ═══
    *
@@ -539,9 +553,8 @@ export class EtageLayer {
     const ty1 = Math.min(height - 1, Math.ceil((v.y + v.height) / TILE_PX) + 1 + (1 + this.relief.hauteurMax) * LIFT_TUILES)
     // `strateDEtage` rend le même nombre pour tout niveau négatif : LA strate du souterrain.
     const strate = strateDEtage(SOUS)
-    // Le palier de la salle qu'on voit — celui d'où le masque compte la masse. Le PLUS BAS des
-    // paliers visibles : deux salles de paliers différents dans un même cadre n'existent pas
-    // aujourd'hui, et si elles existaient, le plus bas couvre le plus, donc ne laisse rien fuir.
+    // Le palier de la salle qu'on voit — celui d'où le masque compte la masse. Seules les salles
+    // de l'étage du regard se peignent (`niveauDuRegard`) : elles n'ont qu'un palier.
     let pSalle = Number.POSITIVE_INFINITY
     for (let ty = ty0; ty <= ty1; ty++) {
       for (let tx = tx0; tx <= tx1; tx++) {
@@ -552,12 +565,15 @@ export class EtageLayer {
         // la salle dessinée à sa hauteur laisserait deux rangées entre le seuil et son sol.
         // Même loi que le corps qui s'y tient (`decalageDEtage`).
         const niveau = this.relief.niveauDeSalle(tx, ty)
-        if (niveau === 0) continue
+        if (niveau === 0 || niveau !== this.niveauDuRegard) continue
         const p = palierDUneSalle(niveau)
         const lift = p * LIFT_TUILES
         if (p < pSalle) pSalle = p
-        // ② LA SALLE DANS LE MASQUE (voir `ouvrirLeMasque`) : son sol, sa paroi et le seuil.
-        this.marquer(tx, ty - 2 - lift, ty + 1 - lift)
+        const estGueule = this.portes.get(ty * width + tx)?.type === 'gueule'
+        // ② LA SALLE DANS LE MASQUE (voir `ouvrirLeMasque`) : son sol, sa paroi et la rangée au
+        //    sud. SAUF la gueule : son sud, c'est le vrai dehors — la passe de surface, qu'on voit
+        //    sous l'arche de jour —, et plus un dehors tamponné sur de la roche (2026-09-14).
+        this.marquer(tx, ty - 2 - lift, ty + (estGueule ? 0 : 1) - lift)
         const t = terrainAEtage(this.map, niveau, tx, ty)
         // LA NAPPE (G-R4) : l'eau de la grille creuse est une tuile de la cave, pas le shader
         // de surface — elle n'a ni ciel à refléter ni heure ; le voile la noie, la torche la rend.
@@ -565,7 +581,6 @@ export class EtageLayer {
         const tt = TERRAINS_DE_CAVE.includes(t) ? t : TERRAIN_DE_CAVE_DEFAUT
         const phase = (((tx % PERIODE_CAVE) + PERIODE_CAVE) % PERIODE_CAVE)
           + PERIODE_CAVE * (((ty % PERIODE_CAVE) + PERIODE_CAVE) % PERIODE_CAVE)
-        const estGueule = this.portes.get(ty * width + tx)?.type === 'gueule'
         const sol = strate + ySortDepth(ty, TILE_PX, TIE_SOL)
         this.tuilesVues.push({ tx, ty, lift })
         // ③ LE SOL (ou l'eau), et son signe — pas de signe sur l'eau.
@@ -606,10 +621,16 @@ export class EtageLayer {
           // échange : c'est le seul trait dur d'un lieu mou, il doit mordre quand on le voit.
           n = this.poser(this.cave, n, caveKey('levre', cote), tx, ty - lift, strate + ySortDepth(ty, TILE_PX, TIE_LEVRE), LEVRE_ALPHA, 0xffffff)
         }
-        // ⑥ LA GUEULE, vue du dedans : la nappe de jour qui remonte vers le nord, et le dehors
-        //    par le trou. Les deux prennent la couleur de l'heure — à minuit c'est de la nuit
-        //    qu'on voit par la fente, pas du blanc.
-        //    La gueule est une PAIRE de tuiles : la nappe, le dehors et le centre de lumière se
+        // ⑥ LA GUEULE, vue du dedans : la nappe de jour qui remonte vers le nord, et l'ARCHE DE
+        //    JOUR — la fente de dehors à sa forme, en lumière. Les deux prennent la couleur de
+        //    l'heure et s'éteignent avec le ciel — à minuit c'est de la nuit qu'on voit par la
+        //    fente, pas du blanc.
+        //    ⚠ L'ARCHE EST UNE RANGÉE PLUS BAS QUE CELLE DE DEHORS, ET C'EST VOULU (Alexis,
+        //    2026-09-14). Dehors, elle vit sur les rangées de paroi au-dessus du seuil ; dedans, le
+        //    bord sud de la salle est la rangée au sud de chaque salle (②), une rangée sous le pied
+        //    de cette paroi. À la place exacte de dehors, l'arche flottait une tuile au-dessus de
+        //    l'ouverture ; posée sur la rangée au-dessus du seuil ET le seuil, elle s'y inscrit.
+        //    La gueule est une PAIRE de tuiles : la nappe, l'arche et le centre de lumière se
         //    posent UNE fois, depuis la tuile ouest, sur 32 px.
         if (estGueule) {
           this.gueulesVues.push({ tx, ty, lift })
@@ -617,7 +638,8 @@ export class EtageLayer {
             this.gueulesPx.push({ x: (tx + 1) * TILE_PX, y: (ty - lift + 0.5) * TILE_PX })
             n = this.poser(this.cave, n, JOUR_KEY, tx, ty - 2 - lift, strate + ySortDepth(ty, TILE_PX, TIE_JOUR),
               lum.ciel, lum.couleurDuJour, Phaser.BlendModes.SCREEN)
-            n = this.poser(this.cave, n, DEHORS_KEY, tx, ty + 1 - lift, ROCHE_DEPTH + 1, 1, lum.couleurDuJour)
+            n = this.poser(this.cave, n, ARCHE_JOUR_KEY, tx, ty - (ARCHE_RANGEES - 1) - lift, strate + ySortDepth(ty, TILE_PX, TIE_ARCHE),
+              lum.ciel, lum.couleurDuJour, Phaser.BlendModes.SCREEN)
           }
         }
         // ⑦ LES LICHENS — là où le ciel n'entre jamais, et là seulement.

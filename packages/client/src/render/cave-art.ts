@@ -588,17 +588,31 @@ export function dessinDuJour(): RectArtA[] {
   return r
 }
 
-/** LE DEHORS, vu par la gueule depuis la salle : un rectangle de jour entre deux jambages. À
- *  teinter de l'heure — et c'est la SEULE chose de la cave qui prend la couleur du ciel. */
-export function dessinDuDehors(): RectArtA[] {
-  const L = GUEULE_LARGEUR
-  return [
-    { x: 2, y: 2, w: L - 4, h: P - 2, c: 0xffffff },
-    { x: 0, y: 0, w: 2, h: P, c: 0x07080c },
-    { x: L - 2, y: 0, w: 2, h: P, c: 0x07080c },
-    { x: 0, y: 0, w: L, h: 2, c: 0x07080c },
-    { x: 2, y: 2, w: L - 4, h: 1, c: 0x000000, a: 0.5 },
-  ]
+/** Combien de rangées l'arche de jour occupe : celles de la fente, sans le seuil. */
+export const ARCHE_RANGEES = PROFIL.length / P
+/** L'arche de jour sous le linteau, puis au ras du sol : c'est au seuil que le jour entre. */
+const ARCHE_ALPHA_HAUT = 0.2
+const ARCHE_ALPHA_BAS = 0.65
+/**
+ * L'ARCHE DE JOUR — la gueule vue de DEDANS (Alexis, 2026-09-14, sur planches : « V4 »). La fente
+ * de dehors à sa forme (`PROFIL`, ligne pour ligne), mais en LUMIÈRE : blanche et translucide, à
+ * TEINTER de l'heure et à poser en SCREEN, comme la nappe. Elle s'éclaire en descendant, par crans
+ * de quatre lignes — la lumière est quantifiée au grain de l'art.
+ *
+ * Elle remplace « le dehors », un rectangle de jour entre deux jambages tamponné une rangée SOUS le
+ * seuil : vue de dedans, la sortie se lisait carrée, deux à trois rangées sous l'arche de dehors.
+ */
+export function dessinDeLArcheDeJour(): RectArtA[] {
+  const r: RectArtA[] = []
+  const premiere = PROFIL.findIndex((p) => p !== null)
+  const bandes = Math.floor((PROFIL.length - 1 - premiere) / 4)
+  for (let abs = premiere; abs < PROFIL.length; abs++) {
+    const p = PROFIL[abs]
+    if (!p) continue
+    const t = Math.floor((abs - premiere) / 4) / bandes
+    r.push({ x: p[0], y: abs, w: p[1] - p[0] + 1, h: 1, c: 0xffffff, a: ARCHE_ALPHA_HAUT + t * (ARCHE_ALPHA_BAS - ARCHE_ALPHA_HAUT) })
+  }
+  return r
 }
 
 // ═══ LA LUEUR — ce qui vit dans le noir ═════════════════════════════════════════════════════
@@ -621,7 +635,7 @@ export function caveKey(family: string, a: number | string = 0, b: number | stri
 }
 export const ROCHE_CAVE_KEY = 'cv-roche'
 export const JOUR_KEY = 'cv-jour'
-export const DEHORS_KEY = 'cv-dehors'
+export const ARCHE_JOUR_KEY = 'cv-arche-jour'
 export const GUEULE_KEY = caveKey('gueule')
 export const BRAISE_GUEULE_KEY = caveKey('braise-gueule')
 
@@ -635,7 +649,7 @@ const MASQUES_PAROI: readonly number[] = ((): number[] => {
 /**
  * Génère les textures de la cave — appelé une fois au boot, après `makeCliffTextures`. Sol :
  * 2 terrains × 16 phases. Signes : 5. Paroi : 12 masques × 8 variantes. Ombres et lèvres : 4 + 4.
- * Gueule : 1 (32×48) + sa braise : 1, flancs : 2, jour (32×48), dehors (32×16), roche (64×64), lueurs : 2. **~170 images**,
+ * Gueule : 1 (32×48) + sa braise : 1, flancs : 2, jour (32×48), arche de jour (32×32), roche (64×64), lueurs : 2. **~170 images**,
  * presque toutes de 16×16.
  */
 export function makeCaveTextures(scene: Phaser.Scene): void {
@@ -663,7 +677,7 @@ export function makeCaveTextures(scene: Phaser.Scene): void {
   rejouer(dessinDeLaBraiseDeGueule(), BRAISE_GUEULE_KEY, GUEULE_LARGEUR, GUEULE_RANGEES * P)
   for (const cote of [2, 4]) rejouer(dessinDuFlanc(cote), caveKey('flanc', cote))
   rejouer(dessinDuJour(), JOUR_KEY, GUEULE_LARGEUR, JOUR_RANGEES * P)
-  rejouer(dessinDuDehors(), DEHORS_KEY, GUEULE_LARGEUR, P)
+  rejouer(dessinDeLArcheDeJour(), ARCHE_JOUR_KEY, GUEULE_LARGEUR, ARCHE_RANGEES * P)
   rejouer(dessinDeLaRocheDeCave(), ROCHE_CAVE_KEY, ROCHE_PX, ROCHE_PX)
   for (let v = 0; v < VARIANTES_LUEUR; v++) rejouer(dessinDeLueur(v), caveKey('lueur', v))
   g.destroy()

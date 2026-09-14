@@ -624,6 +624,8 @@ export class WorldScene extends Phaser.Scene {
     const palierJ = this.relief.palier(Math.floor(this.predicted.x), Math.floor(this.predicted.y))
     const souterrain = decouvert.niveau < palierJ
     this.etages.souterrain = souterrain
+    // …et l'étage de la salle où il se tient : la cave ne peint que celui-là (`niveauDuRegard`).
+    this.etages.niveauDuRegard = souterrain ? decouvert.niveau : 0
     // Les nœuds semés dans la salle et le bivouac (G-R7) ne se voient ni ne se visent que sous
     // la roche (`SnapshotView.sousRoche`) : la MÊME valeur, au MÊME instant.
     this.view.sousRoche = souterrain

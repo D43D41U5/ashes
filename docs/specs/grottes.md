@@ -90,8 +90,8 @@ au-dessus de soi.
 
 `EtageLayer.ouvrirLeMasque` tient désormais, par image, une cellule par tuile de l'écran : la
 MASSE (une colonne de hauteur `h ≥ p + 1` couvre les rangées dessinées `tyw − h × LIFT` à
-`tyw − p × LIFT` — un semis, pas un test) OU la SALLE (son sol, sa paroi au nord, le seuil de la
-gueule au sud). Hors carte, on couvre. Le masque se taille en bandes horizontales et sert DEUX
+`tyw − p × LIFT` — un semis, pas un test) OU la SALLE (son sol, sa paroi au nord, la rangée au
+sud — sauf pour la gueule, dont le sud est le dehors, §4sexies). Hors carte, on couvre. Le masque se taille en bandes horizontales et sert DEUX
 fois : la roche s'y pose (une bande tuilée par run, toutes à `ROCHE_DEPTH`, chevauchées d'un
 pixel), et le **voile de cave s'ouvre sur son complément** — là où rien ne surplombe, il n'y a
 pas de cave à assombrir. Le voile seul aurait rendu noir ce que la roche venait de découvrir.
@@ -164,6 +164,40 @@ est `min(de, vers)`), une gueule s'ouvre **sur** son palier et descend (`vers` e
 négatif de la salle) — donc `de === bas`. Gardes dans `deplier-etage.test.ts`, avec leurs deux
 témoins de rougissement : branche retirée, et branche écrite avec le `min` de la rampe.
 
+## 4sexies. La sortie vue de dedans : l'arche dans l'ouverture (2026-09-14)
+
+*« Entre l'extérieur et l'intérieur, la forme et la place de la sortie est décalée d'une ou 2
+tuiles vers le bas »* (Alexis — l'extérieur, lui, était bon).
+
+**Ce qui se passait** (MESURÉ, Grottes XXII et I, planches à midi, 20 h et 23 h) : dehors, l'arche
+vit sur les `LIFT_TUILES` rangées au-dessus du seuil (§4quinquies). Dedans, rien ne la reprenait :
+« le dehors » (`cv-dehors`, un rectangle de jour entre deux jambages) se tamponnait une rangée
+SOUS le seuil, sur une rangée de roche marquée pour lui. La sortie se lisait carrée, deux à trois
+rangées sous l'arche ; seule la nappe était à sa place.
+
+**Ce qui est décidé** (Alexis, sur planches de cinq variantes : « V4 », et le sol de cave à
+l'entrée) :
+- **L'arche de jour** (`dessinDeLArcheDeJour`, 32×32) : la fente de dehors à sa forme (`PROFIL`),
+  en lumière — blanche translucide, de 0,2 sous le linteau à 0,65 au ras du sol par crans de
+  quatre lignes, teintée de l'heure, en SCREEN et à l'alpha du ciel comme la nappe : de nuit, elle
+  s'éteint. Posée sur la rangée au-dessus du seuil ET le seuil — **une rangée plus bas que l'arche
+  de dehors, et c'est voulu** : dedans, le bord sud d'une salle est la rangée au sud de chaque
+  salle (sa roche, §4ter), une rangée sous le pied de la paroi de dehors. À la place exacte de
+  dehors (essayée : « V2 »), l'arche flottait une tuile au-dessus de l'ouverture.
+- **Le sol de l'entrée reste de la cave** : la gueule est une salle de son étage (`terrainAEtage`)
+  autant que le seuil du palier — rien à changer dans /sim. Et elle reste SOUS LE VOILE : un corps
+  du souterrain se dessine au-dessus du voile de nuit (`framing.ts`), c'est le voile de cave qui
+  l'éteint — la gueule hors du masque (essayée : « V1 »), le corps posé sur le seuil s'allumait en
+  blanc à 20 h.
+- **La gueule ne marque plus la rangée au sud** : sous l'arche, on voit le vrai dehors (la passe de
+  surface), plus un dehors tamponné sur de la roche. `cv-dehors` n'existe plus.
+
+**Et un second défaut, trouvé en chemin** : la cave ne peint plus que **l'étage du regard**
+(`EtageLayer.niveauDuRegard`, posé par `WorldScene` avec `souterrain`). Elle peignait toutes les
+salles du cadre et comptait la masse depuis le plus bas de leurs paliers ; MESURÉ depuis la Grotte I
+(étage −2, palier 1) : 37 tuiles d'un karst voisin à l'étage −1 dans le cadre, le palier tombait à
+0, et la terrasse devant la gueule était murée de roche.
+
 ## 5. Critères d'acceptation
 
 - **G-A1 — Déterminisme** : deux générations directes (`generateZonedTerrain`, jamais le cache) rendent les mêmes grilles creuses, connecteurs, zones et traces, au bit près ; le chemin `'vallee'` (sans `palier`) ne porte aucun karst.
@@ -179,6 +213,7 @@ témoins de rougissement : branche retirée, et branche écrite avec le `min` de
 - **G-A11 — La Grotte de surface** : `placePois` ne tire plus `grotte` ; `grotte.plan` n'est plus un lieu bâti ; C4 de `lieux-batis.md` se réécrit ici.
 - **G-A12 — Le tick** : `profil-tick` avant/après sur le même monde, par corps — `isSheltered`, `populateDen`/`advanceDens` et le pas ne coûtent pas plus qu'avec les caves de mesa.
 - **G-A13 — Le rendu** : `smoke --scenario grotte` — quatre cadrages : le palier devant la gueule (la fente ET la trace), le vestibule de jour, le fond (noir, la forme seule), la torche sur l'eau ; un feu posé au vestibule se voit par la gueule depuis le palier et pas ailleurs. Captures à l'appui, mesurées (contraste de la fente contre la paroi ; la trace lisible à 30 tuiles).
+- **G-A14 — La sortie vue de dedans** (§4sexies) : depuis le vestibule, l'arche de jour occupe la rangée au-dessus du seuil et le seuil, dans l'ouverture de la roche ; la rangée au sud de la gueule montre la passe de surface ; le sol de la gueule est de la cave, et un corps qui s'y tient la nuit n'est pas plus clair que sur le vestibule ; depuis une grotte dont le cadre contient une salle d'un autre étage, le dehors devant la gueule n'est pas couvert de roche. Planches à midi et de nuit, paliers 0 et 1.
 
 ## 6. Ouvert, nommé
 
