@@ -34,7 +34,38 @@ export const GI = {
   PALIER_TEXELS: 32,
   /** Le genou du rebond : m → m / (1 + m / plafond) — le rebond reste sous 0,2 et garde sa teinte (LG-R4 « genou »). */
   PLAFOND_REBOND: 0.2,
+  /**
+   * ═══ L'OMBRE DES ASTRES (LG-R8, LG-R9) ═══
+   * Ce que le soleil et la lune retirent au plancher du ciel. **Ni la dérive ni la force ne sont
+   * ici** : ce sont deux scalaires par image que `dynamic-lighting.ts` calcule déjà (`deriveDOmbre`,
+   * `forceDeLOmbre`) et que `WorldScene` pousse aux socles et aux falaises — la GI lit le MÊME
+   * nombre à la MÊME heure, elle ne refait pas le calcul (une loi, un lecteur).
+   */
+  ASTRE: {
+    /** LG-R9 : ℓ = 0,4 × H px d'ombre pleine — « 8 px ÷ le bloc moyen de 20 px » (Alexis, planche 4). */
+    LONGUEUR_PAR_HAUTEUR: 0.4,
+    /** La hauteur d'un mur, en px : `MUR_HT` (`bati-art.ts:143`). Redit ici pour que l'oracle n'ait
+     *  aucune dépendance navigateur (`bati-art` tire `normal-map`, donc un canvas) ; la garde
+     *  « la hauteur d'un mur est celle du jeu » de `champ-ref.test.ts` tient les deux égaux. */
+    HAUTEUR_MUR_PX: 32,
+    /** LG-R8 : la pointe se cisaille de 8/7 px par px de LONGUEUR, à dérive ±1 — le cisaillement des
+     *  socles (8 px au cran 8 sur leurs 7 rangs). C'est un RAPPORT : le même nombre vaut en texels. */
+    CISAILLEMENT: 8 / 7,
+    /** LG-R8 : la pénombre est DEHORS — 2 texels, à ⅔ puis ⅓, en fronts de Tchebychev. */
+    PENOMBRE: [2 / 3, 1 / 3],
+  },
 } as const
+
+/**
+ * LG-R9 — LA LONGUEUR SUIT LA HAUTEUR : ℓ = 0,4 × H px d'ombre pleine, rendue en TEXELS du grain.
+ *
+ * `pxParTexel` se PASSE au lieu de s'importer : `TILE_PX` vit dans `../framing`, du côté du rendu,
+ * et `champ-ref` promet de n'avoir aucune dépendance navigateur. L'unité devient explicite à chaque
+ * appel, ce qui vaut mieux qu'un 4 en dur dans deux fichiers.
+ */
+export function longueurDOmbre(hauteurPx: number, pxParTexel: number): number {
+  return (hauteurPx * GI.ASTRE.LONGUEUR_PAR_HAUTEUR) / pxParTexel
+}
 
 /**
  * LA PENTE DE LA LUMIÈRE DIRECTE — celle du trou du voile d'aujourd'hui (LG-R4 : « le profil et la

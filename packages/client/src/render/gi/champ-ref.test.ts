@@ -11,9 +11,11 @@ import {
   type ResourceNode,
   type Structure,
 } from '@ashes/sim'
-import { champRef, composerM, partVisibleGrille, type Emetteur } from './champ-ref'
+import { MUR_HT } from '../bati-art'
+import { TILE_PX } from '../framing'
+import { champRef, composerM, masqueDAstre, partVisibleGrille, type Astre, type BandeGrille, type Emetteur, type GrilleGi } from './champ-ref'
 import { grilleDuMonde } from './grille'
-import { ALBEDO, GI } from './reglages'
+import { ALBEDO, GI, longueurDOmbre } from './reglages'
 
 /**
  * L'ORACLE DU CHAMP (spec `lumiere-globale.md` LG-R4, critères LG-A4 ; LG-R5, critère LG-A5 ; LG-R11/R12 :
@@ -203,5 +205,106 @@ describe('la composition (LG-R5, LG-A5)', () => {
     // La lumière ne fait que remonter M vers 1, et l'ombre le descend : monotone dans les deux sens.
     expect(composerM(0.33, 0, 0.42, 0.5)).toBeGreaterThan(composerM(0.33, 0, 0.42, 0.2))
     expect(composerM(0.33, 1, 0.42, 0.2)).toBeLessThan(composerM(0.33, 0, 0.42, 0.2))
+  })
+})
+
+/**
+ * LE MASQUE D'ASTRE (LG-R8, LG-R9, LG-R10 « depuis la face »).
+ *
+ * Le montage se pose au TEXEL plutôt qu'à travers le monde : l'ombre d'astre est une géométrie, et
+ * une grille nue d'une seule bande la rend lisible au rang près. Un dernier cas la reprend sur un
+ * vrai mur de la sim, pour prouver que la plomberie y arrive.
+ *
+ * ⚠ LES PRÉDICTIONS SONT ÉCRITES AVANT LA MESURE (sinon la garde ne peut pas échouer) : mur
+ * est-ouest à cheval sur y = 8, ℓ = 32 px × 0,4 ÷ 4 = 3,2 texels, donc QUATRE rangs pleins (8 à 11),
+ * puis ⅔ au rang 12 et ⅓ au 13 ; à dérive ±1 la pointe part de (8/7) × 3,2 = 3,657 texels de côté.
+ */
+const ASTRE_NU = { cisaillement: GI.ASTRE.CISAILLEMENT, penombre: GI.ASTRE.PENOMBRE }
+const L_MUR = longueurDOmbre(GI.ASTRE.HAUTEUR_MUR_PX, TILE_PX / T)
+const astre = (derive: number, longueur = L_MUR): Astre => ({ derive, longueur, ...ASTRE_NU })
+
+/** Une grille nue de gw × gh texels, avec une seule bande — bords demi-entiers, comme la sim les donne. */
+function grilleNue(gw: number, gh: number, bande: BandeGrille): GrilleGi & { occ: Uint8Array } {
+  return { gw, gh, occ: new Uint8Array(gw * gh), murs: [bande], albedo: new Float32Array(gw * gh * 3), albedoMurs: [[0.5, 0.5, 0.5]] }
+}
+const MUR_EO: BandeGrille = { x0: 6.5, x1: 13.5, y0: 7.5, y1: 8.5 }
+const MUR_NS: BandeGrille = { x0: 9.5, x1: 10.5, y0: 5.5, y1: 10.5 }
+/** Les colonnes d'un rang qui sont dans l'ombre PLEINE. */
+const pleines = (s: Float32Array, gw: number, y: number): number[] => {
+  const c: number[] = []
+  for (let x = 0; x < gw; x++) if (s[y * gw + x] === 1) c.push(x)
+  return c
+}
+
+describe('le masque d’astre (LG-R8, LG-R9)', () => {
+  it('R9 — la longueur suit la hauteur : quatre rangs pleins sous un mur, puis ⅔ et ⅓ dehors', () => {
+    expect(L_MUR).toBeCloseTo(3.2, 12)
+    const g = grilleNue(24, 20, MUR_EO)
+    const s = masqueDAstre(g, astre(0))
+    const col = (y: number) => s[y * g.gw + 10]
+    expect([col(8), col(9), col(10), col(11)]).toEqual([1, 1, 1, 1])
+    // Le masque est un Float32Array : la valeur attendue est le float32 de ⅔, pas ⅔ à l'arrondi près.
+    expect(col(12)).toBe(Math.fround(2 / 3))
+    expect(col(13)).toBe(Math.fround(1 / 3))
+    expect(col(14)).toBe(0)
+    // L'emprise en largeur s'arrête aux bords OUVERTS de la bande : 6,5 et 13,5 ne sont pas dedans.
+    expect(pleines(s, g.gw, 11)).toEqual([7, 8, 9, 10, 11, 12])
+  })
+
+  it('R8 — la pénombre ne va jamais vers le nord : le haut d’une ombre est son contact', () => {
+    const g = grilleNue(24, 20, MUR_EO)
+    for (const d of [0, 1, -1, 0.4]) {
+      const s = masqueDAstre(g, astre(d))
+      for (let y = 0; y <= 7; y++) for (let x = 0; x < g.gw; x++) expect(s[y * g.gw + x], `d=${d} (${x}, ${y})`).toBe(0)
+    }
+  })
+
+  it('R8 — la pointe se cisaille, et son SENS est celui du jeu : le soir à l’est, le matin à l’ouest', () => {
+    const g = grilleNue(24, 20, MUR_EO)
+    const est = pleines(masqueDAstre(g, astre(1)), g.gw, 11)
+    const ouest = pleines(masqueDAstre(g, astre(-1)), g.gw, 11)
+    expect(est).toEqual([10, 11, 12, 13, 14, 15, 16])
+    expect(ouest).toEqual([3, 4, 5, 6, 7, 8, 9])
+    // Le miroir se lit en centres de texels (+0,5), pas en indices : c ↔ 19 − c autour de l'axe x = 10.
+    expect(est.map((c) => 19 - c).reverse()).toEqual(ouest)
+  })
+
+  it('R8 — un texel d’occludeur ne prend pas l’ombre d’astre, et il n’en transmet pas', () => {
+    const g = grilleNue(24, 20, MUR_EO)
+    g.occ[10 * g.gw + 10] = 1
+    const s = masqueDAstre(g, astre(0))
+    expect(s[10 * g.gw + 10]).toBe(0)
+    expect(s[9 * g.gw + 10]).toBe(1)
+    expect(s[11 * g.gw + 10]).toBe(1)
+  })
+
+  it('R10 — un mur nord-sud ne jette rien à dérive nulle : son ombre tombe sous lui', () => {
+    const g = grilleNue(24, 20, MUR_NS)
+    // La bande est à cheval sur x = 10 : l'ombre plein sud tient dans sa propre ligne, et aucun
+    // centre de texel n'est dans son intérieur ouvert. Rien à voir — ce qui est le vrai rendu.
+    expect(masqueDAstre(g, astre(0)).some((v) => v > 0)).toBe(false)
+    // Dès que l'astre dérive, elle traîne en diagonale, au sud et à l'est.
+    const s = masqueDAstre(g, astre(1))
+    expect(s.some((v) => v === 1)).toBe(true)
+    for (let y = 0; y < 5; y++) for (let x = 0; x < g.gw; x++) expect(s[y * g.gw + x], `(${x}, ${y})`).toBe(0)
+  })
+
+  it('R8 — sans astre, pas de masque : à longueur nulle le champ est intact au bit', () => {
+    const g = grilleNue(24, 20, MUR_EO)
+    expect(masqueDAstre(g, astre(0.7, 0)).some((v) => v !== 0)).toBe(false)
+  })
+
+  it('R9 — la hauteur d’un mur est celle du jeu, pas un second nombre', () => {
+    expect(GI.ASTRE.HAUTEUR_MUR_PX).toBe(MUR_HT)
+  })
+
+  it('R8 — la plomberie y arrive : un vrai mur de la sim porte le masque', () => {
+    const g = grilleDuMonde(monde(), N, F)
+    // Le mur du montage est une arête OUEST, donc nord-sud : rien à dérive nulle, une traîne sinon.
+    expect(masqueDAstre(g, astre(0)).some((v) => v > 0)).toBe(false)
+    const s = masqueDAstre(g, astre(-1))
+    expect(s.some((v) => v === 1)).toBe(true)
+    const nord = Math.floor(g.murs[0]!.y0)
+    for (let y = 0; y < nord; y++) for (let x = 0; x < g.gw; x++) expect(s[y * g.gw + x], `(${x}, ${y})`).toBe(0)
   })
 })

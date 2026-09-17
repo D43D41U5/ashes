@@ -340,3 +340,118 @@ export function composerM(mn: number, s: number, a: number, l: number): number {
   const m = 1 - (1 - plancher) * (1 - Math.min(1, l))
   return m > 1 ? 1 : m
 }
+
+/**
+ * ═══ L'ASTRE QUI JETTE L'OMBRE (LG-R8) ═══
+ *
+ * Ses deux nombres sont CALCULÉS AILLEURS et reçus ici. `deriveDOmbre` et `forceDeLOmbre` sont la loi
+ * de `scenes/world/dynamic-lighting.ts`, que `WorldScene` pousse déjà aux socles et aux falaises
+ * (`view.deriveOmbre`, `view.forceOmbre`) : la GI lit le MÊME nombre à la MÊME heure, elle ne le
+ * recalcule pas. Les réglages de forme viennent de `GI.ASTRE`, passés comme `ReglagesChamp` l'est —
+ * l'oracle prend ses nombres, il n'importe aucune constante.
+ */
+export interface Astre {
+  /** La dérive, dans [-1, 1] (`deriveDOmbre`) : négative, l'astre est à l'est et l'ombre part à
+   *  l'OUEST (le matin) ; positive, elle part à l'EST (le soir) ; nulle, elle tombe plein sud. */
+  readonly derive: number
+  /** La longueur de l'ombre PLEINE, en texels — `longueurDOmbre(H, px par texel)` (LG-R9). */
+  readonly longueur: number
+  /** Le décalage latéral par unité de longueur, à dérive ±1 (`GI.ASTRE.CISAILLEMENT`, LG-R8). */
+  readonly cisaillement: number
+  /** Les valeurs de la pénombre, du plus près au plus loin (`GI.ASTRE.PENOMBRE` : ⅔ puis ⅓). */
+  readonly penombre: readonly number[]
+}
+
+/**
+ * Le centre (cx, cy) est-il dans l'ombre PLEINE de la bande ? On REMONTE le rayon : il y est s'il
+ * existe t dans [0, 1] tel que le point reculé de t × (dx, dy) tombe dans l'INTÉRIEUR de la bande.
+ * C'est le clipping de `coupeBande`, aux mêmes intervalles ouverts (LG-R10) — et comme aucun centre
+ * de texel n'est dans l'intérieur d'une bande (elle est à cheval, ses bords sont demi-entiers), le
+ * mur ne s'ombre jamais lui-même.
+ */
+function dansLOmbre(m: BandeGrille, cx: number, cy: number, dx: number, dy: number): boolean {
+  // dy > 0 : l'ombre va vers le sud. Le rang au nord de la bande rend un intervalle vide, donc 0.
+  let t0 = Math.max(0, (cy - m.y1) / dy)
+  let t1 = Math.min(1, (cy - m.y0) / dy)
+  if (dx === 0) {
+    if (!(cx > m.x0 && cx < m.x1)) return false
+  } else {
+    const a = (cx - m.x1) / dx
+    const b = (cx - m.x0) / dx
+    t0 = Math.max(t0, Math.min(a, b))
+    t1 = Math.min(t1, Math.max(a, b))
+  }
+  return t1 - t0 > 1e-9
+}
+
+/**
+ * ═══ LE MASQUE D'ASTRE (LG-R8, LG-R9) — CE QUE LE SOLEIL ET LA LUNE RETIRENT AU PLANCHER DU CIEL ═══
+ *
+ * Rend S par texel, dans [0, 1] : 1 dans l'ombre pleine, ⅔ puis ⅓ dans les deux texels de pénombre,
+ * 0 ailleurs. Il entre dans `composerM` (LG-R5), où il multiplie le PLANCHER — `mn × (1 − a × S)` —
+ * et laisse le feu intact : une ombre d'astre n'éteint pas une flamme.
+ *
+ * ═══ L'OMBRE EST UNE SOMME DE MINKOWSKI, PAS UN TRACÉ ═══
+ * Un point à la hauteur z tombe à ℓ × z/H au sud du pied (LG-R8), et un mur occupe toutes les
+ * hauteurs de 0 à H : son ombre est donc sa bande BALAYÉE par le vecteur (dx, dy) — la somme de
+ * Minkowski de la bande et du segment. Une seule formule rend les deux orientations : un mur
+ * est-ouest jette un parallélogramme vers le sud ; un mur nord-sud ne dépasse qu'au-delà de son bout
+ * sud (le reste du balayage retombe sur lui-même) et traîne en diagonale dès que la dérive n'est pas
+ * nulle. Et « une ombre d'astre se compte depuis la FACE » (LG-R10) en sort tout seul : le balayage
+ * part du BORD de la bande, jamais de son axe.
+ *
+ * ═══ CE QUI N'EST PAS UN LANCEUR ═══
+ * Les murs SEULS, ici. Une roche garde sa coulée au pixel et n'entre pas dans le masque (LG-R15) ; un
+ * arbre est deux cartes debout à la silhouette réelle, vent compris (LG-R8) — une tranche à part ; une
+ * marche est un lanceur de sa hauteur (LG-R14), qui attend `etage-layer.ts`. Un texel d'occludeur,
+ * lui, ne prend pas l'ombre d'astre (LG-R8) : un bloc est éclairé par ses faces, pas par son sol.
+ *
+ * L'opacité `a` n'est PAS ici : elle vaut `SHADOW_ALPHA` × `forceDeLOmbre`, deux nombres du rendu, et
+ * elle entre dans `composerM`. Le masque ne dit que la FORME — d'où « elle s'annule à la nouvelle
+ * lune » qui se lit chez l'appelant, au bit près, sans que cette fonction ait à le savoir.
+ */
+export function masqueDAstre(g: GrilleGi, astre: Astre): Float32Array {
+  const s = new Float32Array(g.gw * g.gh)
+  const dy = astre.longueur
+  if (!(dy > 0) || g.murs.length === 0) return s
+  const dx = astre.cisaillement * astre.longueur * astre.derive
+
+  // ① L'OMBRE PLEINE — le balayage de chaque bande, lu au centre de chaque texel de son emprise.
+  for (const m of g.murs) {
+    const x0 = Math.max(0, Math.floor(Math.min(m.x0, m.x0 + dx)))
+    const x1 = Math.min(g.gw, Math.ceil(Math.max(m.x1, m.x1 + dx)))
+    const y0 = Math.max(0, Math.floor(m.y0))
+    const y1 = Math.min(g.gh, Math.ceil(m.y1 + dy))
+    for (let y = y0; y < y1; y++)
+      for (let x = x0; x < x1; x++) {
+        const k = y * g.gw + x
+        if (s[k] === 1 || g.occ[k]) continue
+        if (dansLOmbre(m, x + 0.5, y + 0.5, dx, dy)) s[k] = 1
+      }
+  }
+
+  // ② LA PÉNOMBRE, DEHORS — deux fronts de Tchebychev à travers le sol libre, JAMAIS vers le nord :
+  //    le haut d'une ombre est son contact, il n'a pas de bord doux (LG-R8).
+  let front: number[] = []
+  for (let k = 0; k < s.length; k++) if (s[k] === 1) front.push(k)
+  for (const v of astre.penombre) {
+    const suivant: number[] = []
+    for (const k of front) {
+      const x = k % g.gw
+      const y = (k - x) / g.gw
+      for (let jy = 0; jy <= 1; jy++)
+        for (let jx = -1; jx <= 1; jx++) {
+          if (jx === 0 && jy === 0) continue
+          const nx = x + jx
+          const ny = y + jy
+          if (nx < 0 || ny < 0 || nx >= g.gw || ny >= g.gh) continue
+          const n = ny * g.gw + nx
+          if (s[n] !== 0 || g.occ[n]) continue
+          s[n] = v
+          suivant.push(n)
+        }
+    }
+    front = suivant
+  }
+  return s
+}
