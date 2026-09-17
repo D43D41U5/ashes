@@ -117,7 +117,7 @@ import { deplierLeLift } from '../render/deplier-etage'
 import { MUR_HT } from '../render/bati-art'
 import { rafraichirCimes } from '../render/lit-trees'
 import { cranDeSaison } from '../render/teinte-saison'
-import { airSansLune, ambientTint, daylight, fireGlow, fireHoleRadius, flicker, heureCanonique, heureSolaire, lerpColor, lueurDeLune, multiplicateurDuVoile, partSansLune, plancherDeNuit, produitCouleurs, voileDeNuit, LUNE_PLEINE_JOUR } from '../render/lighting'
+import { airSansLune, ambientTint, daylight, fireGlow, fireHoleRadius, flicker, heureCanonique, heureSolaire, lerpColor, lueurDeLune, multiplicateurDuVoile, multiplicateurParCanal, partSansLune, plancherDeNuit, produitCouleurs, voileDeNuit, LUNE_PLEINE_JOUR } from '../render/lighting'
 import { partDeNuitDesLucioles } from '../render/couvre-feu-lucioles'
 import { createWarp, type Warp } from '../render/warp'
 import { creerRelief, type Relief } from '../render/relief'
@@ -2748,15 +2748,29 @@ export class WorldScene extends Phaser.Scene {
       // (LG-R3 : à côté de la pile actuelle), et il lit LA MÊME liste de sources que le voile : feux
       // et torches résolus une fois, ils battent en phase.
       const passesGi = getHud(this.registry, 'debugGi') ?? 0
+      // Mn — LE PLANCHER DU VOILE, PAR CANAL, pris à l'expression QUE LE VOILE REÇOIT LUI-MÊME
+      // douze lignes plus bas : une loi, deux lecteurs. La GI compose alors M = 1 − (1 − Mn)(1 − L)
+      // et le voile se tait. En rendu à plat (`lit` faux) il n'y a pas de nuit à composer.
+      const mnGi = passesGi > 0 && this.lit ? multiplicateurParCanal(voileDeNuit(amb, lueurLune)) : null
       if (passesGi > 0) {
         this.gi ??= ChampGpu.creer(this)
+        // Mn au registre POUR LA SONDE : sans lui, la garde LG-A5 lit M sans savoir contre quoi.
+        this.registry.set('debugMn', mnGi)
         this.gi?.update(
           passesGi,
           this.cameras.main,
           { map: this.map, structures: this.view.structures, nodes: this.view.nodes },
           this.etages.souterrain ? this.etages.niveauDuRegard : 0,
           veilFires.map((f) => ({ worldX: f.worldX, worldY: f.worldY, radiusTiles: f.radiusTiles, force: f.force ?? 1 })),
-          ambientDepth + 0.5,
+          // LA PROFONDEUR DU CHAMP — en ADD pour le regard de la tranche B, en MULTIPLY quand il
+          // COMPOSE ; dans les deux cas `ambientDepth` NU, SURTOUT PAS `+ 0.5`. `AIR_OVER_LIGHT`
+          // vaut 0,5, donc l'air et le plancher de nuit se posent EXACTEMENT à `depth + 0.5` ; un
+          // quad posé là leur est à ÉGALITÉ, l'ordre d'insertion le fait passer APRÈS, et il
+          // multiplie le terme additif bleu qui donne à la nuit sa couleur. Mesuré le 17/09 sur
+          // tout le champ lointain — B −5,12 par canal, 75 % des pixels assombris, contre +0,45
+          // et 0,8 % à 8.
+          ambientDepth,
+          mnGi,
         )
       } else this.gi?.setVisible(false)
       this.nightVeil?.update(
@@ -2783,6 +2797,12 @@ export class WorldScene extends Phaser.Scene {
         // rend la nuit qu'il a prise. Le paramètre reste — le mode à plat, lui, n'a pas été
         // remesuré ; qui voudra le retirer devra d'abord le regarder.
         true,
+        // QUAND LA GI COMPOSE, LE VOILE SE TAIT — entièrement, SON TROU COMPRIS. La GI porte
+        // M = 1 − (1 − Mn)(1 − L), qui contient DÉJÀ le Mn du voile : poser le nôtre en plus
+        // donnerait Mn × M, la nuit deux fois. Et le trou EST le L de la torche — le garder
+        // poserait la lumière deux fois de la même façon (mesuré le 17/09 : voile rendu, l'écart
+        // au look d'aujourd'hui près du foyer monte de 6,60 à 16,9).
+        mnGi !== null,
       )
       // SOUS TERRE, le ciel n'entre pas et la gueule éclaire (`SousTerre`) : `etages.render` a
       // tourné plus haut dans cette même image, ses gueules visibles sont celles de l'écran.

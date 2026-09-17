@@ -481,12 +481,28 @@ export function voileDeNuit(amb: { color: number; alpha: number }, lueur: number
  * cesseraient de parler de la même nuit à la première retouche du voile.
  */
 export function multiplicateurDuVoile(v: { color: number; alpha: number }): number {
+  const m = multiplicateurParCanal(v)
   let out = 0
-  for (const d of [16, 8, 0]) {
-    const canal = ((v.color >> d) & 0xff) / 255
-    out |= Math.round(255 * (1 - v.alpha + v.alpha * canal)) << d
-  }
+  for (let i = 0; i < 3; i++) out |= Math.round(255 * m[i]!) << (16 - 8 * i)
   return out
+}
+
+/**
+ * LE MÊME MULTIPLICATEUR, PAR CANAL ET EN 0..1 — ce que LG-R5 nomme Mn.
+ *
+ * `multiplicateurDuVoile` le RANGE dans un 0xRRGGBB parce que Phaser teinte avec ça ; la GI, elle,
+ * en a besoin en `vec3` pour composer M = 1 − (1 − Mn)(1 − L). Les deux DÉRIVENT d'ici au lieu de
+ * recalculer chacun le sien — une loi, deux lecteurs, comme `profilDuTrou` pour la brosse du voile
+ * et le champ (LG-R4).
+ *
+ * Ce n'est pas du rangement : c'est ce qui rend **LG-A5 exact par construction**. « Le Mn du champ
+ * vaut celui du code à ≤ 0,005 par canal » ne peut pas dériver tant que le code n'a qu'une source ;
+ * deux formules recopiées, elles, se seraient séparées à la première retouche du voile — le défaut
+ * même que `multiplicateurDuVoile` a été exporté pour empêcher.
+ */
+export function multiplicateurParCanal(v: { color: number; alpha: number }): [number, number, number] {
+  const canal = (d: number): number => 1 - v.alpha + v.alpha * (((v.color >> d) & 0xff) / 255)
+  return [canal(16), canal(8), canal(0)]
 }
 
 interface DayKey {

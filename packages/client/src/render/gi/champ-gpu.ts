@@ -313,6 +313,7 @@ const FRAG_SOMME = `
 uniform sampler2D uDirect;
 uniform sampler2D uRebond;
 uniform float uPlafond;
+uniform vec3 uMn;
 vec3 lumiere(vec2 t) {
   vec3 d = texture2D(uDirect, uvCible(t)).rgb;
   vec3 r = texture2D(uRebond, uvCible(t)).rgb;
@@ -333,7 +334,11 @@ void main() {
       l = max(l, lumiere(N));
     }
   }
-  gl_FragColor = vec4(l, 1.0);
+  // LG-R5, LA LOI QUI COMPOSE : M = 1 - (1 - Mn) * (1 - L), soit Mn + L * (1 - Mn). La lumiere
+  // comble l'ecart entre le plancher du voile et 1, jamais au-dessus : c'est la phrase de design
+  // elle-meme, le feu ne remplit que l'ombre. A uMn = 0 la formule rend L a l'identique, et c'est
+  // ce qui garde LG-A2 intact (l'oracle compare gi-champ a L) sans passe ni texture de plus.
+  gl_FragColor = vec4(1.0 - (1.0 - uMn) * (1.0 - l), 1.0);
 }`
 
 type Uniformes = Record<string, number | number[] | Float32Array>
@@ -362,6 +367,17 @@ export class ChampGpu {
   private uPasMaxDirect = 0
   private uMotif = new Float32Array(32)
   private uAlbBande = new Float32Array(GI.MAX_ALBEDOS_BANDE * 3)
+  /**
+   * Mn — LE PLANCHER DU VOILE, PAR CANAL (LG-R5), et rien d'autre : la GI ne le RECALCULE pas,
+   * elle le REÇOIT, comme la brosse du voile et le champ partagent déjà `profilDuTrou` (LG-R4,
+   * une loi, deux lecteurs). LG-A5 l'exige au chiffre près : « le Mn du champ vaut celui du code
+   * à ≤ 0,005 par canal ».
+   *
+   * ZÉRO tant que la composition n'est pas câblée (tranche C2) — et ce zéro n'est pas un
+   * bouche-trou : à Mn = 0, M = 1 − (1 − 0)(1 − L) = L À L'IDENTIQUE. La garde LG-A2 lit donc
+   * exactement le champ qu'elle lisait avant, sans sixième passe et sans seconde cible.
+   */
+  private uMn: number[] = [0, 0, 0]
   private albBandes: Albedo[] = []
   /** Le coût de la dernière image, étape par étape, en ms — le budget de LG-A14 se lit ici. */
   readonly temps = { bati: 0, grille: 0, occludeurs: 0, rendu: 0, total: 0 }
@@ -382,7 +398,7 @@ export class ChampGpu {
    * Une image : la fenêtre suit la caméra (plus la marge), les occludeurs se réécrivent quand la fenêtre,
    * l'étage ou le bâti changent, les sources deviennent des uniformes, et les cinq passes rendent.
    */
-  update(passes: number, cam: Phaser.Cameras.Scene2D.Camera, monde: MondeEclaire, niveau: number, sources: readonly SourceGi[], depth: number): void {
+  update(passes: number, cam: Phaser.Cameras.Scene2D.Camera, monde: MondeEclaire, niveau: number, sources: readonly SourceGi[], depth: number, mn: readonly [number, number, number] | null = null): void {
     const n = Math.max(1, Math.min(PASSES_GI, Math.floor(passes)))
     const v = cam.worldView
     const tDebut = performance.now()
@@ -449,6 +465,11 @@ export class ChampGpu {
     let rMax = 0
     for (const e of this.emetteurs) if (e.rayon > rMax) rMax = e.rayon
     this.uPasMaxDirect = Math.ceil(4 * (rMax + GI.TAILLE_SOURCE)) + 2
+    // Mn, REÇU et jamais recalculé (LG-A5). `null` = pas de composition : à Mn = 0 la passe somme
+    // rend L à l'identique, donc la vue de debug et la garde LG-A2 lisent le champ d'avant.
+    this.uMn[0] = mn ? mn[0] : 0
+    this.uMn[1] = mn ? mn[1] : 0
+    this.uMn[2] = mn ? mn[2] : 0
     const tR = performance.now()
     for (let k = 0; k < n; k++) this.passes[k]!.renderImmediate()
     // ⚠ `renderImmediate` ne fait que SOUMETTRE. Ce temps-ci est celui qui occupe le thread
@@ -457,7 +478,25 @@ export class ChampGpu {
     this.temps.rendu = performance.now() - tR
     this.temps.total = performance.now() - tDebut
     if (this.image) {
-      this.image.setPosition(this.ox * PX_PAR_TEXEL, this.oy * PX_PAR_TEXEL).setDisplaySize(gw * PX_PAR_TEXEL, gh * PX_PAR_TEXEL).setDepth(depth).setVisible(n >= PASSES_GI)
+      // ═══ LE QUAD DU CHAMP — LE REGARD EN ADD, LA COMPOSITION EN MULTIPLY (LG-R5) ═══
+      //
+      // Hors composition (`mn === null`), c'est le regard de la tranche B : le champ posé sur le
+      // monde en ADD, pour VOIR la lumière au grain.
+      //   En composition, il porte M = 1 − (1 − Mn)(1 − L) en MULTIPLY, À LA PLACE du multiplicateur
+      // du voile — qui se tait alors ENTIÈREMENT, SON TROU COMPRIS. Ce trou EST le L de la torche :
+      // le laisser poserait la lumière deux fois. Mesuré le 17/09 — voile rendu, l'écart au look
+      // d'aujourd'hui près de la torche MONTE de 6,60 à 16,9.
+      //   « LA LUMIÈRE MULTIPLIE » (LG-R5) : une seule loi compose la nuit et le jour, et c'est
+      // celle-ci. Un quad d'écran en SCREEN a été essayé par-dessus, pour porter la lumière sur les
+      // CORPS ; il est retiré. LG-R7 ne demande pas un calque : elle demande la lumière du sol lue
+      // SOUS CHAQUE PIXEL du sprite, répartie entre ses sources, chaque part passée par sa normal
+      // map. Un uniforme d'écran ignore la normale, la répartition et φ — c'est la tranche D.
+      this.image
+        .setPosition(this.ox * PX_PAR_TEXEL, this.oy * PX_PAR_TEXEL)
+        .setDisplaySize(gw * PX_PAR_TEXEL, gh * PX_PAR_TEXEL)
+        .setDepth(depth)
+        .setBlendMode(mn ? Phaser.BlendModes.MULTIPLY : Phaser.BlendModes.ADD)
+        .setVisible(n >= PASSES_GI)
     }
   }
 
@@ -642,10 +681,10 @@ export class ChampGpu {
       }))
     } else if (k === 5) {
       this.champ = mk('gi-somme', FRAG_SOMME, gw, gh, ['gi-occ', 'gi-direct', 'gi-rebond'], 'gi-champ', () => ({
-        uOcc: 0, uDirect: 1, uRebond: 2, uPlafond: GI.PLAFOND_REBOND,
+        uOcc: 0, uDirect: 1, uRebond: 2, uPlafond: GI.PLAFOND_REBOND, uMn: this.uMn,
       }))
-      // Le regard de la tranche B : le champ posé sur le monde, en ADD, au grain — la composition
-      // vraie (LG-R5) est la tranche C.
+      // Le quad du champ : ADD pour le REGARD (tranche B), MULTIPLY quand il COMPOSE (LG-R5) —
+      // `update` tranche par image, selon que `mn` est là ou non.
       this.image = this.scene.add.image(0, 0, 'gi-champ').setOrigin(0, 0).setBlendMode(Phaser.BlendModes.ADD).setVisible(false)
     }
   }

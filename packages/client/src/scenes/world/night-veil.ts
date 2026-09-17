@@ -217,6 +217,8 @@ export class NightVeil {
     camera: Phaser.Cameras.Scene2D.Camera,
     depth: number,
     holes: boolean,
+    /** La GI porte-t-elle le multiplicateur à notre place (LG-R5, tranche C) ? */
+    composeExterne = false,
   ): void {
     const sw = this.scene.scale.width
     const sh = this.scene.scale.height
@@ -262,8 +264,22 @@ export class NightVeil {
 
     // LA LUMIÈRE — en MULTIPLY. Un plein jour (α = 0) laisse la RT VIDE, donc transparente, donc
     // un multiplicateur de 1 : l'identité exacte. On ne la rend même pas.
-    this.rt.setVisible(hour.alpha > 0.001)
-    if (hour.alpha <= 0.001) return
+    // ═══ MÊME QUAND LA GI COMPOSE, LE VOILE POSE SON Mn (LG-R5, tranche C) ═══
+    //
+    // QUAND LA GI COMPOSE, NOUS NOUS TAISONS — ENTIÈREMENT, NOTRE TROU COMPRIS.
+    //   `gi-champ` porte alors M = 1 − (1 − Mn)(1 − L) en MULTIPLY à NOTRE profondeur. Ce M
+    // contient DÉJÀ notre Mn : poser le nôtre en plus donnerait Mn × M, la nuit deux fois. Et
+    // notre TROU est exactement le L de la torche déjà présent dans ce M — le creuser encore
+    // poserait la lumière deux fois de la même façon. Mesuré le 17/09, en nous rendant par-dessus
+    // la GI : près de la torche, l'écart au look d'aujourd'hui monte de 6,60 à 16,9.
+    //   Ce n'est pas une extinction, c'est la correction de la loi : une seule loi compose la nuit
+    // et le jour (LG-R5), et c'est la GI qui la porte quand elle tourne.
+    //
+    // L'AIR ET LE PLANCHER, eux, n'ont jamais bougé (`depth + AIR_OVER_LIGHT`) : ni la brume ni le
+    // terme additif qui donne sa couleur à la nuit ne sont affaire de GI. Ils sont posés plus haut
+    // dans cette méthode, avant ce retour — délibérément.
+    this.rt.setVisible(!composeExterne && hour.alpha > 0.001)
+    if (composeExterne || hour.alpha <= 0.001) return
     // En Phaser 4, les opérations de DynamicTexture (clear/fill/erase) ne prennent effet qu'au
     // `render()` final qui les flushe — sans lui, le voile reste fantôme (le bug qu'on traquait).
     this.dt.clear()

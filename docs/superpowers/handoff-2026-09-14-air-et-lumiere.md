@@ -1222,11 +1222,36 @@ un village porte plusieurs feux.
 (`tools/__gi-partage.mjs` : `update(n)` puis un `readPixels` qui purge la file — le cumul au cran n
 moins celui du cran n−1 EST le coût de la passe n) : direct 18 ms, faces 22, drapeau 10,
 **rebond 429**, somme 150. `FRAG_REBOND` est un GATHER : 35 840 texels × 625 voisins = 22,4 M
-itérations, chacune payant une lecture de `uDrapeau` juste pour passer son tour. HYPOTHÈSE NON
-ÉPROUVÉE : le coût est dans le TRI, pas dans le calcul — se tranche en retirant le `bloque` interne
-et en re-mesurant. Remèdes candidats : une pyramide sur le drapeau (25×25 couvert en ~16 lectures)
-ou le SCATTER depuis la liste des faces, comme l'oracle. Restent aussi **C5** (`bloque` marche 192
-pas pour tout le monde) et **C6** (`temps.grille` à 39 ms contre les 2 ms de LG-A14).
+itérations, chacune payant une lecture de `uDrapeau` juste pour passer son tour. Remèdes candidats :
+une pyramide sur le drapeau (25×25 couvert en ~16 lectures) ou le SCATTER depuis la liste des faces,
+comme l'oracle. Restent aussi **C5** (`bloque` marche 192 pas pour tout le monde) et **C6**
+(`temps.grille` à 39 ms).
+
+⛔ **CES MILLISECONDES SONT CELLES D'UN RASTERISEUR LOGICIEL, ET NE SE COMPARENT PAS À LG-A14.**
+Cette machine n'a pas de GPU (`CLAUDE.local.md`) : Chromium rend en **SwiftShader**, sur le CPU.
+L'arithmétique le dit seule, et sur les DEUX passes indépendamment :
+
+| passe | travail élémentaire | temps | par opération |
+|---|---|---|---|
+| rebond (bras sans `bloque`) | 22,4 M lectures de `uDrapeau` | 193 ms | **8,6 ns** la lecture |
+| directe | 573 440 rayons × ~24 pas ≈ 14 M pas | ~20 ms | **1,5 ns** le pas |
+
+8,6 ns pour échantillonner une texture R8 de 35 Ko, c'est la cadence d'un **échantillonneur
+logiciel**, pas d'une unité de texture — et c'est la seule dépense qui ne se transporte PAS sur du
+vrai matériel : sur un GPU réel, ces 22,4 M lectures tiennent dans des microsecondes. Tout le profil
+de la chaîne s'explique uniformément par la rastérisation logicielle.
+
+Donc **629 ms ici n'est ni un échec ni une réussite** face aux 2 ms / 4 ms de LG-A14, qui visent
+l'image sur la machine d'un joueur : c'est une grandeur que cette machine **ne peut pas produire**.
+⚠ Le message du commit `4605eee` écrit « LG-A14 N'EST PAS TENU » — **c'est surdit, et ceci est la
+correction** ; l'interrupteur reste éteint par défaut, mais pour cause de coût NON VÉRIFIÉ et non
+de budget dépassé. Le verdict LG-A14 demande du matériel qu'on n'a pas.
+
+**Ce qui reste vrai et portable** : le profil RELATIF (le rebond domine, et de loin) et les
+**comptes d'opérations**, qui ne dépendent d'aucune machine. La suite se mesure donc en opérations —
+compter les texels marqués dans le drapeau, et les couples (texel, voisin) qui survivent à la
+fenêtre 25×25 — et non en millisecondes. C'est ce compte qui départage la pyramide du scatter, et
+il peut très bien dire qu'aucun des deux ne suffit seul.
 
 **Pièges payés dans cette tranche** — une épreuve RADIALEMENT SYMÉTRIQUE ne peut pas voir un miroir
 vertical (la sonde en champ libre « validait » la formule à 1,000 partout) ; `profil` rend 0 au-delà
