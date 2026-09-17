@@ -363,28 +363,6 @@ export interface Astre {
 }
 
 /**
- * Le centre (cx, cy) est-il dans l'ombre PLEINE de la bande ? On REMONTE le rayon : il y est s'il
- * existe t dans [0, 1] tel que le point reculé de t × (dx, dy) tombe dans l'INTÉRIEUR de la bande.
- * C'est le clipping de `coupeBande`, aux mêmes intervalles ouverts (LG-R10) — et comme aucun centre
- * de texel n'est dans l'intérieur d'une bande (elle est à cheval, ses bords sont demi-entiers), le
- * mur ne s'ombre jamais lui-même.
- */
-function dansLOmbre(m: BandeGrille, cx: number, cy: number, dx: number, dy: number): boolean {
-  // dy > 0 : l'ombre va vers le sud. Le rang au nord de la bande rend un intervalle vide, donc 0.
-  let t0 = Math.max(0, (cy - m.y1) / dy)
-  let t1 = Math.min(1, (cy - m.y0) / dy)
-  if (dx === 0) {
-    if (!(cx > m.x0 && cx < m.x1)) return false
-  } else {
-    const a = (cx - m.x1) / dx
-    const b = (cx - m.x0) / dx
-    t0 = Math.max(t0, Math.min(a, b))
-    t1 = Math.min(t1, Math.max(a, b))
-  }
-  return t1 - t0 > 1e-9
-}
-
-/**
  * ═══ LE MASQUE D'ASTRE (LG-R8, LG-R9) — CE QUE LE SOLEIL ET LA LUNE RETIRENT AU PLANCHER DU CIEL ═══
  *
  * Rend S par texel, dans [0, 1] : 1 dans l'ombre pleine, ⅔ puis ⅓ dans les deux texels de pénombre,
@@ -426,7 +404,13 @@ export function masqueDAstre(g: GrilleGi, astre: Astre): Float32Array {
       for (let x = x0; x < x1; x++) {
         const k = y * g.gw + x
         if (s[k] === 1 || g.occ[k]) continue
-        if (dansLOmbre(m, x + 0.5, y + 0.5, dx, dy)) s[k] = 1
+        // S, C'EST LE RAYON D'OMBRE, et rien d'autre : le segment qui part du texel VERS l'astre, long
+        // de ℓ, coupe-t-il la bande ? C'est mot pour mot `coupeBande` — donc le prédicat d'occultation
+        // de la sim, aux mêmes intervalles ouverts (LG-R10), et non une seconde géométrie écrite à
+        // côté. Le balayage de Minkowski et le rayon d'ombre sont la MÊME phrase lue dans les deux
+        // sens. Et comme aucun centre de texel n'est dans l'intérieur d'une bande (ses bords sont
+        // demi-entiers), un mur ne s'ombre jamais lui-même.
+        if (coupeBande(m, x + 0.5, y + 0.5, x + 0.5 - dx, y + 0.5 - dy)) s[k] = 1
       }
   }
 
