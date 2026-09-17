@@ -48,6 +48,11 @@ export const GI = {
      *  aucune dépendance navigateur (`bati-art` tire `normal-map`, donc un canvas) ; la garde
      *  « la hauteur d'un mur est celle du jeu » de `champ-ref.test.ts` tient les deux égaux. */
     HAUTEUR_MUR_PX: 32,
+    /** LG-R9 : la hauteur du PLUS GRAND lanceur de la spec — l'arbre, 96 px. Elle ne sert pas à
+     *  peindre : elle TAILLE la borne littérale de la marche d'ombre du GPU (GLSL ES 1.0 veut une
+     *  constante de compilation). Un mur demande 16 pas, un arbre 44 : une borne écrite à la main
+     *  sur le mur tronquerait l'ombre des arbres EN SILENCE, courte et verte. */
+    HAUTEUR_MAX_LANCEUR_PX: 96,
     /** LG-R8 : la pointe se cisaille de 8/7 px par px de LONGUEUR, à dérive ±1 — le cisaillement des
      *  socles (8 px au cran 8 sur leurs 7 rangs). C'est un RAPPORT : le même nombre vaut en texels. */
     CISAILLEMENT: 8 / 7,

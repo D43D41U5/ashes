@@ -97,6 +97,22 @@ export interface VerdictGi {
 }
 
 const PX_PAR_TEXEL = TILE_PX / LUMIERE.TEXELS_PAR_TUILE
+
+/**
+ * LE PLAFOND DU COMPILATEUR pour la marche d'ombre d'astre — GLSL ES 1.0 exige une borne de boucle
+ * CONSTANTE, alors que le vrai nombre de pas arrive en uniforme (`uPasOmbre`, taillé sur l'astre du
+ * moment). Celui-ci doit donc couvrir le PLUS GRAND lanceur de la spec, pas celui qu'on éprouve.
+ *
+ * ⚠ C'EST UNE TRONCATURE SILENCIEUSE QU'ON ÉVITE, PAS UNE ERREUR. Un mur (32 px) demande 16 pas ;
+ * un arbre (96 px, LG-R9) en demande 44. Une borne écrite à la main sur le mur ne lèverait rien :
+ * elle rendrait l'ombre des arbres COURTE, et la garde resterait verte puisque l'oracle et le GPU
+ * s'accorderaient sur les texels atteints. La borne se DÉRIVE donc, et suit la spec toute seule.
+ *
+ * Le facteur reprend `update()` au pire cas : dérive ±1, donc |dx| = cisaillement × ℓ, et la marche
+ * court sur le réseau 2× — d'où 2 × (1 + cisaillement) × ℓ, plus les 2 pas de garde.
+ */
+const PAS_OMBRE_MAX =
+  Math.ceil(2 * (1 + GI.ASTRE.CISAILLEMENT) * longueurDOmbre(GI.ASTRE.HAUTEUR_MAX_LANCEUR_PX, PX_PAR_TEXEL)) + 2
 /** Le nombre de passes de la chaîne entière : direct, faces, drapeau, rebond, somme. `debugGi` en
  *  porte le compte — le panneau bascule entre 0 et tout, une sonde peut s'arrêter avant. */
 export const PASSES_GI = 5
@@ -229,7 +245,7 @@ float ombreDAstre(vec2 t) {
   vec2 td = vec2(D.x != 0.0 ? abs(1.0 / D.x) : INF, D.y != 0.0 ? abs(1.0 / D.y) : INF);
   float tx = D.x != 0.0 ? (D.x > 0.0 ? c.x + 1.0 - P.x : P.x - c.x) * td.x : INF;
   float ty = D.y != 0.0 ? (D.y > 0.0 ? c.y + 1.0 - P.y : P.y - c.y) * td.y : INF;
-  for (int n = 0; n < 24; n++) {
+  for (int n = 0; n < ${PAS_OMBRE_MAX}; n++) {
     if (float(n) >= uPasOmbre) break;
     if (tx < ty) {
       if (tx >= 1.0) break;
@@ -803,6 +819,12 @@ export class ChampGpu {
      * assombris sur 34 952 ne déplacent la moyenne du champ que d'un demi-niveau, moins que l'écart
      * entre deux images. On compare donc `gi-champ` à `composerM`, terme pour terme, sur le masque
      * ENTIER — c'est la seule des trois cibles qui éprouve la PÉNOMBRE.
+     *
+     * ⚠ ET SA PRÉMISSE EST UNE INTERSECTION, PAS UN COMPTE D'OMBRES. Sur une scène SANS SOURCE,
+     * `o.light` est nul partout, `composerM` tombe sur sa branche `if (l <= 0) return plancher`, et
+     * la garde ne prouve plus que le PLANCHER : verte en n'ayant jamais éprouvé le terme de
+     * comblement ni l'ORDRE qui le compose. `eclaires` compte donc les texels où l'ombre ET la
+     * lumière se rencontrent — une torche qui éclaire DANS l'ombre d'un mur.
      */
     const ecartCompose = (lu: Uint8Array): EcartCible => {
       const s = this.masque()
@@ -811,13 +833,14 @@ export class ChampGpu {
       let somme = 0
       let sup3 = 0
       let max = 0
-      let ombres = 0
+      let croises = 0
       for (let k = 0; k < g.gw * g.gh; k++) {
         if (g.occ[k] === 1) continue
         n++
-        // La prémisse : les texels que l'astre touche, pénombre COMPRISE. À zéro, la garde compare
-        // deux fois le même voile et ne peut pas rougir.
-        if (s[k]! > 0) ombres++
+        // LA PRÉMISSE : là où l'ombre ET la lumière se rencontrent. Compter les seuls texels que
+        // l'astre touche ne prouverait que la MOITIÉ de `composerM` — son plancher — puisque sans
+        // lumière la fonction sort avant de composer quoi que ce soit.
+        if (s[k]! > 0 && (o.light[k * 3]! > 0 || o.light[k * 3 + 1]! > 0 || o.light[k * 3 + 2]! > 0)) croises++
         let pire = 0
         for (let c = 0; c < 3; c++) {
           const attendu = Math.round(composerM(this.uMn[c]!, s[k]!, this.uA, o.light[k * 3 + c]!) * 255)
@@ -828,7 +851,7 @@ export class ChampGpu {
         if (pire > 3) sup3++
         if (pire > max) max = pire
       }
-      return { n, moyenne: n > 0 ? somme / (n * 3) : 0, partSup3: n > 0 ? sup3 / n : 0, max, eclaires: ombres }
+      return { n, moyenne: n > 0 ? somme / (n * 3) : 0, partSup3: n > 0 ? sup3 / n : 0, max, eclaires: croises }
     }
     return {
       fenetre: this.fenetre,
