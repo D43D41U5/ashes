@@ -20,7 +20,7 @@ import { countOf } from './items'
 import { terrainAt } from './map'
 import { auMemeEtage, terrainAEtage } from './etages'
 import { meteoColdAt } from './meteo'
-import { roofAt } from './village'
+import { roofAt, type Structure } from './village'
 import { avanceesDepuisAges, froidDeCendre } from './cendre'
 import { froidDeFumerolle } from './fumerolle'
 import { isOnPoiKind } from './poi-discovery'
@@ -114,21 +114,36 @@ export function sousLaRoche(state: SimState, tx: number, ty: number, etage?: num
   return etage !== undefined && etage < 0 && terrainAEtage(state.map, etage, tx, ty) !== 0
 }
 
+/**
+ * LA BULLE D'UN FEU, dans [0, 1] — 1 au CENTRE DE SA TUILE, linéaire → 0 à FIRE_RANGE, × son
+ * état (allumé 1, braises atténuées, éteint 0 : spec feu-station S3). La chaleur (`fireBubble`)
+ * et la lumière (`nuit.ts`, `lumiereDuFeu`) la lisent toutes deux — UN seul rayon à calibrer.
+ *
+ * ⚠ LE CENTRE EST (tx + ½, ty + ½) — spec `lumiere-globale.md` LG-R17 (Alexis, 2026-09-16 :
+ * « Recentrer la chaleur aussi »). Il valait le coin nord-ouest de la tuile : un corps à la même
+ * distance du feu avait plus chaud au nord-ouest qu'au sud-est, d'une demi-tuile, et l'écran
+ * (le trou du voile, centré sur la tuile) était plus clair que la sim de ce côté-là. Une
+ * simulation, un seul centre — celui de la lumière.
+ */
+export function bulleDuFeu(state: SimState, s: Structure, x: number, y: number): number {
+  const factor = fireWarmthFactor(state, s)
+  if (factor <= 0) return 0
+  const dx = s.tx + 0.5 - x
+  const dy = s.ty + 0.5 - y
+  const dist = Math.sqrt(dx * dx + dy * dy)
+  if (dist >= T.FIRE_RANGE) return 0
+  return factor * (1 - dist / T.FIRE_RANGE)
+}
+
 /** Réchauffement du feu le plus proche : FIRE_WARMTH au contact, linéaire → 0 à FIRE_RANGE.
  *  À L'ÉTAGE du corps (G-R7) : un bivouac sous la roche ne chauffe pas la terrasse au-dessus,
- *  et le Feu du village ne traverse pas la roche jusqu'à la salle. */
+ *  et le Feu du village ne traverse pas la roche jusqu'à la salle. Aucune ligne de vue : ce
+ *  qui chauffe chauffe à travers un mur ; c'est la LUMIÈRE qui s'y arrête (LG-R11). */
 export function fireBubble(state: SimState, x: number, y: number, etage?: number): number {
   let best = 0
   for (const s of state.structures) {
     if (s.type !== 'fire' || !auMemeEtage(s, etage)) continue
-    // Un feu éteint ne chauffe plus ; les braises chauffent atténué (spec feu-station S3).
-    const factor = fireWarmthFactor(state, s)
-    if (factor <= 0) continue
-    const dx = s.tx - x
-    const dy = s.ty - y
-    const dist = Math.sqrt(dx * dx + dy * dy)
-    if (dist >= T.FIRE_RANGE) continue
-    const warmth = T.FIRE_WARMTH * factor * (1 - dist / T.FIRE_RANGE)
+    const warmth = T.FIRE_WARMTH * bulleDuFeu(state, s, x, y)
     if (warmth > best) best = warmth
   }
   return best

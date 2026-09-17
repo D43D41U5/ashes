@@ -430,7 +430,8 @@ export const TEMPERATURE = {
    * Conséquences, voulues : au-dessus de `AMBIANT_DOUX` (6) — la thermogenèse n'y coûte rien,
    * l'hypothermie n'y existe pas ; au-dessus de `CENDREUX.TORPEUR.CHAUD` (6) — les Cendreux y
    * sont amorphes toute l'année ; et un bivouac n'y change RIEN à l'air (`FIRE_WARMTH` = 14 au
-   * contact, 12,3 à la demi-tuile où l'on se tient : sous 13, le `max` ne le lève pas) — sous
+   * contact — le CENTRE de sa tuile depuis LG-R17 —, 12,8 à l'arête, au plus près qu'un corps
+   * s'en tienne puisque le feu bloque sa tuile : sous 13, le `max` ne le lève pas) — sous
    * la roche, le feu est une station, pas une chaleur. En Ardeur (+26 dehors), la grotte est
    * la fraîcheur. Lu par `baselineTemperatureAt`, donc par tout le froid du monde (corps,
    * Cendreux, encyclopédie, HUD).
@@ -5631,6 +5632,26 @@ export const NUIT = {
    * silence celui qui s'y tient.
    */
   SEUIL_NOIR: 0.3,
+} as const
+
+/**
+ * LA LUMIÈRE — la sim apprend l'ombre (spec `lumiere-globale.md`, Q5 ; `lumiere.ts`).
+ *
+ * Ce que le client et la sim doivent lire au MÊME endroit : le grain, la taille de la source
+ * étendue, la portée de la torche portée. Une seconde copie côté client serait un écran plus
+ * clair que la sim quelque part (N2bis, LG-R13).
+ */
+export const LUMIERE = {
+  /** Le grain de la lumière : 4 texels par tuile — les 4 px monde du client (LG-R2, 16 px par tuile). */
+  TEXELS_PAR_TUILE: 4,
+  /** Une source est un DISQUE de ce rayon, en texels (LG-R4) : c'est lui qui fait la pénombre. */
+  SOURCE_RAYON_TEXELS: 1.5,
+  /**
+   * La portée de la torche PORTÉE, en tuiles (LG-R18). C'est celle du point light de l'écran
+   * (`render/torche.ts`, `TORCHE_LIGHT_TILES`) : la même, sinon N2bis casse — la sim la tient ici,
+   * le client doit la lire d'ici.
+   */
+  TORCHE_PORTEE_TUILES: 10,
 } as const
 
 

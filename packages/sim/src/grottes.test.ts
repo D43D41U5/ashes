@@ -567,12 +567,15 @@ describe('G-A5 — un lieu : la Grotte est le karst', () => {
     const k = c.karsts[0]!
     const [fx, fy] = xyDe(map, k.fond)
     // Le feu PLANCHE : 14 °C au contact > 13, la grotte se lève d'un degré à la flamme.
-    // Un feu libre forgé à la main (sans slot `fuel`) vaut ALLUMÉ (`fireStateAt`). Au plus près
-    // qu'un corps s'en tienne (la demi-tuile), il vaut 14 × (1 − 0,71/6) = 12,3 °C < 13 : le
-    // `max` de l'ambiant ne le lève pas — sous la roche, un feu est une station, pas une chaleur.
+    // Un feu libre forgé à la main (sans slot `fuel`) vaut ALLUMÉ (`fireStateAt`). Le contact est
+    // le CENTRE de sa tuile (LG-R17, `lumiere-globale.md`), et le feu bloque sa tuile : au plus
+    // près qu'un corps s'en tienne — l'arête, une demi-tuile —, il vaut 14 × (1 − 0,5/6) = 12,8 °C
+    // < 13 : le `max` de l'ambiant ne le lève pas — sous la roche, un feu est une station, pas
+    // une chaleur. (Le centre lui-même vaut 14, mais aucun corps ne s'y tient.)
     sim.structures.push({ id: 9_999, type: 'fire', tx: fx, ty: fy, villageId: 0, ownerId: 0, access: 'public', hp: 100, etage: k.niveau })
-    expect(fireBubble(sim, fx + 0.5, fy + 0.5, k.niveau)).toBeGreaterThan(0) // le feu chauffe bien, à cet étage
-    expect(ambientTemperature(sim, fx + 0.5, fy + 0.5, k.niveau)).toBe(TEMPERATURE.GROTTE_AMBIANT)
+    expect(fireBubble(sim, fx + 0.5, fy + 0.5, k.niveau)).toBe(TEMPERATURE.FIRE_WARMTH) // le feu chauffe bien, à cet étage, et au plein à son centre
+    expect(fireBubble(sim, fx + 0.5, fy + 1.0, k.niveau)).toBeLessThan(TEMPERATURE.GROTTE_AMBIANT) // à l'arête, sous les 13
+    expect(ambientTemperature(sim, fx + 0.5, fy + 1.0, k.niveau)).toBe(TEMPERATURE.GROTTE_AMBIANT)
     // Le même feu ne chauffe pas la terrasse au-dessus (G-R7) : le dessus reste le froid du monde.
     expect(ambientTemperature(sim, fx + 0.5, fy + 0.5)).toBe(baselineTemperatureAt(sim, fx + 0.5, fy + 0.5, sim.tick))
     // La traque thermique : 13 > CHAUD (6), l'éveil est nul toute l'année, même la nuit du Grand Froid.

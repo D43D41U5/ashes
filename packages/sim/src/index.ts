@@ -151,7 +151,12 @@ export { phraseDuFait, nomDEre } from './annales'
 export type { PhraseDeFait } from './annales'
 export { getGameTime, seasonDayAtTick, actForDay, coeurDeLaSaisonSuivante, tourForDay, phaseForDay, YEAR_DAYS, cycleOffsetForStartHour, calendarScaleForSeasonCycles, TICKS_PER_CYCLE, dayTicksAt, dayTicksPourJour, leverPourJour, leverAt, estCrepuscule, jourDeSaison, jourDeLAnnee, TICKS_PER_SEASON_DAY } from './time'
 export type { GameTime, Act } from './time'
-export { AMBIANT_HYPOTHERMIE, ambientTemperature, baselineTemperature, baselineTemperatureAt, cibleCorporelle, climatFlore, climatMaximal, dehorsSansMeteo, advanceTemperature } from './temperature'
+export { AMBIANT_HYPOTHERMIE, ambientTemperature, baselineTemperature, baselineTemperatureAt, bulleDuFeu, cibleCorporelle, climatFlore, climatMaximal, dehorsSansMeteo, advanceTemperature } from './temperature'
+// LA LUMIÈRE (spec `lumiere-globale.md`) : la sim apprend l'ombre. Le client lit ICI le motif de
+// la source étendue, le grain et la portée de la torche (LG-R12, LG-R18) — jamais une copie.
+export { MOTIF_SOURCE, partVisible, lumiereDesTorches } from './lumiere'
+export type { MondeEclaire } from './lumiere'
+export { LUMIERE } from './balance'
 // LA BRUME (spec brume.md) : le client rendra la nappe en la RECALCULANT du tick (patron front
 // de Cendre) — la géométrie pure et le bloc de calibration s'exportent, l'ordonnanceur non.
 export { brumeCentre, dansLaBrume, brumeJourEligible } from './brume'

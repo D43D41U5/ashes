@@ -15,10 +15,13 @@
  * La clarté sur soi est le MAX de trois choses, et jamais leur somme (deux torches n'éclairent
  * pas deux fois) :
  *   · **le ciel** — le jour à plein, la nuit ce que la lune en laisse ;
- *   · **le feu** — sa bulle, celle-là même qui réchauffe (`fireBubble`, rayon `T.FIRE_RANGE`) :
- *     ce qui chauffe éclaire, un seul rayon à calibrer, et il vaut déjà 6 tuiles côté client
- *     (le trou du voile d'un Feu) ;
- *   · **la torche en main** — à bout de bras, donc à plein sur son porteur.
+ *   · **le feu** — sa bulle, celle-là même qui réchauffe (`bulleDuFeu`, rayon `T.FIRE_RANGE`,
+ *     depuis le centre de sa tuile) : ce qui chauffe éclaire, un seul rayon à calibrer, et il
+ *     vaut déjà 6 tuiles côté client (la clairière d'un Feu) — × LA PART VISIBLE de sa source :
+ *     **la sim apprend l'ombre** (spec `lumiere-globale.md`, LG-R11, LG-R12 ; `lumiere.ts`).
+ *     Derrière un mur, en nuit aveugle, on ne pare plus ;
+ *   · **la torche en main** — à bout de bras, donc à plein sur son porteur ; et **les torches
+ *     des autres avatars** (LG-R18), à la portée de l'écran, comme un feu qu'on porte.
  *
  * ⚠ CE N'EST PAS UN WARD (bible `I3`, et les trois interdits de `torche.md`). La torche ne
  * repousse RIEN et ne chauffe RIEN : les monstres se comportent à l'identique qu'on la porte
@@ -46,9 +49,10 @@
  * numérique (0,0042 au pire) n'en est qu'une conséquence.
  */
 import { TEMPERATURE } from './balance'
-import { fireBubble, isSheltered } from './temperature'
-import { connecteurAt, niveauDuCorps, palierDuSol } from './etages'
+import { bulleDuFeu, isSheltered } from './temperature'
+import { auMemeEtage, connecteurAt, niveauDuCorps, palierDuSol } from './etages'
 import { heldSlot } from './inventory-actions'
+import { lumiereDesTorches, partVisible } from './lumiere'
 import { estTorcheVive } from './torche'
 import { dayTicksAt, gameTimeAt, NIGHT_RAMP_TICKS, partDeNuit, TICKS_PER_CYCLE } from './time'
 import type { Entity, SimState } from './sim'
@@ -139,13 +143,26 @@ export function clarteDuCiel(state: SimState, tick: number = state.tick): number
 }
 
 /**
- * LA LUMIÈRE D'UN FEU, dans [0, 1] — sa bulle de chaleur, relue en lumière. Un feu éteint
- * n'éclaire pas, des braises éclairent atténué : `fireBubble` porte déjà exactement cette
- * loi (facteur d'état × décroissance linéaire jusqu'à `TEMPERATURE.FIRE_RANGE`), et son rayon de 6
- * tuiles est celui du trou que le client perce dans le voile.
+ * LA LUMIÈRE D'UN FEU, dans [0, 1] — sa bulle de chaleur, relue en lumière, × LA PART VISIBLE
+ * de sa source étendue (spec `lumiere-globale.md`, LG-R11 et LG-R12 : la sim apprend l'ombre).
+ * Un feu éteint n'éclaire pas, des braises éclairent atténué : `bulleDuFeu` porte cette loi
+ * (facteur d'état × décroissance linéaire jusqu'à `TEMPERATURE.FIRE_RANGE`, depuis le CENTRE de la
+ * tuile — LG-R17), et son rayon de 6 tuiles est celui de la clairière du client. Ce qui chauffe
+ * éclaire, au même rayon ; mais la lumière demande en plus une ligne de vue : derrière un mur,
+ * dans l'axe d'un fût ou d'une roche, elle s'arrête — la pénombre étant celle de la GI, seize
+ * rayons vers un disque de 1,5 texel (`lumiere.ts`). La chaleur, elle, ne change pas.
  */
 export function lumiereDuFeu(state: SimState, x: number, y: number, etage?: number): number {
-  return fireBubble(state, x, y, etage) / TEMPERATURE.FIRE_WARMTH
+  const niveau = etage ?? palierDuSol(state.map, Math.floor(x), Math.floor(y))
+  let best = 0
+  for (const s of state.structures) {
+    if (s.type !== 'fire' || !auMemeEtage(s, etage)) continue
+    const bulle = bulleDuFeu(state, s, x, y)
+    if (bulle <= best) continue // ne peut plus faire mieux, même vue en entier
+    const v = bulle * partVisible(state, niveau, x, y, s.tx + 0.5, s.ty + 0.5)
+    if (v > best) best = v
+  }
+  return best
 }
 
 /**
@@ -268,7 +285,11 @@ export function clarteSurSoiAt(
   // une flamme. Un feu dans la pièce y suffit — `lumiereDuFeu` est prise au max juste en dessous.
   const ciel = clarteDuCiel(state, tick) * partDuCiel(state, Math.floor(x), Math.floor(y), etage)
   const feu = lumiereDuFeu(state, x, y, etage)
-  return feu > ciel ? feu : ciel
+  // LES TORCHES DES AUTRES (LG-R18, Alexis, 2026-09-16) : en multi, la torche d'un autre avatar
+  // éclaire à l'écran tout autour de lui — la sim la voit donc aussi, au max, jamais en somme.
+  const torches = lumiereDesTorches(state, x, y, etage)
+  const lumiere = feu > torches ? feu : torches
+  return lumiere > ciel ? lumiere : ciel
 }
 
 /**

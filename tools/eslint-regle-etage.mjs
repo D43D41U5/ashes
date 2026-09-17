@@ -93,6 +93,10 @@ const HORS_REGLE = {
   'temperature.ts': {
     // Et il porte DÉJÀ sa garde : `etage < 0 → 0` (G-R7, « la source est au sol »).
     naturalWarmth: 'un champ (la source chaude) lu en un point, et déjà borné par l’étage',
+    // La bulle d'UN feu, mesurée depuis son centre (LG-R17) : la géométrie seule, comme
+    // `inStrikeZone`. Le scellement vit à ses deux appels, qui filtrent le feu par `auMemeEtage`
+    // AVANT de la lire — `fireBubble` (ici) et `lumiereDuFeu` (`nuit.ts`).
+    bulleDuFeu: 'géométrie pure de la bulle d’un feu — le scellement vit aux appels (`fireBubble`, `lumiereDuFeu`), qui font `auMemeEtage`',
   },
 
   // ══ Appartenance à une ZONE, pas une perception ══
@@ -142,6 +146,13 @@ const HORS_REGLE = {
   },
   'foudre.ts': { advanceFoudre: 'scellé par `isSheltered`, qui connaît « sous la roche » (G-R5)' },
   'inventory-actions.ts': { poserAuSol: 'scellé par son propre filtre `niveauDuCorps(p) === etage`' },
+  'lumiere.ts': {
+    // LG-R18 (Alexis, 2026-09-16) : la torche d'un autre corps éclaire « au même étage » — le
+    // filtre `niveauDuCorps(e) !== niveau` précède la distance, comme `poserAuSol`. Pas E-R5 :
+    // la lumière ne suit pas les rampes, elle suit LG-R14 (la falaise fait écran), et c'est
+    // `partVisible`, lu à l'étage du récepteur, qui porte cette règle-là.
+    lumiereDesTorches: 'scellé par son propre filtre `niveauDuCorps(e) === niveau` (LG-R18 : au même étage)',
+  },
   'ecart.ts': {
     // Les paires arrivent déjà filtrées par `separation.ts`, qui appelle l'accesseur.
     separationPush: 'les paires sont filtrées en amont (`separation.ts`) — ici, de la géométrie',
