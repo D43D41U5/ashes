@@ -18,10 +18,22 @@
  *                       `tick`, `calendarScale`, `cycleOffset`, `map`,
  *                       `structures`, `brume`, `meteo`
  *
- * Rien d'autre. Ni entités, ni nœuds, ni PRNG : d'où le `as unknown as SimState` au bout —
- * fabriquer quarante champs vides pour en servir sept aurait été un mensonge plus long.
- * `etat-gel.test.ts` compare la façade à un VRAI `SimState` construit par `createSim`, sur un
- * balayage de tuiles et de ticks : c'est ce test qui tient la promesse, pas ce commentaire.
+ * Rien d'autre. Ni PRNG : d'où le `as unknown as SimState` au bout — fabriquer quarante champs
+ * vides pour en servir sept aurait été un mensonge plus long. `etat-gel.test.ts` compare la
+ * façade à un VRAI `SimState` construit par `createSim`, sur un balayage de tuiles et de ticks :
+ * c'est ce test qui tient la promesse, pas ce commentaire.
+ *
+ * ═══ CE QUE LA LUMIÈRE LIT EN PLUS (2026-09-17, `lumiere-globale.md` LG-R11, LG-R18) ═══
+ *
+ *   `clarteSurSoiAt` → `nodes` (les fûts et les blocs font de l'ombre — `partVisible`),
+ *                      `entities` + `npcs` + `monsters` (la torche d'un AUTRE avatar compte,
+ *                      celle d'un figurant non — `lumiereDesTorches`)
+ *
+ * Sans eux, la prédiction du client était PLUS CLAIRE que l'autorité derrière un fût — le sens
+ * interdit de N2bis (`nuit-noire.md`) : `direLeNoir` se taisait là où la parade était refusée
+ * (revue `determinisme-sim` du 2026-09-16). Les quatre sont OPTIONNELS dans la façade, parce que
+ * la sim les traite ainsi (`MondeEclaire`) ; le client les a tous sous la main (`snapshot-view`,
+ * `lastEntities`) et les passe. `etat-gel-lumiere.test.ts` le garde.
  *
  * ═══ LES TROIS CHAMPS QUE LE SNAPSHOT NE PORTE PAS ═══
  *
@@ -49,12 +61,19 @@
 import {
   TICKS_PER_CYCLE,
   type Brume,
+  type Entity,
   type GameTime,
   type MeteoFront,
+  type ResourceNode,
   type SimState,
   type Structure,
   type WorldMap,
 } from '@ashes/sim'
+
+/** Un figurant, tel que le snapshot le porte : il suffit de son identité de corps. */
+export interface FigurantDuGel {
+  readonly entityId: number
+}
 
 /** Ce que le client possède réellement, et qui suffit aux trois fonctions du gel. */
 export interface SourceDuGel {
@@ -84,6 +103,12 @@ export interface SourceDuGel {
    */
   readonly cendreAge: readonly number[]
   readonly seed: number
+  /** CE QUE LA LUMIÈRE LIT EN PLUS (en-tête) : les nœuds pour l'ombre des fûts et des blocs… */
+  readonly nodes?: ResourceNode[]
+  /** …les corps pour la torche d'un autre avatar, et les figurants pour l'en exclure. */
+  readonly entities?: readonly Entity[]
+  readonly npcs?: readonly FigurantDuGel[]
+  readonly monsters?: readonly FigurantDuGel[]
 }
 
 /**
@@ -121,6 +146,13 @@ interface ChampsDuGel {
   /** L'âge de chaque foyer de cendre, et la graine du monde — voir `SourceDuGel.cendreAge`. */
   cendreAge: readonly number[]
   seed: number
+  /** Ce que la lumière lit en plus (en-tête) — `undefined` si la source ne les porte pas, et
+   *  c'est ce que la sim lit comme « absent » (`MondeEclaire`) : la mise à jour en place peut
+   *  donc les EFFACER quand une source cesse de les porter. */
+  nodes?: ResourceNode[] | undefined
+  entities?: readonly Entity[] | undefined
+  npcs?: readonly FigurantDuGel[] | undefined
+  monsters?: readonly FigurantDuGel[] | undefined
 }
 
 /**
@@ -149,6 +181,10 @@ export function creerEtatGel(src: SourceDuGel): EtatGel {
     brume: src.brume,
     cendreAge: src.cendreAge,
     seed: src.seed,
+    nodes: src.nodes,
+    entities: src.entities,
+    npcs: src.npcs,
+    monsters: src.monsters,
   }
   return champs as unknown as EtatGel
 }
@@ -166,4 +202,8 @@ export function majEtatGel(cible: EtatGel, src: SourceDuGel): void {
   e.brume = src.brume
   e.cendreAge = src.cendreAge
   e.seed = src.seed
+  e.nodes = src.nodes
+  e.entities = src.entities
+  e.npcs = src.npcs
+  e.monsters = src.monsters
 }

@@ -38,6 +38,7 @@
  * torche dès le premier pas — ce qu'on veut, c'est que le joueur VOIE VENIR le noir, assez tôt
  * pour rentrer, mais pas au prix d'une flamme molle toute sa vie.
  */
+import { LUMIERE } from '@ashes/sim'
 import { flicker } from './lighting'
 
 /** Le trou dans le voile de nuit — doublé le 2026-08-26 (2 → 4), voir l'en-tête. Il reste SOUS
@@ -55,8 +56,10 @@ export const TORCHE_HOLE_TILES = 4
 export const TORCHE_HOLE_FORCE = 0.5
 /** La flaque au sol : un peu plus large que le trou, pour qu'on ne voie pas son bord. */
 export const TORCHE_POOL_TILES = 6
-/** Le rayon du point light, en tuiles — ce qui allume les fûts et les corps autour. */
-export const TORCHE_LIGHT_TILES = 10
+/** Le rayon du point light, en tuiles — ce qui allume les fûts et les corps autour. C'est la
+ *  portée que la SIM donne à la torche d'un autre corps (`lumiere-globale.md` LG-R18) : un seul
+ *  nombre, dans `balance.ts`, jamais deux qui divergent. */
+export const TORCHE_LIGHT_TILES: number = LUMIERE.TORCHE_PORTEE_TUILES
 
 /** Sous cette part de flamme, la torche entre en AGONIE et sa lumière lâche pour de bon. */
 export const AGONIE = 0.34

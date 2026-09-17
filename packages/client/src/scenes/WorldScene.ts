@@ -2826,6 +2826,13 @@ export class WorldScene extends Phaser.Scene {
         // la prédiction locale doit la connaître aussi bien que l'autorité.
         cendreAge: this.cendreAge,
         seed: this.worldSeed,
+        // CE QUE LA LUMIÈRE LIT EN PLUS (etat-gel, en-tête) : les fûts et les blocs font de l'ombre
+        // dans la prédiction, la torche d'un autre avatar y compte — sans quoi le client se croirait
+        // plus clair que l'autorité (N2bis).
+        nodes: this.view.nodes,
+        entities: this.lastEntities,
+        npcs: this.view.npcs,
+        monsters: this.view.monsters,
       }
       if (this.etatGel) majEtatGel(this.etatGel, source)
       else this.etatGel = creerEtatGel(source)

@@ -143,13 +143,32 @@ const BATI_OPAQUE: ReadonlySet<StructureType> = new Set<StructureType>([
   'mur_bas',
 ])
 
-/** Une bande de mur, en texels : un rectangle d'intervalles OUVERTS (LG-R10). */
-interface Bande {
+/**
+ * Une bande de mur, en texels ABSOLUS (tuile × T) : un rectangle d'intervalles OUVERTS (LG-R10).
+ * `type` dit la pièce (le client en tire un albédo ; la sim ne le lit pas).
+ */
+export interface Bande {
   readonly x0: number
   readonly x1: number
   readonly y0: number
   readonly y1: number
+  readonly type: StructureType
 }
+
+/** LA SORTE d'un texel plein — ce qui l'occupe (le client en tire un albédo, LG-R4 « faces »). */
+export const OCCLUDEUR = {
+  /** Du sol : la lumière passe. */
+  LIBRE: 0,
+  /** Le terrain plein (roche, mur de roche, glacier, falaise, cendre minérale, le vide — ou le sol d'un autre palier). */
+  TERRAIN: 1,
+  /** Le tronc d'un arbre : les texels du centre de sa tuile. */
+  TRONC: 2,
+  /** Un nœud plein (roche, bloc, filon, carrière, éboulis) : toute sa tuile. */
+  NOEUD: 3,
+  /** Une pièce de bâti PLEINE (sans arête) : toute sa tuile. */
+  BATI: 4,
+} as const
+export type SorteOccludeur = (typeof OCCLUDEUR)[keyof typeof OCCLUDEUR]
 
 /** Ce qu'une paire (récepteur, source) relève UNE fois du monde, avant ses seize rayons. */
 interface Contexte {
@@ -161,12 +180,9 @@ interface Contexte {
   readonly bandes: readonly Bande[]
 }
 
-function contexte(monde: MondeEclaire, niveau: number, ax: number, ay: number, bx: number, by: number): Contexte {
+/** Le contexte d'une FENÊTRE de tuiles [x0, x1] × [y0, y1] (bornes incluses), à un étage. */
+function contexteFenetre(monde: MondeEclaire, niveau: number, x0: number, y0: number, x1: number, y1: number): Contexte {
   const T = LUMIERE.TEXELS_PAR_TUILE
-  const x0 = Math.floor(Math.min(ax, bx)) - 1
-  const x1 = Math.floor(Math.max(ax, bx)) + 1
-  const y0 = Math.floor(Math.min(ay, by)) - 1
-  const y1 = Math.floor(Math.max(ay, by)) + 1
   const pleins: Structure[] = []
   const bandes: Bande[] = []
   for (const s of monde.structures) {
@@ -180,25 +196,38 @@ function contexte(monde: MondeEclaire, niveau: number, ax: number, ay: number, b
     // La bande : à cheval sur sa ligne (± ½ texel), débordant d'un demi-texel à chaque bout.
     const X = s.tx * T
     const Y = s.ty * T
-    if (e & EDGE_N) bandes.push({ x0: X - 0.5, x1: X + T + 0.5, y0: Y - 0.5, y1: Y + 0.5 })
-    if (e & EDGE_S) bandes.push({ x0: X - 0.5, x1: X + T + 0.5, y0: Y + T - 0.5, y1: Y + T + 0.5 })
-    if (e & EDGE_O) bandes.push({ x0: X - 0.5, x1: X + 0.5, y0: Y - 0.5, y1: Y + T + 0.5 })
-    if (e & EDGE_E) bandes.push({ x0: X + T - 0.5, x1: X + T + 0.5, y0: Y - 0.5, y1: Y + T + 0.5 })
+    const type = s.type
+    if (e & EDGE_N) bandes.push({ x0: X - 0.5, x1: X + T + 0.5, y0: Y - 0.5, y1: Y + 0.5, type })
+    if (e & EDGE_S) bandes.push({ x0: X - 0.5, x1: X + T + 0.5, y0: Y + T - 0.5, y1: Y + T + 0.5, type })
+    if (e & EDGE_O) bandes.push({ x0: X - 0.5, x1: X + 0.5, y0: Y - 0.5, y1: Y + T + 0.5, type })
+    if (e & EDGE_E) bandes.push({ x0: X + T - 0.5, x1: X + T + 0.5, y0: Y - 0.5, y1: Y + T + 0.5, type })
   }
   return { monde, niveau, pleins, bandes }
 }
 
-/** Le texel (kx, ky) est-il PLEIN, à l'étage du contexte ? Hors carte : libre (l'oracle ne l'y regarde pas). */
-function texelPlein(ctx: Contexte, kx: number, ky: number): boolean {
+/** Le contexte d'une paire de points (en tuiles) : leur rectangle, une tuile de marge autour. */
+function contexte(monde: MondeEclaire, niveau: number, ax: number, ay: number, bx: number, by: number): Contexte {
+  return contexteFenetre(
+    monde,
+    niveau,
+    Math.floor(Math.min(ax, bx)) - 1,
+    Math.floor(Math.min(ay, by)) - 1,
+    Math.floor(Math.max(ax, bx)) + 1,
+    Math.floor(Math.max(ay, by)) + 1,
+  )
+}
+
+/** LA SORTE du texel (kx, ky), à l'étage du contexte. Hors carte : libre (l'oracle ne l'y regarde pas). */
+function sorteDuTexel(ctx: Contexte, kx: number, ky: number): SorteOccludeur {
   const T = LUMIERE.TEXELS_PAR_TUILE
   const { map } = ctx.monde
   const tx = Math.floor(kx / T)
   const ty = Math.floor(ky / T)
-  if (tx < 0 || ty < 0 || tx >= map.width || ty >= map.height) return false
-  if (TERRAIN_PLEIN.has(terrainAEtage(map, ctx.niveau, tx, ty))) return true
+  if (tx < 0 || ty < 0 || tx >= map.width || ty >= map.height) return OCCLUDEUR.LIBRE
+  if (TERRAIN_PLEIN.has(terrainAEtage(map, ctx.niveau, tx, ty))) return OCCLUDEUR.TERRAIN
   const nd = ctx.monde.nodes !== undefined ? nodeAt(map, ctx.monde.nodes, tx, ty, ctx.niveau) : undefined
   if (nd !== undefined) {
-    if (NOEUD_PLEIN.has(nd.type)) return true
+    if (NOEUD_PLEIN.has(nd.type)) return OCCLUDEUR.NOEUD
     if (NOEUD_TRONC.has(nd.type)) {
       // Les texels du centre : T/2 − 1 et T/2 (à T = 4 : 1 et 2) — dérivés de T, pour que
       // `LUMIERE.TEXELS_PAR_TUILE` reste le seul bouton.
@@ -206,11 +235,50 @@ function texelPlein(ctx: Contexte, kx: number, ky: number): boolean {
       const sy = ky - ty * T
       const lo = T / 2 - 1
       const hi = T / 2
-      if (sx >= lo && sx <= hi && sy >= lo && sy <= hi) return true
+      if (sx >= lo && sx <= hi && sy >= lo && sy <= hi) return OCCLUDEUR.TRONC
     }
   }
-  for (const s of ctx.pleins) if (s.tx === tx && s.ty === ty) return true
-  return false
+  for (const s of ctx.pleins) if (s.tx === tx && s.ty === ty) return OCCLUDEUR.BATI
+  return OCCLUDEUR.LIBRE
+}
+
+/** Le texel (kx, ky) est-il PLEIN, à l'étage du contexte ? */
+function texelPlein(ctx: Contexte, kx: number, ky: number): boolean {
+  return sorteDuTexel(ctx, kx, ky) !== OCCLUDEUR.LIBRE
+}
+
+/**
+ * L'OCCLUSION AU GRAIN d'une fenêtre de tuiles — le masque dont l'écran se DÉRIVE (LG-R11 : « la loi
+ * reste dans /sim, ici on la MONTRE »). Le client ne réécrit pas les occludeurs : il lit ce raster.
+ */
+export interface OcclusionAuGrain {
+  /** L'origine du raster, en texels absolus (la tuile x0 × T, y0 × T). */
+  readonly ox: number
+  readonly oy: number
+  /** La taille du raster, en texels. */
+  readonly gw: number
+  readonly gh: number
+  /** Par texel (ligne par ligne depuis l'origine), sa sorte — `OCCLUDEUR.LIBRE` (0) pour du sol. */
+  readonly sortes: Uint8Array
+  /** Les bandes de la fenêtre, en texels ABSOLUS (à soustraire `ox`, `oy` pour le raster). */
+  readonly bandes: readonly Bande[]
+}
+
+/**
+ * Rasterise les occludeurs de la fenêtre de tuiles [x0, x1] × [y0, y1] (bornes incluses) à l'étage
+ * `niveau`, texel par texel, avec les bandes des murs d'arête. Pure, sans tirage ; ne sert pas au
+ * tick (la sim lit `partVisible`, point par point) — c'est la vue du client et des oracles.
+ */
+export function occlusionAuGrain(monde: MondeEclaire, niveau: number, x0: number, y0: number, x1: number, y1: number): OcclusionAuGrain {
+  const T = LUMIERE.TEXELS_PAR_TUILE
+  const ctx = contexteFenetre(monde, niveau, x0, y0, x1, y1)
+  const gw = (x1 - x0 + 1) * T
+  const gh = (y1 - y0 + 1) * T
+  const ox = x0 * T
+  const oy = y0 * T
+  const sortes = new Uint8Array(gw * gh)
+  for (let j = 0; j < gh; j++) for (let i = 0; i < gw; i++) sortes[j * gw + i] = sorteDuTexel(ctx, ox + i, oy + j)
+  return { ox, oy, gw, gh, sortes, bandes: ctx.bandes }
 }
 
 /**

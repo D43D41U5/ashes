@@ -154,8 +154,8 @@ export type { GameTime, Act } from './time'
 export { AMBIANT_HYPOTHERMIE, ambientTemperature, baselineTemperature, baselineTemperatureAt, bulleDuFeu, cibleCorporelle, climatFlore, climatMaximal, dehorsSansMeteo, advanceTemperature } from './temperature'
 // LA LUMIÈRE (spec `lumiere-globale.md`) : la sim apprend l'ombre. Le client lit ICI le motif de
 // la source étendue, le grain et la portée de la torche (LG-R12, LG-R18) — jamais une copie.
-export { MOTIF_SOURCE, partVisible, lumiereDesTorches } from './lumiere'
-export type { MondeEclaire } from './lumiere'
+export { MOTIF_SOURCE, OCCLUDEUR, occlusionAuGrain, partVisible, lumiereDesTorches } from './lumiere'
+export type { Bande, MondeEclaire, OcclusionAuGrain, SorteOccludeur } from './lumiere'
 export { LUMIERE } from './balance'
 // LA BRUME (spec brume.md) : le client rendra la nappe en la RECALCULANT du tick (patron front
 // de Cendre) — la géométrie pure et le bloc de calibration s'exportent, l'ordonnanceur non.

@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest'
 import { FIRE, LUMIERE, NUIT, SLOTS, TEMPERATURE, TERRAIN_GRASS, TERRAIN_ROCK } from './balance'
 import { EDGE_E, EDGE_N, EDGE_O, EDGE_S } from './geometry'
 import { addItems, makeInventory } from './items'
-import { MOTIF_SOURCE, lumiereDesTorches, partVisible } from './lumiere'
+import { MOTIF_SOURCE, OCCLUDEUR, lumiereDesTorches, occlusionAuGrain, partVisible } from './lumiere'
 import { createEmptyMap } from './map'
 import type { Npc } from './npc'
 import { clarteSurSoi, lumiereDuFeu, LUNAISON_JOURS, LUNE_PLEINE_JOUR } from './nuit'
@@ -307,6 +307,67 @@ describe('la lumière du feu — la bulle × la part (LG-R11, LG-R12, LG-R17)', 
     mur(sim, FX, FY, EDGE_O)
     feu(sim, 44, 48) // à quatre tuiles, à découvert : bulle ⅓
     expect(lumiereDuFeu(sim, RX, RY)).toBeCloseTo(1 - 4 / TEMPERATURE.FIRE_RANGE, 12)
+  })
+})
+
+describe('l’occlusion au grain — le raster dont l’écran dérive (LG-R11)', () => {
+  const T = LUMIERE.TEXELS_PAR_TUILE
+
+  it('O1 — chaque sorte d’occludeur marque ses texels, et rien d’autre', () => {
+    const sim = makeSim()
+    sim.map.terrain[44 * sim.map.width + 44] = TERRAIN_ROCK // le terrain plein : toute la tuile
+    sim.nodes.push({ id: 9101, type: 'tree', tx: 46, ty: 46, stock: 5, regrowAt: 0 }) // un fût : les 2×2 du centre
+    sim.nodes.push({ id: 9102, type: 'rock', tx: 48, ty: 44, stock: 5, regrowAt: 0 }) // un nœud plein : toute la tuile
+    addStructure(sim, 'house', 50, 46, 0, 0) // du bâti plein : toute la tuile
+    mur(sim, FX, FY, EDGE_O) // une bande : aucun texel
+    const o = occlusionAuGrain(sim, N, 42, 42, 53, 51)
+    expect([o.ox, o.oy, o.gw, o.gh]).toEqual([42 * T, 42 * T, 12 * T, 10 * T])
+    const sorte = (tx: number, ty: number, sx: number, sy: number) => o.sortes[((ty - 42) * T + sy) * o.gw + (tx - 42) * T + sx]
+    for (let sy = 0; sy < T; sy++)
+      for (let sx = 0; sx < T; sx++) {
+        expect(sorte(44, 44, sx, sy)).toBe(OCCLUDEUR.TERRAIN)
+        expect(sorte(48, 44, sx, sy)).toBe(OCCLUDEUR.NOEUD)
+        expect(sorte(50, 46, sx, sy)).toBe(OCCLUDEUR.BATI)
+        expect(sorte(FX, FY, sx, sy)).toBe(OCCLUDEUR.LIBRE) // la tuile du mur d'arête reste du sol
+        expect(sorte(43, 43, sx, sy)).toBe(OCCLUDEUR.LIBRE)
+        const centre = sx >= T / 2 - 1 && sx <= T / 2 && sy >= T / 2 - 1 && sy <= T / 2
+        expect(sorte(46, 46, sx, sy)).toBe(centre ? OCCLUDEUR.TRONC : OCCLUDEUR.LIBRE)
+      }
+    // La bande, en texels absolus : à cheval sur x = 50 × T, du haut au bas de la tuile plus un demi-texel.
+    expect(o.bandes).toHaveLength(1)
+    expect(o.bandes[0]).toEqual({ x0: FX * T - 0.5, x1: FX * T + 0.5, y0: FY * T - 0.5, y1: FY * T + T + 0.5, type: 'wall' })
+  })
+
+  it('O2 — le raster et `partVisible` lisent le MÊME monde : tout texel plein du raster bloque un rayon qui le vise', () => {
+    const sim = makeSim()
+    sim.nodes.push({ id: 9103, type: 'rock', tx: 49, ty: 48, stock: 5, regrowAt: 0 })
+    const o = occlusionAuGrain(sim, N, 46, 46, 52, 50)
+    let pleins = 0
+    for (let j = 0; j < o.gh; j++)
+      for (let i = 0; i < o.gw; i++) {
+        if (o.sortes[j * o.gw + i] === OCCLUDEUR.LIBRE) continue
+        pleins++
+        // Un récepteur juste à l'ouest de ce texel plein, la source juste à l'est : tout le disque est derrière lui.
+        const rx = (o.ox + i - 1.5) / T
+        const ry = (o.oy + j + 0.5) / T
+        const sx = (o.ox + i + 1 + 1.5 + 2) / T
+        const sy = ry
+        expect(partVisible(sim, N, rx, ry, sx, sy), `texel plein (${i}, ${j})`).toBeLessThan(1)
+      }
+    expect(pleins).toBe(T * T)
+  })
+
+  it('O3 — à l’étage du récepteur : un mur sous la roche n’est pas dans le raster du sol, et l’inverse', () => {
+    const sim = makeSim()
+    mur(sim, FX, FY, EDGE_O, -1)
+    const sol = occlusionAuGrain(sim, N, 46, 46, 52, 50)
+    expect(sol.bandes).toHaveLength(0)
+    expect(sol.sortes.every((s) => s === OCCLUDEUR.LIBRE)).toBe(true)
+    // Sous une carte sans souterrain, l'étage −1 est de la roche pleine partout (le vide) : tout texel est
+    // du terrain plein — et la bande du mur, elle, y est.
+    const cave = occlusionAuGrain(sim, -1, 46, 46, 52, 50)
+    expect(cave.bandes).toHaveLength(1)
+    expect(cave.sortes.every((s) => s === OCCLUDEUR.TERRAIN)).toBe(true)
   })
 })
 

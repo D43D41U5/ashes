@@ -1074,8 +1074,9 @@ sur le HEAD propre `eae4d2d` du worktree, avec et sans cache de cartes (`ASHES_S
 grottes de plancher (43-55 Grottes par carte), du ressort de l'autre session. **F6** (LG-A11 sur `step()`, le patron
 de P5) et **F7** (LG-A13 : deux mondes à feu, mur d'arête et torche portée rejouent au bit près sur 40 ticks) ajoutés :
 `lumiere.test.ts` 22/22, eslint 0, tsc 0 ; `pnpm check` (sim, client, serveur) 0 et `pnpm lint` (tout le dépôt) 0.
-**La brique est finie, non commitée** — le commit quand Alexis le demande (la ligne de journal `gameplay-systemes.md`
-avec). ⚠ Le worktree `wt-gi` est à `eae4d2d`, sans ce diff : la brique client le verra après le commit (ou par copie). **LG-A12, la moitié « la loi de /sim
+**COMMITÉE le 2026-09-17 : `f53a38c`** (Alexis : « Commit /sim, puis la GI du client » ; `git commit --only` sur les
+onze fichiers de la brique, l'index de l'autre session intact ; la ligne de journal `gameplay-systemes.md` reste due à
+son commit). Le worktree `wt-gi` est déplacé sur `f53a38c` (vite :3140 répond) : la brique client commence là. **LG-A12, la moitié « la loi de /sim
 est celle de l'oracle », MESURÉE le 2026-09-16** : `tools/__lumiere-vs-oracle.mts` (jetable) rebâtit le monde de /sim
 depuis le relevé du run 43 (`p16-nuit-releve.json` : terrain, nœuds, bâti avec ses arêtes) et compare `partVisible`
 à `traverse` de `gi-ref.mjs` sur la grille de `compose.mjs`, texel par texel, à portée du feu — **0 texel différent
@@ -1103,6 +1104,67 @@ R13 et laisse LG-Q9 ouvert) ; N2bis étendu au feu (LG-R13) ; **N4 barré** (sor
 d'Alexis, le pourquoi du journal), N5 « la seule chose que le noir prend » ; le « pourquoi ces deux capacités »
 relu ; P2 à P4 retournées ; les critères à venir (LG-A11 à A13) ; le bandeau de refus tel qu'il est
 (`WorldScene.ts:3559`). La revue `determinisme-sim` vient AVEC le code, pas avant : il n'y a rien à relire.
+
+## La brique client — tranche A, la loi lue par le client (2026-09-17)
+
+Alexis : « Commit /sim, puis la GI du client ». Worktree `wt-gi`, **branche `gi-client`** (depuis `f53a38c`, vite
+:3140). La brique se coupe en quatre tranches : **A** pure (sans navigateur — ce que l'écran lira, prouvé égal à la
+sim avant qu'un shader existe), **B** la chaîne GPU derrière un interrupteur, **C** la composition dans le voile
+(LG-R5), **D** les astres, les corps, les paliers, le dessus et la coulée. La tranche A, écrite et vérifiée le
+2026-09-17 :
+
+- **`packages/sim/src/lumiere.ts`** — `occlusionAuGrain(monde, niveau, x0, y0, x1, y1)` : le RASTER des sortes
+  d'occludeur (`OCCLUDEUR` LIBRE / TERRAIN / TRONC / NOEUD / BATI, un `Uint8Array` de (x1−x0+1)×T par (y1−y0+1)×T,
+  origine `ox = x0×T`, `oy = y0×T`) et les bandes des murs d'arête (`Bande` porte désormais son `type`, pour l'albédo),
+  lus par la même `sorteDuTexel` que `partVisible` (`texelPlein` en dérive) — la sim dit à l'écran où sont les murs, il
+  n'y a pas de seconde lecture. Tests O1–O3 (chaque sorte à sa place — terrain, fût 2×2, nœud plein, bâti, bande —,
+  chaque texel plein du raster arrête un rayon qui le vise, l'étage −1 d'une carte plate est VOID partout donc TERRAIN
+  partout et le bâti du sol y est masqué) : `lumiere.test.ts` 25/25.
+- **`packages/client/src/render/gi/reglages.ts`** — `GI` (grain et taille de source DÉRIVÉS de `LUMIERE`, teinte de
+  feu, rebond 0,9, portée 12, plafond 0,2 : les réglages G2 de la planche 3) et `ALBEDO` par sorte (les tables de
+  `compose.mjs` : terrain par id, tronc, nœud, bâti par type).
+- **`render/gi/champ-ref.ts`** — L'ORACLE du champ, en module durable (l'ex-`gi-ref.mjs` jetable) :
+  `champRef(grille, émetteurs, réglages)` → direct (part visible × profil), faces des cellules opaques et des DEUX côtés
+  de chaque bande, rebond Lambert plafonné par le genou, `composerM` (LG-R5, exact à l ≤ 0 : le plancher au bit).
+  C'est la RÉFÉRENCE de LG-A2 — l'écran se comparera à lui, pas à des captures.
+- **`render/gi/grille.ts`** — `grilleDuMonde(monde, niveau, fenêtre)` : le raster de la sim → `occ` / `albedo` / `murs`
+  de l'oracle, l'albédo du terrain lu par `terrainAEtage`.
+- **`render/gi/champ-ref.test.ts`** 9/9 — **A0 : la part visible de l'oracle vaut `partVisible` de la sim AU BIT PRÈS
+  sur tous les texels libres à portée** (prémisses : plus de 1 000 texels, de l'ombre, de la pénombre, de la pleine
+  vue), G1 la grille, A4·1–6 (le texel contre la bande reçoit 0 et son jumeau plus de 0,9, pénombre monotone, rebond
+  d'un seul côté de la bande, rebond ≤ plafond et teinte préservée, déterminisme, motif de 16), A5 `composerM`.
+- **`render/torche.ts`** — `TORCHE_LIGHT_TILES` DÉRIVÉE de `LUMIERE.TORCHE_PORTEE_TUILES` (le doublon annoncé le
+  16/09). `torche.test.ts` 12/12.
+- **`scenes/world/etat-gel.ts`** — la remarque (5) de la revue : la façade porte `nodes`, `entities`, `npcs`,
+  `monsters` (optionnels, `undefined` = absent, exactement comme `MondeEclaire` le lit ; `creerEtatGel` et
+  `majEtatGel` les relaient, la mise à jour en place peut les effacer). **`WorldScene.ts`** — worktree seulement,
+  QUATRE lignes dans le littéral `source` (`view.nodes`, `lastEntities`, `view.npcs`, `view.monsters`) : à rebaser sur
+  le commit de l'autre session, qui édite ce fichier. **`etat-gel-lumiere.test.ts`** (neuf) 5/5 : L1 la prédiction vaut
+  l'autorité AU BIT PRÈS sur 1 026 points (un feu, un fût, un avatar et un PNJ porteurs de torche) ; L2 sans les nœuds
+  la façade est PLUS CLAIRE que l'autorité derrière le fût — le mensonge de N2bis, mesuré, jamais l'inverse ; L3 sans
+  les corps la torche de l'autre avatar manque ; L4 sans les figurants la torche d'un PNJ compte à tort (LG-R18) ; L5
+  `majEtatGel` remet et efface.
+
+**Vérifié le 2026-09-17, dans le worktree** : `pnpm check` 0 (sim, serveur, client), `pnpm lint` 0 ; les quatre
+suites : sim 2 431 verts, 2 ignorés, 4 rouges — les deux `charniers.test.ts` ANTÉRIEURS (voir « La sim d'abord ») et
+deux timeouts de cache froid (`envol` R21 à 30 s, `terrasses` T-A1 graine 4242 à 60 s) rejoués verts sur le cache
+chaud (75/75) ; client 1 613 verts (133 fichiers), serveur 36, banc 3. Les planchers de `tools/suites.mjs` tiennent
+(les suites ont GROSSI : +3 sim, +14 client — le plancher se relève au commit de l'autre session, c'est son fichier).
+
+**Ce que ça change au jeu** : rien qui se voie — la prédiction du client voit maintenant ce que l'autorité voit (le
+bandeau de refus de la parade ne se trompe plus derrière un fût ni sous la torche d'un autre). Rien ne se dessine
+encore. **LG-A12, l'autre moitié** (l'écran contre la sim) reste à la tranche B, mais son étalon existe : `champRef`.
+
+**Tranche B, la chaîne GPU (à faire, worktree)** — d'après le spike `tools/__gi-spike/spike.js` (Phaser 4.2 :
+`#pragma phaserTemplate`, `setRenderToTexture`, `readPixels` via `glWrapper.updateBindingsFramebuffer`, ping-pong,
+NEAREST) : (1) une texture d'occludeurs à la résolution de la grille, écrite depuis `occlusionAuGrain` (et les bandes,
+qui ne tiennent pas dans un texel : raster 2× ou test analytique dans le shader — à mesurer, l'oracle tranche) ;
+(2) la passe DIRECTE : par texel, les 16 rayons de `MOTIF_SOURCE` vers chaque source, la même marche que
+`segmentBloque` ; (3) faces et rebond, puis le genou ; (4) `composerM` dans le voile (tranche C). Derrière une touche
+du HUD (`hud-state.ts`, patron `debugLighting`) et un bouton du panneau (`debug-panel.ts`), lue dans `WorldScene`
+comme les autres. Gardes : LG-A1/LG-A3 en pixels (le patron du spike), **LG-A2 = l'écran lu par `readPixels` contre
+`champRef` sur la même grille**, à la tolérance de la spec. Les regards (planches) AVANT toute règle qui bouge.
+
 
 ## Lignes de journal dues (relevé du 2026-09-15)
 `rendu-da.md` : 1bis (réouverture « zéro post-FX »), 2bis (G2), 3 (refonte), 3ter (astres → murs), 3quater
