@@ -807,3 +807,24 @@ export const HOLE_RADIUS_TILES = 6
 export function fireHoleRadius(timeMs = 0, seed = 0): number {
   return HOLE_RADIUS_TILES * flicker(timeMs, seed)
 }
+
+/**
+ * LE PROFIL RADIAL DU TROU — la seule pente de la lumière d'un feu au sol, et elle est écrite ICI
+ * pour être lue à DEUX endroits : la brosse d'effacement du voile (`night-veil.ts`) et le champ de
+ * la GI (`render/gi`, spec `lumiere-globale.md` LG-R4 : « le profil et la portée restent ceux
+ * d'aujourd'hui : le profil radial du trou du voile »). Une loi, deux lecteurs.
+ *
+ * `t` = distance / rayon, dans [0, 1] ; rend la part de nuit RETIRÉE en ce point, relative au pic :
+ * un smoothstep — plein au centre, 0 doux au bord (aucune marche à la portée : un rayon qui respire
+ * ne déplace aucun texel, LG-R6).
+ */
+export function profilDuTrou(t: number): number {
+  const s = 1 - Math.min(1, Math.max(0, t))
+  return s * s * (3 - 2 * s)
+}
+
+/** Pic d'effacement (0..1) : à 0,62, un voile à alpha 0,72 tombe au centre à 0,72×0,38 ≈ 0,27.
+ *  ABAISSÉ de 0,82 le 2026-08-03, en même temps que le trou devenait le porteur PRINCIPAL de la
+ *  chaleur au sol (voir l'en-tête de `night-veil.ts`) : à 0,82 il ne creusait plus la nuit, il la
+ *  supprimait. La GI le lit aussi : c'est la FORCE de la lumière directe d'un feu (LG-R4). */
+export const HOLE_ERASE_PEAK = 0.62

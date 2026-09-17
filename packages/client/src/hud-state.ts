@@ -453,6 +453,10 @@ export interface HudState {
   debugSpeed: number
   /** F5 : essai éclairage dynamique — arbres normal-mappés (decisions.md 2026-07-20). */
   debugLighting: boolean
+  /** Le champ de la GI (spec `lumiere-globale.md`, LG-R3 : « à côté de la pile actuelle, derrière un
+   *  interrupteur du panneau debug ») — le NOMBRE de passes de la chaîne GPU qui tournent : 0 éteint,
+   *  `PASSES_GI` la chaîne entière (le panneau bascule entre les deux ; une sonde peut s'arrêter avant). */
+  debugGi: number
   /** Ce que l'overlay affiche — publié par WorldScene, seule à connaître le relief. */
   debugInfo: {
     tick: number
@@ -498,7 +502,7 @@ export const CLES_HUD: Record<keyof HudState, true> = {
   veillee: true, quitMondes: true, audioVolume: true, mapData: true, knownPois: true, knownGrounds: true,
   playerPos: true, chronicle: true, volumesScelles: true, volumesVifs: true, error: true, hint: true, fatal: true,
   alarm: true, seasonVerdicts: true, debugOn: true, debugGod: true, debugSpeed: true,
-  debugLighting: true, debugInfo: true, debugTeleport: true,
+  debugLighting: true, debugGi: true, debugInfo: true, debugTeleport: true,
 }
 
 /**

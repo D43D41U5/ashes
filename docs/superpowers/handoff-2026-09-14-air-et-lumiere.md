@@ -1166,6 +1166,76 @@ comme les autres. Gardes : LG-A1/LG-A3 en pixels (le patron du spike), **LG-A2 =
 `champRef` sur la même grille**, à la tolérance de la spec. Les regards (planches) AVANT toute règle qui bouge.
 
 
+## La brique client — tranche B, la chaîne GPU (2026-09-17)
+
+Cinq passes derrière l'interrupteur `debugGi` (`direct`, `faces`, `drapeau`, `rebond`, `somme`),
+dans `packages/client/src/render/gi/champ-gpu.ts`, éprouvées contre l'oracle `champRef` de la
+tranche A par `verifier()` — c'est LG-A2.
+
+**DEUX DÉFAUTS TROUVÉS ET SOLDÉS, chacun avec son avant/après à lui.**
+
+**1. Le monde à l'envers.** La chaîne lisait le canvas d'occludeurs rangée 0 EN HAUT, alors que
+l'upload le retourne : l'occludeur de la rangée `j` était vu en `gh − 1 − j`. Prouvé par une tache
+2×2 posée à quatre hauteurs (`tools/__gi-miroir.mjs`), avec la prédiction chiffrée écrite AVANT :
+
+| tache en j | miroir prédit `gh−1−j` | apex fantôme mesuré | déplacement |
+|---|---|---|---|
+| 60 | 99 | *aucune ombre* (hors du rayon 24) | — |
+| 74 | 85 | **84** | +10 |
+| 79 | 80 | *recouvre l'ombre vraie* | — |
+| 92 | **67** | **67** | **−25** |
+
++10 à une hauteur et −25 à une autre : aucun décalage constant ne produit ça. Remède : un helper
+`uvRaster(c)` dans `COMMUN`, par lequel passent les **trois** lectures de canvas (`code2`,
+`albBande`, le `uAlb` de `FRAG_FACES`). Retourner à la LECTURE et non à l'écriture — une
+soustraction au lieu d'une addition, K invariant de boucle, et le canvas reste à l'endroit.
+
+**2. La règle d'extrémité.** L'extrémité d'un segment s'épargne au TEXEL ENTIER, pas au sous-texel
+du raster 2× : `traverse` (oracle) n'inspecte jamais le texel de départ ni celui d'arrivée, et ce
+sont des texels entiers ; le raster 2× n'en épargnerait qu'un quart. Validée à **0 désaccord sur
+130 864 segments** (`tools/__gi-traversee.mts`) avant d'être posée.
+
+| LG-A2, passe directe | à l'origine | après le miroir | + règle d'extrémité |
+|---|---|---|---|
+| moyenne (niveaux) | 19,11 | 5,02 | **0** |
+| au-delà de 3 niveaux | 68,6 % | 51,1 % | **0 %** |
+| max | 166 | 43 | **0** |
+
+**La passe directe est EXACTE** — 0 sur 1 411 texels, dont 1 274 éclairés. `champ` rend 0,129 de
+moyenne, max **1** : c'est de l'ARRONDI, montré et non affirmé (313 trop clairs contre 304 trop
+sombres, exclusivement ±1 — un défaut de géométrie aurait un SENS, une symétrie n'en a pas).
+
+**LES BANDES SONT ÉPROUVÉES, ET EXACTES.** La fenêtre du vrai monde n'en contenait AUCUNE
+(`verifier().bandes` = 0) et les mondes-tache effacent `g.murs` : le premier zéro ne portait que
+sur des occludeurs pleins. Un monde d'UNE bande fabriquée à la main (`g.murs` et `g.albedoMurs`
+sont PARALLÈLES — pousser dans les deux) → moyenne 0, max 0 sur 1 547 texels. La prédiction
+(« fuite aux pointes ») était FAUSSE : pour une traversée perpendiculaire le GPU saute le
+sous-texel de départ mais bloque sur le second, qui n'est ni départ ni arrivée.
+
+⚠ **CE QUE « CLOSE » COUVRE, exactement.** Tout ce qui précède est mesuré à 224 × 160 avec **UNE
+source**. `GI.MAX_SOURCES` borne la liste des émetteurs et `uSrc` les empaquette un par un : rien
+ici n'éprouve **deux émetteurs qui se recouvrent**, ni la coupure à `MAX_SOURCES`. Ce n'est pas une
+accusation — c'est la portée du mot. À éprouver avant de déclarer LG-A2 tenu dans le jeu réel, où
+un village porte plusieurs feux.
+
+**CE QUI RESTE EST DE LA PERF, et rien d'autre.** Répartition mesurée à 224 × 160, une source
+(`tools/__gi-partage.mjs` : `update(n)` puis un `readPixels` qui purge la file — le cumul au cran n
+moins celui du cran n−1 EST le coût de la passe n) : direct 18 ms, faces 22, drapeau 10,
+**rebond 429**, somme 150. `FRAG_REBOND` est un GATHER : 35 840 texels × 625 voisins = 22,4 M
+itérations, chacune payant une lecture de `uDrapeau` juste pour passer son tour. HYPOTHÈSE NON
+ÉPROUVÉE : le coût est dans le TRI, pas dans le calcul — se tranche en retirant le `bloque` interne
+et en re-mesurant. Remèdes candidats : une pyramide sur le drapeau (25×25 couvert en ~16 lectures)
+ou le SCATTER depuis la liste des faces, comme l'oracle. Restent aussi **C5** (`bloque` marche 192
+pas pour tout le monde) et **C6** (`temps.grille` à 39 ms contre les 2 ms de LG-A14).
+
+**Pièges payés dans cette tranche** — une épreuve RADIALEMENT SYMÉTRIQUE ne peut pas voir un miroir
+vertical (la sonde en champ libre « validait » la formule à 1,000 partout) ; `profil` rend 0 au-delà
+du rayon, donc 12 144 occludeurs n'est JAMAIS le bon dénominateur (~600 seulement sont dans le
+disque) ; un backtick non échappé dans un commentaire GLSL tue le module en silence (symptôme
+headless : `waitForFunction: Timeout`, sans `pageerror` ni console) — `tsc` avant toute sonde
+navigateur ; et une liste de DIAGNOSTIC relue comme un reste à faire m'a fait écrire deux fois que
+LG-A2 n'était pas déclarable alors que le correctif C2 datait.
+
 ## Lignes de journal dues (relevé du 2026-09-15)
 `rendu-da.md` : 1bis (réouverture « zéro post-FX »), 2bis (G2), 3 (refonte), 3ter (astres → murs), 3quater
 (longueur proportionnelle), 4 (lumière continue, pas de crans), LG-Q3 (a) (le relief des corps refait
@@ -1195,20 +1265,38 @@ LG-R18).
 Les deux volets sont modifiés par l'autre session : on les écrit à son commit, et les « pourquoi » se prennent
 à Alexis, pas à mes suppositions.
 
-## Comment reprendre — plan proposé, pas décidé
-0. **`eclaireur-etat`** (lecture seule) confirme l'inventaire ci-dessus — le protocole de
-   `docs/sprint-aaa.md` ; le backlog de ce dépôt se découvre souvent déjà construit.
-1. **Spike technique**, jetable (`tools/__*`, derrière le debug) : une chaîne de deux passes dans
-   Phaser 4.2 (Shader → `setRenderToTexture` → lu par un second Shader) à la résolution de la grille ;
-   mesurer le coût d'une passe ICI et sur un vrai GPU.
-2. **Maquettes du look** (`da-rendu`, qui possède le harnais) : l'effet choisi en 2-3 variantes,
-   capturées à l'aube et de nuit, en planche — la règle « montrer le look avant de bâtir ».
-3. **Spec** `docs/specs/<nom>.md` avec critères d'acceptation mesurables (luminance, contraste de
-   Weber d'un acteur sur son sol — le calcul existe dans l'en-tête de `night-veil.ts` —, coût par
-   image), puis la ligne de décision. **→ ÉCRITE le 2026-09-15 : `docs/specs/lumiere-globale.md`**
-   (règles LG-R1 → R13, critères LG-A1 → A14, points à trancher LG-Q1 → Q9) : la compléter, pas la réécrire.
-4. **Implémentation** derrière un interrupteur du panneau debug, gardes de pixels, scénario smoke dédié.
-5. **La GI en dernier**, en refonte, seulement si 1 à 3 ont convaincu.
+## Comment reprendre — état au 2026-09-17
+
+⚠ Le plan en cinq étapes qui tenait ici datait du 2026-09-14 et est ENTIÈREMENT dépassé : son spike,
+ses planches et sa spec sont faits, et sa dernière étape (« la GI en dernier, seulement si 1 à 3 ont
+convaincu ») contredisait la toute première décision d'Alexis, « la GI 2D d'emblée ». Remplacé.
+
+**FAIT.** Spike 11/11 · 22 planches · spec `docs/specs/lumiere-globale.md` ENTIÈRE sauf LG-Q2 ·
+brique `/sim` committée **f53a38c** · brique client tranche A (l'oracle en module, la grille, la
+façade) committée **24454aa** sur la branche `gi-client` · tranche B (la chaîne GPU) : **la justesse
+est close** — passe directe exacte contre l'oracle, bandes éprouvées et exactes, reliquat de `champ`
+à ±1 niveau d'arrondi (section « tranche B » ci-dessus).
+
+**À FAIRE, dans cet ordre — c'est de l'ingénierie contre l'oracle, rien n'y attend Alexis.**
+1. **Le rebond** : 429 ms des 629. Trancher d'abord l'hypothèse « le coût est dans le TRI, pas dans
+   le calcul » en retirant le `bloque` interne et en re-mesurant par `tools/__gi-partage.mjs` ;
+   puis pyramide sur le drapeau, ou scatter depuis la liste des faces. **C5** et **C6**
+   (`temps.grille` 39 ms contre 2 ms, LG-A14) ensuite.
+2. **Tranche C** — la composition dans le voile : `composerM`, Mn depuis
+   `multiplicateurDuVoile(voileDeNuit(...))`, f de jour, critères LG-A5/A6/A7.
+3. **Tranche D** — les astres (LG-R8/R9), les corps (LG-R7), les paliers (LG-R14), le dessus
+   (LG-R16), la coulée (LG-R15, indépendante du champ et faisable avant).
+4. **LG-Q2, les grottes** : APRÈS le commit de l'autre session (elle tient `grottes.md`, où le
+   chiffre G-R5 « 12,8 à l'arête » sera à corriger).
+5. **Les lignes de journal dues** (relevé ci-dessous), puis `node tools/decisions-index.mjs` —
+   jamais éditer `docs/decisions.md` à la main.
+
+**Règles de terrain qui ont coûté cher ici.** Worktree `wt-gi` + vite :3140 ; ne jamais éditer
+`packages/client` pendant une sonde navigateur (le HMR recharge la page et tue le run) ni `/sim`
+pendant une suite ; les fichiers de l'autre session (`WorldScene`, `dynamic-lighting`, `cave-veil`,
+`flank-glow`, `cave-*`, `etage-layer`…) se lisent, ne s'écrivent pas — le merge de `gi-client` se
+fait par rebase sur son commit. Et pour Alexis : **les planches avant les règles, des images et pas
+des chiffres.**
 
 ## Pistes de lecture (avant le spike)
 - GPU Gems 3, chapitre 13 — Kenny Mitchell, *Volumetric Light Scattering as a Post-Process*.

@@ -25,6 +25,7 @@
 import type Phaser from 'phaser'
 import { coeurDeLaSaisonSuivante, GEL, nomDeSaison, phaseForDay, TEMPERATURE, type MeteoType, type PlayerAction } from '@ashes/sim'
 import { getHud, setHud } from '../../hud-state'
+import { PASSES_GI } from '../../render/gi/champ-gpu'
 import { ensureGameFont, GAME_FONT } from '../ui/game-font'
 
 const SPEEDS = [1, 2, 4, 8] as const
@@ -128,6 +129,7 @@ export function createDebugPanel(scene: Phaser.Scene, deps: DebugPanelDeps): Deb
 
   const bGod = mkBtn()
   const bLight = mkBtn()
+  const bGi = mkBtn()
   const bSpeed = mkBtn()
   const bNight = mkBtn()
   const bReveil = mkBtn()
@@ -219,6 +221,7 @@ export function createDebugPanel(scene: Phaser.Scene, deps: DebugPanelDeps): Deb
     root.style.opacity = carte && !root.matches(':hover') ? '0.12' : '1'
     paint(bGod, `Invulnérabilité${getHud(reg, 'debugGod') ? ' ·on' : ''}`, Boolean(getHud(reg, 'debugGod')))
     paint(bLight, `Éclairage dynamique${getHud(reg, 'debugLighting') ? ' ·on' : ''}`, Boolean(getHud(reg, 'debugLighting')))
+    paint(bGi, `Champ GI${(getHud(reg, 'debugGi') ?? 0) > 0 ? ' ·on' : ''}`, (getHud(reg, 'debugGi') ?? 0) > 0)
     const sp = getHud(reg, 'debugSpeed') ?? 1
     paint(bSpeed, `Cadence ×${sp}`, sp !== 1)
     paint(bNight, deps.isNight() ? 'Passer au JOUR' : 'Passer à la NUIT', false)
@@ -277,6 +280,10 @@ export function createDebugPanel(scene: Phaser.Scene, deps: DebugPanelDeps): Deb
   }
   bLight.onclick = () => {
     setHud(reg, 'debugLighting', !getHud(reg, 'debugLighting'))
+    render()
+  }
+  bGi.onclick = () => {
+    setHud(reg, 'debugGi', (getHud(reg, 'debugGi') ?? 0) > 0 ? 0 : PASSES_GI)
     render()
   }
   bSpeed.onclick = () => {

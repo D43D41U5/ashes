@@ -48,6 +48,8 @@ export function bindDebugKeys(scene: Phaser.Scene, deps: DebugDeps): void {
   // `true` — en DEV comme en prod la lumière est allumée. Le panneau P sert à l'ÉTEINDRE pour
   // comparer avec l'ancien rendu à plat, pas à l'allumer.
   setHud(scene.registry, 'debugLighting', true)
+  // Le champ de la GI se bâtit À CÔTÉ de la pile actuelle (LG-R3) : éteint tant qu'on ne l'allume pas.
+  setHud(scene.registry, 'debugGi', 0)
 
   onDown(DEBUG_KEYMAP.toggle, () => {
     const on = !isOn()

@@ -211,6 +211,7 @@ function revealRadiusOf(kind: string): number {
   return charge && charge.devise === 'savoir' && charge.reveal === 'radius' ? charge.radiusTiles : 0
 }
 import { NightVeil } from './world/night-veil'
+import { ChampGpu } from '../render/gi/champ-gpu'
 import { DynamicLighting, couleurDuCiel, deriveDOmbre, facteurDuFeu, forceDeLOmbre } from './world/dynamic-lighting'
 import { WaterLayer, type WaterWader } from './world/water-layer'
 import { flowAt } from '../render/flow-field'
@@ -403,6 +404,9 @@ export class WorldScene extends Phaser.Scene {
   private map!: WorldMap
   /** LE VOILE DE NUIT — bleu de l'heure + air de zone, mais TROUÉ par les Feux (voir `night-veil`). */
   private nightVeil: NightVeil | null = null
+  /** LE CHAMP DE LA GI (spec `lumiere-globale.md`, tranche B) — bâti à la demande derrière
+   *  l'interrupteur `debugGi` du panneau, à CÔTÉ de la pile actuelle (LG-R3). */
+  private gi: ChampGpu | null = null
   private airColor = 0x000000
   private airAlpha = 0
   private airCible: { color: number; alpha: number } = { color: 0x000000, alpha: 0 }
@@ -2740,6 +2744,21 @@ export class WorldScene extends Phaser.Scene {
         if (r > 0) veilFires.push({ worldX: p.x, worldY: p.y, radiusTiles: r, force: TORCHE_HOLE_FORCE })
       }
       this.torcheGround?.update(porteurs, day, time)
+      // LE CHAMP DE LA GI (spec `lumiere-globale.md`, tranche B) — derrière l'interrupteur du panneau
+      // (LG-R3 : à côté de la pile actuelle), et il lit LA MÊME liste de sources que le voile : feux
+      // et torches résolus une fois, ils battent en phase.
+      const passesGi = getHud(this.registry, 'debugGi') ?? 0
+      if (passesGi > 0) {
+        this.gi ??= ChampGpu.creer(this)
+        this.gi?.update(
+          passesGi,
+          this.cameras.main,
+          { map: this.map, structures: this.view.structures, nodes: this.view.nodes },
+          this.etages.souterrain ? this.etages.niveauDuRegard : 0,
+          veilFires.map((f) => ({ worldX: f.worldX, worldY: f.worldY, radiusTiles: f.radiusTiles, force: f.force ?? 1 })),
+          ambientDepth + 0.5,
+        )
+      } else this.gi?.setVisible(false)
       this.nightVeil?.update(
         // LE VOILE SUIT LA LUNE — teinte ET opacité : `NIGHT_ALPHA_MAX` est désormais la PLEINE
         // lune (étalon posé par Alexis), et la nuit se ferme à mesure qu'elle décroît ou se

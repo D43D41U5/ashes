@@ -65,11 +65,10 @@
  */
 import Phaser from 'phaser'
 import { TILE_PX } from '../../render/framing'
+import { HOLE_ERASE_PEAK, profilDuTrou } from '../../render/lighting'
 
-/** Pic d'effacement (0..1) : à 0,62, un voile à alpha 0,72 tombe au centre à 0,72×0,38 ≈ 0,27.
- *  ABAISSÉ de 0,82 le 2026-08-03, en même temps que le trou devenait le porteur PRINCIPAL de la
- *  chaleur au sol (voir l'en-tête) : à 0,82 il ne creusait plus la nuit, il la supprimait. */
-const HOLE_ERASE_PEAK = 0.62
+// Le pic d'effacement `HOLE_ERASE_PEAK` et le profil radial `profilDuTrou` vivent dans
+// `render/lighting.ts` depuis le 2026-09-17 : la GI lit la même pente (LG-R4), une loi, deux lecteurs.
 /** Résolution de la brosse UNITÉ. Choisie pour qu'au rayon typique (~7 tuiles) un texel retombe
  *  sur ~4 px monde — le grain de la DA. La portée PULSE (via `fireGlow.radius`), donc le grain
  *  respire un peu autour de 4 px : c'est le prix du « la lumière pulse jusqu'au sol ». */
@@ -89,9 +88,8 @@ function ensureHoleTexture(scene: Phaser.Scene): void {
     for (let i = 0; i < BRUSH_SIDE; i++) {
       const dx = i - BRUSH_RADIUS_CELLS
       const dy = j - BRUSH_RADIUS_CELLS
-      const t = Math.min(1, Math.sqrt(dx * dx + dy * dy) / BRUSH_RADIUS_CELLS)
-      const s = 1 - t
-      const a = s * s * (3 - 2 * s) // smoothstep : plein au centre, 0 doux au bord
+      // smoothstep : plein au centre, 0 doux au bord — la pente partagée avec la GI (`profilDuTrou`)
+      const a = profilDuTrou(Math.sqrt(dx * dx + dy * dy) / BRUSH_RADIUS_CELLS)
       const k = (j * BRUSH_SIDE + i) * 4
       img.data[k] = 255
       img.data[k + 1] = 255

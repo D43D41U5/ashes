@@ -7,8 +7,17 @@
  * Chaque valeur dit d'où elle vient.
  */
 import { LUMIERE } from '@ashes/sim'
+import { HOLE_ERASE_PEAK, profilDuTrou } from '../lighting'
+import type { Emetteur } from './champ-ref'
 
 export const GI = {
+  /** La marge du champ autour de la vue, en tuiles (LG-R3 : au moins la plus longue portée qui peut y
+   *  entrer — un feu : 6 tuiles × le battement 1,18 = 7,1 ; une torche : 4). */
+  MARGE_TUILES: 8,
+  /** Le nombre de sources qu'une image porte au GPU (un tableau d'uniformes ; les plus proches d'abord). */
+  MAX_SOURCES: 16,
+  /** Les sortes d'albédo de bande qu'une image porte au GPU (un tableau d'uniformes). */
+  MAX_ALBEDOS_BANDE: 8,
   /** Le grain : `LUMIERE.TEXELS_PAR_TUILE` texels par tuile (4 px monde, LG-R2). Un seul bouton, dans la sim. */
   GRAIN: LUMIERE.TEXELS_PAR_TUILE,
   /** Le rayon du disque émissif, en texels — la pénombre (LG-R4 « direct » ; le même que la sim, LG-R12). */
@@ -19,9 +28,23 @@ export const GI = {
   REBOND: 0.9,
   /** La portée du rebond, en texels (LG-R4, de moi). */
   PORTEE_REBOND: 12,
+  /** La fenêtre s'alloue par paliers de ce nombre de texels, et ne rétrécit jamais : `floor` et
+   *  `ceil` franchissent leurs seuils séparément, donc une caméra qui glisse ferait osciller la
+   *  taille d'une tuile et reconstruirait toute la chaîne une image sur deux (de moi, 17/09). */
+  PALIER_TEXELS: 32,
   /** Le genou du rebond : m → m / (1 + m / plafond) — le rebond reste sous 0,2 et garde sa teinte (LG-R4 « genou »). */
   PLAFOND_REBOND: 0.2,
 } as const
+
+/**
+ * LA PENTE DE LA LUMIÈRE DIRECTE — celle du trou du voile d'aujourd'hui (LG-R4 : « le profil et la
+ * portée restent ceux d'aujourd'hui »), lue dans `render/lighting.ts` où la brosse du voile la lit
+ * aussi : le pic `HOLE_ERASE_PEAK` × le smoothstep `profilDuTrou`. L'oracle (`champRef`) et la chaîne
+ * GPU (`champ-gpu.ts`) la calculent tous deux ; la garde LG-A2 les compare.
+ */
+export function profilFeu(d: number, e: Emetteur): number {
+  return HOLE_ERASE_PEAK * profilDuTrou(d / e.rayon)
+}
 
 /** Un albédo, en lumière linéaire par canal. */
 export type Albedo = readonly [number, number, number]
