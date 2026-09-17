@@ -40,7 +40,7 @@ import Phaser from 'phaser'
 import { LUMIERE, MOTIF_SOURCE, type MondeEclaire } from '@ashes/sim'
 import { TILE_PX } from '../framing'
 import { HOLE_ERASE_PEAK } from '../lighting'
-import { champRef, masqueDAstre, type Astre, type Emetteur, type GrilleGi } from './champ-ref'
+import { champRef, composerM, masqueDAstre, ombrePleineDAstre, type Astre, type Emetteur, type GrilleGi } from './champ-ref'
 import { grilleDuMonde, type Fenetre } from './grille'
 import { ALBEDO, GI, longueurDOmbre, profilFeu, type Albedo } from './reglages'
 
@@ -84,6 +84,14 @@ export interface VerdictGi {
    * l'oracle met à l'ombre : c'est la PRÉMISSE, une garde à zéro ombre n'a rien éprouvé.
    */
   readonly masque: EcartCible
+  /**
+   * LA COMPOSITION (LG-R5, LG-R8) : `gi-champ` contre `composerM`, soit Mn × (1 − a·S) comblé par la
+   * lumière. C'est la SEULE des trois cibles qui éprouve la force `a` et la PÉNOMBRE — le masque ne
+   * relit que l'ombre pleine, sans force ni bord doux, et la moyenne du champ ne les verrait pas
+   * (485 texels sur 34 952 valent un demi-niveau, moins que l'écart entre deux images). `eclaires`
+   * compte les texels que l'astre touche, pénombre comprise : c'est la prémisse.
+   */
+  readonly compose: EcartCible
   /** La pureté (LG-A3) de la cible relue : 100 % des octets sont ceux d'un texel (toujours, en RTT). */
   readonly purete: number
 }
@@ -183,6 +191,59 @@ uniform vec3 uTeinte;
 uniform vec2 uMotif[16];
 uniform float uTailleSource;
 uniform float uPic;
+// Le vecteur d'ombre, EN TEXELS : (cisaillement × ℓ × dérive, ℓ). Nul quand aucun astre ne porte.
+uniform vec2 uOmbre;
+uniform float uPasOmbre;
+// ═══ LE RAYON D'OMBRE (LG-R8) ═══
+// Un mur occupe TOUTE hauteur de 0 à H : son ombre est sa bande BALAYÉE par le vecteur d'ombre, une
+// somme de Minkowski et non une trace. On rétro-projette donc depuis le centre du texel et l'on
+// demande si le segment p → p - uOmbre entre dans une bande — mot pour mot le \`coupeBande\` de
+// l'oracle, lu sur le raster 2× où une bande tombe juste. Trois choses en tombent gratuitement :
+// l'ombre se compte depuis la FACE (LG-R10), les deux orientations marchent, et rien ne va au nord.
+//
+// ⚠ CE N'EST PAS \`bloque\`, ET ÇA NE PEUT PAS L'ÊTRE — pour trois raisons, chacune suffisante :
+//   · il ÉPARGNE le texel de départ, or la bande occupe une sous-rangée de ce texel-là et c'est de
+//     là que part la première rangée d'ombre ;
+//   · il teste TOUT occludeur (\`code2 > 0\`), or un bloc n'est pas lanceur (LG-R15) : seules les
+//     bandes le sont, soit \`code2 >= 2\` (2 = bande, 3 = bande sur cellule, cf. l. 829) ;
+//   · sa borne \`uPasMax\` est taillée sur la plus GRANDE source du cadre — 192 pas. Ce rayon-ci
+//     mesure ℓ = 3,2 texels et n'en veut jamais plus de seize.
+float ombreDAstre(vec2 t) {
+  if (uOmbre.y <= 0.0) return 0.0;
+  vec2 P = 2.0 * (t + 0.5);
+  vec2 D = -2.0 * uOmbre;
+  // ⚠ P TOMBE TOUJOURS SUR UN COIN DU RÉSEAU 2× — P = 2t + 1, entier sur les deux axes. \`floor\` y
+  // prendrait le sous-texel du côté +x, +y, celui dont le rayon SORT ; il faut celui dans lequel il
+  // ENTRE, donné par le signe de D. Sans cela le texel qui porte la moitié haute d'une bande se met
+  // lui-même à l'ombre, alors que son centre est EXACTEMENT sur le bord et que \`coupeBande\` l'exclut
+  // (intervalles ouverts, LG-R10) : c'est « l'ombre se compte depuis la face », au sous-texel.
+  vec2 c = vec2(D.x > 0.0 ? P.x : P.x - 1.0, D.y > 0.0 ? P.y : P.y - 1.0);
+  // Le sous-texel de DÉPART compte — \`coupeBande\` part de t0 = 0. Sur un axe où D est NUL le rayon
+  // longe la frontière : le point n'est strictement dans la bande que si les DEUX sous-texels qui
+  // se touchent là le sont, ce qui est mot pour mot la branche \`dx === 0\` de l'oracle.
+  if (code2(c) >= 2.0
+      && (D.x != 0.0 || code2(c + vec2(1.0, 0.0)) >= 2.0)
+      && (D.y != 0.0 || code2(c + vec2(0.0, 1.0)) >= 2.0)) return 1.0;
+  vec2 s = vec2(D.x > 0.0 ? 1.0 : -1.0, D.y > 0.0 ? 1.0 : -1.0);
+  float INF = 1.0e30;
+  vec2 td = vec2(D.x != 0.0 ? abs(1.0 / D.x) : INF, D.y != 0.0 ? abs(1.0 / D.y) : INF);
+  float tx = D.x != 0.0 ? (D.x > 0.0 ? c.x + 1.0 - P.x : P.x - c.x) * td.x : INF;
+  float ty = D.y != 0.0 ? (D.y > 0.0 ? c.y + 1.0 - P.y : P.y - c.y) * td.y : INF;
+  for (int n = 0; n < 24; n++) {
+    if (float(n) >= uPasOmbre) break;
+    if (tx < ty) {
+      if (tx >= 1.0) break;
+      c.x += s.x;
+      tx += td.x;
+    } else {
+      if (ty >= 1.0) break;
+      c.y += s.y;
+      ty += td.y;
+    }
+    if (code2(c) >= 2.0) return 1.0;
+  }
+  return 0.0;
+}
 float profil(float t) {
   float s = 1.0 - clamp(t, 0.0, 1.0);
   return s * s * (3.0 - 2.0 * s);
@@ -190,7 +251,10 @@ float profil(float t) {
 void main() {
   vec2 fb = floor(gl_FragCoord.xy);
   vec2 t = vec2(fb.x, uTaille.y - 1.0 - fb.y);
-  if (plein1(t)) { gl_FragColor = vec4(0.0, 0.0, 0.0, 1.0); return; }
+  // L'ALPHA PORTE L'OMBRE PLEINE DE L'ASTRE — canal libre, ses deux lecteurs ne prennent que .rgb.
+  // Un occludeur y met ZÉRO et non un : il ne prend aucune ombre d'astre (LG-R8), et la passe somme
+  // dilate la pénombre en LISANT cet alpha — un 1 ici la ferait fuir à travers les blocs.
+  if (plein1(t)) { gl_FragColor = vec4(0.0, 0.0, 0.0, 0.0); return; }
   vec2 p = t + 0.5;
   vec3 acc = vec3(0.0);
   for (int k = 0; k < ${GI.MAX_SOURCES}; k++) {
@@ -205,7 +269,7 @@ void main() {
     if (vus <= 0.0) continue;
     acc += uTeinte * (f * vus / 16.0);
   }
-  gl_FragColor = vec4(min(acc, vec3(1.0)), 1.0);
+  gl_FragColor = vec4(min(acc, vec3(1.0)), ombreDAstre(t));
 }`
 
 const FRAG_FACES = `
@@ -324,6 +388,32 @@ uniform sampler2D uDirect;
 uniform sampler2D uRebond;
 uniform float uPlafond;
 uniform vec3 uMn;
+// La force de l'ombre d'astre (SHADOW_ALPHA × forceDeLOmbre, nulle à la nouvelle lune) et les deux
+// valeurs de pénombre (⅔ puis ⅓).
+uniform float uA;
+uniform vec2 uPen;
+float ombreLue(vec2 t) { return dansCadre(t) ? texture2D(uDirect, uvCible(t)).a : 0.0; }
+// Les cinq sauts de la pénombre : jx ∈ [-1, 1], jy ∈ [0, 1], moins le centre — la MOITIÉ SUD du
+// voisinage de Tchebychev. C'est cette demi-couronne, et elle seule, qui interdit à l'ombre de
+// remonter vers le nord (LG-R8).
+vec2 sautOmbre(int k) {
+  return k == 0 ? vec2(-1.0, 0.0) : k == 1 ? vec2(1.0, 0.0) : k == 2 ? vec2(-1.0, 1.0) : k == 3 ? vec2(0.0, 1.0) : vec2(1.0, 1.0);
+}
+// ═══ LA PÉNOMBRE, DEHORS (LG-R8) ═══
+// Deux fronts de Tchebychev à travers le SOL LIBRE. Ici et non dans \`gi-direct\`, parce qu'une
+// dilatation se LIT et ne se marche pas : 5 puis 25 lectures de texture au lieu de quinze rayons.
+// Un texel est à ⅔ s'il touche l'ombre pleine ; à ⅓ s'il touche un texel à ⅔ — et ce texel
+// intermédiaire doit être LIBRE, sinon la pénombre traverserait un bloc, ce que l'oracle refuse.
+float ombreEtendue(vec2 t) {
+  if (ombreLue(t) >= 1.0) return 1.0;
+  for (int i = 0; i < 5; i++) if (ombreLue(t - sautOmbre(i)) >= 1.0) return uPen.x;
+  for (int i = 0; i < 5; i++) {
+    vec2 n = t - sautOmbre(i);
+    if (!dansCadre(n) || plein1(n) || ombreLue(n) >= 1.0) continue;
+    for (int j = 0; j < 5; j++) if (ombreLue(n - sautOmbre(j)) >= 1.0) return uPen.y;
+  }
+  return 0.0;
+}
 vec3 lumiere(vec2 t) {
   vec3 d = texture2D(uDirect, uvCible(t)).rgb;
   vec3 r = texture2D(uRebond, uvCible(t)).rgb;
@@ -335,8 +425,12 @@ void main() {
   vec2 fb = floor(gl_FragCoord.xy);
   vec2 t = vec2(fb.x, uTaille.y - 1.0 - fb.y);
   vec3 l;
-  if (!plein1(t)) l = lumiere(t);
-  else {
+  // Un occludeur ne prend AUCUNE ombre d'astre (LG-R8) : son plancher reste le voile nu.
+  float s = 0.0;
+  if (!plein1(t)) {
+    l = lumiere(t);
+    s = ombreEtendue(t);
+  } else {
     l = vec3(0.0);
     for (int n = 0; n < 4; n++) {
       vec2 N = t + dirDe(n);
@@ -348,7 +442,10 @@ void main() {
   // comble l'ecart entre le plancher du voile et 1, jamais au-dessus : c'est la phrase de design
   // elle-meme, le feu ne remplit que l'ombre. A uMn = 0 la formule rend L a l'identique, et c'est
   // ce qui garde LG-A2 intact (l'oracle compare gi-champ a L) sans passe ni texture de plus.
-  gl_FragColor = vec4(1.0 - (1.0 - uMn) * (1.0 - l), 1.0);
+  // Et LE PLANCHER SE CREUSE D'ABORD : Mn × (1 - a × S), l'ombre que l'astre retire au voile avant
+  // que la lumière ne la comble. C'est \`composerM\` de l'oracle, terme pour terme.
+  vec3 plancher = uMn * (1.0 - uA * s);
+  gl_FragColor = vec4(1.0 - (1.0 - plancher) * (1.0 - l), 1.0);
 }`
 
 type Uniformes = Record<string, number | number[] | Float32Array>
@@ -399,6 +496,9 @@ export class ChampGpu {
    */
   private astre: Astre | null = null
   private uA = 0
+  /** Le vecteur d'ombre poussé au shader, en texels : (cisaillement × ℓ × dérive, ℓ). */
+  private uOmbre: number[] = [0, 0]
+  private uPasOmbre = 0
   private albBandes: Albedo[] = []
   /** Le coût de la dernière image, étape par étape, en ms — le budget de LG-A14 se lit ici. */
   readonly temps = { bati: 0, grille: 0, occludeurs: 0, rendu: 0, total: 0 }
@@ -516,6 +616,14 @@ export class ChampGpu {
             penombre: GI.ASTRE.PENOMBRE,
           }
         : null
+    // Le MÊME vecteur pour le shader, et la borne de sa marche : comptée en pas du raster 2×, un
+    // segment ne traverse jamais plus de |Dx| + |Dy| + 2 sous-texels. Seize, là où `uPasMaxDirect`
+    // en veut 192 — une borne de rayon direct est taillée sur la plus grande SOURCE du cadre.
+    const dxO = this.astre ? this.astre.cisaillement * this.astre.longueur * this.astre.derive : 0
+    const dyO = this.astre ? this.astre.longueur : 0
+    this.uOmbre[0] = dxO
+    this.uOmbre[1] = dyO
+    this.uPasOmbre = Math.ceil(2 * (Math.abs(dxO) + dyO)) + 2
     const tR = performance.now()
     for (let k = 0; k < n; k++) this.passes[k]!.renderImmediate()
     // ⚠ `renderImmediate` ne fait que SOUMETTRE. Ce temps-ci est celui qui occupe le thread
@@ -661,7 +769,11 @@ export class ChampGpu {
     // deux autres, qui comparent des triplets. `eclaires` porte ici le nombre de texels que l'oracle
     // met à l'ombre : sans lui, une garde verte sur une scène sans ombre ne dirait rien.
     const ecartMasque = (lu: Uint8Array): EcartCible => {
-      const ref = this.masque()
+      // L'ALPHA DE `gi-direct` PORTE L'OMBRE PLEINE, PAS LE MASQUE ENTIER — la pénombre se dilate
+      // dans la passe somme, où plus rien n'est relisible (un alpha < 1 sur `gi-champ` changerait
+      // son quad MULTIPLY). On compare donc LE MÊME ÉTAGE des deux côtés, exactement, plutôt que le
+      // masque entier à peu près ; la pénombre est épinglée au texel par `champ-ref.test.ts`.
+      const ref = this.grille && this.astre ? ombrePleineDAstre(this.grille, this.astre) : null
       if (lu.length === 0 || !ref) return vide
       let n = 0
       let somme = 0
@@ -680,6 +792,44 @@ export class ChampGpu {
       }
       return { n, moyenne: n > 0 ? somme / n : 0, partSup3: n > 0 ? sup3 / n : 0, max, eclaires: ombres }
     }
+    /**
+     * ═══ LA COMPOSITION, PROUVÉE EN PIXELS (LG-R5, LG-R8) ═══
+     *
+     * `gi-champ` est le SEUL endroit où `a` et la pénombre entrent dans l'image : la passe somme creuse
+     * le plancher de Mn × (1 − a·S) avant que la lumière ne le comble. Rien en amont ne les porte —
+     * l'alpha de `gi-direct` n'a que l'ombre PLEINE, sans force ni bord doux. Sans cette garde-ci, un
+     * uniforme qui n'arriverait jamais au shader (`uA`, `uPen` — le piège du nom WebGL, déjà payé une
+     * fois sur un tableau) laisserait TOUT vert et l'ombre absente de l'écran, parce que 485 texels
+     * assombris sur 34 952 ne déplacent la moyenne du champ que d'un demi-niveau, moins que l'écart
+     * entre deux images. On compare donc `gi-champ` à `composerM`, terme pour terme, sur le masque
+     * ENTIER — c'est la seule des trois cibles qui éprouve la PÉNOMBRE.
+     */
+    const ecartCompose = (lu: Uint8Array): EcartCible => {
+      const s = this.masque()
+      if (lu.length === 0 || !s || this.uA <= 0) return vide
+      let n = 0
+      let somme = 0
+      let sup3 = 0
+      let max = 0
+      let ombres = 0
+      for (let k = 0; k < g.gw * g.gh; k++) {
+        if (g.occ[k] === 1) continue
+        n++
+        // La prémisse : les texels que l'astre touche, pénombre COMPRISE. À zéro, la garde compare
+        // deux fois le même voile et ne peut pas rougir.
+        if (s[k]! > 0) ombres++
+        let pire = 0
+        for (let c = 0; c < 3; c++) {
+          const attendu = Math.round(composerM(this.uMn[c]!, s[k]!, this.uA, o.light[k * 3 + c]!) * 255)
+          const d = Math.abs(lu[k * 4 + c]! - attendu)
+          somme += d
+          if (d > pire) pire = d
+        }
+        if (pire > 3) sup3++
+        if (pire > max) max = pire
+      }
+      return { n, moyenne: n > 0 ? somme / (n * 3) : 0, partSup3: n > 0 ? sup3 / n : 0, max, eclaires: ombres }
+    }
     return {
       fenetre: this.fenetre,
       gw: this.gw,
@@ -689,6 +839,7 @@ export class ChampGpu {
       direct: direct.length > 0 ? ecart(direct, o.direct) : vide,
       champ: champ.length > 0 ? ecart(champ, o.light) : vide,
       masque: ecartMasque(direct),
+      compose: ecartCompose(champ),
       purete: 1,
     }
   }
@@ -744,6 +895,7 @@ export class ChampGpu {
         uOcc: 0, uSrc: this.uSrc, uNb: this.uNb, uTeinte: [GI.TEINTE_FEU[0], GI.TEINTE_FEU[1], GI.TEINTE_FEU[2]],
         uMotif: this.uMotif, uTailleSource: GI.TAILLE_SOURCE, uPic: HOLE_ERASE_PEAK,
         uPasMax: this.uPasMaxDirect,
+        uOmbre: this.uOmbre, uPasOmbre: this.uPasOmbre,
       }))
     } else if (k === 2) {
       mk('gi-faces', FRAG_FACES, gw * 2, gh * 2, ['gi-occ', 'gi-alb', 'gi-direct'], 'gi-faces', () => ({
@@ -761,6 +913,7 @@ export class ChampGpu {
     } else if (k === 5) {
       this.champ = mk('gi-somme', FRAG_SOMME, gw, gh, ['gi-occ', 'gi-direct', 'gi-rebond'], 'gi-champ', () => ({
         uOcc: 0, uDirect: 1, uRebond: 2, uPlafond: GI.PLAFOND_REBOND, uMn: this.uMn,
+        uA: this.uA, uPen: [GI.ASTRE.PENOMBRE[0], GI.ASTRE.PENOMBRE[1]],
       }))
       // Le quad du champ : ADD pour le REGARD (tranche B), MULTIPLY quand il COMPOSE (LG-R5) —
       // `update` tranche par image, selon que `mn` est là ou non.

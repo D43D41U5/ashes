@@ -388,13 +388,13 @@ export interface Astre {
  * elle entre dans `composerM`. Le masque ne dit que la FORME — d'où « elle s'annule à la nouvelle
  * lune » qui se lit chez l'appelant, au bit près, sans que cette fonction ait à le savoir.
  */
-export function masqueDAstre(g: GrilleGi, astre: Astre): Float32Array {
+export function ombrePleineDAstre(g: GrilleGi, astre: Astre): Float32Array {
   const s = new Float32Array(g.gw * g.gh)
   const dy = astre.longueur
   if (!(dy > 0) || g.murs.length === 0) return s
   const dx = astre.cisaillement * astre.longueur * astre.derive
 
-  // ① L'OMBRE PLEINE — le balayage de chaque bande, lu au centre de chaque texel de son emprise.
+  // LE BALAYAGE de chaque bande, lu au centre de chaque texel de son emprise.
   for (const m of g.murs) {
     const x0 = Math.max(0, Math.floor(Math.min(m.x0, m.x0 + dx)))
     const x1 = Math.min(g.gw, Math.ceil(Math.max(m.x1, m.x1 + dx)))
@@ -414,8 +414,24 @@ export function masqueDAstre(g: GrilleGi, astre: Astre): Float32Array {
       }
   }
 
-  // ② LA PÉNOMBRE, DEHORS — deux fronts de Tchebychev à travers le sol libre, JAMAIS vers le nord :
-  //    le haut d'une ombre est son contact, il n'a pas de bord doux (LG-R8).
+  return s
+}
+
+/**
+ * LE MASQUE ENTIER (LG-R8) : l'ombre pleine, PLUS ses deux texels de pénombre à ⅔ puis ⅓. C'est
+ * lui qui entre dans `composerM` et que les planches montrent.
+ *
+ * ⚠ LA SCISSION EN DEUX FONCTIONS N'EST PAS COSMÉTIQUE, ELLE SERT LA GARDE. Sur le GPU, l'ombre
+ * pleine tient dans l'alpha de `gi-direct` — relisible — tandis que la pénombre se dilate dans la
+ * passe somme, où plus rien ne peut la porter : un alpha < 1 sur `gi-champ` changerait son quad
+ * MULTIPLY. La garde compare donc `ombrePleineDAstre` à ce qu'elle peut vraiment relire, au lieu
+ * de comparer à peu près le masque entier. La pénombre, elle, est épinglée au texel par les tests.
+ */
+export function masqueDAstre(g: GrilleGi, astre: Astre): Float32Array {
+  const s = ombrePleineDAstre(g, astre)
+
+  // LA PÉNOMBRE, DEHORS — deux fronts de Tchebychev à travers le sol libre, JAMAIS vers le nord :
+  // le haut d'une ombre est son contact, il n'a pas de bord doux (LG-R8).
   let front: number[] = []
   for (let k = 0; k < s.length; k++) if (s[k] === 1) front.push(k)
   for (const v of astre.penombre) {
