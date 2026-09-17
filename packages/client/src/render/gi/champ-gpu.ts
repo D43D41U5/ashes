@@ -40,9 +40,9 @@ import Phaser from 'phaser'
 import { LUMIERE, MOTIF_SOURCE, type MondeEclaire } from '@ashes/sim'
 import { TILE_PX } from '../framing'
 import { HOLE_ERASE_PEAK } from '../lighting'
-import { champRef, type Emetteur, type GrilleGi } from './champ-ref'
+import { champRef, masqueDAstre, type Astre, type Emetteur, type GrilleGi } from './champ-ref'
 import { grilleDuMonde, type Fenetre } from './grille'
-import { ALBEDO, GI, profilFeu, type Albedo } from './reglages'
+import { ALBEDO, GI, longueurDOmbre, profilFeu, type Albedo } from './reglages'
 
 /** Une source vue par le champ : en px MONDE, la portée en tuiles, la force (le battement, l'agonie). */
 export interface SourceGi {
@@ -74,6 +74,16 @@ export interface VerdictGi {
   readonly bandes: number
   readonly direct: EcartCible
   readonly champ: EcartCible
+  /**
+   * LE MASQUE D'ASTRE (LG-R8), relu dans l'ALPHA de `gi-direct`, contre `masqueDAstre`.
+   *
+   * ⚠ IL SE JUGE À PART, ET C'EST STRUCTUREL. La garde LG-A2 tourne à `uMn = 0`, où la composition
+   * est neutre — c'est ce qui la garde comparable au champ d'avant. Mais S n'entre QUE par `uMn`
+   * (`uMn × (1 − a × S)`) : à `uMn = 0`, l'ombre d'astre est invisible dans `gi-champ`, et un A/B
+   * qui l'y chercherait comparerait deux images tout à zéro. `eclaires` compte ici les texels que
+   * l'oracle met à l'ombre : c'est la PRÉMISSE, une garde à zéro ombre n'a rien éprouvé.
+   */
+  readonly masque: EcartCible
   /** La pureté (LG-A3) de la cible relue : 100 % des octets sont ceux d'un texel (toujours, en RTT). */
   readonly purete: number
 }
@@ -378,6 +388,17 @@ export class ChampGpu {
    * exactement le champ qu'elle lisait avant, sans sixième passe et sans seconde cible.
    */
   private uMn: number[] = [0, 0, 0]
+  /**
+   * L'ASTRE QUI JETTE L'OMBRE (LG-R8), REÇU et jamais recalculé. `deriveDOmbre` et `forceDeLOmbre`
+   * sont la loi de `scenes/world/dynamic-lighting.ts`, que `WorldScene` pousse déjà aux socles et
+   * aux falaises (`view.deriveOmbre`, `view.forceOmbre`) : la GI lit le MÊME nombre à la MÊME heure.
+   * L'opacité arrive DÉJÀ multipliée par `SHADOW_ALPHA`, qui vit dans `scenes/world/` — `render/gi/`
+   * ne remonte pas d'une couche pour aller la chercher.
+   *
+   * `null` : pas d'ombre d'astre du tout (nouvelle lune, crépuscule, composition coupée).
+   */
+  private astre: Astre | null = null
+  private uA = 0
   private albBandes: Albedo[] = []
   /** Le coût de la dernière image, étape par étape, en ms — le budget de LG-A14 se lit ici. */
   readonly temps = { bati: 0, grille: 0, occludeurs: 0, rendu: 0, total: 0 }
@@ -398,7 +419,19 @@ export class ChampGpu {
    * Une image : la fenêtre suit la caméra (plus la marge), les occludeurs se réécrivent quand la fenêtre,
    * l'étage ou le bâti changent, les sources deviennent des uniformes, et les cinq passes rendent.
    */
-  update(passes: number, cam: Phaser.Cameras.Scene2D.Camera, monde: MondeEclaire, niveau: number, sources: readonly SourceGi[], depth: number, mn: readonly [number, number, number] | null = null): void {
+  update(
+    passes: number,
+    cam: Phaser.Cameras.Scene2D.Camera,
+    monde: MondeEclaire,
+    niveau: number,
+    sources: readonly SourceGi[],
+    depth: number,
+    mn: readonly [number, number, number] | null = null,
+    /** L'astre : `deriveDOmbre` tel quel, et `a` = `SHADOW_ALPHA` × `forceDeLOmbre` (LG-R8). Les DEUX
+     *  se prennent à la MÊME image, d'un seul endroit : une opacité d'une image et une géométrie
+     *  d'une autre feraient un décalage qui se lit comme un tremblement. */
+    astre: { readonly derive: number; readonly a: number } | null = null,
+  ): void {
     const n = Math.max(1, Math.min(PASSES_GI, Math.floor(passes)))
     const v = cam.worldView
     const tDebut = performance.now()
@@ -470,6 +503,19 @@ export class ChampGpu {
     this.uMn[0] = mn ? mn[0] : 0
     this.uMn[1] = mn ? mn[1] : 0
     this.uMn[2] = mn ? mn[2] : 0
+    // L'ASTRE (LG-R8, LG-R9) : la longueur d'un mur est la seule du lot pour l'instant — roches
+    // (LG-R15), arbres et marches (LG-R14) ne sont pas encore des lanceurs. `a` nul = pas d'ombre :
+    // on n'en garde aucune trace, et le masque rend zéro partout au bit.
+    this.uA = astre && astre.a > 0 ? astre.a : 0
+    this.astre =
+      this.uA > 0
+        ? {
+            derive: astre!.derive,
+            longueur: longueurDOmbre(GI.ASTRE.HAUTEUR_MUR_PX, PX_PAR_TEXEL),
+            cisaillement: GI.ASTRE.CISAILLEMENT,
+            penombre: GI.ASTRE.PENOMBRE,
+          }
+        : null
     const tR = performance.now()
     for (let k = 0; k < n; k++) this.passes[k]!.renderImmediate()
     // ⚠ `renderImmediate` ne fait que SOUMETTRE. Ce temps-ci est celui qui occupe le thread
@@ -561,6 +607,15 @@ export class ChampGpu {
     return champRef(this.grille, this.emetteurs, { rebond: GI.REBOND, porteeRebond: GI.PORTEE_REBOND, plafondRebond: GI.PLAFOND_REBOND, profil: profilFeu })
   }
 
+  /**
+   * LE MASQUE D'ASTRE de l'image courante, par l'oracle (LG-R8) — `null` sans astre. Il vit à côté
+   * d'`oracle()` et de `lire()` parce qu'il sert à la même chose : la garde s'y compare, et les
+   * planches le montrent. Une seule expression du masque, lue par les deux.
+   */
+  masque(): Float32Array | null {
+    return this.grille && this.astre ? masqueDAstre(this.grille, this.astre) : null
+  }
+
   /** Les cibles `direct` et `champ` contre l'oracle, en niveaux. À appeler APRÈS un `update`. */
   verifier(): VerdictGi | null {
     const o = this.oracle()
@@ -602,6 +657,29 @@ export class ChampGpu {
     const direct = this.lire('direct')
     const champ = this.lire('champ')
     const vide: EcartCible = { n: 0, moyenne: 0, partSup3: 0, max: 0, eclaires: 0 }
+    // LE MASQUE EST UN SCALAIRE PAR TEXEL, relu dans l'alpha — son écart se compte donc à part des
+    // deux autres, qui comparent des triplets. `eclaires` porte ici le nombre de texels que l'oracle
+    // met à l'ombre : sans lui, une garde verte sur une scène sans ombre ne dirait rien.
+    const ecartMasque = (lu: Uint8Array): EcartCible => {
+      const ref = this.masque()
+      if (lu.length === 0 || !ref) return vide
+      let n = 0
+      let somme = 0
+      let sup3 = 0
+      let max = 0
+      let ombres = 0
+      for (let k = 0; k < g.gw * g.gh; k++) {
+        if (g.occ[k] === 1) continue
+        n++
+        const attendu = Math.round(ref[k]! * 255)
+        if (attendu > 0) ombres++
+        const d = Math.abs(lu[k * 4 + 3]! - attendu)
+        somme += d
+        if (d > 3) sup3++
+        if (d > max) max = d
+      }
+      return { n, moyenne: n > 0 ? somme / n : 0, partSup3: n > 0 ? sup3 / n : 0, max, eclaires: ombres }
+    }
     return {
       fenetre: this.fenetre,
       gw: this.gw,
@@ -610,6 +688,7 @@ export class ChampGpu {
       bandes: g.murs.length,
       direct: direct.length > 0 ? ecart(direct, o.direct) : vide,
       champ: champ.length > 0 ? ecart(champ, o.light) : vide,
+      masque: ecartMasque(direct),
       purete: 1,
     }
   }

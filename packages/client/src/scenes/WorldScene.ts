@@ -174,7 +174,7 @@ import { FireFx } from './world/fire-fx'
 import { FireGroundGlow } from './world/fire-ground-glow'
 import { TorcheGroundGlow, type PorteurDeTorche } from './world/torche-ground-glow'
 import { TORCHE_HOLE_FORCE, torcheHoleRadius } from '../render/torche'
-import { createContactShadow } from './world/contact-shadow'
+import { createContactShadow, SHADOW_ALPHA } from './world/contact-shadow'
 import { champLisiere, poidsLisiere, LISIERE_MAX, LISIERE_PORTEE } from '../render/ecotone'
 import {
   creerBrouillard,
@@ -2771,6 +2771,12 @@ export class WorldScene extends Phaser.Scene {
           // et 0,8 % à 8.
           ambientDepth,
           mnGi,
+          // L'ASTRE QUI PORTE L'OMBRE (LG-R8) — les DEUX nombres pris à la MÊME image et à la même
+          // source que les socles et les falaises (`view.deriveOmbre`/`view.forceOmbre`, posés plus
+          // haut dans cet `update`) : la GI n'a pas sa propre heure, et une opacité d'une image avec
+          // une géométrie d'une autre se lirait comme un tremblement. `a` part DÉJÀ multiplié par
+          // `SHADOW_ALPHA`, qui vit de ce côté-ci — `render/gi/` ne remonte pas le chercher.
+          { derive: this.view.deriveOmbre, a: SHADOW_ALPHA * this.view.forceOmbre },
         )
       } else this.gi?.setVisible(false)
       this.nightVeil?.update(
