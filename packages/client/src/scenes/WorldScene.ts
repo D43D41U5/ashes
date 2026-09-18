@@ -212,6 +212,7 @@ function revealRadiusOf(kind: string): number {
 }
 import { NightVeil } from './world/night-veil'
 import { ChampGpu } from '../render/gi/champ-gpu'
+import { ambianteDeLHeure, luminanceDuVoile, rgbDeCouleur } from '../render/gi/corps-ref'
 import { DynamicLighting, couleurDuCiel, deriveDOmbre, facteurDuFeu, forceDeLOmbre } from './world/dynamic-lighting'
 import { WaterLayer, type WaterWader } from './world/water-layer'
 import { flowAt } from '../render/flow-field'
@@ -2778,7 +2779,22 @@ export class WorldScene extends Phaser.Scene {
           // `SHADOW_ALPHA`, qui vit de ce côté-ci — `render/gi/` ne remonte pas le chercher.
           { derive: this.view.deriveOmbre, a: SHADOW_ALPHA * this.view.forceOmbre },
         )
-      } else this.gi?.setVisible(false)
+        // LA PASSE DES CORPS (LG-R7) — la vue reçoit le champ de CETTE image et le pousse au nœud de
+        // rendu ; tout l'assemblage vit de son côté. `ambiante` est la LUMINANCE de l'ambiante de
+        // l'heure, prise à la loi de `corps-ref` et jamais recalculée ici — une loi, deux lecteurs.
+        // `giCiel` nul en rendu à plat (`mnGi` nul) : sans nuit à composer, il n'y a pas de plancher
+        // à rabattre, et la passe des corps n'a rien à faire.
+        this.view.gi = this.gi
+        this.view.giCiel = mnGi === null ? null : {
+          mn: mnGi,
+          a: SHADOW_ALPHA * this.view.forceOmbre,
+          ambiante: luminanceDuVoile(rgbDeCouleur(ambianteDeLHeure(day, lueurLune))),
+        }
+        this.view.poserLeChampGi()
+      } else {
+        this.view.gi = null
+        this.gi?.setVisible(false)
+      }
       this.nightVeil?.update(
         // LE VOILE SUIT LA LUNE — teinte ET opacité : `NIGHT_ALPHA_MAX` est désormais la PLEINE
         // lune (étalon posé par Alexis), et la nuit se ferme à mesure qu'elle décroît ou se

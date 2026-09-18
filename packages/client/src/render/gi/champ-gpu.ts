@@ -113,9 +113,22 @@ const PX_PAR_TEXEL = TILE_PX / LUMIERE.TEXELS_PAR_TUILE
  */
 const PAS_OMBRE_MAX =
   Math.ceil(2 * (1 + GI.ASTRE.CISAILLEMENT) * longueurDOmbre(GI.ASTRE.HAUTEUR_MAX_LANCEUR_PX, PX_PAR_TEXEL)) + 2
-/** Le nombre de passes de la chaîne entière : direct, faces, drapeau, rebond, somme. `debugGi` en
- *  porte le compte — le panneau bascule entre 0 et tout, une sonde peut s'arrêter avant. */
-export const PASSES_GI = 5
+/**
+ * LE RANG DE LA SOMME EST NOMMÉ — il ne se déduit PAS de la longueur de la chaîne.
+ *
+ * `gi-champ` naît de la passe 5. Les deux suivantes (`gi-lumiere`, `gi-face-directe`) servent la
+ * passe des CORPS (LG-R7) et ne nourrissent personne en amont. Le quad du regard doit donc se
+ * montrer dès que la SOMME a tourné.
+ *
+ * ⚠ C'était écrit `n >= PASSES_GI` — juste tant que les deux nombres étaient égaux, et devenu faux
+ * à la seconde où la chaîne s'allonge : une sonde qui demande 5 passes aurait gardé le quad
+ * INVISIBLE, sans erreur ni message. Le genre de régression qu'on impute ensuite au shader.
+ */
+const PASSE_SOMME = 5
+/** Le nombre de passes de la chaîne entière : direct, faces, drapeau, rebond, somme, lumière, face
+ *  directe. `debugGi` en porte le compte — le panneau bascule entre 0 et tout, une sonde peut
+ *  s'arrêter avant. */
+export const PASSES_GI = 7
 const CODE_CELLULE = 1
 const CODE_BANDE = 2
 const NEAREST = Phaser.Textures.FilterMode.NEAREST
@@ -339,8 +352,47 @@ void main() {
   gl_FragColor = vec4(min(em, vec3(1.0)), (em.r + em.g + em.b) > 0.0 ? 1.0 : 0.0);
 }`
 
+/**
+ * LE DRAPEAU — DEUX CANAUX, DEUX LOIS SANS RAPPORT, UNE SEULE PASSE.
+ *
+ * `.r` — ce texel a-t-il une face qui ÉMET ? C'est le crible du rebond : `gi-rebond` saute les
+ * texels éteints au lieu de lire leurs quatre faces (il ne lit que `.r`, et rien d'autre).
+ *
+ * `.g` — L'OMBRE D'ASTRE ÉTENDUE (LG-R8), l'ombre pleine PLUS ses deux texels de pénombre.
+ * Elle vivait dans `gi-somme`, qui la RECALCULAIT : une trentaine de lectures de texture par
+ * texel, à chaque image, pour un résultat que rien ne faisait varier entre les deux passes —
+ * `gi-direct` (sa seule entrée) est écrit à la passe 1, le drapeau est la passe 3, la somme la
+ * passe 5. Ici, c'est une lecture. Et elle devient RELISIBLE, ce que la pénombre n'était pas.
+ *
+ * Pourquoi ce canal-ci : l'alpha reste à 1 (un `gi-champ` translucide changerait son quad
+ * MULTIPLY), `.r` est pris par le crible, et `.b` ne sert à personne.
+ */
 const FRAG_DRAPEAU = `
 uniform sampler2D uFaces;
+uniform sampler2D uDirect;
+uniform vec2 uPen;
+float ombreLue(vec2 t) { return dansCadre(t) ? texture2D(uDirect, uvCible(t)).a : 0.0; }
+// Les cinq sauts de la pénombre : jx ∈ [-1, 1], jy ∈ [0, 1], moins le centre — la MOITIÉ SUD du
+// voisinage de Tchebychev. C'est cette demi-couronne, et elle seule, qui interdit à l'ombre de
+// remonter vers le nord (LG-R8).
+vec2 sautOmbre(int k) {
+  return k == 0 ? vec2(-1.0, 0.0) : k == 1 ? vec2(1.0, 0.0) : k == 2 ? vec2(-1.0, 1.0) : k == 3 ? vec2(0.0, 1.0) : vec2(1.0, 1.0);
+}
+// ═══ LA PÉNOMBRE, DEHORS (LG-R8) ═══
+// Deux fronts de Tchebychev à travers le SOL LIBRE : une dilatation se LIT et ne se marche pas,
+// 5 puis 25 lectures au lieu de quinze rayons. Un texel est à ⅔ s'il touche l'ombre pleine ; à ⅓
+// s'il touche un texel à ⅔ — et ce texel intermédiaire doit être LIBRE, sinon la pénombre
+// traverserait un bloc, ce que l'oracle refuse.
+float ombreEtendue(vec2 t) {
+  if (ombreLue(t) >= 1.0) return 1.0;
+  for (int i = 0; i < 5; i++) if (ombreLue(t - sautOmbre(i)) >= 1.0) return uPen.x;
+  for (int i = 0; i < 5; i++) {
+    vec2 n = t - sautOmbre(i);
+    if (!dansCadre(n) || plein1(n) || ombreLue(n) >= 1.0) continue;
+    for (int j = 0; j < 5; j++) if (ombreLue(n - sautOmbre(j)) >= 1.0) return uPen.y;
+  }
+  return 0.0;
+}
 void main() {
   vec2 fb = floor(gl_FragCoord.xy);
   vec2 t = vec2(fb.x, uTaille.y - 1.0 - fb.y);
@@ -351,7 +403,7 @@ void main() {
     vec2 c = b + vec2(k == 1 || k == 3 ? 1.0 : 0.0, k >= 2 ? 1.0 : 0.0);
     a = max(a, texture2D(uFaces, (vec2(c.x, T2.y - 1.0 - c.y) + 0.5) / T2).a);
   }
-  gl_FragColor = vec4(a, a, a, 1.0);
+  gl_FragColor = vec4(a, ombreEtendue(t), 0.0, 1.0);
 }`
 
 const FRAG_REBOND = `
@@ -399,61 +451,70 @@ void main() {
   gl_FragColor = vec4(min(acc, vec3(1.0)), 1.0);
 }`
 
-const FRAG_SOMME = `
-uniform sampler2D uDirect;
-uniform sampler2D uRebond;
-uniform float uPlafond;
-uniform vec3 uMn;
-// La force de l'ombre d'astre (SHADOW_ALPHA × forceDeLOmbre, nulle à la nouvelle lune) et les deux
-// valeurs de pénombre (⅔ puis ⅓).
-uniform float uA;
-uniform vec2 uPen;
-float ombreLue(vec2 t) { return dansCadre(t) ? texture2D(uDirect, uvCible(t)).a : 0.0; }
-// Les cinq sauts de la pénombre : jx ∈ [-1, 1], jy ∈ [0, 1], moins le centre — la MOITIÉ SUD du
-// voisinage de Tchebychev. C'est cette demi-couronne, et elle seule, qui interdit à l'ombre de
-// remonter vers le nord (LG-R8).
-vec2 sautOmbre(int k) {
-  return k == 0 ? vec2(-1.0, 0.0) : k == 1 ? vec2(1.0, 0.0) : k == 2 ? vec2(-1.0, 1.0) : k == 3 ? vec2(0.0, 1.0) : vec2(1.0, 1.0);
-}
-// ═══ LA PÉNOMBRE, DEHORS (LG-R8) ═══
-// Deux fronts de Tchebychev à travers le SOL LIBRE. Ici et non dans \`gi-direct\`, parce qu'une
-// dilatation se LIT et ne se marche pas : 5 puis 25 lectures de texture au lieu de quinze rayons.
-// Un texel est à ⅔ s'il touche l'ombre pleine ; à ⅓ s'il touche un texel à ⅔ — et ce texel
-// intermédiaire doit être LIBRE, sinon la pénombre traverserait un bloc, ce que l'oracle refuse.
-float ombreEtendue(vec2 t) {
-  if (ombreLue(t) >= 1.0) return 1.0;
-  for (int i = 0; i < 5; i++) if (ombreLue(t - sautOmbre(i)) >= 1.0) return uPen.x;
-  for (int i = 0; i < 5; i++) {
-    vec2 n = t - sautOmbre(i);
-    if (!dansCadre(n) || plein1(n) || ombreLue(n) >= 1.0) continue;
-    for (int j = 0; j < 5; j++) if (ombreLue(n - sautOmbre(j)) >= 1.0) return uPen.y;
-  }
-  return 0.0;
-}
-vec3 lumiere(vec2 t) {
+/**
+ * ═══ LA FACE ÉCLAIRÉE — UNE LOI, UN TEXTE, TROIS PASSES ═══
+ *
+ * *« Une cellule opaque reçoit la lumière de sa face éclairée »* (`champ-ref.ts:158`). Trois passes
+ * en ont besoin — `gi-somme`, `gi-lumiere`, `gi-face-directe` — et GLSL ES 1.0 n'a pas de pointeur
+ * de fonction : le texte s'INSTANCIE deux fois depuis cette source unique, au lieu d'être recopié.
+ * C'est la raison même pour laquelle la route à deux cibles a été préférée à la relecture des
+ * quatre textures depuis la passe des corps ; la dupliquer ici dépenserait la pièce deux fois.
+ *
+ * ⚠ **C'EST UN MAX PAR CANAL, PAS UNE ÉLECTION DE VOISIN** — et je l'avais craint à l'envers.
+ * `recu` rend `[r, gg, b, vx, vy]` où le rgb est le max **canal par canal** sur les 4 voisines
+ * libres ; `vx, vy` (« laquelle ») ne sert qu'aux `Face` du rebond. Et `champ-ref.ts:317-324`
+ * appelle `recu` **DEUX FOIS**, une sur `light`, une sur `direct` : les deux maxima sont
+ * INDÉPENDANTS. Partager une élection entre les deux passes serait donc l'écart, pas la fidélité.
+ *
+ * Sur un texel LIBRE, chaque champ vaut sa valeur nue — `directFace` part de
+ * `new Float32Array(direct)` et seuls les opaques sont réécrits.
+ */
+const VALEUR_LUMIERE = `
+vec3 valeurDe(vec2 t) {
   vec3 d = texture2D(uDirect, uvCible(t)).rgb;
   vec3 r = texture2D(uRebond, uvCible(t)).rgb;
   float m = max(r.r, max(r.g, r.b));
   float s = m > 0.0 ? 1.0 / (1.0 + m / uPlafond) : 1.0;
   return min(d + r * s, vec3(1.0));
-}
+}`
+
+/** La part DIRECTE seule — sans rebond et sans genou : `Champ.directFace` (LG-R7, φ ne se divise pas). */
+const VALEUR_DIRECTE = `
+vec3 valeurDe(vec2 t) { return texture2D(uDirect, uvCible(t)).rgb; }`
+
+const FACE_ECLAIREE = `
+vec3 faceEclairee(vec2 t) {
+  if (!plein1(t)) return valeurDe(t);
+  vec3 l = vec3(0.0);
+  for (int n = 0; n < 4; n++) {
+    vec2 N = t + dirDe(n);
+    if (!dansCadre(N) || plein1(N)) continue;
+    l = max(l, valeurDe(N));
+  }
+  return l;
+}`
+
+const FRAG_SOMME = `
+uniform sampler2D uDirect;
+uniform sampler2D uRebond;
+// L'ombre d'astre ÉTENDUE, déjà dilatée — \`gi-drapeau\`.g, passe 3 (voir \`FRAG_DRAPEAU\`). La
+// somme la LIT : elle ne la recalcule plus, et \`gi-direct\`, sa seule entrée, n'a pas bougé entre
+// les deux passes.
+uniform sampler2D uDrapeau;
+uniform float uPlafond;
+uniform vec3 uMn;
+// La force de l'ombre d'astre (SHADOW_ALPHA × forceDeLOmbre, nulle à la nouvelle lune).
+uniform float uA;
+${VALEUR_LUMIERE}
+${FACE_ECLAIREE}
 void main() {
   vec2 fb = floor(gl_FragCoord.xy);
   vec2 t = vec2(fb.x, uTaille.y - 1.0 - fb.y);
-  vec3 l;
+  // \`faceEclairee\` porte MOT POUR MOT la branche qui vivait ici (libre → \`lumiere(t)\` ; opaque →
+  // max par canal sur les 4 voisines libres). Le comportement ne bouge pas, et LG-A2 le dira.
+  vec3 l = faceEclairee(t);
   // Un occludeur ne prend AUCUNE ombre d'astre (LG-R8) : son plancher reste le voile nu.
-  float s = 0.0;
-  if (!plein1(t)) {
-    l = lumiere(t);
-    s = ombreEtendue(t);
-  } else {
-    l = vec3(0.0);
-    for (int n = 0; n < 4; n++) {
-      vec2 N = t + dirDe(n);
-      if (!dansCadre(N) || plein1(N)) continue;
-      l = max(l, lumiere(N));
-    }
-  }
+  float s = plein1(t) ? 0.0 : texture2D(uDrapeau, uvCible(t)).g;
   // LG-R5, LA LOI QUI COMPOSE : M = 1 - (1 - Mn) * (1 - L), soit Mn + L * (1 - Mn). La lumiere
   // comble l'ecart entre le plancher du voile et 1, jamais au-dessus : c'est la phrase de design
   // elle-meme, le feu ne remplit que l'ombre. A uMn = 0 la formule rend L a l'identique, et c'est
@@ -462,6 +523,46 @@ void main() {
   // que la lumière ne la comble. C'est \`composerM\` de l'oracle, terme pour terme.
   vec3 plancher = uMn * (1.0 - uA * s);
   gl_FragColor = vec4(1.0 - (1.0 - plancher) * (1.0 - l), 1.0);
+}`
+
+/**
+ * ═══ LES DEUX CIBLES DE LA PASSE DES CORPS (LG-R7) ═══
+ *
+ * La passe des corps lit `Champ.light` et `Champ.directFace` sous chaque pixel. **Aucune des cinq
+ * cibles existantes ne les porte**, et c'est ce qui a décidé ces deux passes plutôt qu'une lecture
+ * directe :
+ *   · `gi-champ` porte M, LG-R5 **déjà composée** — le lire comme `L` composerait le corps deux fois ;
+ *   · `gi-direct` a l'ombre PLEINE en alpha, sans pénombre (elle naît dans la somme), et ne dit
+ *     rien de la face d'un opaque ;
+ *   · `gi-faces` est `albédo × direct du voisin libre` : la SOURCE du rebond, pas la face reçue ;
+ *   · `lumiere()` n'était qu'une aide INTERNE à `FRAG_SOMME`, jamais écrite nulle part.
+ *
+ * L'autre route — rééchantillonner `gi-direct` + `gi-rebond` + `gi-occ` + `gi-drapeau` depuis le
+ * shader des corps, avec la branche du voisin opaque — coûtait **20 lectures de texture par pixel
+ * de corps**. Ici : deux passes sur une grille au quart de la résolution du monde.
+ *
+ * Les deux partagent `FACE_ECLAIREE` avec la somme ; seule `valeurDe` change.
+ */
+const FRAG_LUMIERE = `
+uniform sampler2D uDirect;
+uniform sampler2D uRebond;
+uniform float uPlafond;
+${VALEUR_LUMIERE}
+${FACE_ECLAIREE}
+void main() {
+  vec2 fb = floor(gl_FragCoord.xy);
+  vec2 t = vec2(fb.x, uTaille.y - 1.0 - fb.y);
+  gl_FragColor = vec4(faceEclairee(t), 1.0);
+}`
+
+const FRAG_FACE_DIRECTE = `
+uniform sampler2D uDirect;
+${VALEUR_DIRECTE}
+${FACE_ECLAIREE}
+void main() {
+  vec2 fb = floor(gl_FragCoord.xy);
+  vec2 t = vec2(fb.x, uTaille.y - 1.0 - fb.y);
+  gl_FragColor = vec4(faceEclairee(t), 1.0);
 }`
 
 type Uniformes = Record<string, number | number[] | Float32Array>
@@ -556,7 +657,7 @@ export class ChampGpu {
     const y0 = Math.floor(v.y / TILE_PX) - GI.MARGE_TUILES
     // La fenêtre s'alloue par PALIERS et ne rétrécit JAMAIS. `floor` et `ceil` franchissent leurs
     // seuils séparément : une caméra qui glisse ferait osciller la taille d'une tuile, et chaque
-    // oscillation détruirait sept textures et cinq shaders — puis, `destroy` effaçant l'empreinte,
+    // oscillation détruirait neuf textures et sept shaders — puis, `destroy` effaçant l'empreinte,
     // reforcerait une grille entière à 39 ms. Une image sur deux, en déplacement.
     const P = GI.PALIER_TEXELS
     const besoinW = (Math.ceil((v.x + v.width) / TILE_PX) + GI.MARGE_TUILES - x0 + 1) * T
@@ -666,7 +767,7 @@ export class ChampGpu {
         .setDisplaySize(gw * PX_PAR_TEXEL, gh * PX_PAR_TEXEL)
         .setDepth(depth)
         .setBlendMode(mn ? Phaser.BlendModes.MULTIPLY : Phaser.BlendModes.ADD)
-        .setVisible(n >= PASSES_GI)
+        .setVisible(n >= PASSE_SOMME)
     }
   }
 
@@ -689,6 +790,38 @@ export class ChampGpu {
     return { x: this.ox * PX_PAR_TEXEL, y: this.oy * PX_PAR_TEXEL, gw: this.gw, gh: this.gh, pxParTexel: PX_PAR_TEXEL }
   }
 
+  /**
+   * LES TROIS TEXTURES QUE LA PASSE DES CORPS ÉCHANTILLONNE (LG-R7) — et pas une de plus.
+   *
+   * `gi-lumiere` porte `L` nu (`Champ.light`), `gi-face-directe` porte `directFace`, et l'ombre
+   * d'astre `S` se lit dans le **`.g` de `gi-drapeau`** — l'ombre ÉTENDUE, pénombre comprise, telle
+   * que `FRAG_SOMME` la lit elle-même. Les trois raisons de ne pas prendre les voisines évidentes
+   * sont écrites aux passes 6 et 7 : `gi-champ` porte M, LG-R5 DÉJÀ composée (le corps se
+   * composerait deux fois) ; `gi-direct` n'a en alpha que l'ombre PLEINE, sans pénombre.
+   *
+   * ⚠ **`null` TANT QUE LES PASSES 6 ET 7 N'EXISTENT PAS.** Elles ne se bâtissent qu'à
+   * `debugGi >= PASSES_GI` (`batirPasse`, appelée `while (this.passes.length < n)`), et une clé
+   * absente rendrait `textures.get` → la texture `__MISSING` de Phaser, silencieusement : le corps
+   * lirait un damier à la place de sa lumière. Le `null` remonte donc jusqu'au nœud, qui a sa
+   * propre garde visible du shader (`uGiCadre.z <= 0.0`).
+   */
+  texturesDesCorps(): {
+    readonly lumiere: Phaser.Renderer.WebGL.Wrappers.WebGLTextureWrapper
+    readonly faceDirecte: Phaser.Renderer.WebGL.Wrappers.WebGLTextureWrapper
+    readonly ombre: Phaser.Renderer.WebGL.Wrappers.WebGLTextureWrapper
+  } | null {
+    const tex = this.scene.textures
+    const prise = (cle: string): Phaser.Renderer.WebGL.Wrappers.WebGLTextureWrapper | null => {
+      if (!tex.exists(cle)) return null
+      return tex.get(cle).source[0]?.glTexture ?? null
+    }
+    const lumiere = prise('gi-lumiere')
+    const faceDirecte = prise('gi-face-directe')
+    const ombre = prise('gi-drapeau')
+    if (!lumiere || !faceDirecte || !ombre) return null
+    return { lumiere, faceDirecte, ombre }
+  }
+
   destroy(): void {
     for (const p of this.passes) p.destroy()
     this.passes = []
@@ -696,7 +829,7 @@ export class ChampGpu {
     this.champ = null
     this.image?.destroy()
     this.image = null
-    for (const k of ['gi-direct', 'gi-faces', 'gi-drapeau', 'gi-rebond', 'gi-champ', 'gi-occ', 'gi-alb']) {
+    for (const k of ['gi-direct', 'gi-faces', 'gi-drapeau', 'gi-rebond', 'gi-champ', 'gi-lumiere', 'gi-face-directe', 'gi-occ', 'gi-alb']) {
       if (this.scene.textures.exists(k)) this.scene.textures.remove(k)
     }
     this.occ = null
@@ -925,7 +1058,9 @@ export class ChampGpu {
         uOcc: 0, uAlb: 1, uDirect: 2, uAlbBande: this.uAlbBande,
       }))
     } else if (k === 3) {
-      mk('gi-drapeau', FRAG_DRAPEAU, gw, gh, ['gi-occ', 'gi-faces'], 'gi-drapeau', () => ({ uOcc: 0, uFaces: 1 }))
+      mk('gi-drapeau', FRAG_DRAPEAU, gw, gh, ['gi-occ', 'gi-faces', 'gi-direct'], 'gi-drapeau', () => ({
+        uOcc: 0, uFaces: 1, uDirect: 2, uPen: [GI.ASTRE.PENOMBRE[0], GI.ASTRE.PENOMBRE[1]],
+      }))
     } else if (k === 4) {
       mk('gi-rebond', FRAG_REBOND, gw, gh, ['gi-occ', 'gi-faces', 'gi-drapeau'], 'gi-rebond', () => ({
         uOcc: 0, uFaces: 1, uDrapeau: 2, uGain: GI.REBOND, uPortee: GI.PORTEE_REBOND, uNb: this.uNb,
@@ -934,13 +1069,26 @@ export class ChampGpu {
         uPasMax: 4 * GI.PORTEE_REBOND + 2,
       }))
     } else if (k === 5) {
-      this.champ = mk('gi-somme', FRAG_SOMME, gw, gh, ['gi-occ', 'gi-direct', 'gi-rebond'], 'gi-champ', () => ({
-        uOcc: 0, uDirect: 1, uRebond: 2, uPlafond: GI.PLAFOND_REBOND, uMn: this.uMn,
-        uA: this.uA, uPen: [GI.ASTRE.PENOMBRE[0], GI.ASTRE.PENOMBRE[1]],
+      this.champ = mk('gi-somme', FRAG_SOMME, gw, gh, ['gi-occ', 'gi-direct', 'gi-rebond', 'gi-drapeau'], 'gi-champ', () => ({
+        uOcc: 0, uDirect: 1, uRebond: 2, uDrapeau: 3, uPlafond: GI.PLAFOND_REBOND, uMn: this.uMn,
+        uA: this.uA,
       }))
       // Le quad du champ : ADD pour le REGARD (tranche B), MULTIPLY quand il COMPOSE (LG-R5) —
       // `update` tranche par image, selon que `mn` est là ou non.
       this.image = this.scene.add.image(0, 0, 'gi-champ').setOrigin(0, 0).setBlendMode(Phaser.BlendModes.ADD).setVisible(false)
+    } else if (k === 6) {
+      // ─── CE QUE LA PASSE DES CORPS LIT, ET QUE `gi-champ` N'EST PAS ───
+      // `gi-champ` porte M = 1 − (1 − Mn(1 − aS))(1 − L), LG-R5 DÉJÀ composée : le lire comme `L`
+      // composerait le corps une seconde fois. `gi-lumiere` publie `L` nu — `Champ.light`.
+      mk('gi-lumiere', FRAG_LUMIERE, gw, gh, ['gi-occ', 'gi-direct', 'gi-rebond'], 'gi-lumiere', () => ({
+        uOcc: 0, uDirect: 1, uRebond: 2, uPlafond: GI.PLAFOND_REBOND,
+      }))
+    } else if (k === 7) {
+      // Et `gi-direct` n'est pas `directFace` non plus : son alpha porte l'ombre PLEINE, sans
+      // pénombre (elle naît dans la somme), et sur un opaque il ne dit rien de sa face.
+      mk('gi-face-directe', FRAG_FACE_DIRECTE, gw, gh, ['gi-occ', 'gi-direct'], 'gi-face-directe', () => ({
+        uOcc: 0, uDirect: 1,
+      }))
     }
   }
 

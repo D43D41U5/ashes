@@ -145,6 +145,35 @@ import { riveAt, type RiveField } from '../../render/water-field'
 import { coupeDeNeige, enfoncement, enfoncementDUnNoeud, epaisseurQuiSEnfonce } from '../../render/enfoncement'
 import { epinglerLaTuile } from '../../render/tuile-epinglee'
 import { cleDeTuile, indexerParTuile, noeudVu, sousLaRoche } from './index-noeuds'
+import { armerLeCorps, NoeudCorpsGi, NOM_NOEUD, type ChampDeLImage } from '../../render/gi/noeud-corps'
+import { estRuban, expositionAuFeu, hauteurDeCrete, ligneDuPied, suitLaRegleDesFaces, type CorpsPose } from '../../render/gi/sol-du-corps'
+// `SUN_Z` SEULEMENT, et en LECTURE : c'est à cette hauteur-là que `dynamic-lighting` pose le soleil
+// ET la lune (`:385-386`), donc c'est ce qui les distingue d'un feu dans `scene.lights`. Aucun autre
+// nombre n'en vient — la position et le `z` de chaque source se lisent sur la LUMIÈRE POSÉE.
+import { SUN_Z } from './dynamic-lighting'
+
+/**
+ * LES TYPES QUI ARMENT LA PASSE DES CORPS (LG-R7) — les BARRIÈRES, et elles seules.
+ *
+ * Ce sont les corps que `CorpsPose` sait décrire par (famille, arête), et les seuls que
+ * `GI.CORPS.HAUTEUR_PAR_FAMILLE` nomme. `encadrement` en est — la spec le dit « un mur », et
+ * `FAMILLES_DRESSEES` le nomme aussi (`sol-du-corps.ts:92`) — bien qu'il n'ait pas d'`edges` : il
+ * prendra donc `arete = 0`, donc E entièrement, ce qui est exactement ce que la règle dit d'un corps
+ * sans arête. Le `massif`, le `fire`, les sols et les toits ne sont PAS ici.
+ */
+const ARETE_GI: ReadonlySet<string> = new Set(['wall', 'palissade', 'cloture', 'door', 'encadrement'])
+
+/**
+ * DE COMBIEN LA LUMIÈRE D'UN FEU PEUT MONTER AU-DESSUS DE SA TUILE, en pixels monde.
+ *
+ * `dynamic-lighting.ts:513` pose `y = ty*TILE_PX + TILE_PX/2 − lift − FEU_LIFT` : le seul écart
+ * possible est le lift de son palier (un multiple de 32, quelques étages au plus) plus les 4,8 px
+ * de `FEU_LIFT`. 512 px — trente-deux tuiles — passe largement au-dessus de tout palier atteignable
+ * et reste à deux ordres de grandeur du faux foyer qui a motivé cette garde (19 500 px).
+ * C'est un FILET, pas un réglage : on ne calibre pas ce nombre, on s'assure qu'il ne serre jamais
+ * un vrai feu.
+ */
+const ECART_Y_FEU_MAX = TILE_PX * 32
 
 /** Le nœud VISÉ à portée s'éclaire d'or ; hors de portée, il se grise (G4). */
 const AIM_TINT = 0xffe9a8
@@ -991,6 +1020,26 @@ export class SnapshotView {
    */
   forceOmbre = 1
 
+  /**
+   * ═══ LA PASSE DES CORPS (spec `lumiere-globale.md` LG-R7) — CE QUE `WorldScene` POUSSE ═══
+   *
+   * `gi` est le champ de l'image, `null` dès que l'interrupteur est fermé — et c'est la SEULE
+   * chose qui arme la passe. Posés par `WorldScene` comme `lighting`, `deriveOmbre` et
+   * `forceOmbre` : l'appelant tranche, la vue applique. Une seule horloge traverse la chaîne.
+   *
+   * ⚠ **`null` NE VEUT PAS DIRE « SANS GI », IL VEUT DIRE « RIEN N'EST ARMÉ ».** Tant qu'il est
+   * nul, `poserLeChampGi` sort AVANT `getNode` — qui CONSTRUIRAIT le nœud à son premier appel
+   * (`RenderNodeManager.js:353-366`) — et aucun corps ne prend `armerLeCorps`. C'est ce qui rend
+   * vraie la promesse de `main.ts` : déclarer les nœuds ne coûte rien tant qu'on ne les demande pas.
+   */
+  gi: import('../../render/gi/champ-gpu').ChampGpu | null = null
+  /**
+   * LE CIEL DE L'HEURE pour les corps — `Mn` (LG-R5), `a` (LG-R8) et la luminance de l'ambiante (J).
+   * Les trois viennent de `WorldScene` à la MÊME image que `gi`, et pour la raison de `deriveOmbre` :
+   * une opacité d'une image avec une géométrie d'une autre se lit comme un tremblement.
+   */
+  giCiel: { readonly mn: readonly [number, number, number]; readonly a: number; readonly ambiante: number } | null = null
+
   /** LE SANG AU SOL (spec chasse C9), LE VENT (C17), LES PILES (C18). */
   blood: SnapshotMessage['blood'] = []
   wind: SnapshotMessage['wind'] = { x: 1, y: 0 }
@@ -1815,6 +1864,132 @@ export class SnapshotView {
     return this.derives
   }
 
+  /**
+   * ═══ LES DEUX SOURCES, LUES SUR LA LUMIÈRE POSÉE (LG-R7) ═══
+   *
+   * *« La géométrie des lumières du jeu (position, hauteur) reste celle d'aujourd'hui. »* Donc on ne
+   * la REFAIT pas : on lit `scene.lights`, où `dynamic-lighting` a déjà posé le soleil, la lune, les
+   * feux, les torches et les gueules. Rien n'est recopié ici — ni `SUN_FAR`, ni l'azimut, ni la
+   * hauteur d'un feu : chaque source rend son `x`, son `y` et son PROPRE `z`.
+   *
+   * ⚠ **C'EST LA SEULE ROUTE, ET C'EST DÉLIBÉRÉ.** `sun`/`moon` sont PRIVÉS sur `DynamicLighting`,
+   * et `SUN_FAR` (2 200) n'est pas exporté : recalculer la position de l'astre exigerait de recopier
+   * ce nombre dans `render/gi/`, soit exactement la « seconde table de géométrie » que `reglages.ts`
+   * interdit. La lumière posée, elle, est la loi elle-même.
+   *
+   * L'ASTRE est celui des deux qui BRILLE le plus — la lune prend la relève du soleil au crépuscule,
+   * et `intensitesDuCiel` fait déjà que l'un s'éteint quand l'autre monte. LE FEU est la source non
+   * céleste la plus proche du centre de la vue : celle que le joueur regarde. ⚠ **Une seule**, comme
+   * toute la chaîne de référence (`passe-corps.ts`, mesurée avec UN émetteur) — un second foyer dans
+   * le cadre n'entre pas encore dans la part directionnelle d'un corps.
+   */
+  private sourcesDuCiel(): {
+    readonly astre: readonly [number, number, number, number]
+    readonly feu: readonly [number, number, number, number]
+  } {
+    const v = this.scene.cameras.main.worldView
+    const cx = v.x + v.width / 2
+    const cy = v.y + v.height / 2
+    /** Du centre du cadre à son coin : au-delà de ça plus son rayon, une source ne touche rien. */
+    const demiDiagonale = Math.sqrt(v.width * v.width + v.height * v.height) / 2
+    // ═══ UN ESSAIM DE LUCIOLES EST À LA MÊME HAUTEUR QU'UN FEU — ET J'ÉLISAIS LA LUCIOLE ═══
+    //
+    // `ambient-life.ts:725` crée la source d'un essaim à `TILE_PX * 0.6`, et son commentaire le dit
+    // en toutes lettres : « la même hauteur qu'un Feu ». C'est le `z` EXACT d'un Feu
+    // (`dynamic-lighting.ts:507`). Élire « la lumière non céleste la plus proche » élisait donc un
+    // essaim aux QUATRE heures mesurées, et le shader le traitait en foyer — mesuré au balayage du
+    // 2026-09-18 : `feu` à `x = 2355,75`, une abscisse FRACTIONNAIRE, quand un feu est toujours à
+    // `tx * TILE_PX + TILE_PX / 2`, un entier. C'est ce chiffre-là qui a dénoncé l'usurpation.
+    //
+    // On n'élit donc plus par élimination : une lumière n'est un feu que si elle coïncide avec une
+    // structure `fire` que la vue CONNAÎT. Et comme `dynamic-lighting` retire la lumière d'un feu
+    // éteint (sa réconciliation de fin de boucle), la PRÉSENCE de la lumière prouve déjà que le feu
+    // brûle — ni tick ni `facteurDuFeu` n'ont à remonter jusqu'ici.
+    const foyers = new Map<number, number>() // abscisse de la lumière → ordonnée de SA tuile, en px
+    for (const s of this.structures) {
+      if (s.type !== 'fire') continue
+      foyers.set(s.tx * TILE_PX + TILE_PX / 2, s.ty * TILE_PX + TILE_PX / 2)
+    }
+    let astre: Phaser.GameObjects.Light | null = null
+    let feu: Phaser.GameObjects.Light | null = null
+    let dFeu = Infinity
+    for (const l of this.scene.lights.lights) {
+      if (l.intensity <= 0) continue
+      if (l.z === SUN_Z) {
+        if (astre === null || l.intensity > astre.intensity) astre = l
+        continue
+      }
+      // DEUX CONDITIONS INDÉPENDANTES, parce qu'une seule se fait usurper : l'ancre d'un essaim
+      // dérive à chaque image et finira par tomber pile sur un `tx + 0.5`, et les deux côtés sont
+      // alors des entiers — la coïncidence serait EXACTE, pas approchée. L'ordonnée referme la
+      // porte : `dynamic-lighting:513` pose `y = ty*TILE_PX + TILE_PX/2 − lift − FEU_LIFT`, donc la
+      // lumière d'un feu est TOUJOURS au-dessus de sa tuile (jamais en dessous), d'au plus la
+      // hauteur d'un palier. Le test est asymétrique pour cette raison.
+      const yFoyer = foyers.get(l.x)
+      if (yFoyer === undefined || l.y > yFoyer + 1 || l.y < yFoyer - ECART_Y_FEU_MAX) continue
+      const d = (l.x - cx) * (l.x - cx) + (l.y - cy) * (l.y - cy)
+      // ═══ ET IL FAUT QU'IL PORTE JUSQU'ICI ═══
+      // Les deux conditions ci-dessus disent « c'est un feu » ; celle-ci dit « il compte ». Sans
+      // elle j'aurais troqué une luciole proche contre un VRAI feu à 20 767 px — toujours faux,
+      // autrement : `expositionAuFeu` rend `max(0, cosDuSud)`, un cosinus de DIRECTION sans aucune
+      // atténuation de distance, donc un foyer à mille tuiles éclaire exactement comme un foyer au
+      // pied du mur. L'étalon est le `radius` de la lumière elle-même — ce que le rendu lui a donné,
+      // pas un nombre que j'inventerais ici (mémoire `etalon-d-un-rayon-est-le-cadre`).
+      // Hors de portée, la bonne réponse est « pas de feu » (`w = 0`, donc `expo = −1`), et non
+      // « un feu, très loin » : le shader ne sait pas faire la différence.
+      if (d > (l.radius + demiDiagonale) * (l.radius + demiDiagonale)) continue
+      if (d < dFeu) {
+        dFeu = d
+        feu = l
+      }
+    }
+    // `w = 0` dit « absente », et le shader s'en sert : pas d'astre, pas de part directionnelle —
+    // ce n'est pas un zéro qui se confondrait avec « source au sol », que `facteurDeNormale` traite
+    // déjà à part (`sol-du-corps.ts:339`).
+    return {
+      astre: astre === null ? [0, 0, 0, 0] : [astre.x, astre.y, astre.z, 1],
+      feu: feu === null ? [0, 0, 0, 0] : [feu.x, feu.y, feu.z, 1],
+    }
+  }
+
+  /**
+   * LE CHAMP DE L'IMAGE, POUSSÉ AU NŒUD DE RENDU (LG-R7) — UNE FOIS PAR IMAGE, jamais par corps.
+   *
+   * Appelé par `WorldScene` juste après `ChampGpu.update`, avec les textures de CETTE image.
+   *
+   * ⚠ **CHAQUE SORTIE PRÉCOCE EST UNE GARDE, PAS UNE COMMODITÉ.** `getNode` CONSTRUIT le nœud à son
+   * premier appel (`RenderNodeManager.js:353-366`), et le constructeur de `NoeudCorpsGi` lève si
+   * l'addition `ApplyLighting` a disparu. L'appeler quand la GI est fermée bâtirait donc un nœud que
+   * personne n'arme, et démentirait la promesse de `main.ts`. Les sorties viennent AVANT lui.
+   *
+   * Et `texturesDesCorps()` rend `null` tant que les passes 6 et 7 n'existent pas (`debugGi < 7`) :
+   * la passe des corps demande la chaîne ENTIÈRE, pas seulement le champ.
+   */
+  poserLeChampGi(): void {
+    const champGpu = this.gi
+    const ciel = this.giCiel
+    if (champGpu === null || ciel === null) return
+    const renderer = this.scene.sys.renderer
+    if (!(renderer instanceof Phaser.Renderer.WebGL.WebGLRenderer)) return
+    const textures = champGpu.texturesDesCorps()
+    if (textures === null) return
+    const noeud = renderer.renderNodes.getNode(NOM_NOEUD)
+    if (!(noeud instanceof NoeudCorpsGi)) return
+    const c = champGpu.cadre
+    const s = this.sourcesDuCiel()
+    const champ: ChampDeLImage = {
+      textures,
+      cadre: [c.x, c.y, c.gw, c.gh],
+      pas: c.pxParTexel,
+      mn: ciel.mn,
+      a: ciel.a,
+      ambiante: ciel.ambiante,
+      astre: s.astre,
+      feu: s.feu,
+    }
+    noeud.poserChamp(champ)
+  }
+
   private syncStructures(structures: Structure[], self?: { x: number; y: number }): void {
     this.structures = structures
     const { wallTiles, clotureTiles, massifTiles, seuilTiles, doubles, pans } = this.derivesDe(structures)
@@ -1824,20 +1999,30 @@ export class SnapshotView {
     /** La cible de démolition a-t-elle été VUE cette frame ? Sinon le halo s'éteint — sans
      *  ça, il resterait accroché à un mur qu'on vient justement de détruire. */
     let haloVu = false
+    // LE FEU DE L'IMAGE, LU UNE SEULE FOIS (LG-R7) — `sourcesDuCiel` balaie `scene.lights`, et
+    // l'appeler par structure ferait ce balayage six cents fois par snapshot. `null` dès que
+    // l'interrupteur est fermé : rien n'est lu, rien n'est armé.
+    const feuGi = this.gi === null ? null : this.sourcesDuCiel().feu
     for (const s of structures) {
       seen.add(s.id)
       const isRoof = s.type === 'roof'
+      // L'ANCRE, LE PALIER ET LE LIFT — SORTIS du `if (!sprite)` le 2026-09-17. Ils ne servaient
+      // qu'à POSER le sprite ; la passe des corps en a besoin À CHAQUE IMAGE, parce que
+      // `ligneDuPied` se lit sur la position LOGIQUE alors que le sprite, lui, est dessiné à
+      // `a.py − lift − leve`. Les retrouver depuis `sprite.y` demanderait de défaire ces deux
+      // décalages, dont l'un (`leve`, le toit) n'a même pas de champ dans `CorpsPose` : ce serait
+      // redériver une loi qu'on a déjà sous la main.
+      // AU CENTRE de sa tuile, pas à son pied (`warp.ts`) : le pied mord sur la tuile du sud,
+      // qui au bord d'une terrasse est deux étages plus bas.
+      // …ET SOUS LA ROCHE (G-R7), à la hauteur de sa salle : un bivouac posé dans une grotte
+      // (`s.etage < 0`) se lève comme le plancher de la salle (`liftAEtage`) et se trie dans
+      // SA strate (`strateAEtage`) — au-dessus des houppiers, des toits et du voile de nuit,
+      // avec les nœuds de la salle. Au sol, le chemin d'avant, au pixel près.
+      const a = tileFeetAnchor(s.tx, s.ty, TILE_PX)
+      const sousRoche = sousLaRoche(s)
+      const lift = (sousRoche ? this.warp?.liftAEtage(s.tx + 0.5, s.ty + 0.5, s.etage) : this.warp?.liftSol(s.tx + 0.5, s.ty + 0.5)) ?? 0
       let sprite = this.structureSprites.get(s.id)
       if (!sprite) {
-        const a = tileFeetAnchor(s.tx, s.ty, TILE_PX)
-        // AU CENTRE de sa tuile, pas à son pied (`warp.ts`) : le pied mord sur la tuile du sud,
-        // qui au bord d'une terrasse est deux étages plus bas.
-        // …ET SOUS LA ROCHE (G-R7), à la hauteur de sa salle : un bivouac posé dans une grotte
-        // (`s.etage < 0`) se lève comme le plancher de la salle (`liftAEtage`) et se trie dans
-        // SA strate (`strateAEtage`) — au-dessus des houppiers, des toits et du voile de nuit,
-        // avec les nœuds de la salle. Au sol, le chemin d'avant, au pixel près.
-        const sousRoche = sousLaRoche(s)
-        const lift = (sousRoche ? this.warp?.liftAEtage(s.tx + 0.5, s.ty + 0.5, s.etage) : this.warp?.liftSol(s.tx + 0.5, s.ty + 0.5)) ?? 0
         // LES COUCHES (décision d'Alexis) : le SOL au ras du sol (sous les acteurs),
         // le TOIT au-dessus (comme un houppier, il se révèle au loin), le reste trié.
         // …ET LA STRATE DE SON PALIER (T-R7) : un mur au palier 2 se trie avec le sol du palier 2.
@@ -1888,6 +2073,80 @@ export class SnapshotView {
       // LE BIT DE MIROIR D'UNE STRUCTURE VIENT DE SA TUILE — elle ne bouge pas de la partie,
       // là où son rang dans `structures` change à chaque pose et à chaque ruine.
       const mirS = miroirDeTuile(s.tx, s.ty)
+      // ═══ LA FAMILLE DE CETTE BARRIÈRE — UNE SEULE DÉRIVATION, DEUX LECTEURS ═══
+      // *(Sortie de la branche des arêtes le 2026-09-17 : la passe des corps la lit aussi.)*
+      //
+      // Elle donne la CLÉ DE TEXTURE plus bas ET la hauteur de crête que la GI lit
+      // (`GI.CORPS.HAUTEUR_PAR_FAMILLE`). La dériver une seconde fois serait « une loi, deux
+      // lecteurs », et le défaut serait MUET : `hauteurDeCrete` retombe sur `MUR_HT` par un
+      // `?? MUR_HT` (`sol-du-corps.ts:139`), donc une clôture mal nommée serait lue à 32 px au lieu
+      // de 8 et placerait sa crête SOUS son propre pied — tout son art basculerait en « dessus ».
+      //
+      // ⚠ **ELLE VIENT DE LA STRUCTURE, JAMAIS DE LA CLÉ DE TEXTURE.** `encadrement` est indexé par
+      // son MASQUE (`st-encadrement-<m>`, plus bas) : le déduire de sa clé rendrait une famille que
+      // la table ne connaît pas. Il est ici parce que la spec le dit « un mur » — c'est une huisserie
+      // de `MUR_HT`, et `FAMILLES_DRESSEES` le nomme (`sol-du-corps.ts:92`).
+      //
+      // LA PORTE A SA FAMILLE (R23) : elle bloque l'étranger, donc elle se dessine FERMÉE —
+      // l'`encadrement` du bâti généré, lui, est une huisserie percée. Pas de variante ruinée :
+      // le monde bâti n'en pose pas, et une porte de joueur abandonnée n'existe pas encore.
+      // LE MUR DE BOIS A SA FAMILLE aussi (retour d'Alexis, 2026-08-01) : les tons du
+      // matériau vivent dans la TEXTURE (aplats de madriers), plus dans une teinte que
+      // personne ne lisait. La pierre et le métal gardent la maçonnerie neutre + teinte.
+      // ET LE VANTAIL APPARIÉ CHANGE DE FAMILLE (R27) : la moitié ouest/nord du cadre prend
+      // `door2a`, l'autre `door2b` — un seul jambage chacune, les battants se rejoignent au
+      // centre. Non apparié, il reste une porte simple ; démolir son jumeau l'y ramène seul.
+      //
+      // LES PV DE RÉFÉRENCE SUIVENT LE MATÉRIAU. Comparer au barème de BASE (200, le bois)
+      // alors qu'un mur de pierre en vaut 500 faisait passer la Ferme pour NEUVE : ses murs
+      // à 45 % valent 225, soit au-dessus du seuil calculé sur 200. Le lieu s'appelait
+      // « ruinée » et rendait une maçonnerie propre.
+      const maxHp = s.material ? WALL_TIERS[s.material][s.type === 'door' ? 'door' : 'wall'].hp : STRUCTURE_HP[s.type]
+      const ruine = s.villageId === 0 && s.hp < maxHp * RUINE_SEUIL
+      const paire = s.type === 'door' ? doubles.get(s.id) : undefined
+      const fam =
+        s.type === 'door' ? (paire === undefined ? 'door' : paire.premiere ? 'door2a' : 'door2b')
+        : s.type === 'cloture' ? 'cloture'
+        : s.type === 'palissade' ? 'palissade'
+        : s.type === 'encadrement' ? 'encadrement'
+        : ruine ? 'wall-ruine'
+        : (s.material ?? 'wood') === 'wood' ? 'wall-bois'
+        : 'wall'
+      // ═══ LA PASSE DES CORPS (LG-R7) — CE CORPS PREND-IL LE RELIEF DE LA GI ? ═══
+      //
+      // SEULES LES BARRIÈRES ARMENT pour l'instant : ce sont elles que `CorpsPose` décrit par
+      // (famille, arête), et elles que les planches ont mesurées — `wall-bois` y pèse 20 088 pixels
+      // peints. Les acteurs, les fûts et les cimes suivront, chacun avec sa lecture et sa garde.
+      //
+      // ⚠ **LES TOITS N'ARMENT PAS, ET C'EST UNE DÉCISION, PAS UN OUBLI.** Un toit se dessine LEVÉ
+      // de `MUR_HT` (`leve`), un troisième décalage que `CorpsPose` n'a aucun champ pour porter :
+      // armé, il lirait le champ deux tuiles au nord de son vrai sol. Et sans `edges` ni famille il
+      // serait plat de toute façon — il ne perd donc rien à attendre qu'on décide ce qu'est le
+      // dessus d'un toit.
+      if (this.gi !== null && !isRoof && ARETE_GI.has(s.type)) {
+        const corps: CorpsPose = {
+          x: a.px,
+          // LA POSITION LOGIQUE, PAS CELLE DU SPRITE : `a.py` est le bas de la tuile, et le `lift`
+          // du palier voyage À PART (LG-R14) — il n'entre pas dans `pointAuSol`, qui rend des
+          // coordonnées DESSINÉES, mais dans l'angle d'exposition, qui se juge sur le logique.
+          y: a.py,
+          arete: s.edges ?? 0,
+          famille: fam,
+          lift,
+        }
+        const sac = armerLeCorps(sprite)
+        sac.pied = ligneDuPied(corps)
+        sac.ancreX = corps.x
+        sac.crete = hauteurDeCrete(corps)
+        sac.dresse = suitLaRegleDesFaces(corps) ? 1 : 0
+        sac.ruban = estRuban(corps) ? 1 : 0
+        // ⚠ **−1 EST LE `null` DE `expositionAuFeu`**, c'est-à-dire « sous le pixel » — la branche E.
+        // Un 0 dirait « face entièrement détournée du feu », ce qui est une TOUTE autre chose : le
+        // corps garderait sa règle des faces avec une part directe nulle, au lieu de lire le champ
+        // sous chacun de ses pixels. Sans feu dans le cadre, c'est −1 aussi : il n'y a rien à orienter.
+        sac.expo =
+          feuGi === null || feuGi[3] <= 0 ? -1 : (expositionAuFeu(corps, { x: feuGi[0], y: feuGi[1] }) ?? -1)
+      }
       if (LIT_STRUCTURE_TYPES.has(s.type) || BATI_LIT_TYPES.has(s.type)) {
         sprite.setTexture(this.lighting ? cleLit(`st-${s.type}`, mirS) : `st-${s.type}`)
       }
@@ -1943,25 +2202,6 @@ export class SnapshotView {
         // alors qu'un mur de pierre en vaut 500 faisait passer la Ferme pour NEUVE : ses murs
         // à 45 % valent 225, soit au-dessus du seuil calculé sur 200. Le lieu s'appelait
         // « ruinée » et rendait une maçonnerie propre.
-        const maxHp = s.material ? WALL_TIERS[s.material][s.type === 'door' ? 'door' : 'wall'].hp : STRUCTURE_HP[s.type]
-        const ruine = s.villageId === 0 && s.hp < maxHp * RUINE_SEUIL
-        // LA PORTE A SA FAMILLE (R23) : elle bloque l'étranger, donc elle se dessine FERMÉE —
-        // l'`encadrement` du bâti généré, lui, est une huisserie percée. Pas de variante ruinée :
-        // le monde bâti n'en pose pas, et une porte de joueur abandonnée n'existe pas encore.
-        // LE MUR DE BOIS A SA FAMILLE aussi (retour d'Alexis, 2026-08-01) : les tons du
-        // matériau vivent dans la TEXTURE (aplats de madriers), plus dans une teinte que
-        // personne ne lisait. La pierre et le métal gardent la maçonnerie neutre + teinte.
-        // ET LE VANTAIL APPARIÉ CHANGE DE FAMILLE (R27) : la moitié ouest/nord du cadre prend
-        // `door2a`, l'autre `door2b` — un seul jambage chacune, les battants se rejoignent au
-        // centre. Non apparié, il reste une porte simple ; démolir son jumeau l'y ramène seul.
-        const paire = s.type === 'door' ? doubles.get(s.id) : undefined
-        const fam =
-          s.type === 'door' ? (paire === undefined ? 'door' : paire.premiere ? 'door2a' : 'door2b')
-          : s.type === 'cloture' ? 'cloture'
-          : s.type === 'palissade' ? 'palissade'
-          : ruine ? 'wall-ruine'
-          : (s.material ?? 'wood') === 'wood' ? 'wall-bois'
-          : 'wall'
         // ═══ LA DÉCOUPE DE FAÇADE (à la Zomboid — décision d'Alexis, 2026-07-27) ═══
         //
         // QUEL MUR CACHE LA PIÈCE ? Celui qui est DEVANT elle, entre elle et la caméra — donc
@@ -2786,8 +3026,14 @@ export class SnapshotView {
         // ⚠ `poserOmbreDeSocle` rend `false` si la forme retenue est l'ellipse : on retombe
         // alors sur la flaque générique, sans chemin de code en plus (le témoin de la planche).
         const socle = SOCLE_KEYS.has(texture)
+        // ⚠ **LA COULÉE A LA LONGUEUR DE LA PIERRE** (LG-R15) : la taille se redérive ici comme la
+        // CLÉ DU SPRITE la dérive douze lignes plus haut, par la même fonction pure — pas d'un état
+        // gardé à côté, qui se désynchroniserait du dessin à la première butte.
+        const tailleSocle = socle && estUnSocle(n.type)
+          ? tailleDeSocle(n.type as SocleType, n.tx, n.ty, n.size)
+          : 1
         const pose = socle && coupe === 0 && poserOmbreDeSocle(
-          nodeShadow, px, pyPied, cranDeDerive(this.deriveOmbre), sprite.scaleX, sprite.scaleY, sprite.depth,
+          nodeShadow, px, pyPied, cranDeDerive(this.deriveOmbre), tailleSocle, sprite.scaleX, sprite.scaleY, sprite.depth,
           this.forceOmbre,
         )
         if (!pose) {

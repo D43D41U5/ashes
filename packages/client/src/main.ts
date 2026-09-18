@@ -8,6 +8,7 @@
  * par défaut. `roundPixels` reste, pour que les sprites ne scintillent pas au sous-pixel.
  */
 import Phaser from 'phaser'
+import { NOEUDS_GI } from './render/gi/noeud-corps'
 import { BootScene } from './scenes/BootScene'
 import { MenuScene } from './scenes/MenuScene'
 import { UIScene } from './scenes/UIScene'
@@ -27,7 +28,12 @@ new Phaser.Game({
   roundPixels: true,
   // Éclairage dynamique (rendu par défaut, decisions.md 2026-07-20/24) : le LightsManager
   // plafonne le nombre de lumières simultanées. Le soleil + une poignée de Feux tiennent large.
-  render: { maxLights: 40 },
+  //
+  // `renderNodes` DÉCLARE les nœuds de la GI ; il n'en arme aucun. Un nœud n'entre en jeu que si un
+  // sprite le réclame par `setRenderNodeRole` (`armerLeCorps`), et `getNode` ne le CONSTRUIT qu'à ce
+  // moment-là (`RenderNodeManager.js:353-366`). Tant que l'interrupteur GI est fermé, ces deux lignes
+  // ne coûtent donc rien d'autre qu'elles-mêmes.
+  render: { maxLights: 40, renderNodes: NOEUDS_GI },
   scale: {
     mode: Phaser.Scale.FIT,
     autoCenter: Phaser.Scale.CENTER_BOTH,

@@ -421,11 +421,15 @@ export function ombrePleineDAstre(g: GrilleGi, astre: Astre): Float32Array {
  * LE MASQUE ENTIER (LG-R8) : l'ombre pleine, PLUS ses deux texels de pénombre à ⅔ puis ⅓. C'est
  * lui qui entre dans `composerM` et que les planches montrent.
  *
- * ⚠ LA SCISSION EN DEUX FONCTIONS N'EST PAS COSMÉTIQUE, ELLE SERT LA GARDE. Sur le GPU, l'ombre
- * pleine tient dans l'alpha de `gi-direct` — relisible — tandis que la pénombre se dilate dans la
- * passe somme, où plus rien ne peut la porter : un alpha < 1 sur `gi-champ` changerait son quad
- * MULTIPLY. La garde compare donc `ombrePleineDAstre` à ce qu'elle peut vraiment relire, au lieu
- * de comparer à peu près le masque entier. La pénombre, elle, est épinglée au texel par les tests.
+ * ⚠ LA SCISSION EN DEUX FONCTIONS N'EST PAS COSMÉTIQUE, ELLE SUIT LE GPU. L'ombre PLEINE tient
+ * dans l'alpha de `gi-direct` (passe 1) ; le masque ENTIER — pénombre comprise — est dilaté à la
+ * passe 3 et rangé dans `gi-drapeau`.g, d'où `gi-somme` le lit au lieu de le refaire.
+ *
+ * Les DEUX sont donc relisibles aujourd'hui. Ça n'a pas toujours été vrai : la pénombre se dilatait
+ * dans la passe somme, où plus rien ne pouvait la porter (un alpha < 1 sur `gi-champ` changerait son
+ * quad MULTIPLY), et la garde ne pouvait comparer que `ombrePleineDAstre`. ⚠ ELLE N'EN COMPARE
+ * TOUJOURS QUE CELLE-LÀ : la comparer au masque entier contre `gi-drapeau`.g est une garde à
+ * RENFORCER, pas une garde en place. La pénombre reste épinglée au texel par les tests.
  */
 export function masqueDAstre(g: GrilleGi, astre: Astre): Float32Array {
   const s = ombrePleineDAstre(g, astre)

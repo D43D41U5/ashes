@@ -59,6 +59,35 @@ export const GI = {
     /** LG-R8 : la pénombre est DEHORS — 2 texels, à ⅔ puis ⅓, en fronts de Tchebychev. */
     PENOMBRE: [2 / 3, 1 / 3],
   },
+  /**
+   * ═══ LES CORPS (LG-R7, LG-R16) ═══
+   *
+   * LA HAUTEUR DE CRÊTE D'UNE BARRIÈRE, PAR FAMILLE — ce qui sépare son DESSUS de sa FACE, et de
+   * combien ce dessus lit le sol plus bas. **`MUR_HT` n'est pas universel** : `bati-art` dessine
+   * TOUTES les familles par le même `dessinerBarriere(mask, ht, tons)`, générique en `ht`, et trois
+   * hauteurs y vivent (`EDGE_SPRITE`, `bati-art.ts:1923`). Une barrière lue à 32 px quand elle en
+   * fait 8 place sa crête sous son propre pied : tout son art passerait en dessus.
+   *
+   * Redit ici plutôt qu'importé, pour la raison de `HAUTEUR_MUR_PX` ci-dessus (`bati-art` tire
+   * `normal-map`, donc un canvas) ; la garde « les hauteurs de barrière sont celles du jeu » de
+   * `sol-du-corps.test.ts` les tient égales à `EDGE_SPRITE` famille par famille — ET refuse qu'il
+   * en manque une, sinon une famille neuve tomberait en silence sur la hauteur par défaut.
+   */
+  CORPS: {
+    HAUTEUR_PAR_FAMILLE: {
+      wall: 32,
+      'wall-bois': 32,
+      'wall-ruine': 32,
+      encadrement: 32,
+      door: 32,
+      door2a: 32,
+      door2b: 32,
+      /** `PALIS_HT` (`bati-art.ts:1817`) — « entre la clôture (8) et le mur (32) ». */
+      palissade: 24,
+      /** `CLOT_HT` (`bati-art.ts:743`) — « la clôture est BASSE : on voit par-dessus ». */
+      cloture: 8,
+    } as Readonly<Record<string, number>>,
+  },
 } as const
 
 /**
