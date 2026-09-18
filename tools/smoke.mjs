@@ -368,6 +368,193 @@ const NOMS_FEU = ['étalon (le rendu d’avant)', 'la respiration', 'le cœur bl
 
 const SCENARIOS = {
   /**
+   * ═══ LA GI DU CLIENT — LES DEUX GARDES DURABLES (spec `lumiere-globale.md`, LG-A2 et LG-A8) ═══
+   *
+   * Jusqu'ici, `ChampGpu.verifier()` (le champ GPU contre l'oracle CPU, LG-A2) n'avait que des sondes
+   * jetables pour appelant, et la passe des corps (LG-A8) n'avait AUCUNE garde au jeu : la
+   * divergence de `pointAuSol` (`bdd5a41`) a été trouvée en relisant. Ce scénario les tire toutes
+   * les deux, sur le monde joué, un feu posé au plus près du joueur, à deux heures : 14 h (le soleil
+   * porte l'ombre d'astre — la prémisse du masque et de la composition) et 23 h (la nuit, où le feu
+   * domine — la prémisse des trois branches de `lectureDuFeu`).
+   *
+   * `--dev` obligatoire : `debug_*`, `verifier()` et `garderLesCorps` vivent derrière `DEV`. Sous
+   * SwiftShader il rend en quelques secondes par heure — le champ est petit (`FENETRE`).
+   *
+   * LES SEUILS : LG-A2 est dans la spec (≤ 1 niveau en moyenne, < 1 % de texels à plus de 3, « seuils
+   * de moi »). LG-A8 prend la même forme, plus serrée — ≤ 0,5 niveau en moyenne, < 1 % au-delà de 3
+   * — parce qu'elle mesure DEUX CHEMINS sur les mêmes entrées, TypeScript contre GLSL, et que
+   * l'arrondi du framebuffer est le seul écart légitime. MESURÉ le 2026-09-18 (grappe (143, 286),
+   * 36 corps, 11 040 pixels) : 0,00 / 0,01 niveau en moyenne, 0 % au-delà de 3, 1 niveau au pire.
+   *
+   * ⚠ ELLE A ATTRAPÉ UN DÉFAUT À SON PREMIER PASSAGE : `uvDuChamp` lisait le champ un demi-texel au
+   * sud-est du sol (`(t + 0.5)/taille` en NEAREST sur un `t` fractionnaire = `round(t)`) — au pied
+   * d'une face dressée, le fragment tombait dans la bande d'ombre du mur : 126 niveaux au pire,
+   * 2,25 en moyenne, 9,7 % au-delà de 3. `floor` d'abord, et tout rentre — `corps-gpu.ts`.
+   */
+  async gi(page) {
+    if (!dev) { console.error('!! gi exige --dev (debug_*, ChampGpu.verifier, garderLesCorps)'); return }
+    const ev = (fn, arg) => page.evaluate(fn, arg)
+    /** `n` pas de boucle, page endormie — la GI se rend dans `update`, pas dans un timer. */
+    const pas = (n, dt = 50) => ev(({ n, dt }) => {
+      const g = window.__BRAISES__.scene.game
+      if (window.__T__ === undefined) window.__T__ = g.loop.time
+      for (let i = 0; i < n; i++) { window.__T__ += dt; g.step(window.__T__, dt) }
+      return window.__T__
+    }, { n, dt })
+    const agir = async (action, attente = 900, k = 2) => {
+      await ev((a) => { window.__BRAISES__.scene.sendAction(a) }, action)
+      await pas(1)
+      await page.waitForTimeout(attente)
+      await pas(k)
+    }
+    const ok = (c, m) => (c ? console.log(`   ✓ ${m}`) : console.error(`!! ${m}`))
+    const pc = (x) => `${(x * 100).toFixed(2)} %`
+    const f2 = (x) => x.toFixed(2)
+
+    await ev(() => { window.__BRAISES__.scene.game.loop.sleep() })
+    await agir({ type: 'debug_god', on: true }, 300, 1)
+    await agir({ type: 'debug_meteo', meteo: null }, 600, 1)
+
+    // ── LA SCÈNE : UNE GRAPPE DE MURS D'ARÊTE, AVEC LES DEUX ORIENTATIONS, ET UN FEU À SON PIED ──
+    // Au point de naissance il n'y a que des arbres : ni bande dans le champ (l'ombre d'astre n'a
+    // pas de prémisse), ni face dressée (la branche « au pied » du feu non plus). On élit donc, dans
+    // le bâti GÉNÉRÉ, la grappe la plus dense qui a un ruban ET une face dressée, et une tuile hors
+    // de tout lieu à moins de huit tuiles — un feu s'y pose (`place_campfire` refuse tout lieu,
+    // `village.ts`) et porte encore sur les murs (rayon ~8 tuiles). C'est la scène de la sonde
+    // `__gi-corps.mjs`, réduite à l'essentiel : le monde est déterministe, la grappe aussi.
+    const grappe = await ev(() => {
+      const sc = window.__BRAISES__.scene
+      const ARETE = new Set(['wall', 'palissade', 'cloture', 'door', 'encadrement'])
+      const murs = sc.view.structures.filter((q) => ARETE.has(q.type) && q.edges !== undefined && q.edges !== 0)
+      const zones = sc.map?.zones ?? []
+      const dansUneZone = (tx, ty) => zones.some((z) => tx + 0.5 >= z.x && tx + 0.5 < z.x + z.w && ty + 0.5 >= z.y && ty + 0.5 < z.y + z.h)
+      const p = sc.registry.get('playerPos')
+      let best = null
+      for (const m of murs) {
+        const proches = murs.filter((q) => Math.abs(q.tx - m.tx) <= 6 && Math.abs(q.ty - m.ty) <= 6)
+        const rubans = proches.filter((q) => q.edges === 2 || q.edges === 8).length
+        const dressees = proches.filter((q) => q.edges === 1 || q.edges === 4).length
+        if (rubans === 0 || dressees === 0) continue
+        let bord = null
+        for (let dx = -8; dx <= 8; dx++) {
+          for (let dy = -8; dy <= 8; dy++) {
+            if ((dx === 0 && dy === 0) || dansUneZone(m.tx + dx, m.ty + dy)) continue
+            const d = Math.hypot(dx, dy)
+            if (bord === null || d < bord.d) bord = { tx: m.tx + dx, ty: m.ty + dy, d: +d.toFixed(2) }
+          }
+        }
+        if (bord === null) continue
+        const dJoueur = Math.hypot(m.tx - p.x, m.ty - p.y)
+        const score = proches.length * 10 - bord.d * 300 - dJoueur * 0.01
+        if (best === null || score > best.score) best = { tx: m.tx, ty: m.ty, edges: m.edges, proches: proches.length, rubans, dressees, bord, dJoueur: Math.round(dJoueur), score }
+      }
+      return best
+    })
+    ok(grappe !== null, grappe ? `grappe de murs en (${grappe.tx}, ${grappe.ty}) : ${grappe.proches} barrières à 6 tuiles (${grappe.rubans} rubans, ${grappe.dressees} dressées), bord hors lieu à ${grappe.bord.d} tuiles, à ${grappe.dJoueur} tuiles du joueur` : 'aucune grappe de murs avec un ruban, une face dressée et une tuile hors lieu à 8 tuiles — la scène de la garde est introuvable')
+    if (grappe === null) return
+    // LE POSTE : une tuile plus loin du mur que la tuile de bord — le feu ne se pose pas sous ses pieds.
+    const POSTE = { x: grappe.bord.tx + Math.sign(grappe.bord.tx - grappe.tx) + 0.5, y: grappe.bord.ty + Math.sign(grappe.bord.ty - grappe.ty) + 0.5 }
+    await agir({ type: 'debug_teleport', x: POSTE.x, y: POSTE.y }, 1500, 3)
+
+    // ── LE FEU — élu par le prédicat de la PRODUCTION (`placeable`), jamais par une copie de ses
+    //    règles (mémoire `sonde-qui-ne-peut-pas-echouer`) ; au plus près du mur. Sans feu, la moitié
+    //    chaude de la règle des faces n'est pas éprouvée : on le dit, et on rougit. ──
+    for (let i = 0; i < 12; i++) await agir({ type: 'debug_grant', item: 'wood' }, 120, 1)
+    await agir({ type: 'debug_grant', item: 'campfire' }, 400, 1)
+    const candidates = await ev(({ g }) => {
+      const sc = window.__BRAISES__.scene
+      const p = sc.registry.get('playerPos')
+      const px = Math.floor(p.x), py = Math.floor(p.y)
+      const out = []
+      for (let dx = -5; dx <= 5; dx++) {
+        for (let dy = -5; dy <= 5; dy++) {
+          const tx = px + dx, ty = py + dy
+          if (tx === px && ty === py) continue // jamais sous ses pieds
+          let posable = false
+          try { posable = sc.placeable(tx, ty, 'fire', 0) === true } catch { posable = false }
+          const dMur = Math.hypot(tx - g.tx, ty - g.ty)
+          if (posable && dMur <= 8) out.push({ tx, ty, dMur: +dMur.toFixed(2) })
+        }
+      }
+      out.sort((a, b) => a.dMur - b.dMur)
+      return out.slice(0, 8)
+    }, { g: grappe })
+    let feu = null
+    for (const c of candidates) {
+      await agir({ type: 'debug_meteo', meteo: null }, 300, 1)
+      await agir({ type: 'place_campfire', tx: c.tx, ty: c.ty }, 900, 2)
+      feu = await ev(({ tx, ty }) => {
+        const s = window.__BRAISES__.scene.view.structures.find((q) => q.type === 'fire' && q.tx === tx && q.ty === ty)
+        return s ? { tx: s.tx, ty: s.ty, dMur: null } : null
+      }, c)
+      if (feu) { feu.dMur = c.dMur; break }
+    }
+    ok(feu !== null, feu ? `un feu brûle en (${feu.tx}, ${feu.ty}), à ${feu.dMur} tuiles du mur` : `aucun feu posé sur ${candidates.length} tuiles candidates — la moitié chaude de la règle des faces n'est pas éprouvée`)
+    // LE POINT D'OBSERVATION : quatre tuiles et demie au sud de la grappe, hors de portée de la découpe
+    // de façade (`render/pans.ts` : un pan tombe à deux tuiles du joueur — mémoire
+    // `sujet-rendu-sous-une-autre-cle`). La caméra suit le joueur : la grappe et le feu sont au cadre.
+    await agir({ type: 'debug_teleport', x: grappe.tx + 0.5, y: grappe.ty + 4.5 }, 1500, 3)
+
+    // ── CRAN 7 : la chaîne ENTIÈRE (champ, lumière, face directe, drapeau, et la passe des corps). ──
+    await ev(() => { window.__BRAISES__.scene.registry.set('debugGi', 7) })
+    await pas(3)
+
+    const heures = [14, 23]
+    for (const heure of heures) {
+      await agir({ type: 'debug_set_hour', hour: heure }, 1500, 2)
+      await agir({ type: 'debug_meteo', meteo: null }, 400, 1)
+      await pas(30)
+      const r = await ev(() => {
+        const sc = window.__BRAISES__.scene
+        const gi = sc.gi ? sc.gi.verifier() : null
+        const corps = sc.view.garderLesCorps(40)
+        const c = (e) => (e ? { n: e.n, moyenne: e.moyenne, partSup3: e.partSup3, max: e.max, eclaires: e.eclaires } : null)
+        return {
+          debugGi: sc.registry.get('debugGi'),
+          gi: gi ? { sources: gi.sources, bandes: gi.bandes, gw: gi.gw, gh: gi.gh, direct: c(gi.direct), champ: c(gi.champ), masque: c(gi.masque), compose: c(gi.compose), purete: gi.purete } : null,
+          corps,
+        }
+      })
+      console.log(`   — ${heure} h`)
+      // LG-A2 — le champ contre l'oracle.
+      const g = r.gi
+      ok(g !== null, `la chaîne GPU est posée à ${heure} h (debugGi = ${r.debugGi})`)
+      if (g) {
+        console.log(`     champ ${g.gw}×${g.gh}, ${g.sources} sources, ${g.bandes} bandes ; direct n=${g.direct.n} moy ${f2(g.direct.moyenne)} >3 ${pc(g.direct.partSup3)} max ${g.direct.max} ; champ n=${g.champ.n} moy ${f2(g.champ.moyenne)} >3 ${pc(g.champ.partSup3)} max ${g.champ.max} ; masque n=${g.masque.n} moy ${f2(g.masque.moyenne)} ombrés ${g.masque.eclaires} ; composé n=${g.compose.n} moy ${f2(g.compose.moyenne)} >3 ${pc(g.compose.partSup3)} max ${g.compose.max} touchés ${g.compose.eclaires} ; pureté ${pc(g.purete)}`)
+        ok(g.direct.eclaires > 0 && g.champ.eclaires > 0, `prémisse LG-A2 : l'oracle éclaire des texels (direct ${g.direct.eclaires}, champ ${g.champ.eclaires})`)
+        ok(g.bandes > 0, `prémisse LG-A2 : des bandes dans le champ (${g.bandes}) — sans elles, ni ombre ni rebond de face`)
+        ok(g.direct.moyenne <= 1 && g.direct.partSup3 < 0.01, `LG-A2 direct : moyenne ${f2(g.direct.moyenne)} ≤ 1, >3 niveaux ${pc(g.direct.partSup3)} < 1 %`)
+        // `champ` compare `gi-champ` à la lumière NUE de l'oracle : c'est la garde à `uMn = 0` des
+        // sondes (`VerdictGi.masque`, en-tête). Au jeu, `Mn` est vif — `gi-champ` porte le plancher du
+        // voile — et c'est `compose` (contre `composerM`, à Mn et `a` vifs) qui juge LG-A2 ici.
+        ok(g.compose.moyenne <= 1 && g.compose.partSup3 < 0.01, `LG-A2 composition (Mn vif) : moyenne ${f2(g.compose.moyenne)} ≤ 1, >3 niveaux ${pc(g.compose.partSup3)} < 1 %`)
+        ok(g.masque.moyenne <= 1 && g.masque.partSup3 < 0.01, `LG-A9 masque d'astre : moyenne ${f2(g.masque.moyenne)} ≤ 1, >3 niveaux ${pc(g.masque.partSup3)} < 1 %`)
+        ok(g.purete >= 1, `LG-A3 pureté : ${pc(g.purete)}`)
+        // L'ombre d'astre n'a de prémisse que sous un astre qui porte : le soleil de 14 h. À 23 h, la
+        // lune peut être neuve — on lit, on ne juge pas.
+        if (heure === 14) ok(g.masque.eclaires > 0 && g.compose.eclaires > 0, `prémisse LG-A9 à 14 h : l'astre ombre ${g.masque.eclaires} texels et en touche ${g.compose.eclaires}`)
+      }
+      // LG-A8 — les corps, chacun rendu seul contre la référence.
+      const k = r.corps
+      ok(k !== null, `la garde des corps a tourné à ${heure} h`)
+      if (k) {
+        console.log(`     ${k.corps} corps, ${k.pixels} pixels (${k.eprouvants} éprouvants) ; moy ${f2(k.moyenne)} >3 ${pc(k.partSup3)} max ${k.max} ; branches nul ${k.branches.nul} / au pied ${k.branches.auPied} / sous le pixel ${k.branches.sousLePixel} ; alpha mêlé ${k.alphaMele} ; écartés ${JSON.stringify(k.ecartes)}`)
+        for (const p of k.pires) {
+          console.log(`       ${p.cle}: ${p.pixels} px, moy ${f2(p.moyenne)}, >3 ${pc(p.partSup3)}, max ${p.max}, branches ${p.branches.nul}/${p.branches.auPied}/${p.branches.sousLePixel}, alpha mêlé ${p.alphaMele}`)
+          for (const e of p.echantillon) console.log(`         (${e.i},${e.j}) lu ${e.lu.join(',')} attendu ${e.attendu.join(',')} texel ${e.texel.join(',')} n ${e.n.join(',')} fA ${e.fAstre} fF ${e.fFeu} ${e.ou}`)
+        }
+        ok(k.corps >= 10, `prémisse LG-A8 : au moins 10 corps armés dans le cadre (${k.corps})`)
+        ok(k.eprouvants > 0, `prémisse LG-A8 : des pixels où la normale pèse (${k.eprouvants})`)
+        ok(k.ecartes.horsChamp === 0, `aucun pixel lu hors du champ (${k.ecartes.horsChamp})`)
+        ok(k.alphaMele === 0, `la cible échantillonne chaque texel plein en son centre (alpha mêlé : ${k.alphaMele})`)
+        ok(k.moyenne <= 0.5 && k.partSup3 < 0.01, `LG-A8 : moyenne ${f2(k.moyenne)} ≤ 0,5, >3 niveaux ${pc(k.partSup3)} < 1 % (MESURÉ 0,00 / 0,01 et 0 %, max 1)`)
+        if (heure === 23 && feu) ok(k.branches.nul > 0 && k.branches.auPied > 0 && k.branches.sousLePixel > 0, `prémisse LG-A8 à 23 h : les trois branches du feu sont vues (${k.branches.nul} / ${k.branches.auPied} / ${k.branches.sousLePixel})`)
+      }
+    }
+    await ev(() => { window.__BRAISES__.scene.game.loop.wake() })
+  },
+
+  /**
    * ═══ LES SALAISONS AU SAC (jetable, 2026-08-30) — montrer les items du chantier ① ═══
    * Octroie les nouveaux items (salaisons, lamproie, sel) et capture le sac ouvert.
    * `--dev` obligatoire (debug_grant).

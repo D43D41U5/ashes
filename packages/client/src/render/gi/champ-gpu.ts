@@ -841,9 +841,16 @@ export class ChampGpu {
 
   // ─── LA GARDE (LG-A1, LG-A2, LG-A3) : les cibles relues contre l'oracle, sur la MÊME grille ───
 
-  /** Relit une cible (RGBA, rangée 0 au NORD, comme la grille). */
-  lire(cible: 'direct' | 'champ'): Uint8Array {
-    const sh = cible === 'direct' ? this.direct : this.champ
+  /**
+   * Relit une cible (RGBA, rangée 0 au NORD, comme la grille). `direct` et `champ` pour LG-A2 ; les
+   * trois textures que les corps échantillonnent (`texturesDesCorps`) pour la garde LG-A8, qui doit
+   * composer sa référence sur CE que le shader a lu — les cibles du GPU, pas l'oracle CPU.
+   */
+  lire(cible: 'direct' | 'champ' | 'gi-lumiere' | 'gi-face-directe' | 'gi-drapeau'): Uint8Array {
+    const sh =
+      cible === 'direct' ? this.direct
+      : cible === 'champ' ? this.champ
+      : (this.passes.find((p) => (p as unknown as { texture?: { key?: string } | null }).texture?.key === cible) ?? null)
     if (!sh || !sh.drawingContext) return new Uint8Array(0)
     const r = this.scene.sys.renderer as Phaser.Renderer.WebGL.WebGLRenderer
     const gl = r.gl

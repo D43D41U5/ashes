@@ -45,7 +45,7 @@
  */
 
 /** `n_loi.y = −n_phaser.y` — voir l'en-tête. Un seul endroit, et il porte sa raison. */
-const SIGNE_Y_NORMALE = -1
+export const SIGNE_Y_NORMALE = -1
 
 /**
  * ═══ LES UNIFORMES, ET CE QUI EST PAR IMAGE OU PAR SPRITE ═══
@@ -178,8 +178,18 @@ vec2 mondeDuFragment() {
 // ─── UNE PRISE DE TEXEL DANS LE CHAMP ───
 // Le champ est en TEXELS (un texel = \`uGiPas\` px monde, LG-R2) et sa rangée 0 est au NORD —
 // la même convention que \`uvCible\` de \`champ-gpu\`, et pour la même raison.
+//
+// ⚠ **\`floor\` D'ABORD — ET C'EST LA GARDE LG-A8 QUI L'A VU (2026-09-18).** Le texel \`i\` couvre
+// \`[cadre.x + i·pas, cadre.x + (i+1)·pas)\` : c'est ce que dessine le quad de sol (\`champ-gpu\`,
+// \`setPosition(ox·pas, oy·pas)\` puis \`setDisplaySize(gw·pas, gh·pas)\`) et ce que lit l'oracle.
+// \`uvCible\` reçoit un INDEX entier et le centre d'un \`+0.5\` ; ici \`t\` est FRACTIONNAIRE, et
+// \`(t + 0.5) / taille\` lu en NEAREST rendait \`round(t)\` — le champ lu un demi-texel (2 px) au
+// sud-est du sol sous le corps. Invisible en plein champ, franc à la LISIÈRE d'une ombre : au pied
+// d'une face dressée, le fragment lisait la bande d'ombre du mur (S = 1, lumière nulle) là où le sol
+// sous lui était éclairé — \`st-wall-ruine-e4\`, 126 niveaux au pire, et l'avatar près du feu
+// uniformément plus sombre de 7 niveaux (smoke \`gi\`, avant correction).
 vec2 uvDuChamp(vec2 monde) {
-  vec2 t = (monde - uGiCadre.xy) / uGiPas;
+  vec2 t = floor((monde - uGiCadre.xy) / uGiPas);
   return vec2((t.x + 0.5) / uGiCadre.z, 1.0 - (t.y + 0.5) / uGiCadre.w);
 }
 

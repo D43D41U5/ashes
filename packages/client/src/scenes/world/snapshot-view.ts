@@ -146,6 +146,7 @@ import { coupeDeNeige, enfoncement, enfoncementDUnNoeud, epaisseurQuiSEnfonce } 
 import { epinglerLaTuile } from '../../render/tuile-epinglee'
 import { cleDeTuile, indexerParTuile, noeudVu, sousLaRoche } from './index-noeuds'
 import { armerLeCorps, NoeudCorpsGi, NOM_NOEUD, type ChampDeLImage } from '../../render/gi/noeud-corps'
+import { garderLesCorps, type CorpsAEprouver, type VerdictCorps } from '../../render/gi/garde-corps'
 import { GI } from '../../render/gi/reglages'
 import { estRuban, expositionAuFeu, hauteurDeCrete, ligneDuPied, seuilDuDessus, suitLaRegleDesFaces, type CorpsPose } from '../../render/gi/sol-du-corps'
 // `SUN_Z` SEULEMENT, et en LECTURE : c'est à cette hauteur-là que `dynamic-lighting` pose le soleil
@@ -1876,6 +1877,12 @@ export class SnapshotView {
   private feuMemo: { now: number; feu: readonly [number, number, number, number] | null } = { now: -1, feu: null }
   /** L'avertissement « la flamme n'est pas à la hauteur que la règle croit » ne se dit qu'une fois. */
   private flammeAvertie = false
+  /**
+   * LA POSE DE CHAQUE CORPS ARMÉ, GARDÉE POUR LA GARDE (LG-A8, dev seulement) — le sac du shader ne
+   * porte que ce que le fragment lit (pied, crête, seuil, expo…) ; la référence, elle, veut la POSE
+   * dont il dérive. Une `WeakMap` : un sprite qui meurt emporte sa pose.
+   */
+  private readonly poses = new WeakMap<Phaser.GameObjects.Image, CorpsPose>()
   private feuDeLImage(): readonly [number, number, number, number] | null {
     if (this.gi === null) return null
     const now = this.scene.time.now
@@ -1906,6 +1913,69 @@ export class SnapshotView {
     sac.ruban = estRuban(corps) ? 1 : 0
     sac.expo =
       feuGi === null || feuGi[3] <= 0 ? -1 : (expositionAuFeu(corps, { x: feuGi[0], y: feuGi[1] }) ?? -1)
+    if (import.meta.env.DEV) this.poses.set(sprite, corps)
+  }
+
+  /**
+   * LE CHAMP DE L'IMAGE tel que le nœud des corps le reçoit — `null` tant que la chaîne entière n'est
+   * pas posée (`texturesDesCorps` rend `null` sous `debugGi < 7`). Partagé par `poserLeChampGi` et la
+   * garde : les deux doivent lire LE MÊME champ, ou la garde ne prouverait rien.
+   */
+  private champDeLImage(): ChampDeLImage | null {
+    const champGpu = this.gi
+    const ciel = this.giCiel
+    if (champGpu === null || ciel === null) return null
+    const textures = champGpu.texturesDesCorps()
+    if (textures === null) return null
+    const c = champGpu.cadre
+    const s = this.sourcesDuCiel()
+    return {
+      textures,
+      cadre: [c.x, c.y, c.gw, c.gh],
+      pas: c.pxParTexel,
+      mn: ciel.mn,
+      a: ciel.a,
+      ambiante: ciel.ambiante,
+      astre: s.astre,
+      feu: s.feu,
+    }
+  }
+
+  /**
+   * ═══ LA GARDE DES CORPS (LG-A8), EN DEV — `tools/smoke.mjs --scenario gi` ═══
+   *
+   * Les `n` corps armés les plus proches du centre de la vue, rendus SEULS dans une texture de
+   * travail et comparés pixel à pixel à `pixelDuCorps` sur les mêmes textures de champ
+   * (`render/gi/garde-corps.ts`). `null` si la chaîne n'est pas posée. Le jeu ne l'appelle jamais :
+   * c'est le smoke qui la tire, boucle endormie, après un pas.
+   */
+  garderLesCorps(n = 40): VerdictCorps | null {
+    if (!import.meta.env.DEV) return null
+    const champGpu = this.gi
+    const champ = this.champDeLImage()
+    if (champGpu === null || champ === null) return null
+    const v = this.scene.cameras.main.worldView
+    const cx = v.x + v.width / 2
+    const cy = v.y + v.height / 2
+    const candidats: Array<{ corps: CorpsAEprouver; d: number }> = []
+    for (const o of this.scene.children.list) {
+      if (!(o instanceof Phaser.GameObjects.Image || o instanceof Phaser.GameObjects.Sprite) || !o.visible) continue
+      const sprite = o as Phaser.GameObjects.Image
+      const data = (sprite as unknown as { renderNodeData: Record<string, unknown> | null }).renderNodeData
+      const sac = data?.[NOM_NOEUD]
+      if (typeof sac !== 'object' || sac === null || !('expo' in sac)) continue
+      const pose = this.poses.get(sprite)
+      if (pose === undefined) continue
+      if (!Phaser.Geom.Rectangle.Overlaps(sprite.getBounds(), v)) continue
+      candidats.push({ corps: { sprite, pose }, d: Math.hypot(sprite.x - cx, sprite.y - cy) })
+    }
+    candidats.sort((p, q) => p.d - q.d)
+    const lues = {
+      lumiere: champGpu.lire('gi-lumiere'),
+      faceDirecte: champGpu.lire('gi-face-directe'),
+      ombre: champGpu.lire('gi-drapeau'),
+    }
+    return garderLesCorps(this.scene, candidats.slice(0, n).map((c) => c.corps), champ, lues)
   }
 
   /**
@@ -2018,27 +2088,12 @@ export class SnapshotView {
    * la passe des corps demande la chaîne ENTIÈRE, pas seulement le champ.
    */
   poserLeChampGi(): void {
-    const champGpu = this.gi
-    const ciel = this.giCiel
-    if (champGpu === null || ciel === null) return
     const renderer = this.scene.sys.renderer
     if (!(renderer instanceof Phaser.Renderer.WebGL.WebGLRenderer)) return
-    const textures = champGpu.texturesDesCorps()
-    if (textures === null) return
+    const champ = this.champDeLImage()
+    if (champ === null) return
     const noeud = renderer.renderNodes.getNode(NOM_NOEUD)
     if (!(noeud instanceof NoeudCorpsGi)) return
-    const c = champGpu.cadre
-    const s = this.sourcesDuCiel()
-    const champ: ChampDeLImage = {
-      textures,
-      cadre: [c.x, c.y, c.gw, c.gh],
-      pas: c.pxParTexel,
-      mn: ciel.mn,
-      a: ciel.a,
-      ambiante: ciel.ambiante,
-      astre: s.astre,
-      feu: s.feu,
-    }
     noeud.poserChamp(champ)
   }
 
