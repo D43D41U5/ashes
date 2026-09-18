@@ -1,7 +1,9 @@
 import { describe, expect, it } from 'vitest'
 import {
+  EDGE_E,
   EDGE_N,
   EDGE_O,
+  EDGE_S,
   LUMIERE,
   MOTIF_SOURCE,
   PIECES,
@@ -18,6 +20,8 @@ import { MUR_HT } from '../bati-art'
 import { TILE_PX } from '../framing'
 import { champRef, composerM, masqueDAstre, ombrePleineDAstre, partVisibleGrille, type Astre, type BandeGrille, type CarteDOmbre, type Emetteur, type GrilleGi, type Silhouette } from './champ-ref'
 import { TOUTES_VARIANTES, ancrageHouppierPx, hauteurPx, houppierLargeur } from '../arbre-art'
+import type { SourceGi } from './champ-gpu'
+import { composerLeCorps, partsDuCorps, type Rgb } from './corps-ref'
 import { grilleDuMonde } from './grille'
 import { ALBEDO, GI, hauteurDeBande, longueurDOmbre } from './reglages'
 
@@ -490,5 +494,112 @@ describe('les arbres, deux cartes debout (LG-R8, LG-R9, LG-A9)', () => {
     expect(s[20 * 40 + 20]).toBe(1)
     expect(s[22 * 40 + 20]).toBe(1)
     expect(masqueDAstre(SANS_BANDE, astre(0, 0), arbres(carte(pleine(8, 40)))).some((v) => v !== 0)).toBe(false)
+  })
+})
+
+/**
+ * LE CALAGE DES BANDES (LG-R10, LG-A10) — exhaustif sur les quatre bits d'arête et leurs quatre coins.
+ * Le feu au centre de la tuile du mur (LG-R17), rebond nul pour isoler le direct. Deux choses, pour
+ * chaque bande de chaque montage :
+ *   · les quatre texels qui la bordent DU CÔTÉ OPPOSÉ au feu reçoivent 0 de lumière directe — vue de
+ *     si près, la bande (une tuile et un texel de long) masque tout le disque (rayon 1,5 texel) ;
+ *   · les quatre texels qui la bordent DU CÔTÉ DU FEU reçoivent EXACTEMENT, au bit, ce qu'ils
+ *     reçoivent sans aucun mur : une face ne bloque ni ce qui la longe ni ce qui en part (les
+ *     intervalles ouverts de LG-R10).
+ * Sans le montage « sans mur » comme référence, la seconde moitié serait vraie d'un texel éteint.
+ */
+describe('le calage des bandes (LG-R10, LG-A10)', () => {
+  const BITS = [EDGE_N, EDGE_E, EDGE_S, EDGE_O]
+  const COINS = [EDGE_N | EDGE_E, EDGE_N | EDGE_O, EDGE_S | EDGE_E, EDGE_S | EDGE_O]
+  const mondeAvec = (edges: number | null): MondeEclaire => ({
+    map: createEmptyMap(96, 96, TERRAIN_GRASS),
+    structures: edges === null ? [] : [{ id: 1, type: 'wall', tx: FEU.tx, ty: FEU.ty, villageId: 0, ownerId: 0, access: 'public', hp: 100, edges } as unknown as Structure],
+    nodes: [],
+  })
+  const direct = (edges: number | null) => {
+    const g = grilleDuMonde(mondeAvec(edges), N, F)
+    return { g, c: champRef(g, [emetteur(g)], { ...G2, rebond: 0 }) }
+  }
+  const X = (FEU.tx - F.x0) * T
+  const Y = (FEU.ty - F.y0) * T
+  /** Les texels qui bordent une bande : `dedans` du côté du feu (dans la tuile), `dehors` de l'autre. */
+  const bords = (m: BandeGrille): { dedans: [number, number][]; dehors: [number, number][] } => {
+    const horizontale = m.x1 - m.x0 > m.y1 - m.y0
+    const dedans: [number, number][] = []
+    const dehors: [number, number][] = []
+    for (let i = 0; i < T; i++) {
+      if (horizontale) {
+        const nord = Math.round(m.y0 + 0.5) === Y // la bande nord est à cheval sur y = Y, la sud sur Y + T
+        dedans.push([X + i, nord ? Y : Y + T - 1])
+        dehors.push([X + i, nord ? Y - 1 : Y + T])
+      } else {
+        const ouest = Math.round(m.x0 + 0.5) === X
+        dedans.push([ouest ? X : X + T - 1, Y + i])
+        dehors.push([ouest ? X - 1 : X + T, Y + i])
+      }
+    }
+    return { dedans, dehors }
+  }
+  const nu = direct(null)
+
+  it('LA RÉFÉRENCE SANS MUR ÉCLAIRE TOUS LES TEXELS QUI BORDENT UNE FACE — sinon « au bit » serait vrai d’un texel éteint', () => {
+    for (const edges of [...BITS, ...COINS])
+      for (const m of direct(edges).g.murs)
+        for (const [x, y] of [...bords(m).dedans, ...bords(m).dehors]) expect(nu.c.direct[(y * nu.g.gw + x) * 3], `(${x}, ${y})`).toBeGreaterThan(0)
+  })
+
+  for (const edges of [...BITS, ...COINS]) {
+    const bandes = edges === (edges & -edges) ? 1 : 2
+    it(`arêtes ${edges} (${bandes} bande${bandes > 1 ? 's' : ''}) — zéro derrière chaque face, et au bit devant`, () => {
+      const { g, c } = direct(edges)
+      expect(g.murs.length).toBe(bandes)
+      for (const m of g.murs) {
+        const { dedans, dehors } = bords(m)
+        for (const [x, y] of dehors) for (let ch = 0; ch < 3; ch++) expect(c.direct[(y * g.gw + x) * 3 + ch], `dehors (${x}, ${y})`).toBe(0)
+        for (const [x, y] of dedans) for (let ch = 0; ch < 3; ch++) expect(c.direct[(y * g.gw + x) * 3 + ch], `dedans (${x}, ${y})`).toBe(nu.c.direct[(y * nu.g.gw + x) * 3 + ch])
+      }
+    })
+  }
+})
+
+/**
+ * WEBER (LG-R5, LG-A6) — `lighting.test.ts:217`, porté au champ. Le sol prend M (le quad MULTIPLY du
+ * champ) ; un acteur — un corps sans face, E, « tout le reste : sous le pixel » — prend ses parts par
+ * `composerLeCorps` sous des facteurs de normale 1, et ses parts SOMMENT à M. Un gain commun divise le
+ * numérateur et le dénominateur : le rapport ne bouge pas, quel que soit M — l'ombre d'astre, le feu,
+ * la phase de la lune, le plein jour. Le rabat de l'ambiante (J) n'a pas lieu la nuit
+ * (`corps-ref.test.ts`, « une ambiante au-dessus du plancher ne change rien ») : ambiante 1 ici.
+ */
+describe('Weber (LG-R5, LG-A6)', () => {
+  const SOL: Rgb = [0x6a / 255, 0x7a / 255, 0x52 / 255] // une herbe
+  const ACTEUR: Rgb = [0xb0 / 255, 0x80 / 255, 0x40 / 255] // un avatar
+  const weber = (a: number, b: number): number => Math.abs(a - b) / b
+  const CAS: { nom: string; mn: Rgb; s: number; a: number; l: Rgb }[] = [
+    { nom: 'nouvelle lune, rien ne tombe', mn: [0.16, 0.18, 0.26], s: 0, a: 0, l: [0, 0, 0] },
+    { nom: 'pleine lune, dans l’ombre d’astre', mn: [0.3, 0.33, 0.42], s: 1, a: 0.6, l: [0, 0, 0] },
+    { nom: 'pleine lune, sous la lune', mn: [0.3, 0.33, 0.42], s: 0, a: 0.6, l: [0, 0, 0] },
+    { nom: 'près du feu', mn: [0.16, 0.18, 0.26], s: 0, a: 0, l: [0.7, 0.55, 0.35] },
+    { nom: 'le feu dans l’ombre de lune', mn: [0.3, 0.33, 0.42], s: 1, a: 0.6, l: [0.4, 0.3, 0.2] },
+    { nom: 'plein jour', mn: [1, 1, 1], s: 0, a: 0, l: [0, 0, 0] },
+  ]
+  for (const k of CAS) {
+    it(`A6 — ${k.nom} : le contraste de l’avatar sur son sol est celui d’avant le voile, par canal`, () => {
+      const M = [0, 1, 2].map((c) => composerM(k.mn[c]!, k.s, k.a, k.l[c]!))
+      const parts = partsDuCorps(k.mn, k.s, k.a, k.l, [0, 0, 0], 1)
+      const acteur = composerLeCorps(ACTEUR, parts, 1, 1)
+      for (let c = 0; c < 3; c++) {
+        const sol = SOL[c]! * M[c]!
+        expect(M[c]).toBeLessThanOrEqual(1)
+        expect(weber(acteur[c]!, sol), `canal ${c}`).toBeCloseTo(weber(ACTEUR[c]!, SOL[c]!), 10)
+      }
+    })
+  }
+})
+
+describe('l’engagement ne touche pas la portée (LG-R6, LG-A7)', () => {
+  it('A7 — une source construite avec un engagement ne compile pas : `SourceGi` n’a pas ce champ', () => {
+    // @ts-expect-error — une source de la GI ne connaît que sa position, son rayon et sa force (LG-R6).
+    const s: SourceGi = { worldX: 0, worldY: 0, radiusTiles: 6, force: 1, engagement: 1 }
+    expect(s.force).toBe(1)
   })
 })
