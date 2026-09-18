@@ -146,6 +146,7 @@ import { coupeDeNeige, enfoncement, enfoncementDUnNoeud, epaisseurQuiSEnfonce } 
 import { epinglerLaTuile } from '../../render/tuile-epinglee'
 import { cleDeTuile, indexerParTuile, noeudVu, sousLaRoche } from './index-noeuds'
 import { armerLeCorps, NoeudCorpsGi, NOM_NOEUD, type ChampDeLImage } from '../../render/gi/noeud-corps'
+import { GI } from '../../render/gi/reglages'
 import { estRuban, expositionAuFeu, hauteurDeCrete, ligneDuPied, seuilDuDessus, suitLaRegleDesFaces, type CorpsPose } from '../../render/gi/sol-du-corps'
 // `SUN_Z` SEULEMENT, et en LECTURE : c'est à cette hauteur-là que `dynamic-lighting` pose le soleil
 // ET la lune (`:385-386`), donc c'est ce qui les distingue d'un feu dans `scene.lights`. Aucun autre
@@ -156,8 +157,8 @@ import { SUN_Z } from './dynamic-lighting'
  * LES TYPES QUI ARMENT LA PASSE DES CORPS (LG-R7) — les BARRIÈRES, et elles seules.
  *
  * Ce sont les corps que `CorpsPose` sait décrire par (famille, arête), et les seuls que
- * `GI.CORPS.HAUTEUR_PAR_FAMILLE` nomme. `encadrement` en est — la spec le dit « un mur », et
- * `FAMILLES_DRESSEES` le nomme aussi (`sol-du-corps.ts:92`) — bien qu'il n'ait pas d'`edges` : il
+ * `GI.CORPS.HAUTEUR_PAR_FAMILLE` nomme. `encadrement` en est — la spec le dit « un mur », et sa
+ * crête de `MUR_HT` le dresse (`suitLaRegleDesFaces`) — bien qu'il n'ait pas d'`edges` : il
  * prendra donc `arete = 0`, donc E entièrement, ce qui est exactement ce que la règle dit d'un corps
  * sans arête. Le `massif`, le `fire`, les sols et les toits ne sont PAS ici.
  */
@@ -1873,6 +1874,8 @@ export class SnapshotView {
    * `time.now` ne bouge pas à l'intérieur d'un pas, même quand une sonde fait avancer la boucle à la main.
    */
   private feuMemo: { now: number; feu: readonly [number, number, number, number] | null } = { now: -1, feu: null }
+  /** L'avertissement « la flamme n'est pas à la hauteur que la règle croit » ne se dit qu'une fois. */
+  private flammeAvertie = false
   private feuDeLImage(): readonly [number, number, number, number] | null {
     if (this.gi === null) return null
     const now = this.scene.time.now
@@ -1983,6 +1986,14 @@ export class SnapshotView {
         dFeu = d
         feu = l
       }
+    }
+    // ═══ LA PRÉMISSE DE LA PORTE DES FACES SE PROUVE SUR LA LUMIÈRE ÉLUE ═══
+    // `suitLaRegleDesFaces` compare la crête d'une barrière à `GI.CORPS.HAUTEUR_FLAMME_PX`, une REDITE
+    // du `z` que `dynamic-lighting` donne à un Feu. Si l'un bouge sans l'autre, la clôture changerait
+    // de camp en silence (Alexis, 2026-09-18 : « plate, sous la flamme ») — on le dit ici, en dev, une fois.
+    if (import.meta.env.DEV && feu !== null && feu.z !== GI.CORPS.HAUTEUR_FLAMME_PX && !this.flammeAvertie) {
+      this.flammeAvertie = true
+      console.warn(`[gi] la flamme du feu élu est à z = ${feu.z} px ; la règle des faces la croit à ${GI.CORPS.HAUTEUR_FLAMME_PX} (reglages.ts) — une barrière pourrait changer de camp`)
     }
     // `w = 0` dit « absente », et le shader s'en sert : pas d'astre, pas de part directionnelle —
     // ce n'est pas un zéro qui se confondrait avec « source au sol », que `facteurDeNormale` traite
@@ -2126,7 +2137,7 @@ export class SnapshotView {
       // ⚠ **ELLE VIENT DE LA STRUCTURE, JAMAIS DE LA CLÉ DE TEXTURE.** `encadrement` est indexé par
       // son MASQUE (`st-encadrement-<m>`, plus bas) : le déduire de sa clé rendrait une famille que
       // la table ne connaît pas. Il est ici parce que la spec le dit « un mur » — c'est une huisserie
-      // de `MUR_HT`, et `FAMILLES_DRESSEES` le nomme (`sol-du-corps.ts:92`).
+      // de `MUR_HT`, et cette crête-là le dresse (`suitLaRegleDesFaces` : au-dessus de la flamme).
       //
       // LA PORTE A SA FAMILLE (R23) : elle bloque l'étranger, donc elle se dessine FERMÉE —
       // l'`encadrement` du bâti généré, lui, est une huisserie percée. Pas de variante ruinée :

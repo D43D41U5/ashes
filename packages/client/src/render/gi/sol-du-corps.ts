@@ -72,26 +72,10 @@ const MUR_HT = GI.ASTRE.HAUTEUR_MUR_PX
 const DEMI_BANDE_PX = DEMI_BANDE_TUILES * TILE_PX
 
 /**
- * LES FAMILLES DONT LA FACE A UN SENS (LG-R7, O) — celles que la règle des faces nomme :
- * *« un mur (son pan est-ouest, sa face au sud) prend la part directe du feu lue à son pied
- * × max(0, cos θ) »*.
- *
- * ⚠ **LA CLÔTURE N'Y EST PAS, ET C'EST UNE QUESTION OUVERTE, PAS UN OUBLI.** LG-R16 justifie le
- * dessus par la physique — *« la flamme (10 px au-dessus de son sol) est sous toute crête (32 px) :
- * rien de direct ne monte d'un feu sur un dessus »* — et à `CLOT_HT` = 8 px cette phrase S'INVERSE :
- * la flamme passe au-dessus de la crête d'une clôture. Sa clause d'art (« dès que l'art le
- * distingue ») dit pourtant qu'elle en a un, puisque `dessinerBarriere` lui peint un `tons.top`.
- * Les deux moitiés de la règle se contredisent sur cette famille-là : c'est à Alexis de trancher,
- * avec une image. En attendant, la clôture reste PLATE — comme la composition ratifiée l'a rendue
- * (ses 35 clôtures n'étaient nommées ni par `pointAuSol` ni par `orient` dans le harnais).
- *
- * `encadrement`, lui, EST ici bien que le harnais ne l'ait pas nommé : c'est une huisserie de
- * `MUR_HT`, la spec dit « un mur », et rien ne se contredit à son sujet. L'absence d'une famille
- * dans un jetable n'est pas une décision de design.
+ * LA HAUTEUR DE LA FLAMME (`dynamic-lighting.ts:507`, redite dans `reglages.ts`) — c'est ELLE qui
+ * dit quelles barrières se dressent, et non une liste de familles (voir `suitLaRegleDesFaces`).
  */
-const FAMILLES_DRESSEES: ReadonlySet<string> = new Set([
-  'wall', 'wall-bois', 'wall-ruine', 'encadrement', 'door', 'door2a', 'door2b', 'palissade',
-])
+const HAUTEUR_FLAMME_PX = GI.CORPS.HAUTEUR_FLAMME_PX
 
 /** Un corps tel que la GI le voit : où il se tient, et ce qu'il est. */
 export interface CorpsPose {
@@ -243,13 +227,24 @@ export function estDessus(c: CorpsPose, yw: number): boolean {
  * O (la face a un sens) et LG-R16 (le dessus regarde le ciel) sont les deux faces d'une même
  * question : *ce corps a-t-il un dessus et une face, ou est-il plat ?* Les gouverner par deux
  * prédicats séparés laisserait une famille parquée à moitié — une clôture sans orientation mais
- * AVEC une coiffe, une demi-position que personne n'a choisie. Une famille que la règle ne nomme
- * pas garde E ENTIÈREMENT, comme la composition ratifiée l'a rendue.
+ * AVEC une coiffe, une demi-position que personne n'a choisie.
+ *
+ * ═══ LA PORTE SE DÉRIVE DE LA CRÊTE, PAS D'UNE LISTE (Alexis, 2026-09-18) ═══
+ * LG-R16 justifie le dessus par la physique — *« la flamme est sous toute crête : rien de direct
+ * ne monte d'un feu sur un dessus »*. À `CLOT_HT` = 8 px la phrase s'inversait : la flamme (9,6 px,
+ * `HAUTEUR_FLAMME_PX`) passe AU-DESSUS de la crête d'une clôture. Sur la planche « la clôture au
+ * pied du feu » (minuit de pleine lune, un feu à un pas du ruban d'une cour), la clôture dressée
+ * comme un mur faisait une barre sombre entre le sol éclairé et la cour — le « trou » déjà chassé
+ * une fois — quand la clôture PLATE prenait le feu comme le sol qu'elle borde. Alexis a tranché :
+ * **un corps dont la crête est sous la flamme n'a pas de dessus sous le ciel, il est plat.** La
+ * règle n'a donc plus de liste de familles : une barrière se dresse si sa crête DÉPASSE la flamme —
+ * le mur (32) et la palissade (24) oui, la clôture (8) non, et une famille neuve se range d'elle-même
+ * par sa hauteur (`hauteurDeCrete`, `MUR_HT` par défaut) au lieu de tomber en silence hors d'une liste.
  */
 export function suitLaRegleDesFaces(c: CorpsPose): boolean {
   // Un fût a une face qui tourne ; un socle a un dessus qui regarde le ciel : les deux sont régis.
   if (c.fut === true || c.socle !== undefined) return true
-  return c.arete !== 0 && c.famille !== undefined && FAMILLES_DRESSEES.has(c.famille)
+  return c.arete !== 0 && hauteurDeCrete(c) > HAUTEUR_FLAMME_PX
 }
 
 /**
@@ -274,7 +269,7 @@ function cosDuSud(c: CorpsPose, source: Point): number {
  *   un fût   → (1 + cos θ)/2     un cylindre : il tourne, il ne s'éteint pas
  *
  * Rendent `null` : un ruban (vu de champ, il garde E), une cime, une roche, un acteur, le sol — et
- * la clôture, question ouverte (voir `FAMILLES_DRESSEES`).
+ * la clôture, plate parce que la flamme la domine (voir `suitLaRegleDesFaces`).
  */
 export function expositionAuFeu(c: CorpsPose, feu: Point): number | null {
   if (!suitLaRegleDesFaces(c)) return null
@@ -348,8 +343,8 @@ export function lectureDuFeu(c: CorpsPose, yw: number, feu: Point): LectureDuFeu
  * ⚠ LES DEUX SOURCES N'ONT PAS DU TOUT LA MÊME HAUTEUR — mesuré sur la donnée qui a servi à ratifier
  * la règle (`p16-nuit-grilles.json`) : la lune est à `z = 620` px, le feu à **`z = 9,6`** px. C'est
  * ce 9,6 que LG-R16 invoque en disant « la flamme est à 10 px au-dessus de son sol ». Il tombe
- * AU-DESSUS de `CLOT_HT` (8 px) et SOUS `PALIS_HT` (24) : la contradiction de la clôture
- * (`FAMILLES_DRESSEES`) n'est plus déduite d'une phrase, elle est dans la mesure. Et un feu si bas
+ * AU-DESSUS de `CLOT_HT` (8 px) et SOUS `PALIS_HT` (24) : c'est cette hauteur-là, redite dans
+ * `reglages.ts`, qui range la clôture parmi les corps plats (`suitLaRegleDesFaces`). Et un feu si bas
  * donne un `g` qui explose à quelques tuiles — c'est voulu, c'est ce qui fait qu'une face à peine
  * inclinée prend presque tout, et c'est aussi pourquoi l'écrêtage à 1 par canal n'est pas décoratif.
  */

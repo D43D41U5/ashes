@@ -87,6 +87,18 @@ export const GI = {
       /** `CLOT_HT` (`bati-art.ts:743`) — « la clôture est BASSE : on voit par-dessus ». */
       cloture: 8,
     } as Readonly<Record<string, number>>,
+    /**
+     * LA HAUTEUR DE LA FLAMME D'UN FEU AU-DESSUS DE SON SOL, en px — le `z` du point-light d'un Feu
+     * (`dynamic-lighting.ts:507`, `TILE_PX * 0.6`), et c'est de LUI que se dérive la porte de la règle
+     * des faces (Alexis, 2026-09-18, planche « la clôture au pied du feu ») : un corps dont la crête
+     * est SOUS la flamme n'a pas de dessus sous le ciel, il est PLAT — la flamme le domine, il prend le
+     * feu comme le sol qu'il borde. Au-dessus de la clôture (8), sous la palissade (24) et le mur (32).
+     *
+     * Redite ici plutôt qu'importée (`dynamic-lighting` tire toute la scène) ; deux gardes la tiennent :
+     * `sol-du-corps.test.ts` l'égale au feu de l'oracle ratifié (`p16-nuit-grilles.json`, z = 9,6), et
+     * `snapshot-view` avertit en dev si la lumière élue comme feu n'est pas à cette hauteur-là.
+     */
+    HAUTEUR_FLAMME_PX: 9.6,
   },
 } as const
 

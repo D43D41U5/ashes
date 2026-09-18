@@ -213,18 +213,33 @@ describe('les faces ont un sens (LG-R7, O)', () => {
     expect(expositionAuFeu({ x: 400, y: LIGNE, arete: 0 }, { x: 0, y: 0 })).toBeNull()
   })
 
-  it('LA CLÔTURE RESTE À PLAT — question ouverte, pas une décision prise ici', () => {
+  it('LA CLÔTURE EST PLATE — la flamme la domine (Alexis, 2026-09-18, planche « la clôture au pied du feu »)', () => {
     expect(expositionAuFeu({ x: 400, y: LIGNE, arete: EDGE_S, famille: 'cloture' }, { x: 400, y: LIGNE + 64 }))
       .toBeNull()
   })
 
   /**
+   * LA PORTE SE DÉRIVE DE LA CRÊTE, PAS D'UNE LISTE — exhaustive sur la table des hauteurs : une
+   * barrière se dresse si et seulement si sa crête DÉPASSE la flamme. Une liste de familles aurait
+   * laissé une famille neuve tomber en silence d'un côté ou de l'autre.
+   */
+  it('UNE BARRIÈRE SE DRESSE SI ET SEULEMENT SI SA CRÊTE DÉPASSE LA FLAMME — toute la table', () => {
+    for (const [famille, hauteur] of Object.entries(GI.CORPS.HAUTEUR_PAR_FAMILLE)) {
+      const c: CorpsPose = { x: 400, y: LIGNE, arete: EDGE_S, famille }
+      expect(suitLaRegleDesFaces(c), famille).toBe(hauteur > GI.CORPS.HAUTEUR_FLAMME_PX)
+    }
+    // Et la table sépare bien les deux camps : la clôture seule sous la flamme, tout le reste dessus.
+    const plates = Object.entries(GI.CORPS.HAUTEUR_PAR_FAMILLE).filter(([, h]) => h <= GI.CORPS.HAUTEUR_FLAMME_PX).map(([f]) => f)
+    expect(plates).toEqual(['cloture'])
+  })
+
+  /**
    * LE PARCAGE EST TOTAL, PAS À MOITIÉ. O et LG-R16 sont les deux faces d'une même question
    * (« ce corps a-t-il un dessus et une face ? ») : une clôture sans orientation mais AVEC une
-   * coiffe serait une demi-position que personne n'a choisie. Une famille parquée garde E entier,
+   * coiffe serait une demi-position que personne n'a choisie. Un corps sous la flamme garde E entier,
    * comme la composition ratifiée l'a rendue — c'est ce que cette garde tient.
    */
-  it('UNE FAMILLE PARQUÉE GARDE E DES DEUX CÔTÉS — ni orientation, NI coiffe', () => {
+  it('UN CORPS SOUS LA FLAMME GARDE E DES DEUX CÔTÉS — ni orientation, NI coiffe', () => {
     const clot: CorpsPose = { x: 400, y: LIGNE, arete: EDGE_S, famille: 'cloture' }
     expect(suitLaRegleDesFaces(clot)).toBe(false)
     // Sa géométrie dirait pourtant « dessus » sur ses rangs hauts : c'est bien la porte qui tranche.
@@ -464,10 +479,10 @@ describe('la normale et sa portée g (LG-R7)', () => {
   })
 
   /**
-   * ⚠ CE QUE LA MESURE DIT DE LA CLÔTURE, sans rien trancher. LG-R16 justifie le dessus par « la
-   * flamme est à 10 px au-dessus de son sol, sous toute crête ». Le feu de l'oracle est à 9,6 px :
-   * au-dessus de `CLOT_HT` (8), sous `PALIS_HT` (24). La contradiction relevée dans
-   * `FAMILLES_DRESSEES` n'est donc pas une lecture de la prose — elle est dans la donnée.
+   * ⚠ CE QUE LA MESURE DIT DE LA CLÔTURE. LG-R16 justifiait le dessus par « la flamme est à 10 px
+   * au-dessus de son sol, sous toute crête ». Le feu de l'oracle est à 9,6 px : au-dessus de
+   * `CLOT_HT` (8), sous `PALIS_HT` (24) — et c'est cette hauteur-là, redite dans `reglages.ts`, qui
+   * tient lieu de porte à la règle des faces. La garde tient la redite égale à la donnée ratifiée.
    */
   it('LA FLAMME PASSE AU-DESSUS D’UNE CLÔTURE ET SOUS UNE PALISSADE — mesuré, pas déduit', () => {
     const clot = hauteurDeCrete({ x: 0, y: LIGNE, arete: EDGE_S, famille: 'cloture' })
@@ -475,6 +490,7 @@ describe('la normale et sa portée g (LG-R7)', () => {
     expect(FEU.z).toBeGreaterThan(clot)
     expect(FEU.z).toBeLessThan(palis)
     expect(FEU.z).toBeLessThan(MUR_HT)
+    expect(GI.CORPS.HAUTEUR_FLAMME_PX).toBe(FEU.z)
   })
 })
 
