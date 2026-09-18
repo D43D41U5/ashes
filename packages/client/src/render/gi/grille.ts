@@ -30,17 +30,27 @@ export function grilleDuMonde(monde: MondeEclaire, niveau: number, f: Fenetre): 
     albedo[k * 3 + 1] = alb[1]
     albedo[k * 3 + 2] = alb[2]
   }
-  for (let j = 0; j < o.gh; j++)
-    for (let i = 0; i < o.gw; i++) {
-      const k = j * o.gw + i
-      const sorte = o.sortes[k]
-      if (sorte === OCCLUDEUR.LIBRE) continue
-      if (sorte === OCCLUDEUR.TERRAIN) {
-        const id = terrainAEtage(monde.map, niveau, f.x0 + Math.floor(i / T), f.y0 + Math.floor(j / T))
-        poser(k, ALBEDO.TERRAIN[id] ?? ALBEDO.TERRAIN_DEFAUT)
-      } else if (sorte === OCCLUDEUR.TRONC) poser(k, ALBEDO.TRONC)
-      else if (sorte === OCCLUDEUR.NOEUD) poser(k, ALBEDO.NOEUD)
-      else poser(k, ALBEDO.BATI_DEFAUT)
+  // Tuile par tuile (C6, LG-A14) : l'albédo d'un terrain plein se lit UNE fois par tuile, pas à
+  // chacun de ses seize texels — `terrainAEtage` coûtait à chaque texel de roche.
+  const tuilesW = f.x1 - f.x0 + 1
+  const tuilesH = f.y1 - f.y0 + 1
+  for (let ty = 0; ty < tuilesH; ty++)
+    for (let tx = 0; tx < tuilesW; tx++) {
+      let albTerrain: Albedo | null = null
+      for (let sy = 0; sy < T; sy++) {
+        const rang = (ty * T + sy) * o.gw + tx * T
+        for (let sx = 0; sx < T; sx++) {
+          const k = rang + sx
+          const sorte = o.sortes[k]
+          if (sorte === OCCLUDEUR.LIBRE) continue
+          if (sorte === OCCLUDEUR.TERRAIN) {
+            if (albTerrain === null) albTerrain = ALBEDO.TERRAIN[terrainAEtage(monde.map, niveau, f.x0 + tx, f.y0 + ty)] ?? ALBEDO.TERRAIN_DEFAUT
+            poser(k, albTerrain)
+          } else if (sorte === OCCLUDEUR.TRONC) poser(k, ALBEDO.TRONC)
+          else if (sorte === OCCLUDEUR.NOEUD) poser(k, ALBEDO.NOEUD)
+          else poser(k, ALBEDO.BATI_DEFAUT)
+        }
+      }
     }
   const murs: BandeGrille[] = []
   const albedoMurs: Albedo[] = []

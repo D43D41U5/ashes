@@ -1261,7 +1261,7 @@ const SCENARIOS = {
     for (const v of s.verdicts) ok(v.juste, `${v.id} — ${v.nom} : ${v.detail}`)
     ok(s.justes === s.total, `${s.justes} / ${s.total} gardes justes`)
     const c = s.cout
-    console.log(`   coût : ${c.msParImage.toFixed(2)} ms par image (lots ${c.lots.map((x) => x.toFixed(1)).join(' / ')} ms, ${c.imagesParLot} image(s) par lot ; soumission ${c.soumissionMs.toFixed(2)} ms, cartes ${c.cartesMs.toFixed(2)} ms) — gate ${s.gate.verdict}${s.gate.ms !== null ? ` (${s.gate.ms} ms)` : ''}`)
+    console.log(`   coût : ${c.msParImage.toFixed(2)} ms par image (lots ${c.lots.map((x) => x.toFixed(1)).join(' / ')} ms, ${c.imagesParLot} image(s) par lot ; soumission ${c.soumissionMs.toFixed(2)} ms, cartes ${c.cartesMs.toFixed(2)} ms ; changement de fenêtre : grille ${c.grilleMs.toFixed(2)} ms, occludeurs ${c.occludeursMs.toFixed(2)} ms) — gate ${s.gate.verdict}${s.gate.ms !== null ? ` (${s.gate.ms} ms)` : ''}`)
     if (s.gate.verdict === 'passe' || s.gate.verdict === 'rompue') ok(s.gate.verdict === 'passe', `LG-A14 : la gate « ${s.classe} » tient`)
     else console.log('     (LG-A14 : rendu logiciel ou classe à trancher — le coût est indicatif, les gates intégré et dédié restent NON MESURÉES)')
     await page.screenshot({ path: `${OUT}/gi-banc.png`, fullPage: true })

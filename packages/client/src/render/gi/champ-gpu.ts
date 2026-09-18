@@ -626,8 +626,18 @@ export class ChampGpu {
   private oy = 0
   private grille: (GrilleGi & { ox: number; oy: number }) | null = null
   private empreinte = ''
-  private occ: Phaser.Textures.CanvasTexture | null = null
-  private alb: Phaser.Textures.CanvasTexture | null = null
+  /**
+   * Les occludeurs et leurs albédos : deux textures nées d'un `Uint8Array` (`addUint8Array`), et non
+   * d'un canvas — les octets se réécrivent en place et `TextureSource.update()` les téléverse tels quels
+   * (`texImage2D` depuis le tableau), sans passer par `putImageData` ni relire un canvas 2D. C6, LG-A14 :
+   * MESURÉ sous SwiftShader, le changement de fenêtre coûtait 25,6 ms d'occludeurs par le canvas.
+   * Phaser retourne l'upload (`flipY` vaut pour un tableau comme pour un canvas) : la lecture par
+   * `lireOcc`/`lireAlb` des shaders reste la même.
+   */
+  private occ: Phaser.Textures.Texture | null = null
+  private alb: Phaser.Textures.Texture | null = null
+  private occOctets: Uint8Array | null = null
+  private albOctets: Uint8Array | null = null
   private passes: Phaser.GameObjects.Shader[] = []
   private direct: Phaser.GameObjects.Shader | null = null
   private champ: Phaser.GameObjects.Shader | null = null
@@ -1010,6 +1020,8 @@ export class ChampGpu {
     }
     this.occ = null
     this.alb = null
+    this.occOctets = null
+    this.albOctets = null
     this.arbres = null
     this.imageArbres = null
     this.arbresVides = true
@@ -1063,6 +1075,15 @@ export class ChampGpu {
   }
   private readonly texelDeSynchro = new Uint8Array(4)
 
+  /**
+   * Oublie l'empreinte de la grille : le prochain `update` la rebâtit (grille + occludeurs) comme à
+   * un changement de fenêtre — c'est ainsi que le banc chronomètre CE coût-là (C6, LG-A14), qui ne
+   * tombe qu'une image sur les huit tuiles de route de la caméra.
+   */
+  invaliderLaGrille(): void {
+    this.empreinte = ''
+  }
+
   /** La grille de l'image courante (les occludeurs que l'oracle ET la chaîne lisent) — `null` avant la première image. */
   get grilleDuChamp(): GrilleGi | null {
     return this.grille
@@ -1077,11 +1098,9 @@ export class ChampGpu {
    * Le raster 2× des occludeurs tel que la chaîne le lit (`gi-occ`, RGBA, rangée 0 au NORD) — pour la
    * garde de la passe 0 du banc : chaque sous-texel d'une cellule pleine porte le code de cellule.
    */
-  lireOccludeurs(): { readonly w: number; readonly h: number; readonly data: Uint8ClampedArray } | null {
-    if (!this.occ) return null
-    const w = this.gw * 2
-    const h = this.gh * 2
-    return { w, h, data: this.occ.getContext().getImageData(0, 0, w, h).data }
+  lireOccludeurs(): { readonly w: number; readonly h: number; readonly data: Uint8Array } | null {
+    if (!this.occOctets) return null
+    return { w: this.gw * 2, h: this.gh * 2, data: this.occOctets }
   }
 
   /** L'oracle sur la grille et les sources de l'image courante. */
@@ -1261,8 +1280,15 @@ export class ChampGpu {
     this.gw = gw
     this.gh = gh
     const tex = this.scene.textures
-    this.occ = tex.createCanvas('gi-occ', gw * 2, gh * 2)
-    this.alb = tex.createCanvas('gi-alb', gw * 2, gh * 2)
+    this.occOctets = new Uint8Array(gw * 2 * gh * 2 * 4)
+    this.albOctets = new Uint8Array(gw * 2 * gh * 2 * 4)
+    this.occ = tex.addUint8Array('gi-occ', this.occOctets, gw * 2, gh * 2)
+    this.alb = tex.addUint8Array('gi-alb', this.albOctets, gw * 2, gh * 2)
+    // NEAREST une fois pour toutes (LG-R2) : `setFilter` téléverse la texture entière (Phaser 4.2,
+    // `setTextureFilter` → `update`), et `TextureSource.update()` garde ensuite le filtre du wrapper —
+    // le remettre à chaque écriture doublait l'upload du changement de fenêtre.
+    this.occ?.setFilter(NEAREST)
+    this.alb?.setFilter(NEAREST)
     // LA CIBLE DES CARTES (LG-R8), au grain — bâtie AVANT la passe 1, qui la lie par sa clé. Une
     // texture-canvas comme `gi-occ` : l'oracle la rastérise, `ecrireLesCartes` la téléverse.
     this.arbres = tex.createCanvas('gi-arbres', gw, gh)
@@ -1352,19 +1378,14 @@ export class ChampGpu {
 
   /** Les deux textures-canvas au double du grain, depuis la grille de la sim. */
   private ecrireOccludeurs(g: GrilleGi): void {
-    if (!this.occ || !this.alb) return
+    if (!this.occ || !this.alb || !this.occOctets || !this.albOctets) return
     const w2 = g.gw * 2
     const h2 = g.gh * 2
-    const co = this.occ.getContext()
-    const ca = this.alb.getContext()
-    const io = co.createImageData(w2, h2)
-    const ia = ca.createImageData(w2, h2)
-    const O = io.data
-    const A = ia.data
-    for (let k = 0; k < w2 * h2; k++) {
-      O[k * 4 + 3] = 255
-      A[k * 4 + 3] = 255
-    }
+    const O = this.occOctets
+    const A = this.albOctets
+    // Tout à zéro, alpha à 255 — quatre octets d'un coup (petit-boutiste : l'alpha est l'octet haut).
+    new Uint32Array(O.buffer).fill(0xff000000)
+    new Uint32Array(A.buffer).fill(0xff000000)
     for (let j = 0; j < g.gh; j++)
       for (let i = 0; i < g.gw; i++) {
         const k = j * g.gw + i
@@ -1421,12 +1442,8 @@ export class ChampGpu {
           O[q + 2] = dejaBande ? Math.max(O[q + 2]!, h8) : h8
         }
     })
-    co.putImageData(io, 0, 0)
-    ca.putImageData(ia, 0, 0)
-    this.occ.refresh()
-    this.alb.refresh()
-    // `refresh()` remet LINEAR : on reprend NEAREST à chaque écriture (LG-R2).
-    this.occ.setFilter(NEAREST)
-    this.alb.setFilter(NEAREST)
+    // Le téléversement, depuis les octets mêmes — le filtre NEAREST posé à la naissance (`batir`) tient.
+    this.occ.source[0]?.update()
+    this.alb.source[0]?.update()
   }
 }

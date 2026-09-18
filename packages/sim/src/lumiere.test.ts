@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest'
 import { FIRE, LUMIERE, NUIT, SLOTS, TEMPERATURE, TERRAIN_GRASS, TERRAIN_ROCK } from './balance'
 import { EDGE_E, EDGE_N, EDGE_O, EDGE_S } from './geometry'
 import { addItems, makeInventory } from './items'
-import { MOTIF_SOURCE, OCCLUDEUR, lumiereDesTorches, occlusionAuGrain, partVisible } from './lumiere'
+import { MOTIF_SOURCE, OCCLUDEUR, lumiereDesTorches, occlusionAuGrain, partVisible, sorteAuTexel } from './lumiere'
 import { createEmptyMap } from './map'
 import type { Npc } from './npc'
 import { clarteSurSoi, lumiereDuFeu, LUNAISON_JOURS, LUNE_PLEINE_JOUR } from './nuit'
@@ -368,6 +368,55 @@ describe('l’occlusion au grain — le raster dont l’écran dérive (LG-R11)'
     const cave = occlusionAuGrain(sim, -1, 46, 46, 52, 50)
     expect(cave.bandes).toHaveLength(1)
     expect(cave.sortes.every((s) => s === OCCLUDEUR.TERRAIN)).toBe(true)
+  })
+
+  it('O4 — le raster par tuile dit, à chaque texel, ce que la règle au texel dit (C6 : deux lectures par tuile, pas seize)', () => {
+    // Un bloc dense de 16 × 12 tuiles où chaque sorte se présente, et la tuile MIXTE (un fût ET une
+    // pièce pleine) où le centre est du tronc et le tour du bâti ; du bâti à l'étage d'en dessous, qui
+    // n'a rien à faire dans le raster du sol.
+    const sim = makeSim()
+    const X0 = 40
+    const Y0 = 40
+    const X1 = 55
+    const Y1 = 51
+    let id = 9200
+    let mixtes = 0
+    for (let ty = Y0; ty <= Y1; ty++)
+      for (let tx = X0; tx <= X1; tx++) {
+        const r = (tx * 7 + ty * 13) % 9
+        if (r === 0) sim.map.terrain[ty * sim.map.width + tx] = TERRAIN_ROCK
+        else if (r === 1) sim.nodes.push({ id: id++, type: 'tree', tx, ty, stock: 5, regrowAt: 0 })
+        else if (r === 2) sim.nodes.push({ id: id++, type: 'rock', tx, ty, stock: 5, regrowAt: 0 })
+        else if (r === 3) addStructure(sim, 'house', tx, ty, 0, 0)
+        else if (r === 4) {
+          sim.nodes.push({ id: id++, type: 'tree', tx, ty, stock: 5, regrowAt: 0 })
+          addStructure(sim, 'house', tx, ty, 0, 0)
+          mixtes++
+        } else if (r === 5) mur(sim, tx, ty, EDGE_O | EDGE_N)
+        else if (r === 6) addStructure(sim, 'house', tx, ty, 0, 0, undefined, undefined, 0, -1)
+      }
+    const o = occlusionAuGrain(sim, N, X0, Y0, X1, Y1)
+    const comptes = new Map<number, number>()
+    for (let j = 0; j < o.gh; j++)
+      for (let i = 0; i < o.gw; i++) {
+        const lu = o.sortes[j * o.gw + i]!
+        expect(lu, `texel (${o.ox + i}, ${o.oy + j})`).toBe(sorteAuTexel(sim, N, o.ox + i, o.oy + j))
+        comptes.set(lu, (comptes.get(lu) ?? 0) + 1)
+      }
+    // La prémisse : les cinq sortes sont dans le bloc, et la tuile mixte y est bien mixte.
+    for (const sorte of [OCCLUDEUR.LIBRE, OCCLUDEUR.TERRAIN, OCCLUDEUR.TRONC, OCCLUDEUR.NOEUD, OCCLUDEUR.BATI]) expect(comptes.get(sorte) ?? 0, `sorte ${sorte}`).toBeGreaterThan(0)
+    expect(mixtes).toBeGreaterThan(0)
+    const sorte = (tx: number, ty: number, sx: number, sy: number) => o.sortes[((ty - Y0) * T + sy) * o.gw + (tx - X0) * T + sx]
+    for (let ty = Y0; ty <= Y1; ty++)
+      for (let tx = X0; tx <= X1; tx++) {
+        if ((tx * 7 + ty * 13) % 9 !== 4) continue
+        expect(sorte(tx, ty, T / 2 - 1, T / 2 - 1)).toBe(OCCLUDEUR.TRONC)
+        expect(sorte(tx, ty, 0, 0)).toBe(OCCLUDEUR.BATI)
+      }
+    // Et à l'étage d'en dessous, le même accord (tout terrain sous une carte sans souterrain).
+    const cave = occlusionAuGrain(sim, -1, X0, Y0, X1, Y1)
+    for (let j = 0; j < cave.gh; j++)
+      for (let i = 0; i < cave.gw; i++) expect(cave.sortes[j * cave.gw + i]).toBe(sorteAuTexel(sim, -1, cave.ox + i, cave.oy + j))
   })
 })
 

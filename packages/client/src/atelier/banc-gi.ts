@@ -62,6 +62,13 @@ export interface CoutDuBanc {
   /** La part CPU de la dernière image : la soumission des passes, et la rastérisation des cartes. */
   readonly soumissionMs: number
   readonly cartesMs: number
+  /**
+   * LE CHANGEMENT DE FENÊTRE (C6, LG-A14) — ce qui ne tombe qu'une image sur huit tuiles de route :
+   * la grille relue dans la sim, puis les occludeurs réécrits au double du grain. Médianes de cinq
+   * reconstructions à chaud, sur la même fenêtre.
+   */
+  readonly grilleMs: number
+  readonly occludeursMs: number
 }
 
 export interface ResultatDuBanc {
@@ -92,6 +99,8 @@ export interface EtatDuBanc {
   etat: 'pret' | 'cours' | 'fini' | 'echec'
   resultat: ResultatDuBanc | null
   erreur?: string
+  /** La scène du banc, une fois le jeu né — pour une sonde qui veut chronométrer plus fin que le banc. */
+  scene?: Phaser.Scene
 }
 
 /** Les passes gardées, dans l'ordre de la chaîne — le libellé est ce que la garde ÉPROUVE. */
@@ -419,7 +428,18 @@ class BancGiScene extends Phaser.Scene {
       for (let i = 0; i < parLot; i++) image()
       lots.push(Math.max(0, (performance.now() - t - vide) / parLot))
     }
-    return { msParImage: mediane(lots), imagesParLot: parLot, lots, videMs: vide, soumissionMs: gi.temps.rendu, cartesMs: gi.temps.cartes }
+    const soumissionMs = gi.temps.rendu
+    const cartesMs = gi.temps.cartes
+    // Le changement de fenêtre : l'empreinte oubliée, `update` rebâtit la grille et les occludeurs.
+    const grilles: number[] = []
+    const occludeurs: number[] = []
+    for (let k = 0; k < 5; k++) {
+      gi.invaliderLaGrille()
+      image()
+      grilles.push(gi.temps.grille)
+      occludeurs.push(gi.temps.occludeurs)
+    }
+    return { msParImage: mediane(lots), imagesParLot: parLot, lots, videMs: vide, soumissionMs, cartesMs, grilleMs: mediane(grilles), occludeursMs: mediane(occludeurs) }
   }
 }
 
@@ -503,8 +523,8 @@ racine.innerHTML = `
 </section>
 <section aria-labelledby="bg-t-cout">
   <div class="entete"><h2 id="bg-t-cout">Le coût d’une image</h2></div>
-  <p class="note">Sept passes soumises puis un texel relu — le GPU a tout exécuté. La médiane de trois lots. Sous un rendu logiciel le nombre est indicatif : la gate ne se juge que sur une machine de sa classe.</p>
-  <table id="bg-cout"><thead><tr><th>Par image</th><th>Soumission (CPU)</th><th>Cartes (CPU)</th><th>Images par lot</th><th>Fenêtre</th></tr></thead><tbody><tr><td class="n mesure">—</td><td class="n">—</td><td class="n">—</td><td class="n">—</td><td class="sous">—</td></tr></tbody></table>
+  <p class="note">Sept passes soumises puis un texel relu — le GPU a tout exécuté. La médiane de trois lots. Sous un rendu logiciel le nombre est indicatif : la gate ne se juge que sur une machine de sa classe. Les deux dernières colonnes sont le changement de fenêtre — la grille relue dans la sim et les occludeurs réécrits — qui ne tombe qu'une image sur huit tuiles de route.</p>
+  <table id="bg-cout"><thead><tr><th>Par image</th><th>Soumission (CPU)</th><th>Cartes (CPU)</th><th>Images par lot</th><th>Fenêtre</th><th>Grille (CPU)</th><th>Occludeurs (CPU)</th></tr></thead><tbody><tr><td class="n mesure">—</td><td class="n">—</td><td class="n">—</td><td class="n">—</td><td class="sous">—</td><td class="n">—</td><td class="n">—</td></tr></tbody></table>
   <p id="bg-gate" class="gate" data-ton="nm">Gate : non mesurée.</p>
 </section>
 <section aria-labelledby="bg-t-banc">
@@ -554,6 +574,8 @@ function rendreCout(c: CoutDuBanc | null, fenetre: { gw: number; gh: number } | 
     <td class="n">${ms(c?.cartesMs)}</td>
     <td class="n">${c ? c.imagesParLot : '—'}</td>
     <td class="sous">${fenetre ? `${fenetre.gw} × ${fenetre.gh} texels` : '—'}</td>
+    <td class="n">${ms(c?.grilleMs)}</td>
+    <td class="n">${ms(c?.occludeursMs)}</td>
   </tr>`
 }
 
@@ -700,6 +722,8 @@ bouton.addEventListener('click', () => {
   try {
     // La config du jeu (`main.ts`) : antialias ET roundPixels — la chaîne pose NEAREST sur ses cibles
     // sous cet antialias-là, et c'est ce que la garde E éprouve. La taille est celle de la vue jouée.
+    const scene = new BancGiScene(rapport)
+    expose.scene = scene
     jeu = new Phaser.Game({
       type: Phaser.WEBGL,
       width: SCENE.VUE_W,
@@ -712,7 +736,7 @@ bouton.addEventListener('click', () => {
       audio: { noAudio: true },
       render: { maxLights: 40 },
       scale: { mode: Phaser.Scale.NONE },
-      scene: [new BancGiScene(rapport)],
+      scene: [scene],
     })
   } catch (e) {
     rapport.echec(e)

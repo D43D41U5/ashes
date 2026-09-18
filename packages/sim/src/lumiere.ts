@@ -174,23 +174,33 @@ export type SorteOccludeur = (typeof OCCLUDEUR)[keyof typeof OCCLUDEUR]
 interface Contexte {
   readonly monde: MondeEclaire
   readonly niveau: number
-  /** Les pièces PLEINES de la fenêtre (une tuile de marge autour des deux points). */
-  readonly pleins: readonly Structure[]
+  /**
+   * Les tuiles des pièces PLEINES de la fenêtre (une tuile de marge autour des deux points), par
+   * clé `ty × largeur + tx`. Un ensemble, pas une liste : le raster d'une fenêtre demande la sorte de
+   * chaque texel, et une liste balayée à chaque texel coûtait 80 ms sur la vue du jeu (C6, LG-A14 —
+   * MESURÉ dans Node, 418 pleins × 106 496 texels) ; l'ensemble ramène la question à une lecture.
+   */
+  readonly pleins: ReadonlySet<number>
   /** Les BANDES de la fenêtre, en texels. */
   readonly bandes: readonly Bande[]
+}
+
+/** La clé d'une tuile dans `Contexte.pleins` — des entiers, `+ ×` seulement (invariant §2). */
+function cleDeTuile(map: WorldMap, tx: number, ty: number): number {
+  return ty * map.width + tx
 }
 
 /** Le contexte d'une FENÊTRE de tuiles [x0, x1] × [y0, y1] (bornes incluses), à un étage. */
 function contexteFenetre(monde: MondeEclaire, niveau: number, x0: number, y0: number, x1: number, y1: number): Contexte {
   const T = LUMIERE.TEXELS_PAR_TUILE
-  const pleins: Structure[] = []
+  const pleins = new Set<number>()
   const bandes: Bande[] = []
   for (const s of monde.structures) {
     if (s.tx < x0 || s.tx > x1 || s.ty < y0 || s.ty > y1) continue
     if (!BATI_OPAQUE.has(s.type) || !auMemeEtage(s, niveau)) continue
     const e = s.edges ?? 0
     if (e === 0) {
-      pleins.push(s)
+      pleins.add(cleDeTuile(monde.map, s.tx, s.ty))
       continue
     }
     // La bande : à cheval sur sa ligne (± ½ texel), débordant d'un demi-texel à chaque bout.
@@ -238,8 +248,20 @@ function sorteDuTexel(ctx: Contexte, kx: number, ky: number): SorteOccludeur {
       if (sx >= lo && sx <= hi && sy >= lo && sy <= hi) return OCCLUDEUR.TRONC
     }
   }
-  for (const s of ctx.pleins) if (s.tx === tx && s.ty === ty) return OCCLUDEUR.BATI
+  if (ctx.pleins.has(cleDeTuile(map, tx, ty))) return OCCLUDEUR.BATI
   return OCCLUDEUR.LIBRE
+}
+
+/**
+ * LA SORTE D'UN TEXEL, seul — la règle de `sorteDuTexel` ouverte aux oracles et aux gardes (O4 relit
+ * chaque texel d'un raster contre elle). Bâtit le contexte de sa seule tuile : pour une fenêtre,
+ * `occlusionAuGrain`.
+ */
+export function sorteAuTexel(monde: MondeEclaire, niveau: number, kx: number, ky: number): SorteOccludeur {
+  const T = LUMIERE.TEXELS_PAR_TUILE
+  const tx = Math.floor(kx / T)
+  const ty = Math.floor(ky / T)
+  return sorteDuTexel(contexteFenetre(monde, niveau, tx, ty, tx, ty), kx, ky)
 }
 
 /** Le texel (kx, ky) est-il PLEIN, à l'étage du contexte ? */
@@ -277,7 +299,27 @@ export function occlusionAuGrain(monde: MondeEclaire, niveau: number, x0: number
   const ox = x0 * T
   const oy = y0 * T
   const sortes = new Uint8Array(gw * gh)
-  for (let j = 0; j < gh; j++) for (let i = 0; i < gw; i++) sortes[j * gw + i] = sorteDuTexel(ctx, ox + i, oy + j)
+  // PAR TUILE, pas par texel (C6, LG-A14) : la sorte ne dépend de la position DANS la tuile que
+  // pour le tronc, et seulement aux texels du centre. Deux lectures de la règle par tuile suffisent
+  // donc : le coin (jamais un centre, `lo` ≥ 1 pour T ≥ 4) donne le fond de la tuile, et le centre
+  // dit si un tronc s'y dresse — le terrain plein et le nœud plein passant avant le tronc dans la
+  // règle, un fond TERRAIN ou NOEUD vaut aussi au centre. MESURÉ dans Node, la fenêtre du banc
+  // (416 × 256 texels, 418 pleins) : 103 ms texel par texel avec la liste balayée → voir C6.
+  const lo = T / 2 - 1
+  const hi = T / 2
+  for (let ty = y0; ty <= y1; ty++)
+    for (let tx = x0; tx <= x1; tx++) {
+      const X = tx * T
+      const Y = ty * T
+      const fond = sorteDuTexel(ctx, X, Y)
+      const tronc = fond === OCCLUDEUR.TERRAIN || fond === OCCLUDEUR.NOEUD ? false : sorteDuTexel(ctx, X + lo, Y + lo) === OCCLUDEUR.TRONC
+      const base = (Y - oy) * gw + (X - ox)
+      for (let sy = 0; sy < T; sy++) {
+        const rang = base + sy * gw
+        for (let sx = 0; sx < T; sx++) sortes[rang + sx] = fond
+        if (tronc && sy >= lo && sy <= hi) for (let sx = lo; sx <= hi; sx++) sortes[rang + sx] = OCCLUDEUR.TRONC
+      }
+    }
   return { ox, oy, gw, gh, sortes, bandes: ctx.bandes }
 }
 
