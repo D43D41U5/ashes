@@ -366,6 +366,28 @@ async function fonderPres(page, agir, slotDe, p0, sites = SITES_FONDATION) {
  *  Node nu, il n'importe pas le paquet client). */
 const NOMS_FEU = ['étalon (le rendu d’avant)', 'la respiration', 'le cœur blanc', 'les escarbilles', 'le liseré chaud', 'le halo de chaleur', 'TOUT (le rendu livré)']
 
+/** Les outils des scénarios GI (`gi`, `gi-temoin`) : la page dort, et chaque pas est un `game.step`. */
+const outilsGi = (page) => {
+  const ev = (fn, arg) => page.evaluate(fn, arg)
+  /** `n` pas de boucle, page endormie — la GI se rend dans `update`, pas dans un timer. */
+  const pas = (n, dt = 50) => ev(({ n, dt }) => {
+    const g = window.__BRAISES__.scene.game
+    if (window.__T__ === undefined) window.__T__ = g.loop.time
+    for (let i = 0; i < n; i++) { window.__T__ += dt; g.step(window.__T__, dt) }
+    return window.__T__
+  }, { n, dt })
+  const agir = async (action, attente = 900, k = 2) => {
+    await ev((a) => { window.__BRAISES__.scene.sendAction(a) }, action)
+    await pas(1)
+    await page.waitForTimeout(attente)
+    await pas(k)
+  }
+  const ok = (c, m) => (c ? console.log(`   ✓ ${m}`) : console.error(`!! ${m}`))
+  const pc = (x) => `${(x * 100).toFixed(2)} %`
+  const f2 = (x) => x.toFixed(2)
+  return { ev, pas, agir, ok, pc, f2 }
+}
+
 const SCENARIOS = {
   /**
    * ═══ LA GI DU CLIENT — LES DEUX GARDES DURABLES (spec `lumiere-globale.md`, LG-A2 et LG-A8) ═══
@@ -390,26 +412,15 @@ const SCENARIOS = {
    * sud-est du sol (`(t + 0.5)/taille` en NEAREST sur un `t` fractionnaire = `round(t)`) — au pied
    * d'une face dressée, le fragment tombait dans la bande d'ombre du mur : 126 niveaux au pire,
    * 2,25 en moyenne, 9,7 % au-delà de 3. `floor` d'abord, et tout rentre — `corps-gpu.ts`.
+   *
+   * LG-A20 (l'ombre a toujours une cause) tourne dans le même run : la torche portée puis le feu
+   * posé, balayés depuis leur source sur les huit directions du grain contre la grille RÉELLE
+   * (bandes et cellules pleines, au quart de texel). Son TÉMOIN en terrain nu — et LG-A5 — a son
+   * scénario à lui, `gi-temoin` : chacun tient sous dix minutes en SwiftShader.
    */
   async gi(page) {
     if (!dev) { console.error('!! gi exige --dev (debug_*, ChampGpu.verifier, garderLesCorps)'); return }
-    const ev = (fn, arg) => page.evaluate(fn, arg)
-    /** `n` pas de boucle, page endormie — la GI se rend dans `update`, pas dans un timer. */
-    const pas = (n, dt = 50) => ev(({ n, dt }) => {
-      const g = window.__BRAISES__.scene.game
-      if (window.__T__ === undefined) window.__T__ = g.loop.time
-      for (let i = 0; i < n; i++) { window.__T__ += dt; g.step(window.__T__, dt) }
-      return window.__T__
-    }, { n, dt })
-    const agir = async (action, attente = 900, k = 2) => {
-      await ev((a) => { window.__BRAISES__.scene.sendAction(a) }, action)
-      await pas(1)
-      await page.waitForTimeout(attente)
-      await pas(k)
-    }
-    const ok = (c, m) => (c ? console.log(`   ✓ ${m}`) : console.error(`!! ${m}`))
-    const pc = (x) => `${(x * 100).toFixed(2)} %`
-    const f2 = (x) => x.toFixed(2)
+    const { ev, pas, agir, ok, pc, f2 } = outilsGi(page)
 
     await ev(() => { window.__BRAISES__.scene.game.loop.sleep() })
     await agir({ type: 'debug_god', on: true }, 300, 1)
@@ -429,6 +440,9 @@ const SCENARIOS = {
       const zones = sc.map?.zones ?? []
       const dansUneZone = (tx, ty) => zones.some((z) => tx + 0.5 >= z.x && tx + 0.5 < z.x + z.w && ty + 0.5 >= z.y && ty + 0.5 < z.y + z.h)
       const p = sc.registry.get('playerPos')
+      // Un feu de village à moins de dix tuiles serait une SECONDE source dans le champ, et LG-A20
+      // balaie la lumière depuis UNE source : on l'évite fortement, sans l'interdire (on le dit).
+      const feux = sc.view.structures.filter((q) => q.type === 'fire')
       let best = null
       for (const m of murs) {
         const proches = murs.filter((q) => Math.abs(q.tx - m.tx) <= 6 && Math.abs(q.ty - m.ty) <= 6)
@@ -445,16 +459,99 @@ const SCENARIOS = {
         }
         if (bord === null) continue
         const dJoueur = Math.hypot(m.tx - p.x, m.ty - p.y)
-        const score = proches.length * 10 - bord.d * 300 - dJoueur * 0.01
-        if (best === null || score > best.score) best = { tx: m.tx, ty: m.ty, edges: m.edges, proches: proches.length, rubans, dressees, bord, dJoueur: Math.round(dJoueur), score }
+        let dFeu = 99
+        for (const f of feux) dFeu = Math.min(dFeu, Math.hypot(f.tx - m.tx, f.ty - m.ty))
+        const score = proches.length * 10 - bord.d * 300 - (dFeu <= 10 ? 5000 : 0) - dJoueur * 0.01
+        if (best === null || score > best.score) best = { tx: m.tx, ty: m.ty, edges: m.edges, proches: proches.length, rubans, dressees, bord, dJoueur: Math.round(dJoueur), dFeu: +dFeu.toFixed(1), score }
       }
       return best
     })
-    ok(grappe !== null, grappe ? `grappe de murs en (${grappe.tx}, ${grappe.ty}) : ${grappe.proches} barrières à 6 tuiles (${grappe.rubans} rubans, ${grappe.dressees} dressées), bord hors lieu à ${grappe.bord.d} tuiles, à ${grappe.dJoueur} tuiles du joueur` : 'aucune grappe de murs avec un ruban, une face dressée et une tuile hors lieu à 8 tuiles — la scène de la garde est introuvable')
+    ok(grappe !== null, grappe ? `grappe de murs en (${grappe.tx}, ${grappe.ty}) : ${grappe.proches} barrières à 6 tuiles (${grappe.rubans} rubans, ${grappe.dressees} dressées), bord hors lieu à ${grappe.bord.d} tuiles, feu de village le plus proche à ${grappe.dFeu} tuiles, à ${grappe.dJoueur} tuiles du joueur` : 'aucune grappe de murs avec un ruban, une face dressée et une tuile hors lieu à 8 tuiles — la scène de la garde est introuvable')
     if (grappe === null) return
     // LE POSTE : une tuile plus loin du mur que la tuile de bord — le feu ne se pose pas sous ses pieds.
     const POSTE = { x: grappe.bord.tx + Math.sign(grappe.bord.tx - grappe.tx) + 0.5, y: grappe.bord.ty + Math.sign(grappe.bord.ty - grappe.ty) + 0.5 }
     await agir({ type: 'debug_teleport', x: POSTE.x, y: POSTE.y }, 1500, 3)
+
+    // ── CRAN 7 : la chaîne ENTIÈRE (champ, lumière, face directe, drapeau, et la passe des corps). ──
+    await ev(() => { window.__BRAISES__.scene.registry.set('debugGi', 7) })
+    await pas(3)
+
+    // ═══ LG-A20 — L'OMBRE A TOUJOURS UNE CAUSE : LA LUMIÈRE, DIRECTION PAR DIRECTION ═══
+    // Depuis la source, sur les huit directions du grain : si la lumière tombe à zéro à `m`, il y a un
+    // occludeur à `o ≤ m` sur ce rayon ; sinon `m` vaut la portée à ±2 texels. L'occludeur se cherche
+    // dans la grille RÉELLE — cellules pleines ET bandes — au QUART de texel (une bande fait un texel
+    // d'épaisseur : un pas entier la traverse sans la voir). La source balayée est la plus proche du
+    // point visé (le porteur pour la torche, la tuile du feu pour le feu).
+    const balayer = (cible) => ev(({ cible }) => {
+      const sc = window.__BRAISES__.scene
+      const gi = sc.gi
+      if (!gi) return { erreur: 'pas de champ' }
+      const g = gi.grille
+      const d = gi.lire('direct')
+      const ems = gi.emetteurs ?? []
+      if (!g || !d.length || ems.length === 0) return { erreur: `grille, cible directe ou source absentes (${ems.length} source(s))`, sources: ems.length }
+      const c = gi.cadre
+      const tx = (cible.x - c.x) / c.pxParTexel
+      const ty = (cible.y - c.y) / c.pxParTexel
+      let e = ems[0], dd = Infinity
+      for (const q of ems) { const k = (q.x - tx) ** 2 + (q.y - ty) ** 2; if (k < dd) { dd = k; e = q } }
+      const gw = g.gw, gh = g.gh, sx = Math.round(e.x), sy = Math.round(e.y)
+      const bandes = g.murs ?? []
+      const bloque = (x, y) => {
+        if (x < 0 || y < 0 || x >= gw || y >= gh) return false
+        if (g.occ[Math.floor(y) * gw + Math.floor(x)] === 1) return true
+        for (const b of bandes) if (x >= b.x0 && x <= b.x1 && y >= b.y0 && y <= b.y1) return true
+        return false
+      }
+      const PORTEE = Math.ceil(e.rayon) + 4
+      const U = [[1, 0, 'E'], [0.7071, 0.7071, 'SE'], [0, 1, 'S'], [-0.7071, 0.7071, 'SO'], [-1, 0, 'O'], [-0.7071, -0.7071, 'NO'], [0, -1, 'N'], [0.7071, -0.7071, 'NE']]
+      const dirs = U.map(([ux, uy, nom]) => {
+        let mort = -1, obst = -1, bord = false
+        for (let q = 4; q <= PORTEE * 4; q++) {
+          const k = q / 4, x = sx + ux * k, y = sy + uy * k
+          if (x < 0 || y < 0 || x >= gw || y >= gh) { bord = true; break }
+          if (obst < 0 && bloque(x, y)) obst = +k.toFixed(2)
+          if (mort < 0 && Number.isInteger(k)) {
+            const i = Math.round(y) * gw + Math.round(x)
+            if (d[i * 4] + d[i * 4 + 1] + d[i * 4 + 2] <= 0) mort = k
+          }
+        }
+        return { nom, mort, obst, bord }
+      })
+      let occPleines = 0
+      for (let k = 0; k < gw * gh; k++) if (g.occ[k] === 1) occPleines++
+      return { sources: ems.length, source: { x: +e.x.toFixed(1), y: +e.y.toFixed(1), rayon: +e.rayon.toFixed(1), dTexels: +Math.sqrt(dd).toFixed(1) }, bandes: bandes.length, occPleines, dirs }
+    }, { cible })
+    const jugerLeBalayage = (nomSource, b) => {
+      if (!b || b.erreur) { ok(false, `LG-A20 ${nomSource} : ${b?.erreur ?? 'balayage nul'}`); return }
+      console.log(`     ${nomSource} en (${b.source.x}, ${b.source.y}) texels, portée ${b.source.rayon}, à ${b.source.dTexels} texel(s) du point visé ; ${b.sources} source(s) dans le champ, ${b.bandes} bande(s), ${b.occPleines} cellule(s) pleine(s)`)
+      ok(b.sources === 1, `prémisse LG-A20 ${nomSource} : une seule source dans le champ (${b.sources})`)
+      let degagees = 0, murees = 0, fautes = 0
+      for (const s of b.dirs) {
+        const r = b.source.rayon
+        let v
+        if (s.mort < 0) v = s.bord ? 'sort du champ, sans verdict' : `!! porte au-delà de ${r} + 4 texels`
+        else if (s.obst >= 0 && s.obst <= s.mort) { v = `ombre légitime (occludeur à ${s.obst})`; murees++ }
+        else if (s.obst < 0 && Math.abs(s.mort - r) <= 2) { v = 'pleine portée'; degagees++ }
+        else if (s.obst < 0) v = `!! meurt à ${s.mort} sans occludeur (portée ${r})`
+        else v = `!! meurt ${(s.obst - s.mort).toFixed(2)} texel(s) AVANT l'occludeur (${s.obst})`
+        if (v.startsWith('!!')) fautes++
+        console.log(`       ${s.nom.padEnd(2)} lumière meurt à ${String(s.mort).padStart(3)}, premier occludeur à ${String(s.obst).padStart(6)} — ${v}`)
+      }
+      ok(fautes === 0, `LG-A20 ${nomSource} : chaque extinction a sa cause, et rien ne meurt avant (${fautes} direction(s) en faute)`)
+      ok(degagees >= 1 && murees >= 1, `prémisse LG-A20 ${nomSource} : les deux cas dans la scène (${degagees} dégagée(s) à pleine portée, ${murees} murée(s))`)
+    }
+
+    // ── LA TORCHE PORTÉE, D'ABORD ET SEULE : donnée ici, elle est en main — et elle n'éclaire QUE
+    //    tenue (`itemTenu() === 'torche_vive'`). Le don du campfire, plus bas, la remplace en main et
+    //    l'éteint : le feu sera balayé seul à son tour. La nuit, pour que la torche porte à sa force. ──
+    await agir({ type: 'debug_set_hour', hour: 23 }, 1500, 2)
+    await agir({ type: 'debug_meteo', meteo: null }, 400, 1)
+    await agir({ type: 'debug_grant', item: 'torche_vive' }, 700, 2)
+    await pas(20)
+    const posTorche = await ev(() => { const p = window.__BRAISES__.scene.registry.get('playerPos'); return { x: p.x * 16, y: p.y * 16 } })
+    console.log('   — LG-A20, la torche portée, au pied de la grappe (23 h)')
+    jugerLeBalayage('la torche', await balayer(posTorche))
 
     // ── LE FEU — élu par le prédicat de la PRODUCTION (`placeable`), jamais par une copie de ses
     //    règles (mémoire `sonde-qui-ne-peut-pas-echouer`) ; au plus près du mur. Sans feu, la moitié
@@ -494,10 +591,6 @@ const SCENARIOS = {
     // de façade (`render/pans.ts` : un pan tombe à deux tuiles du joueur — mémoire
     // `sujet-rendu-sous-une-autre-cle`). La caméra suit le joueur : la grappe et le feu sont au cadre.
     await agir({ type: 'debug_teleport', x: grappe.tx + 0.5, y: grappe.ty + 4.5 }, 1500, 3)
-
-    // ── CRAN 7 : la chaîne ENTIÈRE (champ, lumière, face directe, drapeau, et la passe des corps). ──
-    await ev(() => { window.__BRAISES__.scene.registry.set('debugGi', 7) })
-    await pas(3)
 
     const heures = [14, 23]
     for (const heure of heures) {
@@ -550,7 +643,216 @@ const SCENARIOS = {
         ok(k.moyenne <= 0.5 && k.partSup3 < 0.01, `LG-A8 : moyenne ${f2(k.moyenne)} ≤ 0,5, >3 niveaux ${pc(k.partSup3)} < 1 % (MESURÉ 0,00 / 0,01 et 0 %, max 1)`)
         if (heure === 23 && feu) ok(k.branches.nul > 0 && k.branches.auPied > 0 && k.branches.sousLePixel > 0, `prémisse LG-A8 à 23 h : les trois branches du feu sont vues (${k.branches.nul} / ${k.branches.auPied} / ${k.branches.sousLePixel})`)
       }
+      // LG-A20 — le feu POSÉ, balayé seul (la torche n'est plus en main) : la même loi que la torche.
+      if (heure === 23 && feu) {
+        console.log('   — LG-A20, le feu posé, au pied de la grappe (23 h)')
+        jugerLeBalayage('le feu', await balayer({ x: (feu.tx + 0.5) * 16, y: (feu.ty + 0.5) * 16 }))
+      }
     }
+
+    await ev(() => { window.__BRAISES__.scene.game.loop.wake() })
+  },
+
+  /**
+   * ═══ LA GI DU CLIENT — LE TÉMOIN EN TERRAIN NU (LG-A20, premier point, et LG-A5) ═══
+   *
+   * Sans occludeur, la GI ne change rien à l'image d'aujourd'hui : sur une scène sans aucune bande
+   * ni cellule pleine À PORTÉE DES ANNEAUX MESURÉS, l'écart entre le rendu d'aujourd'hui (`debugGi`
+   * 0) et le rendu composé (5) vaut au plus 2 niveaux en moyenne à tout anneau, du texel de la
+   * source jusqu'au rayon nu. Sans ce témoin, rien de ce que le scénario `gi` lit au pied des murs
+   * n'est imputable à ce qui s'y dresse. Et LG-A5 y prend sa forme non tautologique : au-delà de la
+   * portée du feu (26 texels, 6 tuiles et demie), rien ne bouge — la même image, au niveau près.
+   *
+   * LA SCÈNE SE TROUVE EN DEUX TEMPS. La vue ne connaît qu'un TAMIS (le sol dur, les nœuds et le
+   * bâti chargés) : il désigne des FENÊTRES candidates, en cercles depuis la naissance. Sur place,
+   * c'est la grille RÉELLE de la GI (`gi.grille` : cellules pleines ET bandes, troncs compris) qui
+   * ÉLIT la tuile au plus grand dégagement — la distance au plus proche occludeur, bornée par le
+   * bord de la fenêtre (au-delà, on ne sait rien) — et le rayon nu R en découle, dix tuiles au plus
+   * (les dix anneaux). Le feu s'y pose par le prédicat de la production (`placeable`), depuis la
+   * tuile voisine. Un premier montage à élu unique (2026-09-18) lisait 332 cellules pleines à neuf
+   * tuiles d'un carré que le tamis disait vide : des troncs, que la vue ne liste pas si loin du
+   * joueur (`sonde-qui-ne-peut-pas-echouer` : la prémisse se lit dans ce que la chaîne lit).
+   *
+   * Les deux moitiés se prennent au MÊME instant de rendu (`step(T, 0)`) : le foyer respire, et un
+   * pas entre les deux mesurerait le souffle de la flamme et non le champ. Scénario À PART de `gi` :
+   * chacun tient sous dix minutes en SwiftShader, et une sonde longue se fait tuer en tâche de fond.
+   */
+  async 'gi-temoin'(page) {
+    if (!dev) { console.error('!! gi-temoin exige --dev (debug_*, le champ GI)'); return }
+    const { ev, pas, agir, ok } = outilsGi(page)
+    await ev(() => { window.__BRAISES__.scene.game.loop.sleep() })
+    await agir({ type: 'debug_god', on: true }, 300, 1)
+    await agir({ type: 'debug_meteo', meteo: null }, 600, 1)
+    await agir({ type: 'debug_set_hour', hour: 23 }, 1500, 3)
+
+    // ── LE TAMIS : des fenêtres candidates, par ce que la vue connaît ──
+    const fenetres = await ev(() => {
+      const sc = window.__BRAISES__.scene, m = sc.map, W = m.width, H = m.height
+      const p = sc.registry.get('playerPos')
+      const st = sc.view.structures ?? []
+      const feux = st.filter((s) => s.type === 'fire')
+      const DUR = new Set([0, 4, 5, 6, 7, 15, 23, 29])
+      const noeuds = new Set(sc.view.nodes.map((n) => n.ty * W + n.tx))
+      const bati = new Set(st.map((s) => s.ty * W + s.tx))
+      const nu = (cx, cy, R) => {
+        for (let dy = -R; dy <= R; dy++) {
+          for (let dx = -R; dx <= R; dx++) {
+            const tx = cx + dx, ty = cy + dy
+            if (tx < 1 || ty < 1 || tx >= W - 1 || ty >= H - 1) return false
+            const k = ty * W + tx
+            if (DUR.has(m.terrain[k]) || bati.has(k) || noeuds.has(k)) return false
+          }
+        }
+        return !feux.some((f) => (f.tx - cx) ** 2 + (f.ty - cy) ** 2 <= 100)
+      }
+      // Des fenêtres, pas un élu : à 40 tuiles l'une de l'autre (une fenêtre fait 56 × 40 tuiles,
+      // deux fenêtres proches liraient la même grille), les plus nues au tamis d'abord.
+      const out = []
+      for (const [R, n] of [[9, 4], [7, 3], [5, 2]]) {
+        let pris = 0
+        for (let r = 0; r <= 200 && pris < n; r++) {
+          for (let dy = -r; dy <= r && pris < n; dy++) {
+            for (let dx = -r; dx <= r && pris < n; dx++) {
+              if (Math.max(Math.abs(dx), Math.abs(dy)) !== r) continue
+              const cx = Math.floor(p.x) + dx, cy = Math.floor(p.y) + dy
+              if (out.some((o) => Math.hypot(o.tx - cx, o.ty - cy) < 40)) continue
+              if (nu(cx, cy, R)) { out.push({ tx: cx, ty: cy, r, R }); pris++ }
+            }
+          }
+        }
+      }
+      return out
+    })
+    ok(fenetres.length > 0, fenetres.length > 0 ? `${fenetres.length} fenêtre(s) candidate(s) au tamis de la vue (sans bâti, nœud ni sol dur, aucun feu à 10 tuiles)` : 'aucun carré nu de rayon 5 à 150 tuiles de la naissance — le témoin est introuvable')
+
+    // ── LA GRILLE ÉLIT : sur place, les tuiles au plus grand dégagement dans la grille RÉELLE ──
+    const elire = () => ev(() => {
+      const sc = window.__BRAISES__.scene, gi = sc.gi, g = gi?.grille
+      if (!g) return null
+      const c = gi.cadre, pas = c.pxParTexel, m = sc.map, W = m.width
+      const DUR = new Set([0, 4, 5, 6, 7, 15, 23, 29])
+      const pleins = []
+      for (let k = 0; k < g.gw * g.gh; k++) if (g.occ[k] === 1) pleins.push([(k % g.gw) + 0.5, Math.floor(k / g.gw) + 0.5])
+      const murs = g.murs ?? []
+      const sources = (gi.emetteurs ?? []).map((e) => [e.x, e.y])
+      const p = sc.registry.get('playerPos')
+      const tx0 = Math.ceil(c.x / 16), ty0 = Math.ceil(c.y / 16)
+      const tx1 = Math.floor((c.x + g.gw * pas) / 16) - 1, ty1 = Math.floor((c.y + g.gh * pas) / 16) - 1
+      const MIN = 20 // cinq tuiles : en deçà, la tuile ne vaut pas le voyage
+      const out = []
+      for (let ty = ty0; ty <= ty1; ty++) {
+        for (let tx = tx0; tx <= tx1; tx++) {
+          if (DUR.has(m.terrain[ty * W + tx])) continue
+          const sx = ((tx + 0.5) * 16 - c.x) / pas, sy = ((ty + 0.5) * 16 - c.y) / pas
+          // Le bord de la fenêtre borne le dégagement : au-delà, la grille ne sait rien.
+          let d = Math.min(sx, sy, g.gw - sx, g.gh - sy)
+          if (d < MIN) continue
+          for (const [x, y] of pleins) { const e = Math.hypot(x - sx, y - sy); if (e < d) { d = e; if (d < MIN) break } }
+          if (d < MIN) continue
+          for (const b of murs) { const e = Math.hypot(Math.max(b.x0 - sx, 0, sx - b.x1), Math.max(b.y0 - sy, 0, sy - b.y1)); if (e < d) d = e }
+          if (d < MIN) continue
+          // Une autre source à quinze tuiles entrerait dans le champ du témoin.
+          if (sources.some(([x, y]) => Math.hypot(x - sx, y - sy) < 60)) continue
+          out.push({ tx, ty, R: Math.min(10, Math.floor(d / 4)), dJoueur: +Math.hypot(tx + 0.5 - p.x, ty + 0.5 - p.y).toFixed(1) })
+        }
+      }
+      out.sort((a, b) => b.R - a.R || a.dJoueur - b.dJoueur)
+      return { pleins: pleins.length, bandes: murs.length, sources: sources.length, elus: out.slice(0, 6) }
+    })
+    for (let i = 0; i < 6; i++) await agir({ type: 'debug_grant', item: 'wood' }, 120, 1)
+    await agir({ type: 'debug_grant', item: 'campfire' }, 400, 1)
+    // Toutes les fenêtres, jusqu'à en tenir une qui dégage neuf tuiles (les anneaux 7 et 8 de LG-A5) ;
+    // puis le plus grand dégagement de toutes, le plus près de la naissance à dégagement égal.
+    const elus = []
+    for (const f of fenetres) {
+      await agir({ type: 'debug_teleport', x: f.tx + 0.5, y: f.ty + 0.5 }, 1200, 2)
+      await ev(() => { window.__BRAISES__.scene.registry.set('debugGi', 5) })
+      await pas(8)
+      const e = await elire()
+      const tete = e?.elus[0]
+      console.log(`     fenêtre (${f.tx}, ${f.ty}), à ${f.r} tuiles de la naissance : ${e ? `${e.pleins} cellule(s) pleine(s), ${e.bandes} bande(s), ${e.sources} source(s) — ${tete ? `au mieux ${tete.R} tuiles de dégagement en (${tete.tx}, ${tete.ty})` : 'aucune tuile dégagée de 5 tuiles'}` : 'pas de champ'}`)
+      if (!e) continue
+      for (const t of e.elus) elus.push({ ...t, r: f.r })
+      if (tete !== undefined && tete.R >= 9) break
+    }
+    elus.sort((a, b) => b.R - a.R || a.r - b.r || a.dJoueur - b.dJoueur)
+    let coin = null
+    for (const t of elus.slice(0, 12)) {
+      // LE FEU, par le prédicat de la production, depuis la tuile voisine — jamais sous ses pieds.
+      await agir({ type: 'debug_teleport', x: t.tx + 1.5, y: t.ty + 0.5 }, 900, 2)
+      const posable = await ev(({ tx, ty }) => { try { return window.__BRAISES__.scene.placeable(tx, ty, 'fire', 0) === true } catch { return false } }, t)
+      if (!posable) { console.log(`     (${t.tx}, ${t.ty}) : dégagée de ${t.R} tuiles, mais le feu ne s'y pose pas`); continue }
+      await agir({ type: 'debug_meteo', meteo: null }, 300, 1)
+      await agir({ type: 'place_campfire', tx: t.tx, ty: t.ty }, 900, 2)
+      const feu = await ev(({ tx, ty }) => window.__BRAISES__.scene.view.structures.some((q) => q.type === 'fire' && q.tx === tx && q.ty === ty), t)
+      if (feu) { coin = t; break }
+      console.log(`     (${t.tx}, ${t.ty}) : posable, mais aucun feu n'y brûle après la pose`)
+    }
+    ok(coin !== null, coin ? `un feu brûle au coin nu (${coin.tx}, ${coin.ty}), dégagé de ${coin.R} tuiles dans la grille réelle` : `aucun coin nu de cinq tuiles où un feu se pose, dans ${fenetres.length} fenêtre(s) — le témoin est introuvable`)
+    if (coin === null) { await ev(() => { window.__BRAISES__.scene.game.loop.wake() }); return }
+
+    await agir({ type: 'debug_teleport', x: coin.tx + 3.5, y: coin.ty + 3.5 }, 900, 2)
+    await ev(({ tx, ty }) => { const cam = window.__BRAISES__.scene.cameras.main; cam.stopFollow(); cam.centerOn((tx + 0.5) * 16, (ty + 0.5) * 16) }, coin)
+    await ev(() => { window.__BRAISES__.scene.registry.set('debugGi', 5) })
+    await pas(8)
+    // LA PRÉMISSE, RELUE AVEC LE FEU POSÉ ET LA CAMÉRA SUR LUI : aucune cellule pleine ni bande à
+    // moins de R tuiles de la source — le disque que les anneaux jugés couvrent — et une seule
+    // source dans le champ.
+    const vide = await ev(({ R, fx, fy }) => {
+      const gi = window.__BRAISES__.scene.gi
+      const g = gi?.grille
+      if (!g) return null
+      const c = gi.cadre
+      const sx = (fx - c.x) / c.pxParTexel, sy = (fy - c.y) / c.pxParTexel
+      const portee = R * 4
+      let occ = 0
+      for (let j = 0; j < g.gh; j++) for (let i = 0; i < g.gw; i++) if (g.occ[j * g.gw + i] === 1 && Math.hypot(i + 0.5 - sx, j + 0.5 - sy) <= portee) occ++
+      const bandes = (g.murs ?? []).filter((b) => Math.hypot(Math.max(b.x0 - sx, 0, sx - b.x1), Math.max(b.y0 - sy, 0, sy - b.y1)) <= portee).length
+      return { bandes, occ, sources: (gi.emetteurs ?? []).length }
+    }, { R: coin.R, fx: (coin.tx + 0.5) * 16, fy: (coin.ty + 0.5) * 16 })
+    ok(vide !== null && vide.bandes === 0 && vide.occ === 0 && vide.sources === 1, `prémisse du témoin : aucun occludeur à ${coin.R} tuiles de la source et une seule source dans le champ (${vide ? `${vide.bandes} bande(s), ${vide.occ} cellule(s) pleine(s), ${vide.sources} source(s)` : 'pas de champ'})`)
+    const T = await ev(() => window.__T__)
+    const anneaux = () => ev(({ T, fx, fy }) => {
+      const sc = window.__BRAISES__.scene, g = sc.game
+      g.step(T, 0); g.step(T, 0) // le premier rendu à un instant s'écarte d'un niveau : le second juge
+      const c = g.canvas, cam = sc.cameras.main
+      const ech = c.width / cam.width
+      const parTuile = 16 * cam.zoom * ech
+      const sx = (fx - cam.worldView.x) * cam.zoom * ech, sy = (fy - cam.worldView.y) * cam.zoom * ech
+      const k = document.createElement('canvas'); k.width = c.width; k.height = c.height
+      const x = k.getContext('2d'); x.drawImage(c, 0, 0)
+      const d = x.getImageData(0, 0, c.width, c.height).data
+      const somme = new Float64Array(10), n = new Float64Array(10)
+      for (let j = 0; j < c.height; j++) {
+        for (let i = 0; i < c.width; i++) {
+          const r = Math.hypot(i + 0.5 - sx, j + 0.5 - sy) / parTuile
+          if (r >= 10) continue
+          const q = Math.floor(r), p = (j * c.width + i) * 4
+          somme[q] += (d[p] + d[p + 1] + d[p + 2]) / 3
+          n[q]++
+        }
+      }
+      return Array.from(somme, (s, q) => (n[q] > 0 ? +(s / n[q]).toFixed(2) : null))
+    }, { T, fx: (coin.tx + 0.5) * 16, fy: (coin.ty + 0.5) * 16 })
+    await ev(() => { window.__BRAISES__.scene.registry.set('debugGi', 0) })
+    await ev(({ T }) => { const g = window.__BRAISES__.scene.game; g.step(T, 0); g.step(T, 0); g.step(T, 0) }, { T })
+    const avant = await anneaux()
+    await ev(() => { window.__BRAISES__.scene.registry.set('debugGi', 5) })
+    await ev(({ T }) => { const g = window.__BRAISES__.scene.game; g.step(T, 0); g.step(T, 0); g.step(T, 0) }, { T })
+    const apres = await anneaux()
+    // Seuls les anneaux SOUS le rayon nu sont jugés : au-delà, ce qui bouge peut avoir une cause.
+    const R = coin.R
+    const ecarts = avant.map((a, q) => (a === null || apres[q] === null ? null : +(apres[q] - a).toFixed(2))).slice(0, R)
+    console.log(`     anneaux (tuiles 0 à ${R - 1}) aujourd'hui : ${avant.slice(0, R).join(' ')}`)
+    console.log(`     anneaux (tuiles 0 à ${R - 1}) composé     : ${apres.slice(0, R).join(' ')}`)
+    console.log(`     écarts                             : ${ecarts.join(' ')}`)
+    const pire = Math.max(...ecarts.filter((e) => e !== null).map(Math.abs))
+    ok(ecarts.every((e) => e !== null && Math.abs(e) <= 2), `LG-A20 témoin : au plus 2 niveaux d'écart en moyenne à tout anneau jusqu'à ${R - 1} tuiles (pire ${pire.toFixed(2)})`)
+    // LG-A5 : au-delà de la portée du feu (26 texels, soit 6,5 tuiles), rien ne bouge. Il faut au
+    // moins un anneau nu au-delà : un rayon nu de 7 ou moins ne l'éprouve pas, et on le dit.
+    const loin = ecarts.slice(7)
+    ok(loin.length > 0 && loin.every((e) => e !== null && Math.abs(e) <= 1), loin.length > 0 ? `LG-A5 : rien ne bouge où rien ne tombe — anneaux 7 à ${R - 1}, au-delà du feu, au niveau près (${loin.join(' ')})` : `LG-A5 non éprouvé : le coin nu ne porte qu'à ${R} tuiles, aucun anneau au-delà du feu`)
+    await ev(() => { window.__BRAISES__.scene.registry.set('debugGi', 7) })
     await ev(() => { window.__BRAISES__.scene.game.loop.wake() })
   },
 
