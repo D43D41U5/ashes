@@ -114,6 +114,18 @@ export function longueurDOmbre(hauteurPx: number, pxParTexel: number): number {
 }
 
 /**
+ * LG-R9 — LA HAUTEUR D'UNE BANDE, en px, par pièce de la sim : ce qu'elle lance comme ombre d'astre.
+ * Les hauteurs sont celles des CORPS (`GI.CORPS.HAUTEUR_PAR_FAMILLE`, gardées égales à `EDGE_SPRITE`
+ * famille par famille), lues par le NOM de la pièce — `wall`, `door` et `palissade` sont aussi des
+ * familles de sprite, à la hauteur de leur crête. Une pièce inconnue retombe sur le mur ; la garde
+ * « toute pièce que la sim met en bande a sa hauteur » de `champ-ref.test.ts` refuse qu'une pièce de
+ * `BATI_OPAQUE` y tombe — sinon une pièce neuve lancerait 32 px en silence.
+ */
+export function hauteurDeBande(type: string): number {
+  return GI.CORPS.HAUTEUR_PAR_FAMILLE[type] ?? GI.ASTRE.HAUTEUR_MUR_PX
+}
+
+/**
  * LA PENTE DE LA LUMIÈRE DIRECTE — celle du trou du voile d'aujourd'hui (LG-R4 : « le profil et la
  * portée restent ceux d'aujourd'hui »), lue dans `render/lighting.ts` où la brosse du voile la lit
  * aussi : le pic `HOLE_ERASE_PEAK` × le smoothstep `profilDuTrou`. L'oracle (`champRef`) et la chaîne

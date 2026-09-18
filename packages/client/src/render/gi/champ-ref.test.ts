@@ -1,11 +1,14 @@
 import { describe, expect, it } from 'vitest'
 import {
+  EDGE_N,
   EDGE_O,
   LUMIERE,
   MOTIF_SOURCE,
+  PIECES,
   TERRAIN_GRASS,
   TERRAIN_ROCK,
   createEmptyMap,
+  occlusionAuGrain,
   partVisible,
   type MondeEclaire,
   type ResourceNode,
@@ -16,7 +19,7 @@ import { TILE_PX } from '../framing'
 import { champRef, composerM, masqueDAstre, ombrePleineDAstre, partVisibleGrille, type Astre, type BandeGrille, type CarteDOmbre, type Emetteur, type GrilleGi, type Silhouette } from './champ-ref'
 import { TOUTES_VARIANTES, ancrageHouppierPx, hauteurPx, houppierLargeur } from '../arbre-art'
 import { grilleDuMonde } from './grille'
-import { ALBEDO, GI, longueurDOmbre } from './reglages'
+import { ALBEDO, GI, hauteurDeBande, longueurDOmbre } from './reglages'
 
 /**
  * L'ORACLE DU CHAMP (spec `lumiere-globale.md` LG-R4, critères LG-A4 ; LG-R5, critère LG-A5 ; LG-R11/R12 :
@@ -69,7 +72,7 @@ describe('la grille lue dans la sim (LG-R11)', () => {
     expect(g.occ[k(53, 45, 2, 0)]).toBe(1)
     expect(g.occ[k(55, 50, 0, 3)]).toBe(1)
     expect(g.occ[k(FEU.tx, FEU.ty, 0, 0)]).toBe(0) // la tuile d'un mur d'arête reste du sol
-    expect(g.murs).toEqual([{ x0: 10 * T - 0.5, x1: 10 * T + 0.5, y0: 8 * T - 0.5, y1: 8 * T + T + 0.5 }])
+    expect(g.murs).toEqual([{ x0: 10 * T - 0.5, x1: 10 * T + 0.5, y0: 8 * T - 0.5, y1: 8 * T + T + 0.5, hauteur: MUR_HT / (TILE_PX / T) }])
     expect(g.albedoMurs).toEqual([ALBEDO.BATI.wall])
   })
 })
@@ -222,14 +225,16 @@ describe('la composition (LG-R5, LG-A5)', () => {
  */
 const ASTRE_NU = { cisaillement: GI.ASTRE.CISAILLEMENT, penombre: GI.ASTRE.PENOMBRE, longueurParHauteur: GI.ASTRE.LONGUEUR_PAR_HAUTEUR }
 const L_MUR = longueurDOmbre(GI.ASTRE.HAUTEUR_MUR_PX, TILE_PX / T)
+/** La hauteur d'un mur en texels du grain : 32 px ÷ 4 = 8 (LG-R9, `BandeGrille.hauteur`). */
+const H_MUR = GI.ASTRE.HAUTEUR_MUR_PX / (TILE_PX / T)
 const astre = (derive: number, longueur = L_MUR): Astre => ({ derive, longueur, ...ASTRE_NU })
 
 /** Une grille nue de gw × gh texels, avec une seule bande — bords demi-entiers, comme la sim les donne. */
 function grilleNue(gw: number, gh: number, bande: BandeGrille): GrilleGi & { occ: Uint8Array } {
   return { gw, gh, occ: new Uint8Array(gw * gh), murs: [bande], albedo: new Float32Array(gw * gh * 3), albedoMurs: [[0.5, 0.5, 0.5]] }
 }
-const MUR_EO: BandeGrille = { x0: 6.5, x1: 13.5, y0: 7.5, y1: 8.5 }
-const MUR_NS: BandeGrille = { x0: 9.5, x1: 10.5, y0: 5.5, y1: 10.5 }
+const MUR_EO: BandeGrille = { x0: 6.5, x1: 13.5, y0: 7.5, y1: 8.5, hauteur: H_MUR }
+const MUR_NS: BandeGrille = { x0: 9.5, x1: 10.5, y0: 5.5, y1: 10.5, hauteur: H_MUR }
 /** Les colonnes d'un rang qui sont dans l'ombre PLEINE. */
 const pleines = (s: Float32Array, gw: number, y: number): number[] => {
   const c: number[] = []
@@ -297,6 +302,8 @@ describe('le masque d’astre (LG-R8, LG-R9)', () => {
 
   it('R9 — la hauteur d’un mur est celle du jeu, pas un second nombre', () => {
     expect(GI.ASTRE.HAUTEUR_MUR_PX).toBe(MUR_HT)
+    // Et l'étalon `longueur` de l'astre est EXACTEMENT ce que la loi par bande rend pour un mur.
+    expect(L_MUR).toBe(GI.ASTRE.LONGUEUR_PAR_HAUTEUR * H_MUR)
   })
 
   it('R8 — la plomberie y arrive : un vrai mur de la sim porte le masque', () => {
@@ -333,6 +340,75 @@ const rangs = (s: Float32Array, gw: number, x: number): number[] => {
   for (let y = 0; y < s.length / gw; y++) if (s[y * gw + x] === 1) out.push(y)
   return out
 }
+
+/**
+ * LES BANDES LANCENT À LEUR HAUTEUR (LG-R9, LG-A9 « toutes leurs hauteurs »). Un mur fait 32 px, une
+ * palissade 24 : la seconde jette trois rangs là où le premier en jette quatre. La liste des pièces en
+ * bande n'est pas recopiée de `BATI_OPAQUE` : on la DEMANDE à la sim (`occlusionAuGrain`), pièce par
+ * pièce — c'est le prédicat de la production qui dit qui lance, et la table des hauteurs doit le suivre.
+ */
+describe('les bandes lancent à leur hauteur (LG-R9, LG-A9)', () => {
+  // Une pièce dont le registre INTERDIT l'arête n'en porte jamais (c'est la règle des pièces) : on
+  // ne demande à la sim que celles qui peuvent en avoir une — sinon `braise_mere`, opaque et sans
+  // arête possible, passerait pour une bande.
+  const PIECES_EN_BANDE = (Object.keys(PIECES) as Structure['type'][]).filter((type) => PIECES[type].arete !== 'interdite').filter((type) => {
+    const m: MondeEclaire = {
+      map: createEmptyMap(96, 96, TERRAIN_GRASS),
+      structures: [{ id: 1, type, tx: FEU.tx, ty: FEU.ty, villageId: 0, ownerId: 0, access: 'public', hp: 100, edges: EDGE_N } as unknown as Structure],
+      nodes: [],
+    }
+    return occlusionAuGrain(m, N, F.x0, F.y0, F.x1, F.y1).bandes.length > 0
+  })
+
+  it('LA SIM MET EN BANDE AU MOINS LE MUR ET LA PALISSADE — sinon la garde serait vraie de rien', () => {
+    expect(PIECES_EN_BANDE).toContain('wall')
+    expect(PIECES_EN_BANDE).toContain('palissade')
+  })
+
+  it('TOUTE PIÈCE EN BANDE A SA HAUTEUR DANS LA TABLE — aucune ne retombe sur le mur en silence', () => {
+    for (const type of PIECES_EN_BANDE) {
+      expect(GI.CORPS.HAUTEUR_PAR_FAMILLE[type], type).toBeDefined()
+      expect(hauteurDeBande(type), type).toBe(GI.CORPS.HAUTEUR_PAR_FAMILLE[type])
+    }
+    // Deux hauteurs au moins, sans quoi « à sa hauteur » ne se distinguerait pas de « au mur ».
+    expect(new Set(PIECES_EN_BANDE.map(hauteurDeBande)).size).toBeGreaterThanOrEqual(2)
+  })
+
+  it('A9 — à dérive 0, l’ombre pleine de chaque pièce en bande mesure 0,4 × H, à un texel près, depuis le pied', () => {
+    for (const type of PIECES_EN_BANDE) {
+      const H = hauteurDeBande(type)
+      const g = grilleNue(24, 24, { ...MUR_EO, hauteur: H / PAS })
+      const r = rangs(ombrePleineDAstre(g, astre(0)), g.gw, 10)
+      expect(r[0], type).toBe(8)
+      expect(r, type).toEqual(r.map((_, i) => 8 + i))
+      expect(Math.abs(r.length - longueurDOmbre(H, PAS)), `${type} : ${r.length} rangs pour ${H} px`).toBeLessThanOrEqual(1)
+    }
+  })
+
+  it('UNE PALISSADE JETTE MOINS QU’UN MUR — trois rangs pour quatre, et c’est la grille lue dans la sim qui le porte', () => {
+    const rangsDe = (type: Structure['type']): number[] => {
+      const nu = monde({ mur: false, corps: false })
+      const m: MondeEclaire = { ...nu, structures: [{ id: 1, type, tx: FEU.tx, ty: FEU.ty, villageId: 0, ownerId: 0, access: 'public', hp: 100, edges: EDGE_N } as unknown as Structure] }
+      const g = grilleDuMonde(m, N, F)
+      expect(g.murs[0]!.hauteur).toBe(hauteurDeBande(type) / PAS)
+      return rangs(ombrePleineDAstre(g, astre(0)), g.gw, (FEU.tx - F.x0) * T + 1)
+    }
+    const y = (FEU.ty - F.y0) * T
+    expect(rangsDe('wall')).toEqual([y, y + 1, y + 2, y + 3])
+    expect(rangsDe('palissade')).toEqual([y, y + 1, y + 2])
+  })
+
+  it('LA DÉRIVE CISAILLE CHAQUE BANDE À SA PROPRE LONGUEUR — la pointe d’une palissade part moins loin', () => {
+    const pointe = (H: number): number => {
+      const g = grilleNue(30, 24, { ...MUR_EO, hauteur: H / PAS })
+      const s = ombrePleineDAstre(g, astre(1))
+      let xMax = -1
+      for (let k = 0; k < s.length; k++) if (s[k] === 1) xMax = Math.max(xMax, k % g.gw)
+      return xMax
+    }
+    expect(pointe(hauteurDeBande('palissade'))).toBeLessThan(pointe(hauteurDeBande('wall')))
+  })
+})
 
 describe('les arbres, deux cartes debout (LG-R8, LG-R9, LG-A9)', () => {
   it('A9 — à dérive 0, l’ombre pleine de chaque variante mesure 0,4 × H, à un texel près — fût ET cime', () => {

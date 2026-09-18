@@ -5,7 +5,8 @@
  * leur donne un albédo (un fait de rendu, `reglages.ts`).
  */
 import { OCCLUDEUR, occlusionAuGrain, terrainAEtage, type MondeEclaire } from '@ashes/sim'
-import { ALBEDO, type Albedo } from './reglages'
+import { TILE_PX } from '../framing'
+import { ALBEDO, hauteurDeBande, type Albedo } from './reglages'
 import type { BandeGrille, GrilleGi } from './champ-ref'
 
 /** Une fenêtre de tuiles, bornes incluses. */
@@ -43,8 +44,10 @@ export function grilleDuMonde(monde: MondeEclaire, niveau: number, f: Fenetre): 
     }
   const murs: BandeGrille[] = []
   const albedoMurs: Albedo[] = []
+  // La hauteur d'une bande, en texels : ce qu'elle lance comme ombre d'astre (LG-R9, `hauteurDeBande`).
+  const pxParTexel = TILE_PX / T
   for (const b of o.bandes) {
-    murs.push({ x0: b.x0 - o.ox, x1: b.x1 - o.ox, y0: b.y0 - o.oy, y1: b.y1 - o.oy })
+    murs.push({ x0: b.x0 - o.ox, x1: b.x1 - o.ox, y0: b.y0 - o.oy, y1: b.y1 - o.oy, hauteur: hauteurDeBande(b.type) / pxParTexel })
     albedoMurs.push(ALBEDO.BATI[b.type] ?? ALBEDO.BATI_DEFAUT)
   }
   return { gw: o.gw, gh: o.gh, occ, murs, albedo, albedoMurs, ox: o.ox, oy: o.oy }

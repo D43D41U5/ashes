@@ -94,6 +94,9 @@ export interface VerdictGi {
   readonly gh: number
   readonly sources: number
   readonly bandes: number
+  /** Les hauteurs DISTINCTES des bandes du champ (LG-R9) — la prémisse de la garde du masque sur la
+   *  marche à hauteur : à une seule hauteur, le GPU et l'oracle s'accorderaient même en l'ignorant. */
+  readonly hauteursDeBande: number
   /** Les cartes d'arbres dessinées (LG-R8) — la prémisse de la garde du masque sur les arbres. */
   readonly cartes: number
   readonly direct: EcartCible
@@ -244,9 +247,17 @@ uniform vec3 uTeinte;
 uniform vec2 uMotif[16];
 uniform float uTailleSource;
 uniform float uPic;
-// Le vecteur d'ombre, EN TEXELS : (cisaillement × ℓ × dérive, ℓ). Nul quand aucun astre ne porte.
+// Le vecteur d'ombre, EN TEXELS : (cisaillement × ℓ × dérive, ℓ) — l'ombre de la PLUS HAUTE bande du
+// champ (\`uHauteurMarche\`, en texels). Nul quand aucun astre ne porte.
 uniform vec2 uOmbre;
 uniform float uPasOmbre;
+uniform float uHauteurMarche;
+// LG-R9 — LA PART D'UNE BANDE : sa hauteur (canal bleu de \`uOcc\`, en huitièmes de texel) rapportée à
+// celle de la marche. Un mur de 8 sous une marche de 8 : 1 ; une palissade de 6 : 0,75 — le rayon qui
+// entre dans sa bande AU-DELÀ des trois quarts de sa longueur ne lui doit aucune ombre.
+float hauteurRel(vec2 c) {
+  return floor(texture2D(uOcc, uvRaster(c)).b * 255.0 + 0.5) / (8.0 * uHauteurMarche);
+}
 // Les cartes projetées des arbres (\`gi-arbres\`, LG-R8) : alpha 1 sous une silhouette, 0 ailleurs.
 uniform sampler2D uArbres;
 // ═══ LE RAYON D'OMBRE (LG-R8) ═══
@@ -288,18 +299,26 @@ float ombreDAstre(vec2 t) {
   vec2 td = vec2(D.x != 0.0 ? abs(1.0 / D.x) : INF, D.y != 0.0 ? abs(1.0 / D.y) : INF);
   float tx = D.x != 0.0 ? (D.x > 0.0 ? c.x + 1.0 - P.x : P.x - c.x) * td.x : INF;
   float ty = D.y != 0.0 ? (D.y > 0.0 ? c.y + 1.0 - P.y : P.y - c.y) * td.y : INF;
+  // Le paramètre d'ENTRÉE dans le sous-texel courant, le long de D (0 = le départ, 1 = le bout de la
+  // marche) : c'est lui qu'une bande compare à sa part (LG-R9).
+  float tEntree = 0.0;
   for (int n = 0; n < ${PAS_OMBRE_MAX}; n++) {
     if (float(n) >= uPasOmbre) break;
     if (tx < ty) {
       if (tx >= 1.0) break;
+      tEntree = tx;
       c.x += s.x;
       tx += td.x;
     } else {
       if (ty >= 1.0) break;
+      tEntree = ty;
       c.y += s.y;
       ty += td.y;
     }
-    if (code2(c) >= 2.0) return 1.0;
+    // STRICT, comme les intervalles ouverts de \`coupeBande\` (LG-R10) : un rayon dont la part s'achève
+    // exactement au bord d'une bande n'y entre pas. Une bande à la hauteur de la marche (part 1) n'est
+    // jamais exclue, la boucle s'arrêtant avant 1.
+    if (code2(c) >= 2.0 && tEntree < hauteurRel(c)) return 1.0;
   }
   return 0.0;
 }
@@ -643,9 +662,13 @@ export class ChampGpu {
    */
   private astre: Astre | null = null
   private uA = 0
-  /** Le vecteur d'ombre poussé au shader, en texels : (cisaillement × ℓ × dérive, ℓ). */
+  /** Le vecteur d'ombre poussé au shader, en texels : (cisaillement × ℓ × dérive, ℓ) — ℓ est la
+   *  longueur de la PLUS HAUTE bande du champ (`hauteurMarche`), et chaque bande n'en prend que sa part
+   *  (LG-R9, `hauteurRel` dans le shader). */
   private uOmbre: number[] = [0, 0]
   private uPasOmbre = 0
+  /** La hauteur, en texels, dont `uOmbre` est l'ombre : le max des bandes du champ, un mur à défaut. */
+  private hauteurMarche = GI.ASTRE.HAUTEUR_MUR_PX / PX_PAR_TEXEL
   private albBandes: Albedo[] = []
   /**
    * ═══ LES CARTES DES ARBRES (LG-R8) ═══
@@ -861,10 +884,11 @@ export class ChampGpu {
     this.uMn[0] = mn ? mn[0] : 0
     this.uMn[1] = mn ? mn[1] : 0
     this.uMn[2] = mn ? mn[2] : 0
-    // L'ASTRE (LG-R8, LG-R9) : `longueur` est celle d'un mur (les bandes, marchées au shader) ;
-    // `longueurParHauteur` projette les cartes des arbres (`ecrireLesCartes`). Une roche n'est pas
-    // lanceur (LG-R15), une marche attend LG-R14. `a` nul = pas d'ombre : on n'en garde aucune trace,
-    // et le masque rend zéro partout au bit.
+    // L'ASTRE (LG-R8, LG-R9) : `longueur` est l'étalon d'un mur (le sentinel de l'astre nul) ;
+    // `longueurParHauteur` projette les cartes des arbres (`ecrireLesCartes`) ET chaque bande à sa
+    // hauteur (`BandeGrille.hauteur`, marchée au shader). Une roche n'est pas lanceur (LG-R15), une
+    // marche attend LG-R14. `a` nul = pas d'ombre : on n'en garde aucune trace, et le masque rend
+    // zéro partout au bit.
     this.uA = astre && astre.a > 0 ? astre.a : 0
     this.astre =
       this.uA > 0
@@ -876,11 +900,14 @@ export class ChampGpu {
             longueurParHauteur: GI.ASTRE.LONGUEUR_PAR_HAUTEUR,
           }
         : null
-    // Le MÊME vecteur pour le shader, et la borne de sa marche : comptée en pas du raster 2×, un
-    // segment ne traverse jamais plus de |Dx| + |Dy| + 2 sous-texels. Seize, là où `uPasMaxDirect`
-    // en veut 192 — une borne de rayon direct est taillée sur la plus grande SOURCE du cadre.
-    const dxO = this.astre ? this.astre.cisaillement * this.astre.longueur * this.astre.derive : 0
-    const dyO = this.astre ? this.astre.longueur : 0
+    // Le vecteur du shader est l'ombre de la PLUS HAUTE bande du champ (`hauteurMarche`, LG-R9) : le
+    // rayon la marche entière, et chaque bande rencontrée ne compte que jusqu'à sa part (`hauteurRel`).
+    // La borne de la marche : comptée en pas du raster 2×, un segment ne traverse jamais plus de
+    // |Dx| + |Dy| + 2 sous-texels. Seize, là où `uPasMaxDirect` en veut 192 — une borne de rayon
+    // direct est taillée sur la plus grande SOURCE du cadre.
+    const lM = this.astre ? this.astre.longueurParHauteur * this.hauteurMarche : 0
+    const dxO = this.astre ? this.astre.cisaillement * lM * this.astre.derive : 0
+    const dyO = lM
     this.uOmbre[0] = dxO
     this.uOmbre[1] = dyO
     this.uPasOmbre = Math.ceil(2 * (Math.abs(dxO) + dyO)) + 2
@@ -1036,6 +1063,26 @@ export class ChampGpu {
   }
 
   /** Les cibles `direct` et `champ` contre l'oracle, en niveaux. À appeler APRÈS un `update`. */
+  /**
+   * L'ÉPREUVE DES HAUTEURS (LG-R9, garde smoke `gi`) — le monde généré ne dresse que des murs : à une
+   * seule hauteur de bande, le GPU et l'oracle s'accorderaient même en ignorant la hauteur (MESURÉ le
+   * 2026-09-18 : 60 bandes chargées, toutes `wall`). On REJOUE donc le champ avec une bande sur deux
+   * abaissée à `hauteur` texels (une palissade : 6) dans la grille que LES DEUX lisent — le raster
+   * d'occludeurs est réécrit, la prochaine image rend, et `verifier()` compare comme d'habitude.
+   * `null` rend la grille au monde : l'empreinte s'efface et la prochaine image la relit dans la sim.
+   * Une épreuve, pas un réglage : rien ici n'entre dans le rendu joué.
+   */
+  eprouverLesHauteurs(hauteur: number | null): void {
+    if (hauteur === null) {
+      this.empreinte = ''
+      return
+    }
+    const g = this.grille
+    if (!g) return
+    this.grille = { ...g, murs: g.murs.map((m, i) => (i % 2 === 1 ? { ...m, hauteur } : m)) }
+    this.ecrireOccludeurs(this.grille)
+  }
+
   verifier(): VerdictGi | null {
     const o = this.oracle()
     const g = this.grille
@@ -1154,6 +1201,7 @@ export class ChampGpu {
       gh: this.gh,
       sources: this.emetteurs.length,
       bandes: g.murs.length,
+      hauteursDeBande: new Set(g.murs.map((m) => m.hauteur)).size,
       cartes: this.cartes.length,
       direct: direct.length > 0 ? ecart(direct, o.direct) : vide,
       champ: champ.length > 0 ? ecart(champ, o.light) : vide,
@@ -1219,7 +1267,7 @@ export class ChampGpu {
         uOcc: 0, uArbres: 1, uSrc: this.uSrc, uNb: this.uNb, uTeinte: [GI.TEINTE_FEU[0], GI.TEINTE_FEU[1], GI.TEINTE_FEU[2]],
         uMotif: this.uMotif, uTailleSource: GI.TAILLE_SOURCE, uPic: HOLE_ERASE_PEAK,
         uPasMax: this.uPasMaxDirect,
-        uOmbre: this.uOmbre, uPasOmbre: this.uPasOmbre,
+        uOmbre: this.uOmbre, uPasOmbre: this.uPasOmbre, uHauteurMarche: this.hauteurMarche,
       }))
     } else if (k === 2) {
       mk('gi-faces', FRAG_FACES, gw * 2, gh * 2, ['gi-occ', 'gi-alb', 'gi-direct'], 'gi-faces', () => ({
@@ -1305,8 +1353,17 @@ export class ChampGpu {
       return i
     }
     if (g.murs.length > 0 && this.albBandes.length === 0) indexAlb(ALBEDO.BATI_DEFAUT)
+    // LA HAUTEUR DE CHAQUE BANDE (LG-R9) va dans le canal BLEU, en huitièmes de texel (un mur de 8
+    // texels : 64 ; une palissade de 6 : 48) ; là où deux bandes se recouvrent, la plus haute l'emporte —
+    // l'union de leurs ombres est celle de la plus haute sur le sous-texel partagé. Le rayon d'ombre
+    // marche à la hauteur de la PLUS HAUTE bande du champ (`hauteurMarche`) et compare son paramètre
+    // d'entrée à la part de la bande rencontrée (`hauteurRel`) : une bande de 6 sur 8 n'ombre que les
+    // trois quarts de la marche.
+    this.hauteurMarche = GI.ASTRE.HAUTEUR_MUR_PX / PX_PAR_TEXEL
+    for (const m of g.murs) if (m.hauteur > this.hauteurMarche) this.hauteurMarche = m.hauteur
     g.murs.forEach((m, im) => {
       const ia2 = indexAlb(g.albedoMurs[im] ?? ALBEDO.BATI_DEFAUT)
+      const h8 = Math.min(255, Math.max(0, Math.round(m.hauteur * 8)))
       const x0 = Math.max(0, Math.round(m.x0 * 2))
       const x1 = Math.min(w2, Math.round(m.x1 * 2))
       const y0 = Math.max(0, Math.round(m.y0 * 2))
@@ -1314,8 +1371,12 @@ export class ChampGpu {
       for (let j2 = y0; j2 < y1; j2++)
         for (let i2 = x0; i2 < x1; i2++) {
           const q = (j2 * w2 + i2) * 4
-          O[q] = (O[q]! === CODE_CELLULE * 40 ? CODE_CELLULE + CODE_BANDE : CODE_BANDE) * 40
+          const code = O[q]! / 40
+          const cellule = code === CODE_CELLULE || code === CODE_CELLULE + CODE_BANDE
+          const dejaBande = code === CODE_BANDE || code === CODE_CELLULE + CODE_BANDE
+          O[q] = (cellule ? CODE_CELLULE + CODE_BANDE : CODE_BANDE) * 40
           O[q + 1] = ia2 * 32
+          O[q + 2] = dejaBande ? Math.max(O[q + 2]!, h8) : h8
         }
     })
     co.putImageData(io, 0, 0)

@@ -31,6 +31,9 @@ export interface BandeGrille {
   readonly x1: number
   readonly y0: number
   readonly y1: number
+  /** La hauteur de la barrière, en TEXELS du grain (H px ÷ px par texel) — LG-R9 : chaque bande lance
+   *  l'ombre d'astre à SA hauteur (`hauteurDeBande`, `reglages.ts`). Un mur : 8 ; une palissade : 6. */
+  readonly hauteur: number
 }
 
 /** La grille des occludeurs, au grain. */
@@ -354,7 +357,9 @@ export interface Astre {
   /** La dérive, dans [-1, 1] (`deriveDOmbre`) : négative, l'astre est à l'est et l'ombre part à
    *  l'OUEST (le matin) ; positive, elle part à l'EST (le soir) ; nulle, elle tombe plein sud. */
   readonly derive: number
-  /** La longueur de l'ombre PLEINE, en texels — `longueurDOmbre(H, px par texel)` (LG-R9). */
+  /** La longueur de l'ombre PLEINE d'un MUR étalon, en texels — `longueurDOmbre(HAUTEUR_MUR_PX, px par
+   *  texel)` (LG-R9). Elle ne projette AUCUNE bande : chaque bande lance à sa hauteur
+   *  (`longueurParHauteur × hauteur`, ci-dessous). Nulle, aucun astre ne porte et rien ne se projette. */
   readonly longueur: number
   /** Le décalage latéral par unité de longueur, à dérive ±1 (`GI.ASTRE.CISAILLEMENT`, LG-R8). */
   readonly cisaillement: number
@@ -502,14 +507,17 @@ export function ombreDesCartes(g: GrilleGi, s: Float32Array, astre: Astre, arbre
  */
 export function ombrePleineDAstre(g: GrilleGi, astre: Astre, arbres?: CartesDOmbre): Float32Array {
   const s = new Float32Array(g.gw * g.gh)
-  const dy = astre.longueur
-  if (!(dy > 0)) return s
+  if (!(astre.longueur > 0)) return s
   if (arbres !== undefined) ombreDesCartes(g, s, astre, arbres)
   if (g.murs.length === 0) return s
-  const dx = astre.cisaillement * astre.longueur * astre.derive
 
-  // LE BALAYAGE de chaque bande, lu au centre de chaque texel de son emprise.
+  // LE BALAYAGE de chaque bande, lu au centre de chaque texel de son emprise — À SA HAUTEUR (LG-R9) :
+  // ℓ = longueurParHauteur × hauteur, cisaillée par la dérive. Une palissade (24 px) jette trois rangs
+  // là où un mur (32 px) en jette quatre ; `astre.longueur`, l'étalon du mur, n'en projette aucune.
   for (const m of g.murs) {
+    const dy = astre.longueurParHauteur * m.hauteur
+    if (!(dy > 0)) continue
+    const dx = astre.cisaillement * dy * astre.derive
     const x0 = Math.max(0, Math.floor(Math.min(m.x0, m.x0 + dx)))
     const x1 = Math.min(g.gw, Math.ceil(Math.max(m.x1, m.x1 + dx)))
     const y0 = Math.max(0, Math.floor(m.y0))
