@@ -558,6 +558,203 @@ const SCENARIOS = {
     //    chaude de la règle des faces n'est pas éprouvée : on le dit, et on rougit. ──
     for (let i = 0; i < 12; i++) await agir({ type: 'debug_grant', item: 'wood' }, 120, 1)
     await agir({ type: 'debug_grant', item: 'campfire' }, 400, 1)
+
+    // ═══ LG-A17 (LG-R16) — LE DESSUS : FEU ABSENT PUIS POSÉ, même caméra, même heure, même instant ═══
+    //
+    // Aucune action de debug n'éteint un feu : le cliché « sans feu » se prend ICI, le campfire en main
+    // (le don a remplacé la torche : plus aucune source), depuis le point d'observation ; le cliché
+    // « avec feu » se prend au même point après la pose. `debug_set_hour` remet la PHASE de l'horloge
+    // avant chaque cliché : la lune et le ciel sont les mêmes à un tick près, et seul le foyer diffère.
+    // Les zones se dérivent du SAC de chaque corps armé (`CorpsPourLeShader`) : au-dessus du `seuil`, un
+    // dessus ; entre le seuil et le `pied`, une face — jamais d'un rectangle d'écran écrit à la main. Et
+    // SEULS LES PIXELS OPAQUES DU SPRITE comptent (l'alpha de sa texture, relu par la frame) : un ruban
+    // est étroit dans un sprite large, et le sol que le feu allume à +96 se voyait à travers — le premier
+    // passage lisait Δ 28 sur un dessus qui, pierre seule, ne monte que du rebond.
+    const OBS = { x: grappe.tx + 0.5, y: grappe.ty + 4.5 }
+    const lireLesZones = (T) => ev(({ T }) => {
+      const sc = window.__BRAISES__.scene, g = sc.game, cam = sc.cameras.main
+      g.step(T, 0); g.step(T, 0)
+      const c = g.canvas
+      const ech = c.width / cam.width
+      const z = cam.zoom * ech
+      const wx = cam.worldView.x, wy = cam.worldView.y
+      const k = document.createElement('canvas'); k.width = c.width; k.height = c.height
+      const x = k.getContext('2d'); x.drawImage(c, 0, 0)
+      const d = x.getImageData(0, 0, c.width, c.height).data
+      const lumAt = (i, j) => { const p = (j * c.width + i) * 4; return 0.2126 * d[p] + 0.7152 * d[p + 1] + 0.0722 * d[p + 2] }
+      // L'alpha des textures, par source, lu une fois.
+      const alphas = new Map()
+      const alphaDe = (o) => {
+        const src = o.frame?.source?.image
+        if (!src || !src.width) return null
+        let a = alphas.get(src)
+        if (a === undefined) {
+          try {
+            const q = document.createElement('canvas'); q.width = src.width; q.height = src.height
+            const qx = q.getContext('2d'); qx.drawImage(src, 0, 0)
+            a = { w: src.width, d: qx.getImageData(0, 0, src.width, src.height).data }
+          } catch { a = null }
+          alphas.set(src, a)
+        }
+        return a
+      }
+      const corps = []
+      for (const o of sc.children.list) {
+        const sac = o.renderNodeData?.['GiCorpsBatch']
+        if (!sac || !o.visible || o.texture === undefined || !o.frame) continue
+        if (!(sac.dresse === 1 || sac.ruban === 1)) continue
+        const w = o.displayWidth ?? 0, h = o.displayHeight ?? 0
+        if (w <= 0 || h <= 0) continue
+        const X0 = o.x - w * (o.originX ?? 0.5), Y0 = o.y - h * (o.originY ?? 1)
+        const fr = o.frame, al = alphaDe(o)
+        /** La moyenne des pixels OPAQUES du sprite dont le y monde est dans [yA, yB). */
+        const moyenneOpaque = (yA, yB) => {
+          let s = 0, n = 0
+          const j0 = Math.max(0, Math.ceil((Math.max(Y0, yA) - wy) * z)), j1 = Math.min(c.height, Math.floor((Math.min(Y0 + h, yB) - wy) * z))
+          const i0 = Math.max(0, Math.ceil((X0 - wx) * z)), i1 = Math.min(c.width, Math.floor((X0 + w - wx) * z))
+          for (let j = j0; j < j1; j++) {
+            for (let i = i0; i < i1; i++) {
+              let u = ((i + 0.5) / z + wx - X0) / w, v = ((j + 0.5) / z + wy - Y0) / h
+              if (o.flipX) u = 1 - u
+              if (o.flipY) v = 1 - v
+              if (al !== null) {
+                const ti = fr.cutX + Math.floor(u * fr.cutWidth), tj = fr.cutY + Math.floor(v * fr.cutHeight)
+                if (al.d[(tj * al.w + ti) * 4 + 3] < 128) continue
+              }
+              s += lumAt(i, j)
+              n++
+            }
+          }
+          return n > 0 ? { n, moy: +(s / n).toFixed(2) } : null
+        }
+        const dessus = moyenneOpaque(-Infinity, sac.seuil)
+        const face = sac.dresse === 1 && sac.ruban !== 1 ? moyenneOpaque(sac.seuil, sac.pied) : null
+        corps.push({ cle: o.texture.key, tx: +(sac.ancreX / 16).toFixed(2), ty: +(sac.pied / 16).toFixed(2), ruban: sac.ruban, dresse: sac.dresse, expo: +sac.expo.toFixed(2), opaque: al !== null, haut: +Y0.toFixed(1), dessus, face })
+      }
+      // L'image au grain du champ : la luminance moyenne de chaque bloc monde de 4 × 4 px dans le cadre.
+      const tx0 = Math.ceil(wx / 4), ty0 = Math.ceil(wy / 4)
+      const tw = Math.floor((wx + cam.worldView.width) / 4) - tx0, th = Math.floor((wy + cam.worldView.height) / 4) - ty0
+      const texels = new Array(tw * th).fill(null)
+      for (let q = 0; q < th; q++) {
+        for (let p = 0; p < tw; p++) {
+          let s = 0, n = 0
+          const i0 = Math.ceil(((tx0 + p) * 4 - wx) * z), i1 = Math.floor(((tx0 + p + 1) * 4 - wx) * z)
+          const j0 = Math.ceil(((ty0 + q) * 4 - wy) * z), j1 = Math.floor(((ty0 + q + 1) * 4 - wy) * z)
+          for (let j = j0; j < j1; j++) for (let i = i0; i < i1; i++) { s += lumAt(i, j); n++ }
+          if (n > 0) texels[q * tw + p] = +(s / n).toFixed(2)
+        }
+      }
+      return { corps, grain: { tx0, ty0, tw, th, texels }, sources: (sc.gi?.emetteurs ?? []).length, cadre: { wx: +wx.toFixed(1), wy: +wy.toFixed(1), zoom: cam.zoom } }
+    }, { T })
+    /** La moyenne du grain sur un rectangle MONDE en px, [x0, x1) × [y0, y1). */
+    const moyGrain = (lu, x0, y0, x1, y1) => {
+      const g = lu.grain
+      let s = 0, n = 0
+      for (let q = Math.ceil(y0 / 4) - g.ty0; q < Math.floor(y1 / 4) - g.ty0; q++) {
+        for (let p = Math.ceil(x0 / 4) - g.tx0; p < Math.floor(x1 / 4) - g.tx0; p++) {
+          if (p < 0 || q < 0 || p >= g.tw || q >= g.th) continue
+          const v = g.texels[q * g.tw + p]
+          if (v === null) continue
+          s += v
+          n++
+        }
+      }
+      return n > 0 ? +(s / n).toFixed(2) : null
+    }
+    /**
+     * LE VERDICT LG-A17 sur une paire de lectures (feu absent, feu posé) : les dessus loin du feu ne
+     * bougent pas ; au pied du feu, le dessus prend le rebond — jamais le direct ; une face tournée vers
+     * lui prend bien plus. « Le rebond, jamais le direct » se juge contre le SOL LIBRE au pied du feu
+     * (la tuile du feu du côté opposé au mur, qui prend le direct entier) : la montée du dessus n'en
+     * dépasse pas le QUART — seuil de moi ; à la planche « le feu au pied du mur » relue rangée par
+     * rangée, le ruban monte d'un vingt-huitième du sol libre sur la rangée du feu, et un direct qui
+     * fuirait sur le dessus le porterait au-delà du quart sans discuter. La bande la plus proche du feu
+     * dit ce qu'on éprouve :
+     *  - un RUBAN (arête est/ouest) : il monte (≥ 2 — « rien du feu » laisserait sa tête plus noire que
+     *    le sol qu'elle domine : une barre noire entre deux surfaces éclairées), et pas plus que le quart
+     *    du sol libre. Le plancher derrière le mur (deux texels au-delà de la ligne, le texel du ruban
+     *    sauté, sur la rangée du feu) est DIT, pas jugé : dans l'ombre du mur il ne prend presque rien
+     *    (+1,9 sur la planche, sur la rangée du feu — le +9,6 que la planche lui prêtait était la
+     *    lumière d'une BRÈCHE de la ruine deux rangées plus bas) ; le ruban, à cheval sur sa ligne, lit
+     *    le rebond du côté du feu — c'est ce qui le fait monter, et c'est du rebond ;
+     *  - une FACE (arête nord/sud, dont le sprite pend sur deux tuiles au NORD de sa ligne, et cache le
+     *    plancher qu'elle domine) : la face monte d'au moins 10 ; sa coiffe lit le sol juste derrière la
+     *    ligne, dans l'ombre du mur : elle ne monte pas de plus du quart du sol libre (pas de plancher
+     *    de montée — ce sol-là ne prend presque rien). Le sol visible au-dessus du sprite est dit, pas
+     *    jugé : il est à huit texels de la ligne, hors du rebond.
+     */
+    const jugerLeDessus = async (nom, sans, avec, feuT) => {
+      const dist = (c) => Math.hypot(c.tx - (feuT.tx + 0.5), c.ty - (feuT.ty + 0.5))
+      const cleDe = (c) => `${c.cle}@${c.tx},${c.ty}`
+      const avant = new Map(sans.corps.map((c) => [cleDe(c), c]))
+      const paires = avec.corps.map((c) => ({ c, a: avant.get(cleDe(c)) })).filter((p) => p.a !== undefined)
+      const dDessus = (p) => p.c.dessus && p.a.dessus ? +(p.c.dessus.moy - p.a.dessus.moy).toFixed(2) : null
+      const dFace = (p) => p.c.face && p.a.face ? +(p.c.face.moy - p.a.face.moy).toFixed(2) : null
+      const loin = paires.filter((p) => dDessus(p) !== null && dist(p.c) > 10)
+      const pres = paires.filter((p) => dDessus(p) !== null && dist(p.c) <= 2.5).sort((p, q) => dist(p.c) - dist(q.c))
+      const faces = paires.filter((p) => dFace(p) !== null && dist(p.c) <= 4 && p.c.expo > 0.5).sort((p, q) => dist(p.c) - dist(q.c))
+      const opaques = paires.filter((p) => !p.c.opaque).length
+      const autour = await ev(({ fx, fy }) => {
+        const st = window.__BRAISES__.scene.view.structures
+        const bandes = st.filter((q) => (q.edges === 1 || q.edges === 2 || q.edges === 4 || q.edges === 8) && Math.abs(q.ty - fy) <= 2 && Math.abs(q.tx - fx) <= 2)
+        const dB = (q) => {
+          const lx = q.edges === 2 ? q.tx + 1 : q.edges === 8 ? q.tx : null, ly = q.edges === 4 ? q.ty + 1 : q.edges === 1 ? q.ty : null
+          return lx !== null ? Math.hypot(lx - (fx + 0.5), Math.max(0, Math.abs(q.ty + 0.5 - (fy + 0.5)) - 0.5)) : Math.hypot(Math.max(0, Math.abs(q.tx + 0.5 - (fx + 0.5)) - 0.5), ly - (fy + 0.5))
+        }
+        bandes.sort((a, b) => dB(a) - dB(b))
+        const r = bandes[0]
+        if (!r) return null
+        if (r.edges === 2 || r.edges === 8) {
+          const ligne = (r.edges === 2 ? r.tx + 1 : r.tx) * 16
+          const cote = (fx + 0.5) * 16 < ligne ? 1 : -1
+          const x0 = cote > 0 ? ligne + 4 : ligne - 12, x1 = cote > 0 ? ligne + 12 : ligne - 4
+          return { bande: { tx: r.tx, ty: r.ty, edges: r.edges, type: r.type }, sens: 'ruban', d: +dB(r).toFixed(2), plancher: [x0, fy * 16, x1, fy * 16 + 16], solLibre: [(fx - cote) * 16, fy * 16, (fx - cote + 1) * 16, fy * 16 + 16] }
+        }
+        const ligne = (r.edges === 4 ? r.ty + 1 : r.ty) * 16
+        const cote = (fy + 0.5) * 16 < ligne ? 1 : -1 // +1 : le feu au NORD de la ligne (sur le dessus) ; −1 : au SUD, devant la face
+        return { bande: { tx: r.tx, ty: r.ty, edges: r.edges, type: r.type }, sens: 'face', d: +dB(r).toFixed(2), cote, plancher: null, solLibre: [fx * 16, (fy - cote) * 16, fx * 16 + 16, (fy - cote + 1) * 16] }
+      }, { fx: feuT.tx, fy: feuT.ty })
+      const dZone = (r) => (r && moyGrain(sans, ...r) !== null && moyGrain(avec, ...r) !== null ? +(moyGrain(avec, ...r) - moyGrain(sans, ...r)).toFixed(2) : null)
+      const dPlancher = autour ? dZone(autour.plancher) : null, dSolLibre = autour ? dZone(autour.solLibre) : null
+      const ruban = pres.find((p) => p.c.ruban === 1) ?? null
+      const laFace = faces[0] ?? null
+      // Le sol VISIBLE au-dessus du sprite de la face (deux texels), dit et non jugé.
+      const dessusDuSprite = laFace ? dZone([feuT.tx * 16, laFace.c.haut - 8, feuT.tx * 16 + 16, laFace.c.haut]) : null
+      console.log(`   — LG-A17, ${nom} : feu absent → posé (23 h, même instant, même point)`)
+      console.log(`     ${sans.corps.length} corps armés avant, ${avec.corps.length} après, ${paires.length} appariés (${opaques} sans alpha lisible) ; sources dans le champ ${sans.sources} → ${avec.sources} ; ${loin.length} dessus à plus de 10 tuiles, ${pres.length} à 2,5 tuiles ou moins, ${faces.length} face(s) tournée(s) vers le feu à 4 tuiles`)
+      if (autour) console.log(`     la bande au pied du feu : ${autour.bande.type} (${autour.bande.tx}, ${autour.bande.ty}) arête ${autour.bande.edges}, un ${autour.sens} à ${autour.d} tuiles${autour.sens === 'face' ? ` (le feu ${autour.cote < 0 ? 'devant la face' : 'sur le dessus'})` : ''} ; plancher derrière le mur ${JSON.stringify(autour.plancher)} Δ ${dPlancher} ; sol libre ${JSON.stringify(autour.solLibre)} Δ ${dSolLibre}${dessusDuSprite !== null ? ` ; sol visible au-dessus du sprite Δ ${dessusDuSprite}` : ''}`)
+      for (const p of pres.slice(0, 3)) console.log(`       dessus à ${dist(p.c).toFixed(2)} tuiles (${p.c.cle}, ruban ${p.c.ruban}, ${p.c.dessus.n} px opaques) : ${p.a.dessus.moy} → ${p.c.dessus.moy} (Δ ${dDessus(p)})`)
+      for (const p of loin.slice(0, 3)) console.log(`       dessus à ${dist(p.c).toFixed(1)} tuiles (${p.c.cle}) : ${p.a.dessus.moy} → ${p.c.dessus.moy} (Δ ${dDessus(p)})`)
+      for (const p of faces.slice(0, 3)) console.log(`       face à ${dist(p.c).toFixed(2)} tuiles (${p.c.cle}, expo ${p.c.expo}, ${p.c.face.n} px) : ${p.a.face.moy} → ${p.c.face.moy} (Δ ${dFace(p)}) ; sa coiffe ${p.a.dessus?.moy} → ${p.c.dessus?.moy} (Δ ${dDessus(p)})`)
+      ok(avec.sources === sans.sources + 1, `prémisse LG-A17 ${nom} : la pose ajoute UNE source au champ (${sans.sources} → ${avec.sources})`)
+      ok(autour !== null && dSolLibre !== null && dSolLibre >= 40, `prémisse LG-A17 ${nom} : le feu éclaire le sol libre à son pied (Δ ${dSolLibre} ≥ 40)`)
+      ok(loin.length >= 1, `prémisse LG-A17 ${nom} : des dessus hors de portée du feu dans le cadre (${loin.length})`)
+      if (loin.length) {
+        const pire = Math.max(...loin.map((p) => Math.abs(dDessus(p))))
+        ok(pire <= 1, `LG-A17 ${nom}, hors de portée du feu (> 10 tuiles) : un dessus est la même image à 1 niveau près (${loin.length} dessus, pire Δ ${pire.toFixed(2)})`)
+      }
+      if (autour?.sens === 'ruban') {
+        ok(ruban !== null && dSolLibre !== null, `prémisse LG-A17 ${nom} : le ruban au pied du feu et le sol libre sont dans le cadre`)
+        if (ruban !== null && dSolLibre !== null) {
+          const d = dDessus(ruban)
+          ok(d >= 2, `LG-A17 ${nom}, au pied du feu : le ruban prend le rebond — il monte (Δ ${d} ≥ 2 ; « rien du feu » laisserait une barre noire entre deux surfaces éclairées)`)
+          ok(d <= dSolLibre / 4, `LG-A17 ${nom}, au pied du feu : le ruban prend le rebond, jamais le direct — il monte de ${d}, pas plus que le quart du sol libre à son pied (${dSolLibre}) ; le plancher derrière le mur, dans son ombre, Δ ${dPlancher}`)
+        }
+      } else if (autour?.sens === 'face') {
+        ok(laFace !== null && dDessus(laFace) !== null && dSolLibre !== null, `prémisse LG-A17 ${nom} : la face tournée vers le feu, sa coiffe et le sol libre sont dans le cadre`)
+        if (laFace !== null && dDessus(laFace) !== null && dSolLibre !== null) {
+          const df = dFace(laFace), dc = dDessus(laFace)
+          ok(df >= 10, `LG-A17 ${nom}, une face, non : la face tournée vers le feu monte de ${df} (≥ 10)`)
+          ok(dc <= dSolLibre / 4, `LG-A17 ${nom}, la coiffe de cette face prend le rebond, jamais le direct : elle monte de ${dc}, pas plus que le quart du sol libre au pied du feu (${dSolLibre})`)
+        }
+      } else console.log(`     (LG-A17 ${nom} au pied : non éprouvé ici — aucune bande à 2 tuiles du feu)`)
+      return { faces: faces.length, pres: pres.length, sens: autour?.sens ?? null }
+    }
+    await agir({ type: 'debug_teleport', x: OBS.x, y: OBS.y }, 1500, 3)
+    await agir({ type: 'debug_set_hour', hour: 23 }, 1200, 3)
+    const T17 = await ev(() => window.__T__)
+    const sansFeu = await lireLesZones(T17)
+    await agir({ type: 'debug_teleport', x: POSTE.x, y: POSTE.y }, 1500, 3)
     const candidates = await ev(({ g }) => {
       const sc = window.__BRAISES__.scene
       const p = sc.registry.get('playerPos')
@@ -590,7 +787,16 @@ const SCENARIOS = {
     // LE POINT D'OBSERVATION : quatre tuiles et demie au sud de la grappe, hors de portée de la découpe
     // de façade (`render/pans.ts` : un pan tombe à deux tuiles du joueur — mémoire
     // `sujet-rendu-sous-une-autre-cle`). La caméra suit le joueur : la grappe et le feu sont au cadre.
-    await agir({ type: 'debug_teleport', x: grappe.tx + 0.5, y: grappe.ty + 4.5 }, 1500, 3)
+    await agir({ type: 'debug_teleport', x: OBS.x, y: OBS.y }, 1500, 3)
+
+    // ── LG-A17, la seconde moitié : le feu posé, même point, même heure, même instant. Ce feu-ci est au
+    //    pied d'un RUBAN (la grappe élue) : il éprouve le dessus au pied ; la face s'éprouve plus bas. ──
+    let dessusRuban = null
+    if (feu) {
+      await agir({ type: 'debug_set_hour', hour: 23 }, 1200, 3)
+      const avecFeu = await lireLesZones(T17)
+      dessusRuban = await jugerLeDessus('au pied du ruban', sansFeu, avecFeu, feu)
+    }
 
     const heures = [14, 23]
     for (const heure of heures) {
@@ -681,6 +887,107 @@ const SCENARIOS = {
       }
     }
 
+    // ═══ LG-A17, LA FACE : un second feu DEVANT une face, hors de tout lieu ═══
+    // La grappe élue met le premier feu au pied d'un ruban, et ses faces sont à six tuiles : trop loin
+    // pour la bulle du feu (LG-R6). Une bande d'arête nord ou sud pend sa face au NORD de sa ligne, et
+    // la montre au sud : un feu posé sur la tuile au sud de la tuile du mur l'éclaire de face (à un
+    // demi-pas de la ligne pour une arête sud, un pas et demi pour une arête nord). Or AUCUN mur de la
+    // carte jouée n'offre ça (sonde du 2026-09-18) : les faces des lieux regardent dedans, et un feu
+    // refuse tout lieu. On BÂTIT donc la scène : le village PNJ le plus proche, tamponné à son palier 3
+    // (`debug_village_stage`, chef 0 seulement), dresse son enceinte de palissades — des faces sans
+    // toit, hors de tout lieu ; le feu se pose devant un pan tourné vers le sud. Le Feu du village est
+    // une source de plus, constante entre les deux clichés ; le premier feu aussi, s'il porte jusqu'ici.
+    if (feu && dessusRuban !== null && dessusRuban.sens !== 'face') {
+      // ⚠ AU SOL SEULEMENT (lift 0). Sur une terrasse, la passe des corps compare aujourd'hui des px
+      // LOGIQUES (`uGiPied`, `uGiSeuil`, la ligne de `cosDuSud`) à des px DESSINÉS (le fragment, la
+      // lumière du feu) : MESURÉ le 2026-09-18 au village PNJ 2 (lift 32), une palissade à un pas et
+      // demi devant un feu rend `expo` 0 — jugée de dos. C'est la part « paliers » de LG-R14, à venir ;
+      // la garde LG-A17 se prend là où la chaîne est cohérente, et le dit quand elle ne peut pas.
+      const villages = await ev(() => {
+        const sc = window.__BRAISES__.scene
+        const p = sc.registry.get('playerPos')
+        const feux = sc.view.structures.filter((q) => q.type === 'fire' && q.villageId !== undefined && q.villageId !== 0)
+        feux.sort((a, b) => Math.hypot(a.tx - p.x, a.ty - p.y) - Math.hypot(b.tx - p.x, b.ty - p.y))
+        return feux.map((f0) => ({ id: f0.villageId, tx: f0.tx, ty: f0.ty, lift: sc.reliefSous?.(f0.tx + 0.5, f0.ty + 0.5)?.lift ?? 0, avant: sc.view.structures.filter((q) => q.villageId === f0.villageId).length }))
+      })
+      ok(villages.length > 0, villages.length ? `${villages.length} village(s) PNJ à tamponner : ${villages.map((v) => `le ${v.id} en (${v.tx}, ${v.ty}) lift ${v.lift}`).join(', ')}` : 'aucun village PNJ sur la carte — « une face, non » reste non éprouvé')
+      let cible = []
+      for (const village of villages) {
+        if (village.lift !== 0) { console.log(`     (village ${village.id} sur une terrasse, lift ${village.lift} : passé — la passe des corps n'y est pas encore cohérente, LG-R14)`); continue }
+        await agir({ type: 'debug_village_stage', villageId: village.id, stage: 3 }, 3000, 4)
+        const apres = await ev(({ id }) => {
+          const st = window.__BRAISES__.scene.view.structures.filter((q) => q.villageId === id)
+          return { n: st.length, palissades: st.filter((q) => q.type === 'palissade').length, murs: st.filter((q) => q.type === 'wall').length, toits: st.filter((q) => q.type === 'roof').length }
+        }, village)
+        ok(apres.n > village.avant && apres.palissades + apres.murs > 0, `le village ${village.id} tamponné au palier 3 : ${village.avant} → ${apres.n} structures (${apres.palissades} palissades, ${apres.murs} murs, ${apres.toits} toits)`)
+        // L'élection est GÉOMÉTRIQUE (`placeable` porte la portée de bras depuis le joueur, BUILD_RANGE :
+        // il se demande une fois le joueur posté devant la candidate). Le sol libre est la tuile au sud
+        // du feu : elle aussi hors lieu, sinon c'est un autre sol. Les pans SUD de l'enceinte d'abord
+        // (le feu se pose dehors), les palissades avant les murs (pas de toit qui coiffe) ; le mur, le
+        // feu et le sol libre au sol (lift 0).
+        cible = await ev(({ v, f }) => {
+          const sc = window.__BRAISES__.scene
+          const st = sc.view.structures
+          const zones = sc.map?.zones ?? []
+          const dansUneZone = (tx, ty) => zones.some((z) => tx + 0.5 >= z.x && tx + 0.5 < z.x + z.w && ty + 0.5 >= z.y && ty + 0.5 < z.y + z.h)
+          const lift = (tx, ty) => sc.reliefSous?.(tx + 0.5, ty + 0.5)?.lift ?? 0
+          const out = []
+          for (const q of st) {
+            if ((q.edges !== 4 && q.edges !== 1) || !['wall', 'palissade', 'door'].includes(q.type)) continue
+            if (Math.hypot(q.tx - v.tx, q.ty - v.ty) > 24) continue
+            // Pas un coin (un ruban à côté serait « la bande la plus proche »), pas un toit qui
+            // cacherait la coiffe ni un meuble sur le plancher : la face, sa coiffe et le sol au-dessus.
+            const voisins = st.filter((r) => Math.abs(r.tx - q.tx) <= 1 && r.ty >= q.ty - 2 && r.ty <= q.ty + 2 && r !== q)
+            if (voisins.some((r) => r.type === 'roof' || ((r.edges === 2 || r.edges === 8) && r.ty === q.ty))) continue
+            if (voisins.some((r) => r.tx === q.tx && r.ty !== q.ty && r.type !== 'floor')) continue
+            const tx = q.tx, ty = q.ty + 1
+            if (dansUneZone(tx, ty) || dansUneZone(tx, ty + 1) || Math.hypot(tx - f.tx, ty - f.ty) < 6) continue
+            if (lift(q.tx, q.ty) !== 0 || lift(tx, ty) !== 0 || lift(tx, ty + 1) !== 0) continue
+            out.push({ mur: { tx: q.tx, ty: q.ty, type: q.type, edges: q.edges }, tx, ty, dy: 1, sud: q.ty - v.ty, dGrappe: +Math.hypot(q.tx - v.tx, q.ty - v.ty).toFixed(1) })
+          }
+          out.sort((a, b) => (a.mur.type === 'palissade' ? 0 : 1) - (b.mur.type === 'palissade' ? 0 : 1) || b.sud - a.sud || Math.abs(a.tx - v.tx) - Math.abs(b.tx - v.tx))
+          return out.slice(0, 6)
+        }, { v: village, f: feu })
+        if (cible.length > 0) break
+        console.log(`     (village ${village.id} : aucune face tournée vers le sud, sans coin ni toit, au sol, avec deux tuiles hors lieu devant elle)`)
+      }
+      // Sans candidate, la garde ne rougit pas : elle DIT qu'elle n'a pas pu (les deux villages PNJ de
+      // la carte jouée sont sur des terrasses, lift 32 et 64 — MESURÉ le 2026-09-18) ; « une face,
+      // non » reste alors à la planche 22 et à LG-R14.
+      if (cible.length > 0) ok(true, `une face tournée vers le sud, sans coin ni toit, au sol, avec deux tuiles hors lieu devant elle : ${cible.length} candidate(s), la première en (${cible[0].tx}, ${cible[0].ty}) devant la ${cible[0].mur.type} (${cible[0].mur.tx}, ${cible[0].mur.ty}) d'arête ${cible[0].mur.edges}, à ${cible[0].sud} rangées au sud du Feu`)
+      else console.log('   ⚠ LG-A17 « une face, non » : NON ÉPROUVÉ sur cette carte — aucune face tournée vers le sud, sans coin ni toit, AU SOL, avec deux tuiles hors lieu devant elle à 24 tuiles d’un Feu de village PNJ (les villages PNJ sont sur des terrasses : LG-R14 d’abord)')
+      let feu2 = null
+      let sansFeu2 = null, T2 = null, obs2 = null
+      for (const c of cible) {
+        obs2 = { x: c.tx + 0.5, y: c.ty + 3.5 }
+        await agir({ type: 'debug_teleport', x: obs2.x, y: obs2.y }, 1500, 3)
+        const posable = await ev(({ tx, ty }) => { try { return window.__BRAISES__.scene.placeable(tx, ty, 'fire', 0) === true } catch { return false } }, c)
+        if (!posable) { console.log(`     (candidate (${c.tx}, ${c.ty}) devant le ${c.mur.type} (${c.mur.tx}, ${c.mur.ty}) : la production refuse la pose)`); sansFeu2 = null; continue }
+        await agir({ type: 'debug_set_hour', hour: 23 }, 1200, 3)
+        T2 = await ev(() => window.__T__)
+        sansFeu2 = await lireLesZones(T2)
+        for (let i = 0; i < 12; i++) await agir({ type: 'debug_grant', item: 'wood' }, 120, 1)
+        await agir({ type: 'debug_grant', item: 'campfire' }, 400, 1)
+        await agir({ type: 'debug_meteo', meteo: null }, 300, 1)
+        await agir({ type: 'place_campfire', tx: c.tx, ty: c.ty }, 900, 2)
+        feu2 = await ev(({ tx, ty }) => {
+          const s = window.__BRAISES__.scene.view.structures.find((q) => q.type === 'fire' && q.tx === tx && q.ty === ty)
+          return s ? { tx: s.tx, ty: s.ty } : null
+        }, c)
+        if (feu2) break
+        console.log(`     (candidate (${c.tx}, ${c.ty}) : la pose n'a pas pris)`)
+        sansFeu2 = null
+      }
+      if (cible.length > 0) ok(feu2 !== null, feu2 ? `un second feu brûle devant la face, en (${feu2.tx}, ${feu2.ty})` : `aucun second feu posé sur ${cible.length} candidate(s) — « une face, non » reste non éprouvé`)
+      if (feu2 && sansFeu2) {
+        await agir({ type: 'debug_teleport', x: obs2.x, y: obs2.y }, 1500, 3)
+        await agir({ type: 'debug_set_hour', hour: 23 }, 1200, 3)
+        const avecFeu2 = await lireLesZones(T2)
+        const v = await jugerLeDessus('devant la face', sansFeu2, avecFeu2, feu2)
+        ok(v.sens === 'face' && v.faces >= 1, `prémisse LG-A17 devant la face : la bande au pied du second feu est une face tournée vers lui (${v.sens}, ${v.faces} face(s) à 4 tuiles)`)
+      }
+    }
+
     await ev(() => { window.__BRAISES__.scene.game.loop.wake() })
   },
 
@@ -710,7 +1017,7 @@ const SCENARIOS = {
    */
   async 'gi-temoin'(page) {
     if (!dev) { console.error('!! gi-temoin exige --dev (debug_*, le champ GI)'); return }
-    const { ev, pas, agir, ok } = outilsGi(page)
+    const { ev, pas, agir, ok, pc } = outilsGi(page)
     await ev(() => { window.__BRAISES__.scene.game.loop.sleep() })
     await agir({ type: 'debug_god', on: true }, 300, 1)
     await agir({ type: 'debug_meteo', meteo: null }, 600, 1)
@@ -883,7 +1190,233 @@ const SCENARIOS = {
     // moins un anneau nu au-delà : un rayon nu de 7 ou moins ne l'éprouve pas, et on le dit.
     const loin = ecarts.slice(7)
     ok(loin.length > 0 && loin.every((e) => e !== null && Math.abs(e) <= 1), loin.length > 0 ? `LG-A5 : rien ne bouge où rien ne tombe — anneaux 7 à ${R - 1}, au-delà du feu, au niveau près (${loin.join(' ')})` : `LG-A5 non éprouvé : le coin nu ne porte qu'à ${R} tuiles, aucun anneau au-delà du feu`)
+
+    // ═══ LG-A7 (LG-R6) — LE SOUFFLE, L'ENGAGEMENT ET LA FLAQUE, SUR LE CHAMP ═══
+    //
+    // Hôte figé, un Feu seul, la nuit, sans occludeur à portée : la scène du témoin est celle du
+    // critère. Tout se lit à des INSTANTS choisis (`step(t, 0)` deux fois — le premier rendu à un instant
+    // s'écarte d'un niveau, le second juge) dans la cible `direct` de la chaîne (le champ du feu seul,
+    // avant Mn et le rebond) et dans l'image composée. Le canal VERT porte la mesure au pied : le rouge
+    // (teinte 1,15 × pic 0,62) sature dès une force de 1,4, or un feu engagé au sommet de sa flamme en
+    // demande 1,57 ; le vert tient jusqu'à 1,75.
     await ev(() => { window.__BRAISES__.scene.registry.set('debugGi', 7) })
+    await pas(3)
+    const fx = (coin.tx + 0.5) * 16, fy = (coin.ty + 0.5) * 16
+    const feuId = await ev(({ tx, ty }) => window.__BRAISES__.scene.view.structures.find((q) => q.type === 'fire' && q.tx === tx && q.ty === ty)?.id ?? null, coin)
+    ok(feuId !== null, `le feu du témoin a un identifiant (${feuId}) — sa graine de battement en dépend`)
+    // LE BATTEMENT ÉTALON DU RAYON (`render/lighting.ts`, `flicker`), recopié ici pour ÉLIRE le creux et
+    // la crête d'une fenêtre de douze secondes. La copie est ÉPROUVÉE plus bas contre le rayon que la
+    // chaîne porte à ces instants : périmée, elle rougit au lieu de mentir.
+    const flicker = (ms, seed) => { const t = ms * 0.001 + seed; return 1 + 0.09 * Math.sin(t * 2.1) + 0.06 * Math.sin(t * 3.7 * Math.SQRT2) + 0.025 * Math.sin(t * 11.3) }
+    const graine = (feuId ?? 0) * 1.7
+    let creux = { t: T, b: Infinity }, crete = { t: T, b: -Infinity }
+    for (let ms = T; ms <= T + 12000; ms += 4) {
+      const b = flicker(ms, graine)
+      if (b < creux.b) creux = { t: ms, b }
+      if (b > crete.b) crete = { t: ms, b }
+    }
+    const milieu = { t: (creux.t + crete.t) / 2, b: flicker((creux.t + crete.t) / 2, graine) }
+    /** Le champ direct à l'instant `t` : les texels touchés, le vert au pied (le max sur 3 × 3 texels
+     *  autour de la source), et ce que la chaîne a REÇU (rayon, force) — plus l'alpha de la flaque au
+     *  même instant, le battement que la flamme et le sol partagent. */
+    const lireLeChamp = (t) => ev(({ t, fx, fy, id }) => {
+      const sc = window.__BRAISES__.scene, g = sc.game, gi = sc.gi
+      g.step(t, 0); g.step(t, 0)
+      const gr = gi.grille, c = gi.cadre
+      const d = gi.lire('direct')
+      const ems = gi.emetteurs ?? []
+      const sx = (fx - c.x) / c.pxParTexel, sy = (fy - c.y) / c.pxParTexel
+      let touches = 0, pied = 0
+      for (let j = 0; j < gr.gh; j++) {
+        for (let i = 0; i < gr.gw; i++) {
+          const p = (j * gr.gw + i) * 4
+          if (d[p] + d[p + 1] + d[p + 2] > 0) touches++
+          if (Math.abs(i + 0.5 - sx) <= 1.5 && Math.abs(j + 0.5 - sy) <= 1.5 && d[p + 1] > pied) pied = d[p + 1]
+        }
+      }
+      const e = ems[0]
+      const flaque = sc.fireGround?.glows?.get(id)
+      return { touches, pied, sources: ems.length, rayon: e ? +e.rayon.toFixed(4) : null, force: e ? +e.force.toFixed(6) : null, alpha: flaque ? +flaque.alpha.toFixed(6) : null }
+    }, { t, fx, fy, id: feuId })
+    const auCreux = await lireLeChamp(creux.t), auMilieu = await lireLeChamp(milieu.t), aLaCrete = await lireLeChamp(crete.t)
+    const dire = (n, x, m) => `${n} (battement ${m.b.toFixed(4)}) : ${x.touches} texels touchés, vert au pied ${x.pied}, rayon ${x.rayon}, force ${x.force}, alpha de la flaque ${x.alpha}`
+    console.log(`   — LG-A7, le souffle (${aLaCrete.sources} source(s) dans le champ)`)
+    for (const [n, x, m] of [['creux ', auCreux, creux], ['milieu', auMilieu, milieu], ['crête ', aLaCrete, crete]]) console.log(`     ${dire(n, x, m)}`)
+    ok(auCreux.sources === 1 && aLaCrete.sources === 1, `prémisse LG-A7 : une seule source dans le champ aux deux instants (${auCreux.sources}, ${aLaCrete.sources})`)
+    const prem = auCreux.rayon !== null && aLaCrete.rayon !== null && auCreux.pied > 0 && aLaCrete.pied > 0 && auCreux.alpha !== null
+    ok(prem, 'prémisse LG-A7 : la chaîne porte le feu, le champ l’éclaire au pied, et la flaque bat')
+    if (prem) {
+      // La copie du battement contre le rayon que la chaîne porte (24 texels × le battement, feu allumé).
+      const ecartCopie = Math.max(Math.abs(auCreux.rayon - 24 * creux.b), Math.abs(aLaCrete.rayon - 24 * crete.b))
+      ok(ecartCopie < 0.02, `la copie du battement étalon vaut le rayon de la chaîne aux deux instants (écart ${ecartCopie.toFixed(4)} texel) — le creux et la crête sont les siens`)
+      // LA PORTÉE RESPIRE EN CARRÉ DU BATTEMENT (LG-R6) : les texels touchés, à 10 % près.
+      const rapportTexels = aLaCrete.touches / auCreux.touches, rapportCarre = (aLaCrete.rayon / auCreux.rayon) ** 2
+      ok(Math.abs(rapportTexels / rapportCarre - 1) <= 0.1, `LG-A7 la portée : du creux à la crête, les texels touchés croissent de ×${rapportTexels.toFixed(3)} pour un rayon au carré ×${rapportCarre.toFixed(3)} (écart ${pc(Math.abs(rapportTexels / rapportCarre - 1))} ≤ 10 %)`)
+      // LA FORCE AU PIED SUIT LA FORCE REÇUE : le champ, pas la promesse.
+      const rapportPied = aLaCrete.pied / auCreux.pied, rapportForce = aLaCrete.force / auCreux.force
+      ok(Math.abs(rapportPied / rapportForce - 1) <= 0.02, `LG-A7 la force au pied : ×${rapportPied.toFixed(4)} dans le champ pour ×${rapportForce.toFixed(4)} reçue (écart ${pc(Math.abs(rapportPied / rapportForce - 1))} ≤ 2 %)`)
+      // LES TROIS BATTEMENTS LISENT LA MÊME GRAINE AU MÊME INSTANT : la force reçue par le champ est
+      // AFFINE en l'alpha de la flaque (alpha = K × battement, force = 1 − S + S × battement) — trois
+      // instants alignés, et l'ordonnée à l'origine dit l'amorti S du trou d'aujourd'hui (`GI.FEU.SOUFFLE`).
+      const pente = (aLaCrete.force - auCreux.force) / (aLaCrete.alpha - auCreux.alpha)
+      const origine = auCreux.force - pente * auCreux.alpha
+      const predit = origine + pente * auMilieu.alpha
+      ok(Number.isFinite(pente) && Math.abs(predit - auMilieu.force) <= 0.005, `LG-A7 même graine, même instant : la force du champ suit l'alpha de la flaque — le milieu tombe sur la droite des deux extrêmes (prédit ${predit.toFixed(4)}, reçu ${auMilieu.force.toFixed(4)})`)
+      ok(Math.abs(1 - origine - 0.7) <= 0.02, `LG-A7 l'amorti du souffle est celui du trou d'aujourd'hui : S = ${(1 - origine).toFixed(3)} (0,7 ± 0,02)`)
+    }
+
+    // ── À 60 Hz, AUCUNE MARCHE : entre deux images consécutives, la luminance d'un texel ne saute pas.
+    //    Au bord de la portée (au-delà de 85 % du rayon), où la géométrie bouge : ≤ 2 niveaux. Sur tout
+    //    le champ, le pire est DIT, avec sa cause légitime : la force au pied bat avec la flamme. ──
+    const paire = (t) => ev(({ t, fx, fy }) => {
+      const sc = window.__BRAISES__.scene, g = sc.game, gi = sc.gi
+      const lum = () => {
+        const d = gi.lire('direct'), gr = gi.grille, out = new Float32Array(gr.gw * gr.gh)
+        for (let k = 0; k < out.length; k++) out[k] = 0.2126 * d[k * 4] + 0.7152 * d[k * 4 + 1] + 0.0722 * d[k * 4 + 2]
+        return out
+      }
+      g.step(t, 0); g.step(t, 0)
+      const a = lum(), eA = gi.emetteurs[0]
+      g.step(t + 1000 / 60, 0); g.step(t + 1000 / 60, 0)
+      const b = lum(), eB = gi.emetteurs[0]
+      const gr = gi.grille, c = gi.cadre
+      const sx = (fx - c.x) / c.pxParTexel, sy = (fy - c.y) / c.pxParTexel
+      const Rm = Math.max(eA?.rayon ?? 0, eB?.rayon ?? 0)
+      let pireTout = 0, pireBord = 0, nBord = 0
+      for (let j = 0; j < gr.gh; j++) {
+        for (let i = 0; i < gr.gw; i++) {
+          const k = j * gr.gw + i, dd = Math.abs(a[k] - b[k])
+          if (dd > pireTout) pireTout = dd
+          if (Math.hypot(i + 0.5 - sx, j + 0.5 - sy) >= 0.85 * Rm) { nBord++; if (dd > pireBord) pireBord = dd }
+        }
+      }
+      return { pireTout: +pireTout.toFixed(2), pireBord: +pireBord.toFixed(2), nBord, dRayon: +((eB?.rayon ?? 0) - (eA?.rayon ?? 0)).toFixed(3), dForce: +((eB?.force ?? 0) - (eA?.force ?? 0)).toFixed(4) }
+    }, { t, fx, fy })
+    const paires = []
+    for (let k = 0; k < 8; k++) paires.push(await paire(T + 300 + k * 220))
+    console.log(`     à 60 Hz, huit paires d'images sur 1,8 s : bord (≥ 85 % du rayon) ${paires.map((p) => p.pireBord).join(' ')} ; tout le champ ${paires.map((p) => p.pireTout).join(' ')} ; Δrayon ${paires.map((p) => p.dRayon).join(' ')} ; Δforce ${paires.map((p) => p.dForce).join(' ')}`)
+    const pireBord = Math.max(...paires.map((p) => p.pireBord)), pireTout = Math.max(...paires.map((p) => p.pireTout))
+    ok(paires.every((p) => p.nBord > 0) && pireBord <= 2, `LG-A7 à 60 Hz : au bord de la portée, aucun texel ne change de plus de 2 niveaux d'une image à l'autre (pire ${pireBord.toFixed(2)}) — la décroissance atteint zéro sans marche`)
+    // Sur TOUT le champ, le pire saut a une cause et une seule : la force au pied, qui bat avec la flamme.
+    // Au pied, la luminance du direct vaut 255 × 0,62 × (0,2126 × 1,15 + 0,7152 × 0,92 + 0,0722 × 0,62) ≈ 150
+    // niveaux par unité de force : un saut plus grand que 150 × |Δforce| + 2 viendrait d'ailleurs.
+    const inexplique = Math.max(...paires.map((p) => p.pireTout - (2 + 150 * Math.abs(p.dForce))))
+    ok(inexplique <= 0, `LG-A7 à 60 Hz : sur tout le champ, le pire saut d'une image à l'autre (${pireTout.toFixed(2)} niveaux) s'explique par le souffle de la force au pied (Δforce jusqu'à ${Math.max(...paires.map((p) => Math.abs(p.dForce))).toFixed(4)} par image, 150 niveaux par unité de force, à 2 niveaux près)`)
+
+    // ── L'ENGAGEMENT : LA FORCE, JAMAIS LA PORTÉE (LG-R6, planche 12 « K ») — le même instant, le village
+    //    du feu forcé neutre puis engagé (verrouillé par un getter, comme `feuNuit` : le snapshot
+    //    réécrit `villages` à chaque tick). Un feu de camp n'a pas de village (id 0) : on lui en donne un,
+    //    copié du premier, pour que `warmth` ait une adresse. ──
+    const verrouiller = (w) => ev(({ w }) => {
+      const sc = window.__BRAISES__.scene
+      const base = (sc.view.villages ?? []).filter((v) => v.id !== 0)
+      const modele = base[0] ?? { id: 0, warmth: 0 }
+      const fige = [...base.map((v) => ({ ...v, warmth: w })), { ...modele, id: 0, warmth: w }]
+      Object.defineProperty(sc.view, 'villages', { get: () => fige, set: () => {}, configurable: true })
+    }, { w })
+    /** L'image composée à l'instant `t`, par anneaux autour du feu (en tuiles d'écran) : la luminance
+     *  (moyenne, médiane, p90) et la part de couleur (max − min) / max (médiane). Les anneaux au-delà de
+     *  10 tuiles ne tiennent que sur la largeur du cadre — ils existent, entamés. */
+    const lireLImage = (t) => ev(({ t, fx, fy }) => {
+      const sc = window.__BRAISES__.scene, g = sc.game
+      g.step(t, 0); g.step(t, 0)
+      const c = g.canvas, cam = sc.cameras.main
+      const ech = c.width / cam.width
+      const parTuile = 16 * cam.zoom * ech
+      const sx = (fx - cam.worldView.x) * cam.zoom * ech, sy = (fy - cam.worldView.y) * cam.zoom * ech
+      const k = document.createElement('canvas'); k.width = c.width; k.height = c.height
+      const x = k.getContext('2d'); x.drawImage(c, 0, 0)
+      const d = x.getImageData(0, 0, c.width, c.height).data
+      const BORNES = [0, 0.5, 1, 2, 3, 4, 6, 8, 10, 12, 14, 16]
+      const lums = BORNES.slice(1).map(() => []), sats = BORNES.slice(1).map(() => [])
+      for (let j = 0; j < c.height; j++) {
+        for (let i = 0; i < c.width; i++) {
+          const r = Math.hypot(i + 0.5 - sx, j + 0.5 - sy) / parTuile
+          if (r >= 16) continue
+          let q = 0
+          while (q < BORNES.length - 2 && r >= BORNES[q + 1]) q++
+          const p = (j * c.width + i) * 4, R = d[p], V = d[p + 1], B = d[p + 2]
+          lums[q].push(0.2126 * R + 0.7152 * V + 0.0722 * B)
+          const mx = Math.max(R, V, B)
+          sats[q].push(mx > 0 ? (mx - Math.min(R, V, B)) / mx : 0)
+        }
+      }
+      const stat = (a) => {
+        if (!a.length) return null
+        a.sort((u, v) => u - v)
+        return { n: a.length, moy: +(a.reduce((s, v) => s + v, 0) / a.length).toFixed(2), med: +a[a.length >> 1].toFixed(3), p90: +a[Math.floor(a.length * 0.9)].toFixed(2) }
+      }
+      return BORNES.slice(0, -1).map((r0, q) => ({ r0, r1: BORNES[q + 1], lum: stat(lums[q]), sat: stat(sats[q]) }))
+    }, { t, fx, fy })
+    const anneau = (img, r0) => img.find((a) => a.r0 === r0)
+    await verrouiller(0)
+    const champNeutre = await lireLeChamp(crete.t), imageNeutre = await lireLImage(crete.t)
+    await verrouiller(100)
+    const champEngage = await lireLeChamp(crete.t), imageEngagee = await lireLImage(crete.t)
+    console.log('   — LG-A7, l’engagement (le même instant, la crête)')
+    console.log(`     champ neutre  : ${champNeutre.touches} texels touchés, vert au pied ${champNeutre.pied}, rayon ${champNeutre.rayon}, force ${champNeutre.force}`)
+    console.log(`     champ engagé  : ${champEngage.touches} texels touchés, vert au pied ${champEngage.pied}, rayon ${champEngage.rayon}, force ${champEngage.force}`)
+    const ligne = (img) => img.map((a) => `${a.r0}–${a.r1} ${a.lum ? `${a.lum.moy} (méd ${a.lum.med.toFixed(0)}, p90 ${a.lum.p90})` : '—'}`).join(' · ')
+    console.log(`     image neutre  : ${ligne(imageNeutre)}`)
+    console.log(`     image engagée : ${ligne(imageEngagee)}`)
+    ok(champNeutre.force > 0 && Math.abs(champEngage.force / champNeutre.force - 1.25) < 1e-6, `LG-A7 l'engagement entre dans la force reçue : ×${(champEngage.force / champNeutre.force).toFixed(4)} du neutre à l'engagé (1,25 : la loi du point-light d'aujourd'hui)`)
+    ok(champEngage.rayon === champNeutre.rayon && champEngage.touches === champNeutre.touches, `LG-A7 l'engagement ne touche pas la portée : même rayon (${champNeutre.rayon}) et mêmes texels touchés (${champNeutre.touches} / ${champEngage.touches})`)
+    ok(champNeutre.pied > 0 && Math.abs(champEngage.pied / champNeutre.pied / 1.25 - 1) <= 0.02, `LG-A7 le point proche, dans le champ : le vert au pied ×${(champEngage.pied / champNeutre.pied).toFixed(4)} (1,25 ± 2 %)`)
+    const pres0 = anneau(imageNeutre, 0.5), pres1 = anneau(imageEngagee, 0.5)
+    ok(pres0?.lum && pres1?.lum && pres1.lum.med - pres0.lum.med >= 10, `LG-A7 le point proche, à l'image : le sol à 0,5–1 tuile gagne ${pres0?.lum && pres1?.lum ? (pres1.lum.med - pres0.lum.med).toFixed(1) : '—'} niveaux de luminance médiane du neutre à l'engagé (≥ 10)`)
+    // AU-DELÀ DE 4 TUILES, LA LOI K ET RIEN D'AUTRE : le sol ne gagne pas plus que le QUART de la part du
+    // feu qu'il avait (la force ×1,25, la portée intacte), à 3 niveaux près. La part du feu à 4–6 tuiles
+    // se lit sur l'image neutre : l'excès sur le sol hors de portée (8–10 tuiles). Un seuil fixe en
+    // niveaux mentirait : à la crête du souffle la portée fait 6,9 tuiles et le feu porte encore à 4.
+    const loin0 = anneau(imageNeutre, 4), loin1 = anneau(imageEngagee, 4), hors = anneau(imageNeutre, 8)
+    const partMoy = loin0?.lum && hors?.lum ? Math.max(0, loin0.lum.moy - hors.lum.moy) : 0
+    const partP90 = loin0?.lum && hors?.lum ? Math.max(0, loin0.lum.p90 - hors.lum.p90) : 0
+    ok(loin0?.lum && loin1?.lum && hors?.lum && Math.abs(loin1.lum.moy - loin0.lum.moy) <= 3 + 0.25 * partMoy && Math.abs(loin1.lum.p90 - loin0.lum.p90) <= 3 + 0.25 * partP90, `LG-A7 le point proche, au-delà de 4 tuiles : le sol ne gagne pas plus que le quart de sa part de feu (4–6 tuiles : moyenne ${loin0?.lum?.moy} → ${loin1?.lum?.moy} pour une part de ${partMoy.toFixed(1)}, p90 ${loin0?.lum?.p90} → ${loin1?.lum?.p90} pour une part de ${partP90.toFixed(1)} ; à 3 niveaux près)`)
+    for (const r0 of [12, 14]) {
+      const a = anneau(imageNeutre, r0), b = anneau(imageEngagee, r0)
+      ok(a?.lum && b?.lum && Math.abs(b.lum.moy - a.lum.moy) <= 3, `LG-A7 ② la nuit reste la nuit : à ${r0}–${r0 + 2} tuiles, l'alignement ne change rien au sol (${a?.lum?.moy} → ${b?.lum?.moy}, ≤ 3)`)
+    }
+    const satPres = anneau(imageNeutre, 2)?.sat, satLoin = anneau(imageNeutre, 12)?.sat
+    ok(satPres && satLoin && satPres.med >= satLoin.med - 0.05, `LG-A7 ③ le sol garde sa teinte sous le champ : part de couleur médiane ${satPres?.med} à 2–3 tuiles contre ${satLoin?.med} à 12–14`)
+
+    // ── LA FLAQUE SOUS LE CHAMP (LG-R6, planche 13) : village neutre, le même instant — le pied du feu
+    //    n'est ni moins clair ni moins coloré qu'aujourd'hui, et sans la flaque il perd sa braise. ──
+    await verrouiller(0)
+    await ev(() => { window.__BRAISES__.scene.registry.set('debugGi', 0) })
+    const imageAujourdhui = await lireLImage(crete.t)
+    await ev(() => { window.__BRAISES__.scene.registry.set('debugGi', 7) })
+    const imageComposee = await lireLImage(crete.t)
+    await ev(({ id }) => { window.__BRAISES__.scene.fireGround?.glows?.get(id)?.setVisible(false) }, { id: feuId })
+    const imageSansFlaque = await lireLImage(crete.t)
+    await ev(({ id }) => { window.__BRAISES__.scene.fireGround?.glows?.get(id)?.setVisible(true) }, { id: feuId })
+    const etendue = await ev(({ id }) => {
+      const sc = window.__BRAISES__.scene
+      const glow = sc.fireGround?.glows?.get(id)
+      if (!glow) return null
+      const src = sc.textures.get(glow.texture.key).getSourceImage()
+      const k = document.createElement('canvas'); k.width = src.width; k.height = src.height
+      const x = k.getContext('2d'); x.drawImage(src, 0, 0)
+      const d = x.getImageData(0, 0, src.width, src.height).data
+      const cx = (src.width - 1) / 2, cy = (src.height - 1) / 2
+      let dMax = 0
+      for (let j = 0; j < src.height; j++) for (let i = 0; i < src.width; i++) if (d[(j * src.width + i) * 4 + 3] > 0) dMax = Math.max(dMax, Math.hypot(i - cx, j - cy))
+      const texelPx = glow.displayWidth / src.width
+      // `centres` : le dernier texel allumé, par son centre (c'est ainsi que la planche 13 a lu 2,96) ;
+      // `bord` : son bord le plus loin — les pixels que la flaque touche vraiment (+ un demi-texel).
+      return { cote: src.width, texelPx: +texelPx.toFixed(2), centres: +((dMax * texelPx) / 16).toFixed(3), bord: +(((dMax + 0.5) * texelPx) / 16).toFixed(3), demiCoteTuiles: +(glow.displayWidth / 2 / 16).toFixed(3) }
+    }, { id: feuId })
+    const a0 = anneau(imageAujourdhui, 0.5), a1 = anneau(imageComposee, 0.5), a2 = anneau(imageSansFlaque, 0.5)
+    console.log('   — LG-A7, la flaque sous le champ (village neutre, la crête)')
+    console.log(`     sol à 0,5–1 tuile — aujourd'hui : luminance méd ${a0?.lum?.med.toFixed(1)} (moy ${a0?.lum?.moy}), couleur méd ${a0?.sat?.med} ; composé : ${a1?.lum?.med.toFixed(1)} (moy ${a1?.lum?.moy}), ${a1?.sat?.med} ; composé sans la flaque : ${a2?.lum?.med.toFixed(1)} (moy ${a2?.lum?.moy}), ${a2?.sat?.med}`)
+    console.log(`     la flaque : ${etendue ? `${etendue.cote} texels de côté à ${etendue.texelPx} px, le dernier texel allumé centré à ${etendue.centres} tuiles du foyer (son bord à ${etendue.bord}), demi-côté ${etendue.demiCoteTuiles} tuiles` : 'introuvable'}`)
+    // La clarté d'aujourd'hui à 4 niveaux près : le témoin LG-A20 tolère déjà 2 niveaux EN MOYENNE sur
+    // l'anneau 0–1 entre les deux compositions (le voile creusé, le champ multiplié) — au pied, la
+    // médiane de la demi-couronne 0,5–1 en prend le double. Planche 13 : 150 pour 147 ; ici, à la crête
+    // du souffle sous la lune, MESURÉ 181 pour 184.
+    ok(a0?.lum && a1?.lum && a1.lum.med >= a0.lum.med - 4, `LG-A7 la flaque sous le champ : le sol à 0,5–1 tuile garde la clarté d'aujourd'hui (${a1?.lum?.med.toFixed(1)} pour ${a0?.lum?.med.toFixed(1)}, à 4 niveaux près)`)
+    ok(a0?.sat && a1?.sat && a1.sat.med >= a0.sat.med - 0.02, `LG-A7 la flaque sous le champ : le sol à 0,5–1 tuile n'est pas moins coloré qu'aujourd'hui (${a1?.sat?.med} pour ${a0?.sat?.med})`)
+    ok(a1?.lum && a2?.lum && a1.lum.med - a2.lum.med >= 15, `LG-A7 le champ ne remplace pas la flaque : sans elle, le sol à 0,5–1 tuile perd ${a1?.lum && a2?.lum ? (a1.lum.med - a2.lum.med).toFixed(1) : '—'} niveaux (≥ 15)`)
+    ok(etendue !== null && etendue.centres <= 3 && etendue.demiCoteTuiles <= 3.2, `LG-A7 la flaque reste dans ses trois tuiles : le dernier texel allumé est centré à ${etendue?.centres} tuiles du foyer (≤ 3 ; son bord de 4 px à ${etendue?.bord})`)
     await ev(() => { window.__BRAISES__.scene.game.loop.wake() })
   },
 

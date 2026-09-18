@@ -23,7 +23,9 @@ import { TOUTES_VARIANTES, ancrageHouppierPx, hauteurPx, houppierLargeur } from 
 import type { SourceGi } from './champ-gpu'
 import { composerLeCorps, partsDuCorps, type Rgb } from './corps-ref'
 import { grilleDuMonde } from './grille'
-import { ALBEDO, GI, hauteurDeBande, longueurDOmbre } from './reglages'
+import { ALBEDO, GI, forceDuFeuGi, hauteurDeBande, longueurDOmbre } from './reglages'
+import { flicker } from '../lighting'
+import { intensiteDuFeu } from '../../scenes/world/dynamic-lighting'
 
 /**
  * L'ORACLE DU CHAMP (spec `lumiere-globale.md` LG-R4, critères LG-A4 ; LG-R5, critère LG-A5 ; LG-R11/R12 :
@@ -601,5 +603,45 @@ describe('l’engagement ne touche pas la portée (LG-R6, LG-A7)', () => {
     // @ts-expect-error — une source de la GI ne connaît que sa position, son rayon et sa force (LG-R6).
     const s: SourceGi = { worldX: 0, worldY: 0, radiusTiles: 6, force: 1, engagement: 1 }
     expect(s.force).toBe(1)
+  })
+
+  // LA FORCE PREND L'ENGAGEMENT PAR LA LOI D'AUJOURD'HUI — `intensiteDuFeu`, le point-light d'un Feu
+  // (planche 12, « K : la force seule ») : le rapport de l'engagé au neutre, à toute heure, tel quel.
+  const AX = { respiration: false, coeurBlanc: false, lisere: false, compose: false }
+  it('R6 — l’engagement entre dans la force comme dans le point-light d’aujourd’hui, à toute heure', () => {
+    for (const day of [0, 0.3, 1]) {
+      for (const e of [0, 0.25, 0.5, 1]) {
+        const attendu = intensiteDuFeu(day, e, 1, AX) / intensiteDuFeu(day, 0, 1, AX)
+        expect(forceDuFeuGi(e * 100, 1, true)).toBeCloseTo(attendu, 12)
+      }
+    }
+  })
+  it('R6 — le feu neutre vaut 1, l’engagement se lit en valeur absolue et se borne à 100', () => {
+    expect(forceDuFeuGi(0, 1, true)).toBe(1)
+    expect(forceDuFeuGi(-100, 1, true)).toBe(forceDuFeuGi(100, 1, true))
+    expect(forceDuFeuGi(250, 1, true)).toBe(forceDuFeuGi(100, 1, true))
+    expect(forceDuFeuGi(100, 1, true)).toBeCloseTo(1 + GI.FEU.ENGAGEMENT, 12)
+  })
+  // LE SOUFFLE : l'amorti du trou du voile d'aujourd'hui, 1 + 0,7 (b − 1) — et rien sans l'axe.
+  it('R6 — la force respire à l’amorti du trou d’aujourd’hui, et ne bouge pas l’axe éteint', () => {
+    expect(forceDuFeuGi(0, 1.18, true)).toBeCloseTo(1 + 0.18 * GI.FEU.SOUFFLE, 12)
+    expect(forceDuFeuGi(0, 0.83, true)).toBeCloseTo(1 - 0.17 * GI.FEU.SOUFFLE, 12)
+    expect(forceDuFeuGi(0, 1.18, false)).toBe(1)
+    expect(forceDuFeuGi(100, 0.83, false)).toBeCloseTo(1 + GI.FEU.ENGAGEMENT, 12)
+    // Les deux se multiplient : l'engagé respire autant, en proportion, que le neutre.
+    expect(forceDuFeuGi(100, 1.18, true) / forceDuFeuGi(100, 0.83, true)).toBeCloseTo(forceDuFeuGi(0, 1.18, true) / forceDuFeuGi(0, 0.83, true), 12)
+  })
+  it('R6 — au creux et à la crête du battement étalon, la force reste entre 0,85 et 1,15 (le trou d’aujourd’hui)', () => {
+    let bas = Infinity
+    let haut = -Infinity
+    for (let ms = 0; ms < 60000; ms += 3) {
+      const f = forceDuFeuGi(0, flicker(ms, 0.7), true)
+      if (f < bas) bas = f
+      if (f > haut) haut = f
+    }
+    expect(bas).toBeGreaterThan(0.85)
+    expect(bas).toBeLessThan(0.9)
+    expect(haut).toBeLessThan(1.15)
+    expect(haut).toBeGreaterThan(1.1)
   })
 })

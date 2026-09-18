@@ -213,6 +213,7 @@ function revealRadiusOf(kind: string): number {
 import { NightVeil } from './world/night-veil'
 import { ChampGpu } from '../render/gi/champ-gpu'
 import { ambianteDeLHeure, luminanceDuVoile, rgbDeCouleur } from '../render/gi/corps-ref'
+import { forceDuFeuGi } from '../render/gi/reglages'
 import { DynamicLighting, couleurDuCiel, deriveDOmbre, facteurDuFeu, forceDeLOmbre } from './world/dynamic-lighting'
 import { WaterLayer, type WaterWader } from './world/water-layer'
 import { flowAt } from '../render/flow-field'
@@ -2450,7 +2451,7 @@ export class WorldScene extends Phaser.Scene {
           // La lueur suit l'ÉTAT du feu (spec feu-station S1/S3) : pleine allumé, faible en braises,
           // NULLE éteint — la flaque au sol, le trou du voile et le reflet sur l'eau s'éteignent ensemble.
           const factor = facteurDuFeu(this.lastSnapshotTick, s)
-          return { s, factor, g: { ...g, alpha: g.alpha * factor } }
+          return { s, factor, g: { ...g, alpha: g.alpha * factor }, warmth }
         })
       // LES REMOUS (spec da-feeling R11) : qui MARCHE dans le haut-fond ? Suivi léger par
       // entité — la force s'éteint ~0,7 s après le dernier pas : un avatar immobile ne remue
@@ -2719,11 +2720,15 @@ export class WorldScene extends Phaser.Scene {
       const axFeu = axesFeu()
       // …ET À LA HAUTEUR DE SA TUILE (`liftSol`, comme le sprite du feu) : au palier 2, le trou
       // se creusait quatre tuiles au sud des rondins (MESURÉ le 2026-09-04, feu 474, graine 2026).
-      const veilFires = litFires.map(({ s, factor, g }) => ({
+      const veilFires = litFires.map(({ s, factor, g, warmth }) => ({
         worldX: (s.tx + 0.5) * TILE_PX,
         worldY: (s.ty + 0.5) * TILE_PX - (this.reliefSous?.(s.tx + 0.5, s.ty + 0.5, s.etage).lift ?? 0),
         radiusTiles: fireHoleRadius(time, s.id * 1.7) * factor,
         force: axFeu.respiration || axFeu.coeurBlanc ? 1 + (g.beat - 1) * 0.7 : 1,
+        // LA FORCE DANS LE CHAMP DE LA GI (LG-R6) : le même souffle que le trou, ET l'engagement du
+        // village, que le trou ne prend pas — le trou ne colore rien, le champ multiplie à la place du
+        // voile ET du point-light. La portée reste la même, `radiusTiles` (LG-A7).
+        forceGi: forceDuFeuGi(warmth, g.beat, axFeu.respiration || axFeu.coeurBlanc),
       }))
       // ═══ LES TORCHES (spec `torche.md`) — TROIS branchements, UNE liste ═══
       //
@@ -2742,7 +2747,7 @@ export class WorldScene extends Phaser.Scene {
         // La FORCE, pas 1 : le rayon a doublé le 2026-08-26, la profondeur du creusement a
         // baissé d'autant (`TORCHE_HOLE_FORCE`) — le réglage vit dans `render/torche.ts`, avec
         // le rayon qu'il compense, jamais en dur dans cette boucle.
-        if (r > 0) veilFires.push({ worldX: p.x, worldY: p.y, radiusTiles: r, force: TORCHE_HOLE_FORCE })
+        if (r > 0) veilFires.push({ worldX: p.x, worldY: p.y, radiusTiles: r, force: TORCHE_HOLE_FORCE, forceGi: TORCHE_HOLE_FORCE })
       }
       this.torcheGround?.update(porteurs, day, time)
       // LE CHAMP DE LA GI (spec `lumiere-globale.md`, tranche B) — derrière l'interrupteur du panneau
@@ -2762,7 +2767,7 @@ export class WorldScene extends Phaser.Scene {
           this.cameras.main,
           { map: this.map, structures: this.view.structures, nodes: this.view.nodes },
           this.etages.souterrain ? this.etages.niveauDuRegard : 0,
-          veilFires.map((f) => ({ worldX: f.worldX, worldY: f.worldY, radiusTiles: f.radiusTiles, force: f.force ?? 1 })),
+          veilFires.map((f) => ({ worldX: f.worldX, worldY: f.worldY, radiusTiles: f.radiusTiles, force: f.forceGi })),
           // LA PROFONDEUR DU CHAMP — en ADD pour le regard de la tranche B, en MULTIPLY quand il
           // COMPOSE ; dans les deux cas `ambientDepth` NU, SURTOUT PAS `+ 0.5`. `AIR_OVER_LIGHT`
           // vaut 0,5, donc l'air et le plancher de nuit se posent EXACTEMENT à `depth + 0.5` ; un

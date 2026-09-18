@@ -632,8 +632,10 @@ export class ChampGpu {
   private direct: Phaser.GameObjects.Shader | null = null
   private champ: Phaser.GameObjects.Shader | null = null
   private image: Phaser.GameObjects.Image | null = null
-  /** Les sources de l'image courante, en texels de la grille (pour l'oracle). */
-  private emetteurs: Emetteur[] = []
+  /** Les sources de l'image courante, en texels de la grille (pour l'oracle) — et la FORCE que chacune
+   *  a reçue (LG-R6), telle quelle, pour que la garde LG-A7 lise ce que la chaîne a reçu et non ce
+   *  qu'elle en a fait (`rgb` est déjà la teinte × la force). */
+  private emetteurs: (Emetteur & { readonly force: number })[] = []
   private uSrc = new Float32Array(GI.MAX_SOURCES * 4)
   private uNb = 0
   /** La borne de marche du direct, en pas du raster 2× — recalculée par image avec les sources. */
@@ -856,14 +858,14 @@ export class ChampGpu {
     // Les sources : en texels de la grille, les plus proches du centre de la vue d'abord.
     const cx = (v.x + v.width / 2) / PX_PAR_TEXEL - this.ox
     const cy = (v.y + v.height / 2) / PX_PAR_TEXEL - this.oy
-    const em: Emetteur[] = []
+    const em: (Emetteur & { readonly force: number })[] = []
     for (const s of sources) {
       const x = s.worldX / PX_PAR_TEXEL - this.ox
       const y = s.worldY / PX_PAR_TEXEL - this.oy
       const rayon = (s.radiusTiles * TILE_PX) / PX_PAR_TEXEL
       if (rayon <= 0 || s.force <= 0) continue
       if (x + rayon < 0 || y + rayon < 0 || x - rayon > gw || y - rayon > gh) continue
-      em.push({ x, y, rayon, taille: GI.TAILLE_SOURCE, rgb: [GI.TEINTE_FEU[0] * s.force, GI.TEINTE_FEU[1] * s.force, GI.TEINTE_FEU[2] * s.force] })
+      em.push({ x, y, rayon, taille: GI.TAILLE_SOURCE, rgb: [GI.TEINTE_FEU[0] * s.force, GI.TEINTE_FEU[1] * s.force, GI.TEINTE_FEU[2] * s.force], force: s.force })
     }
     em.sort((a, b) => (a.x - cx) ** 2 + (a.y - cy) ** 2 - ((b.x - cx) ** 2 + (b.y - cy) ** 2))
     this.emetteurs = em.slice(0, GI.MAX_SOURCES)
