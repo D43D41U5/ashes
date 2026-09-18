@@ -366,7 +366,7 @@ async function fonderPres(page, agir, slotDe, p0, sites = SITES_FONDATION) {
  *  Node nu, il n'importe pas le paquet client). */
 const NOMS_FEU = ['étalon (le rendu d’avant)', 'la respiration', 'le cœur blanc', 'les escarbilles', 'le liseré chaud', 'le halo de chaleur', 'TOUT (le rendu livré)']
 
-/** Les outils des scénarios GI (`gi`, `gi-temoin`, `gi-roches`) : la page dort, et chaque pas est un `game.step`. */
+/** Les outils des scénarios GI (`gi`, `gi-temoin`, `gi-roches`, `gi-banc`) : la page dort, et chaque pas est un `game.step`. */
 const outilsGi = (page) => {
   const ev = (fn, arg) => page.evaluate(fn, arg)
   /** `n` pas de boucle, page endormie — la GI se rend dans `update`, pas dans un timer. */
@@ -1229,6 +1229,42 @@ const SCENARIOS = {
     ok(sSousRoche === 0, `le masque d'astre est nul sous toute roche (LG-R15) : S ${sSousRoche === -1 ? 'NON LU (pas de champ)' : `au pire ${sSousRoche} / 255 sur la tuile de chaque pierre et celle du sud`}`)
     console.log('     (« le champ ne change pas d’un niveau au pied des roches entre avec et sans socles » : non éprouvé ici — retirer les socles du champ demande un crochet que la chaîne n’a pas)')
     await ev(() => { window.__BRAISES__.scene.game.loop.wake() })
+  },
+
+  /**
+   * ═══ LE BANC DE LA GI (LG-A1, LG-A3, LG-A14) — l'onglet `#gi` de l'Atelier, piloté ═══
+   *
+   * Le smoke `gi` juge la chaîne sur le monde joué, à travers la SOMME : `gi-faces`, `gi-drapeau`,
+   * `gi-rebond`, `gi-lumiere` et `gi-face-directe` n'y sont relues par personne. Le banc de l'Atelier
+   * (`atelier/banc-gi.ts`) relit CHAQUE passe contre l'oracle sur une scène fixe — le coin du feu et la
+   * lisière, dont `banc-gi-loi.test.ts` prouve les prémisses — puis l'écran (LG-A3), puis chronomètre
+   * une image par `readPixels` d'un texel (LG-A14). Ce scénario l'ouvre sur le serveur de dev (`--dev` :
+   * l'Atelier n'existe pas dans `dist`), clique « Mesurer », et fait de ses douze gardes autant de
+   * verdicts. Le coût s'imprime, INDICATIF sous SwiftShader : la gate ne se juge que sur une machine de
+   * sa classe, et cette VM n'en a pas. MESURÉ le 2026-09-18 : 12 / 12, 35 s, 1,7 s par image.
+   */
+  async 'gi-banc'(page) {
+    if (!dev) { console.error('!! gi-banc exige --dev (l’Atelier vit hors de dist)'); return }
+    const { ok } = outilsGi(page)
+    // `URL` est ici la chaîne du jeu : la classe est `globalThis.URL`.
+    const adresse = new globalThis.URL('atelier.html#gi', BASE_URL.replace(/\?.*$/, '')).href
+    await page.goto(adresse, { waitUntil: 'networkidle', timeout: 60000 })
+    await page.waitForFunction(() => window.__BANC_GI__?.etat === 'pret', null, { timeout: 60000 })
+    await page.click('#bg-lancer')
+    const t0 = Date.now()
+    await page.waitForFunction(() => ['fini', 'echec'].includes(window.__BANC_GI__?.etat), null, { timeout: 560000 })
+    const r = await page.evaluate(() => window.__BANC_GI__)
+    ok(r.etat === 'fini', `le banc va au bout (${((Date.now() - t0) / 1000).toFixed(0)} s)${r.erreur ? ` — ${r.erreur}` : ''}`)
+    const s = r.resultat
+    if (!s) return
+    console.log(`   GPU : ${s.gpu} — ${s.classeDetectee} ; fenêtre ${s.fenetre.gw} × ${s.fenetre.gh} texels ; ${s.sources} sources, ${s.bandes} bandes, ${s.cartes} cartes`)
+    for (const v of s.verdicts) ok(v.juste, `${v.id} — ${v.nom} : ${v.detail}`)
+    ok(s.justes === s.total, `${s.justes} / ${s.total} gardes justes`)
+    const c = s.cout
+    console.log(`   coût : ${c.msParImage.toFixed(2)} ms par image (lots ${c.lots.map((x) => x.toFixed(1)).join(' / ')} ms, ${c.imagesParLot} image(s) par lot ; soumission ${c.soumissionMs.toFixed(2)} ms, cartes ${c.cartesMs.toFixed(2)} ms) — gate ${s.gate.verdict}${s.gate.ms !== null ? ` (${s.gate.ms} ms)` : ''}`)
+    if (s.gate.verdict === 'passe' || s.gate.verdict === 'rompue') ok(s.gate.verdict === 'passe', `LG-A14 : la gate « ${s.classe} » tient`)
+    else console.log('     (LG-A14 : rendu logiciel ou classe à trancher — le coût est indicatif, les gates intégré et dédié restent NON MESURÉES)')
+    await page.screenshot({ path: `${OUT}/gi-banc.png`, fullPage: true })
   },
 
   /**

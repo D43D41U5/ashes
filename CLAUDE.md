@@ -37,6 +37,9 @@ pnpm plans        # régénère plans-batis.genere.ts depuis packages/sim/src/pl
                   #   onglet PLANS (#plans) : l'éditeur graphique du bâti, spec atelier-plans.md
                   #   onglet SON   (#son)   : le banc d'écoute — le vrai routage audio sur le
                   #     vrai moteur, avec la distance et le côté (spatialisation).
+                  #   onglet GI    (#gi)    : le banc de la lumière globale — chaque passe de la
+                  #     chaîne relue au texel contre l'oracle sur une scène fixe, et le coût d'une
+                  #     image sur le GPU qui l'ouvre (spec lumiere-globale.md LG-A1/A3/A14).
                   # Les outils se montent À LA DEMANDE : ouvrir #son ne boote pas Phaser.
                   # /banc-son.html reste et redirige vers #son.
 # Stack Docker : `docker compose up -d` → jeu sur http://ashes.test via le proxy Traefik

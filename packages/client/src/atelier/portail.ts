@@ -47,6 +47,12 @@ const OUTILS: Outil[] = [
     propos: 'Le banc d’écoute — le vrai routage sur le vrai moteur, à la distance de votre choix.',
     charger: () => import('../banc-son'),
   },
+  {
+    cle: 'gi',
+    nom: 'GI',
+    propos: 'Le banc de la lumière globale — chaque passe relue au texel contre l’oracle, et le coût d’une image sur ce GPU.',
+    charger: () => import('./banc-gi'),
+  },
 ]
 
 const PAR_DEFAUT = OUTILS[0]!

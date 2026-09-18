@@ -190,12 +190,61 @@ function recu(g: GrilleGi, x: number, y: number, src: Float32Array): [number, nu
   return [r, gg, b, vx, vy]
 }
 
-interface Face {
+/** Une face qui émet : au texel (x, y), regardant le texel libre (vx, vy) dont elle renvoie la lumière. */
+export interface Face {
   readonly x: number
   readonly y: number
   readonly vx: number
   readonly vy: number
   readonly rgb: readonly [number, number, number]
+}
+
+/**
+ * LES FACES (LG-R4 « faces ») — les cellules opaques bordées d'une libre, et les deux côtés de chaque
+ * bande. Une cellule pleine regarde sa voisine libre la plus éclairée et renvoie le max par canal de ses
+ * voisines libres, × son albédo. Chaque texel de longueur d'une bande a deux faces, une par côté ;
+ * chacune reçoit la lumière directe du texel qui la borde et la renvoie de ce côté-là, depuis le centre
+ * du texel d'en face (la distance qu'avait la face d'un mur d'un texel à sa voisine — le rebond garde
+ * la pente de G2).
+ *
+ * Exportée pour le banc de l'Atelier (`banc-gi.ts`, LG-A1) : c'est CE que la passe `gi-faces` doit
+ * porter, case par case — la même liste que `champRef` fait rebondir.
+ */
+export function facesDuChamp(g: GrilleGi, direct: Float32Array): Face[] {
+  const { gw, gh, occ } = g
+  const faces: Face[] = []
+  for (let y = 0; y < gh; y++)
+    for (let x = 0; x < gw; x++) {
+      const k = y * gw + x
+      if (occ[k] !== 1) continue
+      const [r, gg, b, vx, vy] = recu(g, x, y, direct)
+      if (r + gg + b <= 1e-4) continue
+      faces.push({ x: x + 0.5, y: y + 0.5, vx: vx + 0.5, vy: vy + 0.5, rgb: [r * g.albedo[k * 3]!, gg * g.albedo[k * 3 + 1]!, b * g.albedo[k * 3 + 2]!] })
+    }
+  g.murs.forEach((m, im) => {
+    const alb = g.albedoMurs[im] ?? [0.5, 0.42, 0.32]
+    const horizontale = m.x1 - m.x0 > m.y1 - m.y0
+    const ligne = horizontale ? Math.round(m.y0 + 0.5) : Math.round(m.x0 + 0.5)
+    const a0 = horizontale ? Math.round(m.x0 + 0.5) : Math.round(m.y0 + 0.5)
+    const a1 = horizontale ? Math.round(m.x1 - 0.5) : Math.round(m.y1 - 0.5)
+    for (let u = a0; u < a1; u++)
+      for (const cote of [ligne - 1, ligne]) {
+        const autre = cote === ligne ? ligne - 1 : ligne
+        const sx = horizontale ? u : cote
+        const sy = horizontale ? cote : u
+        const ax = horizontale ? u : autre
+        const ay = horizontale ? autre : u
+        if (sx < 0 || sy < 0 || sx >= gw || sy >= gh) continue
+        const j = sy * gw + sx
+        if (occ[j] === 1) continue
+        const r = direct[j * 3]!
+        const gg = direct[j * 3 + 1]!
+        const b = direct[j * 3 + 2]!
+        if (r + gg + b <= 1e-4) continue
+        faces.push({ x: ax + 0.5, y: ay + 0.5, vx: sx + 0.5, vy: sy + 0.5, rgb: [r * alb[0], gg * alb[1], b * alb[2]] })
+      }
+  })
+  return faces
 }
 
 /** LE CHAMP (LG-R4, les cinq étapes : direct, faces, rebond, genou, somme). */
@@ -231,45 +280,11 @@ export function champRef(g: GrilleGi, emetteurs: readonly Emetteur[], reglages: 
       }
   }
 
-  // 2. Faces — les cellules opaques bordées d'une libre, et les deux côtés de chaque bande.
+  // 2. Faces — les cellules opaques bordées d'une libre, et les deux côtés de chaque bande (`facesDuChamp`).
   const rb = new Float32Array(n * 3)
   const light = new Float32Array(direct)
   if (rebond > 0) {
-    const faces: Face[] = []
-    for (let y = 0; y < gh; y++)
-      for (let x = 0; x < gw; x++) {
-        const k = y * gw + x
-        if (occ[k] !== 1) continue
-        const [r, gg, b, vx, vy] = recu(g, x, y, direct)
-        if (r + gg + b <= 1e-4) continue
-        faces.push({ x: x + 0.5, y: y + 0.5, vx: vx + 0.5, vy: vy + 0.5, rgb: [r * g.albedo[k * 3]!, gg * g.albedo[k * 3 + 1]!, b * g.albedo[k * 3 + 2]!] })
-      }
-    // Chaque texel de longueur d'une bande a deux faces, une par côté ; chacune reçoit la lumière directe du
-    // texel qui la borde et la renvoie de ce côté-là, depuis le centre du texel d'en face (la distance
-    // qu'avait la face d'un mur d'un texel à sa voisine — le rebond garde la pente de G2).
-    g.murs.forEach((m, im) => {
-      const alb = g.albedoMurs[im] ?? [0.5, 0.42, 0.32]
-      const horizontale = m.x1 - m.x0 > m.y1 - m.y0
-      const ligne = horizontale ? Math.round(m.y0 + 0.5) : Math.round(m.x0 + 0.5)
-      const a0 = horizontale ? Math.round(m.x0 + 0.5) : Math.round(m.y0 + 0.5)
-      const a1 = horizontale ? Math.round(m.x1 - 0.5) : Math.round(m.y1 - 0.5)
-      for (let u = a0; u < a1; u++)
-        for (const cote of [ligne - 1, ligne]) {
-          const autre = cote === ligne ? ligne - 1 : ligne
-          const sx = horizontale ? u : cote
-          const sy = horizontale ? cote : u
-          const ax = horizontale ? u : autre
-          const ay = horizontale ? autre : u
-          if (sx < 0 || sy < 0 || sx >= gw || sy >= gh) continue
-          const j = sy * gw + sx
-          if (occ[j] === 1) continue
-          const r = direct[j * 3]!
-          const gg = direct[j * 3 + 1]!
-          const b = direct[j * 3 + 2]!
-          if (r + gg + b <= 1e-4) continue
-          faces.push({ x: ax + 0.5, y: ay + 0.5, vx: sx + 0.5, vy: sy + 0.5, rgb: [r * alb[0], gg * alb[1], b * alb[2]] })
-        }
-    })
+    const faces = facesDuChamp(g, direct)
 
     // 3. Rebond — chaque face émet en Lambert depuis son côté éclairé, éteinte à la portée ; le total
     // s'accumule À PART pour être passé sous le genou sans changer de teinte.

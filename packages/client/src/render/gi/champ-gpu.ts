@@ -1025,7 +1025,7 @@ export class ChampGpu {
    * trois textures que les corps échantillonnent (`texturesDesCorps`) pour la garde LG-A8, qui doit
    * composer sa référence sur CE que le shader a lu — les cibles du GPU, pas l'oracle CPU.
    */
-  lire(cible: 'direct' | 'champ' | 'gi-lumiere' | 'gi-face-directe' | 'gi-drapeau'): Uint8Array {
+  lire(cible: 'direct' | 'champ' | 'gi-faces' | 'gi-drapeau' | 'gi-rebond' | 'gi-lumiere' | 'gi-face-directe'): Uint8Array {
     const sh =
       cible === 'direct' ? this.direct
       : cible === 'champ' ? this.champ
@@ -1042,6 +1042,46 @@ export class ChampGpu {
     const haut = new Uint8Array(w * h * 4)
     for (let j = 0; j < h; j++) haut.set(bas.subarray((h - 1 - j) * w * 4, (h - j) * w * 4), j * w * 4)
     return haut
+  }
+
+  /**
+   * LE POINT DE SYNCHRONISATION (LG-A14) — UN texel de la dernière cible bâtie, relu par `readPixels`.
+   * `renderImmediate` ne fait que SOUMETTRE (mesuré le 17/09 : 1,7 ms de soumission pour 487 ms
+   * d'exécution) ; seule une relecture attend que le GPU ait tout exécuté — dans l'ordre, donc les
+   * passes d'avant aussi — et `gl.finish()` n'attend rien sous SwiftShader (spec LG-A14). Le banc de
+   * l'Atelier chronomètre `update` PUIS ceci, et compte l'ensemble comme le coût d'une image.
+   * `false` : aucune passe bâtie, rien à attendre.
+   */
+  synchroniser(): boolean {
+    const sh = this.passes[this.passes.length - 1]
+    if (!sh || !sh.drawingContext) return false
+    const r = this.scene.sys.renderer as Phaser.Renderer.WebGL.WebGLRenderer
+    const gl = r.gl
+    r.glWrapper.updateBindingsFramebuffer({ bindings: { framebuffer: sh.drawingContext.framebuffer } })
+    gl.readPixels(0, 0, 1, 1, gl.RGBA, gl.UNSIGNED_BYTE, this.texelDeSynchro)
+    return true
+  }
+  private readonly texelDeSynchro = new Uint8Array(4)
+
+  /** La grille de l'image courante (les occludeurs que l'oracle ET la chaîne lisent) — `null` avant la première image. */
+  get grilleDuChamp(): GrilleGi | null {
+    return this.grille
+  }
+
+  /** L'OMBRE PLEINE d'astre de l'image courante, par l'oracle — ce que l'alpha de `gi-direct` porte ; `null` sans astre. */
+  ombrePleine(): Float32Array | null {
+    return this.grille && this.astre ? ombrePleineDAstre(this.grille, this.astre, this.cartesDOmbre()) : null
+  }
+
+  /**
+   * Le raster 2× des occludeurs tel que la chaîne le lit (`gi-occ`, RGBA, rangée 0 au NORD) — pour la
+   * garde de la passe 0 du banc : chaque sous-texel d'une cellule pleine porte le code de cellule.
+   */
+  lireOccludeurs(): { readonly w: number; readonly h: number; readonly data: Uint8ClampedArray } | null {
+    if (!this.occ) return null
+    const w = this.gw * 2
+    const h = this.gh * 2
+    return { w, h, data: this.occ.getContext().getImageData(0, 0, w, h).data }
   }
 
   /** L'oracle sur la grille et les sources de l'image courante. */
