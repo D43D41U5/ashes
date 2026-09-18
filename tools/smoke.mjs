@@ -366,7 +366,7 @@ async function fonderPres(page, agir, slotDe, p0, sites = SITES_FONDATION) {
  *  Node nu, il n'importe pas le paquet client). */
 const NOMS_FEU = ['étalon (le rendu d’avant)', 'la respiration', 'le cœur blanc', 'les escarbilles', 'le liseré chaud', 'le halo de chaleur', 'TOUT (le rendu livré)']
 
-/** Les outils des scénarios GI (`gi`, `gi-temoin`) : la page dort, et chaque pas est un `game.step`. */
+/** Les outils des scénarios GI (`gi`, `gi-temoin`, `gi-roches`) : la page dort, et chaque pas est un `game.step`. */
 const outilsGi = (page) => {
   const ev = (fn, arg) => page.evaluate(fn, arg)
   /** `n` pas de boucle, page endormie — la GI se rend dans `update`, pas dans un timer. */
@@ -990,6 +990,244 @@ const SCENARIOS = {
       }
     }
 
+    await ev(() => { window.__BRAISES__.scene.game.loop.wake() })
+  },
+
+  /**
+   * ═══ LG-A16 (LG-R15), LE TROISIÈME POINT — LA COULÉE DES ROCHES, MESURÉE EN SCÈNE ═══
+   *
+   * `ombre-socle.test.ts` prouve la GÉOMÉTRIE (6 / 8 / 10 px d'ombre pleine pour 16 / 20 / 24 px de
+   * pierre, la taille 1 = la texture d'aujourd'hui au bit près). Ce qu'aucun test unitaire ne voit,
+   * c'est le CÂBLAGE — la bonne taille atteint-elle le bon sprite ? — et la PROFONDEUR À L'ÉCRAN, le
+   * seul point de LG-A16 qui soit une mesure de scène (planche 20, run 50 : 8 / 9,8 / 12 px le jour,
+   * jamais plus de 13). Un câblage faux est silencieux : toutes les pierres à la même longueur, les
+   * quinze tests verts (`sonde-qui-ne-peut-pas-echouer`).
+   *
+   * LA SCÈNE : des socles ISOLÉS, élus sur toute la carte — aucun autre nœud ni bâti à six tuiles,
+   * sol praticable et palier uniforme autour — parce que le bras B éteint `forceOmbre`, qui est aussi
+   * l'`a` du champ (LG-R8) et la force des falaises : un voisin lanceur d'ombre d'astre entrerait dans
+   * la colonne mesurée (la sonde `__coulee-cablage.mjs` du 17/09 avait rendu 20,0 et 0,0 px sur les
+   * deux petites pierres du spawn, polluées par leurs voisines). On téléporte le joueur cinq tuiles à
+   * l'EST de chaque élu (hors de la colonne), à 11 h (l'astre porte), jusqu'à tenir les TROIS tailles.
+   *
+   * LES DEUX BRAS AU MÊME INSTANT : `forceOmbre → 0` par un getter (`poserOmbreDeSocle` pose alors la
+   * coulée à alpha 0, et l'affectation de `WorldScene` ne peut pas le défaire — un `setVisible(false)`
+   * le serait par le `step` qui rend), et la sonde CONTRÔLE que le bras B a pris (alpha max des coulées
+   * = 0). La profondeur : la DERNIÈRE rangée assombrie de plus de 4 niveaux (LG-A16) sous le pied, sur
+   * les colonnes à ±12 px du milieu de la pierre (la coulée est cisaillée par l'heure : sa pointe
+   * n'est pas sous le milieu). La rangée du pied est couverte par la pierre elle-même, identique dans
+   * les deux bras : la première rupture ne dit rien, la dernière assombrie dit tout.
+   *
+   * SEUILS DE MOI, posés avant de courir : prédit 8 / 10 / 12 px (l'ombre pleine + 2 px de pénombre) ;
+   * la taille 0 dans [6, 10], la 1 dans [8, 12], la 2 dans [10, 13] ; les moyennes MONOTONES ; jamais
+   * plus de 13 ; 51 textures cuites (3 tailles × 17 crans) ; chaque socle à l'écran porte la coulée de
+   * SA taille, et les trois tailles ont été vues (sinon la garde ne discrimine pas).
+   */
+  async 'gi-roches'(page) {
+    if (!dev) { console.error('!! gi-roches exige --dev (debug_*)'); return }
+    const { ev, agir, ok } = outilsGi(page)
+    await ev(() => { window.__BRAISES__.scene.game.loop.sleep() })
+    await agir({ type: 'debug_god', on: true }, 300, 1)
+    await agir({ type: 'debug_meteo', meteo: null }, 600, 1)
+    await ev(() => { window.__BRAISES__.scene.registry.set('debugGi', 7) })
+    await agir({ type: 'debug_set_hour', hour: 11 }, 1200, 3)
+
+    // ── L'ÉLECTION : des socles isolés, les plus proches de la naissance d'abord ──
+    // `R` est le rayon d'isolement en tuiles ; `deja` les tuiles déjà tentées. La taille d'une pierre
+    // ne se lit pas ici (`tailleDeSocle` hache la tuile, hors de portée de la page) : on la découvre sur
+    // place, dans la clé du sprite — d'où une seconde élection, plus large, quand une taille manque.
+    const elire = (R, deja) => ev(({ R, deja }) => {
+      const sc = window.__BRAISES__.scene, m = sc.map, W = m.width, H = m.height
+      const p = sc.registry.get('playerPos')
+      const nodes = sc.view.nodes ?? []
+      const st = sc.view.structures ?? []
+      const SOCLES = new Set(['rock', 'bloc', 'iron_vein', 'coal_seam', 'quarry', 'rubble'])
+      const DUR = new Set([0, 4, 5, 6, 7, 15, 23, 29])
+      const vus = new Set(deja)
+      // Un index par tuile des nœuds et du bâti : l'isolement se lit en (2R+1)² regards, pas en N².
+      const occupe = new Set()
+      for (const n of nodes) occupe.add(n.ty * W + n.tx)
+      for (const s of st) occupe.add(s.ty * W + s.tx)
+      const lift = (tx, ty) => sc.reliefSous?.(tx + 0.5, ty + 0.5)?.lift ?? 0
+      const out = []
+      let dMax = 0
+      for (const n of nodes) {
+        const d = Math.hypot(n.tx - p.x, n.ty - p.y)
+        if (d > dMax) dMax = d
+        if (!SOCLES.has(n.type) || (n.etage ?? 0) !== 0 || n.stock <= 0 || vus.has(`${n.tx},${n.ty}`)) continue
+        if (n.tx < R + 2 || n.ty < R + 2 || n.tx >= W - R - 2 || n.ty >= H - R - 2) continue
+        // AU SOL (lift 0) : sur une terrasse le sprite est dessiné `lift` px plus haut que sa tuile, et le
+        // champ d'une terrasse est encore mixte (LG-R14) — la garde veut une scène où rien d'autre ne bouge.
+        const l0 = lift(n.tx, n.ty)
+        if (l0 !== 0) continue
+        let libre = true
+        for (let dy = -R; dy <= R && libre; dy++) {
+          for (let dx = -R; dx <= R; dx++) {
+            const tx = n.tx + dx, ty = n.ty + dy
+            if (dx === 0 && dy === 0) continue
+            if (DUR.has(m.terrain[ty * W + tx]) || occupe.has(ty * W + tx) || lift(tx, ty) !== l0) { libre = false; break }
+          }
+        }
+        if (!libre) continue
+        out.push({ tx: n.tx, ty: n.ty, type: n.type, size: n.size ?? null, d: +d.toFixed(1) })
+      }
+      out.sort((a, b) => a.d - b.d)
+      return { noeuds: nodes.length, dMax: +dMax.toFixed(0), candidats: out.slice(0, 40) }
+    }, { R, deja })
+    const election = await elire(6, [])
+    ok(election.candidats.length > 0, `${election.candidats.length} socle(s) isolé(s) à six tuiles, au sol, sur ${election.noeuds} nœuds connus (le plus loin à ${election.dMax} tuiles) — le premier en (${election.candidats[0]?.tx}, ${election.candidats[0]?.ty})`)
+    if (election.candidats.length === 0) return
+
+    // ── LA MESURE, socle par socle, jusqu'aux trois tailles ──
+    const mesures = { 0: [], 1: [], 2: [] }
+    const accords = { vus: 0, fautes: [], tailles: new Set() }
+    const tentes = []
+    const debords = []
+    let sSousRoche = -1
+    let cuites = null
+    let brasB = 0
+    let tps = 0
+    const mesurer = async (candidats, budget) => {
+    for (const c of candidats) {
+      if (tps >= budget || [0, 1, 2].every((t) => mesures[t].length >= 2)) break
+      tps++
+      tentes.push(`${c.tx},${c.ty}`)
+      await agir({ type: 'debug_teleport', x: c.tx + 5.5, y: c.ty + 0.5 }, 1500, 3)
+      await agir({ type: 'debug_set_hour', hour: 11 }, 800, 3)
+      const r = await ev(({ c }) => {
+        const sc = window.__BRAISES__.scene, g = sc.game, cam = sc.cameras.main, cv = g.canvas
+        const v = sc.view
+        const ech = cv.width / cam.width
+        const parPx = cam.zoom * ech
+        const grab = () => {
+          g.step(window.__T__, 0); g.step(window.__T__, 0)
+          const k = document.createElement('canvas'); k.width = cv.width; k.height = cv.height
+          const x = k.getContext('2d'); x.drawImage(cv, 0, 0)
+          return x.getImageData(0, 0, cv.width, cv.height).data
+        }
+        const sprites = v.nodePool ?? [], ombres = v.nodeShadowPool ?? []
+        const avec = grab()
+        const ancien = Object.getOwnPropertyDescriptor(v, 'forceOmbre')
+        Object.defineProperty(v, 'forceOmbre', { get: () => 0, set: () => {}, configurable: true })
+        const sans = grab()
+        let alphaMax = 0
+        for (const om of ombres) if (om?.visible && /^fx-ombre-socle-t/.test(om.texture?.key ?? '')) alphaMax = Math.max(alphaMax, om.alpha)
+        if (ancien) Object.defineProperty(v, 'forceOmbre', ancien)
+        else { delete v.forceOmbre; v.forceOmbre = 1 }
+        g.step(window.__T__, 0)
+        let cuites = 0
+        for (let t = 0; t < 3; t++) for (let k = -8; k <= 8; k++) if (sc.textures.exists(`fx-ombre-socle-t${t}-${k < 0 ? 'o' : 'e'}${Math.abs(k)}`)) cuites++
+        // Les pools sont PARALLÈLES (`snapshot-view`, `nodeShadowPool[i]` ↔ `nodePool[i]`) : l'accord se lit index par index.
+        const paires = []
+        let elu = null
+        let plusProche = null
+        const X = c.tx * 16 + 8, Y = (c.ty + 1) * 16
+        for (let i = 0; i < Math.min(sprites.length, ombres.length); i++) {
+          const sp = sprites[i]
+          if (!sp?.visible) continue
+          // Les SOCLES seulement (`SOCLE_TYPES`) : un buisson porte aussi un « -2 » dans sa clé, et ce n'est pas une taille.
+          const mS = /^nd-(?:rock|bloc|iron_vein|coal_seam|quarry|rubble)-([0-2])(?:_|$)/.exec(sp.texture?.key ?? '')
+          if (!mS) continue
+          const om = ombres[i]
+          const cleO = om?.visible ? (om.texture?.key ?? '') : ''
+          const mO = /^fx-ombre-socle-t([0-2])-/.exec(cleO)
+          const paire = { i, sprite: sp.texture.key, tailleSprite: +mS[1], ombre: cleO || '(aucune)', tailleOmbre: mO ? +mO[1] : null }
+          paires.push(paire)
+          const dd = Math.hypot(sp.x - X, sp.y - Y)
+          if (plusProche === null || dd < plusProche.d) plusProche = { d: +dd.toFixed(1), cle: sp.texture.key, x: sp.x, y: sp.y }
+          if (Math.abs(sp.x - X) < 8 && Math.abs(sp.y - Y) < 8) elu = { ...paire, x: sp.x, y: sp.y }
+        }
+        if (elu === null) {
+          const p = sc.registry.get('playerPos')
+          return { cuites, alphaMax: +alphaMax.toFixed(3), paires, elu: null, diag: { joueur: p ? [+p.x.toFixed(1), +p.y.toFixed(1)] : null, socles: paires.length, plusProche, terrain: sc.map.terrain[c.ty * sc.map.width + c.tx] } }
+        }
+        const lum = (d, i) => 0.2126 * d[i] + 0.7152 * d[i + 1] + 0.0722 * d[i + 2]
+        const bx = Math.round((elu.x - cam.worldView.x) * parPx), by = Math.round((elu.y - cam.worldView.y) * parPx)
+        // ±20 px : la pierre la plus large fait 24 px, et la coulée se cisaille de `cran × (rangs − 1)/7`
+        // px à sa pointe (6 px au cran 4) — la dernière rangée s'étend jusqu'à 18 px du milieu.
+        const demi = Math.round(20 * parPx), haut = Math.round(20 * parPx)
+        if (bx < demi || bx >= cv.width - demi || by < 0 || by >= cv.height - haut) return { cuites, alphaMax: +alphaMax.toFixed(3), paires, elu, horsCadre: true }
+        let dernier = -1, colonneDuDernier = 0, rangsMax = 0
+        // Le débord latéral, aux premières rangées sous le pied (là où le cisaillement est encore nul) :
+        // la coulée ne dépasse la pierre que de sa pénombre, 2 px de chaque côté (LG-A16).
+        let colMin = Infinity, colMax = -Infinity
+        for (let i = bx - demi; i <= bx + demi; i++) {
+          let d = -1, rangs = 0
+          for (let j = 0; j < haut; j++) {
+            const k = ((by + j) * cv.width + i) * 4
+            if (lum(sans, k) - lum(avec, k) > 4) {
+              d = j; rangs++
+              if (j < 3) { if (i < colMin) colMin = i; if (i > colMax) colMax = i }
+            }
+          }
+          if (d > dernier) { dernier = d; colonneDuDernier = i - bx }
+          if (rangs > rangsMax) rangsMax = rangs
+        }
+        const sp = sprites[elu.i]
+        const largeur = sp.displayWidth
+        const debordO = colMin === Infinity ? 0 : Math.max(0, (elu.x - largeur / 2) - (cam.worldView.x + colMin / parPx))
+        const debordE = colMax === -Infinity ? 0 : Math.max(0, (cam.worldView.x + (colMax + 1) / parPx) - (elu.x + largeur / 2))
+        // LE MASQUE D'ASTRE EST NUL SOUS TOUTE ROCHE (LG-R15 : un socle n'est pas un lanceur du champ) — lu
+        // dans la cible `gi-drapeau` (S dans .g, comme la garde des corps), sur la tuile de la pierre et celle du sud.
+        let sMax = null
+        const gi = sc.gi
+        if (gi && gi.cadre && typeof gi.lire === 'function') {
+          const S = gi.lire('gi-drapeau')
+          const cd = gi.cadre, pas = cd.pxParTexel
+          if (S) {
+            sMax = 0
+            for (let ty = c.ty; ty <= c.ty + 1; ty++) for (let tx = c.tx; tx < c.tx + 1; tx++) {
+              for (let q = 0; q < 16 / pas; q++) for (let p = 0; p < 16 / pas; p++) {
+                const i = Math.floor((tx * 16 - cd.x) / pas) + p, j = Math.floor((ty * 16 - cd.y) / pas) + q
+                if (i < 0 || j < 0 || i >= cd.gw || j >= cd.gh) continue
+                sMax = Math.max(sMax, S[(j * cd.gw + i) * 4 + 1])
+              }
+            }
+          }
+        }
+        return { cuites, alphaMax: +alphaMax.toFixed(3), paires, elu, parPx: +parPx.toFixed(2), profondeurPx: +((dernier + 1) / parPx).toFixed(1), assombriesPx: +(rangsMax / parPx).toFixed(1), pointeDx: +(colonneDuDernier / parPx).toFixed(1), debordO: +debordO.toFixed(1), debordE: +debordE.toFixed(1), largeur, sMax, derive: v.deriveOmbre, force: v.forceOmbre }
+      }, { c })
+      cuites = r.cuites
+      brasB = Math.max(brasB, r.alphaMax)
+      for (const q of r.paires) { accords.vus++; accords.tailles.add(q.tailleSprite); if (q.tailleOmbre !== q.tailleSprite) accords.fautes.push(q) }
+      if (r.elu === null) { console.log(`     (socle ${c.type} (${c.tx}, ${c.ty}) : pas de sprite à son pied — passé ; joueur en ${JSON.stringify(r.diag.joueur)}, ${r.diag.socles} socle(s) à l'écran, le plus proche ${JSON.stringify(r.diag.plusProche)}, terrain ${r.diag.terrain})`); continue }
+      if (r.horsCadre) { console.log(`     (socle ${c.type} (${c.tx}, ${c.ty}) : hors du cadre — passé)`); continue }
+      mesures[r.elu.tailleSprite].push(r.profondeurPx)
+      debords.push(Math.max(r.debordO, r.debordE))
+      if (r.sMax !== null) sSousRoche = Math.max(sSousRoche, r.sMax)
+      console.log(`     ${c.type} (${c.tx}, ${c.ty}) taille ${r.elu.tailleSprite} [${r.elu.sprite} ↔ ${r.elu.ombre}] : profondeur ${r.profondeurPx} px, ${r.assombriesPx} px assombris, la pointe à ${r.pointeDx} px du milieu ; débord au pied ${r.debordO} px à l'ouest, ${r.debordE} px à l'est (pierre de ${r.largeur} px) ; S sous la pierre ${r.sMax} (dérive ${r.derive}, force ${r.force}, ${r.parPx} px de tampon par px monde)`)
+    }
+    }
+    await mesurer(election.candidats, 16)
+    // Une taille qui manque parmi les isolées à six tuiles (les tailles se tirent au hasard de la
+    // tuile, un tiers chacune — six pierres au sol sur la carte jouée, aucune de taille 2 au run 3) :
+    // on relâche l'isolement à QUATRE tuiles — la coulée fait 12 px au plus, la pénombre 2, et l'ombre
+    // d'astre d'un arbre à quatre tuiles ne descend pas jusqu'à la colonne à 11 h — et on continue.
+    const manquantes = [0, 1, 2].filter((t) => mesures[t].length === 0)
+    if (manquantes.length > 0) {
+      const large = await elire(4, tentes)
+      console.log(`     (taille(s) ${manquantes.join(', ')} absente(s) des isolées à six tuiles — on relâche à quatre : ${large.candidats.length} candidate(s) de plus)`)
+      await mesurer(large.candidats, tps + 16)
+    }
+    ok(cuites === 51, `textures de coulée cuites : ${cuites} / 51 (3 tailles × 17 crans)`)
+    ok(brasB <= 0.001, `le bras B a pris : alpha max des coulées à l'astre éteint ${brasB}`)
+    ok(accords.tailles.size === 3 && accords.fautes.length === 0, `câblage : ${accords.vus} socle(s) vu(s) à l'écran, ${accords.fautes.length} sans la coulée de sa taille, ${accords.tailles.size} taille(s) vue(s)${accords.fautes.length ? ` — ${accords.fautes.slice(0, 3).map((q) => `${q.sprite} → ${q.ombre}`).join(', ')}` : ''}`)
+    const BANDES = { 0: [6, 10], 1: [8, 12], 2: [10, 13] }
+    const moy = (t) => (mesures[t].length ? mesures[t].reduce((a, b) => a + b, 0) / mesures[t].length : null)
+    for (const t of [0, 1, 2]) {
+      const m = moy(t)
+      ok(m !== null && m >= BANDES[t][0] && m <= BANDES[t][1] && Math.max(...mesures[t]) <= 13,
+        `taille ${t} : ${mesures[t].length} pierre(s), profondeur ${mesures[t].map((x) => x.toFixed(1)).join(' / ')} px${m === null ? ' — AUCUNE PIERRE ISOLÉE DE CETTE TAILLE : la garde ne peut pas la prouver' : ` — moyenne ${m.toFixed(1)}, attendue dans [${BANDES[t][0]}, ${BANDES[t][1]}] (prédit ${[8, 10, 12][t]}, planche 20 : ${[8, 9.8, 12][t]}), jamais plus de 13`}`)
+    }
+    const m0 = moy(0), m1 = moy(1), m2 = moy(2)
+    ok(m0 !== null && m1 !== null && m2 !== null && m0 <= m1 && m1 <= m2, `la coulée grandit avec la pierre : ${m0?.toFixed(1)} ≤ ${m1?.toFixed(1)} ≤ ${m2?.toFixed(1)} px`)
+    // 2 px de pénombre, le cisaillement du cran sur les trois premières rangées (au cran 4, 4/7 px par
+    // rang : moins d'un px — MESURÉ 3,1 à l'ouest, le côté du cisaillement, contre 2,2 à l'est), et le
+    // demi-pixel de tampon (2,25 px de tampon par px monde) : 4 px au plus.
+    const debordMax = debords.length ? Math.max(...debords) : null
+    ok(debordMax !== null && debordMax <= 4, `au pied, la coulée ne déborde la pierre que de sa pénombre : ${debordMax} px au pire (2 px de chaque côté, LG-A16, plus le cisaillement du cran et le demi-pixel de tampon ; tolérance 4)`)
+    ok(sSousRoche === 0, `le masque d'astre est nul sous toute roche (LG-R15) : S ${sSousRoche === -1 ? 'NON LU (pas de champ)' : `au pire ${sSousRoche} / 255 sur la tuile de chaque pierre et celle du sud`}`)
+    console.log('     (« le champ ne change pas d’un niveau au pied des roches entre avec et sans socles » : non éprouvé ici — retirer les socles du champ demande un crochet que la chaîne n’a pas)')
     await ev(() => { window.__BRAISES__.scene.game.loop.wake() })
   },
 
