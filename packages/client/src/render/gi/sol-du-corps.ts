@@ -55,6 +55,7 @@
  */
 import { EDGE_E, EDGE_N, EDGE_O } from '@ashes/sim'
 import { DEMI_BANDE_TUILES, TILE_PX } from '../framing'
+import { CROWN, EMERGENCE } from '../socle-mineral'
 import { GI } from './reglages'
 
 /** La hauteur d'un mur — `MUR_HT` (`bati-art.ts:143`), le défaut quand la famille est inconnue. */
@@ -118,6 +119,14 @@ export interface CorpsPose {
    */
   readonly fut?: boolean
   /**
+   * Un SOCLE MINÉRAL (`socle-mineral.ts` : rock, bloc, filon, veine, carrière, éboulis) — sa TAILLE
+   * (0, 1, 2), qui dit son émergence (16 / 20 / 24 px). Son art distingue un DESSUS — les `CROWN`
+   * rangées planes de sa couronne — et LG-R16 le fait regarder le ciel : rien de direct n'y monte.
+   * Son corps, lui, n'a pas de SENS : une pierre est ronde, elle ne tourne pas le dos au feu —
+   * il garde E, sous le pixel.
+   */
+  readonly socle?: number
+  /**
    * Le lift du palier sur lequel ce corps est posé, en px (LG-R14) — `0` au sol. Il n'entre PAS dans
    * `pointAuSol`, qui rend des coordonnées DESSINÉES ; il entre dans l'angle d'exposition, qui se
    * juge sur la position LOGIQUE (`planche9.mjs` : `s.y + lift`).
@@ -136,7 +145,34 @@ export interface Point {
  * pour une clôture (`GI.CORPS.HAUTEUR_PAR_FAMILLE`, gardé égal à `EDGE_SPRITE`).
  */
 export function hauteurDeCrete(c: CorpsPose): number {
+  // Un socle se dresse de son ÉMERGENCE : c'est de là que sa couronne lit le sol (LG-R7, « une
+  // hauteur de crête plus bas »). Une taille hors table retombe sur la moyenne, comme la coulée.
+  if (c.socle !== undefined) return EMERGENCE[c.socle] ?? EMERGENCE[1]
   return (c.famille !== undefined ? GI.CORPS.HAUTEUR_PAR_FAMILLE[c.famille] : undefined) ?? MUR_HT
+}
+
+/**
+ * LE `seuil` D'UN CORPS QUI N'A PAS DE DESSUS — un fût. Un très grand négatif plutôt que `-Infinity` :
+ * la valeur voyage dans un uniforme `float`, et GLSL ES 1.0 ne promet rien d'un infini.
+ */
+export const SANS_DESSUS = -1e9
+
+/**
+ * LE SEUIL DU DESSUS, en px monde : un pixel dont le `y` est PLUS PETIT (plus haut à l'écran) est un
+ * dessus. C'est CE nombre que le shader compare (`uGiSeuil`) — une seule géométrie, calculée ici,
+ * jamais recomposée dans le GLSL depuis `pied`, `crete` et une demi-bande.
+ *
+ *   · une bande nord/sud : la crête est sous le BAS DE LA BANDE (`auDessusDeLaCrete`) ;
+ *   · un socle : les `CROWN` rangées planes de sa couronne — le sprite est planté au bord bas de sa
+ *     tuile, sa texture fait `EMERGENCE + 1` rangs dont le premier est vide (`formeDeSocle`, `y0`),
+ *     donc la couronne occupe `[y − E, y − E + CROWN)` ;
+ *   · un fût : jamais (`SANS_DESSUS`) — un cylindre n'a pas de dessus, sa cime le coiffe.
+ *   · un ruban est dessus PARTOUT, sans seuil (`estDessus`) — ce nombre ne le concerne pas.
+ */
+export function seuilDuDessus(c: CorpsPose): number {
+  if (c.fut === true) return SANS_DESSUS
+  if (c.socle !== undefined) return c.y - hauteurDeCrete(c) + CROWN
+  return ligneDuPied(c) + DEMI_BANDE_PX - hauteurDeCrete(c)
 }
 
 /**
@@ -161,7 +197,11 @@ export function estRuban(c: CorpsPose): boolean {
  * bande. La crête est à `hauteurDeCrete` sous le BAS DE LA BANDE, pas sous la ligne.
  */
 export function pointAuSol(c: CorpsPose, xw: number, yw: number): Point {
-  if (auDessusDeLaCrete(c, yw)) return { x: xw, y: yw + hauteurDeCrete(c) }
+  // ⚠ `estDessus`, PAS `auDessusDeLaCrete` : le shader lit `p` sur son `dessus`, qui compte le RUBAN
+  // sur toutes ses rangées et ne s'ouvre qu'aux familles dressées. L'oracle lisait la géométrie
+  // seule — un ruban lisait sa ligne sur ses rangs bas, une clôture lisait la crête sur ses rangs
+  // hauts — et le GPU lisait autre chose, sans qu'aucune garde ne les mette face à face (LG-A8).
+  if (estDessus(c, yw)) return { x: xw, y: yw + hauteurDeCrete(c) }
   return { x: xw, y: ligneDuPied(c) }
 }
 
@@ -187,7 +227,11 @@ export function auDessusDeLaCrete(c: CorpsPose, yw: number): boolean {
  *   · une bande NORD/SUD est dessus au-dessus de sa crête, et c'est un SEUIL.
  */
 export function estDessus(c: CorpsPose, yw: number): boolean {
-  if (c.arete === 0 || !suitLaRegleDesFaces(c)) return false
+  if (!suitLaRegleDesFaces(c)) return false
+  // Un FÛT n'a pas de dessus ; un SOCLE en a un — sa couronne — et c'est un seuil, comme une bande.
+  if (c.fut === true) return false
+  if (c.socle !== undefined) return yw < seuilDuDessus(c)
+  if (c.arete === 0) return false
   if (estRuban(c)) return true
   return auDessusDeLaCrete(c, yw)
 }
@@ -203,7 +247,8 @@ export function estDessus(c: CorpsPose, yw: number): boolean {
  * pas garde E ENTIÈREMENT, comme la composition ratifiée l'a rendue.
  */
 export function suitLaRegleDesFaces(c: CorpsPose): boolean {
-  if (c.fut === true) return true
+  // Un fût a une face qui tourne ; un socle a un dessus qui regarde le ciel : les deux sont régis.
+  if (c.fut === true || c.socle !== undefined) return true
   return c.arete !== 0 && c.famille !== undefined && FAMILLES_DRESSEES.has(c.famille)
 }
 
@@ -234,6 +279,9 @@ function cosDuSud(c: CorpsPose, source: Point): number {
 export function expositionAuFeu(c: CorpsPose, feu: Point): number | null {
   if (!suitLaRegleDesFaces(c)) return null
   if (c.fut === true) return (1 + cosDuSud(c, feu)) / 2
+  // Une pierre est ronde : son corps ne tourne le dos à rien, il garde E — seule sa couronne est
+  // régie (`estDessus`), et elle l'emporte dans `lectureDuFeu`.
+  if (c.socle !== undefined) return null
   if (estRuban(c)) return null
   return Math.max(0, cosDuSud(c, feu))
 }

@@ -12,9 +12,11 @@ import {
 } from '@ashes/sim'
 import { EDGE_SPRITE, MUR_HT } from '../bati-art'
 import { DEMI_BANDE_TUILES, TILE_PX, barriereDepth } from '../framing'
+import { CROWN, EMERGENCE } from '../socle-mineral'
 import { grilleDuMonde } from './grille'
 import { GI } from './reglages'
 import {
+  SANS_DESSUS,
   auDessusDeLaCrete,
   estDessus,
   estRuban,
@@ -25,6 +27,7 @@ import {
   ligneDuPied,
   pointAuSol,
   porteeDeLaNormale,
+  seuilDuDessus,
   suitLaRegleDesFaces,
   type CorpsPose,
   type Normale,
@@ -472,5 +475,93 @@ describe('la normale et sa portée g (LG-R7)', () => {
     expect(FEU.z).toBeGreaterThan(clot)
     expect(FEU.z).toBeLessThan(palis)
     expect(FEU.z).toBeLessThan(MUR_HT)
+  })
+})
+
+/**
+ * ═══ LES NŒUDS ARMENT — fût, socle, cime (LG-R7 sur ce qui n'est pas une barrière) ═══
+ *
+ * Un FÛT est un cylindre : il tourne face au feu et n'a pas de dessus (sa cime le coiffe). Un SOCLE
+ * est rond — son corps ne tourne le dos à rien — mais son art lui peint une COURONNE plane
+ * (`socle-mineral.ts`, `CROWN` rangées) et LG-R16 la fait regarder le ciel. Une CIME n'a ni face ni
+ * dessus : elle lit le champ à la ligne du pied de son tronc, et c'est tout.
+ */
+describe('les nœuds arment — fût, socle, cime (LG-R7, LG-R16)', () => {
+  const fut: CorpsPose = { x: 400, y: LIGNE, arete: 0, fut: true }
+  const socle = (taille: number): CorpsPose => ({ x: 400, y: LIGNE, arete: 0, socle: taille })
+  const cime: CorpsPose = { x: 400, y: LIGNE, arete: 0 }
+
+  it('UN FÛT N’A PAS DE DESSUS — aucun rang, si haut soit-il, et son seuil le dit', () => {
+    expect(seuilDuDessus(fut)).toBe(SANS_DESSUS)
+    for (const yw of [LIGNE, LIGNE - 10, LIGNE - 100, LIGNE - 1000]) expect(estDessus(fut, yw)).toBe(false)
+    expect(suitLaRegleDesFaces(fut)).toBe(true)
+  })
+
+  it('un fût TOURNE face au feu — (1 + cos)/2 : plein au sud, nul au nord, moitié de côté', () => {
+    expect(expositionAuFeu(fut, { x: 400, y: LIGNE + 100 })).toBe(1)
+    expect(expositionAuFeu(fut, { x: 400, y: LIGNE - 100 })).toBe(0)
+    expect(expositionAuFeu(fut, { x: 500, y: LIGNE })).toBe(0.5)
+    expect(lectureDuFeu(fut, LIGNE - 40, { x: 400, y: LIGNE + 100 })).toEqual({ ou: 'auPied', y: LIGNE, facteur: 1 })
+  })
+
+  it('LA COURONNE D’UN SOCLE REGARDE LE CIEL — les CROWN rangées planes, ni plus ni moins (LG-R16)', () => {
+    for (const taille of [0, 1, 2]) {
+      const c = socle(taille)
+      const E = EMERGENCE[taille]!
+      expect(hauteurDeCrete(c)).toBe(E)
+      expect(seuilDuDessus(c)).toBe(LIGNE - E + CROWN)
+      // `formeDeSocle` : la texture fait E + 1 rangs, le premier vide ; le rang r (1 ≤ r ≤ E) porte
+      // dy = r − 1 et tombe au monde en y = LIGNE − (E + 1) + r (+ ½ au centre du texel, comme le
+      // fragment). Couronne ⇔ dy < CROWN.
+      for (let r = 1; r <= E; r++) {
+        const dy = r - 1
+        expect(estDessus(c, LIGNE - (E + 1) + r + 0.5), `taille ${taille}, rang ${r}`).toBe(dy < CROWN)
+      }
+    }
+  })
+
+  it('la couronne lit le sol une émergence plus bas ; le corps lit sa ligne', () => {
+    const c = socle(2)
+    const E = EMERGENCE[2]
+    expect(pointAuSol(c, 400, LIGNE - E + 0.5)).toEqual({ x: 400, y: LIGNE + 0.5 })
+    expect(pointAuSol(c, 400, LIGNE - 3)).toEqual({ x: 400, y: LIGNE })
+  })
+
+  it('UNE PIERRE EST RONDE : son corps garde E, et sa couronne ne prend rien du feu', () => {
+    const c = socle(1)
+    const feu = { x: 400, y: LIGNE + 50 }
+    expect(expositionAuFeu(c, feu)).toBeNull()
+    expect(lectureDuFeu(c, LIGNE - 3, feu)).toEqual({ ou: 'sousLePixel' })
+    expect(lectureDuFeu(c, LIGNE - EMERGENCE[1] + 1, feu)).toEqual({ ou: 'nul' })
+  })
+
+  it('une cime — ni arête, ni fût, ni socle — lit sa ligne partout et garde E', () => {
+    expect(suitLaRegleDesFaces(cime)).toBe(false)
+    expect(estDessus(cime, LIGNE - 30)).toBe(false)
+    expect(pointAuSol(cime, 400, LIGNE - 30)).toEqual({ x: 400, y: LIGNE })
+    expect(expositionAuFeu(cime, { x: 0, y: 0 })).toBeNull()
+  })
+})
+
+/**
+ * ═══ L'ORACLE LIT LE POINT DU SHADER (LG-A8) ═══
+ *
+ * Le GPU choisit `p` sur son `dessus` — qui compte le RUBAN sur toutes ses rangées et ne s'ouvre
+ * qu'aux familles dressées. `pointAuSol` lisait la GÉOMÉTRIE seule : un ruban lisait sa ligne sur ses
+ * rangs bas, une clôture lisait la crête sur ses rangs hauts, et le GPU lisait autre chose. Aucun
+ * test ne les mettait face à face ; ces deux-ci le font.
+ */
+describe('l’oracle lit le point du shader (LG-A8 — le ruban et la clôture)', () => {
+  it('UN RUBAN LIT UNE HAUTEUR DE CRÊTE PLUS BAS SUR TOUS SES RANGS — pas seulement au-dessus de la crête', () => {
+    const c = mur(EDGE_E)
+    for (const r of [0, 10, 19, 20, 30, 51]) {
+      expect(pointAuSol(c, c.x, rang(r)), `rang ${r}`).toEqual({ x: c.x, y: rang(r) + hauteurDeCrete(c) })
+    }
+  })
+
+  it('UNE CLÔTURE, PLATE, LIT SA LIGNE SUR TOUS SES RANGS — la géométrie seule dirait « crête » en haut', () => {
+    const c: CorpsPose = { x: 400, y: LIGNE, arete: EDGE_S, famille: 'cloture' }
+    expect(auDessusDeLaCrete(c, rang(17))).toBe(true)
+    expect(pointAuSol(c, c.x, rang(17))).toEqual({ x: c.x, y: ligneDuPied(c) })
   })
 })

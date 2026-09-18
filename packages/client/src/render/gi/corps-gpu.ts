@@ -43,7 +43,6 @@
  * pendant que les dessus restent exacts** — un dessus plat a `n.y = 0`, le signe ne peut pas s'y
  * voir. Une garde qui ne compare que des dessus ne verrait rien (cf. `estNonTrivial`).
  */
-import { DEMI_BANDE_TUILES, TILE_PX } from '../framing'
 
 /** `n_loi.y = −n_phaser.y` — voir l'en-tête. Un seul endroit, et il porte sa raison. */
 const SIGNE_Y_NORMALE = -1
@@ -52,7 +51,7 @@ const SIGNE_Y_NORMALE = -1
  * ═══ LES UNIFORMES, ET CE QUI EST PAR IMAGE OU PAR SPRITE ═══
  *
  * PAR IMAGE (posés une fois) : le cadre du champ, les trois samplers, le ciel, les deux sources.
- * PAR SPRITE (posés au draw, depuis `renderNodeData`) : `uGiPied`, `uGiAncreX`, `uGiCrete`,
+ * PAR SPRITE (posés au draw, depuis `renderNodeData`) : `uGiPied`, `uGiAncreX`, `uGiCrete`, `uGiSeuil`,
  * `uGiDresse`, `uGiExpo`.
  *
  * ⚠ **LE PAR-SPRITE EXIGE UN DRAW PAR SPRITE.** `renderNodeData` ne va PAS au fragment — mesuré :
@@ -86,6 +85,10 @@ export const UNIFORMES_CORPS = {
   ancreX: 'uGiAncreX',
   /** PAR SPRITE — `hauteurDeCrete(c)` : 32 / 24 / 8 (`reglages.ts:77-89`). */
   crete: 'uGiCrete',
+  /** PAR SPRITE — `seuilDuDessus(c)`, en px monde : un pixel de bande nord/sud ou de socle dont le
+   *  `y` est plus petit est un DESSUS. `SANS_DESSUS` pour un fût. La géométrie est calculée là-bas,
+   *  jamais recomposée ici depuis `pied`, `crete` et une demi-bande. */
+  seuil: 'uGiSeuil',
   /** PAR SPRITE — 1 si `suitLaRegleDesFaces(c)`, sinon 0. */
   dresse: 'uGiDresse',
   /** PAR SPRITE — 1 si `estRuban(c)` : il est dessus sur TOUTES ses rangées, sans condition de crête. */
@@ -101,13 +104,6 @@ export const UNIFORMES_CORPS = {
   invA: 'uGiInvA',
   invB: 'uGiInvB',
 } as const
-
-/**
- * `DEMI_BANDE_PX`, en dur dans le texte du shader — il ne change pas par image. Il vient de
- * `../framing`, la MÊME source que `sol-du-corps.ts:57,71` : une seconde table de géométrie serait
- * « une loi, deux lecteurs ».
- */
-const DEMI_BANDE_PX = DEMI_BANDE_TUILES * TILE_PX
 
 /**
  * ═══ LE FRAGMENT — `appliquerGi(fragColor, normal)` ═══
@@ -134,6 +130,7 @@ uniform vec4 uGiFeu;
 uniform float uGiPied;
 uniform float uGiAncreX;
 uniform float uGiCrete;
+uniform float uGiSeuil;
 uniform float uGiDresse;
 uniform float uGiRuban;
 uniform float uGiExpo;
@@ -237,17 +234,17 @@ vec4 appliquerGi(vec4 fragColor, vec3 normalPhaser) {
 
   vec2 monde = mondeDuFragment();
 
-  // ① LE POINT AU SOL. \`auDessusDeLaCrete\` : la crête est sous le BAS DE LA BANDE, pas sous la
-  // ligne — et le prédicat est NOMMÉ parce que le relire sur le résultat est faux d'un rang par
-  // bande (rang 2 au nord, 18 au sud ; \`sol-du-corps.ts:168-178\`).
+  // ① LE POINT AU SOL. Le seuil du dessus arrive CALCULÉ (\`seuilDuDessus\`, \`uGiSeuil\`) : pour une
+  // bande, la crête sous le BAS DE LA BANDE ; pour un socle, sa couronne ; jamais pour un fût.
+  // Le prédicat est NOMMÉ là-bas parce que le relire sur le résultat est faux d'un rang par bande
+  // (rang 2 au nord, 18 au sud ; \`sol-du-corps.ts\`, \`auDessusDeLaCrete\`).
   //
   // ⚠ **LE RUBAN EST DESSUS SUR TOUTES SES RANGÉES** (\`estDessus\` : \`estRuban(c) ? true : …\`).
   // Je l'avais perdu, et le défaut était SOURNOIS : \`expositionAuFeu\` rend \`null\` sur un ruban,
   // donc \`uGiExpo\` vaut −1 et la branche du feu se saute — LE FEU SORTAIT JUSTE PAR ACCIDENT.
   // Mais \`p\` tombait sur le point de FACE, et le plat et l'astre lisaient le mauvais texel du
   // champ. Qui « réparerait » ça en touchant au feu déplacerait le défaut au lieu de le corriger.
-  bool dessus = uGiDresse > 0.5 && (uGiRuban > 0.5 ||
-                monde.y < uGiPied + ${DEMI_BANDE_PX.toFixed(1)} - uGiCrete);
+  bool dessus = uGiDresse > 0.5 && (uGiRuban > 0.5 || monde.y < uGiSeuil);
   vec2 p = dessus ? vec2(monde.x, monde.y + uGiCrete) : vec2(monde.x, uGiPied);
 
   // ② LA RÉPARTITION, au point lu.

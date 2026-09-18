@@ -27,6 +27,7 @@
  */
 import Phaser from 'phaser'
 import { UNIFORMES_CORPS, faireAdditionCorps } from './corps-gpu'
+import { SANS_DESSUS } from './sol-du-corps'
 
 const BatchHandlerQuad = Phaser.Renderer.WebGL.RenderNodes.BatchHandlerQuad
 const SubmitterQuad = Phaser.Renderer.WebGL.RenderNodes.SubmitterQuad
@@ -93,8 +94,11 @@ export interface CorpsPourLeShader {
   pied: number
   /** `c.x` — le feu se lit au pied À L'ANCRE, jamais à l'abscisse du pixel. */
   ancreX: number
-  /** `hauteurDeCrete(c)`. */
+  /** `hauteurDeCrete(c)` — de combien plus bas un DESSUS lit le sol. */
   crete: number
+  /** `seuilDuDessus(c)`, en px monde : un pixel de bande nord/sud (ou de socle) au-dessus est un
+   *  dessus. `-∞` (un très grand négatif) pour un corps qui n'a pas de dessus — un fût. */
+  seuil: number
   /** 1 si `suitLaRegleDesFaces(c)`, sinon 0. */
   dresse: number
   /** 1 si `estRuban(c)`. */
@@ -104,7 +108,7 @@ export interface CorpsPourLeShader {
 }
 
 /** Un corps qu'on n'a pas encore renseigné : plat, sans feu direct. Jamais un `null` dans le shader. */
-const CORPS_NEUTRE: CorpsPourLeShader = { pied: 0, ancreX: 0, crete: 0, dresse: 0, ruban: 0, expo: -1 }
+const CORPS_NEUTRE: CorpsPourLeShader = { pied: 0, ancreX: 0, crete: 0, seuil: SANS_DESSUS, dresse: 0, ruban: 0, expo: -1 }
 
 /**
  * LES UNITÉS DE TEXTURE — 0 et 1 sont à Phaser, 2/3/4 sont à nous.
@@ -248,6 +252,7 @@ export class NoeudCorpsGi extends BatchHandlerQuad {
     pm.setUniform(UNIFORMES_CORPS.pied, c.pied)
     pm.setUniform(UNIFORMES_CORPS.ancreX, c.ancreX)
     pm.setUniform(UNIFORMES_CORPS.crete, c.crete)
+    pm.setUniform(UNIFORMES_CORPS.seuil, c.seuil)
     pm.setUniform(UNIFORMES_CORPS.dresse, c.dresse)
     pm.setUniform(UNIFORMES_CORPS.ruban, c.ruban)
     pm.setUniform(UNIFORMES_CORPS.expo, c.expo)

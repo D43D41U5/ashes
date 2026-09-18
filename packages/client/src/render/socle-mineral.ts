@@ -200,8 +200,10 @@ export const SOCLE_OMBRE_DERIVE = 0.5
  */
 export const CHANFREIN = 2
 
-/** Rangées de dessus à hauteur pleine : un PLAN, assez épais pour se lire comme tel. */
-const CROWN = 4
+/** Rangées de dessus à hauteur pleine : un PLAN, assez épais pour se lire comme tel.
+ *  EXPORTÉ pour la passe des corps (LG-R16, « le plat d'un socle dès que l'art le distingue ») :
+ *  c'est CE plan-là, et lui seul, qui regarde le ciel — le seuil du dessus se dérive d'ici. */
+export const CROWN = 4
 /** Hauteur du corps. L'écart avec 1 EST la marche que la rampe descend. */
 const CORPS_H = 0.86
 /** Rangées de biseau entre le dessus et le corps. */

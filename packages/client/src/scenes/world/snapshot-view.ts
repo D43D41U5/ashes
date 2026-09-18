@@ -146,7 +146,7 @@ import { coupeDeNeige, enfoncement, enfoncementDUnNoeud, epaisseurQuiSEnfonce } 
 import { epinglerLaTuile } from '../../render/tuile-epinglee'
 import { cleDeTuile, indexerParTuile, noeudVu, sousLaRoche } from './index-noeuds'
 import { armerLeCorps, NoeudCorpsGi, NOM_NOEUD, type ChampDeLImage } from '../../render/gi/noeud-corps'
-import { estRuban, expositionAuFeu, hauteurDeCrete, ligneDuPied, suitLaRegleDesFaces, type CorpsPose } from '../../render/gi/sol-du-corps'
+import { estRuban, expositionAuFeu, hauteurDeCrete, ligneDuPied, seuilDuDessus, suitLaRegleDesFaces, type CorpsPose } from '../../render/gi/sol-du-corps'
 // `SUN_Z` SEULEMENT, et en LECTURE : c'est à cette hauteur-là que `dynamic-lighting` pose le soleil
 // ET la lune (`:385-386`), donc c'est ce qui les distingue d'un feu dans `scene.lights`. Aucun autre
 // nombre n'en vient — la position et le `z` de chaque source se lisent sur la LUMIÈRE POSÉE.
@@ -1550,6 +1550,9 @@ export class SnapshotView {
       sprite.clearTint()
     }
     sprite.setLighting(this.lighting) // couche 1 : acteurs (PNJ, faune, avatar) éclairés eux aussi
+    // UN ACTEUR ARME AUSSI (LG-R7) : il lit le champ sous ses pieds, sans face ni dessus — un
+    // billboard n'a pas de sens. Sa clarté de lieu (ci-dessus) reste son plancher de jouabilité.
+    if (this.gi !== null) this.poserLeCorps(sprite, { x: p.px, y: p.py, arete: 0, lift }, this.feuDeLImage())
     // L'OMBRE DE CONTACT suit l'acteur (rattachée par `setData` à la création). `syncActor`
     // est le seul point où pieds/depth/emprise sont connus — la placer ici couvre joueur ET
     // autres, sans dupliquer le calcul de position. Aux pieds (p.py, pré-lift : l'ombre reste
@@ -1865,6 +1868,44 @@ export class SnapshotView {
   }
 
   /**
+   * LE FEU DE L'IMAGE, mémorisé sur l'horloge de la scène : les corps se posent en plusieurs passes
+   * (barrières, nœuds, cimes, acteurs) et lisent tous LE MÊME feu — un par image, comme le shader.
+   * `time.now` ne bouge pas à l'intérieur d'un pas, même quand une sonde fait avancer la boucle à la main.
+   */
+  private feuMemo: { now: number; feu: readonly [number, number, number, number] | null } = { now: -1, feu: null }
+  private feuDeLImage(): readonly [number, number, number, number] | null {
+    if (this.gi === null) return null
+    const now = this.scene.time.now
+    if (this.feuMemo.now !== now) this.feuMemo = { now, feu: this.sourcesDuCiel().feu }
+    return this.feuMemo.feu
+  }
+
+  /**
+   * REMPLIR LE SAC d'un corps armé depuis sa pose — UNE écriture des sept champs, pour les quatre
+   * familles de sprites. Chaque image, sur un sprite poolé : le slot peut porter un mur, puis un chêne.
+   *
+   * ⚠ **−1 EST LE `null` DE `expositionAuFeu`**, c'est-à-dire « sous le pixel » — la branche E. Un 0
+   * dirait « face entièrement détournée du feu », ce qui est une TOUTE autre chose : le corps garderait
+   * sa règle des faces avec une part directe nulle, au lieu de lire le champ sous chacun de ses pixels.
+   * Sans feu dans le cadre, c'est −1 aussi : il n'y a rien à orienter.
+   */
+  private poserLeCorps(
+    sprite: Phaser.GameObjects.Image,
+    corps: CorpsPose,
+    feuGi: readonly [number, number, number, number] | null,
+  ): void {
+    const sac = armerLeCorps(sprite)
+    sac.pied = ligneDuPied(corps)
+    sac.ancreX = corps.x
+    sac.crete = hauteurDeCrete(corps)
+    sac.seuil = seuilDuDessus(corps)
+    sac.dresse = suitLaRegleDesFaces(corps) ? 1 : 0
+    sac.ruban = estRuban(corps) ? 1 : 0
+    sac.expo =
+      feuGi === null || feuGi[3] <= 0 ? -1 : (expositionAuFeu(corps, { x: feuGi[0], y: feuGi[1] }) ?? -1)
+  }
+
+  /**
    * ═══ LES DEUX SOURCES, LUES SUR LA LUMIÈRE POSÉE (LG-R7) ═══
    *
    * *« La géométrie des lumières du jeu (position, hauteur) reste celle d'aujourd'hui. »* Donc on ne
@@ -2002,7 +2043,7 @@ export class SnapshotView {
     // LE FEU DE L'IMAGE, LU UNE SEULE FOIS (LG-R7) — `sourcesDuCiel` balaie `scene.lights`, et
     // l'appeler par structure ferait ce balayage six cents fois par snapshot. `null` dès que
     // l'interrupteur est fermé : rien n'est lu, rien n'est armé.
-    const feuGi = this.gi === null ? null : this.sourcesDuCiel().feu
+    const feuGi = this.feuDeLImage()
     for (const s of structures) {
       seen.add(s.id)
       const isRoof = s.type === 'roof'
@@ -2134,18 +2175,7 @@ export class SnapshotView {
           famille: fam,
           lift,
         }
-        const sac = armerLeCorps(sprite)
-        sac.pied = ligneDuPied(corps)
-        sac.ancreX = corps.x
-        sac.crete = hauteurDeCrete(corps)
-        sac.dresse = suitLaRegleDesFaces(corps) ? 1 : 0
-        sac.ruban = estRuban(corps) ? 1 : 0
-        // ⚠ **−1 EST LE `null` DE `expositionAuFeu`**, c'est-à-dire « sous le pixel » — la branche E.
-        // Un 0 dirait « face entièrement détournée du feu », ce qui est une TOUTE autre chose : le
-        // corps garderait sa règle des faces avec une part directe nulle, au lieu de lire le champ
-        // sous chacun de ses pixels. Sans feu dans le cadre, c'est −1 aussi : il n'y a rien à orienter.
-        sac.expo =
-          feuGi === null || feuGi[3] <= 0 ? -1 : (expositionAuFeu(corps, { x: feuGi[0], y: feuGi[1] }) ?? -1)
+        this.poserLeCorps(sprite, corps, feuGi)
       }
       if (LIT_STRUCTURE_TYPES.has(s.type) || BATI_LIT_TYPES.has(s.type)) {
         sprite.setTexture(this.lighting ? cleLit(`st-${s.type}`, mirS) : `st-${s.type}`)
@@ -2867,6 +2897,22 @@ export class SnapshotView {
         sprite.setDepth(nodeDepth(ty, TILE_PX) + strateDuNoeud)
         sprite.setTexture(texture)
         sprite.setLighting(this.lighting) // couche 1 : TOUS les nœuds sont éclairés (arbres, blocs, buissons…)
+        // ═══ LA PASSE DES CORPS (LG-R7) : TOUS LES NŒUDS ARMENT ═══
+        // Un fût tourne face au feu ((1 + cos)/2, jamais éteint) ; un socle a une couronne qui regarde
+        // le ciel (LG-R16, les `CROWN` rangées planes de `socle-mineral`) ; tout le reste — buisson,
+        // pousse, coin de pêche — lit le champ sous son pied (E). La pose est la LOGIQUE (`py`), le
+        // lift voyage à part, comme pour les barrières. Le sac se repose à chaque image : le slot est
+        // poolé et peut porter un chêne puis une pierre.
+        if (this.gi !== null) {
+          this.poserLeCorps(sprite, {
+            x: px,
+            y: py,
+            arete: 0,
+            ...(isTree && !growing ? { fut: true } : {}),
+            ...(estUnSocle(n.type) ? { socle: tailleDeSocle(n.type as SocleType, n.tx, n.ty, n.size) } : {}),
+            lift: py - pyPied,
+          }, this.feuDeLImage())
+        }
         // LA SURBRILLANCE DIT CE QUI VA SE PASSER (spec recolte.md G4) : le nœud
         // visé s'éclaire s'il est à portée, et se GRISE s'il ne l'est pas. On
         // teinte le sprite plutôt que de dessiner un cadre au sol : la teinte suit
@@ -3126,6 +3172,9 @@ export class SnapshotView {
           // lequel le pool a été servi.
           img.setTexture(cle)
           img.setLighting(this.lighting) // pooled : réarmé chaque frame (cf. le tronc)
+          // LA CIME ARME AUSSI (LG-R7 : « pour un houppier, sa profondeur ») — elle lit le champ à la
+          // ligne du pied de SON tronc, sans face ni dessus : le feuillage n'a pas de sens.
+          if (this.gi !== null) this.poserLeCorps(img, { x: px, y: py, arete: 0, lift: py - pyPied }, this.feuDeLImage())
           // L'ANCRAGE SE DÉRIVE, il ne s'écrit plus (cf. `arbre-art`). `px` porte déjà le
           // tressaillement et le décalage d'arbre ; `pyCime` le lift et l'étage.
           img.setPosition(pxCime, pyCime - ancrageHouppierPx(mesures))
