@@ -291,6 +291,7 @@ export function garderLesCorps(
         const texel: Rgb = [alb.data[kt]! / 255, alb.data[kt + 1]! / 255, alb.data[kt + 2]! / 255]
         const normale = normaleDe(nor, kt)
         // Le fragment est au CENTRE du pixel (`mondeDuFragment`) ; le corps a été décalé sur la grille.
+        // Et il est DESSINÉ : `pixelDuCorps` le remonte du lift de la pose (⓪), comme le shader.
         const xw = x0 + i + 0.5
         const yw = y0 + j + 0.5
         let hors = false

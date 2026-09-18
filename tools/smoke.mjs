@@ -627,8 +627,10 @@ const SCENARIOS = {
           }
           return n > 0 ? { n, moy: +(s / n).toFixed(2) } : null
         }
-        const dessus = moyenneOpaque(-Infinity, sac.seuil)
-        const face = sac.dresse === 1 && sac.ruban !== 1 ? moyenneOpaque(sac.seuil, sac.pied) : null
+        // Le sac est LOGIQUE, l'écran DESSINÉ : les bornes descendent du lift du corps (LG-R14 ; 0 au sol).
+        const lift = sac.lift ?? 0
+        const dessus = moyenneOpaque(-Infinity, sac.seuil - lift)
+        const face = sac.dresse === 1 && sac.ruban !== 1 ? moyenneOpaque(sac.seuil - lift, sac.pied - lift) : null
         corps.push({ cle: o.texture.key, tx: +(sac.ancreX / 16).toFixed(2), ty: +(sac.pied / 16).toFixed(2), ruban: sac.ruban, dresse: sac.dresse, expo: +sac.expo.toFixed(2), opaque: al !== null, haut: +Y0.toFixed(1), dessus, face })
       }
       // L'image au grain du champ : la luminance moyenne de chaque bloc monde de 4 × 4 px dans le cadre.
@@ -898,11 +900,11 @@ const SCENARIOS = {
     // toit, hors de tout lieu ; le feu se pose devant un pan tourné vers le sud. Le Feu du village est
     // une source de plus, constante entre les deux clichés ; le premier feu aussi, s'il porte jusqu'ici.
     if (feu && dessusRuban !== null && dessusRuban.sens !== 'face') {
-      // ⚠ AU SOL SEULEMENT (lift 0). Sur une terrasse, la passe des corps compare aujourd'hui des px
-      // LOGIQUES (`uGiPied`, `uGiSeuil`, la ligne de `cosDuSud`) à des px DESSINÉS (le fragment, la
-      // lumière du feu) : MESURÉ le 2026-09-18 au village PNJ 2 (lift 32), une palissade à un pas et
-      // demi devant un feu rend `expo` 0 — jugée de dos. C'est la part « paliers » de LG-R14, à venir ;
-      // la garde LG-A17 se prend là où la chaîne est cohérente, et le dit quand elle ne peut pas.
+      // ⚠ AU SOL SEULEMENT (lift 0). La passe des corps juge tout en logique depuis le 2026-09-18
+      // (`CorpsPose.lift`, `uGiLift`), mais le CHAMP d'une terrasse ne l'est pas encore : ses bandes
+      // sont rastérisées à la tuile, ses émetteurs poussés DESSINÉS (`WorldScene`, la lumière à −lift)
+      // et son quad de sol est dessiné — la part « paliers » de LG-R14, après le commit de l'autre
+      // session. La garde LG-A17 se prend là où la chaîne est cohérente, et le dit quand elle ne peut pas.
       const villages = await ev(() => {
         const sc = window.__BRAISES__.scene
         const p = sc.registry.get('playerPos')
@@ -913,7 +915,7 @@ const SCENARIOS = {
       ok(villages.length > 0, villages.length ? `${villages.length} village(s) PNJ à tamponner : ${villages.map((v) => `le ${v.id} en (${v.tx}, ${v.ty}) lift ${v.lift}`).join(', ')}` : 'aucun village PNJ sur la carte — « une face, non » reste non éprouvé')
       let cible = []
       for (const village of villages) {
-        if (village.lift !== 0) { console.log(`     (village ${village.id} sur une terrasse, lift ${village.lift} : passé — la passe des corps n'y est pas encore cohérente, LG-R14)`); continue }
+        if (village.lift !== 0) { console.log(`     (village ${village.id} sur une terrasse, lift ${village.lift} : passé — le champ n'y est pas encore logique, LG-R14)`); continue }
         await agir({ type: 'debug_village_stage', villageId: village.id, stage: 3 }, 3000, 4)
         const apres = await ev(({ id }) => {
           const st = window.__BRAISES__.scene.view.structures.filter((q) => q.villageId === id)

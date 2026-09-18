@@ -25,6 +25,7 @@ import {
   hauteurDeCrete,
   lectureDuFeu,
   ligneDuPied,
+  ordonneeLogique,
   pointAuSol,
   porteeDeLaNormale,
   seuilDuDessus,
@@ -179,8 +180,9 @@ describe('la hauteur de crête est celle du jeu, famille par famille', () => {
  * × max(0, cos θ), un tronc × (1 + cos θ)/2, θ l'angle entre le sud et la direction du feu »*.
  */
 describe('les faces ont un sens (LG-R7, O)', () => {
+  // Un feu posé par rapport à la LIGNE DU PIED, en px logiques — le lift n'y entre pas (LG-R14).
   const feuAu = (dx: number, dy: number, c: CorpsPose): { x: number; y: number } =>
-    ({ x: c.x + dx, y: ligneDuPied(c) + (c.lift ?? 0) + dy })
+    ({ x: c.x + dx, y: ligneDuPied(c) + dy })
 
   it('UN MUR FACE AU FEU PREND TOUT — le feu droit au sud, cos = 1', () => {
     const c = mur(EDGE_S)
@@ -279,11 +281,30 @@ describe('les faces ont un sens (LG-R7, O)', () => {
     expect(feu.y).toBe(n.y)
   })
 
-  it('LE LIFT D’UN PALIER ENTRE DANS L’ANGLE — la position LOGIQUE, pas la dessinée (LG-R14)', () => {
+  /**
+   * LG-R14 : `c.y` est LOGIQUE (la tuile, le lift retiré) et la source aussi — le lift ne touche pas
+   * l'angle. La version d'avant ajoutait `lift` à une ligne déjà logique : MESURÉ au village PNJ 2
+   * (lift 32), une palissade à un pas et demi devant un feu se jugeait de dos (`expo` 0).
+   */
+  it('LE LIFT N’ENTRE PAS DEUX FOIS DANS L’ANGLE — `c.y` est déjà logique, la source aussi (LG-R14)', () => {
     const haut: CorpsPose = { ...mur(EDGE_S), lift: 32 }
-    const feu = { x: haut.x, y: ligneDuPied(haut) + 32 } // au pied dessiné : sous lui, donc plein sud
-    expect(expositionAuFeu(mur(EDGE_S), feu)).toBeCloseTo(1, 12)
-    expect(expositionAuFeu(haut, feu)).toBe(0) // logiquement, le feu est à sa hauteur : de côté
+    const feu = feuAu(0, 24, haut) // un pas et demi devant la face, en logique
+    expect(expositionAuFeu(haut, feu)).toBeCloseTo(1, 12)
+    expect(expositionAuFeu(haut, feu)).toBe(expositionAuFeu(mur(EDGE_S), feu))
+    // Le même feu jugé DESSINÉ (sa lumière est posée `lift` plus haut) passerait derrière l'arête.
+    expect(expositionAuFeu(haut, { x: feu.x, y: feu.y - 32 })).toBe(0)
+  })
+
+  it('UN PIXEL DESSINÉ SE JUGE À SA PLACE LOGIQUE — `ordonneeLogique` remonte du lift (LG-R14)', () => {
+    const haut: CorpsPose = { ...mur(EDGE_S), lift: 32 }
+    // Le dernier rang de FACE, tel qu'il est dessiné : un pixel au-dessus du pied dessiné.
+    const ywDessine = ligneDuPied(haut) - 32 - 1
+    expect(ordonneeLogique(haut, ywDessine)).toBe(ligneDuPied(haut) - 1)
+    expect(estDessus(haut, ordonneeLogique(haut, ywDessine))).toBe(false)
+    // Jugé tel quel, il tomberait sous le seuil logique : un dessus — tout le mur l'était (MESURÉ).
+    expect(estDessus(haut, ywDessine)).toBe(true)
+    // Au sol, c'est l'identité.
+    expect(ordonneeLogique(mur(EDGE_S), ywDessine)).toBe(ywDessine)
   })
 })
 

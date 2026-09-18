@@ -111,11 +111,27 @@ export interface CorpsPose {
    */
   readonly socle?: number
   /**
-   * Le lift du palier sur lequel ce corps est posé, en px (LG-R14) — `0` au sol. Il n'entre PAS dans
-   * `pointAuSol`, qui rend des coordonnées DESSINÉES ; il entre dans l'angle d'exposition, qui se
-   * juge sur la position LOGIQUE (`planche9.mjs` : `s.y + lift`).
+   * Le lift du palier sur lequel ce corps est posé, en px (LG-R14) — `0` au sol. **`x` et `y` sont
+   * LOGIQUES** (la tuile, le lift retiré) ; le sprite, lui, est DESSINÉ `lift` px plus haut. Toute la
+   * loi de ce module travaille en logique — la spec le dit du champ (*« la terrasse lit le champ à sa
+   * tuile LOGIQUE »*) et l'angle d'exposition s'y juge (`planche9.mjs` : `s.y + lift`, où `s.y` était
+   * l'ordonnée DESSINÉE du sprite). Le seul endroit où le dessiné entre est le FRAGMENT : `ordonneeLogique`
+   * le remonte de `lift` avant tout jugement, et c'est le seul usage de ce champ ici.
+   *
+   * ⚠ MESURÉ le 2026-09-18 (village PNJ 2, lift 32) avant cette convention : `cosDuSud` ajoutait `lift`
+   * à une ligne DÉJÀ logique — le feu se jugeait une terrasse plus haut, et une palissade à un pas et
+   * demi devant un feu rendait `expo` 0 ; et le shader comparait le fragment dessiné au seuil logique,
+   * donc TOUT le mur passait pour un dessus.
    */
   readonly lift?: number
+}
+
+/**
+ * L'ORDONNÉE LOGIQUE D'UN PIXEL DESSINÉ à `ywDessine` (LG-R14) — le sprite est dessiné `lift` px plus
+ * haut que sa place ; la loi juge la place. Au sol (`lift` 0 ou absent) c'est l'identité.
+ */
+export function ordonneeLogique(c: CorpsPose, ywDessine: number): number {
+  return ywDessine + (c.lift ?? 0)
 }
 
 /** Un point du monde, en pixels — une source, ou le sol lu. */
@@ -251,12 +267,14 @@ export function suitLaRegleDesFaces(c: CorpsPose): boolean {
  * LE COSINUS DE L'ANGLE ENTRE LE SUD ET LA DIRECTION DE LA SOURCE (LG-R7, O) — le sud est `+y`,
  * donc `cos = dy / d` : `+1` quand la source est droit devant la face, `−1` quand elle est derrière.
  *
- * Mesuré depuis la position LOGIQUE du pied (`ligneDuPied` + `lift`), jamais depuis l'ancrage du
- * sprite : au nord les deux diffèrent d'une tuile entière.
+ * Mesuré depuis la position LOGIQUE du pied (`ligneDuPied`), jamais depuis l'ancrage du sprite : au
+ * nord les deux diffèrent d'une tuile entière. Et la SOURCE est logique aussi (`snapshot-view`,
+ * `sourcesDuCiel` : la lumière du feu remontée du lift de sa tuile) — un seul espace pour les deux
+ * bouts de l'angle. Le `+ lift` qui vivait ici doublait le lift : `c.y` l'a déjà retiré.
  */
 function cosDuSud(c: CorpsPose, source: Point): number {
   const dx = source.x - c.x
-  const dy = source.y - (ligneDuPied(c) + (c.lift ?? 0))
+  const dy = source.y - ligneDuPied(c)
   const d = Math.hypot(dx, dy)
   return d > 0 ? dy / d : 0
 }

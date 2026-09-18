@@ -1892,13 +1892,17 @@ export class SnapshotView {
   }
 
   /**
-   * REMPLIR LE SAC d'un corps armé depuis sa pose — UNE écriture des sept champs, pour les quatre
+   * REMPLIR LE SAC d'un corps armé depuis sa pose — UNE écriture des huit champs, pour les quatre
    * familles de sprites. Chaque image, sur un sprite poolé : le slot peut porter un mur, puis un chêne.
    *
    * ⚠ **−1 EST LE `null` DE `expositionAuFeu`**, c'est-à-dire « sous le pixel » — la branche E. Un 0
    * dirait « face entièrement détournée du feu », ce qui est une TOUTE autre chose : le corps garderait
    * sa règle des faces avec une part directe nulle, au lieu de lire le champ sous chacun de ses pixels.
    * Sans feu dans le cadre, c'est −1 aussi : il n'y a rien à orienter.
+   *
+   * TOUT EST LOGIQUE ICI (LG-R14) : `corps.x`, `corps.y` sont la tuile, `feuGi` la flamme remontée du
+   * lift de SA tuile (`sourcesDuCiel`) ; seul `lift` dit de combien le sprite est dessiné plus haut, et
+   * le shader remonte son fragment d'autant avant de juger (`uGiLift`).
    */
   private poserLeCorps(
     sprite: Phaser.GameObjects.Image,
@@ -1914,6 +1918,7 @@ export class SnapshotView {
     sac.ruban = estRuban(corps) ? 1 : 0
     sac.expo =
       feuGi === null || feuGi[3] <= 0 ? -1 : (expositionAuFeu(corps, { x: feuGi[0], y: feuGi[1] }) ?? -1)
+    sac.lift = corps.lift ?? 0
     if (import.meta.env.DEV) this.poses.set(sprite, corps)
   }
 
@@ -2020,13 +2025,18 @@ export class SnapshotView {
     // structure `fire` que la vue CONNAÎT. Et comme `dynamic-lighting` retire la lumière d'un feu
     // éteint (sa réconciliation de fin de boucle), la PRÉSENCE de la lumière prouve déjà que le feu
     // brûle — ni tick ni `facteurDuFeu` n'ont à remonter jusqu'ici.
-    const foyers = new Map<number, number>() // abscisse de la lumière → ordonnée de SA tuile, en px
+    // abscisse de la lumière → l'ordonnée de SA tuile (px) et le lift de son palier — le même que
+    // celui du sprite du feu (`liftAEtage` sous la roche, `liftSol` sinon), pour REMONTER la lumière
+    // à sa place logique : la chaîne des corps juge tout en logique (LG-R14, `CorpsPose.lift`).
+    const foyers = new Map<number, { readonly y: number; readonly lift: number }>()
     for (const s of this.structures) {
       if (s.type !== 'fire') continue
-      foyers.set(s.tx * TILE_PX + TILE_PX / 2, s.ty * TILE_PX + TILE_PX / 2)
+      const lift = (sousLaRoche(s) ? this.warp?.liftAEtage(s.tx + 0.5, s.ty + 0.5, s.etage) : this.warp?.liftSol(s.tx + 0.5, s.ty + 0.5)) ?? 0
+      foyers.set(s.tx * TILE_PX + TILE_PX / 2, { y: s.ty * TILE_PX + TILE_PX / 2, lift })
     }
     let astre: Phaser.GameObjects.Light | null = null
     let feu: Phaser.GameObjects.Light | null = null
+    let liftFeu = 0
     let dFeu = Infinity
     for (const l of this.scene.lights.lights) {
       if (l.intensity <= 0) continue
@@ -2040,8 +2050,8 @@ export class SnapshotView {
       // porte : `dynamic-lighting:513` pose `y = ty*TILE_PX + TILE_PX/2 − lift − FEU_LIFT`, donc la
       // lumière d'un feu est TOUJOURS au-dessus de sa tuile (jamais en dessous), d'au plus la
       // hauteur d'un palier. Le test est asymétrique pour cette raison.
-      const yFoyer = foyers.get(l.x)
-      if (yFoyer === undefined || l.y > yFoyer + 1 || l.y < yFoyer - ECART_Y_FEU_MAX) continue
+      const foyer = foyers.get(l.x)
+      if (foyer === undefined || l.y > foyer.y + 1 || l.y < foyer.y - ECART_Y_FEU_MAX) continue
       const d = (l.x - cx) * (l.x - cx) + (l.y - cy) * (l.y - cy)
       // ═══ ET IL FAUT QU'IL PORTE JUSQU'ICI ═══
       // Les deux conditions ci-dessus disent « c'est un feu » ; celle-ci dit « il compte ». Sans
@@ -2056,6 +2066,7 @@ export class SnapshotView {
       if (d < dFeu) {
         dFeu = d
         feu = l
+        liftFeu = foyer.lift
       }
     }
     // ═══ LA PRÉMISSE DE LA PORTE DES FACES SE PROUVE SUR LA LUMIÈRE ÉLUE ═══
@@ -2069,9 +2080,14 @@ export class SnapshotView {
     // `w = 0` dit « absente », et le shader s'en sert : pas d'astre, pas de part directionnelle —
     // ce n'est pas un zéro qui se confondrait avec « source au sol », que `facteurDeNormale` traite
     // déjà à part (`sol-du-corps.ts:339`).
+    //
+    // LE FEU EST RENDU EN PX LOGIQUES (LG-R14) : la lumière est posée DESSINÉE (`y = tuile − lift −
+    // FEU_LIFT`), on lui rend le lift de sa tuile — la flamme reste à ses 4,8 px au-dessus du centre,
+    // comme au sol. C'est ce que `expositionAuFeu` et le facteur de normale confrontent à un corps
+    // dont `x`, `y` et le point lu sont logiques ; l'astre, à 2 200 px, n'a pas de palier.
     return {
       astre: astre === null ? [0, 0, 0, 0] : [astre.x, astre.y, astre.z, 1],
-      feu: feu === null ? [0, 0, 0, 0] : [feu.x, feu.y, feu.z, 1],
+      feu: feu === null ? [0, 0, 0, 0] : [feu.x, feu.y + liftFeu, feu.z, 1],
     }
   }
 
@@ -2235,8 +2251,8 @@ export class SnapshotView {
         const corps: CorpsPose = {
           x: a.px,
           // LA POSITION LOGIQUE, PAS CELLE DU SPRITE : `a.py` est le bas de la tuile, et le `lift`
-          // du palier voyage À PART (LG-R14) — il n'entre pas dans `pointAuSol`, qui rend des
-          // coordonnées DESSINÉES, mais dans l'angle d'exposition, qui se juge sur le logique.
+          // du palier voyage À PART (LG-R14) — la loi juge tout en logique, et le shader remonte son
+          // fragment dessiné de ce lift avant de juger (`CorpsPose.lift`).
           y: a.py,
           arete: s.edges ?? 0,
           famille: fam,

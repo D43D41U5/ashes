@@ -96,6 +96,12 @@ export const UNIFORMES_CORPS = {
   /** PAR SPRITE — `expositionAuFeu(c, feu)`, ou **−1** pour son `null` (« sous le pixel »). */
   expo: 'uGiExpo',
   /**
+   * PAR SPRITE — `c.lift`, en px (LG-R14) : le sprite est DESSINÉ ce lift plus haut que sa place
+   * logique. Le fragment est dessiné ; `uGiPied`, `uGiSeuil` et les sources sont logiques — le
+   * fragment se remonte de `uGiLift` avant tout jugement (`ordonneeLogique`, `sol-du-corps.ts`).
+   */
+  lift: 'uGiLift',
+  /**
    * PAR IMAGE — l'inverse de `camera.matrixCombined`, les six coefficients de `getWorldPoint`
    * (`BaseCamera.js:876-914`) : `invA = (ima, imb, imc, imd)`, `invB = (ime, imf)`.
    * Le nœud les calcule dans `setupUniforms(drawingContext)`, au même endroit et depuis les mêmes
@@ -109,6 +115,8 @@ export const UNIFORMES_CORPS = {
  * ═══ LE FRAGMENT — `appliquerGi(fragColor, normal)` ═══
  *
  * L'ORDRE EST CELUI DE `pixelDuCorps`, et chaque bloc renvoie à son pas :
+ *   ⓪ `ordonneeLogique` — le fragment est DESSINÉ, `uGiLift` px plus haut que sa place ; la loi juge
+ *      la place (LG-R14). Tout ce qui suit est en px LOGIQUES, sources comprises.
  *   ① `pointAuSol` — le plat et l'astre se lisent SOUS LE PIXEL (E) ; sur un dessus, une hauteur de
  *      crête plus bas. La crête est sous le BAS DE LA BANDE, pas sous la ligne (`auDessusDeLaCrete`).
  *   ② `partsDuCorps` en ce point — la répartition, avec le `S` et le champ de CE point.
@@ -134,6 +142,7 @@ uniform float uGiSeuil;
 uniform float uGiDresse;
 uniform float uGiRuban;
 uniform float uGiExpo;
+uniform float uGiLift;
 uniform vec4 uGiInvA;
 uniform vec2 uGiInvB;
 
@@ -244,6 +253,11 @@ vec4 appliquerGi(vec4 fragColor, vec3 normalPhaser) {
 
   vec2 monde = mondeDuFragment();
 
+  // ⓪ LA PLACE LOGIQUE DU FRAGMENT (LG-R14). Sur une terrasse le sprite est dessiné \`uGiLift\` px
+  // plus haut que sa tuile ; \`uGiPied\`, \`uGiSeuil\`, \`uGiFeu\` sont à la tuile. Sans ce pas, un mur de
+  // terrasse tombait TOUT ENTIER sous son seuil — un dessus de haut en bas, sans face (MESURÉ, lift 32).
+  float yLog = monde.y + uGiLift;
+
   // ① LE POINT AU SOL. Le seuil du dessus arrive CALCULÉ (\`seuilDuDessus\`, \`uGiSeuil\`) : pour une
   // bande, la crête sous le BAS DE LA BANDE ; pour un socle, sa couronne ; jamais pour un fût.
   // Le prédicat est NOMMÉ là-bas parce que le relire sur le résultat est faux d'un rang par bande
@@ -254,8 +268,8 @@ vec4 appliquerGi(vec4 fragColor, vec3 normalPhaser) {
   // donc \`uGiExpo\` vaut −1 et la branche du feu se saute — LE FEU SORTAIT JUSTE PAR ACCIDENT.
   // Mais \`p\` tombait sur le point de FACE, et le plat et l'astre lisaient le mauvais texel du
   // champ. Qui « réparerait » ça en touchant au feu déplacerait le défaut au lieu de le corriger.
-  bool dessus = uGiDresse > 0.5 && (uGiRuban > 0.5 || monde.y < uGiSeuil);
-  vec2 p = dessus ? vec2(monde.x, monde.y + uGiCrete) : vec2(monde.x, uGiPied);
+  bool dessus = uGiDresse > 0.5 && (uGiRuban > 0.5 || yLog < uGiSeuil);
+  vec2 p = dessus ? vec2(monde.x, yLog + uGiCrete) : vec2(monde.x, uGiPied);
 
   // ② LA RÉPARTITION, au point lu.
   vec2 uvP = uvDuChamp(p);

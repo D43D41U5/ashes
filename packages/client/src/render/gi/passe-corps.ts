@@ -35,6 +35,7 @@ import { avecFeuDeLaFace, composerLeCorps, partsDuCorps, sansFeuDirect, type Par
 import {
   facteurDeNormale,
   lectureDuFeu,
+  ordonneeLogique,
   pointAuSol,
   type CorpsPose,
   type Normale,
@@ -94,6 +95,8 @@ const NUL: Rgb = [0, 0, 0]
  *
  * L'ORDRE EST LA RÈGLE, et chaque pas dit d'où il vient :
  *
+ *  ⓪ `ordonneeLogique` — `(xw, yw)` est le pixel DESSINÉ (le fragment) ; la loi juge à sa place
+ *     LOGIQUE, `lift` px plus bas (LG-R14). `c.x`, `c.y` et les sources sont déjà logiques.
  *  ① `pointAuSol` — le plat et l'astre se lisent SOUS LE PIXEL (E) : c'est là que les marches entre
  *     deux pans d'un mur s'effacent. Sur un dessus, c'est une hauteur de crête plus bas.
  *  ② `partsDuCorps` en ce point — la répartition, avec le `S` et le champ de CE point.
@@ -114,6 +117,7 @@ const NUL: Rgb = [0, 0, 0]
 export function pixelDuCorps(
   c: CorpsPose,
   xw: number,
+  /** L'ordonnée DESSINÉE du pixel — celle du fragment ; voir ⓪. */
   yw: number,
   lire: (x: number, y: number) => LectureDuChamp,
   ciel: CielDeLHeure,
@@ -121,15 +125,18 @@ export function pixelDuCorps(
   texel: Rgb,
   normale: Normale,
 ): PixelDuCorps {
+  // ⓪ — le pixel dessiné, remonté à sa place logique (identité au sol).
+  const yl = ordonneeLogique(c, yw)
+
   // ① et ② — le point lu, et la répartition qui s'y fait.
-  const p = pointAuSol(c, xw, yw)
+  const p = pointAuSol(c, xw, yl)
   const sous = lire(p.x, p.y)
   let parts: PartsCorps = partsDuCorps(ciel.mn, sous.ombre, ciel.a, sous.light, sous.directFace, ciel.ambiante)
 
   // ③ — la part directe du feu. Sans feu dans la scène, la branche ne change rien : il n'y a rien
   // à orienter ni à retirer, et `lectureDuFeu` lirait un angle depuis une source qui n'existe pas.
   const feu = sources.feu
-  const l = feu ? lectureDuFeu(c, yw, feu) : ({ ou: 'sousLePixel' } as const)
+  const l = feu ? lectureDuFeu(c, yl, feu) : ({ ou: 'sousLePixel' } as const)
   if (l.ou === 'nul') {
     parts = sansFeuDirect(parts)
   } else if (l.ou === 'auPied') {

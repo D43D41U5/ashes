@@ -83,6 +83,32 @@ describe('les points de lecture de la passe (LG-R7)', () => {
     expect(appels[1]).toEqual({ x: c.x, y: ligneDuPied(c) })
   })
 
+  /**
+   * LG-R14 — sur une terrasse le sprite est DESSINÉ `lift` px plus haut que sa tuile ; le fragment
+   * l'est donc aussi, et la loi le remonte avant de juger. Un mur de terrasse compose EXACTEMENT
+   * comme le même mur au sol vu du même pixel logique : mêmes lectures, mêmes branches, même pixel.
+   * Avant ce pas, le mur tombait tout entier sous son seuil (un dessus de haut en bas — MESURÉ, lift 32).
+   */
+  it('SUR UN PALIER, LE FRAGMENT DESSINÉ SE LIT À SA PLACE LOGIQUE — le même pixel qu’au sol (LG-R14)', () => {
+    const sol = mur(EDGE_S)
+    const haut: CorpsPose = { ...sol, lift: 32 }
+    for (const [rangLogique, normale] of [[40, VERS_LE_SUD], [17, PLAT]] as const) {
+      const auSol = champ()
+      const enHaut = champ()
+      const xw = sol.x + 5
+      const pSol = pixelDuCorps(sol, xw, rang(rangLogique), auSol.lire, CIEL, SOURCES, TEXEL, normale)
+      const pHaut = pixelDuCorps(haut, xw, rang(rangLogique) - 32, enHaut.lire, CIEL, SOURCES, TEXEL, normale)
+      expect(pHaut.ou).toBe(pSol.ou)
+      expect(enHaut.appels).toEqual(auSol.appels)
+      expect(pHaut.rgb).toEqual(pSol.rgb)
+    }
+    // Et les deux rangs éprouvent bien les deux branches : une face, puis un dessus.
+    expect(pixelDuCorps(haut, 7, rang(40) - 32, champ().lire, CIEL, SOURCES, TEXEL, VERS_LE_SUD).ou).toBe('auPied')
+    expect(pixelDuCorps(haut, 7, rang(17) - 32, champ().lire, CIEL, SOURCES, TEXEL, PLAT).ou).toBe('nul')
+    // Jugé DESSINÉ, le rang 40 serait un dessus : c'est le défaut mesuré, tenu ici pour qu'il ne revienne pas.
+    expect(pixelDuCorps(sol, 7, rang(40) - 32, champ().lire, CIEL, SOURCES, TEXEL, VERS_LE_SUD).ou).toBe('nul')
+  })
+
   it('SANS FEU DANS LA SCÈNE, RIEN NE S’ORIENTE ET RIEN NE LÈVE', () => {
     const c = mur(EDGE_S)
     const { lire, appels } = champ()

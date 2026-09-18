@@ -105,10 +105,12 @@ export interface CorpsPourLeShader {
   ruban: number
   /** `expositionAuFeu(c, feu)`, ou **−1** pour son `null`. */
   expo: number
+  /** `c.lift`, en px (LG-R14) : le fragment dessiné se remonte d'autant pour se juger à sa place logique. */
+  lift: number
 }
 
-/** Un corps qu'on n'a pas encore renseigné : plat, sans feu direct. Jamais un `null` dans le shader. */
-const CORPS_NEUTRE: CorpsPourLeShader = { pied: 0, ancreX: 0, crete: 0, seuil: SANS_DESSUS, dresse: 0, ruban: 0, expo: -1 }
+/** Un corps qu'on n'a pas encore renseigné : plat, sans feu direct, au sol. Jamais un `null` dans le shader. */
+const CORPS_NEUTRE: CorpsPourLeShader = { pied: 0, ancreX: 0, crete: 0, seuil: SANS_DESSUS, dresse: 0, ruban: 0, expo: -1, lift: 0 }
 
 /**
  * LES UNITÉS DE TEXTURE — 0 et 1 sont à Phaser, 2/3/4 sont à nous.
@@ -176,7 +178,7 @@ export class NoeudCorpsGi extends BatchHandlerQuad {
   /**
    * ═══ LA GARDE DE VIDANGE — LE POINT OÙ CE NŒUD SE CASSERAIT EN SILENCE ═══
    *
-   * Les six valeurs d'un corps sont des UNIFORMES, et un uniforme vaut pour tout le lot. Sans cette
+   * Les huit valeurs d'un corps sont des UNIFORMES, et un uniforme vaut pour tout le lot. Sans cette
    * vidange, le second corps d'un lot prendrait le `pied`, la `crete` et l'`expo` du premier : deux
    * murs voisins liraient le même texel du champ, et ça ressemblerait à un défaut du shader.
    *
@@ -256,6 +258,7 @@ export class NoeudCorpsGi extends BatchHandlerQuad {
     pm.setUniform(UNIFORMES_CORPS.dresse, c.dresse)
     pm.setUniform(UNIFORMES_CORPS.ruban, c.ruban)
     pm.setUniform(UNIFORMES_CORPS.expo, c.expo)
+    pm.setUniform(UNIFORMES_CORPS.lift, c.lift)
   }
 
   /**
