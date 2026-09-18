@@ -164,33 +164,42 @@ export function positionShadow(
  */
 export const FORME_DU_SOCLE: FormeOmbre = 'coulee'
 
-/** Cuit les `2 × CRANS + 1` coulées (une par texel de cisaillement) — une fois, au premier socle
- *  rencontré. 17 textures de 32×14 : le coût est celui d'un sprite. */
+/** La dernière clé que la cuisson pose — la SENTINELLE d'existence. */
+const DERNIERE_COULEE = (): string => cleOmbreSocle(CRANS, OMBRE_SOCLE.VISIBLE.length - 1)
+
+/** Cuit les coulées — une par texel de cisaillement ET PAR TAILLE DE PIERRE depuis LG-R15, puisque
+ *  la longueur suit la hauteur : 3 × 17 textures de 44×17, une fois, au premier socle rencontré.
+ *  Le coût reste celui de quelques sprites. */
 function assurerOmbresDeSocle(scene: Phaser.Scene): void {
   if (FORME_DU_SOCLE === 'ellipse') return
   // ⚠ UN SEUL `exists` EN RÉGIME ÉTABLI. Cette fonction est appelée par socle ET par image :
-  // boucler sur les 17 crans pour les trouver tous déjà cuits, c'est 17 lookups × N blocs à
-  // l'écran, chaque frame. Le cran 0 existe toujours dès que la cuisson est passée.
-  if (scene.textures.exists(cleOmbreSocle(0))) return
-  for (let cran = -CRANS; cran <= CRANS; cran++) {
-    const cle = cleOmbreSocle(cran)
-    if (scene.textures.exists(cle)) continue
-    const tex = scene.textures.createCanvas(cle, TEX_W, TEX_H)
-    if (!tex) return
-    const ctx = tex.getContext()
-    const img = ctx.createImageData(TEX_W, TEX_H)
-    for (let j = 0; j < TEX_H; j++) {
-      for (let i = 0; i < TEX_W; i++) {
-        const k = (j * TEX_W + i) * 4
-        img.data[k] = 0
-        img.data[k + 1] = 0
-        img.data[k + 2] = 0
-        img.data[k + 3] = Math.round(alphaDOmbre(FORME_DU_SOCLE, cran, i, j) * 255)
+  // boucler sur les 51 clés pour les trouver toutes déjà cuites, c'est 51 lookups × N blocs à
+  // l'écran, chaque frame.
+  // ⚠ ET LA SENTINELLE EST LA **DERNIÈRE** CUITE, pas le cran 0. La cuisson peut rendre la main en
+  // cours de route (`createCanvas` qui rend `null`) : une sentinelle posée au milieu ferait croire
+  // à un jeu complet, et les tailles manquantes tomberaient sur une texture absente — en silence.
+  if (scene.textures.exists(DERNIERE_COULEE())) return
+  for (let taille = 0; taille < OMBRE_SOCLE.VISIBLE.length; taille++) {
+    for (let cran = -CRANS; cran <= CRANS; cran++) {
+      const cle = cleOmbreSocle(cran, taille)
+      if (scene.textures.exists(cle)) continue
+      const tex = scene.textures.createCanvas(cle, TEX_W, TEX_H)
+      if (!tex) return
+      const ctx = tex.getContext()
+      const img = ctx.createImageData(TEX_W, TEX_H)
+      for (let j = 0; j < TEX_H; j++) {
+        for (let i = 0; i < TEX_W; i++) {
+          const k = (j * TEX_W + i) * 4
+          img.data[k] = 0
+          img.data[k + 1] = 0
+          img.data[k + 2] = 0
+          img.data[k + 3] = Math.round(alphaDOmbre(FORME_DU_SOCLE, cran, i, j, taille) * 255)
+        }
       }
+      ctx.putImageData(img, 0, 0)
+      tex.refresh()
+      scene.textures.get(cle).setFilter(Phaser.Textures.FilterMode.NEAREST)
     }
-    ctx.putImageData(img, 0, 0)
-    tex.refresh()
-    scene.textures.get(cle).setFilter(Phaser.Textures.FilterMode.NEAREST)
   }
 }
 
@@ -207,6 +216,10 @@ export function poserOmbreDeSocle(
   feetX: number,
   feetY: number,
   cran: number,
+  /** La taille du socle (0, 1, 2) — depuis LG-R15 elle commande la LONGUEUR de la coulée : 6, 8 ou
+   *  10 px d'ombre pleine visible pour 16, 20 ou 24 px de pierre. Le CADRE, lui, ne change pas :
+   *  une petite pierre laisse ses dernières rangées vides, et l'ancre reste la ligne de pied. */
+  taille: number,
   echelleX: number,
   echelleY: number,
   actorDepth: number,
@@ -217,7 +230,7 @@ export function poserOmbreDeSocle(
 ): boolean {
   if (FORME_DU_SOCLE === 'ellipse') return false
   assurerOmbresDeSocle(shadow.scene)
-  shadow.setTexture(cleOmbreSocle(cran))
+  shadow.setTexture(cleOmbreSocle(cran, taille))
   shadow.setOrigin(0.5, 0)
   shadow.setDisplaySize(TEX_W * echelleX, TEX_H * echelleY)
   shadow.setPosition(feetX, feetY - OMBRE_SOCLE.REMONTE * echelleY)
