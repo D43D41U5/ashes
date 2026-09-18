@@ -604,7 +604,7 @@ const SCENARIOS = {
         const c = (e) => (e ? { n: e.n, moyenne: e.moyenne, partSup3: e.partSup3, max: e.max, eclaires: e.eclaires } : null)
         return {
           debugGi: sc.registry.get('debugGi'),
-          gi: gi ? { sources: gi.sources, bandes: gi.bandes, gw: gi.gw, gh: gi.gh, direct: c(gi.direct), champ: c(gi.champ), masque: c(gi.masque), compose: c(gi.compose), purete: gi.purete } : null,
+          gi: gi ? { sources: gi.sources, bandes: gi.bandes, cartes: gi.cartes, gw: gi.gw, gh: gi.gh, direct: c(gi.direct), champ: c(gi.champ), masque: c(gi.masque), compose: c(gi.compose), purete: gi.purete } : null,
           corps,
         }
       })
@@ -613,7 +613,7 @@ const SCENARIOS = {
       const g = r.gi
       ok(g !== null, `la chaîne GPU est posée à ${heure} h (debugGi = ${r.debugGi})`)
       if (g) {
-        console.log(`     champ ${g.gw}×${g.gh}, ${g.sources} sources, ${g.bandes} bandes ; direct n=${g.direct.n} moy ${f2(g.direct.moyenne)} >3 ${pc(g.direct.partSup3)} max ${g.direct.max} ; champ n=${g.champ.n} moy ${f2(g.champ.moyenne)} >3 ${pc(g.champ.partSup3)} max ${g.champ.max} ; masque n=${g.masque.n} moy ${f2(g.masque.moyenne)} ombrés ${g.masque.eclaires} ; composé n=${g.compose.n} moy ${f2(g.compose.moyenne)} >3 ${pc(g.compose.partSup3)} max ${g.compose.max} touchés ${g.compose.eclaires} ; pureté ${pc(g.purete)}`)
+        console.log(`     champ ${g.gw}×${g.gh}, ${g.sources} sources, ${g.bandes} bandes, ${g.cartes} cartes d'arbres ; direct n=${g.direct.n} moy ${f2(g.direct.moyenne)} >3 ${pc(g.direct.partSup3)} max ${g.direct.max} ; champ n=${g.champ.n} moy ${f2(g.champ.moyenne)} >3 ${pc(g.champ.partSup3)} max ${g.champ.max} ; masque n=${g.masque.n} moy ${f2(g.masque.moyenne)} ombrés ${g.masque.eclaires} ; composé n=${g.compose.n} moy ${f2(g.compose.moyenne)} >3 ${pc(g.compose.partSup3)} max ${g.compose.max} touchés ${g.compose.eclaires} ; pureté ${pc(g.purete)}`)
         ok(g.direct.eclaires > 0 && g.champ.eclaires > 0, `prémisse LG-A2 : l'oracle éclaire des texels (direct ${g.direct.eclaires}, champ ${g.champ.eclaires})`)
         ok(g.bandes > 0, `prémisse LG-A2 : des bandes dans le champ (${g.bandes}) — sans elles, ni ombre ni rebond de face`)
         ok(g.direct.moyenne <= 1 && g.direct.partSup3 < 0.01, `LG-A2 direct : moyenne ${f2(g.direct.moyenne)} ≤ 1, >3 niveaux ${pc(g.direct.partSup3)} < 1 %`)
@@ -626,6 +626,9 @@ const SCENARIOS = {
         // L'ombre d'astre n'a de prémisse que sous un astre qui porte : le soleil de 14 h. À 23 h, la
         // lune peut être neuve — on lit, on ne juge pas.
         if (heure === 14) ok(g.masque.eclaires > 0 && g.compose.eclaires > 0, `prémisse LG-A9 à 14 h : l'astre ombre ${g.masque.eclaires} texels et en touche ${g.compose.eclaires}`)
+        // LG-R8 — les arbres lancent leur ombre par leurs deux cartes (fût, cime) : le masque ci-dessus
+        // les compare texel à texel à l'oracle, et cette prémisse dit qu'il y en avait à comparer.
+        if (heure === 14) ok(g.cartes > 0, `prémisse LG-R8 à 14 h : ${g.cartes} carte(s) d'arbres dessinées dans le champ — le masque les éprouve`)
       }
       // LG-A8 — les corps, chacun rendu seul contre la référence.
       const k = r.corps

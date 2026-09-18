@@ -40,9 +40,10 @@ import Phaser from 'phaser'
 import { LUMIERE, MOTIF_SOURCE, type MondeEclaire } from '@ashes/sim'
 import { TILE_PX } from '../framing'
 import { HOLE_ERASE_PEAK } from '../lighting'
-import { champRef, composerM, masqueDAstre, ombrePleineDAstre, type Astre, type Emetteur, type GrilleGi } from './champ-ref'
+import { champRef, composerM, masqueDAstre, ombreDesCartes, ombrePleineDAstre, type Astre, type CarteDOmbre, type CartesDOmbre, type Emetteur, type GrilleGi } from './champ-ref'
 import { grilleDuMonde, type Fenetre } from './grille'
 import { ALBEDO, GI, longueurDOmbre, profilFeu, type Albedo } from './reglages'
+import { Silhouettes } from './silhouettes'
 
 /** Une source vue par le champ : en px MONDE, la portée en tuiles, la force (le battement, l'agonie). */
 export interface SourceGi {
@@ -50,6 +51,27 @@ export interface SourceGi {
   readonly worldY: number
   readonly radiusTiles: number
   readonly force: number
+}
+
+/**
+ * UNE CARTE D'OMBRE TELLE QUE LA VUE LA POSE (LG-R8 : le fût ou la cime d'un arbre, « debout sur son
+ * pied ») — la clé de la texture du sprite et sa pose EXACTE, en px MONDE : position, origine, rotation
+ * du vent, étirement, miroir, et le pied autour duquel la projection tourne. `snapshot-view` les
+ * relève sur les sprites qu'il vient de poser ; la GI les convertit en px de grille (`CarteDOmbre`).
+ */
+export interface CarteMonde {
+  readonly cle: string
+  readonly x: number
+  readonly y: number
+  readonly originX: number
+  readonly originY: number
+  readonly rotation: number
+  readonly scaleX: number
+  readonly scaleY: number
+  readonly flipX: boolean
+  readonly flipY: boolean
+  readonly piedX: number
+  readonly piedY: number
 }
 
 /** Ce que `verifier()` rend : l'écart entre une cible relue et l'oracle, en NIVEAUX (sur 255). */
@@ -72,6 +94,8 @@ export interface VerdictGi {
   readonly gh: number
   readonly sources: number
   readonly bandes: number
+  /** Les cartes d'arbres dessinées (LG-R8) — la prémisse de la garde du masque sur les arbres. */
+  readonly cartes: number
   readonly direct: EcartCible
   readonly champ: EcartCible
   /**
@@ -223,6 +247,8 @@ uniform float uPic;
 // Le vecteur d'ombre, EN TEXELS : (cisaillement × ℓ × dérive, ℓ). Nul quand aucun astre ne porte.
 uniform vec2 uOmbre;
 uniform float uPasOmbre;
+// Les cartes projetées des arbres (\`gi-arbres\`, LG-R8) : alpha 1 sous une silhouette, 0 ailleurs.
+uniform sampler2D uArbres;
 // ═══ LE RAYON D'OMBRE (LG-R8) ═══
 // Un mur occupe TOUTE hauteur de 0 à H : son ombre est sa bande BALAYÉE par le vecteur d'ombre, une
 // somme de Minkowski et non une trace. On rétro-projette donc depuis le centre du texel et l'on
@@ -239,6 +265,10 @@ uniform float uPasOmbre;
 //     mesure ℓ = 3,2 texels et n'en veut jamais plus de seize.
 float ombreDAstre(vec2 t) {
   if (uOmbre.y <= 0.0) return 0.0;
+  // LES CARTES (LG-R8) : les arbres, projetés dans \`gi-arbres\` sous la même loi — rastérisés par
+  // l'oracle et téléversés (\`ecrireLesCartes\`). Un texel couvert par une carte est à l'ombre pleine,
+  // l'union avec l'ombre des bandes.
+  if (texture2D(uArbres, uvCible(t)).a >= 0.5) return 1.0;
   vec2 P = 2.0 * (t + 0.5);
   vec2 D = -2.0 * uOmbre;
   // ⚠ P TOMBE TOUJOURS SUR UN COIN DU RÉSEAU 2× — P = 2t + 1, entier sur les deux axes. \`floor\` y
@@ -617,14 +647,125 @@ export class ChampGpu {
   private uOmbre: number[] = [0, 0]
   private uPasOmbre = 0
   private albBandes: Albedo[] = []
+  /**
+   * ═══ LES CARTES DES ARBRES (LG-R8) ═══
+   * `gi-arbres` : la texture-canvas au grain qui porte l'ombre projetée de chaque fût et de chaque
+   * cime (`ecrireLesCartes`) ; la passe 1 la lit dans son alpha. `cartesMonde` arrive de la vue à
+   * chaque image (`poserLesCartes`), `cartes` en est la traduction en px de grille, avec la silhouette
+   * binaire — c'est ce que l'oracle lit (LG-A2, `masque()`), et c'est lui qui rastérise.
+   */
+  private arbres: Phaser.Textures.CanvasTexture | null = null
+  /** L'image téléversée, réutilisée d'une image à l'autre ; `arbresVides` : la cible est à zéro. */
+  private imageArbres: ImageData | null = null
+  private arbresVides = true
+  private masqueCartes: Float32Array = new Float32Array(0)
+  private readonly silhouettes: Silhouettes
+  private cartesMonde: readonly CarteMonde[] = []
+  private cartes: CarteDOmbre[] = []
   /** Le coût de la dernière image, étape par étape, en ms — le budget de LG-A14 se lit ici. */
-  readonly temps = { bati: 0, grille: 0, occludeurs: 0, rendu: 0, total: 0 }
+  readonly temps = { bati: 0, grille: 0, occludeurs: 0, cartes: 0, rendu: 0, total: 0 }
 
   constructor(private readonly scene: Phaser.Scene) {
     MOTIF_SOURCE.forEach((p, k) => {
       this.uMotif[k * 2] = p[0]
       this.uMotif[k * 2 + 1] = p[1]
     })
+    this.silhouettes = new Silhouettes(scene)
+  }
+
+  /** Les cartes de l'image (LG-R8), relevées par la vue sur les sprites qu'elle vient de poser. */
+  poserLesCartes(cartes: readonly CarteMonde[]): void {
+    this.cartesMonde = cartes
+  }
+
+  /** Les cartes de l'image en px de grille, pour l'oracle. */
+  private cartesDOmbre(): CartesDOmbre {
+    return { cartes: this.cartes, pxParTexel: PX_PAR_TEXEL }
+  }
+
+  /**
+   * ═══ LES CARTES PROJETÉES (LG-R8, LG-R9) — rastérisées par l'oracle, téléversées au grain ═══
+   *
+   * Un point de la carte à la hauteur z tombe à q × z au sud de son pied (q = ℓ/H = 0,4), cisaillé de
+   * k = cisaillement × dérive par px de longueur : l'affine M = [[1, −q·k], [0, −q]] autour du pied.
+   * C'est `ombreDesCartes` — l'oracle — qui lit chaque texel de l'emprise à l'envers de M jusqu'au
+   * pixel de la silhouette, et c'est SON masque que la passe 1 lit, écrit ici dans `gi-arbres`
+   * (alpha 255 sous une carte, 0 ailleurs).
+   *
+   * ═══ POURQUOI LE GPU NE DESSINE PAS LES CARTES — MESURÉ, PAS PRÉFÉRÉ ═══
+   * La première forme les dessinait : un sprite-relais par carte, sous `DynamicTexture.capture` avec
+   * M en matrice parente et une silhouette binaire en NEAREST. Sonde `tools/__gi-arbres.mjs`, 18/09,
+   * 80 cartes à 14 h, la cible relue contre l'oracle texel par texel :
+   *   · le lot de quads multi-textures PERDAIT 188 texels sur 1082 (0 dessinées une à une, 0 avec un
+   *     atlas d'une seule texture) — le choix de la texture se fait sur une égalité flottante d'un
+   *     varying (`outTexDatum == float(INDEX)`, Phaser 4 `GetTexture-glsl.js`), qui rate des pixels
+   *     sous SwiftShader, transparents, jamais gagnés ;
+   *   · même en atlas, 21 texels sur 1463 restaient en désaccord : 12 à égalité exacte (le centre du
+   *     texel juste sur un bord de pixel), 9 à moins de 0,22 px d'un bord. Une carte couchée à 0,4
+   *     met dix pixels de silhouette dans un texel : au sous-pixel près du rastériseur, ce n'est plus
+   *     « le pixel sous le centre du texel » qu'il lit.
+   * Au CPU, les cartes de l'image coûtent une fraction de milliseconde (`temps.cartes`) et le masque
+   * est, au bit, celui de l'oracle. La garde du masque (LG-A9) n'éprouve plus la rastérisation — c'est
+   * `champ-ref.test.ts` qui le fait, sur toutes les variantes — mais le TÉLÉVERSEMENT et la LECTURE :
+   * l'orientation (`uvCible`), le grain, le seuil, l'union avec l'ombre des bandes.
+   *
+   * Sans astre ou sans carte, la cible est vidée une fois et laissée vide : la passe 1 n'y lit rien.
+   */
+  private ecrireLesCartes(): void {
+    const g = this.grille
+    const astre = this.astre
+    this.cartes = []
+    if (!g || !astre || this.cartesMonde.length === 0) {
+      if (!this.arbresVides) this.televerserLesCartes(null)
+      return
+    }
+    const ox = this.ox * PX_PAR_TEXEL
+    const oy = this.oy * PX_PAR_TEXEL
+    // L'emprise d'une carte, en px : la plus haute cime (96 px, LG-R9) couchée à 0,4 puis cisaillée,
+    // plus sa largeur. Une carte dont le pied est plus loin que ça du cadre ne peut rien y jeter.
+    const MARGE = GI.ASTRE.HAUTEUR_MAX_LANCEUR_PX * (1 + GI.ASTRE.CISAILLEMENT) + 64
+    const x0 = ox - MARGE
+    const x1 = ox + this.gw * PX_PAR_TEXEL + MARGE
+    const y0 = oy - MARGE
+    const y1 = oy + this.gh * PX_PAR_TEXEL + MARGE
+    for (const c of this.cartesMonde) {
+      if (c.piedX < x0 || c.piedX > x1 || c.piedY < y0 || c.piedY > y1) continue
+      const silhouette = this.silhouettes.prendre(c.cle)
+      if (silhouette === null) continue
+      this.cartes.push({
+        silhouette,
+        x: c.x - ox, y: c.y - oy, originX: c.originX, originY: c.originY,
+        rotation: c.rotation, scaleX: c.scaleX, scaleY: c.scaleY, flipX: c.flipX, flipY: c.flipY,
+        piedX: c.piedX - ox, piedY: c.piedY - oy,
+      })
+    }
+    if (this.cartes.length === 0) {
+      if (!this.arbresVides) this.televerserLesCartes(null)
+      return
+    }
+    const n = this.gw * this.gh
+    if (this.masqueCartes.length !== n) this.masqueCartes = new Float32Array(n)
+    else this.masqueCartes.fill(0)
+    ombreDesCartes(g, this.masqueCartes, astre, this.cartesDOmbre())
+    this.televerserLesCartes(this.masqueCartes)
+  }
+
+  /** Le masque des cartes (1 = à l'ombre) dans l'alpha de `gi-arbres` ; `null` vide la cible. */
+  private televerserLesCartes(s: Float32Array | null): void {
+    const ct = this.arbres
+    if (!ct) return
+    const w = this.gw
+    const h = this.gh
+    const ctx = ct.getContext()
+    if (!this.imageArbres || this.imageArbres.width !== w || this.imageArbres.height !== h) this.imageArbres = ctx.createImageData(w, h)
+    const D = this.imageArbres.data
+    D.fill(0)
+    if (s) for (let k = 0; k < w * h; k++) if (s[k] === 1) D[k * 4 + 3] = 255
+    ctx.putImageData(this.imageArbres, 0, 0)
+    ct.refresh()
+    // `refresh()` remet LINEAR : on reprend NEAREST à chaque écriture (mémoire du projet).
+    ct.setFilter(NEAREST)
+    this.arbresVides = s === null
   }
 
   /** La chaîne ne vit qu'en WebGL : `null` en Canvas. */
@@ -720,9 +861,10 @@ export class ChampGpu {
     this.uMn[0] = mn ? mn[0] : 0
     this.uMn[1] = mn ? mn[1] : 0
     this.uMn[2] = mn ? mn[2] : 0
-    // L'ASTRE (LG-R8, LG-R9) : la longueur d'un mur est la seule du lot pour l'instant — roches
-    // (LG-R15), arbres et marches (LG-R14) ne sont pas encore des lanceurs. `a` nul = pas d'ombre :
-    // on n'en garde aucune trace, et le masque rend zéro partout au bit.
+    // L'ASTRE (LG-R8, LG-R9) : `longueur` est celle d'un mur (les bandes, marchées au shader) ;
+    // `longueurParHauteur` projette les cartes des arbres (`ecrireLesCartes`). Une roche n'est pas
+    // lanceur (LG-R15), une marche attend LG-R14. `a` nul = pas d'ombre : on n'en garde aucune trace,
+    // et le masque rend zéro partout au bit.
     this.uA = astre && astre.a > 0 ? astre.a : 0
     this.astre =
       this.uA > 0
@@ -731,6 +873,7 @@ export class ChampGpu {
             longueur: longueurDOmbre(GI.ASTRE.HAUTEUR_MUR_PX, PX_PAR_TEXEL),
             cisaillement: GI.ASTRE.CISAILLEMENT,
             penombre: GI.ASTRE.PENOMBRE,
+            longueurParHauteur: GI.ASTRE.LONGUEUR_PAR_HAUTEUR,
           }
         : null
     // Le MÊME vecteur pour le shader, et la borne de sa marche : comptée en pas du raster 2×, un
@@ -741,6 +884,10 @@ export class ChampGpu {
     this.uOmbre[0] = dxO
     this.uOmbre[1] = dyO
     this.uPasOmbre = Math.ceil(2 * (Math.abs(dxO) + dyO)) + 2
+    // Les cartes des arbres, rastérisées et téléversées AVANT la passe 1 qui les lit (LG-R8).
+    const tC = performance.now()
+    this.ecrireLesCartes()
+    this.temps.cartes = performance.now() - tC
     const tR = performance.now()
     for (let k = 0; k < n; k++) this.passes[k]!.renderImmediate()
     // ⚠ `renderImmediate` ne fait que SOUMETTRE. Ce temps-ci est celui qui occupe le thread
@@ -829,11 +976,14 @@ export class ChampGpu {
     this.champ = null
     this.image?.destroy()
     this.image = null
-    for (const k of ['gi-direct', 'gi-faces', 'gi-drapeau', 'gi-rebond', 'gi-champ', 'gi-lumiere', 'gi-face-directe', 'gi-occ', 'gi-alb']) {
+    for (const k of ['gi-direct', 'gi-faces', 'gi-drapeau', 'gi-rebond', 'gi-champ', 'gi-lumiere', 'gi-face-directe', 'gi-occ', 'gi-alb', 'gi-arbres']) {
       if (this.scene.textures.exists(k)) this.scene.textures.remove(k)
     }
     this.occ = null
     this.alb = null
+    this.arbres = null
+    this.imageArbres = null
+    this.arbresVides = true
     this.gw = 0
     this.gh = 0
     this.empreinte = ''
@@ -877,7 +1027,12 @@ export class ChampGpu {
    * planches le montrent. Une seule expression du masque, lue par les deux.
    */
   masque(): Float32Array | null {
-    return this.grille && this.astre ? masqueDAstre(this.grille, this.astre) : null
+    return this.grille && this.astre ? masqueDAstre(this.grille, this.astre, this.cartesDOmbre()) : null
+  }
+
+  /** Les cartes des arbres projetées à cette image (LG-R8) — la prémisse de la garde du masque. */
+  get cartesProjetees(): number {
+    return this.cartes.length
   }
 
   /** Les cibles `direct` et `champ` contre l'oracle, en niveaux. À appeler APRÈS un `update`. */
@@ -929,7 +1084,7 @@ export class ChampGpu {
       // dans la passe somme, où plus rien n'est relisible (un alpha < 1 sur `gi-champ` changerait
       // son quad MULTIPLY). On compare donc LE MÊME ÉTAGE des deux côtés, exactement, plutôt que le
       // masque entier à peu près ; la pénombre est épinglée au texel par `champ-ref.test.ts`.
-      const ref = this.grille && this.astre ? ombrePleineDAstre(this.grille, this.astre) : null
+      const ref = this.grille && this.astre ? ombrePleineDAstre(this.grille, this.astre, this.cartesDOmbre()) : null
       if (lu.length === 0 || !ref) return vide
       let n = 0
       let somme = 0
@@ -999,6 +1154,7 @@ export class ChampGpu {
       gh: this.gh,
       sources: this.emetteurs.length,
       bandes: g.murs.length,
+      cartes: this.cartes.length,
       direct: direct.length > 0 ? ecart(direct, o.direct) : vide,
       champ: champ.length > 0 ? ecart(champ, o.light) : vide,
       masque: ecartMasque(direct),
@@ -1017,6 +1173,11 @@ export class ChampGpu {
     const tex = this.scene.textures
     this.occ = tex.createCanvas('gi-occ', gw * 2, gh * 2)
     this.alb = tex.createCanvas('gi-alb', gw * 2, gh * 2)
+    // LA CIBLE DES CARTES (LG-R8), au grain — bâtie AVANT la passe 1, qui la lie par sa clé. Une
+    // texture-canvas comme `gi-occ` : l'oracle la rastérise, `ecrireLesCartes` la téléverse.
+    this.arbres = tex.createCanvas('gi-arbres', gw, gh)
+    this.imageArbres = null
+    this.arbresVides = false
   }
 
   /** La passe `k` (1 à `PASSES_GI`), dans l'ordre : chacune lit les cibles des précédentes. */
@@ -1054,8 +1215,8 @@ export class ChampGpu {
       return sh
     }
     if (k === 1) {
-      this.direct = mk('gi-direct', FRAG_DIRECT, gw, gh, ['gi-occ'], 'gi-direct', () => ({
-        uOcc: 0, uSrc: this.uSrc, uNb: this.uNb, uTeinte: [GI.TEINTE_FEU[0], GI.TEINTE_FEU[1], GI.TEINTE_FEU[2]],
+      this.direct = mk('gi-direct', FRAG_DIRECT, gw, gh, ['gi-occ', 'gi-arbres'], 'gi-direct', () => ({
+        uOcc: 0, uArbres: 1, uSrc: this.uSrc, uNb: this.uNb, uTeinte: [GI.TEINTE_FEU[0], GI.TEINTE_FEU[1], GI.TEINTE_FEU[2]],
         uMotif: this.uMotif, uTailleSource: GI.TAILLE_SOURCE, uPic: HOLE_ERASE_PEAK,
         uPasMax: this.uPasMaxDirect,
         uOmbre: this.uOmbre, uPasOmbre: this.uPasOmbre,

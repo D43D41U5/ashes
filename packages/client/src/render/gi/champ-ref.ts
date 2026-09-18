@@ -360,6 +360,117 @@ export interface Astre {
   readonly cisaillement: number
   /** Les valeurs de la pénombre, du plus près au plus loin (`GI.ASTRE.PENOMBRE` : ⅔ puis ⅓). */
   readonly penombre: readonly number[]
+  /** LG-R9 : ℓ / H — combien de px d'ombre par px de hauteur (`GI.ASTRE.LONGUEUR_PAR_HAUTEUR`, 0,4).
+   *  C'est le nombre qui projette une CARTE (un arbre, LG-R8) : un point à la hauteur z tombe à
+   *  `longueurParHauteur × z` au sud de son pied. `longueur` ci-dessus en est le cas du mur. */
+  readonly longueurParHauteur: number
+}
+
+/** Une silhouette : w × h pixels, 1 où le pixel est OPAQUE (alpha ≥ 128, LG-R8), rangée 0 en haut. */
+export interface Silhouette {
+  readonly w: number
+  readonly h: number
+  readonly opaque: Uint8Array
+}
+
+/**
+ * UNE CARTE DEBOUT SUR SON PIED (LG-R8 : « un arbre est deux cartes debout sur leur pied : le fût et la
+ * cime »). Elle porte la pose EXACTE du sprite du jeu — position, origine, rotation du vent, étirement,
+ * miroir — et sa silhouette réelle. Toutes les longueurs sont en PX DE LA GRILLE (px monde moins
+ * l'origine du raster) ; l'oracle les convertit en texels avec `pxParTexel`.
+ */
+export interface CarteDOmbre {
+  readonly silhouette: Silhouette
+  /** La position du sprite (son point d'origine). */
+  readonly x: number
+  readonly y: number
+  readonly originX: number
+  readonly originY: number
+  readonly rotation: number
+  readonly scaleX: number
+  readonly scaleY: number
+  readonly flipX: boolean
+  readonly flipY: boolean
+  /** Le PIED de la carte — le point du sol d'où elle se dresse : le sprite du fût y a son origine, la
+   *  cime s'en élève de `ancrageHouppierPx`. C'est autour de lui que la projection tourne. */
+  readonly piedX: number
+  readonly piedY: number
+}
+
+/** Les cartes d'une image et leur grain. */
+export interface CartesDOmbre {
+  readonly cartes: readonly CarteDOmbre[]
+  readonly pxParTexel: number
+}
+
+/**
+ * ═══ L'OMBRE DES CARTES (LG-R8, LG-R9) — la silhouette PROJETÉE au sol ═══
+ *
+ * Un point de la carte à la hauteur z au-dessus de son pied tombe à ℓ/H × z au SUD du pied, cisaillé
+ * comme la coulée : décalé de `cisaillement × dérive` px par px de longueur. La projection est donc
+ * l'affine M = [[1, −q·k], [0, −q]] autour du pied (q = ℓ/H, k = cisaillement × dérive), appliquée à
+ * la carte DEBOUT — c'est-à-dire au sprite tel qu'il est posé (origine, rotation du vent, étirement,
+ * miroir). On la lit à l'ENVERS, du centre de chaque texel vers le pixel de la silhouette qui y tombe :
+ * M⁻¹ = [[1, −k], [0, −1/q]], puis la pose du sprite défaite, puis `floor`.
+ *
+ * C'est cette fonction même qui rastérise la cible `gi-arbres` de la chaîne GPU (`ChampGpu`,
+ * `ecrireLesCartes`) : le GPU ne dessine pas les cartes, il lit ce masque. Pourquoi — mesuré — est
+ * écrit là-bas ; ici, la conséquence : l'oracle et la chaîne partagent la rastérisation, et la garde
+ * du masque (LG-A9) n'éprouve que le téléversement et la lecture. La rastérisation, elle, s'éprouve
+ * dans `champ-ref.test.ts`, sur toutes les variantes d'arbres.
+ *
+ * Un texel d'occludeur ne prend pas l'ombre (LG-R8) ; rien ne tombe au nord du pied (q > 0). `s` reçoit
+ * 1 sous une carte et n'est jamais remis à 0 : l'appelant passe un tableau neuf ou vidé.
+ */
+export function ombreDesCartes(g: GrilleGi, s: Float32Array, astre: Astre, arbres: CartesDOmbre): void {
+  const q = astre.longueurParHauteur
+  if (!(q > 0)) return
+  const k = astre.cisaillement * astre.derive
+  const pas = arbres.pxParTexel
+  for (const c of arbres.cartes) {
+    const sil = c.silhouette
+    if (sil.w <= 0 || sil.h <= 0) continue
+    const cos = Math.cos(c.rotation)
+    const sin = Math.sin(c.rotation)
+    // L'EMPRISE : les quatre coins de la carte, posés puis projetés, bornent les texels à lire.
+    const w = sil.w * c.scaleX
+    const h = sil.h * c.scaleY
+    let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity
+    for (const [lx, ly] of [[-c.originX * w, -c.originY * h], [(1 - c.originX) * w, -c.originY * h], [-c.originX * w, (1 - c.originY) * h], [(1 - c.originX) * w, (1 - c.originY) * h]] as const) {
+      // Posé (rotation autour de l'origine, puis translation), puis projeté autour du pied.
+      const px = c.x + cos * lx - sin * ly - c.piedX
+      const py = c.y + sin * lx + cos * ly - c.piedY
+      const gx = c.piedX + px - q * k * py
+      const gy = c.piedY - q * py
+      if (gx < x0) x0 = gx
+      if (gx > x1) x1 = gx
+      if (gy < y0) y0 = gy
+      if (gy > y1) y1 = gy
+    }
+    const tx0 = Math.max(0, Math.floor(x0 / pas))
+    const tx1 = Math.min(g.gw - 1, Math.ceil(x1 / pas))
+    const ty0 = Math.max(0, Math.floor(y0 / pas))
+    const ty1 = Math.min(g.gh - 1, Math.ceil(y1 / pas))
+    for (let ty = ty0; ty <= ty1; ty++)
+      for (let tx = tx0; tx <= tx1; tx++) {
+        const idx = ty * g.gw + tx
+        if (s[idx] === 1 || g.occ[idx]) continue
+        // Du centre du texel au point de la carte debout : M⁻¹ autour du pied.
+        const dx = (tx + 0.5) * pas - c.piedX
+        const dy = (ty + 0.5) * pas - c.piedY
+        const px = c.piedX + dx - k * dy
+        const py = c.piedY - dy / q
+        // La pose du sprite, défaite : translation, rotation inverse, échelle, origine, miroir.
+        const ex = px - c.x
+        const ey = py - c.y
+        const u = (cos * ex + sin * ey) / c.scaleX + c.originX * sil.w
+        const v = (-sin * ex + cos * ey) / c.scaleY + c.originY * sil.h
+        const i = Math.floor(c.flipX ? sil.w - u : u)
+        const j = Math.floor(c.flipY ? sil.h - v : v)
+        if (i < 0 || j < 0 || i >= sil.w || j >= sil.h) continue
+        if (sil.opaque[j * sil.w + i] === 1) s[idx] = 1
+      }
+  }
 }
 
 /**
@@ -378,20 +489,23 @@ export interface Astre {
  * nulle. Et « une ombre d'astre se compte depuis la FACE » (LG-R10) en sort tout seul : le balayage
  * part du BORD de la bande, jamais de son axe.
  *
- * ═══ CE QUI N'EST PAS UN LANCEUR ═══
- * Les murs SEULS, ici. Une roche garde sa coulée au pixel et n'entre pas dans le masque (LG-R15) ; un
- * arbre est deux cartes debout à la silhouette réelle, vent compris (LG-R8) — une tranche à part ; une
- * marche est un lanceur de sa hauteur (LG-R14), qui attend `etage-layer.ts`. Un texel d'occludeur,
- * lui, ne prend pas l'ombre d'astre (LG-R8) : un bloc est éclairé par ses faces, pas par son sol.
+ * ═══ LES DEUX SORTES DE LANCEUR, ET CE QUI N'EN EST PAS ═══
+ * Les MURS, par leurs bandes balayées (ci-dessous) ; les ARBRES, par leurs deux cartes debout à la
+ * silhouette réelle, vent compris (LG-R8, `ombreDesCartes` — reçues en `arbres`, posées par la vue).
+ * Une roche garde sa coulée au pixel et n'entre pas dans le masque (LG-R15) ; une marche est un
+ * lanceur de sa hauteur (LG-R14), qui attend `etage-layer.ts`. Un texel d'occludeur, lui, ne prend pas
+ * l'ombre d'astre (LG-R8) : un bloc est éclairé par ses faces, pas par son sol.
  *
  * L'opacité `a` n'est PAS ici : elle vaut `SHADOW_ALPHA` × `forceDeLOmbre`, deux nombres du rendu, et
  * elle entre dans `composerM`. Le masque ne dit que la FORME — d'où « elle s'annule à la nouvelle
  * lune » qui se lit chez l'appelant, au bit près, sans que cette fonction ait à le savoir.
  */
-export function ombrePleineDAstre(g: GrilleGi, astre: Astre): Float32Array {
+export function ombrePleineDAstre(g: GrilleGi, astre: Astre, arbres?: CartesDOmbre): Float32Array {
   const s = new Float32Array(g.gw * g.gh)
   const dy = astre.longueur
-  if (!(dy > 0) || g.murs.length === 0) return s
+  if (!(dy > 0)) return s
+  if (arbres !== undefined) ombreDesCartes(g, s, astre, arbres)
+  if (g.murs.length === 0) return s
   const dx = astre.cisaillement * astre.longueur * astre.derive
 
   // LE BALAYAGE de chaque bande, lu au centre de chaque texel de son emprise.
@@ -431,8 +545,8 @@ export function ombrePleineDAstre(g: GrilleGi, astre: Astre): Float32Array {
  * TOUJOURS QUE CELLE-LÀ : la comparer au masque entier contre `gi-drapeau`.g est une garde à
  * RENFORCER, pas une garde en place. La pénombre reste épinglée au texel par les tests.
  */
-export function masqueDAstre(g: GrilleGi, astre: Astre): Float32Array {
-  const s = ombrePleineDAstre(g, astre)
+export function masqueDAstre(g: GrilleGi, astre: Astre, arbres?: CartesDOmbre): Float32Array {
+  const s = ombrePleineDAstre(g, astre, arbres)
 
   // LA PÉNOMBRE, DEHORS — deux fronts de Tchebychev à travers le sol libre, JAMAIS vers le nord :
   // le haut d'une ombre est son contact, il n'a pas de bord doux (LG-R8).

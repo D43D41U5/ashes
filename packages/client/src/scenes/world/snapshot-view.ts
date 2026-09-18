@@ -147,6 +147,7 @@ import { epinglerLaTuile } from '../../render/tuile-epinglee'
 import { cleDeTuile, indexerParTuile, noeudVu, sousLaRoche } from './index-noeuds'
 import { armerLeCorps, NoeudCorpsGi, NOM_NOEUD, type ChampDeLImage } from '../../render/gi/noeud-corps'
 import { garderLesCorps, type CorpsAEprouver, type VerdictCorps } from '../../render/gi/garde-corps'
+import type { CarteMonde } from '../../render/gi/champ-gpu'
 import { GI } from '../../render/gi/reglages'
 import { estRuban, expositionAuFeu, hauteurDeCrete, ligneDuPied, seuilDuDessus, suitLaRegleDesFaces, type CorpsPose } from '../../render/gi/sol-du-corps'
 // `SUN_Z` SEULEMENT, et en LECTURE : c'est à cette hauteur-là que `dynamic-lighting` pose le soleil
@@ -2790,6 +2791,10 @@ export class SnapshotView {
     let used = 0
     let crownsUsed = 0
     let fadesUsed = 0 // les cimes SORTANTES d'un fondu — leur propre compteur (pool séparé)
+    // LES CARTES DES ARBRES (LG-R8) : chaque fût et chaque cime posés à cette image, relevés TELS QUE
+    // POSÉS (clé, origine, rotation du vent, étirement, miroir, pied) pour que la GI projette leur
+    // ombre d'astre — et rien n'est relevé quand le champ n'est pas armé.
+    const cartes: CarteMonde[] | null = this.gi !== null ? [] : null
     this.transitionsFlore.image()
     // LE NŒUD SURVOLÉ N'A PAS ENCORE DE SPRITE À CETTE FRAME : le pool se réattribue ici. On
     // repart donc de rien — sinon un nœud sorti de l'écran laisserait son contour posé sur le
@@ -3062,6 +3067,14 @@ export class SnapshotView {
         const windTake = growing && isTree ? SAPLING_WIND_TAKE : (NODE_WIND_TAKE[n.type] ?? 0)
         sprite.setRotation(windSway(tx, ty, now, windTake, this.ventDuDecor, this.windForce, this.wind))
         sprite.setVisible(true)
+        // LA CARTE DU FÛT (LG-R8) : le sprite tel qu'il vient d'être posé, debout sur son pied réel.
+        if (cartes !== null && isTree && !growing) {
+          cartes.push({
+            cle: texture, x: px, y: pyDessin, originX: 0.5, originY: 1,
+            rotation: sprite.rotation, scaleX: sprite.scaleX, scaleY: sprite.scaleY, flipX: sprite.flipX, flipY: sprite.flipY,
+            piedX: px, piedY: pyPied,
+          })
+        }
         // LE REFLET DE L'ARBRE (eau-vivante R13) : un fût de la rive nord se redit dans
         // l'eau au sud de son pied — la couche découpe elle-même à la course d'eau.
         if (this.reflets && isTree && !growing) {
@@ -3257,6 +3270,15 @@ export class SnapshotView {
           // Et la cime s'étire ou se tasse sous un vent nord-sud, comme les tiges du sol.
           img.setScale(1, windStretch(CROWN_WIND_TAKE, this.ventDuDecor, this.windForce))
           img.setVisible(true)
+          // LA CARTE DE LA CIME (LG-R8) : debout sur le pied de son tronc, élevée de son ancrage —
+          // la cime ENTRANTE seule (dz = 0), jamais celle qui s'efface : un arbre a une cime.
+          if (cartes !== null && dz === 0) {
+            cartes.push({
+              cle, x: pxCime, y: pyCime - ancrageHouppierPx(mesures), originX: 0.5, originY: 1,
+              rotation: img.rotation, scaleX: img.scaleX, scaleY: img.scaleY, flipX: false, flipY: false,
+              piedX: pxCime, piedY: pyCime,
+            })
+          }
         }
         poser(crown, etape.cle, alphaCanopee * etape.u, 0)
         // ── LA CIME D'AVANT, qui s'efface. Elle passe JUSTE SOUS la nouvelle : à profondeur
@@ -3287,6 +3309,9 @@ export class SnapshotView {
     // Les fondus des arbres qu'on ne regarde plus s'oublient — la carte reste bornée à ce qui
     // est passé sous les yeux dans la dernière demi-minute (balayage rare, cf. `fondu-cime.ts`).
     this.fondu.menage(now)
+    // Les cartes de l'image partent à la GI, qui les projette à son prochain `update` — le même
+    // `update` de scène, quelques lignes plus bas que `renderNodes` (LG-R8).
+    if (cartes !== null) this.gi?.poserLesCartes(cartes)
 
     // ═══ LA MORT DES NŒUDS (spec recolte.md G15) ═══════════════════════════════════════
     //

@@ -13,7 +13,8 @@ import {
 } from '@ashes/sim'
 import { MUR_HT } from '../bati-art'
 import { TILE_PX } from '../framing'
-import { champRef, composerM, masqueDAstre, partVisibleGrille, type Astre, type BandeGrille, type Emetteur, type GrilleGi } from './champ-ref'
+import { champRef, composerM, masqueDAstre, ombrePleineDAstre, partVisibleGrille, type Astre, type BandeGrille, type CarteDOmbre, type Emetteur, type GrilleGi, type Silhouette } from './champ-ref'
+import { TOUTES_VARIANTES, ancrageHouppierPx, hauteurPx, houppierLargeur } from '../arbre-art'
 import { grilleDuMonde } from './grille'
 import { ALBEDO, GI, longueurDOmbre } from './reglages'
 
@@ -219,7 +220,7 @@ describe('la composition (LG-R5, LG-A5)', () => {
  * est-ouest à cheval sur y = 8, ℓ = 32 px × 0,4 ÷ 4 = 3,2 texels, donc QUATRE rangs pleins (8 à 11),
  * puis ⅔ au rang 12 et ⅓ au 13 ; à dérive ±1 la pointe part de (8/7) × 3,2 = 3,657 texels de côté.
  */
-const ASTRE_NU = { cisaillement: GI.ASTRE.CISAILLEMENT, penombre: GI.ASTRE.PENOMBRE }
+const ASTRE_NU = { cisaillement: GI.ASTRE.CISAILLEMENT, penombre: GI.ASTRE.PENOMBRE, longueurParHauteur: GI.ASTRE.LONGUEUR_PAR_HAUTEUR }
 const L_MUR = longueurDOmbre(GI.ASTRE.HAUTEUR_MUR_PX, TILE_PX / T)
 const astre = (derive: number, longueur = L_MUR): Astre => ({ derive, longueur, ...ASTRE_NU })
 
@@ -306,5 +307,112 @@ describe('le masque d’astre (LG-R8, LG-R9)', () => {
     expect(s.some((v) => v === 1)).toBe(true)
     const nord = Math.floor(g.murs[0]!.y0)
     for (let y = 0; y < nord; y++) for (let x = 0; x < g.gw; x++) expect(s[y * g.gw + x], `(${x}, ${y})`).toBe(0)
+  })
+})
+
+/**
+ * LES ARBRES, DEUX CARTES DEBOUT SUR LEUR PIED (LG-R8, LG-R9, LG-A9).
+ *
+ * Une grille SANS bande : seules les cartes portent l'ombre. Le pied d'un arbre au centre d'une tuile,
+ * sa silhouette pleine (un rectangle opaque) pour que la longueur se lise au rang près ; puis une
+ * silhouette à trou, une rotation de vent, un miroir, pour que la POSE soit prouvée et non la seule
+ * hauteur. ⚠ PRÉDICTIONS ÉCRITES AVANT LA MESURE : un point à z px tombe à 0,4 × z au sud du pied ;
+ * un arbre de H px jette donc 0,4 × H px = 0,1 × H texels d'ombre pleine, à un texel près (LG-A9).
+ */
+const PAS = TILE_PX / T
+const SANS_BANDE: GrilleGi & { occ: Uint8Array } = { gw: 40, gh: 40, occ: new Uint8Array(1600), murs: [], albedo: new Float32Array(4800), albedoMurs: [] }
+const PIED = { x: 20 * PAS, y: 20 * PAS } // le centre du texel (19, 19)… non : le coin (20, 20), un centre de tuile
+const pleine = (w: number, h: number): Silhouette => ({ w, h, opaque: new Uint8Array(w * h).fill(1) })
+const carte = (sil: Silhouette, ancrage = 0, extra: Partial<CarteDOmbre> = {}): CarteDOmbre => ({
+  silhouette: sil, x: PIED.x, y: PIED.y - ancrage, originX: 0.5, originY: 1, rotation: 0, scaleX: 1, scaleY: 1, flipX: false, flipY: false, piedX: PIED.x, piedY: PIED.y, ...extra,
+})
+const arbres = (...cartes: CarteDOmbre[]) => ({ cartes, pxParTexel: PAS })
+/** Les rangs de texels PLEINS (s = 1) de la colonne `x`, du nord au sud. */
+const rangs = (s: Float32Array, gw: number, x: number): number[] => {
+  const out: number[] = []
+  for (let y = 0; y < s.length / gw; y++) if (s[y * gw + x] === 1) out.push(y)
+  return out
+}
+
+describe('les arbres, deux cartes debout (LG-R8, LG-R9, LG-A9)', () => {
+  it('A9 — à dérive 0, l’ombre pleine de chaque variante mesure 0,4 × H, à un texel près — fût ET cime', () => {
+    expect(TOUTES_VARIANTES.length).toBeGreaterThan(5)
+    for (const v of TOUTES_VARIANTES) {
+      const m = v.mesures
+      const H = hauteurPx(m)
+      // Le fût, debout sur le pied ; la cime, debout sur le pied + `ancrageHouppierPx` — les deux
+      // cartes de LG-R8, pleines, telles que `snapshot-view` les pose.
+      const fut = carte(pleine(m.futW, m.futH))
+      const cime = carte(pleine(houppierLargeur(m), m.houppierS), ancrageHouppierPx(m))
+      const s = masqueDAstre(SANS_BANDE, astre(0), arbres(fut, cime))
+      const r = rangs(s, SANS_BANDE.gw, 20)
+      // Du pied (rang 20, le premier texel au sud) jusqu'à 0,4 × H px = 0,1 × H texels, contigus.
+      expect(r.length, `${v.slug} : ${r.length} rangs pour H = ${H}`).toBeGreaterThanOrEqual(Math.floor(0.1 * H) - 1)
+      expect(r.length, `${v.slug}`).toBeLessThanOrEqual(Math.ceil(0.1 * H) + 1)
+      expect(r[0], `${v.slug} : le contact est au pied`).toBe(20)
+      expect(r, `${v.slug} : d'un seul tenant`).toEqual(r.map((_, i) => r[0]! + i))
+      // Rien au nord du pied, ni pénombre : le haut d'une ombre est son contact (LG-R8).
+      for (let y = 0; y < 20; y++) for (let x = 0; x < SANS_BANDE.gw; x++) expect(s[y * SANS_BANDE.gw + x], `${v.slug} (${x}, ${y})`).toBe(0)
+    }
+  })
+
+  it('R9 — la cime seule, sur son ancrage : son ombre commence à 0,4 × ancrage du pied, pas au contact', () => {
+    const cime = carte(pleine(16, 40), 30) // 30 px de fût, 40 de cime : l'ombre de la cime va de 12 à 28 px
+    const s = masqueDAstre(SANS_BANDE, astre(0), arbres(cime))
+    expect(rangs(s, SANS_BANDE.gw, 20)).toEqual([23, 24, 25, 26])
+  })
+
+  it('R8 — la pointe se cisaille comme la coulée, et son SENS est celui du jeu : le soir à l’est', () => {
+    const fut = carte(pleine(4, 40)) // 40 px : 16 px d'ombre, 4 rangs (20 à 23) ; au dernier, 8/7 × 14 px ≈ 4 texels de côté
+    const est = masqueDAstre(SANS_BANDE, astre(1), arbres(fut))
+    const ouest = masqueDAstre(SANS_BANDE, astre(-1), arbres(fut))
+    const colonnes = (s: Float32Array, y: number): number[] => { const o: number[] = []; for (let x = 0; x < 40; x++) if (s[y * 40 + x] === 1) o.push(x); return o }
+    expect(colonnes(est, 20)).toEqual([20])
+    expect(colonnes(est, 23)[0]!).toBeGreaterThan(22)
+    expect(colonnes(ouest, 23)[0]!).toBeLessThan(18)
+    // Le miroir se lit en centres de texels autour du pied (x = 80 px, un coin de texel) : c ↔ 39 − c,
+    // à un texel près — les intervalles sont demi-ouverts, et le pied tombe sur un bord.
+    const m = colonnes(est, 23).map((c) => 39 - c).reverse()
+    expect(m.length).toBe(colonnes(ouest, 23).length)
+    m.forEach((c, i) => expect(Math.abs(c - colonnes(ouest, 23)[i]!)).toBeLessThanOrEqual(1))
+  })
+
+  it('R8 — la silhouette est la VRAIE : un trou dans la carte est un trou dans l’ombre, et le miroir le retourne', () => {
+    const sil: Silhouette = { w: 12, h: 40, opaque: new Uint8Array(12 * 40).fill(1) }
+    // Un trou de 4 × 16 px dans la moitié OUEST de la carte, de 12 à 28 px de haut (rangées 12 à 27 depuis
+    // le sommet) → au sol, de 4,8 à 11,2 px au sud : les centres des rangs 21 (6 px) et 22 (10 px).
+    for (let j = 12; j < 28; j++) for (let i = 1; i < 5; i++) sil.opaque[j * 12 + i] = 0
+    // La carte (origine 0,5 / 1) couvre x ∈ [74, 86) px autour du pied à 80 ; le trou couvre [75, 79).
+    // Le texel 19 (centre 78) y tombe (i = 4), le texel 20 (centre 82) lit i = 8, plein.
+    // L'ombre PLEINE, sans la pénombre — qui comblerait le trou aux deux tiers, et c'est le pixel qu'on lit.
+    const droit = ombrePleineDAstre(SANS_BANDE, astre(0), arbres(carte(sil)))
+    const miroir = ombrePleineDAstre(SANS_BANDE, astre(0), arbres(carte(sil, 0, { flipX: true })))
+    expect(droit[22 * 40 + 19]).toBe(0)
+    expect(droit[22 * 40 + 20]).toBe(1)
+    expect(miroir[22 * 40 + 19]).toBe(1)
+    expect(miroir[22 * 40 + 20]).toBe(0)
+  })
+
+  it('R8 — le vent penche la carte, et l’ombre suit : une cime couchée à l’est jette à l’est', () => {
+    const sil = pleine(8, 40)
+    const droit = masqueDAstre(SANS_BANDE, astre(0), arbres(carte(sil)))
+    const penche = masqueDAstre(SANS_BANDE, astre(0), arbres(carte(sil, 0, { rotation: 0.5 }))) // ~29° vers l'est (sens horaire, y vers le bas)
+    const centre = (s: Float32Array, y: number): number => { let n = 0, sx = 0; for (let x = 0; x < 40; x++) if (s[y * 40 + x] === 1) { n++; sx += x }; return n > 0 ? sx / n : NaN }
+    // Droite, la carte de 8 px couvre les texels 19 et 20 à parts égales autour du pied : centre 19,5.
+    expect(centre(droit, 22)).toBeCloseTo(19.5, 5)
+    expect(centre(penche, 22)).toBeGreaterThan(20.5)
+    // Penchée, la carte est moins haute : son ombre est plus courte.
+    expect(rangs(penche, 40, 20).length + rangs(penche, 40, 24).length).toBeGreaterThan(0)
+    expect(Math.max(...rangs(droit, 40, 20))).toBeGreaterThanOrEqual(Math.max(...rangs(penche, 40, 24)))
+  })
+
+  it('R8 — un texel d’occludeur ne prend pas l’ombre d’une carte, et sans astre rien ne tombe', () => {
+    const g: GrilleGi & { occ: Uint8Array } = { ...SANS_BANDE, occ: new Uint8Array(1600) }
+    g.occ[21 * 40 + 20] = 1
+    const s = masqueDAstre(g, astre(0), arbres(carte(pleine(8, 40))))
+    expect(s[21 * 40 + 20]).toBe(0)
+    expect(s[20 * 40 + 20]).toBe(1)
+    expect(s[22 * 40 + 20]).toBe(1)
+    expect(masqueDAstre(SANS_BANDE, astre(0, 0), arbres(carte(pleine(8, 40)))).some((v) => v !== 0)).toBe(false)
   })
 })
