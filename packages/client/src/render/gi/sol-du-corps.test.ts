@@ -1,3 +1,4 @@
+import { readFileSync } from 'node:fs'
 import { describe, expect, it } from 'vitest'
 import {
   EDGE_E,
@@ -600,5 +601,17 @@ describe('l’oracle lit le point du shader (LG-A8 — le ruban et la clôture)'
     const c: CorpsPose = { x: 400, y: LIGNE, arete: EDGE_S, famille: 'cloture' }
     expect(auDessusDeLaCrete(c, rang(17))).toBe(true)
     expect(pointAuSol(c, c.x, rang(17))).toEqual({ x: c.x, y: ligneDuPied(c) })
+  })
+})
+
+describe('l’astre des corps — le relais soleil → lune, sans saut (2026-09-18)', () => {
+  it('ASTRE_LOIN_PX est SUN_FAR : la redite se relit dans la source de `dynamic-lighting.ts`', () => {
+    // `dynamic-lighting` tire toute la scène (Phaser) : on ne l'importe pas ici, on lit sa source. Un
+    // `SUN_FAR` qui bouge sans `GI.CORPS.ASTRE_LOIN_PX` mettrait l'astre des corps à une autre distance
+    // que le soleil du jeu — et une face ne regarderait plus le même astre que l'ombre de son mur.
+    const source = readFileSync(new URL('../../scenes/world/dynamic-lighting.ts', import.meta.url), 'utf8')
+    const m = /const SUN_FAR = ([0-9.]+)/.exec(source)
+    expect(m, 'SUN_FAR introuvable dans dynamic-lighting.ts').not.toBeNull()
+    expect(GI.CORPS.ASTRE_LOIN_PX).toBe(Number(m![1]))
   })
 })

@@ -153,7 +153,7 @@ import { estRuban, expositionAuFeu, hauteurDeCrete, ligneDuPied, seuilDuDessus, 
 // `SUN_Z` SEULEMENT, et en LECTURE : c'est à cette hauteur-là que `dynamic-lighting` pose le soleil
 // ET la lune (`:385-386`), donc c'est ce qui les distingue d'un feu dans `scene.lights`. Aucun autre
 // nombre n'en vient — la position et le `z` de chaque source se lisent sur la LUMIÈRE POSÉE.
-import { SUN_Z } from './dynamic-lighting'
+import { SUN_NORTH, SUN_Z } from './dynamic-lighting'
 
 /**
  * LES TYPES QUI ARMENT LA PASSE DES CORPS (LG-R7) — les BARRIÈRES, et elles seules.
@@ -1992,16 +1992,22 @@ export class SnapshotView {
    * feux, les torches et les gueules. Rien n'est recopié ici — ni `SUN_FAR`, ni l'azimut, ni la
    * hauteur d'un feu : chaque source rend son `x`, son `y` et son PROPRE `z`.
    *
-   * ⚠ **C'EST LA SEULE ROUTE, ET C'EST DÉLIBÉRÉ.** `sun`/`moon` sont PRIVÉS sur `DynamicLighting`,
-   * et `SUN_FAR` (2 200) n'est pas exporté : recalculer la position de l'astre exigerait de recopier
-   * ce nombre dans `render/gi/`, soit exactement la « seconde table de géométrie » que `reglages.ts`
-   * interdit. La lumière posée, elle, est la loi elle-même.
+   * ⚠ **L'ASTRE EST L'EXCEPTION, ET ELLE EST MESURÉE.** Il fut d'abord « celui des deux qui BRILLE le
+   * plus » — lu sur la lumière posée, sans recopier `SUN_FAR`. Mais une élection SAUTE : au balayage
+   * du soir par dixièmes d'heure (`__gi-astre.mjs`, 2026-09-18), à 19,7 h la lune prend le soleil et
+   * la part d'astre d'une face est-ouest passait de 0,177 à 0 en UN pas (45 niveaux sur 255, albédo 1)
+   * pendant que les faces d'en face s'allumaient d'autant — quand l'ombre au sol, elle, relaie en
+   * continu (`deriveDOmbre` fond les deux astres au prorata de leur plein, et l'ombre « balaie d'un
+   * bord à l'autre en une heure de jeu au lieu de sauter »). L'astre d'un corps est donc l'ASTRE
+   * VIRTUEL de ce même relais : `cx − deriveOmbre × ASTRE_LOIN_PX`, au nord de la vue (`SUN_NORTH`),
+   * à `SUN_Z` — la dérive et la force que `WorldScene` pousse déjà à la vue pour les socles et les
+   * falaises, et UN nombre recopié (`GI.CORPS.ASTRE_LOIN_PX` = `SUN_FAR`), gardé par
+   * `sol-du-corps.test.ts` qui le relit dans la source de `dynamic-lighting.ts`. Une face et l'ombre
+   * de son mur regardent ainsi le même astre, à toute heure.
    *
-   * L'ASTRE est celui des deux qui BRILLE le plus — la lune prend la relève du soleil au crépuscule,
-   * et `intensitesDuCiel` fait déjà que l'un s'éteint quand l'autre monte. LE FEU est la source non
-   * céleste la plus proche du centre de la vue : celle que le joueur regarde. ⚠ **Une seule**, comme
-   * toute la chaîne de référence (`passe-corps.ts`, mesurée avec UN émetteur) — un second foyer dans
-   * le cadre n'entre pas encore dans la part directionnelle d'un corps.
+   * LE FEU est la source non céleste la plus proche du centre de la vue : celle que le joueur regarde.
+   * ⚠ **Une seule**, comme toute la chaîne de référence (`passe-corps.ts`, mesurée avec UN émetteur) —
+   * un second foyer dans le cadre n'entre pas encore dans la part directionnelle d'un corps.
    */
   private sourcesDuCiel(): {
     readonly astre: readonly [number, number, number, number]
@@ -2034,16 +2040,14 @@ export class SnapshotView {
       const lift = (sousLaRoche(s) ? this.warp?.liftAEtage(s.tx + 0.5, s.ty + 0.5, s.etage) : this.warp?.liftSol(s.tx + 0.5, s.ty + 0.5)) ?? 0
       foyers.set(s.tx * TILE_PX + TILE_PX / 2, { y: s.ty * TILE_PX + TILE_PX / 2, lift })
     }
-    let astre: Phaser.GameObjects.Light | null = null
     let feu: Phaser.GameObjects.Light | null = null
     let liftFeu = 0
     let dFeu = Infinity
     for (const l of this.scene.lights.lights) {
       if (l.intensity <= 0) continue
-      if (l.z === SUN_Z) {
-        if (astre === null || l.intensity > astre.intensity) astre = l
-        continue
-      }
+      // Les lumières célestes ne sont pas des feux — et l'astre des corps ne s'élit plus parmi elles
+      // (voir l'en-tête : il se dérive du relais de l'ombre au sol).
+      if (l.z === SUN_Z) continue
       // DEUX CONDITIONS INDÉPENDANTES, parce qu'une seule se fait usurper : l'ancre d'un essaim
       // dérive à chaque image et finira par tomber pile sur un `tx + 0.5`, et les deux côtés sont
       // alors des entiers — la coïncidence serait EXACTE, pas approchée. L'ordonnée referme la
@@ -2085,8 +2089,13 @@ export class SnapshotView {
     // FEU_LIFT`), on lui rend le lift de sa tuile — la flamme reste à ses 4,8 px au-dessus du centre,
     // comme au sol. C'est ce que `expositionAuFeu` et le facteur de normale confrontent à un corps
     // dont `x`, `y` et le point lu sont logiques ; l'astre, à 2 200 px, n'a pas de palier.
+    // L'ASTRE VIRTUEL DU RELAIS : la dérive de l'ombre au sol (`deriveDOmbre`, poussée par `WorldScene`
+    // avec la force), ramenée en px à l'éloignement du soleil du jeu, au nord de la vue comme lui.
+    // `forceOmbre` nulle (nouvelle lune, ou rendu à plat) : pas d'astre, pas de part directionnelle.
+    const astre: readonly [number, number, number, number] =
+      this.forceOmbre > 0 ? [cx - this.deriveOmbre * GI.CORPS.ASTRE_LOIN_PX, cy - SUN_NORTH, SUN_Z, 1] : [0, 0, 0, 0]
     return {
-      astre: astre === null ? [0, 0, 0, 0] : [astre.x, astre.y, astre.z, 1],
+      astre,
       feu: feu === null ? [0, 0, 0, 0] : [feu.x, feu.y + liftFeu, feu.z, 1],
     }
   }

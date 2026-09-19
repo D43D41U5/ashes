@@ -118,6 +118,19 @@ export const GI = {
      * `snapshot-view` avertit en dev si la lumière élue comme feu n'est pas à cette hauteur-là.
      */
     HAUTEUR_FLAMME_PX: 9.6,
+    /**
+     * L'ÉLOIGNEMENT DE L'ASTRE, en px monde — `SUN_FAR` de `dynamic-lighting.ts` (2 200 : « grand =
+     * quasi directionnel »). L'astre qu'un corps voit n'est PAS une lumière élue : c'est l'astre
+     * VIRTUEL du relais soleil → lune, à `cx − deriveOmbre × ASTRE_LOIN_PX` — la même dérive que l'ombre
+     * au sol (`deriveDOmbre`, qui fond les deux astres au prorata de leur plein). MESURÉ le 2026-09-18
+     * (`__gi-astre.mjs`, balayage du soir par dixièmes d'heure) : élire « le plus intense des deux »
+     * faisait sauter la part d'astre d'une face est-ouest de 45 niveaux sur 255 en un pas, à 19,7 h,
+     * quand la lune prenait le soleil — l'ombre au sol, elle, relayait en continu.
+     *
+     * Redite plutôt qu'importée, comme `HAUTEUR_FLAMME_PX` ; la garde est `sol-du-corps.test.ts`, qui
+     * la lit dans la source de `dynamic-lighting.ts`.
+     */
+    ASTRE_LOIN_PX: 2200,
   },
 } as const
 
