@@ -5652,6 +5652,21 @@ export const LUMIERE = {
    * le client doit la lire d'ici.
    */
   TORCHE_PORTEE_TUILES: 10,
+  /**
+   * LA HAUTEUR D'UNE MARCHE DE PALIER, en texels du grain (LG-R14) : le lift du jeu — un palier de
+   * terrasse se dessine `LIFT_TUILES` tuiles plus haut (`framing.ts`, 2 × 16 px = 32 px), soit 8
+   * texels. La sim n'a pas de pixels : c'est en texels qu'elle juge si un rayon franchit une arête
+   * plus bas que le haut de la marche. Le client garde l'égalité avec son lift (`sol-du-corps.test.ts`).
+   */
+  PALIER_TEXELS: 8,
+  /**
+   * LA HAUTEUR DE LA FLAMME au-dessus de son sol, en texels (LG-R14) : le `z` du point-light d'un
+   * Feu (9,6 px, `GI.CORPS.HAUTEUR_FLAMME_PX`, MESURÉ sur l'oracle ratifié), au grain de 4 px. C'est
+   * elle qui fait l'écran à sens unique : une flamme à 2,4 texels ne passe pas une arête de 8 ;
+   * d'en haut, elle descend sur la plaine au-delà de s = (8 ÷ 2,4) × d = 3,33 × d, d le recul du
+   * feu derrière l'arête (la spec écrivait 3,2 avec la flamme arrondie à 10 px).
+   */
+  FLAMME_TEXELS: 2.4,
 } as const
 
 

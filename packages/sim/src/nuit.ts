@@ -50,7 +50,7 @@
  */
 import { TEMPERATURE } from './balance'
 import { bulleDuFeu, isSheltered } from './temperature'
-import { auMemeEtage, connecteurAt, niveauDuCorps, palierDuSol } from './etages'
+import { auMemeEtage, connecteurAt, niveauDeLaTuile, niveauDuCorps, palierDuSol } from './etages'
 import { heldSlot } from './inventory-actions'
 import { lumiereDesTorches, partVisible } from './lumiere'
 import { estTorcheVive } from './torche'
@@ -150,7 +150,8 @@ export function clarteDuCiel(state: SimState, tick: number = state.tick): number
  * tuile — LG-R17), et son rayon de 6 tuiles est celui de la clairière du client. Ce qui chauffe
  * éclaire, au même rayon ; mais la lumière demande en plus une ligne de vue : derrière un mur,
  * dans l'axe d'un fût ou d'une roche, elle s'arrête — la pénombre étant celle de la GI, seize
- * rayons vers un disque de 1,5 texel (`lumiere.ts`). La chaleur, elle, ne change pas.
+ * rayons vers un disque de 1,5 texel (`lumiere.ts`). La chaleur, elle, ne change pas. Un feu d'un
+ * autre palier compte (LG-R14) : c'est la marche, jugée en hauteur, qui dit s'il descend jusqu'ici.
  */
 export function lumiereDuFeu(state: SimState, x: number, y: number, etage?: number): number {
   const niveau = etage ?? palierDuSol(state.map, Math.floor(x), Math.floor(y))
@@ -159,7 +160,7 @@ export function lumiereDuFeu(state: SimState, x: number, y: number, etage?: numb
     if (s.type !== 'fire' || !auMemeEtage(s, etage)) continue
     const bulle = bulleDuFeu(state, s, x, y)
     if (bulle <= best) continue // ne peut plus faire mieux, même vue en entier
-    const v = bulle * partVisible(state, niveau, x, y, s.tx + 0.5, s.ty + 0.5)
+    const v = bulle * partVisible(state, niveau, x, y, s.tx + 0.5, s.ty + 0.5, niveauDeLaTuile(state.map, s))
     if (v > best) best = v
   }
   return best

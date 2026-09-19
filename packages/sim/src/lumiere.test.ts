@@ -2,12 +2,12 @@ import { describe, expect, it } from 'vitest'
 import { FIRE, LUMIERE, NUIT, SLOTS, TEMPERATURE, TERRAIN_GRASS, TERRAIN_ROCK } from './balance'
 import { EDGE_E, EDGE_N, EDGE_O, EDGE_S } from './geometry'
 import { addItems, makeInventory } from './items'
-import { MOTIF_SOURCE, OCCLUDEUR, lumiereDesTorches, occlusionAuGrain, partVisible, sorteAuTexel } from './lumiere'
+import { MOTIF_SOURCE, OCCLUDEUR, estUnePorte, lumiereDesTorches, occlusionAuGrain, partVisible, seTientAuSol, sorteAuTexel } from './lumiere'
 import { createEmptyMap } from './map'
 import type { Npc } from './npc'
 import { clarteSurSoi, lumiereDuFeu, LUNAISON_JOURS, LUNE_PLEINE_JOUR } from './nuit'
 import { createSim, spawnEntity, step, type Entity, type SimState } from './sim'
-import { fireBubble } from './temperature'
+import { bulleDuFeu, fireBubble } from './temperature'
 import { torcheVive } from './torche'
 import { cycleOffsetForStartHour, jourDeSaison } from './time'
 import { addStructure, type Structure } from './village'
@@ -468,5 +468,212 @@ describe('les torches des autres (LG-R18, LG-A19)', () => {
     autre.etage = -1
     expect(clarteSurSoi(sim, moi)).toBeLessThan(0.15)
     expect(lumiereDesTorches({ map: sim.map, structures: sim.structures }, RX, RY)).toBe(0)
+  })
+})
+
+describe('les paliers — la marche se juge en hauteur (LG-R14, LG-A15)', () => {
+  const T = LUMIERE.TEXELS_PAR_TUILE
+  const H = LUMIERE.PALIER_TEXELS
+  const F = LUMIERE.FLAMME_TEXELS
+  /** La marche : les rangées ty < BORD au palier 1 (au nord, comme les terrasses du jeu), le reste au palier 0. */
+  const BORD = 48
+  const LIGNE = BORD * T
+  function terrasse(sim: SimState, rampe?: { x: number; y: number }): void {
+    const w = sim.map.width
+    sim.map.palier = Array.from({ length: w * sim.map.height }, (_, i) => (Math.floor(i / w) < BORD ? 1 : 0))
+    if (rampe !== undefined) {
+      // La tuile de la rampe appartient aux DEUX étages (E-R7) : au palier 0 par la carte, au 1 par l'étage.
+      const i = rampe.y * w + rampe.x
+      sim.map.etages = [{ niveau: 1, idx: [i], terrain: [TERRAIN_GRASS], x0: rampe.x, y0: rampe.y, x1: rampe.x + 1, y1: rampe.y + 1 }]
+      sim.map.connecteurs = [{ x: rampe.x, y: rampe.y, de: 0, vers: 1, type: 'rampe' }]
+    }
+  }
+  /**
+   * LA LOI, écrite à part de la traversée : pour une marche DROITE sur la ligne y = LIGNE, le rayon du
+   * récepteur (au sol de son palier) vers un échantillon (à la flamme, au-dessus du sol de la source)
+   * franchit la ligne au paramètre t = (LIGNE − y0) / (y1 − y0), à la hauteur z0 + t (z1 − z0) ; il est
+   * bloqué si elle est strictement sous H. Sans marche franchie, il passe (rien d'autre sur la carte).
+   */
+  function partParLaLoi(rx: number, ry: number, pr: number, sx: number, sy: number, ps: number): number {
+    const R = LUMIERE.SOURCE_RAYON_TEXELS
+    const y0 = ry * T
+    const z0 = pr * H
+    const z1 = ps * H + F
+    let vus = 0
+    for (const p of MOTIF_SOURCE) {
+      const y1 = sy * T + p[1] * R
+      if (y0 < LIGNE === y1 < LIGNE) {
+        vus++
+        continue
+      }
+      const t = (LIGNE - y0) / (y1 - y0)
+      if (z0 + t * (z1 - z0) >= H) vus++
+    }
+    return vus / MOTIF_SOURCE.length
+  }
+
+  it('P1 — d’en bas, rien ne monte : un feu au pied de la paroi n’éclaire aucun texel du plateau, et la plaine autour de lui reste entière', () => {
+    const sim = makeSim()
+    terrasse(sim)
+    const plat = makeSim()
+    const cx = 50.5
+    const cy = BORD + 0.5 // le feu sur la première rangée basse, contre la marche
+    let plateau = 0
+    for (let ty = BORD - 6; ty < BORD; ty++)
+      for (let tx = 44; tx <= 56; tx++) {
+        expect(partVisible(sim, 1, tx + 0.5, ty + 0.5, cx, cy, 0), `plateau (${tx}, ${ty})`).toBe(0)
+        expect(partVisible(plat, 0, tx + 0.5, ty + 0.5, cx, cy, 0)).toBe(1) // le contrôle : à plat, tout se voit
+        plateau++
+      }
+    expect(plateau).toBe(6 * 13)
+    for (let ty = BORD; ty <= BORD + 5; ty++) for (let tx = 44; tx <= 56; tx++) expect(partVisible(sim, 0, tx + 0.5, ty + 0.5, cx, cy, 0)).toBe(1)
+    // Et les hauteurs mêmes de la règle : le sol d'un palier à H, la flamme à F au-dessus, F < H.
+    expect(H).toBe(8)
+    expect(F).toBeLessThan(H)
+  })
+
+  it('P2 — d’en haut, la lumière descend au-delà de s = (H ÷ F) × d : la traversée rend, texel pour texel, la loi écrite à part — et le plateau garde sa lumière', () => {
+    const sim = makeSim()
+    terrasse(sim)
+    let dansLOmbre = 0
+    let auClair = 0
+    let penombre = 0
+    for (let recul = 0; recul <= 3; recul++) {
+      const cx = 50.5
+      const cy = BORD - 0.5 - recul // le feu au palier 1, `recul` rangées derrière la dernière rangée haute
+      for (let ty = BORD - 6; ty <= BORD + 15; ty++)
+        for (let tx = 44; tx <= 56; tx++) {
+          const rx = tx + 0.5
+          const ry = ty + 0.5
+          const pr = ty < BORD ? 1 : 0
+          const part = partVisible(sim, pr, rx, ry, cx, cy, 1)
+          expect(part, `recul ${recul}, récepteur (${tx}, ${ty})`).toBe(partParLaLoi(rx, ry, pr, cx, cy, 1))
+          if (ty < BORD) expect(part).toBe(1) // le plateau : la même lumière que sans marche
+          else if (part === 0) dansLOmbre++
+          else if (part === 1) auClair++
+          else penombre++
+        }
+    }
+    // La prémisse : les trois régimes existent dans le balayage.
+    expect(dansLOmbre).toBeGreaterThan(0)
+    expect(penombre).toBeGreaterThan(0)
+    expect(auClair).toBeGreaterThan(0)
+    // Planche 16 (LG-A15) : le feu reculé de deux tuiles, la plaine à 1–2 tuiles derrière la marche ne reçoit rien ;
+    // et loin derrière (s ≥ 3,33 × d pour tout le disque), tout.
+    const cy2 = BORD - 1.5
+    expect(partVisible(sim, 0, 50.5, BORD + 0.5, 50.5, cy2, 1)).toBe(0)
+    expect(partVisible(sim, 0, 50.5, BORD + 1.5, 50.5, cy2, 1)).toBe(0)
+    expect(partVisible(sim, 0, 50.5, BORD + 7.5, 50.5, cy2, 1)).toBe(1)
+    // Le seuil du rayon central, à d = 6 texels : l'ombre s'arrête à s = 20 — la rangée BORD + 4 (s = 18) en
+    // garde une part, la rangée BORD + 5 (s = 22) voit le centre du disque.
+    expect(partVisible(sim, 0, 50.5, BORD + 4.5, 50.5, cy2, 1)).toBeGreaterThan(0)
+    expect(partVisible(sim, 0, 50.5, BORD + 4.5, 50.5, cy2, 1)).toBeLessThan(1)
+  })
+
+  it('P3 — un texel du haut n’est jamais bloqué par sa propre marche : la dernière rangée haute, jusqu’à son dernier texel, voit le feu du plateau en entier', () => {
+    const sim = makeSim()
+    terrasse(sim)
+    const cx = 50.5
+    const cy = BORD - 3.5
+    for (let tx = 44; tx <= 56; tx++)
+      for (let sy = 0; sy < T; sy++)
+        for (let sx = 0; sx < T; sx++) expect(partVisible(sim, 1, tx + (sx + 0.5) / T, BORD - 1 + (sy + 0.5) / T, cx, cy, 1), `texel (${tx}, ${sx}, ${sy})`).toBe(1)
+    // Et le premier texel bas, contre la même arête, n'en voit rien : c'est bien la marche, pas la distance.
+    expect(partVisible(sim, 0, 50.5, BORD + 0.5 / T, cx, cy, 1)).toBe(0)
+  })
+
+  it('P4 — la rampe est une porte ouverte : par elle, la lumière du plateau descend sur la plaine devant elle, et pas à côté', () => {
+    const rampe = { x: 50, y: BORD }
+    const sans = makeSim()
+    terrasse(sans)
+    const avec = makeSim()
+    terrasse(avec, rampe)
+    const cx = 50.5
+    const cy = BORD - 1.5 // reculé de deux tuiles : la plaine dans l'ombre pleine jusqu'à la rangée BORD + 3 (P2)
+    for (let ty = BORD + 1; ty <= BORD + 4; ty++) {
+      expect(partVisible(avec, 0, 50.5, ty + 0.5, cx, cy, 1), `par la rampe, rangée ${ty}`).toBe(1)
+      if (ty > BORD + 3) continue
+      expect(partVisible(sans, 0, 50.5, ty + 0.5, cx, cy, 1), `sans rampe, rangée ${ty}`).toBe(0)
+      expect(partVisible(avec, 0, 53.5, ty + 0.5, cx, cy, 1), `à côté de la rampe, rangée ${ty}`).toBe(0)
+    }
+    // Sur la rampe même, à l'étage 1 comme au 0, on se tient au sol (E-R7 : la tuile appartient aux deux).
+    expect(seTientAuSol(avec.map, 1, 50.5, BORD + 0.5)).toBe(true)
+    expect(seTientAuSol(avec.map, 0, 50.5, BORD + 0.5)).toBe(true)
+    expect(seTientAuSol(avec.map, 1, 50.5, BORD + 1.5)).toBe(false)
+    expect(estUnePorte(avec.map, 50, BORD)).toBe(true)
+    expect(estUnePorte(avec.map, 51, BORD)).toBe(false)
+  })
+
+  it('P5 — le raster dit les paliers : au sol, une terrasse n’est plus du terrain plein et chaque texel porte son palier et sa porte ; dans un creux, rien n’a changé', () => {
+    const sim = makeSim()
+    terrasse(sim, { x: 50, y: BORD })
+    const X0 = 44
+    const Y0 = BORD - 4
+    const X1 = 56
+    const Y1 = BORD + 3
+    const sol = occlusionAuGrain(sim, 0, X0, Y0, X1, Y1)
+    expect(sol.sortes.every((s) => s === OCCLUDEUR.LIBRE)).toBe(true)
+    const k = (tx: number, ty: number, sx: number, sy: number) => ((ty - Y0) * T + sy) * sol.gw + (tx - X0) * T + sx
+    for (let ty = Y0; ty <= Y1; ty++)
+      for (let tx = X0; tx <= X1; tx++)
+        for (let sy = 0; sy < T; sy++)
+          for (let sx = 0; sx < T; sx++) {
+            expect(sol.paliers[k(tx, ty, sx, sy)], `palier (${tx}, ${ty})`).toBe(ty < BORD ? 1 : 0)
+            expect(sol.portes[k(tx, ty, sx, sy)], `porte (${tx}, ${ty})`).toBe(tx === 50 && ty === BORD ? 1 : 0)
+          }
+    // Le même raster, texel par texel, que la règle au texel (O4) — au sol comme dans un creux.
+    for (let j = 0; j < sol.gh; j++) for (let i = 0; i < sol.gw; i++) expect(sol.sortes[j * sol.gw + i]).toBe(sorteAuTexel(sim, 0, sol.ox + i, sol.oy + j))
+    const creux = occlusionAuGrain(sim, 0, X0, Y0, X1, Y1, false)
+    expect(creux.paliers.every((p) => p === 0)).toBe(true)
+    expect(creux.portes.every((p) => p === 0)).toBe(true)
+    for (let j = 0; j < creux.gh; j++)
+      for (let i = 0; i < creux.gw; i++) {
+        const ty = Math.floor((creux.oy + j) / T)
+        // Vu du creux à niveau 0, le sol du palier 1 est plein (le vide de `terrainAEtage`), le palier 0 libre.
+        expect(creux.sortes[j * creux.gw + i], `creux, texel (${i}, ${j})`).toBe(ty < BORD ? OCCLUDEUR.TERRAIN : OCCLUDEUR.LIBRE)
+        expect(creux.sortes[j * creux.gw + i]).toBe(sorteAuTexel(sim, 0, creux.ox + i, creux.oy + j, false))
+      }
+  })
+
+  it('P6 — joué : un feu au pied de la paroi laisse le plateau dans le noir, un feu du plateau laisse la plaine dans son ombre, et passe par la rampe', () => {
+    const sim = nuitNoire()
+    terrasse(sim, { x: 50, y: BORD })
+    // Le feu au pied : le corps du plateau ne pare plus, celui de la plaine, oui.
+    const bas = feu(sim, 47, BORD)
+    const surLePlateau = avatar(sim, 47.5, BORD - 1.5)
+    const surLaPlaine = avatar(sim, 47.5, BORD + 2.5)
+    expect(clarteSurSoi(sim, surLePlateau)).toBeLessThan(0.15)
+    expect(clarteSurSoi(sim, surLaPlaine)).toBeGreaterThanOrEqual(NUIT.SEUIL_NOIR)
+    expect(lumiereDuFeu(sim, surLePlateau.x, surLePlateau.y)).toBe(0)
+    expect(lumiereDuFeu(sim, surLaPlaine.x, surLaPlaine.y)).toBe(bulleDuFeu(sim, bas, surLaPlaine.x, surLaPlaine.y))
+    // Le feu du plateau, reculé de deux tuiles : la plaine derrière la marche est dans son ombre ; devant la rampe, non.
+    sim.structures.length = 0
+    const haut = feu(sim, 50, BORD - 2)
+    expect(lumiereDuFeu(sim, 53.5, BORD + 1.5)).toBe(0)
+    expect(lumiereDuFeu(sim, 50.5, BORD + 1.5)).toBe(bulleDuFeu(sim, haut, 50.5, BORD + 1.5))
+    expect(bulleDuFeu(sim, haut, 50.5, BORD + 1.5)).toBeGreaterThan(0)
+  })
+
+  it('P7 — la torche d’un autre descend de la terrasse, à la part que la marche lui laisse ; d’en bas, elle ne monte pas', () => {
+    const sim = nuitNoire()
+    terrasse(sim)
+    const moi = avatar(sim, 50.5, BORD + 2.5)
+    const autre = avatar(sim, 50.5, BORD - 0.5) // sur la dernière rangée haute : d = 2 texels devant l'arête
+    torcheEnMain(autre)
+    // La loi, à part : s = 10 texels ; un échantillon à d > s × F / H = 3 est caché — deux des seize (les y de
+    // −0,73 et −0,98 du motif, × 1,5) — et la bulle vaut 1 − 3/10.
+    expect(clarteSurSoi(sim, moi)).toBeCloseTo((1 - 3 / LUMIERE.TORCHE_PORTEE_TUILES) * (14 / 16), 6)
+    expect(clarteSurSoi(sim, moi)).toBeGreaterThanOrEqual(NUIT.SEUIL_NOIR)
+    // Les deux échangent leurs places : d'en bas, rien ne monte.
+    autre.y = BORD + 0.5
+    moi.y = BORD - 2.5
+    expect(clarteSurSoi(sim, moi)).toBeLessThan(0.15)
+    expect(lumiereDesTorches(sim, moi.x, moi.y)).toBe(0)
+    // Le même couple à plat : la torche porte, dans les deux sens.
+    const plat = nuitNoire()
+    const moiPlat = avatar(plat, 50.5, BORD - 2.5)
+    const autrePlat = avatar(plat, 50.5, BORD + 0.5)
+    torcheEnMain(autrePlat)
+    expect(clarteSurSoi(plat, moiPlat)).toBeCloseTo(1 - 3 / LUMIERE.TORCHE_PORTEE_TUILES, 6)
   })
 })
