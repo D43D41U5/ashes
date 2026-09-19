@@ -569,9 +569,9 @@ export function dessinDuFlanc(cote: number): RectArtA[] {
 export const JOUR_RANGEES = 3
 /**
  * LA NAPPE DE JOUR au sol, blanche et translucide, à TEINTER de la couleur de l'heure. Elle part
- * du seuil (en BAS de l'image : la gueule est au sud de la salle) et s'éteint vers le nord par
- * crans de quatre pixels — la lumière est quantifiée au grain de l'art, jamais lissée. Elle
- * s'élargit en avançant, comme une lumière qui passe une porte.
+ * du pied de la façade (en BAS de l'image : la gueule est au sud de la salle, et son seuil est
+ * dehors) et s'éteint vers le nord par crans de quatre pixels — la lumière est quantifiée au grain
+ * de l'art, jamais lissée. Elle s'élargit en avançant, comme une lumière qui passe une porte.
  */
 export function dessinDuJour(): RectArtA[] {
   const r: RectArtA[] = []
@@ -579,10 +579,10 @@ export function dessinDuJour(): RectArtA[] {
   const crans = H / 4
   const milieu = GUEULE_LARGEUR / 2
   for (let k = 0; k < crans; k++) {
-    // k = 0 en haut (le fond), crans − 1 en bas (le seuil).
+    // k = 0 en haut (le fond), crans − 1 en bas (le pied de la façade).
     const t = (k + 1) / crans
     const a = 0.04 + t * t * 0.52
-    const demi = Math.round(milieu - t * 6) // de 10 px de chaque côté au seuil à 16 (toute la gueule) au fond
+    const demi = Math.round(milieu - t * 6) // de 10 px de chaque côté au pied à 16 (toute la gueule) au fond
     r.push({ x: milieu - demi, y: k * 4, w: demi * 2, h: 4, c: 0xffffff, a })
   }
   return r
@@ -594,13 +594,15 @@ export const ARCHE_RANGEES = PROFIL.length / P
 const ARCHE_ALPHA_HAUT = 0.2
 const ARCHE_ALPHA_BAS = 0.65
 /**
- * L'ARCHE DE JOUR — la gueule vue de DEDANS (Alexis, 2026-09-14, sur planches : « V4 »). La fente
+ * L'ARCHE DE JOUR — la gueule vue de DEDANS (Alexis, 2026-09-14, sur planches : « V7 »). La fente
  * de dehors à sa forme (`PROFIL`, ligne pour ligne), mais en LUMIÈRE : blanche et translucide, à
  * TEINTER de l'heure et à poser en SCREEN, comme la nappe. Elle s'éclaire en descendant, par crans
  * de quatre lignes — la lumière est quantifiée au grain de l'art.
  *
  * Elle remplace « le dehors », un rectangle de jour entre deux jambages tamponné une rangée SOUS le
  * seuil : vue de dedans, la sortie se lisait carrée, deux à trois rangées sous l'arche de dehors.
+ * Elle se pose dans le trou de la façade percée (`dessinDeLaFacadePercee`), sur les rangées mêmes
+ * de la fente de dehors.
  */
 export function dessinDeLArcheDeJour(): RectArtA[] {
   const r: RectArtA[] = []
@@ -612,6 +614,47 @@ export function dessinDeLArcheDeJour(): RectArtA[] {
     const t = Math.floor((abs - premiere) / 4) / bandes
     r.push({ x: p[0], y: abs, w: p[1] - p[0] + 1, h: 1, c: 0xffffff, a: ARCHE_ALPHA_HAUT + t * (ARCHE_ALPHA_BAS - ARCHE_ALPHA_HAUT) })
   }
+  return r
+}
+
+/** Les variantes de paroi des deux colonnes de la façade percée (ouest, est). */
+const FACADE_VARIANTES = [2, 5] as const
+/**
+ * LA FAÇADE PERCÉE — la face sud de la masse au-dessus de la gueule, vue de DEDANS (Alexis,
+ * 2026-09-14, sur planches : « V7 » — spec `grottes.md` §4sexies).
+ * La paroi de cave de ses deux rangées (arête, puis pied) sur ses deux colonnes, dont on retire la
+ * fente de dehors (`PROFIL`, ligne pour ligne) ; elle en garde les lèvres, le linteau et la tache
+ * d'humidité. Le trou reste TRANSPARENT : dessous, l'arche de jour. Posée à la place exacte de la
+ * gueule de dehors, elle en a la forme au pixel.
+ */
+export function dessinDeLaFacadePercee(): RectArtA[] {
+  const r: RectArtA[] = []
+  for (let col = 0; col < 2; col++) {
+    for (let rang = 0; rang < ARCHE_RANGEES; rang++) {
+      for (const q of dessinDeParoiDeCave(rang === 0 ? 1 : 8, FACADE_VARIANTES[col]!)) {
+        const x0 = col * P + q.x
+        const x1 = x0 + q.w - 1
+        for (let y = q.y; y < q.y + q.h; y++) {
+          const abs = rang * P + y
+          const p = PROFIL[abs]
+          if (!p) { r.push({ ...q, x: x0, y: abs, h: 1 }); continue }
+          if (x0 < p[0]) r.push({ ...q, x: x0, y: abs, w: Math.min(x1, p[0] - 1) - x0 + 1, h: 1 })
+          if (x1 > p[1]) { const a = Math.max(x0, p[1] + 1); r.push({ ...q, x: a, y: abs, w: x1 - a + 1, h: 1 }) }
+        }
+      }
+    }
+  }
+  for (let abs = 0; abs < PROFIL.length; abs++) {
+    const p = PROFIL[abs]
+    if (!p) {
+      if (abs < 4) r.push({ x: 10 + (abs & 1), y: abs, w: 12 - (abs & 1) * 2, h: 1, c: TACHE, a: 0.18 + abs * 0.05 })
+      continue
+    }
+    r.push({ x: p[0] - 1, y: abs, w: 1, h: 1, c: LEVRE_OUEST })
+    r.push({ x: p[1] + 1, y: abs, w: 1, h: 1, c: LEVRE_EST })
+  }
+  const p4 = PROFIL[4]!
+  r.push({ x: p4[0], y: 4, w: p4[1] - p4[0] + 1, h: 1, c: 0x020304 })
   return r
 }
 
@@ -636,6 +679,7 @@ export function caveKey(family: string, a: number | string = 0, b: number | stri
 export const ROCHE_CAVE_KEY = 'cv-roche'
 export const JOUR_KEY = 'cv-jour'
 export const ARCHE_JOUR_KEY = 'cv-arche-jour'
+export const FACADE_PERCEE_KEY = caveKey('facade-percee')
 export const GUEULE_KEY = caveKey('gueule')
 export const BRAISE_GUEULE_KEY = caveKey('braise-gueule')
 
@@ -678,6 +722,7 @@ export function makeCaveTextures(scene: Phaser.Scene): void {
   for (const cote of [2, 4]) rejouer(dessinDuFlanc(cote), caveKey('flanc', cote))
   rejouer(dessinDuJour(), JOUR_KEY, GUEULE_LARGEUR, JOUR_RANGEES * P)
   rejouer(dessinDeLArcheDeJour(), ARCHE_JOUR_KEY, GUEULE_LARGEUR, ARCHE_RANGEES * P)
+  rejouer(dessinDeLaFacadePercee(), FACADE_PERCEE_KEY, GUEULE_LARGEUR, ARCHE_RANGEES * P)
   rejouer(dessinDeLaRocheDeCave(), ROCHE_CAVE_KEY, ROCHE_PX, ROCHE_PX)
   for (let v = 0; v < VARIANTES_LUEUR; v++) rejouer(dessinDeLueur(v), caveKey('lueur', v))
   g.destroy()

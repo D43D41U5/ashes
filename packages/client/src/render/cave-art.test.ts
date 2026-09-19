@@ -12,8 +12,9 @@ import { describe, expect, it } from 'vitest'
 import { TERRAIN_BOULDERS, TERRAIN_SCREE } from '@ashes/sim'
 import { dessinDeParoi, PAROI_RANGEES } from './cliff-art'
 import {
-  ARCHE_RANGEES, dessinDeLArcheDeJour, dessinDeLaGueule, dessinDeLaGueuleEntiere, dessinDeLaRocheDeCave, dessinDeLevre, dessinDeParoiDeCave, dessinDuJour,
-  dessinDuSolDeCave, GUEULE_LARGEUR, GUEULE_RANGEES, JOUR_RANGEES, lum, PERIODE_CAVE, ROCHE_PX, type RectArtA,
+  ARCHE_RANGEES, dessinDeLArcheDeJour, dessinDeLaFacadePercee, dessinDeLaGueule, dessinDeLaGueuleEntiere, dessinDeLaRocheDeCave,
+  dessinDeLevre, dessinDeParoiDeCave, dessinDuJour, dessinDuSolDeCave, GUEULE_LARGEUR, GUEULE_RANGEES, JOUR_RANGEES, lum,
+  PERIODE_CAVE, ROCHE_PX, type RectArtA,
 } from './cave-art'
 
 /** Le pixel (x, y) — le dernier rectangle qui le couvre, composé avec son alpha sur `fond`. */
@@ -186,5 +187,47 @@ describe('cave-art — l\'arche de jour, la gueule vue de dedans', () => {
     expect(alpha(mx, ARCHE_RANGEES * 16 - 1)).toBeGreaterThan(alpha(mx, 4) * 3)
     // Translucide partout : posée sur le sol, pas une porte peinte par-dessus.
     expect(Math.max(...arche.map((q) => q.a ?? 1))).toBeLessThan(1)
+  })
+})
+
+describe('cave-art — la façade percée, la gueule vue de dedans', () => {
+  const facade = dessinDeLaFacadePercee()
+  const arche = dessinDeLArcheDeJour()
+  const couvre = (rects: readonly RectArtA[], x: number, y: number): boolean =>
+    rects.some((q) => x >= q.x && x < q.x + q.w && y >= q.y && y < q.y + q.h)
+
+  it('a la taille de la fente de dehors : les deux colonnes de la paire, les deux rangées de paroi', () => {
+    expect(Math.min(...facade.map((q) => q.x))).toBe(0)
+    expect(Math.max(...facade.map((q) => q.x + q.w))).toBe(GUEULE_LARGEUR)
+    expect(Math.max(...facade.map((q) => q.y + q.h))).toBe(ARCHE_RANGEES * 16)
+  })
+
+  it('est trouée à la place exacte de la fente de dehors : le trou est l\'arche de jour, au pixel', () => {
+    // La ligne 4 est le linteau : l'ombre du surplomb bouche la fissure, dedans comme dehors.
+    for (let y = 0; y < ARCHE_RANGEES * 16; y++) {
+      if (y === 4) continue
+      for (let x = 0; x < GUEULE_LARGEUR; x++) {
+        if (couvre(arche, x, y)) expect(couvre(facade, x, y)).toBe(false)
+      }
+    }
+    // …et la roche autour est pleine : une façade, pas un pochoir.
+    for (let y = 2; y < ARCHE_RANGEES * 16; y++) {
+      for (const x of [0, 1, 2, GUEULE_LARGEUR - 2, GUEULE_LARGEUR - 1]) expect(couvre(facade, x, y)).toBe(true)
+    }
+  })
+
+  it('garde les lèvres de dehors, aux mêmes pixels : claire à l\'ouest, sombre à l\'est', () => {
+    const gueule = dessinDeLaGueuleEntiere()
+    let lignes = 0
+    for (let y = 5; y < ARCHE_RANGEES * 16; y++) {
+      const xs = [...Array(GUEULE_LARGEUR).keys()].filter((x) => couvre(arche, x, y))
+      if (xs.length === 0) continue
+      const g = Math.min(...xs)
+      const d = Math.max(...xs)
+      expect(pixel(facade, g - 1, y)).toBe(pixel(gueule, g - 1, y))
+      expect(pixel(facade, d + 1, y)).toBe(pixel(gueule, d + 1, y))
+      lignes++
+    }
+    expect(lignes).toBe(ARCHE_RANGEES * 16 - 5)
   })
 })

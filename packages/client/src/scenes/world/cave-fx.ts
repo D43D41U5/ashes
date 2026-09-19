@@ -152,9 +152,10 @@ export class CaveFx {
         p.vie = 3 + Math.random() * 3
         p.phase = Math.random() * 6.28
         p.ty = g.ty
-        // La nappe de jour part du seuil et remonte vers le nord : la poussière naît dedans.
+        // La nappe de jour part du pied de la façade et remonte vers le nord : la poussière naît
+        // dans l'arche et au-dessus — pas sur le seuil, qui est dehors (`grottes.md` §4sexies).
         p.x = (g.tx + Math.random()) * TILE_PX
-        p.y = (g.ty - g.lift + 0.9 - Math.random() * 2.2) * TILE_PX
+        p.y = (g.ty - g.lift - 0.1 - Math.random() * 2.2) * TILE_PX
         p.vx = (Math.random() - 0.5) * 5
         p.vy = -2 - Math.random() * 3
       }

@@ -235,8 +235,10 @@ function ensureBraise(scene: Phaser.Scene): number {
   return side
 }
 
-/** La nappe de jour au sol : un disque BLANC à chute quadratique, au même grain — la couleur
- *  vient de la teinte (l'heure), jamais de la texture. Un carré arrondi, comme le trou qu'elle double. */
+/** La nappe de jour au sol : la moitié NORD d'un carré arrondi BLANC à chute quadratique, au même
+ *  grain — la couleur vient de la teinte (l'heure), jamais de la texture. Posée au pied de la
+ *  façade, elle n'éclaire que la salle : au sud, c'est le dehors, et il a sa lumière (`grottes.md`
+ *  §4sexies — le disque entier allumait l'herbe du seuil et de ses voisines, +40 MESURÉ à midi). */
 function ensureJourSol(scene: Phaser.Scene): number {
   const cells = Math.round((JOUR_TUILES * TILE_PX) / GRAIN_PX)
   const side = cells * 2 + 1
@@ -255,7 +257,7 @@ function ensureJourSol(scene: Phaser.Scene): number {
           img.data[k] = 255
           img.data[k + 1] = 255
           img.data[k + 2] = 255
-          img.data[k + 3] = Math.round((1 - t) * (1 - t) * 255)
+          img.data[k + 3] = dy >= 0 ? 0 : Math.round((1 - t) * (1 - t) * 255)
         }
       }
       ctx.putImageData(img, 0, 0)
@@ -369,8 +371,8 @@ export class CaveVeil {
   }
 
   /**
-   * Redessine le voile pour cette image. `gueules` : les centres des gueules en px monde (le jour
-   * entre par chacune) ; `lum` : ce que la scène sait de la lumière.
+   * Redessine le voile pour cette image. `gueules` : le pied de la façade de chaque gueule, au
+   * milieu de la paire, en px monde (le jour entre par là) ; `lum` : ce que la scène sait de la lumière.
    */
   update(
     lum: LumiereDeCave, gueules: readonly { x: number; y: number }[],

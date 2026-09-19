@@ -327,7 +327,7 @@ const FEU_LIFT = TILE_PX * 0.3
  * propre souffle (`SOI_PIC`) ; mais une ambiante presque pleine (0xc4ccdc, essayée d'abord)
  * DÉLAVAIT la torche : un corps à [210, 205, 112] — jaune, pas ambre — sous une flamme, mesuré
  * le 2026-09-02 contre [182, 140, 79] à 0x808898. Et le jour entre par la GUEULE : une source par
- * gueule visible, posée sur elle, basse (elle RASE : le côté du corps qui regarde la sortie
+ * gueule visible, au pied de sa façade, basse (elle RASE : le côté du corps qui regarde la sortie
  * s'allume, l'autre reste dans la salle), de la couleur de l'heure, à la force de `clarteDuCiel`.
  * Les feux ne changent pas ; les torches brûlent à leur force de NUIT (voir la boucle des
  * torches) : sous terre, il n'y a pas de midi pour les éteindre.
@@ -351,7 +351,7 @@ export function couleurDuCiel(day: number): number {
 const AMBIENT_CAVE = 0x808898 // froide, à mi-hauteur : le voile fait la nuit, la torche fait l'ambre
 const GUEULE_MAX = 4 // gueules éclairées par image (budget du manager : 40, voir TORCHE_MAX)
 const GUEULE_INTENSITE = 0.9
-/** La source du jour à la gueule est BASSE : elle rase la salle depuis le seuil. */
+/** La source du jour à la gueule est BASSE : elle rase la salle depuis le pied de la façade. */
 const GUEULE_Z = TILE_PX * 0.8
 /** Portée : la pénétration du jour (`JOUR_TUILES` du voile) et une tuile de plus — l'atténuation
  *  de Light2D est quadratique, la source doit porter au-delà de là où le voile s'éteint. */

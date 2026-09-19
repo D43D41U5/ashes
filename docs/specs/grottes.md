@@ -164,7 +164,7 @@ est `min(de, vers)`), une gueule s'ouvre **sur** son palier et descend (`vers` e
 négatif de la salle) — donc `de === bas`. Gardes dans `deplier-etage.test.ts`, avec leurs deux
 témoins de rougissement : branche retirée, et branche écrite avec le `min` de la rampe.
 
-## 4sexies. La sortie vue de dedans : l'arche dans l'ouverture (2026-09-14)
+## 4sexies. La sortie vue de dedans : la façade percée (2026-09-14)
 
 *« Entre l'extérieur et l'intérieur, la forme et la place de la sortie est décalée d'une ou 2
 tuiles vers le bas »* (Alexis — l'extérieur, lui, était bon).
@@ -173,24 +173,43 @@ tuiles vers le bas »* (Alexis — l'extérieur, lui, était bon).
 vit sur les `LIFT_TUILES` rangées au-dessus du seuil (§4quinquies). Dedans, rien ne la reprenait :
 « le dehors » (`cv-dehors`, un rectangle de jour entre deux jambages) se tamponnait une rangée
 SOUS le seuil, sur une rangée de roche marquée pour lui. La sortie se lisait carrée, deux à trois
-rangées sous l'arche ; seule la nappe était à sa place.
+rangées sous l'arche ; seule la nappe était à sa place. Et le mur sud de la salle n'avait pas de
+FACE dedans : une arche posée à la place de dehors y flottait (« V2 ») ; posée une rangée plus bas,
+elle restait décalée (« V4 », livrée puis rejetée : « il y a toujours un décalage »).
 
-**Ce qui est décidé** (Alexis, sur planches de cinq variantes : « V4 », et le sol de cave à
-l'entrée) :
-- **L'arche de jour** (`dessinDeLArcheDeJour`, 32×32) : la fente de dehors à sa forme (`PROFIL`),
-  en lumière — blanche translucide, de 0,2 sous le linteau à 0,65 au ras du sol par crans de
-  quatre lignes, teintée de l'heure, en SCREEN et à l'alpha du ciel comme la nappe : de nuit, elle
-  s'éteint. Posée sur la rangée au-dessus du seuil ET le seuil — **une rangée plus bas que l'arche
-  de dehors, et c'est voulu** : dedans, le bord sud d'une salle est la rangée au sud de chaque
-  salle (sa roche, §4ter), une rangée sous le pied de la paroi de dehors. À la place exacte de
-  dehors (essayée : « V2 »), l'arche flottait une tuile au-dessus de l'ouverture.
-- **Le sol de l'entrée reste de la cave** : la gueule est une salle de son étage (`terrainAEtage`)
-  autant que le seuil du palier — rien à changer dans /sim. Et elle reste SOUS LE VOILE : un corps
-  du souterrain se dessine au-dessus du voile de nuit (`framing.ts`), c'est le voile de cave qui
-  l'éteint — la gueule hors du masque (essayée : « V1 »), le corps posé sur le seuil s'allumait en
-  blanc à 20 h.
-- **La gueule ne marque plus la rangée au sud** : sous l'arche, on voit le vrai dehors (la passe de
-  surface), plus un dehors tamponné sur de la roche. `cv-dehors` n'existe plus.
+**Ce qui est décidé** (Alexis, sur planches : « V7 » ; puis, contre « un palier qui dépasse vers
+le bas », le seuil rendu au dehors — avant/après validé) : **dedans, la sortie est celle de dehors,
+au pixel.**
+- **La façade percée** (`dessinDeLaFacadePercee`, 32×32) : la face sud de la masse, dessinée dedans
+  sur les MÊMES rangées que dehors — les deux rangées de paroi au-dessus du seuil —, en paroi de
+  cave, trouée de la fente de dehors (`PROFIL`, ligne pour ligne) dont elle garde les lèvres. Le
+  long de la salle, partout où le sud d'une tuile de salle sous la masse est dehors, la même face,
+  pleine. Elle trie sur la rangée AU SUD de sa tuile (`TIE_FACADE`) : elle couvre qui se tient
+  derrière elle, et CÈDE sur le corps du joueur (`FACADE_CEDE_ALPHA` 0,3 sur lui, pleine à
+  `FACADE_CEDE_TUILES` 1,5 de son bord).
+- **L'arche de jour** (`dessinDeLArcheDeJour`, 32×32) dans le trou : la fente de dehors en lumière —
+  blanche translucide, de 0,2 sous le linteau à 0,65 au ras du sol par crans de quatre lignes,
+  teintée de l'heure, en SCREEN et à l'alpha du ciel : de nuit, elle s'éteint. Gueule de dehors,
+  façade et arche se posent sur UNE rangée, `hautDeLaFente` (`etage-layer.ts`) : deux écritures, et
+  la sortie se décale — c'est le défaut d'origine.
+- **Le seuil est DEHORS, dans les deux sens.** La tuile de la gueule n'est ni marquée ni peinte
+  dedans : on y voit la passe de surface — l'herbe, la tache du seuil, la trace —, comme de dehors.
+  Peinte en sol de cave (« V4 », puis « V7 »), elle dépassait sous la façade comme un palier clair.
+  Le sol de cave de l'entrée, c'est celui de la rangée derrière, vu par l'arche. Un corps posé sur
+  la gueule se dessine au palier, qu'il entre ou qu'il sorte (`niveau-du-corps.ts`) : sous le voile
+  de nuit, comme tout corps du dehors — la strate du souterrain passe AU-DESSUS du voile de nuit, et
+  un corps de cette strate sur une tuile hors du masque s'allumait en blanc (« V1 »). Le regard
+  bascule donc sous l'arche, et là seulement : debout sur le seuil, c'est la vue de dehors.
+- **Le jour entre au pied de la façade** : la nappe (`dessinDuJour`) sur les trois rangées
+  au-dessus du seuil ; le trou du voile, la lueur au sol et la source Light2D centrés au pied de la
+  façade — et la lueur n'éclaire que le NORD de ce pied : au sud, c'est le dehors, il a sa lumière.
+  La poussière du jour naît dans l'arche, plus sur le seuil. `cv-dehors` n'existe plus.
+
+MESURÉ (luminance moyenne par tuile, dedans − dehors, rangée du seuil, colonnes de la gueule) : à
+midi, de +120 (« V7 ») à +2 (Grotte XXII) et de +95 à −1 (Grotte I) — relever la nappe seule n'en
+ôtait qu'un tiers, le sol de cave faisait le reste ; ses voisines, qu'allumait la lueur au sol, de
++40 à ±4. À 23 h, de +45 à +6…+11 (dans la fourchette de ses voisines) et de +41 à +3. Le corps
+posé sur le seuil, la nuit : +12, contre +72.
 
 **Et un second défaut, trouvé en chemin** : la cave ne peint plus que **l'étage du regard**
 (`EtageLayer.niveauDuRegard`, posé par `WorldScene` avec `souterrain`). Elle peignait toutes les
@@ -213,10 +232,14 @@ salles du cadre et comptait la masse depuis le plus bas de leurs paliers ; MESUR
 - **G-A11 — La Grotte de surface** : `placePois` ne tire plus `grotte` ; `grotte.plan` n'est plus un lieu bâti ; C4 de `lieux-batis.md` se réécrit ici.
 - **G-A12 — Le tick** : `profil-tick` avant/après sur le même monde, par corps — `isSheltered`, `populateDen`/`advanceDens` et le pas ne coûtent pas plus qu'avec les caves de mesa.
 - **G-A13 — Le rendu** : `smoke --scenario grotte` — quatre cadrages : le palier devant la gueule (la fente ET la trace), le vestibule de jour, le fond (noir, la forme seule), la torche sur l'eau ; un feu posé au vestibule se voit par la gueule depuis le palier et pas ailleurs. Captures à l'appui, mesurées (contraste de la fente contre la paroi ; la trace lisible à 30 tuiles).
-- **G-A14 — La sortie vue de dedans** (§4sexies) : depuis le vestibule, l'arche de jour occupe la rangée au-dessus du seuil et le seuil, dans l'ouverture de la roche ; la rangée au sud de la gueule montre la passe de surface ; le sol de la gueule est de la cave, et un corps qui s'y tient la nuit n'est pas plus clair que sur le vestibule ; depuis une grotte dont le cadre contient une salle d'un autre étage, le dehors devant la gueule n'est pas couvert de roche. Planches à midi et de nuit, paliers 0 et 1.
+- **G-A14 — La sortie vue de dedans** (§4sexies) : depuis le vestibule, la façade percée et l'arche de jour occupent les rangées de la fente de dehors, au pixel (`hautDeLaFente`, la rangée de `poserLaGueule`) ; la rangée de la gueule montre la passe de surface comme de dehors — son écart de luminance au dehors (par tuile, hors corps) ne dépasse pas celui de ses voisines de rangée ; un corps posé sur la gueule se dessine au palier en entrant comme en sortant (`niveau-du-corps.test.ts`), donc sous le voile de nuit ; depuis une grotte dont le cadre contient une salle d'un autre étage, le dehors devant la gueule n'est pas couvert de roche. Planches à midi et de nuit, paliers 0 et 1.
 
 ## 6. Ouvert, nommé
 
+- **Un autre corps sur la gueule, vu de dedans** (SUSPECTÉ — lu dans le code, pas capturé) :
+  dessiné au palier, dans la strate du dehors, le haut de son corps passe derrière la façade
+  (strate du souterrain) le temps de son pas sur le seuil. Avant (« V7 »), un corps qui ENTRAIT
+  disparaissait entièrement sur cette tuile, sous le sol de cave.
 - Le **gouffre** comme germe (G-R4) : fréquence à mesurer avant d'en faire une règle.
 - La **saison** de la nappe (niveau qui monte au printemps, fond coupé) : hors chantier.
 - Le **puits** (`'escalier'` vers `−H−1`) : hors chantier, la verticalité d'un autre jour.

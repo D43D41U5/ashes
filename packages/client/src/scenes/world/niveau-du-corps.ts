@@ -29,7 +29,7 @@
  * Depuis les terrasses, « celui qui porte » se lit du relief : le chapeau s'il y en a un, sinon
  * le palier du sol — la hauteur à laquelle la tuile se dessine, et rien d'autre.
  */
-import { marchableAEtage, rampeQuiMonte, type WorldMap } from '@ashes/sim'
+import { connecteurAt, marchableAEtage, rampeQuiMonte, type WorldMap } from '@ashes/sim'
 import { niveauSurLaRampe, palierDUneSalle } from '../../render/framing'
 import type { Relief } from '../../render/relief'
 
@@ -41,6 +41,17 @@ export function niveauDuCorpsDessine(map: WorldMap, relief: Relief, x: number, y
   // cette géométrie, et le corps glisserait à côté de la pente qu'il gravit.
   const pente = rampeQuiMonte(map, tx, ty)
   if (pente !== undefined) return niveauSurLaRampe(y, pente.bas, pente.haut)
+  // ⚠ **LA GUEULE EST DEHORS, DANS LES DEUX SENS** (Alexis, 2026-09-14 : « on a toujours un
+  // palier qui dépasse vers le bas » — `grottes.md` §4sexies).
+  //
+  // Sa tuile porte la salle ET le palier : `marchableAEtage` dit oui aux deux, et rendait donc
+  // l'étage qu'on apportait. Le corps qui SORTAIT s'y dessinait encore sous la roche : le regard
+  // ne rebasculait dehors qu'une tuile plus au sud, et la cave peignait le seuil en sol de cave,
+  // un palier clair sous la façade — là où, dehors, il y a l'herbe et la tache du seuil. Elle se
+  // dessine donc au palier, qu'on entre ou qu'on sorte : le regard bascule sous l'arche, et là
+  // seulement. Dans la strate du palier, le corps passe sous le voile de nuit comme tout corps du
+  // dehors ; dans celle du souterrain — au-dessus de ce voile —, il s'allumait en blanc la nuit.
+  if (connecteurAt(map, tx, ty)?.type === 'gueule') return relief.hauteur(tx, ty)
   if (marchableAEtage(map, etageAutorite, tx, ty)) return etageAutorite
   // ⚠ **LE SEUIL D'UNE GUEULE : LA TUILE DEVANT SOI EST LA SALLE, PAS LE TOIT DE LA MASSE.**
   //
@@ -55,9 +66,9 @@ export function niveauDuCorpsDessine(map: WorldMap, relief: Relief, x: number, y
   //
   // La salle porte le corps dès qu'elle est SOUS LUI : une salle de niveau `n` s'ouvre sur le
   // palier `−n − 1` (G-R1), et c'est de CE palier-là qu'on franchit son seuil. On exige en plus
-  // que la surface soit PLUS HAUTE que le corps — sans quoi la tuile de la gueule elle-même,
-  // qui est du palier et porte la salle, ferait basculer le regard sous la roche une tuile
-  // avant d'y être.
+  // que la surface soit PLUS HAUTE que le corps — sans quoi une roche de plain-pied avec lui,
+  // sous laquelle court la salle, ferait basculer le regard sous la roche à côté d'elle. (La
+  // tuile de la gueule, qui est du palier et porte la salle, est réglée plus haut.)
   const salle = relief.niveauDeSalle(tx, ty)
   if (salle !== 0 && palierDUneSalle(salle) === etageAutorite && relief.hauteur(tx, ty) > etageAutorite) return salle
   return relief.hauteur(tx, ty)

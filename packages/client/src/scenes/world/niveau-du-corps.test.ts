@@ -12,9 +12,13 @@
  * ⚠ **CE QUI FERAIT ROUGIR, énoncé AVANT d'accepter le vert** : retirer la garde `niveauDeSalle`
  * de `niveau-du-corps.ts` (le repli rend alors `relief.hauteur`, le TOIT de la masse) doit faire
  * rougir « le seuil franchi ». Et remplacer cette garde par un `return salle` inconditionnel doit
- * faire rougir « la mesa sans salle » et « la tuile de la gueule » — sans quoi la garde ne mesure
+ * faire rougir « la mesa sans salle » et « la salle de plain-pied » — sans quoi la garde ne mesure
  * qu'un seul de ses deux bords. (MESURÉ dans le monde joué avant correctif : sur les six grottes
  * les plus proches du spawn, aux trois rangées derrière le seuil, 32 px d'écart — un étage.)
+ * Retirer la règle de la GUEULE doit faire rougir « en sortant » : l'autorité qui dit encore la
+ * salle y dessinait le corps sous la roche, et la cave peignait le seuil (Alexis, 2026-09-14).
+ * « La tuile de la gueule est encore le dehors » ne témoigne plus pour la garde : la règle de la
+ * gueule passe avant elle.
  */
 import { describe, expect, it } from 'vitest'
 import { createEmptyMap, TERRAIN_GRASS, TERRAIN_ROCK, type Connecteur, type EtageCreux, type WorldMap } from '@ashes/sim'
@@ -82,6 +86,17 @@ describe('le niveau où le corps se dessine — le seuil d’une gueule', () => 
       const map = karstDeLabo(p)
       expect(niveauA(map, GX, LIGNE, p), 'la tuile ouest de la paire').toBe(p)
       expect(niveauA(map, GX + 1, LIGNE, p), 'la tuile est de la paire').toBe(p)
+    })
+
+    it(`palier ${p} : en SORTANT, la tuile de la gueule est déjà le dehors`, () => {
+      // L'autorité dit encore la salle — la gueule EN EST une tuile (`marchableAEtage` la porte).
+      // Sans la règle de la gueule, le corps s'y dessinait sous la roche : le regard ne rebasculait
+      // dehors qu'une tuile plus au sud, et le seuil se peignait en sol de cave, une rangée sous la
+      // façade (Alexis, 2026-09-14 : « un palier qui dépasse vers le bas »).
+      const map = karstDeLabo(p)
+      expect(niveauA(map, GX, LIGNE, salle), 'la tuile ouest de la paire').toBe(p)
+      expect(niveauA(map, GX + 1, LIGNE, salle), 'la tuile est de la paire').toBe(p)
+      expect(niveauA(map, GX, LIGNE - 1, salle), 'une rangée derrière : la salle').toBe(salle)
     })
 
     it(`palier ${p} : le seuil franchi, l’autorité en retard — la SALLE, pas le toit`, () => {
