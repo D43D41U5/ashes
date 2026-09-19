@@ -133,6 +133,13 @@ function pixelDeSol(
   ciel: CielDeLHeure,
   texel: Rgb,
 ): PixelDuCorps {
+  if (sol === 'lueur') {
+    // UNE LUEUR (LG-R20) : le texel fois la luminance de la lumière du champ sous le pixel — les poids
+    // sont ceux du shader (`lumPlat`), pas ceux de `luminanceDuVoile`. Jamais plus que le texel.
+    const l = lire(xw, yl).light
+    const k = Math.min(1, 0.299 * l[0] + 0.587 * l[1] + 0.114 * l[2])
+    return { rgb: [texel[0] * k, texel[1] * k, texel[2] * k], fAstre: 1, fFeu: 1, ou: 'sol' }
+  }
   const m = multiplicateurLu(sol === 'tuile' ? lire(xw, yl) : lire(xw, ligneDuPied(c)), ciel)
   if (sol === 'piedSousLeVoile') {
     // Le quad multipliera ce pixel par `M` à sa place dessinée — jamais nul quand on compose (Mn > 0),

@@ -22,6 +22,8 @@ import { TransitionsFlore, retardDe } from '../../render/flore-gel'
 import { enFleur } from '../../render/flore-especes'
 import type { Warp } from '../../render/warp'
 import { createContactShadow, positionShadow } from './contact-shadow'
+import { desarmerLeCorps } from '../../render/gi/noeud-corps'
+import type { CorpsPose } from '../../render/gi/sol-du-corps'
 
 const CLUTTER_MIN_ZOOM = 1.2 // en-deçà, on coupe le décor (props illisibles) : le canopy prend le relais
 /** Props RAMPANTS : des textures de sol, sans hauteur. Ils restent sous la bande
@@ -180,6 +182,14 @@ export class ClutterLayer {
    *  LightsManager (normale plate) — la lumière module son albédo peint sans le déformer.
    *  Piloté par WorldScene (armé sauf coupure via le panneau debug DEV). */
   lighting = false
+  /**
+   * LA PASSE DES CORPS (spec `lumiere-globale.md`, LG-R7, LG-R3) : quand le champ de la GI compose,
+   * `WorldScene` pose ici la main qui ARME un sprite du décor (`SnapshotView.armerUnCorps`) — chaque prop
+   * devient un corps du champ, « l'avatar comme les autres corps », posé à sa tuile LOGIQUE avec le lift
+   * de son dessin. `null` : la pile d'avant, et les sprites armés sont rendus à Phaser.
+   */
+  armerCorps: ((sprite: Phaser.GameObjects.Image, corps: CorpsPose) => void) | null = null
+  private armes = false
 
   /** LE BÂTI GOMME LE DÉCOR (décision d'Alexis) : mur/sol/porte/toit effacent le
    *  décor cosmétique de leur tuile ; feu, composants et coffre le laissent. Appelé
@@ -342,6 +352,11 @@ export class ClutterLayer {
             // Le lift du PALIER et le décalage PROPRE à l'étage s'additionnent (`warp.ts`).
             const sy = feetY * TILE_PX - lift + decalageDEtage(eProp, palier)
             sprite.setPosition(feetX * TILE_PX, sy)
+            // LE CORPS DU CHAMP (LG-R7) : sa tuile en logique, son pied ; `lift` = de combien il est dessiné plus haut.
+            if (this.armerCorps !== null) {
+              this.armerCorps(sprite, { x: feetX * TILE_PX, y: feetY * TILE_PX, arete: 0, lift: feetY * TILE_PX - sy })
+              this.armes = true
+            }
             // LE STRETCH DU VENT NORD-SUD (essai, 2026-08-25) : une rotation ne sait pencher
             // qu'à gauche ou à droite, la HAUTEUR APPARENTE dit le reste. Il se multiplie à
             // l'échelle du gel plutôt que de la remplacer — les deux gestes se composent.
@@ -432,6 +447,11 @@ export class ClutterLayer {
       }
     }
     for (let i = used; i < this.pool.length; i++) this.pool[i]!.setVisible(false)
+    // L'interrupteur dans l'autre sens : la main retirée, tout le pool est rendu à Phaser — une fois.
+    if (this.armerCorps === null && this.armes) {
+      for (const s of this.pool) desarmerLeCorps(s)
+      this.armes = false
+    }
     // Les ombres suivent le sort de leurs props (même logique que le pool de sprites) : dézoomé
     // ou culled, `shadowsUsed` retombe à 0 et aucune flaque ne reste allumée sous une tuile vide.
     for (let i = shadowsUsed; i < this.shadowPool.length; i++) this.shadowPool[i]!.setVisible(false)

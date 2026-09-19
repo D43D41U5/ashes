@@ -111,7 +111,8 @@ export const UNIFORMES_CORPS = {
   /**
    * PAR SPRITE — `CorpsPose.sol` : 0 un corps ; 1 `tuile` (sous le pixel, à sa place logique) ; 2 `pied`
    * (à `uGiPied`) ; 3 `piedSousLeVoile` (`pied`, divisé par `M` à la place dessinée, que le quad
-   * multipliera). Non nul, le fragment est `texel × M` et sort AVANT la règle des corps.
+   * multipliera) ; 4 `lueur` (LG-R20 : le texel fois la LUMINANCE de `L` sous le pixel, à sa place
+   * logique — une nappe de jour au-dessus du quad). Non nul, le fragment sort AVANT la règle des corps.
    */
   sol: 'uGiSol',
   /**
@@ -231,6 +232,13 @@ bool dansLeChamp(vec2 monde) {
 // dessinée : on divise d'avance, pour que le produit soit \`M(pied)\`. Le plancher 1e-3 est celui de
 // la référence — les deux chemins divisent la même chose.
 vec4 pixelDeSol(vec4 fragColor, vec2 monde, float yLog) {
+  // UNE LUEUR (mode 4, LG-R20) : la luminance de \`L\` sous le pixel, aux poids de \`lumPlat\` — le décalque
+  // de \`pixelDeSol\` (\`passe-corps.ts\`, branche \`lueur\`). Ni \`M\` ni parts : la nappe est du jour.
+  if (uGiSol > 3.5) {
+    vec3 l = texture2D(uGiL, uvDuChamp(vec2(monde.x, yLog))).rgb;
+    float k = clamp(dot(l, vec3(0.299, 0.587, 0.114)), 0.0, 1.0);
+    return vec4(fragColor.rgb * k, fragColor.a);
+  }
   vec2 p = vec2(monde.x, uGiSol > 1.5 ? uGiPied : yLog);
   vec3 m = texture2D(uGiM, uvDuChamp(p)).rgb;
   if (uGiSol > 2.5 && dansLeChamp(monde)) m /= max(texture2D(uGiM, uvDuChamp(monde)).rgb, vec3(1.0e-3));

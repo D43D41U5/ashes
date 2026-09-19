@@ -90,6 +90,14 @@ export interface Emetteur {
    * ras du sol, ce qui ne change rien sur une grille sans marches.
    */
   readonly z?: number
+  /**
+   * LE JOUR D'UNE GUEULE (LG-R20) — la source n'est pas une flamme : sa lumière suit la loi des ANNEAUX
+   * de la sim (`partDuCiel` : Tchebychev à la PAIRE, nul sur sa largeur — `demi` texels de part et
+   * d'autre de `x` —, linéaire jusqu'à `rayon`, à sa force propre : le pic du feu ne s'y applique pas), et
+   * ses seize rayons vont au disque posé CONTRE LA FENTE (`sourceDUnePorte`), à `cible`, pas à (x, y).
+   * Absent : un feu, une torche — le profil du trou et le disque sous la flamme.
+   */
+  readonly jour?: { readonly demi: number; readonly cible: readonly [number, number] }
 }
 
 export interface ReglagesChamp {
@@ -349,8 +357,10 @@ export function champRef(g: GrilleGi, emetteurs: readonly Emetteur[], reglages: 
   // 1. Direct — du sol du texel (son palier, LG-R14) à la flamme de la source (`e.z`).
   for (const e of emetteurs) {
     const z1 = e.z ?? 0
-    const x0 = Math.max(0, Math.floor(e.x - e.rayon))
-    const x1 = Math.min(gw - 1, Math.ceil(e.x + e.rayon))
+    const j = e.jour
+    const demi = j ? j.demi : 0
+    const x0 = Math.max(0, Math.floor(e.x - e.rayon - demi))
+    const x1 = Math.min(gw - 1, Math.ceil(e.x + e.rayon + demi))
     const y0 = Math.max(0, Math.floor(e.y - e.rayon))
     const y1 = Math.min(gh - 1, Math.ceil(e.y + e.rayon))
     for (let y = y0; y <= y1; y++)
@@ -361,9 +371,12 @@ export function champRef(g: GrilleGi, emetteurs: readonly Emetteur[], reglages: 
         const py = y + 0.5
         const ddx = px - e.x
         const ddy = py - e.y
-        const f = profil(Math.sqrt(ddx * ddx + ddy * ddy), e)
+        // Le jour d'une gueule (LG-R20) : l'anneau de la sim, à la paire ; une flamme : le profil du trou.
+        const f = j
+          ? Math.max(0, 1 - Math.max(Math.max(0, Math.abs(ddx) - j.demi), Math.abs(ddy)) / e.rayon)
+          : profil(Math.sqrt(ddx * ddx + ddy * ddy), e)
         if (f <= 0) continue
-        const vus = partVisibleGrille(g, px, py, e.x, e.y, e.taille, solDuTexel(g, k), z1)
+        const vus = partVisibleGrille(g, px, py, j ? j.cible[0] : e.x, j ? j.cible[1] : e.y, e.taille, solDuTexel(g, k), z1)
         if (vus <= 0) continue
         const a = f * vus
         direct[k * 3] = direct[k * 3]! + e.rgb[0] * a

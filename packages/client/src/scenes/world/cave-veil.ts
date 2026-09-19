@@ -34,10 +34,17 @@
  * façade d'état, et ne décide rien.
  */
 import Phaser from 'phaser'
-import { TEMPERATURE } from '@ashes/sim'
 import { SOUTERRAIN_STRATE, TILE_PX } from '../../render/framing'
-import { HOLE_RADIUS_TILES } from '../../render/lighting'
-import { TORCHE_HOLE_TILES } from '../../render/torche'
+import { armerLeSol, desarmerLeSol } from '../../render/gi/noeud-corps'
+import {
+  brosse, ensureGomme, ensurePres, luminance,
+  FEU_CAVE_TUILES, FEU_KEY, GOMME_KEY, GRAIN_PX, JOUR_KEY, JOUR_PIC, JOUR_TUILES, NOIR, NOIR_ALPHA,
+  PRES_KEY, SOI_KEY, SOI_PIC, SOI_TUILES, TORCHE_CAVE_TUILES, TORCHE_KEY, TORCHE_PIC,
+} from '../../render/cave-brosses'
+
+// Le noir, le grain, les portées et les brosses vivent dans `render/cave-brosses.ts` depuis la
+// bascule (LG-R3, LG-R20) : le champ de la GI peint le même voile dans `gi-mn`, avec les mêmes brosses.
+export { FEU_CAVE_TUILES, JOUR_TUILES, TORCHE_CAVE_TUILES }
 
 /** Le voile au-dessus de TOUTE la strate −1, sous la lisière de la strate suivante. */
 export const CAVE_VEIL_DEPTH = SOUTERRAIN_STRATE - 1
@@ -45,6 +52,13 @@ export const CAVE_VEIL_DEPTH = SOUTERRAIN_STRATE - 1
 export const BRAISE_DEPTH = CAVE_VEIL_DEPTH - 1
 /** La chaleur de la torche — le MULTIPLY qui ôte le bleu — passe juste avant la braise. */
 const CHALEUR_DEPTH = BRAISE_DEPTH - 1
+/**
+ * LA NAPPE DU JOUR QUAND LE CHAMP COMPOSE (LG-R20) : AU-DESSUS du quad du champ (qui est à
+ * `CAVE_VEIL_DEPTH` dans un creux), sous la lisière de la strate suivante — armée en `lueur`, elle
+ * lit elle-même la lumière du champ sous chaque pixel (`nappe × L`, la planche 28 (c)). Sous le quad,
+ * elle prenait le plancher du près en plus du jour, et fuyait derrière l'angle (MESURÉ le 2026-09-19).
+ */
+const LUEUR_DEPTH = CAVE_VEIL_DEPTH + 0.5
 
 /**
  * UNE BANDE HORIZONTALE DU MASQUE DE LA MASSE, en tuiles MONDE : la rangée `r` est une rangée
@@ -76,31 +90,6 @@ export interface LumiereDeCave {
   feux: readonly { x: number; y: number; force: number }[]
 }
 
-/**
- * Le NOIR d'une cave : bleu-nuit, pas noir pur — multiplicateur (0,11 · 0,12 · 0,16) au plus
- * sombre. Un noir absolu ferait un TROU dans l'image (la leçon du socle, encore) ; celui-ci laisse
- * deviner la matière, ce qui est très exactement ce qu'on veut : *une forme, pas un contenu*.
- */
-const NOIR = 0x0b0e18
-const NOIR_ALPHA = 0.62
-/** Un texel de lumière : 4 px monde, le grain de tous les halos du jeu. */
-const GRAIN_PX = 4
-
-/** Le jour entre de `CIEL_PENETRATION` tuiles ; la brosse va une tuile plus loin pour que sa chute
- *  linéaire atteigne 0 exactement là où la loi le dit (`1 − d/(P+1)`). */
-export const JOUR_TUILES = TEMPERATURE.CIEL_PENETRATION + 1
-/** La portée d'une torche SOUS TERRE. Plus courte que dehors (`TORCHE_HOLE_TILES` = 4) : il n'y a
- *  pas de ciel pour l'aider, et c'est ce qui fait de la torche un outil et de la cave un lieu. */
-export const TORCHE_CAVE_TUILES = 6
-/** LE FEU DE BIVOUAC sous la roche : la clairière d'un Feu dans la nuit (`HOLE_RADIUS_TILES`, 6)
- *  ramenée à l'échelle de la cave — celle que la torche y prend déjà (3 pour 4 dehors). Dérivé,
- *  pas posé : la cave n'a pas de règle à elle, elle serre les mêmes lumières. */
-export const FEU_CAVE_TUILES = HOLE_RADIUS_TILES * (TORCHE_CAVE_TUILES / TORCHE_HOLE_TILES)
-/** Le souffle autour du corps. */
-const SOI_TUILES = 1.25
-const JOUR_PIC = 1
-const TORCHE_PIC = 1
-const SOI_PIC = 0.45
 /** LA CHALEUR DU JOUR AU SOL — en ADD sous le voile, comme la braise de la torche : le trou du
  *  voile montre le sol tel qu'il est peint (froid), cette nappe lui rend la couleur de la lumière
  *  qui entre. C'est le contraste chaud/froid qui fait lire une cave : le dehors est chaud. */
@@ -113,93 +102,6 @@ const JOUR_SOL_ALPHA = 0.34
 const BRAISE_ALPHA = 0.65
 const CHALEUR_ALPHA = 1
 const JOUR_SOL_KEY = 'fx-cave-jour-sol'
-/** LE LOIN. Sous un voile uniforme, le sol d'une salle (albédo [109,115,137]) reste 2,3 fois plus
- *  clair que la roche ([47,49,59]) : à dix tuiles de toute lumière on lisait encore le PLAN entier
- *  de la cave, en bleu sur noir (capture du 2026-09-02). Le voile se pose donc OPAQUE (tout tombe
- *  à la couleur du noir, salle comprise) et c'est le PRÈS qui l'ouvre à `NOIR_ALPHA` autour du
- *  joueur : plein jusqu'à `PRES_TUILES`, éteint à `LOIN_TUILES`. Près de soi on DEVINE (la
- *  curiosité), au loin on ne sait pas (l'inquiétude). Les lichens, en ADD au-dessus du voile,
- *  restent les seuls points du vide. (Un disque sombre DESSINÉ, essayé d'abord, laissait le voile
- *  plus clair hors de son rayon : un cercle sur l'écran.) */
-const PRES_KEY = 'fx-cave-pres'
-const PRES_TUILES = 6
-const LOIN_TUILES = 11
-
-type Metrique = 'rond' | 'carre'
-
-/** La luminance relative d'une teinte plate (Rec. 601), dans [0, 1]. */
-function luminance(rgb: number): number {
-  const r = ((rgb >> 16) & 0xff) / 255
-  const g = ((rgb >> 8) & 0xff) / 255
-  const b = (rgb & 0xff) / 255
-  return 0.299 * r + 0.587 * g + 0.114 * b
-}
-
-/** Fabrique une brosse d'effacement : un disque (ou un carré arrondi) à chute LINÉAIRE, blanc,
- *  une cellule par texel, NEAREST. La taille monde vient de `setDisplaySize` à chaque usage. */
-function brosse(scene: Phaser.Scene, key: string, rayonTuiles: number, metrique: Metrique): { key: string; side: number } {
-  const cells = Math.round((rayonTuiles * TILE_PX) / GRAIN_PX)
-  const side = cells * 2 + 1
-  if (!scene.textures.exists(key)) {
-    const tex = scene.textures.createCanvas(key, side, side)
-    if (tex) {
-      const ctx = tex.getContext()
-      const img = ctx.createImageData(side, side)
-      for (let j = 0; j < side; j++) {
-        for (let i = 0; i < side; i++) {
-          const dx = i - cells
-          const dy = j - cells
-          const euclide = Math.sqrt(dx * dx + dy * dy)
-          // Le carré arrondi : la moyenne de Chebyshev (ce que la loi balaie) et d'Euclide (ce
-          // que l'œil accepte comme une lumière). Un carré franc se lirait comme une dalle.
-          const d = metrique === 'carre' ? 0.5 * Math.max(Math.abs(dx), Math.abs(dy)) + 0.5 * euclide : euclide
-          const a = Math.max(0, 1 - d / cells)
-          const k = (j * side + i) * 4
-          img.data[k] = 255
-          img.data[k + 1] = 255
-          img.data[k + 2] = 255
-          img.data[k + 3] = Math.round(a * 255)
-        }
-      }
-      ctx.putImageData(img, 0, 0)
-      tex.refresh()
-      scene.textures.get(key).setFilter(Phaser.Textures.FilterMode.NEAREST)
-    }
-  }
-  return { key, side }
-}
-
-/** Le près : une brosse blanche pleine jusqu'à `PRES_TUILES`, éteinte à `LOIN_TUILES` — chute
- *  quadratique, au grain des halos. Elle EFFACE le voile opaque jusqu'à `NOIR_ALPHA`. */
-function ensurePres(scene: Phaser.Scene): number {
-  const cells = Math.round((LOIN_TUILES * TILE_PX) / GRAIN_PX)
-  const pres = (PRES_TUILES * TILE_PX) / GRAIN_PX
-  const side = cells * 2 + 1
-  if (!scene.textures.exists(PRES_KEY)) {
-    const tex = scene.textures.createCanvas(PRES_KEY, side, side)
-    if (tex) {
-      const ctx = tex.getContext()
-      const img = ctx.createImageData(side, side)
-      for (let j = 0; j < side; j++) {
-        for (let i = 0; i < side; i++) {
-          const dx = i - cells
-          const dy = j - cells
-          const d = Math.sqrt(dx * dx + dy * dy)
-          const t = Math.max(0, Math.min(1, (d - pres) / (cells - pres)))
-          const k = (j * side + i) * 4
-          img.data[k] = 255
-          img.data[k + 1] = 255
-          img.data[k + 2] = 255
-          img.data[k + 3] = Math.round((1 - t * t) * 255)
-        }
-      }
-      ctx.putImageData(img, 0, 0)
-      tex.refresh()
-      scene.textures.get(PRES_KEY).setFilter(Phaser.Textures.FilterMode.NEAREST)
-    }
-  }
-  return side
-}
 
 /** La braise : un disque ambré, chaud au cœur, orangé au bord — la palette de `fx-torche-ground`,
  *  au même grain. En ADD sous le voile : là où la torche perce, le sol froid se réchauffe. */
@@ -268,19 +170,6 @@ function ensureJourSol(scene: Phaser.Scene): number {
   return side
 }
 
-/** LA GOMME : un texel blanc opaque, étiré à la bande qu'on ouvre. Elle n'est jamais DESSINÉE —
- *  elle ne sert qu'à `erase`, où seule sa couverture compte. */
-const GOMME_KEY = 'fx-cave-gomme'
-function ensureGomme(scene: Phaser.Scene): void {
-  if (scene.textures.exists(GOMME_KEY)) return
-  const tex = scene.textures.createCanvas(GOMME_KEY, 1, 1)
-  if (!tex) return
-  const ctx = tex.getContext()
-  ctx.fillStyle = '#ffffff'
-  ctx.fillRect(0, 0, 1, 1)
-  tex.refresh()
-}
-
 export class CaveVeil {
   private rt: Phaser.GameObjects.RenderTexture
   private dt: Phaser.Textures.DynamicTexture
@@ -307,11 +196,11 @@ export class CaveVeil {
   private h = 0
 
   constructor(private scene: Phaser.Scene) {
-    this.jour = brosse(scene, 'fx-cave-jour', JOUR_TUILES, 'carre')
+    this.jour = brosse(scene, JOUR_KEY, JOUR_TUILES, 'carre')
     this.pres = { key: PRES_KEY, side: ensurePres(scene) }
-    this.torche = brosse(scene, 'fx-cave-torche', TORCHE_CAVE_TUILES, 'rond')
-    this.feu = brosse(scene, 'fx-cave-feu', FEU_CAVE_TUILES, 'rond')
-    this.soi = brosse(scene, 'fx-cave-soi', SOI_TUILES, 'rond')
+    this.torche = brosse(scene, TORCHE_KEY, TORCHE_CAVE_TUILES, 'rond')
+    this.feu = brosse(scene, FEU_KEY, FEU_CAVE_TUILES, 'rond')
+    this.soi = brosse(scene, SOI_KEY, SOI_TUILES, 'rond')
     this.braiseSide = ensureBraise(scene)
     this.jourSolSide = ensureJourSol(scene)
     ensureGomme(scene)
@@ -378,7 +267,24 @@ export class CaveVeil {
     lum: LumiereDeCave, gueules: readonly { x: number; y: number }[],
     camera: Phaser.Cameras.Scene2D.Camera,
     trouees: readonly BandeDeMasque[] = [], nTrouees = 0,
+    /**
+     * LE CHAMP DE LA GI PORTE-T-IL LE VOILE À NOTRE PLACE (LG-R3, LG-R20) ? Alors la RenderTexture
+     * se tait — son noir, son près, son souffle sont repeints dans `gi-mn` avec NOS brosses, et le
+     * jour de la gueule, la torche et le bivouac sont des émetteurs du champ, qui apprennent l'ombre
+     * de la roche (planche 28, « Oui, comme le feu »). Restent ici la braise et la chaleur de la
+     * torche et des feux — des lueurs ADD/MULTIPLY sous le champ, comme la flaque du feu dehors
+     * (LG-Q3 c : « la flaque reste sous le champ ») — et la nappe chaude du jour, qui passe AU-DESSUS
+     * du quad et lit le jour du champ sous chaque pixel (`lueur`, `LUEUR_DEPTH`) : `lift` est celui de
+     * l'étage du regard, de combien la salle est dessinée plus haut que sa place logique (LG-R14).
+     */
+    composeExterne: { readonly lift: number } | null = null,
   ): void {
+    const jour = JOUR_PIC * lum.ciel * luminance(lum.teinteDuJour)
+    if (composeExterne) {
+      this.rt.setVisible(false)
+      this.poserLesLueurs(lum, gueules, jour, composeExterne)
+      return
+    }
     const sw = this.scene.scale.width
     const sh = this.scene.scale.height
     if (sw !== this.w || sh !== this.h) {
@@ -436,7 +342,6 @@ export class CaveVeil {
     // entrer, c'est la lumière de l'heure : le trou ne dépasse pas la LUMINANCE de la teinte du
     // dehors (`teinteDuJour`, le multiplicateur du voile de nuit), sinon une nuit de pleine lune
     // faisait entrer un plein midi dans la salle (vu à la capture).
-    const jour = JOUR_PIC * lum.ciel * luminance(lum.teinteDuJour)
     for (const g of gueules) percer(this.jour, g.x, g.y, jour)
     // Le près AVANT les trous de lumière : une gueule ou une torche perce aussi au-delà — c'est
     // une lumière, elle porte plus loin que l'œil dans le noir.
@@ -447,7 +352,16 @@ export class CaveVeil {
     for (const f of lum.feux) percer(this.feu, f.x, f.y, TORCHE_PIC * f.force)
     if (lum.joueur) percer(this.soi, lum.joueur.x, lum.joueur.y, SOI_PIC)
     this.dt.render()
+    this.poserLesLueurs(lum, gueules, jour, null)
+  }
 
+  /** Les lueurs SOUS le voile (ou sous le champ) : la braise et la chaleur de la torche et des feux,
+   *  la nappe chaude d'une gueule — `jour` est la force du jour de l'image. Quand le champ compose
+   *  (`champ`), la nappe passe au-dessus de lui, armée en `lueur` ; sinon elle reste sous le voile. */
+  private poserLesLueurs(
+    lum: LumiereDeCave, gueules: readonly { x: number; y: number }[], jour: number,
+    champ: { readonly lift: number } | null,
+  ): void {
     if (lum.torche) {
       this.braise
         .setPosition(lum.torche.x, lum.torche.y)
@@ -494,6 +408,15 @@ export class CaveVeil {
         this.joursSol[i] = j
       }
       j.setPosition(g.x, g.y).setTint(lum.couleurDuJour).setAlpha(JOUR_SOL_ALPHA * jour).setVisible(true)
+      // Sur un emplacement poolé, à chaque image (voir `armerLeSol`) ; et le retour sous le voile
+      // rend à l'image son rendu nu, à sa profondeur d'avant.
+      if (champ) {
+        if (j.depth !== LUEUR_DEPTH) j.setDepth(LUEUR_DEPTH)
+        armerLeSol(j, { lueur: true, lift: champ.lift })
+      } else {
+        if (j.depth !== BRAISE_DEPTH) j.setDepth(BRAISE_DEPTH)
+        desarmerLeSol(j)
+      }
     })
     for (let i = gueules.length; i < this.joursSol.length; i++) this.joursSol[i]?.setVisible(false)
   }

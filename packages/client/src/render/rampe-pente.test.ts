@@ -22,12 +22,15 @@ import { describe, expect, it, vi } from 'vitest'
 import type Phaser from 'phaser'
 
 // Le moteur ne se charge pas sous Node (« window is not defined ») : `EtageLayer` n'en lit au
-// chargement que des CONSTANTES (modes de fusion, filtre de texture). Le leurre les fournit ;
-// rien d'autre n'est appelé — la couche de labo ne touche jamais la scène.
+// chargement que des CONSTANTES (modes de fusion, filtre de texture) — et, depuis LG-R14 (la rampe
+// armée comme un sol du champ), les deux CLASSES de nœud de rendu dont `noeud-corps.ts` hérite au
+// chargement (`BatchHandlerQuad`, `SubmitterQuad`) : des coquilles vides suffisent, rien n'en est
+// instancié. Le leurre les fournit ; rien d'autre n'est appelé — la couche de labo ne touche jamais la scène.
 vi.mock('phaser', () => ({
   default: {
     BlendModes: { NORMAL: 0, ADD: 1, MULTIPLY: 2, SCREEN: 3 },
     Textures: { FilterMode: { NEAREST: 0 } },
+    Renderer: { WebGL: { RenderNodes: { BatchHandlerQuad: class {}, SubmitterQuad: class {} } } },
   },
 }))
 import {

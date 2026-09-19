@@ -191,7 +191,7 @@ import {
 import { peindreCarteArt, type CarteArt } from '../render/carte-art'
 import { cellulesDuDisque, peindreSavoirRegion } from '../render/carte-savoir'
 import { cleDuRegime, deriverEauDuJour, regimeDeCarte } from '../render/carte-eau'
-import { atteignableEntreEtages, etagesDuPas, niveauDeLaTuile, niveauDuCorps, palierDuSol, terrainAEtage, TRACTION, eauPechable, estUnCoinDePeche, porteDeLEau, FISH_SPECIES, niveauDEau, torcheVive, partDeFlamme, clarteSurSoiAt, clarteDuCiel, partDuCiel, NUIT, MONSTER_DEFS, POI_CHARGES, TERRAIN_DEEP_WATER, TERRAIN_SHALLOW_WATER, CREUX, TERRAINS_BOISES_MASSIF, ventForceAt, VENT, type EtatVent, type Souillure } from '@ashes/sim'
+import { atteignableEntreEtages, etagesDuPas, niveauDeLaTuile, niveauDuCorps, palierDuSol, terrainAEtage, TRACTION, eauPechable, estUnCoinDePeche, porteDeLEau, FISH_SPECIES, niveauDEau, torcheVive, partDeFlamme, clarteSurSoiAt, clarteDuCiel, partDuCiel, NUIT, MONSTER_DEFS, POI_CHARGES, TERRAIN_DEEP_WATER, TERRAIN_SHALLOW_WATER, CREUX, TERRAINS_BOISES_MASSIF, ventForceAt, VENT, LUMIERE, type EtatVent, type Souillure } from '@ashes/sim'
 
 /** L'assombrissement du sol au plafond de profondeur (§2quater R42) : au cœur d'un massif,
  *  le sol perd jusqu'à 14 % de luminance — en PENTE CONTINUE, jamais par bande. */
@@ -211,10 +211,12 @@ function revealRadiusOf(kind: string): number {
   return charge && charge.devise === 'savoir' && charge.reveal === 'radius' ? charge.radiusTiles : 0
 }
 import { NightVeil } from './world/night-veil'
-import { ChampGpu, PASSES_GI } from '../render/gi/champ-gpu'
+import { ChampGpu, PASSES_GI, type CreuxGi, type SourceGi } from '../render/gi/champ-gpu'
 import { ambianteDeLHeure, luminanceDuVoile, rgbDeCouleur } from '../render/gi/corps-ref'
+import { cellulesDeBrosse, cellulesDuPres, FEU_CAVE_TUILES, FORCE_AU_CHAMP, JOUR_PIC, JOUR_TUILES, luminance, NOIR, NOIR_ALPHA, SOI_PIC, SOI_TUILES, TORCHE_CAVE_TUILES, TORCHE_PIC } from '../render/cave-brosses'
+import { CAVE_VEIL_DEPTH, type LumiereDeCave } from './world/cave-veil'
 import { forceDuFeuGi } from '../render/gi/reglages'
-import { DynamicLighting, couleurDuCiel, deriveDOmbre, facteurDuFeu, forceDeLOmbre } from './world/dynamic-lighting'
+import { AMBIENT_CAVE, DynamicLighting, couleurDuCiel, deriveDOmbre, facteurDuFeu, forceDeLOmbre } from './world/dynamic-lighting'
 import { WaterLayer, type WaterWader } from './world/water-layer'
 import { flowAt } from '../render/flow-field'
 import { AmbientLife } from './world/ambient-life'
@@ -652,6 +654,90 @@ export class WorldScene extends Phaser.Scene {
       this.map, this.predicted.x, this.predicted.y, this.etageJoueur,
       tx + 0.5, ty + 0.5, etage ?? palierDuSol(this.map, tx, ty),
     )
+  }
+
+  /** Les trouées du masque de la cave en rangées LOGIQUES (`CreuxGi.trouees`) — réutilisé, jamais réalloué. */
+  private readonly troueesGi: { r: number; a: number; b: number }[] = []
+  /** Les brosses du creux, au grain — les mêmes cellules que le voile de cave (`cave-brosses.ts`). */
+  private readonly brossesGi = { pres: cellulesDuPres(), soi: { ...cellulesDeBrosse(SOI_TUILES, 'rond'), pic: SOI_PIC } }
+  /** La main que le décor reçoit pour armer ses sprites (LG-R3) — liée une fois, jamais par image. */
+  private readonly armerCorpsDeDecor = (sprite: Phaser.GameObjects.Image, corps: import('../render/gi/sol-du-corps').CorpsPose): void => {
+    this.view.armerUnCorps(sprite, corps)
+  }
+
+  /**
+   * ═══ LE CREUX DE L'IMAGE (LG-R3, LG-R20) — ce que le champ compose SOUS LA ROCHE ═══
+   *
+   * Le plancher que `CaveVeil` peignait : le noir, opaque quand le joueur est connu (le près l'ouvre) et à
+   * `NOIR_ALPHA` sinon ; les trouées du masque, où le dehors garde SA nuit (`mnGi`) ; le joueur en px
+   * LOGIQUES (le près et le souffle s'y centrent) ; et le lift de l'étage, dont le quad se lève.
+   */
+  private creuxDeLImage(lum: LumiereDeCave, niveau: number, nuit: readonly [number, number, number] | null): CreuxGi {
+    const lift = palierDUneSalle(niveau) * LIFT_TUILES * TILE_PX
+    const m = this.etages.masqueOuvert()
+    // Les bandes sont en rangées DESSINÉES : la logique est `lift` tuiles plus bas.
+    const dr = lift / TILE_PX
+    for (let i = 0; i < m.nTrouees; i++) {
+      const t = m.trouees[i]!
+      const o = this.troueesGi[i]
+      if (o) {
+        o.r = t.r + dr
+        o.a = t.a
+        o.b = t.b
+      } else this.troueesGi[i] = { r: t.r + dr, a: t.a, b: t.b }
+    }
+    return {
+      lift,
+      noir: NOIR,
+      // L'ALPHA DU VOILE, `NOIR_ALPHA` — pas « 1 avec un joueur » : c'est le plancher qui est opaque avec
+      // un joueur, et le près qui l'OUVRE à `1 − alphaVoile` (CaveVeil : fill(NOIR, 1) puis percer(près,
+      // 1 − NOIR_ALPHA)). Avec 1 ici, le près n'effaçait rien : la salle entière restait noire autour du
+      // corps — MESURÉ le 2026-09-19 sur la planche 28 (site droite) : luminance 7 contre 40 à la cible.
+      alphaVoile: NOIR_ALPHA,
+      nuit: nuit ?? [1, 1, 1],
+      joueur: lum.joueur ? { x: this.predicted.x * TILE_PX, y: this.predicted.y * TILE_PX } : null,
+      trouees: this.troueesGi,
+      nTrouees: m.nTrouees,
+      pres: this.brossesGi.pres,
+      soi: this.brossesGi.soi,
+    }
+  }
+
+  /**
+   * LES SOURCES D'UN CREUX (LG-R20) — celles que le voile de cave perçait, devenues des émetteurs du champ :
+   *   · LE JOUR de chaque gueule visible : DEUX émetteurs par paire, à la loi des anneaux de la sim
+   *     (Tchebychev à la paire, `1 − d/(P + 1)`), chacun à la moitié de la force et chacun vers le disque
+   *     de SA tuile, tangent à la fente côté salle (`sourceDUnePorte`) — la part vue est ainsi la moyenne
+   *     sur la largeur de la fente, ce que la planche 28 (c) a recomposé ; force `JOUR_PIC × ciel ×
+   *     luminance(teinteDuJour)`, la même que la brosse de jour, à la couleur de l'heure ;
+   *   · LA TORCHE du joueur et LE BIVOUAC de la salle, aux portées de la cave (`TORCHE_CAVE_TUILES`,
+   *     `FEU_CAVE_TUILES`) et à leur force d'aujourd'hui rapportée au pic du champ (`FORCE_AU_CHAMP`).
+   * Tout en px LOGIQUES (LG-R14) ; le champ apprend l'ombre de la roche à chacune (LG-R11, planche 28).
+   */
+  private sourcesDuCreux(lum: LumiereDeCave, niveau: number, feux: readonly { readonly s: Structure; readonly factor: number }[], time: number): SourceGi[] {
+    const out: SourceGi[] = []
+    const jour = JOUR_PIC * lum.ciel * luminance(lum.teinteDuJour)
+    if (jour > 0.002) {
+      const c = rgbDeCouleur(lum.couleurDuJour)
+      const l = luminanceDuVoile(c)
+      // La couleur à luminance 1 : la force porte la clarté, la teinte ne porte que l'heure.
+      const rgb: readonly [number, number, number] = l > 0 ? [c[0] / l, c[1] / l, c[2] / l] : [1, 1, 1]
+      const cibleDy = -(0.5 + LUMIERE.SOURCE_RAYON_TEXELS / LUMIERE.TEXELS_PAR_TUILE) * TILE_PX
+      for (const g of this.etages.gueulesLogiques) {
+        for (const cote of [-1, 1] as const) {
+          out.push({ worldX: g.x, worldY: g.y, radiusTiles: JOUR_TUILES, force: jour / 2, rgb, jour: { demiPx: TILE_PX / 2, cibleDx: (cote * TILE_PX) / 2, cibleDy } })
+        }
+      }
+    }
+    if (lum.torche && lum.torche.force > 0) {
+      out.push({ worldX: this.predicted.x * TILE_PX, worldY: this.predicted.y * TILE_PX, radiusTiles: TORCHE_CAVE_TUILES, force: TORCHE_PIC * lum.torche.force * FORCE_AU_CHAMP })
+    }
+    for (const { s, factor } of feux) {
+      if (!sousLaRoche(s) || niveauDeLaTuile(this.map, s) !== niveau) continue
+      const force = TORCHE_PIC * factor * flicker(time, s.id * 1.7) * FORCE_AU_CHAMP
+      if (force > 0) out.push({ worldX: (s.tx + 0.5) * TILE_PX, worldY: (s.ty + 0.5) * TILE_PX, radiusTiles: FEU_CAVE_TUILES, force })
+    }
+    return out
   }
 
   private porteursDeTorche(): PorteurDeTorche[] {
@@ -2227,6 +2313,12 @@ export class WorldScene extends Phaser.Scene {
         time,
       )
     }
+    // LE CHAMP DE LA GI COMPOSE-T-IL CETTE IMAGE (LG-R3) ? La chaîne ENTIÈRE (`PASSES_GI`, le défaut
+    // depuis la bascule du 2026-09-19), en rendu éclairé. Tranché ICI, avant le décor : le fouillis
+    // s'arme comme un corps (LG-R7, « l'avatar comme les autres corps »), et le voile de cave se tait.
+    const composeGi = this.lit && (getHud(this.registry, 'debugGi') ?? PASSES_GI) >= PASSES_GI
+    if (this.etages) this.etages.champCompose = composeGi
+    if (this.clutter) this.clutter.armerCorps = composeGi && this.view.gi !== null ? this.armerCorpsDeDecor : null
     this.clutter?.update(this.cameras.main, time) // le vent : le décor plie
     this.view.renderNodes(this.cameras.main, this.predicted.x, this.predicted.y, time)
     // LE CONTOUR DE L'INTERACTION — APRÈS la boucle de nœuds, et c'est un ORDRE : le pool des
@@ -2435,10 +2527,11 @@ export class WorldScene extends Phaser.Scene {
       // au lieu de la teinte. La chaîne ENTIÈRE (`PASSES_GI`) : sous ce compte, `texturesDesCorps` est
       // nul et une image armée sortirait NUE (`uGiCadre.z <= 0`), blanche dans la nuit. Le gel et
       // l'eau gardent la teinte : ils ne sont pas des images du nœud des corps.
-      const composeGi = this.lit && (getHud(this.registry, 'debugGi') ?? 0) >= PASSES_GI
-      if (this.paves) this.paves.champCompose = composeGi
-      if (this.cliffs) this.cliffs.champCompose = composeGi
-      if (this.etages) this.etages.champCompose = composeGi
+      // …ET PAS SOUS LA ROCHE : dans un creux le quad est celui de la cave, levé et posé au-dessus de
+      // tout ; une terrasse vue par une trouée est dessous, et il la multiplie de la nuit du dehors.
+      const composeSols = composeGi && !this.etages.souterrain
+      if (this.paves) this.paves.champCompose = composeSols
+      if (this.cliffs) this.cliffs.champCompose = composeSols
       // ═══ LA SOUS-LISTE DES FEUX, DÉRIVÉE UNE FOIS PAR IMAGE (PERF-08) ═══
       //
       // Quatre passes complètes sur `structures` cherchaient le même petit sous-ensemble à
@@ -2750,6 +2843,9 @@ export class WorldScene extends Phaser.Scene {
         yLogique: (s.ty + 0.5) * TILE_PX,
         niveau: niveauDeLaTuile(this.map, s),
       }))
+      // LES FEUX POUR LA PASSE DES CORPS (LG-R7, LG-R3) : la même liste, en logique, avant les torches —
+      // un feu mort (portée nulle) n'y est pas, comme `dynamic-lighting` retirait sa lumière.
+      this.view.feuxGi = veilFires.filter((f) => f.radiusTiles > 0).map((f) => ({ x: f.worldX, y: f.yLogique, rayon: f.radiusTiles * TILE_PX, lift: f.yLogique - f.worldY }))
       // ═══ LES TORCHES (spec `torche.md`) — TROIS branchements, UNE liste ═══
       //
       // Résolue ICI, une fois, et partagée par le trou du voile, la flaque au sol et le point
@@ -2773,7 +2869,7 @@ export class WorldScene extends Phaser.Scene {
       // LE CHAMP DE LA GI (spec `lumiere-globale.md`, tranche B) — derrière l'interrupteur du panneau
       // (LG-R3 : à côté de la pile actuelle), et il lit LA MÊME liste de sources que le voile : feux
       // et torches résolus une fois, ils battent en phase.
-      const passesGi = getHud(this.registry, 'debugGi') ?? 0
+      const passesGi = getHud(this.registry, 'debugGi') ?? PASSES_GI
       // Mn — LE PLANCHER DU VOILE, PAR CANAL, pris à l'expression QUE LE VOILE REÇOIT LUI-MÊME
       // douze lignes plus bas : une loi, deux lecteurs. La GI compose alors M = 1 − (1 − Mn)(1 − L)
       // et le voile se tait. En rendu à plat (`lit` faux) il n'y a pas de nuit à composer.
@@ -2787,15 +2883,24 @@ export class WorldScene extends Phaser.Scene {
         // plateau ; dans un creux, tout se lit au niveau du regard, et ses sources seules.
         const auSol = !this.etages.souterrain
         const niveauGi = auSol ? 0 : this.etages.niveauDuRegard
+        // ═══ LE CREUX (LG-R3, LG-R20) : sous la roche, le champ prend la place du voile de cave ═══
+        // Ses sources sont celles que le voile perçait (`sourcesDuCreux`), son plancher le noir de la
+        // cave ouvert par le près (`creuxDeLImage`), et son quad se lève du lift de l'étage, à la
+        // profondeur du voile. Au sol : les feux et les torches de la surface, à leur place logique.
+        const lumCave = this.etages.lumiere
+        const creux = auSol || lumCave === null ? null : this.creuxDeLImage(lumCave, niveauGi, mnGi)
+        const sourcesGi: SourceGi[] = creux !== null && lumCave !== null
+          ? this.sourcesDuCreux(lumCave, niveauGi, litFires, time)
+          : veilFires
+              .filter((f) => (auSol ? f.niveau >= 0 : f.niveau === niveauGi))
+              // À LA PLACE LOGIQUE, jamais dessinée : le champ est la grille de la sim (LG-R14).
+              .map((f) => ({ worldX: f.worldX, worldY: f.yLogique, radiusTiles: f.radiusTiles, force: f.forceGi, palier: f.niveau }))
         this.gi?.update(
           passesGi,
           this.cameras.main,
           { map: this.map, structures: this.view.structures, nodes: this.view.nodes },
           niveauGi,
-          veilFires
-            .filter((f) => (auSol ? f.niveau >= 0 : f.niveau === niveauGi))
-            // À LA PLACE LOGIQUE, jamais dessinée : le champ est la grille de la sim (LG-R14).
-            .map((f) => ({ worldX: f.worldX, worldY: f.yLogique, radiusTiles: f.radiusTiles, force: f.forceGi, palier: f.niveau })),
+          sourcesGi,
           // LA PROFONDEUR DU CHAMP — en ADD pour le regard de la tranche B, en MULTIPLY quand il
           // COMPOSE ; dans les deux cas `ambientDepth` NU, SURTOUT PAS `+ 0.5`. `AIR_OVER_LIGHT`
           // vaut 0,5, donc l'air et le plancher de nuit se posent EXACTEMENT à `depth + 0.5` ; un
@@ -2803,7 +2908,8 @@ export class WorldScene extends Phaser.Scene {
           // multiplie le terme additif bleu qui donne à la nuit sa couleur. Mesuré le 17/09 sur
           // tout le champ lointain — B −5,12 par canal, 75 % des pixels assombris, contre +0,45
           // et 0,8 % à 8.
-          ambientDepth,
+          //   DANS UN CREUX : celle du voile de cave, que le quad remplace (`CAVE_VEIL_DEPTH`).
+          creux !== null ? CAVE_VEIL_DEPTH : ambientDepth,
           mnGi,
           // L'ASTRE QUI PORTE L'OMBRE (LG-R8) — les DEUX nombres pris à la MÊME image et à la même
           // source que les socles et les falaises (`view.deriveOmbre`/`view.forceOmbre`, posés plus
@@ -2812,6 +2918,7 @@ export class WorldScene extends Phaser.Scene {
           // `SHADOW_ALPHA`, qui vit de ce côté-ci — `render/gi/` ne remonte pas le chercher.
           { derive: this.view.deriveOmbre, a: SHADOW_ALPHA * this.view.forceOmbre },
           auSol,
+          creux,
         )
         // LA PASSE DES CORPS (LG-R7) — la vue reçoit le champ de CETTE image et le pousse au nœud de
         // rendu ; tout l'assemblage vit de son côté. `ambiante` est la LUMINANCE de l'ambiante de
@@ -2819,7 +2926,14 @@ export class WorldScene extends Phaser.Scene {
         // `giCiel` nul en rendu à plat (`mnGi` nul) : sans nuit à composer, il n'y a pas de plancher
         // à rabattre, et la passe des corps n'a rien à faire.
         this.view.gi = this.gi
-        this.view.giCiel = mnGi === null ? null : {
+        // SOUS LA ROCHE, le ciel d'un corps est celui de la cave : pas de voile (le quad du creux porte
+        // le noir, et il multiplie les corps de la salle comme le voile le faisait), pas d'astre, et le
+        // plancher rabattu à l'ambiante de la cave — celle que Light2D donnait aux corps (`AMBIENT_CAVE`).
+        this.view.giCiel = mnGi === null ? null : creux !== null ? {
+          mn: [1, 1, 1],
+          a: 0,
+          ambiante: luminanceDuVoile(rgbDeCouleur(AMBIENT_CAVE)),
+        } : {
           mn: mnGi,
           a: SHADOW_ALPHA * this.view.forceOmbre,
           ambiante: luminanceDuVoile(rgbDeCouleur(ambianteDeLHeure(day, lueurLune))),
@@ -2862,10 +2976,13 @@ export class WorldScene extends Phaser.Scene {
       )
       // SOUS TERRE, le ciel n'entre pas et la gueule éclaire (`SousTerre`) : `etages.render` a
       // tourné plus haut dans cette même image, ses gueules visibles sont celles de l'écran.
+      // …ET QUAND LE CHAMP COMPOSE (LG-R3), les feux, les torches et les gueules ne sont plus des lumières
+      // Light2D : le champ les porte (au sol par son quad, sur les corps par la passe des corps). Restent
+      // le soleil, la lune et l'ambiante — sous terre, celle de la cave — pour ce qui n'est pas armé.
       const sousTerre = this.etages.souterrain
-        ? { gueules: this.etages.gueulesPx, ciel: this.etages.lumiere?.ciel ?? 1 }
+        ? { gueules: composeGi ? [] : this.etages.gueulesPx, ciel: this.etages.lumiere?.ciel ?? 1 }
         : null
-      this.dynLight?.update(lit, this.cameras.main, feux, this.view.villages, hour, day, time, jourLune, lueurLune, porteurs, this.lastSnapshotTick, sousTerre)
+      this.dynLight?.update(lit, this.cameras.main, composeGi ? [] : feux, this.view.villages, hour, day, time, jourLune, lueurLune, composeGi ? [] : porteurs, this.lastSnapshotTick, sousTerre)
       // La vie ambiante : les oiseaux traversent, les lucioles ne sortent qu'à la nuit — et
       // depuis le 2026-08-26 elles ÉCLAIRENT, d'où le `lit` (le mode à plat les éteint avec
       // toutes les autres sources).

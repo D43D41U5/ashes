@@ -216,6 +216,9 @@ export class EtageLayer {
   /** Les gueules visibles de la salle, en px monde : le PIED de la façade, au milieu de la paire —
    *  là où le jour entre. Lues par le voile (son trou, la lueur au sol) et par `DynamicLighting`. */
   readonly gueulesPx: { x: number; y: number }[] = []
+  /** Les mêmes gueules en px monde LOGIQUES, pour le champ de la GI (LG-R20) : le CENTRE de la paire —
+   *  sa tuile, jamais sa place dessinée. Le champ en fait ses émetteurs de jour (`SourceGi.jour`). */
+  readonly gueulesLogiques: { x: number; y: number }[] = []
   /** `partDuCiel` par tuile de cave, mémorisé : la géométrie d'une cave ne change jamais. */
   private readonly cielMemo = new Map<number, number>()
   /** L'horloge des lichens : ils respirent, lentement. */
@@ -570,6 +573,7 @@ export class EtageLayer {
     this.tuilesVues.length = 0
     this.gueulesVues.length = 0
     this.gueulesPx.length = 0
+    this.gueulesLogiques.length = 0
 
     let n = 0
     const tx0 = Math.max(0, Math.floor(v.x / TILE_PX) - 1)
@@ -637,6 +641,7 @@ export class EtageLayer {
           if (this.estOuestDeGueule(tx, ty)) {
             const haut = hautDeLaFente(ty, p)
             this.gueulesPx.push({ x: (tx + 1) * TILE_PX, y: (haut + LIFT_TUILES) * TILE_PX })
+            this.gueulesLogiques.push({ x: (tx + 1) * TILE_PX, y: (ty + 0.5) * TILE_PX })
             n = this.poser(this.cave, n, JOUR_KEY, tx, haut - 1, strate + ySortDepth(ty, TILE_PX, TIE_JOUR),
               lum.ciel, lum.couleurDuJour, Phaser.BlendModes.SCREEN)
             n = this.poser(this.cave, n, ARCHE_JOUR_KEY, tx, haut, strate + ySortDepth(ty, TILE_PX, TIE_ARCHE),
@@ -741,8 +746,20 @@ export class EtageLayer {
     this.poserLaRoche()
     // ② LE VOILE, et ⑧ ce qui bouge. Le voile s'ouvre sur le COMPLÉMENT du masque : là où rien
     // ne surplombe, il n'y a pas de cave à assombrir — c'est le dehors, et il a déjà sa nuit.
-    this.veil?.update(lum, this.gueulesPx, camera, this.trouees, this.nTrouees)
+    // …SAUF QUAND LE CHAMP DE LA GI COMPOSE (LG-R3, LG-R20) : la RT du voile se tait, le champ porte le
+    // noir et les lumières (`ChampGpu`, `CreuxGi`) ; restent ici la braise, la chaleur et la nappe du
+    // jour — qui passe au-dessus du champ et lit son jour, au lift de l'étage du regard (LG-R14).
+    this.veil?.update(
+      lum, this.gueulesPx, camera, this.trouees, this.nTrouees,
+      this.champCompose ? { lift: palierDUneSalle(this.niveauDuRegard) * LIFT_TUILES * TILE_PX } : null,
+    )
     this.fx?.update(dtMs, true, this.tuilesVues, this.gueulesVues, lum.ciel)
+  }
+
+  /** Les trouées du masque — le COMPLÉMENT de la roche, en rangées DESSINÉES — telles que le voile s'y
+   *  ouvre ; le champ de la GI les repeint dans son plancher (LG-R3, `CreuxGi.trouees`, en logique). */
+  masqueOuvert(): { readonly trouees: readonly BandeDeMasque[]; readonly nTrouees: number } {
+    return { trouees: this.trouees, nTrouees: this.nTrouees }
   }
 
   /**
@@ -905,7 +922,8 @@ export class EtageLayer {
     // les deux paliers éclairent — et la lumière descend par elle d'un seul tenant. Chaque rangée
     // dessinée lit donc le champ à SON point logique, du centre de la tuile du haut (rang 0) au
     // centre de la sienne (le tablier). Au palier 0, le quad la couvre à sa place dessinée, comme le sol.
-    const armee = bas >= 1 && this.champCompose
+    // …et jamais depuis un creux (LG-R3) : le quad y est celui de la cave, levé au-dessus de tout.
+    const armee = bas >= 1 && this.champCompose && !this.souterrain
     const teinte = bas >= 1 && !armee ? this.teinte : 0xffffff
     for (let rang = 0; rang < RAMPE_RANGEES; rang++) {
       // rang 0 = le haut (contre la surface liftée), le dernier = le tablier sur le sol du bas.

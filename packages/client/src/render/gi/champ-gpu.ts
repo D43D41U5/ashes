@@ -58,6 +58,53 @@ export interface SourceGi {
   readonly force: number
   /** Le palier du sol de la source (`palierDuSol`, `niveauDuCorps`) — 0 absent. */
   readonly palier?: number
+  /**
+   * LA COULEUR de la source à force 1 (LG-R20) : la teinte du feu (`GI.TEINTE_FEU`) quand elle manque —
+   * un feu, une torche. Le jour d'une gueule est à la couleur de l'heure (`couleurDuJour`), et c'est
+   * la seule source qui n'est pas une flamme : chaque émetteur porte donc SA teinte (`uSrcRgb`).
+   */
+  readonly rgb?: readonly [number, number, number]
+  /**
+   * LE JOUR D'UNE GUEULE (LG-R20) : pas une flamme — la loi des anneaux de la sim, Tchebychev à la PAIRE
+   * (`demiPx` de demi-largeur autour de `worldX`), linéaire jusqu'à la portée, à sa force propre ; et ses
+   * rayons vont au disque posé contre la fente, à (`cibleDx`, `cibleDy`) px de (`worldX`, `worldY`) —
+   * `sourceDUnePorte`. En px monde, comme le reste ; voir `Emetteur.jour`.
+   */
+  readonly jour?: { readonly demiPx: number; readonly cibleDx: number; readonly cibleDy: number }
+}
+
+/**
+ * ═══ UN CREUX (LG-R3, LG-R20) — le champ SOUS LA ROCHE ═══
+ *
+ * Dedans, le plancher n'est plus le voile de nuit (un Mn PLAT par canal) : c'est le NOIR de la cave,
+ * ouvert autour du corps par le PRÈS et le SOUFFLE, et les trouées du masque où le dehors garde SA
+ * nuit — ce que `cave-veil.ts` peignait à l'écran avec ses brosses, et que le champ peint désormais
+ * dans SA texture `gi-mn`, au grain, avec LES MÊMES brosses (`render/cave-brosses.ts` : une loi, deux
+ * lecteurs). Les lumières, elles — le jour d'une gueule, la torche, le bivouac —, sont des
+ * ÉMETTEURS du champ, et apprennent l'ombre de la roche comme le feu (planche 28).
+ *
+ * TOUT EST LOGIQUE ICI (LG-R14) : `joueur` et les rangées des trouées sont en px et en tuiles de la
+ * grille de la sim ; `lift` dit de combien la salle est DESSINÉE plus haut (`p × LIFT_TUILES` rangées,
+ * `palierDUneSalle`), et c'est le quad qui remonte, pas la grille.
+ */
+export interface CreuxGi {
+  /** Le lift de l'étage en px monde : la salle se dessine `lift` px plus haut que sa tuile logique. */
+  readonly lift: number
+  /** Le noir de la cave (`NOIR`) et l'alpha de son voile (`NOIR_ALPHA`) : uniforme sans joueur ; avec
+   *  un joueur le plancher est OPAQUE et le près l'ouvre à `1 − alphaVoile` autour du corps. */
+  readonly noir: number
+  readonly alphaVoile: number
+  /** Le multiplicateur de la nuit du DEHORS, par canal, peint dans les trouées : la surface qu'on
+   *  voit par la trouée garde sa nuit (`multiplicateurParCanal(voileDeNuit)`). */
+  readonly nuit: readonly [number, number, number]
+  /** Le joueur en px monde LOGIQUES — le près et le souffle s'y centrent ; `null` : voile uniforme. */
+  readonly joueur: { readonly x: number; readonly y: number } | null
+  /** Les bandes ouvertes du masque (`EtageLayer`, rangée LOGIQUE `r`, colonnes `a`…`b` incluses). */
+  readonly trouees: readonly { readonly r: number; readonly a: number; readonly b: number }[]
+  readonly nTrouees: number
+  /** Les brosses, une cellule par texel : le près (`ensurePres`), le souffle (`SOI_KEY`, `SOI_PIC`). */
+  readonly pres: { readonly side: number; readonly alpha: Float32Array }
+  readonly soi: { readonly side: number; readonly alpha: Float32Array; readonly pic: number }
 }
 
 /**
@@ -297,7 +344,12 @@ uniform vec4 uSrc[${GI.MAX_SOURCES}];
 // La hauteur de la flamme de chaque source, en texels au-dessus du palier 0 (LG-R14, \`Emetteur.z\`).
 uniform float uSrcZ[${GI.MAX_SOURCES}];
 uniform float uNb;
-uniform vec3 uTeinte;
+// La couleur de chaque source, DÉJÀ multipliée par sa force (\`Emetteur.rgb\`) : le feu et la torche à la
+// teinte du feu, le jour d'une gueule à la couleur de l'heure (LG-R20).
+uniform vec3 uSrcRgb[${GI.MAX_SOURCES}];
+// LE JOUR D'UNE GUEULE (LG-R20) : x = la demi-largeur de la paire en texels (< 0 : une flamme, la loi
+// d'en dessous ne s'applique pas) ; yz = où vont les rayons, depuis le centre — le disque contre la fente.
+uniform vec3 uSrcJour[${GI.MAX_SOURCES}];
 uniform vec2 uMotif[16];
 uniform float uTailleSource;
 uniform float uPic;
@@ -415,14 +467,26 @@ void main() {
   for (int k = 0; k < ${GI.MAX_SOURCES}; k++) {
     if (float(k) >= uNb) break;
     vec4 s = uSrc[k];
-    float f = uPic * profil(distance(p, s.xy) / s.z) * s.w;
+    vec3 j = uSrcJour[k];
+    float f;
+    vec2 cible = s.xy;
+    if (j.x >= 0.0) {
+      // LE JOUR (LG-R20) : l'anneau de la sim — Tchebychev à la paire, nul sur sa largeur, linéaire jusqu'à
+      // la portée, à sa force propre (le pic du feu est celui d'un trou de voile, pas du jour) ; ses rayons
+      // vont au disque posé contre la fente (\`sourceDUnePorte\`), et non au centre de la paire.
+      vec2 e = abs(p - s.xy);
+      f = max(0.0, 1.0 - max(max(0.0, e.x - j.x), e.y) / s.z) * s.w;
+      cible = s.xy + j.yz;
+    } else {
+      f = uPic * profil(distance(p, s.xy) / s.z) * s.w;
+    }
     if (f <= 0.0) continue;
     float vus = 0.0;
     for (int m = 0; m < 16; m++) {
-      if (!bloque(p, s.xy + uMotif[m] * uTailleSource, z0, uSrcZ[k])) vus += 1.0;
+      if (!bloque(p, cible + uMotif[m] * uTailleSource, z0, uSrcZ[k])) vus += 1.0;
     }
     if (vus <= 0.0) continue;
-    acc += uTeinte * (f * vus / 16.0);
+    acc += uSrcRgb[k] * (f * vus / 16.0);
   }
   gl_FragColor = vec4(min(acc, vec3(1.0)), ombreDAstre(t));
 }`
@@ -635,6 +699,11 @@ uniform sampler2D uRebond;
 uniform sampler2D uDrapeau;
 uniform float uPlafond;
 uniform vec3 uMn;
+// SOUS LA ROCHE (LG-R3, LG-R20) : le plancher n'est plus plat — \`gi-mn\`, au grain, porte le noir de la
+// cave ouvert par le près et le souffle, et la nuit du dehors dans les trouées (voir \`CreuxGi\`).
+// \`uMnMode\` > 0,5 : on le lit là ; sinon \`uMn\`, le voile de nuit par canal.
+uniform sampler2D uMnTex;
+uniform float uMnMode;
 // La force de l'ombre d'astre (SHADOW_ALPHA × forceDeLOmbre, nulle à la nouvelle lune).
 uniform float uA;
 ${VALEUR_LUMIERE}
@@ -653,7 +722,8 @@ void main() {
   // ce qui garde LG-A2 intact (l'oracle compare gi-champ a L) sans passe ni texture de plus.
   // Et LE PLANCHER SE CREUSE D'ABORD : Mn × (1 - a × S), l'ombre que l'astre retire au voile avant
   // que la lumière ne la comble. C'est \`composerM\` de l'oracle, terme pour terme.
-  vec3 plancher = uMn * (1.0 - uA * s);
+  vec3 mn = uMnMode > 0.5 ? texture2D(uMnTex, uvCible(t)).rgb : uMn;
+  vec3 plancher = mn * (1.0 - uA * s);
   gl_FragColor = vec4(1.0 - (1.0 - plancher) * (1.0 - l), 1.0);
 }`
 
@@ -737,6 +807,10 @@ export class ChampGpu {
   private uSrc = new Float32Array(GI.MAX_SOURCES * 4)
   /** La hauteur de la flamme de chaque source, en texels au-dessus du palier 0 (LG-R14, `Emetteur.z`). */
   private uSrcZ = new Float32Array(GI.MAX_SOURCES)
+  /** La couleur × la force de chaque source (`Emetteur.rgb`, LG-R20) — ce que le direct accumule. */
+  private uSrcRgb = new Float32Array(GI.MAX_SOURCES * 3)
+  /** Le jour d'une gueule (LG-R20) : (demi-largeur, cible − centre) en texels ; x < 0 pour une flamme. */
+  private uSrcJour = new Float32Array(GI.MAX_SOURCES * 3)
   private uNb = 0
   /** La borne de marche du direct, en pas du raster 2× — recalculée par image avec les sources. */
   private uPasMaxDirect = 0
@@ -753,6 +827,18 @@ export class ChampGpu {
    * exactement le champ qu'elle lisait avant, sans sixième passe et sans seconde cible.
    */
   private uMn: number[] = [0, 0, 0]
+  /**
+   * LE PLANCHER D'UN CREUX (LG-R3, LG-R20) : `gi-mn`, une texture au grain écrite sur le CPU à chaque
+   * image sous la roche — le noir de la cave, le près, le souffle, la nuit des trouées —, et lue par la
+   * somme à la place de `uMn` (`uMnMode` = 1). Hors d'un creux elle n'est ni écrite ni lue.
+   */
+  private mn: Phaser.Textures.Texture | null = null
+  private mnOctets: Uint8Array | null = null
+  /** L'alpha du noir par texel, le temps d'une image (réutilisé, jamais réalloué). */
+  private mnAlpha: Float32Array | null = null
+  private uMnMode = 0
+  /** Le creux de l'image courante — `null` au sol ; le quad se lève de son `lift`. */
+  private creux: CreuxGi | null = null
   /**
    * L'ASTRE QUI JETTE L'OMBRE (LG-R8), REÇU et jamais recalculé. `deriveDOmbre` et `forceDeLOmbre`
    * sont la loi de `scenes/world/dynamic-lighting.ts`, que `WorldScene` pousse déjà aux socles et
@@ -920,20 +1006,27 @@ export class ChampGpu {
      * scène le dit (`!souterrain`) : un chapeau a un niveau ≥ 0 sans être le sol.
      */
     auSol = niveau >= 0,
+    /** LE CREUX (LG-R3, LG-R20) : sous la roche, le plancher est `gi-mn` et le quad se lève du lift de
+     *  l'étage. `null` au sol — et un creux SANS astre : sous la roche il n'y a pas de ciel. */
+    creux: CreuxGi | null = null,
   ): void {
     const n = Math.max(1, Math.min(PASSES_GI, Math.floor(passes)))
     const v = cam.worldView
     const tDebut = performance.now()
     const T = LUMIERE.TEXELS_PAR_TUILE
+    // LA FENÊTRE EST LOGIQUE (LG-R14) : la caméra regarde des px DESSINÉS, et dans un creux la salle
+    // est dessinée `lift` px plus haut que sa tuile — ce que la vue montre en `v.y` est la rangée
+    // logique `(v.y + lift) / TILE_PX`. Le quad, lui, se pose `lift` px plus haut (ci-dessous).
+    const lift = creux?.lift ?? 0
     const x0 = Math.floor(v.x / TILE_PX) - GI.MARGE_TUILES
-    const y0 = Math.floor(v.y / TILE_PX) - GI.MARGE_TUILES
+    const y0 = Math.floor((v.y + lift) / TILE_PX) - GI.MARGE_TUILES
     // La fenêtre s'alloue par PALIERS et ne rétrécit JAMAIS. `floor` et `ceil` franchissent leurs
     // seuils séparément : une caméra qui glisse ferait osciller la taille d'une tuile, et chaque
     // oscillation détruirait neuf textures et sept shaders — puis, `destroy` effaçant l'empreinte,
     // reforcerait une grille entière à 39 ms. Une image sur deux, en déplacement.
     const P = GI.PALIER_TEXELS
     const besoinW = (Math.ceil((v.x + v.width) / TILE_PX) + GI.MARGE_TUILES - x0 + 1) * T
-    const besoinH = (Math.ceil((v.y + v.height) / TILE_PX) + GI.MARGE_TUILES - y0 + 1) * T
+    const besoinH = (Math.ceil((v.y + lift + v.height) / TILE_PX) + GI.MARGE_TUILES - y0 + 1) * T
     const gw = Math.max(this.gw, Math.ceil(besoinW / P) * P)
     const gh = Math.max(this.gh, Math.ceil(besoinH / P) * P)
     if (gw !== this.gw || gh !== this.gh) this.batir(gw, gh)
@@ -965,7 +1058,7 @@ export class ChampGpu {
     }
     // Les sources : en texels de la grille, les plus proches du centre de la vue d'abord.
     const cx = (v.x + v.width / 2) / PX_PAR_TEXEL - this.ox
-    const cy = (v.y + v.height / 2) / PX_PAR_TEXEL - this.oy
+    const cy = (v.y + lift + v.height / 2) / PX_PAR_TEXEL - this.oy
     const em: (Emetteur & { readonly force: number })[] = []
     for (const s of sources) {
       const x = s.worldX / PX_PAR_TEXEL - this.ox
@@ -977,7 +1070,13 @@ export class ChampGpu {
       // `hauteurDuPalier(niveauSource) + FLAMME_TEXELS`, ce que la sim pose dans `partVisible`. Dans un
       // creux la grille n'a pas de marches et cette hauteur ne rencontre rien.
       const z = (auSol ? (s.palier ?? 0) : 0) * H_PALIER + LUMIERE.FLAMME_TEXELS
-      em.push({ x, y, rayon, taille: GI.TAILLE_SOURCE, rgb: [GI.TEINTE_FEU[0] * s.force, GI.TEINTE_FEU[1] * s.force, GI.TEINTE_FEU[2] * s.force], z, force: s.force })
+      // SA COULEUR (LG-R20) : la teinte du feu à défaut — le jour d'une gueule apporte la sienne.
+      const teinte = s.rgb ?? GI.TEINTE_FEU
+      // …ET SA LOI (LG-R20) : le jour d'une gueule, converti en texels ; une flamme n'a rien à dire.
+      const jour = s.jour
+        ? { demi: s.jour.demiPx / PX_PAR_TEXEL, cible: [x + s.jour.cibleDx / PX_PAR_TEXEL, y + s.jour.cibleDy / PX_PAR_TEXEL] as const }
+        : null
+      em.push({ x, y, rayon, taille: GI.TAILLE_SOURCE, rgb: [teinte[0] * s.force, teinte[1] * s.force, teinte[2] * s.force], z, force: s.force, ...(jour ? { jour } : {}) })
     }
     em.sort((a, b) => (a.x - cx) ** 2 + (a.y - cy) ** 2 - ((b.x - cx) ** 2 + (b.y - cy) ** 2))
     this.emetteurs = em.slice(0, GI.MAX_SOURCES)
@@ -986,25 +1085,43 @@ export class ChampGpu {
       this.uSrc[k * 4] = e.x
       this.uSrc[k * 4 + 1] = e.y
       this.uSrc[k * 4 + 2] = e.rayon
-      this.uSrc[k * 4 + 3] = e.rgb[0] / GI.TEINTE_FEU[0]
+      // La force est DANS `rgb` (teinte × force, ce que l'oracle accumule) : le poids scalaire vaut 1.
+      this.uSrc[k * 4 + 3] = 1
       this.uSrcZ[k] = e.z ?? 0
+      this.uSrcRgb[k * 3] = e.rgb[0]
+      this.uSrcRgb[k * 3 + 1] = e.rgb[1]
+      this.uSrcRgb[k * 3 + 2] = e.rgb[2]
+      const j = e.jour
+      this.uSrcJour[k * 3] = j ? j.demi : -1
+      this.uSrcJour[k * 3 + 1] = j ? j.cible[0] - e.x : 0
+      this.uSrcJour[k * 3 + 2] = j ? j.cible[1] - e.y : 0
     })
-    // La borne de marche du direct : un rayon ne va jamais plus loin que le rayon de sa source,
-    // plus le disque émissif — converti en pas du raster 2×, sur les deux axes.
+    // La borne de marche du direct : un rayon ne va jamais plus loin que le rayon de sa source (plus la
+    // largeur de la paire et le décalage de sa cible, pour le jour), plus le disque émissif — converti
+    // en pas du raster 2×, sur les deux axes.
     let rMax = 0
-    for (const e of this.emetteurs) if (e.rayon > rMax) rMax = e.rayon
+    for (const e of this.emetteurs) {
+      const j = e.jour
+      const portee = e.rayon + (j ? j.demi + Math.hypot(j.cible[0] - e.x, j.cible[1] - e.y) : 0)
+      if (portee > rMax) rMax = portee
+    }
     this.uPasMaxDirect = Math.ceil(4 * (rMax + GI.TAILLE_SOURCE)) + 2
     // Mn, REÇU et jamais recalculé (LG-A5). `null` = pas de composition : à Mn = 0 la passe somme
     // rend L à l'identique, donc la vue de debug et la garde LG-A2 lisent le champ d'avant.
     this.uMn[0] = mn ? mn[0] : 0
     this.uMn[1] = mn ? mn[1] : 0
     this.uMn[2] = mn ? mn[2] : 0
+    // LE PLANCHER D'UN CREUX (LG-R3, LG-R20) : peint au grain, à chaque image sous la roche.
+    this.creux = mn ? creux : null
+    this.uMnMode = this.creux ? 1 : 0
+    if (this.creux) this.peindreLePlancherDuCreux(this.creux)
     // L'ASTRE (LG-R8, LG-R9) : `longueur` est l'étalon d'un mur (le sentinel de l'astre nul) ;
     // `longueurParHauteur` projette les cartes des arbres (`ecrireLesCartes`), chaque bande à sa
     // hauteur (`BandeGrille.hauteur`, marchée au shader) et chaque marche à la sienne (LG-R14,
     // `ombreDesMarches`). Une roche n'est pas lanceur (LG-R15). `a` nul = pas d'ombre : on n'en garde
     // aucune trace, et le masque rend zéro partout au bit.
-    this.uA = astre && astre.a > 0 ? astre.a : 0
+    // …et JAMAIS dans un creux : sous la roche il n'y a pas de ciel qui porte une ombre.
+    this.uA = astre && astre.a > 0 && !creux ? astre.a : 0
     this.astre =
       this.uA > 0
         ? {
@@ -1051,8 +1168,12 @@ export class ChampGpu {
       // CORPS ; il est retiré. LG-R7 ne demande pas un calque : elle demande la lumière du sol lue
       // SOUS CHAQUE PIXEL du sprite, répartie entre ses sources, chaque part passée par sa normal
       // map. Un uniforme d'écran ignore la normale, la répartition et φ — c'est la tranche D.
+      //   DANS UN CREUX (LG-R3, LG-R20), le quad se LÈVE du lift de l'étage : la grille est logique, la
+      // salle est dessinée plus haut — même geste que le corps qui s'y tient (`decalageDEtage`). Et
+      // il se pose à la profondeur du voile de cave (`CAVE_VEIL_DEPTH`, passée par la scène) : au-dessus
+      // de la salle et de sa roche, sous les lueurs ADD qui restent (braise, nappe).
       this.image
-        .setPosition(this.ox * PX_PAR_TEXEL, this.oy * PX_PAR_TEXEL)
+        .setPosition(this.ox * PX_PAR_TEXEL, this.oy * PX_PAR_TEXEL - lift)
         .setDisplaySize(gw * PX_PAR_TEXEL, gh * PX_PAR_TEXEL)
         .setDepth(depth)
         .setBlendMode(mn ? Phaser.BlendModes.MULTIPLY : Phaser.BlendModes.ADD)
@@ -1122,11 +1243,14 @@ export class ChampGpu {
     this.champ = null
     this.image?.destroy()
     this.image = null
-    for (const k of ['gi-direct', 'gi-faces', 'gi-drapeau', 'gi-rebond', 'gi-champ', 'gi-lumiere', 'gi-face-directe', 'gi-occ', 'gi-alb', 'gi-paliers', 'gi-arbres']) {
+    for (const k of ['gi-direct', 'gi-faces', 'gi-drapeau', 'gi-rebond', 'gi-champ', 'gi-lumiere', 'gi-face-directe', 'gi-occ', 'gi-alb', 'gi-paliers', 'gi-arbres', 'gi-mn']) {
       if (this.scene.textures.exists(k)) this.scene.textures.remove(k)
     }
     this.occ = null
     this.alb = null
+    this.mn = null
+    this.mnOctets = null
+    this.mnAlpha = null
     this.occOctets = null
     this.albOctets = null
     this.paliers = null
@@ -1357,7 +1481,9 @@ export class ChampGpu {
      */
     const ecartCompose = (lu: Uint8Array): EcartCible => {
       const s = this.masque()
-      if (lu.length === 0 || !s || this.uA <= 0) return vide
+      // Dans un creux, le plancher est `gi-mn` (par texel) et non `uMn` : `composerM` ne le lit pas —
+      // et il n'y a pas d'astre (`uA` = 0), la garde y est vide de toute façon.
+      if (lu.length === 0 || !s || this.uA <= 0 || this.uMnMode > 0) return vide
       let n = 0
       let somme = 0
       let sup3 = 0
@@ -1427,12 +1553,19 @@ export class ChampGpu {
     this.alb = tex.addUint8Array('gi-alb', this.albOctets, gw * 2, gh * 2)
     // Les marches (LG-R14), au grain : une tuile porte un seul palier, le raster 2× n'y ajouterait rien.
     this.paliers = tex.addUint8Array('gi-paliers', this.paliersOctets, gw, gh)
+    // LE PLANCHER D'UN CREUX (LG-R3, LG-R20), au grain, alpha 255 : Mn y est déjà COMPOSÉ sur le CPU
+    // (le noir × son alpha + (1 − alpha), la nuit du dehors dans les trouées), la somme le lit tel quel.
+    this.mnOctets = new Uint8Array(gw * gh * 4)
+    new Uint32Array(this.mnOctets.buffer).fill(0xffffffff)
+    this.mnAlpha = new Float32Array(gw * gh)
+    this.mn = tex.addUint8Array('gi-mn', this.mnOctets, gw, gh)
     // NEAREST une fois pour toutes (LG-R2) : `setFilter` téléverse la texture entière (Phaser 4.2,
     // `setTextureFilter` → `update`), et `TextureSource.update()` garde ensuite le filtre du wrapper —
     // le remettre à chaque écriture doublait l'upload du changement de fenêtre.
     this.occ?.setFilter(NEAREST)
     this.alb?.setFilter(NEAREST)
     this.paliers?.setFilter(NEAREST)
+    this.mn?.setFilter(NEAREST)
     // LA CIBLE DES CARTES (LG-R8), au grain — bâtie AVANT la passe 1, qui la lie par sa clé. Une
     // texture-canvas comme `gi-occ` : l'oracle la rastérise, `ecrireLesCartes` la téléverse.
     this.arbres = tex.createCanvas('gi-arbres', gw, gh)
@@ -1476,7 +1609,7 @@ export class ChampGpu {
     }
     if (k === 1) {
       this.direct = mk('gi-direct', FRAG_DIRECT, gw, gh, ['gi-occ', 'gi-arbres', 'gi-paliers'], 'gi-direct', () => ({
-        uOcc: 0, uArbres: 1, uPaliers: 2, uSrc: this.uSrc, uSrcZ: this.uSrcZ, uNb: this.uNb, uTeinte: [GI.TEINTE_FEU[0], GI.TEINTE_FEU[1], GI.TEINTE_FEU[2]],
+        uOcc: 0, uArbres: 1, uPaliers: 2, uSrc: this.uSrc, uSrcZ: this.uSrcZ, uSrcRgb: this.uSrcRgb, uSrcJour: this.uSrcJour, uNb: this.uNb,
         uMotif: this.uMotif, uTailleSource: GI.TAILLE_SOURCE, uPic: HOLE_ERASE_PEAK,
         uPasMax: this.uPasMaxDirect,
         uOmbre: this.uOmbre, uPasOmbre: this.uPasOmbre, uHauteurMarche: this.hauteurMarche,
@@ -1497,8 +1630,9 @@ export class ChampGpu {
         uPasMax: 4 * GI.PORTEE_REBOND + 2,
       }))
     } else if (k === 5) {
-      this.champ = mk('gi-somme', FRAG_SOMME, gw, gh, ['gi-occ', 'gi-direct', 'gi-rebond', 'gi-drapeau'], 'gi-champ', () => ({
-        uOcc: 0, uDirect: 1, uRebond: 2, uDrapeau: 3, uPlafond: GI.PLAFOND_REBOND, uMn: this.uMn,
+      this.champ = mk('gi-somme', FRAG_SOMME, gw, gh, ['gi-occ', 'gi-direct', 'gi-rebond', 'gi-drapeau', 'gi-mn'], 'gi-champ', () => ({
+        uOcc: 0, uDirect: 1, uRebond: 2, uDrapeau: 3, uMnTex: 4, uPlafond: GI.PLAFOND_REBOND, uMn: this.uMn,
+        uMnMode: this.uMnMode,
         uA: this.uA,
       }))
       // Le quad du champ : ADD pour le REGARD (tranche B), MULTIPLY quand il COMPOSE (LG-R5) —
@@ -1518,6 +1652,89 @@ export class ChampGpu {
         uOcc: 0, uDirect: 1,
       }))
     }
+  }
+
+  /**
+   * ═══ LE PLANCHER D'UN CREUX, PEINT AU GRAIN (LG-R3, LG-R20) ═══
+   *
+   * Ce que `CaveVeil.update` peignait à l'écran, mot pour mot, mais dans la grille : le noir OPAQUE
+   * (ou à `alphaVoile` sans joueur), les trouées du masque où le dehors garde SA nuit, puis le PRÈS qui
+   * ouvre le noir à `1 − alphaVoile` autour du corps et le SOUFFLE (`SOI_PIC`) — deux effacements, avec
+   * les MÊMES brosses (`render/cave-brosses.ts`, une cellule par texel, NEAREST : la brosse à l'écran
+   * se dessinait à 4 px monde la cellule, soit un texel). Les lumières ne sont PLUS effacées ici :
+   * le jour, la torche, le bivouac sont des émetteurs du champ, et c'est la loi LG-R5 qui les compose.
+   *
+   * Un effacement est `alpha ×= 1 − brosse` (le mode ERASE du voile : dst × (1 − src.a)) ; Mn en sort
+   * COMPOSÉ comme le MULTIPLY d'une couleur `noir` à cet alpha : `noir × alpha + (1 − alpha)`.
+   */
+  private peindreLePlancherDuCreux(c: CreuxGi): void {
+    if (!this.mn || !this.mnOctets || !this.mnAlpha) return
+    const gw = this.gw
+    const gh = this.gh
+    const A = this.mnAlpha
+    A.fill(c.joueur ? 1 : c.alphaVoile)
+    // LES TROUÉES : là où rien ne surplombe, le voile s'ouvre ENTIÈREMENT — et le dehors garde sa
+    // nuit, peinte à la place (le voile de nuit se tait quand le champ compose).
+    const T = LUMIERE.TEXELS_PAR_TUILE
+    for (let i = 0; i < c.nTrouees; i++) {
+      const t = c.trouees[i]!
+      const j0 = t.r * T - this.oy
+      const i0 = t.a * T - this.ox
+      const i1 = (t.b + 1) * T - this.ox
+      for (let j = Math.max(0, j0); j < Math.min(gh, j0 + T); j++) {
+        for (let k = Math.max(0, i0); k < Math.min(gw, i1); k++) A[j * gw + k] = -1
+      }
+    }
+    const effacer = (b: { readonly side: number; readonly alpha: Float32Array }, wx: number, wy: number, force: number): void => {
+      if (force <= 0.002) return
+      const f = Math.min(1, force)
+      const cells = (b.side - 1) / 2
+      // Le centre de la brosse en texels de grille (continu) ; la cellule `i` couvre
+      // [cx − side/2 + i, +1) — un texel prend la cellule qui contient son centre (NEAREST).
+      const cx = wx / PX_PAR_TEXEL - this.ox
+      const cy = wy / PX_PAR_TEXEL - this.oy
+      const k0 = Math.max(0, Math.floor(cx - cells - 0.5))
+      const k1 = Math.min(gw - 1, Math.ceil(cx + cells + 0.5))
+      const j0 = Math.max(0, Math.floor(cy - cells - 0.5))
+      const j1 = Math.min(gh - 1, Math.ceil(cy + cells + 0.5))
+      for (let j = j0; j <= j1; j++) {
+        const bj = Math.floor(j + 0.5 - (cy - b.side / 2))
+        if (bj < 0 || bj >= b.side) continue
+        for (let k = k0; k <= k1; k++) {
+          const bi = Math.floor(k + 0.5 - (cx - b.side / 2))
+          if (bi < 0 || bi >= b.side) continue
+          const a = A[j * gw + k]!
+          if (a < 0) continue
+          A[j * gw + k] = a * (1 - f * b.alpha[bj * b.side + bi]!)
+        }
+      }
+    }
+    if (c.joueur) {
+      effacer(c.pres, c.joueur.x, c.joueur.y, 1 - c.alphaVoile)
+      effacer(c.soi, c.joueur.x, c.joueur.y, c.soi.pic)
+    }
+    const O = this.mnOctets
+    const nr = (c.noir >> 16) & 0xff
+    const ng = (c.noir >> 8) & 0xff
+    const nb = c.noir & 0xff
+    const tr = Math.round(Math.min(1, c.nuit[0]) * 255)
+    const tg = Math.round(Math.min(1, c.nuit[1]) * 255)
+    const tb = Math.round(Math.min(1, c.nuit[2]) * 255)
+    for (let k = 0; k < gw * gh; k++) {
+      const a = A[k]!
+      if (a < 0) {
+        O[k * 4] = tr
+        O[k * 4 + 1] = tg
+        O[k * 4 + 2] = tb
+      } else {
+        const u = 1 - a
+        O[k * 4] = Math.round(nr * a + 255 * u)
+        O[k * 4 + 1] = Math.round(ng * a + 255 * u)
+        O[k * 4 + 2] = Math.round(nb * a + 255 * u)
+      }
+      O[k * 4 + 3] = 255
+    }
+    this.mn.source[0]?.update()
   }
 
   /** Les deux textures-canvas au double du grain, depuis la grille de la sim. */

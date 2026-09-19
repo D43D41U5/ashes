@@ -111,7 +111,7 @@ export interface CorpsPourLeShader {
   lift: number
   /** 1 si `c.ciel` — un corps sous le ciel seul (un toit) : ni lumière ni ombre du champ, le plancher et l'astre entiers. */
   ciel: number
-  /** `CorpsPose.sol` (LG-R14) : 0 un corps, 1 `tuile`, 2 `pied`, 3 `piedSousLeVoile` — voir `UNIFORMES_CORPS.sol`. */
+  /** `CorpsPose.sol` (LG-R14) : 0 un corps, 1 `tuile`, 2 `pied`, 3 `piedSousLeVoile`, 4 `lueur` — voir `UNIFORMES_CORPS.sol`. */
   sol: number
 }
 
@@ -390,9 +390,13 @@ export function desarmerLeCorps(sprite: Phaser.GameObjects.Image): void {
  * OÙ une image de sol lit le champ : `lift` — sous le pixel, `lift` px sous sa place dessinée (une part
  * de terrasse, une écume) ; `pied` — à cette ligne, en px monde LOGIQUES, sur toute sa hauteur (une
  * paroi, une rampe levée, une chute) ; `sousLeVoile` — la même, pour une image de STRATE 0 que le quad
- * multiplie déjà (`CorpsPose.sol`, `sol-du-corps.ts`).
+ * multiplie déjà (`CorpsPose.sol`, `sol-du-corps.ts`) ; `lueur` — une nappe de jour AU-DESSUS du quad
+ * (LG-R20), qui lit la luminance de `L` sous le pixel, `lift` px sous sa place dessinée.
  */
-export type SolDuChamp = { readonly lift: number } | { readonly pied: number; readonly sousLeVoile?: boolean }
+export type SolDuChamp =
+  | { readonly lift: number }
+  | { readonly pied: number; readonly sousLeVoile?: boolean }
+  | { readonly lueur: true; readonly lift: number }
 
 /**
  * LA POSE de chaque image de sol armée, pour la garde (LG-A8, dev seulement) — le pendant du
@@ -415,7 +419,11 @@ const POSES_DU_SOL = new WeakMap<Phaser.GameObjects.Image, CorpsPose>()
  */
 export function armerLeSol(image: Phaser.GameObjects.Image, sol: SolDuChamp): void {
   const sac = armerLeCorps(image)
-  if ('lift' in sol) {
+  if ('lueur' in sol) {
+    sac.sol = 4
+    sac.lift = sol.lift
+    sac.pied = 0
+  } else if ('lift' in sol) {
     sac.sol = 1
     sac.lift = sol.lift
     sac.pied = 0
@@ -429,7 +437,7 @@ export function armerLeSol(image: Phaser.GameObjects.Image, sol: SolDuChamp): vo
     POSES_DU_SOL.set(
       image,
       'lift' in sol
-        ? { x: image.x, y: image.y + sol.lift, arete: 0, lift: sol.lift, sol: 'tuile' }
+        ? { x: image.x, y: image.y + sol.lift, arete: 0, lift: sol.lift, sol: 'lueur' in sol ? 'lueur' : 'tuile' }
         : { x: image.x, y: sol.pied, arete: 0, sol: sol.sousLeVoile === true ? 'piedSousLeVoile' : 'pied' },
     )
   }

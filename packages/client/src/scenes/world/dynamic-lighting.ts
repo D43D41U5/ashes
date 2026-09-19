@@ -16,6 +16,13 @@
  * N'affecte QUE les objets en `setLighting(true)` (arbres, nœuds, décor volumique). Actif par
  * défaut ; le panneau debug (DEV) peut le couper (`update(active=false)`) pour retomber sur
  * l'ancien rendu à plat — utile pour comparer, jamais le mode nominal.
+ *
+ * ═══ DEPUIS LA BASCULE (spec `lumiere-globale.md`, LG-R3, 2026-09-19) ═══
+ * Quand le champ de la GI COMPOSE (`debugGi` ≥ `PASSES_GI` — le défaut), les feux, les torches et
+ * les gueules ne sont plus des lumières Light2D : `WorldScene` passe des listes VIDES, le champ porte
+ * leur lumière (au sol par le quad, sur les corps par la passe des corps, LG-R7). Restent ici le
+ * soleil, la lune et l'ambiante, pour ce qui n'est pas armé (les pierres d'un POI, les FX). Sous
+ * `debugGi = 0`, la pile d'avant, entière — c'est l'A/B des planches et des smokes.
  */
 import type Phaser from 'phaser'
 import { fireStateAt } from '@ashes/sim'
@@ -348,7 +355,9 @@ export function couleurDuCiel(day: number): number {
   const d = Math.max(0, Math.min(1, day))
   return lerpColor(MOON_COLOR, lerpColor(GOLDEN, WHITE, d), Math.min(1, d / MOON_DAWN))
 }
-const AMBIENT_CAVE = 0x808898 // froide, à mi-hauteur : le voile fait la nuit, la torche fait l'ambre
+/** L'ambiante d'une cave — froide, à mi-hauteur : le voile fait la nuit, la torche fait l'ambre. EXPORTÉE :
+ *  la passe des corps (LG-R7) rabat le plancher d'un corps sous la roche à SA luminance (`WorldScene`). */
+export const AMBIENT_CAVE = 0x808898
 const GUEULE_MAX = 4 // gueules éclairées par image (budget du manager : 40, voir TORCHE_MAX)
 const GUEULE_INTENSITE = 0.9
 /** La source du jour à la gueule est BASSE : elle rase la salle depuis le pied de la façade. */

@@ -70,7 +70,23 @@ const prisesVoulues = args.includes('--prise')
 // `?solo` : le deep-link qui saute l'écran principal et démarre droit en Veillée
 // (voir MenuScene). Sans lui, tous les scénarios resteraient bloqués sur le menu.
 const BASE_URL = process.env.SMOKE_URL ?? (dev ? 'http://ashes.test/' : `http://localhost:${PORT}/`)
-const URL = BASE_URL.includes('?') ? BASE_URL : `${BASE_URL}?solo`
+/**
+ * `&gi=0` : LES SMOKES HORS GI TOURNENT SUR LA PILE D'AVANT (Light2D, voiles). Depuis la
+ * bascule (spec `lumiere-globale.md` LG-R3, 2026-09-19) le champ de la GI est le rendu par
+ * défaut — mais sous SwiftShader (cette machine, sans GPU) une image du champ coûte des
+ * SECONDES (MESURÉ 3 à 6 s) là où la pile d'avant en rend treize par seconde (MESURÉ le
+ * 2026-09-19, `gi=0`, à la nuit) : un scénario à boucle ÉVEILLÉE n'est plus mesurable sous le
+ * champ. Les gardes de ces scénarios sont l'étalon de la pile d'avant ; celles de la GI vivent
+ * dans les scénarios `gi*`, qui posent eux-mêmes `debugGi` (7, 5, 0 — `gi-temoin` fait l'A/B).
+ * Le paramètre n'est lu qu'en DEV (debug-bindings.ts) : en `--dev` seulement, donc ; un build
+ * de prod l'ignore et compose.
+ * ⚠ `torche` ne passe pas non plus sur la pile d'avant ICI, ce jour-là (MESURÉ le 2026-09-19,
+ * `gi=0`, `champ: null` : une attente de 0,9 s a pris 84 s et la capture de nuit n'est pas
+ * revenue en 120 s, charge 5 à 7 sur 6 cœurs) — c'est le régime « machine chargée, une image de
+ * nuit coûte des minutes » que `sprint` documente déjà, pas la bascule. À rejouer au calme.
+ */
+const GI_URL = scenario.startsWith('gi') ? '' : '&gi=0'
+const URL = (BASE_URL.includes('?') ? BASE_URL : `${BASE_URL}?solo`) + GI_URL
 
 mkdirSync(OUT, { recursive: true })
 
@@ -1532,6 +1548,13 @@ const SCENARIOS = {
           return x.getImageData(0, 0, cv.width, cv.height).data
         }
         const sprites = v.nodePool ?? [], ombres = v.nodeShadowPool ?? []
+        // LE DÉCOR SE CACHE LE TEMPS DE L'A/B (bascule LG-R3, 2026-09-19) : ses touffes sont des corps du
+        // champ, et leur part d'astre suit `forceOmbre` — au sud d'une pierre, elles s'assombriraient AVEC
+        // la coulée et la mesure les compterait (MESURÉ : 17,8 et 20 px de « profondeur » sur des pierres
+        // à touffes, 8 sur les autres). La garde veut une scène où rien d'autre ne bouge : la couche est
+        // retirée du pas (ses sprites poolés cachés), et rendue après.
+        const cl = sc.clutter
+        if (cl) { sc.clutter = null; for (const s of cl.pool ?? []) s.setVisible(false); for (const s of cl.shadowPool ?? []) s.setVisible(false) }
         const avec = grab()
         const ancien = Object.getOwnPropertyDescriptor(v, 'forceOmbre')
         Object.defineProperty(v, 'forceOmbre', { get: () => 0, set: () => {}, configurable: true })
@@ -1540,6 +1563,7 @@ const SCENARIOS = {
         for (const om of ombres) if (om?.visible && /^fx-ombre-socle-t/.test(om.texture?.key ?? '')) alphaMax = Math.max(alphaMax, om.alpha)
         if (ancien) Object.defineProperty(v, 'forceOmbre', ancien)
         else { delete v.forceOmbre; v.forceOmbre = 1 }
+        if (cl) sc.clutter = cl
         g.step(window.__T__, 0)
         let cuites = 0
         for (let t = 0; t < 3; t++) for (let k = -8; k <= 8; k++) if (sc.textures.exists(`fx-ombre-socle-t${t}-${k < 0 ? 'o' : 'e'}${Math.abs(k)}`)) cuites++

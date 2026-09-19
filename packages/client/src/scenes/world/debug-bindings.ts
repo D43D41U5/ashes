@@ -17,6 +17,7 @@
 import type { PlayerAction } from '@ashes/sim'
 import Phaser from 'phaser'
 import { getHud, setHud } from '../../hud-state'
+import { PASSES_GI } from '../../render/gi/champ-gpu'
 import { DEBUG_KEYMAP } from './keymap'
 
 /** Les crans de cadence, dans l'ordre où F4 les fait défiler. */
@@ -48,8 +49,15 @@ export function bindDebugKeys(scene: Phaser.Scene, deps: DebugDeps): void {
   // `true` — en DEV comme en prod la lumière est allumée. Le panneau P sert à l'ÉTEINDRE pour
   // comparer avec l'ancien rendu à plat, pas à l'allumer.
   setHud(scene.registry, 'debugLighting', true)
-  // Le champ de la GI se bâtit À CÔTÉ de la pile actuelle (LG-R3) : éteint tant qu'on ne l'allume pas.
-  setHud(scene.registry, 'debugGi', 0)
+  // LE CHAMP DE LA GI EST LE RENDU PAR DÉFAUT depuis la bascule (LG-R3, 2026-09-19) : la chaîne
+  // entière. Le panneau bascule à 0 — la pile d'avant (Light2D, voiles) — pour l'A/B, pas l'inverse.
+  // …SAUF QUAND L'ADRESSE LE DIT (`?gi=0`, DEV seulement) : les smokes hors GI tournent sous
+  // SwiftShader, où une image du champ coûte des SECONDES (MESURÉ 3 à 6 s) quand la pile d'avant en
+  // rend treize par seconde (MESURÉ le 2026-09-19, `gi=0`, à la nuit) — une boucle ÉVEILLÉE ne se
+  // mesure plus sous le champ. `tools/smoke.mjs` ouvre donc ces scénarios sur la pile d'avant, dont
+  // leurs gardes sont l'étalon ; les smokes de la GI (`gi-*`) posent leur compte eux-mêmes.
+  const gi = new URLSearchParams(window.location.search).get('gi')
+  setHud(scene.registry, 'debugGi', gi === null ? PASSES_GI : Math.max(0, Math.min(PASSES_GI, Math.floor(Number(gi)) || 0)))
 
   onDown(DEBUG_KEYMAP.toggle, () => {
     const on = !isOn()

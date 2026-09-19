@@ -453,9 +453,9 @@ export interface HudState {
   debugSpeed: number
   /** F5 : essai éclairage dynamique — arbres normal-mappés (decisions.md 2026-07-20). */
   debugLighting: boolean
-  /** Le champ de la GI (spec `lumiere-globale.md`, LG-R3 : « à côté de la pile actuelle, derrière un
-   *  interrupteur du panneau debug ») — le NOMBRE de passes de la chaîne GPU qui tournent : 0 éteint,
-   *  `PASSES_GI` la chaîne entière (le panneau bascule entre les deux ; une sonde peut s'arrêter avant). */
+  /** Le champ de la GI (spec `lumiere-globale.md`) — le NOMBRE de passes de la chaîne GPU qui tournent :
+   *  `PASSES_GI` la chaîne entière, LE DÉFAUT depuis la bascule (LG-R3, 2026-09-19) ; 0 rend la pile
+   *  d'avant (Light2D, voiles) pour l'A/B ; une sonde peut s'arrêter entre les deux. */
   debugGi: number
   /** Ce que l'overlay affiche — publié par WorldScene, seule à connaître le relief. */
   debugInfo: {

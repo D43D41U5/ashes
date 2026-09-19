@@ -150,6 +150,17 @@ import { garderLesCorps, type CorpsAEprouver, type VerdictCorps } from '../../re
 import type { CarteMonde } from '../../render/gi/champ-gpu'
 import { GI } from '../../render/gi/reglages'
 import { estRuban, expositionAuFeu, hauteurDeCrete, ligneDuPied, seuilDuDessus, suitLaRegleDesFaces, type CorpsPose } from '../../render/gi/sol-du-corps'
+
+/** Un Feu de l'image tel que la passe des corps le reçoit (voir `SnapshotView.feuxGi`). */
+export interface FeuGi {
+  /** Le centre de sa tuile, en px monde LOGIQUES. */
+  readonly x: number
+  readonly y: number
+  /** La portée de son trou, en px — nulle : il ne brûle pas. */
+  readonly rayon: number
+  /** De combien son sprite est dessiné plus haut que sa tuile (le lift de son palier, ou de sa salle). */
+  readonly lift: number
+}
 // `SUN_Z` SEULEMENT, et en LECTURE : c'est à cette hauteur-là que `dynamic-lighting` pose le soleil
 // ET la lune (`:385-386`), donc c'est ce qui les distingue d'un feu dans `scene.lights`. Aucun autre
 // nombre n'en vient — la position et le `z` de chaque source se lisent sur la LUMIÈRE POSÉE.
@@ -165,18 +176,6 @@ import { SUN_NORTH, SUN_Z } from './dynamic-lighting'
  * sans arête. Le `massif`, le `fire`, les sols et les toits ne sont PAS ici.
  */
 const ARETE_GI: ReadonlySet<string> = new Set(['wall', 'palissade', 'cloture', 'door', 'encadrement'])
-
-/**
- * DE COMBIEN LA LUMIÈRE D'UN FEU PEUT MONTER AU-DESSUS DE SA TUILE, en pixels monde.
- *
- * `dynamic-lighting.ts:513` pose `y = ty*TILE_PX + TILE_PX/2 − lift − FEU_LIFT` : le seul écart
- * possible est le lift de son palier (un multiple de 32, quelques étages au plus) plus les 4,8 px
- * de `FEU_LIFT`. 512 px — trente-deux tuiles — passe largement au-dessus de tout palier atteignable
- * et reste à deux ordres de grandeur du faux foyer qui a motivé cette garde (19 500 px).
- * C'est un FILET, pas un réglage : on ne calibre pas ce nombre, on s'assure qu'il ne serre jamais
- * un vrai feu.
- */
-const ECART_Y_FEU_MAX = TILE_PX * 32
 
 /** Le nœud VISÉ à portée s'éclaire d'or ; hors de portée, il se grise (G4). */
 const AIM_TINT = 0xffe9a8
@@ -1042,6 +1041,14 @@ export class SnapshotView {
    * une opacité d'une image avec une géométrie d'une autre se lit comme un tremblement.
    */
   giCiel: { readonly mn: readonly [number, number, number]; readonly a: number; readonly ambiante: number } | null = null
+  /**
+   * LES FEUX DE L'IMAGE pour la passe des corps (LG-R7, LG-R3) — poussés par `WorldScene` avec `gi`, en
+   * px LOGIQUES, la MÊME liste que les sources du champ (les Feux résolus une fois, en phase). Depuis la
+   * bascule, les feux ne sont plus des lumières Light2D quand le champ compose : la vue ne peut plus les
+   * lire sur `scene.lights`, elle les reçoit. `rayon` : la portée du trou, en px — l'étalon de « il porte
+   * jusqu'ici » ; `lift` : de combien le feu est dessiné plus haut que sa tuile.
+   */
+  feuxGi: readonly FeuGi[] = []
 
   /** LE SANG AU SOL (spec chasse C9), LE VENT (C17), LES PILES (C18). */
   blood: SnapshotMessage['blood'] = []
@@ -1876,8 +1883,6 @@ export class SnapshotView {
    * `time.now` ne bouge pas à l'intérieur d'un pas, même quand une sonde fait avancer la boucle à la main.
    */
   private feuMemo: { now: number; feu: readonly [number, number, number, number] | null } = { now: -1, feu: null }
-  /** L'avertissement « la flamme n'est pas à la hauteur que la règle croit » ne se dit qu'une fois. */
-  private flammeAvertie = false
   /**
    * LA POSE DE CHAQUE CORPS ARMÉ, GARDÉE POUR LA GARDE (LG-A8, dev seulement) — le sac du shader ne
    * porte que ce que le fragment lit (pied, crête, seuil, expo…) ; la référence, elle, veut la POSE
@@ -1926,6 +1931,15 @@ export class SnapshotView {
   }
 
   /**
+   * ARMER UN CORPS DEPUIS UNE AUTRE COUCHE (LG-R3) — le décor (`ClutterLayer`), dont les sprites ne sont
+   * pas à la vue : « l'avatar comme les autres corps », et le fouillis comme l'avatar. Le feu est celui
+   * de l'image (`feuDeLImage`), le même que pour les acteurs, les structures et les nœuds.
+   */
+  armerUnCorps(sprite: Phaser.GameObjects.Image, corps: CorpsPose): void {
+    this.poserLeCorps(sprite, corps, this.feuDeLImage())
+  }
+
+  /**
    * LE CHAMP DE L'IMAGE tel que le nœud des corps le reçoit — `null` tant que la chaîne entière n'est
    * pas posée (`texturesDesCorps` rend `null` sous `debugGi < 7`). Partagé par `poserLeChampGi` et la
    * garde : les deux doivent lire LE MÊME champ, ou la garde ne prouverait rien.
@@ -1937,7 +1951,8 @@ export class SnapshotView {
     const textures = champGpu.texturesDesCorps()
     if (textures === null) return null
     const c = champGpu.cadre
-    const s = this.sourcesDuCiel()
+    // Le feu MÉMOÏSÉ de l'image (`feuDeLImage`) : celui que chaque corps armé dans ce pas a reçu — le
+    // nœud et les sacs doivent parler du même foyer, ou la garde LG-A8 comparerait deux élections.
     return {
       textures,
       cadre: [c.x, c.y, c.gw, c.gh],
@@ -1945,8 +1960,8 @@ export class SnapshotView {
       mn: ciel.mn,
       a: ciel.a,
       ambiante: ciel.ambiante,
-      astre: s.astre,
-      feu: s.feu,
+      astre: this.sourcesDuCiel().astre,
+      feu: this.feuDeLImage() ?? [0, 0, 0, 0],
     }
   }
 
@@ -1990,29 +2005,29 @@ export class SnapshotView {
   }
 
   /**
-   * ═══ LES DEUX SOURCES, LUES SUR LA LUMIÈRE POSÉE (LG-R7) ═══
+   * ═══ LES DEUX SOURCES D'UN CORPS (LG-R7) ═══
    *
-   * *« La géométrie des lumières du jeu (position, hauteur) reste celle d'aujourd'hui. »* Donc on ne
-   * la REFAIT pas : on lit `scene.lights`, où `dynamic-lighting` a déjà posé le soleil, la lune, les
-   * feux, les torches et les gueules. Rien n'est recopié ici — ni `SUN_FAR`, ni l'azimut, ni la
-   * hauteur d'un feu : chaque source rend son `x`, son `y` et son PROPRE `z`.
-   *
-   * ⚠ **L'ASTRE EST L'EXCEPTION, ET ELLE EST MESURÉE.** Il fut d'abord « celui des deux qui BRILLE le
-   * plus » — lu sur la lumière posée, sans recopier `SUN_FAR`. Mais une élection SAUTE : au balayage
-   * du soir par dixièmes d'heure (`__gi-astre.mjs`, 2026-09-18), à 19,7 h la lune prend le soleil et
-   * la part d'astre d'une face est-ouest passait de 0,177 à 0 en UN pas (45 niveaux sur 255, albédo 1)
-   * pendant que les faces d'en face s'allumaient d'autant — quand l'ombre au sol, elle, relaie en
-   * continu (`deriveDOmbre` fond les deux astres au prorata de leur plein, et l'ombre « balaie d'un
-   * bord à l'autre en une heure de jeu au lieu de sauter »). L'astre d'un corps est donc l'ASTRE
-   * VIRTUEL de ce même relais : `cx − deriveOmbre × ASTRE_LOIN_PX`, au nord de la vue (`SUN_NORTH`),
-   * à `SUN_Z` — la dérive et la force que `WorldScene` pousse déjà à la vue pour les socles et les
-   * falaises, et UN nombre recopié (`GI.CORPS.ASTRE_LOIN_PX` = `SUN_FAR`), gardé par
-   * `sol-du-corps.test.ts` qui le relit dans la source de `dynamic-lighting.ts`. Une face et l'ombre
-   * de son mur regardent ainsi le même astre, à toute heure.
-   *
-   * LE FEU est la source non céleste la plus proche du centre de la vue : celle que le joueur regarde.
+   * *« La géométrie des lumières du jeu (position, hauteur) reste celle d'aujourd'hui. »* LE FEU vient de
+   * `feuxGi` — la liste que `WorldScene` dérive UNE fois par image pour le champ (les Feux résolus une
+   * fois, en phase), en px LOGIQUES (LG-R14) : c'est la source non céleste la plus proche du centre de la
+   * vue, celle que le joueur regarde, à la hauteur de la flamme (`GI.CORPS.HAUTEUR_FLAMME_PX` — les
+   * 9,6 px que `dynamic-lighting` donnait à un Feu, et que `suitLaRegleDesFaces` compare à la crête d'une
+   * barrière : un seul nombre, dans `reglages.ts`). Elle se lisait sur `scene.lights` ; depuis la
+   * bascule (LG-R3) les feux n'y sont plus quand le champ compose — et l'élection y avait déjà pris un
+   * essaim de lucioles pour un foyer (2026-09-18). On ne lit plus que des feux, et rien d'autre.
    * ⚠ **Une seule**, comme toute la chaîne de référence (`passe-corps.ts`, mesurée avec UN émetteur) —
    * un second foyer dans le cadre n'entre pas encore dans la part directionnelle d'un corps.
+   *
+   * ⚠ **L'ASTRE EST DÉRIVÉ, ET C'EST MESURÉ.** Il fut d'abord « celui des deux qui BRILLE le plus » — lu
+   * sur la lumière posée. Mais une élection SAUTE : au balayage du soir par dixièmes d'heure
+   * (`__gi-astre.mjs`, 2026-09-18), à 19,7 h la lune prend le soleil et la part d'astre d'une face
+   * est-ouest passait de 0,177 à 0 en UN pas (45 niveaux sur 255, albédo 1) pendant que les faces d'en
+   * face s'allumaient d'autant — quand l'ombre au sol, elle, relaie en continu (`deriveDOmbre` fond les
+   * deux astres au prorata de leur plein). L'astre d'un corps est donc l'ASTRE VIRTUEL de ce même relais :
+   * `cx − deriveOmbre × ASTRE_LOIN_PX`, au nord de la vue (`SUN_NORTH`), à `SUN_Z` — la dérive et la
+   * force que `WorldScene` pousse déjà à la vue pour les socles et les falaises, et UN nombre recopié
+   * (`GI.CORPS.ASTRE_LOIN_PX` = `SUN_FAR`), gardé par `sol-du-corps.test.ts` qui le relit dans la source
+   * de `dynamic-lighting.ts`. Une face et l'ombre de son mur regardent ainsi le même astre, à toute heure.
    */
   private sourcesDuCiel(): {
     readonly astre: readonly [number, number, number, number]
@@ -2023,77 +2038,30 @@ export class SnapshotView {
     const cy = v.y + v.height / 2
     /** Du centre du cadre à son coin : au-delà de ça plus son rayon, une source ne touche rien. */
     const demiDiagonale = Math.sqrt(v.width * v.width + v.height * v.height) / 2
-    // ═══ UN ESSAIM DE LUCIOLES EST À LA MÊME HAUTEUR QU'UN FEU — ET J'ÉLISAIS LA LUCIOLE ═══
-    //
-    // `ambient-life.ts:725` crée la source d'un essaim à `TILE_PX * 0.6`, et son commentaire le dit
-    // en toutes lettres : « la même hauteur qu'un Feu ». C'est le `z` EXACT d'un Feu
-    // (`dynamic-lighting.ts:507`). Élire « la lumière non céleste la plus proche » élisait donc un
-    // essaim aux QUATRE heures mesurées, et le shader le traitait en foyer — mesuré au balayage du
-    // 2026-09-18 : `feu` à `x = 2355,75`, une abscisse FRACTIONNAIRE, quand un feu est toujours à
-    // `tx * TILE_PX + TILE_PX / 2`, un entier. C'est ce chiffre-là qui a dénoncé l'usurpation.
-    //
-    // On n'élit donc plus par élimination : une lumière n'est un feu que si elle coïncide avec une
-    // structure `fire` que la vue CONNAÎT. Et comme `dynamic-lighting` retire la lumière d'un feu
-    // éteint (sa réconciliation de fin de boucle), la PRÉSENCE de la lumière prouve déjà que le feu
-    // brûle — ni tick ni `facteurDuFeu` n'ont à remonter jusqu'ici.
-    // abscisse de la lumière → l'ordonnée de SA tuile (px) et le lift de son palier — le même que
-    // celui du sprite du feu (`liftAEtage` sous la roche, `liftSol` sinon), pour REMONTER la lumière
-    // à sa place logique : la chaîne des corps juge tout en logique (LG-R14, `CorpsPose.lift`).
-    const foyers = new Map<number, { readonly y: number; readonly lift: number }>()
-    for (const s of this.structures) {
-      if (s.type !== 'fire') continue
-      const lift = (sousLaRoche(s) ? this.warp?.liftAEtage(s.tx + 0.5, s.ty + 0.5, s.etage) : this.warp?.liftSol(s.tx + 0.5, s.ty + 0.5)) ?? 0
-      foyers.set(s.tx * TILE_PX + TILE_PX / 2, { y: s.ty * TILE_PX + TILE_PX / 2, lift })
-    }
-    let feu: Phaser.GameObjects.Light | null = null
-    let liftFeu = 0
+    let feu: FeuGi | null = null
     let dFeu = Infinity
-    for (const l of this.scene.lights.lights) {
-      if (l.intensity <= 0) continue
-      // Les lumières célestes ne sont pas des feux — et l'astre des corps ne s'élit plus parmi elles
-      // (voir l'en-tête : il se dérive du relais de l'ombre au sol).
-      if (l.z === SUN_Z) continue
-      // DEUX CONDITIONS INDÉPENDANTES, parce qu'une seule se fait usurper : l'ancre d'un essaim
-      // dérive à chaque image et finira par tomber pile sur un `tx + 0.5`, et les deux côtés sont
-      // alors des entiers — la coïncidence serait EXACTE, pas approchée. L'ordonnée referme la
-      // porte : `dynamic-lighting:513` pose `y = ty*TILE_PX + TILE_PX/2 − lift − FEU_LIFT`, donc la
-      // lumière d'un feu est TOUJOURS au-dessus de sa tuile (jamais en dessous), d'au plus la
-      // hauteur d'un palier. Le test est asymétrique pour cette raison.
-      const foyer = foyers.get(l.x)
-      if (foyer === undefined || l.y > foyer.y + 1 || l.y < foyer.y - ECART_Y_FEU_MAX) continue
-      const d = (l.x - cx) * (l.x - cx) + (l.y - cy) * (l.y - cy)
+    for (const f of this.feuxGi) {
+      if (f.rayon <= 0) continue
+      // La distance se juge À L'ÉCRAN (le feu dessiné, `y − lift`) : c'est là que le joueur le regarde.
+      const dx = f.x - cx
+      const dy = f.y - f.lift - cy
+      const d = dx * dx + dy * dy
       // ═══ ET IL FAUT QU'IL PORTE JUSQU'ICI ═══
-      // Les deux conditions ci-dessus disent « c'est un feu » ; celle-ci dit « il compte ». Sans
-      // elle j'aurais troqué une luciole proche contre un VRAI feu à 20 767 px — toujours faux,
-      // autrement : `expositionAuFeu` rend `max(0, cosDuSud)`, un cosinus de DIRECTION sans aucune
-      // atténuation de distance, donc un foyer à mille tuiles éclaire exactement comme un foyer au
-      // pied du mur. L'étalon est le `radius` de la lumière elle-même — ce que le rendu lui a donné,
-      // pas un nombre que j'inventerais ici (mémoire `etalon-d-un-rayon-est-le-cadre`).
-      // Hors de portée, la bonne réponse est « pas de feu » (`w = 0`, donc `expo = −1`), et non
-      // « un feu, très loin » : le shader ne sait pas faire la différence.
-      if (d > (l.radius + demiDiagonale) * (l.radius + demiDiagonale)) continue
+      // Sans cette borne, un vrai feu à 20 767 px l'emporterait sur rien : `expositionAuFeu` rend
+      // `max(0, cosDuSud)`, un cosinus de DIRECTION sans atténuation de distance, donc un foyer à mille
+      // tuiles éclairerait exactement comme un foyer au pied du mur. L'étalon est la portée que le rendu
+      // lui a donnée — celle de son trou, la même que le champ (mémoire `etalon-d-un-rayon-est-le-cadre`).
+      // Hors de portée, la bonne réponse est « pas de feu » (`w = 0`, donc `expo = −1`).
+      if (d > (f.rayon + demiDiagonale) * (f.rayon + demiDiagonale)) continue
       if (d < dFeu) {
         dFeu = d
-        feu = l
-        liftFeu = foyer.lift
+        feu = f
       }
-    }
-    // ═══ LA PRÉMISSE DE LA PORTE DES FACES SE PROUVE SUR LA LUMIÈRE ÉLUE ═══
-    // `suitLaRegleDesFaces` compare la crête d'une barrière à `GI.CORPS.HAUTEUR_FLAMME_PX`, une REDITE
-    // du `z` que `dynamic-lighting` donne à un Feu. Si l'un bouge sans l'autre, la clôture changerait
-    // de camp en silence (Alexis, 2026-09-18 : « plate, sous la flamme ») — on le dit ici, en dev, une fois.
-    if (import.meta.env.DEV && feu !== null && feu.z !== GI.CORPS.HAUTEUR_FLAMME_PX && !this.flammeAvertie) {
-      this.flammeAvertie = true
-      console.warn(`[gi] la flamme du feu élu est à z = ${feu.z} px ; la règle des faces la croit à ${GI.CORPS.HAUTEUR_FLAMME_PX} (reglages.ts) — une barrière pourrait changer de camp`)
     }
     // `w = 0` dit « absente », et le shader s'en sert : pas d'astre, pas de part directionnelle —
     // ce n'est pas un zéro qui se confondrait avec « source au sol », que `facteurDeNormale` traite
     // déjà à part (`sol-du-corps.ts:339`).
     //
-    // LE FEU EST RENDU EN PX LOGIQUES (LG-R14) : la lumière est posée DESSINÉE (`y = tuile − lift −
-    // FEU_LIFT`), on lui rend le lift de sa tuile — la flamme reste à ses 4,8 px au-dessus du centre,
-    // comme au sol. C'est ce que `expositionAuFeu` et le facteur de normale confrontent à un corps
-    // dont `x`, `y` et le point lu sont logiques ; l'astre, à 2 200 px, n'a pas de palier.
     // L'ASTRE VIRTUEL DU RELAIS : la dérive de l'ombre au sol (`deriveDOmbre`, poussée par `WorldScene`
     // avec la force), ramenée en px à l'éloignement du soleil du jeu, au nord de la vue comme lui.
     // `forceOmbre` nulle (nouvelle lune, ou rendu à plat) : pas d'astre, pas de part directionnelle.
@@ -2101,7 +2069,9 @@ export class SnapshotView {
       this.forceOmbre > 0 ? [cx - this.deriveOmbre * GI.CORPS.ASTRE_LOIN_PX, cy - SUN_NORTH, SUN_Z, 1] : [0, 0, 0, 0]
     return {
       astre,
-      feu: feu === null ? [0, 0, 0, 0] : [feu.x, feu.y + liftFeu, feu.z, 1],
+      // LE FEU EN PX LOGIQUES (LG-R14), à la hauteur de sa flamme : ce que `expositionAuFeu` et le facteur
+      // de normale confrontent à un corps dont `x`, `y` et le point lu sont logiques.
+      feu: feu === null ? [0, 0, 0, 0] : [feu.x, feu.y, GI.CORPS.HAUTEUR_FLAMME_PX, 1],
     }
   }
 
