@@ -159,7 +159,11 @@ const SUITES = [
   //   dérivation par tuile, peindre « comme le bake » = copier le bake (octet pour octet), la vase
   //   de l'assec et son liseré, la crue aux deux eaux et la rive qui bouge. Suite à 1596 ;
   //   plancher inchangé (1575).
-  { nom: 'client', dir: 'packages/client', args: ['run'], plancher: 1575 },
+  // 2026-09-19 : la LUMIÈRE GLOBALE a apporté ses gardes au fil du chantier (176 tests GI, `render/gi/`,
+  //   fusionnés sur main le 19/09) sans que le plancher bouge ; puis +6 avec LA PASSE DES CORPS EN
+  //   ATTRIBUTS (`corps-gpu.test.ts` : les drapeaux empaquetés, la teinte, le GLSL sans uniforme par
+  //   sprite). Suite à 1795, plancher relevé quelques pourcents dessous.
+  { nom: 'client', dir: 'packages/client', args: ['run'], plancher: 1740 },
   { nom: 'serveur', dir: 'packages/server', args: ['run'], plancher: 36 },
   // Le banc pilote le vrai worldgen sur la carte de production : lent, et seul à porter le
   // drapeau qui ignore les erreurs non gérées (voir l'en-tête de `scenario.test.ts`).

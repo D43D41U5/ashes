@@ -860,14 +860,14 @@ export class ChampGpu {
   private albBandes: Albedo[] = []
   /**
    * ═══ LES CARTES DES ARBRES (LG-R8) ═══
-   * `gi-arbres` : la texture-canvas au grain qui porte l'ombre projetée de chaque fût et de chaque
-   * cime (`ecrireLesCartes`) ; la passe 1 la lit dans son alpha. `cartesMonde` arrive de la vue à
-   * chaque image (`poserLesCartes`), `cartes` en est la traduction en px de grille, avec la silhouette
-   * binaire — c'est ce que l'oracle lit (LG-A2, `masque()`), et c'est lui qui rastérise.
+   * `gi-arbres` : la texture d'octets au grain (comme `gi-occ`) qui porte l'ombre projetée de chaque
+   * fût et de chaque cime (`ecrireLesCartes`) ; la passe 1 la lit dans son alpha. `cartesMonde` arrive
+   * de la vue à chaque image (`poserLesCartes`), `cartes` en est la traduction en px de grille, avec la
+   * silhouette binaire — c'est ce que l'oracle lit (LG-A2, `masque()`), et c'est lui qui rastérise.
    */
-  private arbres: Phaser.Textures.CanvasTexture | null = null
-  /** L'image téléversée, réutilisée d'une image à l'autre ; `arbresVides` : la cible est à zéro. */
-  private imageArbres: ImageData | null = null
+  private arbres: Phaser.Textures.Texture | null = null
+  /** Les octets téléversés, réécrits en place d'une image à l'autre ; `arbresVides` : la cible est à zéro. */
+  private arbresOctets: Uint8Array | null = null
   private arbresVides = true
   private masqueCartes: Float32Array = new Float32Array(0)
   private readonly silhouettes: Silhouettes
@@ -963,19 +963,18 @@ export class ChampGpu {
 
   /** Le masque des cartes (1 = à l'ombre) dans l'alpha de `gi-arbres` ; `null` vide la cible. */
   private televerserLesCartes(s: Float32Array | null): void {
-    const ct = this.arbres
-    if (!ct) return
-    const w = this.gw
-    const h = this.gh
-    const ctx = ct.getContext()
-    if (!this.imageArbres || this.imageArbres.width !== w || this.imageArbres.height !== h) this.imageArbres = ctx.createImageData(w, h)
-    const D = this.imageArbres.data
-    D.fill(0)
-    if (s) for (let k = 0; k < w * h; k++) if (s[k] === 1) D[k * 4 + 3] = 255
-    ctx.putImageData(this.imageArbres, 0, 0)
-    ct.refresh()
-    // `refresh()` remet LINEAR : on reprend NEAREST à chaque écriture (mémoire du projet).
-    ct.setFilter(NEAREST)
+    const D = this.arbresOctets
+    if (!this.arbres || !D) return
+    // Tout à zéro, quatre octets d'un coup, puis l'alpha seul (l'octet haut, petit-boutiste) sous une carte.
+    new Uint32Array(D.buffer).fill(0)
+    if (s) {
+      const n = this.gw * this.gh
+      for (let k = 0; k < n; k++) if (s[k] === 1) D[k * 4 + 3] = 255
+    }
+    // Le téléversement, depuis les octets mêmes — UN seul, le filtre NEAREST posé à la naissance (`batir`)
+    // tient. MESURÉ le 2026-09-19 (`tools/__perf-gi.mjs`) : la texture-canvas d'avant en coûtait deux par
+    // image — `refresh()`, puis le `setFilter` que `refresh()` obligeait — après un `putImageData`.
+    this.arbres.source[0]?.update()
     this.arbresVides = s === null
   }
 
@@ -1256,7 +1255,7 @@ export class ChampGpu {
     this.paliers = null
     this.paliersOctets = null
     this.arbres = null
-    this.imageArbres = null
+    this.arbresOctets = null
     this.arbresVides = true
     this.gw = 0
     this.gh = 0
@@ -1566,11 +1565,13 @@ export class ChampGpu {
     this.alb?.setFilter(NEAREST)
     this.paliers?.setFilter(NEAREST)
     this.mn?.setFilter(NEAREST)
-    // LA CIBLE DES CARTES (LG-R8), au grain — bâtie AVANT la passe 1, qui la lie par sa clé. Une
-    // texture-canvas comme `gi-occ` : l'oracle la rastérise, `ecrireLesCartes` la téléverse.
-    this.arbres = tex.createCanvas('gi-arbres', gw, gh)
-    this.imageArbres = null
-    this.arbresVides = false
+    // LA CIBLE DES CARTES (LG-R8), au grain — bâtie AVANT la passe 1, qui la lie par sa clé. Des octets
+    // comme `gi-occ` : l'oracle la rastérise, `ecrireLesCartes` l'écrit en place et la téléverse.
+    // Née à zéro et téléversée telle quelle (`createUint8ArrayTexture`) : la cible est vide.
+    this.arbresOctets = new Uint8Array(gw * gh * 4)
+    this.arbres = tex.addUint8Array('gi-arbres', this.arbresOctets, gw, gh)
+    this.arbres?.setFilter(NEAREST)
+    this.arbresVides = true
   }
 
   /** La passe `k` (1 à `PASSES_GI`), dans l'ordre : chacune lit les cibles des précédentes. */

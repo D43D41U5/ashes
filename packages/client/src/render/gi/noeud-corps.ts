@@ -15,20 +15,36 @@
  * J'avais d'abord cru pouvoir tout faire dans le handler — c'était faux, et le défaut aurait été que
  * `renderNodeData` reste vide sans que rien ne le dise.
  *
- * ═══ ET POURQUOI LES SIX VALEURS NE PASSENT PAS PAR `renderOptions` ═══
+ * ═══ ET POURQUOI LES DIX VALEURS NE PASSENT PAS PAR `renderOptions` ═══
  * La route paraissait élégante : `renderOptions` traverse déjà la frontière, et `batch()` vide le lot
  * tout seul quand elles changent. Deux mesures l'abattent :
  *   · `updateRenderOptions` (`:404-459`) est une liste de SEPT champs écrite à la main — un huitième
  *     serait ignoré en silence ;
  *   · et même surchargée, `batch()` enchaîne `this.run()` **avec `this.updateShaderConfig()`**
  *     (`:719-723`) : je reconstruirais le programme de shader une fois par corps.
- * La vidange se fait donc à la main, dans `poserCorps` — et c'est l'idiome de Phaser lui-même, qui
- * appelle `this.run(currentContext)` au milieu de son propre `batch()`.
+ *
+ * ═══ NI PAR DES UNIFORMES — LES VALEURS VOYAGENT AVEC LES SOMMETS ═══
+ * La première forme les posait en uniformes et VIDAIT LE LOT à chaque corps (`poserCorps` appelait
+ * `this.run()`), un uniforme valant pour tout un draw. MESURÉ le 2026-09-19 (`tools/__perf-gi.mjs`,
+ * le monde joué à 23 h, page endormie) : 890 corps armés = 890 vidanges, 1 104 lots par image au
+ * lieu de 376, 1 358 draw calls au lieu de 1 104, le rendu CPU de 87 à 222 ms sur la VM — le coût
+ * de la GI sur le thread principal était CELUI-LÀ, pas la chaîne du champ (2,5 ms).
+ * Désormais les dix valeurs sont DEUX ATTRIBUTS DE SOMMET (`ATTRIBUTS_CORPS`, `vertexBufferLayoutAdd`)
+ * écrits par `batch()` avec la position et la teinte, et recopiés dans deux varyings : un corps
+ * s'empile dans le lot comme n'importe quel sprite éclairé, et les lots ne se coupent plus qu'au
+ * changement de texture — ce que Phaser fait déjà pour tout sprite à normal map.
+ * `batch()` est RECOPIÉ de `BatchHandlerQuad.js:696-800` plutôt qu'appelé : Phaser y écrit ses sept
+ * valeurs par sommet à des offsets consécutifs, sans connaître le pas du tampon — un `super.batch()`
+ * suivi de nos huit flottants ne peut pas s'intercaler entre les sommets.
  */
 import Phaser from 'phaser'
-import { UNIFORMES_CORPS, faireAdditionCorps } from './corps-gpu'
+import { ATTRIBUTS_CORPS, UNIFORMES_CORPS, empaqueterDrapeaux, empaqueterTeinte, faireAdditionCorps } from './corps-gpu'
 import { SANS_DESSUS, type CorpsPose } from './sol-du-corps'
 
+// ⚠ RIEN D'AUTRE DE PHASER N'EST LU AU CHARGEMENT : les tests du client (`rampe-pente.test.ts`) chargent
+// ce module à travers `cave-veil.ts` sous un `vi.mock('phaser')` qui ne fournit que ces deux coquilles.
+// `getTintAppendFloatAlpha` en avait été tiré ici — la collecte de ce test cassait. Il est recopié dans
+// `corps-gpu.ts` (`empaqueterTeinte`), pur, éprouvé.
 const BatchHandlerQuad = Phaser.Renderer.WebGL.RenderNodes.BatchHandlerQuad
 const SubmitterQuad = Phaser.Renderer.WebGL.RenderNodes.SubmitterQuad
 
@@ -140,11 +156,38 @@ export class NoeudCorpsGi extends BatchHandlerQuad {
   /** Le champ de l'image. `null` tant que `WorldScene` n'a rien posé — le nœud rend alors sans GI. */
   private champ: ChampDeLImage | null = null
 
-  /** Le corps du draw en cours. Voir `poserCorps` pour la garde de vidange. */
+  /** Le corps que `batch()` écrira dans les quatre prochains sommets — posé par `poserCorps` juste avant. */
   private corps: CorpsPourLeShader = CORPS_NEUTRE
 
+  /**
+   * LES TABLEAUX D'UNIFORMES DE L'IMAGE, EN FLOAT32 — remplis une fois par `poserChamp`, tendus tels
+   * quels à chaque sous-lot.
+   *
+   * MESURÉ (Phaser 4.2, `WebGLProgramWrapper.js:405-419` et `:485-499`) : un uniforme vectoriel est
+   * gardé dans un `Float32Array`, et `_processUniformRequest` ne pousse au GL que ce qui diffère de sa
+   * copie, terme à terme par `===`. Un `number[]` en float64 n'est JAMAIS égal à sa copie float32 dès
+   * qu'une valeur n'est pas exacte (un astre, une pénombre) : le même vecteur repartait au GL à chaque
+   * sous-lot — 791 par image à 23 h — après une allocation par sous-lot (`[...champ.astre]`). Arrondi
+   * ici une fois, il n'y va qu'au premier. La recopie de Phaser rend le partage de référence sûr.
+   */
+  private readonly uCadre = new Float32Array(4)
+  private readonly uMn = new Float32Array(3)
+  private readonly uAstre = new Float32Array(4)
+  private readonly uFeu = new Float32Array(4)
+  /** L'inverse de la caméra du contexte (`setupUniforms`), même raison — et sans allocation par sous-lot. */
+  private readonly uInvA = new Float32Array(4)
+  private readonly uInvB = new Float32Array(2)
+
   constructor(manager: Phaser.Renderer.WebGL.RenderNodes.RenderNodeManager) {
-    super(manager, { name: NOM_NOEUD } as Phaser.Types.Renderer.WebGL.RenderNodes.BatchHandlerConfig)
+    super(manager, {
+      name: NOM_NOEUD,
+      // LES DEUX ATTRIBUTS PAR SPRITE, À LA SUITE des cinq de Phaser (`defaultConfig.vertexBufferLayout`) :
+      // la fusion de config les ajoute en queue, et `batch()` ci-dessous les écrit dans cet ordre-là.
+      vertexBufferLayoutAdd: [
+        { name: ATTRIBUTS_CORPS.a, size: 4 },
+        { name: ATTRIBUTS_CORPS.b, size: 4 },
+      ],
+    } as Phaser.Types.Renderer.WebGL.RenderNodes.BatchHandlerConfig)
 
     // ─── LA SUBSTITUTION DE L'ADDITION ───
     //
@@ -180,39 +223,143 @@ export class NoeudCorpsGi extends BatchHandlerQuad {
   /** Le champ de l'image — `WorldScene` le pose une fois par image, avant le rendu des corps. */
   poserChamp(champ: ChampDeLImage | null): void {
     this.champ = champ
+    if (!champ) return
+    this.uCadre.set(champ.cadre)
+    this.uMn.set(champ.mn)
+    this.uAstre.set(champ.astre)
+    this.uFeu.set(champ.feu)
   }
 
   /**
-   * ═══ LA GARDE DE VIDANGE — LE POINT OÙ CE NŒUD SE CASSERAIT EN SILENCE ═══
-   *
-   * Les huit valeurs d'un corps sont des UNIFORMES, et un uniforme vaut pour tout le lot. Sans cette
-   * vidange, le second corps d'un lot prendrait le `pied`, la `crete` et l'`expo` du premier : deux
-   * murs voisins liraient le même texel du champ, et ça ressemblerait à un défaut du shader.
-   *
-   * `run()` rend la main tout de suite si `instanceCount === 0` (`:595`), donc l'appel est gratuit sur
-   * le premier corps. Et il est SÛR : `setCurrentBatchNode` (`RenderNodeManager.js:395-410`) ne relance
-   * un nœud que s'il CHANGE — le mien reste le courant, à zéro instance, et le `batch()` suivant le
-   * ré-arme sans double vidange.
-   *
-   * ⚠ Et l'inverse caméra n'a RIEN à repousser à la main : `setupUniforms` est appelé DANS la boucle
-   * des sous-lots de `run()` (`:622-627`), donc à chaque vidange.
+   * LE CORPS DU PROCHAIN QUAD. Le submitter l'appelle juste avant `super.run()`, qui appelle `batch()` :
+   * les quatre sommets du quad emportent ce sac (`batch`, ci-dessous). Plus de vidange ici — les
+   * valeurs sont par sommet, deux corps voisins d'un même lot lisent chacun les siennes.
    */
-  poserCorps(drawingContext: Phaser.Renderer.WebGL.DrawingContext, corps: CorpsPourLeShader): void {
-    if (this.instanceCount > 0) {
-      // ⚠ **ON VIDE AVEC LE CONTEXTE DES INSTANCES EN ATTENTE, PAS AVEC CELUI QU'ON REÇOIT.**
-      // Les instances déjà dans le lot ont été empilées contre le contexte courant À CE MOMENT-LÀ ;
-      // celui que le submitter nous tend est celui du corps SUIVANT. `setCurrentBatchNode` ne vide
-      // que sur un changement de NŒUD (`RenderNodeManager.js:397`), donc un changement de CONTEXTE
-      // sous le même nœud ne l'a pas couvert. `currentBatchDrawingContext` est précisément ce que
-      // Phaser garde pour vider lui-même (`:402`).
-      const ctx = this.manager.currentBatchDrawingContext ?? drawingContext
-      this.run(ctx)
-    }
+  poserCorps(_drawingContext: Phaser.Renderer.WebGL.DrawingContext, corps: CorpsPourLeShader): void {
     this.corps = corps
   }
 
   /**
-   * LES UNIFORMES — ceux de Phaser d'abord, les nôtres ensuite.
+   * ═══ UN QUAD DE PLUS DANS LE LOT — `BatchHandlerQuad.batch()` recopié, plus nos deux attributs ═══
+   *
+   * Mot pour mot `BatchHandlerQuad.js:696-800` (4.2.0) : le nœud courant, les options de rendu (une
+   * vidange si elles changent, puis le programme), le sous-lot par texture, la teinte secondaire
+   * empaquetée, puis les quatre sommets dans l'ordre TRIANGLE_STRIP — bas-gauche, haut-gauche,
+   * bas-droite, haut-droite —, et la vidange quand le lot est plein. La seule différence : après les
+   * sept valeurs de Phaser, chaque sommet reçoit les huit flottants du corps (`ATTRIBUTS_CORPS`), les
+   * mêmes sur les quatre — le varying est constant sur le quad, à un ulp près (voir `corps-gpu.ts`).
+   *
+   * ⚠ Le pas du tampon (`floatsPerInstance`) est CALCULÉ par Phaser depuis le layout complet, donc 15
+   * flottants par sommet ici et non 7 : c'est ce qui rend la recopie obligatoire — `super.batch()`
+   * écrirait ses 28 valeurs à la suite, et nos attributs tomberaient dans la position du sommet suivant.
+   */
+  override batch(
+    currentContext: Phaser.Renderer.WebGL.DrawingContext,
+    glTexture: Phaser.Renderer.WebGL.Wrappers.WebGLTextureWrapper,
+    x0: number,
+    y0: number,
+    x1: number,
+    y1: number,
+    x2: number,
+    y2: number,
+    x3: number,
+    y3: number,
+    texX: number,
+    texY: number,
+    texWidth: number,
+    texHeight: number,
+    tintMode: number,
+    tintTL: number,
+    tintBL: number,
+    tintTR: number,
+    tintBR: number,
+    renderOptions: Phaser.Types.Renderer.WebGL.RenderNodes.BatchHandlerQuadRenderOptions,
+    tint2TL?: number,
+    tint2BL?: number,
+    tint2TR?: number,
+    tint2BR?: number,
+  ): void {
+    if (this.instanceCount === 0) this.manager.setCurrentBatchNode(this, currentContext)
+
+    renderOptions.alphaStrategy = currentContext.alphaStrategy
+    this.updateRenderOptions(renderOptions)
+    if ((this as unknown as { _renderOptionsChanged: boolean })._renderOptionsChanged) {
+      this.run(currentContext)
+      this.updateShaderConfig()
+    }
+
+    const textureDatum = this.batchTextures(glTexture, renderOptions)
+
+    let t2TL: number
+    let t2BL: number
+    let t2TR: number
+    let t2BR: number
+    if (tint2TL === undefined) {
+      t2TL = tintMode << 24
+      t2BL = t2TL
+      t2TR = t2TL
+      t2BR = t2TL
+    } else {
+      t2TL = empaqueterTeinte(tint2TL, tintMode / 255)
+      t2BL = empaqueterTeinte(tint2BL ?? 0, tintMode / 255)
+      t2TR = empaqueterTeinte(tint2TR ?? 0, tintMode / 255)
+      t2BR = empaqueterTeinte(tint2BR ?? 0, tintMode / 255)
+    }
+
+    const buffer = this.vertexBufferLayout.buffer
+    const F = buffer.viewF32
+    const U = buffer.viewU32
+    if (F === null || U === null) return
+    const c = this.corps
+    const drapeaux = empaqueterDrapeaux(c.dresse, c.ruban, c.ciel, c.sol)
+    let o = this.instanceCount * this.floatsPerInstance
+    // Bas-gauche, haut-gauche, bas-droite, haut-droite.
+    o = this.ecrireSommet(F, U, o, x1, y1, texX, texY + texHeight, textureDatum, t2BL, tintBL, c, drapeaux)
+    o = this.ecrireSommet(F, U, o, x0, y0, texX, texY, textureDatum, t2TL, tintTL, c, drapeaux)
+    o = this.ecrireSommet(F, U, o, x3, y3, texX + texWidth, texY + texHeight, textureDatum, t2BR, tintBR, c, drapeaux)
+    this.ecrireSommet(F, U, o, x2, y2, texX + texWidth, texY, textureDatum, t2TR, tintTR, c, drapeaux)
+
+    this.instanceCount++
+    this.currentBatchEntry.count++
+    if (this.instanceCount === this.instancesPerBatch) this.run(currentContext)
+  }
+
+  /** Un sommet : les sept valeurs de Phaser, puis `inGiA` et `inGiB`. Rend l'offset suivant. */
+  private ecrireSommet(
+    F: Float32Array,
+    U: Uint32Array,
+    o: number,
+    x: number,
+    y: number,
+    u: number,
+    v: number,
+    textureDatum: number,
+    tint2: number,
+    tint: number,
+    c: CorpsPourLeShader,
+    drapeaux: number,
+  ): number {
+    F[o++] = x
+    F[o++] = y
+    F[o++] = u
+    F[o++] = v
+    F[o++] = textureDatum
+    U[o++] = tint2
+    U[o++] = tint
+    F[o++] = c.pied
+    F[o++] = c.ancreX
+    F[o++] = c.crete
+    F[o++] = c.seuil
+    F[o++] = c.expo
+    F[o++] = c.lift
+    F[o++] = drapeaux
+    F[o++] = 0
+    return o
+  }
+
+  /**
+   * LES UNIFORMES — ceux de Phaser d'abord, les nôtres ensuite. Tous PAR IMAGE : le par-sprite voyage
+   * dans les sommets (`batch`).
    *
    * `super` pose `uResolution`, `uProjectionMatrix` et, si l'éclairage est armé, tout le bloc de
    * `updateLightingUniforms` dont `uNormSampler` (`BatchHandlerQuad.js:276-306`). On n'écrase rien :
@@ -241,34 +388,29 @@ export class NoeudCorpsGi extends BatchHandlerQuad {
     // une assertion de non-nullité que `noUncheckedIndexedAccess` exigerait sinon.
     const [mva = 0, mvb = 0, mvc = 0, mvd = 0, mve = 0, mvf = 0] = camera.matrixCombined.matrix
     const det = 1 / (mva * mvd - mvb * mvc)
-    pm.setUniform(UNIFORMES_CORPS.invA, [mvd * det, -mvb * det, -mvc * det, mva * det])
-    pm.setUniform(UNIFORMES_CORPS.invB, [(mvc * mvf - mvd * mve) * det, (mvb * mve - mva * mvf) * det])
+    const invA = this.uInvA
+    invA[0] = mvd * det
+    invA[1] = -mvb * det
+    invA[2] = -mvc * det
+    invA[3] = mva * det
+    const invB = this.uInvB
+    invB[0] = (mvc * mvf - mvd * mve) * det
+    invB[1] = (mvb * mve - mva * mvf) * det
+    pm.setUniform(UNIFORMES_CORPS.invA, invA)
+    pm.setUniform(UNIFORMES_CORPS.invB, invB)
 
-    // ─── LE CHAMP DE L'IMAGE ───
+    // ─── LE CHAMP DE L'IMAGE ─── (les tableaux sont ceux de `poserChamp`, voir `uCadre`)
     pm.setUniform(UNIFORMES_CORPS.lumiere, UNITE_LUMIERE)
     pm.setUniform(UNIFORMES_CORPS.faceDirecte, UNITE_FACE_DIRECTE)
     pm.setUniform(UNIFORMES_CORPS.ombre, UNITE_OMBRE)
     pm.setUniform(UNIFORMES_CORPS.champ, UNITE_CHAMP)
-    pm.setUniform(UNIFORMES_CORPS.cadre, [...champ.cadre])
+    pm.setUniform(UNIFORMES_CORPS.cadre, this.uCadre)
     pm.setUniform(UNIFORMES_CORPS.pas, champ.pas)
-    pm.setUniform(UNIFORMES_CORPS.mn, [...champ.mn])
+    pm.setUniform(UNIFORMES_CORPS.mn, this.uMn)
     pm.setUniform(UNIFORMES_CORPS.a, champ.a)
     pm.setUniform(UNIFORMES_CORPS.ambiante, champ.ambiante)
-    pm.setUniform(UNIFORMES_CORPS.astre, [...champ.astre])
-    pm.setUniform(UNIFORMES_CORPS.feu, [...champ.feu])
-
-    // ─── LE CORPS DU DRAW ───
-    const c = this.corps
-    pm.setUniform(UNIFORMES_CORPS.pied, c.pied)
-    pm.setUniform(UNIFORMES_CORPS.ancreX, c.ancreX)
-    pm.setUniform(UNIFORMES_CORPS.crete, c.crete)
-    pm.setUniform(UNIFORMES_CORPS.seuil, c.seuil)
-    pm.setUniform(UNIFORMES_CORPS.dresse, c.dresse)
-    pm.setUniform(UNIFORMES_CORPS.ruban, c.ruban)
-    pm.setUniform(UNIFORMES_CORPS.expo, c.expo)
-    pm.setUniform(UNIFORMES_CORPS.lift, c.lift)
-    pm.setUniform(UNIFORMES_CORPS.ciel, c.ciel)
-    pm.setUniform(UNIFORMES_CORPS.sol, c.sol)
+    pm.setUniform(UNIFORMES_CORPS.astre, this.uAstre)
+    pm.setUniform(UNIFORMES_CORPS.feu, this.uFeu)
   }
 
   /**

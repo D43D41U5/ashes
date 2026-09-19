@@ -48,20 +48,27 @@
 export const SIGNE_Y_NORMALE = -1
 
 /**
- * ═══ LES UNIFORMES, ET CE QUI EST PAR IMAGE OU PAR SPRITE ═══
+ * ═══ LES UNIFORMES (PAR IMAGE) ET LES ATTRIBUTS (PAR SPRITE) ═══
  *
- * PAR IMAGE (posés une fois) : le cadre du champ, les trois samplers, le ciel, les deux sources.
- * PAR SPRITE (posés au draw, depuis `renderNodeData`) : `uGiPied`, `uGiAncreX`, `uGiCrete`, `uGiSeuil`,
- * `uGiDresse`, `uGiExpo`.
+ * PAR IMAGE, en UNIFORMES posés une fois par vidange : le cadre du champ, les quatre samplers, le
+ * ciel, les deux sources, l'inverse de la caméra.
+ * PAR SPRITE, en ATTRIBUTS DE SOMMET (`ATTRIBUTS_CORPS`, écrits par le nœud dans le tampon de
+ * sommets avec la position et la teinte, puis portés au fragment par deux varyings) : le pied,
+ * l'ancre, la crête, le seuil, l'exposition, le lift, et les quatre drapeaux empaquetés.
  *
- * ⚠ **LE PAR-SPRITE EXIGE UN DRAW PAR SPRITE.** `renderNodeData` ne va PAS au fragment — mesuré :
- * un grep sur tout `phaser/src/` ne lui trouve qu'un lecteur, et c'est une initialisation à `{}`.
- * Le nœud le relit en JS et pose les uniformes ; il doit donc VIDER SON LOT entre deux corps, sinon
- * le second prend l'`arete` du premier. La garde est dans le nœud, pas ici.
+ * ⚠ **POURQUOI DES ATTRIBUTS ET NON DES UNIFORMES — MESURÉ LE 2026-09-19.** `renderNodeData` ne va
+ * PAS au fragment (un grep sur tout `phaser/src/` ne lui trouve qu'un lecteur, une initialisation à
+ * `{}`) : le nœud le relit en JS. En uniformes, chaque corps exigeait sa propre vidange du lot — un
+ * draw call par sprite armé. Sonde `tools/__perf-gi.mjs` sur le monde joué, page endormie, 23 h :
+ * 890 corps armés = 890 vidanges, 1 104 lots au lieu de 376, 1 358 draw calls au lieu de 1 104, et le
+ * rendu CPU d'une image de 87 à 222 ms sur la VM (SwiftShader). En attributs, un corps s'empile dans
+ * le lot comme tout sprite éclairé : les lots ne se coupent plus qu'au changement de texture.
  *
- * ⚠ **ET RIEN N'EST EMPAQUETÉ.** `arete·64 + crête` aurait tenu dans un flottant et coûté un
- * `floor`/`mod` au décodage, plus une erreur de bord le jour où une crête vaudrait 64. Trois
- * `uniform1f` ne pèsent rien à côté du draw qu'on paie déjà.
+ * ⚠ **LES DRAPEAUX SONT EMPAQUETÉS, ET C'EST UNE LOI À DEUX LECTEURS.** Quatre entiers (dressé, ruban,
+ * ciel, sol ∈ 0…4) tiennent dans un flottant : `dresse + 2·ruban + 4·ciel + 8·sol` (`empaqueterDrapeaux`),
+ * et le fragment les défait par `floor` après un arrondi — un varying constant sur les quatre sommets
+ * revient à un ulp près de sa valeur, jamais exactement. `depaqueterDrapeaux` est le miroir JS du GLSL,
+ * et `corps-gpu.test.ts` tient les deux face à face sur toutes les combinaisons.
  */
 export const UNIFORMES_CORPS = {
   /** Le champ : `L`, `directFace`, et l'ombre `S` (dans `.g`, comme `FRAG_SOMME` la lit). */
@@ -79,42 +86,11 @@ export const UNIFORMES_CORPS = {
   /** Les deux sources en px MONDE, `w` = 1 si présente. `z` est la hauteur au-dessus du sol. */
   astre: 'uGiAstre',
   feu: 'uGiFeu',
-  /** PAR SPRITE — `ligneDuPied(c)`, en px monde. */
-  pied: 'uGiPied',
-  /** PAR SPRITE — `c.x` : le feu se lit au pied À L'ANCRE, pas à l'abscisse du pixel. */
-  ancreX: 'uGiAncreX',
-  /** PAR SPRITE — `hauteurDeCrete(c)` : 32 / 24 / 8 (`reglages.ts:77-89`). */
-  crete: 'uGiCrete',
-  /** PAR SPRITE — `seuilDuDessus(c)`, en px monde : un pixel de bande nord/sud ou de socle dont le
-   *  `y` est plus petit est un DESSUS. `SANS_DESSUS` pour un fût. La géométrie est calculée là-bas,
-   *  jamais recomposée ici depuis `pied`, `crete` et une demi-bande. */
-  seuil: 'uGiSeuil',
-  /** PAR SPRITE — 1 si `suitLaRegleDesFaces(c)`, sinon 0. */
-  dresse: 'uGiDresse',
-  /** PAR SPRITE — 1 si `estRuban(c)` : il est dessus sur TOUTES ses rangées, sans condition de crête. */
-  ruban: 'uGiRuban',
-  /** PAR SPRITE — `expositionAuFeu(c, feu)`, ou **−1** pour son `null` (« sous le pixel »). */
-  expo: 'uGiExpo',
-  /**
-   * PAR SPRITE — `c.lift`, en px (LG-R14) : le sprite est DESSINÉ ce lift plus haut que sa place
-   * logique. Le fragment est dessiné ; `uGiPied`, `uGiSeuil` et les sources sont logiques — le
-   * fragment se remonte de `uGiLift` avant tout jugement (`ordonneeLogique`, `sol-du-corps.ts`).
-   */
-  lift: 'uGiLift',
-  /** 1 pour un corps qui ne voit que le ciel (`CorpsPose.ciel`, un toit) : le shader ne lit pas le champ. */
-  ciel: 'uGiCiel',
   /**
    * PAR IMAGE — `gi-champ`, le `M` composé que le quad de sol multiplie (LG-R5). Un SOL le lit tel
    * quel : ce n'est pas une quatrième lecture du corps, c'est le quad lui-même, porté là où il ne va pas.
    */
   champ: 'uGiM',
-  /**
-   * PAR SPRITE — `CorpsPose.sol` : 0 un corps ; 1 `tuile` (sous le pixel, à sa place logique) ; 2 `pied`
-   * (à `uGiPied`) ; 3 `piedSousLeVoile` (`pied`, divisé par `M` à la place dessinée, que le quad
-   * multipliera) ; 4 `lueur` (LG-R20 : le texel fois la LUMINANCE de `L` sous le pixel, à sa place
-   * logique — une nappe de jour au-dessus du quad). Non nul, le fragment sort AVANT la règle des corps.
-   */
-  sol: 'uGiSol',
   /**
    * PAR IMAGE — l'inverse de `camera.matrixCombined`, les six coefficients de `getWorldPoint`
    * (`BaseCamera.js:876-914`) : `invA = (ima, imb, imc, imd)`, `invB = (ime, imf)`.
@@ -124,6 +100,82 @@ export const UNIFORMES_CORPS = {
   invA: 'uGiInvA',
   invB: 'uGiInvB',
 } as const
+
+/**
+ * ═══ LES DEUX ATTRIBUTS PAR SPRITE, ET LEURS VARYINGS ═══
+ *
+ * `a` = (`pied`, `ancreX`, `crete`, `seuil`) :
+ *   · `ligneDuPied(c)`, en px monde ;
+ *   · `c.x` — le feu se lit au pied À L'ANCRE, pas à l'abscisse du pixel ;
+ *   · `hauteurDeCrete(c)` : 32 / 24 / 8 (`reglages.ts`, `HAUTEUR_PAR_FAMILLE`) ;
+ *   · `seuilDuDessus(c)`, en px monde : un pixel de bande nord/sud ou de socle dont le `y` est plus
+ *     petit est un DESSUS ; `SANS_DESSUS` pour un fût. La géométrie est calculée là-bas, jamais
+ *     recomposée ici depuis `pied`, `crete` et une demi-bande.
+ * `b` = (`expo`, `lift`, `drapeaux`, 0) :
+ *   · `expositionAuFeu(c, feu)`, ou **−1** pour son `null` (« sous le pixel ») ;
+ *   · `c.lift`, en px (LG-R14) : le sprite est DESSINÉ ce lift plus haut que sa place logique. Le
+ *     fragment est dessiné ; le pied, le seuil et les sources sont logiques — le fragment se remonte
+ *     du lift avant tout jugement (`ordonneeLogique`, `sol-du-corps.ts`) ;
+ *   · les drapeaux (`empaqueterDrapeaux`) : `dresse` (1 si `suitLaRegleDesFaces(c)`), `ruban` (1 si
+ *     `estRuban(c)` : dessus sur TOUTES ses rangées, sans condition de crête), `ciel` (1 pour un corps
+ *     qui ne voit que le ciel — un toit, `CorpsPose.ciel` : le shader ne lit pas le champ), et `sol`
+ *     (`CorpsPose.sol` : 0 un corps ; 1 `tuile`, sous le pixel à sa place logique ; 2 `pied` ; 3
+ *     `piedSousLeVoile`, divisé par `M` à la place dessinée que le quad multipliera ; 4 `lueur`, LG-R20 :
+ *     le texel fois la LUMINANCE de `L` sous le pixel — une nappe de jour au-dessus du quad. Non nul,
+ *     le fragment sort AVANT la règle des corps) ;
+ *   · le quatrième flottant est libre.
+ *
+ * Le nom `in…` est l'attribut (le tampon de sommets), `out…` le varying (ce que le fragment lit) —
+ * la convention de `Multi.vert`. Le sommet ne fait que recopier l'un dans l'autre.
+ */
+export const ATTRIBUTS_CORPS = {
+  a: 'inGiA',
+  b: 'inGiB',
+} as const
+
+export const VARYINGS_CORPS = {
+  a: 'outGiA',
+  b: 'outGiB',
+} as const
+
+/** Les bornes de l'empaquetage : `sol` va jusqu'à 4 (`lueur`), donc trois bits ; le tout tient sous 64. */
+export const SOL_MAX = 4
+
+/**
+ * Les quatre drapeaux d'un corps dans UN flottant : `dresse + 2·ruban + 4·ciel + 8·sol`. Exact en
+ * float32 (entiers sous 64), et défait par `depaqueterDrapeaux` — le miroir de ce que le fragment fait.
+ */
+export function empaqueterDrapeaux(dresse: number, ruban: number, ciel: number, sol: number): number {
+  return dresse + 2 * ruban + 4 * ciel + 8 * sol
+}
+
+/**
+ * La teinte secondaire d'un sommet, empaquetée comme Phaser le fait — RECOPIE de
+ * `Utils.getTintAppendFloatAlpha` (`renderer/webgl/Utils.js:52-57`, 4.2.0) : l'alpha, tronqué sur un
+ * octet, en octet haut d'un Uint32 non signé, le RGB en bas. Recopiée plutôt que lue sur
+ * `Phaser.Renderer.WebGL.Utils`, parce que `noeud-corps.ts` ne doit rien tirer de Phaser au chargement
+ * hors ses deux classes de base (voir son en-tête) — et parce que c'est pur, donc éprouvable ici.
+ */
+export function empaqueterTeinte(rgb: number, a: number): number {
+  const ua = ((a * 255) | 0) & 0xff
+  return ((ua << 24) | rgb) >>> 0
+}
+
+/**
+ * Le MIROIR JS du décodage GLSL (`appliquerGi`, « les drapeaux »), pour la garde : `floor(d + 0.5)`
+ * d'abord — un varying constant sur les quatre sommets revient à un ulp près —, puis les bits par
+ * `floor` du plus fort au plus faible, exactement dans l'ordre du shader.
+ */
+export function depaqueterDrapeaux(d: number): { dresse: number; ruban: number; ciel: number; sol: number } {
+  let r = Math.floor(d + 0.5)
+  const sol = Math.floor(r / 8)
+  r -= 8 * sol
+  const ciel = Math.floor(r / 4)
+  r -= 4 * ciel
+  const ruban = Math.floor(r / 2)
+  const dresse = r - 2 * ruban
+  return { dresse, ruban, ciel, sol }
+}
 
 /**
  * ═══ LE FRAGMENT — `appliquerGi(fragColor, normal)` ═══
@@ -149,19 +201,12 @@ uniform float uGiA;
 uniform float uGiAmbiante;
 uniform vec4 uGiAstre;
 uniform vec4 uGiFeu;
-uniform float uGiPied;
-uniform float uGiAncreX;
-uniform float uGiCrete;
-uniform float uGiSeuil;
-uniform float uGiDresse;
-uniform float uGiRuban;
-uniform float uGiExpo;
-uniform float uGiLift;
-uniform float uGiCiel;
 uniform sampler2D uGiM;
-uniform float uGiSol;
 uniform vec4 uGiInvA;
 uniform vec2 uGiInvB;
+// Le PAR-SPRITE arrive par les varyings \`outGiA\` / \`outGiB\` (\`ATTRIBUTS_CORPS\`), déclarés dans
+// \`outVariables\` de l'addition — donc AVANT ce texte, comme ceux de \`Multi.frag\` — et défaits en tête
+// d'\`appliquerGi\`. Aucun uniforme par corps : c'est ce qui laisse les corps s'empiler dans un lot.
 
 // ⚠ NI \`uCamera\` NI \`uNormSampler\` NE SE DÉCLARENT ICI — \`MakeDefineLights\` les déclare déjà, et
 // le nœud DOIT le garder : c'est de lui que \`getNormalFromMap\` tire son \`uNormSampler\`. Seule
@@ -231,17 +276,17 @@ bool dansLeChamp(vec2 monde) {
 // normale ni parts. Sous le voile (mode 3), le quad multipliera encore ce pixel par \`M\` à sa place
 // dessinée : on divise d'avance, pour que le produit soit \`M(pied)\`. Le plancher 1e-3 est celui de
 // la référence — les deux chemins divisent la même chose.
-vec4 pixelDeSol(vec4 fragColor, vec2 monde, float yLog) {
+vec4 pixelDeSol(vec4 fragColor, vec2 monde, float yLog, float sol, float pied) {
   // UNE LUEUR (mode 4, LG-R20) : la luminance de \`L\` sous le pixel, aux poids de \`lumPlat\` — le décalque
   // de \`pixelDeSol\` (\`passe-corps.ts\`, branche \`lueur\`). Ni \`M\` ni parts : la nappe est du jour.
-  if (uGiSol > 3.5) {
+  if (sol > 3.5) {
     vec3 l = texture2D(uGiL, uvDuChamp(vec2(monde.x, yLog))).rgb;
     float k = clamp(dot(l, vec3(0.299, 0.587, 0.114)), 0.0, 1.0);
     return vec4(fragColor.rgb * k, fragColor.a);
   }
-  vec2 p = vec2(monde.x, uGiSol > 1.5 ? uGiPied : yLog);
+  vec2 p = vec2(monde.x, sol > 1.5 ? pied : yLog);
   vec3 m = texture2D(uGiM, uvDuChamp(p)).rgb;
-  if (uGiSol > 2.5 && dansLeChamp(monde)) m /= max(texture2D(uGiM, uvDuChamp(monde)).rgb, vec3(1.0e-3));
+  if (sol > 2.5 && dansLeChamp(monde)) m /= max(texture2D(uGiM, uvDuChamp(monde)).rgb, vec3(1.0e-3));
   return vec4(min(vec3(1.0), fragColor.rgb * m), fragColor.a);
 }
 
@@ -305,18 +350,35 @@ vec4 appliquerGi(vec4 fragColor, vec3 normalPhaser) {
   // \`uGiCadre.z\` est la LARGEUR du raster en texels : strictement positive dès qu'un champ existe.
   if (uGiCadre.z <= 0.0) return fragColor;
 
+  // LE PAR-SPRITE, DÉFAIT DES DEUX VARYINGS (\`ATTRIBUTS_CORPS\`). Les drapeaux : \`floor(d + 0.5)\`
+  // D'ABORD — un varying constant sur les quatre sommets revient à un ulp près de sa valeur —, puis
+  // les bits du plus fort au plus faible ; \`depaqueterDrapeaux\` est le miroir JS, mot pour mot.
+  float pied = outGiA.x;
+  float ancreX = outGiA.y;
+  float crete = outGiA.z;
+  float seuil = outGiA.w;
+  float expo = outGiB.x;
+  float lift = outGiB.y;
+  float drapeaux = floor(outGiB.z + 0.5);
+  float sol = floor(drapeaux / 8.0);
+  drapeaux -= 8.0 * sol;
+  float ciel = floor(drapeaux / 4.0);
+  drapeaux -= 4.0 * ciel;
+  float ruban = floor(drapeaux / 2.0);
+  float dresse = drapeaux - 2.0 * ruban;
+
   // La normale, dans LE REPÈRE DE LA LOI : +x est, +y SUD, +z haut (voir l'en-tête).
   vec3 n = vec3(normalPhaser.x, ${SIGNE_Y_NORMALE}.0 * normalPhaser.y, normalPhaser.z);
 
   vec2 monde = mondeDuFragment();
 
-  // ⓪ LA PLACE LOGIQUE DU FRAGMENT (LG-R14). Sur une terrasse le sprite est dessiné \`uGiLift\` px
-  // plus haut que sa tuile ; \`uGiPied\`, \`uGiSeuil\`, \`uGiFeu\` sont à la tuile. Sans ce pas, un mur de
+  // ⓪ LA PLACE LOGIQUE DU FRAGMENT (LG-R14). Sur une terrasse le sprite est dessiné \`lift\` px
+  // plus haut que sa tuile ; \`pied\`, \`seuil\`, \`uGiFeu\` sont à la tuile. Sans ce pas, un mur de
   // terrasse tombait TOUT ENTIER sous son seuil — un dessus de haut en bas, sans face (MESURÉ, lift 32).
-  float yLog = monde.y + uGiLift;
+  float yLog = monde.y + lift;
 
   // UN SOL (LG-R14) sort ici : ni parts, ni normale — avant la règle des corps, comme la référence.
-  if (uGiSol > 0.5) return pixelDeSol(fragColor, monde, yLog);
+  if (sol > 0.5) return pixelDeSol(fragColor, monde, yLog, sol, pied);
 
   // ① LE POINT AU SOL. Le seuil du dessus arrive CALCULÉ (\`seuilDuDessus\`, \`uGiSeuil\`) : pour une
   // bande, la crête sous le BAS DE LA BANDE ; pour un socle, sa couronne ; jamais pour un fût.
@@ -325,37 +387,39 @@ vec4 appliquerGi(vec4 fragColor, vec3 normalPhaser) {
   //
   // ⚠ **LE RUBAN EST DESSUS SUR TOUTES SES RANGÉES** (\`estDessus\` : \`estRuban(c) ? true : …\`).
   // Je l'avais perdu, et le défaut était SOURNOIS : \`expositionAuFeu\` rend \`null\` sur un ruban,
-  // donc \`uGiExpo\` vaut −1 et la branche du feu se saute — LE FEU SORTAIT JUSTE PAR ACCIDENT.
+  // donc \`expo\` vaut −1 et la branche du feu se saute — LE FEU SORTAIT JUSTE PAR ACCIDENT.
   // Mais \`p\` tombait sur le point de FACE, et le plat et l'astre lisaient le mauvais texel du
   // champ. Qui « réparerait » ça en touchant au feu déplacerait le défaut au lieu de le corriger.
-  bool dessus = uGiDresse > 0.5 && (uGiRuban > 0.5 || yLog < uGiSeuil);
-  vec2 p = dessus ? vec2(monde.x, yLog + uGiCrete) : vec2(monde.x, uGiPied);
+  bool dessus = dresse > 0.5 && (ruban > 0.5 || yLog < seuil);
+  vec2 p = dessus ? vec2(monde.x, yLog + crete) : vec2(monde.x, pied);
 
   // ② LA RÉPARTITION, au point lu — ou SANS CHAMP pour un corps qui ne voit que le ciel (un toit,
-  // \`uGiCiel\`, \`CorpsPose.ciel\`) : lumière nulle, ombre nulle, donc le plancher et l'astre entiers.
+  // \`ciel\`, \`CorpsPose.ciel\`) : lumière nulle, ombre nulle, donc le plancher et l'astre entiers.
   // Le décalque est \`passe-corps.ts\` (\`SANS_CHAMP\`) ; la garde LG-A8 tient les deux face à face.
   vec2 uvP = uvDuChamp(p);
-  bool ciel = uGiCiel > 0.5;
+  bool sousLeCiel = ciel > 0.5;
   vec3 pAstre, pFeu, pPlat;
-  partsDuCorps(ciel ? vec3(0.0) : texture2D(uGiL, uvP).rgb,
-               ciel ? vec3(0.0) : texture2D(uGiF, uvP).rgb,
-               ciel ? 0.0 : texture2D(uGiS, uvP).g,
+  partsDuCorps(sousLeCiel ? vec3(0.0) : texture2D(uGiL, uvP).rgb,
+               sousLeCiel ? vec3(0.0) : texture2D(uGiF, uvP).rgb,
+               sousLeCiel ? 0.0 : texture2D(uGiS, uvP).g,
                pAstre, pFeu, pPlat);
 
   // ③ LA PART DIRECTE DU FEU — les trois branches de \`lectureDuFeu\`, dans leur ordre.
   // Un DESSUS l'emporte sur l'orientation (LG-R16) : rien de direct n'y monte. Une face dressée
-  // lit AU PIED, à l'ANCRE du sprite — \`uGiAncreX\`, jamais \`monde.x\` : un facteur par sprite et
+  // lit AU PIED, à l'ANCRE du sprite — \`ancreX\`, jamais \`monde.x\` : un facteur par sprite et
   // par source, pas un dégradé le long de la longueur (planche 8, ratifiée).
+  // \`expo\` est −1 pour « sous le pixel » : le seuil se lit à mi-chemin (−0,5), un varying n'étant
+  // exact qu'à un ulp près — une exposition nulle (face détournée) reste une face dressée.
   if (dessus) {
     pFeu = vec3(0.0);
-  } else if (uGiExpo >= 0.0) {
-    vec2 uvPied = uvDuChamp(vec2(uGiAncreX, uGiPied));
+  } else if (expo >= -0.5) {
+    vec2 uvPied = uvDuChamp(vec2(ancreX, pied));
     vec3 aAstre, aFeu, aPlat;
     partsDuCorps(texture2D(uGiL, uvPied).rgb, texture2D(uGiF, uvPied).rgb,
                  texture2D(uGiS, uvPied).g, aAstre, aFeu, aPlat);
     // UNE SUBSTITUTION, JAMAIS UNE SOUSTRACTION (\`avecFeuDeLaFace\`) : le plat et l'astre restent
     // ceux du pixel. Soustraire est ce qui avait tourné les rubans au sarcelle.
-    pFeu = aFeu * uGiExpo;
+    pFeu = aFeu * max(expo, 0.0);
   }
 
   // ④ LES DEUX FACTEURS — au POINT LU pour les deux sources, même quand la part vient du pied
@@ -380,13 +444,20 @@ vec4 appliquerGi(vec4 fragColor, vec3 normalPhaser) {
  */
 export function faireAdditionCorps(desactivee?: boolean): {
   name: string
-  additions: { fragmentHeader: string; fragmentProcess: string }
+  additions: { vertexHeader: string; vertexProcess: string; outVariables: string; fragmentHeader: string; fragmentProcess: string }
   tags: string[]
   disable: boolean
 } {
   return {
     name: 'ApplyGiCorps',
     additions: {
+      // LES DEUX ATTRIBUTS PAR SPRITE (`ATTRIBUTS_CORPS`) : déclarés au sommet, recopiés dans leurs
+      // varyings (`outVariables` est partagé par les deux étages, comme `outInverseRotationMatrix`
+      // chez Phaser), lus au fragment. Le nœud (`noeud-corps.ts`) les écrit dans le tampon de
+      // sommets, à la suite de la position et de la teinte : l'ordre du `vertexBufferLayoutAdd`.
+      vertexHeader: `attribute vec4 ${ATTRIBUTS_CORPS.a};\nattribute vec4 ${ATTRIBUTS_CORPS.b};`,
+      vertexProcess: `${VARYINGS_CORPS.a} = ${ATTRIBUTS_CORPS.a};\n${VARYINGS_CORPS.b} = ${ATTRIBUTS_CORPS.b};`,
+      outVariables: `varying vec4 ${VARYINGS_CORPS.a};\nvarying vec4 ${VARYINGS_CORPS.b};`,
       fragmentHeader: APPLIQUER_GI,
       fragmentProcess: 'fragColor = appliquerGi(fragColor, normal);',
     },
