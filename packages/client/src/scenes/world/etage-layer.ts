@@ -48,6 +48,7 @@ import { CaveFx, type TuileDeCave } from './cave-fx'
 import { CaveVeil, FEU_CAVE_TUILES, type BandeDeMasque, type LumiereDeCave } from './cave-veil'
 import { niveauDuCorpsDessine } from './niveau-du-corps'
 import { epinglerLaTuile } from '../../render/tuile-epinglee'
+import { armerLeSol, desarmerLeSol, type SolDuChamp } from '../../render/gi/noeud-corps'
 
 /**
  * ═══ DEPUIS LES TERRASSES (spec `terrasses.md`, T-R7) : TOUT SE COMPTE DEPUIS LE PALIER DU SOL ═══
@@ -290,6 +291,13 @@ export class EtageLayer {
    * Et l'appelant la remet à blanc en rendu à plat (debug), où le voile recouvre toute la scène.
    */
   teinte = 0xffffff
+  /**
+   * LE CHAMP COMPOSE (LG-R14, posé par `WorldScene` comme `teinte`, voir `CliffLayer.champCompose`) :
+   * une RAMPE levée d'un palier lit alors le champ à sa tuile (`armerLeSol`) au lieu de la teinte
+   * plate — c'est une porte, éclairée des deux côtés. Le chapeau d'une mesa et la gueule gardent la
+   * teinte : un creux se lit à un seul niveau, et ce qu'il devient sous le champ est LG-Q2.
+   */
+  champCompose = false
 
   constructor(
     private scene: Phaser.Scene,
@@ -891,11 +899,19 @@ export class EtageLayer {
     // elle en sort et porte sa nuit elle-même — jugé au NIVEAU, jamais à la profondeur
     // (`CLIFF_DEPTH` est négatif). MESURÉ 2026-09-03 : la rampe 1→2 de la graine 2026 luisait
     // blanche à 0 h entre des parois bleues.
-    const teinte = bas >= 1 ? this.teinte : 0xffffff
+    // …ET QUAND LE CHAMP COMPOSE (LG-R14), la rampe levée est UN PLANCHER EN PENTE (planche 17,
+    // « la rampe plancher », la lecture retenue par Alexis le 2026-09-16) : en haut elle a la lumière
+    // du bord de la terrasse, en bas celle de sa tuile — la porte, que la marche n'ombre pas et que
+    // les deux paliers éclairent — et la lumière descend par elle d'un seul tenant. Chaque rangée
+    // dessinée lit donc le champ à SON point logique, du centre de la tuile du haut (rang 0) au
+    // centre de la sienne (le tablier). Au palier 0, le quad la couvre à sa place dessinée, comme le sol.
+    const armee = bas >= 1 && this.champCompose
+    const teinte = bas >= 1 && !armee ? this.teinte : 0xffffff
     for (let rang = 0; rang < RAMPE_RANGEES; rang++) {
       // rang 0 = le haut (contre la surface liftée), le dernier = le tablier sur le sol du bas.
       const y = ty - lift - (RAMPE_RANGEES - 1 - rang)
-      n = this.poser(this.rampes, n, plateauKey('rampe', cotes, rang), tx, y, depth, 1, teinte)
+      const sol: SolDuChamp | undefined = armee ? { pied: (ty + 0.5 - (RAMPE_RANGEES - 1 - rang) / (RAMPE_RANGEES - 1)) * TILE_PX } : undefined
+      n = this.poser(this.rampes, n, plateauKey('rampe', cotes, rang), tx, y, depth, 1, teinte, Phaser.BlendModes.NORMAL, sol)
     }
     return n
   }
@@ -972,6 +988,8 @@ export class EtageLayer {
   private poser(
     pool: Phaser.GameObjects.Image[], n: number, key: string, tx: number, ty: number,
     depth: number, alpha: number, teinte: number, blend: number = Phaser.BlendModes.NORMAL,
+    /** LG-R14 : où cette image lit le champ quand il compose ; absent, elle garde sa `teinte`. */
+    sol?: SolDuChamp,
   ): number {
     let img = pool[n]
     if (!img) {
@@ -994,6 +1012,9 @@ export class EtageLayer {
     // dès qu'on bouge la caméra — invisible en test, visible en jeu.
     img.setDepth(depth)
     img.setPosition(tx * TILE_PX, ty * TILE_PX)
+    // ⚠ ET L'ARMEMENT, pour la même raison : le pool des rampes sert aussi les gueules et leurs flancs.
+    if (sol !== undefined) armerLeSol(img, sol)
+    else desarmerLeSol(img)
     img.setVisible(true)
     return n + 1
   }

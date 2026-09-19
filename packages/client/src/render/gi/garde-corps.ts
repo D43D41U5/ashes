@@ -30,14 +30,16 @@ import Phaser from 'phaser'
 import { SIGNE_Y_NORMALE } from './corps-gpu'
 import type { Rgb } from './corps-ref'
 import type { ChampDeLImage } from './noeud-corps'
-import { estNonTrivial, pixelDuCorps, type CielDeLHeure, type LectureDuChamp, type SourcesDuPixel } from './passe-corps'
+import { estNonTrivial, pixelDuCorps, type CielDeLHeure, type LectureDuChamp, type PixelDuCorps, type SourcesDuPixel } from './passe-corps'
 import type { CorpsPose, Normale } from './sol-du-corps'
 
-/** Les trois cibles que les corps lisent, relues du GPU (`ChampGpu.lire`) — RGBA, rangée 0 au nord. */
+/** Les quatre cibles que les corps lisent, relues du GPU (`ChampGpu.lire`) — RGBA, rangée 0 au nord. */
 export interface TexturesLues {
   readonly lumiere: Uint8Array
   readonly faceDirecte: Uint8Array
   readonly ombre: Uint8Array
+  /** `gi-champ` — le `M` composé qu'un SOL (LG-R14) lit tel quel, sur l'octet même que le shader lit. */
+  readonly champ: Uint8Array
 }
 
 /** Un corps à éprouver : le sprite ARMÉ tel qu'il est au jeu, et la pose dont son sac dérive. */
@@ -46,11 +48,13 @@ export interface CorpsAEprouver {
   readonly pose: CorpsPose
 }
 
-/** Combien de pixels ont pris chaque branche de `lectureDuFeu` — la prémisse des trois branches. */
+/** Combien de pixels ont pris chaque branche de `lectureDuFeu` — la prémisse des trois branches — et
+ *  combien étaient un SOL (LG-R14), hors de ces branches. */
 export interface Branches {
   nul: number
   auPied: number
   sousLePixel: number
+  sol: number
 }
 
 /** UN pixel écarté, avec tout ce qui l'a composé — pour LIRE le défaut, pas seulement le compter. */
@@ -66,7 +70,7 @@ export interface PixelEcarte {
   readonly n: readonly [number, number, number]
   readonly fAstre: number
   readonly fFeu: number
-  readonly ou: 'nul' | 'auPied' | 'sousLePixel'
+  readonly ou: PixelDuCorps['ou']
 }
 
 /** L'écart d'UN corps. */
@@ -239,17 +243,19 @@ export function garderLesCorps(
     const k = (ty * gw + tx) * 4
     const L = lues.lumiere
     const F = lues.faceDirecte
+    const M = lues.champ
     return {
       light: [L[k]! / 255, L[k + 1]! / 255, L[k + 2]! / 255],
       directFace: [F[k]! / 255, F[k + 1]! / 255, F[k + 2]! / 255],
       ombre: lues.ombre[k + 1]! / 255,
+      m: [M[k]! / 255, M[k + 1]! / 255, M[k + 2]! / 255],
     }
   }
   const NOIR: LectureDuChamp = { light: [0, 0, 0], directFace: [0, 0, 0], ombre: 0 }
 
   const ecartes = { echelle: 0, rotation: 0, rognes: 0, sansTexel: 0, horsChamp: 0 }
   const total = { pixels: 0, eprouvants: 0, somme: 0, sup3: 0, max: 0, alphaMele: 0 }
-  const branches: Branches = { nul: 0, auPied: 0, sousLePixel: 0 }
+  const branches: Branches = { nul: 0, auPied: 0, sousLePixel: 0, sol: 0 }
   const parCorps: EcartCorps[] = []
 
   for (const { sprite, pose } of corps) {
@@ -274,7 +280,7 @@ export function garderLesCorps(
     let sup3 = 0
     let max = 0
     let alphaMele = 0
-    const br: Branches = { nul: 0, auPied: 0, sousLePixel: 0 }
+    const br: Branches = { nul: 0, auPied: 0, sousLePixel: 0, sol: 0 }
     const echantillon: Array<PixelEcarte & { pire: number }> = []
     for (let j = 0; j < h; j++) {
       for (let i = 0; i < w; i++) {
@@ -347,6 +353,7 @@ export function garderLesCorps(
     branches.nul += br.nul
     branches.auPied += br.auPied
     branches.sousLePixel += br.sousLePixel
+    branches.sol += br.sol
   }
   ecartes.horsChamp = horsChamp
   parCorps.sort((a, b) => b.moyenne - a.moyenne)

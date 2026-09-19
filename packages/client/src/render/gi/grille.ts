@@ -4,7 +4,7 @@
  * `/sim`, dont l'écran DÉRIVE). Ici on ne décide de rien : on traduit les sortes en opaque/libre, et on
  * leur donne un albédo (un fait de rendu, `reglages.ts`).
  */
-import { OCCLUDEUR, occlusionAuGrain, terrainAEtage, type MondeEclaire } from '@ashes/sim'
+import { LUMIERE, OCCLUDEUR, occlusionAuGrain, palierDuSol, terrainAEtage, type MondeEclaire } from '@ashes/sim'
 import { TILE_PX } from '../framing'
 import { ALBEDO, hauteurDeBande, type Albedo } from './reglages'
 import type { BandeGrille, GrilleGi } from './champ-ref'
@@ -17,9 +17,16 @@ export interface Fenetre {
   readonly y1: number
 }
 
-/** La grille au grain de la fenêtre, à l'étage `niveau`, avec l'origine du raster en texels absolus. */
-export function grilleDuMonde(monde: MondeEclaire, niveau: number, f: Fenetre): GrilleGi & { readonly ox: number; readonly oy: number } {
-  const o = occlusionAuGrain(monde, niveau, f.x0, f.y0, f.x1, f.y1)
+/**
+ * La grille au grain de la fenêtre, à l'étage `niveau`, avec l'origine du raster en texels absolus.
+ *
+ * `auSol` (LG-R14) : le regard se tient au palier de sa tuile — chaque tuile répond alors à SON palier,
+ * et la grille porte les `marches` (paliers et portes) que la sim rastérise ; vrai par défaut à la
+ * surface, faux sous la roche (un creux se lit à un seul niveau, la loi d'avant les terrasses) — et le
+ * client le DIT pour un chapeau, dont le niveau est ≥ 0 mais qui n'est pas le sol.
+ */
+export function grilleDuMonde(monde: MondeEclaire, niveau: number, f: Fenetre, auSol = niveau >= 0): GrilleGi & { readonly ox: number; readonly oy: number } {
+  const o = occlusionAuGrain(monde, niveau, f.x0, f.y0, f.x1, f.y1, auSol)
   const T = o.gw / (f.x1 - f.x0 + 1)
   const n = o.gw * o.gh
   const occ = new Uint8Array(n)
@@ -44,7 +51,11 @@ export function grilleDuMonde(monde: MondeEclaire, niveau: number, f: Fenetre): 
           const sorte = o.sortes[k]
           if (sorte === OCCLUDEUR.LIBRE) continue
           if (sorte === OCCLUDEUR.TERRAIN) {
-            if (albTerrain === null) albTerrain = ALBEDO.TERRAIN[terrainAEtage(monde.map, niveau, f.x0 + tx, f.y0 + ty)] ?? ALBEDO.TERRAIN_DEFAUT
+            // Au sol, le terrain plein d'une tuile est celui de SON palier (LG-R14) — le même que la sim lit.
+            if (albTerrain === null) {
+              const etage = auSol ? palierDuSol(monde.map, f.x0 + tx, f.y0 + ty) : niveau
+              albTerrain = ALBEDO.TERRAIN[terrainAEtage(monde.map, etage, f.x0 + tx, f.y0 + ty)] ?? ALBEDO.TERRAIN_DEFAUT
+            }
             poser(k, albTerrain)
           } else if (sorte === OCCLUDEUR.TRONC) poser(k, ALBEDO.TRONC)
           else if (sorte === OCCLUDEUR.NOEUD) poser(k, ALBEDO.NOEUD)
@@ -60,5 +71,8 @@ export function grilleDuMonde(monde: MondeEclaire, niveau: number, f: Fenetre): 
     murs.push({ x0: b.x0 - o.ox, x1: b.x1 - o.ox, y0: b.y0 - o.oy, y1: b.y1 - o.oy, hauteur: hauteurDeBande(b.type) / pxParTexel })
     albedoMurs.push(ALBEDO.BATI[b.type] ?? ALBEDO.BATI_DEFAUT)
   }
-  return { gw: o.gw, gh: o.gh, occ, murs, albedo, albedoMurs, ox: o.ox, oy: o.oy }
+  // LES MARCHES (LG-R14) : les deux tableaux de la sim, tels quels, et le lift d'un palier en texels —
+  // `LUMIERE.PALIER_TEXELS`, lu là où la sim le pose. Rien dans un creux : aucune marche ne s'y juge.
+  if (!auSol) return { gw: o.gw, gh: o.gh, occ, murs, albedo, albedoMurs, ox: o.ox, oy: o.oy }
+  return { gw: o.gw, gh: o.gh, occ, murs, albedo, albedoMurs, marches: { paliers: o.paliers, portes: o.portes, hauteur: LUMIERE.PALIER_TEXELS }, ox: o.ox, oy: o.oy }
 }

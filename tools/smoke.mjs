@@ -366,7 +366,7 @@ async function fonderPres(page, agir, slotDe, p0, sites = SITES_FONDATION) {
  *  Node nu, il n'importe pas le paquet client). */
 const NOMS_FEU = ['étalon (le rendu d’avant)', 'la respiration', 'le cœur blanc', 'les escarbilles', 'le liseré chaud', 'le halo de chaleur', 'TOUT (le rendu livré)']
 
-/** Les outils des scénarios GI (`gi`, `gi-temoin`, `gi-roches`, `gi-banc`) : la page dort, et chaque pas est un `game.step`. */
+/** Les outils des scénarios GI (`gi`, `gi-face`, `gi-marche`, `gi-temoin`, `gi-roches`, `gi-banc`) : la page dort, et chaque pas est un `game.step`. */
 const outilsGi = (page) => {
   const ev = (fn, arg) => page.evaluate(fn, arg)
   /** `n` pas de boucle, page endormie — la GI se rend dans `update`, pas dans un timer. */
@@ -386,6 +386,203 @@ const outilsGi = (page) => {
   const pc = (x) => `${(x * 100).toFixed(2)} %`
   const f2 = (x) => x.toFixed(2)
   return { ev, pas, agir, ok, pc, f2 }
+}
+
+/**
+ * Les lectures LG-A17 (LG-R16), partagées par `gi` (le dessus au pied d'un ruban) et `gi-face` (une face,
+ * non) : `lireLesZones(T)` relit l'écran au même instant `T` et dérive, du SAC de chaque corps armé, son
+ * dessus et sa face ; `jugerLeDessus` compare deux lectures (feu absent, feu posé). Voir les en-têtes
+ * de `gi` pour la règle et ses seuils.
+ */
+const outilsDessus = ({ ev, ok }) => {
+  const lireLesZones = (T) => ev(({ T }) => {
+    const sc = window.__BRAISES__.scene, g = sc.game, cam = sc.cameras.main
+    g.step(T, 0); g.step(T, 0)
+    const c = g.canvas
+    const ech = c.width / cam.width
+    const z = cam.zoom * ech
+    const wx = cam.worldView.x, wy = cam.worldView.y
+    const k = document.createElement('canvas'); k.width = c.width; k.height = c.height
+    const x = k.getContext('2d'); x.drawImage(c, 0, 0)
+    const d = x.getImageData(0, 0, c.width, c.height).data
+    const lumAt = (i, j) => { const p = (j * c.width + i) * 4; return 0.2126 * d[p] + 0.7152 * d[p + 1] + 0.0722 * d[p + 2] }
+    // L'alpha des textures, par source, lu une fois.
+    const alphas = new Map()
+    const alphaDe = (o) => {
+      const src = o.frame?.source?.image
+      if (!src || !src.width) return null
+      let a = alphas.get(src)
+      if (a === undefined) {
+        try {
+          const q = document.createElement('canvas'); q.width = src.width; q.height = src.height
+          const qx = q.getContext('2d'); qx.drawImage(src, 0, 0)
+          a = { w: src.width, d: qx.getImageData(0, 0, src.width, src.height).data }
+        } catch { a = null }
+        alphas.set(src, a)
+      }
+      return a
+    }
+    const corps = []
+    for (const o of sc.children.list) {
+      const sac = o.renderNodeData?.['GiCorpsBatch']
+      if (!sac || !o.visible || o.texture === undefined || !o.frame) continue
+      if (!(sac.dresse === 1 || sac.ruban === 1)) continue
+      const w = o.displayWidth ?? 0, h = o.displayHeight ?? 0
+      if (w <= 0 || h <= 0) continue
+      const X0 = o.x - w * (o.originX ?? 0.5), Y0 = o.y - h * (o.originY ?? 1)
+      const fr = o.frame, al = alphaDe(o)
+      /** La moyenne des pixels OPAQUES du sprite dont le y monde est dans [yA, yB). */
+      const moyenneOpaque = (yA, yB) => {
+        let s = 0, n = 0
+        const j0 = Math.max(0, Math.ceil((Math.max(Y0, yA) - wy) * z)), j1 = Math.min(c.height, Math.floor((Math.min(Y0 + h, yB) - wy) * z))
+        const i0 = Math.max(0, Math.ceil((X0 - wx) * z)), i1 = Math.min(c.width, Math.floor((X0 + w - wx) * z))
+        for (let j = j0; j < j1; j++) {
+          for (let i = i0; i < i1; i++) {
+            let u = ((i + 0.5) / z + wx - X0) / w, v = ((j + 0.5) / z + wy - Y0) / h
+            if (o.flipX) u = 1 - u
+            if (o.flipY) v = 1 - v
+            if (al !== null) {
+              const ti = fr.cutX + Math.floor(u * fr.cutWidth), tj = fr.cutY + Math.floor(v * fr.cutHeight)
+              if (al.d[(tj * al.w + ti) * 4 + 3] < 128) continue
+            }
+            s += lumAt(i, j)
+            n++
+          }
+        }
+        return n > 0 ? { n, moy: +(s / n).toFixed(2) } : null
+      }
+      // Le sac est LOGIQUE, l'écran DESSINÉ : les bornes descendent du lift du corps (LG-R14 ; 0 au sol).
+      const lift = sac.lift ?? 0
+      const dessus = moyenneOpaque(-Infinity, sac.seuil - lift)
+      const face = sac.dresse === 1 && sac.ruban !== 1 ? moyenneOpaque(sac.seuil - lift, sac.pied - lift) : null
+      corps.push({ cle: o.texture.key, tx: +(sac.ancreX / 16).toFixed(2), ty: +(sac.pied / 16).toFixed(2), ruban: sac.ruban, dresse: sac.dresse, expo: +sac.expo.toFixed(2), opaque: al !== null, haut: +Y0.toFixed(1), dessus, face })
+    }
+    // L'image au grain du champ : la luminance moyenne de chaque bloc monde de 4 × 4 px dans le cadre.
+    const tx0 = Math.ceil(wx / 4), ty0 = Math.ceil(wy / 4)
+    const tw = Math.floor((wx + cam.worldView.width) / 4) - tx0, th = Math.floor((wy + cam.worldView.height) / 4) - ty0
+    const texels = new Array(tw * th).fill(null)
+    for (let q = 0; q < th; q++) {
+      for (let p = 0; p < tw; p++) {
+        let s = 0, n = 0
+        const i0 = Math.ceil(((tx0 + p) * 4 - wx) * z), i1 = Math.floor(((tx0 + p + 1) * 4 - wx) * z)
+        const j0 = Math.ceil(((ty0 + q) * 4 - wy) * z), j1 = Math.floor(((ty0 + q + 1) * 4 - wy) * z)
+        for (let j = j0; j < j1; j++) for (let i = i0; i < i1; i++) { s += lumAt(i, j); n++ }
+        if (n > 0) texels[q * tw + p] = +(s / n).toFixed(2)
+      }
+    }
+    return { corps, grain: { tx0, ty0, tw, th, texels }, sources: (sc.gi?.emetteurs ?? []).length, cadre: { wx: +wx.toFixed(1), wy: +wy.toFixed(1), zoom: cam.zoom } }
+  }, { T })
+  /** La moyenne du grain sur un rectangle MONDE en px, [x0, x1) × [y0, y1). */
+  const moyGrain = (lu, x0, y0, x1, y1) => {
+    const g = lu.grain
+    let s = 0, n = 0
+    for (let q = Math.ceil(y0 / 4) - g.ty0; q < Math.floor(y1 / 4) - g.ty0; q++) {
+      for (let p = Math.ceil(x0 / 4) - g.tx0; p < Math.floor(x1 / 4) - g.tx0; p++) {
+        if (p < 0 || q < 0 || p >= g.tw || q >= g.th) continue
+        const v = g.texels[q * g.tw + p]
+        if (v === null) continue
+        s += v
+        n++
+      }
+    }
+    return n > 0 ? +(s / n).toFixed(2) : null
+  }
+  /**
+   * LE VERDICT LG-A17 sur une paire de lectures (feu absent, feu posé) : les dessus loin du feu ne
+   * bougent pas ; au pied du feu, le dessus prend le rebond — jamais le direct ; une face tournée vers
+   * lui prend bien plus. « Le rebond, jamais le direct » se juge contre le SOL LIBRE au pied du feu
+   * (la tuile du feu du côté opposé au mur, qui prend le direct entier) : la montée du dessus n'en
+   * dépasse pas le QUART — seuil de moi ; à la planche « le feu au pied du mur » relue rangée par
+   * rangée, le ruban monte d'un vingt-huitième du sol libre sur la rangée du feu, et un direct qui
+   * fuirait sur le dessus le porterait au-delà du quart sans discuter. La bande la plus proche du feu
+   * dit ce qu'on éprouve :
+   *  - un RUBAN (arête est/ouest) : il monte (≥ 2 — « rien du feu » laisserait sa tête plus noire que
+   *    le sol qu'elle domine : une barre noire entre deux surfaces éclairées), et pas plus que le quart
+   *    du sol libre. Le plancher derrière le mur (deux texels au-delà de la ligne, le texel du ruban
+   *    sauté, sur la rangée du feu) est DIT, pas jugé : dans l'ombre du mur il ne prend presque rien
+   *    (+1,9 sur la planche, sur la rangée du feu — le +9,6 que la planche lui prêtait était la
+   *    lumière d'une BRÈCHE de la ruine deux rangées plus bas) ; le ruban, à cheval sur sa ligne, lit
+   *    le rebond du côté du feu — c'est ce qui le fait monter, et c'est du rebond ;
+   *  - une FACE (arête nord/sud, dont le sprite pend sur deux tuiles au NORD de sa ligne, et cache le
+   *    plancher qu'elle domine) : la face monte d'au moins 10 ; sa coiffe lit le sol juste derrière la
+   *    ligne, dans l'ombre du mur : elle ne monte pas de plus du quart du sol libre (pas de plancher
+   *    de montée — ce sol-là ne prend presque rien). Le sol visible au-dessus du sprite est dit, pas
+   *    jugé : il est à huit texels de la ligne, hors du rebond.
+   */
+  const jugerLeDessus = async (nom, sans, avec, feuT) => {
+    const dist = (c) => Math.hypot(c.tx - (feuT.tx + 0.5), c.ty - (feuT.ty + 0.5))
+    const cleDe = (c) => `${c.cle}@${c.tx},${c.ty}`
+    const avant = new Map(sans.corps.map((c) => [cleDe(c), c]))
+    const paires = avec.corps.map((c) => ({ c, a: avant.get(cleDe(c)) })).filter((p) => p.a !== undefined)
+    const dDessus = (p) => p.c.dessus && p.a.dessus ? +(p.c.dessus.moy - p.a.dessus.moy).toFixed(2) : null
+    const dFace = (p) => p.c.face && p.a.face ? +(p.c.face.moy - p.a.face.moy).toFixed(2) : null
+    const loin = paires.filter((p) => dDessus(p) !== null && dist(p.c) > 10)
+    const pres = paires.filter((p) => dDessus(p) !== null && dist(p.c) <= 2.5).sort((p, q) => dist(p.c) - dist(q.c))
+    const faces = paires.filter((p) => dFace(p) !== null && dist(p.c) <= 4 && p.c.expo > 0.5).sort((p, q) => dist(p.c) - dist(q.c))
+    const opaques = paires.filter((p) => !p.c.opaque).length
+    const autour = await ev(({ fx, fy }) => {
+      const sc = window.__BRAISES__.scene
+      const st = sc.view.structures
+      // LE SOL D'UNE TERRASSE SE DESSINE `lift` PX PLUS HAUT que sa tuile logique (LG-R14, `gi-face`) :
+      // les rectangles du sol libre et du plancher se lisent à l'écran, donc on les remonte du lift de
+      // la tuile du feu — le premier passage sur la terrasse lisait la tuile deux rangées plus au sud
+      // (Δ 19 pour un sol au pied du feu, MESURÉ le 2026-09-19). Les corps, eux, portent leur lift.
+      const lift = sc.reliefSous?.(fx + 0.5, fy + 0.5)?.lift ?? 0
+      const bandes = st.filter((q) => (q.edges === 1 || q.edges === 2 || q.edges === 4 || q.edges === 8) && Math.abs(q.ty - fy) <= 2 && Math.abs(q.tx - fx) <= 2)
+      const dB = (q) => {
+        const lx = q.edges === 2 ? q.tx + 1 : q.edges === 8 ? q.tx : null, ly = q.edges === 4 ? q.ty + 1 : q.edges === 1 ? q.ty : null
+        return lx !== null ? Math.hypot(lx - (fx + 0.5), Math.max(0, Math.abs(q.ty + 0.5 - (fy + 0.5)) - 0.5)) : Math.hypot(Math.max(0, Math.abs(q.tx + 0.5 - (fx + 0.5)) - 0.5), ly - (fy + 0.5))
+      }
+      bandes.sort((a, b) => dB(a) - dB(b))
+      const r = bandes[0]
+      if (!r) return null
+      if (r.edges === 2 || r.edges === 8) {
+        const ligne = (r.edges === 2 ? r.tx + 1 : r.tx) * 16
+        const cote = (fx + 0.5) * 16 < ligne ? 1 : -1
+        const x0 = cote > 0 ? ligne + 4 : ligne - 12, x1 = cote > 0 ? ligne + 12 : ligne - 4
+        return { bande: { tx: r.tx, ty: r.ty, edges: r.edges, type: r.type }, sens: 'ruban', d: +dB(r).toFixed(2), lift, plancher: [x0, fy * 16 - lift, x1, fy * 16 + 16 - lift], solLibre: [(fx - cote) * 16, fy * 16 - lift, (fx - cote + 1) * 16, fy * 16 + 16 - lift] }
+      }
+      const ligne = (r.edges === 4 ? r.ty + 1 : r.ty) * 16
+      const cote = (fy + 0.5) * 16 < ligne ? 1 : -1 // +1 : le feu au NORD de la ligne (sur le dessus) ; −1 : au SUD, devant la face
+      return { bande: { tx: r.tx, ty: r.ty, edges: r.edges, type: r.type }, sens: 'face', d: +dB(r).toFixed(2), cote, lift, plancher: null, solLibre: [fx * 16, (fy - cote) * 16 - lift, fx * 16 + 16, (fy - cote + 1) * 16 - lift] }
+    }, { fx: feuT.tx, fy: feuT.ty })
+    const dZone = (r) => (r && moyGrain(sans, ...r) !== null && moyGrain(avec, ...r) !== null ? +(moyGrain(avec, ...r) - moyGrain(sans, ...r)).toFixed(2) : null)
+    const dPlancher = autour ? dZone(autour.plancher) : null, dSolLibre = autour ? dZone(autour.solLibre) : null
+    const ruban = pres.find((p) => p.c.ruban === 1) ?? null
+    const laFace = faces[0] ?? null
+    // Le sol VISIBLE au-dessus du sprite de la face (deux texels), dit et non jugé.
+    const dessusDuSprite = laFace ? dZone([feuT.tx * 16, laFace.c.haut - 8, feuT.tx * 16 + 16, laFace.c.haut]) : null
+    console.log(`   — LG-A17, ${nom} : feu absent → posé (23 h, même instant, même point)`)
+    console.log(`     ${sans.corps.length} corps armés avant, ${avec.corps.length} après, ${paires.length} appariés (${opaques} sans alpha lisible) ; sources dans le champ ${sans.sources} → ${avec.sources} ; ${loin.length} dessus à plus de 10 tuiles, ${pres.length} à 2,5 tuiles ou moins, ${faces.length} face(s) tournée(s) vers le feu à 4 tuiles`)
+    if (autour) console.log(`     la bande au pied du feu : ${autour.bande.type} (${autour.bande.tx}, ${autour.bande.ty}) arête ${autour.bande.edges}, un ${autour.sens} à ${autour.d} tuiles${autour.sens === 'face' ? ` (le feu ${autour.cote < 0 ? 'devant la face' : 'sur le dessus'})` : ''} ; lift ${autour.lift} px ; plancher derrière le mur ${JSON.stringify(autour.plancher)} Δ ${dPlancher} ; sol libre ${JSON.stringify(autour.solLibre)} Δ ${dSolLibre}${dessusDuSprite !== null ? ` ; sol visible au-dessus du sprite Δ ${dessusDuSprite}` : ''}`)
+    for (const p of pres.slice(0, 3)) console.log(`       dessus à ${dist(p.c).toFixed(2)} tuiles (${p.c.cle}, ruban ${p.c.ruban}, ${p.c.dessus.n} px opaques) : ${p.a.dessus.moy} → ${p.c.dessus.moy} (Δ ${dDessus(p)})`)
+    for (const p of loin.slice(0, 3)) console.log(`       dessus à ${dist(p.c).toFixed(1)} tuiles (${p.c.cle}) : ${p.a.dessus.moy} → ${p.c.dessus.moy} (Δ ${dDessus(p)})`)
+    for (const p of faces.slice(0, 3)) console.log(`       face à ${dist(p.c).toFixed(2)} tuiles (${p.c.cle}, expo ${p.c.expo}, ${p.c.face.n} px) : ${p.a.face.moy} → ${p.c.face.moy} (Δ ${dFace(p)}) ; sa coiffe ${p.a.dessus?.moy} → ${p.c.dessus?.moy} (Δ ${dDessus(p)})`)
+    ok(avec.sources === sans.sources + 1, `prémisse LG-A17 ${nom} : la pose ajoute UNE source au champ (${sans.sources} → ${avec.sources})`)
+    ok(autour !== null && dSolLibre !== null && dSolLibre >= 40, `prémisse LG-A17 ${nom} : le feu éclaire le sol libre à son pied (Δ ${dSolLibre} ≥ 40)`)
+    ok(loin.length >= 1, `prémisse LG-A17 ${nom} : des dessus hors de portée du feu dans le cadre (${loin.length})`)
+    if (loin.length) {
+      const pire = Math.max(...loin.map((p) => Math.abs(dDessus(p))))
+      ok(pire <= 1, `LG-A17 ${nom}, hors de portée du feu (> 10 tuiles) : un dessus est la même image à 1 niveau près (${loin.length} dessus, pire Δ ${pire.toFixed(2)})`)
+    }
+    if (autour?.sens === 'ruban') {
+      ok(ruban !== null && dSolLibre !== null, `prémisse LG-A17 ${nom} : le ruban au pied du feu et le sol libre sont dans le cadre`)
+      if (ruban !== null && dSolLibre !== null) {
+        const d = dDessus(ruban)
+        ok(d >= 2, `LG-A17 ${nom}, au pied du feu : le ruban prend le rebond — il monte (Δ ${d} ≥ 2 ; « rien du feu » laisserait une barre noire entre deux surfaces éclairées)`)
+        ok(d <= dSolLibre / 4, `LG-A17 ${nom}, au pied du feu : le ruban prend le rebond, jamais le direct — il monte de ${d}, pas plus que le quart du sol libre à son pied (${dSolLibre}) ; le plancher derrière le mur, dans son ombre, Δ ${dPlancher}`)
+      }
+    } else if (autour?.sens === 'face') {
+      ok(laFace !== null && dDessus(laFace) !== null && dSolLibre !== null, `prémisse LG-A17 ${nom} : la face tournée vers le feu, sa coiffe et le sol libre sont dans le cadre`)
+      if (laFace !== null && dDessus(laFace) !== null && dSolLibre !== null) {
+        const df = dFace(laFace), dc = dDessus(laFace)
+        ok(df >= 10, `LG-A17 ${nom}, une face, non : la face tournée vers le feu monte de ${df} (≥ 10)`)
+        ok(dc <= dSolLibre / 4, `LG-A17 ${nom}, la coiffe de cette face prend le rebond, jamais le direct : elle monte de ${dc}, pas plus que le quart du sol libre au pied du feu (${dSolLibre})`)
+      }
+    } else console.log(`     (LG-A17 ${nom} au pied : non éprouvé ici — aucune bande à 2 tuiles du feu)`)
+    return { faces: faces.length, pres: pres.length, sens: autour?.sens ?? null }
+  }
+  return { lireLesZones, moyGrain, jugerLeDessus }
 }
 
 const SCENARIOS = {
@@ -416,11 +613,14 @@ const SCENARIOS = {
    * LG-A20 (l'ombre a toujours une cause) tourne dans le même run : la torche portée puis le feu
    * posé, balayés depuis leur source sur les huit directions du grain contre la grille RÉELLE
    * (bandes et cellules pleines, au quart de texel). Son TÉMOIN en terrain nu — et LG-A5 — a son
-   * scénario à lui, `gi-temoin` : chacun tient sous dix minutes en SwiftShader.
+   * scénario à lui, `gi-temoin` ; « une face, non » (LG-A17, la seconde moitié) aussi, `gi-face`, et la
+   * marche (LG-A15) `gi-marche` : chacun tient sous dix minutes en SwiftShader.
    */
   async gi(page) {
     if (!dev) { console.error('!! gi exige --dev (debug_*, ChampGpu.verifier, garderLesCorps)'); return }
     const { ev, pas, agir, ok, pc, f2 } = outilsGi(page)
+    const t0 = Date.now()
+    const chrono = () => `${((Date.now() - t0) / 1000).toFixed(0)} s`
 
     await ev(() => { window.__BRAISES__.scene.game.loop.sleep() })
     await agir({ type: 'debug_god', on: true }, 300, 1)
@@ -550,7 +750,7 @@ const SCENARIOS = {
     await agir({ type: 'debug_grant', item: 'torche_vive' }, 700, 2)
     await pas(20)
     const posTorche = await ev(() => { const p = window.__BRAISES__.scene.registry.get('playerPos'); return { x: p.x * 16, y: p.y * 16 } })
-    console.log('   — LG-A20, la torche portée, au pied de la grappe (23 h)')
+    console.log(`   — LG-A20, la torche portée, au pied de la grappe (23 h) (${chrono()})`)
     jugerLeBalayage('la torche', await balayer(posTorche))
 
     // ── LE FEU — élu par le prédicat de la PRODUCTION (`placeable`), jamais par une copie de ses
@@ -571,187 +771,7 @@ const SCENARIOS = {
     // est étroit dans un sprite large, et le sol que le feu allume à +96 se voyait à travers — le premier
     // passage lisait Δ 28 sur un dessus qui, pierre seule, ne monte que du rebond.
     const OBS = { x: grappe.tx + 0.5, y: grappe.ty + 4.5 }
-    const lireLesZones = (T) => ev(({ T }) => {
-      const sc = window.__BRAISES__.scene, g = sc.game, cam = sc.cameras.main
-      g.step(T, 0); g.step(T, 0)
-      const c = g.canvas
-      const ech = c.width / cam.width
-      const z = cam.zoom * ech
-      const wx = cam.worldView.x, wy = cam.worldView.y
-      const k = document.createElement('canvas'); k.width = c.width; k.height = c.height
-      const x = k.getContext('2d'); x.drawImage(c, 0, 0)
-      const d = x.getImageData(0, 0, c.width, c.height).data
-      const lumAt = (i, j) => { const p = (j * c.width + i) * 4; return 0.2126 * d[p] + 0.7152 * d[p + 1] + 0.0722 * d[p + 2] }
-      // L'alpha des textures, par source, lu une fois.
-      const alphas = new Map()
-      const alphaDe = (o) => {
-        const src = o.frame?.source?.image
-        if (!src || !src.width) return null
-        let a = alphas.get(src)
-        if (a === undefined) {
-          try {
-            const q = document.createElement('canvas'); q.width = src.width; q.height = src.height
-            const qx = q.getContext('2d'); qx.drawImage(src, 0, 0)
-            a = { w: src.width, d: qx.getImageData(0, 0, src.width, src.height).data }
-          } catch { a = null }
-          alphas.set(src, a)
-        }
-        return a
-      }
-      const corps = []
-      for (const o of sc.children.list) {
-        const sac = o.renderNodeData?.['GiCorpsBatch']
-        if (!sac || !o.visible || o.texture === undefined || !o.frame) continue
-        if (!(sac.dresse === 1 || sac.ruban === 1)) continue
-        const w = o.displayWidth ?? 0, h = o.displayHeight ?? 0
-        if (w <= 0 || h <= 0) continue
-        const X0 = o.x - w * (o.originX ?? 0.5), Y0 = o.y - h * (o.originY ?? 1)
-        const fr = o.frame, al = alphaDe(o)
-        /** La moyenne des pixels OPAQUES du sprite dont le y monde est dans [yA, yB). */
-        const moyenneOpaque = (yA, yB) => {
-          let s = 0, n = 0
-          const j0 = Math.max(0, Math.ceil((Math.max(Y0, yA) - wy) * z)), j1 = Math.min(c.height, Math.floor((Math.min(Y0 + h, yB) - wy) * z))
-          const i0 = Math.max(0, Math.ceil((X0 - wx) * z)), i1 = Math.min(c.width, Math.floor((X0 + w - wx) * z))
-          for (let j = j0; j < j1; j++) {
-            for (let i = i0; i < i1; i++) {
-              let u = ((i + 0.5) / z + wx - X0) / w, v = ((j + 0.5) / z + wy - Y0) / h
-              if (o.flipX) u = 1 - u
-              if (o.flipY) v = 1 - v
-              if (al !== null) {
-                const ti = fr.cutX + Math.floor(u * fr.cutWidth), tj = fr.cutY + Math.floor(v * fr.cutHeight)
-                if (al.d[(tj * al.w + ti) * 4 + 3] < 128) continue
-              }
-              s += lumAt(i, j)
-              n++
-            }
-          }
-          return n > 0 ? { n, moy: +(s / n).toFixed(2) } : null
-        }
-        // Le sac est LOGIQUE, l'écran DESSINÉ : les bornes descendent du lift du corps (LG-R14 ; 0 au sol).
-        const lift = sac.lift ?? 0
-        const dessus = moyenneOpaque(-Infinity, sac.seuil - lift)
-        const face = sac.dresse === 1 && sac.ruban !== 1 ? moyenneOpaque(sac.seuil - lift, sac.pied - lift) : null
-        corps.push({ cle: o.texture.key, tx: +(sac.ancreX / 16).toFixed(2), ty: +(sac.pied / 16).toFixed(2), ruban: sac.ruban, dresse: sac.dresse, expo: +sac.expo.toFixed(2), opaque: al !== null, haut: +Y0.toFixed(1), dessus, face })
-      }
-      // L'image au grain du champ : la luminance moyenne de chaque bloc monde de 4 × 4 px dans le cadre.
-      const tx0 = Math.ceil(wx / 4), ty0 = Math.ceil(wy / 4)
-      const tw = Math.floor((wx + cam.worldView.width) / 4) - tx0, th = Math.floor((wy + cam.worldView.height) / 4) - ty0
-      const texels = new Array(tw * th).fill(null)
-      for (let q = 0; q < th; q++) {
-        for (let p = 0; p < tw; p++) {
-          let s = 0, n = 0
-          const i0 = Math.ceil(((tx0 + p) * 4 - wx) * z), i1 = Math.floor(((tx0 + p + 1) * 4 - wx) * z)
-          const j0 = Math.ceil(((ty0 + q) * 4 - wy) * z), j1 = Math.floor(((ty0 + q + 1) * 4 - wy) * z)
-          for (let j = j0; j < j1; j++) for (let i = i0; i < i1; i++) { s += lumAt(i, j); n++ }
-          if (n > 0) texels[q * tw + p] = +(s / n).toFixed(2)
-        }
-      }
-      return { corps, grain: { tx0, ty0, tw, th, texels }, sources: (sc.gi?.emetteurs ?? []).length, cadre: { wx: +wx.toFixed(1), wy: +wy.toFixed(1), zoom: cam.zoom } }
-    }, { T })
-    /** La moyenne du grain sur un rectangle MONDE en px, [x0, x1) × [y0, y1). */
-    const moyGrain = (lu, x0, y0, x1, y1) => {
-      const g = lu.grain
-      let s = 0, n = 0
-      for (let q = Math.ceil(y0 / 4) - g.ty0; q < Math.floor(y1 / 4) - g.ty0; q++) {
-        for (let p = Math.ceil(x0 / 4) - g.tx0; p < Math.floor(x1 / 4) - g.tx0; p++) {
-          if (p < 0 || q < 0 || p >= g.tw || q >= g.th) continue
-          const v = g.texels[q * g.tw + p]
-          if (v === null) continue
-          s += v
-          n++
-        }
-      }
-      return n > 0 ? +(s / n).toFixed(2) : null
-    }
-    /**
-     * LE VERDICT LG-A17 sur une paire de lectures (feu absent, feu posé) : les dessus loin du feu ne
-     * bougent pas ; au pied du feu, le dessus prend le rebond — jamais le direct ; une face tournée vers
-     * lui prend bien plus. « Le rebond, jamais le direct » se juge contre le SOL LIBRE au pied du feu
-     * (la tuile du feu du côté opposé au mur, qui prend le direct entier) : la montée du dessus n'en
-     * dépasse pas le QUART — seuil de moi ; à la planche « le feu au pied du mur » relue rangée par
-     * rangée, le ruban monte d'un vingt-huitième du sol libre sur la rangée du feu, et un direct qui
-     * fuirait sur le dessus le porterait au-delà du quart sans discuter. La bande la plus proche du feu
-     * dit ce qu'on éprouve :
-     *  - un RUBAN (arête est/ouest) : il monte (≥ 2 — « rien du feu » laisserait sa tête plus noire que
-     *    le sol qu'elle domine : une barre noire entre deux surfaces éclairées), et pas plus que le quart
-     *    du sol libre. Le plancher derrière le mur (deux texels au-delà de la ligne, le texel du ruban
-     *    sauté, sur la rangée du feu) est DIT, pas jugé : dans l'ombre du mur il ne prend presque rien
-     *    (+1,9 sur la planche, sur la rangée du feu — le +9,6 que la planche lui prêtait était la
-     *    lumière d'une BRÈCHE de la ruine deux rangées plus bas) ; le ruban, à cheval sur sa ligne, lit
-     *    le rebond du côté du feu — c'est ce qui le fait monter, et c'est du rebond ;
-     *  - une FACE (arête nord/sud, dont le sprite pend sur deux tuiles au NORD de sa ligne, et cache le
-     *    plancher qu'elle domine) : la face monte d'au moins 10 ; sa coiffe lit le sol juste derrière la
-     *    ligne, dans l'ombre du mur : elle ne monte pas de plus du quart du sol libre (pas de plancher
-     *    de montée — ce sol-là ne prend presque rien). Le sol visible au-dessus du sprite est dit, pas
-     *    jugé : il est à huit texels de la ligne, hors du rebond.
-     */
-    const jugerLeDessus = async (nom, sans, avec, feuT) => {
-      const dist = (c) => Math.hypot(c.tx - (feuT.tx + 0.5), c.ty - (feuT.ty + 0.5))
-      const cleDe = (c) => `${c.cle}@${c.tx},${c.ty}`
-      const avant = new Map(sans.corps.map((c) => [cleDe(c), c]))
-      const paires = avec.corps.map((c) => ({ c, a: avant.get(cleDe(c)) })).filter((p) => p.a !== undefined)
-      const dDessus = (p) => p.c.dessus && p.a.dessus ? +(p.c.dessus.moy - p.a.dessus.moy).toFixed(2) : null
-      const dFace = (p) => p.c.face && p.a.face ? +(p.c.face.moy - p.a.face.moy).toFixed(2) : null
-      const loin = paires.filter((p) => dDessus(p) !== null && dist(p.c) > 10)
-      const pres = paires.filter((p) => dDessus(p) !== null && dist(p.c) <= 2.5).sort((p, q) => dist(p.c) - dist(q.c))
-      const faces = paires.filter((p) => dFace(p) !== null && dist(p.c) <= 4 && p.c.expo > 0.5).sort((p, q) => dist(p.c) - dist(q.c))
-      const opaques = paires.filter((p) => !p.c.opaque).length
-      const autour = await ev(({ fx, fy }) => {
-        const st = window.__BRAISES__.scene.view.structures
-        const bandes = st.filter((q) => (q.edges === 1 || q.edges === 2 || q.edges === 4 || q.edges === 8) && Math.abs(q.ty - fy) <= 2 && Math.abs(q.tx - fx) <= 2)
-        const dB = (q) => {
-          const lx = q.edges === 2 ? q.tx + 1 : q.edges === 8 ? q.tx : null, ly = q.edges === 4 ? q.ty + 1 : q.edges === 1 ? q.ty : null
-          return lx !== null ? Math.hypot(lx - (fx + 0.5), Math.max(0, Math.abs(q.ty + 0.5 - (fy + 0.5)) - 0.5)) : Math.hypot(Math.max(0, Math.abs(q.tx + 0.5 - (fx + 0.5)) - 0.5), ly - (fy + 0.5))
-        }
-        bandes.sort((a, b) => dB(a) - dB(b))
-        const r = bandes[0]
-        if (!r) return null
-        if (r.edges === 2 || r.edges === 8) {
-          const ligne = (r.edges === 2 ? r.tx + 1 : r.tx) * 16
-          const cote = (fx + 0.5) * 16 < ligne ? 1 : -1
-          const x0 = cote > 0 ? ligne + 4 : ligne - 12, x1 = cote > 0 ? ligne + 12 : ligne - 4
-          return { bande: { tx: r.tx, ty: r.ty, edges: r.edges, type: r.type }, sens: 'ruban', d: +dB(r).toFixed(2), plancher: [x0, fy * 16, x1, fy * 16 + 16], solLibre: [(fx - cote) * 16, fy * 16, (fx - cote + 1) * 16, fy * 16 + 16] }
-        }
-        const ligne = (r.edges === 4 ? r.ty + 1 : r.ty) * 16
-        const cote = (fy + 0.5) * 16 < ligne ? 1 : -1 // +1 : le feu au NORD de la ligne (sur le dessus) ; −1 : au SUD, devant la face
-        return { bande: { tx: r.tx, ty: r.ty, edges: r.edges, type: r.type }, sens: 'face', d: +dB(r).toFixed(2), cote, plancher: null, solLibre: [fx * 16, (fy - cote) * 16, fx * 16 + 16, (fy - cote + 1) * 16] }
-      }, { fx: feuT.tx, fy: feuT.ty })
-      const dZone = (r) => (r && moyGrain(sans, ...r) !== null && moyGrain(avec, ...r) !== null ? +(moyGrain(avec, ...r) - moyGrain(sans, ...r)).toFixed(2) : null)
-      const dPlancher = autour ? dZone(autour.plancher) : null, dSolLibre = autour ? dZone(autour.solLibre) : null
-      const ruban = pres.find((p) => p.c.ruban === 1) ?? null
-      const laFace = faces[0] ?? null
-      // Le sol VISIBLE au-dessus du sprite de la face (deux texels), dit et non jugé.
-      const dessusDuSprite = laFace ? dZone([feuT.tx * 16, laFace.c.haut - 8, feuT.tx * 16 + 16, laFace.c.haut]) : null
-      console.log(`   — LG-A17, ${nom} : feu absent → posé (23 h, même instant, même point)`)
-      console.log(`     ${sans.corps.length} corps armés avant, ${avec.corps.length} après, ${paires.length} appariés (${opaques} sans alpha lisible) ; sources dans le champ ${sans.sources} → ${avec.sources} ; ${loin.length} dessus à plus de 10 tuiles, ${pres.length} à 2,5 tuiles ou moins, ${faces.length} face(s) tournée(s) vers le feu à 4 tuiles`)
-      if (autour) console.log(`     la bande au pied du feu : ${autour.bande.type} (${autour.bande.tx}, ${autour.bande.ty}) arête ${autour.bande.edges}, un ${autour.sens} à ${autour.d} tuiles${autour.sens === 'face' ? ` (le feu ${autour.cote < 0 ? 'devant la face' : 'sur le dessus'})` : ''} ; plancher derrière le mur ${JSON.stringify(autour.plancher)} Δ ${dPlancher} ; sol libre ${JSON.stringify(autour.solLibre)} Δ ${dSolLibre}${dessusDuSprite !== null ? ` ; sol visible au-dessus du sprite Δ ${dessusDuSprite}` : ''}`)
-      for (const p of pres.slice(0, 3)) console.log(`       dessus à ${dist(p.c).toFixed(2)} tuiles (${p.c.cle}, ruban ${p.c.ruban}, ${p.c.dessus.n} px opaques) : ${p.a.dessus.moy} → ${p.c.dessus.moy} (Δ ${dDessus(p)})`)
-      for (const p of loin.slice(0, 3)) console.log(`       dessus à ${dist(p.c).toFixed(1)} tuiles (${p.c.cle}) : ${p.a.dessus.moy} → ${p.c.dessus.moy} (Δ ${dDessus(p)})`)
-      for (const p of faces.slice(0, 3)) console.log(`       face à ${dist(p.c).toFixed(2)} tuiles (${p.c.cle}, expo ${p.c.expo}, ${p.c.face.n} px) : ${p.a.face.moy} → ${p.c.face.moy} (Δ ${dFace(p)}) ; sa coiffe ${p.a.dessus?.moy} → ${p.c.dessus?.moy} (Δ ${dDessus(p)})`)
-      ok(avec.sources === sans.sources + 1, `prémisse LG-A17 ${nom} : la pose ajoute UNE source au champ (${sans.sources} → ${avec.sources})`)
-      ok(autour !== null && dSolLibre !== null && dSolLibre >= 40, `prémisse LG-A17 ${nom} : le feu éclaire le sol libre à son pied (Δ ${dSolLibre} ≥ 40)`)
-      ok(loin.length >= 1, `prémisse LG-A17 ${nom} : des dessus hors de portée du feu dans le cadre (${loin.length})`)
-      if (loin.length) {
-        const pire = Math.max(...loin.map((p) => Math.abs(dDessus(p))))
-        ok(pire <= 1, `LG-A17 ${nom}, hors de portée du feu (> 10 tuiles) : un dessus est la même image à 1 niveau près (${loin.length} dessus, pire Δ ${pire.toFixed(2)})`)
-      }
-      if (autour?.sens === 'ruban') {
-        ok(ruban !== null && dSolLibre !== null, `prémisse LG-A17 ${nom} : le ruban au pied du feu et le sol libre sont dans le cadre`)
-        if (ruban !== null && dSolLibre !== null) {
-          const d = dDessus(ruban)
-          ok(d >= 2, `LG-A17 ${nom}, au pied du feu : le ruban prend le rebond — il monte (Δ ${d} ≥ 2 ; « rien du feu » laisserait une barre noire entre deux surfaces éclairées)`)
-          ok(d <= dSolLibre / 4, `LG-A17 ${nom}, au pied du feu : le ruban prend le rebond, jamais le direct — il monte de ${d}, pas plus que le quart du sol libre à son pied (${dSolLibre}) ; le plancher derrière le mur, dans son ombre, Δ ${dPlancher}`)
-        }
-      } else if (autour?.sens === 'face') {
-        ok(laFace !== null && dDessus(laFace) !== null && dSolLibre !== null, `prémisse LG-A17 ${nom} : la face tournée vers le feu, sa coiffe et le sol libre sont dans le cadre`)
-        if (laFace !== null && dDessus(laFace) !== null && dSolLibre !== null) {
-          const df = dFace(laFace), dc = dDessus(laFace)
-          ok(df >= 10, `LG-A17 ${nom}, une face, non : la face tournée vers le feu monte de ${df} (≥ 10)`)
-          ok(dc <= dSolLibre / 4, `LG-A17 ${nom}, la coiffe de cette face prend le rebond, jamais le direct : elle monte de ${dc}, pas plus que le quart du sol libre au pied du feu (${dSolLibre})`)
-        }
-      } else console.log(`     (LG-A17 ${nom} au pied : non éprouvé ici — aucune bande à 2 tuiles du feu)`)
-      return { faces: faces.length, pres: pres.length, sens: autour?.sens ?? null }
-    }
+    const { lireLesZones, jugerLeDessus } = outilsDessus({ ev, ok })
     await agir({ type: 'debug_teleport', x: OBS.x, y: OBS.y }, 1500, 3)
     await agir({ type: 'debug_set_hour', hour: 23 }, 1200, 3)
     const T17 = await ev(() => window.__T__)
@@ -793,18 +813,19 @@ const SCENARIOS = {
 
     // ── LG-A17, la seconde moitié : le feu posé, même point, même heure, même instant. Ce feu-ci est au
     //    pied d'un RUBAN (la grappe élue) : il éprouve le dessus au pied ; la face s'éprouve plus bas. ──
-    let dessusRuban = null
     if (feu) {
       await agir({ type: 'debug_set_hour', hour: 23 }, 1200, 3)
       const avecFeu = await lireLesZones(T17)
-      dessusRuban = await jugerLeDessus('au pied du ruban', sansFeu, avecFeu, feu)
+      await jugerLeDessus('au pied du ruban', sansFeu, avecFeu, feu)
     }
 
     const heures = [14, 23]
     for (const heure of heures) {
       await agir({ type: 'debug_set_hour', hour: heure }, 1500, 2)
       await agir({ type: 'debug_meteo', meteo: null }, 400, 1)
-      await pas(30)
+      // Douze pas : l'instantané de la nouvelle heure, le champ et les sacs des corps sont posés bien
+      // avant (`gi-marche` juge après dix) ; trente coûtaient une minute par heure en SwiftShader.
+      await pas(12)
       const r = await ev(() => {
         const sc = window.__BRAISES__.scene
         const gi = sc.gi ? sc.gi.verifier() : null
@@ -812,16 +833,16 @@ const SCENARIOS = {
         const c = (e) => (e ? { n: e.n, moyenne: e.moyenne, partSup3: e.partSup3, max: e.max, eclaires: e.eclaires } : null)
         return {
           debugGi: sc.registry.get('debugGi'),
-          gi: gi ? { sources: gi.sources, bandes: gi.bandes, hauteurs: gi.hauteursDeBande, cartes: gi.cartes, gw: gi.gw, gh: gi.gh, direct: c(gi.direct), champ: c(gi.champ), masque: c(gi.masque), compose: c(gi.compose), purete: gi.purete } : null,
+          gi: gi ? { sources: gi.sources, bandes: gi.bandes, hauteurs: gi.hauteursDeBande, cartes: gi.cartes, paliers: gi.paliers, marchesOmbrees: gi.marchesOmbrees, gw: gi.gw, gh: gi.gh, direct: c(gi.direct), champ: c(gi.champ), masque: c(gi.masque), compose: c(gi.compose), purete: gi.purete } : null,
           corps,
         }
       })
-      console.log(`   — ${heure} h`)
+      console.log(`   — ${heure} h (${chrono()})`)
       // LG-A2 — le champ contre l'oracle.
       const g = r.gi
       ok(g !== null, `la chaîne GPU est posée à ${heure} h (debugGi = ${r.debugGi})`)
       if (g) {
-        console.log(`     champ ${g.gw}×${g.gh}, ${g.sources} sources, ${g.bandes} bandes (${g.hauteurs} hauteur(s)), ${g.cartes} cartes d'arbres ; direct n=${g.direct.n} moy ${f2(g.direct.moyenne)} >3 ${pc(g.direct.partSup3)} max ${g.direct.max} ; champ n=${g.champ.n} moy ${f2(g.champ.moyenne)} >3 ${pc(g.champ.partSup3)} max ${g.champ.max} ; masque n=${g.masque.n} moy ${f2(g.masque.moyenne)} ombrés ${g.masque.eclaires} ; composé n=${g.compose.n} moy ${f2(g.compose.moyenne)} >3 ${pc(g.compose.partSup3)} max ${g.compose.max} touchés ${g.compose.eclaires} ; pureté ${pc(g.purete)}`)
+        console.log(`     champ ${g.gw}×${g.gh}, ${g.sources} sources, ${g.bandes} bandes (${g.hauteurs} hauteur(s)), ${g.cartes} cartes d'arbres, ${g.paliers} palier(s) (${g.marchesOmbrees} texels ombrés par les marches) ; direct n=${g.direct.n} moy ${f2(g.direct.moyenne)} >3 ${pc(g.direct.partSup3)} max ${g.direct.max} ; champ n=${g.champ.n} moy ${f2(g.champ.moyenne)} >3 ${pc(g.champ.partSup3)} max ${g.champ.max} ; masque n=${g.masque.n} moy ${f2(g.masque.moyenne)} ombrés ${g.masque.eclaires} ; composé n=${g.compose.n} moy ${f2(g.compose.moyenne)} >3 ${pc(g.compose.partSup3)} max ${g.compose.max} touchés ${g.compose.eclaires} ; pureté ${pc(g.purete)}`)
         ok(g.direct.eclaires > 0 && g.champ.eclaires > 0, `prémisse LG-A2 : l'oracle éclaire des texels (direct ${g.direct.eclaires}, champ ${g.champ.eclaires})`)
         ok(g.bandes > 0, `prémisse LG-A2 : des bandes dans le champ (${g.bandes}) — sans elles, ni ombre ni rebond de face`)
         ok(g.direct.moyenne <= 1 && g.direct.partSup3 < 0.01, `LG-A2 direct : moyenne ${f2(g.direct.moyenne)} ≤ 1, >3 niveaux ${pc(g.direct.partSup3)} < 1 %`)
@@ -843,20 +864,22 @@ const SCENARIOS = {
         // s'accorderaient même en l'ignorant. On rejoue donc le champ avec une bande sur deux abaissée
         // à 6 texels (une palissade) dans la grille que LES DEUX lisent (`eprouverLesHauteurs`), on
         // exige que l'ombre ait raccourci (sinon l'épreuve n'éprouve rien), et on compare. Puis la
-        // grille revient au monde avant 23 h.
+        // grille revient au monde avant 23 h. L'« avant » de ce raccourci est `ombresSansEpreuve` :
+        // la grille du monde SOUS LE MÊME ASTRE que l'épreuve — le soleil court pendant les pas, et
+        // l'ombre bougeait de trente texels entre deux `verifier()` (1462 → 1470 le 2026-09-19, pour
+        // une épreuve qui en retire vingt-cinq au même instant).
         if (heure === 14) {
-          const avant = g.masque.eclaires
           await ev(() => { window.__BRAISES__.scene.gi.eprouverLesHauteurs(6) })
           await pas(3)
           const e = await ev(() => {
             const v = window.__BRAISES__.scene.gi.verifier()
-            return v ? { hauteurs: v.hauteursDeBande, bandes: v.bandes, masque: { moyenne: v.masque.moyenne, partSup3: v.masque.partSup3, max: v.masque.max, ombres: v.masque.eclaires } } : null
+            return v ? { hauteurs: v.hauteursDeBande, bandes: v.bandes, sansEpreuve: v.ombresSansEpreuve, masque: { moyenne: v.masque.moyenne, partSup3: v.masque.partSup3, max: v.masque.max, ombres: v.masque.eclaires } } : null
           })
           ok(e !== null, 'l’épreuve des hauteurs a rendu un verdict')
           if (e) {
-            console.log(`     épreuve LG-R9 : ${e.bandes} bandes, ${e.hauteurs} hauteurs ; masque moy ${f2(e.masque.moyenne)} >3 ${pc(e.masque.partSup3)} max ${e.masque.max} ombrés ${e.masque.ombres} (${avant} avant)`)
+            console.log(`     épreuve LG-R9 : ${e.bandes} bandes, ${e.hauteurs} hauteurs ; masque moy ${f2(e.masque.moyenne)} >3 ${pc(e.masque.partSup3)} max ${e.masque.max} ombrés ${e.masque.ombres} (${e.sansEpreuve} sans l'épreuve, même astre ; ${g.masque.eclaires} à l'image d'avant)`)
             ok(e.hauteurs >= 2, `prémisse LG-R9 : ${e.hauteurs} hauteurs de bande dans le champ sous l'épreuve (une bande sur deux à 6 texels)`)
-            ok(e.masque.ombres < avant, `prémisse LG-R9 : l'épreuve raccourcit l'ombre (${avant} → ${e.masque.ombres} texels ombrés) — elle a quelque chose à départager`)
+            ok(e.sansEpreuve !== null && e.masque.ombres < e.sansEpreuve, `prémisse LG-R9 : l'épreuve raccourcit l'ombre (${e.sansEpreuve} → ${e.masque.ombres} texels ombrés, même astre) — elle a quelque chose à départager`)
             // AU TEXEL, PAS EN MOYENNE : le masque est binaire, et l'épreuve ne déplace que ~25 texels sur
             // 35 000 (MESURÉ : 1463 → 1438) — un GPU qui ignorerait la hauteur resterait sous « 1 niveau en
             // moyenne, 1 % au-delà de 3 ». Zéro texel en désaccord, ou la garde ne prouve rien.
@@ -870,7 +893,7 @@ const SCENARIOS = {
       const k = r.corps
       ok(k !== null, `la garde des corps a tourné à ${heure} h`)
       if (k) {
-        console.log(`     ${k.corps} corps, ${k.pixels} pixels (${k.eprouvants} éprouvants) ; moy ${f2(k.moyenne)} >3 ${pc(k.partSup3)} max ${k.max} ; branches nul ${k.branches.nul} / au pied ${k.branches.auPied} / sous le pixel ${k.branches.sousLePixel} ; alpha mêlé ${k.alphaMele} ; écartés ${JSON.stringify(k.ecartes)}`)
+        console.log(`     ${k.corps} corps, ${k.pixels} pixels (${k.eprouvants} éprouvants) ; moy ${f2(k.moyenne)} >3 ${pc(k.partSup3)} max ${k.max} ; branches nul ${k.branches.nul} / au pied ${k.branches.auPied} / sous le pixel ${k.branches.sousLePixel} / sol ${k.branches.sol} ; alpha mêlé ${k.alphaMele} ; écartés ${JSON.stringify(k.ecartes)}`)
         for (const p of k.pires) {
           console.log(`       ${p.cle}: ${p.pixels} px, moy ${f2(p.moyenne)}, >3 ${pc(p.partSup3)}, max ${p.max}, branches ${p.branches.nul}/${p.branches.auPied}/${p.branches.sousLePixel}, alpha mêlé ${p.alphaMele}`)
           for (const e of p.echantillon) console.log(`         (${e.i},${e.j}) lu ${e.lu.join(',')} attendu ${e.attendu.join(',')} texel ${e.texel.join(',')} n ${e.n.join(',')} fA ${e.fAstre} fF ${e.fFeu} ${e.ou}`)
@@ -884,111 +907,514 @@ const SCENARIOS = {
       }
       // LG-A20 — le feu POSÉ, balayé seul (la torche n'est plus en main) : la même loi que la torche.
       if (heure === 23 && feu) {
-        console.log('   — LG-A20, le feu posé, au pied de la grappe (23 h)')
+        console.log(`   — LG-A20, le feu posé, au pied de la grappe (23 h) (${chrono()})`)
         jugerLeBalayage('le feu', await balayer({ x: (feu.tx + 0.5) * 16, y: (feu.ty + 0.5) * 16 }))
       }
     }
 
-    // ═══ LG-A17, LA FACE : un second feu DEVANT une face, hors de tout lieu ═══
-    // La grappe élue met le premier feu au pied d'un ruban, et ses faces sont à six tuiles : trop loin
-    // pour la bulle du feu (LG-R6). Une bande d'arête nord ou sud pend sa face au NORD de sa ligne, et
-    // la montre au sud : un feu posé sur la tuile au sud de la tuile du mur l'éclaire de face (à un
-    // demi-pas de la ligne pour une arête sud, un pas et demi pour une arête nord). Or AUCUN mur de la
-    // carte jouée n'offre ça (sonde du 2026-09-18) : les faces des lieux regardent dedans, et un feu
-    // refuse tout lieu. On BÂTIT donc la scène : le village PNJ le plus proche, tamponné à son palier 3
-    // (`debug_village_stage`, chef 0 seulement), dresse son enceinte de palissades — des faces sans
-    // toit, hors de tout lieu ; le feu se pose devant un pan tourné vers le sud. Le Feu du village est
-    // une source de plus, constante entre les deux clichés ; le premier feu aussi, s'il porte jusqu'ici.
-    if (feu && dessusRuban !== null && dessusRuban.sens !== 'face') {
-      // ⚠ AU SOL SEULEMENT (lift 0). La passe des corps juge tout en logique depuis le 2026-09-18
-      // (`CorpsPose.lift`, `uGiLift`), mais le CHAMP d'une terrasse ne l'est pas encore : ses bandes
-      // sont rastérisées à la tuile, ses émetteurs poussés DESSINÉS (`WorldScene`, la lumière à −lift)
-      // et son quad de sol est dessiné — la part « paliers » de LG-R14, après le commit de l'autre
-      // session. La garde LG-A17 se prend là où la chaîne est cohérente, et le dit quand elle ne peut pas.
-      const villages = await ev(() => {
+    // « Une face, non » (LG-A17, la seconde moitié de LG-R16) a son scénario à lui, `gi-face` : la scène
+    // se bâtit sur la terrasse d'un village PNJ, et la course de `gi` ne tenait plus sous dix minutes.
+    console.log(`   — fin (${chrono()})`)
+    await ev(() => { window.__BRAISES__.scene.game.loop.wake() })
+  },
+
+  /**
+   * ═══ LG-A17 (LG-R16), LA FACE : un feu DEVANT une face, hors de tout lieu — « une face, non » ═══
+   *
+   * La grappe de `gi` met son feu au pied d'un ruban, et ses faces sont à six tuiles : trop loin pour
+   * la bulle du feu (LG-R6). Une bande d'arête nord ou sud pend sa face au NORD de sa ligne, et la
+   * montre au sud : un feu posé sur la tuile au sud de la tuile du mur l'éclaire de face (à un demi-pas
+   * de la ligne pour une arête sud, un pas et demi pour une arête nord). Or AUCUN mur de la carte jouée
+   * n'offre ça (sonde du 2026-09-18) : les faces des lieux regardent dedans, et un feu refuse tout lieu.
+   * On BÂTIT donc la scène : le village PNJ le plus proche, tamponné à son palier 3
+   * (`debug_village_stage`, chef 0 seulement), dresse son enceinte de palissades — des faces sans toit,
+   * hors de tout lieu ; le feu se pose devant un pan tourné vers le sud. Le Feu du village est une
+   * source de plus, constante entre les deux clichés.
+   *
+   * SUR UNE TERRASSE, depuis LG-R14 côté champ (2026-09-19) : la passe des corps juge en logique
+   * (`CorpsPose.lift`, `uGiLift`), le champ est la grille de la sim (paliers, portes), ses émetteurs
+   * sont poussés LOGIQUES, et la marche se juge en hauteur. Les villages PNJ de la carte jouée sont sur
+   * des terrasses (lift 32 et 64, MESURÉ le 2026-09-18) : c'est là que « une face, non » s'éprouve —
+   * et sans candidate la garde ROUGIT, une terrasse n'est plus une excuse.
+   *
+   * Son scénario à lui (2026-09-19) : dans `gi`, la course passait dix minutes en SwiftShader. Les
+   * lectures sont celles de `gi` (`outilsDessus`) ; les dons et la pose se font au cran 0 (chaque pas
+   * au cran 7 coûte des secondes ici), la chaîne revient au cran 7 avant chaque cliché, l'heure remise
+   * juste avant — même point, même heure, même instant. `--dev` obligatoire.
+   */
+  async 'gi-face'(page) {
+    if (!dev) { console.error('!! gi-face exige --dev (debug_*, le champ GI)'); return }
+    const { ev, pas, agir, ok } = outilsGi(page)
+    const { lireLesZones, jugerLeDessus } = outilsDessus({ ev, ok })
+    const t0 = Date.now()
+    const chrono = () => `${((Date.now() - t0) / 1000).toFixed(0)} s`
+    const cran = async (n) => { await ev((n) => { window.__BRAISES__.scene.registry.set('debugGi', n) }, n); await pas(3) }
+    await ev(() => { window.__BRAISES__.scene.game.loop.sleep() })
+    await agir({ type: 'debug_god', on: true }, 300, 1)
+    await agir({ type: 'debug_meteo', meteo: null }, 600, 1)
+
+    // ── LES VILLAGES PNJ, du plus proche au plus loin ; le premier qui offre une face fait la scène. ──
+    const villages = await ev(() => {
+      const sc = window.__BRAISES__.scene
+      const p = sc.registry.get('playerPos')
+      const feux = sc.view.structures.filter((q) => q.type === 'fire' && q.villageId !== undefined && q.villageId !== 0)
+      feux.sort((a, b) => Math.hypot(a.tx - p.x, a.ty - p.y) - Math.hypot(b.tx - p.x, b.ty - p.y))
+      return feux.map((f0) => ({ id: f0.villageId, tx: f0.tx, ty: f0.ty, lift: sc.reliefSous?.(f0.tx + 0.5, f0.ty + 0.5)?.lift ?? 0, avant: sc.view.structures.filter((q) => q.villageId === f0.villageId).length }))
+    })
+    ok(villages.length > 0, villages.length ? `${villages.length} village(s) PNJ à tamponner : ${villages.map((v) => `le ${v.id} en (${v.tx}, ${v.ty}) lift ${v.lift}`).join(', ')}` : 'aucun village PNJ sur la carte — « une face, non » reste non éprouvé')
+    let cible = []
+    for (const village of villages) {
+      await agir({ type: 'debug_village_stage', villageId: village.id, stage: 3 }, 3000, 4)
+      const apres = await ev(({ id }) => {
+        const st = window.__BRAISES__.scene.view.structures.filter((q) => q.villageId === id)
+        return { n: st.length, palissades: st.filter((q) => q.type === 'palissade').length, murs: st.filter((q) => q.type === 'wall').length, toits: st.filter((q) => q.type === 'roof').length }
+      }, village)
+      ok(apres.n > village.avant && apres.palissades + apres.murs > 0, `le village ${village.id} tamponné au palier 3 : ${village.avant} → ${apres.n} structures (${apres.palissades} palissades, ${apres.murs} murs, ${apres.toits} toits)`)
+      // L'élection est GÉOMÉTRIQUE (`placeable` porte la portée de bras depuis le joueur, BUILD_RANGE :
+      // il se demande une fois le joueur posté devant la candidate). Le sol libre est la tuile au sud
+      // du feu : elle aussi hors lieu, sinon c'est un autre sol. Les pans SUD de l'enceinte d'abord
+      // (le feu se pose dehors), les palissades avant les murs (pas de toit qui coiffe) ; le mur, le
+      // feu et le sol libre AU MÊME PALIER (une marche entre eux serait un autre sujet : LG-A15).
+      cible = await ev(({ v }) => {
         const sc = window.__BRAISES__.scene
-        const p = sc.registry.get('playerPos')
-        const feux = sc.view.structures.filter((q) => q.type === 'fire' && q.villageId !== undefined && q.villageId !== 0)
-        feux.sort((a, b) => Math.hypot(a.tx - p.x, a.ty - p.y) - Math.hypot(b.tx - p.x, b.ty - p.y))
-        return feux.map((f0) => ({ id: f0.villageId, tx: f0.tx, ty: f0.ty, lift: sc.reliefSous?.(f0.tx + 0.5, f0.ty + 0.5)?.lift ?? 0, avant: sc.view.structures.filter((q) => q.villageId === f0.villageId).length }))
-      })
-      ok(villages.length > 0, villages.length ? `${villages.length} village(s) PNJ à tamponner : ${villages.map((v) => `le ${v.id} en (${v.tx}, ${v.ty}) lift ${v.lift}`).join(', ')}` : 'aucun village PNJ sur la carte — « une face, non » reste non éprouvé')
-      let cible = []
-      for (const village of villages) {
-        if (village.lift !== 0) { console.log(`     (village ${village.id} sur une terrasse, lift ${village.lift} : passé — le champ n'y est pas encore logique, LG-R14)`); continue }
-        await agir({ type: 'debug_village_stage', villageId: village.id, stage: 3 }, 3000, 4)
-        const apres = await ev(({ id }) => {
-          const st = window.__BRAISES__.scene.view.structures.filter((q) => q.villageId === id)
-          return { n: st.length, palissades: st.filter((q) => q.type === 'palissade').length, murs: st.filter((q) => q.type === 'wall').length, toits: st.filter((q) => q.type === 'roof').length }
-        }, village)
-        ok(apres.n > village.avant && apres.palissades + apres.murs > 0, `le village ${village.id} tamponné au palier 3 : ${village.avant} → ${apres.n} structures (${apres.palissades} palissades, ${apres.murs} murs, ${apres.toits} toits)`)
-        // L'élection est GÉOMÉTRIQUE (`placeable` porte la portée de bras depuis le joueur, BUILD_RANGE :
-        // il se demande une fois le joueur posté devant la candidate). Le sol libre est la tuile au sud
-        // du feu : elle aussi hors lieu, sinon c'est un autre sol. Les pans SUD de l'enceinte d'abord
-        // (le feu se pose dehors), les palissades avant les murs (pas de toit qui coiffe) ; le mur, le
-        // feu et le sol libre au sol (lift 0).
-        cible = await ev(({ v, f }) => {
-          const sc = window.__BRAISES__.scene
-          const st = sc.view.structures
-          const zones = sc.map?.zones ?? []
-          const dansUneZone = (tx, ty) => zones.some((z) => tx + 0.5 >= z.x && tx + 0.5 < z.x + z.w && ty + 0.5 >= z.y && ty + 0.5 < z.y + z.h)
-          const lift = (tx, ty) => sc.reliefSous?.(tx + 0.5, ty + 0.5)?.lift ?? 0
-          const out = []
-          for (const q of st) {
-            if ((q.edges !== 4 && q.edges !== 1) || !['wall', 'palissade', 'door'].includes(q.type)) continue
-            if (Math.hypot(q.tx - v.tx, q.ty - v.ty) > 24) continue
-            // Pas un coin (un ruban à côté serait « la bande la plus proche »), pas un toit qui
-            // cacherait la coiffe ni un meuble sur le plancher : la face, sa coiffe et le sol au-dessus.
-            const voisins = st.filter((r) => Math.abs(r.tx - q.tx) <= 1 && r.ty >= q.ty - 2 && r.ty <= q.ty + 2 && r !== q)
-            if (voisins.some((r) => r.type === 'roof' || ((r.edges === 2 || r.edges === 8) && r.ty === q.ty))) continue
-            if (voisins.some((r) => r.tx === q.tx && r.ty !== q.ty && r.type !== 'floor')) continue
-            const tx = q.tx, ty = q.ty + 1
-            if (dansUneZone(tx, ty) || dansUneZone(tx, ty + 1) || Math.hypot(tx - f.tx, ty - f.ty) < 6) continue
-            if (lift(q.tx, q.ty) !== 0 || lift(tx, ty) !== 0 || lift(tx, ty + 1) !== 0) continue
-            out.push({ mur: { tx: q.tx, ty: q.ty, type: q.type, edges: q.edges }, tx, ty, dy: 1, sud: q.ty - v.ty, dGrappe: +Math.hypot(q.tx - v.tx, q.ty - v.ty).toFixed(1) })
-          }
-          out.sort((a, b) => (a.mur.type === 'palissade' ? 0 : 1) - (b.mur.type === 'palissade' ? 0 : 1) || b.sud - a.sud || Math.abs(a.tx - v.tx) - Math.abs(b.tx - v.tx))
-          return out.slice(0, 6)
-        }, { v: village, f: feu })
-        if (cible.length > 0) break
-        console.log(`     (village ${village.id} : aucune face tournée vers le sud, sans coin ni toit, au sol, avec deux tuiles hors lieu devant elle)`)
-      }
-      // Sans candidate, la garde ne rougit pas : elle DIT qu'elle n'a pas pu (les deux villages PNJ de
-      // la carte jouée sont sur des terrasses, lift 32 et 64 — MESURÉ le 2026-09-18) ; « une face,
-      // non » reste alors à la planche 22 et à LG-R14.
-      if (cible.length > 0) ok(true, `une face tournée vers le sud, sans coin ni toit, au sol, avec deux tuiles hors lieu devant elle : ${cible.length} candidate(s), la première en (${cible[0].tx}, ${cible[0].ty}) devant la ${cible[0].mur.type} (${cible[0].mur.tx}, ${cible[0].mur.ty}) d'arête ${cible[0].mur.edges}, à ${cible[0].sud} rangées au sud du Feu`)
-      else console.log('   ⚠ LG-A17 « une face, non » : NON ÉPROUVÉ sur cette carte — aucune face tournée vers le sud, sans coin ni toit, AU SOL, avec deux tuiles hors lieu devant elle à 24 tuiles d’un Feu de village PNJ (les villages PNJ sont sur des terrasses : LG-R14 d’abord)')
-      let feu2 = null
-      let sansFeu2 = null, T2 = null, obs2 = null
-      for (const c of cible) {
-        obs2 = { x: c.tx + 0.5, y: c.ty + 3.5 }
-        await agir({ type: 'debug_teleport', x: obs2.x, y: obs2.y }, 1500, 3)
+        const st = sc.view.structures
+        const zones = sc.map?.zones ?? []
+        const dansUneZone = (tx, ty) => zones.some((z) => tx + 0.5 >= z.x && tx + 0.5 < z.x + z.w && ty + 0.5 >= z.y && ty + 0.5 < z.y + z.h)
+        const lift = (tx, ty) => sc.reliefSous?.(tx + 0.5, ty + 0.5)?.lift ?? 0
+        const out = []
+        for (const q of st) {
+          if ((q.edges !== 4 && q.edges !== 1) || !['wall', 'palissade', 'door'].includes(q.type)) continue
+          if (Math.hypot(q.tx - v.tx, q.ty - v.ty) > 24) continue
+          // Pas un coin (un ruban à côté serait « la bande la plus proche »), pas un toit qui
+          // cacherait la coiffe ni un meuble sur le plancher : la face, sa coiffe et le sol au-dessus.
+          const voisins = st.filter((r) => Math.abs(r.tx - q.tx) <= 1 && r.ty >= q.ty - 2 && r.ty <= q.ty + 2 && r !== q)
+          if (voisins.some((r) => r.type === 'roof' || ((r.edges === 2 || r.edges === 8) && r.ty === q.ty))) continue
+          if (voisins.some((r) => r.tx === q.tx && r.ty !== q.ty && r.type !== 'floor')) continue
+          const tx = q.tx, ty = q.ty + 1
+          if (dansUneZone(tx, ty) || dansUneZone(tx, ty + 1)) continue
+          const l0 = lift(q.tx, q.ty)
+          if (lift(tx, ty) !== l0 || lift(tx, ty + 1) !== l0) continue
+          out.push({ mur: { tx: q.tx, ty: q.ty, type: q.type, edges: q.edges }, tx, ty, dy: 1, sud: q.ty - v.ty, lift: l0 })
+        }
+        out.sort((a, b) => (a.mur.type === 'palissade' ? 0 : 1) - (b.mur.type === 'palissade' ? 0 : 1) || b.sud - a.sud || Math.abs(a.tx - v.tx) - Math.abs(b.tx - v.tx))
+        return out.slice(0, 6)
+      }, { v: village })
+      if (cible.length > 0) break
+      console.log(`     (village ${village.id} : aucune face tournée vers le sud, sans coin ni toit, à son palier, avec deux tuiles hors lieu devant elle)`)
+    }
+    // Sans candidate, la garde ROUGIT : depuis LG-R14 côté champ, une terrasse n'est plus une excuse —
+    // les villages PNJ de la carte jouée (lift 32 et 64, MESURÉ le 2026-09-18) sont la scène même.
+    ok(cible.length > 0, cible.length > 0 ? `une face tournée vers le sud, sans coin ni toit, à son palier (lift ${cible[0].lift}), avec deux tuiles hors lieu devant elle : ${cible.length} candidate(s), la première en (${cible[0].tx}, ${cible[0].ty}) devant la ${cible[0].mur.type} (${cible[0].mur.tx}, ${cible[0].mur.ty}) d'arête ${cible[0].mur.edges}, à ${cible[0].sud} rangées au sud du Feu` : 'LG-A17 « une face, non » : aucune face tournée vers le sud, sans coin ni toit, avec deux tuiles hors lieu devant elle à 24 tuiles d’un Feu de village PNJ — la scène est introuvable')
+
+    // ── LE FEU DEVANT LA FACE : le cliché « sans feu » d'abord (chaîne au cran 7, l'heure remise juste
+    //    avant), puis les dons et la pose au cran 0 — douze dons font douze pas, et chaque pas au cran 7
+    //    coûte des secondes en SwiftShader. Le point d'observation : trois tuiles et demie au sud du feu. ──
+    let feu = null
+    let sansFeu = null, T = null, obs = null
+    for (const c of cible) {
+      obs = { x: c.tx + 0.5, y: c.ty + 3.5 }
+      await agir({ type: 'debug_teleport', x: obs.x, y: obs.y }, 1500, 3)
+      const posable = await ev(({ tx, ty }) => { try { return window.__BRAISES__.scene.placeable(tx, ty, 'fire', 0) === true } catch { return false } }, c)
+      if (!posable) { console.log(`     (candidate (${c.tx}, ${c.ty}) devant le ${c.mur.type} (${c.mur.tx}, ${c.mur.ty}) : la production refuse la pose)`); sansFeu = null; continue }
+      console.log(`   — la candidate (${c.tx}, ${c.ty}), le cliché sans feu (${chrono()})`)
+      await cran(7)
+      await agir({ type: 'debug_set_hour', hour: 23 }, 1200, 3)
+      T = await ev(() => window.__T__)
+      sansFeu = await lireLesZones(T)
+      await cran(0)
+      for (let i = 0; i < 12; i++) await agir({ type: 'debug_grant', item: 'wood' }, 120, 1)
+      await agir({ type: 'debug_grant', item: 'campfire' }, 400, 1)
+      await agir({ type: 'debug_meteo', meteo: null }, 300, 1)
+      await agir({ type: 'place_campfire', tx: c.tx, ty: c.ty }, 900, 2)
+      feu = await ev(({ tx, ty }) => {
+        const s = window.__BRAISES__.scene.view.structures.find((q) => q.type === 'fire' && q.tx === tx && q.ty === ty)
+        return s ? { tx: s.tx, ty: s.ty } : null
+      }, c)
+      if (feu) break
+      console.log(`     (candidate (${c.tx}, ${c.ty}) : la pose n'a pas pris)`)
+      sansFeu = null
+    }
+    if (cible.length > 0) ok(feu !== null, feu ? `un feu brûle devant la face, en (${feu.tx}, ${feu.ty})` : `aucun feu posé sur ${cible.length} candidate(s) — « une face, non » reste non éprouvé`)
+    if (feu && sansFeu) {
+      console.log(`   — le feu posé, le cliché avec feu (${chrono()})`)
+      await cran(7)
+      await agir({ type: 'debug_teleport', x: obs.x, y: obs.y }, 1500, 3)
+      await agir({ type: 'debug_set_hour', hour: 23 }, 1200, 3)
+      const avecFeu = await lireLesZones(T)
+      const v = await jugerLeDessus('devant la face', sansFeu, avecFeu, feu)
+      ok(v.sens === 'face' && v.faces >= 1, `prémisse LG-A17 devant la face : la bande au pied du feu est une face tournée vers lui (${v.sens}, ${v.faces} face(s) à 4 tuiles)`)
+    }
+    console.log(`   — fin (${chrono()})`)
+    await ev(() => { window.__BRAISES__.scene.game.loop.wake() })
+  },
+
+  /**
+   * ═══ LG-A15 (LG-R14), LA MARCHE — LE CHAMP D'UNE TERRASSE EST LA GRILLE DE LA SIM ═══
+   *
+   * La falaise fait écran À SENS UNIQUE, jugée en hauteur (un palier = 8 texels, la flamme à 2,4) ;
+   * la rampe est une porte ouverte ; la marche porte son ombre d'astre comme un mur de sa hauteur
+   * (0,4 × 8 = 3,2 texels par palier) ; une paroi lit le champ à son pied ; et la teinte plate des
+   * hauteurs n'existe plus (pavés et parois ARMÉS, `armerLeSol`). Les tests purs prouvent l'oracle
+   * contre la sim (`champ-ref.test.ts` M1–M4) ; ici c'est la CHAÎNE JOUÉE — le raster des paliers et
+   * des portes téléversé (`gi-paliers`), le shader, les couches — sur le monde généré.
+   *
+   * LE SITE, DATÉ (graine 2026, comme `terrasses`) : la rampe 1→2 de trois tuiles en (93–95, 739),
+   * le plateau (palier 2) au nord, la plaine (palier 1) au sud. Deux feux, l'un après l'autre :
+   *   A, SUR LE PLATEAU, deux tuiles derrière l'arête — la scène de la planche 17 : la plaine derrière
+   *     la marche ne reçoit rien, la rampe et la plaine devant elle sont allumées par la porte ;
+   *   B, SUR LA PLAINE, loin à l'est (hors de portée de A) — la scène de la planche 14 : le plateau
+   *     au-dessus de lui ne reçoit rien.
+   * Les texels se lisent dans `gi-direct` (RGB = la lumière directe, A = l'ombre pleine d'astre),
+   * PAR LA CARTE (`map.palier`, les connecteurs) — jamais par l'oracle, qui ne sert qu'à DIRE
+   * quel texel doit son ombre à la marche (`ombreDesMarchesSeules`) ; `verifier()` compare GPU et
+   * oracle comme d'habitude (LG-A2, LG-A9), `garderLesCorps` les corps (LG-A8, dont les sols armés).
+   *
+   * Quatre captures pour l'œil (`OUT/gi-marche-*.png`) : avant (cran 0, la pile d'aujourd'hui) et
+   * après (cran 7) à 23 h puis 14 h, le feu A seul. ~4 min en SwiftShader. `--dev` obligatoire.
+   */
+  async 'gi-marche'(page) {
+    if (!dev) { console.error('!! gi-marche exige --dev (debug_*, ChampGpu.verifier, garderLesCorps)'); return }
+    const { ev, pas, agir, ok, pc, f2 } = outilsGi(page)
+    await ev(() => { window.__BRAISES__.scene.game.loop.sleep() })
+    await agir({ type: 'debug_god', on: true }, 300, 1)
+    await agir({ type: 'debug_meteo', meteo: null }, 600, 1)
+
+    // ── LE SITE — vérifié, pas élu : sur une autre graine il n'y a rien là. ──
+    const site = await ev(() => {
+      const map = window.__BRAISES__.scene.map, w = map.width
+      const palier = (tx, ty) => map.palier?.[ty * w + tx] ?? 0
+      const rampe = (map.connecteurs ?? []).filter((c) => c.type === 'rampe' && c.y === 739 && c.x >= 93 && c.x <= 95 && c.de === 1 && c.vers === 2).length
+      const zones = map.zones ?? []
+      const dansUneZone = (tx, ty) => zones.some((z) => tx + 0.5 >= z.x && tx + 0.5 < z.x + z.w && ty + 0.5 >= z.y && ty + 0.5 < z.y + z.h)
+      // L'ARÊTE de chaque colonne : la dernière rangée au palier 2 avant la plaine, en descendant.
+      const aretes = {}
+      for (let tx = 86; tx <= 108; tx++) { aretes[tx] = -1; for (let ty = 730; ty <= 745; ty++) if (palier(tx, ty) === 2 && palier(tx, ty + 1) === 1) { aretes[tx] = ty; break } }
+      return { rampe, p739: [93, 94, 95].map((x) => palier(x, 739)), p738: [91, 92, 93, 94, 95, 96].map((x) => palier(x, 738)), aretes, lieu: [[94, 737], [104, 741], [99, 740]].some(([x, y]) => dansUneZone(x, y)) }
+    })
+    const t0 = Date.now()
+    const chrono = () => `${((Date.now() - t0) / 1000).toFixed(0)} s`
+    // Les arêtes des colonnes voisines de la rampe : 738 à l'est (96) et à l'ouest (91), et 739 en 92 —
+    // le plateau y descend d'une rangée de plus, contre la rampe (MESURÉ, sonde `__gi-site.mts`).
+    const siteOk = site.rampe === 3 && site.p739.every((p) => p === 1) && site.p738.every((p) => p === 2) && !site.lieu && site.aretes[91] === 738 && site.aretes[92] === 739 && site.aretes[96] === 738 && [102, 103, 104].every((x) => site.aretes[x] === 737)
+    ok(siteOk, `le site : la rampe 1→2 de trois tuiles en (93–95, 739) au palier 1, le plateau en (91–96, 738), l'arête droite en (102–104, 737), hors de tout lieu — arêtes ${JSON.stringify(site.aretes)}`)
+    if (!siteOk) { console.error('!! gi-marche est écrit pour la graine 2026 (comme terrasses) : site introuvable'); await ev(() => { window.__BRAISES__.scene.game.loop.wake() }); return }
+    // LE POSTE : deux rangées sous la rampe, à l'est — le feu A, la marche, la rampe et sa plaine sont au
+    // cadre (20 rangées de haut au zoom du jeu), l'avatar hors des tuiles mesurées ; à portée de bras de B.
+    const OBS = { x: 99.5, y: 740.5 }
+    const capturer = async (nom) => {
+      // La page endormie dessine sans PRÉSENTER : on la réveille le temps d'une image, puis on relit
+      // l'horloge des pas (`__T__`), qui a couru pendant l'éveil.
+      await ev(() => { window.__BRAISES__.scene.game.loop.wake() })
+      await page.waitForTimeout(3000)
+      await ev(() => { const g = window.__BRAISES__.scene.game; g.loop.sleep(); window.__T__ = g.loop.time })
+      await page.screenshot({ timeout: 90000, path: `${OUT}/${nom}.png` })
+      console.log(`   capture ${OUT}/${nom}.png`)
+    }
+    const cran = async (n) => { await ev((n) => { window.__BRAISES__.scene.registry.set('debugGi', n) }, n); await pas(3) }
+    /** Un feu, élu par le prédicat de la PRODUCTION (`placeable`) depuis `poste`, parmi `candidats` dans l'ordre. */
+    const poserUnFeu = async (nom, candidats, poste) => {
+      await agir({ type: 'debug_teleport', x: poste.x, y: poste.y }, 1500, 3)
+      for (let i = 0; i < 12; i++) await agir({ type: 'debug_grant', item: 'wood' }, 120, 1)
+      await agir({ type: 'debug_grant', item: 'campfire' }, 400, 1)
+      for (const c of candidats) {
         const posable = await ev(({ tx, ty }) => { try { return window.__BRAISES__.scene.placeable(tx, ty, 'fire', 0) === true } catch { return false } }, c)
-        if (!posable) { console.log(`     (candidate (${c.tx}, ${c.ty}) devant le ${c.mur.type} (${c.mur.tx}, ${c.mur.ty}) : la production refuse la pose)`); sansFeu2 = null; continue }
-        await agir({ type: 'debug_set_hour', hour: 23 }, 1200, 3)
-        T2 = await ev(() => window.__T__)
-        sansFeu2 = await lireLesZones(T2)
-        for (let i = 0; i < 12; i++) await agir({ type: 'debug_grant', item: 'wood' }, 120, 1)
-        await agir({ type: 'debug_grant', item: 'campfire' }, 400, 1)
+        if (!posable) { console.log(`     (${nom} : la production refuse (${c.tx}, ${c.ty}))`); continue }
         await agir({ type: 'debug_meteo', meteo: null }, 300, 1)
         await agir({ type: 'place_campfire', tx: c.tx, ty: c.ty }, 900, 2)
-        feu2 = await ev(({ tx, ty }) => {
-          const s = window.__BRAISES__.scene.view.structures.find((q) => q.type === 'fire' && q.tx === tx && q.ty === ty)
-          return s ? { tx: s.tx, ty: s.ty } : null
-        }, c)
-        if (feu2) break
-        console.log(`     (candidate (${c.tx}, ${c.ty}) : la pose n'a pas pris)`)
-        sansFeu2 = null
+        const feu = await ev(({ tx, ty }) => { const s = window.__BRAISES__.scene.view.structures.find((q) => q.type === 'fire' && q.tx === tx && q.ty === ty); return s ? { tx: s.tx, ty: s.ty } : null }, c)
+        if (feu) return feu
+        console.log(`     (${nom} : la pose en (${c.tx}, ${c.ty}) n'a pas pris)`)
       }
-      if (cible.length > 0) ok(feu2 !== null, feu2 ? `un second feu brûle devant la face, en (${feu2.tx}, ${feu2.ty})` : `aucun second feu posé sur ${cible.length} candidate(s) — « une face, non » reste non éprouvé`)
-      if (feu2 && sansFeu2) {
-        await agir({ type: 'debug_teleport', x: obs2.x, y: obs2.y }, 1500, 3)
-        await agir({ type: 'debug_set_hour', hour: 23 }, 1200, 3)
-        const avecFeu2 = await lireLesZones(T2)
-        const v = await jugerLeDessus('devant la face', sansFeu2, avecFeu2, feu2)
-        ok(v.sens === 'face' && v.faces >= 1, `prémisse LG-A17 devant la face : la bande au pied du second feu est une face tournée vers lui (${v.sens}, ${v.faces} face(s) à 4 tuiles)`)
+      return null
+    }
+    /**
+     * `gi-direct` sur des tuiles, par la CARTE : pour chaque tuile, ses 16 texels libres — `allumes`
+     * (RGB > 0), `ombres` (alpha ≥ 128, l'ombre pleine d'astre), `lum` (RGB moyen, 0–765), et par
+     * rangée de texels (`rangs`, du nord au sud) ; `marche`/`masque` disent combien de ces texels
+     * l'oracle met à l'ombre par les marches seules / par tout lanceur (les prémisses).
+     */
+    const lireLesTuiles = (tuiles) => ev(({ tuiles }) => {
+      const sc = window.__BRAISES__.scene, gi = sc.gi
+      if (!gi) return null
+      const d = gi.lire('direct'), c = gi.cadre, g = gi.grille
+      if (!d.length || !g) return null
+      // `m` : le multiplicateur composé (`gi-champ`), en luminance 0–1 — ce que le sol montre.
+      const mch = gi.lire('champ')
+      const mo = gi.ombreDesMarchesSeules(), pl = gi.ombrePleine()
+      const out = []
+      for (const t of tuiles) {
+        const i0 = Math.round((t.tx * 16 - c.x) / c.pxParTexel), j0 = Math.round((t.ty * 16 - c.y) / c.pxParTexel)
+        const r = { tx: t.tx, ty: t.ty, n: 0, allumes: 0, ombres: 0, lum: 0, m: 0, marche: 0, masque: 0, rangs: [] }
+        for (let j = j0; j < j0 + 4; j++) {
+          const rang = { n: 0, allumes: 0, ombres: 0, masque: 0 }
+          for (let i = i0; i < i0 + 4; i++) {
+            if (i < 0 || j < 0 || i >= g.gw || j >= g.gh) continue
+            const k = j * g.gw + i
+            if (g.occ[k] === 1) continue
+            rang.n++; r.n++
+            const s = d[k * 4] + d[k * 4 + 1] + d[k * 4 + 2]
+            r.lum += s
+            if (mch.length) r.m += (0.2126 * mch[k * 4] + 0.7152 * mch[k * 4 + 1] + 0.0722 * mch[k * 4 + 2]) / 255
+            if (s > 0) { r.allumes++; rang.allumes++ }
+            if (d[k * 4 + 3] >= 128) { r.ombres++; rang.ombres++ }
+            const parLaMarche = mo && mo[k] > 0
+            if (parLaMarche) r.marche++
+            // `masque` : l'ombre PLEINE d'un AUTRE lanceur (bande, arbre) — pas la marche, pas la pénombre.
+            if (pl && pl[k] > 0 && !parLaMarche) { r.masque++; rang.masque++ }
+          }
+          r.rangs.push(rang)
+        }
+        r.lum = r.n > 0 ? +(r.lum / r.n).toFixed(1) : 0
+        r.m = r.n > 0 ? +(r.m / r.n).toFixed(3) : 0
+        out.push(r)
+      }
+      return out
+    }, { tuiles })
+    const somme = (rs, champ) => rs.reduce((a, r) => a + r[champ], 0)
+    const tuiles = (xs, ys) => xs.flatMap((tx) => ys.map((ty) => ({ tx, ty })))
+    /**
+     * LA LUMINANCE À L'ÉCRAN, lue dans le canvas au même pas (`page-endormie-ne-presente-pas`) :
+     * des tuiles à leur place DESSINÉE (la rangée − 2 tuiles par palier de lift), et des sprites
+     * élus par clé et cadre, sur leurs pixels OPAQUES seulement (comme `lireLesZones` de `gi`).
+     */
+    const lireLEcran = (T) => ev(({ T }) => {
+      const sc = window.__BRAISES__.scene, g = sc.game, cam = sc.cameras.main
+      g.step(T, 0); g.step(T, 0)
+      const c = g.canvas, ech = c.width / cam.width, z = cam.zoom * ech, wx = cam.worldView.x, wy = cam.worldView.y
+      const k = document.createElement('canvas'); k.width = c.width; k.height = c.height
+      const x = k.getContext('2d'); x.drawImage(c, 0, 0)
+      const d = x.getImageData(0, 0, c.width, c.height).data
+      const lumAt = (i, j) => { const p = (j * c.width + i) * 4; return 0.2126 * d[p] + 0.7152 * d[p + 1] + 0.0722 * d[p + 2] }
+      const rect = (X0, Y0, w, h, alpha) => {
+        let s = 0, n = 0
+        const j0 = Math.max(0, Math.ceil((Y0 - wy) * z)), j1 = Math.min(c.height, Math.floor((Y0 + h - wy) * z))
+        const i0 = Math.max(0, Math.ceil((X0 - wx) * z)), i1 = Math.min(c.width, Math.floor((X0 + w - wx) * z))
+        for (let j = j0; j < j1; j++) for (let i = i0; i < i1; i++) {
+          if (alpha) { const u = Math.floor((i / z + wx - X0) / w * alpha.fw), v = Math.floor((j / z + wy - Y0) / h * alpha.fh); if ((alpha.d[((alpha.fy + v) * alpha.w + alpha.fx + u) * 4 + 3] ?? 0) < 128) continue }
+          s += lumAt(i, j); n++
+        }
+        return { s, n }
+      }
+      const tuile = (tx, ty, palier) => rect(tx * 16, ty * 16 - 32 * palier, 16, 16, null)
+      const moyenne = (parts) => { let s = 0, n = 0; for (const p of parts) { s += p.s; n += p.n } return n > 0 ? +(s / n).toFixed(1) : null }
+      // Les sprites d'un pool, par préfixe de clé et cadre dessiné (en tuiles dessinées).
+      const alphas = new Map()
+      const alphaDe = (o) => {
+        const src = o.frame?.source?.image
+        if (!src || !src.width) return null
+        let a = alphas.get(src)
+        if (a === undefined) {
+          try { const q = document.createElement('canvas'); q.width = src.width; q.height = src.height; const qx = q.getContext('2d'); qx.drawImage(src, 0, 0); a = { w: src.width, d: qx.getImageData(0, 0, src.width, src.height).data } } catch { a = null }
+          alphas.set(src, a)
+        }
+        return a ? { ...a, fx: o.frame.cutX, fy: o.frame.cutY, fw: o.frame.cutWidth, fh: o.frame.cutHeight } : null
+      }
+      const sprites = (pool, prefixes, x0, x1, y0, y1) => {
+        const parts = []
+        let n = 0
+        for (const o of pool ?? []) {
+          if (!o.visible || !prefixes.some((p) => o.texture?.key?.startsWith(p))) continue
+          const w = o.displayWidth ?? 0, h = o.displayHeight ?? 0
+          const X0 = o.x - w * (o.originX ?? 0.5), Y0 = o.y - h * (o.originY ?? 1)
+          if (X0 < x0 * 16 || X0 >= x1 * 16 || Y0 < y0 * 16 || Y0 >= y1 * 16) continue
+          parts.push(rect(X0, Y0, w, h, alphaDe(o))); n++
+        }
+        return { lum: moyenne(parts), n }
+      }
+      return {
+        // La plaine devant la rampe (rows 740–742, cols 93–95) et à côté de la marche (cols 90–92, 96–98), au palier 1.
+        devant: moyenne([93, 94, 95].flatMap((tx) => [740, 741, 742].map((ty) => tuile(tx, ty, 1)))),
+        aCote: moyenne([90, 91, 92, 96, 97, 98].flatMap((tx) => [740, 741, 742].map((ty) => tuile(tx, ty, 1)))),
+        // Le bord de la terrasse au-dessus de la rampe : la LÈVRE de pierre qui ourle le plateau de part et
+        // d'autre de la rampe (cols 91–92 et 96–97, dessinée à la rangée 734), et le sol du plateau (row 738,
+        // cols 93–95, palier 2) pour mémoire ; et la rampe elle-même (ses trois rangées).
+        levres: sprites(sc.cliffs?.tops, ['cf-levre-', 'cf-coin-'], 91, 98, 733, 736),
+        bord: moyenne([93, 94, 95].map((tx) => tuile(tx, 738, 2))),
+        rampe: sprites(sc.etages?.rampes, ['pl-rampe-'], 93, 96, 733, 739),
+        // Les parois sous l'arête 738/739 (cols 89–92 et 96–99), dessinées aux rangées 735–736.
+        paroi: sprites(sc.cliffs?.tops, ['cf-face-'], 89, 100, 733, 738),
+        // Le plancher de la nuit : la plaine loin de tout feu (cols 108–110, rows 747–748).
+        loin: moyenne([108, 109, 110].flatMap((tx) => [747, 748].map((ty) => tuile(tx, ty, 1)))),
+        zoom: +z.toFixed(2),
+      }
+    }, { T })
+
+    // ═══ LE FEU A, SUR LE PLATEAU, DEUX TUILES DERRIÈRE L'ARÊTE (planche 17) ═══
+    // Les poses et les déplacements se font au CRAN 0 : sous SwiftShader chaque pas de la chaîne entière
+    // coûte des secondes, et douze dons de bois font trente pas.
+    console.log(`   — le feu A, sur le plateau derrière la marche (${chrono()})`)
+    const A = await poserUnFeu('A', [{ tx: 94, ty: 737 }, { tx: 94, ty: 736 }, { tx: 93, ty: 737 }, { tx: 95, ty: 737 }, { tx: 94, ty: 735 }], { x: 96.5, y: 736.5 })
+    ok(A !== null, A ? `le feu A brûle sur le plateau en (${A.tx}, ${A.ty}), ${(739 - A.ty - 0.5).toFixed(1)} tuile(s) derrière la porte` : 'aucun feu A posé sur le plateau — la scène de la planche 17 est introuvable')
+    if (A === null) { await ev(() => { window.__BRAISES__.scene.game.loop.wake() }); return }
+    await agir({ type: 'debug_teleport', x: OBS.x, y: OBS.y }, 1500, 3)
+    await agir({ type: 'debug_set_hour', hour: 23 }, 1500, 2)
+    await agir({ type: 'debug_meteo', meteo: null }, 400, 1)
+    await cran(7)
+    await pas(10)
+    console.log(`   — 23 h, le champ (${chrono()})`)
+
+    // ── L'ÉCRAN À SENS UNIQUE, ET LA PORTE (23 h) : par la carte, dans `gi-direct`. ──
+    // Les tuiles, par la carte : le plateau au nord du feu (le contrôle) ; la plaine à 1–2 tuiles
+    // derrière la marche, de part et d'autre de la rampe (l'arête de chaque colonne) ; la rampe ; la
+    // plaine devant elle de 1 à 4 tuiles.
+    const plateauT = tuiles([A.tx - 1, A.tx, A.tx + 1], [A.ty - 1])
+    const derriere = [88, 89, 90, 98, 99, 100].flatMap((tx) => [{ tx, ty: site.aretes[tx] + 1 }, { tx, ty: site.aretes[tx] + 2 }])
+    const rampeT = tuiles([93, 94, 95], [739])
+    const devantT = tuiles([93, 94, 95], [740, 741, 742, 743])
+    const aCoteT = tuiles([90, 91, 92, 96, 97, 98], [740, 741, 742])
+    const lu23 = await lireLesTuiles(plateauT.concat(derriere, rampeT, devantT, aCoteT))
+    ok(lu23 !== null, 'la cible directe se relit à 23 h')
+    if (lu23) {
+      const plateau = lu23.slice(0, plateauT.length), der = lu23.slice(plateauT.length, plateauT.length + derriere.length), ramp = lu23.slice(plateauT.length + derriere.length, plateauT.length + derriere.length + rampeT.length), dev = lu23.slice(plateauT.length + derriere.length + rampeT.length, plateauT.length + derriere.length + rampeT.length + devantT.length), aCote = lu23.slice(plateauT.length + derriere.length + rampeT.length + devantT.length)
+      const mMoy = (rs) => +(rs.reduce((a, r) => a + r.m, 0) / rs.length).toFixed(3)
+      console.log(`     plateau au nord du feu : ${somme(plateau, 'allumes')}/${somme(plateau, 'n')} texels allumés ; plaine derrière la marche (1–2 tuiles, cols 88–90 et 98–100) : ${somme(der, 'allumes')}/${somme(der, 'n')} ; la rampe : ${somme(ramp, 'allumes')}/${somme(ramp, 'n')} ; la plaine devant elle (1–4 tuiles) : ${somme(dev, 'allumes')}/${somme(dev, 'n')} ; M composé (luminance) — devant (1–3 tuiles) ${mMoy(dev.slice(0, 9))}, à côté ${mMoy(aCote)}, plateau ${mMoy(plateau)}, rampe ${mMoy(ramp)}, derrière ${mMoy(der)}`)
+      ok(somme(plateau, 'allumes') > 0, `prémisse LG-A15 : le feu A allume le plateau autour de lui (${somme(plateau, 'allumes')} texels)`)
+      ok(somme(der, 'n') >= 100 && somme(der, 'allumes') === 0, `LG-A15 l'écran : la plaine à 1–2 tuiles derrière la marche ne reçoit aucun texel de lumière directe (${somme(der, 'allumes')} sur ${somme(der, 'n')})`)
+      ok(somme(ramp, 'allumes') === somme(ramp, 'n') && somme(ramp, 'n') > 0, `LG-A15 la porte : la rampe est allumée sur tous ses texels (${somme(ramp, 'allumes')}/${somme(ramp, 'n')})`)
+      // De 1 à 3 tuiles : à la quatrième, le feu (1,5 tuile derrière la porte) touche au bout de sa portée
+      // dans les coins de l'éventail — ce n'est plus la porte qui décide (MESURÉ : 162/192 sur 1–4).
+      const dev3 = dev.filter((r) => r.ty <= 742)
+      ok(somme(dev3, 'n') > 0 && somme(dev3, 'allumes') >= 0.9 * somme(dev3, 'n'), `LG-A15 la porte : la plaine devant la rampe, de 1 à 3 tuiles, est allumée par elle (${somme(dev3, 'allumes')}/${somme(dev3, 'n')} ≥ 90 % ; de 1 à 4, ${somme(dev, 'allumes')}/${somme(dev, 'n')})`)
+    }
+    // ── GPU = ORACLE (LG-A2, LG-A9) ET LES CORPS (LG-A8), AVEC LES SOLS ARMÉS, À 23 H. ──
+    const juger = async (heure) => {
+      const r = await ev(() => {
+        const sc = window.__BRAISES__.scene
+        const gi = sc.gi ? sc.gi.verifier() : null
+        const corps = sc.view.garderLesCorps(40)
+        const c = (e) => (e ? { n: e.n, moyenne: e.moyenne, partSup3: e.partSup3, max: e.max, eclaires: e.eclaires } : null)
+        return { gi: gi ? { sources: gi.sources, bandes: gi.bandes, cartes: gi.cartes, paliers: gi.paliers, marchesOmbrees: gi.marchesOmbrees, gw: gi.gw, gh: gi.gh, direct: c(gi.direct), champ: c(gi.champ), masque: c(gi.masque), compose: c(gi.compose) } : null, corps }
+      })
+      const g = r.gi
+      ok(g !== null, `la chaîne GPU est posée à ${heure} h`)
+      if (g) {
+        console.log(`     champ ${g.gw}×${g.gh}, ${g.sources} source(s), ${g.bandes} bandes, ${g.cartes} cartes, ${g.paliers} paliers, ${g.marchesOmbrees} texels ombrés par les marches ; direct n=${g.direct.n} moy ${f2(g.direct.moyenne)} >3 ${pc(g.direct.partSup3)} max ${g.direct.max} ; champ n=${g.champ.n} moy ${f2(g.champ.moyenne)} >3 ${pc(g.champ.partSup3)} max ${g.champ.max} ; masque moy ${f2(g.masque.moyenne)} >3 ${pc(g.masque.partSup3)} max ${g.masque.max} ombrés ${g.masque.eclaires} ; composé moy ${f2(g.compose.moyenne)} >3 ${pc(g.compose.partSup3)} max ${g.compose.max}`)
+        ok(g.paliers >= 2, `prémisse LG-A15 à ${heure} h : ${g.paliers} paliers dans le champ — la marche a quelque chose à juger`)
+        ok(g.direct.eclaires > 0, `prémisse LG-A2 à ${heure} h : l'oracle éclaire ${g.direct.eclaires} texels`)
+        ok(g.direct.moyenne <= 1 && g.direct.partSup3 < 0.01, `LG-A2 direct à ${heure} h, marche comprise : moyenne ${f2(g.direct.moyenne)} ≤ 1, >3 niveaux ${pc(g.direct.partSup3)} < 1 %`)
+        ok(g.compose.moyenne <= 1 && g.compose.partSup3 < 0.01, `LG-A2 composition à ${heure} h : moyenne ${f2(g.compose.moyenne)} ≤ 1, >3 niveaux ${pc(g.compose.partSup3)} < 1 %`)
+        ok(g.masque.moyenne <= 1 && g.masque.partSup3 < 0.01, `LG-A9 masque à ${heure} h, marches comprises : moyenne ${f2(g.masque.moyenne)} ≤ 1, >3 niveaux ${pc(g.masque.partSup3)} < 1 %`)
+        if (heure === 14) ok(g.marchesOmbrees > 0, `prémisse LG-A15 à 14 h : les marches seules ombrent ${g.marchesOmbrees} texels — le masque les a éprouvées`)
+      }
+      const k = r.corps
+      ok(k !== null, `la garde des corps a tourné à ${heure} h`)
+      if (k) {
+        console.log(`     ${k.corps} corps, ${k.pixels} pixels (${k.eprouvants} éprouvants) ; moy ${f2(k.moyenne)} >3 ${pc(k.partSup3)} max ${k.max} ; branches nul ${k.branches.nul} / au pied ${k.branches.auPied} / sous le pixel ${k.branches.sousLePixel} / sol ${k.branches.sol} ; alpha mêlé ${k.alphaMele} ; écartés ${JSON.stringify(k.ecartes)}`)
+        for (const p of k.pires) {
+          console.log(`       ${p.cle}: ${p.pixels} px, moy ${f2(p.moyenne)}, >3 ${pc(p.partSup3)}, max ${p.max}, branches ${p.branches.nul}/${p.branches.auPied}/${p.branches.sousLePixel}/${p.branches.sol}`)
+          for (const e of p.echantillon) console.log(`         (${e.i},${e.j}) lu ${e.lu.join(',')} attendu ${e.attendu.join(',')} texel ${e.texel.join(',')} n ${e.n.join(',')} fA ${e.fAstre} fF ${e.fFeu} ${e.ou}`)
+        }
+        ok(k.branches.sol > 0, `prémisse LG-A15 à ${heure} h : des pixels de SOL armé dans la garde (${k.branches.sol}) — pavés de terrasse, parois, rampe`)
+        ok(k.ecartes.horsChamp === 0 && k.alphaMele === 0, `aucun pixel hors du champ (${k.ecartes.horsChamp}), aucun alpha mêlé (${k.alphaMele})`)
+        ok(k.moyenne <= 0.5 && k.partSup3 < 0.01, `LG-A8 à ${heure} h, sols compris : moyenne ${f2(k.moyenne)} ≤ 0,5, >3 niveaux ${pc(k.partSup3)} < 1 %`)
       }
     }
+    await juger(23)
+    console.log(`   — 23 h, les couches et l'écran (${chrono()})`)
+    // ── PLUS DE COUTURE : les couches ARMENT les sols des hauteurs, et le champ ne connaît pas le palier. ──
+    const couches = await ev(() => {
+      const sc = window.__BRAISES__.scene
+      const sacDe = (o) => o?.renderNodeData?.['GiCorpsBatch'] ?? null
+      let parts = 0, armees = 0, blanches = 0
+      for (const c of sc.paves?.chunks?.values?.() ?? []) for (const p of c.parts) {
+        if (p.palier < 1 || !p.image.visible) continue
+        parts++
+        const s = sacDe(p.image)
+        if (s && s.sol === 1) armees++
+        if (p.image.tintTopLeft === 0xffffff) blanches++
+      }
+      let parois = 0, paroisArmees = 0
+      for (const o of sc.cliffs?.tops ?? []) {
+        if (!o.visible || !o.texture?.key?.startsWith('cf-face-')) continue
+        parois++
+        const s = sacDe(o)
+        if (s && (s.sol === 2 || s.sol === 3)) paroisArmees++
+      }
+      let rampes = 0, rampesArmees = 0
+      for (const o of sc.etages?.rampes ?? []) { if (!o.visible) continue; rampes++; const s = sacDe(o); if (s && s.sol === 2) rampesArmees++ }
+      // Le champ loin de tout feu et de toute ombre : un texel de plateau et un de plaine, à ≤ 1 niveau.
+      const gi = sc.gi, m = gi?.lire('champ') ?? new Uint8Array(0), ma = gi?.masque(), c = gi?.cadre, g = gi?.grille
+      const texel = (tx, ty) => { if (!c || !g || !m.length) return null; const i = Math.round(((tx + 0.5) * 16 - c.x) / c.pxParTexel), j = Math.round(((ty + 0.5) * 16 - c.y) / c.pxParTexel); if (i < 0 || j < 0 || i >= g.gw || j >= g.gh) return null; const k = j * g.gw + i; if (g.occ[k] === 1 || (ma && ma[k] > 0)) return null; return [m[k * 4], m[k * 4 + 1], m[k * 4 + 2]] }
+      const plateau = [[84, 730], [85, 731], [86, 730], [84, 728], [83, 729]].map(([x, y]) => texel(x, y)).find((t) => t !== null) ?? null
+      const plaine = [[108, 750], [109, 749], [110, 750], [108, 748], [111, 751]].map(([x, y]) => texel(x, y)).find((t) => t !== null) ?? null
+      return { compose: sc.paves?.champCompose === true, parts, armees, blanches, parois, paroisArmees, rampes, rampesArmees, plateau, plaine }
+    })
+    console.log(`     couches : compose ${couches.compose} ; parts de pavé aux paliers ≥ 1 : ${couches.parts}, armées ${couches.armees}, blanches ${couches.blanches} ; parois : ${couches.parois}, armées ${couches.paroisArmees} ; rampes : ${couches.rampes}, armées ${couches.rampesArmees} ; M loin du feu, plateau ${couches.plateau?.join(',')} / plaine ${couches.plaine?.join(',')}`)
+    ok(couches.compose && couches.parts > 0 && couches.armees === couches.parts && couches.blanches === couches.parts, `LG-A15 plus de couture : les ${couches.parts} parts de pavé des hauteurs sont armées (${couches.armees}) et blanches (${couches.blanches}) — la teinte plate n'existe plus`)
+    ok(couches.parois > 0 && couches.paroisArmees === couches.parois, `LG-A15 la paroi lit son pied : ${couches.paroisArmees}/${couches.parois} bandes de paroi armées`)
+    ok(couches.rampes > 0 && couches.rampesArmees === couches.rampes, `LG-A15 la rampe lit sa tuile : ${couches.rampesArmees}/${couches.rampes} rangées de rampe armées`)
+    ok(couches.plateau !== null && couches.plaine !== null && couches.plateau.every((v, i) => Math.abs(v - couches.plaine[i]) <= 1), `LG-A15 plus de couture : loin de tout feu et de toute ombre, la terrasse et la plaine rendent le même multiplicateur à ≤ 1 niveau (plateau ${couches.plateau?.join(',')}, plaine ${couches.plaine?.join(',')})`)
+
+    // ── L'ŒIL, À 23 H : après (cran 7) puis avant (cran 0), le même feu, le même instant à un tick près. ──
+    const T23 = await ev(() => window.__T__)
+    const apres23 = await lireLEcran(T23)
+    await capturer('gi-marche-23h-apres')
+    await cran(0)
+    const avant23 = await lireLEcran(await ev(() => window.__T__))
+    await capturer('gi-marche-23h-avant')
+    await cran(7)
+    await pas(3)
+    console.log(`     écran 23 h (zoom ${apres23.zoom}) — devant la rampe ${apres23.devant} / à côté de la marche ${apres23.aCote} (avant : ${avant23.devant} / ${avant23.aCote}) ; la rampe ${apres23.rampe.lum} (${apres23.rampe.n} rangées) / la lèvre du bord ${apres23.levres.lum} (${apres23.levres.n} pièces) / le sol du plateau au bord ${apres23.bord} (avant : ${avant23.rampe.lum} / ${avant23.levres.lum} / ${avant23.bord}) ; la paroi ${apres23.paroi.lum} (${apres23.paroi.n} bandes ; avant ${avant23.paroi.lum}) ; la plaine loin de tout ${apres23.loin} (avant ${avant23.loin})`)
+    ok(apres23.devant !== null && apres23.aCote !== null && apres23.devant >= 1.2 * apres23.aCote, `LG-A15 la rampe, à l'écran : la plaine devant elle est plus claire d'au moins un cinquième que la plaine à côté de la marche (${apres23.devant} contre ${apres23.aCote} ; avant, ${avant23.devant} contre ${avant23.aCote})`)
+    // « Le bord de la terrasse au-dessus d'elle » : la lèvre de pierre qui ourle le plateau — la planche 17
+    // lisait la rampe plancher « en haut, la lumière du bord de la terrasse », et la compare pierre à pierre.
+    ok(apres23.rampe.n > 0 && apres23.levres.n > 0 && apres23.rampe.lum !== null && apres23.levres.lum !== null && apres23.rampe.lum >= apres23.levres.lum, `LG-A15 la rampe, à l'écran : sa luminance moyenne (${apres23.rampe.lum}) est au moins celle du bord de la terrasse au-dessus d'elle (la lèvre, ${apres23.levres.lum} ; avant, ${avant23.rampe.lum} contre ${avant23.levres.lum})`)
+    ok(apres23.paroi.n > 0 && apres23.paroi.lum !== null && avant23.paroi.lum !== null && apres23.paroi.lum < avant23.paroi.lum && apres23.paroi.lum > 3, `LG-A15 la paroi dans l'ombre de sa marche : sous celle d'aujourd'hui (${apres23.paroi.lum} contre ${avant23.paroi.lum}, ${apres23.paroi.n} bandes) et au-dessus du noir`)
+
+    // ═══ 14 H — L'OMBRE D'ASTRE DE LA MARCHE, PAR LA CARTE ═══
+    console.log(`   — 14 h, l’ombre d’astre de la marche (${chrono()})`)
+    await agir({ type: 'debug_set_hour', hour: 14 }, 1500, 2)
+    await agir({ type: 'debug_meteo', meteo: null }, 400, 1)
+    await pas(10)
+    await juger(14)
+    const astre = await ev(() => { const gi = window.__BRAISES__.scene.gi; const a = gi?.astre ?? null; const h = gi?.grille?.marches?.hauteur ?? 0; return a ? { derive: +a.derive.toFixed(3), dx: +(a.cisaillement * a.longueurParHauteur * h * a.derive).toFixed(2), l: +(a.longueurParHauteur * h).toFixed(2) } : null })
+    ok(astre !== null, `l'astre porte à 14 h : dérive ${astre?.derive}, rayon d'ombre de marche ${astre?.l} texels, cisaillé de ${astre?.dx}`)
+    if (astre) {
+      // L'arête droite (102–104, 737) : la colonne du milieu, 103. Trois rangées de texels sous
+      // l'arête à l'ombre pleine (0,4 × 8 = 3,2 texels), la quatrième et les suivantes claires — quand
+      // aucun autre lanceur n'y tombe (l'oracle le dit). Et la colonne du milieu de la rampe, 94, claire.
+      const lu14 = await lireLesTuiles([{ tx: 103, ty: 738 }, { tx: 103, ty: 739 }, { tx: 94, ty: 739 }, { tx: 94, ty: 740 }])
+      const [b0, b1, r0, r1] = lu14 ?? [null, null, null, null]
+      if (b0 && b1 && r0 && r1) {
+        const bande = b0.rangs.slice(0, 3), claires = [b0.rangs[3], b1.rangs[0], b1.rangs[1]]
+        console.log(`     col 103 sous l'arête 737 : rangées de texels 0–2 ombrées ${bande.map((r) => `${r.ombres}/${r.n}`).join(' ')}, marche seule ${b0.marche}/${b0.n} ; rangées 3–5 ombrées ${claires.map((r) => `${r.ombres}/${r.n}`).join(' ')} (autres lanceurs ${claires.map((r) => r.masque).join(' ')}) ; rampe col 94 rangées 739–740 ombrées ${r0.ombres + r1.ombres}/${r0.n + r1.n} (autres lanceurs ${r0.masque + r1.masque})`)
+        // Le rayon part du centre d'un texel de la colonne 103 (x ∈ [412,5 ; 415,5]) et entre dans le plateau
+        // au plus à 2,5/3,2 de sa longueur : un cisaillement de 4 texels le laisse dans les colonnes 102–104.
+        ok(Math.abs(astre.dx) <= 4, `prémisse : le cisaillement (${astre.dx} texel) garde le rayon dans l'arête droite (102–104)`)
+        ok(bande.every((r) => r.n === 4 && r.ombres === 4), `LG-A15 l'ombre de la marche : les trois rangées de texels sous l'arête sont à l'ombre pleine (${bande.map((r) => r.ombres).join('/')} sur 4)`)
+        if (claires.every((r) => r.masque === 0)) ok(claires.every((r) => r.n === 4 && r.ombres === 0), `LG-A15 l'ombre de la marche s'arrête à 3,2 texels : la quatrième rangée et les deux suivantes sont claires (${claires.map((r) => r.ombres).join('/')})`)
+        else console.log('     (rangées 3–5 : un autre lanceur y tombe — la longueur de l’ombre de marche n’est pas jugée ici)')
+        if (r0.masque + r1.masque === 0) ok(r0.ombres + r1.ombres === 0 && r0.n + r1.n > 0, `LG-A15 les colonnes de la rampe ne prennent pas cette ombre (${r0.ombres + r1.ombres} texel ombré sur ${r0.n + r1.n})`)
+        else console.log('     (rampe : un autre lanceur y tombe — non jugée ici)')
+      } else ok(false, 'la cible directe se relit à 14 h')
+    }
+    const apres14 = await lireLEcran(await ev(() => window.__T__))
+    await capturer('gi-marche-14h-apres')
+    await cran(0)
+    const avant14 = await lireLEcran(await ev(() => window.__T__))
+    await capturer('gi-marche-14h-avant')
+    await cran(7)
+    console.log(`     écran 14 h — devant la rampe ${apres14.devant} / à côté ${apres14.aCote} (avant ${avant14.devant} / ${avant14.aCote}) ; la paroi ${apres14.paroi.lum} (avant ${avant14.paroi.lum}) ; loin ${apres14.loin} (avant ${avant14.loin})`)
+
+    // ═══ LE FEU B, SUR LA PLAINE, HORS DE PORTÉE DE A (planche 14) : le plateau au-dessus ne reçoit rien ═══
+    console.log(`   — le feu B, sur la plaine au pied de l’arête droite, 23 h (${chrono()})`)
+    await cran(0)
+    await agir({ type: 'debug_set_hour', hour: 23 }, 1500, 2)
+    await agir({ type: 'debug_meteo', meteo: null }, 400, 1)
+    const B = await poserUnFeu('B', [{ tx: 104, ty: 741 }, { tx: 104, ty: 742 }, { tx: 103, ty: 742 }, { tx: 105, ty: 741 }], OBS)
+    ok(B !== null, B ? `le feu B brûle sur la plaine en (${B.tx}, ${B.ty}), à ${Math.hypot(B.tx - A.tx, B.ty - A.ty).toFixed(1)} tuiles de A` : 'aucun feu B posé sur la plaine — la scène de la planche 14 est introuvable')
+    if (B) {
+      await cran(7)
+      await pas(10)
+      const luB = await lireLesTuiles(tuiles([103, 104], [736, 737]).concat([{ tx: B.tx - 1, ty: B.ty - 1 }, { tx: B.tx + 1, ty: B.ty - 1 }, { tx: B.tx, ty: B.ty + 1 }]))
+      if (luB) {
+        const haut = luB.slice(0, 4), pres = luB.slice(4)
+        console.log(`     plateau au-dessus de B (103–104, 736–737, à ≥ 9 tuiles de A) : ${somme(haut, 'allumes')}/${somme(haut, 'n')} texels allumés ; la plaine autour de B : ${somme(pres, 'allumes')}/${somme(pres, 'n')}`)
+        ok(somme(pres, 'allumes') > 0, `prémisse LG-A15 : le feu B allume la plaine autour de lui (${somme(pres, 'allumes')} texels)`)
+        ok(somme(haut, 'n') >= 48 && somme(haut, 'allumes') === 0, `LG-A15 l'écran, à sens unique : d'un feu au pied de la paroi, aucun texel du plateau au-dessus ne reçoit de lumière directe (${somme(haut, 'allumes')} sur ${somme(haut, 'n')})`)
+      } else ok(false, 'la cible directe se relit avec le feu B')
+    }
+    console.log(`   — fin (${chrono()})`)
 
     await ev(() => { window.__BRAISES__.scene.game.loop.wake() })
   },
@@ -1056,8 +1482,8 @@ const SCENARIOS = {
         if (d > dMax) dMax = d
         if (!SOCLES.has(n.type) || (n.etage ?? 0) !== 0 || n.stock <= 0 || vus.has(`${n.tx},${n.ty}`)) continue
         if (n.tx < R + 2 || n.ty < R + 2 || n.tx >= W - R - 2 || n.ty >= H - R - 2) continue
-        // AU SOL (lift 0) : sur une terrasse le sprite est dessiné `lift` px plus haut que sa tuile, et le
-        // champ d'une terrasse est encore mixte (LG-R14) — la garde veut une scène où rien d'autre ne bouge.
+        // AU SOL (lift 0) : la coulée d'une roche est au pixel (LG-R15), une scène au palier 0 la mesure
+        // sans le lift entre la tuile et le sprite — la garde veut une scène où rien d'autre ne bouge.
         const l0 = lift(n.tx, n.ty)
         if (l0 !== 0) continue
         let libre = true
@@ -1308,6 +1734,12 @@ const SCENARIOS = {
       const DUR = new Set([0, 4, 5, 6, 7, 15, 23, 29])
       const noeuds = new Set(sc.view.nodes.map((n) => n.ty * W + n.tx))
       const bati = new Set(st.map((s) => s.ty * W + s.tx))
+      // AU PALIER 0 SEULEMENT : le témoin compare au rendu d'AUJOURD'HUI, qui n'éclaire pas le sol
+      // d'une terrasse (sa teinte plate, planche 14), et il lit l'écran en px LOGIQUES — une terrasse
+      // s'y dessine 32 px plus haut. Depuis LG-R14 côté champ (2026-09-19) un plateau est libre dans
+      // la grille, et le tamis élisait la terrasse (372, 112) : cinq verdicts LG-A7 rougissaient sur un
+      // sol lu deux rangées trop au sud, et une flaque sous les pavés.
+      const palier = m.palier ?? null
       const nu = (cx, cy, R) => {
         for (let dy = -R; dy <= R; dy++) {
           for (let dx = -R; dx <= R; dx++) {
@@ -1315,6 +1747,7 @@ const SCENARIOS = {
             if (tx < 1 || ty < 1 || tx >= W - 1 || ty >= H - 1) return false
             const k = ty * W + tx
             if (DUR.has(m.terrain[k]) || bati.has(k) || noeuds.has(k)) return false
+            if (palier !== null && palier[k] !== 0) return false
           }
         }
         return !feux.some((f) => (f.tx - cx) ** 2 + (f.ty - cy) ** 2 <= 100)
@@ -1337,7 +1770,7 @@ const SCENARIOS = {
       }
       return out
     })
-    ok(fenetres.length > 0, fenetres.length > 0 ? `${fenetres.length} fenêtre(s) candidate(s) au tamis de la vue (sans bâti, nœud ni sol dur, aucun feu à 10 tuiles)` : 'aucun carré nu de rayon 5 à 150 tuiles de la naissance — le témoin est introuvable')
+    ok(fenetres.length > 0, fenetres.length > 0 ? `${fenetres.length} fenêtre(s) candidate(s) au tamis de la vue (sans bâti, nœud ni sol dur, au palier 0, aucun feu à 10 tuiles)` : 'aucun carré nu de rayon 5 au palier 0 à 150 tuiles de la naissance — le témoin est introuvable')
 
     // ── LA GRILLE ÉLIT : sur place, les tuiles au plus grand dégagement dans la grille RÉELLE ──
     const elire = () => ev(() => {
@@ -1426,7 +1859,33 @@ const SCENARIOS = {
     }, { R: coin.R, fx: (coin.tx + 0.5) * 16, fy: (coin.ty + 0.5) * 16 })
     ok(vide !== null && vide.bandes === 0 && vide.occ === 0 && vide.sources === 1, `prémisse du témoin : aucun occludeur à ${coin.R} tuiles de la source et une seule source dans le champ (${vide ? `${vide.bandes} bande(s), ${vide.occ} cellule(s) pleine(s), ${vide.sources} source(s)` : 'pas de champ'})`)
     const T = await ev(() => window.__T__)
-    const anneaux = () => ev(({ T, fx, fy }) => {
+    // OÙ QUELQUE CHOSE TOMBE : l'ombre pleine d'astre (l'alpha de `gi-direct`, LG-R8/LG-R14), dilatée d'un
+    // texel pour sa pénombre. Le coin nu n'a ni bande ni cellule pleine à R tuiles, mais l'ombre de lune
+    // d'un arbre planté HORS du carré nu y tombe (0,4 × 64 px = 1,6 tuile, LG-R8) — une ombre VOULUE,
+    // qu'aujourd'hui n'a pas : le témoin ne juge que les pixels où rien ne tombe, et dit combien il écarte
+    // (MESURÉ le 2026-09-19 au coin (226, 220) : l'anneau 9 perdait 1,74 niveau, ombres comprises).
+    const ombres = await ev(() => {
+      const gi = window.__BRAISES__.scene.gi
+      const g = gi?.grille
+      if (!g) return null
+      const d = gi.lire('direct')
+      const gw = g.gw, gh = g.gh
+      const plein = new Uint8Array(gw * gh)
+      let pleins = 0
+      for (let k = 0; k < gw * gh; k++) if (d[k * 4 + 3] > 0) { plein[k] = 1; pleins++ }
+      const idx = []
+      for (let j = 0; j < gh; j++) {
+        for (let i = 0; i < gw; i++) {
+          let o = 0
+          for (let dj = -1; dj <= 1 && !o; dj++) for (let di = -1; di <= 1 && !o; di++) { const ii = i + di, jj = j + dj; if (ii >= 0 && jj >= 0 && ii < gw && jj < gh && plein[jj * gw + ii] === 1) o = 1 }
+          if (o) idx.push(j * gw + i)
+        }
+      }
+      const c = gi.cadre
+      return { idx, pleins, cadre: { x: c.x, y: c.y, pxParTexel: c.pxParTexel, gw, gh } }
+    })
+    ok(ombres !== null, `le masque d'astre du coin nu est lu (${ombres ? `${ombres.pleins} texel(s) à l'ombre pleine, ${ombres.idx.length} écartés avec la pénombre` : 'pas de champ'})`)
+    const anneaux = () => ev(({ T, fx, fy, ombres }) => {
       const sc = window.__BRAISES__.scene, g = sc.game
       g.step(T, 0); g.step(T, 0) // le premier rendu à un instant s'écarte d'un niveau : le second juge
       const c = g.canvas, cam = sc.cameras.main
@@ -1436,30 +1895,38 @@ const SCENARIOS = {
       const k = document.createElement('canvas'); k.width = c.width; k.height = c.height
       const x = k.getContext('2d'); x.drawImage(c, 0, 0)
       const d = x.getImageData(0, 0, c.width, c.height).data
-      const somme = new Float64Array(10), n = new Float64Array(10)
+      const O = new Set(ombres?.idx ?? [])
+      const cd = ombres?.cadre ?? null
+      const somme = new Float64Array(10), n = new Float64Array(10), ecartes = new Float64Array(10)
       for (let j = 0; j < c.height; j++) {
         for (let i = 0; i < c.width; i++) {
           const r = Math.hypot(i + 0.5 - sx, j + 0.5 - sy) / parTuile
           if (r >= 10) continue
           const q = Math.floor(r), p = (j * c.width + i) * 4
+          if (cd) {
+            const wx = cam.worldView.x + (i + 0.5) / (cam.zoom * ech), wy = cam.worldView.y + (j + 0.5) / (cam.zoom * ech)
+            const ti = Math.floor((wx - cd.x) / cd.pxParTexel), tj = Math.floor((wy - cd.y) / cd.pxParTexel)
+            if (ti >= 0 && tj >= 0 && ti < cd.gw && tj < cd.gh && O.has(tj * cd.gw + ti)) { ecartes[q]++; continue }
+          }
           somme[q] += (d[p] + d[p + 1] + d[p + 2]) / 3
           n[q]++
         }
       }
-      return Array.from(somme, (s, q) => (n[q] > 0 ? +(s / n[q]).toFixed(2) : null))
-    }, { T, fx: (coin.tx + 0.5) * 16, fy: (coin.ty + 0.5) * 16 })
+      return { moy: Array.from(somme, (s, q) => (n[q] > 0 ? +(s / n[q]).toFixed(2) : null)), ecartes: Array.from(ecartes, (e, q) => (n[q] + e > 0 ? +(e / (n[q] + e)).toFixed(3) : null)) }
+    }, { T, fx: (coin.tx + 0.5) * 16, fy: (coin.ty + 0.5) * 16, ombres })
     await ev(() => { window.__BRAISES__.scene.registry.set('debugGi', 0) })
     await ev(({ T }) => { const g = window.__BRAISES__.scene.game; g.step(T, 0); g.step(T, 0); g.step(T, 0) }, { T })
-    const avant = await anneaux()
+    const { moy: avant } = await anneaux()
     await ev(() => { window.__BRAISES__.scene.registry.set('debugGi', 5) })
     await ev(({ T }) => { const g = window.__BRAISES__.scene.game; g.step(T, 0); g.step(T, 0); g.step(T, 0) }, { T })
-    const apres = await anneaux()
+    const { moy: apres, ecartes: partOmbree } = await anneaux()
     // Seuls les anneaux SOUS le rayon nu sont jugés : au-delà, ce qui bouge peut avoir une cause.
     const R = coin.R
     const ecarts = avant.map((a, q) => (a === null || apres[q] === null ? null : +(apres[q] - a).toFixed(2))).slice(0, R)
     console.log(`     anneaux (tuiles 0 à ${R - 1}) aujourd'hui : ${avant.slice(0, R).join(' ')}`)
     console.log(`     anneaux (tuiles 0 à ${R - 1}) composé     : ${apres.slice(0, R).join(' ')}`)
     console.log(`     écarts                             : ${ecarts.join(' ')}`)
+    console.log(`     part des pixels écartés (une ombre d'astre y tombe) : ${partOmbree.slice(0, R).map((e) => (e === null ? '—' : pc(e))).join(' ')}`)
     const pire = Math.max(...ecarts.filter((e) => e !== null).map(Math.abs))
     ok(ecarts.every((e) => e !== null && Math.abs(e) <= 2), `LG-A20 témoin : au plus 2 niveaux d'écart en moyenne à tout anneau jusqu'à ${R - 1} tuiles (pire ${pire.toFixed(2)})`)
     // LG-A5 : au-delà de la portée du feu (26 texels, soit 6,5 tuiles), rien ne bouge. Il faut au
@@ -1503,16 +1970,18 @@ const SCENARIOS = {
       const ems = gi.emetteurs ?? []
       const sx = (fx - c.x) / c.pxParTexel, sy = (fy - c.y) / c.pxParTexel
       let touches = 0, pied = 0
+      // Chaque texel touché, avec son niveau le plus haut : la comparaison neutre/engagé se fait AU TEXEL.
+      const touchesIdx = []
       for (let j = 0; j < gr.gh; j++) {
         for (let i = 0; i < gr.gw; i++) {
           const p = (j * gr.gw + i) * 4
-          if (d[p] + d[p + 1] + d[p + 2] > 0) touches++
+          if (d[p] + d[p + 1] + d[p + 2] > 0) { touches++; touchesIdx.push([j * gr.gw + i, Math.max(d[p], d[p + 1], d[p + 2])]) }
           if (Math.abs(i + 0.5 - sx) <= 1.5 && Math.abs(j + 0.5 - sy) <= 1.5 && d[p + 1] > pied) pied = d[p + 1]
         }
       }
       const e = ems[0]
       const flaque = sc.fireGround?.glows?.get(id)
-      return { touches, pied, sources: ems.length, rayon: e ? +e.rayon.toFixed(4) : null, force: e ? +e.force.toFixed(6) : null, alpha: flaque ? +flaque.alpha.toFixed(6) : null }
+      return { touches, touchesIdx, pied, sources: ems.length, rayon: e ? +e.rayon.toFixed(4) : null, force: e ? +e.force.toFixed(6) : null, alpha: flaque ? +flaque.alpha.toFixed(6) : null }
     }, { t, fx, fy, id: feuId })
     const auCreux = await lireLeChamp(creux.t), auMilieu = await lireLeChamp(milieu.t), aLaCrete = await lireLeChamp(crete.t)
     const dire = (n, x, m) => `${n} (battement ${m.b.toFixed(4)}) : ${x.touches} texels touchés, vert au pied ${x.pied}, rayon ${x.rayon}, force ${x.force}, alpha de la flaque ${x.alpha}`
@@ -1636,7 +2105,15 @@ const SCENARIOS = {
     console.log(`     image neutre  : ${ligne(imageNeutre)}`)
     console.log(`     image engagée : ${ligne(imageEngagee)}`)
     ok(champNeutre.force > 0 && Math.abs(champEngage.force / champNeutre.force - 1.25) < 1e-6, `LG-A7 l'engagement entre dans la force reçue : ×${(champEngage.force / champNeutre.force).toFixed(4)} du neutre à l'engagé (1,25 : la loi du point-light d'aujourd'hui)`)
-    ok(champEngage.rayon === champNeutre.rayon && champEngage.touches === champNeutre.touches, `LG-A7 l'engagement ne touche pas la portée : même rayon (${champNeutre.rayon}) et mêmes texels touchés (${champNeutre.touches} / ${champEngage.touches})`)
+    // AU TEXEL : la queue du profil (`profil`, en s² près du bord) passe sous un demi-niveau sur une bande
+    // de texels, et une force ×1,25 en fait remonter quelques-uns à 1 — de l'arrondi, pas de la portée
+    // (MESURÉ le 2026-09-19 au coin (226, 220) : 16 texels de plus sur 2 308, tous à 1 niveau ; au coin
+    // (404, 84) l'arrondi n'en déplaçait aucun). Un texel touché EN PLUS au-delà d'un niveau, lui, serait
+    // de la portée, et la garde rougit.
+    const dejaTouches = new Set(champNeutre.touchesIdx.map(([k]) => k))
+    const enPlus = champEngage.touchesIdx.filter(([k]) => !dejaTouches.has(k))
+    const enPlusFrancs = enPlus.filter(([, niveau]) => niveau > 1).length
+    ok(champEngage.rayon === champNeutre.rayon && enPlusFrancs === 0, `LG-A7 l'engagement ne touche pas la portée : même rayon (${champNeutre.rayon}), et les texels touchés en plus sont l'arrondi de la queue (${enPlus.length} de plus sur ${champNeutre.touches}, ${enPlusFrancs} au-delà d'un niveau)`)
     ok(champNeutre.pied > 0 && Math.abs(champEngage.pied / champNeutre.pied / 1.25 - 1) <= 0.02, `LG-A7 le point proche, dans le champ : le vert au pied ×${(champEngage.pied / champNeutre.pied).toFixed(4)} (1,25 ± 2 %)`)
     const pres0 = anneau(imageNeutre, 0.5), pres1 = anneau(imageEngagee, 0.5)
     ok(pres0?.lum && pres1?.lum && pres1.lum.med - pres0.lum.med >= 10, `LG-A7 le point proche, à l'image : le sol à 0,5–1 tuile gagne ${pres0?.lum && pres1?.lum ? (pres1.lum.med - pres0.lum.med).toFixed(1) : '—'} niveaux de luminance médiane du neutre à l'engagé (≥ 10)`)

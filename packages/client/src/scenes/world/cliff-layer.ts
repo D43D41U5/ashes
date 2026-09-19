@@ -60,10 +60,14 @@ import { hash2, TERRAIN_CLIFF, TERRAIN_ROCK, type Connecteur, type WorldMap } fr
 import { CHUTE_FRAMES, CHUTE_HZ, CHUTE_PHASES, ECUME_FRAMES } from '../../render/chute-art'
 import { cliffKey, levreDe, PAROI_RANGEES, PHASES_PAROI, roleDeFalaise, varianteDeChute, varianteDEcume, varianteDeLevre, VARIANTES_DESSUS } from '../../render/cliff-art'
 import { alphaDeDecouvert, CLIFF_DEPTH, CLIFF_OMBRE_DEPTH, LIFT_TUILES, strateDEtage, TILE_PX, type Decouvert } from '../../render/framing'
+import { armerLeSol, desarmerLeSol, type SolDuChamp } from '../../render/gi/noeud-corps'
 import { cranDeDerive } from '../../render/ombre-socle'
 import { estEau } from '../../render/paves'
 import type { Relief } from '../../render/relief'
 import { epinglerLaTuile } from '../../render/tuile-epinglee'
+
+/** Le lift d'un palier, en px — de combien une tuile de palier `p` est dessinée plus haut que sa place (`p × LIFT_PX`). */
+const LIFT_PX = LIFT_TUILES * TILE_PX
 
 
 /** Une chute VISIBLE à cette image : la tuile haute `(tx, ty)`, le palier `hs` de l'eau du pied
@@ -97,6 +101,20 @@ export class CliffLayer {
    * l'appelant — c'est lui qu'on passe.
    */
   teinte = 0xffffff
+  /**
+   * ═══ LE CHAMP COMPOSE (spec `lumiere-globale.md` LG-R14) — posé par `WorldScene`, comme `teinte` ═══
+   *
+   * Quand la GI compose la nuit (le quad MULTIPLY de `gi-champ`, à la profondeur du voile), la teinte
+   * plate ne suffit plus : elle disait « la même nuit d'un palier à l'autre », or la nuit n'est plus
+   * plate — un feu de terrasse éclaire le plateau, la marche porte une ombre d'astre. Ce qui vit
+   * AU-DESSUS du quad lit alors le champ à SON point (`armerLeSol`) : un dessus de roche et une lèvre
+   * SOUS LE PIXEL à leur place logique ; une paroi et une chute AU PIED, sur le sol qu'elles suivent
+   * — donc dans l'ombre que leur propre marche y porte (LG-A15 : *« la paroi dans son ombre »*) ; et
+   * la bande de strate 0 d'une paroi, que le quad multiplie DÉJÀ à sa place dessinée, se divise
+   * d'avance (`piedSousLeVoile`). Les ombres PEINTES de la marche (le pied, le flanc) se taisent : le
+   * champ les porte (`ombreDesMarches`). Celle de la roche dressée reste — elle est au pixel (LG-R15).
+   */
+  champCompose = false
   /**
    * L'ASTRE QUI JETTE L'OMBRE — les deux mêmes nombres que les socles minéraux reçoivent
    * (`view.deriveOmbre`/`view.forceOmbre`), poussés par `WorldScene` depuis la MÊME ligne, à la
@@ -241,7 +259,7 @@ export class CliffLayer {
             const pied = f.pied && memeHauteurAuSud
             key = cliffKey('face', (f.arete ? 1 : 0) | (e ? 2 : 0) | (w ? 4 : 0) | (pied ? 8 : 0), variant)
           }
-          nTop = this.poser(this.tops, nTop, key, tx, ty - lift, strateDEtage(p) + CLIFF_DEPTH, p)
+          nTop = this.poser(this.tops, nTop, key, tx, ty - lift, strateDEtage(p) + CLIFF_DEPTH, p, 1, { lift: p * LIFT_PX })
 
           // L'ombre que la paroi jette sur le sol qui la suit. Jamais sur de la roche : le pied,
           // par définition, n'en a pas sous lui.
@@ -280,16 +298,19 @@ export class CliffLayer {
           // la trouée des pavés à cette tuile — sans quoi un trait de roche resterait suspendu
           // au-dessus du corps qu'on vient de découvrir.
           const a = alphaDeDecouvert(this.decouvert, tx + 0.5, ty - lift + 0.5, h)
-          if (levre.cotes !== 0) nTop = this.poser(this.tops, nTop, cliffKey('levre', levre.cotes, vl), tx, ty - lift, profondeur, h, a)
+          const solLevre: SolDuChamp = { lift: h * LIFT_PX }
+          if (levre.cotes !== 0) nTop = this.poser(this.tops, nTop, cliffKey('levre', levre.cotes, vl), tx, ty - lift, profondeur, h, a, solLevre)
           for (let c = 0; c < 4; c++) {
-            if ((levre.coins & (1 << c)) !== 0) nTop = this.poser(this.tops, nTop, cliffKey('coin', c, vl), tx, ty - lift, profondeur, h, a)
+            if ((levre.coins & (1 << c)) !== 0) nTop = this.poser(this.tops, nTop, cliffKey('coin', c, vl), tx, ty - lift, profondeur, h, a, solLevre)
           }
         }
         // ── L'OMBRE DU FLANC, sur le sol du bas — du côté OPPOSÉ à l'astre (`cran`, voir
         //    `deriveOmbre`) : au ras de la lèvre, à la rangée d'écran du dessus — puis le long de
-        //    chaque bande de paroi dont la joue est exposée, plus bas.
+        //    chaque bande de paroi dont la joue est exposée, plus bas. Quand le champ compose, c'est
+        //    lui qui porte l'ombre de la marche (LG-R14) : rien à peindre.
         const hF = dxFlanc < 0 ? hW : hE
-        if (cran !== 0 && hF < h && !surface) nOmbre = this.poserLeFlanc(nOmbre, tx + dxFlanc, ty - h * L, hF, keyFlanc, cran < 0)
+        const ombresPeintes = !this.champCompose
+        if (ombresPeintes && cran !== 0 && hF < h && !surface) nOmbre = this.poserLeFlanc(nOmbre, tx + dxFlanc, ty - h * L, hF, keyFlanc, cran < 0)
         // ── LA PAROI COMMUNE : sous toute tuile plus haute que sa voisine sud (T-R8).
         if (hs >= h) continue
         if (rampeMonte) continue
@@ -299,16 +320,24 @@ export class CliffLayer {
         if (this.estChute(tx, ty, h, hs)) {
           const phase = ((tx % CHUTE_PHASES) + CHUTE_PHASES) % CHUTE_PHASES
           const strate = strateDEtage(hs) + CLIFF_DEPTH
+          // La nappe lit son pied (le sol du bas, comme une paroi) ; l'écume, le sol qu'elle mouille.
+          const pied: SolDuChamp = { pied: (ty + 1) * TILE_PX }
           for (let k = 0; k < L; k++) {
-            nTop = this.poser(this.tops, nTop, cliffKey('chute', k, varianteDeChute(phase, pasChute)), tx, ty - h * L + 1 + k, strate, hs)
+            nTop = this.poser(this.tops, nTop, cliffKey('chute', k, varianteDeChute(phase, pasChute)), tx, ty - h * L + 1 + k, strate, hs, 1, pied)
           }
-          nTop = this.poser(this.tops, nTop, cliffKey('ecume', 0, varianteDEcume(phase, pasEcume)), tx, ty + 1 - hs * L, strate, hs)
+          nTop = this.poser(this.tops, nTop, cliffKey('ecume', 0, varianteDEcume(phase, pasEcume)), tx, ty + 1 - hs * L, strate, hs, 1, { lift: hs * LIFT_PX })
           this.chutes.push({ tx, ty, hs })
           continue
         }
         let premiere = true
+        // LE PIED DE LA PAROI (LG-R14) : la tuile du sud, au palier bas — la première rangée de sol
+        // que sa marche ombre. Toute la hauteur du mur lit ce sol-là.
+        const piedDeParoi = (ty + 1) * TILE_PX
         for (let j = h - 1; j >= hs; j--) {
           const strate = strateDEtage(j) + CLIFF_DEPTH
+          // La bande de strate 0 vit SOUS le quad de sol, qui la multipliera à sa place dessinée : elle
+          // se divise d'avance (`piedSousLeVoile`, `sol-du-corps.ts`).
+          const solDeBande: SolDuChamp = { pied: piedDeParoi, sousLeVoile: j === 0 }
           // Les joues : le côté est exposé quand la voisine ne monte pas jusqu'à cette bande.
           const e = hE <= j ? 2 : 0
           const w = hW <= j ? 4 : 0
@@ -320,13 +349,14 @@ export class CliffLayer {
             const variant = (((tx % PHASES_PAROI) + PHASES_PAROI) % PHASES_PAROI)
               + PHASES_PAROI * (hash2(tx, ty + (h - j) * L + k) < 0.5 ? 0 : 1)
             const key = cliffKey('face', (arete ? 1 : 0) | e | w | (pied ? 8 : 0), variant)
-            nTop = this.poser(this.tops, nTop, key, tx, ty - (j + 1) * L + 1 + k, strate, j)
+            nTop = this.poser(this.tops, nTop, key, tx, ty - (j + 1) * L + 1 + k, strate, j, 1, solDeBande)
             const joueOmbree = dxFlanc < 0 ? w !== 0 : e !== 0
-            if (cran !== 0 && joueOmbree && !surface) nOmbre = this.poserLeFlanc(nOmbre, tx + dxFlanc, ty - (j + 1) * L + 1 + k, hF, keyFlanc, cran < 0)
+            if (ombresPeintes && cran !== 0 && joueOmbree && !surface) nOmbre = this.poserLeFlanc(nOmbre, tx + dxFlanc, ty - (j + 1) * L + 1 + k, hF, keyFlanc, cran < 0)
           }
         }
-        // L'ombre au pied, sur le sol du palier bas — à sa hauteur à lui.
-        if (ty + 1 < height) nOmbre = this.poserLOmbre(nOmbre, tx, ty + 1 - hs * L, strateDEtage(hs) + CLIFF_OMBRE_DEPTH, hs)
+        // L'ombre au pied, sur le sol du palier bas — à sa hauteur à lui. Le champ la porte quand il
+        // compose (LG-R14, `ombreDesMarches`) : peinte en plus, la marche ombrerait deux fois.
+        if (ombresPeintes && ty + 1 < height) nOmbre = this.poserLOmbre(nOmbre, tx, ty + 1 - hs * L, strateDEtage(hs) + CLIFF_OMBRE_DEPTH, hs)
       }
     }
 
@@ -335,8 +365,9 @@ export class CliffLayer {
   }
 
   /** `niveau` : la strate où vit le sprite (palier du dessus, bande `j` d'une paroi, palier du sol
-   *  sous une ombre) — ≥ 1 échappe au voile de nuit et prend la teinte (voir `teinte`). */
-  private poser(pool: Phaser.GameObjects.Image[], n: number, key: string, tx: number, ty: number, depth: number, niveau: number, alpha = 1): number {
+   *  sous une ombre) — ≥ 1 échappe au voile de nuit et prend la teinte (voir `teinte`), ou lit le
+   *  champ à `sol` quand il compose (voir `champCompose`). Sans `sol` (une ombre) : la teinte. */
+  private poser(pool: Phaser.GameObjects.Image[], n: number, key: string, tx: number, ty: number, depth: number, niveau: number, alpha = 1, sol?: SolDuChamp): number {
     let img = pool[n]
     if (!img) {
       img = epinglerLaTuile(this.scene.add.image(0, 0, key).setOrigin(0).setDepth(depth))
@@ -348,8 +379,17 @@ export class CliffLayer {
     // L'alpha aussi : une lèvre fondue hier ne doit pas fondre la face qui prend sa place.
     img.setDepth(depth)
     img.setAlpha(alpha)
-    img.setTint(niveau >= 1 ? this.teinte : 0xffffff)
     img.setPosition(tx * TILE_PX, ty * TILE_PX)
+    // ⚠ L'ARMEMENT AUSSI SE REPOSE À CHAQUE FRAME, pour la même raison : le slot d'une bande armée
+    // sert une lèvre de strate 0 à l'image suivante. Au-dessus du quad (niveau ≥ 1), ou sous le voile
+    // en le disant (mode 3) — sinon la nuit plate d'avant, ou le blanc du palier 0 que le voile couvre.
+    if (this.champCompose && sol !== undefined && (niveau >= 1 || ('sousLeVoile' in sol && sol.sousLeVoile === true))) {
+      img.setTint(0xffffff)
+      armerLeSol(img, sol)
+    } else {
+      img.setTint(niveau >= 1 ? this.teinte : 0xffffff)
+      desarmerLeSol(img)
+    }
     img.setVisible(true)
     return n + 1
   }

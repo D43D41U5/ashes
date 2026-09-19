@@ -56,6 +56,10 @@ export interface PorteurDeTorche {
   strate: number
   /** `partDeFlamme` du slot tenu : 1 neuve → 0 morte. */
   part: number
+  /** La rangée LOGIQUE du corps, en px (la tuile, lift retiré) — ce que le champ de la GI lit (LG-R14). */
+  yLogique: number
+  /** Le niveau du corps (`niveauDuCorps` : son étage, sinon le palier de sa tuile) — le palier de sa flamme. */
+  niveau: number
 }
 
 /** Le PIXEL DE LUMIÈRE : 4×4 px monde — la MÊME grille que les deux autres flaques et que l'art. */

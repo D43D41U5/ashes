@@ -27,7 +27,7 @@
  */
 import Phaser from 'phaser'
 import { UNIFORMES_CORPS, faireAdditionCorps } from './corps-gpu'
-import { SANS_DESSUS } from './sol-du-corps'
+import { SANS_DESSUS, type CorpsPose } from './sol-du-corps'
 
 const BatchHandlerQuad = Phaser.Renderer.WebGL.RenderNodes.BatchHandlerQuad
 const SubmitterQuad = Phaser.Renderer.WebGL.RenderNodes.SubmitterQuad
@@ -55,11 +55,13 @@ export const NOM_SUBMITTER = 'GiCorpsSubmitter'
 export const ROLE_HANDLER = 'BatchHandler'
 export const ROLE_SUBMITTER = 'Submitter'
 
-/** Les trois textures du champ, telles que `ChampGpu` les publie. */
+/** Les quatre textures du champ, telles que `ChampGpu` les publie — trois pour un corps, `champ` pour un sol. */
 export interface TexturesDuChamp {
   readonly lumiere: Phaser.Renderer.WebGL.Wrappers.WebGLTextureWrapper
   readonly faceDirecte: Phaser.Renderer.WebGL.Wrappers.WebGLTextureWrapper
   readonly ombre: Phaser.Renderer.WebGL.Wrappers.WebGLTextureWrapper
+  /** `gi-champ` — le `M` composé, celui du quad de sol ; un SOL (LG-R14) le lit tel quel. */
+  readonly champ: Phaser.Renderer.WebGL.Wrappers.WebGLTextureWrapper
 }
 
 /**
@@ -109,10 +111,12 @@ export interface CorpsPourLeShader {
   lift: number
   /** 1 si `c.ciel` — un corps sous le ciel seul (un toit) : ni lumière ni ombre du champ, le plancher et l'astre entiers. */
   ciel: number
+  /** `CorpsPose.sol` (LG-R14) : 0 un corps, 1 `tuile`, 2 `pied`, 3 `piedSousLeVoile` — voir `UNIFORMES_CORPS.sol`. */
+  sol: number
 }
 
 /** Un corps qu'on n'a pas encore renseigné : plat, sans feu direct, au sol. Jamais un `null` dans le shader. */
-const CORPS_NEUTRE: CorpsPourLeShader = { pied: 0, ancreX: 0, crete: 0, seuil: SANS_DESSUS, dresse: 0, ruban: 0, expo: -1, lift: 0, ciel: 0 }
+const CORPS_NEUTRE: CorpsPourLeShader = { pied: 0, ancreX: 0, crete: 0, seuil: SANS_DESSUS, dresse: 0, ruban: 0, expo: -1, lift: 0, ciel: 0, sol: 0 }
 
 /**
  * LES UNITÉS DE TEXTURE — 0 et 1 sont à Phaser, 2/3/4 sont à nous.
@@ -122,11 +126,12 @@ const CORPS_NEUTRE: CorpsPourLeShader = { pied: 0, ancreX: 0, crete: 0, seuil: S
  * (`:366-372`) force `count = 1` sous éclairage — « the normal map is included in the textures array,
  * but it's attached to another texture unit, so we shouldn't count it ». Les rangs suivants du tableau
  * sont donc libres, et `bindUnits` (`WebGLTextureUnitsWrapper.js:148-155`) lie par POSITION en sautant
- * les trous. Trois de plus tiennent partout : WebGL1 garantit 8 unités au minimum.
+ * les trous. Quatre de plus tiennent partout : WebGL1 garantit 8 unités au minimum.
  */
 const UNITE_LUMIERE = 2
 const UNITE_FACE_DIRECTE = 3
 const UNITE_OMBRE = 4
+const UNITE_CHAMP = 5
 
 /**
  * ═══ LE HANDLER — le lot, le shader, et les uniformes ═══
@@ -243,6 +248,7 @@ export class NoeudCorpsGi extends BatchHandlerQuad {
     pm.setUniform(UNIFORMES_CORPS.lumiere, UNITE_LUMIERE)
     pm.setUniform(UNIFORMES_CORPS.faceDirecte, UNITE_FACE_DIRECTE)
     pm.setUniform(UNIFORMES_CORPS.ombre, UNITE_OMBRE)
+    pm.setUniform(UNIFORMES_CORPS.champ, UNITE_CHAMP)
     pm.setUniform(UNIFORMES_CORPS.cadre, [...champ.cadre])
     pm.setUniform(UNIFORMES_CORPS.pas, champ.pas)
     pm.setUniform(UNIFORMES_CORPS.mn, [...champ.mn])
@@ -262,6 +268,7 @@ export class NoeudCorpsGi extends BatchHandlerQuad {
     pm.setUniform(UNIFORMES_CORPS.expo, c.expo)
     pm.setUniform(UNIFORMES_CORPS.lift, c.lift)
     pm.setUniform(UNIFORMES_CORPS.ciel, c.ciel)
+    pm.setUniform(UNIFORMES_CORPS.sol, c.sol)
   }
 
   /**
@@ -282,6 +289,7 @@ export class NoeudCorpsGi extends BatchHandlerQuad {
       t[UNITE_LUMIERE] = champ.textures.lumiere
       t[UNITE_FACE_DIRECTE] = champ.textures.faceDirecte
       t[UNITE_OMBRE] = champ.textures.ombre
+      t[UNITE_CHAMP] = champ.textures.champ
     }
     return datum
   }
@@ -374,4 +382,74 @@ export function armerLeCorps(sprite: Phaser.GameObjects.Image): CorpsPourLeShade
 export function desarmerLeCorps(sprite: Phaser.GameObjects.Image): void {
   sprite.setRenderNodeRole(ROLE_HANDLER, null)
   sprite.setRenderNodeRole(ROLE_SUBMITTER, null)
+}
+
+/**
+ * ═══ UN SOL DANS LE NŒUD DES CORPS (LG-R14) ═══
+ *
+ * OÙ une image de sol lit le champ : `lift` — sous le pixel, `lift` px sous sa place dessinée (une part
+ * de terrasse, une écume) ; `pied` — à cette ligne, en px monde LOGIQUES, sur toute sa hauteur (une
+ * paroi, une rampe levée, une chute) ; `sousLeVoile` — la même, pour une image de STRATE 0 que le quad
+ * multiplie déjà (`CorpsPose.sol`, `sol-du-corps.ts`).
+ */
+export type SolDuChamp = { readonly lift: number } | { readonly pied: number; readonly sousLeVoile?: boolean }
+
+/**
+ * LA POSE de chaque image de sol armée, pour la garde (LG-A8, dev seulement) — le pendant du
+ * `WeakMap` de `snapshot-view` pour les corps : le sac ne porte que ce que le fragment lit, la
+ * référence veut la pose. Une image désarmée en sort ; une image qui meurt l'emporte.
+ */
+const POSES_DU_SOL = new WeakMap<Phaser.GameObjects.Image, CorpsPose>()
+
+/**
+ * ARMER UNE IMAGE DE SOL — les deux rôles, le sac, et l'ÉCLAIRAGE.
+ *
+ * ⚠ **`setLighting(true)` EST LA CONDITION, PAS UN DÉTAIL.** L'addition qui porte `appliquerGi` est
+ * taguée `LIGHTING` et `updateShaderConfig` la désarme sur un objet non éclairé : une image de sol
+ * armée sans éclairage serait dessinée par mon nœud avec le shader de Phaser NU, et le symptôme
+ * (« la terrasse est comme avant ») se lirait comme un interrupteur éteint. Une image sans normal map
+ * prend la `__NORMAL` plate de Phaser, que le bloc `uGiSol` ne lit de toute façon pas.
+ *
+ * À APPELER À CHAQUE IMAGE sur un emplacement poolé : le même slot sert une paroi de strate 2 puis une
+ * lèvre de strate 0 d'une image à l'autre, et le sac persiste par référence.
+ */
+export function armerLeSol(image: Phaser.GameObjects.Image, sol: SolDuChamp): void {
+  const sac = armerLeCorps(image)
+  if ('lift' in sol) {
+    sac.sol = 1
+    sac.lift = sol.lift
+    sac.pied = 0
+  } else {
+    sac.sol = sol.sousLeVoile === true ? 3 : 2
+    sac.lift = 0
+    sac.pied = sol.pied
+  }
+  image.setLighting(true)
+  if (import.meta.env.DEV) {
+    POSES_DU_SOL.set(
+      image,
+      'lift' in sol
+        ? { x: image.x, y: image.y + sol.lift, arete: 0, lift: sol.lift, sol: 'tuile' }
+        : { x: image.x, y: sol.pied, arete: 0, sol: sol.sousLeVoile === true ? 'piedSousLeVoile' : 'pied' },
+    )
+  }
+}
+
+/**
+ * DÉSARMER UNE IMAGE DE SOL — et lui rendre son rendu SANS éclairage, celui que les couches de sol
+ * ont toujours eu. Bon marché quand il n'y a rien à défaire : c'est l'appel de chaque image sur
+ * chaque slot non armé.
+ */
+export function desarmerLeSol(image: Phaser.GameObjects.Image): void {
+  const data = (image as unknown as { renderNodeData: Record<string, unknown> | null }).renderNodeData
+  if (data?.[NOM_NOEUD] !== undefined) {
+    desarmerLeCorps(image)
+    if (import.meta.env.DEV) POSES_DU_SOL.delete(image)
+  }
+  if (image.lighting) image.setLighting(false)
+}
+
+/** La pose d'une image de sol armée (dev), ou `undefined` — pour la garde LG-A8. */
+export function poseDuSol(image: Phaser.GameObjects.Image): CorpsPose | undefined {
+  return POSES_DU_SOL.get(image)
 }

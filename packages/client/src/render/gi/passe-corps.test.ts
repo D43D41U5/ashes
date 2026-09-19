@@ -12,6 +12,7 @@ import { describe, expect, it } from 'vitest'
 import { EDGE_E, EDGE_N, EDGE_S } from '@ashes/sim'
 import { MUR_HT } from '../bati-art'
 import { DEMI_BANDE_TUILES, TILE_PX } from '../framing'
+import { composerM } from './champ-ref'
 import type { Rgb } from './corps-ref'
 import { estNonTrivial, pixelDuCorps, type CielDeLHeure, type LectureDuChamp, type SourcesDuPixel } from './passe-corps'
 import { hauteurDeCrete, ligneDuPied, type CorpsPose, type Normale } from './sol-du-corps'
@@ -247,5 +248,71 @@ describe('le compteur de prémisse de la passe', () => {
   it('UN TEXEL NOIR REND TOUT TRIVIAL — un écart qu’aucun octet ne porte n’éprouve rien', () => {
     const px = pixelDuCorps(c, c.x, rang(40), champ().lire, CIEL, SOURCES, TEXEL, VERS_LE_SUD)
     expect(estNonTrivial(px, [0, 0, 0])).toBe(false)
+  })
+})
+
+/**
+ * ═══ UN SOL (LG-R14) — le quad de sol, porté là où il ne va pas ═══
+ * Une image de terrain d'une strate ≥ 1 (`CorpsPose.sol`) est `texel × M` en UN point : ni parts, ni
+ * normale, ni feu au pied. Le miroir GLSL est le bloc `uGiSol` de `corps-gpu.ts` (`pixelDeSol`).
+ */
+describe('un sol lit le champ à son point (LG-R14)', () => {
+  const mParDefaut = (l: LectureDuChamp): Rgb => [
+    composerM(CIEL.mn[0], l.ombre, CIEL.a, l.light[0]),
+    composerM(CIEL.mn[1], l.ombre, CIEL.a, l.light[1]),
+    composerM(CIEL.mn[2], l.ombre, CIEL.a, l.light[2]),
+  ]
+  const fois = (t: Rgb, m: Rgb): Rgb => [t[0] * m[0], t[1] * m[1], t[2] * m[2]]
+
+  it('TUILE — sous le pixel, à sa place LOGIQUE (le lift retiré), et texel × M sans rien d’autre', () => {
+    const c = champ({ ombre: 0.5 })
+    const pose: CorpsPose = { x: 400, y: 900, arete: 0, lift: 32, sol: 'tuile' }
+    const px = pixelDuCorps(pose, 410.5, 850.5, c.lire, CIEL, SOURCES, TEXEL, VERS_LE_SUD)
+    expect(c.appels).toEqual([{ x: 410.5, y: 882.5 }])
+    expect(px.ou).toBe('sol')
+    expect(px.rgb).toEqual(fois(TEXEL, mParDefaut(c.lire(0, 0))))
+    // Une normale plein sud n'y change rien : un sol n'a pas de facteur de normale.
+    expect([px.fAstre, px.fFeu]).toEqual([1, 1])
+    expect(estNonTrivial(px, TEXEL)).toBe(false)
+  })
+
+  it('PIED — à sa ligne, sur toute sa hauteur : deux rangs lisent le même point', () => {
+    const c = champ()
+    const pose: CorpsPose = { x: 400, y: 900, arete: 0, sol: 'pied' }
+    pixelDuCorps(pose, 410.5, 850.5, c.lire, CIEL, SOURCES, TEXEL, PLAT)
+    pixelDuCorps(pose, 410.5, 870.5, c.lire, CIEL, SOURCES, TEXEL, PLAT)
+    expect(c.appels).toEqual([{ x: 410.5, y: 900 }, { x: 410.5, y: 900 }])
+  })
+
+  it('PIED SOUS LE VOILE — divisé par M à la place dessinée : fois le quad, le produit vaut texel × M(pied)', () => {
+    const auPied: LectureDuChamp = { light: [0.1, 0.08, 0.05], directFace: [0, 0, 0], ombre: 1 }
+    const dessine: LectureDuChamp = { light: [0.6, 0.5, 0.4], directFace: [0.3, 0.2, 0.1], ombre: 0 }
+    const appels: number[] = []
+    const lire = (_x: number, y: number): LectureDuChamp => { appels.push(y); return y === 900 ? auPied : dessine }
+    const pose: CorpsPose = { x: 400, y: 900, arete: 0, sol: 'piedSousLeVoile' }
+    const px = pixelDuCorps(pose, 410.5, 850.5, lire, CIEL, SOURCES, TEXEL, PLAT)
+    expect(appels).toEqual([900, 850.5])
+    const mPied = mParDefaut(auPied)
+    const mQuad = mParDefaut(dessine)
+    for (let i = 0; i < 3; i++) expect(px.rgb[i]! * mQuad[i]!).toBeCloseTo(TEXEL[i]! * mPied[i]!, 12)
+    // Et le contrôle : sans le voile, le même pixel vaut texel × M(pied) tout court — plus sombre.
+    const nu = pixelDuCorps({ ...pose, sol: 'pied' }, 410.5, 850.5, lire, CIEL, SOURCES, TEXEL, PLAT)
+    expect(nu.rgb).toEqual(fois(TEXEL, mPied))
+    expect(nu.rgb[0]).toBeLessThan(px.rgb[0]!)
+  })
+
+  it('M LU TEL QUEL L’EMPORTE SUR LA RECOMPOSITION — la garde compare l’octet du quad, pas la loi refaite', () => {
+    const c = champ({ m: [0.2, 0.3, 0.4] })
+    const pose: CorpsPose = { x: 400, y: 900, arete: 0, sol: 'pied' }
+    const px = pixelDuCorps(pose, 410.5, 850.5, c.lire, CIEL, SOURCES, TEXEL, PLAT)
+    expect(px.rgb).toEqual(fois(TEXEL, [0.2, 0.3, 0.4]))
+  })
+
+  it('UN SOL S’ÉCRÊTE À 1 PAR CANAL — un pied plus clair que son voile ne rend pas plus que le texel', () => {
+    const auPied: LectureDuChamp = { light: [1, 1, 1], directFace: [0, 0, 0], ombre: 0 }
+    const dessine: LectureDuChamp = { light: [0, 0, 0], directFace: [0, 0, 0], ombre: 1 }
+    const lire = (_x: number, y: number): LectureDuChamp => (y === 900 ? auPied : dessine)
+    const px = pixelDuCorps({ x: 400, y: 900, arete: 0, sol: 'piedSousLeVoile' }, 410.5, 850.5, lire, CIEL, SOURCES, [0.9, 0.9, 0.9], PLAT)
+    expect(px.rgb).toEqual([1, 1, 1])
   })
 })

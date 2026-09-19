@@ -31,10 +31,12 @@
  * fabricables hors navigateur. Ici on éprouve la LOI sur des entrées posées ; le PIXEL se juge sous
  * SwiftShader (LG-A1, LG-A2), comme l'en-tête de `corps-ref.test.ts` le dit déjà.
  */
+import { composerM } from './champ-ref'
 import { avecFeuDeLaFace, composerLeCorps, partsDuCorps, sansFeuDirect, type PartsCorps, type Rgb } from './corps-ref'
 import {
   facteurDeNormale,
   lectureDuFeu,
+  ligneDuPied,
   ordonneeLogique,
   pointAuSol,
   type CorpsPose,
@@ -50,6 +52,12 @@ export interface LectureDuChamp {
   readonly directFace: Rgb
   /** `S`, le masque d'ombre d'astre en ce point, dans [0, 1] (LG-R8). */
   readonly ombre: number
+  /**
+   * `M`, le multiplicateur COMPOSÉ en ce point — `gi-champ`, ce que le quad de sol multiplie — quand
+   * l'appelant l'a lu tel quel (la garde LG-A8, sur l'octet même que le shader lit) ; absent, il se
+   * recompose des trois autres (`composerM`, la loi de LG-R5). Seul un SOL (`CorpsPose.sol`) le lit.
+   */
+  readonly m?: Rgb
 }
 
 /** Le ciel de l'heure — trois nombres par IMAGE, jamais par pixel : ce sont des uniformes. */
@@ -84,14 +92,63 @@ export interface PixelDuCorps {
   /** Le facteur de normale de l'astre, et celui du feu — `1` exactement sur un dessus plat. */
   readonly fAstre: number
   readonly fFeu: number
-  /** La branche prise par la part directe du feu (LG-R16, O) — `nul` sur un dessus. */
-  readonly ou: 'nul' | 'auPied' | 'sousLePixel'
+  /** La branche prise par la part directe du feu (LG-R16, O) — `nul` sur un dessus ; `sol` pour une
+   *  image de sol (LG-R14), qui n'a ni feu au pied ni normale : `texel × M`, et rien d'autre. */
+  readonly ou: 'nul' | 'auPied' | 'sousLePixel' | 'sol'
 }
 
 const NUL: Rgb = [0, 0, 0]
 
 /** Le champ tel que le voit un corps sous le ciel seul (`CorpsPose.ciel`) : rien, et pas d'ombre. */
 const SANS_CHAMP: LectureDuChamp = { light: NUL, directFace: NUL, ombre: 0 }
+
+/**
+ * LE MULTIPLICATEUR DU CHAMP en un point lu — `M` tel quel s'il a été lu (`LectureDuChamp.m`), sinon
+ * recomposé par la loi de LG-R5 (`composerM`, celle de `FRAG_SOMME` et du quad de sol). Mutable :
+ * l'appelant le divise.
+ */
+function multiplicateurLu(l: LectureDuChamp, ciel: CielDeLHeure): [number, number, number] {
+  if (l.m !== undefined) return [l.m[0], l.m[1], l.m[2]]
+  return [
+    composerM(ciel.mn[0], l.ombre, ciel.a, l.light[0]),
+    composerM(ciel.mn[1], l.ombre, ciel.a, l.light[1]),
+    composerM(ciel.mn[2], l.ombre, ciel.a, l.light[2]),
+  ]
+}
+
+/**
+ * UN PIXEL DE SOL (LG-R14, `CorpsPose.sol`) — le décalque du quad `gi-champ` sur une image qu'il ne
+ * couvre pas : le texel fois `M` en UN point, sans normale ni parts. Le point : sous le pixel à sa
+ * place logique (`tuile`), ou la ligne du pied (`pied`) ; et sous le voile, divisé par ce que le quad
+ * posera à la place DESSINÉE, pour que le produit soit `M(pied)`. Le miroir GLSL est le bloc `uGiSol`
+ * de `corps-gpu.ts`.
+ */
+function pixelDeSol(
+  c: CorpsPose,
+  sol: NonNullable<CorpsPose['sol']>,
+  xw: number,
+  yw: number,
+  yl: number,
+  lire: (x: number, y: number) => LectureDuChamp,
+  ciel: CielDeLHeure,
+  texel: Rgb,
+): PixelDuCorps {
+  const m = multiplicateurLu(sol === 'tuile' ? lire(xw, yl) : lire(xw, ligneDuPied(c)), ciel)
+  if (sol === 'piedSousLeVoile') {
+    // Le quad multipliera ce pixel par `M` à sa place dessinée — jamais nul quand on compose (Mn > 0),
+    // et le plancher 1e-3 est celui du shader, pour que les deux chemins divisent la même chose.
+    const d = multiplicateurLu(lire(xw, yw), ciel)
+    m[0] /= Math.max(d[0], 1e-3)
+    m[1] /= Math.max(d[1], 1e-3)
+    m[2] /= Math.max(d[2], 1e-3)
+  }
+  return {
+    rgb: [Math.min(1, texel[0] * m[0]), Math.min(1, texel[1] * m[1]), Math.min(1, texel[2] * m[2])],
+    fAstre: 1,
+    fFeu: 1,
+    ou: 'sol',
+  }
+}
 
 /**
  * UN PIXEL DE CORPS, DE BOUT EN BOUT.
@@ -130,6 +187,9 @@ export function pixelDuCorps(
 ): PixelDuCorps {
   // ⓪ — le pixel dessiné, remonté à sa place logique (identité au sol).
   const yl = ordonneeLogique(c, yw)
+
+  // UN SOL (LG-R14) n'a ni parts ni normale : `texel × M`, et c'est tout — avant la règle des corps.
+  if (c.sol !== undefined) return pixelDeSol(c, c.sol, xw, yw, yl, lire, ciel, texel)
 
   // ① et ② — le point lu, et la répartition qui s'y fait. Un corps qui ne voit que le CIEL (un
   // toit, `CorpsPose.ciel`) se répartit SANS CHAMP : ni lumière, ni ombre — le décalque exact du

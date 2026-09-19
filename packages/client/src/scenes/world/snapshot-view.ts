@@ -145,7 +145,7 @@ import { riveAt, type RiveField } from '../../render/water-field'
 import { coupeDeNeige, enfoncement, enfoncementDUnNoeud, epaisseurQuiSEnfonce } from '../../render/enfoncement'
 import { epinglerLaTuile } from '../../render/tuile-epinglee'
 import { cleDeTuile, indexerParTuile, noeudVu, sousLaRoche } from './index-noeuds'
-import { armerLeCorps, NoeudCorpsGi, NOM_NOEUD, type ChampDeLImage } from '../../render/gi/noeud-corps'
+import { armerLeCorps, NoeudCorpsGi, NOM_NOEUD, poseDuSol, type ChampDeLImage } from '../../render/gi/noeud-corps'
 import { garderLesCorps, type CorpsAEprouver, type VerdictCorps } from '../../render/gi/garde-corps'
 import type { CarteMonde } from '../../render/gi/champ-gpu'
 import { GI } from '../../render/gi/reglages'
@@ -1920,6 +1920,8 @@ export class SnapshotView {
       feuGi === null || feuGi[3] <= 0 ? -1 : (expositionAuFeu(corps, { x: feuGi[0], y: feuGi[1] }) ?? -1)
     sac.lift = corps.lift ?? 0
     sac.ciel = corps.ciel === true ? 1 : 0
+    // Un CORPS, jamais un sol (LG-R14) : les sols s'arment par `armerLeSol`, depuis les couches.
+    sac.sol = 0
     if (import.meta.env.DEV) this.poses.set(sprite, corps)
   }
 
@@ -1971,7 +1973,8 @@ export class SnapshotView {
       const data = (sprite as unknown as { renderNodeData: Record<string, unknown> | null }).renderNodeData
       const sac = data?.[NOM_NOEUD]
       if (typeof sac !== 'object' || sac === null || !('expo' in sac)) continue
-      const pose = this.poses.get(sprite)
+      // Un corps (posé ici) ou un SOL (armé par sa couche, LG-R14) : les deux ont une pose, à deux adresses.
+      const pose = this.poses.get(sprite) ?? poseDuSol(sprite)
       if (pose === undefined) continue
       if (!Phaser.Geom.Rectangle.Overlaps(sprite.getBounds(), v)) continue
       candidats.push({ corps: { sprite, pose }, d: Math.hypot(sprite.x - cx, sprite.y - cy) })
@@ -1981,6 +1984,7 @@ export class SnapshotView {
       lumiere: champGpu.lire('gi-lumiere'),
       faceDirecte: champGpu.lire('gi-face-directe'),
       ombre: champGpu.lire('gi-drapeau'),
+      champ: champGpu.lire('champ'),
     }
     return garderLesCorps(this.scene, candidats.slice(0, n).map((c) => c.corps), champ, lues)
   }

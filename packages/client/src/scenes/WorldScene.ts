@@ -191,7 +191,7 @@ import {
 import { peindreCarteArt, type CarteArt } from '../render/carte-art'
 import { cellulesDuDisque, peindreSavoirRegion } from '../render/carte-savoir'
 import { cleDuRegime, deriverEauDuJour, regimeDeCarte } from '../render/carte-eau'
-import { atteignableEntreEtages, etagesDuPas, niveauDuCorps, palierDuSol, terrainAEtage, TRACTION, eauPechable, estUnCoinDePeche, porteDeLEau, FISH_SPECIES, niveauDEau, torcheVive, partDeFlamme, clarteSurSoiAt, clarteDuCiel, partDuCiel, NUIT, MONSTER_DEFS, POI_CHARGES, TERRAIN_DEEP_WATER, TERRAIN_SHALLOW_WATER, CREUX, TERRAINS_BOISES_MASSIF, ventForceAt, VENT, type EtatVent, type Souillure } from '@ashes/sim'
+import { atteignableEntreEtages, etagesDuPas, niveauDeLaTuile, niveauDuCorps, palierDuSol, terrainAEtage, TRACTION, eauPechable, estUnCoinDePeche, porteDeLEau, FISH_SPECIES, niveauDEau, torcheVive, partDeFlamme, clarteSurSoiAt, clarteDuCiel, partDuCiel, NUIT, MONSTER_DEFS, POI_CHARGES, TERRAIN_DEEP_WATER, TERRAIN_SHALLOW_WATER, CREUX, TERRAINS_BOISES_MASSIF, ventForceAt, VENT, type EtatVent, type Souillure } from '@ashes/sim'
 
 /** L'assombrissement du sol au plafond de profondeur (§2quater R42) : au cœur d'un massif,
  *  le sol perd jusqu'à 14 % de luminance — en PENTE CONTINUE, jamais par bande. */
@@ -211,7 +211,7 @@ function revealRadiusOf(kind: string): number {
   return charge && charge.devise === 'savoir' && charge.reveal === 'radius' ? charge.radiusTiles : 0
 }
 import { NightVeil } from './world/night-veil'
-import { ChampGpu } from '../render/gi/champ-gpu'
+import { ChampGpu, PASSES_GI } from '../render/gi/champ-gpu'
 import { ambianteDeLHeure, luminanceDuVoile, rgbDeCouleur } from '../render/gi/corps-ref'
 import { forceDuFeuGi } from '../render/gi/reglages'
 import { DynamicLighting, couleurDuCiel, deriveDOmbre, facteurDuFeu, forceDeLOmbre } from './world/dynamic-lighting'
@@ -668,7 +668,13 @@ export class WorldScene extends Phaser.Scene {
       // strate 0 sous les pavés du palier (voir `PorteurDeTorche.strate`).
       const palier = this.relief.palier(Math.floor(pos.x), Math.floor(pos.y))
       const strate = strateDEtage(strateDuCorps(this.etages.niveauDuCorps(pos.x, pos.y, e.etage ?? palier)), palier)
-      out.push({ id: e.id, x: pos.x * TILE_PX, y: this.yDessineDuCorps(pos.x, pos.y, e.etage) * TILE_PX, strate, part: partDeFlamme(slot) })
+      // …ET LA PLACE LOGIQUE, pour le champ de la GI (LG-R14) : la sim juge la marche entre le sol du
+      // récepteur et la flamme du porteur, à SON palier (`niveauDuCorps`, ce que `lumiereDesTorches` lit).
+      out.push({
+        id: e.id, x: pos.x * TILE_PX, y: this.yDessineDuCorps(pos.x, pos.y, e.etage) * TILE_PX, strate, part: partDeFlamme(slot),
+        yLogique: pos.y * TILE_PX,
+        niveau: e.etage ?? palierDuSol(this.map, Math.floor(pos.x), Math.floor(pos.y)),
+      })
     }
     return out
   }
@@ -2424,6 +2430,15 @@ export class WorldScene extends Phaser.Scene {
       if (this.gelLayer) this.gelLayer.teinte = teinteDesHauteurs
       if (this.water) this.water.teinte = teinteDesHauteurs
       if (this.cliffs) this.cliffs.teinte = teinteDesHauteurs
+      // …SAUF QUAND LE CHAMP COMPOSE (LG-R14) : la nuit n'est plus plate, et ce qui vit au-dessus du
+      // quad de sol — pavés de terrasse, parois, rampes levées — lit le champ à son point (`armerLeSol`)
+      // au lieu de la teinte. La chaîne ENTIÈRE (`PASSES_GI`) : sous ce compte, `texturesDesCorps` est
+      // nul et une image armée sortirait NUE (`uGiCadre.z <= 0`), blanche dans la nuit. Le gel et
+      // l'eau gardent la teinte : ils ne sont pas des images du nœud des corps.
+      const composeGi = this.lit && (getHud(this.registry, 'debugGi') ?? 0) >= PASSES_GI
+      if (this.paves) this.paves.champCompose = composeGi
+      if (this.cliffs) this.cliffs.champCompose = composeGi
+      if (this.etages) this.etages.champCompose = composeGi
       // ═══ LA SOUS-LISTE DES FEUX, DÉRIVÉE UNE FOIS PAR IMAGE (PERF-08) ═══
       //
       // Quatre passes complètes sur `structures` cherchaient le même petit sous-ensemble à
@@ -2729,6 +2744,11 @@ export class WorldScene extends Phaser.Scene {
         // village, que le trou ne prend pas — le trou ne colore rien, le champ multiplie à la place du
         // voile ET du point-light. La portée reste la même, `radiusTiles` (LG-A7).
         forceGi: forceDuFeuGi(warmth, g.beat, axFeu.respiration || axFeu.coeurBlanc),
+        // LA PLACE LOGIQUE ET LE NIVEAU, pour le champ (LG-R14) : la sim juge la marche entre le sol du
+        // récepteur et la FLAMME de la source, à son palier (`lumiereDuFeu`, `niveauDeLaTuile`) — le
+        // champ est en px logiques, il ne voit pas où le feu est dessiné.
+        yLogique: (s.ty + 0.5) * TILE_PX,
+        niveau: niveauDeLaTuile(this.map, s),
       }))
       // ═══ LES TORCHES (spec `torche.md`) — TROIS branchements, UNE liste ═══
       //
@@ -2747,7 +2767,7 @@ export class WorldScene extends Phaser.Scene {
         // La FORCE, pas 1 : le rayon a doublé le 2026-08-26, la profondeur du creusement a
         // baissé d'autant (`TORCHE_HOLE_FORCE`) — le réglage vit dans `render/torche.ts`, avec
         // le rayon qu'il compense, jamais en dur dans cette boucle.
-        if (r > 0) veilFires.push({ worldX: p.x, worldY: p.y, radiusTiles: r, force: TORCHE_HOLE_FORCE, forceGi: TORCHE_HOLE_FORCE })
+        if (r > 0) veilFires.push({ worldX: p.x, worldY: p.y, radiusTiles: r, force: TORCHE_HOLE_FORCE, forceGi: TORCHE_HOLE_FORCE, yLogique: p.yLogique, niveau: p.niveau })
       }
       this.torcheGround?.update(porteurs, day, time)
       // LE CHAMP DE LA GI (spec `lumiere-globale.md`, tranche B) — derrière l'interrupteur du panneau
@@ -2762,12 +2782,20 @@ export class WorldScene extends Phaser.Scene {
         this.gi ??= ChampGpu.creer(this)
         // Mn au registre POUR LA SONDE : sans lui, la garde LG-A5 lit M sans savoir contre quoi.
         this.registry.set('debugMn', mnGi)
+        // LE RÉGIME (LG-R14) : au sol, chaque tuile répond à son palier et le champ ne voit que les
+        // sources de la surface — une torche portée dans une salle sous la terrasse n'éclaire pas le
+        // plateau ; dans un creux, tout se lit au niveau du regard, et ses sources seules.
+        const auSol = !this.etages.souterrain
+        const niveauGi = auSol ? 0 : this.etages.niveauDuRegard
         this.gi?.update(
           passesGi,
           this.cameras.main,
           { map: this.map, structures: this.view.structures, nodes: this.view.nodes },
-          this.etages.souterrain ? this.etages.niveauDuRegard : 0,
-          veilFires.map((f) => ({ worldX: f.worldX, worldY: f.worldY, radiusTiles: f.radiusTiles, force: f.forceGi })),
+          niveauGi,
+          veilFires
+            .filter((f) => (auSol ? f.niveau >= 0 : f.niveau === niveauGi))
+            // À LA PLACE LOGIQUE, jamais dessinée : le champ est la grille de la sim (LG-R14).
+            .map((f) => ({ worldX: f.worldX, worldY: f.yLogique, radiusTiles: f.radiusTiles, force: f.forceGi, palier: f.niveau })),
           // LA PROFONDEUR DU CHAMP — en ADD pour le regard de la tranche B, en MULTIPLY quand il
           // COMPOSE ; dans les deux cas `ambientDepth` NU, SURTOUT PAS `+ 0.5`. `AIR_OVER_LIGHT`
           // vaut 0,5, donc l'air et le plancher de nuit se posent EXACTEMENT à `depth + 0.5` ; un
@@ -2783,6 +2811,7 @@ export class WorldScene extends Phaser.Scene {
           // une géométrie d'une autre se lirait comme un tremblement. `a` part DÉJÀ multiplié par
           // `SHADOW_ALPHA`, qui vit de ce côté-ci — `render/gi/` ne remonte pas le chercher.
           { derive: this.view.deriveOmbre, a: SHADOW_ALPHA * this.view.forceOmbre },
+          auSol,
         )
         // LA PASSE DES CORPS (LG-R7) — la vue reçoit le champ de CETTE image et le pousse au nœud de
         // rendu ; tout l'assemblage vit de son côté. `ambiante` est la LUMINANCE de l'ambiante de

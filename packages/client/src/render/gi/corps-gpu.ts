@@ -104,6 +104,17 @@ export const UNIFORMES_CORPS = {
   /** 1 pour un corps qui ne voit que le ciel (`CorpsPose.ciel`, un toit) : le shader ne lit pas le champ. */
   ciel: 'uGiCiel',
   /**
+   * PAR IMAGE — `gi-champ`, le `M` composé que le quad de sol multiplie (LG-R5). Un SOL le lit tel
+   * quel : ce n'est pas une quatrième lecture du corps, c'est le quad lui-même, porté là où il ne va pas.
+   */
+  champ: 'uGiM',
+  /**
+   * PAR SPRITE — `CorpsPose.sol` : 0 un corps ; 1 `tuile` (sous le pixel, à sa place logique) ; 2 `pied`
+   * (à `uGiPied`) ; 3 `piedSousLeVoile` (`pied`, divisé par `M` à la place dessinée, que le quad
+   * multipliera). Non nul, le fragment est `texel × M` et sort AVANT la règle des corps.
+   */
+  sol: 'uGiSol',
+  /**
    * PAR IMAGE — l'inverse de `camera.matrixCombined`, les six coefficients de `getWorldPoint`
    * (`BaseCamera.js:876-914`) : `invA = (ima, imb, imc, imd)`, `invB = (ime, imf)`.
    * Le nœud les calcule dans `setupUniforms(drawingContext)`, au même endroit et depuis les mêmes
@@ -146,6 +157,8 @@ uniform float uGiRuban;
 uniform float uGiExpo;
 uniform float uGiLift;
 uniform float uGiCiel;
+uniform sampler2D uGiM;
+uniform float uGiSol;
 uniform vec4 uGiInvA;
 uniform vec2 uGiInvB;
 
@@ -205,6 +218,25 @@ vec2 uvDuChamp(vec2 monde) {
   return vec2((t.x + 0.5) / uGiCadre.z, 1.0 - (t.y + 0.5) / uGiCadre.w);
 }
 
+// Ce point du monde tombe-t-il dans le cadre du champ ? Hors cadre, le quad de sol ne multiplie
+// rien : un sol sous le voile n'y divise donc rien non plus (la référence, elle, écarte le pixel).
+bool dansLeChamp(vec2 monde) {
+  vec2 t = floor((monde - uGiCadre.xy) / uGiPas);
+  return t.x >= 0.0 && t.y >= 0.0 && t.x < uGiCadre.z && t.y < uGiCadre.w;
+}
+
+// ─── UN SOL (LG-R14) — \`texel × M\`, le décalque de \`pixelDeSol\` (\`passe-corps.ts\`) ───
+// Le quad de sol, porté là où il ne va pas : une image d'une strate ≥ 1 lit \`M\` en UN point, sans
+// normale ni parts. Sous le voile (mode 3), le quad multipliera encore ce pixel par \`M\` à sa place
+// dessinée : on divise d'avance, pour que le produit soit \`M(pied)\`. Le plancher 1e-3 est celui de
+// la référence — les deux chemins divisent la même chose.
+vec4 pixelDeSol(vec4 fragColor, vec2 monde, float yLog) {
+  vec2 p = vec2(monde.x, uGiSol > 1.5 ? uGiPied : yLog);
+  vec3 m = texture2D(uGiM, uvDuChamp(p)).rgb;
+  if (uGiSol > 2.5 && dansLeChamp(monde)) m /= max(texture2D(uGiM, uvDuChamp(monde)).rgb, vec3(1.0e-3));
+  return vec4(min(vec3(1.0), fragColor.rgb * m), fragColor.a);
+}
+
 // ─── ② LA RÉPARTITION EN TROIS PARTS (LG-R7) ───
 // Décalque de \`partsDuCorps\` (\`corps-ref.ts:141\`). Le \`continue\` de la boucle par canal devient
 // un ternaire : ici les trois canaux se calculent ensemble, et un \`somme <= 0\` doit rendre zéro
@@ -260,6 +292,9 @@ vec4 appliquerGi(vec4 fragColor, vec3 normalPhaser) {
   // plus haut que sa tuile ; \`uGiPied\`, \`uGiSeuil\`, \`uGiFeu\` sont à la tuile. Sans ce pas, un mur de
   // terrasse tombait TOUT ENTIER sous son seuil — un dessus de haut en bas, sans face (MESURÉ, lift 32).
   float yLog = monde.y + uGiLift;
+
+  // UN SOL (LG-R14) sort ici : ni parts, ni normale — avant la règle des corps, comme la référence.
+  if (uGiSol > 0.5) return pixelDeSol(fragColor, monde, yLog);
 
   // ① LE POINT AU SOL. Le seuil du dessus arrive CALCULÉ (\`seuilDuDessus\`, \`uGiSeuil\`) : pour une
   // bande, la crête sous le BAS DE LA BANDE ; pour un socle, sa couronne ; jamais pour un fût.

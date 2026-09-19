@@ -40,17 +40,24 @@ import Phaser from 'phaser'
 import { LUMIERE, MOTIF_SOURCE, type MondeEclaire } from '@ashes/sim'
 import { TILE_PX } from '../framing'
 import { HOLE_ERASE_PEAK } from '../lighting'
-import { champRef, composerM, masqueDAstre, ombreDesCartes, ombrePleineDAstre, type Astre, type CarteDOmbre, type CartesDOmbre, type Emetteur, type GrilleGi } from './champ-ref'
+import { champRef, composerM, hauteurDesMarches, masqueDAstre, ombreDesCartes, ombreDesMarches, ombrePleineDAstre, type Astre, type CarteDOmbre, type CartesDOmbre, type Emetteur, type GrilleGi } from './champ-ref'
 import { grilleDuMonde, type Fenetre } from './grille'
 import { ALBEDO, GI, longueurDOmbre, profilFeu, type Albedo } from './reglages'
 import { Silhouettes } from './silhouettes'
 
-/** Une source vue par le champ : en px MONDE, la portée en tuiles, la force (le battement, l'agonie). */
+/**
+ * Une source vue par le champ : en px MONDE **LOGIQUES** (la tuile, jamais la position dessinée — LG-R14 :
+ * *« la terrasse lit le champ à sa tuile LOGIQUE »*), la portée en tuiles, la force (le battement,
+ * l'agonie), et le PALIER de son sol : sa flamme est à `palier × PALIER_TEXELS + FLAMME_TEXELS` texels
+ * au-dessus du palier 0, ce que la sim pose (`lumiereDuFeu`, `niveauDeLaTuile`).
+ */
 export interface SourceGi {
   readonly worldX: number
   readonly worldY: number
   readonly radiusTiles: number
   readonly force: number
+  /** Le palier du sol de la source (`palierDuSol`, `niveauDuCorps`) — 0 absent. */
+  readonly palier?: number
 }
 
 /**
@@ -99,6 +106,18 @@ export interface VerdictGi {
   readonly hauteursDeBande: number
   /** Les cartes d'arbres dessinées (LG-R8) — la prémisse de la garde du masque sur les arbres. */
   readonly cartes: number
+  /** Les paliers DISTINCTS du champ (LG-R14) — la prémisse des gardes de la marche : à un seul palier,
+   *  le GPU et l'oracle s'accorderaient même en l'ignorant. 1 sur une fenêtre plate ou dans un creux. */
+  readonly paliers: number
+  /** Les texels libres que les MARCHES SEULES mettent à l'ombre d'astre, par l'oracle (LG-A15) — la
+   *  prémisse de la garde du masque sur les marches : sans un lanceur de cette sorte dans le champ,
+   *  elle n'a rien éprouvé. 0 sans astre. */
+  readonly marchesOmbrees: number
+  /** SOUS L'ÉPREUVE DES HAUTEURS (`eprouverLesHauteurs`) : les texels libres que la grille du MONDE
+   *  — celle d'avant l'épreuve — met à l'ombre pleine, SOUS LE MÊME ASTRE que `masque` ; `null` hors
+   *  épreuve. C'est l'« avant » de la prémisse « l'épreuve raccourcit l'ombre » : lu au même instant
+   *  — le soleil court entre deux `verifier()`, et l'ombre bouge de dizaines de texels avec lui. */
+  readonly ombresSansEpreuve: number | null
   readonly direct: EcartCible
   readonly champ: EcartCible
   /**
@@ -124,6 +143,8 @@ export interface VerdictGi {
 }
 
 const PX_PAR_TEXEL = TILE_PX / LUMIERE.TEXELS_PAR_TUILE
+/** Le lift d'un palier en texels (LG-R14), lu dans la sim — le même nombre que `grille.ts` met dans `marches.hauteur`. */
+const H_PALIER = LUMIERE.PALIER_TEXELS
 
 /**
  * LE PLAFOND DU COMPILATEUR pour la marche d'ombre d'astre — GLSL ES 1.0 exige une borne de boucle
@@ -199,10 +220,27 @@ bool plein1(vec2 t) {
 bool dansCadre(vec2 t) { return t.x >= 0.0 && t.y >= 0.0 && t.x < uTaille.x && t.y < uTaille.y; }
 vec2 uvCible(vec2 t) { return (vec2(t.x, uTaille.y - 1.0 - t.y) + 0.5) / uTaille; }
 vec2 dirDe(int k) { return k == 0 ? vec2(1.0, 0.0) : k == 1 ? vec2(-1.0, 0.0) : k == 2 ? vec2(0.0, 1.0) : vec2(0.0, -1.0); }
+// ═══ LES MARCHES (LG-R14) — \`gi-paliers\`, au grain : R = le palier de la tuile, G = 1 sur une PORTE ═══
+// Le raster de la sim (\`occlusionAuGrain\`, \`paliers\`/\`portes\`), téléversé par \`ecrireOccludeurs\`.
+// Pas dans \`gi-occ\` : ses trois canaux sont pris (code, albédo de bande, hauteur de bande) et son
+// alpha est PRÉMULTIPLIÉ à l'upload (\`createUint8ArrayTexture\`, pma = true) — un alpha < 255 y
+// écraserait le code. Une texture de plus, une lecture par changement de texel, et rien à décoder.
+uniform sampler2D uPaliers;
+const float H_PALIER = ${H_PALIER.toFixed(1)};
+vec2 palierDe(vec2 t) {
+  vec4 v = texture2D(uPaliers, uvCible(t));
+  return vec2(floor(v.r * 255.0 + 0.5), v.g);
+}
 // Le segment p → q (coordonnées continues de grille) entre-t-il dans un occludeur ? La règle de
 // segmentBloque (sim) sur le raster 2× : départ et arrivée exclus, une cellule n'est visitée que si
 // le segment y entre avant sa fin, à égalité on avance en y d'abord.
-bool bloque(vec2 p, vec2 q) {
+//
+// ET LA MARCHE (LG-R14), mot pour mot celle de la sim : le rayon est une droite de la hauteur z0 (le
+// sol du récepteur) à z1 (la flamme), en texels au-dessus du palier 0 ; quand il CHANGE DE TEXEL, si
+// le palier change et qu'aucun des deux texels n'est une porte, il est bloqué s'il franchit l'arête
+// STRICTEMENT sous le haut de la marche. Le départ et l'arrivée s'épargnent la SORTE, jamais la
+// marche. Hors du cadre, le palier est inconnu : on garde le dernier vu — l'oracle fait de même.
+bool bloque(vec2 p, vec2 q, float z0, float z1) {
   // L'EXTRÉMITÉ S'ÉPARGNE AU TEXEL, PAS AU SOUS-TEXEL. La fonction traverse de l'oracle n'inspecte
   // jamais le texel de départ ni celui d'arrivée, et ce sont des texels ENTIERS ; le raster 2×
   // n'en épargnerait qu'un quart et bloquerait sur les trois autres, que l'oracle laisse passer.
@@ -220,18 +258,32 @@ bool bloque(vec2 p, vec2 q) {
   vec2 td = vec2(d.x != 0.0 ? abs(1.0 / d.x) : INF, d.y != 0.0 ? abs(1.0 / d.y) : INF);
   float tx = d.x != 0.0 ? (d.x > 0.0 ? c.x + 1.0 - P.x : P.x - c.x) * td.x : INF;
   float ty = d.y != 0.0 ? (d.y > 0.0 ? c.y + 1.0 - P.y : P.y - c.y) * td.y : INF;
+  vec2 cPrec = s1;
+  vec2 pp = dansCadre(s1) ? palierDe(s1) : vec2(0.0);
   for (int n = 0; n < 192; n++) {
     if (float(n) >= uPasMax) return false;
+    // \`t\` : le paramètre d'ENTRÉE dans le sous-texel suivant — la hauteur du rayon s'y juge.
+    float t;
     if (tx < ty) {
       if (tx >= 1.0) return false;
+      t = tx;
       c.x += s.x;
       tx += td.x;
     } else {
       if (ty >= 1.0) return false;
+      t = ty;
       c.y += s.y;
       ty += td.y;
     }
     vec2 c1 = floor(c * 0.5);
+    if (c1 != cPrec) {
+      if (dansCadre(c1)) {
+        vec2 pn = palierDe(c1);
+        if (pn.x != pp.x && pp.y < 0.5 && pn.y < 0.5 && z0 + t * (z1 - z0) < max(pp.x, pn.x) * H_PALIER) return true;
+        pp = pn;
+      }
+      cPrec = c1;
+    }
     if (c1 == e1) return false;
     if (c1 == s1) continue;
     if (code2(c) > 0.0) return true;
@@ -242,6 +294,8 @@ bool bloque(vec2 p, vec2 q) {
 
 const FRAG_DIRECT = `
 uniform vec4 uSrc[${GI.MAX_SOURCES}];
+// La hauteur de la flamme de chaque source, en texels au-dessus du palier 0 (LG-R14, \`Emetteur.z\`).
+uniform float uSrcZ[${GI.MAX_SOURCES}];
 uniform float uNb;
 uniform vec3 uTeinte;
 uniform vec2 uMotif[16];
@@ -302,6 +356,13 @@ float ombreDAstre(vec2 t) {
   // Le paramètre d'ENTRÉE dans le sous-texel courant, le long de D (0 = le départ, 1 = le bout de la
   // marche) : c'est lui qu'une bande compare à sa part (LG-R9).
   float tEntree = 0.0;
+  // LES MARCHES (LG-R14, \`ombreDesMarches\`) : le palier du texel de DÉPART — la hauteur d'une marche
+  // se compte depuis le sol du récepteur — et le palier et la porte du dernier texel traversé : une
+  // marche est une ARÊTE, elle se franchit entre deux texels consécutifs, en montant.
+  vec2 p0 = palierDe(t);
+  vec2 cPrec = t;
+  float pPrec = p0.x;
+  float portePrec = p0.y;
   for (int n = 0; n < ${PAS_OMBRE_MAX}; n++) {
     if (float(n) >= uPasOmbre) break;
     if (tx < ty) {
@@ -314,6 +375,20 @@ float ombreDAstre(vec2 t) {
       tEntree = ty;
       c.y += s.y;
       ty += td.y;
+    }
+    // Une MONTÉE dont le haut domine le sol du départ, entrée avant la part de sa marche — (haut − bas)
+    // paliers sur la hauteur de la marche d'ombre — met le texel à l'ombre ; sauf si le texel quitté ou
+    // le texel entré est une porte : un connecteur n'est pas une arête (la colonne de la rampe reste
+    // claire, LG-A15). Hors du cadre, le palier est inconnu : on garde le dernier vu, comme l'oracle.
+    vec2 c1 = floor(c * 0.5);
+    if (c1 != cPrec) {
+      if (dansCadre(c1)) {
+        vec2 pn = palierDe(c1);
+        if (pn.x > pPrec && pn.x > p0.x && portePrec < 0.5 && pn.y < 0.5 && tEntree < (pn.x - p0.x) * H_PALIER / uHauteurMarche) return 1.0;
+        pPrec = pn.x;
+        portePrec = pn.y;
+      }
+      cPrec = c1;
     }
     // STRICT, comme les intervalles ouverts de \`coupeBande\` (LG-R10) : un rayon dont la part s'achève
     // exactement au bord d'une bande n'y entre pas. Une bande à la hauteur de la marche (part 1) n'est
@@ -334,6 +409,8 @@ void main() {
   // dilate la pénombre en LISANT cet alpha — un 1 ici la ferait fuir à travers les blocs.
   if (plein1(t)) { gl_FragColor = vec4(0.0, 0.0, 0.0, 0.0); return; }
   vec2 p = t + 0.5;
+  // Le sol de ce texel, en texels au-dessus du palier 0 (LG-R14) : d'ici part chaque rayon.
+  float z0 = palierDe(t).x * H_PALIER;
   vec3 acc = vec3(0.0);
   for (int k = 0; k < ${GI.MAX_SOURCES}; k++) {
     if (float(k) >= uNb) break;
@@ -342,7 +419,7 @@ void main() {
     if (f <= 0.0) continue;
     float vus = 0.0;
     for (int m = 0; m < 16; m++) {
-      if (!bloque(p, s.xy + uMotif[m] * uTailleSource)) vus += 1.0;
+      if (!bloque(p, s.xy + uMotif[m] * uTailleSource, z0, uSrcZ[k])) vus += 1.0;
     }
     if (vus <= 0.0) continue;
     acc += uTeinte * (f * vus / 16.0);
@@ -433,6 +510,10 @@ vec2 sautOmbre(int k) {
 // s'il touche un texel à ⅔ — et ce texel intermédiaire doit être LIBRE, sinon la pénombre
 // traverserait un bloc, ce que l'oracle refuse.
 float ombreEtendue(vec2 t) {
+  // Un occludeur ne prend AUCUNE ombre d'astre (LG-R8), pénombre comprise : l'oracle (\`masqueDAstre\`)
+  // ne dilate jamais sur un texel plein, et \`gi-somme\` y lisait déjà 0. Ici pour que la passe des
+  // CORPS — qui lit ce canal sans \`uOcc\` — voie le même 0 qu'elle.
+  if (plein1(t)) return 0.0;
   if (ombreLue(t) >= 1.0) return 1.0;
   for (int i = 0; i < 5; i++) if (ombreLue(t - sautOmbre(i)) >= 1.0) return uPen.x;
   for (int i = 0; i < 5; i++) {
@@ -477,6 +558,8 @@ void main() {
   // pas une approximation — et elle épargne les 625 lectures par texel du nid ci-dessous : 429 ms
   // des 629 ms de la chaîne, mesurés le 17/09 à 224 × 160, une source.
   if (uNb <= 0.0) { gl_FragColor = vec4(0.0, 0.0, 0.0, 1.0); return; }
+  // Le sol de ce texel (LG-R14) ; une face rebondit au sol de son texel éclairé (\`champRef\`, \`zf\`).
+  float z0 = palierDe(t).x * H_PALIER;
   for (int dy = -${GI.PORTEE_REBOND}; dy <= ${GI.PORTEE_REBOND}; dy++) {
     for (int dx = -${GI.PORTEE_REBOND}; dx <= ${GI.PORTEE_REBOND}; dx++) {
       vec2 X = t + vec2(float(dx), float(dy));
@@ -492,7 +575,7 @@ void main() {
         vec2 n = dirDe(k);
         float cs = dot(dv, n) / d;
         if (cs <= 0.0) continue;
-        if (bloque(p, f + n)) continue;
+        if (bloque(p, f + n, z0, palierDe(X + n).x * H_PALIER)) continue;
         acc += e * (uGain * cs * (1.0 - d / uPortee) / (1.0 + d));
       }
     }
@@ -626,6 +709,8 @@ export class ChampGpu {
   private oy = 0
   private grille: (GrilleGi & { ox: number; oy: number }) | null = null
   private empreinte = ''
+  /** La grille du monde, gardée le temps d'une épreuve des hauteurs (`eprouverLesHauteurs`) ; `null` sinon. */
+  private grilleAvantEpreuve: (GrilleGi & { ox: number; oy: number }) | null = null
   /**
    * Les occludeurs et leurs albédos : deux textures nées d'un `Uint8Array` (`addUint8Array`), et non
    * d'un canvas — les octets se réécrivent en place et `TextureSource.update()` les téléverse tels quels
@@ -638,6 +723,9 @@ export class ChampGpu {
   private alb: Phaser.Textures.Texture | null = null
   private occOctets: Uint8Array | null = null
   private albOctets: Uint8Array | null = null
+  /** Les marches (LG-R14) : `gi-paliers`, au grain — R = palier, G = porte ; alpha 255 (prémultiplié à l'upload). */
+  private paliers: Phaser.Textures.Texture | null = null
+  private paliersOctets: Uint8Array | null = null
   private passes: Phaser.GameObjects.Shader[] = []
   private direct: Phaser.GameObjects.Shader | null = null
   private champ: Phaser.GameObjects.Shader | null = null
@@ -647,6 +735,8 @@ export class ChampGpu {
    *  qu'elle en a fait (`rgb` est déjà la teinte × la force). */
   private emetteurs: (Emetteur & { readonly force: number })[] = []
   private uSrc = new Float32Array(GI.MAX_SOURCES * 4)
+  /** La hauteur de la flamme de chaque source, en texels au-dessus du palier 0 (LG-R14, `Emetteur.z`). */
+  private uSrcZ = new Float32Array(GI.MAX_SOURCES)
   private uNb = 0
   /** La borne de marche du direct, en pas du raster 2× — recalculée par image avec les sources. */
   private uPasMaxDirect = 0
@@ -824,6 +914,12 @@ export class ChampGpu {
      *  se prennent à la MÊME image, d'un seul endroit : une opacité d'une image et une géométrie
      *  d'une autre feraient un décalage qui se lit comme un tremblement. */
     astre: { readonly derive: number; readonly a: number } | null = null,
+    /**
+     * LE RÉGIME (LG-R14) : au sol, chaque tuile répond à SON palier et la marche se juge en hauteur ;
+     * dans un creux (une cave, un chapeau), tout se lit à `niveau`, la loi d'avant les terrasses. La
+     * scène le dit (`!souterrain`) : un chapeau a un niveau ≥ 0 sans être le sol.
+     */
+    auSol = niveau >= 0,
   ): void {
     const n = Math.max(1, Math.min(PASSES_GI, Math.floor(passes)))
     const v = cam.worldView
@@ -853,13 +949,15 @@ export class ChampGpu {
     // Les occludeurs : réécrits quand la fenêtre bouge ou que le monde change de forme. Le bâti et
     // les nœuds se comptent — un mur bâti, un fût abattu changent le compte ; une arête retournée
     // sur place ne le change pas (à relever si ça se voit).
-    const empreinte = `${f.x0},${f.y0},${f.x1},${f.y1},${niveau},${monde.structures.length},${monde.nodes?.length ?? -1}`
+    const empreinte = `${f.x0},${f.y0},${f.x1},${f.y1},${niveau},${auSol ? 's' : 'c'},${monde.structures.length},${monde.nodes?.length ?? -1}`
     this.temps.grille = 0
     this.temps.occludeurs = 0
     if (empreinte !== this.empreinte) {
       this.empreinte = empreinte
+      // Une grille neuve met fin à toute épreuve des hauteurs : son « avant » ne serait plus la sienne.
+      this.grilleAvantEpreuve = null
       const tG = performance.now()
-      this.grille = grilleDuMonde(monde, niveau, f)
+      this.grille = grilleDuMonde(monde, niveau, f, auSol)
       const tO = performance.now()
       this.ecrireOccludeurs(this.grille)
       this.temps.grille = tO - tG
@@ -875,7 +973,11 @@ export class ChampGpu {
       const rayon = (s.radiusTiles * TILE_PX) / PX_PAR_TEXEL
       if (rayon <= 0 || s.force <= 0) continue
       if (x + rayon < 0 || y + rayon < 0 || x - rayon > gw || y - rayon > gh) continue
-      em.push({ x, y, rayon, taille: GI.TAILLE_SOURCE, rgb: [GI.TEINTE_FEU[0] * s.force, GI.TEINTE_FEU[1] * s.force, GI.TEINTE_FEU[2] * s.force], force: s.force })
+      // LA FLAMME, en texels au-dessus du palier 0 (LG-R14) : le sol de son palier, plus la flamme —
+      // `hauteurDuPalier(niveauSource) + FLAMME_TEXELS`, ce que la sim pose dans `partVisible`. Dans un
+      // creux la grille n'a pas de marches et cette hauteur ne rencontre rien.
+      const z = (auSol ? (s.palier ?? 0) : 0) * H_PALIER + LUMIERE.FLAMME_TEXELS
+      em.push({ x, y, rayon, taille: GI.TAILLE_SOURCE, rgb: [GI.TEINTE_FEU[0] * s.force, GI.TEINTE_FEU[1] * s.force, GI.TEINTE_FEU[2] * s.force], z, force: s.force })
     }
     em.sort((a, b) => (a.x - cx) ** 2 + (a.y - cy) ** 2 - ((b.x - cx) ** 2 + (b.y - cy) ** 2))
     this.emetteurs = em.slice(0, GI.MAX_SOURCES)
@@ -885,6 +987,7 @@ export class ChampGpu {
       this.uSrc[k * 4 + 1] = e.y
       this.uSrc[k * 4 + 2] = e.rayon
       this.uSrc[k * 4 + 3] = e.rgb[0] / GI.TEINTE_FEU[0]
+      this.uSrcZ[k] = e.z ?? 0
     })
     // La borne de marche du direct : un rayon ne va jamais plus loin que le rayon de sa source,
     // plus le disque émissif — converti en pas du raster 2×, sur les deux axes.
@@ -897,10 +1000,10 @@ export class ChampGpu {
     this.uMn[1] = mn ? mn[1] : 0
     this.uMn[2] = mn ? mn[2] : 0
     // L'ASTRE (LG-R8, LG-R9) : `longueur` est l'étalon d'un mur (le sentinel de l'astre nul) ;
-    // `longueurParHauteur` projette les cartes des arbres (`ecrireLesCartes`) ET chaque bande à sa
-    // hauteur (`BandeGrille.hauteur`, marchée au shader). Une roche n'est pas lanceur (LG-R15), une
-    // marche attend LG-R14. `a` nul = pas d'ombre : on n'en garde aucune trace, et le masque rend
-    // zéro partout au bit.
+    // `longueurParHauteur` projette les cartes des arbres (`ecrireLesCartes`), chaque bande à sa
+    // hauteur (`BandeGrille.hauteur`, marchée au shader) et chaque marche à la sienne (LG-R14,
+    // `ombreDesMarches`). Une roche n'est pas lanceur (LG-R15). `a` nul = pas d'ombre : on n'en garde
+    // aucune trace, et le masque rend zéro partout au bit.
     this.uA = astre && astre.a > 0 ? astre.a : 0
     this.astre =
       this.uA > 0
@@ -995,6 +1098,7 @@ export class ChampGpu {
     readonly lumiere: Phaser.Renderer.WebGL.Wrappers.WebGLTextureWrapper
     readonly faceDirecte: Phaser.Renderer.WebGL.Wrappers.WebGLTextureWrapper
     readonly ombre: Phaser.Renderer.WebGL.Wrappers.WebGLTextureWrapper
+    readonly champ: Phaser.Renderer.WebGL.Wrappers.WebGLTextureWrapper
   } | null {
     const tex = this.scene.textures
     const prise = (cle: string): Phaser.Renderer.WebGL.Wrappers.WebGLTextureWrapper | null => {
@@ -1004,8 +1108,11 @@ export class ChampGpu {
     const lumiere = prise('gi-lumiere')
     const faceDirecte = prise('gi-face-directe')
     const ombre = prise('gi-drapeau')
-    if (!lumiere || !faceDirecte || !ombre) return null
-    return { lumiere, faceDirecte, ombre }
+    // ET `gi-champ`, POUR LES SOLS SEULEMENT (LG-R14) : le `M` composé, celui du quad. Un corps ne le
+    // lit jamais (il se composerait deux fois, voir ci-dessus) ; une image de sol n'a QUE lui à lire.
+    const champ = prise('gi-champ')
+    if (!lumiere || !faceDirecte || !ombre || !champ) return null
+    return { lumiere, faceDirecte, ombre, champ }
   }
 
   destroy(): void {
@@ -1015,13 +1122,15 @@ export class ChampGpu {
     this.champ = null
     this.image?.destroy()
     this.image = null
-    for (const k of ['gi-direct', 'gi-faces', 'gi-drapeau', 'gi-rebond', 'gi-champ', 'gi-lumiere', 'gi-face-directe', 'gi-occ', 'gi-alb', 'gi-arbres']) {
+    for (const k of ['gi-direct', 'gi-faces', 'gi-drapeau', 'gi-rebond', 'gi-champ', 'gi-lumiere', 'gi-face-directe', 'gi-occ', 'gi-alb', 'gi-paliers', 'gi-arbres']) {
       if (this.scene.textures.exists(k)) this.scene.textures.remove(k)
     }
     this.occ = null
     this.alb = null
     this.occOctets = null
     this.albOctets = null
+    this.paliers = null
+    this.paliersOctets = null
     this.arbres = null
     this.imageArbres = null
     this.arbresVides = true
@@ -1118,6 +1227,19 @@ export class ChampGpu {
     return this.grille && this.astre ? masqueDAstre(this.grille, this.astre, this.cartesDOmbre()) : null
   }
 
+  /**
+   * L'OMBRE PLEINE DES MARCHES SEULES (LG-R14, LG-A15), par l'oracle — ni bande ni arbre : ce que la
+   * falaise, et elle seule, jette sur le sol plus bas. `null` sans astre. La garde smoke `gi-marche`
+   * s'en sert pour DIRE quel texel doit son ombre à la marche (la prémisse), et vérifie la règle sur
+   * l'alpha de `gi-direct` depuis la carte, pas depuis l'oracle.
+   */
+  ombreDesMarchesSeules(): Float32Array | null {
+    if (!this.grille || !this.astre) return null
+    const s = new Float32Array(this.grille.gw * this.grille.gh)
+    ombreDesMarches(this.grille, s, this.astre)
+    return s
+  }
+
   /** Les cartes des arbres projetées à cette image (LG-R8) — la prémisse de la garde du masque. */
   get cartesProjetees(): number {
     return this.cartes.length
@@ -1135,11 +1257,15 @@ export class ChampGpu {
    */
   eprouverLesHauteurs(hauteur: number | null): void {
     if (hauteur === null) {
+      this.grilleAvantEpreuve = null
       this.empreinte = ''
       return
     }
-    const g = this.grille
+    // L'épreuve se rejoue depuis la grille du MONDE, jamais depuis une épreuve précédente — et cette
+    // grille-là reste lisible à `verifier()` (`ombresSansEpreuve`) tant que l'épreuve dure.
+    const g = this.grilleAvantEpreuve ?? this.grille
     if (!g) return
+    this.grilleAvantEpreuve = g
     this.grille = { ...g, murs: g.murs.map((m, i) => (i % 2 === 1 ? { ...m, hauteur } : m)) }
     this.ecrireOccludeurs(this.grille)
   }
@@ -1256,6 +1382,17 @@ export class ChampGpu {
       }
       return { n, moyenne: n > 0 ? somme / (n * 3) : 0, partSup3: n > 0 ? sup3 / n : 0, max, eclaires: croises }
     }
+    const marches = this.ombreDesMarchesSeules()
+    let marchesOmbrees = 0
+    if (marches) for (let k = 0; k < g.gw * g.gh; k++) if (g.occ[k] !== 1 && marches[k]! > 0) marchesOmbrees++
+    // L'« avant » de l'épreuve des hauteurs, sous l'astre de CETTE image (la grille du monde n'a que
+    // ses bandes de plus : même `occ`, mêmes marches, mêmes cartes).
+    let ombresSansEpreuve: number | null = null
+    if (this.grilleAvantEpreuve && this.astre) {
+      const s = ombrePleineDAstre(this.grilleAvantEpreuve, this.astre, this.cartesDOmbre())
+      ombresSansEpreuve = 0
+      for (let k = 0; k < g.gw * g.gh; k++) if (g.occ[k] !== 1 && Math.round(s[k]! * 255) > 0) ombresSansEpreuve++
+    }
     return {
       fenetre: this.fenetre,
       gw: this.gw,
@@ -1264,6 +1401,9 @@ export class ChampGpu {
       bandes: g.murs.length,
       hauteursDeBande: new Set(g.murs.map((m) => m.hauteur)).size,
       cartes: this.cartes.length,
+      paliers: g.marches ? new Set(g.marches.paliers).size : 1,
+      marchesOmbrees,
+      ombresSansEpreuve,
       direct: direct.length > 0 ? ecart(direct, o.direct) : vide,
       champ: champ.length > 0 ? ecart(champ, o.light) : vide,
       masque: ecartMasque(direct),
@@ -1282,13 +1422,17 @@ export class ChampGpu {
     const tex = this.scene.textures
     this.occOctets = new Uint8Array(gw * 2 * gh * 2 * 4)
     this.albOctets = new Uint8Array(gw * 2 * gh * 2 * 4)
+    this.paliersOctets = new Uint8Array(gw * gh * 4)
     this.occ = tex.addUint8Array('gi-occ', this.occOctets, gw * 2, gh * 2)
     this.alb = tex.addUint8Array('gi-alb', this.albOctets, gw * 2, gh * 2)
+    // Les marches (LG-R14), au grain : une tuile porte un seul palier, le raster 2× n'y ajouterait rien.
+    this.paliers = tex.addUint8Array('gi-paliers', this.paliersOctets, gw, gh)
     // NEAREST une fois pour toutes (LG-R2) : `setFilter` téléverse la texture entière (Phaser 4.2,
     // `setTextureFilter` → `update`), et `TextureSource.update()` garde ensuite le filtre du wrapper —
     // le remettre à chaque écriture doublait l'upload du changement de fenêtre.
     this.occ?.setFilter(NEAREST)
     this.alb?.setFilter(NEAREST)
+    this.paliers?.setFilter(NEAREST)
     // LA CIBLE DES CARTES (LG-R8), au grain — bâtie AVANT la passe 1, qui la lie par sa clé. Une
     // texture-canvas comme `gi-occ` : l'oracle la rastérise, `ecrireLesCartes` la téléverse.
     this.arbres = tex.createCanvas('gi-arbres', gw, gh)
@@ -1331,8 +1475,8 @@ export class ChampGpu {
       return sh
     }
     if (k === 1) {
-      this.direct = mk('gi-direct', FRAG_DIRECT, gw, gh, ['gi-occ', 'gi-arbres'], 'gi-direct', () => ({
-        uOcc: 0, uArbres: 1, uSrc: this.uSrc, uNb: this.uNb, uTeinte: [GI.TEINTE_FEU[0], GI.TEINTE_FEU[1], GI.TEINTE_FEU[2]],
+      this.direct = mk('gi-direct', FRAG_DIRECT, gw, gh, ['gi-occ', 'gi-arbres', 'gi-paliers'], 'gi-direct', () => ({
+        uOcc: 0, uArbres: 1, uPaliers: 2, uSrc: this.uSrc, uSrcZ: this.uSrcZ, uNb: this.uNb, uTeinte: [GI.TEINTE_FEU[0], GI.TEINTE_FEU[1], GI.TEINTE_FEU[2]],
         uMotif: this.uMotif, uTailleSource: GI.TAILLE_SOURCE, uPic: HOLE_ERASE_PEAK,
         uPasMax: this.uPasMaxDirect,
         uOmbre: this.uOmbre, uPasOmbre: this.uPasOmbre, uHauteurMarche: this.hauteurMarche,
@@ -1346,8 +1490,8 @@ export class ChampGpu {
         uOcc: 0, uFaces: 1, uDirect: 2, uPen: [GI.ASTRE.PENOMBRE[0], GI.ASTRE.PENOMBRE[1]],
       }))
     } else if (k === 4) {
-      mk('gi-rebond', FRAG_REBOND, gw, gh, ['gi-occ', 'gi-faces', 'gi-drapeau'], 'gi-rebond', () => ({
-        uOcc: 0, uFaces: 1, uDrapeau: 2, uGain: GI.REBOND, uPortee: GI.PORTEE_REBOND, uNb: this.uNb,
+      mk('gi-rebond', FRAG_REBOND, gw, gh, ['gi-occ', 'gi-faces', 'gi-drapeau', 'gi-paliers'], 'gi-rebond', () => ({
+        uOcc: 0, uFaces: 1, uDrapeau: 2, uPaliers: 3, uGain: GI.REBOND, uPortee: GI.PORTEE_REBOND, uNb: this.uNb,
         // Un rayon de rebond ne dépasse jamais `uPortee` texels : quatre pas de raster par texel
         // sur les deux axes, plus la marge d'entrée. 50 pas au lieu de 192.
         uPasMax: 4 * GI.PORTEE_REBOND + 2,
@@ -1378,7 +1522,7 @@ export class ChampGpu {
 
   /** Les deux textures-canvas au double du grain, depuis la grille de la sim. */
   private ecrireOccludeurs(g: GrilleGi): void {
-    if (!this.occ || !this.alb || !this.occOctets || !this.albOctets) return
+    if (!this.occ || !this.alb || !this.occOctets || !this.albOctets || !this.paliers || !this.paliersOctets) return
     const w2 = g.gw * 2
     const h2 = g.gh * 2
     const O = this.occOctets
@@ -1386,6 +1530,17 @@ export class ChampGpu {
     // Tout à zéro, alpha à 255 — quatre octets d'un coup (petit-boutiste : l'alpha est l'octet haut).
     new Uint32Array(O.buffer).fill(0xff000000)
     new Uint32Array(A.buffer).fill(0xff000000)
+    // LES MARCHES (LG-R14) : R = le palier, G = 255 sur une porte, alpha 255 — l'upload prémultiplie
+    // par l'alpha (`createUint8ArrayTexture`, pma = true), un alpha plein laisse les canaux intacts.
+    const M = this.paliersOctets
+    new Uint32Array(M.buffer).fill(0xff000000)
+    if (g.marches) {
+      for (let k = 0; k < g.gw * g.gh; k++) {
+        M[k * 4] = g.marches.paliers[k]!
+        M[k * 4 + 1] = g.marches.portes[k] === 1 ? 255 : 0
+      }
+    }
+    this.paliers.source[0]?.update()
     for (let j = 0; j < g.gh; j++)
       for (let i = 0; i < g.gw; i++) {
         const k = j * g.gw + i
@@ -1424,6 +1579,10 @@ export class ChampGpu {
     // trois quarts de la marche.
     this.hauteurMarche = GI.ASTRE.HAUTEUR_MUR_PX / PX_PAR_TEXEL
     for (const m of g.murs) if (m.hauteur > this.hauteurMarche) this.hauteurMarche = m.hauteur
+    // …ET LA PLUS HAUTE MARCHE du champ (LG-R14) : elle lance comme un mur de sa hauteur, le rayon
+    // d'ombre doit aller jusque-là, et chaque marche ne compte que jusqu'à sa part (`ombreDAstre`).
+    const hMarches = hauteurDesMarches(g)
+    if (hMarches > this.hauteurMarche) this.hauteurMarche = hMarches
     g.murs.forEach((m, im) => {
       const ia2 = indexAlb(g.albedoMurs[im] ?? ALBEDO.BATI_DEFAUT)
       const h8 = Math.min(255, Math.max(0, Math.round(m.hauteur * 8)))

@@ -134,6 +134,20 @@ export interface CorpsPose {
    * et Light2D (un feu dehors allumait le chaume à travers le mur).
    */
   readonly ciel?: boolean
+  /**
+   * UN SOL, PAS UN CORPS (LG-R14 : *« la terrasse lit le champ à sa tuile LOGIQUE »*) — une image de
+   * terrain d'une strate ≥ 1 (une part de pavés de terrasse, une paroi, une rampe levée, une chute),
+   * que le quad MULTIPLY de `gi-champ` ne couvre pas parce qu'elle vit au-dessus de lui. Elle est
+   * multipliée par le champ EN UN POINT, exactement comme le sol du palier 0 l'est par le quad — pas
+   * de normale, pas de parts, pas de feu au pied : `texel × M`. Trois points de lecture :
+   *   · `tuile` : sous le pixel, à sa place logique (`lift` retiré) — un plancher de terrasse ;
+   *   · `pied` : à `y` (sa ligne du pied) sur toute sa hauteur — une paroi lit le sol qu'elle suit,
+   *     donc l'ombre que sa propre marche y porte (LG-A15 : *« la paroi dans son ombre »*) ;
+   *   · `piedSousLeVoile` : `pied`, pour une paroi de STRATE 0, que le quad multiplie DÉJÀ à sa place
+   *     dessinée (le plateau qu'elle recouvre à l'écran) : le pixel se divise par ce que le quad y
+   *     posera, pour que le produit des deux soit `M(pied)` et rien d'autre.
+   */
+  readonly sol?: 'tuile' | 'pied' | 'piedSousLeVoile'
 }
 
 /**

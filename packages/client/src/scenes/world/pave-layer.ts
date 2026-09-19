@@ -30,6 +30,7 @@ import { cranDeSaison, teinteDuTerrain, teinter } from '../../render/teinte-sais
 import { TERRAIN_COLORS } from '../../render/terrain-colors'
 import { contexteDesButtes, densiteDeMoucheture, type ButteContexte } from '../../render/buttes'
 import { epinglerLaTuile } from '../../render/tuile-epinglee'
+import { armerLeSol, desarmerLeSol } from '../../render/gi/noeud-corps'
 import type { Relief } from '../../render/relief'
 import type { Decouvert } from '../../render/framing'
 import { Trouee } from './trouee'
@@ -259,12 +260,36 @@ export class PaveLayer {
   set teinte(v: number) {
     if (v === this._teinte) return
     this._teinte = v
-    for (const c of this.chunks.values()) for (const part of c.parts) this.teinterLaPart(part)
+    for (const c of this.chunks.values()) for (const part of c.parts) this.habillerLaPart(part)
   }
-  private teinterLaPart(part: Part): void {
+  /**
+   * LE CHAMP COMPOSE (LG-R14, posé par `WorldScene` comme `teinte`, voir `CliffLayer.champCompose`) :
+   * une part de palier ≥ 1 lit alors le champ SOUS LE PIXEL, à sa place logique — la terrasse lit le
+   * champ à sa tuile, `lift` px sous là où elle est dessinée (`armerLeSol`) — et sa teinte redevient
+   * blanche : la nuit n'est plus plate, un feu de terrasse éclaire son plateau. Les parts sont des
+   * images durables, armées UNE fois ici (le sac persiste par référence, et leur lift ne bouge pas).
+   */
+  private _champCompose = false
+  get champCompose(): boolean {
+    return this._champCompose
+  }
+  set champCompose(v: boolean) {
+    if (v === this._champCompose) return
+    this._champCompose = v
+    for (const c of this.chunks.values()) for (const part of c.parts) this.habillerLaPart(part)
+  }
+  private habillerLaPart(part: Part): void {
     if (part.palier === 0) return
-    part.image.setTint(this._teinte)
-    part.surplomb?.image.setTint(this._teinte)
+    const images = part.surplomb ? [part.image, part.surplomb.image] : [part.image]
+    for (const img of images) {
+      if (this._champCompose) {
+        img.setTint(0xffffff)
+        armerLeSol(img, { lift: part.palier * LIFT_TUILES * TILE_PX })
+      } else {
+        img.setTint(this._teinte)
+        desarmerLeSol(img)
+      }
+    }
   }
 
   /**
@@ -598,7 +623,7 @@ export class PaveLayer {
         const sur = this.poser(cleSur, cuit.surplomb, x0, y, SURPLOMB_DEPTH + strateDEtage(p))
         if (sur) part.surplomb = { image: sur, cle: cleSur }
       }
-      this.teinterLaPart(part)
+      this.habillerLaPart(part)
       chunk.parts.push(part)
       chunk.relief ||= cuit.relief
     }

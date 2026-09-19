@@ -12,7 +12,7 @@ import {
   type Structure,
 } from '@ashes/sim'
 import { EDGE_SPRITE, MUR_HT } from '../bati-art'
-import { DEMI_BANDE_TUILES, TILE_PX, barriereDepth } from '../framing'
+import { DEMI_BANDE_TUILES, LIFT_TUILES, TILE_PX, barriereDepth } from '../framing'
 import { CROWN, EMERGENCE } from '../socle-mineral'
 import { grilleDuMonde } from './grille'
 import { GI } from './reglages'
@@ -630,5 +630,25 @@ describe('le toit est un dessus entier (LG-R16, planche 27)', () => {
   it('ET IL ARME EN JEU, PAS DERRIÈRE UNE CLÉ DE DEBUG', () => {
     expect(source).not.toMatch(/debugGiToits/)
     expect(source).toMatch(/this\.gi !== null && \(isRoof \|\| ARETE_GI\.has\(s\.type\)\)/)
+  })
+})
+
+/**
+ * ═══ LES DEUX HAUTEURS DE LA MARCHE SONT CELLES DU JEU (LG-R14) ═══
+ * La sim juge la marche en TEXELS (`LUMIERE.PALIER_TEXELS`, `LUMIERE.FLAMME_TEXELS`) ; le client dessine
+ * en PIXELS (`LIFT_TUILES × TILE_PX` par palier, `HAUTEUR_FLAMME_PX` pour la flamme). Une loi, deux
+ * unités : si l'une bouge sans l'autre, la marche de la sim et celle de l'écran ne parlent plus de la
+ * même falaise — et rien d'autre ne le dirait.
+ */
+describe('la marche de la sim est celle de l’écran (LG-R14)', () => {
+  const PX_PAR_TEXEL = TILE_PX / LUMIERE.TEXELS_PAR_TUILE
+  it('UN PALIER DE LA SIM EST UN LIFT DE L’ÉCRAN — 8 texels, 32 px', () => {
+    expect(LUMIERE.PALIER_TEXELS * PX_PAR_TEXEL).toBe(LIFT_TUILES * TILE_PX)
+  })
+  it('LA FLAMME DE LA SIM EST CELLE DU POINT-LIGHT — 2,4 texels, 9,6 px', () => {
+    expect(LUMIERE.FLAMME_TEXELS * PX_PAR_TEXEL).toBeCloseTo(GI.CORPS.HAUTEUR_FLAMME_PX, 12)
+  })
+  it('ET LA FLAMME EST SOUS LE PALIER — sans quoi « d’en bas rien ne monte » serait faux', () => {
+    expect(LUMIERE.FLAMME_TEXELS).toBeLessThan(LUMIERE.PALIER_TEXELS)
   })
 })

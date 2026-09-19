@@ -36,6 +36,28 @@ export interface BandeGrille {
   readonly hauteur: number
 }
 
+/**
+ * ═══ LES MARCHES (LG-R14) — le relief du sol, par texel, tel que la sim le rastérise ═══
+ *
+ * *« La falaise fait écran À SENS UNIQUE, jugée en hauteur : un palier vaut le lift du jeu (32 px), la
+ * flamme d'un feu est à 10 px au-dessus de son sol ; un rayon du champ est bloqué par une arête s'il la
+ * franchit plus bas que le haut de la marche, et un texel du haut n'est jamais bloqué par sa propre
+ * marche. La rampe est un plancher, la porte ouverte : un connecteur n'est pas une arête. »*
+ *
+ * Ce sont les deux tableaux de `occlusionAuGrain` (`paliers`, `portes`), copiés tels quels par
+ * `grille.ts` : le raster de la sim, dont l'écran DÉRIVE (LG-R11). `hauteur` est le lift d'un palier en
+ * texels (`LUMIERE.PALIER_TEXELS`, 8) — reçu, jamais recalculé ici. Absent dans un creux (cave, chapeau) :
+ * tout s'y lit à un seul niveau, la loi d'avant les terrasses.
+ */
+export interface MarchesGrille {
+  /** Par texel, le palier de sa tuile (`palierDuSol`). */
+  readonly paliers: Uint8Array
+  /** Par texel, 1 sur une PORTE (rampe, gueule, escalier — `estUnePorte`) : jamais une arête. */
+  readonly portes: Uint8Array
+  /** Le lift d'un palier, en texels du grain. */
+  readonly hauteur: number
+}
+
 /** La grille des occludeurs, au grain. */
 export interface GrilleGi {
   readonly gw: number
@@ -48,6 +70,8 @@ export interface GrilleGi {
   readonly albedo: Float32Array
   /** Par bande, son albédo (même ordre que `murs`). */
   readonly albedoMurs: readonly (readonly [number, number, number])[]
+  /** Les paliers et les portes (LG-R14) — absents dans un creux, ou sur une grille sans relief. */
+  readonly marches?: MarchesGrille
 }
 
 /** Une source de lumière, en texels de la grille. */
@@ -60,6 +84,12 @@ export interface Emetteur {
   readonly taille: number
   /** La teinte, en lumière linéaire. */
   readonly rgb: readonly [number, number, number]
+  /**
+   * LA HAUTEUR DE LA FLAMME au-dessus du palier 0, en texels (LG-R14) : `palier × hauteur + flamme` —
+   * ce que la sim pose (`partVisible`, `hauteurDuPalier(niveauSource) + FLAMME_TEXELS`). Absente : au
+   * ras du sol, ce qui ne change rien sur une grille sans marches.
+   */
+  readonly z?: number
 }
 
 export interface ReglagesChamp {
@@ -111,12 +141,24 @@ export function coupeBande(m: BandeGrille, x0: number, y0: number, x1: number, y
   return t1 - t0 > 1e-9
 }
 
+/** L'indice d'un texel de la grille, ou −1 hors d'elle. */
+function indice(g: GrilleGi, cx: number, cy: number): number {
+  return cx >= 0 && cy >= 0 && cx < g.gw && cy < g.gh ? cy * g.gw + cx : -1
+}
+
 /**
- * Le segment (x0, y0) → (x1, y1) est-il BLOQUÉ ? — une bande coupée, ou une cellule opaque visitée.
- * Amanatides–Woo, avec la règle du coin de la sim (`segmentBloque`) : départ et arrivée exclus, une
- * cellule n'est visitée que si le segment y entre avant sa fin, à égalité on avance en y d'abord.
+ * Le segment (x0, y0) → (x1, y1) est-il BLOQUÉ ? — une bande coupée, une cellule opaque visitée, ou une
+ * MARCHE franchie trop bas (LG-R14). Amanatides–Woo, avec la règle du coin de la sim (`segmentBloque`) :
+ * départ et arrivée exclus de la SORTE, une cellule n'est visitée que si le segment y entre avant sa fin,
+ * à égalité on avance en y d'abord.
+ *
+ * LA MARCHE, mot pour mot celle de la sim : le rayon est une droite de la hauteur `z0` (le sol du
+ * récepteur) à `z1` (la flamme) ; à chaque changement de texel, si le palier change et qu'aucun des deux
+ * texels n'est une porte, il est bloqué s'il franchit l'arête STRICTEMENT sous le haut de la marche,
+ * `max(palier, suivant) × hauteur`. Le texel de départ et celui d'arrivée ne s'épargnent JAMAIS la marche.
+ * Hors de la grille, le palier est inconnu : on garde celui du dernier texel vu — le GPU fait de même.
  */
-export function traverse(g: GrilleGi, x0: number, y0: number, x1: number, y1: number): boolean {
+export function traverse(g: GrilleGi, x0: number, y0: number, x1: number, y1: number, z0 = 0, z1 = 0): boolean {
   for (const m of g.murs) if (coupeBande(m, x0, y0, x1, y1)) return true
   let cx = Math.floor(x0)
   let cy = Math.floor(y0)
@@ -131,16 +173,40 @@ export function traverse(g: GrilleGi, x0: number, y0: number, x1: number, y1: nu
   const tdy = dy !== 0 ? Math.abs(1 / dy) : Infinity
   let tx = dx !== 0 ? (dx > 0 ? cx + 1 - x0 : x0 - cx) * tdx : Infinity
   let ty = dy !== 0 ? (dy > 0 ? cy + 1 - y0 : y0 - cy) * tdy : Infinity
+  const marches = g.marches
+  let palier = 0
+  let porte = false
+  if (marches) {
+    const k0 = indice(g, cx, cy)
+    if (k0 >= 0) {
+      palier = marches.paliers[k0]!
+      porte = marches.portes[k0] === 1
+    }
+  }
   const garde = 4 * (Math.abs(dx) + Math.abs(dy)) + 4
   for (let pas = 0; pas < garde; pas++) {
+    // `t` : le paramètre d'ENTRÉE dans le texel suivant — c'est là que la hauteur du rayon se juge.
+    let t: number
     if (tx < ty) {
       if (tx >= 1) return false
+      t = tx
       cx += sx
       tx += tdx
     } else {
       if (ty >= 1) return false
+      t = ty
       cy += sy
       ty += tdy
+    }
+    if (marches) {
+      const k = indice(g, cx, cy)
+      if (k >= 0) {
+        const suivant = marches.paliers[k]!
+        const porteSuivante = marches.portes[k] === 1
+        if (suivant !== palier && !porte && !porteSuivante && z0 + t * (z1 - z0) < Math.max(palier, suivant) * marches.hauteur) return true
+        palier = suivant
+        porte = porteSuivante
+      }
     }
     if (cx === ex && cy === ey) return false
     if (cx >= 0 && cy >= 0 && cx < g.gw && cy < g.gh && g.occ[cy * g.gw + cx] === 1) return true
@@ -151,11 +217,36 @@ export function traverse(g: GrilleGi, x0: number, y0: number, x1: number, y1: nu
 /**
  * LA PART VISIBLE d'une source étendue depuis (px, py) — combien des seize points du disque de rayon
  * `taille` centré en (ex, ey) le point voit, sur seize. La même mesure que `partVisible` de la sim.
+ * `z0`, `z1` : le sol du récepteur et la flamme, en texels au-dessus du palier 0 (LG-R14).
  */
-export function partVisibleGrille(g: GrilleGi, px: number, py: number, ex: number, ey: number, taille: number): number {
+export function partVisibleGrille(g: GrilleGi, px: number, py: number, ex: number, ey: number, taille: number, z0 = 0, z1 = 0): number {
   let vus = 0
-  for (const p of MOTIF_SOURCE) if (!traverse(g, px, py, ex + p[0] * taille, ey + p[1] * taille)) vus++
+  for (const p of MOTIF_SOURCE) if (!traverse(g, px, py, ex + p[0] * taille, ey + p[1] * taille, z0, z1)) vus++
   return vus / MOTIF_SOURCE.length
+}
+
+/** Le sol d'un texel, en texels au-dessus du palier 0 — 0 sans marches (LG-R14). */
+function solDuTexel(g: GrilleGi, k: number): number {
+  const m = g.marches
+  return m ? m.paliers[k]! * m.hauteur : 0
+}
+
+/**
+ * LA HAUTEUR DES MARCHES d'une grille, en texels : du palier le plus bas au plus haut de la fenêtre —
+ * ce que la plus haute marche lance comme ombre d'astre (LG-R14, « comme un mur de sa hauteur »). 0 sans
+ * relief. C'est le lanceur que `ChampGpu` ajoute aux bandes pour tailler sa marche d'ombre.
+ */
+export function hauteurDesMarches(g: GrilleGi): number {
+  const m = g.marches
+  if (!m) return 0
+  let bas = 255
+  let haut = 0
+  for (let k = 0; k < m.paliers.length; k++) {
+    const p = m.paliers[k]!
+    if (p < bas) bas = p
+    if (p > haut) haut = p
+  }
+  return haut > bas ? (haut - bas) * m.hauteur : 0
 }
 
 /** Une cellule opaque reçoit la lumière de sa face éclairée : le max de ses voisines libres, et laquelle. */
@@ -255,8 +346,9 @@ export function champRef(g: GrilleGi, emetteurs: readonly Emetteur[], reglages: 
   const n = gw * gh
   const direct = new Float32Array(n * 3)
 
-  // 1. Direct.
+  // 1. Direct — du sol du texel (son palier, LG-R14) à la flamme de la source (`e.z`).
   for (const e of emetteurs) {
+    const z1 = e.z ?? 0
     const x0 = Math.max(0, Math.floor(e.x - e.rayon))
     const x1 = Math.min(gw - 1, Math.ceil(e.x + e.rayon))
     const y0 = Math.max(0, Math.floor(e.y - e.rayon))
@@ -271,7 +363,7 @@ export function champRef(g: GrilleGi, emetteurs: readonly Emetteur[], reglages: 
         const ddy = py - e.y
         const f = profil(Math.sqrt(ddx * ddx + ddy * ddy), e)
         if (f <= 0) continue
-        const vus = partVisibleGrille(g, px, py, e.x, e.y, e.taille)
+        const vus = partVisibleGrille(g, px, py, e.x, e.y, e.taille, solDuTexel(g, k), z1)
         if (vus <= 0) continue
         const a = f * vus
         direct[k * 3] = direct[k * 3]! + e.rgb[0] * a
@@ -291,6 +383,9 @@ export function champRef(g: GrilleGi, emetteurs: readonly Emetteur[], reglages: 
     for (const f of faces) {
       const nx = f.vx - f.x
       const ny = f.vy - f.y
+      // La face rebondit AU SOL de son texel éclairé (LG-R14) : le rayon de rebond va du sol du récepteur
+      // au sol de ce texel-là — une marche entre les deux fait écran comme pour le direct.
+      const zf = solDuTexel(g, Math.floor(f.vy) * gw + Math.floor(f.vx))
       const x0 = Math.max(0, Math.floor(f.x - porteeRebond))
       const x1 = Math.min(gw - 1, Math.ceil(f.x + porteeRebond))
       const y0 = Math.max(0, Math.floor(f.y - porteeRebond))
@@ -308,7 +403,7 @@ export function champRef(g: GrilleGi, emetteurs: readonly Emetteur[], reglages: 
           const cos = (ddx * nx + ddy * ny) / d
           if (!(cos > 0)) continue
           // La distance se compte depuis la face, la visibilité depuis son côté éclairé.
-          if (traverse(g, px, py, f.vx, f.vy)) continue
+          if (traverse(g, px, py, f.vx, f.vy, solDuTexel(g, k), zf)) continue
           const a = (rebond * cos * (1 - d / porteeRebond)) / (1 + d)
           rb[k * 3] = rb[k * 3]! + f.rgb[0] * a
           rb[k * 3 + 1] = rb[k * 3 + 1]! + f.rgb[1] * a
@@ -509,12 +604,13 @@ export function ombreDesCartes(g: GrilleGi, s: Float32Array, astre: Astre, arbre
  * nulle. Et « une ombre d'astre se compte depuis la FACE » (LG-R10) en sort tout seul : le balayage
  * part du BORD de la bande, jamais de son axe.
  *
- * ═══ LES DEUX SORTES DE LANCEUR, ET CE QUI N'EN EST PAS ═══
+ * ═══ LES TROIS SORTES DE LANCEUR, ET CE QUI N'EN EST PAS ═══
  * Les MURS, par leurs bandes balayées (ci-dessous) ; les ARBRES, par leurs deux cartes debout à la
- * silhouette réelle, vent compris (LG-R8, `ombreDesCartes` — reçues en `arbres`, posées par la vue).
- * Une roche garde sa coulée au pixel et n'entre pas dans le masque (LG-R15) ; une marche est un
- * lanceur de sa hauteur (LG-R14), qui attend `etage-layer.ts`. Un texel d'occludeur, lui, ne prend pas
- * l'ombre d'astre (LG-R8) : un bloc est éclairé par ses faces, pas par son sol.
+ * silhouette réelle, vent compris (LG-R8, `ombreDesCartes` — reçues en `arbres`, posées par la vue) ;
+ * les MARCHES (LG-R14, `ombreDesMarches`) : *« la marche porte son ombre d'astre comme un mur de sa
+ * hauteur — (haut − bas) × 32 px, sur le sol plus bas seulement ; la rampe n'est pas une arête »*.
+ * Une roche garde sa coulée au pixel et n'entre pas dans le masque (LG-R15). Un texel d'occludeur, lui,
+ * ne prend pas l'ombre d'astre (LG-R8) : un bloc est éclairé par ses faces, pas par son sol.
  *
  * L'opacité `a` n'est PAS ici : elle vaut `SHADOW_ALPHA` × `forceDeLOmbre`, deux nombres du rendu, et
  * elle entre dans `composerM`. Le masque ne dit que la FORME — d'où « elle s'annule à la nouvelle
@@ -524,6 +620,7 @@ export function ombrePleineDAstre(g: GrilleGi, astre: Astre, arbres?: CartesDOmb
   const s = new Float32Array(g.gw * g.gh)
   if (!(astre.longueur > 0)) return s
   if (arbres !== undefined) ombreDesCartes(g, s, astre, arbres)
+  ombreDesMarches(g, s, astre)
   if (g.murs.length === 0) return s
 
   // LE BALAYAGE de chaque bande, lu au centre de chaque texel de son emprise — À SA HAUTEUR (LG-R9) :
@@ -552,6 +649,85 @@ export function ombrePleineDAstre(g: GrilleGi, astre: Astre, arbres?: CartesDOmb
   }
 
   return s
+}
+
+/**
+ * ═══ L'OMBRE DES MARCHES (LG-R14) — la falaise est un mur de sa hauteur, pour l'astre aussi ═══
+ *
+ * Le RAYON D'OMBRE d'un texel, comme pour une bande : du centre du texel vers l'astre, long de
+ * ℓ = longueurParHauteur × la plus haute marche de la grille, cisaillé par la dérive. Il met le texel à
+ * l'ombre s'il ENTRE dans un texel d'un palier PLUS HAUT que le sien, au paramètre `t`, avant la part
+ * de cette marche : `t × ℓ < longueurParHauteur × (haut − bas) × hauteur` — la hauteur se compte depuis
+ * le SOL DU RÉCEPTEUR, comme un mur se compte depuis son pied. Sur le sol plus bas seulement : depuis un
+ * palier haut, rien ne tombe (le rayon n'entre dans rien de plus haut). Un connecteur n'est pas une
+ * arête : si le texel quitté OU le texel entré est une porte, ce franchissement-là ne porte pas — la
+ * colonne de la rampe reste claire, et la rampe elle-même (LG-A15). Un texel d'occludeur ne prend rien.
+ *
+ * C'est la MÊME marche que `ombreDAstre` du GPU (`champ-gpu.ts`), à la borne près : ici le rayon est
+ * taillé sur les marches seules, là-bas sur la plus haute bande OU marche du champ, et chaque lanceur
+ * ne compte que jusqu'à sa part. Les deux lisent le même prédicat — la garde LG-A2 les compare.
+ */
+export function ombreDesMarches(g: GrilleGi, s: Float32Array, astre: Astre): void {
+  const m = g.marches
+  if (!m) return
+  const hMax = hauteurDesMarches(g)
+  if (!(hMax > 0) || !(astre.longueurParHauteur > 0)) return
+  const dy = astre.longueurParHauteur * hMax
+  const dx = astre.cisaillement * dy * astre.derive
+  // La part d'UN palier de marche sur la longueur du rayon : (haut − bas) paliers valent (haut − bas) × cette part.
+  const partParPalier = m.hauteur / hMax
+  for (let y = 0; y < g.gh; y++)
+    for (let x = 0; x < g.gw; x++) {
+      const k = y * g.gw + x
+      if (s[k] === 1 || g.occ[k]) continue
+      if (rayonDOmbreDeMarche(g, m, x + 0.5, y + 0.5, x + 0.5 - dx, y + 0.5 - dy, partParPalier)) s[k] = 1
+    }
+}
+
+/** Le rayon d'ombre (x0, y0) → (x1, y1) entre-t-il dans une marche plus haute avant sa part ? (voir `ombreDesMarches`) */
+function rayonDOmbreDeMarche(g: GrilleGi, m: MarchesGrille, x0: number, y0: number, x1: number, y1: number, partParPalier: number): boolean {
+  let cx = Math.floor(x0)
+  let cy = Math.floor(y0)
+  const k0 = cy * g.gw + cx
+  const p0 = m.paliers[k0]!
+  // LA MARCHE EST UNE ARÊTE : elle se franchit entre DEUX texels consécutifs de paliers différents, en
+  // MONTANT (`p > pPrec`). Juger « plus haut que le récepteur » à chaque texel ferait de tout le plateau
+  // une marche — et le texel d'après la rampe bloquait ce que la rampe venait d'épargner (MESURÉ, M4).
+  let pPrec = p0
+  let portePrec = m.portes[k0] === 1
+  const dx = x1 - x0
+  const dy = y1 - y0
+  const sx = dx > 0 ? 1 : -1
+  const sy = dy > 0 ? 1 : -1
+  const tdx = dx !== 0 ? Math.abs(1 / dx) : Infinity
+  const tdy = dy !== 0 ? Math.abs(1 / dy) : Infinity
+  let tx = dx !== 0 ? (dx > 0 ? cx + 1 - x0 : x0 - cx) * tdx : Infinity
+  let ty = dy !== 0 ? (dy > 0 ? cy + 1 - y0 : y0 - cy) * tdy : Infinity
+  const garde = 4 * (Math.abs(dx) + Math.abs(dy)) + 4
+  for (let pas = 0; pas < garde; pas++) {
+    let t: number
+    if (tx < ty) {
+      if (tx >= 1) return false
+      t = tx
+      cx += sx
+      tx += tdx
+    } else {
+      if (ty >= 1) return false
+      t = ty
+      cy += sy
+      ty += tdy
+    }
+    const k = indice(g, cx, cy)
+    if (k < 0) return false
+    const p = m.paliers[k]!
+    const porte = m.portes[k] === 1
+    // Une montée, dont le haut domine le sol du récepteur (`p − p0` paliers au-dessus de lui) ; STRICT,
+    // comme la part d'une bande : un rayon dont la part s'achève au bord d'une marche n'y entre pas.
+    if (p > pPrec && p > p0 && !portePrec && !porte && t < (p - p0) * partParPalier) return true
+    pPrec = p
+    portePrec = porte
+  }
+  return false
 }
 
 /**

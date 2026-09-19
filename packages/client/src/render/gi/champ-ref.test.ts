@@ -18,7 +18,7 @@ import {
 } from '@ashes/sim'
 import { MUR_HT } from '../bati-art'
 import { TILE_PX } from '../framing'
-import { champRef, composerM, masqueDAstre, ombrePleineDAstre, partVisibleGrille, type Astre, type BandeGrille, type CarteDOmbre, type Emetteur, type GrilleGi, type Silhouette } from './champ-ref'
+import { champRef, composerM, hauteurDesMarches, masqueDAstre, ombrePleineDAstre, partVisibleGrille, type Astre, type BandeGrille, type CarteDOmbre, type Emetteur, type GrilleGi, type Silhouette } from './champ-ref'
 import { TOUTES_VARIANTES, ancrageHouppierPx, hauteurPx, houppierLargeur } from '../arbre-art'
 import type { SourceGi } from './champ-gpu'
 import { composerLeCorps, partsDuCorps, type Rgb } from './corps-ref'
@@ -643,5 +643,159 @@ describe('l’engagement ne touche pas la portée (LG-R6, LG-A7)', () => {
     expect(bas).toBeLessThan(0.9)
     expect(haut).toBeLessThan(1.15)
     expect(haut).toBeGreaterThan(1.1)
+  })
+})
+
+/**
+ * ═══ LA MARCHE (spec LG-R14, critère LG-A15) — L'ORACLE ET LA SIM SONT UNE LOI, EN HAUTEUR AUSSI ═══
+ *
+ * Le montage est celui de `lumiere.test.ts` (P1-P7) : les rangées `ty < BORD` au palier 1 (la terrasse
+ * au nord, comme celles du jeu), le reste au palier 0 ; une rampe, tuile des DEUX étages (E-R7),
+ * connecteur 0 → 1. La fenêtre chevauche la marche : ses 32 premiers rangs de texels sont le plateau.
+ * L'oracle ne connaît de tout cela que le raster de la sim (`marches`, `grille.ts`) : ces gardes
+ * tiennent sa traversée face à `partVisible`, texel pour texel, comme A0 le fait à plat.
+ */
+describe('la marche de l’oracle est celle de la sim (LG-R14, LG-A15)', () => {
+  const H = LUMIERE.PALIER_TEXELS
+  const FL = LUMIERE.FLAMME_TEXELS
+  const BORD = 48
+  const LIGNE = (BORD - F.y0) * T
+  const RAMPE = { x: 56, y: BORD }
+  function terrasse(rampe = false): MondeEclaire {
+    const map = createEmptyMap(96, 96, TERRAIN_GRASS)
+    const w = map.width
+    map.palier = Array.from({ length: w * map.height }, (_, i) => (Math.floor(i / w) < BORD ? 1 : 0))
+    if (rampe) {
+      map.etages = [{ niveau: 1, idx: [RAMPE.y * w + RAMPE.x], terrain: [TERRAIN_GRASS], x0: RAMPE.x, y0: RAMPE.y, x1: RAMPE.x + 1, y1: RAMPE.y + 1 }]
+      map.connecteurs = [{ x: RAMPE.x, y: RAMPE.y, de: 0, vers: 1, type: 'rampe' }]
+    }
+    return { map, structures: [], nodes: [] }
+  }
+  /** Un feu au centre de la tuile, à la flamme de SON palier (`Emetteur.z`, ce que `ChampGpu.update` pose). */
+  function feu(g: { ox: number; oy: number }, tx: number, ty: number, palier: number): Emetteur {
+    return { x: (tx + 0.5) * T - g.ox, y: (ty + 0.5) * T - g.oy, rayon: 8 * T, taille: GI.TAILLE_SOURCE, rgb: GI.TEINTE_FEU, z: palier * H + FL }
+  }
+  /** L'oracle contre `partVisible` sur tous les texels libres à portée — chaque récepteur au palier de SA tuile. */
+  function comparer(m: MondeEclaire, g: ReturnType<typeof grilleDuMonde>, e: Emetteur, tx: number, ty: number, palierSource: number): { n: number; ombre: number; penombre: number } {
+    const marches = g.marches
+    if (marches === undefined) throw new Error('la grille au sol doit porter les marches — sinon la garde ne prouve rien')
+    let n = 0
+    let ombre = 0
+    let penombre = 0
+    for (let j = 0; j < g.gh; j++)
+      for (let i = 0; i < g.gw; i++) {
+        const k = j * g.gw + i
+        if (g.occ[k] === 1) continue
+        const px = i + 0.5
+        const py = j + 0.5
+        if ((px - e.x) ** 2 + (py - e.y) ** 2 >= e.rayon * e.rayon) continue
+        n++
+        const palierR = marches.paliers[k]!
+        const oracle = partVisibleGrille(g, px, py, e.x, e.y, e.taille, palierR * H, e.z ?? 0)
+        const sim = partVisible(m, palierR, (g.ox + px) / T, (g.oy + py) / T, tx + 0.5, ty + 0.5, palierSource)
+        expect(oracle, `texel (${i}, ${j})`).toBe(sim)
+        if (oracle === 0) ombre++
+        else if (oracle < 1) penombre++
+      }
+    return { n, ombre, penombre }
+  }
+
+  it('M0 — la grille au sol porte le raster des marches de la sim : deux paliers, la rampe en porte, et la hauteur d’une marche en texels', () => {
+    const g = grilleDuMonde(terrasse(true), N, F)
+    expect(g.marches).toBeDefined()
+    expect(new Set(g.marches!.paliers).size).toBe(2)
+    expect(g.marches!.paliers[0]).toBe(1) // le coin nord-ouest : la terrasse
+    expect(g.marches!.paliers[(g.gh - 1) * g.gw]).toBe(0) // le coin sud-ouest : la plaine
+    expect(g.marches!.portes.reduce((a, b) => a + b, 0)).toBe(T * T) // la rampe, et elle seule
+    expect(g.marches!.hauteur).toBe(H)
+    expect(hauteurDesMarches(g)).toBe(H)
+    // Dans un creux, aucune marche : la loi d'avant les terrasses (LG-R14, « `auSol` »).
+    expect(grilleDuMonde(terrasse(true), N, F, false).marches).toBeUndefined()
+    expect(grilleDuMonde(terrasse(true), -1, F).marches).toBeUndefined()
+    // Et sur une carte plate, le raster est là mais ne fait aucune marche.
+    const plat = grilleDuMonde(monde({}), N, F)
+    expect(hauteurDesMarches(plat)).toBe(0)
+  })
+
+  it('M1 — d’en bas, rien ne monte : un feu au pied de la marche, l’oracle rend `partVisible` texel pour texel — le plateau noir, la plaine entière', () => {
+    const m = terrasse()
+    const g = grilleDuMonde(m, N, F)
+    const { n, ombre, penombre } = comparer(m, g, feu(g, 50, 49, 0), 50, 49, 0)
+    expect(n).toBeGreaterThan(1000)
+    // La prémisse : tout le plateau à portée dans le noir, toute la plaine au plein, et RIEN entre les deux.
+    expect(ombre).toBeGreaterThan(300)
+    expect(penombre).toBe(0)
+    expect(n - ombre).toBeGreaterThan(500)
+  })
+
+  it('M2 — d’en haut, la lumière descend jusqu’à s = (H ÷ F) × d : un feu contre le bord du plateau — l’ombre, la pénombre et le clair, tous présents, tous égaux à la sim', () => {
+    const m = terrasse()
+    const g = grilleDuMonde(m, N, F)
+    const { n, ombre, penombre } = comparer(m, g, feu(g, 50, 47, 1), 50, 47, 1)
+    expect(n).toBeGreaterThan(1000)
+    expect(ombre).toBeGreaterThan(50)
+    expect(penombre).toBeGreaterThan(20)
+    expect(n - ombre - penombre).toBeGreaterThan(500)
+    // Et la LOI, à part : sous la marche, le premier rang de la plaine est noir, le quatorzième est
+    // plein (le disque de la source va de 0,5 à 3,5 texels de la ligne : s < 3,33 × d s'arrête entre
+    // 1,7 et 11,7 texels — noir sur le premier rang pour tout échantillon, plein au-delà du douzième).
+    const e = feu(g, 50, 47, 1)
+    const col = (50 - F.x0) * T
+    expect(partVisibleGrille(g, col + 0.5, LIGNE + 0.5, e.x, e.y, e.taille, 0, e.z)).toBe(0)
+    expect(partVisibleGrille(g, col + 0.5, LIGNE + 5.5, e.x, e.y, e.taille, 0, e.z)).toBeGreaterThan(0)
+    expect(partVisibleGrille(g, col + 0.5, LIGNE + 5.5, e.x, e.y, e.taille, 0, e.z)).toBeLessThan(1)
+    expect(partVisibleGrille(g, col + 0.5, LIGNE + 13.5, e.x, e.y, e.taille, 0, e.z)).toBe(1)
+    // Le plateau lui-même reste entier : un texel du haut n'est jamais bloqué par sa propre marche.
+    expect(partVisibleGrille(g, col + 0.5, LIGNE - 0.5, e.x, e.y, e.taille, H, e.z)).toBe(1)
+  })
+
+  it('M3 — la rampe est une porte ouverte DEVANT elle, et pas à côté : un feu de la plaine monte par elle, et c’est ce que la sim dit', () => {
+    const avec = terrasse(true)
+    const sans = terrasse(false)
+    const gA = grilleDuMonde(avec, N, F)
+    const gS = grilleDuMonde(sans, N, F)
+    const e = feu(gA, RAMPE.x, RAMPE.y + 2, 0)
+    const plateau = (tx: number): [number, number] => [(tx + 0.5) * T - gA.ox, (BORD - 1 + 0.5) * T - gA.oy]
+    const [dx, dy] = plateau(RAMPE.x)
+    const devant = partVisibleGrille(gA, dx, dy, e.x, e.y, e.taille, H, e.z)
+    expect(devant).toBeGreaterThan(0)
+    expect(devant).toBe(partVisible(avec, 1, RAMPE.x + 0.5, BORD - 0.5, RAMPE.x + 0.5, RAMPE.y + 2.5, 0))
+    expect(partVisibleGrille(gS, dx, dy, e.x, e.y, e.taille, H, e.z)).toBe(0)
+    const [cx, cy] = plateau(RAMPE.x + 3)
+    expect(partVisibleGrille(gA, cx, cy, e.x, e.y, e.taille, H, e.z)).toBe(0)
+    // Et sur toute la fenêtre, texel pour texel, avec la rampe.
+    const { n, ombre } = comparer(avec, gA, e, RAMPE.x, RAMPE.y + 2, 0)
+    expect(n).toBeGreaterThan(1000)
+    expect(ombre).toBeGreaterThan(100)
+  })
+
+  it('M4 — la marche lance une ombre d’astre à sa hauteur : trois rangs pleins sous la ligne puis la pénombre, la colonne de la rampe épargnée, le plateau intact', () => {
+    const g = grilleDuMonde(terrasse(true), N, F)
+    // `astre(0)` : plein sud, la longueur d'un mur ; la marche, elle, se projette à SA hauteur —
+    // `longueurParHauteur × H` = 0,4 × 8 = 3,2 texels, la même que `L_MUR` parce que H = un mur.
+    const s = masqueDAstre(g, astre(0))
+    const col = (50 - F.x0) * T + 1
+    const v = (y: number) => s[y * g.gw + col]
+    expect([v(LIGNE), v(LIGNE + 1), v(LIGNE + 2)]).toEqual([1, 1, 1])
+    expect(v(LIGNE + 3)).toBe(Math.fround(2 / 3))
+    expect(v(LIGNE + 4)).toBe(Math.fround(1 / 3))
+    expect(v(LIGNE + 5)).toBe(0)
+    for (let y = 0; y < LIGNE; y++) expect(v(y), `plateau, rang ${y}`).toBe(0)
+    // La colonne de la rampe : un connecteur n'est pas une arête, rien ne s'y projette en PLEIN (LG-A15)
+    // — ses quatre colonnes, du tablier à deux rangs sous la rampe. Le masque, lui, y porte la pénombre
+    // des deux marches qui l'encadrent (deux texels de chaque côté, LG-R8) : jamais pleine.
+    const plein = ombrePleineDAstre(g, astre(0))
+    for (let dx = 0; dx < T; dx++) {
+      const colRampe = (RAMPE.x - F.x0) * T + dx
+      for (let y = LIGNE; y < LIGNE + T + 2; y++) {
+        expect(plein[y * g.gw + colRampe], `rampe, colonne ${dx}, rang ${y}`).toBe(0)
+        expect(s[y * g.gw + colRampe], `rampe (masque), colonne ${dx}, rang ${y}`).toBeLessThan(1)
+      }
+    }
+    // Et de part et d'autre, la marche est pleine sur ses trois rangs : la rampe n'a rien éteint autour d'elle.
+    expect(plein[LIGNE * g.gw + (RAMPE.x - F.x0) * T - 1]).toBe(1)
+    expect(plein[(LIGNE + 2) * g.gw + (RAMPE.x + 1 - F.x0) * T]).toBe(1)
+    // Et la prémisse : sans marche, ce masque est nul partout (aucun mur, aucun arbre).
+    expect(Array.from(masqueDAstre(grilleDuMonde(monde({}), N, F), astre(0))).every((x) => x === 0)).toBe(true)
   })
 })
