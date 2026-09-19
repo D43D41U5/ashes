@@ -1919,6 +1919,7 @@ export class SnapshotView {
     sac.expo =
       feuGi === null || feuGi[3] <= 0 ? -1 : (expositionAuFeu(corps, { x: feuGi[0], y: feuGi[1] }) ?? -1)
     sac.lift = corps.lift ?? 0
+    sac.ciel = corps.ciel === true ? 1 : 0
     if (import.meta.env.DEV) this.poses.set(sprite, corps)
   }
 
@@ -2247,26 +2248,32 @@ export class SnapshotView {
         : 'wall'
       // ═══ LA PASSE DES CORPS (LG-R7) — CE CORPS PREND-IL LE RELIEF DE LA GI ? ═══
       //
-      // SEULES LES BARRIÈRES ARMENT pour l'instant : ce sont elles que `CorpsPose` décrit par
-      // (famille, arête), et elles que les planches ont mesurées — `wall-bois` y pèse 20 088 pixels
-      // peints. Les acteurs, les fûts et les cimes suivront, chacun avec sa lecture et sa garde.
+      // LES BARRIÈRES ARMENT par (famille, arête) : ce sont elles que `CorpsPose` décrit ainsi, et
+      // elles que les planches ont mesurées — `wall-bois` y pèse 20 088 pixels peints. Les acteurs,
+      // les fûts et les cimes suivront, chacun avec sa lecture et sa garde.
       //
-      // ⚠ **LES TOITS N'ARMENT PAS, ET C'EST UNE DÉCISION, PAS UN OUBLI.** Un toit se dessine LEVÉ
-      // de `MUR_HT` (`leve`), un troisième décalage que `CorpsPose` n'a aucun champ pour porter :
-      // armé, il lirait le champ deux tuiles au nord de son vrai sol. Et sans `edges` ni famille il
-      // serait plat de toute façon — il ne perd donc rien à attendre qu'on décide ce qu'est le
-      // dessus d'un toit.
-      if (this.gi !== null && !isRoof && ARETE_GI.has(s.type)) {
-        const corps: CorpsPose = {
-          x: a.px,
-          // LA POSITION LOGIQUE, PAS CELLE DU SPRITE : `a.py` est le bas de la tuile, et le `lift`
-          // du palier voyage À PART (LG-R14) — la loi juge tout en logique, et le shader remonte son
-          // fragment dessiné de ce lift avant de juger (`CorpsPose.lift`).
-          y: a.py,
-          arete: s.edges ?? 0,
-          famille: fam,
-          lift,
-        }
+      // ET LE TOIT ARME SOUS LE CIEL SEUL (Alexis, 2026-09-19, LG-Q13, planche 27 « Le toit sous le
+      // ciel » : « Le ciel seul » — LG-R16 étendu à un dessus ENTIER). Un toit se dessine LEVÉ de
+      // `MUR_HT` (`leve`), sans `edges` ni famille, au-dessus de toute crête : rien du champ ne
+      // l'atteint — ni le feu (dehors, il ne traverse plus le mur ; dedans, il allume le sol de la
+      // pièce, pas le chaume), ni l'ombre d'astre des murs qu'il coiffe. `CorpsPose.ciel` : le shader
+      // ne lit pas le champ, le plancher et l'astre entiers. Écartés sur la planche : « un corps plat
+      // qui lit sa pièce » (un feu dedans en faisait une lanterne) et Light2D (le feu traversait les
+      // murs jusqu'au chaume). Un toit à alpha 0 (`dedansAvec`) n'est pas dessiné du tout : la passe
+      // n'a rien à en dire.
+      if (this.gi !== null && (isRoof || ARETE_GI.has(s.type))) {
+        const corps: CorpsPose = isRoof
+          ? { x: a.px, y: a.py, arete: 0, lift, ciel: true }
+          : {
+              x: a.px,
+              // LA POSITION LOGIQUE, PAS CELLE DU SPRITE : `a.py` est le bas de la tuile, et le `lift`
+              // du palier voyage À PART (LG-R14) — la loi juge tout en logique, et le shader remonte son
+              // fragment dessiné de ce lift avant de juger (`CorpsPose.lift`).
+              y: a.py,
+              arete: s.edges ?? 0,
+              famille: fam,
+              lift,
+            }
         this.poserLeCorps(sprite, corps, feuGi)
       }
       if (LIT_STRUCTURE_TYPES.has(s.type) || BATI_LIT_TYPES.has(s.type)) {

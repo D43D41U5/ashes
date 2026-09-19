@@ -615,3 +615,20 @@ describe('l’astre des corps — le relais soleil → lune, sans saut (2026-09-
     expect(GI.CORPS.ASTRE_LOIN_PX).toBe(Number(m![1]))
   })
 })
+
+/**
+ * LE TOIT ARME SOUS LE CIEL SEUL (Alexis, 2026-09-19, LG-Q13, planche 27 « Le toit sous le ciel »).
+ * `snapshot-view.ts` tire Phaser, donc la garde lit sa SOURCE : un toit pose `ciel: true`, sans arête
+ * ni famille, et il arme EN JEU — pas derrière la clé de debug qui a servi à montrer les trois lectures.
+ * La règle qu'il applique est éprouvée dans `passe-corps.test.ts` (« un toit ne lit pas le champ »).
+ */
+describe('le toit est un dessus entier (LG-R16, planche 27)', () => {
+  const source = readFileSync(new URL('../../scenes/world/snapshot-view.ts', import.meta.url), 'utf8')
+  it('UN TOIT POSE `ciel: true`, SANS ARÊTE NI FAMILLE', () => {
+    expect(source).toMatch(/isRoof\s*\?\s*\{ x: a\.px, y: a\.py, arete: 0, lift, ciel: true \}/)
+  })
+  it('ET IL ARME EN JEU, PAS DERRIÈRE UNE CLÉ DE DEBUG', () => {
+    expect(source).not.toMatch(/debugGiToits/)
+    expect(source).toMatch(/this\.gi !== null && \(isRoof \|\| ARETE_GI\.has\(s\.type\)\)/)
+  })
+})

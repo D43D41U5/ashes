@@ -101,6 +101,8 @@ export const UNIFORMES_CORPS = {
    * fragment se remonte de `uGiLift` avant tout jugement (`ordonneeLogique`, `sol-du-corps.ts`).
    */
   lift: 'uGiLift',
+  /** 1 pour un corps qui ne voit que le ciel (`CorpsPose.ciel`, un toit) : le shader ne lit pas le champ. */
+  ciel: 'uGiCiel',
   /**
    * PAR IMAGE — l'inverse de `camera.matrixCombined`, les six coefficients de `getWorldPoint`
    * (`BaseCamera.js:876-914`) : `invA = (ima, imb, imc, imd)`, `invB = (ime, imf)`.
@@ -143,6 +145,7 @@ uniform float uGiDresse;
 uniform float uGiRuban;
 uniform float uGiExpo;
 uniform float uGiLift;
+uniform float uGiCiel;
 uniform vec4 uGiInvA;
 uniform vec2 uGiInvB;
 
@@ -271,10 +274,15 @@ vec4 appliquerGi(vec4 fragColor, vec3 normalPhaser) {
   bool dessus = uGiDresse > 0.5 && (uGiRuban > 0.5 || yLog < uGiSeuil);
   vec2 p = dessus ? vec2(monde.x, yLog + uGiCrete) : vec2(monde.x, uGiPied);
 
-  // ② LA RÉPARTITION, au point lu.
+  // ② LA RÉPARTITION, au point lu — ou SANS CHAMP pour un corps qui ne voit que le ciel (un toit,
+  // \`uGiCiel\`, \`CorpsPose.ciel\`) : lumière nulle, ombre nulle, donc le plancher et l'astre entiers.
+  // Le décalque est \`passe-corps.ts\` (\`SANS_CHAMP\`) ; la garde LG-A8 tient les deux face à face.
   vec2 uvP = uvDuChamp(p);
+  bool ciel = uGiCiel > 0.5;
   vec3 pAstre, pFeu, pPlat;
-  partsDuCorps(texture2D(uGiL, uvP).rgb, texture2D(uGiF, uvP).rgb, texture2D(uGiS, uvP).g,
+  partsDuCorps(ciel ? vec3(0.0) : texture2D(uGiL, uvP).rgb,
+               ciel ? vec3(0.0) : texture2D(uGiF, uvP).rgb,
+               ciel ? 0.0 : texture2D(uGiS, uvP).g,
                pAstre, pFeu, pPlat);
 
   // ③ LA PART DIRECTE DU FEU — les trois branches de \`lectureDuFeu\`, dans leur ordre.

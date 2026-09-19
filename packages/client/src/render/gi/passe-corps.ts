@@ -90,6 +90,9 @@ export interface PixelDuCorps {
 
 const NUL: Rgb = [0, 0, 0]
 
+/** Le champ tel que le voit un corps sous le ciel seul (`CorpsPose.ciel`) : rien, et pas d'ombre. */
+const SANS_CHAMP: LectureDuChamp = { light: NUL, directFace: NUL, ombre: 0 }
+
 /**
  * UN PIXEL DE CORPS, DE BOUT EN BOUT.
  *
@@ -128,9 +131,11 @@ export function pixelDuCorps(
   // ⓪ — le pixel dessiné, remonté à sa place logique (identité au sol).
   const yl = ordonneeLogique(c, yw)
 
-  // ① et ② — le point lu, et la répartition qui s'y fait.
+  // ① et ② — le point lu, et la répartition qui s'y fait. Un corps qui ne voit que le CIEL (un
+  // toit, `CorpsPose.ciel`) se répartit SANS CHAMP : ni lumière, ni ombre — le décalque exact du
+  // shader (`corps-gpu.ts`, `uGiCiel`), qui ne lit alors aucune des trois textures.
   const p = pointAuSol(c, xw, yl)
-  const sous = lire(p.x, p.y)
+  const sous = c.ciel === true ? SANS_CHAMP : lire(p.x, p.y)
   let parts: PartsCorps = partsDuCorps(ciel.mn, sous.ombre, ciel.a, sous.light, sous.directFace, ciel.ambiante)
 
   // ③ — la part directe du feu. Sans feu dans la scène, la branche ne change rien : il n'y a rien

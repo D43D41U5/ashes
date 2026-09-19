@@ -124,6 +124,16 @@ export interface CorpsPose {
    * donc TOUT le mur passait pour un dessus.
    */
   readonly lift?: number
+  /**
+   * UN CORPS QUI NE VOIT QUE LE CIEL — un TOIT *(Alexis, 2026-09-19, LG-Q13, planche 27 « Le toit sous
+   * le ciel » : « Le ciel seul » — LG-R16 étendu à un dessus entier)*. Au-dessus de toute crête, rien
+   * du champ ne l'atteint : ni l'ombre d'astre des murs qu'il coiffe, ni le feu, ni le rebond. Sa
+   * lecture est `partsDuCorps` SANS CHAMP — lumière nulle, ombre nulle — d'où le plancher et l'astre
+   * entiers (`X = Mn`, σ = 1). Le point lu ne sert plus qu'à orienter la normale vers l'astre.
+   * Écartés sur la planche : un corps plat qui lit sa pièce (un feu dedans en faisait une lanterne),
+   * et Light2D (un feu dehors allumait le chaume à travers le mur).
+   */
+  readonly ciel?: boolean
 }
 
 /**

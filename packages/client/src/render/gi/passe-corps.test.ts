@@ -118,6 +118,28 @@ describe('les points de lecture de la passe (LG-R7)', () => {
     expect(appels).toHaveLength(1)
     for (const v of px.rgb) expect(v).toBeGreaterThan(0) // l'astre, lui, éclaire encore
   })
+
+  /**
+   * LG-R16 ÉTENDU AU TOIT (Alexis, 2026-09-19, LG-Q13, planche 27 « Le toit sous le ciel » : « Le ciel
+   * seul »). Un toit est au-dessus de toute crête : rien du champ ne l'atteint. La passe ne LIT donc
+   * rien — ni lumière, ni ombre — et compose le plancher et l'astre entiers. C'est le décalque de
+   * `uGiCiel` (`corps-gpu.ts`), que la garde LG-A8 tient face à face avec cette référence.
+   */
+  it('UN TOIT NE LIT PAS LE CHAMP — ni le feu, ni l’ombre d’astre des murs qu’il coiffe (LG-R16, planche 27)', () => {
+    const toit: CorpsPose = { x: 400, y: LIGNE, arete: 0, ciel: true }
+    // Un champ « d'enfer » : plein feu sous le toit, et dans l'ombre d'astre d'un mur.
+    const enfer = champ({ light: [1, 0.8, 0.5], directFace: [1, 0.8, 0.5], ombre: 1 })
+    const px = pixelDuCorps(toit, 12, LIGNE - 40, enfer.lire, CIEL, SOURCES, TEXEL, PLAT)
+    expect(enfer.appels).toEqual([])
+    expect(px.ou).toBe('sousLePixel')
+    // Le même corps sans `ciel`, sous un champ NUL et sans ombre : le même pixel, au bit près.
+    const plat: CorpsPose = { x: 400, y: LIGNE, arete: 0 }
+    const nul = champ({ light: [0, 0, 0], directFace: [0, 0, 0], ombre: 0 })
+    expect(pixelDuCorps(plat, 12, LIGNE - 40, nul.lire, CIEL, SOURCES, TEXEL, PLAT).rgb).toEqual(px.rgb)
+    expect(nul.appels).toHaveLength(1)
+    // Le contrôle positif : le corps plat SOUS le champ d'enfer rend autre chose — sinon la garde ne tiendrait rien.
+    expect(pixelDuCorps(plat, 12, LIGNE - 40, enfer.lire, CIEL, SOURCES, TEXEL, PLAT).rgb).not.toEqual(px.rgb)
+  })
 })
 
 /**
