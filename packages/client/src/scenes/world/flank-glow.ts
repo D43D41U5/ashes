@@ -42,6 +42,49 @@ function circDist(a: number, b: number): number {
   return Math.min(d, 4 - d)
 }
 
+/** Le nœud que le REGARD voit sur une tuile — celui que la visée y prendrait (`SnapshotView.noeudALaTuile`). */
+export type NoeudDuRegard = (tx: number, ty: number) => ResourceNode | undefined
+/** La joignabilité d'étage depuis MON étage (spec `etages.md` E-R5) — le prédicat de la visée. */
+export type Atteignable = (tx: number, ty: number, etage?: number) => boolean
+
+/**
+ * ═══ LES ROCHERS QUI LUISENT : CEUX QUE LA VISÉE PRENDRAIT, ET AUCUN AUTRE ═══
+ *
+ * La lueur balayait TOUT le tableau des nœuds et ne gardait que la distance À PLAT. Sous la
+ * roche, c'était faux deux fois (Alexis, 2026-09-14 : « je vois la pastille de récolte d'un rock
+ * node dans une cave alors que le node est soit à l'étage au-dessus ou à l'extérieur ») : le
+ * rocher de la terrasse qui coiffe la salle est À L'APLOMB — distance nulle —, celui du palier
+ * derrière la paroi à une tuile. Leur pastille se peint à `OVERLAY_DEPTH`, au-dessus de la strate
+ * souterraine : rien ne la couvrait, elle flottait seule sur la roche.
+ *
+ * On pose donc les deux questions de la visée (`aimAt` → `nodeInRange`), pas une de plus :
+ * (1) le nœud est celui que le REGARD voit sur sa tuile (`noeudVu` : la salle sous la roche, la
+ *     surface ailleurs) — on parcourt les tuiles à portée par l'index au lieu de balayer le
+ *     tableau, et le nœud que le regard ne voit pas n'est jamais rendu ;
+ * (2) il est JOIGNABLE depuis mon étage (E-R5) — la règle de `strikeRejection`, qui refuse
+ *     « trop loin » à travers un plancher.
+ * La lueur promet un coup : elle ne se peint que là où le clic en rendrait un.
+ */
+export function rochersQuiLuisent(
+  noeudDuRegard: NoeudDuRegard,
+  player: { x: number; y: number },
+  atteignable: Atteignable,
+): ResourceNode[] {
+  const r = BALANCE.INTERACT_RANGE
+  const out: ResourceNode[] = []
+  // Les tuiles dont le CENTRE peut tomber à portée : `t + 0,5 ∈ [p − r, p + r]`.
+  for (let ty = Math.floor(player.y - r - 0.5); ty <= Math.floor(player.y + r - 0.5); ty++) {
+    for (let tx = Math.floor(player.x - r - 0.5); tx <= Math.floor(player.x + r - 0.5); tx++) {
+      const node = noeudDuRegard(tx, ty)
+      if (node === undefined || node.stock <= 0 || NODE_DEFS[node.type].skill !== 'mining') continue
+      if ((node.tx + 0.5 - player.x) ** 2 + (node.ty + 0.5 - player.y) ** 2 > r * r) continue
+      if (!atteignable(node.tx, node.ty, node.etage)) continue
+      out.push(node)
+    }
+  }
+  return out
+}
+
 export class FlankGlow {
   private readonly g: Phaser.GameObjects.Graphics
 
@@ -50,27 +93,24 @@ export class FlankGlow {
   }
 
   update(
-    nodes: readonly ResourceNode[],
+    noeudDuRegard: NoeudDuRegard,
     player: { x: number; y: number },
+    atteignable: Atteignable,
     level: number,
     readiness: number,
     time: number,
     warp: Warp | undefined,
   ): void {
     this.g.clear()
-    const rangeSq = BALANCE.INTERACT_RANGE * BALANCE.INTERACT_RANGE
     const tol = mineTolerance(level)
     // LE TEMPO : `grow` monte de ~0 (juste frappé) à 1 (prêt) ; à plein, un souffle lent
     // (`pulse`) dit « frappe ». `sin` est du rendu — permis hors /sim.
     const grow = Math.max(0, Math.min(1, readiness))
     const ready = grow >= 1
     const pulse = ready ? 0.85 + 0.15 * Math.sin(time / 150) : 1
-    for (const node of nodes) {
-      if (node.stock <= 0 || NODE_DEFS[node.type].skill !== 'mining') continue
+    for (const node of rochersQuiLuisent(noeudDuRegard, player, atteignable)) {
       const cxT = node.tx + 0.5
       const cyT = node.ty + 0.5
-      if ((cxT - player.x) ** 2 + (cyT - player.y) ** 2 > rangeSq) continue
-
       const good = mineGoodFlank(node.id, node.stock)
       // Le lift de la tuile ET son étage : un bloc de chapeau montre ses flancs sur lui, pas
       // sur la paroi deux tuiles plus bas.

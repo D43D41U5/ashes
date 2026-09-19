@@ -1098,14 +1098,9 @@ déjà ce champ (*« un pas au sol reste `{tx, ty}` »*), le runtime ne bouge pa
 
 ### CE QUI RESTE
 
-- **`followPath` est aveugle à l'étage** — il ne remplit pas `etages` dans son `MoveWorld` et
-  n'appelle pas `poserLEtageDuCorps`, contrairement à l'avatar (`sim.ts`) et à la bête
-  (`monsters.ts`, décision du 2026-09-01). **Le PNJ est donc le seul corps du jeu qui ne monte
-  pas** : son chemin peut désormais descendre dans une salle, son corps ne l'y suivrait pas. C'est
-  sans conséquence aujourd'hui — rien n'élit de cible dans un creux (E-R5 scelle l'élection, et le
-  bâti n'y naît que si un joueur descend bâtir). **C'est une décision d'Alexis** : faire marcher
-  les villageois entre les étages se VOIT (on les verrait prendre les rampes, entrer dans les
-  grottes), et ce n'est pas une correction technique.
+- ~~**`followPath` est aveugle à l'étage**~~ — ✅ **TRANCHÉ ET LIVRÉ LE 2026-09-11, voir le §24.**
+  *« L'avatar et la bête franchissent les rampes et entrent dans les grottes. Veux-tu que les PNJ
+  en fassent autant ? » — « Oui. »* (Alexis.)
 - **L'élection reste fermée aux creux** (E-R5, `dansUnCreux`) — rouverte pour les terrasses le
   2026-09-08, pas pour les salles.
 
@@ -1135,3 +1130,99 @@ même changement. Ce nombre-là ne prouvait donc rien ; ce qui fonde la décisio
 d'ÉLECTION (quels nœuds sont coupés, et lesquels un chemin rejoint), pas le banc.
 
 *Le banc reste vert : 0 affamé sur les six graines, avant comme après.*
+
+---
+
+## 24. LE PAS DU VILLAGEOIS PORTE L'ÉTAGE (2026-09-11) — le PNJ monte, comme tout le monde
+
+> *« `followPath` est aveugle à l'étage. Le villageois VISE désormais juste — il ne descend pas
+> encore. L'avatar et la bête, eux, franchissent les rampes et entrent dans les grottes. Veux-tu
+> que les PNJ en fassent autant ? »* — ***« Oui. »*** (Alexis, 2026-09-11.)
+
+Le §23 avait réparé l'APPROCHE : `setPathTo` porte l'étage, donc le chemin d'un villageois vise
+enfin le bon niveau. Restait le CORPS : le PNJ était le seul déplaceur du jeu qui ne changeait
+jamais d'étage.
+
+### E-R9 — TROIS SITES, UNE SEULE FONCTION
+
+`npc.ts` déplaçait un PNJ à trois endroits, chacun avec sa copie des quatre lignes `moveAvatar` →
+`entity.x/y` : la marche du chemin (`followPath`), l'écart d'un pas pour poser un composant, et la
+marche gloutonne vers une menace. Ils passent tous par **`pasDuVillageois`**, qui est le patron de
+l'avatar (`sim.ts`) et de la bête (`monsters.ts`), mot pour mot :
+
+```
+etageAvant = niveauDuCorps(map, entity)
+etages     = etagesDuPas(map, etageAvant, ⌊x⌋, ⌊y⌋)      → passé au MoveWorld
+moved      = moveAvatar(…)                                → écrit x, y, moved
+poserLEtageDuCorps(map, entity, etageApresLePas(map, etages, etageAvant, ⌊moved.x⌋, ⌊moved.y⌋))
+```
+
+**Les deux moitiés sont indispensables, et pour deux raisons différentes.**
+
+- Sans **`etages` dans le monde de collision**, la paroi d'une terrasse N'EXISTE PAS pour le
+  villageois : `terrainBloque` retombe sur `map.terrain`, que les terrasses ne repeignent jamais
+  (T-R2). Il traversait les falaises à pied sec, et aucune rampe ne lui servait à rien.
+- Sans **`poserLEtageDuCorps`**, un étage EXPLICITE hérité de la position d'avant survit au pas.
+  `niveauDuCorps` répond alors faux, `near` refuse le geste — et on retrouve exactement le
+  villageois figé que le §23 venait de réparer côté approche. C'est pour ça que les TROIS sites y
+  passent, pas seulement `followPath` : un quatrième qui écrirait `entity.x` à la main rouvrirait
+  cette panne-là, en silence.
+
+Ce que ça NE change pas : l'élection reste fermée aux creux (E-R5, `dansUnCreux`). Un villageois
+peut désormais descendre dans une salle ; rien ne l'y envoie encore.
+
+### E-A5 — QUATRE GARDES, ET LA PLUS ÉVIDENTE NE PROUVE PAS CE QU'ON CROIT
+
+**LA PAROI** (terrasse de laboratoire du §23) — poussé droit dans le mur, **loin de la rampe**, le
+villageois reste au palier 0 ; le TÉMOIN, la même poussée dans la colonne de la rampe, monte au
+palier 1. *Sabotage `etages` retiré : il finit au palier 1 — il escalade la falaise.*
+
+**LE PUITS** (§24, une butte de roche, une salle sous son chapeau, une gueule dans sa jupe) — le
+villageois descend (`niveauDuCorps` = −1), sa main atteint enfin la cible (`near` passe au vert),
+puis il **ressort** par la même gueule et son corps ne garde aucun étage écrit. *Les deux sabotages
+la rougissent, et différemment* : sans `etages` il **n'entre pas** (le chapeau est un mur, chemin
+jamais consommé) ; sans `poserLEtageDuCorps` il **entre sans descendre** — marqué étage 0 sous la
+roche, `near` refuse le geste. C'est le villageois figé du §23, déplacé d'un étage.
+
+**LE MUR DE LA TERRASSE** — le villageois ne traverse pas un mur posé sur une tuile de palier 1 ;
+le TÉMOIN est le même mur au palier 0. *Sabotage `etages` retiré : il le traverse.*
+
+**LA TERRASSE** (le glanage, sur `step()`) — la branche du haut se glane, et le corps ne change de
+palier **qu'à la rampe**.
+
+> ⚠ **CETTE TROISIÈME NE PROUVE PAS LA PAROI, et c'est mesuré, pas supposé : le sabotage la laisse
+> VERTE.** Depuis le §23 le chemin porte l'étage, donc l'A* fait passer le villageois par la rampe
+> *même quand la falaise ne l'arrête pas*, et il la suit sagement. « Il emprunte le connecteur » et
+> « la paroi tient » sont deux affirmations distinctes — il a fallu un pas **hors chemin** pour
+> voir la seconde. Même leçon dans le monde JOUÉ (`tools/__pnj-etages.mts`, vrai worldgen, 1 jour,
+> graines 2026/4242/999) : **2/10 · 7/10 · 5/10** villageois changent de palier, et les
+> franchissements hors connecteur valent **0 partout — avant comme après**. Le banc mesure
+> l'itinéraire, pas le mur.
+
+### ⚠ ET ÇA REFERME UNE PANNE SILENCIEUSE : le PNJ traversait les murs d'en haut
+
+`bloquantAt` (`collision.ts`) écarte tout le bâti d'une tuile dès que l'étage du marcheur diffère
+du palier de cette tuile — *« le bâti vit au sol, celui de SA tuile »*. Or l'étage du marcheur, pour
+la collision, c'est `etageCourant = world.etages?.[0] ?? 0`, et **aucun PNJ ne remplissait
+`etages`**. Un villageois d'un village fondé sur la terrasse haute était donc jugé « au niveau 0 »
+sur des tuiles de palier 1 : **tous les murs de son propre village cessaient de le bloquer**, sans
+un mot, sans un événement. L'avatar était correct depuis le 2026-09-01 ; c'est le PNJ, et lui seul,
+qui passait à travers. Mesuré et gardé (« LE MUR DE LA TERRASSE » ci-dessus).
+
+### ⚠ CE QUI FAIT DESCENDRE, C'EST LE PLAFOND — pas le chemin
+
+`etageApresLePas` dit *« on garde son étage tant qu'il porte encore »*. Sur une salle creusée sous
+une **plaine**, l'étage 0 porte toujours : le villageois traverse la salle **par le dessus** sans
+jamais descendre, quoi que son chemin en dise. Ce n'est pas un défaut, c'est E-R1 au pied de la
+lettre — et ça n'existe pas dans le jeu, où une cave est creusée **sous un chapeau de roche**
+(`zonegen-karst.ts`, 2026-09-02 : *« le chapeau reste `TERRAIN_ROCK` au sol »*). C'est le plafond
+de roche qui fait descendre.
+
+**Conséquence pour qui écrit une garde** : la salle du §23, creusée sous une plaine d'herbe, suffit
+à éprouver un CHEMIN et **ne peut pas** éprouver un CORPS. Le §24 a son propre montage, une butte.
+
+### CE QUI RESTE DEHORS
+
+- **La faune ne monte toujours pas** (hors la bête de `monsters.ts`) — inchangé depuis le §12.
+- **Aucune élection ne vise un creux** : E-R5 tient. Le villageois en est capable, on ne l'y
+  envoie pas.

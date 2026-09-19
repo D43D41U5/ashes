@@ -631,6 +631,23 @@ export class WorldScene extends Phaser.Scene {
     this.view.sousRoche = souterrain
   }
 
+  /**
+   * ═══ LA JOIGNABILITÉ D'ÉTAGE DU JOUEUR (spec `etages.md` E-R5) — une écriture, deux lecteurs ═══
+   *
+   * La MÊME loi que la sim (`strikeRejection`, `atteintLeSol`) : depuis MON étage (`etageJoueur`,
+   * relu de l'autorité à chaque snapshot) vers le sol de la tuile ou l'étage du nœud qu'elle porte.
+   * La VISÉE la lit — sans elle, le bloc d'un chapeau se dorait depuis le pied de la mesa, et `F`
+   * rendait « trop loin » ; la LUEUR DU FLANC aussi (`rochersQuiLuisent`) — sans elle, le rocher
+   * de la terrasse qui coiffe une salle luisait dans la grotte. Une copie par lecteur, et c'est
+   * celle qu'on oublie qui dérive.
+   */
+  private atteignableDuJoueur(tx: number, ty: number, etage?: number): boolean {
+    return atteignableEntreEtages(
+      this.map, this.predicted.x, this.predicted.y, this.etageJoueur,
+      tx + 0.5, ty + 0.5, etage ?? palierDuSol(this.map, tx, ty),
+    )
+  }
+
   private porteursDeTorche(): PorteurDeTorche[] {
     const out: PorteurDeTorche[] = []
     for (const e of this.lastEntities) {
@@ -1202,16 +1219,8 @@ export class WorldScene extends Phaser.Scene {
       // de curseur. C'est la même précaution que la couche de gel, pour la même raison.
       porteDeLEau: (tx, ty) =>
         this.etatGel !== null && eauPechable(this.etatGel as unknown as Parameters<typeof eauPechable>[0], tx, ty, this.niveauEauDuTick),
-      // ═══ LA JOIGNABILITÉ D'ÉTAGE (spec `etages.md` E-R5) ═══
-      //
-      // La MÊME loi que la sim (`strikeRejection`, `atteintLeSol`) : depuis MON étage
-      // (`etageJoueur`, relu de l'autorité à chaque snapshot) vers le sol de la tuile visée
-      // ou l'étage du nœud qu'elle porte. Sans elle, le bloc d'un chapeau se dorait depuis
-      // le pied de la mesa, et `F` rendait « trop loin ».
-      atteignable: (tx, ty, etage) => atteignableEntreEtages(
-        this.map, this.predicted.x, this.predicted.y, this.etageJoueur,
-        tx + 0.5, ty + 0.5, etage ?? palierDuSol(this.map, tx, ty),
-      ),
+      // ═══ LA JOIGNABILITÉ D'ÉTAGE (spec `etages.md` E-R5) — voir `atteignableDuJoueur` ═══
+      atteignable: (tx, ty, etage) => this.atteignableDuJoueur(tx, ty, etage),
       // L'ACCUSÉ DE RÉCEPTION DU DÉCOCHAGE : ma charge telle que le dernier SNAPSHOT la
       // connaît. Tant qu'elle est là, la sim n'a pas vu l'`attack_release` — et rebander
       // l'écraserait (une seule action par tick).
@@ -1913,7 +1922,14 @@ export class WorldScene extends Phaser.Scene {
     const meNow = this.lastEntities.find((e) => e.id === this.playerId)
     const cooldownMs = (BALANCE.GATHER_COOLDOWN_TICKS / BALANCE.TICK_RATE_HZ) * 1000
     const readiness = (time - this.lastStrikeAt) / cooldownMs
-    this.flankGlow.update(this.view.nodes, this.predicted, skillLevel(meNow?.skills.mining ?? 0), readiness, time, this.warp)
+    // Et SEULEMENT sur ceux que la visée prendrait : le nœud que le regard voit sur sa tuile (sous
+    // la roche, celui de la salle — pas la terrasse qui la coiffe), joignable depuis mon étage.
+    this.flankGlow.update(
+      (tx, ty) => this.view.noeudALaTuile(tx, ty),
+      this.predicted,
+      (tx, ty, etage) => this.atteignableDuJoueur(tx, ty, etage),
+      skillLevel(meNow?.skills.mining ?? 0), readiness, time, this.warp,
+    )
     // Les stations à portée : elles grisent (ou non) les vignettes du panneau de
     // craft. Miroir pur du client — la sim revalide tout, à l'enfilage et à chaque
     // tick (spec craft-file F7, F14).

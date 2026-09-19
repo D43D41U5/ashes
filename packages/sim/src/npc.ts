@@ -35,7 +35,7 @@ import {
 import { isBlockedAt, moveAvatar, type MoveWorld } from './collision'
 import { engageRange, startAttack, weaponProfile } from './combat'
 import { poseLibre } from './defriche'
-import { atteignableEntreEtages, atteintLeSol, dansUnCreux, niveauDuCorps, palierDuSol } from './etages'
+import { atteignableEntreEtages, atteintLeSol, dansUnCreux, etageApresLePas, etagesDuPas, niveauDuCorps, palierDuSol, poserLEtageDuCorps } from './etages'
 import type { WorldMap } from './map'
 import { applyEconomyAction, toolRank, type ResourceNode } from './economy'
 import { sertExigence } from './pieces'
@@ -132,7 +132,7 @@ export const TICKS_PER_HOUR = TICKS_PER_CYCLE / 24
 
 // ─── Aides ────────────────────────────────────────────────────────────────
 
-function moveWorldFor(state: SimState, villageId: number): MoveWorld {
+function moveWorldFor(state: SimState, villageId: number, etages?: readonly number[]): MoveWorld {
   // `opensDoors` — LES PNJ DU VILLAGE ACTIONNENT SES PORTES (spec construction R26).
   //
   // Depuis que la porte a un ÉTAT, une porte close ne laisse plus passer personne — pas même les
@@ -143,7 +143,48 @@ function moveWorldFor(state: SimState, villageId: number): MoveWorld {
   // On ne simule pas le battant qu'ils poussent : ils ouvrent et referment derrière eux, et
   // l'état que le JOUEUR a réglé n'est jamais touché — sinon les villageois laisseraient la porte
   // ouverte et défairaient sa décision, la seule chose qu'une porte serve à exprimer.
-  return { map: state.map, structures: state.structures, nodes: state.nodes, moverVillageId: villageId, opensDoors: true, etat: state }
+  //
+  // `etages` — LES ÉTAGES QUE LE PAS PEUT OCCUPER (spec `etages.md` E-R1). Absent pour tout ce
+  // qui n'est pas un PAS : l'A* de `setPathTo` reçoit son étage par argument, pas par le monde.
+  return { map: state.map, structures: state.structures, nodes: state.nodes, moverVillageId: villageId, opensDoors: true, ...(etages !== undefined ? { etages } : {}), etat: state }
+}
+
+/**
+ * ═══ LE PAS DU VILLAGEOIS — ÉTAGE COMPRIS ═══
+ *
+ * *« L'avatar et la bête franchissent les rampes et entrent dans les grottes. Veux-tu que les PNJ
+ * en fassent autant ? » — « Oui. »* (Alexis, 2026-09-11.)
+ *
+ * C'est le patron de l'avatar (`sim.ts`) et de la bête (`monsters.ts`), mot pour mot : on lit
+ * l'étage AVANT, on demande au pas quels étages il peut occuper, on le passe au monde de
+ * collision, et on écrit l'étage APRÈS. Aucune des trois pièces n'est optionnelle —
+ *
+ *  - sans `etages` dans le monde, la paroi d'une terrasse N'EXISTE PAS pour le villageois :
+ *    `terrainBloque` retombe sur `map.terrain`, que les terrasses ne repeignent jamais (T-R2).
+ *    Il traversait donc les falaises à pied sec, et aucune rampe ne servait à rien ;
+ *  - sans `poserLEtageDuCorps`, un étage EXPLICITE hérité de la position d'avant survit au pas.
+ *    `niveauDuCorps` répond alors faux, `near` refuse le geste, et on retrouve exactement le
+ *    villageois figé que le §23 vient de réparer côté approche.
+ *
+ * LES TROIS SITES QUI DÉPLACENT UN PNJ passent par ici — la marche du chemin, l'écart d'un pas
+ * pour poser un composant, et la marche gloutonne vers une menace. Un quatrième qui écrirait
+ * `entity.x` à la main rouvrirait la deuxième panne, en silence : c'est pour ça qu'il y a une
+ * fonction et pas trois copies.
+ *
+ * Écrit `entity.moved`, `entity.x`, `entity.y` et l'étage ; rend la position obtenue, pour qui
+ * veut savoir s'il a bougé (l'anti-blocage de `followPath`).
+ */
+function pasDuVillageois(
+  state: SimState, npc: Npc, entity: Entity, sx: -1 | 0 | 1, sy: -1 | 0 | 1, speedScale = 1,
+): { x: number; y: number } {
+  const etageAvant = niveauDuCorps(state.map, entity)
+  const etages = etagesDuPas(state.map, etageAvant, Math.floor(entity.x), Math.floor(entity.y))
+  const moved = moveAvatar(moveWorldFor(state, npc.villageId, etages), entity.x, entity.y, sx, sy, TICK_DT_S, speedScale)
+  entity.moved = moved.x !== entity.x || moved.y !== entity.y
+  entity.x = moved.x
+  entity.y = moved.y
+  poserLEtageDuCorps(state.map, entity, etageApresLePas(state.map, etages, etageAvant, Math.floor(moved.x), Math.floor(moved.y)))
+  return moved
 }
 
 /**
@@ -258,8 +299,10 @@ export function followPath(state: SimState, npc: Npc, entity: Entity): boolean {
   const sx = (dx > zm ? 1 : dx < -zm ? -1 : 0) as -1 | 0 | 1
   const sy = (dy > zm ? 1 : dy < -zm ? -1 : 0) as -1 | 0 | 1
   const speedScale = entity.hunger <= 0 ? BALANCE.HUNGER_SPEED_MALUS : 1
-  const moved = moveAvatar(moveWorldFor(state, npc.villageId), entity.x, entity.y, sx, sy, TICK_DT_S, speedScale)
-  if (moved.x === entity.x && moved.y === entity.y) {
+  const avantX = entity.x
+  const avantY = entity.y
+  const moved = pasDuVillageois(state, npc, entity, sx, sy, speedScale)
+  if (moved.x === avantX && moved.y === avantY) {
     npc.stuck += 1
     if (npc.stuck > 2 * BALANCE.TICK_RATE_HZ) {
       npc.path = [] // recalcul au prochain tick de décision
@@ -268,9 +311,6 @@ export function followPath(state: SimState, npc: Npc, entity: Entity): boolean {
   } else {
     npc.stuck = 0
   }
-  entity.moved = moved.x !== entity.x || moved.y !== entity.y
-  entity.x = moved.x
-  entity.y = moved.y
   return true
 }
 
@@ -937,10 +977,7 @@ function executeBuild(state: SimState, village: Village, npc: Npc, entity: Entit
     // Un composant BLOQUE et refuse « pas sous ses pieds » : on s'écarte d'un pas.
     if (order.action === 'place' && Math.floor(entity.x) === tx && Math.floor(entity.y) === ty) {
       const sx = (village.fireTx + 0.5 > entity.x ? 1 : -1) as -1 | 1
-      const moved = moveAvatar(moveWorldFor(state, npc.villageId), entity.x, entity.y, sx, 0, TICK_DT_S)
-      entity.moved = moved.x !== entity.x || moved.y !== entity.y
-      entity.x = moved.x
-      entity.y = moved.y
+      pasDuVillageois(state, npc, entity, sx, 0)
       return
     }
     // Le marteau ne sert qu'à POSER et à MONTER : le défrichement équipe sa hache plus bas
@@ -1296,10 +1333,7 @@ function handleDefense(state: SimState, village: Village, npc: Npc, entity: Enti
   const zm = NPC_AI.STEP_DEADZONE_COARSE
   const sx = (threat.x - entity.x > zm ? 1 : threat.x - entity.x < -zm ? -1 : 0) as -1 | 0 | 1
   const sy = (threat.y - entity.y > zm ? 1 : threat.y - entity.y < -zm ? -1 : 0) as -1 | 0 | 1
-  const moved = moveAvatar(moveWorldFor(state, npc.villageId), entity.x, entity.y, sx, sy, TICK_DT_S)
-  entity.moved = moved.x !== entity.x || moved.y !== entity.y
-  entity.x = moved.x
-  entity.y = moved.y
+  pasDuVillageois(state, npc, entity, sx, sy)
 
   /*
    * ANTI-LIVELOCK (même doctrine que handleCold/handleHunger/handleSleep) : une

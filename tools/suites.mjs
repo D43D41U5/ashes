@@ -68,6 +68,8 @@ const SUITES = [
   // 2026-09-11 : +5 gardes E-R5 §23 — l'approche vise l'étage de sa cible (`etages-etancheite`),
   //   puis +4 gardes T-A13 — le bord de terrasse n'est plus la grille de 8 (`terrasses.test.ts`,
   //   spec T-R11) — suite à 2305, plancher relevé quelques pourcents dessous.
+  // 2026-09-11 : +5 gardes avec LE PAS D'ÉTAGE DU VILLAGEOIS (`etages-etancheite.test.ts`, spec
+  //   §24) — la paroi, le mur de la terrasse, la descente dans la salle, la remontée. Suite à 2310.
   // 2026-09-12 : +18 gardes avec LA QUALITÉ DE L'EAU (`qualite-eau.test.ts`, spec `qualite-eau.md`)
   //   — la suie au plafond, le sang qui descend le fil, le coude qui ne coud pas, l'eau dormante,
   //   les deux bornes, la glace qui protège, l'événement qui ne bégaie pas. Suite à 2328,
