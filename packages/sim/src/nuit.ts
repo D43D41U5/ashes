@@ -48,9 +48,9 @@
  * C'est CET invariant qu'un changement de l'une ou l'autre courbe doit préserver ; leur écart
  * numérique (0,0042 au pire) n'en est qu'une conséquence.
  */
-import { TEMPERATURE } from './balance'
+import { LUMIERE, TEMPERATURE } from './balance'
 import { bulleDuFeu, isSheltered } from './temperature'
-import { auMemeEtage, connecteurAt, niveauDeLaTuile, niveauDuCorps, palierDuSol } from './etages'
+import { auMemeEtage, connecteurAt, marchableAEtage, niveauDeLaTuile, niveauDuCorps, palierDuSol } from './etages'
 import { heldSlot } from './inventory-actions'
 import { lumiereDesTorches, partVisible } from './lumiere'
 import { estTorcheVive } from './torche'
@@ -167,6 +167,26 @@ export function lumiereDuFeu(state: SimState, x: number, y: number, etage?: numb
 }
 
 /**
+ * LA SOURCE D'UNE PORTE, vue de la salle (LG-R20) : le disque de `partVisible` (rayon
+ * `SOURCE_RAYON_TEXELS`) posé CONTRE LA FENTE, du côté de la salle — tangent au bord de la tuile de
+ * la porte qui touche la salle, entièrement dans la première rangée. Au centre de la tuile, le disque
+ * serait à mi-épaisseur de la paroi, et la roche de part et d'autre de la gueule mangerait les rayons
+ * rasants : une salle ouverte ne rendrait plus ses anneaux. Le côté de la salle, c'est le voisin
+ * marchable à l'étage qui n'est pas lui-même une porte ; sans voisin, le centre de la tuile.
+ */
+function sourceDUnePorte(map: SimState['map'], etage: number, cx: number, cy: number): readonly [number, number] {
+  const r = LUMIERE.SOURCE_RAYON_TEXELS / LUMIERE.TEXELS_PAR_TUILE
+  for (const [dx, dy] of COTES_DE_PORTE) {
+    const vx = cx + dx
+    const vy = cy + dy
+    if (marchableAEtage(map, etage, vx, vy) && connecteurAt(map, vx, vy) === undefined) return [cx + 0.5 + dx * (0.5 + r), cy + 0.5 + dy * (0.5 + r)]
+  }
+  return [cx + 0.5, cy + 0.5]
+}
+/** Nord, sud, ouest, est — la gueule d'une mesa ouvre au nord (la salle est sous le chapeau), les autres portes diront la leur. */
+const COTES_DE_PORTE: readonly (readonly [number, number])[] = [[0, -1], [0, 1], [-1, 0], [1, 0]]
+
+/**
  * ═══ E-R13 — LA PART DU CIEL QUI ATTEINT CE POINT, dans [0, 1] ═══
  *
  * *Décision d'Alexis du 2026-09-02 (`etages.md` §10, branche **B1**).* C'est LA loi que ce choix
@@ -215,7 +235,22 @@ export function partDuCiel(state: SimState, tx: number, ty: number, etage?: numb
   if (etage === undefined) etage = sol
   if (etage > sol) return 1
   if (etage < sol) {
+    // ═══ LE JOUR D'UNE GUEULE APPREND L'OMBRE — comme le feu (LG-R20, LG-R11) ═══
+    //
+    // *Décision d'Alexis du 2026-09-19 (spec `lumiere-globale.md` LG-Q2, planche 28 : « Oui, comme
+    // le feu »).* La loi garde ses anneaux et sa portée ; chaque ouverture y est MULTIPLIÉE par la
+    // part de sa source étendue que la tuile VOIT à travers la roche de l'étage — `partVisible`, le
+    // seul prédicat d'occultation, seize rayons vers un disque posé contre la fente (`sourceDUnePorte`).
+    // Derrière un angle, deux pas après le seuil, il fait noir ; un pilier porte son ombre.
+    //
+    // LE MAX SUR TOUTES LES OUVERTURES À PORTÉE, plus « la première trouvée » : une gueule proche
+    // mais cachée par l'angle ne vaut rien, une plus loin mais en vue éclaire. Les anneaux
+    // décroissent avec `d` : dès qu'un anneau ne peut plus battre le meilleur, on s'arrête.
+    // Sur la gueule même (`d` = 0), on voit comme dehors — sans rayon.
+    let best = 0
     for (let d = 0; d <= P; d++) {
+      const anneau = d === 0 ? 1 : 1 - d / (P + 1)
+      if (anneau <= best) break
       for (let oy = -d; oy <= d; oy++) {
         for (let ox = -d; ox <= d; ox++) {
           if (d > 0 && !(ox === -d || ox === d || oy === -d || oy === d)) continue
@@ -225,12 +260,14 @@ export function partDuCiel(state: SimState, tx: number, ty: number, etage?: numb
           // de terrasse 0→1 qui passe à trois tuiles d'une cave au niveau 1 n'éclaire rien.
           const autre = c.de === etage ? c.vers : c.vers === etage ? c.de : undefined
           if (autre === undefined || autre <= etage) continue
-          // Sur la gueule même (`d` = 0) on voit comme dehors ; au fond, plus rien.
-          return d === 0 ? 1 : 1 - d / (P + 1)
+          if (d === 0) return 1
+          const src = sourceDUnePorte(state.map, etage, tx + ox, ty + oy)
+          const v = anneau * partVisible(state, etage, tx + 0.5, ty + 0.5, src[0], src[1])
+          if (v > best) best = v
         }
       }
     }
-    return 0
+    return best
   }
   if (!isSheltered(state, tx, ty)) return 1
   for (let d = 1; d <= P; d++) {
