@@ -281,6 +281,20 @@ float facteurDeNormale(vec3 n, vec2 p, vec4 src) {
 }
 
 vec4 appliquerGi(vec4 fragColor, vec3 normalPhaser) {
+  // ⚠ **UN TEXEL SANS ALPHA SORT VIDE, AVANT TOUT ÉCRÊTAGE — SINON IL SORT BLANC SUR UN GPU.**
+  // \`ApplyTint-glsl.js\` fait \`texture.rgb / texture.a\` : sur un texel prémultiplié transparent c'est
+  // 0/0, et \`fragColor\` arrive ici en \`(NaN, NaN, NaN, 0)\`. Phaser vit avec — un NaN s'écrit 0 au
+  // framebuffer, l'alpha est 0, le blend NORMAL (ONE, ONE_MINUS_SRC_ALPHA) laisse le fond intact. Mais
+  // les \`min(vec3(1.0), …)\` ci-dessous le TRANSFORMENT : la spec GLSL (« y si y < x, sinon x ») et les
+  // \`minNum\` matériels rendent 1,0 pour \`min(1.0, NaN)\`. Le fragment sortait \`(1, 1, 1, 0)\`, et le
+  // blend prémultiplié ADDITIONNAIT ce blanc au fond : tout le quad transparent de chaque corps armé
+  // en carré blanc (vu par Alexis le 2026-09-19, « des carrés blancs partout autour des sprites »).
+  // MESURÉ le même jour (sonde WebGL nue, SwiftShader) : \`min(vec3(1.0), NaN)\` y reste NaN — le pixel
+  // intact — quand \`min(NaN, vec3(1.0))\` rend le blanc. C'est pour cela qu'aucun smoke, aucune planche,
+  // ni la garde LG-A8 (qui ne relit que les texels PLEINS) ne l'avaient vu. \`!(a > 0.0)\` attrape
+  // aussi un alpha NaN ; \`vec4(0.0)\` est exactement ce que le blend ignore.
+  if (!(fragColor.a > 0.0)) return vec4(0.0);
+
   // ⚠ **PAS DE CHAMP, PAS DE GI — ET LA GARDE EST ICI, VISIBLE DU SHADER.**
   // Un corps peut être armé AVANT que \`WorldScene\` n'ait poussé le champ de la première image.
   // Sans cette ligne, le défaut serait odieux : les trois samplers garderaient leur valeur par
