@@ -129,11 +129,20 @@ describe('la loterie des lieux ne bouge pas', () => {
     // **grotte 3 → 0**, et RIEN d'autre ne bouge (le tirage des 36 autres types est
     // octet-identique : un lieu `horsSemis` ne consomme aucun tirage). Louvières 16, stèles 7,
     // repaires 9. Le monde joué ('racine'), lui, porte des dizaines de Grottes : G-A5.
-    expect(lieuxDe(CARTE.map).length).toBe(157)
+    // RE-ÉPINGLÉ 157 → 172 (LA SOURCE DEVIENT UN FAIT, `qualite-eau.md` A3, décision du 2026-09-13 ;
+    // ré-épinglé le 2026-09-20) : la résurgence karstique devient un lieu HORS-SEMIS que
+    // `generateZonedTerrain` pousse EN TOUT DERNIER — la pastille d'une mare qui est DÉJÀ dans le
+    // terrain (passe 1.5), ni tuile ni tirage en plus. Un AJOUT pur, comme les stèles et les
+    // louvières : MESURÉ par kind (seed 2026) : **source 0 → 15**, et RIEN d'autre ne bouge — les
+    // 134 lieux de la loterie sont les mêmes (gardés juste en dessous, par différence de kinds).
+    // Louvières 16, stèles 7, repaires 9, grotte 0.
+    expect(lieuxDe(CARTE.map).length).toBe(172)
     expect(lieuxDe(CARTE.map).filter((z) => z.kind === 'louviere').length).toBe(16)
     expect(lieuxDe(CARTE.map).filter((z) => z.kind === 'stele').length).toBe(7)
     expect(lieuxDe(CARTE.map).filter((z) => z.kind === 'grotte').length).toBe(0)
-    expect(lieuxDe(CARTE.map).filter((z) => z.kind !== 'stele' && z.kind !== 'louviere').length).toBe(134)
+    expect(lieuxDe(CARTE.map).filter((z) => z.kind === 'source').length).toBe(15)
+    // La LOTERIE seule — sans les trois lieux hors-semis posés après elle.
+    expect(lieuxDe(CARTE.map).filter((z) => z.kind !== 'stele' && z.kind !== 'louviere' && z.kind !== 'source').length).toBe(134)
     expect(lieuxDe(CARTE.map).filter((z) => z.kind === 'repaire').length).toBe(9)
   })
 })
@@ -230,7 +239,15 @@ describe('le charnier est un lieu comme les autres', () => {
       }
       for (const a of autres) {
         const d2 = distSq(tx, ty, a.x + a.w / 2, a.y + a.h / 2)
-        expect(d2, `${z.name} est trop près du centre de ${a.name}`).toBeGreaterThanOrEqual(ecart2)
+        // SAUF LA SOURCE (2026-09-20) : l'écart est le contrat de `tropPres`, qui ne connaît que
+        // les lieux ENREGISTRÉS quand le charnier se pose — or la Source est poussée EN TOUT
+        // DERNIER (décision du 2026-09-13), après les charniers : c'est la pastille d'une mare qui
+        // est dans le terrain depuis la passe 1.5, pas un lieu de la loterie. Et l'écarter en
+        // worldgen rebrasserait les fosses pour rien : un charnier en amont d'une source est la
+        // prochaine cause de souillure que `qualite-eau.md` annonce, pas un défaut de placement.
+        // MESURÉ (seed 2026) : le Charnier XLVIII à 21 t du centre d'une Source, sans recouvrement
+        // — et le recouvrement, la propriété qui compte, se garde pour TOUS les lieux, elle comprise.
+        if (a.kind !== 'source') expect(d2, `${z.name} est trop près du centre de ${a.name}`).toBeGreaterThanOrEqual(ecart2)
         // ET LA PROPRIÉTÉ QUI COMPTE VRAIMENT — aucun recouvrement de RECTANGLES.
         // `tropPres` ne connaît que les CENTRES, or les set-pieces sont vastes : le Bois Noir
         // fait 48 tuiles de large, soit une demi-diagonale de 33,9 — plus que l'écart de 32.

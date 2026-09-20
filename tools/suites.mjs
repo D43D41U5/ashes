@@ -130,6 +130,12 @@ const SUITES = [
   //   2458 sur l'arbre, 2 rouges PRÉEXISTANTS à HEAD dans `charniers.test.ts` (les 15 Sources du
   //   2026-09-13 jamais ré-épinglées : 172 lieux, et le Charnier XLVIII à 21 t d'une Source) ;
   //   plancher inchangé (2360).
+  // 2026-09-20 : les deux rouges de `charniers.test.ts` soldés — 157 → 172 ré-épinglé (les 15 Sources
+  //   sont un AJOUT pur : la loterie garde ses 134, gardés à part), et la Source sort de la règle
+  //   d'écart des charniers (poussée APRÈS eux, `tropPres` ne l'a jamais vue ; le recouvrement reste
+  //   gardé pour tous les lieux). Suite à 2460 ✓ sur l'arbre (2 sautés) ; plancher inchangé (2360).
+  //   ⚠ A13 (`zonegen.test.ts`, < 20 s) tient à 17,7 s machine calme et rougit à 22 s sous les
+  //   cinq workers à cache froid : une garde de temps se juge seule, pas dans la suite chargée.
   { nom: 'sim', dir: 'packages/sim', args: ['run', '--exclude', 'src/scenario.test.ts'], plancher: 2360 },
   // 2026-09-01 : +10 gardes avec le RENDU des étages (`plateau-art.test.ts`).
   // 2026-09-01 : +9 gardes avec le TRI DES ÉTAGES (strate, découvert — `framing.test.ts`),
