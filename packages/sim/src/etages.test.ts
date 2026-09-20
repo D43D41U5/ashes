@@ -215,6 +215,30 @@ describe('E-A3 — atteignable ⟺ la règle E-R5, sur tout l’espace des paire
     expect(atteignableEntreEtages(nu, 0.5, 0.5, 0, 7.5, 7.5, 0)).toBe(true)
     expect(atteignableEntreEtages(nu, 0.5, 0.5, 0, 7.5, 7.5, 1)).toBe(false)
   })
+
+  /**
+   * LA ROCHE EST ÉTANCHE (Alexis, 2026-09-20 : « on ne garde pas la porosité »). La clause du
+   * connecteur ne vaut que pour la pente ouverte d'une rampe : un souterrain (étage NÉGATIF, G-R1)
+   * ne se rejoint que depuis son propre étage — pas depuis sa gueule, pas à N tuiles d'elle.
+   * ⚠ CE QUI FERAIT ROUGIR : retirer `if (ae < 0 || be < 0) return false` — la gueule redevient un
+   * connecteur comme un autre et les trois premières attentes basculent à `true`.
+   */
+  it('la roche est étanche : un souterrain ne se rejoint que depuis son étage, jamais par sa gueule', () => {
+    const map = createEmptyMap(8, 8, TERRAIN_GRASS)
+    const idx = [3 * 8 + 3, 3 * 8 + 4, 4 * 8 + 3] // la salle (3..4, 3) et sa gueule (3, 4)
+    map.etages = [{ niveau: -1, idx, terrain: idx.map(() => TERRAIN_SCREE), x0: 3, y0: 3, x1: 5, y1: 5 }]
+    map.connecteurs = [{ x: 3, y: 4, de: 0, vers: -1, type: 'gueule' }]
+    // Debout SUR la gueule, ou à N tuiles d'elle : la surface n'atteint pas la salle, ni l'inverse.
+    expect(atteignableEntreEtages(map, 3.5, 4.5, 0, 3.5, 3.5, -1), 'depuis la gueule').toBe(false)
+    expect(atteignableEntreEtages(map, 3.5, 3.5, -1, 3.5, 4.5, 0), 'depuis la salle vers la gueule').toBe(false)
+    expect(atteignableEntreEtages(map, 3.5, 6.5, 0, 4.5, 3.5, -1), 'à deux tuiles de la gueule').toBe(false)
+    // Même étage souterrain : oui, comme partout.
+    expect(atteignableEntreEtages(map, 3.5, 3.5, -1, 4.5, 3.5, -1)).toBe(true)
+    // …et la RAMPE reste ouverte : la même géométrie entre les étages 0 et 1 traverse.
+    map.etages = [{ niveau: 1, idx, terrain: idx.map(() => TERRAIN_SCREE), x0: 3, y0: 3, x1: 5, y1: 5 }]
+    map.connecteurs = [{ x: 3, y: 4, de: 0, vers: 1, type: 'rampe' }]
+    expect(atteignableEntreEtages(map, 3.5, 4.5, 0, 3.5, 3.5, 1), 'la pente d’une rampe').toBe(true)
+  })
 })
 
 /* ─── E-A3 (le vrai appelant) + E-A4 — LE LOUP NE MORD PAS À TRAVERS LA ROCHE ─── */

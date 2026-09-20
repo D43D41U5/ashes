@@ -635,8 +635,10 @@ export class WorldScene extends Phaser.Scene {
     // …et l'étage de la salle où il se tient : la cave ne peint que celui-là (`niveauDuRegard`).
     this.etages.niveauDuRegard = souterrain ? decouvert.niveau : 0
     // Les nœuds semés dans la salle et le bivouac (G-R7) ne se voient ni ne se visent que sous
-    // la roche (`SnapshotView.sousRoche`) : la MÊME valeur, au MÊME instant.
+    // la roche (`SnapshotView.sousRoche`) : la MÊME valeur, au MÊME instant. Et les CORPS
+    // souterrains ne se voient que de l'étage du regard (`corps-vu.ts`) : le même nombre, aussi.
     this.view.sousRoche = souterrain
+    this.view.etageDuRegard = this.etages.niveauDuRegard
   }
 
   /**
@@ -654,6 +656,12 @@ export class WorldScene extends Phaser.Scene {
       this.map, this.predicted.x, this.predicted.y, this.etageJoueur,
       tx + 0.5, ty + 0.5, etage ?? palierDuSol(this.map, tx, ty),
     )
+  }
+
+  /** La même question pour un CORPS du snapshot : son étage est celui de l'autorité, ou le palier
+   *  de sa tuile (`niveauDuCorps`, la lecture de /sim) — la visée ne verrouille pas à travers la roche. */
+  private corpsJoignable(e: { x: number; y: number; etage?: number }): boolean {
+    return atteignableEntreEtages(this.map, this.predicted.x, this.predicted.y, this.etageJoueur, e.x, e.y, niveauDuCorps(this.map, e))
   }
 
   /** Les trouées du masque de la cave en rangées LOGIQUES (`CreuxGi.trouees`) — réutilisé, jamais réalloué. */
@@ -1326,10 +1334,13 @@ export class WorldScene extends Phaser.Scene {
       ligneTendue: () => this.myFishing,
       // Les autres ENTITÉS vivantes pour le DON — SANS soi ni les monstres (la sim les
       // refuse de toute façon). Position LOGIQUE (tuiles), depuis le dernier snapshot.
+      // ⚠ NI L'UN NI L'AUTRE À TRAVERS UN PLANCHER (E-R5, `corpsJoignable`) : la sim refuse le
+      // coup et le don, mais la visée verrouillait quand même le sanglier de la salle depuis la
+      // prairie à son aplomb (MESURÉ le 2026-09-20) — un curseur sur ce qu'on ne peut pas toucher.
       others: () => {
         const monsterIds = new Set(this.view.monsters.map((m) => m.entityId))
         return this.lastEntities
-          .filter((e) => e.id !== this.playerId && e.hp > 0 && !monsterIds.has(e.id))
+          .filter((e) => e.id !== this.playerId && e.hp > 0 && !monsterIds.has(e.id) && this.corpsJoignable(e))
           // `wounds` accompagne la position : c'est ce qui permet de PANSER un tiers et pas
           // seulement de lui donner. Le snapshot les porte déjà — il ne manquait que le fil.
           .map((e) => ({ id: e.id, x: e.x, y: e.y, wounds: e.wounds }))
@@ -1340,7 +1351,7 @@ export class WorldScene extends Phaser.Scene {
       // on vise ce que l'œil montre, vers ce que la sim connaît (voir `visee-corps.ts`).
       corps: () =>
         this.lastEntities.flatMap((e) => {
-          if (e.id === this.playerId || e.hp <= 0) return []
+          if (e.id === this.playerId || e.hp <= 0 || !this.corpsJoignable(e)) return []
           const sprite = this.view.others.get(e.id)?.sprite
           if (!sprite) return []
           return [

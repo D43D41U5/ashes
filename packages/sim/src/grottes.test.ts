@@ -59,11 +59,15 @@ describe('G-A3 — « −H » ferme la roche', () => {
    * sortait sur `ae === be` : le loup l'atteignait à travers la roche. MESURÉ graine 2026 : 6 caves
    * sur 7 au niveau ≥ 0 avaient du sol de leur palier à 1-8 tuiles.
    *
-   * L'énoncé : depuis toute tuile de SURFACE à ≤ 8 tuiles, un souterrain n'est atteignable que
-   * par une gueule — un connecteur de la paire à portée (`ETAGE_PORTEE_CONNECTEUR`) de l'un des
-   * deux points. Sans gueule à portée, la roche est fermée.
+   * L'énoncé, jusqu'au 2026-09-20 : depuis toute tuile de SURFACE à ≤ 8 tuiles, un souterrain
+   * n'était atteignable que par une gueule à portée (`ETAGE_PORTEE_CONNECTEUR`). Depuis
+   * (Alexis : *« on ne garde pas la porosité »*) **LA ROCHE EST ÉTANCHE** : aucun couple
+   * (surface, souterrain) ne s'atteint, gueule à portée ou non — la gueule se franchit par le pas,
+   * elle ne s'atteint pas. La garde prouve sa prémisse : elle compte les couples qu'une gueule à
+   * portée aurait ouverts sous l'ancienne règle, et exige qu'il y en ait — sinon un monde sans
+   * gueule la passerait au vert sans rien éprouver.
    */
-  it.each(GRAINES)('graine %i — aucun souterrain n’est atteignable depuis la surface sans une gueule à portée', (seed) => {
+  it.each(GRAINES)('graine %i — aucun souterrain n’est atteignable depuis la surface, gueule à portée ou non', (seed) => {
     const map = carteDeTest(seed, MONDE.JOUEURS_CIBLE, MONDE_JOUE).map
     const sous = souterrains(map)
     expect(sous.length, 'le monde joué porte des souterrains').toBeGreaterThan(0)
@@ -72,7 +76,7 @@ describe('G-A3 — « −H » ferme la roche', () => {
     for (const s of sous) expect(s.niveau, `souterrain (${s.x},${s.y})`).toBeLessThan(0)
     const R = 8
     const N = BALANCE.ETAGE_PORTEE_CONNECTEUR
-    let paires = 0
+    let poreux = 0
     let fautes = 0
     for (const s of sous) {
       for (let dy = -R; dy <= R; dy++) {
@@ -81,24 +85,20 @@ describe('G-A3 — « −H » ferme la roche', () => {
           const y = s.y + dy
           if (x < 0 || y < 0 || x >= map.width || y >= map.height) continue
           const p = palierDuSol(map, x, y)
-          const atteint = atteignableEntreEtages(map, x + 0.5, y + 0.5, p, s.x + 0.5, s.y + 0.5, s.niveau)
-          if (!atteint) continue
-          paires++
-          // Atteint : il DOIT y avoir une gueule de la paire (p, niveau) à portée de l'un des deux.
-          let gueule = false
+          if (atteignableEntreEtages(map, x + 0.5, y + 0.5, p, s.x + 0.5, s.y + 0.5, s.niveau)) fautes++
+          // Le couple qu'une gueule de la paire (p, niveau) à portée de l'un des deux aurait ouvert.
           for (const c of map.connecteurs ?? []) {
             if (c.type !== 'gueule') continue
             if (!((c.de === p && c.vers === s.niveau) || (c.vers === p && c.de === s.niveau))) continue
             const d1 = Math.max(Math.abs(c.x - x), Math.abs(c.y - y))
             const d2 = Math.max(Math.abs(c.x - s.x), Math.abs(c.y - s.y))
-            if (d1 <= N || d2 <= N) { gueule = true; break }
+            if (d1 <= N || d2 <= N) { poreux++; break }
           }
-          if (!gueule) fautes++
         }
       }
     }
-    expect(paires, 'la garde ne passe pas à vide : des couples sont atteints par la gueule').toBeGreaterThan(0)
-    expect(fautes, 'couples (surface, souterrain) atteints À TRAVERS LA ROCHE').toBe(0)
+    expect(poreux, 'la garde ne passe pas à vide : des couples ont une gueule à portée').toBeGreaterThan(0)
+    expect(fautes, 'couples (surface, souterrain) atteints à travers la roche ou par la gueule').toBe(0)
   })
 
   it('chaque gueule joint un palier du sol à un souterrain NÉGATIF, sur sa tuile', () => {
@@ -636,6 +636,58 @@ describe('G-A5 — un lieu : la Grotte est le karst', () => {
       if (fautes.length > 3) break
     }
     expect(fautes, fautes.join('\n')).toHaveLength(0)
+  })
+})
+
+describe('G-A15 — la paroi tient une tuile : jamais l’intérieur contre la falaise (G-R12)', () => {
+  // Alexis, 2026-09-20 : « la paroi d'une grotte : toujours au moins une tuile entre l'intérieur de
+  // la grotte et la falaise extérieure (s'il y en a une) ». La masse est ce qui est au palier ≥ p+1 ;
+  // le dehors, tout ce qui est en dessous — la face par où la gueule s'ouvre, et toute autre face
+  // de la même terrasse. Seules les PORTES touchent le dehors : la paire de gueule (au palier p,
+  // c'est le dehors lui-même) et les deux tuiles juste derrière, le seuil qu'on franchit.
+  it.each(GRAINES)('graine %i — toute tuile creusée hors des portes a ses huit voisines dans la masse', (seed) => {
+    const c = carteDeTest(seed, MONDE.JOUEURS_CIBLE, MONDE_JOUE)
+    const { map } = c
+    const { width, height } = map
+    expect(c.karsts.length, 'la prémisse : des karsts').toBeGreaterThan(0)
+    const dehors = (masse: number, x: number, y: number): [number, number] | null => {
+      for (let dy = -1; dy <= 1; dy++) {
+        for (let dx = -1; dx <= 1; dx++) {
+          if (dx === 0 && dy === 0) continue
+          const nx = x + dx
+          const ny = y + dy
+          if (nx < 0 || ny < 0 || nx >= width || ny >= height || palierDuSol(map, nx, ny) < masse) return [nx, ny]
+        }
+      }
+      return null
+    }
+    const fautes: string[] = []
+    let controlees = 0
+    let karstsFautifs = 0
+    for (const k of c.karsts) {
+      const masse = -k.niveau // p + 1 : la roche qui porte l'étage −(p+1)
+      const portes = new Set<number>()
+      for (const [o, e] of k.gueules) {
+        portes.add(o)
+        portes.add(e)
+        portes.add(o - width)
+        portes.add(e - width)
+      }
+      let fautif = false
+      for (const t of k.tuiles) {
+        if (portes.has(t)) continue
+        controlees += 1
+        const [x, y] = xyDe(map, t)
+        const d = dehors(masse, x, y)
+        if (d === null) continue
+        fautif = true
+        fautes.push(`karst (${xyDe(map, k.gueules[0]![0])})${k.plancher ? ' [plancher]' : ''} : (${x},${y}) à l'étage ${k.niveau} touche le dehors en (${d[0]},${d[1]})`)
+      }
+      if (fautif) karstsFautifs += 1
+    }
+    expect(controlees, 'la prémisse : des tuiles creusées hors des portes').toBeGreaterThan(0)
+    console.log(`G-A15 graine ${seed} : ${c.karsts.length} karsts, ${controlees} tuiles contrôlées, ${fautes.length} contre la falaise (${karstsFautifs} karsts)`)
+    expect(fautes.slice(0, 12), `${fautes.length} tuiles contre la falaise sur ${karstsFautifs} karsts\n${fautes.slice(0, 12).join('\n')}`).toHaveLength(0)
   })
 })
 

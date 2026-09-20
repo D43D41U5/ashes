@@ -200,7 +200,8 @@ const HORS_REGLE = {
     migrationTarget: 'tirage par rejet dans SON propre disque',
     graze: 'cohésion à SA harde, dont les membres partagent son étage par construction',
     pathStep: 'la péremption de SON chemin, et SON waypoint',
-    boarStep: 'la portée de charge sur une menace déjà élue',
+    // `boarStep` n'est plus exempté (2026-09-20) : le coup de charge appelle l'accesseur — la
+    // menace « déjà élue » l'était à travers le plancher (`nearestThreat` ne filtrait pas).
     wolfStep: 'la distance à une cible déjà élue par `chooseQuarry`, scellé',
     goutteDuTick: 'départage entre deux gouttes d’homme du MÊME tick (deux avatars gouttent au même '
       + 'instant) : la sienne est la plus proche — une goutte déjà ÉLUE atteignable par '

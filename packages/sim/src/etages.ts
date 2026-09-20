@@ -357,8 +357,9 @@ export function rampeQuiMonte(
 /**
  * ═══ E-R5 — LA RÈGLE, ÉCRITE UNE FOIS ═══
  *
- * *Deux points s'atteignent s'ils sont **au même étage**, **ou** si l'un est à moins de
- * `ETAGE_PORTEE_CONNECTEUR` tuiles d'un **connecteur qui les relie**.*
+ * *Deux points s'atteignent s'ils sont **au même étage**, **ou** — entre deux étages DU SOL —
+ * si l'un est à moins de `ETAGE_PORTEE_CONNECTEUR` tuiles d'un **connecteur qui les relie**.
+ * **La roche est étanche** : un souterrain ne se rejoint que depuis son propre étage.*
  *
  * Elle ne répond QUE de l'étage. Elle ne remplace aucune portée : l'appelant garde la sienne
  * (l'aggro du loup, le carré du Feu, le rayon de découverte…) et compose. Le rôle de cette
@@ -368,6 +369,17 @@ export function rampeQuiMonte(
  * **La première clause est la sortie précoce, et ce n'est pas une optimisation : c'est la
  * règle.** Tous les appels du jeu d'aujourd'hui la prennent (personne n'a d'étage), donc E-A8
  * — « le tick ne se dégrade pas » — est vrai par construction et non par réglage.
+ *
+ * ═══ LA ROCHE EST ÉTANCHE (Alexis, 2026-09-20 : *« on ne garde pas la porosité »*) ═══
+ *
+ * La clause du connecteur est faite pour la PENTE OUVERTE d'une rampe : le loup qui vous suit
+ * sur la rampe ne vous lâche pas à mi-pente. Appliquée à une gueule, elle rendait le porche
+ * poreux dans les deux sens — MESURÉ (Grotte I, sanglier de tanière à −2) : depuis la prairie à
+ * l'aplomb, on visait la bête du vestibule, et elle sentait, chargeait et encornait le joueur
+ * à travers le plancher (pv 100 → 76 en 16 s, immobile). Un étage NÉGATIF (G-R1) est donc
+ * scellé : la gueule se FRANCHIT par le pas (`etageApresLePas`), elle ne s'atteint pas. Elle ne
+ * regarde toujours pas le TYPE du connecteur (E-R29) — elle regarde le signe de l'étage, qui est
+ * ce que « sous la roche » veut dire (`dansUnCreux`).
  */
 export function atteignableEntreEtages(
   map: WorldMap,
@@ -379,6 +391,7 @@ export function atteignableEntreEtages(
   be: number,
 ): boolean {
   if (ae === be) return true
+  if (ae < 0 || be < 0) return false
   const cs = map.connecteurs
   if (cs === undefined) return false
   // « QUI LES RELIE » — le connecteur ne connaît pas de sens : `de`/`vers` est une paire, et
@@ -411,8 +424,8 @@ export function atteintLeSol(
   etage?: number,
 ): boolean {
   // « Le sol » de cette tuile est son PALIER (T-R2), et l'acteur sans étage est au sol sous lui
-  // (T-R3). Une chose SOUS LA ROCHE se rejoint depuis son étage — ou depuis la gueule, qui est un
-  // connecteur comme une rampe : `atteignableEntreEtages` le sait déjà.
+  // (T-R3). Une chose SOUS LA ROCHE se rejoint depuis son étage, et de nulle part ailleurs — pas
+  // même depuis la gueule (la roche est étanche) : `atteignableEntreEtages` le sait déjà.
   return atteignableEntreEtages(map, acteur.x, acteur.y, niveauDuCorps(map, acteur), tx + 0.5, ty + 0.5, etage ?? palierDuSol(map, tx, ty))
 }
 

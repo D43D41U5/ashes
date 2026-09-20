@@ -756,6 +756,13 @@ function nearestThreat(
     // étouffe l'odeur et le pas comme il gomme la silhouette.
     const perceived = Math.max(t.vision * angle, t.noise, scent) * meteoVisionFactor(state, a.x, a.y)
     const effSq = dSq / (perceived * perceived)
+    if (effSq > bestD) continue
+    // ═══ ON NE SENT PAS À TRAVERS UN PLANCHER (spec `etages.md` E-R5) ═══
+    // Les trois canaux sont des distances sur x,y : sans cette ligne, le sanglier de tanière
+    // sentait le joueur debout sur la prairie à l'aplomb de sa salle, le menaçait et le chargeait
+    // à travers douze mètres de roche (MESURÉ le 2026-09-20, Grotte I). L'accesseur vient APRÈS
+    // la distance (il coûte, elle non) et AVANT l'élection (une égalité n'élit pas l'inatteignable).
+    if (!atteignableEntreEtages(state.map, entity.x, entity.y, niveauDuCorps(state.map, entity), a.x, a.y, niveauDuCorps(state.map, a))) continue
     if (effSq < bestD || (effSq === bestD && best && a.id < best.id)) {
       best = a
       bestD = effSq
@@ -3365,7 +3372,11 @@ function boarStep(
     moveToward(state, monster, entity, entity.x + dx * CAP_VISEE, entity.y + dy * CAP_VISEE, false, FAUNA.CHARGE_SPEED)
     if (!monster.chargeHit && threat) {
       const reach = COMBAT.MELEE_ENGAGE_RANGE
-      if (distSq(entity.x, entity.y, threat.x, threat.y) <= reach * reach) {
+      // …ET IL N'ENCORNE PAS À TRAVERS UN PLANCHER (E-R5) : la menace est élue à son étage
+      // (`nearestThreat`), mais la charge est un coup, et un coup se garde là où il porte —
+      // comme `resolveStrike`. Le même corps, une tuile plus haut, ne se touche pas.
+      if (distSq(entity.x, entity.y, threat.x, threat.y) <= reach * reach &&
+        atteignableEntreEtages(state.map, entity.x, entity.y, niveauDuCorps(state.map, entity), threat.x, threat.y, niveauDuCorps(state.map, threat))) {
         monster.chargeHit = true
         applyDamage(state, threat, def.damage, entity.id)
       }

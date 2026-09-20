@@ -776,9 +776,12 @@ export const BALANCE = {
    *
    * ⚠ **VALEUR PROVISOIRE, NON CALIBRÉE.** La spec dit « à calibrer en jouant, pas à poser », et
    * elle a raison : ce nombre décide de la largeur du seuil — trop petit, le loup vous lâche au
-   * pied de la rampe qu'il est en train de monter ; trop grand, il mord à travers la roche parce
-   * qu'une rampe est dans le quartier. 3 tuiles est un ordre de grandeur (la rampe, plus le pas
-   * qui la précède et celui qui la suit), pas un réglage : il attend un playtest.
+   * pied de la rampe qu'il est en train de monter ; trop grand, il mord d'une terrasse à l'autre
+   * parce qu'une rampe est dans le quartier. 3 tuiles est un ordre de grandeur (la rampe, plus le
+   * pas qui la précède et celui qui la suit), pas un réglage : il attend un playtest.
+   *
+   * Il ne vaut QUE pour la pente ouverte d'une rampe : **la roche est étanche** (2026-09-20), un
+   * souterrain ne se rejoint jamais par sa gueule, à aucune distance — `atteignableEntreEtages`.
    *
    * Il vit ICI et non dans le worldgen parce qu'il se règle en JOUANT, pas en regardant une
    * carte — c'est très exactement la ligne de partage de l'en-tête de ce fichier.

@@ -40,6 +40,7 @@ import { advanceWorldEvents } from './worldevents'
 import { advanceFire, fireState } from './fire'
 import { foundNpcVillage } from './worldgen'
 import { POI, SEASON, SLOTS } from './balance'
+import { cycleOffsetForStartHour } from './time'
 
 /* ══════════ LA MESA DE LABORATOIRE — et le point AVEUGLE qu'elle offre ══════════
  *
@@ -146,6 +147,38 @@ describe('E-A3 — un plancher ne se traverse que par un connecteur', () => {
     })
     expect(r.temoin, 'témoin : au même étage, le coup porte').toBe(true)
     expect(r.aTravers, 'à travers le plancher : il ne porte pas').toBe(false)
+  })
+
+  /**
+   * LA BÊTE NON PLUS (2026-09-20). MESURÉ dans le monde joué : le sanglier de tanière de la
+   * Grotte I sentait le joueur debout sur la prairie à l'aplomb de sa salle, le menaçait, chargeait
+   * et l'encornait à travers le plancher — pv 100 → 76 en seize secondes, immobile. La perception
+   * (`nearestThreat`) et le coup de charge (`boarStep`) passent désormais par E-R5.
+   * ⚠ CE QUI FERAIT ROUGIR : retirer l'un ou l'autre — la menace est élue à travers la roche, la
+   * charge part, et le coup porte à `MELEE_ENGAGE_RANGE` sur x,y.
+   */
+  it('LA MENACE DU SANGLIER : il ne sent, ne menace ni n’encorne à travers un plancher', () => {
+    const r = lesDeuxSens((etageDuBas) => {
+      // En plein jour : la nuit, il dort et ses sens se brident (R26) — ce serait le sommeil qu'on
+      // mesurerait, pas le plancher.
+      const state = createSim(1, {
+        map: mesaDeLabo(), worldEvents: false, faunaCap: 0, meteoActive: false, nightHunt: false,
+        cycleOffset: cycleOffsetForStartHour(12, 1),
+      })
+      // Le témoin se tient SUR le plateau, une tuile plus loin — la même raison que la frappe.
+      const surLePlateau = etageDuBas !== 0
+      const at = surLePlateau ? { x: HAUT.x + 1, y: HAUT.y } : BAS
+      const boarId = spawnMonster(state, 'boar', at.x, at.y)
+      if (surLePlateau) state.entities.find((k) => k.id === boarId)!.etage = etageDuBas
+      const cible = poser(state, HAUT, 1)
+      const avant = state.entities.find((k) => k.id === cible)!.hp
+      // L'avertissement (`THREAT_TICKS`) puis la charge (`CHARGE_TICKS`) : le coup porte à
+      // `MELEE_ENGAGE_RANGE`, et les deux corps sont à une tuile. Quatre secondes les couvrent.
+      for (let t = 0; t < 4 * BALANCE.TICK_RATE_HZ; t++) step(state, [{ entityId: cible, dx: 0, dy: 0 }])
+      return state.entities.find((k) => k.id === cible)!.hp < avant
+    })
+    expect(r.temoin, 'témoin : au même étage, la charge encorne').toBe(true)
+    expect(r.aTravers, 'à travers le plancher : ni menace ni coup').toBe(false)
   })
 })
 

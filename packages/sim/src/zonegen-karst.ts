@@ -44,6 +44,12 @@ export const KARST = {
   FOND_DISTANCE: 24,
   /** La roche derrière la paroi doit tenir tant de rangées au palier `p + 1` : la place du réseau. */
   ROCHE_MIN: 28,
+  /**
+   * G-R12 (Alexis, 2026-09-20) : entre l'intérieur et la falaise — toute face où le palier retombe
+   * sous `p + 1`, et le bord de la carte — la paroi tient au moins tant de tuiles (Chebyshev).
+   * Seules les portes y échappent : la paire de gueule et les deux tuiles de seuil derrière elle.
+   */
+  PAROI: 1,
   /** Un segment de paroi éligible fait au moins tant de pieds contigus. */
   SEGMENT_MIN: 6,
   /** La part d'une paroi éligible qui porte un karst, par famille de roche (G-R8b). */
@@ -317,9 +323,28 @@ export function creuserUnKarst(champ: ChampDeKarst, seg: SegmentDeParoi, gx: num
     const i = ty * width + tx
     return palier[i]! >= p + 1 && reserve[i] !== 1
   }
-  // Un NŒUD est le coin haut-gauche d'un bloc 2×2 entièrement permis : le pas d'un boyau.
+  // ═══ G-R12 — LA PAROI TIENT UNE TUILE (Alexis, 2026-09-20) ═══
+  // La masse est ce qui porte l'étage : le palier ≥ p+1, dans la carte. Une tuile ne se creuse que
+  // si ses voisines à `PAROI` sont toutes dans la masse — sinon l'intérieur toucherait la falaise
+  // (la face de la gueule, ou toute autre face de la même terrasse). Les PORTES y échappent : le
+  // seuil derrière chaque gueule, qu'on franchit. La paire de gueule elle-même est au palier p —
+  // le dehors — et n'est jamais « permise » : elle s'ajoute à la main, plus bas.
+  const dansLaMasse = (tx: number, ty: number): boolean =>
+    tx >= 0 && ty >= 0 && tx < width && ty < champ.height && palier[ty * width + tx]! >= p + 1
+  const portes = new Set<number>([(y - 1) * width + gx - 1, (y - 1) * width + gx])
+  const paroi = (tx: number, ty: number): boolean => {
+    for (let dy = -KARST.PAROI; dy <= KARST.PAROI; dy++) {
+      for (let dx = -KARST.PAROI; dx <= KARST.PAROI; dx++) {
+        if ((dx !== 0 || dy !== 0) && !dansLaMasse(tx + dx, ty + dy)) return false
+      }
+    }
+    return true
+  }
+  const creusable = (tx: number, ty: number): boolean =>
+    permis(tx, ty) && (portes.has(ty * width + tx) || paroi(tx, ty))
+  // Un NŒUD est le coin haut-gauche d'un bloc 2×2 entièrement creusable : le pas d'un boyau.
   const noeud = (tx: number, ty: number): boolean =>
-    permis(tx, ty) && permis(tx + 1, ty) && permis(tx, ty + 1) && permis(tx + 1, ty + 1)
+    creusable(tx, ty) && creusable(tx + 1, ty) && creusable(tx, ty + 1) && creusable(tx + 1, ty + 1)
 
   const creuse = new Set<number>()
   const stamp = (chemin: readonly number[]): void => {
@@ -445,7 +470,7 @@ export function creuserUnKarst(champ: ChampDeKarst, seg: SegmentDeParoi, gx: num
         const nb = ny * width + nx
         if (vue.has(nb)) continue
         vue.add(nb)
-        if (!permis(nx, ny)) continue
+        if (!creusable(nx, ny)) continue
         const r = R * (0.75 + 0.5 * fbm2(nx, ny, 6, SEL_FORME))
         const ddx = nx - gxs
         const ddy = ny - gys
@@ -518,10 +543,14 @@ export function creuserUnKarst(champ: ChampDeKarst, seg: SegmentDeParoi, gx: num
     const o = sy * width + sx - 1
     if (creuse.has(o) || creuse.has(o + 1)) continue
     const depart = (sy - 2) * width + (sx - 1)
-    if (!noeud(sx - 1, sy - 2) || horsVestibule(depart)) continue
-    const ch = chemin(depart, C, toucheLeCreux, horsVestibule)
-    if (!ch) continue
-    if (creuse.size + nouvelles(ch) + 2 > KARST.TUILES) continue
+    // G-R12 : le seuil de la secondaire est une porte le temps de l'essai — rendu à la roche si elle cède.
+    const seuil = [o - width, o + 1 - width]
+    for (const t of seuil) portes.add(t)
+    const ch = noeud(sx - 1, sy - 2) && !horsVestibule(depart) ? chemin(depart, C, toucheLeCreux, horsVestibule) : null
+    if (!ch || creuse.size + nouvelles(ch) + 2 > KARST.TUILES) {
+      for (const t of seuil) portes.delete(t)
+      continue
+    }
     stamp(ch)
     laterales.push(ch)
     creuse.add(o)

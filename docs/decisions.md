@@ -9,9 +9,9 @@ volets, chacun en ajout seul et en ordre chronologique. Ce fichier-ci est l'INDE
 
 | | Volet | Ce qu'on y trouve | Entrées | Poids |
 |---|---|---|---|---|
-| **M** | [Monde & worldgen](decisions/monde-worldgen.md) | worldgen, relief, eau, biomes, lieux, cendre, étages | 163 | 327 Ko |
+| **M** | [Monde & worldgen](decisions/monde-worldgen.md) | worldgen, relief, eau, biomes, lieux, cendre, étages | 164 | 328 Ko |
 | **R** | [Rendu & DA](decisions/rendu-da.md) | lumière, couleur, sprites, FX, art du sol, son | 204 | 528 Ko |
-| **G** | [Gameplay & systèmes](decisions/gameplay-systemes.md) | faune, combat, récolte, craft, saisons, météo, construction, design | 319 | 794 Ko |
+| **G** | [Gameplay & systèmes](decisions/gameplay-systemes.md) | faune, combat, récolte, craft, saisons, météo, construction, design | 320 | 794 Ko |
 | **I** | [Interface & outillage](decisions/interface-outillage.md) | HUD, menus, encyclopédie, carte, smoke, bancs, process | 84 | 183 Ko |
 | **A** | [Architecture & infra](decisions/architecture-infra.md) | pureté et déterminisme de /sim, protocole, serveur, persistance, perf | 65 | 117 Ko |
 
@@ -31,7 +31,7 @@ retrouve ici, à la même date, jamais à la ligne du dessus dans son volet.
 
 ---
 
-## Index chronologique — 835 entrées, 1949 Ko
+## Index chronologique — 837 entrées, 1951 Ko
 
 - 2026-07-05 · **M** · Spec monde validée par Alexis : déplacement continu type Binding of Isaac (jamais de case par c…
 - 2026-07-05 · **M** · Convention d'import Tiled : l'index local de la tuile dans le premier tileset = l'id de terrain…
@@ -868,3 +868,5 @@ retrouve ici, à la même date, jamais à la ligne du dessus dans son volet.
 - 2026-09-19 · **G** · Le brouillard de guerre et le disque « vif » de la carte ne lisent pas l'air : 22 tuiles par to…
 - 2026-09-19 · **G** · L'air est une couche de 0 à H = 12,8 texels (51,3 px, la hauteur du brouillard dérivée du boule…
 - 2026-09-19 · **G** · La sim connaît les trous de la brume : le champ de bruit de `mist-layer.ts` porté en TS (hash e…
+- 2026-09-20 · **M** · LA PAROI D'UNE GROTTE TIENT UNE TUILE (G-R12, G-A15, `KARST.PAROI 1`) : entre l'intérieur d'un…
+- 2026-09-20 · **G** · LA ROCHE EST ÉTANCHE : E-R5 ne traverse jamais vers un étage négatif, même à `N` tuiles d'une g…

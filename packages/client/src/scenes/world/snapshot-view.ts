@@ -145,6 +145,7 @@ import { riveAt, type RiveField } from '../../render/water-field'
 import { coupeDeNeige, enfoncement, enfoncementDUnNoeud, epaisseurQuiSEnfonce } from '../../render/enfoncement'
 import { epinglerLaTuile } from '../../render/tuile-epinglee'
 import { cleDeTuile, indexerParTuile, noeudVu, sousLaRoche } from './index-noeuds'
+import { corpsVu } from './corps-vu'
 import { armerLeCorps, NoeudCorpsGi, NOM_NOEUD, poseDuSol, type ChampDeLImage } from '../../render/gi/noeud-corps'
 import { garderLesCorps, type CorpsAEprouver, type VerdictCorps } from '../../render/gi/garde-corps'
 import type { CarteMonde } from '../../render/gi/champ-gpu'
@@ -595,6 +596,9 @@ export class SnapshotView {
    * d'une image de retard sur le plancher de la salle : le patron du `decouvert` juste au-dessus.
    */
   sousRoche = false
+  /** L'ÉTAGE DU REGARD quand il est sous la roche (`EtageLayer.niveauDuRegard`, posé par `WorldScene`
+   *  au même instant que `sousRoche`) : un corps souterrain ne se voit que de cet étage (`corps-vu.ts`). */
+  etageDuRegard = 0
   /** Les sprites des structures SOUS LA ROCHE — pour les montrer ou les cacher d'un coup quand
    *  `sousRoche` bascule, sans balayer les six cents sprites du village. */
   private readonly spritesSousRoche = new Set<number>()
@@ -1369,7 +1373,29 @@ export class SnapshotView {
         hVol = this.syncCerf(o, id, now)
       }
       this.syncActor(o.sprite, p.x, p.y, o.textureKey, o.crouch, this.reveilFx?.enfouissementDe(id, now) ?? 0, hVol, o.etage)
+      this.montrerLeCorps(o.sprite, corpsVu(o.etage, this.sousRoche, this.etageDuRegard))
     }
+  }
+
+  /**
+   * UN CORPS SOUS LA ROCHE NE SE VOIT QUE DE SON ÉTAGE (`corps-vu.ts`, spec `grottes.md` §4) — à
+   * l'image, comme `montrerLaRoche`, et APRÈS `syncActor` : c'est lui qui rallume le regard et
+   * l'anneau de flottaison à chaque image, on les éteint donc à chaque image tant que le corps
+   * est caché. Quand il se voit, on ne touche qu'au sprite et à son ombre — le reste est déjà
+   * juste, `syncActor` vient de le poser.
+   */
+  private montrerLeCorps(sprite: Phaser.GameObjects.Image, vu: boolean): void {
+    const shadow = sprite.getData('shadow') as Phaser.GameObjects.Image | undefined
+    if (vu) {
+      if (sprite.visible) return
+      sprite.setVisible(true)
+      shadow?.setVisible(true)
+      return
+    }
+    sprite.setVisible(false)
+    shadow?.setVisible(false)
+    ;(sprite.getData('gaze') as Phaser.GameObjects.Image | undefined)?.setVisible(false)
+    ;(sprite.getData('flottaison') as Phaser.GameObjects.Image | undefined)?.setVisible(false)
   }
 
   /**
@@ -1392,7 +1418,10 @@ export class SnapshotView {
       record.sprite.setTexture(aff.key)
       record.textureKey = aff.key
       const l = latest(record.buffer)
-      this.syncActor(record.sprite, l.x, l.y, aff.key)
+      // AVEC SON ÉTAGE : sans lui, le corps repassait au palier de sa tuile jusqu'à l'image
+      // suivante (strate et position de surface pour un corps de salle — 249 lectures sur 702
+      // snapshots, MESURÉ le 2026-09-20), et la visée lit la silhouette entre deux images.
+      this.syncActor(record.sprite, l.x, l.y, aff.key, false, 0, 0, record.etage)
     }
     return aff.hauteurBond
   }
@@ -1776,7 +1805,9 @@ export class SnapshotView {
         record.sprite.setTexture(key)
         record.textureKey = key
         const l = latest(record.buffer)
-        this.syncActor(record.sprite, l.x, l.y, key)
+        // AVEC SON ÉTAGE (voir `syncCerf`) : le sanglier de salle qui passe en charge ne remonte
+        // pas d'une image au palier de sa tuile.
+        this.syncActor(record.sprite, l.x, l.y, key, false, 0, 0, entity.etage)
       }
       // LE REGARD (R9bis) : le sprite se met dans le sens où la bête regarde —
       // la sim oriente déjà `facing` (marche, gel qui fixe, sentinelle qui

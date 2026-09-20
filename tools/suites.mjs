@@ -124,6 +124,12 @@ const SUITES = [
   //   la saison jouée muette, la crue qui ferme les gués puis rend dans l'ordre, la sauvegarde
   //   d'avant, la chronique. Suite à 2387 sur l'arbre (2382 sur l'arbre commité seul) ; plancher
   //   inchangé (2360).
+  // 2026-09-20 : +6 gardes — LA ROCHE EST ÉTANCHE (`etages.test.ts` 1 : un souterrain ne se rejoint
+  //   jamais par sa gueule ; `etages-etancheite.test.ts` 1 : le sanglier ne sent ni n'encorne à
+  //   travers un plancher) et LA PAROI TIENT UNE TUILE (`grottes.test.ts` G-A15, 4 graines). Suite à
+  //   2458 sur l'arbre, 2 rouges PRÉEXISTANTS à HEAD dans `charniers.test.ts` (les 15 Sources du
+  //   2026-09-13 jamais ré-épinglées : 172 lieux, et le Charnier XLVIII à 21 t d'une Source) ;
+  //   plancher inchangé (2360).
   { nom: 'sim', dir: 'packages/sim', args: ['run', '--exclude', 'src/scenario.test.ts'], plancher: 2360 },
   // 2026-09-01 : +10 gardes avec le RENDU des étages (`plateau-art.test.ts`).
   // 2026-09-01 : +9 gardes avec le TRI DES ÉTAGES (strate, découvert — `framing.test.ts`),
