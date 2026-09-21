@@ -8,12 +8,21 @@
  *   node --import tsx tools/profil-tick.mts [joueurs] [ticks]
  */
 import {
-  MONDE, MONDE_JOUE, createSim, step, placeZoneNodes, placeHuntingGrounds, spawnPoiMonsters,
+  BALANCE, MONDE, MONDE_JOUE, createSim, step, placeZoneNodes, placeHuntingGrounds, spawnPoiMonsters,
   creuserLePlancher, emplacementsDeVillage, pointsDeSpawn, generateZonedTerrain, foundNpcVillage, FAUNA, nidsAMonstre,
 } from '../packages/sim/src/index'
 
 const joueurs = Number(process.argv[2] ?? 8)
 const ticks = Number(process.argv[3] ?? 2000)
+/**
+ * Combien de villages PNJ fonder — défaut : la règle de l'hôte (`ascension.md` V-R4).
+ *
+ * Le passer en ARGUMENT est ce qui rend l'A/B honnête : même graine, même carte, même semis,
+ * seul le peuplement change — et sans toucher `/sim`, donc sans périmer le cache de cartes.
+ *   node --import tsx tools/profil-tick.mts 50 500 2
+ *   node --import tsx tools/profil-tick.mts 50 500 5
+ */
+const villages = Number(process.argv[4] ?? BALANCE.VILLAGES_VEILLEE)
 
 const t0 = performance.now()
 const carte = generateZonedTerrain(2026, joueurs, MONDE_JOUE)
@@ -37,10 +46,20 @@ const sim = createSim(2026, {
   home: { x: premier.tx + 0.5, y: premier.ty + 0.5 },
 })
 spawnPoiMonsters(sim, 2026)
+// LE PEUPLEMENT DE L'HÔTE, comme la Veillée le fait (spec `ascension.md` V-R4, 2026-09-21).
+// ⚠ Ce profileur portait sa PROPRE copie de la règle — l'ancienne : les deux emplacements les
+// plus ÉLOIGNÉS, tailles 4 et 3 en dur. Il aurait mesuré le peuplement d'hier. Il y avait trois
+// copies de cette règle dans le dépôt (ici, `veillee.ts`, `scenario.ts`) : une seule a changé
+// le jour où elle s'est corrigée, et c'est exactement ainsi qu'un profileur se met à mentir.
 const d2 = (e: { tx: number; ty: number }) => (e.tx - premier.tx) ** 2 + (e.ty - premier.ty) ** 2
-const voisins = emplacements.filter((e) => e.tx !== premier.tx || e.ty !== premier.ty).sort((a, b) => d2(b) - d2(a))
-if (voisins[0]) foundNpcVillage(sim, voisins[0].tx, voisins[0].ty, 4, 'foyer')
-if (voisins[1]) foundNpcVillage(sim, voisins[1].tx, voisins[1].ty, 3, 'meute')
+const voisins = emplacements
+  .filter((e) => e.tx !== premier.tx || e.ty !== premier.ty)
+  .sort((a, b) => d2(a) - d2(b))
+  .slice(0, villages)
+const dispositions = ['foyer', 'meute'] as const
+for (const [i, v] of voisins.entries()) {
+  foundNpcVillage(sim, v.tx, v.ty, BALANCE.NPC_PER_VILLAGE, dispositions[i] ?? 'neutre')
+}
 
 console.log(`carte ${carte.map.width}×${carte.map.height} = ${(carte.map.width * carte.map.height / 1e6).toFixed(2)} M tuiles`)
 console.log(`génération : ${(tGen / 1000).toFixed(1)} s`)

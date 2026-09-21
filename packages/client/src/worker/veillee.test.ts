@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { BALANCE, TICKS_PER_CYCLE, TICKS_PER_SEASON_DAY, seasonDayAtTick } from '@ashes/sim'
+import { BALANCE, MONDE, TICKS_PER_CYCLE, TICKS_PER_SEASON_DAY, seasonDayAtTick } from '@ashes/sim'
 import { createVeillee, VEILLEE_CALENDAR_SCALE, VEILLEE_SEASON_CYCLES } from './veillee'
 
 /**
@@ -29,11 +29,12 @@ describe('la Veillée compte ses jours sur le cycle', () => {
  * que la Veillée naît avec deux voisins PNJ — un Foyer et une Meute.
  */
 describe('createVeillee — peupler la Veillée (V1-10)', () => {
-  it('fonde DEUX voisins PNJ (un Foyer, une Meute), loin du joueur', () => {
+  it('fonde ses voisins PNJ (un Foyer, une Meute, des neutres) — à portée du joueur, pas au pas de sa porte', () => {
     const { sim, spawn } = createVeillee()
 
-    // Deux villages voisins (le joueur n'a PAS encore de foyer — il naît survivant).
-    expect(sim.villages.length).toBe(2)
+    // Les villages voisins (le joueur n'a PAS encore de foyer — il naît survivant). Le compte
+    // vit dans `balance.ts` : c'est un levier de peuplement ET de coût de tick, pas un littéral.
+    expect(sim.villages.length).toBe(BALANCE.VILLAGES_VEILLEE)
 
     // LE MONDE OUVRE À L'OUVERTURE DES PLUIES (spec `saisons.md` S2, jour 61 depuis le
     // 2026-08-24) : une saison entière pour s'installer, qui annonce toute seule ce qui vient,
@@ -54,12 +55,24 @@ describe('createVeillee — peupler la Veillée (V1-10)', () => {
     expect(warmths.some((x) => x > 0)).toBe(true) // le Foyer
     expect(warmths.some((x) => x < 0)).toBe(true) // la Meute
 
-    // CONFORME AU GDD (Ermitage tranquille) : les voisins naissent LOIN — pas de raid au
-    // pas de la porte. Chaque Feu est à bonne distance du spawn du joueur.
-    for (const v of sim.villages) {
+    // ═══ LES DEUX BORNES, parce qu'une seule POURRIT (spec `ascension.md` V-A2) ═══
+    //
+    // ⚠ **LA GARDE D'ORIGINE (`> 40`) ÉTAIT VERTE SUR 1930 TUILES.** Le tri des villages
+    // demandait l'antipode de la carte, Alexis n'a jamais vu un village de tout le jeu, et
+    // aucune borne d'un seul côté ne pouvait le dire. Une borne HAUTE est donc obligatoire.
+    //
+    // Et elle s'écrit comme une LOI relative à la carte — un multiple de l'écart entre villages
+    // — jamais en tuiles en dur : c'est exactement ainsi que le `40` a pourri, en survivant à un
+    // doublement de la carte qui l'a rendu vide de sens.
+    const dists = sim.villages.map((v) => {
       const dx = v.fireTx + 0.5 - spawn.x
       const dy = v.fireTy + 0.5 - spawn.y
-      expect(Math.sqrt(dx * dx + dy * dy)).toBeGreaterThan(40) // au moins ~40 tuiles
-    }
-  }, 30000) // `createVeillee` fait toute la worldgen alpine (~10 s) : timeout large
+      return Math.sqrt(dx * dx + dy * dy)
+    })
+    // LE PLANCHER — l'Ermitage (GDD, décision 2026-07-22) : pas de raid au pas de la porte.
+    expect(Math.min(...dists), 'un village au pas de la porte').toBeGreaterThan(40)
+    // LE PLAFOND — on RENCONTRE ses voisins. Deux écarts de village : au-delà, le joueur peut
+    // jouer une saison entière sans en croiser un, ce qui est très exactement ce qui se passait.
+    expect(Math.min(...dists), 'aucun village à portée du joueur').toBeLessThan(2 * MONDE.ESPACEMENT_VILLAGES)
+  }, 120000) // `createVeillee` fait toute la worldgen du monde joué : ~10 s avant, ~18 s depuis la carte doublée (2026-09-20) — 30 s expiraient
 })

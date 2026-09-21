@@ -1087,6 +1087,24 @@ export const BALANCE = {
   /** PNJ qui rejoignent un village fondé par un joueur (spec pnj R9). */
   NPC_PER_VILLAGE: 3,
 
+  /**
+   * COMBIEN DE VILLAGES PNJ LA VEILLÉE FONDE (spec `ascension.md` V-R4).
+   *
+   * ⚠ **C'EST UN LEVIER DE PERFORMANCE AUTANT QUE DE GAMEPLAY.** Chaque village fonde
+   * `NPC_PER_VILLAGE` habitants, et `advanceNpcs` pèse **85 à 94 % du tick** (MESURÉ le
+   * 2026-09-21, sur les deux régressions de pathfinding de la nuit). Le monter se fait en
+   * MESURANT le tick et la famine du banc — jamais au jugé.
+   *
+   * À 5 : le Foyer et la Meute — que le moteur d'alignement exige, un caractère chaud et un
+   * froid, sans quoi `isOutsider()` est toujours faux et tout le pilier tourne à vide — plus
+   * trois voisins neutres. Soit 15 villageois contre 6 avant.
+   *
+   * V-R4 en veut davantage, ÉTAGÉS et DIFFÉRENCIÉS (beaucoup de villages en bas dont des
+   * capitales, peu en haut mais robustes) : ça se construit avec la spec, ça ne s'obtient pas
+   * en montant ce seul nombre.
+   */
+  VILLAGES_VEILLEE: 5,
+
   /** Sous ce seuil de faim, un PNJ va manger (spec pnj R3). */
   NPC_HUNGER_EAT_THRESHOLD: 30,
 

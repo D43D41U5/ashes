@@ -190,10 +190,32 @@ export function createVeillee(
   // Ermitage, l'isolement reste un choix de tranquillité), la Meute est une pression
   // DISTANTE et évitable, pas un harcèlement. Le joueur n'est cible qu'après avoir fondé
   // SON village (chest `access:'village'`). Le drame Foyer-vs-Meute est OBSERVABLE, opt-in.
+  //
+  // ═══ ON LES POSE PRÈS DU JOUEUR, PAS À L'ANTIPODE (spec `ascension.md` V-R4) ═══
+  //
+  // ⚠ **CE TRI ÉTAIT INVERSÉ, et Alexis n'a jamais vu un seul village de tout le jeu.**
+  // `sort((a, b) => d2(b) - d2(a))` demandait littéralement les deux emplacements les PLUS
+  // ÉLOIGNÉS de la carte : MESURÉ le 2026-09-21 (graine 2026), Foyer à **1930 tuiles** et Meute
+  // à 1845, quand le site viable le plus proche était à 136 et qu'il en existait 102. Sur une
+  // carte de 1 700 rangées ce n'était pas de la malchance, c'était arithmétique.
+  //
+  // **La décision d'origine n'est pas rouverte** (2026-07-22, « les voisins naissent LOIN — pas
+  // de raid au pas de la porte », vérifiée « > 40 tuiles ») : l'Ermitage tient, c'est sa
+  // CONSTANTE que le doublement de la carte a débordée. Et le plancher se tient tout seul —
+  // deux emplacements sont à `MONDE.ESPACEMENT_VILLAGES` (130 tuiles) l'un de l'autre par
+  // construction, donc aucun n'est au pas de la porte.
   const d2 = (e: { tx: number; ty: number }): number => (e.tx - premier.tx) * (e.tx - premier.tx) + (e.ty - premier.ty) * (e.ty - premier.ty)
-  const voisins = emplacements.filter((e) => e.tx !== premier.tx || e.ty !== premier.ty).sort((a, b) => d2(b) - d2(a))
-  if (voisins[0]) foundNpcVillage(sim, voisins[0].tx, voisins[0].ty, 3, 'foyer')
-  if (voisins[1]) foundNpcVillage(sim, voisins[1].tx, voisins[1].ty, 3, 'meute')
+  const voisins = emplacements
+    .filter((e) => e.tx !== premier.tx || e.ty !== premier.ty)
+    .sort((a, b) => d2(a) - d2(b))
+    .slice(0, BALANCE.VILLAGES_VEILLEE)
+  // Le Foyer et la Meute D'ABORD : le moteur d'alignement exige un caractère chaud ET un froid.
+  // Les suivants naissent NEUTRES et leur archétype ÉMERGE de leurs actes, comme pour tout le
+  // monde — on ne pose pas un troisième caractère, on laisse le jeu le faire.
+  const dispositions = ['foyer', 'meute'] as const
+  for (const [i, v] of voisins.entries()) {
+    foundNpcVillage(sim, v.tx, v.ty, BALANCE.NPC_PER_VILLAGE, dispositions[i] ?? 'neutre')
+  }
 
   return { sim, playerId, spawn }
 }

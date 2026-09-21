@@ -2686,21 +2686,67 @@ export function pointsDeSpawn(
   const dans = loin.length > 0 ? loin : continent
   if (dans.length === 0) return []
 
-  // On part d'un site TIRÉ AU SORT dans le vivier — la graine du monde décide, et elle seule.
+  /**
+   * ═══ ON NAÎT EN BAS — ET LE VIVIER SE REMPLIT PAR LE BAS (spec `ascension.md` V-R1) ═══
+   *
+   * Le jeu commence au plancher de la vallée et pousse à monter d'étage en étage : naître en
+   * haut, c'est commencer par l'arrivée. ⚠ **MESURÉ le 2026-09-21, AVANT cette règle : le spawn
+   * de la graine 2026 tombait en (248, 72), palier 3 — l'extrême nord, le sommet.** Rien ne
+   * filtrait le palier ici ; seuls la zone, le continent et la fosse comptaient.
+   *
+   * **Ce n'est PAS un filtre sec, et la distinction est mesurée.** Ne garder que le palier le
+   * plus bas affame le semis : graine 4242, le palier 0 ne compte plus que **16** sites une fois
+   * l'écart à la cendre appliqué, pour **17** spawns demandés — et `cendre.test.ts` A5 (« le
+   * filtre ne doit pas affamer le semis ») rougirait, à juste titre, puisque `scenario.ts` et le
+   * LAN appellent cette même fonction avec ce même compte. On REMPLIT donc par le bas : tout le
+   * palier le plus bas, puis le suivant seulement s'il manque encore des sites. La loi reste
+   * vraie dans les deux cas — *on ne monte jamais tant qu'il reste de la place en dessous* — et
+   * on ne rend jamais moins de points qu'avant.
+   *
+   * **On ne coupe jamais un palier en deux** : le vivier s'étend jusqu'au bout du palier qui fait
+   * l'appoint. Autrement le site retenu dépendrait de l'ORDRE de la liste, pas de la carte.
+   *
+   * Une carte sans paliers (`'vallee'`, F-A6) traverse la passe inchangée : un seul rang, l'ordre
+   * d'origine préservé (le tri est stable depuis ES2019), donc vivier === `dans`.
+   */
+  const palier = c.map.palier
+  const rang = (e: Emplacement): number => (palier ? palier[e.ty * c.map.width + e.tx]! : 0)
+  const parRang = [...dans].sort((a, b) => rang(a) - rang(b))
+  let n = 0
+  while (n < parRang.length && (n < combien || (n > 0 && rang(parRang[n]!) === rang(parRang[n - 1]!)))) n++
+  const vivier = n > 0 ? parRang.slice(0, n) : dans
+
+  /**
+   * ⚠ **REMPLIR LE VIVIER PAR LE BAS NE SUFFIT PAS — LA SÉLECTION AUSSI DOIT PRÉFÉRER LE BAS.**
+   * MESURÉ le 2026-09-21 : avec le seul vivier rempli par le bas, la graine 4242 rendait
+   * **6 spawns au palier 0 et 11 au palier 1** alors que seize sites restaient libres en bas.
+   * Le semis max-min ne connaît que la DISTANCE, et les sites d'en haut sont plus étalés : il
+   * montait d'un étage par pur écartement. La loi de V-R1 — *on ne monte jamais tant qu'il reste
+   * de la place en dessous* — se tient donc sur DEUX gestes, et un seul la laisse fausse.
+   */
+  const plancher = rang(parRang[0]!)
+  const auPlancher = vivier.filter((e) => rang(e) === plancher)
+
+  // On part d'un site TIRÉ AU SORT — la graine du monde décide, et elle seule. ⚠ Le tirage se
+  // fait DANS LE PLANCHER, pas dans tout le vivier : en solo, `spawns[0]` EST le joueur, et un
+  // tirage large le poserait un étage trop haut le jour où le bas ne suffit pas.
   // (`rngFloat` rend un flottant de [0, 1) : l'index reste dans les bornes ; la garde `min` ne
   // sert qu'à rendre l'invariant lisible sur place.)
   const tirage = rngRoll((seed ^ 0x5350574e /* 'SPWN' */) >>> 0)
-  const depart = dans[Math.min(dans.length - 1, Math.floor(tirage.value * dans.length))]!
+  const depart = auPlancher[Math.min(auPlancher.length - 1, Math.floor(tirage.value * auPlancher.length))]!
   const out = [depart]
-  // …puis chaque suivant est celui qui est le PLUS LOIN de tous les déjà pris.
-  while (out.length < combien && out.length < dans.length) {
+  // …puis chaque suivant est le PLUS BAS d'abord, et à palier égal le PLUS LOIN de tous les
+  // déjà pris : l'écartement ne départage qu'à l'intérieur d'un étage.
+  while (out.length < combien && out.length < vivier.length) {
     let best: Emplacement | null = null
+    let bestRang = Infinity
     let bestScore = -1
-    for (const e of dans) {
+    for (const e of vivier) {
       if (out.includes(e)) continue
       let score = Infinity
       for (const o of out) score = Math.min(score, distSq(e.tx, e.ty, o.tx, o.ty))
-      if (score > bestScore) { bestScore = score; best = e }
+      const r = rang(e)
+      if (r < bestRang || (r === bestRang && score > bestScore)) { bestRang = r; bestScore = score; best = e }
     }
     if (!best) break
     out.push(best)
