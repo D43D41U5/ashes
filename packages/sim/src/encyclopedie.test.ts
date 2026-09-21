@@ -257,6 +257,7 @@ describe('le carnet de l’encyclopédie', () => {
       task: null,
       path: [],
       stuck: 0,
+      sansChemin: [],
       defendStuck: 0,
       defendBest: -1,
       defendIgnoreUntil: 0,

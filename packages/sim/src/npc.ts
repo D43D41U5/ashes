@@ -88,6 +88,37 @@ export interface Npc {
    */
   path: { tx: number; ty: number; etage?: number }[]
   stuck: number
+  /**
+   * LE REFUS MÉMORISÉ — « aucune route vers CETTE tuile, DEPUIS celle-ci, jusqu'à CE tick ».
+   *
+   * Un A* qui échoue est le calcul le plus cher du jeu : il épuise son budget entier (4096
+   * expansions, ×4 quand `pathToward` essaie les voisins d'une cible bloquée) pour ne rien
+   * rendre. Sans mémoire, un villageois coupé de sa cible le repaie À CHAQUE TICK. Mesuré sur
+   * la carte doublée (banc 6 joueurs) : 6 appels par tick, 100 % d'échecs, le tick à 89 ms ;
+   * avec ce refus gardé `NPC_AI.SANS_CHEMIN_TICKS`, 0,12 appel par tick et le tick à 8,9 ms.
+   *
+   * La clé porte la CIBLE *et* la tuile d'où l'on a refusé : un PNJ qui a bougé d'une seule
+   * tuile reprend son droit de chercher — il peut avoir franchi la rampe qui manquait. Le
+   * délai, lui, borne ce que le mémo ignore : une porte qu'on ouvre, un mur qu'on abat.
+   *
+   * Il ne protège qu'UN PNJ. Une corvée relâchée libre repart au voisin, qui repaie le même
+   * A* perdu : c'est pourquoi un site dont le chemin échoue retire sa corvée DU TABLEAU.
+   *
+   * ⚠ PLUSIEURS CASES, ET C'EST LE CŒUR DE LA LOI. Avec une seule case, deux appelants qui
+   * visent des tuiles différentes s'évincent l'un l'autre à chaque tick, et AUCUN des deux ne
+   * retrouve jamais son propre refus : le mémo est alors plein en permanence et ne sert à rien.
+   * MESURÉ le 2026-09-21, nuit du jour 61 (banc 6 joueurs, carte doublée) : `handleCold` vise
+   * la MAISON (`home ?? feu`, npc-needs.ts:193) et le ralliement R14 vise le FEU. Trois
+   * villageois coupés des deux repayaient DEUX A* complets par tick, chacun ×4 voisins autour
+   * d'une cible à hitbox — le tick du banc à 267 ms, treize fois son régime de jour.
+   *
+   * Le nombre de cases se lit sur l'ENSEMBLE des appelants (blessure, faim, sommeil, orage,
+   * froid, ralliement, exécuteurs de corvée) : `NPC_AI.SANS_CHEMIN_CASES`. Au-delà du plafond,
+   * la plus ancienne cède — cet appelant-là repaie son A* une fois, puis se réinscrit. Borné,
+   * jamais pathologique. Chaque case garde SA péremption : un tableau qui expirerait en bloc
+   * jetterait un refus tout frais parce qu'un autre a vieilli.
+   */
+  sansChemin: { cible: number; depuis: number; niveau: number; etageCible: number; jusqua: number }[]
   /** Ticks passés à ne PAS progresser vers une menace (bloqué contre un obstacle).
    *  Au-delà de `DEFENSE_GIVE_UP_TICKS`, on lâche la garde — sinon le PNJ monte
    *  la garde devant un rocher jusqu'à en mourir de faim (voir `handleDefense`). */
@@ -343,16 +374,72 @@ export function followPath(state: SimState, npc: Npc, entity: Entity): boolean {
 export function setPathTo(
   state: SimState, npc: Npc, entity: Entity, tx: number, ty: number, etage: number | undefined,
 ): boolean {
+  // LE REFUS MÉMORISÉ (cf. `Npc.sansChemin`) : même cible, même tuile de départ, répit non
+  // écoulé → on redit non SANS relancer l'A*. Un échec coûte son budget ENTIER ; le répéter
+  // soixante fois par seconde pour un villageois qu'un mur sépare de sa cible, c'est le tick
+  // qui passe de 9 à 89 ms. La garde est au-dessus de `pathToward`, donc elle couvre aussi les
+  // quatre essais que celui-ci fait autour d'une cible bloquée.
+  const W = state.map.width
+  const cible = ty * W + tx
+  const ici = Math.floor(entity.y) * W + Math.floor(entity.x)
+  // ⚠ LES DEUX NIVEAUX FONT PARTIE DE LA CLÉ. L'A* les reçoit tous les deux — le niveau du
+  // CORPS et le palier de la CIBLE — or la première version de ce mémo ne les encodait pas :
+  // deux requêtes de mêmes tuiles à des étages différents s'aliasaient, et le mémo disait non
+  // là où la route existait. Un mémo ne doit jamais être plus grossier que le calcul qu'il
+  // remplace. On les hisse au-dessus du test : deux lectures de carte sur le chemin rapide,
+  // sans commune mesure avec l'A* qu'elles évitent.
+  const niveau = niveauDuCorps(state.map, entity)
+  const etageCible = etage ?? palierDuSol(state.map, tx, ty)
+  const refus = npc.sansChemin
+  for (const m of refus) {
+    if (m.cible === cible && m.depuis === ici && m.niveau === niveau && m.etageCible === etageCible && state.tick < m.jusqua) {
+      npc.path = []
+      return false
+    }
+  }
   const world = moveWorldFor(state, npc.villageId)
   // Cible bloquée (Feu à hitbox, mur…) → on se poste au voisin libre le plus
   // proche. Logique partagée avec la dérive du Cendreux (`pathToward`).
   const path = pathToward(
     world, entity.x, entity.y, tx, ty,
     undefined, // le budget d'exploration : celui de `pathToward`, inchangé
-    niveauDuCorps(state.map, entity),
-    etage ?? palierDuSol(state.map, tx, ty),
+    niveau,
+    etageCible,
   )
   npc.path = path ?? []
+  if (path === null) {
+    // On REMPLACE la case de cette cible si elle existe (sa péremption vient de s'écouler),
+    // sinon on ajoute — APRÈS AVOIR BALAYÉ LES MORTES. Sans ce balayage, une cible qu'on cesse
+    // de demander garde sa place pour toujours : MESURÉ le 2026-09-21, une case à
+    // `reste = −16 406` squattait un quart du mémo seize mille ticks après sa péremption, et
+    // c'est une case VIVE que le `shift()` aurait fini par évincer à sa place. On ne balaie
+    // qu'au moment d'AJOUTER : le chemin du succès et celui du mémo touché restent gratuits,
+    // et l'ordre du tableau reste déterministe (parcours arrière, `splice` par index).
+    // ⚠ LE BALAYAGE EST EN TÊTE, ET C'EST TOUT L'ENJEU. Placé dans la branche d'AJOUT, il ne
+    // s'exécutait JAMAIS : un PNJ enclavé redemande toujours une cible déjà mémorisée, donc
+    // `findIndex` la trouve, on remplace en place, et la branche d'ajout reste morte — la case
+    // à `reste = −16 406` a survécu intacte à ce premier correctif. Une garde ne vaut que si
+    // le cas réel passe par le chemin qui la porte.
+    for (let k = refus.length - 1; k >= 0; k--) {
+      const mort = refus[k]
+      if (mort !== undefined && state.tick >= mort.jusqua) refus.splice(k, 1)
+    }
+    const neuf = { cible, depuis: ici, niveau, etageCible, jusqua: state.tick + NPC_AI.SANS_CHEMIN_TICKS }
+    const i = refus.findIndex((m) => m.cible === cible && m.niveau === niveau && m.etageCible === etageCible)
+    if (i >= 0) refus[i] = neuf
+    else {
+      refus.push(neuf)
+      if (refus.length > NPC_AI.SANS_CHEMIN_CASES) refus.shift()
+    }
+  } else if (refus.length > 0) {
+    // ⚠ ON NE RETIRE QUE LA CASE DE **CETTE** CIBLE. Vider tout le tableau au premier succès
+    // reproduisait le défaut de la case unique sous une autre forme : en régime MIXTE (une
+    // cible joignable, une autre non), le succès vers X effaçait le refus de Y, qui repayait
+    // son A* au tick suivant — et ainsi à chaque tick. Une route trouvée vers X ne prouve
+    // rien sur Y ; c'est la péremption par case qui répond au monde qui change.
+    const j = refus.findIndex((m) => m.cible === cible && m.niveau === niveau && m.etageCible === etageCible)
+    if (j >= 0) refus.splice(j, 1)
+  }
   return path !== null
 }
 
@@ -701,6 +788,18 @@ function executeGather(state: SimState, village: Village, npc: Npc, entity: Enti
     return
   }
   if (npc.path.length === 0 && !setPathTo(state, npc, entity, chest.tx, chest.ty, chest.etage)) {
+    // GRENIER INATTEIGNABLE — ON RELÂCHE (`false`), ON NE SUPPRIME PAS. Tranché le 2026-09-21
+    // après mesure, contre l'intuition « économisons l'A* du voisin » qui avait mis `true` ici.
+    // ① MESURÉ : `true` coûte 3 points de famine au banc A8 (72 contre 69, graine 2026, 2 jours,
+    //    sim déterministe — l'écart est réel, pas du bruit).
+    // ② Le bénéfice de perf de `true` est désormais ABSORBÉ par `sansChemin` : le voisin qui
+    //    reprend la corvée paie UN A* puis mémorise son propre refus, au lieu de le repayer
+    //    chaque tick. C'est ce qui rendait `true` nécessaire avant le mémo ; ça ne l'est plus.
+    // ③ Et surtout, relâcher rend la corvée au tableau, où un voisin QUI ATTEINT le grenier
+    //    peut la prendre ; `true` la ferait disparaître jusqu'au prochain `refreshBoard`.
+    //    Pour un PNJ enclavé, passer la main est le geste juste.
+    // ⚠ Le vrai remède reste géographique (F-R3, deux rampes par terrasse) : aucun des deux
+    //    réglages ne DÉSENCLAVE qui que ce soit.
     dropTask(village, npc, false)
     return
   }
@@ -1498,6 +1597,7 @@ export function spawnNpcsAround(state: SimState, village: Village, count: number
       task: null,
       path: [],
       stuck: 0,
+      sansChemin: [],
       defendStuck: 0,
       defendBest: -1,
       defendIgnoreUntil: 0,

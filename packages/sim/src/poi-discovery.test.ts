@@ -451,6 +451,7 @@ describe('le récit — la première fois seulement', () => {
       task: null,
       path: [],
       stuck: 0,
+      sansChemin: [],
       defendStuck: 0,
       defendBest: -1,
       defendIgnoreUntil: 0,

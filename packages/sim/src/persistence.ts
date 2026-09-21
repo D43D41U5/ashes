@@ -172,6 +172,7 @@ export function deserializeSim(text: string): SimState {
     throw new Error(`Veillée d'un format antérieur : ${manquants.length} champ(s) manquant(s) — ${manquants.join(', ')}`)
   }
   migrerParoiEnMassif(env.sim)
+  migrerSansChemin(env.sim) // champ neuf DANS `Npc` : aucune garde de racine ne le voit
   return env.sim
 }
 
@@ -190,6 +191,27 @@ function migrerParoiEnMassif(sim: SimState): void {
       s.type = 'massif'
       delete s.edges
     }
+  }
+}
+
+/**
+ * MIGRATION `Npc.sansChemin` (2026-09-21) — LES GARDES DE CE FICHIER NE VOIENT QUE LA RACINE.
+ *
+ * `SAVE_REQUIRED_KEYS` et `comblerEphemeres` confrontent des clés de PREMIER NIVEAU, et le
+ * recollage final est un spread SUPERFICIEL : les objets `Npc` d'une vieille Veillée passent
+ * intacts, jamais inspectés. Un champ neuf et REQUIS *dans* un `Npc` franchit donc toutes les
+ * gardes — `npcs` existe, la liste est complète — puis `step()` jette au premier tick, à chaque
+ * lancement : exactement le sinistre décrit en tête de ce fichier, et exactement celui que
+ * `migrerParoiEnMassif` existe pour avoir déjà coûté une fois.
+ *
+ * `sansChemin` (le refus de chemin mémorisé, `npc.ts`) est un TABLEAU ; une sauvegarde d'avant
+ * ne porte rien, une écrite pendant le développement peut porter `null` ou un objet. On teste
+ * donc la FORME, pas l'absence : le type statique ment tant que la migration n'a pas tourné.
+ */
+function migrerSansChemin(sim: SimState): void {
+  for (const npc of sim.npcs) {
+    const brut = npc as unknown as { sansChemin?: unknown }
+    if (!Array.isArray(brut.sansChemin)) npc.sansChemin = []
   }
 }
 
@@ -406,6 +428,7 @@ export function deserializePartie(text: string, carte: CarteSauvee): SimState {
   const nodes = appliqueDiffNoeuds(carte.nodes, env.noeuds)
   const sim = { ...env.partie, map, nodes } as SimState
   migrerParoiEnMassif(sim) //  les parties du 2026-08-10 portent des `paroi` (cf. la migration)
+  migrerSansChemin(sim) // LE CHEMIN VIF (cf. `persistence-store.ts`) : ne brancher qu'un site le laisserait cassé
   return sim
 }
 

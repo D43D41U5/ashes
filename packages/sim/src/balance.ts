@@ -6824,6 +6824,19 @@ export const NPC_AI = {
   /** Cible de fibres au grenier (tableau du village). */
   VILLAGE_FIBER_TARGET: 2,
   /**
+   * LE RÉPIT D'UN REFUS DE CHEMIN — ticks pendant lesquels un PNJ qui n'a trouvé AUCUNE route
+   * vers une tuile redit non sans relancer l'A* (`Npc.sansChemin`). 100 ticks = 5 s à 20 Hz :
+   * assez long pour qu'un échec ne se repaie pas à chaque tick (c'est le calcul le plus cher du
+   * jeu — il épuise son budget entier pour ne rien rendre), assez court pour qu'une porte
+   * ouverte ou un mur abattu redeviennent praticables sans qu'on sente l'attente.
+   */
+  SANS_CHEMIN_TICKS: 100,
+  /** Combien de refus un PNJ garde EN MÊME TEMPS. Un seul ne suffit pas : `handleCold` vise la
+   *  maison, le ralliement R14 vise le Feu, et deux appelants sur une case unique s'évincent à
+   *  chaque tick — mesuré, le tick du banc à 267 ms. Quatre couvre les appelants qu'un PNJ
+   *  coupé de son village enchaîne réellement dans un tick (froid, faim, sommeil, ralliement). */
+  SANS_CHEMIN_CASES: 4,
+  /**
    * L'ORDRE DANS LEQUEL UN VILLAGE PNJ TRAVAILLE — priorité de chaque tâche du tableau,
    * la plus haute d'abord. C'est le CARACTÈRE économique du village : nourrir le Feu
    * prime sur tout (sans combustible, la ruine — construction R16), réparer avant

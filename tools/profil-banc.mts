@@ -35,7 +35,15 @@ console.log(
     ` · PNJ ${sim.npcs.length} · monstres ${sim.monsters.length} · marge de ciblage ${monde.margeDeCible} %`,
 )
 
-const events: unknown[] = []
+/** On COMPTE les événements, on ne les GARDE pas. Les garder (`events.push`) ne servait à rien —
+ *  personne ne les relisait — mais ⚠ ce n'était PAS la cause de la régression tardive du tick,
+ *  et je l'ai cru une heure durant. Mesuré le 2026-09-21 : le banc à 6 joueurs n'émet que ~870
+ *  événements sur une journée de 36 000 ticks. Retenir 870 petits objets ne remplit aucun tas,
+ *  et la régression (tranches 8 à 10 à 131, 246, 240 ms) se reproduit à l'identique une fois le
+ *  hoard retiré. On jette quand même : un instrument qui accumule ce qu'il n'ouvre jamais finit
+ *  par mesurer sa propre thésaurisation. La leçon vaut plus que le correctif — vérifier l'ORDRE
+ *  DE GRANDEUR d'un mécanisme avant de le déclarer coupable. */
+let nEvents = 0
 const total = jours * TICKS_PER_CYCLE
 const parTranche = Math.floor(total / tranches)
 console.log(`\n${jours} jour(s) = ${total} ticks, en ${tranches} tranches de ${parTranche}${drain ? ' — AVEC drainEvents (boucle du banc)' : ' — step() seul'}\n`)
@@ -45,7 +53,7 @@ for (let k = 0; k < tranches; k++) {
   const t = performance.now()
   for (let i = 0; i < parTranche; i++) {
     step(sim, [])
-    if (drain) for (const e of drainEvents(sim)) events.push(e)
+    if (drain) nEvents += drainEvents(sim).length
   }
   const ms = (performance.now() - t) / parTranche
   const corps = sim.corpses?.length ?? 0
@@ -53,7 +61,7 @@ for (let k = 0; k < tranches; k++) {
     `  ${String(k + 1).padStart(7)}${ms.toFixed(2).padStart(10)}` +
       `${String(sim.entities.length).padStart(10)}${String(sim.monsters.length).padStart(10)}` +
       `${String(corps).padStart(7)}${String(sim.structures.length).padStart(12)}` +
-      `${String(events.length).padStart(10)}` +
+      `${String(nEvents).padStart(10)}` +
       `${String(jourDeSaison(sim)).padStart(17)}`,
   )
 }
