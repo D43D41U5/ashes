@@ -1431,6 +1431,67 @@ export function poserLesTerrasses(
     }
     return false
   }
+  /** ═══ CE QUE LA LOI D'AGENCE VISE — UNE SEULE DÉFINITION, DEUX CONSOMMATEURS ═══
+   *
+   *  La règle (iv) de l'élection et l'entaille d'agence (§6e) doivent viser EXACTEMENT les mêmes
+   *  terrasses. Deux copies de ce prédicat auraient dérivé, et la dérive aurait ici le pire visage
+   *  possible : CREUSER — déplacer des tuiles, définitivement — pour une terrasse que l'élection
+   *  ne servirait pas ensuite. D'où ces quatre fonctions, partagées. */
+  const rampesParComposante = (): Map<number, RampeDeTerrasse[]> => {
+    const servies = new Map<number, RampeDeTerrasse[]>()
+    for (const [, liste] of reliees) {
+      for (const r of liste) {
+        for (const id of [comp[(r.y - 1) * width + r.x]!, comp[r.y * width + r.x]!]) {
+          if (id < 0) continue
+          let l = servies.get(id)
+          if (l === undefined) { l = []; servies.set(id, l) }
+          // Tête et pied peuvent être la MÊME composante (une rampe interne) : on ne la compte qu'une.
+          if (!l.includes(r)) l.push(r)
+        }
+      }
+    }
+    return servies
+  }
+  /** Le plus grand écart (Chebyshev) entre deux rampes de la liste. */
+  const ecartMax = (l: readonly RampeDeTerrasse[]): number => {
+    let max = 0
+    for (let i = 0; i < l.length; i++) {
+      for (let j = i + 1; j < l.length; j++) {
+        const d = Math.max(Math.abs(l[i]!.x - l[j]!.x), Math.abs(l[i]!.y - l[j]!.y))
+        if (d > max) max = d
+      }
+    }
+    return max
+  }
+  /** L'EMPRISE : le plus grand côté de la boîte englobante — le diamètre de Chebyshev EXACT (la
+   *  paire qui réalise l'étendue réalise le maximum), pas un majorant. */
+  const empriseDe = (id: number): number => {
+    let minX = width
+    let maxX = -1
+    let minY = height
+    let maxY = -1
+    for (let m = debut[id]!; m < debut[id + 1]!; m++) {
+      const i = membres[m]!
+      const x = i % width
+      const y = (i - x) / width
+      if (x < minX) minX = x
+      if (x > maxX) maxX = x
+      if (y < minY) minY = y
+      if (y > maxY) maxY = y
+    }
+    return Math.max(maxX - minX, maxY - minY)
+  }
+  /** Les rampes qui desservent `id` SI la loi d'agence la réclame et qu'elle n'est pas satisfaite ;
+   *  `null` sinon. Ce que la loi vise : une TERRASSE (palier > 0) qui n'est pas une miette, et assez
+   *  large pour PORTER deux approches — en deçà de `SECTEUR` d'emprise, aucune paire de pieds ne
+   *  peut l'atteindre, quoi qu'on élise OU QU'ON CREUSE. */
+  const sousServie = (id: number, servies: Map<number, RampeDeTerrasse[]>): RampeDeTerrasse[] | null => {
+    if (palierDe[id]! <= 0 || taille[id]! < TERRASSES.MIETTE_TUILES * 4) return null
+    const deja = servies.get(id) ?? []
+    if (deja.length >= 2 && ecartMax(deja) >= FLANC.SECTEUR) return null
+    if (empriseDe(id) < FLANC.SECTEUR) return null
+    return deja
+  }
   const elireLesRampes = (): void => {
     rampes = []
     reliees = new Map()
@@ -1502,7 +1563,7 @@ export function poserLesTerrasses(
     //
     // ⚠ ON NE FAIT QU'AJOUTER DES RAMPES : aucune n'est retirée, aucune tuile ne bouge. L'élection
     // ne fait que LIRE le champ, donc (iv) ne peut pas plus rouvrir le point fixe que (i-iii).
-    const servies = new Map<number, RampeDeTerrasse[]>()
+    const servies = rampesParComposante()
     const servir = (r: RampeDeTerrasse): void => {
       for (const id of [comp[(r.y - 1) * width + r.x]!, comp[r.y * width + r.x]!]) {
         if (id < 0) continue
@@ -1512,39 +1573,14 @@ export function poserLesTerrasses(
         if (!l.includes(r)) l.push(r)
       }
     }
-    for (const [, l] of reliees) for (const r of l) servir(r)
-    const ecartMax = (l: RampeDeTerrasse[]): number => {
-      let max = 0
-      for (let i = 0; i < l.length; i++) {
-        for (let j = i + 1; j < l.length; j++) {
-          const d = Math.max(Math.abs(l[i]!.x - l[j]!.x), Math.abs(l[i]!.y - l[j]!.y))
-          if (d > max) max = d
-        }
-      }
-      return max
-    }
     for (let id = 0; id < nComp; id++) {
-      // CE QUE LA LOI VISE : une TERRASSE (palier > 0) qui n'est pas une miette. Et qui soit assez
-      // large pour PORTER deux approches — sans quoi on courrait après l'impossible : l'emprise est
-      // le plus grand côté de la boîte englobante, donc le diamètre de Chebyshev EXACT, et en deçà
-      // de `SECTEUR` aucune paire de pieds ne peut l'atteindre, quoi qu'on élise.
-      if (palierDe[id]! <= 0 || taille[id]! < TERRASSES.MIETTE_TUILES * 4) continue
-      const deja = servies.get(id) ?? []
-      if (deja.length >= 2 && ecartMax(deja) >= FLANC.SECTEUR) continue
-      let minX = width
-      let maxX = -1
-      let minY = height
-      let maxY = -1
-      for (let m = debut[id]!; m < debut[id + 1]!; m++) {
-        const i = membres[m]!
-        const x = i % width
-        const y = (i - x) / width
-        if (x < minX) minX = x
-        if (x > maxX) maxX = x
-        if (y < minY) minY = y
-        if (y > maxY) maxY = y
-      }
-      if (Math.max(maxX - minX, maxY - minY) < FLANC.SECTEUR) continue
+      // ⚠ LE CAS « AUCUNE RAMPE » EST LAISSÉ À `garantir`, DÉLIBÉRÉMENT — ce n'est pas un oubli.
+      // Sans rampe en place, l'écart d'une candidate ne se mesure à RIEN : `bestEcart` reste 0 et
+      // (iv) n'élit personne. C'est voulu. Une terrasse que rien ne rejoint est un défaut
+      // d'ATTEINTE, dont répond `garantir` (§6) ; (iv) ne traite que « il y en a une, il en faut
+      // deux ». Les 23 fautives mesurées avaient toutes exactement UNE rampe.
+      const deja = sousServie(id, servies)
+      if (deja === null) continue
       // LA PLUS ÉLOIGNÉE DE CELLES QU'ELLE A DÉJÀ. Les candidates portent la rangée de TÊTE, les
       // rampes élues celle du PIED : on compare donc `c.y + 1` à `r.y`.
       let best: { x: number; y: number } | null = null
@@ -1664,38 +1700,48 @@ export function poserLesTerrasses(
   //
   // Même discipline que la ravine : que de la terre marchable de la pièce, hors lieu et hors bloc,
   // et tout le halo entre p−1 et p, sans eau à p.
-  const creuserUneEntaille = (terre: number[], p: number, atteinte: Uint8Array, piece: (j: number) => boolean): boolean => {
+  /** LE SITE D'ENTAILLE en (`t`, `sens`) : l'abscisse D'OÙ PART LE CHENAL (la terre plus basse), ou
+   *  −1. Extrait de `creuserUneEntaille` pour que la loi d'AGENCE (§6e) partage ce test au lieu de
+   *  le recopier — deux copies d'un halo aussi subtil auraient dérivé, et l'une des deux CREUSE. */
+  const siteDEntaille = (t: number, sens: number, p: number, atteinte: Uint8Array, piece: (j: number) => boolean): number => {
     const L = CREUX.RAMPE_LARGEUR
     const terreDeLaPiece = (j: number): boolean =>
       piece(j) && palier[j] === p && marchable(j) && !eau(j) && !reservees.has(j) && blocDe[j]! < 0
+    const xt = t % width
+    const y = (t - xt) / width
+    if (y < 3 || y + 2 >= height) return -1
+    const x0 = xt - sens // la terre atteinte, d'où l'on creuse
+    if (x0 < 0 || x0 >= width || x0 + sens * (L + 1) < 0 || x0 + sens * (L + 1) >= width) return -1
+    const j0 = y * width + x0
+    if (atteinte[j0] === 0 || palier[j0] !== p - 1 || eau(j0)) return -1
+    // Le halo : colonnes x0..x0+sens·(L+1), rangées y−3..y+2, tout entre p−1 et p.
+    for (let k = 0; k <= L + 1; k++) {
+      for (let r = -3; r <= 2; r++) {
+        const j = (y + r) * width + x0 + sens * k
+        const q = palier[j]!
+        if (q < p - 1 || q > p) return -1
+        if (q === p && eau(j)) return -1
+      }
+    }
+    // Le chenal (rangées y, y+1) à creuser ; au-dessus, deux rangées de la pièce qui restent.
+    for (let k = 1; k <= L; k++) {
+      for (let r = -2; r <= 1; r++) {
+        if (!terreDeLaPiece((y + r) * width + x0 + sens * k)) return -1
+      }
+    }
+    return x0
+  }
+  /** Le chenal lui-même : `RAMPE_LARGEUR` colonnes sur deux rangées, descendues d'un palier. */
+  const creuserLeChenal = (x0: number, sens: number, y: number, p: number): void => {
+    for (let k = 1; k <= CREUX.RAMPE_LARGEUR; k++) for (let r = 0; r <= 1; r++) palier[(y + r) * width + x0 + sens * k] = p - 1
+  }
+  const creuserUneEntaille = (terre: number[], p: number, atteinte: Uint8Array, piece: (j: number) => boolean): boolean => {
     for (const t of terre) {
-      const xt = t % width
-      const y = (t - xt) / width
-      if (y < 3 || y + 2 >= height) continue
+      const y = (t - (t % width)) / width
       for (const sens of [1, -1]) {
-        const x0 = xt - sens // la terre atteinte, d'où l'on creuse
-        if (x0 < 0 || x0 >= width || x0 + sens * (L + 1) < 0 || x0 + sens * (L + 1) >= width) continue
-        const j0 = y * width + x0
-        if (atteinte[j0] === 0 || palier[j0] !== p - 1 || eau(j0)) continue
-        let ok = true
-        // Le halo : colonnes x0..x0+sens·(L+1), rangées y−3..y+2, tout entre p−1 et p.
-        for (let k = 0; k <= L + 1 && ok; k++) {
-          for (let r = -3; r <= 2; r++) {
-            const j = (y + r) * width + x0 + sens * k
-            const q = palier[j]!
-            if (q < p - 1 || q > p) { ok = false; break }
-            if (q === p && eau(j)) { ok = false; break }
-          }
-        }
-        if (!ok) continue
-        // Le chenal (rangées y, y+1) à creuser ; au-dessus, deux rangées de la pièce qui restent.
-        for (let k = 1; k <= L && ok; k++) {
-          for (let r = -2; r <= 1; r++) {
-            if (!terreDeLaPiece((y + r) * width + x0 + sens * k)) { ok = false; break }
-          }
-        }
-        if (!ok) continue
-        for (let k = 1; k <= L; k++) for (let r = 0; r <= 1; r++) palier[(y + r) * width + x0 + sens * k] = p - 1
+        const x0 = siteDEntaille(t, sens, p, atteinte, piece)
+        if (x0 < 0) continue
+        creuserLeChenal(x0, sens, y, p)
         return true
       }
     }
@@ -1753,6 +1799,69 @@ export function poserLesTerrasses(
       }
     }
     return false
+  }
+
+  // ── 6e. L'ENTAILLE D'AGENCE — la seconde approche qu'aucun terrain n'offrait (F-R3) ───────
+  //
+  // C'EST LE SEUL GESTE DE CE FICHIER QUI DÉPLACE DES TUILES POUR UNE RAISON DE JEU ET NON DE
+  // TOPOLOGIE. Tous les autres creusements (§6b, §6c, la ravine, l'entaille) répondent d'un défaut
+  // d'ATTEINTE — une terre qu'on ne rejoint pas. Celui-ci répond d'un défaut d'AGENCE : la terrasse
+  // se rejoint très bien, par UNE rampe, et F-R3 en veut deux « depuis deux secteurs », parce que
+  // « c'est la première décision du joueur (R14) portée à chaque terrasse ».
+  //
+  // MESURÉ le 2026-09-21 (sonde `__fa3-creusement`), après que les règles (i-iv) ont ramené les
+  // fautives de 23 à 4 : sur ces quatre-là, AUCUNE colonne montante n'existe à `FLANC.SECTEUR` de
+  // la rampe en place — meilleurs écarts atteignables 13, 4, 14 et 8. Le terrain ne l'offre pas ;
+  // Alexis a tranché : on creuse.
+  //
+  // LE GESTE EST CELUI DE L'ENTAILLE (§6c), à une différence près qui est TOUT : l'entaille
+  // d'atteinte prend LE PREMIER site venu — n'importe lequel rejoint la pièce, c'est une question
+  // de topologie. Celle-ci prend LE PLUS ÉLOIGNÉ de la rampe existante, et renonce s'il n'atteint
+  // pas un secteur : un site trop proche ne fabriquerait pas un CHOIX, seulement une seconde porte
+  // au même endroit. MESURÉ : 18 à 31 sites légaux par terrasse — le premier venu serait tombé
+  // sous 18 sans effort.
+  //
+  // ⚠ ELLE NE PRODUIT RIEN SANS LA RÈGLE (iv). Les écarts obtenus valent 23 à 43, tous SOUS
+  // `RAMPE_PAS` (48) : `tropPres` refuserait la rampe creusée en règle (iii). C'est (iv) — l'agence,
+  // qui passe outre `tropPres` — qui l'élit au tour suivant. Les deux moitiés se tiennent.
+  //
+  // ⚠ ELLE N'ENTRE QU'UNE FOIS L'ATTEINTE POSÉE (voir son appel, à la fin de `garantir`) : jamais
+  // en concurrence avec la garantie, dont elle emprunte `atteinte`. Et elle NE FAIT QUE BAISSER
+  // des tuiles, dans un halo tout entier entre p−1 et p — ±1 n'a rien à y refaire au tour suivant.
+  const entaillerPourLAgence = (atteinte: Uint8Array): number => {
+    const servies = rampesParComposante()
+    let n = 0
+    for (let id = 0; id < nComp; id++) {
+      const deja = sousServie(id, servies)
+      if (deja === null || deja.length === 0) continue
+      const p = palierDe[id]!
+      const dansLaTerrasse = (j: number): boolean => comp[j] === id
+      let bestX = -1
+      let bestSens = 0
+      let bestY = 0
+      let bestEcart = -1
+      for (let m = debut[id]!; m < debut[id + 1]!; m++) {
+        const t = membres[m]!
+        const y = (t - (t % width)) / width
+        for (const sens of [1, -1]) {
+          const x0 = siteDEntaille(t, sens, p, atteinte, dansLaTerrasse)
+          if (x0 < 0) continue
+          // LA RAMPE QUI NAÎTRA : le centre du chenal, sur la rangée du PIED. `elire` est appelée
+          // sur la rangée de TÊTE (y − 1) et pose `r.y = y` — on compare donc à `y`, pas à `y − 1`.
+          const rx = x0 + sens * 2
+          let e = 0
+          for (const r of deja) {
+            const d = Math.max(Math.abs(r.x - rx), Math.abs(r.y - y))
+            if (d > e) e = d
+          }
+          if (e > bestEcart) { bestEcart = e; bestX = x0; bestSens = sens; bestY = y }
+        }
+      }
+      if (bestX < 0 || bestEcart < FLANC.SECTEUR) continue
+      creuserLeChenal(bestX, bestSens, bestY, p)
+      n++
+    }
+    return n
   }
 
   /**
@@ -2137,6 +2246,15 @@ export function poserLesTerrasses(
         if (monter(terre[0]!, p)) n++
       }
     }
+    // ── ET L'AGENCE EN DERNIER, UNE FOIS L'ATTEINTE POSÉE (§6e) ─────────────────────────────
+    // `n === 0` : rien n'a bougé pour l'ATTEINTE ce tour-ci. C'est la seule garde qui convienne —
+    // pas « tout est atteint » (une île vraie laisse `n` à 0 sans être rejointe), mais « la
+    // garantie ne se dispute plus rien ». L'agence ne creuse donc jamais en concurrence avec elle.
+    // Elle emprunte `atteinte`, qui n'existe QUE dans cette portée : c'est aussi pourquoi elle vit
+    // ici et non dans la boucle du point fixe. Son retour s'ajoute à `n`, donc un creusement fait
+    // repartir un tour — et c'est voulu : il faut un `calmer()` de plus pour que (iv) élise la
+    // rampe que le chenal vient de rendre possible.
+    if (escalier && n === 0) n += entaillerPourLAgence(atteinte)
     return n
   }
 

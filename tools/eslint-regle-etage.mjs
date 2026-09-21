@@ -76,6 +76,15 @@ const HORS_REGLE = {
   'zonegen-water.ts': { '*': 'worldgen' },
   'clairieres.ts': { tuileDeClairiere: 'worldgen — le rayon normalisé d’un cadre de clairière' },
   'map.ts': { poiClearings: 'worldgen — le disque déboisé d’un lieu' },
+  'terrasses.ts': {
+    // Les ÉCARTS ENTRE RAMPES de la loi d’agence (F-R3, `FLANC.SECTEUR`) : « deux rampes par
+    // terrasse, depuis deux secteurs ». Ce sont des distances entre deux POSITIONS DE RAMPE sur le
+    // champ de paliers pendant qu’on le fabrique — aucun corps ne le parcourt encore, et les
+    // étages n’existent pas : c’est ce champ-là qui les définira. On nomme la fonction plutôt que
+    // `'*'` (elle les couvre toutes aujourd’hui, `poserLesTerrasses` étant la plus large) pour
+    // qu’une distance écrite DEHORS un jour soit quand même soumise au tri.
+    poserLesTerrasses: 'worldgen — écarts entre rampes sur le champ de paliers en cours de fabrication (F-R3)',
+  },
 
   // ══ Ni deux corps, ni une perception ══
   'annales.ts': { '*': 'densité de deux ANNALES entre elles — des faits, pas des corps' },
