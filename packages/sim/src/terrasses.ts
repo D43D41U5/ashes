@@ -1442,13 +1442,29 @@ export function poserLesTerrasses(
     // Toutes les candidates, groupées par paire (haut, bas), dans l'ordre ouest → est puis
     // nord → sud : c'est l'ordre du départage.
     const parPaire = new Map<number, { x: number; y: number }[]>()
+    /** LES MÊMES CANDIDATES, RANGÉES PAR COMPOSANTE DESSERVIE — ce dont la règle (iv) a besoin.
+     *  On les range sous les DEUX bouts, tête ET pied : une rampe se descend autant qu'elle se
+     *  monte, et F-A3 compte les deux (son en-tête dit pourquoi — des terrasses ne sont servies QUE
+     *  par des pieds, on y descend depuis le palier du dessus). La règle (iv) doit voir une terrasse
+     *  exactement comme la garde la voit, sans quoi elle réparerait à côté. */
+    const parComp = new Map<number, { x: number; y: number }[]>()
+    const ranger = (id: number, x: number, y: number): void => {
+      if (id < 0) return
+      let l = parComp.get(id)
+      if (l === undefined) { l = []; parComp.set(id, l) }
+      l.push({ x, y })
+    }
     for (let x = demi; x + demi < width; x++) {
       for (let y = 1; y + 1 < height; y++) {
         if (!rampeMonte(x, y)) continue
-        const cle = comp[y * width + x]! * nComp + comp[(y + 1) * width + x]!
+        const haut = comp[y * width + x]!
+        const bas = comp[(y + 1) * width + x]!
+        const cle = haut * nComp + bas
         let l = parPaire.get(cle)
         if (l === undefined) { l = []; parPaire.set(cle, l) }
         l.push({ x, y })
+        ranger(haut, x, y)
+        if (bas !== haut) ranger(bas, x, y)
       }
     }
     // (i) D'ABORD LES SENTES : là où la route du bas continue au nord par la route du haut, la
@@ -1468,6 +1484,85 @@ export function poserLesTerrasses(
         if (!libre(c.x, c.y) || tropPres(cle, c.x, c.y)) continue
         elire(c.x, c.y, pris)
       }
+    }
+    // (iv) L'AGENCE — DEUX APPROCHES PAR TERRASSE (spec `flanc.md` F-R3, `FLANC.SECTEUR`).
+    //
+    // ⚠ C'EST UNE AUTRE LOI QUE (iii), ET C'EST TOUT L'INTÉRÊT. (iii) espace les rampes de
+    // `TERRASSES.RAMPE_PAS` le long d'un bord : c'est le CONFORT — « on ne longe pas un mur un écran
+    // entier sans trouver où monter ». (iv) demande qu'une même terrasse soit abordable DEPUIS DEUX
+    // SECTEURS écartés de `FLANC.SECTEUR` : c'est l'AGENCE — « c'est la première décision du joueur
+    // (R14) portée à chaque terrasse ». Comme `FLANC.SECTEUR` (18) est PLUS COURT que `RAMPE_PAS`
+    // (48), (iv) élit sciemment une candidate que `tropPres` avait écartée. Elle ne défait pas (iii),
+    // qui garde son pas : elle ajoute LA SEULE que l'agence réclame là où l'espacement n'en donnait
+    // qu'une. Baisser `RAMPE_PAS` à 18 pour le même effet serait rouvrir l'AUTRE loi, partout.
+    //
+    // C'est le geste que F-R3 prescrivait sans qu'il ait jamais été écrit : « là où l'élection n'en
+    // donne qu'une, on en ouvre une seconde, au bord sud LE PLUS ÉLOIGNÉ de la première ». D'où le
+    // départage — la candidate qui MAXIMISE l'écart, jamais la première venue.
+    //
+    // ⚠ ON NE FAIT QU'AJOUTER DES RAMPES : aucune n'est retirée, aucune tuile ne bouge. L'élection
+    // ne fait que LIRE le champ, donc (iv) ne peut pas plus rouvrir le point fixe que (i-iii).
+    const servies = new Map<number, RampeDeTerrasse[]>()
+    const servir = (r: RampeDeTerrasse): void => {
+      for (const id of [comp[(r.y - 1) * width + r.x]!, comp[r.y * width + r.x]!]) {
+        if (id < 0) continue
+        let l = servies.get(id)
+        if (l === undefined) { l = []; servies.set(id, l) }
+        // Tête et pied peuvent être la MÊME composante (une rampe interne) : on ne la compte qu'une.
+        if (!l.includes(r)) l.push(r)
+      }
+    }
+    for (const [, l] of reliees) for (const r of l) servir(r)
+    const ecartMax = (l: RampeDeTerrasse[]): number => {
+      let max = 0
+      for (let i = 0; i < l.length; i++) {
+        for (let j = i + 1; j < l.length; j++) {
+          const d = Math.max(Math.abs(l[i]!.x - l[j]!.x), Math.abs(l[i]!.y - l[j]!.y))
+          if (d > max) max = d
+        }
+      }
+      return max
+    }
+    for (let id = 0; id < nComp; id++) {
+      // CE QUE LA LOI VISE : une TERRASSE (palier > 0) qui n'est pas une miette. Et qui soit assez
+      // large pour PORTER deux approches — sans quoi on courrait après l'impossible : l'emprise est
+      // le plus grand côté de la boîte englobante, donc le diamètre de Chebyshev EXACT, et en deçà
+      // de `SECTEUR` aucune paire de pieds ne peut l'atteindre, quoi qu'on élise.
+      if (palierDe[id]! <= 0 || taille[id]! < TERRASSES.MIETTE_TUILES * 4) continue
+      const deja = servies.get(id) ?? []
+      if (deja.length >= 2 && ecartMax(deja) >= FLANC.SECTEUR) continue
+      let minX = width
+      let maxX = -1
+      let minY = height
+      let maxY = -1
+      for (let m = debut[id]!; m < debut[id + 1]!; m++) {
+        const i = membres[m]!
+        const x = i % width
+        const y = (i - x) / width
+        if (x < minX) minX = x
+        if (x > maxX) maxX = x
+        if (y < minY) minY = y
+        if (y > maxY) maxY = y
+      }
+      if (Math.max(maxX - minX, maxY - minY) < FLANC.SECTEUR) continue
+      // LA PLUS ÉLOIGNÉE DE CELLES QU'ELLE A DÉJÀ. Les candidates portent la rangée de TÊTE, les
+      // rampes élues celle du PIED : on compare donc `c.y + 1` à `r.y`.
+      let best: { x: number; y: number } | null = null
+      let bestEcart = -1
+      for (const c of parComp.get(id) ?? []) {
+        if (!libre(c.x, c.y)) continue
+        let e = 0
+        for (const r of deja) {
+          const d = Math.max(Math.abs(r.x - c.x), Math.abs(r.y - (c.y + 1)))
+          if (d > e) e = d
+        }
+        if (e > bestEcart) { bestEcart = e; best = c }
+      }
+      if (best === null || bestEcart < FLANC.SECTEUR) continue
+      elire(best.x, best.y, pris)
+      const cle = comp[best.y * width + best.x]! * nComp + comp[(best.y + 1) * width + best.x]!
+      const liste = reliees.get(cle)!
+      servir(liste[liste.length - 1]!)
     }
   }
 
