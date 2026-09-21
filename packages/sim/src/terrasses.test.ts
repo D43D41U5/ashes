@@ -37,7 +37,7 @@ import { buildPoiStructures } from './poi-batis'
 import { nidsAMonstre, spawnPoiMonsters } from './poi'
 import { createSim, spawnEntity, step, type SimState } from './sim'
 import { CREUX } from './racine-relief'
-import { TERRASSES } from './terrasses'
+import { FLANC, TERRASSES } from './terrasses'
 import { cycleOffsetForStartHour } from './time'
 import { renderVignette } from './vignette'
 import { CONTENU, emplacementsDeVillage, placeZoneNodes, pointsDeSpawn } from './zone-content'
@@ -909,15 +909,25 @@ describe('T-A6bis — la joue : l’A*, le gradient et le lissage abordent une r
  * 2026-09-21 en rejouant sa propre marche (`atteintEnEtages`) composante par composante, toute
  * composante non insulaire est atteinte à **100 %** sur les graines 2026 / 42 / 7 — y compris
  * treize qui n'ont aucun connecteur du tout (elles se rejoignent par un gué au même palier).
- * F-A3 est une promesse de CONFORT : on ne longe pas un mur un écran entier sans trouver où
- * monter, et une terrasse à rampe unique fait de ce mur un détour obligatoire.
+ *
+ * ⚠ **NI UNE GARDE DE CONFORT — C'EST UNE LOI D'AGENCE, et s'être trompé de loi a coûté une
+ * session.** Cet en-tête a longtemps lu F-A3 comme « on ne longe pas un mur un écran entier sans
+ * trouver où monter ». C'est une vraie loi du jeu, mais c'en est une AUTRE : elle est déjà écrite,
+ * elle s'appelle `TERRASSES.RAMPE_PAS`, et le commentaire de `terrasses.ts:44` la dit mot pour
+ * mot. F-R3, lui, s'intitule « deux rampes par terrasse, **depuis deux secteurs** » et se conclut
+ * par « c'est la première décision du joueur (R14) portée à chaque terrasse » : ce qu'il exige est
+ * un CHOIX D'APPROCHE, pas une borne sur le détour. D'où `FLANC.SECTEUR` ci-dessous, et non plus
+ * la constante empruntée à la loi voisine.
  *
  * ⚠ **CE QUI FERAIT ROUGIR F-A3, ÉNONCÉ AVANT D'ACCEPTER SON VERT** : retirer `tropPres` de la
- * règle (iii) de `elireLesRampes` — chaque paire retombe à UNE rampe et la garde tombe sur
- * presque toutes les terrasses ; ou porter `TERRASSES.RAMPE_PAS` au-delà de la largeur du pays —
- * plus aucune seconde rampe ne s'élit nulle part. MESURÉ AVANT D'ÉCRIRE (sonde jetable, graines
- * 2026 / 7 / 42) : **51 terrasses éligibles, dont 21 n'ont qu'UNE rampe** — et aucune n'en a
- * zéro, ce qui est mot pour mot le cas que F-R3 décrit (« là où l'élection n'en donne qu'une »).
+ * règle (iii) de `elireLesRampes` — chaque paire retombe à UNE rampe, et le premier membre du
+ * verdict (`l.length < 2`) tombe sur presque toutes les terrasses. C'est le contrôle POSITIF.
+ *
+ * ⚠ **ET CE QUI NE LA FERAIT *PAS* ROUGIR — à savoir avant de toucher au chiffre** : MONTER
+ * `FLANC.SECTEUR`. Passé le diamètre des terrasses, le terme d'emprise ci-dessous les écarte de
+ * l'ÉLIGIBILITÉ au lieu de les déclarer fautives : la garde deviendrait VIDE, pas rouge. C'est
+ * `expect(terrasses.length).toBeGreaterThan(8)` qui tient ce bord — ici cette assertion porte,
+ * elle ne décore pas.
  *
  * ⚠ **ON COMPTE LES DEUX BOUTS, PAS SEULEMENT LA MONTÉE — écart ASSUMÉ avec la lettre de la
  * spec** (« rampes montantes depuis le palier du dessous »). `terrainAEtage` (etages.ts:212) :
@@ -939,12 +949,20 @@ describe('T-A6bis — la joue : l’A*, le gradient et le lissage abordent une r
  * fausses fautives : essayé le 2026-09-21, treize d'un coup.
  */
 describe('F-A3 — toute terrasse qui n’est pas une miette a deux rampes, écartées d’un secteur', () => {
-  /** La loi, pas un nombre : la séparation de F-R3 EST celle que `tropPres` impose déjà à
-   *  l'élection (`TERRASSES.RAMPE_PAS` — « on ne longe jamais un mur plus d'un écran sans trouver
-   *  où monter »). La garde est donc une régression sur l'élection, pas un seuil de plus à
-   *  arbitrer. ⚠ Ne PAS la recalibrer sur la distribution mesurée des écarts : elle retombe sur
-   *  48 par construction, c'est circulaire. */
-  const SECTEUR = TERRASSES.RAMPE_PAS
+  /** La séparation entre DEUX APPROCHES d'une même terrasse — un demi-cadre (18). Elle est
+   *  DÉRIVÉE du cadre de jeu, et surtout pas de la distribution mesurée des écarts : la recalibrer
+   *  dessus ramène au chiffre de départ par construction, c'est circulaire. L'en-tête de
+   *  `FLANC.SECTEUR` porte la dérivation.
+   *  ⚠ Jusqu'au 2026-09-21 cette ligne lisait `TERRASSES.RAMPE_PAS` faute que `FLANC` existe — la
+   *  constante d'une AUTRE loi. À 48, NEUF terrasses éligibles sur 25 avaient un diamètre entier
+   *  plus petit que le seuil : aucun monde ne pouvait satisfaire la garde. */
+  const SECTEUR = FLANC.SECTEUR
+  /** ⚠ **L'ÉLIGIBILITÉ DOIT ÊTRE COMMENSURABLE AVEC CE QU'ELLE EXIGE** — le défaut de fond, et il
+   *  est DIMENSIONNEL : `SEUIL` est une AIRE (384 tuiles), `SECTEUR` une LONGUEUR. Une composante
+   *  de 384 tuiles peut n'avoir que 20 de diamètre, et on lui demandait deux pieds écartés de 48.
+   *  Les deux constantes n'avaient jamais été réconciliées. On GARDE l'aire (une miette n'est pas
+   *  une terrasse) et on AJOUTE le diamètre : une terrasse trop étroite pour porter deux approches
+   *  n'a pas à en porter deux. */
   const SEUIL = TERRASSES.MIETTE_TUILES * 4
 
   for (const graine of GRAINES) {
@@ -961,6 +979,12 @@ describe('F-A3 — toute terrasse qui n’est pas une miette a deux rampes, éca
       const palierDe: number[] = []
       const dansP: number[] = []
       const eaux: number[] = []
+      /** L'EMPRISE : le plus grand côté de la boîte englobante. C'est EXACTEMENT le diamètre de
+       *  Chebyshev de la composante, pas un majorant — la paire qui réalise l'étendue réalise le
+       *  maximum de `max(|dx|, |dy|)`. Donc « emprise < SECTEUR ⟹ deux pieds si écartés sont
+       *  impossibles » est EXACT, et c'est ce qui a permis de dater le défaut au lieu de le
+       *  soupçonner. */
+      const emprise: number[] = []
       const pile = new Int32Array(N)
       for (let d = 0; d < N; d++) {
         if (comp[d] !== -1 || MARCHABLE[terrain[d]!] !== 1) continue
@@ -970,6 +994,10 @@ describe('F-A3 — toute terrasse qui n’est pas une miette a deux rampes, éca
         let dedans = 0
         let eau = 0
         let sp = 0
+        let minX = width
+        let maxX = -1
+        let minY = height
+        let maxY = -1
         pile[sp++] = d
         comp[d] = id
         while (sp > 0) {
@@ -979,6 +1007,10 @@ describe('F-A3 — toute terrasse qui n’est pas une miette a deux rampes, éca
           if (isWater(terrain[i]!)) eau++
           const x = i % width
           const y = (i - x) / width
+          if (x < minX) minX = x
+          if (x > maxX) maxX = x
+          if (y < minY) minY = y
+          if (y > maxY) maxY = y
           for (const [vx, vy] of [[x + 1, y], [x - 1, y], [x, y + 1], [x, y - 1]] as const) {
             if (vx < 0 || vy < 0 || vx >= width || vy >= height) continue
             const j = vy * width + vx
@@ -991,6 +1023,7 @@ describe('F-A3 — toute terrasse qui n’est pas une miette a deux rampes, éca
         palierDe.push(p)
         dansP.push(dedans)
         eaux.push(eau)
+        emprise.push(Math.max(maxX - minX, maxY - minY))
       }
 
       // ── les rampes LOGIQUES : entrées contiguës d'une même rangée, regroupées ───────────
@@ -1033,8 +1066,8 @@ describe('F-A3 — toute terrasse qui n’est pas une miette a deux rampes, éca
       // en cherchant où monter : lui demander deux rampes, c'est lui demander ce que le monde ne
       // promet pas. MESURÉ : la comp 150 de la graine 2026 (419 t, palier 1) est à 100 % d'eau.
       const terrasses = taille
-        .map((n, id) => ({ id, n, p: palierDe[id]!, dp: dansP[id]!, eau: eaux[id]! }))
-        .filter((c) => c.n >= SEUIL && c.p > 0 && c.dp / c.n >= 0.5 && c.eau / c.n < 0.5)
+        .map((n, id) => ({ id, n, p: palierDe[id]!, dp: dansP[id]!, eau: eaux[id]!, emp: emprise[id]! }))
+        .filter((c) => c.n >= SEUIL && c.p > 0 && c.dp / c.n >= 0.5 && c.eau / c.n < 0.5 && c.emp >= SECTEUR)
       // La garde ne peut pas passer à vide : un monde joué a des dizaines de terrasses.
       expect(terrasses.length, `graine ${graine} : terrasses éligibles`).toBeGreaterThan(8)
 

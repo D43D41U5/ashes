@@ -82,6 +82,46 @@ export const TERRASSES = {
   GRAIN_WARP: 7,
 } as const
 
+/**
+ * ═══ LE FLANC — le versant, et ce qui s'y règle EN REGARDANT LE PAYS ═══
+ *
+ * Le bloc que la spec `flanc.md` annonce (« un bloc `FLANC` à venir »). Il naît ici, à côté de
+ * `TERRASSES`, parce que la seule loi qu'il porte aujourd'hui se juge sur les RAMPES — et qu'un
+ * réglage de générateur vit à côté de son générateur (CLAUDE.md).
+ */
+export const FLANC = {
+  /**
+   * ═══ L'ÉCARTEMENT DE LA LOI D'AGENCE (F-R3) ═══
+   *
+   * **DEUX RAMPES PAR TERRASSE, DEPUIS DEUX SECTEURS.** Ce que F-R3 veut n'est pas du confort,
+   * c'est un CHOIX : « c'est la première décision du joueur (R14) portée à chaque terrasse ».
+   * Deux pieds de rampe écartés d'au moins `SECTEUR`, ce sont deux APPROCHES — et on en préfère
+   * une.
+   *
+   * ⚠ **NE PAS CONFONDRE AVEC `TERRASSES.RAMPE_PAS` (48, ligne 44) : C'EST UNE AUTRE LOI** —
+   * celle du CONFORT, « on ne longe pas un mur un écran entier sans trouver où monter ». Elle est
+   * déjà implémentée, dans `tropPres`, et elle régit l'ESPACEMENT le long de tout un bord de
+   * palier. Celle-ci régit ce qu'on peut DÉCIDER sur une composante. Deux lois, deux constantes.
+   *
+   * ⚠ **48 ÉTAIT UN BOUCHON, ET IL RENDAIT LA LOI IMPOSSIBLE.** Faute de cette constante-ci, la
+   * garde F-A3 écrivait `const SECTEUR = TERRASSES.RAMPE_PAS` — la constante de l'autre loi.
+   * MESURÉ le 2026-09-21 sur les quatre graines : à 48, **9 terrasses éligibles sur 25 ne peuvent
+   * PAS la satisfaire**, leur diamètre ENTIER valant 32 à 47 ; et **aucune des 25** n'était
+   * réparable en élisant une rampe candidate existante. À 18 : **0 impossible**.
+   *
+   * **18 EST DÉRIVÉ — UN DEMI-CADRE — et surtout PAS recalibré sur les écarts mesurés** (les
+   * recalibrer ramène à 48 par construction : c'est circulaire). Le cadre de jeu mesure
+   * 35,6 × 20,0 tuiles à zoom 2,25 (`docs/decisions/rendu-da.md`, 2026-08-25 — où le demi-cadre
+   * sert DÉJÀ d'étalon, pour y recaler un rayon de brouillard trop grand) : sa demi-largeur vaut
+   * 17,8. Deux pieds écartés de 18 ne tiennent pas dans la même moitié d'écran — on ne les
+   * embrasse pas du même coup d'œil, donc on choisit. (Le chiffre est ÉCRIT ICI : pas emprunté à
+   * `FUMEROLLE.ECRAN_TUILES`, dont le commentaire dit qu'il « ne sert qu'à dériver et à garder
+   * `JEU` » ; pas importé de `DEMI_CADRE_TUILES`, qui vit dans le CLIENT — `/sim` n'en importe
+   * jamais rien.)
+   */
+  SECTEUR: 18,
+} as const
+
 /** Une rampe de terrasse : une COLONNE de connecteur, tuile du palier `de` sous une tuile du
  *  palier `vers = de + 1`. Trois colonnes voisines font une rampe (`CREUX.RAMPE_LARGEUR`). */
 export interface RampeDeTerrasse {
