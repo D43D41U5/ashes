@@ -24,7 +24,7 @@
  * vingt secondes de plus pour le redire ici.
  */
 import { describe, expect, it } from 'vitest'
-import { BALANCE, FAUNA, TERRAIN_GRASS, TERRAIN_MARSH, TERRAIN_PEAT_BOG, TERRAIN_REED_MARSH, TICK_DT_S } from './balance'
+import { BALANCE, FAUNA, TERRAIN_GRASS, TERRAIN_MARSH, TERRAIN_PEAT_BOG, TERRAIN_REED_MARSH, TERRAIN_ROCK, TICK_DT_S } from './balance'
 import { carteDeTest } from '../../../tools/carte-cache'
 import { moveAvatar, type MoveWorld } from './collision'
 import {
@@ -1088,6 +1088,217 @@ describe('F-A3 — toute terrasse qui n’est pas une miette a deux rampes, éca
         fautives,
         `graine ${graine} : ${fautives.length}/${terrasses.length} terrasses sans deux rampes écartées —\n  ${fautives.join('\n  ')}`,
       ).toHaveLength(0)
+    }, 120_000)
+  }
+})
+
+/**
+ * ═══ T-A14 — ON NE LONGE PAS UN MUR SANS TROUVER OÙ MONTER (spec `terrasses.md` §5) ═══
+ *
+ * La loi de CONFORT, celle que `TERRASSES.RAMPE_PAS` prétendait tenir et ne tenait pas : **aucun
+ * pied de mur à plus de `TERRASSES.PIED_DE_MUR_MAX` d'une MONTÉE, là où le terrain en offre une.**
+ * Un ESPACEMENT (une rampe tous les 48 le long d'un bord) ne borne pas un DÉTOUR : jusqu'au
+ * 2026-09-21 le commentaire de `RAMPE_PAS` annonçait « un écran (≈ 36 tuiles) » et on marchait 95.
+ *
+ * ⚠ **CE QUI FERAIT ROUGIR T-A14, ÉNONCÉ ET MESURÉ AVANT D'ACCEPTER SON VERT.** Neutraliser la
+ * règle (v) de `elireLesRampes` — il suffit de porter `PIED_DE_MUR_MAX` à 9999, la règle n'élit
+ * alors plus rien. MESURÉ le 2026-09-21, les quatre graines rougissent, aucune ne survit :
+ *
+ *       graine   2026    7    4242   909        hors portée, règle NEUTRALISÉE
+ *       budget      0    7     131    29        hors portée, règle ACTIVE
+ *       mesuré     12  112     227   102        ← ce que la garde verrait alors
+ *
+ * ⚠ **CE QUI NE LA FERAIT PAS ROUGIR, ET C'EST LE PIÈGE** : relever `PIED_DE_MUR_MAX`. La garde
+ * deviendrait VIDE, pas rouge — plus aucun pied hors portée parce que le plafond aurait avalé le
+ * monde. C'est pourquoi elle affirme d'abord SA PRÉMISSE : des dizaines de terrasses éligibles et
+ * des milliers de pieds de mur. Sans ce dénominateur, « 0 hors portée » ne veut rien dire.
+ *
+ * ⚠ **POURQUOI LE BUDGET N'EST PAS ZÉRO — et pourquoi ce n'est pas une garde qui dégrade.** Ces
+ * pieds-là n'ont AUCUNE candidate de rampe à portée : le terrain ne porte pas de colonne montante
+ * près d'eux, et la décision d'Alexis du 2026-09-21 est qu'on ne CREUSE pas pour du confort (le
+ * creusement de §6e répond de l'AGENCE — un CHOIX qui manque, pas la longueur d'un trajet). Ce
+ * n'est pas une tolérance de confort : c'est la réserve « là où le terrain en offre une », et elle
+ * est PROUVÉE. Le balayage du 2026-09-21 comptait ses orphelins sur un SUR-ENSEMBLE de candidates
+ * (`reservees` ignoré, donc optimiste), et l'implémentation retombe EXACTEMENT sur ses chiffres —
+ * 0 / 7 / 131 / 29, et +2 / +5 / +3 / +1 rampes. Un pied qu'un sur-ensemble ne sait pas servir
+ * n'est servi par rien.
+ *
+ * ⚠ **LE DÉTECTEUR DE DÉRIVE.** Le pied de mur et la montée sont définis ici une SECONDE fois (une
+ * garde rebâtit son monde seule, comme F-A3) ; l'original est `estUnPiedDeMur` dans `terrasses.ts`.
+ * Si les deux divergent, la garde cesse de mesurer la loi sans cesser d'être verte. Le contrôle ne
+ * coûte rien : règle neutralisée, le PIRE détour de chaque graine doit valoir exactement **67, 81,
+ * 95 et 91** — les chiffres sur lesquels Alexis a tranché. Vérifié le 2026-09-21.
+ */
+describe('T-A14 — aucun pied de mur à plus d’un plafond d’une montée, là où le terrain en offre une', () => {
+  const PLAFOND = TERRASSES.PIED_DE_MUR_MAX
+  /** L'éligibilité de F-A3, mot pour mot : c'est la population sur laquelle 67/81/95/91 a été
+   *  mesuré, donc celle où le détecteur de dérive parle. En changer une condition le rend muet. */
+  const SECTEUR = FLANC.SECTEUR
+  const SEUIL = TERRASSES.MIETTE_TUILES * 4
+  /** LES PIEDS DE MUR QUE LE TERRAIN NE SAIT PAS SERVIR — aucune candidate à `PLAFOND`, même en
+   *  ignorant `reservees`. MESURÉ le 2026-09-21 ; l'en-tête dit pourquoi ce n'est pas une
+   *  dégradation tolérée. Un chiffre qui MONTE est un vrai défaut : le terrain n'a pas changé. */
+  const BUDGET: Record<number, number> = { 2026: 0, 7: 7, 4242: 131, 909: 29 }
+
+  for (const graine of GRAINES) {
+    // `GRAINES` est PARTAGÉ (ligne 48) avec F-A3 et le reste du fichier : une graine ajoutée là-bas
+    // arriverait ici sans budget MESURÉ, et la garde comparerait contre `undefined` — verte, et
+    // vide de sens. Mieux vaut rougir bruyamment en la nommant.
+    const budget = BUDGET[graine]
+    if (budget === undefined) {
+      throw new Error(
+        `T-A14 : graine ${graine} sans budget MESURÉ. Mesurer ses pieds de mur hors portée` +
+        ` (tools/__couv-apres.mts) et inscrire le chiffre dans BUDGET avant d'ajouter la graine.`,
+      )
+    }
+    it(`graine ${graine} : ≤ ${budget} pied(s) de mur au-delà de ${PLAFOND} d’une montée — garde EXHAUSTIVE`, () => {
+      const map = carteDeTest(graine, MONDE.JOUEURS_CIBLE, MONDE_JOUE).map
+      const { width, height, terrain } = map
+      const N = width * height
+      const palier = map.palier!
+      const principale = composantePrincipale(map)
+
+      // ── les composantes : marchable (eau comprise), même palier, 4-connexe ──────────────
+      const comp = new Int32Array(N).fill(-1)
+      const taille: number[] = []
+      const palierDe: number[] = []
+      const dansP: number[] = []
+      const eaux: number[] = []
+      const emprise: number[] = []
+      const pile = new Int32Array(N)
+      for (let d = 0; d < N; d++) {
+        if (comp[d] !== -1 || MARCHABLE[terrain[d]!] !== 1) continue
+        const id = taille.length
+        const p = palier[d]!
+        let n = 0
+        let dedans = 0
+        let eau = 0
+        let sp = 0
+        let minX = width
+        let maxX = -1
+        let minY = height
+        let maxY = -1
+        pile[sp++] = d
+        comp[d] = id
+        while (sp > 0) {
+          const i = pile[--sp]!
+          n++
+          if (principale[i] === 1) dedans++
+          if (isWater(terrain[i]!)) eau++
+          const x = i % width
+          const y = (i - x) / width
+          if (x < minX) minX = x
+          if (x > maxX) maxX = x
+          if (y < minY) minY = y
+          if (y > maxY) maxY = y
+          for (const [vx, vy] of [[x + 1, y], [x - 1, y], [x, y + 1], [x, y - 1]] as const) {
+            if (vx < 0 || vy < 0 || vx >= width || vy >= height) continue
+            const j = vy * width + vx
+            if (comp[j] !== -1 || MARCHABLE[terrain[j]!] !== 1 || palier[j] !== p) continue
+            comp[j] = id
+            pile[sp++] = j
+          }
+        }
+        taille.push(n)
+        palierDe.push(p)
+        dansP.push(dedans)
+        eaux.push(eau)
+        emprise.push(Math.max(maxX - minX, maxY - minY))
+      }
+
+      // ── les rampes LOGIQUES, et qui elles desservent (pied rangée y, tête rangée y − 1) ──
+      const brutes = (map.connecteurs ?? []).filter((c) => c.type === 'rampe')
+      brutes.sort((a, b) => a.y - b.y || a.de - b.de || a.vers - b.vers || a.x - b.x)
+      const logiques: { x: number; y: number; de: number; vers: number; largeur: number }[] = []
+      for (const c of brutes) {
+        const p = logiques[logiques.length - 1]
+        if (p !== undefined && p.y === c.y && p.de === c.de && p.vers === c.vers && c.x === p.x + p.largeur) { p.largeur++; continue }
+        logiques.push({ x: c.x, y: c.y, de: c.de, vers: c.vers, largeur: 1 })
+      }
+      const dessert = new Map<number, { x: number; y: number; de: number }[]>()
+      for (const r of logiques) {
+        const vus = new Set<number>()
+        for (const dy of [0, -1]) {
+          const y = r.y + dy
+          if (y < 0 || y >= height) continue
+          for (let k = 0; k < r.largeur; k++) {
+            const x = r.x + k
+            if (x < 0 || x >= width) continue
+            const id = comp[y * width + x]!
+            if (id >= 0) vus.add(id)
+          }
+        }
+        for (const id of vus) {
+          let l = dessert.get(id)
+          if (l === undefined) { l = []; dessert.set(id, l) }
+          l.push({ x: r.x, y: r.y, de: r.de })
+        }
+      }
+
+      const terrasses = taille
+        .map((n, id) => ({ id, n, p: palierDe[id]!, dp: dansP[id]!, eau: eaux[id]!, emp: emprise[id]! }))
+        .filter((c) => c.n >= SEUIL && c.p > 0 && c.dp / c.n >= 0.5 && c.eau / c.n < 0.5 && c.emp >= SECTEUR)
+      const tuilesDe = new Map<number, number[]>()
+      for (const c of terrasses) tuilesDe.set(c.id, [])
+      for (let i = 0; i < N; i++) {
+        const l = tuilesDe.get(comp[i]!)
+        if (l !== undefined) l.push(i)
+      }
+
+      const LOIN = width + height
+      let totalMurs = 0
+      let horsPortee = 0
+      let pireGlobal = 0
+      const detail: string[] = []
+      for (const c of terrasses) {
+        // UNE RAMPE QU'ON DESCEND N'EST PAS UNE FAÇON DE MONTER : `dessert` range sous les DEUX
+        // bouts (pied `de === p`, tête `vers === p`) ; la couverture ne compte que les montées.
+        const montees = (dessert.get(c.id) ?? []).filter((r) => r.de === c.p)
+        // LE PIED D'UN MUR — la copie de `estUnPiedDeMur` (`terrasses.ts`) : une tuile que jouxte
+        // un palier PLUS HAUT non rocheux. Un flanc de mesa n'est pas un mur qu'on longe : son
+        // chapeau est un cul-de-sac et ses portes sont `reservees`, le monter ne monte pas d'étage.
+        const murs: { x: number; y: number }[] = []
+        for (const i of tuilesDe.get(c.id)!) {
+          const x = i % width
+          const y = (i - x) / width
+          for (const [dx, dy] of [[1, 0], [-1, 0], [0, 1], [0, -1]] as const) {
+            const nx = x + dx
+            const ny = y + dy
+            if (nx < 0 || ny < 0 || nx >= width || ny >= height) continue
+            const j = ny * width + nx
+            if (palier[j]! > c.p && terrain[j] !== TERRAIN_ROCK) { murs.push({ x, y }); break }
+          }
+        }
+        if (murs.length === 0) continue // aucune paroi à longer : la loi ne dit rien de cette terrasse
+        totalMurs += murs.length
+        let pire = 0
+        let hors = 0
+        for (const m of murs) {
+          // Chebyshev : un PLANCHER sur ce qui se marche, jamais un majorant — une couverture
+          // prouvée ici l'est a fortiori sur le trajet réel.
+          let d = LOIN
+          for (const r of montees) {
+            const e = Math.max(Math.abs(r.x - m.x), Math.abs(r.y - m.y))
+            if (e < d) d = e
+          }
+          if (d > pire) pire = d
+          if (d > PLAFOND) hors++
+        }
+        horsPortee += hors
+        if (pire > pireGlobal) pireGlobal = pire
+        if (hors > 0 && detail.length < 10) {
+          detail.push(`comp ${c.id} p${c.p} ${c.n}t : pire ${pire}, ${hors}/${murs.length} hors portée, ${montees.length} montée(s)`)
+        }
+      }
+
+      // ── LA PRÉMISSE D'ABORD : sans dénominateur, « 0 hors portée » ne prouve rien ────────
+      expect(terrasses.length, `graine ${graine} : terrasses éligibles`).toBeGreaterThan(8)
+      expect(totalMurs, `graine ${graine} : pieds de mur à servir`).toBeGreaterThan(10_000)
+      expect(
+        horsPortee,
+        `graine ${graine} : ${horsPortee} pied(s) de mur à plus de ${PLAFOND} d'une montée` +
+        ` (budget ${budget}, pire détour ${pireGlobal}, ${totalMurs} pieds en tout) —\n  ${detail.join('\n  ')}`,
+      ).toBeLessThanOrEqual(budget)
     }, 120_000)
   }
 })

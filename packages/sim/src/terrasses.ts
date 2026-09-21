@@ -23,7 +23,7 @@ import { CREUX } from './racine-relief'
 import { fbmWarp2 } from './noise'
 import { TasPF, type Socle } from './socle'
 import { isWater, MARCHABLE } from './map'
-import { TERRAIN_MARSH, TERRAIN_PEAT_BOG, TERRAIN_REED_MARSH, TERRAIN_ROAD } from './balance'
+import { TERRAIN_MARSH, TERRAIN_PEAT_BOG, TERRAIN_REED_MARSH, TERRAIN_ROAD, TERRAIN_ROCK } from './balance'
 import type { Escalier } from './zonegen-hydro'
 
 export type { Escalier } from './zonegen-hydro'
@@ -41,10 +41,55 @@ export const TERRASSES = {
    */
   MIETTE_TUILES: 96,
   /**
-   * Une rampe tous les N tuiles de bord entre deux composantes : le joueur ne longe pas un mur
-   * un écran entier (≈ 36 tuiles) sans trouver où monter.
+   * ═══ L'ESPACEMENT LE LONG D'UN BORD — loi de CONFORT, 1 sur 2 ═══
+   *
+   * Une rampe tous les N tuiles de bord entre deux composantes. C'est `tropPres` (règle (iii) de
+   * l'élection), qui compare les deux axes SÉPARÉMENT (`|dx| < N && |dy| < N`), pas en Chebyshev.
+   *
+   * ⚠ **CE COMMENTAIRE A MENTI DU 2026-09-03 AU 2026-09-21.** Il annonçait « le joueur ne longe pas
+   * un mur un écran entier (≈ 36 tuiles) sans trouver où monter ». Or un écran fait bien ≈ 36
+   * tuiles de large (`VISIBLE_TILES_TALL` 20 × `RATIO_IMAGE` 16/9, côté client) et cette constante
+   * vaut **48** : la promesse était fausse d'un tiers le jour même où elle a été écrite, avant
+   * même que la carte double de hauteur. Et surtout, **un ESPACEMENT NE BORNE PAS UN DÉTOUR** :
+   * espacer les rampes de 48 le long d'un bord ne dit rien de ce qui sépare un pied de mur
+   * quelconque de la montée la plus proche. MESURÉ le 2026-09-21 (graines 2026 / 7 / 4242 / 909) :
+   * ce pire détour valait **67, 81, 95 et 91 tuiles**, soit 4 à 5 HAUTEURS d'écran, et AUCUNE
+   * terrasse n'était couverte à 36. C'est `PIED_DE_MUR_MAX` qui borne cela, juste en dessous.
    */
   RAMPE_PAS: 48,
+  /**
+   * ═══ CE QU'ON MARCHE AVANT DE TROUVER OÙ MONTER — loi de CONFORT, 2 sur 2 ═══
+   *
+   * **AUCUN PIED DE MUR À PLUS DE N TUILES D'UNE MONTÉE — LÀ OÙ LE TERRAIN EN OFFRE UNE.**
+   * Un pied de mur est une tuile de terrasse que jouxte un palier PLUS HAUT qui ne soit pas de la
+   * roche (`estUnPiedDeMur`). La réserve finale n'est pas une échappatoire : c'est la décision
+   * d'Alexis du 2026-09-21 — on ÉLIT des rampes là où le terrain en porte, on ne CREUSE pas pour du
+   * confort. Le creusement du même jour (§6e) répond de l'AGENCE, qui est une promesse de CHOIX ;
+   * la longueur d'un trajet n'en est pas une.
+   *
+   * ⚠ **64 EST UN CHOIX SUR MESURE, PAS UN ARRONDI.** Le coût en rampes s'effondre d'un facteur six
+   * entre 48 et 64 — MESURÉ sur les quatre graines, en n'élisant que des candidates DÉJÀ présentes :
+   *     36 → +47 rampes pour la SEULE graine 909 · 48 → +64 (18/21/15/10)
+   *     **64 → +11 (2/5/3/1)** · 72 → +6 · 96 → +0
+   * 96 rendrait zéro parce que le pire d'aujourd'hui EST 95 : ce serait décrire l'existant en le
+   * baptisant loi — pire que pas de loi, puisque ça a l'air d'une garantie. À ~330 rampes par carte,
+   * 64 coûte moins de 1 % de passages en plus : on tue les trajets de 90 tuiles sans faire du flanc
+   * un escalier de service. L'Ascension veut qu'une montée reste un ÉVÉNEMENT (`ascension.md`).
+   *
+   * ⚠ Ce qui reste assumé : 64 tuiles font **3,2 hauteurs d'écran**. Ce n'est pas « on voit toujours
+   * où monter » — c'est le prix pour que le flanc garde ses murs.
+   *
+   * ⚠ **CE QUE LA RÈGLE COÛTE À LA GÉNÉRATION : rien de mesurable.** Le risque était réel sur le
+   * papier — l'appoint balaie ~17 000 pieds de mur par carte. MESURÉ le 2026-09-21, graine 4242,
+   * `generateZonedTerrain` appelé EN DIRECT (hors cache), médiane de trois tours après un tour jeté :
+   *     règle active (64) → **18 730 ms**   ·   règle inerte (`PIED_DE_MUR_MAX` à 9999) → **18 413 ms**
+   * soit +317 ms, +1,7 %. Mais l'écart tour-à-tour vaut 555 ms dans la première série et 1 275 ms
+   * dans la seconde : LE SURCOÛT EST PLUS PETIT QUE LA DISPERSION DE LA MACHINE. Il n'est donc pas
+   * isolable — et c'est la raison de l'écrire ici plutôt qu'un chiffre nu, qu'on relirait comme un
+   * coût établi. Contre-recoupement gratuit de la même mesure : 991 contre 982 tuiles de rampe sur
+   * la carte finale, soit +9 tuiles = les 3 rampes logiques que le balayage prédisait pour 4242.
+   */
+  PIED_DE_MUR_MAX: 64,
   /**
    * La largeur d'une marche creusée par T-R5 (rayon Chebyshev) : une bande intermédiaire de
    * `2·MARCHE + 1` tuiles au moins, assez pour qu'une rampe y tienne (deux rangées du haut).
@@ -1492,6 +1537,30 @@ export function poserLesTerrasses(
     if (empriseDe(id) < FLANC.SECTEUR) return null
     return deja
   }
+  /** UN PIED DE MUR : une tuile que jouxte un palier PLUS HAUT qui ne soit pas de la roche. C'est
+   *  là, et seulement là, qu'un joueur longe une paroi en cherchant où monter.
+   *
+   *  ⚠ **UN FLANC DE MESA N'EST PAS UN MUR QU'ON LONGE.** Une butte plantée sur la terrasse est
+   *  bien une voisine plus haute, mais son corps est `TERRAIN_ROCK`, son chapeau un cul-de-sac et
+   *  ses portes sont `reservees` (`zonegen.ts`) : la monter ne fait pas monter d'étage. Le mur dont
+   *  parle la loi de confort est la paroi de la TERRASSE, pas le pourtour d'un caillou.
+   *
+   *  ⚠ **LA GARDE T-A14 EN TIENT UNE COPIE** (`terrasses.test.ts`) — un test rebâtit ses
+   *  composantes seul, comme F-A3. Les deux définitions DOIVENT s'accorder, et le détecteur de
+   *  dérive ne coûte rien : appoint retiré, T-A14 doit retrouver EXACTEMENT les pires détours
+   *  mesurés le 2026-09-21 — 67 (2026), 81 (7), 95 (4242), 91 (909). Un autre chiffre dit que les
+   *  deux définitions ont divergé, et alors la garde ne mesure plus la loi. */
+  const estUnPiedDeMur = (i: number): boolean => {
+    const x = i % width
+    const y = (i - x) / width
+    const p = palier[i]!
+    for (const [vx, vy] of [[x + 1, y], [x - 1, y], [x, y + 1], [x, y - 1]] as const) {
+      if (vx < 0 || vy < 0 || vx >= width || vy >= height) continue
+      const j = vy * width + vx
+      if (palier[j]! > p && terrain[j] !== TERRAIN_ROCK) return true
+    }
+    return false
+  }
   const elireLesRampes = (): void => {
     rampes = []
     reliees = new Map()
@@ -1573,6 +1642,15 @@ export function poserLesTerrasses(
         if (!l.includes(r)) l.push(r)
       }
     }
+    /** Élire une candidate ET la compter aussitôt dans `servies`. Partagé par (iv) et (v) : les
+     *  deux règles ajoutent des rampes dans la même passe, et l'une doit voir ce que l'autre vient
+     *  d'élire — sans quoi (v) recompterait une terrasse que (iv) vient de servir. */
+    const elireEtServir = (x: number, y: number): void => {
+      elire(x, y, pris)
+      const cle = comp[y * width + x]! * nComp + comp[(y + 1) * width + x]!
+      const liste = reliees.get(cle)!
+      servir(liste[liste.length - 1]!)
+    }
     for (let id = 0; id < nComp; id++) {
       // ⚠ LE CAS « AUCUNE RAMPE » EST LAISSÉ À `garantir`, DÉLIBÉRÉMENT — ce n'est pas un oubli.
       // Sans rampe en place, l'écart d'une candidate ne se mesure à RIEN : `bestEcart` reste 0 et
@@ -1595,10 +1673,85 @@ export function poserLesTerrasses(
         if (e > bestEcart) { bestEcart = e; best = c }
       }
       if (best === null || bestEcart < FLANC.SECTEUR) continue
-      elire(best.x, best.y, pris)
-      const cle = comp[best.y * width + best.x]! * nComp + comp[(best.y + 1) * width + best.x]!
-      const liste = reliees.get(cle)!
-      servir(liste[liste.length - 1]!)
+      elireEtServir(best.x, best.y)
+    }
+    // (v) LE CONFORT — AUCUN PIED DE MUR À PLUS DE `PIED_DE_MUR_MAX` D'UNE MONTÉE.
+    //
+    // ⚠ C'EST UNE TROISIÈME LOI, ET LE TROISIÈME SENS DU MOT « RAMPE » DANS CETTE FONCTION.
+    // (iii) ESPACE les rampes le long d'un bord (`RAMPE_PAS`, 48) ; (iv) en veut DEUX par terrasse,
+    // écartées (`FLANC.SECTEUR`, 18) ; (v) borne CE QU'ON MARCHE avant d'en trouver une. Un
+    // espacement ne borne pas un détour, et c'est exactement par là que la promesse a menti :
+    // MESURÉ le 2026-09-21, (iii) laissait des pieds de mur à 67, 81, 95 et 91 tuiles de la montée
+    // la plus proche — 4 à 5 HAUTEURS d'écran, et pas UNE terrasse couverte à 36. L'en-tête de
+    // `TERRASSES.PIED_DE_MUR_MAX` porte la mesure, le choix de 64 et son coût.
+    //
+    // ⚠ ON N'ÉLIT QUE DES CANDIDATES DÉJÀ PORTÉES PAR LE TERRAIN — ON NE CREUSE JAMAIS (décision
+    // d'Alexis, 2026-09-21). Un pied de mur sans candidate à portée RESTE DÉCOUVERT : c'est la
+    // réserve « là où le terrain en offre une », et elle est assumée, pas contournée. Le creusement
+    // de §6e répond de l'AGENCE — un CHOIX qui manque ; la longueur d'un trajet n'est pas un choix.
+    //
+    // ⚠ « AUCUNE MONTÉE » N'EST PAS L'AFFAIRE DE (v), pas plus que de (iv) : une terrasse que rien
+    // ne rejoint est un défaut d'ATTEINTE, dont répond `garantir` (§6). Sans montée, la distance ne
+    // se mesure à rien.
+    //
+    // ⚠ COMME (i-iv), ON NE FAIT QU'AJOUTER : aucune tuile ne bouge, le point fixe ne se rouvre pas.
+    for (let id = 0; id < nComp; id++) {
+      if (palierDe[id]! <= 0 || taille[id]! < TERRASSES.MIETTE_TUILES * 4) continue
+      const p = palierDe[id]!
+      // UNE RAMPE QU'ON DESCEND N'EST PAS UNE FAÇON DE MONTER. `servies` range sous les DEUX bouts
+      // (tête et pied) ; la couverture ne compte que les MONTÉES, celles dont le pied est ici.
+      const montees = (servies.get(id) ?? []).filter((r) => r.de === p)
+      if (montees.length === 0) continue
+      // Une terrasse dont l'emprise est plus courte que le plafond passe toute seule — sa montée
+      // est SUR elle, donc à moins d'une emprise de chacune de ses tuiles. Rien à exclure à la main.
+      const murs: number[] = []
+      for (let m = debut[id]!; m < debut[id + 1]!; m++) {
+        const i = membres[m]!
+        if (estUnPiedDeMur(i)) murs.push(i)
+      }
+      if (murs.length === 0) continue // aucune paroi à longer : la loi ne dit rien de cette terrasse
+      /** La distance du k-ième pied de mur à un point — le pied d'une rampe, ou celui d'une
+       *  candidate (sa rangée `y + 1`). Chebyshev : un PLANCHER sur ce qui se marche, jamais un
+       *  majorant, donc une couverture prouvée ici l'est aussi sur le trajet réel. */
+      const distA = (x: number, y: number, k: number): number => {
+        const i = murs[k]!
+        const mx = i % width
+        const my = (i - mx) / width
+        return Math.max(Math.abs(x - mx), Math.abs(y - my))
+      }
+      const dist = new Int32Array(murs.length)
+      const vivant = new Uint8Array(murs.length).fill(1)
+      for (let k = 0; k < murs.length; k++) {
+        let d = width + height
+        for (const r of montees) { const e = distA(r.x, r.y, k); if (e < d) d = e }
+        dist[k] = d
+      }
+      const cands = parComp.get(id) ?? []
+      // CHAQUE TOUR ÉLIT UNE RAMPE OU ÉTEINT UN PIED DE MUR — la boucle se termine, et la borne le
+      // dit À LA LECTURE au lieu de l'espérer d'un compteur large.
+      const tours = murs.length + cands.length + 1
+      for (let t = 0; t < tours; t++) {
+        let pire: number = TERRASSES.PIED_DE_MUR_MAX
+        let kPire = -1
+        for (let k = 0; k < murs.length; k++) if (vivant[k] === 1 && dist[k]! > pire) { pire = dist[k]!; kPire = k }
+        if (kPire < 0) break
+        // LA CANDIDATE LA PLUS PROCHE DU PIRE PIED DE MUR, parmi celles qui MONTENT depuis cette
+        // terrasse : `parComp` range sous les deux bouts, et `comp[(c.y + 1) …] === id` retient
+        // celles dont le PIED est ici.
+        let best: { x: number; y: number } | null = null
+        let bestD = width + height
+        for (const c of cands) {
+          if (comp[(c.y + 1) * width + c.x] !== id || !libre(c.x, c.y)) continue
+          const d = distA(c.x, c.y + 1, kPire)
+          if (d < bestD) { bestD = d; best = c }
+        }
+        if (best === null || bestD > TERRASSES.PIED_DE_MUR_MAX) { vivant[kPire] = 0; continue }
+        elireEtServir(best.x, best.y)
+        for (let k = 0; k < murs.length; k++) {
+          const e = distA(best.x, best.y + 1, k)
+          if (e < dist[k]!) dist[k] = e
+        }
+      }
     }
   }
 

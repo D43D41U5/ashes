@@ -136,6 +136,9 @@ const SUITES = [
   //   gardé pour tous les lieux). Suite à 2460 ✓ sur l'arbre (2 sautés) ; plancher inchangé (2360).
   //   ⚠ A13 (`zonegen.test.ts`, < 20 s) tient à 17,7 s machine calme et rougit à 22 s sous les
   //   cinq workers à cache froid : une garde de temps se juge seule, pas dans la suite chargée.
+  // 2026-09-21 : +4 gardes T-A14 — aucun pied de mur à plus d'un PLAFOND d'une montée, là où le
+  //   terrain en offre une (`terrasses.test.ts`, spec `terrasses.md` §5, 4 graines). Suite à 2468 ✓
+  //   sur l'arbre (2 sautés) ; plancher inchangé (2360).
   { nom: 'sim', dir: 'packages/sim', args: ['run', '--exclude', 'src/scenario.test.ts'], plancher: 2360 },
   // 2026-09-01 : +10 gardes avec le RENDU des étages (`plateau-art.test.ts`).
   // 2026-09-01 : +9 gardes avec le TRI DES ÉTAGES (strate, découvert — `framing.test.ts`),
