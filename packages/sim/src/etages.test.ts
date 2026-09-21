@@ -147,7 +147,7 @@ describe('E-A2 — même graine, mêmes étages', () => {
       expect(a.palier).toEqual(b.palier)
       expect(a.palier).toBeDefined()
       expect(a.connecteurs!.length).toBeGreaterThan(0) // la garde ne peut pas passer à vide
-    }, 60_000)
+    }, 120_000) // deux générations du monde joué : ~17 s chacune depuis la carte doublée (2026-09-20), plus la suite en parallèle
   }
 })
 

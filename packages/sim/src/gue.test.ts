@@ -21,6 +21,7 @@
 import { describe, expect, it } from 'vitest'
 import { TERRAIN_SHALLOW_WATER } from './balance'
 import { isBlockedAt } from './collision'
+import { palierDuSol } from './etages'
 import { CONTENU, placeZoneNodes } from './zone-content'
 import { carteDeTest } from '../../../tools/carte-cache'
 import { MONDE } from './zonegraph'
@@ -163,14 +164,19 @@ describe('les pierres du gué — un passage qu’on lit parce qu’on le contou
     const z = guesDe(m.c)[0]!
     const pierres = pierresDe(m, z)
     expect(pierres.length, 'aucune pierre : la garde de collision ne prouverait rien').toBeGreaterThan(0)
-    const world = { map: m.c.map, nodes: m.nodes }
+    // LE DÉPLACEUR EST SUR LE PALIER DU GUÉ : la collision lit les nœuds de l'étage du corps
+    // (`etageCourant`, E-R5), et un nœud au sol est indexé sous le palier de sa tuile. Sans
+    // `etages`, le monde de test juge depuis l'étage 0 — vrai par hasard tant que le premier gué
+    // de la graine 2026 vivait au palier 0 ; depuis le flanc (2026-09-20, quatre paliers) il est
+    // plus haut, et la pierre « se traversait » : c'était le test qui regardait le mauvais étage.
+    const surLePalier = (nodes: ResourceNode[], p: ResourceNode) => ({ map: m.c.map, nodes, etages: [palierDuSol(m.c.map, p.tx, p.ty)] })
     for (const p of pierres) {
-      expect(isBlockedAt(world, p.tx, p.ty), `la pierre (${p.tx},${p.ty}) se traverse`).toBe(true)
+      expect(isBlockedAt(surLePalier(m.nodes, p), p.tx, p.ty), `la pierre (${p.tx},${p.ty}) se traverse`).toBe(true)
     }
     // ÉPUISÉE, elle cesse de bloquer : dégager son gué est un chantier qui SE TERMINE.
     const vides = m.nodes.map((n) => (pierres.includes(n) ? { ...n, stock: 0 } : n))
     for (const p of pierres) {
-      expect(isBlockedAt({ map: m.c.map, nodes: vides }, p.tx, p.ty)).toBe(false)
+      expect(isBlockedAt(surLePalier(vides, p), p.tx, p.ty)).toBe(false)
     }
   })
 })

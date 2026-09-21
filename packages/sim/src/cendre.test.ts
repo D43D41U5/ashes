@@ -149,9 +149,16 @@ describe('A3/A4 — le calendrier tient, et la cendre ne recule jamais', () => {
     // **42,0 %**. La même géométrie, dans l'autre sens : l'eau de la Racine recule de 16 à 11 %,
     // la cendre contourne moins, et le 6ᵉ hiver remonte vers la moitié d'origine (46 % avant
     // l'hydrologie dérivée). `A` toujours intact ; la fenêtre suit la mesure, à ±20 % près.
+    // ⚑ RE-MESURÉ le 2026-09-20 (LA CARTE JOUÉE DOUBLE EN HAUTEUR, 852 → 1 700 rangées) : 42,0 % →
+    // **27,1 %** au jour 720 (10,6 % au jour 240, 43,2 % au jour 1440). `A` toujours intact : la
+    // cendre avance à la même vitesse ABSOLUE (un coût de champ, en tuiles) sur un pays deux fois
+    // plus haut — la moitié de la vallée vient au 12ᵉ hiver, plus au 6ᵉ. ⚠ CONSÉQUENCE DE DESIGN
+    // SIGNALÉE, non décidée : garder « la moitié au 6ᵉ hiver » demande de redériver `A` (≈ ×√2,
+    // la surface ayant doublé) ; garder `A`, c'est accepter une pression plus lente. La fenêtre
+    // suit la mesure, à ±20 % près.
     const part = partCendree(720)
-    expect(part).toBeGreaterThan(0.34)
-    expect(part).toBeLessThan(0.50)
+    expect(part).toBeGreaterThan(0.22)
+    expect(part).toBeLessThan(0.33)
     const nodes = placeZoneNodes(monde)
     const empl = emplacementsDeVillage(monde, nodes, {
       coinsDeChasse: placeHuntingGrounds(map, SEED), nids: nidsAMonstre(map),
@@ -163,7 +170,10 @@ describe('A3/A4 — le calendrier tient, et la cendre ne recule jamais', () => {
     // des gueules — 49 sites au lieu de 50, et **22 pris sur 49 = 44,9 %** au lieu de ≥ 45 %.
     // La vallée, elle, n'a pas bougé (42 %) : c'est le DÉNOMINATEUR qui s'est déplacé, pas la
     // cendre. Borne reposée à 40 %, à ±20 % de la mesure, comme la fenêtre de vallée.
-    expect(pris / empl.length, 'le repère de pression, en sites').toBeGreaterThan(0.40)
+    // ⚑ RE-MESURÉ le 2026-09-20 (carte doublée) : **39 sites pris sur 102 = 38,2 %** — deux fois
+    // plus de sites sur deux fois plus de pays, et la cendre en prend une part à peine plus
+    // faible (les sites se serrent vers le sud, où elle naît). Borne reposée à 30 %, même règle.
+    expect(pris / empl.length, 'le repère de pression, en sites').toBeGreaterThan(0.30)
   }, 120_000)
 
   it('A4 — monotone non décroissante, balayée jour par jour sur vingt ans', () => {

@@ -29,8 +29,10 @@ import type { Escalier } from './zonegen-hydro'
 export type { Escalier } from './zonegen-hydro'
 
 export const TERRASSES = {
-  /** Combien de paliers — trois, aux terciles de `altLarge` (décision du 2026-09-03). */
-  PALIERS: 3,
+  /** Combien de paliers — aux quantiles de `altLarge`. Trois (terciles) du 2026-09-03 au
+   *  2026-09-20 ; **quatre depuis le flanc** (spec `flanc.md` F-R5), choisi à l'œil sur la planche
+   *  rendue à la pente 2 : trois parois à gravir du sud au nord, des bandes de ~200 rangées. */
+  PALIERS: 4,
   /**
    * En dessous de cette taille (tuiles marchables d'un seul tenant, même palier), une poche de
    * terrasse est une MIETTE : fondue dans le palier voisin majoritaire. Mesuré (graine 2026) :
@@ -393,8 +395,19 @@ export function poserLesTerrasses(
       for (let x = 0; x < width; x++) palier[y * width + x] = cellules[celluleDe(socle, x, y)]!
     }
   }
-  const marchable = (i: number): boolean => MARCHABLE[terrain[i]!] === 1
-  const eau = (i: number): boolean => isWater(terrain[i]!)
+  // LE TERRAIN NE BOUGE PLUS ICI, seules les hauteurs bougent : ses deux prédicats se lisent
+  // une fois pour toutes, un octet par tuile — le point fixe ne relit plus le tableau de nombres
+  // à chaque voisin de chaque passe (MESURÉ 2026-09-20, carte doublée 1581×1700 : `etiqueter`
+  // pesait 1,3 s à lui seul). Au bit près : ce sont les mêmes questions, posées plus tôt.
+  const marchableT = new Uint8Array(N)
+  const eauT = new Uint8Array(N)
+  for (let i = 0; i < N; i++) {
+    const t = terrain[i]!
+    marchableT[i] = MARCHABLE[t]!
+    eauT[i] = isWater(t) ? 1 : 0
+  }
+  const marchable = (i: number): boolean => marchableT[i] === 1
+  const eau = (i: number): boolean => eauT[i] === 1
   const marais = (i: number): boolean =>
     terrain[i] === TERRAIN_MARSH || terrain[i] === TERRAIN_PEAT_BOG || terrain[i] === TERRAIN_REED_MARSH
 
@@ -1191,16 +1204,17 @@ export function poserLesTerrasses(
         const i = file[h]!
         if (!figee(i)) pure = 0
         const x = i % width
-        const y = (i - x) / width
-        for (const [dx, dy] of VOISINS4) {
-          const nx = x + dx
-          const ny = y + dy
-          if (nx < 0 || ny < 0 || nx >= width || ny >= height) continue
-          const j = ny * width + nx
-          if (comp[j] !== -1 || !marchable(j) || palier[j] !== p) continue
-          comp[j] = id
-          file.push(j)
-        }
+        // Les quatre voisins DÉROULÉS, dans l'ordre exact de VOISINS4 (est, ouest, sud, nord) :
+        // l'ordre de la file fait l'ordre des membres, donc celui de toutes les passes — il ne
+        // bouge pas. C'est la boucle la plus chaude du point fixe (trois étiquetages par carte).
+        let j = i + 1
+        if (x + 1 < width && comp[j] === -1 && marchableT[j] === 1 && palier[j] === p) { comp[j] = id; file.push(j) }
+        j = i - 1
+        if (x > 0 && comp[j] === -1 && marchableT[j] === 1 && palier[j] === p) { comp[j] = id; file.push(j) }
+        j = i + width
+        if (j < N && comp[j] === -1 && marchableT[j] === 1 && palier[j] === p) { comp[j] = id; file.push(j) }
+        j = i - width
+        if (j >= 0 && comp[j] === -1 && marchableT[j] === 1 && palier[j] === p) { comp[j] = id; file.push(j) }
       }
       tailles.push(file.length)
       pals.push(p)
@@ -1606,6 +1620,78 @@ export function poserLesTerrasses(
     return false
   }
 
+  /**
+   * ── 6d. COMBLER LE GUÉ — quand un chenal d'une tuile coupe un isthme ──────────────────────
+   *
+   * Le cas, MESURÉ sur la carte doublée (2026-09-20, graine 7) : une ÎLE de 3 921 tuiles dans le
+   * grand lac du sud — 391 tuiles de son pourtour sont de l'eau profonde, et son seul lien avec le
+   * continent est une crête de DEUX colonnes au palier 1… que quatre tuiles d'eau courante au
+   * palier 0 traversent de part en part. À plat, on passe le gué à pied sec ou presque ; en
+   * étages, l'eau est un cran sous ses deux rives, et aucune rampe ne tient sur deux colonnes
+   * (il en faut `RAMPE_LARGEUR`). L'île entière se perdait : T-A2 comptait 3 922 tuiles de terre
+   * hors d'atteinte pour une borne de 40.
+   *
+   * Alors on COMBLE : le chenal remonte au palier de ses rives. Ce n'est pas un geste de plus
+   * dans le vocabulaire — c'est le GUÉ de §5, celui dont la rampe a le pied dans l'eau, écrit là
+   * où la rampe ne peut pas naître. Les conditions sont strictes, et chacune protège un invariant :
+   *   · l'eau est COURANTE (jamais un lac : un lac ne se soulève pas, T-A3) et tient en
+   *     `GUE_TUILES` tuiles — un chenal, pas un bras de mer ;
+   *   · TOUTE la terre qui le borde est au même palier `p` (les deux rives sont de plain-pied) et
+   *     l'une d'elles au moins est déjà atteinte — sinon on comblerait vers nulle part ;
+   *   · aucune eau plus basse que le chenal ne le touche — on ne perche pas une eau au-dessus
+   *     d'une autre plus loin que la marche d'un palier.
+   * Ce qui reste après : le chenal à `p` entre ses deux rives à `p`, et le lac à `p − 1` de part
+   * et d'autre — une chute d'un palier, large d'une tuile, à chaque bout (jamais une digue :
+   * T-A3bis ne compte que l'eau PROFONDE, et celle-ci est un haut-fond).
+   */
+  const GUE_TUILES = 12
+  const comblerLeGue = (terre: readonly number[], p: number, atteinte: Uint8Array): boolean => {
+    if (p < 1) return false
+    for (const i of terre) {
+      const x = i % width
+      const y = (i - x) / width
+      for (const [dx, dy] of VOISINS4) {
+        const nx = x + dx
+        const ny = y + dy
+        if (nx < 0 || ny < 0 || nx >= width || ny >= height) continue
+        const depart = ny * width + nx
+        if (!eau(depart) || deLaNappe(depart) || palier[depart] !== p - 1) continue
+        const chenal = [depart]
+        const dedans = new Set<number>([depart])
+        let ok = true
+        let touche = false
+        for (let h = 0; h < chenal.length && ok; h++) {
+          if (chenal.length > GUE_TUILES) { ok = false; break }
+          const k = chenal[h]!
+          const kx = k % width
+          const ky = (k - kx) / width
+          for (const [ex, ey] of VOISINS4) {
+            const vx = kx + ex
+            const vy = ky + ey
+            if (vx < 0 || vy < 0 || vx >= width || vy >= height) { ok = false; break }
+            const v = vy * width + vx
+            if (eau(v)) {
+              if (palier[v]! < p - 1) { ok = false; break }
+              if (palier[v] === p - 1 && !deLaNappe(v) && !dedans.has(v)) { dedans.add(v); chenal.push(v) }
+              continue
+            }
+            if (!marchable(v)) continue // la roche borde un chenal : elle ne dit rien du palier
+            if (palier[v] !== p) { ok = false; break }
+            if (atteinte[v] === 1) touche = true
+          }
+        }
+        if (!ok || !touche || chenal.length > GUE_TUILES) continue
+        for (const k of chenal) {
+          palier[k] = p
+          atteinte[k] = 1
+        }
+        for (const t of terre) if (marchable(t)) atteinte[t] = 1
+        return true
+      }
+    }
+    return false
+  }
+
   const garantir = (): number => {
     if (nComp === 0) return 0
     const adj: number[][] = Array.from({ length: nComp }, () => [])
@@ -1860,7 +1946,9 @@ export function poserLesTerrasses(
             const j = membres[m]!
             if (eau(j) && atteinte[j] === 0) ceinture.push(j)
           }
-          if (ceinture.length > 0 && creuserUneDescente(ceinture, p, atteinte)) n++
+          if (ceinture.length > 0 && creuserUneDescente(ceinture, p, atteinte)) { n++; continue }
+          // Et si rien ne se creuse : le gué d'une tuile qui la coupait du continent se comble (§6d).
+          if (comblerLeGue(terre, p, atteinte)) n++
           continue
         }
         // Sur l'escalier, LA PIÈCE AU-DESSUS D'UNE TERRE ATTEINTE SE CREUSE AVANT DE FONDRE : la
@@ -1948,6 +2036,13 @@ export function poserLesTerrasses(
   // Une remise à plat qui a le DERNIER mot ne coûte rien ; la même, disputée à chaque tour, ne
   // converge pas. Il reste 1 tuile perchée sur la graine 4242, pour une borne de 5.
   if (escalier) nivelerLesMarais()
+  // ET LES RAMPES SE RELISENT APRÈS LUI (2026-09-20) : `nivelerLesMarais` DÉPLACE des paliers —
+  // c'est tout son objet — et les rampes élues juste avant gardaient alors le `de` d'un sol qui
+  // n'existe plus. MESURÉ sur la carte doublée, graine 2026 : deux rampes en (164,604) et
+  // (165,604), sur du marais, annonçaient `de = 1` sur une tuile devenue palier 2 — E-A5 et T-A2
+  // rougissaient sur « marchable en 1 ». L'élection ne fait que LIRE le champ (aucune tuile ne
+  // bouge), donc la relancer ne peut pas rouvrir le point fixe : elle le constate.
+  if (escalier) { etiqueter(); elireLesRampes() }
   return { palier, rampes, tours }
 }
 

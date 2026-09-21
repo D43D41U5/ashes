@@ -237,7 +237,15 @@ describe('A1/A2 — les coins de pêche existent, sont joignables, et viennent e
     // pêcherie qui se REDÉCOUPE. Un lac vit désormais sur UN palier : celui qui enjambait une
     // marche devient deux lacs, chacun avec son quota (mesuré : 92 → 103 plans d'eau profonde
     // sur la seed 2026, et 127 → 138 coins). Même plafond de lisibilité, même consigne.
-    expect(coins.length).toBeLessThanOrEqual(140)
+    // 140 → 150 le 2026-09-20 (LE FLANC — `flanc.md` : pente 2 dans l'uplift et QUATRE paliers) :
+    // la pêcherie se redécoupe une fois de plus, un lac par palier sur quatre au lieu de trois ;
+    // MESURÉ 138 → 141 coins sur la seed 2026. Même plafond de lisibilité, même consigne — la
+    // conséquence d'équilibrage du ⚠ ci-dessus reste à trancher, et pas ici.
+    // LE PLAFOND EST UNE DENSITÉ depuis la carte doublée (2026-09-20, 852 → 1 700 rangées) : 150
+    // coins pour 1581 × 852 tuiles, au prorata de la surface jouée — MESURÉ 141 → 260 coins sur la
+    // seed 2026, la même pêcherie sur deux fois plus de pays. La consigne du ⚠ ne change pas.
+    const plafond = Math.round(150 * (carte.map.width * carte.map.height) / (1581 * 852))
+    expect(coins.length).toBeLessThanOrEqual(plafond)
     // A2 (reprise de l'eau, 2026-09-12) : les coudes de TOUS les fleuves. Avant, 5 coins de rivière
     // sur la seed 2026 (les cinq autres fleuves passaient pour des lacs) ; l'éclaireur en a
     // mesuré +28 — la borne dit qu'on n'est pas retombé au fleuve seul.
@@ -272,7 +280,10 @@ describe('A1/A2 — les coins de pêche existent, sont joignables, et viennent e
       if (!pres) horsBande += 1
     }
     expect(horsBande, 'le lit peint déborde la bande').toBeGreaterThan(1000)
-    const maxAutre = Math.max(...autres.map((n) => n.id))
+    // ⚠ EN BOUCLE, JAMAIS EN SPREAD : `Math.max(...)` sur les nœuds du monde joué déborde la pile
+    // depuis la carte doublée (2026-09-20, 191 k nœuds — « Maximum call stack size exceeded »).
+    let maxAutre = -1
+    for (const n of autres) if (n.id > maxAutre) maxAutre = n.id
     for (const k of coins) {
       expect(k.id, 'en queue : aucun nœud d’avant ne bouge (P5)').toBeGreaterThan(maxAutre)
       const i = k.ty * width + k.tx

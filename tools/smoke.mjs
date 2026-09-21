@@ -2422,9 +2422,13 @@ const SCENARIOS = {
     }
     const estRampe = await page.evaluate(() => {
       const map = window.__BRAISES__.scene.map
-      return (map.connecteurs ?? []).some((c) => c.x === 93 && c.y === 739 && c.type === 'rampe' && c.de === 1 && c.vers === 2) && (map.palier?.[739 * map.width + 93] ?? -1) === 1
+      return (map.connecteurs ?? []).some((c) => c.x === 75 && c.y === 728 && c.type === 'rampe' && c.de === 1 && c.vers === 2) && (map.palier?.[728 * map.width + 75] ?? -1) === 1
     })
-    if (!estRampe) { console.error('!! terrasses : (93,739) n’est pas une rampe de terrasse 1→2 — écrit pour la graine 2026'); return }
+    // ⚠ LA GARDE DOIT VISER LE MÊME SITE QUE LE CORPS. Elle a testé (71,386) — un site de l'ère
+    // FLANC — pendant que les sept vues ci-dessous regardaient déjà (75,728), celui de la carte
+    // DOUBLÉE : le scénario s'avortait sur son propre garde-fou, et le ✗ accusait le jeu au lieu
+    // du montage. Recalé le 2026-09-21 contre `tools/__sites-flanc.mts` rejoué sur le monde JOUÉ.
+    if (!estRampe) { console.error('!! terrasses : (75,728) n’est pas une rampe de terrasse 1→2 — écrit pour la graine 2026, re-relevé le 2026-09-21 (carte doublée, `tools/__sites-flanc.mts`)'); return }
     const poserT = async (nom) => {
       await page.evaluate(() => window.__BRAISES__.scene.game.loop.sleep())
       // CONVERGÉ = `renderOffset` résorbé — pas « le sprite est à la hauteur du corps » : sur un
@@ -2480,27 +2484,27 @@ const SCENARIOS = {
     }
     await agirT({ type: 'debug_god' }, 400)
     // ── LE PIED DE LA RAMPE (palier 1) : la paroi 1→2 en face, le palier 0 en bas du cadre.
-    await vue('terrasse-pied', 93, 741)
+    await vue('terrasse-pied', 75, 730)
     // ── SUR LA RAMPE : le corps à mi-pente.
-    await vue('terrasse-rampe', 93, 739)
+    await vue('terrasse-rampe', 75, 728)
     // ── EN HAUT (palier 2), le dos aux deux paliers du bas.
-    await vue('terrasse-haut', 93, 736)
-    // ── DE LOIN, du sud-ouest (la poche au palier 0) : l'escalier des trois paliers.
-    await vue('terrasse-loin', 101, 752)
-    // ── L'EAU HAUTE : le lac du palier 2, depuis sa rive est.
-    await vue('terrasse-lac', 1357, 544)
-    // ── LA CASCADE : un fleuve qui tombe de 1 à 0 vers le sud, vu du pied.
-    // CE QUI FERAIT ROUGIR : la ligne (700-704, 278-279) n'est plus détectée comme chute (0
+    await vue('terrasse-haut', 75, 725)
+    // ── DE LOIN, du sud-ouest, treize rangées plus bas sur le palier 1 : la paroi 1→2 et sa rampe.
+    await vue('terrasse-loin', 68, 741)
+    // ── L'EAU HAUTE : le grand lac du palier 2, depuis sa rive est.
+    await vue('terrasse-lac', 709, 678)
+    // ── LA CASCADE : un fleuve qui tombe de 1 à 0 vers le sud, vu du pied (carte doublée, 2026-09-20).
+    // CE QUI FERAIT ROUGIR : la ligne (1080-1087, 927) n'est plus détectée comme chute (0
     // colonne — de la roche à la place de la nappe, le « barrage » d'avant) ; une colonne comptée
     // sans ses sprites (nappe < LIFT_TUILES × colonnes, ou pas d'écume) ; ou un pied sans une
     // seule particule vivante après `fastForward`.
-    const casc = await vue('terrasse-cascade', 704, 281)
-    if (casc.chutes < 1) console.error(`!! cascade : aucune colonne de chute posée (attendu ≥ 1, la ligne 700-704 × 278-279)`)
+    const casc = await vue('terrasse-cascade', 1089, 929)
+    if (casc.chutes < 1) console.error(`!! cascade : aucune colonne de chute posée (attendu ≥ 1, la ligne 1080-1087 × 927)`)
     else if (casc.nappe < casc.chutes * 2 || casc.ecume < casc.chutes) console.error(`!! cascade : ${casc.chutes} colonnes mais nappe=${casc.nappe} écume=${casc.ecume}`)
     else if (casc.gouttes < 1) console.error(`!! cascade : ${casc.chutes} colonnes et aucune particule vivante au pied`)
     else console.log(`   ✓ cascade : ${casc.chutes} colonnes, ${casc.nappe} sprites de nappe, ${casc.ecume} d'écume, ${casc.gouttes} particules vivantes`)
     // LA VOIX (B1) : au pied de la chute, la nappe demande un niveau > 0 sur ≥ 1 colonne, et
-    // penche À GAUCHE (les colonnes 700-704 ont leur milieu à l'ouest de 704,5) — ce qui ferait
+    // penche À GAUCHE (les colonnes 1080-1087 ont leur milieu à l’ouest de 1089,5) — ce qui ferait
     // rougir : 0 colonne (la carte des chutes n'a pas été lue), gain 0 (la machine ne tourne pas),
     // ou un pan à droite (le côté est inversé).
     const v = casc.voix
@@ -2509,7 +2513,7 @@ const SCENARIOS = {
     else if (v.pan > 0.02) console.error(`!! cascade : la voix penche à droite (pan ${v.pan}) alors que la chute est à l'ouest`)
     else console.log(`   ✓ voix de la cascade : ${v.colonnes} colonnes à portée, niveau ${v.gain}, pan ${v.pan}, coupe ${v.hz} Hz`)
     // ── LA NUIT au pied de la rampe : les paliers hauts prennent la même nuit que le sol.
-    await vue('terrasse-nuit', 93, 741, 1)
+    await vue('terrasse-nuit', 75, 730, 1)
     console.log(`   → ${OUT}/terrasse-*.png : pied, rampe, haut, loin, lac, cascade, nuit`)
   },
 
@@ -2542,16 +2546,16 @@ const SCENARIOS = {
       console.log(`   ${nom} ${JSON.stringify(r)}`)
       return r
     }
-    const pied = await lire('pied (704,281)     ', 704, 281)
-    const est10 = await lire('est +10 (714,281)  ', 714, 281)
-    const est30 = await lire('est +30 (734,281)  ', 734, 281)
-    const loin = await lire('lac (1357,544)     ', 1357, 544)
+    const pied = await lire('pied (1089,929)    ', 1089, 929)
+    const est10 = await lire('est +10 (1099,929) ', 1099, 929)
+    const est30 = await lire('est +30 (1119,929) ', 1119, 929)
+    const loin = await lire('lac (709,678)      ', 709, 678)
     const ok = (c, m) => (c ? console.log(`   ✓ ${m}`) : console.error(`!! ${m}`))
     // MESURÉ le 2026-09-12 : 66 colonnes sur la graine 2026 (18 cascades face sud, T-A9) — pas les
     // 437 « marches sud » de T-R8quater, qui comptent aussi celles dont le pied n'est pas de l'eau.
     ok(pied.chutesCarte >= 10, `la carte a des chutes : ${pied.chutesCarte} colonnes (66 mesurées sur la graine 2026)`)
     ok(pied.voix && pied.voix.colonnes >= 1 && pied.voix.gain > 0, `au pied, la voix parle : ${JSON.stringify(pied.voix)}`)
-    ok(pied.voix && pied.voix.pan <= 0.02, `au pied, elle penche à gauche ou au centre (chute 700-704) : pan ${pied.voix?.pan}`)
+    ok(pied.voix && pied.voix.pan <= 0.02, `au pied, elle penche à gauche ou au centre (chute 1080-1087) : pan ${pied.voix?.pan}`)
     ok(est10.voix && est10.voix.gain > 0 && est10.voix.gain < pied.voix.gain && est10.voix.pan < -0.2, `à +10 à l'est : plus faible (${est10.voix?.gain} < ${pied.voix?.gain}) et à gauche (pan ${est10.voix?.pan})`)
     // Le VOILE ne mord qu'en bout de queue : à 30 t, `placer` coupe vers 7 kHz, bien au-dessus du
     // timbre (900 Hz) — le `min` de `buildSound` garde le plus bas. La distance se lit au niveau.
@@ -2561,7 +2565,7 @@ const SCENARIOS = {
 
   // ═══ SONDE JETABLE (2026-09-04) : la cascade seule, jour et nuit — pour itérer à l'œil sans
   //     repayer les six autres vues de `terrasses`. Mêmes cibles datées (graine 2026, relevé
-  //     du 2026-09-11 : la cascade (700-704, 278-279), pied (704,281)). ═══
+  //     du 2026-09-11 : la cascade (1080-1087, 927), pied (1089,929)). ═══
   async __cascade(page) {
     if (!dev) { console.error('!! exige --dev'); return }
     const agirT = async (action, ms) => {
@@ -2570,7 +2574,7 @@ const SCENARIOS = {
     }
     const vue = async (nom, heure) => {
       await agirT({ type: 'debug_set_hour', hour: heure }, 1200)
-      await agirT({ type: 'debug_teleport', x: 704.5, y: 281.5 }, 2400)
+      await agirT({ type: 'debug_teleport', x: 477.5, y: 448.5 }, 2400)
       await page.evaluate(() => window.__BRAISES__.scene.game.loop.sleep())
       // Converger le sprite ET laisser vivre les particules : 90 images à 16 ms = 1,4 s de FX.
       const c = await page.evaluate(() => {
@@ -2664,13 +2668,13 @@ const SCENARIOS = {
    * ═══ LA MESA (2026-09-01) — voir le plateau, sa paroi et sa rampe. `--dev`. ═══
    *
    * Rampes relevées offline (`tools/__rampe-proche.mts`, graine 2026, monde joué) : la plus
-   * proche du spawn est en (291,106), à 77 tuiles — hors de tout ce qu'une caméra peut montrer,
+   * proche du spawn était en (900,161) avant le flanc — (112,188) depuis le 2026-09-20 — hors de tout ce qu'une caméra peut montrer,
    * donc TÉLÉPORTATION (la caméra ne déplace pas les nœuds).
    */
   /**
    * ═══ LA PENTE DE LA RAMPE (jetable, 2026-09-01) — « le personnage se téléporte en haut » ═══
-   * Colonne 291 de la mesa de la graine 2026 : on se pose à quatre hauteurs le long de la tuile
-   * de rampe (y=106) et on RELÈVE où la scène dessine le corps. `--dev` obligatoire (TP).
+   * Colonne 112 de la butte à gueule de la graine 2026 (re-relevée le 2026-09-20, le flanc) : on se pose à quatre hauteurs le long de la tuile
+   * de rampe (y=188) et on RELÈVE où la scène dessine le corps. `--dev` obligatoire (TP).
    */
   async pente(page) {
     if (!dev) { console.error('!! pente exige --dev'); return }
@@ -2699,19 +2703,19 @@ const SCENARIOS = {
       if (ecart >= 0.05) console.error(`!! ${nom} : le sprite n'est pas stabilisé (${ecart} px/image)`)
     }
     const estRampe = await page.evaluate(() => (window.__BRAISES__.scene.map.connecteurs ?? [])
-      .some((c) => c.x === 291 && c.y === 106))
-    if (!estRampe) { console.error('!! pente : (291,106) n’est pas une rampe — écrit pour la graine 2026'); return }
+      .some((c) => c.x === 900 && c.y === 161))
+    if (!estRampe) { console.error('!! pente : (900,161) n’est pas une rampe — écrit pour la graine 2026, re-relevé le 2026-09-20 (le flanc, puis la carte doublée)'); return }
     await agirP({ type: 'debug_set_hour', hour: 11 }, 1500)
     await agirP({ type: 'debug_god' }, 400)
     const releve = []
-    for (const [nom, y] of [['0-pied', 107.5], ['1-bas', 106.9], ['2-mi', 106.5], ['3-haut', 106.05]]) {
-      await agirP({ type: 'debug_teleport', x: 291.5, y }, 2200)
+    for (const [nom, y] of [['0-pied', 162.5], ['1-bas', 161.9], ['2-mi', 161.5], ['3-haut', 161.05]]) {
+      await agirP({ type: 'debug_teleport', x: 900.5, y }, 2200)
       await poserP(nom)
       const vu = await page.evaluate(() => {
         const sc = window.__BRAISES__.scene
         const me = (sc.lastEntities ?? []).find((en) => en.id === sc.playerId)
         // La RANGÉE D'ÉCRAN où la scène pose les pieds du sprite, et celle où elle peint la rampe.
-        const rampes = (sc.etages?.rampes ?? []).filter((im) => im.visible && Math.floor(im.x / 16) === 291)
+        const rampes = (sc.etages?.rampes ?? []).filter((im) => im.visible && Math.floor(im.x / 16) === 900)
           .map((im) => Math.round(im.y / 16 * 100) / 100).sort((a, b) => a - b)
         return {
           y: Math.round((me?.y ?? 0) * 100) / 100,
@@ -2731,7 +2735,7 @@ const SCENARIOS = {
     // prédite arrive sur le plateau avant que l'autorité n'ait dit +1. Avant le correctif il
     // était dessiné 2 tuiles trop bas (le plongeon) ; après, la carte tranche : la roche ne porte
     // personne à l'étage 0, donc on dessine à +1.
-    await agirP({ type: 'debug_teleport', x: 291.5, y: 103.5 }, 2200)
+    await agirP({ type: 'debug_teleport', x: 900.5, y: 158.5 }, 2200)
     await poserP('5-retard')
     const retard = await page.evaluate(() => {
       const sc = window.__BRAISES__.scene
@@ -2745,7 +2749,7 @@ const SCENARIOS = {
     await page.waitForTimeout(300)
 
     // Et le sommet : on y MARCHE (le TP efface l'étage — il viserait le sol, donc la roche).
-    await agirP({ type: 'debug_teleport', x: 291.5, y: 106.5 }, 2000)
+    await agirP({ type: 'debug_teleport', x: 900.5, y: 161.5 }, 2000)
     await page.keyboard.down('KeyW')
     await page.waitForTimeout(3000)
     await page.keyboard.up('KeyW')
@@ -2769,7 +2773,7 @@ const SCENARIOS = {
 
   /**
    * ═══ LA CAVE (2026-09-02) — l'étage −1, et l'obscurité qui s'y gagne ═══
-   * Mesa de la graine 2026 : rampe en 290-292/106, gueule en 294/106 — la MÊME butte.
+   * Butte de la graine 2026 : rampe en 531-533/201, gueule en 536-537/201 (re-relevée le 2026-09-20 pour le flanc, puis pour la carte doublée ; `pente` vise une autre mesa, 900/161).
    * On photographie le dehors, le seuil, puis le fond de la salle. `--dev` obligatoire.
    */
   async cave(page) {
@@ -2812,7 +2816,7 @@ const SCENARIOS = {
         y: Math.round((me?.y ?? 0) * 100) / 100, etage: me?.etage ?? 0,
         // La cave vit à `−(p + 1)` sous une mesa posée au palier `p` (grottes.md G-R1,
         // 2026-09-06) : l'attendu se LIT sur le relief, il ne s'écrit pas « -1 ».
-        etageAttendu: -(sc.relief.palier(294, 100) + 1),
+        etageAttendu: -(sc.relief.palier(537, 195) + 1),
         etageJoueur: sc.etageJoueur, souterrain: sc.etages?.souterrain ?? null,
         tuilesDeCaveVisibles: familles.sol ?? 0,
         familles,
@@ -2823,14 +2827,14 @@ const SCENARIOS = {
       }
     })
     const gueule = await page.evaluate(() => (window.__BRAISES__.scene.map.connecteurs ?? [])
-      .some((c) => c.x === 294 && c.y === 106 && c.type === 'gueule'))
-    // La gueule est une PAIRE (293,106)+(294,106) : on vise son centre, x = 294.0.
-    if (!gueule) { console.error('!! cave : (294,106) n’est pas une gueule — écrit pour la graine 2026'); return }
+      .some((c) => c.x === 537 && c.y === 201 && c.type === 'gueule'))
+    // La gueule est une PAIRE (536,201)+(537,201) : on vise son centre, x = 537.0.
+    if (!gueule) { console.error('!! cave : (537,201) n’est pas une gueule — écrit pour la graine 2026, re-relevé le 2026-09-20 (le flanc, puis la carte doublée)'); return }
     await agirC({ type: 'debug_set_hour', hour: 12 }, 1500)
     await agirC({ type: 'debug_god' }, 400)
 
     // ① DEHORS, devant la butte : la cave n'existe pas à l'écran (E-R1 au rendu).
-    await agirC({ type: 'debug_teleport', x: 294, y: 109.5 }, 2200)
+    await agirC({ type: 'debug_teleport', x: 537, y: 204.5 }, 2200)
     await stabiliser('dehors')
     console.log(`   → dehors : ${JSON.stringify(await releve())}`)
     await page.screenshot({ timeout: 120000, path: `${OUT}/cave-0-dehors.png` })
@@ -2854,8 +2858,8 @@ const SCENARIOS = {
       await page.keyboard.up('KeyW')
       await page.waitForTimeout(600)
     }
-    await agirC({ type: 'debug_teleport', x: 294, y: 107.4 }, 2000)
-    await marcherNord(105.2, 8000)
+    await agirC({ type: 'debug_teleport', x: 537, y: 202.4 }, 2000)
+    await marcherNord(200.2, 8000)
     await stabiliser('seuil')
     console.log(`   → seuil : ${JSON.stringify(await releve())}`)
     await page.screenshot({ timeout: 120000, path: `${OUT}/cave-1-seuil.png` })
@@ -2863,7 +2867,7 @@ const SCENARIOS = {
     await page.waitForTimeout(300)
 
     // ③ AU FOND — on continue vers le nord, sous le chapeau, jusqu'au mur.
-    await marcherNord(97.5, 8000)
+    await marcherNord(181.5, 8000)
     await stabiliser('fond')
     const fond = await releve()
     console.log(`   → fond : ${JSON.stringify(fond)}`)
@@ -2897,7 +2901,7 @@ const SCENARIOS = {
 
     // ⑥ ET LA GUEULE, DE DEHORS, LA NUIT — le souffle et le trou dans une paroi sans jour.
     await agirC({ type: 'debug_set_hour', hour: 12 }, 1500)
-    await agirC({ type: 'debug_teleport', x: 294, y: 109.5 }, 2200)
+    await agirC({ type: 'debug_teleport', x: 537, y: 204.5 }, 2200)
     await stabiliser('dehors-2')
     console.log(`   → dehors (retour) : ${JSON.stringify(await releve())}`)
     await page.screenshot({ timeout: 120000, path: `${OUT}/cave-5-dehors-retour.png` })
@@ -3364,18 +3368,18 @@ const SCENARIOS = {
     // ⚠ LA CIBLE EST DATÉE (graine 2026, monde joué) : sur une autre graine il n'y a pas de mesa
     // là, et le scénario photographierait un pré en silence. On le DIT plutôt que de le taire.
     const estRampe = await page.evaluate(() => (window.__BRAISES__.scene.map.connecteurs ?? [])
-      .some((c) => c.x === 291 && c.y === 106))
+      .some((c) => c.x === 900 && c.y === 161))
     if (!estRampe) {
-      console.error('!! mesa : (291,106) n’est pas une rampe dans ce monde — scénario écrit pour la graine 2026')
+      console.error('!! mesa : (900,161) n’est pas une rampe dans ce monde — scénario écrit pour la graine 2026 AVANT le flanc du 2026-09-20 : ses constantes mesurées (96,81, 104,19, la rangée 97…) sont à re-relever')
       return
     }
     await agirM({ type: 'debug_set_hour', hour: 11 }, 1500)
     await agirM({ type: 'debug_god' }, 400)
     // Le pied de la rampe, puis le sommet du plateau : deux points de vue sur la même butte.
     const vues = [
-      ['pied', 291, 110],   // en dessous, la paroi sud en face
-      ['rampe', 291, 106],  // sur la rampe elle-même
-      ['dessus', 291, 100], // au milieu du chapeau
+      ['pied', 900, 165],   // en dessous, la paroi sud en face
+      ['rampe', 900, 161],  // sur la rampe elle-même
+      ['dessus', 900, 155], // au milieu du chapeau
     ]
     for (const [nom, x, y] of vues) {
       await agirM({ type: 'debug_teleport', x: x + 0.5, y: y + 0.5 }, 2600)
@@ -3389,8 +3393,10 @@ const SCENARIOS = {
     // Question d'Alexis (2026-09-01) : « le dénivelé sur l'ensemble de la carte ». On ne va plus
     // à une mesa : on se pose ailleurs, là où il n'y avait rien avant, et on regarde le relief.
     let nT = 0
-    // Points relevés offline (tools/__ou-terrasse.mts) : de vraies barres de terrasse est-ouest.
-    for (const [x, y] of [[676, 208], [922, 266], [1088, 290]]) {
+    // Points relevés offline (`tools/__portrait.mts barres`) : de vraies barres de terrasse est-ouest,
+    // en terre sèche et loin de l'eau — re-relevés le 2026-09-20 sur la carte doublée (les trois
+    // d'avant, 676/208, 922/266, 1088/290, sont devenus du plat au palier 3).
+    for (const [x, y] of [[348, 138], [194, 292], [992, 327]]) {
       await agirM({ type: 'debug_teleport', x: x + 0.5, y: y + 0.5 }, 2600)
       await poser(`terrasse${nT}`)
       await page.screenshot({ timeout: 120000, path: `${OUT}/terrasse-${nT}.png` })
@@ -3738,9 +3744,9 @@ const SCENARIOS = {
    * quand je suis en haut d'une rampe que je suis en train de monter », « un flash noir lorsque
    * j'arrive à un étage supérieur ») ═══
    *
-   * Deux sites de la graine 2026 : la terrasse 0→1 en (1425,661) (sonde `__rampe-01`, sol droit
+   * Deux sites de la graine 2026 : la terrasse 0→1 en (100,1313) (re-relevée le 2026-09-20 pour le flanc puis pour la carte doublée, `tools/__sites-flanc.mts` et `__portrait.mts rampes01` ; avant : 76,644 puis 1425,661 — sol droit
    * 3 rangées au sud, 4 au nord, puis une SECONDE rampe 1→2 en 656 que la montée enchaîne) et la
-   * mesa (291,106). On part deux tuiles au sud, on tient le nord (`tenirLaDirection` : la boucle
+   * mesa (900,161 ; avant : 112,188, et avant le flanc 291,106). On part deux tuiles au sud, on tient le nord (`tenirLaDirection` : la boucle
    * endormie, la scène steppée au temps réel), et un crochet sur `sys.sceneUpdate` RELÈVE CHAQUE
    * PAS : la position prédite, l'étage d'autorité, la strate du sprite, le niveau et l'ouverture
    * du découvert, les trouées, les socles visibles.
@@ -3761,7 +3767,7 @@ const SCENARIOS = {
     }
     await agirR({ type: 'debug_set_hour', hour: 11 }, 1500)
     await agirR({ type: 'debug_god' }, 400)
-    for (const [nom, x, y] of [['terrasse', 1425, 661], ['mesa', 291, 106]]) {
+    for (const [nom, x, y] of [['terrasse', 100, 1313], ['mesa', 900, 161]]) {
       const site = await page.evaluate(([x, y]) => {
         const sc = window.__BRAISES__.scene
         return sc.etages.penteAt(x, y) ?? null

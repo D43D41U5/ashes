@@ -128,7 +128,7 @@ describe('G-A1 — déterminisme des karsts', () => {
     expect(a.map.connecteurs).toEqual(b.map.connecteurs)
     expect(a.map.zones).toEqual(b.map.zones)
     expect(a.map.terrain).toEqual(b.map.terrain)
-  }, 60_000)
+  }, 120_000) // deux générations du monde joué, ~17 s chacune depuis la carte doublée (2026-09-20)
 
   it('le chemin « vallee » (sans palier) ne porte aucun karst', () => {
     const c = generateZonedTerrain(2026, MONDE.JOUEURS_CIBLE, 'vallee')

@@ -247,15 +247,20 @@ describe('A1 — le débit survit à la génération (`map.debit`, décision d�
     expect(coule).toBeGreaterThan(30_000)
     expect(max).toBe(7)
     // Chaque point de fil hors lac coule ; et le plus gros fleuve grossit de la tête à la bouche
-    // (MESURÉ : 1,70 → 7,00 sur les dixièmes extrêmes).
+    // (MESURÉ : 1,70 → 7,00 sur les dixièmes extrêmes). Les dixièmes se prennent HORS LAC — un
+    // lac est une eau dormante (rang 0, la garde du dessus), et depuis la carte doublée
+    // (2026-09-20) le premier fil finit dans le grand lac du sud : 240 de ses 254 derniers pas y
+    // sont, et la « bouche » lue en lac valait 0,39 (MESURÉ ; hors lac : 3,01 → 7,00).
     const fils = map.fils ?? []
     expect(fils.length).toBeGreaterThanOrEqual(2)
     for (const f of fils) for (const i of f) if (!lacs.has(i)) expect(debit![i], `pas ${i}`).toBeGreaterThan(0)
-    const f0 = fils[0]!
+    const f0 = fils[0]!.filter((i) => !lacs.has(i))
     const dixieme = Math.max(1, Math.floor(f0.length / 10))
     const moyenne = (pas: readonly number[]): number => pas.reduce((s, i) => s + debit![i]!, 0) / pas.length
     const tete = moyenne(f0.slice(0, dixieme))
     const bouche = moyenne(f0.slice(-dixieme))
     expect(bouche).toBeGreaterThan(tete + 2)
-  }, 60_000)
+    // 60 → 120 s le 2026-09-20 : la carte doublée fait 2,69 M de tuiles, et ce test les balaie
+    // toutes après avoir payé la génération quand le cache est froid.
+  }, 120_000)
 })

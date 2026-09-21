@@ -411,6 +411,9 @@ export const TEMPERATURE = {
    * autrefois « le froid, prix de la verticalité » (un terme `elevation × ALT_COLD`) est re-sourcé
    * ici : la neige et surtout le glacier portent leur froid dans leur terrain, ce qui garde le Névé
    * et le Glacier mortellement froids sans aucune hauteur. Ordres de grandeur, à calibrer en playtest.
+   * ⚠ AMENDÉ le 2026-09-20 (spec `flanc.md` F-R6, décision d'Alexis) : sur la Racine jouée — un flanc
+   * en quatre paliers — le froid montera AUSSI avec l'étage, par une constante `FROID_PAR_ETAGE`
+   * faible, à côté du biome et non à sa place. Pas encore codée.
    */
   BIOME_OFFSET: {
     3: 2, 13: 2, 14: 2, 22: 2, 24: 2, // forêts (couvert — la saulaie aussi) : +2 °C

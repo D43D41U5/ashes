@@ -151,9 +151,14 @@ export function creuserLePlancher(c: CarteZonee, nodes: ResourceNode[], points: 
 
   for (const p of points) {
     if (grotteLaPlusProche2(c.karsts, width, p) <= R2) continue
+    // LA MÊME TUILE QUE LA MESURE : `grotteLaPlusProche2` lit la tuile OUEST de la paire de gueule
+    // (`gueules[0][0]`), or `gueuleDuSegment` rend la tuile EST. Planifier sur l'est et mesurer
+    // sur l'ouest décalait d'une tuile : une paroi planifiée à 99,6 t creusait une Grotte mesurée à
+    // 100,4 — hors rayon, sans refus ni paroi lointaine à rapporter (G-A7 rougie sur la graine 1234
+    // le 2026-09-20, la carte du flanc). La distance se prend donc à `gx − 1`.
     const ordre = segments
       .map((s, i) => {
-        const gx = gueuleDuSegment(s)
+        const gx = gueuleDuSegment(s) - 1
         return { s, i, d: (gx - p.tx) * (gx - p.tx) + (s.y - p.ty) * (s.y - p.ty) }
       })
       .sort((u, v) => u.d - v.d || u.i - v.i)

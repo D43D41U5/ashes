@@ -15,6 +15,7 @@ import { describe, expect, it } from 'vitest'
 import { carteDeTest } from '../../../tools/carte-cache'
 import { MONDE, MONDE_JOUE } from './zonegraph'
 import { CREUX } from './racine-relief'
+import { TERRASSES } from './terrasses'
 import { NUIT, TEMPERATURE, TERRAIN_ROCK } from './balance'
 import { connecteurAt, marchableAEtage, niveauDuCorps } from './etages'
 import { MARCHABLE, terrainAt } from './map'
@@ -75,9 +76,14 @@ describe('la cave — le premier étage NÉGATIF', () => {
     // Une gueule = une PAIRE de connecteurs (Alexis, 2026-09-02 : une fente d'une tuile se lisait
     // comme une fissure, et le corps qui la franchit en heurtait les joues).
     expect(gueules.length, 'deux connecteurs de gueule par salle').toBe(s.length * 2)
-    expect(s.map((c) => c.niveau), 'la cave du monde joué vit sous les trois paliers — à −H').toEqual(
-      expect.arrayContaining([-1, -2, -3]),
-    )
+    // La cave vit à −(p + 1) sous une butte posée au palier p — donc dans −PALIERS..−1, et sur
+    // PLUSIEURS niveaux (la loi ne dépend pas du palier). Elle exigeait « les trois paliers »
+    // [−1, −2, −3] jusqu'au 2026-09-20 : depuis le flanc (quatre paliers, des bandes sud → nord)
+    // le palier 0 est la plaine du bas et n'a pas toujours de butte — MESURÉ sur la carte doublée,
+    // graine 2026 : 12 salles, 7 à −4, 3 à −3, 2 à −2, aucune à −1.
+    const niveaux = s.map((c) => c.niveau)
+    for (const n of niveaux) expect(n >= -TERRASSES.PALIERS && n <= -1, `niveau ${n}`).toBe(true)
+    expect(new Set(niveaux).size, 'la cave du monde joué vit sous plusieurs paliers — à −H').toBeGreaterThanOrEqual(2)
     for (const { idx: comp } of s) {
       const portes = comp.filter((j) => connecteurAt(map, j % map.width, (j - (j % map.width)) / map.width)?.type === 'gueule')
       expect(portes.length, 'exactement une porte par salle, large de deux').toBe(2)

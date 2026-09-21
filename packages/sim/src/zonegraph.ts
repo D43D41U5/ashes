@@ -68,6 +68,19 @@ export const MONDE = {
   RATIO_HAUTEUR: 3,
 
   /**
+   * LA HAUTEUR DU MONDE JOUÉ — le bord NORD de la Racine étirée, en fraction de la vallée
+   * (décision du 2026-09-20 : « doubler la taille de la carte en hauteur »). Le plan `racine`
+   * étire le T0 de cette fraction jusqu'à `y1 = 0,985` ; le squelette disait 0,665 et rendait
+   * **852 rangées** à 50 joueurs (1581 de large). À **0,315**, le T0 prend ~1 700 rangées — le
+   * double, à la quantification au bloc et au jitter de rail près (±0,8 % de la vallée, soit
+   * ±19 rangées selon la graine). La largeur ne bouge pas : le flanc (`socle.ts`, F-R1) monte sur
+   * une pente deux fois plus longue, ses quatre bandes deviennent des étages qu'on gravit.
+   * MESURÉ (graine 2026, 50 joueurs) : 852 → 1 700 rangées ; le banc à 6 joueurs 342 → 630.
+   * La vallée complète (`'vallee'`) ne lit pas cette fraction : octet-identique.
+   */
+  RACINE_JOUEE_Y0: 0.315,
+
+  /**
    * LE BLOC — la maille de TOUT ce qui est rectiligne, en tuiles (spec R32). Les rectangles de
    * régions sont alignés dessus : un bord de zone tombe donc TOUJOURS pile sur une arête de bloc.
    */
@@ -603,10 +616,21 @@ function planReduit(roles: readonly string[], etirage: Record<string, Partial<Ca
   }
 }
 
-const PLANS: Record<MondeGen, PlanDuMonde> = {
-  vallee: { squelette: SQUELETTE, liens: LIENS, priorites: PRIORITE },
-  // Le T0 SEUL, étiré sur le bord sud que la Cendrière occupait (2026-08-24).
-  racine: planReduit(['racine'], { racine: { y1: 0.985 } }),
+/**
+ * Le plan d'un monde, bâti À L'APPEL : le monde réduit lit `MONDE.RACINE_JOUEE_Y0` au moment de
+ * dériver le graphe, pas au chargement du module — une sonde qui règle la hauteur jouée en
+ * écrasant `MONDE` (la planche du flanc) voit son réglage pris en compte.
+ */
+const PLAN_VALLEE: PlanDuMonde = { squelette: SQUELETTE, liens: LIENS, priorites: PRIORITE }
+let planRacine: { y0: number; plan: PlanDuMonde } | null = null
+function planDuMonde(monde: MondeGen): PlanDuMonde {
+  if (monde === 'vallee') return PLAN_VALLEE
+  // Le T0 SEUL, étiré sur le bord sud que la Cendrière occupait (2026-08-24), et vers le nord
+  // jusqu'à `RACINE_JOUEE_Y0` depuis le 2026-09-20 (la carte double en hauteur). Mémoïsé sur la
+  // fraction : `regionProprietaire` le demande pour CHAQUE tuile.
+  const y0 = MONDE.RACINE_JOUEE_Y0
+  if (planRacine === null || planRacine.y0 !== y0) planRacine = { y0, plan: planReduit(['racine'], { racine: { y0, y1: 0.985 } }) }
+  return planRacine.plan
 }
 
 /**
@@ -721,7 +745,7 @@ export function voisinAt(g: GrapheZones, x: number, y: number): number {
  */
 function regionProprietaire(g: GrapheZones, x: number, y: number): number {
   const n = g.zones.length
-  const prio = PLANS[g.monde ?? 'vallee'].priorites
+  const prio = planDuMonde(g.monde ?? 'vallee').priorites
   let zone = -1
   let best = -1
   for (let i = 0; i < n; i++) {
@@ -826,7 +850,7 @@ export interface Porte {
 
 function catalogueDesPortes(g: GrapheZones): Map<string, Porte[]> {
   const B = MONDE.BLOC
-  const plan = PLANS[g.monde ?? 'vallee']
+  const plan = planDuMonde(g.monde ?? 'vallee')
   const lies = new Set<string>()
   for (const [ra, rb] of plan.liens) {
     const a = plan.squelette.findIndex((c) => c.role === ra)
@@ -892,7 +916,7 @@ export function deriveGrapheZones(
   monde: MondeGen = 'vallee',
 ): GrapheZones {
   const { width, height } = tailleCarte(joueurs)
-  const plan = PLANS[monde]
+  const plan = planDuMonde(monde)
   const B = MONDE.BLOC
   const q = (t: number): number => Math.round(t / B) * B
 

@@ -69,6 +69,30 @@ export const SOCLE = {
    *  (`ondulation`, valeurs inchangées) dans l'étage le plus bas de la physique. */
   RACINE_BASE: 0.06,
   RACINE_AMP: 0.2,
+  /**
+   * LE FLANC (spec `flanc.md` F-R1, décision du 2026-09-20) : la Racine JOUÉE monte du sud au
+   * nord. Une pente rectiligne s'ajoute à l'ondulation DANS L'UPLIFT — donc maintenue par le
+   * ré-uplift pendant que l'incision la dissèque : les vallons deviennent les combes, les crêtes
+   * les éperons, et les terrasses (terciles d'`altLarge`) se rangent en bandes sud→nord. En
+   * RAPPORT de `RACINE_AMP` (1 = la pente vaut toute l'amplitude de l'ondulation ; 0 = la carte
+   * d'avant, au bit près). Le recalage sur l'étendue historique (plus bas) absorbe l'amplitude :
+   * seul le rapport commande. MONDE RÉDUIT SEUL (`g.monde === 'racine'`) — la vallée dort et
+   * reste octet-identique. Se règle EN REGARDANT UNE CARTE (`tools/__flanc-planche.mts`).
+   * **2 depuis le 2026-09-20**, choisi à l'œil sur la planche (trois graines × pentes 0, ½, 1, 2) :
+   * palier moyen nord → sud 1,85 → 1,09 → 0,08 à trois paliers (graine 2026), bandes nettes.
+   */
+  FLANC_RAPPORT: 2,
+  /**
+   * LA PENTE EST UNE PENTE PAR RANGÉE, pas une montée totale : `FLANC_RAPPORT` s'entend sur
+   * `FLANC_HAUTEUR_REF` rangées — les 852 de la planche où Alexis l'a choisie. Une carte deux fois
+   * plus haute (décision du 2026-09-20, `MONDE.RACINE_JOUEE_Y0`) garde le MÊME versant à la rangée
+   * près (combes, éperons, largeur des bandes en rangées ×2) et monte deux fois plus haut en tout ;
+   * répartir la même montée sur le double de rangées aurait rendu la pente 1 écartée sur planche.
+   * Le recalage sur l'étendue historique absorbe la montée totale. À 852 rangées la pente est
+   * celle d'avant (même valeur, à l'arrondi de la division près — la carte a de toute façon
+   * changé de hauteur le même jour).
+   */
+  FLANC_HAUTEUR_REF: 852,
   /** Itérations d'érosion. Chacune : Priority-Flood + récepteurs + accumulation + solveur. */
   ITERATIONS: 60,
   /** K·dt du stream power — la vitesse à laquelle les vallées se creusent. */
@@ -222,6 +246,12 @@ export function batirLeSocle(
   const zoneCell = new Int32Array(n)
   const videCell = new Uint8Array(n)
   const racineRaw = new Float64Array(n) //  le champ HISTORIQUE de la Racine, brut (pour altLarge)
+  // LE FLANC (F-R1) : la pente sud→nord ne vaut que pour le monde JOUÉ. `nord` vaut 0 sur la
+  // dernière rangée de tuiles et 1 à `FLANC_HAUTEUR_REF − 1` rangées au-dessus — le nord est le
+  // haut, et la pente est PAR RANGÉE (une carte plus haute monte plus haut, au même versant).
+  const flanc = g.monde === 'racine' ? SOCLE.FLANC_RAPPORT : 0
+  const hauteurMax = height > 1 ? height - 1 : 1
+  const hauteurRef = SOCLE.FLANC_HAUTEUR_REF > 1 ? SOCLE.FLANC_HAUTEUR_REF - 1 : 1
 
   for (let my = 0; my < rows; my++) {
     for (let mx = 0; mx < cols; mx++) {
@@ -240,9 +270,11 @@ export function batirLeSocle(
       if (!vide && z === g.racine) {
         // LA RACINE : son champ de juillet, calé dans l'étage bas. Il n'est plus ÉPINGLÉ — il
         // devient l'uplift que le ré-uplift maintient pendant que l'incision le dissèque
-        // (`SOCLE.EXUTOIRE_BANDE`). Le domaine des quantiles T0 (`dedans`), lui, ne bouge pas.
+        // (`SOCLE.UPLIFT`). Le domaine des quantiles T0 (`dedans`), lui, ne bouge pas.
+        // Et le FLANC s'ajoute ICI, dans l'uplift maintenu — pas après l'érosion (F-R1).
         dedans[k] = 1
-        h[k] = SOCLE.RACINE_BASE + SOCLE.RACINE_AMP * ond
+        const nord = flanc === 0 ? 0 : (hauteurMax - cy) / hauteurRef
+        h[k] = SOCLE.RACINE_BASE + SOCLE.RACINE_AMP * (ond + flanc * nord)
         uplift0[k] = h[k]!
       } else if (vide) {
         h[k] = SOCLE.ALT_VIDE + (bruitUplift(tx, ty, seed) - 0.5) * SOCLE.RELIEF_AMP

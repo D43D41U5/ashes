@@ -40,10 +40,17 @@ describe('A-MR1 — le monde réduit tient : la boucle de saison a tous ses orga
       expect(slugs, `seed ${s}`).toEqual(['pres_bas'])
       expect(c.graphe.monde, `seed ${s}`).toBe('racine')
       expect(c.graphe.zones[c.graphe.racine]!.def.slug, `seed ${s}`).toBe('pres_bas')
-      // La carte rétrécit VRAIMENT (sinon on paie 78 % de roche morte en mémoire et en sauvegarde).
+      // La carte rétrécit VRAIMENT (sinon on paie de la roche morte en mémoire et en sauvegarde) :
+      // coupée au nord à la fraction `RACINE_JOUEE_Y0` de la vallée, plus la marge nord et la
+      // quantification au bloc (≤ 8 blocs de 16). Elle valait « moins de la moitié » jusqu'au
+      // 2026-09-20 ; la carte doublée (852 → 1 700 rangées) en prend 72 %, et c'est la loi qu'on
+      // garde, pas le chiffre.
       const pleine = tailleCarte(MONDE.JOUEURS_CIBLE)
+      const coupe = pleine.height * (1 - MONDE.RACINE_JOUEE_Y0)
       expect(c.map.width, `seed ${s}`).toBe(pleine.width)
-      expect(c.map.height, `seed ${s}`).toBeLessThan(pleine.height * 0.5)
+      expect(c.map.height, `seed ${s}`).toBeLessThan(pleine.height)
+      expect(c.map.height, `seed ${s}`).toBeGreaterThanOrEqual(coupe - 16)
+      expect(c.map.height, `seed ${s}`).toBeLessThanOrEqual(coupe + 8 * 16)
     }
   })
 

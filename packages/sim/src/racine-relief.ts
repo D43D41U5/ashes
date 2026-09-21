@@ -40,7 +40,10 @@
  *
  * Le champ n'est JAMAIS rendu, jamais stocké dans la carte, jamais lu au runtime : **la carte
  * reste plate** (pivot RimWorld du 2026-07-17 — pas de palier, pas de marche, pas de falaise
- * intra-zone). Il ne vit que le temps de la génération. Ça ne rouvre pas le renversement du §1 de
+ * intra-zone). *(⚠ Caduc depuis les terrasses du 2026-09-03 et le FLANC du 2026-09-20, spec
+ * `flanc.md` : la Racine jouée porte `map.palier[]`, quatre paliers aux quartiles d'`altLarge`,
+ * et une pente sud→nord dans l'uplift de `socle.ts`. Ce fichier, lui, garde son rôle : le champ
+ * des CREUX, local à la génération.)* Il ne vit que le temps de la génération. Ça ne rouvre pas le renversement du §1 de
  * `worldgen.md` (« on génère d'abord un GRAPHE de zones, le terrain en découle ») : le graphe
  * reste roi, il décide encore de tout ce qui est structure — zones, frontières, seuils, paliers.
  * Le relief ne décide que de la CHAIR d'UNE zone, à l'intérieur de ses murs. C'est très exactement

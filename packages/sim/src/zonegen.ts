@@ -1258,10 +1258,15 @@ function estUneIle(
       comp.push(j)
     }
   }
-  // On ne mémorise que ce qu'on a EXPLORÉ EN ENTIER : une exploration coupée au plafond n'a
-  // visité qu'un bout du continent, et ses tuiles n'ont pas toutes le même sort par accident.
-  if (ile) for (const i of comp) cache.set(i, true)
-  else cache.set(depart, false)
+  // TOUT CE QU'ON A VISITÉ PARTAGE LE VERDICT — dans les deux sens. Une île : chaque tuile
+  // explorée est de l'île. Le continent : chaque tuile explorée, même quand l'exploration s'est
+  // coupée au plafond, est reliée à `depart` par de la terre marchable — elle appartient à la
+  // même composante, qui dépasse `ILE_MAX` ou touche le bord ; et une composante ne fait que
+  // GROSSIR pendant l'assainissement (du profond devient du haut-fond, jamais l'inverse), donc
+  // le continent d'aujourd'hui l'est encore au tour d'après. L'écriture d'avant ne mémorisait
+  // que `depart` côté continent, et chaque tuile de rive repayait ses 4 000 pas : 2,2 s sur la
+  // carte doublée (MESURÉ 2026-09-20, graine 2026, 1581×1700), pour un résultat au bit près.
+  for (const i of comp) cache.set(i, ile)
   return ile
 }
 

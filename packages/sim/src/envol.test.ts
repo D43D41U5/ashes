@@ -164,10 +164,14 @@ describe('R21 — le tétras EXISTE dans le monde qu’on joue', () => {
     }
     expect(parGraine[1234], 'graine 1234 : aucun coin de chasse n’admet le tétras').toBeGreaterThan(0)
     expect(parGraine[4321], 'graine 4321 : aucun coin de chasse n’admet le tétras').toBeGreaterThan(0)
-    // La 909 est ÉPINGLÉE À ZÉRO, pas ignorée : le jour où elle retrouve un coin, cette ligne
-    // rougit et la garde remonte à « chaque graine ».
-    expect(parGraine[909], 'graine 909 : un coin de chasse admet le tétras — resserrer la garde').toBe(0)
-  })
+    // La 909 était ÉPINGLÉE À ZÉRO, pas ignorée, avec la consigne « le jour où elle retrouve un
+    // coin, cette ligne rougit et la garde remonte à chaque graine ». Ce jour est le 2026-09-20 :
+    // LE FLANC (`flanc.md`, pente 2 et quatre paliers) a redéplacé les eaux et la 909 retrouve
+    // UN coin qui admet le tétras (MESURÉ : 0 → 1). La garde remonte donc à « chaque graine ».
+    expect(parGraine[909], 'graine 909 : aucun coin de chasse n’admet le tétras').toBeGreaterThan(0)
+    // 180 s : ce test génère TROIS cartes du monde joué quand le cache est froid (~18 s chacune
+    // depuis la carte doublée du 2026-09-20) et sème les coins de chasse sur chacune.
+  }, 180_000)
 })
 
 describe('R21 — le décollage', () => {

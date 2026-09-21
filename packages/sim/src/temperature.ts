@@ -328,6 +328,9 @@ export function socleDuJour(jour: number, tour: number): number {
 function baseDuMonde(state: SimState, tick: number, time = gameTimeAt(state, tick)): number {
   // La carte est plate : le froid ne vient plus de l'altitude, seulement du BIOME (la neige, le
   // glacier) et de l'heure. Le froid des zones hautes est porté par leur terrain, pas par une hauteur.
+  // ⚠ AMENDÉ le 2026-09-20 (spec `flanc.md` F-R6) : la Racine jouée est un flanc en quatre paliers et
+  // le froid MONTERA avec l'étage (`TEMPERATURE.FROID_PAR_ETAGE`, par le palier du sol) — pas encore
+  // codé ici ; le socle du jour reste celui du monde, le terme par étage viendra dans l'exposition.
   return socleDuJour(time.seasonDay, time.tour)
 }
 

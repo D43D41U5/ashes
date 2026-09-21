@@ -142,8 +142,10 @@ describe('T-A1 — le monde réduit porte ses paliers, le monde complet n’en s
   })
 
   for (const graine of GRAINES) {
-    // 60 s : le premier test d'une graine paie sa génération quand le cache des cartes est froid.
-    it(`graine ${graine} : un palier par tuile, dans 0..${TERRASSES.PALIERS - 1}, et les trois sont peuplés`, { timeout: 60_000 }, () => {
+    // 120 s : le premier test d'une graine paie sa génération quand le cache des cartes est froid
+    // — 60 s ne suffisaient plus avec la carte doublée du 2026-09-20 (génération ~18 s, 2,69 M de
+    // tuiles à balayer, la machine chargée par les autres fichiers de la suite).
+    it(`graine ${graine} : un palier par tuile, dans 0..${TERRASSES.PALIERS - 1}, et les trois sont peuplés`, { timeout: 120_000 }, () => {
       const map = carteDeTest(graine, MONDE.JOUEURS_CIBLE, MONDE_JOUE).map
       expect(map.palier).toBeDefined()
       expect(map.palier).toHaveLength(map.width * map.height)
@@ -238,7 +240,7 @@ describe('T-A2 — rien de ce qui se marchait ne se perd : la marche en étages 
       ).toBeLessThanOrEqual(TERRE_PERDUE_MAX)
       expect(perduesLac, `${perduesLac} haut-fonds de lac perdus sur ${hautsFondsDeLac}`).toBeLessThan(hautsFondsDeLac * PART_EAU_PERDUE_MAX)
       expect(perduesRiviere, `${perduesRiviere} haut-fonds de rivière perdus sur ${hautsFondsDeRiviere}`).toBeLessThan(hautsFondsDeRiviere * PART_EAU_PERDUE_MAX)
-    }, 30_000)
+    }, 120_000) // 30 → 120 s avec la carte doublée (2026-09-20) : la marche en étages parcourt 2,69 M de tuiles
   }
 
   // LE GUÉ (§5) : une rampe peut poser son pied dans les haut-fonds — c'est ainsi qu'on descend
@@ -894,4 +896,165 @@ describe('T-A6bis — la joue : l’A*, le gradient et le lissage abordent une r
     expect(at(RAMPE.x + 2, RAMPE.y + 1)).toBe(rampe + 2)
     expect(at(RAMPE.x + 2, RAMPE.y)).toBe(rampe + 3) // par le flanc, ce serait un ; par le sud, trois
   })
+})
+
+/* ─────────────── F-A3 — DEUX FAÇONS DE MONTER SUR CHAQUE TERRASSE ─────────────── */
+
+/**
+ * Spec `flanc.md` F-R3/F-A3 : « toute composante de terrasse qui n'est pas une miette est
+ * rejointe depuis le palier du dessous par au moins deux rampes dont les pieds sont à
+ * `FLANC.SECTEUR` tuiles au moins l'un de l'autre ».
+ *
+ * ⚠ **CE N'EST PAS UNE GARDE DE CONNEXITÉ.** T-A2 tient celle-là, et il est VERT : MESURÉ le
+ * 2026-09-21 en rejouant sa propre marche (`atteintEnEtages`) composante par composante, toute
+ * composante non insulaire est atteinte à **100 %** sur les graines 2026 / 42 / 7 — y compris
+ * treize qui n'ont aucun connecteur du tout (elles se rejoignent par un gué au même palier).
+ * F-A3 est une promesse de CONFORT : on ne longe pas un mur un écran entier sans trouver où
+ * monter, et une terrasse à rampe unique fait de ce mur un détour obligatoire.
+ *
+ * ⚠ **CE QUI FERAIT ROUGIR F-A3, ÉNONCÉ AVANT D'ACCEPTER SON VERT** : retirer `tropPres` de la
+ * règle (iii) de `elireLesRampes` — chaque paire retombe à UNE rampe et la garde tombe sur
+ * presque toutes les terrasses ; ou porter `TERRASSES.RAMPE_PAS` au-delà de la largeur du pays —
+ * plus aucune seconde rampe ne s'élit nulle part. MESURÉ AVANT D'ÉCRIRE (sonde jetable, graines
+ * 2026 / 7 / 42) : **51 terrasses éligibles, dont 21 n'ont qu'UNE rampe** — et aucune n'en a
+ * zéro, ce qui est mot pour mot le cas que F-R3 décrit (« là où l'élection n'en donne qu'une »).
+ *
+ * ⚠ **ON COMPTE LES DEUX BOUTS, PAS SEULEMENT LA MONTÉE — écart ASSUMÉ avec la lettre de la
+ * spec** (« rampes montantes depuis le palier du dessous »). `terrainAEtage` (etages.ts:212) :
+ * une tuile de sol ne répond qu'à SON palier ; et E-A5, vert, exige `marchableAEtage` à `de` ET
+ * à `vers` sur TOUT connecteur. Une rampe se descend donc autant qu'elle se monte. Trois
+ * terrasses des graines mesurées ne sont servies QUE par des pieds — on y descend depuis le
+ * palier du dessus ; les compter « zéro rampe » ferait rougir la garde sur une carte saine.
+ *
+ * ⚠ **DES RAMPES LOGIQUES, PAS DES ENTRÉES** : `elire` pousse une entrée par tuile sur
+ * `CREUX.RAMPE_LARGEUR` colonnes — trois entrées contiguës sont UNE rampe, pas trois.
+ *
+ * **LES ÎLES SONT HORS SUJET** : une composante hors de la composante principale n'est
+ * rejoignable par AUCUNE rampe — le monde à plat ne l'atteignait pas davantage. T-A2 les écarte
+ * de la même façon et pour la même raison.
+ *
+ * **UNE COMPOSANTE, ICI, C'EST CE QUE LA MARCHE PARCOURT SANS CHANGER DE NIVEAU** : marchable
+ * (`MARCHABLE`, **eau comprise** — un haut-fond au même palier se patauge), même palier,
+ * 4-connexe. Exclure l'eau coupe en morceaux ce qui est un seul lieu dans le jeu et fabrique de
+ * fausses fautives : essayé le 2026-09-21, treize d'un coup.
+ */
+describe('F-A3 — toute terrasse qui n’est pas une miette a deux rampes, écartées d’un secteur', () => {
+  /** La loi, pas un nombre : la séparation de F-R3 EST celle que `tropPres` impose déjà à
+   *  l'élection (`TERRASSES.RAMPE_PAS` — « on ne longe jamais un mur plus d'un écran sans trouver
+   *  où monter »). La garde est donc une régression sur l'élection, pas un seuil de plus à
+   *  arbitrer. ⚠ Ne PAS la recalibrer sur la distribution mesurée des écarts : elle retombe sur
+   *  48 par construction, c'est circulaire. */
+  const SECTEUR = TERRASSES.RAMPE_PAS
+  const SEUIL = TERRASSES.MIETTE_TUILES * 4
+
+  for (const graine of GRAINES) {
+    it(`graine ${graine} : chaque terrasse ≥ ${SEUIL} tuiles a ≥ 2 rampes, écartées de ≥ ${SECTEUR} tuiles — garde EXHAUSTIVE`, () => {
+      const map = carteDeTest(graine, MONDE.JOUEURS_CIBLE, MONDE_JOUE).map
+      const { width, height, terrain } = map
+      const N = width * height
+      const palier = map.palier!
+      const principale = composantePrincipale(map)
+
+      // ── les composantes : marchable (eau comprise), même palier, 4-connexe ──────────────
+      const comp = new Int32Array(N).fill(-1)
+      const taille: number[] = []
+      const palierDe: number[] = []
+      const dansP: number[] = []
+      const eaux: number[] = []
+      const pile = new Int32Array(N)
+      for (let d = 0; d < N; d++) {
+        if (comp[d] !== -1 || MARCHABLE[terrain[d]!] !== 1) continue
+        const id = taille.length
+        const p = palier[d]!
+        let n = 0
+        let dedans = 0
+        let eau = 0
+        let sp = 0
+        pile[sp++] = d
+        comp[d] = id
+        while (sp > 0) {
+          const i = pile[--sp]!
+          n++
+          if (principale[i] === 1) dedans++
+          if (isWater(terrain[i]!)) eau++
+          const x = i % width
+          const y = (i - x) / width
+          for (const [vx, vy] of [[x + 1, y], [x - 1, y], [x, y + 1], [x, y - 1]] as const) {
+            if (vx < 0 || vy < 0 || vx >= width || vy >= height) continue
+            const j = vy * width + vx
+            if (comp[j] !== -1 || MARCHABLE[terrain[j]!] !== 1 || palier[j] !== p) continue
+            comp[j] = id
+            pile[sp++] = j
+          }
+        }
+        taille.push(n)
+        palierDe.push(p)
+        dansP.push(dedans)
+        eaux.push(eau)
+      }
+
+      // ── les rampes LOGIQUES : entrées contiguës d'une même rangée, regroupées ───────────
+      const brutes = (map.connecteurs ?? []).filter((c) => c.type === 'rampe')
+      brutes.sort((a, b) => a.y - b.y || a.de - b.de || a.vers - b.vers || a.x - b.x)
+      const logiques: { x: number; y: number; de: number; vers: number; largeur: number }[] = []
+      for (const c of brutes) {
+        const p = logiques[logiques.length - 1]
+        if (p !== undefined && p.y === c.y && p.de === c.de && p.vers === c.vers && c.x === p.x + p.largeur) { p.largeur++; continue }
+        logiques.push({ x: c.x, y: c.y, de: c.de, vers: c.vers, largeur: 1 })
+      }
+
+      // ── qui dessert quoi : le PIED (rangée y) et la TÊTE (rangée y − 1), toute la largeur ──
+      const dessert = new Map<number, { x: number; y: number }[]>()
+      for (const r of logiques) {
+        const vus = new Set<number>()
+        for (const dy of [0, -1]) {
+          const y = r.y + dy
+          if (y < 0 || y >= height) continue
+          for (let k = 0; k < r.largeur; k++) {
+            const x = r.x + k
+            if (x < 0 || x >= width) continue
+            const id = comp[y * width + x]!
+            if (id >= 0) vus.add(id)
+          }
+        }
+        for (const id of vus) {
+          let l = dessert.get(id)
+          if (l === undefined) { l = []; dessert.set(id, l) }
+          l.push({ x: r.x, y: r.y })
+        }
+      }
+
+      // ── le verdict, sur TOUTES les terrasses ───────────────────────────────────────────
+      // ⚠ L'EXCLUSION DE L'EAU EST CELLE DE T-A2, PAS UNE NOUVELLE. Son en-tête nomme déjà les deux
+      // cas : la ceinture de haut-fonds d'un lac sous une rive haute au sud, et la VASIÈRE — de la
+      // terre ou de l'eau marchable qu'AUCUNE rampe ne peut rejoindre par construction (une rampe
+      // descend vers le sud, une nappe ne se soulève pas), et que T-A2 range sous une borne d'EAU
+      // et non de terre. Une composante majoritairement en eau n'est pas une terrasse qu'on longe
+      // en cherchant où monter : lui demander deux rampes, c'est lui demander ce que le monde ne
+      // promet pas. MESURÉ : la comp 150 de la graine 2026 (419 t, palier 1) est à 100 % d'eau.
+      const terrasses = taille
+        .map((n, id) => ({ id, n, p: palierDe[id]!, dp: dansP[id]!, eau: eaux[id]! }))
+        .filter((c) => c.n >= SEUIL && c.p > 0 && c.dp / c.n >= 0.5 && c.eau / c.n < 0.5)
+      // La garde ne peut pas passer à vide : un monde joué a des dizaines de terrasses.
+      expect(terrasses.length, `graine ${graine} : terrasses éligibles`).toBeGreaterThan(8)
+
+      const fautives: string[] = []
+      for (const c of terrasses) {
+        const l = dessert.get(c.id) ?? []
+        if (l.length < 2) { fautives.push(`comp ${c.id} p${c.p} ${c.n}t : ${l.length} rampe(s)`); continue }
+        let max = 0
+        for (let i = 0; i < l.length; i++) {
+          for (let j = i + 1; j < l.length; j++) {
+            const d = Math.max(Math.abs(l[i]!.x - l[j]!.x), Math.abs(l[i]!.y - l[j]!.y))
+            if (d > max) max = d
+          }
+        }
+        if (max < SECTEUR) fautives.push(`comp ${c.id} p${c.p} ${c.n}t : ${l.length} rampes mais écart ${max} < ${SECTEUR}`)
+      }
+      expect(
+        fautives,
+        `graine ${graine} : ${fautives.length}/${terrasses.length} terrasses sans deux rampes écartées —\n  ${fautives.join('\n  ')}`,
+      ).toHaveLength(0)
+    }, 120_000)
+  }
 })
