@@ -1,5 +1,8 @@
 import { describe, expect, it } from 'vitest'
-import { construireMondeDuBanc, runScenario } from './scenario'
+import { BALANCE, NPC_AI } from './balance'
+import type { MoveWorld } from './collision'
+import { pathToward } from './pathfinding'
+import { VILLAGES_DU_BANC, construireMondeDuBanc, runScenario } from './scenario'
 
 // Le tsconfig de /sim est ES2022 pur (pas de lib Node) — le test, lui, tourne
 // sur Node : on déclare le strict nécessaire.
@@ -42,7 +45,7 @@ describe('le banc de test', () => {
    * Il coûte deux secondes et il tient l'invariant que la longue partie ne peut pas tenir.
    */
   it('mesure le monde qu’on JOUE — coins de chasse, nœuds, villages', { timeout: 120_000 }, () => {
-    const { monde } = construireMondeDuBanc(2026)
+    const { sim, monde } = construireMondeDuBanc(2026)
     // Sans gibier, tout chiffre sur la faim est un artefact. C'est LE défaut d'origine.
     expect(monde.huntingGrounds, 'aucun coin de chasse : le banc mesurerait la faim sans gibier').toBeGreaterThan(0)
     expect(monde.nodes, 'une vallée sans nœuds est une carte dégénérée').toBeGreaterThan(1000)
@@ -54,7 +57,38 @@ describe('le banc de test', () => {
     // elle raide le même chaque nuit jusqu'à destruction mutuelle, et le banc mesure une guerre
     // au lieu d'une économie. C'est arrivé (marge de 0,4 % sur l'ancienne carte, corrigée à la
     // main). Ici on ne touche à aucune coordonnée — on maximise l'écart et on VÉRIFIE la marge.
-    expect(monde.margeDeCible, 'cibles de la Meute à quasi-égalité — le banc mesurerait une guerre').toBeGreaterThan(5)
+    expect(
+      monde.margeDeCible,
+      'cibles de la Meute à quasi-égalité — le banc mesurerait une guerre',
+    ).toBeGreaterThan(BALANCE.MARGE_DE_CIBLE_MIN)
+
+    /**
+     * ═══ LE BANC PEUPLE COMME LE JEU (`peuplerLesVoisins`, 2026-09-22) ═══
+     *
+     * Il avait sa règle propre : trois villages écartés au maximum, un Foyer de QUATRE posé
+     * EXACTEMENT sur le point de naissance. Il joue désormais la loi des trois hôtes. Ces deux
+     * gardes disent ce que la loi PROMET là où la marge ci-dessus ne dit rien, et chacune
+     * attraperait un retour en arrière DIFFÉRENT : le compte, et le site laissé libre.
+     *
+     * ⚠ Le seuil de marge n'est plus un 5 écrit ici : c'est `BALANCE.MARGE_DE_CIBLE_MIN`, que la
+     * loi GARANTIT pour les trois hôtes. Cette assertion cesse donc d'être un privilège du banc —
+     * elle vérifie une promesse tenue ailleurs, au lieu d'espérer une géométrie favorable.
+     *
+     * ⚠ Le COMPTE, lui, est celui du BANC (`VILLAGES_DU_BANC`) et NON celui de la Veillée : la LOI
+     * est commune aux trois hôtes, le NOMBRE ne l'est pas — ce monde-ci est 7,8× plus petit que
+     * celui du solo. La justification chiffrée vit sur la constante, dans `scenario.ts`.
+     */
+    expect(sim.villages.length, 'le banc ne peuple plus comme le jeu').toBe(VILLAGES_DU_BANC)
+    const home = sim.home
+    expect(home, 'un banc sans point de naissance ne prouve rien de ce qui suit').not.toBeNull()
+    for (const v of sim.villages) {
+      const dx = v.fireTx - home!.x
+      const dy = v.fireTy - home!.y
+      expect(
+        Math.sqrt(dx * dx + dy * dy),
+        `le Feu du village ${v.id} est posé SUR le point de naissance — le joueur naîtrait dans un village`,
+      ).toBeGreaterThan(1)
+    }
   })
 
   /**
@@ -108,8 +142,11 @@ describe('le banc de test', () => {
     expect(foyer!.membersAlive).toBeGreaterThan(0)
     expect(report.chronicle.length).toBeGreaterThan(2)
     // Le monde MESURÉ (coins de chasse, nœuds, marge de ciblage) est déjà tenu par le banc rapide
-    // ci-dessus — ici on ne vérifie que ce qu'on y VIT. Les trois villages doivent exister.
-    expect(report.villages.length, 'trois villages : foyer, meute, neutre').toBe(3)
+    // ci-dessus — ici on ne vérifie que ce qu'on y VIT. Depuis le 2026-09-22 le banc peuple par la
+    // loi commune (`peuplerLesVoisins`) avec son propre compte, et l'assertion garde AUTRE CHOSE
+    // que le banc rapide : elle dit qu'aucun village n'a DISPARU en cours de route, là-haut on ne
+    // comptait que ceux qu'on venait de fonder.
+    expect(report.villages.length, 'le banc a perdu un village en route').toBe(VILLAGES_DU_BANC)
   })
 
   /**
@@ -134,4 +171,53 @@ describe('le banc de test', () => {
     // la conso des feux) : même seuil absolu que le banc par défaut.
     expect(report.starvationSamples).toBeLessThanOrEqual(10)
   })
+
+  /**
+   * ═══ V-A9 — LE RETOUR TIENT DANS LE BUDGET (spec `ascension.md`, V-R11) ═══
+   *
+   * LE BOGUE QU'IL REPRODUIT, et il a coûté une session entière. Sur la graine 2026, les trois
+   * habitants du « Feu du Gué » se sont figés à DIX-NEUF tuiles de leur Feu, du tick ~2500 au
+   * tick 61500. Le chemin du retour EXISTAIT — 189 pas, par un détour de cinquante tuiles vers
+   * le sud et les deux seules rampes à portée — mais l'A* du villageois abandonnait à 4 096
+   * nœuds, le défaut de signature de `findPath` : un budget calibré POUR LA FAUNE, que personne
+   * n'avait choisi pour un habitant. Plus personne ne rentrait, les dix bois du coffre n'ont
+   * jamais bougé d'un seul, le Feu est tombé à sec et la horde a rasé le village. Les 69
+   * échantillons d'affamés du banc étaient le DERNIER maillon, jamais le premier.
+   *
+   * LE CONTRÔLE POSITIF EST LA MOITIÉ DU TEST. On vérifie d'ABORD que le piège existe encore
+   * (`null` à 4 096). Sans lui, un worldgen qui déplacerait la tranchée rendrait ce test vert
+   * sans rien prouver — une garde qui ne peut pas échouer ne garde rien.
+   *
+   * Il ne joue AUCUN tick : il bâtit le monde et interroge la primitive que `setPathTo` appelle.
+   */
+  it('V-A9 — un villageois sait rentrer à son Feu, et le piège de 4096 est toujours là', { timeout: 120_000 }, () => {
+    const { sim } = construireMondeDuBanc(2026)
+    const village = sim.villages.find((v) => v.fireTx === 96 && v.fireTy === 360)
+    expect(
+      village,
+      'le « Feu du Gué » n’est plus en (96,360) : le monde a bougé et ce test ne prouve plus rien',
+    ).toBeDefined()
+    const world: MoveWorld = {
+      map: sim.map,
+      structures: sim.structures,
+      nodes: sim.nodes,
+      moverVillageId: village!.id,
+      opensDoors: true,
+      etat: sim,
+    }
+    /** Le villageois figé, MESURÉ le 2026-09-22 : (115, 362). */
+    const auFeu = (budget: number): unknown =>
+      pathToward(world, 115.5, 362.5, village!.fireTx, village!.fireTy, budget)
+
+    expect(
+      auFeu(4096),
+      'le piège de 4096 a disparu : plus aucun détour ne le dépasse ici, ce test ne garde plus rien',
+    ).toBeNull()
+    const chemin = auFeu(NPC_AI.PATH_EXPLORE) as { tx: number; ty: number }[] | null
+    expect(chemin, 'un villageois ne sait plus rentrer à son Feu — V-R11 est rompue').not.toBeNull()
+    // Le détour est LONG, et c'est tout l'enjeu : un chemin court voudrait dire que la
+    // géographie a changé et que le test mesure autre chose.
+    expect(chemin!.length, 'le retour est devenu court : ce n’est plus le même monde').toBeGreaterThan(100)
+  })
+
 })

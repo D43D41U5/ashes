@@ -11,12 +11,97 @@
  * autour du grenier. Plus AUCUNE `house` (le chip d'une tuile qui lisait comme
  * une image posée) : le type survit pour les parties sauvées, plus rien n'en pose.
  */
-import { ALIGNMENT, VILLAGE_GROWTH } from './balance'
+import { ALIGNMENT, BALANCE, VILLAGE_GROWTH } from './balance'
 import { addItems } from './items'
 import { RING_OFFSETS, spawnNpcsAround } from './npc'
 import type { SimState } from './sim'
 import { addStructure, createVillage, type Village } from './village'
 import { bedAnchor, HUT_SPOTS } from './village-plan'
+
+/**
+ * ═══ QUI S'INSTALLE AUTOUR DE CELUI QUI NAÎT — LA LOI COMMUNE AUX TROIS HÔTES ═══
+ *
+ * Le monde se peuplait de trois façons différentes : la Veillée posait ses voisins au plus
+ * proche du joueur, le banc de calibrage plantait un Foyer EXACTEMENT sur le point de naissance
+ * puis écartait ses trois sites au maximum, et la zone LAN ne fondait RIEN. Une seule loi depuis
+ * le 2026-09-22, appelée par les trois : c'est l'invariant « une simulation, pas deux jeux »
+ * appliqué au peuplement, pas un arbitrage de design.
+ *
+ * ⚠ **LA MARGE DU RAIDEUR EST GARANTIE, PAS SEULEMENT MESURÉE.** L'IA de raid de la Meute vise
+ * le village le plus proche À VOL D'OISEAU (`nearestOtherVillage`, `npc-errands.ts`). Quand ses
+ * deux cibles sont à quasi-égalité, elle raide la même chaque nuit jusqu'à destruction mutuelle
+ * — et on mesure alors une guerre au lieu d'une économie. Le banc s'en protégeait SEUL, par son
+ * écartement maximal ; serrer les voisins autour du joueur retire cette protection, or
+ * `npc-errands.ts` est du /sim pur et le même raid tourne en solo.
+ *
+ * MESURÉ le 2026-09-22 (`tools/__marge-solo.mts`, tri au plus proche, 5 villages) — marge de la
+ * Meute entre ses deux cibles : **52,6 %** (graine 2026), **78,6 %** (7), **80,5 %** (909), et
+ * **3,3 %** (4242 : deux cibles à 132 et 136 tuiles). Une graine sur quatre livrait le cas
+ * dégénéré, sans aucune garde en solo. On décale donc le site de la Meute d'un cran vers
+ * l'extérieur jusqu'à ce que sa marge passe `BALANCE.MARGE_DE_CIBLE_MIN` : elle naît un peu plus
+ * loin, et le drame Foyer-vs-Meute reste un drame CHOISI plutôt qu'une fatalité de placement.
+ *
+ * ⚠ **CE QUE LA LOI NE FAIT PAS.** Elle ne garantit la marge que du RAIDEUR : un neutre à
+ * quasi-égalité entre deux voisins ne détruit personne, il donne. Elle ne dit rien non plus de
+ * ce qui arrive une fois le village du JOUEUR fondé — une cible de plus, et c'est la sienne.
+ *
+ * Déterministe et sans tirage : mêmes emplacements + même `premier` = mêmes sites.
+ */
+export function peuplerLesVoisins(
+  state: SimState,
+  emplacements: readonly { tx: number; ty: number }[],
+  /** Le site du joueur (ou la base de la zone) : on ne fonde JAMAIS dessus. */
+  premier: { tx: number; ty: number },
+  combien: number = BALANCE.VILLAGES_VEILLEE,
+  habitants: number = BALANCE.NPC_PER_VILLAGE,
+): { sites: { tx: number; ty: number }[]; margeDeCible: number } {
+  const d2 = (a: { tx: number; ty: number }, b: { tx: number; ty: number }): number =>
+    (a.tx - b.tx) * (a.tx - b.tx) + (a.ty - b.ty) * (a.ty - b.ty)
+
+  // LES PLUS PROCHES D'ABORD (spec `ascension.md` V-R4) : le joueur doit RENCONTRER ses voisins.
+  const candidats = emplacements
+    .filter((e) => e.tx !== premier.tx || e.ty !== premier.ty)
+    .slice()
+    .sort((a, b) => d2(a, premier) - d2(b, premier))
+
+  /** La marge du village `i` entre sa cible la plus proche et la suivante, en pour-cent. */
+  const margeDe = (sites: readonly { tx: number; ty: number }[], i: number): number => {
+    let premiere = Infinity
+    let seconde = Infinity
+    for (let j = 0; j < sites.length; j++) {
+      if (j === i) continue
+      const d = Math.sqrt(d2(sites[i]!, sites[j]!))
+      if (d < premiere) { seconde = premiere; premiere = d } else if (d < seconde) { seconde = d }
+    }
+    // Moins de deux cibles : aucun choix à faire, donc aucune oscillation possible.
+    if (premiere === Infinity || seconde === Infinity || premiere === 0) return 100
+    return ((seconde - premiere) / premiere) * 100
+  }
+
+  const sites = candidats.slice(0, combien)
+  /** L'index de la Meute dans `dispositions` — c'est elle, et elle seule, qui raide. */
+  const MEUTE = 1
+  // On ne reprend jamais un site déjà écarté : le balayage va vers l'extérieur et s'arrête.
+  let prochain = combien
+  while (
+    sites.length > MEUTE + 1 &&
+    prochain < candidats.length &&
+    margeDe(sites, MEUTE) <= BALANCE.MARGE_DE_CIBLE_MIN
+  ) {
+    sites[MEUTE] = candidats[prochain]!
+    prochain++
+  }
+
+  // Le Foyer et la Meute D'ABORD : le moteur d'alignement exige un caractère chaud ET un froid,
+  // sans quoi `isOutsider()` est toujours faux et tout le pilier tourne à vide. Les suivants
+  // naissent NEUTRES et leur archétype ÉMERGE de leurs actes, comme pour tout le monde.
+  const dispositions = ['foyer', 'meute'] as const
+  for (const [i, v] of sites.entries()) {
+    foundNpcVillage(state, v.tx, v.ty, habitants, dispositions[i] ?? 'neutre')
+  }
+
+  return { sites, margeDeCible: Math.round(margeDe(sites, MEUTE) * 10) / 10 }
+}
 
 /**
  * Crée un village 100 % PNJ complet (spec R10) : Feu, grenier approvisionné,

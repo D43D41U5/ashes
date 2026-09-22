@@ -395,7 +395,7 @@ export type { DebugAction } from './debug'
 
 // ─── Hôte/scénario UNIQUEMENT (setup rejoué par le replay, jamais en jeu) ─
 export { generateNodes } from './economy'
-export { foundNpcVillage } from './worldgen'
+export { foundNpcVillage, peuplerLesVoisins } from './worldgen'
 export { spawnMonster } from './monsters'
 export { spawnHorde, spawnConvoy } from './worldevents'
 export { applyDamage } from './combat'

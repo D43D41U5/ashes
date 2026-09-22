@@ -182,7 +182,7 @@ const SUITES = [
   { nom: 'serveur', dir: 'packages/server', args: ['run'], plancher: 36 },
   // Le banc pilote le vrai worldgen sur la carte de production : lent, et seul à porter le
   // drapeau qui ignore les erreurs non gérées (voir l'en-tête de `scenario.test.ts`).
-  { nom: 'banc', dir: 'packages/sim', args: ['run', 'src/scenario.test.ts', '--dangerouslyIgnoreUnhandledErrors'], plancher: 3 },
+  { nom: 'banc', dir: 'packages/sim', args: ['run', 'src/scenario.test.ts', '--dangerouslyIgnoreUnhandledErrors'], plancher: 4 },
 ]
 
 /**

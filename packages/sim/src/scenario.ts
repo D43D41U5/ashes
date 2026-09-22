@@ -45,8 +45,8 @@ import { buildPoiStructures } from './poi-batis'
 import { createSim, step, type SimState } from './sim'
 import { TICKS_PER_CYCLE, TICKS_PER_SEASON_DAY } from './time'
 import { FAUNA } from './balance'
-import { foundNpcVillage } from './worldgen'
-import { emplacementsDeVillage, placeZoneNodes, pointsDeSpawn, type Emplacement } from './zone-content'
+import { peuplerLesVoisins } from './worldgen'
+import { emplacementsDeVillage, placeZoneNodes, pointsDeSpawn } from './zone-content'
 import { creuserLePlancher } from './grottes-plancher'
 import { MONDE, MONDE_JOUE } from './zonegraph'
 import { generateZonedTerrain } from './zonegen'
@@ -74,6 +74,41 @@ import { generateZonedTerrain } from './zonegen'
  * Le baisser encore rendrait la nourriture plus facile qu'en jeu ; le monter n'achète rien.
  */
 export const BANC_JOUEURS = 6
+
+/**
+ * LE NOMBRE DE VILLAGES DU BANC — et pourquoi ce n'est PAS `BALANCE.VILLAGES_VEILLEE`.
+ *
+ * `VILLAGES_VEILLEE` est une constante de VEILLÉE, calibrée sur la carte du solo. Le banc joue le
+ * MÊME monde (`MONDE_JOUE`), mais à six joueurs — et `tailleCarte` DÉDUIT la carte du nombre de
+ * joueurs. D'où deux échelles pour une seule loi (MESURÉ le 2026-09-22) :
+ *
+ * |          | carte       | tuiles  | villages | densité      |
+ * |----------|-------------|---------|----------|--------------|
+ * | banc (6) | 548×630     | 0,35 M  | 5        | 14,5 /M      |
+ * | solo (50)| 1 581×1 700 | 2,69 M  | 5        | **1,86 /M**  |
+ *
+ * Sept virgule huit fois plus petit : cinq villages pèsent ici la densité que TRENTE-NEUF
+ * pèseraient en solo. Le banc météo (2 jours, graine 2026) passe de **0 échantillon affamé** à
+ * **72**, et le Foyer y disparaît entièrement.
+ *
+ * Trois est le compte auquel TOUT ce que le banc rapporte a été calibré — famine, économie, coût
+ * par tick. Le reprendre n'arbitre rien : ça RESTAURE une référence que l'unification du
+ * peuplement avait déplacée par ricochet. La loi, elle, reste commune aux trois hôtes : c'est le
+ * même `peuplerLesVoisins`, appelé avec le `combien` du banc.
+ *
+ * ⚠ CE QUE CE NOMBRE NE RÉTABLIT PAS. L'ancien banc fondait `[4, 3, 3]` = dix habitants, et
+ * écartait ses trois sites AU MAXIMUM ; la loi commune en prend trois au PLUS PROCHE du spawn, à
+ * `NPC_PER_VILLAGE` chacun. Deux choses ont donc changé d'un coup — les bouches et la géométrie —
+ * et seule la seconde subsiste ici. Si la famine persistait à trois villages groupés, elle
+ * accuserait l'écartement et non le compte : ce serait un fait sur le JEU, pas sur le banc.
+ *
+ * ⚠ CE QUI RESTE OUVERT, et qui n'est pas tranché ici : le nombre de villages devrait-il DÉRIVER
+ * de la taille du monde, comme la carte dérive déjà du nombre de joueurs ? Le dépôt porte la loi
+ * (`MONDE.JOUEURS_PAR_VILLAGE = 3`) mais ne l'applique nulle part, et à la lettre elle donnerait
+ * dix-sept villages en solo — soit ~70 ms par tick à 1,36 ms le villageois, 140 % du budget à
+ * 20 Hz. C'est une question de design, avec un plafond de perf en travers : elle attend Alexis.
+ */
+export const VILLAGES_DU_BANC = 3
 
 export interface ScenarioReport {
   days: number
@@ -129,63 +164,23 @@ function d2(a: { tx: number; ty: number }, b: { tx: number; ty: number }): numbe
 }
 
 /**
- * Trois emplacements MUTUELLEMENT les plus écartés (échantillonnage au point le plus lointain).
+ * ═══ `troisVillages` A VÉCU ICI JUSQU'AU 2026-09-22 — ET SA LEÇON SURVIT AILLEURS ═══
  *
- * Ce n'est pas de l'esthétique, c'est une leçon payée : sur la vallée, l'IA de raid de la Meute
- * cible le village le plus proche **à vol d'oiseau** (`nearestOtherVillage`, distance euclidienne
- * pure). Quand deux villages sont à quasi-égalité, la Meute raide le même chaque nuit jusqu'à
- * destruction mutuelle — et le banc mesure alors une guerre, pas une économie. L'ancien banc s'en
- * tirait en déplaçant un site À LA MAIN ; ici on ne touche à aucune coordonnée, on maximise
- * l'écart — et surtout **on MESURE la marge obtenue** (`margeDeCible`), que le banc assied par une
- * assertion. Maximiser ne suffit pas : sur une vallée à quatre joueurs, la marge tombe à 4,4 % et
- * le cas dégénéré revient. C'est ce garde-fou, et non l'intuition, qui a écarté cette taille.
+ * Le banc choisissait ses trois sites lui-même : le deuxième au max-min, et le TROISIÈME parmi
+ * les deux douzaines les plus éloignées, en prenant celui qui ÉCARTE LE PLUS les deux cibles
+ * possibles de la Meute. Ce n'était pas de l'esthétique, c'était une leçon payée deux fois :
+ *   · marge de 0,4 % sur l'ancienne carte — un site déplacé À LA MAIN pour s'en sortir ;
+ *   · **le 2026-08-24, l'écart de spawn imposé aux naissances (spec `cendre.md` R10) a déplacé
+ *     le premier site et la marge est tombée de plus de 5 % à 1,9 %** — le banc allait mesurer
+ *     une guerre. Maximiser le minimum ne suffit donc PAS : c'est ce garde-fou, et non
+ *     l'intuition, qui avait écarté la vallée à quatre joueurs (marge retombée à 4,4 %).
+ *
+ * La loi de peuplement est devenue commune aux trois hôtes (`peuplerLesVoisins`, `worldgen.ts`),
+ * et elle garantit la marge du raideur au lieu de la maximiser : la Meute se décale vers
+ * l'extérieur jusqu'à passer `BALANCE.MARGE_DE_CIBLE_MIN`. C'est plus FAIBLE que ce que le banc
+ * s'offrait seul, et plus FORT que ce que le solo et le LAN avaient — c'est-à-dire rien.
+ * `margeDeCible` reste mesurée et assise par `scenario.test.ts` : la garde n'a pas bougé.
  */
-function troisVillages(emplacements: Emplacement[], premier: Emplacement | undefined): Emplacement[] {
-  if (!premier) return []
-  const choisis = [premier]
-  // Le DEUXIÈME au max-min : le plus loin possible du premier.
-  const plusLoin = (deja: Emplacement[]): Emplacement | undefined => {
-    let meilleur: Emplacement | undefined
-    let meilleureDist = -1
-    for (const e of emplacements) {
-      if (deja.some((c) => c.tx === e.tx && c.ty === e.ty)) continue
-      const proche = Math.min(...deja.map((c) => d2(c, e)))
-      if (proche > meilleureDist) { meilleureDist = proche; meilleur = e }
-    }
-    return meilleur
-  }
-  const second = plusLoin(choisis)
-  if (!second) return choisis
-  choisis.push(second)
-
-  /**
-   * ═══ LE TROISIÈME SE CHOISIT SUR LA MARGE, PAS SUR LA DISTANCE ═══
-   *
-   * Maximiser le minimum ne suffit pas, et ce n'est pas une intuition : **le 2026-08-24, l'écart
-   * de spawn imposé aux naissances (spec `cendre.md` R10) a déplacé le premier site, et la marge
-   * est tombée de plus de 5 % à 1,9 %** — le banc allait mesurer une guerre. C'est exactement le
-   * cas que le garde-fou annonçait (« sur une vallée à quatre joueurs, la marge tombe à 4,4 % »).
-   *
-   * On ne déplace toujours AUCUNE coordonnée : on classe les candidats par éloignement, on garde
-   * les meilleurs, et parmi eux on prend celui qui ÉCARTE LE PLUS les deux cibles possibles de la
-   * Meute. Le banc devient robuste à la carte qui bouge, au lieu d'être recalé à la main.
-   */
-  const restants = emplacements
-    .filter((e) => !choisis.some((c) => c.tx === e.tx && c.ty === e.ty))
-    .map((e) => ({ e, loin: Math.min(...choisis.map((c) => d2(c, e))) }))
-    .sort((a, b) => b.loin - a.loin)
-    .slice(0, 24) // les deux douzaines les plus éloignées : au-delà, on rapprocherait les villages
-  let meilleur: Emplacement | undefined
-  let meilleureMarge = -1
-  for (const { e } of restants) {
-    const dFoyer = Math.sqrt(d2(second, premier))
-    const dNeutre = Math.sqrt(d2(second, e))
-    const marge = (Math.abs(dFoyer - dNeutre) / Math.min(dFoyer, dNeutre)) * 100
-    if (marge > meilleureMarge) { meilleureMarge = marge; meilleur = e }
-  }
-  if (meilleur) choisis.push(meilleur)
-  return choisis
-}
 
 /** Le monde du banc, et de quoi le décrire — voir `construireMondeDuBanc`. */
 export interface MondeDuBanc {
@@ -220,8 +215,10 @@ export function construireMondeDuBanc(seed: number, joueurs: number = BANC_JOUEU
   // LE PLANCHER DES GROTTES (spec `grottes.md` G-R8a) — même passe, même moment que la Veillée
   // et le LAN : le banc joue un monde où chaque naissance et chaque site a sa Grotte.
   creuserLePlancher(carte, nodes, [...spawns, ...emplacements])
-  const sites = troisVillages(emplacements, spawns[0] ?? emplacements[0])
-  const base = sites[0]
+  // LE `home` DU BANC EST LE POINT DE NAISSANCE, PLUS UN VILLAGE (2026-09-22). Il valait
+  // `sites[0]`, c'est-à-dire le Foyer que le banc plantait EXACTEMENT sur le spawn — la
+  // divergence que la loi commune supprime. Il vaut maintenant le spawn lui-même, comme au LAN.
+  const base = spawns[0] ?? emplacements[0]
   if (!base) throw new Error('scenario: la vallée ne porte aucun emplacement viable — carte dégénérée')
 
   const sim = createSim(seed, {
@@ -243,29 +240,25 @@ export function construireMondeDuBanc(seed: number, joueurs: number = BANC_JOUEU
   // rapport inscrit ce que le monde porte de bâti, comme il inscrit ses coins de chasse.
   const structuresBaties = sim.structures.length
 
-  // Trois villages, comme avant — mais posés sur les emplacements que le générateur PROPOSE,
-  // jamais sur des coordonnées écrites à la main.
-  const archetypes = ['foyer', 'meute', 'neutre'] as const
-  const effectifs = [4, 3, 3]
-  sites.forEach((s, i) => {
-    const a = archetypes[i]
-    if (a) foundNpcVillage(sim, s.tx, s.ty, effectifs[i] ?? 3, a)
-  })
+  // ═══ LE BANC PEUPLE COMME LE JEU (`peuplerLesVoisins`, 2026-09-22) ═══
+  // Il avait sa propre règle : trois villages écartés au maximum, un Foyer de QUATRE sur le point
+  // de naissance. Il joue désormais la loi des trois hôtes — des voisins pris au plus proche du
+  // spawn, `NPC_PER_VILLAGE` chacun, et le spawn laissé LIBRE. Ce que le banc mesure change donc
+  // (famine, économie) : c'est le but, il mesurait un peuplement que personne ne joue.
+  // Le COMPTE, lui, reste celui du banc — ce monde est 7,8× plus petit que celui du solo, et
+  // `VILLAGES_DU_BANC` porte l'arithmétique. La loi est commune ; le nombre ne peut pas l'être.
+  const { sites, margeDeCible } = peuplerLesVoisins(sim, emplacements, base, VILLAGES_DU_BANC)
   let ecartMinVillages = Infinity
   for (let i = 0; i < sites.length; i++) {
     for (let j = i + 1; j < sites.length; j++) {
       ecartMinVillages = Math.min(ecartMinVillages, Math.sqrt(d2(sites[i]!, sites[j]!)))
     }
   }
-  // La marge de ciblage de la Meute (index 1) entre ses deux cibles possibles — le Foyer (0) et
-  // le neutre (2). C'est la quantité qui décide si le banc mesure une économie ou une guerre.
-  const [foyerSite, meuteSite, neutreSite] = sites
-  let margeDeCible = 100
-  if (foyerSite && meuteSite && neutreSite) {
-    const dFoyer = Math.sqrt(d2(meuteSite, foyerSite))
-    const dNeutre = Math.sqrt(d2(meuteSite, neutreSite))
-    margeDeCible = (Math.abs(dFoyer - dNeutre) / Math.min(dFoyer, dNeutre)) * 100
-  }
+  // La marge de ciblage de la Meute entre ses deux cibles les plus proches : la quantité qui
+  // décide si le banc mesure une économie ou une guerre. Elle n'est plus RECALCULÉE ici — c'est
+  // `peuplerLesVoisins` qui la rend, parce que c'est lui qui la GARANTIT désormais (il décale le
+  // site de la Meute jusqu'à passer `BALANCE.MARGE_DE_CIBLE_MIN`). Le banc la mesure toujours,
+  // mais il ne l'obtient plus tout seul : les trois hôtes en héritent.
 
   return {
     sim,

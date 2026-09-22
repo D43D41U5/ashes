@@ -13,7 +13,7 @@ import {
   cycleOffsetForStartHour,
   emplacementsDeVillage,
   FAUNA,
-  foundNpcVillage,
+  peuplerLesVoisins,
   generateZonedTerrain,
   MONDE,
   MONDE_JOUE,
@@ -204,18 +204,11 @@ export function createVeillee(
   // CONSTANTE que le doublement de la carte a débordée. Et le plancher se tient tout seul —
   // deux emplacements sont à `MONDE.ESPACEMENT_VILLAGES` (130 tuiles) l'un de l'autre par
   // construction, donc aucun n'est au pas de la porte.
-  const d2 = (e: { tx: number; ty: number }): number => (e.tx - premier.tx) * (e.tx - premier.tx) + (e.ty - premier.ty) * (e.ty - premier.ty)
-  const voisins = emplacements
-    .filter((e) => e.tx !== premier.tx || e.ty !== premier.ty)
-    .sort((a, b) => d2(a) - d2(b))
-    .slice(0, BALANCE.VILLAGES_VEILLEE)
-  // Le Foyer et la Meute D'ABORD : le moteur d'alignement exige un caractère chaud ET un froid.
-  // Les suivants naissent NEUTRES et leur archétype ÉMERGE de leurs actes, comme pour tout le
-  // monde — on ne pose pas un troisième caractère, on laisse le jeu le faire.
-  const dispositions = ['foyer', 'meute'] as const
-  for (const [i, v] of voisins.entries()) {
-    foundNpcVillage(sim, v.tx, v.ty, BALANCE.NPC_PER_VILLAGE, dispositions[i] ?? 'neutre')
-  }
+  // ═══ LA LOI DE PEUPLEMENT EST COMMUNE AUX TROIS HÔTES (`peuplerLesVoisins`, 2026-09-22) ═══
+  // Le tri au plus proche, le Foyer et la Meute d'abord, les neutres ensuite : tout cela vivait
+  // ICI et nulle part ailleurs — le banc peuplait autrement, le LAN ne peuplait pas. La loi a
+  // déménagé dans `/sim` avec, en plus, la GARANTIE de marge du raideur que seul le banc avait.
+  peuplerLesVoisins(sim, emplacements, premier)
 
   return { sim, playerId, spawn }
 }

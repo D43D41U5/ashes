@@ -21,6 +21,7 @@ import {
   MONDE_JOUE,
   nidsAMonstre,
   placeHuntingGrounds,
+  peuplerLesVoisins,
   pointsDeSpawn,
   type ResourceNode,
   placeZoneNodes,
@@ -116,6 +117,12 @@ export function createZone(): LanWorld {
   // d'amorce, spec lieux-batis A5). Sans cet appel, la zone LAN servait une Ferme ruinée
   // SANS MURS : les joueurs multi ne jouaient pas le monde que le solo joue.
   buildPoiStructures(sim, LAN_SEED)
+  // ═══ LA ZONE LAN SE PEUPLE, ELLE AUSSI (`peuplerLesVoisins`, 2026-09-22) ═══
+  // Elle ne fondait AUCUN village PNJ : elle calculait les emplacements, les spawns — et n'en
+  // faisait rien. Un monde multi sans voisin PNJ laisse `isOutsider()` toujours faux tant que
+  // deux joueurs n'ont pas fondé, donc tout le moteur d'alignement tourne à vide à l'ouverture.
+  // Même loi, même marge garantie au raideur que le solo et le banc.
+  peuplerLesVoisins(sim, emplacements, base)
   return { sim, base: { tx: base.tx, ty: base.ty }, spawns, carte, emplacements, nodes }
 }
 

@@ -402,7 +402,7 @@ export function setPathTo(
   // proche. Logique partagée avec la dérive du Cendreux (`pathToward`).
   const path = pathToward(
     world, entity.x, entity.y, tx, ty,
-    undefined, // le budget d'exploration : celui de `pathToward`, inchangé
+    NPC_AI.PATH_EXPLORE, // ce qu'un villageois connaît de son pays (V-R11) — pas un défaut de signature
     niveau,
     etageCible,
   )

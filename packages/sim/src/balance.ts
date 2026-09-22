@@ -1105,6 +1105,24 @@ export const BALANCE = {
    */
   VILLAGES_VEILLEE: 5,
 
+  /**
+   * LA MARGE MINIMALE ENTRE LES DEUX CIBLES DU RAIDEUR, EN POUR-CENT (`peuplerLesVoisins`).
+   *
+   * L'IA de raid de la Meute vise le village le plus proche À VOL D'OISEAU
+   * (`nearestOtherVillage`, `npc-errands.ts`). Quand ses deux cibles sont à quasi-égalité, elle
+   * raide la même chaque nuit jusqu'à destruction mutuelle — et on mesure une guerre au lieu
+   * d'une économie. Ce n'est pas une crainte : c'est arrivé, marge de 0,4 % sur l'ancienne
+   * carte, corrigée À LA MAIN sur un site.
+   *
+   * ⚠ **5 N'EST PAS UN ARRONDI : c'est le seuil que le banc assied depuis le 2026-07-24**
+   * (`scenario.test.ts`, « cibles de la Meute à quasi-égalité »). Il vaut désormais pour les
+   * TROIS hôtes, puisque `npc-errands.ts` est du /sim pur et que le même raid tourne en solo.
+   * MESURÉ le 2026-09-22 au tri « au plus proche », marge de la Meute : 52,6 % (graine 2026),
+   * 78,6 % (7), 80,5 % (909) — et **3,3 % sur 4242**, deux cibles à 132 et 136 tuiles. Une
+   * graine sur quatre livrait le cas dégénéré, sans aucune garde en solo.
+   */
+  MARGE_DE_CIBLE_MIN: 5,
+
   /** Sous ce seuil de faim, un PNJ va manger (spec pnj R3). */
   NPC_HUNGER_EAT_THRESHOLD: 30,
 
@@ -6854,6 +6872,47 @@ export const NPC_AI = {
    *  chaque tick — mesuré, le tick du banc à 267 ms. Quatre couvre les appelants qu'un PNJ
    *  coupé de son village enchaîne réellement dans un tick (froid, faim, sommeil, ralliement). */
   SANS_CHEMIN_CASES: 4,
+  /**
+   * CE QU'UN VILLAGEOIS CONNAÎT DE SON PROPRE PAYS — le budget d'exploration de son A*, et
+   * c'est un BOUTON DE DESIGN au sens exact où `FAUNA.PATH_EXPLORE` en est un : il ne règle pas
+   * une perf, il décide de ce qu'un habitant SAIT retrouver. La bête a 1 200 « pour rester une
+   * bête » ; le villageois, lui, n'avait RIEN et retombait sur le défaut de signature de
+   * `findPath` (4 096) — un nombre calibré POUR LA FAUNE (« détour de 40 tuiles, enceinte 40×40,
+   * labyrinthe »), que personne n'avait jamais choisi pour lui.
+   *
+   * POURQUOI IL LUI EN FALLAIT UN. Les terrasses (V-R3, « chaque montée est un événement » : les
+   * passages sont rares et se cherchent) fabriquent des détours plus longs que tout ce pour quoi
+   * 4 096 avait été calibré. MESURÉ le 2026-09-22, graine 2026 : trois villageois figés à
+   * DIX-NEUF tuiles de leur Feu pendant soixante mille ticks, alors que le chemin du retour
+   * existait — 189 pas pour 21 tuiles à vol d'oiseau, par un détour de cinquante tuiles vers le
+   * sud et les deux seules rampes à portée. Leur Feu s'est éteint avec dix bois dans son coffre.
+   *
+   * CE QUE CHAQUE VALEUR ACHÈTE — MESURÉ sur les CINQ graines de la maison (1 154 tuiles
+   * praticables prises autour des quinze Feux), part des tuiles d'où un villageois sait rentrer :
+   *
+   *     1 200 (la bête)  84,3 %       16 384          98,2 %   ← ici
+   *     4 096 (défaut)   92,3 %       32 768          99,4 %   (plafond)
+   *     8 192            93,9 %      131 072          99,4 %
+   *
+   * À 4 096, **7,7 % du rayon de travail d'un village était un aller sans retour**, et chaque
+   * graine avait son village atteint. Les sept dernières tuiles sur 1 154 restent enclavées à
+   * TOUT budget : celles-là sont l'affaire du relief, aucune constante ne les rattrapera.
+   *
+   * POURQUOI ON S'ARRÊTE SOUS LE PLAFOND — décision d'Alexis du 2026-09-22, « il connaît sa
+   * vallée » : le relief doit rester un vrai danger, et un joueur qui mure un village doit
+   * toujours pouvoir le couper de ses vivres. 32 768 aurait retiré le siège et l'enclavement du
+   * jeu en échange de 1,2 point.
+   *
+   * CE QUE ÇA COÛTE. Une recherche qui ÉCHOUE se repaie son budget ENTIER — mais `sansChemin` la
+   * mémorise. MESURÉ (graine 2026, village figé, 2 × 600 ticks de jour et de nuit) : **un seul
+   * `pathToward` raté par 100 ticks et par PNJ**, `depuis` parfaitement stable (zéro changement
+   * de tuile), mémo à UNE seule clé, zéro éviction. Le surcoût est donc 1 tick sur 100, pas 100
+   * sur 100. ⚠ ET VOICI LA FALAISE : ce plafond ne tient que tant qu'un PNJ demande AU PLUS
+   * `SANS_CHEMIN_CASES` cibles distinctes. À partir de cinq, les cases s'évincent l'une l'autre
+   * et l'échec se repaie à CHAQUE tick — ×33. Les deux constantes ci-dessus bornent celle-ci, et
+   * c'est pourquoi elle vit entre elles.
+   */
+  PATH_EXPLORE: 16384,
   /**
    * L'ORDRE DANS LEQUEL UN VILLAGE PNJ TRAVAILLE — priorité de chaque tâche du tableau,
    * la plus haute d'abord. C'est le CARACTÈRE économique du village : nourrir le Feu

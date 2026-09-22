@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 import {
   buildPoiStructures,
   createSim,
+  peuplerLesVoisins,
   spawnPoiMonsters,
   TICKS_PER_SEASON_DAY,
   zoneSlugAt,
@@ -73,6 +74,12 @@ describe('la vallée LAN — le monde de production', () => {
     const ref = createSim(LAN_SEED, { map: monde.carte.map, nodes: monde.nodes })
     spawnPoiMonsters(ref, LAN_SEED)
     buildPoiStructures(ref, LAN_SEED)
+    // ⚠ LES VILLAGES ENTRENT DANS LA RÉFÉRENCE depuis le 2026-09-22 : les trois hôtes peuplent
+    // désormais par `peuplerLesVoisins`, et un village POSE DES STRUCTURES (huttes, Feu). Sans
+    // cet appel la référence compare 814 murs à 839 et le test n'accuse plus la parité, mais
+    // l'absence de villages dans sa propre copie. Mêmes `emplacements` et même `base` que
+    // `createZone` : la loi est positionnelle, donc les structures doivent retomber au bit près.
+    peuplerLesVoisins(ref, monde.emplacements, monde.base)
     expect(ref.structures.length, 'la référence ne bâtit rien : ce test ne garderait rien').toBeGreaterThan(0)
     expect(monde.sim.structures).toEqual(ref.structures)
   })
