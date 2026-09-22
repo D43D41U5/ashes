@@ -6911,6 +6911,17 @@ export const NPC_AI = {
    * `SANS_CHEMIN_CASES` cibles distinctes. À partir de cinq, les cases s'évincent l'une l'autre
    * et l'échec se repaie à CHAQUE tick — ×33. Les deux constantes ci-dessus bornent celle-ci, et
    * c'est pourquoi elle vit entre elles.
+   *
+   * ⚠ CE QUE COÛTE *UN* ÉCHEC, ET C'EST LÀ QUE CE RÉGLAGE SE PAIE. MESURÉ le 2026-09-22 (graine
+   * 2026, cible libre mais réellement enclavée, 12 tirages à chaud, sous `tsx` qui majore d'environ
+   * 25 %) : 1 200 → 4,45 ms · 4 096 → 17,20 ms · 8 192 → 28,27 ms · **16 384 → 54,82 ms, soit
+   * 110 % d'un tick de 50 ms** · 32 768 → 140,81 ms. Et ces échecs ne sont PAS un pire cas
+   * théorique : sur un jour de jeu du monde réparé (36 000 ticks, graine 2026), **393 A* échoués,
+   * 1,09 par tranche de 100 ticks, 69 % des tranches touchées, et jusqu'à DEUX dans le même tick**.
+   * Étalé, ça ne fait que 0,6 ms/tick — d'où un profil moyen qui ne bouge pas — mais le PIRE tick
+   * passe de ~17 à ~55 ms toutes les ~92 ticks. Monter ce budget AGGRAVE donc le pic, jamais la
+   * moyenne : `SANS_CHEMIN_TICKS` ci-dessus est le seul espaceur de ces pics, et son 100 a été
+   * calibré quand un échec coûtait le quart. Les deux constantes se relisent ENSEMBLE.
    */
   PATH_EXPLORE: 16384,
   /**
