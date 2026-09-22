@@ -9,9 +9,9 @@ volets, chacun en ajout seul et en ordre chronologique. Ce fichier-ci est l'INDE
 
 | | Volet | Ce qu'on y trouve | Entrées | Poids |
 |---|---|---|---|---|
-| **M** | [Monde & worldgen](decisions/monde-worldgen.md) | worldgen, relief, eau, biomes, lieux, cendre, étages | 185 | 347 Ko |
+| **M** | [Monde & worldgen](decisions/monde-worldgen.md) | worldgen, relief, eau, biomes, lieux, cendre, étages | 186 | 350 Ko |
 | **R** | [Rendu & DA](decisions/rendu-da.md) | lumière, couleur, sprites, FX, art du sol, son | 205 | 528 Ko |
-| **G** | [Gameplay & systèmes](decisions/gameplay-systemes.md) | faune, combat, récolte, craft, saisons, météo, construction, design | 322 | 797 Ko |
+| **G** | [Gameplay & systèmes](decisions/gameplay-systemes.md) | faune, combat, récolte, craft, saisons, météo, construction, design | 322 | 800 Ko |
 | **I** | [Interface & outillage](decisions/interface-outillage.md) | HUD, menus, encyclopédie, carte, smoke, bancs, process | 84 | 183 Ko |
 | **A** | [Architecture & infra](decisions/architecture-infra.md) | pureté et déterminisme de /sim, protocole, serveur, persistance, perf | 68 | 129 Ko |
 
@@ -31,7 +31,7 @@ retrouve ici, à la même date, jamais à la ligne du dessus dans son volet.
 
 ---
 
-## Index chronologique — 864 entrées, 1984 Ko
+## Index chronologique — 865 entrées, 1991 Ko
 
 - 2026-07-05 · **M** · Spec monde validée par Alexis : déplacement continu type Binding of Isaac (jamais de case par c…
 - 2026-07-05 · **M** · Convention d'import Tiled : l'index local de la tuile dans le premier tileset = l'id de terrain…
@@ -897,3 +897,4 @@ retrouve ici, à la même date, jamais à la ligne du dessus dans son volet.
 - 2026-09-21 · **A** · UN A* QUI ÉCHOUE NE SE REPAIE PLUS À CHAQUE TICK : LE TICK DU BANC REVIENT DE 97 À 8,3 ms — DAN…
 - 2026-09-21 · **A** · LA SECONDE CAUSE ÉTAIT LE MÉMO LUI-MÊME : UNE CASE UNIQUE POUR N APPELANTS NE MÉMORISE RIEN. `N…
 - 2026-09-21 · **A** · LA « RÉGRESSION DE FAMINE » QUE J'AI IMPUTÉE TROIS FOIS À MON PROPRE CODE N'EXISTAIT PAS SOUS C…
+- 2026-09-22 · **M** · Une seule loi de peuplement pour les TROIS hôtes (`peuplerLesVoisins`, `worldgen.ts`) : `VILLAG…
