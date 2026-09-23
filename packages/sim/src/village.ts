@@ -307,6 +307,22 @@ export interface Village {
    *  c'est ici que le stock se consume ; `advanceFire` la convertit en charbon là où il tient
    *  déjà la structure du Foyer, sans un balayage de plus par village et par tick. */
   charbonDette?: number
+  /**
+   * LES SITES QU'AUCUNE ROUTE NE REJOINT — le refus de chemin, mais à l'échelle du VILLAGE.
+   *
+   * `Npc.sansChemin` ne protège QU'UN PNJ et seulement cent ticks : il empêche le livelock,
+   * pas la réélection. Un nœud enclavé était donc reposté par `refreshBoard`, réélu par
+   * `nearestAliveNode` (qui choisit à VOL D'OISEAU), et repayé par le village entier,
+   * indéfiniment — MESURÉ le 2026-09-22 : 393 recherches de chemin perdues en un jour de banc,
+   * toutes sur DEUX nœuds, et surtout **le village n'atteignait jamais le nœud qu'il POUVAIT
+   * prendre**, épinglé sur celui qui était plus proche à vol d'oiseau.
+   *
+   * ⚠ OPTIONNEL, ET C'EST VOULU : une sauvegarde d'avant ce champ se charge telle quelle et le
+   * village repart sans mémoire — au pire il repaie un échec, une fois, et se réinscrit. Un
+   * champ REQUIS hors racine aurait jeté au premier tick (les gardes de `persistence` ne voient
+   * que la racine). Péremption et plafond : `NPC_AI.SITE_INJOIGNABLE_TICKS` / `_MAX`.
+   */
+  sitesInjoignables?: { nodeId: number; jusqua: number }[]
   /** Le tableau du village — généré par seuils, consommé par les PNJ (et bientôt lu par les joueurs). */
   tasks: VillageTask[]
   nextTaskId: number

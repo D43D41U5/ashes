@@ -62,7 +62,7 @@ La corde vient de la fibre, et **la cueillette reste au geste nu** — c'est ce 
 
 ## Critères d'acceptation
 
-*(`packages/sim/src/glanage.test.ts` — 14 tests. Le verrou est éprouvé à TROIS étages, et il faut les trois : la RÈGLE, le GESTE, et le MONDE. Les deux premiers passeraient très bien sur un monde où le glanage n'existe nulle part.)*
+*(`packages/sim/src/glanage.test.ts` — 15 tests. Le verrou est éprouvé à TROIS étages, et il faut les trois : la RÈGLE, le GESTE, et le MONDE. Les deux premiers passeraient très bien sur un monde où le glanage n'existe nulle part.)*
 
 - **A1** — Sur TOUT le domaine de `NODE_DEFS` : tout ce qui rend `wood` ou `stone` exige au moins `crude`, sauf les deux nœuds de glanage, qui n'exigent rien. Balayage exhaustif, pas trois cas choisis.
 - **A2 / A3** — L'arbre refuse la main nue (« il faut une hache en main ») et cède au hachereau ; le rocher refuse (« il faut une pioche en main ») et cède à la pioche de fortune ; **le filon, lui, la refuse toujours** — le verrou du bois n'a pas dilué celui du fer.
@@ -78,6 +78,7 @@ La corde vient de la fibre, et **la cueillette reste au geste nu** — c'est ce 
 - **A12 — La boucle entière, côté village** : un village nu, du glanage par terre → il ramasse, il tresse, il taille un hachereau, et l'arbre finit par tomber. Si n'importe quel maillon manquait (la corvée, la corde d'`ensureOutil`, le verrou du défrichement), l'arbre resterait debout et le grenier vide.
 - **A13** — Le bot headless (`bot.test.ts`) rejoue la rampe entière au bit près : refus de l'arbre nu → glanage → corde → hachereau → l'arbre cède à ×2, sans qu'aucune structure n'existe.
 - **A14** — Le banc de session solo (`session.test.ts`) s'ouvre par le glanage et reste jouable : ramasser, tailler, couper, faire du feu, cuisiner, manger.
+- **A16 — UN GLANAGE ENCLAVÉ CESSE D'ÊTRE ÉLU, et le village prend celui qu'il PEUT atteindre** (spec `ascension.md` V-R12). Les deux bornes de coût d'A11 supposaient qu'un nœud à portée est un nœud atteignable — les terrasses l'ont démenti. Un `pierre_au_sol` muré à 4 tuiles et un autre libre à 6 : le village doit ramasser le second. **Il ne le faisait pas** — `nearestAliveNode` élit à vol d'oiseau, `refreshBoard` repose la corvée, et le village restait épinglé sur le muré pour toujours. MESURÉ sur le monde joué (graine 2026, un jour) : **393 recherches de chemin perdues, toutes sur DEUX nœuds enclavés à tout budget** ; après `Village.sitesInjoignables`, **8**. Le garde-fou qui aurait dû l'empêcher est le filtre de ZONE de `nearestAliveNode` — il ne voit que les frontières de zones, et le monde joué n'en a qu'une.
 - **A15 — LE REFUS SE VOIT, et ça se vérifie DANS LE JEU** (`pnpm smoke --dev --scenario glanage`) : mains vides, un vrai clic sur un vrai arbre → le bandeau du HUD dit « il faut une hache en main » et le sac reste vide. Sans ce relevé, l'objet le plus évident de l'écran serait un no-op silencieux à la minute 1. Le même scénario relève la distance du premier butin au spawn et en rend une capture.
 
 ---

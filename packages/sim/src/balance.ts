@@ -6867,6 +6867,41 @@ export const NPC_AI = {
    * ouverte ou un mur abattu redeviennent praticables sans qu'on sente l'attente.
    */
   SANS_CHEMIN_TICKS: 100,
+  /**
+   * ═══ LE RÉPIT D'UN SITE INJOIGNABLE — le même refus, mais à l'échelle du VILLAGE ═══
+   *
+   * `SANS_CHEMIN_TICKS` ci-dessus ne protège QU'UN PNJ, et seulement cent ticks. Ça suffit à
+   * empêcher un livelock ; ça ne suffit pas à éteindre une corvée que PERSONNE ne peut honorer.
+   * Trois étages devaient s'en charger et deux seulement fonctionnent : `executeGather` retire
+   * bien la corvée du tableau quand le chemin échoue, `sansChemin` empêche bien le même PNJ de
+   * la repayer tout de suite — mais `refreshBoard` la REPOSE au rafraîchissement suivant et
+   * `nearestAliveNode`, qui élit À VOL D'OISEAU, réélit le même nœud. Le village entier la
+   * repaie, indéfiniment.
+   *
+   * MESURÉ le 2026-09-22 (monde du banc, graine 2026, un jour de jeu) : **393 recherches de
+   * chemin payées pour rien, et elles tiennent EN ENTIER dans DEUX nœuds de glanage** — cinq
+   * villageois sur sept, trois d'entre eux sur le même nœud. Les deux sont **enclavés à tout
+   * budget** : aucun chemin même à 524 288 expansions (1,2 s de recherche). Le tick médian qui
+   * en porte un passe de 4,63 à **115,92 ms**, et 0,70 % des ticks dépassent le budget de 50.
+   *
+   * ⚠ LE GARDE-FOU PRÉVU POUR ÇA EXISTE DÉJÀ, ET LE MONDE JOUÉ L'A DÉSARMÉ. C'est le filtre de
+   * ZONE de `nearestAliveNode` (« sans lui, 99 % des recherches échouaient ») : or le monde joué
+   * n'a **qu'une seule zone** (mesuré), et les terrasses ont mis la falaise À L'INTÉRIEUR. Le
+   * filtre ne filtre plus rien — c'est ce trou que cette constante bouche.
+   *
+   * POURQUOI UNE PÉREMPTION ET PAS UN OUBLI DÉFINITIF : le monde bouge. Un mur qu'on abat, une
+   * rampe qu'on creuse, une porte qu'on ouvre rendent sa chance au nœud. 6 000 ticks = **cinq
+   * minutes réelles**, soixante rafraîchissements de tableau : le coût tombe d'un facteur dix,
+   * et la CONSÉQUENCE ASSUMÉE est qu'un passage fraîchement ouvert met jusqu'à cinq minutes à
+   * être remarqué par le village.
+   */
+  SITE_INJOIGNABLE_TICKS: ticksFor(300),
+  /** Combien de sites injoignables un village retient EN MÊME TEMPS. Même raison que
+   *  `SANS_CHEMIN_CASES` : une case unique n'est pas une mémoire (deux nœuds enclavés
+   *  s'évinceraient l'un l'autre et aucun ne serait jamais retrouvé). Seize couvre largement
+   *  ce qu'un rayon de village enferme — mesuré : deux nœuds pour trois villages. Au-delà, le
+   *  plus ancien cède ; il se réinscrira au prochain échec, une fois.  */
+  SITES_INJOIGNABLES_MAX: 16,
   /** Combien de refus un PNJ garde EN MÊME TEMPS. Un seul ne suffit pas : `handleCold` vise la
    *  maison, le ralliement R14 vise le Feu, et deux appelants sur une case unique s'évincent à
    *  chaque tick — mesuré, le tick du banc à 267 ms. Quatre couvre les appelants qu'un PNJ
@@ -6918,10 +6953,19 @@ export const NPC_AI = {
    * 110 % d'un tick de 50 ms** · 32 768 → 140,81 ms. Et ces échecs ne sont PAS un pire cas
    * théorique : sur un jour de jeu du monde réparé (36 000 ticks, graine 2026), **393 A* échoués,
    * 1,09 par tranche de 100 ticks, 69 % des tranches touchées, et jusqu'à DEUX dans le même tick**.
-   * Étalé, ça ne fait que 0,6 ms/tick — d'où un profil moyen qui ne bouge pas — mais le PIRE tick
-   * passe de ~17 à ~55 ms toutes les ~92 ticks. Monter ce budget AGGRAVE donc le pic, jamais la
-   * moyenne : `SANS_CHEMIN_TICKS` ci-dessus est le seul espaceur de ces pics, et son 100 a été
-   * calibré quand un échec coûtait le quart. Les deux constantes se relisent ENSEMBLE.
+   * Étalé, ça ne fait que 0,6 ms/tick — d'où un profil moyen qui ne bouge pas. Monter ce budget
+   * AGGRAVE donc le PIC, jamais la moyenne.
+   *
+   * ⚠ CORRIGÉ LE MÊME JOUR, ET TROIS FOIS. ① Le « ~17 → ~55 ms » ci-dessus était une DÉDUCTION
+   * (un échec × le coût d'un échec) ; chronométré, le tick médian qui porte un échec vaut
+   * **115,92 ms** contre **4,63** pour un tick sain, et le pire mesuré **201 ms**. ② « Ces échecs
+   * arrivent en jeu normal » était vrai mais trompeur : les 393 tiennent EN ENTIER dans DEUX
+   * nœuds de glanage enclavés à tout budget (aucun chemin même à 524 288 expansions) —
+   * ce n'était pas le monde qui coûtait, c'était un choisisseur qui rééligeait sans fin. ③ Et
+   * `SANS_CHEMIN_TICKS` n'est PLUS le seul espaceur : `SITE_INJOIGNABLE_TICKS` ci-dessous les
+   * espace désormais à l'échelle du village. MESURÉ après ce correctif, même sonde, même graine :
+   * **393 → 8** recherches perdues, et **252 → 12** ticks au-dessus de 50 ms sur 36 000 (0,03 %).
+   * Les trois constantes se relisent ENSEMBLE.
    */
   PATH_EXPLORE: 16384,
   /**

@@ -236,7 +236,13 @@ function pasDuVillageois(
  * ancienne vallée) : le filtre est alors inerte et le comportement d'origine est conservé,
  * exactement.
  */
-function nearestAliveNode(state: SimState, entity: Entity, type: NodeType, porteeMax = Infinity): ResourceNode | undefined {
+function nearestAliveNode(
+  state: SimState, entity: Entity, type: NodeType, porteeMax = Infinity,
+  /** Le village de celui qui cherche — sa mémoire des sites injoignables écarte les nœuds dont
+   *  le chemin a DÉJÀ échoué. Absent ≡ aucune mémoire (un chercheur sans village). */
+  village?: Village,
+): ResourceNode | undefined {
+  const injoignables = village?.sitesInjoignables
   const maZone = zoneIdAt(state.map, Math.floor(entity.x), Math.floor(entity.y))
   let best: ResourceNode | undefined
   let bestD = Infinity
@@ -273,6 +279,15 @@ function nearestAliveNode(state: SimState, entity: Entity, type: NodeType, porte
     // 35 % du temps CPU. Avec, il reste plat. Un villageois ne traverse pas le pays pour une
     // brindille : s'il n'y en a pas dans son voisinage, la corvée quitte le tableau.
     if (d > porteeMax2) continue
+    // ─── LE SITE DÉJÀ PROUVÉ INJOIGNABLE (V-R12) ───
+    //
+    // Le filtre de zone, quelques lignes plus bas, existe pour cette raison exacte — « sans lui,
+    // un PNJ visait le nœud le plus proche À VOL D'OISEAU sans voir les falaises » —, mais il ne
+    // voit QUE les frontières de zones. Le monde joué n'en a qu'une, et les terrasses ont mis la
+    // falaise à l'intérieur : le filtre ne filtre plus rien. On écarte donc ce que le CHEMIN
+    // lui-même a déjà réfuté. Le test est ICI, avec la portée et avant toute élection : sinon
+    // l'égalité de distance ferait encore gagner un nœud dont on sait qu'il est hors d'atteinte.
+    if (injoignables !== undefined && injoignables.some((m) => m.nodeId === n.id && state.tick < m.jusqua)) continue
     // ─── E-R5 ICI NE VAUT QUE POUR LES CREUX (Alexis, 2026-09-08 — il rouvre les terrasses) ───
     //
     // Q5 avait scellé les neuf sites d'interaction en bloc, celui-ci compris. Or E-R5 répond
@@ -638,6 +653,34 @@ function claimTask(village: Village, npc: Npc, entity: Entity): void {
  *     temps mort dont on dispose — `refreshBoard` la reposte au prochain
  *     rafraîchissement si le besoin du village tient toujours.
  */
+/**
+ * LE VILLAGE APPREND QU'UN SITE EST INJOIGNABLE (V-R12) — et c'est le maillon qui manquait.
+ *
+ * `dropTask(…, true)` ci-dessous retire la corvée du tableau, et `Npc.sansChemin` empêche CE
+ * PNJ de la repayer avant cent ticks. Les deux marchaient ; ce qui manquait, c'est que
+ * `refreshBoard` reposait la corvée au rafraîchissement suivant et que `nearestAliveNode`
+ * réélisait le MÊME nœud — il élit à vol d'oiseau. MESURÉ le 2026-09-22 : 393 recherches
+ * perdues en un jour de banc, toutes sur deux nœuds enclavés à tout budget, et surtout un
+ * village qui n'allait JAMAIS chercher la pierre qu'il pouvait atteindre.
+ *
+ * On REMPLACE la case de ce nœud si elle existe (sa péremption vient de s'écouler), sinon on
+ * ajoute — après avoir balayé les mortes, et seulement au moment d'ajouter : le même patron que
+ * `sansChemin`, dont le balayage placé dans la branche d'ajout ne s'exécutait jamais.
+ */
+function noterSiteInjoignable(state: SimState, village: Village, nodeId: number): void {
+  const sites = (village.sitesInjoignables ??= [])
+  const i = sites.findIndex((m) => m.nodeId === nodeId)
+  const neuf = { nodeId, jusqua: state.tick + NPC_AI.SITE_INJOIGNABLE_TICKS }
+  if (i >= 0) { sites[i] = neuf; return }
+  for (let k = sites.length - 1; k >= 0; k--) {
+    const mort = sites[k]
+    if (mort !== undefined && state.tick >= mort.jusqua) sites.splice(k, 1)
+  }
+  sites.push(neuf)
+  // Plafond : le plus ancien cède. Il se réinscrira au prochain échec, une fois.
+  if (sites.length > NPC_AI.SITES_INJOIGNABLES_MAX) sites.shift()
+}
+
 export function dropTask(village: Village, npc: Npc, clearFromBoard: boolean): void {
   if (npc.task) {
     if (clearFromBoard) village.tasks = village.tasks.filter((t) => t.id !== npc.task!.id)
@@ -706,7 +749,7 @@ function executeGather(state: SimState, village: Village, npc: Npc, entity: Enti
     }
     let node = task.nodeId !== null ? state.nodes.find((n) => n.id === task.nodeId) : undefined
     if (!node || node.stock <= 0) {
-      node = nearestAliveNode(state, entity, def.nodeType, def.portee ?? Infinity)
+      node = nearestAliveNode(state, entity, def.nodeType, def.portee ?? Infinity, village)
       if (!node) {
         // Rien à récolter dans le monde : si on porte déjà quelque chose, on le range.
         if (countOf(entity.inventory, def.item) > 0) task.stage = 'store'
@@ -763,6 +806,12 @@ function executeGather(state: SimState, village: Village, npc: Npc, entity: Enti
       // (4096 expansions) : mesuré, le tick passait de 1,56 à 26 ms — ×17 — sans que personne ne
       // récolte quoi que ce soit. Retirée du tableau, la tentative ne coûte plus qu'une fois par
       // rafraîchissement, et le PNJ passe à la corvée suivante.
+      //
+      // ⚠ ET LE VILLAGE S'EN SOUVIENT (V-R12). Sans cette ligne, le retrait ne dure qu'un
+      // rafraîchissement : `refreshBoard` repose la corvée, `nearestAliveNode` réélit le même
+      // nœud, et le village entier la repaie — sans jamais descendre au nœud qu'il POURRAIT
+      // prendre, qui est plus loin à vol d'oiseau.
+      noterSiteInjoignable(state, village, node.id)
       dropTask(village, npc, true)
       return
     }

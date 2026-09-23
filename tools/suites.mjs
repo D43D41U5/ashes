@@ -139,7 +139,10 @@ const SUITES = [
   // 2026-09-21 : +4 gardes T-A14 — aucun pied de mur à plus d'un PLAFOND d'une montée, là où le
   //   terrain en offre une (`terrasses.test.ts`, spec `terrasses.md` §5, 4 graines). Suite à 2468 ✓
   //   sur l'arbre (2 sautés) ; plancher inchangé (2360).
-  { nom: 'sim', dir: 'packages/sim', args: ['run', '--exclude', 'src/scenario.test.ts'], plancher: 2360 },
+  // 2026-09-22 : +1 garde A16 — un glanage ENCLAVÉ cesse d'être élu et le village prend celui
+  //   qu'il PEUT atteindre (`glanage.test.ts`, spec `ascension.md` V-R12). Suite à 2469 ;
+  //   plancher relevé d'autant.
+  { nom: 'sim', dir: 'packages/sim', args: ['run', '--exclude', 'src/scenario.test.ts'], plancher: 2361 },
   // 2026-09-01 : +10 gardes avec le RENDU des étages (`plateau-art.test.ts`).
   // 2026-09-01 : +9 gardes avec le TRI DES ÉTAGES (strate, découvert — `framing.test.ts`),
   //   suite relevée à 1429 ✓, plancher recalé quelques pourcents dessous.

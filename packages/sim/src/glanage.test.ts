@@ -22,13 +22,13 @@
  */
 import { describe, expect, it } from 'vitest'
 import {
-  BALANCE, NODE_DEFS, RECIPES, SLOTS, TERRAIN_ROAD, TERRAIN_GRASS, TERRAINS, TOOL_RANK,
-  type NodeType,
+  BALANCE, NODE_DEFS, NPC_AI, RECIPES, SLOTS, TERRAIN_ROAD, TERRAIN_GRASS, TERRAIN_ROCK, TERRAINS,
+  TOOL_RANK, type NodeType,
 } from './balance'
 import { MONDE } from './zonegraph'
 import type { ResourceNode } from './economy'
 import { countOf, makeInventory, type ItemId } from './items'
-import { createEmptyMap } from './map'
+import { createEmptyMap, setTile } from './map'
 import { createSim, spawnEntity, step, type PlayerAction, type SimState } from './sim'
 import { foundNpcVillage } from './worldgen'
 import { grantItems } from './village'
@@ -399,5 +399,73 @@ describe('G6 — le village glane, taille, puis coupe', () => {
     expect(partout.reduce((a, b) => a + b, 0), 'aucun hachereau taillé').toBeGreaterThan(0)
     // Et il COUPE : l'arbre a payé.
     expect(sim.nodes[0]!.stock, "l'arbre est resté debout").toBeLessThan(20)
+  })
+
+  /**
+   * ═══ A16 — UN NŒUD QUE PERSONNE NE PEUT ATTEINDRE CESSE D'ÊTRE ÉLU (spec `ascension.md` V-R12) ═══
+   *
+   * MESURÉ le 2026-09-22, monde du banc, graine 2026, un jour de jeu : **393 recherches de
+   * chemin payées pour rien**, et elles tiennent EN ENTIER dans **deux nœuds de glanage** —
+   * `pierre_au_sol` en (251,510) et `branche_au_sol` en (106,359), tous deux **enclavés à tout
+   * budget** (aucun chemin même à 524 288 expansions, 1,2 s de recherche). Cinq villageois sur
+   * sept, trois d'entre eux sur le MÊME nœud. Le tick médian qui en porte un passe de 4,63 ms à
+   * **115,92 ms**, et 0,70 % des ticks dépassent le budget de 50 ms.
+   *
+   * LE MÉCANISME, et il a trois étages dont deux fonctionnent déjà. `executeGather` retire bien
+   * la corvée du tableau quand le chemin échoue (`dropTask(…, true)`), et `sansChemin` empêche
+   * bien le MÊME PNJ de la repayer avant cent ticks. Mais **`refreshBoard` la repose au
+   * rafraîchissement suivant**, `nearestAliveNode` réélit le même nœud — il choisit à VOL
+   * D'OISEAU — et le village entier la repaie, indéfiniment. Le garde-fou prévu pour ça est le
+   * FILTRE DE ZONE (`npc.ts`, « sans lui, 99 % des recherches échouaient ») : or **le monde
+   * joué n'a qu'une seule zone** (mesuré) et les terrasses ont mis la falaise À L'INTÉRIEUR.
+   * Le filtre ne filtre plus rien.
+   *
+   * CE QUI FERAIT ROUGIR CE TEST : réélire un nœud dont le chemin a déjà échoué ; ou, dans
+   * l'autre sens, l'oublier POUR TOUJOURS — un mur qu'on abat ou une rampe qu'on creuse doit
+   * lui rendre sa chance, d'où la péremption.
+   */
+  it('A16 — un glanage ENCLAVÉ cesse d’être élu, et celui qu’on peut atteindre est ramassé', () => {
+    // Le nœud enclavé est PLUS PROCHE que l'autre : sans mémoire, il gagne toutes les élections.
+    const sim = villageNu([
+      { id: 300, type: 'pierre_au_sol', tx: 12, ty: 8, stock: 1, regrowAt: 0 }, // muré, à 4 tuiles
+      { id: 301, type: 'pierre_au_sol', tx: 12, ty: 18, stock: 1, regrowAt: 0 }, // libre, à 6
+    ])
+    // Une ceinture de roche autour de (12,8) : le nœud reste marchable, mais personne n'y entre.
+    for (let dx = -1; dx <= 1; dx++) {
+      for (let dy = -1; dy <= 1; dy++) {
+        if (dx === 0 && dy === 0) continue
+        setTile(sim.map, 12 + dx, 8 + dy, TERRAIN_ROCK)
+      }
+    }
+
+    // On compte les recherches payées pour rien, comme la sonde du banc : chaque apparition ou
+    // rafraîchissement d'une case de `sansChemin` EST un A* épuisé pour ce nœud.
+    const vu = new Map<string, number>()
+    let payees = 0
+    const DUREE = 600 * BALANCE.TICK_RATE_HZ
+    for (let t = 0; t < DUREE; t++) {
+      step(sim, [])
+      for (const n of sim.npcs) {
+        for (const m of n.sansChemin) {
+          const k = `${n.entityId}|${m.cible}|${m.niveau}|${m.etageCible}`
+          const avant = vu.get(k)
+          if (avant === undefined || m.jusqua > avant) { payees++; vu.set(k, m.jusqua) }
+        }
+      }
+    }
+
+    // ⚠ LES TROIS EN `soft`, ET C'EST NÉCESSAIRE. Une assertion dure avorte le test : au premier
+    //    contrôle positif (correctif désarmé), ① est tombée et ③ n'a JAMAIS été évaluée — ni
+    //    rouge ni verte. Une garde qu'on ne peut pas voir échouer ne prouve rien. En `soft`, les
+    //    trois se prononcent toujours, et l'échec dit lequel des trois maillons a cédé.
+    // ① LE VILLAGE N'EST PAS ÉPINGLÉ : la pierre atteignable est entrée dans le circuit.
+    expect.soft(sim.nodes.find((n) => n.id === 301)!.stock, 'la pierre ATTEIGNABLE n’a jamais été ramassée').toBe(0)
+    // ② LA PIERRE MURÉE EST INTACTE — personne ne peut l'atteindre, c'est le monde qui le dit.
+    expect.soft(sim.nodes.find((n) => n.id === 300)!.stock, 'la pierre murée a été ramassée : la ceinture ne tient pas').toBe(1)
+    // ③ ET ON NE LA REPAIE PAS INDÉFINIMENT. Sans mémoire du village, le tableau repose la
+    //    corvée à chaque `BOARD_REFRESH_TICKS` et chaque PNJ la repaie pour son compte : le
+    //    compte croît avec la DURÉE. Avec mémoire, il est borné par la péremption.
+    const plafond = Math.ceil(DUREE / NPC_AI.SITE_INJOIGNABLE_TICKS) * sim.npcs.length + sim.npcs.length
+    expect.soft(payees, `${payees} recherches payées pour rien en ${DUREE} ticks (plafond ${plafond}) — le nœud enclavé est réélu sans fin`).toBeLessThanOrEqual(plafond)
   })
 })
