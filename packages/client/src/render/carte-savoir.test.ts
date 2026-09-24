@@ -124,3 +124,75 @@ describe('l’art de la carte', () => {
     expect(luma).toBeGreaterThan(60) // la roche assagie, pas l'encre du cadre
   })
 })
+
+describe('les parois de terrasse (spec `ascension.md` V-R8)', () => {
+  /**
+   * UN FLANC JOUET : de l'herbe partout, deux paliers séparés par une rupture est-ouest. Les
+   * rangées au nord de `COUPE` sont au palier 1, celles au sud au palier 0 — exactement la
+   * forme du versant joué, où l'on monte vers le nord.
+   *
+   * ⚠ `terrain` est UNIFORME : c'est tout l'enjeu. Si la carte dessine quelque chose ici, elle
+   * ne peut le tenir que de `map.palier` — `TERRAIN_CLIFF` n'est écrit sur AUCUNE de ces tuiles,
+   * et `terrasses.ts` n'en écrit nulle part dans le vrai monde non plus.
+   */
+  const COTE = 120
+  const COUPE = 60
+  const flanc = (connecteurs: unknown[] = [], avecPalier = true): WorldMap => {
+    const palier = new Array<number>(COTE * COTE)
+    for (let y = 0; y < COTE; y++) for (let x = 0; x < COTE; x++) palier[y * COTE + x] = y < COUPE ? 1 : 0
+    return {
+      width: COTE, height: COTE, terrain: new Array<number>(COTE * COTE).fill(1), zones: [],
+      palier: avecPalier ? palier : undefined, connecteurs,
+    } as unknown as WorldMap
+  }
+  const SOL = new Uint32Array(COTE * COTE).fill(0x3e7d3a)
+  const luma = (art: CarteArt, x: number, y: number): number => {
+    const k = (y * COTE + x) * 4
+    return 0.299 * art.vive[k]! + 0.587 * art.vive[k + 1]! + 0.114 * art.vive[k + 2]!
+  }
+  /** L'encre de falaise est la matière la plus sombre de la palette carte hors eau et hors
+   *  cadre : sur un flanc tout en herbe, un seuil de luminance la sépare sans ambiguïté. */
+  const ENCRE_MAX = 55
+
+  it('la CRÊTE porte le trait, le PIED porte l’ombre — `terrain` ne dit pourtant rien', () => {
+    const art = peindreCarteArt(flanc(), SOL)
+    // La crête (dernière rangée du palier haut) est de l'encre.
+    expect(luma(art, 30, COUPE - 1)).toBeLessThan(ENCRE_MAX)
+    // Le PIED n'a PAS de trait — un seul par rupture, sinon le mur ferait deux lignes.
+    expect(luma(art, 30, COUPE)).toBeGreaterThan(ENCRE_MAX)
+    // …mais il s'assombrit : l'ombre portée, l'idiome de la falaise appliqué à la terrasse.
+    expect(luma(art, 30, COUPE)).toBeLessThan(luma(art, 30, COUPE + 5) - 3)
+    // Et loin de la rupture, le sol est intact des deux côtés.
+    expect(luma(art, 30, COUPE - 20)).toBeGreaterThan(ENCRE_MAX)
+  })
+
+  it('la RAMPE fait une trouée : le mur s’ouvre là où l’on monte, et LÀ SEULEMENT', () => {
+    const art = peindreCarteArt(flanc([{ x: 30, y: COUPE, de: 0, vers: 1, type: 'rampe' }]), SOL)
+    // La crête que la rampe rejoint n'est plus encrée…
+    expect(luma(art, 30, COUPE - 1)).toBeGreaterThan(ENCRE_MAX)
+    // …ni ombrée à son pied : une ombre refermerait visuellement le passage qu'on vient d'ouvrir.
+    expect(luma(art, 30, COUPE)).toBeGreaterThan(luma(art, 40, COUPE))
+    // …et le reste du mur est intact. (Le contrôle POSITIF de l'épreuve : sans lui, une passe
+    // qui effacerait tout le trait passerait au vert.)
+    expect(luma(art, 40, COUPE - 1)).toBeLessThan(ENCRE_MAX)
+    expect(luma(art, 20, COUPE - 1)).toBeLessThan(ENCRE_MAX)
+  })
+
+  it('une rampe de MESA n’ouvre RIEN — le `vers` d’un connecteur est un étage, pas un palier', () => {
+    // ⚠ LE PIÈGE MESURÉ : `vers === de + 1` sur 1 105/1 105 rampes du monde joué, POSÉ et jamais
+    // relu — 163 d'entre elles (graine 2026) montent sur un dessus de mesa, sans aucune terrasse
+    // au-dessus d'elles. La trouée se dérive donc du CHAMP `palier`, jamais du connecteur : ici
+    // aucune voisine du pied n'est au palier 2, donc le mur reste fermé.
+    const art = peindreCarteArt(flanc([{ x: 30, y: COUPE, de: 1, vers: 2, type: 'rampe' }]), SOL)
+    expect(luma(art, 30, COUPE - 1)).toBeLessThan(ENCRE_MAX)
+  })
+
+  it('sans `map.palier`, la carte ne bouge pas d’un octet — la vallée reste elle-même (F-A6)', () => {
+    const art = peindreCarteArt(flanc([], false), SOL)
+    // Pas un trait, pas une ombre : la passe est un no-op strict sur une carte sans terrasses.
+    for (let x = 0; x < COTE; x += 7) {
+      expect(luma(art, x, COUPE - 1)).toBeGreaterThan(ENCRE_MAX)
+      expect(luma(art, x, COUPE)).toBeCloseTo(luma(art, x, COUPE + 5), 6)
+    }
+  })
+})

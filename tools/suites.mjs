@@ -181,6 +181,10 @@ const SUITES = [
   //   fusionnés sur main le 19/09) sans que le plancher bouge ; puis +6 avec LA PASSE DES CORPS EN
   //   ATTRIBUTS (`corps-gpu.test.ts` : les drapeaux empaquetés, la teinte, le GLSL sans uniforme par
   //   sprite). Suite à 1795, plancher relevé quelques pourcents dessous.
+  // 2026-09-24 : +4 gardes V-R8 — LES PAROIS DE TERRASSE SUR LA CARTE (`carte-savoir.test.ts` :
+  //   la crête porte le trait et le pied l'ombre, la rampe fait une trouée et LÀ SEULEMENT, une
+  //   rampe de MESA n'ouvre rien — le piège du `vers` —, et sans `map.palier` rien ne bouge).
+  //   Suite à 1802 ✓ sur l'arbre ; plancher inchangé (1740).
   { nom: 'client', dir: 'packages/client', args: ['run'], plancher: 1740 },
   { nom: 'serveur', dir: 'packages/server', args: ['run'], plancher: 36 },
   // Le banc pilote le vrai worldgen sur la carte de production : lent, et seul à porter le

@@ -66,7 +66,10 @@ const ART = {
    *  la mare partie ne s'efface pas en pré. Luminance 109 vive, 60 grise — au-dessus de l'eau
    *  (62 / 36), en dessous d'une berge. */
   VASE: EAU_PAVE.ASSEC,
-  /** Le trait d'encre d'une falaise, et l'ombre qu'elle porte au sud (relief à une passe). */
+  /** Le trait d'encre d'une falaise, et l'ombre qu'elle porte au sud (relief à une passe).
+   *  ⚠ LA MÊME ENCRE SERT AUX PAROIS DE TERRASSE (`champDesParois`, V-R8) — un mur est un mur,
+   *  et la carte n'a pas à distinguer ce qui ne se franchit jamais de ce qui se franchit à sa
+   *  rampe : la TROUÉE le dit déjà, et elle le dit en creux. */
   FALAISE: 0x322f3a,
   OMBRE_FALAISE: 0.7,
   /** Liseré de côte : l'eau qui touche la terre fonce — la rive se dessine toute seule. */
@@ -219,6 +222,97 @@ export function fondreAuCadre(r: number, g: number, b: number, dc: number): [num
   return [r * f + encreR * (1 - f), g * f + encreG * (1 - f), b * f + encreB * (1 - f)]
 }
 
+/** Les trois bits du champ des parois. Une tuile peut être crête ET pied (une terrasse d'une
+ *  seule tuile de large), d'où des drapeaux et non un état. */
+const PAROI_CRETE = 1
+const PAROI_TROUEE = 2
+const PAROI_OMBRE = 4
+
+/**
+ * ═══ LE SECOND SQUELETTE DE LA CARTE : LES PAROIS DE TERRASSE (spec `ascension.md` V-R8) ═══
+ *
+ * `terrain` NE DIT RIEN des terrasses. `TERRAIN_CLIFF` n'est écrit qu'en trois points de tout
+ * `/sim` — l'anneau de bordure et les deux passes de `murerLesAretes` (`zonegen.ts`) — et
+ * `terrasses.ts` n'en pose aucun : `map.ts` l'énonce en toutes lettres, « deux voisines de
+ * paliers différents sont séparées par une paroi que RIEN NE REPEINT ». La carte du joueur
+ * dessinait donc un flanc de montagne parfaitement PLAT.
+ *
+ * MESURÉ le 2026-09-24 (monde joué, graine 2026, 1581×1700, `tools/__parois.mts`) : **43 621
+ * arêtes** séparent deux tuiles de paliers différents — 13 006 au nord, 8 263 au sud, 11 015 à
+ * l'est, 11 337 à l'ouest : un versant, pas des bandes —, et **216 seulement (0,5 %)** touchent
+ * un `TERRAIN_CLIFF`, par coïncidence avec l'anneau et les murs de zone. Tout le reste était
+ * invisible.
+ *
+ * **LE TRAIT VA SUR LA CRÊTE, L'OMBRE SUR LE PIED.** C'est déjà l'idiome de la falaise ici même
+ * (la tuile `TERRAIN_CLIFF` est de l'encre, celle qui la jouxte au sud s'assombrit), et c'est la
+ * convention cartographique : la ligne se pose sur la rupture, l'ombre pend vers le bas. Encrer
+ * le pied aurait doublé chaque trait — deux terrasses mitoyennes portent chacune une arête.
+ *
+ * **ET LA RAMPE FAIT UNE TROUÉE.** Une tuile que le connecteur rejoint depuis le palier du
+ * dessous n'est PAS encrée : le mur s'ouvre là où l'on monte. Et il ne révèle RIEN — le trait ne
+ * se voit que là où le brouillard a été levé (les trois états de `carte-savoir`), donc un passage
+ * ne se lit qu'après avoir longé son mur. MESURÉ : **314 trouées, toutes de 3 tuiles exactement**
+ * (graine 2026 ; 170 sur la 42, 323 sur la 7) — la largeur que le worldgen garantit à tout passage.
+ *
+ * ⚠ **CE N'EST PAS ENCORE LE GUIDAGE QUE V-R8 DEMANDE, ET LA MESURE LE DIT.** L'écran carte
+ * s'ouvre à `mapFit` — la carte jouée (1581×1700) y tient en 526×566 px, soit **0,333 px par
+ * tuile** : une trouée de 3 tuiles y vaut **1,00 px**, et le filtre NEAREST perd deux traits
+ * d'une tuile sur trois. Le mur et ses trouées ne se lisent qu'à partir du **zoom ×4** (1,33
+ * px/tuile, trouée de 4 px) et franchement à ×8. Ce que cette passe livre est donc le RELIEF de
+ * la carte, pas encore la flèche vers le passage : la forme du guidage (marqueur de rampe vue,
+ * ou sentes qui y mènent) est une fourche de design ouverte — `ascension.md` V-R8.
+ *
+ * ⚠ **LA TROUÉE SE DÉRIVE DU CHAMP, JAMAIS DU `vers` DU CONNECTEUR.** `vers` vaut `de + 1` par
+ * construction sur 1 105/1 105 rampes, et c'est un index d'ÉTAGE, pas un palier de sol : 163
+ * d'entre elles (graine 2026) sont des rampes de dessus de MESA qui n'ont aucune terrasse
+ * au-dessus d'elles. On n'ouvre donc le mur que sur une voisine dont le palier du SOL vaut
+ * `vers` — les 942 autres. Les rampes de mesa n'ouvrent rien, et c'est juste.
+ *
+ * Sans `map.palier` — la vallée complète, une carte d'avant — le champ est vide et la carte ne
+ * bouge pas d'un octet (F-A6). O(N), une passe, plus une passe sur les connecteurs.
+ */
+function champDesParois(map: WorldMap): Uint8Array {
+  const { width, height } = map
+  const champ = new Uint8Array(width * height)
+  const pal = map.palier
+  if (pal === undefined) return champ
+  const p = (tx: number, ty: number): number => pal[ty * width + tx] ?? 0
+
+  for (let ty = 0; ty < height; ty++) {
+    for (let tx = 0; tx < width; tx++) {
+      const ici = p(tx, ty)
+      let bits = 0
+      // ⚠ LE HORS-CARTE N'EST PAS « PLUS BAS » : compté comme un palier, le bord du monde se
+      // serait encré sur tout son pourtour. On ne regarde que les voisines EN CARTE.
+      if (tx > 0 && p(tx - 1, ty) < ici) bits |= PAROI_CRETE
+      if (tx < width - 1 && p(tx + 1, ty) < ici) bits |= PAROI_CRETE
+      if (ty > 0 && p(tx, ty - 1) < ici) bits |= PAROI_CRETE
+      if (ty < height - 1 && p(tx, ty + 1) < ici) bits |= PAROI_CRETE
+      // L'OMBRE : un mur se dresse au NORD de cette tuile — elle est au pied.
+      if (ty > 0 && p(tx, ty - 1) > ici) bits |= PAROI_OMBRE
+      champ[ty * width + tx] = bits
+    }
+  }
+
+  // LA TROUÉE, en second : elle ÉPARGNE, donc elle passe après ce qu'elle épargne. Le pied de
+  // la rampe et la tuile qu'elle rejoint au palier du dessus — les deux, parce que le pied peut
+  // être lui-même une crête (une terrasse étroite) et parce que l'ombre du pied fermerait
+  // visuellement le passage qu'on vient d'ouvrir.
+  for (const c of map.connecteurs ?? []) {
+    if (c.type !== 'rampe') continue
+    if (c.x < 0 || c.y < 0 || c.x >= width || c.y >= height) continue
+    champ[c.y * width + c.x] = (champ[c.y * width + c.x] ?? 0) | PAROI_TROUEE
+    for (const [dx, dy] of [[0, -1], [0, 1], [-1, 0], [1, 0]] as const) {
+      const nx = c.x + dx
+      const ny = c.y + dy
+      if (nx < 0 || ny < 0 || nx >= width || ny >= height) continue
+      if (p(nx, ny) !== c.vers) continue
+      champ[ny * width + nx] = (champ[ny * width + nx] ?? 0) | PAROI_TROUEE
+    }
+  }
+  return champ
+}
+
 /**
  * PEINT LA PAIRE — une passe locale par tuile, deux lectures de voisins orthogonaux, rien
  * d'itératif : O(N) strict, ~130 k tuiles sur une carte de Veillée.
@@ -232,6 +326,7 @@ export function peindreCarteArt(map: WorldMap, solCouleurs: ArrayLike<number>): 
   const encreG = (CARTE_ENCRE >> 8) & 0xff
   const encreB = CARTE_ENCRE & 0xff
   const cadre = champDuCadre(map)
+  const parois = champDesParois(map)
   const terr = (tx: number, ty: number): number =>
     tx < 0 || ty < 0 || tx >= width || ty >= height ? TERRAIN_VOID : (terrain[ty * width + tx] ?? TERRAIN_VOID)
 
@@ -239,6 +334,7 @@ export function peindreCarteArt(map: WorldMap, solCouleurs: ArrayLike<number>): 
     for (let tx = 0; tx < width; tx++) {
       const i = ty * width + tx
       const t = terrain[i] ?? TERRAIN_VOID
+      const paroi = parois[i] ?? 0
       let r: number, g: number, b: number
 
       if (t === TERRAIN_VOID) {
@@ -247,9 +343,10 @@ export function peindreCarteArt(map: WorldMap, solCouleurs: ArrayLike<number>): 
         const cote =
           !estEau(terr(tx - 1, ty)) || !estEau(terr(tx + 1, ty)) || !estEau(terr(tx, ty - 1)) || !estEau(terr(tx, ty + 1))
         ;[r, g, b] = couleurEauCarte(t === TERRAIN_DEEP_WATER, cote)
-      } else if (t === TERRAIN_CLIFF) {
+      } else if (t === TERRAIN_CLIFF || (paroi & PAROI_CRETE) !== 0 && (paroi & PAROI_TROUEE) === 0) {
         // LA FALAISE EST LE SQUELETTE DE LA CARTE (spec lieux R2bis : « on suit un mur ») :
-        // un trait d'encre froide, le plus franc de la palette carte.
+        // un trait d'encre froide, le plus franc de la palette carte. Et depuis V-R8, LA CRÊTE
+        // D'UNE TERRASSE est la même matière — sauf à la trouée d'une rampe, qui reste du sol.
         r = (ART.FALAISE >> 16) & 0xff
         g = (ART.FALAISE >> 8) & 0xff
         b = ART.FALAISE & 0xff
@@ -258,7 +355,7 @@ export function peindreCarteArt(map: WorldMap, solCouleurs: ArrayLike<number>): 
         ;[r, g, b] = assagir((c >> 16) & 0xff, (c >> 8) & 0xff, c & 0xff)
         // L'OMBRE PORTÉE d'une falaise au nord : une passe de relief — la paroi domine la
         // tuile qui la jouxte au sud, la carte cesse d'être plate.
-        if (terr(tx, ty - 1) === TERRAIN_CLIFF) {
+        if (terr(tx, ty - 1) === TERRAIN_CLIFF || (paroi & PAROI_OMBRE) !== 0 && (paroi & PAROI_TROUEE) === 0) {
           r *= ART.OMBRE_FALAISE
           g *= ART.OMBRE_FALAISE
           b *= ART.OMBRE_FALAISE

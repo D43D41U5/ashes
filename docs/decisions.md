@@ -10,7 +10,7 @@ volets, chacun en ajout seul et en ordre chronologique. Ce fichier-ci est l'INDE
 | | Volet | Ce qu'on y trouve | Entrées | Poids |
 |---|---|---|---|---|
 | **M** | [Monde & worldgen](decisions/monde-worldgen.md) | worldgen, relief, eau, biomes, lieux, cendre, étages | 186 | 350 Ko |
-| **R** | [Rendu & DA](decisions/rendu-da.md) | lumière, couleur, sprites, FX, art du sol, son | 205 | 528 Ko |
+| **R** | [Rendu & DA](decisions/rendu-da.md) | lumière, couleur, sprites, FX, art du sol, son | 207 | 530 Ko |
 | **G** | [Gameplay & systèmes](decisions/gameplay-systemes.md) | faune, combat, récolte, craft, saisons, météo, construction, design | 326 | 809 Ko |
 | **I** | [Interface & outillage](decisions/interface-outillage.md) | HUD, menus, encyclopédie, carte, smoke, bancs, process | 84 | 183 Ko |
 | **A** | [Architecture & infra](decisions/architecture-infra.md) | pureté et déterminisme de /sim, protocole, serveur, persistance, perf | 68 | 129 Ko |
@@ -31,7 +31,7 @@ retrouve ici, à la même date, jamais à la ligne du dessus dans son volet.
 
 ---
 
-## Index chronologique — 869 entrées, 2000 Ko
+## Index chronologique — 871 entrées, 2001 Ko
 
 - 2026-07-05 · **M** · Spec monde validée par Alexis : déplacement continu type Binding of Isaac (jamais de case par c…
 - 2026-07-05 · **M** · Convention d'import Tiled : l'index local de la tuile dans le premier tileset = l'id de terrain…
@@ -902,3 +902,5 @@ retrouve ici, à la même date, jamais à la ligne du dessus dans son volet.
 - 2026-09-22 · **G** · UN VILLAGEOIS CONNAÎT SA VALLÉE : `NPC_AI.PATH_EXPLORE = 16 384`, son propre budget d'explorati…
 - 2026-09-22 · **G** · CORRECTION DATÉE DE MA PROPRE LIGNE DU JOUR (`6a5f888`) : « LA PERF NE COÛTE RIEN » EST VRAI PO…
 - 2026-09-22 · **G** · V-R12 — un site de ressource qu'AUCUNE route ne rejoint cesse d'être élu : `Village.sitesInjoig…
+- 2026-09-24 · **R** · La carte du joueur dessine les PAROIS DE TERRASSE : le trait d'encre sur la CRÊTE, l'ombre port…
+- 2026-09-24 · **R** · Le joueur est guidé vers les rampes par LES SENTES, pas par un marqueur de carte ni par la seul…
