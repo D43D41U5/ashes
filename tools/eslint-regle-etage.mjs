@@ -72,6 +72,16 @@ const HORS_REGLE = {
   'zone-content.ts': { '*': 'worldgen (semis)' },
   'zonegen.ts': { '*': 'worldgen' },
   'zonegen-karst.ts': { '*': 'worldgen (c’est lui qui CREUSE les étages)' },
+  'zonegen-reseau.ts': {
+    // LA PASSE DES SENTES (V-R8). Les trois distances de Chebyshev qu’elle écrit n’ont pas de
+    // second CORPS : (i) l’écart le plus large entre deux rampes d’UNE MÊME terrasse — une
+    // étendue géométrique dans une composante, pas une perception ; (ii) `dansVillage`, le
+    // CARRÉ d’enceinte autour d’un site de village, un gabarit de terrain ; (iii) la BANDE de
+    // tuiles contre la palissade, un anneau. Aucun corps ne parcourt la carte à ce moment : la
+    // route s’y peint. On nomme `tracerLeReseau`, la fonction la plus large, pour qu’une
+    // distance écrite DEHORS un jour repasse par le tri.
+    tracerLeReseau: 'worldgen — écart entre rampes d’une terrasse, carré d’enceinte, anneau de palissade',
+  },
   'zonegen-trace.ts': { '*': 'worldgen' },
   'zonegen-water.ts': { '*': 'worldgen' },
   'clairieres.ts': { tuileDeClairiere: 'worldgen — le rayon normalisé d’un cadre de clairière' },

@@ -122,7 +122,8 @@ export function createZone(): LanWorld {
   // faisait rien. Un monde multi sans voisin PNJ laisse `isOutsider()` toujours faux tant que
   // deux joueurs n'ont pas fondé, donc tout le moteur d'alignement tourne à vide à l'ouverture.
   // Même loi, même marge garantie au raideur que le solo et le banc.
-  peuplerLesVoisins(sim, emplacements, base)
+  // La carte en dernier : elle arme le RÉSEAU DE SENTES (V-A7). Même monde qu'en solo.
+  peuplerLesVoisins(sim, emplacements, base, undefined, undefined, carte)
   return { sim, base: { tx: base.tx, ty: base.ty }, spawns, carte, emplacements, nodes }
 }
 

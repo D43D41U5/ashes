@@ -208,7 +208,10 @@ export function createVeillee(
   // Le tri au plus proche, le Foyer et la Meute d'abord, les neutres ensuite : tout cela vivait
   // ICI et nulle part ailleurs — le banc peuplait autrement, le LAN ne peuplait pas. La loi a
   // déménagé dans `/sim` avec, en plus, la GARANTIE de marge du raideur que seul le banc avait.
-  peuplerLesVoisins(sim, emplacements, premier)
+  // La carte passe en dernier : c'est elle qui arme le RÉSEAU DE SENTES (V-A7), tracé entre
+  // l'élection des sites et la fondation des villages — le seul instant où il a les portes
+  // ET le terrain d'avant que le bâti ne remue le sol.
+  peuplerLesVoisins(sim, emplacements, premier, undefined, undefined, carte)
 
   return { sim, playerId, spawn }
 }

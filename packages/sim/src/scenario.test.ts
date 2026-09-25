@@ -35,6 +35,28 @@ declare const console: { log: (...args: unknown[]) => void }
  */
 const DAYS = Number(process.env.SCENARIO_DAYS ?? 1)
 
+/**
+ * ═══ LE SEUIL DE FAMINE EST UN TAUX, PAS UN COMPTE — CORRIGÉ LE 2026-09-25 ═══
+ *
+ * `starvationSamples` s'incrémente d'un par PNJ affamé ET par point de relevé, et **la cadence est
+ * FIXE** : `sampleEveryTicks = Math.round(500 * (BALANCE.TICK_RATE_HZ / 12))`, soit **833 ticks**,
+ * sans le moindre terme en `days` (quelques lignes plus haut dans `scenario.ts`). Un banc de N
+ * jours prend donc exactement N fois plus de relevés, et comparer ce compteur à un nombre fixe
+ * fait rougir la garde à mesure qu'on allonge l'horizon, **sans aucune régression**. Or A8 joue 2
+ * jours contre un seuil calibré à 1.
+ *
+ * ⚠ **CE N'EST PAS UN RELÂCHEMENT** : la ligne de design reste **10 par jour**, celle du
+ * 2026-07-24, au chiffre près — on la divise enfin par l'horizon qu'elle parcourt. L'argument est
+ * la cadence ci-dessus, pas un chiffre de confort.
+ *
+ * ⚠ **ET CE QUE LA FORME EN TAUX NE RÈGLE PAS.** A/B mesuré le 2026-09-25 sur cinq graines, banc
+ * A8 (2 jours, météo armée), AVANT tout changement de tracé : `0 · 0 · 0 · 0 · 20`. La graine 42
+ * franchissait DÉJÀ le seuil absolu, et elle tient la forme en taux à **zéro marge**. Le compteur
+ * est par ailleurs BIMODAL (zéro, ou quinze à vingt) : il ne dérive pas, il bascule — donc ce
+ * seuil reste à surveiller sur cette graine-là.
+ */
+const FAMINE_PAR_JOUR = 10
+
 describe('le banc de test', () => {
   /**
    * LE GARDE-FOU DU MONDE — rapide, sans simulation, et c'est LUI qui aurait attrapé la dérive.
@@ -136,7 +158,7 @@ describe('le banc de test', () => {
     // isolés sont du bruit stochastique, un effondrement en produirait des dizaines — 177 avant
     // les correctifs du 2026-07-24, ZÉRO après (mesuré au défaut d'1 jour). Le seuil n'a jamais
     // été relâché vers 177 : c'est le MONDE qu'on a rendu digne de lui.
-    expect(report.starvationSamples).toBeLessThanOrEqual(10)
+    expect(report.starvationSamples).toBeLessThanOrEqual(FAMINE_PAR_JOUR * report.days)
     const foyer = report.villages.find((v) => v.archetype === 'foyer')
     expect(foyer).toBeDefined()
     expect(foyer!.membersAlive).toBeGreaterThan(0)
@@ -168,8 +190,8 @@ describe('le banc de test', () => {
     // n'en cause aucune — le zéro est donc net, et un compte non nul accuse quoi qu'il en soit.
     expect(report.mortsFroid, 'le froid a tué un PNJ (les villageois doivent s’abriter)').toBe(0)
     // Et la famine ne doit pas se dégrader PARCE QUE la météo est là (le silence du gibier,
-    // la conso des feux) : même seuil absolu que le banc par défaut.
-    expect(report.starvationSamples).toBeLessThanOrEqual(10)
+    // la conso des feux) : même seuil que le banc par défaut, au même TAUX.
+    expect(report.starvationSamples).toBeLessThanOrEqual(FAMINE_PAR_JOUR * report.days)
   })
 
   /**

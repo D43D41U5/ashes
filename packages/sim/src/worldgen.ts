@@ -15,6 +15,8 @@ import { ALIGNMENT, BALANCE, VILLAGE_GROWTH } from './balance'
 import { addItems } from './items'
 import { RING_OFFSETS, spawnNpcsAround } from './npc'
 import type { SimState } from './sim'
+import type { CarteZonee } from './zonegen'
+import { retirerLesNoeudsSousLaRoute, tracerLeReseau } from './zonegen-reseau'
 import { addStructure, createVillage, type Village } from './village'
 import { bedAnchor, HUT_SPOTS } from './village-plan'
 
@@ -54,6 +56,16 @@ export function peuplerLesVoisins(
   premier: { tx: number; ty: number },
   combien: number = BALANCE.VILLAGES_VEILLEE,
   habitants: number = BALANCE.NPC_PER_VILLAGE,
+  /**
+   * La carte zonée, quand l'hôte l'a encore sous la main — alors le RÉSEAU DE SENTES se trace
+   * ici (spec `ascension.md` V-A7). Il se trace ICI et pas ailleurs pour deux raisons :
+   *  · il lui faut les SITES, puisque la route doit s'arrêter devant la porte de chaque
+   *    village — et les sites, c'est cette fonction qui les élit ;
+   *  · il lui faut le terrain d'AVANT la fondation : `foundNpcVillage` fait place nette, et une
+   *    route peinte après lirait un monde déjà remué.
+   * Sans carte (un test qui peuple une carte nue), la passe ne tourne pas : rien ne casse.
+   */
+  carte?: CarteZonee,
 ): { sites: { tx: number; ty: number }[]; margeDeCible: number } {
   const d2 = (a: { tx: number; ty: number }, b: { tx: number; ty: number }): number =>
     (a.tx - b.tx) * (a.tx - b.tx) + (a.ty - b.ty) * (a.ty - b.ty)
@@ -95,6 +107,17 @@ export function peuplerLesVoisins(
   // Le Foyer et la Meute D'ABORD : le moteur d'alignement exige un caractère chaud ET un froid,
   // sans quoi `isOutsider()` est toujours faux et tout le pilier tourne à vide. Les suivants
   // naissent NEUTRES et leur archétype ÉMERGE de leurs actes, comme pour tout le monde.
+  // ═══ LES SENTES, AVANT QUE LES VILLAGES NE REMUENT LE SOL (V-A7) ═══
+  // Les sites sont arrêtés, le monde est encore celui du worldgen : c'est le seul instant où la
+  // passe a TOUT ce qu'il lui faut. Elle peint dans `carte.map.terrain`, puis les nœuds tombés
+  // sous la route s'en vont — un arbre au milieu d'une sente est une route qui ment.
+  if (carte !== undefined) {
+    // ⚠ On peint dans `state.map`, pas dans `carte.map` : `createSim` a DÉCLONÉ la carte
+    // (`sim.ts:683`), et une route peinte dans l'original resterait invisible au jeu.
+    tracerLeReseau(state.map, carte.socle ?? null, sites, state.seed)
+    state.nodes = retirerLesNoeudsSousLaRoute(state.nodes, state.map).restants
+  }
+
   const dispositions = ['foyer', 'meute'] as const
   for (const [i, v] of sites.entries()) {
     foundNpcVillage(state, v.tx, v.ty, habitants, dispositions[i] ?? 'neutre')

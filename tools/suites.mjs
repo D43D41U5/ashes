@@ -142,7 +142,13 @@ const SUITES = [
   // 2026-09-22 : +1 garde A16 — un glanage ENCLAVÉ cesse d'être élu et le village prend celui
   //   qu'il PEUT atteindre (`glanage.test.ts`, spec `ascension.md` V-R12). Suite à 2469 ;
   //   plancher relevé d'autant.
-  { nom: 'sim', dir: 'packages/sim', args: ['run', '--exclude', 'src/scenario.test.ts'], plancher: 2361 },
+  // 2026-09-25 : +29 gardes avec LE RÉSEAU DE SENTES (`zonegen-reseau.test.ts`, spec
+  //   `ascension.md` V-A7 — aucune route ne traverse un mur, toute terrasse éligible est
+  //   rejointe, la sente passe devant la porte, et l'EMPREINTE du terrain peint) — suite à
+  //   2498 ✓, plancher relevé quelques pourcents dessous.
+  // 2026-09-25 (même jour, plus tard) : +4 gardes « (d) le tracé est ORGANIQUE » — la rectitude
+  //   du réseau se mesure enfin, l'empreinte ne disait rien de la FORME. Suite à 2502 ✓.
+  { nom: 'sim', dir: 'packages/sim', args: ['run', '--exclude', 'src/scenario.test.ts'], plancher: 2424 },
   // 2026-09-01 : +10 gardes avec le RENDU des étages (`plateau-art.test.ts`).
   // 2026-09-01 : +9 gardes avec le TRI DES ÉTAGES (strate, découvert — `framing.test.ts`),
   //   suite relevée à 1429 ✓, plancher recalé quelques pourcents dessous.
