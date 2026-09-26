@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { BALANCE, NPC_AI } from './balance'
+import { FEATURES } from './features'
 import type { MoveWorld } from './collision'
 import { pathToward } from './pathfinding'
 import { VILLAGES_DU_BANC, construireMondeDuBanc, runScenario } from './scenario'
@@ -100,16 +101,28 @@ describe('le banc de test', () => {
      * est commune aux trois hôtes, le NOMBRE ne l'est pas — ce monde-ci est 7,8× plus petit que
      * celui du solo. La justification chiffrée vit sur la constante, dans `scenario.ts`.
      */
-    expect(sim.villages.length, 'le banc ne peuple plus comme le jeu').toBe(VILLAGES_DU_BANC)
-    const home = sim.home
-    expect(home, 'un banc sans point de naissance ne prouve rien de ce qui suit').not.toBeNull()
-    for (const v of sim.villages) {
-      const dx = v.fireTx - home!.x
-      const dy = v.fireTy - home!.y
-      expect(
-        Math.sqrt(dx * dx + dy * dy),
-        `le Feu du village ${v.id} est posé SUR le point de naissance — le joueur naîtrait dans un village`,
-      ).toBeGreaterThan(1)
+    // ⛔ CE SEUL BLOC EST GELÉ AVEC LES VILLAGES (`FEATURES.VILLAGES_PNJ`, 2026-09-26) — et rien
+    //    au-dessus ne l'est, délibérément. Tout ce qui précède est du WORLDGEN (le gibier, les
+    //    nœuds, les murs des lieux) ou de l'ÉLECTION DE SITES (la marge du raideur), et l'élection
+    //    tourne toujours : le drapeau ne ferme que la fondation. Geler le test entier aurait vidé
+    //    le banc de sa couverture worldgen pendant le chantier qui la travaille — l'inverse de ce
+    //    qu'on veut. Voir `features.ts`.
+    if (FEATURES.VILLAGES_PNJ) {
+      expect(sim.villages.length, 'le banc ne peuple plus comme le jeu').toBe(VILLAGES_DU_BANC)
+      const home = sim.home
+      expect(home, 'un banc sans point de naissance ne prouve rien de ce qui suit').not.toBeNull()
+      for (const v of sim.villages) {
+        const dx = v.fireTx - home!.x
+        const dy = v.fireTy - home!.y
+        expect(
+          Math.sqrt(dx * dx + dy * dy),
+          `le Feu du village ${v.id} est posé SUR le point de naissance — le joueur naîtrait dans un village`,
+        ).toBeGreaterThan(1)
+      }
+    } else {
+      // La PRÉMISSE du gel, affirmée : sans elle, un jour où la fondation reviendrait par une
+      // autre porte, ce test resterait silencieux au lieu de rougir.
+      expect(sim.villages.length, 'le drapeau est éteint et des villages sont nés quand même').toBe(0)
     }
   })
 
@@ -131,7 +144,10 @@ describe('le banc de test', () => {
    * Depuis, à 1 jour (le défaut) : trois villages, dix habitants, **zéro affamé**. Le seuil reste
    * une CIBLE DE DESIGN — on ne l'a jamais relâché vers 177, on a rendu le monde digne de lui.
    */
-  it(`l'écosystème tient ${DAYS} jours : personne n'affame, les Feux gardent leur caractère`, { timeout: 900_000 }, () => {
+  // ⛔ GELÉ AVEC LES VILLAGES (`FEATURES.VILLAGES_PNJ`, décision d'Alexis du 2026-09-26).
+  // Sans villageois, ce banc n'a plus de sujet : il mesure une ÉCONOMIE (qui mange, qui glane,
+  // qui porte au grenier). Il repartira tel quel au rallumage.
+  it.skipIf(!FEATURES.VILLAGES_PNJ)(`l'écosystème tient ${DAYS} jours : personne n'affame, les Feux gardent leur caractère`, { timeout: 900_000 }, () => {
     const report = runScenario(2026, DAYS)
 
     // Le rapport, pour l'humain (et l'agent) qui calibre balance.ts.
@@ -180,7 +196,11 @@ describe('le banc de test', () => {
    */
   // Deux jours MINIMUM : le cycle 0 du calendrier du banc est une accalmie (mesuré — le
   // premier front est la pluie du cycle 1), et la prémisse `frontsVus > 0` doit pouvoir tenir.
-  it(`A8 — la météo armée ne tue aucun PNJ (${Math.max(DAYS, 2)} jours, seed 2026)`, { timeout: 900_000 }, () => {
+  // ⛔ GELÉ AVEC LES VILLAGES (`FEATURES.VILLAGES_PNJ`, décision d'Alexis du 2026-09-26).
+  // ⚠ CELUI-CI PASSAIT AU VERT SANS VILLAGES, et c'est PIRE qu'un rouge : « la météo ne tue aucun
+  // PNJ » est trivialement vrai quand il n'y a aucun PNJ. Une garde qui ne peut plus échouer ne
+  // garde rien — on la gèle plutôt que de la laisser mentir.
+  it.skipIf(!FEATURES.VILLAGES_PNJ)(`A8 — la météo armée ne tue aucun PNJ (${Math.max(DAYS, 2)} jours, seed 2026)`, { timeout: 900_000 }, () => {
     const report = runScenario(2026, Math.max(DAYS, 2), undefined, { meteoActive: true })
     console.log(`  A8 : ${report.frontsVus} front(s) vus · morts foudre ${report.mortsFoudre} · morts froid ${report.mortsFroid}`)
     // La PRÉMISSE d'abord : sans front traversé, les deux zéros ne prouveraient rien.
@@ -212,7 +232,10 @@ describe('le banc de test', () => {
    *
    * Il ne joue AUCUN tick : il bâtit le monde et interroge la primitive que `setPathTo` appelle.
    */
-  it('V-A9 — un villageois sait rentrer à son Feu, et le piège de 4096 est toujours là', { timeout: 120_000 }, () => {
+  // ⛔ GELÉ AVEC LES VILLAGES (`FEATURES.VILLAGES_PNJ`, décision d'Alexis du 2026-09-26).
+  // Il cherche le « Feu du Gué » en (96,360) : sans fondation, il n'y a pas de Feu à trouver.
+  // Le piège de 4096 qu'il garde est un fait de PATHFINDING, intact — seul son sujet a disparu.
+  it.skipIf(!FEATURES.VILLAGES_PNJ)('V-A9 — un villageois sait rentrer à son Feu, et le piège de 4096 est toujours là', { timeout: 120_000 }, () => {
     const { sim } = construireMondeDuBanc(2026)
     const village = sim.villages.find((v) => v.fireTx === 96 && v.fireTy === 360)
     expect(

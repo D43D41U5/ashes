@@ -59,7 +59,53 @@ Peupler les villages. Un village 100 % PNJ doit *survivre* seul (le joueur y pro
 
 ---
 
-## La passe sur la machine du village — ouverte le 2026-09-26
+## La passe sur la machine du village — ouverte, puis SUSPENDUE le 2026-09-26
+
+> ⛔ **SUSPENDUE LE JOUR MÊME, ET LES VILLAGES PNJ SONT ÉTEINTS — décision d'Alexis :** *« stop les
+> villages. Masque-les avec une feature flag (idem pour les tests) »*, puis la raison : *« je veux
+> qu'on finisse la worldgen avant »*. Le drapeau est `FEATURES.VILLAGES_PNJ` (`packages/sim/src/features.ts`),
+> éteint, et il ne ferme **qu'une porte** : la fondation, dans `peuplerLesVoisins`. L'élection des
+> sites et le RÉSEAU DE SENTES tournent toujours — les routes du monde joué sont inchangées, elles
+> mènent seulement à des clairières vides.
+>
+> **CE QUI EST LIVRÉ ET TIENT** : P-A1 (la vivacité du tableau) et P-A3 (le gardien du Feu), avec
+> leurs gardes, et P-A4 (l'attribution du coût, qui a corrigé le 1,36 ms en amorçage).
+> ⚠ **CE QUI EST INVENTORIÉ ET NON CORRIGÉ — à lire AVANT de rallumer le drapeau** : les **quatre**
+> conditions de terminaison inatteignables de P-A2, au premier chef **la réparation qui ne s'achève
+> jamais quand le Feu est à sec et qui mange le bois même qui manque au Feu** ; le mur de pierre qui
+> ne se répare jamais au-delà du cinquième de sa solidité ; le froid dont on ne sort jamais ;
+> `fetch_water` sans branche de purge ; et la corvée qu'un dormeur garde toute la nuit alors qu'elle
+> est unique au tableau. **Rallumer les villages sans traiter P-A2 rallumerait ces défauts avec.**
+> ⚠ **ET LE GEL A SA CAUSE, trouvée juste avant l'arrêt** : le pic de 517 à 607 ms tombe au tick
+> UNIQUE du crépuscule, où `assignErrands` (`npc-errands.ts`) assigne les expéditions et où **chaque
+> villageois lance un A\* complet sur 1581×1700**. Ce n'est pas un défaut de l'A\* mais leur NOMBRE
+> sur un seul tick ; et le corriger (étaler l'assignation, ou la plafonner) **décale le flux des
+> événements et du PRNG** — donc c'est un changement de JEU à trancher avec Alexis, pas une
+> optimisation transparente. Le drapeau éteint supprime le gel en attendant.
+> L'instrument qui a établi tout cela survit : `tools/profil-villageois.mts` et ses trois lecteurs.
+>
+> ⚠ **LA RÉVERSIBILITÉ EST MESURÉE, ELLE N'EST PAS GARDÉE.** Le drapeau remis à `true`, le banc rend
+> ses **quatre gardes vertes** et les mêmes chiffres qu'avant (*villages écartés de 221 tuiles, marge
+> de ciblage 9,4 %*) : allumé, le code exécuté est `if (true)` autour de la boucle d'avant, à
+> l'identique. **Mais rien ne surveille cette propriété tant que le drapeau est éteint** — *« idem
+> pour les tests »* veut dire `it.skipIf`, donc aucune garde ne rejoue `fonder = true`, et ni
+> `empreinte-sim` ni `replay-monde-reel` ne l'éprouvent (tous deux appellent `foundNpcVillage` en
+> direct, sans traverser `peuplerLesVoisins`). C'est un fait à REFAIRE du même geste — basculer le
+> drapeau, jouer le banc — et non un invariant. La règle ① de `features.ts` n'est donc pas honorée
+> par une garde pour ce drapeau-ci, et c'est écrit là-bas aussi.
+>
+> **CE QUI EST GELÉ, PAR SUJET ET NON PAR PRÉSENCE** : quatre gardes seulement (V-A2 de
+> `veillee.test.ts`, trois du banc) — les ~29 fichiers qui se servent d'un village comme DÉCOR
+> appellent `foundNpcVillage` en direct et ne sont pas traversés. Deux pièges méritaient le geste :
+> `A8 — la météo armée ne tue aucun PNJ` **passait au VERT sans un seul PNJ** (trivialement vraie sur
+> une population nulle), et `mesure le monde qu'on JOUE` est gardée ENTIÈRE, seul son dernier bloc
+> gelé — avec un ELSE qui AFFIRME `villages.length === 0`, pour qu'une fondation revenue par une
+> autre porte ne passe pas en silence. Côté navigateur, même partage : `gi-face` (sa scène LG-A17
+> était bâtie sur une enceinte PNJ tamponnée) et `village-pnj` déclarent n'avoir plus de sujet ;
+> `vitrine` saute ses prises de village en le disant ; `trainer` perd ses trois branches d'annonce de
+> Feu — perte assumée ; `gi-temoin`, `epuisement`, `flore` et `arete` sont intacts.
+
+### Le périmètre d'origine, tel qu'il avait été arrêté
 
 > **POURQUOI ELLE EXISTE.** En une semaine, le banc a sorti **trois défauts de la même machine** :
 > le villageois qui ne sait pas rentrer à son Feu (V-R11, budget d'A\*), le site de récolte

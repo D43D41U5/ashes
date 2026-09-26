@@ -12,6 +12,7 @@
  * une image posée) : le type survit pour les parties sauvées, plus rien n'en pose.
  */
 import { ALIGNMENT, BALANCE, VILLAGE_GROWTH } from './balance'
+import { FEATURES } from './features'
 import { addItems } from './items'
 import { RING_OFFSETS, spawnNpcsAround } from './npc'
 import type { SimState } from './sim'
@@ -66,6 +67,15 @@ export function peuplerLesVoisins(
    * Sans carte (un test qui peuple une carte nue), la passe ne tourne pas : rien ne casse.
    */
   carte?: CarteZonee,
+  /**
+   * FONDE-T-ON VRAIMENT LES VILLAGES ? Défaut : `FEATURES.VILLAGES_PNJ`, éteint depuis le
+   * 2026-09-26 (décision d'Alexis : finir le worldgen d'abord). Une garde dont le village est le
+   * SUJET passe `true`. Tout ce qui précède la fondation — l'élection des sites, la marge du
+   * raideur, le RÉSEAU DE SENTES — tourne dans les deux cas : les routes du monde joué sont donc
+   * les mêmes, elles mènent seulement à des clairières vides. Voir `features.ts` pour ce que le
+   * drapeau change vraiment (place nette perdue, flux du PRNG décalé) et ce qu'il garantit.
+   */
+  fonder: boolean = FEATURES.VILLAGES_PNJ,
 ): { sites: { tx: number; ty: number }[]; margeDeCible: number } {
   const d2 = (a: { tx: number; ty: number }, b: { tx: number; ty: number }): number =>
     (a.tx - b.tx) * (a.tx - b.tx) + (a.ty - b.ty) * (a.ty - b.ty)
@@ -119,8 +129,13 @@ export function peuplerLesVoisins(
   }
 
   const dispositions = ['foyer', 'meute'] as const
-  for (const [i, v] of sites.entries()) {
-    foundNpcVillage(state, v.tx, v.ty, habitants, dispositions[i] ?? 'neutre')
+  // ═══ LA SEULE PORTE QUE LE DRAPEAU FERME (`FEATURES.VILLAGES_PNJ`) ═══
+  // Tout ce qui est au-dessus a déjà tourné — les sites sont élus, les routes sont peintes, les
+  // nœuds sous la route sont partis. On s'arrête juste avant que le bâti ne remue le sol.
+  if (fonder) {
+    for (const [i, v] of sites.entries()) {
+      foundNpcVillage(state, v.tx, v.ty, habitants, dispositions[i] ?? 'neutre')
+    }
   }
 
   return { sites, margeDeCible: Math.round(margeDe(sites, MEUTE) * 10) / 10 }

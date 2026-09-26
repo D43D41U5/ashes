@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { BALANCE, MONDE, TICKS_PER_CYCLE, TICKS_PER_SEASON_DAY, seasonDayAtTick } from '@ashes/sim'
+import { BALANCE, FEATURES, MONDE, TICKS_PER_CYCLE, TICKS_PER_SEASON_DAY, seasonDayAtTick } from '@ashes/sim'
 import { createVeillee, VEILLEE_CALENDAR_SCALE, VEILLEE_SEASON_CYCLES } from './veillee'
 
 /**
@@ -29,7 +29,11 @@ describe('la Veillée compte ses jours sur le cycle', () => {
  * que la Veillée naît avec deux voisins PNJ — un Foyer et une Meute.
  */
 describe('createVeillee — peupler la Veillée (V1-10)', () => {
-  it('fonde ses voisins PNJ (un Foyer, une Meute, des neutres) — à portée du joueur, pas au pas de sa porte', () => {
+  // ⛔ GELÉE AVEC LES VILLAGES (`FEATURES.VILLAGES_PNJ`, décision d'Alexis du 2026-09-26 : finir
+  // le worldgen d'abord). C'est la garde V-A2 de `ascension.md` — « on rencontre un village » —
+  // et son sujet a disparu du monde joué, pas sa loi : `createVeillee` élit toujours les sites et
+  // trace toujours les sentes, il ne fonde plus. Elle repart telle quelle au rallumage.
+  it.skipIf(!FEATURES.VILLAGES_PNJ)('fonde ses voisins PNJ (un Foyer, une Meute, des neutres) — à portée du joueur, pas au pas de sa porte', () => {
     const { sim, spawn } = createVeillee()
 
     // Les villages voisins (le joueur n'a PAS encore de foyer — il naît survivant). Le compte

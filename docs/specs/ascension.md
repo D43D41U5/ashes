@@ -101,6 +101,17 @@
 
 - **V-A1 — On naît en bas.** Sur les graines de la maison : **aucun spawn n'est à un palier `p` tant qu'un site viable inutilisé subsiste à un palier `< p`** (la loi, qui reste vraie même quand le bas ne suffit pas), ET le compte rendu ne diminue jamais — `cendre.test.ts` A5 exige 17 sur 17. Une carte sans `palier` rend exactement ce qu'elle rendait : garde de non-régression, sinon F-A6 (« la vallée octet-identique ») tombe.
 - **V-A2 — On rencontre un village.** Depuis le spawn, le Feu le plus proche est à la fois **au-delà** d'un plancher (l'Ermitage : pas de raid au pas de la porte) et **en deçà** d'un plafond exprimé comme une **loi relative à la carte** (une fraction de sa hauteur, ou un multiple de `MONDE.ESPACEMENT_VILLAGES`), jamais un nombre de tuiles en dur. ⚠ La garde d'origine (`veillee.test.ts:62`, `> 40`) était **verte sur 1930 tuiles** : une borne d'un seul côté pourrit dès que la carte change d'échelle.
+- ⛔ **V-R4, V-A2 ET V-A3 SONT PARQUÉS DEPUIS LE 2026-09-26** — les villages PNJ sont éteints
+  derrière `FEATURES.VILLAGES_PNJ` (`packages/sim/src/features.ts`), décision d'Alexis : *« stop les
+  villages […] je veux qu'on finisse la worldgen avant »*. Ce qui reste VRAI et tourne : l'élection
+  des sites (donc la marge du raideur) et le **réseau de sentes**, tracés avant la fondation — les
+  routes du monde joué sont inchangées et V-A7 reste verte, les sentes mènent à des clairières
+  vides. Rallumer est **MESURÉ sans perte pour le monde** — le drapeau remis à `true`, le banc rend
+  ses quatre gardes vertes et les mêmes chiffres (*221 tuiles d'écart, marge 9,4 %*), ce qui tient
+  parce qu'allumé le code exécuté est celui d'avant, à l'identique. ⚠ Mais **aucune garde
+  permanente ne le surveille** : « idem pour les tests » veut dire `skipIf`, donc rien ne rejoue
+  `fonder = true` — c'est un fait à REFAIRE du même geste, pas un invariant. **Et pas sans dette** :
+  lire `pnj.md` § P-A2, où quatre défauts de la machine du village sont inventoriés et NON corrigés.
 - **V-A3 — Le peuplement décroît en montant.** Le compte de villages par palier est décroissant au sens large, et strictement du palier le plus bas au plus haut ; leur effectif de fondation croît dans l'autre sens.
 - **V-A4 — La rareté monte.** La densité de nœuds par palier décroît (déjà vrai : 132 ‰ → 50 ‰), ET la valeur du meilleur nœud atteignable croît avec le palier. Le second terme est ce qui reste à construire.
 - **V-A5 — Le froid monte.** À ciel clair, à découvert, au cœur du Grand Froid : l'ambiant du palier haut est plus bas que celui du palier 0 de `(PALIERS − 1) × FROID_PAR_ETAGE`, et le palier 0 reste au-dessus du seuil d'hypothermie. *(= F-A7.)*

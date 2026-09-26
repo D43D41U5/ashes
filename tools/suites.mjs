@@ -201,11 +201,25 @@ const SUITES = [
   //   la crête porte le trait et le pied l'ombre, la rampe fait une trouée et LÀ SEULEMENT, une
   //   rampe de MESA n'ouvre rien — le piège du `vers` —, et sans `map.palier` rien ne bouge).
   //   Suite à 1802 ✓ sur l'arbre ; plancher inchangé (1740).
+  // 2026-09-26 : −1 SAUTÉ, pas une perte — V-A2 (« la Veillée fonde ses voisins PNJ ») passe en
+  //   `it.skipIf(!FEATURES.VILLAGES_PNJ)` avec l'extinction des villages PNJ (Alexis : « stop les
+  //   villages […] idem pour les tests »). Suite à 1801 ✓ + 1 sauté ; plancher inchangé (1740), la
+  //   marge l'absorbe. ⚠ Le plancher compare les PASSÉS : un sauté maigrit le compte pour de vrai,
+  //   et si d'autres gardes rejoignent ce drapeau il faudra le dire ici plutôt que de le subir.
   { nom: 'client', dir: 'packages/client', args: ['run'], plancher: 1740 },
   { nom: 'serveur', dir: 'packages/server', args: ['run'], plancher: 36 },
   // Le banc pilote le vrai worldgen sur la carte de production : lent, et seul à porter le
   // drapeau qui ignore les erreurs non gérées (voir l'en-tête de `scenario.test.ts`).
-  { nom: 'banc', dir: 'packages/sim', args: ['run', 'src/scenario.test.ts', '--dangerouslyIgnoreUnhandledErrors'], plancher: 4 },
+  // 2026-09-26 : LE BANC TOMBE DE 4 À 1 — les villages PNJ sont ÉTEINTS (`FEATURES.VILLAGES_PNJ`,
+  //   décision d'Alexis : finir le worldgen d'abord). Trois de ses quatre gardes ont perdu leur
+  //   SUJET, pas leur loi, et sont gelées par `it.skipIf` : l'économie sur un jour, A8 (la météo
+  //   qui ne tue aucun PNJ — celle-là passait au VERT sans villageois, ce qui est pire qu'un rouge)
+  //   et V-A9 (elle cherche un Feu qui n'existe plus). ⚠ LA QUATRIÈME EST GARDÉE ENTIÈRE et c'est
+  //   délibéré : « mesure le monde qu'on JOUE » est du WORLDGEN (gibier, nœuds, murs des lieux) et
+  //   de l'ÉLECTION DE SITES (la marge du raideur) — que le drapeau ne touche pas —, seul son
+  //   dernier bloc est gelé. Vider le banc de sa couverture worldgen pendant le chantier qui la
+  //   travaille aurait été l'inverse du but. Plancher à 1 ; il remonte à 4 au rallumage.
+  { nom: 'banc', dir: 'packages/sim', args: ['run', 'src/scenario.test.ts', '--dangerouslyIgnoreUnhandledErrors'], plancher: 1 },
 ]
 
 /**

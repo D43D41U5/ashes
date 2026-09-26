@@ -41,7 +41,7 @@ import { chromium } from 'playwright'
 import { inflateSync } from 'node:zlib'
 import { writeFile } from 'node:fs/promises'
 import { spawn } from 'node:child_process'
-import { mkdirSync, rmSync, statSync, writeFileSync } from 'node:fs'
+import { mkdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs'
 import { dirname, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
@@ -51,6 +51,22 @@ const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 // et un outil de diagnostic qui ne peut plus rien écrire ne diagnostique rien.
 const OUT = process.env.SMOKE_OUT ? resolve(process.env.SMOKE_OUT) : resolve(ROOT, 'scratchpad/smoke')
 const PORT = 4173
+
+/**
+ * LIRE UN DRAPEAU DE `features.ts` DEPUIS LE SMOKE — et pourquoi par la SOURCE.
+ *
+ * `smoke.mjs` tourne en node nu : il ne peut pas `import`er du TypeScript, et le
+ * drapeau n'est pas exposé sur `window.__BRAISES__` (la porte est volontairement
+ * étroite — elle LIT l'état du jeu, pas ses réglages de chantier). On lit donc la
+ * ligne de `packages/sim/src/features.ts`, et on JETTE si on ne la trouve pas :
+ * un drapeau renommé doit faire crier le scénario, pas le faire passer en douce.
+ */
+const drapeau = (nom) => {
+  const src = readFileSync(resolve(ROOT, 'packages/sim/src/features.ts'), 'utf-8')
+  const m = src.match(new RegExp(`^\\s*${nom}:\\s*(true|false),`, 'm'))
+  if (!m) throw new Error(`smoke : le drapeau ${nom} est introuvable dans packages/sim/src/features.ts`)
+  return m[1] === 'true'
+}
 
 const args = process.argv.slice(2)
 const headed = args.includes('--headed')
@@ -960,6 +976,26 @@ const SCENARIOS = {
    */
   async 'gi-face'(page) {
     if (!dev) { console.error('!! gi-face exige --dev (debug_*, le champ GI)'); return }
+    // ⛔ PARQUÉ AVEC LES VILLAGES PNJ (2026-09-26, `FEATURES.VILLAGES_PNJ`) : toute la scène de
+    // LG-A17 est BÂTIE sur un village PNJ tamponné au palier 3. Le drapeau éteint, il n'y a plus
+    // d'enceinte à dresser — la garde ne rougit donc pas, elle DÉCLARE qu'elle n'a pas de sujet.
+    // Rallumer le drapeau rallume ce scénario, sans y toucher une ligne.
+    //
+    // ⚠ CE N'EST PAS LE SEUL SCÉNARIO QUE LE DRAPEAU ATTEINT — audit complet du 2026-09-26
+    // (`chiefId === 0`, `villageId !== 0`, `debug_village_stage`, `view.villages`) :
+    //   · `gi-face` et `village-pnj` : le village PNJ est leur SUJET → porte explicite, ici et là ;
+    //   · `vitrine` : ses prises de village retombent sur « pas de Nᵉ village PNJ — prise SAUTÉE »,
+    //     déjà écrit, déjà bruyant ;
+    //   · `trainer` : ses trois branches d'annonce de Feu rendent « pas de village » — le scénario
+    //     passe, mais ces trois-là ne sont plus éprouvées. Perte ASSUMÉE, parquée avec le drapeau ;
+    //   · `gi-temoin` (retombe sur un modèle `{ id: 0, warmth: 0 }`), `epuisement` et `flore` (une
+    //     liste vide leur suffit) : intacts ;
+    //   · `arete` : son `villageId !== 0` porte sur ce que le JOUEUR bâtit, pas sur un village PNJ.
+    if (!drapeau('VILLAGES_PNJ')) {
+      console.log('   ⛔ FEATURES.VILLAGES_PNJ est éteint : aucun village PNJ à tamponner, la scène de LG-A17')
+      console.log('      « une face, non » est INBÂTISSABLE. Non éprouvé — ni vert, ni rouge. (docs/specs/pnj.md)')
+      return
+    }
     const { ev, pas, agir, ok } = outilsGi(page)
     const { lireLesZones, jugerLeDessus } = outilsDessus({ ev, ok })
     const t0 = Date.now()
@@ -6968,6 +7004,15 @@ const SCENARIOS = {
    * le même pipeline — le neuf visible à la fondation, c'est le camp. Exige `--dev` (TP).
    */
   async 'village-pnj'(page) {
+    // ⛔ PARQUÉ AVEC SON SUJET (2026-09-26, `FEATURES.VILLAGES_PNJ`) : ce scénario NE JUGE QUE le
+    // campement d'un village PNJ. Le drapeau éteint, il n'y en a plus un seul sur la carte — et
+    // sans porte il passerait au VERT sur une liste vide, ce qui est pire que rouge : il dirait
+    // « le campement est bon » en n'ayant rien regardé. Il déclare donc qu'il n'a pas de sujet.
+    if (!drapeau('VILLAGES_PNJ')) {
+      console.log('   ⛔ FEATURES.VILLAGES_PNJ est éteint : aucun village PNJ sur la carte, le campement')
+      console.log('      de fondation est INOBSERVABLE. Non éprouvé — ni vert, ni rouge. (docs/specs/pnj.md)')
+      return
+    }
     await page.goto(URL)
     await page.waitForFunction(() => Boolean(window.__BRAISES__?.scene?.registry?.get('worldReady')), null, { timeout: 150000 })
     await page.waitForTimeout(1000)

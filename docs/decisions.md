@@ -11,7 +11,7 @@ volets, chacun en ajout seul et en ordre chronologique. Ce fichier-ci est l'INDE
 |---|---|---|---|---|
 | **M** | [Monde & worldgen](decisions/monde-worldgen.md) | worldgen, relief, eau, biomes, lieux, cendre, étages | 191 | 355 Ko |
 | **R** | [Rendu & DA](decisions/rendu-da.md) | lumière, couleur, sprites, FX, art du sol, son | 207 | 530 Ko |
-| **G** | [Gameplay & systèmes](decisions/gameplay-systemes.md) | faune, combat, récolte, craft, saisons, météo, construction, design | 335 | 826 Ko |
+| **G** | [Gameplay & systèmes](decisions/gameplay-systemes.md) | faune, combat, récolte, craft, saisons, météo, construction, design | 337 | 831 Ko |
 | **I** | [Interface & outillage](decisions/interface-outillage.md) | HUD, menus, encyclopédie, carte, smoke, bancs, process | 84 | 183 Ko |
 | **A** | [Architecture & infra](decisions/architecture-infra.md) | pureté et déterminisme de /sim, protocole, serveur, persistance, perf | 69 | 129 Ko |
 
@@ -31,7 +31,7 @@ retrouve ici, à la même date, jamais à la ligne du dessus dans son volet.
 
 ---
 
-## Index chronologique — 886 entrées, 2023 Ko
+## Index chronologique — 888 entrées, 2028 Ko
 
 - 2026-07-05 · **M** · Spec monde validée par Alexis : déplacement continu type Binding of Isaac (jamais de case par c…
 - 2026-07-05 · **M** · Convention d'import Tiled : l'index local de la tuile dans le premier tileset = l'id de terrain…
@@ -919,3 +919,5 @@ retrouve ici, à la même date, jamais à la ligne du dessus dans son volet.
 - 2026-09-26 · **G** · LA VIVACITÉ DU TABLEAU EST UNE LOI GARDÉE, ET SA GARDE NE NOMME AUCUNE CORVÉE — P-A1, `npc.test…
 - 2026-09-26 · **G** · LE VILLAGE CONSACRE UN BRAS À SON FEU : « LE GARDIEN ASSUMÉ » (décision d'Alexis, P-A3 de `pnj.…
 - 2026-09-26 · **G** · UNE GARDE QUI REMONTE UN AVANT DEPUIS UN APRÈS ÉCRÊTÉ EST STRUCTURELLEMENT AVEUGLE — écrire la…
+- 2026-09-26 · **G** · LES VILLAGES PNJ SONT ÉTEINTS DERRIÈRE `FEATURES.VILLAGES_PNJ` — on finit le worldgen d'abord (…
+- 2026-09-26 · **G** · « IDEM POUR LES TESTS » SE LIT PAR SUJET, PAS PAR PRÉSENCE — et quatre tests seulement sont tom…
