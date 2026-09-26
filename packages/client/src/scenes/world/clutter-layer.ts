@@ -238,10 +238,18 @@ export class ClutterLayer {
       const x0 = Math.max(0, Math.floor(v.x / TILE_PX) - MARGIN_TILES)
       const y0 = Math.max(0, Math.floor(v.y / TILE_PX) - MARGIN_TILES)
       const x1 = Math.min(this.map.width - 1, Math.ceil((v.x + v.width) / TILE_PX) + MARGIN_TILES)
-      // Carte plate : plus de lift, donc une simple marge de pop symétrique suffit.
+      // ⚠ LE COMMENTAIRE D'AVANT DISAIT « carte plate : plus de lift, une marge symétrique
+      // suffit ». IL ÉTAIT PÉRIMÉ — ce fichier lit `warp.lift` à la tuile et l'APPLIQUE au prop
+      // (voir `sy`, plus bas). la MARGE SUD D'UNE COUCHE FENÊTRÉE VAUT `liftMaxPx` + la hauteur propre de
+    // ce qu'elle dessine. Un objet du palier `p` est peint `liftDuPalier(p)` px plus haut que sa
+    // rangée : il est donc VISIBLE alors que sa rangée est sous le bas de l'écran. Sans ce terme,
+    // il apparaît d'un coup À QUELQUES PIXELS DU BORD BAS (vu par Alexis, 2026-09-26).
+      // MESURÉ le 2026-09-26 : la médiane de la profondeur d'apparition d'un prop passe de −108 px
+      // au palier 0 (il entre par le bord, comme il faut) à +38 au palier 2 et +106 au palier 3,
+      // où les 21 apparitions relevées sont positives — le décor naissait en plein cadre.
       const y1 = Math.min(
         this.map.height - 1,
-        Math.ceil((v.y + v.height) / TILE_PX) + MARGIN_TILES,
+        Math.ceil((v.y + v.height + this.warp.liftMaxPx) / TILE_PX) + MARGIN_TILES,
       )
       for (let ty = y0; ty <= y1 && used < MAX_SPRITES; ty++) {
         for (let tx = x0; tx <= x1 && used < MAX_SPRITES; tx++) {

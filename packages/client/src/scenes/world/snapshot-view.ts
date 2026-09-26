@@ -2814,7 +2814,19 @@ export class SnapshotView {
     const tx0 = Math.floor(v.x / TILE_PX) - 2
     const ty0 = Math.floor(v.y / TILE_PX) - 1
     const tx1 = Math.ceil((v.x + v.width) / TILE_PX) + 2
-    const ty1 = Math.ceil((v.y + v.height) / TILE_PX) + crownMargin
+    // ═══ ET ELLE S'ÉLARGIT AUSSI DU LIFT (2026-09-26) — les deux marges S'AJOUTENT ═══
+    //
+    // La cime et le lift sont deux débords INDÉPENDANTS : un gros bois monte 6 rangées au-dessus
+    // de sa tuile, et une terrasse le monte de `2p` de plus. la MARGE SUD D'UNE COUCHE FENÊTRÉE VAUT `liftMaxPx` + la hauteur propre de
+    // ce qu'elle dessine. Un objet du palier `p` est peint `liftDuPalier(p)` px plus haut que sa
+    // rangée : il est donc VISIBLE alors que sa rangée est sous le bas de l'écran. Sans ce terme,
+    // il apparaît d'un coup À QUELQUES PIXELS DU BORD BAS (vu par Alexis, 2026-09-26).
+    //
+    // MESURÉ : au palier 2, un hêtre apparaissait alors que son sommet était déjà 7 px DANS le
+    // cadre. Cette fenêtre est aussi celle des SOUCHES et des gerbes d'ÉPUISEMENT (plus bas, elles
+    // relisent `ty0/ty1`) : elles popaient pareil, un seul terme les répare toutes les trois.
+    // `ground-layer.ts` est le modèle — sol, pavés, gel, falaises et étages portent déjà ce terme.
+    const ty1 = Math.ceil((v.y + v.height + (this.warp?.liftMaxPx ?? 0)) / TILE_PX) + crownMargin
     const feetY = playerY + BALANCE.AVATAR_HITBOX_DEPTH_TILES / 2
     // ÉTEINDRE OU RALLUMER LA LUMIÈRE N'EST PAS UN FONDU. Le toggle DEV (panneau P) change TOUTES
     // les clés de cime d'un coup — art peint ↔ `_lit` — et `FonduDeCime`, qui ne juge que sur la
@@ -2997,6 +3009,24 @@ export class SnapshotView {
         // `terrasse-1`, poche de palier 1, 2026-09-04).
         const pyPied = py - (this.warp?.liftAEtage(tx + 0.5, ty + 0.5, n.etage) ?? 0)
         const pyDessin = pyPied + (immerge ? enfoncementDUnNoeud(true).descente : 0)
+        // ═══ CE DONT LE CHAMP GI A BESOIN, ET QUI N'EST PAS `pyPied` (2026-09-26) ═══
+        //
+        // DE COMBIEN CE NŒUD EST-IL DESSINÉ PLUS HAUT QUE SA RANGÉE LOGIQUE. Positif dès le
+        // palier 1, nul au palier 0 — c'est exactement `liftAEtage`, relu comme une DISTANCE.
+        //
+        // ⚠ LE CHAMP GI, LUI, TRAVAILLE EN LOGIQUE. `pave-layer.ts` (`habillerLaPart`) laisse la
+        // part du palier 0 SOUS le quad MULTIPLY — elle est donc multipliée à sa place dessinée,
+        // qui EST sa place logique — mais arme les parts des paliers ≥ 1 AU-DESSUS du quad, et
+        // celles-là lisent `gi-champ` À LEUR TUILE LOGIQUE (LG-R14, « la terrasse lit le champ à
+        // sa tuile »). Une carte d'ombre poussée au pied DESSINÉ est donc écrite `2p` rangées
+        // trop haut, puis relue par une part qui est elle-même dessinée `2p` rangées plus haut
+        // encore : l'ombre de l'arbre finissait à hauteur de son houppier, détachée de son pied
+        // (VU par Alexis, MESURÉ le 2026-09-26 : +72 px écran = 32 px monde = `liftDuPalier(1)`
+        // pile, k = 1 — et rien au palier 0, le témoin qui prouve que le terme est bien le lift).
+        // La flaque de contact, elle, est DISCULPÉE : `sprite.y − ombre.y` vaut 0,00 aux deux
+        // paliers. C'était la seule chaîne du GI à travailler en coordonnées dessinées ; les feux
+        // sont poussés à leur place logique depuis toujours (`WorldScene.ts`).
+        const liftDuNoeud = py - pyPied
         sprite.setPosition(px, pyDessin)
         // Le sprite est POOLÉ : sa depth suit la tuile qu'il occupe cette frame,
         // jamais celle où il a été créé. Le pied réel intègre le décalage Y, pour
@@ -3107,9 +3137,12 @@ export class SnapshotView {
         // LA CARTE DU FÛT (LG-R8) : le sprite tel qu'il vient d'être posé, debout sur son pied réel.
         if (cartes !== null && isTree && !growing) {
           cartes.push({
-            cle: texture, x: px, y: pyDessin, originX: 0.5, originY: 1,
+            // ⚠ LES DEUX COMPOSANTES ENSEMBLE (`+ liftDuNoeud`), jamais une seule : la projection
+            // de l'ombre tourne AUTOUR DU PIED, donc translater le sprite sans son pied (ou
+            // l'inverse) ne déplacerait pas l'ombre — il la DÉFORMERAIT. Voir `liftDuNoeud`.
+            cle: texture, x: px, y: pyDessin + liftDuNoeud, originX: 0.5, originY: 1,
             rotation: sprite.rotation, scaleX: sprite.scaleX, scaleY: sprite.scaleY, flipX: sprite.flipX, flipY: sprite.flipY,
-            piedX: px, piedY: pyPied,
+            piedX: px, piedY: pyPied + liftDuNoeud,
           })
         }
         // LE REFLET DE L'ARBRE (eau-vivante R13) : un fût de la rive nord se redit dans
@@ -3311,9 +3344,10 @@ export class SnapshotView {
           // la cime ENTRANTE seule (dz = 0), jamais celle qui s'efface : un arbre a une cime.
           if (cartes !== null && dz === 0) {
             cartes.push({
-              cle, x: pxCime, y: pyCime - ancrageHouppierPx(mesures), originX: 0.5, originY: 1,
+              // Même translation que le fût, et pour la même raison — les deux composantes.
+              cle, x: pxCime, y: pyCime - ancrageHouppierPx(mesures) + liftDuNoeud, originX: 0.5, originY: 1,
               rotation: img.rotation, scaleX: img.scaleX, scaleY: img.scaleY, flipX: false, flipY: false,
-              piedX: pxCime, piedY: pyCime,
+              piedX: pxCime, piedY: pyCime + liftDuNoeud,
             })
           }
         }

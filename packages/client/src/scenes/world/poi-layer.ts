@@ -61,8 +61,14 @@ export class PoiLayer {
   private lastLighting: boolean | null = null
   /** Éclairage dynamique armé ? Posé par WorldScene, comme pour le clutter. Défaut : allumé (mode nominal). */
   lighting = true
+  /** LE PLUS GRAND LIFT DE LA CARTE, gardé pour la BORNE SUD du culling (`update`) : les lieux
+   *  sont posés une fois pour toutes dans le constructeur, mais leur fenêtre se recalcule à
+   *  chaque image — et un lieu du palier `p` est peint `liftDuPalier(p)` px plus haut que sa
+   *  rangée. 0 sur une carte plate, donc inerte là où il n'y a pas de terrasse. */
+  private readonly liftMaxPx: number
 
   constructor(scene: Phaser.Scene, map: WorldMap, warp: Warp) {
+    this.liftMaxPx = warp.liftMaxPx
     const art = new Map(POI_ART.map((a) => [a.slug, a]))
     map.zones.forEach((z, poiId) => {
       if (z.kind === undefined) return
@@ -158,7 +164,12 @@ export class PoiLayer {
     const x0 = v.x / TILE_PX - MARGIN_TILES
     const y0 = v.y / TILE_PX - MARGIN_TILES
     const x1 = (v.x + v.width) / TILE_PX + MARGIN_TILES
-    const y1 = (v.y + v.height) / TILE_PX + MARGIN_TILES
+    // LA BORNE SUD PORTE LE LIFT (2026-09-26) : la MARGE SUD D'UNE COUCHE FENÊTRÉE VAUT `liftMaxPx` + la hauteur propre de
+    // ce qu'elle dessine. Un objet du palier `p` est peint `liftDuPalier(p)` px plus haut que sa
+    // rangée : il est donc VISIBLE alors que sa rangée est sous le bas de l'écran. Sans ce terme,
+    // il apparaît d'un coup À QUELQUES PIXELS DU BORD BAS (vu par Alexis, 2026-09-26).
+    // `MARGIN_TILES` vaut 10 et un bâti monte jusqu'à ~6 tuiles : il en faut `liftMaxPx` de plus.
+    const y1 = (v.y + v.height + this.liftMaxPx) / TILE_PX + MARGIN_TILES
 
     // LE TOGGLE RE-SWAPPE LES TEXTURES (revue du 26/07 : « éteint = comme avant » doit être
     // vrai — un albédo aplati sans lumière est un sprite délavé, pas l'art peint). Une fois
