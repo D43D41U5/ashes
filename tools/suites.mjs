@@ -148,7 +148,17 @@ const SUITES = [
   //   2498 ✓, plancher relevé quelques pourcents dessous.
   // 2026-09-25 (même jour, plus tard) : +4 gardes « (d) le tracé est ORGANIQUE » — la rectitude
   //   du réseau se mesure enfin, l'empreinte ne disait rien de la FORME. Suite à 2502 ✓.
-  { nom: 'sim', dir: 'packages/sim', args: ['run', '--exclude', 'src/scenario.test.ts'], plancher: 2424 },
+  // 2026-09-25 (soir) : +2 gardes V-A9bis — une corvée sans bois ne gèle plus le tableau, pour le
+  //   Feu ET pour la réparation (`npc.test.ts`). Suite à 2504 ✓.
+  // 2026-09-26 : +4 gardes P-A1, LA VIVACITÉ DU TABLEAU (`npc.test.ts`, spec `pnj.md` — la passe
+  //   sur la machine du village). La loi ne nomme aucune corvée : un village qui a encore
+  //   quelqu'un de vivant travaille, quoi qu'il lui manque. Quatre empêchements, ROUGES tous les
+  //   quatre sur `7ea2121`. Suite à 2508 ✓.
+  // 2026-09-26 : +1 garde P-A3 — le gardien du Feu ne brûle pas plus de bois que le Feu n'en
+  //   absorbe (`npc.test.ts`), écrite en CONSERVATION parce que la forme instantanée était verte
+  //   sur le code fautif (le clamp de `feedVillageFire` masquait le gaspillage). Rouge sur
+  //   `152401a` : 40 bûches pour 7,5 absorbables. Suite à 2509 ✓, plancher relevé d'autant.
+  { nom: 'sim', dir: 'packages/sim', args: ['run', '--exclude', 'src/scenario.test.ts'], plancher: 2429 },
   // 2026-09-01 : +10 gardes avec le RENDU des étages (`plateau-art.test.ts`).
   // 2026-09-01 : +9 gardes avec le TRI DES ÉTAGES (strate, découvert — `framing.test.ts`),
   //   suite relevée à 1429 ✓, plancher recalé quelques pourcents dessous.

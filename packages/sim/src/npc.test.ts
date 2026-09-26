@@ -1077,3 +1077,188 @@ describe('la corvée du Feu sans bois ne gèle plus le tableau (livelock de prio
     expect(consomme, `${consomme} unité(s) récoltées : le village tourne à vide`).toBeGreaterThan(0)
   })
 })
+
+/**
+ * ═══ LA VIVACITÉ DU TABLEAU — LA GARDE GÉNÉRIQUE ═══
+ *
+ * Les deux tests ci-dessus décrivent le défaut qu'on a TROUVÉ. Celui-ci est là pour le
+ * PROCHAIN, et il ne nomme aucune corvée :
+ *
+ *     ⟶ UN VILLAGE QUI A ENCORE QUELQU'UN DE VIVANT TRAVAILLE, QUOI QU'IL LUI MANQUE.
+ *
+ * Un empêchement que le village ne peut pas lever — pas un bois, pas un outil — a le droit de
+ * laisser une corvée inexécutable ; il n'a pas le droit d'arrêter LES AUTRES. C'est le défaut
+ * de V-A9bis énoncé en loi : `feed_fire` siège à la priorité la plus haute, et relâchée LIBRE
+ * elle était reprise par le villageois suivant au même tick, à 20 Hz, indéfiniment — le village
+ * entier gelait sur une corvée que personne ne pouvait faire.
+ *
+ * ⚠ CE QUI FAIT ROUGIR CETTE GARDE, écrit pour qu'elle ne puisse pas passer au vert pour rien :
+ * un seul empêchement du tableau qui rende nul soit le travail, soit sa morsure sur le monde.
+ * Et **elle rougit pour de bon** — une garde de vivacité qu'on n'a pas vue rouge ne prouve rien.
+ * MESURÉ le 2026-09-26, les quatre lignes rejouées sur `7ea2121` (le commit d'AVANT V-A9bis,
+ * sorti en worktree détaché) : **4 rouges sur 4, toutes sur `ticksAuTravail`, toutes à ZÉRO
+ * tick de travail sur 9 000 possibles** (3 villageois × 3 000 ticks) — et les deux lignes de
+ * prémisse VERTES des deux côtés, donc ce n'est pas un montage mort. Sur HEAD : 4 vertes.
+ * ⚠ Le troisième cas — réparation seule, Feu plein — gèle AUSSI sur `7ea2121` : c'est la preuve
+ * séparée qu'il fallait les deux moitiés du correctif, et pas seulement celle du Feu.
+ *
+ * ⚠ ET ELLE PROUVE SA PRÉMISSE AVANT DE CONCLURE : un village dont le tableau serait resté vide
+ * n'aurait rien pu geler, et les deux lignes de la loi passeraient au vert sans rien dire.
+ *
+ * AJOUTER UNE LIGNE AU TABLEAU est le geste normal du jour où l'on découvre un empêchement de
+ * plus. C'est là que ça se met, pas dans un test de plus.
+ */
+const EMPECHEMENTS: { nom: string; escape: string; poser: (sim: SimState) => void }[] = [
+  {
+    nom: 'le Feu réclame du bois, il n’y en a pas un au village — mais les outils sont là',
+    escape: 'la corvée de bois',
+    poser: (sim) => {
+      granary(sim).inventory = makeInventory(SLOTS.CHEST)
+      granary(sim).inventory![0] = { item: 'crude_axe', count: 1 }
+      granary(sim).inventory![1] = { item: 'crude_pickaxe', count: 1 }
+      sim.villages[0]!.fuel = FIRE_UPKEEP.TASK_THRESHOLD - 1
+    },
+  },
+  {
+    nom: 'le Feu réclame du bois, et il n’y a ni bois NI OUTIL pour en faire',
+    escape: 'le glanage, seul (glanage.md G6 : sans hache, le village glane au lieu de bûcher)',
+    poser: (sim) => {
+      granary(sim).inventory = makeInventory(SLOTS.CHEST)
+      sim.villages[0]!.fuel = FIRE_UPKEEP.TASK_THRESHOLD - 1
+    },
+  },
+  {
+    nom: 'des structures à réparer, et pas un bois au village',
+    escape: 'la corvée de bois (le Feu, lui, est plein : on isole la réparation)',
+    poser: (sim) => {
+      granary(sim).inventory = makeInventory(SLOTS.CHEST)
+      granary(sim).inventory![0] = { item: 'crude_axe', count: 1 }
+      sim.villages[0]!.fuel = FIRE_UPKEEP.CAPACITY
+      for (const st of sim.structures) if (st.villageId === sim.villages[0]!.id) st.hp = Math.floor(st.hp * 0.3)
+    },
+  },
+  {
+    nom: 'le Feu ET les réparations réclament ensemble, sur un grenier vide',
+    escape: 'le glanage — et c’est le cas qui a vraiment gelé : deux corvées prioritaires',
+    poser: (sim) => {
+      granary(sim).inventory = makeInventory(SLOTS.CHEST)
+      sim.villages[0]!.fuel = FIRE_UPKEEP.TASK_THRESHOLD - 1
+      for (const st of sim.structures) if (st.villageId === sim.villages[0]!.id) st.hp = Math.floor(st.hp * 0.3)
+    },
+  },
+]
+
+describe('la vivacité du tableau : un empêchement universel n’arrête pas le village', () => {
+  for (const cas of EMPECHEMENTS) {
+    it(`${cas.nom} → il reste ${cas.escape}`, () => {
+      const sim = npcVillageSim(3)
+      cas.poser(sim)
+      const village = sim.villages[0]!
+      const stock0 = sim.nodes.reduce((n, x) => n + x.stock, 0)
+
+      let ticksAuTravail = 0
+      let ticksTableauNonVide = 0
+      for (let t = 0; t < 3000; t++) {
+        step(sim, [])
+        if (village.tasks.length > 0) ticksTableauNonVide += 1
+        for (const n of sim.npcs) if (n.task) ticksAuTravail += 1
+      }
+      const consomme = stock0 - sim.nodes.reduce((n, x) => n + x.stock, 0)
+
+      // ── LA PRÉMISSE, D'ABORD. Sans ces deux lignes, un village mort ou sans tableau
+      //    rendrait la garde verte en ne prouvant rien. (`state.npcs` ne porte QUE des
+      //    vivants : `combat.ts` en retire l'entrée à la mort.)
+      expect(sim.npcs.length, 'plus un villageois vivant : ce n’est plus le cas mesuré').toBeGreaterThan(0)
+      expect(ticksTableauNonVide, 'le tableau est resté vide tout du long : rien ne pouvait geler').toBeGreaterThan(0)
+
+      // ── PUIS LA LOI, EN DEUX TEMPS. Quelqu'un travaille…
+      expect(ticksAuTravail, 'aucun villageois n’a travaillé de tout le banc — le tableau est GELÉ').toBeGreaterThan(0)
+      // …et ce travail MORD SUR LE MONDE. Un PNJ qui « a une tâche » sans jamais entamer un
+      // nœud serait un gel plus discret ; c'est cette ligne-ci qui l'attrape.
+      expect(consomme, `${consomme} unité(s) récoltées en 3 000 ticks : le village tourne à vide`).toBeGreaterThan(0)
+    })
+  }
+})
+
+/**
+ * ═══ P-A3 — LE GARDIEN DU FEU NE GASPILLE PAS (spec `pnj.md`, décision d'Alexis du 2026-09-26) ═══
+ *
+ * LE DÉFAUT QUE CETTE GARDE FERME. `advanceNpcs` tourne AVANT `advanceUpkeep` (`sim.ts`), donc un
+ * villageois voit toujours un Feu qui vient de brûler son tick : `fuel` vaut `CAPACITY` moins un
+ * drain, JAMAIS `CAPACITY`. Les deux gardes « c'est plein » étaient donc inatteignables pour lui,
+ * `give = ceil(room / FEED_PER_WOOD)` rendait 1 pour un trou de 0,003, et **une bûche entière —
+ * dix minutes de flamme — partait pour racheter un vingtième de seconde**. MESURÉ au banc : 75 des
+ * 92 `fire_fed` de la graine 2026 tombaient dans un Feu déjà à 240, par lots jusqu'à 34 d'affilée.
+ *
+ * ⚠ POURQUOI AUCUN TEST NE L'AVAIT VU, et c'est la leçon : `upkeep.test.ts` porte une garde qui
+ * s'appelle « ne le remplit jamais AU-DELÀ de sa capacité (pas de gaspillage) », mais elle appelle
+ * `applyVillageAction` **sans un seul tick d'upkeep entre deux**. Elle éprouve le geste du JOUEUR,
+ * qui passe par la phase d'inputs — en amont du drain, donc là où la garde EST atteignable. Le cas
+ * réel, la boucle du villageois avec l'ordre des phases, n'avait aucun témoin. **Celui-ci joue de
+ * vrais ticks : c'est la seule façon de le voir.**
+ *
+ * ⚠ CE QUI LE FAIT ROUGIR, et il a été VU ROUGE : le bilan du bois versé qui dépasse ce que le
+ * Feu pouvait absorber. MESURÉ le 2026-09-26 sur `152401a` (le commit d'avant le correctif, sorti
+ * en worktree détaché) : **40 bûches versées en 3 000 ticks, en 35 versements dont 33 d'affilée**,
+ * quand le Feu ne pouvait en absorber que **7,5**. Après correctif : vert, et la marge est de 5×.
+ */
+describe('P-A3 — le gardien du Feu ne brûle pas plus de bois que le Feu n’en absorbe', () => {
+  it('sur 3 000 ticks de village vivant, le bilan du bois versé tient dans ce que le Feu pouvait prendre', () => {
+    const sim = npcVillageSim(3)
+    // Un village OUTILLÉ et APPROVISIONNÉ : on éprouve le gaspillage, pas la disette.
+    granary(sim).inventory = inventoryOf(SLOTS.CHEST, { wood: 40, berries: 20, fiber: 10 })
+    granary(sim).inventory![6] = { item: 'crude_axe', count: 1 }
+    const village = sim.villages[0]!
+    // Sous le seuil : la corvée se poste, le gardien prend son poste.
+    village.fuel = FIRE_UPKEEP.TASK_THRESHOLD - 1
+
+    const TICKS = 3000
+    const fuelDepart = village.fuel
+    let versements = 0
+    let boisVerse = 0
+    let refusFeu = 0
+    drainEvents(sim)
+    for (let t = 0; t < TICKS; t++) {
+      step(sim, [])
+      for (const e of drainEvents(sim) as { type: string; reason?: string; wood?: number }[]) {
+        if (e.type === 'fire_fed') {
+          versements += 1
+          boisVerse += e.wood!
+        }
+        if (e.type === 'action_rejected' && (e.reason ?? '').includes('bûche')) refusFeu += 1
+      }
+    }
+
+    // ── LA PRÉMISSE : sans un seul nourrissage, tout ce qui suit passerait au vert pour rien.
+    expect(versements, 'le Feu n’a jamais été nourri : la garde ne prouve rien').toBeGreaterThan(0)
+
+    // ── LA LOI EST UNE CONSERVATION, et il a fallu s'y reprendre.
+    //
+    // ⚠ LA FORME ÉVIDENTE NE MARCHE PAS, et c'est un piège à consigner : juger chaque versement
+    // en remontant de `fuel` (l'événement) à la place qu'il y avait AVANT, par soustraction du
+    // bois versé. Impossible — `feedVillageFire` ÉCRÊTE (`Math.min(CAPACITY, …)`), donc dans le
+    // cas gaspilleur `fuel` vaut exactement `CAPACITY` et la soustraction rend toujours
+    // `room = FEED_PER_WOOD` pile. La garde était verte sur le code FAUTIF : aveugle précisément
+    // là où elle devait mordre. (MESURÉ : 35 versements, tous reconstruits à « 24,000 » de place.)
+    //
+    // La loi qui tient ne regarde donc pas un versement mais le BILAN : sur la fenêtre, le bois
+    // versé ne peut pas dépasser ce que le Feu était CAPABLE d'absorber — son déficit de départ,
+    // plus ce qu'il a pu brûler pendant. Tout dérivé de `balance.ts`, aucun nombre posé.
+    const brulableMax = TICKS * FIRE_UPKEEP.DRAIN_PER_TICK * 2 // 2 = plafond d'`ACT_FACTOR` (Grand Froid)
+    const absorbableMax = (FIRE_UPKEEP.CAPACITY - fuelDepart + brulableMax) / FIRE_UPKEEP.FEED_PER_WOOD + 1 // +1 bûche de jeu
+    expect(
+      boisVerse,
+      `${boisVerse} bûches versées en ${TICKS} ticks (${versements} versements) quand le Feu ne pouvait en absorber` +
+        ` que ${absorbableMax.toFixed(1)} : le surplus est brûlé pour rien`,
+    ).toBeLessThanOrEqual(absorbableMax)
+
+    // ── ET LE GARDIEN TIENT SON POSTE : le Feu est remonté au large et n'a pas replongé.
+    //    C'est la moitié « gardien assumé » du choix — sous les fournées, cette ligne serait fausse.
+    expect(village.fuel, 'le Feu n’est jamais remonté au-dessus de son seuil d’alerte').toBeGreaterThan(FIRE_UPKEEP.TASK_THRESHOLD)
+
+    // ── ET IL N'INONDE PAS LE FLUX DE DOMAINE. Sans le retour anticipé d'`executeFeedFire`, le
+    //    gardien se ferait refuser l'action à CHAQUE tick : 20 `action_rejected` par seconde pour
+    //    un fait qui n'en est pas un. Le flux d'événements est un contrat (`events.ts`), pas un log.
+    expect(refusFeu, `${refusFeu} refus « pas la place d’une bûche » dans le flux : le gardien harcèle l’action`).toBe(0)
+  })
+})

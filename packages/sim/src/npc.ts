@@ -1392,6 +1392,12 @@ function executeFeedFire(state: SimState, village: Village, npc: Npc, entity: En
   task.stage = 'work'
 
   if (near(state.map, entity, village.fireTx, village.fireTy, undefined)) {
+    // LE GARDIEN VEILLE : pas la place d'une bûche entière → il attend, bois en main, sans rien
+    // tenter. Sans ce retour, `feedVillageFire` refuserait à chaque tick et déverserait un
+    // `action_rejected` par tick dans le flux de domaine — 20 par seconde et par gardien, pour
+    // un fait qui n'en est pas un. Le seuil est le MÊME que celui de `feedVillageFire`, et c'est
+    // voulu : deux seuils qui se désaccordent rouvriraient exactement le gaspillage qu'on ferme.
+    if (FIRE_UPKEEP.CAPACITY - village.fuel < FIRE_UPKEEP.FEED_PER_WOOD) return
     if (state.tick >= entity.cooldownUntil) {
       applyVillageAction(state, entity.id, { type: 'feed_fire' })
       if (!hasWood()) task.stage = 'fetch'

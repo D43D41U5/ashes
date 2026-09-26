@@ -1036,6 +1036,20 @@ function feedFreeFire(state: SimState, actor: SimState['entities'][number], s: S
 function feedVillageFire(state: SimState, actor: SimState['entities'][number], actorId: number, v: Village): string | null {
   const room = FIRE_UPKEEP.CAPACITY - v.fuel
   if (room <= 0) return 'le Feu est déjà plein'
+  // ⚠ ET « PLEIN » NE SE COMPARE PAS À LA CAPACITÉ, MAIS À LA TAILLE D'UNE BÛCHE. La ligne
+  // du dessus est INATTEIGNABLE pour un PNJ : `advanceNpcs` tourne avant `advanceUpkeep`
+  // (`sim.ts`), donc le villageois voit toujours un Feu qui vient de brûler son tick — `fuel`
+  // vaut `CAPACITY` moins un drain, jamais `CAPACITY`. Elle ne sert que pour le geste du
+  // JOUEUR, qui passe par la phase d'inputs, en amont du drain.
+  // `give = ceil(room / FEED_PER_WOOD)` rendait donc 1 pour un trou de 0,003 : une bûche
+  // entière — 24 de combustible, DIX MINUTES de flamme — versée pour racheter UN tick, un
+  // vingtième de seconde. MESURÉ au banc (3 j, météo armée) : 75 des 92 `fire_fed` de la
+  // graine 2026 tombaient dans un Feu déjà à 240, par lots allant jusqu'à 34 d'affilée.
+  // La garde se DÉRIVE donc de ce qu'on verse, jamais du plein : un feu qui n'a pas la place
+  // d'une bûche entière n'en reçoit pas. (Décision d'Alexis du 2026-09-26, le « gardien
+  // assumé » : le village consacre un bras à son Feu et le tient au large — MESURÉ, il ne
+  // franchit son seuil d'alerte qu'UNE fois en trois jours, contre trois par fournées.)
+  if (room < FIRE_UPKEEP.FEED_PER_WOOD) return 'le Feu n’a pas la place d’une bûche entière'
   const have = countOf(actor.inventory, 'wood')
   if (have <= 0) return 'il faut du bois pour nourrir le Feu'
   const give = Math.min(have, Math.ceil(room / FIRE_UPKEEP.FEED_PER_WOOD))

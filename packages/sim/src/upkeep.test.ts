@@ -65,15 +65,48 @@ describe("L'upkeep du Feu (V1-11, spec construction R16-R17, A7)", () => {
     expect(drainEvents(sim).some((e) => e.type === 'fire_fed' && e.villageId === v.id)).toBe(true)
   })
 
-  it('nourrir le Feu ne le remplit jamais AU-DELÀ de sa capacité (pas de gaspillage)', () => {
+  /**
+   * ⚠ CE TEST S'APPELAIT « pas de gaspillage » ET ENCODAIT LE GASPILLAGE. Son ancienne attente
+   * était : Feu à `CAPACITY − 1`, on nourrit, le combustible monte à `CAPACITY` et **une bûche
+   * entière a été avalée** pour racheter UN point. C'est exactement la loi qu'on a fermée le
+   * 2026-09-26 (spec `pnj.md` P-A3, décision d'Alexis « le gardien assumé ») : une bûche vaut 24
+   * de combustible, soit dix minutes de flamme, et elle ne se verse pas dans un trou plus petit
+   * qu'elle. Au banc, 75 des 92 nourrissages de la graine 2026 tombaient ainsi dans un Feu plein.
+   *
+   * Et il n'avait rien pu voir du cas RÉEL, celui du villageois : il appelle `applyVillageAction`
+   * sans un seul tick d'upkeep entre deux, donc en amont du drain — là où `room <= 0` est encore
+   * atteignable. Le témoin du cas réel vit désormais dans `npc.test.ts` (P-A3) et joue de vrais
+   * ticks. Celui-ci garde ce qui lui revient : le GESTE, aux trois tailles de trou.
+   */
+  it('nourrir le Feu : un trou plus petit qu’une bûche est refusé, un grand trou se remplit sans déborder', () => {
     const sim = makeSim()
     const chief = spawnEntity(sim, 10, 10)
     const v = createVillage(sim, { chiefId: chief, tx: 10, ty: 10, npcsArrived: true })
-    v.fuel = FIRE_UPKEEP.CAPACITY - 1 // presque plein
     grantItems(sim, chief, { wood: 20 })
+
+    // ① UN TROU PLUS PETIT QU'UNE BÛCHE → REFUSÉ, et rien n'est consommé.
+    v.fuel = FIRE_UPKEEP.CAPACITY - 1
+    drainEvents(sim)
     applyVillageAction(sim, chief, { type: 'feed_fire' })
-    expect(v.fuel).toBe(FIRE_UPKEEP.CAPACITY) // plafonné
-    expect(countOf(ent(sim, chief).inventory, 'wood')).toBe(19) // 1 seul bois avalé
+    expect(v.fuel, 'une bûche est entrée dans un trou d’un point : le gaspillage est revenu').toBe(FIRE_UPKEEP.CAPACITY - 1)
+    expect(countOf(ent(sim, chief).inventory, 'wood'), 'du bois a été consommé pour rien').toBe(20)
+    expect(
+      drainEvents(sim).some((e) => e.type === 'action_rejected' && String((e as { reason?: string }).reason).includes('bûche')),
+      'le refus n’est pas dit au joueur : il croirait avoir nourri son Feu',
+    ).toBe(true)
+
+    // ② LA PLACE D'UNE BÛCHE EXACTEMENT → acceptée, et plafonnée pile à la capacité.
+    v.fuel = FIRE_UPKEEP.CAPACITY - FIRE_UPKEEP.FEED_PER_WOOD
+    applyVillageAction(sim, chief, { type: 'feed_fire' })
+    expect(v.fuel).toBe(FIRE_UPKEEP.CAPACITY)
+    expect(countOf(ent(sim, chief).inventory, 'wood')).toBe(19)
+
+    // ③ UN GRAND TROU → plusieurs bûches d'un coup, JAMAIS au-delà de la capacité (la garde
+    //    d'origine de ce test, et elle reste vraie).
+    v.fuel = 0
+    applyVillageAction(sim, chief, { type: 'feed_fire' })
+    expect(v.fuel).toBe(FIRE_UPKEEP.CAPACITY)
+    expect(countOf(ent(sim, chief).inventory, 'wood')).toBe(19 - FIRE_UPKEEP.CAPACITY / FIRE_UPKEEP.FEED_PER_WOOD)
   })
 })
 
