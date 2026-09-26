@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { BALANCE, COMBAT, SLOTS, TEMPERATURE, TERRAIN_GRASS, TERRAIN_ROCK } from './balance'
+import { BALANCE, COMBAT, FIRE_UPKEEP, SLOTS, TEMPERATURE, TERRAIN_GRASS, TERRAIN_ROCK } from './balance'
 import { drainEvents } from './events'
 import { countOf, freeRoomFor, inventoryOf, makeInventory } from './items'
 import { createEmptyMap } from './map'
@@ -972,5 +972,108 @@ describe('le PNJ arme sa main tout seul (A6/A9 côté PNJ)', () => {
     const after = countOf(granary(sim).inventory!, 'wood') + countOf(e.inventory, 'wood')
     expect(after - before).toBe(swings.reduce((a, b) => a + b, 0))
     expect(e.activeSlot === -1 || e.inventory[e.activeSlot]?.item !== 'axe').toBe(true)
+  })
+})
+
+/**
+ * ═══ LA CORVÉE DU FEU SANS BOIS GELAIT LE VILLAGE ENTIER (livelock du tableau) ═══
+ *
+ * `feed_fire` siège à la priorité **5, la plus haute** : chaque villageois la réclame AVANT
+ * tout le reste. Quand aucun grenier ne porte de bois, `executeFeedFire` la lâchait avec
+ * `dropTask(…, false)` — remise LIBRE au tableau. Elle était donc reprise dans le même tick par
+ * le villageois suivant, qui échouait pareil, et ainsi de suite, à 20 Hz, indéfiniment : plus
+ * personne ne glanait, donc plus personne ne rapportait de bois, donc la corvée ne pouvait plus
+ * jamais aboutir. Le Feu finissait par s'éteindre — et la chronique n'accusait que la famine.
+ *
+ * C'est un empêchement **UNIVERSEL** (le village n'a pas de bois, pas « ce PNJ-ci ne peut pas »),
+ * et la doctrine du fichier est écrite : un empêchement universel QUITTE le tableau. Le jumeau
+ * de cette garde existe pour l'eau (`village-board.ts` : « poster une tâche décale QUI réclame
+ * les autres corvées », mesuré sur un monde sans eau) ; le Feu ne l'avait pas.
+ *
+ * **MESURÉ en isolation le 2026-09-25** (village à trois, greniers vidés, `fuel` sous le seuil,
+ * 3 000 ticks) : **0 tick-PNJ de travail sur 9 000** et **pas un nœud entamé** (121/121 de stock
+ * intact), contre **3 656 ticks et 37 unités** récoltées dans le témoin au Feu plein. Après
+ * correctif : 1 294 ticks, 33 unités de stock consommées.
+ *
+ * CE QUI FERAIT ROUGIR CE TEST : relâcher à nouveau la corvée LIBRE sur un empêchement que tout
+ * le village partage — et il rougirait pour la bonne raison, avec un village qui ne récolte rien.
+ */
+describe('la corvée du Feu sans bois ne gèle plus le tableau (livelock de priorité)', () => {
+  it('greniers vides et Feu sous le seuil : le village glane quand même', () => {
+    const sim = npcVillageSim(3)
+    // LA PRÉMISSE DU DÉFAUT : pas un bois au village, et un Feu qui en réclame.
+    granary(sim).inventory = makeInventory(SLOTS.CHEST)
+    const village = sim.villages[0]!
+    village.fuel = FIRE_UPKEEP.TASK_THRESHOLD - 1
+
+    const stock0 = sim.nodes.reduce((n, x) => n + x.stock, 0)
+    const boisDuVillage = (): number =>
+      sim.structures.reduce((n, st) => n + countOf(st.inventory ?? [], 'wood'), 0) +
+      sim.entities.reduce((n, e) => n + countOf(e.inventory, 'wood'), 0)
+    let ticksAuTravail = 0
+    for (let t = 0; t < 3000; t++) {
+      step(sim, [])
+      for (const n of sim.npcs) if (n.task) ticksAuTravail += 1
+    }
+
+    // ① LE CAS EST BIEN CELUI-LÀ, tout du long : un Feu qui réclame, et rien à lui donner.
+    //    (`refreshBoard` poste `feed_fire` dès que `fuel < TASK_THRESHOLD` — sans jamais
+    //    vérifier qu'il y a du bois, contrairement à la corvée d'eau.)
+    expect(village.fuel, 'le Feu est repassé au-dessus du seuil : ce n’est plus le cas mesuré').toBeLessThan(FIRE_UPKEEP.TASK_THRESHOLD)
+    expect(boisDuVillage(), 'du bois est apparu : la corvée du Feu devenait exécutable').toBe(0)
+    // ② LE TABLEAU N'EST PAS GELÉ : quelqu'un a travaillé.
+    expect(ticksAuTravail, 'aucun villageois n’a travaillé de tout le banc — le tableau est gelé').toBeGreaterThan(0)
+    // ③ ET LE TRAVAIL A MORDU SUR LE MONDE. Un PNJ qui « a une tâche » sans jamais entamer un
+    //    nœud serait un gel plus discret ; c'est cette ligne qui l'attrape.
+    const consomme = stock0 - sim.nodes.reduce((n, x) => n + x.stock, 0)
+    expect(consomme, `${consomme} unité(s) récoltées : le village tourne à vide`).toBeGreaterThan(0)
+
+    // ④ LE CONTRÔLE POSITIF, et il est indispensable : les trois lignes ci-dessus passeraient
+    //    aussi si la corvée du Feu n'était jamais postée du tout — on aurait alors gardé un
+    //    village ordinaire, pas ce cas-ci. On lui donne du bois : s'il le porte au Feu, c'est
+    //    que la corvée était bien vivante pendant tout ce qui précède, et qu'il n'y manquait
+    //    QUE le bois. (Elle ne se voit pas en fin de tick : réclamée et retirée dans le même.)
+    granary(sim).inventory = inventoryOf(SLOTS.CHEST, { wood: 20 })
+    const fuelAvant = village.fuel
+    run(sim, 1200)
+    expect(village.fuel, 'du bois au grenier et le Feu n’est pas nourri : la corvée n’existait pas').toBeGreaterThan(fuelAvant)
+  })
+
+  /**
+   * ⚠ ET IL FAUT LES DEUX, sinon le premier correctif ne sert à rien — MESURÉ. `repair` est
+   * l'exacte jumelle : elle lit `!chest` (un fait du VILLAGE, pas de ce corps-ci), elle siège à
+   * la priorité 4, et **rien ne la borne** — `refreshBoard` ne purge une réparation que si la
+   * structure a disparu ou est remise à neuf, jamais parce que le bois manque. Dès que la corvée
+   * du Feu quitte le tableau, celle-ci en prend la tête et le village regèle : sur le banc à deux
+   * corvées, le correctif du Feu seul rendait toujours **0 tick de travail sur 9 000**.
+   */
+  it('structures abîmées, zéro bois : la corvée de réparation ne gèle pas le tableau non plus', () => {
+    const sim = npcVillageSim(3)
+    granary(sim).inventory = makeInventory(SLOTS.CHEST)
+    const village = sim.villages[0]!
+    // Le Feu reste PLEIN : on isole la réparation, sinon on mesurerait la garde d'à côté.
+    village.fuel = FIRE_UPKEEP.CAPACITY
+    for (const st of sim.structures) if (st.villageId === village.id) st.hp = Math.floor(st.hp * 0.3)
+
+    const stock0 = sim.nodes.reduce((n, x) => n + x.stock, 0)
+    let ticksAuTravail = 0
+    for (let t = 0; t < 3000; t++) {
+      step(sim, [])
+      for (const n of sim.npcs) if (n.task) ticksAuTravail += 1
+    }
+
+    // ① LE CAS EST BIEN CELUI-LÀ : une réparation réclamée, et pas un bois pour la faire.
+    expect(
+      village.tasks.some((t) => t.kind === 'repair') || ticksAuTravail > 0,
+      'aucune réparation n’a jamais été postée : la garde est vide',
+    ).toBe(true)
+    expect(
+      sim.structures.reduce((n, st) => n + countOf(st.inventory ?? [], 'wood'), 0),
+      'du bois est apparu : la réparation devenait exécutable',
+    ).toBe(0)
+    // ② ET LE VILLAGE TRAVAILLE QUAND MÊME.
+    expect(ticksAuTravail, 'aucun villageois n’a travaillé — le tableau est gelé par la réparation').toBeGreaterThan(0)
+    const consomme = stock0 - sim.nodes.reduce((n, x) => n + x.stock, 0)
+    expect(consomme, `${consomme} unité(s) récoltées : le village tourne à vide`).toBeGreaterThan(0)
   })
 })

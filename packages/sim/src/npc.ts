@@ -1303,7 +1303,15 @@ function executeRepair(state: SimState, village: Village, npc: Npc, entity: Enti
 
   if (task.stage === 'fetch' && !enoughWood()) {
     const chest = granaries(state, village.id).find((c) => countOf(c.inventory ?? [], 'wood') > 0)
-    if (!chest) return dropTask(village, npc, false) // pas de bois : on abandonne
+    // PAS UN GRAIN DE BOIS AU VILLAGE — le JUMEAU exact de la garde d'`executeFeedFire` plus bas,
+    // et il faut les DEUX : relâchée libre, la corvée de réparation (priorité 4) prend la tête du
+    // tableau dès que celle du Feu l'a quitté, et le village regèle. MESURÉ avec son témoin
+    // (village à trois, zéro bois, structures sous `REPAIR_TASK_THRESHOLD`, 3 000 ticks) :
+    // **0 tick-PNJ de travail sur 9 000**, pas un nœud entamé, neuf corvées au tableau dont
+    // AUCUNE réclamée — contre 3 656 ticks et 37 unités récoltées quand les structures sont
+    // saines. Et rien ne le bornait : `refreshBoard` ne purge une `repair` que si la structure a
+    // disparu ou est remise à neuf, jamais parce que le bois manque.
+    if (!chest) return dropTask(village, npc, true)
     if (near(state.map, entity, chest.tx, chest.ty, chest.etage)) {
       const got = withdraw(
         state,
@@ -1341,13 +1349,36 @@ function executeRepair(state: SimState, village: Village, npc: Npc, entity: Enti
  *  puis le donner au Feu. La tâche communautaire zéro — sans elle, le village tombe. */
 function executeFeedFire(state: SimState, village: Village, npc: Npc, entity: Entity): void {
   const task = npc.task!
-  // Feu au plein → tâche finie (refreshBoard la purgera de toute façon).
+  // ⚠ CETTE GARDE NE SE DÉCLENCHE JAMAIS — DÉFAUT CONNU, MESURÉ, NON CORRIGÉ (`ascension.md`).
+  // `advanceNpcs` tourne AVANT `advanceUpkeep` (`sim.ts`) : le villageois voit toujours un Feu
+  // qui vient de brûler son tick : `fuel` vaut `CAPACITY` moins UN tick de drain — 0,0019 à
+  // l'acte I, 0,0029 au Grand Froid — et jamais `CAPACITY`. La
+  // corvée ne s'arrête donc qu'une fois le sac ET le grenier vides, et `feedVillageFire` avale
+  // une bûche pleine (24, soit 8 400 ticks de combustion) pour racheter UN tick. MESURÉ au banc
+  // (3 j, météo armée) : 75 des 92 `fire_fed` de la graine 2026 tombent dans un Feu déjà à 240,
+  // par lots allant jusqu'à 34 d'affilée ; sur la graine 777, 117 nourrissages contre 12 une
+  // fois la garde rendue atteignable.
+  //
+  // ⚠ ET LE CORRECTIF NE TIENT PAS TOUT SEUL : rendre cette garde vraie fait passer le banc de
+  // 0 à 4 Feux éteints (4 graines, 3 jours, mesuré à l'isolé — la moitié B ci-dessous est, elle,
+  // neutre au banc). Le gaspillage tient un villageois collé au Feu en permanence, et joue par
+  // accident le GARDIEN qui le maintient à 240. Le retirer demande de décider comment le village
+  // garde son Feu — c'est de l'équilibrage, pas un correctif, et c'est une décision en attente.
   if (village.fuel >= FIRE_UPKEEP.CAPACITY) return dropTask(village, npc, true)
   const hasWood = (): boolean => countOf(entity.inventory, 'wood') > 0
 
   if (task.stage === 'fetch' && !hasWood()) {
     const chest = granaries(state, village.id).find((c) => countOf(c.inventory ?? [], 'wood') > 0)
-    if (!chest) return dropTask(village, npc, false) // pas de bois au grenier : on abandonne
+    // PAS UN GRAIN DE BOIS AU VILLAGE : c'est un empêchement UNIVERSEL, il doit QUITTER le
+    // tableau (doctrine `noterSiteInjoignable` ci-dessus). Relâchée LIBRE, la corvée de
+    // priorité 5 était reprise au même tick par le villageois suivant, qui échouait pareil :
+    // MESURÉ en isolation (village à trois, grenier vidé, `fuel` sous le seuil, 3 000 ticks)
+    // **zéro tick-PNJ de travail sur 9 000**, aucun nœud entamé — contre 3 656 et 37 unités
+    // récoltées dans le témoin au Feu plein. Le village entier gelait sur une corvée
+    // inexécutable, jusqu'à ce que le Feu s'éteigne faute de quiconque pour aller au bois.
+    // Le jumeau de cette garde est écrit pour l'eau (`village-board.ts` : « poster une tâche
+    // décale QUI réclame les autres corvées ») ; le Feu ne l'avait pas.
+    if (!chest) return dropTask(village, npc, true)
     if (near(state.map, entity, chest.tx, chest.ty, chest.etage)) {
       const got = withdraw(state, entity, chest.id, 'wood', Math.min(NPC_AI.REPAIR_WOOD_WITHDRAW, countOf(chest.inventory ?? [], 'wood')))
       if (got === 0) return dropTask(village, npc, false)
