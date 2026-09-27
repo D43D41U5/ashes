@@ -34,12 +34,14 @@
 import { composerM } from './champ-ref'
 import { avecFeuDeLaFace, composerLeCorps, partsDuCorps, sansFeuDirect, type PartsCorps, type Rgb } from './corps-ref'
 import {
+  colonneAuPalierDuCorps,
   facteurDeNormale,
   lectureDuFeu,
   ligneDuPied,
   ordonneeLogique,
   pointAuSol,
   type CorpsPose,
+  type GrainDuChamp,
   type Normale,
   type Source3,
 } from './sol-du-corps'
@@ -58,6 +60,25 @@ export interface LectureDuChamp {
    * recompose des trois autres (`composerM`, la loi de LG-R5). Seul un SOL (`CorpsPose.sol`) le lit.
    */
   readonly m?: Rgb
+}
+
+/**
+ * ═══ L'ORACLE DU CHAMP — DEUX SAMPLERS, UNE PRISE CHACUN ═══
+ *
+ * `lire(x, y)` est le champ lui-même : `texture2D(uGiL/uGiF/uGiS, …)` en un point, quatre valeurs.
+ * `lire.palier(x, y)` est le CINQUIÈME sampler, `texture2D(uGiPaliers, …)` — le palier de la tuile
+ * (LG-R14), au même grain, un octet. Deux fonctions parce que le shader a deux textures : l'en-tête
+ * de ce module tient à ce que la référence garde la FORME d'un shader, pour que LG-A8 compare deux
+ * chemins et non deux architectures.
+ *
+ * ⚠ **ET `grain` EST OBLIGATOIRE.** La garde de palier marche de texel en texel ; sans l'origine et
+ * le pas du raster, elle ne saurait pas de combien avancer. L'oublier est une erreur de compilation —
+ * un défaut par défaut serait ici la pire des issues : la garde se tairait et le corps resterait rayé.
+ */
+export interface OracleDuChamp {
+  (x: number, y: number): LectureDuChamp
+  readonly palier: (x: number, y: number) => number
+  readonly grain: GrainDuChamp
 }
 
 /** Le ciel de l'heure — trois nombres par IMAGE, jamais par pixel : ce sont des uniformes. */
@@ -129,7 +150,7 @@ function pixelDeSol(
   xw: number,
   yw: number,
   yl: number,
-  lire: (x: number, y: number) => LectureDuChamp,
+  lire: OracleDuChamp,
   ciel: CielDeLHeure,
   texel: Rgb,
 ): PixelDuCorps {
@@ -166,6 +187,8 @@ function pixelDeSol(
  *     LOGIQUE, `lift` px plus bas (LG-R14). `c.x`, `c.y` et les sources sont déjà logiques.
  *  ① `pointAuSol` — le plat et l'astre se lisent SOUS LE PIXEL (E) : c'est là que les marches entre
  *     deux pans d'un mur s'effacent. Sur un dessus, c'est une hauteur de crête plus bas.
+ *  ①bis `colonneAuPalierDuCorps` — mais jamais AU-DELÀ D'UNE MARCHE (LG-R14) : une colonne qui
+ *     déborde sur une voisine d'un autre palier lirait un sol dessiné une terrasse plus haut.
  *  ② `partsDuCorps` en ce point — la répartition, avec le `S` et le champ de CE point.
  *  ③ `lectureDuFeu` — la part directe du feu selon la branche : nulle sur un dessus (LG-R16), lue
  *     AU PIED fois l'exposition sur une face dressée (O), sous le pixel partout ailleurs (E).
@@ -176,17 +199,19 @@ function pixelDeSol(
  * c'est la tension avec LG-R7 que la planche 8 avait déjà tranchée (« un facteur par SOURCE et par
  * sprite, lu sous le pied ; seule la normale module au pixel »).
  *
- * ⚠ **ET `g` SE PREND TOUJOURS AU POINT LU, MÊME QUAND LA PART VIENT DU PIED** (`planche9.mjs:177` :
- * `gF` se calcule en `p`). La géométrie de la normale et l'origine de la part ne viennent pas du même
- * endroit, et les confondre donnerait à toute une face le `g` de son pied — sur un feu à 9,6 px, où
- * `g` double en deux tuiles, cela se verrait.
+ * ⚠ **ET `g` SE PREND TOUJOURS AU POINT DU PIXEL, MÊME QUAND LA PART VIENT D'AILLEURS**
+ * (`planche9.mjs:177` : `gF` se calcule en `p`). La géométrie de la normale et l'origine de la part
+ * ne viennent pas du même endroit, et les confondre donnerait à toute une face le `g` de son pied —
+ * sur un feu à 9,6 px, où `g` double en deux tuiles, cela se verrait. Cela vaut pour les DEUX
+ * détournements de la lecture : le pied d'une face dressée (③) et le texel de la garde de palier
+ * (①bis), qui déplacent ce qu'on LIT et jamais où l'on est.
  */
 export function pixelDuCorps(
   c: CorpsPose,
   xw: number,
   /** L'ordonnée DESSINÉE du pixel — celle du fragment ; voir ⓪. */
   yw: number,
-  lire: (x: number, y: number) => LectureDuChamp,
+  lire: OracleDuChamp,
   ciel: CielDeLHeure,
   sources: SourcesDuPixel,
   texel: Rgb,
@@ -201,7 +226,12 @@ export function pixelDuCorps(
   // ① et ② — le point lu, et la répartition qui s'y fait. Un corps qui ne voit que le CIEL (un
   // toit, `CorpsPose.ciel`) se répartit SANS CHAMP : ni lumière, ni ombre — le décalque exact du
   // shader (`corps-gpu.ts`, `uGiCiel`), qui ne lit alors aucune des trois textures.
-  const p = pointAuSol(c, xw, yl)
+  // ①bis LA GARDE DE PALIER (LG-R14, `colonneAuPalierDuCorps`) : une colonne qui déborde sur une
+  // voisine d'un AUTRE palier retombe sur le texel le plus proche du côté de l'ancre. Elle ne
+  // s'applique PAS à un corps sous le ciel seul — il ne lit rien, il n'y a rien à garder —, et le
+  // point qu'elle rend sert ensuite à tout, `g` compris : un seul point lu, comme avant elle.
+  const brut = pointAuSol(c, xw, yl)
+  const p = c.ciel === true ? brut : colonneAuPalierDuCorps(c, brut, lire.grain, lire.palier)
   const sous = c.ciel === true ? SANS_CHAMP : lire(p.x, p.y)
   let parts: PartsCorps = partsDuCorps(ciel.mn, sous.ombre, ciel.a, sous.light, sous.directFace, ciel.ambiante)
 
@@ -222,9 +252,17 @@ export function pixelDuCorps(
     ])
   }
 
-  // ④ — la normale, au POINT LU pour les deux sources, puis la composition.
-  const fAstre = sources.astre ? facteurDeNormale(normale, p, sources.astre) : 0
-  const fFeu = feu ? facteurDeNormale(normale, p, feu) : 0
+  // ④ — la normale, AU POINT DU PIXEL (`brut`) pour les deux sources, puis la composition.
+  //
+  // ⚠ **`brut`, PAS `p` : la garde de palier déplace la LECTURE, jamais la géométrie.** Les deux
+  // coïncidaient avant elle, et le commentaire d'alors disait « au point lu ». Ce qu'il voulait dire
+  // est « pas au pied quand la part vient du pied » — c'est la géométrie DU PIXEL qui commande `g`,
+  // et l'origine de la part est une autre question. Prendre `g` au texel gardé donnerait aux
+  // colonnes débordantes un `g` GELÉ pendant que les autres gardent leur dégradé : un aplat au
+  // milieu du sprite, exactement le palier que la directive de feel refuse. Invisible sous l'astre
+  // (z = 620) ; près d'un Feu (z = 9,6), quelques pixels d'écart en x déplacent `g` sensiblement.
+  const fAstre = sources.astre ? facteurDeNormale(normale, brut, sources.astre) : 0
+  const fFeu = feu ? facteurDeNormale(normale, brut, feu) : 0
   return { rgb: composerLeCorps(texel, parts, fAstre, fFeu), ou: l.ou, fAstre, fFeu }
 }
 

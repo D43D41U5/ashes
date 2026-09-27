@@ -10,7 +10,7 @@ volets, chacun en ajout seul et en ordre chronologique. Ce fichier-ci est l'INDE
 | | Volet | Ce qu'on y trouve | Entrées | Poids |
 |---|---|---|---|---|
 | **M** | [Monde & worldgen](decisions/monde-worldgen.md) | worldgen, relief, eau, biomes, lieux, cendre, étages | 191 | 355 Ko |
-| **R** | [Rendu & DA](decisions/rendu-da.md) | lumière, couleur, sprites, FX, art du sol, son | 209 | 534 Ko |
+| **R** | [Rendu & DA](decisions/rendu-da.md) | lumière, couleur, sprites, FX, art du sol, son | 210 | 534 Ko |
 | **G** | [Gameplay & systèmes](decisions/gameplay-systemes.md) | faune, combat, récolte, craft, saisons, météo, construction, design | 337 | 831 Ko |
 | **I** | [Interface & outillage](decisions/interface-outillage.md) | HUD, menus, encyclopédie, carte, smoke, bancs, process | 84 | 183 Ko |
 | **A** | [Architecture & infra](decisions/architecture-infra.md) | pureté et déterminisme de /sim, protocole, serveur, persistance, perf | 69 | 129 Ko |
@@ -31,7 +31,7 @@ retrouve ici, à la même date, jamais à la ligne du dessus dans son volet.
 
 ---
 
-## Index chronologique — 890 entrées, 2032 Ko
+## Index chronologique — 891 entrées, 2033 Ko
 
 - 2026-07-05 · **M** · Spec monde validée par Alexis : déplacement continu type Binding of Isaac (jamais de case par c…
 - 2026-07-05 · **M** · Convention d'import Tiled : l'index local de la tuile dans le premier tileset = l'id de terrain…
@@ -923,3 +923,4 @@ retrouve ici, à la même date, jamais à la ligne du dessus dans son volet.
 - 2026-09-26 · **G** · UNE GARDE QUI REMONTE UN AVANT DEPUIS UN APRÈS ÉCRÊTÉ EST STRUCTURELLEMENT AVEUGLE — écrire la…
 - 2026-09-26 · **G** · LES VILLAGES PNJ SONT ÉTEINTS DERRIÈRE `FEATURES.VILLAGES_PNJ` — on finit le worldgen d'abord (…
 - 2026-09-26 · **G** · « IDEM POUR LES TESTS » SE LIT PAR SUJET, PAS PAR PRÉSENCE — et quatre tests seulement sont tom…
+- 2026-09-27 · **R** · Un corps ne lit plus le champ par-dessus une MARCHE : la colonne qui déborde sur une voisine d'…

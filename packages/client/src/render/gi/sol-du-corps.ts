@@ -53,7 +53,7 @@
  * bas lisent sa ligne. Ce que la règle ne peut PAS dire de lui, c'est qu'il est dessus PARTOUT —
  * cela se lit sur son type, pas sur sa géométrie (`estDessus`).
  */
-import { EDGE_E, EDGE_N, EDGE_O } from '@ashes/sim'
+import { EDGE_E, EDGE_N, EDGE_O, LUMIERE } from '@ashes/sim'
 import { DEMI_BANDE_TUILES, TILE_PX } from '../framing'
 import { CROWN, EMERGENCE } from '../socle-mineral'
 import { GI } from './reglages'
@@ -233,6 +233,81 @@ export function pointAuSol(c: CorpsPose, xw: number, yw: number): Point {
   // hauts — et le GPU lisait autre chose, sans qu'aucune garde ne les mette face à face (LG-A8).
   if (estDessus(c, yw)) return { x: xw, y: yw + hauteurDeCrete(c) }
   return { x: xw, y: ligneDuPied(c) }
+}
+
+/**
+ * ═══ LE GRAIN DU CHAMP ═══
+ * Ce que le shader tient en `uGiCadre.xy` et `uGiPas` : de quoi passer d'un texel au suivant. La loi
+ * d'en dessous marche de texel en texel ; sans le grain, elle ne saurait pas de combien avancer.
+ */
+export interface GrainDuChamp {
+  /** L'abscisse de l'origine du raster, en px MONDE (`ChampGpu.cadre[0]`). */
+  readonly x0: number
+  /** Le pas du raster, en px monde par texel (`PX_PAR_TEXEL` = 4). */
+  readonly pas: number
+}
+
+/**
+ * LA BORNE DE LA MARCHE, en texels — une tuile (LG-R2, `TEXELS_PAR_TUILE`). Un corps ne déborde
+ * jamais de plus d'une tuile sur sa voisine, et la boucle du shader veut une borne CONSTANTE
+ * (GLSL ES 1.0). Au-delà, on retombe sur l'ancre.
+ */
+export const PAS_GARDE_PALIER = LUMIERE.TEXELS_PAR_TUILE
+
+/**
+ * ═══ LA GARDE DE PALIER SUR LA LECTURE EN COLONNE (LG-R14) ═══
+ *
+ * *« UN CORPS SE TIENT SUR UN PALIER, ET NE LIT QUE LE SIEN. »*
+ *
+ * E (planche 9, ratifiée le 2026-09-16) fait lire à chaque pixel le champ SOUS SA COLONNE. Sur un
+ * plancher d'un seul tenant, c'est exactement ce qu'on veut. Contre une terrasse plus HAUTE, non : le
+ * sprite est plus large que sa tuile, il déborde sur la voisine — et cette voisine-là est dessinée
+ * `LIFT_TUILES` tuiles plus haut. La lumière qu'on y lit n'est pas celle qui tombe à la hauteur du
+ * corps : c'est celle d'un sol qui n'est même pas derrière lui, il est DESSUS. Ni E ni LG-R14
+ * n'autorisent à franchir une marche — l'une dit « sous le pixel », l'autre « à sa tuile ».
+ *
+ * MESURÉ le 2026-09-26 (avatar collé dans l'angle, tuiles 910,94 · 832,08, palier 1, lift 32, 17 h) :
+ * 14 colonnes de multiplicateur `0,559 ×7 · 0,651 ×4 · 0,742 ×3` — µ 0,625, σ 0,073, σ/µ 0,117, une
+ * amplitude de 0,183 (≈ 37 niveaux sur un texel à 200) en travers de 12 px de sprite. Les 7 dernières
+ * colonnes tombaient sur la tuile 911, qui est du palier 2. Le même corps trois tuiles au sud, même
+ * heure, même session : `0,834 ×13`, σ = 0.
+ *
+ * ⚠ **ON RETOMBE SUR LE TEXEL LE PLUS PROCHE DU CÔTÉ DE L'ANCRE, PAS SUR CELUI DE L'ANCRE.** Les deux
+ * coïncident quand l'ancre est déjà dans le texel de bord — c'est un accident de la pose mesurée, pas
+ * une loi. Ailleurs ils diffèrent, parce que le champ VARIE à l'intérieur d'une tuile (σ = 0,056 sur la
+ * pose centrée du même relevé) : renvoyer toute la colonne débordante à l'ancre poserait une MARCHE
+ * neuve au milieu du sprite, là où la directive de feel demande une pente. Prolonger le texel de bord
+ * aplatit le débord sans rien inventer.
+ *
+ * ⚠ **ET LE POINT RENDU EST SNAPÉ AU CENTRE DE SON TEXEL** quand la garde a déplacé la colonne. Le
+ * shader refait ce `floor` en float32 et la référence en float64 : sans le snap, un point choisi au
+ * bord d'un texel pourrait tomber d'un côté ici et de l'autre là-bas, et LG-A8 accuserait le shader
+ * d'un défaut qui ne serait qu'un arrondi. Quand la garde ne déplace rien, le point sort INCHANGÉ —
+ * c'est le chemin d'aujourd'hui, celui que LG-A8 tient déjà vert.
+ *
+ * ⚠ **CE N'EST PAS LA COUTURE DE E.** Au MILIEU d'une tuile, sans débord, deux colonnes voisines
+ * lisent toujours deux texels différents et la couture verticale demeure (σ = 0,056 mesuré) : c'est E
+ * telle qu'Alexis l'a ratifiée, et cette garde n'y touche pas. Elle ne coupe que le franchissement.
+ */
+export function colonneAuPalierDuCorps(
+  c: CorpsPose,
+  p: Point,
+  grain: GrainDuChamp,
+  palierEn: (x: number, y: number) => number,
+): Point {
+  const centre = (t: number): number => grain.x0 + (t + 0.5) * grain.pas
+  const tc = Math.floor((p.x - grain.x0) / grain.pas)
+  const ta = Math.floor((c.x - grain.x0) / grain.pas)
+  // Le palier de l'ANCRE est celui du corps : elle tombe dans sa tuile, et une tuile porte un palier.
+  const cible = palierEn(centre(ta), p.y)
+  if (palierEn(centre(tc), p.y) === cible) return p
+  const sens = ta > tc ? 1 : -1
+  for (let k = 1; k <= PAS_GARDE_PALIER; k++) {
+    const t = tc + sens * k
+    if (palierEn(centre(t), p.y) === cible) return { x: centre(t), y: p.y }
+    if (t === ta) break
+  }
+  return { x: centre(ta), y: p.y }
 }
 
 /**

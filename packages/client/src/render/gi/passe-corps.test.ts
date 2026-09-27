@@ -14,7 +14,7 @@ import { MUR_HT } from '../bati-art'
 import { DEMI_BANDE_TUILES, TILE_PX } from '../framing'
 import { composerM } from './champ-ref'
 import type { Rgb } from './corps-ref'
-import { estNonTrivial, pixelDuCorps, type CielDeLHeure, type LectureDuChamp, type SourcesDuPixel } from './passe-corps'
+import { estNonTrivial, pixelDuCorps, type CielDeLHeure, type LectureDuChamp, type OracleDuChamp, type SourcesDuPixel } from './passe-corps'
 import { hauteurDeCrete, ligneDuPied, type CorpsPose, type Normale } from './sol-du-corps'
 
 const M = DEMI_BANDE_TUILES * TILE_PX
@@ -33,9 +33,21 @@ const TEXEL: Rgb = [0.5, 0.42, 0.32]
 const PLAT: Normale = { x: 0, y: 0, z: 1 }
 const VERS_LE_SUD: Normale = { x: 0, y: 1, z: 0 }
 
+/** Le grain du champ du jeu : 4 px monde par texel (LG-R2), origine à 0 pour que les comptes soient lisibles. */
+const GRAIN = { x0: 0, pas: 4 }
+
+/**
+ * UN ORACLE, DES DEUX SAMPLERS. `fn` est le champ ; `palierEn` est `gi-paliers`, et sans lui TOUT est
+ * du palier 0 — la scène plate d'avant les terrasses, où la garde de palier doit être strictement
+ * inerte. C'est le contrôle négatif de toutes les épreuves qui précèdent.
+ */
+function oracle(fn: (x: number, y: number) => LectureDuChamp, palierEn?: (x: number, y: number) => number): OracleDuChamp {
+  return Object.assign(fn, { palier: palierEn ?? ((): number => 0), grain: GRAIN })
+}
+
 /** Un champ constant, et le carnet de ce qu'on lui a demandé. */
 function champ(valeur?: Partial<LectureDuChamp>): {
-  lire: (x: number, y: number) => LectureDuChamp
+  lire: OracleDuChamp
   appels: { x: number; y: number }[]
 } {
   const appels: { x: number; y: number }[] = []
@@ -45,7 +57,7 @@ function champ(valeur?: Partial<LectureDuChamp>): {
     ombre: 0,
     ...valeur,
   }
-  return { lire: (x, y) => { appels.push({ x, y }); return v }, appels }
+  return { lire: oracle((x, y) => { appels.push({ x, y }); return v }), appels }
 }
 
 describe('les points de lecture de la passe (LG-R7)', () => {
@@ -288,7 +300,7 @@ describe('un sol lit le champ à son point (LG-R14)', () => {
     const auPied: LectureDuChamp = { light: [0.1, 0.08, 0.05], directFace: [0, 0, 0], ombre: 1 }
     const dessine: LectureDuChamp = { light: [0.6, 0.5, 0.4], directFace: [0.3, 0.2, 0.1], ombre: 0 }
     const appels: number[] = []
-    const lire = (_x: number, y: number): LectureDuChamp => { appels.push(y); return y === 900 ? auPied : dessine }
+    const lire = oracle((_x: number, y: number): LectureDuChamp => { appels.push(y); return y === 900 ? auPied : dessine })
     const pose: CorpsPose = { x: 400, y: 900, arete: 0, sol: 'piedSousLeVoile' }
     const px = pixelDuCorps(pose, 410.5, 850.5, lire, CIEL, SOURCES, TEXEL, PLAT)
     expect(appels).toEqual([900, 850.5])
@@ -311,8 +323,128 @@ describe('un sol lit le champ à son point (LG-R14)', () => {
   it('UN SOL S’ÉCRÊTE À 1 PAR CANAL — un pied plus clair que son voile ne rend pas plus que le texel', () => {
     const auPied: LectureDuChamp = { light: [1, 1, 1], directFace: [0, 0, 0], ombre: 0 }
     const dessine: LectureDuChamp = { light: [0, 0, 0], directFace: [0, 0, 0], ombre: 1 }
-    const lire = (_x: number, y: number): LectureDuChamp => (y === 900 ? auPied : dessine)
+    const lire = oracle((_x: number, y: number): LectureDuChamp => (y === 900 ? auPied : dessine))
     const px = pixelDuCorps({ x: 400, y: 900, arete: 0, sol: 'piedSousLeVoile' }, 410.5, 850.5, lire, CIEL, SOURCES, [0.9, 0.9, 0.9], PLAT)
     expect(px.rgb).toEqual([1, 1, 1])
+  })
+})
+
+/**
+ * ═══ LA GARDE DE PALIER SUR LA LECTURE EN COLONNE (LG-R14) ═══
+ *
+ * LA SCÈNE : une tuile de palier 1 en `[400, 416)`, sa VOISINE de palier 2 en `[416, 432)` — dessinée
+ * 32 px plus haut à l'écran. Un corps posé dans l'angle déborde sur la voisine, et E (« sous le
+ * pixel ») lui fait lire, sur sept de ses quatorze colonnes, la lumière d'un sol qui est AU-DESSUS
+ * de lui. C'est le défaut mesuré le 2026-09-26 (avatar en 910,94 · 832,08, palier 1, 17 h :
+ * `0,559 ×7 · 0,651 ×4 · 0,742 ×3`, σ = 0,073 sur 12 px).
+ *
+ * ⚠ **CE FICHIER PORTE LES DEUX MOITIÉS, ET IL LE FAUT.** Rendre le sprite uniforme est facile en
+ * lisant TOUT à l'ancre — et ce serait rouvrir E, que la planche 9 a ratifiée le 2026-09-16 : la
+ * couture verticale au MILIEU d'une tuile est voulue. La seconde moitié (« au centre, rien ne
+ * bouge ») est ce qui rougirait sous un correctif qui déborde. Le discriminant, lui, sépare « le
+ * texel le plus proche du côté de l'ancre » de « le texel de l'ancre » : les deux coïncident dans la
+ * pose mesurée, par accident, et un seul des deux est la loi.
+ */
+describe('un corps ne lit pas par-dessus une marche (LG-R14)', () => {
+  const BORD = 416
+  const palierDeuxAuDela = (bord: number) => (x: number): number => (x >= bord ? 2 : 1)
+
+  /**
+   * Un champ dont chaque TEXEL porte sa valeur, le carnet des points lus, et celui des valeurs
+   * RENDUES — c'est sur ces dernières que se lit le σ du relevé, sans passer par la composition :
+   * `facteurDeNormale` fait varier le pixel avec `p.x` de toute façon, et ce n'est pas lui qu'on juge.
+   */
+  function champDesTexels(valeurs: Record<number, number>, palierEn: (x: number, y: number) => number): {
+    lire: OracleDuChamp
+    appels: { x: number; y: number }[]
+    lues: number[]
+  } {
+    const appels: { x: number; y: number }[] = []
+    const lues: number[] = []
+    const lire = oracle((x, y) => {
+      appels.push({ x, y })
+      const v = valeurs[Math.floor(x / GRAIN.pas)] ?? 0
+      lues.push(v)
+      return { light: [v, v, v], directFace: [0, 0, 0], ombre: 0 }
+    }, palierEn)
+    return { lire, appels, lues }
+  }
+
+  /** Le corps du relevé : un acteur — `arete` 0, aucune famille — donc ni dressé, ni dessus, ni feu au pied. */
+  const acteur = (x: number): CorpsPose => ({ x, y: LIGNE, arete: 0 })
+  /** Les 14 colonnes du sprite, au centre de chaque pixel. */
+  const colonnes = (gauche: number): number[] => Array.from({ length: 14 }, (_, i) => gauche + i + 0.5)
+
+  it('COLLÉ CONTRE UNE VOISINE PLUS HAUTE — les 14 colonnes lisent le palier du corps, et le sprite sort UNIFORME', () => {
+    // Le relevé : t102 et t103 sont la tuile du corps (0,559), t104 et t105 la terrasse du dessus.
+    const { lire, appels, lues } = champDesTexels({ 102: 0.559, 103: 0.559, 104: 0.651, 105: 0.742 }, palierDeuxAuDela(BORD))
+    const c = acteur(415.04) // l'ancre, à 15,04 px du bord ouest de sa tuile — la pose mesurée
+    for (const xw of colonnes(409)) pixelDuCorps(c, xw, LIGNE, lire, CIEL, SOURCES, TEXEL, PLAT)
+
+    // ① AUCUNE LECTURE AU-DELÀ DE LA MARCHE — c'est la loi ; le reste en découle.
+    expect(appels.filter((a) => a.x >= BORD)).toEqual([])
+    // ② Les 7 colonnes débordantes retombent sur le texel de BORD du corps (t103, centre 414), pas plus loin.
+    expect(appels.map((a) => a.x)).toEqual([409.5, 410.5, 411.5, 412.5, 413.5, 414.5, 415.5, 414, 414, 414, 414, 414, 414, 414])
+    // ③ LA PRÉDICTION CHIFFRÉE : 14 colonnes à 0,559, σ = 0. Sans la garde, ce même champ rend
+    // `0,559 ×7 · 0,651 ×4 · 0,742 ×3` — µ 0,625, σ 0,073 —, qui est le relevé du 26/09 au texel.
+    // (Le relevé du 27/09 sur les PIXELS rendus donne 12 colonnes et σ/µ 0,099 → 0,001 ; journal.)
+    expect(lues).toEqual(Array(14).fill(0.559))
+  })
+
+  it('AU CENTRE DE SA TUILE, RIEN NE BOUGE — la couture de E (planche 9, ratifiée) reste', () => {
+    const { lire, appels, lues } = champDesTexels({ 100: 0.5, 101: 0.52, 102: 0.559, 103: 0.58 }, palierDeuxAuDela(BORD))
+    const c = acteur(408)
+    const xs = colonnes(401)
+    for (const xw of xs) pixelDuCorps(c, xw, LIGNE, lire, CIEL, SOURCES, TEXEL, PLAT)
+
+    // ① Le point lu est le point du pixel, INCHANGÉ : la garde n'a rien déplacé.
+    expect(appels.map((a) => a.x)).toEqual(xs)
+    // ② Et le corps reste dégradé sur ses quatre texels — quatre valeurs distinctes, pas une. C'est
+    // la couture de E, et un correctif qui lirait tout à l'ancre la ferait tomber à 1.
+    expect(new Set(lues).size).toBe(4)
+  })
+
+  it('DISCRIMINANT — on retombe sur le texel le plus proche DU CÔTÉ de l’ancre, pas sur celui de l’ancre', () => {
+    // t102 est le texel de l'ANCRE, t103 le texel de BORD : deux valeurs bien distinctes.
+    const { lire, appels, lues } = champDesTexels({ 102: 0.4, 103: 0.559, 104: 0.9 }, palierDeuxAuDela(BORD))
+    const c = acteur(410) // au milieu de sa tuile, mais un corps large déborde quand même
+    pixelDuCorps(c, 417.5, LIGNE, lire, CIEL, SOURCES, TEXEL, PLAT)
+
+    expect(appels.map((a) => a.x)).toEqual([414]) // le centre de t103, jamais 410 (l'ancre) ni 417,5 (le débord)
+    expect(lues).toEqual([0.559])
+  })
+
+  it('ELLE DÉPLACE LA LECTURE, PAS LA GÉOMÉTRIE — le `g` d’une colonne débordante ne gèle pas', () => {
+    // Une normale INCLINÉE et un feu au ras du sol (z = 9,6) : c'est le régime où quelques pixels
+    // de x déplacent `g` pour de bon. Si la garde emportait `g` avec la lecture, les colonnes
+    // débordantes prendraient toutes le `g` du texel de bord — un APLAT au milieu du sprite, le
+    // palier que la directive de feel refuse. Ici les deux `g` restent ceux de leurs pixels.
+    const N: Normale = { x: 0.6, y: 0.5, z: 0.62 }
+    const { lire } = champDesTexels({ 102: 0.559, 103: 0.559, 104: 0.651 }, palierDeuxAuDela(BORD))
+    const sansMarche = champDesTexels({ 102: 0.559, 103: 0.559, 104: 0.651 }, () => 1)
+    const c = acteur(415.04)
+    for (const xw of [417.5, 421.5]) {
+      const garde = pixelDuCorps(c, xw, LIGNE, lire, CIEL, SOURCES, TEXEL, N)
+      const libre = pixelDuCorps(c, xw, LIGNE, sansMarche.lire, CIEL, SOURCES, TEXEL, N)
+      expect(garde.fFeu, `fFeu en ${xw}`).toBe(libre.fFeu)
+      expect(garde.fAstre, `fAstre en ${xw}`).toBe(libre.fAstre)
+    }
+    // Le contrôle positif : ces deux colonnes n'ont PAS le même `g` — sinon l'égalité ne dirait rien.
+    const a = pixelDuCorps(c, 417.5, LIGNE, lire, CIEL, SOURCES, TEXEL, N)
+    const b = pixelDuCorps(c, 421.5, LIGNE, lire, CIEL, SOURCES, TEXEL, N)
+    expect(a.fFeu).not.toBe(b.fFeu)
+  })
+
+  it('LA MARCHE EST BORNÉE À UNE TUILE — au-delà, l’ancre ; et sans palier dans la scène, la garde est INERTE', () => {
+    // Six texels de palier 2 d'affilée : la marche de 4 texels n'atteint jamais le palier 1, on retombe sur l'ancre.
+    const loin = champDesTexels({ 102: 0.4, 108: 0.9 }, palierDeuxAuDela(412))
+    pixelDuCorps(acteur(410), 434.5, LIGNE, loin.lire, CIEL, SOURCES, TEXEL, PLAT)
+    expect(loin.appels.map((a) => a.x)).toEqual([410]) // le centre de t102, celui de l'ancre
+
+    // LE CONTRÔLE NÉGATIF : le même corps, la même colonne, mais une scène SANS marches (`gi-paliers`
+    // tout à zéro — un creux, ou un monde sans relief). La garde ne doit alors rien déplacer du tout.
+    const plate = champDesTexels({ 102: 0.4, 108: 0.9 }, () => 0)
+    pixelDuCorps(acteur(410), 434.5, LIGNE, plate.lire, CIEL, SOURCES, TEXEL, PLAT)
+    expect(plate.appels.map((a) => a.x)).toEqual([434.5])
   })
 })

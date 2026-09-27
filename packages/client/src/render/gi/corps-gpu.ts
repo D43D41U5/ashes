@@ -44,13 +44,15 @@
  * voir. Une garde qui ne compare que des dessus ne verrait rien (cf. `estNonTrivial`).
  */
 
+import { PAS_GARDE_PALIER } from './sol-du-corps'
+
 /** `n_loi.y = −n_phaser.y` — voir l'en-tête. Un seul endroit, et il porte sa raison. */
 export const SIGNE_Y_NORMALE = -1
 
 /**
  * ═══ LES UNIFORMES (PAR IMAGE) ET LES ATTRIBUTS (PAR SPRITE) ═══
  *
- * PAR IMAGE, en UNIFORMES posés une fois par vidange : le cadre du champ, les quatre samplers, le
+ * PAR IMAGE, en UNIFORMES posés une fois par vidange : le cadre du champ, les cinq samplers, le
  * ciel, les deux sources, l'inverse de la caméra.
  * PAR SPRITE, en ATTRIBUTS DE SOMMET (`ATTRIBUTS_CORPS`, écrits par le nœud dans le tampon de
  * sommets avec la position et la teinte, puis portés au fragment par deux varyings) : le pied,
@@ -75,6 +77,15 @@ export const UNIFORMES_CORPS = {
   lumiere: 'uGiL',
   faceDirecte: 'uGiF',
   ombre: 'uGiS',
+  /**
+   * `gi-paliers` — LE CINQUIÈME SAMPLER (LG-R14). R = le palier de la tuile, au grain du champ. Il ne
+   * porte AUCUNE lumière : il dit seulement si la colonne d'un pixel a franchi une marche
+   * (`colonneAuPalierDuCorps`). Sans marches dans la scène, la texture est à zéro partout et la garde
+   * est inerte — mais elle doit EXISTER : un sampler non lié retombe sur l'unité 0, la texture du
+   * sprite lui-même, et la garde clamperait alors sur du bruit. D'où sa présence dans le tout-ou-rien
+   * de `texturesDesCorps`.
+   */
+  paliers: 'uGiPaliers',
   /** `vec4(x, y, gw, gh)` — l'origine du raster en px MONDE, sa taille en TEXELS (`ChampGpu.cadre`). */
   cadre: 'uGiCadre',
   /** Le pas du raster, en px monde par texel (`PX_PAR_TEXEL` = 4). */
@@ -194,6 +205,7 @@ const APPLIQUER_GI = `
 uniform sampler2D uGiL;
 uniform sampler2D uGiF;
 uniform sampler2D uGiS;
+uniform sampler2D uGiPaliers;
 uniform vec4 uGiCadre;
 uniform float uGiPas;
 uniform vec3 uGiMn;
@@ -269,6 +281,38 @@ vec2 uvDuChamp(vec2 monde) {
 bool dansLeChamp(vec2 monde) {
   vec2 t = floor((monde - uGiCadre.xy) / uGiPas);
   return t.x >= 0.0 && t.y >= 0.0 && t.x < uGiCadre.z && t.y < uGiCadre.w;
+}
+
+// ─── LA GARDE DE PALIER SUR LA LECTURE EN COLONNE (LG-R14) ───
+// Le décalque GLSL de \`colonneAuPalierDuCorps\` (\`sol-du-corps.ts\`), qui porte la loi et sa mesure.
+// En deux mots : un corps se tient sur UN palier et ne lit que le sien ; la colonne qui déborde sur
+// une voisine d'un autre palier retombe sur le TEXEL LE PLUS PROCHE DU CÔTÉ DE L'ANCRE — pas sur
+// celui de l'ancre, qui poserait une marche neuve au milieu du sprite.
+//
+// \`uGiPaliers\` est au grain du champ, donc \`uvDuChamp\` le lit : MESURÉ dans \`champ-gpu.ts\` —
+// \`palierDe\` y échantillonne la même texture par \`uvCible\`, dont la formule
+// \`(taille.y - 1 - t.y + 0.5) / taille\` est celle d'\`uvDuChamp\` au signe près de l'écriture. Une
+// texture née d'un \`Uint8Array\` et une cible de rendu se lisent donc pareil : Phaser retourne
+// l'upload d'un tableau comme celui d'un canvas (voir \`ChampGpu.occ\`).
+float palierEn(vec2 monde) {
+  return floor(texture2D(uGiPaliers, uvDuChamp(monde)).r * 255.0 + 0.5);
+}
+float centreDuTexel(float t) { return uGiCadre.x + (t + 0.5) * uGiPas; }
+
+vec2 colonneAuPalier(vec2 p, float ancreX) {
+  float tc = floor((p.x - uGiCadre.x) / uGiPas);
+  float ta = floor((ancreX - uGiCadre.x) / uGiPas);
+  float cible = palierEn(vec2(centreDuTexel(ta), p.y));
+  if (abs(palierEn(vec2(centreDuTexel(tc), p.y)) - cible) < 0.5) return p;
+  float sens = ta > tc ? 1.0 : -1.0;
+  // Borne CONSTANTE : GLSL ES 1.0 n'accepte pas d'autre forme de boucle, et une tuile suffit — un
+  // corps ne déborde jamais plus loin. Au-delà, l'ancre.
+  for (int k = 1; k <= ${PAS_GARDE_PALIER}; k++) {
+    float t = tc + sens * float(k);
+    if (abs(palierEn(vec2(centreDuTexel(t), p.y)) - cible) < 0.5) return vec2(centreDuTexel(t), p.y);
+    if (abs(t - ta) < 0.5) break;
+  }
+  return vec2(centreDuTexel(ta), p.y);
 }
 
 // ─── UN SOL (LG-R14) — \`texel × M\`, le décalque de \`pixelDeSol\` (\`passe-corps.ts\`) ───
@@ -393,11 +437,17 @@ vec4 appliquerGi(vec4 fragColor, vec3 normalPhaser) {
   bool dessus = dresse > 0.5 && (ruban > 0.5 || yLog < seuil);
   vec2 p = dessus ? vec2(monde.x, yLog + crete) : vec2(monde.x, pied);
 
+  // ①bis LA GARDE DE PALIER (LG-R14) — la colonne ne franchit pas une marche. Pas pour un corps
+  // sous le ciel seul : il ne lit rien, il n'y a rien à garder, et la référence n'appelle pas non
+  // plus la garde dans ce cas. \`p\` sert ensuite à tout, \`g\` compris : un seul point lu.
+  bool sousLeCiel = ciel > 0.5;
+  vec2 brut = p;
+  if (!sousLeCiel) p = colonneAuPalier(p, ancreX);
+
   // ② LA RÉPARTITION, au point lu — ou SANS CHAMP pour un corps qui ne voit que le ciel (un toit,
   // \`ciel\`, \`CorpsPose.ciel\`) : lumière nulle, ombre nulle, donc le plancher et l'astre entiers.
   // Le décalque est \`passe-corps.ts\` (\`SANS_CHAMP\`) ; la garde LG-A8 tient les deux face à face.
   vec2 uvP = uvDuChamp(p);
-  bool sousLeCiel = ciel > 0.5;
   vec3 pAstre, pFeu, pPlat;
   partsDuCorps(sousLeCiel ? vec3(0.0) : texture2D(uGiL, uvP).rgb,
                sousLeCiel ? vec3(0.0) : texture2D(uGiF, uvP).rgb,
@@ -422,10 +472,12 @@ vec4 appliquerGi(vec4 fragColor, vec3 normalPhaser) {
     pFeu = aFeu * max(expo, 0.0);
   }
 
-  // ④ LES DEUX FACTEURS — au POINT LU pour les deux sources, même quand la part vient du pied
-  // (\`planche9.mjs:177\`). Confondre les deux donnerait à toute une face le \`g\` de son pied.
-  float fA = facteurDeNormale(n, p, uGiAstre);
-  float fF = facteurDeNormale(n, p, uGiFeu);
+  // ④ LES DEUX FACTEURS — au POINT DU PIXEL (\`brut\`) pour les deux sources, même quand la part
+  // vient d'ailleurs (\`planche9.mjs:177\`). Confondre les deux donnerait à toute une face le \`g\` de
+  // son pied ; et prendre \`g\` au texel de la garde de palier gèlerait le \`g\` des seules colonnes
+  // débordantes — un aplat au milieu du sprite. La garde déplace ce qu'on LIT, pas où l'on est.
+  float fA = facteurDeNormale(n, brut, uGiAstre);
+  float fF = facteurDeNormale(n, brut, uGiFeu);
 
   // LA COMPOSITION, ET SON ÉCRÊTAGE À DEUX NIVEAUX (\`planche9.mjs:115, 183-184, 186\`) :
   // chaque terme directionnel écrêté, puis le total. HAUT seulement — rien ici ne peut être négatif.

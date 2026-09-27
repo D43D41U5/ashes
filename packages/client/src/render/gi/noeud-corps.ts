@@ -71,13 +71,15 @@ export const NOM_SUBMITTER = 'GiCorpsSubmitter'
 export const ROLE_HANDLER = 'BatchHandler'
 export const ROLE_SUBMITTER = 'Submitter'
 
-/** Les quatre textures du champ, telles que `ChampGpu` les publie — trois pour un corps, `champ` pour un sol. */
+/** Les cinq textures du champ, telles que `ChampGpu` les publie — trois pour un corps, `champ` pour un sol, `paliers` pour la garde de marche. */
 export interface TexturesDuChamp {
   readonly lumiere: Phaser.Renderer.WebGL.Wrappers.WebGLTextureWrapper
   readonly faceDirecte: Phaser.Renderer.WebGL.Wrappers.WebGLTextureWrapper
   readonly ombre: Phaser.Renderer.WebGL.Wrappers.WebGLTextureWrapper
   /** `gi-champ` — le `M` composé, celui du quad de sol ; un SOL (LG-R14) le lit tel quel. */
   readonly champ: Phaser.Renderer.WebGL.Wrappers.WebGLTextureWrapper
+  /** `gi-paliers` — la MARCHE, pas de la lumière : R = le palier de la tuile (LG-R14). */
+  readonly paliers: Phaser.Renderer.WebGL.Wrappers.WebGLTextureWrapper
 }
 
 /**
@@ -135,19 +137,20 @@ export interface CorpsPourLeShader {
 const CORPS_NEUTRE: CorpsPourLeShader = { pied: 0, ancreX: 0, crete: 0, seuil: SANS_DESSUS, dresse: 0, ruban: 0, expo: -1, lift: 0, ciel: 0, sol: 0 }
 
 /**
- * LES UNITÉS DE TEXTURE — 0 et 1 sont à Phaser, 2/3/4 sont à nous.
+ * LES UNITÉS DE TEXTURE — 0 et 1 sont à Phaser, 2 à 6 sont à nous.
  *
  * MESURÉ dans la branche d'éclairage de `batchTextures` (`BatchHandlerQuad.js:1001-1021`) : elle ne
  * remplit que `texture[0]` (le quad) et `texture[1]` (la normal map), et `finalizeTextureCount`
  * (`:366-372`) force `count = 1` sous éclairage — « the normal map is included in the textures array,
  * but it's attached to another texture unit, so we shouldn't count it ». Les rangs suivants du tableau
  * sont donc libres, et `bindUnits` (`WebGLTextureUnitsWrapper.js:148-155`) lie par POSITION en sautant
- * les trous. Quatre de plus tiennent partout : WebGL1 garantit 8 unités au minimum.
+ * les trous. Cinq de plus tiennent partout : WebGL1 garantit 8 unités au minimum.
  */
 const UNITE_LUMIERE = 2
 const UNITE_FACE_DIRECTE = 3
 const UNITE_OMBRE = 4
 const UNITE_CHAMP = 5
+const UNITE_PALIERS = 6
 
 /**
  * ═══ LE HANDLER — le lot, le shader, et les uniformes ═══
@@ -404,6 +407,7 @@ export class NoeudCorpsGi extends BatchHandlerQuad {
     pm.setUniform(UNIFORMES_CORPS.faceDirecte, UNITE_FACE_DIRECTE)
     pm.setUniform(UNIFORMES_CORPS.ombre, UNITE_OMBRE)
     pm.setUniform(UNIFORMES_CORPS.champ, UNITE_CHAMP)
+    pm.setUniform(UNIFORMES_CORPS.paliers, UNITE_PALIERS)
     pm.setUniform(UNIFORMES_CORPS.cadre, this.uCadre)
     pm.setUniform(UNIFORMES_CORPS.pas, champ.pas)
     pm.setUniform(UNIFORMES_CORPS.mn, this.uMn)
@@ -414,9 +418,9 @@ export class NoeudCorpsGi extends BatchHandlerQuad {
   }
 
   /**
-   * LES TROIS TEXTURES DU CHAMP, GREFFÉES AU LOT.
+   * LES CINQ TEXTURES DU CHAMP, GREFFÉES AU LOT.
    *
-   * `super` remplit `texture[0]` et `texture[1]` ; on ajoute les rangs 2 à 4. `bindUnits` les liera
+   * `super` remplit `texture[0]` et `texture[1]` ; on ajoute les rangs 2 à 6. `bindUnits` les liera
    * par position, et `finalizeTextureCount` continue de compter 1 (la branche d'éclairage l'y force),
    * donc le shader multi-texture reste à une seule texture de lot — ce qu'il est.
    */
@@ -432,6 +436,7 @@ export class NoeudCorpsGi extends BatchHandlerQuad {
       t[UNITE_FACE_DIRECTE] = champ.textures.faceDirecte
       t[UNITE_OMBRE] = champ.textures.ombre
       t[UNITE_CHAMP] = champ.textures.champ
+      t[UNITE_PALIERS] = champ.textures.paliers
     }
     return datum
   }

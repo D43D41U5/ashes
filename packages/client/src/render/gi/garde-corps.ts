@@ -30,16 +30,22 @@ import Phaser from 'phaser'
 import { SIGNE_Y_NORMALE } from './corps-gpu'
 import type { Rgb } from './corps-ref'
 import type { ChampDeLImage } from './noeud-corps'
-import { estNonTrivial, pixelDuCorps, type CielDeLHeure, type LectureDuChamp, type PixelDuCorps, type SourcesDuPixel } from './passe-corps'
+import { estNonTrivial, pixelDuCorps, type CielDeLHeure, type LectureDuChamp, type OracleDuChamp, type PixelDuCorps, type SourcesDuPixel } from './passe-corps'
 import type { CorpsPose, Normale } from './sol-du-corps'
 
-/** Les quatre cibles que les corps lisent, relues du GPU (`ChampGpu.lire`) — RGBA, rangée 0 au nord. */
+/** Les cinq textures que les corps lisent, relues du GPU (`ChampGpu.lire`) — RGBA, rangée 0 au nord. */
 export interface TexturesLues {
   readonly lumiere: Uint8Array
   readonly faceDirecte: Uint8Array
   readonly ombre: Uint8Array
   /** `gi-champ` — le `M` composé qu'un SOL (LG-R14) lit tel quel, sur l'octet même que le shader lit. */
   readonly champ: Uint8Array
+  /**
+   * `gi-paliers` — le cinquième sampler (LG-R14), R = le palier de la tuile. Il ne vient PAS d'un
+   * `readPixels` mais de `ChampGpu.octetsDesPaliers()` : cette texture-là est un `Uint8Array` téléversé,
+   * pas une cible de rendu, et ce sont donc les octets mêmes que le GPU a reçus.
+   */
+  readonly paliers: Uint8Array
 }
 
 /** Un corps à éprouver : le sprite ARMÉ tel qu'il est au jeu, et la pose dont son sac dérive. */
@@ -252,6 +258,17 @@ export function garderLesCorps(
     }
   }
   const NOIR: LectureDuChamp = { light: [0, 0, 0], directFace: [0, 0, 0], ombre: 0 }
+  // LE CINQUIÈME SAMPLER (LG-R14) — la même convention de grille, sur l'octet R. `null` hors cadre :
+  // l'appelant en fait un pixel ÉCARTÉ, exactement comme pour `lire`, sinon un corps au bord du
+  // raster se comparerait à une garde qui, elle, aurait clampé sur le texel du bord.
+  const palier = (x: number, y: number): number | null => {
+    const tx = Math.floor((x - cx) / pas)
+    const ty = Math.floor((y - cy) / pas)
+    if (tx < 0 || ty < 0 || tx >= gw || ty >= gh) return null
+    // `?? 0` et non `!` : la texture peut être VIDE (raster pas encore bâti). Zéro partout, c'est le
+    // même « aucune marche » que voit le shader sur une scène sans relief — la garde y est inerte.
+    return lues.paliers[(ty * gw + tx) * 4] ?? 0
+  }
 
   const ecartes = { echelle: 0, rotation: 0, rognes: 0, sansTexel: 0, horsChamp: 0 }
   const total = { pixels: 0, eprouvants: 0, somme: 0, sup3: 0, max: 0, alphaMele: 0 }
@@ -301,11 +318,21 @@ export function garderLesCorps(
         const xw = x0 + i + 0.5
         const yw = y0 + j + 0.5
         let hors = false
-        const prise = (x: number, y: number): LectureDuChamp => {
-          const l = lire(x, y)
-          if (l === null) { hors = true; return NOIR }
-          return l
-        }
+        const prise: OracleDuChamp = Object.assign(
+          (x: number, y: number): LectureDuChamp => {
+            const l = lire(x, y)
+            if (l === null) { hors = true; return NOIR }
+            return l
+          },
+          {
+            palier: (x: number, y: number): number => {
+              const p = palier(x, y)
+              if (p === null) { hors = true; return 0 }
+              return p
+            },
+            grain: { x0: cx, pas },
+          },
+        )
         const px = pixelDuCorps(pose, xw, yw, prise, ciel, sources, texel, normale)
         if (hors) { horsChamp++; continue }
         const k = (j * w + i) * 4

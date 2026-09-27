@@ -2031,6 +2031,9 @@ export class SnapshotView {
       faceDirecte: champGpu.lire('gi-face-directe'),
       ombre: champGpu.lire('gi-drapeau'),
       champ: champGpu.lire('champ'),
+      // `gi-paliers` n'est pas une cible de rendu mais un `Uint8Array` téléversé : on rend ses octets
+      // mêmes, sans `readPixels`. Vide tant que le raster n'a pas été bâti — le champ est alors nul.
+      paliers: champGpu.octetsDesPaliers() ?? new Uint8Array(0),
     }
     return garderLesCorps(this.scene, candidats.slice(0, n).map((c) => c.corps), champ, lues)
   }

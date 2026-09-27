@@ -1219,6 +1219,7 @@ export class ChampGpu {
     readonly faceDirecte: Phaser.Renderer.WebGL.Wrappers.WebGLTextureWrapper
     readonly ombre: Phaser.Renderer.WebGL.Wrappers.WebGLTextureWrapper
     readonly champ: Phaser.Renderer.WebGL.Wrappers.WebGLTextureWrapper
+    readonly paliers: Phaser.Renderer.WebGL.Wrappers.WebGLTextureWrapper
   } | null {
     const tex = this.scene.textures
     const prise = (cle: string): Phaser.Renderer.WebGL.Wrappers.WebGLTextureWrapper | null => {
@@ -1231,8 +1232,26 @@ export class ChampGpu {
     // ET `gi-champ`, POUR LES SOLS SEULEMENT (LG-R14) : le `M` composé, celui du quad. Un corps ne le
     // lit jamais (il se composerait deux fois, voir ci-dessus) ; une image de sol n'a QUE lui à lire.
     const champ = prise('gi-champ')
-    if (!lumiere || !faceDirecte || !ombre || !champ) return null
-    return { lumiere, faceDirecte, ombre, champ }
+    // ET `gi-paliers` (LG-R14) — pas de la lumière : la MARCHE, pour que la colonne d'un corps ne la
+    // franchisse pas (`colonneAuPalierDuCorps`). Elle naît avec le raster, bien avant les passes 6-7,
+    // et reste à zéro quand la scène n'a pas de marches : la garde y est inerte, jamais fausse.
+    // ⚠ Elle est dans le MÊME tout-ou-rien que les quatre autres, et il le faut : un sampler non lié
+    // retombe sur l'unité 0 — la texture du sprite — et la garde clamperait alors sur du bruit.
+    const paliers = prise('gi-paliers')
+    if (!lumiere || !faceDirecte || !ombre || !champ || !paliers) return null
+    return { lumiere, faceDirecte, ombre, champ, paliers }
+  }
+
+  /**
+   * LES OCTETS DE `gi-paliers`, POUR LA GARDE LG-A8 — le cinquième sampler relu côté CPU.
+   *
+   * Pas de `readPixels` ici, et c'est la différence avec `lire()` : cette texture n'est pas une cible
+   * de rendu mais un `Uint8Array` téléversé (`addUint8Array`), dont on tient déjà la source. On rend
+   * donc les octets MÊMES que le GPU a reçus — `(ty · gw + tx) · 4`, rangée 0 au NORD, comme les
+   * cibles relues et retournées par `lire()`. `null` tant que le raster n'a pas été bâti.
+   */
+  octetsDesPaliers(): Uint8Array | null {
+    return this.paliersOctets
   }
 
   destroy(): void {
