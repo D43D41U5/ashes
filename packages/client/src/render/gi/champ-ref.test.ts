@@ -798,4 +798,53 @@ describe('la marche de l’oracle est celle de la sim (LG-R14, LG-A15)', () => {
     // Et la prémisse : sans marche, ce masque est nul partout (aucun mur, aucun arbre).
     expect(Array.from(masqueDAstre(grilleDuMonde(monde({}), N, F), astre(0))).every((x) => x === 0)).toBe(true)
   })
+
+  /**
+   * ═══ M5 (LG-R21) — LA PÉNOMBRE NE REMONTE PAS SUR LA TERRASSE ═══
+   *
+   * M4 ne pouvait pas attraper ce défaut-là : dans `terrasse`, le seul palier haut est au NORD de
+   * l'ombre, et la pénombre ne va jamais vers le nord (LG-R8). Il faut une ARÊTE NORD-SUD — le coin
+   * d'Alexis sur la graine 2026 en (621, 419) : le plateau à l'ouest, le sol d'en bas à l'est, et
+   * l'ombre de la marche nord posée sur ce sol-là, TOUCHANT le plateau par le côté.
+   *
+   * ⚠ PRÉDICTIONS ÉCRITES AVANT LA MESURE. `astre(0)`, plein sud, ℓ = 3,2 texels :
+   *   · sur le sol bas (palier 0), trois rangs pleins sous la ligne, puis ⅔ et ⅓ — comme M4 ;
+   *   · sur le plateau (palier 1), ZÉRO partout, y compris sur la colonne qui touche l'ombre ;
+   *   · et le contrôle POSITIF : le rang ⅔ du sol bas est bien là (sinon la garde passerait au vert
+   *     pour une pénombre éteinte partout, ce qui n'est pas la loi).
+   */
+  const CX = 52
+  /** Le coin : palier 1 au nord de `BORD` ET à l'ouest de `CX` — le sol bas est le quart sud-est. */
+  function coin(): MondeEclaire {
+    const map = createEmptyMap(96, 96, TERRAIN_GRASS)
+    const w = map.width
+    map.palier = Array.from({ length: w * map.height }, (_, i) => {
+      const x = i % w
+      return Math.floor(i / w) < BORD || x < CX ? 1 : 0
+    })
+    return { map, structures: [], nodes: [] }
+  }
+
+  it('M5 — la pénombre ne franchit pas une marche : l’ombre du sol d’en bas ne remonte pas sur la terrasse qu’elle touche', () => {
+    const g = grilleDuMonde(coin(), N, F)
+    const marches = g.marches
+    expect(marches).toBeDefined()
+    const colBas = (CX - F.x0) * T // le premier texel du sol bas, celui que l'ombre pleine occupe
+    const colHaut = colBas - 1 // le dernier texel du plateau, collé à lui
+    const v = (x: number, y: number): number => s[y * g.gw + x]!
+    const s = masqueDAstre(g, astre(0))
+    // La PRÉMISSE — les deux colonnes sont bien de part et d'autre d'une arête, et aucune porte.
+    expect(marches!.paliers[LIGNE * g.gw + colHaut]).toBe(1)
+    expect(marches!.paliers[LIGNE * g.gw + colBas]).toBe(0)
+    expect(marches!.portes.reduce((a, b) => a + b, 0)).toBe(0)
+    // Le sol bas : la marche du nord y jette ses trois rangs pleins, puis ⅔ et ⅓ (le CONTRÔLE POSITIF).
+    expect([v(colBas, LIGNE), v(colBas, LIGNE + 1), v(colBas, LIGNE + 2)]).toEqual([1, 1, 1])
+    expect(v(colBas, LIGNE + 3)).toBe(Math.fround(2 / 3))
+    expect(v(colBas, LIGNE + 4)).toBe(Math.fround(1 / 3))
+    // LE PLATEAU, NU — sur toute la hauteur de l'ombre et ses deux texels de pénombre, et sur les
+    // deux colonnes du bord (la dilatation porte à deux texels).
+    for (let y = LIGNE; y <= LIGNE + 5; y++)
+      for (let dx = 0; dx < 2; dx++)
+        expect(v(colHaut - dx, y), `plateau (${colHaut - dx}, ${y})`).toBe(0)
+  })
 })

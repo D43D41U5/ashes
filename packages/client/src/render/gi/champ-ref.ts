@@ -761,7 +761,9 @@ export function masqueDAstre(g: GrilleGi, astre: Astre, arbres?: CartesDOmbre): 
   const s = ombrePleineDAstre(g, astre, arbres)
 
   // LA PÉNOMBRE, DEHORS — deux fronts de Tchebychev à travers le sol libre, JAMAIS vers le nord :
-  // le haut d'une ombre est son contact, il n'a pas de bord doux (LG-R8).
+  // le haut d'une ombre est son contact, il n'a pas de bord doux (LG-R8). Et JAMAIS D'UN PALIER À
+  // L'AUTRE (LG-R21) : voir `memePalier`.
+  const m = g.marches
   let front: number[] = []
   for (let k = 0; k < s.length; k++) if (s[k] === 1) front.push(k)
   for (const v of astre.penombre) {
@@ -777,6 +779,7 @@ export function masqueDAstre(g: GrilleGi, astre: Astre, arbres?: CartesDOmbre): 
           if (nx < 0 || ny < 0 || nx >= g.gw || ny >= g.gh) continue
           const n = ny * g.gw + nx
           if (s[n] !== 0 || g.occ[n]) continue
+          if (!memePalier(m, k, n)) continue
           s[n] = v
           suivant.push(n)
         }
@@ -784,4 +787,24 @@ export function masqueDAstre(g: GrilleGi, astre: Astre, arbres?: CartesDOmbre): 
     front = suivant
   }
   return s
+}
+
+/**
+ * ═══ LG-R21 — LA PÉNOMBRE NE FRANCHIT PAS UNE MARCHE ═══
+ *
+ * Deux texels de paliers différents sont DEUX SURFACES, séparées par la hauteur d'une marche : le
+ * bord doux d'une ombre posée sur l'une n'a rien à faire sur l'autre. Sans ce test, la dilatation
+ * de Tchebychev fait remonter l'ombre du sol d'en bas sur la terrasse d'au-dessus — MESURÉ le
+ * 2026-09-27 sur la graine 2026 en (621, 419) : deux colonnes de texels du plateau (palier 3) à
+ * M = 0,86 puis 0,72 le long de la lèvre, dont le seul foyer était une ombre pleine sur le sol au
+ * palier 2. Une ombre sans rien pour la jeter, en haut de la falaise.
+ *
+ * Une PORTE (rampe, gueule, escalier) n'est pas une arête, ici comme dans `rayonDOmbreDeMarche` :
+ * le sol y est continu, et la pénombre la traverse. Sans marches — creux, grille sans relief — le
+ * test est inerte et la dilatation reste celle d'avant.
+ */
+function memePalier(m: MarchesGrille | undefined, a: number, b: number): boolean {
+  if (!m) return true
+  if (m.paliers[a] === m.paliers[b]) return true
+  return m.portes[a] === 1 || m.portes[b] === 1
 }

@@ -568,6 +568,15 @@ float ombreLue(vec2 t) { return dansCadre(t) ? texture2D(uDirect, uvCible(t)).a 
 vec2 sautOmbre(int k) {
   return k == 0 ? vec2(-1.0, 0.0) : k == 1 ? vec2(1.0, 0.0) : k == 2 ? vec2(-1.0, 1.0) : k == 3 ? vec2(0.0, 1.0) : vec2(1.0, 1.0);
 }
+// LG-R21 — LA PÉNOMBRE NE FRANCHIT PAS UNE MARCHE. Deux texels de paliers différents sont DEUX
+// SURFACES, séparées par la hauteur d'une marche : le bord doux d'une ombre posée sur l'une n'a rien
+// à faire sur l'autre. Une PORTE n'est pas une arête (le sol y est continu), ici comme dans
+// \`ombreDAstre\` ; et le \`memePalier\` de l'oracle est cette fonction, mot pour mot.
+bool memePalier(vec2 a, vec2 b) {
+  vec2 pa = palierDe(a);
+  vec2 pb = palierDe(b);
+  return pa.x == pb.x || pa.y >= 0.5 || pb.y >= 0.5;
+}
 // ═══ LA PÉNOMBRE, DEHORS (LG-R8) ═══
 // Deux fronts de Tchebychev à travers le SOL LIBRE : une dilatation se LIT et ne se marche pas,
 // 5 puis 25 lectures au lieu de quinze rayons. Un texel est à ⅔ s'il touche l'ombre pleine ; à ⅓
@@ -579,11 +588,17 @@ float ombreEtendue(vec2 t) {
   // CORPS — qui lit ce canal sans \`uOcc\` — voie le même 0 qu'elle.
   if (plein1(t)) return 0.0;
   if (ombreLue(t) >= 1.0) return 1.0;
-  for (int i = 0; i < 5; i++) if (ombreLue(t - sautOmbre(i)) >= 1.0) return uPen.x;
   for (int i = 0; i < 5; i++) {
     vec2 n = t - sautOmbre(i);
-    if (!dansCadre(n) || plein1(n) || ombreLue(n) >= 1.0) continue;
-    for (int j = 0; j < 5; j++) if (ombreLue(n - sautOmbre(j)) >= 1.0) return uPen.y;
+    if (ombreLue(n) >= 1.0 && memePalier(t, n)) return uPen.x;
+  }
+  for (int i = 0; i < 5; i++) {
+    vec2 n = t - sautOmbre(i);
+    if (!dansCadre(n) || plein1(n) || ombreLue(n) >= 1.0 || !memePalier(t, n)) continue;
+    for (int j = 0; j < 5; j++) {
+      vec2 o = n - sautOmbre(j);
+      if (ombreLue(o) >= 1.0 && memePalier(n, o)) return uPen.y;
+    }
   }
   return 0.0;
 }
@@ -1639,8 +1654,9 @@ export class ChampGpu {
         uOcc: 0, uAlb: 1, uDirect: 2, uAlbBande: this.uAlbBande,
       }))
     } else if (k === 3) {
-      mk('gi-drapeau', FRAG_DRAPEAU, gw, gh, ['gi-occ', 'gi-faces', 'gi-direct'], 'gi-drapeau', () => ({
-        uOcc: 0, uFaces: 1, uDirect: 2, uPen: [GI.ASTRE.PENOMBRE[0], GI.ASTRE.PENOMBRE[1]],
+      // `gi-paliers` en quatrième : la pénombre ne franchit pas une marche (LG-R21).
+      mk('gi-drapeau', FRAG_DRAPEAU, gw, gh, ['gi-occ', 'gi-faces', 'gi-direct', 'gi-paliers'], 'gi-drapeau', () => ({
+        uOcc: 0, uFaces: 1, uDirect: 2, uPaliers: 3, uPen: [GI.ASTRE.PENOMBRE[0], GI.ASTRE.PENOMBRE[1]],
       }))
     } else if (k === 4) {
       mk('gi-rebond', FRAG_REBOND, gw, gh, ['gi-occ', 'gi-faces', 'gi-drapeau', 'gi-paliers'], 'gi-rebond', () => ({
