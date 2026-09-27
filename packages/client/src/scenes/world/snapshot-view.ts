@@ -150,7 +150,7 @@ import { armerLeCorps, NoeudCorpsGi, NOM_NOEUD, poseDuSol, type ChampDeLImage } 
 import { garderLesCorps, type CorpsAEprouver, type VerdictCorps } from '../../render/gi/garde-corps'
 import type { CarteMonde } from '../../render/gi/champ-gpu'
 import { GI } from '../../render/gi/reglages'
-import { estRuban, expositionAuFeu, hauteurDeCrete, ligneDuPied, seuilDuDessus, suitLaRegleDesFaces, type CorpsPose } from '../../render/gi/sol-du-corps'
+import { estRuban, expositionAuFeu, hauteurDeCrete, ligneDuPied, piedDansSaTuile, seuilDuDessus, suitLaRegleDesFaces, type CorpsPose } from '../../render/gi/sol-du-corps'
 
 /** Un Feu de l'image tel que la passe des corps le reçoit (voir `SnapshotView.feuxGi`). */
 export interface FeuGi {
@@ -1591,7 +1591,13 @@ export class SnapshotView {
     sprite.setLighting(this.lighting) // couche 1 : acteurs (PNJ, faune, avatar) éclairés eux aussi
     // UN ACTEUR ARME AUSSI (LG-R7) : il lit le champ sous ses pieds, sans face ni dessus — un
     // billboard n'a pas de sens. Sa clarté de lieu (ci-dessus) reste son plancher de jouabilité.
-    if (this.gi !== null) this.poserLeCorps(sprite, { x: p.px, y: p.py, arete: 0, lift }, this.feuDeLImage())
+    // ⚠ LE PIED, MAIS JAMAIS HORS DE SA TUILE (LG-R22, `piedDansSaTuile`) : `p.py` est 3 px sous
+    // `y` (la profondeur du corps), et sur les trois derniers pixels d'une tuile il mord sur celle
+    // du sud — au bord d'une terrasse, un palier plus bas. C'est le même « lu au CENTRE, pas aux
+    // pieds » que le palier applique quinze lignes plus haut (T-R7).
+    if (this.gi !== null) {
+      this.poserLeCorps(sprite, { x: p.px, y: piedDansSaTuile(y * TILE_PX, p.py), arete: 0, lift }, this.feuDeLImage())
+    }
     // L'OMBRE DE CONTACT suit l'acteur (rattachée par `setData` à la création). `syncActor`
     // est le seul point où pieds/depth/emprise sont connus — la placer ici couvre joueur ET
     // autres, sans dupliquer le calcul de position. Aux pieds (p.py, pré-lift : l'ombre reste

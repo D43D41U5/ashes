@@ -213,6 +213,34 @@ export function ligneDuPied(c: CorpsPose): number {
   return c.arete === EDGE_N ? c.y - TILE_PX : c.y
 }
 
+/**
+ * ═══ LG-R22 — UN ACTEUR LIT LE SOL DE LA TUILE OÙ IL SE TIENT ═══
+ *
+ * Le pied DESSINÉ d'un acteur n'est pas sa position : `actorPlacement` le pose à
+ * `y + AVATAR_HITBOX_DEPTH_TILES / 2`, soit 3 px plus bas — la profondeur de son corps. Sur les
+ * trois derniers pixels d'une tuile, ce pied MORD SUR LA TUILE DU SUD ; et au bord d'une terrasse,
+ * celle-là est un palier plus bas. Le corps lisait alors le champ du sol d'en bas : collé contre la
+ * falaise du sud, l'avatar prenait en plein l'ombre que la marche jette EN DESSOUS de lui
+ * (MESURÉ le 2026-09-27, graine 2026, en (621,5 ; 419,97) : `pied` 6722,5 — tuile (621, 420),
+ * palier 2 — pour un corps au palier 3 ; S = 1 et M = 0,58 sur ses treize colonnes, d'un bloc).
+ *
+ * C'est le mot pour mot de T-R7, que `syncActor` applique déjà au PALIER (« lu au CENTRE, comme la
+ * sim. Pas aux pieds : `feetY` mord sur la tuile du sud ») : la tuile où l'on se tient est celle du
+ * CENTRE, et le champ se lit dedans. On garde donc le pied dessiné — c'est bien sous ses pieds
+ * qu'un corps lit (E) — mais jamais au-delà du bord sud de cette tuile-là.
+ *
+ * ⚠ ELLE NE MORD QUE LÀ. Ailleurs dans la tuile, `pied < sud` et la fonction rend `pied` inchangé :
+ * ni le milieu d'une tuile, ni un corps pressé au NORD, ni le coin de LG-R14 (`colonneAuPalierDuCorps`,
+ * qui garde l'axe des X) ne changent d'un texel.
+ *
+ * Les deux bornes sont en px MONDE ; `centre` est la position logique du corps (`y × TILE_PX`).
+ */
+export function piedDansSaTuile(centre: number, pied: number): number {
+  const sud = (Math.floor(centre / TILE_PX) + 1) * TILE_PX
+  // Strictement DANS la tuile : `sud` lui-même est le premier texel de la suivante.
+  return pied < sud ? pied : sud - TILE_PX / (2 * LUMIERE.TEXELS_PAR_TUILE)
+}
+
 /** Un ruban : une bande EST ou OUEST, peinte tout entière au ton du dessus. */
 export function estRuban(c: CorpsPose): boolean {
   return c.arete === EDGE_E || c.arete === EDGE_O

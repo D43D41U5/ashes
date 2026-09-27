@@ -5,6 +5,7 @@ import {
   EDGE_N,
   EDGE_O,
   EDGE_S,
+  BALANCE,
   LUMIERE,
   TERRAIN_GRASS,
   createEmptyMap,
@@ -27,6 +28,7 @@ import {
   lectureDuFeu,
   ligneDuPied,
   ordonneeLogique,
+  piedDansSaTuile,
   pointAuSol,
   porteeDeLaNormale,
   seuilDuDessus,
@@ -630,6 +632,76 @@ describe('le toit est un dessus entier (LG-R16, planche 27)', () => {
   it('ET IL ARME EN JEU, PAS DERRIÈRE UNE CLÉ DE DEBUG', () => {
     expect(source).not.toMatch(/debugGiToits/)
     expect(source).toMatch(/this\.gi !== null && \(isRoof \|\| ARETE_GI\.has\(s\.type\)\)/)
+  })
+})
+
+/**
+ * ═══ LG-R22 — LE PIED D'UN ACTEUR NE SORT PAS DE SA TUILE ═══
+ *
+ * « Colle-toi à la falaise du sud. Il reste l'ombre à cet endroit » (Alexis, 2026-09-27). Le pied
+ * DESSINÉ d'un acteur est 3 px sous sa position (`AVATAR_HITBOX_DEPTH_TILES / 2 × TILE_PX`, la
+ * profondeur de son corps) : sur les trois derniers pixels d'une tuile il mord sur celle du sud, et
+ * au bord d'une terrasse celle-là est un palier plus bas.
+ *
+ * ⚠ PRÉDICTIONS ÉCRITES AVANT LA MESURE, sur le poste d'Alexis (graine 2026, tuile (621, 419) au
+ * palier 3, (621, 420) au palier 2) :
+ *   · à y = 419,97 le pied dessiné vaut 6722,52 — DANS la tuile 420 ; la loi doit le ramener à
+ *     6718, le MILIEU du dernier texel de la tuile 419 (`sud` moins un demi-texel de 4 px) ;
+ *   · à y = 419,5 (le milieu) il vaut 6715 et ne bouge PAS d'un pixel — le CONTRÔLE POSITIF : une
+ *     loi qui ramènerait tout le monde au bord de sa tuile passerait au vert sans lui ;
+ *   · pressé au NORD (y = 419,03) il vaut 6707,5 et ne bouge pas non plus.
+ */
+describe('un acteur lit le sol de sa tuile (LG-R22)', () => {
+  const DECALAGE = (BALANCE.AVATAR_HITBOX_DEPTH_TILES / 2) * TILE_PX
+  const pied = (y: number): number => piedDansSaTuile(y * TILE_PX, (y + BALANCE.AVATAR_HITBOX_DEPTH_TILES / 2) * TILE_PX)
+  const tuileDe = (px: number): number => Math.floor(px / TILE_PX)
+
+  it('LA PRÉMISSE — le pied dessiné est bien 3 px sous la position, et il SORT de la tuile au bord sud', () => {
+    expect(DECALAGE).toBeCloseTo(3, 12)
+    expect((419.97 + BALANCE.AVATAR_HITBOX_DEPTH_TILES / 2) * TILE_PX).toBeCloseTo(6722.52, 6)
+    expect(tuileDe(6722.52)).toBe(420) // sans la loi, le corps lirait la tuile d'en dessous
+  })
+
+  it('COLLÉ À LA FALAISE DU SUD — le pied revient dans sa tuile, au milieu du dernier texel', () => {
+    expect(pied(419.97)).toBe(6718)
+    expect(tuileDe(pied(419.97))).toBe(419)
+    // Et au texel : le dernier rang de la tuile 419, jamais le premier de la 420.
+    const PX_PAR_TEXEL = TILE_PX / LUMIERE.TEXELS_PAR_TUILE
+    expect(Math.floor(pied(419.97) / PX_PAR_TEXEL)).toBe(Math.floor((420 * TILE_PX - 1) / PX_PAR_TEXEL))
+  })
+
+  it('AILLEURS DANS LA TUILE, ELLE NE MORD PAS — le contrôle positif', () => {
+    expect(pied(419.5)).toBe(6715)
+    expect(pied(419.03)).toBeCloseTo(6707.48, 6)
+    expect(pied(419)).toBe(6707)
+    // Sur toute la tuile sauf ses trois derniers pixels, la loi est l'identité.
+    for (let k = 0; k <= 12; k++) {
+      const y = 419 + k / 16
+      expect(pied(y), `y = ${y}`).toBeCloseTo((y + BALANCE.AVATAR_HITBOX_DEPTH_TILES / 2) * TILE_PX, 6)
+    }
+  })
+
+  it('ET SUR N’IMPORTE QUELLE TUILE — le pied reste toujours dans celle du CENTRE', () => {
+    for (const y of [0.99, 1.5, 12.999, 419.97, 1023.98]) {
+      const p = piedDansSaTuile(y * TILE_PX, (y + BALANCE.AVATAR_HITBOX_DEPTH_TILES / 2) * TILE_PX)
+      // DANS la tuile du centre, bornes comprises au nord, exclue au sud — jamais au-delà.
+      expect(tuileDe(p), `y = ${y}`).toBe(Math.floor(y))
+      expect(p, `y = ${y}`).toBeGreaterThanOrEqual(Math.floor(y) * TILE_PX)
+      expect(p, `y = ${y}`).toBeLessThan((Math.floor(y) + 1) * TILE_PX)
+    }
+  })
+})
+
+/**
+ * L'ACTEUR PASSE VRAIMENT PAR LA LOI (LG-R22). `snapshot-view.ts` tire Phaser : la garde lit sa
+ * SOURCE, comme celle du toit plus haut. Sans cette ligne, `piedDansSaTuile` serait une loi livrée
+ * sans appelant — et les tests ci-dessus resteraient verts pour rien.
+ */
+describe('et `syncActor` l’appelle (LG-R22)', () => {
+  const source = readFileSync(new URL('../../scenes/world/snapshot-view.ts', import.meta.url), 'utf8')
+  it('LE CORPS D’UN ACTEUR S’ARME SUR `piedDansSaTuile`, PAS SUR `p.py` NU', () => {
+    expect(source).toMatch(/y: piedDansSaTuile\(y \* TILE_PX, p\.py\)/)
+    expect(source).not.toMatch(/poserLeCorps\(sprite, \{ x: p\.px, y: p\.py, arete: 0, lift \}/)
   })
 })
 
