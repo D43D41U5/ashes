@@ -1,5 +1,7 @@
 # Direction de design — BRAISES
 
+> ⚠ **PÉRIMÉ COMME BOUSSOLE — LA CIBLE A CHANGÉ LE 2026-09-28** (décision d'Alexis, « définitif »). Le jeu est désormais **solo / coop** et son cœur est **`docs/specs/braise.md`** (la braise portée, ses crans de couverture au froid, les balises, un étage = une saison). Les villages PNJ, l'alignement comme moteur, les vêtements de froid et la saison persistante multi **sortent du jeu** ; la nourriture n'est plus une survie. Ce document garde sa valeur d'**archive** — ce qu'on savait, ce qui était livré, les mesures — mais **ne pas y choisir un chantier**. Les décisions : `grep 2026-09-28 docs/decisions.md`.
+
 > **Nature du document.** Synthèse courte et décantée de la direction vers laquelle BRAISES converge *réellement*, au vu du code existant (`docs/audit-gameplay-phase1.md`) et des axes retenus (`docs/axes-amelioration-phase2.md`). Elle sert de boussole : trois pages qui disent ce que le jeu est aujourd'hui, où il va, et ce qui reste à trancher. Ce n'est ni le GDD (la vision) ni le backlog (le quoi-faire) — c'est le *cap*.
 >
 > *Rédigée le 2026-07-19, après l'audit gameplay en trois phases.*

@@ -1,5 +1,7 @@
 # Roadmap d'implémentation
 
+> ⚠ **PÉRIMÉ COMME BOUSSOLE — LA CIBLE A CHANGÉ LE 2026-09-28** (décision d'Alexis, « définitif »). Le jeu est désormais **solo / coop** et son cœur est **`docs/specs/braise.md`** (la braise portée, ses crans de couverture au froid, les balises, un étage = une saison). Les villages PNJ, l'alignement comme moteur, les vêtements de froid et la saison persistante multi **sortent du jeu** ; la nourriture n'est plus une survie. Ce document garde sa valeur d'**archive** — ce qu'on savait, ce qui était livré, les mesures — mais **ne pas y choisir un chantier**. Les décisions : `grep 2026-09-28 docs/decisions.md`.
+
 *Dérivée du GDD §13. Statut : proposition (2026-07-05). Les durées sont des ordres de grandeur pour un dev solo assisté d'agents — à recalibrer après les 2-3 premiers jalons.*
 
 ## Principes de séquencement

@@ -1,5 +1,7 @@
 # Specs par système
 
+> **⚑ LA CIBLE A CHANGÉ — 2026-09-28, décision d'Alexis, « définitif ».** Le jeu devient **solo / coop**, et son cœur est **`braise.md`** (un objet porté, une barre de crans qui dit jusqu'où on peut monter, des balises qu'on allume et qui rechargent). Conséquence pour la lecture de tout ce dossier : **deux des trois piliers du GDD §1 ne tiennent plus** (« le village est le personnage », « la morale est une mécanique »), ni le cadre multi persistant de la fiche d'identité. Les villages PNJ, l'alignement comme moteur et les vêtements de froid **sortent du jeu** ; la nourriture cesse d'être une survie. Les dix décisions sont au journal du 2026-09-28 (`grep 2026-09-28 docs/decisions.md`). `ascension.md` reste la colonne vertébrale — `braise.md` en est le moteur.
+
 Le GDD (`ashes-gdd.md`) est la source de vérité de la *vision*. Avant d'implémenter un système, on en extrait ici une spec *travaillable* : assez précise pour coder contre elle, avec des critères d'acceptation testables en headless.
 
 Une tâche d'implémentation bien posée ressemble à : « implémente l'endurance selon `specs/combat.md` §2 ; les critères A1-A4 doivent passer en test ».
