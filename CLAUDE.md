@@ -92,7 +92,6 @@ tools/            ← les instruments. `smoke.mjs` (navigateur), `suites.mjs` (l
                     Une sonde JETABLE de session se nomme `tools/__*.mts` : gitignorée, elle meurt
                     avec la session ; ce qui doit survivre perd son préfixe et prend un nom.
 docs/specs/       ← specs par système, extraites du GDD, avec critères d'acceptation
-docs/gate1-finition.md ← le backlog de finition solo priorisé (P0/P1/P2) — ce qui reste vraiment à construire
 docs/decisions.md ← L'INDEX du journal des décisions (ADR léger). Les entrées vivent dans
                     docs/decisions/ — CINQ VOLETS par thème (monde-worldgen, rendu-da,
                     gameplay-systemes, interface-outillage, architecture-infra). L'index
@@ -133,10 +132,10 @@ Ils viennent du GDD §11 et §14 (« décisions actées »). Ne pas les rouvrir 
 
 ## Roadmap — état courant
 
-⚠ **La roadmap V0-V10 → LAN → Vallée → Saison 0 (`docs/roadmap.md`) décrit l'ANCIENNE cible.** Elle garde sa valeur pour le *séquencement* (sim-first, tranche verticale par jalon) et pour l'inventaire de ce qui est livré — pas pour la destination. Idem `docs/gate1-finition.md` et `docs/direction-design.md`, écrits en juillet, avant le pivot du flanc, des terrasses et de l'Ascension. Les trois portent un bandeau.
+⚠ **La roadmap V0-V10 → LAN → Vallée → Saison 0 (`docs/roadmap.md`) décrit l'ANCIENNE cible.** Elle garde sa valeur pour le *séquencement* (sim-first, tranche verticale par jalon) et pour l'inventaire de ce qui est livré — pas pour la destination. *(Les dix documents de juillet-août qui l'accompagnaient — les sept audits, `axes-amelioration-phase2`, `direction-design`, `gate1-finition` — ont été **supprimés** le 2026-09-28 : ils décrivaient un jeu qui n'existe plus. Ils restent dans git, et le journal du jour les nomme.)* `docs/roadmap.md` garde son bandeau.
 
 **Ce qui est acquis.** La Phase Veillée (V0-V10) est complète ; le **worldgen est le chantier le plus abouti du projet** (stratigraphie, flanc en quatre paliers, terrasses et rampes, réseau de sentes, lumière globale 2D) et la **carte actuelle est le MVP** — aucune zone neuve, aucun biome neuf (décision du 2026-09-19). `packages/server` + Colyseus sont substantiellement livrés et restent utiles pour la **coop** : l'invariant « une simulation, pas deux jeux » n'a pas bougé.
 
 **Le chantier courant est `docs/specs/braise.md`**, et son ordre de construction est dans son § 3. **L'étape 1 est `FROID_PAR_ETAGE`** — aujourd'hui *monter ne refroidit pas* (le gradient de froid est **horizontal**, porté par le biome ; `balance.ts:410` le dit encore en clair), donc **rien du nouveau cœur ne mord avant lui** et une braise livrée d'abord serait une fonctionnalité morte aux tests verts. Ne pas commencer ailleurs.
 
-**Ce qui n'est plus la cible** : le GATE 2 multi, les MVP gouvernance et alignement, et le backlog de `gate1-finition.md`. La *question* du GATE 1 — « la boucle solo est-elle fun 5 sessions d'affilée ? » — reste la bonne ; c'est la boucle qui a changé.
+**Ce qui n'est plus la cible** : le GATE 2 multi, les MVP gouvernance et alignement, et l'ancien backlog de finition solo. La *question* du GATE 1 — « la boucle solo est-elle fun 5 sessions d'affilée ? » — reste la bonne ; c'est la boucle qui a changé.

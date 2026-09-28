@@ -405,8 +405,9 @@ export { advanceUpkeep, applyStructureDamage, grantItems } from './village'
 // ── LA VALLÉE — un graphe de zones, un terrain qui en découle (spec `worldgen.md`) ──
 // (L'ANCIENNE pile `valleygen` — squelette déclaratif + chair procédurale, juillet 2026 — a été
 //  SUPPRIMÉE le 2026-08-02 : `scenario.ts` avait migré vers `generateZonedTerrain`, plus personne
-//  ne l'appelait. C'est l'item 18 de `docs/audit-gameplay-phase1.md` — « deux stacks de génération
-//  de carte », dont le banc calibrait sur une carte que le joueur ne voyait jamais — refermé par
+//  ne l'appelait. C'était le défaut « deux stacks de génération de carte » relevé par l'audit
+//  gameplay de juillet (document supprimé le 2026-09-28) : le banc calibrait sur une carte que le
+//  joueur ne voyait jamais — refermé par
 //  la suppression plutôt que par la vigilance. Elle reste dans git si le squelette déclaratif
 //  redevenait un jour la bonne idée.)
 export {

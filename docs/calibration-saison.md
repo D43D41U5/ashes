@@ -1,6 +1,6 @@
 # Calibration de saison entière — banc long, passe 1 (2026-08-16)
 
-> **Nature.** Premier relevé du « seul vrai reste de GATE 1 » (`gate1-finition.md` P4) : la
+> **Nature.** Premier relevé du « seul vrai reste de GATE 1 » (`gate1-finition.md` P4 — document supprimé le 2026-09-28, cf. le journal du jour) : la
 > saison ENTIÈRE jouée au banc, 60 jours × 4 graines, relevé par cycle. Instrument :
 > `tools/banc-saison.mts` (même monde que `pnpm scenario` — `construireMondeDuBanc`, parité
 > d'amorce comprise —, graine paramétrable, JSONL par cycle dans `scratchpad/banc-saison/`).
