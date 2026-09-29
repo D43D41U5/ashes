@@ -354,15 +354,3 @@ export function desiredOrders(state: SimState, village: Village): BuildOrder[] {
   return orders
 }
 
-/** Le premier LIT libre (l'ancre d'un logis sans paillasse) — pour le colon qui arrive. */
-export function freeBedSpot(state: SimState, village: Village): { tx: number; ty: number } | null {
-  for (const spot of HUT_SPOTS) {
-    const [tx, ty] = bedAnchor(village.fireTx, village.fireTy, spot)
-    if (tx < 0 || ty < 0 || tx >= state.map.width || ty >= state.map.height) continue
-    if (!terrainConstructible(terrainAt(state.map, tx, ty), 'paillasse')) continue
-    if (fullTileAt(state.structures, tx, ty)) continue
-    if (!poseLibre(state.villages, state.nodes, tx, ty)) continue
-    return { tx, ty }
-  }
-  return null
-}

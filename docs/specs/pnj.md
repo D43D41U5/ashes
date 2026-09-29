@@ -2,6 +2,30 @@
 
 *Source : GDD §10 (mode Veillée, RimWorld-light), §5 (PNJ = main-d'œuvre, pas citoyens ; « plus d'humains = moins de bras »), §6 (le tableau du village). Statut : **implémenté** (2026-07-05, A1-A8 verts — dont la survie 10 jours — + smoke test navigateur). Jalon : V5.*
 
+> **⚠⚠ 2026-09-29 — LES VILLAGES PNJ SORTENT DU JEU** (décision d'Alexis du 2026-09-28, `braise.md`
+> § 4 : *« à bandeauter, pas à réécrire »*). Ils étaient déjà ÉTEINTS derrière `FEATURES.VILLAGES_PNJ`
+> depuis le 26/09 ; le retrait du code a commencé, par tranches, et cette spec cesse d'être une
+> cible. **MESURÉ avant de couper** : dans le jeu joué, aucun PNJ ne peut naître — le drapeau ferme
+> `foundNpcVillage`, le client fonde par `found_village` (qui pose `npcsArrived: true`, « aucun PNJ
+> d'accueil », décision d'Alexis), et `light_fire` — le seul chemin qui en amènerait trois — n'a
+> **aucun émetteur côté client**. `state.npcs` reste donc vide dans tout monde NÉ après le 26/09.
+>
+> ⚠ **UNE VIEILLE SAUVEGARDE, ELLE, PORTE ENCORE SES PNJ** : `FEATURES.VILLAGES_PNJ` a éteint la
+> FONDATION, pas la persistance — une Veillée commencée avant le 26/09 recharge ses villages et ses
+> villageois. Pour eux, la tranche 1 arrête seulement la croissance (plus de colon, plus de palier,
+> plus de porte rituelle) ; ils restent là. Ce que devient un tel monde quand l'IA des villageois
+> partira à son tour est la question que la tranche 2 doit trancher, pas un détail de migration.
+>
+> **Tranche 1 (faite)** : `village-growth.ts` — la porte rituelle (R7), la montée de palier (R6) et
+> le colon (R9), dont la boucle entière était gardée par `chiefId === 0`. Avec eux les événements
+> `village_stage_up` et `settler_arrived`.
+>
+> ⚠ **P-A2 devient SANS OBJET, il n'est pas corrigé.** Ses quatre conditions de terminaison
+> inatteignables — au premier chef la réparation qui ne s'achève jamais quand le Feu est à sec, et
+> qui mange le bois même qui manque au Feu — étaient inventoriées et non réparées. Elles partent
+> avec la machine, elles ne sont pas résolues : quiconque ressusciterait ce code depuis git les
+> ressusciterait avec.
+
 ## Objectif de design
 
 Peupler les villages. Un village 100 % PNJ doit *survivre* seul (le joueur y prospère, GDD §10) : les villageois mangent, dorment, travaillent, et le tableau du village orchestre le travail — le même tableau que les joueurs liront et alimenteront plus tard. C'est le système qui fait du solo un jeu et du serveur un monde déjà habité.

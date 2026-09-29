@@ -66,8 +66,10 @@ export const FEATURES = {
    * ⚠ **MAIS AUCUNE GARDE PERMANENTE NE TIENT CETTE PROPRIÉTÉ**, et il ne faut pas le lire
    * autrement. Alexis a demandé le masquage *« idem pour les tests »* : les gardes dont le
    * village est le sujet sont donc `skipIf`, elles ne rallument pas le drapeau chez elles.
-   * `empreinte-sim` et `replay-monde-reel` n'éprouvent PAS cette identité non plus — tous deux
-   * appellent `foundNpcVillage` en direct et ne traversent jamais `peuplerLesVoisins`. Tant que
+   * `empreinte-sim` n'éprouve PAS cette identité non plus : il appelle `foundNpcVillage` en
+   * direct et ne traverse jamais `peuplerLesVoisins`. *(Cette phrase nommait aussi
+   * `replay-monde-reel` — MESURÉ FAUX le 2026-09-29 : ce test n'appelle `foundNpcVillage` nulle
+   * part, il ne fonde aucun village du tout. Corrigé plutôt que recopié.)* Tant que
    * le drapeau est éteint, la réversibilité est un fait MESURÉ UNE FOIS, pas un invariant
    * surveillé : la revérifier veut dire refaire le geste ci-dessus (basculer, jouer le banc).
    * La règle ① de ce fichier n'est donc, pour ce drapeau-ci, PAS honorée par une garde.

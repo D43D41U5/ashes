@@ -58,7 +58,6 @@ import { advanceVent } from './vent'
 import { rngNext } from './rng'
 import { advanceNightHunt } from './nighthunt'
 import { advanceNpcs, type Npc } from './npc'
-import { advanceVillageGrowth } from './village-growth'
 import { advancePois } from './poi-discovery'
 import { advanceDens } from './poi'
 import { actForDay, dayTicksAt, TICKS_PER_CYCLE, advanceTime, jourDeSaison } from './time'
@@ -1110,7 +1109,6 @@ export function step(state: SimState, inputs: MoveInput[]): void {
   // l'aube la porte s'ouvre, le palier monte au surplus, la prospérité attire un
   // colon ; au crépuscule la porte se ferme. Avant la passe PNJ : le village se
   // réveille, PUIS ses habitants agissent. Aucun tirage RNG (position par hash2, comme les convois).
-  advanceVillageGrowth(state)
   advanceNpcs(state)
   advanceMonsters(state)
   // L'ENVOL DE LA LISIÈRE (forêts-vivantes §3) — après les bêtes : l'alarme qu'il pose se

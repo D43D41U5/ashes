@@ -71,7 +71,11 @@ describe('l’inventaire des 97 faits', () => {
     // 104 → 103 le 2026-09-29 : L'ALIGNEMENT EST RETIRÉ — `village_archetype_changed` (une voix)
     // perd son sujet. La famille `social` SURVIT : `gift_given`, `village_founded`, `village_fell`,
     // `member_joined` et `member_banished` sont du vocabulaire de balise et de coop.
-    expect(somme).toBe(103)
+    // 103 → 101 le 2026-09-29 : LES VILLAGES PNJ SORTENT DU JEU (tranche 1 — `village-growth.ts`) :
+    // `village_stage_up` (une voix) et `settler_arrived` (un silence) n'ont plus d'émetteur, leur
+    // boucle entière était gardée par `chiefId === 0`. La famille `social` survit encore : le don,
+    // la fondation, la chute, l'entrée et le banni sont de la balise et de la coop.
+    expect(somme).toBe(101)
   })
 
   it('chaque fait DIT ce qu’il raconte — pas son identifiant', () => {
@@ -143,7 +147,9 @@ describe('l’inventaire des 97 faits', () => {
     // 57 → 54 le 2026-09-29 : − `evacuation_opened`, `season_ended`, `ark_departed` — la fin de
     // saison n'existe plus (le pivot de la braise). Les silences ne bougent pas (50).
     // 54 → 53 le 2026-09-29 : − `village_archetype_changed` (retrait de l'alignement).
-    expect(SONORES.length).toBe(53)
+    // 53 → 52 le 2026-09-29 : − `village_stage_up` (villages PNJ, tranche 1). Les silences
+    // tombent de 50 à 49 avec `settler_arrived`, qui naissait muet.
+    expect(SONORES.length).toBe(52)
     // 33 → 34 le 2026-08-21 : `refugee_rumeur` naît MUET (annales.md R12) — le geste de
     // nourrir parle déjà, le renseignement se lit dans la chronique.
     // 34 → 35 le 2026-08-21 : `cendre_prend` naît MUET (P5a) — la perte se lit et se voit.
@@ -171,7 +177,9 @@ describe('l’inventaire des 97 faits', () => {
     // décidées — elles se voient et se lisent ; six one-shots doubleraient le rendu et la chronique.
     // 49 → 50 le 2026-09-13 : `nasse_caught` (reprise de l'eau D3) naît MUET — la récolte parle
     // déjà, et surtout la nasse prend sans témoin : personne n'est là pour l'entendre.
-    expect(Object.keys(INVENTAIRE).length - SONORES.length).toBe(50)
+    // 50 → 49 le 2026-09-29 : − `settler_arrived`, qui naissait MUET — les villages PNJ sortent
+    // du jeu et le colon n'a plus de prospérité qui l'attire (tranche 1, `village-growth.ts`).
+    expect(Object.keys(INVENTAIRE).length - SONORES.length).toBe(49)
   })
 
   it('PLUS AUCUNE famille n’est entièrement muette, sauf celle qui l’est par décision', () => {

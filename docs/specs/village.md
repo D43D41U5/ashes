@@ -2,6 +2,14 @@
 
 *Source : GDD §5 (gouvernance, MVP : rang unique + Chef + propriété individuelle), §9 (fondation semi-libre), §6 (le village comme nécessité). Statut : **implémenté** (2026-07-05, A1-A6 verts en headless + smoke test navigateur). Jalon : V3.*
 
+> **⚠ 2026-09-29 — CE QUI SURVIT ICI EST LA BALISE, PAS LE VILLAGE PNJ.** Les villages PNJ sortent
+> du jeu (décision d'Alexis du 28/09, `braise.md` § 4). Ce que cette spec décrit et qui RESTE vivant,
+> parce que la balise en dépend entièrement : la PROPRIÉTÉ et l'APPARTENANCE (`getVillageOf`,
+> `memberIds`, `chiefId` — la seule porte de « ce Feu est le mien », d'où découlent la pose, le
+> palier, le coffre, la porte et la démolition) et les ACCÈS (`invite`/`banish`, qui sont le
+> mécanisme de COOP, pas des débris PNJ). Ce qui est CADUC : tout ce qui fait du village un acteur
+> autonome — la main-d'œuvre, le tableau de corvées, la croissance.
+
 > ⚠️ **Partie construction supersédée** (pivot Rust, 2026-07-18). La fondation, le carré, les composants et les fonctions émergentes sont désormais régis par `docs/specs/construction.md`. Cette spec reste la source pour la **gouvernance, la propriété, les accès, le coffre et les rangs** (R10-R12), réutilisés à l'identique.
 
 ## Objectif de design

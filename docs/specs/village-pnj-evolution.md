@@ -3,11 +3,23 @@
 *Spec extraite de la session du 2026-07-31 (cinq décisions d'Alexis, consignées dans
 `docs/decisions.md`). Complète `pnj.md` (R7/R9/R10) et amende `construction.md` (R15).*
 
+> **⚠⚠ 2026-09-29 — SPEC MORTE.** Les villages PNJ sortent du jeu (décision d'Alexis du 28/09,
+> `braise.md` § 4), et c'est CETTE spec que la tranche 1 du retrait a exécutée : R6 (la montée de
+> palier au surplus), R7 (la porte rituelle) et R9 (le colon) vivaient dans `village-growth.ts`,
+> supprimé. Leur boucle entière était gardée par `chiefId === 0` : du village PNJ et rien d'autre.
+> Rien ci-dessous n'est implémenté. Conservée pour mémoire, pas réécrite.
+>
+> Une seule de ses lois devient STRUCTURELLE plutôt que gardée : R7 dérogeait à « une porte ne bouge
+> jamais seule » (`construction.md` R26) pour les seuls villages PNJ. La dérogation n'a plus de
+> bénéficiaire — plus rien au monde ne bouge une porte sans un geste.
+
+
 Le spawn actuel (`foundNpcVillage`) pose un feu, un coffre et N chips `house` d'une
 tuile : le village se lit comme trois images posées dans l'herbe. Ce chantier le
 remplace par de **vrais bâtiments assemblés avec les pièces du joueur** (le patron
 `poi-batis.ts` : murs d'arêtes, encadrements, mobilier), qui **évoluent** — et c'est
 le village qui se les construit.
+
 
 ## Les cinq décisions (Alexis, 2026-07-31)
 

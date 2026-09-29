@@ -13,8 +13,7 @@ import { addItems, countOf } from './items'
 import { createEmptyMap } from './map'
 import type { ResourceNode } from './economy'
 import { createSim, spawnEntity, step, type SimState } from './sim'
-import { dayTicksAt, TICKS_PER_CYCLE } from './time'
-import { addStructure, createVillage, type BuildOrder } from './village'
+import { addStructure, type BuildOrder } from './village'
 import { bedAnchor, desiredOrders, granaries, granaryStocks, HUT_SPOTS, HUT_W } from './village-plan'
 import { refreshBoard } from './village-board'
 import { STRUCTURE_TYPES, piece } from './pieces'
@@ -36,44 +35,12 @@ function npcVillageSim(count = 3): SimState {
 
 const granary = (sim: SimState) => sim.structures.find((s) => s.type === 'chest')!
 const village = (sim: SimState) => sim.villages[0]!
-const alive = (sim: SimState) =>
-  sim.entities.filter((e) => village(sim).memberIds.includes(e.id) && e.hp > 0).length
-
 function run(sim: SimState, ticks: number, collect?: SimEvent[]): void {
   for (let t = 0; t < ticks; t++) {
     step(sim, [])
     const evs = drainEvents(sim)
     if (collect) collect.push(...evs)
   }
-}
-
-/** Saute juste AVANT une phase du cycle (0 = aube), puis la franchit. */
-function crossPhase(sim: SimState, phase: number, collect?: SimEvent[]): void {
-  const cur = (sim.tick + sim.cycleOffset) % TICKS_PER_CYCLE
-  let delta = (phase - cur + TICKS_PER_CYCLE) % TICKS_PER_CYCLE
-  if (delta <= 3) delta += TICKS_PER_CYCLE
-  sim.tick += delta - 3
-  run(sim, 6, collect)
-}
-
-/**
- * Saute juste AVANT le CRÉPUSCULE et le franchit.
- *
- * Il ne se dit plus par une constante : la longueur du jour est saisonnière (spec
- * `saisons.md` S6) et `estCrepuscule` la teste par ÉGALITÉ EXACTE — viser l'heure de tombée
- * d'un AUTRE cycle que celui où l'on atterrit, c'est enjamber le tick de l'événement et
- * perdre la fermeture des portes sans une erreur. On résout donc le cycle visé d'abord, et
- * on lui demande SON crépuscule.
- */
-function crossCrepuscule(sim: SimState, collect?: SimEvent[]): void {
-  const aube = sim.tick - ((sim.tick + sim.cycleOffset) % TICKS_PER_CYCLE)
-  let cible = aube + dayTicksAt(sim, aube)
-  if (cible - sim.tick <= 3) {
-    const suivante = aube + TICKS_PER_CYCLE
-    cible = suivante + dayTicksAt(sim, suivante)
-  }
-  sim.tick = cible - 3
-  run(sim, 6, collect)
 }
 
 describe('la fondation au campement (R1-R2)', () => {
@@ -176,59 +143,15 @@ describe('les PNJ bâtissent (R4-R5)', () => {
   })
 })
 
-describe('la montée de palier au surplus (R6)', () => {
-  it('grenier garni → palier 2 à l’aube ; grenier de naissance → rien', () => {
-    const sim = npcVillageSim(2)
-    addItems(granary(sim).inventory!, { wood: 40, berries: 20 })
-    const events: SimEvent[] = []
-    crossPhase(sim, 0, events)
-    expect(village(sim).buildTier).toBe(2)
-    expect(events.some((e) => e.type === 'village_stage_up' && e.stage === 2)).toBe(true)
-
-    const pauvre = npcVillageSim(2) // le grenier de naissance : food 10 < 15
-    crossPhase(pauvre, 0)
-    expect(village(pauvre).buildTier).toBe(1)
-  })
-})
-
-describe('la porte rituelle (R7)', () => {
-  it('ouvre à l’aube, ferme au crépuscule — et jamais chez un village à chef humain', () => {
-    const sim = npcVillageSim(2)
-    const gate = addStructure(sim, 'door', 12, 19, village(sim).id, 0, 'village', 'wood', 1)
-    // Un village à chef HUMAIN, avec sa porte close : le rituel ne le touche pas.
-    const chief = spawnEntity(sim, 24.5, 4.5)
-    const humain = createVillage(sim, { chiefId: chief, tx: 24, ty: 4, npcsArrived: true })
-    const porteHumaine = addStructure(sim, 'door', 24, 6, humain.id, chief, 'village', 'wood', 1)
-    drainEvents(sim)
-
-    crossPhase(sim, 0)
-    expect(gate.open).toBe(true)
-    expect(porteHumaine.open).toBeUndefined()
-    crossCrepuscule(sim)
-    expect(gate.open).toBeUndefined() // `undefined` EST « close » : le snapshot reste léger
-    expect(porteHumaine.open).toBeUndefined()
-  })
-})
-
-describe('la prospérité attire (R9)', () => {
-  it('au plafond du palier 1 rien n’arrive ; au palier 2 le colon vient, avec sa paillasse', () => {
-    const sim = npcVillageSim(3) // 3 = le plafond du campement
-    addItems(granary(sim).inventory!, { berries: 60 })
-    village(sim).buildTier = 1
-    // food 70 ≥ 18 mais effectif = plafond → personne. (La barre du palier 2 exige
-    // du bois : le grenier n'en a pas, le palier ne monte pas pendant ce test.)
-    crossPhase(sim, 0)
-    expect(alive(sim)).toBe(3)
-
-    village(sim).buildTier = 2 // plafond 6 : la porte s'ouvre
-    const events: SimEvent[] = []
-    crossPhase(sim, 0, events)
-    expect(alive(sim)).toBe(4)
-    expect(events.some((e) => e.type === 'settler_arrived')).toBe(true)
-    expect(sim.structures.filter((s) => s.type === 'paillasse')).toHaveLength(4)
-  })
-})
-
+/**
+ * ⚠ TROIS DESCRIBES SONT PARTIS LE 2026-09-29 avec `village-growth.ts` (les villages PNJ sortent
+ * du jeu, décision d'Alexis du 28/09) : « la montée de palier au surplus (R6) », « la porte
+ * rituelle (R7) » et « la prospérité attire (R9) ». Les trois éprouvaient `advanceVillageGrowth`,
+ * dont la boucle entière était gardée par `chiefId === 0` — du village PNJ et rien d'autre.
+ * Une de leurs lois devient STRUCTURELLE au lieu d'être gardée : la porte rituelle affirmait
+ * qu'un village à chef HUMAIN ne voit jamais ses portes bouger seules ; plus rien au monde ne
+ * bouge une porte sans un geste, donc il n'y a plus de dérogation à surveiller.
+ */
 describe('la palissade au marteau du joueur (décision 2026-08-01)', () => {
   it('se pose sur une arête ; la pose pleine-tuile est refusée avec son motif', () => {
     const sim = createSim(3, { map: createEmptyMap(32, 32, TERRAIN_GRASS) })

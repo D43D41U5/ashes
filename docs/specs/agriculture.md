@@ -2,7 +2,7 @@
 
 *Source : GDD §8 (économie de flux, la branche Agriculture : Potager → Champs → Serres/cultures d'hiver → Semences maîtresses), §8bis (les trois cercles — le DOMESTIQUE est « sûr, renouvelable vite, MÉDIOCRE : un village y survit, n'y prospère jamais »). Statut : **proposition** (2026-07-23). Jalon : Veillée, phase 2.*
 
-> **Note de cadrage.** L'agriculture (voie A) est un système **explicitement différé** par `direction-design` §2 (« ce n'est pas une fuite en avant vers plus de systèmes… charrette, agriculture… explicitement différées »). Il est construit maintenant **sur directive d'Alexis (« tu fais tout dans l'ordre », 2026-07-23)** qui le dé-diffère. On respecte le garde-fou du GDD (§8bis, ci-dessous), pas la seule envie d'ajouter.
+> **Note de cadrage.** L'agriculture (voie A) est un système **explicitement différé** par `direction-design` §2 (document supprimé le 2026-09-28, cf. le journal du jour) (« ce n'est pas une fuite en avant vers plus de systèmes… charrette, agriculture… explicitement différées »). Il est construit maintenant **sur directive d'Alexis (« tu fais tout dans l'ordre », 2026-07-23)** qui le dé-diffère. On respecte le garde-fou du GDD (§8bis, ci-dessous), pas la seule envie d'ajouter.
 
 ## L'intention
 

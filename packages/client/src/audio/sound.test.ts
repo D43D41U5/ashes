@@ -139,7 +139,11 @@ describe('la table de routage audio (soundForEvent)', () => {
     // 104 → 103 le 2026-09-29 : L'ALIGNEMENT EST RETIRÉ — `village_archetype_changed` (une voix)
     // perd son sujet. La famille `social` SURVIT : `gift_given`, `village_founded`, `village_fell`,
     // `member_joined` et `member_banished` sont du vocabulaire de balise et de coop.
-    expect(total).toBe(103)
+    // 103 → 101 le 2026-09-29 : LES VILLAGES PNJ SORTENT DU JEU (tranche 1 — `village-growth.ts`) :
+    // `village_stage_up` (une voix) et `settler_arrived` (un silence) n'ont plus d'émetteur, leur
+    // boucle entière était gardée par `chiefId === 0`. La famille `social` survit encore : le don,
+    // la fondation, la chute, l'entrée et le banni sont de la balise et de la coop.
+    expect(total).toBe(101)
     // 34 → 35 le 2026-07-29 : `node_depleted` a gagné sa voix (trois, selon la matière).
     // 61 → 62 faits et 35 → 36 voix le 2026-07-30 : `door_toggled` naît (spec construction R26).
     // 62 → 63 faits et 36 → 37 voix le 2026-07-31 : `cendreux_prowl` naît (spec cendreux R11bis) —
@@ -158,7 +162,8 @@ describe('la table de routage audio (soundForEvent)', () => {
     // 57 → 54 le 2026-09-29 : − `evacuation_opened`, `season_ended`, `ark_departed` — la fin de
     // saison n'existe plus (le pivot de la braise). Les silences ne bougent pas (50).
     // 54 → 53 le 2026-09-29 : − `village_archetype_changed` (retrait de l'alignement).
-    expect(voix).toBe(53)
+    // 53 → 52 le 2026-09-29 : − `village_stage_up` (villages PNJ, tranche 1 — `village-growth.ts`).
+    expect(voix).toBe(52)
   })
 
   it('L’AXE D’ALIGNEMENT S’ENTEND : les verbes chauds montent, les froids tombent', () => {

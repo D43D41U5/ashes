@@ -44,7 +44,7 @@ writeFileSync(OUT, '')
  *  coûterait des centaines de Mo pour rien. */
 const MOMENTS = new Set([
   'act_started',
-  'village_fell', 'village_stage_up',
+  'village_fell',
   'fire_starved', 'fire_extinguished', 'fire_relit', 'fire_upgraded',
   'horde_spawned', 'horde_dispersed', 'member_banished',
 ])

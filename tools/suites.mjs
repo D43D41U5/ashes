@@ -172,6 +172,12 @@ const SUITES = [
   //   fabrique un `it` PAR LIGNE de sa table `LOIS`, dont `ALIGNMENT.ACT_FACTOR` — son compte de
   //   `it(` statiques ne bouge pas, la suite perd un test quand même. Un delta qui ne se recompte
   //   pas à la main dans ce fichier-là vient de là. Suite à 2486 ✓ ; PLANCHER INCHANGÉ (2429).
+  // 2026-09-29 : −3 gardes — TRANCHE 1 DU RETRAIT DES VILLAGES PNJ (`village-growth.ts` supprimé).
+  //   `village-plan.test.ts` perd ses trois describes qui éprouvaient `advanceVillageGrowth` : « la
+  //   montée de palier au surplus (R6) », « la porte rituelle (R7) », « la prospérité attire (R9) ».
+  //   Une de leurs lois devient STRUCTURELLE au lieu d'être gardée, et c'est écrit dans le fichier :
+  //   R7 affirmait qu'un village à chef HUMAIN ne voit pas ses portes bouger seules — plus rien au
+  //   monde ne bouge une porte sans un geste. PLANCHER INCHANGÉ (2429).
   { nom: 'sim', dir: 'packages/sim', args: ['run', '--exclude', 'src/scenario.test.ts'], plancher: 2429 },
   // 2026-09-01 : +10 gardes avec le RENDU des étages (`plateau-art.test.ts`).
   // 2026-09-01 : +9 gardes avec le TRI DES ÉTAGES (strate, découvert — `framing.test.ts`),
