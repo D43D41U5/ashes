@@ -136,9 +136,10 @@ export function createDebugPanel(scene: Phaser.Scene, deps: DebugPanelDeps): Deb
   const bSaison = mkBtn()
   const bMeteo = mkBtn()
   /** LA RONDE DES CIELS (`debug_meteo`) — l'action existait dans /sim et n'avait AUCUNE
-   *  surface au panneau : seuls la console et `smoke-lumiere` l'atteignaient. Le « clair »
-   *  final purge le front. `vent_de_cendre` s'élit en jeu par le caractère « les Vents de
-   *  cendre » (Grand Froid, 2026-08-28) ; ce bouton reste le chemin court pour le voir. */
+   *  surface au panneau : seule la console l'atteignait (et `smoke-lumiere`, fork de `smoke.mjs`
+   *  supprimé le 2026-09-29). Le « clair » final purge le front. `vent_de_cendre` s'élit en jeu
+   *  par le caractère « les Vents de cendre » (Grand Froid, 2026-08-28) ; ce bouton reste le
+   *  chemin court pour le voir. */
   const CIELS: readonly (readonly [MeteoType | null, string])[] = [
     ['pluie', 'pluie'], ['brouillard', 'brouillard'], ['orage', 'orage'],
     ['vent_de_cendre', 'vent de cendre'], [null, 'clair'],
