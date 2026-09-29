@@ -14091,7 +14091,14 @@ Depuis le spawn (${depart.x.toFixed(0)}, ${depart.y.toFixed(0)}) :`)
   async default(page) {
     const s = await page.evaluate(PROBE)
     console.log(`tick ${s.tick} · joueur (${s.player.x.toFixed(1)}, ${s.player.y.toFixed(1)}) · ${s.pois.length} lieux sur la carte`)
+    // ⚠ ON ENDORT LA BOUCLE AVANT DE CAPTURER (2026-09-29). `page.screenshot` attend une image
+    // complète ; sur une machine SANS GPU (celle-ci : VM KVM, Chromium en SwiftShader — voir
+    // `CLAUDE.local.md`) une boucle Phaser VIVE ne la lui rend pas en 30 s, et la capture expirait
+    // À TOUS LES COUPS — alors que TOUTES les assertions du scénario passaient. C'est la recette
+    // que `glanage` appliquait déjà et documentait ; elle valait pour les autres.
+    await page.evaluate(() => window.__BRAISES__.scene.game.loop.sleep())
     await page.screenshot({ path: `${OUT}/monde.png` })
+    await page.evaluate(() => window.__BRAISES__.scene.game.loop.wake())
     return s
   },
 
@@ -23372,7 +23379,9 @@ Depuis le spawn (${depart.x.toFixed(0)}, ${depart.y.toFixed(0)}) :`)
 
     await page.keyboard.press('m')
     await page.waitForTimeout(700)
+    await page.evaluate(() => window.__BRAISES__.scene.game.loop.sleep())
     await page.screenshot({ path: `${OUT}/carte-vierge.png` })
+    await page.evaluate(() => window.__BRAISES__.scene.game.loop.wake())
     await page.keyboard.press('m')
 
     console.log(`\n── Ce que la vallée CONTIENT vraiment (les onze lieux chargés) ──`)
