@@ -283,17 +283,15 @@ describe('le travail (A5)', () => {
 })
 
 describe('le peuplement (A6)', () => {
-  it('fonder en joueur attire 3 PNJ membres', () => {
-    const sim = createSim(3, { map: createEmptyMap(32, 32, TERRAIN_GRASS) })
-    const player = spawnEntity(sim, 15.5, 15.5)
-    grantItems(sim, player, { wood: 10 })
-    step(sim, [{ entityId: player, dx: 0, dy: 0, action: { type: 'light_fire' } }])
-    step(sim, []) // l'arrivée se fait au tick suivant la fondation
-    expect(sim.npcs).toHaveLength(BALANCE.NPC_PER_VILLAGE)
-    const village = sim.villages[0]!
-    for (const npc of sim.npcs) expect(village.memberIds).toContain(npc.entityId)
-  })
-
+  /**
+   * ⚠ « FONDER EN JOUEUR ATTIRE 3 PNJ MEMBRES » EST RETIRÉ LE 2026-09-29, et ce n'était pas
+   * une garde devenue fausse par accident : elle AFFIRMAIT COMME UNE PROMESSE la divergence
+   * que la décision d'Alexis contredit. Le joueur ne fonde pas par `light_fire` (aucun émetteur
+   * côté client) mais par `found_village`, qui pose `npcsArrived: true` — « AUCUN PNJ
+   * d'accueil », décision d'Alexis, écrite dans `village.ts`. Ce test éprouvait donc un chemin
+   * de test, et il en gardait l'écart au jeu réel. `light_fire` est aligné sur `true` (« go
+   * fidélité on retire »), et cette garde part avec l'écart qu'elle protégeait.
+   */
   it('foundNpcVillage crée un village complet — le campement, plus aucune house', () => {
     const sim = npcVillageSim(3)
     expect(sim.villages).toHaveLength(1)

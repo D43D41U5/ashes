@@ -103,7 +103,7 @@ describe('multi-joueurs (L1)', () => {
       tier: 1,
       tasks: [{ id: 1, kind: 'gather_wood', priority: 1, claimedBy: member }],
       nextTaskId: 2,
-      npcsArrived: false,
+      npcsArrived: true,
       lastAlarmAt: -1,
     }
     state.villages.push(village)

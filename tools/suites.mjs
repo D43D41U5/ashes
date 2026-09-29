@@ -178,6 +178,13 @@ const SUITES = [
   //   Une de leurs lois devient STRUCTURELLE au lieu d'être gardée, et c'est écrit dans le fichier :
   //   R7 affirmait qu'un village à chef HUMAIN ne voit pas ses portes bouger seules — plus rien au
   //   monde ne bouge une porte sans un geste. PLANCHER INCHANGÉ (2429).
+  // 2026-09-29 : −1 garde — TRANCHE 2a, `light_fire` s'aligne sur le jeu réel (`npcsArrived: true`).
+  //   `npc.test.ts` perd « fonder en joueur attire 3 PNJ membres », et ce n'était pas une garde
+  //   devenue fausse par accident : elle AFFIRMAIT COMME UNE PROMESSE l'écart entre le chemin de
+  //   test (`light_fire`) et le chemin du jeu (`found_village`, « AUCUN PNJ d'accueil », décision
+  //   d'Alexis). Aucun émetteur client n'envoie `light_fire` : la garde éprouvait un monde que
+  //   personne ne peut jouer. Elle part avec l'écart qu'elle protégeait. Suite à 2482 ✓ (2 sautés) ;
+  //   PLANCHER INCHANGÉ (2429).
   { nom: 'sim', dir: 'packages/sim', args: ['run', '--exclude', 'src/scenario.test.ts'], plancher: 2429 },
   // 2026-09-01 : +10 gardes avec le RENDU des étages (`plateau-art.test.ts`).
   // 2026-09-01 : +9 gardes avec le TRI DES ÉTAGES (strate, découvert — `framing.test.ts`),

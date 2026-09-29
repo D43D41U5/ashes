@@ -1040,14 +1040,23 @@ export function applyVillageAction(state: SimState, actorId: number, action: Vil
   switch (action.type) {
     /**
      * ALLUMER + FONDER d'un seul geste, à ses pieds, à partir de bois brut : le
-     * RACCOURCI de test et de worldgen — le jumeau de `foundNpcVillage` (PNJ
-     * d'accueil compris). Le JOUEUR, lui, ne passe PLUS par ici : la ceinture
+     * RACCOURCI de test et de worldgen. Le JOUEUR, lui, ne passe PLUS par ici : la ceinture
      * fabrique l'OBJET feu de camp, qu'on POSE (`place_campfire` → un feu libre)
      * puis qu'on peut PROMOUVOIR en foyer (`found_village`, SANS PNJ). Le panneau
      * d'artisanat n'émet plus `light_fire` — il reste hors de portée du joueur.
      * PAS de garde météo R5 ici : le refus « feu neuf sous la pluie » vit sur la pose
      * JOUEUR (`place_campfire`) ; un raccourci de test/worldgen qui fonde ne doit pas
      * dépendre du ciel (et `foundNpcVillage` ne passe pas par un input du tout).
+     *
+     * ⚠ **`npcsArrived: true` DEPUIS LE 2026-09-29, ET C'EST UNE CORRECTION DE FIDÉLITÉ**
+     * (décision d'Alexis : « go fidélité on retire »). Ce raccourci posait `false`, donc
+     * `advanceNpcs` — qui, lui, ne teste PAS `chiefId` — faisait naître trois villageois
+     * d'accueil. Or c'est le fixture de fondation de ONZE fichiers de test (34 appels) : tout
+     * le corpus mesurait un monde à trois bras de plus que le jeu réel, où le chemin
+     * atteignable (`found_village`) pose `true` et ne donne AUCUN PNJ. `session.test.ts`
+     * (« le jeu est-il jouable ? ») jugeait donc une jouabilité qui n'était pas la nôtre.
+     * Aligner ce `true` était UNE LIGNE ; convertir les 34 appels en « pose un feu de camp
+     * puis promeus-le » aurait inventé trente-quatre scènes pour le même résultat.
      */
     case 'light_fire': {
       const tx = Math.floor(actor.x)
@@ -1067,7 +1076,7 @@ export function applyVillageAction(state: SimState, actorId: number, action: Vil
       // max d'un village — light_fire fonde AUSSI un village, il joue donc le garde-fou.
       if (poiSpecificInSquare(state, tx, ty)) return reject('un landmark tombe dans le carré')
       removeItems(actor.inventory, STRUCTURE_COSTS.fire)
-      const village = createVillage(state, { chiefId: actorId, tx, ty, npcsArrived: false })
+      const village = createVillage(state, { chiefId: actorId, tx, ty, npcsArrived: true })
       addStructure(state, 'fire', tx, ty, village.id, 0)
       return
     }
