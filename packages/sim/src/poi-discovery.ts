@@ -181,12 +181,13 @@ export function staminaPoiFactor(state: SimState, x: number, y: number): number 
  * pas qu'on vient de faire.
  */
 export function advancePois(state: SimState): void {
-  const npcIds = new Set(state.npcs.map((n) => n.entityId))
   const monsterIds = new Set(state.monsters.map((m) => m.entityId))
   const sight2 = POI.SIGHT_TILES * POI.SIGHT_TILES
 
   for (const entity of state.entities) {
-    if (npcIds.has(entity.id) || monsterIds.has(entity.id)) continue // les PNJ n'ont pas de carte
+    // Une bête n'a pas de carte. (Les PNJ non plus : leur exclusion est partie avec
+    // `SimState.npcs` le 2026-09-29, tranche 3 du retrait des villages PNJ.)
+    if (monsterIds.has(entity.id)) continue
 
     // ── VOIR : tout lieu à portée de vue entre dans la carte ──
     for (let poiId = 0; poiId < state.map.zones.length; poiId += 1) {

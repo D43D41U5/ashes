@@ -20,7 +20,6 @@ import type { ChronicleVolume } from './chronicle'
 import type { WorldMap } from './map'
 import type { Monster } from './monsters'
 import type { Reveil } from './morts'
-import type { Npc } from './npc'
 import type { Entity, PlayerAction } from './sim'
 import type { GameTime } from './time'
 import type { Structure, Village } from './village'
@@ -236,7 +235,7 @@ export interface SnapshotMessage {
    * le patron du gel et du niveau d'eau, poussé à son terme.
    */
   cendreAge: number[]
-  npcs: Npc[]
+  // (`npcs: Npc[]` a quitté le snapshot le 2026-09-29 — tranche 3 du retrait des villages PNJ.)
   monsters: Monster[]
   corpses: Corpse[]
   /** LES SOLS QUI TRAVAILLENT (spec `cendreux.md` R21) : le client peint le sol qui se

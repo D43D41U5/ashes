@@ -93,17 +93,14 @@ function jouer(seed: number, cycles: number, meteo: boolean): Releve {
   let fuelDonne = 0
 
   /** L'ombre du tick précédent : la victime est déjà retirée quand l'événement se lit.
-   *  Relevée par INDEX (une passe sur les entités), pas par `find` par PNJ — le quadratique
-   *  coûtait des heures sur une saison. */
+   *  Relevée par INDEX (une passe sur les entités), pas par `find` par corps — le quadratique
+   *  coûtait des heures sur une saison. ⚠ Elle ne relevait QUE les PNJ jusqu'au 2026-09-29 ;
+   *  `SimState.npcs` est parti (tranche 3 du retrait des villages PNJ) et elle relève désormais
+   *  TOUT corps vivant — plus général, et c'est ce qu'il faut pour un banc qui jouera un avatar. */
   let ombres = new Map<number, { x: number; y: number }>()
   const releverOmbres = (): void => {
-    const parId = new Map<number, { x: number; y: number; hp: number }>()
-    for (const e of sim.entities) parId.set(e.id, e)
     ombres = new Map()
-    for (const n of sim.npcs) {
-      const e = parId.get(n.entityId)
-      if (e && e.hp > 0) ombres.set(n.entityId, { x: e.x, y: e.y })
-    }
+    for (const e of sim.entities) if (e.hp > 0) ombres.set(e.id, { x: e.x, y: e.y })
   }
   releverOmbres()
 
@@ -166,9 +163,7 @@ function jouer(seed: number, cycles: number, meteo: boolean): Releve {
     }
   }
 
-  const vivants = sim.npcs
-    .map((n) => sim.entities.find((x) => x.id === n.entityId))
-    .filter((e): e is NonNullable<typeof e> => !!e && e.hp > 0)
+  const vivants = sim.entities.filter((e) => e.hp > 0)
   r.faimMoyenne = vivants.length ? vivants.reduce((s, e) => s + e.hunger, 0) / vivants.length : 0
   // Le bois RAPPORTÉ pendant la course ne fausse pas le drain : on l'a compté à part.
   void fuelDepart

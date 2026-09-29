@@ -76,8 +76,12 @@ export function saigneBete(monster: Monster, tick: number): boolean {
  * une teinte. Quand la direction artistique arrivera, ce sera une posture — tête
  * baissée, échine hérissée, ventre au sol — et cette fonction disparaîtra.
  */
-export function beastTint(monster: Monster | undefined, windup: boolean, isNpc: boolean, tick: number): number {
-  if (!monster) return windup ? 0xff8866 : isNpc ? 0xe8d9a0 : 0xffffff
+export function beastTint(monster: Monster | undefined, windup: boolean, tick: number): number {
+  // ⚠ UN TROISIÈME CAS A VÉCU ICI : `isNpc`, qui rendait le sable chaud `0xe8d9a0` — le
+  // villageois se distinguait de l'errant à la teinte. Il est parti le 2026-09-29 avec
+  // `SimState.npcs` (tranche 3 du retrait des villages PNJ) : aucune garde ne l'assertait,
+  // et depuis la tranche 2a plus un corps au monde ne pouvait le prendre.
+  if (!monster) return windup ? 0xff8866 : 0xffffff
 
   // LA BÊTE CENDREUSE (spec `cendre.md` R30) — GRISE, toujours, et sous le sang même :
   // c'est son identité, pas une humeur. La couleur se calibre contre son fond : un gris de

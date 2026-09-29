@@ -25,7 +25,7 @@ import {
   makeInventory,
   spawnEntity,
   type Entity,
-  type Npc,
+  type Monster,
   type SimState,
   type Structure,
 } from '@ashes/sim'
@@ -35,7 +35,7 @@ const FEU = { tx: 50, ty: 48 }
 /** Un porteur de torche AVATAR, loin du feu : là, seule sa flamme éclaire. */
 const AUTRE = { x: 40.5, y: 40.5 }
 /** Un porteur de torche FIGURANT, aussi loin : sa flamme ne compte pas (LG-R18). */
-const PNJ = { x: 60.5, y: 40.5 }
+const FIGURANT = { x: 60.5, y: 40.5 }
 
 function nuitNoire(): SimState {
   const jourDeDepart = Math.floor(LUNE_PLEINE_JOUR + LUNAISON_JOURS / 2)
@@ -61,18 +61,24 @@ function porteur(sim: SimState, x: number, y: number): Entity {
   return e
 }
 
-/** Le monde témoin : un feu, un fût juste à l'ouest, deux porteurs de torche dont un figurant. */
+/**
+ * Le monde témoin : un feu, un fût juste à l'ouest, deux porteurs de torche dont un figurant.
+ *
+ * ⚠ LE FIGURANT ÉTAIT UN PNJ jusqu'au 2026-09-29 ; `SimState.npcs` est parti avec les villages
+ * PNJ (tranche 3) et c'est un MONSTRE qui tient le rôle. La façade porte toujours la liste des
+ * figurants — une de moins, mais celle qui existe dans le jeu joué —, et LG-R18 est inchangée.
+ */
 function monde(): SimState {
   const sim = nuitNoire()
   feu(sim, FEU.tx, FEU.ty)
   sim.nodes.push({ id: 9001, type: 'tree', tx: FEU.tx - 1, ty: FEU.ty, stock: 5, regrowAt: 0 })
   porteur(sim, AUTRE.x, AUTRE.y)
-  const pnj = porteur(sim, PNJ.x, PNJ.y)
-  sim.npcs.push({ entityId: pnj.id } as unknown as Npc)
+  const figurant = porteur(sim, FIGURANT.x, FIGURANT.y)
+  sim.monsters.push({ entityId: figurant.id } as unknown as Monster)
   return sim
 }
 
-type Porte = { nodes?: boolean; entities?: boolean; npcs?: boolean }
+type Porte = { nodes?: boolean; entities?: boolean; figurants?: boolean }
 function sourceDepuis(sim: SimState, porte: Porte): SourceDuGel {
   const src: SourceDuGel = {
     map: sim.map,
@@ -86,7 +92,7 @@ function sourceDepuis(sim: SimState, porte: Porte): SourceDuGel {
     brume: sim.brume ?? null,
     ...(porte.nodes ? { nodes: sim.nodes } : {}),
     ...(porte.entities ? { entities: sim.entities } : {}),
-    ...(porte.npcs ? { npcs: sim.npcs, monsters: sim.monsters } : {}),
+    ...(porte.figurants ? { monsters: sim.monsters } : {}),
   }
   return src
 }
@@ -100,7 +106,7 @@ const clarte = (etat: SimState, x: number, y: number): number => clarteSurSoiAt(
 describe('la façade rend la même clarté que le vrai SimState (LG-R11, LG-R18)', () => {
   it('L1 — tout porté, la prédiction vaut l’autorité au bit près, sur tout le balayage', () => {
     const sim = monde()
-    const facade = creerEtatGel(sourceDepuis(sim, { nodes: true, entities: true, npcs: true }))
+    const facade = creerEtatGel(sourceDepuis(sim, { nodes: true, entities: true, figurants: true }))
     // Le ciel seul, loin de toute flamme : le plancher de la nuit (la nouvelle lune n'est pas
     // le zéro exact — c'est `clarteDuCiel` qui le dit, pas ce test).
     const ciel = clarte(sim, 90.5, 90.5)
@@ -120,7 +126,7 @@ describe('la façade rend la même clarté que le vrai SimState (LG-R11, LG-R18)
 
   it('L2 — sans les nœuds, la façade est PLUS CLAIRE que l’autorité derrière le fût (N2bis)', () => {
     const sim = monde()
-    const sans = creerEtatGel(sourceDepuis(sim, { entities: true, npcs: true }))
+    const sans = creerEtatGel(sourceDepuis(sim, { entities: true, figurants: true }))
     let mensonges = 0
     for (const [x, y] of points()) {
       const vrai = clarte(sim, x, y)
@@ -137,8 +143,8 @@ describe('la façade rend la même clarté que le vrai SimState (LG-R11, LG-R18)
 
   it('L3 — sans les corps, la torche de l’autre avatar manque ; avec, elle vaut l’autorité', () => {
     const sim = monde()
-    const sans = creerEtatGel(sourceDepuis(sim, { nodes: true, npcs: true }))
-    const avec = creerEtatGel(sourceDepuis(sim, { nodes: true, entities: true, npcs: true }))
+    const sans = creerEtatGel(sourceDepuis(sim, { nodes: true, figurants: true }))
+    const avec = creerEtatGel(sourceDepuis(sim, { nodes: true, entities: true, figurants: true }))
     const pres: [number, number] = [AUTRE.x + 1, AUTRE.y + 1]
     const vrai = clarte(sim, ...pres)
     expect(vrai).toBeGreaterThan(0.5) // à un pas du porteur, sa flamme domine le ciel de nouvelle lune
@@ -146,11 +152,11 @@ describe('la façade rend la même clarté que le vrai SimState (LG-R11, LG-R18)
     expect(clarte(sans, ...pres)).toBeLessThan(vrai)
   })
 
-  it('L4 — sans les figurants, la façade compte la torche d’un PNJ que l’autorité ignore (LG-R18)', () => {
+  it('L4 — sans les figurants, la façade compte la torche d’un figurant que l’autorité ignore (LG-R18)', () => {
     const sim = monde()
     const sans = creerEtatGel(sourceDepuis(sim, { nodes: true, entities: true }))
-    const avec = creerEtatGel(sourceDepuis(sim, { nodes: true, entities: true, npcs: true }))
-    const pres: [number, number] = [PNJ.x + 1, PNJ.y + 1]
+    const avec = creerEtatGel(sourceDepuis(sim, { nodes: true, entities: true, figurants: true }))
+    const pres: [number, number] = [FIGURANT.x + 1, FIGURANT.y + 1]
     const vrai = clarte(sim, ...pres)
     expect(clarte(avec, ...pres)).toBe(vrai)
     expect(clarte(sans, ...pres)).toBeGreaterThan(vrai)
@@ -161,7 +167,7 @@ describe('la façade rend la même clarté que le vrai SimState (LG-R11, LG-R18)
     const facade = creerEtatGel(sourceDepuis(sim, {}))
     const ombre: [number, number] = [FEU.tx - 2.5, FEU.ty + 0.5]
     const nu = clarte(facade, ...ombre)
-    majEtatGel(facade, sourceDepuis(sim, { nodes: true, entities: true, npcs: true }))
+    majEtatGel(facade, sourceDepuis(sim, { nodes: true, entities: true, figurants: true }))
     expect(clarte(facade, ...ombre)).toBe(clarte(sim, ...ombre))
     expect(clarte(facade, ...ombre)).toBeLessThan(nu)
     majEtatGel(facade, sourceDepuis(sim, {}))

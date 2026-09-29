@@ -31,8 +31,13 @@ pnpm lint         # eslint, dont les garde-fous de pureté de /sim
 pnpm dev          # client Vite SUR L'HÔTE (jeu jouable sur http://localhost:3000)
 pnpm --filter @ashes/server dev   # zone LAN Colyseus sur ws://localhost:2567
                                   # le client s'y branche par VITE_SERVER_URL
-pnpm scenario     # banc d'équilibrage : le vrai worldgen joué sur des milliers de ticks
-                  # (SCENARIO_DAYS=60 pnpm scenario pour une saison entière)
+pnpm scenario     # banc d'équilibrage. ⚠ IL NE JOUE PLUS UN TICK depuis le 2026-09-29 : ses
+                  # deux gardes longues étaient gelées par FEATURES.VILLAGES_PNJ (26/09) puis
+                  # supprimées avec SimState.npcs (tranche 3). Ce qui reste éprouve le MONDE
+                  # CONSTRUIT (construireMondeDuBanc), pas le monde JOUÉ, et SCENARIO_DAYS ne
+                  # commande plus rien. Le banc n'a jamais eu d'avatar : le rallumer demande
+                  # d'abord de lui donner un corps. Coût MESURÉ, pour ce jour-là :
+                  # runScenario 1 j = 132 s, 2 j = +315 s.
 pnpm plans        # régénère plans-batis.genere.ts depuis packages/sim/src/plans/*.plan
                   # L'ATELIER — LE PORTAIL DE TOUS LES OUTILS WEB, une seule adresse :
                   # pnpm dev → http://localhost:3000/atelier.html (dev seulement, hors dist)

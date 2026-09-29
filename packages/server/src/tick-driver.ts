@@ -124,7 +124,6 @@ export function buildSnapshotBase(sim: SimState, nodeDeltas: NodeDelta[]): Omit<
     functions: sim.functions,
     nodeDeltas,
     cendreAge: sim.cendreAge,
-    npcs: sim.npcs,
     monsters: sim.monsters,
     corpses: sim.corpses,
     reveils: sim.reveils,

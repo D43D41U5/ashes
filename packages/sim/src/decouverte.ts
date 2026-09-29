@@ -97,9 +97,13 @@ export function advanceDecouverte(state: SimState): void {
   }
 }
 
-/** Un AVATAR = une entité qui n'est ni PNJ, ni monstre (les deux ont leur propre table). */
+/**
+ * Un AVATAR = une entité qui n'est pas un monstre (les bêtes ont leur propre table). Le
+ * prédicat écartait AUSSI les PNJ jusqu'au 2026-09-29 (tranche 3 du retrait des villages PNJ,
+ * `SimState.npcs` supprimé) : la loi est la même, sa population a fondu de moitié.
+ */
 function estAvatar(state: SimState, id: number): boolean {
-  return !state.npcs.some((n) => n.entityId === id) && !state.monsters.some((m) => m.entityId === id)
+  return !state.monsters.some((m) => m.entityId === id)
 }
 
 /** Cette recette est-elle découverte par cette entité ? (le client peint là-dessus) */

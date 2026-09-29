@@ -26,12 +26,16 @@
  * ═══ CE QUE LA LUMIÈRE LIT EN PLUS (2026-09-17, `lumiere-globale.md` LG-R11, LG-R18) ═══
  *
  *   `clarteSurSoiAt` → `nodes` (les fûts et les blocs font de l'ombre — `partVisible`),
- *                      `entities` + `npcs` + `monsters` (la torche d'un AUTRE avatar compte,
- *                      celle d'un figurant non — `lumiereDesTorches`)
+ *                      `entities` + `monsters` (la torche d'un AUTRE avatar compte, celle d'un
+ *                      figurant non — `lumiereDesTorches`)
+ *
+ * ⚠ `npcs` A VÉCU DANS CETTE LISTE jusqu'au 2026-09-29 : un troisième champ, pour exclure la
+ * torche d'un villageois. Il part avec `SimState.npcs` (tranche 3) ; la loi N6 — un figurant
+ * n'éclaire personne — reste entière, portée par les MONSTRES, qui existent toujours.
  *
  * Sans eux, la prédiction du client était PLUS CLAIRE que l'autorité derrière un fût — le sens
  * interdit de N2bis (`nuit-noire.md`) : `direLeNoir` se taisait là où la parade était refusée
- * (revue `determinisme-sim` du 2026-09-16). Les quatre sont OPTIONNELS dans la façade, parce que
+ * (revue `determinisme-sim` du 2026-09-16). Les trois sont OPTIONNELS dans la façade, parce que
  * la sim les traite ainsi (`MondeEclaire`) ; le client les a tous sous la main (`snapshot-view`,
  * `lastEntities`) et les passe. `etat-gel-lumiere.test.ts` le garde.
  *
@@ -107,7 +111,6 @@ export interface SourceDuGel {
   readonly nodes?: ResourceNode[]
   /** …les corps pour la torche d'un autre avatar, et les figurants pour l'en exclure. */
   readonly entities?: readonly Entity[]
-  readonly npcs?: readonly FigurantDuGel[]
   readonly monsters?: readonly FigurantDuGel[]
 }
 
@@ -151,7 +154,6 @@ interface ChampsDuGel {
    *  donc les EFFACER quand une source cesse de les porter. */
   nodes?: ResourceNode[] | undefined
   entities?: readonly Entity[] | undefined
-  npcs?: readonly FigurantDuGel[] | undefined
   monsters?: readonly FigurantDuGel[] | undefined
 }
 
@@ -183,7 +185,6 @@ export function creerEtatGel(src: SourceDuGel): EtatGel {
     seed: src.seed,
     nodes: src.nodes,
     entities: src.entities,
-    npcs: src.npcs,
     monsters: src.monsters,
   }
   return champs as unknown as EtatGel
@@ -204,6 +205,5 @@ export function majEtatGel(cible: EtatGel, src: SourceDuGel): void {
   e.seed = src.seed
   e.nodes = src.nodes
   e.entities = src.entities
-  e.npcs = src.npcs
   e.monsters = src.monsters
 }

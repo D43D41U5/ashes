@@ -21,8 +21,10 @@
  * cendreux), c'est ici qu'il reprend. D'ici là : du code éprouvé sans appelant de jeu.
  *
  * `Npc` n'est plus qu'un MARCHEUR : l'identité du corps, son village (pour les portes) et
- * l'état de sa navigation. `SimState.npcs` reste déclaré et RESTE VIDE — plus rien ne le
- * peuple ; il part avec sa tranche structurelle.
+ * l'état de sa navigation. ⚠ **ET IL N'EST PLUS UN CHAMP DE L'ÉTAT** : `SimState.npcs` est
+ * parti le 2026-09-29 (tranche 3), avec ses quatorze lecteurs, le snapshot et la clé de
+ * sauvegarde. Ce type ne vit donc plus que dans la main de qui le construit — les gardes
+ * E-R5 ci-dessus, et le corps non-joueur du jour où il y en aura un.
  */
 import {
   BALANCE,

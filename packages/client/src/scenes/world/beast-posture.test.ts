@@ -141,19 +141,19 @@ describe('le bond du loup se VOIT (R19)', () => {
   }
 
   it('un loup en plein bond porte la teinte de MENACE — un bond qu’on ne voit pas ne s’esquive pas', () => {
-    expect(beastTint(loup({ leapUntil: 100 }), false, false, 50)).toBe(BEAST_TINTS.menace)
+    expect(beastTint(loup({ leapUntil: 100 }), false, 50)).toBe(BEAST_TINTS.menace)
   })
 
   it('…et il RETOMBE en teinte de souffle : la fenêtre pour le frapper', () => {
-    expect(beastTint(loup({ windedUntil: 100 }), false, false, 50)).toBe(BEAST_TINTS.winded)
+    expect(beastTint(loup({ windedUntil: 100 }), false, 50)).toBe(BEAST_TINTS.winded)
   })
 
   it('le bond prime sur la traque : un loup qui bondit n’est plus tapi', () => {
-    expect(beastTint(loup({ leapUntil: 100, stalking: true }), false, false, 50)).toBe(BEAST_TINTS.menace)
+    expect(beastTint(loup({ leapUntil: 100, stalking: true }), false, 50)).toBe(BEAST_TINTS.menace)
   })
 
   it('…mais le SANG prime sur le bond : ce qu’on traque reste l’information la plus chère', () => {
-    expect(beastTint(loup({ leapUntil: 100, bleedMortal: true }), false, false, 50)).toBe(BEAST_TINTS.bleeding)
+    expect(beastTint(loup({ leapUntil: 100, bleedMortal: true }), false, 50)).toBe(BEAST_TINTS.bleeding)
   })
 })
 

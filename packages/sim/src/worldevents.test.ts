@@ -294,7 +294,7 @@ describe('le déterminisme (A8)', () => {
     const live = createSim(77, options)
     const log = createReplayLog(77, options)
     setup(live)
-    const playerId = live.entities.find((e) => !live.npcs.some((n) => n.entityId === e.id) && !live.monsters.some((m) => m.entityId === e.id))!.id
+    const playerId = live.entities.find((e) => !live.monsters.some((m) => m.entityId === e.id))!.id
     for (let t = 0; t < 2500; t++) {
       recordAndStep(live, log, [{ entityId: playerId, dx: t % 3 === 0 ? 1 : -1, dy: t % 5 === 0 ? 1 : 0 }])
     }

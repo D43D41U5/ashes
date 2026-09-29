@@ -32,7 +32,7 @@ console.log(`monde ${monde.width}×${monde.height} = ${((monde.width * monde.hei
 console.log(`génération : ${((performance.now() - t0) / 1000).toFixed(1)} s`)
 console.log(
   `nœuds ${monde.nodes} · coins de chasse ${monde.huntingGrounds} · entités ${sim.entities.length}` +
-    ` · PNJ ${sim.npcs.length} · monstres ${sim.monsters.length} · marge de ciblage ${monde.margeDeCible} %`,
+    ` · monstres ${sim.monsters.length} · marge de ciblage ${monde.margeDeCible} %`,
 )
 
 /** On COMPTE les événements, on ne les GARDE pas. Les garder (`events.push`) ne servait à rien —

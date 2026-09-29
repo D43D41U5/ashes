@@ -57,7 +57,6 @@ import { advanceEau } from './eau-evenements'
 import { advanceVent } from './vent'
 import { rngNext } from './rng'
 import { advanceNightHunt } from './nighthunt'
-import type { Npc } from './npc'
 import { advancePois } from './poi-discovery'
 import { advanceDens } from './poi'
 import { actForDay, dayTicksAt, TICKS_PER_CYCLE, advanceTime, jourDeSaison } from './time'
@@ -359,7 +358,8 @@ export interface SimState {
    */
   functions: import('./construction').RecognizedFunction[]
   nodes: ResourceNode[]
-  npcs: Npc[]
+  // (`npcs: Npc[]` a vécu ici jusqu'au 2026-09-29 — tranche 3 du retrait des villages PNJ.
+  //  Le module `npc.ts` et le type `Npc` restent : voir son en-tête.)
   monsters: Monster[]
   corpses: Corpse[]
   nextCorpseId: number
@@ -649,7 +649,6 @@ export function createSim(seed: number, options: SimOptions = {}): SimState {
     structures: [],
     functions: [],
     nodes: options.nodes ? (JSON.parse(JSON.stringify(options.nodes)) as ResourceNode[]) : [],
-    npcs: [],
     monsters: [],
     corpses: [],
     reveils: [],
@@ -1110,10 +1109,9 @@ export function step(state: SimState, inputs: MoveInput[]): void {
   // l'aube la porte s'ouvre, le palier monte au surplus, la prospérité attire un
   // colon ; au crépuscule la porte se ferme. Avant la passe PNJ : le village se
   // réveille, PUIS ses habitants agissent. Aucun tirage RNG (position par hash2, comme les convois).
-  // L'IA VILLAGEOISE EST PARTIE LE 2026-09-29 (tranche 2b du retrait des villages PNJ).
-  // `advanceNpcs(state)` tournait ici, entre la faune et le reste du monde ; `state.npcs`
-  // reste déclaré et RESTE VIDE — plus rien ne le peuple. Le tableau part avec sa tranche
-  // structurelle, pour qu'un rouge ici veuille dire « la coupe a cassé » et rien d'autre.
+  // L'IA VILLAGEOISE EST PARTIE LE 2026-09-29 (tranches 2b puis 3 du retrait des villages
+  // PNJ). `advanceNpcs(state)` tournait ici, entre la faune et le reste du monde, et
+  // `SimState.npcs` a suivi le même jour : il n'y a plus ni boucle ni champ.
   advanceMonsters(state)
   // L'ENVOL DE LA LISIÈRE (forêts-vivantes §3) — après les bêtes : l'alarme qu'il pose se
   // lit au tick suivant, comme tout stimulus de méfiance.

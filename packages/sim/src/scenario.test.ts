@@ -3,15 +3,13 @@ import { BALANCE, NPC_AI } from './balance'
 import { FEATURES } from './features'
 import type { MoveWorld } from './collision'
 import { pathToward } from './pathfinding'
-import { VILLAGES_DU_BANC, construireMondeDuBanc, runScenario } from './scenario'
+import { VILLAGES_DU_BANC, construireMondeDuBanc } from './scenario'
 
 // Le tsconfig de /sim est ES2022 pur (pas de lib Node) — le test, lui, tourne
 // sur Node : on déclare le strict nécessaire.
-declare const process: { env: Record<string, string | undefined> }
-declare const console: { log: (...args: unknown[]) => void }
 
 /**
- * Le banc de test (V10). Calibrage long : `SCENARIO_DAYS=60 pnpm scenario`.
+ * Le banc de test (V10).
  *
  * DÉFAUT À 1 JOUR, et ce n'est pas un choix de confort mais le compte-rendu de DEUX coûts réels
  * que la migration sur la carte de PRODUCTION a rendus visibles — aucun des deux n'existe sur
@@ -29,34 +27,40 @@ declare const console: { log: (...args: unknown[]) => void }
  *    (mesuré : ~1,3× seulement) — c'est le prix que le serveur paiera aussi. À optimiser (cache de
  *    chemins inter-zones, ou une corvée qui préfère sa zone tant qu'elle y a de quoi faire).
  *
- * Un jour SUFFIT à ce que la CI doit garder : la non-régression de FAMINE. Mesuré à ce défaut —
- * trois villages, dix habitants, **zéro affamé** (contre 177 et deux villages anéantis avant les
- * correctifs). Les longues saisons, elles, restent l'affaire du calibrage manuel via
- * `SCENARIO_DAYS`, là où les deux coûts ci-dessus se paient — et se mesurent.
+ * ⚠ **ET CE QUI PRÉCÈDE DÉCRIT UN BANC QUI NE TOURNE PLUS.** Il gardait la non-régression de
+ * FAMINE (mesurée à ce défaut : trois villages, dix habitants, zéro affamé, contre 177 et deux
+ * villages anéantis avant les correctifs), et cette garde jouait des dizaines de milliers de
+ * ticks. Depuis le 2026-09-26 elle était GELÉE par `FEATURES.VILLAGES_PNJ` ; depuis le
+ * 2026-09-29 elle est SUPPRIMÉE avec `SimState.npcs`. **Plus aucun test de ce fichier n'appelle
+ * `runScenario`** : ce qui reste ici ne joue pas un tick, il éprouve le MONDE CONSTRUIT
+ * (`construireMondeDuBanc`).
+ *
+ * ⚠ Donc `SCENARIO_DAYS` et `pnpm scenario` ne commandent plus rien, et les deux coûts ci-dessus
+ * ne se paient plus. MESURÉ le 2026-09-29, pour le jour où on voudra rallumer : `runScenario`
+ * à **1 jour = 132 s** (0 front, 1 ligne de chronique), à **2 jours = 315 s de plus** (1 front,
+ * 0 horde, 3 lignes). Le banc n'a PAS d'avatar — il n'en a jamais joué —, donc rendre la garde
+ * de famine demande d'abord de lui donner un corps. Question ouverte, posée à Alexis.
  */
-const DAYS = Number(process.env.SCENARIO_DAYS ?? 1)
 
-/**
- * ═══ LE SEUIL DE FAMINE EST UN TAUX, PAS UN COMPTE — CORRIGÉ LE 2026-09-25 ═══
+/*
+ * ⚠ ═══ `FAMINE_PAR_JOUR` A VÉCU ICI, ET SON ENQUÊTE MÉRITE DE SURVIVRE AU CHIFFRE ═══
  *
- * `starvationSamples` s'incrémente d'un par PNJ affamé ET par point de relevé, et **la cadence est
- * FIXE** : `sampleEveryTicks = Math.round(500 * (BALANCE.TICK_RATE_HZ / 12))`, soit **833 ticks**,
- * sans le moindre terme en `days` (quelques lignes plus haut dans `scenario.ts`). Un banc de N
- * jours prend donc exactement N fois plus de relevés, et comparer ce compteur à un nombre fixe
- * fait rougir la garde à mesure qu'on allonge l'horizon, **sans aucune régression**. Or A8 joue 2
- * jours contre un seuil calibré à 1.
+ * Le seuil valait **10 par jour** (ligne de design du 2026-07-24), et il a fallu deux corrections
+ * pour le rendre honnête. ① Il était un COMPTE et non un TAUX : `starvationSamples` prenait un
+ * point par PNJ affamé et par relevé, à cadence FIXE (833 ticks), donc un banc de N jours prenait
+ * N fois plus de relevés et la garde rougissait à mesure qu'on allongeait l'horizon, sans aucune
+ * régression — corrigé en `10 × report.days` le 25/09. ② Et la forme en taux ne réglait pas tout :
+ * A/B sur cinq graines, banc A8 à 2 jours, `0 · 0 · 0 · 0 · 20` — **la graine 42 tenait à zéro
+ * marge**, et le compteur était BIMODAL (zéro, ou quinze à vingt) : il ne dérivait pas, il
+ * basculait. La contre-enquête à mener restait « ce n'est pas la ressource » : un village RASÉ
+ * rendait 69 affamés, et la cause se lisait dans la chronique (`village_fell`), jamais dans
+ * l'économie.
  *
- * ⚠ **CE N'EST PAS UN RELÂCHEMENT** : la ligne de design reste **10 par jour**, celle du
- * 2026-07-24, au chiffre près — on la divise enfin par l'horizon qu'elle parcourt. L'argument est
- * la cadence ci-dessus, pas un chiffre de confort.
- *
- * ⚠ **ET CE QUE LA FORME EN TAUX NE RÈGLE PAS.** A/B mesuré le 2026-09-25 sur cinq graines, banc
- * A8 (2 jours, météo armée), AVANT tout changement de tracé : `0 · 0 · 0 · 0 · 20`. La graine 42
- * franchissait DÉJÀ le seuil absolu, et elle tient la forme en taux à **zéro marge**. Le compteur
- * est par ailleurs BIMODAL (zéro, ou quinze à vingt) : il ne dérive pas, il bascule — donc ce
- * seuil reste à surveiller sur cette graine-là.
+ * Le seuil part le 2026-09-29 avec `report.starvationSamples` et les deux gardes gelées qui le
+ * lisaient (tranche 3 du retrait des villages PNJ) : plus un corps à affamer sur ce banc.
+ * ⚠ Le jour où le banc joue un AVATAR, c'est cette forme-là qu'il faut reprendre — un TAUX, et
+ * une lecture de la chronique avant de soupçonner la nourriture.
  */
-const FAMINE_PAR_JOUR = 10
 
 describe('le banc de test', () => {
   /**
@@ -126,95 +130,28 @@ describe('le banc de test', () => {
     }
   })
 
-  /**
-   * ═══ L'EFFONDREMENT QU'IL A TROUVÉ, ET LE CORRECTIF ═══
+  /*
+   * ⚠ DEUX GARDES ONT VÉCU ICI, ET ELLES SONT PARTIES LE 2026-09-29 (tranche 3 du retrait des
+   * villages PNJ, `SimState.npcs` supprimé). Elles étaient déjà GELÉES par
+   * `it.skipIf(!FEATURES.VILLAGES_PNJ)` depuis le 26/09, et `braise.md` § 3 étape 11 tranche le
+   * sort de ces gelées : **on les supprime au lieu de les faire repartir.**
    *
-   * Posé sur le monde de PRODUCTION, ce banc a immédiatement trouvé ce que la carte plate cachait —
-   * quatre jours, deux villages sur trois ANÉANTIS, 177 relevés d'affamés, le seul survivant étant
-   * la MEUTE (celle qui pille) pendant que les deux qui RÉCOLTENT mouraient. Trois bugs, corrigés
-   * le 2026-07-24 (voir `nearestAliveNode` et `dropTask` dans npc.ts, `SLEEP_YIELD_HUNGER` dans
-   * npc-needs.ts) :
-   *   ① une corvée à cible introuvable/inatteignable retournait au tableau LIBRE → reprise en
-   *      boucle à 20 Hz, sans jamais laisser la place à la corvée suivante. Elle QUITTE le tableau.
-   *   ② le filtre de zone (ajouté pour la perf) INTERDISAIT toute cible hors zone → un village dans
-   *      une zone sans buissons ne mangeait jamais. Devenu une PRÉFÉRENCE avec repli.
-   *   ③ `handleSleep` passait avant `handleHunger` sans garde de faim → un dormeur ne mangeait
-   *      JAMAIS, et franchissait son seuil de repas chaque nuit. La faim le RÉVEILLE désormais.
+   *   ① « l'écosystème tient N jours : personne n'affame, les Feux gardent leur caractère »
+   *   ② « A8 — la météo armée ne tue aucun PNJ (2 jours, seed 2026) »
    *
-   * Depuis, à 1 jour (le défaut) : trois villages, dix habitants, **zéro affamé**. Le seuil reste
-   * une CIBLE DE DESIGN — on ne l'a jamais relâché vers 177, on a rendu le monde digne de lui.
+   * Les deux lisaient `report.starvationSamples`, qui comptait un point par PNJ affamé et par
+   * relevé. Ce compteur part avec le champ : **le banc n'a PAS d'avatar** (il ne joue que des
+   * PNJ), donc il ne reste plus un seul corps à affamer — le garder aurait rendu 0 à vie, et un
+   * zéro sans population est le pire des verts.
+   *
+   * ⚠ CE QUE ÇA COÛTE, et il faut le lire avant de croire le vert de cette suite : **la famine
+   * n'est plus mesurée par personne**, et la promesse « la météo ne tue pas un corps abrité »
+   * non plus (le repli à l'abri avait déjà perdu son mesureur en tranche 2b, R8 PNJ de
+   * `meteo.test.ts`). Les deux reviennent avec un banc qui joue un AVATAR — et c'est le vrai
+   * chantier : `braise.md` § 3 étape 10 remet la faim sur la table, la braise § 1 le froid.
    */
-  // ⛔ GELÉ AVEC LES VILLAGES (`FEATURES.VILLAGES_PNJ`, décision d'Alexis du 2026-09-26).
-  // Sans villageois, ce banc n'a plus de sujet : il mesure une ÉCONOMIE (qui mange, qui glane,
-  // qui porte au grenier). Il repartira tel quel au rallumage.
-  it.skipIf(!FEATURES.VILLAGES_PNJ)(`l'écosystème tient ${DAYS} jours : personne n'affame, les Feux gardent leur caractère`, { timeout: 900_000 }, () => {
-    const report = runScenario(2026, DAYS)
 
-    // Le rapport, pour l'humain (et l'agent) qui calibre balance.ts.
-    console.log(`\n═══ Rapport de scénario — ${report.days} jours (${report.ticks} ticks) ═══`)
-    // LE MONDE MESURÉ, EN TÊTE DU RAPPORT. Un rapport qui ne dit pas quel monde il a joué est
-    // exactement ce qui a permis au banc de calibrer la faim, des mois durant, sur une carte
-    // sans un seul coin de chasse.
-    const m = report.monde
-    console.log(
-      `  monde : ${m.width}×${m.height} (${(m.width * m.height) / 1000 | 0}k tuiles, ${m.joueurs} joueurs cibles)` +
-        ` · ${m.nodes} nœuds · ${m.huntingGrounds} coins de chasse · ${m.structuresBaties} structures de lieux` +
-        ` · villages écartés de ${m.ecartMinVillages} tuiles, marge de ciblage ${m.margeDeCible} %`,
-    )
-    for (const v of report.villages) {
-      console.log(
-        `  ${v.name} : ${v.membersAlive} membres, nourriture ${v.granaryFood}, bois ${v.granaryWood}`,
-      )
-    }
-    console.log(`  morts d'avatars : ${report.deaths} · hordes : ${report.hordesSpawned} · échantillons affamés : ${report.starvationSamples}`)
-    console.log(`\n─── Chronique (${report.chronicle.length} entrées) ───`)
-    for (const line of report.chronicle.slice(0, 30)) console.log(`  ${line}`)
 
-    // LA NON-RÉGRESSION DE FAMINE, l'invariant que ce banc garde. Seuil à 10 : quelques pics
-    // isolés sont du bruit stochastique, un effondrement en produirait des dizaines — 177 avant
-    // les correctifs du 2026-07-24, ZÉRO après (mesuré au défaut d'1 jour). Le seuil n'a jamais
-    // été relâché vers 177 : c'est le MONDE qu'on a rendu digne de lui.
-    expect(report.starvationSamples).toBeLessThanOrEqual(FAMINE_PAR_JOUR * report.days)
-    // L'archétype est parti avec l'alignement (2026-09-29) : on garde la LOI — un village
-    // peuplé tient debout — en la portant sur le premier, au lieu d'élire un Foyer.
-    const premier = report.villages[0]
-    expect(premier).toBeDefined()
-    expect(premier!.membersAlive).toBeGreaterThan(0)
-    expect(report.chronicle.length).toBeGreaterThan(2)
-    // Le monde MESURÉ (coins de chasse, nœuds, marge de ciblage) est déjà tenu par le banc rapide
-    // ci-dessus — ici on ne vérifie que ce qu'on y VIT. Depuis le 2026-09-22 le banc peuple par la
-    // loi commune (`peuplerLesVoisins`) avec son propre compte, et l'assertion garde AUTRE CHOSE
-    // que le banc rapide : elle dit qu'aucun village n'a DISPARU en cours de route, là-haut on ne
-    // comptait que ceux qu'on venait de fonder.
-    expect(report.villages.length, 'le banc a perdu un village en route').toBe(VILLAGES_DU_BANC)
-  })
-
-  /**
-   * A8 (spec `meteo.md`), la tranche automatisée — le critère complet (6 cycles × 3 graines)
-   * vit dans `tools/diag-meteo.mts`, resté manuel parce qu'il coûte dix-huit cycles ; ici on
-   * garde CHAQUE exécution de suite contre la régression qui tuerait des PNJ sous la météo :
-   * `pnpm test` n'armait `meteoActive` nulle part, donc une foudre qui se mettrait à frapper
-   * les abrités, ou un front qui gèlerait les villageois, ne faisait rougir AUCUNE suite.
-   */
-  // Deux jours MINIMUM : le cycle 0 du calendrier du banc est une accalmie (mesuré — le
-  // premier front est la pluie du cycle 1), et la prémisse `frontsVus > 0` doit pouvoir tenir.
-  // ⛔ GELÉ AVEC LES VILLAGES (`FEATURES.VILLAGES_PNJ`, décision d'Alexis du 2026-09-26).
-  // ⚠ CELUI-CI PASSAIT AU VERT SANS VILLAGES, et c'est PIRE qu'un rouge : « la météo ne tue aucun
-  // PNJ » est trivialement vrai quand il n'y a aucun PNJ. Une garde qui ne peut plus échouer ne
-  // garde rien — on la gèle plutôt que de la laisser mentir.
-  it.skipIf(!FEATURES.VILLAGES_PNJ)(`A8 — la météo armée ne tue aucun PNJ (${Math.max(DAYS, 2)} jours, seed 2026)`, { timeout: 900_000 }, () => {
-    const report = runScenario(2026, Math.max(DAYS, 2), undefined, { meteoActive: true })
-    console.log(`  A8 : ${report.frontsVus} front(s) vus · morts foudre ${report.mortsFoudre} · morts froid ${report.mortsFroid}`)
-    // La PRÉMISSE d'abord : sans front traversé, les deux zéros ne prouveraient rien.
-    expect(report.frontsVus, 'aucun front n’a couvert le banc — la garde est vide').toBeGreaterThan(0)
-    expect(report.mortsFoudre, 'la foudre a tué un PNJ (l’abri doit immuniser, R8)').toBe(0)
-    // Le froid compte TOUTES ses morts (front ou nuit) : au banc court, le socle sans front
-    // n'en cause aucune — le zéro est donc net, et un compte non nul accuse quoi qu'il en soit.
-    expect(report.mortsFroid, 'le froid a tué un PNJ (les villageois doivent s’abriter)').toBe(0)
-    // Et la famine ne doit pas se dégrader PARCE QUE la météo est là (le silence du gibier,
-    // la conso des feux) : même seuil que le banc par défaut, au même TAUX.
-    expect(report.starvationSamples).toBeLessThanOrEqual(FAMINE_PAR_JOUR * report.days)
-  })
 
   /**
    * ═══ V-A9 — LE RETOUR TIENT DANS LE BUDGET (spec `ascension.md`, V-R11) ═══

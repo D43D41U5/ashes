@@ -123,7 +123,6 @@ export interface MondeEclaire {
   readonly structures: readonly Structure[]
   readonly nodes?: ResourceNode[]
   readonly entities?: readonly Entity[]
-  readonly npcs?: readonly { readonly entityId: number }[]
   readonly monsters?: readonly { readonly entityId: number }[]
 }
 
@@ -539,10 +538,14 @@ export function partVisible(monde: MondeEclaire, niveau: number, rx: number, ry:
   return vus / MOTIF_SOURCE.length
 }
 
-/** Un PNJ ou un monstre — pas un avatar (N6 : le périmètre est l'avatar, et sa torche). */
+/**
+ * Un monstre — pas un avatar (N6 : le périmètre est l'avatar, et sa torche).
+ *
+ * ⚠ Cette fonction pesait DEUX populations jusqu'au 2026-09-29 : les PNJ et les monstres. La
+ * moitié PNJ est partie avec `SimState.npcs` (tranche 3 du retrait des villages PNJ) ; N6 est
+ * intacte, et c'est le monstre qui la porte désormais — il en reste une vraie, de population.
+ */
 function estFigurant(monde: MondeEclaire, entityId: number): boolean {
-  const npcs = monde.npcs
-  if (npcs !== undefined) for (const n of npcs) if (n.entityId === entityId) return true
   const monsters = monde.monsters
   if (monsters !== undefined) for (const m of monsters) if (m.entityId === entityId) return true
   return false

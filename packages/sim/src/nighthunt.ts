@@ -44,13 +44,13 @@ function roll(state: SimState): number {
 }
 
 /**
- * Qui peut être chassé : les AVATARS — ni les monstres, ni les PNJ (leur défense
- * est un autre chantier ; le GDD veut d'abord un solo qui tienne).
+ * Qui peut être chassé : les AVATARS — pas les monstres. (Une seconde exclusion visait les
+ * PNJ ; elle est partie avec `SimState.npcs` le 2026-09-29, tranche 3 du retrait des villages
+ * PNJ. Le jour où un corps non-joueur remarche, c'est ici qu'il se re-exclut.)
  */
 function preys(state: SimState): Entity[] {
   const monsterIds = new Set(state.monsters.map((m) => m.entityId))
-  const npcIds = new Set(state.npcs.map((n) => n.entityId))
-  return state.entities.filter((e) => e.hp > 0 && !monsterIds.has(e.id) && !npcIds.has(e.id))
+  return state.entities.filter((e) => e.hp > 0 && !monsterIds.has(e.id))
 }
 
 export function advanceNightHunt(state: SimState): void {

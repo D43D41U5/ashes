@@ -14,8 +14,9 @@
  *
  * ── CE QUI EST FILTRÉ, ET CE QUI NE L'EST PAS ───────────────────────────────────
  *
- * FILTRÉ (spatial et volumineux) : `entities`, `monsters`, `npcs`, `blood`, `groundItems`.
- * `monsters` et `npcs` suivent EXACTEMENT le sort de leur entité — garder
+ * FILTRÉ (spatial et volumineux) : `entities`, `monsters`, `blood`, `groundItems`.
+ * (`npcs` était de la liste jusqu'au 2026-09-29, tranche 3 du retrait des villages PNJ.)
+ * `monsters` suit EXACTEMENT le sort de son entité — garder
  * la fiche d'une bête dont le corps n'est plus transmis ne dessinerait rien et coûterait
  * quand même.
  *
@@ -85,7 +86,6 @@ export function filtreParInteret<T extends Omit<SnapshotMessage, 'lastProcessedI
     ...base,
     entities,
     monsters: base.monsters.filter(suitSonCorps),
-    npcs: base.npcs.filter(suitSonCorps),
     blood: base.blood.filter(proche),
     groundItems: base.groundItems.filter(proche),
   }

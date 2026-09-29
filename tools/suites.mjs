@@ -211,6 +211,28 @@ const SUITES = [
   //   pourchassait, donc elle marchait encore). Fenêtre bornée à l'arrivée : 95,5 à 100 % sur
   //   douze graines, contre 54 % avant réparation. La garde était fausse, pas la horde.
   //   Suite à 2415 ✓ (plus aucun sauté : les deux vivaient dans `npc.test.ts`).
+  // 2026-09-29 : TRANCHE 3 — `SimState.npcs` QUITTE L'ÉTAT, ET AUCUN COMPTE NE BOUGE. C'est la
+  //   promesse de cette tranche et elle est tenue : sim 2415, client 1805, serveur 36, banc 1 ✓ —
+  //   PLANCHERS INCHANGÉS. Le champ ne portait plus rien depuis 2b ; ce qui part ici est
+  //   structurel (quatorze lecteurs, le snapshot `protocol.ts`, la clé de `SAVE_REQUIRED_KEYS`,
+  //   `migrerSansChemin`, la façade du gel côté client). ⚠ Le seul chiffre qui bouge est celui des
+  //   SAUTÉS du banc, 3 → 1 : les deux gardes gelées par `it.skipIf(!FEATURES.VILLAGES_PNJ)` qui
+  //   lisaient `report.starvationSamples` sont supprimées, `braise.md` § 3 étape 11 tranchant leur
+  //   sort (« se suppriment au lieu de repartir »). ⚠ ELLES ÉTAIENT LES SEULES À APPELER
+  //   `runScenario` : **`pnpm scenario` ne joue plus un tick**, et la perte date du 26/09 (le
+  //   drapeau), pas d'aujourd'hui — la doc qui promettait encore « des milliers de ticks » est
+  //   corrigée (CLAUDE.md, en-tête de `scenario.test.ts`). Coût pour le rallumer, MESURÉ :
+  //   runScenario 1 j = 132 s, 2 j = +315 s, et le banc n'a pas d'avatar.
+  //   TROIS gardes RÉÉCRITES au lieu d'être supprimées, parce que la loi appariait TOUJOURS les
+  //   PNJ aux MONSTRES dans une même expression et que les monstres vivent : `lumiere.test.ts` T3
+  //   (N6 — la torche d'un figurant n'éclaire personne), `etat-gel-lumiere.test.ts` (la porte
+  //   `npcs` devient `figurants`), `interest.test.ts` (les monstres portaient déjà la loi
+  //   entière). ⚠ ET LA FAMINE N'EST PLUS MESURÉE PAR PERSONNE (`starvationSamples` part) —
+  //   troisième loi sans mesureur après l'étanchéité sur un corps qui marche et le repli à l'abri.
+  //   MESURÉ, zéro changement de comportement : `tools/empreinte-sim.mts` sur 12 régimes, flux
+  //   d'événements identique 48/48 jalons, `rngState` et tous les compteurs identiques 12/12,
+  //   couverture identique. Les hachages d'ÉTAT diffèrent 48/48 et c'est ATTENDU : `snapshot()`
+  //   est `JSON.stringify(state)`, l'objet porte une clé de moins.
   { nom: 'sim', dir: 'packages/sim', args: ['run', '--exclude', 'src/scenario.test.ts'], plancher: 2370 },
   // 2026-09-01 : +10 gardes avec le RENDU des étages (`plateau-art.test.ts`).
   // 2026-09-01 : +9 gardes avec le TRI DES ÉTAGES (strate, découvert — `framing.test.ts`),

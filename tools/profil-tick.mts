@@ -62,7 +62,7 @@ for (const v of voisins) {
 
 console.log(`carte ${carte.map.width}×${carte.map.height} = ${(carte.map.width * carte.map.height / 1e6).toFixed(2)} M tuiles`)
 console.log(`génération : ${(tGen / 1000).toFixed(1)} s`)
-console.log(`nœuds : ${nodes.length} · entités : ${sim.entities.length} · PNJ : ${sim.npcs.length} · monstres : ${sim.monsters.length}`)
+console.log(`nœuds : ${nodes.length} · entités : ${sim.entities.length} · monstres : ${sim.monsters.length}`)
 
 const t1 = performance.now()
 for (let i = 0; i < ticks; i++) step(sim, [])

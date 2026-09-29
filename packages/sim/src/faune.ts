@@ -602,7 +602,7 @@ export function advanceEnvols(state: SimState): void {
     if (gaitNoise(e) * bruitDuSol(state, tx, ty) < HUNT.ENVOL_SEUIL) continue
     if (!estLisiere(profondeurAt(state.map, tx, ty))) continue
     if (state.monsters.some((m) => m.entityId === e.id)) continue
-    if (state.npcs.some((n) => n.entityId === e.id)) continue
+    // (Une seconde ligne écartait les PNJ : partie avec `SimState.npcs`, 2026-09-29.)
 
     const envols = (state.envols ??= [])
     let bloque = false
@@ -1749,14 +1749,14 @@ function goHome(state: SimState, monster: Monster, entity: Entity): boolean {
  * la carte du joueur (`knownGrounds`, le patron `knownPois` — par POSITION, pas
  * par index : un coin meurt et renaît ailleurs, R27). L'OUBLI : revenir à portée
  * d'une pastille dont le coin est MORT l'éteint — la carte ne se corrige qu'au
- * CONSTAT, jamais à distance. Les PNJ n'ont pas de carte.
+ * CONSTAT, jamais à distance. (Un second filtre écartait ici les PNJ, qui n'ont pas de carte :
+ * il est parti avec `SimState.npcs` le 2026-09-29 — et il était déjà une ceinture par-dessus
+ * les bretelles, l'appelant ne passant que des avatars.)
  */
 export function advanceCoinsConnus(state: SimState, avatars: Entity[]): void {
   if (avatars.length === 0) return
   const sight2 = FAUNA.GROUND_SIGHT * FAUNA.GROUND_SIGHT
-  const npc = new Set(state.npcs.map((n) => n.entityId))
   for (const a of avatars) {
-    if (npc.has(a.id)) continue
     for (const g of state.grounds) {
       if (distSq(a.x, a.y, g.x, g.y) > sight2) continue
       // E-R5, Q5 (Alexis, 2026-09-07) : un coin de chasse s'APPREND en le voyant. Sous la roche,
@@ -4482,12 +4482,17 @@ function pisteStep(state: SimState, monster: Monster, entity: Entity): boolean {
 /**
  * LE DOS D'UNE PROIE (L12) — la direction de sa prise à revers, ou `null` si son
  * regard n'est pas lisible. Les bêtes posent `facing` à chaque pas (chasse C4),
- * l'avatar aussi ; LE PNJ, JAMAIS (`npc.ts` n'écrit pas ce champ — il garde le
- * cap de sa naissance, plein est) : lire son dos rendrait un verdict tiré au
- * sort par la géographie. Contre un PNJ, les postes restent ceux du rang.
+ * l'avatar aussi.
+ *
+ * ⚠ **UN TROISIÈME CAS A VÉCU ICI, ET SA RAISON RESTE VRAIE** : le PNJ n'écrivait JAMAIS
+ * `facing` (il gardait le cap de sa naissance, plein est), donc lire son dos rendait un verdict
+ * tiré au sort par la géographie — contre lui, les postes restaient ceux du rang. La garde est
+ * partie avec `SimState.npcs` le 2026-09-29 (tranche 3 du retrait des villages PNJ), faute de
+ * population. Le jour où un corps non-joueur remarche (compagnon de coop, siège cendreux), la
+ * question à se poser est la même : **est-ce qu'il écrit son `facing` ?** Sinon, il se re-exclut
+ * ici, et pas ailleurs.
  */
-function dosDe(state: SimState, target: Entity): { x: number; y: number } | null {
-  for (const n of state.npcs) if (n.entityId === target.id) return null
+function dosDe(_state: SimState, target: Entity): { x: number; y: number } | null {
   const f = target.facing
   const l = Math.sqrt(f.x * f.x + f.y * f.y)
   if (l < 0.001) return null

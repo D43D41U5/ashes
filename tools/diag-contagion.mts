@@ -157,10 +157,7 @@ const identifier = (id: number): void => {
     identiteDesTueurs.set(id, `monstre ${m.type}${marques ? ` (${marques})` : ''}`)
     return
   }
-  if (sim.npcs.some((n) => n.entityId === id)) {
-    identiteDesTueurs.set(id, 'PNJ')
-    return
-  }
+  // (Une branche rendait ici « PNJ » : partie avec `SimState.npcs`, 2026-09-29.)
   identiteDesTueurs.set(id, sim.entities.some((e) => e.id === id) ? 'entité sans rôle' : 'DÉJÀ RETIRÉ')
 }
 let nuitVue = false

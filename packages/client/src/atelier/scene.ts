@@ -281,7 +281,6 @@ export class AtelierScene extends Phaser.Scene {
       villages: sim.villages,
       functions: [],
       nodeDeltas: [],
-      npcs: [],
       monsters: [],
       corpses: [],
       reveils: [],

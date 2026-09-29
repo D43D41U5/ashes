@@ -370,12 +370,12 @@ export function advanceWorldEvents(state: SimState): void {
   // s'empilaient sans fin (mesuré : 5 → 75 Cendreux sur une saison, par ce seul canal).
   if (state.monsters.some((m) => m.expiresAt !== undefined && state.tick >= m.expiresAt)) {
     const monsterIds = new Set(state.monsters.map((m) => m.entityId))
-    // LES TÉMOINS SONT LES AVATARS RÉELS, pas les PNJ (constat C6/C31 du panel) : « jamais
-    // sous les yeux » protège le JOUEUR du décor qui avoue — un villageois posté près des
-    // reliques de la nuit ne doit pas les rendre éternelles (elles s'accumulaient au pied
-    // des villages PNJ et mangeaient le plafond global).
-    const npcIds = new Set(state.npcs.map((n) => n.entityId))
-    const avatars = state.entities.filter((e) => !monsterIds.has(e.id) && !npcIds.has(e.id) && e.hp > 0)
+    // LES TÉMOINS SONT LES AVATARS RÉELS (constat C6/C31 du panel) : « jamais sous les yeux »
+    // protège le JOUEUR du décor qui avoue. ⚠ Une seconde exclusion visait les PNJ — un
+    // villageois posté près des reliques de la nuit ne devait pas les rendre éternelles (elles
+    // s'accumulaient au pied des villages PNJ et mangeaient le plafond global) ; elle est partie
+    // avec `SimState.npcs` le 2026-09-29, en même temps que les villages qui la motivaient.
+    const avatars = state.entities.filter((e) => !monsterIds.has(e.id) && e.hp > 0)
     const clearance = FAUNA.DEN_SPAWN_CLEARANCE * FAUNA.DEN_SPAWN_CLEARANCE
     const partis = new Set<number>()
     for (const m of state.monsters) {

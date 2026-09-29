@@ -144,7 +144,12 @@ export interface ScenarioReport {
     granaryFood: number
     granaryWood: number
   }[]
-  starvationSamples: number
+  // ⚠ `starvationSamples` A VÉCU ICI. Il comptait un point par PNJ affamé et par relevé — le
+  //   dernier maillon de l'économie villageoise, et le seul chiffre du banc qui la mesurait.
+  //   Il part avec `SimState.npcs` le 2026-09-29 (tranche 3 du retrait des villages PNJ) :
+  //   le banc n'a PAS d'avatar (que des PNJ), donc plus un seul corps à affamer. ⚠ LA FAMINE
+  //   N'EST DONC PLUS MESURÉE PAR PERSONNE — à reprendre le jour où le banc joue un avatar,
+  //   et c'est le vrai chantier : `braise.md` § 3 étape 10 remet la faim sur la table.
   deaths: number
   hordesSpawned: number
   /** A8 — les morts d'avatar que la MÉTÉO cause : la foudre, et le froid (front ou nuit —
@@ -293,7 +298,6 @@ export function runScenario(
   if (options.meteoActive === true) sim.meteoActive = true
 
   const events: SimEvent[] = [...drainEvents(sim)]
-  let starvationSamples = 0
   let deaths = 0
   let hordesSpawned = 0
   let mortsFoudre = 0
@@ -301,9 +305,6 @@ export function runScenario(
   let frontsVus = 0
   let dernierFront = -1
   const total = days * TICKS_PER_CYCLE
-  // Cadence d'échantillonnage de la faim, en ticks — fixée en temps réel (pas
-  // en nombre de ticks brut) pour rester comparable d'un TICK_RATE_HZ à l'autre.
-  const sampleEveryTicks = Math.round(500 * (BALANCE.TICK_RATE_HZ / 12))
   for (let t = 0; t < total; t++) {
     step(sim, [])
     for (const e of drainEvents(sim)) {
@@ -324,12 +325,6 @@ export function runScenario(
       dernierFront = sim.meteo.startTick
       frontsVus += 1
     }
-    if (t % sampleEveryTicks === 0) {
-      for (const npc of sim.npcs) {
-        const entity = sim.entities.find((en) => en.id === npc.entityId)
-        if (entity && entity.hunger <= 0) starvationSamples += 1
-      }
-    }
   }
 
   const names = Object.fromEntries(sim.villages.map((v) => [v.id, v.name]))
@@ -349,7 +344,6 @@ export function runScenario(
         granaryWood: countOf(granary?.inventory ?? [], 'wood'),
       }
     }),
-    starvationSamples,
     deaths,
     hordesSpawned,
     mortsFoudre,

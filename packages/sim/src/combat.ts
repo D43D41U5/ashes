@@ -766,19 +766,20 @@ function resolveStrike(state: SimState, attacker: Entity): void {
   const attackerHerd = attackerMonster?.herdId
   const attackerIsCendreux = attackerMonster?.type === 'cendreux'
 
-  // ═══ TROISIÈME ALLIANCE : LA MILICE NE SE FAUCHE PAS ELLE-MÊME (2026-08-21) ═══
+  // ⚠ ═══ IL Y EUT UNE TROISIÈME ALLIANCE, ET ELLE EST PARTIE LE 2026-09-29 ═══
   //
-  // Même défaut MESURÉ, même remède que les deux premières (la harde : « l'arc de 90°
-  // attrapait le frère d'en face, et la meute se décimait toute seule » ; l'espèce cendreux :
-  // 313 levées abattues par leur propre camp). Depuis le cadran de température, un cendreux
-  // engourdi est une cible quasi STATIQUE : la milice s'agglutine dessus, et ses propres arcs
-  // fauchaient ses rangs — MESURÉ sur douze graines : 10/12 villages tenaient avant, 4/12
-  // après, trois miliciens tombés au même tick sous les coups… de leurs frères. L'alliance
-  // est ÉTROITE : deux PNJ du MÊME village, et rien d'autre — le JOUEUR frappe toujours tout
-  // ce qui est dans son arc (le PvP, la trahison et la maladresse restent des mécaniques),
-  // et deux PNJ de villages différents s'atteignent comme avant (la guerre existe).
-  const attackerIsNpc = state.npcs.some((n) => n.entityId === attacker.id)
-  const attackerVillage = attackerIsNpc ? getVillageOf(state, attacker.id) : undefined
+  // « LA MILICE NE SE FAUCHE PAS ELLE-MÊME » (2026-08-21) : deux PNJ du MÊME village ne
+  // s'atteignaient pas. Elle réparait un défaut MESURÉ, et le chiffre mérite de survivre au
+  // code — depuis le cadran de température, un cendreux engourdi est une cible quasi STATIQUE,
+  // la milice s'agglutinait dessus et ses propres arcs fauchaient ses rangs : sur douze
+  // graines, 10/12 villages tenaient avant, 4/12 après, trois miliciens tombés au même tick
+  // sous les coups de leurs frères. Elle était ÉTROITE par construction — le JOUEUR frappait
+  // toujours tout ce qui est dans son arc (le PvP, la trahison et la maladresse sont des
+  // mécaniques), et deux PNJ de villages différents s'atteignaient (la guerre existait).
+  //
+  // Elle est INERTE depuis la tranche 2a (plus aucun corps au monde n'est un PNJ) et part avec
+  // `SimState.npcs`. Le jour où des corps non-joueurs se battent côte à côte (compagnons de
+  // coop, milice d'une balise), le défaut reviendra tel quel : c'est ici qu'on le rerépare.
 
   // ═══ LE TRAIT NE PREND QU'UN CORPS, ET IL LUI FAUT UNE LIGNE (spec `tir.md` T4-T5) ═══
   //
@@ -826,11 +827,6 @@ function resolveStrike(state: SimState, attacker: Entity): void {
     if (!ranged && targetMonster !== undefined && enVol(targetMonster, state.tick)) continue
     if (attackerHerd !== undefined && targetMonster?.herdId === attackerHerd) continue
     if (attackerIsCendreux && targetMonster?.type === 'cendreux') continue
-    if (
-      attackerVillage !== undefined &&
-      state.npcs.some((n) => n.entityId === target.id) &&
-      getVillageOf(state, target.id)?.id === attackerVillage.id
-    ) continue // la milice ne se fauche pas elle-même (troisième alliance, voir plus haut)
     // LA LIGNE se juge par corps, et seulement sur ce que la zone a déjà retenu : un
     // balayage de sous-tuiles par entité de la carte serait ruineux, alors qu'il n'y a
     // jamais qu'une poignée de corps dans un cône.
@@ -1193,8 +1189,6 @@ export function die(state: SimState, entity: Entity, byEntityId: number, cause?:
     wasMonster: monster !== undefined,
     ...(cause ? { cause } : {}),
   })
-  const npc = state.npcs.find((n) => n.entityId === entity.id)
-
   // Le cadavre reçoit tout ce qui était porté (spec R9) — ou la table de
   // loot du monstre (le sanglier donne sa viande). Son sac est assez grand pour
   // que rien ne soit jamais tronqué (spec inventaire R11).
@@ -1345,16 +1339,13 @@ export function die(state: SimState, entity: Entity, byEntityId: number, cause?:
     return
   }
 
-  if (npc) {
-    // Les PNJ meurent pour de bon (spec R10) : la main-d'œuvre est un stock.
-    state.npcs = state.npcs.filter((n) => n.entityId !== entity.id)
-    state.entities = state.entities.filter((e) => e.id !== entity.id)
-    for (const village of state.villages) {
-      village.memberIds = village.memberIds.filter((id) => id !== entity.id)
-      // (plus de tableau de corvées à relâcher — l'IA villageoise est partie le 2026-09-29)
-    }
-    return
-  }
+  // ⚠ UNE TROISIÈME BRANCHE A VÉCU ICI : « les PNJ meurent pour de bon » (spec R10, la
+  // main-d'œuvre est un stock). Elle RETIRAIT le corps de `state.entities` et de tous les
+  // `memberIds`, là où le joueur, lui, reste à terre. Elle est partie avec `SimState.npcs` le
+  // 2026-09-29 (tranche 3 du retrait des villages PNJ) — inerte depuis la tranche 2a. ⚠ Elle
+  // était la SEULE chose dans /sim qui supprimait une entité vivante de `state.entities` : un
+  // corps non-joueur à venir (compagnon de coop) hérite donc du sort du JOUEUR, il gît. Si on
+  // veut qu'il disparaisse, c'est un geste à réécrire, pas un comportement à retrouver.
 
   // ═══ LE JOUEUR RESTE À TERRE (décision d'Alexis, 2026-08-31) ═══
   //

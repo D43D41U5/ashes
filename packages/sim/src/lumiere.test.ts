@@ -4,7 +4,7 @@ import { EDGE_E, EDGE_N, EDGE_O, EDGE_S } from './geometry'
 import { addItems, makeInventory } from './items'
 import { MOTIF_SOURCE, OCCLUDEUR, estUnePorte, lumiereDesTorches, occlusionAuGrain, partVisible, seTientAuSol, sorteAuTexel } from './lumiere'
 import { createEmptyMap } from './map'
-import type { Npc } from './npc'
+import type { Monster } from './monsters'
 import { clarteSurSoi, lumiereDuFeu, LUNAISON_JOURS, LUNE_PLEINE_JOUR } from './nuit'
 import { createSim, spawnEntity, step, type Entity, type SimState } from './sim'
 import { bulleDuFeu, fireBubble } from './temperature'
@@ -446,17 +446,23 @@ describe('les torches des autres (LG-R18, LG-A19)', () => {
     expect(chaleurAvant).toBe(0)
   })
 
-  it('T3 — la torche d’un PNJ n’éclaire personne (N6 : le périmètre est l’avatar)', () => {
+  // ⚠ RÉÉCRITE LE 2026-09-29 : elle prenait son figurant dans `sim.npcs`, champ supprimé avec
+  // les villages PNJ (tranche 3). N6 pesait DEUX populations — les PNJ et les monstres —, et
+  // c'est le monstre qui la porte désormais : une vraie population, qui existe dans le jeu
+  // joué. La loi et les trois assertions sont identiques, seul le figurant a changé d'espèce.
+  it('T3 — la torche d’un FIGURANT n’éclaire personne (N6 : le périmètre est l’avatar)', () => {
     const sim = nuitNoire()
     const moi = avatar(sim, RX, RY)
-    const pnj = avatar(sim, RX + 2, RY)
-    torcheEnMain(pnj)
-    sim.npcs.push({ entityId: pnj.id } as unknown as Npc)
+    const figurant = avatar(sim, RX + 2, RY)
+    torcheEnMain(figurant)
+    sim.monsters.push({ entityId: figurant.id } as unknown as Monster)
     expect(clarteSurSoi(sim, moi)).toBeLessThan(0.15)
-    // Et un porteur MORT n'éclaire plus.
-    sim.npcs.length = 0
+    // Et le MÊME corps, redevenu avatar, éclaire — c'est ce qui prouve que c'est bien le
+    // statut de figurant qui l'éteint, et non la géométrie de la scène.
+    sim.monsters.length = 0
     expect(clarteSurSoi(sim, moi)).toBeGreaterThanOrEqual(NUIT.SEUIL_NOIR)
-    pnj.hp = 0
+    // Et un porteur MORT n'éclaire plus.
+    figurant.hp = 0
     expect(clarteSurSoi(sim, moi)).toBeLessThan(0.15)
   })
 

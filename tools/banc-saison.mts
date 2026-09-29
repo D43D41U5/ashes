@@ -103,10 +103,9 @@ for (let cycle = 1; cycle <= JOURS; cycle++) {
     }
     tickGlobal += 1
     if (tickGlobal % sampleEveryTicks === 0) {
-      for (const npc of sim.npcs) {
-        const entity = sim.entities.find((en) => en.id === npc.entityId)
-        if (entity && entity.hunger <= 0) faim += 1
-      }
+      // (Le relevé ne pesait QUE les PNJ jusqu'au 2026-09-29 ; `SimState.npcs` est parti avec
+      //  eux et il pèse tout corps vivant — le banc n'en a aucun aujourd'hui, il en aura.)
+      for (const entity of sim.entities) if (entity.hp > 0 && entity.hunger <= 0) faim += 1
     }
   }
   const ligne = {

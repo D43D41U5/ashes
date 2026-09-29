@@ -124,7 +124,6 @@ describe('le feu de camp — objet posé, foyer optionnel (décision utilisateur
     expect(fire?.villageId).toBe(0) // LIBRE : aucun foyer
     expect(fire?.ownerId).toBe(id) // …mais à moi (je cuisine, je démolis)
     expect(sim.villages).toHaveLength(0) // aucun village fondé
-    expect(sim.npcs).toHaveLength(0) // aucun PNJ
     expect(countOf(sim.entities.find((e) => e.id === id)!.inventory, 'campfire')).toBe(0) // consommé
   })
 
@@ -191,7 +190,6 @@ describe('le feu de camp — objet posé, foyer optionnel (décision utilisateur
     expect(village?.chiefId).toBe(id)
     expect(fire.villageId).toBe(village!.id) // le feu libre est DEVENU le Feu du foyer
     expect(fire.ownerId).toBe(0) // il appartient au village, plus à moi
-    expect(sim.npcs).toHaveLength(0) // toujours aucun PNJ
     expect(drainEvents(sim).some((e) => e.type === 'village_founded' && e.chiefId === id)).toBe(true)
   })
 

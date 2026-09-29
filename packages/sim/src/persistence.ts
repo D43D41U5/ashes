@@ -115,7 +115,7 @@ export const SAVE_REQUIRED_KEYS: readonly string[] = [
   // (Les clés des réfugiés — `refugeeGroups`, `nextRefugeeGroupId`, `lastRefugeeDay` — ont
   // quitté la liste avec le système, 2026-08-30. Une vieille sauvegarde qui les porte encore
   // recharge sans encombre : la garde exige la présence, elle ne refuse pas l'excédent.)
-  'lieuxBrules', 'nodes', 'npcs', 'presage', 'reveils', 'rngState', 'seed', 'souillures', 'structures', 'tick',
+  'lieuxBrules', 'nodes', 'presage', 'reveils', 'rngState', 'seed', 'souillures', 'structures', 'tick',
   'villages', 'visitedPois', 'wind', 'windForce', 'worldEvents',
 ]
 
@@ -162,7 +162,6 @@ export function deserializeSim(text: string): SimState {
     throw new Error(`Veillée d'un format antérieur : ${manquants.length} champ(s) manquant(s) — ${manquants.join(', ')}`)
   }
   migrerParoiEnMassif(env.sim)
-  migrerSansChemin(env.sim) // champ neuf DANS `Npc` : aucune garde de racine ne le voit
   return env.sim
 }
 
@@ -184,26 +183,18 @@ function migrerParoiEnMassif(sim: SimState): void {
   }
 }
 
-/**
- * MIGRATION `Npc.sansChemin` (2026-09-21) — LES GARDES DE CE FICHIER NE VOIENT QUE LA RACINE.
- *
+/*
+ * ⚠ `migrerSansChemin` A VÉCU ICI (2026-09-21 → 2026-09-29), ET SA LEÇON RESTE LA SEULE QUI
+ * COMPTE DANS CE FICHIER : **les gardes de ce fichier ne voient que la RACINE.**
  * `SAVE_REQUIRED_KEYS` et `comblerEphemeres` confrontent des clés de PREMIER NIVEAU, et le
- * recollage final est un spread SUPERFICIEL : les objets `Npc` d'une vieille Veillée passent
- * intacts, jamais inspectés. Un champ neuf et REQUIS *dans* un `Npc` franchit donc toutes les
- * gardes — `npcs` existe, la liste est complète — puis `step()` jette au premier tick, à chaque
- * lancement : exactement le sinistre décrit en tête de ce fichier, et exactement celui que
- * `migrerParoiEnMassif` existe pour avoir déjà coûté une fois.
- *
- * `sansChemin` (le refus de chemin mémorisé, `npc.ts`) est un TABLEAU ; une sauvegarde d'avant
- * ne porte rien, une écrite pendant le développement peut porter `null` ou un objet. On teste
- * donc la FORME, pas l'absence : le type statique ment tant que la migration n'a pas tourné.
+ * recollage final est un spread SUPERFICIEL. Un champ neuf et REQUIS *à l'intérieur* d'un objet
+ * de liste (`Entity`, `Monster`, `Village`…) franchit donc TOUTES les gardes — la clé racine
+ * existe, la liste est complète — puis `step()` jette au premier tick, à chaque lancement.
+ * C'est le sinistre décrit en tête de ce fichier, et celui que `migrerParoiEnMassif` existe
+ * pour avoir déjà coûté une fois. Elle réparait `Npc.sansChemin` et part avec `SimState.npcs`
+ * (tranche 3 du retrait des villages PNJ) ; `braise.md` B-R2 rappelle la même dette pour
+ * `Entity.braise`, qui vient : **la migration s'écrit avec le champ, pas après.**
  */
-function migrerSansChemin(sim: SimState): void {
-  for (const npc of sim.npcs) {
-    const brut = npc as unknown as { sansChemin?: unknown }
-    if (!Array.isArray(brut.sansChemin)) npc.sansChemin = []
-  }
-}
 
 /* ─── LA CARTE À PART — ce qui ne bouge pas ne se réécrit pas ────────────────────── */
 
@@ -418,7 +409,6 @@ export function deserializePartie(text: string, carte: CarteSauvee): SimState {
   const nodes = appliqueDiffNoeuds(carte.nodes, env.noeuds)
   const sim = { ...env.partie, map, nodes } as SimState
   migrerParoiEnMassif(sim) //  les parties du 2026-08-10 portent des `paroi` (cf. la migration)
-  migrerSansChemin(sim) // LE CHEMIN VIF (cf. `persistence-store.ts`) : ne brancher qu'un site le laisserait cassé
   return sim
 }
 

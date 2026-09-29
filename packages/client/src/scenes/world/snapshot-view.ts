@@ -24,7 +24,6 @@ import {
   type Entity,
   type Monster,
   type FunctionId,
-  type Npc,
   type ResourceNode,
   type NodeType,
   type Structure,
@@ -864,7 +863,6 @@ export class SnapshotView {
   corpses: Corpse[] = []
   /** LES RÉFUGIÉS (V2-25) : groupes de survivants sur les routes — WorldScene y branche la
    *  fenêtre à trois gestes, et on les dessine ici en huddle. */
-  npcs: Npc[] = []
   monsters: Monster[] = []
   /** LES SOLS QUI TRAVAILLENT du dernier snapshot. Ils partaient jusqu'ici DIRECTEMENT dans
    *  `reveilFx` et personne d'autre ne pouvait les lire — or le thème d'ambiance se coupe sur
@@ -1121,7 +1119,6 @@ export class SnapshotView {
     for (const e of msg.events) if (e.type === 'door_toggled') this.pousserPorte(e.structureId, e.open)
     this.villages = msg.villages
     this.functions = msg.functions
-    this.npcs = msg.npcs
     this.monsters = msg.monsters
     this.tick = msg.tick
     this.hour = msg.time.hourOfCycle
@@ -1711,7 +1708,6 @@ export class SnapshotView {
     const seen = new Set<number>()
     // Index par entityId, UNE fois par snapshot — le `.find` par entité était
     // O(N×M) à chaque snapshot.
-    const npcByEntity = new Map(this.npcs.map((n) => [n.entityId, n]))
     const monsterByEntity = new Map(this.monsters.map((m) => [m.entityId, m]))
     // LES SENTINELLES du tick (R9bis) : dérivées ICI, avec exactement le même
     // calcul que la sim (`sentinelOf`) — la posture tête haute ne ment jamais.
@@ -1753,7 +1749,6 @@ export class SnapshotView {
       }
       // Les villageois se distinguent des errants et des monstres ; un
       // dormeur s'estompe ; un wind-up flashe (lisibilité, spec R4).
-      const npc = npcByEntity.get(entity.id)
       const monster = monsterByEntity.get(entity.id)
       // LE REGARD DU CENDREUX (R27) : le pion naît avec son premier snapshot, et le `facing`
       // de chaque snapshot l'accompagne — `syncActor` le pose là où il connaît la tête.
@@ -1844,7 +1839,7 @@ export class SnapshotView {
         delete record.volDebutMs
         delete record.volDureeMs
       }
-      record.sprite.setTint(beastTint(monster, entity.windup !== undefined, npc !== undefined, this.tick))
+      record.sprite.setTint(beastTint(monster, entity.windup !== undefined, this.tick))
       // (un PNJ endormi se peignait à 0,45 d'alpha ; le sommeil est parti avec l'IA
       //  villageoise le 2026-09-29, et `npc` ne sert plus qu'à la teinte ci-dessus)
       record.sprite.setAlpha(1)

@@ -3050,7 +3050,6 @@ export class WorldScene extends Phaser.Scene {
         // plus clair que l'autorité (N2bis).
         nodes: this.view.nodes,
         entities: this.lastEntities,
-        npcs: this.view.npcs,
         monsters: this.view.monsters,
       }
       if (this.etatGel) majEtatGel(this.etatGel, source)

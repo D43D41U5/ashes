@@ -27,7 +27,6 @@ const base = (): Omit<SnapshotMessage, 'lastProcessedInput'> =>
     villages: [] as never,
     functions: [] as never,
     nodeDeltas: [{ id: 77, stock: 3 }] as never,
-    npcs: [{ entityId: 2 }, { entityId: 5 }] as never,
     monsters: [{ entityId: 3 }, { entityId: 4 }] as never,
     corpses: [{ id: 1, x: 2000, y: 2000 }] as never,
     blood: [{ x: 100, y: 101, tick: 1 }, { x: 900, y: 900, tick: 1 }] as never,
@@ -44,12 +43,13 @@ describe('la zone d\'intérêt — ce qui arrive au client, et ce qui reste au s
     expect(vu.entities.map((e) => e.id)).toEqual([1, 2, 3])
   })
 
-  it('une bête ou un PNJ suit SON corps — jamais de fiche orpheline', () => {
+  it('une bête suit SON corps — jamais de fiche orpheline', () => {
     // Le piège de ce filtre : garder la fiche d'un monstre dont l'entité n'est plus
     // transmise. Le client ne dessinerait rien et aurait payé le transport.
+    // (Une seconde assertion pesait la même loi sur `npcs`, jusqu'au 2026-09-29 : le champ
+    // est parti avec les villages PNJ, la loi tient entière sur les monstres.)
     const vu = filtreParInteret(base(), moi)
     expect(vu.monsters.map((m) => m.entityId)).toEqual([3]) // 4 est sorti avec son corps
-    expect(vu.npcs.map((n) => n.entityId)).toEqual([2]) // 5 aussi
   })
 
   it('rogne aussi le sang et les piles au sol', () => {

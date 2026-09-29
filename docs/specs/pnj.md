@@ -29,7 +29,7 @@
 > `TASK_PRIORITIES`), les BESOINS (`npc-needs.ts` : plaies, faim, sommeil, orage, froid), les six
 > EXÉCUTEURS de corvée (récolter, bâtir, cuisiner, réparer, nourrir le Feu, puiser), la MILICE
 > (`handleDefense`), le PEUPLEMENT (`spawnNpcsAround`) et `npc.test.ts` (1 208 l). `npc.ts` passe de
-> 1 683 à 386 lignes : il ne reste que la NAVIGATION D'UN CORPS. Six instruments partent avec leur
+> 1 683 à 385 lignes : il ne reste que la NAVIGATION D'UN CORPS. Six instruments partent avec leur
 > sujet : `diag-recolte`, `trace-corvee`, `diag-mort-pnj`, `profil-villageois`, `diag-siege`,
 > `diag-horde`.
 >
@@ -49,6 +49,43 @@
 > sous l'orage** (R8 PNJ, `meteo.test.ts`) — la foudre reste gardée, le geste de s'abriter n'est
 > plus mesuré par personne. Les deux se réécriront contre le JOUEUR, qui est désormais le seul
 > décideur du jeu.
+>
+> **Tranche 3 (faite, 2026-09-29) — `SimState.npcs` QUITTE L'ÉTAT.** Le champ, ses quatorze
+> lecteurs, le snapshot (`protocol.ts`), la clé de sauvegarde et la migration `migrerSansChemin`.
+> Partout où il était lu, il était APPARIÉ AUX MONSTRES dans une même expression « exclure les
+> figurants » : **la loi survit, seule la moitié PNJ tombe**, et les monstres existent toujours —
+> N6 (la torche d'un figurant n'éclaire personne), les POI, le carnet, la découverte, les témoins
+> de `worldevents`, les coins de chasse. Trois gardes ont donc été RÉÉCRITES sur un monstre plutôt
+> que supprimées (`lumiere.test.ts` T3, `etat-gel-lumiere.test.ts`, `interest.test.ts`). Partent
+> aussi : la « troisième alliance » du combat (la milice ne se fauchait pas elle-même — inerte
+> depuis la tranche 2a), la branche de mort PNJ de `die`, le compteur `starvationSamples` du banc
+> et les deux gardes gelées qui le lisaient. `npc.ts`, lui, RESTE : le type `Npc` et la navigation
+> n'ont plus de champ d'état, mais ils sont le harnais des huit gardes E-R5 §23/§24.
+>
+> ⚠ **CE QUE DEVIENT UNE VIEILLE SAUVEGARDE, VERSION CORRIGÉE PAR LA TRANCHE 3.** La réponse
+> ci-dessus (« ses villageois se figent ») était juste pour 2b et devient **incomplète**. Ce qui
+> se passe maintenant :
+>
+> - **Elle charge toujours.** `SAVE_REQUIRED_KEYS` exige la PRÉSENCE des clés, elle ne refuse pas
+>   l'excédent — le fichier lui-même le dit pour les clés des réfugiés retirées le 2026-08-30. La
+>   clé `npcs` de la vieille sauvegarde est simplement recollée et jamais relue.
+> - **Mais ses villageois ne sont plus des figurants : ils deviennent des JOUEURS.** Tous les
+>   filtres « ni PNJ ni monstre » sont devenus « pas un monstre ». Un villageois d'avant gagne donc
+>   une carte de POI, un carnet d'encyclopédie, les découvertes de recettes, le statut de témoin
+>   pour les reliques de la nuit et l'apprentissage des coins de chasse. *(La chasse nocturne, elle,
+>   ne les visera pas : `veillee.ts` l'éteint en solo, `nightHunt: false`.)*
+> - **Et un villageois tué gît pour toujours.** La branche « les PNJ meurent pour de bon » retirait
+>   le corps de `state.entities` ; elle est partie. Le corps reste à `hp = 0`, comme un joueur qui
+>   ne s'est pas relevé — et c'était la SEULE chose dans `/sim` qui supprimait une entité vivante.
+>
+> Toujours aucune migration, décision d'Alexis : *« tant pis pour les vieilles save. »*
+>
+> ⚠ **UNE TROISIÈME LOI PERD SON MESUREUR EN TRANCHE 3 : LA FAMINE.** `starvationSamples` comptait
+> un point par PNJ affamé et par relevé, et c'était le seul chiffre du banc qui pesait l'économie.
+> Le banc n'a **pas d'avatar** — il n'en a jamais joué —, donc il ne lui reste aucun corps à
+> affamer. Et comme les deux gardes qui le lisaient étaient les seules à appeler `runScenario`,
+> **`pnpm scenario` ne joue plus un tick** : ce qui reste éprouve le monde CONSTRUIT. Coût MESURÉ
+> pour le jour où on rallume : `runScenario` à 1 jour = 132 s, à 2 jours = +315 s.
 >
 > ⚠ **P-A2 devient SANS OBJET, il n'est pas corrigé.** Ses quatre conditions de terminaison
 > inatteignables — au premier chef la réparation qui ne s'achève jamais quand le Feu est à sec, et

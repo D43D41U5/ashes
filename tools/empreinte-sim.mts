@@ -187,7 +187,7 @@ for (const seed of SEEDS) {
       jalons,
       final: {
         tick: sim.tick, rngState: sim.rngState,
-        entites: sim.entities.length, monstres: sim.monsters.length, npcs: sim.npcs.length,
+        entites: sim.entities.length, monstres: sim.monsters.length,
         structures: sim.structures.length, villages: sim.villages.length, corpses: sim.corpses.length,
         nodes: sim.nodes.length, hordes: sim.hordes.length, groundItems: sim.groundItems.length,
         blood: sim.blood.length, reveils: sim.reveils.length, evenements: n,

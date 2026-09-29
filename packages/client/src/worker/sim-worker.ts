@@ -209,7 +209,6 @@ function tick(): void {
     functions: sim.functions,
     nodeDeltas: collectNodeDeltas(sim.nodes, nodeStockShadow),
     cendreAge: sim.cendreAge,
-    npcs: sim.npcs,
     monsters: sim.monsters,
     corpses: sim.corpses,
     reveils: sim.reveils,

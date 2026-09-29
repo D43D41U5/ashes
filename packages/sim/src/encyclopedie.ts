@@ -150,9 +150,10 @@ export function advanceEncyclopedie(state: SimState, depuis: number): void {
   const aDesFaits = state.events.length > depuis
   if (!passeSaison && !aDesFaits) return
 
-  const npcIds = new Set(state.npcs.map((n) => n.entityId))
   const monsterIds = new Set(state.monsters.map((m) => m.entityId))
-  const estJoueur = (id: number): boolean => !npcIds.has(id) && !monsterIds.has(id)
+  // Un joueur = un corps qui n'est pas une bête. (`state.npcs` formait la seconde moitié de ce
+  // prédicat jusqu'au 2026-09-29, tranche 3 du retrait des villages PNJ.)
+  const estJoueur = (id: number): boolean => !monsterIds.has(id)
   /** Le carnet de ce joueur, créé au besoin — `undefined` si l'auteur n'est pas un joueur. */
   const carnetDe = (id: number): LigneEncyclo[] | undefined => {
     if (!estJoueur(id)) return undefined
