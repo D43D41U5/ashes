@@ -366,7 +366,6 @@ describe('A9/A10 — le potager : on ne sème pas une terre gelée, et le gel tu
       map: createEmptyMap(40, 40, TERRAIN_GRASS),
       calendarScale: FAST,
       meteoActive: true,
-      finDeSaison: null, // l'année tourne : la recherche du ciel qui tue traverse les saisons
     })
     const jour = auJour(MI_ARDEUR) // le plein été : la fenêtre du fruit est ouverte (S16)
     sim.tick = jour

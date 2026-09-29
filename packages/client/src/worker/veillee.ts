@@ -156,9 +156,6 @@ export function createVeillee(
     // 2026-08-24) : une saison ENTIÈRE pour s'installer, qui annonce toute seule ce qui vient,
     // et le Grand Froid à h 15 de jeu réel.
     jourDeDepart: BALANCE.JOUR_DE_DEPART,
-    // LA SAISON NE FINIT PAS (saison-sans-fin R4, décision d'Alexis 2026-08-21) : ni verdict ni
-    // Arche en solo — l'année tourne, l'hiver revient. La fin de saison n'est plus qu'un jour.
-    finDeSaison: null,
     nodes,
     // ⚠ LE JOUR EST REQUIS : le lever suit la saison (2026-08-26), donc « ouvrir à 9 h » se
     // compte depuis le lever du jour d'ouverture — 06h50 au jour 61, pas un 6 h de convention.

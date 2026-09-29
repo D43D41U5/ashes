@@ -18,7 +18,6 @@ import { createCraftQueueView, type CraftQueueView } from './ui/craft-queue'
 import { createFirePanel, type FirePanel } from './ui/fire-panel'
 import { createBandeaux, type Bandeaux } from './ui/bandeaux'
 import { createDeathVeil, DEATH_VEIL_FILET_MS, type DeathVeil } from './ui/death-veil'
-import { createSeasonVeil, type SeasonVeil } from './ui/season-veil'
 import { createFicheLieu, type FicheLieu } from './ui/fiche-lieu'
 import { createPauseMenu, type PauseMenu } from './ui/pause-menu'
 import { mountHud, type HudDom } from './ui/hud-dom'
@@ -28,8 +27,6 @@ import { createLoadingScreen, type LoadingScreen } from './ui/loading'
 import { createChatPanel, type ChatPanel } from './ui/chat-panel'
 import { createDebugOverlay, renderDebugOverlay, requestTeleport } from './world/debug-overlay'
 import { FONT } from './ui/typography'
-import { reopenFreshVeillee } from './ui/reopen-veillee'
-import { VEILLEE_SEED } from '../worker/mondes'
 
 /**
  * LE VOCABULAIRE DU TABLEAU DES TÂCHES — plus affiché depuis que le village a quitté le coin
@@ -116,11 +113,8 @@ export class UIScene extends Phaser.Scene {
   /** LE MODAL DU FEU (spec feu-station S17-S19) — ouvert à E, il remplace les deux fenêtres flottantes. */
   private firePanel!: FirePanel
   private deathVeil!: DeathVeil
-  private seasonVeil!: SeasonVeil
   /** LE TIROIR DU REGISTRE (T5) — ouvert en cliquant une pastille CONNUE de la carte. */
   private ficheLieu!: FicheLieu
-  /** La stèle de fin de saison n'est levée qu'UNE fois (la saison ne finit qu'une fois). */
-  private seasonVeilShown = false
   private pauseMenu!: PauseMenu
   /** Le dernier `at` de mort déjà montré — un nouveau lève le voile une seule fois. */
   private lastDeathAt = -1
@@ -236,7 +230,6 @@ export class UIScene extends Phaser.Scene {
       this.vignette?.destroy() // elle vit à la racine (hors planche) : à retirer à la main
       this.deathVeil?.destroy() // il vit à la racine (hors planche) : à retirer à la main
       this.bandeaux?.destroy() // idem — il monte sur `document.body`, pas sur la scène
-      this.seasonVeil?.destroy() // idem : monté sur document.body
       this.pauseMenu?.destroy() // idem
       this.ficheLieu?.destroy() // idem — le tiroir du registre monte sur document.body
     })
@@ -289,14 +282,6 @@ export class UIScene extends Phaser.Scene {
     // one-shot de `update` (`onRelever` empile ses écouteurs sans les retirer : la
     // N-ième mort aurait rappelé le geste N fois).
     this.deathVeil.onRelever(() => this.demanderARelever())
-    // La stèle de fin de saison (finition GATE 1) : SŒUR du voile de mort, terminale.
-    // WorldScene pose `seasonVerdicts` au jour 61 (sa non-nullité = fin de saison) ; on la lève une fois.
-    // ROUVRIR LA VALLÉE : la case et la seed du monde en cours (posées au `ready` par
-    // WorldScene) — lues AU CLIC, pas à la construction : la stèle se monte avant le `ready`.
-    this.seasonVeil = createSeasonVeil(() => {
-      const v = getHud(this.registry, 'veillee')
-      reopenFreshVeillee(v?.slot ?? 0, v?.seed ?? VEILLEE_SEED)
-    })
     // Le menu PAUSE (ESC) : REPRENDRE referme (menuOpen=false → WorldScene reprend l'hôte) ; le
     // curseur de son passe par le registre (`audioVolume`), que WorldScene applique au moteur.
     // LE TIROIR DU REGISTRE (T5) : `registreDuLieu`/`ficheDuLieu` vivaient dans /sim, purs et
@@ -1027,9 +1012,7 @@ export class UIScene extends Phaser.Scene {
       now: this.time.now,
     })
 
-    // Le journal : ouvert À LA DEMANDE (J). La fin de saison ne le force PLUS : c'est la stèle
-    // (season-veil) qui prend la cérémonie, et elle tient sa propre chronique.
-    const chronicle = getHud(this.registry, 'chronicle') ?? []
+    // Le journal : ouvert À LA DEMANDE (J).
     const open = Boolean(getHud(this.registry, 'journalOpen'))
     this.journalPanel.setVisible(open)
     if (open) {
@@ -1043,15 +1026,6 @@ export class UIScene extends Phaser.Scene {
         for (const e of v.entrees) lignes.push(formatChronicleLine(e))
       }
       this.journalText.setText(lignes.slice(-26).join('\n') || '(rien encore — le monde est jeune)')
-    }
-
-    // LA STÈLE DE FIN DE SAISON : levée UNE fois, au jour 61, avec les verdicts et la chronique
-    // entière (le vrai trophée). Terminale — le joueur ROUVRE la vallée (?fresh) depuis elle.
-    // `seasonVerdicts` non-null EST le signal de fin de saison (posé au `season_ended`).
-    const verdicts = getHud(this.registry, 'seasonVerdicts')
-    if (!this.seasonVeilShown && verdicts) {
-      this.seasonVeilShown = true
-      this.seasonVeil.show(verdicts.verdicts, verdicts.myVillageId, chronicle)
     }
 
     // Le menu PAUSE (ESC) : WorldScene fige l'hôte quand `menuOpen` ; on ne fait que montrer/cacher.

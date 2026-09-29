@@ -137,7 +137,6 @@ import {
   publishPickup,
   publishPlayerVitals,
   publishSaved,
-  publishSeasonEnded,
   publishStationsInRange,
   publishTimeAndVillage,
   KINDS_SANS_BANDEAU,
@@ -1109,7 +1108,6 @@ export class WorldScene extends Phaser.Scene {
    *  arrivent). Sans ce forçage, aucun événement neuf ne la déclencherait et le récit
    *  repris resterait invisible. */
   private chronicleReseedPending = false
-  private evacMarker: Phaser.GameObjects.Arc | null = null
   private myWounds: Entity['wounds'] = {}
   private myStamina = 100
   /** À bout de souffle (R1ter) — absent tant qu'on ne l'est pas. */
@@ -4356,26 +4354,6 @@ export class WorldScene extends Phaser.Scene {
           this.eventLog.splice(0, this.eventLog.length - EVENT_LOG_CAP)
         }
         chronicleDirty = true
-        if (event.type === 'evacuation_opened') {
-          this.evacMarker?.destroy()
-          this.evacMarker = this.add
-            .circle(event.tx * TILE_PX + 8, event.ty * TILE_PX + 8, 10, 0xffd94a, 0.6)
-            .setStrokeStyle(2, 0xfff2b0)
-            .setDepth(OVERLAY_DEPTH)
-          publishError(this.registry, 'Une arche s’est ouverte. Embarquez AVANT qu’elle ne lève l’ancre.', this.time.now)
-        }
-        if (event.type === 'ark_departed') {
-          // L'ARCHE EST PARTIE (V2-24) : le marqueur disparaît, on le DIT (le train est passé).
-          this.evacMarker?.destroy()
-          this.evacMarker = null
-          publishError(this.registry, event.saved > 0 ? `L’arche a levé l’ancre — ${event.saved} à bord.` : 'L’arche est partie. À vide.', this.time.now)
-        }
-        if (event.type === 'season_ended') {
-          publishSeasonEnded(this.registry, event.verdicts, this.myVillageId)
-          // La saison est finie : l'objectif d'évacuation n'a plus de sens.
-          this.evacMarker?.destroy()
-          this.evacMarker = null
-        }
       }
     }
     if (chronicleDirty) {

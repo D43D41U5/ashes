@@ -118,11 +118,9 @@ export const INVENTAIRE: Inventaire = {
   // ── LES BATTEMENTS DE LA SAISON — le temps qui serre, et la menace ────────────────
   night_started: { voix: 'voix', ou: 'monde', famille: 'saison', quoi: 'la nuit tombe' },
   alarm_raised: { voix: 'voix', ou: 'village', famille: 'saison', quoi: 'l’alarme du village — la milice se lève' },
-  evacuation_opened: { voix: 'voix', ou: 'monde', famille: 'saison', quoi: 'le point d’évacuation s’ouvre sur la route' },
   day_started: { voix: 'muet', famille: 'saison', quoi: 'le jour se lève' },
-  season_day_started: { voix: 'muet', famille: 'saison', quoi: 'un jour de saison de plus (sur 60)' },
+  season_day_started: { voix: 'muet', famille: 'saison', quoi: 'un jour de saison de plus' },
   act_started: { voix: 'voix', ou: 'monde', famille: 'saison', quoi: 'un ACTE commence — la pression change de cran' },
-  season_ended: { voix: 'voix', ou: 'monde', famille: 'saison', quoi: 'la saison s’achève, les verdicts tombent' },
   cendre_avance: { voix: 'voix', ou: 'monde', famille: 'saison', quoi: 'la Cendre a mangé un morceau de la vallée' },
   cendre_prend: { voix: 'muet', famille: 'registre', quoi: 'le front passe les ouvrages d’un village — muet : souvent lointain (les villages PNJ du sud tombent d’abord), la perte se lit dans la chronique et se voit au cortège ; une voix viendra avec le chantier audio de la Cendre si le playtest la réclame' },
   cendreux_risen: { voix: 'voix', ou: 'xy', famille: 'saison', quoi: 'un cendreux se relève' },
@@ -175,7 +173,6 @@ export const INVENTAIRE: Inventaire = {
   crue_retiree: { voix: 'muet', famille: 'saison', quoi: 'la crue s’est retirée' },
   gues_fermes: { voix: 'muet', famille: 'saison', quoi: 'la crue a fermé les gués' },
   gues_rouverts: { voix: 'muet', famille: 'saison', quoi: 'les gués ont rouvert' },
-  ark_departed: { voix: 'voix', ou: 'monde', famille: 'saison', quoi: 'l’Arche lève l’ancre — avec ceux qui étaient à bord' },
 
   // ── BÂTIR, CRAFTER, MANGER — 4 voix : poser, perdre, finir, cuire ────────────────
   // ⚠ TREIZE VOIX DE MATIÈRE, PAS UNE (2026-08-27) — le geste le plus répété du jeu parle LA

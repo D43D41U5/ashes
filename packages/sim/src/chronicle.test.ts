@@ -294,28 +294,6 @@ describe('chronicleFromEvents — entrées structurées {jour, texte, poids}', (
     expect(entries).toHaveLength(0)
   })
 
-  it('déplie la fin de saison : un battement puis les verdicts en récit', () => {
-    const entries = chronicleFromEvents(
-      [
-        at(48, {
-          type: 'season_ended',
-          verdicts: [
-            { villageId: 1, name: 'le Foyer de la Rivière', archetype: 'foyer', score: 3, outcome: 'a tenu jusqu’au bout' },
-            { villageId: 2, name: 'la Meute des Cendres', archetype: 'meute', score: 2, outcome: 'est partie les bras pleins' },
-          ],
-        }),
-      ],
-      SCALE,
-      DEPART,
-      NAMES,
-      CARTE,
-    )
-    expect(entries.map((e) => e.weight)).toEqual(['battement', 'recit', 'recit'])
-    expect(entries[0]!.text).toBe("Le monde s'est éteint. Ce qu'on retiendra :")
-    expect(entries[1]!.text).toBe('le Foyer de la Rivière a tenu jusqu’au bout.')
-    expect(entries.every((e) => e.day === 48)).toBe(true)
-  })
-
   /**
    * LE MOT « MÉGA-HORDE » NE SE DÉPENSE QU'UNE FOIS PAR SAISON (décision d'Alexis,
    * 2026-08-02). Le seuil valait `12` écrit en clair — soit exactement la taille d'une horde

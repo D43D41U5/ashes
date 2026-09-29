@@ -33,7 +33,6 @@ function vallee(): SimState {
     map: carte.map,
     calendarScale: TICKS_PER_SEASON_DAY / TICKS_PER_CYCLE,
     jourDeDepart: BALANCE.JOUR_DE_DEPART,
-    finDeSaison: null,
   })
   return cache
 }

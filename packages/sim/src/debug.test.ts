@@ -150,7 +150,6 @@ describe('debug — le saut de calendrier mène VRAIMENT à la saison', () => {
       debug: true,
       calendarScale: TICKS_PER_SEASON_DAY / TICKS_PER_CYCLE,
       jourDeDepart: BALANCE.JOUR_DE_DEPART,
-      finDeSaison: null,
     })
     const player = spawnEntity(sim, 10, 10)
 

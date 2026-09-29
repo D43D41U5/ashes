@@ -34,7 +34,7 @@ import {
   type WorldMap,
 } from '@ashes/sim'
 import type Phaser from 'phaser'
-import { getHud, setHud, type CapacitesEnPortee, type FireView, type SeasonVerdict } from '../../hud-state'
+import { getHud, setHud, type CapacitesEnPortee, type FireView } from '../../hud-state'
 
 type Registry = Phaser.Data.DataManager
 
@@ -576,9 +576,3 @@ export function publishAlarm(registry: Registry, at: number): void {
   setHud(registry, 'alarm', { at })
 }
 
-export function publishSeasonEnded(registry: Registry, verdicts: SeasonVerdict[], myVillageId: number | null): void {
-  // Les verdicts + l'id de MON village : l'écran de fin de saison couronne le mien, montre
-  // les voisins, et le distingue par archétype. `seasonVerdicts !== null` EST « la saison est
-  // finie » — pas besoin d'un booléen miroir à côté. Le récit (chronique) est déjà en état.
-  setHud(registry, 'seasonVerdicts', { verdicts, myVillageId })
-}

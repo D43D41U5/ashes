@@ -1,5 +1,12 @@
 # La saison sans fin — une loi, deux réglages
 
+> **⚠ 2026-09-29 — LA FIN DE SAISON N'EXISTE PLUS DU TOUT.** Avec le pivot de la braise, la coupe
+> de T4 est allée jusqu'au bout : `finDeSaison`, l'évacuation, l'Arche, `computeVerdicts` et la
+> stèle de fin ont été **retirés du code** — le multi n'est plus la cible, donc le « conservés tels
+> quels pour le wipe multi » de **R4bis** n'a plus d'objet. Ce qui RESTE vrai et vivant : l'année qui
+> tourne (R1-R2, R4), le calendrier des saisons, l'arc oscillant, les volumes de chronique (R9).
+> Ce qui est CADUC : R3 (b) le reset, R4bis, R5, R6 — ils décrivent un wipe qui n'a plus de serveur.
+
 *Source : décisions d'Alexis du 2026-07-31 (journal). **Supersède le cadre de `saison.md`** (60 jours, trois actes, fin au jour 61) sans en annuler les mécanismes : la méga-horde, la chronique et les verdicts survivent, ils changent d'ancrage. Statut : **en cours — T1 (les dix lois totales), T2 (le calendrier des tours : l'année de 84 jours, quatre actes de 21, `actForDay` non borné) T3 (le front en escalier), T4 (la fin qui n'en est plus une : ni verdict ni Arche en solo) et T5 (la mémoire des hivers : la chronique se scelle au tour de l'année) livrées le 2026-08-21 ; plan en cinq tranches dans `docs/superpowers/plans/2026-08-21-saison-sans-fin-tranches.md`**. Jalon : avant GATE 1 (O7 tranchée de fait par « continue », 2026-08-21). O1 est RÉPONDUE : **l’arc oscille** (décision d’Alexis 2026-08-21) — pas de dernier acte, un hiver qui revient plus dur.*
 
 ## Objectif de design

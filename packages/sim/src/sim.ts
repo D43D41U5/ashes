@@ -342,18 +342,9 @@ export interface SimState {
    * LE JOUR OÙ CE MONDE A COMMENCÉ (spec `saisons.md` S2). Le vrai jeu ouvre au jour 51, à la
    * fin de l'Ardeur ; un montage de test ouvre au jour 1, à l'Éclosion. Dans l'ÉTAT et non
    * dans une option volatile : le replay et la sauvegarde doivent le retrouver, sinon une
-   * partie reprise change de saison — patron de `finDeSaison`.
+   * partie reprise change de saison.
    */
   jourDeDepart: number
-  /**
-   * LE RESET (spec `saison-sans-fin.md` R3b, T4) — le jour de saison après lequel la saison
-   * FINIT (verdicts, évacuation avant), ou `null` : JAMAIS. **En solo, jamais** (R4 — décision
-   * d'Alexis 2026-08-21 : ni verdict ni Arche en Veillée, la saison ne finit pas, elle tourne) ;
-   * le multi garde le jour 61 tant que le wipe n'est pas bâti. Dans l'état, pas dans une
-   * option volatile : le replay et la sauvegarde doivent le retrouver. Absent d'une vieille
-   * sauvegarde : `undefined` vaut `null` — une Veillée d'avant le pivot ne finit plus non plus.
-   */
-  finDeSaison: number | null
   /**
    * Décalage de PHASE du cycle jour/nuit, en ticks (0 = le cycle démarre à
    * l'aube). N'affecte QUE le cycle diégétique, jamais le calendrier de saison —
@@ -423,22 +414,9 @@ export interface SimState {
   lastConvoyDay: number
   /** Mémoire d'agression entre villages (premier sang, spec alignement R4). */
   aggressions: Aggression[]
-  evacuation: { tx: number; ty: number } | null
-  /** L'ARCHE EST PARTIE — le verrou une-seule-fois, comme `megaHordeSpawned`. Sans lui,
-   *  `evacuation = null` au départ re-remplissait la condition d'ouverture au tick suivant :
-   *  ouvre→part→ouvre→part À CHAQUE TICK dès le jour 58 (57 600 événements/jour mesurés au
-   *  banc de saison le 2026-08-16, `evacuatedIds` regonflé en boucle, un tirage RNG par
-   *  réouverture). Absent d'une vieille sauvegarde : `undefined` vaut `false`, l'Arche n'y
-   *  était jamais partie. */
-  arkDeparted: boolean
-  /** L'ARCHE (V2-24) : les entités montées à bord AVANT le départ (dans le rayon à l'heure du
-   *  départ). L'évacuation n'est plus un marqueur passif — elle LÈVE L'ANCRE : seuls les
-   *  embarqués comptent au verdict Foyer, pas ceux qui traînent près à la fin. */
-  evacuatedIds: number[]
   /** Lieux déjà atteints par un joueur, tous joueurs confondus (spec lieux R12).
    *  Global : il n'y a qu'un premier — en multi, c'est une course. */
   visitedPois: number[]
-  seasonEnded: boolean
   nextVillageId: number
   nextStructureId: number
   /** Buffer d'événements de domaine, drainé par l'hôte (voir events.ts). */
@@ -589,9 +567,6 @@ export interface SimOptions {
   /** Le jour de saison où le monde ouvre (spec `saisons.md` S2) — 51 dans le vrai jeu,
    *  1 par défaut (les montages de test ouvrent à l'Éclosion). */
   jourDeDepart?: number
-  /** Le jour après lequel la saison finit, ou `null` : jamais (le solo). Défaut : le jour 60 —
-   *  la saison nominale des bancs, des tests et du multi d'aujourd'hui. */
-  finDeSaison?: number | null
   /** Nœuds de ressources — typiquement `generateNodes(map, seed)`. */
   nodes?: ResourceNode[]
   /** Décalage de phase du cycle (ticks) — voir `cycleOffsetForStartHour`. */
@@ -669,12 +644,6 @@ export function createSim(seed: number, options: SimOptions = {}): SimState {
     rngState: seed >>> 0,
     calendarScale: options.calendarScale ?? BALANCE.DEFAULT_CALENDAR_SCALE,
     jourDeDepart: options.jourDeDepart ?? 1,
-    // RELATIF AU JOUR DE DÉPART (S2) : une saison dure `SEASON_DAYS` jours À PARTIR de
-    // l'ouverture. En absolu, un monde né au jour 51 rendait ses verdicts dix cycles plus tard.
-    finDeSaison:
-      options.finDeSaison === undefined
-        ? (options.jourDeDepart ?? 1) + BALANCE.SEASON_DAYS - 1
-        : options.finDeSaison,
     cycleOffset: ((options.cycleOffset ?? 0) % TICKS_PER_CYCLE + TICKS_PER_CYCLE) % TICKS_PER_CYCLE,
     // Copies profondes (JSON — l'état est JSON-sérialisable par design) :
     // les options sont des ENTRÉES immuables. Les partager par référence
@@ -701,11 +670,7 @@ export function createSim(seed: number, options: SimOptions = {}): SimState {
     lastConvoyDay: 0,
     aggressions: [],
     presage: null,
-    evacuation: null,
-    arkDeparted: false,
-    evacuatedIds: [],
     visitedPois: [],
-    seasonEnded: false,
     nextVillageId: 1,
     nextStructureId: 1,
     events: [],

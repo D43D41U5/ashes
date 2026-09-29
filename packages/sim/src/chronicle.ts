@@ -98,10 +98,7 @@ export const CHRONICLE_EVENT_TYPES: ReadonlySet<SimEvent['type']> = new Set([
   'blizzard_annonce',
   'gift_given',
   'entity_died',
-  'evacuation_opened',
-  'ark_departed',
   'poi_first_visit',
-  'season_ended',
   // L'EAU DE LA VALLÉE (D1, 2026-09-12) : six bascules, rares, toutes racontées.
   'eau_a_sec',
   'eau_revenue',
@@ -271,15 +268,6 @@ export function chronicleFromEvents(
         // L'intime : discret et grave. Sa sobriété est son poids.
         if (!e.wasMonster) push(`Quelqu'un est tombé.`, 'intime')
         break
-      case 'evacuation_opened':
-        push(`Une arche s'est ouverte sur la route. Embarquez avant qu'elle ne parte.`, 'battement')
-        break
-      case 'ark_departed':
-        push(
-          e.saved > 0 ? `L'arche a levé l'ancre — ${e.saved} à bord, sauvés.` : `L'arche est partie à vide.`,
-          'battement',
-        )
-        break
       case 'cendre_avance':
         // LE PREMIER MORS SEULEMENT. Le front avance ensuite chaque jour — quarante lignes
         // identiques ne raconteraient rien (le « rare se dit » des annales, appliqué au monde
@@ -368,11 +356,6 @@ export function chronicleFromEvents(
             push(`On a atteint ${e.name}. Elle regardait ${guet.cause === 'est' ? "l'est" : guet.cause === 'ouest' ? "l'ouest" : `le ${guet.cause}`}.`, 'recit', e.poiId)
           }
         }
-        break
-      case 'season_ended':
-        // La finale : un battement, suivi des verdicts (le corps de la stèle).
-        push(`Le monde s'est éteint. Ce qu'on retiendra :`, 'battement')
-        for (const v of e.verdicts) push(`${v.name} ${v.outcome}.`, 'recit')
         break
     }
   }

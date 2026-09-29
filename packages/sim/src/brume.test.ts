@@ -72,14 +72,9 @@ function jourDeBrume(eligible: boolean, depuis = PREMIER_JOUR_FROID): number {
   throw new Error(`aucun jour de ${depuis} à ${DERNIER_JOUR_FROID} ne convient — le hash aurait ${tirages} tirages identiques`)
 }
 
-/**
- * ⚠ `finDeSaison: null` — **la saison ne finit pas, elle tourne** (le réglage du solo, T4).
- * La Brume vit désormais aux jours 61-120, au-delà des `SEASON_DAYS` = 60 de la fin de saison
- * par défaut : sans ça, chaque montage jouerait l'évacuation, l'Arche et le verdict de fin de
- * saison par-dessus la nappe qu'on mesure.
- */
+/** La Brume vit aux jours 61-120 : l'année tourne sans fin (la saison ne finit plus — 2026-09-29). */
 function simBrume(seed = 2026): SimState {
-  return createSim(seed, { map: carteACendre(), calendarScale: SCALE, finDeSaison: null })
+  return createSim(seed, { map: carteACendre(), calendarScale: SCALE })
 }
 
 describe('la prémisse du banc', () => {
@@ -127,7 +122,7 @@ describe('l’annonce (A3, A8)', () => {
   })
 
   it('A8 — worldEvents=false : aucune annonce, jamais', () => {
-    const sim = createSim(2026, { map: carteACendre(), calendarScale: SCALE, worldEvents: false, finDeSaison: null })
+    const sim = createSim(2026, { map: carteACendre(), calendarScale: SCALE, worldEvents: false })
     sim.tick = tickCrepusculeDuJour(jourDeBrume(true))
     drainEvents(sim)
     step(sim, [])
@@ -135,7 +130,7 @@ describe('l’annonce (A3, A8)', () => {
   })
 
   it('une carte SANS champ de Cendre (les bancs) ne voit jamais de Brume', () => {
-    const sim = createSim(2026, { calendarScale: SCALE, finDeSaison: null })
+    const sim = createSim(2026, { calendarScale: SCALE })
     sim.tick = tickCrepusculeDuJour(jourDeBrume(true))
     drainEvents(sim)
     step(sim, [])
@@ -410,7 +405,6 @@ describe('la Brume se lève sur le MONDE RÉEL, pas seulement sur le banc', () =
       map: carteReelle.map,
       nodes: nodesReels,
       calendarScale: SCALE,
-      finDeSaison: null,
     })
   }
 

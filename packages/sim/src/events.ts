@@ -369,9 +369,6 @@ export type SimEvent =
   | { type: 'gues_rouverts'; tick: number; day: number }
   | { type: 'gift_given'; tick: number; byEntityId: number; toVillageId: number; item: ItemId; count: number }
   | { type: 'village_archetype_changed'; tick: number; villageId: number; archetype: 'foyer' | 'meute' | 'neutre' }
-  | { type: 'evacuation_opened'; tick: number; tx: number; ty: number }
-  /** L'ARCHE A LEVÉ L'ANCRE (V2-24) : `saved` = combien étaient à bord. */
-  | { type: 'ark_departed'; tick: number; tx: number; ty: number; saved: number }
   | { type: 'cendreux_risen'; tick: number; entityId: number; x: number; y: number }
   /**
    * LE FEU A ÉTOUFFÉ UN RÉVEIL (spec `cendreux.md` R21) — la parade de S4, enfin quotidienne.
@@ -400,17 +397,6 @@ export type SimEvent =
   /** LE RITUEL DU BÛCHER (spec `cendre.md` R31b) — le SEUL recul du monde : l'âge du foyer
    *  vient de reculer de plusieurs jours. La chronique le tient. */
   | { type: 'bucher_rituel'; tick: number; zone: number; jours: number; x: number; y: number }
-  | {
-      type: 'season_ended'
-      tick: number
-      verdicts: {
-        villageId: number
-        name: string
-        archetype: 'foyer' | 'meute' | 'neutre'
-        score: number
-        outcome: string
-      }[]
-    }
   /**
    * L'ENVOL DE LA LISIÈRE (forêts-vivantes §3 R4) : un pas bruyant sur une lisière de bois
    * fait gicler les oiseaux — la forêt prévient AVANT que la bête entende. Le client rend

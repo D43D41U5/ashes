@@ -106,15 +106,6 @@ export interface FireView {
     | null
 }
 
-/** Le verdict d'un village à la fin de la saison (spec saison R4, événement `season_ended`). */
-export interface SeasonVerdict {
-  villageId: number
-  name: string
-  archetype: 'foyer' | 'meute' | 'neutre'
-  score: number
-  outcome: string
-}
-
 /** Une propriété par clé du registry — la seule source de vérité des clés. */
 export interface HudState {
   /** La vallée est-elle générée ? Posé à `false` au boot de WorldScene, à `true`
@@ -440,11 +431,6 @@ export interface HudState {
   fatal: { reason: string }
   /** Dernière alarme de mon village (flash rouge). */
   alarm: { at: number }
-  /** Les VERDICTS de fin de saison + l'id de MON village (pour couronner le mien). `null` tant
-   *  que la saison n'est pas finie — sa non-nullité EST le signal « saison finie ». Lu par
-   *  l'écran de fin de saison (ui/season-veil). */
-  seasonVerdicts: { verdicts: SeasonVerdict[]; myVillageId: number | null } | null
-
   // ─── Mode debug (DEV uniquement — voir scenes/world/debug-bindings.ts) ───
   /** P : le mode debug est-il armé ? (rien d'autre ne s'affiche ni ne répond sans lui) */
   debugOn: boolean
@@ -501,7 +487,7 @@ export const CLES_HUD: Record<keyof HudState, true> = {
   saveState: true, pendingActions: true, journalOpen: true, mapOpen: true, menuOpen: true,
   veillee: true, quitMondes: true, audioVolume: true, mapData: true, knownPois: true, knownGrounds: true,
   playerPos: true, chronicle: true, volumesScelles: true, volumesVifs: true, error: true, hint: true, fatal: true,
-  alarm: true, seasonVerdicts: true, debugOn: true, debugGod: true, debugSpeed: true,
+  alarm: true, debugOn: true, debugGod: true, debugSpeed: true,
   debugLighting: true, debugGi: true, debugInfo: true, debugTeleport: true,
 }
 

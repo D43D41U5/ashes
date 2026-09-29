@@ -39,7 +39,7 @@ import { advancePois } from './poi-discovery'
 import { advanceWorldEvents } from './worldevents'
 import { advanceFire, fireState } from './fire'
 import { foundNpcVillage } from './worldgen'
-import { POI, SEASON, SLOTS } from './balance'
+import { POI, SLOTS } from './balance'
 import { cycleOffsetForStartHour } from './time'
 
 /* ══════════ LA MESA DE LABORATOIRE — et le point AVEUGLE qu'elle offre ══════════
@@ -466,27 +466,6 @@ describe('E-A3 — les sites de PORTÉE repris le 2026-09-07', () => {
     expect(r.temoin, 'sur le plateau, un plancher entre les deux : pas d’alarme').toBe(false)
   })
 
-  it('L’ARCHE : on n’embarque pas depuis l’étage d’en dessous', () => {
-    const r = lesDeuxSens((etageDuPassager) => {
-      const state = monde()
-      // Le quai sur le PLATEAU, le passager au sol juste à côté — dans EVAC_RADIUS.
-      // L'Arche n'existe QUE dans une saison qui finit (`finDeSaison`, saison-sans-fin T4), et
-      // son jour se compte DEPUIS la fin. On pose donc les deux, et le jour de départ.
-      state.finDeSaison = BALANCE.SEASON_DAYS
-      const jourEvac = state.finDeSaison - (BALANCE.SEASON_DAYS - SEASON.EVAC_DAY)
-      state.jourDeDepart = jourEvac + SEASON.EVAC_DEPART_DAYS
-      state.evacuation = { tx: CAP_X0, ty: CAP_Y0 }
-      state.arkDeparted = false
-      state.evacuatedIds = []
-      const id = poser(state, BAS, etageDuPassager)
-      advanceWorldEvents(state)
-      return state.evacuatedIds.includes(id)
-    })
-    // Le quai est au SOL (le chapeau est un ÉTAGE, pas un palier : `palierDuSol` y vaut 0),
-    // donc c'est le passager du sol qui est le TÉMOIN, et celui du plateau le cas de la règle.
-    expect(r.aTravers, 'témoin : au même étage que le quai, on embarque').toBe(true)
-    expect(r.temoin, 'depuis le plateau, un plancher entre les deux : on reste').toBe(false)
-  })
   /**
    * LE FEU (R13) — repris parce que l'excuse qui l'avait différé était fausse. §20 disait ces
    * deux sites « impossibles à mettre en scène : il y faudrait un envol ou un camp allumé sur la

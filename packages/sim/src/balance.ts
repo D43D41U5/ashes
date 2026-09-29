@@ -6460,7 +6460,7 @@ export const CONVOY_LOOT: import('./items').ItemBag = {
   coal: 4,
 }
 
-/** La saison (GDD §2, spec saison) : la pression, la Cendre, la fin. */
+/** La saison (GDD §2, spec saison) : la pression et la Cendre. */
 export const SEASON = {
   /** Les sources se contractent : repousse des nœuds ralentie par acte. */
   // ⚠ LA SEULE LIGNE QUI S'ÉCARTE DE « la pression suit le froid », et S10 l'impose : la
@@ -6469,30 +6469,7 @@ export const SEASON = {
   REGROW_ACT_FACTOR: actLaw([1, 2, 1.5, 3]), // S13 : quatre paliers, réordonnés sur l'Éclosion · l'Ardeur · les Pluies · le Grand Froid
   /* (la méga-horde scriptée du premier crépuscule de la Cendre est SUPPRIMÉE — décision ⑲,
    *  2026-08-21 : la horde est une pente continue, la dernière nuit est naturellement la pire.) */
-  /** Le jour où l'évacuation s'ouvre, et son rayon de « sauvetage ». */
-  EVAC_DAY: 55,
-  EVAC_RADIUS: 6,
-  /** L'ARCHE LÈVE L'ANCRE (V2-24) ce nombre de jours APRÈS l'ouverture : la fenêtre pour
-   *  embarquer. Départ au jour EVAC_DAY + EVAC_DEPART_DAYS (58) — avant la fin (60), pour que
-   *  le départ soit un ACTE, pas la fin passive. Ordre de grandeur playtest. */
-  EVAC_DEPART_DAYS: 3,
 } as const
-
-/** Valeur de butin pour le verdict de la Meute (spec saison R4). */
-export const LOOT_VALUES: Partial<Record<import('./items').ItemId, number>> = {
-  components: 10,
-  iron_ingot: 5,
-  iron_axe: 3,
-  iron_pickaxe: 3,
-  spear: 3,
-  axe: 2,
-  pickaxe: 2,
-  // La fortune ne vaut presque rien : piller un camp qui n'a que des cailloux
-  // ficelés ne doit pas nourrir le verdict de la Meute.
-  crude_axe: 1,
-  crude_pickaxe: 1,
-  crude_spear: 1,
-}
 
 /** Noms de villages, attribués par id (une chronique exige des noms). */
 export const VILLAGE_NAMES = [

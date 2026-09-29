@@ -133,7 +133,10 @@ describe('la table de routage audio (soundForEvent)', () => {
     // 106 → 107 faits et 57 voix INCHANGÉES le 2026-09-13 : `nasse_caught` naît MUET (`nasse.md`
     // N15, reprise de l'eau D3) — la récolte parle déjà au même tick (la raison de `fish_caught`),
     // et la nasse prend SEULE : une voix sonnerait sur une eau où il n'y a aucune oreille.
-    expect(total).toBe(107)
+    // 107 → 104 le 2026-09-29 : la FIN DE SAISON est retirée du code (`evacuation_opened`,
+    // `season_ended`, `ark_departed`) — trois faits, TROIS VOIX, zéro silence. Le verdict classait
+    // des villages qui n'existent plus ; la famille `saison` reste peuplée.
+    expect(total).toBe(104)
     // 34 → 35 le 2026-07-29 : `node_depleted` a gagné sa voix (trois, selon la matière).
     // 61 → 62 faits et 35 → 36 voix le 2026-07-30 : `door_toggled` naît (spec construction R26).
     // 62 → 63 faits et 36 → 37 voix le 2026-07-31 : `cendreux_prowl` naît (spec cendreux R11bis) —
@@ -149,7 +152,9 @@ describe('la table de routage audio (soundForEvent)', () => {
     // le jumeau grave du préavis de Brume ; `entre`/`passe` restent à la nappe du vent.
     // 57 → 58 le 2026-08-30 : `murmure_recueilli` — le souffle qui retombe (R27c), arrivé avec
     // son fantôme.
-    expect(voix).toBe(57)
+    // 57 → 54 le 2026-09-29 : − `evacuation_opened`, `season_ended`, `ark_departed` — la fin de
+    // saison n'existe plus (le pivot de la braise). Les silences ne bougent pas (50).
+    expect(voix).toBe(54)
   })
 
   it('L’AXE D’ALIGNEMENT S’ENTEND : les verbes chauds montent, les froids tombent', () => {

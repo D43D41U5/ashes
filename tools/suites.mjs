@@ -158,6 +158,13 @@ const SUITES = [
   //   absorbe (`npc.test.ts`), écrite en CONSERVATION parce que la forme instantanée était verte
   //   sur le code fautif (le clamp de `feedVillageFire` masquait le gaspillage). Rouge sur
   //   `152401a` : 40 bûches pour 7,5 absorbables. Suite à 2509 ✓, plancher relevé d'autant.
+  // 2026-09-29 : −9 gardes — LA FIN DE SAISON EST RETIRÉE DU CODE (pivot de la braise, décision
+  //   d'Alexis). Neuf `it` ont perdu leur SUJET, pas leur loi : `saison.test.ts` −6 (l'évacuation
+  //   ×2, le verdict, et les trois de « la saison SANS fin » — une saison qui ne peut plus finir
+  //   n'a pas de garde à poser), `saisons.test.ts` −1 (« la saison ne finit pas dix cycles après
+  //   l'ouverture », devenu structurel), `chronicle.test.ts` −1 (la stèle), `etages-etancheite`
+  //   −1 (E-R5 « on n'embarque pas depuis l'étage d'en dessous » — la LOI survit dans les autres
+  //   sites du fichier). Suite à 2500 ✓ ; PLANCHER INCHANGÉ (2429), la marge l'absorbe.
   { nom: 'sim', dir: 'packages/sim', args: ['run', '--exclude', 'src/scenario.test.ts'], plancher: 2429 },
   // 2026-09-01 : +10 gardes avec le RENDU des étages (`plateau-art.test.ts`).
   // 2026-09-01 : +9 gardes avec le TRI DES ÉTAGES (strate, découvert — `framing.test.ts`),

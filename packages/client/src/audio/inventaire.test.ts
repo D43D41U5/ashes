@@ -65,7 +65,10 @@ describe('l’inventaire des 97 faits', () => {
     // `batir` — MUET pour DEUX raisons : la récolte parle déjà (c'est celle de `fish_caught`), et
     // la nasse prend SEULE, sans personne au bord de l'eau — une voix sonnerait là où il n'y a
     // aucune oreille. Le fait existe pour la chronique.
-    expect(somme).toBe(107)
+    // 107 → 104 le 2026-09-29 : la FIN DE SAISON est retirée du code (`evacuation_opened`,
+    // `season_ended`, `ark_departed`) — trois faits, TROIS VOIX, zéro silence. Le verdict classait
+    // des villages qui n'existent plus ; la famille `saison` reste peuplée.
+    expect(somme).toBe(104)
   })
 
   it('chaque fait DIT ce qu’il raconte — pas son identifiant', () => {
@@ -134,7 +137,9 @@ describe('l’inventaire des 97 faits', () => {
     // 60 → 56 voix le 2026-08-30 : les réfugiés quittent le jeu (4 voix, 2 silences en moins).
     // 56 → 57 le 2026-08-31 : `attack_interrupted` — le coup brisé décide de l'échange,
     // il ne pouvait pas rester muet (voir `sound.test.ts`).
-    expect(SONORES.length).toBe(57)
+    // 57 → 54 le 2026-09-29 : − `evacuation_opened`, `season_ended`, `ark_departed` — la fin de
+    // saison n'existe plus (le pivot de la braise). Les silences ne bougent pas (50).
+    expect(SONORES.length).toBe(54)
     // 33 → 34 le 2026-08-21 : `refugee_rumeur` naît MUET (annales.md R12) — le geste de
     // nourrir parle déjà, le renseignement se lit dans la chronique.
     // 34 → 35 le 2026-08-21 : `cendre_prend` naît MUET (P5a) — la perte se lit et se voit.

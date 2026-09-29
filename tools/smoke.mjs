@@ -328,7 +328,7 @@ async function mesurerContraste(page, a, b) {
 /**
  * FONDER UN VILLAGE PRÈS DE SOI, ET RENDRE LE FEU QU'ON A VRAIMENT ALLUMÉ.
  *
- * Quatre scénarios recopiaient cette recette (`finale`, `porte`, `porte-double`, `arete`) ;
+ * Trois scénarios recopient cette recette (`porte`, `porte-double`, `arete`) ;
  * elle n'a plus qu'une définition, parce que la copie portait une COURSE — mesurée le
  * 2026-08-03, elle faisait rougir `porte-double` deux fois sur trois.
  *
@@ -14232,71 +14232,6 @@ Depuis le spawn (${depart.x.toFixed(0)}, ${depart.y.toFixed(0)}) :`)
   },
 
   /**
-   * LA STÈLE DE FIN DE SAISON se lève-t-elle, et COURONNE-t-elle le bon verdict ?
-   *
-   * Au jour 61, `season_ended` pose `seasonEnded` + `seasonVerdicts` (le registry est PARTAGÉ
-   * WorldScene↔UIScene). On INJECTE ces deux-là (comme `mort` injecte `deathMoment`) plus une
-   * chronique, puis on LIT le DOM et on REGARDE : la stèle couvre l'écran, nomme MON village,
-   * liste les voisins, et déplie la chronique. `reducedMotion` désarme la révélation échelonnée
-   * (l'horloge headless saute — même piège que le voile de mort), tout est visible d'emblée.
-   */
-  async saison(page) {
-    await page.emulateMedia({ reducedMotion: 'reduce' })
-    await page.waitForTimeout(1500) // stabilisation (harnais a déjà navigué + attendu mapData)
-    await page.evaluate(() => {
-      const r = window.__BRAISES__.scene.registry
-      r.set('chronicle', [
-        { day: 1, text: 'Un Feu s’est allumé : Brande-Haute.', weight: 'recit' },
-        { day: 22, text: 'Le Grand Froid a commencé.', weight: 'battement' },
-        { day: 47, text: 'Quelqu’un est tombé.', weight: 'intime' },
-        { day: 58, text: 'L’arche a levé l’ancre — 3 à bord.', weight: 'battement' },
-      ])
-      // `seasonVerdicts` non-null EST le signal de fin de saison (la stèle se lève dessus).
-      r.set('seasonVerdicts', {
-        myVillageId: 1,
-        verdicts: [
-          { villageId: 1, name: 'Brande-Haute', archetype: 'foyer', score: 5, outcome: 'a sauvé 3 vies dont 2 évacuées' },
-          { villageId: 2, name: 'Le Ravin', archetype: 'meute', score: 240, outcome: 'est partie les bras pleins (valeur 240)' },
-          { villageId: 3, name: 'Le Val', archetype: 'neutre', score: 4, outcome: 'a survécu' },
-        ],
-      })
-    })
-    await page.waitForTimeout(400) // UIScene.update lève la stèle (reduced-motion = instantané)
-    const dom = await page.evaluate(() => {
-      const sv = document.querySelector('.season-veil')
-      return {
-        count: document.querySelectorAll('.season-veil').length,
-        display: sv && getComputedStyle(sv).display,
-        title: document.querySelector('.sv-title')?.textContent ?? '',
-        youLabel: document.querySelector('.sv-you-label')?.textContent ?? '',
-        youName: document.querySelector('.sv-you-name')?.textContent ?? '',
-        youColor: (() => {
-          const n = document.querySelector('.sv-you-name')
-          return n ? getComputedStyle(n).color : ''
-        })(),
-        youOutcome: document.querySelector('.sv-you-outcome')?.textContent ?? '',
-        nbCount: document.querySelectorAll('.sv-nb').length,
-      }
-    })
-    console.log(`stèle de fin de saison : ${JSON.stringify(dom)}`)
-    await page.screenshot({ path: `${OUT}/saison-stele.png` })
-    // Déplier la chronique et vérifier ses lignes (les trois poids rendus).
-    await page.evaluate(() => document.querySelector('.sv-chron-toggle')?.click())
-    await page.waitForTimeout(200)
-    const chron = await page.evaluate(() => ({
-      open: getComputedStyle(document.querySelector('.sv-chronicle')).display,
-      lines: document.querySelectorAll('.sv-cl').length,
-      battements: document.querySelectorAll('.sv-cl.sv-battement').length,
-    }))
-    console.log(`chronique dépliée : ${JSON.stringify(chron)}`)
-    await page.screenshot({ path: `${OUT}/saison-chronique.png` })
-    if (dom.display !== 'flex' || !dom.youName.includes('Brande') || dom.nbCount !== 2) {
-      console.error(`!! LA STÈLE NE SE LÈVE PAS BIEN : ${JSON.stringify(dom)}`)
-    }
-    return { ...dom, chron }
-  },
-
-  /**
    * LE MENU PAUSE (ESC) s'ouvre-t-il, rappelle-t-il les contrôles, et se referme-t-il ?
    *
    * On presse ESC pour de VRAI (le chemin complet : keydown → `menuOpen` → l'hôte se fige,
@@ -14933,100 +14868,6 @@ Depuis le spawn (${depart.x.toFixed(0)}, ${depart.y.toFixed(0)}) :`)
       console.error(`!! LA CARTE EST REVENUE DANS L'AUTOSAVE : ${(dernier.octets / 1e6).toFixed(1)} Mo écrits, ${dernier.serialisationMs} ms de monde arrêté (attendu ~9 Mo)`)
     }
     return r
-  },
-
-  /**
-   * LE DERNIER ÉCRAN DU JEU EST-IL ATTEIGNABLE ? — la question que GATE 1 pose en dernier.
-   *
-   * Le scénario `saison` montre la stèle de fin, mais il l'OBTIENT EN LA FABRIQUANT : il écrit
-   * `seasonVerdicts` dans le registre à la main. Il prouve donc que l'écran se dessine bien —
-   * pas que le jeu y mène. Or l'en-tête de ce fichier pose la règle : « le smoke test LIT
-   * l'état, il ne le fabrique pas ».
-   *
-   * Personne n'a jamais vu la fin de saison sortir de la simulation. C'est pourtant le dernier
-   * écran que GATE 1 montrera — et une saison solo vaut ~4 h 48 de jeu (6 cycles), donc
-   * personne ne l'atteindra par accident non plus.
-   *
-   * Ici, on ne touche PAS à l'écran. On fonde un vrai Feu, on pousse le CALENDRIER au jour 61
-   * (`debug_set_season_day`, qui se pose un tick avant la bascule pour que la sim la franchisse
-   * elle-même), et on regarde ce que le jeu fait de lui-même : `/sim` émet `season_ended` avec
-   * ses verdicts, le pont les publie, la stèle se lève. Tout ce qu'on lit ensuite vient de la
-   * simulation. Exige `--dev`.
-   */
-  async finale(page) {
-    await page.emulateMedia({ reducedMotion: 'reduce' })
-    await page.waitForFunction(() => Boolean(window.__BRAISES__?.scene?.registry?.get('worldReady')), null, { timeout: 150000 })
-    await page.evaluate(() => window.__BRAISES__.scene.sendAction({ type: 'debug_set_hour', hour: 11 }))
-    await page.waitForTimeout(500)
-
-    const doAction = async (action, wait = 150) => {
-      await page.evaluate((a) => window.__BRAISES__.scene.sendAction(a), action)
-      await page.waitForTimeout(wait)
-    }
-
-    // ── UN VRAI FEU, parce que la stèle COURONNE le village du joueur : sans village, on ne
-    // vérifierait que la moitié de l'écran (les voisins) et pas le verdict qui le regarde, lui.
-    const spawn = await page.evaluate(() => window.__BRAISES__.scene.registry.get('playerPos'))
-    const slotDe = (item) => page.evaluate((it) => (window.__BRAISES__.scene.registry.get('inv') ?? [])
-      .findIndex((s) => s?.item === it), item)
-    const feu = await fonderPres(page, doAction, slotDe, spawn)
-    // L'ID DU VILLAGE FONDÉ, tel que la sim me le reconnaît (`fonderPres` le rend avec
-    // l'adresse : un seul témoin, cf. sa note). C'est lui qui rend l'assertion finale non
-    // tautologique — sans ça, on ne saurait pas distinguer « la stèle couronne MON village »
-    // de « la stèle couronne un village PNJ », les deux affichant un nom.
-    const monVillageId = feu ? feu.village : null
-    console.log(`fondation : ${feu ? `Feu en (${feu.bx + 1}, ${feu.by}) → village ${monVillageId}` : 'ABSENTE — la stèle ne couronnera personne'}`)
-
-    // ── ON POUSSE LE CALENDRIER, PAS L'ÉCRAN. La fin de saison est RELATIVE au jour d'ouverture
-    //    depuis S2 (`jourDeDepart + SEASON_DAYS − 1`, soit 110 pour un monde né au jour 51).
-    const avant = await page.evaluate(() => window.__BRAISES__.scene.registry.get('seasonVerdicts') ?? null)
-    if (avant !== null) console.error('!! la saison était DÉJÀ finie avant le saut — le scénario ne prouverait rien')
-    await doAction({ type: 'debug_set_season_day', day: 111 }, 300)
-
-    // La stèle se lève sur le SNAPSHOT qui porte l'événement : on l'attend, on ne la pose pas.
-    let levee = false
-    try {
-      await page.waitForFunction(() => Boolean(window.__BRAISES__.scene.registry.get('seasonVerdicts')), null, { timeout: 20000 })
-      levee = true
-    } catch { /* on rapporte l'absence plus bas — elle EST le résultat */ }
-    await page.waitForTimeout(600)
-
-    const r = await page.evaluate(() => {
-      const reg = window.__BRAISES__.scene.registry
-      const sv = document.querySelector('.season-veil')
-      const verdicts = reg.get('seasonVerdicts')
-      return {
-        // ── ce que la SIMULATION a produit
-        verdictsDuSim: verdicts
-          ? { monVillage: verdicts.myVillageId, n: verdicts.verdicts.length, qui: verdicts.verdicts.map((v) => `${v.name}/${v.archetype}: ${v.outcome}`) }
-          : null,
-        chronique: (reg.get('chronicle') ?? []).length,
-        // ── ce que l'ÉCRAN en fait
-        steleLevee: sv ? getComputedStyle(sv).display : null,
-        titre: document.querySelector('.sv-title')?.textContent ?? '',
-        monNom: document.querySelector('.sv-you-name')?.textContent ?? '',
-        monVerdict: document.querySelector('.sv-you-outcome')?.textContent ?? '',
-        voisins: document.querySelectorAll('.sv-nb').length,
-        rouvrir: Boolean(document.querySelector('.sv-reopen')),
-      }
-    })
-
-    console.log(`finale : ${JSON.stringify(r, null, 2)}`)
-    await page.screenshot({ path: `${OUT}/finale.png`, fullPage: false })
-
-    if (!levee || !r.verdictsDuSim) {
-      console.error("!! LE FINALE N'EST PAS ATTEIGNABLE : le calendrier est au bout et `/sim` n'a pas rendu ses verdicts")
-    } else if (r.steleLevee !== 'flex') {
-      console.error(`!! /sim a fini la saison mais la stèle ne se lève pas (display=${r.steleLevee})`)
-    } else if (feu && !r.monNom) {
-      console.error('!! la stèle se lève mais ne couronne aucun village, alors que le joueur en a fondé un')
-    } else if (feu && monVillageId !== null && r.verdictsDuSim.monVillage !== monVillageId) {
-      // Le cas qui passerait pour une réussite : un nom s'affiche, mais c'est celui d'un
-      // voisin PNJ. La stèle est censée couronner le village DU JOUEUR — on le vérifie par
-      // l'identifiant, pas par la présence d'un texte.
-      console.error(`!! LA STÈLE COURONNE LE MAUVAIS VILLAGE : ${r.verdictsDuSim.monVillage} au lieu du tien (${monVillageId})`)
-    }
-    return { ...r, fondation: Boolean(feu), monVillageId }
   },
 
   /**
@@ -20168,7 +20009,7 @@ Depuis le spawn (${depart.x.toFixed(0)}, ${depart.y.toFixed(0)}) :`)
     //
     // Il n'y a AUCUN réglage de confort en jeu (l'écran Options ne porte que le son et les
     // touches), mais `prefers-reduced-motion` est déjà honoré en CSS par `menu-dom`,
-    // `hud-core` et `season-veil`. On l'étend, donc on le PROUVE — sinon la vérification ne
+    // `hud-core` et le voile de mort. On l'étend, donc on le PROUVE — sinon la vérification ne
     // teste pas la chose. `debug_speed` accélère la sim : un créneau de foudre dure 400
     // ticks, soit 20 s à cadence normale et ~1,3 s à ×16.
     let calme = null

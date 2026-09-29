@@ -6,11 +6,11 @@
  * calendrier — la pression monte avec les actes (GDD §2).
  */
 import { isThreatTo } from './alignment'
-import { BALANCE, CENDREUX, COMBAT, CONVOY_LOOT, FAUNA, LOOT_VALUES, MONSTER_DEFS, SEASON, SLOTS, TERRAIN_ROAD, WORLD_EVENTS } from './balance'
+import { BALANCE, CENDREUX, COMBAT, CONVOY_LOOT, FAUNA, MONSTER_DEFS, SLOTS, TERRAIN_ROAD, WORLD_EVENTS } from './balance'
 import { distSq } from './geometry'
 import { atteintLeSol } from './etages'
 import { computeFlowField, solidesEternels } from './pathfinding'
-import { inventoryOf, toBag } from './items'
+import { inventoryOf } from './items'
 import { rngRoll } from './rng'
 import { cendreuxSousPression, plafondGlobal, spawnMonster } from './monsters'
 import type { SimState } from './sim'
@@ -426,115 +426,4 @@ export function advanceWorldEvents(state: SimState): void {
   state.hordes = state.hordes.filter((h) =>
     h.memberEntityIds.some((id) => state.entities.some((e) => e.id === id)),
   )
-
-  // LA FIN DE SAISON, SI ELLE EXISTE (saison-sans-fin T4) : `null` = jamais — le solo. Alors
-  // ni évacuation, ni Arche, ni verdict : la saison ne finit pas, elle tourne (R4). Un seul
-  // test, lu une fois ; une vieille sauvegarde sans le champ vaut « jamais ».
-  const fin = state.finDeSaison ?? null
-  if (fin === null) return
-  // L'ÉVACUATION SE COMPTE DEPUIS LA FIN, PAS DEPUIS UN JOUR ABSOLU (S2) : `EVAC_DAY` était
-  // le jour 55 d'une saison qui finissait au 60 — cinq jours avant la fin. Un monde né au
-  // jour 61 (le vrai jeu) ouvrait sinon son évacuation à son quatrième cycle.
-  const jourEvac = fin - (BALANCE.SEASON_DAYS - SEASON.EVAC_DAY)
-
-  // L'évacuation s'ouvre (spec saison R3) — une fois par saison : partie, l'Arche ne
-  // revient pas (`arkDeparted`), sinon ce bloc rouvrait l'évacuation au tick suivant
-  // le départ et la boucle ouvre→part inondait le flux (mesuré au banc de saison).
-  if (state.evacuation === null && !state.arkDeparted && day >= jourEvac) {
-    const roadTiles: number[] = []
-    for (let i = 0; i < state.map.terrain.length; i++) {
-      if (state.map.terrain[i] === TERRAIN_ROAD) roadTiles.push(i)
-    }
-    const key = roadTiles.length > 0 ? roadTiles[Math.floor(roll(state) * roadTiles.length)]! : 0
-    const tx = roadTiles.length > 0 ? key % state.map.width : Math.floor(state.map.width / 2)
-    const ty = roadTiles.length > 0 ? Math.floor(key / state.map.width) : Math.floor(state.map.height / 2)
-    state.evacuation = { tx, ty }
-    emitEvent(state, { type: 'evacuation_opened', tick: state.tick, tx, ty })
-  }
-
-  // L'ARCHE LÈVE L'ANCRE (V2-24) : l'évacuation n'est plus un marqueur passif — elle a une
-  // HEURE. Au jour EVAC_DAY + EVAC_DEPART_DAYS, qui est À BORD (dans le rayon) part sauvé ;
-  // le reste est laissé. C'est le « tenir jusqu'au départ » que le GDD promet, et le verdict
-  // Foyer ne compte plus que les EMBARQUÉS, pas ceux qui traînent à proximité à la fin.
-  if (state.evacuation !== null && day >= jourEvac + SEASON.EVAC_DEPART_DAYS) {
-    const evac = state.evacuation
-    for (const e of state.entities) {
-      if (e.hp <= 0) continue
-      const dx = e.x - (evac.tx + 0.5)
-      const dy = e.y - (evac.ty + 0.5)
-      if (dx * dx + dy * dy > SEASON.EVAC_RADIUS * SEASON.EVAC_RADIUS) continue
-      // E-R5 : ON N'EMBARQUE PAS DEPUIS UNE GROTTE. « Qui est À BORD part sauvé » — être sous
-      // le quai à la verticale n'est pas être à bord, et c'est le verdict de fin de saison qui
-      // se jouerait sur un plancher.
-      if (!atteintLeSol(state.map, e, evac.tx, evac.ty)) continue
-      state.evacuatedIds.push(e.id)
-    }
-    emitEvent(state, { type: 'ark_departed', tick: state.tick, tx: evac.tx, ty: evac.ty, saved: state.evacuatedIds.length })
-    state.evacuation = null // partie : le marqueur disparaît
-    state.arkDeparted = true // et elle ne repart pas — le verrou de la réouverture
-  }
-
-  // La fin de saison : les verdicts (spec saison R4) — au jour réglé, plus à une constante.
-  if (!state.seasonEnded && day > fin) {
-    state.seasonEnded = true
-    emitEvent(state, { type: 'season_ended', tick: state.tick, verdicts: computeVerdicts(state) })
-  }
-}
-
-/** Le verdict de chaque village selon son archétype (GDD §2). */
-function computeVerdicts(state: SimState): {
-  villageId: number
-  name: string
-  archetype: 'foyer' | 'meute' | 'neutre'
-  score: number
-  outcome: string
-}[] {
-  return state.villages.map((village) => {
-    const members = state.entities.filter((e) => village.memberIds.includes(e.id) && e.hp > 0)
-    // L'ARCHE (V2-24) : seuls les EMBARQUÉS comptent (recensés au départ), pas la proximité
-    // passive à la fin — « sauver des vies » exige de les avoir mises à bord à temps.
-    const evacuated = members.filter((m) => state.evacuatedIds.includes(m.id)).length
-    const lootValue = (inv: Record<string, number | undefined>): number => {
-      let total = 0
-      for (const item of Object.keys(inv)) {
-        total += (inv[item] ?? 0) * ((LOOT_VALUES as Record<string, number>)[item] ?? 1)
-      }
-      return total
-    }
-    let granaryValue = 0
-    for (const s of state.structures) {
-      if (s.villageId === village.id && s.inventory) granaryValue += lootValue(toBag(s.inventory))
-    }
-    for (const m of members) granaryValue += lootValue(toBag(m.inventory))
-
-    if (village.archetype === 'foyer') {
-      const score = members.length + evacuated
-      return {
-        villageId: village.id,
-        name: village.name,
-        archetype: village.archetype,
-        score,
-        outcome: `a sauvé ${members.length} vie${members.length > 1 ? 's' : ''}${evacuated > 0 ? ` dont ${evacuated} évacuée${evacuated > 1 ? 's' : ''}` : ''}`,
-      }
-    }
-    if (village.archetype === 'meute') {
-      return {
-        villageId: village.id,
-        name: village.name,
-        archetype: village.archetype,
-        score: granaryValue,
-        // Formulation INVARIANTE en genre (bible T5) : « le Clan du Levant est partie » était
-        // la faute — « a quitté la vallée » s'accorde tout seul, pour « le Clan » comme pour
-        // « la Meute ».
-        outcome: `a quitté la vallée les bras pleins (valeur ${granaryValue})`,
-      }
-    }
-    return {
-      villageId: village.id,
-      name: village.name,
-      archetype: village.archetype,
-      score: members.length,
-      outcome: members.length > 0 ? `a tenu jusqu'à la Cendre (${members.length} debout)` : 's’est éteint',
-    }
-  })
 }

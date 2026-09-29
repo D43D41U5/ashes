@@ -102,12 +102,6 @@ describe('persistance de la Veillée', () => {
     const relu = deserializeSim(JSON.stringify(sansReveils))
     expect(relu.reveils).toEqual([]) // recollé, pas refusé
 
-    // LA FIN DE SAISON (saison-sans-fin T4) : une vallée d'avant le pivot n'a pas le champ —
-    // elle se relit avec « jamais », la règle du solo, au lieu d'être refusée ou de finir.
-    const sansFin = JSON.parse(serializeSim(sim)) as { v: number; sim: Record<string, unknown> }
-    delete sansFin.sim.finDeSaison
-    expect(deserializeSim(JSON.stringify(sansFin)).finDeSaison).toBeNull()
-
     // LA FORCE DU VENT (`vent.md` V3, 2026-08-24) : DÉRIVÉE — le premier tick la recalcule du
     // front. Une vallée d'avant l'unification se relit donc, au lieu d'être orpheline pour un
     // champ qui se reconstitue en cinquante millisecondes.

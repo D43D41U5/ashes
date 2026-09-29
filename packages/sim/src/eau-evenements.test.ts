@@ -37,7 +37,6 @@ function monde(jourDeDepart: number): SimState {
     map: createEmptyMap(24, 24, TERRAIN_GRASS),
     calendarScale: ECHELLE,
     jourDeDepart,
-    finDeSaison: null,
     meteoActive: true,
   })
 }

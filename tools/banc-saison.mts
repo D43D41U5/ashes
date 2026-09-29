@@ -43,7 +43,7 @@ writeFileSync(OUT, '')
  *  reste n'est que compté (un tally par cycle) : accumuler 60 jours d'événements bruts
  *  coûterait des centaines de Mo pour rien. */
 const MOMENTS = new Set([
-  'act_started', 'season_ended', 'evacuation_opened', 'ark_departed',
+  'act_started',
   'village_fell', 'village_archetype_changed', 'village_stage_up',
   'fire_starved', 'fire_extinguished', 'fire_relit', 'fire_upgraded',
   'horde_spawned', 'horde_dispersed', 'member_banished',

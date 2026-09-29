@@ -11,7 +11,7 @@ volets, chacun en ajout seul et en ordre chronologique. Ce fichier-ci est l'INDE
 |---|---|---|---|---|
 | **M** | [Monde & worldgen](decisions/monde-worldgen.md) | worldgen, relief, eau, biomes, lieux, cendre, étages | 191 | 355 Ko |
 | **R** | [Rendu & DA](decisions/rendu-da.md) | lumière, couleur, sprites, FX, art du sol, son | 210 | 536 Ko |
-| **G** | [Gameplay & systèmes](decisions/gameplay-systemes.md) | faune, combat, récolte, craft, saisons, météo, construction, design | 361 | 845 Ko |
+| **G** | [Gameplay & systèmes](decisions/gameplay-systemes.md) | faune, combat, récolte, craft, saisons, météo, construction, design | 363 | 846 Ko |
 | **I** | [Interface & outillage](decisions/interface-outillage.md) | HUD, menus, encyclopédie, carte, smoke, bancs, process | 85 | 185 Ko |
 | **A** | [Architecture & infra](decisions/architecture-infra.md) | pureté et déterminisme de /sim, protocole, serveur, persistance, perf | 69 | 129 Ko |
 
@@ -31,7 +31,7 @@ retrouve ici, à la même date, jamais à la ligne du dessus dans son volet.
 
 ---
 
-## Index chronologique — 916 entrées, 2050 Ko
+## Index chronologique — 918 entrées, 2052 Ko
 
 - 2026-07-05 · **M** · Spec monde validée par Alexis : déplacement continu type Binding of Isaac (jamais de case par c…
 - 2026-07-05 · **M** · Convention d'import Tiled : l'index local de la tuile dans le premier tileset = l'id de terrain…
@@ -949,3 +949,5 @@ retrouve ici, à la même date, jamais à la ligne du dessus dans son volet.
 - 2026-09-28 · **G** · LA GARDE DE GEL DEVRA DEVENIR LOCALE — c'est une conséquence FORCÉE du froid d'étage, et c'est…
 - 2026-09-28 · **G** · ON POSE UNE TORCHE : elle est la lumière qu'on LAISSE, la braise celle qu'on PORTE (décision d'…
 - 2026-09-28 · **I** · DIX DOCUMENTS DE JUILLET-AOÛT SUPPRIMÉS, ET LEURS NOMS CONSIGNÉS ICI POUR QUE LES RENVOIS DU JO…
+- 2026-09-29 · **G** · LA FIN DE SAISON EST RETIRÉE DU CODE, ENTIÈREMENT (décision d'Alexis, au nettoyage du pivot) :…
+- 2026-09-29 · **G** · LE ×1,375 DE RÉGÉN PV DEVIENT `COMBAT.HP_REGEN_FEU`, CONDITIONNÉ AU FEU (décision d'Alexis : «…

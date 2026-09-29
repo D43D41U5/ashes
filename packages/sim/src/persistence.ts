@@ -65,16 +65,6 @@ const REPLIS_EPHEMERES: Readonly<Record<string, () => unknown>> = {
   // vérité. Les sauvegardes NEUVES, elles, portent la clé : rien ne s'y oublie.
   lieuxBrules: () => [],
   buchers: () => [],
-  // Pas éphémère, mais un repli HONNÊTE existe : une sauvegarde d'avant le champ (2026-08-16)
-  // n'a jamais vu l'Arche partir — `false` est la vérité de ce monde-là. Une vallée d'avant
-  // sauvée APRÈS le jour 58 portait la boucle ouvre→part du bug : recollée à `false`, l'Arche
-  // y repart une dernière fois puis se verrouille — l'état guérit de lui-même.
-  arkDeparted: () => false,
-  // LA FIN DE SAISON (saison-sans-fin T4, 2026-08-21) : une Veillée d'avant le pivot n'a pas
-  // de réglage — et la règle du solo est « jamais » (R4). `null` est donc sa vérité : elle ne
-  // finit plus, comme toute Veillée neuve. Bosser la version pour ça aurait rendu illisibles
-  // toutes les vallées en cours, pour leur dire une chose qu'un repli dit mieux.
-  finDeSaison: () => null,
   // LE SANG DANS L'EAU (`qualite-eau.md`, 2026-09-12) : une souillure vit cinq minutes. Une
   // Veillée d'avant le chantier n'en a jamais porté, et `[]` est SA vérité — une eau propre.
   // Bosser la version pour un état qui s'évapore de lui-même aurait orphelinné toutes les
@@ -117,15 +107,15 @@ export const SAVE_REQUIRED_KEYS: readonly string[] = [
   // `cendreAge` / `cendreJour` (spec `cendre.md`) : les dix âges de foyer et le dernier jour
   // traité. **Ils DOIVENT être sauvés** — ce sont les seuls octets de la mécanique, et une reprise
   // qui les perdrait rendrait au joueur une vallée revenue à sa tache initiale.
-  'aggressions', 'arkDeparted', 'blood', 'buchers', 'calendarScale', 'cendreAge', 'cendreJour', 'corpses', 'cycleOffset', 'debug', 'denRespawns',
-  'dens', 'entities', 'evacuatedIds', 'evacuation', 'events', 'faunaCap', 'faunaQuiet', 'finDeSaison',
+  'aggressions', 'blood', 'buchers', 'calendarScale', 'cendreAge', 'cendreJour', 'corpses', 'cycleOffset', 'debug', 'denRespawns',
+  'dens', 'entities', 'events', 'faunaCap', 'faunaQuiet',
   'functions', 'groundItems', 'grounds', 'home', 'hordes', 'lastConvoyDay',
   'jourDeDepart', 'map', 'monsters', 'nextCorpseId', 'nextEntityId', 'nextGroundItemId',
   'nextHerdId', 'nextHordeId', 'nextStructureId', 'nextVillageId',
   // (Les clés des réfugiés — `refugeeGroups`, `nextRefugeeGroupId`, `lastRefugeeDay` — ont
   // quitté la liste avec le système, 2026-08-30. Une vieille sauvegarde qui les porte encore
   // recharge sans encombre : la garde exige la présence, elle ne refuse pas l'excédent.)
-  'lieuxBrules', 'nodes', 'npcs', 'presage', 'reveils', 'rngState', 'seasonEnded', 'seed', 'souillures', 'structures', 'tick',
+  'lieuxBrules', 'nodes', 'npcs', 'presage', 'reveils', 'rngState', 'seed', 'souillures', 'structures', 'tick',
   'villages', 'visitedPois', 'wind', 'windForce', 'worldEvents',
 ]
 

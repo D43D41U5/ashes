@@ -7,6 +7,8 @@
 > IRL en multi). **R1** (courbe en trois actes), **R3** (évacuation au jour 55) et **R4** (fin au
 > jour 61) ci-dessous sont donc caducs dans leur ancrage. **R2** (méga-horde), **R5** (noms de
 > village) et **R6** (chronique) restent valables tels quels.
+> **⚠ 2026-09-29 — R3 et R4 sont RETIRÉS DU CODE** (évacuation, Arche, verdicts, stèle) : la saison
+> ne finit plus jamais, même en multi. `LOOT_VALUES` et `SEASON.EVAC_*` n'existent plus.
 
 *Source : GDD §2 (60 jours, trois actes, wipe, Mémoires + chronique), §8 (robinets et éviers par acte). Statut : **implémenté** (2026-07-05, décisions prises en autonomie — révisables). Jalon : V9.*
 

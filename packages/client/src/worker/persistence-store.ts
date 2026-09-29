@@ -162,9 +162,8 @@ export async function saveCarteEtSlot(slot: number, carte: string, record: SaveR
  * ⚠ INVARIANT : `clearSlot` ne s'appelle QUE hors partie — au boot, ou depuis l'écran des
  * mondes, où aucun Worker ne vit.
  *
- * Les appelants sont `MenuScene` (deep-link `?solo&fresh`, et le bouton EFFACER de l'écran des
- * mondes, monté avant qu'une partie n'existe) et `reopenFreshVeillee` — qui RECHARGE la page
- * pour y arriver. C'est ce qui rend l'appel sûr : effacer les clés pendant qu'un Worker tourne
+ * L'appelant est `MenuScene` (deep-link `?solo&fresh`, et le bouton EFFACER de l'écran des
+ * mondes, monté avant qu'une partie n'existe). C'est ce qui rend l'appel sûr : effacer les clés pendant qu'un Worker tourne
  * laisserait son `carteEcrite` à `true` alors que l'enregistrement de naissance a disparu du
  * disque, et **chaque autosave suivant écrirait une partie sans sa carte** — au boot d'après,
  * plus rien ne serait relisible. Ce n'est pas une fenêtre d'une seconde comme celle des deux

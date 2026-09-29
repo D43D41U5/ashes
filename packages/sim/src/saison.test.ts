@@ -1,12 +1,11 @@
 import { describe, expect, it } from 'vitest'
-import { ALIGNMENT, BALANCE, SEASON, SLOTS, TERRAIN_GRASS, TERRAIN_ROAD, WORLD_EVENTS } from './balance'
+import { BALANCE, SEASON, TERRAIN_GRASS, TERRAIN_ROAD, WORLD_EVENTS } from './balance'
 import { chronicleFromEvents, formatChronicleLine } from './chronicle'
 import { drainEvents, type SimEvent } from './events'
-import { inventoryOf } from './items'
 import { createEmptyMap } from './map'
 import { foundNpcVillage } from './worldgen'
 import { createSim, snapshot, spawnEntity, step, type SimState } from './sim'
-import { actForDay, cycleOffsetForStartHour, dayTicksAt, TICKS_PER_CYCLE, TICKS_PER_SEASON_DAY, YEAR_DAYS, getGameTime } from './time'
+import { actForDay, cycleOffsetForStartHour, dayTicksAt, TICKS_PER_CYCLE, TICKS_PER_SEASON_DAY } from './time'
 import type { ResourceNode } from './economy'
 
 /** 1 cycle jour/nuit = 1 jour de saison : la saison entière tient en 60 cycles. */
@@ -20,9 +19,8 @@ const FAST = TICKS_PER_SEASON_DAY / TICKS_PER_CYCLE
  * l'endgame parle. Ouvert au jour 1, il ne verrait que l'Éclosion et l'Ardeur, et « la
  * chronique raconte le Grand Froid » deviendrait invérifiable.
  *
- * Rien d'autre ne bouge : `finDeSaison` et l'ouverture de l'évacuation se comptent DEPUIS
- * L'OUVERTURE (S2, `worldevents.ts`), donc chaque `N * TICKS_PER_CYCLE` de ce fichier garde
- * exactement le sens qu'il avait — un décalage de N jours après le premier matin.
+ * Chaque `N * TICKS_PER_CYCLE` de ce fichier est donc un décalage de N jours après le premier
+ * matin — l'année tourne sans fin (la saison ne finit plus, 2026-09-29).
  */
 function makeSim(withRoad = true): SimState {
   const map = createEmptyMap(40, 40, TERRAIN_GRASS)
@@ -118,133 +116,8 @@ describe('la Cendre (A2)', () => {
   })
 })
 
-describe('l’évacuation (A3)', () => {
-  // LES JOURS SE COMPTENT DEPUIS L'OUVERTURE, plus depuis un jour absolu (S2) : l'arche
-  // s'ouvre `SEASON_DAYS − EVAC_DAY` jours avant la fin, quel que soit le jour où le monde a
-  // commencé — un monde né au jour 61 ouvrait sinon son évacuation à son quatrième cycle.
-  // `(EVAC_DAY − 1)` cycles après le premier matin : c'est ce décalage-là, pas la date.
-  it('s’ouvre cinq jours avant la fin de saison, sur la route', () => {
-    const sim = makeSim()
-    sim.tick = (SEASON.EVAC_DAY - 1) * TICKS_PER_CYCLE - 5
-    const events: SimEvent[] = []
-    runTo(sim, sim.tick + 20, events)
-    const opened = events.find((e) => e.type === 'evacuation_opened')
-    expect(opened).toBeDefined()
-    const { tx, ty } = opened as { tx: number; ty: number }
-    expect(sim.map.terrain[ty * 40 + tx]).toBe(TERRAIN_ROAD)
-    expect(sim.evacuation).toEqual({ tx, ty })
-  })
-
-  it('l’arche LÈVE L’ANCRE trois jours après l’ouverture — et UNE SEULE FOIS : partie, elle ne revient pas', () => {
-    const sim = makeSim()
-    sim.tick = (SEASON.EVAC_DAY - 1) * TICKS_PER_CYCLE - 5
-    const events: SimEvent[] = []
-    runTo(sim, sim.tick + 20, events) // l'arche s'ouvre
-    const evac = sim.evacuation
-    expect(evac).not.toBeNull()
-    // Un survivant monte À BORD (dans le rayon), un autre reste au loin.
-    const aboard = spawnEntity(sim, evac!.tx + 0.5, evac!.ty + 0.5)
-    const ashore = spawnEntity(sim, evac!.tx + 20, evac!.ty + 20)
-    // On pousse jusqu'au départ (EVAC_DEPART_DAYS jours plus tard), PUIS BIEN AU-DELÀ.
-    // L'ancien test s'arrêtait 30 ticks après et demandait `some(ark_departed)` : il était
-    // AVEUGLE à la boucle ouvre→part émise à chaque tick (57 600 événements/jour mesurés au
-    // banc de saison, 2026-08-16) — la présence était vraie, l'unicité était fausse.
-    sim.tick = (SEASON.EVAC_DAY + SEASON.EVAC_DEPART_DAYS - 1) * TICKS_PER_CYCLE - 5
-    runTo(sim, sim.tick + 200, events)
-    // Et le LENDEMAIN du départ ne rouvre rien non plus.
-    sim.tick = (SEASON.EVAC_DAY + SEASON.EVAC_DEPART_DAYS) * TICKS_PER_CYCLE + 5
-    runTo(sim, sim.tick + 20, events)
-    expect(sim.evacuatedIds).toContain(aboard) // sauvé
-    expect(sim.evacuatedIds).not.toContain(ashore) // laissé
-    expect(sim.evacuation).toBeNull() // l'arche est partie, le marqueur disparaît
-    expect(events.filter((e) => e.type === 'ark_departed')).toHaveLength(1)
-    expect(events.filter((e) => e.type === 'evacuation_opened')).toHaveLength(1)
-    // Un embarqué compte UNE fois au verdict — pas une fois par tick de boucle.
-    expect(new Set(sim.evacuatedIds).size).toBe(sim.evacuatedIds.length)
-  })
-})
-
-describe('la fin de saison (A4)', () => {
-  it('verdicts par archétype au lendemain de la fin, émis une seule fois', { timeout: 30_000 }, () => {
-    const sim = makeSim()
-    foundNpcVillage(sim, 10, 10, 3, 'foyer')
-    foundNpcVillage(sim, 30, 30, 2, 'meute')
-    for (let t = 0; t < ALIGNMENT.REFRESH_TICKS + 1; t++) step(sim, []) // classer les archétypes
-    // Un grenier Meute gonflé pour le score de butin.
-    const meuteChest = sim.structures.find((s) => s.type === 'chest' && s.villageId === sim.villages[1]!.id)!
-    meuteChest.inventory = inventoryOf(SLOTS.CHEST, { components: 5, iron_ingot: 4, wood: 10 })
-
-    // Le dernier jour de la saison — `SEASON_DAYS` cycles après l'ouverture ; le cycle qu'on
-    // joue ensuite le franchit, et c'est ce franchissement qui rend les verdicts.
-    sim.tick = BALANCE.SEASON_DAYS * TICKS_PER_CYCLE - 5
-    const events: SimEvent[] = []
-    runTo(sim, sim.tick + TICKS_PER_CYCLE, events)
-    const ends = events.filter((e) => e.type === 'season_ended')
-    expect(ends).toHaveLength(1)
-    const verdicts = (ends[0] as Extract<SimEvent, { type: 'season_ended' }>).verdicts
-    const foyer = verdicts.find((v) => v.archetype === 'foyer')!
-    const meute = verdicts.find((v) => v.archetype === 'meute')!
-    expect(foyer.score).toBeGreaterThan(0) // des vies sauvées
-    expect(foyer.outcome).toContain('vie')
-    expect(meute.score).toBeGreaterThanOrEqual(5 * 10 + 4 * 5 + 10) // composants + lingots + bois
-    expect(meute.outcome).toContain('bras pleins')
-  })
-})
-
-describe('la saison SANS fin (saison-sans-fin R4, T4) — ni verdict ni Arche en solo', () => {
-  /** Le même monde, mais réglé « jamais » : c'est ce que la Veillée passe. */
-  function simSansFin(): SimState {
-    const map = createEmptyMap(40, 40, TERRAIN_GRASS)
-    for (let tx = 0; tx < 40; tx++) map.terrain[20 * 40 + tx] = TERRAIN_ROAD
-    return createSim(41, { map, calendarScale: FAST, jourDeDepart: BALANCE.JOUR_DE_DEPART, finDeSaison: null })
-  }
-
-  it('réglé « jamais », la fin de saison n’est qu’un jour : aucune évacuation, aucune Arche, aucun verdict — jusqu’à l’an 2', () => {
-    const sim = simSansFin()
-    // Sans village : l'ouverture et la fin ne dépendent que du jour — un village ne ferait que
-    // ralentir le cycle. Par SAUTS aux deux jours-clés, un cycle chacun (le patron du test de
-    // verdict) : l'ouverture de l'arche et le lendemain de la fin ; puis un tick DANS L'AN 2.
-    const events: SimEvent[] = []
-    for (const jour of [SEASON.EVAC_DAY, BALANCE.SEASON_DAYS + 1]) {
-      sim.tick = jour * TICKS_PER_CYCLE - 5
-      runTo(sim, sim.tick + TICKS_PER_CYCLE, events)
-    }
-    // Le premier jour de l'an 2 (j121 sous une année de 120 jours), compté depuis l'ouverture.
-    sim.tick = (YEAR_DAYS + 1 - BALANCE.JOUR_DE_DEPART) * TICKS_PER_CYCLE
-    runTo(sim, sim.tick + 2, events)
-    expect(events.filter((e) => e.type === 'evacuation_opened')).toHaveLength(0)
-    expect(events.filter((e) => e.type === 'ark_departed')).toHaveLength(0)
-    expect(events.filter((e) => e.type === 'season_ended')).toHaveLength(0)
-    expect(sim.evacuation).toBeNull()
-    expect(sim.arkDeparted).toBe(false)
-    expect(sim.seasonEnded).toBe(false)
-    // Et le monde a bien traversé l'année : l'acte a tourné.
-    expect(getGameTime(sim).tour).toBe(2)
-  }, 60_000)
-
-  it('une VIEILLE sauvegarde sans le champ vaut « jamais » — une Veillée d’avant le pivot ne finit plus non plus', () => {
-    const sim = makeSim() // le défaut (la saison nominale)…
-    delete (sim as Partial<SimState>).finDeSaison // …puis le champ absent, comme dans une sauvegarde d'avant
-    const events: SimEvent[] = []
-    for (const jour of [SEASON.EVAC_DAY, BALANCE.SEASON_DAYS + 1]) {
-      sim.tick = jour * TICKS_PER_CYCLE - 5
-      runTo(sim, sim.tick + TICKS_PER_CYCLE, events)
-    }
-    expect(events.some((e) => e.type === 'evacuation_opened' || e.type === 'season_ended')).toBe(false)
-  }, 60_000)
-
-  it('le DÉFAUT reste la saison nominale — SEASON_DAYS jours À PARTIR de l’ouverture', () => {
-    // La saison se compte DEPUIS le premier matin (S2) : le monde né au jour 61 rendait
-    // sinon ses verdicts dix cycles trop tôt. C'est la DURÉE qu'on affirme, pas la date.
-    const sim = makeSim()
-    expect(sim.finDeSaison! - sim.jourDeDepart + 1).toBe(BALANCE.SEASON_DAYS)
-    expect(createSim(7, { finDeSaison: 30 }).finDeSaison).toBe(30)
-    expect(createSim(7, { finDeSaison: null }).finDeSaison).toBeNull()
-  })
-})
-
 describe('la chronique (A5)', () => {
-  it('raconte la saison : noms, jours croissants, actes, verdicts', { timeout: 120_000 }, () => {
+  it('raconte la saison : noms, jours croissants, actes', { timeout: 120_000 }, () => {
     const sim = makeSim()
     foundNpcVillage(sim, 10, 10, 3, 'foyer')
     foundNpcVillage(sim, 30, 30, 3, 'meute')
@@ -277,8 +150,6 @@ describe('la chronique (A5)', () => {
     // Plus de méga-horde nommée (décision ⑲) : le grand mot du récit est « a déferlé »,
     // et il n'est plus GARANTI un jour fixe — la pente le rend probable, pas scripté.
     expect(chronicle.some((l) => l.includes('méga-horde'))).toBe(false)
-    expect(chronicle.some((l) => l.includes('arche'))).toBe(true) // l'évacuation est une ARCHE qui part (V2-24)
-    expect(chronicle.some((l) => l.includes('éteint. Ce qu\'on retiendra'))).toBe(true)
     expect(chronicle.some((l) => l.includes(sim.villages[0]!.name))).toBe(true)
     // Les jours sont datés en ordre croissant.
     const days = chronicle.map((l) => /^Jour (\d+)/.exec(l)?.[1]).filter(Boolean).map(Number)

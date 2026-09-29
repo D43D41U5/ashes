@@ -67,7 +67,6 @@ function mondeAuJour(jour: number, options: { meteo?: boolean } = {}): SimState 
   const sim = createSim(7, {
     map: createEmptyMap(64, 64, TERRAIN_GRASS),
     calendarScale: echelle,
-    finDeSaison: null,
     meteoActive: options.meteo ?? false,
   })
   sim.tick = Math.round(((jour - 1) * TICKS_PER_SEASON_DAY) / echelle)
@@ -676,7 +675,6 @@ describe('S2 — le monde ouvre à l’ouverture des Pluies', () => {
       map: createEmptyMap(32, 32, TERRAIN_GRASS),
       calendarScale: TICKS_PER_SEASON_DAY / TICKS_PER_CYCLE,
       jourDeDepart: BALANCE.JOUR_DE_DEPART,
-      finDeSaison: null,
     })
     expect(jourDeSaison(sim)).toBe(61)
     expect(phaseForDay(jourDeSaison(sim))).toBe(3)
@@ -684,14 +682,5 @@ describe('S2 — le monde ouvre à l’ouverture des Pluies', () => {
     expect(naissance.some((e) => e.type === 'season_day_started' && e.day === 61)).toBe(true)
     expect(naissance.some((e) => e.type === 'act_started' && e.act === actForDay(61))).toBe(true)
   })
-
-  it('la saison ne finit pas dix cycles après l’ouverture', () => {
-    const sim = createSim(3, {
-      map: createEmptyMap(32, 32, TERRAIN_GRASS),
-      calendarScale: TICKS_PER_SEASON_DAY / TICKS_PER_CYCLE,
-      jourDeDepart: BALANCE.JOUR_DE_DEPART,
-    })
-    // `finDeSaison` par défaut : SEASON_DAYS jours À PARTIR de l'ouverture, pas le jour 60 absolu.
-    expect(sim.finDeSaison).toBe(BALANCE.JOUR_DE_DEPART + BALANCE.SEASON_DAYS - 1)
-  })
 })
+
