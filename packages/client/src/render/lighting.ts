@@ -13,7 +13,6 @@ export const NIGHT_ALPHA_MAX = 0.72
 
 const GLOW_MAX_ALPHA = 0.9
 const GLOW_MIN_RADIUS_TILES = 3
-const GLOW_SPAN_TILES = 5
 
 function lerp(a: number, c: number, t: number): number {
   return a + (c - a) * t
@@ -51,17 +50,10 @@ function bracket<T extends { hour: number }>(keys: T[], hour: number): { lo: T; 
   return { lo: last, hi: last, t: 0 }
 }
 
-/**
- * Couleur du Feu selon l'alignement — MÊME formule que snapshot-view (DRY) :
- * warmth > 0 → bleu (Foyer), warmth < 0 → rouge (Meute), 0 → blanc.
- */
-export function warmthColor(warmth: number): number {
-  const t = Math.max(-1, Math.min(1, warmth / 100))
-  const red = t > 0 ? Math.floor(255 - 130 * t) : 255
-  const green = Math.floor(255 - 90 * Math.abs(t))
-  const blue = t < 0 ? Math.floor(255 + 140 * t) : 255
-  return (red << 16) | (green << 8) | blue
-}
+/** La couleur d'un Feu allumé. CONSTANTE depuis le retrait de l'alignement (2026-09-29) :
+ *  `warmthColor` interpolait bleu↔blanc↔rouge sur la chaleur du village, qui valait 0 à vie
+ *  dans le jeu joué — elle rendait donc toujours ce blanc-là. Le rendu n'a pas bougé d'un bit. */
+export const COULEUR_DU_FEU = 0xffffff
 
 /** Le soleil se lève et se couche AUX BORNES DE `DAYLIGHT_KEYS`, pas trois heures avant. */
 const SUN_RISE = 5
@@ -768,14 +760,12 @@ export function flickerV(timeMs: number, seed: number, respire: boolean): number
 }
 
 /**
- * Halo d'un Feu : couleur d'alignement, plus fort la nuit (∝ 1 - day) et pour un
- * village plus engagé (∝ |warmth|). `radius` en tuiles, `alpha` pour blend ADD.
+ * Halo d'un Feu : plus fort la nuit (∝ 1 − day). `radius` en tuiles, `alpha` pour blend ADD.
  *
  * `timeMs`/`seed` font PALPITER le halo. Sans eux, la fonction est pure de
  * l'heure — et un feu parfaitement immobile est la chose la plus morte du monde.
  */
 export function fireGlow(
-  warmth: number,
   day: number,
   timeMs = 0,
   seed = 0,
@@ -783,7 +773,8 @@ export function fireGlow(
    *  au bit près — les tests et les appelants qui ne s'en soucient pas l'omettent. */
   respire = false,
 ): { color: number; radius: number; alpha: number; beat: number } {
-  const engage = Math.min(1, Math.abs(warmth) / 100)
+  // L'ENGAGEMENT EST MORT AVEC L'ALIGNEMENT (2026-09-29) : il valait 0 à vie dans le jeu joué,
+  // donc alpha et rayon prennent exactement les valeurs qu'ils prenaient déjà.
   const dark = 1 - day
   // DEUX BATTEMENTS, et c'est délibéré : l'ALPHA prend celui de la variante (il peut plonger
   // et flamber sans rien casser), le RAYON garde l'étalon. Une géométrie qui respire fort fait
@@ -791,9 +782,9 @@ export function fireGlow(
   // documentés (`fire-ground-glow`, `fireHoleRadius`), et ils ne sont pas la question posée.
   const beat = flickerV(timeMs, seed, respire)
   const beatGeo = flicker(timeMs, seed)
-  const alpha = Math.min(GLOW_MAX_ALPHA, GLOW_MAX_ALPHA * dark * (0.6 + 0.4 * engage) * beat)
-  const radius = (GLOW_MIN_RADIUS_TILES + GLOW_SPAN_TILES * engage) * beatGeo
-  return { color: warmthColor(warmth), radius, alpha, beat }
+  const alpha = Math.min(GLOW_MAX_ALPHA, GLOW_MAX_ALPHA * dark * 0.6 * beat)
+  const radius = GLOW_MIN_RADIUS_TILES * beatGeo
+  return { color: COULEUR_DU_FEU, radius, alpha, beat }
 }
 
 /**

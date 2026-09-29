@@ -248,14 +248,15 @@ const AMBIENT_SANS_LUNE = multiplicateurDuVoile(voileDeNuit(ambientTint(heureCan
  */
 export function intensiteDuFeu(
   day: number,
-  engage: number,
   beat: number,
   ax: { respiration: boolean; coeurBlanc: boolean; lisere: boolean; compose: boolean },
   /** L'état du feu, en facteur : 1 allumé, `BRAISES_FACTEUR` en braises, 0 éteint. Il
    *  s'applique APRÈS le plafond — le plafond borne ce que la source vaut quand elle brûle. */
   facteur = 1,
 ): number {
-  const socle = (0.6 + 1.2 * (1 - day)) * (0.8 + 0.2 * engage)
+  // Le facteur d'engagement (× 0,8 à engagement nul) est FIGÉ depuis le retrait de l'alignement
+  // (2026-09-29) : il valait 0 à vie dans le jeu joué, donc c'est la valeur déjà rendue.
+  const socle = (0.6 + 1.2 * (1 - day)) * 0.8
   const respire = ax.respiration || ax.coeurBlanc ? 1 + (beat - 1) * 0.55 : 1
   const gain = ax.lisere ? (ax.compose ? 2.35 : 2.8) : 1
   return Math.min(socle * PLAFOND_DU_FEU, socle * respire * gain) * facteur
@@ -507,10 +508,8 @@ export class DynamicLighting {
       if (facteur <= 0) continue // éteint
       count++
       seen.add(s.id)
-      const warmth = villages.find((vg) => vg.id === s.villageId)?.warmth ?? 0
       const ax = axesFeu()
-      const g = fireGlow(warmth, day, now, s.id * 1.7, ax.respiration)
-      const engage = Math.min(1, Math.abs(warmth) / 100)
+      const g = fireGlow(day, now, s.id * 1.7, ax.respiration)
       let light = this.feux.get(s.id)
       if (!light) {
         light = this.scene.lights.addLight(0, 0, 0, 0xffffff, 0, TILE_PX * 0.6)
@@ -535,8 +534,9 @@ export class DynamicLighting {
         const chaud = Math.max(0, Math.min(1, (g.beat - 0.86) / 0.5)) // 0 au creux, 1 au pic
         light.color.set(1.0, 0.34 + 0.42 * chaud, 0.1 + 0.36 * chaud)
       } else {
-        // Couleur CHAUDE (pas la couleur politique du Feu) — un peu plus rouge s'il couve fort.
-        light.color.set(1.0, 0.5 - 0.14 * engage, 0.22 - 0.13 * engage)
+        // Couleur CHAUDE. (Elle rougissait avec l'engagement du village jusqu'au 2026-09-29 ;
+        // celui-ci valait 0 à vie, donc ce sont les valeurs déjà rendues.)
+        light.color.set(1.0, 0.5, 0.22)
       }
       // « CALMER la flamme au-dessus des bûches » (demande d'Alexis) : à ~3 la nuit, la source SATURAIT
       // le sol pile autour (rouge+vert au plafond → aplat orange) et écrasait les rondins par contraste.
@@ -553,7 +553,7 @@ export class DynamicLighting {
       // qu'on ne peut vérifier qu'en lisant une boucle de rendu n'en est pas un.
       // …et les BRAISES prennent le même cran que le reste du feu (`BRAISES_FACTEUR`) : la
       // canopée baisse avec la flaque au sol, elle ne reste pas en plein jour ambré.
-      light.intensity = intensiteDuFeu(day, engage, g.beat, ax, facteur)
+      light.intensity = intensiteDuFeu(day, g.beat, ax, facteur)
     }
     for (const [id, light] of this.feux) {
       if (seen.has(id)) continue

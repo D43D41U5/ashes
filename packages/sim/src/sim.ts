@@ -47,7 +47,6 @@ import { advanceEncyclopedie, type LigneEncyclo } from './encyclopedie'
 import { applyInventoryAction, isInventoryAction, type InventoryAction } from './inventory-actions'
 import { carryRatio, carryTier, makeInventory, type Inventory, type ItemId, type SkillId } from './items'
 import { createEmptyMap, type WorldMap } from './map'
-import { advanceAlignment, type Aggression } from './alignment'
 import { advanceMonsters, type Monster } from './monsters'
 import { advanceWorldEvents, type Horde, type Presage } from './worldevents'
 import { clarteSurSoi } from './nuit'
@@ -300,9 +299,6 @@ export interface Entity {
   /** Point de respawn hors village (position d'apparition). */
   homeX: number
   homeY: number
-  /** Alignement personnel (GDD §3) : chaleur −100..+100, engagement 0..100. */
-  warmth: number
-  engagement: number
   /** DEV seulement : invulnérable, jauges gelées (voir debug.ts). */
   god?: true
   /**
@@ -412,8 +408,6 @@ export interface SimState {
    *  l'aube — null la plupart des jours. La méga-horde scriptée n'existe plus (⑲). */
   presage: Presage | null
   lastConvoyDay: number
-  /** Mémoire d'agression entre villages (premier sang, spec alignement R4). */
-  aggressions: Aggression[]
   /** Lieux déjà atteints par un joueur, tous joueurs confondus (spec lieux R12).
    *  Global : il n'y a qu'un premier — en multi, c'est une course. */
   visitedPois: number[]
@@ -668,7 +662,6 @@ export function createSim(seed: number, options: SimOptions = {}): SimState {
     hordes: [],
     nextHordeId: 1,
     lastConvoyDay: 0,
-    aggressions: [],
     presage: null,
     visitedPois: [],
     nextVillageId: 1,
@@ -764,8 +757,6 @@ export function spawnEntity(state: SimState, x: number, y: number, slots: number
     swingSide: 1,
     homeX: x,
     homeY: y,
-    warmth: 0,
-    engagement: 0,
     knownPois: [],
     reachedPois: [],
   })
@@ -1141,10 +1132,9 @@ export function step(state: SimState, inputs: MoveInput[]): void {
   // L'IMPASSE (impasse.ts) — le guet du tremblement, APRÈS la séparation : il lit
   // l'état FINAL du tick, celui que le snapshot emporte et que l'œil voit.
   advanceImpasse(state)
-  advanceAlignment(state)
   // L'UPKEEP DU FEU (spec construction R16) : le Feu brûle son combustible, et à sec les
-  // murs cèdent. Le seul évier permanent — après l'alignement (les raids ont pu casser),
-  // avant l'avance du temps (l'acte de CE tick module la combustion).
+  // murs cèdent. Le seul évier permanent — avant l'avance du temps (l'acte de CE tick
+  // module la combustion).
   advanceUpkeep(state)
   // LE FEU LIBRE brûle son combustible (spec feu-station S2/S12) — jumeau de l'upkeep,
   // pour la structure feu hors village. À sec, il passe en braises puis s'éteint.

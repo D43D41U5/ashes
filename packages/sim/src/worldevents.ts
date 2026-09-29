@@ -5,7 +5,7 @@
  * apporte l'opportunité. Tout est tiré au PRNG de la sim et cadencé par le
  * calendrier — la pression monte avec les actes (GDD §2).
  */
-import { isThreatTo } from './alignment'
+import { isThreatTo } from './village'
 import { BALANCE, CENDREUX, COMBAT, CONVOY_LOOT, FAUNA, MONSTER_DEFS, SLOTS, TERRAIN_ROAD, WORLD_EVENTS } from './balance'
 import { distSq } from './geometry'
 import { atteintLeSol } from './etages'

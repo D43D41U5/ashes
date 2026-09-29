@@ -44,7 +44,7 @@ writeFileSync(OUT, '')
  *  coûterait des centaines de Mo pour rien. */
 const MOMENTS = new Set([
   'act_started',
-  'village_fell', 'village_archetype_changed', 'village_stage_up',
+  'village_fell', 'village_stage_up',
   'fire_starved', 'fire_extinguished', 'fire_relit', 'fire_upgraded',
   'horde_spawned', 'horde_dispersed', 'member_banished',
 ])
@@ -64,14 +64,11 @@ function releveVillages(s: SimState): object[] {
     const inv = granary?.inventory ?? []
     return {
       nom: v.name,
-      arch: v.archetype,
       membres: s.entities.filter((e) => v.memberIds.includes(e.id) && e.hp > 0).length,
       nourriture: countOf(inv, 'berries') + 3 * countOf(inv, 'stew'),
       bois: countOf(inv, 'wood'),
       fuel: Math.round(v.fuel),
       palier: v.tier,
-      warmth: Math.round(v.warmth),
-      engagement: Math.round(v.engagement),
     }
   })
 }
@@ -100,7 +97,7 @@ for (let cycle = 1; cycle <= JOURS; cycle++) {
         moments.push({
           jour: cycle,
           evt: e.type,
-          detail: [d.act, d.villageId, d.name, d.archetype].filter((x) => x !== undefined).join(' '),
+          detail: [d.act, d.villageId, d.name].filter((x) => x !== undefined).join(' '),
         })
       }
     }

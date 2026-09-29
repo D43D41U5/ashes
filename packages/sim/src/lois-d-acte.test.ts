@@ -19,7 +19,7 @@
  */
 import { describe, expect, it } from 'vitest'
 import {
-  ACTS_PER_YEAR, ALIGNMENT, BALANCE, BRUME, CENDREUX, FIRE_UPKEEP, METEO, NIGHT_HUNT, SEASON,
+  ACTS_PER_YEAR, BALANCE, BRUME, CENDREUX, FIRE_UPKEEP, METEO, NIGHT_HUNT, SEASON,
   actLaw, actTable, phaseOf, tourOf, type ActLaw,
 } from './balance'
 import { createEmptyMap } from './map'
@@ -48,7 +48,6 @@ const LOIS: { nom: string; loi: ActLaw; paliers: readonly [number, number, numbe
   // La repousse est LA seule ligne qui s'écarte de « la pression suit le froid », et S10 l'impose :
   // aussi lente à l'Ardeur qu'aux Pluies, parce que la sécheresse arrête ce que le froid arrêtera.
   { nom: 'SEASON.REGROW_ACT_FACTOR', loi: SEASON.REGROW_ACT_FACTOR, paliers: [1, 2, 1.5, 3] },
-  { nom: 'ALIGNMENT.ACT_FACTOR', loi: ALIGNMENT.ACT_FACTOR, paliers: [1, 1, 2, 3] }, // le don vaut double aux Pluies, triple au Grand Froid
   { nom: 'FIRE_UPKEEP.ACT_FACTOR', loi: FIRE_UPKEEP.ACT_FACTOR, paliers: [1, 1, 1.5, 2] },
   { nom: 'NIGHT_HUNT.CHANCE_PER_MIN', loi: NIGHT_HUNT.CHANCE_PER_MIN, paliers: [0.12, 0.12, 0.3, 0.55] },
   // La Brume est un mécanisme de FROID : elle doit lire 0 sur les trente jours de l'Ardeur.

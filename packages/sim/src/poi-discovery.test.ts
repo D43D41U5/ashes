@@ -455,7 +455,6 @@ describe('le récit — la première fois seulement', () => {
       defendStuck: 0,
       defendBest: -1,
       defendIgnoreUntil: 0,
-      errand: null,
     })
     state.events.length = 0
     step(state, [])

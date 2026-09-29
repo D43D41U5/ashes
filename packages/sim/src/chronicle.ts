@@ -90,7 +90,6 @@ export const CHRONICLE_EVENT_TYPES: ReadonlySet<SimEvent['type']> = new Set([
   'cendre_prend',
   'murmure_recueilli',
   'bucher_rituel',
-  'village_archetype_changed',
   'horde_spawned',
   'convoy_spawned',
   'brume_annonce',
@@ -187,11 +186,6 @@ export function chronicleFromEvents(
             'battement',
           )
         }
-        break
-      case 'village_archetype_changed':
-        if (e.archetype === 'foyer') push(`${name(e.villageId)} a viré au bleu : un Foyer.`, 'recit')
-        else if (e.archetype === 'meute') push(`${name(e.villageId)} a viré au rouge : une Meute.`, 'recit')
-        else push(`Le Feu de « ${name(e.villageId)} » est redevenu neutre.`, 'recit')
         break
       case 'horde_spawned': {
         // LA HORDE EST UNE PENTE, PLUS UN SCRIPT (décisions ⑭⑲, 2026-08-21) : la méga-horde

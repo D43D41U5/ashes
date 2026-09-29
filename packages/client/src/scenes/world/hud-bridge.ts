@@ -43,8 +43,6 @@ export function publishTimeAndVillage(registry: Registry, time: GameTime, myVill
   setHud(registry, 'time', time)
   setHud(registry, 'village', myVillage?.memberIds.length ?? 0)
   setHud(registry, 'tasks', myVillage?.tasks ?? [])
-  setHud(registry, 'archetype', myVillage?.archetype ?? null)
-  setHud(registry, 'villageWarmth', myVillage?.warmth ?? 0)
 }
 
 /** Les jauges et l'inventaire de MON avatar (l'entité autoritative du snapshot). */

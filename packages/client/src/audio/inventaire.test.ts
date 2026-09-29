@@ -68,7 +68,10 @@ describe('l’inventaire des 97 faits', () => {
     // 107 → 104 le 2026-09-29 : la FIN DE SAISON est retirée du code (`evacuation_opened`,
     // `season_ended`, `ark_departed`) — trois faits, TROIS VOIX, zéro silence. Le verdict classait
     // des villages qui n'existent plus ; la famille `saison` reste peuplée.
-    expect(somme).toBe(104)
+    // 104 → 103 le 2026-09-29 : L'ALIGNEMENT EST RETIRÉ — `village_archetype_changed` (une voix)
+    // perd son sujet. La famille `social` SURVIT : `gift_given`, `village_founded`, `village_fell`,
+    // `member_joined` et `member_banished` sont du vocabulaire de balise et de coop.
+    expect(somme).toBe(103)
   })
 
   it('chaque fait DIT ce qu’il raconte — pas son identifiant', () => {
@@ -139,7 +142,8 @@ describe('l’inventaire des 97 faits', () => {
     // il ne pouvait pas rester muet (voir `sound.test.ts`).
     // 57 → 54 le 2026-09-29 : − `evacuation_opened`, `season_ended`, `ark_departed` — la fin de
     // saison n'existe plus (le pivot de la braise). Les silences ne bougent pas (50).
-    expect(SONORES.length).toBe(54)
+    // 54 → 53 le 2026-09-29 : − `village_archetype_changed` (retrait de l'alignement).
+    expect(SONORES.length).toBe(53)
     // 33 → 34 le 2026-08-21 : `refugee_rumeur` naît MUET (annales.md R12) — le geste de
     // nourrir parle déjà, le renseignement se lit dans la chronique.
     // 34 → 35 le 2026-08-21 : `cendre_prend` naît MUET (P5a) — la perte se lit et se voit.

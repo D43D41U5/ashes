@@ -163,7 +163,7 @@ describe('le banc de test', () => {
     )
     for (const v of report.villages) {
       console.log(
-        `  ${v.name} [${v.archetype}] : ${v.membersAlive} membres, nourriture ${v.granaryFood}, bois ${v.granaryWood}`,
+        `  ${v.name} : ${v.membersAlive} membres, nourriture ${v.granaryFood}, bois ${v.granaryWood}`,
       )
     }
     console.log(`  morts d'avatars : ${report.deaths} · hordes : ${report.hordesSpawned} · échantillons affamés : ${report.starvationSamples}`)
@@ -175,9 +175,11 @@ describe('le banc de test', () => {
     // les correctifs du 2026-07-24, ZÉRO après (mesuré au défaut d'1 jour). Le seuil n'a jamais
     // été relâché vers 177 : c'est le MONDE qu'on a rendu digne de lui.
     expect(report.starvationSamples).toBeLessThanOrEqual(FAMINE_PAR_JOUR * report.days)
-    const foyer = report.villages.find((v) => v.archetype === 'foyer')
-    expect(foyer).toBeDefined()
-    expect(foyer!.membersAlive).toBeGreaterThan(0)
+    // L'archétype est parti avec l'alignement (2026-09-29) : on garde la LOI — un village
+    // peuplé tient debout — en la portant sur le premier, au lieu d'élire un Foyer.
+    const premier = report.villages[0]
+    expect(premier).toBeDefined()
+    expect(premier!.membersAlive).toBeGreaterThan(0)
     expect(report.chronicle.length).toBeGreaterThan(2)
     // Le monde MESURÉ (coins de chasse, nœuds, marge de ciblage) est déjà tenu par le banc rapide
     // ci-dessus — ici on ne vérifie que ce qu'on y VIT. Depuis le 2026-09-22 le banc peuple par la

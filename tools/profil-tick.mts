@@ -56,9 +56,8 @@ const voisins = emplacements
   .filter((e) => e.tx !== premier.tx || e.ty !== premier.ty)
   .sort((a, b) => d2(a) - d2(b))
   .slice(0, villages)
-const dispositions = ['foyer', 'meute'] as const
-for (const [i, v] of voisins.entries()) {
-  foundNpcVillage(sim, v.tx, v.ty, BALANCE.NPC_PER_VILLAGE, dispositions[i] ?? 'neutre')
+for (const v of voisins) {
+  foundNpcVillage(sim, v.tx, v.ty, BALANCE.NPC_PER_VILLAGE)
 }
 
 console.log(`carte ${carte.map.width}×${carte.map.height} = ${(carte.map.width * carte.map.height / 1e6).toFixed(2)} M tuiles`)

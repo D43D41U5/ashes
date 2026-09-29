@@ -28,7 +28,7 @@ const releves = Number(process.argv[4] ?? 16)
 
 const { sim, monde } = construireMondeDuBanc(2026, joueurs)
 console.log(`monde ${monde.width}×${monde.height} · ${monde.nodes} nœuds · ${monde.huntingGrounds} coins de chasse`)
-console.log(`villages : ${sim.villages.map((v) => `${v.archetype}(${v.memberIds.length})`).join(' ')}\n`)
+console.log(`villages : ${sim.villages.map((v) => `${v.name}(${v.memberIds.length})`).join(' ')}\n`)
 
 const total = jours * TICKS_PER_CYCLE
 const pas = Math.floor(total / releves)
@@ -51,7 +51,6 @@ for (let k = 0; k < releves; k++) {
   // en expédition. Un tableau plein de tâches libres ne sert à rien si personne n'y arrive.
   let dort = 0
   let auChaud = 0
-  let enExpedition = 0
   let defend = 0
   let defendBloque = 0
   const kinds: Record<string, number> = {}
@@ -63,7 +62,6 @@ for (let k = 0; k < releves; k++) {
     sommeFaim += e.hunger
     if (npc.sleeping) dort += 1
     if (npc.seekingWarmth) auChaud += 1
-    if (npc.errand) enExpedition += 1
     // LA DÉFENSE laisse une trace : `defendBest` vaut -1 hors engagement. Le commentaire du code
     // décrit précisément le piège — « un zombie posté hors d'atteinte affamait tout le village,
     // grenier plein » — et la vraie carte, avec ses falaises, est le terrain rêvé pour ça.
@@ -124,7 +122,7 @@ for (let k = 0; k < releves; k++) {
   }
   // LE TABLEAU DU VILLAGE : `claimTask` ne puise QUE là. Un tableau vide = personne ne travaille,
   // quels que soient les chemins et les nœuds.
-  const tableau = sim.villages.map((v) => `${v.archetype[0]}${v.tasks.length}`).join('/')
+  const tableau = sim.villages.map((v) => `${v.tasks.length}`).join('/')
   const libres = sim.villages.reduce((n, v) => n + v.tasks.filter((t) => t.claimedBy === null).length, 0)
   const f = (v: number, w = 8): string => String(Math.round(v * 10) / 10).padStart(w)
   console.log(
@@ -132,7 +130,7 @@ for (let k = 0; k < releves; k++) {
       `${String(sansChemin).padStart(12)}${String(bloques).padStart(9)}${f(nDist ? sommeDist / nDist : 0)}` +
       `${String(horsZone).padStart(10)}${f(vivants ? sommeFaim / vivants : 0)}   ` +
       `${(tableau + ` (${libres} libres)`).padEnd(22)}` +
-      `dort:${dort} froid:${auChaud} exp:${enExpedition} def:${defend}/${defendBloque}  ` +
+      `dort:${dort} froid:${auChaud} def:${defend}/${defendBloque}  ` +
       Object.entries(kinds)
         .map(([k, n]) => `${k}:${n}`)
         .join(' '),

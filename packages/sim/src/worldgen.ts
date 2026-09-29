@@ -11,7 +11,7 @@
  * autour du grenier. Plus AUCUNE `house` (le chip d'une tuile qui lisait comme
  * une image posée) : le type survit pour les parties sauvées, plus rien n'en pose.
  */
-import { ALIGNMENT, BALANCE, VILLAGE_GROWTH } from './balance'
+import { BALANCE, VILLAGE_GROWTH } from './balance'
 import { FEATURES } from './features'
 import { addItems } from './items'
 import { RING_OFFSETS, spawnNpcsAround } from './npc'
@@ -30,12 +30,12 @@ import { bedAnchor, HUT_SPOTS } from './village-plan'
  * le 2026-09-22, appelée par les trois : c'est l'invariant « une simulation, pas deux jeux »
  * appliqué au peuplement, pas un arbitrage de design.
  *
- * ⚠ **LA MARGE DU RAIDEUR EST GARANTIE, PAS SEULEMENT MESURÉE.** L'IA de raid de la Meute vise
- * le village le plus proche À VOL D'OISEAU (`nearestOtherVillage`, `npc-errands.ts`). Quand ses
- * deux cibles sont à quasi-égalité, elle raide la même chaque nuit jusqu'à destruction mutuelle
- * — et on mesure alors une guerre au lieu d'une économie. Le banc s'en protégeait SEUL, par son
- * écartement maximal ; serrer les voisins autour du joueur retire cette protection, or
- * `npc-errands.ts` est du /sim pur et le même raid tourne en solo.
+ * ⚠ **LA MARGE ENTRE LES DEUX PREMIERS SITES EST GARANTIE, PAS SEULEMENT MESURÉE.** Elle est
+ * NÉE du raid — l'IA de la Meute visait le village le plus proche à vol d'oiseau, et deux cibles
+ * à quasi-égalité la faisaient raider la même chaque nuit jusqu'à destruction mutuelle. Le raid
+ * a quitté le jeu avec l'alignement (2026-09-29) ; la marge, elle, RESTE : elle s'applique AVANT
+ * `tracerLeReseau`, donc elle dessine les routes du monde joué — quatre empreintes de réseau
+ * l'épinglent (`zonegen-reseau.test.ts`). On ne la rouvre pas en passant.
  *
  * MESURÉ le 2026-09-22 (`tools/__marge-solo.mts`, tri au plus proche, 5 villages) — marge de la
  * Meute entre ses deux cibles : **52,6 %** (graine 2026), **78,6 %** (7), **80,5 %** (909), et
@@ -101,7 +101,9 @@ export function peuplerLesVoisins(
   }
 
   const sites = candidats.slice(0, combien)
-  /** L'index de la Meute dans `dispositions` — c'est elle, et elle seule, qui raide. */
+  /** L'index du SECOND site élu. Héritage du raid (la Meute y était plantée) : le nom reste, et
+   *  surtout le CODE reste — c'est lui qui ré-élit le site #1 quand la marge est trop faible, en
+   *  amont de `tracerLeReseau`. Le retirer déplacerait les routes. */
   const MEUTE = 1
   // On ne reprend jamais un site déjà écarté : le balayage va vers l'extérieur et s'arrête.
   let prochain = combien
@@ -128,13 +130,12 @@ export function peuplerLesVoisins(
     state.nodes = retirerLesNoeudsSousLaRoute(state.nodes, state.map).restants
   }
 
-  const dispositions = ['foyer', 'meute'] as const
   // ═══ LA SEULE PORTE QUE LE DRAPEAU FERME (`FEATURES.VILLAGES_PNJ`) ═══
   // Tout ce qui est au-dessus a déjà tourné — les sites sont élus, les routes sont peintes, les
   // nœuds sous la route sont partis. On s'arrête juste avant que le bâti ne remue le sol.
   if (fonder) {
-    for (const [i, v] of sites.entries()) {
-      foundNpcVillage(state, v.tx, v.ty, habitants, dispositions[i] ?? 'neutre')
+    for (const v of sites) {
+      foundNpcVillage(state, v.tx, v.ty, habitants)
     }
   }
 
@@ -150,7 +151,6 @@ export function foundNpcVillage(
   tx: number,
   ty: number,
   count: number,
-  disposition: 'foyer' | 'meute' | 'neutre' = 'neutre',
 ): Village {
   // Le monde-gen a le droit de faire place nette — mais SEULEMENT sous le campement
   // (Feu, grenier, anneau d'accueil, les 8 emplacements de logis, le mobilier) : le
@@ -189,17 +189,12 @@ export function foundNpcVillage(
     addStructure(state, 'paillasse', ax, ay, village.id, 0)
   }
   spawnNpcsAround(state, village, count)
-  // Un village PNJ naît armé (spec combat R13) et avec son caractère
-  // ensemencé (spec alignement R12) — l'archétype ÉMERGE ensuite des actes.
-  const seedWarmth = disposition === 'foyer' ? ALIGNMENT.SEED_WARMTH : disposition === 'meute' ? -ALIGNMENT.SEED_WARMTH : 0
+  // Un village PNJ naît armé (spec combat R13). Le semis de caractère est parti avec
+  // l'alignement (2026-09-29) — `disposition` ne pilote plus rien ici.
   for (const npc of state.npcs) {
     if (npc.villageId !== village.id) continue
     const entity = state.entities.find((e) => e.id === npc.entityId)
-    if (entity) {
-      addItems(entity.inventory, { spear: 1 })
-      entity.warmth = seedWarmth
-      entity.engagement = disposition === 'neutre' ? 0 : ALIGNMENT.SEED_ENGAGEMENT
-    }
+    if (entity) addItems(entity.inventory, { spear: 1 })
   }
   return village
 }

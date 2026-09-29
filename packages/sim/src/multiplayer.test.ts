@@ -105,9 +105,6 @@ describe('multi-joueurs (L1)', () => {
       nextTaskId: 2,
       npcsArrived: false,
       lastAlarmAt: -1,
-      warmth: 0,
-      engagement: 0,
-      archetype: 'neutre',
     }
     state.villages.push(village)
 

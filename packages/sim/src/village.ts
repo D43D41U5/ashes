@@ -8,10 +8,8 @@
  * action refusée émet `action_rejected` (feedback client, testabilité) ;
  * une action validée émet son événement de domaine.
  */
-import { isOutsider, recordAct, recordHostility, seasonActFactor } from './alignment'
 import {
   AGRICULTURE,
-  ALIGNMENT,
   BALANCE,
   CENDREUX,
   COMBAT,
@@ -334,10 +332,6 @@ export interface Village {
   foundedSize?: number
   /** Dernière alarme (spec événements R4 : une par vague) — TICK_NEVER si jamais. */
   lastAlarmAt: number
-  /** Le Feu : agrégat des membres, recalculé périodiquement (spec alignement R5). */
-  warmth: number
-  engagement: number
-  archetype: 'foyer' | 'meute' | 'neutre'
   /**
    * LE PALIER DE BÂTI d'un village PNJ (spec `village-pnj-evolution.md`) : 1 le
    * campement → 2 le hameau de bois → 3 le bourg de pierre. DISTINCT du palier du
@@ -801,11 +795,6 @@ export function creditForeignDeposit(
   const foodValue = FOOD_VALUES[item]
   if (foodValue === undefined) return
   if (getVillageOf(state, actorId)?.id === s.villageId) return
-  recordAct(
-    state,
-    actorId,
-    foodValue * count * ALIGNMENT.FOREIGN_DEPOSIT_WARMTH_PER_FOOD * seasonActFactor(state),
-  )
   emitEvent(state, {
     type: 'gift_given',
     tick: state.tick,
@@ -817,7 +806,7 @@ export function creditForeignDeposit(
 }
 
 /** Endommage une structure ; à 0 elle disparaît (spec événements R1). */
-export function applyStructureDamage(state: SimState, structureId: number, damage: number, byEntityId = 0): void {
+export function applyStructureDamage(state: SimState, structureId: number, damage: number): void {
   const s = state.structures.find((st) => st.id === structureId)
   if (!s) return
   // L'INCASSABLE EST DU MONDE AU SENS FORT (décision d'Alexis, 2026-08-11) : le massif
@@ -833,26 +822,11 @@ export function applyStructureDamage(state: SimState, structureId: number, damag
     if (v && v.fuel > 0) return
   }
   s.hp -= damage
-  // Saboter la structure d'autrui est une hostilité (premier sang par sabotage).
-  // Un feu de camp LIBRE (villageId 0) n'appartient à personne : le casser ne fait
-  // de tort à aucun village, donc n'ouvre aucune hostilité.
-  if (byEntityId !== 0 && s.villageId !== 0 && !state.monsters.some((m) => m.entityId === byEntityId)) {
-    const actorVillage = getVillageOf(state, byEntityId)
-    if (actorVillage && actorVillage.id !== s.villageId) {
-      recordHostility(state, byEntityId, s.villageId)
-    }
-  }
   if (s.hp <= 0) {
     state.structures = state.structures.filter((st) => st.id !== structureId)
     // Un conteneur détruit répand son contenu (spec alignement R13).
     if (s.inventory && !isEmpty(s.inventory)) {
       spillOnGround(state, s.tx + 0.5, s.ty + 0.5, {}, s.inventory)
-    }
-    if (byEntityId !== 0 && s.villageId !== 0 && !state.monsters.some((m) => m.entityId === byEntityId)) {
-      const actorVillage = getVillageOf(state, byEntityId)
-      if (actorVillage && actorVillage.id !== s.villageId) {
-        recordAct(state, byEntityId, ALIGNMENT.DESTROY_STRUCTURE_WARMTH)
-      }
     }
     emitEvent(state, { type: 'structure_destroyed', tick: state.tick, structureId })
     // LE FEU ABATTU = LE VILLAGE TOMBE EN RUINE (V1-12/V2-20) — avant refreshFunctions,
@@ -950,7 +924,7 @@ export function advanceUpkeep(state: SimState): void {
     const walls = state.structures.filter(
       (s) => s.villageId === village.id && (s.type === 'wall' || s.type === 'door' || s.type === 'palissade'),
     )
-    for (const w of walls) applyStructureDamage(state, w.id, FIRE_UPKEEP.WALL_DECAY_PER_TICK, 0)
+    for (const w of walls) applyStructureDamage(state, w.id, FIRE_UPKEEP.WALL_DECAY_PER_TICK)
   }
 }
 
@@ -993,9 +967,6 @@ export function createVillage(state: SimState, opts: CreateVillageOptions): Vill
     nextTaskId: 1,
     npcsArrived: opts.npcsArrived,
     lastAlarmAt: TICK_NEVER,
-    warmth: 0,
-    engagement: 0,
-    archetype: 'neutre',
     buildTier: 1,
   }
   state.villages.push(village)
@@ -1638,13 +1609,14 @@ export function applyVillageAction(state: SimState, actorId: number, action: Vil
       // Le sac de la cible est borné : on ne donne que ce qui rentre.
       const given = transferItems(actor.inventory, target.inventory, action.item, action.count)
       if (given === 0) return reject('le sac de la cible est plein')
-      // L'acte chaud fondamental : pondéré par la faim UTILE du receveur (spec R2)
-      // et par ce qui a VRAIMENT changé de mains.
+      // LE DON À QUELQU'UN D'UN AUTRE FEU reste un FAIT de domaine (`gift_given`) après le
+      // retrait de l'alignement (2026-09-29) : en coop, donner à qui n'est pas de sa balise
+      // est exactement le geste que la chronique doit retenir. Seule la pesée morale part.
+      // La condition garde la sémantique d'`isOutsider` : un sans-Feu ne « donne à l'extérieur »
+      // de personne.
       const foodValue = FOOD_VALUES[action.item]
-      if (foodValue !== undefined && isOutsider(state, actorId, target.id)) {
-        const useful = Math.min(foodValue * given, 100 - target.hunger)
-        const need = target.hunger < ALIGNMENT.NEED_HUNGER ? ALIGNMENT.NEED_FACTOR : 1
-        recordAct(state, actorId, useful * ALIGNMENT.GIVE_WARMTH_PER_HUNGER * need * seasonActFactor(state))
+      const monFeu = getVillageOf(state, actorId)
+      if (foodValue !== undefined && monFeu !== undefined && monFeu.id !== getVillageOf(state, target.id)?.id) {
         const toVillage = getVillageOf(state, target.id)
         emitEvent(state, {
           type: 'gift_given',
@@ -1743,9 +1715,6 @@ export function addStructure(
 ): Structure {
   const id = state.nextStructureId
   state.nextStructureId += 1
-  // Le Foyer bâtit plus solide (spec alignement R8).
-  const village = state.villages.find((v) => v.id === villageId)
-  const hpBonus = village?.archetype === 'foyer' ? ALIGNMENT.FOYER_STRUCTURE_HP_BONUS : 1
   const chiffree = matiereChiffre(type)
   const baseHp = material !== undefined && estPalierMur(type) ? WALL_TIERS[material][type].hp : STRUCTURE_HP[type]
   const structure: Structure = {
@@ -1756,7 +1725,7 @@ export function addStructure(
     villageId,
     ownerId,
     access,
-    hp: Math.floor(baseHp * hpBonus),
+    hp: baseHp,
   }
   // On ne stocke le matériau que s'il n'est pas le défaut (bois) : snapshot léger,
   // et `s.material ?? 'wood'` fait foi partout (upgrade, démolition, PV).
@@ -1796,4 +1765,18 @@ export function addStructure(
   // enceinte (mur/toit) : on recalcule et on émet les changements (spec R9-R10).
   refreshFunctions(state)
   return structure
+}
+
+/**
+ * LES MENACES D'UN VILLAGE — lues par l'alarme (`worldevents`) et par la milice (`npc`).
+ *
+ * Venue d'`alignment.ts` à son retrait (2026-09-29). Elle y croisait les monstres ET les
+ * avatars des villages agresseurs ; sans premier sang ni hostilité entre Feux, la seconde
+ * moitié n'a plus de sujet — reste la loi qui comptait vraiment : **est une menace ce qui
+ * est un monstre et n'est pas des nôtres**. La garde de membre est conservée telle quelle :
+ * un membre ne peut jamais devenir sa propre alarme, même possédé par un cas futur.
+ */
+export function isThreatTo(state: SimState, entityId: number, village: Village): boolean {
+  if (village.memberIds.includes(entityId)) return false
+  return state.monsters.some((m) => m.entityId === entityId)
 }

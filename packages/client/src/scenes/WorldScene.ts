@@ -2563,12 +2563,11 @@ export class WorldScene extends Phaser.Scene {
       // du voile ET le reflet sur l'eau → les trois battent EN PHASE avec la flamme.
       const litFires = feux
         .map((s) => {
-          const warmth = this.view.villages.find((vg) => vg.id === s.villageId)?.warmth ?? 0
-          const g = fireGlow(warmth, day, time, s.id * 1.7, axesFeu().respiration)
+          const g = fireGlow(day, time, s.id * 1.7, axesFeu().respiration)
           // La lueur suit l'ÉTAT du feu (spec feu-station S1/S3) : pleine allumé, faible en braises,
           // NULLE éteint — la flaque au sol, le trou du voile et le reflet sur l'eau s'éteignent ensemble.
           const factor = facteurDuFeu(this.lastSnapshotTick, s)
-          return { s, factor, g: { ...g, alpha: g.alpha * factor }, warmth }
+          return { s, factor, g: { ...g, alpha: g.alpha * factor } }
         })
       // LES REMOUS (spec da-feeling R11) : qui MARCHE dans le haut-fond ? Suivi léger par
       // entité — la force s'éteint ~0,7 s après le dernier pas : un avatar immobile ne remue
@@ -2837,15 +2836,14 @@ export class WorldScene extends Phaser.Scene {
       const axFeu = axesFeu()
       // …ET À LA HAUTEUR DE SA TUILE (`liftSol`, comme le sprite du feu) : au palier 2, le trou
       // se creusait quatre tuiles au sud des rondins (MESURÉ le 2026-09-04, feu 474, graine 2026).
-      const veilFires = litFires.map(({ s, factor, g, warmth }) => ({
+      const veilFires = litFires.map(({ s, factor, g }) => ({
         worldX: (s.tx + 0.5) * TILE_PX,
         worldY: (s.ty + 0.5) * TILE_PX - (this.reliefSous?.(s.tx + 0.5, s.ty + 0.5, s.etage).lift ?? 0),
         radiusTiles: fireHoleRadius(time, s.id * 1.7) * factor,
         force: axFeu.respiration || axFeu.coeurBlanc ? 1 + (g.beat - 1) * 0.7 : 1,
-        // LA FORCE DANS LE CHAMP DE LA GI (LG-R6) : le même souffle que le trou, ET l'engagement du
-        // village, que le trou ne prend pas — le trou ne colore rien, le champ multiplie à la place du
-        // voile ET du point-light. La portée reste la même, `radiusTiles` (LG-A7).
-        forceGi: forceDuFeuGi(warmth, g.beat, axFeu.respiration || axFeu.coeurBlanc),
+        // LA FORCE DANS LE CHAMP DE LA GI (LG-R6) : le même souffle que le trou. La portée reste
+        // la même, `radiusTiles` (LG-A7).
+        forceGi: forceDuFeuGi(g.beat, axFeu.respiration || axFeu.coeurBlanc),
         // LA PLACE LOGIQUE ET LE NIVEAU, pour le champ (LG-R14) : la sim juge la marche entre le sol du
         // récepteur et la FLAMME de la source, à son palier (`lumiereDuFeu`, `niveauDeLaTuile`) — le
         // champ est en px logiques, il ne voit pas où le feu est dessiné.

@@ -16,11 +16,11 @@ import {
   brumeDuMatin as brumeDuMatin_,
   daylight as daylight_,
   fireGlow,
+  COULEUR_DU_FEU,
   fireHoleRadius,
   frontDeBrume as frontDeBrume_,
   partDeBrumeMatinale,
   sunDirection as sunDirection_,
-  warmthColor,
   BRUME_ECART_MUET,
   BRUME_ECART_PLEIN,
   BRUME_VENT_DECHIRE,
@@ -54,22 +54,6 @@ const SOURCES = import.meta.glob('../scenes/world/*.ts', {
   eager: true,
 }) as Record<string, string>
 
-const r = (c: number): number => (c >> 16) & 0xff
-const b = (c: number): number => c & 0xff
-
-describe('warmthColor (convention Feu existante)', () => {
-  it('warmth positif → bleu (Foyer)', () => {
-    const c = warmthColor(80)
-    expect(b(c)).toBeGreaterThan(r(c))
-  })
-  it('warmth négatif → rouge (Meute)', () => {
-    const c = warmthColor(-80)
-    expect(r(c)).toBeGreaterThan(b(c))
-  })
-  it('warmth nul → blanc', () => {
-    expect(warmthColor(0)).toBe(0xffffff)
-  })
-})
 
 describe('daylight (facteur de lumière du jour)', () => {
   it('borné dans [0,1]', () => {
@@ -119,28 +103,37 @@ describe('ambientTint (teinte selon l\'heure)', () => {
 
 describe('fireGlow (halo des Feux)', () => {
   it("brille la nuit, s'éteint à midi", () => {
-    const night = fireGlow(0, daylight(0))
-    const noon = fireGlow(0, daylight(12))
+    const night = fireGlow(daylight(0))
+    const noon = fireGlow(daylight(12))
     expect(night.alpha).toBeGreaterThan(noon.alpha)
     expect(noon.alpha).toBeCloseTo(0, 5)
   })
-  it('couleur = alignement (Foyer bleu, Meute rouge)', () => {
-    const foyer = fireGlow(80, daylight(0)).color
-    const meute = fireGlow(-80, daylight(0)).color
-    expect(foyer & 0xff).toBeGreaterThan((foyer >> 16) & 0xff) // bleu > rouge
-    expect((meute >> 16) & 0xff).toBeGreaterThan(meute & 0xff) // rouge > bleu
-  })
-  it('un Feu plus engagé rayonne plus loin', () => {
-    expect(fireGlow(90, daylight(0)).radius).toBeGreaterThan(fireGlow(10, daylight(0)).radius)
+  // *(Deux gardes de plus tenaient ici la COULEUR d'alignement (Foyer bleu, Meute rouge) et le
+  //   rayon qui grandissait avec l'engagement. Les deux entrées valaient 0 à vie dans le jeu
+  //   joué et partent avec l'alignement, le 2026-09-29 — le rendu ne bouge pas d'un bit.)*
+  it('un Feu allumé est blanc — la couleur du Feu est une constante', () => {
+    expect(fireGlow(daylight(0)).color).toBe(COULEUR_DU_FEU)
   })
 })
 
 /**
  * LA CLAIRIÈRE — portée CONSTANTE (décision Alexis, 2026-08-03).
  *
- * Ce banc garde une décision, pas une formule. `fireHoleRadius` ne prend pas `warmth` : c'est
- * le compilateur qui interdit de la recoupler à l'alignement, et ces cas-là gardent le RESTE —
- * qu'elle batte, et qu'elle reste dans une plage où la nuit survit à côté du camp.
+ * Ce banc garde une décision, pas une formule. `fireHoleRadius` n'a que le TEMPS et la GRAINE
+ * pour entrées, et ces cas-là gardent le reste — qu'elle batte, et qu'elle reste dans une plage
+ * où la nuit survit à côté du camp.
+ *
+ * ⚠ **LA GARDE « ELLE NE PREND PAS L'ALIGNEMENT EN ARGUMENT » EST RETIRÉE (2026-09-29) ET RIEN
+ * NE LA REMPLACE — c'est un trou, pas un oubli.** Elle tenait par une OPPOSITION : la clairière
+ * contre le halo, qui lui grandissait avec l'engagement. L'engagement parti, sa moitié halo
+ * comparait deux rayons devenus égaux (`expected 3 to be greater than 3`). Deux remplacements
+ * ont été essayés et jetés : « deux appels identiques rendent la même chose » ne peut pas
+ * échouer sur une fonction pure, et une garde de SIGNATURE au compilateur non plus — ÉPROUVÉ,
+ * `(a, b, c = 0) => number` reste assignable à `(a, b) => number`, or un `warmth = 0` optionnel
+ * est très exactement la forme qu'un recouplage prendrait (c'est celle que `fireGlow` avait).
+ * Ce qui protège vraiment aujourd'hui est la SIGNATURE ELLE-MÊME, lisible dans `lighting.ts` :
+ * il n'y a pas de troisième paramètre à passer. Le jour où une entrée de lieu ou de palier entre
+ * ici, elle amènera son propre terme d'opposition, et la garde redeviendra écrivable.
  *
  * D'où vient la borne haute — et l'histoire vaut d'être écrite, parce qu'un premier chiffre a
  * été faux. On avait mesuré « à warmth 100, le sol se relève jusqu'à 25 tuiles du foyer » et
@@ -155,14 +148,6 @@ describe('fireGlow (halo des Feux)', () => {
  * pas un goût, qui borne la portée ici.
  */
 describe('fireHoleRadius (le trou du Feu dans la nuit)', () => {
-  it("ne prend PAS l'alignement en argument — le halo si, elle non", () => {
-    // Le halo cosmétique grandit avec l'engagement : c'est CE couplage-là qui effaçait la nuit.
-    expect(fireGlow(100, daylight(0)).radius).toBeGreaterThan(fireGlow(0, daylight(0)).radius)
-    // La clairière, elle, n'a qu'un temps et une graine. Deux Feux d'alignements opposés, même
-    // instant, même graine : rigoureusement la même portée — il n'y a pas d'autre entrée.
-    expect(fireHoleRadius(1234, 5)).toBe(fireHoleRadius(1234, 5))
-  })
-
   it('elle PULSE avec la flamme (jamais un disque mort)', () => {
     const echantillons = [0, 120, 240, 360, 480, 600, 720].map((t) => fireHoleRadius(t, 3))
     expect(Math.max(...echantillons)).toBeGreaterThan(Math.min(...echantillons))

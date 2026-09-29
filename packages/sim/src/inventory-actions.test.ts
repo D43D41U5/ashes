@@ -1,6 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { seasonActFactor } from './alignment'
-import { ALIGNMENT, BALANCE, COMBAT, FOOD_VALUES, SLOTS, TERRAIN_GRASS } from './balance'
+import { BALANCE, COMBAT, SLOTS, TERRAIN_GRASS } from './balance'
 import { drainEvents } from './events'
 import { applyInventoryAction, heldSlot, wearHeld } from './inventory-actions'
 import { countOf, inventoryOf, makeInventory, type Inventory, type ItemId } from './items'
@@ -554,13 +553,15 @@ describe('transfer — joueur ⇄ conteneur (R16)', () => {
   })
 
   /**
-   * R16 : « les effets d'alignement du dépôt de nourriture chez autrui sont
-   * préservés à l'IDENTIQUE ». Les deux chemins (`deposit` en gros, `transfer`
-   * case-à-case) doivent produire le même `gift_given` et la même chaleur — c'est
-   * la même règle, appelée au même endroit (`creditForeignDeposit`).
+   * R16 : le dépôt de nourriture chez autrui vaut À L'IDENTIQUE par les deux chemins
+   * (`deposit` en gros, `transfer` case-à-case) — même `gift_given`, même compte. C'est la
+   * même règle, appelée au même endroit (`creditForeignDeposit`).
+   *
+   * La moitié « chaleur » de cette garde est partie avec l'alignement (2026-09-29) ; le FAIT
+   * de domaine, lui, reste — c'est lui que la chronique et la coop lisent.
    */
-  it('A17 : le don au grenier d’un AUTRE village crédite la même chaleur que `deposit`', () => {
-    function donner(via: 'deposit' | 'transfer'): { warmth: number; gifts: unknown[] } {
+  it('A17 : le don au grenier d’un AUTRE village émet le même `gift_given` que `deposit`', () => {
+    function donner(via: 'deposit' | 'transfer'): { gifts: unknown[] } {
       const sim = makeSim()
       const donneur = founder(sim, 10.5, 10.5)
       const chief2 = founder(sim, 70.5, 70.5)
@@ -573,7 +574,6 @@ describe('transfer — joueur ⇄ conteneur (R16)', () => {
       const moi = entity(sim, donneur)
       moi.x = 71.5
       moi.y = 71.4
-      moi.warmth = 0
       moi.inventory = makeInventory(SLOTS.PLAYER)
       moi.inventory[0] = { item: 'berries', count: 10 }
       drainEvents(sim)
@@ -594,26 +594,20 @@ describe('transfer — joueur ⇄ conteneur (R16)', () => {
       const gifts = drainEvents(sim).filter((e) => e.type === 'gift_given')
       expect(countOf(granary.inventory, 'berries')).toBe(10) // 7 + 3
       expect(countOf(moi.inventory, 'berries')).toBe(7) // le reste est resté au sac
-      return { warmth: moi.warmth, gifts }
+      return { gifts }
     }
 
-    const attendu =
-      FOOD_VALUES.berries! * 3 * ALIGNMENT.FOREIGN_DEPOSIT_WARMTH_PER_FOOD * seasonActFactor(makeSim())
     const parDeposit = donner('deposit')
     const parTransfer = donner('transfer')
 
     expect(parDeposit.gifts).toHaveLength(1)
     expect(parTransfer.gifts).toEqual(parDeposit.gifts) // le MÊME événement, au même compte (3)
-    expect(parTransfer.warmth).toBe(parDeposit.warmth) // …et la MÊME chaleur, au bit près
-    // (3 baies créditées, pas 10 ; seasonActFactor a décanté d'un cheveu depuis le tick 0)
-    expect(parTransfer.warmth).toBeCloseTo(attendu, 3)
   })
 
-  it('déposer chez SOI n’est pas un don (aucun `gift_given`, aucune chaleur)', () => {
+  it('déposer chez SOI n’est pas un don (aucun `gift_given`)', () => {
     const { sim, chief, chest } = chestSim()
     grantItems(sim, chief, { berries: 5 })
     act(sim, chief, { type: 'set_access', structureId: chest.id, access: 'village' })
-    entity(sim, chief).warmth = 0
     drainEvents(sim)
 
     act(sim, chief, {
@@ -627,7 +621,6 @@ describe('transfer — joueur ⇄ conteneur (R16)', () => {
 
     expect(chest.inventory![0]).toMatchObject({ item: 'berries', count: 5 }) // le dépôt a bien eu lieu…
     expect(drainEvents(sim).filter((e) => e.type === 'gift_given')).toEqual([]) // …mais ce n'est pas un don
-    expect(entity(sim, chief).warmth).toBe(0)
   })
 })
 
@@ -679,7 +672,6 @@ describe('transfer — un `side` hors des valeurs légales (anti-cheat)', () => 
     const me = entity(sim, donor)
     me.x = 71.5
     me.y = 71.4
-    me.warmth = 0
     drainEvents(sim)
 
     // `from.side` ment ET vise la MÊME case que `to.side='container'` : `srcInv` et
@@ -703,7 +695,6 @@ describe('transfer — un `side` hors des valeurs légales (anti-cheat)', () => 
     expect(events).toContainEqual(
       expect.objectContaining({ type: 'action_rejected', reason: 'case invalide' }),
     )
-    expect(me.warmth).toBe(0) // aucune chaleur créditée
     expect(granary.inventory![0]).toMatchObject({ item: 'berries', count: 5 }) // le grenier n'a pas bougé
   })
 

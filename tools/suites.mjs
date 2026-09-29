@@ -165,6 +165,13 @@ const SUITES = [
   //   l'ouverture », devenu structurel), `chronicle.test.ts` −1 (la stèle), `etages-etancheite`
   //   −1 (E-R5 « on n'embarque pas depuis l'étage d'en dessous » — la LOI survit dans les autres
   //   sites du fichier). Suite à 2500 ✓ ; PLANCHER INCHANGÉ (2429), la marge l'absorbe.
+  // 2026-09-29 : −14 gardes — L'ALIGNEMENT EST RETIRÉ DU CODE (suite du pivot). `alignment.test.ts`
+  //   part en entier (−9) avec le système qu'il éprouvait ; `npc.test.ts` −2 (les deux gardes de
+  //   raid), `depecage.test.ts` −1 (A14, la récolte pesée par l'archétype), `economy.test.ts` −1
+  //   (la récolte de la Meute). ⚠ LA QUATORZIÈME EST GÉNÉRÉE, et c'est le piège : `lois-d-acte.test.ts`
+  //   fabrique un `it` PAR LIGNE de sa table `LOIS`, dont `ALIGNMENT.ACT_FACTOR` — son compte de
+  //   `it(` statiques ne bouge pas, la suite perd un test quand même. Un delta qui ne se recompte
+  //   pas à la main dans ce fichier-là vient de là. Suite à 2486 ✓ ; PLANCHER INCHANGÉ (2429).
   { nom: 'sim', dir: 'packages/sim', args: ['run', '--exclude', 'src/scenario.test.ts'], plancher: 2429 },
   // 2026-09-01 : +10 gardes avec le RENDU des étages (`plateau-art.test.ts`).
   // 2026-09-01 : +9 gardes avec le TRI DES ÉTAGES (strate, découvert — `framing.test.ts`),
@@ -213,6 +220,18 @@ const SUITES = [
   //   villages […] idem pour les tests »). Suite à 1801 ✓ + 1 sauté ; plancher inchangé (1740), la
   //   marge l'absorbe. ⚠ Le plancher compare les PASSÉS : un sauté maigrit le compte pour de vrai,
   //   et si d'autres gardes rejoignent ce drapeau il faudra le dire ici plutôt que de le subir.
+  // 2026-09-29 : −7 gardes — L'ALIGNEMENT EST RETIRÉ DU CODE, côté rendu. `lighting.test.ts` −5,
+  //   dont QUATRE qui éprouvaient une ENTRÉE qui n'existe plus (« warmth positif → bleu (Foyer) »,
+  //   « warmth négatif → rouge (Meute) », « couleur = alignement », « un Feu plus engagé rayonne
+  //   plus loin ») ; « warmth nul → blanc » est REMPLACÉE une pour une par « un Feu allumé est
+  //   blanc — la couleur du Feu est une constante ». ⚠ LA CINQUIÈME EST UN TROU ASSUMÉ, et il est
+  //   écrit en tête de son `describe` : l'opposition halo↔clairière tenait par un TERME (le halo
+  //   grandissait avec l'engagement) et la coupe le retire, donc sa moitié halo comparait deux
+  //   rayons devenus égaux. Deux remplacements ont été écrits puis JETÉS parce qu'ils ne pouvaient
+  //   pas rougir — dont une garde de signature au compilateur, ÉPROUVÉE : `(a, b, c = 0)` reste
+  //   assignable à `(a, b)`, or un `warmth = 0` optionnel est la forme même d'un recouplage.
+  //   `champ-ref.test.ts` −2 (la force du Feu modulée par l'engagement dans la chaîne GI ; la
+  //   moitié SOUFFLE est gardée). Suite à 1805 ✓ ; plancher inchangé (1740).
   { nom: 'client', dir: 'packages/client', args: ['run'], plancher: 1740 },
   { nom: 'serveur', dir: 'packages/server', args: ['run'], plancher: 36 },
   // Le banc pilote le vrai worldgen sur la carte de production : lent, et seul à porter le

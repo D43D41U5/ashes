@@ -108,7 +108,6 @@ export const INVENTAIRE: Inventaire = {
   gift_given: { voix: 'voix', ou: 'auteur', famille: 'social', quoi: 'on DONNE à un voisin (le verbe chaud du Foyer)' },
   village_founded: { voix: 'muet', famille: 'social', quoi: 'un village naît autour d’un Feu' },
   village_fell: { voix: 'voix', ou: 'village', famille: 'social', quoi: 'un village TOMBE — il n’est plus qu’une ruine pillable' },
-  village_archetype_changed: { voix: 'voix', ou: 'village', famille: 'social', quoi: 'un Feu vire au bleu ou au rouge — Foyer, Meute' },
   member_joined: { voix: 'muet', famille: 'social', quoi: 'quelqu’un rejoint le village' },
   // Muet comme `member_joined`, qu'il accompagne toujours : l'arrivée du colon se VOIT
   // (il entre au village à l'aube, sa paillasse apparaît) — un son la redirait.

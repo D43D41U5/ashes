@@ -46,7 +46,6 @@ import {
   type FishSpecies,
   CENDREUX,
 } from './balance'
-import { harvestFactor } from './alignment'
 import { die, type Corpse } from './combat'
 import { emitEvent } from './events'
 import { secouerLeSol } from './sens'
@@ -1198,7 +1197,7 @@ function harvestStrike(state: SimState, actor: Entity, actorId: number, node: Re
   const tierYield = TOOL_YIELD[effectiveTier(tier, level)]
   const base = Math.max(
     1,
-    Math.floor((tierYield + Math.floor(level / BALANCE.SKILL_YIELD_STEP)) * harvestFactor(state, actorId)),
+    tierYield + Math.floor(level / BALANCE.SKILL_YIELD_STEP),
   )
   // Le bonus propre est un PLANCHER À +1 : à base 1, +50 % arrondirait à 0 et la
   // maîtrise ne se verrait pas. Il croît ensuite avec le rendement de base.

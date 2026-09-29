@@ -119,13 +119,13 @@ describe('Le Feu tuable → la ruine (V1-12/V2-20)', () => {
 
     // NOURRI : aucun dégât ne mord (le totem inviolable).
     v.fuel = 100
-    applyStructureDamage(sim, fire.id, 99999, 0)
+    applyStructureDamage(sim, fire.id, 99999)
     expect(sim.structures.find((s) => s.id === fire.id)!.hp).toBe(STRUCTURE_HP.fire)
 
     // À SEC : un assaut suffisant l'abat → le village TOMBE.
     v.fuel = 0
     drainEvents(sim)
-    applyStructureDamage(sim, fire.id, 99999, 0)
+    applyStructureDamage(sim, fire.id, 99999)
     expect(sim.structures.some((s) => s.id === fire.id)).toBe(false) // le Feu est tombé
     expect(sim.villages.some((vg) => vg.id === v.id)).toBe(false) // le village a quitté l'état
     // La ruine se PILLE : le coffre survivant s'ouvre à tous, sans propriétaire.
@@ -140,7 +140,7 @@ describe('Le Feu tuable → la ruine (V1-12/V2-20)', () => {
     const fire = addStructure(sim, 'fire', 10, 10, v.id, 0)
     v.fuel = 0
     drainEvents(sim)
-    applyStructureDamage(sim, fire.id, 99999, 0)
+    applyStructureDamage(sim, fire.id, 99999)
     expect(drainEvents(sim).some((e) => e.type === 'village_fell' && e.villageId === v.id)).toBe(true)
   })
 })

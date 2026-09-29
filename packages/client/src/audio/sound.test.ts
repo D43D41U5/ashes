@@ -136,7 +136,10 @@ describe('la table de routage audio (soundForEvent)', () => {
     // 107 → 104 le 2026-09-29 : la FIN DE SAISON est retirée du code (`evacuation_opened`,
     // `season_ended`, `ark_departed`) — trois faits, TROIS VOIX, zéro silence. Le verdict classait
     // des villages qui n'existent plus ; la famille `saison` reste peuplée.
-    expect(total).toBe(104)
+    // 104 → 103 le 2026-09-29 : L'ALIGNEMENT EST RETIRÉ — `village_archetype_changed` (une voix)
+    // perd son sujet. La famille `social` SURVIT : `gift_given`, `village_founded`, `village_fell`,
+    // `member_joined` et `member_banished` sont du vocabulaire de balise et de coop.
+    expect(total).toBe(103)
     // 34 → 35 le 2026-07-29 : `node_depleted` a gagné sa voix (trois, selon la matière).
     // 61 → 62 faits et 35 → 36 voix le 2026-07-30 : `door_toggled` naît (spec construction R26).
     // 62 → 63 faits et 36 → 37 voix le 2026-07-31 : `cendreux_prowl` naît (spec cendreux R11bis) —
@@ -154,7 +157,8 @@ describe('la table de routage audio (soundForEvent)', () => {
     // son fantôme.
     // 57 → 54 le 2026-09-29 : − `evacuation_opened`, `season_ended`, `ark_departed` — la fin de
     // saison n'existe plus (le pivot de la braise). Les silences ne bougent pas (50).
-    expect(voix).toBe(54)
+    // 54 → 53 le 2026-09-29 : − `village_archetype_changed` (retrait de l'alignement).
+    expect(voix).toBe(53)
   })
 
   it('L’AXE D’ALIGNEMENT S’ENTEND : les verbes chauds montent, les froids tombent', () => {

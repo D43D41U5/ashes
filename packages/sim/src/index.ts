@@ -21,7 +21,6 @@ export { poissonPoints } from './poisson'
 
 // ─── Équilibrage & définitions (balance.ts — la seule source des nombres) ─
 export { POI,
-  ALIGNMENT,
   BALANCE,
   COMBAT,
   CARRY,
@@ -303,8 +302,6 @@ export type { PoiCharge } from './poi-discovery'
 export { advanceWorldEvents } from './worldevents'
 export { advanceNightHunt } from './nighthunt'
 export type { Horde } from './worldevents'
-export { advanceAlignment, archetypeOf, isOutsider, regenFactor, damageModifier, harvestFactor } from './alignment'
-export type { Archetype, Aggression } from './alignment'
 export {
   countOf,
   hasItems,

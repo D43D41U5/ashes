@@ -12,7 +12,7 @@
  * milice (handleDefense) et le peuplement (spawnNpcsAround). Les besoins,
  * les expéditions et le tableau vivent dans leurs modules.
  */
-import { isThreatTo } from './alignment'
+import { isThreatTo } from './village'
 import {
   BALANCE,
   COMBAT,
@@ -45,7 +45,6 @@ import { distSq } from './geometry'
 import { eauLaPlusProcheMarchable, zoneIdAt } from './map'
 import { countOf, freeRoomFor, moveSlotWithin, type ItemId } from './items'
 import { handleCold, handleHunger, handleOrage, handleSleep, handleWounds } from './npc-needs'
-import { assignErrands, handleErrand } from './npc-errands'
 import { pathToward } from './pathfinding'
 import { spawnEntity, type Entity, type SimState } from './sim'
 import { getGameTime, TICKS_PER_CYCLE } from './time'
@@ -131,12 +130,6 @@ export interface Npc {
   /** Tick jusqu'auquel on IGNORE toute menace, après avoir renoncé. Sans ce répit,
    *  il repartirait à la charge au tick suivant, pour l'éternité. */
   defendIgnoreUntil: number
-  /** Expédition en cours (spec alignement R13-R14) : raid de Meute ou don de Foyer. */
-  errand: {
-    kind: 'raid' | 'gift'
-    targetVillageId: number
-    stage: 'fetch' | 'go' | 'smash' | 'loot' | 'home'
-  } | null
 }
 
 const TASK_DEFS: Record<
@@ -1559,7 +1552,6 @@ export function advanceNpcs(state: SimState): void {
     }
     if (state.tick % BALANCE.BOARD_REFRESH_TICKS === 0) refreshBoard(state, village)
   }
-  assignErrands(state)
 
   for (const npc of state.npcs) {
     const entity = state.entities.find((e) => e.id === npc.entityId)
@@ -1598,11 +1590,9 @@ export function advanceNpcs(state: SimState): void {
       (countOf(entity.inventory, 'fiber') >= COMBAT.BANDAGE_FIBER_COST ||
         granaries(state, village.id).some((c) => countOf(c.inventory ?? [], 'fiber') >= COMBAT.BANDAGE_FIBER_COST))
     if (!starving && !bleeding && handleDefense(state, village, npc, entity)) continue
-    // LE SANG AVANT TOUT LE RESTE (R13) : l'expédition, le sommeil et la faim attendent —
-    // aucun n'est aussi pressé qu'une hémorragie.
+    // LE SANG AVANT TOUT LE RESTE (R13) : le sommeil et la faim attendent — aucun n'est
+    // aussi pressé qu'une hémorragie.
     if (handleWounds(state, village, npc, entity)) continue
-    // Puis l'expédition en cours (raid ou don, spec alignement R13-R14).
-    if (handleErrand(state, village, npc, entity)) continue
     if (handleSleep(state, npc, entity)) continue
     if (handleCold(state, village, npc, entity)) continue
     // R8 — L'ORAGE POUSSE À L'ABRI (spec meteo.md) : sous l'empreinte d'un orage, on
@@ -1687,7 +1677,6 @@ export function spawnNpcsAround(state: SimState, village: Village, count: number
       defendStuck: 0,
       defendBest: -1,
       defendIgnoreUntil: 0,
-      errand: null,
     })
     spawned += 1
   }

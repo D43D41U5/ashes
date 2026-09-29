@@ -119,8 +119,8 @@ describe('la Cendre (A2)', () => {
 describe('la chronique (A5)', () => {
   it('raconte la saison : noms, jours croissants, actes', { timeout: 120_000 }, () => {
     const sim = makeSim()
-    foundNpcVillage(sim, 10, 10, 3, 'foyer')
-    foundNpcVillage(sim, 30, 30, 3, 'meute')
+    foundNpcVillage(sim, 10, 10, 3)
+    foundNpcVillage(sim, 30, 30, 3)
     const events: SimEvent[] = []
     events.push(...drainEvents(sim))
     // Sauter de veille de nuit en veille de nuit pour traverser la saison vite, en jouant
@@ -161,8 +161,8 @@ describe('le déterminisme (A6)', () => {
   it('deux saisons accélérées identiques au bit près', { timeout: 60_000 }, () => {
     const run = (): string => {
       const sim = makeSim()
-      foundNpcVillage(sim, 10, 10, 2, 'foyer')
-      foundNpcVillage(sim, 30, 30, 2, 'meute')
+      foundNpcVillage(sim, 10, 10, 2)
+      foundNpcVillage(sim, 30, 30, 2)
       for (let day = 0; day <= BALANCE.SEASON_DAYS; day += 4) {
         sim.tick = day * TICKS_PER_CYCLE
         sim.tick += dayTicksAt(sim, sim.tick) - 5

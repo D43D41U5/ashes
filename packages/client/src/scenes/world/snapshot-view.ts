@@ -126,7 +126,7 @@ const BANDE_IMMERGEE_DEPTH = GROUND_MAP_DEPTH + 0.255
 
 const MARGE_CIMES = Math.ceil(Math.max(...TOUTES_VARIANTES.map((v) => hauteurTuiles(v.mesures))))
 import { cimeDe, varianteArbre } from '../../render/arbre-peuplement'
-import { warmthColor } from '../../render/lighting'
+import { COULEUR_DU_FEU } from '../../render/lighting'
 import { LIT_NODE_TYPES, litNodeTextureKey } from '../../render/lit-props'
 import { cleLit } from '../../render/normal-map'
 import { cleDeSocle, estUnSocle, SOCLE_KEYS, SOCLE_OMBRE_DERIVE, SOCLE_OMBRE_DESCENTE, SOCLE_OMBRE_TUILES, tailleDeSocle, type SocleType } from '../../render/socle-mineral'
@@ -2327,15 +2327,12 @@ export class SnapshotView {
         // Les BÛCHES normal-mappées : bois mat `_lit` quand l'éclairage est armé (relief
         // calculé par la normal map cylindrique), sinon le sprite ombré simple.
         sprite.setTexture(this.lighting ? cleLit('st-fire', mirS) : 'st-fire')
-        // La couleur suit l'ÉTAT (spec feu-station S1) : allumé → couleur du Feu (alignement R9,
-        // bleu↔blanc↔rouge) ; braises → ambre sombre ; éteint → bûches froides et grises.
+        // La couleur suit l'ÉTAT (spec feu-station S1) : allumé → `COULEUR_DU_FEU` ; braises →
+        // ambre sombre ; éteint → bûches froides et grises.
         const st = fireStateAt(this.tick, s)
         if (st === 'out') sprite.setTint(0x555560)
         else if (st === 'ember') sprite.setTint(0x8a4a2a)
-        else {
-          const warmth = this.villages.find((v) => v.id === s.villageId)?.warmth ?? 0
-          sprite.setTint(warmthColor(warmth))
-        }
+        else sprite.setTint(COULEUR_DU_FEU)
       } else if (s.edges !== undefined && (s.type === 'wall' || s.type === 'palissade' || s.type === 'cloture' || s.type === 'door')) {
         // ═══ LA BARRIÈRE SUR ARÊTE — la forme est PORTÉE, plus devinée ═══
         //

@@ -21,8 +21,10 @@
  * CE QU'ELLE A ÉTABLI, et où c'est écrit : `docs/specs/pnj.md` § P-A4 — le 1,36 ms/villageois
  * rendu à l'AMORÇAGE (croisière : 0,768), jour et nuit indistinguables sous le plancher de bruit,
  * et le vrai problème qui est un PIC de 517 à 607 ms au tick du crépuscule, causé par une bouffée
- * d'A* — `assignErrands` assigne les expéditions au tick unique où `estCrepuscule` est vrai, et
- * chaque villageois lance alors un A* complet sur 1581×1700.
+ * d'A* — `assignErrands` assignait les expéditions au tick unique où `estCrepuscule` est vrai, et
+ * chaque villageois lançait alors un A* complet sur 1581×1700. ⚠ MESURE PÉRIMÉE de ce côté : les
+ * expéditions sont parties avec l'alignement (2026-09-29, `npc-errands.ts` supprimé), donc le pic
+ * du crépuscule que ce profileur nommait n'a plus sa cause. Le reste du chiffre tient.
  *
  * Le monde est celui de `profil-tick.mts` (graine 2026, `MONDE_JOUE`, 50 joueurs) ; seul le
  * NOMBRE DE VILLAGES change d'un run à l'autre. Le run à 0 village est le TÉMOIN INERTE : le
@@ -81,9 +83,8 @@ const voisins = emplacements
   .filter((e) => e.tx !== premier.tx || e.ty !== premier.ty)
   .sort((a, b) => d2(a) - d2(b))
   .slice(0, villages)
-const dispositions = ['foyer', 'meute'] as const
-for (const [i, v] of voisins.entries()) {
-  foundNpcVillage(sim, v.tx, v.ty, BALANCE.NPC_PER_VILLAGE, dispositions[i] ?? 'neutre')
+for (const v of voisins) {
+  foundNpcVillage(sim, v.tx, v.ty, BALANCE.NPC_PER_VILLAGE)
 }
 
 const gt0 = getGameTime(sim)

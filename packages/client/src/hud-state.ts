@@ -6,7 +6,7 @@
  * doivent JAMAIS appeler `registry.set/get` directement — uniquement
  * `setHud`/`getHud`.
  */
-import type { BarrierType, ChronicleEntry, ChronicleVolume, TenuPosable, RecipeId, StationFonction, CraftOrder, Entity, GameTime, Inventory, ItemBag, ItemId, MeteoAspect, PlayerAction, SkillId, Village, VillageTask, WallMaterial, WorldMap } from '@ashes/sim'
+import type { BarrierType, ChronicleEntry, ChronicleVolume, TenuPosable, RecipeId, StationFonction, CraftOrder, Entity, GameTime, Inventory, ItemBag, ItemId, MeteoAspect, PlayerAction, SkillId, VillageTask, WallMaterial, WorldMap } from '@ashes/sim'
 import type Phaser from 'phaser'
 import type { Brouillard } from './render/fog'
 
@@ -152,10 +152,6 @@ export interface HudState {
   village: number
   /** Tableau des tâches de mon village. */
   tasks: VillageTask[]
-  /** Archétype de mon village (null = pas de village). */
-  archetype: Village['archetype'] | null
-  /** Chaleur du Feu de mon village. */
-  villageWarmth: number
   inv: Inventory
   /** Case tenue en main (`-1` = mains nues) — surligne la ceinture (spec inventaire R8). */
   activeSlot: number
@@ -475,7 +471,7 @@ export function getHud<K extends keyof HudState>(registry: Registry, key: K): Hu
 export const CLES_HUD: Record<keyof HudState, true> = {
   worldReady: true, loadProgress: true, time: true, zone: true, village: true,
   toponyme: true, lieu: true, ambiant: true, cielIci: true, cielCouvre: true, vent: true,
-  tasks: true, archetype: true, villageWarmth: true, inv: true, activeSlot: true,
+  tasks: true, inv: true, activeSlot: true,
   craftQueue: true, stationsInRange: true, seen: true, hunger: true, temperature: true, skills: true, pecheCarnet: true, carnetEncyclo: true,
   hp: true, stamina: true, exhausted: true, wounds: true, selected: true, buildMaterial: true, buildEdge: true, demolir: true,
   marteau: true,

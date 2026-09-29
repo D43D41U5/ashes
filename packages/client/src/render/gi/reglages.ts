@@ -26,18 +26,13 @@ export const GI = {
   TEINTE_FEU: [1.15, 0.92, 0.62] as const,
   /**
    * ═══ LA FORCE D'UN FEU (LG-R6, LG-A7) ═══
-   * La portée d'un Feu ne prend ni l'engagement ni la force : elle est celle du trou d'aujourd'hui
-   * (`fireHoleRadius`, qui respire au battement étalon). Sa FORCE, elle, prend les deux battements
-   * d'aujourd'hui — l'engagement du village, comme le point-light (`intensiteDuFeu`), et le souffle
-   * de la flamme, comme le trou du voile (`VeilFire.force`) : « le look de la clairière qui respire
-   * est reconduit, le trou en moins ».
+   * La portée d'un Feu ne prend pas la force : elle est celle du trou d'aujourd'hui
+   * (`fireHoleRadius`, qui respire au battement étalon). Sa FORCE prend le souffle de la flamme,
+   * comme le trou du voile (`VeilFire.force`) : « le look de la clairière qui respire est
+   * reconduit, le trou en moins ». *(L'engagement du village en était le second terme jusqu'au
+   * 2026-09-29 ; il valait 0 à vie et part avec l'alignement — le rendu ne bouge pas.)*
    */
   FEU: {
-    /** L'engagement dans la force : (0,8 + 0,2 e) / 0,8 = 1 + 0,25 e — la loi d'aujourd'hui,
-     *  `intensiteDuFeu` (`dynamic-lighting.ts`), rapportée au feu neutre : un quart de plus à plein
-     *  engagement (Alexis, planche 12, LG-Q3 (b) : « K : la force seule »). `champ-ref.test.ts` tient
-     *  les deux égales. */
-    ENGAGEMENT: 0.25,
     /** Le souffle dans la force : 1 + 0,7 × (battement − 1) — l'amorti du trou du voile d'aujourd'hui
      *  (`WorldScene`, `veilFires.force` : « la clairière respire en profondeur »), que la GI reconduit
      *  (Alexis, LG-Q6 : « la force et la portée »). À pleine amplitude, le grain du sol clignoterait. */
@@ -158,17 +153,14 @@ export function hauteurDeBande(type: string): number {
 }
 
 /**
- * LG-R6 — LA FORCE D'UNE SOURCE DE FEU DANS LE CHAMP : l'engagement de son village (|warmth| / 100,
- * borné à 1 — la lecture de `fireGlow`) et le souffle de sa flamme (`beat`, le battement de l'alpha
- * du halo, `fireGlow().beat` — même graine, même instant que la flamme et la flaque), chacun par la
- * loi d'aujourd'hui (`GI.FEU`). La portée n'en sait rien : elle se donne à côté, et `SourceGi` n'a
- * pas de champ d'engagement (LG-A7). `respire` : l'axe « respiration » du rendu — éteint, le trou
- * d'aujourd'hui ne bat pas, la force non plus.
+ * LG-R6 — LA FORCE D'UNE SOURCE DE FEU DANS LE CHAMP : le souffle de sa flamme (`beat`, le
+ * battement de l'alpha du halo, `fireGlow().beat` — même graine, même instant que la flamme et la
+ * flaque), par la loi d'aujourd'hui (`GI.FEU`). La portée n'en sait rien : elle se donne à côté
+ * (LG-A7). `respire` : l'axe « respiration » du rendu — éteint, le trou d'aujourd'hui ne bat pas,
+ * la force non plus.
  */
-export function forceDuFeuGi(warmth: number, beat: number, respire: boolean): number {
-  const engage = Math.min(1, Math.abs(warmth) / 100)
-  const souffle = respire ? 1 + (beat - 1) * GI.FEU.SOUFFLE : 1
-  return (1 + GI.FEU.ENGAGEMENT * engage) * souffle
+export function forceDuFeuGi(beat: number, respire: boolean): number {
+  return respire ? 1 + (beat - 1) * GI.FEU.SOUFFLE : 1
 }
 
 /**

@@ -988,8 +988,7 @@ const SCENARIOS = {
     //     déjà écrit, déjà bruyant ;
     //   · `trainer` : ses trois branches d'annonce de Feu rendent « pas de village » — le scénario
     //     passe, mais ces trois-là ne sont plus éprouvées. Perte ASSUMÉE, parquée avec le drapeau ;
-    //   · `gi-temoin` (retombe sur un modèle `{ id: 0, warmth: 0 }`), `epuisement` et `flore` (une
-    //     liste vide leur suffit) : intacts ;
+    //   · `gi-temoin`, `epuisement` et `flore` (une liste vide leur suffit) : intacts ;
     //   · `arete` : son `villageId !== 0` porte sur ce que le JOUEUR bâtit, pas sur un village PNJ.
     if (!drapeau('VILLAGES_PNJ')) {
       console.log('   ⛔ FEATURES.VILLAGES_PNJ est éteint : aucun village PNJ à tamponner, la scène de LG-A17')
@@ -2108,17 +2107,16 @@ const SCENARIOS = {
     const inexplique = Math.max(...paires.map((p) => p.pireTout - (2 + 150 * Math.abs(p.dForce))))
     ok(inexplique <= 0, `LG-A7 à 60 Hz : sur tout le champ, le pire saut d'une image à l'autre (${pireTout.toFixed(2)} niveaux) s'explique par le souffle de la force au pied (Δforce jusqu'à ${Math.max(...paires.map((p) => Math.abs(p.dForce))).toFixed(4)} par image, 150 niveaux par unité de force, à 2 niveaux près)`)
 
-    // ── L'ENGAGEMENT : LA FORCE, JAMAIS LA PORTÉE (LG-R6, planche 12 « K ») — le même instant, le village
-    //    du feu forcé neutre puis engagé (verrouillé par un getter, comme `feuNuit` : le snapshot
-    //    réécrit `villages` à chaque tick). Un feu de camp n'a pas de village (id 0) : on lui en donne un,
-    //    copié du premier, pour que `warmth` ait une adresse. ──
-    const verrouiller = (w) => ev(({ w }) => {
-      const sc = window.__BRAISES__.scene
-      const base = (sc.view.villages ?? []).filter((v) => v.id !== 0)
-      const modele = base[0] ?? { id: 0, warmth: 0 }
-      const fige = [...base.map((v) => ({ ...v, warmth: w })), { ...modele, id: 0, warmth: w }]
-      Object.defineProperty(sc.view, 'villages', { get: () => fige, set: () => {}, configurable: true })
-    }, { w })
+    // ── LE SOL SOUS LE CHAMP, À L'INSTANT DE LA CRÊTE (LG-R6, planche 12 « K ») ──
+    //
+    // ⚠ CE BLOC A PERDU SA MOITIÉ LE 2026-09-29, AVEC L'ALIGNEMENT. Il forçait le village du feu
+    // neutre puis engagé (`warmth`, verrouillé par un getter) et éprouvait SEPT fois la loi « la
+    // force, jamais la portée » : ×1,25 sur la force reçue, le rayon inchangé au texel, le pied
+    // ×1,25, le sol proche +10 niveaux, le sol lointain au quart de sa part, la nuit intacte à 12
+    // et 14 tuiles. Cette loi n'a plus d'ENTRÉE : `forceDuFeuGi` ne prend que le souffle, et
+    // `GI.FEU.ENGAGEMENT` est parti. Rejouées telles quelles, les sept gardes compareraient deux
+    // fois le même pixel et passeraient au vert à vide. Ce qui RESTE éprouvable ici est le sol
+    // sous le champ — sa teinte (③, ci-dessous) et sa flaque (le bloc suivant).
     /** L'image composée à l'instant `t`, par anneaux autour du feu (en tuiles d'écran) : la luminance
      *  (moyenne, médiane, p90) et la part de couleur (max − min) / max (médiane). Les anneaux au-delà de
      *  10 tuiles ne tiennent que sur la largeur du cadre — ils existent, entamés. */
@@ -2154,47 +2152,16 @@ const SCENARIOS = {
       return BORNES.slice(0, -1).map((r0, q) => ({ r0, r1: BORNES[q + 1], lum: stat(lums[q]), sat: stat(sats[q]) }))
     }, { t, fx, fy })
     const anneau = (img, r0) => img.find((a) => a.r0 === r0)
-    await verrouiller(0)
     const champNeutre = await lireLeChamp(crete.t), imageNeutre = await lireLImage(crete.t)
-    await verrouiller(100)
-    const champEngage = await lireLeChamp(crete.t), imageEngagee = await lireLImage(crete.t)
-    console.log('   — LG-A7, l’engagement (le même instant, la crête)')
-    console.log(`     champ neutre  : ${champNeutre.touches} texels touchés, vert au pied ${champNeutre.pied}, rayon ${champNeutre.rayon}, force ${champNeutre.force}`)
-    console.log(`     champ engagé  : ${champEngage.touches} texels touchés, vert au pied ${champEngage.pied}, rayon ${champEngage.rayon}, force ${champEngage.force}`)
+    console.log('   — LG-A7, le sol sous le champ (le même instant, la crête)')
+    console.log(`     champ         : ${champNeutre.touches} texels touchés, vert au pied ${champNeutre.pied}, rayon ${champNeutre.rayon}, force ${champNeutre.force}`)
     const ligne = (img) => img.map((a) => `${a.r0}–${a.r1} ${a.lum ? `${a.lum.moy} (méd ${a.lum.med.toFixed(0)}, p90 ${a.lum.p90})` : '—'}`).join(' · ')
-    console.log(`     image neutre  : ${ligne(imageNeutre)}`)
-    console.log(`     image engagée : ${ligne(imageEngagee)}`)
-    ok(champNeutre.force > 0 && Math.abs(champEngage.force / champNeutre.force - 1.25) < 1e-6, `LG-A7 l'engagement entre dans la force reçue : ×${(champEngage.force / champNeutre.force).toFixed(4)} du neutre à l'engagé (1,25 : la loi du point-light d'aujourd'hui)`)
-    // AU TEXEL : la queue du profil (`profil`, en s² près du bord) passe sous un demi-niveau sur une bande
-    // de texels, et une force ×1,25 en fait remonter quelques-uns à 1 — de l'arrondi, pas de la portée
-    // (MESURÉ le 2026-09-19 au coin (226, 220) : 16 texels de plus sur 2 308, tous à 1 niveau ; au coin
-    // (404, 84) l'arrondi n'en déplaçait aucun). Un texel touché EN PLUS au-delà d'un niveau, lui, serait
-    // de la portée, et la garde rougit.
-    const dejaTouches = new Set(champNeutre.touchesIdx.map(([k]) => k))
-    const enPlus = champEngage.touchesIdx.filter(([k]) => !dejaTouches.has(k))
-    const enPlusFrancs = enPlus.filter(([, niveau]) => niveau > 1).length
-    ok(champEngage.rayon === champNeutre.rayon && enPlusFrancs === 0, `LG-A7 l'engagement ne touche pas la portée : même rayon (${champNeutre.rayon}), et les texels touchés en plus sont l'arrondi de la queue (${enPlus.length} de plus sur ${champNeutre.touches}, ${enPlusFrancs} au-delà d'un niveau)`)
-    ok(champNeutre.pied > 0 && Math.abs(champEngage.pied / champNeutre.pied / 1.25 - 1) <= 0.02, `LG-A7 le point proche, dans le champ : le vert au pied ×${(champEngage.pied / champNeutre.pied).toFixed(4)} (1,25 ± 2 %)`)
-    const pres0 = anneau(imageNeutre, 0.5), pres1 = anneau(imageEngagee, 0.5)
-    ok(pres0?.lum && pres1?.lum && pres1.lum.med - pres0.lum.med >= 10, `LG-A7 le point proche, à l'image : le sol à 0,5–1 tuile gagne ${pres0?.lum && pres1?.lum ? (pres1.lum.med - pres0.lum.med).toFixed(1) : '—'} niveaux de luminance médiane du neutre à l'engagé (≥ 10)`)
-    // AU-DELÀ DE 4 TUILES, LA LOI K ET RIEN D'AUTRE : le sol ne gagne pas plus que le QUART de la part du
-    // feu qu'il avait (la force ×1,25, la portée intacte), à 3 niveaux près. La part du feu à 4–6 tuiles
-    // se lit sur l'image neutre : l'excès sur le sol hors de portée (8–10 tuiles). Un seuil fixe en
-    // niveaux mentirait : à la crête du souffle la portée fait 6,9 tuiles et le feu porte encore à 4.
-    const loin0 = anneau(imageNeutre, 4), loin1 = anneau(imageEngagee, 4), hors = anneau(imageNeutre, 8)
-    const partMoy = loin0?.lum && hors?.lum ? Math.max(0, loin0.lum.moy - hors.lum.moy) : 0
-    const partP90 = loin0?.lum && hors?.lum ? Math.max(0, loin0.lum.p90 - hors.lum.p90) : 0
-    ok(loin0?.lum && loin1?.lum && hors?.lum && Math.abs(loin1.lum.moy - loin0.lum.moy) <= 3 + 0.25 * partMoy && Math.abs(loin1.lum.p90 - loin0.lum.p90) <= 3 + 0.25 * partP90, `LG-A7 le point proche, au-delà de 4 tuiles : le sol ne gagne pas plus que le quart de sa part de feu (4–6 tuiles : moyenne ${loin0?.lum?.moy} → ${loin1?.lum?.moy} pour une part de ${partMoy.toFixed(1)}, p90 ${loin0?.lum?.p90} → ${loin1?.lum?.p90} pour une part de ${partP90.toFixed(1)} ; à 3 niveaux près)`)
-    for (const r0 of [12, 14]) {
-      const a = anneau(imageNeutre, r0), b = anneau(imageEngagee, r0)
-      ok(a?.lum && b?.lum && Math.abs(b.lum.moy - a.lum.moy) <= 3, `LG-A7 ② la nuit reste la nuit : à ${r0}–${r0 + 2} tuiles, l'alignement ne change rien au sol (${a?.lum?.moy} → ${b?.lum?.moy}, ≤ 3)`)
-    }
+    console.log(`     image         : ${ligne(imageNeutre)}`)
     const satPres = anneau(imageNeutre, 2)?.sat, satLoin = anneau(imageNeutre, 12)?.sat
     ok(satPres && satLoin && satPres.med >= satLoin.med - 0.05, `LG-A7 ③ le sol garde sa teinte sous le champ : part de couleur médiane ${satPres?.med} à 2–3 tuiles contre ${satLoin?.med} à 12–14`)
 
-    // ── LA FLAQUE SOUS LE CHAMP (LG-R6, planche 13) : village neutre, le même instant — le pied du feu
+    // ── LA FLAQUE SOUS LE CHAMP (LG-R6, planche 13), au même instant — le pied du feu
     //    n'est ni moins clair ni moins coloré qu'aujourd'hui, et sans la flaque il perd sa braise. ──
-    await verrouiller(0)
     await ev(() => { window.__BRAISES__.scene.registry.set('debugGi', 0) })
     const imageAujourdhui = await lireLImage(crete.t)
     await ev(() => { window.__BRAISES__.scene.registry.set('debugGi', 7) })
@@ -2219,7 +2186,7 @@ const SCENARIOS = {
       return { cote: src.width, texelPx: +texelPx.toFixed(2), centres: +((dMax * texelPx) / 16).toFixed(3), bord: +(((dMax + 0.5) * texelPx) / 16).toFixed(3), demiCoteTuiles: +(glow.displayWidth / 2 / 16).toFixed(3) }
     }, { id: feuId })
     const a0 = anneau(imageAujourdhui, 0.5), a1 = anneau(imageComposee, 0.5), a2 = anneau(imageSansFlaque, 0.5)
-    console.log('   — LG-A7, la flaque sous le champ (village neutre, la crête)')
+    console.log('   — LG-A7, la flaque sous le champ (la crête)')
     console.log(`     sol à 0,5–1 tuile — aujourd'hui : luminance méd ${a0?.lum?.med.toFixed(1)} (moy ${a0?.lum?.moy}), couleur méd ${a0?.sat?.med} ; composé : ${a1?.lum?.med.toFixed(1)} (moy ${a1?.lum?.moy}), ${a1?.sat?.med} ; composé sans la flaque : ${a2?.lum?.med.toFixed(1)} (moy ${a2?.lum?.moy}), ${a2?.sat?.med}`)
     console.log(`     la flaque : ${etendue ? `${etendue.cote} texels de côté à ${etendue.texelPx} px, le dernier texel allumé centré à ${etendue.centres} tuiles du foyer (son bord à ${etendue.bord}), demi-côté ${etendue.demiCoteTuiles} tuiles` : 'introuvable'}`)
     // La clarté d'aujourd'hui à 4 niveaux près : le témoin LG-A20 tolère déjà 2 niveaux EN MOYENNE sur
@@ -11937,23 +11904,34 @@ const SCENARIOS = {
    * et qu'aucun test unitaire n'atteint : elles vivent dans l'EMPILEMENT des calques.
    *
    *   ① LE CAMP EST ÉCLAIRÉ — le sol près du foyer est franchement plus clair qu'au loin.
-   *   ② LA NUIT RESTE LA NUIT — hors du camp, le sol ne bouge pas d'un cheveu quand le village
-   *     passe de neutre à pleinement engagé. C'est LA décision d'Alexis (portée CONSTANTE,
-   *     l'engagement se lit à la flamme) et c'est la régression qu'on attrape ici : le trou du
-   *     voile suivait `fireGlow.radius`, qui double avec l'alignement — mesuré, le sol se
-   *     relevait alors jusqu'à 25 tuiles du foyer et dans les coins de l'écran.
+   *   ② RETIRÉE LE 2026-09-29, AVEC L'ALIGNEMENT. Elle comparait le sol lointain sous un village
+   *     neutre puis pleinement engagé : `warmth` n'existe plus, les deux relevés seraient le même
+   *     pixel et la garde passerait au vert à vide. La LOI qu'elle défendait, elle, est désormais
+   *     STRUCTURELLE — `fireGlow.radius` ne dépend plus que du SOUFFLE de la flamme
+   *     (`GLOW_MIN_RADIUS_TILES × beatGeo`) : plus aucune entrée ne peut le doubler. C'est le
+   *     scénario `gi` (LG-A7), au texel, qui garde le sol sous le champ.
    *   ③ LE SOL GARDE SA COULEUR — l'écart entre canaux (donc la saturation) ne s'effondre pas
    *     près du feu. C'est le « sol tout jaune » : un additif trop fort referme R, V et B les
    *     uns sur les autres et rend un kaki plat.
    *
    * On mesure sur le Feu d'un VILLAGE, jamais sur un feu de camp posé : `fireStateAt` rend
    * toujours `lit` pour un Foyer, alors qu'un feu libre s'éteint en cours de scénario — la
-   * mesure aurait flanché au hasard de la durée de la passe. Le `warmth` se force CÔTÉ CLIENT
-   * (`view.villages`), là même où le rendu le lit : aucune règle de jeu n'est touchée.
+   * mesure aurait flanché au hasard de la durée de la passe.
    *
    * Exige `--dev` (heure).
    */
   async feuNuit(page) {
+    // ⛔ CE SCÉNARIO EST INATTEIGNABLE DEPUIS LE 2026-09-26, et le drapeau l'avait manqué :
+    // il mesure sur le Feu d'un VILLAGE (`villageId > 0`, l'attente ci-dessous), or
+    // `FEATURES.VILLAGES_PNJ` éteint il n'existe plus aucun village sur la carte jouée. Il
+    // mourait sur un `waitForFunction: Timeout 30000ms` sans un mot d'explication — constaté le
+    // 2026-09-29. On le PARQUE comme les autres (la liste au `drapeau('VILLAGES_PNJ')` plus
+    // haut) : il repartira seul au rallumage, sans qu'on y touche une ligne.
+    if (!drapeau('VILLAGES_PNJ')) {
+      console.log('   ⛔ FEATURES.VILLAGES_PNJ est éteint : aucun Feu de village, donc aucune')
+      console.log('      clairière à mesurer. Scénario SAUTÉ — il n\'est pas vert, il est à l\'arrêt.')
+      return
+    }
     await page.goto(URL)
     await page.waitForFunction(() => Boolean(window.__BRAISES__?.scene?.registry?.get('worldReady')), null, { timeout: 60000 })
     // `worldReady` PRÉCÈDE le premier snapshot : sans cette attente, `view.structures` est vide
@@ -12034,47 +12012,30 @@ const SCENARIOS = {
       return out
     }
 
-    // On FIGE la boucle et on avance à `time` constant : le vacillement de la flamme est alors
-    // le même sous les deux alignements, et l'écart mesuré ne peut venir que de l'alignement.
-    const poser = (warmth) =>
-      page.evaluate((w) => {
-        const s = window.__BRAISES__.scene
-        // Le snapshot réécrit `villages` à chaque tick : on VERROUILLE par un getter, sinon la
-        // valeur forcée s'évapore entre le réglage et la capture.
-        const fige = s.view.villages.map((v) => ({ ...v, warmth: w }))
-        Object.defineProperty(s.view, 'villages', { get: () => fige, set: () => {}, configurable: true })
-        const g = s.game
+    // On FIGE la boucle et on avance à `time` constant : le vacillement de la flamme ne doit pas
+    // se glisser entre le relevé et sa référence.
+    const figer = () =>
+      page.evaluate(() => {
+        const g = window.__BRAISES__.scene.game
         g.loop.sleep()
         g.step(120000, 16)
         g.step(120016, 16)
-      }, warmth)
+      })
 
-    await poser(0)
+    await figer()
     const neutre = await releve()
     await page.screenshot({ path: `${OUT}/feu-nuit.png` })
-    await poser(100)
-    const engage = await releve()
     const dire = (t) => RAYONS.map((r) => `${r}t ${t[r] ? t[r].join(',') : '—'}`).join(' · ')
     console.log(`   Feu #${feu.id} en (${feu.tx},${feu.ty}), minuit`)
-    console.log(`   village NEUTRE  : ${dire(neutre)}`)
-    console.log(`   village ENGAGÉ  : ${dire(engage)}`)
+    console.log(`   le sol         : ${dire(neutre)}`)
 
     // ① LE CAMP EST ÉCLAIRÉ.
     // Référence à 12 tuiles : franchement au-delà de la portée du trou (6), et l'anneau y est
-    // encore fourni. À 15 tuiles la paire horizontale peut tomber sur un autre terrain — elle
-    // sert à comparer deux alignements, pas à étalonner une luminance.
+    // encore fourni.
     const pres = lum(neutre[3]), loin = lum(neutre[12])
     console.log(pres > loin + 6
       ? `   ✓ ① la clairière existe : ${pres.toFixed(0)} de luminance à 3 tuiles contre ${loin.toFixed(0)} à 12`
       : `   ✗ ① AUCUNE clairière : ${pres.toFixed(0)} à 3 tuiles contre ${loin.toFixed(0)} à 12`)
-
-    // ② LA NUIT RESTE LA NUIT — la décision « portée constante », au pixel.
-    for (const r of [12, 15]) {
-      const d = Math.max(...[0, 1, 2].map((i) => Math.abs(neutre[r][i] - engage[r][i])))
-      console.log(d <= 3
-        ? `   ✓ ② à ${r} tuiles, l'alignement ne change RIEN au sol (écart max ${d})`
-        : `   ✗ ② à ${r} tuiles, le sol bouge de ${d} avec l'alignement — la portée s'est recouplée`)
-    }
 
     // ③ LE SOL GARDE SA COULEUR — saturation près du feu vs au loin.
     const sat = (p) => (Math.max(...p) - Math.min(...p)) / Math.max(1, Math.max(...p))
@@ -27136,8 +27097,8 @@ Depuis le spawn (${depart.x.toFixed(0)}, ${depart.y.toFixed(0)}) :`)
    * de sim : tout est peint côté client, le scénario tourne sur le build de production.
    *
    *  ① LA PISTE N'EST PLUS UN TAMPON — on injecte des pistes FABRIQUÉES dans la vue
-   *     (verrouillées par getter, le motif de `feuNuit` sur `warmth` : le snapshot
-   *     réécrirait le champ au tick suivant) et on lit ce que le POOL affiche :
+   *     (verrouillées par getter — sans quoi le snapshot réécrirait le champ au tick
+   *     suivant) et on lit ce que le POOL affiche :
    *     textures distinctes, rotations distinctes — et l'orientation SUIT la course
    *     injectée (une piste plein est pointe plein est, une piste plein sud plein sud).
    *  ② LA GICLÉE SE POSE — `sangFx.gicler`, boucle figée, avancée à la main

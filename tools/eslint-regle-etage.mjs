@@ -149,7 +149,6 @@ const HORS_REGLE = {
     advanceNpcs: 'appartenance au carré du feu, pas une perception',
   },
   'traction.ts': { advanceTraction: 'un corps et SA propre charge — la rupture règle déjà la distance' },
-  'npc-errands.ts': { nearestOtherVillage: 'deux feux de village entre eux — deux LIEUX, au sol' },
 
   // ══ Un anneau / une grille de tuiles qu'on balaie pour CHOISIR une tuile ══
   'worldevents.ts': {

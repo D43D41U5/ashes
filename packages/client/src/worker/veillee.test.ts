@@ -23,17 +23,17 @@ describe('la Veillée compte ses jours sur le cycle', () => {
 })
 
 /**
- * PEUPLER LA VEILLÉE (V1-10, racine R-A) — le geste qui allume le pilier n°1.
- * Sans un second village, `isOutsider()` renvoie toujours faux et le moteur
- * d'alignement tourne à vide en solo. On vérifie ici, HEADLESS (pas de navigateur),
- * que la Veillée naît avec deux voisins PNJ — un Foyer et une Meute.
+ * PEUPLER LA VEILLÉE (V1-10, racine R-A). On vérifie ici, HEADLESS (pas de navigateur), que la
+ * Veillée naît avec ses voisins PNJ, à portée du joueur. *(Le mobile d'origine — allumer le
+ * moteur d'alignement, qui exigeait un second village — est mort avec lui le 2026-09-29 ; la
+ * garde tient désormais le PEUPLEMENT seul.)*
  */
 describe('createVeillee — peupler la Veillée (V1-10)', () => {
   // ⛔ GELÉE AVEC LES VILLAGES (`FEATURES.VILLAGES_PNJ`, décision d'Alexis du 2026-09-26 : finir
   // le worldgen d'abord). C'est la garde V-A2 de `ascension.md` — « on rencontre un village » —
   // et son sujet a disparu du monde joué, pas sa loi : `createVeillee` élit toujours les sites et
   // trace toujours les sentes, il ne fonde plus. Elle repart telle quelle au rallumage.
-  it.skipIf(!FEATURES.VILLAGES_PNJ)('fonde ses voisins PNJ (un Foyer, une Meute, des neutres) — à portée du joueur, pas au pas de sa porte', () => {
+  it.skipIf(!FEATURES.VILLAGES_PNJ)('fonde ses voisins PNJ — à portée du joueur, pas au pas de sa porte', () => {
     const { sim, spawn } = createVeillee()
 
     // Les villages voisins (le joueur n'a PAS encore de foyer — il naît survivant). Le compte
@@ -46,18 +46,6 @@ describe('createVeillee — peupler la Veillée (V1-10)', () => {
     // garde — `createVeillee` est la seule ligne du jeu qui pose ce jour d'ouverture, et un
     // monde reparti au jour 1 offrirait le printemps en tutoriel, l'exact contraire de S2.
     expect(sim.jourDeDepart).toBe(BALANCE.JOUR_DE_DEPART)
-
-    // Un caractère ensemencé CHAUD (Foyer) et un FROID (Meute) : les villageois portent
-    // la graine (warmth ±60), l'archétype ÉMERGE ensuite des actes.
-    const villageWarmth = (villageId: number): number => {
-      const w = sim.npcs
-        .filter((n) => n.villageId === villageId)
-        .map((n) => sim.entities.find((e) => e.id === n.entityId)?.warmth ?? 0)
-      return w.reduce((a, b) => a + b, 0) / Math.max(1, w.length)
-    }
-    const warmths = sim.villages.map((v) => villageWarmth(v.id))
-    expect(warmths.some((x) => x > 0)).toBe(true) // le Foyer
-    expect(warmths.some((x) => x < 0)).toBe(true) // la Meute
 
     // ═══ LES DEUX BORNES, parce qu'une seule POURRIT (spec `ascension.md` V-A2) ═══
     //

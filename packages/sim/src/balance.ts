@@ -1106,13 +1106,16 @@ export const BALANCE = {
   VILLAGES_VEILLEE: 5,
 
   /**
-   * LA MARGE MINIMALE ENTRE LES DEUX CIBLES DU RAIDEUR, EN POUR-CENT (`peuplerLesVoisins`).
+   * LA MARGE MINIMALE ENTRE LES DEUX PREMIERS SITES ÉLUS, EN POUR-CENT (`peuplerLesVoisins`).
    *
-   * L'IA de raid de la Meute vise le village le plus proche À VOL D'OISEAU
-   * (`nearestOtherVillage`, `npc-errands.ts`). Quand ses deux cibles sont à quasi-égalité, elle
-   * raide la même chaque nuit jusqu'à destruction mutuelle — et on mesure une guerre au lieu
-   * d'une économie. Ce n'est pas une crainte : c'est arrivé, marge de 0,4 % sur l'ancienne
-   * carte, corrigée À LA MAIN sur un site.
+   * NÉE DU RAID : l'IA de la Meute visait le village le plus proche À VOL D'OISEAU, et deux
+   * cibles à quasi-égalité la faisaient raider la même chaque nuit jusqu'à destruction mutuelle
+   * — une guerre mesurée au lieu d'une économie. Ce n'était pas une crainte : c'est arrivé,
+   * marge de 0,4 % sur l'ancienne carte, corrigée À LA MAIN sur un site.
+   *
+   * LE RAID A QUITTÉ LE JEU avec l'alignement (2026-09-29) ; ce nombre RESTE parce que l'élection
+   * de sites tourne AVANT `tracerLeReseau` — il dessine les routes du monde joué, épinglées par
+   * quatre empreintes de réseau.
    *
    * ⚠ **5 N'EST PAS UN ARRONDI : c'est le seuil que le banc assied depuis le 2026-07-24**
    * (`scenario.test.ts`, « cibles de la Meute à quasi-égalité »). Il vaut désormais pour les
@@ -5471,6 +5474,17 @@ export const COMBAT = {
   BLEED_HP_PER_S: 1.5,
   BANDAGE_FIBER_COST: 3,
   HP_REGEN_PER_MIN: 2, // si faim > 50 ; FREINÉ ×WOUNDED_REGEN_FACTOR par une plaie non soignée (§6bis)
+  /**
+   * AVOIR UN FEU À SOI ACCÉLÈRE LA GUÉRISON (2026-09-29, au retrait de l'alignement).
+   *
+   * HÉRITÉ, PAS INVENTÉ : c'est la valeur exacte que `alignment.regenFactor` rendait pour
+   * quiconque appartenait à un village — `REGEN_MIN + ½ × (REGEN_MAX − REGEN_MIN)` =
+   * `0,75 + ½ × 1,25`. MESURÉ : les six sites d'appel de `recordAct` exigeaient tous un AUTRE
+   * village, donc en solo la chaleur du Feu restait à 0 à vie et ce facteur ne bougeait jamais.
+   * La CONDITION est gardée telle quelle : sans Feu, `regenFactor` rendait 1 — le cuire à plat
+   * dans `HP_REGEN_PER_MIN` aurait buffé de 37 % tout le début de partie, avant le premier Feu.
+   */
+  HP_REGEN_FEU: 1.375,
   RESPAWN_HP: 50,
   RESPAWN_HUNGER: 50,
   RESPAWN_STAMINA: 20,
@@ -6482,68 +6496,6 @@ export const VILLAGE_NAMES = [
   'les Cendres Douces',
   'le Camp du Vieux Pont',
 ] as const
-
-/** L'alignement émergent (GDD §3, spec alignement). */
-export const ALIGNMENT = {
-  /** Chaleur par point de faim utile donné (spec R2). */
-  GIVE_WARMTH_PER_HUNGER: 0.2,
-  /** Multiplicateur si le receveur est affamé (< `NEED_HUNGER`). */
-  NEED_FACTOR: 3,
-  /** En-dessous de cette faim, le receveur est AFFAMÉ : le don répond à un vrai besoin
-   *  et vaut `NEED_FACTOR` fois plus. Le seuil vivait en clair dans `applyVillageAction`,
-   *  alors que le facteur qu'il commande était ici, deux lignes plus haut. */
-  NEED_HUNGER: 30,
-  /**
-   * LE CARACTÈRE ENSEMENCÉ d'un village PNJ à sa fondation (spec alignement R12) — la
-   * chaleur de départ d'un Foyer, et son opposée pour une Meute. L'archétype ÉMERGE
-   * ensuite des actes ; ceci n'est qu'une inclination initiale.
-   *
-   * `SEED_ENGAGEMENT` : assez d'inertie pour que le caractère survive à la décroissance
-   * (`DECAY_PER_DAY`) le temps que les actes — dons, raids — prennent le relais. Un
-   * village neutre part à 0 : il n'a pas encore d'avis.
-   */
-  SEED_WARMTH: 60,
-  SEED_ENGAGEMENT: 60,
-  /** Multiplicateur par acte de la saison (le Grand Froid vaut cher). */
-  ACT_FACTOR: actLaw([1, 1, 2, 3]), // S13 : quatre paliers, réordonnés sur l'Éclosion · l'Ardeur · les Pluies · le Grand Froid
-  /** Dépôt de nourriture au grenier d'autrui : chaleur par point de valeur. */
-  FOREIGN_DEPOSIT_WARMTH_PER_FOOD: 0.3,
-  HEAL_OUTSIDER_WARMTH: 15,
-  FIRST_BLOOD_WARMTH: -20,
-  ONGOING_HIT_WARMTH: -2,
-  RIPOSTE_WARMTH: -2,
-  KILL_WARMTH: -40,
-  /** Tuer un agresseur en défense « ne coûte presque rien » (GDD §3). */
-  RIPOSTE_KILL_WARMTH: -4,
-  DESTROY_STRUCTURE_WARMTH: -15,
-  ENGAGEMENT_PER_ACT: 8,
-  /**
-   * Décroissance linéaire vers 0, en points par jour de saison (le paquebot).
-   * Calibrage 2026-07-06 : 4 → 2. À 4/jour, une chaleur ensemencée à 60
-   * passait sous le seuil d'archétype (40) en 5 jours — aucun rythme d'actes
-   * réaliste ne pouvait entretenir un caractère (banc de scénario, 6 jours).
-   */
-  DECAY_PER_DAY: 2,
-  /** Mémoire d'agression entre villages : 1 cycle. */
-  AGGRESSION_MEMORY_TICKS: ticksForCycles(1),
-  /** Plafond par tête à l'agrégation du Feu (GDD : un seul berserker…). */
-  WARMTH_CAP_PER_HEAD: 50,
-  /** Seuils d'archétype. */
-  ARCHETYPE_WARMTH: 40,
-  ARCHETYPE_ENGAGEMENT: 20,
-  /** Effets continus : régén PV de ×0.75 (froid) à ×2 (chaud). */
-  REGEN_MIN: 0.75,
-  REGEN_MAX: 2,
-  /** Paliers. */
-  FOYER_STRUCTURE_HP_BONUS: 1.25,
-  FOYER_OFFENSE_MALUS: 0.6,
-  MEUTE_DAMAGE_BONUS: 1.2,
-  MEUTE_HARVEST_MALUS: 0.75,
-  /** Cadence de recalcul du Feu (5 s). */
-  REFRESH_TICKS: ticksFor(5),
-  /** Le don du Foyer PNJ (spec R14). */
-  GIFT_BERRIES: 5,
-} as const
 
 /**
  * LA NUIT QUI CHASSE (spec `tension.md`). « La nuit, loin d'un feu, on est chassé. »

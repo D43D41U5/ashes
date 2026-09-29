@@ -261,7 +261,6 @@ describe('le carnet de l’encyclopédie', () => {
       defendStuck: 0,
       defendBest: -1,
       defendIgnoreUntil: 0,
-      errand: null,
     })
     const avant = JSON.stringify(moi(sim, id).carnet ?? [])
     act(sim, id, { type: 'harvest', nodeId: tree.id })

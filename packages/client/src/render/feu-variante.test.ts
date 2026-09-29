@@ -135,7 +135,7 @@ describe('la composition ne rouvre pas les défauts qu’elle frôle', () => {
           const socle = (0.6 + 1.2 * (1 - day)) * (0.8 + 0.2 * engage)
           // Toute la course du battement asymétrique, marges comprises.
           for (let beat = 0.8; beat <= 1.45; beat += 0.01) {
-            const i = intensiteDuFeu(day, engage, beat, ax)
+            const i = intensiteDuFeu(day, beat, ax)
             if (i > socle * PLAFOND_DU_FEU + 1e-9) {
               fautes.push(`jour ${day.toFixed(2)} engage ${engage.toFixed(1)} beat ${beat.toFixed(2)} → ${i.toFixed(3)} > ${(socle * PLAFOND_DU_FEU).toFixed(3)}`)
             }
@@ -153,10 +153,10 @@ describe('la composition ne rouvre pas les défauts qu’elle frôle', () => {
   it('au repos, le liseré composé passe SOUS le plafond — il sculpte encore', () => {
     const ax = axesFeu(TOUT)
     const socle = (0.6 + 1.2 * (1 - 0)) * 0.8 // minuit, village neutre
-    const auRepos = intensiteDuFeu(0, 0, 1, ax)
+    const auRepos = intensiteDuFeu(0, 1, ax)
     expect(auRepos).toBeLessThan(socle * PLAFOND_DU_FEU) // pas écrêté
     expect(auRepos).toBeGreaterThan(socle * 2) // et bien au-dessus de l'étalon
-    expect(auRepos).toBeGreaterThan(intensiteDuFeu(0, 0, 1, axesFeu(0)) * 2)
+    expect(auRepos).toBeGreaterThan(intensiteDuFeu(0, 1, axesFeu(0)) * 2)
   })
 
   /**
@@ -164,8 +164,8 @@ describe('la composition ne rouvre pas les défauts qu’elle frôle', () => {
    * banc ont été prises à ×2,8, et `__FEU__ = 4` doit toujours montrer ce qu'elles montrent.
    */
   it('isolé, le liseré garde le gain sur lequel il a été photographié', () => {
-    const seul = intensiteDuFeu(0, 0, 1, axesFeu(4))
-    const compose = intensiteDuFeu(0, 0, 1, axesFeu(TOUT))
+    const seul = intensiteDuFeu(0, 1, axesFeu(4))
+    const compose = intensiteDuFeu(0, 1, axesFeu(TOUT))
     expect(seul).toBeGreaterThan(compose) // 2,8 contre 2,35 × la respiration au repos
   })
 })

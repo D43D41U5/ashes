@@ -99,8 +99,8 @@ function mondeJoue(seed: number, cycleOffset: number): { sim: SimState; avatar: 
   spawnPoiMonsters(sim, seed)
   const d2 = (e: { tx: number; ty: number }) => (e.tx - premier.tx) * (e.tx - premier.tx) + (e.ty - premier.ty) * (e.ty - premier.ty)
   const voisins = emplacements.filter((e) => e.tx !== premier.tx || e.ty !== premier.ty).sort((a, b) => d2(b) - d2(a))
-  if (voisins[0]) foundNpcVillage(sim, voisins[0].tx, voisins[0].ty, 4, 'foyer')
-  if (voisins[1]) foundNpcVillage(sim, voisins[1].tx, voisins[1].ty, 3, 'meute')
+  if (voisins[0]) foundNpcVillage(sim, voisins[0].tx, voisins[0].ty, 4)
+  if (voisins[1]) foundNpcVillage(sim, voisins[1].tx, voisins[1].ty, 3)
   // UN AVATAR JOUEUR : le banc n'en a pas (mémoire « le banc n'a pas de joueur »), or c'est
   // lui qui emprunte le routage d'actions — le chemin qu'on s'apprête à refactorer.
   const avatar = spawnEntity(sim, premier.tx + 0.5, premier.ty + 0.5, SLOTS.PLAYER)

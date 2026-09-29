@@ -170,9 +170,6 @@ export function soundForEvent(event: SimEvent, onMe: boolean): SoundSpec | null 
     // qu'une personne qui s'éteint, et le son doit le dire sans qu'on l'explique.
     case 'village_fell':
       return { wave: 'sine', freq: 130, freqEnd: 58, dur: 1.4, gain: 0.12, portee: PORTEE.LOIN }
-    // UN FEU VIRE (Foyer/Meute) : ni gain ni perte — une bascule. La hauteur fléchit à peine.
-    case 'village_archetype_changed':
-      return { wave: 'sine', freq: 330, freqEnd: 294, dur: 0.7, gain: 0.07 }
     // MUETS ici, et par décision : `village_founded` (la fondation a déjà sa cérémonie à
     // l'écran) et `member_joined` (discret par nature).
 

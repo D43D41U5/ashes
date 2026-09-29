@@ -14,7 +14,6 @@ import { fenetreOuverte } from './agriculture'
 import {
   ACTS_PER_YEAR,
   AGRICULTURE,
-  ALIGNMENT,
   BALANCE,
   BRUME,
   CENDREUX,
@@ -295,13 +294,12 @@ describe('A11 — aucune loi ne reste à trois paliers', () => {
   const LOIS = [
     ['SEASON.REGROW_ACT_FACTOR', SEASON.REGROW_ACT_FACTOR],
     ['FIRE_UPKEEP.ACT_FACTOR', FIRE_UPKEEP.ACT_FACTOR],
-    ['ALIGNMENT.ACT_FACTOR', ALIGNMENT.ACT_FACTOR],
     ['NIGHT_HUNT.CHANCE_PER_MIN', NIGHT_HUNT.CHANCE_PER_MIN],
     ['BRUME.CHANCE_PER_DAY', BRUME.CHANCE_PER_DAY],
     ['CENDREUX.CONVERGE_TILES', CENDREUX.CONVERGE_TILES],
   ] as const
 
-  it('les sept lois déclarent QUATRE paliers', () => {
+  it('toutes les lois de la table déclarent QUATRE paliers', () => {
     for (const [nom, loi] of LOIS) {
       expect(loi.paliers.length, nom).toBe(ACTS_PER_YEAR)
     }

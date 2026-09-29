@@ -1,6 +1,26 @@
 # L'alignement — deux axes, le Feu coloré, Foyer et Meute
 
-*Source : GDD §3 (alignement émergent), §13 (MVP : deux axes + Foyer/Meute ; Ermitage/Charognard en phase Vallée). Statut : **implémenté** (2026-07-05, A1-A8 verts — le paquebot vire, la Meute raide). Jalon : V8.*
+*Source : GDD §3 (alignement émergent), §13 (MVP : deux axes + Foyer/Meute ; Ermitage/Charognard en phase Vallée). Statut : **RETIRÉ DU CODE le 2026-09-29** (implémenté le 2026-07-05, A1-A8 verts ; mort au pivot de la braise). Jalon : V8.*
+
+> **⚠⚠ 2026-09-29 — L'ALIGNEMENT A QUITTÉ LE CODE. SPEC MORTE, GARDÉE POUR MÉMOIRE.**
+> Le pivot du 2026-09-28 a tué le pilier « la morale est une mécanique » (GDD §1, §3 entier).
+> `alignment.ts`, `alignment.test.ts` et `npc-errands.ts` (les expéditions raid/don, toutes deux
+> conditionnées à l'archétype) sont **supprimés** ; `Village.warmth`, `.engagement` et `.archetype`
+> n'existent plus, ni `ALIGNMENT` dans `balance.ts`, ni `village_archetype_changed` au flux
+> d'événements. **RIEN CI-DESSOUS N'EST IMPLÉMENTÉ.**
+>
+> **Ce qui a survécu, et pourquoi :**
+> - **`COMBAT.HP_REGEN_FEU` = 1,375** — l'UNIQUE effet que l'alignement exerçait vraiment dans le
+>   jeu joué. `regenFactor` rendait exactement cette valeur à quiconque appartenait à un village, et
+>   1 sinon ; la condition est gardée telle quelle pour que la guérison ne bouge pas d'un bit.
+> - **`gift_given`** — le don reste un FAIT de domaine : en coop, donner à qui n'est pas de sa
+>   balise est ce que la chronique doit retenir. Seule la pesée morale est partie.
+> - **`isThreatTo`** — descendu dans `village.ts`, réduit à ce qu'il énonçait vraiment (un monstre
+>   qui n'est pas des nôtres). Il ne consulte plus aucune agression.
+> - **`BALANCE.MARGE_DE_CIBLE_MIN`** — née du raid, gardée : l'élection de sites tourne AVANT
+>   `tracerLeReseau`, donc elle dessine les routes du monde joué (quatre empreintes l'épinglent).
+>
+> *Historique ci-dessous, conservé au titre de la mémoire du projet.*
 
 > **⚠ Débranché du mode joué (audit 2026-07-19).** A1-A8 sont verts *en /sim et au banc* (`scenario.ts`), mais `veillee.ts` ne fonde aucun village PNJ : en Veillée solo, `isOutsider()` reste toujours faux et rien ci-dessous ne se déclenche (Feu blanc, aucun archétype, aucun raid/don n'atteint le joueur). Rebrancher = fonder 2-3 voisins dans la Veillée (backlog R-A / V1-10). *Décision de design ouverte (T1, `direction-design.md`) : le solo doit-il subir des raids, ou l'Ermitage tranquille prime-t-il ?*
 

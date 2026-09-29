@@ -395,7 +395,7 @@ describe('Le Feu-station : destructibilité découplée du combustible (spec feu
     const sim = makeSim()
     const fire = addStructure(sim, 'fire', 10, 10, 0, 0)
     expect(countOf(fire.fuel!, 'wood')).toBeGreaterThan(0)
-    applyStructureDamage(sim, fire.id, 99999, 0)
+    applyStructureDamage(sim, fire.id, 99999)
     expect(sim.structures.some((s) => s.id === fire.id)).toBe(false) // il tombe malgré le combustible
   })
 })

@@ -368,7 +368,6 @@ export type SimEvent =
   | { type: 'gues_fermes'; tick: number; day: number }
   | { type: 'gues_rouverts'; tick: number; day: number }
   | { type: 'gift_given'; tick: number; byEntityId: number; toVillageId: number; item: ItemId; count: number }
-  | { type: 'village_archetype_changed'; tick: number; villageId: number; archetype: 'foyer' | 'meute' | 'neutre' }
   | { type: 'cendreux_risen'; tick: number; entityId: number; x: number; y: number }
   /**
    * LE FEU A ÉTOUFFÉ UN RÉVEIL (spec `cendreux.md` R21) — la parade de S4, enfin quotidienne.

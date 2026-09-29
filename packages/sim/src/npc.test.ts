@@ -487,60 +487,6 @@ describe('le grenier plein (A21 + livelock)', () => {
     expect(stages.filter((s) => s === 'store').length).toBeLessThan(stages.length)
   })
 
-  it('butin de raid + grenier plein : le raider ne rentre pas pour l’éternité', () => {
-    const sim = npcVillageSim(1)
-    granary(sim).inventory = saturated()
-    const e = npcEntity(sim)
-    grantItems(sim, e.id, { stone: 10 }) // le butin — rien dans le village n'en veut
-    sim.npcs[0]!.errand = { kind: 'raid', targetVillageId: sim.villages[0]!.id, stage: 'home' }
-
-    for (let t = 0; t < 300; t++) step(sim, [])
-
-    // Le grenier ne prend rien : l'expédition s'achève quand même (elle se
-    // retentait à chaque tick, et le PNJ ne faisait plus JAMAIS rien d'autre).
-    expect(sim.npcs[0]!.errand).toBeNull()
-    expect(countOf(e.inventory, 'stone')).toBe(10) // il garde son butin, rien ne s'évapore
-  })
-})
-
-/**
- * Le raid finit par un LOOT de cadavre (spec alignement R13) — et le sac du
- * raider peut être plein. Depuis que `loot_corpse` est honnête (spec inventaire
- * R11), ce loot peut ne RIEN déplacer et ne PLUS effacer le cadavre : un stade
- * `loot` qui attendrait la disparition du cadavre tournerait à 20 Hz pour
- * l'éternité. On assert la PROGRESSION (le stade avance) et la CONSERVATION
- * (rien ne s'évapore).
- */
-describe('le raid, sac plein, sur un cadavre (livelock du loot)', () => {
-  it('le raider ne détruit pas le butin qu’il ne peut pas prendre, et l’expédition avance', () => {
-    const sim = npcVillageSim(1)
-    const e = npcEntity(sim)
-    e.inventory = inventoryOf(SLOTS.NPC, { stone: 20 * SLOTS.NPC }) // pas un interstice
-    e.hunger = 100
-    const corpseId = sim.nextCorpseId
-    sim.corpses.push({
-      id: corpseId,
-      x: e.x,
-      y: e.y,
-      inventory: inventoryOf(SLOTS.CORPSE, { wood: 40 }),
-      decayAt: sim.tick + 100_000,
-      diedAt: 0,
-    })
-    sim.nextCorpseId += 1
-    sim.npcs[0]!.errand = { kind: 'raid', targetVillageId: sim.villages[0]!.id, stage: 'loot' }
-
-    const stages: (string | null)[] = []
-    for (let t = 0; t < 300; t++) {
-      step(sim, [])
-      stages.push(sim.npcs[0]!.errand?.stage ?? null)
-    }
-
-    // PROGRESSION : il n'est pas resté collé au stade `loot`.
-    expect(stages.filter((s) => s === 'loot')).toHaveLength(0)
-    // CONSERVATION : les 40 bois sont toujours quelque part.
-    const corpse = sim.corpses.find((c) => c.id === corpseId)
-    expect(countOf(e.inventory, 'wood') + countOf(corpse?.inventory ?? [], 'wood')).toBe(40)
-  })
 })
 
 /**

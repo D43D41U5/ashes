@@ -1,6 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { seasonActFactor } from './alignment'
-import { ALIGNMENT, BALANCE, COMBAT, FOOD_VALUES, SLOTS, TERRAIN_GRASS } from './balance'
+import { BALANCE, COMBAT, SLOTS, TERRAIN_GRASS } from './balance'
 import { drainEvents } from './events'
 import { countOf, inventoryOf, makeInventory } from './items'
 import { createEmptyMap } from './map'
@@ -819,7 +818,6 @@ describe('la conservation des items (A21)', () => {
     const moi = entity(sim, donneur)
     moi.x = 71.5
     moi.y = 71.4 // à portée du grenier étranger
-    moi.warmth = 0
     grantItems(sim, donneur, { berries: 10 })
     drainEvents(sim)
 
@@ -827,11 +825,7 @@ describe('la conservation des items (A21)', () => {
 
     const gifts = drainEvents(sim).flatMap((e) => (e.type === 'gift_given' ? [e] : []))
     expect(gifts).toHaveLength(1)
-    expect(gifts[0]!.count).toBe(3) // pas 10 : on ne se fait pas créditer d'un don qui n'a pas eu lieu
-    // 3 baies créditées, pas 10 (la chaleur du tick suivant a déjà un peu décanté).
-    const attendu =
-      FOOD_VALUES.berries! * 3 * ALIGNMENT.FOREIGN_DEPOSIT_WARMTH_PER_FOOD * seasonActFactor(sim)
-    expect(moi.warmth).toBeCloseTo(attendu, 3)
+    expect(gifts[0]!.count).toBe(3) // pas 10 : le don compte ce qui a VRAIMENT changé de mains
   })
 
   it('donner à quelqu’un dont le sac est plein : refus, aucun item ne change de mains', () => {

@@ -199,9 +199,9 @@ describe('la lumière d’un feu suit son état', () => {
     const fautes: string[] = []
     for (let h = 0; h < 24; h += 0.25) {
       const d = daylight(h)
-      const allume = intensiteDuFeu(d, 0.5, 1, AX, 1)
-      if (intensiteDuFeu(d, 0.5, 1, AX, 0) !== 0) fautes.push(`${h} h : éteint éclaire encore`)
-      if (Math.abs(intensiteDuFeu(d, 0.5, 1, AX, BRAISES_FACTEUR) - allume * BRAISES_FACTEUR) > 1e-9) {
+      const allume = intensiteDuFeu(d, 1, AX, 1)
+      if (intensiteDuFeu(d, 1, AX, 0) !== 0) fautes.push(`${h} h : éteint éclaire encore`)
+      if (Math.abs(intensiteDuFeu(d, 1, AX, BRAISES_FACTEUR) - allume * BRAISES_FACTEUR) > 1e-9) {
         fautes.push(`${h} h : les braises ne valent pas ${BRAISES_FACTEUR} × l’allumé`)
       }
       if (!(allume > 0)) fautes.push(`${h} h : l’allumé n’éclaire pas — la sonde ne mesure rien`)

@@ -199,7 +199,7 @@ export class FireFx {
       if (unit.halo) {
         // Le halo bat sur le MÊME `fireGlow` que la flaque, le trou du voile et le reflet sur
         // l'eau — même graine, même horloge : les quatre respirent en phase avec la flamme.
-        const g = fireGlow(0, day, now, s.id * 1.7, ax.respiration)
+        const g = fireGlow(day, now, s.id * 1.7, ax.respiration)
         const facteur = st === 'lit' ? 1 : st === 'ember' ? 0.35 : 0
         // COMPOSITION ③ — le halo garde son gain : c'est la flaque qui rentre (voir
         // `fire-ground-glow`, COMPOSITION ①). Lui seul occupe le volume entre la flamme et

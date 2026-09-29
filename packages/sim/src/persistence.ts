@@ -107,7 +107,7 @@ export const SAVE_REQUIRED_KEYS: readonly string[] = [
   // `cendreAge` / `cendreJour` (spec `cendre.md`) : les dix âges de foyer et le dernier jour
   // traité. **Ils DOIVENT être sauvés** — ce sont les seuls octets de la mécanique, et une reprise
   // qui les perdrait rendrait au joueur une vallée revenue à sa tache initiale.
-  'aggressions', 'blood', 'buchers', 'calendarScale', 'cendreAge', 'cendreJour', 'corpses', 'cycleOffset', 'debug', 'denRespawns',
+  'blood', 'buchers', 'calendarScale', 'cendreAge', 'cendreJour', 'corpses', 'cycleOffset', 'debug', 'denRespawns',
   'dens', 'entities', 'events', 'faunaCap', 'faunaQuiet',
   'functions', 'groundItems', 'grounds', 'home', 'hordes', 'lastConvoyDay',
   'jourDeDepart', 'map', 'monsters', 'nextCorpseId', 'nextEntityId', 'nextGroundItemId',

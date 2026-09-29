@@ -18,7 +18,6 @@ import { spawnMonster } from './monsters'
 import { createSim, snapshot, spawnEntity, step, type Entity, type MoveInput, type SimState } from './sim'
 import { cycleOffsetForStartHour } from './time'
 import { grantItems } from './village'
-import { foundNpcVillage } from './worldgen'
 
 // ── LE BANC ───────────────────────────────────────────────────────────────────
 const CHASSEUR = { x: 10.5, y: 10.5 }
@@ -402,24 +401,3 @@ describe('A13 — même graine, mêmes inputs : mêmes parts, mêmes événement
   })
 })
 
-// ── A14 — LES RAIDERS NE DÉPÈCENT PAS ─────────────────────────────────────────
-describe('A14 — un raider PNJ ne dépèce pas', () => {
-  it('en stade `loot` près d’une carcasse, il rentre les mains vides et l’expédition avance', () => {
-    const sim = createSim(11, { map: createEmptyMap(28, 28, TERRAIN_GRASS), worldEvents: false })
-    foundNpcVillage(sim, 12, 12, 1)
-    const npc = sim.npcs[0]!
-    const e = sim.entities.find((x) => x.id === npc.entityId)!
-    e.hunger = 100
-    const corpse = planter(sim, 'boar', { raw_meat: 3 }, { x: e.x, y: e.y })
-    npc.errand = { kind: 'raid', targetVillageId: sim.villages[0]!.id, stage: 'loot' }
-    drainEvents(sim)
-    const stages: (string | null)[] = []
-    for (let t = 0; t < 60; t++) {
-      step(sim, [])
-      stages.push(npc.errand?.stage ?? null)
-    }
-    expect(stages.filter((s) => s === 'loot')).toHaveLength(0)
-    expect(countOf(e.inventory, 'raw_meat')).toBe(0)
-    expect(countOf(sim.corpses.find((c) => c.id === corpse.id)!.inventory, 'raw_meat')).toBe(3)
-  })
-})

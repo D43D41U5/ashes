@@ -189,8 +189,7 @@ export class FireGroundGlow {
       // réconciliation détruit sa flaque. (Les braises la gardent, atténuée par `fireGlow`.)
       if (fireStateAt(tick, s) === 'out') continue
       seen.add(s.id)
-      const warmth = villages.find((v) => v.id === s.villageId)?.warmth ?? 0
-      const g = fireGlow(warmth, day, now, s.id * 1.7, ax.respiration)
+      const g = fireGlow(day, now, s.id * 1.7, ax.respiration)
       let glow = this.glows.get(s.id)
       if (!glow) {
         // Centrée sur le CENTRE de la tuile du foyer — un multiple de 2 px, donc la grille des

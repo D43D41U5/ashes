@@ -140,7 +140,6 @@ export interface ScenarioReport {
   }
   villages: {
     name: string
-    archetype: string
     membersAlive: number
     granaryFood: number
     granaryWood: number
@@ -344,7 +343,6 @@ export function runScenario(
       const granary = sim.structures.find((s) => estGrenier(s, v.id))
       return {
         name: v.name,
-        archetype: v.archetype,
         membersAlive: sim.entities.filter((e) => v.memberIds.includes(e.id) && e.hp > 0).length,
         granaryFood:
           countOf(granary?.inventory ?? [], 'berries') + 3 * countOf(granary?.inventory ?? [], 'stew'),

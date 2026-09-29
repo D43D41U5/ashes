@@ -6,9 +6,7 @@
  * porte. Le même pipeline résout les coups des joueurs, des PNJ et des
  * monstres — personne ne triche.
  */
-import { damageModifier, hasAggressionBetween, isOutsider, recordAct, recordHostility, regenFactor } from './alignment'
 import {
-  ALIGNMENT,
   BALANCE,
   CARRY,
   CENDREUSE,
@@ -408,10 +406,6 @@ export function applyCombatAction(state: SimState, actorId: number, action: Comb
       else if (target.wounds.leg) delete target.wounds.leg
       else delete target.wounds.arm
       actor.cooldownUntil = state.tick + COMBAT.BANDAGE_COOLDOWN_TICKS
-      // Soigner un extérieur est un acte chaud (spec alignement R2).
-      if (target.id !== actorId && isOutsider(state, actorId, target.id)) {
-        recordAct(state, actorId, ALIGNMENT.HEAL_OUTSIDER_WARMTH)
-      }
       emitEvent(state, { type: 'entity_bandaged', tick: state.tick, entityId: target.id, byEntityId: actorId })
       return
     }
@@ -728,7 +722,7 @@ function resolveStrike(state: SimState, attacker: Entity): void {
     if (s && distSq(attacker.x, attacker.y, s.tx + 0.5, s.ty + 0.5) <= COMBAT.STRUCTURE_STRIKE_RANGE * COMBAT.STRUCTURE_STRIKE_RANGE
       // Le bâti vit au sol : on ne démolit pas une palissade depuis un plateau (E-R5).
       && atteintLeSol(state.map, attacker, s.tx, s.ty, s.etage)) {
-      applyStructureDamage(state, s.id, strike.damage, attacker.id)
+      applyStructureDamage(state, s.id, strike.damage)
       // L'IMPACT PORTE (spec cendreux R25) : un VIVANT qui frappe du bâti — le raider qui
       // défonce un grenier — ébranle le sol jusqu'aux morts. Jamais un monstre (décision ⑤ :
       // pas d'alerte goule→goule, même par le sol — c'est la horde elle-même qui frappe ici),
@@ -859,7 +853,7 @@ function resolveStrike(state: SimState, attacker: Entity): void {
 
   let struck = false
   for (const { target, monster: targetMonster, tx, ty, dist } of cibles) {
-    let dealt = damage * damageModifier(state, attacker.id, target.id)
+    let dealt = damage
 
     // LA MISE À MORT PROPRE (spec chasse C6). Un coup sur une bête sauvage qui
     // n'était pas alertée AU DÉPART du wind-up frappe CLEAN_KILL_FACTOR fois plus
@@ -1134,21 +1128,6 @@ export function applyDamage(state: SimState, target: Entity, damage: number, byE
     }
   }
 
-  // L'alignement (spec alignement R2, R4) : frapper l'extérieur est un acte.
-  if (!targetMonster && byEntityId !== 0 && isOutsider(state, byEntityId, target.id)) {
-    const targetVillage = getVillageOf(state, target.id)
-    const killerVillage = getVillageOf(state, byEntityId)
-    const cost = recordHostility(state, byEntityId, targetVillage?.id ?? null)
-    recordAct(state, byEntityId, cost)
-    if (target.hp <= 0 && before > 0) {
-      // Tuer l'agresseur en défense ne coûte presque rien (GDD : la riposte).
-      const defensive =
-        targetVillage !== undefined &&
-        killerVillage !== undefined &&
-        hasAggressionBetween(state, targetVillage.id, killerVillage.id)
-      recordAct(state, byEntityId, defensive ? ALIGNMENT.RIPOSTE_KILL_WARMTH : ALIGNMENT.KILL_WARMTH)
-    }
-  }
   emitEvent(state, {
     type: 'entity_damaged',
     tick: state.tick,
@@ -1504,7 +1483,12 @@ export function advanceCombat(state: SimState): void {
       const woundFactor = wounded ? COMBAT.WOUNDED_REGEN_FACTOR : 1
       entity.hp = Math.min(
         100,
-        entity.hp + (COMBAT.HP_REGEN_PER_MIN / (60 * BALANCE.TICK_RATE_HZ)) * regenFactor(state, entity) * woundFactor,
+        // AVOIR UN FEU À SOI ACCÉLÈRE LA GUÉRISON (`HP_REGEN_FEU`) — l'unique effet que
+        // l'alignement exerçait vraiment, conservé à l'identique à son retrait (2026-09-29).
+        entity.hp +
+          (COMBAT.HP_REGEN_PER_MIN / (60 * BALANCE.TICK_RATE_HZ)) *
+            (getVillageOf(state, entity.id) ? COMBAT.HP_REGEN_FEU : 1) *
+            woundFactor,
       )
     }
   }
