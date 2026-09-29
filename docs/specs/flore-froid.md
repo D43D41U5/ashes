@@ -102,6 +102,17 @@ Plus un front de neige (−25), un blizzard ou la Brume (−55), en rampe sur la
   fait qu'il se SENT venir). **Le chemin réel est celui-ci** : on sème là où la sim l'autorise
   (acte II, de jour), et c'est le blizzard qui tue — pas une main qui pose `plantedAt`
   (critère A10ter).
+> **⚠ 2026-09-29 — F3bis ET A10quater SONT SANS OBJET : il n'y a plus de PNJ pour se planter.**
+> L'IA villageoise est retirée (tranche 2b, pivot de la braise). Le livelock que F3bis gardait — le
+> nœud a du stock, `applyEconomyAction` refuse « la plante est gelée », le villageois ne cherche pas
+> ailleurs et ne relâche pas sa corvée — **ne peut plus se produire : plus personne ne réclame de
+> corvée**. Les deux gardes de `flore-froid.test.ts` partent avec lui.
+>
+> ⚠ **LA LOI, ELLE, EST INTACTE ET TOUJOURS GARDÉE** : `floreGelee` dit vrai sur un buisson posé sur
+> la neige et faux sur l'arbre d'à côté, et `applyEconomyAction` refuse la récolte d'une plante
+> gelée — **y compris dans la main du joueur**, qui est désormais la seule main du jeu. C'est le
+> lecteur du refus qui a disparu, pas le refus.
+
 - **F3bis — UN PNJ NE RESTE PAS PLANTÉ DEVANT UN BUISSON GELÉ.** Le refus de F3 doit être
   LU par l'IA, pas seulement infligé : sans ça, `applyEconomyAction` refuse, le nœud a encore
   du stock (donc on ne cherche pas ailleurs), la corvée n'est pas relâchée — et le PNJ repart

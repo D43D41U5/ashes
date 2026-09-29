@@ -95,7 +95,7 @@ function laisserLeTempsDeRepousser(s: SimState): void {
 }
 /** Un village dont le Feu brûle en (tx, ty), sans passer par le marteau ni le bois. */
 function fonder(s: SimState, tx: number, ty: number, chiefId = 0): void {
-  createVillage(s, { chiefId, tx, ty, npcsArrived: true })
+  createVillage(s, { chiefId, tx, ty })
 }
 
 const FEU_X = 60

@@ -57,7 +57,7 @@ import { advanceEau } from './eau-evenements'
 import { advanceVent } from './vent'
 import { rngNext } from './rng'
 import { advanceNightHunt } from './nighthunt'
-import { advanceNpcs, type Npc } from './npc'
+import type { Npc } from './npc'
 import { advancePois } from './poi-discovery'
 import { advanceDens } from './poi'
 import { actForDay, dayTicksAt, TICKS_PER_CYCLE, advanceTime, jourDeSaison } from './time'
@@ -782,7 +782,8 @@ export function despawnAvatar(state: SimState, id: number): void {
   state.entities = state.entities.filter((e) => e.id !== id)
   for (const village of state.villages) {
     village.memberIds = village.memberIds.filter((m) => m !== id)
-    for (const task of village.tasks) if (task.claimedBy === id) task.claimedBy = null
+    // (le tableau des corvées est parti avec l'IA villageoise, 2026-09-29 — il n'y a plus
+    // de réclamation à relâcher quand un membre meurt)
   }
   emitEvent(state, { type: 'entity_despawned', tick: state.tick, entityId: id })
 }
@@ -1109,7 +1110,10 @@ export function step(state: SimState, inputs: MoveInput[]): void {
   // l'aube la porte s'ouvre, le palier monte au surplus, la prospérité attire un
   // colon ; au crépuscule la porte se ferme. Avant la passe PNJ : le village se
   // réveille, PUIS ses habitants agissent. Aucun tirage RNG (position par hash2, comme les convois).
-  advanceNpcs(state)
+  // L'IA VILLAGEOISE EST PARTIE LE 2026-09-29 (tranche 2b du retrait des villages PNJ).
+  // `advanceNpcs(state)` tournait ici, entre la faune et le reste du monde ; `state.npcs`
+  // reste déclaré et RESTE VIDE — plus rien ne le peuple. Le tableau part avec sa tranche
+  // structurelle, pour qu'un rouge ici veuille dire « la coupe a cassé » et rien d'autre.
   advanceMonsters(state)
   // L'ENVOL DE LA LISIÈRE (forêts-vivantes §3) — après les bêtes : l'alarme qu'il pose se
   // lit au tick suivant, comme tout stimulus de méfiance.

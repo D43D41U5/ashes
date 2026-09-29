@@ -3,6 +3,7 @@ import { RECIPES, TERRAIN_GRASS, type RecipeId } from './balance'
 import { estDecouverte } from './decouverte'
 import { drainEvents } from './events'
 import { createEmptyMap } from './map'
+import { spawnMonster } from './monsters'
 import { createSim, spawnEntity, step, type SimState } from './sim'
 import { addStructure, grantItems } from './village'
 
@@ -109,19 +110,25 @@ describe('la découverte des recettes (D2)', () => {
     expect(estDecouverte(moi(sim, id), 'rope')).toBe(true)
   })
 
-  it('un PNJ n’a pas de catalogue — on ne fait pas grossir le snapshot pour personne', () => {
+  /**
+   * ⚠ RÉÉCRITE LE 2026-09-29, ET ELLE EST DEVENUE PLUS FORTE. Elle balayait `sim.npcs` sur un
+   * monde nu — donc un tableau VIDE : son propre commentaire l'avouait (« il n'y en a pas dans
+   * ce monde nu, mais la garde vaut pour le jour où il y en aura »). Une garde qui ne peut pas
+   * échouer ne garde rien. Le figurant est maintenant une BÊTE, qui existe vraiment et qui
+   * reçoit vraiment le geste : `estAvatar` (decouverte.ts) exclut les deux tables dans la même
+   * expression, donc la loi éprouvée est exactement la même — mais si on retirait le filtre,
+   * ce test rougirait.
+   */
+  it('un FIGURANT n’a pas de catalogue — on ne fait pas grossir le snapshot pour personne', () => {
     const sim = monde()
     const id = spawnEntity(sim, 10.5, 10.5)
+    const bete = spawnMonster(sim, 'rabbit', 12.5, 10.5)
     grantItems(sim, id, { fiber: 3 })
+    grantItems(sim, bete, { fiber: 3 }) // le MÊME geste, dans la main d'un figurant
     tick(sim)
     // L'avatar, lui, a appris.
     expect(moi(sim, id).seen?.length).toBeGreaterThan(0)
-    // Aucune entité de PNJ ne porte de `seen` (il n'y en a pas dans ce monde nu, mais la
-    // garde vaut pour le jour où il y en aura — et elle échouerait si on retirait le
-    // filtre `estAvatar`).
-    for (const npc of sim.npcs) {
-      expect(sim.entities.find((e) => e.id === npc.entityId)?.seen).toBeUndefined()
-    }
+    expect(sim.entities.find((e) => e.id === bete)?.seen).toBeUndefined()
   })
 
   it('DÉTERMINISME : même graine, mêmes gestes ⇒ même `seen`, dans le même ORDRE', () => {

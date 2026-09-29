@@ -20,7 +20,7 @@ const ent = (sim: SimState, id: number) => sim.entities.find((e) => e.id === id)
 describe("L'upkeep du Feu (V1-11, spec construction R16-R17, A7)", () => {
   it('le Feu BRÛLE son combustible chaque tick — sans jamais s’éteindre (braises dormantes)', () => {
     const sim = makeSim()
-    const v = createVillage(sim, { chiefId: 0, tx: 10, ty: 10, npcsArrived: true })
+    const v = createVillage(sim, { chiefId: 0, tx: 10, ty: 10 })
     const before = v.fuel
     for (let t = 0; t < 500; t++) advanceUpkeep(sim)
     expect(v.fuel).toBeLessThan(before) // il brûle…
@@ -29,7 +29,7 @@ describe("L'upkeep du Feu (V1-11, spec construction R16-R17, A7)", () => {
 
   it('A7 : à SEC, les murs/barrières cèdent — mais JAMAIS les composants (R17)', () => {
     const sim = makeSim()
-    const v = createVillage(sim, { chiefId: 0, tx: 10, ty: 10, npcsArrived: true })
+    const v = createVillage(sim, { chiefId: 0, tx: 10, ty: 10 })
     v.fuel = 0
     const wall = addStructure(sim, 'wall', 12, 10, v.id, 0)
     const comp = addStructure(sim, 'enclume', 14, 10, v.id, 0) // un composant : intouchable
@@ -42,7 +42,7 @@ describe("L'upkeep du Feu (V1-11, spec construction R16-R17, A7)", () => {
 
   it('le passage à sec émet fire_starved UNE seule fois (au franchissement)', () => {
     const sim = makeSim()
-    const v = createVillage(sim, { chiefId: 0, tx: 10, ty: 10, npcsArrived: true })
+    const v = createVillage(sim, { chiefId: 0, tx: 10, ty: 10 })
     v.fuel = FIRE_UPKEEP.DRAIN_PER_TICK * 1.5 // à un souffle du sec
     drainEvents(sim)
     let starved = 0
@@ -56,7 +56,7 @@ describe("L'upkeep du Feu (V1-11, spec construction R16-R17, A7)", () => {
   it('nourrir le Feu : le bois porté devient du combustible (le geste qui tient l’upkeep)', () => {
     const sim = makeSim()
     const chief = spawnEntity(sim, 10, 10)
-    const v = createVillage(sim, { chiefId: chief, tx: 10, ty: 10, npcsArrived: true })
+    const v = createVillage(sim, { chiefId: chief, tx: 10, ty: 10 })
     v.fuel = 0
     grantItems(sim, chief, { wood: 5 })
     applyVillageAction(sim, chief, { type: 'feed_fire' })
@@ -81,7 +81,7 @@ describe("L'upkeep du Feu (V1-11, spec construction R16-R17, A7)", () => {
   it('nourrir le Feu : un trou plus petit qu’une bûche est refusé, un grand trou se remplit sans déborder', () => {
     const sim = makeSim()
     const chief = spawnEntity(sim, 10, 10)
-    const v = createVillage(sim, { chiefId: chief, tx: 10, ty: 10, npcsArrived: true })
+    const v = createVillage(sim, { chiefId: chief, tx: 10, ty: 10 })
     grantItems(sim, chief, { wood: 20 })
 
     // ① UN TROU PLUS PETIT QU'UNE BÛCHE → REFUSÉ, et rien n'est consommé.
@@ -113,7 +113,7 @@ describe("L'upkeep du Feu (V1-11, spec construction R16-R17, A7)", () => {
 describe('Le Feu tuable → la ruine (V1-12/V2-20)', () => {
   it('le Feu NOURRI est inviolable ; à SEC il tombe → le village devient une ruine pillable', () => {
     const sim = makeSim()
-    const v = createVillage(sim, { chiefId: 0, tx: 10, ty: 10, npcsArrived: true })
+    const v = createVillage(sim, { chiefId: 0, tx: 10, ty: 10 })
     const fire = addStructure(sim, 'fire', 10, 10, v.id, 0)
     const chest = addStructure(sim, 'chest', 11, 10, v.id, 0, 'village')
 
@@ -136,7 +136,7 @@ describe('Le Feu tuable → la ruine (V1-12/V2-20)', () => {
 
   it('la chute émet village_fell (pour la chronique)', () => {
     const sim = makeSim()
-    const v = createVillage(sim, { chiefId: 0, tx: 10, ty: 10, npcsArrived: true })
+    const v = createVillage(sim, { chiefId: 0, tx: 10, ty: 10 })
     const fire = addStructure(sim, 'fire', 10, 10, v.id, 0)
     v.fuel = 0
     drainEvents(sim)

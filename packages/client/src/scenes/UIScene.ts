@@ -4,7 +4,7 @@
  * objet scrollFactor 0 dans une caméra zoomée serait projeté hors écran).
  * Communication par le registry : WorldScene écrit, UIScene lit.
  */
-import { formatChronicleLine, modificateurDeSaison, NOMS_MODIFICATEUR, TEMPERATURE, zoneAt, type VillageTask, type WorldMap } from '@ashes/sim'
+import { formatChronicleLine, modificateurDeSaison, NOMS_MODIFICATEUR, TEMPERATURE, zoneAt, type WorldMap } from '@ashes/sim'
 import Phaser from 'phaser'
 import { getHud, setHud } from '../hud-state'
 import { drainAlertes, drainConseils, drainCrafts, drainDecouvertes, drainLevelUps, drainPickups, queueAction } from './world/hud-bridge'
@@ -28,29 +28,6 @@ import { createChatPanel, type ChatPanel } from './ui/chat-panel'
 import { createDebugOverlay, renderDebugOverlay, requestTeleport } from './world/debug-overlay'
 import { FONT } from './ui/typography'
 
-/**
- * LE VOCABULAIRE DU TABLEAU DES TÂCHES — plus affiché depuis que le village a quitté le coin
- * haut-gauche (2026-08-24), et EXPORTÉ pour cela : la barre du village qui vient le reprendra
- * tel quel. Neuf libellés réécrits de mémoire auraient dit autre chose que ceux d'hier.
- */
-export const TASK_LABELS: Record<VillageTask['kind'], string> = {
-  gather_berries: 'récolter des baies',
-  gather_wood: 'couper du bois',
-  gather_fiber: 'ramasser des fibres',
-  gather_stone: 'extraire de la pierre',
-  gather_cut_stone: 'tailler à la carrière',
-  // LE GLANAGE (spec `glanage.md` G9) — et la nuance avec la corvée d'à côté est le sujet même
-  // du chantier : on RAMASSE ce qui traîne tant qu'on n'a pas l'outil pour EXTRAIRE. D'où le
-  // verbe de `gather_stone`, passé de « ramasser » à « extraire » : les deux libellés se
-  // seraient contredits sur le tableau, et c'est justement l'écart qu'il faut lire.
-  glaner_bois: 'glaner du bois mort',
-  glaner_pierre: 'glaner des pierres',
-  cook_stew: 'cuisiner',
-  repair: 'réparer',
-  feed_fire: 'nourrir le Feu',
-  build: 'bâtir',
-  fetch_water: "aller puiser de l'eau",
-}
 
 /** Carte plein écran : bornes et pas du zoom (1 = carte ajustée, 8 = gros plan). */
 const MAP_ZOOM_MIN = 1
@@ -872,10 +849,11 @@ export class UIScene extends Phaser.Scene {
     // saisons ont des NOMS, et pas un mot du défilé.
     //
     // ⚠ LE VILLAGE N'EST PLUS AFFICHÉ NULLE PART. Il part dans une barre à lui (décision
-    // d'Alexis, 2026-08-24), qui n'existe pas encore : d'ici là, le nombre de membres, la
-    // couleur du Feu et le tableau des tâches ne se lisent plus en jeu. Les clés du HUD
-    // (`village`, `archetype`, `villageWarmth`, `tasks`) restent écrites et intactes — c'est
-    // l'affichage qui manque, pas la donnée.
+    // d'Alexis, 2026-08-24), qui n'existe pas encore : d'ici là, le nombre de membres ne se
+    // lit plus en jeu. **La clé `village` est la SEULE qui reste écrite** — `archetype` et
+    // `villageWarmth` sont parties avec l'alignement le 2026-09-29, `tasks` avec le tableau
+    // des corvées le même jour. Ce commentaire les annonçait encore « écrites et intactes » :
+    // corrigé plutôt que recopié.
     // LE CARACTÈRE DE LA SAISON (`saisons.md` S18) : fonction PURE du tour et de la phase,
     // donc rien à faire transiter. Le HUD ne le disait pas — Alexis a tranché l'inverse le
     // 2026-08-24 : le PRÉSENT se nomme, seul le FUTUR se tait.

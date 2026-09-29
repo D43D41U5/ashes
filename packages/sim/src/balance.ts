@@ -1132,13 +1132,6 @@ export const BALANCE = {
   /** Sous ce seuil d'énergie, la nuit, un PNJ va dormir. */
   NPC_ENERGY_SLEEP_THRESHOLD: 40,
 
-  /** Sous ce seuil de température CORPORELLE (°C), un PNJ lâche sa tâche et rentre au feu
-   *  (spec IA chaleur). Pile à la cible que donne la vallée d'acte III de JOUR (−2 °C d'air →
-   *  33 °C de corps) → la vie normale ne le déclenche pas ; au-dessus de `CORPS_HYPOTHERMIE`
-   *  (29 °C) avec marge (la dérive est lente). Ex-jauge 40. */
-  NPC_COLD_SEEK: 33,
-  /** Hystérésis : arrêt de la recherche au retour au confort. */
-  NPC_COLD_RESUME: 37,
 
   /** Énergie perdue par heure de cycle, éveillé. */
   ENERGY_AWAKE_PER_CYCLE_HOUR: 4,
@@ -1147,38 +1140,12 @@ export const BALANCE = {
   SLEEP_RECOVERY_HOME_PER_HOUR: 12,
   SLEEP_RECOVERY_FIRE_PER_HOUR: 6,
 
-  /** Cadence de recalcul du tableau du village (5 s). */
-  BOARD_REFRESH_TICKS: ticksFor(5),
 
   /** Cibles du grenier (spec R5). Score nourriture = baies + 3×ragoûts. */
   VILLAGE_FOOD_TARGET: 12,
   VILLAGE_WOOD_TARGET: 20,
   VILLAGE_STEW_TARGET: 3,
 
-  /** Quantités visées par sortie de récolte PNJ, par item. */
-  NPC_CARRY_TARGETS: { berries: 6, wood: 8, fiber: 3, stone: 6, cut_stone: 4 },
-  /**
-   * LE QUOTA D'UNE TOURNÉE DE GLANAGE (spec `glanage.md` G6). Petit, et il DOIT l'être : un
-   * nœud de glanage porte UNE unité, donc ce nombre est un nombre de NŒUDS, pas de coups —
-   * le glaneur va de branche en branche jusqu'à l'atteindre. Trois, c'est déjà trois trajets
-   * pour trois bûches ; viser le quota du bois (8) enverrait un villageois arpenter la zone
-   * une demi-journée pour ce qu'un coup de hache donne en trois secondes. Le glanage AMORCE
-   * la hache, il ne nourrit pas le village.
-   */
-  NPC_GLANAGE_CARRY: 3,
-  /**
-   * LA PORTÉE D'UNE TOURNÉE DE GLANAGE, en tuiles — et c'est un GARDE-FOU DE COÛT autant qu'une
-   * règle de jeu (spec `glanage.md` G9).
-   *
-   * Un nœud de glanage porte UNE unité : là où un arbre coûte une recherche de chemin pour dix
-   * bûches, une branche en coûte une par bûche — et le plus proche RECULE à mesure qu'on les
-   * ramasse. MESURÉ sans plafond (`tools/profil-banc.mts`, 8 joueurs, 1 jour) : le tick dérive
-   * de 1,33 à **64,5 ms** sur la journée, `findPath` pesant 35 % du CPU ; avec, il reste plat.
-   *
-   * 40 tuiles = le rayon dans lequel un village regarde déjà (`CONTENU.RAYON_VILLAGE`) : au-delà,
-   * ce n'est plus sa cour, et il n'a rien à y faire pour une brindille.
-   */
-  NPC_GLANAGE_PORTEE: 40,
 } as const
 
 /**
@@ -6778,16 +6745,25 @@ export const MORTS = {
   CHARNIER_MIN_PAR_ZONE: 1,
 } as const
 
-/** L'IA des PNJ (spec pnj, alignement R13-R14) — les seuils de décision. */
+/**
+ * LA NAVIGATION D'UN CORPS NON JOUEUR — ce qui reste de `NPC_AI` (spec pnj).
+ *
+ * ⚠ **CE BLOC PESAIT DEUX CENT TRENTE LIGNES ET TRENTE-CINQ NOMBRES JUSQU'AU 2026-09-29** : les
+ * seuils de décision de l'IA villageoise. Tout est parti avec elle (tranche 2b du retrait des
+ * villages PNJ, pivot de la braise) — la réserve de baies, les retraits au grenier, le barème
+ * `TASK_PRIORITIES` des neuf corvées, la cadence et le dwell de la course à l'eau, les seuils de
+ * sommeil, de froid, de gîte, de ralliement nocturne, la garde de la milice et son abandon, et
+ * les restes du raid d'alignement (`RAID_*`, `CORPSE_SEARCH_RANGE`). Aucun n'avait plus de
+ * lecteur : ce ne sont pas des réglages mis en réserve, ce sont des nombres orphelins.
+ *
+ * **CE QUI RESTE EST DE LA NAVIGATION, ET SEULEMENT ÇA** — le mémo de refus de chemin et le
+ * budget d'exploration, lus par `setPathTo`, et la zone morte d'un pas, lue par `followPath`.
+ * Chacun est MESURÉ, chacun a coûté une session : on les garde mot pour mot.
+ *
+ * Le nom `NPC_AI` survit à ce qu'il nommait. Il se renommera le jour où un corps non joueur
+ * remarchera pour de bon ; le rebaptiser aujourd'hui ne ferait que brouiller le diff.
+ */
 export const NPC_AI = {
-  /** Réserve personnelle de baies conservée au dépôt d'une récolte (spec pnj R6). */
-  FOOD_KEEP: 2,
-  /** Bois retiré au grenier pour une sortie de réparation. */
-  REPAIR_WOOD_WITHDRAW: 4,
-  /** Baies retirées au grenier pour un repas (à défaut de ragoût). */
-  EAT_BERRIES_WITHDRAW: 3,
-  /** Cible de fibres au grenier (tableau du village). */
-  VILLAGE_FIBER_TARGET: 2,
   /**
    * LE RÉPIT D'UN REFUS DE CHEMIN — ticks pendant lesquels un PNJ qui n'a trouvé AUCUNE route
    * vers une tuile redit non sans relancer l'A* (`Npc.sansChemin`). 100 ticks = 5 s à 20 Hz :
@@ -6796,41 +6772,6 @@ export const NPC_AI = {
    * ouverte ou un mur abattu redeviennent praticables sans qu'on sente l'attente.
    */
   SANS_CHEMIN_TICKS: 100,
-  /**
-   * ═══ LE RÉPIT D'UN SITE INJOIGNABLE — le même refus, mais à l'échelle du VILLAGE ═══
-   *
-   * `SANS_CHEMIN_TICKS` ci-dessus ne protège QU'UN PNJ, et seulement cent ticks. Ça suffit à
-   * empêcher un livelock ; ça ne suffit pas à éteindre une corvée que PERSONNE ne peut honorer.
-   * Trois étages devaient s'en charger et deux seulement fonctionnent : `executeGather` retire
-   * bien la corvée du tableau quand le chemin échoue, `sansChemin` empêche bien le même PNJ de
-   * la repayer tout de suite — mais `refreshBoard` la REPOSE au rafraîchissement suivant et
-   * `nearestAliveNode`, qui élit À VOL D'OISEAU, réélit le même nœud. Le village entier la
-   * repaie, indéfiniment.
-   *
-   * MESURÉ le 2026-09-22 (monde du banc, graine 2026, un jour de jeu) : **393 recherches de
-   * chemin payées pour rien, et elles tiennent EN ENTIER dans DEUX nœuds de glanage** — cinq
-   * villageois sur sept, trois d'entre eux sur le même nœud. Les deux sont **enclavés à tout
-   * budget** : aucun chemin même à 524 288 expansions (1,2 s de recherche). Le tick médian qui
-   * en porte un passe de 4,63 à **115,92 ms**, et 0,70 % des ticks dépassent le budget de 50.
-   *
-   * ⚠ LE GARDE-FOU PRÉVU POUR ÇA EXISTE DÉJÀ, ET LE MONDE JOUÉ L'A DÉSARMÉ. C'est le filtre de
-   * ZONE de `nearestAliveNode` (« sans lui, 99 % des recherches échouaient ») : or le monde joué
-   * n'a **qu'une seule zone** (mesuré), et les terrasses ont mis la falaise À L'INTÉRIEUR. Le
-   * filtre ne filtre plus rien — c'est ce trou que cette constante bouche.
-   *
-   * POURQUOI UNE PÉREMPTION ET PAS UN OUBLI DÉFINITIF : le monde bouge. Un mur qu'on abat, une
-   * rampe qu'on creuse, une porte qu'on ouvre rendent sa chance au nœud. 6 000 ticks = **cinq
-   * minutes réelles**, soixante rafraîchissements de tableau : le coût tombe d'un facteur dix,
-   * et la CONSÉQUENCE ASSUMÉE est qu'un passage fraîchement ouvert met jusqu'à cinq minutes à
-   * être remarqué par le village.
-   */
-  SITE_INJOIGNABLE_TICKS: ticksFor(300),
-  /** Combien de sites injoignables un village retient EN MÊME TEMPS. Même raison que
-   *  `SANS_CHEMIN_CASES` : une case unique n'est pas une mémoire (deux nœuds enclavés
-   *  s'évinceraient l'un l'autre et aucun ne serait jamais retrouvé). Seize couvre largement
-   *  ce qu'un rayon de village enferme — mesuré : deux nœuds pour trois villages. Au-delà, le
-   *  plus ancien cède ; il se réinscrira au prochain échec, une fois.  */
-  SITES_INJOIGNABLES_MAX: 16,
   /** Combien de refus un PNJ garde EN MÊME TEMPS. Un seul ne suffit pas : `handleCold` vise la
    *  maison, le ralliement R14 vise le Feu, et deux appelants sur une case unique s'évincent à
    *  chaque tick — mesuré, le tick du banc à 267 ms. Quatre couvre les appelants qu'un PNJ
@@ -6898,129 +6839,15 @@ export const NPC_AI = {
    */
   PATH_EXPLORE: 16384,
   /**
-   * L'ORDRE DANS LEQUEL UN VILLAGE PNJ TRAVAILLE — priorité de chaque tâche du tableau,
-   * la plus haute d'abord. C'est le CARACTÈRE économique du village : nourrir le Feu
-   * prime sur tout (sans combustible, la ruine — construction R16), réparer avant
-   * bâtir (le chantier attend, pas les murs percés), et la cueillette avant l'extraction.
-   *
-   * Ces neuf nombres décident de ce que fait un village quand il a le choix, et ils
-   * vivaient dans le corps de `refreshBoard` — on ne pouvait pas rééquilibrer la
-   * diligence d'un village sans ouvrir le code de son tableau.
-   */
-  TASK_PRIORITIES: {
-    feed_fire: 5,
-    repair: 4,
-    build: 3, // bâtir avant de cuisiner, après réparer
-    cook_stew: 3,
-    gather_berries: 2,
-    gather_fiber: 2,
-    gather_wood: 1,
-    gather_stone: 1,
-    gather_cut_stone: 1,
-    /**
-     * LE GLANAGE PASSE AVANT LA RÉCOLTE QU'IL DÉBLOQUE (spec `glanage.md` G6). Il n'est posté
-     * QUE quand le village ne peut pas tenir l'outil (`refreshBoard`) : à ce moment-là, c'est
-     * le seul travail qui fasse avancer quoi que ce soit — la corvée de bois, elle, serait
-     * refusée à chaque coup. Au-dessus du bois et de la pierre, donc, et sous la cueillette
-     * qui nourrit : un village qui glane doit quand même manger.
-     */
-    glaner_bois: 2,
-    glaner_pierre: 2,
-    /**
-     * LA CORVÉE D'EAU EST UN CHORE DE FOND (reprise de l'eau D2, « temps de trajet ») — au
-     * niveau du bois et de la pierre (1), donc SOUS la cueillette qui nourrit (2), le Feu (5)
-     * et le chantier : un village au ventre creux va aux buissons, pas à la rivière. Assez
-     * haut, quand même, pour que l'aller-retour à l'eau se fasse VRAIMENT (à 0, un village
-     * actif ne puiserait jamais et le mécanisme serait inerte). Se règle en jouant.
-     */
-    fetch_water: 1,
-  } as const,
-  /**
-   * LA CADENCE DE LA CORVÉE D'EAU (reprise de l'eau D2, « temps de trajet ») — le tableau
-   * poste UNE course à l'eau tous les `WATER_RUN_PACE_TICKS` (un sixième de cycle ≈ 4 h de
-   * jeu). Pas un seuil de stock : l'eau n'est pas stockée, la corvée EST le trajet. Un chore
-   * de fond, léger — ordre de grandeur, calibré en jouant.
-   */
-  WATER_RUN_PACE_TICKS: ticksForCycles(1 / 6),
-  /** Le temps qu'on PUISE, arrivé à la berge (bras occupés sur place). Ordre de grandeur. */
-  WATER_FETCH_DWELL_TICKS: ticksFor(2),
-  /**
-   * LE BUDGET DE BALAYAGE pour trouver la berge la plus proche — nombre max de tuiles visitées
-   * par le BFS marchable depuis le Feu (une fois par course, pas par tick). MESURÉ sur le monde
-   * joué (sonde `__village-eau`, graines 2026/7/42) : village→eau de médiane 14-17, étendue
-   * 0→75 ; 20000 couvre tout avec marge, et borne le cas pathologique d'un village enclavé
-   * (aucun dans les graines jouées) plutôt que de balayer sa composante entière.
-   */
-  WATER_RUN_SCAN_BUDGET: 20000,
-  /**
    * LA ZONE MORTE D'UN PAS DE PNJ — en-deçà de cet écart sur un axe, il ne pousse pas
    * dans cette direction. Sans elle, un PNJ à 0,001 tuile de sa cible pousse quand même
    * et tremble sur place.
    *
-   * DEUX valeurs, et la différence est voulue : en SUIVANT UN CHEMIN on veut le jalon
-   * précisément (fine), en MARCHANT SUR UNE MENACE on veut une trajectoire franche et
-   * pas un zigzag de correction (large).
+   * ⚠ IL Y EN AVAIT DEUX, et la seconde (`STEP_DEADZONE_COARSE` = 0,2, « en MARCHANT SUR UNE
+   * MENACE on veut une trajectoire franche ») part le 2026-09-29 avec `handleDefense` : la
+   * marche gloutonne de la milice était son unique lectrice.
    */
   STEP_DEADZONE: 0.05,
-  STEP_DEADZONE_COARSE: 0.2,
-  /** Cuisiner exige la recette + une marge de baies, et la fibre de la recette. */
-  COOK_MIN_BERRIES: 5,
-  COOK_MIN_FIBER: 1,
-  /** Raid (spec alignement R13) : un raider décroche sous ce seuil de PV… */
-  RAID_DISENGAGE_HP: 40,
-  /** …la Meute ne raide pas exsangue, et envoie ce nombre de raiders par nuit. */
-  RAID_MIN_ALIVE: 3,
-  RAIDERS_PER_RAID: 2,
-  /** Rayon de fouille des cadavres autour d'un raider, en tuiles. */
-  CORPSE_SEARCH_RANGE: 2,
-  /**
-   * ÊTRE À SON GÎTE : à quelle distance d'un lit (ou du Feu) un PNJ est considéré
-   * ARRIVÉ — il s'y couche, et c'est de là qu'il récupère au tarif « chez soi »
-   * (`SLEEP_RECOVERY_HOME_PER_HOUR`) plutôt qu'au tarif « près du feu ». Rien à voir
-   * avec `BALANCE.WAYPOINT_RADIUS`, qui fait avancer un chemin : celui-ci décide d'un
-   * ÉTAT, et c'est pourquoi il est plus large.
-   */
-  HOME_ARRIVAL_RANGE: 1.0,
-
-  /* ── LA DÉFENSE NE DOIT PAS TUER SON DÉFENSEUR (correctif 2026-07-12) ────────
-   * `handleDefense` prime sur TOUT (sommeil, froid, faim) et ne renonçait jamais.
-   * Or il marche GLOUTONNEMENT vers la menace — sans pathfinding, « le village est
-   * un terrain ouvert », disait le commentaire. La vallée, elle, ne l'est pas : le
-   * PNJ bute sur un rocher, n'atteint jamais le zombie… et rend `true` à chaque
-   * tick, pour toujours. Il ne mange plus (deux baies dans sa poche, dix au
-   * grenier), ne dort plus, et meurt de faim en montant la garde.
-   *
-   * C'est le livelock exact que les trois AUTRES besoins gardent explicitement
-   * (« la faim ne tue pas ; le figeage, si »). Le seul handler prioritaire était
-   * le seul sans garde. */
-
-  /** Sous ce seuil de faim, MANGER passe avant la défense. Un défenseur mort de
-   *  faim ne défend rien — et manger prend UN tick : le village n'est pas désarmé. */
-  DEFENSE_YIELD_HUNGER: 15,
-  /**
-   * Sous ce seuil de faim, MANGER passe avant le SOMMEIL — et c'est le pendant exact de la garde
-   * ci-dessus, qui manquait.
-   *
-   * `handleSleep` rend `true` inconditionnellement tant qu'il fait nuit : un PNJ endormi ne mange
-   * donc JAMAIS, quelle que soit sa faim. Or la faim décroît d'environ 12 par tranche de 7 200
-   * ticks : partie de 88 au matin, elle franchit le seuil de repas (30) en pleine nuit — chaque
-   * nuit, systématiquement. Mesuré sur le banc : la faim tombe à 4 puis 0 avant l'aube, et le
-   * village compte 177 relevés d'affamés en quatre jours pour un seuil de 10.
-   *
-   * Un dormeur mort de faim ne se réveille pas. Manger prend UN tick, puis il se rendort.
-   */
-  SLEEP_YIELD_HUNGER: 15,
-  /** LA NUIT RASSEMBLE (spec village-pnj-evolution R14) : un oisif de nuit se replie à
-   *  cette distance (Chebyshev) du Feu. L'autopsie du banc de saison (2026-08-17) l'a
-   *  mesuré cueilli SEUL à 7-8 tuiles — se serrer au Feu concentre aussi la milice. */
-  NIGHT_RALLY_TILES: 3,
-  /** Ticks sans le moindre PROGRÈS vers la menace (jamais plus près qu'avant) au
-   *  bout desquels on LÂCHE la garde : on ne fige pas une vie devant un rocher. */
-  DEFENSE_GIVE_UP_TICKS: ticksFor(3),
-  /** …et on l'IGNORE ce temps-là avant de retenter. Sans ce répit, le PNJ
-   *  repartirait à la charge au tick suivant : trois secondes de course, une de
-   *  renoncement, pour toujours — il n'aurait toujours jamais le temps de manger. */
-  DEFENSE_IGNORE_TICKS: ticksFor(30),
 } as const
 
 /**

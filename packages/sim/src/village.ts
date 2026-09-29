@@ -206,34 +206,6 @@ export interface Structure {
   buchesConsumees?: number
 }
 
-export type TaskKind =
-  | 'gather_berries'
-  | 'gather_wood'
-  | 'gather_fiber'
-  | 'gather_stone'
-  | 'gather_cut_stone'
-  /**
-   * LE GLANAGE (spec `glanage.md` G6) — ramasser la branche et la pierre qui traînent, pour
-   * TAILLER L'OUTIL qui ouvrira l'arbre et le rocher. Deux corvées et non une : elles visent
-   * deux types de nœud et remplissent deux cases du grenier, exactement comme `gather_wood` et
-   * `gather_stone` dont elles sont l'amont. `refreshBoard` ne les poste QUE quand le village
-   * ne peut pas tenir l'outil — un village outillé n'envoie personne ramasser des brindilles.
-   */
-  | 'glaner_bois'
-  | 'glaner_pierre'
-  | 'cook_stew'
-  | 'repair'
-  | 'feed_fire'
-  | 'build'
-  /**
-   * LA CORVÉE D'EAU (décision d'Alexis, reprise de l'eau D2 : « temps de trajet ») — l'eau
-   * n'est PAS un stock ni un item : la corvée EST le coût du trajet. Un villageois va puiser à
-   * l'eau la plus proche et revient au Feu ; ses bras sont occupés le temps de l'aller-retour,
-   * ∝ à la distance à l'eau. Postée à la CADENCE (`WATER_RUN_PACE_TICKS`), jamais par un seuil
-   * de grenier — rien à déposer, rien à consommer. Ne rouvre pas la soif (actée refusée).
-   */
-  | 'fetch_water'
-
 /**
  * UN ORDRE DE CONSTRUCTION (spec `village-pnj-evolution.md` R3-R4) — la charge d'une
  * tâche `build`. Quatre gestes, chacun rejoué par le PIPELINE JOUEUR (pnj R1) :
@@ -269,18 +241,6 @@ export type BuildOrder =
   | { action: 'place'; component: ComponentType; tx: number; ty: number }
   | { action: 'upgrade'; structureId: number }
 
-/** Une tâche du tableau du village (spec pnj R5). */
-export interface VillageTask {
-  id: number
-  kind: TaskKind
-  priority: number
-  claimedBy: number | null
-  /** Cible, pour les tâches localisées (réparer telle structure). */
-  structureId?: number
-  /** L'ordre de construction, pour les tâches `build` (spec village-pnj-evolution R3). */
-  build?: BuildOrder
-}
-
 export interface Village {
   id: number
   /** Une chronique exige des noms (spec saison R5). */
@@ -305,27 +265,6 @@ export interface Village {
    *  c'est ici que le stock se consume ; `advanceFire` la convertit en charbon là où il tient
    *  déjà la structure du Foyer, sans un balayage de plus par village et par tick. */
   charbonDette?: number
-  /**
-   * LES SITES QU'AUCUNE ROUTE NE REJOINT — le refus de chemin, mais à l'échelle du VILLAGE.
-   *
-   * `Npc.sansChemin` ne protège QU'UN PNJ et seulement cent ticks : il empêche le livelock,
-   * pas la réélection. Un nœud enclavé était donc reposté par `refreshBoard`, réélu par
-   * `nearestAliveNode` (qui choisit à VOL D'OISEAU), et repayé par le village entier,
-   * indéfiniment — MESURÉ le 2026-09-22 : 393 recherches de chemin perdues en un jour de banc,
-   * toutes sur DEUX nœuds, et surtout **le village n'atteignait jamais le nœud qu'il POUVAIT
-   * prendre**, épinglé sur celui qui était plus proche à vol d'oiseau.
-   *
-   * ⚠ OPTIONNEL, ET C'EST VOULU : une sauvegarde d'avant ce champ se charge telle quelle et le
-   * village repart sans mémoire — au pire il repaie un échec, une fois, et se réinscrit. Un
-   * champ REQUIS hors racine aurait jeté au premier tick (les gardes de `persistence` ne voient
-   * que la racine). Péremption et plafond : `NPC_AI.SITE_INJOIGNABLE_TICKS` / `_MAX`.
-   */
-  sitesInjoignables?: { nodeId: number; jusqua: number }[]
-  /** Le tableau du village — généré par seuils, consommé par les PNJ (et bientôt lu par les joueurs). */
-  tasks: VillageTask[]
-  nextTaskId: number
-  /** Les PNJ d'accueil sont-ils déjà arrivés ? (spec pnj R9) */
-  npcsArrived: boolean
   /** L'EFFECTIF DE FONDATION — posé par `foundNpcVillage`. Servait de plafond à la
    *  réparation aux réfugiés (R12, système retiré le 2026-08-30) ; conservé dans l'état
    *  (les sauvegardes le portent) pour le jour où une autre source de réparation naîtra. */
@@ -943,8 +882,6 @@ export interface CreateVillageOptions {
   chiefId: number
   tx: number
   ty: number
-  /** true si l'appelant peuple lui-même — sinon les PNJ d'accueil arrivent (spec pnj R9). */
-  npcsArrived: boolean
 }
 
 /**
@@ -963,9 +900,6 @@ export function createVillage(state: SimState, opts: CreateVillageOptions): Vill
     fireTy: opts.ty,
     tier: 1,
     fuel: FIRE_UPKEEP.START, // un Feu neuf naît à demi-plein (spec R16, une grâce)
-    tasks: [],
-    nextTaskId: 1,
-    npcsArrived: opts.npcsArrived,
     lastAlarmAt: TICK_NEVER,
     buildTier: 1,
   }
@@ -1048,15 +982,13 @@ export function applyVillageAction(state: SimState, actorId: number, action: Vil
      * JOUEUR (`place_campfire`) ; un raccourci de test/worldgen qui fonde ne doit pas
      * dépendre du ciel (et `foundNpcVillage` ne passe pas par un input du tout).
      *
-     * ⚠ **`npcsArrived: true` DEPUIS LE 2026-09-29, ET C'EST UNE CORRECTION DE FIDÉLITÉ**
-     * (décision d'Alexis : « go fidélité on retire »). Ce raccourci posait `false`, donc
-     * `advanceNpcs` — qui, lui, ne teste PAS `chiefId` — faisait naître trois villageois
-     * d'accueil. Or c'est le fixture de fondation de ONZE fichiers de test (34 appels) : tout
-     * le corpus mesurait un monde à trois bras de plus que le jeu réel, où le chemin
-     * atteignable (`found_village`) pose `true` et ne donne AUCUN PNJ. `session.test.ts`
-     * (« le jeu est-il jouable ? ») jugeait donc une jouabilité qui n'était pas la nôtre.
-     * Aligner ce `true` était UNE LIGNE ; convertir les 34 appels en « pose un feu de camp
-     * puis promeus-le » aurait inventé trente-quatre scènes pour le même résultat.
+     * ⚠ **CE RACCOURCI A AMENÉ TROIS VILLAGEOIS D'ACCUEIL JUSQU'AU 2026-09-29**, parce qu'il
+     * posait `npcsArrived: false` là où le chemin du joueur (`found_village`) posait `true` :
+     * tout le corpus de test mesurait un monde à trois bras de plus que le jeu réel, et
+     * `session.test.ts` (« le jeu est-il jouable ? ») jugeait une jouabilité qui n'était pas la
+     * nôtre. La bascule (tranche 2a) a aligné les deux chemins ; la tranche 2b a retiré l'IA
+     * qui faisait vivre ces trois bras, et avec elle le champ `npcsArrived` lui-même, devenu
+     * une écriture que personne ne relisait.
      */
     case 'light_fire': {
       const tx = Math.floor(actor.x)
@@ -1076,7 +1008,7 @@ export function applyVillageAction(state: SimState, actorId: number, action: Vil
       // max d'un village — light_fire fonde AUSSI un village, il joue donc le garde-fou.
       if (poiSpecificInSquare(state, tx, ty)) return reject('un landmark tombe dans le carré')
       removeItems(actor.inventory, STRUCTURE_COSTS.fire)
-      const village = createVillage(state, { chiefId: actorId, tx, ty, npcsArrived: true })
+      const village = createVillage(state, { chiefId: actorId, tx, ty })
       addStructure(state, 'fire', tx, ty, village.id, 0)
       return
     }
@@ -1135,7 +1067,8 @@ export function applyVillageAction(state: SimState, actorId: number, action: Vil
     /**
      * PROMOUVOIR un feu de camp libre en FOYER. Le feu (le mien, à portée) cesse
      * d'être libre : il prend le villageId du village qu'on fonde, dont je suis le
-     * Chef. AUCUN PNJ d'accueil (`npcsArrived: true`) — décision utilisateur.
+     * Chef. AUCUN PNJ d'accueil — décision utilisateur, et depuis le 2026-09-29 il n'y a
+     * plus de PNJ du tout à accueillir.
      */
     case 'found_village': {
       if (getVillageOf(state, actorId)) return reject('déjà un foyer')
@@ -1158,7 +1091,7 @@ export function applyVillageAction(state: SimState, actorId: number, action: Vil
       }
       // …et aucun POI-spécifique dans le carré à taille max (les landmarks restent des communs).
       if (poiSpecificInSquare(state, s.tx, s.ty)) return reject('un landmark tombe dans le carré')
-      const village = createVillage(state, { chiefId: actorId, tx: s.tx, ty: s.ty, npcsArrived: true })
+      const village = createVillage(state, { chiefId: actorId, tx: s.tx, ty: s.ty })
       // Le feu libre DEVIENT le Feu du village : il change d'appartenance et passe
       // au village lui-même (ownerId 0 — un Feu n'a pas de maître privé, et ne se démolit pas).
       s.villageId = village.id

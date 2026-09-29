@@ -5,7 +5,6 @@ import { countOf, inventoryOf, makeInventory, stackSize, type Inventory, type It
 import { applyDamage, die, respawn, staminaCapFor, startAttack, weaponDamage } from './combat'
 import { createEmptyMap } from './map'
 import { spawnMonster } from './monsters'
-import { foundNpcVillage } from './worldgen'
 import { createReplayLog, recordAndStep, runReplay } from './replay'
 import { createSim, snapshot, spawnEntity, step, type MoveInput, type SimState } from './sim'
 import { ambientTemperature } from './temperature'
@@ -1459,19 +1458,15 @@ describe('l’arme TENUE (A9, spec inventaire R9)', () => {
   })
 })
 
-describe('la milice (A7)', () => {
-  it('trois Cendreux marchent sur le village : la milice tient, personne ne meurt', { timeout: 30_000 }, () => {
-    const sim = createSim(9, { map: createEmptyMap(40, 40, TERRAIN_GRASS) })
-    foundNpcVillage(sim, 20, 20, 4)
-    spawnMonster(sim, 'cendreux', 27, 20)
-    spawnMonster(sim, 'cendreux', 20, 27)
-    spawnMonster(sim, 'cendreux', 14, 15)
-
-    for (let t = 0; t < 300 * BALANCE.TICK_RATE_HZ && sim.monsters.length > 0; t++) tick(sim) // ~5 min de marge
-    expect(sim.monsters).toHaveLength(0) // tous abattus
-    expect(sim.npcs).toHaveLength(4) // aucun mort
-  })
-})
+/**
+ * ⚠ **« LA MILICE (A7) » EST RETIRÉE LE 2026-09-29** — « trois Cendreux marchent sur le
+ * village : la milice tient, personne ne meurt ». Il n'y a plus de milice : l'IA villageoise et
+ * son `handleDefense` partent avec le pivot de la braise. La question que cette garde posait
+ * revient autrement dans le nouveau cœur — *une balise assiégée, qui la défend ?* — et la
+ * réponse est désormais le JOUEUR. Elle se réécrira contre lui quand le siège sera spécifié
+ * (`braise.md`) ; l'écrire aujourd'hui contre un défenseur qui n'existe pas serait une garde
+ * vide. Le combat garde tout le reste : la portée, les fenêtres, l'usure, le déterminisme.
+ */
 
 describe('le déterminisme (A8)', () => {
   it('replay exact avec combat, blessures et monstres', () => {

@@ -69,7 +69,7 @@ import { nearestPrey, spawnMonster, type Monster } from './monsters'
 import { createSim, snapshot, spawnEntity, step, type PlayerAction, type SimState } from './sim'
 import {
   advanceTemperature, AMBIANT_HYPOTHERMIE, ambientTemperature, baselineTemperature, cibleCorporelle,
-  dehorsSansMeteo, fireBubble, isSheltered, socleDuJour,
+  dehorsSansMeteo, isSheltered, socleDuJour,
 } from './temperature'
 import {
   actForDay, calendarScaleForSeasonCycles, cycleOffsetForStartHour, dayTicksPourJour, phaseForDay,
@@ -1752,66 +1752,19 @@ describe('R8 — la foudre (A6)', () => {
     expect(sim.entities.some((en) => en.id === cerfId)).toBe(false)
   })
 
-  /** Un village PNJ au midi du cœur de l'Ardeur sous un orage ÉTIRÉ (patron D_LENT de R5 :
-   *  bande quasi immobile — la couverture tient toute la mesure). `worldEvents: false` : un
-   *  banc de PNJ mesure les PNJ. L'orage d'Ardeur est SEC (`ORAGE_SEC_PHASE`) et c'est sans
-   *  effet ici : `handleOrage` se déclenche sur la CLASSE du front, jamais sur `MOUILLE` —
-   *  on se met à l'abri de la foudre, pas de l'eau. */
-  function simVillageSousOrage(count: number): SimState {
-    const sim = createSim(7, {
-      map: createEmptyMap(W, H, TERRAIN_GRASS), calendarScale: SCALE, meteoActive: true, worldEvents: false,
-    })
-    sim.tick = tickMidiDuJour(MI_ARDEUR)
-    foundNpcVillage(sim, 125, 21, count)
-    const D = 400000
-    const largeur = largeurDe({ type: 'orage', day: MI_ARDEUR })
-    const u = (95.5 + largeur) / (W + largeur)
-    const startTick = sim.tick - Math.round(u * D)
-    sim.meteo = { type: 'orage', cycle: MI_ARDEUR - 1, day: MI_ARDEUR, edge: 0, startTick, endTick: startTick + D }
-    expect(meteoIntensity(sim, 125.5, 21.5)).toBe(1) // la prémisse : le village est au cœur
-    return sim
-  }
-
-  it('R8 PNJ — couverts par l’orage, les villageois gagnent la tuile abritée du village et y RESTENT', () => {
-    const sim = simVillageSousOrage(3)
-    const village = sim.villages[0]!
-    addStructure(sim, 'house', 135, 21, village.id, 0) // hors de l'empreinte du campement (huts ≤ ±8), au cœur de bande
-    expect(meteoIntensity(sim, 135.5, 21.5)).toBe(1)
-    const npcs = sim.npcs.filter((n) => n.villageId === village.id)
-    expect(npcs).toHaveLength(3)
-    // La prémisse : personne n'est abrité au départ — le geste va se VOIR.
-    for (const n of npcs) {
-      const e = sim.entities.find((en) => en.id === n.entityId)!
-      expect(isSheltered(sim, Math.floor(e.x), Math.floor(e.y))).toBe(false)
-    }
-    for (let t = 0; t < 600; t++) step(sim, [])
-    for (const n of npcs) {
-      const e = sim.entities.find((en) => en.id === n.entityId)!
-      expect(e.hp).toBeGreaterThan(0)
-      expect(isSheltered(sim, Math.floor(e.x), Math.floor(e.y))).toBe(true) // au sec, hors de portée de la foudre
-    }
-    // …et ils y RESTENT tant que l'orage couvre.
-    for (let t = 0; t < 200; t++) step(sim, [])
-    for (const n of npcs) {
-      const e = sim.entities.find((en) => en.id === n.entityId)!
-      expect(isSheltered(sim, Math.floor(e.x), Math.floor(e.y))).toBe(true)
-    }
-  })
-
-  it('R8 PNJ — sans maison, le repli est la BULLE DU FEU (le refuge lisible), et il y tient', () => {
-    const sim = simVillageSousOrage(1)
-    const npc = sim.npcs[0]!
-    const e = sim.entities.find((en) => en.id === npc.entityId)!
-    // Éloigné à découvert, toujours au cœur de bande, hors bulle (FIRE_RANGE) : le geste se mesure.
-    e.x = 110.5
-    e.y = 21.5
-    expect(meteoIntensity(sim, e.x, e.y)).toBe(1)
-    expect(fireBubble(sim, e.x, e.y)).toBe(0)
-    for (let t = 0; t < 400; t++) step(sim, [])
-    expect(fireBubble(sim, e.x, e.y)).toBeGreaterThan(0) // replié dans la bulle de SON Feu…
-    for (let t = 0; t < 200; t++) step(sim, [])
-    expect(fireBubble(sim, e.x, e.y)).toBeGreaterThan(0) // …et il y tient tant que l'orage couvre
-  })
+  /**
+   * ⚠ **LES DEUX GARDES « R8 PNJ » SONT RETIRÉES LE 2026-09-29** (avec le montage
+   * `simVillageSousOrage` qui les servait) : « couverts par l'orage, les villageois gagnent la
+   * tuile abritée du village et y RESTENT » et « sans maison, le repli est la BULLE DU FEU ».
+   * Elles éprouvaient `handleOrage`, un besoin de l'IA villageoise, qui part avec le pivot de
+   * la braise.
+   *
+   * ⚠ ET C'EST UNE DETTE, PAS UN SOLDE. R8 dit que la foudre pousse à l'abri ; ce qui reste
+   * éprouvé ci-dessus, c'est la foudre elle-même (où elle tombe, ce qu'elle tue, le fait
+   * qu'`isSheltered` protège). **Le REPLI, plus personne ne le mesure** — et le jour où le
+   * joueur devra s'abriter, ces deux gardes se réécriront contre LUI : elles n'attendent qu'un
+   * sujet, pas une loi. C'est écrit ici pour que ça ne se perde pas dans l'historique.
+   */
 })
 
 // ═══ R9 — L'ANNONCE (BLIZZARD) ══════════════════════════════════════════════════════════

@@ -464,7 +464,7 @@ describe('Le Feu-station : le charbon de bois (S30)', () => {
   it('S30 — LE FOYER en produit aussi : ce qui se consume au stock devient charbon, exactement', () => {
     const sim = makeSim()
     const owner = spawnEntity(sim, 10, 10)
-    const v = createVillage(sim, { chiefId: owner, tx: 10, ty: 10, npcsArrived: true })
+    const v = createVillage(sim, { chiefId: owner, tx: 10, ty: 10 })
     const foyer = addStructure(sim, 'fire', 10, 10, v.id, owner) // le FOYER, sur fireTx/fireTy
     // Un village NOURRI : on remplit le stock à chaque tick, comme le feraient ses porteurs de
     // bois. On relève NOUS-MÊMES ce qui s'y consume — le drain réel n'est pas `DRAIN_PER_TICK`
@@ -493,7 +493,7 @@ describe('Le Feu-station : le charbon de bois (S30)', () => {
     // cette garde-là passe par le tick complet et rien d'autre.
     const sim = makeSim()
     const owner = spawnEntity(sim, 10, 10)
-    const v = createVillage(sim, { chiefId: owner, tx: 10, ty: 10, npcsArrived: true })
+    const v = createVillage(sim, { chiefId: owner, tx: 10, ty: 10 })
     const foyer = addStructure(sim, 'fire', 10, 10, v.id, owner)
     for (let t = 0; t < 90_000 && charbon(foyer) === 0; t++) {
       v.fuel = FIRE_UPKEEP.CAPACITY
@@ -509,11 +509,11 @@ describe('Le Feu-station : le charbon de bois (S30)', () => {
     // brûle rien. Une dette prise sur la perte de stock ferait du siège une fabrique de charbon.
     const sim = makeSim()
     const owner = spawnEntity(sim, 10, 10)
-    const v = createVillage(sim, { chiefId: owner, tx: 10, ty: 10, npcsArrived: true })
+    const v = createVillage(sim, { chiefId: owner, tx: 10, ty: 10 })
     v.fuel = FIRE_UPKEEP.CAPACITY
     const temoin = makeSim()
     spawnEntity(temoin, 10, 10)
-    const vT = createVillage(temoin, { chiefId: 1, tx: 10, ty: 10, npcsArrived: true })
+    const vT = createVillage(temoin, { chiefId: 1, tx: 10, ty: 10 })
     vT.fuel = FIRE_UPKEEP.CAPACITY
     expect(spawnMonster(sim, 'cendreux', 10, 10)).not.toBeNull()
     for (let t = 0; t < 2000; t++) {
@@ -527,7 +527,7 @@ describe('Le Feu-station : le charbon de bois (S30)', () => {
   it('S30 — LE DÉFAUT ÉVITÉ : un Foyer À SEC ne fabrique RIEN (le drain clampé n’est pas du feu)', () => {
     const sim = makeSim()
     const owner = spawnEntity(sim, 10, 10)
-    const v = createVillage(sim, { chiefId: owner, tx: 10, ty: 10, npcsArrived: true })
+    const v = createVillage(sim, { chiefId: owner, tx: 10, ty: 10 })
     const foyer = addStructure(sim, 'fire', 10, 10, v.id, owner)
     v.fuel = 0 // à sec : `advanceUpkeep` soustrait quand même, et `Math.max(0, …)` rattrape
     for (let t = 0; t < 20_000; t++) advanceUpkeep(sim)

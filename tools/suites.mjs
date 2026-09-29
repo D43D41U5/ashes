@@ -185,7 +185,33 @@ const SUITES = [
   //   d'Alexis). Aucun émetteur client n'envoie `light_fire` : la garde éprouvait un monde que
   //   personne ne peut jouer. Elle part avec l'écart qu'elle protégeait. Suite à 2482 ✓ (2 sautés) ;
   //   PLANCHER INCHANGÉ (2429).
-  { nom: 'sim', dir: 'packages/sim', args: ['run', '--exclude', 'src/scenario.test.ts'], plancher: 2429 },
+  // 2026-09-29 : −69 gardes NETTES, ET LE PLANCHER CÈDE POUR DE BON — TRANCHE 2b, L'IA
+  //   VILLAGEOISE QUITTE LE CODE. C'est la plus grosse coupe du pivot de la braise, et le
+  //   plancher descend de 2429 à 2370 : il DOIT descendre, sinon il garderait un corpus dont le
+  //   sujet n'existe plus. Le détail, fichier par fichier (−70 retirées, +1 recueillie) :
+  //     npc.test.ts             44 → 0   le fichier entier — 42 gardes d'IA + 2 sautées
+  //     village-plan.test.ts    18 → 12  le tableau build ×2, la paillasse-domicile, « les PNJ
+  //                                      bâtissent », P0.3c, le débit du défrichement
+  //     glanage.test.ts         17 → 12  G6 en entier (A10, A11, A11bis, A12, A16) : elles
+  //                                      éprouvaient le TABLEAU, pas le glanage
+  //     etages-etancheite.test  45 → 40  « le glanage élit ce que le CHEMIN rejoint » — ⚠ LA
+  //                                      PERTE LA PLUS CHÈRE, voir le bandeau du fichier
+  //     corvee-eau.test.ts       4 → 2   la course à l'eau ; `eauLaPlusProcheMarchable` reste
+  //     flore-froid.test.ts     19 → 17  le livelock du buisson gelé (plus de corvée à figer)
+  //     meteo.test.ts           87 → 85  R8 PNJ ×2 — ⚠ le REPLI à l'abri n'est plus mesuré
+  //     worldevents.test.ts     14 → 12  A7(a) et A7(b), la milice contre la horde
+  //     combat.test.ts          75 → 74  la milice (A7)
+  //     balance.test.ts          8 → 7   la cible de portage croisée avec la taille de case
+  //     lissage-chemin.test.ts   5 → 6   **+1 RECUEILLIE** : « l'A* contourne, se rejoue et sait
+  //                                      dire non », qui vivait sous « la navigation (A4) » des
+  //                                      PNJ sans jamais avoir eu besoin d'un PNJ
+  //   ⚠ ET UN ROUGE QUI N'ÉTAIT PAS UNE COUPE : `worldevents` « elle NE SE RETASSE PAS en
+  //   marchant » comptait 1 200 ticks alors que la horde ARRIVE au village au bout de 270-560 et
+  //   tourne ensuite sur place. Le villageois d'accueil masquait le défaut (la horde le
+  //   pourchassait, donc elle marchait encore). Fenêtre bornée à l'arrivée : 95,5 à 100 % sur
+  //   douze graines, contre 54 % avant réparation. La garde était fausse, pas la horde.
+  //   Suite à 2415 ✓ (plus aucun sauté : les deux vivaient dans `npc.test.ts`).
+  { nom: 'sim', dir: 'packages/sim', args: ['run', '--exclude', 'src/scenario.test.ts'], plancher: 2370 },
   // 2026-09-01 : +10 gardes avec le RENDU des étages (`plateau-art.test.ts`).
   // 2026-09-01 : +9 gardes avec le TRI DES ÉTAGES (strate, découvert — `framing.test.ts`),
   //   suite relevée à 1429 ✓, plancher recalé quelques pourcents dessous.

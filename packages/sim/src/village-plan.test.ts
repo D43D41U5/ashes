@@ -15,7 +15,6 @@ import type { ResourceNode } from './economy'
 import { createSim, spawnEntity, step, type SimState } from './sim'
 import { addStructure, type BuildOrder } from './village'
 import { bedAnchor, desiredOrders, granaries, granaryStocks, HUT_SPOTS, HUT_W } from './village-plan'
-import { refreshBoard } from './village-board'
 import { STRUCTURE_TYPES, piece } from './pieces'
 import { foundNpcVillage } from './worldgen'
 
@@ -55,13 +54,9 @@ describe('la fondation au campement (R1-R2)', () => {
     expect(village(sim).buildTier).toBe(1)
   })
 
-  it('la paillasse est un domicile : chaque PNJ en reçoit une', () => {
-    const sim = npcVillageSim(2)
-    run(sim, 3)
-    const homes = sim.npcs.map((n) => n.homeId)
-    expect(homes.every((h) => h !== null)).toBe(true)
-    expect(new Set(homes).size).toBe(2) // jamais deux dormeurs sur le même lit
-  })
+  // ⚠ « LA PAILLASSE EST UN DOMICILE : chaque PNJ en reçoit une » part le 2026-09-29 : plus
+  // aucun dormeur à loger. Ce qui reste au-dessus — le campement POSÉ, des paillasses et pas
+  // de `house` — se voit toujours sur la carte, et c'est ce que `foundNpcVillage` bâtit encore.
 })
 
 describe('le plan directeur (R3)', () => {
@@ -92,66 +87,22 @@ describe('le plan directeur (R3)', () => {
     }
   })
 
-  it('le tableau porte UNE tâche build, seulement si le grenier paie', () => {
-    const sim = npcVillageSim(2)
-    village(sim).buildTier = 2
-    addItems(granary(sim).inventory!, { wood: 100, berries: 20 }) // au-dessus des planchers (bois du Feu, ventre plein)
-    refreshBoard(sim, village(sim))
-    expect(village(sim).tasks.filter((t) => t.kind === 'build')).toHaveLength(1)
-    // Grenier à sec : le premier ordre (un sol, 1 bois) devient impayable → aucune tâche.
-    const sec = npcVillageSim(2)
-    village(sec).buildTier = 2
-    granary(sec).inventory = granary(sec).inventory!.map(() => null)
-    refreshBoard(sec, village(sec))
-    expect(village(sec).tasks.filter((t) => t.kind === 'build')).toHaveLength(0)
-  })
-
-  it('au palier 2, le village veut de la pierre (vers la barre du palier 3)', () => {
-    const sim = npcVillageSim(2)
-    village(sim).buildTier = 2
-    // LA PIOCHE AU GRENIER : depuis `glanage.md` G6, la corvée de pierre n'est postée que si
-    // le village peut fournir l'outil — sinon c'est le GLANAGE qu'il poste. Ce test parle de
-    // la CIBLE de stock du palier 2, pas du verrou d'outil.
-    addItems(granary(sim).inventory!, { crude_pickaxe: 1 })
-    refreshBoard(sim, village(sim))
-    expect(village(sim).tasks.some((t) => t.kind === 'gather_stone')).toBe(true)
-  })
-})
-
-describe('les PNJ bâtissent (R4-R5)', () => {
-  it('sans marteau au village, ils le forgent et posent l\'enceinte — par le pipeline', () => {
-    const sim = npcVillageSim(2)
-    village(sim).buildTier = 2
-    addItems(granary(sim).inventory!, { wood: 200, berries: 40, fiber: 10, stone: 10 })
-    // Le chemin dur (pose d'arête, matériau) est désormais l'ANNEAU (R15 : l'enceinte
-    // d'abord) — la palissade est une arête comme le mur l'était. La cadence fait qu'on
-    // ne vérifie pas un volume ici : le volume et la survie se mesurent au banc (R11).
-    const events: SimEvent[] = []
-    run(sim, 11000, events)
-    const forged = events.filter((e) => e.type === 'item_crafted' && e.recipeId === 'hammer')
-    expect(forged.length).toBeGreaterThanOrEqual(1)
-    const npcIds = new Set(sim.npcs.map((n) => n.entityId))
-    const built = events.filter(
-      (e): e is Extract<SimEvent, { type: 'structure_built' }> =>
-        e.type === 'structure_built' && npcIds.has(e.ownerId),
-    )
-    expect(built.length).toBeGreaterThanOrEqual(2)
-    expect(built.every((e) => e.structure === 'palissade')).toBe(true) // l'anneau avant tout (R15)
-    // …et la pièce est bien une ARÊTE de bois du plan (pas une pose pleine tuile).
-    const palissade = sim.structures.find((s) => s.id === built[0]!.structureId)!
-    expect(palissade.edges).toBeDefined()
-  })
+  // ⚠ DEUX GARDES DU TABLEAU PARTENT LE 2026-09-29 avec `refreshBoard` : « le tableau porte
+  // UNE tâche build, seulement si le grenier paie » et « au palier 2, le village veut de la
+  // pierre ». Elles éprouvaient le TABLEAU DES CORVÉES, pas le plan : `desiredOrders`, qui est
+  // le plan lui-même, garde ses gardes juste au-dessus et plus bas dans ce fichier.
 })
 
 /**
- * ⚠ TROIS DESCRIBES SONT PARTIS LE 2026-09-29 avec `village-growth.ts` (les villages PNJ sortent
- * du jeu, décision d'Alexis du 28/09) : « la montée de palier au surplus (R6) », « la porte
- * rituelle (R7) » et « la prospérité attire (R9) ». Les trois éprouvaient `advanceVillageGrowth`,
- * dont la boucle entière était gardée par `chiefId === 0` — du village PNJ et rien d'autre.
- * Une de leurs lois devient STRUCTURELLE au lieu d'être gardée : la porte rituelle affirmait
- * qu'un village à chef HUMAIN ne voit jamais ses portes bouger seules ; plus rien au monde ne
- * bouge une porte sans un geste, donc il n'y a plus de dérogation à surveiller.
+ * ⚠ **« LES PNJ BÂTISSENT (R4-R5) » EST RETIRÉ LE 2026-09-29.** Cette garde était la preuve que
+ * le plan se RÉALISE — que des villageois forgent le marteau qui manque et posent l'anneau par
+ * le pipeline joueur. Personne ne bâtit plus : elle n'a pas de sujet. **Ce qu'il reste à savoir,
+ * le plan le dit toujours** — `desiredOrders` est éprouvé directement (l'ordre des ordres, le
+ * toit après les murs, la cour défrichée avant le sol), et la POSE par le pipeline est éprouvée
+ * par le joueur juste en dessous (« la palissade au marteau du joueur »). C'est l'EXÉCUTANT qui
+ * s'en va, pas le plan ni le geste.
  */
+
 describe('la palissade au marteau du joueur (décision 2026-08-01)', () => {
   it('se pose sur une arête ; la pose pleine-tuile est refusée avec son motif', () => {
     const sim = createSim(3, { map: createEmptyMap(32, 32, TERRAIN_GRASS) })
@@ -225,18 +176,9 @@ describe('le grenier est une FONCTION, pas un type (P0.3)', () => {
     }
   })
 
-  it('P0.3c — et le tableau ne se tait plus : un village à silo travaille encore', () => {
-    const sim = npcVillageSim()
-    const v = village(sim)
-    sim.structures = sim.structures.filter((s) => s.type !== 'chest') // le raid a cassé le coffre
-    const silo = addStructure(sim, 'silo', 14, 12, v.id, 0)
-    silo.access = 'village'
-    v.tasks = []
-    refreshBoard(sim, v)
-    // Avant le correctif : ZÉRO tâche postée, y compris `feed_fire` — « la tâche
-    // communautaire zéro, sans elle le village tombe ».
-    expect(v.tasks.length).toBeGreaterThan(0)
-  })
+  // ⚠ « P0.3c — et le tableau ne se tait plus » part le 2026-09-29 avec le tableau. Sa loi
+  // utile survit en P0.3b juste au-dessus : **un silo compte dans les stocks du village**, ce
+  // qui est la prémisse dont le tableau se servait. C'est le consommateur qui disparaît.
 })
 
 // ═══════════════════════════════════════════════════════════════════════════════════════
@@ -404,53 +346,11 @@ describe('la cour entière se défriche (décision 2026-08-20)', () => {
 // tombe, comme `executeGather` reste sur son nœud.
 // ═══════════════════════════════════════════════════════════════════════════════════════
 
-describe('le défrichement TIENT SON DÉBIT (2026-08-20)', () => {
-  it('un arbre de la cour tombe en UNE corvée, pas en dix', () => {
-    const sim = npcVillageSim(3)
-    const v = village(sim)
-    v.buildTier = 2
-    // Le chantier ne doit pas caler faute de stock — NI FAUTE DE HACHE : défricher, c'est
-    // abattre, et depuis `glanage.md` G1 l'arbre ne cède qu'à l'outil. Ce qu'on chronomètre
-    // ici est le DÉBIT du défrichement ; l'approvisionnement en outils a ses propres gardes.
-    addItems(granary(sim).inventory!, { wood: 200, berries: 60, crude_axe: 1 })
-    // UN SEUL arbre, planté dans la cour, loin des paillasses : ce qu'on chronomètre est le
-    // défrichement, pas un logis qui se bâtit autour.
-    const tx = v.fireTx + 5
-    const ty = v.fireTy + 5
-    sim.nodes.push({ id: 7777, type: 'tree', tx, ty, stock: 10, regrowAt: 0 })
-    const arbre = () => sim.nodes.find((n) => n.id === 7777)!
-    expect(arbre().stock, 'la prémisse : il est debout, plein').toBe(10)
-
-    // L'ANNEAU D'ABORD — POSÉ, PAS ATTENDU. La cour ne se défriche qu'après la palissade
-    // (R15 : on s'abrite avant tout), et l'anneau fait 66 rondins à la cadence de défense :
-    // le chronométrer aussi mesurerait le chantier entier, pas le défrichement. On le pose
-    // donc par le PLAN LUI-MÊME — jamais une géométrie recopiée, qui divergerait le jour où
-    // l'enceinte change de forme.
-    for (const o of desiredOrders(sim, v)) {
-      if (o.action === 'pose' && o.enceinte === true) {
-        addStructure(sim, o.structure, o.tx, o.ty, v.id, 0, undefined, o.material, o.edges)
-      }
-    }
-    expect(desiredOrders(sim, v).some((o) => o.action === 'pose' && o.enceinte === true)).toBe(false)
-    expect(desiredOrders(sim, v)[0], "le défrichement est en tête de chantier").toMatchObject({ action: 'defriche' })
-
-    // ON POSE LA CORVÉE À LA MAIN, comme le fait déjà « le tableau porte UNE tâche build » :
-    // la fenêtre de cadence n'ouvre qu'un tick sur 8 400, et l'attendre ferait mesurer
-    // l'ALIGNEMENT de la cadence au lieu du geste. Ce qu'on chronomètre ici est le
-    // défrichement lui-même, une fois la corvée servie.
-    refreshBoard(sim, village(sim))
-    const corvee = village(sim).tasks.find((t) => t.kind === 'build')
-    expect(corvee?.build, 'le tableau n’a pas servi le défrichement').toMatchObject({ action: 'defriche', tx, ty })
-
-    // UNE SEULE FENÊTRE de marge. Avec l'ancien modèle (un coup de hache puis on lâche la
-    // corvée, et le tableau reposte à la fenêtre SUIVANTE), il en aurait fallu DIX — une par
-    // point de stock. Ce plafond sépare donc exactement les deux comportements.
-    const plafond = VILLAGE_GROWTH.BUILD_PACE_TICKS
-    let tombe = -1
-    for (let t = 0; t < plafond && tombe < 0; t++) {
-      step(sim, [])
-      if (arbre().stock === 0) tombe = t
-    }
-    expect(tombe, `l'arbre tient encore debout après ${plafond} ticks (une fenêtre entière)`).toBeGreaterThan(0)
-  })
-})
+/**
+ * ⚠ **« LE DÉFRICHEMENT TIENT SON DÉBIT » EST RETIRÉ LE 2026-09-29.** Ce chronomètre mesurait
+ * qu'UNE corvée `build`/`defriche` servie par le tableau abat l'arbre d'un coup au lieu d'un
+ * point de stock par fenêtre de cadence — une propriété de l'EXÉCUTEUR de corvée
+ * (`executeBuild`), qui part avec l'IA. Il ne reste rien à chronométrer : plus de corvée, plus
+ * de cadence, plus d'exécutant. Le PLAN, lui, affirme toujours que le défrichement vient en
+ * tête de chantier (« TOUTE LA COUR se défriche — et l'ordre passe AVANT le sol et les murs »).
+ */

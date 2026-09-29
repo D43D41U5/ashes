@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { BALANCE, CENDREUX, TEMPERATURE, TERRAIN_GRASS, TERRAIN_ROAD, TERRAIN_ROCK, WORLD_EVENTS } from './balance'
+import { BALANCE, TERRAIN_GRASS, TERRAIN_ROAD, TERRAIN_ROCK, WORLD_EVENTS } from './balance'
 import { drainEvents, type SimEvent } from './events'
 import { countOf } from './items'
 import { createEmptyMap } from './map'
@@ -23,24 +23,14 @@ const MI_ARDEUR = Math.round(BALANCE.ACT_DAYS * 1.5)
 const MI_GRAND_FROID = Math.round(BALANCE.ACT_DAYS * 3.5)
 
 /**
- * LA NUIT QUI MET LES MORTS À MI-RÉGIME — CHERCHÉE SUR LA COURBE, JAMAIS ÉCRITE.
- *
- * Le contrat A7(a) ne vise pas un jour, il vise un RÉGIME : assez froid pour que les goules
- * marchent (au cœur de l'Ardeur elles sont amorphes, `TORPEUR.CHAUD`), assez loin du cran de
- * fureur pour qu'aucun cri ne parte. C'était « la nuit d'acte II » quand l'arc allait dans un
- * seul sens ; sous l'année qui tourne, c'est un point de la MONTÉE des Pluies vers l'hiver —
- * et il se déplacerait si les cardinaux glissaient (S12). On le cherche donc au lieu de le
- * poser : le jour dont la nuit de plaine tombe au plus près du milieu de la plage de torpeur.
+ * ⚠ `NUIT_A_MI_REGIME` A VÉCU ICI JUSQU'AU 2026-09-29, et c'était une belle pièce : au lieu de
+ * poser un jour en dur, elle CHERCHAIT sur la courbe la nuit dont la température de plaine tombe
+ * au plus près du milieu de la plage de torpeur des Cendreux — assez froid pour qu'ils marchent,
+ * assez loin du cran de fureur pour qu'aucun cri ne parte, et robuste au glissement des
+ * cardinaux (S12). Son unique lectrice était A7(a), la milice, qui part avec l'IA villageoise.
+ * La méthode (chercher le régime plutôt qu'écrire un jour) est dans l'historique ; elle vaut
+ * pour le jour où le siège d'une balise se mesurera.
  */
-const NUIT_A_MI_REGIME = ((): number => {
-  const cible = (CENDREUX.TORPEUR.CHAUD + CENDREUX.TORPEUR.FROID) / 2
-  const nuitDe = (j: number): number => TEMPERATURE.SOCLE(j, 1) - TEMPERATURE.ECART_NUIT(j)
-  let elu = 2 * BALANCE.ACT_DAYS + 1
-  for (let j = elu; j <= 3 * BALANCE.ACT_DAYS; j++) {
-    if (Math.abs(nuitDe(j) - cible) < Math.abs(nuitDe(elu) - cible)) elu = j
-  }
-  return elu
-})()
 
 function run(sim: SimState, ticks: number): void {
   for (let t = 0; t < ticks; t++) step(sim, [])
@@ -128,23 +118,24 @@ describe('les murs face à la horde (A2)', () => {
 })
 
 describe('l’alarme (A3)', () => {
-  it('une seule alarme par vague ; les dormeurs se réveillent', () => {
+  /**
+   * ⚠ « ET LES DORMEURS SE RÉVEILLENT » est tombé le 2026-09-29 avec l'IA villageoise : plus
+   * personne ne dort. L'ALARME, ELLE, N'A PAS BOUGÉ — `worldevents.ts` la lève sur un VILLAGE
+   * qu'une menace approche, jamais sur un villageois, et un village se fonde toujours (le
+   * joueur en fonde un). La garde perd sa seconde moitié, pas son sujet.
+   */
+  it('une seule alarme par vague', () => {
     const sim = createSim(6, { map: createEmptyMap(30, 30, TERRAIN_GRASS) })
     foundNpcVillage(sim, 15, 15, 2)
     // Nuit : tout le monde dort. Le crépuscule est SAISONNIER (spec `saisons.md` S6) — on le
     // lit sur le cycle en cours au lieu de la constante d'avant, sans quoi on se poserait
     // en plein jour un jour sur deux.
     sim.tick = dayTicksAt(sim, sim.tick)
-    for (const npc of sim.npcs) {
-      npc.energy = 10
-      npc.sleeping = true
-    }
     drainEvents(sim)
     spawnMonster(sim, 'cendreux', 21, 15) // dans le rayon de 10
     run(sim, 30)
     const alarms = collect(sim, ['alarm_raised'])
     expect(alarms).toHaveLength(1)
-    expect(sim.npcs.some((n) => !n.sleeping)).toBe(true) // la milice est debout
     run(sim, 60)
     expect(collect(sim, ['alarm_raised'])).toHaveLength(0) // pas de spam
   })
@@ -268,52 +259,28 @@ describe('la carcasse de convoi (A6)', () => {
   })
 })
 
-describe('LE scénario (A7) — tient ou casse', () => {
-  it('(a) horde de 4 contre milice armée de 4 : le village tient (≤ 1 perte)', { timeout: 30_000 }, () => {
-    // NUIT DES PLUIES FINISSANTES, prise au RÉGIME et non au numéro d'acte (l'acte II de
-    // 21 jours n'existe plus, S1-S3) : le contrat mesure la MILICE contre l'assaut nominal —
-    // froid (la courbe élit le jour 79, nuit de plaine à −3,9 °C : les goules courent à
-    // mi-régime), HORS fureur (−3,9 °C reste loin au-dessus de `TORPEUR.FUREUR` = −13,2 :
-    // pas de cris, pas de salves — le climax du Grand Froid a ses propres gardes).
-    // RE-MESURÉ sous le calendrier qui tourne, 12 graines : 12/12 tiennent, et le plateau
-    // s'étend sur toute la fin des Pluies (j77→j83) — ce n'est pas une graine chanceuse.
-    const sim = createSim(14, { map: createEmptyMap(40, 40, TERRAIN_GRASS), cycleOffset: cycleOffsetForStartHour(0, 1), calendarScale: 1 })
-    sim.tick = (NUIT_A_MI_REGIME - 1) * TICKS_PER_SEASON_DAY
-    sim.tick -= sim.tick % TICKS_PER_CYCLE
-    sim.tick += 1
-    foundNpcVillage(sim, 20, 20, 4)
-    spawnHorde(sim, 4)
-    for (let t = 0; t < 8000 && sim.monsters.length > 0; t++) step(sim, [])
-    expect(sim.monsters).toHaveLength(0)
-    expect(sim.npcs.length).toBeGreaterThanOrEqual(3)
-  })
-
-  it('(b) horde de 10 contre 2 PNJ : le village casse', { timeout: 30_000 }, () => {
-    // Graine 17 (était 15), 2026-08-02 — le CORPS-CIBLE (spec combat R4quinquies) rend un
-    // peu de tranchant à la milice, et la graine 15 est passée du côté « le village tient ».
-    // Vérifié avant de la changer, sur 12 graines (`tools/diag-horde.mts`) : (b) CASSE
-    // **9/12 → 7/12**, et (a) « le village tient » ne bouge pas (11/12 → 11/12). La
-    // propriété survit largement ; c'est bien la graine qui a tourné, pas la promesse —
-    // à la différence du raid d'alignement A7(b), où le taux s'est effondré (5/12 → 1/12)
-    // et où le commentaire le dit.
-    // NUIT DU CŒUR DU GRAND FROID (jour 105) : « le village casse » est un contrat d'ENDGAME
-    // — au plein régime, le froid extrême arme aussi le CRI (le cran ⑤ EST cette zone de
-    // froid ; la nuit de plaine y vaut −16 °C, sous `TORPEUR.FUREUR`), et le crescendo fait
-    // partie de la promesse. L'ancien « acte III, jour 55 » visait cette zone-là ; sous
-    // l'année qui tourne (S1), le jour 55 est une fin d'Ardeur tiède où rien ne se lève.
-    // RE-MESURÉ au cœur du Grand Froid, 12 graines : 12/12 cassent, en 780 à 1 619 ticks.
-    const sim = createSim(17, { map: createEmptyMap(40, 40, TERRAIN_GRASS), cycleOffset: cycleOffsetForStartHour(0, 1), calendarScale: 1 })
-    sim.tick = (MI_GRAND_FROID - 1) * TICKS_PER_SEASON_DAY
-    sim.tick -= sim.tick % TICKS_PER_CYCLE
-    sim.tick += 1
-    foundNpcVillage(sim, 20, 20, 2)
-    spawnHorde(sim, 10)
-    for (let t = 0; t < 8000 && sim.npcs.length > 0 && sim.monsters.length > 0; t++) step(sim, [])
-    expect(sim.npcs.length).toBeLessThan(2) // des morts — la défense a cassé
-  })
-})
+/**
+ * ⚠ **LE SCÉNARIO (A7) EST RETIRÉ LE 2026-09-29** — ses deux gardes (« (a) horde de 4 contre
+ * milice armée de 4 : le village tient » et « (b) horde de 10 contre 2 PNJ : le village
+ * casse ») mesuraient LA MILICE, c'est-à-dire des villageois qui se défendent. L'IA
+ * villageoise part avec le pivot de la braise : il n'y a plus de milice à opposer à une
+ * horde, et les deux verdicts n'ont plus de sujet. Ce n'est pas la horde qui s'en va — elle
+ * garde ses gardes juste au-dessus et juste en dessous (les murs, l'alarme, le déterminisme,
+ * la foule qui s'ouvre) : c'est le DÉFENSEUR qui a disparu du jeu.
+ *
+ * Leur chiffrage reste au journal (12 graines, (a) 12/12 tiennent, (b) 12/12 cassent) et dans
+ * l'historique git — il dira ce que valait l'assaut nominal le jour où quelque chose défendra
+ * de nouveau une balise.
+ */
 
 describe('le déterminisme (A8)', () => {
+  /**
+   * ⚠ CE REPLAY A MAIGRI LE 2026-09-29 sans changer de loi : `foundNpcVillage` ne pose plus
+   * personne, donc l'exactitude n'est plus éprouvée sur des villageois qui décident. Elle
+   * l'est toujours sur ce qui décide encore — la horde, l'alarme, le convoi, le joueur qui
+   * marche. `live.npcs` reste interrogé ci-dessous et rend simplement vide : la ligne dit
+   * encore « le joueur est celui qui n'est ni figurant ni bête », et c'est vrai.
+   */
   it('replay exact avec hordes, alarmes et carcasses', () => {
     const map = createEmptyMap(30, 30, TERRAIN_GRASS)
     for (let tx = 0; tx < 30; tx++) map.terrain[22 * 30 + tx] = TERRAIN_ROAD
@@ -401,6 +368,26 @@ describe('la horde s’ouvre en marchant (décision 2026-08-20)', () => {
     expect(range, 'le tas ne s’est jamais défait').toBeGreaterThan(0)
   })
 
+  /**
+   * ⚠ **LA FENÊTRE DE MESURE A ÉTÉ RÉPARÉE LE 2026-09-29, ET C'EST LE RETRAIT DE L'IA QUI L'A
+   * DÉMASQUÉE.** Cette garde rougissait (graine 7 : 54 % contre 60 % exigés) et le premier
+   * réflexe — baisser le plancher — aurait enterré un vrai défaut de garde.
+   *
+   * CE QUI SE PASSAIT : elle comptait 1 200 ticks en bloc. Or au bout de 270 à 560 ticks la
+   * horde ARRIVE au village, et à partir de là elle tourne sur place autour d'un Feu immobile,
+   * serrée — ce qui est normal et n'a rien à voir avec la marche. Le villageois d'accueil
+   * masquait ça : la horde le pourchassait, donc elle MARCHAIT encore pendant le reste de la
+   * fenêtre. Sans lui, la moitié de la fenêtre mesure une horde à l'arrêt. La garde ne parlait
+   * plus de son sujet.
+   *
+   * MESURÉ pour trancher, SONDE `__horde-part` SUR DOUZE GRAINES, avant/après la coupe :
+   *  · arbre d'avant (un villageois) sur 1 200 ticks : 11 graines ≥ 92,5 %, une à 36,8 % — donc
+   *    le plancher de 0,6 n'était DÉJÀ pas une propriété du système, seulement de quatre graines ;
+   *  · arbre d'après (personne) sur 1 200 ticks : cinq graines sur douze entre 33 et 57 % ;
+   *  · arbre d'après, **fenêtre bornée à l'arrivée** : **95,5 à 100 % sur les douze graines**, et
+   *    la médiane vaut 12 partout — avec ou sans un corps posté au village.
+   * La marche de la horde n'a donc pas bougé d'un pouce. C'est la fenêtre qui était fausse.
+   */
   it('et elle NE SE RETASSE PAS en marchant — mesuré sur quatre graines', () => {
     // QUATRE GRAINES, PAS UNE. Une horde est un système chaotique : une graine choisie dirait
     // ce qu'on veut entendre (leçon « mesurer la pire seconde » — moyenner sur ≥ 4 graines
@@ -414,10 +401,21 @@ describe('la horde s’ouvre en marchant (décision 2026-08-20)', () => {
       // membre dont la case tombe hors du champ de flux (`champ === -1`). Près d'un obstacle,
       // douze goules naissent donc sur TROIS tuiles. Ce qu'on garde ici est la MARCHE, pas le
       // semis — et le test d'à côté prouve déjà qu'un tas se défait.
+      const village = sim.villages[0]!
       const serie: number[] = []
       for (let t = 0; t < 1200; t++) {
         step(sim, [])
-        if (corps(sim).length < 12) break // une goule est tombée : le dénominateur a changé
+        const c = corps(sim)
+        if (c.length < 12) break // une goule est tombée : le dénominateur a changé
+        // ═══ ON NE COMPTE QUE CE QUI MARCHE (fenêtre réparée le 2026-09-29) ═══
+        // Arrivée au Feu = fin de la marche. Passé ce point la horde tourne autour d'une cible
+        // immobile et se serre — c'est le comportement voulu, mais ce n'est plus de la marche,
+        // et le compter noyait le sujet. Rayon 6 (Chebyshev, sur le CENTRE de la horde) : elle
+        // n'y entre qu'une fois le trajet fait. Mesuré : la marche dure 270 à 560 ticks selon
+        // la graine, donc la garde « elle a marché assez longtemps » ci-dessous tient partout.
+        const cx = c.reduce((a, e) => a + e.x, 0) / c.length
+        const cy = c.reduce((a, e) => a + e.y, 0) / c.length
+        if (Math.max(Math.abs(cx - (village.fireTx + 0.5)), Math.abs(cy - (village.fireTy + 0.5))) <= 6) break
         serie.push(tuilesOccupees(sim))
       }
       // LA GARDE PROUVE QU'ELLE A REGARDÉ QUELQUE CHOSE : sans ça, une horde massacrée au
@@ -427,9 +425,11 @@ describe('la horde s’ouvre en marchant (décision 2026-08-20)', () => {
       expect(tri[Math.floor(tri.length / 2)], `graine ${graine} : la moitié du temps, elle se tasse`).toBe(12)
       parts.push(serie.filter((v) => v === 12).length / serie.length)
     }
-    // LE PLANCHER EST CELUI DU PIRE CAS MESURÉ (68 %, graine 7 — sa horde s'engouffre dans la
-    // porte de l'enceinte), avec de la marge. Une régression en COLONNE le ferait tomber à
-    // zéro : c'est le seul chiffre qu'on ait besoin de séparer.
+    // LE PLANCHER RESTE À 0,6, et il est maintenant LARGE : le pire cas mesuré sur douze
+    // graines, fenêtre bornée à l'arrivée, est 95,5 %. Le chiffre qu'il faut séparer est ZÉRO —
+    // une régression en COLONNE (le gradient partagé d'avant 2026-08-20) y tombe net. On ne
+    // resserre pas le plancher sur 95 % : ce serait épingler du chaos, et la garde rougirait
+    // pour une goule qui hésite.
     for (const [i, part] of parts.entries()) {
       expect(part, `graine ${[23, 7, 41, 88][i]} : ${(100 * part).toFixed(0)} % de marche étalée`).toBeGreaterThan(0.6)
     }

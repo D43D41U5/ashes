@@ -1351,7 +1351,7 @@ export function die(state: SimState, entity: Entity, byEntityId: number, cause?:
     state.entities = state.entities.filter((e) => e.id !== entity.id)
     for (const village of state.villages) {
       village.memberIds = village.memberIds.filter((id) => id !== entity.id)
-      for (const task of village.tasks) if (task.claimedBy === entity.id) task.claimedBy = null
+      // (plus de tableau de corvées à relâcher — l'IA villageoise est partie le 2026-09-29)
     }
     return
   }

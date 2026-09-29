@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
-import { BALANCE, FOOD_VALUES, ITEM_WEIGHT, SLOTS, SPOIL_CYCLES, TERRAINS, TERRAIN_SCREE, TERRAIN_SNOW } from './balance'
-import { stackSize, type ItemId } from './items'
+import { FOOD_VALUES, ITEM_WEIGHT, SLOTS, SPOIL_CYCLES, TERRAINS, TERRAIN_SCREE, TERRAIN_SNOW } from './balance'
+import { type ItemId } from './items'
 
 describe('les tailles de sac (spec inventaire R11)', () => {
   // Les `addItems` de la sim qui jettent leur reliquat le font À RAISON — parce que
@@ -28,16 +28,11 @@ describe('les tailles de sac (spec inventaire R11)', () => {
     expect(SLOTS.PLAYER).toBeGreaterThanOrEqual(SLOTS.BELT)
   })
 
-  // Le stade « work » de la récolte PNJ (npc.ts) ne s'achève qu'à la CIBLE DE
-  // PORTAGE. Si une case pleine du butin en contenait moins, un PNJ pourrait
-  // saturer son sac avant d'atteindre la cible, et frapperait alors le buisson
-  // pour l'éternité (chaque coup jetant sa récolte, faute de place) sans jamais
-  // passer au rangement. Deux boutons de balance.ts, un seul livelock.
-  it('une case pleine du butin porte au moins la cible de portage du PNJ', () => {
-    for (const item of Object.keys(BALANCE.NPC_CARRY_TARGETS) as (keyof typeof BALANCE.NPC_CARRY_TARGETS)[]) {
-      expect(stackSize(item)).toBeGreaterThanOrEqual(BALANCE.NPC_CARRY_TARGETS[item])
-    }
-  })
+  // ⚠ « UNE CASE PLEINE DU BUTIN PORTE AU MOINS LA CIBLE DE PORTAGE DU PNJ » part le
+  // 2026-09-29 avec `NPC_CARRY_TARGETS`. Elle gardait un livelock d'IA précis — un villageois
+  // qui sature son sac avant la cible de portage frappe le buisson pour l'éternité, chaque coup
+  // jetant sa récolte — en croisant DEUX boutons de `balance.ts`. Plus de stade « work », plus
+  // de cible de portage : la cohérence à garder a disparu avec les deux nombres.
 })
 
 describe('terrains d\'altitude alpins', () => {

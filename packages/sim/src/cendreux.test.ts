@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest'
 import { BALANCE, COMBAT, MONSTER_DEFS, CENDREUX, METEO, SLOTS, TERRAIN_GRASS, WEAPON_PROFILES } from './balance'
 import { meteoVisionFactor } from './meteo'
-import { createSim, spawnEntity, step, type MoveInput, type SimState } from './sim'
+import { createSim, spawnEntity, step, type Entity, type MoveInput, type SimState } from './sim'
 import { countOf, inventoryOf } from './items'
 import { die, respawn, startAttack } from './combat'
 import { advanceCendreux, risenAlive } from './cendreux'
@@ -465,15 +465,31 @@ describe('la contagion et son plafond (R7-R8)', () => {
 })
 
 describe('le critère « allié » — branche village de willRiseAsCendreux', () => {
-  // Un village PNJ pose un Feu (ward 12) à (12,12) : on déplace la mort et
-  // l'allié loin de là (>12) pour isoler la branche « seul », jamais exercée
-  // par les tests ci-dessus (qui ne montent jamais de village).
+  /**
+   * ⚠ RÉÉCRIT LE 2026-09-29 : LES DEUX CORPS ÉTAIENT DES VILLAGEOIS, CE SONT MAINTENANT DEUX
+   * JOUEURS — et c'est la scène que le pivot garde vraiment. `willRiseAsCendreux` ne demande
+   * rien d'autre que « deux membres du même village » (`village.memberIds.includes`) : la loi
+   * éprouvée n'a pas changé d'une virgule, seule la table d'où viennent les corps a changé.
+   * Deux joueurs en coop dans le même village SONT des alliés au sens de cette branche, et le
+   * voisin qui meurt seul loin de tout feu est précisément l'histoire que la braise raconte.
+   *
+   * Le montage reste le même : un Feu à (12,12) (ward 12), et la mort déplacée à (200,200)
+   * pour isoler la branche « seul ».
+   */
+  function deuxMembres(state: ReturnType<typeof createSim>): { dier: Entity; ally: Entity } {
+    const village = foundNpcVillage(state, 12, 12, 0) // Feu en (12,12), ward 12 — et personne
+    const a = spawnEntity(state, 200, 200)
+    const b = spawnEntity(state, 204, 200)
+    village.memberIds.push(a, b)
+    return {
+      dier: state.entities.find((e) => e.id === a)!,
+      ally: state.entities.find((e) => e.id === b)!,
+    }
+  }
 
   it('un allié vivant du même village à portée (WITNESS_RADIUS) empêche la levée', () => {
     const state = createSim(1)
-    foundNpcVillage(state, 12, 12, 2) // Feu en (12,12), ward 12
-    const dier = state.entities.find((e) => e.id === state.npcs[0]!.entityId)!
-    const ally = state.entities.find((e) => e.id === state.npcs[1]!.entityId)!
+    const { dier, ally } = deuxMembres(state)
     dier.x = 200; dier.y = 200 // loin de tout feu (>> HEARTH_WARD_RADIUS)
     ally.x = 204; ally.y = 200 // distance 4 <= WITNESS_RADIUS (8) : témoin vivant
     die(state, dier, 0, 'cold')
@@ -483,9 +499,7 @@ describe('le critère « allié » — branche village de willRiseAsCendreux', (
 
   it('même montage mais l\'allié est hors WITNESS_RADIUS → cadavre marqué', () => {
     const state = createSim(1)
-    foundNpcVillage(state, 12, 12, 2)
-    const dier = state.entities.find((e) => e.id === state.npcs[0]!.entityId)!
-    const ally = state.entities.find((e) => e.id === state.npcs[1]!.entityId)!
+    const { dier, ally } = deuxMembres(state)
     dier.x = 200; dier.y = 200
     ally.x = 220; ally.y = 200 // distance 20 > WITNESS_RADIUS (8)
     die(state, dier, 0, 'cold')
@@ -495,9 +509,7 @@ describe('le critère « allié » — branche village de willRiseAsCendreux', (
 
   it('même montage mais l\'allié est déjà mort (hp 0) → ne compte pas comme témoin', () => {
     const state = createSim(1)
-    foundNpcVillage(state, 12, 12, 2)
-    const dier = state.entities.find((e) => e.id === state.npcs[0]!.entityId)!
-    const ally = state.entities.find((e) => e.id === state.npcs[1]!.entityId)!
+    const { dier, ally } = deuxMembres(state)
     dier.x = 200; dier.y = 200
     ally.x = 204; ally.y = 200 // à portée, mais...
     ally.hp = 0 // ...mort : ne fait plus office de témoin
@@ -537,14 +549,17 @@ describe('le critère « joueur » (A7) — respawn au Feu ET cadavre marqué au
 describe('tuer un Cendreux : 2 coups d\'arme basique, cadavre + loot redéposé (critères 6, 8)', () => {
   it('un Cendreux levé (loot hérité) survit à 1 coup de hache, meurt au 2e, redépose le loot', () => {
     const state = createSim(1)
-    // Un PNJ (pas un joueur) : à sa mort il est retiré pour de bon (spec R10),
-    // donc pas de respawn qui viendrait traîner près du site et fausser le
-    // pipeline de coups réel plus bas (qui frappe toute entité à portée/arc).
-    foundNpcVillage(state, 12, 12, 1) // Feu en (12,12), ward 12
-    const human = state.entities.find((e) => e.id === state.npcs[0]!.entityId)!
-    human.x = 200; human.y = 200 // loin de tout feu et de tout témoin (spec levée « seul »)
+    // ⚠ LE MORT ÉTAIT UN PNJ JUSQU'AU 2026-09-29 ; c'est un corps nu, membre d'aucun village.
+    // Le raisonnement d'origine tient toujours : ce qu'on ne veut pas, c'est un corps qui
+    // TRAÎNE près du site et encaisse les coups à la place du Cendreux (le pipeline frappe
+    // toute entité à portée). Un PNJ était retiré pour de bon à sa mort ; ici on le retire
+    // explicitement, ce qui dit la même chose sans dépendre d'une table qui n'existe plus.
+    foundNpcVillage(state, 12, 12, 0) // Feu en (12,12), ward 12
+    const humanId = spawnEntity(state, 200, 200) // loin de tout feu et de tout témoin (levée « seul »)
+    const human = state.entities.find((e) => e.id === humanId)!
     human.inventory = inventoryOf(SLOTS.NPC, { berries: 3 })
     die(state, human, 0, 'cold')
+    state.entities = state.entities.filter((e) => e.id !== humanId)
     const originalCorpse = state.corpses.find((c) => c.risesAt !== undefined)!
     state.tick = originalCorpse.risesAt!
     advanceCendreux(state)

@@ -240,28 +240,19 @@ describe('le carnet de l’encyclopédie', () => {
     expect(connuEncyclo(moi(sim, temoin).carnet, 'rabbit')).toBe(false)
   })
 
-  it('UN PNJ n’a pas de carnet — il ne voyagerait dans le snapshot pour personne', () => {
+  /**
+   * ⚠ LE FIGURANT ÉTAIT UN PNJ JUSQU'AU 2026-09-29 ; C'EST DÉSORMAIS UNE BÊTE, et la loi
+   * éprouvée n'a pas bougé d'un mot. `estJoueur` (encyclopedie.ts) exclut les DEUX tables
+   * dans la même expression — `!npcIds.has(id) && !monsterIds.has(id)` —, donc le contraste
+   * passe par le même code. Le changement était obligé : `state.npcs` reste VIDE à vie depuis
+   * que l'IA villageoise est partie, et une garde dont le sujet n'existe plus verdit à vide,
+   * ce qui est pire que rouge. Ici le figurant EXISTE et la garde peut encore échouer.
+   */
+  it('UN FIGURANT n’a pas de carnet — il ne voyagerait dans le snapshot pour personne', () => {
     const tree = makeNode('tree', 11, 10)
     const sim = monde([tree])
-    const id = spawnEntity(sim, 10.5, 10.5)
+    const id = spawnMonster(sim, 'rabbit', 10.5, 10.5)
     step(sim, [])
-    // On enrôle l'entité comme PNJ — la MÊME forme que `spawnNpcsAround` : le même geste ne
-    // doit plus rien écrire. (Un objet approximatif traverserait vitest et tomberait à `tsc`.)
-    sim.npcs.push({
-      entityId: id,
-      villageId: -1,
-      homeId: null,
-      energy: 100,
-      sleeping: false,
-      seekingWarmth: false,
-      task: null,
-      path: [],
-      stuck: 0,
-      sansChemin: [],
-      defendStuck: 0,
-      defendBest: -1,
-      defendIgnoreUntil: 0,
-    })
     const avant = JSON.stringify(moi(sim, id).carnet ?? [])
     act(sim, id, { type: 'harvest', nodeId: tree.id })
     expect(JSON.stringify(moi(sim, id).carnet ?? [])).toBe(avant)

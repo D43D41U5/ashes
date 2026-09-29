@@ -7,14 +7,11 @@ import {
   TERRAIN_FOREST,
   TERRAIN_GRASS,
   TERRAIN_MARSH,
-  SLOTS,
   TERRAIN_SNOW,
   TERRAINS,
   type NodeType,
 } from './balance'
 import { drainEvents } from './events'
-import { makeInventory } from './items'
-import { foundNpcVillage } from './worldgen'
 import { floreGelee, gelMortel } from './gel'
 import { countOf } from './items'
 import { createEmptyMap } from './map'
@@ -23,7 +20,7 @@ import { modificateurDuJour } from './modificateur'
 import { AMBIANT_HYPOTHERMIE, baselineTemperatureAt, climatFlore, dehorsSansMeteo } from './temperature'
 import { createSim, spawnEntity, step, type PlayerAction, type SimState } from './sim'
 import { addStructure, getVillageOf, grantItems, type Structure } from './village'
-import { cycleOffsetForStartHour, dayTicksPourJour, getGameTime, TICKS_PER_CYCLE, TICKS_PER_SEASON_DAY, YEAR_DAYS } from './time'
+import { dayTicksPourJour, getGameTime, TICKS_PER_CYCLE, TICKS_PER_SEASON_DAY, YEAR_DAYS } from './time'
 import type { ResourceNode } from './economy'
 
 /** 1 cycle jour/nuit = 1 jour de saison : une saison de 30 jours tient en 30 cycles. */
@@ -467,71 +464,18 @@ describe('les seuils tiennent leurs promesses', () => {
   })
 })
 
-describe('LE PNJ NE RESTE PAS COLLÉ À UN BUISSON GELÉ (régression)', () => {
-  /**
-   * LE DÉFAUT QUE CE TEST GARDE, et il a failli passer.
-   *
-   * `applyEconomyAction` refuse (« la plante est gelée »), mais le PNJ ne le SAIT pas : le
-   * nœud a encore du stock, donc il ne cherche pas ailleurs, et sa corvée n'est pas relâchée.
-   * Il repart pour un tour, indéfiniment — **planté devant le buisson**. Une nuit d'acte II
-   * c'est une nuit perdue ; en acte III, où plus rien ne dégèle, c'est pour toujours : il ne
-   * mange plus et ne DESCEND JAMAIS jusqu'au bois qu'il pourrait couper. C'est la famine que
-   * `npc.ts` avait déjà épinglée pour « aucun nœud de ce type », par une autre porte.
-   *
-   * On l'isole en gelant LE LIEU plutôt que la saison : le monde ouvre à `JOUR_TIEDE`, à midi
-   * — la vallée y est à +14 °C (rien n'y gèle) et les buissons, posés sur la NEIGE (seize
-   * degrés de moins), sont à −2 °C, sous le seuil. Aucune pression de froid sur le PNJ,
-   * aucune famine de saison — le seul fait mesuré est le gel du buisson.
-   */
-  function villageDevantDesBuissonsGeles(): SimState {
-    const map = createEmptyMap(28, 28, TERRAIN_GRASS)
-    for (const [tx, ty] of [[18, 12], [19, 14]]) map.terrain[ty! * 28 + tx!] = TERRAIN_SNOW
-    const nodes: ResourceNode[] = [
-      { id: 1, type: 'berry_bush', tx: 18, ty: 12, stock: 8, regrowAt: 0 },
-      { id: 2, type: 'berry_bush', tx: 19, ty: 14, stock: 8, regrowAt: 0 },
-      { id: 3, type: 'tree', tx: 10, ty: 12, stock: 10, regrowAt: 0 },
-    ]
-    // Le calendrier n'est PAS accéléré ici (échelle 1) : le jour ne bouge pas de la mesure,
-    // et `cycleOffset` pose le tick 0 à midi — le tick 0 nu porte encore le plein froid de la
-    // nuit (`partDeNuit`), et le montage mesurerait alors une aube, pas un jour tiède.
-    const sim = createSim(11, {
-      map,
-      nodes,
-      worldEvents: false,
-      jourDeDepart: JOUR_TIEDE,
-      cycleOffset: cycleOffsetForStartHour(12, JOUR_TIEDE),
-    })
-    foundNpcVillage(sim, 12, 12, 1)
-    // Grenier VIDÉ (on veut mesurer ce qu'il rapporte, pas ce qu'il avait) — sauf UNE hache.
-    // Depuis `glanage.md` G1 l'arbre exige un outil, et le tableau ne poste même pas la corvée
-    // de bois quand le village ne peut en fournir aucun (G6) : sans elle, ce test verrait un
-    // PNJ « qui ne descend pas au bois » pour une raison qui n'a rien à voir avec le gel.
-    const grenier = sim.structures.find((st) => st.type === 'chest')!
-    grenier.inventory = makeInventory(SLOTS.CHEST)
-    grenier.inventory[0] = { item: 'crude_axe', count: 1 }
-    return sim
-  }
-
-  it('les buissons gelés, il DESCEND jusqu’au bois — au lieu d’attendre devant', () => {
-    const sim = villageDevantDesBuissonsGeles()
-    expect(floreGelee(sim, 18, 12)).toBe(true) // le buisson gèle…
-    expect(floreGelee(sim, 10, 12)).toBe(false) // …l'arbre, non : la carte est tiède
-
-    for (let t = 0; t < BALANCE.BOARD_REFRESH_TICKS * 3; t++) step(sim, [])
-
-    const grenier = sim.structures.find((st) => st.type === 'chest')!.inventory ?? []
-    const porte = sim.entities.find((e) => e.id === sim.npcs[0]!.entityId)!
-    // Il a fait la corvée qu'il POUVAIT faire. Collé au buisson, ce compte resterait à zéro.
-    expect(countOf(grenier, 'wood') + countOf(porte.inventory, 'wood')).toBeGreaterThan(0)
-    expect(countOf(porte.inventory, 'berries')).toBe(0) // et il n'a rien tiré du gel
-    expect(sim.nodes[0]!.stock).toBe(8) // le buisson est intact : personne ne l'a entamé
-  })
-
-  it('et il cueille normalement dès que le buisson dégèle (le gel seul le retenait)', () => {
-    const sim = villageDevantDesBuissonsGeles()
-    for (const [tx, ty] of [[18, 12], [19, 14]]) sim.map.terrain[ty! * 28 + tx!] = TERRAIN_GRASS
-    expect(floreGelee(sim, 18, 12)).toBe(false)
-    for (let t = 0; t < BALANCE.BOARD_REFRESH_TICKS * 3; t++) step(sim, [])
-    expect(sim.nodes[0]!.stock + sim.nodes[1]!.stock).toBeLessThan(16) // entamés
-  })
-})
+/**
+ * ═══ « LE PNJ NE RESTE PAS COLLÉ À UN BUISSON GELÉ » EST RETIRÉ LE 2026-09-29 ═══
+ *
+ * Deux gardes de régression partent avec l'IA villageoise : « les buissons gelés, il DESCEND
+ * jusqu'au bois » et « il cueille normalement dès que le buisson dégèle ». Elles gardaient un
+ * défaut d'IA précis et cher — `applyEconomyAction` refuse (« la plante est gelée »), le nœud a
+ * encore du stock, donc le villageois ne cherchait pas ailleurs, ne relâchait pas sa corvée et
+ * restait planté devant le buisson jusqu'à la famine. **Ce défaut ne peut plus se produire :
+ * plus personne ne réclame de corvée.**
+ *
+ * ⚠ CE QUI SURVIT EST LA LOI, ET ELLE EST GARDÉE AU-DESSUS : `floreGelee` dit vrai sur un
+ * buisson posé sur la neige et faux sur l'arbre d'à côté, et `applyEconomyAction` refuse la
+ * récolte d'une plante gelée — **y compris dans la main du joueur**, ce qui est désormais la
+ * seule main du jeu. Ce qui s'en va, c'est le livelock de celui qui ne savait pas lire un refus.
+ */

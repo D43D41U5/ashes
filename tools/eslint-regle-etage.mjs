@@ -141,12 +141,12 @@ const HORS_REGLE = {
     // lecture, tout passe par `terrainAt`, donc par `map.terrain` — la seule strate du sol.
     forceDUneSouillure: 'champ au sol : étage refusé à l’émission, lecture par `map.terrain` seulement',
   },
+  // ⚠ DEUX EXEMPTIONS RETIRÉES LE 2026-09-29, ET C'EST LA RÈGLE ELLE-MÊME QUI L'A EXIGÉ :
+  // `executeBuild` et `advanceNpcs` sont partis avec l'IA villageoise (tranche 2b), et la garde
+  // « une exemption périmée est une garde morte » a fait rougir le lint jusqu'à ce qu'on les
+  // retire. Elle a fait exactement son travail.
   'npc.ts': {
     followPath: 'waypoint de son propre chemin — pas de second corps',
-    executeBuild: 'choix d’une tuile libre adjacente — la marchabilité tranche',
-    // Chebyshev au feu = « suis-je DANS le village ? ». Un test d'appartenance de zone, pas une
-    // perception : le rendre étanche exclurait du village celui qui en descend la cave.
-    advanceNpcs: 'appartenance au carré du feu, pas une perception',
   },
   'traction.ts': { advanceTraction: 'un corps et SA propre charge — la rupture règle déjà la distance' },
 

@@ -85,13 +85,18 @@ describe('multi-joueurs (L1)', () => {
     expect(snapshot(runOnce())).toBe(snapshot(state))
   })
 
-  it("A3 : despawn nettoie l'appartenance au village et les tâches réclamées", () => {
+  /**
+   * ⚠ « ET LES TÂCHES RÉCLAMÉES » est tombé le 2026-09-29 : le tableau des corvées part avec
+   * l'IA villageoise. La MOITIÉ QUI RESTE est celle qui comptait en coop — un joueur qui se
+   * déconnecte quitte les `memberIds` de son village. C'est une garde amputée, pas une garde
+   * périmée : son sujet, `despawnAvatar`, n'a pas bougé.
+   */
+  it("A3 : despawn nettoie l'appartenance au village", () => {
     const state = createSim(2026, buildOptions())
     const chief = spawnEntity(state, 8, 8)
     const member = spawnEntity(state, 9, 9)
     // Un village injecté directement (le contrat de nettoyage est testé en
-    // isolation, sans dépendre des mécaniques de fondation) : le membre appartient
-    // au village ET a réclamé une tâche.
+    // isolation, sans dépendre des mécaniques de fondation).
     const village: Village = {
       id: 1,
       name: 'Braises',
@@ -101,9 +106,6 @@ describe('multi-joueurs (L1)', () => {
       fireTy: 8,
       fuel: 120,
       tier: 1,
-      tasks: [{ id: 1, kind: 'gather_wood', priority: 1, claimedBy: member }],
-      nextTaskId: 2,
-      npcsArrived: true,
       lastAlarmAt: -1,
     }
     state.villages.push(village)
@@ -112,7 +114,6 @@ describe('multi-joueurs (L1)', () => {
 
     expect(state.entities.some((e) => e.id === member)).toBe(false)
     expect(village.memberIds).toEqual([chief])
-    expect(village.tasks[0]!.claimedBy).toBeNull()
   })
 
   it("A4 : despawn d'un id absent est un no-op (pas d'event, pas de PRNG)", () => {

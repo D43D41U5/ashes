@@ -113,3 +113,37 @@ describe('le lissage de chemin — la diagonale est un cap, pas une tuile', () =
     expect(lisserLeChemin(world, 3.5, 3.5, [])).toEqual([])
   })
 })
+
+/**
+ * ═══ RECUEILLI DE `npc.test.ts` LE 2026-09-29 (tranche 2b, l'IA villageoise part) ═══
+ *
+ * Cette garde vivait sous « la navigation (A4) » des PNJ, mais elle n'a JAMAIS eu besoin d'un
+ * PNJ : elle appelle `findPath` nu, sur une carte nue. Son sujet est l'A* lui-même — il
+ * contourne, il est reproductible, et il sait dire NON — donc elle survit au retrait de son
+ * ancien voisinage et vient s'asseoir à côté du lissage, qui est l'autre moitié du même chemin.
+ * La déplacer plutôt que la supprimer, c'est refuser de perdre la seule garde de trois lois.
+ */
+describe('l’A* lui-même : il contourne, il se rejoue, il sait dire non', () => {
+  it('A* contourne un mur de roche ; chemin identique à chaque run', () => {
+    const map = createEmptyMap(20, 20, TERRAIN_GRASS)
+    for (let ty = 2; ty < 18; ty++) map.terrain[ty * 20 + 10] = TERRAIN_ROCK // mur vertical, passage en haut
+    const world = { map }
+    const p1 = findPath(world, { tx: 5, ty: 10 }, { tx: 15, ty: 10 })
+    const p2 = findPath(world, { tx: 5, ty: 10 }, { tx: 15, ty: 10 })
+    expect(p1).not.toBeNull()
+    expect(p1!.length).toBeGreaterThan(18) // bien plus long que la ligne droite (10)
+    expect(p1).toEqual(p2)
+    // Contourne par l'une des deux extrémités du mur (ty 2-17).
+    expect(p1!.some((t) => t.tx === 10 && (t.ty <= 1 || t.ty >= 18))).toBe(true)
+    // Cible emmurée → null.
+    for (let tx = 0; tx < 20; tx++) {
+      map.terrain[5 * 20 + tx] = TERRAIN_ROCK
+      map.terrain[15 * 20 + tx] = TERRAIN_ROCK
+    }
+    for (let ty = 5; ty <= 15; ty++) {
+      map.terrain[ty * 20 + 0] = TERRAIN_ROCK
+      map.terrain[ty * 20 + 19] = TERRAIN_ROCK
+    }
+    expect(findPath({ map }, { tx: 2, ty: 2 }, { tx: 10, ty: 10 })).toBeNull()
+  })
+})

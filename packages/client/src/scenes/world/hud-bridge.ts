@@ -42,7 +42,6 @@ type Registry = Phaser.Data.DataManager
 export function publishTimeAndVillage(registry: Registry, time: GameTime, myVillage: Village | undefined): void {
   setHud(registry, 'time', time)
   setHud(registry, 'village', myVillage?.memberIds.length ?? 0)
-  setHud(registry, 'tasks', myVillage?.tasks ?? [])
 }
 
 /** Les jauges et l'inventaire de MON avatar (l'entité autoritative du snapshot). */

@@ -751,7 +751,7 @@ describe('la mort lâche la ligne', () => {
   it('un pêcheur qui meurt respawne sans ligne ni jauge : aucune touche ne lui arrive au Feu', () => {
     const b = banc()
     // Un village pour le respawn (sinon `die` respawne au point d'apparition, ce qui revient au même).
-    createVillage(b.sim, { chiefId: b.id, tx: 40, ty: 5, npcsArrived: true })
+    createVillage(b.sim, { chiefId: b.id, tx: 40, ty: 5 })
     lancer(b)
     expect(entity(b).fishing).toBeDefined()
     die(b.sim, entity(b), 0, 'cold')
@@ -1607,7 +1607,7 @@ describe('A27 — le séchoir conserve, sans feu et sans surveillance', () => {
     // séchoir — du mobilier posé comme le coffre — était fabricable, tenu en main, et
     // impossible à poser. Vu à l'écran, pas dans un test : d'où cette garde.
     const b = banc('fishing_spot_lake', { canne: false })
-    createVillage(b.sim, { chiefId: b.id, tx: 16, ty: 15, npcsArrived: true })
+    createVillage(b.sim, { chiefId: b.id, tx: 16, ty: 15 })
     grantItems(b.sim, b.id, { sechoir: 1 })
     const e = entity(b)
     e.activeSlot = e.inventory.findIndex((sl) => sl !== null && sl.item === 'sechoir')

@@ -14,7 +14,7 @@
 import { BALANCE, VILLAGE_GROWTH } from './balance'
 import { FEATURES } from './features'
 import { addItems } from './items'
-import { RING_OFFSETS, spawnNpcsAround } from './npc'
+import { RING_OFFSETS } from './npc'
 import type { SimState } from './sim'
 import type { CarteZonee } from './zonegen'
 import { retirerLesNoeudsSousLaRoute, tracerLeReseau } from './zonegen-reseau'
@@ -175,7 +175,7 @@ export function foundNpcVillage(
   ]
   state.nodes = state.nodes.filter((n) => !reserved.some(([rx, ry]) => n.tx === rx && n.ty === ry))
 
-  const village = createVillage(state, { chiefId: 0, tx, ty, npcsArrived: true }) // on peuple nous-mêmes
+  const village = createVillage(state, { chiefId: 0, tx, ty }) // on peuple nous-mêmes
   village.foundedSize = count // l'effectif de fondation (mémoire du village, cf. village.ts)
   addStructure(state, 'fire', tx, ty, village.id, 0)
   // Le grenier d'un village PNJ est ouvert aux siens (accès `village`, pas le
@@ -188,13 +188,11 @@ export function foundNpcVillage(
     const [ax, ay] = bedAnchor(tx, ty, spot)
     addStructure(state, 'paillasse', ax, ay, village.id, 0)
   }
-  spawnNpcsAround(state, village, count)
-  // Un village PNJ naît armé (spec combat R13). Le semis de caractère est parti avec
-  // l'alignement (2026-09-29) — `disposition` ne pilote plus rien ici.
-  for (const npc of state.npcs) {
-    if (npc.villageId !== village.id) continue
-    const entity = state.entities.find((e) => e.id === npc.entityId)
-    if (entity) addItems(entity.inventory, { spear: 1 })
-  }
+  // ⚠ **PLUS PERSONNE NE NAÎT ICI DEPUIS LE 2026-09-29** (tranche 2b). `spawnNpcsAround` posait
+  // `count` villageois sur l'anneau, et la boucle qui suivait leur mettait un épieu en main
+  // (« un village PNJ naît armé », spec combat R13) : les deux partent avec l'IA qui les faisait
+  // vivre. **`count` SURVIT, et ce n'est pas un oubli** : il commande `RING_OFFSETS.slice(0,
+  // count + 2)` ci-dessus, donc les tuiles que le semis de décor laisse nues autour du Feu. Le
+  // retirer déplacerait des nœuds sur toute la carte et ferait diverger le PRNG.
   return village
 }

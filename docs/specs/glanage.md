@@ -2,6 +2,24 @@
 
 *Source : décision d'Alexis du 2026-08-25 (« je ne souhaite plus que l'on puisse récolter quoi que ce soit à main nue […] à côté d'un nœud de pierre, on a faible chance de trouver une pierre au sol lootable. Pareil pour le bois »), précisée le même jour : « seuls la pierre et le bois sont concernés » et, pour les PNJ, « fais qu'ils ont aussi le verrou ». Amende `craft-fortune.md` (C3, **retiré**), `recolte-maitrise.md` (le baseline du bois), `economie.md` (R5). Statut : **implémentée le 2026-08-25** — 16 critères en tests headless (`glanage.test.ts`), vus en jeu (`pnpm smoke --dev --scenario glanage`), instruments `tools/mesure-glanage.mts` (le tempo) et `tools/planche-glanage.mts` (le butin contre le décor). Jalon : calibrage Veillée / GATE 1.*
 
+
+> **⚠ 2026-09-29 — G7 ET SES CINQ GARDES SORTENT DU CODE : IL N'Y A PLUS DE PNJ POUR GLANER.**
+> L'IA villageoise est retirée (tranche 2b du retrait des villages PNJ, pivot de la braise du
+> 2026-09-28). **G7 « les PNJ ont le MÊME verrou que le joueur » est SANS OBJET**, et avec lui les
+> gardes A10, A11 (la garde de coût), A11bis (le retour au grenier), A12 et A16 du `describe` « G6 —
+> le village glane, taille, puis coupe » de `glanage.test.ts`. ⚠ Elles n'éprouvaient PAS le glanage
+> mais le **tableau des corvées** : quelle corvée un village poste, laquelle il retire, comment un
+> villageois se rééquipe en route.
+>
+> **LE RESTE DE CETTE SPEC EST INTACT ET C'EST L'ESSENTIEL** — G1 à G6 (le verrou de l'outil, le
+> ramassage, le nœud, le refus qui nomme, l'ancrage sur un parent, la passe en queue) gardent leurs
+> douze gardes. La boucle qui compte pour la braise est celle du joueur : **on monte, on ramasse la
+> branche au sol, on taille sa première hache**, et rien de ça n'a bougé.
+>
+> Les deux instruments (`mesure-glanage`, `planche-glanage`) mesurent le semis et le butin, pas les
+> corvées : ils survivent. `NPC_GLANAGE_CARRY` et `NPC_GLANAGE_PORTEE` partent de `balance.ts` avec
+> leur unique lecteur.
+
 ---
 
 ## Objectif de design

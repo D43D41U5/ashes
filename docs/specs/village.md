@@ -8,7 +8,11 @@
 > `memberIds`, `chiefId` — la seule porte de « ce Feu est le mien », d'où découlent la pose, le
 > palier, le coffre, la porte et la démolition) et les ACCÈS (`invite`/`banish`, qui sont le
 > mécanisme de COOP, pas des débris PNJ). Ce qui est CADUC : tout ce qui fait du village un acteur
-> autonome — la main-d'œuvre, le tableau de corvées, la croissance.
+> autonome — la main-d'œuvre, le tableau de corvées, la croissance. **Et ce n'est plus un projet :
+> le 2026-09-29, `Village.tasks`, `nextTaskId`, `VillageTask`, `TaskKind` et `village-board.ts` ont
+> quitté le code avec l'IA villageoise, ainsi que `npcsArrived` et `sitesInjoignables` — deux champs
+> devenus des écritures que personne ne relisait.** Le `Village` qui reste est exactement une
+> BALISE : une identité, un Feu, des membres, un combustible, un palier.
 
 > ⚠️ **Partie construction supersédée** (pivot Rust, 2026-07-18). La fondation, le carré, les composants et les fonctions émergentes sont désormais régis par `docs/specs/construction.md`. Cette spec reste la source pour la **gouvernance, la propriété, les accès, le coffre et les rangs** (R10-R12), réutilisés à l'identique.
 

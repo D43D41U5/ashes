@@ -1845,7 +1845,9 @@ export class SnapshotView {
         delete record.volDureeMs
       }
       record.sprite.setTint(beastTint(monster, entity.windup !== undefined, npc !== undefined, this.tick))
-      record.sprite.setAlpha(npc?.sleeping ? 0.45 : 1)
+      // (un PNJ endormi se peignait à 0,45 d'alpha ; le sommeil est parti avec l'IA
+      //  villageoise le 2026-09-29, et `npc` ne sert plus qu'à la teinte ci-dessus)
+      record.sprite.setAlpha(1)
       // LA PLAIE GOUTTE. L'état qui saigne (la même vérité que la teinte ci-dessus :
       // `saigneBete`, ou `wounds.bleeding` pour un humain) laisse TOMBER son sang —
       // la piste au sol, elle, reste l'affaire de la sim (C9) : ici on peint la chute.

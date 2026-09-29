@@ -13,12 +13,42 @@
 > ⚠ **UNE VIEILLE SAUVEGARDE, ELLE, PORTE ENCORE SES PNJ** : `FEATURES.VILLAGES_PNJ` a éteint la
 > FONDATION, pas la persistance — une Veillée commencée avant le 26/09 recharge ses villages et ses
 > villageois. Pour eux, la tranche 1 arrête seulement la croissance (plus de colon, plus de palier,
-> plus de porte rituelle) ; ils restent là. Ce que devient un tel monde quand l'IA des villageois
-> partira à son tour est la question que la tranche 2 doit trancher, pas un détail de migration.
+> plus de porte rituelle) ; ils restent là.
 >
-> **Tranche 1 (faite)** : `village-growth.ts` — la porte rituelle (R7), la montée de palier (R6) et
-> le colon (R9), dont la boucle entière était gardée par `chiefId === 0`. Avec eux les événements
-> `village_stage_up` et `settler_arrived`.
+> **Tranche 1 (faite, 2026-09-29)** : `village-growth.ts` — la porte rituelle (R7), la montée de
+> palier (R6) et le colon (R9), dont la boucle entière était gardée par `chiefId === 0`. Avec eux
+> les événements `village_stage_up` et `settler_arrived`.
+>
+> **Tranche 2a (faite, 2026-09-29)** : `light_fire` s'aligne sur le jeu réel (`npcsArrived: true`).
+> Le raccourci de test amenait trois villageois d'accueil que le chemin du joueur n'amène pas : tout
+> le corpus mesurait un monde à trois bras de plus que le nôtre.
+>
+> **Tranche 2b (faite, 2026-09-29) — L'IA QUITTE LE CODE, et c'est la coupe principale.** Partent :
+> `advanceNpcs` et son orchestration, le TABLEAU DU VILLAGE en entier (`village-board.ts`,
+> `refreshBoard`, `Village.tasks`, `nextTaskId`, `VillageTask`, `TaskKind`, le barème
+> `TASK_PRIORITIES`), les BESOINS (`npc-needs.ts` : plaies, faim, sommeil, orage, froid), les six
+> EXÉCUTEURS de corvée (récolter, bâtir, cuisiner, réparer, nourrir le Feu, puiser), la MILICE
+> (`handleDefense`), le PEUPLEMENT (`spawnNpcsAround`) et `npc.test.ts` (1 208 l). `npc.ts` passe de
+> 1 683 à 386 lignes : il ne reste que la NAVIGATION D'UN CORPS. Six instruments partent avec leur
+> sujet : `diag-recolte`, `trace-corvee`, `diag-mort-pnj`, `profil-villageois`, `diag-siege`,
+> `diag-horde`.
+>
+> ⚠ **CE QUE DEVIENT UNE VIEILLE SAUVEGARDE — la question que ce bandeau posait, répondue.** Elle
+> se recharge, et **ses villageois se figent** : `state.npcs` est toujours un champ racine (donc les
+> gardes de `persistence` sont satisfaites), les corps sont toujours dans `state.entities`, mais
+> plus aucune boucle ne les fait décider. Ils respirent, on peut les frapper, ils ne travaillent
+> plus. Les champs que la coupe a retirés (`Village.tasks`, `npcsArrived`, `sitesInjoignables`)
+> restent dans le JSON de la sauvegarde et sont simplement IGNORÉS — aucune migration, décision
+> d'Alexis : *« tant pis pour les vieilles save, on n'est pas en prod »*.
+>
+> ⚠ **CE QUE LA COUPE COÛTE EN GARDES, et il faut le lire avant de croire le vert.** Deux lois
+> survivantes perdent leur seul mesureur : (1) **l'étanchéité de la roche mesurée sur un corps qui
+> MARCHE** — le bloc E-R5 « le glanage élit ce que le chemin rejoint » (`etages-etancheite.test.ts`)
+> mesurait la terrasse, la rampe et la paroi en laissant un village vivre deux cents secondes ; il
+> ne reste que les blocs §23/§24, qui appellent la navigation à la main ; (2) **le repli à l'abri
+> sous l'orage** (R8 PNJ, `meteo.test.ts`) — la foudre reste gardée, le geste de s'abriter n'est
+> plus mesuré par personne. Les deux se réécriront contre le JOUEUR, qui est désormais le seul
+> décideur du jeu.
 >
 > ⚠ **P-A2 devient SANS OBJET, il n'est pas corrigé.** Ses quatre conditions de terminaison
 > inatteignables — au premier chef la réparation qui ne s'achève jamais quand le Feu est à sec, et

@@ -253,7 +253,7 @@ export type { TiledMapFile, TiledImportResult } from './tiled'
 
 // ─── Actions & systèmes (l'hôte les applique, les requêtes sont pures) ────
 export { applyVillageAction, structureAt, solidAt, floorAt, roofAt, structureBlocks, getVillageOf, hasAccess, fireRadius, evaluateBuild, buildPlacementValid } from './village'
-export type { Structure, Village, VillageAction, TaskKind, VillageTask, BuildEval, BuildReject } from './village'
+export type { Structure, Village, VillageAction, BuildEval, BuildReject } from './village'
 export { blocksNavigation, placementKeepsNavigable, isComponent, recognizeFunctions, refreshFunctions, fullTileAt, edgeBarrierAt, crossingBlocker, doorPairs, terrainConstructible, POSABLE_SUR_EAU } from './construction'
 export type { PlacedStructure, RecogStructure, RecognizedFunction, EdgeAware, DoorPairing } from './construction'
 /** LE VOCABULAIRE DES ARÊTES (spec construction R23) — la même valeur traverse le fantôme du
@@ -285,8 +285,7 @@ export {
 } from './agriculture' // le potager (voie A) : maturité PURE, lue par le rendu
 export { applyCombatAction, advanceCombat, staminaCapFor, weaponDamage, weaponKind, weaponProfile, pendingStrike, inStrikeZone } from './combat'
 export type { CombatAction, Corpse } from './combat'
-export { advanceNpcs } from './npc'
-export type { Npc, NpcTaskState } from './npc'
+export type { Npc } from './npc'
 export { advanceMonsters } from './monsters'
 export type { Monster } from './monsters'
 export { isPrey, isPredator, isWild, activityAt, sentinelOf, wolfVigor } from './faune'

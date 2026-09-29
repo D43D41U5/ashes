@@ -414,13 +414,9 @@ export type SimEvent =
    * de la découverte, pas celle du fait.
    */
   | { type: 'poi_first_visit'; tick: number; poiId: number; kind: string; name: string; byEntityId: number; faits?: { ere: 0 | 1 | 2 | 3; type: string; cause?: string; saillant: boolean }[]; stele?: { lignes: string[] } }
-  /**
-   * LE VILLAGE PNJ MONTE DE PALIER DE BÂTI (spec `village-pnj-evolution.md` R6) :
-   * campement → hameau de bois → bourg de pierre. Émis à l'aube, au surplus — jamais
-   * à une date. La chronique en fait « X s'agrandit ».
-   */
-  /** LA PROSPÉRITÉ ATTIRE (R9) : un colon rejoint un village PNJ à l'aube. S'ajoute au
-   *  `member_joined` du spawn — celui-ci dit POURQUOI (la prospérité, pas un recrutement). */
+  // ⚠ DEUX COMMENTAIRES ORPHELINS ONT VÉCU ICI jusqu'au 2026-09-29 : ceux de
+  // `village_stage_up` et `settler_arrived`, dont les types sont partis à la tranche 1 du
+  // retrait des villages PNJ. Un commentaire sans champ décrit un bus qui n'existe pas.
 // À venir avec les systèmes : pact_signed, cicatrices, …
 
 /** Émet un événement dans le buffer de l'état. Usage interne à /sim. */

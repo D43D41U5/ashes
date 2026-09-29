@@ -866,7 +866,7 @@ describe('G-A9 — le bivouac : chaque pièce dit si elle se pose sous la roche,
         const player = spawnEntity(sim, gx + 0.5, gy + 2.5)
         const e = sim.entities.find((x) => x.id === player)!
         // Le Feu du village À LA GUEULE : c'est de lui que se mesure le carré, et la salle en fait partie.
-        const village = createVillage(sim, { chiefId: player, tx: gx, ty: gy, npcsArrived: true })
+        const village = createVillage(sim, { chiefId: player, tx: gx, ty: gy })
         village.tier = BALANCE.FIRE_RADIUS_BY_TIER.length
         step(sim, [{ entityId: player, dx: 0, dy: 0, action: { type: 'debug_teleport', x: sx + 0.5, y: sy + 0.5, etage: k.niveau } }])
         expect(niveauDuCorps(map, e)).toBe(k.niveau)

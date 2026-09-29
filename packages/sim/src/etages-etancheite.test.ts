@@ -20,14 +20,14 @@ import { describe, expect, it } from 'vitest'
 import { BALANCE, FAUNA, HUNT, MONSTER_DEFS, TERRAIN_GRASS, TERRAIN_ROCK, TERRAIN_SCREE, WEAPON_PROFILES } from './balance'
 import { createEmptyMap, MARCHABLE, type WorldMap } from './map'
 import { atteintLeSol, type EtageCreux, niveauDuCorps, palierDuSol } from './etages'
-import { createSim, spawnEntity, step, type SimState } from './sim'
+import { createSim, spawnEntity, step, type Entity, type SimState } from './sim'
 import { nearestPrey, spawnMonster } from './monsters'
 import { prowlerNear } from './nighthunt'
 import { advanceDecouverte } from './decouverte'
 import { advanceCoinsConnus, advanceEnvols, bruitDuSol, gaitNoise } from './faune'
 import { drainEvents } from './events'
 import { butcherRejection, castRejection } from './economy'
-import { followPath, near, setPathTo } from './npc'
+import { followPath, near, setPathTo, type Npc } from './npc'
 import { pathToward } from './pathfinding'
 import { advanceUpkeep, applyVillageAction, createVillage, evaluateBuild, grantItems } from './village'
 import { advanceCendreux, nearestWarmth, willRiseAsCendreux } from './cendreux'
@@ -39,7 +39,7 @@ import { advancePois } from './poi-discovery'
 import { advanceWorldEvents } from './worldevents'
 import { advanceFire, fireState } from './fire'
 import { foundNpcVillage } from './worldgen'
-import { POI, SLOTS } from './balance'
+import { POI } from './balance'
 import { cycleOffsetForStartHour } from './time'
 
 /* ══════════ LA MESA DE LABORATOIRE — et le point AVEUGLE qu'elle offre ══════════
@@ -57,6 +57,28 @@ const RAMPE = { x: 12, y: CAP_Y0 + CAP_N }
 const BAS = { x: CAP_X0 - 0.5, y: CAP_Y0 + 0.5 }
 /** Sur le plateau, la tuile d'à côté — une tuile d'écart, un plancher entre les deux. */
 const HAUT = { x: CAP_X0 + 0.5, y: CAP_Y0 + 0.5 }
+
+/**
+ * ═══ UN MARCHEUR — un corps, et l'état de navigation que le chemin lit ═══
+ *
+ * ⚠ **CES GARDES PRENAIENT LEUR MARCHEUR DANS `sim.npcs` JUSQU'AU 2026-09-29.** L'IA villageoise
+ * est partie (tranche 2b du retrait des villages PNJ) et `sim.npcs` reste vide à vie : le mobile
+ * se fabrique donc ICI, explicitement — un corps posé par `spawnEntity`, et le petit état que
+ * `setPathTo`/`followPath` lisent (le chemin, le compteur de blocage, le refus mémorisé).
+ *
+ * **LA LOI ÉPROUVÉE NE CHANGE PAS D'UN BIT** : ces deux blocs (§23 l'approche, §24 la descente)
+ * n'ont jamais eu besoin d'une IA — ils appellent la navigation à la main et regardent où le
+ * corps arrive. Ce qui change, c'est qu'on ne fait plus semblant que le marcheur est un
+ * villageois : c'est un corps, et la roche est étanche pour tout corps.
+ *
+ * On ne le pousse PAS dans `sim.npcs` : rien ne le fait avancer tout seul, et c'est voulu — un
+ * corps qu'aucune boucle ne bouge est exactement ce qu'il faut pour mesurer un pas à la fois.
+ */
+function unMarcheur(sim: SimState, x: number, y: number): { npc: Npc; e: Entity } {
+  const id = spawnEntity(sim, x, y)
+  const npc: Npc = { entityId: id, villageId: sim.villages[0]?.id ?? 0, path: [], stuck: 0, sansChemin: [] }
+  return { npc, e: sim.entities.find((k) => k.id === id)! }
+}
 
 function mesaDeLabo(): WorldMap {
   const map = createEmptyMap(24, 24, TERRAIN_GRASS)
@@ -745,7 +767,7 @@ describe('E-A3 — les huit décisions d’Alexis du 2026-09-07 (Q1..Q7)', () =>
       // ⚠ LE FOYER N'A PAS D'ÉTAGE (`Village` n'en porte pas) : il se tient au SOL de sa tuile,
       // et le sol de la mésa de labo est le palier 0 — la plaine SOUS le chapeau. Le témoin est
       // donc le buveur de la plaine, et le scellé celui de la salle (niveau −1, sans connecteur).
-      const v = createVillage(state, { chiefId: 0, tx, ty, npcsArrived: true })
+      const v = createVillage(state, { chiefId: 0, tx, ty })
       expect(v.fuel, 'la prémisse : le Foyer a de quoi être bu').toBeGreaterThan(CENDREUX.BOIRE.FOYER_PLANCHER)
       expect(palierDuSol(state.map, tx, ty), 'la prémisse : le Foyer est au sol de la plaine').toBe(0)
       if (etageDuCendreux !== null) {
@@ -829,7 +851,7 @@ describe('E-A3 — les huit décisions d’Alexis du 2026-09-07 (Q1..Q7)', () =>
       const state = monde()
       const id = poser(state, etageDuCorps === 0 ? BAS : HAUT, etageDuCorps)
       const corps = state.entities.find((k) => k.id === id)!
-      createVillage(state, { chiefId: id, tx: Math.floor(BAS.x), ty: Math.floor(BAS.y), npcsArrived: true })
+      createVillage(state, { chiefId: id, tx: Math.floor(BAS.x), ty: Math.floor(BAS.y) })
       grantItems(state, id, { hammer: 1, wood: 20 })
       corps.activeSlot = corps.inventory.findIndex((sl) => sl !== null && sl.item === 'hammer')
       expect(corps.activeSlot, 'la prémisse : le marteau est EN MAIN').toBeGreaterThanOrEqual(0)
@@ -846,235 +868,29 @@ describe('E-A3 — les huit décisions d’Alexis du 2026-09-07 (Q1..Q7)', () =>
   })
 })
 
-/* ══════════ E-R5 ROUVERT POUR LES TERRASSES — le glanage suit le CHEMIN ══════════
+/* ══════════ E-R5 ROUVERT POUR LES TERRASSES — CINQ GARDES RETIRÉES LE 2026-09-29 ══════════
  *
- * *Décision d'Alexis, 2026-09-08.* Q5 avait scellé les neuf sites d'interaction en bloc,
- * `nearestAliveNode` compris. Mais celui-là n'élit pas un CONTACT — il élit une DESTINATION,
- * suivie d'un `setPathTo`, et le A* du jeu est à trois dimensions. MESURÉ sur six graines du
- * monde joué : le sceau coupait 5 à 33 % des candidats, dont **35 à 97 % étaient joignables**
- * par le chemin lui-même. Le CREUX, lui, reste scellé — `setPathTo` ne porte aucun étage, donc
- * une route vers une salle mène au TOIT (mesuré : ~30 jalons, graine 2026).
+ * *Décision d'Alexis, 2026-09-08 pour la loi ; 2026-09-29 pour ce retrait.* Ce bloc éprouvait
+ * `nearestAliveNode` — l'ÉLECTION d'un nœud par un villageois — et il le faisait de la seule
+ * manière honnête : en laissant un village vivre deux cents secondes et en regardant s'il
+ * montait la rampe. Cinq gardes partent avec l'électeur : « LA PRÉMISSE », « LA TERRASSE : la
+ * branche du haut se glane », « LE MUR DE LA TERRASSE arrête le villageois », « LA PAROI » et
+ * « LE CREUX : la branche de la salle ne s'élit pas », avec `terrasseDeLabo`,
+ * `villageEtUneBranche` et `courseALaBranche`.
  *
- * ⚠ CE QUI FERAIT ROUGIR : rendre le sceau à TOUS les nœuds (la branche de la terrasse ne se
- * glane plus) ; le retirer AUSSI aux creux (le PNJ part se planter sur le toit de la salle) ; ou
- * casser la rampe — et alors c'est la jambe TERRASSE qui tombe, ce qu'on veut : elle affirme que
- * le PNJ MONTE, pas seulement qu'il élit.
+ * ⚠ **CE QUE ÇA COÛTE, ET IL FAUT LE DIRE.** La loi mesurée était forte : sur six graines du
+ * monde joué, le sceau de Q5 coupait 5 à 33 % des candidats dont 35 à 97 % étaient JOIGNABLES,
+ * et le creux devait rester scellé parce qu'une route vers une salle mène au TOIT. Cette loi vit
+ * toujours dans `etages.ts` ; ce qui disparaît, c'est **le seul endroit qui la mesurait sur un
+ * corps qui marche pour de vrai**. Les deux blocs qui suivent (§23 l'approche, §24 la descente)
+ * gardent la moitié navigation — un corps, un A*, une paroi — et c'est pour eux qu'on garde
+ * `followPath`/`setPathTo` malgré l'absence d'appelant de jeu (voir l'en-tête de `npc.ts`).
+ *
+ * Le jour où quelque chose élit de nouveau une destination — un compagnon de coop, une bête qui
+ * cherche —, ce bloc se réécrit contre lui : le labo de terrasse et la mesure « par où est-il
+ * monté ? » (jamais « a-t-il atteint le niveau 1 », qui ne mesure rien) sont dans l'historique.
  */
-describe('E-R5 — le glanage élit ce que le CHEMIN rejoint, pas ce que la main touche', () => {
-  /** Au nord de cette ligne, le palier 1 ; au sud, le palier 0. Une seule montée. */
-  const BORD = 10
-  const RAMPE_T = { x: 12, y: BORD }
-  /** La branche : sur la terrasse, à douze tuiles du village — et derrière la rampe. */
-  const BRANCHE = { tx: 12, ty: 6 }
 
-  function terrasseDeLabo(): WorldMap {
-    const map = createEmptyMap(28, 28, TERRAIN_GRASS)
-    const w = map.width
-    map.palier = Array.from({ length: w * map.height }, (_, i) => ((i - (i % w)) / w < BORD ? 1 : 0))
-    const i = RAMPE_T.y * w + RAMPE_T.x
-    map.etages = [{ niveau: 1, idx: [i], terrain: [TERRAIN_GRASS], x0: RAMPE_T.x, y0: RAMPE_T.y, x1: RAMPE_T.x + 1, y1: RAMPE_T.y + 1 }]
-    map.connecteurs = [{ x: RAMPE_T.x, y: RAMPE_T.y, de: 0, vers: 1, type: 'rampe' }]
-    return map
-  }
-
-  /**
-   * Le patron du village nu de `glanage.test.ts` (A10..A12), posé sur la terrasse : grenier
-   * vide, aucun outil, et UNE branche à glaner — celle qu'on éprouve.
-   */
-  function villageEtUneBranche(etageDeLaBranche: number | undefined): SimState {
-    const nodes = [
-      { id: 1, type: 'tree' as const, tx: 12, ty: 20, stock: 20, regrowAt: 0 },
-      { id: 2, type: 'berry_bush' as const, tx: 14, ty: 18, stock: 20, regrowAt: 0 },
-      {
-        id: 3, type: 'branche_au_sol' as const, tx: BRANCHE.tx, ty: BRANCHE.ty, stock: 1, regrowAt: 0,
-        ...(etageDeLaBranche === undefined ? {} : { etage: etageDeLaBranche }),
-      },
-    ]
-    const sim = createSim(11, { map: terrasseDeLabo(), nodes, worldEvents: false, jourDeDepart: BALANCE.JOUR_DE_DEPART })
-    foundNpcVillage(sim, 12, 18, 2)
-    const coffre = sim.structures.find((s) => s.type === 'chest')!
-    coffre.inventory = makeInventory(SLOTS.CHEST)
-    return sim
-  }
-
-  /**
-   * Ce que le village fait de la branche : l'a-t-il glanée, et s'en est-il seulement APPROCHÉ ?
-   *
-   * ⚠ **LES DEUX MESURES, ET IL FAUT LES DEUX.** « Pas glanée » ne prouve RIEN sur l'élection
-   * d'un nœud de creux : `near` scelle l'interaction de toute façon (Q5), donc un PNJ qui
-   * élirait la branche de la salle, marcherait douze tuiles et se planterait sur le toit rendrait
-   * exactement le même « stock intact ». Éprouvé : sceau retiré, la jambe du creux passait quand
-   * même au vert — une garde qui ne pouvait pas échouer. C'est l'APPROCHE qui la fait échouer.
-   */
-  function courseALaBranche(sim: SimState): { glanee: boolean; approche: number; horsRampe: number } {
-    let approche = Infinity
-    let horsRampe = 0
-    /** La tuile où chaque corps se tenait au tick d'avant — c'est PAR OÙ il est monté. */
-    const avant = new Map<number, { tx: number; ty: number }>()
-    for (let t = 0; t < 200 * BALANCE.TICK_RATE_HZ; t++) {
-      step(sim, [])
-      for (const npc of sim.npcs) {
-        const e = sim.entities.find((k) => k.id === npc.entityId)
-        if (e === undefined || e.hp <= 0) continue
-        const dx = e.x - (BRANCHE.tx + 0.5)
-        const dy = e.y - (BRANCHE.ty + 0.5)
-        const d = Math.sqrt(dx * dx + dy * dy)
-        if (d < approche) approche = d
-        // ═══ PAR OÙ EST-IL MONTÉ ? ═══
-        //
-        // « A-t-il atteint le niveau 1 » ne mesure RIEN — éprouvé : la sabotage (retirer `etages`
-        // du monde de collision) laissait la jambe au VERT. Le corps qui traverse la paroi finit
-        // sur une tuile de palier 1, et `etageApresLePas` le repose donc au niveau 1 de toute
-        // façon (T-R6, « on ne reste jamais en l'air »). Ce qui distingue la rampe du mur, c'est
-        // la TUILE D'OÙ IL VENAIT : un seul passage existe entre les deux paliers.
-        const tx = Math.floor(e.x)
-        const ty = Math.floor(e.y)
-        const d1 = avant.get(e.id)
-        if (d1 !== undefined && (d1.tx !== tx || d1.ty !== ty)) {
-          const de = palierDuSol(sim.map, d1.tx, d1.ty)
-          const vers = palierDuSol(sim.map, tx, ty)
-          const parLaRampe = (d1.tx === RAMPE_T.x && d1.ty === RAMPE_T.y) || (tx === RAMPE_T.x && ty === RAMPE_T.y)
-          if (de !== vers && !parLaRampe) horsRampe += 1
-        }
-        avant.set(e.id, { tx, ty })
-      }
-    }
-    return { glanee: sim.nodes.find((n) => n.id === 3)!.stock === 0, approche, horsRampe }
-  }
-
-  it('LA PRÉMISSE — le village est au palier 0, la branche au palier 1, et E-R5 les sépare', () => {
-    const sim = villageEtUneBranche(undefined)
-    const npc = sim.entities.find((e) => sim.npcs.some((n) => n.entityId === e.id))!
-    expect(palierDuSol(sim.map, Math.floor(npc.x), Math.floor(npc.y)), 'le village est en bas').toBe(0)
-    expect(palierDuSol(sim.map, BRANCHE.tx, BRANCHE.ty), 'la branche est en haut').toBe(1)
-    expect(niveauDuCorps(sim.map, npc), 'et le PNJ n’a pas d’étage : il est au sol de sa tuile').toBe(0)
-    // C'est bien E-R5 qui les séparait : la garde d'avant refusait cette élection.
-    expect(atteintLeSol(sim.map, npc, BRANCHE.tx, BRANCHE.ty, undefined), 'E-R5 dit non').toBe(false)
-  })
-
-  it('LA TERRASSE : la branche du haut se glane — le PNJ prend la rampe', () => {
-    const r = courseALaBranche(villageEtUneBranche(undefined))
-    expect(r.glanee, 'la branche de la terrasse est restée par terre').toBe(true)
-    // ⚠ **E-A5 — ET IL LA PREND POUR DE BON.** Cette jambe était verte AVANT que le pas du PNJ
-    // ne porte l'étage (2026-09-11) : elle l'était parce que le villageois montait la PAROI à
-    // pied sec — la collision retombait sur `map.terrain`, que les terrasses ne repeignent
-    // jamais (T-R2). Le glanage seul ne prouvait donc rien sur la rampe. La ligne ci-dessous
-    // est ce qu'il prouve maintenant : le seul endroit où un corps change de palier est le
-    // connecteur.
-    //
-    // ⚠ **CE QU'ELLE NE PROUVE PAS, mesuré plutôt que supposé** : retirer `etages` du monde de
-    // `pasDuVillageois` la laisse VERTE. C'est que le chemin, lui, porte l'étage depuis le §23 :
-    // l'A* fait passer le villageois par la rampe même quand la paroi ne l'arrête pas, et il la
-    // suit sagement. Cette ligne dit donc « il emprunte le connecteur », pas « la paroi tient ».
-    // La paroi a sa propre garde, juste en dessous — il fallait le pas HORS CHEMIN pour la voir.
-    expect(r.horsRampe, 'un villageois a changé de palier ailleurs qu’à la rampe : il traverse la paroi').toBe(0)
-  })
-
-  /**
-   * ═══ LA PAROI TIENT — et il faut un pas HORS CHEMIN pour le savoir ═══
-   *
-   * On pousse le villageois DROIT DANS LE MUR, loin de la rampe. C'est le seul montage qui
-   * sépare la collision du chemin : tant qu'il suit un chemin étage-conscient, il passe par la
-   * rampe de toute façon (voir la jambe du dessus). Ici il n'y a pas d'itinéraire à suivre —
-   * juste un jalon au nord, derrière douze mètres de falaise.
-   *
-   * `followPath` s'appelle ici SEULE, et c'est légitime : la propriété éprouvée est purement
-   * géométrique (le pas franchit-il, oui ou non), sans wind-up ni phase suivante qui la résolve.
-   * La marche complète, elle, est éprouvée par `step()` dans la jambe du dessus.
-   *
-   * ⚠ **CE QUI LA FERAIT ROUGIR** : retirer `etages` du monde de `pasDuVillageois` — la
-   * collision retombe alors sur `map.terrain`, qui est de l'herbe des deux côtés du bord
-   * (les terrasses ne repeignent jamais le terrain, T-R2), et le villageois monte la falaise à
-   * pied sec. MESURÉ : sans `etages`, il finit au palier 1 ; avec, il reste collé au palier 0.
-   * Le TÉMOIN est la seconde moitié : la MÊME poussée, dans la colonne de la rampe, monte.
-   */
-  /**
-   * ═══ ET LE BÂTI DE LA TERRASSE BLOQUE — la panne SILENCIEUSE que le pas d'étage referme ═══
-   *
-   * `bloquantAt` (`collision.ts`) écarte tout le bâti d'une tuile dès que l'étage du marcheur
-   * diffère du palier de cette tuile : *« le bâti vit au sol — celui de SA tuile »*. Or l'étage
-   * d'un marcheur, pour la collision, c'est `etageCourant = world.etages?.[0] ?? 0` — et **avant
-   * le 2026-09-11 aucun PNJ ne remplissait `etages`**. Un villageois d'un village fondé sur la
-   * terrasse haute était donc jugé « au niveau 0 » sur des tuiles de palier 1 : **tous les murs
-   * de son propre village cessaient de le bloquer**, sans un mot. L'avatar, lui, était correct
-   * depuis le 2026-09-01 — c'est le PNJ, et lui seul, qui traversait les murs d'en haut.
-   *
-   * ⚠ **CE QUI FERAIT ROUGIR** : retirer `etages` du monde de `pasDuVillageois` — le mur
-   * redevient traversable. Le TÉMOIN est le même mur posé au palier 0, qui bloquait déjà avant.
-   */
-  it('LE MUR DE LA TERRASSE arrête le villageois — au palier 1 comme au palier 0', () => {
-    /** Pose un mur pleine tuile devant le villageois et le pousse dedans ; rend `true` s'il passe. */
-    const traverse = (y: number): boolean => {
-      const sim = villageEtUneBranche(undefined)
-      const npc = sim.npcs[0]!
-      const e = sim.entities.find((k) => k.id === npc.entityId)!
-      e.x = 4.5
-      e.y = y + 0.5
-      delete e.etage
-      sim.structures.push({ id: 9400, type: 'wall', tx: 4, ty: y - 1, villageId: 99, ownerId: 0, access: 'public', hp: 100 })
-      npc.path = [{ tx: 4, ty: y - 3 }]
-      for (let t = 0; t < 5 * BALANCE.TICK_RATE_HZ; t++) followPath(sim, npc, e)
-      return Math.floor(e.y) <= y - 1
-    }
-    const carte = terrasseDeLabo()
-    expect(palierDuSol(carte, 4, BORD - 2), 'le mur du haut est bien sur la terrasse').toBe(1)
-    expect(palierDuSol(carte, 4, BORD + 2), 'et celui du bas au sol').toBe(0)
-    expect(traverse(BORD - 1), 'il a traversé le mur de la terrasse').toBe(false)
-    expect(traverse(BORD + 3), 'au sol non plus il ne passe pas : le témoin est mort').toBe(false)
-  })
-
-  it('LA PAROI : poussé droit dans le mur, le villageois ne monte pas — et la rampe, si', () => {
-    /** Pousse le villageois posté en (x, BORD+0,5) vers le nord pendant cinq secondes. */
-    const pousseAuNord = (x: number): number => {
-      const sim = villageEtUneBranche(undefined)
-      const npc = sim.npcs[0]!
-      const entity = sim.entities.find((e) => e.id === npc.entityId)!
-      entity.x = x + 0.5
-      entity.y = BORD + 0.5
-      delete entity.etage // au sol de sa tuile, palier 0 : le défaut de tout corps du village
-      npc.path = [{ tx: x, ty: BORD - 4 }]
-      for (let t = 0; t < 5 * BALANCE.TICK_RATE_HZ; t++) followPath(sim, npc, entity)
-      return niveauDuCorps(sim.map, entity)
-    }
-    const carte = terrasseDeLabo()
-    expect(palierDuSol(carte, 4, BORD), 'la tuile de départ est au palier 0').toBe(0)
-    expect(palierDuSol(carte, 4, BORD - 1), 'et celle d’en face au palier 1').toBe(1)
-    expect(carte.connecteurs?.some((c) => c.x === 4), 'aucun connecteur dans cette colonne').toBe(false)
-    expect(pousseAuNord(4), 'il a escaladé la paroi').toBe(0)
-    expect(pousseAuNord(RAMPE_T.x), 'la rampe ne mène plus nulle part : le témoin est mort').toBe(1)
-  })
-
-  it('LE CREUX : la branche de la salle ne s’élit pas — on ne s’en approche même pas', () => {
-    const r = courseALaBranche(villageEtUneBranche(-1))
-    expect(r.glanee, 'la branche de la salle a été glanée').toBe(false)
-    // LA MESURE QUI PORTE, et ses deux valeurs : scellé, le village ne s'approche jamais à moins
-    // de **10,5 tuiles** ; sceau retiré, un PNJ venait se planter à **0,05 tuile** — c'est-à-dire
-    // SUR le toit de la salle, `setPathTo` ne portant pas d'étage. Il y restait : `near` refuse
-    // le geste, et le garde-fou qui relâche la corvée ne se déclenche que si AUCUN chemin
-    // n'existe. Le seuil est posé entre les deux, du côté de l'arrivée.
-    //
-    // ⚠ **LE 2026-09-11, LA MOITIÉ QUI PLANTAIT SUR LE TOIT A ÉTÉ RÉPARÉE** (§23, le bloc en bas
-    // de ce fichier) : `setPathTo` porte l'étage, donc sceau retiré, l'A* rendrait `null` et la
-    // corvée serait relâchée au lieu de figer un villageois. Le sceau d'E-R5, lui, n'a pas bougé
-    // — c'est l'ÉLECTION du nœud qui reste fermée aux creux, et c'est une décision d'Alexis.
-    expect(r.approche, 'il s’est mis en route vers une branche qu’il ne peut pas atteindre')
-      .toBeGreaterThan(4)
-  })
-})
-
-/* ══════════ §23 — L'APPROCHE PORTE L'ÉTAGE QUE L'INTERACTION EXIGE ══════════
- *
- * Le dernier point ouvert de la spec, mot pour mot : *« La navigation ne porte pas l'étage
- * (`setPathTo` → `pathToward` sans `etageFrom`/`etageTo`). Tant que c'est vrai, aucune élection
- * de destination ne peut viser un creux. Le jour où on la corrige, la moitié creuse de la garde
- * devient rouvrable — et c'est elle qui le dira. »*
- *
- * ⚠ **CE QUI FERAIT ROUGIR CETTE GARDE, énoncé avant d'accepter son vert** : rendre l'étage à
- * `setPathTo` de nouveau muet (repasser `undefined` à `pathToward`) — la jambe de la salle
- * rendrait alors `true`, et son chemin finirait au PLAFOND. C'est précisément l'état d'avant, et
- * c'est pourquoi le TÉMOIN de chaque jambe est la MÊME tuile visée à la surface : si la garde
- * passait au vert parce que « rien n'est joignable par ici », le témoin rougirait avec elle.
- */
 describe('E-R5 §23 — l’approche vise l’étage de sa cible, pas le sol sous elle', () => {
   /** La salle : un carré sous la plaine, à l'étage −1, à douze tuiles du village. */
   const SALLE = { x0: 14, y0: 10, x1: 18, y1: 14 }
@@ -1108,13 +924,10 @@ describe('E-R5 §23 — l’approche vise l’étage de sa cible, pas le sol sou
     return sim
   }
 
-  /** Le premier villageois et son corps — c'est lui qui marche. */
-  function leVillageois(sim: SimState): { npc: (typeof sim.npcs)[number]; e: ReturnType<typeof leCorps> } {
-    const npc = sim.npcs[0]!
-    return { npc, e: leCorps(sim, npc.entityId) }
-  }
-  function leCorps(sim: SimState, id: number) {
-    return sim.entities.find((k) => k.id === id)!
+  /** Le corps qui marche et son état de navigation — voir `unMarcheur` en tête de fichier. */
+  function leVillageois(sim: SimState): { npc: Npc; e: Entity } {
+    const v = sim.villages[0]!
+    return unMarcheur(sim, v.fireTx + 1.5, v.fireTy + 1.5)
   }
 
   it('LA PRÉMISSE — la salle est bien sous la plaine, et le villageois est au sol', () => {
@@ -1144,11 +957,11 @@ describe('E-R5 §23 — l’approche vise l’étage de sa cible, pas le sol sou
 
   it('LE DÉFAUT D’AVANT — sans l’étage, le chemin existait et finissait SUR LE PLAFOND', () => {
     const sim = salleDeLabo(false)
-    const { e } = leVillageois(sim)
+    const { npc, e } = leVillageois(sim)
     // C'est l'appel EXACT que faisait `setPathTo` avant le 2026-09-11 : les défauts de
     // `pathToward`, c'est-à-dire le palier du sol des deux côtés. Il rend un vrai chemin — vers
-    // la surface. Le PNJ s'y plantait, `near` refusait le geste, et rien ne relâchait la corvée.
-    const monde = { map: sim.map, structures: sim.structures, nodes: sim.nodes, moverVillageId: sim.npcs[0]!.villageId, opensDoors: true, etat: sim }
+    // la surface. Le corps s'y plantait, `near` refusait le geste, et rien ne relâchait la corvée.
+    const monde = { map: sim.map, structures: sim.structures, nodes: sim.nodes, moverVillageId: npc.villageId, opensDoors: true, etat: sim }
     const chemin = pathToward(monde, e.x, e.y, CIBLE.tx, CIBLE.ty)
     expect(chemin, 'le chemin d’avant existait bel et bien').not.toBeNull()
     expect(chemin![chemin!.length - 1]!.etage, 'et son dernier jalon était à la SURFACE').toBeUndefined()
@@ -1214,10 +1027,10 @@ describe('§24 — le villageois monte les rampes et entre dans les grottes', ()
 
   it('LA PRÉMISSE — le chapeau est de la roche, la salle est dessous, et une seule gueule y mène', () => {
     const sim = butteCreuse()
-    const npc = sim.npcs[0]!
-    const e = sim.entities.find((k) => k.id === npc.entityId)!
+    const v = sim.villages[0]!
+    const { e } = unMarcheur(sim, v.fireTx + 1.5, v.fireTy + 1.5)
     expect(MARCHABLE[sim.map.terrain[CIBLE_C.ty * sim.map.width + CIBLE_C.tx]!], 'le chapeau se foule').toBe(0)
-    expect(niveauDuCorps(sim.map, e), 'le villageois part du sol').toBe(0)
+    expect(niveauDuCorps(sim.map, e), 'le corps part du sol').toBe(0)
     expect(near(sim.map, e, CIBLE_C.tx, CIBLE_C.ty, -1), 'et il atteint déjà la cible').toBe(false)
     expect(sim.map.connecteurs?.length, 'il y a plus d’une porte').toBe(1)
   })
@@ -1233,8 +1046,8 @@ describe('§24 — le villageois monte les rampes et entre dans les grottes', ()
    */
   it('IL DESCEND : le corps suit le chemin dans la salle, et sa main y atteint la cible', () => {
     const sim = butteCreuse()
-    const npc = sim.npcs[0]!
-    const e = sim.entities.find((k) => k.id === npc.entityId)!
+    const v = sim.villages[0]!
+    const { npc, e } = unMarcheur(sim, v.fireTx + 1.5, v.fireTy + 1.5)
     expect(setPathTo(sim, npc, e, CIBLE_C.tx, CIBLE_C.ty, -1), 'la gueule ne mène nulle part').toBe(true)
     for (let t = 0; t < 90 * BALANCE.TICK_RATE_HZ && npc.path.length > 0; t++) followPath(sim, npc, e)
     expect(npc.path.length, 'il n’est jamais arrivé au bout de son chemin').toBe(0)
@@ -1244,8 +1057,8 @@ describe('§24 — le villageois monte les rampes et entre dans les grottes', ()
 
   it('ET IL RESSORT : le chemin du retour le ramène au sol, par la même gueule', () => {
     const sim = butteCreuse()
-    const npc = sim.npcs[0]!
-    const e = sim.entities.find((k) => k.id === npc.entityId)!
+    const v = sim.villages[0]!
+    const { npc, e } = unMarcheur(sim, v.fireTx + 1.5, v.fireTy + 1.5)
     setPathTo(sim, npc, e, CIBLE_C.tx, CIBLE_C.ty, -1)
     for (let t = 0; t < 90 * BALANCE.TICK_RATE_HZ && npc.path.length > 0; t++) followPath(sim, npc, e)
     expect(niveauDuCorps(sim.map, e), 'il n’est pas descendu, il n’y a rien à remonter').toBe(-1)

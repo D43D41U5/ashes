@@ -163,7 +163,7 @@ describe('la torche — prendre le feu au foyer (T2-T5)', () => {
     // (c) ce n'est pas un feu
     sim = makeSim()
     id = porteur(sim)
-    const village = createVillage(sim, { chiefId: 0, tx: 49, ty: 48, npcsArrived: true })
+    const village = createVillage(sim, { chiefId: 0, tx: 49, ty: 48 })
     const mur = addStructure(sim, 'wall', 49, 48, village.id, 0)
     drainEvents(sim)
     applyVillageAction(sim, id, { type: 'light_torch', structureId: mur.id })

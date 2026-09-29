@@ -22,15 +22,14 @@
  */
 import { describe, expect, it } from 'vitest'
 import {
-  BALANCE, NODE_DEFS, NPC_AI, RECIPES, SLOTS, TERRAIN_ROAD, TERRAIN_GRASS, TERRAIN_ROCK, TERRAINS,
+  BALANCE, NODE_DEFS, RECIPES, TERRAIN_ROAD, TERRAIN_GRASS, TERRAINS,
   TOOL_RANK, type NodeType,
 } from './balance'
 import { MONDE } from './zonegraph'
 import type { ResourceNode } from './economy'
-import { countOf, makeInventory, type ItemId } from './items'
-import { createEmptyMap, setTile } from './map'
+import { countOf, type ItemId } from './items'
+import { createEmptyMap } from './map'
 import { createSim, spawnEntity, step, type PlayerAction, type SimState } from './sim'
-import { foundNpcVillage } from './worldgen'
 import { grantItems } from './village'
 import { drainEvents } from './events'
 import { emplacementsDeVillage, placeZoneNodes, pointsDeSpawn } from './zone-content'
@@ -285,187 +284,20 @@ function pointsDeSpawnDuMonde(c: ReturnType<typeof carteDeTest>, nodes: Resource
   )
 }
 
-// ═══════════════════════════════════════════════════════════════════════════════════════
-// G5/G6 — LE VILLAGE : les PNJ ont le verrou, et le village les outille
-// ═══════════════════════════════════════════════════════════════════════════════════════
-
-describe('G6 — le village glane, taille, puis coupe', () => {
-  /** Un village PNJ nu : grenier vide, aucun outil, un arbre et du glanage à portée. */
-  function villageNu(glanage: ResourceNode[]): SimState {
-    const map = createEmptyMap(28, 28, TERRAIN_GRASS)
-    const nodes: ResourceNode[] = [
-      { id: 1, type: 'tree', tx: 8, ty: 12, stock: 20, regrowAt: 0 },
-      { id: 2, type: 'fiber_plant', tx: 14, ty: 10, stock: 20, regrowAt: 0 },
-      { id: 3, type: 'berry_bush', tx: 14, ty: 14, stock: 20, regrowAt: 0 },
-      ...glanage,
-    ]
-    const sim = createSim(11, { map, nodes, worldEvents: false, jourDeDepart: BALANCE.JOUR_DE_DEPART })
-    foundNpcVillage(sim, 12, 12, 2)
-    sim.structures.find((s) => s.type === 'chest')!.inventory = makeInventory(SLOTS.CHEST)
-    return sim
-  }
-
-  it('A10 — sans outil ni glanage : il POSTE le glanage, jamais la corvée de bois', () => {
-    const sim = villageNu([])
-    for (let t = 0; t < BALANCE.BOARD_REFRESH_TICKS + 1; t++) step(sim, [])
-    const kinds = sim.villages[0]!.tasks.map((t) => t.kind)
-    expect(kinds).toContain('glaner_bois')
-    expect(kinds).not.toContain('gather_wood') // sinon : un refus toutes les 30 s, en silence
-    expect(sim.nodes[0]!.stock, "l'arbre n'a pas été entamé").toBe(20)
-  })
-
-  /**
-   * LA BOUCLE ENTIÈRE, CÔTÉ VILLAGE — et c'est le seul test qui l'affirme bout à bout.
-   * Un village nu, du glanage par terre : il ramasse, il tresse, il taille, il abat. Si
-   * n'importe quel maillon manquait (la corvée, la corde d'`ensureOutil`, le verrou du
-   * défrichement), l'arbre resterait debout et le grenier vide.
-   */
-  /**
-   * ⚠ **LA GARDE DE COÛT, et elle est née d'une mesure, pas d'une intuition.**
-   *
-   * Un nœud de glanage porte UNE unité : là où un arbre coûte une recherche de chemin pour dix
-   * bûches, une branche en coûte une par bûche — et le plus proche RECULE à chaque prise. Livré
-   * sans plafond, le banc dérivait de 1,33 à **64,5 ms/tick** sur une journée (`profil-banc`,
-   * `findPath` à 35 % du CPU) ; avec, il reste plat. Deux bornes le tiennent, et il faut les
-   * deux : la PORTÉE (on ne traverse pas le pays pour une brindille) et la CIBLE
-   * (`*_D_AMORCAGE` — on glane le prix de l'outil, pas le stock du chantier).
-   *
-   * Ce test tient la première. La seconde se lit dans `refreshBoard` et se mesure au banc.
-   */
-  it('A11 — un glanage HORS PORTÉE n’envoie personne : la corvée quitte le tableau', () => {
-    const loin = BALANCE.NPC_GLANAGE_PORTEE + 10
-    const sim = villageNu([{ id: 200, type: 'branche_au_sol', tx: 12 + loin, ty: 12, stock: 1, regrowAt: 0 }])
-    for (let t = 0; t < 40 * BALANCE.TICK_RATE_HZ; t++) step(sim, [])
-    // Le butin est intact : personne n'est parti le chercher.
-    expect(sim.nodes.find((n) => n.id === 200)!.stock).toBe(1)
-    // Et le village n'a pas de PNJ épinglé sur une corvée qu'il ne peut pas mener.
-    expect(sim.npcs.every((n) => n.task === null || n.task.kind !== 'glaner_bois')).toBe(true)
-  })
-
-  /**
-   * LE RETOUR AU GRENIER N'EST PAS UNE CORVÉE OUTILLÉE (spec `glanage.md` G8).
-   *
-   * Le verrou d'outil s'est d'abord posé AVANT l'aiguillage des stades : un PNJ qui RENTRAIT,
-   * sa charge sur le dos, se voyait redemander une hache qu'il venait de casser — la corvée
-   * mourait et **le bois n'arrivait jamais au grenier**. Le défaut est invisible à toute garde
-   * qui compte « sac + grenier » (la conservation tient : le bois reste dans le sac) ; il ne se
-   * voit qu'en regardant CE QUI ENTRE au grenier. C'est ce que ce test fait.
-   */
-  it('A11bis — la hache casse pendant le RETOUR : la charge arrive quand même au grenier', () => {
-    const sim = villageNu([])
-    const grenier = sim.structures.find((s) => s.type === 'chest')!
-    const npc = sim.entities.find((e) => e.id === sim.npcs[0]!.entityId)!
-    // On le met dans l'état exact du défaut : chargé, en route vers le grenier, SANS outil.
-    grantItems(sim, npc.id, { wood: 8 })
-    sim.npcs[0]!.task = { id: 1, kind: 'gather_wood', stage: 'store', nodeId: null }
-    sim.villages[0]!.tasks = [{ id: 1, kind: 'gather_wood', priority: 1, claimedBy: npc.id }]
-
-    let arrivee = -1
-    for (let t = 0; t < 60 * BALANCE.TICK_RATE_HZ && arrivee < 0; t++) {
-      step(sim, [])
-      if (countOf(grenier.inventory ?? [], 'wood') > 0) arrivee = t
-    }
-
-    // ⚠ C'EST LE DÉLAI QU'ON AFFIRME, PAS L'ARRIVÉE — et l'écart entre les deux est tout le
-    // test. MESURÉ des deux côtés : avec le verrou à sa place, le PNJ finit son dépôt au tick
-    // **13** ; avec le verrou avant l'aiguillage (le défaut), sa corvée meurt et sa charge ne
-    // rejoint le grenier qu'au tick **368**, par un repli d'oisiveté qui n'existe pas dans tous
-    // les cas. Une garde qui se contenterait de « le bois est arrivé » serait VERTE des deux
-    // côtés : elle mesurerait le repli, pas le correctif.
-    expect(arrivee, 'la corvée de dépôt est morte en route (le bois est arrivé trop tard, ou pas)').toBeGreaterThanOrEqual(0)
-    expect(arrivee, 'la corvée de dépôt est morte en route : la charge a traîné').toBeLessThan(60)
-  })
-
-  it('A12 — avec du glanage au sol : il s’outille tout seul et l’arbre finit par tomber', () => {
-    const glanage: ResourceNode[] = []
-    let id = 100
-    for (const [tx, ty] of [[10, 10], [10, 14], [14, 12], [11, 9], [13, 15], [9, 13]] as const) {
-      glanage.push({ id: ++id, type: 'branche_au_sol', tx, ty, stock: 1, regrowAt: 0 })
-    }
-    for (const [tx, ty] of [[11, 15], [13, 9], [9, 11], [15, 12], [12, 8], [10, 15]] as const) {
-      glanage.push({ id: ++id, type: 'pierre_au_sol', tx, ty, stock: 1, regrowAt: 0 })
-    }
-    const sim = villageNu(glanage)
-
-    for (let t = 0; t < 200 * BALANCE.TICK_RATE_HZ; t++) step(sim, [])
-
-    // Il a glané : les objets au sol ont disparu dans le circuit du village.
-    expect(glanage.every((g) => sim.nodes.find((n) => n.id === g.id)!.stock === 0)).toBe(true)
-    // Il s'est OUTILLÉ : un hachereau existe quelque part (une main, un grenier).
-    const partout = [
-      ...sim.entities.flatMap((e) => [countOf(e.inventory, 'crude_axe')]),
-      ...sim.structures.map((s) => countOf(s.inventory ?? [], 'crude_axe')),
-    ]
-    expect(partout.reduce((a, b) => a + b, 0), 'aucun hachereau taillé').toBeGreaterThan(0)
-    // Et il COUPE : l'arbre a payé.
-    expect(sim.nodes[0]!.stock, "l'arbre est resté debout").toBeLessThan(20)
-  })
-
-  /**
-   * ═══ A16 — UN NŒUD QUE PERSONNE NE PEUT ATTEINDRE CESSE D'ÊTRE ÉLU (spec `ascension.md` V-R12) ═══
-   *
-   * MESURÉ le 2026-09-22, monde du banc, graine 2026, un jour de jeu : **393 recherches de
-   * chemin payées pour rien**, et elles tiennent EN ENTIER dans **deux nœuds de glanage** —
-   * `pierre_au_sol` en (251,510) et `branche_au_sol` en (106,359), tous deux **enclavés à tout
-   * budget** (aucun chemin même à 524 288 expansions, 1,2 s de recherche). Cinq villageois sur
-   * sept, trois d'entre eux sur le MÊME nœud. Le tick médian qui en porte un passe de 4,63 ms à
-   * **115,92 ms**, et 0,70 % des ticks dépassent le budget de 50 ms.
-   *
-   * LE MÉCANISME, et il a trois étages dont deux fonctionnent déjà. `executeGather` retire bien
-   * la corvée du tableau quand le chemin échoue (`dropTask(…, true)`), et `sansChemin` empêche
-   * bien le MÊME PNJ de la repayer avant cent ticks. Mais **`refreshBoard` la repose au
-   * rafraîchissement suivant**, `nearestAliveNode` réélit le même nœud — il choisit à VOL
-   * D'OISEAU — et le village entier la repaie, indéfiniment. Le garde-fou prévu pour ça est le
-   * FILTRE DE ZONE (`npc.ts`, « sans lui, 99 % des recherches échouaient ») : or **le monde
-   * joué n'a qu'une seule zone** (mesuré) et les terrasses ont mis la falaise À L'INTÉRIEUR.
-   * Le filtre ne filtre plus rien.
-   *
-   * CE QUI FERAIT ROUGIR CE TEST : réélire un nœud dont le chemin a déjà échoué ; ou, dans
-   * l'autre sens, l'oublier POUR TOUJOURS — un mur qu'on abat ou une rampe qu'on creuse doit
-   * lui rendre sa chance, d'où la péremption.
-   */
-  it('A16 — un glanage ENCLAVÉ cesse d’être élu, et celui qu’on peut atteindre est ramassé', () => {
-    // Le nœud enclavé est PLUS PROCHE que l'autre : sans mémoire, il gagne toutes les élections.
-    const sim = villageNu([
-      { id: 300, type: 'pierre_au_sol', tx: 12, ty: 8, stock: 1, regrowAt: 0 }, // muré, à 4 tuiles
-      { id: 301, type: 'pierre_au_sol', tx: 12, ty: 18, stock: 1, regrowAt: 0 }, // libre, à 6
-    ])
-    // Une ceinture de roche autour de (12,8) : le nœud reste marchable, mais personne n'y entre.
-    for (let dx = -1; dx <= 1; dx++) {
-      for (let dy = -1; dy <= 1; dy++) {
-        if (dx === 0 && dy === 0) continue
-        setTile(sim.map, 12 + dx, 8 + dy, TERRAIN_ROCK)
-      }
-    }
-
-    // On compte les recherches payées pour rien, comme la sonde du banc : chaque apparition ou
-    // rafraîchissement d'une case de `sansChemin` EST un A* épuisé pour ce nœud.
-    const vu = new Map<string, number>()
-    let payees = 0
-    const DUREE = 600 * BALANCE.TICK_RATE_HZ
-    for (let t = 0; t < DUREE; t++) {
-      step(sim, [])
-      for (const n of sim.npcs) {
-        for (const m of n.sansChemin) {
-          const k = `${n.entityId}|${m.cible}|${m.niveau}|${m.etageCible}`
-          const avant = vu.get(k)
-          if (avant === undefined || m.jusqua > avant) { payees++; vu.set(k, m.jusqua) }
-        }
-      }
-    }
-
-    // ⚠ LES TROIS EN `soft`, ET C'EST NÉCESSAIRE. Une assertion dure avorte le test : au premier
-    //    contrôle positif (correctif désarmé), ① est tombée et ③ n'a JAMAIS été évaluée — ni
-    //    rouge ni verte. Une garde qu'on ne peut pas voir échouer ne prouve rien. En `soft`, les
-    //    trois se prononcent toujours, et l'échec dit lequel des trois maillons a cédé.
-    // ① LE VILLAGE N'EST PAS ÉPINGLÉ : la pierre atteignable est entrée dans le circuit.
-    expect.soft(sim.nodes.find((n) => n.id === 301)!.stock, 'la pierre ATTEIGNABLE n’a jamais été ramassée').toBe(0)
-    // ② LA PIERRE MURÉE EST INTACTE — personne ne peut l'atteindre, c'est le monde qui le dit.
-    expect.soft(sim.nodes.find((n) => n.id === 300)!.stock, 'la pierre murée a été ramassée : la ceinture ne tient pas').toBe(1)
-    // ③ ET ON NE LA REPAIE PAS INDÉFINIMENT. Sans mémoire du village, le tableau repose la
-    //    corvée à chaque `BOARD_REFRESH_TICKS` et chaque PNJ la repaie pour son compte : le
-    //    compte croît avec la DURÉE. Avec mémoire, il est borné par la péremption.
-    const plafond = Math.ceil(DUREE / NPC_AI.SITE_INJOIGNABLE_TICKS) * sim.npcs.length + sim.npcs.length
-    expect.soft(payees, `${payees} recherches payées pour rien en ${DUREE} ticks (plafond ${plafond}) — le nœud enclavé est réélu sans fin`).toBeLessThanOrEqual(plafond)
-  })
-})
+/**
+ * ═══ G5/G6 — « LE VILLAGE GLANE, TAILLE, PUIS COUPE » EST RETIRÉ LE 2026-09-29 ═══
+ *
+ * Six gardes partent avec l'IA villageoise (pivot de la braise) : A10 (« il POSTE le glanage,
+ * jamais la corvée de bois »), A11 (« un glanage HORS PORTÉE n'envoie personne »), A11bis (« la
+ * hache casse pendant le RETOUR »), A12 (« il s'outille tout seul et l'arbre finit par tomber »)
+ * et A16 (« un glanage ENCLAVÉ cesse d'être élu »), avec le montage `villageNu` qui les servait.
+ *
+ * ⚠ CE QU'ELLES ÉPROUVAIENT N'ÉTAIT PAS LE GLANAGE — c'était le TABLEAU DES CORVÉES : quelle
+ * corvée un village poste, laquelle il retire, comment un villageois se rééquipe en route. Le
+ * glanage lui-même garde ses treize gardes ci-dessus (G1 le verrou de l'outil, G2 le ramassage,
+ * G3 le semis sur le vrai monde), et c'est la moitié qui compte pour la braise : **un joueur qui
+ * monte ramasse la branche au sol pour tailler sa première hache**, exactement comme avant.
+ *
+ * La boucle « glaner → tailler → couper » reste donc éprouvée là où elle vit encore : dans la
+ * main du joueur. Ce qui s'en va, c'est le village qui la déléguait.
+ */

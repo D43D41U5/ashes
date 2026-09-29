@@ -436,26 +436,17 @@ describe('le récit — la première fois seulement', () => {
     expect(visite).toMatchObject({ stele: { lignes: ['… le sud …'] } })
   })
 
-  it('un PNJ qui traverse le Sanctuaire ne produit RIEN — ni carte, ni découverte, ni première', () => {
+  /**
+   * ⚠ LE FIGURANT ÉTAIT UN PNJ JUSQU'AU 2026-09-29 ; C'EST DÉSORMAIS UNE BÊTE. `advancePois`
+   * saute les DEUX tables dans la même ligne (`npcIds.has || monsterIds.has`), donc la loi
+   * éprouvée est la même — mais `state.npcs` reste vide à vie depuis le retrait de l'IA
+   * villageoise, et une garde sans population verdit à vide.
+   */
+  it('un FIGURANT qui traverse le Sanctuaire ne produit RIEN — ni carte, ni découverte, ni première', () => {
     // Le Sanctuaire est HORS DE VUE du joueur (resté au coin) : sinon c'est LUI
-    // qui le découvrirait à vue, et le test ne dirait plus rien du PNJ.
+    // qui le découvrirait à vue, et le test ne dirait plus rien du figurant.
     const { state } = simWith([{ name: 'le Sanctuaire I', x: 100, y: 100, w: 2, h: 2, kind: 'sanctuaire' }])
-    const npcEntityId = spawnEntity(state, 100.5, 100.5)
-    state.npcs.push({
-      entityId: npcEntityId,
-      villageId: 1,
-      homeId: null,
-      energy: 100,
-      sleeping: false,
-      seekingWarmth: false,
-      task: null,
-      path: [],
-      stuck: 0,
-      sansChemin: [],
-      defendStuck: 0,
-      defendBest: -1,
-      defendIgnoreUntil: 0,
-    })
+    const npcEntityId = spawnMonster(state, 'rabbit', 100.5, 100.5)
     state.events.length = 0
     step(state, [])
     expect(state.entities.find((e) => e.id === npcEntityId)!.knownPois).toEqual([])

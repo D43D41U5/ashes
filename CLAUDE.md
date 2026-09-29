@@ -85,8 +85,8 @@ tools/            ← les instruments. `smoke.mjs` (navigateur), `suites.mjs` (l
                     `plans-compile.mts` (= pnpm plans), `decisions-index.mjs` (l'index du
                     journal), et une batterie de sondes headless :
                     profileurs (`profil-tick`, `profil-banc`, `empreinte-sim`), diagnostics par
-                    système (`diag-loup`, `diag-recolte`…), mesures (`mesure-bande`,
-                    `apercu-carte`, `trace-corvee`…). Ils vivent ICI et non dans /sim parce que le
+                    système (`diag-loup`, `diag-contagion`…), mesures (`mesure-bande`,
+                    `apercu-carte`, `mesure-glanage`…). Ils vivent ICI et non dans /sim parce que le
                     lint y interdit `Date`/`performance`, or c'est de chronométrage qu'on a
                     besoin. `node --import tsx tools/profil-tick.mts`.
                     Une sonde JETABLE de session se nomme `tools/__*.mts` : gitignorée, elle meurt
