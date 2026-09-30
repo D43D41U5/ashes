@@ -33,7 +33,8 @@
  *   — Sa PORTÉE, énoncée : `morte` se rend en `Program:exit`, donc pour les fichiers qu'ESLint
  *     VISITE. Renommer une fonction rougit ; renommer ou supprimer un FICHIER qui porte une
  *     entrée `'*'` ne rougit pas — plus personne ne visite ce fichier, plus personne ne relève
- *     son entrée. C'est le seul trou connu de cette table, et il est petit (onze fichiers).
+ *     son entrée. C'est le seul trou connu de cette table, et il est petit (dix fichiers —
+ *     onze jusqu'au 2026-09-29, `village-plan.ts` étant sorti avec son plan directeur).
  *
  * ⚠ **ELLE NE VISE QUE LES DISTANCES COMPARÉES À UN SEUIL**, et c'est la leçon de son premier
  * passage : elle relevait 45 sites, dont l'écrasante majorité étaient des NORMALISATIONS
@@ -68,7 +69,9 @@ const HORS_REGLE = {
   'layons.ts': { '*': 'worldgen' },
   'poi.ts': { '*': 'worldgen (placement des lieux)' },
   'poisson.ts': { '*': 'worldgen (échantillonnage de Poisson)' },
-  'village-plan.ts': { '*': 'worldgen (plan du bâti)' },
+  // (`village-plan.ts` a été exempté ici jusqu'au 2026-09-29 : son plan directeur écrivait des
+  //  distances de Chebyshev sur le bâti. Le plan est parti avec les villages PNJ — et la règle
+  //  refuse une exemption qui ne couvre plus aucun site, ce qui est comment on l'a su.)
   'zone-content.ts': { '*': 'worldgen (semis)' },
   'zonegen.ts': { '*': 'worldgen' },
   'zonegen-karst.ts': { '*': 'worldgen (c’est lui qui CREUSE les étages)' },

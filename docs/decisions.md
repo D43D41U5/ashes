@@ -11,7 +11,7 @@ volets, chacun en ajout seul et en ordre chronologique. Ce fichier-ci est l'INDE
 |---|---|---|---|---|
 | **M** | [Monde & worldgen](decisions/monde-worldgen.md) | worldgen, relief, eau, biomes, lieux, cendre, étages | 191 | 355 Ko |
 | **R** | [Rendu & DA](decisions/rendu-da.md) | lumière, couleur, sprites, FX, art du sol, son | 210 | 536 Ko |
-| **G** | [Gameplay & systèmes](decisions/gameplay-systemes.md) | faune, combat, récolte, craft, saisons, météo, construction, design | 368 | 856 Ko |
+| **G** | [Gameplay & systèmes](decisions/gameplay-systemes.md) | faune, combat, récolte, craft, saisons, météo, construction, design | 369 | 861 Ko |
 | **I** | [Interface & outillage](decisions/interface-outillage.md) | HUD, menus, encyclopédie, carte, smoke, bancs, process | 85 | 185 Ko |
 | **A** | [Architecture & infra](decisions/architecture-infra.md) | pureté et déterminisme de /sim, protocole, serveur, persistance, perf | 69 | 129 Ko |
 
@@ -31,7 +31,7 @@ retrouve ici, à la même date, jamais à la ligne du dessus dans son volet.
 
 ---
 
-## Index chronologique — 923 entrées, 2062 Ko
+## Index chronologique — 924 entrées, 2067 Ko
 
 - 2026-07-05 · **M** · Spec monde validée par Alexis : déplacement continu type Binding of Isaac (jamais de case par c…
 - 2026-07-05 · **M** · Convention d'import Tiled : l'index local de la tuile dans le premier tileset = l'id de terrain…
@@ -956,3 +956,4 @@ retrouve ici, à la même date, jamais à la ligne du dessus dans son volet.
 - 2026-09-29 · **G** · TRANCHE 2a — `light_fire` S'ALIGNE SUR LE JEU RÉEL : plus de villageois d'accueil (décision d'A…
 - 2026-09-29 · **G** · TRANCHE 2b — L'IA VILLAGEOISE QUITTE LE CODE, et c'est la plus grosse coupe du pivot : `npc-nee…
 - 2026-09-29 · **G** · TRANCHE 3 — `SimState.npcs` QUITTE L'ÉTAT : le champ, ses quatorze lecteurs, le snapshot (`prot…
+- 2026-09-29 · **G** · TRANCHE 4, LA DERNIÈRE — LE PLAN DIRECTEUR, LA FONDATION ET LE DRAPEAU QUITTENT LE CODE. `villa…

@@ -26,73 +26,39 @@
  *    provenance devient un mystère au bout de trois semaines.
  */
 
+/*
+ * ⚠ ═══ CE FICHIER N'A PLUS AUCUN DRAPEAU, ET SON PREMIER LOCATAIRE A UNE MORALE ═══
+ *
+ * `VILLAGES_PNJ: false` a vécu ici du 2026-09-26 au 2026-09-29. Il exécutait la décision
+ * d'Alexis — *« stop les villages. Masque-les avec une feature flag (idem pour les tests) »*,
+ * *« je veux qu'on finisse la worldgen avant »* — en coupant la SEULE porte de fondation
+ * (`peuplerLesVoisins`, `worldgen.ts`, où passent les trois hôtes). La couture était choisie :
+ * l'élection des sites et le RÉSEAU DE SENTES restaient en amont, donc les routes du monde joué
+ * n'ont jamais bougé d'une tuile ; elles menaient à des clairières vides.
+ *
+ * Le pivot du 2026-09-28 a transformé l'extinction en RETRAIT, et le drapeau est parti avec son
+ * sujet (tranche 4). `braise.md` § 3 étape 11 le dit en propres termes : « le drapeau devient un
+ * retrait ; les gardes gelées par `it.skipIf` se suppriment au lieu de repartir ».
+ *
+ * ⚠ ET IL LAISSE UNE LEÇON QUI CONTREDIT LA RÈGLE ① CI-DESSUS, il faut la lire avant d'écrire
+ * le prochain drapeau : **un drapeau MASQUE, il ne GARDE pas.** La règle ① promettait que
+ * rallumer serait SANS PERTE et que ce serait « une propriété qu'on GARDE, pas qu'on espère ».
+ * Ça n'a pas tenu : les gardes dont le village était le sujet étaient `skipIf`, donc elles ne
+ * rallumaient rien chez elles, et `empreinte-sim` ne traversait pas `peuplerLesVoisins`. La
+ * réversibilité est restée un fait MESURÉ UNE FOIS (le 26/09 : banc vert, villages écartés de
+ * 221 tuiles, marge de ciblage 9,4 %), jamais un invariant surveillé. Trois jours plus tard,
+ * personne n'aurait su dire si le rallumage marchait encore.
+ *
+ * Deux conséquences pratiques, pour la prochaine fois :
+ *  · une garde `skipIf` est une garde ÉTEINTE — si la réversibilité compte, il faut une garde
+ *    qui RALLUME le drapeau chez elle et compare, sinon la règle ① est un vœu ;
+ *  · éteindre n'est pas soustraire. MESURÉ : sans `foundNpcVillage`, les emplacements gardent
+ *    leur terrain et leurs nœuds naturels (plus de place nette), et une quinzaine de corps en
+ *    moins DÉCALE LE FLUX DU PRNG pour tout ce qui suit — hordes, météo, faune. Un monde
+ *    « éteint » n'est jamais le monde d'avant moins la chose éteinte.
+ *
+ * La doctrine des quatre règles ci-dessus, elle, reste bonne et attend le prochain drapeau.
+ */
+
 export const FEATURES = {
-  /**
-   * LES VILLAGES PNJ SONT ÉTEINTS — décision d'Alexis du 2026-09-26 : *« stop les
-   * villages. Masque-les avec une feature flag (idem pour les tests) »*, et la raison
-   * qu'il a donnée juste après : *« je veux qu'on finisse la worldgen avant »*.
-   *
-   * ── CE QUE LE DRAPEAU COUPE, ET CE QU'IL NE COUPE PAS ────────────────────────
-   *
-   * Il coupe **la seule FONDATION** des villages PNJ, à la porte unique qui la fait
-   * (`peuplerLesVoisins`, `worldgen.ts` — les trois hôtes y passent : la Veillée, le
-   * banc de scénario et la zone LAN). Il ne coupe RIEN d'autre, et la couture a été
-   * choisie pour ça :
-   *
-   *   · **l'élection des sites reste** — donc le décalage du site de la Meute pour la
-   *     marge du raideur reste, donc les sites sont ceux de HEAD ;
-   *   · **le réseau de sentes reste** (`tracerLeReseau`, tracé ENTRE l'élection et la
-   *     fondation), donc les routes du monde joué sont **inchangées**. Elles mènent
-   *     désormais à des clairières vides : c'est le réseau de HEAD, V-A7 reste verte,
-   *     et rallumer rend les villages au bout de leurs routes sans retoucher un tracé ;
-   *   · **le Feu du JOUEUR reste entier** — `light_fire`, `found_village`, le tableau,
-   *     le grenier, l'upkeep. Le drapeau ne connaît que `chiefId: 0`, le village PNJ.
-   *     La boucle de survie (le froid, la cuisson, le Grand Froid) n'y touche pas.
-   *
-   * ── CE QU'IL CHANGE, MESURÉ — et ce n'est pas « rien » ───────────────────────
-   *
-   * Éteint, le monde n'est PAS celui de HEAD moins les villages :
-   *   · `foundNpcVillage` faisait **place nette** sous chaque village ; sans lui, ces
-   *     emplacements gardent leur terrain et leurs nœuds naturels ;
-   *   · une quinzaine de PNJ en moins **décale le flux du PRNG** pour tout ce qui suit
-   *     — hordes, tirages de météo, faune. C'est le piège connu du décompte d'entités.
-   * ── LA RÉVERSIBILITÉ : CE QUI EST MESURÉ, ET CE QUI N'EST PAS GARDÉ ──────────
-   *
-   * **MESURÉ le 2026-09-26** : le drapeau remis à `true`, le banc de scénario rend ses QUATRE
-   * gardes vertes et les mêmes chiffres qu'avant le drapeau — *villages écartés de 221 tuiles,
-   * marge de ciblage 9,4 %*. La raison en est structurelle et c'est ce qui fonde la confiance :
-   * allumé, le code exécuté est `if (true) { … }` autour de la boucle de HEAD, à l'identique.
-   *
-   * ⚠ **MAIS AUCUNE GARDE PERMANENTE NE TIENT CETTE PROPRIÉTÉ**, et il ne faut pas le lire
-   * autrement. Alexis a demandé le masquage *« idem pour les tests »* : les gardes dont le
-   * village est le sujet sont donc `skipIf`, elles ne rallument pas le drapeau chez elles.
-   * `empreinte-sim` n'éprouve PAS cette identité non plus : il appelle `foundNpcVillage` en
-   * direct et ne traverse jamais `peuplerLesVoisins`. *(Cette phrase nommait aussi
-   * `replay-monde-reel` — MESURÉ FAUX le 2026-09-29 : ce test n'appelle `foundNpcVillage` nulle
-   * part, il ne fonde aucun village du tout. Corrigé plutôt que recopié.)* Tant que
-   * le drapeau est éteint, la réversibilité est un fait MESURÉ UNE FOIS, pas un invariant
-   * surveillé : la revérifier veut dire refaire le geste ci-dessus (basculer, jouer le banc).
-   * La règle ① de ce fichier n'est donc, pour ce drapeau-ci, PAS honorée par une garde.
-   *
-   * ── OÙ ON LE RALLUME ────────────────────────────────────────────────────────
-   *
-   * Passer `true` en dernier argument de `peuplerLesVoisins` — ou, pour tout rallumer d'un
-   * coup, remettre ce champ à `true` ici. Les gardes dont le village est le SUJET sont
-   * `it.skipIf(!FEATURES.VILLAGES_PNJ)` : elles repartent seules. Celles qui se servent d'un
-   * village comme DÉCOR (un feu, un coffre) appellent `foundNpcVillage` en direct et n'ont
-   * jamais été concernées — le drapeau ne les traverse pas.
-   *
-   * Côté navigateur, `tools/smoke.mjs` lit ce champ dans la SOURCE (`drapeau('VILLAGES_PNJ')`,
-   * node nu ne sait pas importer du TypeScript) : `gi-face` et `village-pnj`, dont le village
-   * PNJ est le sujet, déclarent alors n'avoir plus de sujet au lieu de rougir ou, pire, de
-   * verdir sur une liste vide. L'audit des autres scénarios est en tête de cette porte.
-   *
-   * ⚠ **CE QUI EST PARQUÉ AVEC, et n'est PAS fait** : la passe sur la machine du
-   * village (`docs/specs/pnj.md`), dont P-A1 et P-A3 sont livrées mais dont **les
-   * quatre conditions de terminaison inatteignables de P-A2 sont inventoriées et NON
-   * CORRIGÉES** — au premier chef la réparation qui ne s'achève jamais quand le Feu
-   * est à sec, et qui mange le bois même qui manque au Feu. Rallumer les villages
-   * sans lire P-A2 rallumerait ces défauts-là avec.
-   */
-  VILLAGES_PNJ: false,
 } as const

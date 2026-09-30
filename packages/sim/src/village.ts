@@ -206,41 +206,23 @@ export interface Structure {
   buchesConsumees?: number
 }
 
-/**
- * UN ORDRE DE CONSTRUCTION (spec `village-pnj-evolution.md` R3-R4) — la charge d'une
- * tâche `build`. Quatre gestes, chacun rejoué par le PIPELINE JOUEUR (pnj R1) :
- *   · `defriche` → `harvest` sur le nœud qui encombre le site (hache/main, R9) ;
- *   · `pose`     → `build` au marteau (mur/porte/sol/toit, arête ou tuile) ;
- *   · `place`    → l'objet-composant, assemblé au Feu puis posé (`place_component`) ;
- *   · `upgrade`  → `upgrade_structure` au marteau (bois → pierre).
- * JSON-plat : il voyage dans la tâche, le snapshot et la sauvegarde.
+/*
+ * ⚠ `BuildOrder` A VÉCU ICI, ET SA LEÇON DE CONCEPTION VAUT D'ÊTRE GARDÉE. C'était l'ordre de
+ * construction du plan directeur d'un camp PNJ — `pose`, `place`, `defriche`, `upgrade` —,
+ * JSON-plat parce qu'il voyageait dans la tâche, le snapshot et la sauvegarde. Il part le
+ * 2026-09-29 avec le plan (tranche 4 du retrait des villages PNJ).
+ *
+ * CE QU'IL AVAIT APPRIS, et qui resservira au rayon de construction d'une balise :
+ *  · `defriche` devait être UN GESTE, pas une exception à la pose. Les murs d'un logis sont des
+ *    ARÊTES, et une arête est dispensée de `poseLibre` (« elle court sur le trait, elle ne prend
+ *    pas le buisson ») : un logis pouvait donc se refermer autour d'un arbre VIVANT — constaté
+ *    sur une capture d'accueil avant de l'être en jeu. Le remède n'a touché NI la règle des
+ *    arêtes (elle est juste) NI `addStructure` (qui ne doit pas décider d'abattre) : c'est le
+ *    PLAN qui commandait le défrichement, et un bras qui l'exécutait ;
+ *  · `enceinte` portait un drapeau pour poser l'anneau à la cadence de DÉFENSE et non à l'arc de
+ *    saison — sans lui, l'anneau se fermait vite et sa porte traînait : une brèche fixe de deux
+ *    tuiles.
  */
-export type BuildOrder =
-  /** `enceinte` (spec R15) : l'ordre appartient à l'ANNEAU — palissade OU vantail de la
-   *  porte charretière — et se pose à la cadence de défense (`BUILD_PACE_TICKS_ENCEINTE`),
-   *  pas à l'arc de saison du hameau. Sans le drapeau sur les vantaux, l'anneau se fermait
-   *  vite et sa porte traînait à la cadence lente : une brèche fixe de 2 tuiles (revue). */
-  /**
-   * DÉFRICHER LE SITE (décision d'Alexis, 2026-08-20) — « les PNJ coupent tout arbre, buisson,
-   * fleur… à l'intérieur de l'enceinte des maisons ».
-   *
-   * IL FALLAIT UN GESTE, pas une exception à la pose. Les murs d'un logis sont des ARÊTES, et
-   * une arête est explicitement dispensée de `poseLibre` (« elle court sur le trait, elle ne
-   * prend pas le buisson », voir `applyBuild`) : un logis pouvait donc se refermer autour d'un
-   * arbre VIVANT, et rien dans le plan ne demandait de l'abattre. Constaté sur une capture
-   * d'accueil avant de l'être en jeu.
-   *
-   * Le remède ne touche NI la règle des arêtes (elle est juste : un mur mince ne mange pas la
-   * tuile voisine) NI `addStructure` (qui ne doit pas décider d'abattre). C'est le PLAN qui
-   * demande le défrichement, et un villageois qui l'exécute — à la hache, en rapportant le
-   * bois. « Récolter = défricher » (R5) : le nœud reste dans `state.nodes` à stock 0, ce que
-   * `poseLibre` lit comme libre et le client comme une souche.
-   */
-  | { action: 'defriche'; tx: number; ty: number }
-  | { action: 'pose'; structure: BarrierType; tx: number; ty: number; edges?: number; material?: WallMaterial; enceinte?: true }
-  | { action: 'place'; component: ComponentType; tx: number; ty: number }
-  | { action: 'upgrade'; structureId: number }
-
 export interface Village {
   id: number
   /** Une chronique exige des noms (spec saison R5). */
@@ -271,15 +253,7 @@ export interface Village {
   foundedSize?: number
   /** Dernière alarme (spec événements R4 : une par vague) — TICK_NEVER si jamais. */
   lastAlarmAt: number
-  /**
-   * LE PALIER DE BÂTI d'un village PNJ (spec `village-pnj-evolution.md`) : 1 le
-   * campement → 2 le hameau de bois → 3 le bourg de pierre. DISTINCT du palier du
-   * Feu (`tier`, actions joueur) : le palier 3 du Feu exige la chaîne du fer, hors
-   * de portée d'une IA de corvées. Monte à l'aube, au surplus (décision n°2).
-   * Absent (parties sauvées d'avant) = 1. Ne bouge jamais sur un village à chef
-   * humain.
-   */
-  buildTier?: number
+  // (`buildTier` a vécu ici : le palier de bâti d'un camp PNJ. Parti le 2026-09-29.)
 }
 
 export type VillageAction =
@@ -901,7 +875,6 @@ export function createVillage(state: SimState, opts: CreateVillageOptions): Vill
     tier: 1,
     fuel: FIRE_UPKEEP.START, // un Feu neuf naît à demi-plein (spec R16, une grâce)
     lastAlarmAt: TICK_NEVER,
-    buildTier: 1,
   }
   state.villages.push(village)
   emitEvent(state, {

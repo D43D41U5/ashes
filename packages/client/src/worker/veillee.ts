@@ -208,7 +208,7 @@ export function createVeillee(
   // La carte passe en dernier : c'est elle qui arme le RÉSEAU DE SENTES (V-A7), tracé entre
   // l'élection des sites et la fondation des villages — le seul instant où il a les portes
   // ET le terrain d'avant que le bâti ne remue le sol.
-  peuplerLesVoisins(sim, emplacements, premier, undefined, undefined, carte)
+  peuplerLesVoisins(sim, emplacements, premier, undefined, carte)
 
   return { sim, playerId, spawn }
 }

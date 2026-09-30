@@ -12,6 +12,23 @@
 > Une seule de ses lois devient STRUCTURELLE plutôt que gardée : R7 dérogeait à « une porte ne bouge
 > jamais seule » (`construction.md` R26) pour les seuls villages PNJ. La dérogation n'a plus de
 > bénéficiaire — plus rien au monde ne bouge une porte sans un geste.
+>
+> ⚠ **ACHEVÉ LE 2026-09-29 (tranche 4)** — le PLAN DIRECTEUR, qui était le cœur de cette spec
+> (R1-R5 : le campement, le hameau, l'enceinte, les stations, le bourg de pierre), a quitté le
+> code : `desiredOrders`, `orderCost`, `buildTierOf`, `contourEdges`, `hutDoor`, `STATION_SPOTS`,
+> `granaries`/`granaryStocks`/`foodScoreOf`, et `village-plan.ts` passe de 356 à 94 lignes. Deux
+> gardes du code le disaient déjà : `desiredOrders` s'ouvrait sur `if (village.chiefId !== 0 ||
+> tier < 2) return []`, et son seul exécutant restant, `debug_village_stage`, refusait les
+> villages à chef humain — plus un village au monde ne pouvait franchir les deux. **TROIS symboles
+> survivent**, et aucun pour cette spec : `estGrenier` (le rapport du banc le lit ; sa leçon — un
+> grenier est une FONCTION, pas un type — vaudra pour le coffre commun d'une balise), `HUT_SPOTS`
+> et `bedAnchor`, dont le seul lecteur est `foundNpcVillage` — qui n'a plus **aucun appelant de
+> runtime** depuis que la fondation a quitté `peuplerLesVoisins` le même jour : **c'est devenu un
+> montage de test** (une trentaine de fichiers de `/sim`, plus `profil-tick` et `empreinte-sim`).
+> Le monde joué n'a donc plus ni village PNJ ni campement, et les retirer ne changerait rien au
+> jeu — seulement ces montages et la référence d'`empreinte-sim`. On les garde comme montage.
+> Côté navigateur, le scénario `village-pnj` (« le campement du palier 1 SE VOIT », R1) est
+> supprimé avec son sujet.
 
 
 Le spawn actuel (`foundNpcVillage`) pose un feu, un coffre et N chips `house` d'une

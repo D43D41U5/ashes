@@ -13,6 +13,16 @@
 > quitté le code avec l'IA villageoise, ainsi que `npcsArrived` et `sitesInjoignables` — deux champs
 > devenus des écritures que personne ne relisait.** Le `Village` qui reste est exactement une
 > BALISE : une identité, un Feu, des membres, un combustible, un palier.
+>
+> ⚠ **SUITE DU 2026-09-29 (tranches 3 et 4)** — le `Village` a encore maigri, et toujours par
+> retrait de ce qui faisait de lui un ACTEUR : `SimState.npcs` a quitté l'état avec ses 14
+> lecteurs et son champ de snapshot ; `Village.buildTier` (le palier de BÂTI, distinct du palier
+> du Feu) et le type `BuildOrder` sont partis avec le plan directeur du campement ; l'action de
+> debug `debug_village_stage` avec eux. **La FONDATION elle-même a quitté `peuplerLesVoisins`** :
+> l'élection des sites, la marge du raideur et le RÉSEAU DE SENTES tournent toujours à
+> l'identique — les routes du monde joué sont inchangées, elles mènent à des clairières vides.
+> `foundNpcVillage` survit **sans aucun appelant de runtime** (tests et instruments seuls) : son
+> nom ment donc d'un mot, gardé exprès jusqu'à ce que le chantier de la balise sache ce qu'il pose.
 
 > ⚠️ **Partie construction supersédée** (pivot Rust, 2026-07-18). La fondation, le carré, les composants et les fonctions émergentes sont désormais régis par `docs/specs/construction.md`. Cette spec reste la source pour la **gouvernance, la propriété, les accès, le coffre et les rangs** (R10-R12), réutilisés à l'identique.
 

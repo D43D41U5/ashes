@@ -13,7 +13,6 @@ import { niveauDuCorps, type EtageCreux } from './etages'
 import { niveauDEau } from './eau'
 import { drainEvents } from './events'
 import { coeurDeLaSaisonSuivante, getGameTime, jourDeSaison, phaseForDay, TICKS_PER_CYCLE, TICKS_PER_SEASON_DAY } from './time'
-import { foundNpcVillage } from './worldgen'
 
 function makeSim(debug: boolean): { sim: SimState; player: number } {
   const sim = createSim(1, { map: createEmptyMap(64, 64, TERRAIN_GRASS), debug })
@@ -308,34 +307,22 @@ describe('debug — réveiller le sol', () => {
   })
 })
 
-describe('debug — tamponner le palier de bâti (spec village-pnj-evolution)', () => {
-  it('palier 3 : le plan directeur entier est posé, pierre et stations comprises', () => {
-    const { sim, player } = makeSim(true)
-    const village = foundNpcVillage(sim, 32, 32, 3)
-    act(sim, player, { type: 'debug_village_stage', villageId: village.id, stage: 3 })
-    const du = sim.structures.filter((s) => s.villageId === village.id)
-    const n = (t: string): number => du.filter((s) => s.type === t).length
-    expect(n('floor')).toBe(48) //          3 logis × 16 sols (intérieur 4×4)
-    expect(n('wall')).toBe(45) //           3 logis × 15 murs — l'enceinte n'est PAS un mur
-    expect(n('palissade')).toBe(66) //      l'anneau 9, moins la porte charretière
-    expect(n('door')).toBe(5) //            3 logis + la porte charretière (2 vantaux)
-    expect(n('workshop') + n('furnace') + n('silo')).toBe(3)
-    // LES LOGIS sont en pierre (murs et portes) ; la palissade et la porte charretière
-    // restent du bois — c'est leur essence (décision d'Alexis, 2026-08-01).
-    const pierres = du.filter((s) => (s.type === 'wall' || s.type === 'door') && s.material === 'stone')
-    expect(pierres.length).toBe(48) // 45 murs + 3 portes de logis ; les 2 vantaux : bois
-    expect(du.some((s) => s.type === 'house')).toBe(false)
-  })
-
-  it('inerte hors debug, et inerte sur un village à chef humain', () => {
-    const { sim, player } = makeSim(false)
-    const village = foundNpcVillage(sim, 32, 32, 2)
-    const avant = sim.structures.length
-    act(sim, player, { type: 'debug_village_stage', villageId: village.id, stage: 3 })
-    expect(sim.structures.length).toBe(avant)
-    expect(village.buildTier).toBe(1)
-  })
-})
+/*
+ * ⚠ DEUX GARDES ONT VÉCU ICI, ET ELLES SONT PARTIES LE 2026-09-29 avec `debug_village_stage`
+ * (tranche 4 du retrait des villages PNJ) : « palier 3 : le plan directeur entier est posé » et
+ * « inerte hors debug, et inerte sur un village à chef humain ».
+ *
+ * La première EST le compte-rendu chiffré du plan directeur, et il vaut d'être gardé ici même
+ * pour qui voudrait le relire : au palier 3, un village de trois habitants posait 48 sols
+ * (3 logis × 16), 45 murs (3 × 15 — l'enceinte n'est PAS un mur), 66 palissades (l'anneau 9
+ * moins la porte charretière), 5 portes (3 logis + les 2 vantaux) et 3 stations ; les logis en
+ * pierre, murs ET portes (48 pièces), la palissade et la porte charretière en bois — leur
+ * essence, décision d'Alexis du 2026-08-01. La seconde tenait la double inertie : hors debug, et
+ * sur un village à chef humain.
+ *
+ * Aucune des deux ne pouvait plus s'exécuter dans le jeu : `debug_village_stage` exigeait
+ * `chiefId === 0` et `desiredOrders` exigeait la même chose.
+ */
 
 describe('debug — la carcasse posée (spec depecage.md)', () => {
   it('fait naître une vraie bête et la tue : une carcasse marquée, avec os et peau (clean), à deux tuiles', () => {

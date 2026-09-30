@@ -41,7 +41,7 @@ import { chromium } from 'playwright'
 import { inflateSync } from 'node:zlib'
 import { writeFile } from 'node:fs/promises'
 import { spawn } from 'node:child_process'
-import { mkdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs'
+import { mkdirSync, rmSync, statSync, writeFileSync } from 'node:fs'
 import { dirname, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
@@ -52,21 +52,14 @@ const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 const OUT = process.env.SMOKE_OUT ? resolve(process.env.SMOKE_OUT) : resolve(ROOT, 'scratchpad/smoke')
 const PORT = 4173
 
-/**
- * LIRE UN DRAPEAU DE `features.ts` DEPUIS LE SMOKE — et pourquoi par la SOURCE.
- *
- * `smoke.mjs` tourne en node nu : il ne peut pas `import`er du TypeScript, et le
- * drapeau n'est pas exposé sur `window.__BRAISES__` (la porte est volontairement
- * étroite — elle LIT l'état du jeu, pas ses réglages de chantier). On lit donc la
- * ligne de `packages/sim/src/features.ts`, et on JETTE si on ne la trouve pas :
- * un drapeau renommé doit faire crier le scénario, pas le faire passer en douce.
+/*
+ * ⚠ `drapeau(nom)` A VÉCU ICI — il lisait un drapeau de `features.ts` DANS LA SOURCE (node nu ne
+ *   sait pas importer du TypeScript, et `window.__BRAISES__` LIT l'état du jeu, pas les réglages
+ *   de chantier), et il JETAIT sur un drapeau introuvable : un drapeau renommé devait faire crier
+ *   le scénario, pas passer en douce. Parti le 2026-09-29 avec son seul drapeau,
+ *   `FEATURES.VILLAGES_PNJ` — et c'est justement ce « je jette » qui a nommé les quatre scénarios
+ *   à trancher quand `FEATURES` s'est vidé. La recette est ci-dessus si un drapeau revient.
  */
-const drapeau = (nom) => {
-  const src = readFileSync(resolve(ROOT, 'packages/sim/src/features.ts'), 'utf-8')
-  const m = src.match(new RegExp(`^\\s*${nom}:\\s*(true|false),`, 'm'))
-  if (!m) throw new Error(`smoke : le drapeau ${nom} est introuvable dans packages/sim/src/features.ts`)
-  return m[1] === 'true'
-}
 
 const args = process.argv.slice(2)
 const headed = args.includes('--headed')
@@ -398,7 +391,7 @@ async function fonderPres(page, agir, slotDe, p0, sites = SITES_FONDATION) {
  *  Node nu, il n'importe pas le paquet client). */
 const NOMS_FEU = ['étalon (le rendu d’avant)', 'la respiration', 'le cœur blanc', 'les escarbilles', 'le liseré chaud', 'le halo de chaleur', 'TOUT (le rendu livré)']
 
-/** Les outils des scénarios GI (`gi`, `gi-face`, `gi-marche`, `gi-temoin`, `gi-roches`, `gi-banc`) : la page dort, et chaque pas est un `game.step`. */
+/** Les outils des scénarios GI (`gi`, `gi-marche`, `gi-temoin`, `gi-roches`, `gi-banc`) : la page dort, et chaque pas est un `game.step`. */
 const outilsGi = (page) => {
   const ev = (fn, arg) => page.evaluate(fn, arg)
   /** `n` pas de boucle, page endormie — la GI se rend dans `update`, pas dans un timer. */
@@ -421,8 +414,9 @@ const outilsGi = (page) => {
 }
 
 /**
- * Les lectures LG-A17 (LG-R16), partagées par `gi` (le dessus au pied d'un ruban) et `gi-face` (une face,
- * non) : `lireLesZones(T)` relit l'écran au même instant `T` et dérive, du SAC de chaque corps armé, son
+ * Les lectures LG-A17 (LG-R16). `gi` en tient la première moitié — le dessus au pied d'un ruban ; la
+ * seconde, « une face, non », vivait dans `gi-face`, retiré le 2026-09-29 (son corps était une enceinte
+ * de village PNJ) : ces outils la SERVENT toujours, plus personne ne l'appelle. `lireLesZones(T)` relit l'écran au même instant `T` et dérive, du SAC de chaque corps armé, son
  * dessus et sa face ; `jugerLeDessus` compare deux lectures (feu absent, feu posé). Voir les en-têtes
  * de `gi` pour la règle et ses seuils.
  */
@@ -555,7 +549,7 @@ const outilsDessus = ({ ev, ok }) => {
     const autour = await ev(({ fx, fy }) => {
       const sc = window.__BRAISES__.scene
       const st = sc.view.structures
-      // LE SOL D'UNE TERRASSE SE DESSINE `lift` PX PLUS HAUT que sa tuile logique (LG-R14, `gi-face`) :
+      // LE SOL D'UNE TERRASSE SE DESSINE `lift` PX PLUS HAUT que sa tuile logique (LG-R14) :
       // les rectangles du sol libre et du plancher se lisent à l'écran, donc on les remonte du lift de
       // la tuile du feu — le premier passage sur la terrasse lisait la tuile deux rangées plus au sud
       // (Δ 19 pour un sol au pied du feu, MESURÉ le 2026-09-19). Les corps, eux, portent leur lift.
@@ -645,8 +639,9 @@ const SCENARIOS = {
    * LG-A20 (l'ombre a toujours une cause) tourne dans le même run : la torche portée puis le feu
    * posé, balayés depuis leur source sur les huit directions du grain contre la grille RÉELLE
    * (bandes et cellules pleines, au quart de texel). Son TÉMOIN en terrain nu — et LG-A5 — a son
-   * scénario à lui, `gi-temoin` ; « une face, non » (LG-A17, la seconde moitié) aussi, `gi-face`, et la
-   * marche (LG-A15) `gi-marche` : chacun tient sous dix minutes en SwiftShader.
+   * scénario à lui, `gi-temoin`, et la marche (LG-A15) `gi-marche` : chacun tient sous dix minutes en
+   * SwiftShader. *(« Une face, non » — LG-A17, la seconde moitié — en avait un aussi, `gi-face` ; il est
+   * parti le 2026-09-29 avec le village PNJ qui lui servait de scène, et cette moitié n'a plus de garde.)*
    */
   async gi(page) {
     if (!dev) { console.error('!! gi exige --dev (debug_*, ChampGpu.verifier, garderLesCorps)'); return }
@@ -944,160 +939,46 @@ const SCENARIOS = {
       }
     }
 
-    // « Une face, non » (LG-A17, la seconde moitié de LG-R16) a son scénario à lui, `gi-face` : la scène
-    // se bâtit sur la terrasse d'un village PNJ, et la course de `gi` ne tenait plus sous dix minutes.
+    // ⚠ « Une face, non » (LG-A17, la seconde moitié de LG-R16) AVAIT son scénario à lui, `gi-face` — sa
+    //   scène se bâtissait sur la terrasse d'un village PNJ, et la course de `gi` ne tenait plus sous dix
+    //   minutes. Retiré le 2026-09-29 avec les villages : cette moitié de LG-A17 n'a plus de garde.
     console.log(`   — fin (${chrono()})`)
     await ev(() => { window.__BRAISES__.scene.game.loop.wake() })
   },
 
-  /**
-   * ═══ LG-A17 (LG-R16), LA FACE : un feu DEVANT une face, hors de tout lieu — « une face, non » ═══
+  /*
+   * ⚠ ═══ LE SCÉNARIO `gi-face` A VÉCU ICI, ET IL EST PARTI LE 2026-09-29 ═══
+   *   (tranche 4 du retrait des villages PNJ, pivot de la braise du 2026-09-28.)
    *
-   * La grappe de `gi` met son feu au pied d'un ruban, et ses faces sont à six tuiles : trop loin pour
-   * la bulle du feu (LG-R6). Une bande d'arête nord ou sud pend sa face au NORD de sa ligne, et la
-   * montre au sud : un feu posé sur la tuile au sud de la tuile du mur l'éclaire de face (à un demi-pas
-   * de la ligne pour une arête sud, un pas et demi pour une arête nord). Or AUCUN mur de la carte jouée
-   * n'offre ça (sonde du 2026-09-18) : les faces des lieux regardent dedans, et un feu refuse tout lieu.
-   * On BÂTIT donc la scène : le village PNJ le plus proche, tamponné à son palier 3
-   * (`debug_village_stage`, chef 0 seulement), dresse son enceinte de palissades — des faces sans toit,
-   * hors de tout lieu ; le feu se pose devant un pan tourné vers le sud. Le Feu du village est une
-   * source de plus, constante entre les deux clichés.
+   * ⚠ **CE QUI TOMBE N'EST PAS SA LOI, C'EST SON CORPS — ET LA LOI VIT ENCORE.** Il éprouvait
+   * **LG-A17 (LG-R16), seconde moitié : « une face, non »** — un feu posé DEVANT une face, hors
+   * de tout lieu, ne doit pas l'éclairer comme il éclaire un dessus. Cette loi est en vigueur :
+   * elle est dans le shader, elle est dans `docs/specs/lumiere-globale.md`. **Elle n'a plus
+   * aucune garde au navigateur**, et c'est écrit dans la spec à côté du critère.
    *
-   * SUR UNE TERRASSE, depuis LG-R14 côté champ (2026-09-19) : la passe des corps juge en logique
-   * (`CorpsPose.lift`, `uGiLift`), le champ est la grille de la sim (paliers, portes), ses émetteurs
-   * sont poussés LOGIQUES, et la marche se juge en hauteur. Les villages PNJ de la carte jouée sont sur
-   * des terrasses (lift 32 et 64, MESURÉ le 2026-09-18) : c'est là que « une face, non » s'éprouve —
-   * et sans candidate la garde ROUGIT, une terrasse n'est plus une excuse.
+   * POURQUOI ON NE LA RÉÉCRIT PAS ICI : la scène était BÂTIE, faute de corps naturel — AUCUN mur
+   * de la carte jouée n'offre une face tournée vers le sud hors de tout lieu (sonde du
+   * 2026-09-18 : les faces des lieux regardent dedans, et un feu refuse tout lieu). Le scénario
+   * prenait donc le village PNJ le plus proche, le tamponnait au palier 3 (`debug_village_stage`)
+   * pour dresser son enceinte de palissades — des faces sans toit, hors de tout lieu — et posait
+   * le feu devant un pan tourné au sud. Les deux sont partis : les villages ET le tampon.
    *
-   * Son scénario à lui (2026-09-19) : dans `gi`, la course passait dix minutes en SwiftShader. Les
-   * lectures sont celles de `gi` (`outilsDessus`) ; les dons et la pose se font au cran 0 (chaque pas
-   * au cran 7 coûte des secondes ici), la chaîne revient au cran 7 avant chaque cliché, l'heure remise
-   * juste avant — même point, même heure, même instant. `--dev` obligatoire.
+   * LE CORPS DE REMPLACEMENT EXISTE — **la palissade au marteau du joueur** (elle est dans
+   * `BarrierType` depuis le 2026-08-01, et une garde de `/sim` le tient encore). Mais la
+   * réécriture est du VRAI travail de smoke sous SwiftShader (bâtir un pan, poster le joueur,
+   * deux clichés au cran 7), pas un nettoyage : elle est NOMMÉE dans les pertes de la tranche 4,
+   * à trancher par Alexis. ⚠ **CE N'EST PAS « le sujet est mort ».**
+   *
+   * CE QU'IL MESURAIT, gardé ici : les villages PNJ de la carte jouée étaient SUR DES TERRASSES
+   * (lift 32 et 64, MESURÉ le 2026-09-18), et depuis LG-R14 côté champ c'est très exactement là
+   * que « une face, non » s'éprouve — la passe des corps juge en logique (`CorpsPose.lift`,
+   * `uGiLift`), le champ est la grille de la sim, ses émetteurs sont poussés LOGIQUES. Une
+   * terrasse n'est donc pas une excuse : sans candidate, la garde ROUGISSAIT.
+   *
+   * Il vivait à part de `gi` (2026-09-19) parce que dans `gi` la course passait dix minutes en
+   * SwiftShader. Ses lectures étaient celles de `gi` (`outilsDessus`) ; dons et pose au cran 0,
+   * retour au cran 7 avant chaque cliché, heure remise juste avant — même point, même heure.
    */
-  async 'gi-face'(page) {
-    if (!dev) { console.error('!! gi-face exige --dev (debug_*, le champ GI)'); return }
-    // ⛔ PARQUÉ AVEC LES VILLAGES PNJ (2026-09-26, `FEATURES.VILLAGES_PNJ`) : toute la scène de
-    // LG-A17 est BÂTIE sur un village PNJ tamponné au palier 3. Le drapeau éteint, il n'y a plus
-    // d'enceinte à dresser — la garde ne rougit donc pas, elle DÉCLARE qu'elle n'a pas de sujet.
-    // Rallumer le drapeau rallume ce scénario, sans y toucher une ligne.
-    //
-    // ⚠ CE N'EST PAS LE SEUL SCÉNARIO QUE LE DRAPEAU ATTEINT — audit complet du 2026-09-26
-    // (`chiefId === 0`, `villageId !== 0`, `debug_village_stage`, `view.villages`) :
-    //   · `gi-face` et `village-pnj` : le village PNJ est leur SUJET → porte explicite, ici et là ;
-    //   · `vitrine` : ses prises de village retombent sur « pas de Nᵉ village PNJ — prise SAUTÉE »,
-    //     déjà écrit, déjà bruyant ;
-    //   · `trainer` : ses trois branches d'annonce de Feu rendent « pas de village » — le scénario
-    //     passe, mais ces trois-là ne sont plus éprouvées. Perte ASSUMÉE, parquée avec le drapeau ;
-    //   · `gi-temoin`, `epuisement` et `flore` (une liste vide leur suffit) : intacts ;
-    //   · `arete` : son `villageId !== 0` porte sur ce que le JOUEUR bâtit, pas sur un village PNJ.
-    if (!drapeau('VILLAGES_PNJ')) {
-      console.log('   ⛔ FEATURES.VILLAGES_PNJ est éteint : aucun village PNJ à tamponner, la scène de LG-A17')
-      console.log('      « une face, non » est INBÂTISSABLE. Non éprouvé — ni vert, ni rouge. (docs/specs/pnj.md)')
-      return
-    }
-    const { ev, pas, agir, ok } = outilsGi(page)
-    const { lireLesZones, jugerLeDessus } = outilsDessus({ ev, ok })
-    const t0 = Date.now()
-    const chrono = () => `${((Date.now() - t0) / 1000).toFixed(0)} s`
-    const cran = async (n) => { await ev((n) => { window.__BRAISES__.scene.registry.set('debugGi', n) }, n); await pas(3) }
-    await ev(() => { window.__BRAISES__.scene.game.loop.sleep() })
-    await agir({ type: 'debug_god', on: true }, 300, 1)
-    await agir({ type: 'debug_meteo', meteo: null }, 600, 1)
-
-    // ── LES VILLAGES PNJ, du plus proche au plus loin ; le premier qui offre une face fait la scène. ──
-    const villages = await ev(() => {
-      const sc = window.__BRAISES__.scene
-      const p = sc.registry.get('playerPos')
-      const feux = sc.view.structures.filter((q) => q.type === 'fire' && q.villageId !== undefined && q.villageId !== 0)
-      feux.sort((a, b) => Math.hypot(a.tx - p.x, a.ty - p.y) - Math.hypot(b.tx - p.x, b.ty - p.y))
-      return feux.map((f0) => ({ id: f0.villageId, tx: f0.tx, ty: f0.ty, lift: sc.reliefSous?.(f0.tx + 0.5, f0.ty + 0.5)?.lift ?? 0, avant: sc.view.structures.filter((q) => q.villageId === f0.villageId).length }))
-    })
-    ok(villages.length > 0, villages.length ? `${villages.length} village(s) PNJ à tamponner : ${villages.map((v) => `le ${v.id} en (${v.tx}, ${v.ty}) lift ${v.lift}`).join(', ')}` : 'aucun village PNJ sur la carte — « une face, non » reste non éprouvé')
-    let cible = []
-    for (const village of villages) {
-      await agir({ type: 'debug_village_stage', villageId: village.id, stage: 3 }, 3000, 4)
-      const apres = await ev(({ id }) => {
-        const st = window.__BRAISES__.scene.view.structures.filter((q) => q.villageId === id)
-        return { n: st.length, palissades: st.filter((q) => q.type === 'palissade').length, murs: st.filter((q) => q.type === 'wall').length, toits: st.filter((q) => q.type === 'roof').length }
-      }, village)
-      ok(apres.n > village.avant && apres.palissades + apres.murs > 0, `le village ${village.id} tamponné au palier 3 : ${village.avant} → ${apres.n} structures (${apres.palissades} palissades, ${apres.murs} murs, ${apres.toits} toits)`)
-      // L'élection est GÉOMÉTRIQUE (`placeable` porte la portée de bras depuis le joueur, BUILD_RANGE :
-      // il se demande une fois le joueur posté devant la candidate). Le sol libre est la tuile au sud
-      // du feu : elle aussi hors lieu, sinon c'est un autre sol. Les pans SUD de l'enceinte d'abord
-      // (le feu se pose dehors), les palissades avant les murs (pas de toit qui coiffe) ; le mur, le
-      // feu et le sol libre AU MÊME PALIER (une marche entre eux serait un autre sujet : LG-A15).
-      cible = await ev(({ v }) => {
-        const sc = window.__BRAISES__.scene
-        const st = sc.view.structures
-        const zones = sc.map?.zones ?? []
-        const dansUneZone = (tx, ty) => zones.some((z) => tx + 0.5 >= z.x && tx + 0.5 < z.x + z.w && ty + 0.5 >= z.y && ty + 0.5 < z.y + z.h)
-        const lift = (tx, ty) => sc.reliefSous?.(tx + 0.5, ty + 0.5)?.lift ?? 0
-        const out = []
-        for (const q of st) {
-          if ((q.edges !== 4 && q.edges !== 1) || !['wall', 'palissade', 'door'].includes(q.type)) continue
-          if (Math.hypot(q.tx - v.tx, q.ty - v.ty) > 24) continue
-          // Pas un coin (un ruban à côté serait « la bande la plus proche »), pas un toit qui
-          // cacherait la coiffe ni un meuble sur le plancher : la face, sa coiffe et le sol au-dessus.
-          const voisins = st.filter((r) => Math.abs(r.tx - q.tx) <= 1 && r.ty >= q.ty - 2 && r.ty <= q.ty + 2 && r !== q)
-          if (voisins.some((r) => r.type === 'roof' || ((r.edges === 2 || r.edges === 8) && r.ty === q.ty))) continue
-          if (voisins.some((r) => r.tx === q.tx && r.ty !== q.ty && r.type !== 'floor')) continue
-          const tx = q.tx, ty = q.ty + 1
-          if (dansUneZone(tx, ty) || dansUneZone(tx, ty + 1)) continue
-          const l0 = lift(q.tx, q.ty)
-          if (lift(tx, ty) !== l0 || lift(tx, ty + 1) !== l0) continue
-          out.push({ mur: { tx: q.tx, ty: q.ty, type: q.type, edges: q.edges }, tx, ty, dy: 1, sud: q.ty - v.ty, lift: l0 })
-        }
-        out.sort((a, b) => (a.mur.type === 'palissade' ? 0 : 1) - (b.mur.type === 'palissade' ? 0 : 1) || b.sud - a.sud || Math.abs(a.tx - v.tx) - Math.abs(b.tx - v.tx))
-        return out.slice(0, 6)
-      }, { v: village })
-      if (cible.length > 0) break
-      console.log(`     (village ${village.id} : aucune face tournée vers le sud, sans coin ni toit, à son palier, avec deux tuiles hors lieu devant elle)`)
-    }
-    // Sans candidate, la garde ROUGIT : depuis LG-R14 côté champ, une terrasse n'est plus une excuse —
-    // les villages PNJ de la carte jouée (lift 32 et 64, MESURÉ le 2026-09-18) sont la scène même.
-    ok(cible.length > 0, cible.length > 0 ? `une face tournée vers le sud, sans coin ni toit, à son palier (lift ${cible[0].lift}), avec deux tuiles hors lieu devant elle : ${cible.length} candidate(s), la première en (${cible[0].tx}, ${cible[0].ty}) devant la ${cible[0].mur.type} (${cible[0].mur.tx}, ${cible[0].mur.ty}) d'arête ${cible[0].mur.edges}, à ${cible[0].sud} rangées au sud du Feu` : 'LG-A17 « une face, non » : aucune face tournée vers le sud, sans coin ni toit, avec deux tuiles hors lieu devant elle à 24 tuiles d’un Feu de village PNJ — la scène est introuvable')
-
-    // ── LE FEU DEVANT LA FACE : le cliché « sans feu » d'abord (chaîne au cran 7, l'heure remise juste
-    //    avant), puis les dons et la pose au cran 0 — douze dons font douze pas, et chaque pas au cran 7
-    //    coûte des secondes en SwiftShader. Le point d'observation : trois tuiles et demie au sud du feu. ──
-    let feu = null
-    let sansFeu = null, T = null, obs = null
-    for (const c of cible) {
-      obs = { x: c.tx + 0.5, y: c.ty + 3.5 }
-      await agir({ type: 'debug_teleport', x: obs.x, y: obs.y }, 1500, 3)
-      const posable = await ev(({ tx, ty }) => { try { return window.__BRAISES__.scene.placeable(tx, ty, 'fire', 0) === true } catch { return false } }, c)
-      if (!posable) { console.log(`     (candidate (${c.tx}, ${c.ty}) devant le ${c.mur.type} (${c.mur.tx}, ${c.mur.ty}) : la production refuse la pose)`); sansFeu = null; continue }
-      console.log(`   — la candidate (${c.tx}, ${c.ty}), le cliché sans feu (${chrono()})`)
-      await cran(7)
-      await agir({ type: 'debug_set_hour', hour: 23 }, 1200, 3)
-      T = await ev(() => window.__T__)
-      sansFeu = await lireLesZones(T)
-      await cran(0)
-      for (let i = 0; i < 12; i++) await agir({ type: 'debug_grant', item: 'wood' }, 120, 1)
-      await agir({ type: 'debug_grant', item: 'campfire' }, 400, 1)
-      await agir({ type: 'debug_meteo', meteo: null }, 300, 1)
-      await agir({ type: 'place_campfire', tx: c.tx, ty: c.ty }, 900, 2)
-      feu = await ev(({ tx, ty }) => {
-        const s = window.__BRAISES__.scene.view.structures.find((q) => q.type === 'fire' && q.tx === tx && q.ty === ty)
-        return s ? { tx: s.tx, ty: s.ty } : null
-      }, c)
-      if (feu) break
-      console.log(`     (candidate (${c.tx}, ${c.ty}) : la pose n'a pas pris)`)
-      sansFeu = null
-    }
-    if (cible.length > 0) ok(feu !== null, feu ? `un feu brûle devant la face, en (${feu.tx}, ${feu.ty})` : `aucun feu posé sur ${cible.length} candidate(s) — « une face, non » reste non éprouvé`)
-    if (feu && sansFeu) {
-      console.log(`   — le feu posé, le cliché avec feu (${chrono()})`)
-      await cran(7)
-      await agir({ type: 'debug_teleport', x: obs.x, y: obs.y }, 1500, 3)
-      await agir({ type: 'debug_set_hour', hour: 23 }, 1200, 3)
-      const avecFeu = await lireLesZones(T)
-      const v = await jugerLeDessus('devant la face', sansFeu, avecFeu, feu)
-      ok(v.sens === 'face' && v.faces >= 1, `prémisse LG-A17 devant la face : la bande au pied du feu est une face tournée vers lui (${v.sens}, ${v.faces} face(s) à 4 tuiles)`)
-    }
-    console.log(`   — fin (${chrono()})`)
-    await ev(() => { window.__BRAISES__.scene.game.loop.wake() })
-  },
 
   /**
    * ═══ LG-A15 (LG-R14), LA MARCHE — LE CHAMP D'UNE TERRASSE EST LA GRILLE DE LA SIM ═══
@@ -6961,96 +6842,22 @@ const SCENARIOS = {
     await page.screenshot({ timeout: 90000, path: `${OUT}/tir-4-repos.png` })
   },
 
-  /**
-   * VILLAGE-PNJ (2026-07-31) — le campement du palier 1 SE VOIT (spec village-pnj-evolution R1).
+  /*
+   * ⚠ ═══ LE SCÉNARIO `village-pnj` A VÉCU ICI, ET IL EST PARTI LE 2026-09-29 ═══
+   *   (tranche 4 du retrait des villages PNJ, pivot de la braise du 2026-09-28.)
    *
-   * Ce qui ne se prouve qu'au navigateur : le spawn n'est plus « 1 feu + 3 chips house + 1
-   * coffre », c'est un CAMPEMENT — des paillasses autour d'un Feu et d'un grenier. On lit
-   * l'état (villages PNJ du snapshot, zéro `house`), puis on va REGARDER. Les pièces des
-   * paliers 2-3 (murs d'arêtes, portes, stations) sont celles du joueur, déjà rendues par
-   * le même pipeline — le neuf visible à la fondation, c'est le camp. Exige `--dev` (TP).
+   * Né le 2026-07-31 pour une seule promesse : **le campement du palier 1 SE VOIT** — le spawn
+   * n'était plus « 1 feu + 3 chips house + 1 coffre » mais un CAMP, des paillasses autour d'un Feu
+   * et d'un grenier (spec `village-pnj-evolution` R1). Il lisait les villages à chef 0 du
+   * snapshot, exigeait zéro `house`, puis tamponnait les paliers 2 et 3 par `debug_village_stage`
+   * et allait REGARDER (quatre clichés).
+   *
+   * SON SUJET EST MORT EN ENTIER : plus un village PNJ sur la carte, plus de plan directeur, plus
+   * de `debug_village_stage`. Rien à réécrire ailleurs — ce qu'il gardait, c'est le camp PNJ.
+   * ⚠ ET IL N'Y A PLUS DE CAMPEMENT DU TOUT SUR LA CARTE JOUÉE : `foundNpcVillage` (le seul
+   * lecteur de `HUT_SPOTS`/`bedAnchor`) n'a plus aucun appelant de runtime depuis que la boucle
+   * de fondation a quitté `peuplerLesVoisins` — c'est devenu un montage de test.
    */
-  async 'village-pnj'(page) {
-    // ⛔ PARQUÉ AVEC SON SUJET (2026-09-26, `FEATURES.VILLAGES_PNJ`) : ce scénario NE JUGE QUE le
-    // campement d'un village PNJ. Le drapeau éteint, il n'y en a plus un seul sur la carte — et
-    // sans porte il passerait au VERT sur une liste vide, ce qui est pire que rouge : il dirait
-    // « le campement est bon » en n'ayant rien regardé. Il déclare donc qu'il n'a pas de sujet.
-    if (!drapeau('VILLAGES_PNJ')) {
-      console.log('   ⛔ FEATURES.VILLAGES_PNJ est éteint : aucun village PNJ sur la carte, le campement')
-      console.log('      de fondation est INOBSERVABLE. Non éprouvé — ni vert, ni rouge. (docs/specs/pnj.md)')
-      return
-    }
-    await page.goto(URL)
-    await page.waitForFunction(() => Boolean(window.__BRAISES__?.scene?.registry?.get('worldReady')), null, { timeout: 150000 })
-    await page.waitForTimeout(1000)
-
-    const etat = await page.evaluate(() => {
-      const sc = window.__BRAISES__.scene
-      const villages = (sc.view?.villages ?? []).filter((v) => v.chiefId === 0)
-      const structures = sc.view?.structures ?? []
-      return villages.map((v) => ({
-        id: v.id,
-        buildTier: v.buildTier ?? 1,
-        x: v.fireTx,
-        y: v.fireTy,
-        paillasses: structures.filter((s) => s.type === 'paillasse' && s.villageId === v.id).length,
-        houses: structures.filter((s) => s.type === 'house' && s.villageId === v.id).length,
-      }))
-    })
-    console.log(`villages PNJ : ${JSON.stringify(etat)}`)
-    if (etat.length === 0) console.error('!! aucun village PNJ dans le snapshot')
-    for (const v of etat) {
-      if (v.houses !== 0) console.error(`!! le village ${v.id} a encore ${v.houses} house (chip d'une tuile)`)
-      if (v.paillasses < 3) console.error(`!! le village ${v.id} n'a que ${v.paillasses} paillasse(s) — le campement manque`)
-    }
-
-    // Plein jour, puis on va regarder le premier village — À CHAQUE PALIER : le
-    // campement tel qu'il naît, puis le hameau et le bourg TAMPONNÉS par
-    // `debug_village_stage` (le plan directeur posé d'un coup — la cadence du vrai
-    // chantier étale ça sur un arc de saison, invisible en smoke).
-    await page.evaluate(() => window.__BRAISES__.scene.sendAction({ type: 'debug_set_hour', hour: 11 }))
-    await page.waitForTimeout(400)
-    const v = etat[0]
-    if (v) {
-      await page.evaluate(({ x, y }) => {
-        window.__BRAISES__.scene.sendAction({ type: 'debug_teleport', x: x + 0.5, y: y + 2.5 })
-      }, v)
-      await page.waitForTimeout(1500)
-      await page.screenshot({ path: `${OUT}/village-pnj-1-campement.png` })
-      console.log(`   → palier 1 (campement) du village ${v.id} @(${v.x}, ${v.y})`)
-
-      for (const [stage, nom] of [[2, 'hameau'], [3, 'bourg']]) {
-        await page.evaluate(({ id, s }) => {
-          window.__BRAISES__.scene.sendAction({ type: 'debug_village_stage', villageId: id, stage: s })
-        }, { id: v.id, s: stage })
-        await page.waitForTimeout(2000) // le tampon puis le snapshot qui le montre
-        const compte = await page.evaluate((id) => {
-          const st = window.__BRAISES__.scene.view?.structures ?? []
-          const du = st.filter((q) => q.villageId === id)
-          const n = (t) => du.filter((q) => q.type === t).length
-          return {
-            walls: n('wall'), palissades: n('palissade'), doors: n('door'), floors: n('floor'),
-            pierre: du.filter((q) => (q.type === 'wall' || q.type === 'door') && q.material === 'stone').length,
-            stations: n('workshop') + n('furnace') + n('silo'),
-          }
-        }, v.id)
-        console.log(`   palier ${stage} : ${JSON.stringify(compte)}`)
-        // Les seuils tolèrent les trous HONNÊTES du plan (terrain refusé, arête déjà
-        // fermée par une ruine voisine) — le compte exact sur terrain nu vit dans
-        // debug.test.ts ; ici on vérifie que le palier SE VOIT, pas qu'il est parfait.
-        if (stage === 2 && (compte.walls < 30 || compte.palissades < 40 || compte.floors < 40)) {
-          console.error(`!! palier 2 : le hameau manque de pièces (${compte.walls} murs, ${compte.palissades} palissades, ${compte.floors} sols)`)
-        }
-        // ≥ 2 stations et pas 3 : le plan SAUTE honnêtement un emplacement pris (un
-        // lieu bâti voisin, un nœud qui a dérivé) — c'est la règle faisable-ou-sauté.
-        if (stage === 3 && (compte.stations < 2 || compte.pierre < 40)) {
-          console.error(`!! palier 3 : stations ou pierre manquantes (${compte.stations} stations, ${compte.pierre} pierres)`)
-        }
-        await page.screenshot({ path: `${OUT}/village-pnj-${stage}-${nom}.png` })
-        console.log(`   → palier ${stage} (${nom})`)
-      }
-    }
-  },
 
   /**
    * T0-EXPLORATION (2026-07-25) — la Racine donne envie de marcher (spec t0-exploration).
@@ -11921,25 +11728,74 @@ const SCENARIOS = {
    * Exige `--dev` (heure).
    */
   async feuNuit(page) {
-    // ⛔ CE SCÉNARIO EST INATTEIGNABLE DEPUIS LE 2026-09-26, et le drapeau l'avait manqué :
-    // il mesure sur le Feu d'un VILLAGE (`villageId > 0`, l'attente ci-dessous), or
-    // `FEATURES.VILLAGES_PNJ` éteint il n'existe plus aucun village sur la carte jouée. Il
-    // mourait sur un `waitForFunction: Timeout 30000ms` sans un mot d'explication — constaté le
-    // 2026-09-29. On le PARQUE comme les autres (la liste au `drapeau('VILLAGES_PNJ')` plus
-    // haut) : il repartira seul au rallumage, sans qu'on y touche une ligne.
-    if (!drapeau('VILLAGES_PNJ')) {
-      console.log('   ⛔ FEATURES.VILLAGES_PNJ est éteint : aucun Feu de village, donc aucune')
-      console.log('      clairière à mesurer. Scénario SAUTÉ — il n\'est pas vert, il est à l\'arrêt.')
-      return
-    }
+    // ⚠ ═══ LE CORPS A CHANGÉ LE 2026-09-29 : C'EST LE FEU DU JOUEUR ═══ (tranche 4)
+    //
+    // Il mesurait sur le Feu d'un VILLAGE PNJ, et pour une bonne raison : `fireStateAt` rend
+    // toujours `lit` dès que `villageId !== 0` (`fire.ts:39`), là où un feu de camp posé s'éteint
+    // au hasard de la durée de la passe. Les villages PNJ sont partis — mais **le Feu du JOUEUR a
+    // exactement la même propriété**, et c'est en outre le corps que le pivot garde : une BALISE
+    // est un Feu qu'on allume (`braise.md`). On l'allume donc nous-mêmes, `light_fire` fondant le
+    // village au passage. La LOI, elle, n'a pas bougé d'un mot : ① le camp est éclairé, ③ le sol
+    // garde sa couleur.
+    if (!dev) { console.error('!! feuNuit exige --dev (heure, dons, le Feu qu\'on allume)'); return }
     await page.goto(URL)
     await page.waitForFunction(() => Boolean(window.__BRAISES__?.scene?.registry?.get('worldReady')), null, { timeout: 60000 })
-    // `worldReady` PRÉCÈDE le premier snapshot : sans cette attente, `view.structures` est vide
-    // et le scénario conclurait « aucun Feu » sans avoir rien regardé.
+    // ⚠ `worldReady` PRÉCÈDE LE PREMIER SNAPSHOT, et une attente laxiste passe AVANT lui : un
+    //   `predicted` par défaut est `{x:0,y:0}`, donc « fini ». On téléporterait alors au COIN de la
+    //   carte. Le signal de la maison est le HUD : « JOUR n » ne s'affiche qu'une fois le premier
+    //   snapshot appliqué. ⚠ **ET SURTOUT PAS `view.structures.length > 0`** : je l'avais écrit, et
+    //   le run a expiré dessus — depuis que les villages PNJ sont partis, **le monde joué peut
+    //   n'avoir AUCUNE structure à portée du point de naissance** (la vue est rognée à 64 tuiles).
+    //   C'est le changement même qu'on vient de faire : une attente ne doit pas le prendre pour une
+    //   panne. ⚠ MESURÉ, pas supposé : sur le monde joué de la Veillée, **0 structure à moins de
+    //   64 tuiles de la naissance** (814 sur toute la carte) — cette attente-là ne pouvait jamais
+    //   passer, et elle a fait expirer un run entier.
     await page.waitForFunction(
-      () => (window.__BRAISES__.scene.view?.structures ?? []).some((s) => s.type === 'fire' && s.villageId > 0),
-      null, { timeout: 30000 },
+      () => document.body.innerText.includes('JOUR') && Number.isFinite(window.__BRAISES__?.scene?.predicted?.x),
+      null, { timeout: 60000 },
     )
+
+    // ── ON ALLUME LE FEU. Une action de debug PAR TICK (patron de la maison), et `light_fire`
+    //    REFUSE beaucoup : tuile prise, landmark, sous la roche, trop près d'un autre Feu, terrain
+    //    inconstructible. On essaie donc plusieurs pas autour du point de naissance — conclure
+    //    d'un seul serait le piège du raideur. 10 bois (`PIECES.fire.cout`), donnés un par un.
+    const envoyer = async (action, ms = 140) => {
+      await page.evaluate((a) => window.__BRAISES__.scene.sendAction(a), action)
+      await page.waitForTimeout(ms)
+    }
+    await envoyer({ type: 'debug_god', on: true }, 300)
+    for (let i = 0; i < 12; i++) await envoyer({ type: 'debug_grant', item: 'wood' }, 120)
+    const naissance = await page.evaluate(() => ({ x: window.__BRAISES__.scene.predicted.x, y: window.__BRAISES__.scene.predicted.y }))
+    if (!Number.isFinite(naissance.x) || !Number.isFinite(naissance.y)) {
+      console.error(`!! point de naissance illisible (${naissance.x}, ${naissance.y}) — rien n'a été mesuré`)
+      return
+    }
+    // On relit le Feu POSÉ (ses propres `tx`/`ty`), jamais le pas qu'on venait d'essayer : une
+    // pose vue un tour trop tard serait créditée au pas suivant.
+    let allume = null
+    for (const [dx, dy] of [[0, 0], [3, 0], [-3, 0], [0, 3], [0, -3], [6, 2], [-6, -2], [9, 0], [0, -9]]) {
+      await envoyer({ type: 'debug_teleport', x: naissance.x + dx, y: naissance.y + dy }, 500)
+      await envoyer({ type: 'light_fire' }, 700)
+      allume = await page.evaluate(() => {
+        const f = (window.__BRAISES__.scene.view?.structures ?? []).find((s) => s.type === 'fire' && s.villageId > 0)
+        return f ? { tx: f.tx, ty: f.ty, villageId: f.villageId } : null
+      })
+      if (allume) break
+      // ⚠ CE N'EST PAS LE MOTIF DU REFUS, ET C'EST LA LEÇON : `registry.get('error')` est le
+      //   loquet de la DERNIÈRE ALERTE, et `publishError` a DEUX appelants — `action_rejected`
+      //   (ce qu'on cherche) et l'avertissement de nuit de `WorldScene:4239` (« La nuit tombe.
+      //   Loin d'un feu, on est chassé. »), qui est exactement ce que le run du 2026-09-29 a
+      //   imprimé en se croyant informé. On l'affiche donc pour ce qu'il est, et le vrai tri des
+      //   neuf pas se fait HEADLESS (`light_fire` sur le monde joué), où les motifs sont exacts.
+      //   ⚠ MESURÉ AINSI le 2026-09-29 (graine de la Veillée, monde joué) : naissance en
+      //   (1432,5 · 1272,5), **0 village**, les deux premiers pas refusés pour « terrain
+      //   inconstructible », et **le troisième (−3, 0) POSE le Feu** (village 1). Le montage des
+      //   neuf pas est donc juste — c'est la raison pour laquelle on en essaie neuf.
+      const alerte = await page.evaluate(() => window.__BRAISES__.scene.registry.get('error')?.reason ?? '(aucune alerte)')
+      console.log(`     (pas (${dx}, ${dy}) : pas de Feu — dernière alerte du HUD, qui n'est PAS forcément le refus : « ${alerte} »)`)
+    }
+    if (!allume) { console.error(`!! aucun des 9 pas autour de (${naissance.x.toFixed(1)}, ${naissance.y.toFixed(1)}) n'a accepté \`light_fire\` — la clairière reste NON MESURÉE`); return }
+    console.log(`   → Feu du joueur en (${allume.tx}, ${allume.ty}), village ${allume.villageId}`)
 
     const feu = await page.evaluate(() => {
       const s = window.__BRAISES__.scene
@@ -24290,7 +24146,6 @@ Depuis le spawn (${depart.x.toFixed(0)}, ${depart.y.toFixed(0)}) :`)
       // (`LUNE_PLEINE_JOUR = 61`). Une prise de nuit qui ne dit pas son jour tombe donc, par
       // défaut, sur la nuit la plus plate de la lunaison. Toutes les prises de nuit de cette
       // planche portent désormais leur jour, et il est CHOISI sur la phase.
-      { nom: 'feu-hameau', jour: 70, heure: 4.6, village: 1, stage: 2, couvert: false, tuiles: 24, quoi: 'le feu du hameau, dans la nuit sans lune' },
       // ET LE JOUR CHOISIT AUSSI LA COULEUR DU SOL (`teinte-saison.ts`, 2026-08-23). La variété
       // que la planche précédente avait perdue avec la seconde zone REVIENT par la saison : le
       // cardinal des Pluies tombe au jour 75 de l'année, et c'est la teinte la plus FORTE des
@@ -24402,7 +24257,6 @@ Depuis le spawn (${depart.x.toFixed(0)}, ${depart.y.toFixed(0)}) :`)
       // jour 76 la lune est à ⅕, l'averse prend l'orange du foyer et les logis se découpent.
       // (Au jour 75, où la planche l'avait laissé, elle est à ⅒ — mais c'est la MÊME nuit à un
       // cran près : ce qui l'aurait tué, c'était le jour 84, la pleine lune, qui aplatit tout.)
-      { nom: 'bourg-pluie', jour: 76, heure: 20.3, village: 2, stage: 3, couvert: false, meteo: 'pluie', tuiles: 26, quoi: 'le bourg sous la pluie, au crépuscule' },
       // LA HORDE — ON RECULE, ET C'EST TOUT LE CORRECTIF (2026-08-24). Les trois séries
       // précédentes se plantaient à SIX tuiles du paquet, donc DANS son `aggroRange` (5) : les
       // goules lâchaient la descente de gradient, se retournaient sur le photographe, et leurs
@@ -24612,7 +24466,8 @@ Depuis le spawn (${depart.x.toFixed(0)}, ${depart.y.toFixed(0)}) :`)
           const s = window.__BRAISES__.scene
           // L'ASPECT, PAS LE TYPE — et c'est la seule chose qui dise ce que la photo montrera.
           // Depuis R11 la neige et le blizzard se DÉRIVENT du froid au point : armer `pluie` un
-          // soir de fin de saison rend des FLOCONS. Une prise du 2026-08-24 (`bourg-pluie`,
+          // soir de fin de saison rend des FLOCONS. Une prise du 2026-08-24 (`bourg-pluie`, retirée
+          // le 2026-09-29 avec les villages PNJ,
           // jour 75 à 20,5 h) est ainsi revenue sous la neige alors que la planche disait pluie.
           // `meteoLayer.type` porte l'index d'aspect que le shader a réellement branché.
           const ASPECTS = ['pluie', 'brouillard', 'neige', 'orage', 'blizzard', 'vent_de_cendre']
@@ -24714,7 +24569,8 @@ Depuis le spawn (${depart.x.toFixed(0)}, ${depart.y.toFixed(0)}) :`)
       // parfois 900 ms sous SwiftShader.
       //
       // ET ON DÉGAGE MÊME QUAND LA PRISE VEUT UN CIEL, ce qui a coûté dix-huit minutes le
-      // 2026-08-24. `orage-ruine` et `bourg-pluie` sont toutes deux au jour 75 et portent
+      // 2026-08-24. `orage-ruine` et `bourg-pluie` (cette dernière retirée le 2026-09-29 avec les
+      // villages PNJ) étaient toutes deux au jour 75 et portaient
       // toutes deux un front : l'ancienne condition sautait donc le nettoyage, et la page
       // rendait un orage COUVRANT LA CARTE ENTIÈRE (largeur 2500 aux Pluies) pendant qu'on lui
       // demandait de rebâtir un village au palier 3. Or `page.evaluate` N'A PAS DE TIMEOUT :
@@ -24763,40 +24619,15 @@ Depuis le spawn (${depart.x.toFixed(0)}, ${depart.y.toFixed(0)}) :`)
       }
 
       let cible = null
-      if (p.village) {
-        // LE FEU DU VILLAGE, pas un feu fondé : chaque village PNJ naît autour du sien
-        // (fireTx/fireTy), et il brûle la nuit. L'avatar se pose 4,5 tuiles sous le feu :
-        // à cette hauteur les deux logis latéraux du hameau entrent en entier dans le cadre
-        // et la porte charretière du sud tient au tiers bas.
-        // `village` est un RANG (1 = le premier), pas un booléen : la carte en porte deux, et
-        // tamponner deux fois le même écraserait la prise d'ouverture par un bourg de pierre.
-        // ON ENDORT LA BOUCLE DE RENDU LE TEMPS DU TAMPON, et on BORNE l'appel. Bâtir un bourg
-        // de pierre pose des dizaines de pièces d'un coup ; sous SwiftShader, les repeindre
-        // pendant qu'on parle à la page transforme un aller-retour de 50 ms en minutes. Même
-        // patron que l'attente de la horde — le monde continue d'être suivi (`view.apply` est
-        // appelée par le gestionnaire de MESSAGE), seul le rendu s'arrête.
-        await page.evaluate(() => window.__BRAISES__.scene.game.loop.sleep()).catch(() => {})
-        try {
-          cible = await borne(page.evaluate(({ rang, stage }) => {
-            const sc = window.__BRAISES__.scene
-            const v = (sc.view?.villages ?? []).filter((q) => q.chiefId === 0)[rang - 1]
-            if (!v) return null
-            if (stage > 1) sc.sendAction({ type: 'debug_village_stage', villageId: v.id, stage })
-            return { x: v.fireTx + 0.5, y: v.fireTy + 4.5, kind: 'village', name: `le village PNJ ${v.id} (palier ${stage})` }
-          }, { rang: p.village, stage: p.stage }), 60000, 'le tampon de village')
-        } catch (e) {
-          await page.evaluate(() => window.__BRAISES__.scene.game.loop.wake()).catch(() => {})
-          console.error(`   ✗ ${p.nom.padEnd(18)} ${e.message} — prise SAUTÉE`)
-          continue
-        }
-        if (!cible) {
-          await page.evaluate(() => window.__BRAISES__.scene.game.loop.wake()).catch(() => {})
-          console.error(`   ✗ ${p.nom.padEnd(18)} pas de ${p.village}ᵉ village PNJ dans le snapshot — prise SAUTÉE`)
-          continue
-        }
-        await page.waitForTimeout(2500) // le tampon s'applique au tick suivant, pièce par pièce
-        await page.evaluate(() => window.__BRAISES__.scene.game.loop.wake()).catch(() => {})
-      } else if (p.berge) {
+      // ⚠ LA BRANCHE DU VILLAGE A VÉCU ICI, ET ELLE EST PARTIE LE 2026-09-29 (tranche 4 du
+      //   retrait des villages PNJ). Elle tamponnait le Nᵉ village à chef 0 au palier voulu
+      //   (`debug_village_stage`, retiré de `/sim` le même jour) et postait l'avatar 4,5 tuiles
+      //   sous son Feu — les deux logis latéraux entiers dans le cadre, la porte charretière au
+      //   tiers bas. Ses deux prises partent avec elle : `feu-hameau` (j70, 4 h 36, palier 2) et
+      //   `bourg-pluie` (j76, 20 h 18, palier 3, sous la pluie). ⚠ **LEURS DEUX JPG SONT ENCORE
+      //   AU CARROUSEL DE L'ACCUEIL** (`vitrine.ts`) : l'accueil promet donc un hameau que le jeu
+      //   ne pose plus. Question posée à Alexis — remplacer les deux images est un choix de DA.
+      if (p.berge) {
         // ═══ LA RIVE D'UN LAC — ON NOTE LE PIED, PAS LA NAPPE ═══
         //
         // La caméra CENTRE le joueur : viser le milieu de l'eau le planterait au milieu de

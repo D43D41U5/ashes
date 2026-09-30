@@ -253,7 +253,7 @@ export function construireMondeDuBanc(seed: number, joueurs: number = BANC_JOUEU
   // `VILLAGES_DU_BANC` porte l'arithmétique. La loi est commune ; le nombre ne peut pas l'être.
   // La carte en dernier : elle arme le RÉSEAU DE SENTES (V-A7). Le banc joue le monde du jeu,
   // routes comprises — sans quoi il calibrerait une économie que personne ne joue.
-  const { sites, margeDeCible } = peuplerLesVoisins(sim, emplacements, base, VILLAGES_DU_BANC, undefined, carte)
+  const { sites, margeDeCible } = peuplerLesVoisins(sim, emplacements, base, VILLAGES_DU_BANC, carte)
   let ecartMinVillages = Infinity
   for (let i = 0; i < sites.length; i++) {
     for (let j = i + 1; j < sites.length; j++) {

@@ -15,7 +15,7 @@
  *   quand même à l'identique.
  */
 import { fenetreDe } from './meteo'
-import { WORLD_EVENTS, MORTS, NIGHT_HUNT, TEMPERATURE, WALL_TIERS } from './balance'
+import { WORLD_EVENTS, MORTS, NIGHT_HUNT, TEMPERATURE } from './balance'
 import { emitEvent } from './events'
 import { spawnHorde } from './worldevents'
 import { addItems, type ItemId } from './items'
@@ -23,11 +23,9 @@ import { spawnMonster } from './monsters'
 import { die } from './combat'
 import { densiteDesMorts, siteDansLaCouronne } from './morts'
 import type { Entity, SimState } from './sim'
-import { TICKS_PER_CYCLE, TICKS_PER_SEASON_DAY, cycleOffsetForStartHour, getGameTime, jourDeSaison, seasonRamp } from './time'
-import { addStructure } from './village'
+import { TICKS_PER_CYCLE, TICKS_PER_SEASON_DAY, cycleOffsetForStartHour, jourDeSaison, seasonRamp } from './time'
 import { marchableAEtage, palierDuSol, poserLEtageDuCorps } from './etages'
 import type { WorldMap } from './map'
-import { desiredOrders } from './village-plan'
 
 export type DebugAction =
   /** Poser l'avatar sur une tuile, sans se soucier des obstacles ni de la distance. `etage` :
@@ -102,20 +100,16 @@ export type DebugAction =
    * c'est la traque. `clean` : la bête meurt « d'un coup propre » (elle laisse sa peau brute).
    */
   | { type: 'debug_carcass'; species: import('./balance').MonsterType; clean?: boolean }
-  /**
-   * TAMPONNER LE PALIER DE BÂTI D'UN VILLAGE PNJ (spec `village-pnj-evolution.md`).
-   *
-   * Sans lui, VOIR un hameau ou un bourg exige des jours de Veillée : la cadence du
-   * chantier (`BUILD_PACE_TICKS`) étale exprès la construction sur un arc de saison.
-   * Une mécanique qu'on ne peut pas ATTEINDRE est une mécanique morte (même remède
-   * que `debug_set_season_day`) — le playtest et le smoke doivent pouvoir regarder
-   * chaque palier MAINTENANT.
-   *
-   * On tamponne le PLAN DIRECTEUR, pas un décor : `desiredOrders` — la même vérité
-   * que le tableau du village — posée pièce à pièce par `addStructure`. Ce qu'on
-   * court-circuite, et c'est tout : la main-d'œuvre et le coût. Aucun tirage.
+  /*
+   * ⚠ `debug_village_stage` A VÉCU ICI (tamponner le palier de bâti d'un village PNJ, pour que
+   * le playtest et le smoke puissent regarder un hameau ou un bourg SANS attendre un arc de
+   * saison). Il part le 2026-09-29 avec le plan directeur (tranche 4 du retrait des villages
+   * PNJ). Sa raison d'être reste vraie et vaudra pour la balise : **une mécanique qu'on ne peut
+   * pas ATTEINDRE est une mécanique morte** — même remède que `debug_set_season_day`. Et sa
+   * leçon de fidélité aussi : il vidait le nœud (stock 0) au lieu de le sauter, parce qu'un
+   * logis tamponné s'était retrouvé bâti AUTOUR d'un arbre vivant sur une photo d'accueil. Un
+   * tampon doit atteindre le MÊME ÉTAT que le chantier, jamais un décor qui lui ressemble.
    */
-  | { type: 'debug_village_stage'; villageId: number; stage: number }
   /**
    * ARMER UN FRONT MÉTÉO ICI ET MAINTENANT (spec `meteo.md`, chantier de rendu).
    *
@@ -251,47 +245,6 @@ export function applyDebugAction(state: SimState, entityId: number, action: Debu
     if (!monster || !bete) return
     if (action.clean === true) monster.slainClean = true
     die(state, bete, entity.id)
-  } else if (action.type === 'debug_village_stage') {
-    const village = state.villages.find((v) => v.id === action.villageId && v.chiefId === 0)
-    if (!village) return // les villages à chef humain ne se tamponnent pas
-    village.buildTier = clamp(Math.round(action.stage), 1, 3)
-    // Le plan se recalcule après chaque passe : les montées en pierre ne se voient
-    // qu'une fois les murs de bois posés. Quatre passes suffisent ; huit est un
-    // garde-fou, pas une attente.
-    for (let passe = 0; passe < 8; passe++) {
-      const orders = desiredOrders(state, village)
-      if (orders.length === 0) break
-      for (const order of orders) {
-        if (order.action === 'defriche') {
-          // LE TAMPON DOIT ATTEINDRE LE MÊME ÉTAT QUE LE CHANTIER, sinon il ment — et c'est
-          // très exactement par ce mensonge qu'un logis tamponné s'est retrouvé bâti AUTOUR
-          // d'un arbre vivant sur une photo d'accueil. On vide le nœud (stock 0), ce que
-          // `poseLibre` lit comme libre et le client comme une souche : le même état que si
-          // un villageois l'avait abattu. Ce qu'on court-circuite reste la main-d'œuvre et le
-          // temps, jamais le RÉSULTAT.
-          for (const n of state.nodes) {
-            if (n.tx === order.tx && n.ty === order.ty) n.stock = 0
-          }
-        } else if (order.action === 'pose') {
-          addStructure(state, order.structure, order.tx, order.ty, village.id, 0, undefined, order.material, order.edges)
-        } else if (order.action === 'place') {
-          addStructure(state, order.component, order.tx, order.ty, village.id, 0)
-        } else {
-          const s = state.structures.find((st) => st.id === order.structureId)
-          if (s && (s.type === 'wall' || s.type === 'door')) {
-            s.material = 'stone'
-            s.hp = WALL_TIERS.stone[s.type].hp
-          }
-        }
-      }
-    }
-    // Les portes suivent le rituel (R7) : tamponnées en plein jour, elles naissent OUVERTES
-    // — sinon la photo d'un village « ouvert le jour » montrerait un fort barricadé à midi.
-    if (!getGameTime(state).isNight) {
-      for (const s of state.structures) {
-        if (s.type === 'door' && s.villageId === village.id) s.open = true
-      }
-    }
   } else if (action.type === 'debug_meteo') {
     if (action.meteo === null) {
       state.meteo = null

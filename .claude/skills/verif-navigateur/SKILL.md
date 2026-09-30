@@ -46,9 +46,10 @@ production, les actions de debug sont **inertes et silencieuses** : elles ne ren
 il ne se passe rien. Tout scénario qui se téléporte, force l'heure ou s'octroie un objet **exige
 un serveur de dev** (§1).
 
-Les onze actions (`packages/sim/src/protocol.ts`) : `debug_teleport` · `debug_grant` · `debug_god`
+Les dix actions (`packages/sim/src/protocol.ts`) : `debug_teleport` · `debug_grant` · `debug_god`
 · `debug_set_hour` · `debug_set_season_day` · `debug_speed` · `debug_meteo` · `debug_reveil` ·
-`debug_horde` · `debug_carcass` · `debug_village_stage`.
+`debug_horde` · `debug_carcass`. *(`debug_village_stage` — tamponner le palier de bâti d'un village
+PNJ — a été retirée le 2026-09-29 avec les villages PNJ.)*
 
 ⚠ **`debug_set_season_day` ne peut que MONTER.** Vers un jour antérieur, il rembobine le tick ; le
 client jette alors tous les snapshots et **l'écran fige, sans un mot**.

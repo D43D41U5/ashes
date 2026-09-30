@@ -195,6 +195,28 @@ Peupler les villages. Un village 100 % PNJ doit *survivre* seul (le joueur y pro
 > était bâtie sur une enceinte PNJ tamponnée) et `village-pnj` déclarent n'avoir plus de sujet ;
 > `vitrine` saute ses prises de village en le disant ; `trainer` perd ses trois branches d'annonce de
 > Feu — perte assumée ; `gi-temoin`, `epuisement`, `flore` et `arete` sont intacts.
+>
+> ⚠ **AMENDÉ LE 2026-09-29 — LE GEL EST DEVENU UN RETRAIT** (tranche 4 ; le drapeau lui-même est
+> parti, `FEATURES` est vide). Des quatre gardes gelées : **V-A2 est supprimée** (`veillee.test.ts`,
+> avec une pierre tombale qui garde ses deux bornes — plancher 40 tuiles, plafond deux
+> `MONDE.ESPACEMENT_VILLAGES`) ; **A8 météo et le dernier bloc du banc sont supprimés** ; **V-A9 «
+> mesure le monde qu'on JOUE » est DÉGELÉE et tourne** (le banc passe de 1 ✓ · 1 sauté à 2 ✓), sa
+> clause finale affirmant `villages.length === 0`. Au navigateur : **`village-pnj` et `gi-face` sont
+> supprimés** (pierres tombales dans `smoke.mjs`), **les deux prises de village de `vitrine`
+> aussi** — ⚠ leurs JPG sont encore au carrousel de l'accueil, question ouverte —, et **`feuNuit` est
+> RÉÉCRIT, ET SON MONTAGE EST PROUVÉ HEADLESS** (MESURÉ le 2026-09-29 sur le monde joué de la
+> Veillée : naissance en 1432,5 · 1272,5, **0 village**, les deux premiers pas refusés pour
+> « terrain inconstructible », le troisième POSE le Feu — village 1). ⚠ **Le run NAVIGATEUR n'a
+> pas abouti sur cette machine** : Chromium sous SwiftShader pèse 7,3 Go sur 11, et le run est
+> resté bloqué sur son premier pas. La loi n'est donc pas re-éprouvée à l'image — c'est nommé,
+> pas masqué. Au passage, le run a payé deux leçons : une attente exigeant `structures.length >
+> 0` ne peut **jamais** passer (0 structure à moins de 64 tuiles de la naissance, la vue étant
+> rognée là — c'est le retrait des villages qui l'a rendue vraie), et `registry.get('error')` **
+> n'est pas le motif d'un refus** : `publishError` a un second appelant, l'avertissement de nuit
+> de `WorldScene:4239`, que la sonde a imprimé en se croyant informée. Détail : sa loi (la clairière du feu la nuit) est vivante, son corps devient le **Feu du JOUEUR**
+> (`light_fire` : `fireStateAt` rend `lit` dès `villageId !== 0`, même propriété que le Foyer PNJ —
+> et c'est le corps que la balise gardera). La perte NOMMÉE et non réparée : « une face, non »
+> (LG-A17, seconde moitié) n'a plus de garde du tout, c'est écrit dans `lumiere-globale.md`.
 
 ### Le périmètre d'origine, tel qu'il avait été arrêté
 

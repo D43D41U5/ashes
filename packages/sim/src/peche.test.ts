@@ -47,7 +47,7 @@ import { addStructure, createVillage, grantItems } from './village'
 import { fireZoneAccepts, fireZoneInventory } from './fire'
 import { addItems } from './items'
 import { foundNpcVillage } from './worldgen'
-import { desiredOrders } from './village-plan'
+import { dansEmprise, noeudDefrichable } from './defriche'
 import { die } from './combat'
 import { CONTENU, placeZoneNodes } from './zone-content'
 import { carteDeTest } from '../../../tools/carte-cache'
@@ -722,10 +722,21 @@ describe('A14 — le coin vidé dérive sur l’eau, jamais sur la terre', () =>
 })
 
 // ── LES DEUX DÉFAUTS DE LA RELECTURE DÉTERMINISME (2026-08-22) ───────────────
-describe('la cour d’un village PNJ ne défriche pas l’eau', () => {
-  it('un coin de pêche à portée du Feu ne produit AUCUN ordre de défriche — le chantier ne se bloque pas', () => {
-    // Le PNJ exécute une défriche par `harvest`, refusé sur un coin (il faut lancer la ligne) sans
-    // lâcher la corvée : 5 929 refus en 6 000 ticks mesurés, et tout le chantier à l'arrêt.
+describe('un coin de pêche ne se défriche pas', () => {
+  /**
+   * ⚠ RÉÉCRITE LE 2026-09-29, ET ELLE INTERROGE ENFIN LA LOI ELLE-MÊME. Elle demandait au PLAN
+   * DIRECTEUR d'un camp PNJ (`desiredOrders`, parti en tranche 4 du retrait des villages PNJ)
+   * s'il produisait un ordre de défriche sur le coin — donc elle éprouvait un CONSOMMATEUR de la
+   * règle, et le dernier. La règle, elle, vit dans `noeudDefrichable` (`defriche.ts`) : un nœud
+   * `renewable` n'est JAMAIS défrichable, et un coin de pêche repousse. On la lui demande
+   * directement ; tout ce qui bâtit dans une emprise en dépendra pareil, à commencer par la
+   * balise.
+   *
+   * LE DÉFAUT QU'ELLE GARDE, et il vaut toujours : celui qui exécute une défriche le fait par
+   * `harvest`, refusé sur un coin de pêche (il faut lancer la ligne) SANS lâcher la corvée —
+   * 5 929 refus en 6 000 ticks mesurés, et tout le chantier à l'arrêt.
+   */
+  it('l’arbre de la cour se défriche, le coin de pêche JAMAIS (prémisse comprise)', () => {
     const map = createEmptyMap(28, 28, TERRAIN_GRASS)
     setTile(map, 15, 12, TERRAIN_SHALLOW_WATER)
     setTile(map, 16, 12, TERRAIN_DEEP_WATER)
@@ -739,11 +750,15 @@ describe('la cour d’un village PNJ ne défriche pas l’eau', () => {
       faunaCap: 0,
     })
     foundNpcVillage(sim, 12, 12, 3)
-    const v = sim.villages[0]!
-    v.buildTier = 3
-    const defriches = desiredOrders(sim, v).filter((o) => o.action === 'defriche') as { tx: number; ty: number }[]
-    expect(defriches.some((o) => o.tx === 14 && o.ty === 14), 'la prémisse : l’arbre de la cour, lui, se défriche').toBe(true)
-    expect(defriches.some((o) => o.tx === 15 && o.ty === 12), 'le coin de pêche, jamais').toBe(false)
+    const foyers = sim.villages
+    const arbre = sim.nodes.find((n) => n.id === 1)!
+    const coin = sim.nodes.find((n) => n.id === 2)!
+    // LA PRÉMISSE : les deux nœuds sont bien DANS l'emprise du Feu — sans elle, les deux
+    // verdicts seraient `false` pour la même mauvaise raison et la garde ne prouverait rien.
+    expect(dansEmprise(foyers, arbre.tx, arbre.ty), 'l’arbre est hors emprise : la garde est vide').toBe(true)
+    expect(dansEmprise(foyers, coin.tx, coin.ty), 'le coin est hors emprise : la garde est vide').toBe(true)
+    expect(noeudDefrichable(foyers, arbre), 'l’arbre de la cour, lui, se défriche').toBe(true)
+    expect(noeudDefrichable(foyers, coin), 'le coin de pêche, jamais').toBe(false)
   })
 })
 

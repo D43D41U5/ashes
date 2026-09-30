@@ -1,9 +1,8 @@
 import { describe, expect, it } from 'vitest'
 import { BALANCE, NPC_AI } from './balance'
-import { FEATURES } from './features'
 import type { MoveWorld } from './collision'
 import { pathToward } from './pathfinding'
-import { VILLAGES_DU_BANC, construireMondeDuBanc } from './scenario'
+import { construireMondeDuBanc } from './scenario'
 
 // Le tsconfig de /sim est ES2022 pur (pas de lib Node) — le test, lui, tourne
 // sur Node : on déclare le strict nécessaire.
@@ -105,29 +104,15 @@ describe('le banc de test', () => {
      * est commune aux trois hôtes, le NOMBRE ne l'est pas — ce monde-ci est 7,8× plus petit que
      * celui du solo. La justification chiffrée vit sur la constante, dans `scenario.ts`.
      */
-    // ⛔ CE SEUL BLOC EST GELÉ AVEC LES VILLAGES (`FEATURES.VILLAGES_PNJ`, 2026-09-26) — et rien
-    //    au-dessus ne l'est, délibérément. Tout ce qui précède est du WORLDGEN (le gibier, les
-    //    nœuds, les murs des lieux) ou de l'ÉLECTION DE SITES (la marge du raideur), et l'élection
-    //    tourne toujours : le drapeau ne ferme que la fondation. Geler le test entier aurait vidé
-    //    le banc de sa couverture worldgen pendant le chantier qui la travaille — l'inverse de ce
-    //    qu'on veut. Voir `features.ts`.
-    if (FEATURES.VILLAGES_PNJ) {
-      expect(sim.villages.length, 'le banc ne peuple plus comme le jeu').toBe(VILLAGES_DU_BANC)
-      const home = sim.home
-      expect(home, 'un banc sans point de naissance ne prouve rien de ce qui suit').not.toBeNull()
-      for (const v of sim.villages) {
-        const dx = v.fireTx - home!.x
-        const dy = v.fireTy - home!.y
-        expect(
-          Math.sqrt(dx * dx + dy * dy),
-          `le Feu du village ${v.id} est posé SUR le point de naissance — le joueur naîtrait dans un village`,
-        ).toBeGreaterThan(1)
-      }
-    } else {
-      // La PRÉMISSE du gel, affirmée : sans elle, un jour où la fondation reviendrait par une
-      // autre porte, ce test resterait silencieux au lieu de rougir.
-      expect(sim.villages.length, 'le drapeau est éteint et des villages sont nés quand même').toBe(0)
-    }
+    // ⚠ CE BLOC ÉTAIT GELÉ derrière `FEATURES.VILLAGES_PNJ` (2026-09-26) et il est RÉDUIT à sa
+    //    branche survivante le 2026-09-29 (tranche 4 du retrait des villages PNJ). Ce qui est
+    //    parti : « le banc peuple comme le jeu » (trois villages) et « aucun Feu n'est posé SUR
+    //    le point de naissance ». Tout ce qui PRÉCÈDE reste, délibérément — c'est du WORLDGEN
+    //    (le gibier, les nœuds, les murs des lieux) et de l'ÉLECTION DE SITES (la marge du
+    //    raideur), et l'élection tourne toujours : elle dessine les routes.
+    //    L'assertion qui reste est celle qui peut ENCORE échouer, et elle garde la promesse du
+    //    pivot : plus un seul village ne naît, quelle que soit la porte.
+    expect(sim.villages.length, 'un village est né alors que la fondation a quitté le code').toBe(0)
   })
 
   /*
@@ -171,34 +156,40 @@ describe('le banc de test', () => {
    *
    * Il ne joue AUCUN tick : il bâtit le monde et interroge la primitive que `setPathTo` appelle.
    */
-  // ⛔ GELÉ AVEC LES VILLAGES (`FEATURES.VILLAGES_PNJ`, décision d'Alexis du 2026-09-26).
-  // Il cherche le « Feu du Gué » en (96,360) : sans fondation, il n'y a pas de Feu à trouver.
-  // Le piège de 4096 qu'il garde est un fait de PATHFINDING, intact — seul son sujet a disparu.
-  it.skipIf(!FEATURES.VILLAGES_PNJ)('V-A9 — un villageois sait rentrer à son Feu, et le piège de 4096 est toujours là', { timeout: 120_000 }, () => {
+  // ⚠ RECUEILLIE LE 2026-09-29, PAS SUPPRIMÉE (tranche 4 du retrait des villages PNJ). Elle
+  // était gelée par `FEATURES.VILLAGES_PNJ` parce qu'elle CHERCHAIT le « Feu du Gué » dans
+  // `sim.villages` — or le piège qu'elle garde est un fait de PATHFINDING et de GÉOGRAPHIE, et
+  // le terrain du banc n'a pas bougé d'une tuile. On vise donc la TUILE (96,360), qui reste un
+  // site élu, au lieu d'un Feu qui n'est plus fondé ; `moverVillageId` passe à `null` (aucune
+  // porte sur ce trajet, puisqu'aucun village n'y est bâti). Les trois assertions sont les mêmes.
+  it('V-A9 — le retour tient dans le budget, et le piège de 4096 est toujours là', { timeout: 120_000 }, () => {
     const { sim } = construireMondeDuBanc(2026)
-    const village = sim.villages.find((v) => v.fireTx === 96 && v.fireTy === 360)
-    expect(
-      village,
-      'le « Feu du Gué » n’est plus en (96,360) : le monde a bougé et ce test ne prouve plus rien',
-    ).toBeDefined()
+    /** Le site du « Feu du Gué », MESURÉ le 2026-09-22 — une tuile, plus un Feu. */
+    const BUT = { tx: 96, ty: 360 }
+    // ⚠ J'AI ESSAYÉ D'AJOUTER ICI UNE PRÉMISSE « la tuile est marchable », ET ELLE ÉTAIT FAUSSE
+    // (2026-09-29, attrapée par le rouge) : `marchableAEtage(map, x, y, palierDuSol(map, x, y))`
+    // rend `false` sur les DEUX bouts du trajet — le but comme le départ — alors que
+    // `pathToward` les relie en 192 pas. Ce n'est pas le prédicat que le pathfinder consulte :
+    // un corps qui SUIT UN CHEMIN ne se juge pas comme une paroi. La vraie prémisse de ce test
+    // est le `null` à 4 096 juste dessous — le contrôle positif EST la moitié du test.
     const world: MoveWorld = {
       map: sim.map,
       structures: sim.structures,
       nodes: sim.nodes,
-      moverVillageId: village!.id,
+      moverVillageId: null,
       opensDoors: true,
       etat: sim,
     }
-    /** Le villageois figé, MESURÉ le 2026-09-22 : (115, 362). */
-    const auFeu = (budget: number): unknown =>
-      pathToward(world, 115.5, 362.5, village!.fireTx, village!.fireTy, budget)
+    /** Le corps figé, MESURÉ le 2026-09-22 : (115, 362). */
+    const auBut = (budget: number): unknown =>
+      pathToward(world, 115.5, 362.5, BUT.tx, BUT.ty, budget)
 
     expect(
-      auFeu(4096),
+      auBut(4096),
       'le piège de 4096 a disparu : plus aucun détour ne le dépasse ici, ce test ne garde plus rien',
     ).toBeNull()
-    const chemin = auFeu(NPC_AI.PATH_EXPLORE) as { tx: number; ty: number }[] | null
-    expect(chemin, 'un villageois ne sait plus rentrer à son Feu — V-R11 est rompue').not.toBeNull()
+    const chemin = auBut(NPC_AI.PATH_EXPLORE) as { tx: number; ty: number }[] | null
+    expect(chemin, 'on ne sait plus rejoindre (96,360) — V-R11 est rompue').not.toBeNull()
     // Le détour est LONG, et c'est tout l'enjeu : un chemin court voudrait dire que la
     // géographie a changé et que le test mesure autre chose.
     expect(chemin!.length, 'le retour est devenu court : ce n’est plus le même monde').toBeGreaterThan(100)

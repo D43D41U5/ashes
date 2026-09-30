@@ -293,6 +293,10 @@ const SUITES = [
   //   assignable à `(a, b)`, or un `warmth = 0` optionnel est la forme même d'un recouplage.
   //   `champ-ref.test.ts` −2 (la force du Feu modulée par l'engagement dans la chaîne GI ; la
   //   moitié SOUFFLE est gardée). Suite à 1805 ✓ ; plancher inchangé (1740).
+  // 2026-09-29 (tranche 4) : sim 2415 → 2405 (−2 `debug.test.ts`, −8 `village-plan.test.ts` ;
+  //   la garde rescapée de `peche.test.ts` ne change pas le compte) et le CLIENT PERD SON SEUL
+  //   SAUTÉ — V-A2 était gelée par `it.skipIf`, elle est supprimée : 1805 ✓ tout net. Planchers
+  //   sim et client inchangés (2370 et 1740) : ils gardent leur marge de quelques pourcents.
   { nom: 'client', dir: 'packages/client', args: ['run'], plancher: 1740 },
   { nom: 'serveur', dir: 'packages/server', args: ['run'], plancher: 36 },
   // Le banc pilote le vrai worldgen sur la carte de production : lent, et seul à porter le
@@ -306,7 +310,14 @@ const SUITES = [
   //   de l'ÉLECTION DE SITES (la marge du raideur) — que le drapeau ne touche pas —, seul son
   //   dernier bloc est gelé. Vider le banc de sa couverture worldgen pendant le chantier qui la
   //   travaille aurait été l'inverse du but. Plancher à 1 ; il remonte à 4 au rallumage.
-  { nom: 'banc', dir: 'packages/sim', args: ['run', 'src/scenario.test.ts', '--dangerouslyIgnoreUnhandledErrors'], plancher: 1 },
+  // 2026-09-29 : LE BANC REMONTE À 2, ET « IL REMONTE À 4 AU RALLUMAGE » N'A PLUS D'OBJET — il
+  //   n'y a plus rien à rallumer (`FEATURES` est vide, tranche 4 du retrait des villages PNJ).
+  //   Des trois gardes gelées le 26/09, deux sont SUPPRIMÉES avec leur sujet (l'économie sur un
+  //   jour, A8 la météo — celle-là verdissait à vide) et **V-A9 est DÉGELÉE** : « mesure le monde
+  //   qu'on JOUE » tourne, sa clause finale affirmant `villages.length === 0` pour qu'une
+  //   fondation revenue par une autre porte ne passe pas en silence. Suite à 2 ✓, plancher à 2 —
+  //   pas de marge ici : deux gardes, on les compte à l'unité.
+  { nom: 'banc', dir: 'packages/sim', args: ['run', 'src/scenario.test.ts', '--dangerouslyIgnoreUnhandledErrors'], plancher: 2 },
 ]
 
 /**

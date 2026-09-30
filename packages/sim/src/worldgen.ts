@@ -12,7 +12,6 @@
  * une image posée) : le type survit pour les parties sauvées, plus rien n'en pose.
  */
 import { BALANCE, VILLAGE_GROWTH } from './balance'
-import { FEATURES } from './features'
 import { addItems } from './items'
 import { RING_OFFSETS } from './npc'
 import type { SimState } from './sim'
@@ -56,7 +55,8 @@ export function peuplerLesVoisins(
   /** Le site du joueur (ou la base de la zone) : on ne fonde JAMAIS dessus. */
   premier: { tx: number; ty: number },
   combien: number = BALANCE.VILLAGES_VEILLEE,
-  habitants: number = BALANCE.NPC_PER_VILLAGE,
+  // (`habitants` a vécu ici, entre `combien` et `carte` : le nombre de PNJ par village fondé.
+  //  Parti le 2026-09-29 avec la fondation — chaque appelant perd un `undefined`.)
   /**
    * La carte zonée, quand l'hôte l'a encore sous la main — alors le RÉSEAU DE SENTES se trace
    * ici (spec `ascension.md` V-A7). Il se trace ICI et pas ailleurs pour deux raisons :
@@ -67,15 +67,6 @@ export function peuplerLesVoisins(
    * Sans carte (un test qui peuple une carte nue), la passe ne tourne pas : rien ne casse.
    */
   carte?: CarteZonee,
-  /**
-   * FONDE-T-ON VRAIMENT LES VILLAGES ? Défaut : `FEATURES.VILLAGES_PNJ`, éteint depuis le
-   * 2026-09-26 (décision d'Alexis : finir le worldgen d'abord). Une garde dont le village est le
-   * SUJET passe `true`. Tout ce qui précède la fondation — l'élection des sites, la marge du
-   * raideur, le RÉSEAU DE SENTES — tourne dans les deux cas : les routes du monde joué sont donc
-   * les mêmes, elles mènent seulement à des clairières vides. Voir `features.ts` pour ce que le
-   * drapeau change vraiment (place nette perdue, flux du PRNG décalé) et ce qu'il garantit.
-   */
-  fonder: boolean = FEATURES.VILLAGES_PNJ,
 ): { sites: { tx: number; ty: number }[]; margeDeCible: number } {
   const d2 = (a: { tx: number; ty: number }, b: { tx: number; ty: number }): number =>
     (a.tx - b.tx) * (a.tx - b.tx) + (a.ty - b.ty) * (a.ty - b.ty)
@@ -130,14 +121,17 @@ export function peuplerLesVoisins(
     state.nodes = retirerLesNoeudsSousLaRoute(state.nodes, state.map).restants
   }
 
-  // ═══ LA SEULE PORTE QUE LE DRAPEAU FERME (`FEATURES.VILLAGES_PNJ`) ═══
-  // Tout ce qui est au-dessus a déjà tourné — les sites sont élus, les routes sont peintes, les
-  // nœuds sous la route sont partis. On s'arrête juste avant que le bâti ne remue le sol.
-  if (fonder) {
-    for (const v of sites) {
-      foundNpcVillage(state, v.tx, v.ty, habitants)
-    }
-  }
+  // ⚠ ═══ ELLE FONDAIT LES VILLAGES ICI, ET ELLE NE LE FAIT PLUS ═══
+  // Une boucle `for (const v of sites) foundNpcVillage(...)` tenait cette place, derrière le
+  // drapeau `FEATURES.VILLAGES_PNJ` (éteint le 2026-09-26, retiré le 2026-09-29 avec la tranche
+  // 4). Tout ce qui est AU-DESSUS tourne toujours et c'est l'essentiel : les sites sont élus, la
+  // marge du raideur est garantie, le RÉSEAU DE SENTES est peint, les nœuds sous la route sont
+  // partis. Les routes du monde joué sont donc exactement les mêmes — elles mènent seulement à
+  // des clairières vides, et c'est ce que le pivot de la braise veut.
+  //
+  // ⚠ LE NOM DE CETTE FONCTION MENT DÉSORMAIS D'UN MOT : elle n'a jamais peuplé que par cette
+  // boucle. On le GARDE exprès — trois hôtes et une poignée d'instruments l'appellent, et le
+  // chantier de la balise la renommera pour de bon quand il saura ce qu'elle pose.
 
   return { sites, margeDeCible: Math.round(margeDe(sites, MEUTE) * 10) / 10 }
 }
@@ -192,7 +186,10 @@ export function foundNpcVillage(
   // `count` villageois sur l'anneau, et la boucle qui suivait leur mettait un épieu en main
   // (« un village PNJ naît armé », spec combat R13) : les deux partent avec l'IA qui les faisait
   // vivre. **`count` SURVIT, et ce n'est pas un oubli** : il commande `RING_OFFSETS.slice(0,
-  // count + 2)` ci-dessus, donc les tuiles que le semis de décor laisse nues autour du Feu. Le
-  // retirer déplacerait des nœuds sur toute la carte et ferait diverger le PRNG.
+  // count + 2)` ci-dessus, donc les tuiles que cette fonction rend nues autour du Feu — le
+  // retirer remuerait la trentaine de montages de test qui l'appellent, et la référence
+  // d'`empreinte-sim`. ⚠ **ET CETTE FONCTION EST DÉSORMAIS UN MONTAGE DE TEST** : depuis que la
+  // boucle de fondation a quitté `peuplerLesVoisins` (ci-dessus, le même jour), elle n'a plus
+  // AUCUN appelant de runtime — le monde joué n'a plus ni village PNJ ni campement.
   return village
 }
