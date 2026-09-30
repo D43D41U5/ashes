@@ -407,14 +407,45 @@ export const TEMPERATURE = {
   /**
    * Décalage signé par terrain (id de TERRAINS). Absent = 0.
    *
-   * LE FROID VIENT DU BIOME, pas de l'altitude (la carte est plate — façon RimWorld). Ce qui était
-   * autrefois « le froid, prix de la verticalité » (un terme `elevation × ALT_COLD`) est re-sourcé
-   * ici : la neige et surtout le glacier portent leur froid dans leur terrain, ce qui garde le Névé
-   * et le Glacier mortellement froids sans aucune hauteur. Ordres de grandeur, à calibrer en playtest.
-   * ⚠ AMENDÉ le 2026-09-20 (spec `flanc.md` F-R6, décision d'Alexis) : sur la Racine jouée — un flanc
-   * en quatre paliers — le froid montera AUSSI avec l'étage, par une constante `FROID_PAR_ETAGE`
-   * faible, à côté du biome et non à sa place. Pas encore codée.
+   * LE FROID VIENT DU BIOME **ET DE L'ALTITUDE** — la seconde moitié est arrivée le 2026-09-30
+   * (`FROID_PAR_ETAGE`, juste au-dessus). Le biome garde son rôle et ne bouge pas d'un degré : la
+   * neige et le glacier portent leur froid dans leur TERRAIN, ce qui tient le Névé et le Glacier
+   * mortellement froids *là où ils sont*, quelle que soit leur hauteur. L'étage s'ajoute **à côté**,
+   * jamais à sa place. Ordres de grandeur, à calibrer en playtest.
+   * *(Le terme `elevation × ALT_COLD` d'avant le pivot du 2026-07-17 ne revient pas pour autant :
+   * celui-là lisait une hauteur CONTINUE ; celui d'aujourd'hui lit le PALIER du sol, qui est une
+   * strate — quatre marches, pas une pente. Voir `FROID_PAR_ETAGE`.)*
    */
+  /**
+   * ═══ UN ÉTAGE = UNE SAISON : LE FROID QUE COÛTE UN PALIER, EN DEGRÉS ═══
+   *
+   * Loi d'Alexis du 2026-09-28 (`braise.md` B-R4b) : *« un hiver correspond à un été de l'étage
+   * supérieur »*, après sa demande « l'étage doit avoir autant d'impact que les saisons ». **28 est
+   * donc exactement l'amplitude de l'année**, prise sur les cardinaux du `SOCLE` ci-dessus :
+   * mi-Ardeur **+26** au jour 45 → cœur du Grand Froid **−2** au jour 105. Ce n'est pas un réglage
+   * heureux, c'est une ÉGALITÉ — si `SOCLE` change d'amplitude, cette constante doit suivre, et la
+   * garde F-A11 ② le vérifie en comparant `cransExiges(palier k, hiver)` à `cransExiges(k+1, été)`.
+   *
+   * ⚠ **IL VAUT 14 FOIS LA « CONSTANTE FAIBLE » DÉCIDÉE LE 2026-09-20** (F-R6 disait « °C, faible »,
+   * de l'ordre de 2). Révisé le 28/09 sur un chiffre : la plaine d'hiver DE NUIT est déjà à −16 °C
+   * au palier 0, soit 22 °C sous le confort ; un terme de 2 °C par palier n'ajoutait qu'un tiers de
+   * cran par marche, et le CALENDRIER aurait commandé dix fois plus que l'ALTITUDE. Or on monte une
+   * montagne — c'est elle qui doit commander.
+   *
+   * ⚠ **IL S'APPLIQUE HORS DU FACTEUR D'ABRI** (décision d'Alexis, 2026-09-30). F-R6 le plaçait
+   * « dans l'exposition », or l'exposition est MULTIPLIÉE par `SHELTER_FACTOR` : un toit aurait
+   * offert 42 °C au palier 3, soit un cran et demi gratuit, et on se serait « roofé » jusqu'au
+   * sommet — la braise aurait cessé d'être la porte de l'altitude (B-R7). Un toit continue
+   * d'amortir la nuit, la saison et la météo ; il n'amortit pas la montagne.
+   *
+   * ⚠ **ET IL SATURE SOUS LE CLAMP, EXPRÈS.** `clampTemp` borne l'ambiant à `AMBIANT_MIN` = −18 :
+   * dès le palier 1, l'air que lisent le gel, la flore et les Cendreux vaut −18 et n'en bouge plus.
+   * C'EST VOULU (`braise.md` § 5.9 : gel et flore permanents en altitude, Cendreux saturés) et
+   * MESURÉ : tous leurs seuils sont au-dessus de −18, donc aucun ne perd d'information. Ce qui a
+   * besoin de l'air NON borné, c'est le compte de crans de la braise — il passe par
+   * `airNonBorneAt`, à côté. Le CORPS, lui, ne lit jamais cet air-là (B-R6).
+   */
+  FROID_PAR_ETAGE: 28,
   BIOME_OFFSET: {
     3: 2, 13: 2, 14: 2, 22: 2, 24: 2, // forêts (couvert — la saulaie aussi) : +2 °C
     8: -2, 18: -2, 19: -2, 25: -2, // marais/tourbière/roselière/prairie humide (mouillé)

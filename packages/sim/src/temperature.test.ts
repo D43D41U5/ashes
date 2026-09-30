@@ -4,17 +4,23 @@ import { respawn } from './combat'
 import { drainEvents } from './events'
 import { addItems } from './items'
 import { createEmptyMap } from './map'
+import { palierDuSol } from './etages'
+import { TERRASSES } from './terrasses'
 import { createSim, spawnEntity, step, type Entity, type SimState } from './sim'
 import {
   advanceTemperature,
+  airNonBorneAt,
   AMBIANT_HYPOTHERMIE,
   ambientTemperature,
+  baselineTemperatureAt,
   cibleCorporelle,
   coldDamagePerTick,
   coldEffectRamp,
   coldSpeedFactor,
   coldStaminaRegenFactor,
   driftStep,
+  isSheltered,
+  socleDuJour,
 } from './temperature'
 import { cycleOffsetForStartHour, jourDeSaison, TICKS_PER_CYCLE, TICKS_PER_SEASON_DAY, YEAR_DAYS } from './time'
 
@@ -24,8 +30,15 @@ function spawn(state: SimState, x: number, y: number): Entity {
   return state.entities.find((e) => e.id === id)!
 }
 
-/** Remplit toute la carte d'un terrain uniforme. (La carte est plate : le froid vient du BIOME,
- *  plus de l'altitude.) */
+/**
+ * Remplit toute la carte d'un terrain uniforme — et la laisse SANS `map.palier`, donc **au palier
+ * 0 partout** (`palierDuSol` rend 0 sur une carte qui n'en porte pas).
+ *
+ * ⚠ Depuis le 2026-09-30 (`FROID_PAR_ETAGE`), ce n'est plus « la carte est plate » : c'est un
+ * choix de montage. Ces gardes-là isolent le BIOME et l'HEURE, et le froid d'étage y est nul par
+ * construction. Celles qui éprouvent l'altitude montent leur carte avec `carteEnPaliers`,
+ * plus bas — sans quoi elles passeraient **au vert à vide**.
+ */
 function flatMap(state: SimState, terrain: number): void {
   const n = state.map.width * state.map.height
   state.map.terrain = new Array(n).fill(terrain)
@@ -67,7 +80,7 @@ describe('ambientTemperature', () => {
     expect(ambientTemperature(state, 5, 5)).toBeGreaterThanOrEqual(TEMPERATURE.AMBIANT_DOUX)
   })
 
-  it('glacier = un air qui TUE (≤ AMBIANT_HYPOTHERMIE) — le froid vient du BIOME, plus de l\'altitude', () => {
+  it('glacier = un air qui TUE (≤ AMBIANT_HYPOTHERMIE) — au palier 0, le BIOME suffit déjà', () => {
     const state = createSim(1)
     flatMap(state, 15 /* glacier */)
     expect(ambientTemperature(state, 5, 5)).toBeLessThanOrEqual(AMBIANT_HYPOTHERMIE)
@@ -356,5 +369,116 @@ describe('la thermogenèse — la faim suit le froid RESSENTI (décision d’Ale
       'la prémisse : cet air-là est doux',
     ).toBeGreaterThanOrEqual(T.AMBIANT_DOUX)
     expect(penteObservee(state, e, 200)).toBeCloseTo(penteParTick(0), 6)
+  })
+})
+
+describe('FROID_PAR_ETAGE — monter refroidit (braise.md B-R4b, étape 1 du § 3)', () => {
+  /**
+   * UNE CARTE QUI PORTE DES PALIERS — en bandes horizontales de quatre lignes, un palier chacune.
+   *
+   * ⚠ C'EST LA GARDE DE LA GARDE : sans `map.palier`, `palierDuSol` rend 0 partout et **tout ce
+   * bloc passerait au vert à vide** — le piège que braise.md § 3 étape 1 nomme lui-même. Et c'est
+   * `map.palier` (le SOL) et non `entity.etage` : l'étage d'un corps est effacé au sol, un terme
+   * qui s'y appuierait serait inerte.
+   * `number[]` et non `Uint8Array` : `SimState` doit rester JSON-sérialisable.
+   */
+  function carteEnPaliers(state: SimState): void {
+    flatMap(state, 9 /* scree, offset biome 0 — on isole l'altitude */)
+    const { width, height } = state.map
+    const palier: number[] = new Array(width * height)
+    for (let ty = 0; ty < height; ty++) {
+      const p = Math.min(TERRASSES.PALIERS - 1, ty >> 2)
+      for (let tx = 0; tx < width; tx++) palier[ty * width + tx] = p
+    }
+    state.map.palier = palier
+  }
+
+  /** Le milieu de la bande du palier `p` — MIDI, biome neutre, sans météo. */
+  const yDe = (p: number): number => p * 4 + 1.5
+
+  const mondeAuJour = (jour: number): SimState => {
+    const state = createSim(1, { calendarScale: 1, cycleOffset: cycleOffsetForStartHour(12, 1), meteoActive: false })
+    carteEnPaliers(state)
+    auJour(state, jour)
+    return state
+  }
+
+  it('la prémisse : la carte de montage porte bien quatre paliers distincts', () => {
+    // Un contrôle POSITIF avant les lois : si cette garde tombe, les suivantes ne prouvent rien.
+    const state = mondeAuJour(coeurDe(2))
+    const vus = new Set<number>()
+    for (let p = 0; p < TERRASSES.PALIERS; p++) vus.add(palierDuSol(state.map, 5, Math.floor(yDe(p))))
+    expect([...vus].sort((a, b) => a - b)).toEqual([0, 1, 2, 3])
+  })
+
+  it('UN PALIER DE PLUS = FROID_PAR_ETAGE DE MOINS, exactement — à tous les paliers, aux quatre saisons', () => {
+    const fautes: string[] = []
+    for (const phase of [1, 2, 3, 4]) {
+      const state = mondeAuJour(coeurDe(phase))
+      for (let p = 0; p + 1 < TERRASSES.PALIERS; p++) {
+        // L'air NON borné : `clampTemp` écrase le saut dès le palier 1 (voir la garde du clamp).
+        const ici = airNonBorneAt(state, 5.5, yDe(p), state.tick)
+        const dessus = airNonBorneAt(state, 5.5, yDe(p + 1), state.tick)
+        const saut = ici - dessus
+        if (saut !== TEMPERATURE.FROID_PAR_ETAGE) fautes.push(`saison ${phase}, p${p}→p${p + 1} : saut de ${saut} (${TEMPERATURE.FROID_PAR_ETAGE} attendu) — ${ici} puis ${dessus}`)
+      }
+    }
+    expect(fautes, fautes.join('\n')).toHaveLength(0)
+  })
+
+  it("L'ALTITUDE NE S'ABRITE PAS : sous un toit, le saut vaut encore FROID_PAR_ETAGE ENTIER", () => {
+    // Décision d'Alexis, 2026-09-30 : « Non — l'altitude ne s'abrite pas. » Le terme vit dans le
+    // groupe du SOCLE, HORS du facteur d'abri — sinon un toit diviserait la montagne par deux et
+    // B-R7 tomberait (c'est la braise, pas un toit, qui est la porte de l'altitude).
+    // ⚠ CETTE GARDE EST LA SEULE QUI TIENNE CETTE DÉCISION : déplacer le terme à l'intérieur du
+    // facteur d'abri rendrait `SHELTER_FACTOR × FROID_PAR_ETAGE` et la ferait rougir. VÉRIFIÉ par
+    // mutation le 2026-09-30 (terme déplacé dans le groupe de l'exposition : saut de 14, ✗).
+    const state = mondeAuJour(coeurDe(4))
+    for (let p = 0; p + 1 < TERRASSES.PALIERS; p++) {
+      state.structures.length = 0
+      // Le même toit sur les deux tuiles : l'exposition s'annule, seul le socle reste.
+      state.structures.push({ type: 'house', tx: 5, ty: Math.floor(yDe(p)) } as never)
+      state.structures.push({ type: 'house', tx: 5, ty: Math.floor(yDe(p + 1)) } as never)
+      const ici = airNonBorneAt(state, 5.5, yDe(p), state.tick)
+      const dessus = airNonBorneAt(state, 5.5, yDe(p + 1), state.tick)
+      // ⚠ `isSheltered` prend des coordonnées de TUILE (`s.tx === tx`), pas des coordonnées
+      // monde — la lire en 5,5 rendrait `false` en silence et l'égalité passerait au vert à vide.
+      expect(isSheltered(state, 5, Math.floor(yDe(p))), `abri au palier ${p}`).toBe(true)
+      expect(isSheltered(state, 5, Math.floor(yDe(p + 1))), `abri au palier ${p + 1}`).toBe(true)
+      expect(ici - dessus, `sous abri, p${p}→p${p + 1} : ${ici} puis ${dessus}`).toBe(TEMPERATURE.FROID_PAR_ETAGE)
+    }
+  })
+
+  it("UN ÉTAGE = UNE SAISON : l'amplitude de l'année EST le pas d'un palier (B-R4b)", () => {
+    // La loi d'Alexis — « un hiver correspond à un été de l'étage supérieur » — n'est vraie que
+    // si le pas d'altitude égale l'amplitude du `SOCLE`. Ce n'est pas un hasard heureux : c'est
+    // une ÉGALITÉ, et si la courbe `SOCLE` change d'amplitude, `FROID_PAR_ETAGE` doit suivre.
+    const ardeur = socleDuJour(coeurDe(2), 0)
+    const grandFroid = socleDuJour(coeurDe(4), 0)
+    expect(ardeur - grandFroid, `SOCLE : Ardeur ${ardeur} → Grand Froid ${grandFroid}`).toBe(TEMPERATURE.FROID_PAR_ETAGE)
+    // Et la conséquence, lue sur l'air : l'hiver du palier k vaut l'été du palier k+1.
+    const hiver = mondeAuJour(coeurDe(4))
+    const ete = mondeAuJour(coeurDe(2))
+    for (let p = 0; p + 1 < TERRASSES.PALIERS; p++) {
+      expect(airNonBorneAt(hiver, 5.5, yDe(p), hiver.tick), `hiver p${p} vs été p${p + 1}`)
+        .toBe(airNonBorneAt(ete, 5.5, yDe(p + 1), ete.tick))
+    }
+  })
+
+  it("LE CLAMP TIENT L'ANCRE DU CORPS : la lecture BORNÉE ne descend jamais sous AMBIANT_MIN", () => {
+    // `AMBIANT_MIN` = −18 est l'ancre du modèle du corps (« air à AMBIANT_MIN ⇒ corps à
+    // CORPS_MORTEL »). Le froid d'étage vit HORS du clamp pour la demande en crans (B-R4), mais
+    // la lecture bornée — celle que lit tout le reste du jeu — reste inchangée : c'est ce qui
+    // permet à `cibleCorporelle`, `PENTE_CORPS` et `CORPS_MORTEL` de ne pas bouger d'un cheveu.
+    const state = mondeAuJour(coeurDe(4))
+    for (let p = 0; p < TERRASSES.PALIERS; p++) {
+      const borne = baselineTemperatureAt(state, 5.5, yDe(p), state.tick)
+      expect(borne, `borné au palier ${p}`).toBeGreaterThanOrEqual(TEMPERATURE.AMBIANT_MIN)
+    }
+    // ET LA CONTREPARTIE, QUI EST LE MOTIF DE L'ÉTAPE 3 : au sommet, le borné SATURE — il ne
+    // sait plus dire de combien on est trop haut. Seul le non borné le sait.
+    const haut = TERRASSES.PALIERS - 1
+    expect(baselineTemperatureAt(state, 5.5, yDe(haut), state.tick)).toBe(TEMPERATURE.AMBIANT_MIN)
+    expect(airNonBorneAt(state, 5.5, yDe(haut), state.tick)).toBeLessThan(TEMPERATURE.AMBIANT_MIN)
   })
 })

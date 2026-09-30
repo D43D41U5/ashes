@@ -92,6 +92,7 @@ import {
   TERRAINS,
 } from './balance'
 import { froidDeCendre, tuileCendree } from './cendre'
+import { TERRASSES } from './terrasses' // `PALIERS` : le pire palier, pour que la borne reste sound
 import { terrainAt } from './map'
 import { coldMaximal, frontDuCycle, frontMeteoPos, largeurDe, partDeNeige, type BandeMeteo } from './meteo'
 import { effetsDuJour } from './modificateur'
@@ -140,6 +141,31 @@ function plancherDeLaVallee(state: SimState): number {
   t -= TEMPERATURE.ECART_NUIT(jour) * partDeNuit(cycleTick, dayTicksAt(state, state.tick))
   if (state.brume) t -= BRUME.COLD_MALUS
   if (state.meteo) t -= coldMaximal(state.meteo.type)
+  // ⚠ ═══ LE FROID D'ALTITUDE, AU PIRE PALIER : SANS LUI CETTE BORNE EST **FAUSSE** ═══
+  //   (2026-09-30, `braise.md` § 3.1 — `TEMPERATURE.FROID_PAR_ETAGE`.)
+  //
+  // Cette fonction n'a PAS DE POSITION : c'est une borne inférieure sur TOUTE la vallée. Depuis que
+  // le froid monte avec le palier, le point le plus froid n'est plus au fond mais au sommet — et
+  // une borne qui l'ignorerait rendrait `gelPossible` faux pendant que le haut est à −86 °C. Ce
+  // serait exactement le défaut que l'en-tête de `gelPossible` interdit : « une tuile franchissable
+  // pour l'avatar et bloquante pour l'A* ».
+  //
+  // ⚠ **ET LE RACCOURCI EN MEURT, C'EST MESURÉ — MAIS SON COÛT EN TEMPS, LUI, NE L'EST PAS.**
+  // Balayage de l'année entière (240 points : midi et cœur de nuit de chacun des 120 jours) : le
+  // raccourci coupait sur **120/240 points (50 %)** sans ce terme, il coupe maintenant sur
+  // **0/240** — le plancher ne repasse jamais au-dessus du seuil, pas même en plein été. La garde
+  // reste JUSTE (elle ne rate aucune glace), elle ne fait simplement plus rien gagner.
+  //   ⚠ **CE QUE LA MESURE NE DIT PAS** : `tools/profil-tick.mts 8 50` ne voit PAS la différence,
+  //   et pourtant le raccourci coupait au jour qu'il profile (jour 61, plancher 3,7 °C pour un
+  //   seuil de 2). Trois relevés — 6,195 · 7,363 · 6,039 ms/tick — ont donné l'A/B À L'ENVERS :
+  //   l'écart est sous le plancher de bruit de l'instrument. Les gros consommateurs de la porte
+  //   ne sont donc PAS le tick nu : ce sont les CHAMPS DE FLUX (`blockedAt` interroge `estGele`
+  //   par tuile bloquante) et la cuisson des chunks du client (`gel-layer.ts:447`) — ni l'un ni
+  //   l'autre exercés par ce profileur. **Le coût reste donc SUSPECTÉ, pas MESURÉ.**
+  // **La rendre LOCALE (par palier ou par région) est l'étape 2 de `braise.md` § 3, explicitement
+  // obligatoire** — et l'argument n'est pas un chiffre de tick, c'est qu'une garde qui ne garde
+  // plus rien est une garde morte.
+  t -= TEMPERATURE.FROID_PAR_ETAGE * (TERRASSES.PALIERS - 1)
   return t
 }
 

@@ -5,7 +5,14 @@
  *
  * ═══ DEUX ÉCHELLES, UNE UNITÉ : LE DEGRÉ CELSIUS (décision d'Alexis, 2026-08-22) ═══
  *
- * L'AMBIANT vit dans [−18, +22] °C ; LE CORPS dans [25, 37] °C. Ils ne se confondent pas —
+ * L'AMBIANT BORNÉ vit dans [`AMBIANT_MIN`, `AMBIANT_MAX`] = [−18, +30] °C ; LE CORPS dans
+ * [25, 37] °C. *(Le plafond a été relevé de 22 à 30 quand le socle est devenu une courbe — l'Ardeur
+ * atteint +26 ; voir `balance.ts`.)* ⚠ **ET DEPUIS LE 2026-09-30, IL Y A UNE TROISIÈME LECTURE** :
+ * `airNonBorneAt` rend l'air **sans le clamp**, et elle descend jusqu'à **−100 °C** au sommet en
+ * hiver (`FROID_PAR_ETAGE` = 28 par palier). Elle n'est PAS pour le corps : la demande en crans de
+ * la braise la lit (`braise.md` B-R4), le corps ne lit jamais qu'un déficit en crans (B-R6). C'est
+ * pour cela que `AMBIANT_MIN` peut rester l'ancre du modèle du corps sans mentir sur la montagne.
+ * Ambiant et corps ne se confondent pas —
  * un corps n'est pas de l'air — et c'est `cibleCorporelle` qui fait le pont : la température
  * à laquelle un corps nu se STABILISE dans cet air-là. Voir l'en-tête de `TEMPERATURE` dans
  * `balance.ts` pour la conversion depuis l'ancienne jauge 0-100 (une application affine :
@@ -18,7 +25,7 @@ import { fireWarmthFactor } from './fire'
 import { die } from './combat'
 import { countOf } from './items'
 import { terrainAt } from './map'
-import { auMemeEtage, terrainAEtage } from './etages'
+import { auMemeEtage, palierDuSol, terrainAEtage } from './etages'
 import { meteoColdAt } from './meteo'
 import { roofAt, type Structure } from './village'
 import { avanceesDepuisAges, froidDeCendre } from './cendre'
@@ -213,6 +220,39 @@ export function baselineTemperatureAt(state: SimState, x: number, y: number, tic
 }
 
 /**
+ * ═══ L'AIR RÉEL D'UNE TUILE, **SANS LA BORNE DU MODÈLE DU CORPS** (B-R4, `braise.md`) ═══
+ *
+ * Jumelle exacte de `baselineTemperatureAt` : même grotte, même abri, même composition — **moins le
+ * `clampTemp` final**. Elle existe pour ce que la braise devra compter, et pour rien d'autre :
+ *
+ * ```
+ * cransExiges(air) = ceil( max(0, AMBIANT_DOUX − air) / BRAISE.CRAN_DEGRES )
+ * ```
+ *
+ * ⚠ **SANS ELLE CETTE FORMULE NE REND QUE 0 OU 1** — MESURÉ : le déficit maximal d'un air borné
+ * vaut `AMBIANT_DOUX − AMBIANT_MIN` = 6 − (−18) = 24, et `ceil(24 / 28)` = 1. Sous le clamp, le
+ * palier 1 d'été et le palier 3 d'hiver rendent donc **le même chiffre**, et toute l'échelle de
+ * `braise.md` (un cran = un étage = une saison) est inécrivable.
+ *
+ * ⚠ **CE N'EST PAS L'AIR DU CORPS, ET IL NE DOIT JAMAIS LE DEVENIR** (B-R6). Le corps lit
+ * `ambientTemperature`, borné, et c'est ce qui tient tout son modèle : `cibleCorporelle`,
+ * `PENTE_CORPS`, `CORPS_MORTEL` et `AMBIANT_MIN` sont calibrés sur une bande de 24 °C. À −86 °C la
+ * valeur serait re-clampée mais la VITESSE de dérive (proportionnelle à l'écart) exploserait — on
+ * mourrait instantanément au palier 3 au lieu de « se mettre à mourir ». Ce que le corps lira, c'est
+ * un **déficit en crans** (1 à 4), jamais ces degrés-là.
+ *
+ * ⚠ Aucun appelant aujourd'hui, et c'est assumé : elle arrive à l'étape 1 de `braise.md` § 3 parce
+ * que l'étape 4 (la braise en état) ne peut pas s'écrire sans elle, et qu'une étape 1 qui la
+ * remettrait à plus tard livrerait un froid d'altitude que rien ne sait lire. *(Une loi livrée sans
+ * appelant est un risque connu du dépôt — celui-ci est daté et nommé, pas oublié.)*
+ */
+export function airNonBorneAt(state: SimState, x: number, y: number, tick: number, cst?: ConstantesDeTuile, etage?: number): number {
+  if (sousLaRoche(state, Math.floor(x), Math.floor(y), etage)) return T.GROTTE_AMBIANT
+  const shelter = cst?.abri ?? abriDeTuile(state, x, y, etage)
+  return airDuMonde(state, x, y, tick, shelter, cst)
+}
+
+/**
  * ═══ CE QUI, DANS LE FROID D'UNE TUILE, NE DÉPEND PAS DU TICK (perf, 2026-08-26) ═══
  *
  * Deux termes du froid ne bougent pas quand l'horloge bouge : **l'ABRI** (une maison ou une
@@ -284,7 +324,43 @@ export function froidDeFumerolleDeTuile(state: SimState, x: number, y: number): 
  * LE FROID DU MONDE À DÉCOUVERT — l'écrivain unique de `baselineTemperatureAt` et de
  * `climatFlore`, qui ne diffèrent QUE par le facteur d'abri.
  */
-function froidDuMonde(state: SimState, x: number, y: number, tick: number, shelter: number, cst?: ConstantesDeTuile): number {
+/**
+ * ═══ LE FROID QUE COÛTE L'ALTITUDE — `− FROID_PAR_ETAGE × palier` (F-R6, B-R4b) ═══
+ *
+ * ⚠ **IL SE DÉRIVE DU PALIER DU SOL, JAMAIS DE `entity.etage`** — et ce n'est pas un détail de
+ * style : `poserLEtageDuCorps` **EFFACE** `corps.etage` dès qu'un corps se tient sur le palier de
+ * sa tuile (`etages.ts:180`, `delete corps.etage`), c'est-à-dire pour tout marcheur, y compris au
+ * sommet. Un terme écrit en `etage ?? 0` serait donc **inerte en jeu** — et, le pire, une garde
+ * qui poserait `entity.etage` à la main passerait au VERT sur une fonctionnalité morte.
+ *
+ * ⚠ **ET PAS `niveauDuCorps` NON PLUS**, qui n'est pas borné : MESURÉ sur le monde joué, il existe
+ * **3 459 tuiles de niveau 4** (les chapeaux posés au-dessus du palier 3) — là, `niveauDuCorps`
+ * rendrait 4 et le terme vaudrait **−112 °C**, un palier de froid que la loi ne prévoit pas.
+ * `palierDuSol` borne à `0..PALIERS−1` par construction, et rend 0 sur toute carte sans `palier`
+ * (une carte d'avant, le monde complet, une carte de test) : ces mondes-là ne changent pas d'un bit.
+ *
+ * Le signe est négatif ou nul pour tout palier ≥ 0, ce qui garde `climatMaximal` (qui n'a pas de
+ * position) valide comme borne OPTIMISTE sans y toucher — c'est ce que F-R6 avait prévu.
+ */
+function froidDEtage(state: SimState, x: number, y: number): number {
+  return -T.FROID_PAR_ETAGE * palierDuSol(state.map, Math.floor(x), Math.floor(y))
+}
+
+/**
+ * ═══ L'AIR DU MONDE, **NON BORNÉ** — la composition seule, sans `clampTemp` ═══
+ *
+ * C'est le corps de `froidDuMonde`, dont il n'est séparé que par le clamp final. Il existe pour
+ * une raison MESURÉE et non pour la symétrie : sous le clamp, **le compte de crans de la braise se
+ * réduit à {0, 1}**. Le déficit maximal d'un air borné vaut `AMBIANT_DOUX − AMBIANT_MIN` = 24, et
+ * `ceil(24 / 28)` = 1 — donc tout palier ≥ 1 rendrait *le même chiffre*, hiver comme été, palier 1
+ * comme palier 3, et la barre entière de `braise.md` serait inécrivable (B-A2).
+ *
+ * ⚠ **`T₀` RESTE BORNÉ, ET C'EST DÉLIBÉRÉ.** T₀ est par définition l'ambiant à découvert que la
+ * météo TROUVE en arrivant (`meteo.md` R11-R12) : c'est dessus que l'orage décide de sa morsure et
+ * que la pluie décide d'être neige. Le déborner changerait la météo, qui n'a rien demandé — et ne
+ * changerait rien à la limite de neige, qui sature à `LIMITE_NEIGE` = 0 bien avant −18.
+ */
+function airDuMonde(state: SimState, x: number, y: number, tick: number, shelter: number, cst?: ConstantesDeTuile): number {
   // ═══ UNE SEULE LECTURE DE L'HORLOGE (perf, 2026-08-26) ═══
   //
   // `baseDuMonde` et `expositionSansMeteo` demandaient CHACUNE `gameTimeAt(state, tick)` — le
@@ -292,14 +368,28 @@ function froidDuMonde(state: SimState, x: number, y: number, tick: number, shelt
   // MESURÉ : 30 ms pour 147 456 lectures, doublées. On la fait une fois et on la passe ; les
   // deux fonctions gardent leur repli par défaut, donc tous leurs autres appelants sont intacts.
   const time = gameTimeAt(state, tick)
-  const base = baseDuMonde(state, tick, time)
+  // LE SOCLE PORTE L'ALTITUDE, ET L'EXPOSITION NON — parce que seul le groupe de l'exposition est
+  // multiplié par `shelter` (décision d'Alexis du 2026-09-30 : « l'altitude ne s'abrite pas »).
+  // C'est la SEULE différence avec la version d'avant le 2026-09-30, et elle est d'un terme.
+  const base = baseDuMonde(state, tick, time) + froidDEtage(state, x, y)
   const exposedSansMeteo = expositionSansMeteo(state, x, y, tick, cst, time)
   // R11-R12 (`meteo.md`) : LE FRONT LIT LE FROID QU'IL TROUVE. `T₀` est le monde SANS lui, à
   // découvert — c'est sur elle que l'orage décide de sa morsure (`partDeBlizzard`) et que la pluie
   // décide d'être neige (`neigeA`). Calculée ICI, une fois, et passée : pas de seconde lecture.
+  // Elle porte l'altitude (donc la première neige tombe en HAUT avant le bas, contrôle de F-R6)
+  // et reste BORNÉE — voir l'en-tête.
   const t0 = clampTemp(base + exposedSansMeteo)
   const meteo = meteoColdAt(state, x, y, tick, t0)
-  return clampTemp(base + shelter * (exposedSansMeteo - meteo))
+  return base + shelter * (exposedSansMeteo - meteo)
+}
+
+/**
+ * LE FROID DU MONDE À DÉCOUVERT, BORNÉ — l'écrivain unique de `baselineTemperatureAt` et de
+ * `climatFlore`. Exactement `airDuMonde` sous `clampTemp` : une seule expression, pour qu'un
+ * chemin borné et un chemin non borné ne puissent pas diverger d'un bit.
+ */
+function froidDuMonde(state: SimState, x: number, y: number, tick: number, shelter: number, cst?: ConstantesDeTuile): number {
+  return clampTemp(airDuMonde(state, x, y, tick, shelter, cst))
 }
 
 /**
@@ -311,7 +401,10 @@ function froidDuMonde(state: SimState, x: number, y: number, tick: number, shelt
  */
 export function dehorsSansMeteo(state: SimState, x: number, y: number, tick: number, cst?: ConstantesDeTuile): number {
   const time = gameTimeAt(state, tick) // une seule lecture, comme `froidDuMonde` (voir son en-tête)
-  return clampTemp(baseDuMonde(state, tick, time) + expositionSansMeteo(state, x, y, tick, cst, time))
+  // ⚠ `+ froidDEtage` EST OBLIGATOIRE ICI, et pas par symétrie : cette expression DOIT rester
+  //   égale au `t0` de `airDuMonde`, sans quoi la chute de neige et les cinq `effetOrage` liraient
+  //   un autre monde que celui où le froid tombe. C'est ce que promet l'en-tête (« au bit près »).
+  return clampTemp(baseDuMonde(state, tick, time) + froidDEtage(state, x, y) + expositionSansMeteo(state, x, y, tick, cst, time))
 }
 
 /**
@@ -326,11 +419,13 @@ export function socleDuJour(jour: number, tour: number): number {
 }
 
 function baseDuMonde(state: SimState, tick: number, time = gameTimeAt(state, tick)): number {
-  // La carte est plate : le froid ne vient plus de l'altitude, seulement du BIOME (la neige, le
-  // glacier) et de l'heure. Le froid des zones hautes est porté par leur terrain, pas par une hauteur.
-  // ⚠ AMENDÉ le 2026-09-20 (spec `flanc.md` F-R6) : la Racine jouée est un flanc en quatre paliers et
-  // le froid MONTERA avec l'étage (`TEMPERATURE.FROID_PAR_ETAGE`, par le palier du sol) — pas encore
-  // codé ici ; le socle du jour reste celui du monde, le terme par étage viendra dans l'exposition.
+  // LE SOCLE DU JOUR, ET RIEN D'AUTRE : il ne connaît ni la tuile, ni le biome, ni la hauteur —
+  // c'est le froid que le CALENDRIER impose à toute la vallée à cet instant.
+  // ⚠ LE TERME D'ÉTAGE N'EST PAS ICI, et il aurait été naturel de l'y mettre : cette fonction n'a
+  //   PAS DE POSITION. Il est ajouté à son résultat par `airDuMonde` (et par `dehorsSansMeteo`),
+  //   c'est-à-dire **dans le même groupe que le socle** et donc HORS du facteur d'abri — F-R6 le
+  //   voulait « dans l'exposition », ce qui l'aurait fait diviser par deux sous un toit (décision
+  //   d'Alexis du 2026-09-30 : « l'altitude ne s'abrite pas »). Voir `froidDEtage`.
   return socleDuJour(time.seasonDay, time.tour)
 }
 

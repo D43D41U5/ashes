@@ -19,7 +19,7 @@ import { fondDuLieu, nidsAMonstre, spawnPoiMonsters } from './poi'
 import { placeHuntingGrounds } from './faune'
 import { creuserLePlancher } from './grottes-plancher'
 import { isOnPoiKind } from './poi-discovery'
-import { ambientTemperature, baselineTemperatureAt, eveilCendreuxAt, fireBubble, isSheltered } from './temperature'
+import { airNonBorneAt, ambientTemperature, baselineTemperatureAt, eveilCendreuxAt, fireBubble, isSheltered } from './temperature'
 import { partDuCiel } from './nuit'
 import { createSim, spawnEntity, step } from './sim'
 import { PIECES, STRUCTURE_TYPES, type BarrierType } from './pieces'
@@ -357,6 +357,8 @@ describe('G-A6 / G-R11 — ce que le souterrain ne subit pas : le gel et la neig
     const fautes: string[] = []
     let nappes = 0
     let traces = 0
+    let bas = 0    // les karsts du palier 0 — le contrôle positif de ①
+    let hauts = 0  // ceux d'au-dessus, que le froid d'étage prend dès les Pluies
     for (const k of c.karsts) {
       if (!k.noye) continue
       const nom = `karst (${xyDe(c.map, k.gueules[0]![0])})`
@@ -370,13 +372,33 @@ describe('G-A6 / G-R11 — ce que le souterrain ne subit pas : le gel et la neig
       const tx = trace % width
       const ty = Math.floor(trace / width)
 
-      // ① LES PLUIES, le témoin : la trace n'est pas prise, on patauge des deux côtés à 0,5.
+      // ① LES PLUIES, le témoin — ET DEPUIS LE 2026-09-30, LE PALIER Y COMMANDE.
+      //    `FROID_PAR_ETAGE` = 28 °C (braise.md B-R4b) fait qu'une résurgence de palier ≥ 1 est
+      //    prise MÊME aux Pluies : c'est le « gel permanent en altitude » que braise.md § 5.9
+      //    revendique, pas un défaut. La trace du PALIER 0, elle, reste libre — et c'est le
+      //    contrôle POSITIF de la garde : sans lui, « la nappe patauge » ne prouverait plus rien
+      //    d'une saison, seulement qu'il gèle partout.
+      //    ⚠ CE PRÉDICAT EST UNE CONSÉQUENCE DE 28 °C, PAS UNE LOI ÉTERNELLE : redimensionner
+      //    `FROID_PAR_ETAGE` DOIT faire rougir cette ligne. MESURÉ le 2026-09-30 aux ticks de
+      //    cette garde, sur les quatre graines et aux QUATRE cardinaux (mi-Éclosion et mi-Ardeur
+      //    comprises, pas seulement l'hiver) : **0/9 traces prises au palier 0, 29/29 au-dessus**
+      //    — 38 karsts noyés, zéro exception. Le palier décide seul, toute l'année.
       state.tick = tickDe(PLUIES)
-      if (estGele(state, tx, ty)) fautes.push(`${nom} : la trace est prise aux Pluies`)
+      // La loi lit `palierDuSol`, pas le champ du karst : on affirme d'abord qu'ils concordent.
+      const solDeLaTrace = palierDuSol(c.map, tx, ty)
+      if (solDeLaTrace !== k.palier) fautes.push(`${nom} : la trace est au palier ${solDeLaTrace} du SOL mais le karst dit ${k.palier}`)
+      const priseAttendue = k.palier > 0
+      if (priseAttendue) hauts += 1
+      else bas += 1
+      const priseAuxPluies = estGele(state, tx, ty)
+      if (priseAuxPluies !== priseAttendue) fautes.push(`${nom} p${k.palier} : aux Pluies la trace est ${priseAuxPluies ? 'prise' : 'libre'} (${priseAttendue ? 'prise' : 'libre'} attendue — le froid d'étage)`)
       const dedansChaud = facteurDuPas(state, ex, ey, k.niveau)
       const dehorsChaud = facteurDuPas(state, tx, ty, k.palier)
+      // LA NAPPE PATAUGE À TOUTE SAISON ET À TOUT PALIER : c'est G-R11, et le froid d'étage n'y
+      // change rien puisque la roche la couvre.
       if (dedansChaud !== 0.5) fautes.push(`${nom} : aux Pluies, le pas dans la nappe vaut ${dedansChaud} (0,5 attendu — le haut-fond de la grille creuse)`)
-      if (dehorsChaud !== 0.5) fautes.push(`${nom} : aux Pluies, le pas sur la trace vaut ${dehorsChaud} (0,5 attendu)`)
+      const attenduDehors = priseAttendue ? GEL.VITESSE_GLACE : 0.5
+      if (dehorsChaud !== attenduDehors) fautes.push(`${nom} p${k.palier} : aux Pluies, le pas sur la trace vaut ${dehorsChaud} (${attenduDehors} attendu)`)
 
       // ② LE GRAND FROID : la trace est prise — c'est de la surface, elle gèle comme un gué —,
       //    la nappe non : pas de glace ni de neige sous la roche (G-R11), on y patauge encore.
@@ -392,6 +414,10 @@ describe('G-A6 / G-R11 — ce que le souterrain ne subit pas : le gel et la neig
       if (dedansFroid !== 0.5) fautes.push(`${nom} : au Grand Froid, le pas dans la nappe vaut ${dedansFroid} (0,5 attendu — ni glace ni neige sous la roche)`)
     }
     expect(nappes, 'la garde ne passe pas à vide').toBeGreaterThan(0)
+    // ET LES DEUX POPULATIONS DE ① EXISTENT : sans karst de palier 0 la garde perdrait son
+    // témoin de saison, sans karst haut elle ne verrait plus le froid d'étage.
+    expect(bas, `karsts noyés du palier 0 (le témoin de saison) sur ${nappes}`).toBeGreaterThan(0)
+    expect(hauts, `karsts noyés au-dessus du palier 0 sur ${nappes}`).toBeGreaterThan(0)
     // LA TRACE GÈLE : au cœur de l'hiver, toute résurgence est prise — c'est le contraste voulu
     // avec la nappe, la seule eau libre du pays.
     expect(traces, `traces prises au Grand Froid sur ${nappes} karsts noyés`).toBe(nappes)
@@ -546,11 +572,22 @@ describe('G-A5 — un lieu : la Grotte est le karst', () => {
       const dessus = new Set<number>()
       for (const t of instants) {
         expect(baselineTemperatureAt(sim, fx + 0.5, fy + 0.5, t, undefined, k.niveau), `fond de (${gx},${gy}) au tick ${t}`).toBe(TEMPERATURE.GROTTE_AMBIANT)
-        dessus.add(baselineTemperatureAt(sim, fx + 0.5, fy + 0.5, t))
+        // ⚠ LE TÉMOIN SE LIT NON BORNÉ DEPUIS LE 2026-09-30. `FROID_PAR_ETAGE` = 28 °C pousse le
+        // dessus d'une terrasse de palier ≥ 1 sous `AMBIANT_MIN` à TOUTE heure de TOUTE saison :
+        // lu borné, le témoin s'écrasait sur la seule valeur −18 et la garde mourait d'un
+        // `size` de 1. L'air NON borné — celui que la demande en crans lira (braise.md B-R4,
+        // étape 3) — vit encore le temps qu'il fait.
+        dessus.add(airNonBorneAt(sim, fx + 0.5, fy + 0.5, t))
       }
       // Le témoin : le même corps lu AU SOL de cette tuile (le dessus de la terrasse) vit le
       // temps qu'il fait — sinon la garde ne prouverait pas que la grotte l'ignore.
       expect(dessus.size, `dessus de (${gx},${gy}) : ${[...dessus].join(', ')}`).toBeGreaterThan(1)
+      // ET LA GROTTE EST À 13 °C SUR LA MÊME FONCTION QUE LE TÉMOIN : le fond ne doit pas tenir
+      // son 13 du seul clamp. C'est aussi le contrat de l'étape 3 (la grotte reste GRATUITE pour
+      // la demande en crans, B-R4), éprouvé ici avant que la braise n'existe.
+      for (const t of instants) {
+        expect(airNonBorneAt(sim, fx + 0.5, fy + 0.5, t, undefined, k.niveau), `fond NON borné de (${gx},${gy}) au tick ${t}`).toBe(TEMPERATURE.GROTTE_AMBIANT)
+      }
       // Et l'ambiant fini, sans feu : le même 13 (rien ne plancher, rien ne tire).
       expect(ambientTemperature(sim, fx + 0.5, fy + 0.5, k.niveau), `ambiant du fond de (${gx},${gy})`).toBe(TEMPERATURE.GROTTE_AMBIANT)
       // Le fond est à ≥ FOND_DISTANCE de toute gueule : le jour n'y entre pas (E-R13).

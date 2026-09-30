@@ -24,13 +24,14 @@
  * vingt secondes de plus pour le redire ici.
  */
 import { describe, expect, it } from 'vitest'
-import { BALANCE, FAUNA, TERRAIN_GRASS, TERRAIN_MARSH, TERRAIN_PEAT_BOG, TERRAIN_REED_MARSH, TERRAIN_ROCK, TICK_DT_S } from './balance'
+import { BALANCE, FAUNA, TERRAIN_DEEP_WATER, TERRAIN_GRASS, TERRAIN_MARSH, TERRAIN_PEAT_BOG, TERRAIN_REED_MARSH, TERRAIN_ROCK, TICK_DT_S } from './balance'
 import { carteDeTest } from '../../../tools/carte-cache'
 import { moveAvatar, type MoveWorld } from './collision'
 import {
   etageApresLePas, etagesDuPas, franchitUneJoue, marchableAEtage, niveauDeLaTuile, niveauDuCorps, palierDuSol, terrainAEtage,
 } from './etages'
 import { placeHuntingGrounds } from './faune'
+import { estGele } from './gel'
 import { MARCHABLE, createEmptyMap, isWater, type WorldMap } from './map'
 import { computeFlowFieldMulti, findPath, lisserLeChemin } from './pathfinding'
 import { buildPoiStructures } from './poi-batis'
@@ -709,18 +710,46 @@ describe('T-A5 — à l’amorce et après un banc, chaque chose se tient sur un
     const id = spawnEntity(sim, spawn.tx + 0.5, spawn.ty + 0.5)
     expect(sim.entities.length).toBeGreaterThan(10)
 
+    // ⚠ LE PRÉDICAT EST CELUI DU MARCHEUR, PAS CELUI DE LA CARTE (corrigé le 2026-09-30).
+    //
+    // `marchableAEtage` est un prédicat STATIQUE : il lit `MARCHABLE[terrain]` et ne peut pas
+    // savoir qu'un lac est GELÉ. Or `collision.ts` (`blockedAt`) dit l'inverse en clair — « SEULE
+    // L'EAU PROFONDE peut cesser de bloquer … `return !estGele(etat, tx, ty)` », sous le
+    // commentaire « le miroir exact du lac gelé qui devient un chemin » (`saisons.md` S10). Un
+    // corps sur de la glace est donc LÉGAL, et cette garde l'accusait.
+    //
+    // Elle l'a accusé pour de vrai le 2026-09-30, quand `FROID_PAR_ETAGE` = 28 a rendu le gel
+    // PERMANENT en altitude (`braise.md` § 5.9) : MESURÉ sur la graine 2026, l'entité #86 marche
+    // 522 ticks sur son palier puis entre sur le lac gelé en (657,685) — `terrainAEtage` y rend 6
+    // (eau profonde), `estGele` y rend `true`. Le jeu avait raison, le prédicat non.
+    //
+    // CE QUE LA GARDE AFFIRME DONC, ET C'EST TOUJOURS LE SUJET DE T-A5 : ① la tuile EXISTE au
+    // niveau du corps (`terrainAEtage !== 0` — c'est l'invariant d'étage, et il n'est pas
+    // relâché) ; ② elle est franchissable POUR UN MARCHEUR, ce qui admet l'eau profonde gelée et
+    // rien d'autre. Un corps dans de l'eau LIBRE rougit encore.
+    let surGlace = 0
     const verifier = (quand: string): void => {
       for (const e of sim.entities) {
         const tx = Math.floor(e.x)
         const ty = Math.floor(e.y)
         const niveau = niveauDuCorps(map, e)
-        expect(marchableAEtage(map, niveau, tx, ty), `${quand} : entité #${e.id} en (${tx},${ty}) au niveau ${niveau}`).toBe(true)
+        const t = terrainAEtage(map, niveau, tx, ty)
+        const ou = `${quand} : entité #${e.id} en (${tx},${ty}) au niveau ${niveau}, terrain ${t}`
+        expect(t, `${ou} — la tuile n’existe pas à ce niveau`).not.toBe(0)
+        if (marchableAEtage(map, niveau, tx, ty)) continue
+        const glace = t === TERRAIN_DEEP_WATER && estGele(sim, tx, ty)
+        if (glace) { surGlace++; continue }
+        expect.fail(`${ou} — ni marchable, ni glace`)
       }
     }
     verifier('à l’amorce')
     // L'avatar marche — vers le nord, là où les rampes montent — le reste du monde vit.
     for (let t = 0; t < 600; t++) step(sim, [{ entityId: id, dx: t % 40 < 20 ? 0 : 1, dy: -1 }])
     verifier('après 600 ticks')
+    // ⚠ ET LA CLAUSE DE LA GLACE N'EST PAS UN DESSERRAGE À VIDE : au moins un corps se tient
+    // VRAIMENT sur un lac gelé. Si ce compte retombait à 0, la branche ci-dessus serait morte et
+    // il faudrait la retirer — pas la garder « au cas où ».
+    expect(surGlace, 'relevés sur de la glace (la branche de collision.ts est-elle empruntée ?)').toBeGreaterThan(0)
   }, 60_000)
 })
 
