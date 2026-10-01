@@ -11,7 +11,7 @@ volets, chacun en ajout seul et en ordre chronologique. Ce fichier-ci est l'INDE
 |---|---|---|---|---|
 | **M** | [Monde & worldgen](decisions/monde-worldgen.md) | worldgen, relief, eau, biomes, lieux, cendre, étages | 191 | 355 Ko |
 | **R** | [Rendu & DA](decisions/rendu-da.md) | lumière, couleur, sprites, FX, art du sol, son | 210 | 536 Ko |
-| **G** | [Gameplay & systèmes](decisions/gameplay-systemes.md) | faune, combat, récolte, craft, saisons, météo, construction, design | 372 | 876 Ko |
+| **G** | [Gameplay & systèmes](decisions/gameplay-systemes.md) | faune, combat, récolte, craft, saisons, météo, construction, design | 373 | 879 Ko |
 | **I** | [Interface & outillage](decisions/interface-outillage.md) | HUD, menus, encyclopédie, carte, smoke, bancs, process | 85 | 185 Ko |
 | **A** | [Architecture & infra](decisions/architecture-infra.md) | pureté et déterminisme de /sim, protocole, serveur, persistance, perf | 69 | 129 Ko |
 
@@ -31,7 +31,7 @@ retrouve ici, à la même date, jamais à la ligne du dessus dans son volet.
 
 ---
 
-## Index chronologique — 927 entrées, 2082 Ko
+## Index chronologique — 928 entrées, 2085 Ko
 
 - 2026-07-05 · **M** · Spec monde validée par Alexis : déplacement continu type Binding of Isaac (jamais de case par c…
 - 2026-07-05 · **M** · Convention d'import Tiled : l'index local de la tuile dans le premier tileset = l'id de terrain…
@@ -960,3 +960,4 @@ retrouve ici, à la même date, jamais à la ligne du dessus dans son volet.
 - 2026-09-30 · **G** · `FROID_PAR_ETAGE` EST CODÉ : MONTER REFROIDIT DE 28 °C PAR PALIER (étape 1 de `braise.md` § 3,…
 - 2026-10-01 · **G** · LES LACS D'ALTITUDE SONT DES PONTS DE GLACE PERMANENTS, ET C'EST UNE RÉCOMPENSE. Conséquence de…
 - 2026-10-01 · **G** · LE COÛT DE LA PORTE DE GEL MORTE EST UN COÛT CLIENT, ET LA MESURE DICTE LA FORME DE L'ÉTAPE 2 :…
+- 2026-10-01 · **G** · LE TABLEAU DES LACS D'ALTITUDE ÉTAIT FAUX, ET LA VÉRITÉ EST UN MEILLEUR DESIGN. L'entrée de ce…

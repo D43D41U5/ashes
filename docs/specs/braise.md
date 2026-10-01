@@ -169,12 +169,24 @@
 
 0. ~~**LES LACS D'ALTITUDE SONT DEVENUS DES PONTS**~~ — **TRANCHÉ le 2026-10-01 : ⓐ ON ACCEPTE.** Décision d'Alexis. Le haut est un pays de glace, et c'est une **récompense de mobilité** pour qui monte ; surtout, **rien n'est à écrire** — la propriété tombe des lois existantes, et elle n'affaiblit pas la braise, qui barre par le FROID et non par la géométrie (un raccourci sur un lac ne dispense d'aucun cran). Les deux autres branches sont gardées ci-dessous parce qu'elles disent *pourquoi* ⓐ gagne. *(Question ouverte le 2026-09-30, née de l'étape 1 ; ce n'était pas un ajustement mais une propriété qui n'existait pas.)* ⚠ **MESURÉ par A/B sur le terme lui-même** (graine 2026, l'eau profonde échantillonnée par palier, huit instants — midi et cœur de nuit des quatre cardinaux) :
 
-   | `FROID_PAR_ETAGE` | palier 0 | palier 1 | palier 2 | palier 3 |
-   |---|---|---|---|---|
-   | **0** (= HEAD) | 0 % gelée | **0 %** | **0 %** | **0 %** |
-   | **28** (livré) | 0 % gelée | **100 %** | **100 %** | **100 %** |
+   ⚠ **CE TABLEAU A ÉTÉ MESURÉ FAUX UNE PREMIÈRE FOIS, puis REFAIT le 2026-10-01** : la sonde calculait le tick d'un jour en comptant des **cycles jour/nuit** alors qu'un jour de saison vaut `TICKS_PER_SEASON_DAY` = 1 728 000 ticks — ses « huit instants » étaient en réalité **une seule date**. Voici la mesure juste, sur les quatre cardinaux × jour et nuit (8 instants), graine 2026, échantillon de 400 tuiles par palier. Chaque case dit **sur combien des 8 instants l'eau est prise** :
 
-   Donc l'eau profonde **ne gelait nulle part, à aucune saison** — et elle est maintenant prise **toute l'année au-dessus du palier 0**, aux huit instants, sans une exception. Le biome n'y est pour rien : le terme d'altitude en est la cause unique (à 0, la même population rend 0 % partout). Or `collision.ts` fait qu'un lac gelé **est un chemin** (« le miroir exact du lac gelé qui devient un chemin », `saisons.md` S10) : la connexité de la montagne change donc en altitude, **dans le sens de la facilité**, et un lac qui était un mur devient une place. C'est ce qui a fait rougir T-A5 (l'entité #86 marche sur le lac en (657,685), graine 2026, au tick 522).
+   | eau PROFONDE (`SEUIL_PROFOND` = −10) | palier 0 | palier 1 | palier 2 | palier 3 |
+   |---|---|---|---|---|
+   | **`FROID_PAR_ETAGE` = 0** (= HEAD) | 1/8 | **1/8** | **1/8** | **1/8** |
+   | **= 28** (livré) | 1/8 | **6/8** | **8/8** | **8/8** |
+
+   | gué (`SEUIL_GUE` = 0) | palier 0 | palier 1 | palier 2 | palier 3 |
+   |---|---|---|---|---|
+   | **= 28** (livré) | 3/8 | **8/8** | **8/8** | **8/8** |
+
+   **CE QUE ÇA DIT VRAIMENT, et c'est un meilleur design que ce que j'avais rapporté :**
+   - Le lac n'est pas devenu un pont **à partir de rien** : il l'était déjà, **une fenêtre par an** — la nuit du cœur du Grand Froid, à tout palier (1/8, et c'est la même case avant et après).
+   - **Le palier 1 devient un pont SAISONNIER** : pris aux trois quarts de l'année, **il DÉGÈLE en Ardeur** (T ≈ −2 le jour, −8 la nuit, au-dessus du seuil de −10). ⚠ **C'est l'exception que l'éclaireur avait nommée et que j'avais écartée à tort.** Et c'est exactement « la saison est la marée », appliqué à la géographie : au palier 1, l'été rouvre le lac.
+   - **Les paliers 2 et 3 sont des ponts PERMANENTS** (8/8) : la température y sature à `AMBIANT_MIN` = −18, bien sous les deux seuils.
+   - **Le gué, lui, est pris partout dès le palier 1** (seuil 0, pas −10) : c'est la rivière qui devient chemin, et elle ne rouvre plus en altitude.
+
+   Or `collision.ts` fait qu'un lac gelé **est un chemin** (« le miroir exact du lac gelé qui devient un chemin », `saisons.md` S10) : la connexité de la montagne change donc en altitude, **dans le sens de la facilité**. C'est ce qui a fait rougir T-A5 (l'entité #86 marche sur le lac en (657,685), graine 2026, au tick 522).
 
    Trois réponses étaient possibles — **ⓐ retenue** : **ⓐ on l'accepte** (le haut est un pays de glace — cohérent, gratuit, et une récompense de traversée pour qui monte) ; **ⓑ le gel de l'eau PROFONDE cesse d'être un chemin** (le gué et le lac ne seraient plus la même loi — mais la loi de S10 reste vraie en plaine, où rien ne gèle) ; **ⓒ la traversée reste possible et COÛTE** (glace d'altitude plus lente, ou qui rompt). *Rien n'a été codé, et c'est le propre de ⓐ : la décision CONFIRME le comportement livré au lieu de le corriger.*
 
