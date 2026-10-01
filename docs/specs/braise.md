@@ -154,7 +154,7 @@
 
 ## 5. Reste à trancher
 
-0. **LES LACS D'ALTITUDE SONT DEVENUS DES PONTS — question NEUVE, ouverte le 2026-09-30, née de l'étape 1, et ce n'est pas un ajustement : c'est une propriété qui n'existait pas.** ⚠ **MESURÉ par A/B sur le terme lui-même** (graine 2026, l'eau profonde échantillonnée par palier, huit instants — midi et cœur de nuit des quatre cardinaux) :
+0. ~~**LES LACS D'ALTITUDE SONT DEVENUS DES PONTS**~~ — **TRANCHÉ le 2026-10-01 : ⓐ ON ACCEPTE.** Décision d'Alexis. Le haut est un pays de glace, et c'est une **récompense de mobilité** pour qui monte ; surtout, **rien n'est à écrire** — la propriété tombe des lois existantes, et elle n'affaiblit pas la braise, qui barre par le FROID et non par la géométrie (un raccourci sur un lac ne dispense d'aucun cran). Les deux autres branches sont gardées ci-dessous parce qu'elles disent *pourquoi* ⓐ gagne. *(Question ouverte le 2026-09-30, née de l'étape 1 ; ce n'était pas un ajustement mais une propriété qui n'existait pas.)* ⚠ **MESURÉ par A/B sur le terme lui-même** (graine 2026, l'eau profonde échantillonnée par palier, huit instants — midi et cœur de nuit des quatre cardinaux) :
 
    | `FROID_PAR_ETAGE` | palier 0 | palier 1 | palier 2 | palier 3 |
    |---|---|---|---|---|
@@ -163,7 +163,7 @@
 
    Donc l'eau profonde **ne gelait nulle part, à aucune saison** — et elle est maintenant prise **toute l'année au-dessus du palier 0**, aux huit instants, sans une exception. Le biome n'y est pour rien : le terme d'altitude en est la cause unique (à 0, la même population rend 0 % partout). Or `collision.ts` fait qu'un lac gelé **est un chemin** (« le miroir exact du lac gelé qui devient un chemin », `saisons.md` S10) : la connexité de la montagne change donc en altitude, **dans le sens de la facilité**, et un lac qui était un mur devient une place. C'est ce qui a fait rougir T-A5 (l'entité #86 marche sur le lac en (657,685), graine 2026, au tick 522).
 
-   Trois réponses possibles, et c'est une décision de design, pas une correction technique : **ⓐ on l'accepte** (le haut est un pays de glace — cohérent, gratuit, et une récompense de traversée pour qui monte) ; **ⓑ le gel de l'eau PROFONDE cesse d'être un chemin** (le gué et le lac ne seraient plus la même loi — mais la loi de S10 reste vraie en plaine, où rien ne gèle) ; **ⓒ la traversée reste possible et COÛTE** (glace d'altitude plus lente, ou qui rompt). *Rien n'est codé dans un sens ou l'autre : aujourd'hui c'est ⓐ par défaut, faute de décision.*
+   Trois réponses étaient possibles — **ⓐ retenue** : **ⓐ on l'accepte** (le haut est un pays de glace — cohérent, gratuit, et une récompense de traversée pour qui monte) ; **ⓑ le gel de l'eau PROFONDE cesse d'être un chemin** (le gué et le lac ne seraient plus la même loi — mais la loi de S10 reste vraie en plaine, où rien ne gèle) ; **ⓒ la traversée reste possible et COÛTE** (glace d'altitude plus lente, ou qui rompt). *Rien n'a été codé, et c'est le propre de ⓐ : la décision CONFIRME le comportement livré au lieu de le corriger.*
 
 
 1. ~~**La vidange court-elle partout ?**~~ **TRANCHÉ le 2026-09-28 : NON — elle ne paie que le froid** (B-R8). L'été en bas, la grotte à 13 °C et le pied d'une balise sont gratuits ; la pression vient de la montagne et de l'hiver, jamais de l'horloge.
