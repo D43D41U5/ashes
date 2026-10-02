@@ -143,11 +143,12 @@ Ils viennent du GDD §11 et §14 (« décisions actées »). Ne pas les rouvrir 
 
 **Le chantier courant est `docs/specs/braise.md`**, et son ordre de construction est dans son § 3. **L'étape 1, `FROID_PAR_ETAGE`, est LIVRÉE le 2026-09-30** : monter refroidit de **28 °C par palier** (`TEMPERATURE.FROID_PAR_ETAGE`, l'amplitude de l'année — un étage vaut une saison), le terme vit dans le SOCLE **hors du facteur d'abri** (« l'altitude ne s'abrite pas », décision d'Alexis) et la demande se lira sur `airNonBorneAt`, une lecture d'air **non bornée** à côté de la lecture bornée qui reste l'ancre du corps. **L'ÉTAPE 2 EST LIVRÉE le 2026-10-02** : la garde de gel est LOCALE, avec ses **deux bornes par palier** — `plancherDuPalier` / `gelPossibleAuPalier` (« ici rien ne gèle ») et `plafondDuPalier` (« ici tout gèle », qui rend vrai *sans lire une température*). MESURÉ, en régime, A/B alterné dans un seul processus (`tools/profil-gel-bornes.mts`, qui chronomètre **les deux régimes de cendre** — voir plus bas pourquoi c'est obligatoire) :
 
-| à midi | mi-Éclosion | mi-Ardeur | Pluies | Grand Froid |
+| à midi, palier 0 | mi-Éclosion | mi-Ardeur | Pluies | Grand Froid |
 |---|---|---|---|---|
-| **palier 0**, borne serrée (jours 61→91) | ×10,2 | ×9,5 | ×10,4 | ×1,08 |
-| **palier 0**, borne élargie (jour 92→) | ×0,97 | ×12,9 | ×1,00 | ×1,09 |
-| **palier 3**, les deux | ×8,0 à ×10,5 | ×8,0 à ×10,0 | ×8,1 à ×9,9 | ×7,9 à ×9,6 |
+| borne **serrée** | ×10,2 | ×9,5 | **×10,4** | ×1,08 |
+| borne **élargie** | **×0,97** | **×12,9** | **×1,00** | **×1,09** |
+
+**⚠ SEULES LES CASES EN GRAS SONT ATTEIGNABLES EN JEU, et mon premier tableau ne le disait pas.** Le monde ouvre au jour **61**, c'est-à-dire au premier jour des **Pluies**, et la cendre s'éveille au jour **91** : la borne serrée ne vit donc que pendant **les trente premiers jours, en Pluies**. Mi-Éclosion et mi-Ardeur ne sont jamais jouées avec elle. En jeu réel : **la vallée gagne en Pluies de l'an 1, puis plus qu'en Ardeur, pour toujours.** Le palier 3, lui, gagne ×8,0 à ×10,5 **aux quatre saisons et dans les deux régimes** — c'est le plafond, et c'est lui qui portait le vrai problème.
 
 Le ×1,08 au Grand Froid en bas est **juste** : c'est le seul instant où le gel dépend vraiment de la lecture locale. L'altitude, elle, gagne **aux quatre saisons** — c'est le plafond. ⚠ **LE RÉGIME QUE LE JEU JOUE EST DATÉ, pas supposé** : `cendreAge` naît vide et ne se remplit qu'au premier franchissement de jour après le réveil de la cendre — **jour 91** (`max((CENDRE.ACTE_DEPART−1) × ACT_DAYS + 1, jourDeDepart)`), alors que le monde ouvre au jour **61**. Les **30 premiers jours de jeu** portent donc la borne serrée ; à partir du jour 92 elle est élargie pour le reste de la partie, `cendreAge` ne se vidant jamais.
 
