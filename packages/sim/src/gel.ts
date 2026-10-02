@@ -135,6 +135,35 @@ const FROID_DE_FUMEROLLE_MAX = FUMEROLLE.FROID
   * Math.max(1, ...Object.values(CARACTERES_DE_FOYER).map((e) => e.froid ?? 1))
 
 /**
+ * LE PIRE SOUFFLE DE FUMEROLLE SUR L'EAU DE **CE** PALIER — précalculé à l'amorce, global en repli.
+ *
+ * ⚠ **POURQUOI UN CHAMP DE CARTE PLUTÔT QUE LA CONSTANTE, ET C'EST UN CHIFFRE QUI L'A DÉCIDÉ**
+ * (Alexis, 2026-10-02 : *« on suit ta reco »*). Le majorant GLOBAL vaut 12,6 °C — le pire souffle
+ * de la carte entière, retranché partout. Il élargit donc la fenêtre du plancher de douze degrés
+ * *aux paliers où aucune fumerolle ne touche l'eau*, et la porte « ici rien ne gèle » cesse de
+ * couper au fond de la vallée. MESURÉ sur le pire écran du palier 0 (13 098 tuiles d'eau, 88
+ * chunks cuits d'un coup) : **7,5 ms avec la porte, 62 ms sans — et 285 ms sur une base de 800
+ * structures**, soit 34 images à 120 fps de gel sur une téléportation.
+ *
+ * ⚠ **ET LE GAIN EST PARTIEL, IL FAUT LE DIRE AVEC SON CHIFFRE.** Situé, le terme tombe à 8,09 °C
+ * au palier 0 — exact, c'est le pire souffle qu'une tuile d'eau de ce palier prend vraiment. La
+ * porte y recoupe **126 points de l'année sur 480** contre 74 avant, et sa fenêtre de midi passe de
+ * **31 à 47 jours** sur 120. Mais l'instant mesuré (Pluies, jour 75) reste ouvert : aucun majorant
+ * PAR PALIER ne peut le fermer, puisque 8 °C est la vérité de ce palier. Fermer les 73 jours
+ * restants demanderait un index PAR TUILE des 416 tuiles d'eau qui prennent un souffle (plafond
+ * mesuré : 260/480) — il n'est pas écrit, et c'est une décision qui n'est pas prise.
+ *
+ * ⚠ **LE REPLI N'EST PAS DE LA PRUDENCE, C'EST LA MIGRATION DE SAUVEGARDE** (mémoire : un champ
+ * neuf requis jette au premier tick). Une carte d'avant le 2026-10-02, un faux `SimState` de
+ * façade côté client, une carte de banc : `souffleMax` y est `undefined`, et l'on retombe sur le
+ * majorant global — plus lent, **jamais faux**. C'est le seul sens dans lequel on peut dégrader :
+ * un repli par zéro rendrait la borne fausse, donc le gel incohérent.
+ */
+function souffleMaxDuPalier(map: SimState['map'], palier: number): number {
+  return map.souffleMax?.[palier] ?? FROID_DE_FUMEROLLE_MAX
+}
+
+/**
  * LE PLANCHER DE TEMPÉRATURE DE LA VALLÉE à ce tick — une borne INFÉRIEURE prouvée du
  * `baselineTemperature` de n'importe quelle tuile d'EAU, calculée en O(1).
  *
@@ -206,7 +235,9 @@ function plancherDuPalier(state: SimState, palier: number): number {
   if (state.map.cendreCout !== undefined) {
     t -= CENDRE.FROID_COEUR // la vieille cendre : il suffit que la carte porte un champ de coût
     // LE SOUFFLE, lui, exige en plus des fosses éveillées : sans `cendreAge`, zéro bouche.
-    if ((state.cendreAge?.length ?? 0) > 0) t -= FROID_DE_FUMEROLLE_MAX
+    // …et il se lit AU PALIER (2026-10-02) : le majorant global élargissait la fenêtre de 12,6 °C
+    // partout, y compris là où aucune bouche ne touche l'eau — voir `souffleMaxDuPalier`.
+    if ((state.cendreAge?.length ?? 0) > 0) t -= souffleMaxDuPalier(state.map, palier)
   }
   return t
 }

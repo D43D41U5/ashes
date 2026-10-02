@@ -39,7 +39,9 @@
 import { hash2 } from './noise'
 import { auCoeurDeLaCendre, cadranDeFoyer, caracteresDeLaCarte, estSolCendre, foyerDeLaTuile } from './cendre'
 import { TERRAINS, TERRAIN_BURNT_FOREST } from './balance'
-import type { WorldMap } from './map'
+import { isWater, type WorldMap } from './map'
+import { palierDuSol } from './etages'
+import { TERRASSES } from './terrasses'
 import type { ResourceNode } from './economy'
 
 export const FUMEROLLE = {
@@ -260,6 +262,86 @@ export function froidDeFumerolle(
     if (f > pire) pire = f
   }
   return pire
+}
+
+/**
+ * ═══ LE PIRE SOUFFLE QUE L'EAU DE CHAQUE PALIER PUISSE JAMAIS PRENDRE — précalculé ═══
+ *
+ * Rend un nombre par palier (`0..PALIERS−1`) : le maximum, sur toutes les tuiles d'EAU de ce
+ * palier et sur TOUTE la durée d'une partie, de `froidDeFumerolle`. C'est un **majorant exact et
+ * local**, et c'est ce que `plancherDuPalier` (`gel.ts`) retranche à la place du majorant global.
+ *
+ * ⚠ **POURQUOI ÇA EXISTE, ET LE CHIFFRE QUI L'A DÉCIDÉ** (décision d'Alexis le 2026-10-02, après
+ * mesure). La borne basse du gel doit retrancher ce souffle sous peine d'affirmer « ici rien ne
+ * gèle » sur un gué pris (1 540 divergences reproduites le même jour). Avec un majorant GLOBAL de
+ * 12,6 °C, la fenêtre s'élargit de douze degrés même là où aucune bouche ne touche l'eau, et la
+ * porte cesse de couper au fond de la vallée — or quand elle ne coupe pas, une cuisson du pire
+ * écran du palier 0 passe de **7,5 ms à 62 ms** (0 structure) et à **285 ms** avec 800 structures.
+ *
+ * ⚠ **CE QU'IL REND, MESURÉ — ET CE QU'IL NE REND PAS.** Situé, le terme tombe de 12,6 à **8,09 °C**
+ * au palier 0 (et c'est EXACT : 8,09 est le pire souffle réellement pris par une tuile d'eau de ce
+ * palier, cendre vieillie au maximum). La porte y recoupe **126 points de l'année sur 480** contre
+ * 74 avec le majorant global, et sa fenêtre de midi passe de **31 à 47 jours** sur 120. Mais ce
+ * n'est PAS le remboursement complet : le pire souffle du palier 0 vaut vraiment 8 °C, donc aucun
+ * majorant par palier ne peut faire mieux, et l'instant mesuré (Pluies, jour 75) reste ouvert — la
+ * cuisson y coûte toujours 62 ms. Le plafond d'un index PAR TUILE serait 260/480 (mesuré sur la
+ * borne sans aucun froid local) ; il n'est pas écrit.
+ *
+ * ⚠ **IL EST INDÉPENDANT DE L'ÂGE DE LA CENDRE, et c'est ce qui le rend précalculable.** Des trois
+ * filtres de `fumerollesAutour`, deux — `bouchePotentielle` et `solTenable` — sont des fonctions
+ * pures de (carte, graine) ; seul `auCoeurDeLaCendre` dépend des `avancees`. On énumère donc les
+ * bouches **POSSIBLES** en l'omettant : l'ensemble des bouches éveillées à un instant donné est
+ * toujours un SOUS-ENSEMBLE de celui-là, et `froidDeFumerolle` prend un `max` — le majorant tient
+ * à tout instant de la partie, sans rien savoir du calendrier.
+ *
+ * ⚠ **LE MAXIMUM EST PRIS AUX TUILES ENTIÈRES, et il faut le dire parce que `froidDeFumerolle`
+ * lit un point FLOTTANT.** Le souffle est plus froid au centre exact du trou qu'au coin de sa
+ * tuile ; un majorant continu vaudrait `FROID` tout rond. Celui-ci majore la lecture *à la tuile*,
+ * qui est la seule que cette borne garde : `estGele` — son unique consommateur, directement ou via
+ * `gelPossibleAuPalier` — n'interroge jamais que des coordonnées entières.
+ *
+ * ⚠ **ET LA BOUCLE EST INVERSÉE, POUR LE BUDGET A13.** Balayer l'eau et chercher ses bouches
+ * coûterait O(eau × bouches) — 321 649 tuiles d'eau sur le monde joué. On balaie les BOUCHES et
+ * l'on regarde les tuiles de leur rayon : O(bouches × R²), soit quelques centaines de mailles ×
+ * 225 tuiles. La passe ne tourne d'ailleurs pas du tout sans `cendreCout` (bancs, cartes de test).
+ */
+export function souffleMaxParPalier(map: WorldMap, seed: number): number[] {
+  const out = new Array<number>(TERRASSES.PALIERS).fill(0)
+  if (!map.cendreCout) return out
+  const M = FUMEROLLE.MAILLE
+  const R = FUMEROLLE.RAYON
+  const caracteres = caracteresDeLaCarte(map, seed)
+  const mx1 = Math.floor((map.width - 1) / M)
+  const my1 = Math.floor((map.height - 1) / M)
+  for (let my = 0; my <= my1; my++) {
+    for (let mx = 0; mx <= mx1; mx++) {
+      const b = bouchePotentielle(map, seed, mx, my)
+      if (!b) continue
+      // `solTenable` borne aussi la carte : une bouche hors cadre n'est jamais tenable, donc aucune
+      // maille au-delà de `mx1`/`my1` ne peut en porter une (le tirage reste au CŒUR de sa maille).
+      if (!solTenable(map, b.tx, b.ty)) continue
+      // ⚠ PAS DE `auCoeurDeLaCendre` ICI : c'est le seul filtre qui dépend de l'âge, et l'omettre
+      //   est précisément ce qui rend ce majorant valable à tout instant (voir la docstring).
+      const froid = FUMEROLLE.FROID * cadranDeFoyer(caracteres, foyerDeLaTuile(map, b.tx, b.ty), 'froid')
+      for (let ty = b.ty - R; ty <= b.ty + R; ty++) {
+        if (ty < 0 || ty >= map.height) continue
+        for (let tx = b.tx - R; tx <= b.tx + R; tx++) {
+          if (tx < 0 || tx >= map.width) continue
+          if (!isWater(map.terrain[ty * map.width + tx]!)) continue
+          // LA MÊME DISTANCE QUE `froidDeFumerolle`, au centre de la tuile : un majorant qui
+          // mesurerait autrement serait faux d'un demi-pas sur la pente du souffle.
+          const dx = b.tx + 0.5 - tx
+          const dy = b.ty + 0.5 - ty
+          const d = Math.sqrt(dx * dx + dy * dy)
+          if (d >= R) continue
+          const f = froid * (1 - d / R)
+          const p = palierDuSol(map, tx, ty)
+          if (p >= 0 && p < out.length && f > out[p]!) out[p] = f
+        }
+      }
+    }
+  }
+  return out
 }
 
 /**

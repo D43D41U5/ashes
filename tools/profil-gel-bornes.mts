@@ -57,6 +57,13 @@ const sim = createSim(2026, { map: m.map, calendarScale: 1, meteoActive: false }
  * qu'elle vient d'introduire. On mesure donc `cendre neuve` (la borne serrée) **et** `cendre
  * vieillie` (la borne élargie de `FROID_LOCAL_MAX`), et l'écart entre les deux EST le prix du
  * correctif de soudure.
+ *
+ * ⚠ **ET DEPUIS `map.souffleMax` (le même jour, plus tard), L'ÉLARGISSEMENT N'EST PLUS LE MÊME** :
+ * le majorant du souffle est précalculé PAR PALIER, donc la borne élargie ne perd plus 12,6 °C
+ * partout mais 8,09 au palier 0 et 9,75 en altitude (exact — c'est le pire souffle vrai de chaque
+ * palier). Les chiffres que cet instrument rendait le matin se lisent donc comme l'état d'AVANT ce
+ * champ ; l'A/B qui attribue le gain du champ lui-même est dans `profil-gel-structures.mts`
+ * (`ASHES_SANS_SOUFFLEMAX=1`).
  */
 const REGIMES = [
   { nom: 'cendre NEUVE (cendreAge vide — borne serrée)', ages: [] as number[] },

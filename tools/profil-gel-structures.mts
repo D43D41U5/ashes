@@ -37,6 +37,14 @@ const ECRAN = { w: 1920, h: 1080 }
 const IMAGE_120 = 1000 / 120
 
 const m = carteDeTest(2026, MONDE.JOUEURS_CIBLE, MONDE_JOUE)
+// ⚠ LE TÉMOIN DU `souffleMax` PAR PALIER (2026-10-02) : `ASHES_SANS_SOUFFLEMAX=1` retire le champ
+//   de la carte et l'on retombe sur le majorant GLOBAL de 12,6 °C — le code d'avant ce jour-là,
+//   au bit près (c'est le repli de sauvegarde). C'est l'A/B qui ATTRIBUE le gain au champ plutôt
+//   qu'à la saison : sans lui, « 5,7 ms au jour 65 » pourrait n'être qu'un jour plus froid.
+if (process.env.ASHES_SANS_SOUFFLEMAX === '1') {
+  delete (m.map as { souffleMax?: number[] }).souffleMax
+  console.log('⚠ TÉMOIN : `souffleMax` RETIRÉ — majorant global de 12,6 °C (le code d\'avant le 02/10).')
+}
 const sim = createSim(2026, { map: m.map, calendarScale: 1, meteoActive: false })
 console.log(`structures du monde joué à la naissance : ${sim.structures.length} (les balises n'existent pas encore)`)
 
@@ -109,11 +117,18 @@ function tickAu(jour: number): number {
 }
 
 const N = [0, 10, 25, 50, 100, 200, 400, 800]
-// LES DEUX INSTANTS QUI SE JOUENT VRAIMENT (le monde ouvre au jour 61, la cendre s'éveille au 91) :
+// LES INSTANTS QUI SE JOUENT VRAIMENT (le monde ouvre au jour 61, la cendre s'éveille au 91) :
 // le cœur des Pluies de l'an 1 (borne SERRÉE) et le même jour de l'an 2 (borne ÉLARGIE).
+//
+// ⚠ LE TROISIÈME EST CELUI QUE LE `souffleMax` PAR PALIER A GAGNÉ (2026-10-02). Le champ situe le
+//   majorant du souffle (12,6 → 8,09 °C au palier 0) et rend à la porte 126 points de l'année sur
+//   480 au lieu de 74 : le jour 65 à midi en fait partie, le jour 75 non. Les deux sont donc ici,
+//   et c'est délibéré — l'un montre le gain, l'autre montre qu'il est PARTIEL.
+const AGES = foyersDeLaCarte(m.map).map(() => 120)
 const INSTANTS = [
   { nom: 'Pluies an 1 (borne serrée)', jour: 75, ages: [] as number[] },
-  { nom: 'Pluies an 2 (borne élargie)', jour: 75, ages: foyersDeLaCarte(m.map).map(() => 120) },
+  { nom: 'Pluies an 2 (borne élargie)', jour: 75, ages: AGES },
+  { nom: 'début des Pluies an 2, jour 65 — RENDU par le souffleMax par palier', jour: 65, ages: AGES },
 ]
 
 for (const palier of [0, 3]) {

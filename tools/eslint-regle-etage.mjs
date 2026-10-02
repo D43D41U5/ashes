@@ -111,7 +111,13 @@ const HORS_REGLE = {
 
   // ══ Un CHAMP échantillonné en un point : c'est E-R13, pas E-R5 ══
   'brume.ts': { dansLaBrumeAu: 'un champ (la brume) lu en un point — E-R13' },
-  'fumerolle.ts': { froidDeFumerolle: 'un champ (le souffle froid) lu en un point — E-R13' },
+  'fumerolle.ts': {
+    froidDeFumerolle: 'un champ (le souffle froid) lu en un point — E-R13',
+    // Le MÊME champ, majoré à l'amorce (2026-10-02) : la passe est du worldgen — aucun corps
+    // n'existe quand elle tourne —, et son résultat est rangé PAR PALIER, donc l'étage n'est pas
+    // ignoré, il est la CLÉ du tableau qu'elle remplit.
+    souffleMaxParPalier: 'worldgen — le souffle majoré par palier, et le palier EST la clé de sortie',
+  },
   'temperature.ts': {
     // Et il porte DÉJÀ sa garde : `etage < 0 → 0` (G-R7, « la source est au sol »).
     naturalWarmth: 'un champ (la source chaude) lu en un point, et déjà borné par l’étage',

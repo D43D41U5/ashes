@@ -26,7 +26,8 @@ import {
   YEAR_DAYS,
 } from './balance'
 import { palierDuSol, terrainAEtage } from './etages'
-import { foyersDeLaCarte, froidDeCendre } from './cendre'
+import { CARACTERES_DE_FOYER, foyersDeLaCarte, froidDeCendre } from './cendre'
+import { FUMEROLLE, souffleMaxParPalier } from './fumerolle'
 import { drainEvents } from './events'
 import { placeHuntingGrounds } from './faune'
 import {
@@ -1668,5 +1669,136 @@ describe('les deux bornes par palier : « ici rien ne gèle » et « ici tout g�
         expect(estGele(sim, i % map.width, Math.floor(i / map.width)), `${nom} : (${i % map.width},${Math.floor(i / map.width)}) au palier ${haut}`).toBe(true)
       }
     }
+  })
+
+  // ═══════════════════════════════════════════════════════════════════════════════════════════
+  // LE SOUFFLE MAX PAR PALIER — le majorant local précalculé (2026-10-02, « on suit ta reco »)
+  // ═══════════════════════════════════════════════════════════════════════════════════════════
+
+  /** Le majorant GLOBAL — celui que `plancherDuPalier` retranchait partout avant le champ, et
+   *  celui sur lequel il retombe quand le champ manque (carte d'avant, façade client, banc). */
+  const SOUFFLE_GLOBAL = FUMEROLLE.FROID * Math.max(1, ...Object.values(CARACTERES_DE_FOYER).map((e) => e.froid ?? 1))
+
+  /** Toutes les fosses à un âge donné — la cendre vieillie, que `createSim` ne pose jamais. */
+  const agesDe = (age: number): number[] => foyersDeLaCarte(map).map(() => age)
+
+  it('LE SOUFFLE MAX PAR PALIER EST UN MAJORANT — et il est ATTEINT AU BIT, les quatre paliers', () => {
+    // ═══ LE CONTRAT DU CHAMP, ET IL EST DOUBLE ═══
+    //
+    // ① **MAJORANT** : `souffleMax[p] ≥ froidDeFumerolle` sur CHAQUE tuile d'eau du palier `p`, à
+    //   tout âge de la cendre. Sans ça `plancherDuPalier` cesse d'être un minorant et la porte
+    //   « ici rien ne gèle » mentirait sur un gué pris — le défaut du matin, en plus petit.
+    // ② **EXACT** : à la limite (toutes les bouches éveillées), il est ÉGAL au pire souffle
+    //   réellement pris, aux quatre paliers. Un majorant trop lâche serait SAIN MAIS INERTE —
+    //   la leçon du plafond, dont le terme de palier mis à `×0` ne faisait rougir aucune garde
+    //   de justesse. Ici l'égalité au bit est ce qui atteste qu'il mesure la bonne chose.
+    //
+    // ⚠ L'ÂGE EST POUSSÉ AU-DELÀ DU JOUABLE, ET C'EST LE SENS DU CHAMP : il majore pour TOUTE la
+    //   durée d'une partie, donc il se juge quand la corruption a tout atteint. Aux âges jouables
+    //   il est simplement plus lâche (MESURÉ : à 120 jours, les paliers 1-3 n'ont pas encore
+    //   réveillé leurs bouches — 5,25 / 6,27 / 0 pour une borne de 8,09 / 9,75 / 9,75).
+    const champ = map.souffleMax
+    expect(champ, 'la carte du monde JOUÉ porte le champ (worldgen, passe de queue)').toBeDefined()
+    expect(champ).toHaveLength(TERRASSES.PALIERS)
+    const sim = createSim(SEED, { map, calendarScale: 1, meteoActive: false })
+    for (const [nom, age, exact] of [['âge jouable (120 j)', 120, false], ['à la LIMITE', 100000, true]] as const) {
+      sim.cendreAge = agesDe(age)
+      const pire = new Array<number>(TERRASSES.PALIERS).fill(0)
+      let chaudes = 0
+      const fautes: string[] = []
+      for (const [p, tuiles] of EAU) for (const i of tuiles) {
+        const tx = i % map.width, ty = Math.floor(i / map.width)
+        const f = froidDeFumerolleDeTuile(sim, tx, ty)
+        if (f <= 0) continue
+        chaudes++
+        if (f > pire[p]!) pire[p] = f
+        if (f > champ![p]! && fautes.length < 8) fautes.push(`${nom} · p${p} (${tx},${ty}) : souffle ${f} > borne ${champ![p]}`)
+      }
+      expect(fautes, fautes.join('\n')).toHaveLength(0)
+      // ⚠ CONTRÔLE POSITIF : sans tuile chaude, « aucun dépassement » est une tautologie.
+      expect(chaudes, `${nom} : des tuiles d’eau prennent vraiment un souffle`).toBeGreaterThan(100)
+      if (exact) {
+        for (let p = 0; p < TERRASSES.PALIERS; p++) {
+          expect(pire[p], `p${p} : le majorant est ATTEINT, au bit`).toBe(champ![p])
+        }
+        // Et il est STRICTEMENT meilleur que le majorant global — c'est tout son objet.
+        expect(Math.max(...champ!)).toBeLessThan(SOUFFLE_GLOBAL)
+      }
+    }
+  })
+
+  it('LE CHAMP DU WORLDGEN EST EXACTEMENT UN RECALCUL — il ne doit rien au PRNG ni à l’ordre des passes', () => {
+    // La passe est posée en TOUTE FIN de `generateZonedTerrain` et ne tire pas un nombre : si elle
+    // en tirait un, elle déplacerait la naissance et les villages (journal du 2026-09-22, « l'ordre
+    // d'une passe déplace les villages »). Le recalcul à froid, hors de toute génération, doit
+    // rendre le même tableau au bit — c'est ce qui le prouve, et c'est aussi ce qui autorise une
+    // sauvegarde à se relire : le champ est une FONCTION de (carte, graine), pas un état.
+    expect(souffleMaxParPalier(map, SEED)).toEqual(map.souffleMax)
+    // Et sans champ de cendre, rien ne fume : la passe rend des zéros et le worldgen ne pose alors
+    // PAS le champ (il est gaté) — l'absence doit être une absence, jamais un `[0,0,0,0]`, qui
+    // serait un repli par zéro et rendrait le plancher FAUX au lieu de lent.
+    expect(souffleMaxParPalier(carteDEssai(), SEED)).toEqual(new Array(TERRASSES.PALIERS).fill(0))
+  })
+
+  it('RETIRER LE CHAMP NE CHANGE PAS UN VERDICT — mais la porte du palier 0 coupe DEUX FOIS MOINS', () => {
+    // ═══ LES DEUX MOITIÉS DE LA DÉCISION DU 2026-10-02 ═══
+    //
+    // ① **LE REPLI EST SAIN** : une carte d'avant ce jour-là (ou un faux `SimState` de façade
+    //   client) n'a pas le champ et retombe sur le majorant global. Ça doit être PLUS LENT et
+    //   JAMAIS FAUX — donc pas un verdict de `estGele` ne bouge entre les deux.
+    // ② **LE CHAMP SERT** : et ça se compte. Situé, le terme tombe de 12,6 à 8,09 °C au palier 0
+    //   et la porte y recoupe des points de l'année que le majorant global ne coupait plus.
+    //   MESURÉ : **126 points sur 480 contre 74** (et au banc, la cuisson du pire écran du palier
+    //   0 passe de 66 ms à 5,7 ms au jour 65 — `tools/profil-gel-structures.mts`).
+    //
+    // ⚠ CE N'EST PAS UN REMBOURSEMENT COMPLET, et la garde ne prétend pas le contraire : 8,09 °C
+    //   est le pire souffle VRAI du palier 0 (garde ci-dessus), donc aucun majorant par palier ne
+    //   peut faire mieux, et les 73 jours restants coûtent toujours 66 ms.
+    const ages = agesDe(120)
+    const avec = createSim(SEED, { map, calendarScale: 1, meteoActive: false })
+    avec.cendreAge = [...ages]
+    const sans = createSim(SEED, { map, calendarScale: 1, meteoActive: false })
+    sans.cendreAge = [...ages]
+    // ⚠ ON MUTE LA CARTE **DE LA SIM**, pas `map` : `createSim` déclone la carte, donc les deux
+    //   sims ont chacune la leur et `map` (partagée par tout ce fichier) reste intacte.
+    delete (sans.map as { souffleMax?: number[] }).souffleMax
+    expect(avec.map.souffleMax, 'le témoin a bien son champ').toBeDefined()
+    expect(sans.map.souffleMax, 'et le repli n’en a pas').toBeUndefined()
+
+    // Les tuiles qui PEUVENT diverger : celles qui portent un froid local (le champ ne change
+    // rien ailleurs — il ne se lit que sous `cendreAge` non vide).
+    const chaudes: number[] = []
+    for (const [, tuiles] of EAU) for (const i of tuiles) {
+      const tx = i % map.width, ty = Math.floor(i / map.width)
+      if (froidDeFumerolleDeTuile(avec, tx, ty) + froidDeCendre(avec, tx, ty) > 0) chaudes.push(i)
+    }
+    expect(chaudes.length, 'des tuiles à froid local').toBeGreaterThan(100)
+    // …plus un échantillon de l'eau FROIDE de chaque palier : le champ change la PORTE, qui vaut
+    // pour tout le palier, pas seulement pour les tuiles chaudes.
+    const cibles = [...chaudes, ...[...EAU.values()].flatMap((l) => l.filter((_, k) => k % 997 === 0))]
+    let coupeAvec = 0, coupeSans = 0, points = 0, geles = 0
+    const fautes: string[] = []
+    for (let jour = 1; jour <= YEAR_DAYS; jour++) for (const [quand, nuit, part] of MOMENTS) {
+      avec.tick = tickAu(avec, jour, nuit, part)
+      sans.tick = avec.tick
+      points++
+      if (!gelPossibleAuPalier(avec, 0)) coupeAvec++
+      if (!gelPossibleAuPalier(sans, 0)) coupeSans++
+      for (const i of cibles) {
+        const tx = i % map.width, ty = Math.floor(i / map.width)
+        const a = estGele(avec, tx, ty)
+        if (a) geles++
+        const b = estGele(sans, tx, ty)
+        if (a !== b && fautes.length < 8) fautes.push(`jour ${jour} ${quand} (${tx},${ty}) : avec=${a}, sans=${b}`)
+      }
+    }
+    expect(fautes, fautes.join('\n')).toHaveLength(0)
+    // NON-VACUITÉ : si rien ne gelait jamais, l'égalité ci-dessus serait triviale.
+    expect(geles, 'des instants où ces tuiles sont RÉELLEMENT prises').toBeGreaterThan(100)
+    // ② — et la porte coupe strictement plus souvent avec le champ. ⚠ La garde s'énonce en LOI
+    //    (« strictement plus ») et garde le chiffre mesuré en commentaire : un seuil chiffré se
+    //    périmerait au premier réglage du semis de fumerolles.
+    expect(coupeSans, `la porte doit déjà couper quelque part sans le champ (sur ${points} points)`).toBeGreaterThan(0)
+    expect(coupeAvec, `le champ rend des points à la porte (mesuré le 02/10 : 126 contre 74 sur 480)`).toBeGreaterThan(coupeSans)
   })
 })

@@ -50,6 +50,7 @@ import {
 } from './balance'
 import { isWater, MARCHABLE, type WorldMap, type Zone as ZoneRect } from './map'
 import { calculeChampDeCendre, computeCendreField, foyersDeLaCarte } from './cendre'
+import { souffleMaxParPalier } from './fumerolle'
 import { construireEtage, palierDuSol, terrainDeCave, terrainDeDessus, type Connecteur, type EtageCreux } from './etages'
 import { aDesPaliers, poserLesTerrasses, quantifierLEscalier, TERRASSES } from './terrasses'
 import { distSq } from './geometry'
@@ -1181,6 +1182,18 @@ export function generateZonedTerrain(
     map.zones.push({ name: 'la Source', x: x0, y: y0, w: cote, h: cote, kind: 'source' })
     ;(map.annales ??= []).push({ ere: 0, type: 'source', x: s.x, y: s.y, lieu: 'source' })
   }
+
+  // ── LE PIRE SOUFFLE DE FUMEROLLE PAR PALIER — la borne basse du gel, précalculée ───────────
+  //
+  // EN TOUT DERNIER ET SANS UN SEUL TIRAGE : la passe ne lit que `hash2` (semis positionnel) et le
+  // terrain déjà posé, elle n'avance aucun PRNG et ne mute aucune tuile. L'ordre importe quand
+  // même, et dans l'autre sens : il lui faut le terrain FINI (les terrasses commandent le palier)
+  // et `cendreCout` (sans lui, aucune fumerolle n'existe — la passe rend des zéros et sort).
+  // Pourquoi ce champ existe, et le chiffre qui l'a décidé : `souffleMaxParPalier`.
+  // ⚠ GATÉ : sans `cendreCout` rien ne fume, et l'on ne pose alors **PAS LE CHAMP** plutôt que des
+  //   zéros. Un `[0,0,0,0]` serait un repli par ZÉRO — précisément celui que `souffleMaxDuPalier`
+  //   interdit, parce qu'il rendrait la borne fausse au lieu de lente.
+  if (map.cendreCout) map.souffleMax = souffleMaxParPalier(map, seed)
 
   return carte
 }

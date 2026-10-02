@@ -11,7 +11,7 @@ volets, chacun en ajout seul et en ordre chronologique. Ce fichier-ci est l'INDE
 |---|---|---|---|---|
 | **M** | [Monde & worldgen](decisions/monde-worldgen.md) | worldgen, relief, eau, biomes, lieux, cendre, étages | 191 | 355 Ko |
 | **R** | [Rendu & DA](decisions/rendu-da.md) | lumière, couleur, sprites, FX, art du sol, son | 210 | 536 Ko |
-| **G** | [Gameplay & systèmes](decisions/gameplay-systemes.md) | faune, combat, récolte, craft, saisons, météo, construction, design | 376 | 899 Ko |
+| **G** | [Gameplay & systèmes](decisions/gameplay-systemes.md) | faune, combat, récolte, craft, saisons, météo, construction, design | 377 | 903 Ko |
 | **I** | [Interface & outillage](decisions/interface-outillage.md) | HUD, menus, encyclopédie, carte, smoke, bancs, process | 85 | 185 Ko |
 | **A** | [Architecture & infra](decisions/architecture-infra.md) | pureté et déterminisme de /sim, protocole, serveur, persistance, perf | 69 | 129 Ko |
 
@@ -31,7 +31,7 @@ retrouve ici, à la même date, jamais à la ligne du dessus dans son volet.
 
 ---
 
-## Index chronologique — 931 entrées, 2105 Ko
+## Index chronologique — 932 entrées, 2109 Ko
 
 - 2026-07-05 · **M** · Spec monde validée par Alexis : déplacement continu type Binding of Isaac (jamais de case par c…
 - 2026-07-05 · **M** · Convention d'import Tiled : l'index local de la tuile dans le premier tileset = l'id de terrain…
@@ -964,3 +964,4 @@ retrouve ici, à la même date, jamais à la ligne du dessus dans son volet.
 - 2026-10-02 · **G** · ÉTAPE 2 LIVRÉE : LA GARDE DE GEL EST LOCALE, AVEC SES DEUX BORNES PAR PALIER — ET ELLE A RÉVEIL…
 - 2026-10-02 · **G** · TROIS CHOSES QUE J'AI ÉCRITES FAUX DANS L'ENTRÉE « ÉTAPE 2 LIVRÉE » CI-DESSUS, ET LE DÉFAUT QU'…
 - 2026-10-02 · **G** · OUI, ÇA SE VOIT, ET C'EST LE PIRE ÉCRAN QUI LE DIT : 62 ms À ZÉRO STRUCTURE, 285 ms AVEC UNE BA…
+- 2026-10-02 · **G** · LE PIRE SOUFFLE DE FUMEROLLE EST PRÉCALCULÉ PAR PALIER (`map.souffleMax`), ET LE GAIN EST PARTI…

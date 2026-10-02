@@ -110,6 +110,27 @@ export interface WorldMap {
   cendreCout?: number[]
 
   /**
+   * ═══ LE PIRE SOUFFLE DE FUMEROLLE QUE L'EAU DE CHAQUE PALIER PUISSE PRENDRE ═══
+   *
+   * Un nombre par palier (`souffleMax[p]`, en degrés), précalculé à l'amorce par
+   * `souffleMaxParPalier` (`fumerolle.ts`) — le majorant LOCAL que `plancherDuPalier` (`gel.ts`)
+   * retranche pour garder sa porte « ici rien ne gèle ». Sans lui, cette porte doit retrancher le
+   * pire souffle de toute la carte (12,6 °C) et coupe deux fois moins souvent au fond de la vallée :
+   * MESURÉ, 74 points de l'année sur 480 au palier 0 contre **126** avec le champ (et quand elle ne
+   * coupe pas, une cuisson du pire écran coûte 62 ms au lieu de 7,5 — 285 ms sur une base de 800
+   * structures). Décision d'Alexis du 2026-10-02 ; le gain est partiel, voir `souffleMaxDuPalier`.
+   *
+   * **Donnée STATIQUE, gelée à l'amorce**, comme `cendreCout` : l'ensemble des bouches POSSIBLES
+   * ne dépend que de (carte, graine), jamais de l'âge de la cendre.
+   *
+   * Additifs : **une carte d'avant se relit sans**, et c'est la sauvegarde qui l'exige (mémoire :
+   * un champ neuf requis jette au premier tick). Son absence dégrade sur le majorant GLOBAL, qui
+   * est sain — plus lent, jamais faux. Absent aussi sur toute carte sans `cendreCout` (bancs,
+   * cartes de test) : là, rien ne fume, la passe ne tourne pas et le terme vaut zéro.
+   */
+  souffleMax?: number[]
+
+  /**
    * ═══ LA ZONE, POUR LE CLIENT — et pourquoi elle est GROSSIÈRE ═══
    *
    * Le client ne peut pas distinguer deux zones à partir des TERRAINS : ils sont partagés (de

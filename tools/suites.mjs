@@ -240,7 +240,11 @@ const SUITES = [
   //   cendre), le balayage exhaustif qui prouve majorant ET équivalence d'un coup, la porte locale
   //   qui coupe avec sa monotonie, le plafond en altitude. Suite à 2415, plancher relevé à 2405 :
   //   40 de marge accumulés depuis le 09-12 ne détectaient plus un fichier évaporé.
-  { nom: 'sim', dir: 'packages/sim', args: ['run', '--exclude', 'src/scenario.test.ts'], plancher: 2405 },
+  // 2026-10-02 (bis) : +3 gardes LE SOUFFLE MAX PAR PALIER (`gel.test.ts`) — le majorant atteint
+  //   au bit aux quatre paliers, le champ du worldgen égal à un recalcul (donc sans PRNG), et le
+  //   repli qui ne change pas un verdict pendant que la porte coupe deux fois plus. Suite à 2418,
+  //   plancher relevé à 2408.
+  { nom: 'sim', dir: 'packages/sim', args: ['run', '--exclude', 'src/scenario.test.ts'], plancher: 2408 },
   // 2026-09-01 : +10 gardes avec le RENDU des étages (`plateau-art.test.ts`).
   // 2026-09-01 : +9 gardes avec le TRI DES ÉTAGES (strate, découvert — `framing.test.ts`),
   //   suite relevée à 1429 ✓, plancher recalé quelques pourcents dessous.
