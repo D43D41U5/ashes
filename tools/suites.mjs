@@ -233,7 +233,14 @@ const SUITES = [
   //   d'événements identique 48/48 jalons, `rngState` et tous les compteurs identiques 12/12,
   //   couverture identique. Les hachages d'ÉTAT diffèrent 48/48 et c'est ATTENDU : `snapshot()`
   //   est `JSON.stringify(state)`, l'objet porte une clé de moins.
-  { nom: 'sim', dir: 'packages/sim', args: ['run', '--exclude', 'src/scenario.test.ts'], plancher: 2370 },
+  // 2026-09-30 : +5 gardes `FROID_PAR_ETAGE` (étape 1 de `braise.md` § 3, `temperature.test.ts`)
+  //   — suite à 2410, plancher laissé tel quel, la marge le couvrait.
+  // 2026-10-02 : +5 gardes LES DEUX BORNES PAR PALIER (étape 2, `gel.test.ts`) — la prémisse du
+  //   plafond affirmée sur l'arité, le plancher contre les froids locaux (dans les deux régimes de
+  //   cendre), le balayage exhaustif qui prouve majorant ET équivalence d'un coup, la porte locale
+  //   qui coupe avec sa monotonie, le plafond en altitude. Suite à 2415, plancher relevé à 2405 :
+  //   40 de marge accumulés depuis le 09-12 ne détectaient plus un fichier évaporé.
+  { nom: 'sim', dir: 'packages/sim', args: ['run', '--exclude', 'src/scenario.test.ts'], plancher: 2405 },
   // 2026-09-01 : +10 gardes avec le RENDU des étages (`plateau-art.test.ts`).
   // 2026-09-01 : +9 gardes avec le TRI DES ÉTAGES (strate, découvert — `framing.test.ts`),
   //   suite relevée à 1429 ✓, plancher recalé quelques pourcents dessous.

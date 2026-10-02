@@ -25,11 +25,13 @@ import {
   TERRAIN_OLD_GROWTH, TERRAIN_PINE, TERRAIN_SHALLOW_WATER, TERRAIN_SNOW, TERRAIN_WILLOW,
   YEAR_DAYS,
 } from './balance'
+import { palierDuSol, terrainAEtage } from './etages'
+import { foyersDeLaCarte, froidDeCendre } from './cendre'
 import { drainEvents } from './events'
 import { placeHuntingGrounds } from './faune'
 import {
-  advanceDegel, bandeDuCycle, estGele, feuillageDenude, gelPossible, jourDeDefeuillaison,
-  jourDeRefeuillaison, neigeAuSol, vitesseSurGlace,
+  advanceDegel, bandeDuCycle, estGele, feuillageDenude, gelPossible, gelPossibleAuPalier,
+  jourDeDefeuillaison, jourDeRefeuillaison, neigeAuSol, plafondDuPalier, vitesseSurGlace,
 } from './gel'
 import { createEmptyMap, isBlockingTile, isWater, MARCHABLE, setTile, terrainAt, type WorldMap } from './map'
 import { modificateurDeSaison } from './modificateur'
@@ -37,14 +39,18 @@ import { fenetreDe, frontDuCycle, largeurDe, neigeA, type MeteoFront } from './m
 import { spawnMonster } from './monsters'
 import { computeFlowField, findPath } from './pathfinding'
 import { createSim, snapshot, spawnEntity, step, type SimState } from './sim'
+import { TERRASSES } from './terrasses'
 import {
-  ambientTemperature, baselineTemperature, climatFlore, climatMaximal, dehorsSansMeteo, socleDuJour,
+  ambientTemperature, baselineTemperature, baselineTemperatureAt, climatFlore, climatMaximal,
+  dehorsSansMeteo, froidDeFumerolleDeTuile, socleDuJour, sousLaRoche,
 } from './temperature'
 import {
   calendarScaleForSeasonCycles, dayTicksPourJour, gameTimeAt, jourDeSaison, NIGHT_RAMP_TICKS,
-  phaseForDay, TICKS_PER_CYCLE, tourForDay,
+  phaseForDay, TICKS_PER_CYCLE, TICKS_PER_SEASON_DAY, tourForDay,
 } from './time'
 import { addStructure } from './village'
+import { MONDE, MONDE_JOUE } from './zonegraph'
+import { carteDeTest } from '../../../tools/carte-cache'
 
 /** 1 jour de saison = 1 cycle : le tick porte la saison ET l'heure. */
 const SCALE = calendarScaleForSeasonCycles(BALANCE.SEASON_DAYS)
@@ -1365,5 +1371,302 @@ describe('`climatMaximal` est CONSERVATRICE (la borne O(1) du gel de la flore)',
     sim.brume = null
     sim.tick = tickDe(ARDEUR, false)
     expect(climatMaximal(sim, sim.tick)).toBe(climatFlore(sim, PROBE_X, PROBE_Y, sim.tick))
+  })
+})
+
+/* ─────────── LES DEUX BORNES PAR PALIER — étape 2 de `braise.md` § 3 (2026-10-02) ─────────── */
+
+describe('les deux bornes par palier : « ici rien ne gèle » et « ici tout gèle »', () => {
+  const SEED = 2026
+  const carte = carteDeTest(SEED, MONDE.JOUEURS_CIBLE, MONDE_JOUE)
+  const map = carte.map
+
+  /** MIDI et CŒUR DE NUIT d'un jour de SAISON. ⚠ Un jour de saison vaut `TICKS_PER_SEASON_DAY`
+   *  (1 728 000 ticks) et NON un cycle jour/nuit : une sonde qui comptait des cycles a rendu un
+   *  tableau tout propre et parfaitement faux le 2026-10-01 (journal du jour). On s'aligne donc
+   *  sur le début du cycle qui porte le jour visé, et l'on VÉRIFIE le jour obtenu. */
+  /** Les quatre moments d'un cycle, en PART du jour puis de la nuit. ⚠ L'aube et le crépuscule
+   *  ne sont pas du décor : `partDeNuit` y est une RAMPE, donc c'est là que la température
+   *  traverse un seuil — et donc là que la bande morte et sa relecture du passé décident. Une
+   *  garde qui ne visite que midi et le cœur de nuit ne voit jamais la traversée. */
+  const MOMENTS = [
+    ['midi', false, 0.5], ['aube', false, 0.04], ['crépuscule', false, 0.96], ['cœur de nuit', true, 0.5],
+  ] as const
+  function tickAu(state: SimState, jour: number, nuit: boolean, part: number): number {
+    const t0 = (jour - 1) * TICKS_PER_SEASON_DAY + TICKS_PER_CYCLE
+    const cs = t0 - (((t0 + state.cycleOffset) % TICKS_PER_CYCLE) + TICKS_PER_CYCLE) % TICKS_PER_CYCLE
+    const d = dayTicksPourJour(jour)
+    const t = cs + (nuit ? d + Math.floor((TICKS_PER_CYCLE - d) * part) : Math.floor(d * part))
+    expect(jourDeSaison(state, t), `le tick ${t} doit tomber au jour ${jour}`).toBe(jour)
+    return t
+  }
+  function tickDe(state: SimState, jour: number, nuit: boolean): number {
+    // Un cycle DANS le jour avant d'aligner : sans cette marge, l'alignement vers le bas
+    // retomberait la veille au jour 1 (t0 = 0) et la garde se jugerait sur une autre saison.
+    const t0 = (jour - 1) * TICKS_PER_SEASON_DAY + TICKS_PER_CYCLE
+    const cs = t0 - (((t0 + state.cycleOffset) % TICKS_PER_CYCLE) + TICKS_PER_CYCLE) % TICKS_PER_CYCLE
+    const d = dayTicksPourJour(jour)
+    const t = cs + (nuit ? d + Math.floor((TICKS_PER_CYCLE - d) / 2) : Math.floor(d / 2))
+    expect(jourDeSaison(state, t), `le tick ${t} doit tomber au jour ${jour}`).toBe(jour)
+    return t
+  }
+  const coeurDe = (phase: number): number => (phase - 1) * BALANCE.ACT_DAYS + BALANCE.ACT_DAYS / 2
+  const INSTANTS = [1, 2, 3, 4].flatMap((ph) => [[`saison ${ph} jour`, coeurDe(ph), false], [`saison ${ph} nuit`, coeurDe(ph), true]] as const)
+
+  /**
+   * TOUTE l'eau de la carte, rangée par palier — **un balayage, pas un échantillon**.
+   *
+   * ⚠ Un échantillon borné avait été écrit d'abord (les 120 premières tuiles par palier) et il
+   * était PIRE qu'inutile : l'ordre de balayage part du haut de la carte, donc « les 120
+   * premières » sont toutes voisines, et les tuiles capables de rompre le majorant sont
+   * précisément les rares — abritées, karstiques, en bord de carte. Un titre qui dit « aucune
+   * tuile » doit avoir regardé chaque tuile.
+   */
+  function eauParPalier(): Map<number, number[]> {
+    const parPalier = new Map<number, number[]>()
+    for (let ty = 0; ty < map.height; ty++) for (let tx = 0; tx < map.width; tx++) {
+      const t = terrainAt(map, tx, ty)
+      if (t !== TERRAIN_SHALLOW_WATER && t !== TERRAIN_DEEP_WATER) continue
+      const p = palierDuSol(map, tx, ty)
+      const l = parPalier.get(p)
+      if (l) l.push(ty * map.width + tx)
+      else parPalier.set(p, [ty * map.width + tx])
+    }
+    return parPalier
+  }
+  const EAU = eauParPalier()
+  const TOTAL_EAU = [...EAU.values()].reduce((n, l) => n + l.length, 0)
+  const sim0 = createSim(SEED, { map, calendarScale: 1, meteoActive: false })
+  /** Du SEC, échantillonné en grille — pour éprouver l'inversion de l'ordre (seuil avant porte). */
+  const SEC: number[] = (() => {
+    const l: number[] = []
+    for (let ty = 0; ty < map.height && l.length < 400; ty += 7) for (let tx = 0; tx < map.width && l.length < 400; tx += 11) {
+      if (!isWater(terrainAt(map, tx, ty))) l.push(ty * map.width + tx)
+    }
+    return l
+  })()
+
+  it('LE PLAFOND NE PEUT PAS RENCONTRER `GROTTE_AMBIANT` — prémisse affirmée sur l’ARITÉ, pas sur un comptage', () => {
+    // ⚠ `airNonBorneAt` rend `GROTTE_AMBIANT` (13 °C) dès qu'une tuile est sous la roche, QUEL QUE
+    // SOIT son palier : une eau sous un plafond de roche rendrait le majorant faux de 31 °C au
+    // palier 3 (13 contre −18). La prémisse est donc à prouver — mais PAS comme je l'avais écrite.
+    //
+    // ⚠ **MA PREMIÈRE VERSION DE CETTE GARDE NE POUVAIT PAS ÉCHOUER, et son chiffre ne mesurait
+    //   rien.** Elle appelait `sousLaRoche(sim0, tx, ty)` — **trois** arguments — alors que la
+    //   fonction s'ouvre sur `etage !== undefined && etage < 0 && …` : à trois arguments elle rend
+    //   **toujours faux**, sans jamais toucher la carte. Mon « 0 tuile sur 321 649 » était donc une
+    //   tautologie déguisée en mesure. C'est affirmé ici, et le chiffre est retiré partout.
+    //
+    // CE QUI PROUVE VRAIMENT LA PRÉMISSE, en deux clauses :
+    //   ① **l'arité** — `estGele` lit `baselineTemperature(state, tx, ty)` SANS `etage`, donc la
+    //     branche grotte est structurellement inatteignable. C'est le fait porteur : la prémisse
+    //     ne redeviendra vivante que le jour où `estGele` ou l'une des deux bornes prendra un étage.
+    //   ② **la carte** — aucune tuile d'eau n'existe à un étage CREUSÉ (`−(palier+1)`, G-R1), ce qui
+    //     se lit avec `terrainAEtage` et non avec `sousLaRoche`.
+    // ① est un CONTRÔLE POSITIF de ② : il montre que ma sonde d'avant mesurait la première et
+    // croyait mesurer la seconde.
+    expect(sousLaRoche(sim0, 0, 0), '① `sousLaRoche` à trois arguments rend faux par construction')
+      .toBe(false)
+    let sous = 0
+    const exemples: string[] = []
+    for (const [p, tuiles] of EAU) for (const i of tuiles) {
+      const tx = i % map.width, ty = Math.floor(i / map.width)
+      // L'étage creusé sous CE palier, celui que `sousLaRoche` aurait reçu si on le lui passait.
+      if (terrainAEtage(map, -(p + 1), tx, ty) === 0) continue
+      sous++
+      if (exemples.length < 5) exemples.push(`(${tx},${ty}) palier ${p}`)
+    }
+    expect(TOTAL_EAU, 'la garde ne passe pas à vide').toBeGreaterThan(10000)
+    expect(sous, `② eau à un étage creusé — le plafond n’y est plus un majorant : ${exemples.join(' · ')}`).toBe(0)
+  })
+
+  it('LE PLANCHER TIENT COMPTE DES FROIDS LOCAUX — fumerolle et cendre, le trou reproduit le 2026-10-02', () => {
+    // ⚠ ═══ LA GARDE DE NON-RÉGRESSION DU DÉFAUT LE PLUS SÉRIEUX DE L'ÉTAPE 2 ═══
+    //
+    // `expositionSansMeteo` retranche CINQ termes : `biome − nuit − brume − FUMEROLLE − CENDRE`.
+    // `plancherDuPalier` en omettait les deux derniers, qui sont des froids ≥ 0 — il n'était donc
+    // pas un minorant, et la porte locale affirmait « ici rien ne gèle » sur des gués à −3,6 °C.
+    // **REPRODUIT avant d'être corrigé** : 1 540 divergences sur l'année, graine 2026, cendre
+    // vieillie — 416 tuiles d'eau portent un souffle jusqu'à 8,09 °C, aux paliers 0, 1 et 2.
+    //
+    // ⚠ **LE DÉFAUT EST PLUS VIEUX QUE L'ÉTAPE 2 ET CELLE-CI LE RÉVEILLE** : avant le 2026-09-30 la
+    //   porte coupait 120/240 et le trou était VIVANT ; le froid d'étage l'a masqué (0/240) ; la
+    //   rendre locale la fait couper à nouveau. Une borne qu'on rend utile redevient faillible.
+    //
+    // ⚠ **ET C'EST POURQUOI CETTE GARDE VIEILLIT LA CENDRE** : `createSim` laisse `cendreAge` vide,
+    //   donc les deux froids valent 0 par court-circuit et le balayage exhaustif ci-dessus — qui
+    //   n'a pas de cendre — est AVEUGLE à ce défaut. Un montage qui ne porte pas la prémisse ne
+    //   peut pas voir ce qui en dépend.
+    // ⚠ **LES DEUX RÉGIMES DE CENDRE, et ce n'est pas du zèle** : les deux froids n'ont pas la
+    //   même condition d'existence — le souffle exige un `cendreAge` non vide, le froid de cendre
+    //   non (`profondeurNueDeCendre` lit `?? 0` et calcule quand même). Une garde qui ne jouerait
+    //   que la cendre vieillie laisserait la borne du régime NEUF sans aucune épreuve, or c'est
+    //   celui d'une partie qui vient de naître.
+    const seuilRef = (terrain: number): number | undefined =>
+      terrain === TERRAIN_SHALLOW_WATER ? GEL.SEUIL_GUE : terrain === TERRAIN_DEEP_WATER ? GEL.SEUIL_PROFOND : undefined
+    let chaudesVues = 0
+    for (const [nomRegime, ages] of [
+      ['cendre VIEILLIE (120 j)', foyersDeLaCarte(map).map(() => 120)],
+      ['cendre NEUVE (cendreAge vide)', [] as number[]],
+    ] as const) {
+      const sim = createSim(SEED, { map, calendarScale: 1, meteoActive: false })
+      sim.cendreAge = [...ages]
+      const chaudes: { tx: number; ty: number; p: number }[] = []
+      let pireFroid = 0
+      for (const [p, tuiles] of EAU) for (const i of tuiles) {
+        const tx = i % map.width, ty = Math.floor(i / map.width)
+        const froid = froidDeFumerolleDeTuile(sim, tx, ty) + froidDeCendre(sim, tx, ty)
+        if (froid <= 0) continue
+        chaudes.push({ tx, ty, p })
+        if (froid > pireFroid) pireFroid = froid
+      }
+      chaudesVues += chaudes.length
+      // ⚠ LA PRÉMISSE N'EST AFFIRMÉE QUE POUR LE RÉGIME QUI LA PORTE. En cendre neuve il n'y a
+      //   AUCUNE bouche éveillée (MESURÉ : 0 tuile d'eau sur 321 649 porte un froid local), donc
+      //   exiger ici « plus de 100 tuiles chaudes » rendrait la garde rouge pour une bonne raison.
+      //   Ce régime-là éprouve l'AUTRE chose : que la borne reste JUSTE quand on ne la pénalise pas.
+      if (ages.length > 0) {
+        expect(chaudes.length, `${nomRegime} : des tuiles d’eau portant un froid local`).toBeGreaterThan(100)
+        expect(pireFroid, `${nomRegime} : et un froid qui franchit l’hystérésis`).toBeGreaterThan(GEL.HYSTERESIS)
+      }
+      // En cendre neuve on n'a pas de tuile « chaude » : on éprouve alors un échantillon d'eau du
+      // palier 0, là où la borne est la plus serrée et donc la plus prompte à se tromper.
+      const cibles = chaudes.length > 0 ? chaudes
+        : (EAU.get(0) ?? []).slice(0, 400).map((i) => ({ tx: i % map.width, ty: Math.floor(i / map.width), p: 0 }))
+      expect(cibles.length, `${nomRegime} : des cibles`).toBeGreaterThan(100)
+      const fautes: string[] = []
+      let geles = 0
+      // ⚠ L'ANNÉE ENTIÈRE × LES QUATRE MOMENTS DU CYCLE. La fenêtre du défaut est étroite et on ne
+      //   la devine pas : celle de 2026 s'ouvrait au JOUR 1, qu'aucun des huit cardinaux du
+      //   balayage exhaustif ne visite — et l'aube et le crépuscule sont les instants où la
+      //   température TRAVERSE un seuil, donc où la bande morte décide.
+      for (let jour = 1; jour <= YEAR_DAYS; jour++) for (const [quand, nuit, part] of MOMENTS) {
+        sim.tick = tickAu(sim, jour, nuit, part)
+        for (const k of cibles) {
+          const seuil = seuilRef(terrainAt(map, k.tx, k.ty))!
+          const t = baselineTemperature(sim, k.tx, k.ty)
+          let attendu: boolean
+          if (t < seuil) attendu = true
+          else if (t >= seuil + GEL.HYSTERESIS) attendu = false
+          else attendu = baselineTemperatureAt(sim, k.tx, k.ty, Math.max(0, sim.tick - GEL.RETARD_TICKS)) < seuil
+          const obtenu = estGele(sim, k.tx, k.ty)
+          if (attendu) geles++
+          if (obtenu !== attendu && fautes.length < 8) {
+            fautes.push(`${nomRegime} · jour ${jour} ${quand} · p${k.p} (${k.tx},${k.ty}) : estGele=${obtenu}, la vérité est ${attendu} · T=${t} · porte p${k.p}=${gelPossibleAuPalier(sim, k.p)}`)
+          }
+        }
+      }
+      // ⚠ NON-VACUITÉ : si aucune cible ne gelait jamais, l'égalité serait triviale.
+      expect(geles, `${nomRegime} : des instants où ces tuiles sont RÉELLEMENT prises`).toBeGreaterThan(100)
+      expect(fautes, fautes.join('\n')).toHaveLength(0)
+    }
+    expect(chaudesVues, 'au moins un régime porte des tuiles chaudes').toBeGreaterThan(100)
+  })
+
+  it('LE PLAFOND EST UN MAJORANT **ET** `estGele` N’A PAS BOUGÉ D’UNE TUILE — balayage de toute l’eau', () => {
+    // ═══ LE CONTRAT ENTIER DE L'ÉTAPE 2, EN UN SEUL BALAYAGE ═══
+    //
+    // Deux affirmations se vérifient ici, et elles sont réunies pour une raison de COÛT : toutes
+    // deux ont besoin de la MÊME lecture de température, qui est le poste cher (MESURÉ le
+    // 2026-10-02 : 2,0 s pour 321 649 tuiles à un instant). Les séparer la paierait deux fois.
+    //
+    //  ① LE PLAFOND EST UN VRAI MAJORANT. C'est la garde de soudure de `plafondDuPalier` : sa
+    //    preuve tient à une propriété de l'EAU — l'exposition est SIGNÉE (le biome peut
+    //    RÉCHAUFFER, +2 en forêt) mais `BIOME_OFFSET` n'a aucune entrée pour 4 ni 6. Le jour où
+    //    une eau prendrait un offset positif, le plafond deviendrait faux ; c'est ici qu'on
+    //    l'apprendrait. (L'autre prémisse — aucune eau sous la roche — a sa garde juste au-dessus.)
+    //
+    //  ② `estGele` REND EXACTEMENT CE QU'IL RENDAIT. La référence recalcule le prédicat SANS
+    //    aucune borne : si les deux coïncident sur chaque tuile d'eau de la carte et à huit
+    //    instants, les bornes n'ont rien changé au JEU — elles ont seulement évité des lectures.
+    //
+    // ⚠ ET C'EST UN BALAYAGE, PAS UN ÉCHANTILLON (voir `eauParPalier`) : les tuiles capables de
+    //   rompre le majorant sont les rares, et un échantillon pris dans l'ordre de balayage les
+    //   manque par construction.
+    const sim = sim0
+    const seuilRef = (terrain: number): number | undefined =>
+      terrain === TERRAIN_SHALLOW_WATER ? GEL.SEUIL_GUE : terrain === TERRAIN_DEEP_WATER ? GEL.SEUIL_PROFOND : undefined
+    const majorant: string[] = []
+    const divergences: string[] = []
+    let vus = 0, geles = 0
+    for (const [, jour, nuit] of INSTANTS) {
+      sim.tick = tickDe(sim, jour, nuit)
+      for (const [p, tuiles] of [...EAU, [-1, SEC] as const]) {
+        const plafond = p < 0 ? undefined : plafondDuPalier(sim, p)
+        for (const i of tuiles) {
+          const tx = i % map.width, ty = Math.floor(i / map.width)
+          const seuil = seuilRef(terrainAt(map, tx, ty))
+          // ① le majorant — sur l'eau seulement, c'est son domaine
+          const t = seuil === undefined ? 0 : baselineTemperature(sim, tx, ty)
+          if (plafond !== undefined && t > plafond && majorant.length < 8) {
+            majorant.push(`jour ${jour}${nuit ? ' nuit' : ''}, p${p} (${tx},${ty}) : ${t} > plafond ${plafond}`)
+          }
+          // ② l'équivalence — la référence réemploie la lecture déjà faite
+          let attendu: boolean
+          if (seuil === undefined) attendu = false
+          else if (t < seuil) attendu = true
+          else if (t >= seuil + GEL.HYSTERESIS) attendu = false
+          else attendu = baselineTemperatureAt(sim, tx, ty, Math.max(0, sim.tick - GEL.RETARD_TICKS)) < seuil
+          const obtenu = estGele(sim, tx, ty)
+          vus++
+          if (obtenu) geles++
+          if (obtenu !== attendu && divergences.length < 8) {
+            divergences.push(`jour ${jour}${nuit ? ' nuit' : ''}, p${palierDuSol(map, tx, ty)} (${tx},${ty}) terrain ${terrainAt(map, tx, ty)} : estGele=${obtenu} mais la référence dit ${attendu}`)
+          }
+        }
+      }
+    }
+    expect(vus, 'la garde ne passe pas à vide').toBeGreaterThan(TOTAL_EAU)
+    // ⚠ LES DEUX ISSUES SONT VISITÉES : sans ces deux lignes, une référence qui rendrait TOUJOURS
+    // faux coïnciderait avec un `estGele` cassé dans le même sens, et l'équivalence serait triviale.
+    expect(geles, 'des tuiles GELÉES dans le balayage').toBeGreaterThan(1000)
+    expect(vus - geles, 'des tuiles LIBRES dans le balayage').toBeGreaterThan(1000)
+    expect(majorant, majorant.join('\n')).toHaveLength(0)
+    expect(divergences, divergences.join('\n')).toHaveLength(0)
+  })
+
+  it('LA PORTE LOCALE COUPE LÀ OÙ LA GLOBALE NE COUPAIT PLUS — c’est toute la récupération', () => {
+    // ⚠ CE QUE CETTE GARDE PROUVE, ET QUI EST LE MOTIF DE L'ÉTAPE 2 : depuis le froid d'étage, la
+    // porte de la VALLÉE est vraie toute l'année (0/240 points, journal du 2026-09-30), donc elle
+    // ne court-circuite plus rien. Au palier 0, aux saisons douces, la porte LOCALE coupe encore.
+    const sim = sim0
+    let coupe = 0
+    for (const [nom, jour, nuit] of INSTANTS) {
+      sim.tick = tickDe(sim, jour, nuit)
+      // La porte de la vallée ne coupe JAMAIS — c'est le défaut qu'on répare, et on l'affirme.
+      expect(gelPossible(sim), `porte de la vallée à ${nom}`).toBe(true)
+      if (!gelPossibleAuPalier(sim, 0)) coupe++
+    }
+    // Et elle coupe sur une PART des instants, jamais sur tous : si elle coupait partout, elle
+    // affirmerait que rien ne gèle même au cœur de l'hiver.
+    expect(coupe, `instants où la porte du palier 0 coupe, sur ${INSTANTS.length}`).toBeGreaterThan(0)
+    expect(coupe, 'elle ne doit PAS couper partout').toBeLessThan(INSTANTS.length)
+    // LA MONOTONIE : plus on monte, moins la porte peut couper. Une borne qui ne serait pas
+    // monotone en palier accuserait son propre calcul.
+    for (const [nom, jour, nuit] of INSTANTS) {
+      sim.tick = tickDe(sim, jour, nuit)
+      for (let p = 1; p < TERRASSES.PALIERS; p++) {
+        if (gelPossibleAuPalier(sim, p - 1)) {
+          expect(gelPossibleAuPalier(sim, p), `${nom} : p${p - 1} peut geler mais p${p} non`).toBe(true)
+        }
+      }
+    }
+  })
+
+  it('LE PLAFOND TRANCHE EN ALTITUDE : au plus haut palier, toute l’eau est prise à toute saison', () => {
+    // La moitié du gain qui vient du PLAFOND — et c'est la conséquence de la décision ⓐ du
+    // 2026-10-01 (les lacs d'altitude sont des ponts). Si cette garde tombait, le plafond ne
+    // récupérerait plus rien et l'étape 2 serait à moitié inutile.
+    const sim = sim0
+    const haut = TERRASSES.PALIERS - 1
+    const tuiles = EAU.get(haut) ?? []
+    expect(tuiles.length, `de l’eau au palier ${haut}`).toBeGreaterThan(0)
+    for (const [nom, jour, nuit] of INSTANTS) {
+      sim.tick = tickDe(sim, jour, nuit)
+      expect(plafondDuPalier(sim, haut), `plafond du palier ${haut} à ${nom}`).toBeLessThan(GEL.SEUIL_PROFOND)
+      for (const i of tuiles.slice(0, 20)) {
+        expect(estGele(sim, i % map.width, Math.floor(i / map.width)), `${nom} : (${i % map.width},${Math.floor(i / map.width)}) au palier ${haut}`).toBe(true)
+      }
+    }
   })
 })

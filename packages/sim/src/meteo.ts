@@ -449,7 +449,7 @@ function effetOrage(front: MeteoFront, doux: number, froid: number, t0: number):
 }
 
 /** LE PLEIN FROID d'une classe — le pire qu'elle puisse retrancher, pour les bornes
- *  (`plancherDeLaVallee`) : la ligne `ORAGE_FROID` pour l'orage, la table sinon. */
+ *  (`plancherDuPalier`) : la ligne `ORAGE_FROID` pour l'orage, la table sinon. */
 export function coldMaximal(type: MeteoType): number {
   return type === 'orage' ? METEO.ORAGE_FROID.COLD : METEO.COLD[type]
 }

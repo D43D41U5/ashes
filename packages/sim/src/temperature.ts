@@ -38,7 +38,12 @@ const T = TEMPERATURE
 
 /** Borne l'AMBIANT dans la fenêtre du monde (°C). C'est ce plancher qui borne, en cascade,
  *  le froid que le corps peut atteindre : air à `AMBIANT_MIN` ⇒ corps à `CORPS_MORTEL`. */
-function clampTemp(v: number): number {
+/**
+ * LE CLAMP DE L'AIR BORNÉ, et c'est le SEUL — exporté depuis le 2026-10-02 parce que `gel.ts` en
+ * a besoin pour borner un palier par le haut (`plafondDuPalier`). Le recopier là-bas aurait fait
+ * deux vérités d'un seul intervalle, et une borne fausse se tait.
+ */
+export function clampTemp(v: number): number {
   return Math.max(T.AMBIANT_MIN, Math.min(T.AMBIANT_MAX, v))
 }
 

@@ -192,6 +192,10 @@ export {
   // LE FROID SUR LA FLORE (spec `flore-froid.md`) : le client peint la plante gelée avec le
   // MÊME prédicat que la sim lui applique — écrivain unique, comme la glace et le feuillage.
   floreGelee, floreEntierementGelee, gelMortel,
+  // LES DEUX BORNES PAR PALIER (étape 2 de `braise.md` § 3, 2026-10-02) : la porte basse « ici
+  // rien ne gèle » et le plafond « ici tout gèle ». `gelPossible` reste la porte de la VALLÉE,
+  // et elle délègue à la locale au pire palier.
+  gelPossibleAuPalier, plafondDuPalier,
   // G9 — la neige a deux hauteurs : le niveau d'une tuile, son seuil, son pas.
   niveauDeNeige, niveauPourCouverture, seuilDeNeige, vitesseSurNeige,
   NEIGE_NUE, NEIGE_POUDREUSE, NEIGE_GENOUX,

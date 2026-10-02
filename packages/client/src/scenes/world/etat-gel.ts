@@ -160,7 +160,7 @@ interface ChampsDuGel {
 /**
  * LA FAÇADE — allouée UNE fois par appelant et remise à jour EN PLACE (`majEtatGel`). La
  * couche l'interroge une fois par tuile visible et par recuisson : une allocation par image
- * serait du déchet pur, et le patron est celui de `plancherDeLaVallee`, qui refait le calcul
+ * serait du déchet pur, et le patron est celui de `plancherDuPalier`, qui refait le calcul
  * de `getGameTime` plutôt que d'allouer son résultat.
  */
 export type EtatGel = SimState

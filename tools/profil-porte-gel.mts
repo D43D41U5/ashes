@@ -18,6 +18,13 @@
  * Donc les deux régimes sont exactement :
  *   · porte VIVANTE (= HEAD)      → `glacePossible` faux → **zéro appel** à `estGele`
  *   · porte MORTE (= aujourd'hui) → `glacePossible` vrai → **un `estGele` par tuile d'eau**
+ *
+ * ⚠ **DEPUIS L'ÉTAPE 2 (2026-10-02), LA COLONNE « porte MORTE » NE MESURE PLUS LA PORTE MORTE** :
+ * `estGele` porte désormais ses deux bornes PAR PALIER, donc cette colonne chronomètre le coût
+ * d'AUJOURD'HUI, pas celui qu'on voulait supprimer. Ce que cet instrument garde de valable est le
+ * COMPTAGE (combien de tuiles chaque borne récupère, et où) ; pour le gain en temps, c'est
+ * `tools/profil-gel-bornes.mts` — qui alterne les deux régimes dans un seul processus, parce que
+ * deux lots séparés ont menti de ×3,4 sur un callee froid (son en-tête le raconte).
  * On n'a donc RIEN à modifier dans `/sim` pour obtenir les deux côtés : il suffit de ne pas
  * appeler. L'A/B est ALTERNÉ dans la même passe et mesuré en **temps CPU** (`process.cpuUsage`),
  * parce qu'une autre session fait souvent tourner vitest à 100 % d'un cœur et que le temps mur

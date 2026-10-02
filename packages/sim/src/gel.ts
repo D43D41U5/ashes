@@ -91,12 +91,14 @@ import {
   TERRAIN_WILLOW,
   TERRAINS,
 } from './balance'
-import { froidDeCendre, tuileCendree } from './cendre'
+import { CARACTERES_DE_FOYER, CENDRE, froidDeCendre, tuileCendree } from './cendre'
+import { FUMEROLLE } from './fumerolle'
 import { TERRASSES } from './terrasses' // `PALIERS` : le pire palier, pour que la borne reste sound
 import { terrainAt } from './map'
 import { coldMaximal, frontDuCycle, frontMeteoPos, largeurDe, partDeNeige, type BandeMeteo } from './meteo'
 import { effetsDuJour } from './modificateur'
 import { fbm2, hash2 } from './noise'
+import { palierDuSol } from './etages'
 import type { SimState } from './sim'
 import {
   baselineTemperature,
@@ -106,10 +108,31 @@ import {
   type ConstantesDeTuile,
   climatFlore,
   climatMaximal,
+  clampTemp,
   dehorsSansMeteo,
   socleDuJour,
 } from './temperature'
 import { dayTicksAt, jourDeLAnnee, jourDeSaison, partDeNuit, TICKS_PER_CYCLE, tourForDay } from './time'
+
+/**
+ * LE PIRE SOUFFLE DE FUMEROLLE QUE `plancherDuPalier` NE SAIT PAS SITUER — DÉRIVÉ.
+ *
+ * `froidDeFumerolle` plafonne à `FUMEROLLE.FROID × cadranDeFoyer(…, 'froid')`, le facteur de
+ * distance étant dans `[0, 1[`. Le pire cadran se LIT DANS LA TABLE au lieu d'être recopié : le
+ * jour où un caractère souffle plus froid que la Muette, cette constante suit — un 1,4 en dur ne
+ * suivrait pas.
+ *
+ * ⚠ **LE FROID DE CENDRE EST UNE CONSTANTE SÉPARÉE, ET LA SÉPARATION EST MESURÉE.** Les deux
+ * froids n'ont pas la même condition d'existence : le souffle exige un `cendreAge` non vide
+ * (`avanceesDepuisAges([], 0)` rend un tableau vide, donc `fumerollesAutour` n'éveille personne),
+ * mais `froidDeCendre` passe par `profondeurNueDeCendre`, qui lit `cendreAge?.[k] ?? 0` et
+ * **calcule quand même** — il ne rend `−1` que sans `map.cendreCout`. Les gater ensemble était
+ * donc faux en droit, même si c'était juste en fait sur cette carte (MESURÉ le 2026-10-02 :
+ * `froidDeCendre` est nul sur les **321 649** tuiles d'eau, aux deux régimes de cendre — l'eau
+ * n'est pas dans la bande de vieille cendre. Une borne ne doit pas reposer là-dessus.)
+ */
+const FROID_DE_FUMEROLLE_MAX = FUMEROLLE.FROID
+  * Math.max(1, ...Object.values(CARACTERES_DE_FOYER).map((e) => e.froid ?? 1))
 
 /**
  * LE PLANCHER DE TEMPÉRATURE DE LA VALLÉE à ce tick — une borne INFÉRIEURE prouvée du
@@ -127,7 +150,7 @@ import { dayTicksAt, jourDeLAnnee, jourDeSaison, partDeNuit, TICKS_PER_CYCLE, to
  * On sous-estime donc toujours la température : si CETTE valeur est déjà trop chaude pour
  * geler, aucune tuile ne gèle — c'est la seule chose que le court-circuit affirme.
  */
-function plancherDeLaVallee(state: SimState): number {
+function plancherDuPalier(state: SimState, palier: number): number {
   // On refait le calcul de `getGameTime` au lieu de l'appeler, et pour UNE raison MESURÉE :
   // il ALLOUE son résultat (un objet de cinq champs). Cette borne est interrogée une fois
   // par tuile bloquante — des centaines de milliers de fois par champ de flux —, or on n'a
@@ -150,23 +173,76 @@ function plancherDeLaVallee(state: SimState): number {
   // serait exactement le défaut que l'en-tête de `gelPossible` interdit : « une tuile franchissable
   // pour l'avatar et bloquante pour l'A* ».
   //
-  // ⚠ **ET LE RACCOURCI EN MEURT, C'EST MESURÉ — MAIS SON COÛT EN TEMPS, LUI, NE L'EST PAS.**
-  // Balayage de l'année entière (240 points : midi et cœur de nuit de chacun des 120 jours) : le
-  // raccourci coupait sur **120/240 points (50 %)** sans ce terme, il coupe maintenant sur
-  // **0/240** — le plancher ne repasse jamais au-dessus du seuil, pas même en plein été. La garde
-  // reste JUSTE (elle ne rate aucune glace), elle ne fait simplement plus rien gagner.
-  //   ⚠ **CE QUE LA MESURE NE DIT PAS** : `tools/profil-tick.mts 8 50` ne voit PAS la différence,
-  //   et pourtant le raccourci coupait au jour qu'il profile (jour 61, plancher 3,7 °C pour un
-  //   seuil de 2). Trois relevés — 6,195 · 7,363 · 6,039 ms/tick — ont donné l'A/B À L'ENVERS :
-  //   l'écart est sous le plancher de bruit de l'instrument. Les gros consommateurs de la porte
-  //   ne sont donc PAS le tick nu : ce sont les CHAMPS DE FLUX (`blockedAt` interroge `estGele`
-  //   par tuile bloquante) et la cuisson des chunks du client (`gel-layer.ts:447`) — ni l'un ni
-  //   l'autre exercés par ce profileur. **Le coût reste donc SUSPECTÉ, pas MESURÉ.**
-  // **La rendre LOCALE (par palier ou par région) est l'étape 2 de `braise.md` § 3, explicitement
-  // obligatoire** — et l'argument n'est pas un chiffre de tick, c'est qu'une garde qui ne garde
-  // plus rien est une garde morte.
-  t -= TEMPERATURE.FROID_PAR_ETAGE * (TERRASSES.PALIERS - 1)
+  // ⚠ ═══ LE FROID D'ALTITUDE DU PALIER DEMANDÉ ═══
+  //   (2026-09-30 pour le terme, 2026-10-02 pour le fait qu'il soit LOCAL — `braise.md` § 3.2.)
+  //
+  // C'est ce terme qui rend la borne JUSTE en altitude : sans lui elle affirmerait que rien ne
+  // gèle pendant que le sommet est à −86 °C, et ce serait « une tuile franchissable pour l'avatar
+  // et bloquante pour l'A* » — le défaut que l'en-tête de `gelPossible` interdit.
+  //
+  // ⚠ **ET C'EST POURQUOI LE PALIER EST UN PARAMÈTRE.** Du 30/09 au 02/10 cette fonction
+  //   retranchait le PIRE palier (`PALIERS − 1`) parce qu'elle devait valoir pour toute la vallée.
+  //   La borne restait juste, mais son raccourci « rien ne gèle nulle part » ne coupait plus
+  //   JAMAIS : MESURÉ 120/240 points de l'année avant, **0/240** après. Rendue locale, elle coupe
+  //   à nouveau là où elle le doit — au fond de la vallée, aux saisons douces.
+  t -= TEMPERATURE.FROID_PAR_ETAGE * palier
+  // ⚠ ═══ LES DEUX FROIDS LOCAUX QUE CETTE BORNE OMETTAIT, ET QUI LA RENDAIENT FAUSSE ═══
+  //   (trouvé et REPRODUIT le 2026-10-02 : 1 540 divergences sur la graine 2026.)
+  //
+  // `expositionSansMeteo` retranche CINQ termes, pas trois : `biome − nuit − brume − FUMEROLLE −
+  // CENDRE`. Les deux derniers manquaient ici, et ce sont des froids ≥ 0 : la borne pouvait donc
+  // être AU-DESSUS du vrai, et la porte affirmer « rien ne gèle » sur un gué à −3,6 °C. MESURÉ sur
+  // le monde joué (cendre vieillie) : **416 tuiles d'eau** portent un souffle de fumerolle, jusqu'à
+  // **8,09 °C**, aux paliers 0, 1 et 2 — et `estGele` les déclarait libres 1 540 fois dans l'année.
+  //
+  // ⚠ **LE DÉFAUT EST PLUS VIEUX QUE L'ÉTAPE 2, ET CELLE-CI LE RÉVEILLE.** Avant le 2026-09-30 la
+  //   porte coupait 120/240 points de l'année et le trou était donc VIVANT ; le froid d'étage l'a
+  //   MASQUÉ (0/240 — une porte qui ne coupe jamais ne peut pas se tromper) ; la rendre locale la
+  //   fait couper à nouveau, donc rouvre le trou. Il ne suffisait pas de le trouver dans la borne
+  //   neuve : il fallait le chercher dans l'ANCIENNE.
+  //
+  // Les deux majorants sont DÉRIVÉS, jamais posés, et ils ont CHACUN leur condition — elles ne
+  // sont pas les mêmes, et les confondre était ma première version (voir la docstring ci-dessus).
+  if (state.map.cendreCout !== undefined) {
+    t -= CENDRE.FROID_COEUR // la vieille cendre : il suffit que la carte porte un champ de coût
+    // LE SOUFFLE, lui, exige en plus des fosses éveillées : sans `cendreAge`, zéro bouche.
+    if ((state.cendreAge?.length ?? 0) > 0) t -= FROID_DE_FUMEROLLE_MAX
+  }
   return t
+}
+
+/**
+ * ═══ LE PLAFOND D'UN PALIER — l'AUTRE borne, et la mesure a dit qu'elle était indispensable ═══
+ *
+ * Une borne **SUPÉRIEURE** prouvée du `baselineTemperature` de n'importe quelle tuile d'**EAU** de
+ * ce palier, en O(1). Si ce plafond est déjà sous le seuil de gel, **tout gèle ici** et l'on rend
+ * vrai *sans lire une seule température*.
+ *
+ * ⚠ **POURQUOI DEUX BORNES ET PAS UNE** (MESURÉ le 2026-10-01, `tools/profil-porte-gel.mts`) : la
+ * borne basse seule récupère **100 %** du fond de la vallée et **0 %** de l'altitude — un écran
+ * d'altitude porte 5 513 tuiles d'eau gelées aux quatre cardinaux (13,1-13,4 ms CPU par cuisson),
+ * et elles le sont *légitimement*. Seul ce plafond-là les récupère.
+ *
+ * ⚠ **LA PREUVE QUE C'EST BIEN UN MAJORANT**, et elle tient à une propriété de l'EAU :
+ *   `froidDuMonde = clampTemp(socle + froidDEtage + abri × (exposition − météo))`
+ *   · `abri ∈ [SHELTER_FACTOR, 1]`, donc positif — il ne peut que RÉDUIRE un terme négatif ;
+ *   · `météo ≥ 0` (c'est un froid), donc `− météo ≤ 0` ;
+ *   · `exposition ≤ 0` **sur de l'eau** : elle est SIGNÉE (le biome peut réchauffer, +2 en forêt)
+ *     mais `BIOME_OFFSET` **n'a aucune entrée pour 4 ni 6** — ni le gué ni le lac — tandis que la
+ *     nuit, la Brume et les fumerolles sont toutes des termes ≤ 0. ⚠ **C'EST L'HYPOTHÈSE DE
+ *     SOUDURE DE CETTE BORNE** : le jour où une eau prend un offset de biome POSITIF, elle devient
+ *     fausse. La garde `gel.test.ts` « le plafond est un vrai majorant » balaie les deux terrains
+ *     et le dirait.
+ * Le supremum est donc atteint quand tous ces termes valent zéro : `clampTemp(socle + froidDEtage)`.
+ *
+ * ⚠ **ET CETTE BORNE REPOSE SUR UNE DÉCISION DE DESIGN, PAS SEULEMENT SUR DE L'ARITHMÉTIQUE** :
+ * elle ne fait gagner quelque chose que parce que l'eau d'altitude est gelée *en permanence*, ce
+ * qu'Alexis a choisi d'assumer le 2026-10-01 (`braise.md` § 5.0, branche ⓐ — « les lacs d'altitude
+ * sont des ponts »). Revenir sur ⓐ ne la rendrait pas FAUSSE, mais la rendrait inerte.
+ */
+export function plafondDuPalier(state: SimState, palier: number): number {
+  const jour = jourDeSaison(state)
+  return clampTemp(socleDuJour(jour, tourForDay(jour)) - TEMPERATURE.FROID_PAR_ETAGE * palier)
 }
 
 /**
@@ -176,6 +252,24 @@ function plancherDeLaVallee(state: SimState): number {
  * porte d'entrée bon marché avant de balayer un écran de tuiles.
  */
 export function gelPossible(state: SimState): boolean {
+  // ⚠ LA VALLÉE ENTIÈRE, C'EST LE PIRE PALIER — et depuis le 2026-10-02 c'est écrit comme tel :
+  //   cette porte DÉLÈGUE à la porte locale au plus haut palier. Les deux ne peuvent plus diverger,
+  //   et l'ancienne sémantique est préservée au bit près pour ses appelants (le client lit cette
+  //   porte une fois par image, `collision.ts` l'interroge pour le facteur du pas).
+  return gelPossibleAuPalier(state, TERRASSES.PALIERS - 1)
+}
+
+/**
+ * ═══ QUELQUE CHOSE PEUT-IL GELER À CE PALIER-LÀ ? — la porte LOCALE (étape 2, `braise.md` § 3.2) ═══
+ *
+ * Faux ⇒ **aucune** tuile de ce palier n'est gelée, et `estGele` le rend sans lire une température.
+ * C'est la borne basse des deux ; le plafond (`plafondDuPalier`) est l'autre.
+ *
+ * ⚠ **CE QU'ELLE RÉCUPÈRE, MESURÉ** (`tools/profil-porte-gel.mts`, 2026-10-01) : au fond de la
+ * vallée un écran porte 2 998 tuiles d'eau, **toutes au palier 0**, dont **0 gelée aux trois
+ * cardinaux doux** — 6,7 à 6,9 ms CPU de cuisson que cette porte-là rend entièrement.
+ */
+export function gelPossibleAuPalier(state: SimState, palier: number): boolean {
   // `+ HYSTERESIS` : une glace posée peut SURVIVRE jusqu'au seuil relevé (G8). Une borne qui
   // s'arrêterait au seuil nu écarterait des tuiles encore gelées — et une borne fausse, c'est
   // une tuile franchissable pour l'avatar et bloquante pour l'A*.
@@ -190,7 +284,7 @@ export function gelPossible(state: SimState): boolean {
   // survivre gelé, et écarte l'acte I entier comme avant.)
   // (La rampe de nuit ne la touche pas : `partDeNuit` vaut 1 sur toute la nuit, donc le point
   //  le plus froid de chaque saison est CELUI D'AVANT, au bit près. Vérifié le 2026-08-23.)
-  return plancherDeLaVallee(state) < GEL.SEUIL_GUE + GEL.HYSTERESIS
+  return plancherDuPalier(state, palier) < GEL.SEUIL_GUE + GEL.HYSTERESIS
 }
 
 /**
@@ -236,9 +330,19 @@ function seuilDe(terrain: number): number | undefined {
  * coûterait un champ dans le `SimState` et l'invariant « rien n'est stocké » avec.
  */
 export function estGele(state: SimState, tx: number, ty: number): boolean {
-  if (!gelPossible(state)) return false
+  // ⚠ LE SEUIL D'ABORD, LA PORTE ENSUITE — inversé le 2026-10-02, et c'est sans effet sur le
+  //   résultat (une tuile qui n'est pas de l'eau rendait déjà faux par les deux chemins) : la
+  //   lecture du terrain est plus bon marché que la borne, et surtout le seuil est ce dont le
+  //   PLAFOND a besoin pour trancher (le gué prend à 0, le lac à −10 — deux promesses, G2).
   const seuil = seuilDe(terrainAt(state.map, tx, ty))
   if (seuil === undefined) return false
+  // ═══ LES DEUX BORNES DU PALIER, et c'est tout l'objet de l'étape 2 ═══
+  //   Le palier lu ici est EXACTEMENT celui que la température emploie : `froidDEtage` dérive de
+  //   `palierDuSol(map, floor(x), floor(y))` et les coordonnées sont déjà entières. Deux
+  //   dérivations différentes du même étage auraient fait deux lois d'une seule.
+  const palier = palierDuSol(state.map, tx, ty)
+  if (!gelPossibleAuPalier(state, palier)) return false // ICI RIEN NE GÈLE
+  if (plafondDuPalier(state, palier) < seuil) return true // ICI TOUT GÈLE — sans lire l'air
   const t = baselineTemperature(state, tx, ty)
   if (t < seuil) return true // ça prend
   if (t >= seuil + GEL.HYSTERESIS) return false // ça a franchement dégelé
