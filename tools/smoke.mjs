@@ -2206,6 +2206,298 @@ const SCENARIOS = {
   },
 
   /**
+   * ═══ LA BALISE — scénario `balise` (spec `braise.md` étape 6, 2026-10-03) ═══
+   *
+   * LA BOUCLE ENTIÈRE, DANS LE VRAI JEU : on est à midi au cœur du Grand Froid, la braise se vide ;
+   * on pose une balise, elle naît ÉTEINTE (un tas de bois gris) ; on l'allume à sa braise ; la
+   * charge REMONTE. C'est le seul endroit où l'on vérifie que la recharge est ATTEIGNABLE — les gardes de
+   * `/sim` prouvent la loi, pas le fait qu'un joueur puisse y arriver.
+   *
+   * ⚠ POURQUOI CE SCÉNARIO EXISTE : depuis l'étape 4, le froid vide une braise que RIEN ne
+   * remplissait (le bas de la vallée devenait létal vers le jour 67). L'étape 6 est le remède, et
+   * un remède inatteignable n'en est pas un : il faut qu'on puisse fabriquer, poser, allumer.
+   *
+   * `--dev` obligatoire (`debug_grant`, `debug_set_season_day`, `debug_set_hour`).
+   */
+  async balise(page) {
+    if (!dev) { console.error('!! balise exige --dev (debug_grant, debug_set_season_day, debug_set_hour)'); return }
+    const lire = () => page.evaluate(() => {
+      const sc = window.__BRAISES__.scene
+      const moi = (sc.lastEntities ?? []).find((q) => q.id === sc.playerId)
+      const p = sc.predicted ?? moi ?? { x: 0, y: 0 }
+      // `chargePleine` = (CRANS_DEPART + niveau) × DUREE_CRAN — on le dérive ici plutôt que de
+      // recopier deux nombres d'équilibrage dans un outil.
+      const B = window.__BRAISES__.sim?.BRAISE ?? null
+      const niveau = moi?.braise?.niveau ?? 0
+      return {
+        charge: moi?.braise?.charge ?? null,
+        niveau: moi?.braise?.niveau ?? null,
+        plein: B ? (B.CRANS_DEPART + niveau) * B.DUREE_CRAN : null,
+        tx: Math.floor(p.x), ty: Math.floor(p.y),
+        // ⚠ LE JOUR VIT SUR `lastTime`, PAS DANS LE REGISTRE : il n'y a pas de clé HUD
+        // `seasonDay` (j'avais lu une clé qui n'existe pas, et la ligne imprimait « ? » en
+        // silence — une sonde qui ne peut pas échouer). Il reste un DIAGNOSTIC et non une
+        // garde : que le jour ait bien pris, c'est la prémisse ① qui le prouve (sans Grand
+        // Froid la charge ne descendrait pas).
+        jour: sc.lastTime?.seasonDay ?? null,
+      }
+    })
+    let bon = true
+    const ok = (cond, texte) => { if (!cond) bon = false; console.log(`   ${cond ? '✓' : '✗'} ${texte}`) }
+    // ⚠ `page.screenshot` EXPIRE tant que Phaser tourne (pas de GPU ici : SwiftShader) — on endort
+    //   la boucle, on photographie, on la réveille. La recette de la skill `verif-navigateur`.
+    // `SMOKE_TRACE=1` — la page raconte ce qu'elle fait, pas seulement ce qu'elle a fini de
+    // faire. Sans GPU, un bloc qui orchestre dans la page peut se bloquer sans un mot ; cette
+    // trace est le seul moyen de savoir OÙ.
+    const TRACE = process.env.SMOKE_TRACE === '1'
+    const trace = (m) => { if (TRACE) console.log(`   · ${m}`) }
+    // ⚠ LES PHOTOS SONT OPTIONNELLES (`SMOKE_PHOTOS=0` les coupe), ET VOICI POURQUOI.
+    //   Tout ce scénario tourne BOUCLE ENDORMIE (voir plus bas) : rien n'est peint, donc le
+    //   canevas garde sa dernière image. Pour une photo qui montre la balise il faut donc
+    //   peindre UNE image à la demande — et c'est précisément l'opération qui coûte dix à
+    //   quinze minutes sur cette machine. Le VERDICT (la boucle de jeu est-elle atteignable ?)
+    //   ne dépend pas d'elles : il se lit sur l'état. On garde donc les deux séparés, et on
+    //   coupe les photos quand on veut le verdict sans attendre une demi-heure.
+    const PHOTOS = process.env.SMOKE_PHOTOS !== '0'
+    const photo = async (chemin) => {
+      if (!PHOTOS) { trace(`photo sautée (SMOKE_PHOTOS=0) : ${chemin}`); return }
+      // `game.step` rend EXACTEMENT une image, à un `t` connu, sans rallumer la boucle.
+      await page.evaluate(() => { const g = window.__BRAISES__.scene.game; g.step(performance.now(), 16) })
+      await page.screenshot({ timeout: 120000, path: chemin })
+    }
+
+    // ① LE CŒUR DU GRAND FROID — le seul régime où la braise se vide en bas (MESURÉ : le froid
+    //    ne mord que 14,9 % des ticks au point de naissance). `debug_set_season_day` ne va QUE
+    //    vers l'avant : le monde ouvre au jour 61, on vise le cœur du Grand Froid (105).
+    // ⚠ LES QUATRE ACTIONS PARTENT EN UN SEUL ENVOI, PUIS ON ATTEND AU MUR — et c'est ce qui
+    //   rend ce scénario tenable sans GPU. Un saut de jour RECUIT la carte (`recuireSuie`,
+    //   `rafraichirCimes`, le manteau) : pendant cette recuisson, TOUT `page.evaluate` attend
+    //   derrière l'image en cours, et un scénario qui relit l'état entre chaque action ne rend
+    //   pas la main — j'ai perdu une demi-heure à le constater (c'est la note « evaluate pendant
+    //   la recuisson » : 26 min à plus de 71). Un envoi, une attente de MUR, puis on lit.
+    // ═══ ON ENDORT LA BOUCLE DE RENDU AVANT TOUT, ET C'EST LA CLÉ DE CE SCÉNARIO ═══
+    //
+    // ⚠ **LA SIM NE DÉPEND PAS DE LA BOUCLE DE RENDU** : `WorldScene` branche les snapshots par
+    // `this.host.onMessage(...)`, un callback de `postMessage`, pas un appel d'`update()`. Donc
+    // `loop.sleep()` arrête de PEINDRE sans rien arrêter d'autre — l'hôte tique, les snapshots
+    // arrivent, `view` et `lastEntities` se remplissent. On peut donc tout jouer sans peindre.
+    //
+    // **POURQUOI IL FAUT LE FAIRE TÔT, ET C'EST MESURÉ** : sans GPU, le process GPU de Chromium
+    // tourne à **400 %** (SwiftShader) et le thread principal du rendu **bloque dans un appel GL**
+    // en attendant le compositeur. Dans ce régime, un `page.evaluate` n'est plus ordonnancé du
+    // tout : l'image en cours prend DIX À QUINZE MINUTES dès qu'une structure existe, et le run
+    // meurt de son plafond. Tracé trois fois. Pire, `loop.sleep()` est lui-même un `evaluate` :
+    // si l'on attend d'être dans ce régime pour l'appeler, **il ne passe plus**. On endort donc
+    // avant d'avoir rien fait, et tout le reste rend la main instantanément.
+    await page.evaluate(() => window.__BRAISES__.scene.game.loop.sleep())
+    const JOUR = 105
+    // ⚠ À MIDI, ET C'EST UNE CONTRAINTE DE MACHINE, PAS DE DESIGN. Ce qu'il faut à ce scénario
+    //   c'est du FROID, pas de la nuit : le Grand Froid à midi mord déjà au palier 0. Or sans
+    //   GPU une image de NUIT coûte des minutes sous charge — le régime que l'en-tête de ce
+    //   fichier documente pour `torche` (« une attente de 0,9 s a pris 84 s »), et c'est lui
+    //   qui a englouti deux runs de ce scénario. À midi, le voile, les lueurs et la lumière
+    //   dynamique ne travaillent pas, et les deux photos se lisent en plus : on JUGE l'art de
+    //   la balise dessus, et c'est précisément la question ouverte (§ 5.17 ⓔ).
+    const HEURE = 12
+    const envoyer = async (actions, mur) => {
+      await page.evaluate((as) => { for (const a of as) window.__BRAISES__.scene.sendAction(a) }, actions)
+      await page.waitForTimeout(mur)
+    }
+    // ⚠ UN SEUL ENVOI PAR TICK QUI DÉPLACE LE TEMPS, ET ENTRE DEUX ON ATTEND AU MUR — les deux
+    //   moitiés de cette règle ont été payées, chacune par un run perdu.
+    //   ⓐ **On ne LIT pas pendant la recuisson.** Un saut de jour recuit toute la carte
+    //     (`recuireSuie`, `rafraichirCimes`, le manteau) ; tout `page.evaluate` attend derrière
+    //     l'image en cours, et un scénario qui relit l'état entre chaque action ne rend pas la
+    //     main — constaté à 31 min sans sortir de la pose (note « evaluate pendant la recuisson »).
+    //   ⓑ **Mais on ne les empile pas dans le MÊME tick non plus.** Les quatre actions envoyées
+    //     d'un coup laissaient le client au jour 61 avec une braise pleine : `debug_set_season_day`
+    //     réécrit `state.tick`, et groupé avec le reste le client ne reprenait pas le fil. Séparés
+    //     par une attente de mur, les mêmes quatre actions marchent — c'est ce que faisait la
+    //     version d'avant, par accident, avec ses `1500` ms.
+    await envoyer([{ type: 'debug_god', on: true }, { type: 'debug_meteo', meteo: null }], 3000)
+    await envoyer([{ type: 'debug_set_season_day', day: JOUR }], 90000)
+    await envoyer([{ type: 'debug_set_hour', hour: HEURE }], 20000)
+    const a0 = await lire()
+    await page.waitForTimeout(3000)
+    const a1 = await lire()
+    console.log(`   joueur en (${a1.tx}, ${a1.ty}), jour ${a1.jour ?? '?'} — charge ${a0.charge} → ${a1.charge}`)
+    ok(a0.charge !== null, `la braise voyage bien jusqu’au client (niveau ${a1.niveau})`)
+    // ⚠ LE JOUR EST UNE GARDE, PAS UN DIAGNOSTIC — c'est elle qui a pris le montage en défaut
+    //   (le client restait au jour 61 et la ligne d'avant imprimait « ? » en silence, parce
+    //   qu'elle lisait une clé de registre qui n'existe pas).
+    ok(a1.jour === JOUR, `le monde est bien au cœur du Grand Froid (jour ${a1.jour ?? '?'}, visé ${JOUR})`)
+    ok(a1.charge !== null && a0.charge !== null && a1.charge < a0.charge,
+      `la prémisse : ce froid-là MORD (jour ${JOUR}, ${HEURE} h) — la charge descend sans balise`)
+
+    // ═══ ② ③ ④ — ET LA RÈGLE QUE CE SCÉNARIO A FINI PAR ÉTABLIR ═══
+    //
+    // ⚠ **ON N'ATTEND JAMAIS DANS LA PAGE. JAMAIS.** Sans GPU, le process GPU de Chromium tourne
+    // à **409 % de CPU** (SwiftShader, 2,4 Go de RSS) tant que la scène est éveillée, et dans ce
+    // régime **les timers de la page ne partent plus** : un bloc qui faisait
+    // `await new Promise((r) => setTimeout(r, 1000))` *dans* un `page.evaluate` ne s'est jamais
+    // réveillé — TRACÉ, « ② grant envoyé » puis plus rien pendant trente minutes, l'`evaluate`
+    // ne rendant jamais la main (Playwright n'impose aucun délai au corps d'un `evaluate`).
+    //
+    // Donc : un `evaluate` **synchrone** — il envoie, ou il lit, et il rend tout de suite — et
+    // **toute** l'attente côté NODE, par `page.waitForTimeout`, dont l'horloge ne dépend pas de
+    // la page. C'est ce que voulait dire « un envoi, une attente de MUR » : le mur est celui de
+    // Node, pas celui du navigateur. (Les envois, eux, reviennent sans problème : la trace le
+    // montre. Ce n'est donc pas le NOMBRE d'allers-retours qui coûte, c'est d'attendre dedans.)
+    // ⚠ RAPPEL : LA BOUCLE DORT DEPUIS LE DÉBUT DU SCÉNARIO (voir en tête). Donc rien n'est
+    //   peint ici, tous les `evaluate` rendent la main tout de suite, et la seule image de tout
+    //   le run est celle que `photo()` demande explicitement.
+    const envoyerSync = (actions) => page.evaluate((as) => {
+      for (const a of as) window.__BRAISES__.scene.sendAction(a)
+    }, actions)
+
+    // ② LA POSE — ET LE MONTAGE A DÛ APPRENDRE DEUX CHOSES, CHACUNE PAYÉE PAR UN RUN.
+    //
+    //   ⓐ **ON NAÎT LES PIEDS DANS L'EAU.** Le point de naissance (graine 2026 : 1432, 1272) a ses
+    //     HUIT voisines en haut-fond (`shallow_water`, terrain 4), et une balise n'accepte pas
+    //     l'eau (`eau: false` dans `PIECES`) : les huit poses étaient refusées par « terrain
+    //     inconstructible », et c'est /sim qui l'a DIT — pas moi qui l'ai déduit. Ce n'était donc
+    //     pas un défaut du jeu, c'était un montage qui supposait de la terre ferme sous le joueur.
+    //     On CHERCHE la tuile dans le disque de `BALANCE.BUILD_RANGE` (6) au lieu de la supposer.
+    //
+    //   ⓑ **UNE SEULE ACTION PAR CORPS ET PAR TICK ARRIVE.** Les huit `place_component` partaient
+    //     d'un coup, et le journal des refus n'en contenait qu'UN : `step(sim, [{entityId, …,
+    //     action}])` ne prend qu'une action par corps, les sept autres sont perdues en route. Mon
+    //     « la première tuile qui accepte consomme l'objet, les suivantes sont refusées faute
+    //     d'objet » raisonnait donc sur un envoi qui n'a jamais eu lieu — un cardinal vrai pour
+    //     une mauvaise raison. On envoie UNE pose par aller-retour.
+    const relevePose = () => page.evaluate(() => {
+      const sc = window.__BRAISES__.scene
+      const toutes = (sc.view.structures ?? []).filter((z) => z.type === 'balise')
+      const q = toutes[0]
+      const moi = (sc.lastEntities ?? []).find((e) => e.id === sc.playerId)
+      return {
+        combien: toutes.length,
+        b: q ? { id: q.id, tx: q.tx, ty: q.ty, allumee: q.allumee ?? null, bois: (q.fuel ?? []).filter(Boolean).reduce((t, c) => t + c.count, 0) } : null,
+        main: (moi?.inventory ?? [])[moi?.activeSlot ?? 0] ?? null,
+        // ⚠ LA CHARGE SE RELÈVE ICI, AVANT L'ALLUMAGE, et c'est obligatoire : à 20 par tick, les
+        //   ticks de froid perdus plus haut se refont en une demi-seconde. Relevée après, elle
+        //   serait pleine des deux côtés et la garde dirait « ça ne remonte pas » sur une
+        //   recharge qui marche.
+        charge: moi?.braise?.charge ?? null,
+        // Le journal des refus, que `publishError` verse dans le registre. Il SURVIT ici parce
+        // que la boucle dort : `UIScene.update` ne tourne pas, donc `drainAlertes` ne vide rien.
+        refus: sc.registry.get('alertes') ?? null,
+      }
+    })
+    // Le montage prouve d'abord qu'il a de quoi poser — sinon le ✗ qui suit accuse le jeu pour
+    // une faute de terrain. On écarte l'eau et l'infranchissable ; tout le reste, c'est /sim qui
+    // le juge, et un refus ne coûte qu'un aller-retour.
+    const candidats = await page.evaluate(() => {
+      const sc = window.__BRAISES__.scene
+      const m = sc.map
+      const moi = (sc.lastEntities ?? []).find((e) => e.id === sc.playerId)
+      const px = moi?.x ?? 0, py = moi?.y ?? 0
+      const tx0 = Math.floor(px), ty0 = Math.floor(py)
+      const pris = new Set()
+      for (const z of sc.view.structures ?? []) pris.add(`${z.tx},${z.ty}`)
+      for (const n of sc.view.nodes ?? []) pris.add(`${n.tx},${n.ty}`)
+      const REFUSES = new Set([0, 4, 5, 6, 7]) // vide, haut-fond, roche, eau profonde, mur
+      const out = []
+      for (let dy = -5; dy <= 5; dy++) {
+        for (let dx = -5; dx <= 5; dx++) {
+          if (dx === 0 && dy === 0) continue // « pas sous ses pieds »
+          const tx = tx0 + dx, ty = ty0 + dy
+          const t = m.terrain[ty * m.width + tx]
+          if (t === undefined || REFUSES.has(t)) continue
+          if (pris.has(`${tx},${ty}`)) continue
+          const d2 = (tx + 0.5 - px) ** 2 + (ty + 0.5 - py) ** 2
+          if (d2 > 36) continue // BUILD_RANGE² — la porte « trop loin » de `place_component`
+          out.push({ tx, ty, t, d2 })
+        }
+      }
+      out.sort((a, b) => a.d2 - b.d2)
+      return { tx0, ty0, sousPieds: m.terrain[ty0 * m.width + tx0] ?? null, liste: out.slice(0, 6) }
+    })
+    console.log(`   terrain sous les pieds ${candidats.sousPieds} — ${candidats.liste.length} tuiles posables à portée${candidats.liste.length > 0 ? ` : ${candidats.liste.map((c) => `(${c.tx},${c.ty})=${c.t}`).join(' ')}` : ''}`)
+    ok(candidats.liste.length > 0, 'le montage trouve de la terre ferme à portée de bâti (le point de naissance est dans l’eau)')
+
+    trace('grant')
+    await envoyerSync([{ type: 'debug_grant', item: 'balise' }])
+    await page.waitForTimeout(2000)
+    let pose = { combien: 0, b: null, main: null, charge: null, refus: null }
+    for (const c of candidats.liste) {
+      trace(`pose en (${c.tx}, ${c.ty}) terrain ${c.t}`)
+      await envoyerSync([{ type: 'place_component', tx: c.tx, ty: c.ty }])
+      await page.waitForTimeout(2500)
+      pose = await relevePose()
+      if (pose.b) break
+    }
+    const b = pose.b
+    // ⚠ UN REFUS DE POSE SE LIT, IL NE SE DEVINE PAS. `reject()` (village.ts) émet un
+    //   `action_rejected`, que `WorldScene` verse dans le registre par `publishError`. Sans ce
+    //   relevé, « la balise ne s'est posée nulle part » est un constat MUET — il y a onze portes
+    //   dans `place_component` et rien ne dit laquelle a claqué. C'est lui qui a nommé l'eau.
+    if (!b) console.log(`   !! main ${JSON.stringify(pose.main)} · refus : ${JSON.stringify(pose.refus)}`)
+    ok(b !== null, b ? `balise posée en (${b.tx}, ${b.ty}) — ${b.bois} bûches en soute` : 'la balise ne s’est posée sur aucune tuile posable')
+    ok(pose.combien === 1, `UNE seule balise pour UN objet accordé (vu : ${pose.combien})`)
+    // La main est VIDE : l'objet est devenu la structure. C'est ce que le cardinal ci-dessus
+    // voulait dire, et c'est la seule forme qui ne dépende pas d'un envoi groupé qui n'arrive pas.
+    ok(pose.main === null, `l’objet s’est CONSOMMÉ en se posant (main : ${JSON.stringify(pose.main)})`)
+    if (!b) return
+    ok(b.allumee === null, 'elle naît ÉTEINTE (B-R10 : un tas de bois qui attend une braise)')
+    trace('photo éteinte')
+    await photo(`${OUT}/balise-eteinte.png`)
+
+    // ③ L'ALLUMAGE À LA BRAISE — le geste que le client offre au clic, envoyé ici en direct.
+    //
+    // ⚠ **ON POSE DE LOIN, ON ALLUME DE PRÈS — DEUX PORTÉES, ET J'AI CRU QU'IL N'Y EN AVAIT
+    //   QU'UNE.** `place_component` juge à `BALANCE.BUILD_RANGE` (6 tuiles) ; `light_balise`, lui,
+    //   juge au BRAS : `BALANCE.INTERACT_RANGE` (1,5 — la même porte que `feed_fire` et `repair`).
+    //   La balise posée à 3,5 tuiles était donc hors d'atteinte, et le refus disait « trop loin ».
+    //   Ce n'est pas un défaut : c'est la loi du geste. On se déplace donc d'abord — par
+    //   `debug_teleport`, sur une tuile posable COLLÉE à la balise (Chebyshev 1), jamais sur la
+    //   sienne : une balise `bloque`, et s'y téléporter emmurerait le corps.
+    const cote = candidats.liste.find((c) => (c.tx !== b.tx || c.ty !== b.ty)
+      && Math.max(Math.abs(c.tx - b.tx), Math.abs(c.ty - b.ty)) === 1) ?? candidats.liste[0]
+    trace(`approche en (${cote.tx}, ${cote.ty})`)
+    await envoyerSync([{ type: 'debug_teleport', x: cote.tx + 0.5, y: cote.ty + 0.5 }])
+    await page.waitForTimeout(2500)
+    const pres = await lire()
+    const d = Math.sqrt((pres.tx + 0.5 - (b.tx + 0.5)) ** 2 + (pres.ty + 0.5 - (b.ty + 0.5)) ** 2)
+    ok(d <= 1.5, `le corps est À PORTÉE DE BRAS de la balise (${d.toFixed(2)} t ≤ INTERACT_RANGE 1,5)`)
+    trace('allumage')
+    await envoyerSync([{ type: 'light_balise', structureId: b.id }])
+    await page.waitForTimeout(3000)
+    const vive = await page.evaluate((id) => {
+      const sc = window.__BRAISES__.scene
+      const q = (sc.view.structures ?? []).find((z) => z.id === id)
+      return {
+        allumee: q?.allumee ?? null,
+        bois: (q?.fuel ?? []).filter(Boolean).reduce((t, c) => t + c.count, 0),
+        refus: sc.registry.get('alertes') ?? null,
+      }
+    }, b.id)
+    if (vive.allumee !== true) console.log(`   !! refus : ${JSON.stringify(vive.refus)}`)
+    ok(vive.allumee === true, 'elle a pris la flamme')
+    trace('photo vive')
+    await photo(`${OUT}/balise-vive.png`)
+
+    // ④ LA RECHARGE — le point de tout l'étage : la charge REMONTE au pied d'une balise allumée.
+    await page.waitForTimeout(3000)
+    trace('relevé de la recharge')
+    const c1 = await lire()
+    console.log(`   charge au pied de la balise : ${pose.charge} → ${c1.charge} (bois restant ${vive.bois})`)
+    ok(pose.charge !== null && c1.charge !== null && c1.charge > pose.charge, 'LA RECHARGE TOURNE DANS LE VRAI JEU (B-R9)')
+    // ⚠ LE PLEIN NE S'ATTEINT PAS EN TROIS SECONDES, ET MA PREMIÈRE GARDE L'EXIGEAIT. À 20 par
+    //   tick il faut `(plein − charge) / 20` ticks, soit plus de six secondes de montre depuis le
+    //   creux où la pose nous a laissés — la garde aurait rougi sur une recharge qui MARCHE. On
+    //   laisse donc le temps, et ce qu'on affirme alors est la seule chose qui ne dépende pas du
+    //   chrono : le PLAFOND. La charge s'arrête au plein, elle ne le dépasse pas.
+    await page.waitForTimeout(15000)
+    const c2 = await lire()
+    console.log(`   et après 15 s au pied : ${c1.charge} → ${c2.charge} (plein ${a0.plein})`)
+    ok(c2.charge === a0.plein, `elle remonte AU PLEIN et s’y arrête — jamais au-delà (${c2.charge} / ${a0.plein})`)
+    await page.evaluate(() => window.__BRAISES__.scene.game.loop.wake())
+    console.log(`   ${bon ? '✓ balise : la boucle est atteignable' : '✗ balise : voir les ✗ ci-dessus'}`)
+    console.log(`   → ${OUT}/balise-eteinte.png + balise-vive.png`)
+  },
+
+  /**
    * ═══ LA PLANCHE DU RELIEF — scénario `relief` (2026-09-01) — de quoi juger le rendu final ═══
    *
    * Demande d'Alexis : *« fais des printscreens de différentes falaises, mesas, etc. pour que je

@@ -85,7 +85,9 @@ import {
   fullTileAt,
   noeudDefriche,
   roofAt,
+  BRAISE,
   chebyshev,
+  estFoyer,
   fireRadius,
   piece,
   type Village,
@@ -1396,7 +1398,7 @@ export class WorldScene extends Phaser.Scene {
     // part en prod. Les deux tables n'y ajoutent RIEN — elles sont déjà dans le bundle (le
     // client les importe), et `scene: this` donne déjà accès à tout ce qu'elles contiennent.
     // C'est de la commodité de lecture, pas une nouvelle surface.
-    ;(window as unknown as { __BRAISES__: unknown }).__BRAISES__ = { scene: this, audio: { buildSound, soundForEvent }, sim: { NODE_DEFS, BALANCE, FISH_SPECIES } }
+    ;(window as unknown as { __BRAISES__: unknown }).__BRAISES__ = { scene: this, audio: { buildSound, soundForEvent }, sim: { NODE_DEFS, BALANCE, FISH_SPECIES, BRAISE } }
 
     // L'aiguillage solo/multi vient de l'écran principal (`MenuScene`), par les `data`
     // de scène. « Seul le transport change » : le reste de la scène ne sait pas lequel
@@ -2462,7 +2464,7 @@ export class WorldScene extends Phaser.Scene {
           // (`reliefSous`, l'étage compris), et sa flamme selon l'ÉTAT du foyer — le même
           // `facteurDuFeu` que la flaque et le trou du voile de nuit, un feu mort n'éclaire rien.
           feux: this.view.structures.flatMap((s) => {
-            if (s.type !== 'fire' || !sousLaRoche(s)) return []
+            if (!estFoyer(s.type) || !sousLaRoche(s)) return [] // le feu ET la balise (B-R10)
             const force = facteurDuFeu(this.lastSnapshotTick, s) * flicker(time, s.id * 1.7)
             return [{ x: (s.tx + 0.5) * TILE_PX, y: (s.ty + 0.5) * TILE_PX - (this.reliefSous?.(s.tx + 0.5, s.ty + 0.5, s.etage).lift ?? 0), force }]
           }),
@@ -2473,7 +2475,7 @@ export class WorldScene extends Phaser.Scene {
       // n'est sous la roche (le cas de presque toutes les images).
       let feuxSousRoche: { tx: number; ty: number; etage: number; force: number }[] | null = null
       for (const s of this.view.structures) {
-        if (s.type !== 'fire' || !sousLaRoche(s)) continue
+        if (!estFoyer(s.type) || !sousLaRoche(s)) continue // le feu ET la balise (B-R10)
         const force = facteurDuFeu(this.lastSnapshotTick, s) * flicker(time, s.id * 1.7)
         if (force <= 0) continue
         ;(feuxSousRoche ??= []).push({ tx: s.tx, ty: s.ty, etage: s.etage ?? 0, force })
@@ -2560,7 +2562,7 @@ export class WorldScene extends Phaser.Scene {
       // ⚠ UN FEU SOUS LA ROCHE (G-R7) N'EXISTE QUE SOUS LA ROCHE : dehors, ses flammes se seraient
       //   dessinées dans la strate de la grotte — au-dessus de la terrasse qui le recouvre. Les
       //   feux de la surface restent dans la liste depuis la salle : on les voit par la gueule.
-      const feux = this.view.structures.filter((s) => s.type === 'fire' && (!sousLaRoche(s) || this.etages.souterrain))
+      const feux = this.view.structures.filter((s) => estFoyer(s.type) && (!sousLaRoche(s) || this.etages.souterrain))
       // Les Feux, résolus UNE fois : même `fireGlow` (seed/heure) pour la flaque au sol, le trou
       // du voile ET le reflet sur l'eau → les trois battent EN PHASE avec la flamme.
       const litFires = feux

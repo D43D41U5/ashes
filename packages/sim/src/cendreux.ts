@@ -7,6 +7,7 @@ import { distSq } from './geometry'
 import { atteignableEntreEtages, atteintLeSol, niveauDuCorps, poserLEtageDuCorps } from './etages'
 import { emitEvent } from './events'
 import { fireActive, fireState } from './fire'
+import { estFoyer } from './pieces'
 import { baselineTemperature, eveilPourTemperature } from './temperature'
 import { isEmpty, pourInto } from './items'
 import {
@@ -73,7 +74,7 @@ export function willRiseAsCendreux(state: SimState, entity: Entity): boolean {
   // stériliserait la contagion partout dessous, et rien à l'écran ne le dirait.
   const hearthWardR = CENDREUX.HEARTH_WARD_RADIUS
   const nearFire = state.structures.some(
-    (s) => s.type === 'fire' && fireActive(state, s) && distSq(s.tx + 0.5, s.ty + 0.5, entity.x, entity.y) <= hearthWardR * hearthWardR &&
+    (s) => estFoyer(s.type) && fireActive(state, s) && distSq(s.tx + 0.5, s.ty + 0.5, entity.x, entity.y) <= hearthWardR * hearthWardR &&
       atteintLeSol(state.map, entity, s.tx, s.ty, s.etage),
   )
   if (nearFire) return false
@@ -115,7 +116,7 @@ export function advanceCendreux(state: SimState): void {
     // E-R5, Q1 : le feu ne veille que SON étage (voir `willRiseAsCendreux`). Le cadavre porte
     // son `etage` depuis qu'un corps peut tomber sur un plateau — c'est lui qu'on interroge.
     const warded = state.structures.some(
-      (s) => s.type === 'fire' && fireActive(state, s) && distSq(s.tx + 0.5, s.ty + 0.5, corpse.x, corpse.y) <= ward * ward &&
+      (s) => estFoyer(s.type) && fireActive(state, s) && distSq(s.tx + 0.5, s.ty + 0.5, corpse.x, corpse.y) <= ward * ward &&
         atteintLeSol(state.map, corpse, s.tx, s.ty, s.etage),
     )
     if (warded) {
@@ -223,8 +224,10 @@ export function nearestWarmth(
   let best: { x: number; y: number; prey?: Entity } | undefined
   let bestD = r2
   for (const s of state.structures) {
-    if (s.type !== 'fire') continue
-    if (fireState(state, s) !== 'lit') continue // seul un feu ALLUMÉ est un phare (spec feu-station S5)
+    // LA BALISE EST UN PHARE, elle aussi — B-R10 le dit en propre : « monter une balise, c'est
+    // monter un phare ». C'est l'antagoniste gratuit de l'ascension, et il était déjà écrit.
+    if (!estFoyer(s.type)) continue
+    if (fireState(state, s) !== 'lit') continue // seul un foyer ALLUMÉ est un phare (spec feu-station S5)
     const d = distSq(s.tx + 0.5, s.ty + 0.5, entity.x, entity.y)
     // E-R5, Q2 : un feu allumé n'est un PHARE que pour ce qui peut le rejoindre. À travers la
     // roche il n'appelle rien — sinon le froid pousserait la horde contre une paroi.

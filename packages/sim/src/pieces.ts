@@ -134,7 +134,9 @@ export interface Exigence {
  * une définition, donc aucun fantôme vert là où la sim refuse.
  */
 export function capaciteStation(type: StructureType): Exigence | null {
-  if (type === 'fire') return { fonction: 'feu', niveau: 1 }
+  // UN FOYER EST UNE STATION « feu » DE NIVEAU 1 — le Feu et la Balise (B-R10 : la balise
+  // hérite de la cuisson comme du reste ; un camp où l'on ne peut rien cuire ne serait pas une base).
+  if (estFoyer(type)) return { fonction: 'feu', niveau: 1 }
   const f = piece(type).fonction
   return f === undefined ? null : { fonction: f, niveau: palierDe(type) }
 }
@@ -213,6 +215,37 @@ export interface PieceDef {
    */
   coutObjet?: ItemBag
   acces: AccessLevel
+  /**
+   * ═══ EST-CE UN FOYER ? (spec `braise.md` B-R10) ═══
+   *
+   * Vrai pour le Feu et pour la BALISE, et c'est tout le mécanisme de l'héritage : la balise
+   * est « un grand feu persistant », donc elle hérite des trois états, du combustible, de la
+   * cuisson, de la chaleur, de la lumière et du phare à Cendreux — tout ce que le code appelait
+   * jusqu'ici `s.type === 'fire'`. Ce drapeau est la clé lue par `estFoyer`, et c'est `estFoyer`
+   * qui a remplacé ces tests-là : un foyer de plus n'aura donc rien à recâbler.
+   *
+   * ⚠ CE QU'IL NE DIT PAS : ni l'allumage (la balise ne prend qu'à la braise, `s.allumee`), ni
+   * le FOYER DU VILLAGE (`villageId !== 0`, qui reste un `type === 'fire'` — une balise ne fonde
+   * pas de village, `found_village` la refuse). Les sites qui distinguent ces deux-là n'ont pas
+   * bougé, et c'est volontaire : l'héritage porte sur le feu, pas sur le village.
+   */
+  foyer?: true
+  /**
+   * ═══ C'EST UNE BALISE (spec `braise.md` B-R9/B-R10) — trois conséquences, un seul drapeau ═══
+   *
+   * Ce que `foyer` ne dit pas, et qui fait d'un grand feu une BASE :
+   *   ① elle naît ÉTEINTE et **ne s'allume qu'à la braise** (`s.allumee`, `light_balise`) — bois
+   *      ou pas, elle ne brûle rien en attendant, et chaque extinction lui reprend la flamme ;
+   *   ② allumée, elle **recharge** la braise dans son rayon (B-R9, `BRAISE.RECHARGE_PAR_TICK`) ;
+   *   ③ allumée, **il fait DOUX dans tout son rayon** (décision d'Alexis du 2026-10-03) — là où
+   *      le feu de camp garde son cône, dont le cercle gratuit ne vaut que 57 % du rayon.
+   *
+   * UN SEUL DRAPEAU pour les trois parce qu'ils ne se séparent pas : ils SONT « être une
+   * balise ». Le jour où une torchère de haut palier voudra ① sans ② (une lumière qu'on allume
+   * à la braise mais qui ne recharge pas), c'est ce drapeau qu'on scindera — et les trois sites
+   * qui le lisent sont nommés ci-dessus, aucun n'est caché dans une machine à états.
+   */
+  balise?: true
   /** SE POSE HORS VILLAGE ET HORS CARRÉ (le statut du feu de camp) — la braise-mère et la
    *  parcelle de suie (`cendre.md` R28a, `agriculture.md` J1) : leur place est à la FRANGE,
    *  loin du Feu. Toutes les autres portes de pose les jugent comme tout le monde. */
@@ -300,6 +333,34 @@ export const PIECES = {
     label: 'Feu', fam: 'ancre', pose: 'feu', occupe: 'tuile', arete: 'interdite',
     sousRoche: true,
     bloque: 'oui', pv: 900, cout: { wood: 10 }, acces: 'village', eau: false, usurable: false,
+    foyer: true,
+  },
+  /**
+   * ═══ LA BALISE (spec `braise.md` B-R9/B-R10) — LA BASE, ET LA SEULE RECHARGE ═══
+   *
+   * Un grand feu persistant qu'on ALLUME À LA BRAISE et qui, allumé, la RECHARGE. C'est la
+   * laisse spatiale de tout le jeu : la portée du joueur est la distance qu'il ose mettre entre
+   * lui et sa dernière balise. Elle hérite du feu (`foyer: true` — états, combustible, cuisson,
+   * chaleur, lumière, phare) et n'ajoute que ces deux-là.
+   *
+   * CE QUI LA DISTINGUE DU FEU DE CAMP, en trois lignes de registre :
+   *   · `pose: 'objet'` + `horsVillage` — elle se pose par `place_component`, comme la nasse et
+   *     la braise-mère : une BASE, pas un village (B-R10 le dit mot pour mot). Elle emprunte donc
+   *     la porte de pose qui refuse déjà « sous ses pieds », la tuile occupée et le landmark.
+   *   · `acces: 'private'` — elle est à qui la bâtit. ⚠ Conséquence coop à signaler : le chemin
+   *     « nourrir le feu le plus proche » filtre sur `ownerId`, donc un camarade ne nourrit pas
+   *     votre balise par ce geste-là (il la nourrit par le modal, cible explicite).
+   *   · `cout: { wood: 30 }` — trois fois le feu de camp. PROVISOIRE : c'est un nombre de
+   *     calibrage, à régler en jouant (le seul autre levier de son prix est `BRAISE.RECHARGE_PAR_TICK`).
+   *
+   * `pv: 900`, comme le feu : une base qu'une horde ne défait pas d'un passage. `sousRoche: true` —
+   * une balise de salle est un bivouac légitime, et c'est l'abri le plus naturel de la montagne.
+   */
+  balise: {
+    label: 'Balise', fam: 'ancre', pose: 'objet', occupe: 'tuile', arete: 'interdite',
+    sousRoche: true,
+    bloque: 'oui', pv: 900, cout: { wood: 30 }, acces: 'private', eau: false, usurable: false,
+    foyer: true, balise: true, horsVillage: true,
   },
 
   // ── LES BARRIÈRES DU MARTEAU (R8, R20) ─────────────────────────────────────
@@ -712,6 +773,32 @@ export const INCASSABLE_TYPES = new Set<StructureType>(
   STRUCTURE_TYPES.filter((t) => (PIECES[t] as PieceDef).incassable === true),
 )
 export const estIncassable = (t: StructureType): boolean => INCASSABLE_TYPES.has(t)
+
+/**
+ * ═══ LES FOYERS (spec `braise.md` B-R10) — le Feu et la Balise, dérivés du registre ═══
+ *
+ * Tout ce que le code appelait `s.type === 'fire'` et qui parle de FEU (l'état, la combustion,
+ * la cuisson, la chaleur, la lumière, le phare à Cendreux, la flamme qu'on prend pour sa torche)
+ * se lit désormais ici. Ce qui parle de VILLAGE (le Foyer, `found_village`, la ruine) est resté
+ * sur le type : une balise n'est pas un Foyer.
+ *
+ * ⚠ UN `Set` DE MODULE, PAS UNE LECTURE DU REGISTRE PAR APPEL : `fireBubble` interroge ce
+ * prédicat pour CHAQUE structure et CHAQUE tuile cuite (le pire écran du palier 0 en avait
+ * compté 800 × des milliers le 2026-10-03). Un `piece(t).foyer` y aurait ajouté une lecture
+ * d'objet par structure dans la boucle la plus chaude du gel ; le `Set` est le patron
+ * d'`INCASSABLE_TYPES`, et il tient la même promesse : une table dérivée, jamais deux listes.
+ */
+export const FOYER_TYPES = new Set<StructureType>(
+  STRUCTURE_TYPES.filter((t) => (PIECES[t] as PieceDef).foyer === true),
+)
+export const estFoyer = (t: StructureType): boolean => FOYER_TYPES.has(t)
+
+/** LES BALISES (B-R9/B-R10) — même patron, même raison que `FOYER_TYPES` : la machine à états
+ *  du feu et la chaleur du monde interrogent ce prédicat par structure et par tick. */
+export const BALISE_TYPES = new Set<StructureType>(
+  STRUCTURE_TYPES.filter((t) => (PIECES[t] as PieceDef).balise === true),
+)
+export const estBalise = (t: StructureType): boolean => BALISE_TYPES.has(t)
 
 
 /**

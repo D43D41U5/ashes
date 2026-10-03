@@ -15,7 +15,7 @@
  * froids ≥ 0 : ils ne feraient qu'exiger PLUS de crans, jamais moins.
  */
 import { describe, expect, it } from 'vitest'
-import { BALANCE, BRAISE, COMBAT, MONSTER_DEFS, TEMPERATURE } from './balance'
+import { BALANCE, BRAISE, COMBAT, FIRE, MONSTER_DEFS, TEMPERATURE } from './balance'
 import { braiseNeuve, chargePleine, cransCouverts, cransMax, type Braise } from './braise'
 import { palierDuSol } from './etages'
 import { fenetreDe, type MeteoFront } from './meteo'
@@ -24,7 +24,11 @@ import { respawn } from './combat'
 import { spawnMonster } from './monsters'
 import { createSim, spawnEntity, step, type Entity, type SimState } from './sim'
 import { TERRASSES } from './terrasses'
-import { advanceTemperature, airDeLaDemande, cransExiges, socleDuJour } from './temperature'
+import { addItems, countOf, makeInventory } from './items'
+import { advanceFire, fireState, fireZoneInventory } from './fire'
+import { advanceTemperature, airDeLaDemande, baselineTemperature, cransExiges, eveilCendreuxAt, rechargeDeBalise, socleDuJour } from './temperature'
+import { estGele } from './gel'
+import { addStructure, grantItems, type Structure } from './village'
 import { cycleOffsetForStartHour, jourDeSaison, TICKS_PER_CYCLE, TICKS_PER_SEASON_DAY, tourForDay, YEAR_DAYS } from './time'
 
 const T = TEMPERATURE
@@ -355,6 +359,16 @@ describe('B-A5 — zéro demande, zéro vidange (B-R8)', () => {
     for (let i = 0; i < TICKS; i++) advanceTemperature(camp)
     expect(e3.braise!.charge, 'le camp ne coûte pas un tick de braise').toBe(chargePleine(0))
 
+    // ④ AU PIED D'UNE BALISE ALLUMÉE — la clause que B-A5 nomme, et qui n'était pas écrivable
+    //    avant l'étape 6. ⚠ AVEC UNE BRAISE PLEINE, exprès : sous B-R9, une braise ENTAMÉE
+    //    REMONTE ici (c'est B-A6), donc seule la pleine peut affirmer « inchangée ».
+    const balise = simPlate({ jour: GRAND_FROID })
+    addStructure(balise, 'balise', 5, 5, 0, 1).allumee = true
+    const e5 = spawn(balise, 6.5, 5.5)
+    expect(cransExiges(balise, e5.x, e5.y), 'la prémisse : le plateau annule la demande').toBe(0)
+    for (let i = 0; i < TICKS; i++) advanceTemperature(balise)
+    expect(e5.braise!.charge, 'la balise ne coûte pas un tick, et ne déborde pas').toBe(chargePleine(0))
+
     // ⚠ CONTRÔLE POSITIF, dans le même test : sans rien de tout ça, elle se vide bien — sinon les
     //   trois égalités ci-dessus seraient vraies d'une vidange qui ne marche pas du tout.
     const froid = simPlate({ jour: GRAND_FROID })
@@ -601,5 +615,384 @@ describe('LA MÉTÉO NE PEUT QUE MONTER LA DEMANDE — et sous un orage, un pali
     // ③ CONTRÔLE NÉGATIF — le brouillard ne porte pas de froid (`METEO.COLD.brouillard` = 0) : il
     //    ne doit JAMAIS déplacer un cran. Une garde qui verrait tout monter mesurerait son montage.
     expect(montees.get('brouillard'), 'le brouillard ne refroidit pas').toBe(0)
+  })
+})
+
+// ═══════════════════════════════════════════════════════════════════════════════════════════════
+//   LA BALISE (étape 6) — B-A6, B-A7, et la loi ⓒ d'Alexis : « doux garanti dans tout le rayon »
+// ═══════════════════════════════════════════════════════════════════════════════════════════════
+
+/**
+ * UNE BALISE POSÉE PAR LA VRAIE PORTE (`addStructure`), donc avec son bois de naissance et sans
+ * ancre de combustion — c'est l'état exact d'une balise qu'un joueur vient de poser.
+ *
+ * `allumee` se donne à la main ici plutôt que par l'action : les gardes de cette section éprouvent
+ * la RECHARGE et la CHALEUR, pas le geste (B-A7 et le rejeu, eux, passent par l'action).
+ */
+function poserBalise(state: SimState, tx: number, ty: number, options: { allumee?: boolean; etage?: number } = {}): Structure {
+  const s = addStructure(state, 'balise', tx, ty, 0, 1, 'private', undefined, undefined, options.etage)
+  if (options.allumee === true) s.allumee = true
+  return s
+}
+
+describe('B-A6 — seule une balise ALLUMÉE recharge', () => {
+  /** Une braise ENTAMÉE : c'est la seule qui puisse montrer une recharge (une pleine est déjà au
+   *  plafond, et affirmer son immobilité ne prouverait rien). */
+  const entamee = (): Braise => ({ niveau: 0, charge: chargePleine(0) - 10 * BRAISE.RECHARGE_PAR_TICK })
+
+  it('la charge REMONTE dans le rayon d’une balise allumée, et par pas de RECHARGE_PAR_TICK', () => {
+    const state = simPlate({ jour: GRAND_FROID })
+    poserBalise(state, 5, 5, { allumee: true })
+    const e = spawn(state, 6.5, 5.5) // à une tuile : dans le rayon, jamais sous la structure
+    e.braise = entamee()
+    const depart = e.braise.charge
+    expect(cransExiges(state, e.x, e.y), 'la prémisse ⓐ : le plateau rend l’air DOUX, donc zéro cran').toBe(0)
+    expect(rechargeDeBalise(state, e.x, e.y, e.etage), 'la prémisse ⓑ : on est bien dans le rayon').toBe(true)
+    advanceTemperature(state)
+    expect(e.braise.charge, 'un tick = un pas de recharge, exactement').toBe(depart + BRAISE.RECHARGE_PAR_TICK)
+    for (let i = 0; i < 9; i++) advanceTemperature(state)
+    expect(e.braise.charge, 'dix ticks suffisaient : la voilà pleine').toBe(chargePleine(0))
+    for (let i = 0; i < 50; i++) advanceTemperature(state)
+    expect(e.braise.charge, 'et ça ne DÉBORDE pas — `chargePleine` est le plafond').toBe(chargePleine(0))
+  })
+
+  it('elle ne bouge PAS : hors rayon, en braises, éteinte, ni près d’un feu qui n’est pas une balise', () => {
+    const TICKS = 200
+    // ⚠ CHAQUE CAS EST UN MONDE À LUI, et chacun doit être FROID : une charge immobile ne prouve
+    //   rien si la demande est nulle par ailleurs (ce serait l'été qui tient la garde, pas le cas).
+    const cas: [string, (s: SimState) => void, number, number][] = [
+      // ① HORS RAYON — la balise est allumée, mais à plus de FIRE_RANGE : rien ne doit remonter.
+      ['hors rayon', (s) => { poserBalise(s, 5, 5, { allumee: true }) }, 5 + T.FIRE_RANGE + 2.5, 5.5],
+      // ② EN BRAISES — allumée, mais son bois est fini et la fenêtre de braises court (B-R9 au mot :
+      //    « pas en braises »). Le cône atténué chauffe encore ; il ne recharge pas.
+      ['en braises', (s) => {
+        const b = poserBalise(s, 5, 5, { allumee: true })
+        b.fuel = makeInventory(FIRE.FUEL_SLOTS) // plus une bûche
+        b.emberUntil = s.tick + FIRE.EMBER_TICKS
+      }, 6.5, 5.5],
+      // ③ ÉTEINTE — bâtie, pleine de bois, jamais allumée. C'est B-R10 vu par la recharge.
+      ['éteinte', (s) => { poserBalise(s, 5, 5) }, 6.5, 5.5],
+      // ④ UN FEU DE CAMP — il chauffe (donc la vidange ne court pas), mais il ne recharge rien :
+      //    « à une balise allumée, et NULLE PART AILLEURS ».
+      ['un feu, pas une balise', (s) => { addStructure(s, 'fire', 5, 5, 0, 1) }, 6.5, 5.5],
+    ]
+    for (const [nom, monter, x, y] of cas) {
+      const state = simPlate({ jour: GRAND_FROID })
+      monter(state)
+      const e = spawn(state, x, y)
+      e.braise = entamee()
+      const depart = e.braise.charge
+      expect(rechargeDeBalise(state, e.x, e.y, e.etage), `${nom} : aucune recharge ici`).toBe(false)
+      for (let i = 0; i < TICKS; i++) advanceTemperature(state)
+      expect(e.braise.charge, `${nom} : la charge ne REMONTE pas`).toBeLessThanOrEqual(depart)
+    }
+  })
+
+  it('CONTRÔLE POSITIF — les quatre cas ci-dessus sont bien FROIDS : la charge y descend ou tient', () => {
+    // ⚠ CE QUE CE TEST FERME : « elle ne remonte pas » serait vrai d'une recharge en panne. On
+    //   affirme donc le SIGNE de chaque cas, et il n'est pas le même partout — c'est ce qui prouve
+    //   que le montage est vivant : hors rayon la braise se VIDE (rien ne couvre le Grand Froid),
+    //   tandis qu'au pied d'un feu ou de braises elle TIENT (la bulle couvre, B-R8).
+    const TICKS = 200
+    const state = simPlate({ jour: GRAND_FROID })
+    poserBalise(state, 5, 5, { allumee: true })
+    const loin = spawn(state, 5 + T.FIRE_RANGE + 2.5, 5.5)
+    loin.braise = entamee()
+    const departLoin = loin.braise.charge
+    const pres = spawn(state, 6.5, 5.5)
+    pres.braise = entamee()
+    for (let i = 0; i < TICKS; i++) advanceTemperature(state)
+    expect(loin.braise.charge, 'hors rayon, le Grand Froid mord : elle se VIDE de TICKS').toBe(departLoin - TICKS)
+    expect(pres.braise.charge, 'dans le rayon, elle est pleine : la recharge a bien tourné').toBe(chargePleine(0))
+  })
+
+  it('G-R7 — une balise de la TERRASSE ne recharge pas un corps dans la salle du dessous', () => {
+    const state = simPlate({ jour: GRAND_FROID })
+    const i0 = 5 * state.map.width + 5
+    state.map.etages = [{ niveau: -1, idx: [i0], terrain: [9], x0: 5, y0: 5, x1: 6, y1: 6 }]
+    poserBalise(state, 5, 5, { allumee: true }) // AU SOL : `etage` absent
+    const dessous = spawn(state, 5.5, 5.5)
+    dessous.etage = -1
+    dessous.braise = entamee()
+    const depart = dessous.braise.charge
+    expect(rechargeDeBalise(state, 5.5, 5.5, -1), 'la roche arrête la recharge, comme la chaleur').toBe(false)
+    for (let i = 0; i < 100; i++) advanceTemperature(state)
+    expect(dessous.braise.charge, 'la grotte à 13 °C ne coûte rien et ne rend rien').toBe(depart)
+    // CONTRÔLE POSITIF : le MÊME point, au SOL, recharge.
+    expect(rechargeDeBalise(state, 5.5, 5.5), 'au sol, sous la balise, elle recharge').toBe(true)
+  })
+})
+
+describe('la loi ⓒ (2026-10-03) — dans le rayon d’une balise allumée, il fait DOUX partout', () => {
+  it('l’abri et la recharge COÏNCIDENT, tuile par tuile, là où le feu de camp a une falaise', () => {
+    // ⚠ C'EST LA GARDE DE LA DÉCISION, et elle se lit en deux colonnes sur le MÊME rayon :
+    //   le feu de camp garde son cône (zone gratuite = 57 % du rayon), la balise plancher le rayon
+    //   ENTIER. L'implication qu'on affirme est la forme exacte de la décision d'Alexis :
+    //   « recharge ⟺ demande nulle », donc un seul rayon pour les deux lois.
+    const pas = 0.5
+    const rayon = T.FIRE_RANGE
+    const lire = (type: 'fire' | 'balise'): { gratuites: number; divergences: number; total: number } => {
+      const state = simPlate({ jour: GRAND_FROID })
+      if (type === 'balise') poserBalise(state, 5, 5, { allumee: true })
+      else addStructure(state, 'fire', 5, 5, 0, 1)
+      let gratuites = 0
+      let divergences = 0
+      let total = 0
+      for (let d = pas; d < rayon; d += pas) {
+        const x = 5.5 + d
+        total += 1
+        const libre = cransExiges(state, x, 5.5) === 0
+        if (libre) gratuites += 1
+        // L'implication, dans les DEUX sens : une balise recharge exactement où elle affranchit.
+        const recharge = rechargeDeBalise(state, x, 5.5)
+        if (type === 'balise' && recharge !== libre) divergences += 1
+        if (type === 'fire' && recharge) divergences += 1 // un feu ne recharge nulle part
+      }
+      return { gratuites, divergences, total }
+    }
+    const feu = lire('fire')
+    const balise = lire('balise')
+    expect(balise.divergences, 'balise : la recharge et la demande nulle coïncident, tuile par tuile').toBe(0)
+    expect(feu.divergences, 'feu : il ne recharge nulle part, même là où il affranchit').toBe(0)
+    expect(balise.gratuites, 'la balise affranchit TOUT son rayon').toBe(balise.total)
+    // LA FALAISE DU FEU DE CAMP, mesurée et non supposée : elle existe, et elle est PLUS PETITE
+    // que le rayon. La loi, pas le chiffre — `FIRE_WARMTH` est un nombre d'équilibrage.
+    expect(feu.gratuites, 'le feu, lui, en affranchit moins').toBeLessThan(feu.total)
+    expect(feu.gratuites, 'mais il en affranchit quand même — son cœur est chaud').toBeGreaterThan(0)
+    const partFeu = feu.gratuites / feu.total
+    expect(partFeu, 'et la part gratuite du feu reste celle de sa bulle linéaire (≈ 57 %, MESURÉ)')
+      .toBeCloseTo(1 - T.AMBIANT_DOUX / T.FIRE_WARMTH, 1)
+  })
+
+  it('les BRAISES gardent le cône : le plateau est la promesse d’une balise ALLUMÉE', () => {
+    // Sans cette garde, « doux partout » aurait pu être écrit sur `fireActive` (allumé OU braises)
+    // et le combustible d'une balise n'aurait plus valu grand-chose.
+    const state = simPlate({ jour: GRAND_FROID })
+    const b = poserBalise(state, 5, 5, { allumee: true })
+    const bord = 5.5 + T.FIRE_RANGE - 0.5 // dans le rayon, mais loin du centre
+    expect(cransExiges(state, bord, 5.5), 'allumée : le bord du rayon est doux').toBe(0)
+    b.fuel = makeInventory(FIRE.FUEL_SLOTS)
+    b.emberUntil = state.tick + FIRE.EMBER_TICKS
+    expect(fireState(state, b), 'la prémisse : elle est bien en BRAISES').toBe('ember')
+    expect(cransExiges(state, bord, 5.5), 'en braises : le bord redevient froid').toBeGreaterThan(0)
+  })
+})
+
+describe('le plateau ne sort PAS dans le monde de base (vérifié le 2026-10-03, un commentaire était faux)', () => {
+  /**
+   * ⚠ **CE QUE J'AVAIS ÉCRIT, ET QUI ÉTAIT FAUX** : « ce plateau sort par TOUS les lecteurs de
+   * `fireBubble` — l'air du corps, l'air de la demande, l'éveil des Cendreux et la faune ». Les
+   * deux derniers sont faux, et c'est STRUCTUREL : l'éveil lit `baselineTemperature` *hors feu*
+   * (la note S5 de `feu-station.md` : sinon un Cendreux oscille à la lisière de la bulle) et
+   * `faune.ts` ne lit aucune température. `fireBubble` n'a que trois appelants — `airDeLaDemande`
+   * (la demande en crans), `ambientTemperature` (plus aucun appelant dans `/sim` : les deux
+   * lectures du HUD) et `nighthunt.ts` (un prédicat `> 0`, INCHANGÉ au bit — le plateau ne fait
+   * que monter une valeur déjà positive dans le rayon).
+   *
+   * Conséquence de jeu, et elle est voulue : **une balise allumée ne dégèle pas la glace de son
+   * rayon et n'endort pas les Cendreux.** Elle couvre la DEMANDE d'un corps ; elle ne réchauffe
+   * pas le monde.
+   */
+  it('la température de BASE est la même dedans et dehors, alors que la demande, elle, tombe à 0', () => {
+    const state = simPlate({ jour: GRAND_FROID, heure: 0, paliers: true })
+    const ty = ligneDuPalier(3) // le palier le plus froid : le gel y est certain à toute saison
+    const loin = 5 + Math.ceil(T.FIRE_RANGE) + 3 // hors rayon, MÊME ligne donc même palier
+    expect(loin, 'la tuile témoin tient dans la carte').toBeLessThan(state.map.width)
+    // DE L'EAU de part et d'autre : un gué (seuil 0) dans le rayon, un gué témoin dehors.
+    state.map.terrain[ty * state.map.width + 6] = 4
+    state.map.terrain[ty * state.map.width + loin] = 4
+    poserBalise(state, 5, ty, { allumee: true })
+    // ⓐ LA PRÉMISSE : on est bien dans le rayon, et le plateau y est bien vu par la DEMANDE.
+    expect(rechargeDeBalise(state, 6.5, ty + 0.5), 'prémisse : la tuile d’eau est dans le rayon').toBe(true)
+    expect(cransExiges(state, 6.5, ty + 0.5), 'le plateau EST vu par la demande : zéro cran').toBe(0)
+    expect(cransExiges(state, loin + 0.5, ty + 0.5), 'dehors, le palier 3 en Grand Froid exige des crans').toBeGreaterThan(0)
+    expect(airDeLaDemande(state, 6.5, ty + 0.5), 'et l’air de la demande vaut le plancher doux').toBeGreaterThanOrEqual(T.AMBIANT_DOUX)
+    // ⓑ LA LOI : le monde de base ne bouge pas d'un bit. C'est la clause SENSIBLE — elle rougirait
+    //   si `fireBubble` entrait dans `baselineTemperature`, ou si `estGele` lisait l'air du corps.
+    expect(baselineTemperature(state, 6.5, ty + 0.5), 'le froid de BASE ignore la balise').toBe(
+      baselineTemperature(state, loin + 0.5, ty + 0.5),
+    )
+    expect(estGele(state, 6, ty), 'la glace du rayon TIENT').toBe(true)
+    expect(estGele(state, loin, ty), 'comme celle du témoin').toBe(true)
+    // ⓒ ET LE CADRAN DES CENDREUX NON PLUS — même valeur dedans et dehors, au bit.
+    expect(eveilCendreuxAt(state, 6.5, ty + 0.5, state.tick), 'l’éveil lit le froid de base, hors feu').toBe(
+      eveilCendreuxAt(state, loin + 0.5, ty + 0.5, state.tick),
+    )
+    expect(eveilCendreuxAt(state, 6.5, ty + 0.5, state.tick), 'et il est bien ÉVEILLÉ : la garde n’est pas vide').toBeGreaterThan(0)
+  })
+})
+
+describe('B-A7 — le rallumage exige de la charge (B-R10)', () => {
+  /** Le geste, par la VRAIE porte (l'action) : c'est elle qu'un joueur traverse. */
+  const allumer = (state: SimState, e: Entity, s: Structure): void => {
+    step(state, [{ entityId: e.id, dx: 0, dy: 0, action: { type: 'light_balise', structureId: s.id } }])
+  }
+
+  it('une braise CHARGÉE l’allume ; à 0 elle REFUSE — même balise, même tuile, seule la charge change', () => {
+    for (const [nom, charge, attendu] of [['chargée', BRAISE.DUREE_CRAN, true], ['à 0', 0, false]] as const) {
+      const state = simPlate({ jour: ARDEUR })
+      const b = poserBalise(state, 5, 5)
+      const e = spawn(state, 6.5, 5.5)
+      e.braise = { niveau: 0, charge }
+      expect(fireState(state, b), `${nom} : la prémisse — elle est éteinte`).toBe('out')
+      allumer(state, e, b)
+      expect(b.allumee === true, `braise ${nom} : la flamme est donnée ?`).toBe(attendu)
+      expect(fireState(state, b) === 'lit', `braise ${nom} : elle brûle ?`).toBe(attendu)
+    }
+  })
+
+  it('une balise SANS BOIS refuse la flamme — un refus lisible plutôt qu’un geste mort', () => {
+    const state = simPlate({ jour: ARDEUR })
+    const b = poserBalise(state, 5, 5)
+    b.fuel = makeInventory(FIRE.FUEL_SLOTS)
+    const e = spawn(state, 6.5, 5.5)
+    allumer(state, e, b)
+    expect(b.allumee, 'rien à brûler : la braise n’est pas dépensée pour rien').toBeUndefined()
+  })
+
+  it('allumer ne COÛTE rien à la braise (le patron de `light_torch`)', () => {
+    const state = simPlate({ jour: ARDEUR })
+    const b = poserBalise(state, 5, 5)
+    const e = spawn(state, 6.5, 5.5)
+    const avant = e.braise!.charge
+    allumer(state, e, b)
+    expect(b.allumee, 'la prémisse : elle s’est bien allumée').toBe(true)
+    expect(e.braise!.charge, 'la charge est intacte — c’est une DÉCISION ouverte (§ 5)').toBe(avant)
+  })
+
+  it('CONTRÔLE POSITIF du geste — trop loin, ce n’est pas la charge qui refuse', () => {
+    const state = simPlate({ jour: ARDEUR })
+    const b = poserBalise(state, 5, 5)
+    const e = spawn(state, 5.5 + BALANCE.INTERACT_RANGE + 2, 5.5)
+    allumer(state, e, b)
+    expect(b.allumee, 'la portée de bras garde le geste').toBeUndefined()
+  })
+})
+
+describe('B-R10 — une balise éteinte ne brûle RIEN, et chaque extinction lui reprend la flamme', () => {
+  const bois = (s: Structure): number => (s.fuel ? countOf(s.fuel, 'wood') : 0)
+
+  it('éteinte, son bois de naissance est INTACT après une fenêtre de combustion entière', () => {
+    // ⚠ LA GARDE LA PLUS IMPORTANTE DE L'ÉTAPE : sans elle, une balise bâtie brûlait ses dix bûches
+    //   sans flamme et se trouvait VIDE le jour où l'on vient enfin l'allumer.
+    const state = simPlate({ jour: ARDEUR })
+    const b = poserBalise(state, 5, 5)
+    const depart = bois(b)
+    expect(depart, 'la prémisse : elle naît AVEC du bois').toBe(FIRE.FUEL_START_WOOD)
+    expect(b.burnAt, 'et SANS ancre de combustion — sinon la première bûche partirait à l’allumage').toBeUndefined()
+    // ⚠ LE TICK AVANCE À LA MAIN. `advanceFire` est UNE PHASE, pas un tour d'horloge : appelée mille
+    //   fois au même tick, elle ne peut rien consumer (`tick >= burnAt + BURN_TICKS` reste faux) et
+    //   la garde serait verte sur une mécanique morte. C'est le piège « une phase seule n'est pas un
+    //   tick », et c'est ce test qui l'a attrapé.
+    const brulerUneFenetre = (): void => {
+      for (let i = 0; i < FIRE.BURN_TICKS + 10; i++) { state.tick += 1; advanceFire(state) }
+    }
+    brulerUneFenetre()
+    expect(bois(b), 'pas une bûche consumée').toBe(depart)
+    // CONTRÔLE POSITIF : la MÊME balise, allumée, brûle bien — donc l'horloge du montage tourne.
+    b.allumee = true
+    brulerUneFenetre()
+    expect(bois(b), 'allumée, elle consume sa bûche').toBe(depart - 1)
+  })
+
+  it('le temps passé éteinte n’est pas FACTURÉ : on l’allume, et sa bûche brûle une fenêtre pleine', () => {
+    const state = simPlate({ jour: ARDEUR })
+    const b = poserBalise(state, 5, 5)
+    const depart = bois(b)
+    for (let i = 0; i < FIRE.BURN_TICKS * 3; i++) { state.tick += 1; advanceFire(state) }
+    b.allumee = true
+    advanceFire(state) // l'ancre se pose ICI (clause « Sécurité »)
+    for (let i = 0; i < FIRE.BURN_TICKS - 2; i++) { state.tick += 1; advanceFire(state) }
+    expect(bois(b), 'la fenêtre n’est pas écoulée : sa bûche tient encore').toBe(depart)
+    state.tick += 2
+    advanceFire(state)
+    expect(bois(b), 'et elle finit à l’heure, pas trois fenêtres plus tôt').toBe(depart - 1)
+  })
+
+  it('les braises mortes REPRENNENT la flamme : du bois seul ne rallume pas une balise', () => {
+    const state = simPlate({ jour: ARDEUR })
+    const b = poserBalise(state, 5, 5, { allumee: true })
+    b.fuel = makeInventory(FIRE.FUEL_SLOTS) // à sec
+    b.emberUntil = state.tick + 5
+    state.tick += 6 // les braises ont fini de rougir
+    advanceFire(state)
+    expect(b.allumee, 'la flamme est reprise').toBeUndefined()
+    addItems(b.fuel!, { wood: 3 })
+    advanceFire(state)
+    expect(fireState(state, b), 'du bois dans une balise reprise ne la rallume pas').toBe('out')
+    expect(bois(b), 'et ce bois-là ne part pas en fumée non plus').toBe(3)
+  })
+})
+
+describe('la charge ne bouge QUE d’un pas à la fois (B-R8 + B-R9)', () => {
+  it('à chaque tick, le delta vaut −VIDANGE, 0 ou +RECHARGE — jamais les deux, jamais autre chose', () => {
+    // ⚠ CE QUE CETTE GARDE FERME : la vidange et la recharge vivent dans la MÊME boucle, à deux
+    //   lignes d'écart. Qu'elles ne se croisent jamais n'est pas un ordre d'écriture, c'est une
+    //   propriété de la loi ⓒ (dans le rayon, la demande est NULLE, donc la vidange ne court pas).
+    //   Si le plateau cessait de planchéer, on verrait ici un delta de `RECHARGE − VIDANGE`.
+    const state = simPlate({ jour: GRAND_FROID })
+    addStructure(state, 'balise', 5, 5, 0, 1).allumee = true
+    const e = spawn(state, 6.5, 5.5)
+    e.braise = { niveau: 0, charge: Math.floor(chargePleine(0) / 2) }
+    const vus = new Set<number>()
+    // Le corps entre et sort du rayon : les deux régimes se croisent dans un seul run.
+    for (let i = 0; i < 400; i++) {
+      e.x = i % 100 < 50 ? 6.5 : 5.5 + T.FIRE_RANGE + 3
+      const avant = e.braise.charge
+      advanceTemperature(state)
+      vus.add(e.braise.charge - avant)
+    }
+    for (const delta of vus) {
+      expect([-BRAISE.VIDANGE_PAR_TICK, 0, BRAISE.RECHARGE_PAR_TICK], `delta observé ${delta}`).toContain(delta)
+    }
+    expect(vus.has(-BRAISE.VIDANGE_PAR_TICK), 'la prémisse ⓐ : on a bien vu la vidange courir').toBe(true)
+    expect(vus.has(BRAISE.RECHARGE_PAR_TICK), 'la prémisse ⓑ : et la recharge aussi').toBe(true)
+  })
+})
+
+describe('B-A8, moitié BALISE — les balises bâties restent sur la carte après la mort', () => {
+  it('on se relève avec une braise pleine, et sa balise est toujours là, telle qu’on l’a laissée', () => {
+    // ⚠ CE QUI N'EST PAS ICI : la POSITION (« on repart en bas »), qui est l'étape 9 — et le
+    //   rallumage des balises bâties, qui est la même étape. Ce qu'on tient aujourd'hui est la
+    //   moitié vérifiable : la mort ne RASE rien, donc la remontée est bien « l'échelle qu'on
+    //   s'est construite » (B-R11).
+    const state = simPlate({ jour: ARDEUR })
+    const e = spawn(state, 6.5, 5.5)
+    e.braise = { niveau: 2, charge: 7 }
+    const b = addStructure(state, 'balise', 5, 5, 0, e.id)
+    b.allumee = true
+    const avant = { id: b.id, tx: b.tx, ty: b.ty, allumee: b.allumee, bois: countOf(b.fuel!, 'wood') }
+    e.hp = 0
+    e.downedAt = state.tick // la porte de `respawn` : sans corps à terre, il ne fait RIEN
+    expect(respawn(state, e), 'la prémisse : on se relève vraiment').toBe(true)
+    expect(e.braise.niveau, 'le niveau traverse la mort').toBe(2)
+    expect(e.braise.charge, 'et la charge repart au plein de CE niveau').toBe(chargePleine(2))
+    const apres = state.structures.find((s) => s.id === avant.id)
+    expect(apres, 'la balise est toujours sur la carte').toBeDefined()
+    expect({ id: apres!.id, tx: apres!.tx, ty: apres!.ty, allumee: apres!.allumee, bois: countOf(apres!.fuel!, 'wood') },
+      'et rien d’elle n’a changé').toEqual(avant)
+  })
+})
+
+describe('B-R10 — une balise est une BASE, pas un village', () => {
+  it('posée AU MILIEU de son propre village, elle reste LIBRE (villageId 0) et garde son combustible', () => {
+    // ⚠ CE QUE CETTE GARDE FERME : `place_component` donne au posé le `villageId` du poseur. Sans
+    //   clause, une balise bâtie dans son village basculait sur la branche FOYER de toute la
+    //   machine du feu — allumée pour toujours (`fireStateAt` rend 'lit' sans regarder le bois) et
+    //   SANS zone combustible (`fireZoneInventory` la refuse à un Foyer). Une balise de camp et une
+    //   balise de village auraient été deux objets différents.
+    const state = simPlate({ jour: ARDEUR })
+    const e = spawn(state, 5.5, 5.5)
+    grantItems(state, e.id, { balise: 1 })
+    grantItems(state, e.id, { wood: 20 }) // le Feu du village se paie, lui (`STRUCTURE_COSTS.fire`)
+    step(state, [{ entityId: e.id, dx: 0, dy: 0, action: { type: 'light_fire' } }])
+    expect(state.villages, 'la prémisse ⓐ : il a bien un village').toHaveLength(1)
+    step(state, [{ entityId: e.id, dx: 0, dy: 0, action: { type: 'set_active_slot', slot: 0 } }])
+    step(state, [{ entityId: e.id, dx: 0, dy: 0, action: { type: 'place_component', tx: 5, ty: 4 } }])
+    const b = state.structures.find((s) => s.type === 'balise')
+    expect(b, 'la prémisse ⓑ : elle est bien posée (dans le carré du Feu)').toBeDefined()
+    expect(b!.villageId, 'et elle est LIBRE, comme un feu de camp').toBe(0)
+    expect(fireState(state, b!), 'donc éteinte à la naissance, comme toute balise').toBe('out')
+    expect(fireZoneInventory(b!, 'fuel'), 'et elle a bien une zone combustible').toBeDefined()
   })
 })

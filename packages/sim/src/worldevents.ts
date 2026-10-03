@@ -17,6 +17,7 @@ import type { SimState } from './sim'
 import { dayTicksAt, estCrepuscule, TICKS_PER_CYCLE, jourDeSaison, seasonRamp } from './time'
 import { emitEvent, type SimEvent } from './events'
 import { fireStateAt } from './fire'
+import { estFoyer } from './pieces'
 import { densiteDesMorts } from './morts'
 import { eveilCendreuxAt } from './temperature'
 import { isPrey } from './faune'
@@ -67,7 +68,7 @@ function feuxAllumes(state: SimState): { tx: number; ty: number; villageId?: num
   const vus = new Set<number>()
   const width = state.map.width
   for (const s of state.structures) {
-    if (s.type !== 'fire') continue
+    if (!estFoyer(s.type)) continue
     if (fireStateAt(state.tick, s) !== 'lit') continue
     const key = s.ty * width + s.tx
     if (vus.has(key)) continue

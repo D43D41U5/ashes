@@ -313,6 +313,11 @@ export type ItemId =
    *  séchoir). C'est cet `ItemId` qui manquait pour qu'un joueur puisse en avoir une : la pièce
    *  et son système existaient depuis le 2026-09-13, mais rien ne pouvait en produire. */
   | 'fish_trap'
+  /** LA BALISE EN OBJET (`braise.md` B-R10) : on la bâtit en bois (30), on la porte, on la POSE
+   *  (`place_component`, comme la nasse et la braise-mère), puis on l'ALLUME À SA BRAISE. C'est
+   *  la seule chose au monde qui recharge une braise (B-R9) — donc l'objet dont dépend toute
+   *  l'ascension. */
+  | 'balise'
 
 /** Une case occupée. `wear` absent = neuf ; un empilable n'a jamais d'usure. */
 export interface Slot {

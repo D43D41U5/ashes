@@ -584,6 +584,25 @@ export const BRAISE = {
    * C'est le chiffre qu'on relira pour décider si 2 est le bon : qu'il dise ce qu'il fait.
    */
   CRANS_DEPART: 2,
+  /**
+   * ═══ LA RECHARGE À LA BALISE (B-R9) — en charge par tick, dans le rayon d'une balise ALLUMÉE ═══
+   *
+   * **Vingt**, soit vingt fois la vidange : la braise se remplit vingt fois plus vite qu'elle ne
+   * se vide. Ce qui se lit en temps de jeu, puisque la charge est un budget de ticks (voir
+   * `DUREE_CRAN`) : un cran se refait en `DUREE_CRAN / 20` = 1 800 ticks, **une minute et demie
+   * de montre**, et une braise de départ vide se refait entièrement en trois minutes.
+   *
+   * Pourquoi ce rapport-là, et pas l'instantané qu'on aurait pu choisir : la recharge est
+   * PROGRESSIVE par décision (2026-09-28, § 5 question 3), et c'est elle qui fait du camp une
+   * HALTE — on s'assied, on cuit, on repart. Instantanée, la balise serait une borne qu'on
+   * frôle ; en vingt minutes, elle serait une corvée. À une minute et demie par cran, le temps
+   * de la halte est celui d'une cuisson.
+   *
+   * ⚠ PROVISOIRE, et c'est le levier de calibrage de toute la laisse spatiale avec le prix de la
+   * balise (30 bois) : aucune partie ne l'a encore éprouvé. Il n'a AUCUNE conséquence de
+   * déterminisme (entier, ajouté à un entier, borné par `chargePleine`).
+   */
+  RECHARGE_PAR_TICK: 20,
 }
 
 /**
@@ -2561,6 +2580,8 @@ export type RecipeId =
   | 'chest'
   // LA NASSE (`nasse.md`, reprise de l'eau D3) : à la MAIN, sans poste — voir sa ligne.
   | 'fish_trap'
+  // LA BALISE (`braise.md` B-R10) : à la MAIN, trente bois — voir sa ligne.
+  | 'balise'
 
 export interface Recipe {
   /**
@@ -2644,6 +2665,17 @@ export const RECIPES: Record<RecipeId, Recipe> = {
   // SEUL prix de la nasse, et le faire diverger du `cout` du registre mettrait deux chiffres
   // en circulation pour une seule idée.
   fish_trap: { requiert: null, inputs: { fiber: 8 }, output: 'fish_trap', seconds: 7 },
+  // ═══ LA BALISE (`braise.md` B-R10) — À LA MAIN, ET CHÈRE ═══
+  //
+  // `requiert: null` comme le feu de camp, et pour la même raison, en plus forte : la balise est
+  // la SEULE recharge d'une braise (B-R9), donc la mettre derrière un atelier mettrait l'ascension
+  // derrière un atelier. Ce qui la rend chère n'est pas une station, c'est son prix : **trente
+  // bois**, trois feux de camp — un après-midi de hache, pas un geste.
+  // Le coût MIROITE `STRUCTURE_COSTS.balise` (le patron de la nasse) : `place_component` ne
+  // prélève rien, il consomme l'objet tenu, donc cette ligne est le SEUL prix de la balise.
+  // ⚠ PROVISOIRE, à calibrer en jouant : 30 bois et `BRAISE.RECHARGE_PAR_TICK` sont les deux
+  // seuls leviers de la laisse spatiale, et aucun des deux n'a encore vu une partie.
+  balise: { requiert: null, inputs: { wood: 30 }, output: 'balise', seconds: 12 },
   // LA BRAISE-MÈRE (spec `cendre.md` R28a) — Forge N2, et SON COÛT EST L'AMORCE : le cœur de
   // braise (R29) entre dans la recette. La défense se paie d'abord en courage.
   braise_mere: { requiert: FORGE_N2, inputs: { stone: 8, iron_ingot: 2, coeur_de_braise: 1 }, output: 'braise_mere', seconds: 14 },
@@ -5875,6 +5907,17 @@ export const COOK_SLOT: Partial<
     // espèce — le cuit garde son identité (la rareté de D5 se mange, elle ne se fond pas).
     ...cuissonDesPrises(),
   },
+  // ═══ LA BALISE CUIT COMME LE FEU (`braise.md` B-R10 — « héritière du feu ») ═══
+  //
+  // La MÊME cuisine, mot pour mot : c'est un grand feu, et un camp où l'on ne peut rien griller
+  // ne serait pas une base. ⚠ ET CETTE LIGNE N'EST PAS DÉCORATIVE : `fireZoneInventory` refuse
+  // toute zone à un poste SANS recettes (`recettesDuPoste === undefined`), zone COMBUSTIBLE
+  // comprise. Sans elle, on ne pourrait pas mettre une bûche dans une balise — donc elle ne
+  // brûlerait jamais, donc elle ne rechargerait jamais rien.
+  balise: {
+    raw_meat: { output: 'cooked_meat', ticks: ticksFor(5) },
+    ...cuissonDesPrises(),
+  },
 }
 
 /**
@@ -7081,6 +7124,10 @@ export const ITEM_WEIGHT: Record<import('./items').ItemId, number> = {
   // Le feu de camp en ballot : LOURD (un tiers de la besace). On ne trimballe pas
   // trois foyers dans son dos — le poser est un engagement, pas un réflexe.
   campfire: 8,
+  // LA BALISE en ballot : la charge la plus lourde du jeu, au niveau du four d'acier. C'est
+  // l'intention — monter une balise d'un étage est une EXPÉDITION, et la laisse spatiale de
+  // `braise.md` se paie une fois en bois et une fois en dos.
+  balise: 12,
   // Les COMPOSANTS en objet : LOURDS (une enclume, un four…). On les porte un par un.
   enclume: 10,
   furnace: 9,

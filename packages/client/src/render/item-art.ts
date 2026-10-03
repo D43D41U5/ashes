@@ -86,6 +86,7 @@ export const ITEM_LABELS: Record<ItemId, string> = {
   tenue_hiver: "Tenue d'hiver",
   components: 'Composants',
   campfire: 'Feu de camp',
+  balise: 'Balise',
   // ── Les COMPOSANTS en objet (spec construction R20) : on les pose pour faire
   //    émerger une fonction (la Forge : enclume + four…).
   enclume: 'Enclume',
@@ -277,6 +278,18 @@ export const ITEM_PAINTS: Record<ItemId, ItemPaint> = {
     g.fillStyle(0x5a3d22).fillRect(2, 12, 12, 2) // la bûche du dessus
     g.fillStyle(0x6a4c2c).fillRect(3, 14, 10, 1) // celle du dessous
     g.fillStyle(0xc3a678).fillRect(2, 12, 2, 2) // cœur clair au bout (NO)
+  },
+
+  // LA BALISE EN BALLOT (`braise.md` B-R10) : le feu de camp en GRAND — un faisceau dressé,
+  // lié, qu'on porte sur le dos. Pas de flamme : elle n'en a pas encore, et c'est tout son
+  // sujet (elle ne s'allume qu'à la braise). ⚠ DA PROVISOIRE, à montrer à Alexis.
+  balise: (g) => {
+    g.fillStyle(0x5a3d22).fillTriangle(7, 1, 9, 1, 4, 14) // le rondin de gauche, dressé
+    g.fillStyle(0x6a4c2c).fillTriangle(7, 1, 9, 1, 12, 14) // celui de droite
+    g.fillStyle(0x7a5a34).fillRect(6, 1, 4, 13) // le troisième, au milieu
+    g.fillStyle(0xc3a678).fillRect(6, 1, 4, 1) // les bouts clairs, en haut du faisceau
+    g.fillStyle(0x3a2a18).fillRect(3, 8, 10, 2) // le lien qui tient le faisceau
+    g.fillStyle(0x4a3a24).fillRect(2, 14, 12, 2) // la couronne de pierres, au pied
   },
 
   // Les COMPOSANTS EN OBJET (spec construction R20) : une silhouette qui dit la

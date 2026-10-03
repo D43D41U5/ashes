@@ -40,7 +40,7 @@
  * AUCUNE logique de jeu. `fireGlow` (module pur) porte le battement et l'extinction de jour.
  */
 import Phaser from 'phaser'
-import { fireStateAt, type SnapshotMessage, type Structure } from '@ashes/sim'
+import { estFoyer, fireStateAt, type SnapshotMessage, type Structure } from '@ashes/sim'
 import { fireGlow } from '../../render/lighting'
 import { axesFeu, varianteFeu, type VarianteFeu } from '../../render/feu-variante'
 import { FIRE_GROUND_DEPTH, TILE_PX } from '../../render/framing'
@@ -172,7 +172,8 @@ export class FireGroundGlow {
 
   /** Réconcilie une flaque par Feu et la fait respirer (alpha) avec la flamme (`fireGlow`).
    *  `structures` reçoit la sous-liste des FEUX dérivée une fois par `WorldScene` (PERF-08) ;
-   *  la garde `type !== 'fire'` reste, une liste déjà filtrée la traverse sans frais. */
+   *  la garde `estFoyer` reste (elle disait `type !== 'fire'` avant la balise), une liste déjà
+ *  filtrée la traverse sans frais. */
   update(structures: Structure[], villages: SnapshotMessage['villages'], day: number, now: number, tick: number): void {
     const v = varianteFeu()
     const ax = axesFeu(v)
@@ -184,7 +185,7 @@ export class FireGroundGlow {
     ensureTexture(this.scene, ax.coeurBlanc)
     const seen = new Set<number>()
     for (const s of structures) {
-      if (s.type !== 'fire') continue
+      if (!estFoyer(s.type)) continue // le feu ET la balise (B-R10)
       // Un feu ÉTEINT ne rougeoie plus le sol (spec feu-station S1/S3) : on le saute → la
       // réconciliation détruit sa flaque. (Les braises la gardent, atténuée par `fireGlow`.)
       if (fireStateAt(tick, s) === 'out') continue

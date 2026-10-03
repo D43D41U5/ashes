@@ -53,6 +53,7 @@ import { isBlockedAt, makeIndexedIsBlockedAt } from './collision'
 import { applyDamage, die, startAttack, weaponKind, type Corpse } from './combat'
 import { emitEvent } from './events'
 import { fireState } from './fire'
+import { estFoyer } from './pieces'
 import { atteignableEntreEtages, atteintLeSol, niveauDuCorps, palierDuSol } from './etages'
 import { distSq } from './geometry'
 import { carryRatio, carryTier, countOf, isEmpty, removeItems, type ItemId } from './items'
@@ -4998,7 +4999,7 @@ function encirclePost(
  */
 function underFireWard(state: SimState, e: { x: number; y: number; etage?: number }): boolean {
   for (const s of state.structures) {
-    if (s.type !== 'fire' || s.hp <= 0) continue
+    if (!estFoyer(s.type) || s.hp <= 0) continue
     // Un loup ne fuit qu'un feu ALLUMÉ (faune.md:91, « Feu allumé ») — les braises ne
     // suffisent pas (spec feu-station S3 : la chasse tient à l'allumé, pas aux braises).
     if (fireState(state, s) !== 'lit') continue

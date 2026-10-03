@@ -22,6 +22,8 @@ export { poissonPoints } from './poisson'
 // ─── Équilibrage & définitions (balance.ts — la seule source des nombres) ─
 export { POI,
   BALANCE,
+  // LA BRAISE (`braise.md`) — ses cinq nombres : le client en dérive la barre (et le harnais la lit).
+  BRAISE,
   COMBAT,
   CARRY,
   CONVOY_LOOT,
@@ -359,6 +361,10 @@ export {
   libelleExigence,
   matieresDe,
   matiereChiffre,
+  // LES FOYERS (`braise.md` B-R10) — le client les lit pour dessiner, viser et nourrir : une
+  // seule définition de « c'est un feu », côté sim comme côté écran.
+  estFoyer,
+  estBalise,
 } from './pieces'
 export type { PieceDef, Famille, Pose, Occupe, Arete, Bloque, Exigence, StationFonction, Matiere, TenuPosable } from './pieces'
 

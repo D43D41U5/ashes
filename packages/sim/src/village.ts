@@ -73,7 +73,7 @@ import {
 import { heldSlot } from './inventory-actions'
 import { foyerDonneLeFeu } from './torche'
 import { meteoFeuConso, meteoMouille } from './meteo'
-import { estIncassable, matiereChiffre, matieresDe, parPiece, piece, PIECES } from './pieces'
+import { estBalise, estFoyer, estIncassable, matiereChiffre, matieresDe, parPiece, piece, PIECES } from './pieces'
 import { terrainAt, zoneAt } from './map'
 import { isSheltered } from './temperature'
 import { floreGelee } from './gel'
@@ -180,6 +180,26 @@ export interface Structure {
   /** Tick de fin de la fenêtre de BRAISES (S2) : posé quand le bois tombe à 0, effacé au
    *  rallumage. Feu libre uniquement. */
   emberUntil?: number
+  /**
+   * ═══ LA FLAMME A-T-ELLE ÉTÉ DONNÉE ? (spec `braise.md` B-R10) — LA BALISE SEULEMENT ═══
+   *
+   * `true` = on l'a allumée à sa braise. **Absent = ÉTEINTE** — et c'est tout le sens de B-R10 :
+   * une balise bâtie, pleine de bois, ne brûle pas. Il faut y porter sa braise.
+   *
+   * ⚠ **CE CHAMP GARDE LA COMBUSTION, PAS SEULEMENT L'ÉTAT AFFICHÉ.** Sans cette garde dans
+   * `advanceFire`, une balise non allumée brûlerait le bois de sa naissance (`FUEL_START_WOOD`)
+   * en silence, et serait vide le jour où l'on vient enfin l'allumer.
+   *
+   * ⚠ **ET IL S'EFFACE À CHAQUE EXTINCTION** — quand les braises ont fini de rougir
+   * (`advanceFire`) : sinon, remettre une bûche dans une balise refroidie la rallumerait sans
+   * braise, et la seule règle qui fait d'elle une balise serait contournable avec du bois.
+   * *(Il n'y a pas d'autre chemin vers l'extinction : aucun geste n'éteint un feu — `demolish`
+   * le démonte entièrement.)*
+   *
+   * Absent sur un FEU : le feu n'a jamais eu besoin qu'on lui donne la flamme (`place_campfire`
+   * le pose allumé), et `fireStateAt` ne lit ce champ que pour un foyer qui l'EXIGE.
+   */
+  allumee?: true
   /** LES ENTRÉES DE CUISSON (spec feu-station) — un inventaire de STACKS d'aliments crus (3 cases),
    *  géré comme un coffre (dépôt/retrait/déplacement libres). Chaque case cuit sa pile UNE unité à la
    *  fois ; le compteur de l'unité en cours vit dans `cookRemaining` (parallèle, MÊME index). L'unité
@@ -279,6 +299,13 @@ export type VillageAction =
    * passe par un INPUT (jamais par une mutation directe) — sans quoi le replay diverge.
    */
   | { type: 'light_torch'; structureId: number }
+  /**
+   * J'ALLUME UNE BALISE À MA BRAISE (spec `braise.md` B-R10) — le geste qui ouvre une base.
+   *
+   * Aucun objet en main : la braise est PORTÉE, pas tenue (B-R1). Il faut seulement qu'elle ait
+   * de la charge (B-A7 : une braise à 0 refuse), et que la balise ait du bois à brûler.
+   */
+  | { type: 'light_balise'; structureId: number }
   | { type: 'repair'; structureId: number }
   /** SEMER (agriculture voie A, spec `agriculture.md`) : une graine en main + une parcelle VIDE
    *  de mon village, à portée. RÉCOLTER : une parcelle MÛRE. La pousse se dérive du tick (pur). */
@@ -1182,7 +1209,7 @@ export function applyVillageAction(state: SimState, actorId: number, action: Vil
      */
     case 'light_torch': {
       const s = state.structures.find((st) => st.id === action.structureId)
-      if (!s || s.type !== 'fire') return reject('pas un feu')
+      if (!s || !estFoyer(s.type)) return reject('pas un feu')
       // PORTÉE DE BRAS, la même que `feed_fire` / `repair` / `plant` / `found_village` — et
       // la même que celle où le CLIENT offre le geste (`aim.inRange`). Deux portées auraient
       // fait une demi-tuile de zone morte, muette (voir le bloc sous `TORCHE`, balance.ts).
@@ -1199,6 +1226,42 @@ export function applyVillageAction(state: SimState, actorId: number, action: Vil
       held.item = 'torche_vive'
       held.wear = 0
       emitEvent(state, { type: 'torche_allumee', tick: state.tick, entityId: actorId, structureId: s.id })
+      return
+    }
+
+    /**
+     * ═══ ALLUMER UNE BALISE À SA BRAISE (spec `braise.md` B-R10) ═══
+     *
+     * Le geste qui ouvre une base, et la seule chose au monde qui fasse d'un tas de bois la
+     * recharge d'une braise (B-R9). Le patron EXACT de `light_torch` : la portée de bras, le sol
+     * (E-R5), et aucun coût. Trois différences, et ce sont les trois phrases de B-R10 :
+     *
+     *   · ON NE TIENT RIEN — la braise est portée, pas tenue (B-R1). Aucune case d'inventaire
+     *     n'entre dans ce geste, donc aucun objet ne peut manquer.
+     *   · IL FAUT DE LA CHARGE (B-A7) : une braise à 0 ne donne pas de feu. C'est la seule
+     *     clause qui fasse de la braise une CLÉ, et elle est ce qui tient B-R16 — une balise
+     *     neuve se paie en charge gagnée ailleurs.
+     *   · ÇA NE COÛTE RIEN DE CHARGE. Même raison que la torche (« prendre le feu n'en ôte
+     *     pas ») : la braise est déjà payée deux fois, en bois et en trajet. ⚠ C'est une
+     *     décision ouverte — la spec dit « se rallume avec une braise chargée », pas « au prix
+     *     d'un cran » (`braise.md` § 5, à trancher si l'allumage doit mordre).
+     *
+     * ⚠ ON EXIGE DU BOIS, et c'est un refus LISIBLE plutôt qu'un geste mort : allumer une balise
+     * vide la rallumerait pour zéro tick (la machine à états la rend 'out' au tick suivant, et la
+     * flamme se reprendrait aussitôt). Mieux vaut dire « il n'y a rien à brûler ».
+     */
+    case 'light_balise': {
+      const s = state.structures.find((st) => st.id === action.structureId)
+      if (!s || !estBalise(s.type)) return reject('pas une balise')
+      if (s.allumee === true) return reject('elle brûle déjà')
+      const range = BALANCE.INTERACT_RANGE
+      if (distSq(actor.x, actor.y, s.tx + 0.5, s.ty + 0.5) > range * range) return reject('trop loin')
+      // LE BÂTI VIT AU SOL (spec `etages.md` E-R5) : un bras ne le rejoint pas depuis un plateau.
+      if (!atteintLeSol(state.map, actor, s.tx, s.ty, s.etage)) return reject('trop loin')
+      if ((s.fuel ? countOf(s.fuel, 'wood') : 0) <= 0) return reject('pas de bois à brûler')
+      if ((actor.braise?.charge ?? 0) <= 0) return reject('votre braise est morte')
+      s.allumee = true
+      emitEvent(state, { type: 'balise_allumee', tick: state.tick, entityId: actorId, structureId: s.id })
       return
     }
 
@@ -1293,7 +1356,14 @@ export function applyVillageAction(state: SimState, actorId: number, action: Vil
       // L'objet tenu se consomme (une unité) : il DEVIENT la structure.
       held.count -= 1
       if (held.count <= 0) actor.inventory[actor.activeSlot] = null
-      addStructure(state, placeType, tx, ty, village?.id ?? 0, actorId, DEFAULT_ACCESS[placeType], undefined, undefined, sol.etage)
+      // ⚠ UNE BALISE EST TOUJOURS LIBRE (`braise.md` B-R10 : « une BASE, pas un village »), même
+      // posée au milieu de son propre village. Sans cette clause elle héritait du `villageId` du
+      // poseur, et TOUTE la machine du feu aurait basculé sur la branche FOYER : allumée pour
+      // toujours (`fireStateAt` rend 'lit' sans regarder le bois), sans combustible de structure
+      // (`fireZoneInventory` refuse la zone `fuel` à un Foyer) et brûlant l'upkeep d'un village.
+      // Une balise de camp et une balise de village auraient été deux objets différents.
+      const baliseLibre = estBalise(placeType) ? 0 : (village?.id ?? 0)
+      addStructure(state, placeType, tx, ty, baliseLibre, actorId, DEFAULT_ACCESS[placeType], undefined, undefined, sol.etage)
       // LE CHANTIER S'ENTEND (spec cendreux R25) — même règle que `build`, même portée.
       secouerLeSol(state, tx + 0.5, ty + 0.5, CENDREUX.SENS.BATIR)
       return
@@ -1329,7 +1399,7 @@ export function applyVillageAction(state: SimState, actorId: number, action: Vil
       const range = BALANCE.INTERACT_RANGE
       // CIBLE EXPLICITE (le modal du feu, spec S15) : on nourrit CE feu à portée — libre ou Foyer.
       if (action.structureId !== undefined) {
-        const s = state.structures.find((st) => st.id === action.structureId && st.type === 'fire')
+        const s = state.structures.find((st) => st.id === action.structureId && estFoyer(st.type))
         if (!s) return reject('pas un feu')
         if (distSq(actor.x, actor.y, s.tx + 0.5, s.ty + 0.5) > range * range) return reject('trop loin du feu')
         if (s.villageId === 0) {
@@ -1355,7 +1425,10 @@ export function applyVillageAction(state: SimState, actorId: number, action: Vil
       let fire: Structure | undefined
       let bestD = range * range
       for (const s of state.structures) {
-        if (s.type !== 'fire' || s.villageId !== 0 || s.ownerId !== actorId) continue
+        // ⚠ LE FILTRE `ownerId` VAUT POUR LA BALISE AUSSI (`acces: 'private'`) : en coop, un
+        // camarade ne nourrit pas votre balise par ce geste-ci — il la nourrit par le modal,
+        // qui passe une cible explicite. À signaler à Alexis si ça gêne (§ 5 de `braise.md`).
+        if (!estFoyer(s.type) || s.villageId !== 0 || s.ownerId !== actorId) continue
         const d = distSq(actor.x, actor.y, s.tx + 0.5, s.ty + 0.5)
         if (d <= bestD) {
           bestD = d
@@ -1757,11 +1830,18 @@ export function addStructure(
   if (containerSlots !== undefined) structure.inventory = makeInventory(containerSlots)
   // LE FEU LIBRE naît avec 10 bois dans son slot combustible, la première allumée maintenant.
   // Le Foyer (villageId ≠ 0) n'a pas de combustible de structure — il tourne sur `village.fuel`.
-  if (type === 'fire' && villageId === 0) {
+  if (estFoyer(type) && villageId === 0) {
     structure.fuel = makeInventory(FIRE.FUEL_SLOTS)
     addItems(structure.fuel, { wood: FIRE.FUEL_START_WOOD })
-    structure.burnAt = state.tick
-    structure.burnSlot = 0 // le bois de départ atterrit dans la 1re case : c'est elle qui brûle
+    // ⚠ L'ANCRE DE COMBUSTION N'EST POSÉE QUE POUR CE QUI BRÛLE DÉJÀ. Une balise naît ÉTEINTE
+    // (B-R10) : lui poser `burnAt` ici lui ferait consommer sa première bûche à l'instant même
+    // où on l'allume, dix mille ticks plus tard — tout le temps passé éteinte serait facturé
+    // d'un coup. C'est la clause « Sécurité » d'`advanceFire` qui l'ancre au premier tick de
+    // flamme, et elle existait déjà pour le feu forgé à la main.
+    if (!estBalise(type)) {
+      structure.burnAt = state.tick
+      structure.burnSlot = 0 // le bois de départ atterrit dans la 1re case : c'est elle qui brûle
+    }
   }
   state.structures.push(structure)
   emitEvent(state, {

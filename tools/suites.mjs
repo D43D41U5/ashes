@@ -249,7 +249,16 @@ const SUITES = [
   //   une équivalence relevée dessus serait vide), « le premier posé gagne », et la péremption
   //   éprouvée par une séquence qui REVIENT à la longueur du premier état lu. Suite à 2421,
   //   plancher relevé à 2411.
-  { nom: 'sim', dir: 'packages/sim', args: ['run', '--exclude', 'src/scenario.test.ts'], plancher: 2435 },
+  // 2026-10-03 : +18 gardes LA BALISE (étape 6 de `braise.md` § 3) — 17 dans `braise.test.ts`
+  //   (B-A6 recharge au pas exact, B-A7 le rallumage par l'action, la moitié BALISE de B-A8, la
+  //   loi ⓒ tuile par tuile avec le feu de camp en contrôle négatif, B-R10 « éteinte, elle ne
+  //   brûle rien », le delta à un seul pas, la balise libre dans son village) + le rejeu par le
+  //   VRAI chemin joueur dans `replay.test.ts` (craft → set_active_slot → place_component →
+  //   light_balise). La 18ᵉ est née de l'audit de mes propres commentaires : « le plateau ne sort
+  //   PAS dans le monde de base » — une balise allumée ne dégèle pas sa glace et n'endort pas les
+  //   Cendreux (`baselineTemperature` ignore `fireBubble`), les deux clauses falsifiées.
+  //   Suite à 2463, plancher relevé à 2453.
+  { nom: 'sim', dir: 'packages/sim', args: ['run', '--exclude', 'src/scenario.test.ts'], plancher: 2453 },
   // 2026-09-01 : +10 gardes avec le RENDU des étages (`plateau-art.test.ts`).
   // 2026-09-01 : +9 gardes avec le TRI DES ÉTAGES (strate, découvert — `framing.test.ts`),
   //   suite relevée à 1429 ✓, plancher recalé quelques pourcents dessous.
@@ -313,7 +322,17 @@ const SUITES = [
   //   la garde rescapée de `peche.test.ts` ne change pas le compte) et le CLIENT PERD SON SEUL
   //   SAUTÉ — V-A2 était gelée par `it.skipIf`, elle est supprimée : 1805 ✓ tout net. Planchers
   //   sim et client inchangés (2370 et 1740) : ils gardent leur marge de quelques pourcents.
-  { nom: 'client', dir: 'packages/client', args: ['run'], plancher: 1740 },
+  // 2026-10-03 : +3 gardes LA BALISE AU CURSEUR (`aim.test.ts`, étape 6) — une balise éteinte
+  //   sous le curseur donne `light_balise` MAINS NUES, allumée elle redevient une cible ordinaire
+  //   (et hors de portée le geste ne part pas), et ⚠ DU BOIS EN MAIN LE CLIC NOURRIT au lieu
+  //   d'allumer : constaté, gardé tel quel, et c'est la fourche ⓓ de `braise.md` § 5.17.
+  //   CINQ FICHIERS DE COUVERTURE du client ont rougi d'eux-mêmes et c'est leur travail, aucun
+  //   n'était un défaut de code : `inventaire.test` (le compte des voix), `sound.test` (un `voix`
+  //   qui ne sonne pas est une promesse non tenue), `spatial.test` (un fait sonore sans portée),
+  //   `lit-coverage.test` (la partition `_lit` du registre) et `encyclopedie.test` (tout `ItemId`
+  //   a une section ou est déclaré hors). D'où une ligne de PRODUCTION : la voix de la balise.
+  //   Suite à 1808, plancher relevé à 1795 : 68 de marge ne détectaient plus un fichier évaporé.
+  { nom: 'client', dir: 'packages/client', args: ['run'], plancher: 1795 },
   { nom: 'serveur', dir: 'packages/server', args: ['run'], plancher: 36 },
   // Le banc pilote le vrai worldgen sur la carte de production : lent, et seul à porter le
   // drapeau qui ignore les erreurs non gérées (voir l'en-tête de `scenario.test.ts`).

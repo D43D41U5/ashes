@@ -804,6 +804,7 @@ describe('l’eau peu profonde est inconstructible, sauf le sol', () => {
   const SUR_LE_GUE: Record<StructureType, boolean> = {
     floor: true, // la seule : des planches sur l'eau, elle porte sa propre assise
     fire: false,
+    balise: false, // un grand feu sur le gué — non, et `eau: false` au registre (comme le feu)
     wall: false,
     palissade: false,
     door: false,

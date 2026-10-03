@@ -17,6 +17,7 @@ import { distSq } from './geometry'
 import { addItems, countOf, makeInventory, type Inventory, type ItemId } from './items'
 import { meteoFeuConso } from './meteo'
 import type { Monster } from './monsters'
+import { estBalise, estFoyer } from './pieces'
 import type { SimState } from './sim'
 import type { Structure } from './village'
 
@@ -35,7 +36,14 @@ function firstFuelSlot(fuel: Inventory): number {
  * puisse le dériver du snapshot (il a le tick + la structure), source unique avec la sim.
  */
 export function fireStateAt(tick: number, s: Structure): FireState {
-  if (s.type !== 'fire') return 'out'
+  if (!estFoyer(s.type)) return 'out'
+  // ═══ LA BALISE NE S'ALLUME QU'À LA BRAISE (spec `braise.md` B-R10) ═══
+  //
+  // AVANT TOUT LE RESTE, et il le faut : les deux lignes qui suivent rendent `'lit'` sans
+  // regarder le bois (le Foyer de village, et le foyer « hors modèle » sans case combustible).
+  // Une balise bâtie est pleine de bois dès sa naissance (`addStructure`) ; sans cette porte en
+  // tête, elle serait allumée par le seul fait d'exister, et B-R10 n'existerait pas.
+  if (estBalise(s.type) && s.allumee !== true) return 'out'
   if (s.villageId !== 0) return 'lit' // Foyer : inchangé tant que l'upkeep n'est pas migré (S16)
   // Feu libre SANS slot combustible = hors modèle (feu forgé à la main dans un test, ou d'avant
   // cette feature) : il vaut ALLUMÉ. En prod, tout feu libre naît avec du bois (addStructure).
@@ -158,8 +166,12 @@ export function advanceFire(state: SimState): void {
   const contact2 = CENDREUX.BOIRE.CONTACT * CENDREUX.BOIRE.CONTACT
 
   for (const s of state.structures) {
-    if (s.type !== 'fire') continue
-    if (s.villageId === 0 && s.fuel && countOf(s.fuel, 'wood') > 0) {
+    if (!estFoyer(s.type)) continue
+    // ⚠ UNE BALISE NON ALLUMÉE NE BRÛLE RIEN (B-R10). Sans cette garde, le bois de sa naissance
+    // (`FUEL_START_WOOD`) partirait en fumée sans flamme, et elle serait VIDE le jour où l'on
+    // vient enfin y porter sa braise — le pire des deux mondes.
+    const brule = !estBalise(s.type) || s.allumee === true
+    if (brule && s.villageId === 0 && s.fuel && countOf(s.fuel, 'wood') > 0) {
       // Sécurité : du bois attend mais rien n'est ancré (feu forgé à la main, ou bûche déplacée hors
       // de la case qui brûlait). On (r)ancre sur la première case pleine et on rallume.
       if (s.burnAt === undefined || s.burnSlot === undefined || (s.fuel[s.burnSlot]?.count ?? 0) <= 0) {
@@ -207,13 +219,19 @@ export function advanceFire(state: SimState): void {
         }
       }
     }
+    // ⚠ CHAQUE EXTINCTION REPREND LA FLAMME (B-R10) — les braises ont fini de rougir, la balise
+    // redevient un tas de bois. Sans cette ligne, y remettre une bûche la rallumerait SANS
+    // braise : la seule règle qui fait d'elle une balise serait contournable au bois.
+    // (Le geste d'éteindre, lui, l'efface là où il s'exécute — `extinguish_fire`.)
+    if (s.allumee === true && fireStateAt(state.tick, s) === 'out') delete s.allumee
+
     // Cuisson passive (S7-S9) — sur TOUT feu (libre ou Foyer), le travail de la STATION.
     advanceCook(state, s)
 
     // LE CHARBON (S30) — ici, et pas dans `advanceUpkeep` : cette boucle tient déjà la
     // structure, donc son inventaire de sortie. Le Foyer a compté sa dette en BÛCHES là où
     // son stock se consume (`village.ts`) ; on ne fait que la verser dans le même compteur.
-    if (s.type === 'fire') {
+    if (estFoyer(s.type)) {
       if (s.villageId !== 0) {
         const v = state.villages.find((x) => x.id === s.villageId)
         // Le Foyer du village est le feu posé SUR `fireTx/fireTy` — un autre feu bâti dans
@@ -250,7 +268,7 @@ function advanceCook(state: SimState, s: Structure): void {
   // LE FEU, LUI, EXIGE LA FLAMME (S8) : en braises ou éteint, la cuisson se FIGE et reprend au
   // rallumage. Les postes sans flamme (séchoir, four) n'ont rien à figer — le séchoir sèche
   // même sous la pluie (D13), et c'est une décision, pas un oubli.
-  if (s.type === 'fire' && fireState(state, s) !== 'lit') return
+  if (estFoyer(s.type) && fireState(state, s) !== 'lit') return
   if (!s.cookRemaining) s.cookRemaining = s.cookIn.map(() => null)
   for (let i = 0; i < s.cookIn.length; i++) {
     const slot = s.cookIn[i]
@@ -312,7 +330,7 @@ export function fireZoneInventory(s: Structure, zone: FireZone): Inventory | und
   }
   if (recettesDuPoste(s.type) === undefined) return undefined
   if (zone === 'fuel') {
-    if (s.type !== 'fire') return undefined
+    if (!estFoyer(s.type)) return undefined
     if (s.villageId !== 0) return undefined // Foyer : pas de zone combustible (S16)
     if (!s.fuel) s.fuel = makeInventory(FIRE.FUEL_SLOTS)
     return s.fuel
@@ -332,7 +350,7 @@ export function fireZoneInventory(s: Structure, zone: FireZone): Inventory | und
 export function fireZoneAccepts(s: Structure, zone: FireZone, item: ItemId): boolean {
   // LA BRAISE-MÈRE (cendre.md R28b) : une soute à CHARBON, rien d'autre — ni bûche ni cuisine.
   if (s.type === 'braise_mere') return zone === 'fuel' && item === 'charcoal'
-  if (zone === 'fuel') return s.type === 'fire' && item === 'wood'
+  if (zone === 'fuel') return estFoyer(s.type) && item === 'wood'
   // LA CLAIE SALÉE (S4bis) : un poste qui SÈCHE accepte le sel dans ses entrées — il n'y
   // « sèche » pas (aucune règle ne le prend), il attend l'échéance d'une unité pour la saler.
   if (zone === 'cookIn' && DRY_SLOT[s.type] !== undefined && item === 'salt') return true
@@ -341,7 +359,7 @@ export function fireZoneAccepts(s: Structure, zone: FireZone, item: ItemId): boo
   // recette de cuisson : la table des postes ne le connaît pas. Sans cette ligne, un feu
   // accepterait le charbon qu'il vient de produire dans sa propre sortie… mais pas qu'on l'y
   // repose. Un filtre qui refuse ce que la case contient déjà est un défaut, pas une règle.
-  if (zone === 'cookOut' && s.type === 'fire' && item === 'charcoal') return true
+  if (zone === 'cookOut' && estFoyer(s.type) && item === 'charcoal') return true
   const rules = recettesDuPoste(s.type)
   if (!rules) return false
   for (const rule of Object.values(rules)) {

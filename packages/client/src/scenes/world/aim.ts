@@ -19,7 +19,7 @@
  * Aucune règle de jeu n'est décidée ici — la sim revalide tout (invariant §3).
  * On ne fait qu'éviter d'ÉMETTRE une action qu'on sait perdue d'avance.
  */
-import { EDGE_E, FISHING, EDGE_N, EDGE_O, EDGE_S, FOOD_VALUES, NODE_DEFS, STRUCTURE_HP, TENUS_POSABLES, WEAPON_DAMAGE, edgeBarrierAt, isCropMature, isPlot, isRangedWeapon, piece, porteeDuNoeud, toolTier, type ItemId, type StructureType, type WallMaterial } from '@ashes/sim'
+import { EDGE_E, FISHING, EDGE_N, EDGE_O, EDGE_S, FOOD_VALUES, NODE_DEFS, STRUCTURE_HP, TENUS_POSABLES, WEAPON_DAMAGE, edgeBarrierAt, estBalise, estFoyer, isCropMature, isPlot, isRangedWeapon, piece, porteeDuNoeud, toolTier, type ItemId, type StructureType, type WallMaterial } from '@ashes/sim'
 import type { Placeable } from '../../hud-state'
 import type { Corpse, PlayerAction, ResourceNode, TenuPosable, ToolFamily } from '@ashes/sim'
 
@@ -196,6 +196,10 @@ export interface AimTarget {
   /** L'id du FEU visé (structure) — pour ouvrir SON modal à la touche F (spec feu-station S17).
    *  `null` = aucun feu sous le curseur. La portée se lit sur `inRange`. */
   fireId: number | null
+  /** L'id de la BALISE ÉTEINTE visée (`braise.md` B-R10) — la cible de `light_balise`, le geste
+   *  qui ouvre une base. `null` = pas de balise éteinte ici (une balise ALLUMÉE est un feu comme
+   *  un autre : elle se nourrit, elle donne sa flamme, elle s'ouvre). */
+  baliseEteinteId: number | null
   /** Une structure ABÎMÉE (hp < max, hors Feu) sur la tuile visée — la cible de `repair`
    *  (du bois en main + clic → on la répare). `null` = rien à réparer ici. La sim revalide
    *  l'appartenance et la portée. */
@@ -246,6 +250,10 @@ export interface AimStructure {
   hp: number
   /** Le tick de mise en terre — parcelles seulement (agriculture). Pour la maturité. */
   plantedAt?: number
+  /** LA FLAMME A-T-ELLE ÉTÉ DONNÉE ? (`braise.md` B-R10) — balises seulement. Absent = ÉTEINTE,
+   *  donc candidate à `light_balise`. C'est le MÊME prédicat que la porte de la sim, pas un
+   *  deuxième : le client n'a pas à rejouer la machine à états pour offrir le geste. */
+  allumee?: true
 }
 
 /** Le curseur doit être à peu près SUR l'entité (≤ ça, en tuiles) pour la viser — sinon
@@ -313,14 +321,21 @@ export function aimAt(
   // (mûre). `STRUCTURE_HP` est TOTAL sur `StructureType` — pas de garde. Maturité PURE (isCropMature).
   let onFire = false
   let fireId: number | null = null
+  let baliseEteinte: number | null = null
   let damaged: AimStructure | undefined
   let plantable: AimStructure | undefined
   let harvestable: AimStructure | undefined
   for (const s of structures) {
     if (s.tx !== tx || s.ty !== ty) continue
-    if (s.type === 'fire') {
+    if (estFoyer(s.type)) {
+      // LE FEU ET LA BALISE (B-R10) : les deux se nourrissent au bois, les deux ouvrent leur
+      // modal, les deux donnent la flamme à une torche. La sim lit le même `estFoyer`.
       onFire = true
       fireId = s.id
+      // …et une balise ÉTEINTE est en plus la cible de `light_balise`. Le test est la porte de
+      // la sim, mot pour mot (`estBalise && allumee !== true`), donc le client n'offre jamais un
+      // geste qu'elle refuserait, ni ne cache un geste qu'elle accepterait.
+      if (estBalise(s.type) && s.allumee !== true) baliseEteinte = s.id
       continue
     }
     // ⚠ LE FOUR ET LE SÉCHOIR S'OUVRENT COMME LE FEU (peche.md S2/S5, 2026-08-24) : ce sont
@@ -375,6 +390,7 @@ export function aimAt(
     entityWounded,
     onFire,
     fireId,
+    baliseEteinteId: baliseEteinte,
     repairableId: damaged?.id ?? null,
     plantableId: plantable?.id ?? null,
     harvestableId: harvestable?.id ?? null,
@@ -614,6 +630,17 @@ export function clickToAction(
   // traverse cette branche et ne fait rien de spécial : on ne rallume pas ce qui brûle.
   if (hand && hand.held === 'torche' && target.fireId !== null && target.inRange)
     return { type: 'light_torch', structureId: target.fireId }
+  // ═══ ALLUMER UNE BALISE À SA BRAISE (`braise.md` B-R10) ═══
+  //
+  // MAINS LIBRES OU NON, et c'est la différence avec tous les gestes au-dessus : la braise est
+  // PORTÉE, pas tenue (B-R1) — il n'y a pas d'objet à équiper, donc rien à tester en main.
+  //
+  // ⚠ PLACÉE AVANT LA FRAPPE, comme le bandage et la torche, et pour la même raison : une balise
+  // éteinte est une structure, donc le clic serait parti la TAPER — le joueur aurait démoli à
+  // coups de poing les trente bois qu'il vient de poser. Allumée, elle sort de cette branche
+  // (`baliseEteinteId` rend null) et redevient une cible ordinaire.
+  if (target.baliseEteinteId !== null && target.inRange)
+    return { type: 'light_balise', structureId: target.baliseEteinteId }
   // RÉPARER : du BOIS en main + une structure ABÎMÉE sous le curseur, à portée → on la répare.
   // Le pendant défensif du feed_fire : après une horde, remurer sa maison de sa propre main
   // plutôt que d'attendre un PNJ. La sim revalide l'appartenance, la portée et le coût.

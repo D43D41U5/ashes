@@ -79,6 +79,10 @@ export type SimEvent =
    * en fait un bandeau et un son.
    */
   | { type: 'torche_allumee'; tick: number; entityId: number; structureId: number }
+  /** LA BALISE PREND LA FLAMME (spec `braise.md` B-R10) — le fait de jeu qui OUVRE une base :
+   *  à partir de là, ce point de la carte recharge une braise, donc la vallée est montable d'un
+   *  cran de plus. C'est l'événement le plus structurant de l'ascension. */
+  | { type: 'balise_allumee'; tick: number; entityId: number; structureId: number }
   | { type: 'torche_eteinte'; tick: number; entityId: number }
   // LA CUISSON AU SLOT (spec feu-station S25) : un aliment est sorti cuit du slot d'une station.
   | { type: 'meat_cooked'; tick: number; structureId: number; item: import('./items').ItemId }

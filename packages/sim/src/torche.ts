@@ -25,6 +25,7 @@
  */
 import { TORCHE } from './balance'
 import { fireStateAt } from './fire'
+import { estFoyer } from './pieces'
 import { emitEvent } from './events'
 import { heldSlot } from './inventory-actions'
 import type { Entity, SimState } from './sim'
@@ -72,7 +73,9 @@ export function partDeFlamme(slot: Slot | null): number {
  * les braises aurait fait de l'extinction une double peine.
  */
 export function foyerDonneLeFeu(tick: number, s: Structure): boolean {
-  if (s.type !== 'fire') return false
+  // LA BALISE DONNE LE FEU comme un foyer (B-R10) : c'est le même geste, et refuser la flamme
+  // d'une balise aurait fait de la base de haut palier un endroit où l'on ne s'éclaire pas.
+  if (!estFoyer(s.type)) return false
   const st = fireStateAt(tick, s)
   return st === 'lit' || st === 'ember'
 }

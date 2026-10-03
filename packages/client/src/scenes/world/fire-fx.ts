@@ -20,7 +20,7 @@
  * AUCUNE logique de jeu : pur habillage.
  */
 import Phaser from 'phaser'
-import { fireStateAt, VENT, type Structure } from '@ashes/sim'
+import { estFoyer, fireStateAt, VENT, type Structure } from '@ashes/sim'
 import { TILE_PX, structureDepth } from '../../render/framing'
 import { fireGlow } from '../../render/lighting'
 import { axesFeu, varianteFeu, type AxesFeu, type VarianteFeu } from '../../render/feu-variante'
@@ -150,8 +150,9 @@ export class FireFx {
   update(
     /** LES FEUX de l'image — la sous-liste que `WorldScene` dérive UNE fois et sert aux trois
      *  couches de feu (PERF-08 : quatre balayages de `structures` par image cherchaient tous le
-     *  même petit sous-ensemble). La garde `type !== 'fire'` ci-dessous RESTE : l'Atelier des
-     *  plans, lui, passe encore tout le bâti, et une liste déjà filtrée la traverse sans frais. */
+     *  même petit sous-ensemble). La garde `estFoyer` ci-dessous RESTE (elle disait
+     *  `type !== 'fire'` avant la balise) : l'Atelier des plans, lui, passe encore tout le bâti,
+     *  et une liste déjà filtrée la traverse sans frais. */
     structures: Structure[],
     tick: number,
     wind: { x: number; y: number } = { x: 0, y: 0 },
@@ -175,7 +176,7 @@ export class FireFx {
     }
     const seen = new Set<number>()
     for (const s of structures) {
-      if (s.type !== 'fire') continue
+      if (!estFoyer(s.type)) continue // le feu ET la balise (B-R10 : « monter une balise, c'est monter un phare »)
       seen.add(s.id)
       let unit = this.units.get(s.id)
       if (!unit) {

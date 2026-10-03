@@ -31,7 +31,7 @@ import {
   type NodeDelta,
   type SnapshotMessage,
 } from '@ashes/sim'
-import { enVol, hauteurDeBond, estUnCoinDePeche, feuillageDenude, fireStateAt, hash2, TERRAIN_CLIFF, TERRAIN_SHALLOW_WATER, terrainAt, VENT, type SimState, type WorldMap } from '@ashes/sim'
+import { enVol, hauteurDeBond, estFoyer, estUnCoinDePeche, feuillageDenude, fireStateAt, hash2, TERRAIN_CLIFF, TERRAIN_SHALLOW_WATER, terrainAt, VENT, type SimState, type WorldMap } from '@ashes/sim'
 import { TransitionsFlore, retardDe } from '../../render/flore-gel'
 import { cliffKey } from '../../render/cliff-art'
 import { cleCarcasse, etatCarcasse } from '../../render/carcasse-art'
@@ -2172,7 +2172,7 @@ export class SnapshotView {
         // le TOIT au-dessus (comme un houppier, il se révèle au loin), le reste trié.
         // …ET LA STRATE DE SON PALIER (T-R7) : un mur au palier 2 se trie avec le sol du palier 2.
         const depth = ((sousRoche ? this.warp?.strateAEtage(s.tx + 0.5, s.ty + 0.5, s.etage) : this.warp?.strateSol(s.tx + 0.5, s.ty + 0.5)) ?? 0) + (
-          s.type === 'fire'
+          estFoyer(s.type) // le feu ET la balise : un foyer se trie au ras du sol
             ? GROUND_FIRE_DEPTH
             : isRoof
               ? ROOF_DEPTH + s.ty
@@ -2320,12 +2320,17 @@ export class SnapshotView {
         const variant = hash2(s.tx, s.ty) < 0.5 ? 0 : 1
         sprite.setTexture(cliffKey('top', (nOuvert ? 1 : 0) | (eOuvert ? 2 : 0) | (oOuvert ? 4 : 0), variant))
       }
-      if (s.type === 'fire') {
+      if (estFoyer(s.type)) {
         // Les BÛCHES normal-mappées : bois mat `_lit` quand l'éclairage est armé (relief
         // calculé par la normal map cylindrique), sinon le sprite ombré simple.
-        sprite.setTexture(this.lighting ? cleLit('st-fire', mirS) : 'st-fire')
+        // LA BALISE A SON PROPRE JEU DE TEXTURES (`st-balise`, le même bois en plus grand) :
+        // la clé suit donc le TYPE, et les deux foyers partagent tout le reste du dessin.
+        const cle = `st-${s.type}`
+        sprite.setTexture(this.lighting ? cleLit(cle, mirS) : cle)
         // La couleur suit l'ÉTAT (spec feu-station S1) : allumé → `COULEUR_DU_FEU` ; braises →
-        // ambre sombre ; éteint → bûches froides et grises.
+        // ambre sombre ; éteint → bûches froides et grises. ⚠ Une BALISE non allumée tombe dans
+        // ce gris-là — c'est tout ce qui la distingue à l'œil d'une balise vive, et c'est
+        // exactement ce que B-R10 veut montrer : un tas de bois qui attend une braise.
         const st = fireStateAt(this.tick, s)
         if (st === 'out') sprite.setTint(0x555560)
         else if (st === 'ember') sprite.setTint(0x8a4a2a)

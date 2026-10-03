@@ -55,4 +55,44 @@ describe('replay', () => {
 
     expect(snapshot(replayed)).toBe(snapshot(live))
   })
+
+  it('LA BALISE PAR LE VRAI CHEMIN JOUEUR (`braise.md` B-R10) : fabriquée, posée, allumée — et rejouée au bit', () => {
+    // ⚠ POURQUOI CETTE GARDE EXISTE : une structure née d'un `addStructure` direct est HORS du flux
+    //   d'inputs, donc le replay ne la reconstruit pas. Tout ce que l'étape 6 ajoute passe au
+    //   contraire par des ACTIONS (`craft`, `set_active_slot`, `place_component`, `light_balise`), et
+    //   c'est ce chemin-là qu'il faut éprouver : `light_balise` écrit un champ d'état (`s.allumee`)
+    //   dont dépendent la combustion, la chaleur et la recharge. Un champ non rejoué, et la partie
+    //   rejouée aurait une balise éteinte là où la vraie en a une allumée.
+    const map = createEmptyMap(24, 24, TERRAIN_GRASS)
+    const options: SimOptions = { map, calendarScale: 720 }
+    const setup = (state: SimState) => {
+      spawnEntity(state, 5, 5)
+      grantItems(state, 1, { wood: 40 }) // de quoi payer les 30 de la balise, et du rab
+    }
+    const actionAt = (t: number): PlayerAction | undefined => {
+      if (t === 10) return { type: 'craft', recipeId: 'balise' }
+      if (t === 400) return { type: 'set_active_slot', slot: 0 } // la balise fabriquée, en main
+      // DEVANT SOI, à portée de BRAS (`INTERACT_RANGE`) : `place_component` refuse « sous ses
+      // pieds », et `light_balise` refuse « trop loin » — la tuile du dessus satisfait les deux.
+      if (t === 410) return { type: 'place_component', tx: 5, ty: 4 }
+      if (t === 420) return { type: 'light_balise', structureId: 1 }
+      return undefined
+    }
+    const live = createSim(2026, options)
+    const log = createReplayLog(2026, options)
+    setup(live)
+    for (let t = 0; t < 2000; t++) {
+      const action = actionAt(t)
+      recordAndStep(live, log, [{ entityId: 1, dx: 0, dy: 0, ...(action ? { action } : {}) }])
+    }
+    // LES PRÉMISSES, affirmées avant l'égalité : sans elles, deux parties sans balise seraient
+    // « identiques » et la garde serait verte sur du vide.
+    const balise = live.structures.find((s) => s.type === 'balise')
+    expect(balise, 'la balise a bien été fabriquée ET posée').toBeDefined()
+    expect(balise!.id, 'c’est bien l’id que l’action visait').toBe(1)
+    expect(balise!.allumee, 'et elle a bien pris la flamme').toBe(true)
+
+    const replayed = runReplay(log, setup)
+    expect(snapshot(replayed)).toBe(snapshot(live))
+  })
 })

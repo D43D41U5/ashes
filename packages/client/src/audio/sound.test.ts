@@ -143,7 +143,10 @@ describe('la table de routage audio (soundForEvent)', () => {
     // `village_stage_up` (une voix) et `settler_arrived` (un silence) n'ont plus d'émetteur, leur
     // boucle entière était gardée par `chiefId === 0`. La famille `social` survit encore : le don,
     // la fondation, la chute, l'entrée et le banni sont de la balise et de la coop.
-    expect(total).toBe(101)
+    // 101 → 102 faits et 57 → 58 voix le 2026-10-03 : `balise_allumee` naît AVEC SA VOIX
+    // (`braise.md` B-R10, étape 6) — l'octave montante, le seul fait qui dise « la vallée est
+    // montable d'un cran de plus ». Voir `inventaire.test.ts` pour le détail du verdict.
+    expect(total).toBe(102)
     // 34 → 35 le 2026-07-29 : `node_depleted` a gagné sa voix (trois, selon la matière).
     // 61 → 62 faits et 35 → 36 voix le 2026-07-30 : `door_toggled` naît (spec construction R26).
     // 62 → 63 faits et 36 → 37 voix le 2026-07-31 : `cendreux_prowl` naît (spec cendreux R11bis) —
@@ -163,7 +166,9 @@ describe('la table de routage audio (soundForEvent)', () => {
     // saison n'existe plus (le pivot de la braise). Les silences ne bougent pas (50).
     // 54 → 53 le 2026-09-29 : − `village_archetype_changed` (retrait de l'alignement).
     // 53 → 52 le 2026-09-29 : − `village_stage_up` (villages PNJ, tranche 1 — `village-growth.ts`).
-    expect(voix).toBe(52)
+    // 52 → 53 le 2026-10-03 : `balise_allumee` prend sa voix (`braise.md` B-R10, étape 6) —
+    // l'octave montante. Les silences ne bougent pas : rien n'est devenu muet.
+    expect(voix).toBe(53)
   })
 
   it('L’AXE D’ALIGNEMENT S’ENTEND : les verbes chauds montent, les froids tombent', () => {

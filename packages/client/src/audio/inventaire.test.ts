@@ -75,7 +75,9 @@ describe('l’inventaire des 97 faits', () => {
     // `village_stage_up` (une voix) et `settler_arrived` (un silence) n'ont plus d'émetteur, leur
     // boucle entière était gardée par `chiefId === 0`. La famille `social` survit encore : le don,
     // la fondation, la chute, l'entrée et le banni sont de la balise et de la coop.
-    expect(somme).toBe(101)
+    // 101 → 102 le 2026-10-03 : `balise_allumee` entre dans la famille `feu` (`braise.md` B-R10,
+    // étape 6) — avec sa voix ; aucune famille ne se vide.
+    expect(somme).toBe(102)
   })
 
   it('chaque fait DIT ce qu’il raconte — pas son identifiant', () => {
@@ -149,7 +151,10 @@ describe('l’inventaire des 97 faits', () => {
     // 54 → 53 le 2026-09-29 : − `village_archetype_changed` (retrait de l'alignement).
     // 53 → 52 le 2026-09-29 : − `village_stage_up` (villages PNJ, tranche 1). Les silences
     // tombent de 50 à 49 avec `settler_arrived`, qui naissait muet.
-    expect(SONORES.length).toBe(52)
+    // 52 → 53 le 2026-10-03 : `balise_allumee` naît AVEC SA VOIX (`braise.md` B-R10, étape 6) —
+    // l'inverse exact de `torche_allumee` : ce geste-là ne se répète pas (trente bois, une fois)
+    // et c'est l'instant où un point de la carte devient une base. Les silences ne bougent pas.
+    expect(SONORES.length).toBe(53)
     // 33 → 34 le 2026-08-21 : `refugee_rumeur` naît MUET (annales.md R12) — le geste de
     // nourrir parle déjà, le renseignement se lit dans la chronique.
     // 34 → 35 le 2026-08-21 : `cendre_prend` naît MUET (P5a) — la perte se lit et se voit.

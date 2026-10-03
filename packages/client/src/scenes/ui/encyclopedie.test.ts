@@ -263,6 +263,11 @@ describe('l’encyclopédie — la couverture des tables', () => {
     // (R29) est une matière intermédiaire — un composant d'Ouvrage, pas une rencontre. Le jour
     // où le bestiaire notera les butins des morts, la garde exigera sa sortie d'ici.
     'braise_mere', 'coeur_de_braise',
+    // LA BALISE (`braise.md` B-R10, étape 6) : du bâti posable, comme la braise-mère et le
+    // séchoir — l'OUVRAGE qu'on porte et qu'on dresse, donc un MOYEN et non une rencontre. Ce
+    // qui se rencontre, c'est le FROID qu'elle tient, et il n'a pas de fiche d'objet. Elle
+    // sortira d'ici avec les autres, le jour où le bâti aura sa section.
+    'balise',
     // LE CUIR CENDRÉ (R30c) : matière intermédiaire, comme la peau brute — l'ingrédient de
     // la tenue cendrée (R29b), pas une rencontre.
     'cuir_cendre',

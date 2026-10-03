@@ -32,6 +32,7 @@ import {
   type Structure,
   type Village,
   type WorldMap,
+  estFoyer,
 } from '@ashes/sim'
 import type Phaser from 'phaser'
 import { getHud, setHud, type CapacitesEnPortee, type FireView } from '../../hud-state'
@@ -304,7 +305,11 @@ export function publishOpenFire(
   // LE SÉCHOIR ET LE FOUR N'ONT PAS DE COMBUSTIBLE : `fireZoneInventory` le dit (elle rend
   // `undefined` pour leur zone `fuel`), et le panneau efface la section entière.
   // La BRAISE-MÈRE a une soute comme le feu libre (cendre.md R28b) — du charbon, pas du bois.
-  const brule = s.type === 'fire' || s.type === 'braise_mere'
+  // LA BALISE BRÛLE comme un feu libre (`braise.md` B-R10) : son modal montre donc ses bûches,
+  // son état et son temps restant. ⚠ Et `foundableFireAt` ci-dessus reste sur `type === 'fire'` :
+  // on ne FONDE PAS un village sur une balise (la sim refuse `found_village`), donc proposer le
+  // bouton aurait été un refus muet de plus.
+  const brule = estFoyer(s.type) || s.type === 'braise_mere'
   // Le bouton contextuel (S19), même logique de disponibilité que les fenêtres flottantes retirées.
   let action: FireView['action'] = null
   // ⚠ FONDER / AMÉLIORER NE CONCERNE QUE LE FEU. Sans cette porte, un séchoir proposait

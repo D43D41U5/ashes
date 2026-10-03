@@ -11,7 +11,7 @@ volets, chacun en ajout seul et en ordre chronologique. Ce fichier-ci est l'INDE
 |---|---|---|---|---|
 | **M** | [Monde & worldgen](decisions/monde-worldgen.md) | worldgen, relief, eau, biomes, lieux, cendre, étages | 191 | 355 Ko |
 | **R** | [Rendu & DA](decisions/rendu-da.md) | lumière, couleur, sprites, FX, art du sol, son | 210 | 536 Ko |
-| **G** | [Gameplay & systèmes](decisions/gameplay-systemes.md) | faune, combat, récolte, craft, saisons, météo, construction, design | 383 | 911 Ko |
+| **G** | [Gameplay & systèmes](decisions/gameplay-systemes.md) | faune, combat, récolte, craft, saisons, météo, construction, design | 385 | 918 Ko |
 | **I** | [Interface & outillage](decisions/interface-outillage.md) | HUD, menus, encyclopédie, carte, smoke, bancs, process | 85 | 185 Ko |
 | **A** | [Architecture & infra](decisions/architecture-infra.md) | pureté et déterminisme de /sim, protocole, serveur, persistance, perf | 69 | 129 Ko |
 
@@ -31,7 +31,7 @@ retrouve ici, à la même date, jamais à la ligne du dessus dans son volet.
 
 ---
 
-## Index chronologique — 938 entrées, 2117 Ko
+## Index chronologique — 940 entrées, 2123 Ko
 
 - 2026-07-05 · **M** · Spec monde validée par Alexis : déplacement continu type Binding of Isaac (jamais de case par c…
 - 2026-07-05 · **M** · Convention d'import Tiled : l'index local de la tuile dans le premier tileset = l'id de terrain…
@@ -971,3 +971,5 @@ retrouve ici, à la même date, jamais à la ligne du dessus dans son volet.
 - 2026-10-03 · **G** · LA MOITIÉ BRAISE DE B-R11 EST AVANCÉE À L'ÉTAPE 4 : `respawn` rend `braiseNeuve(niveau)` — l'éc…
 - 2026-10-03 · **G** · L'AUDIT DE FUSION DU DIFF BRAISE NE TROUVE AUCUN DÉFAUT DE LOGIQUE (`determinisme-sim`) : charg…
 - 2026-10-03 · **G** · ÉTAPE 5 : `tenue_hiver` SORT DU CHEMIN DU FROID (B-R15, « la braise est la seule porte »). Une…
+- 2026-10-03 · **G** · LA BALISE N'HÉRITE PAS DE LA BULLE DU FEU : elle garantit `AMBIANT_DOUX` PARTOUT dans son rayon…
+- 2026-10-03 · **G** · ÉTAPE 6 LIVRÉE : LA BALISE EXISTE, ET LA BOUCLE DE LA BRAISE EST FERMÉE. `PIECES.balise` (30 bo…

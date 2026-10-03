@@ -37,6 +37,7 @@ import { emitEvent } from './events'
 import { atteignableEntreEtages, atteintLeSol, palierDuSol } from './etages'
 import { effetsDuJour } from './modificateur'
 import { fireActive, fireState } from './fire'
+import { estFoyer } from './pieces'
 import { distSq } from './geometry'
 import { isWater, terrainAt, zoneTierAt, type WorldMap } from './map'
 import { placeSousPlafondGlobal, spawnMonster } from './monsters'
@@ -163,7 +164,7 @@ export function advanceLieuxBrules(state: SimState): void {
   const foyers = foyersDeLaCarte(state.map)
   const caracteres = caracteresDeLaCarte(state.map, state.seed)
   for (const s of state.structures) {
-    if (s.type !== 'fire' || s.villageId !== 0) continue
+    if (!estFoyer(s.type) || s.villageId !== 0) continue
     if (fireState(state, s) !== 'lit') continue // il faut des FLAMMES — les braises ne brûlent pas un lieu
     for (let zi = 0; zi < zones.length; zi++) {
       const z = zones[zi]!
@@ -333,7 +334,7 @@ export function siteDansLaCouronne(
   const feux: { x: number; y: number; etage: number }[] = []
   const portee = (dMax + ward + 1) * (dMax + ward + 1)
   for (const s of state.structures) {
-    if (s.type !== 'fire' || !fireActive(state, s)) continue
+    if (!estFoyer(s.type) || !fireActive(state, s)) continue
     if (distSq(s.tx + 0.5, s.ty + 0.5, px, py) <= portee) {
       feux.push({ x: s.tx + 0.5, y: s.ty + 0.5, etage: s.etage ?? palierDuSol(state.map, s.tx, s.ty) })
     }
@@ -492,7 +493,7 @@ export function advanceReveils(state: SimState): void {
     // E-R5, Q1 : et il ne veille que SON étage (voir `siteDansLaCouronne`). Le site du réveil
     // est une position de SOL — c'est son palier qu'on interroge, comme partout ailleurs.
     const veille = state.structures.some(
-      (s) => s.type === 'fire' && fireActive(state, s) && distSq(s.tx + 0.5, s.ty + 0.5, r.x, r.y) <= ward * ward &&
+      (s) => estFoyer(s.type) && fireActive(state, s) && distSq(s.tx + 0.5, s.ty + 0.5, r.x, r.y) <= ward * ward &&
         atteintLeSol(state.map, { x: r.x, y: r.y }, s.tx, s.ty, s.etage),
     )
     if (veille) {

@@ -152,6 +152,20 @@ export function soundForEvent(event: SimEvent, onMe: boolean): SoundSpec | null 
     // annoncent un danger sans le nommer : la nuit vient de se refermer, loin de chez soi.
     case 'torche_eteinte':
       return { wave: 'noise', freq: 0, dur: 0.2, gain: 0.05, lowpass: 900 }
+    // ═══ UNE BALISE PREND LA FLAMME (`braise.md` B-R10) — L'OCTAVE ═══
+    //
+    // La grammaire de ce fichier dit qu'une hauteur qui MONTE ouvre. Ici elle monte d'une
+    // OCTAVE juste (G3 → G4, 196 → 392) et c'est le sens même du fait : la même note, un
+    // étage plus haut. `fire_relit` (220 → 330) est une quinte et `fire_upgraded` (262 → 392)
+    // une quinte aussi — l'octave est au-dessus des deux, comme ce fait l'est au-dessus d'eux.
+    //
+    // `triangle` : un fait sur une CHOSE (le timbre de la porte et du feu), pas sur un corps.
+    // `PORTEE.LOIN` (≈ 53 t) : ce qui s'entend d'un village à l'autre — exactement ce qu'une
+    // balise est censée être. Elle s'ancre sur la STRUCTURE, comme `fire_relit` ; la portée
+    // reste sous le rayon d'intérêt, donc le fait arrive toujours assez près pour être situé.
+    // Long (0,7 s) : ce geste ne se répète pas, il coûte trente bois et il ouvre une base.
+    case 'balise_allumee':
+      return { wave: 'triangle', freq: 196, freqEnd: 392, dur: 0.7, gain: 0.1, lowpass: 2200, portee: PORTEE.LOIN }
     // `fire_fed` et `torche_allumee` restent MUETS : gestes répétés (bûche après bûche, torche
     // après torche), et ce qu'on voit le dit déjà — la flamme qui monte, la lumière qui naît.
 

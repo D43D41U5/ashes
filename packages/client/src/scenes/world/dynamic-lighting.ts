@@ -25,7 +25,7 @@
  * `debugGi = 0`, la pile d'avant, entière — c'est l'A/B des planches et des smokes.
  */
 import type Phaser from 'phaser'
-import { fireStateAt } from '@ashes/sim'
+import { estFoyer, fireStateAt } from '@ashes/sim'
 import type { SnapshotMessage, Structure } from '@ashes/sim'
 import { fireGlow, sunDirection, moonDirection, daylight, lueurDeLune, heureCanonique, lerpColor, ambientTint, multiplicateurDuVoile, voileDeNuit, LUNE_PLEINE_JOUR } from '../../render/lighting'
 import type { HeureSolaire } from '../../render/lighting'
@@ -405,8 +405,9 @@ export class DynamicLighting {
     cam: Phaser.Cameras.Scene2D.Camera,
     /** LES FEUX de l'image — la sous-liste que `WorldScene` dérive UNE fois et sert aux trois
      *  couches de feu (PERF-08 : quatre balayages de `structures` par image cherchaient tous le
-     *  même petit sous-ensemble). La garde `type !== 'fire'` ci-dessous RESTE : l'Atelier des
-     *  plans, lui, passe encore tout le bâti, et une liste déjà filtrée la traverse sans frais. */
+     *  même petit sous-ensemble). La garde `estFoyer` ci-dessous RESTE (elle disait
+     *  `type !== 'fire'` avant la balise) : l'Atelier des plans, lui, passe encore tout le bâti,
+     *  et une liste déjà filtrée la traverse sans frais. */
     structures: Structure[],
     villages: SnapshotMessage['villages'],
     hour: HeureSolaire,
@@ -494,7 +495,7 @@ export class DynamicLighting {
     const seen = new Set<number>()
     let count = 0
     for (const s of structures) {
-      if (s.type !== 'fire' || count >= FEU_MAX) continue
+      if (!estFoyer(s.type) || count >= FEU_MAX) continue // le feu ET la balise (B-R10)
       // ═══ UN FEU ÉTEINT N'ÉCLAIRE PLUS (spec feu-station S1 : « éteint … halo éteint ») ═══
       //
       // C'était le trou : la flaque au sol (`fire-ground-glow`), les particules (`FireFx`), le

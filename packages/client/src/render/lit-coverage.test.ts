@@ -85,6 +85,11 @@ describe('la couverture _lit (garde A1)', () => {
     door: 'idem, plus son animation propre (`porte-anim`)',
     palissade: 'chemin dédié dans snapshot-view (elle borde la tuile, elle ne l’occupe pas)',
     fire: 'chemin dédié dans snapshot-view — le feu a son FX, pas un sprite éclairé',
+    // LA BALISE suit le feu, et par le MÊME chemin : `snapshot-view` la peint dans la branche
+    // `estFoyer` (clé `st-${type}`, teinte par état), et sa paire `_lit` est posée par
+    // `generateFireProp` — le même bois, agrandi. Elle n'a donc pas de chip ici, pas plus que
+    // le feu. Le jour où elle gagne son propre dessin, il naîtra au même endroit.
+    balise: 'idem le feu — branche `estFoyer` de snapshot-view, paire `_lit` posée par generateFireProp',
     floor: 'couche MOLLE : elle n’a pas de corps à éclairer',
     roof: 'idem',
     parcelle: 'le potager se rend par son stade de pousse (`cropStage`), pas par un sprite fixe',

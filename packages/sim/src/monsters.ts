@@ -9,7 +9,7 @@
  * aléa via le PRNG de la sim.
  */
 import { BALANCE, CENDREUX, COMBAT, FAUNA, HUNT, MONSTER_DEFS, NODE_DEFS, TICK_DT_S, WORLD_EVENTS, type MonsterType } from './balance'
-import { estIncassable } from './pieces'
+import { estFoyer, estIncassable } from './pieces'
 // Type seul : `economy` importe `monsters`, un import de valeur fermerait le cycle.
 import type { ResourceNode } from './economy'
 import { startAttack } from './combat'
@@ -926,7 +926,9 @@ export function champDesFeux(state: SimState): Int32Array | null {
   let sigVillages: number = acte
   let sigLibres: number = acte
   for (const s of state.structures) {
-    if (s.type !== 'fire') continue
+    // Le FEU et la BALISE (B-R10, le phare) : elle entre dans le champ des feux LIBRES, son
+    // `villageId` valant toujours 0 — c'est la branche du dessous qui l'y envoie, pas une règle.
+    if (!estFoyer(s.type)) continue
     if (fireStateAt(state.tick, s) !== 'lit') continue
     const key = s.ty * width + s.tx + 1
     if (s.villageId !== 0) sigVillages = (Math.imul(sigVillages, 31) + key) | 0
@@ -941,7 +943,7 @@ export function champDesFeux(state: SimState): Int32Array | null {
   if (cache.sigVillages !== sigVillages || cache.fusion === null) {
     const sources: { tx: number; ty: number }[] = []
     for (const s of state.structures) {
-      if (s.type !== 'fire' || s.villageId === 0) continue
+      if (!estFoyer(s.type) || s.villageId === 0) continue
       if (fireStateAt(state.tick, s) !== 'lit') continue
       sources.push({ tx: s.tx, ty: s.ty })
     }
@@ -954,7 +956,7 @@ export function champDesFeux(state: SimState): Int32Array | null {
   if (cache.sigLibres !== sigLibres || cache.fusion === null) {
     const sources: { tx: number; ty: number }[] = []
     for (const s of state.structures) {
-      if (s.type !== 'fire' || s.villageId !== 0) continue
+      if (!estFoyer(s.type) || s.villageId !== 0) continue
       if (fireStateAt(state.tick, s) !== 'lit') continue
       sources.push({ tx: s.tx, ty: s.ty })
     }

@@ -591,6 +591,9 @@ export function generateLitProps(scene: Phaser.Scene): void {
  */
 const FIRE_SIZE = 16
 const FIRE_CELL = 2
+/** L'agrandissement de la BALISE sur le foyer (`braise.md` B-R10). 1,5 : elle dépasse sa tuile
+ *  d'une demi-largeur, assez pour se lire comme « grand feu » sans écraser ses voisines. */
+const BALISE_ECHELLE = 1.5
 // x0,y0 → x1,y1 (px) et rayon du rondin : deux diagonales croisées + un rondin au sol devant.
 const FIRE_LOGS: readonly (readonly [number, number, number, number, number])[] = [
   [3, 4, 13, 11, 2.6],
@@ -694,4 +697,29 @@ export function generateFireProp(scene: Phaser.Scene): void {
   // ⚠ Sa normale est ÉCRITE ICI, en PIXELS déjà encodés (pas un champ flottant comme le socle) :
   // son miroir passe donc par `mirrorNormalCanvas`, qui retourne l'image ET inverse le canal X.
   poserPaire(scene, (m) => cleLit('st-fire', m), albedo.c, normal.c, mirrorNormalCanvas(normal.c))
+  // ═══ LA BALISE : LE MÊME BOIS, EN GRAND (`braise.md` B-R10 — « un grand feu persistant ») ═══
+  //
+  // `st-balise` / `st-balise_lit`, agrandis d'un facteur `BALISE_ECHELLE` depuis les MÊMES
+  // canevas. Rien de redessiné à la main : c'est le même foyer, et sa silhouette doit se
+  // reconnaître de loin tout en disant « plus gros que ton feu de camp ».
+  //
+  // ⚠ AU PLUS PROCHE VOISIN, OBLIGATOIREMENT : la normal map est stockée en pixels DÉJÀ ENCODÉS
+  // (voir juste au-dessus), donc toute interpolation mélangerait des vecteurs et rendrait des
+  // normales ni unitaires ni justes. `imageSmoothingEnabled = false` est ici une règle de
+  // justesse, pas un choix de DA — et il sert aussi la DA (tout le jeu est au pixel).
+  //
+  // ⚠ DA PROVISOIRE : la balise mérite son propre dessin (une vasque sur un mât, une tour de
+  // rondins…). C'est une question d'image, donc une question pour Alexis — pas pour moi.
+  const grandir = (src: HTMLCanvasElement): HTMLCanvasElement => {
+    const taille = Math.round(FIRE_SIZE * BALISE_ECHELLE)
+    const out = newCanvas(taille, taille)
+    out.ctx.imageSmoothingEnabled = false
+    out.ctx.drawImage(src, 0, 0, taille, taille)
+    return out.c
+  }
+  const baliseAlbedo = grandir(albedo.c)
+  const baliseNormal = grandir(normal.c)
+  if (scene.textures.exists('st-balise')) scene.textures.remove('st-balise')
+  scene.textures.addCanvas('st-balise', grandir(shaded.c))
+  poserPaire(scene, (m) => cleLit('st-balise', m), baliseAlbedo, baliseNormal, mirrorNormalCanvas(baliseNormal))
 }

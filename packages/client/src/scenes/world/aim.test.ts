@@ -310,12 +310,12 @@ describe('viser un feu → fireId (pour ouvrir le modal à E, spec feu-station S
 })
 
 describe('la main décide du clic', () => {
-  const vide = { tx: 5, ty: 5, nodeId: null, nodeTool: null, corpseId: null, carcass: false, entityId: null, entityWounded: false, onFire: false, fireId: null, repairableId: null, plantableId: null, harvestableId: null,
+  const vide = { tx: 5, ty: 5, nodeId: null, nodeTool: null, corpseId: null, carcass: false, entityId: null, entityWounded: false, onFire: false, fireId: null, baliseEteinteId: null, repairableId: null, plantableId: null, harvestableId: null,
   pileId: null, inRange: true, nodeInRange: false, waterInRange: false }
   // `nodeTool` porte la FAMILLE d'outil du nœud visé (lue de `NODE_DEFS[type].tool`) : un
   // arbre appelle la hache, un filon la pioche, un buisson personne. C'est ce qui permet à la
   // hache d'être une arme SANS cesser d'abattre (décision d'Alexis 2026-08-20).
-  const surUnArbre = { tx: 5, ty: 5, nodeId: 42, nodeTool: 'axe' as const, corpseId: null, carcass: false, entityId: null, entityWounded: false, onFire: false, fireId: null, repairableId: null, plantableId: null, harvestableId: null,
+  const surUnArbre = { tx: 5, ty: 5, nodeId: 42, nodeTool: 'axe' as const, corpseId: null, carcass: false, entityId: null, entityWounded: false, onFire: false, fireId: null, baliseEteinteId: null, repairableId: null, plantableId: null, harvestableId: null,
   pileId: null, inRange: true, nodeInRange: true, waterInRange: false }
   const versLest = { dx: 1, dy: 0 }
 
@@ -367,7 +367,7 @@ describe('la main décide du clic', () => {
  */
 describe('la hache est une arme, et elle abat quand même', () => {
   const versLest = { dx: 1, dy: 0 }
-  const vide = { tx: 5, ty: 5, nodeId: null, nodeTool: null, corpseId: null, carcass: false, entityId: null, entityWounded: false, onFire: false, fireId: null, repairableId: null, plantableId: null, harvestableId: null, pileId: null, inRange: true, nodeInRange: false, waterInRange: false }
+  const vide = { tx: 5, ty: 5, nodeId: null, nodeTool: null, corpseId: null, carcass: false, entityId: null, entityWounded: false, onFire: false, fireId: null, baliseEteinteId: null, repairableId: null, plantableId: null, harvestableId: null, pileId: null, inRange: true, nodeInRange: false, waterInRange: false }
   const surUnArbre = { ...vide, nodeId: 42, nodeTool: 'axe' as const, nodeInRange: true }
   const surUnFilon = { ...vide, nodeId: 43, nodeTool: 'pickaxe' as const, nodeInRange: true }
 
@@ -416,7 +416,7 @@ describe('la hache est une arme, et elle abat quand même', () => {
  */
 describe('le clic lance la ligne (peche.md D9)', () => {
   const versLest = { dx: 1, dy: 0 }
-  const sec = { tx: 9, ty: 4, nodeId: null, nodeTool: null, corpseId: null, carcass: false, entityId: null, entityWounded: false, onFire: false, fireId: null, repairableId: null, plantableId: null, harvestableId: null, pileId: null, inRange: false, nodeInRange: false, waterInRange: false }
+  const sec = { tx: 9, ty: 4, nodeId: null, nodeTool: null, corpseId: null, carcass: false, entityId: null, entityWounded: false, onFire: false, fireId: null, baliseEteinteId: null, repairableId: null, plantableId: null, harvestableId: null, pileId: null, inRange: false, nodeInRange: false, waterInRange: false }
   const surLEau = { ...sec, waterInRange: true }
 
   it('CANNE EN MAIN + de l’eau à portée : on LANCE, sur la TUILE (pas sur un nœud)', () => {
@@ -451,9 +451,38 @@ describe('le clic lance la ligne (peche.md D9)', () => {
   })
 })
 
+describe('allumer une balise au clic (`braise.md` B-R10)', () => {
+  const base = {
+    tx: 5, ty: 5, nodeId: null, nodeTool: null, corpseId: null, carcass: false, entityId: null, entityWounded: false,
+    onFire: true, fireId: 7, baliseEteinteId: null, repairableId: null, plantableId: null, harvestableId: null,
+    pileId: null, inRange: true, nodeInRange: false, waterInRange: false,
+  }
+  const mainsNues = { held: null, dx: 1, dy: 0 }
+
+  it('une balise ÉTEINTE sous le curseur → `light_balise`, MAINS NUES (la braise est portée, pas tenue)', () => {
+    expect(clickToAction({ ...base, baliseEteinteId: 7 }, null, mainsNues)).toEqual({ type: 'light_balise', structureId: 7 })
+  })
+
+  it('ALLUMÉE, elle redevient une cible ordinaire — et HORS DE PORTÉE, le geste ne part pas', () => {
+    // `baliseEteinteId` à null = soit ce n'est pas une balise, soit elle brûle déjà : dans les deux
+    // cas le clic ne doit pas proposer l'allumage (la sim le refuserait, « elle brûle déjà »).
+    expect(clickToAction(base, null, mainsNues)).not.toMatchObject({ type: 'light_balise' })
+    expect(clickToAction({ ...base, baliseEteinteId: 7, inRange: false }, null, mainsNues))
+      .not.toMatchObject({ type: 'light_balise' })
+  })
+
+  it('⚠ DU BOIS EN MAIN, LE CLIC NOURRIT AU LIEU D’ALLUMER — constaté, et c’est une question ouverte', () => {
+    // `feed_fire` passe AVANT dans la chaîne. Ce n'est pas un défaut de sim (nourrir une balise
+    // éteinte est légitime : on remplit sa soute), mais c'est une surprise possible pour le joueur
+    // — consignée dans `braise.md` § 5.17 plutôt que tranchée ici.
+    const bois = { held: 'wood' as const, dx: 1, dy: 0 }
+    expect(clickToAction({ ...base, baliseEteinteId: 7 }, null, bois)).toMatchObject({ type: 'feed_fire' })
+  })
+})
+
 describe('le maintien ne défait pas le clic', () => {
   const versLest = { dx: 1, dy: 0 }
-  const base = { tx: 5, ty: 5, nodeId: null, nodeTool: null, corpseId: null, carcass: false, entityId: null, entityWounded: false, onFire: false, fireId: null, repairableId: null, plantableId: null, harvestableId: null, pileId: null, inRange: true, nodeInRange: false, waterInRange: false }
+  const base = { tx: 5, ty: 5, nodeId: null, nodeTool: null, corpseId: null, carcass: false, entityId: null, entityWounded: false, onFire: false, fireId: null, baliseEteinteId: null, repairableId: null, plantableId: null, harvestableId: null, pileId: null, inRange: true, nodeInRange: false, waterInRange: false }
   const surUnArbre = { ...base, nodeId: 42, nodeTool: 'axe' as const, nodeInRange: true }
 
   it('ARC en main : le clic est muet — et le MAINTIEN doit l’être aussi', () => {

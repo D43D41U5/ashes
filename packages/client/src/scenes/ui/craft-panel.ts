@@ -58,6 +58,7 @@ export const RECIPE_CATEGORY: Record<RecipeId, CraftCategory> = {
   // LE FEU DE CAMP est une recette comme une autre : elle produit un OBJET
   // (station: null → faisable partout) qu'on pose ensuite au sol.
   campfire: 'campement',
+  balise: 'campement', // la base de `braise.md` — au campement, avec le feu de camp
   // LE COFFRE (décision d'Alexis) : fabriqué à la main, posé en objet tenu — plus au marteau.
   chest: 'campement',
   sechoir: 'campement', // la claie du bord de l'eau : on la pose à son camp (peche.md S1)

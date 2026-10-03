@@ -102,6 +102,10 @@ export const INVENTAIRE: Inventaire = {
   // un geste qu'on répète — MUET, comme nourrir le Feu. L'EXTINCTION, elle, PARLE : c'est
   // l'instant où la nuit se referme, et le joueur ne regarde pas sa ceinture à ce moment-là.
   torche_allumee: { voix: 'muet', famille: 'feu', quoi: 'on prend le feu au foyer, la torche s’allume' },
+  // LA BALISE PREND LA FLAMME (`braise.md` B-R10) — l'inverse exact de `torche_allumee` : ce
+  // geste-là ne se répète PAS (une balise coûte trente bois et s'allume une fois), et c'est
+  // l'instant où un point de la carte devient une base. Il parle, et il parle de la STRUCTURE.
+  balise_allumee: { voix: 'voix', ou: 'structure', famille: 'feu', quoi: 'une balise prend la flamme — la vallée est montable d’un cran de plus' },
   torche_eteinte: { voix: 'voix', ou: 'entite', famille: 'feu', quoi: 'la torche meurt — la nuit se referme, loin de chez soi' },
 
   // ── LE SOCIAL — l'axe d'alignement : les verbes chauds montent, les froids tombent ─

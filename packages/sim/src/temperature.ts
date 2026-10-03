@@ -21,17 +21,18 @@
 import { BALANCE, BRAISE, CENDREUX, POI, TEMPERATURE } from './balance'
 import { effetsDuJour } from './modificateur'
 import { brumeColdAt } from './brume'
-import { fireWarmthFactor } from './fire'
+import { fireState, fireWarmthFactor } from './fire'
 import { die } from './combat'
 import { terrainAt } from './map'
 import { auMemeEtage, palierDuSol, terrainAEtage } from './etages'
 import { meteoColdAt } from './meteo'
+import { estBalise, estFoyer } from './pieces'
 import { roofAt, structuresDeLaTuile, type Structure } from './village'
 import { avanceesDepuisAges, froidDeCendre } from './cendre'
 import { froidDeFumerolle } from './fumerolle'
 import { isOnPoiKind } from './poi-discovery'
 import { TICKS_PER_CYCLE, gameTimeAt } from './time'
-import { braiseNeuve, cransCouverts, type Braise } from './braise'
+import { braiseNeuve, chargePleine, cransCouverts, type Braise } from './braise'
 import type { SimState } from './sim'
 
 const T = TEMPERATURE
@@ -150,18 +151,84 @@ export function bulleDuFeu(state: SimState, s: Structure, x: number, y: number):
   return factor * (1 - dist / T.FIRE_RANGE)
 }
 
-/** Réchauffement du feu le plus proche : FIRE_WARMTH au contact, linéaire → 0 à FIRE_RANGE.
+/**
+ * ═══ LA CHALEUR D'UN FOYER EN CE POINT (°C), ET LE PLATEAU DE LA BALISE ═══
+ *
+ * Le feu garde son CÔNE : `FIRE_WARMTH` au contact, linéaire → 0 à `FIRE_RANGE`. Sa zone
+ * vraiment gratuite (celle où la demande en crans tombe à 0) ne vaut donc que
+ * `1 − AMBIANT_DOUX / FIRE_WARMTH` du rayon, soit 57 % — une falaise au milieu du cercle, et
+ * c'est VOULU : c'est elle qui rend une balise désirable (décision d'Alexis, 2026-10-03).
+ *
+ * LA BALISE ALLUMÉE, ELLE, PLANCHE SON RAYON ENTIER À `AMBIANT_DOUX` (`braise.md` § 5.13 ⓒ) :
+ * « dans le rayon d'une balise allumée, il fait doux » — partout, et sans condition sur l'air de
+ * dessous (c'est un plancher, pas un terme ajouté : au palier 3 en plein Grand Froid, il fait
+ * doux pareil). Deux conséquences voulues : l'abri et la recharge **coïncident au bit** (B-R9 lit
+ * ce même prédicat, voir `rechargeDeBalise`), et `cransExiges` tombe à 0 dans tout le rayon —
+ * donc la vidange s'arrête (B-R8) et le camp est un répit entier.
+ *
+ * ⚠ LES BRAISES GARDENT LE CÔNE. Le plateau est la promesse d'une balise ALLUMÉE ; quand elle
+ * retombe en braises, elle redevient un feu atténué — sinon le combustible ne vaudrait rien.
+ *
+ * ⚠ **JUSQU'OÙ CE PLATEAU SORT — VÉRIFIÉ, ET MA PREMIÈRE VERSION DE CETTE NOTE ÉTAIT FAUSSE.**
+ * J'avais écrit qu'il sortait « par TOUS les lecteurs de `fireBubble` : l'air du corps, l'air de
+ * la demande, l'éveil des Cendreux et la faune ». Les deux derniers sont faux, et c'est
+ * STRUCTUREL : `fireBubble` n'a que TROIS appelants —
+ *   · `airDeLaDemande` → `cransExiges` : la DEMANDE en crans. C'est le vrai chemin, et par lui
+ *     le plateau commande la vidange (B-R8), la recharge (B-R9) et le corps (B-R6) ;
+ *   · `ambientTemperature`, qui n'a plus AUCUN appelant dans `/sim` depuis l'étape 4 — les deux
+ *     lectures du HUD client ;
+ *   · `nighthunt.ts`, un prédicat `fireBubble > 0` qui est INCHANGÉ AU BIT : le plateau ne fait
+ *     que monter une valeur déjà positive dans le rayon, l'ensemble `{> 0}` est le même.
+ * L'éveil des Cendreux, lui, lit `baselineTemperature` **hors feu** — par construction, et c'est
+ * la note S5 de `feu-station.md` (sinon un Cendreux oscille à la lisière de la bulle) ; et
+ * `faune.ts` ne lit aucune température.
+ *
+ * **Conséquence de jeu, et elle est voulue** : une balise allumée **ne dégèle pas la glace de son
+ * rayon** (`estGele` lit le froid de BASE) et **n'endort pas les Cendreux**. Elle couvre la
+ * DEMANDE d'un corps ; elle ne réchauffe pas le monde. Gardé par `braise.test.ts`, « le plateau
+ * ne sort PAS dans le monde de base ».
+ */
+export function chaleurDuFoyer(state: SimState, s: Structure, x: number, y: number): number {
+  const bulle = T.FIRE_WARMTH * bulleDuFeu(state, s, x, y)
+  if (bulle <= 0) return 0 // hors rayon, ou foyer éteint : une ABSENCE, pas une température
+  if (!estBalise(s.type) || fireState(state, s) !== 'lit') return bulle
+  return bulle > T.AMBIANT_DOUX ? bulle : T.AMBIANT_DOUX
+}
+
+/** Réchauffement du foyer le plus proche — le feu ET la balise (B-R10), chacun avec sa loi
+ *  (`chaleurDuFoyer`).
  *  À L'ÉTAGE du corps (G-R7) : un bivouac sous la roche ne chauffe pas la terrasse au-dessus,
  *  et le Feu du village ne traverse pas la roche jusqu'à la salle. Aucune ligne de vue : ce
  *  qui chauffe chauffe à travers un mur ; c'est la LUMIÈRE qui s'y arrête (LG-R11). */
 export function fireBubble(state: SimState, x: number, y: number, etage?: number): number {
   let best = 0
   for (const s of state.structures) {
-    if (s.type !== 'fire' || !auMemeEtage(s, etage)) continue
-    const warmth = T.FIRE_WARMTH * bulleDuFeu(state, s, x, y)
+    if (!estFoyer(s.type) || !auMemeEtage(s, etage)) continue
+    const warmth = chaleurDuFoyer(state, s, x, y)
     if (warmth > best) best = warmth
   }
   return best
+}
+
+/**
+ * ═══ UNE BALISE ALLUMÉE RECHARGE-T-ELLE ICI ? (spec `braise.md` B-R9) ═══
+ *
+ * **LE MÊME PRÉDICAT QUE L'ABRI, PAS UN SECOND RAYON** : `bulleDuFeu > 0` est exactement la
+ * condition sous laquelle `chaleurDuFoyer` planche à `AMBIANT_DOUX`. L'abri et la recharge
+ * coïncident donc au bit — c'est la forme exacte de la décision d'Alexis (§ 5.13 ⓒ : « doux
+ * garanti dans tout le rayon »), et deux constantes de rayon auraient fait deux lois d'une.
+ *
+ * `fireState === 'lit'` : ni les braises ni l'éteinte ne rechargent (B-R9 au mot). `auMemeEtage`
+ * : une balise sur la terrasse ne recharge pas un corps dans la salle du dessous (G-R7, la même
+ * clause que la chaleur).
+ */
+export function rechargeDeBalise(state: SimState, x: number, y: number, etage?: number): boolean {
+  for (const s of state.structures) {
+    if (!estBalise(s.type) || !auMemeEtage(s, etage)) continue
+    if (fireState(state, s) !== 'lit') continue
+    if (bulleDuFeu(state, s, x, y) > 0) return true
+  }
+  return false
 }
 
 /**
@@ -729,6 +796,24 @@ export function advanceTemperature(state: SimState): void {
     // s'habiter, et qu'aucune porte n'a eu à être codée pour fermer le palier 2.
     if (demande > 0 && braise.charge > 0) {
       braise.charge = Math.max(0, braise.charge - BRAISE.VIDANGE_PAR_TICK)
+    }
+    // ═══ B-R9 — LA RECHARGE À LA BALISE, ET NULLE PART AILLEURS ═══
+    //
+    // Ici, et pas dans une passe à soi, pour la raison exacte de la vidange : cette boucle tient
+    // déjà le corps et son étage. La charge est un budget de ticks ENTIER (voir `DUREE_CRAN`),
+    // donc `+ RECHARGE_PAR_TICK` borné par `chargePleine` garde la barre exacte au bit.
+    //
+    // ⚠ APRÈS LA VIDANGE, et ça ne peut pas se croiser : dans le rayon d'une balise allumée la
+    // demande est NULLE (le plateau de `chaleurDuFoyer` planche l'air à `AMBIANT_DOUX`, donc
+    // `cransExiges` rend 0), donc la vidange au-dessus ne court pas. Les deux ne sont jamais
+    // actives au même tick — c'est une propriété de la loi ⓒ d'Alexis, pas un ordre d'écriture,
+    // et une garde l'affirme (« la charge ne bouge que d'un pas à la fois »).
+    //
+    // ⚠ ON NE LA PAIE QU'À UNE BRAISE INCOMPLÈTE : `rechargeDeBalise` balaie les structures, et
+    // le camp est précisément l'endroit où l'on s'attarde. Pleine, rien n'est lu.
+    const plein = chargePleine(braise.niveau)
+    if (braise.charge < plein && rechargeDeBalise(state, entity.x, entity.y, entity.etage)) {
+      braise.charge = Math.min(plein, braise.charge + BRAISE.RECHARGE_PAR_TICK)
     }
     // B-R6 — LE CORPS LIT LE DÉFICIT, JAMAIS L'AIR BRUT. Il ne voit donc plus `ambientTemperature`
     // du tout : `airRessenti` porte le feu et l'abri par la demande (B-R5), et borne le reste au

@@ -50,6 +50,7 @@
  */
 import { LUMIERE, TEMPERATURE } from './balance'
 import { bulleDuFeu, isSheltered } from './temperature'
+import { estFoyer } from './pieces'
 import { auMemeEtage, connecteurAt, marchableAEtage, niveauDeLaTuile, niveauDuCorps, palierDuSol } from './etages'
 import { heldSlot } from './inventory-actions'
 import { lumiereDesTorches, partVisible } from './lumiere'
@@ -157,7 +158,9 @@ export function lumiereDuFeu(state: SimState, x: number, y: number, etage?: numb
   const niveau = etage ?? palierDuSol(state.map, Math.floor(x), Math.floor(y))
   let best = 0
   for (const s of state.structures) {
-    if (s.type !== 'fire' || !auMemeEtage(s, etage)) continue
+    // Le FEU et la BALISE (B-R10 : elle hérite de la lumière comme du reste — un phare qu'on
+    // monte d'un étage doit se voir de l'étage du dessous).
+    if (!estFoyer(s.type) || !auMemeEtage(s, etage)) continue
     const bulle = bulleDuFeu(state, s, x, y)
     if (bulle <= best) continue // ne peut plus faire mieux, même vue en entier
     const v = bulle * partVisible(state, niveau, x, y, s.tx + 0.5, s.ty + 0.5, niveauDeLaTuile(state.map, s))
