@@ -24,6 +24,7 @@ import {
   type WeaponKind,
   type WeaponProfile,
 } from './balance'
+import { braiseNeuve } from './braise'
 import { BRAISE_MERE } from './braise-mere'
 import { avanceesDepuisAges, BANDE_CROUTE, bandeDeCendre } from './cendre'
 import { willRiseAsCendreux } from './cendreux'
@@ -1403,6 +1404,17 @@ export function respawn(state: SimState, entity: Entity): boolean {
   entity.hunger = COMBAT.RESPAWN_HUNGER
   entity.stamina = COMBAT.RESPAWN_STAMINA
   entity.temperature = COMBAT.RESPAWN_TEMPERATURE
+  // ═══ LA BRAISE REVIENT PLEINE, AU NIVEAU ATTEINT (`braise.md` B-R11) ═══
+  //
+  // « La mort prend la position, pas l'échelle » : `niveau` traverse la mort (sinon l'arbre de
+  // techno ne vaudrait rien), `charge` repart au plein. C'est la MOITIÉ BRAISE de l'étape 9 —
+  // avancée ici parce que l'étape 4 l'a rendue nécessaire : une braise ne se recharge qu'à une
+  // balise allumée (B-R9), qui n'existe pas encore, donc se relever avec une braise vide rouvrait
+  // la nuit qui vient de tuer. MESURÉ sur le monde joué (graine 2026, naissance, aucun input,
+  // météo éteinte) : sans cette ligne, le corps meurt au jour 67 puis **quatre fois en quatorze
+  // jours**, à 8 000-31 000 ticks d'intervalle. La POSITION, elle, ne bouge pas ici (« en bas »
+  // reste l'étape 9) : c'est toujours le Feu du village ou le point d'apparition, ci-dessous.
+  entity.braise = braiseNeuve(entity.braise?.niveau ?? 0)
   // L'ÉPUISEMENT PART D'ICI (V2-21) — de la seconde où l'on rouvre les yeux, pas de la chute.
   // Le COMPTE, lui, a été tenu par `die` (voir la note là-bas) : assis à la chute, il mesure
   // le temps VÉCU entre deux morts ; parti du réveil, l'épuisement ne se consume pas pendant

@@ -508,6 +508,82 @@ export const TEMPERATURE = {
 }
 
 /**
+ * ═══ LA BRAISE (spec `braise.md` § 1) — la seule porte du froid ═══
+ *
+ * Quatre nombres, et trois d'entre eux sont DÉRIVÉS ou calibrés contre le monde ; le seul vrai
+ * réglage de jeu est `DUREE_CRAN`, la LAISSE. L'arbre de techno (B-R14) ne joue que sur trois
+ * axes — `cransMax`, `DUREE_CRAN`, le rayon de lumière — et aucun autre nombre d'ici.
+ */
+export const BRAISE = {
+  /**
+   * ═══ UN CRAN = UN ÉTAGE = UNE SAISON (B-R4b) — et c'est pour ça que ce n'est PAS un 28 écrit ═══
+   *
+   * La loi d'Alexis du 2026-09-28 (*« un hiver correspond à un été de l'étage supérieur »*) dit que
+   * les trois échelles du jeu n'en font qu'une. L'écrire en `28` ici la laisserait se briser en
+   * silence le jour où l'altitude changerait de prix : on la LIT donc sur `FROID_PAR_ETAGE`, dont
+   * elle est l'égale par définition. L'autre moitié de la loi — que 28 est aussi l'amplitude de
+   * l'ANNÉE (mi-Ardeur +26 → cœur du Grand Froid −2) — ne peut pas s'écrire ici : elle se prouve
+   * en exécutant `SOCLE`, et c'est la garde B-A2 ② qui la tient.
+   */
+  CRAN_DEGRES: TEMPERATURE.FROID_PAR_ETAGE,
+  /**
+   * ═══ CE QUE COÛTE UN CRAN DE RETARD (B-R6) ═══
+   *
+   * Un cran manquant vaut **la nuit d'hiver létale d'aujourd'hui en plaine** : −16 °C, soit 22 °C
+   * sous le confort (`AMBIANT_DOUX` = 6). C'est la calibration que la spec énonce, et elle est
+   * TENUE PAR UNE GARDE qui relit l'air du palier 0 au cœur du Grand Froid — un `SOCLE` retouché
+   * ferait rougir B-A2, pas dériver le modèle en silence.
+   *
+   * ⚠ **Et le produit se re-borne** : à deux crans de retard, `AMBIANT_DOUX − 2 × 22` vaut −38, que
+   * `clampTemp` ramène à `AMBIANT_MIN` = −18. C'est VOULU et c'est ce qui sauve le modèle du corps
+   * (B-R6 : `cibleCorporelle`, `PENTE_CORPS`, `CORPS_MORTEL` sont calibrés sur une bande de 24 °C) :
+   * au-delà d'un cran de retard, on est au pire air du jeu — on ne meurt pas plus vite que « le
+   * plus vite », on meurt simplement sans répit.
+   */
+  DEFICIT_DEGRES: 22,
+  /**
+   * ═══ LA LAISSE — combien de temps un cran couvre le froid ═══
+   *
+   * **UN CYCLE.** C'est le seul nombre de la braise qui soit un choix de jeu et non une dérivation,
+   * et il se lit ainsi : *une braise de deux crans tient deux journées de froid continu, et il en
+   * faut une de plus pour chaque étage monté* (B-R7 : `(N − d) × T`). Au palier 0 en hiver (demande
+   * 1), une braise pleine de deux crans donne donc **un cycle** avant le déficit — on rentre au
+   * camp une fois par jour, pas une fois par minute.
+   *
+   * ⚠ **LA CHARGE EST UN BUDGET DE TICKS DE FROID**, ce qui rend toute la barre exacte en entiers
+   * (aucune dérive flottante dans un état qui doit rejouer au bit près) : `charge` compte les ticks
+   * de couverture restants, `VIDANGE_PAR_TICK` vaut 1, et `cransCouverts = floor(charge /
+   * DUREE_CRAN)`. Le levier de l'arbre est CE nombre (B-R14), jamais la vidange.
+   *
+   * À CALIBRER EN JEU : c'est un ordre de grandeur (GDD §15), pas une vérité.
+   */
+  DUREE_CRAN: ticksForCycles(1),
+  /** La vidange, en charge par tick de froid — **1 par construction** : voir `DUREE_CRAN`, la
+   *  charge EST un compte de ticks. La spec la nomme (B-R8) parce qu'elle doit rester CONSTANTE :
+   *  c'est ce qui fait tenir `(N − d) × T` sans aucune table de vitesse. */
+  VIDANGE_PAR_TICK: 1,
+  /**
+   * Les crans d'une braise de départ (B-R3) — deux. L'arbre les augmente (B-R14).
+   *
+   * ⚠ **CE QUE DEUX CRANS ACHÈTENT VRAIMENT, ET CE N'EST PAS CE QUI ÉTAIT ÉCRIT ICI.** Sous
+   * `floor` (B-R7b), une braise pleine de 2 n'en COUVRE que 1 dès son premier tick de froid : le
+   * palier de demande 2 se touche, il ne s'habite pas. MESURÉ (à midi, braise de niveau 0 après un
+   * tick de vidange — l'état qu'un corps a réellement) :
+   *
+   * | | p0 | p1 | p2 | p3 |
+   * |---|---|---|---|---|
+   * | **été** (mi-Ardeur, d = k)    | d0 → 37 °C ✓ | d1 → 37 °C ✓ | d2 → 26 °C ☠ | d3 → 25 °C ☠ |
+   * | **hiver** (Grand Froid, d = k+1) | d1 → 37 °C ✓ | d2 → 26 °C ☠ | d3 → 25 °C ☠ | d4 → 25 °C ☠ |
+   *
+   * Donc : **le palier 0 seul en hiver, les paliers 0 et 1 en été**, et l'on meurt au **DEUXIÈME**
+   * étage en hiver, pas au troisième. (Le texte d'avant disait un palier de trop dans les deux
+   * saisons ; `braise.test.ts` B-A12 écrivait déjà `CRANS_DEPART - 1` pour cette raison exacte.)
+   * C'est le chiffre qu'on relira pour décider si 2 est le bon : qu'il dise ce qu'il fait.
+   */
+  CRANS_DEPART: 2,
+}
+
+/**
  * Les lieux chargés (spec `docs/specs/lieux.md`). Ordres de grandeur, à
  * calibrer en jeu — pas des vérités.
  */

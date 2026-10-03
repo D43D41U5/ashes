@@ -18,7 +18,7 @@
  * `balance.ts` pour la conversion depuis l'ancienne jauge 0-100 (une application affine :
  * l'équilibrage n'a pas bougé d'un bit, seules les étiquettes ont changé).
  */
-import { BALANCE, CENDREUX, POI, TEMPERATURE } from './balance'
+import { BALANCE, BRAISE, CENDREUX, POI, TEMPERATURE } from './balance'
 import { effetsDuJour } from './modificateur'
 import { brumeColdAt } from './brume'
 import { fireWarmthFactor } from './fire'
@@ -32,6 +32,7 @@ import { avanceesDepuisAges, froidDeCendre } from './cendre'
 import { froidDeFumerolle } from './fumerolle'
 import { isOnPoiKind } from './poi-discovery'
 import { TICKS_PER_CYCLE, gameTimeAt } from './time'
+import { braiseNeuve, cransCouverts, type Braise } from './braise'
 import type { SimState } from './sim'
 
 const T = TEMPERATURE
@@ -258,6 +259,89 @@ export function airNonBorneAt(state: SimState, x: number, y: number, tick: numbe
   if (sousLaRoche(state, Math.floor(x), Math.floor(y), etage)) return T.GROTTE_AMBIANT
   const shelter = cst?.abri ?? abriDeTuile(state, x, y, etage)
   return airDuMonde(state, x, y, tick, shelter, cst)
+}
+
+/**
+ * ═══ L'AIR DE LA DEMANDE — non borné, MAIS AVEC LES FEUX (B-R5) ═══
+ *
+ * C'est l'air que la braise doit couvrir, et il n'est ni `ambientTemperature` ni `airNonBorneAt` :
+ *
+ *   · **non borné**, comme `airNonBorneAt` — sous le clamp, `cransExiges` ne rendrait que 0 ou 1 et
+ *     toute l'échelle « un cran = un étage = une saison » serait inécrivable ;
+ *   · **planché par le feu et par la source chaude**, comme `ambientTemperature` — parce que « au
+ *     pied d'une balise, la demande tombe à 0 : le camp est un répit » EST la règle (B-R5), et que
+ *     c'est elle qui garde vivants et GRATUITS l'abri, la grotte à 13 °C et la Source chaude.
+ *
+ * ⚠ **ET JAMAIS LA BRAISE ELLE-MÊME.** Si la braise entrait dans l'air qu'elle lit, elle baisserait
+ * sa propre demande, la demande remonterait en se vidant, et on aurait l'oscillation que
+ * `feu-station.md` S5 a déjà eu à écarter pour l'attraction des Cendreux. Le piège est connu,
+ * documenté, et il vaut ici mot pour mot : la braise n'est **pas** une source de chaleur du monde,
+ * elle est une COUVERTURE de la demande.
+ *
+ * ⚠ Le zéro de `fireBubble`/`naturalWarmth` est une ABSENCE, pas une température : on ne plancher
+ * que sur une source RÉELLE (le `max` à trois termes avait déjà planché tout le monde à 0 °C une
+ * fois, et plus rien ne pouvait tuer de froid).
+ */
+export function airDeLaDemande(state: SimState, x: number, y: number, etage?: number): number {
+  let t = airNonBorneAt(state, x, y, state.tick, undefined, etage)
+  const feu = fireBubble(state, x, y, etage)
+  if (feu > 0 && feu > t) t = feu
+  const source = naturalWarmth(state, x, y, etage)
+  if (source > 0 && source > t) t = source
+  return t
+}
+
+/**
+ * ═══ LA DEMANDE, EN CRANS (B-R4) — le calcul de température EXISTANT est la demande ═══
+ *
+ * ```
+ * cransExiges(air) = ceil( max(0, AMBIANT_DOUX − air) / BRAISE.CRAN_DEGRES )
+ * ```
+ *
+ * Conséquence voulue : la saison (`SOCLE`), l'heure, la météo, la brume, l'abri, la grotte et la
+ * Source chaude restent tous vivants et gratuits — et « lire la fenêtre météo » survit comme
+ * maîtrise, puisqu'un orage au palier 1 en fait un endroit de palier 2 le temps qu'il passe.
+ * Contrepartie acceptée : **une nuit d'hiver coûte des crans même en bas.**
+ *
+ * À `CRAN_DEGRES` = `FROID_PAR_ETAGE` = 28, la table de B-R4b tombe d'elle-même : **en hiver le
+ * palier k demande k+1 crans, en été il en demande k.** Personne n'a eu à l'écrire, et c'est la
+ * marée de la montagne — l'été ouvre un étage, l'hiver le referme.
+ *
+ * ⚠ `Math.ceil` et une division : les deux sont autorisés par l'invariant §2 (pas de `pow`, pas
+ * d'`exp`), donc la demande est la même au bit près sur Node et dans le navigateur.
+ */
+export function cransExiges(state: SimState, x: number, y: number, etage?: number): number {
+  const manque = T.AMBIANT_DOUX - airDeLaDemande(state, x, y, etage)
+  if (manque <= 0) return 0
+  return Math.ceil(manque / BRAISE.CRAN_DEGRES)
+}
+
+/**
+ * ═══ CE QUE LE CORPS RESSENT (B-R6) — le DÉFICIT en crans, jamais l'air brut ═══
+ *
+ * ```
+ * manque      = cransExiges − cransCouverts                     // 0 quand la braise suffit
+ * airRessenti = clampTemp(AMBIANT_DOUX − manque × DEFICIT_DEGRES)
+ * ```
+ *
+ * ⚠ **C'EST CE QUI SAUVE TOUT LE MODÈLE DU CORPS.** `cibleCorporelle`, `PENTE_CORPS`,
+ * `CORPS_MORTEL` et `AMBIANT_MIN` sont calibrés sur une bande de 24 °C ; à −86 °C la valeur serait
+ * re-clampée mais la VITESSE de dérive (proportionnelle à l'écart) exploserait — on mourrait
+ * instantanément au palier 3 au lieu de « se mettre à mourir ». Le corps ne voit donc jamais l'air
+ * d'altitude : il voit un déficit de 1 à 4 crans, et rien d'autre.
+ *
+ * ⚠ **ET LA FORMULE NAÏVE `air + couverts × CRAN_DEGRES` EST FAUSSE À 28** : un palier 2 d'hiver
+ * couvert de 2 crans rendrait −58 + 56 = −2 °C, AU-DESSUS du seuil d'hypothermie — un cran de
+ * retard ne ferait alors rien du tout. On ne corrige pas l'air, on le REMPLACE par le déficit.
+ *
+ * Puis toute la cascade existante s'applique sans modification (`cibleCorporelle`, la dérive,
+ * `CORPS_MORTEL`, `HYPOTHERMIA_DAMAGE_MAX`) : on ne meurt pas à l'instant où l'on manque un cran,
+ * on **se met à mourir** — et c'est ce qui donne au repli le temps d'être une décision.
+ */
+export function airRessenti(demande: number, braise: Braise): number {
+  const manque = demande - cransCouverts(braise)
+  if (manque <= 0) return T.AMBIANT_DOUX
+  return clampTemp(T.AMBIANT_DOUX - manque * BRAISE.DEFICIT_DEGRES)
 }
 
 /**
@@ -620,11 +704,54 @@ export function advanceTemperature(state: SimState): void {
   // Copie défensive (comme advanceCombat) : die() peut réassigner state.entities.
   for (const entity of [...state.entities]) {
     if (monsterIds.has(entity.id)) continue // pas de température pour les monstres
-    let ambient = ambientTemperature(state, entity.x, entity.y, entity.etage)
+    // ═══ LA BRAISE : C'EST ICI QUE LE FROID LA RENCONTRE (`braise.md` B-R6 et B-R8) ═══
+    //
+    // ⚠ **ET C'EST LE SEUL ENDROIT, EXPRÈS.** La demande coûte une lecture d'air par corps et par
+    // tick — exactement celle que cette boucle payait déjà (`ambientTemperature`, qu'elle ne
+    // demande plus pour un porteur). Une passe séparée `advanceBraise` l'aurait payée DEUX fois
+    // pour la même réponse, et la spec elle-même branche B-R6 ici (§ 3 point 4).
+    //
+    // ⚠ **LA MIGRATION EST CETTE LIGNE** (B-R2 : « un champ requis neuf hors de la racine du
+    // `SimState` casse les sauvegardes existantes »). Un corps humain sans braise en reçoit une
+    // PLEINE : une vallée sauvegardée avant le champ, un avatar né avant lui, une arrivée rejouée
+    // par `replay-log`. La population est celle que cette boucle balaie déjà — depuis le retrait
+    // des villages PNJ (2026-09-29), « entité qui n'est pas un monstre » EST « humain ». Aucun
+    // tirage de PRNG, aucun compte d'entité changé : même graine, même état.
+    const braise = (entity.braise ??= braiseNeuve())
+    const demande = cransExiges(state, entity.x, entity.y, entity.etage)
+    // B-R8 — LA VIDANGE NE COURT QUE QUAND LA BRAISE COUVRE : l'été en bas, la grotte à 13 °C et
+    // le pied d'un feu ne coûtent rien. La charge est une monnaie d'altitude et d'hiver, jamais
+    // une horloge. Et elle est CONSTANTE tant qu'elle couvre — c'est ce qui fait tenir
+    // `(N − d) × T` (B-R7) sans aucune table de vitesse, quelle que soit la taille du déficit.
+    //
+    // ⚠ LA VIDANGE PASSE AVANT LA LECTURE, et c'est le mécanisme de B-R7b : sous
+    // `floor(charge / DUREE_CRAN)`, une braise pleine de `N` crans n'en couvre plus que `N − 1`
+    // dès le premier tick de froid. C'est ce qui fait qu'un palier de demande `N` se TOUCHE sans
+    // s'habiter, et qu'aucune porte n'a eu à être codée pour fermer le palier 2.
+    if (demande > 0 && braise.charge > 0) {
+      braise.charge = Math.max(0, braise.charge - BRAISE.VIDANGE_PAR_TICK)
+    }
+    // B-R6 — LE CORPS LIT LE DÉFICIT, JAMAIS L'AIR BRUT. Il ne voit donc plus `ambientTemperature`
+    // du tout : `airRessenti` porte le feu et l'abri par la demande (B-R5), et borne le reste au
+    // déficit en crans. C'est ce qui permet à l'air du monde de descendre à −100 °C au sommet sans
+    // qu'un seul nombre du modèle du corps ne bouge.
+    let ambient = airRessenti(demande, braise)
     // LA TENUE D'HIVER PLAFONNE LE FROID (spec cuir/température) : la porter plancher
     // l'ambiant ressenti — au-dessus de l'hypothermie, donc survivable. C'est ce qui
     // donne une raison à toute la chaîne chasse→cuir→couture, et rend la plaine
     // franchissable en acte III. Vraie protection, pas un simple ralentissement de dérive.
+    //
+    // ⚠ **ET ELLE ÉCRASE ENCORE LA BRAISE — BIEN PLUS QUE « UN CRAN », ET IL FAUT LE DIRE.**
+    // Appliquée APRÈS le déficit, elle plancher le ressenti à −5,2 °C, dont la cible corporelle
+    // vaut **31,4 °C** — au-dessus de l'hypothermie (29). Donc, braise VIDE au cœur du Grand
+    // Froid, MESURÉ sur 60 000 ticks : sans tenue le corps meurt (tick 8762 au palier 0, 7435 aux
+    // paliers 1 à 3) ; **avec une tenue dans le sac, les QUATRE paliers sont survivables
+    // indéfiniment** (31,40 °C, 100 PV, aucune mort). Toute l'échelle de B-R4b est donc
+    // actuellement neutralisée par un objet cousu — et la braise brûle quand même sous la tenue
+    // (5 000 ticks de charge consommés en 5 000 ticks au sommet). C'est exactement la
+    // contradiction que B-R15 tranche — *« la braise est la SEULE porte du froid »* — et son
+    // retrait est l'étape 5 de `braise.md` § 3, avec les six fichiers de test que B-A9 nomme.
+    // Gardée ici une tranche pour ne pas casser ce qu'elle ne remplace pas encore.
     if (countOf(entity.inventory, 'tenue_hiver') > 0) ambient = Math.max(ambient, T.TENUE_FLOOR)
     // Le surcoût suit l'EFFORT de compensation (l'écart au doux), pas la température atteinte :
     // lutter contre le froid coûte à manger, PERDRE la lutte coûte des PV (l'hypothermie,

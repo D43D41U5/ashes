@@ -150,6 +150,13 @@ export type { PhraseDeFait } from './annales'
 export { getGameTime, seasonDayAtTick, actForDay, coeurDeLaSaisonSuivante, tourForDay, phaseForDay, YEAR_DAYS, cycleOffsetForStartHour, calendarScaleForSeasonCycles, TICKS_PER_CYCLE, dayTicksAt, dayTicksPourJour, leverPourJour, leverAt, estCrepuscule, jourDeSaison, jourDeLAnnee, TICKS_PER_SEASON_DAY } from './time'
 export type { GameTime, Act } from './time'
 export { AMBIANT_HYPOTHERMIE, airNonBorneAt, ambientTemperature, baselineTemperature, baselineTemperatureAt, bulleDuFeu, cibleCorporelle, climatFlore, climatMaximal, dehorsSansMeteo, advanceTemperature } from './temperature'
+// ═══ LA BRAISE (spec `braise.md`, étapes 3 et 4) ═══
+//
+// La demande en crans et l'arithmétique de la barre. ⚠ Exportées pour le CLIENT, qui doit peindre
+// `cransCouverts` — et le cran du haut se vidant visiblement HORS COMPTE (B-R7b : un cran ne vaut
+// que plein). C'est la seule dette que l'étape 4 laisse, et elle est de rendu, pas de règle.
+export { airDeLaDemande, airRessenti, cransExiges } from './temperature'
+export { braiseNeuve, chargePleine, cransCouverts, cransMax, type Braise } from './braise'
 // LA LUMIÈRE (spec `lumiere-globale.md`) : la sim apprend l'ombre. Le client lit ICI le motif de
 // la source étendue, le grain et la portée de la torche (LG-R12, LG-R18) — jamais une copie.
 export { MOTIF_SOURCE, OCCLUDEUR, occlusionAuGrain, partVisible, lumiereDesTorches, seTientAuSol, estUnePorte } from './lumiere'

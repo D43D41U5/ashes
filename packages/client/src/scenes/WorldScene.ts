@@ -32,9 +32,11 @@ import {
   aspectAuPoint,
   aspectFroidDe,
   partDeNeige,
+  airRessenti,
   ambientTemperature,
   baselineTemperature,
   cibleCorporelle,
+  cransExiges,
   dehorsSansMeteo,
   estGele,
   neigeAuSol,
@@ -3155,7 +3157,11 @@ export class WorldScene extends Phaser.Scene {
           lieu: baselineTemperature(etat, x, y, this.etageJoueur),
           ressenti: ambientTemperature(etat, x, y, this.etageJoueur),
           corps: this.myTemperature,
-          cibleCorps: cibleCorporelle(ambientTemperature(etat, x, y, this.etageJoueur)),
+          // LA DEMANDE EN CRANS, et la cible d'un corps que rien ne couvre (`braise.md` B-R4/B-R6).
+          // ⚠ Pas `cibleCorporelle(ambientTemperature(...))` : depuis la braise, AUCUN corps ne vise
+          // plus l'air brut — ce chiffre-là n'était la cible de personne.
+          demande: cransExiges(etat, x, y, this.etageJoueur),
+          cibleCorps: cibleCorporelle(airRessenti(cransExiges(etat, x, y, this.etageJoueur), { niveau: 0, charge: 0 })),
           ciel: meteoAspectAt(etat, x, y, this.lastTime.tick),
           intensite: meteoFront ? meteoIntensityAt(meteoFront, this.lastTime.tick, this.map.width, this.map.height, x, y) : 0,
           froidDuFront: meteoColdAt(etat, x, y, this.lastTime.tick),

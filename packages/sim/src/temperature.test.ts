@@ -31,6 +31,19 @@ function spawn(state: SimState, x: number, y: number): Entity {
 }
 
 /**
+ * ⚠ **VIDE LA BRAISE — à n'employer que pour éprouver le FROID NU** (`braise.md` B-R6, 2026-10-03).
+ *
+ * Depuis que le corps lit un déficit en crans et non l'air, un avatar naît avec une braise PLEINE
+ * et le froid ne l'atteint plus pendant deux cycles : une garde qui veut mesurer ce que l'air fait
+ * à un corps doit donc DIRE qu'il n'a rien pour se couvrir. La prémisse était implicite avant la
+ * braise ; elle est écrite maintenant, et c'est mieux.
+ */
+function sansBraise(e: Entity): Entity {
+  e.braise = { niveau: 0, charge: 0 }
+  return e
+}
+
+/**
  * Remplit toute la carte d'un terrain uniforme — et la laisse SANS `map.palier`, donc **au palier
  * 0 partout** (`palierDuSol` rend 0 sur une carte qui n'en porte pas).
  *
@@ -332,7 +345,13 @@ describe('la thermogenèse — la faim suit le froid RESSENTI (décision d’Ale
   it('sur glacier, le drain = base + manque MAXIMAL × coefficient (l’air est au plancher du monde)', () => {
     const state = createSim(1, { cycleOffset: cycleOffsetForStartHour(12, 1) })
     flatMap(state, 15 /* glacier */)
-    const e = spawn(state, 5, 5)
+    // ⚠ BRAISE VIDE — ET CE N'EST PAS PARCE QUE LE GLACIER SERAIT COUVERT. `cransExiges` y vaut 2
+    //   et une braise NÉE n'en couvre qu'UN (B-R7b, `floor`) : le drain ne tomberait donc pas à
+    //   zéro, il tomberait à `penteParTick(22)` — un cran de retard — au lieu des
+    //   `penteParTick(24)` que cette garde mesure. L'écart est de 6 %, et c'est précisément pour ça
+    //   que la prémisse doit être ÉCRITE : à vide, le déficit de 2 crans rend `clampTemp(6 − 44)`
+    //   = `AMBIANT_MIN`, donc le manque maximal est EXACTEMENT celui d'avant la braise, au bit.
+    const e = sansBraise(spawn(state, 5, 5))
     // La prémisse rend la garde stable : cet air est CLAMPÉ à `AMBIANT_MIN`, donc le manque
     // vaut exactement `AMBIANT_DOUX − AMBIANT_MIN` quoi que la météo ajoute par-dessus.
     expect(ambientTemperature(state, 5, 5)).toBe(T.AMBIANT_MIN)

@@ -62,6 +62,7 @@ import { advanceDens } from './poi'
 import { actForDay, dayTicksAt, TICKS_PER_CYCLE, advanceTime, jourDeSaison } from './time'
 import { advanceCultures } from './agriculture'
 import { advanceNasses } from './nasse'
+import { braiseNeuve, type Braise } from './braise'
 import { advanceTemperature, coldSpeedFactor } from './temperature'
 import { advanceUpkeep, applyVillageAction, getVillageOf, type VillageAction, type Structure, type Village } from './village'
 
@@ -96,6 +97,27 @@ export interface Entity {
   /** Le dernier MURMURE recueilli (spec `cendre.md` R27b) — l'id dérivé du site, pour ne pas
    *  émettre un événement par tick en restant à portée. Absent tant qu'aucun ne s'est donné. */
   murmure?: number
+  /**
+   * ═══ LA BRAISE QU'ON PORTE (spec `braise.md` B-R2) — un champ, pas un item du sac ═══
+   *
+   * Elle tient le froid (B-R6), allume les feux et éclaire. ⚠ **Un champ, et pas un `ItemId` :**
+   * c'est la leçon de `tenue_hiver`, dont le plancher s'appliquait par simple POSSESSION — un objet
+   * oublié au fond du sac protégeait autant qu'un objet porté. Une porte de survie ne se lit pas
+   * dans un inventaire.
+   *
+   * ⚠ **OPTIONNEL, ET C'EST LA MIGRATION** (B-R2) : les gardes de sauvegarde ne voient que la
+   * RACINE du `SimState`, donc un champ REQUIS ici aurait fait jeter toute vallée en cours au
+   * premier tick. Absent = « pas encore de braise » ; `advanceTemperature` en pose une pleine au
+   * premier tick de tout corps humain qui n'en a pas (vieille sauvegarde, arrivée rejouée).
+   *
+   * ⚠ **CE QUE « HUMAIN » VEUT DIRE, ÉNUMÉRÉ ET NON SUPPOSÉ** : `spawnEntity` est le SEUL
+   * producteur de `state.entities` (un unique `push`, ci-dessous), et les monstres y passent avec
+   * leur propre `slots` — ils sont ensuite écartés de la boucle du froid par `monsterIds`
+   * (`temperature.ts`). Donc aucun monstre ne reçoit de braise, ni à la naissance ni par le
+   * `??=` : « entité que la passe température balaie » EST « humain », depuis le retrait des
+   * villages PNJ (2026-09-29).
+   */
+  braise?: Braise
   /** L'ATTELAGE (spec `traction.md` T1) — la charge que ce corps tire. L'état vit sur le
    *  TIREUR seul ; la charge ne sait rien. Absent : les mains sont libres. */
   attelage?: { kind: import('./traction').TractableKind; id: number }
@@ -738,6 +760,14 @@ export function spawnEntity(state: SimState, x: number, y: number, slots: number
      * replay du direct. Aucun tirage RNG, aucun compte d'entité changé : même graine, même état.
      */
     activeSlot: slots === SLOTS.PLAYER ? 0 : -1,
+    /**
+     * LA BRAISE NAÎT AVEC L'AVATAR, PLEINE (`braise.md` B-R2) — et sur le sac du JOUEUR seul,
+     * pour la raison exacte du commentaire ci-dessus : `spawnEntity` sert aussi aux monstres, et
+     * la braise est l'objet du joueur. Ici et non chez l'hôte, parce que le serveur REJOUE les
+     * arrivées par `spawnEntity` (`replay-log.ts`) : la poser dans `veillee.ts` aurait fait
+     * diverger le replay du direct. Aucun tirage, aucun compte d'entité changé.
+     */
+    ...(slots === SLOTS.PLAYER ? { braise: braiseNeuve() } : {}),
     cooldownUntil: 0,
     craftQueue: [],
     hp: 100,

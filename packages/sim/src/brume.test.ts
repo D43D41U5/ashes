@@ -290,6 +290,11 @@ describe('le froid de la nappe (A4, A5)', () => {
     const { sim } = simSousNappe()
     const id = spawnEntity(sim, 40.5, 20.5)
     const e = sim.entities.find((en) => en.id === id)!
+    // ⚠ BRAISE VIDE (`braise.md` B-R6, 2026-10-03) : le corps lit désormais un DÉFICIT en crans, et
+    //   une braise pleine couvre la nappe entière — le corps ne refroidirait pas du tout. La garde
+    //   mesure le froid NU, donc elle doit dire que rien ne le couvre. La loi qu'elle tient (« par
+    //   dérive, pas par couperet ») est inchangée : le déficit d'un cran vaut la nuit d'hiver.
+    e.braise = { niveau: 0, charge: 0 }
     // ⚠ UN CORPS, EN °C (2026-08-22) : 30 °C, déjà refroidi mais au-dessus de l'hypothermie.
     // L'ancien littéral 25 était une JAUGE ; en degrés il vaut `CORPS_MORTEL`, donc le corps
     // partait mort et l'assertion passait par le respawn — le bon vert pour la mauvaise raison.

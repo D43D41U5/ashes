@@ -331,18 +331,46 @@ describe('à bout de souffle, on traîne (A1quinquies, R1 — l’écart soldé)
     //
     // La garde se lit contre `MONSTER_DEFS.wolf.speed` et non contre un nombre écrit :
     // c'est la règle « on ne distance pas des loups » qui est affirmée, pas un réglage.
-    const sim = createSim(5, { map: createEmptyMap(400, 40, TERRAIN_GRASS) })
-    const id = spawnEntity(sim, 5, 20)
-    entity(sim, id).hunger = 100
-    const x0 = entity(sim, id).x
-    const secondes = 30
-    for (let t = 0; t < secondes * BALANCE.TICK_RATE_HZ; t++) {
-      tick(sim, [{ entityId: id, dx: 1, dy: 0, sprint: true }])
+    //
+    // ⚠ ═══ ET LA BRAISE A DÉPLACÉ CE QUE CETTE GARDE MESURAIT (2026-10-03) ═══
+    //
+    // Le vert de cette garde ne venait pas du seul `WINDED_SPEED` : le corps refroidissait dans
+    // cette vallée du jour 1, et `coldSpeedFactor` rognait le pas. Depuis que la braise couvre le
+    // froid (`braise.md` B-R6), un avatar NEUF tient ses 37 °C. MESURÉ le 2026-10-03, les deux
+    // régimes dans le même test : **4,744 t/s braise VIDE contre 4,880 braise COUVRANTE** — pour un
+    // loup à **4,80**.
+    //
+    // ⚠ **4,744 N'EST PAS LA VALEUR D'AVANT LA BRAISE** — c'est le régime « rien ne couvre », où le
+    // corps ressent le déficit (−16 °C). L'air BRUT que lisait le corps d'avant est plus chaud :
+    // MESURÉ sur ce montage, −8,53 °C au plus froid, au-dessus du −16 ressenti sur **600/600**
+    // ticks. La valeur d'avant est donc ENCADRÉE sans avoir été mesurée : **> 4,744** (le corps y
+    // était plus chaud) et **< 4,800** (c'est exactement ce que cette garde affirmait, verte, avant
+    // la braise). *(Le « 4,42 → 4,88 » de l'énoncé d'origine datait du jour de la règle.)*
+    //
+    // ⚠ **C'EST UNE QUESTION DE DESIGN OUVERTE, PAS UN BUG, ET LA GARDE NE LA TRANCHE PAS** : « on
+    //   ne distance pas des loups » (R1) et « être au chaud, c'est être rapide » (une récompense
+    //   gratuite de la braise) se contredisent de 1,7 %. Trois issues possibles — retoucher
+    //   `WINDED_SPEED`, accélérer le loup, ou accepter que la braise paie aussi en vitesse — et
+    //   c'est à Alexis. En attendant, la garde affirme ce qui est VRAI dans les deux cas : la loi de
+    //   R1 sur un corps que rien ne couvre, et le fait que la braise lève le malus.
+    const moyenneSprint = (couverte: boolean): number => {
+      const sim = createSim(5, { map: createEmptyMap(400, 40, TERRAIN_GRASS) })
+      const id = spawnEntity(sim, 5, 20)
+      entity(sim, id).hunger = 100
+      if (!couverte) entity(sim, id).braise = { niveau: 0, charge: 0 }
+      const x0 = entity(sim, id).x
+      const secondes = 30
+      for (let t = 0; t < secondes * BALANCE.TICK_RATE_HZ; t++) {
+        tick(sim, [{ entityId: id, dx: 1, dy: 0, sprint: true }])
+      }
+      return (entity(sim, id).x - x0) / secondes
     }
-    const moyenne = (entity(sim, id).x - x0) / secondes
-    expect(moyenne).toBeLessThan(MONSTER_DEFS.wolf.speed)
+    const moyenne = moyenneSprint(false)
+    expect(moyenne, 'sans rien pour couvrir le froid, la loi de R1 tient').toBeLessThan(MONSTER_DEFS.wolf.speed)
     // …et l'on n'est pas cloué non plus : essoufflé on TRAÎNE, on ne s'arrête pas.
     expect(moyenne).toBeGreaterThan(MONSTER_DEFS.wolf.speed * 0.5)
+    // La braise lève le malus de froid : strictement plus vite, et c'est elle qui rouvre la question.
+    expect(moyenneSprint(true), 'une braise qui couvre rend le pas plein').toBeGreaterThan(moyenne)
   })
 
   it('LE VERROU COMMANDE LE PAS, et à 1 la règle est rigoureusement inerte', () => {

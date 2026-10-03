@@ -61,7 +61,10 @@ export interface ReleveThermique {
   /** `baselineTemperature` — le front compris, l'abri compris ; NI le feu ni la source chaude.
    *  C'est ce que lisent le gel, la flore et l'éveil des Cendreux. */
   lieu: number
-  /** `ambientTemperature` — la cible du corps : le lieu, PLANCHÉ par le feu et la source chaude. */
+  /** `ambientTemperature` — le lieu, PLANCHÉ par le feu et la source chaude.
+   *  ⚠ **CE N'EST PLUS LA CIBLE DU CORPS depuis la braise** (`braise.md` B-R6, 2026-10-03) : le
+   *  corps ne lit plus l'air, il lit un DÉFICIT EN CRANS. Cette ligne reste la bonne lecture du
+   *  LIEU (c'est ce que voient le gel, la flore, les Cendreux), pas celle du vivant. */
   ressenti: number
   /** La jauge de l'avatar, qui DÉRIVE vers l'ambiant (elle est en retard, c'est normal). */
   corps: number
@@ -76,6 +79,19 @@ export interface ReleveThermique {
   niveauNeige: number
   /** `cibleCorporelle(ressenti)` — la température où le corps se STABILISERAIT ici. Le
    *  corps y dérive ; comparer les deux dit si l'on se réchauffe ou si l'on s'éteint. */
+  /**
+   * La demande de la tuile en CRANS de braise (`cransExiges`, B-R4) — zéro = l'air suffit.
+   * C'est la lecture que le corps fait vraiment depuis le 2026-10-03.
+   */
+  demande: number
+  /**
+   * La cible d'un corps que **RIEN NE COUVRE** (déficit plein), dérivée de `demande`.
+   *
+   * ⚠ Ce n'est PAS forcément la cible du joueur : la vraie dépend de la braise qu'il PORTE, et le
+   * snapshot ne la transmet pas encore (`braise.md` § 5.12 — une paire `crans`/`cransMax` à côté de
+   * `temperature`). Tant qu'elle manque, le panneau montre l'ENJEU de la tuile, qui est vrai, au
+   * lieu d'une cible de corps qui serait fausse.
+   */
   cibleCorps: number
   /** La tuile est-elle gelée (`estGele`) ? */
   glace: boolean
@@ -189,7 +205,8 @@ export function createDebugPanel(scene: Phaser.Scene, deps: DebugPanelDeps): Deb
   const vLieu = ligne('lieu')
   const vRessenti = ligne('ressenti')
   const vCorps = ligne('corps')
-  const vCible = ligne('cible corps')
+  const vDemande = ligne('demande')
+  const vCible = ligne('cible nue')
   const vCiel = ligne('ciel')
   const vSol = ligne('sol')
 
@@ -255,8 +272,11 @@ export function createDebugPanel(scene: Phaser.Scene, deps: DebugPanelDeps): Deb
     vRessenti.style.color = teinteAir(r.ressenti)
     vCorps.textContent = un(r.corps)
     vCorps.style.color = teinteCorps(r.corps)
-    // LA CIBLE : où le corps FINIRAIT s'il restait là. Elle dit si l'on est en train de
-    // gagner ou de perdre — un corps à 34 qui vise 36 se réchauffe, à 34 qui vise 27 il meurt.
+    // LA DEMANDE puis LA CIBLE NUE : ce que la tuile exige en crans, et où finirait un corps que
+    // rien ne couvre. Ensemble, elles disent l'ENJEU du lieu — « 0 cran » veut dire qu'on est chez
+    // soi, « 2 crans → 26 °C » qu'il faut une braise chargée pour seulement traverser.
+    vDemande.textContent = `${r.demande} cran${r.demande > 1 ? 's' : ''}`
+    vDemande.style.color = r.demande === 0 ? teinteCorps(37) : teinteAir(-r.demande)
     vCible.textContent = un(r.cibleCorps)
     vCible.style.color = teinteCorps(r.cibleCorps)
     // LE CIEL : l'aspect DÉRIVÉ (pluie ou neige, orage ou blizzard — R11), son emprise ici,
