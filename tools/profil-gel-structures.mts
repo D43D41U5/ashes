@@ -108,10 +108,11 @@ function basesDe(n: number, ou: { tx: number; ty: number }): Structure[] {
   return out
 }
 
-function tickAu(jour: number): number {
+function tickAu(jour: number, nuit = false): number {
   const t0 = (jour - 1) * TICKS_PER_SEASON_DAY + TICKS_PER_CYCLE
   const cs = t0 - (((t0 + sim.cycleOffset) % TICKS_PER_CYCLE) + TICKS_PER_CYCLE) % TICKS_PER_CYCLE
-  const t = cs + Math.floor(dayTicksPourJour(jour) / 2)
+  const d = dayTicksPourJour(jour)
+  const t = cs + (nuit ? d + Math.floor((TICKS_PER_CYCLE - d) / 2) : Math.floor(d / 2))
   if (jourDeSaison(sim, t) !== jour) throw new Error(`jour ${jour} introuvable`)
   return t
 }
@@ -129,6 +130,10 @@ const INSTANTS = [
   { nom: 'Pluies an 1 (borne serrée)', jour: 75, ages: [] as number[] },
   { nom: 'Pluies an 2 (borne élargie)', jour: 75, ages: AGES },
   { nom: 'début des Pluies an 2, jour 65 — RENDU par le souffleMax par palier', jour: 65, ages: AGES },
+  // ⚠ LE CŒUR DE NUIT : le PIRE instant, et c'est pour ça qu'il est là. Aucune des deux bornes ne
+  //   coupe alors en bas (l'écart de nuit descend l'air de lui-même sous le seuil), donc c'est le
+  //   cas où la cuisson paie tout — et où la croissance en N se voit sans rien pour l'amortir.
+  { nom: 'NUIT de mi-Pluies an 2 — aucune borne ne coupe', jour: 75, nuit: true, ages: AGES },
 ]
 
 for (const palier of [0, 3]) {
@@ -136,7 +141,7 @@ for (const palier of [0, 3]) {
   const { eau, chunks } = ecranAutour(ou.tx, ou.ty)
   console.log(`\n╔══ LE PIRE ÉCRAN DU PALIER ${palier} (centre ${ou.tx},${ou.ty}) — ${chunks} chunks, ${eau.length} tuiles d'eau ══`)
   for (const inst of INSTANTS) {
-    sim.tick = tickAu(inst.jour)
+    sim.tick = tickAu(inst.jour, (inst as { nuit?: boolean }).nuit ?? false)
     sim.cendreAge = [...inst.ages]
     console.log(`║ ── ${inst.nom} ──`)
     // ⚠ **LES N S'ENTRELACENT, ILS NE SE SUIVENT PAS.** Mesurés l'un après l'autre, le premier N

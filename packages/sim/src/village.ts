@@ -366,8 +366,106 @@ export function floorAt(structures: readonly Structure[], tx: number, ty: number
   return structures.find((s) => s.tx === tx && s.ty === ty && auMemeEtage(s, etage) && piece(s.type).occupe === 'sol')
 }
 
+/**
+ * ═══ L'INDEX DES STRUCTURES PAR TUILE — mémoïsé par RÉFÉRENCE **et par longueur** ═══
+ *
+ * ⚠ **CE QUI L'A DEMANDÉ, ET C'EST UN CHIFFRE** (décision d'Alexis le 2026-10-03, « Go n2 »).
+ * `isSheltered` (`temperature.ts`) balayait `state.structures` **deux fois par tuile**, et la
+ * couche de glace du client cuit un écran entier d'un coup : MESURÉ sur le pire écran du palier 0
+ * (13 098 tuiles d'eau, 88 chunks), une cuisson passait de **66 ms à 0 structure à 286 ms avec
+ * 800** — 34 images à 120 fps, et ça empirait à chaque mur posé. Le coût était en O(tuiles ×
+ * structures) là où la question est locale : *« qu'y a-t-il SUR cette tuile ? »*.
+ *
+ * ⚠ **IL N'INDEXE QUE LA TUILE, ET C'EST CE QUI LE REND SÛR.** Les listes portent des
+ * RÉFÉRENCES, et tout le reste du prédicat (`auMemeEtage`, `occupe`, `type`) se relit sur l'objet
+ * à chaque lecture. Une mutation en place d'un champ autre que `tx`/`ty` ne peut donc pas le
+ * périmer — ce qui compte : `persistence.ts` réécrit `s.type` (`paroi` → `massif`) sur une
+ * sauvegarde d'août, et aucune structure du dépôt ne change jamais de tuile.
+ *
+ * ⚠ **L'ÉQUIVALENCE D'ORDRE EST UNE PREUVE, PAS UN ESPOIR.** Un `.find` global rend le premier
+ * élément, dans l'ordre du tableau, qui satisfait *(la tuile ∧ P)* ; la liste d'une tuile garde
+ * l'ordre du tableau entre ses membres, donc le premier qui y satisfait P **est** le même. C'est
+ * ce qui autorise à garder « le premier posé gagne » en changeant de structure de données.
+ *
+ * ⚠ **LA PÉREMPTION TIENT À QUATRE CHOSES, ET IL EN A FALLU QUATRE — un rouge l'a prouvé.** Un
+ * retrait refait le tableau (`state.structures = …filter(…)`, deux sites) donc change la
+ * RÉFÉRENCE ; une pose `push` garde la référence mais change la LONGUEUR. J'ai d'abord cru ces
+ * deux-là suffisants, et `temperature.test.ts` (« L'ALTITUDE NE S'ABRITE PAS ») a rougi dans
+ * l'heure : il fait `structures.length = 0` puis deux `push` **à chaque tour de boucle** — même
+ * référence, même longueur, contenu entièrement neuf, et l'abri du palier 2 répondait avec la
+ * carte du palier 1. On compare donc aussi l'IDENTITÉ DU PREMIER ET DU DERNIER élément, ce qui
+ * est O(1) et attrape tout vidage-repeuplement.
+ *
+ * ⚠ **LE TROU QUI RESTE, ÉNONCÉ** : remplacer en place un élément du MILIEU à longueur ET
+ * extrémités constantes (`structures[i] = autre`), ou réordonner par un `sort` en place qui
+ * laisserait les deux bouts — le second casserait « le premier posé gagne » sans rien signaler.
+ * Le dépôt entier (sources **et tests**, c'est l'oubli qui a coûté le rouge) ne porte que quatre
+ * mutations en place sur ces tableaux : deux `length = 0` (`temperature.test.ts`,
+ * `lumiere.test.ts`) et deux `splice(…, 1)` (`grottes.test.ts`), toutes attrapées. Aucun
+ * `sort`/`reverse`/`structures[i] =`.
+ *
+ * ⚠ **ET SI CE TROU S'OUVRAIT UN JOUR, IL SE PAIERAIT EN REPLAY, pas en rendu.** Un index resté
+ * valide à tort persiste tant que la partie tourne, mais une reprise relit le tableau d'un
+ * `JSON.parse` tout frais — donc avec un index neuf et JUSTE. La session continuée et la session
+ * rechargée répondraient alors différemment à la même question, et le Worker et la façade du
+ * client aussi : c'est exactement la classe de divergence pour laquelle `determinisme-sim`
+ * existe. Tout diff qui ajouterait une mutation en place sur `state.structures` passe par lui.
+ *
+ * Le `Map` vit HORS du `SimState` (comme `indexDesConnecteurs`) : l'invariant « pas de Map dans
+ * l'état » n'est pas touché. Et les appelants passent tous un tableau STABLE — vérifié, pas
+ * supposé : `syncStructures` (`snapshot-view.ts`) fait `this.structures = structures`, un
+ * REMPLACEMENT par le tableau du snapshot, jamais un rapiéçage élément par élément ; le client en
+ * reçoit donc un neuf par snapshot, soit **un index par snapshot et non par tuile**. Le dépôt
+ * portait déjà ce raisonnement écrit noir sur blanc pour un second cache mémoïsé sur le même
+ * tableau (`AVANT_PAR_TABLEAU`, `build-ghost.ts`). ⚠ Un appelant qui passerait un `.filter(…)` ou
+ * un `[...structures, hypo]` frais rebâtirait l'index à CHAQUE lecture, ce qui serait **pire
+ * qu'avant** : `build-ghost.ts` en fabrique un (`famillePorte`), et il ne touche pas `roofAt`.
+ */
+const CLE_TUILE = 1 << 16
+type IndexStructures = {
+  parTuile: Map<number, Structure[]>
+  /** L'EMPREINTE du tableau indexé — longueur et identité des deux bouts (voir la docstring). */
+  len: number
+  premier: Structure | undefined
+  dernier: Structure | undefined
+}
+const indexStructures = new WeakMap<readonly Structure[], IndexStructures>()
+const AUCUNE: readonly Structure[] = []
+
+/** Ce qui se tient SUR cette tuile, tous étages et toutes couches — dans l'ordre du tableau. */
+export function structuresDeLaTuile(
+  structures: readonly Structure[],
+  tx: number,
+  ty: number,
+): readonly Structure[] {
+  // Le monde naissant ne porte AUCUNE structure (les balises n'existent pas encore) : on ne
+  // fabrique pas un index vide pour l'interroger ensuite.
+  if (structures.length === 0) return AUCUNE
+  const n = structures.length
+  const premier = structures[0]
+  const dernier = structures[n - 1]
+  let idx = indexStructures.get(structures)
+  if (idx === undefined || idx.len !== n || idx.premier !== premier || idx.dernier !== dernier) {
+    const parTuile = new Map<number, Structure[]>()
+    for (const s of structures) {
+      const k = s.ty * CLE_TUILE + s.tx
+      const l = parTuile.get(k)
+      if (l === undefined) parTuile.set(k, [s])
+      else l.push(s)
+    }
+    idx = { parTuile, len: n, premier, dernier }
+    indexStructures.set(structures, idx)
+  }
+  return idx.parTuile.get(ty * CLE_TUILE + tx) ?? AUCUNE
+}
+
 export function roofAt(structures: readonly Structure[], tx: number, ty: number, etage?: number): Structure | undefined {
-  return structures.find((s) => s.tx === tx && s.ty === ty && auMemeEtage(s, etage) && piece(s.type).occupe === 'toit')
+  // ⚠ LE SEUL DES QUATRE ACCESSEURS QUI PASSE PAR L'INDEX, et c'est délibéré : c'est celui que
+  //   `isSheltered` martèle par tuile. `structureAt`/`solidAt`/`floorAt` nourrissent la collision
+  //   et le pathfinding — donc le tick et le replay —, et personne ne l'a demandé. L'index les
+  //   attend, il ne les prend pas de force.
+  return structuresDeLaTuile(structures, tx, ty)
+    .find((s) => auMemeEtage(s, etage) && piece(s.type).occupe === 'toit')
 }
 
 export function getVillageOf(state: SimState, entityId: number): Village | undefined {

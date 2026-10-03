@@ -5,7 +5,9 @@ import { countOf, inventoryOf, makeInventory } from './items'
 import { createEmptyMap } from './map'
 import { isBlockedAt } from './collision'
 import { createSim, spawnEntity, step, type PlayerAction, type SimState } from './sim'
-import { addStructure, getVillageOf, grantItems, structureAt } from './village'
+import { addStructure, getVillageOf, grantItems, roofAt, structureAt, structuresDeLaTuile, type Structure } from './village'
+import { auMemeEtage } from './etages'
+import { piece } from './pieces'
 
 /** Carte 96×96 (assez grande pour FIRE_MIN_DISTANCE) avec un landmark. */
 function makeSim(): SimState {
@@ -860,5 +862,124 @@ describe('la conservation des items (A21)', () => {
     expect(countOf(entity(sim, chief).inventory, 'berries')).toBe(7)
     const gifts = drainEvents(sim).flatMap((e) => (e.type === 'gift_given' ? [e] : []))
     expect(gifts[0]?.count).toBe(3) // …mais l'événement dit la vérité : 3 baies
+  })
+})
+
+// ═══════════════════════════════════════════════════════════════════════════════════════════════
+// L'INDEX DES STRUCTURES PAR TUILE (2026-10-03, « Go n2 ») — il doit être INVISIBLE
+// ═══════════════════════════════════════════════════════════════════════════════════════════════
+//
+// `isSheltered` balayait `state.structures` deux fois PAR TUILE, et la couche de glace du client
+// cuit un écran entier d'un coup : 66 ms à 0 structure, **286 ms avec 800** sur le pire écran du
+// palier 0. L'index supprime la croissance (MESURÉ : 63,6 ms à 800, plat en N). Ce qu'il ne doit
+// pas faire, c'est changer une réponse — et ces gardes-là ne mesurent rien, elles comparent.
+describe('l’index des structures par tuile — une optimisation qui ne doit rien changer', () => {
+  /** LES PRÉDICATS D'AVANT, mot pour mot — c'est l'oracle, et il balaie en linéaire. */
+  const roofLineaire = (ss: readonly Structure[], tx: number, ty: number, etage?: number): Structure | undefined =>
+    ss.find((s) => s.tx === tx && s.ty === ty && auMemeEtage(s, etage) && piece(s.type).occupe === 'toit')
+  const maisonLineaire = (ss: readonly Structure[], tx: number, ty: number): boolean =>
+    ss.some((s) => s.tx === tx && s.ty === ty && s.type === 'house')
+
+  /**
+   * UNE POPULATION QUI PEUT FAIRE ROUGIR, et c'est le point : le monde JOUÉ porte **zéro
+   * structure** à la naissance (les balises n'existent pas encore), donc une équivalence relevée
+   * dessus serait vide. On empile donc à la main ce qui peut mettre l'index en défaut —
+   * deux toits sur une tuile (l'ordre), trois couches sur une autre (le filtre `occupe`), une
+   * maison (l'autre prédicat), et un toit SOUS LA ROCHE sur la même tuile qu'un toit du sol
+   * (le filtre d'étage, qui est la seule chose que l'index délègue à l'objet).
+   */
+  function peupler(): { sim: SimState; tuiles: { tx: number; ty: number }[] } {
+    const sim = makeSim()
+    const v = 1
+    const pose = (type: Parameters<typeof addStructure>[1], tx: number, ty: number, etage?: number): void => {
+      addStructure(sim, type, tx, ty, v, 0, undefined, undefined, undefined, etage)
+    }
+    pose('roof', 10, 10) // ① deux toits sur la MÊME tuile : le premier doit gagner
+    pose('roof', 10, 10)
+    pose('wall', 12, 12) // ② trois couches sur une tuile : le filtre `occupe` doit trier
+    pose('floor', 12, 12)
+    pose('roof', 12, 12)
+    pose('house', 14, 14) // ③ l'autre prédicat d'`isSheltered`
+    pose('roof', 16, 16) // ④ le sol ET la roche sur la même tuile
+    pose('roof', 16, 16, -1)
+    pose('roof', 18, 18, -1) // ⑤ sous la roche SEULEMENT : le sol doit rendre `undefined`
+    const tuiles: { tx: number; ty: number }[] = []
+    for (let ty = 8; ty <= 20; ty++) for (let tx = 8; tx <= 20; tx++) tuiles.push({ tx, ty })
+    return { sim, tuiles }
+  }
+
+  it('il rend EXACTEMENT ce que rendait le balayage — la boîte entière, et par IDENTITÉ', () => {
+    const { sim, tuiles } = peupler()
+    let toitsVus = 0, maisonsVues = 0, ecartsDEtage = 0
+    for (const { tx, ty } of tuiles) {
+      // ⚠ `toBe` ET NON `toEqual` : l'index rend des RÉFÉRENCES, et c'est tout l'enjeu de
+      //   l'équivalence d'ordre — deux toits de la même tuile sont `toEqual` à un `id` près.
+      const sol = roofAt(sim.structures, tx, ty)
+      expect(sol, `toit au sol en (${tx},${ty})`).toBe(roofLineaire(sim.structures, tx, ty))
+      const roche = roofAt(sim.structures, tx, ty, -1)
+      expect(roche, `toit sous la roche en (${tx},${ty})`).toBe(roofLineaire(sim.structures, tx, ty, -1))
+      expect(structuresDeLaTuile(sim.structures, tx, ty).some((s) => s.type === 'house'), `maison en (${tx},${ty})`)
+        .toBe(maisonLineaire(sim.structures, tx, ty))
+      if (sol !== undefined) toitsVus++
+      if (maisonLineaire(sim.structures, tx, ty)) maisonsVues++
+      if ((sol === undefined) !== (roche === undefined)) ecartsDEtage++
+    }
+    // ⚠ LES TROIS CONTRÔLES POSITIFS : sans eux, « tout concorde » concorderait sur du vide.
+    expect(toitsVus, 'des tuiles portent vraiment un toit au sol').toBeGreaterThanOrEqual(3)
+    expect(maisonsVues, 'une tuile porte vraiment une maison').toBe(1)
+    expect(ecartsDEtage, 'et l’étage TRANCHE sur au moins une tuile (le toit de la salle seul)').toBeGreaterThanOrEqual(1)
+  })
+
+  it('« le premier posé gagne » survit au changement de structure de données', () => {
+    const { sim } = peupler()
+    // La preuve est dans `village.ts` : un `.find` global rend le premier, dans l'ordre du
+    // tableau, qui satisfait (la tuile ∧ P) ; la liste d'une tuile garde cet ordre. Ici on
+    // l'éprouve sur le seul cas qui peut la démentir — deux toits, une tuile.
+    const deux = sim.structures.filter((s) => s.tx === 10 && s.ty === 10)
+    expect(deux, 'le montage pose bien DEUX toits sur (10,10)').toHaveLength(2)
+    expect(roofAt(sim.structures, 10, 10)!.id).toBe(deux[0]!.id)
+    expect(roofAt(sim.structures, 10, 10)).toBe(roofLineaire(sim.structures, 10, 10))
+  })
+
+  it('LA PÉREMPTION : une pose, un retrait, une repose — et la LONGUEUR REVENUE ne ment pas', () => {
+    // ⚠ LA SÉQUENCE EST CHOISIE POUR PIÉGER LE COUPLE (référence, longueur). Le dernier état a
+    //   EXACTEMENT la longueur du premier lu, et un contenu différent : si l'index ne se périmait
+    //   que sur la longueur, il répondrait avec la carte d'il y a trois gestes.
+    const { sim } = peupler()
+    const relire = (quand: string): void => {
+      for (let ty = 8; ty <= 20; ty++) for (let tx = 8; tx <= 20; tx++) {
+        expect(roofAt(sim.structures, tx, ty), `${quand} · (${tx},${ty})`).toBe(roofLineaire(sim.structures, tx, ty))
+      }
+    }
+    relire('à froid') // ← bâtit l'index
+    const n0 = sim.structures.length
+    addStructure(sim, 'roof', 11, 11, 1, 0) // `push` : même RÉFÉRENCE, longueur +1
+    expect(roofAt(sim.structures, 11, 11), 'un toit posé se voit IMMÉDIATEMENT').toBeDefined()
+    relire('après la pose')
+    // Le retrait refait le tableau (`state.structures = …filter(…)`) : la référence change.
+    const victime = sim.structures.find((s) => s.tx === 10 && s.ty === 10)!
+    sim.structures = sim.structures.filter((s) => s.id !== victime.id)
+    expect(sim.structures).toHaveLength(n0)
+    relire('après le retrait')
+    // …et l'on revient à la longueur du PREMIER état lu, avec un contenu qui diffère.
+    addStructure(sim, 'roof', 13, 13, 1, 0)
+    expect(sim.structures).toHaveLength(n0 + 1)
+    expect(roofAt(sim.structures, 13, 13), 'la repose se voit').toBeDefined()
+    relire('après la repose')
+    // ⚠ ═══ LE VIDAGE-REPEUPLEMENT : MÊME RÉFÉRENCE, MÊME LONGUEUR, CONTENU ENTIÈREMENT NEUF ═══
+    //
+    // C'est le cas qui a fait rougir `temperature.test.ts` (« L'ALTITUDE NE S'ABRITE PAS ») une
+    // heure après que j'aie écrit l'index : il fait `structures.length = 0` puis deux `push` à
+    // CHAQUE tour de sa boucle, et l'abri du palier 2 répondait avec la carte du palier 1. Une
+    // péremption réduite au couple (référence, longueur) ne peut pas le voir — d'où l'identité
+    // des deux bouts. La garde vit ici parce qu'elle doit rougir dans le fichier de l'index, pas
+    // seulement par ricochet dans celui d'un autre système.
+    const n1 = sim.structures.length
+    sim.structures.length = 0
+    for (let i = 0; i < n1; i++) addStructure(sim, 'roof', 19 + (i % 2), 19, 1, 0)
+    expect(sim.structures, 'la longueur est REVENUE à l’identique').toHaveLength(n1)
+    expect(roofAt(sim.structures, 10, 10), 'et l’ancien monde a bien disparu').toBeUndefined()
+    expect(roofAt(sim.structures, 19, 19), 'le monde neuf se voit').toBeDefined()
+    relire('après le vidage-repeuplement')
   })
 })

@@ -27,7 +27,7 @@ import { countOf } from './items'
 import { terrainAt } from './map'
 import { auMemeEtage, palierDuSol, terrainAEtage } from './etages'
 import { meteoColdAt } from './meteo'
-import { roofAt, type Structure } from './village'
+import { roofAt, structuresDeLaTuile, type Structure } from './village'
 import { avanceesDepuisAges, froidDeCendre } from './cendre'
 import { froidDeFumerolle } from './fumerolle'
 import { isOnPoiKind } from './poi-discovery'
@@ -112,7 +112,10 @@ export function isSheltered(state: SimState, tx: number, ty: number, etage?: num
   // n'existe pas à l'étage (terrain 0) EST la roche : personne ne s'y tient, « dehors » est faux.
   if (etage !== undefined && etage < 0) return sousLaRoche(state, tx, ty, etage)
   if (roofAt(state.structures, tx, ty) !== undefined) return true
-  if (state.structures.some((s) => s.tx === tx && s.ty === ty && s.type === 'house')) return true
+  // ⚠ PAR L'INDEX AUSSI (2026-10-03) : c'était le SECOND balayage linéaire de cette fonction, et
+  //   les deux ensemble faisaient les 286 ms d'une cuisson sur une base de 800 structures. Le
+  //   prédicat est inchangé au bit — `house` sans condition d'étage, comme le `.some` d'avant.
+  if (structuresDeLaTuile(state.structures, tx, ty).some((s) => s.type === 'house')) return true
   return isOnPoiKind(state, tx, ty, 'grotte')
 }
 

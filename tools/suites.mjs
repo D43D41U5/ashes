@@ -244,7 +244,12 @@ const SUITES = [
   //   au bit aux quatre paliers, le champ du worldgen égal à un recalcul (donc sans PRNG), et le
   //   repli qui ne change pas un verdict pendant que la porte coupe deux fois plus. Suite à 2418,
   //   plancher relevé à 2408.
-  { nom: 'sim', dir: 'packages/sim', args: ['run', '--exclude', 'src/scenario.test.ts'], plancher: 2408 },
+  // 2026-10-03 : +3 gardes L'INDEX DES STRUCTURES PAR TUILE (`village.test.ts`) — l'équivalence
+  //   par IDENTITÉ sur toute une boîte peuplée à la main (le monde joué porte 0 structure, donc
+  //   une équivalence relevée dessus serait vide), « le premier posé gagne », et la péremption
+  //   éprouvée par une séquence qui REVIENT à la longueur du premier état lu. Suite à 2421,
+  //   plancher relevé à 2411.
+  { nom: 'sim', dir: 'packages/sim', args: ['run', '--exclude', 'src/scenario.test.ts'], plancher: 2411 },
   // 2026-09-01 : +10 gardes avec le RENDU des étages (`plateau-art.test.ts`).
   // 2026-09-01 : +9 gardes avec le TRI DES ÉTAGES (strate, découvert — `framing.test.ts`),
   //   suite relevée à 1429 ✓, plancher recalé quelques pourcents dessous.
