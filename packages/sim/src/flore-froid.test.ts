@@ -230,8 +230,11 @@ describe('A5/A7/A8 — la cueillette gèle, le bois non ; la géographie et le b
     expect(rejections(sim)).not.toContain('la plante est gelée')
     expect(countOf(sim.entities[0]!.inventory, 'wood')).toBeGreaterThan(0) // le Feu vit
 
-    // LA FIBRE SÈCHE SE RAMASSE ENCORE (décision d'Alexis 2026-08-20) : `tenue_hiver` en
-    // coûte 2, et c'est la parade au froid — le geler fermerait sa propre contre-mesure.
+    // LA FIBRE SÈCHE SE RAMASSE ENCORE (décision d'Alexis 2026-08-20). ⚠ Son motif d'origine est
+    // PÉRIMÉ depuis le 2026-10-03 : `tenue_hiver` coûtait 2 fibres et « c'était la parade au froid »,
+    // or elle ne planche plus rien (B-R15 — la braise est la seule porte). La règle, elle, tient sur
+    // l'autre moitié de sa raison : une plante gelée fermerait une chaîne de craft entière en hiver.
+    // La chaîne chasse → cuir → couture est à re-motiver ou à couper, et c'est `cuir.md` (B-R15).
     sim.entities[0]!.cooldownUntil = 0
     act(sim, id, { type: 'harvest', nodeId: 3 })
     expect(rejections(sim)).not.toContain('la plante est gelée')

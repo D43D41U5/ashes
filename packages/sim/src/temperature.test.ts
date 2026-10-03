@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest'
-import { BALANCE, COMBAT, TEMPERATURE } from './balance'
+import { BALANCE, BRAISE, COMBAT, TEMPERATURE } from './balance'
+import { chargePleine } from './braise'
 import { respawn } from './combat'
 import { drainEvents } from './events'
 import { addItems } from './items'
@@ -10,8 +11,10 @@ import { createSim, spawnEntity, step, type Entity, type SimState } from './sim'
 import {
   advanceTemperature,
   airNonBorneAt,
+  airRessenti,
   AMBIANT_HYPOTHERMIE,
   ambientTemperature,
+  cransExiges,
   baselineTemperatureAt,
   cibleCorporelle,
   coldDamagePerTick,
@@ -290,37 +293,49 @@ describe('le froid létal & la tenue d’hiver (V2-15/16, fork froid tranché)',
     expect(coldDamagePerTick(cibleCorporelle(plaineHiverNuit))).toBeGreaterThan(0)
   })
 
-  it('la tenue d’hiver plancher AU-DESSUS de l’hypothermie → zéro dégât de froid', () => {
-    expect(T.TENUE_FLOOR).toBeGreaterThan(AMBIANT_HYPOTHERMIE)
-    expect(coldDamagePerTick(cibleCorporelle(T.TENUE_FLOOR))).toBe(0)
+  it('ce qui PLANCHE le ressenti au-dessus de l’hypothermie, c’est la braise — plus un vêtement', () => {
+    // L'HÉRITIÈRE de « la tenue d'hiver plancher au-dessus de l'hypothermie » (retirée le
+    // 2026-10-03, B-R15) : la même inégalité, sur ce qui la tient désormais. Une braise qui COUVRE
+    // rend `AMBIANT_DOUX` quelle que soit la demande — c'est le plancher, et il se vide.
+    for (const demande of [0, 1, 2, 3, 4]) {
+      const couverte = { niveau: demande, charge: chargePleine(demande) } // couvre n'importe quelle demande
+      expect(airRessenti(demande, couverte), `demande ${demande}`).toBe(T.AMBIANT_DOUX)
+    }
+    expect(T.AMBIANT_DOUX).toBeGreaterThan(AMBIANT_HYPOTHERMIE)
+    expect(coldDamagePerTick(cibleCorporelle(T.AMBIANT_DOUX))).toBe(0)
+    // ⚠ ET LE CONTRÔLE QUI MANQUAIT AVANT : un corps que rien ne couvre, lui, prend des dégâts.
+    expect(coldDamagePerTick(cibleCorporelle(airRessenti(1, { niveau: 0, charge: 0 })))).toBeGreaterThan(0)
   })
 
-  it('sur glacier de nuit, la tenue d’hiver SAUVE : le nu MEURT de froid, le vêtu non', () => {
-    // Carte VIDE en glacier (aucune source chaude parasite) + MINUIT : un ambiant franchement
-    // mortel (le plancher `AMBIANT_MIN`), où seule la tenue sauve. L'heure murale, et non un
-    // tick de crépuscule : la longueur du jour est saisonnière depuis `saisons.md` S6.
+  it('sur glacier de nuit, LE VÊTU MEURT COMME LE NU — la tenue ne planche plus rien (B-A9)', () => {
+    // ═══ LE CRITÈRE B-A9 AU MOT : « le froid tue sans vêtement » ═══
+    //
+    // Cette garde affirmait l'inverse exact jusqu'au 2026-10-03 (« la tenue SAUVE »). Elle garde son
+    // montage — carte VIDE en glacier, aucune source chaude parasite, MINUIT à l'heure murale (la
+    // longueur du jour est saisonnière, `saisons.md` S6) — et retourne sa conclusion : ce qui sauve
+    // est la braise, et elle seule. MESURÉ avant le retrait : une tenue dans le sac tenait les
+    // QUATRE paliers du Grand Froid indéfiniment (31,40 °C, 100 PV) ; c'est ça qui n'est plus.
     const cold = (): Parameters<typeof createSim>[1] => ({ map: createEmptyMap(96, 96, 15 /* glacier */), cycleOffset: cycleOffsetForStartHour(0, 1) })
     const froid = createSim(1, cold())
-    const nu = spawn(froid, 5, 5)
+    const nu = sansBraise(spawn(froid, 5, 5))
     const chaud = createSim(1, cold())
-    const vetu = spawn(chaud, 5, 5)
-    addItems(vetu.inventory, { tenue_hiver: 1 }) // on l'habille
-    // Un corps DÉJÀ refroidi (30 °C : sous le confort, au-dessus de l'hypothermie) — assez
-    // bas pour que la chute soit courte, assez haut pour que la tenue ait quelque chose à tenir.
+    const vetu = sansBraise(spawn(chaud, 5, 5))
+    addItems(vetu.inventory, { tenue_hiver: 1 }) // on l'habille — et ça ne change RIEN
+    // Un corps DÉJÀ refroidi (30 °C : sous le confort, au-dessus de l'hypothermie) — assez bas pour
+    // que la chute soit courte. Les deux braises sont VIDES : c'est la prémisse, sans elle le froid
+    // n'atteint aucun des deux corps et la garde mesurerait son montage.
     nu.temperature = 30
     vetu.temperature = 30
     for (let t = 0; t < 8000; t++) {
       advanceTemperature(froid)
       advanceTemperature(chaud)
     }
-    // Le nu dérive vers l'ambiant glacial (0) et FINIT par mourir de froid ; le vêtu,
-    // plancheré au-dessus de l'hypothermie par sa tenue, ne gèle JAMAIS.
     const geleNu = drainEvents(froid).some((e) => e.type === 'entity_died' && e.entityId === nu.id && e.cause === 'cold')
     const geleVetu = drainEvents(chaud).some((e) => e.type === 'entity_died' && e.entityId === vetu.id && e.cause === 'cold')
-    expect(geleNu).toBe(true) // le nu a gelé
-    expect(geleVetu).toBe(false) // le vêtu, jamais
-    expect(vetu.hp).toBe(100) // et il n'a pas pris un seul PV de froid
-    expect(vetu.temperature).toBeGreaterThan(T.CORPS_HYPOTHERMIE) // il reste au-dessus du seuil
+    expect(geleNu, 'le nu gèle — la prémisse : cet air tue').toBe(true)
+    expect(geleVetu, 'ET LE VÊTU AUSSI : plus aucun objet ne garde du froid').toBe(true)
+    // Au bit : le vêtement ne déplace plus la moindre décimale du corps.
+    expect(vetu.temperature).toBe(nu.temperature)
   })
 })
 
@@ -370,12 +385,19 @@ describe('la thermogenèse — la faim suit le froid RESSENTI (décision d’Ale
     expect(penteObservee(state, e, 200)).toBeCloseTo(penteParTick(0), 6)
   })
 
-  it('la tenue d’hiver PLAFONNE la note : le manque est borné à AMBIANT_DOUX − TENUE_FLOOR', () => {
+  it('CE qui PLAFONNE la note, c’est le déficit d’UN cran — plus la tenue d’hiver', () => {
+    // L'héritière de « la tenue PLAFONNE la note » (B-R15). Le plafond existe toujours, il a
+    // changé de main : un cran de retard vaut `BRAISE.DEFICIT_DEGRES`, et c'est le manque que la
+    // thermogenèse paie — quel que soit le froid réel dehors (ici le glacier, bien plus bas).
     const state = createSim(1, { cycleOffset: cycleOffsetForStartHour(12, 1) })
     flatMap(state, 15 /* glacier */)
     const e = spawn(state, 5, 5)
-    addItems(e.inventory, { tenue_hiver: 1 })
-    expect(penteObservee(state, e, 200)).toBeCloseTo(penteParTick(T.AMBIANT_DOUX - T.TENUE_FLOOR), 6)
+    // Le corps garde la braise de sa naissance : pleine de 2 crans, elle n'en COUVRE qu'un dès le
+    // premier tick de froid (`floor`, B-R7b). Le glacier de midi en demande 2 → il manque
+    // EXACTEMENT un cran, tout le temps que dure la mesure.
+    expect(cransExiges(state, e.x, e.y), 'la prémisse : le glacier demande 2 crans à midi').toBe(2)
+    expect(e.braise!.charge, 'et la braise est bien celle de la naissance').toBe(chargePleine(0))
+    expect(penteObservee(state, e, 200)).toBeCloseTo(penteParTick(BRAISE.DEFICIT_DEGRES), 6)
   })
 
   it('au-dessus de l’air doux, AUCUN surcoût — l’Ardeur vit au tarif de base, au bit près', () => {

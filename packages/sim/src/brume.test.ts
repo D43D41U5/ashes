@@ -22,7 +22,6 @@ import { rngNext } from './rng'
 import { createSim, snapshot, spawnEntity, step, type SimState } from './sim'
 import { advanceTemperature, AMBIANT_HYPOTHERMIE, ambientTemperature, baselineTemperature } from './temperature'
 import { calendarScaleForSeasonCycles, dayTicksPourJour, TICKS_PER_CYCLE } from './time'
-import { grantItems } from './village'
 import { foundNpcVillage } from './worldgen'
 
 /** La graine du monde RÉEL rejoué en fin de fichier. */
@@ -304,14 +303,38 @@ describe('le froid de la nappe (A4, A5)', () => {
     expect(e.temperature).toBeGreaterThan(TEMPERATURE.CORPS_HYPOTHERMIE) // …mais pas d'un coup
   })
 
-  it('A5 — la tenue d’hiver PLANCHE : sous la nappe, on remonte vers TENUE_FLOOR', () => {
-    const { sim } = simSousNappe()
-    const id = spawnEntity(sim, 40.5, 20.5)
-    const e = sim.entities.find((en) => en.id === id)!
-    grantItems(sim, id, { tenue_hiver: 1 })
-    e.temperature = 25
-    for (let i = 0; i < 50; i++) advanceTemperature(sim)
-    expect(e.temperature).toBeGreaterThan(25) // le plancher tire vers le haut
+  it('A5 — SOUS LA NAPPE, C’EST LA BRAISE QUI TIRE VERS LE HAUT — et une braise vide ne tire rien', () => {
+    // ═══ L'HÉRITIÈRE DE « la tenue d'hiver PLANCHE » (B-R15, 2026-10-03) ═══
+    //
+    // ⚠ L'ancienne garde ne pouvait plus échouer, et c'est l'audit de fusion qui l'a montré : depuis
+    // la braise, le corps remontait **au bit près** (25,1194 °C) avec ou sans tenue — `tenue_hiver`
+    // y était devenue décorative. Pire, son prédicat (`> 25`) était déjà vacant AVANT la braise (le
+    // nu remontait à 25,03). On la remplace par le même énoncé sur ce qui plancher désormais, et
+    // avec les DEUX régimes : c'est l'écart entre eux qui fait la garde.
+    const sous = (couverte: boolean, ticks: number, depart: number): { t: number; hp: number } => {
+      const { sim } = simSousNappe()
+      const id = spawnEntity(sim, 40.5, 20.5)
+      const e = sim.entities.find((en) => en.id === id)!
+      if (!couverte) e.braise = { niveau: 0, charge: 0 }
+      e.temperature = depart
+      for (let i = 0; i < ticks; i++) advanceTemperature(sim)
+      return { t: e.temperature, hp: e.hp }
+    }
+    // ① À 50 ticks, les DEUX remontent — mais pas vers le même endroit, donc pas à la même vitesse.
+    //    (Un corps à 25 vise 37 s'il est couvert, 26 s'il ne l'est pas : à vide il remonte, et
+    //    s'arrête juste SOUS l'hypothermie. C'est pour ça qu'un simple « ça descend » serait faux.)
+    expect(sous(true, 50, 25).t, 'couvert, il remonte').toBeGreaterThan(25)
+    expect(sous(true, 50, 25).t, 'et plus vite que le même corps à vide').toBeGreaterThan(sous(false, 50, 25).t)
+    // ② Ce que ça devient, sur un corps SAIN qui entre sous la nappe — le vrai cas de jeu : la
+    //    braise décide du côté du seuil où l'on se stabilise, donc de la vie. (Partir de 25 ici
+    //    serait trompeur : un corps déjà sous l'hypothermie saigne pendant toute sa remontée, et
+    //    les deux régimes mourraient — ce n'est pas la nappe qu'on mesurerait, c'est le départ.)
+    const couvert = sous(true, 10_000, TEMPERATURE.CORPS_SAIN)
+    const vide = sous(false, 10_000, TEMPERATURE.CORPS_SAIN)
+    expect(couvert.t, 'couvert, la nappe ne lui prend pas un dixième').toBe(TEMPERATURE.CORPS_SAIN)
+    expect(couvert.hp, 'et intact').toBe(100)
+    expect(vide.t, 'à vide, il plafonne SOUS l’hypothermie').toBeLessThan(TEMPERATURE.CORPS_HYPOTHERMIE)
+    expect(vide.hp, 'donc il saigne du froid').toBeLessThan(100)
   })
 
   it('A5 — la bulle d’un Feu de village tient la nappe dehors', () => {

@@ -162,9 +162,10 @@ export function actLaw(paliers: readonly number[], pas = 0, plafond?: number): A
  *
  * Chaque cardinal peut GLISSER d'un tour à l'autre, avec sa propre borne. Ce sont les
  * cardinaux VOISINS de l'hiver qui glissent vers lui ; son cœur, lui, ne bouge pas — mesuré
- * (`saisons.md` S12) : trois planchers rendent « plus froid » inerte, dont `TENUE_FLOOR` qui
- * plafonne le ressenti d'un joueur habillé à −5,2 °C quoi qu'il fasse dehors. Ce qui monte
- * d'une année sur l'autre, c'est donc le NOMBRE DE JOURS sous les seuils, jamais le fond.
+ * (`saisons.md` S12) : des planchers rendent « plus froid » inerte. Ce qui monte d'une année sur
+ * l'autre, c'est donc le NOMBRE DE JOURS sous les seuils, jamais le fond. *(Le troisième de ces
+ * planchers était `TENUE_FLOOR`, retiré le 2026-10-03 avec B-R15 ; depuis, c'est la BRAISE qui
+ * borne ce qu'un corps ressent, et elle se vide — un plancher qu'il faut entretenir.)*
  */
 export interface Cardinal {
   /** Le jour DE L'ANNÉE où la valeur est atteinte (1..`YEAR_DAYS`), au cœur de sa saison. */
@@ -478,11 +479,13 @@ export const TEMPERATURE = {
   K_DRIFT: 0.0002,
   /** Isolation du corps nu (stub ; la Couture la fera monter plus tard). */
   INSULATION_BODY: 1,
-  /** LA TENUE D'HIVER PLAFONNE LE FROID (spec cuir/température, V2-16). Porter une
-   *  `tenue_hiver` plancher l'ambiant ressenti à cette valeur — au-dessus de
-   *  AMBIANT_HYPOTHERMIE, donc le froid ne tue plus : c'est ce qui rend la plaine survivable en
-   *  acte III. Vraie protection (un plancher), pas un simple ralentissement de dérive. */
-  TENUE_FLOOR: -5.2,
+  /*
+   * ⚠ `TENUE_FLOOR` A ÉTÉ RETIRÉ LE 2026-10-03 (B-R15, `braise.md` étape 5). Il valait −5,2 °C et
+   * planchait le ressenti de quiconque POSSÉDAIT une `tenue_hiver` — donc, MESURÉ, les quatre
+   * paliers du Grand Froid survivables indéfiniment avec une braise vide. « La braise est la seule
+   * porte du froid » : plus de plancher de vêtement, plus d'exception. Ne pas le réintroduire sans
+   * rouvrir B-R15 ; l'objet, lui, existe toujours (sa chaîne est une question de `cuir.md`).
+   */
   /**
    * L'AIR DOUX — au-dessus, un corps nu tient ses 37 et ne subit RIEN (ex-`COMFORT`, jauge 60).
    * C'est le genou de `cibleCorporelle` ET la borne chaude de la fonte des neiges (`gel.ts`) :

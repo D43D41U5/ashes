@@ -21,7 +21,8 @@ import {
 } from './cendre'
 import { BALANCE, MORTS, NIGHT_HUNT, TEMPERATURE, TERRAIN_GRASS } from './balance'
 import { FUMEROLLE, toutesLesFumerolles } from './fumerolle'
-import { AMBIANT_HYPOTHERMIE, baselineTemperatureAt } from './temperature'
+import { airRessenti, AMBIANT_HYPOTHERMIE, baselineTemperatureAt } from './temperature'
+import { chargePleine } from './braise'
 import { createSim, type SimState } from './sim'
 import { createEmptyMap } from './map'
 import { advanceLieuxBrules, densiteDeBase, densiteDesMorts, rodeursPortes } from './morts'
@@ -454,13 +455,19 @@ describe('A28 — sur le monde JOUÉ, le froid suit les bandes (et la frange res
       .toBeLessThan(moy[4]! - CENDRE.FROID_COEUR / 2)
   })
 
-  it('⚠ NI LA TENUE NI LE FEU NE PEUVENT ÊTRE DÉFAITS PAR LE FROID DE LA CENDRE', () => {
-    // La moitié SÛRE de la décision, et elle est structurelle : l'ambiant est un `max`, donc
-    // la tenue d'hiver plancher le ressenti à `TENUE_FLOOR`. Si un jour ce plancher passait
-    // sous la ligne d'hypothermie, un joueur VÊTU mourrait dans la cendre — cette garde
-    // rougirait. (Le feu, lui, plancher bien plus haut : `FIRE_WARMTH`.)
-    expect(TEMPERATURE.TENUE_FLOOR).toBeGreaterThan(AMBIANT_HYPOTHERMIE)
+  it('⚠ NI LA BRAISE NI LE FEU NE PEUVENT ÊTRE DÉFAITS PAR LE FROID DE LA CENDRE', () => {
+    // La moitié SÛRE de la décision, et elle est structurelle. ⚠ Jusqu'au 2026-10-03 elle se lisait
+    // sur `TENUE_FLOOR` — le plancher d'un VÊTEMENT, retiré avec B-R15 (« la braise est la seule
+    // porte du froid »). Les deux planchers qui restent sont la braise et le feu : le premier rend
+    // `AMBIANT_DOUX` tant qu'il couvre, le second chauffe de `FIRE_WARMTH`. Si l'un des deux passait
+    // sous la ligne d'hypothermie, un joueur ÉQUIPÉ mourrait dans la cendre — cette garde rougirait.
+    expect(TEMPERATURE.AMBIANT_DOUX).toBeGreaterThan(AMBIANT_HYPOTHERMIE)
     expect(TEMPERATURE.FIRE_WARMTH).toBeGreaterThan(AMBIANT_HYPOTHERMIE)
+    // Et le plancher de la braise se LIT, il ne se suppose pas : couverte, elle rend le doux quelle
+    // que soit la profondeur de cendre sous les pieds (le froid de cendre entre dans la DEMANDE).
+    for (const demande of [1, 2, 3]) {
+      expect(airRessenti(demande, { niveau: demande, charge: chargePleine(demande) })).toBe(TEMPERATURE.AMBIANT_DOUX)
+    }
   })
 
   it('un FAUX SimState — sans champ, sans âges — ne jette pas et ne refroidit rien', () => {

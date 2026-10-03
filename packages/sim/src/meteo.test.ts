@@ -46,6 +46,7 @@ import {
   BALANCE, CENDREUX, FAUNA, GEL, METEO, MONSTER_DEFS, TEMPERATURE, TERRAIN_GLACIER, TERRAIN_GRASS,
   TERRAIN_MARSH, TERRAIN_SNOW,
 } from './balance'
+import { chargePleine } from './braise'
 import { brumeJourEligible } from './brume'
 import { CHRONICLE_EVENT_TYPES, chronicleFromEvents } from './chronicle'
 import { drainEvents, type SimEvent } from './events'
@@ -68,7 +69,7 @@ import {
 import { nearestPrey, spawnMonster, type Monster } from './monsters'
 import { createSim, snapshot, spawnEntity, step, type PlayerAction, type SimState } from './sim'
 import {
-  advanceTemperature, AMBIANT_HYPOTHERMIE, ambientTemperature, baselineTemperature, cibleCorporelle,
+  advanceTemperature, cransExiges, AMBIANT_HYPOTHERMIE, ambientTemperature, baselineTemperature,
   dehorsSansMeteo, isSheltered, socleDuJour,
 } from './temperature'
 import {
@@ -617,28 +618,46 @@ describe('R4 — le froid des fronts (A3)', () => {
     expect(e.hp).toBe(100) // aucun dégât de froid dans la bulle
   })
 
-  it('A3 planchers — la tenue d’hiver PLANCHE : le corps ne descend jamais sous sa cible, zéro dégât', () => {
-    // La calibration qui rend le plancher SÛR : au-dessus de l'hypothermie, donc sans dégât.
-    expect(TEMPERATURE.TENUE_FLOOR).toBeGreaterThan(AMBIANT_HYPOTHERMIE)
-    // ⚠ LES TROIS BORNES D'AVANT ÉTAIENT DE LA JAUGE, ET ELLES NE GARDAIENT PLUS RIEN : un
-    // corps posé à 60 (au-dessus de `CORPS_SAIN` = 37 en °C) qu'on comparait à `TENUE_FLOOR`
-    // (−5,2, une borne d'AMBIANT) et à « moins de 45 ». Le plancher se dit sur ce qu'il borne
-    // vraiment : l'ambiant ressenti sous tenue vaut `TENUE_FLOOR`, donc le corps converge vers
-    // `cibleCorporelle(TENUE_FLOOR)` et ne passe jamais dessous.
-    const plancherDuCorps = cibleCorporelle(TEMPERATURE.TENUE_FLOOR)
-    expect(plancherDuCorps).toBeGreaterThan(TEMPERATURE.CORPS_HYPOTHERMIE) // sinon la tenue ne protège de rien
+  it('A3 planchers — AU CŒUR DU BLIZZARD, LA BRAISE PLANCHE : zéro dégât tant qu’elle couvre', () => {
+    // ═══ L'HÉRITIÈRE DE « la tenue d'hiver PLANCHE » (B-R15, retrait du 2026-10-03) ═══
+    //
+    // Le même énoncé — « le corps ne descend jamais sous sa cible, zéro dégât » — sur ce qui le
+    // tient désormais. Une braise qui COUVRE rend `AMBIANT_DOUX`, dont la cible est `CORPS_SAIN` :
+    // le plancher est donc le confort lui-même, et il ne cède que quand la barre cède. ⚠ Et la
+    // différence avec la tenue n'est pas cosmétique : la tenue protégeait par simple POSSESSION et
+    // pour toujours ; la braise se vide, donc ce plancher-ci est un plancher qu'il faut entretenir.
     const { sim, coeur } = simSousBlizzard()
     const id = spawnEntity(sim, coeur, 20.5)
     const e = sim.entities.find((en) => en.id === id)!
-    grantItems(sim, id, { tenue_hiver: 1 })
+    const demandeDepart = cransExiges(sim, e.x, e.y)
+    expect(demandeDepart, 'la prémisse : le cœur du blizzard EXIGE de la braise').toBeGreaterThan(0)
+    // Une braise d'ARBRE (niveau 2 → quatre crans couverts) : de quoi couvrir le cœur d'un blizzard
+    // de bout en bout. ⚠ La braise de DÉPART n'y suffit pas — elle couvre 1 cran (`floor`) et le
+    // cœur en demande 2 par moments : MESURÉ, le corps y creuse un petit creux (36,998 °C). C'est le
+    // jeu ; ce que cette garde affirme, c'est que le plancher EXISTE quand la barre suit.
+    e.braise = { niveau: 2, charge: chargePleine(2) }
     e.temperature = TEMPERATURE.CORPS_SAIN
     for (let i = 0; i < 8000; i++) {
       advanceTemperature(sim)
-      expect(e.temperature).toBeGreaterThanOrEqual(plancherDuCorps) // JAMAIS sous le plancher
+      // JAMAIS un dixième sous le confort : sa braise a de quoi couvrir pendant tout ce temps.
+      expect(e.temperature).toBe(TEMPERATURE.CORPS_SAIN)
     }
-    expect(e.temperature).toBeLessThan(TEMPERATURE.CORPS_SAIN) // le blizzard a bien mordu…
-    expect(e.temperature).toBeGreaterThan(TEMPERATURE.CORPS_HYPOTHERMIE) // …c'est le plancher qui a tenu
     expect(e.hp).toBe(100)
+    // Et ça s'est PAYÉ : la barre a reculé — d'au plus un tick par tick, et pas de zéro (la vidange
+    // ne court que quand la braise couvre, donc l'égalité exacte dépendrait de la fenêtre du front).
+    expect(e.braise.charge).toBeLessThan(chargePleine(2))
+    expect(e.braise.charge).toBeGreaterThanOrEqual(chargePleine(2) - 8000)
+    // ⚠ CONTRÔLE POSITIF — le blizzard mord bel et bien : le même corps, braise vide, y descend
+    //   sous l'hypothermie. Sans cette moitié, la garde du dessus pourrait être celle d'un montage
+    //   où il ne fait pas froid (c'est le défaut qu'avait l'ancienne version de A5 dans brume.test).
+    const { sim: nu, coeur: coeurNu } = simSousBlizzard()
+    const idNu = spawnEntity(nu, coeurNu, 20.5)
+    const eNu = nu.entities.find((en) => en.id === idNu)!
+    eNu.braise = { niveau: 0, charge: 0 }
+    eNu.temperature = TEMPERATURE.CORPS_SAIN
+    for (let i = 0; i < 8000; i++) advanceTemperature(nu)
+    expect(eNu.temperature).toBeLessThan(TEMPERATURE.CORPS_HYPOTHERMIE)
+    expect(eNu.hp).toBeLessThan(100)
   })
 
   it('R4 gradient — traversée perpendiculaire : la température descend vers le cœur, remonte en face, jamais un mur', () => {
@@ -880,7 +899,11 @@ describe('R6 — la faune se terre (A5)', () => {
     })
     const ambients = (): number => sim.monsters.filter((m) => m.ambient).length
     const a = spawnEntity(sim, 80.5, 80.5)
-    grantItems(sim, a, { tenue_hiver: 1 }) // le front mord (T2) : la tenue PLANCHE — on mesure la faune, pas le froid
+    // ⚠ Le front mord (T2) et on mesure la FAUNE, pas le froid : avant le 2026-10-03 on habillait ce
+    // corps d'une `tenue_hiver` pour le soustraire au froid. Elle ne planche plus rien (B-R15) —
+    // inutile de la remplacer : un avatar naît avec une braise PLEINE, qui couvre déjà la bande.
+    const avatar = sim.entities.find((en) => en.id === a)!
+    expect(avatar.braise, 'la prémisse du montage : il a de quoi se couvrir').toBeDefined()
     let plafond = 0
     for (let t = 0; t < 60 * BALANCE.TICK_RATE_HZ; t++) {
       step(sim, [])

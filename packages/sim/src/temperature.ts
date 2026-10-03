@@ -23,7 +23,6 @@ import { effetsDuJour } from './modificateur'
 import { brumeColdAt } from './brume'
 import { fireWarmthFactor } from './fire'
 import { die } from './combat'
-import { countOf } from './items'
 import { terrainAt } from './map'
 import { auMemeEtage, palierDuSol, terrainAEtage } from './etages'
 import { meteoColdAt } from './meteo'
@@ -735,24 +734,21 @@ export function advanceTemperature(state: SimState): void {
     // du tout : `airRessenti` porte le feu et l'abri par la demande (B-R5), et borne le reste au
     // déficit en crans. C'est ce qui permet à l'air du monde de descendre à −100 °C au sommet sans
     // qu'un seul nombre du modèle du corps ne bouge.
-    let ambient = airRessenti(demande, braise)
-    // LA TENUE D'HIVER PLAFONNE LE FROID (spec cuir/température) : la porter plancher
-    // l'ambiant ressenti — au-dessus de l'hypothermie, donc survivable. C'est ce qui
-    // donne une raison à toute la chaîne chasse→cuir→couture, et rend la plaine
-    // franchissable en acte III. Vraie protection, pas un simple ralentissement de dérive.
     //
-    // ⚠ **ET ELLE ÉCRASE ENCORE LA BRAISE — BIEN PLUS QUE « UN CRAN », ET IL FAUT LE DIRE.**
-    // Appliquée APRÈS le déficit, elle plancher le ressenti à −5,2 °C, dont la cible corporelle
-    // vaut **31,4 °C** — au-dessus de l'hypothermie (29). Donc, braise VIDE au cœur du Grand
-    // Froid, MESURÉ sur 60 000 ticks : sans tenue le corps meurt (tick 8762 au palier 0, 7435 aux
-    // paliers 1 à 3) ; **avec une tenue dans le sac, les QUATRE paliers sont survivables
-    // indéfiniment** (31,40 °C, 100 PV, aucune mort). Toute l'échelle de B-R4b est donc
-    // actuellement neutralisée par un objet cousu — et la braise brûle quand même sous la tenue
-    // (5 000 ticks de charge consommés en 5 000 ticks au sommet). C'est exactement la
-    // contradiction que B-R15 tranche — *« la braise est la SEULE porte du froid »* — et son
-    // retrait est l'étape 5 de `braise.md` § 3, avec les six fichiers de test que B-A9 nomme.
-    // Gardée ici une tranche pour ne pas casser ce qu'elle ne remplace pas encore.
-    if (countOf(entity.inventory, 'tenue_hiver') > 0) ambient = Math.max(ambient, T.TENUE_FLOOR)
+    // ⚠ **ET C'EST LA DERNIÈRE ÉTAPE DU CHEMIN** : plus rien ne replanche ce que la braise a rendu.
+    // ═══ IL N'Y A PLUS DE VÊTEMENT SUR LE CHEMIN DU FROID (B-R15, étape 5 — 2026-10-03) ═══
+    //
+    // Une `tenue_hiver` planchait ici le ressenti à `TENUE_FLOOR` = −5,2 °C, dont la cible
+    // corporelle vaut 31,4 °C — au-dessus de l'hypothermie. MESURÉ avant son retrait : braise VIDE
+    // au cœur du Grand Froid, **une tenue dans le sac rendait les QUATRE paliers survivables
+    // indéfiniment** (31,40 °C, 100 PV) quand un corps sans elle mourait au tick 7435. Toute
+    // l'échelle de B-R4b était donc neutralisée par un objet cousu, et par simple POSSESSION.
+    // *« La braise est la SEULE porte du froid »* : elle l'est maintenant, sans exception à lire.
+    //
+    // ⚠ L'OBJET, LUI, EXISTE ENCORE (recette, poids, encyclopédie) : c'est la chaîne
+    // chasse → cuir → couture qu'il faut re-motiver ou couper, et B-R15 la renvoie à `cuir.md` —
+    // une décision, pas un retrait mécanique. Ce qui sort ici, c'est le PLANCHER.
+    const ambient = airRessenti(demande, braise)
     // Le surcoût suit l'EFFORT de compensation (l'écart au doux), pas la température atteinte :
     // lutter contre le froid coûte à manger, PERDRE la lutte coûte des PV (l'hypothermie,
     // plus bas). Près d'un feu, ambiant ≥ doux → zéro surcoût : se chauffer nourrit.
