@@ -179,7 +179,16 @@ function souffleMaxDuPalier(map: SimState['map'], palier: number): number {
  * On sous-estime donc toujours la température : si CETTE valeur est déjà trop chaude pour
  * geler, aucune tuile ne gèle — c'est la seule chose que le court-circuit affirme.
  */
-function plancherDuPalier(state: SimState, palier: number): number {
+/**
+ * ⚠ **EXPORTÉE POUR UNE SEULE RAISON : SA MONOTONIE EST UN CONTRAT QUE RIEN D'AUTRE NE PEUT
+ * TENIR.** `gelPossible` ne lit que le plus HAUT palier en supposant qu'il a le plancher le plus
+ * BAS ; or depuis le 2026-10-02 cette décroissance n'est plus structurelle (voir `souffleMaxDuPalier`,
+ * qui CROÎT avec le palier), et elle est INOBSERVABLE par la porte : `gelPossibleAuPalier` est un
+ * SEUIL, et aux paliers ≥ 1 il est franchi à toute saison — une implication entre portes y est donc
+ * vraie quoi qu'il arrive. C'est la valeur qu'il faut lire, pas son verdict. (Sa jumelle
+ * `plafondDuPalier` était publique depuis le premier jour, pour la même sorte de garde.)
+ */
+export function plancherDuPalier(state: SimState, palier: number): number {
   // On refait le calcul de `getGameTime` au lieu de l'appeler, et pour UNE raison MESURÉE :
   // il ALLOUE son résultat (un objet de cinq champs). Cette borne est interrogée une fois
   // par tuile bloquante — des centaines de milliers de fois par champ de flux —, or on n'a

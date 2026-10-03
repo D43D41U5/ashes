@@ -20,7 +20,7 @@
  */
 import { describe, expect, it } from 'vitest'
 import {
-  BALANCE, GEL, TEMPERATURE, TERRAINS,
+  BALANCE, GEL, METEO, TEMPERATURE, TERRAINS,
   TERRAIN_DEEP_WATER, TERRAIN_FOREST, TERRAIN_GRASS, TERRAIN_LARCH,
   TERRAIN_OLD_GROWTH, TERRAIN_PINE, TERRAIN_SHALLOW_WATER, TERRAIN_SNOW, TERRAIN_WILLOW,
   YEAR_DAYS,
@@ -32,11 +32,12 @@ import { drainEvents } from './events'
 import { placeHuntingGrounds } from './faune'
 import {
   advanceDegel, bandeDuCycle, estGele, feuillageDenude, gelPossible, gelPossibleAuPalier,
-  jourDeDefeuillaison, jourDeRefeuillaison, neigeAuSol, plafondDuPalier, vitesseSurGlace,
+  jourDeDefeuillaison, jourDeRefeuillaison, neigeAuSol, plafondDuPalier, plancherDuPalier,
+  vitesseSurGlace,
 } from './gel'
 import { createEmptyMap, isBlockingTile, isWater, MARCHABLE, setTile, terrainAt, type WorldMap } from './map'
 import { modificateurDeSaison } from './modificateur'
-import { fenetreDe, frontDuCycle, largeurDe, neigeA, type MeteoFront } from './meteo'
+import { coldMaximal, fenetreDe, frontDuCycle, largeurDe, meteoColdAt, neigeA, type MeteoFront } from './meteo'
 import { spawnMonster } from './monsters'
 import { computeFlowField, findPath } from './pathfinding'
 import { createSim, snapshot, spawnEntity, step, type SimState } from './sim'
@@ -1800,5 +1801,230 @@ describe('les deux bornes par palier : « ici rien ne gèle » et « ici tout g�
     //    périmerait au premier réglage du semis de fumerolles.
     expect(coupeSans, `la porte doit déjà couper quelque part sans le champ (sur ${points} points)`).toBeGreaterThan(0)
     expect(coupeAvec, `le champ rend des points à la porte (mesuré le 02/10 : 126 contre 74 sur 480)`).toBeGreaterThan(coupeSans)
+  })
+
+  // ═════════════════════════════════════════════════════════════════════════════════════════
+  // LES DEUX TROUS DE COUVERTURE RAPPORTÉS PAR `determinisme-sim` LE 2026-10-03
+  // ═════════════════════════════════════════════════════════════════════════════════════════
+
+  it('LES DEUX BORNES TIENNENT SOUS UN FRONT — et la marge météo du plancher est EXACTEMENT nulle', () => {
+    // ⚠ TOUT LE BLOC CI-DESSUS TOURNE EN `meteoActive: false`, DONC SANS FRONT : la moitié météo
+    // des deux preuves n'était éprouvée par aucun test, alors que chacune tient à une inégalité
+    // qui vit dans `meteo.ts` et non ici — donc à une table qu'un réglage de météo peut changer
+    // sans jamais toucher au gel.
+    //
+    //  ① LE PLAFOND (« ici tout gèle ») ne retranche AUCUN terme météo : sa justesse exige que la
+    //    météo ne puisse que REFROIDIR, c'est-à-dire `meteoColdAt ≥ 0`. Un `COLD` négatif — un
+    //    redoux de pluie, un vent tiède — rendrait le majorant faux et la porte mentirait.
+    //    C'est affirmé ici dans sa forme FORTE et locale : `T(avec front) ≤ T(sans front)`, sur
+    //    la même tuile au même tick. (Le majorant SANS météo, lui, est balayé exhaustivement par
+    //    la garde ③ ; ce qui manquait est le terme qui s'y ajoute.)
+    //
+    //  ② LE PLANCHER (« ici rien ne gèle ») retranche `coldMaximal(type)` — le PLEIN froid de la
+    //    classe — là où la tuile ne prend que `effetOrage(…) × intensite`. Il faut donc
+    //    `effetOrage ≤ coldMaximal` ET `intensite ≤ 1` ; sans ça la borne cesse d'être un
+    //    minorant et la porte affirme « rien ne gèle » sous un blizzard.
+    //
+    // ⚠ ET ② EST TENDUE À ZÉRO — c'est pourquoi la garde la MESURE au lieu de s'en remettre à la
+    //   lecture des tables : sous un ORAGE, `partDeBlizzard` sature à 1 dès que T₀ passe sous
+    //   `LIMITE_NEIGE − BLIZZARD_RAMPE`, donc `effetOrage` vaut `ORAGE_FROID.COLD` (22) =
+    //   `coldMaximal`, et `intensite` vaut exactement 1 dès qu'on est à plus de `RAMPE × largeur`
+    //   des deux bords de la bande. Une borne LARGE passerait ① et ② sans rien protéger — la
+    //   leçon de `F-borne-bis` : on exige donc le CONTACT, au bit.
+    const sim = createSim(SEED, { map, calendarScale: 1, meteoActive: true })
+    // LA CENDRE VIEILLIE EN PLUS DU FRONT : les cinq termes de l'exposition et le terme météo
+    // sont vivants ENSEMBLE, ce qu'aucune garde ne jouait — et c'est le montage le plus dur.
+    sim.cendreAge = agesDe(120)
+    const seuilRef = (terrain: number): number | undefined =>
+      terrain === TERRAIN_SHALLOW_WATER ? GEL.SEUIL_GUE : terrain === TERRAIN_DEEP_WATER ? GEL.SEUIL_PROFOND : undefined
+    /** Les tuiles à froid local (là où les cinq termes jouent) + une sur 31 de toute l'eau. Le
+     *  balayage exhaustif est déjà payé par la garde ③ ; le terme qui s'ajoute ici est CONTINU
+     *  en tuile (une rampe de bande), donc un échantillon le voit — et on le VÉRIFIE plus bas
+     *  en exigeant que le front morde vraiment sur ces cibles. */
+    const cibles: { tx: number; ty: number; p: number }[] = []
+    for (const [p, tuiles] of EAU) for (let k = 0; k < tuiles.length; k++) {
+      const i = tuiles[k]!
+      const tx = i % map.width, ty = Math.floor(i / map.width)
+      if (k % 31 === 0 || froidDeFumerolleDeTuile(sim, tx, ty) + froidDeCendre(sim, tx, ty) > 0) cibles.push({ tx, ty, p })
+    }
+    expect(cibles.length, 'des cibles').toBeGreaterThan(400)
+
+    const CLASSES = Object.keys(METEO.COLD) as MeteoFront['type'][]
+    expect(CLASSES, 'la garde doit VOIR les quatre classes de front').toHaveLength(4)
+    const majorant: string[] = []
+    const minorant: string[] = []
+    const divergences: string[] = []
+    const refroidi: string[] = []
+    /** La marge du minorant, et les instants où la porte COUPE vraiment, par classe — ce qui dit
+     *  laquelle des quatre classes éprouve le court-circuit, et laquelle ne peut pas. */
+    let margeMin = Number.POSITIVE_INFINITY
+    const coupures = new Map<string, number>()
+    /** Le pire froid RÉELLEMENT appliqué, par classe — contre `coldMaximal`, qui est ce que le
+     *  plancher retranche. Mordre = l'écart `sans − avec` est non nul sur une cible. */
+    const pire = new Map<string, number>()
+    const morsures = new Map<string, number>()
+    let vus = 0, geles = 0
+    for (const type of CLASSES) {
+      // `vent_de_cendre` entre toujours par le même bord dans le jeu (`meteo.ts:283`) : on garde
+      // sa géométrie, les trois autres balaient depuis l'ouest.
+      const edge: MeteoFront['edge'] = type === 'vent_de_cendre' ? 3 : 0
+      for (const [nom, jour, nuit] of INSTANTS) {
+        sim.tick = tickDe(sim, jour, nuit)
+        // LE TÉMOIN D'ABORD, sur la même tuile et le même tick : c'est lui qui donne à ① sa
+        // forme locale, et il ne coûte qu'une lecture puisqu'on les compare deux à deux.
+        sim.meteo = null
+        const sans = cibles.map((k) => baselineTemperature(sim, k.tx, k.ty))
+        const front = frontSurLeTick(sim, type, edge)
+        expect(sim.meteo, `${type} à ${nom} : le front est posé`).toBe(front)
+        const plafonds = new Map<number, number>()
+        const planchers = new Map<number, number>()
+        for (const [p] of EAU) {
+          plafonds.set(p, plafondDuPalier(sim, p))
+          planchers.set(p, plancherDuPalier(sim, p))
+          if (!gelPossibleAuPalier(sim, p)) coupures.set(type, (coupures.get(type) ?? 0) + 1)
+        }
+        for (let k = 0; k < cibles.length; k++) {
+          const { tx, ty, p } = cibles[k]!
+          const seuil = seuilRef(terrainAt(map, tx, ty))!
+          const t = baselineTemperature(sim, tx, ty)
+          const plafond = plafonds.get(p)!
+          // ① le majorant, et sa forme locale — la météo ne peut que refroidir.
+          if (t > plafond && majorant.length < 8) majorant.push(`${type} · ${nom} · p${p} (${tx},${ty}) : ${t} > plafond ${plafond}`)
+          // ② en DIRECT, et c'est la clause qui compte : l'équivalence de `estGele` ne peut PAS
+          //   voir un plancher faux sous l'orage, parce qu'il y retranche 22 °C de plus et que la
+          //   porte n'y coupe alors JAMAIS (`coupures`, affirmé plus bas) — un court-circuit qui ne
+          //   s'exécute pas ne peut pas se tromper. On lit donc la BORNE elle-même.
+          const plancher = planchers.get(p)!
+          if (t < plancher && minorant.length < 8) minorant.push(`${type} · ${nom} · p${p} (${tx},${ty}) : ${t} < plancher ${plancher}`)
+          if (t - plancher < margeMin) margeMin = t - plancher
+          if (t > sans[k]! && refroidi.length < 8) refroidi.push(`${type} · ${nom} · p${p} (${tx},${ty}) : avec front ${t} > sans front ${sans[k]} — la météo RÉCHAUFFE`)
+          if (t !== sans[k]) morsures.set(type, (morsures.get(type) ?? 0) + 1)
+          // ② l'équivalence : le plancher n'a pas changé un verdict sous le front.
+          let attendu: boolean
+          if (t < seuil) attendu = true
+          else if (t >= seuil + GEL.HYSTERESIS) attendu = false
+          else attendu = baselineTemperatureAt(sim, tx, ty, Math.max(0, sim.tick - GEL.RETARD_TICKS)) < seuil
+          const obtenu = estGele(sim, tx, ty)
+          vus++
+          if (obtenu) geles++
+          if (obtenu !== attendu && divergences.length < 8) {
+            divergences.push(`${type} · ${nom} · p${p} (${tx},${ty}) : estGele=${obtenu}, la vérité est ${attendu} · T=${t} · porte p${p}=${gelPossibleAuPalier(sim, p)}`)
+          }
+          const froid = meteoColdAt(sim, tx, ty, sim.tick)
+          if (froid > (pire.get(type) ?? 0)) pire.set(type, froid)
+        }
+      }
+    }
+    expect(majorant, majorant.join('\n')).toHaveLength(0)
+    expect(minorant, minorant.join('\n')).toHaveLength(0)
+    expect(refroidi, refroidi.join('\n')).toHaveLength(0)
+    // ⚠ ET LA BORNE EST APPROCHÉE, sinon la clause ci-dessus serait SAINE MAIS INERTE : une marge
+    //   lâche de plus d'un étage entier ne verrait aucune erreur de composition plus petite qu'elle.
+    //   MESURÉ le 2026-10-03 : **2,0 °C** — le minorant est presque exact quelque part dans
+    //   l'année, donc la clause voit une erreur de composition de quelques degrés.
+    expect(margeMin, 'le minorant est approché à moins d’un étage').toBeLessThan(TEMPERATURE.FROID_PAR_ETAGE)
+    expect(margeMin, 'et il n’est jamais franchi').toBeGreaterThanOrEqual(0)
+    expect(divergences, divergences.join('\n')).toHaveLength(0)
+    // ⚠ NON-VACUITÉ, EN TROIS CLAUSES — sans elles, un front qui n'aurait jamais atteint une
+    //   cible rendrait les trois égalités ci-dessus triviales.
+    expect(geles, 'des cibles RÉELLEMENT prises sous un front').toBeGreaterThan(100)
+    expect(vus - geles, 'et des cibles LIBRES').toBeGreaterThan(100)
+    for (const type of CLASSES) {
+      if (METEO.COLD[type] === 0) {
+        // LE BROUILLARD NE REFROIDIT PAS, AU BIT : `meteoColdSousFront` court-circuite sur
+        // `cold === 0`, donc la température est identique bit pour bit. C'est le contrôle
+        // NÉGATIF de la mesure : il montre que « 0 morsure » a bien le sens qu'on lui donne.
+        expect(morsures.get(type) ?? 0, `${type} (COLD 0) ne doit pas changer un bit`).toBe(0)
+        expect(pire.get(type) ?? 0, `${type} : froid appliqué nul`).toBe(0)
+        continue
+      }
+      expect(morsures.get(type) ?? 0, `${type} : le front doit MORDRE sur des cibles`).toBeGreaterThan(100)
+
+      // ② chiffrée : le plein froid de la classe majore ce qui est vraiment appliqué.
+      expect(pire.get(type) ?? 0, `${type} : appliqué ≤ coldMaximal`).toBeLessThanOrEqual(coldMaximal(type))
+    }
+    // ⚠ LA PORTE DOIT COUPER QUELQUE PART, sinon le court-circuit n'est jamais exercé et
+    //   l'équivalence de `estGele` est vraie pour rien. MESURÉ le 2026-10-03 : **2 coupures pour
+    //   la pluie, le brouillard et le vent de cendre, et ZÉRO pour l'orage** — qui retranche 22 °C
+    //   de plus et fait donc plonger le plancher sous le seuil à TOUS les paliers. C'est exactement
+    //   pourquoi le minorant est examiné EN DIRECT plus haut : sous l'orage, aucune équivalence de
+    //   verdict ne peut prendre la borne en défaut, seule la lecture de la borne le peut.
+    expect([...coupures.values()].reduce((a, b) => a + b, 0), 'une classe au moins fait COUPER la porte').toBeGreaterThan(0)
+    // ET LE CONTACT : sous l'orage, `partDeBlizzard` sature et la bande a un cœur — le pire
+    // appliqué vaut EXACTEMENT ce que le plancher retranche. La marge est nulle : c'est ce qui
+    // rend ② fragile, donc digne d'une garde.
+    expect(pire.get('orage'), 'l’orage touche sa borne, au bit').toBe(coldMaximal('orage'))
+  })
+
+  it('LE PLANCHER DÉCROÎT EN PALIER — l’inégalité qui autorise `gelPossible` à ne lire que le sommet', () => {
+    // `gelPossible` DÉLÈGUE à `gelPossibleAuPalier(PALIERS − 1)` (et elle nourrit `collision.ts`,
+    // donc le tick, donc le replay) : toute sa justesse tient à ce que le plus HAUT palier ait le
+    // plancher le plus BAS. C'était trivial jusqu'au 2026-10-02 — le seul terme de palier était
+    // `− FROID_PAR_ETAGE × p`, monotone par construction. **Mon `souffleMax` par palier l'a rendu
+    // CONDITIONNEL** : le plancher vaut `… − FROID_PAR_ETAGE × p − souffleMax[p]`, et `souffleMax`
+    // n'est PAS monotone (MESURÉ : 8,09 / 8,09 / 9,75 / 9,75 — il CROÎT avec le palier, donc dans
+    // le mauvais sens pour cette preuve). La décroissance tient si et seulement si
+    //
+    //      FROID_PAR_ETAGE  >  souffleMax[p] − souffleMax[p+1]   pour tout p,
+    //
+    // et on ne l'obtient pas du champ (qu'un réglage du semis de fumerolles change) mais des DEUX
+    // TABLES : `souffleMax` est borné par le majorant GLOBAL, qui est lui-même dérivé de la table
+    // des caractères de foyer. 28 contre 12,6 — large, mais rien ne le gardait.
+    const champ = map.souffleMax
+    expect(champ, 'la carte du monde JOUÉ porte le champ').toBeDefined()
+    expect(champ).toHaveLength(TERRASSES.PALIERS)
+    // ① LA LOI, sur les tables seules — vraie pour TOUT champ possible, pas pour celui-ci.
+    expect(TEMPERATURE.FROID_PAR_ETAGE, 'un étage coûte plus froid que le pire souffle concevable')
+      .toBeGreaterThan(SOUFFLE_GLOBAL)
+    for (let p = 0; p < TERRASSES.PALIERS; p++) {
+      expect(champ![p], `souffleMax[${p}] est un froid ≥ 0`).toBeGreaterThanOrEqual(0)
+      expect(champ![p], `souffleMax[${p}] est borné par le majorant global`).toBeLessThanOrEqual(SOUFFLE_GLOBAL)
+    }
+    // ② LA CONSÉQUENCE sur le champ réel : le froid cumulé croît STRICTEMENT avec le palier.
+    for (let p = 1; p < TERRASSES.PALIERS; p++) {
+      expect(TEMPERATURE.FROID_PAR_ETAGE * p + champ![p]!, `le palier ${p} doit être plus froid que ${p - 1}`)
+        .toBeGreaterThan(TEMPERATURE.FROID_PAR_ETAGE * (p - 1) + champ![p - 1]!)
+    }
+    // ③ ET SUR LA VALEUR, L'ANNÉE ENTIÈRE, DANS LES DEUX RÉGIMES DE CENDRE — car c'est la seule
+    //   façon de l'éprouver.
+    //
+    // ⚠ **MA PREMIÈRE VERSION DE ③ NE POUVAIT PAS ÉCHOUER, et je l'ai écrite avant de le voir.**
+    //   Elle affirmait l'implication entre PORTES — « si `p` peut geler, la vallée peut geler » —
+    //   et cette implication est vraie quoi que fasse le plancher : `gelPossible` est le palier 3,
+    //   dont la porte est OUVERTE à tout instant de l'année (26 °C de socle contre 84 °C de froid
+    //   d'étage, journal du 2026-09-30 : 0/240 points où elle coupe). Une implication dont le
+    //   conséquent est une tautologie ne garde rien. C'est pourquoi `plancherDuPalier` est
+    //   désormais exportée : la monotonie vit dans la VALEUR, pas dans le verdict.
+    //
+    // ⚠ ET LES DEUX RÉGIMES DE CENDRE, pour la raison déjà apprise ce jour-là : sans `cendreAge`,
+    //   le plancher ne lit même pas `souffleMax` (court-circuit) et sa monotonie redevient celle
+    //   du seul terme d'étage — donc le régime NEUF est aveugle au conditionnel qu'on garde ici.
+    let compares = 0
+    let pireEcart = Number.POSITIVE_INFINITY
+    const fautes: string[] = []
+    for (const [nomRegime, ages] of [['cendre VIEILLIE (120 j)', agesDe(120)], ['cendre NEUVE', [] as number[]]] as const) {
+      const sim = createSim(SEED, { map, calendarScale: 1, meteoActive: false })
+      sim.cendreAge = [...ages]
+      for (let jour = 1; jour <= YEAR_DAYS; jour++) for (const [quand, nuit, part] of MOMENTS) {
+        sim.tick = tickAu(sim, jour, nuit, part)
+        for (let p = 1; p < TERRASSES.PALIERS; p++) {
+          const haut = plancherDuPalier(sim, p)
+          const bas = plancherDuPalier(sim, p - 1)
+          compares++
+          if (bas - haut < pireEcart) pireEcart = bas - haut
+          if (haut >= bas && fautes.length < 8) {
+            fautes.push(`${nomRegime} · jour ${jour} ${quand} : plancher p${p} = ${haut} ≥ plancher p${p - 1} = ${bas}`)
+          }
+        }
+      }
+    }
+    expect(fautes, fautes.join('\n')).toHaveLength(0)
+    expect(compares, 'la garde ne passe pas à vide').toBeGreaterThan(1000)
+    // L'ÉCART MINIMAL EST LA MARGE RÉELLE DE LA PREUVE, et on l'affirme en LOI : il vaut
+    // `FROID_PAR_ETAGE + souffleMax[p] − souffleMax[p−1]`, donc au pire `FROID_PAR_ETAGE −
+    // SOUFFLE_GLOBAL`. MESURÉ le 2026-10-03 : 28 °C (les paliers 0→1 et 2→3, où le souffle ne
+    // bouge pas) — large, mais c'est un chiffre de table, pas une garantie de structure.
+    expect(pireEcart, 'la marge de la décroissance').toBeGreaterThanOrEqual(
+      TEMPERATURE.FROID_PAR_ETAGE - SOUFFLE_GLOBAL)
   })
 })

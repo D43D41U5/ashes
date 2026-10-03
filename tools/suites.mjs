@@ -249,7 +249,7 @@ const SUITES = [
   //   une équivalence relevée dessus serait vide), « le premier posé gagne », et la péremption
   //   éprouvée par une séquence qui REVIENT à la longueur du premier état lu. Suite à 2421,
   //   plancher relevé à 2411.
-  { nom: 'sim', dir: 'packages/sim', args: ['run', '--exclude', 'src/scenario.test.ts'], plancher: 2411 },
+  { nom: 'sim', dir: 'packages/sim', args: ['run', '--exclude', 'src/scenario.test.ts'], plancher: 2413 },
   // 2026-09-01 : +10 gardes avec le RENDU des étages (`plateau-art.test.ts`).
   // 2026-09-01 : +9 gardes avec le TRI DES ÉTAGES (strate, découvert — `framing.test.ts`),
   //   suite relevée à 1429 ✓, plancher recalé quelques pourcents dessous.
