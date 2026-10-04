@@ -87,10 +87,12 @@ export interface ReleveThermique {
   /**
    * La cible d'un corps que **RIEN NE COUVRE** (déficit plein), dérivée de `demande`.
    *
-   * ⚠ Ce n'est PAS forcément la cible du joueur : la vraie dépend de la braise qu'il PORTE, et le
-   * snapshot ne la transmet pas encore (`braise.md` § 5.12 — une paire `crans`/`cransMax` à côté de
-   * `temperature`). Tant qu'elle manque, le panneau montre l'ENJEU de la tuile, qui est vrai, au
-   * lieu d'une cible de corps qui serait fausse.
+   * ⚠ Ce n'est PAS forcément la cible du joueur : la vraie dépend de la braise qu'il PORTE. Ce
+   * panneau montre donc l'ENJEU DE LA TUILE, qui est vrai pour tout le monde, au lieu d'une cible
+   * de corps qui ne vaudrait que pour un porteur donné — c'est un choix, pas un manque.
+   * *(Ce commentaire disait « le snapshot ne la transmet pas encore ». **C'était faux**, et corrigé
+   * le 2026-10-04 : le snapshot porte `entities` NON PROJETÉ, donc `me.braise` est déjà là —
+   * `cransCouverts(me.braise)` suffirait à peindre la cible du porteur.)*
    */
   cibleCorps: number
   /** La tuile est-elle gelée (`estGele`) ? */
