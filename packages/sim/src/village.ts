@@ -1356,14 +1356,9 @@ export function applyVillageAction(state: SimState, actorId: number, action: Vil
       // L'objet tenu se consomme (une unité) : il DEVIENT la structure.
       held.count -= 1
       if (held.count <= 0) actor.inventory[actor.activeSlot] = null
-      // ⚠ UNE BALISE EST TOUJOURS LIBRE (`braise.md` B-R10 : « une BASE, pas un village »), même
-      // posée au milieu de son propre village. Sans cette clause elle héritait du `villageId` du
-      // poseur, et TOUTE la machine du feu aurait basculé sur la branche FOYER : allumée pour
-      // toujours (`fireStateAt` rend 'lit' sans regarder le bois), sans combustible de structure
-      // (`fireZoneInventory` refuse la zone `fuel` à un Foyer) et brûlant l'upkeep d'un village.
-      // Une balise de camp et une balise de village auraient été deux objets différents.
-      const baliseLibre = estBalise(placeType) ? 0 : (village?.id ?? 0)
-      addStructure(state, placeType, tx, ty, baliseLibre, actorId, DEFAULT_ACCESS[placeType], undefined, undefined, sol.etage)
+      // Le `villageId` du poseur, sans condition : « une balise est toujours libre » (B-R10) est
+      // désormais tenu par `addStructure` lui-même, pour toute la classe et non pour ce site-ci.
+      addStructure(state, placeType, tx, ty, village?.id ?? 0, actorId, DEFAULT_ACCESS[placeType], undefined, undefined, sol.etage)
       // LE CHANTIER S'ENTEND (spec cendreux R25) — même règle que `build`, même portée.
       secouerLeSol(state, tx + 0.5, ty + 0.5, CENDREUX.SENS.BATIR)
       return
@@ -1801,6 +1796,17 @@ export function addStructure(
 ): Structure {
   const id = state.nextStructureId
   state.nextStructureId += 1
+  // ⚠ UNE BALISE EST TOUJOURS LIBRE (`braise.md` B-R10 : « une BASE, pas un village »), et cet
+  // invariant vit ICI, pas au site de pose : il ferme la CLASSE. Posé dans `place_component` seul,
+  // il laissait un futur plan, un POI ou un set-piece créer une balise de village en silence — et
+  // le sinistre serait vicieux plutôt que bruyant : toute la machine du feu basculerait sur la
+  // branche FOYER (`fireStateAt` rendrait `'lit'` ÉTERNELLEMENT sans regarder le bois,
+  // `fireZoneInventory` refuserait la zone `fuel`, et l'upkeep d'un village brûlerait pour elle).
+  // Une balise de camp et une balise de village auraient été deux objets différents.
+  // MESURÉ à l'audit de fusion (2026-10-04) : aucun plan ne crée de balise aujourd'hui — `plans/`
+  // et `plans-batis.genere.ts` n'en portent aucune —, donc la ligne ne change rien AUJOURD'HUI.
+  // C'est précisément pour ça qu'elle doit être là avant que ce ne soit plus vrai.
+  if (estBalise(type)) villageId = 0
   const chiffree = matiereChiffre(type)
   const baseHp = material !== undefined && estPalierMur(type) ? WALL_TIERS[material][type].hp : STRUCTURE_HP[type]
   const structure: Structure = {

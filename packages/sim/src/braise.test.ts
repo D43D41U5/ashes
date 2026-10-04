@@ -922,6 +922,71 @@ describe('B-R10 — une balise éteinte ne brûle RIEN, et chaque extinction lui
     expect(fireState(state, b), 'du bois dans une balise reprise ne la rallume pas').toBe('out')
     expect(bois(b), 'et ce bois-là ne part pas en fumée non plus').toBe(3)
   })
+
+  it('UNE SAUVEGARDE D’AVANT LA BALISE se relit, et son Feu brûle exactement comme avant', () => {
+    // ═══ LA DETTE DE B-R2, UN CHAMP PLUS LOIN — `Structure.allumee` (étape 6) ═══
+    //
+    // ⚠ Les gardes de `persistence.ts` NE VOIENT QUE LA RACINE du `SimState` (`SAVE_REQUIRED_KEYS`
+    //   et un recollage SUPERFICIEL) : un champ neuf à l'intérieur d'un objet de LISTE les franchit
+    //   toutes sans un mot. `Entity.braise` a sa garde deux `describe` plus haut ; `allumee` est né
+    //   avec l'étape 6 et n'en avait aucune. Et son sinistre serait PIRE qu'un throw : la porte de
+    //   combustion vit dans `advanceFire`, donc une porte mal cadrée n'aurait pas planté — elle
+    //   aurait éteint EN SILENCE tous les feux de toutes les vallées sauvegardées.
+    //
+    // ⚠ CE QUI FERAIT ROUGIR CETTE GARDE : que la porte `allumee` cesse d'être réservée à la
+    //   balise. MESURÉ — remplacer `!estBalise(s.type) || s.allumee === true` par
+    //   `s.allumee === true` dans `advanceFire` fait tomber la dernière clause (0 bûche consumée).
+    const avant = simPlate({ jour: ARDEUR })
+    spawn(avant, 5.5, 5.5)
+    const feu = addStructure(avant, 'fire', 8, 8, 0, 1)
+    // LES PRÉMISSES — sans elles on relirait un monde sans feu, et tout serait vert pour rien.
+    expect(bois(feu), 'un feu libre naît AVEC son bois').toBe(FIRE.FUEL_START_WOOD)
+    expect('allumee' in feu, 'et un FEU n’a jamais ce champ — c’est ça, le monde d’avant').toBe(false)
+    const json = serializeSim(avant)
+    expect(json, 'la sauvegarde fabriquée ne porte pas le champ').not.toContain('"allumee"')
+
+    const relu = deserializeSim(json)
+    expect(relu, 'elle se relit').not.toBeNull()
+    const feuRelu = relu!.structures.find((s) => s.type === 'fire')!
+    expect(feuRelu.allumee, 'le feu arrive sans le champ').toBeUndefined()
+    // IL TOURNE — et des TOURS D'HORLOGE entiers, pas une phase : `step()` est le seul qui dirait
+    // qu'une passe quelconque jette au premier tick sur une structure sans `allumee`.
+    expect(() => { for (let i = 0; i < 5; i++) step(relu!, []) }).not.toThrow()
+    expect(fireState(relu!, feuRelu), 'et il BRÛLE : `allumee` absent vaut « pas une balise »').toBe('lit')
+    // Puis sa bûche part à l'heure, comme avant l'étape 6 (patron de tick à la main du describe).
+    const depart = bois(feuRelu)
+    for (let i = 0; i < FIRE.BURN_TICKS + 10; i++) { relu!.tick += 1; advanceFire(relu!) }
+    expect(bois(feuRelu), 'une bûche consumée, ni zéro ni dix').toBe(depart - 1)
+    expect(feuRelu.allumee, 'et rien ne lui a posé le champ en chemin').toBeUndefined()
+  })
+
+  it('UNE BALISE EST TOUJOURS LIBRE, quel que soit le village qu’on lui passe (B-R10)', () => {
+    // ⚠ L'INVARIANT A CHANGÉ D'ADRESSE, et c'est ce que cette garde tient. Il vivait au SITE de
+    //   pose (`place_component` calculait un `baliseLibre`) ; il vit maintenant dans
+    //   `addStructure`, donc il couvre la CLASSE — un futur plan, POI ou set-piece qui créerait
+    //   une balise ne peut plus en faire une balise de village par mégarde (relevé à l'audit de
+    //   fusion, 2026-10-04 : aucun plan n'en crée AUJOURD'HUI, et c'est pour ça qu'il fallait
+    //   fermer avant que ce ne soit plus vrai).
+    //
+    // ⚠ CE QUI FERAIT ROUGIR CETTE GARDE, et pourquoi le sinistre serait vicieux plutôt que
+    //   bruyant : retirer la ligne ne jette RIEN. La balise basculerait sur la branche FOYER —
+    //   `fireStateAt` la rendrait 'lit' ÉTERNELLEMENT sans regarder le bois, et `addStructure` ne
+    //   lui donnerait PAS de soute (`estFoyer(type) && villageId === 0`). Les trois clauses
+    //   ci-dessous sont donc liées : le `villageId`, la soute, et l'état 'out' à la naissance.
+    const state = simPlate({ jour: ARDEUR })
+    const e = spawn(state, 6.5, 5.5)
+    // On fonde un vrai village pour que le piège soit atteignable : c'est son id qu'un site de
+    // création naïf passerait.
+    const b = addStructure(state, 'balise', 5, 5, 7, e.id)
+    expect(b.villageId, 'le village passé est IGNORÉ — une balise n’appartient à aucun').toBe(0)
+    expect(b.fuel, 'donc elle a sa propre soute, comme un feu libre').toBeDefined()
+    expect(countOf(b.fuel!, 'wood'), 'et ses dix bûches de naissance').toBe(FIRE.FUEL_START_WOOD)
+    expect(fireState(state, b), 'et elle naît ÉTEINTE, pas allumée pour toujours').toBe('out')
+    // CONTRÔLE : un FEU de village, lui, garde son village — l'invariant ne mord que la balise.
+    const foyer = addStructure(state, 'fire', 9, 9, 7, e.id)
+    expect(foyer.villageId, 'un Feu de village garde le sien').toBe(7)
+    expect(foyer.fuel, 'et il n’a pas de soute de structure : il tourne sur `village.fuel`').toBeUndefined()
+  })
 })
 
 describe('la charge ne bouge QUE d’un pas à la fois (B-R8 + B-R9)', () => {

@@ -258,7 +258,20 @@ const SUITES = [
   //   PAS dans le monde de base » — une balise allumée ne dégèle pas sa glace et n'endort pas les
   //   Cendreux (`baselineTemperature` ignore `fireBubble`), les deux clauses falsifiées.
   //   Suite à 2463, plancher relevé à 2453.
-  { nom: 'sim', dir: 'packages/sim', args: ['run', '--exclude', 'src/scenario.test.ts'], plancher: 2453 },
+  // 2026-10-04 : +3 gardes DE L'AUDIT DE FUSION des étapes 5 et 6 (`determinisme-sim`), et aucune
+  //   ne corrige un défaut de code — les trois étaient des PREUVES NON JOUÉES. ① une sauvegarde
+  //   d'AVANT la balise se relit et son Feu brûle comme avant (`braise.test.ts`) : `Entity.braise`
+  //   avait sa garde, `Structure.allumee` n'en avait aucune, et son sinistre serait PIRE qu'un
+  //   throw — la porte vit dans `advanceFire`, donc elle aurait éteint EN SILENCE les feux de
+  //   toutes les vallées sauvegardées. ② le MIROIR DES COÛTS, exhaustif (`pieces.test.ts`) : la
+  //   nasse avait la garde pour elle seule, la balise est née avec ses 30 bois écrits deux fois
+  //   (`RECIPES.balise.inputs` et `PIECES.balise.cout`) sans rien qui les lie ; la forme
+  //   exhaustive la rend héritable (18 paires, verte, et le miroir se lit sur `coutObjet()` parce
+  //   que le four a deux prix PAR DESSEIN). ③ « une balise est toujours libre » monte du SITE de
+  //   pose dans `addStructure` (`braise.test.ts`) : l'invariant ferme désormais la classe, un
+  //   futur plan ou POI ne peut plus en faire une balise de village par mégarde. Les trois ont
+  //   leur contrôle positif joué. Suite à 2466, plancher relevé à 2456.
+  { nom: 'sim', dir: 'packages/sim', args: ['run', '--exclude', 'src/scenario.test.ts'], plancher: 2456 },
   // 2026-09-01 : +10 gardes avec le RENDU des étages (`plateau-art.test.ts`).
   // 2026-09-01 : +9 gardes avec le TRI DES ÉTAGES (strate, découvert — `framing.test.ts`),
   //   suite relevée à 1429 ✓, plancher recalé quelques pourcents dessous.

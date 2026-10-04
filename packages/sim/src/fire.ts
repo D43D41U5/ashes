@@ -222,7 +222,10 @@ export function advanceFire(state: SimState): void {
     // ⚠ CHAQUE EXTINCTION REPREND LA FLAMME (B-R10) — les braises ont fini de rougir, la balise
     // redevient un tas de bois. Sans cette ligne, y remettre une bûche la rallumerait SANS
     // braise : la seule règle qui fait d'elle une balise serait contournable au bois.
-    // (Le geste d'éteindre, lui, l'efface là où il s'exécute — `extinguish_fire`.)
+    // ⚠ ET C'EST LE SEUL CHEMIN VERS L'EXTINCTION : aucun geste n'éteint un foyer. `demolish` le
+    // DÉMONTE entièrement (la structure sort de `state.structures`, le champ avec elle), et il n'y
+    // a pas d'action `extinguish_fire` dans le jeu — le seul « un Feu ne s'éteint pas » du code est
+    // le refus de démolir un FOYER DE VILLAGE (`village.ts`). Une balise, elle, se démolit.
     if (s.allumee === true && fireStateAt(state.tick, s) === 'out') delete s.allumee
 
     // Cuisson passive (S7-S9) — sur TOUT feu (libre ou Foyer), le travail de la STATION.

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { COMPONENTS, FUNCTIONS, SLOTS, STRUCTURE_COSTS, STRUCTURE_HP } from './balance'
+import { COMPONENTS, FUNCTIONS, RECIPES, SLOTS, STRUCTURE_COSTS, STRUCTURE_HP } from './balance'
 import { POSABLE_SUR_EAU, blocksNavigation, isComponent } from './construction'
 import {
   BARRIER_TYPES,
@@ -159,6 +159,27 @@ describe('le registre des pièces — les accords que le type ne garde pas', () 
     // Et pour tous les autres, l'objet coûte la pièce : une seule vérité.
     for (const t of STRUCTURE_TYPES) {
       if (t !== 'furnace') expect(coutObjet(t), `${t}`).toEqual(piece(t).cout)
+    }
+  })
+
+  it('TOUTE pièce qui porte une recette de son nom en MIROITE le coût — un seul chiffre par idée', () => {
+    // ⚠ CE QUI FERAIT ROUGIR CETTE GARDE : deux nombres pour une seule idée. `place_component` ne
+    //   prélève RIEN — il consomme l'objet tenu —, donc la RECETTE est le seul prix que le joueur
+    //   paie, et `PIECES[t].cout` n'est à côté qu'une prose que rien ne relit. La nasse avait cette
+    //   garde pour ELLE SEULE (`nasse.test.ts`) ; la balise est née avec ses 30 bois écrits DEUX
+    //   fois et personne ne les liait — relevé à l'audit de fusion de l'étape 6 (2026-10-04). Sous
+    //   cette forme exhaustive, la prochaine pièce posable l'hérite sans qu'on y pense.
+    //   ⓐ Le miroir se lit sur `coutObjet()` et non sur `cout` : le four a les deux, par dessein
+    //     (la garde du dessus fige l'écart) — comparer au seul `cout` ferait rougir `furnace`
+    //     pour rien.
+    const miroirs = STRUCTURE_TYPES.filter((t) => (t as string) in RECIPES)
+    // LA PRÉMISSE — sans elle, une liste vide passerait au vert sans rien affirmer.
+    expect(miroirs.length, 'des pièces portent bien une recette de leur nom').toBeGreaterThan(10)
+    expect(miroirs, 'et la balise est du lot — c’est elle qui a révélé le trou').toContain('balise')
+    for (const t of miroirs) {
+      const r = RECIPES[t as keyof typeof RECIPES]
+      expect(r.inputs, `le prix de ${t} : la recette et le registre disent la même chose`).toEqual(coutObjet(t))
+      expect(r.output, `la recette de ${t} rend bien l’objet du même nom`).toBe(t)
     }
   })
 

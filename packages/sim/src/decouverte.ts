@@ -38,8 +38,20 @@ import type { Entity, SimState } from './sim'
 
 /**
  * L'INDEX INVERSE matière → recettes qui la consomment. Bâti UNE fois au chargement du
- * module : sans lui, chaque tick rebalaierait les 34 recettes pour chaque case de chaque
- * sac. Pur, déterministe, et l'ordre de `RECIPES` s'y conserve.
+ * module : sans lui, chaque tick rebalaierait TOUTE la table `RECIPES` pour chaque case de
+ * chaque sac. Pur, déterministe, et l'ordre de `RECIPES` s'y conserve.
+ * *(Le compte vivait ici en dur — « les 34 recettes » — et avait vieilli sans qu'on le voie :
+ * un nombre qu'aucune garde ne relit n'est pas une information, c'est une dette. Il est parti.)*
+ *
+ * ⚠ **AJOUTER UNE RECETTE N'EST DONC PAS INERTE SUR L'ÉTAT SAUVEGARDÉ, et c'est par ici que ça
+ * passe** (mesuré à l'audit de fusion de l'étape 6, 2026-10-04). Une recette neuve qui consomme
+ * une matière déjà portée est révélée au premier tick : elle pousse une entrée dans `e.seen`
+ * (qui vit dans le `SimState`) et émet un `recipe_revealed`. Comme l'ordre de `RECIPES` se
+ * conserve ici, une recette insérée AU MILIEU de la table s'insère au milieu des `seen` — le
+ * contenu ET l'ordre changent. Le flux du PRNG, lui, n'est pas touché (aucun tirage ici).
+ * Conséquence pratique : une recette ajoutée en QUEUE de `RECIPES` laisse les `seen` existants
+ * intacts en préfixe ; ajoutée au milieu, non. Rien de cassé dans les deux cas — mais un hachage
+ * d'état d'avant/après ne peut pas être comparé sans le savoir.
  */
 const RECETTES_PAR_MATIERE: Partial<Record<ItemId, RecipeId[]>> = (() => {
   const index: Partial<Record<ItemId, RecipeId[]>> = {}
