@@ -31,7 +31,7 @@ retrouve ici, à la même date, jamais à la ligne du dessus dans son volet.
 
 ---
 
-## Index chronologique — 944 entrées, 2133 Ko
+## Index chronologique — 944 entrées, 2134 Ko
 
 - 2026-07-05 · **M** · Spec monde validée par Alexis : déplacement continu type Binding of Isaac (jamais de case par c…
 - 2026-07-05 · **M** · Convention d'import Tiled : l'index local de la tuile dans le premier tileset = l'id de terrain…

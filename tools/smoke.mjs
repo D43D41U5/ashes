@@ -2259,11 +2259,17 @@ const SCENARIOS = {
     //   ne dépend pas d'elles : il se lit sur l'état. On garde donc les deux séparés, et on
     //   coupe les photos quand on veut le verdict sans attendre une demi-heure.
     const PHOTOS = process.env.SMOKE_PHOTOS !== '0'
+    // ⚠ **CE CHEMIN-LÀ N'A JAMAIS ÉTÉ JOUÉ** (tous les runs verts tournaient à `SMOKE_PHOTOS=0`) :
+    //   il est écrit d'après la recette ÉPROUVÉE ailleurs, pas d'après une mesure d'ici. Et surtout
+    //   il n'utilise PAS `game.step` : boucle endormie, `step` DESSINE SANS PRÉSENTER — une capture
+    //   prise juste après lirait le canevas périmé, c'est-à-dire la vallée d'avant la balise. La
+    //   seule recette qui présente est `wake()` → laisser passer des images → `sleep()` → capturer.
     const photo = async (chemin) => {
       if (!PHOTOS) { trace(`photo sautée (SMOKE_PHOTOS=0) : ${chemin}`); return }
-      // `game.step` rend EXACTEMENT une image, à un `t` connu, sans rallumer la boucle.
-      await page.evaluate(() => { const g = window.__BRAISES__.scene.game; g.step(performance.now(), 16) })
-      await page.screenshot({ timeout: 120000, path: chemin })
+      await page.evaluate(() => window.__BRAISES__.scene.game.loop.wake())
+      await page.waitForTimeout(2500) // des images RÉELLEMENT présentées ; sans GPU, c'est long
+      await page.evaluate(() => window.__BRAISES__.scene.game.loop.sleep())
+      await page.screenshot({ timeout: 300000, path: chemin })
     }
 
     // ① LE CŒUR DU GRAND FROID — le seul régime où la braise se vide en bas (MESURÉ : le froid
@@ -2494,7 +2500,8 @@ const SCENARIOS = {
     ok(c2.charge === a0.plein, `elle remonte AU PLEIN et s’y arrête — jamais au-delà (${c2.charge} / ${a0.plein})`)
     await page.evaluate(() => window.__BRAISES__.scene.game.loop.wake())
     console.log(`   ${bon ? '✓ balise : la boucle est atteignable' : '✗ balise : voir les ✗ ci-dessus'}`)
-    console.log(`   → ${OUT}/balise-eteinte.png + balise-vive.png`)
+    if (PHOTOS) console.log(`   → ${OUT}/balise-eteinte.png + balise-vive.png`)
+    else console.log('   (photos coupées — SMOKE_PHOTOS=1 pour la DA du § 5.17 ⓔ, sur machine calme)')
   },
 
   /**
