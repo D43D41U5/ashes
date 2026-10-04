@@ -585,6 +585,29 @@ export const BRAISE = {
    */
   CRANS_DEPART: 2,
   /**
+   * ═══ LE SOMMET DE L'ARBRE (B-R14) — combien de crans quand la braise est au bout ═══
+   *
+   * **Quatre, et c'est DÉRIVÉ du monde, pas choisi** (décision d'Alexis, 2026-10-04). La table de
+   * B-R4b dit qu'en hiver le palier `k` exige `k + 1` crans ; la vallée a quatre paliers (0→3) ;
+   * donc le palier 3 au cœur du Grand Froid demande **4**, et c'est le maximum que la montagne
+   * sache demander. Une braise à quatre crans couvre tout — ni plus, ni moins.
+   *
+   * ⚠ **CE QU'IL NE FAIT PAS : il ne borne PAS `cransMax`.** `cransMax(niveau)` reste
+   * `CRANS_DEPART + niveau`, sans clamp, pour que le jour où l'arbre dépasserait ce sommet le
+   * défaut soit VISIBLE au lieu d'être écrasé en silence. C'est l'ÉCHELLE DE LA BARRE que ce
+   * nombre commande : le tube se divise en `CRANS_MAX` cases de hauteur fixe, dont les
+   * non-débloquées se peignent en verrou (`barre-braise.ts`). La barre prend quand même le max
+   * des deux, donc une braise qui dépasserait resterait peinte en entier.
+   *
+   * ⚠ Et c'est un choix de DESIGN, pas une constante technique : à 4 pile, le sommet d'hiver se
+   * TOUCHE sans s'habiter (B-R7b — un cran ne vaut que plein, donc on est en déficit dès le
+   * premier tick de froid là-haut). Un 5ᵉ cran achèterait le droit d'y camper ; Alexis a tranché
+   * pour 4, c'est-à-dire pour que le sommet reste un lieu de PASSAGE (B-R16).
+   *
+   * Il commande aussi combien de recettes l'arbre doit avoir : `CRANS_MAX − CRANS_DEPART` = **3**.
+   */
+  CRANS_MAX: 4,
+  /**
    * ═══ LA RECHARGE À LA BALISE (B-R9) — en charge par tick, dans le rayon d'une balise ALLUMÉE ═══
    *
    * **Vingt**, soit vingt fois la vidange : la braise se remplit vingt fois plus vite qu'elle ne

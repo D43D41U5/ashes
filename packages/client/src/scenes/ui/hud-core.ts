@@ -14,7 +14,7 @@
  * la maquette, qui n'étaient qu'un mannequin.
  *
  * ÉCARTS À LA MAQUETTE, ASSUMÉS (à trancher par Alexis) : (1) le poids reste ABSTRAIT
- * « / 30 », pas en « KG » (décision actée #4) ; (2) 4 médaillons + le poids en ligne
+ * « / 30 », pas en « KG » (décision actée #4) ; (2) les médaillons + le poids en ligne
  * secondaire (comme la maquette 2A), là où le HUD Phaser en faisait un 5ᵉ disque ;
  * (3) le Feu du village garde son MOT (tiède/neutre/sombre) au lieu des 5 pips de
  * magnitude — « prévisible dans le sens, flou dans la magnitude » ; (4) les blessures
@@ -29,7 +29,7 @@ import {
   skillLevel,
   SLOTS,
   staminaCapFor,
-  TEMPERATURE,
+  type Braise,
   type CarryTier,
   type Entity,
   type Inventory,
@@ -39,6 +39,7 @@ import type Phaser from 'phaser'
 import { itemIconKey } from '../../render/item-art'
 import { vitalIconKey, type VitalId } from '../../render/vital-art'
 import { BARRE_H } from './barre-haute'
+import { createBarreBraise, cssBarreBraise, etatBarreBraise, type BarreBraise } from './barre-braise'
 import { INK_OUTLINE, INK_OUTLINE_STRONG, INK_OUTLINE_LIST } from './hud-dom'
 import { HEX, VITAL_HEX } from './palette'
 import { SKILL_LABELS } from './skill-labels'
@@ -73,15 +74,24 @@ const CARRY_CONSEQUENCE: Record<CarryTier, string> = {
   overloaded: ' — plus de sprint',
 }
 
-/** Les 4 vitales en médaillon (le poids, lui, passe en ligne secondaire — maquette 2A). */
+/**
+ * ═══ LES DEUX VITALES EN MÉDAILLON (le poids passe en ligne secondaire — maquette 2A) ═══
+ *
+ * ⚠ **ELLES ÉTAIENT QUATRE JUSQU'AU 2026-10-04.** La FAIM et la TEMPÉRATURE sortent du HUD sur
+ * décision d'Alexis — *« retire les vitals températures et nourriture, ces systèmes vont
+ * disparaître »* —, et c'est la suite directe du pivot du 2026-09-28 : B-R16 fait de la
+ * nourriture un **build** et non une survie (« le combustible est la seule monnaie de survie »),
+ * et la laisse de froid se lit désormais sur la **barre de crans** du bord droit, qui dit
+ * « jusqu'où je peux monter » là où le thermomètre ne disait qu'un degré.
+ *
+ * ⚠ **CE N'EST QUE L'AFFICHAGE.** Les deux systèmes vivent toujours dans `/sim` : la faim
+ * plafonne encore le souffle (`staminaCapFor` — la zone condamnée et le seuil restent peints sur
+ * le disque d'ENDURANCE, c'est pourquoi `HudCoreState.hunger` demeure) et le froid tue toujours.
+ * Les retirer de la sim est un chantier à part, qui demandera son audit de déterminisme.
+ */
 const VITALS: { id: Exclude<VitalId, 'carry'>; label: string; min?: number; max: number; warn?: number; unite?: string }[] = [
   { id: 'hp', label: 'PV', max: 100 },
   { id: 'stamina', label: 'ENDURANCE', max: 100 },
-  { id: 'hunger', label: 'FAIM', max: 100, warn: 0 },
-  // LA TEMPÉRATURE EST EN DEGRÉS (2026-08-22) et son domaine n'est PAS [0, max] : un corps
-  // vit entre 25 et 37 °C. D'où `min` — sans lui, la jauge serait pleine aux deux tiers en
-  // permanence et ne bougerait plus qu'à peine avant la mort.
-  { id: 'temperature', label: 'TEMP', min: TEMPERATURE.CORPS_MORTEL, max: TEMPERATURE.CORPS_SAIN, warn: TEMPERATURE.CORPS_HYPOTHERMIE, unite: '°C' },
 ]
 
 /** Ce qu'une vitale doit MONTRER : sa couleur d'alerte et son infobulle. */
@@ -149,9 +159,19 @@ export interface HudCoreState {
    * lui apprenait rien non plus.
    */
   exhausted?: boolean
+  /** ⚠ LA FAIM RESTE AU CONTRAT ALORS QUE SON MÉDAILLON EST PARTI (2026-10-04) : elle plafonne
+   *  le max d'endurance (`staminaCapFor`, spec combat R2ter), et c'est ce plafond qu'on peint
+   *  sur le disque du SOUFFLE. La retirer éteindrait la zone condamnée et son seuil. */
   hunger: number
-  temperature: number
   wounds: Entity['wounds']
+  /**
+   * LA BRAISE PORTÉE et CE QUE LE LIEU EXIGE — les deux moitiés de la barre du bord droit
+   * (`braise.md` § 5.12). `undefined` de part ou d'autre = pas de barre : une sauvegarde d'avant
+   * la braise, ou un premier tick sans relevé. Aucun repli n'est posé en amont, délibérément —
+   * il inventerait un plein ou un zéro.
+   */
+  braise: Braise | undefined
+  cransDemandes: number | undefined
   skills: Partial<Record<SkillId, number>>
   inv: Inventory
   activeSlot: number
@@ -200,7 +220,13 @@ export function createHudCore(
   const weightEl = $('.hc-weight')
   const skillsEl = $('.hc-skills')
 
-  // ── Les 4 médaillons : disque cerné, remplissage-liquide, icône SILHOUETTE, infobulle ──
+  // ── LA BARRE DE CRANS DE LA BRAISE, au bord droit (`barre-braise.ts`) ──
+  // Montée DANS `.hc` : elle hérite de `setVisible`, de `--hud-alpha` et du garde `worldReady`
+  // sans avoir à les refaire. Elle reste visible sac ouvert, comme les médaillons — c'est une
+  // vitale, et la pile d'artisanat se montre par-dessus l'écran personnage pour la même raison.
+  const barreBraise: BarreBraise = createBarreBraise(root)
+
+  // ── Les médaillons : disque cerné, remplissage-liquide, icône SILHOUETTE, infobulle ──
   const fills = new Map<string, HTMLElement>()
   const tips = new Map<string, HTMLElement>()
   const vitalsWrap = $('.hc-vitals')
@@ -334,12 +360,15 @@ export function createHudCore(
       // opaques ; sur l'onglet CARTE, où le panneau s'efface, les deux se chevaucheraient.
       tlWrap.style.display = s.characterMenuOpen ? 'none' : ''
 
+      // LA BARRE DE CRANS : tout l'état peint vient d'une fonction PURE, éprouvée sans DOM.
+      // ⚠ Elle se CACHE sous un menu, au lieu de devenir opaque comme le reste du HUD (décision
+      // d'Alexis, 2026-10-04) — même geste que la ceinture et le coin haut-gauche juste au-dessus.
+      barreBraise.update(etatBarreBraise(s.braise, s.cransDemandes), s.characterMenuOpen)
+
       // Vitales : hauteur du liquide + couleur (rouge sous le seuil d'alarme) + infobulle.
       const vals: Record<string, number> = {
         hp: s.hp,
         stamina: s.stamina,
-        hunger: s.hunger,
-        temperature: s.temperature,
       }
       // Le plafond du souffle, LU de la sim (aucune règle recopiée) : la faim raccourcit
       // le max d'endurance — la zone condamnée descend du haut du disque, et le seuil de
@@ -499,6 +528,7 @@ function markup(): string {
     /* z-index 10 : les vitales restent visibles PAR-DESSUS l'écran personnage (3A),
        comme la maquette (« la fenêtre ne les recouvre pas »). */
     .hc-bl{position:absolute;left:26px;bottom:24px;opacity:var(--hud-alpha);z-index:10;}
+${cssBarreBraise(BARRE_H + 20)}
     .hc-vitals{display:flex;gap:12px;align-items:flex-end;}
     /* Le médaillon capte le survol (→ l'infobulle) ; ailleurs le HUD laisse le clic
        filer au monde. Une petite zone morte bas-gauche, comme tout HUD. */

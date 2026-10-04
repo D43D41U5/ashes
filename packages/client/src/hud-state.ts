@@ -6,7 +6,7 @@
  * doivent JAMAIS appeler `registry.set/get` directement — uniquement
  * `setHud`/`getHud`.
  */
-import type { BarrierType, ChronicleEntry, ChronicleVolume, TenuPosable, RecipeId, StationFonction, CraftOrder, Entity, GameTime, Inventory, ItemBag, ItemId, MeteoAspect, PlayerAction, SkillId, WallMaterial, WorldMap } from '@ashes/sim'
+import type { BarrierType, Braise, ChronicleEntry, ChronicleVolume, TenuPosable, RecipeId, StationFonction, CraftOrder, Entity, GameTime, Inventory, ItemBag, ItemId, MeteoAspect, PlayerAction, SkillId, WallMaterial, WorldMap } from '@ashes/sim'
 import type Phaser from 'phaser'
 import type { Brouillard } from './render/fog'
 
@@ -171,6 +171,27 @@ export interface HudState {
   /** Température du CORPS de l'avatar, en °C — domaine [25, 37] depuis le passage en degrés
    *  (2026-08-22) ; l'hypothermie mord sous `TEMPERATURE.HYPOTHERMIA` (29). */
   temperature: number
+  /**
+   * LA BRAISE PORTÉE (`Entity.braise`, spec `braise.md` B-R2) — telle quelle, du snapshot.
+   *
+   * ⚠ Les CRANS ne voyagent pas : `cransCouverts` et `cransMax` sont exportés par `/sim`
+   * « pour le CLIENT, qui doit peindre `cransCouverts` », et la barre les y lit. Publier un
+   * couple `crans`/`cransMax` déjà dérivé mettrait la règle de B-R7b (`floor`) en double, et
+   * c'est exactement ce que `/sim` a pris la peine d'empêcher.
+   *
+   * `undefined` = une sauvegarde d'avant la braise, ou un premier tick sans snapshot : la
+   * barre ne se montre alors pas, au lieu de mentir un plein.
+   */
+  braise: Braise | undefined
+  /**
+   * CE QUE LE LIEU EXIGE, en crans (`cransExiges` au point de l'avatar et à SON étage).
+   *
+   * Relevé par `WorldScene` sur la façade du gel, dans le même bloc cadencé qu'`ambiant` et
+   * pour la même raison : les deux balaient les structures et les zones, et aucune des deux
+   * n'a besoin d'être refaite à chaque image. Il peut DÉPASSER l'échelle de la braise — c'est
+   * le cas le plus parlant (« cet étage est au-delà de cette braise »), jamais une anomalie.
+   */
+  cransDemandes: number | undefined
   skills: Partial<Record<SkillId, number>>
   /** LE BESTIAIRE DE PÊCHE (spec `peche.md` B5/R11) — une ligne par espèce déjà prise :
    *  combien de fois, et le RECORD en millimètres. Vient du snapshot (`Entity.peche`), comme
@@ -470,7 +491,7 @@ export const CLES_HUD: Record<keyof HudState, true> = {
   worldReady: true, loadProgress: true, time: true, zone: true, village: true,
   toponyme: true, lieu: true, ambiant: true, cielIci: true, cielCouvre: true, vent: true,
   inv: true, activeSlot: true,
-  craftQueue: true, stationsInRange: true, seen: true, hunger: true, temperature: true, skills: true, pecheCarnet: true, carnetEncyclo: true,
+  craftQueue: true, stationsInRange: true, seen: true, hunger: true, temperature: true, braise: true, cransDemandes: true, skills: true, pecheCarnet: true, carnetEncyclo: true,
   hp: true, stamina: true, exhausted: true, wounds: true, selected: true, buildMaterial: true, buildEdge: true, demolir: true,
   marteau: true,
   foundableFire: true, upgradableFire: true, deathMoment: true, deathVeilOpen: true, playerDown: true, corpseHint: true,

@@ -4,7 +4,7 @@
  * objet scrollFactor 0 dans une caméra zoomée serait projeté hors écran).
  * Communication par le registry : WorldScene écrit, UIScene lit.
  */
-import { formatChronicleLine, modificateurDeSaison, NOMS_MODIFICATEUR, TEMPERATURE, zoneAt, type WorldMap } from '@ashes/sim'
+import { formatChronicleLine, modificateurDeSaison, NOMS_MODIFICATEUR, zoneAt, type WorldMap } from '@ashes/sim'
 import Phaser from 'phaser'
 import { getHud, setHud } from '../hud-state'
 import { drainAlertes, drainConseils, drainCrafts, drainDecouvertes, drainLevelUps, drainPickups, queueAction } from './world/hud-bridge'
@@ -979,8 +979,15 @@ export class UIScene extends Phaser.Scene {
       hp: getHud(this.registry, 'hp') ?? 100,
       stamina: getHud(this.registry, 'stamina') ?? 100,
       exhausted: getHud(this.registry, 'exhausted') ?? false,
+      // ⚠ LA FAIM N'A PLUS DE MÉDAILLON (2026-10-04) mais passe toujours : elle plafonne le max
+      // d'endurance, et c'est ce plafond qui se peint sur le disque du souffle. La TEMPÉRATURE,
+      // elle, ne passe plus du tout — la laisse de froid se lit sur la barre de crans.
       hunger: getHud(this.registry, 'hunger') ?? 100,
-      temperature: getHud(this.registry, 'temperature') ?? TEMPERATURE.CORPS_SAIN, // °C, pas une jauge 0-100
+      // LA BARRE DE CRANS : les deux relais passent TELS QUELS, `undefined` compris — c'est lui
+      // qui dit « pas de barre » (une sauvegarde d'avant la braise, ou un premier tick). Aucun
+      // `??` ici : un repli inventerait un plein ou un zéro, et la barre mentirait.
+      braise: getHud(this.registry, 'braise'),
+      cransDemandes: getHud(this.registry, 'cransDemandes'),
       wounds: getHud(this.registry, 'wounds') ?? {},
       skills: getHud(this.registry, 'skills') ?? {},
       inv,

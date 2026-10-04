@@ -51,6 +51,10 @@ export function publishPlayerVitals(registry: Registry, me: Entity): void {
   setHud(registry, 'activeSlot', me.activeSlot)
   setHud(registry, 'hunger', me.hunger)
   setHud(registry, 'temperature', me.temperature)
+  // LA BRAISE telle quelle (B-R2) : un champ porté, pas un item du sac. Les crans se dérivent
+  // au rendu par les fonctions de `/sim` — publier un couple déjà dérivé mettrait `floor`
+  // (B-R7b) en double exemplaire.
+  setHud(registry, 'braise', me.braise)
   setHud(registry, 'skills', me.skills)
   setHud(registry, 'pecheCarnet', me.peche ?? []) // le bestiaire (peche.md B5) — du snapshot, jamais compté ici
   setHud(registry, 'carnetEncyclo', me.carnet ?? []) // l'encyclopédie — idem : la sim compte, l'écran lit

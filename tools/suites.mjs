@@ -345,7 +345,23 @@ const SUITES = [
   //   `lit-coverage.test` (la partition `_lit` du registre) et `encyclopedie.test` (tout `ItemId`
   //   a une section ou est déclaré hors). D'où une ligne de PRODUCTION : la voix de la balise.
   //   Suite à 1808, plancher relevé à 1795 : 68 de marge ne détectaient plus un fichier évaporé.
-  { nom: 'client', dir: 'packages/client', args: ['run'], plancher: 1795 },
+  // 2026-10-04 : +10 LA BARRE DE CRANS (`barre-braise.test.ts`, `braise.md` § 5.12 — forme
+  //   choisie par Alexis : le tube). Sept gardes sur la fonction PURE (dont B-R7b, qui sépare
+  //   `floor` de `ceil` à `2·T − 1`, et le repère hors échelle : la braise de départ devant le
+  //   palier 2 d'hiver) et trois sur la SOURCE — parce que le CSS est une chaîne et que la pile
+  //   d'artisanat était seule au bord droit : rien n'aurait vu la colonne se poser dessous.
+  //   Puis +2 après la MESURE DE CONTRASTE (le rendu était illisible alors que les douze gardes
+  //   étaient vertes) : la colonne ne prend pas l'effacement du HUD, et les deux repères sont
+  //   cernés d'encre — les deux lois sont gardées, chiffres à l'appui dans le test.
+  //   TROIS FALSIFICATIONS JOUÉES, les trois rouges. Suite à 1820, plancher relevé à 1805.
+  // · 2026-10-04 (le même jour, suite) — LA BARRE PREND SA FORME DÉFINITIVE : le tube se divise
+  //   en CRANS_MAX cases qui ne bougent plus, les crans non débloqués sont des TROUS (on voit le
+  //   monde), et le cadre ne coiffe que les crans ouverts — donc il grandit avec l'arbre. Plus
+  //   l'arithmétique de ce cadre affirmée au pixel, le masquage sous le sac, et le retrait des
+  //   médaillons FAIM et TEMP (décision d'Alexis : « ces systèmes vont disparaître »).
+  //   Suite à 1825. ⚠ Le plancher reste à 1805 : il n'a de valeur que s'il garde une MARGE sur
+  //   la suite du jour — le relever à chaque tranche en ferait un miroir, qui n'attrape rien.
+  { nom: 'client', dir: 'packages/client', args: ['run'], plancher: 1805 },
   { nom: 'serveur', dir: 'packages/server', args: ['run'], plancher: 36 },
   // Le banc pilote le vrai worldgen sur la carte de production : lent, et seul à porter le
   // drapeau qui ignore les erreurs non gérées (voir l'en-tête de `scenario.test.ts`).
@@ -442,12 +458,35 @@ function compte(sortie) {
   }
 }
 
+/**
+ * LES NOMS DES TESTS EN ÉCHEC, relus de la sortie de Vitest.
+ *
+ * ⚠ POURQUOI (2026-10-04) : le ✗ d'une suite ne disait QUE son compte — « sim 2465 ✓ · 1 ✗ »,
+ * sans un mot sur QUEL test. Pour l'apprendre il fallait rejouer la suite à la main avec les
+ * mêmes arguments, et un échec d'HORLOGE ne se reproduit pas toujours : l'information était
+ * parfois perdue pour de bon. Un verdict qu'on ne peut pas suivre vaut à peine mieux qu'un
+ * verdict vert. On relit donc la sortie qu'on tient déjà, sans rien relancer.
+ *
+ * Vitest préfixe chaque ligne fautive d'un « × » (U+00D7). ⚠ Les codes ANSI se retirent AVANT
+ * de chercher : la sortie est colorée en temps normal, et le motif ne mordrait pas dessus.
+ */
+function nomsDesEchecs(sortie) {
+  const nu = sortie.replace(/\u001b\[[0-9;]*m/g, '')
+  const vus = new Set()
+  for (const m of nu.matchAll(/^\s*\u00d7\s+(.+?)\s*$/gm)) {
+    const ligne = m[1].trim()
+    if (ligne) vus.add(ligne)
+  }
+  // Au-delà d'une douzaine, ce n'est plus un test qui casse mais la suite : le compte suffit.
+  return [...vus].slice(0, 12)
+}
+
 const resultats = []
 for (const suite of SUITES) {
   console.log(`\n[1m── ${suite.nom} ──[0m`)
   const { code, sortie } = await lance(suite)
   const c = compte(sortie)
-  resultats.push({ suite, code, compte: c, flaky: FLAKY.test(sortie) })
+  resultats.push({ suite, code, compte: c, flaky: FLAKY.test(sortie) , sortie })
 }
 
 console.log(`\n[1m════ COMPTE-RENDU ════[0m`)
@@ -465,6 +504,7 @@ for (const r of resultats) {
   if (c.echecs > 0) {
     rouge = true
     console.log(`  [31m✗[0m ${nom} ${detail}`)
+    for (const l of nomsDesEchecs(r.sortie)) console.log(`      \u001b[31m\u00d7\u001b[0m ${l}`)
   } else if (c.fichiersEchecs === null) {
     // La ligne « Test Files » manque alors que « Tests » est là : format inattendu. On ne
     // devine pas — un garde-fou qui suppose est un garde-fou qui finira par se tromper.

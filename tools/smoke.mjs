@@ -2206,6 +2206,267 @@ const SCENARIOS = {
   },
 
   /**
+   * ═══ LA BARRE DE CRANS — scénario `barre-braise` (`braise.md` § 5.12, 2026-10-04) ═══
+   *
+   * La braise existait dans la sim sans se voir nulle part. Ce scénario éprouve LA COLONNE, dans
+   * le vrai navigateur, sur le vrai HUD : les cases sont-elles là, autant que l'échelle ; les
+   * pleines valent-elles `cransCouverts` ; le repère du lieu se pose-t-il où la demande l'exige.
+   *
+   * ⚠ POURQUOI UN SCÉNARIO À PART, et pas trois lignes dans `balise` : la colonne vit dans le DOM
+   * du HUD, et le DOM du HUD ne bouge que dans `UIScene.update` — donc **seulement quand la
+   * boucle de rendu tourne**. Tout `balise` tourne BOUCLE ENDORMIE (sans GPU, une image coûte dix
+   * à quinze minutes dès qu'une structure existe), et sa première image se paie après la pose.
+   * Ici on reste **avant toute structure** : c'est le seul moment où quelques images sont
+   * abordables, et c'est aussi le seul instant où la photo est honnête — le HUD au repos.
+   *
+   * La MOITIÉ SIM de la barre, elle, est gardée dans `balise` (la demande MORD au Grand Froid,
+   * elle se TAIT au pied d'une balise allumée) : zéro image de plus là-bas.
+   *
+   * `--dev` obligatoire (`debug_set_season_day`, `debug_set_hour`).
+   */
+  async 'barre-braise'(page) {
+    if (!dev) { console.error('!! barre-braise exige --dev (debug_set_season_day, debug_set_hour)'); return }
+    const JOUR = 105 // cœur du Grand Froid : en bas la demande vaut déjà un cran (B-R4b)
+    const HEURE = 12
+    // ⚠ `PHOTOS` est LOCAL à chaque scénario (celui de `balise` ne sort pas de sa portée) : ma
+    //   première version le lisait de loin et aurait jeté un ReferenceError que `node -c` ne voit
+    //   pas. Même défaut que `balise` — allumé, coupé par `SMOKE_PHOTOS=0`.
+    const PHOTOS = process.env.SMOKE_PHOTOS !== '0'
+    let bon = true
+    const ok = (cond, texte) => { if (!cond) bon = false; console.log(`   ${cond ? '✓' : '✗'} ${texte}`) }
+    const envoyer = async (actions, mur) => {
+      await page.evaluate((a) => { for (const q of a) window.__BRAISES__.scene.sendAction(q) }, actions)
+      await page.waitForTimeout(mur)
+    }
+    // ⚠ `game.step` est le SEUL chemin qui fait tourner `UIScene.update`, donc le seul qui bâtit
+    //   et met à jour la colonne. On en joue le moins possible et on CHRONOMÈTRE : sur cette
+    //   machine une image se paie, et un scénario qui ne dit pas son prix se fait couper un jour
+    //   sans qu'on sache lequel de ses blocs coûtait.
+    const peindre = async (n) => {
+      const t = Date.now()
+      await page.evaluate((k) => {
+        const sc = window.__BRAISES__.scene
+        for (let i = 0; i < k; i++) sc.game.step(performance.now() + i * 16, 16)
+      }, n)
+      console.log(`   · ${n} image(s) de HUD en ${((Date.now() - t) / 1000).toFixed(1)} s`)
+    }
+    // La colonne telle qu'elle est PEINTE, plus la paire que la sim lui donne.
+    const lire = () => page.evaluate(() => {
+      const sc = window.__BRAISES__.scene
+      const moi = (sc.lastEntities ?? []).find((q) => q.id === sc.playerId)
+      const bb = document.querySelector('.bb')
+      return {
+        braise: moi?.braise ?? null,
+        demande: sc.registry.get('cransDemandes') ?? null,
+        jour: sc.lastTime?.seasonDay ?? null,
+        // `null` = la colonne n'est pas montée du tout, ce qui n'est pas la même chose que 0.
+        cases: bb ? bb.querySelectorAll('.bb-c').length : null,
+        pleines: bb ? bb.querySelectorAll('.bb-plein').length : null,
+        verrous: bb ? bb.querySelectorAll('.bb-verrou').length : null,
+        fuite: bb ? bb.querySelectorAll('.bb-fuite').length : null,
+        exige: bb ? bb.querySelectorAll('.bb-exige').length : null,
+        hors: bb ? getComputedStyle(bb.querySelector('.bb-hors')).display !== 'none' : null,
+        manque: bb ? bb.classList.contains('bb-manque') : null,
+        visible: bb ? getComputedStyle(bb).display !== 'none' : null,
+      }
+    })
+
+    await page.evaluate(() => window.__BRAISES__.scene.game.loop.sleep()) // dès la PREMIÈRE ligne
+    // ⚠ **LA FENÊTRE PAR DÉFAUT MENT SUR CE RENDU-CI.** Le harnais ouvre en 1280 × 800, donc la
+    //   planche 1920 × 1080 est mise à l'échelle 0,667 (`hud-dom.ts` : FIT) — et une colonne de
+    //   26 px dont les crans sont séparés de 3 px et le repère épais de 2 px se réduit alors à 17,
+    //   2 et 1,3 px. On ne juge pas une géométrie fine sur une image où elle a perdu un tiers de
+    //   sa taille : à 1920 de large la planche est **1:1**, et la photo montre la barre LIVRÉE.
+    await page.setViewportSize({ width: 1920, height: 1200 })
+    await envoyer([{ type: 'debug_god', on: true }, { type: 'debug_meteo', meteo: null }], 3000)
+    await envoyer([{ type: 'debug_set_season_day', day: JOUR }], 90000)
+    await envoyer([{ type: 'debug_set_hour', hour: HEURE }], 20000)
+    await peindre(3)
+    const r = await lire()
+    console.log(`   jour ${r.jour}, braise ${JSON.stringify(r.braise)}, demande ${r.demande}`)
+    console.log(`   colonne : ${r.cases} case(s), ${r.pleines} pleine(s), ${r.fuite} qui fuit, repère ${r.exige}, hors ${r.hors}, manque ${r.manque}`)
+
+    // ① LA PRÉMISSE — sans elle tout le reste verdirait à vide (une colonne absente rend `null`
+    //    partout, et `null === null` ne prouve rien).
+    ok(r.braise !== null, 'la braise voyage jusqu’au client')
+    ok(r.jour === JOUR, `le monde est au cœur du Grand Froid (jour ${r.jour}, visé ${JOUR})`)
+    ok(r.demande !== null && r.demande > 0, `la demande MORD ici : ${r.demande} cran(s)`)
+    ok(r.visible === true, 'LA COLONNE EST PEINTE — elle existe dans le DOM du HUD et elle est visible')
+
+    // ② L'ÉCHELLE — autant de cases que de crans, ni une de plus.
+    // Dérivé du réglage, jamais recopié : `cransMax = CRANS_DEPART + niveau` (B-R3/B-R14), et le
+    // jour où l'arbre déplace `CRANS_DEPART`, la garde suit au lieu de mentir.
+    const B = await page.evaluate(() => {
+      const b = window.__BRAISES__.sim?.BRAISE
+      return b ? { depart: b.CRANS_DEPART ?? null, sommet: b.CRANS_MAX ?? null, T: b.DUREE_CRAN ?? null } : null
+    })
+    // ⚠ On l'affirme avant de s'en servir : à `null`, les comptes tomberaient à 0 et les ✗ qui
+    // suivent accuseraient le RENDU au lieu de nommer un hook de page qui ne porte plus `BRAISE`.
+    ok(B !== null && B.depart > 0 && B.sommet > 0 && B.T > 0,
+      `le réglage voyage jusqu’à la page : CRANS_DEPART ${B?.depart}, CRANS_MAX ${B?.sommet}, DUREE_CRAN ${B?.T}`)
+    const max = (r.braise?.niveau ?? 0) + B.depart
+    // ⚠ LE TUBE A LA TAILLE DU BOUT DE L'ARBRE, PAS DE L'ÉCHELLE COURANTE (décision d'Alexis du
+    // 2026-10-04). C'est le ✗ qui attraperait un retour à l'ancienne forme, où gagner un cran
+    // redessinait toute la barre.
+    ok(r.cases === B.sommet, `le tube a la taille du SOMMET : ${r.cases} cases pour CRANS_MAX ${B.sommet}`)
+    ok(r.verrous === B.sommet - max,
+      `les crans non débloqués sont des verrous : ${r.verrous} (échelle ${max} sur ${B.sommet})`)
+
+    // ③ CE QUI EST PLEIN — `floor`, et c'est la dette de lisibilité de B-R7b payée à l'écran.
+    const T = B?.T ?? null
+    const attendues = T !== null && r.braise !== null ? Math.min(max, Math.floor(r.braise.charge / T)) : null
+    ok(attendues !== null && r.pleines === attendues,
+      `les cases pleines valent cransCouverts (floor) : ${r.pleines} pour ${attendues} (charge ${r.braise?.charge} / T ${T})`)
+    // Et le cran qui fuit ne se peint QUE s'il en reste un — jamais à charge pleine.
+    const resteUn = attendues !== null && attendues < max
+    ok(r.fuite === (resteUn ? 1 : 0), `le cran qui fuit : ${r.fuite} (attendu ${resteUn ? 1 : 0})`)
+
+    // ④ LE REPÈRE DU LIEU — dans l'échelle il se pose sur UNE case, au-delà il s'épingle hors du
+    //    tube, et les deux ne se montrent jamais ensemble.
+    // ⚠ « DEDANS » SE JUGE SUR LE TUBE, PAS SUR L'ÉCHELLE DÉBLOQUÉE : le repère se pose aussi
+    // sur un cran VERROUILLÉ, et c'est tout l'intérêt de la forme choisie — il montre la serrure.
+    const dedans = r.demande !== null && r.demande > 0 && r.demande <= r.cases
+    ok(r.exige === (dedans ? 1 : 0), `le repère dans le tube : ${r.exige} (attendu ${dedans ? 1 : 0})`)
+    ok(r.hors === !dedans, `le repère épinglé hors du tube : ${r.hors} (attendu ${!dedans})`)
+    ok(r.manque === (r.demande > r.pleines), `le cadre dit le déficit : ${r.manque} (demande ${r.demande} > pleines ${r.pleines})`)
+
+    // ⑤ CE QUI EST VRAIMENT PEINT, EN CHIFFRES — les classes DOM disent l'intention, pas le
+    //    résultat : un `::after` sans hauteur, une couleur héritée de travers ou un cran de 0 px
+    //    passeraient toutes les gardes ci-dessus. On lit donc la GÉOMÉTRIE et les COULEURS.
+    const g = await page.evaluate(() => {
+      const bb = document.querySelector('.bb')
+      if (!bb) return null
+      const r = bb.getBoundingClientRect()
+      const lis = (el, pseudo) => {
+        const cs = getComputedStyle(el, pseudo)
+        // ⚠ ON LIT AUSSI L'IMAGE : le VERROU est une hachure (`repeating-linear-gradient`), donc
+        // son `backgroundColor` est transparent — le juger sur la couleur seule dirait « rien
+        // de peint » sur une case parfaitement peinte.
+        return { fond: cs.backgroundColor, image: cs.backgroundImage, h: cs.height }
+      }
+      return {
+        tube: { x: Math.round(r.x), y: Math.round(r.y), w: Math.round(r.width), h: Math.round(r.height) },
+        cadre: getComputedStyle(bb).borderTopColor,
+        fondDuTube: getComputedStyle(bb).backgroundColor,
+        cadre: (() => {
+          const el = bb.querySelector('.bb-cadre')
+          if (!el) return null
+          const c = el.getBoundingClientRect()
+          return { y: c.y, h: Math.round(c.height), bord: getComputedStyle(el).borderTopColor }
+        })(),
+        rects: [...bb.querySelectorAll('.bb-c')].map((c) => ({ y: c.getBoundingClientRect().y })),
+        cases: [...bb.querySelectorAll('.bb-c')].map((c) => {
+          const b = c.getBoundingClientRect()
+          return {
+            h: Math.round(b.height),
+            classes: c.className.replace('bb-c', '').trim(),
+            fond: getComputedStyle(c).backgroundColor,
+            cerne: getComputedStyle(c).boxShadow,
+            apres: lis(c, '::after'),
+            repere: c.classList.contains('bb-exige') ? lis(c, '::before') : null,
+          }
+        }),
+      }
+    })
+    console.log(`   tube ${g.tube.w} × ${g.tube.h} px à (${g.tube.x}, ${g.tube.y}), cadre ${g.cadre?.h ?? '—'} px en ${g.cadre?.bord ?? '—'}`)
+    for (const [i, c] of g.cases.entries()) {
+      console.log(`     cran ${i} : ${c.h} px, « ${c.classes || '—'} », peint ${c.apres.fond} sur ${c.apres.h}` +
+        (c.repere ? `, repère ${c.repere.fond} épais ${c.repere.h}` : ''))
+    }
+    // Les trois choses qu'une classe ne prouve pas : le tube occupe la hauteur dispo, chaque cran
+    // a une taille utile, et le peint du cran plein a bien la couleur de braise sur TOUTE sa case.
+    ok(g.tube.h > 800, `le tube prend la hauteur dispo : ${g.tube.h} px`)
+    ok(g.cases.every((c) => c.h > 20), `chaque cran a une taille utile (min ${Math.min(...g.cases.map((c) => c.h))} px)`)
+    const plein = g.cases.find((c) => c.classes.includes('bb-plein'))
+    ok(plein !== undefined && plein.apres.fond === 'rgb(201, 139, 58)', `le cran plein est en braise #c98b3a : ${plein?.apres.fond}`)
+    const fuit = g.cases.find((c) => c.classes.includes('bb-fuite'))
+    ok(fuit === undefined || fuit.apres.fond !== 'rgb(201, 139, 58)',
+      `LE CRAN QUI FUIT N’EST PAS EN BRAISE (B-R7b) : ${fuit?.apres.fond ?? 'aucun'} sur ${fuit?.apres.h ?? '—'}`)
+    const rep = g.cases.find((c) => c.repere)
+    ok(rep === undefined || rep.repere.fond === 'rgb(224, 90, 74)', `le repère est en alerte #e05a4a : ${rep?.repere.fond ?? 'aucun'}`)
+    // LE VERROU EST PEINT, ET C'EST UNE TEXTURE. Une classe posée sur une case dont le `::after`
+    // ne dessine rien passerait tous les comptes ci-dessus : c'est le défaut que ceci attrape.
+    const verrou = g.cases.find((c) => c.classes.includes('bb-verrou'))
+    ok(verrou !== undefined, `au moins un cran verrouillé à peindre (échelle ${max} sur ${B.sommet})`)
+    // ⚠ TRANSPARENT, pas sombre (décision d'Alexis du 2026-10-04). La garde porte sur les DEUX
+    // couches, parce qu'il en suffit d'une opaque pour boucher le trou : la case elle-même, et le
+    // TUBE derrière elle — c'est ce dernier qui portait le fond chaud jusqu'ici.
+    ok(verrou !== undefined && verrou.fond === 'rgba(0, 0, 0, 0)',
+      `le verrou est un TROU : fond ${verrou?.fond ?? 'aucun'}`)
+    ok(g.fondDuTube === 'rgba(0, 0, 0, 0)', `et le tube ne le bouche pas : fond ${g.fondDuTube}`)
+    ok(verrou !== undefined && verrou.cerne === 'none',
+      `et rien ne le marque — le cadre porte seul la lecture : ${verrou?.cerne ?? 'aucun'}`)
+
+    // ⑤ter LE CADRE NE TIENT QUE LES CRANS OUVERTS (décision d'Alexis, 2026-10-04). C'est de
+    //      l'arithmétique écrite à la main sur la géométrie du flex : on la relit ici sur les
+    //      RECTS que le navigateur a vraiment calculés, pas sur la formule qui les a produits.
+    ok(g.cadre !== null, 'le cadre existe dans le DOM')
+    const basDuTube = g.tube.y + g.tube.h
+    const hautOuvert = g.rects[max - 1]?.y ?? null // le cran ouvert le plus haut
+    const attenduH = hautOuvert === null ? null : basDuTube - hautOuvert + 5 // 3 de padding + 2 de bordure
+    ok(attenduH !== null && Math.abs(g.cadre.h - attenduH) <= 1,
+      `le cadre coiffe exactement les ${max} crans ouverts : ${g.cadre.h} px (attendu ${attenduH})`)
+    ok(Math.abs(g.cadre.y + g.cadre.h - basDuTube) <= 1,
+      `il est posé au BAS du tube : ${Math.round(g.cadre.y + g.cadre.h)} contre ${basDuTube}`)
+    // ⚠ LE CONTRÔLE QUI DONNE SON SENS AU RESTE : tant que l'arbre n'est pas au bout, le cadre
+    // laisse du vide au-dessus — c'est LUI, par sa hauteur, qui dit ce qu'il reste à ouvrir.
+    const reste = g.tube.h - g.cadre.h
+    ok(max < B.sommet ? reste > 100 : Math.abs(reste) <= 1,
+      `et il laisse le vide des ${B.sommet - max} verrous au-dessus : ${Math.round(reste)} px`)
+
+    // ⑤bis LE SAC LA FAIT DISPARAÎTRE (décision d'Alexis, 2026-10-04). Le HUD, lui, devient
+    //      OPAQUE sous l'écran personnage au lieu de s'en aller : un héritage n'aurait donc rien
+    //      caché, et c'est pour ça que ça se vérifie ici et pas seulement en test de source.
+    //      ⚠⚠ ET IL FAUT RÉVEILLER LA BOUCLE. Deux raisons, pas une : la touche passe par le
+    //      clavier de PHASER (`input-bindings`), et le DOM du HUD ne bouge que dans
+    //      `UIScene.update` — les deux sont morts boucle endormie. Ma première version pressait
+    //      TAB sur une boucle à l'arrêt : ✗ garanti, et il accusait le masquage au lieu du montage.
+    await page.evaluate(() => window.__BRAISES__.scene.game.loop.wake())
+    const etatDuSac = async () => await page.evaluate(() => {
+      const bb = document.querySelector('.bb')
+      const sc = window.__BRAISES__.scene
+      return {
+        sac: Boolean(sc.registry?.get('characterMenuOpen')), // `setHud` écrit la clé NUE (hud-state.ts)
+        vue: bb ? getComputedStyle(bb).display !== 'none' : null,
+      }
+    })
+    await page.keyboard.press('Tab')
+    await page.waitForTimeout(1500)
+    const ouvert = await etatDuSac()
+    // ⚠ DEUX CLAUSES, PARCE QU'IL Y A DEUX CAUSES D'ÉCHEC : la touche n'est pas arrivée, ou la
+    // colonne ne s'efface pas. Une seule affirmation les confondrait, et le ✗ accuserait au hasard.
+    ok(ouvert.sac === true, `le sac s’ouvre vraiment (TAB reçu : ${ouvert.sac})`)
+    ok(ouvert.vue === false, `et la colonne s’efface dessous (visible : ${ouvert.vue})`)
+    await page.keyboard.press('Tab')
+    await page.waitForTimeout(1500)
+    const ferme = await etatDuSac()
+    // ⚠ LE CONTRÔLE POSITIF : sans lui, une colonne DÉFINITIVEMENT morte (un `display:none` qui
+    // ne se relève jamais) passerait le ✓ ci-dessus. C'est le retour qui prouve le masquage.
+    ok(ferme.sac === false && ferme.vue === true, `et elle revient quand on le referme (sac ${ferme.sac}, visible ${ferme.vue})`)
+    await page.evaluate(() => window.__BRAISES__.scene.game.loop.sleep())
+
+    // ⑥ LA PHOTO — boucle réveillée, le temps qu'une image se présente, puis rendormie (sans quoi
+    //    `page.screenshot` expire : pas de GPU ici). Avant toute structure, c'est abordable.
+    if (PHOTOS) {
+      await page.evaluate(() => window.__BRAISES__.scene.game.loop.wake())
+      await page.waitForTimeout(2500)
+      await page.evaluate(() => window.__BRAISES__.scene.game.loop.sleep())
+      await page.screenshot({ timeout: 300000, path: `${OUT}/barre-braise.png` })
+      // …et la colonne SEULE, cadrée large de 20 px : c'est à cette échelle qu'on juge un gap de
+      // 3 px et un repère de 2 px, pas sur une planche entière réduite dans un rapport.
+      await page.screenshot({
+        timeout: 300000, path: `${OUT}/barre-braise-detail.png`,
+        clip: { x: g.tube.x - 20, y: g.tube.y - 10, width: g.tube.w + 40, height: g.tube.h + 20 },
+      })
+      console.log(`   → ${OUT}/barre-braise.png + barre-braise-detail.png`)
+    } else {
+      console.log('   (photo coupée — SMOKE_PHOTOS=1 pour voir la colonne, sur machine calme)')
+    }
+    await page.evaluate(() => window.__BRAISES__.scene.game.loop.wake())
+    console.log(`   ${bon ? '✓ barre-braise : la colonne peint la règle' : '✗ barre-braise : voir les ✗ ci-dessus'}`)
+  },
+
+  /**
    * ═══ LA BALISE — scénario `balise` (spec `braise.md` étape 6, 2026-10-03) ═══
    *
    * LA BOUCLE ENTIÈRE, DANS LE VRAI JEU : on est à midi au cœur du Grand Froid, la braise se vide ;
@@ -2240,10 +2501,26 @@ const SCENARIOS = {
         // garde : que le jour ait bien pris, c'est la prémisse ① qui le prouve (sans Grand
         // Froid la charge ne descendrait pas).
         jour: sc.lastTime?.seasonDay ?? null,
+        // CE QUE LE LIEU EXIGE, tel que le client le relève (`braise.md` § 5.12) — la moitié
+        // du couple que peint la barre de crans. Lu au REGISTRE et non recalculé : c'est la
+        // valeur que l'écran montre, pas une seconde opinion.
+        demande: sc.registry.get('cransDemandes') ?? null,
       }
     })
     let bon = true
     const ok = (cond, texte) => { if (!cond) bon = false; console.log(`   ${cond ? '✓' : '✗'} ${texte}`) }
+    // ⚠ **CE SCÉNARIO TOURNE BOUCLE ENDORMIE, DONC `WorldScene.update` NE TOURNE PAS — ET C'EST
+    //   LUI QUI ÉCRIT `cransDemandes` ET QUI RAFRAÎCHIT LA FAÇADE DU GEL.** Les deux vivent dans
+    //   `update()` (l. 1793→3503), avec l'ambiant et la caméra. Sans ce coup de manivelle, les
+    //   gardes de la demande liraient `null` — vertes ou rouges pour la mauvaise raison.
+    //   On appelle donc la MÉTHODE D'UPDATE elle-même, pas `game.step` : c'est le même code, moins
+    //   le rendu — or le rendu est précisément ce qui coûte dix à quinze minutes dès qu'une
+    //   structure existe. (Ce n'est pas « une phase seule » : c'est l'image de client ENTIÈRE.)
+    const manivelle = () => page.evaluate(() => {
+      const sc = window.__BRAISES__.scene
+      sc.update(performance.now(), 16)
+      return sc.lastTime?.tick ?? null
+    })
     // ⚠ `page.screenshot` EXPIRE tant que Phaser tourne (pas de GPU ici : SwiftShader) — on endort
     //   la boucle, on photographie, on la réveille. La recette de la skill `verif-navigateur`.
     // `SMOKE_TRACE=1` — la page raconte ce qu'elle fait, pas seulement ce qu'elle a fini de
@@ -2325,6 +2602,7 @@ const SCENARIOS = {
     await envoyer([{ type: 'debug_set_hour', hour: HEURE }], 20000)
     const a0 = await lire()
     await page.waitForTimeout(3000)
+    const tickA = await manivelle()
     const a1 = await lire()
     console.log(`   joueur en (${a1.tx}, ${a1.ty}), jour ${a1.jour ?? '?'} — charge ${a0.charge} → ${a1.charge}`)
     ok(a0.charge !== null, `la braise voyage bien jusqu’au client (niveau ${a1.niveau})`)
@@ -2334,6 +2612,13 @@ const SCENARIOS = {
     ok(a1.jour === JOUR, `le monde est bien au cœur du Grand Froid (jour ${a1.jour ?? '?'}, visé ${JOUR})`)
     ok(a1.charge !== null && a0.charge !== null && a1.charge < a0.charge,
       `la prémisse : ce froid-là MORD (jour ${JOUR}, ${HEURE} h) — la charge descend sans balise`)
+    // ⚠ ET LA DEMANDE AVEC — c'est le CONTRÔLE POSITIF de la garde ④ bis plus bas. Sans lui,
+    //   « la demande tombe à 0 au pied de la balise » serait vrai d'un monde où elle vaut 0
+    //   partout : la façade du gel rendrait `undefined`, la barre ne se peindrait jamais, et le
+    //   zéro final ne prouverait rien. (C'est le piège de `etat-gel.ts` : une lecture non
+    //   déclarée type vrai et rend `undefined` en silence.)
+    ok(a1.demande !== null && a1.demande > 0,
+      `la demande du lieu traverse la façade du gel et MORD : ${a1.demande} cran(s) exigé(s) ici, au tick ${tickA}`)
 
     // ═══ ② ③ ④ — ET LA RÈGLE QUE CE SCÉNARIO A FINI PAR ÉTABLIR ═══
     //
@@ -2495,9 +2780,22 @@ const SCENARIOS = {
     //   laisse donc le temps, et ce qu'on affirme alors est la seule chose qui ne dépende pas du
     //   chrono : le PLAFOND. La charge s'arrête au plein, elle ne le dépasse pas.
     await page.waitForTimeout(15000)
+    const tickB = await manivelle()
     const c2 = await lire()
     console.log(`   et après 15 s au pied : ${c1.charge} → ${c2.charge} (plein ${a0.plein})`)
     ok(c2.charge === a0.plein, `elle remonte AU PLEIN et s’y arrête — jamais au-delà (${c2.charge} / ${a0.plein})`)
+    // ④ bis — CE QUE LA BARRE MONTRERA : au pied d'une balise ALLUMÉE la demande tombe à ZÉRO.
+    //
+    // C'est la seule chose que l'A/B de `cransExiges` sur la façade du client ne pouvait pas
+    // prouver par le raisonnement : le plateau de la balise passe par `s.allumee` lu dans
+    // `fireBubble`, et personne n'avait encore vérifié qu'une façade — qui porte `structures`
+    // mais n'est pas un `SimState` — le voit. Le ✓ de la ligne ① et celui-ci sont les deux
+    // bouts de la même garde : la demande MORD au Grand Froid, et elle se TAIT au camp (B-R8).
+    // ⚠ ET ON PROUVE QUE LA VALEUR A ÉTÉ RELUE, pas laissée là : les deux tours de manivelle
+    //   tombent sur des ticks différents, donc la seconde lecture a bien revu le monde APRÈS
+    //   l'allumage. Sans ça, un 0 pourrait n'être qu'un registre jamais réécrit.
+    ok(tickB !== null && tickA !== null && tickB > tickA, `le monde a bien avancé entre les deux lectures (${tickA} → ${tickB})`)
+    ok(c2.demande === 0, `la demande tombe à 0 au pied de la balise allumée — le camp est un répit (B-R8) : ${c2.demande}`)
     await page.evaluate(() => window.__BRAISES__.scene.game.loop.wake())
     console.log(`   ${bon ? '✓ balise : la boucle est atteignable' : '✗ balise : voir les ✗ ci-dessus'}`)
     if (PHOTOS) console.log(`   → ${OUT}/balise-eteinte.png + balise-vive.png`)

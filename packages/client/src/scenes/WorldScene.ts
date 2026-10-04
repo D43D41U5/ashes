@@ -3467,6 +3467,16 @@ export class WorldScene extends Phaser.Scene {
       // À L'ÉTAGE du joueur : sous la roche il fait 13 °C (`GROTTE_AMBIANT`), et le thermomètre
       // doit le dire — lu au sol, il montrait l'air de la terrasse au-dessus de la tête.
       setHud(this.registry, 'ambiant', ambientTemperature(this.etatGel, this.predicted.x, this.predicted.y, this.etageJoueur))
+      // ═══ CE QUE LE LIEU EXIGE EN CRANS (`braise.md` B-R4) — la barre du bord droit ═══
+      //
+      // Sur la MÊME façade, dans le MÊME bloc cadencé, et ce n'est pas une commodité : le jeu de
+      // lectures d'état est IDENTIQUE à celui d'`ambiant`, au bit. `froidDuMonde` n'est que
+      // `clampTemp(airDuMonde(…))` — même fonction, mêmes arguments — donc `airNonBorneAt` et
+      // `baselineTemperatureAt` touchent exactement les mêmes champs, et `airDeLaDemande` ajoute
+      // les deux planchers (`fireBubble`, `naturalWarmth`) qu'`ambientTemperature` appelle déjà.
+      // Rien à ajouter au contrat de `etat-gel.ts`, dont l'en-tête avertit qu'une lecture non
+      // déclarée type vrai et rend `undefined` en silence.
+      setHud(this.registry, 'cransDemandes', cransExiges(this.etatGel, this.predicted.x, this.predicted.y, this.etageJoueur))
     }
     // Le marqueur « tu es ici » de la carte plein écran suit l'ancre autorité.
     setHud(this.registry, 'playerPos', { x: this.predicted.x, y: this.predicted.y })

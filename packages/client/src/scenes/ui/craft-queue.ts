@@ -45,6 +45,7 @@
 import { BALANCE, RECIPES, type CraftOrder, type ItemId, type PlayerAction, type RecipeId } from '@ashes/sim'
 import type Phaser from 'phaser'
 import { ITEM_LABELS, itemIconKey } from '../../render/item-art'
+import { BARRE_BRAISE_GAP, BARRE_BRAISE_W } from './barre-braise'
 import { INK_OUTLINE } from './hud-dom'
 import { HEX, VITAL_HEX } from './palette'
 
@@ -172,8 +173,11 @@ export function createCraftQueueView(
     `<style>
     /* LA COLONNE : ancrée au coin, transparente au clic — seul le ✕ rallume le pointeur (un
        panneau cliquable d'un bloc volait la molette et le glisser au monde). z-index 10 : elle
-       se voit PAR-DESSUS l'écran personnage (maquette 3A), comme les vitales. */
-    .cq{position:absolute;right:26px;bottom:26px;width:312px;z-index:10;pointer-events:none;display:none;
+       se voit PAR-DESSUS l'écran personnage (maquette 3A), comme les vitales.
+       ⚠ ELLE N'EST PLUS SEULE AU BORD DROIT (2026-10-04) : la barre de crans de la braise y
+       prend sa colonne sur toute la hauteur dispo, et la pile se décale de sa largeur — le
+       rapport entre les deux est IMPORTÉ (BARRE_BRAISE_W), pas recopié de chaque côté. */
+    .cq{position:absolute;right:${26 + BARRE_BRAISE_W + BARRE_BRAISE_GAP}px;bottom:26px;width:312px;z-index:10;pointer-events:none;display:none;
       flex-direction:column;align-items:stretch;gap:6px;}
     .cq-h{display:flex;justify-content:flex-end;padding:0 2px;}
     .cq-n{font-size:12px;color:${HEX.faint};letter-spacing:2px;${INK_OUTLINE}}
