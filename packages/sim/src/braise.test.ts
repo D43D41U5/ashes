@@ -18,17 +18,19 @@ import { describe, expect, it } from 'vitest'
 import { BALANCE, BRAISE, COMBAT, FIRE, MONSTER_DEFS, TEMPERATURE } from './balance'
 import { braiseNeuve, chargePleine, cransCouverts, cransMax, type Braise } from './braise'
 import { palierDuSol } from './etages'
-import { fenetreDe, type MeteoFront } from './meteo'
+import { fenetreDe, meteoMouille, type MeteoFront } from './meteo'
 import { deserializeSim, serializeSim } from './persistence'
 import { respawn } from './combat'
 import { spawnMonster } from './monsters'
 import { createSim, spawnEntity, step, type Entity, type SimState } from './sim'
 import { TERRASSES } from './terrasses'
 import { addItems, countOf, makeInventory } from './items'
-import { advanceFire, fireState, fireZoneInventory } from './fire'
+import { advanceFire, fireState, fireStateAt, flammeDonnee, foyerAllumable, fireZoneInventory } from './fire'
 import { advanceTemperature, airDeLaDemande, baselineTemperature, cransExiges, eveilCendreuxAt, rechargeDeBalise, socleDuJour } from './temperature'
 import { estGele } from './gel'
-import { addStructure, grantItems, type Structure } from './village'
+import { addStructure, applyVillageAction, grantItems, type Structure } from './village'
+import { PIECES, piece, type StructureType } from './pieces'
+import { drainEvents } from './events'
 import { cycleOffsetForStartHour, jourDeSaison, TICKS_PER_CYCLE, TICKS_PER_SEASON_DAY, tourForDay, YEAR_DAYS } from './time'
 
 const T = TEMPERATURE
@@ -733,8 +735,12 @@ describe('la loi ⓒ (2026-10-03) — dans le rayon d’une balise allumée, il 
     const rayon = T.FIRE_RANGE
     const lire = (type: 'fire' | 'balise'): { gratuites: number; divergences: number; total: number } => {
       const state = simPlate({ jour: GRAND_FROID })
+      // ⚠ LES DEUX FOYERS SE DONNENT LA FLAMME À LA MAIN DEPUIS B-R17 (2026-10-04) : tout foyer
+      //   libre naît ÉTEINT, donc un `addStructure` nu ne chauffe plus rien et les deux colonnes
+      //   de cette garde auraient lu 0 — un vert pour la mauvaise raison du côté balise, un rouge
+      //   du côté feu. Ce qu'on éprouve ici est la GÉOMÉTRIE de deux foyers qui brûlent.
       if (type === 'balise') poserBalise(state, 5, 5, { allumee: true })
-      else addStructure(state, 'fire', 5, 5, 0, 1)
+      else addStructure(state, 'fire', 5, 5, 0, 1).allumee = true
       let gratuites = 0
       let divergences = 0
       let total = 0
@@ -822,22 +828,28 @@ describe('le plateau ne sort PAS dans le monde de base (vérifié le 2026-10-03,
   })
 })
 
-describe('B-A7 — le rallumage exige de la charge (B-R10)', () => {
+describe('B-A7 + B-A17 ② — le rallumage n’exige AUCUNE charge (B-R17 ②, la clause inversée)', () => {
   /** Le geste, par la VRAIE porte (l'action) : c'est elle qu'un joueur traverse. */
   const allumer = (state: SimState, e: Entity, s: Structure): void => {
-    step(state, [{ entityId: e.id, dx: 0, dy: 0, action: { type: 'light_balise', structureId: s.id } }])
+    step(state, [{ entityId: e.id, dx: 0, dy: 0, action: { type: 'light_foyer', structureId: s.id } }])
   }
 
-  it('une braise CHARGÉE l’allume ; à 0 elle REFUSE — même balise, même tuile, seule la charge change', () => {
-    for (const [nom, charge, attendu] of [['chargée', BRAISE.DUREE_CRAN, true], ['à 0', 0, false]] as const) {
+  it('B-A17 ② — une braise À 0 allume, exactement comme une braise pleine (la charge ne garde plus rien)', () => {
+    // ⚠ LE VERDICT DE CETTE GARDE S'EST INVERSÉ LE 2026-10-04, et la garde est GARDÉE pour ça :
+    //   elle affirmait `charge 0 ⇒ refus`, et ce refus fermait l'ascension pour de bon (mesuré :
+    //   sans balise la charge tombe sous un cran au jour 67, et seule une balise ALLUMÉE recharge
+    //   — la seule issue était de mourir). B-R17 ② le retire : la braise est la SOURCE du feu, pas
+    //   son réservoir. C'est la décision du 2026-09-28 honorée au mot.
+    for (const [nom, charge] of [['pleine', BRAISE.DUREE_CRAN], ['à 0', 0]] as const) {
       const state = simPlate({ jour: ARDEUR })
       const b = poserBalise(state, 5, 5)
       const e = spawn(state, 6.5, 5.5)
       e.braise = { niveau: 0, charge }
       expect(fireState(state, b), `${nom} : la prémisse — elle est éteinte`).toBe('out')
       allumer(state, e, b)
-      expect(b.allumee === true, `braise ${nom} : la flamme est donnée ?`).toBe(attendu)
-      expect(fireState(state, b) === 'lit', `braise ${nom} : elle brûle ?`).toBe(attendu)
+      expect(b.allumee, `braise ${nom} : la flamme est donnée`).toBe(true)
+      expect(fireState(state, b), `braise ${nom} : elle brûle`).toBe('lit')
+      expect(cransCouverts(e.braise!), `braise ${nom} : et allumer ne rend AUCUN cran`).toBe(cransCouverts({ niveau: 0, charge }))
     }
   })
 
@@ -847,7 +859,7 @@ describe('B-A7 — le rallumage exige de la charge (B-R10)', () => {
     b.fuel = makeInventory(FIRE.FUEL_SLOTS)
     const e = spawn(state, 6.5, 5.5)
     allumer(state, e, b)
-    expect(b.allumee, 'rien à brûler : la braise n’est pas dépensée pour rien').toBeUndefined()
+    expect(b.allumee, 'rien à brûler : la braise n’est pas dépensée pour rien').toBe(false)
   })
 
   it('allumer ne COÛTE rien à la braise (le patron de `light_torch`)', () => {
@@ -865,11 +877,11 @@ describe('B-A7 — le rallumage exige de la charge (B-R10)', () => {
     const b = poserBalise(state, 5, 5)
     const e = spawn(state, 5.5 + BALANCE.INTERACT_RANGE + 2, 5.5)
     allumer(state, e, b)
-    expect(b.allumee, 'la portée de bras garde le geste').toBeUndefined()
+    expect(b.allumee, 'la portée de bras garde le geste').toBe(false)
   })
 })
 
-describe('B-R10 — une balise éteinte ne brûle RIEN, et chaque extinction lui reprend la flamme', () => {
+describe('B-R17 — un foyer éteint ne brûle RIEN, et chaque extinction lui reprend la flamme', () => {
   const bois = (s: Structure): number => (s.fuel ? countOf(s.fuel, 'wood') : 0)
 
   it('éteinte, son bois de naissance est INTACT après une fenêtre de combustion entière', () => {
@@ -916,7 +928,7 @@ describe('B-R10 — une balise éteinte ne brûle RIEN, et chaque extinction lui
     b.emberUntil = state.tick + 5
     state.tick += 6 // les braises ont fini de rougir
     advanceFire(state)
-    expect(b.allumee, 'la flamme est reprise').toBeUndefined()
+    expect(b.allumee, 'la flamme est reprise, et ÉCRITE `false` — pas effacée (B-R18)').toBe(false)
     addItems(b.fuel!, { wood: 3 })
     advanceFire(state)
     expect(fireState(state, b), 'du bois dans une balise reprise ne la rallume pas').toBe('out')
@@ -933,15 +945,33 @@ describe('B-R10 — une balise éteinte ne brûle RIEN, et chaque extinction lui
     //   combustion vit dans `advanceFire`, donc une porte mal cadrée n'aurait pas planté — elle
     //   aurait éteint EN SILENCE tous les feux de toutes les vallées sauvegardées.
     //
-    // ⚠ CE QUI FERAIT ROUGIR CETTE GARDE : que la porte `allumee` cesse d'être réservée à la
-    //   balise. MESURÉ — remplacer `!estBalise(s.type) || s.allumee === true` par
-    //   `s.allumee === true` dans `advanceFire` fait tomber la dernière clause (0 bûche consumée).
+    // ⚠ CE QUI FERAIT ROUGIR CETTE GARDE, et la réponse a CHANGÉ le 2026-10-04 : la porte `allumee`
+    //   n'est plus réservée à la balise (B-R17), donc ce qui la tient n'est plus le TYPE mais le
+    //   DÉFAUT DÉRIVÉ de `flammeDonnee` (`s.allumee ?? !estBalise(s.type)`). Remplacer ce défaut
+    //   par un `s.allumee === true` sec fait tomber les deux dernières clauses : le feu relu
+    //   n'allumerait plus et ne consumerait plus une bûche. C'est LÀ qu'est la migration.
     const avant = simPlate({ jour: ARDEUR })
     spawn(avant, 5.5, 5.5)
     const feu = addStructure(avant, 'fire', 8, 8, 0, 1)
+    // ⚠ LA PRÉMISSE NE SE FABRIQUE PLUS TOUTE SEULE DEPUIS B-R17 : `addStructure` écrit désormais
+    //   `allumee: false` sur tout foyer libre, donc un feu neuf n'est PLUS « le monde d'avant ». On
+    //   retire le champ à la main — c'est exactement ce que porte une sauvegarde d'avant la loi, et
+    //   sans ce `delete` la garde éprouverait un feu moderne en croyant relire un ancien.
+    delete feu.allumee
+    // ⚠ ET IL MANQUAIT LA MOITIÉ DE LA PRÉMISSE, trouvé le 2026-10-04 en fermant la fenêtre d'un
+    //   tick (B-A17 ⑧) : le pré-B-R17 `addStructure` donnait à tout feu libre ses dix bûches **ET
+    //   L'ANCRE DE COMBUSTION** (`burnAt = tick`) — c'est même exactement ce qui faisait qu'un feu
+    //   de camp naissait ALLUMÉ sans braise, la faille que B-R17 est venu fermer. Le `addStructure`
+    //   d'aujourd'hui ne pose plus d'ancre nulle part, donc retirer `allumee` seul fabriquait une
+    //   forme que le monde d'avant **ne produisait pas** : du bois, aucune ancre, aucune braise.
+    //   Sans ces deux lignes la garde éprouvait un feu CHIMÉRIQUE, et c'est elle qui a rougi quand
+    //   le droit de brûler s'est mis à regarder l'ancre.
+    feu.burnAt = avant.tick
+    feu.burnSlot = feu.fuel!.findIndex((sl) => sl !== null)
     // LES PRÉMISSES — sans elles on relirait un monde sans feu, et tout serait vert pour rien.
     expect(bois(feu), 'un feu libre naît AVEC son bois').toBe(FIRE.FUEL_START_WOOD)
-    expect('allumee' in feu, 'et un FEU n’a jamais ce champ — c’est ça, le monde d’avant').toBe(false)
+    expect(feu.burnAt, 'et le monde d’avant lui posait son ancre à la naissance').toBeDefined()
+    expect('allumee' in feu, 'et le monde d’avant n’a pas ce champ du tout').toBe(false)
     const json = serializeSim(avant)
     expect(json, 'la sauvegarde fabriquée ne porte pas le champ').not.toContain('"allumee"')
 
@@ -958,6 +988,17 @@ describe('B-R10 — une balise éteinte ne brûle RIEN, et chaque extinction lui
     for (let i = 0; i < FIRE.BURN_TICKS + 10; i++) { relu!.tick += 1; advanceFire(relu!) }
     expect(bois(feuRelu), 'une bûche consumée, ni zéro ni dix').toBe(depart - 1)
     expect(feuRelu.allumee, 'et rien ne lui a posé le champ en chemin').toBeUndefined()
+    // ⚠ TROISIÈME CLAUSE, ET C'EST ELLE QUI FERME LA PORTE DÉROBÉE (B-R18) : quand ce feu d'avant
+    //   la loi s'éteint pour de bon, l'extinction doit ÉCRIRE `false` et non effacer. Sinon il
+    //   retomberait sur « né avant la loi » = allumé, et une bûche le rallumerait sans braise —
+    //   la loi serait contournable au bois pour toujours, sur toutes les sauvegardes du monde.
+    feuRelu.fuel = makeInventory(FIRE.FUEL_SLOTS) // à sec
+    delete feuRelu.emberUntil
+    advanceFire(relu!)
+    expect(feuRelu.allumee, 'éteint pour de bon, il porte `false` — il n’est plus « d’avant »').toBe(false)
+    addItems(feuRelu.fuel!, { wood: 3 })
+    advanceFire(relu!)
+    expect(fireState(relu!, feuRelu), 'et du bois seul ne le rallume pas').toBe('out')
   })
 
   it('UNE BALISE EST TOUJOURS LIBRE, quel que soit le village qu’on lui passe (B-R10)', () => {
@@ -1060,4 +1101,378 @@ describe('B-R10 — une balise est une BASE, pas un village', () => {
     expect(fireState(state, b!), 'donc éteinte à la naissance, comme toute balise').toBe('out')
     expect(fireZoneInventory(b!, 'fuel'), 'et elle a bien une zone combustible').toBeDefined()
   })
+})
+
+
+/**
+ * ═══ B-A17 — LE FEU NE NAÎT QUE DU FEU (B-R17, la loi du 2026-10-04) ═══
+ *
+ * ⚠ **CE QUE CE BLOC ÉPROUVE EST NEUF, ET LE DÉFAUT QU'IL FERME EST PLUS VIEUX QUE LA BRAISE.**
+ * `addStructure` donnait dix bûches ET l'ancre de combustion à tout feu libre : un feu de camp
+ * **naissait allumé, à cinq bois, sans braise**. La prémisse de la décision du 2026-09-28 — *« toute
+ * flamme du monde descend de la braise »* — était donc fausse dans le code qui la citait, et c'est
+ * ce qui rendait tolérable le verrou de `light_balise` (une braise à 0 ne pouvait plus rien allumer,
+ * et plus rien ne la rechargeait : la seule issue était de mourir).
+ *
+ * Les clauses de B-A7 et du bloc B-R17 juste au-dessus couvrent déjà ② (l'allumage à charge 0) et
+ * ④ (le bois intact d'un foyer éteint) **pour la balise**. Ce bloc-ci porte ce qui n'existait pas :
+ * le FEU DE CAMP par le vrai chemin joueur, le trou de `found_village`, et la pluie déplacée.
+ */
+describe('B-A17 — le feu ne naît que du feu (B-R17)', () => {
+  const bois = (s: Structure): number => (s.fuel ? countOf(s.fuel, 'wood') : 0)
+
+  /** Poser un feu de camp PAR LE VRAI CHEMIN JOUEUR : l'objet en main, l'action, le tick. */
+  function poserUnFeu(state: SimState, e: Entity, tx: number, ty: number): Structure {
+    grantItems(state, e.id, { campfire: 1 })
+    e.activeSlot = e.inventory.findIndex((sl) => sl?.item === 'campfire')
+    step(state, [{ entityId: e.id, dx: 0, dy: 0, action: { type: 'place_campfire', tx, ty } }])
+    return state.structures.find((s) => s.type === 'fire' && s.tx === tx && s.ty === ty)!
+  }
+  const allumer = (state: SimState, e: Entity, s: Structure): void => {
+    step(state, [{ entityId: e.id, dx: 0, dy: 0, action: { type: 'light_foyer', structureId: s.id } }])
+  }
+
+  it('① un feu de camp bâti naît ÉTEINT, et s’allume à la braise', () => {
+    const state = simPlate({ jour: ARDEUR })
+    const e = spawn(state, 5.5, 5.5)
+    const feu = poserUnFeu(state, e, 6, 5)
+    expect(feu, 'la prémisse : la pose a bien abouti par l’action').toBeDefined()
+    expect(bois(feu), 'et il porte ses dix bûches de naissance').toBe(FIRE.FUEL_START_WOOD)
+    expect(feu.allumee, '`false` ÉCRIT, pas absent — c’est ça, la migration (B-R18)').toBe(false)
+    expect(fireState(state, feu), 'DONC il naît éteint, et c’est toute la loi').toBe('out')
+    expect(feu.burnAt, 'et sans ancre de combustion : rien ne brûle encore').toBeUndefined()
+    // CONTRÔLE POSITIF — la même pose, puis le geste : il prend.
+    allumer(state, e, feu)
+    expect(fireState(state, feu), 'la braise lui donne la flamme').toBe('lit')
+  })
+
+  it('① bis un feu de camp ÉTEINT ne brûle pas son bois (sinon il serait vide le jour de l’allumage)', () => {
+    const state = simPlate({ jour: ARDEUR })
+    const e = spawn(state, 5.5, 5.5)
+    const feu = poserUnFeu(state, e, 6, 5)
+    const depart = bois(feu)
+    const brulerUneFenetre = (): void => {
+      for (let i = 0; i < FIRE.BURN_TICKS + 10; i++) { state.tick += 1; advanceFire(state) }
+    }
+    brulerUneFenetre()
+    expect(bois(feu), 'éteint : pas une bûche consumée').toBe(depart)
+    // CONTRÔLE POSITIF : le MÊME feu, allumé, brûle — donc l'horloge du montage tourne bien.
+    feu.allumee = true
+    brulerUneFenetre()
+    expect(bois(feu), 'allumé : il consume').toBe(depart - 1)
+  })
+
+  it('③ le bois seul ne rallume pas un feu de camp mort — il faut la braise', () => {
+    const state = simPlate({ jour: ARDEUR })
+    const e = spawn(state, 5.5, 5.5)
+    const feu = poserUnFeu(state, e, 6, 5)
+    allumer(state, e, feu)
+    expect(fireState(state, feu), 'la prémisse : il brûle').toBe('lit')
+    feu.fuel = makeInventory(FIRE.FUEL_SLOTS) // à sec
+    delete feu.emberUntil
+    advanceFire(state)
+    expect(feu.allumee, 'mort, il porte `false` (ÉCRIT, pas effacé — B-R18)').toBe(false)
+    addItems(feu.fuel!, { wood: 3 })
+    advanceFire(state)
+    expect(fireState(state, feu), 'une bûche ne suffit plus : la loi n’est pas contournable au bois').toBe('out')
+    expect(bois(feu), 'et ce bois-là ne part pas en fumée non plus').toBe(3)
+    // CONTRÔLE POSITIF : la braise, elle, le reprend.
+    allumer(state, e, feu)
+    expect(fireState(state, feu), 'la braise rallume').toBe('lit')
+  })
+
+  it('⑥ `found_village` EXIGE la flamme — sinon la loi avait un trou le jour de sa naissance', () => {
+    // ⚠ LE TROU, EN UNE PHRASE : promouvoir met `villageId ≠ 0`, or `fireStateAt` rend alors `'lit'`
+    //   SANS REGARDER LE BOIS (branche du Foyer de village). Bâtir puis fonder donnait donc du feu
+    //   sans braise — le contournement le plus court de toute la loi.
+    const state = simPlate({ jour: ARDEUR })
+    const e = spawn(state, 5.5, 5.5)
+    const feu = poserUnFeu(state, e, 6, 5)
+    step(state, [{ entityId: e.id, dx: 0, dy: 0, action: { type: 'found_village', structureId: feu.id } }])
+    expect(feu.villageId, 'un feu éteint ne fonde pas').toBe(0)
+    expect(state.villages.length, 'et aucun village n’est né').toBe(0)
+    // CONTRÔLE POSITIF : le MÊME feu, la MÊME tuile, allumé — il fonde.
+    allumer(state, e, feu)
+    step(state, [{ entityId: e.id, dx: 0, dy: 0, action: { type: 'found_village', structureId: feu.id } }])
+    expect(feu.villageId, 'allumé, il fonde — seule la flamme changeait').not.toBe(0)
+  })
+
+  it('⑦ la pluie n’empêche plus RIEN — ni poser, ni allumer — et R5 garde sa vraie pression', () => {
+    // ⚠ CETTE GARDE A CHANGÉ DE VERDICT AVANT D'ÊTRE COMMITÉE, et c'est la suite qui l'a obtenu.
+    //   J'avais DÉPLACÉ le refus R5 de la pose vers l'allumage en le croyant forcé par B-R17. Le
+    //   bloc rouge de `meteo.test.ts` a nommé le vrai problème : « R5 RALLUMAGE SACRÉ », dont la
+    //   raison d'être est qu'on ne puisse PAS se retrouver sans feu après être mort sous un orage.
+    //   B-R17 tue le chemin qui le tenait (du bois ne rallume plus rien), donc garder le refus
+    //   refabriquait un verrou de la famille exacte qu'on venait de retirer. Décision d'Alexis :
+    //   AUCUNE garde de pluie — la braise est une braise VIVE.
+    const poserAverse = (state: SimState): void => {
+      const fenetre = fenetreDe({ type: 'pluie', day: jourDeSaison(state, state.tick) })
+      const startTick = state.tick - Math.floor(fenetre / 2)
+      state.meteo = {
+        type: 'pluie',
+        cycle: Math.floor(startTick / TICKS_PER_CYCLE),
+        day: jourDeSaison(state, startTick),
+        edge: 0,
+        startTick,
+        endTick: startTick + fenetreDe({ type: 'pluie', day: jourDeSaison(state, startTick) }),
+      }
+    }
+    const state = simPlate({ jour: coeurDe(3), meteo: true })
+    const e = spawn(state, 5.5, 5.5)
+    poserAverse(state)
+    // ⚠ LA PRÉMISSE SE PROUVE : sans elle la garde serait verte sur un monde sec. Et elle a déjà
+    //   servi — MESURÉ en balayant 4 cardinaux × 4 bords, un ORAGE ne mouille pas une seule tuile
+    //   à mi-Ardeur (`frontMouille` rend faux pour `METEO.ORAGE_SEC_PHASE`). D'où une pluie de
+    //   Pluies, et non l'orage d'été que j'avais écrit d'abord.
+    expect(meteoMouille(state, 6, 5), 'la prémisse : l’averse mouille bien CETTE tuile').toBe(true)
+    const feu = poserUnFeu(state, e, 6, 5)
+    expect(feu, 'sous l’averse, poser PASSE').toBeDefined()
+    allumer(state, e, feu)
+    expect(fireState(state, feu), 'et allumer passe AUSSI — la braise ne craint pas la pluie').toBe('lit')
+    // ⚠ ET R5 N'EST PAS VIDÉ POUR AUTANT : sa vraie pression est la FAIM du feu, pas l'extinction.
+    //   Deux mondes jumeaux, même tick, même bûche — celui sous l'averse brûle plus vite. Sans
+    //   cette clause, « la pluie ne garde plus rien » serait vrai par vacuité.
+    const faim = (avecPluie: boolean): number => {
+      const st = simPlate({ jour: coeurDe(3), meteo: true })
+      const ee = spawn(st, 5.5, 5.5)
+      if (avecPluie) poserAverse(st)
+      const f = poserUnFeu(st, ee, 6, 5)
+      f.allumee = true
+      const depart = (f.fuel ? countOf(f.fuel, 'wood') : 0)
+      for (let i = 0; i < FIRE.BURN_TICKS * 2; i++) { st.tick += 1; advanceFire(st) }
+      return depart - (f.fuel ? countOf(f.fuel, 'wood') : 0)
+    }
+    const sec = faim(false)
+    const mouille = faim(true)
+    expect(sec, 'la prémisse : à sec, le feu consume bien').toBeGreaterThan(0)
+    expect(mouille, 'sous l’averse il AFFAME plus vite — c’est ça, R5, et c’est intact').toBeGreaterThan(sec)
+
+    // ─── la BALISE : même loi, et c'est le CONTRÔLE que le retrait vaut pour les deux foyers ───
+    const s2 = simPlate({ jour: coeurDe(3), meteo: true })
+    const e2 = spawn(s2, 6.5, 5.5)
+    poserAverse(s2)
+    expect(meteoMouille(s2, 5, 5), 'la prémisse, chez la balise aussi').toBe(true)
+    const b = poserBalise(s2, 5, 5)
+    allumer(s2, e2, b)
+    expect(fireState(s2, b), 'une balise s’allume aussi sous l’averse').toBe('lit')
+  })
+  // ════════════════════════════════════════════════════════════════════════════════════════════
+  // ⑧ ET ⑨ — LA FENÊTRE D'UN TICK. Trouvées par l'audit de fusion, écrites AVANT le correctif.
+  //
+  // LA CAUSE EST UN ORDRE, pas une condition manquante : `step` applique les actions du joueur,
+  // PUIS `advanceFire`, PUIS `advanceTime` — l'action et la combustion voient donc le MÊME
+  // numéro de tick. Or la ligne qui reprend la flamme (`allumee = false`) vit en BAS de
+  // l'itération d'`advanceFire`. Au tick où les braises meurent (`state.tick === emberUntil`),
+  // `allumee` vaut donc encore `true` quand le bois arrive, la clause « Sécurité » le trouve,
+  // RANCRE et rallume — sans braise. La loi était contournable au bois, une fois, dans une
+  // fenêtre large d'exactement UN tick.
+  // ════════════════════════════════════════════════════════════════════════════════════════════
+
+  /** Un feu ALLUMÉ amené au tick EXACT où ses braises meurent, par la combustion réelle. */
+  function auTickDesBraisesMortes(state: SimState, e: Entity, feu: Structure, recul = 0): void {
+    feu.fuel = makeInventory(FIRE.FUEL_SLOTS)
+    addItems(feu.fuel, { wood: 1 }) // une seule bûche : la fenêtre suivante l'éteint
+    feu.allumee = true
+    feu.burnAt = state.tick
+    feu.burnSlot = feu.fuel.findIndex((sl) => sl !== null)
+    delete feu.emberUntil
+    // ⚠ DEUX COMPTEURS, ET C'EST UNE FAUTE QUE J'AI PAYÉE : un seul `garde` partagé était déjà
+    //   épuisé par la première boucle (BURN_TICKS), si bien que la seconde ne tournait PAS UNE FOIS
+    //   et que le montage s'arrêtait 599 ticks avant la cible — c'est l'assertion de montage juste
+    //   en dessous qui l'a dit, et sans elle les quatre gardes auraient jugé le mauvais tick.
+    let gardeBuche = 0
+    while (feu.emberUntil === undefined && gardeBuche++ < FIRE.BURN_TICKS + 50) step(state, [])
+    expect(feu.emberUntil, 'le montage : la bûche a bien fini et les braises sont nées').toBeDefined()
+    let gardeBraises = 0
+    while (state.tick < feu.emberUntil! - recul && gardeBraises++ < FIRE.EMBER_TICKS + 50) step(state, [])
+    expect(state.tick, 'le montage vise le tick voulu, au tick près').toBe(feu.emberUntil! - recul)
+    grantItems(state, e.id, { wood: 3 })
+  }
+  /** La porte du NOURRISSAGE — le clic, `feed_fire`. */
+  const nourrir = (state: SimState, e: Entity, feu: Structure): void => {
+    step(state, [{ entityId: e.id, dx: 0, dy: 0, action: { type: 'feed_fire', structureId: feu.id } }])
+  }
+  /** La porte du MODAL — `transfer`, qui n'a AUCUNE garde à elle et repose sur « Sécurité ». */
+  const deposer = (state: SimState, e: Entity, feu: Structure): void => {
+    const ent = state.entities.find((x) => x.id === e.id)!
+    const from = ent.inventory.findIndex((sl) => sl?.item === 'wood')
+    step(state, [{ entityId: e.id, dx: 0, dy: 0, action: {
+      type: 'transfer', kind: 'structure', containerId: feu.id,
+      from: { side: 'player', slot: from },
+      to: { side: 'container', slot: 0, zone: 'fuel' }, count: 1,
+    } }])
+  }
+
+  it('⑫ ALLUMER UN FOYER N’EST PAS MUET — un feu de camp dit `fire_relit`, une balise `balise_allumee`', () => {
+    // ⚠ CE QUE ÇA RÉPARE : avant B-R17, raviver un camp au bois émettait `fire_relit`, dont le seul
+    //   consommateur est la VOIX du client. La loi tue ce chemin (le bois ne rallume plus rien) et
+    //   le remplace par `light_foyer`, qui n'émettait RIEN pour un feu de camp — le geste le plus
+    //   fréquent qu'elle introduise se jouait donc dans le silence complet (audit du 2026-10-04).
+    const state = simPlate({ jour: ARDEUR })
+    const e = spawn(state, 5.5, 5.5)
+    const feu = poserUnFeu(state, e, 6, 5)
+    drainEvents(state)
+    allumer(state, e, feu)
+    const evts = drainEvents(state)
+    expect(evts.some((ev) => ev.type === 'fire_relit' && ev.structureId === feu.id), 'le feu de camp PARLE').toBe(true)
+    expect(evts.some((ev) => ev.type === 'balise_allumee'), 'et il ne se fait PAS passer pour une balise').toBe(false)
+    // LA BALISE, elle, garde son événement à elle — un palier gagné ne se noie pas dans un geste courant.
+    const s2 = simPlate({ jour: ARDEUR })
+    const e2 = spawn(s2, 6.5, 5.5)
+    const b = poserBalise(s2, 5, 5)
+    drainEvents(s2)
+    allumer(s2, e2, b)
+    const evts2 = drainEvents(s2)
+    expect(evts2.some((ev) => ev.type === 'balise_allumee' && ev.structureId === b.id), 'la balise dit SON événement').toBe(true)
+    expect(evts2.some((ev) => ev.type === 'fire_relit'), 'et pas celui du feu de camp').toBe(false)
+  })
+
+  for (const [nom, porte] of [['feed_fire (le clic)', nourrir], ['transfer (le modal)', deposer]] as const) {
+    it(`⑧ au tick où les braises MEURENT, le bois ne rallume pas — porte ${nom}`, () => {
+      const state = simPlate({ jour: ARDEUR })
+      const e = spawn(state, 5.5, 5.5)
+      const feu = poserUnFeu(state, e, 6, 5)
+      auTickDesBraisesMortes(state, e, feu)
+      // ⚠ LA PRÉMISSE, SANS QUOI UN `EMBER_TICKS` CHANGÉ RENDRAIT LA GARDE VERTE SUR UN TICK QUE
+      //   LE JEU NE VISITE JAMAIS : à cet instant le feu est DÉJÀ éteint au sens de l'état…
+      expect(fireStateAt(state.tick, feu), 'prémisse : les braises sont mortes à CE tick').toBe('out')
+      // …et pourtant la flamme lui est encore DONNÉE — c'est tout l'écart, et c'est la fenêtre.
+      expect(flammeDonnee(feu), 'prémisse : `allumee` est encore `true` — l’écart est là').toBe(true)
+      porte(state, e, feu)
+      // ⚠ ON AFFIRME L'ÉTAT APRÈS UN `step` COMPLET, ET JAMAIS L'ABSENCE DE `fire_relit` : gater la
+      //   seule porte du nourrissage laisserait la clause « Sécurité » rallumer EN SILENCE, et une
+      //   garde sur l'événement serait verte pendant que le feu brûle.
+      expect(fireState(state, feu), 'le bois ne rallume pas : la loi tient').toBe('out')
+      expect(feu.allumee, 'et la flamme est reprise, ÉCRITE `false` (B-R18)').toBe(false)
+      expect(feu.burnAt, 'et rien n’est ancré : aucune combustion n’a repris').toBeUndefined()
+      expect(bois(feu), 'le bois, lui, reste dans la soute — il attend la braise').toBeGreaterThan(0)
+    })
+
+    it(`⑧ bis CONTRÔLE POSITIF — UN TICK PLUS TÔT, le même montage rallume (porte ${nom})`, () => {
+      const state = simPlate({ jour: ARDEUR })
+      const e = spawn(state, 5.5, 5.5)
+      const feu = poserUnFeu(state, e, 6, 5)
+      auTickDesBraisesMortes(state, e, feu, 1) // un tick AVANT la mort des braises
+      expect(fireStateAt(state.tick, feu), 'prémisse : à ce tick il est encore en BRAISES').toBe('ember')
+      porte(state, e, feu)
+      expect(fireState(state, feu), 'nourrir des braises VIVES rallume — c’est légitime, et ça doit rester').toBe('lit')
+    })
+  }
+
+  it('⑨ une sauvegarde d’AVANT la loi dont le feu est mort ne se rallume pas au bois, dès le premier tick', () => {
+    // ⚠ CETTE GARDE N'APPELLE PAS `advanceFire` EN DIRECT, ET C'EST LE POINT : la garde de
+    //   migration qui existait le faisait, donc elle était STRUCTURELLEMENT aveugle au trou —
+    //   *une phase seule n'est pas un tick*, et la fenêtre vit dans l'ordre action-avant-feu.
+    const state = simPlate({ jour: ARDEUR })
+    const e = spawn(state, 5.5, 5.5)
+    const feu = poserUnFeu(state, e, 6, 5)
+    // LA PRÉMISSE D'UNE VIEILLE SAUVEGARDE : le champ est ABSENT, donc « né avant la loi », donc
+    // `flammeDonnee` rend VRAI pour un feu — et la soute est vide, donc l'état est `'out'`.
+    delete feu.allumee
+    delete feu.burnAt
+    delete feu.burnSlot
+    delete feu.emberUntil
+    feu.fuel = makeInventory(FIRE.FUEL_SLOTS)
+    expect(flammeDonnee(feu), 'prémisse : absent = né avant la loi = la flamme est donnée').toBe(true)
+    expect(fireStateAt(state.tick, feu), 'prémisse : et pourtant il est éteint, faute de bois').toBe('out')
+    grantItems(state, e.id, { wood: 3 })
+    nourrir(state, e, feu)
+    expect(fireState(state, feu), 'le bois ne ressuscite pas un feu mort d’avant la loi').toBe('out')
+    expect(feu.allumee, 'le premier tick ÉCRIT `false` : la porte dérobée se ferme pour toujours').toBe(false)
+    // CONTRÔLE : sans l'input, un `step` à vide écrit le même `false` — donc c'est bien le tick
+    // qui referme, et la garde ne doit pas son vert à l'action.
+    const s2 = simPlate({ jour: ARDEUR })
+    const e2 = spawn(s2, 5.5, 5.5)
+    const f2 = poserUnFeu(s2, e2, 6, 5)
+    delete f2.allumee
+    delete f2.burnAt
+    f2.fuel = makeInventory(FIRE.FUEL_SLOTS)
+    step(s2, [])
+    expect(f2.allumee, 'un tick à vide suffit à reprendre la flamme d’une vieille sauvegarde').toBe(false)
+  })
+
+  for (const [nom2, porte2] of [['feed_fire', nourrir], ['transfer', deposer]] as const) {
+  it(`⑨ bis LA FORME QUE LE MONDE D’AVANT PRODUISAIT VRAIMENT : un feu mort y porte ses braises ÉTEINTES — porte ${nom2}`, () => {
+    // ⚠ LA PRÉMISSE DE ⑨ EST CONSTRUITE À LA MAIN, et il faut le dire : un feu d'avant la loi qui a
+    //   brûlé tout son bois n'a pas « ni ancre ni braises » — `advanceFire` lui a effacé l'ancre ET
+    //   posé `emberUntil`, qui est donc dans le PASSÉ quand on relit la sauvegarde. C'est cette
+    //   forme-là qu'un joueur réel apporte, et c'est l'autre branche du droit de brûler qui la
+    //   prend (braises mortes), pas celle de ⑨. Les deux gardes éprouvent donc deux chemins.
+    const state = simPlate({ jour: ARDEUR })
+    const e = spawn(state, 5.5, 5.5)
+    const feu = poserUnFeu(state, e, 6, 5)
+    delete feu.allumee // le monde d'avant n'avait pas le champ
+    delete feu.burnAt
+    delete feu.burnSlot
+    feu.fuel = makeInventory(FIRE.FUEL_SLOTS) // à sec : la dernière bûche a fini
+    feu.emberUntil = state.tick - 1 // … et ses braises ont fini de rougir, AVANT le chargement
+    expect(flammeDonnee(feu), 'prémisse : absent = né avant la loi = flamme donnée').toBe(true)
+    expect(fireStateAt(state.tick, feu), 'prémisse : et il est bel et bien éteint').toBe('out')
+    grantItems(state, e.id, { wood: 3 })
+    porte2(state, e, feu)
+    expect(fireState(state, feu), 'le bois ne ressuscite pas un feu d’avant la loi dont les braises sont mortes').toBe('out')
+    expect(feu.allumee, 'et le premier tick écrit `false`').toBe(false)
+    // CONTRÔLE POSITIF — LE MÊME FEU, braises encore VIVES : là le bois doit rallumer.
+    const s3 = simPlate({ jour: ARDEUR })
+    const e3 = spawn(s3, 5.5, 5.5)
+    const f3 = poserUnFeu(s3, e3, 6, 5)
+    delete f3.allumee
+    delete f3.burnAt
+    delete f3.burnSlot
+    f3.fuel = makeInventory(FIRE.FUEL_SLOTS)
+    f3.emberUntil = s3.tick + 100 // braises VIVES
+    grantItems(s3, e3.id, { wood: 3 })
+    porte2(s3, e3, f3)
+    expect(fireState(s3, f3), 'des braises vives se nourrissent encore — c’est S15, et ça ne bouge pas').toBe('lit')
+  })
+  }
+})
+
+describe('B-A17 ⑩① — `foyerAllumable` ÉQUIVAUT à ce que `light_foyer` accepte, l’équivalence se PROUVE', () => {
+  // ⚠ POURQUOI UNE ÉQUIVALENCE ET PAS DEUX TESTS SÉPARÉS : B-R18 interdit un second prédicat, mais
+  //   `light_foyer` garde ses refus un par un parce qu'ils portent chacun un MOTIF lisible pour le
+  //   joueur. Deux écritures du même droit, donc — et c'est exactement le genre de paire qui dérive
+  //   en silence. On la PROUVE au lieu de l'espérer, sur une énumération tirée du REGISTRE : une
+  //   pièce `foyer` ajoutée demain entre dans la matrice sans qu'on y pense.
+  const TYPES_FOYER = (Object.keys(PIECES) as StructureType[]).filter((t) => piece(t).foyer === true)
+
+  it('① la matrice complète : le prédicat et la porte disent la même chose, sur toutes les formes', () => {
+    expect(TYPES_FOYER.length, 'la prémisse : le registre porte bien des foyers').toBeGreaterThanOrEqual(2)
+    const ecarts: string[] = []
+    let acceptes = 0
+    let refuses = 0
+    for (const type of TYPES_FOYER) {
+      for (const flamme of [undefined, true, false] as const) {
+        for (const bois of [0, 5]) {
+          for (const village of [0, 1]) {
+            const state = simPlate({ jour: ARDEUR })
+            const e = spawn(state, 6.5, 5.5) // collé à la tuile (6,5) : à portée de bras
+            e.braise = { niveau: 0, charge: 1 }
+            const s0 = addStructure(state, type, 6, 5, 0, e.id)
+            if (flamme === undefined) delete s0.allumee
+            else s0.allumee = flamme
+            s0.fuel = makeInventory(FIRE.FUEL_SLOTS)
+            if (bois > 0) addItems(s0.fuel, { wood: bois })
+            s0.villageId = village
+            const attendu = foyerAllumable(s0)
+            drainEvents(state)
+            applyVillageAction(state, e.id, { type: 'light_foyer', structureId: s0.id })
+            const refus = drainEvents(state).some((ev) => ev.type === 'action_rejected')
+            const obtenu = !refus
+            if (obtenu) acceptes++
+            else refuses++
+            if (attendu !== obtenu) {
+              ecarts.push(`${type} flamme=${String(flamme)} bois=${bois} village=${village} : prédicat ${attendu}, porte ${obtenu}`)
+            }
+          }
+        }
+      }
+    }
+    // ⚠ LES DEUX CONTRÔLES QUI EMPÊCHENT UN VERT PAR VACUITÉ : si la porte refusait TOUT (acteur mal
+    //   placé, braise absente…), le prédicat n'aurait qu'à rendre faux partout pour coïncider.
+    expect(acceptes, 'contrôle : la porte accepte vraiment dans certains cas').toBeGreaterThan(0)
+    expect(refuses, 'contrôle : et elle refuse vraiment dans d’autres').toBeGreaterThan(0)
+    expect(ecarts, 'aucun écart entre le prédicat du miroir et la porte de la sim').toEqual([])
+  })
+
 })

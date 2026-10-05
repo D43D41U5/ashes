@@ -1232,6 +1232,10 @@ describe('les monstres (A6)', () => {
     tick(sim, [{ entityId: a, dx: 0, dy: 0, action: { type: 'set_active_slot', slot: cf } }])
     tick(sim, [{ entityId: a, dx: 0, dy: 0, action: { type: 'place_campfire', tx: 9, ty: 10 } }])
     const foyer = sim.structures.find((s) => s.type === 'fire')!
+    // ⚠ B-R17 : un feu bâti naît ÉTEINT, et `found_village` exige la flamme. Le montage la donne à la
+    // main plutôt que par l'action — pas de tick de plus, pas d'entrée de log en plus, donc les gardes
+    // de rejeu et de comptage ne bougent pas. Le vrai chemin joueur est éprouvé par B-A17 ⑥.
+    foyer.allumee = true
     tick(sim, [{ entityId: a, dx: 0, dy: 0, action: { type: 'found_village', structureId: foyer.id } }])
     tick(sim, [{ entityId: a, dx: 0, dy: 0, action: { type: 'set_active_slot', slot: 0 } }]) // reprend la lance
     const b = spawnMonster(sim, 'boar', 11.2, 10)

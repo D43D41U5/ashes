@@ -4,7 +4,7 @@ import { addItems, makeInventory } from './items'
 import { createEmptyMap } from './map'
 import { createSim, spawnEntity, step, type Entity, type MoveInput, type SimState } from './sim'
 import { cycleOffsetForStartHour, gameTimeAt, jourDeSaison, TICKS_PER_CYCLE } from './time'
-import { addStructure } from './village'
+import { addStructure, type Structure } from './village'
 import {
   clarteDeLune,
   clarteDuCiel,
@@ -13,6 +13,22 @@ import {
   LUNE_PLEINE_JOUR,
   phaseDeLune,
 } from './nuit'
+
+/**
+ * ⚠ UN FOYER LIBRE NAÎT ÉTEINT DEPUIS `braise.md` B-R17 (2026-10-04) : un `addStructure` nu ne
+ * brûle plus rien. Les gardes de ce fichier éprouvent un feu QUI BRÛLE, donc le montage lui donne
+ * la flamme — c'est la prémisse perdue qu'on refabrique, pas un contournement de la loi : la loi
+ * elle-même est éprouvée par le vrai chemin joueur dans `braise.test.ts` (B-A17).
+ */
+const allume = <S extends Structure>(sim: SimState, s: S): S => {
+  s.allumee = true
+  // …ET L'ANCRE DE COMBUSTION AVEC. `addStructure` ne la pose plus (un foyer naît éteint, donc rien
+  // ne brûle à sa naissance) ; la production l'ancre au premier tick de flamme, clause « Sécurité »
+  // d'`advanceFire`. Ici on la pose AVEC la flamme, pour rendre exactement l'état de naissance
+  // d'avant la loi — c'est ce que ces montages supposent quand ils règlent `burnAt` à la main.
+  if (s.fuel && s.burnAt === undefined) { s.burnAt = sim.tick; s.burnSlot = 0 }
+  return s
+}
 
 /**
  * LE CADRAN DE LA LUNE, CÔTÉ /sim.
@@ -59,7 +75,7 @@ const NOUVELLE_LUNE_JOUR = LUNE_PLEINE_JOUR + LUNAISON_JOURS / 2
 
 /** Un feu LIBRE et allumé à `d` tuiles de (48,5 · 48,5) — le montage de `torche.test.ts`. */
 function feu(sim: SimState, d = 1) {
-  const s = addStructure(sim, 'fire', 48 + d, 48, 0, 0)
+  const s = allume(sim, addStructure(sim, 'fire', 48 + d, 48, 0, 0))
   s.fuel = makeInventory(FIRE.FUEL_SLOTS)
   addItems(s.fuel, { wood: 3 })
   s.burnAt = sim.tick

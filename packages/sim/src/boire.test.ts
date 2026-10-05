@@ -27,10 +27,20 @@ function nuitDuJour(jour: number, largeur = 64): SimState {
   return state
 }
 
-/** Un feu LIBRE nourri de `bois` bûches, ancré et en flammes. */
+/**
+ * Un feu LIBRE nourri de `bois` bûches, ancré et en flammes.
+ *
+ * ⚠ **IL NE L'ÉTAIT NI ANCRÉ NI EN FLAMMES, et le commentaire mentait déjà avant B-R17** (trouvé
+ * le 2026-10-04 en fermant la fenêtre d'un tick, B-A17 ⑧). Ce littéral ne posait ni `allumee` ni
+ * `burnAt` : il comptait sur la clause « Sécurité » d'`advanceFire` pour l'ancrer au premier tick,
+ * c'est-à-dire sur le chemin même par lequel du bois rallumait un foyer mort sans braise. Depuis
+ * que le DROIT DE BRÛLER se lit en tête d'itération, un feu forgé à la main doit **dire** qu'il
+ * brûle — exactement comme les 34 montages repris par le helper `allume` de `fire.test.ts`.
+ * La prémisse se fabrique donc ici, et le banc de la soif n'éprouve plus que la soif.
+ */
 function feuNourri(state: SimState, tx: number, ty: number, bois: number): { fuelWood: () => number } {
   const fuel = inventoryOf(FIRE.FUEL_SLOTS, { wood: bois })
-  const s = { id: 7000 + tx, type: 'fire', tx, ty, villageId: 0, hp: 100, fuel } as never
+  const s = { id: 7000 + tx, type: 'fire', tx, ty, villageId: 0, hp: 100, fuel, allumee: true, burnAt: state.tick, burnSlot: 0 } as never
   state.structures.push(s)
   return { fuelWood: () => countOf((s as { fuel: never }).fuel, 'wood') }
 }

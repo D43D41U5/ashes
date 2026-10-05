@@ -9,6 +9,21 @@ import { createSim, spawnEntity, step, type Entity, type SimState } from './sim'
 import { advanceTemperature } from './temperature'
 import { partDeFlamme, ticksDeFlamme, torcheVive } from './torche'
 import { addStructure, applyVillageAction, createVillage, type Structure } from './village'
+/**
+ * ⚠ UN FOYER LIBRE NAÎT ÉTEINT DEPUIS `braise.md` B-R17 (2026-10-04) : un `addStructure` nu ne
+ * brûle plus rien. Les gardes de ce fichier éprouvent un feu QUI BRÛLE, donc le montage lui donne
+ * la flamme — c'est la prémisse perdue qu'on refabrique, pas un contournement de la loi : la loi
+ * elle-même est éprouvée par le vrai chemin joueur dans `braise.test.ts` (B-A17).
+ */
+const allume = <S extends Structure>(sim: SimState, s: S): S => {
+  s.allumee = true
+  // …ET L'ANCRE DE COMBUSTION AVEC. `addStructure` ne la pose plus (un foyer naît éteint, donc rien
+  // ne brûle à sa naissance) ; la production l'ancre au premier tick de flamme, clause « Sécurité »
+  // d'`advanceFire`. Ici on la pose AVEC la flamme, pour rendre exactement l'état de naissance
+  // d'avant la loi — c'est ce que ces montages supposent quand ils règlent `burnAt` à la main.
+  if (s.fuel && s.burnAt === undefined) { s.burnAt = sim.tick; s.burnSlot = 0 }
+  return s
+}
 
 /**
  * LA TORCHE (spec `docs/specs/torche.md`) — critères T1 à T10.
@@ -50,7 +65,7 @@ function porteur(sim: SimState, item: 'torche' | 'torche_vive' = 'torche'): numb
  * réel dans ce cas d'usage : on prend sa torche au feu de camp qu'on vient de poser.
  */
 function feu(sim: SimState, d = 1): Structure {
-  const s = addStructure(sim, 'fire', 48 + d, 48, 0, 0)
+  const s = allume(sim, addStructure(sim, 'fire', 48 + d, 48, 0, 0))
   s.fuel = makeInventory(FIRE.FUEL_SLOTS)
   addItems(s.fuel, { wood: 3 })
   s.burnAt = sim.tick

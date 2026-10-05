@@ -377,6 +377,10 @@ async function fonderPres(page, agir, slotDe, p0, sites = SITES_FONDATION) {
       return f ? f.id : null
     }, { x: tx + 1, y: ty })
     if (id === null) continue
+    // ⚠ B-R17 (2026-10-04) : UN FEU BÂTI NAÎT ÉTEINT, et `found_village` exige la flamme. On la tend
+    // avant de fonder — la braise est portée, il n'y a rien à équiper, mais le geste est AU BRAS
+    // (`INTERACT_RANGE` 1,5) alors qu'on pose à 6 : on est déjà collé ici, la tuile est voisine.
+    await agir({ type: 'light_foyer', structureId: id }, 200)
     await agir({ type: 'found_village', structureId: id }, 200)
     for (let essai = 0; essai < 20; essai++) {
       const v = await monFeu()
@@ -832,6 +836,14 @@ const SCENARIOS = {
       }, c)
       if (feu) { feu.dMur = c.dMur; break }
     }
+    // ⚠ B-R17 (2026-10-04) : UN FEU BÂTI NAÎT ÉTEINT. Tout ce que ce scénario mesure d'un feu
+    // mesurerait un tas de bois sans ces deux lignes — et la flamme se tend AU BRAS
+    // (`INTERACT_RANGE` 1,5) là où l'on pose à 6, donc on s'approche d'abord (TP, mode dev).
+    if (feu) {
+      await agir({ type: 'debug_teleport', x: feu.tx + 0.5, y: feu.ty + 1.4 }, 400, 1)
+      const idFeu = await ev(({ tx, ty }) => window.__BRAISES__.scene.view.structures.find((q) => q.type === 'fire' && q.tx === tx && q.ty === ty)?.id ?? null, feu)
+      if (idFeu !== null) await agir({ type: 'light_foyer', structureId: idFeu }, 500, 1)
+    }
     ok(feu !== null, feu ? `un feu brûle en (${feu.tx}, ${feu.ty}), à ${feu.dMur} tuiles du mur` : `aucun feu posé sur ${candidates.length} tuiles candidates — la moitié chaude de la règle des faces n'est pas éprouvée`)
     // LE POINT D'OBSERVATION : quatre tuiles et demie au sud de la grappe, hors de portée de la découpe
     // de façade (`render/pans.ts` : un pan tombe à deux tuiles du joueur — mémoire
@@ -1053,8 +1065,17 @@ const SCENARIOS = {
         if (!posable) { console.log(`     (${nom} : la production refuse (${c.tx}, ${c.ty}))`); continue }
         await agir({ type: 'debug_meteo', meteo: null }, 300, 1)
         await agir({ type: 'place_campfire', tx: c.tx, ty: c.ty }, 900, 2)
-        const feu = await ev(({ tx, ty }) => { const s = window.__BRAISES__.scene.view.structures.find((q) => q.type === 'fire' && q.tx === tx && q.ty === ty); return s ? { tx: s.tx, ty: s.ty } : null }, c)
-        if (feu) return feu
+        const feu = await ev(({ tx, ty }) => { const s = window.__BRAISES__.scene.view.structures.find((q) => q.type === 'fire' && q.tx === tx && q.ty === ty); return s ? { id: s.id, tx: s.tx, ty: s.ty } : null }, c)
+        if (feu) {
+          // ⚠ B-R17 (2026-10-04) : UN FEU BÂTI NAÎT ÉTEINT. Ce scénario mesure la LUMIÈRE d'un
+          // feu : sans ces lignes il mesurerait un tas de bois. La flamme se tend au BRAS
+          // (`INTERACT_RANGE` 1,5) quand on pose à 6, donc on s'approche — puis on REVIENT au
+          // poste, parce que la GI ne couvre que le cadre, et le cadre suit l'avatar.
+          await agir({ type: 'debug_teleport', x: feu.tx + 0.5, y: feu.ty + 1.4 }, 500, 2)
+          await agir({ type: 'light_foyer', structureId: feu.id }, 500, 1)
+          await agir({ type: 'debug_teleport', x: poste.x, y: poste.y }, 1500, 3)
+          return feu
+        }
         console.log(`     (${nom} : la pose en (${c.tx}, ${c.ty}) n'a pas pris)`)
       }
       return null
@@ -1772,7 +1793,13 @@ const SCENARIOS = {
       await agir({ type: 'debug_meteo', meteo: null }, 300, 1)
       await agir({ type: 'place_campfire', tx: t.tx, ty: t.ty }, 900, 2)
       const feu = await ev(({ tx, ty }) => window.__BRAISES__.scene.view.structures.some((q) => q.type === 'fire' && q.tx === tx && q.ty === ty), t)
-      if (feu) { coin = t; break }
+      if (feu) {
+        // ⚠ B-R17 : le feu naît ÉTEINT — sans flamme, le témoin de lumière mesurerait du noir.
+        await agir({ type: 'debug_teleport', x: t.tx + 0.5, y: t.ty + 1.4 }, 400, 1)
+        const idFeu = await ev(({ tx, ty }) => window.__BRAISES__.scene.view.structures.find((q) => q.type === 'fire' && q.tx === tx && q.ty === ty)?.id ?? null, t)
+        if (idFeu !== null) await agir({ type: 'light_foyer', structureId: idFeu }, 600, 1)
+        coin = t; break
+      }
       console.log(`     (${t.tx}, ${t.ty}) : posable, mais aucun feu n'y brûle après la pose`)
     }
     ok(coin !== null, coin ? `un feu brûle au coin nu (${coin.tx}, ${coin.ty}), dégagé de ${coin.R} tuiles dans la grille réelle` : `aucun coin nu de cinq tuiles où un feu se pose, dans ${fenetres.length} fenêtre(s) — le témoin est introuvable`)
@@ -2737,7 +2764,7 @@ const SCENARIOS = {
     // ③ L'ALLUMAGE À LA BRAISE — le geste que le client offre au clic, envoyé ici en direct.
     //
     // ⚠ **ON POSE DE LOIN, ON ALLUME DE PRÈS — DEUX PORTÉES, ET J'AI CRU QU'IL N'Y EN AVAIT
-    //   QU'UNE.** `place_component` juge à `BALANCE.BUILD_RANGE` (6 tuiles) ; `light_balise`, lui,
+    //   QU'UNE.** `place_component` juge à `BALANCE.BUILD_RANGE` (6 tuiles) ; `light_foyer`, lui,
     //   juge au BRAS : `BALANCE.INTERACT_RANGE` (1,5 — la même porte que `feed_fire` et `repair`).
     //   La balise posée à 3,5 tuiles était donc hors d'atteinte, et le refus disait « trop loin ».
     //   Ce n'est pas un défaut : c'est la loi du geste. On se déplace donc d'abord — par
@@ -2752,7 +2779,7 @@ const SCENARIOS = {
     const d = Math.sqrt((pres.tx + 0.5 - (b.tx + 0.5)) ** 2 + (pres.ty + 0.5 - (b.ty + 0.5)) ** 2)
     ok(d <= 1.5, `le corps est À PORTÉE DE BRAS de la balise (${d.toFixed(2)} t ≤ INTERACT_RANGE 1,5)`)
     trace('allumage')
-    await envoyerSync([{ type: 'light_balise', structureId: b.id }])
+    await envoyerSync([{ type: 'light_foyer', structureId: b.id }])
     await page.waitForTimeout(3000)
     const vive = await page.evaluate((id) => {
       const sc = window.__BRAISES__.scene
@@ -3689,6 +3716,12 @@ const SCENARIOS = {
       const lDedansAvant = moyenne(await luminances(autour(b.tx + 0.5, b.ty + 0.5)))
       await page.evaluate(() => window.__BRAISES__.scene.game.loop.wake())
       await agirG({ type: 'place_campfire', tx: b.tx, ty: b.ty }, 2000)
+      // ⚠ B-R17 (2026-10-04) : le feu naît ÉTEINT — sans la flamme, ce bloc mesurerait l'éclairage
+      // d'un tas de bois. On est déjà au bras (le TP du bloc nous a posés à côté).
+      {
+        const idB = await page.evaluate(({ tx, ty }) => (window.__BRAISES__.scene.view.structures ?? []).find((q) => q.type === 'fire' && q.tx === tx && q.ty === ty)?.id ?? null, b)
+        if (idB !== null) await agirG({ type: 'light_foyer', structureId: idB }, 1200)
+      }
       await stabiliser('bivouac')
       const feu = await page.evaluate(() => {
         const sc = window.__BRAISES__.scene
@@ -3741,6 +3774,11 @@ const SCENARIOS = {
       await page.evaluate(() => window.__BRAISES__.scene.game.loop.wake())
       await agirG({ type: 'debug_teleport', x: v.tx + 0.5, y: v.ty + 1.5, etage: k.etage }, 2200)
       await agirG({ type: 'place_campfire', tx: v.tx, ty: v.ty }, 2000)
+      // ⚠ B-R17 : même raison qu'au bivouac — le feu naît éteint, on lui tend la braise.
+      {
+        const idV = await page.evaluate(({ tx, ty }) => (window.__BRAISES__.scene.view.structures ?? []).find((q) => q.type === 'fire' && q.tx === tx && q.ty === ty)?.id ?? null, v)
+        if (idV !== null) await agirG({ type: 'light_foyer', structureId: idV }, 1200)
+      }
       await stabiliser('vestibule-feu')
       const feuV = await page.evaluate(({ tx, ty }) => {
         const sc = window.__BRAISES__.scene
@@ -5292,6 +5330,18 @@ const SCENARIOS = {
     if (!tuile) { console.error('!! aucun feu posé — rien à photographier'); return }
     console.log(`  feu posé en (${tuile.tx}, ${tuile.ty}) — ${recale.portee} volumes à portée`)
 
+    // ⚠ B-R17 (2026-10-04) : UN FEU BÂTI NAÎT ÉTEINT — et ce scénario photographie LA FLAMME.
+    // Sans ces lignes, les 84 clichés montreraient un tas de bois. L'allumage se tend au bras
+    // (`INTERACT_RANGE` 1,5) là où l'on pose à 6 : on s'approche d'abord. La caméra se recadre
+    // juste après (`stopFollow` + `centerOn`), donc où l'avatar finit n'a pas d'incidence.
+    await agir({ type: 'debug_teleport', x: tuile.tx + 0.5, y: tuile.ty + 1.4 }, 500)
+    const idFeu = await lire(({ tx, ty }) => (window.__BRAISES__.scene.view?.structures ?? [])
+      .find((st) => st.type === 'fire' && st.tx === tx && st.ty === ty)?.id ?? null, tuile)
+    if (idFeu !== null) await agir({ type: 'light_foyer', structureId: idFeu }, 550)
+    const brule = await lire((id) => Boolean((window.__BRAISES__.scene.view?.structures ?? [])
+      .find((st) => st.id === id)?.allumee), idFeu)
+    if (!brule) console.error(`!! le feu en (${tuile.tx}, ${tuile.ty}) n'est pas allumé — la planche montrerait un tas de bois`)
+
     // ── CADRER : la caméra s'arrête, le feu est au centre ──
     await lire(({ tx, ty }) => {
       const sc = window.__BRAISES__.scene
@@ -5738,10 +5788,21 @@ const SCENARIOS = {
         const [dx, dy] = OFFSETS[(iOffset + k) % OFFSETS.length]
         await agir({ type: 'debug_grant', item: 'campfire' }, 300)
         await agir({ type: 'place_campfire', tx: Math.floor(p0.x) + dx, ty: Math.floor(p0.y) + dy }, 500)
-        const ok = await lire(({ x, y, dx, dy }) => (window.__BRAISES__.scene.view?.structures ?? [])
-          .some((st) => st.type === 'fire' && st.tx === Math.floor(x) + dx && st.ty === Math.floor(y) + dy),
+        const id = await lire(({ x, y, dx, dy }) => (window.__BRAISES__.scene.view?.structures ?? [])
+          .find((st) => st.type === 'fire' && st.tx === Math.floor(x) + dx && st.ty === Math.floor(y) + dy)?.id ?? null,
           { x: p0.x, y: p0.y, dx, dy })
-        if (ok) { iOffset = (iOffset + k + 1) % OFFSETS.length; return [dx, dy] }
+        if (id !== null) {
+          // ⚠ B-R17 (2026-10-04) : UN FEU BÂTI NAÎT ÉTEINT, et c'est sa PORTÉE DE LUMIÈRE qu'on
+          // mesure ici. On se porte au bras (`INTERACT_RANGE` 1,5 — les offsets valent 2 à 4,2
+          // tuiles, donc on ne l'atteint pas de `p0`), on allume, et on REVIENT à `p0` : la
+          // caméra suit l'avatar et la bande se trace depuis l'écran.
+          const tx = Math.floor(p0.x) + dx, ty = Math.floor(p0.y) + dy
+          await agir({ type: 'debug_teleport', x: tx + 0.5, y: ty + 1.4 }, 400)
+          await agir({ type: 'light_foyer', structureId: id }, 500)
+          await agir({ type: 'debug_teleport', x: p0.x, y: p0.y }, 500)
+          iOffset = (iOffset + k + 1) % OFFSETS.length
+          return [dx, dy]
+        }
       }
       return null
     }
@@ -6056,10 +6117,19 @@ const SCENARIOS = {
     const lum = ([r, v, b]) => 0.2126 * r + 0.7152 * v + 0.0722 * b
 
     const releve = async (etiquette) => {
+      // LAISSER PEINDRE, PUIS FIGER. ⚠ Les trois captures se prenaient AVEC LA BOUCLE PHASER QUI
+      // TOURNE, et c'est le piège que la skill `verif-navigateur` nomme : sous SwiftShader
+      // `page.screenshot` attend derrière une frame et EXPIRE (vu le 2026-10-04, « Timeout
+      // 90000ms exceeded » dès qu'une autre tâche charge la machine — le scénario mourait en ①,
+      // avant d'atteindre ses verdicts). On endort la boucle pour les captures seulement : elle
+      // doit RETOURNER pour que le prochain snapshot s'applique (la sim vit dans le Worker, mais
+      // c'est `update()` qui la lit), donc `wake()` sans faute avant de rendre la main.
       await page.waitForTimeout(700)
+      await page.evaluate(() => { window.__BRAISES__.scene.game.loop.sleep() })
       const p = await pixelAt(page, pieds.x, pieds.y)
       const b = await pixelAt(page, bord.x, bord.y)
       await page.screenshot({ path: `${OUT}/torche-${etiquette}.png`, timeout: 90000 })
+      await page.evaluate(() => { window.__BRAISES__.scene.game.loop.wake() })
       if (!p || !b) return null
       console.log(`  ${etiquette.padEnd(8)} pieds rvb(${p.join(',')}) lum ${lum(p).toFixed(1)}  ·  bord rvb(${b.join(',')}) lum ${lum(b).toFixed(1)}`)
       return { pieds: lum(p), bord: lum(b) }
@@ -6077,12 +6147,89 @@ const SCENARIOS = {
     const feu = await releve('avec')
     if (!noir || !feu || tenue !== 'torche_vive') { console.error('!! relevé impossible'); return }
 
+    // ⚠ LE TÉMOIN INERTE — et sans lui le verdict ② était FAUX (vu le 2026-10-04).
+    //
+    // ② se lisait en RELATIF sur le coin de l'écran, où la nouvelle lune laisse une luminance de
+    // **8,6**. Le relevé a mesuré rvb(11,8,8) → rvb(12,9,9) : **un seul pas de quantification par
+    // canal**, ΔL = +1,0 — soit « +12 % » contre un seuil de 10 %, donc un ✗. Sur une base quasi
+    // noire, un pourcentage ne sait pas distinguer une fuite de lumière d'un ARRONDI 8 bits. Et
+    // rien ne séparait les deux causes possibles : `noir` se prend AVANT le grant, `avec` après,
+    // ≈ 1,6 s d'horloge plus tard — la lune dérive, le voile de nuit se recuit.
+    //
+    // On ajoute donc le point où le changement NE PEUT PAS AGIR : la même torche, RANGÉE. Par T7
+    // (`torche.md`), seule la torche TENUE brûle et éclaire — celle du sac n'émet rien. Le témoin
+    // est pris APRÈS `avec`, donc à une heure encore plus tardive : toute dérive du monde y est
+    // comptée en PLUS, jamais en moins.
+    //
+    // PRÉDICTION écrite avant le run : si le +1 LSB est de la dérive, `temoin.bord ≈ avec.bord`
+    // (≈ 9,6) et l'écart attribué à la torche tombe à ≈ 0. Si la torche fuit vraiment jusqu'au
+    // coin, `temoin.bord` retombe sur `noir.bord` et l'écart reste à +1.
+    //
+    // CE QUI FAIT ROUGIR ② : un trou qui atteint le coin le déplace de DIZAINES de niveaux,
+    // comme sous les pieds (+39,5 mesuré) — pas de 1. Le seuil est donc en valeur ABSOLUE, à un
+    // pas de quantification près, et le chiffre s'imprime en niveaux de luminance, pas en %.
+    // ⚠ ET MA PREMIÈRE VERSION DE CE TÉMOIN N'ÉTAIT PAS INERTE (relevé le 2026-10-05, au run
+    // suivant). Elle rangeait la torche par `agir(…, 900)` — une attente d'HORLOGE — puis
+    // capturait. Or `porteursDeTorche()` lit `lastEntities`, que seule la passe d'`update()`
+    // rafraîchit, et sous SwiftShader UNE IMAGE PEUT DURER DES SECONDES (le lot `balise` a mesuré
+    // ≈ 9 min pour une poignée de relevés) : 900 + 700 ms peuvent tenir DANS une seule image. Le
+    // témoin lisait donc la torche ENCORE EN MAIN, seulement plus faible parce qu'elle avait
+    // brûlé (`partDeFlamme` baisse) — 105,1 au pied contre 121,4, et 15,6 AU BIT au bord comme
+    // `avec`. D'où un ② vert qui ne disait pas ce qu'il prétendait : il soustrayait la torche
+    // à elle-même, au lieu de la retirer du monde.
+    //
+    // On attend donc l'ÉTAT DU RENDU, jamais une horloge, en deux clauses :
+    await page.evaluate(() => { window.__BRAISES__.scene.sendAction({ type: 'set_active_slot', slot: -1 }) })
+    // ⓐ L'ENTRÉE du rendu n'a plus de torche en main — `lastEntities` est exactement ce que
+    //    `porteursDeTorche()` balaie, et `torcheVive()` y lit la case TENUE (`heldSlot`).
+    await page.waitForFunction(() => {
+      const sc = window.__BRAISES__.scene
+      const e = (sc.lastEntities ?? []).find((x) => x.id === sc.playerId)
+      if (!e) return false
+      const slot = e.activeSlot >= 0 ? (e.inventory ?? [])[e.activeSlot] : null
+      return !slot || slot.item !== 'torche_vive'
+    }, null, { timeout: 240000 })
+    // ⓑ LA LUMIÈRE EST PARTIE, lue sur les objets du rendu et non déduite. Les deux sont
+    //    DÉTRUITS dans la passe où leur porteur quitte la liste, sans aucun fondu : la flaque au
+    //    sol (`TorcheGroundGlow.glows` → `glow.destroy()`) et le point light
+    //    (`DynamicLighting.torches` → `removeLight` + `delete`). ⚠ Le chemin `!active` du
+    //    gestionnaire, lui, garde ses lumières et leur met `intensity = 0` — d'où la seconde
+    //    branche, sans quoi l'attente pendrait 240 s dans ce régime.
+    await page.waitForFunction(() => {
+      const sc = window.__BRAISES__.scene
+      const flaques = sc.torcheGround?.glows
+      const points = sc.dynLight?.torches
+      const flaquesVides = !flaques || flaques.size === 0
+      const pointsVides = !points || points.size === 0
+        || [...points.values()].every((l) => (l.intensity ?? 0) === 0)
+      return flaquesVides && pointsVides
+    }, null, { timeout: 240000 })
+    const temoin = await releve('temoin')
+    if (!temoin) { console.error('!! témoin impossible') ; return }
+    // ⓒ LA PRÉMISSE DU TÉMOIN, AFFIRMÉE — c'est elle qui manquait. T7 dit qu'une torche RANGÉE
+    //    n'éclaire rien ; le témoin doit donc RETOMBER près du noir. Tant que cette clause n'est
+    //    pas vraie, ② n'est pas calculable : on ne soustrait pas une lumière encore allumée.
+    const portee = feu.pieds - noir.pieds
+    const resteAuPied = temoin.pieds - noir.pieds
+    const temoinInerte = resteAuPied <= portee * 0.25
+    console.log(`  (témoin : ${temoin.pieds.toFixed(1)} au pied, pour un noir à ${noir.pieds.toFixed(1)} et une torche à ${feu.pieds.toFixed(1)}`
+      + ` — il reste ${resteAuPied.toFixed(1)} des ${portee.toFixed(1)} de la flamme, soit ${(portee > 0 ? resteAuPied / portee * 100 : 0).toFixed(0)} %)`)
+
     const gainPieds = (feu.pieds - noir.pieds) / Math.max(1, noir.pieds)
-    const gainBord = (feu.bord - noir.bord) / Math.max(1, noir.bord)
-    console.log(`\n  ① sous les pieds : ${(gainPieds * 100).toFixed(0)} %  (attendu ≥ +25 %)`)
-    console.log(`  ② au bord        : ${(gainBord * 100).toFixed(0)} %  (attendu ≤ +10 %)`)
+    const dPieds = feu.pieds - noir.pieds
+    const dBordBrut = feu.bord - noir.bord
+    const dBordTorche = feu.bord - temoin.bord // ce que la TORCHE seule ajoute au coin
+    const derive = temoin.bord - noir.bord // ce que le MONDE a bougé pendant la sonde
+    console.log(`\n  ① sous les pieds : +${dPieds.toFixed(1)} niveaux (${(gainPieds * 100).toFixed(0)} %, attendu ≥ +25 %)`)
+    console.log(`  ② au bord        : +${dBordBrut.toFixed(1)} brut, dont dérive du monde +${derive.toFixed(1)}`)
+    console.log(`     → attribué à la torche : +${dBordTorche.toFixed(1)} niveau(x)  (attendu ≤ +1,5 = un pas 8 bits)`)
     console.log(gainPieds >= 0.25 ? '  ✓ elle éclaire' : '  ✗ ELLE N’ÉCLAIRE PAS le sol sous le porteur')
-    console.log(gainBord <= 0.10 ? '  ✓ la nuit tient au loin' : '  ✗ ELLE EFFACE LA NUIT jusqu’au bord de l’écran')
+    if (!temoinInerte) {
+      console.log('  ✗ LE TÉMOIN N’EST PAS INERTE : la torche rangée éclaire encore le sol (T7 rompu,'
+        + ' ou la passe de rendu n’a pas eu lieu) — ② N’EST PAS CALCULABLE, on ne soustrait pas la torche à elle-même')
+    } else {
+      console.log(dBordTorche <= 1.5 ? '  ✓ la nuit tient au loin' : '  ✗ ELLE EFFACE LA NUIT jusqu’au bord de l’écran')
+    }
 
     // ═══ ③ LE CHEMIN DU JOUEUR : poser un feu, tenir une torche ÉTEINTE, CLIQUER dessus ═══
     //
@@ -6155,6 +6302,20 @@ const SCENARIOS = {
     // la même que `feed_fire`). Le premier run se tenait à 1,5000003 : le clic ne faisait rien,
     // et le verdict accusait le code neuf pour trois millionièmes de tuile.
     await agir({ type: 'debug_teleport', x: feuPose.tx - 0.5, y: feuPose.ty + 0.5 }, 600)
+    /**
+     * ⚠ B-R17 (2026-10-04) : UN FEU BÂTI NAÎT ÉTEINT, DONC ③ A MAINTENANT DEUX ÉCHELONS — et on
+     * les joue tous les deux AU CLIC, par la vraie souris, parce que c'est exactement là que le
+     * commentaire ci-dessus dit qu'un geste se perd en silence :
+     *
+     *   ③a le foyer est éteint, la main tient une torche → le clic ALLUME LE FOYER et la main NE
+     *      CHANGE PAS (décision d'Alexis du 2026-10-04 : `light_foyer` passe avant `light_torch`
+     *      dans la cascade d'`aim.ts`).
+     *   ③b le foyer brûle, la même main → le clic allume LA TORCHE (le geste d'avant, intact).
+     *
+     * Allumer le foyer par l'action aurait laissé ③a sans aucune épreuve de souris : la décision
+     * ne vit que dans l'ORDRE de la cascade, et l'ordre ne se lit pas dans un test unitaire de
+     * `/sim`. Un seul clic de plus achète les deux échelons.
+     */
     await page.evaluate(() => window.__BRAISES__.scene.registry.set('error', null))
     // ⚠ LA CAMÉRA GLISSE ENCORE APRÈS UNE TÉLÉPORTATION. Un pixel calculé « juste après » le
     // saut désignait la tuile d'à côté (843 au lieu de 842, une tuile pleine = ~36 px CSS), et
@@ -6182,24 +6343,46 @@ const SCENARIOS = {
       }, { tx: feuPose.tx, ty: feuPose.ty })
     }
     if (cible === null) { console.error('  ✗ la caméra ne se stabilise pas sur le feu — clic impossible'); return }
-    await page.mouse.move(cible.x, cible.y)
-    await page.waitForTimeout(150)
-    await page.mouse.down()
-    await page.mouse.up()
-    await page.waitForTimeout(800)
-    const apresClic = await page.evaluate(() => {
-      const inv = window.__BRAISES__.scene.registry.get('inv') ?? []
-      return inv[window.__BRAISES__.scene.registry.get('activeSlot')]?.item ?? null
-    })
-    // Le refus, s'il y en a un : un clic MUET (aucune action émise) et un clic REFUSÉ sont deux
-    // défauts différents, et sans cette ligne ils rendent le même verdict rouge.
-    const refus = await page.evaluate(() => window.__BRAISES__.scene.registry.get('error') ?? null)
-    if (refus) console.log(`  (la sim refuse : « ${refus.reason} »)`)
+    /** Un clic de souris SUR LA CIBLE, puis l'état de la main ET du foyer. */
+    const cliquer = async () => {
+      await page.evaluate(() => window.__BRAISES__.scene.registry.set('error', null))
+      await page.mouse.move(cible.x, cible.y)
+      await page.waitForTimeout(150)
+      await page.mouse.down()
+      await page.mouse.up()
+      await page.waitForTimeout(800)
+      return page.evaluate((id) => {
+        const sc = window.__BRAISES__.scene
+        const inv = sc.registry.get('inv') ?? []
+        const s = (sc.view?.structures ?? []).find((st) => st.id === id)
+        return {
+          main: inv[sc.registry.get('activeSlot')]?.item ?? null,
+          allumee: Boolean(s?.allumee),
+          // Un clic MUET (aucune action émise) et un clic REFUSÉ sont deux défauts différents,
+          // et sans cette lecture ils rendent le même verdict rouge.
+          refus: sc.registry.get('error')?.reason ?? null,
+        }
+      }, feuPose.id)
+    }
+    // ③a — LE FOYER ÉTEINT PREND LA FLAMME, ET LA MAIN NE CHANGE PAS.
+    const clicA = await cliquer()
+    if (clicA.refus) console.log(`  (la sim refuse, clic 1 : « ${clicA.refus} »)`)
+    console.log(`\n  ③a foyer éteint : « ${avantClic} » en main → (clic) → foyer ${clicA.allumee ? 'ALLUMÉ' : 'éteint'}, main « ${clicA.main} »`)
+    console.log(clicA.allumee && clicA.main === avantClic
+      ? '  ✓ le clic allume LE FOYER, et la torche reste éteinte en main (B-R17)'
+      : `  ✗ LE CLIC N’ALLUME PAS LE FOYER (allumée : ${clicA.allumee} · main : « ${clicA.main} »)`)
+    // ③b — LE MÊME CLIC, SUR LE FOYER QUI BRÛLE, ALLUME LA TORCHE.
+    const clicB = await cliquer()
+    if (clicB.refus) console.log(`  (la sim refuse, clic 2 : « ${clicB.refus} »)`)
+    // Figée pour la photo, comme dans `releve` ci-dessus : c'est la dernière ligne du scénario,
+    // mais une capture qui expire ici ferait tomber les deux verdicts de ③ avec elle.
+    await page.evaluate(() => { window.__BRAISES__.scene.game.loop.sleep() })
     await page.screenshot({ path: `${OUT}/torche-au-feu.png`, timeout: 90000 })
-    console.log(`\n  ③ le geste : ${avantClic} → (clic sur le feu) → ${apresClic}`)
-    console.log(apresClic === 'torche_vive'
+    await page.evaluate(() => { window.__BRAISES__.scene.game.loop.wake() })
+    console.log(`  ③b foyer allumé : « ${clicA.main} » en main → (clic) → « ${clicB.main} »`)
+    console.log(clicB.main === 'torche_vive'
       ? '  ✓ la torche prend le feu au foyer'
-      : `  ✗ LE CLIC N’ALLUME PAS (la case tient toujours « ${apresClic} »)`)
+      : `  ✗ LE CLIC N’ALLUME PAS LA TORCHE (la case tient toujours « ${clicB.main} »)`)
 
   },
 
@@ -12554,6 +12737,16 @@ const SCENARIOS = {
     // On LAISSE le snapshot rattraper la téléportation AVANT d'ouvrir : sinon publishOpenFire
     // juge le joueur hors de portée (ancienne position) et referme le modal aussitôt.
     await page.waitForTimeout(800)
+    // ⚠ B-R17 (2026-10-04) : UN FEU BÂTI NAÎT ÉTEINT — et ce scénario CUIT (la cuisson ne tourne
+    // que sur un feu allumé). La téléportation ci-dessus met l'avatar à une tuile du foyer, donc
+    // déjà au bras (`INTERACT_RANGE` 1,5) : on allume avant d'ouvrir le modal.
+    if (feu) {
+      await page.evaluate((id) => window.__BRAISES__.scene.sendAction({ type: 'light_foyer', structureId: id }), feu.id)
+      await page.waitForTimeout(600)
+      const brule = await page.evaluate((id) => Boolean((window.__BRAISES__.scene.view?.structures ?? [])
+        .find((st) => st.id === id)?.allumee), feu.id)
+      if (!brule) console.error('!! le feu posé n’est pas allumé — la cuisson ne partira pas')
+    }
     if (feu) await page.evaluate((id) => window.__BRAISES__.scene.registry.set('openFire', { structureId: id }), feu.id)
     await page.waitForTimeout(600)
     // Les cases du feu sont de VRAIS conteneurs : on GLISSE (action `transfer` + `zone`). On dépose
@@ -22173,6 +22366,10 @@ Depuis le spawn (${depart.x.toFixed(0)}, ${depart.y.toFixed(0)}) :`)
       return s ? s.id : null
     }, feu)
     if (feuPose !== null) {
+      // ⚠ B-R17 (2026-10-04) : UN FEU BÂTI NAÎT ÉTEINT, et la mesure qui suit compte la LUEUR
+      // autour de la flamme. Le feu est posé à une tuile de l'avatar, donc déjà au bras.
+      await page.evaluate((id) => window.__BRAISES__.scene.sendAction({ type: 'light_foyer', structureId: id }), feuPose)
+      await page.waitForTimeout(600)
       await viser(feu.tx, feu.ty)
       const surFeu = await etat()
       // AUTOUR D'UNE FLAMME, on compte le TRÈS CLAIR (≥200) sans exiger la neutralité — la

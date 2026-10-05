@@ -254,7 +254,7 @@ const SUITES = [
   //   loi ⓒ tuile par tuile avec le feu de camp en contrôle négatif, B-R10 « éteinte, elle ne
   //   brûle rien », le delta à un seul pas, la balise libre dans son village) + le rejeu par le
   //   VRAI chemin joueur dans `replay.test.ts` (craft → set_active_slot → place_component →
-  //   light_balise). La 18ᵉ est née de l'audit de mes propres commentaires : « le plateau ne sort
+  //   light_foyer). La 18ᵉ est née de l'audit de mes propres commentaires : « le plateau ne sort
   //   PAS dans le monde de base » — une balise allumée ne dégèle pas sa glace et n'endort pas les
   //   Cendreux (`baselineTemperature` ignore `fireBubble`), les deux clauses falsifiées.
   //   Suite à 2463, plancher relevé à 2453.
@@ -271,6 +271,64 @@ const SUITES = [
   //   pose dans `addStructure` (`braise.test.ts`) : l'invariant ferme désormais la classe, un
   //   futur plan ou POI ne peut plus en faire une balise de village par mégarde. Les trois ont
   //   leur contrôle positif joué. Suite à 2466, plancher relevé à 2456.
+  // 2026-10-04 (le même jour, suite) : B-R17, « LE FEU NE NAÎT QUE DU FEU ». +8 gardes, −6, net
+  //   **+2** — et le compte ment sur l'ampleur : la loi a fait rougir 34 MONTAGES qui tenaient
+  //   pour acquis qu'un feu bâti brûle (`fire/torche/nuit/lumiere/gel/bucher/bete-cendreuse/
+  //   upkeep/village/construction/porte-double/wall-edges/combat/carte-immuable/grottes`), tous
+  //   repris par un helper `allume(sim, addStructure(...))` qui pose AUSSI l'ancre de combustion
+  //   (`burnAt`/`burnSlot` : `addStructure` ne la donne plus, sinon le temps passé éteint serait
+  //   facturé à l'allumage). ⚠ Et dans les CINQ gardes de replay la mutation de champ ne suffit
+  //   pas — elle vit hors du journal d'inputs : elles allument par l'ACTION `light_foyer`.
+  //   LES SIX RETIRÉES sont des preuves devenues FAUSSES, pas un allègement : quatre refus de
+  //   pluie (R5 est retiré de la pose et n'est pas déplacé dans l'allumage — décision d'Alexis)
+  //   et deux clauses de charge (`light_foyer` n'exige plus de braise chargée). Les huit neuves :
+  //   B-A17 ① né éteint, ①bis éteint il ne brûle pas son bois, ③ le bois ne rallume pas,
+  //   ⑥ `found_village` exige la flamme (le trou du jour de naissance : promouvoir mettait
+  //   `villageId ≠ 0`, donc `fireStateAt` rendait `'lit'` SANS REGARDER LE BOIS), ⑦ la pluie ne
+  //   refuse rien mais le feu AFFAME (deux mondes jumeaux, le mouillé mange plus vite — ⚠ et ma
+  //   première version de ⑦ ne pouvait pas échouer : elle tournait sur un monde SEC, `frontMouille`
+  //   rendant faux pour un orage en `ORAGE_SEC_PHASE`, MESURÉ aux quatre cardinaux). Plus la
+  //   migration B-R18 qui fabrique sa prémisse par un `delete feu.allumee` explicite — depuis que
+  //   `addStructure` écrit `false`, le « monde d'avant » ne s'obtient plus en s'abstenant.
+  //   ⚠ Plancher INCHANGÉ à 2456 : un net de +2 ne vaut pas qu'on rogne la marge, qui n'a de
+  //   valeur que pour attraper un FICHIER évaporé — pas deux gardes.
+  // 2026-10-04 (le même jour, suite) : L'AUDIT DE FUSION DE B-R17 — DEUX TROUS DE LOGIQUE ET UN
+  //   SILENCE (`braise.md` B-A17 ⑧→⑫). +9 gardes dans `braise.test.ts`, −0.
+  //   ① **LA FENÊTRE D'UN TICK.** La cause est un ORDRE : `step` applique les actions, PUIS
+  //     `advanceFire`, PUIS `advanceTime` — action et combustion voient le MÊME tick. Or la ligne
+  //     qui reprend la flamme vivait en BAS de l'itération. Au tick où les braises meurent,
+  //     `allumee` valait encore `true` quand le bois arrivait : la clause « Sécurité » le trouvait,
+  //     RANCRAIT et rallumait, SANS BRAISE. Largeur MESURÉE : exactement un tick, monotone, et par
+  //     LES DEUX PORTES (`feed_fire`, et `transfer` qui n'a aucune garde à lui).
+  //     ⚠ Le correctif a DEUX moitiés parce qu'une seule est inerte — `feedFreeFire` ancre
+  //     lui-même, donc une garde dans `advanceFire` seule n'aurait fermé que le modal. Et les deux
+  //     sont PROUVÉES portantes, de domaines DISJOINTS, par falsification séparée.
+  //     Les gardes : ⑧ × 2 portes + ⑧bis × 2 (le CONTRÔLE POSITIF à un tick près — sans lui, un
+  //     `EMBER_TICKS` changé les rendrait vertes sur un tick que le jeu ne visite jamais),
+  //     ⑨ × 1 (la variante construite à la main) et ⑨bis × 2 portes (LA FORME QUE LE MONDE
+  //     D'AVANT PRODUISAIT VRAIMENT : un feu mort y porte ses braises ÉTEINTES).
+  //     ⚠ Elles affirment l'ÉTAT APRÈS UN `step` COMPLET, jamais l'absence de `fire_relit` : gater
+  //     la seule porte du clic laisserait le feu brûler EN SILENCE, et une garde sur l'événement
+  //     serait verte. Et ⑨ n'appelle PAS `advanceFire` en direct — c'est ce qui aveuglait la garde
+  //     de migration : *une phase seule n'est pas un tick*.
+  //   ② **⑪① L'ÉQUIVALENCE DU MIROIR** : `foyerAllumable` (exporté de `fire.ts`) rend exactement
+  //     ce que `light_foyer` accepte, sur une matrice tirée du REGISTRE (types `foyer` × trois états
+  //     de flamme × bois × village), avec deux contrôles ANTI-VACUITÉ (la porte accepte vraiment
+  //     dans certains cas, refuse vraiment dans d'autres) — sans eux, un prédicat toujours faux
+  //     coïnciderait avec une porte toujours fermée.
+  //   ③ **⑫ LA VOIX** : allumer un feu de camp n'émettait RIEN (seule la balise parlait), alors que
+  //     raviver un camp au bois émettait `fire_relit` avant la loi — le geste le plus fréquent que
+  //     B-R17 introduit se jouait dans le silence. Réemploi de `fire_relit`, et la garde affirme
+  //     les DEUX sens (le feu ne se fait pas passer pour une balise, ni l'inverse).
+  //   ⚠ **ET UN MONTAGE A RELEVÉ UNE CLASSE QUE LE BALAYAGE DES 34 AVAIT MANQUÉE** : il passait par
+  //     `addStructure`, donc il ne voyait pas les feux forgés en LITTÉRAL. `boire.test.ts`
+  //     (`feuNourri`) en construisait un « ancré et en flammes » qui ne posait NI `allumee` NI
+  //     `burnAt` : son commentaire mentait déjà avant B-R17, et il s'appuyait sur la clause
+  //     « Sécurité » — c'est-à-dire sur le trou. Il dit maintenant ce qu'il prétend. Les ~10 autres
+  //     littéraux sont SANS SOUTE, donc pris par l'alternative `fuel === undefined` du droit de
+  //     brûler (le « hors modèle » que `fireStateAt` déclare allumé) : c'est pourquoi un seul a
+  //     rougi, et c'est la preuve que cette alternative-là porte vraiment.
+  //   ⚠ Plancher INCHANGÉ à 2456 : la marge n'a de valeur que pour attraper un FICHIER évaporé.
   { nom: 'sim', dir: 'packages/sim', args: ['run', '--exclude', 'src/scenario.test.ts'], plancher: 2456 },
   // 2026-09-01 : +10 gardes avec le RENDU des étages (`plateau-art.test.ts`).
   // 2026-09-01 : +9 gardes avec le TRI DES ÉTAGES (strate, découvert — `framing.test.ts`),
@@ -336,7 +394,7 @@ const SUITES = [
   //   SAUTÉ — V-A2 était gelée par `it.skipIf`, elle est supprimée : 1805 ✓ tout net. Planchers
   //   sim et client inchangés (2370 et 1740) : ils gardent leur marge de quelques pourcents.
   // 2026-10-03 : +3 gardes LA BALISE AU CURSEUR (`aim.test.ts`, étape 6) — une balise éteinte
-  //   sous le curseur donne `light_balise` MAINS NUES, allumée elle redevient une cible ordinaire
+  //   sous le curseur donne `light_foyer` MAINS NUES, allumée elle redevient une cible ordinaire
   //   (et hors de portée le geste ne part pas), et ⚠ DU BOIS EN MAIN LE CLIC NOURRIT au lieu
   //   d'allumer : constaté, gardé tel quel, et c'est la fourche ⓓ de `braise.md` § 5.17.
   //   CINQ FICHIERS DE COUVERTURE du client ont rougi d'eux-mêmes et c'est leur travail, aucun
@@ -361,6 +419,64 @@ const SUITES = [
   //   médaillons FAIM et TEMP (décision d'Alexis : « ces systèmes vont disparaître »).
   //   Suite à 1825. ⚠ Le plancher reste à 1805 : il n'a de valeur que s'il garde une MARGE sur
   //   la suite du jour — le relever à chaque tranche en ferait un miroir, qui n'attrape rien.
+  // · 2026-10-04 (le même jour, suite) — B-R17 au CURSEUR : +3 gardes, −3, net ZÉRO (1825), et la
+  //   ligne du 2026-10-03 juste au-dessus est DÉMENTIE — « du bois en main le clic nourrit au lieu
+  //   d'allumer » était la fourche ⓓ de `braise.md` § 5.17 ; Alexis l'a tranchée (« clic allume,
+  //   on va revoir comment nourrir plus tard »), donc `light_foyer` passe AVANT `feed_fire` ET
+  //   avant `light_torch` dans la cascade d'`aim.ts`. La garde s'inverse au mot (« DU BOIS EN MAIN
+  //   SUR UN FOYER ÉTEINT, LE CLIC ALLUME ») et gagne deux clauses, parce qu'un ordre ne se prouve
+  //   que par ce qu'il DÉPLACE : sur un foyer qui BRÛLE le bois nourrit encore, et une TORCHE sur
+  //   un foyer éteint allume le foyer. Le prédicat est `flammeDonnee` — partagé au bit avec
+  //   `/sim`, sur un `Pick<Structure, 'type' | 'allumee'>` pour que l'`AimStructure` maigre du
+  //   client puisse l'appeler : `allumee` a TROIS états (B-R18) et `!== true` en aurait perdu un.
+  //   Puis **+3 GARDES QU'AUCUNE SUITE NE POUVAIT AVOIR** (`fondation.test.ts`, suite à 1828) :
+  //   `empechementDeFonder` ignorait la flamme, donc le modal d'un feu fraîchement posé — c'est-à-
+  //   dire de TOUT feu, depuis ce matin — offrait « Fonder un Foyer ici » plein et cliquable sur
+  //   un feu que `found_village` refuse. ⚠ La sim refusait CORRECTEMENT : rien dans `/sim` ne
+  //   pouvait rougir, c'est l'AFFORDANCE qui promettait — la classe de défaut exacte que l'audit
+  //   UX du 2026-08-20 avait fait réparer pour la distance, revenue par la porte d'à côté. Les
+  //   trois : un feu éteint n'est pas fondable et on le dit avant le clic ; un feu EN BRAISES
+  //   fonde (on exige la flamme, pas le bois — sinon tout le sas d'alerte S2 devenait interdit
+  //   sans qu'on le dise) ; et ⚠ L'ORDRE — éteint ET trop proche, c'est la FLAMME qui parle,
+  //   parce que `found_village` la juge AVANT la distance : un miroir inversé envoie le joueur
+  //   déménager son camp pour découvrir trente tuiles plus loin qu'il lui manquait une braise.
+  //   TROIS FALSIFICATIONS JOUÉES, les trois rouges (dont `etat !== 'lit'`, qui ne prend QUE la
+  //   garde des braises — une falsification unique n'aurait pas séparé les deux lois).
+  // · 2026-10-04 (le même jour, suite) — LE MIROIR DU CLIC REGARDAIT LA FLAMME, PAS LE BOIS : +6
+  //   gardes (`aim.test.ts`), −0. ⚠ **ET CE N'EST PAS UN BORD, C'EST LA BOUCLE LA PLUS FRÉQUENTE DU
+  //   JEU** : `light_foyer` exige du combustible, `AimStructure` ne le portait pas, et la décision
+  //   ④ met l'allumage DEVANT le nourrissage — or tout feu de camp finit `allumee: false` avec une
+  //   soute vide. « Mon feu s'est éteint cette nuit, j'ajoute du bois » rendait donc « pas de bois
+  //   à brûler » À CHAQUE CLIC, bois en main, sans autre issue que le modal.
+  //   ⚠ **AUCUNE DES 112 GARDES EXISTANTES NE POUVAIT L'ATTRAPER** : les gardes B-R17 d'`aim`
+  //   construisent un `AimTarget` SYNTHÉTIQUE (`{ ...base, foyerEteintId: 7 }`) — elles éprouvent
+  //   `clickToAction`, jamais `aimAt`, et le défaut vivait dans le RACCORD des deux. Les six neuves
+  //   partent donc de VRAIES structures et passent par le vrai résolveur : ① éteint AVEC bois
+  //   s'offre (la décision ④, intacte, mains nues ET bois en main), ② éteint et VIDE ne s'offre
+  //   pas et le bois NOURRIT, ③ sans soute du tout non plus, ④ un foyer qui brûle jamais,
+  //   ⑤ un feu d'AVANT LA LOI (champ absent) brûle donc ne s'offre pas, ⑥ une BALISE d'avant la
+  //   loi, elle, s'offre — le défaut se dérive du TYPE, pas d'un drapeau. Le prédicat est UNIQUE
+  //   (`foyerAllumable`, exporté de `fire.ts`), et son équivalence avec la porte de la sim est
+  //   prouvée côté `/sim` sur une matrice du registre. `AimStructure` gagne `fuel` et `villageId`
+  //   — ce dernier REQUIS comme dans `Structure`, ce qui a forcé cinq fixtures à dire de quel
+  //   village elles parlent. FALSIFICATION JOUÉE : réinverser le prédicat rougit ② et ③, et AUCUNE
+  //   des 116 autres — le reste de la cascade est intact.
+  // · 2026-10-04 (le même jour, suite) — +1 GARDE DE SOURCE (⑪) : `flammeDonnee` est le SEUL
+  //   lecteur de `.allumee`, balayé sur `packages/sim/src` ET `packages/client/src`. C'est la seule
+  //   défense MÉCANIQUE de la thèse centrale de B-R18 — un second prédicat écrit ailleurs
+  //   (`s.allumee !== true`, le réflexe naturel) ne ferait rougir aucune suite tout en rouvrant la
+  //   porte au bois sur toutes les sauvegardes du monde. Elle autorise les ÉCRITURES (la machine à
+  //   états en a besoin : `village.ts` en porte deux) et interdit les LECTURES hors de `fire.ts`.
+  //   ⚠ **ELLE VIT DANS LE CLIENT ET NON DANS `/sim`, et ce n'est pas un caprice** : le lint de
+  //   pureté interdit `node:fs` jusque dans les TESTS de `/sim` (un Web Worker n'a pas Node) et on
+  //   ne contourne pas cette règle ; le client a déjà le patron (la garde CSS de `barre-braise`), et
+  //   la place est juste puisque c'est `aim.ts` qui serait tenté d'écrire le second prédicat.
+  //   ⚠ Et elle porte DEUX prémisses sans lesquelles son vide ne prouverait rien : avoir LU plus de
+  //   100 fichiers (un chemin faux la rendrait verte pour toujours — et c'est arrivé : ma première
+  //   racine remontait d'un cran de trop, ENOENT) et avoir VU les écritures connues de `village.ts`.
+  //   Falsifiée DEUX FOIS, une lecture ajoutée dans chaque paquet : rouge les deux fois.
+  //   Suite CLIENT à 1835 ✓ au total pour le lot B-R17 (1825 → 1828 avec `fondation`, → 1834 avec
+  //   les six du miroir, → 1835 avec celle-ci) ; plancher INCHANGÉ à 1805.
   { nom: 'client', dir: 'packages/client', args: ['run'], plancher: 1805 },
   { nom: 'serveur', dir: 'packages/server', args: ['run'], plancher: 36 },
   // Le banc pilote le vrai worldgen sur la carte de production : lent, et seul à porter le

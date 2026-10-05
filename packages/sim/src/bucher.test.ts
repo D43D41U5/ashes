@@ -15,11 +15,26 @@ import { spawnMonster } from './monsters'
 import { advanceBuchers, BUCHER, tenterLeRituel } from './bucher'
 import { createSim, spawnEntity, step, type SimState } from './sim'
 import { calendarScaleForSeasonCycles } from './time'
-import { addStructure } from './village'
+import { addStructure, type Structure } from './village'
 import { fireZoneInventory } from './fire'
 import { LUNAISON_JOURS } from './nuit'
 import { carteDeTest } from '../../../tools/carte-cache'
 import { MONDE, MONDE_JOUE } from './zonegraph'
+/**
+ * ⚠ UN FOYER LIBRE NAÎT ÉTEINT DEPUIS `braise.md` B-R17 (2026-10-04) : un `addStructure` nu ne
+ * brûle plus rien. Les gardes de ce fichier éprouvent un feu QUI BRÛLE, donc le montage lui donne
+ * la flamme — c'est la prémisse perdue qu'on refabrique, pas un contournement de la loi : la loi
+ * elle-même est éprouvée par le vrai chemin joueur dans `braise.test.ts` (B-A17).
+ */
+const allume = <S extends Structure>(sim: SimState, s: S): S => {
+  s.allumee = true
+  // …ET L'ANCRE DE COMBUSTION AVEC. `addStructure` ne la pose plus (un foyer naît éteint, donc rien
+  // ne brûle à sa naissance) ; la production l'ancre au premier tick de flamme, clause « Sécurité »
+  // d'`advanceFire`. Ici on la pose AVEC la flamme, pour rendre exactement l'état de naissance
+  // d'avant la loi — c'est ce que ces montages supposent quand ils règlent `burnAt` à la main.
+  if (s.fuel && s.burnAt === undefined) { s.burnAt = sim.tick; s.burnSlot = 0 }
+  return s
+}
 
 const SEED = 2026
 const monde = carteDeTest(SEED, MONDE.JOUEURS_CIBLE, MONDE_JOUE)
@@ -92,7 +107,7 @@ describe('A40 — le rituel recule, borné et cadencé', () => {
     expect(temoin, 'une tuile de frange sensible au recul — la prémisse').not.toBeNull()
     // LE BRÛLAGE, PAR LE VRAI TICK : un feu de camp allumé au bord de la fosse, de jour.
     const id = spawnEntity(b.sim, b.cx + 1.5, b.cy + 0.5)
-    const feu = addStructure(b.sim, 'fire', b.cx + 1, b.cy, 0, id)
+    const feu = allume(b.sim, addStructure(b.sim, 'fire', b.cx + 1, b.cy, 0, id))
     addItems(fireZoneInventory(feu, 'fuel')!, { wood: 3 })
     b.sim.tick += 20 - (b.sim.tick % 20)
     step(b.sim, [{ entityId: id, dx: 0, dy: 0 }])

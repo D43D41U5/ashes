@@ -56,6 +56,10 @@ function foundVillage(sim: SimState, id: number, fireTx: number, fireTy: number)
   act(sim, id, { type: 'set_active_slot', slot: slotOf(sim, id, 'campfire') })
   act(sim, id, { type: 'place_campfire', tx: fireTx, ty: fireTy })
   const fire = structureAt(sim.structures, fireTx, fireTy)!
+  // ⚠ B-R17 : un feu bâti naît ÉTEINT, et `found_village` exige la flamme. Le montage la donne à la
+  // main plutôt que par l'action — pas de tick de plus, pas d'entrée de log en plus, donc les gardes
+  // de rejeu et de comptage ne bougent pas. Le vrai chemin joueur est éprouvé par B-A17 ⑥.
+  fire.allumee = true
   act(sim, id, { type: 'found_village', structureId: fire.id })
   return fire.id
 }
@@ -675,6 +679,11 @@ describe('A9 — déterminisme du rejeu (poses/démolitions/paliers)', () => {
     play({ type: 'set_active_slot', slot: 0 }) // le feu de camp (posé en case 0)
     play({ type: 'place_campfire', tx: 41, ty: 40 })
     const fire = structureAt(sim.structures, 41, 40)!
+    // ⚠ ICI L'ALLUMAGE PASSE PAR L'ACTION, PAS PAR LE CHAMP, et c'est une garde de REJEU qui l'exige :
+    // ce bloc enregistre un LOG d'inputs et le rejoue. Une flamme posée à la main vit hors du log —
+    // le rejeu ne la verrait pas, `found_village` serait refusé au second passage, et la divergence
+    // accuserait le déterminisme au lieu du montage. (Ailleurs, où rien n'est rejoué, le champ suffit.)
+    play({ type: 'light_foyer', structureId: fire.id })
     play({ type: 'found_village', structureId: fire.id }) // à portée sans bouger
     play({ type: 'set_active_slot', slot: 1 }) // le marteau
     play({ type: 'build', structure: 'wall', tx: 42, ty: 40 })
@@ -703,6 +712,11 @@ describe('A9 — déterminisme du rejeu (poses/démolitions/paliers)', () => {
     }
     play({ type: 'set_active_slot', slot: 2 }) // le feu de camp
     play({ type: 'place_campfire', tx: 41, ty: 40 })
+    // ⚠ ICI L'ALLUMAGE PASSE PAR L'ACTION, PAS PAR LE CHAMP, et c'est une garde de REJEU qui l'exige :
+    // ce bloc enregistre un LOG d'inputs et le rejoue. Une flamme posée à la main vit hors du log —
+    // le rejeu ne la verrait pas, `found_village` serait refusé au second passage, et la divergence
+    // accuserait le déterminisme au lieu du montage. (Ailleurs, où rien n'est rejoué, le champ suffit.)
+    play({ type: 'light_foyer', structureId: structureAt(sim.structures, 41, 40)!.id })
     play({ type: 'found_village', structureId: structureAt(sim.structures, 41, 40)!.id })
     play({ type: 'set_active_slot', slot: 0 }) // l'enclume
     play({ type: 'place_component', tx: 44, ty: 40 })

@@ -1,3 +1,5 @@
+import { readdirSync, readFileSync, statSync } from 'node:fs'
+import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
 import type { Corpse, ResourceNode } from '@ashes/sim'
 import { pousseDe } from '@ashes/sim'
@@ -299,7 +301,7 @@ describe('holdHarvest — le maintien n’inonde pas la sim (A4, A6)', () => {
  */
 describe('viser un feu → fireId (pour ouvrir le modal à E, spec feu-station S17)', () => {
   it('un FEU sur la tuile visée → fireId = son id', () => {
-    const fire = { id: 9, tx: 5, ty: 5, type: 'fire' as const, hp: 100 }
+    const fire = { id: 9, tx: 5, ty: 5, type: 'fire' as const, hp: 100, villageId: 0 }
     const t = aimAt(5, 5, PLAYER, [], [], RANGE, [], [fire])
     expect(t.fireId).toBe(9)
     expect(t.onFire).toBe(true)
@@ -310,12 +312,12 @@ describe('viser un feu → fireId (pour ouvrir le modal à E, spec feu-station S
 })
 
 describe('la main décide du clic', () => {
-  const vide = { tx: 5, ty: 5, nodeId: null, nodeTool: null, corpseId: null, carcass: false, entityId: null, entityWounded: false, onFire: false, fireId: null, baliseEteinteId: null, repairableId: null, plantableId: null, harvestableId: null,
+  const vide = { tx: 5, ty: 5, nodeId: null, nodeTool: null, corpseId: null, carcass: false, entityId: null, entityWounded: false, onFire: false, fireId: null, foyerEteintId: null, repairableId: null, plantableId: null, harvestableId: null,
   pileId: null, inRange: true, nodeInRange: false, waterInRange: false }
   // `nodeTool` porte la FAMILLE d'outil du nœud visé (lue de `NODE_DEFS[type].tool`) : un
   // arbre appelle la hache, un filon la pioche, un buisson personne. C'est ce qui permet à la
   // hache d'être une arme SANS cesser d'abattre (décision d'Alexis 2026-08-20).
-  const surUnArbre = { tx: 5, ty: 5, nodeId: 42, nodeTool: 'axe' as const, corpseId: null, carcass: false, entityId: null, entityWounded: false, onFire: false, fireId: null, baliseEteinteId: null, repairableId: null, plantableId: null, harvestableId: null,
+  const surUnArbre = { tx: 5, ty: 5, nodeId: 42, nodeTool: 'axe' as const, corpseId: null, carcass: false, entityId: null, entityWounded: false, onFire: false, fireId: null, foyerEteintId: null, repairableId: null, plantableId: null, harvestableId: null,
   pileId: null, inRange: true, nodeInRange: true, waterInRange: false }
   const versLest = { dx: 1, dy: 0 }
 
@@ -367,7 +369,7 @@ describe('la main décide du clic', () => {
  */
 describe('la hache est une arme, et elle abat quand même', () => {
   const versLest = { dx: 1, dy: 0 }
-  const vide = { tx: 5, ty: 5, nodeId: null, nodeTool: null, corpseId: null, carcass: false, entityId: null, entityWounded: false, onFire: false, fireId: null, baliseEteinteId: null, repairableId: null, plantableId: null, harvestableId: null, pileId: null, inRange: true, nodeInRange: false, waterInRange: false }
+  const vide = { tx: 5, ty: 5, nodeId: null, nodeTool: null, corpseId: null, carcass: false, entityId: null, entityWounded: false, onFire: false, fireId: null, foyerEteintId: null, repairableId: null, plantableId: null, harvestableId: null, pileId: null, inRange: true, nodeInRange: false, waterInRange: false }
   const surUnArbre = { ...vide, nodeId: 42, nodeTool: 'axe' as const, nodeInRange: true }
   const surUnFilon = { ...vide, nodeId: 43, nodeTool: 'pickaxe' as const, nodeInRange: true }
 
@@ -416,7 +418,7 @@ describe('la hache est une arme, et elle abat quand même', () => {
  */
 describe('le clic lance la ligne (peche.md D9)', () => {
   const versLest = { dx: 1, dy: 0 }
-  const sec = { tx: 9, ty: 4, nodeId: null, nodeTool: null, corpseId: null, carcass: false, entityId: null, entityWounded: false, onFire: false, fireId: null, baliseEteinteId: null, repairableId: null, plantableId: null, harvestableId: null, pileId: null, inRange: false, nodeInRange: false, waterInRange: false }
+  const sec = { tx: 9, ty: 4, nodeId: null, nodeTool: null, corpseId: null, carcass: false, entityId: null, entityWounded: false, onFire: false, fireId: null, foyerEteintId: null, repairableId: null, plantableId: null, harvestableId: null, pileId: null, inRange: false, nodeInRange: false, waterInRange: false }
   const surLEau = { ...sec, waterInRange: true }
 
   it('CANNE EN MAIN + de l’eau à portée : on LANCE, sur la TUILE (pas sur un nœud)', () => {
@@ -454,35 +456,45 @@ describe('le clic lance la ligne (peche.md D9)', () => {
 describe('allumer une balise au clic (`braise.md` B-R10)', () => {
   const base = {
     tx: 5, ty: 5, nodeId: null, nodeTool: null, corpseId: null, carcass: false, entityId: null, entityWounded: false,
-    onFire: true, fireId: 7, baliseEteinteId: null, repairableId: null, plantableId: null, harvestableId: null,
+    onFire: true, fireId: 7, foyerEteintId: null, repairableId: null, plantableId: null, harvestableId: null,
     pileId: null, inRange: true, nodeInRange: false, waterInRange: false,
   }
   const mainsNues = { held: null, dx: 1, dy: 0 }
 
-  it('une balise ÉTEINTE sous le curseur → `light_balise`, MAINS NUES (la braise est portée, pas tenue)', () => {
-    expect(clickToAction({ ...base, baliseEteinteId: 7 }, null, mainsNues)).toEqual({ type: 'light_balise', structureId: 7 })
+  it('une balise ÉTEINTE sous le curseur → `light_foyer`, MAINS NUES (la braise est portée, pas tenue)', () => {
+    expect(clickToAction({ ...base, foyerEteintId: 7 }, null, mainsNues)).toEqual({ type: 'light_foyer', structureId: 7 })
   })
 
   it('ALLUMÉE, elle redevient une cible ordinaire — et HORS DE PORTÉE, le geste ne part pas', () => {
-    // `baliseEteinteId` à null = soit ce n'est pas une balise, soit elle brûle déjà : dans les deux
+    // `foyerEteintId` à null = soit ce n'est pas une balise, soit elle brûle déjà : dans les deux
     // cas le clic ne doit pas proposer l'allumage (la sim le refuserait, « elle brûle déjà »).
-    expect(clickToAction(base, null, mainsNues)).not.toMatchObject({ type: 'light_balise' })
-    expect(clickToAction({ ...base, baliseEteinteId: 7, inRange: false }, null, mainsNues))
-      .not.toMatchObject({ type: 'light_balise' })
+    expect(clickToAction(base, null, mainsNues)).not.toMatchObject({ type: 'light_foyer' })
+    expect(clickToAction({ ...base, foyerEteintId: 7, inRange: false }, null, mainsNues))
+      .not.toMatchObject({ type: 'light_foyer' })
   })
 
-  it('⚠ DU BOIS EN MAIN, LE CLIC NOURRIT AU LIEU D’ALLUMER — constaté, et c’est une question ouverte', () => {
-    // `feed_fire` passe AVANT dans la chaîne. Ce n'est pas un défaut de sim (nourrir une balise
-    // éteinte est légitime : on remplit sa soute), mais c'est une surprise possible pour le joueur
-    // — consignée dans `braise.md` § 5.17 plutôt que tranchée ici.
+  it('DU BOIS EN MAIN SUR UN FOYER ÉTEINT, LE CLIC ALLUME — « on allume ce qui est éteint, on nourrit ce qui brûle »', () => {
+    // ⚠ LE VERDICT DE CETTE GARDE S'EST INVERSÉ LE 2026-10-04 (décision d'Alexis : *« clic allume,
+    // on va revoir comment nourrir plus tard »*), et c'est B-R17 qui l'a rendue urgente : tant que
+    // seule la balise naissait éteinte, le cas était une curiosité (§ 5.17 ⓓ) ; depuis que TOUT
+    // foyer naît éteint, c'est le chemin le plus fréquent du jeu — arriver avec du bois, poser son
+    // feu, cliquer — et la bûche rentrait sans que rien ne s'allume, sans que le joueur puisse
+    // deviner que c'était SON bois qui bloquait SON allumage.
     const bois = { held: 'wood' as const, dx: 1, dy: 0 }
-    expect(clickToAction({ ...base, baliseEteinteId: 7 }, null, bois)).toMatchObject({ type: 'feed_fire' })
+    expect(clickToAction({ ...base, foyerEteintId: 7 }, null, bois)).toMatchObject({ type: 'light_foyer', structureId: 7 })
+    // …et sur un foyer QUI BRÛLE (`foyerEteintId` null), le même bois nourrit : l'autre moitié de
+    // la règle, sans laquelle « le clic allume » aurait pu vouloir dire « le clic n'alimente plus ».
+    expect(clickToAction({ ...base, onFire: true, fireId: 7 }, null, bois)).toMatchObject({ type: 'feed_fire' })
+    // ⚠ ET UNE TORCHE EN MAIN SUR UN FOYER ÉTEINT ALLUME LE FOYER, pas la torche : il n'y a pas de
+    // flamme à prendre, et l'ordre inverse offrait un geste que la sim refuse (« ce feu est éteint »).
+    const torche = { held: 'torche' as const, dx: 1, dy: 0 }
+    expect(clickToAction({ ...base, foyerEteintId: 7, fireId: 7 }, null, torche)).toMatchObject({ type: 'light_foyer' })
   })
 })
 
 describe('le maintien ne défait pas le clic', () => {
   const versLest = { dx: 1, dy: 0 }
-  const base = { tx: 5, ty: 5, nodeId: null, nodeTool: null, corpseId: null, carcass: false, entityId: null, entityWounded: false, onFire: false, fireId: null, baliseEteinteId: null, repairableId: null, plantableId: null, harvestableId: null, pileId: null, inRange: true, nodeInRange: false, waterInRange: false }
+  const base = { tx: 5, ty: 5, nodeId: null, nodeTool: null, corpseId: null, carcass: false, entityId: null, entityWounded: false, onFire: false, fireId: null, foyerEteintId: null, repairableId: null, plantableId: null, harvestableId: null, pileId: null, inRange: true, nodeInRange: false, waterInRange: false }
   const surUnArbre = { ...base, nodeId: 42, nodeTool: 'axe' as const, nodeInRange: true }
 
   it('ARC en main : le clic est muet — et le MAINTIEN doit l’être aussi', () => {
@@ -545,7 +557,7 @@ describe('DONNER : nourriture en main + un voisin visé → le don chaud (V1-10)
 
 describe('clickToAction — nourrir le Feu & réparer (grappe entretien : bois en main + structure)', () => {
   const struct = (id: number, tx: number, ty: number, type: AimStructure['type'], hp: number): AimStructure =>
-    ({ id, tx, ty, type, hp })
+    ({ id, tx, ty, type, hp, villageId: 0 })
   const wood = { held: 'wood' as const, dx: 1, dy: 0 }
 
   it('bois en main + le Feu sous le curseur, à portée → feed_fire', () => {
@@ -597,6 +609,7 @@ describe('clickToAction — le potager : semer & récolter (agriculture voie A)'
   /** Une parcelle sur la tuile visée (10,10) : `plantedAt` absent = vide ; posé = semée. */
   const parcelle = (plantedAt?: number): AimStructure => ({
     id: 8,
+    villageId: 0,
     tx: 10,
     ty: 10,
     type: 'parcelle',
@@ -635,7 +648,7 @@ describe('clickToAction — le potager : semer & récolter (agriculture voie A)'
   })
 
   it('du bois sur une parcelle ABÎMÉE → repair (l’agriculture n’écrase pas la réparation)', () => {
-    const abimee: AimStructure = { id: 8, tx: 10, ty: 10, type: 'parcelle', hp: STRUCTURE_HP.parcelle - 10 }
+    const abimee: AimStructure = { id: 8, tx: 10, ty: 10, type: 'parcelle', hp: STRUCTURE_HP.parcelle - 10, villageId: 0 }
     const t = aimAt(10, 10, PLAYER, [], [], RANGE, [], [abimee], 0)
     expect(t.repairableId).toBe(8)
     expect(clickToAction(t, null, wood)).toEqual({ type: 'repair', structureId: 8 })
@@ -780,7 +793,7 @@ describe('clickToAction — le mode DÉMOLIR est un mode : il dit ce que le clic
  * cascade rende UNE cible, la même pour les deux.
  */
 describe('interactTargetAt — ce que `F` prendrait sous le curseur', () => {
-  const feu = (id: number, tx: number, ty: number): AimStructure => ({ id, tx, ty, type: 'fire', hp: STRUCTURE_HP.fire })
+  const feu = (id: number, tx: number, ty: number): AimStructure => ({ id, tx, ty, type: 'fire', hp: STRUCTURE_HP.fire, villageId: 0 })
   const buisson = (id: number, tx: number, ty: number): ResourceNode =>
     ({ id, tx, ty, stock: 6, type: 'berry_bush', regrowAt: 0 }) as ResourceNode
   /** La cueillette, ici, c'est le buisson (id 7) — le prédicat que fournit `input-bindings`
@@ -983,5 +996,130 @@ describe('aimAt — la joignabilité d’étage borne la portée (E-R5)', () => 
     const jamais = (): boolean => false
     expect(aimAt(11, 11, PLAYER, [], [], RANGE, [], [], 0, [], () => false, undefined, jamais).inRange).toBe(false)
     expect(aimAt(11, 11, PLAYER, [], [], RANGE).inRange).toBe(true)
+  })
+})
+
+describe('B-A17 ⑩② — le miroir du clic passe par le VRAI résolveur, et il regarde le BOIS', () => {
+  // ⚠ POURQUOI CE describe EXISTE, ET POURQUOI AUCUN DES 112 AUTRES NE POUVAIT ATTRAPER LE DÉFAUT :
+  //   les gardes B-R17 d'au-dessus construisent un `AimTarget` SYNTHÉTIQUE (`{ ...base,
+  //   foyerEteintId: 7 }`) — elles éprouvent `clickToAction`, jamais `aimAt`. Or le défaut vivait
+  //   dans `aimAt` : il posait `foyerEteintId` sur tout foyer sans flamme, SANS regarder sa soute,
+  //   alors que `light_foyer` exige du bois. Les deux moitiés de la cascade étaient justes
+  //   séparément ; c'est leur raccord qui mentait. On part donc de VRAIES structures.
+  //
+  // ⚠ ET LE CAS N'EST PAS UN BORD : c'est la fin de vie de TOUT feu de camp (il brûle ses bûches,
+  //   `fire.ts` écrit `allumee = false`, la soute est vide). « Mon feu s'est éteint cette nuit,
+  //   j'ajoute du bois » rendait donc « pas de bois à brûler » à chaque clic, bois en main.
+  const foyer = (opts: { allumee?: boolean; bois?: number }): AimStructure => ({
+    id: 7, tx: 10, ty: 10, type: 'fire', hp: STRUCTURE_HP.fire, villageId: 0,
+    ...(opts.allumee === undefined ? {} : { allumee: opts.allumee }),
+    ...(opts.bois === undefined ? {} : { fuel: [{ item: 'wood' as const, count: opts.bois }, null, null] }),
+  })
+  const mainsNues = null
+  const bois = { held: 'wood' as const, dx: 0, dy: -1 }
+  const clic = (s: AimStructure, hand: typeof bois | null): unknown =>
+    clickToAction(aimAt(10, 10, PLAYER, [], [], RANGE, [], [s]), null, hand ?? undefined)
+
+  it('① un foyer éteint AVEC du bois s’offre à l’allumage — c’est la décision ④, et elle ne bouge pas', () => {
+    const f = foyer({ allumee: false, bois: 5 })
+    expect(aimAt(10, 10, PLAYER, [], [], RANGE, [], [f]).foyerEteintId, 'le résolveur le désigne').toBe(7)
+    expect(clic(f, mainsNues), 'mains nues : on allume').toEqual({ type: 'light_foyer', structureId: 7 })
+    expect(clic(f, bois), 'ET bois en main : on allume AUSSI — l’allumage passe devant le nourrissage').toEqual({ type: 'light_foyer', structureId: 7 })
+  })
+
+  it('② un foyer éteint et VIDE ne s’offre PAS à l’allumage — bois en main, le clic NOURRIT', () => {
+    const f = foyer({ allumee: false, bois: 0 })
+    expect(aimAt(10, 10, PLAYER, [], [], RANGE, [], [f]).foyerEteintId, 'le résolveur ne le désigne plus').toBeNull()
+    expect(clic(f, bois), 'le bois entre dans la soute au lieu d’être refusé').toEqual({ type: 'feed_fire' })
+  })
+
+  it('③ … et sans soute du tout (`fuel` absent), le miroir ne promet rien non plus', () => {
+    const f = foyer({ allumee: false })
+    expect(aimAt(10, 10, PLAYER, [], [], RANGE, [], [f]).foyerEteintId).toBeNull()
+  })
+
+  it('④ un foyer qui BRÛLE ne s’offre jamais à l’allumage, avec ou sans bois (il brûle déjà)', () => {
+    const f = foyer({ allumee: true, bois: 5 })
+    expect(aimAt(10, 10, PLAYER, [], [], RANGE, [], [f]).foyerEteintId).toBeNull()
+    expect(clic(f, bois), 'on nourrit ce qui brûle').toEqual({ type: 'feed_fire' })
+  })
+
+  it('⑤ UN FEU D’AVANT LA LOI (champ absent) brûle, donc il ne s’offre pas — les trois états comptent', () => {
+    // ⚠ `allumee` absent = « né avant la loi » = ALLUMÉ pour un feu (B-R18). Un `allumee !== true`
+    //   écrit à la main ici l'aurait proposé à l'allumage, que la sim refuse par « il brûle déjà ».
+    const f = foyer({ bois: 5 })
+    expect('allumee' in f, 'la prémisse : le champ est bien ABSENT').toBe(false)
+    expect(aimAt(10, 10, PLAYER, [], [], RANGE, [], [f]).foyerEteintId).toBeNull()
+  })
+
+  it('⑥ UNE BALISE d’avant la loi, elle, s’offre — le défaut se dérive du TYPE, pas d’un drapeau', () => {
+    const b: AimStructure = {
+      id: 7, tx: 10, ty: 10, type: 'balise', hp: STRUCTURE_HP.balise, villageId: 0,
+      fuel: [{ item: 'wood', count: 5 }, null, null],
+    }
+    expect('allumee' in b, 'la prémisse : champ absent, comme pour le feu de ⑤').toBe(false)
+    expect(aimAt(10, 10, PLAYER, [], [], RANGE, [], [b]).foyerEteintId, 'et pourtant elle s’offre : absent vaut ÉTEINT pour une balise').toBe(7)
+  })
+})
+
+describe('B-A17 ⑪ — `flammeDonnee` est le SEUL lecteur de `.allumee` (garde de SOURCE, les deux paquets)', () => {
+  it('⑪ `flammeDonnee` est le SEUL lecteur de `.allumee` — garde de SOURCE, les deux paquets', () => {
+    // ⚠ C'EST LA SEULE DÉFENSE MÉCANIQUE DE LA THÈSE CENTRALE DE B-R18. Aujourd'hui elle ne tient
+    //   qu'à un commentaire (« n'écrire `allumee` à la main nulle part ailleurs »), et un second
+    //   prédicat écrit ailleurs — `s.allumee !== true`, le réflexe naturel — ne ferait rougir
+    //   AUCUNE suite tout en rouvrant la porte au bois sur toutes les sauvegardes du monde.
+    //
+    // CE QU'ELLE AUTORISE, délibérément : les ÉCRITURES (`s.allumee = …`, `allumee: …` d'un objet
+    // littéral) — la machine à états en a besoin, et `village.ts` en porte deux. Ce qu'elle
+    // interdit, c'est une LECTURE hors de `fire.ts`.
+    // ⚠ CETTE GARDE VIT DANS LE CLIENT ET NON DANS `/sim`, ET CE N'EST PAS UN CAPRICE : le lint de
+    //   pureté interdit `node:fs` jusque dans les TESTS de `/sim` (un Web Worker n'a pas Node), et
+    //   on ne contourne pas cette règle. Le client a déjà le patron (la garde CSS de `barre-braise`).
+    //   Et la place est juste : c'est CE fichier qui serait tenté d'écrire le second prédicat.
+    const racine = join(__dirname, '..', '..', '..', '..')
+    const lectures: string[] = []
+    let fichiersVus = 0
+    let ecrituresVues = 0
+    const visiter = (dossier: string): void => {
+      for (const nom of readdirSync(dossier)) {
+        const chemin = join(dossier, nom)
+        if (statSync(chemin).isDirectory()) { visiter(chemin); continue }
+        if (!nom.endsWith('.ts') || nom.endsWith('.test.ts')) continue
+        if (chemin.endsWith(join('sim', 'src', 'fire.ts'))) continue // le lecteur légitime
+        fichiersVus++
+        const src = readFileSync(chemin, 'utf8')
+        src.split('\n').forEach((ligne, i) => {
+          const nue = ligne.replace(/\/\/.*$/, '').replace(/^\s*\*.*$/, '')
+          // une LECTURE : `.allumee` qui n'est pas la cible d'une affectation simple
+          for (const m of nue.matchAll(/\.allumee\s*(.{0,3})/g)) {
+            const suite = m[1] ?? ''
+            if (/^=[^=]/.test(suite.trimStart())) { ecrituresVues++; continue } // écriture
+            lectures.push(`${chemin.slice(racine.length + 1)}:${i + 1} ${ligne.trim()}`)
+          }
+        })
+      }
+    }
+    visiter(join(racine, 'sim', 'src'))
+    visiter(join(racine, 'client', 'src'))
+    // ⚠ LES DEUX PRÉMISSES SANS LESQUELLES CE VIDE NE PROUVERAIT RIEN : un balayage qui ne visite
+    //   aucun fichier (chemin faux, filtre trop large) rendrait `lectures` vide et la garde verte
+    //   pour toujours. On exige donc qu'elle ait LU les deux paquets, et qu'elle ait VU les
+    //   écritures connues de `village.ts` — preuve qu'elle regarde bien le bon champ.
+    expect(fichiersVus, 'prémisse : le balayage a bien lu les deux paquets').toBeGreaterThan(100)
+    expect(ecrituresVues, 'prémisse : et il voit les écritures de `village.ts` — il lit le bon champ').toBeGreaterThanOrEqual(2)
+    expect(lectures, '`.allumee` ne se lit que dans fire.ts — partout ailleurs, passer par `flammeDonnee`').toEqual([])
+    // ⚠ CONTRÔLE POSITIF : la garde doit savoir RECONNAÎTRE une lecture, sinon son vide ne prouve
+    //   rien. On lui donne les deux formes à la main et on exige qu'elle les classe juste.
+    const classe = (ligne: string): boolean => {
+      const nue = ligne.replace(/\/\/.*$/, '')
+      for (const m of nue.matchAll(/\.allumee\s*(.{0,3})/g)) {
+        if (!/^=[^=]/.test((m[1] ?? '').trimStart())) return true
+      }
+      return false
+    }
+    expect(classe('if (s.allumee !== true) return'), 'contrôle : une LECTURE est vue').toBe(true)
+    expect(classe('const x = s.allumee ?? false'), 'contrôle : celle-ci aussi').toBe(true)
+    expect(classe('s.allumee = false'), 'contrôle : une ÉCRITURE ne compte pas').toBe(false)
+    expect(classe('  // s.allumee est lu par flammeDonnee'), 'contrôle : un commentaire ne compte pas').toBe(false)
   })
 })

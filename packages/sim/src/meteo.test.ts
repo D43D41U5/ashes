@@ -51,8 +51,7 @@ import { brumeJourEligible } from './brume'
 import { CHRONICLE_EVENT_TYPES, chronicleFromEvents } from './chronicle'
 import { drainEvents, type SimEvent } from './events'
 import { avatarThreat, faunaStep, wolfStep, wolfVigor } from './faune'
-import { fireActive, fireState, fireWarmthFactor, fuelTicksRemaining } from './fire'
-import { countOf } from './items'
+import { fireActive, fireState, fireWarmthFactor, fuelTicksRemaining, advanceFire } from './fire'
 import { createEmptyMap, setTile } from './map'
 import { effetsDuJour } from './modificateur'
 import { neigeAuSol } from './gel'
@@ -76,7 +75,7 @@ import {
   actForDay, calendarScaleForSeasonCycles, cycleOffsetForStartHour, dayTicksPourJour, phaseForDay,
   TICKS_PER_CYCLE, YEAR_DAYS,
 } from './time'
-import { addStructure, applyVillageAction, grantItems, structureAt } from './village'
+import { addStructure, grantItems, structureAt } from './village'
 import { foundNpcVillage } from './worldgen'
 
 /** 1 jour de saison = 1 cycle : l'aube du cycle c est le jour c+1. */
@@ -1016,6 +1015,13 @@ describe('R5 — le Feu sous la pluie (A4)', () => {
     e.x = tx + 0.5
     e.y = ty + 1.5
     act(sim, id, { type: 'place_campfire', tx, ty })
+    // ⚠ ET ON L'ALLUME, PAR L'ACTION (`braise.md` B-R17, 2026-10-04) : un foyer bâti naît ÉTEINT, et
+    // les gardes de ce bloc mesurent ce qu'un feu QUI BRÛLE consomme sous la pluie. Par l'action et
+    // non par le champ, parce que c'est aussi le chemin que le joueur prend — et parce qu'une de ces
+    // gardes compte les tirages du PRNG : un geste de plus doit y rester visible.
+    e.braise ??= { niveau: 0, charge: 1 } // l'allumage n'exige aucune charge (B-R17 ②)
+    const feu = structureAt(sim.structures, tx, ty)
+    if (feu) act(sim, id, { type: 'light_foyer', structureId: feu.id })
   }
 
   it('A4 conso — cœur : ×FEU_CONSO.pluie EXACTEMENT ; hors bande : rien ; rampe : strictement entre — et zéro tirage', () => {
@@ -1234,111 +1240,66 @@ describe('R5 — le Feu sous la pluie (A4)', () => {
     expect(drainEvents(sim).some((e) => e.type === 'fire_extinguished')).toBe(false)
   })
 
-  it('R5 refus — feu neuf à découvert sous la pluie : refusé, observable, l’objet reste en main, zéro tirage ; le front parti, la même pose passe', () => {
+  /**
+   * ═══ R5 NE GARDE PLUS LA POSE, ET IL N'A PAS CHANGÉ D'ADRESSE : IL EST RETIRÉ ═══
+   *
+   * ⚠ **QUATRE GARDES ONT ÉTÉ RETIRÉES ICI LE 2026-10-04, parce qu'elles sont devenues VIDES, pas
+   * parce qu'elles gênaient** — « R5 refus », « R5 abri : le toit », « R5 abri : maison et grotte »
+   * et « R5 ciblé ». Toutes les quatre n'existaient que pour prouver un refus météo à la POSE, son
+   * échappée abritée, et le fait qu'il ne fuyait pas sur les murs. Ce refus n'existe plus (décision
+   * d'Alexis, `braise.md` B-R17 ⓐ) : depuis que tout foyer naît ÉTEINT, rien ne « prend » à la pose
+   * — on empile du bois sur une tuile —, et remettre le refus à l'ALLUMAGE rouvrait le « rallumage
+   * sacré » juste en dessous (mourir sous un orage, camp éteint, plus de feu avant que le front
+   * passe), c'est-à-dire exactement le verrou que B-R17 venait de retirer.
+   *
+   * Cette garde-ci les remplace toutes, et elle n'affirme QUE la première moitié de la décision :
+   * la pluie ne refuse plus rien, ni à la pose ni à l'allumage, et le marteau bâtit toujours.
+   *
+   * ⚠ **ELLE NE GARDE PAS `FEU_CONSO`, ET ELLE N'A PAS À LE FAIRE — mais ce n'est pas que la
+   * seconde moitié de la décision manque : elle est gardée DEUX FOIS, ailleurs.** ① Par QUATRE `it`
+   * de ce même `describe` ci-dessus — « A4 conso — cœur » (×`FEU_CONSO.pluie` au bit près),
+   * « A4 Foyer — l'upkeep » (en ratio), « meteoFeuConso — balayage perpendiculaire exhaustif » et
+   * « A4 jamais d'extinction » (la pente de l'orage). ② Et par **B-A17 ⑦ de `braise.test.ts`**, qui
+   * joue deux mondes JUMEAUX dont le mouillé mange plus vite. Donc « la pluie ne garde plus rien »
+   * n'est pas vrai par vacuité : le jour où `FEU_CONSO` casserait, cinq gardes le diraient.
+   *
+   * ⚠ **Et il y a DEUX gardes de R5 dans ce lot, que j'ai confondues une fois** — celle-ci et
+   * B-A17 ⑦ : la seconde porte les mondes jumeaux, celle-ci non. C'est cette confusion qui a
+   * laissé un `countOf` orphelin en tête de ce fichier (les quatre refus de pluie supprimés le
+   * comptaient), orphelin que `pnpm lint` a dénoncé.
+   */
+  it('R5 — la pluie ne refuse plus ni la pose ni l’allumage ; sa pression est la FAIM du feu', () => {
     const sim = simCalme()
     const id = poseur(sim, 125, 20, 1)
     poseFront(sim, 'pluie', 95.5)
-    expect(meteoMouille(sim, 125, 21)).toBe(true) // la prémisse : la tuile visée est mouillée
+    expect(meteoMouille(sim, 125, 21), 'la prémisse : la tuile visée est bien mouillée').toBe(true)
     drainEvents(sim)
-    // L'action SEULE d'abord (la garde chirurgicale) : le refus ne tire RIEN sur le PRNG.
-    const rng0 = sim.rngState
-    applyVillageAction(sim, id, { type: 'place_campfire', tx: 125, ty: 21 })
-    expect(sim.rngState).toBe(rng0)
-    expect(refus(sim)).toEqual(['un feu neuf ne prend pas sous la pluie'])
-    expect(structureAt(sim.structures, 125, 21)).toBeUndefined()
-    const e = sim.entities.find((en) => en.id === id)!
-    expect(countOf(e.inventory, 'campfire')).toBe(1) // l'objet n'est PAS consommé par un refus
-    // Par l'INPUT aussi — le chemin réel, celui que le replay rejoue.
+    // ① POSER passe — et par l'INPUT, le chemin réel, celui que le replay rejoue.
     act(sim, id, { type: 'place_campfire', tx: 125, ty: 21 })
-    expect(refus(sim)).toEqual(['un feu neuf ne prend pas sous la pluie'])
-    // Le front parti : la MÊME pose, au même endroit, passe.
-    sim.meteo = null
-    act(sim, id, { type: 'place_campfire', tx: 125, ty: 21 })
-    expect(refus(sim)).toEqual([])
-    expect(structureAt(sim.structures, 125, 21)?.type).toBe('fire')
-  })
-
-  it('R5 abri — LE TOIT RÉVEILLE L’ÉCHAPPÉE : sous un toit, un feu neuf prend SOUS LA PLUIE', () => {
-    /**
-     * ⚠ **LA GARDE D’À CÔTÉ DIT QUE CETTE ÉCHAPPÉE EST « DORMANTE », ET ELLE NE L’EST PLUS.**
-     * Elle l’était pour une raison qui n’a rien à voir avec R5 : les deux seuls abris que
-     * `isSheltered` connaissait refusaient la pose par une AUTRE porte — la `house` occupe sa
-     * tuile (« tuile occupée »), la Grotte est un landmark. On ne pouvait donc jamais OBSERVER
-     * le contrat, seulement constater qu’un autre motif sortait avant lui.
-     *
-     * Depuis que le TOIT abrite (2026-09-02), il existe enfin un abri qui ne ferme aucune de ces
-     * portes : `roof` est `bloque: 'non'` et `occupe: 'toit'` — il ne prend pas la tuile, il n’est
-     * pas un landmark. La pose DOIT donc passer, sous la pluie, et c’est R5 qui tient debout pour
-     * la première fois. Ce qui ferait rougir : retirer `roofAt` d’`isSheltered` — le motif météo
-     * ressort, et l’échappée se rendort.
-     */
-    const sim = simCalme()
-    const id = poseur(sim, 125, 20, 1)
-    addStructure(sim, 'roof', 125, 21, 0, 0)
-    poseFront(sim, 'pluie', 95.5)
-    expect(meteoMouille(sim, 125, 21), 'la prémisse : il pleut bien là').toBe(true)
-    expect(isSheltered(sim, 125, 21), 'et la tuile est couverte').toBe(true)
-    drainEvents(sim)
-    act(sim, id, { type: 'place_campfire', tx: 125, ty: 21 })
-    expect(refus(sim), 'aucun refus : le feu prend sous le toit').toEqual([])
-    expect(structureAt(sim.structures, 125, 21)?.type ?? 'rien').not.toBe('rien')
-  })
-
-  it('R5 abri — sur une tuile abritée le refus météo ne mord JAMAIS : maison et grotte le prouvent chacune par sa porte', () => {
-    // Les deux abris d'`isSheltered` (maison, grotte) refusent AUJOURD'HUI la pose par des
-    // portes pré-existantes (tuile occupée, landmark) : l'échappée abritée du contrat R5
-    // est dormante. Ces gardes épinglent qu'elle CÈDE — le motif météo ne sort jamais sur
-    // une tuile abritée — et le jour où ces portes s'ouvrent, elles tiendront telles quelles.
-    const MOTIF = 'un feu neuf ne prend pas sous la pluie'
-
-    // LA MAISON — la plus probante : le refus météo est évalué AVANT « tuile occupée »,
-    // donc s'il ne cédait pas à l'abri, c'est SON motif qui sortirait. (`addStructure`
-    // direct : un décor d'héritage, pas un geste de jeu à rejouer — le worldgen fait pareil.)
-    const simM = simCalme()
-    const idM = poseur(simM, 125, 20, 1)
-    addStructure(simM, 'house', 125, 21, 0, 0)
-    poseFront(simM, 'pluie', 95.5)
-    expect(meteoMouille(simM, 125, 21)).toBe(true)
-    expect(isSheltered(simM, 125, 21)).toBe(true)
-    drainEvents(simM)
-    act(simM, idM, { type: 'place_campfire', tx: 125, ty: 21 })
-    expect(refus(simM)).toEqual(['tuile occupée'])
-
-    // LA GROTTE — même contrat, porte landmark.
-    const simG = simCalme()
-    simG.map.zones.push({ name: 'la Grotte I', x: 125, y: 21, w: 1, h: 1, kind: 'grotte' })
-    const idG = poseur(simG, 125, 20, 1)
-    poseFront(simG, 'pluie', 95.5)
-    expect(meteoMouille(simG, 125, 21)).toBe(true)
-    expect(isSheltered(simG, 125, 21)).toBe(true)
-    drainEvents(simG)
-    act(simG, idG, { type: 'place_campfire', tx: 125, ty: 21 })
-    const raisons = refus(simG)
-    expect(raisons).not.toContain(MOTIF)
-    expect(raisons).toEqual(['les landmarks sont inconstructibles'])
-  })
-
-  it('R5 ciblé — le refus ne fuit pas sur les murs : le marteau bâtit sous la pluie', () => {
-    const sim = simCalme()
-    const id = poseur(sim, 125, 20, 1)
-    grantItems(sim, id, { hammer: 1, wood: 20 })
-    // Fonder À SEC (la fondation passe par la pose d'un feu, gardée par R5)…
-    poseFeu(sim, id, 125, 21)
+    expect(refus(sim), 'aucun refus météo à la pose').toEqual([])
     const feu = structureAt(sim.structures, 125, 21)!
-    act(sim, id, { type: 'found_village', structureId: feu.id })
-    expect(sim.villages).toHaveLength(1)
-    // …puis la pluie arrive, et le marteau continue de bâtir : R5 ne garde QUE le feu neuf.
-    poseFront(sim, 'pluie', 95.5)
-    expect(meteoMouille(sim, 127, 21)).toBe(true)
+    expect(feu.type, 'le feu est bien là').toBe('fire')
+    expect(fireState(sim, feu), 'mais ÉTEINT — c’est B-R17, et c’est pour ça que R5 n’a plus de sens ici').toBe('out')
+    // ② ALLUMER passe aussi, sous la même averse : la braise est une braise VIVE.
     const e = sim.entities.find((en) => en.id === id)!
+    e.braise = { niveau: 0, charge: 1 } // une charge d'un tick : l'allumage n'exige RIEN (B-R17 ②)
+    drainEvents(sim)
+    act(sim, id, { type: 'light_foyer', structureId: feu.id })
+    expect(refus(sim), 'aucun refus météo à l’allumage non plus').toEqual([])
+    expect(fireState(sim, feu), 'il brûle, sous la pluie, avec une braise presque morte').toBe('lit')
+    // ③ ET LE MARTEAU BÂTIT TOUJOURS SOUS LA PLUIE (ce que « R5 ciblé » gardait).
+    grantItems(sim, id, { hammer: 1, wood: 20 })
+    feu.allumee = true
+    act(sim, id, { type: 'found_village', structureId: feu.id })
+    expect(sim.villages, 'la prémisse de ③ : le village est fondé').toHaveLength(1)
     e.activeSlot = e.inventory.findIndex((s) => s?.item === 'hammer')
     drainEvents(sim)
     act(sim, id, { type: 'build', structure: 'wall', tx: 127, ty: 21 })
-    expect(refus(sim)).toEqual([])
+    expect(refus(sim), 'le marteau bâtit sous l’averse').toEqual([])
     expect(structureAt(sim.structures, 127, 21)?.type).toBe('wall')
   })
 
-  it('R5 rallumage sacré — un feu ÉTEINT se réalimente et se rallume SOUS l’orage au cœur de bande', () => {
+  it('R5 rallumage sacré — un feu ÉTEINT se rallume À LA BRAISE sous l’orage, et le bois seul n’y suffit plus', () => {
     const sim = simCalme()
     const id = poseur(sim, 125, 20, 1)
     poseFeu(sim, id, 125, 21)
@@ -1350,6 +1311,12 @@ describe('R5 — le Feu sous la pluie (A4)', () => {
     feu.emberUntil = sim.tick
     expect(fireState(sim, feu)).toBe('out')
     expect(fireWarmthFactor(sim, feu)).toBe(0)
+    // ⚠ UN TICK DE PLUS, ET IL EST NÉCESSAIRE (B-R18) : c'est `advanceFire` qui REPREND la flamme
+    //   d'un foyer définitivement mort (`allumee = false`). Sans lui, le feu serait « out » par
+    //   calcul tout en gardant sa flamme donnée, et la clause ① se rallumerait au bois — la garde
+    //   accuserait la loi au lieu du montage. En jeu, le tick tourne toujours.
+    advanceFire(sim)
+    expect(feu.allumee, 'la flamme est bien reprise').toBe(false)
     // L'orage arrive, plein cœur sur le feu — là où la POSE d'un feu neuf serait refusée. Sa
     // bande est CENTRÉE sur le feu : un orage d'Éclosion est large de 120 tuiles (S7) et sa
     // rampe de 18 — poser son bord à 10 tuiles du feu ne l'aurait mis QUE dans la rampe. Et
@@ -1358,11 +1325,24 @@ describe('R5 — le Feu sous la pluie (A4)', () => {
     expect(meteoMouille(sim, feu.tx, feu.ty)).toBe(true)
     expect(meteoIntensity(sim, feu.tx, feu.ty)).toBe(1)
     drainEvents(sim)
-    // `feed_fire` — la RÉALIMENTATION, un chemin distinct de la pose : il passe, toujours.
+    // ⚠ CE QUE CETTE GARDE PROTÈGE N'A PAS CHANGÉ — son CHEMIN, oui (`braise.md` B-R17, 2026-10-04).
+    //   Sa raison d'être est qu'on ne puisse PAS se retrouver sans feu après être mort sous un
+    //   orage ; c'est elle qui a fait retirer le refus météo de l'allumage plutôt que le déplacer.
+    //   Mais le bois ne rallume plus rien : la flamme ne vient que de la braise.
+    // ① LE BOIS REMPLIT ET NE RALLUME PAS — et il ne mentira pas en émettant `fire_relit`.
     act(sim, id, { type: 'feed_fire', structureId: feu.id })
+    const evtsBois = drainEvents(sim)
+    expect(evtsBois.some((e2) => e2.type === 'action_rejected'), 'nourrir n’est pas refusé').toBe(false)
+    expect(evtsBois.some((e2) => e2.type === 'fire_relit'), 'mais aucun `fire_relit` : rien ne s’est rallumé').toBe(false)
+    expect(fireState(sim, feu), 'le feu est rechargé et toujours mort').toBe('out')
+    expect(feu.burnAt, 'et AUCUNE ancre posée : le temps sans flamme ne sera pas facturé').toBeUndefined()
+    // ② LA BRAISE LE REPREND, SOUS L'ORAGE, AU CŒUR DE LA BANDE — c'est le « sacré » de R5.
+    const porteur = sim.entities.find((en) => en.id === id)!
+    porteur.braise = { niveau: 0, charge: 1 } // presque morte : l'allumage n'exige aucune charge
+    drainEvents(sim)
+    act(sim, id, { type: 'light_foyer', structureId: feu.id })
     const evts = drainEvents(sim)
-    expect(evts.some((e2) => e2.type === 'action_rejected')).toBe(false)
-    expect(evts.some((e2) => e2.type === 'fire_relit')).toBe(true) // l'ancre de respawn s'est rallumée
+    expect(evts.some((e2) => e2.type === 'action_rejected'), 'l’orage ne refuse pas l’allumage').toBe(false)
     expect(fireState(sim, feu)).toBe('lit')
     expect(fireWarmthFactor(sim, feu)).toBe(1)
     // Et il brûle au rythme de l'orage : la pression continue — jamais la mort.

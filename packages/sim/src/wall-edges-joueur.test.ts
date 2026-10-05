@@ -55,6 +55,10 @@ function batisseur(sim: SimState, x: number, y: number): number {
   grantItems(sim, id, { campfire: 1, hammer: 1, wood: 80, stone: 40, cut_stone: 40 })
   act(sim, id, { type: 'set_active_slot', slot: slotOf(sim, id, 'campfire') })
   act(sim, id, { type: 'place_campfire', tx: x + 1, ty: y })
+  // ⚠ B-R17 : un feu bâti naît ÉTEINT, et `found_village` exige la flamme. Le montage la donne à la
+  // main plutôt que par l'action — pas de tick de plus, pas d'entrée de log en plus, donc les gardes
+  // de rejeu et de comptage ne bougent pas. Le vrai chemin joueur est éprouvé par B-A17 ⑥.
+  structureAt(sim.structures, x + 1, y)!.allumee = true
   act(sim, id, { type: 'found_village', structureId: structureAt(sim.structures, x + 1, y)!.id })
   act(sim, id, { type: 'set_active_slot', slot: slotOf(sim, id, 'hammer') })
   drainEvents(sim)
@@ -293,6 +297,11 @@ describe('une partie qui bâtit en arêtes rejoue à l’identique', () => {
     }
     jouer({ type: 'set_active_slot', slot: slotOf(sim, id, 'campfire') })
     jouer({ type: 'place_campfire', tx: 41, ty: 40 })
+    // ⚠ ICI L'ALLUMAGE PASSE PAR L'ACTION, PAS PAR LE CHAMP, et c'est une garde de REJEU qui l'exige :
+    // ce bloc enregistre un LOG d'inputs et le rejoue. Une flamme posée à la main vit hors du log —
+    // le rejeu ne la verrait pas, `found_village` serait refusé au second passage, et la divergence
+    // accuserait le déterminisme au lieu du montage. (Ailleurs, où rien n'est rejoué, le champ suffit.)
+    jouer({ type: 'light_foyer', structureId: structureAt(sim.structures, 41, 40)!.id })
     jouer({ type: 'found_village', structureId: structureAt(sim.structures, 41, 40)!.id })
     jouer({ type: 'set_active_slot', slot: slotOf(sim, id, 'hammer') })
     // Une pièce : quatre segments autour de (41,42), plus le doublon refusé et l'angle.
@@ -530,6 +539,11 @@ describe('pousser une porte (R26)', () => {
     }
     jouer({ type: 'set_active_slot', slot: slotOf(sim, id, 'campfire') })
     jouer({ type: 'place_campfire', tx: 41, ty: 40 })
+    // ⚠ ICI L'ALLUMAGE PASSE PAR L'ACTION, PAS PAR LE CHAMP, et c'est une garde de REJEU qui l'exige :
+    // ce bloc enregistre un LOG d'inputs et le rejoue. Une flamme posée à la main vit hors du log —
+    // le rejeu ne la verrait pas, `found_village` serait refusé au second passage, et la divergence
+    // accuserait le déterminisme au lieu du montage. (Ailleurs, où rien n'est rejoué, le champ suffit.)
+    jouer({ type: 'light_foyer', structureId: structureAt(sim.structures, 41, 40)!.id })
     jouer({ type: 'found_village', structureId: structureAt(sim.structures, 41, 40)!.id })
     jouer({ type: 'set_active_slot', slot: slotOf(sim, id, 'hammer') })
     // LA PORTE JUSTE SOUS SES PIEDS (arête nord de (40,41), le colon est en (40,5 ; 40,5)) : la

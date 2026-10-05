@@ -4,7 +4,22 @@ import { drainEvents } from './events'
 import { countOf } from './items'
 import { createEmptyMap } from './map'
 import { createSim, spawnEntity, type SimState } from './sim'
-import { addStructure, advanceUpkeep, applyStructureDamage, applyVillageAction, createVillage, grantItems } from './village'
+import { addStructure, advanceUpkeep, applyStructureDamage, applyVillageAction, createVillage, grantItems, type Structure } from './village'
+/**
+ * ⚠ UN FOYER LIBRE NAÎT ÉTEINT DEPUIS `braise.md` B-R17 (2026-10-04) : un `addStructure` nu ne
+ * brûle plus rien. Les gardes de ce fichier éprouvent un feu QUI BRÛLE, donc le montage lui donne
+ * la flamme — c'est la prémisse perdue qu'on refabrique, pas un contournement de la loi : la loi
+ * elle-même est éprouvée par le vrai chemin joueur dans `braise.test.ts` (B-A17).
+ */
+const allume = <S extends Structure>(sim: SimState, s: S): S => {
+  s.allumee = true
+  // …ET L'ANCRE DE COMBUSTION AVEC. `addStructure` ne la pose plus (un foyer naît éteint, donc rien
+  // ne brûle à sa naissance) ; la production l'ancre au premier tick de flamme, clause « Sécurité »
+  // d'`advanceFire`. Ici on la pose AVEC la flamme, pour rendre exactement l'état de naissance
+  // d'avant la loi — c'est ce que ces montages supposent quand ils règlent `burnAt` à la main.
+  if (s.fuel && s.burnAt === undefined) { s.burnAt = sim.tick; s.burnSlot = 0 }
+  return s
+}
 
 /**
  * L'UPKEEP DU FEU (V1-11, spec construction R16-R17, critère A7) — le seul évier
@@ -114,7 +129,7 @@ describe('Le Feu tuable → la ruine (V1-12/V2-20)', () => {
   it('le Feu NOURRI est inviolable ; à SEC il tombe → le village devient une ruine pillable', () => {
     const sim = makeSim()
     const v = createVillage(sim, { chiefId: 0, tx: 10, ty: 10 })
-    const fire = addStructure(sim, 'fire', 10, 10, v.id, 0)
+    const fire = allume(sim, addStructure(sim, 'fire', 10, 10, v.id, 0))
     const chest = addStructure(sim, 'chest', 11, 10, v.id, 0, 'village')
 
     // NOURRI : aucun dégât ne mord (le totem inviolable).
@@ -137,7 +152,7 @@ describe('Le Feu tuable → la ruine (V1-12/V2-20)', () => {
   it('la chute émet village_fell (pour la chronique)', () => {
     const sim = makeSim()
     const v = createVillage(sim, { chiefId: 0, tx: 10, ty: 10 })
-    const fire = addStructure(sim, 'fire', 10, 10, v.id, 0)
+    const fire = allume(sim, addStructure(sim, 'fire', 10, 10, v.id, 0))
     v.fuel = 0
     drainEvents(sim)
     applyStructureDamage(sim, fire.id, 99999)

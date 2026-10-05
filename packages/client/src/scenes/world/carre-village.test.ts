@@ -55,6 +55,9 @@ function villageFonde(fireTx: number, fireTy: number): { sim: SimState; id: numb
   act(sim, id, { type: 'set_active_slot', slot: slot('campfire') })
   act(sim, id, { type: 'place_campfire', tx: fireTx, ty: fireTy })
   const fire = structureAt(sim.structures, fireTx, fireTy)!
+  // ⚠ B-R17 (2026-10-04) : un feu bâti naît ÉTEINT, et `found_village` exige la flamme. Montage à
+  // la main — rien n'est rejoué ici, et le vrai chemin joueur est éprouvé dans `/sim` (B-A17 ⑥).
+  fire.allumee = true
   act(sim, id, { type: 'found_village', structureId: fire.id })
   act(sim, id, { type: 'set_active_slot', slot: slot('hammer') })
   const village = getVillageOf(sim, id)!

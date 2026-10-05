@@ -119,18 +119,28 @@ describe('le repère du lieu a TROIS états, et le troisième est le message du 
     expect(monte.deficit).toBe(false)
   })
 
-  it('LE PIRE QUE LA MONTAGNE DEMANDE TIENT DANS LE TUBE — donc le repère épinglé est un FILET, pas un état joué', () => {
-    // ⚠ C'EST LA JUSTIFICATION DU CHIFFRE : `CRANS_MAX` vaut 4 parce que la table de B-R4b plafonne
-    // à 4 (palier 3 au cœur du Grand Froid, le pire instant du pire étage). Donc sur la carte
-    // actuelle `horsEchelle` ne peut JAMAIS être vrai, et cette garde rougirait si quelqu'un
-    // baissait `CRANS_MAX` sous ce que le monde sait demander — ce qui rendrait la barre menteuse.
-    const PIRE_DEMANDE_DU_MONDE = 4 // palier 3, hiver
+  it('LE TUBE COUVRE LA TABLE DE B-R4b — mais PAS la tempête : le repère épinglé est un état JOUÉ', () => {
+    // ⚠ LE TITRE ET LE COMMENTAIRE DE CETTE GARDE ÉTAIENT FAUX, démentis par `determinisme-sim` le
+    // 2026-10-04 et corrigés ici. J'avais écrit « donc sur la carte actuelle `horsEchelle` ne peut
+    // JAMAIS être vrai » : c'est FAUX. MESURÉ sur le monde joué (graine 2026, les 56 couples
+    // (palier, terrain) marchables, l'année entière) — sans météo le pire est bien 4, mais à
+    // **4,0 °C près** (l'air descend à −102 et le 5ᵉ cran s'ouvre à −106) ; et **sous orage le
+    // palier 3 exige 5**, sur 542 315 tuiles marchables (26,2 %) et 71 jours sur 120. Or la météo
+    // est ARMÉE dans le vrai jeu (`veillee.ts`). Le repère épinglé n'est donc pas un filet dormant :
+    // c'est l'état normal d'une tempête d'altitude. L'arbitrage est ouvert (`braise.md` § 5.20).
+    //
+    // ⚠ ET CETTE GARDE NE PEUT TOUJOURS ATTRAPER QU'UN SENS, il faut le dire : elle rougit si
+    // quelqu'un BAISSE `CRANS_MAX` sous la table, jamais si le MONDE en demande plus — parce que
+    // le 4 ci-dessous est un littéral, et qu'un test de client ne peut pas balayer la carte. La
+    // garde qui le ferait vit dans `/sim`, et elle n'existe pas encore.
+    const PIRE_DEMANDE_DE_LA_TABLE = 4 // palier 3, cœur du Grand Froid, SANS front (B-R4b)
+    const PIRE_DEMANDE_DU_MONDE = PIRE_DEMANDE_DE_LA_TABLE
     expect(BRAISE.CRANS_MAX, 'le tube couvre tout ce que la montagne sait exiger').toBeGreaterThanOrEqual(PIRE_DEMANDE_DU_MONDE)
     for (let d = 0; d <= PIRE_DEMANDE_DU_MONDE; d++) {
       expect(etatBarreBraise(braiseNeuve(0), d)!.horsEchelle, `demande ${d}`).toBe(false)
     }
-    // Le filet existe quand même, et il se déclenche un cran au-dessus — pour le jour où un
-    // palier de plus existera (la carte actuelle est le MVP, décision du 2026-09-19).
+    // Et le repère s'épingle bien un cran au-dessus — ce que la tempête d'altitude atteint
+    // RÉELLEMENT aujourd'hui (§ 5.20), et non « le jour où un palier de plus existera ».
     const auDela = etatBarreBraise(braiseNeuve(0), BRAISE.CRANS_MAX + 1)!
     expect(auDela.horsEchelle, 'au-delà du tube entier, le repère s’épingle').toBe(true)
     expect(auDela.verrouille, 'et les deux repères ne se montrent jamais ensemble').toBe(false)

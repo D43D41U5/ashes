@@ -21,6 +21,7 @@ import {
   hasItems,
   type Corpse,
   type Entity,
+  type FireState,
   type GameTime,
   type Inventory,
   type ItemBag,
@@ -146,11 +147,26 @@ export function foundableFireAt(
  * ⚠ CE MIROIR EST PARTIEL, ET C'EST DIT : la sim refuse AUSSI si un POI-spécifique tombe dans
  * le carré (`poiSpecificInSquare`), ce que le client ne sait pas calculer sans la carte des
  * zones. Ce refus-là reste annoncé après coup, par le bandeau — qui, lui, se voit maintenant.
+ *
+ * ═══ ET LA FLAMME, DEPUIS B-R17 (2026-10-04) ═══
+ *
+ * « Un feu éteint ne fonde pas » est la clause ⓑ de la loi, et elle est devenue **le cas le plus
+ * fréquent du jeu** : tout feu bâti naît ÉTEINT. Sans ce terme, le premier geste de tout joueur
+ * qui pose un feu et ouvre son modal est un bouton plein, cliqué, refusé en silence — le défaut
+ * EXACT que l'audit UX de 2026-08-20 avait fait corriger pour la distance. Aucun test de `/sim`
+ * ne pouvait l'attraper : la sim refuse CORRECTEMENT ; c'est l'affordance qui promettait.
+ *
+ * ⚠ L'ORDRE SUIT CELUI DE LA SIM, et il n'est pas libre : `found_village` juge la flamme AVANT
+ * la distance, donc un feu éteint à vingt tuiles d'un autre Feu doit s'entendre dire « allume-le
+ * d'abord » — la même phrase que la sim, dans le même ordre, sinon le joueur corrige la mauvaise
+ * chose. Et on exige la FLAMME, pas le bois : un feu en braises fonde (il brûle encore).
  */
 export function empechementDeFonder(
   villages: readonly { fireTx: number; fireTy: number }[],
   feu: { tx: number; ty: number },
+  etat: FireState,
 ): string | null {
+  if (etat === 'out') return 'Il faut l’allumer à la braise d’abord'
   const min = BALANCE.FIRE_MIN_DISTANCE
   const proche = villages.some((v) => Math.max(Math.abs(v.fireTx - feu.tx), Math.abs(v.fireTy - feu.ty)) < min)
   return proche ? `Trop proche d’un autre Feu (il en faut ${min} tuiles)` : null
@@ -324,7 +340,10 @@ export function publishOpenFire(
     // On MONTRE le bouton même empêché — et on dit pourquoi. Le patron est celui d'`upgrade`
     // juste en dessous : « grise le bouton et fait APPRENDRE le coût, on le voit avant de
     // pouvoir payer ». Le faire disparaître serait un refus muet de plus.
-    action = { kind: 'found', label: 'Fonder un Foyer ici', empeche: empechementDeFonder(villages, s) }
+    // L'ÉTAT EST CELUI QUE LE PANNEAU MONTRE, pas un second calcul : `state` plus bas rend
+    // exactement `fireStateAt(tick, s)` pour un foyer, donc le bouton et la jauge ne peuvent pas
+    // se contredire (B-R17 ⓑ — un feu éteint ne fonde pas).
+    action = { kind: 'found', label: 'Fonder un Foyer ici', empeche: empechementDeFonder(villages, s, fireStateAt(tick, s)) }
   } else {
     const up = upgradableFireAt(player, villages, playerId)
     if (up && s.villageId === up.villageId) {

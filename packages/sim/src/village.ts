@@ -49,7 +49,7 @@ import {
   refreshFunctions,
   terrainConstructible,
 } from './construction'
-import { cendreuxVivantsPositions } from './fire'
+import { cendreuxVivantsPositions, fireState, fireStateAt, flammeDonnee } from './fire'
 import { emitEvent } from './events'
 import { atteintLeSol, auMemeEtage, marchableAEtage, niveauDuCorps, terrainAEtage } from './etages'
 import { chebyshev, distSq, isSingleEdge } from './geometry'
@@ -72,10 +72,9 @@ import {
 } from './items'
 import { heldSlot } from './inventory-actions'
 import { foyerDonneLeFeu } from './torche'
-import { meteoFeuConso, meteoMouille } from './meteo'
+import { meteoFeuConso } from './meteo'
 import { estBalise, estFoyer, estIncassable, matiereChiffre, matieresDe, parPiece, piece, PIECES } from './pieces'
 import { terrainAt, zoneAt } from './map'
-import { isSheltered } from './temperature'
 import { floreGelee } from './gel'
 import { actForDay, jourDeSaison } from './time'
 import type { Entity, SimState } from './sim'
@@ -183,23 +182,32 @@ export interface Structure {
   /**
    * ═══ LA FLAMME A-T-ELLE ÉTÉ DONNÉE ? (spec `braise.md` B-R10) — LA BALISE SEULEMENT ═══
    *
-   * `true` = on l'a allumée à sa braise. **Absent = ÉTEINTE** — et c'est tout le sens de B-R10 :
-   * une balise bâtie, pleine de bois, ne brûle pas. Il faut y porter sa braise.
+   * `true` = on lui a donné la flamme à sa braise, `false` = pas (encore). ⚠ **ET CE N'EST PLUS LA
+   * SEULE BALISE depuis le 2026-10-04** (B-R17) : TOUT foyer libre naît éteint — un feu de camp
+   * bâti, plein de bois, ne brûle pas, et c'est la braise qui l'allume. Jusque-là, `addStructure`
+   * donnait dix bûches ET l'ancre de combustion à tout feu libre : le feu de camp naissait allumé,
+   * à cinq bois, sans braise, et la prémisse « toute flamme du monde descend de la braise » était
+   * fausse dans le code qui la citait.
    *
    * ⚠ **CE CHAMP GARDE LA COMBUSTION, PAS SEULEMENT L'ÉTAT AFFICHÉ.** Sans cette garde dans
-   * `advanceFire`, une balise non allumée brûlerait le bois de sa naissance (`FUEL_START_WOOD`)
+   * `advanceFire`, un foyer non allumé brûlerait le bois de sa naissance (`FUEL_START_WOOD`)
    * en silence, et serait vide le jour où l'on vient enfin l'allumer.
    *
-   * ⚠ **ET IL S'EFFACE À CHAQUE EXTINCTION** — quand les braises ont fini de rougir
-   * (`advanceFire`) : sinon, remettre une bûche dans une balise refroidie la rallumerait sans
-   * braise, et la seule règle qui fait d'elle une balise serait contournable avec du bois.
+   * ⚠ **ET IL PASSE À `false` À CHAQUE EXTINCTION** — quand les braises ont fini de rougir
+   * (`advanceFire`) : sinon, remettre une bûche dans un foyer refroidi le rallumerait sans braise,
+   * et la loi serait contournable avec du bois. ⚠ **`false`, et non un `delete`** : effacer le
+   * champ le ferait retomber sur « né avant la loi », donc sur ALLUMÉ pour un feu — l'extinction
+   * se serait annulée elle-même (B-R18).
    * *(Il n'y a pas d'autre chemin vers l'extinction : aucun geste n'éteint un feu — `demolish`
    * le démonte entièrement.)*
    *
-   * Absent sur un FEU : le feu n'a jamais eu besoin qu'on lui donne la flamme (`place_campfire`
-   * le pose allumé), et `fireStateAt` ne lit ce champ que pour un foyer qui l'EXIGE.
+   * ⚠ **TROIS ÉTATS DEPUIS LE 2026-10-04, ET C'EST LA MIGRATION** (B-R18). `absent` ne veut pas
+   * dire « éteint » : il veut dire **né avant la loi B-R17**, et son sens se DÉRIVE DU TYPE —
+   * allumé pour un feu (il brûlait dans la sauvegarde, il brûle encore), éteint pour une balise
+   * (née après la loi, et chez elle « absent » valait déjà éteint). Un seul lecteur a le droit de
+   * trancher ça : `flammeDonnee` (`fire.ts`). N'écrire `allumee` à la main nulle part ailleurs.
    */
-  allumee?: true
+  allumee?: boolean
   /** LES ENTRÉES DE CUISSON (spec feu-station) — un inventaire de STACKS d'aliments crus (3 cases),
    *  géré comme un coffre (dépôt/retrait/déplacement libres). Chaque case cuit sa pile UNE unité à la
    *  fois ; le compteur de l'unité en cours vit dans `cookRemaining` (parallèle, MÊME index). L'unité
@@ -305,7 +313,7 @@ export type VillageAction =
    * Aucun objet en main : la braise est PORTÉE, pas tenue (B-R1). Il faut seulement qu'elle ait
    * de la charge (B-A7 : une braise à 0 refuse), et que la balise ait du bois à brûler.
    */
-  | { type: 'light_balise'; structureId: number }
+  | { type: 'light_foyer'; structureId: number }
   | { type: 'repair'; structureId: number }
   /** SEMER (agriculture voie A, spec `agriculture.md`) : une graine en main + une parcelle VIDE
    *  de mon village, à portée. RÉCOLTER : une parcelle MÛRE. La pousse se dérive du tick (pur). */
@@ -1020,13 +1028,28 @@ export function createVillage(state: SimState, opts: CreateVillageOptions): Vill
 function feedFreeFire(state: SimState, actor: SimState['entities'][number], s: Structure): string | null {
   const have = countOf(actor.inventory, 'wood')
   if (have <= 0) return 'il faut du bois pour nourrir le feu'
+  // ⚠ L'ÉTAT SE LIT **AVANT** LE DÉPÔT, et c'est là toute la moitié 1 du correctif de la FENÊTRE
+  //   D'UN TICK (B-A17 ⑧, trouvée par l'audit de fusion le 2026-10-04). Lu après `addItems`, ce
+  //   test serait INERTE : le bois vient d'arriver, donc `fireStateAt` rend déjà `'lit'`. C'est la
+  //   PLACE qui le rend utile, pas la condition.
+  //   Il remplace l'ancien `flammeDonnee(s)` et le subsume au bit : `fireStateAt` s'ouvre sur
+  //   `if (!flammeDonnee(s)) return 'out'`, donc `vif` implique la flamme donnée, jamais l'inverse.
+  //   Et il laisse passer le rallumage LÉGITIME des braises encore vives (`'ember'`), qui est le
+  //   geste que S15 décrit — c'est au tick où elles MEURENT qu'il devient un contournement.
+  const vif = fireStateAt(state.tick, s) !== 'out'
   if (!s.fuel) s.fuel = makeInventory(FIRE.FUEL_SLOTS)
   const before = countOf(s.fuel, 'wood')
   const leftover = addItems(s.fuel, { wood: have }) // on remplit ce qui tient dans les slots
   const added = have - (leftover.wood ?? 0)
   if (added <= 0) return 'le feu est déjà plein'
   removeItems(actor.inventory, { wood: added })
-  if (before <= 0) {
+  // ⚠ LE BOIS NE RALLUME PLUS RIEN (`braise.md` B-R17, 2026-10-04) : sur un foyer à qui la flamme
+  // n'a pas été donnée, nourrir REMPLIT et s'arrête là. Sans cette garde le bloc mentait deux fois —
+  // il émettait `fire_relit` alors que `fireStateAt` rend `'out'` (un événement de domaine faux,
+  // donc une chronique fausse), et il ANCRAIT la combustion sur un foyer éteint, si bien que tout le
+  // temps passé sans flamme aurait été facturé d'un coup au premier allumage. C'est exactement le
+  // piège que la balise avait déjà payé à l'étape 6, par l'autre bout.
+  if (before <= 0 && vif) {
     s.burnAt = state.tick // rallumage : la première bûche s'allume
     s.burnSlot = s.fuel.findIndex((sl) => sl !== null && sl.count > 0) // la case où le bois vient d'atterrir
     delete s.emberUntil
@@ -1135,16 +1158,14 @@ export function applyVillageAction(state: SimState, actorId: number, action: Vil
       const sol = solDeLaPose(state, actor, tx, ty, 'fire')
       if (typeof sol === 'string') return reject(BUILD_REJECT_REASON[sol])
       if (!terrainConstructible(sol.terrain, 'fire')) return reject('terrain inconstructible')
-      // R5 MÉTÉO — un feu NEUF ne prend pas sous l'eau qui tombe : refusé à découvert sous
-      // front mouillé, au point de POSE (l'abri d'`isSheltered` — maison, grotte — lève le
-      // refus). SEULE la naissance est gardée : nourrir, rallumer ou charger un feu
-      // EXISTANT (`feed_fire`, `transfer`) ne passe jamais par ici — l'ancre de respawn se
-      // rallume sous l'orage. NB : les deux abris d'`isSheltered` (maison, grotte) refusent
-      // AUJOURD'HUI la pose par d'autres portes (tuile occupée, landmark) — l'échappée
-      // abritée est du contrat R5, elle s'ouvrira avec eux.
-      if (meteoMouille(state, tx, ty) && !isSheltered(state, tx, ty, sol.etage)) {
-        return reject('un feu neuf ne prend pas sous la pluie')
-      }
+      // ⚠ LE REFUS DE PLUIE EST RETIRÉ, ET IL N'EST PAS DÉPLACÉ (décision d'Alexis du 2026-10-04,
+      // B-R17 ⓐ). « Un feu neuf ne prend pas sous l'eau qui tombe » n'avait plus de sens ici — sur
+      // un feu qui naît ÉTEINT, rien ne « prend » : on empile du bois sur une tuile. Et le mettre
+      // dans `light_foyer` aurait rouvert le « RALLUMAGE SACRÉ » de R5 (mourir sous un orage, camp
+      // éteint, plus de feu avant que le front passe) — un verrou de la famille exacte que B-R17
+      // venait de retirer. La braise est une braise VIVE : elle allume partout, toujours.
+      // ⚠ R5 N'EST PAS VIDÉ : sa vraie pression reste entière — sous l'averse le feu AFFAME
+      // (`METEO.FEU_CONSO`, jusqu'à ×2 sur la bûche en cours, lu dans `advanceFire`).
       // TUILE LIBRE, au sens LARGE (décision utilisateur) : ni structure, ni ressource
       // (arbre, filon, buisson…), ni personne (animal, PNJ, autre joueur) dessus. On ne
       // pose pas un foyer sur ce qui est déjà là. « Prise ENTIÈRE », depuis R23 : un mur
@@ -1178,6 +1199,12 @@ export function applyVillageAction(state: SimState, actorId: number, action: Vil
       // fonde pas. Un village a un carré, des PNJ, des maisons ; rien de cela ne tient dans une
       // salle sans ciel. (Conséquence de jeu signalée à Alexis, à trancher si elle déplaît.)
       if (s.etage !== undefined && s.etage < 0) return reject('un bivouac, pas un foyer')
+      // ⚠ UN FEU ÉTEINT NE FONDE PAS (B-R17 ⓑ, 2026-10-04) — et sans cette ligne la loi avait un
+      // trou le jour de sa naissance : promouvoir met `villageId ≠ 0`, or `fireStateAt` rend alors
+      // `'lit'` SANS REGARDER LE BOIS (c'est la branche du Foyer de village). Bâtir puis fonder
+      // donnait donc du feu sans braise. On exige la flamme, pas le bois : un feu en braises
+      // fonde (il brûle encore), un feu mort non.
+      if (fireState(state, s) === 'out') return reject('un feu éteint ne fonde pas')
       const range = BALANCE.INTERACT_RANGE
       if (distSq(actor.x, actor.y, s.tx + 0.5, s.ty + 0.5) > range * range) return reject('trop loin')
       // LE BÂTI VIT AU SOL (spec `etages.md` E-R5) : un bras ne le rejoint pas depuis un plateau.
@@ -1230,38 +1257,77 @@ export function applyVillageAction(state: SimState, actorId: number, action: Vil
     }
 
     /**
-     * ═══ ALLUMER UNE BALISE À SA BRAISE (spec `braise.md` B-R10) ═══
+     * ═══ DONNER LA FLAMME À UN FOYER, À SA BRAISE (spec `braise.md` B-R17 — tout foyer libre) ═══
      *
-     * Le geste qui ouvre une base, et la seule chose au monde qui fasse d'un tas de bois la
-     * recharge d'une braise (B-R9). Le patron EXACT de `light_torch` : la portée de bras, le sol
-     * (E-R5), et aucun coût. Trois différences, et ce sont les trois phrases de B-R10 :
+     * Le geste qui ouvre un camp ou une base, et la seule source de flamme du monde. Le patron
+     * EXACT de `light_torch` : la portée de bras, le sol (E-R5), et aucun coût. Trois différences,
+     * et ce sont les trois phrases de B-R10, étendues du seul cas balise à tout foyer libre le
+     * 2026-10-04 :
      *
      *   · ON NE TIENT RIEN — la braise est portée, pas tenue (B-R1). Aucune case d'inventaire
      *     n'entre dans ce geste, donc aucun objet ne peut manquer.
-     *   · IL FAUT DE LA CHARGE (B-A7) : une braise à 0 ne donne pas de feu. C'est la seule
-     *     clause qui fasse de la braise une CLÉ, et elle est ce qui tient B-R16 — une balise
-     *     neuve se paie en charge gagnée ailleurs.
+     *   · ⚠ IL NE FAUT **PAS** DE CHARGE, et c'est l'inverse de ce que j'avais écrit le
+     *     2026-10-03. La clause `charge > 0` est RETIRÉE (B-R17 ②) : elle n'était dans aucune
+     *     règle — B-R10 dit « la balise ne s'allume qu'à la braise », la braise comme SOURCE et
+     *     non comme réservoir — et elle fermait l'ascension pour de bon. Mesuré : sans balise la
+     *     charge tombe sous un cran au jour 67, et plus rien ne la remonte (seule une balise
+     *     ALLUMÉE recharge, B-R9) ; la seule issue était de mourir. Une braise froide garde donc
+     *     « de quoi produire une nouvelle source de feu » — la décision du 2026-09-28, au mot.
      *   · ÇA NE COÛTE RIEN DE CHARGE. Même raison que la torche (« prendre le feu n'en ôte
-     *     pas ») : la braise est déjà payée deux fois, en bois et en trajet. ⚠ C'est une
-     *     décision ouverte — la spec dit « se rallume avec une braise chargée », pas « au prix
-     *     d'un cran » (`braise.md` § 5, à trancher si l'allumage doit mordre).
+     *     pas ») : la braise est déjà payée deux fois, en bois et en trajet. ⚠ Décision ouverte
+     *     (`braise.md` § 5.17 ⓐ), à trancher si l'allumage doit mordre.
      *
-     * ⚠ ON EXIGE DU BOIS, et c'est un refus LISIBLE plutôt qu'un geste mort : allumer une balise
-     * vide la rallumerait pour zéro tick (la machine à états la rend 'out' au tick suivant, et la
+     * ⚠ ON EXIGE DU BOIS, et c'est un refus LISIBLE plutôt qu'un geste mort : allumer un foyer
+     * vide le rallumerait pour zéro tick (la machine à états le rend 'out' au tick suivant, et la
      * flamme se reprendrait aussitôt). Mieux vaut dire « il n'y a rien à brûler ».
+     *
+     * ⚠ ET LA PLUIE N'EMPÊCHE PLUS RIEN, NULLE PART (décision d'Alexis du 2026-10-04, B-R17 ⓐ
+     * révisé). J'avais d'abord DÉPLACÉ le refus R5 de la pose vers ici, en le croyant forcé. La
+     * suite m'a démenti : ça rouvrait le « RALLUMAGE SACRÉ » de R5 (`meteo.test.ts`), dont la
+     * raison d'être était justement qu'on ne puisse pas se retrouver sans feu après être mort sous
+     * un orage — or B-R17 tue le chemin qui le tenait (du bois ne rallume plus rien). Garder le
+     * refus ici aurait donc refabriqué un verrou de la famille exacte qu'on venait de retirer.
+     * La braise est une braise VIVE : elle allume partout, toujours. ⚠ **R5 N'EST PAS VIDÉ POUR
+     * AUTANT** — sa vraie pression est intacte : sous l'averse, le feu AFFAME (`METEO.FEU_CONSO`,
+     * jusqu'à ×2 sur la bûche en cours, `meteoFeuConso` dans `advanceFire`).
      */
-    case 'light_balise': {
+    case 'light_foyer': {
       const s = state.structures.find((st) => st.id === action.structureId)
-      if (!s || !estBalise(s.type)) return reject('pas une balise')
-      if (s.allumee === true) return reject('elle brûle déjà')
+      // TOUT FOYER LIBRE, et `villageId === 0` n'est pas une politesse : le Foyer d'un village est
+      // `'lit'` sans condition (`fireStateAt`) et tourne sur `village.fuel` — il n'a rien à
+      // allumer, et le prétendre aurait écrit un champ que personne ne relit.
+      if (!s || !estFoyer(s.type) || s.villageId !== 0) return reject('pas un foyer')
+      if (flammeDonnee(s)) return reject('il brûle déjà')
       const range = BALANCE.INTERACT_RANGE
       if (distSq(actor.x, actor.y, s.tx + 0.5, s.ty + 0.5) > range * range) return reject('trop loin')
       // LE BÂTI VIT AU SOL (spec `etages.md` E-R5) : un bras ne le rejoint pas depuis un plateau.
       if (!atteintLeSol(state.map, actor, s.tx, s.ty, s.etage)) return reject('trop loin')
       if ((s.fuel ? countOf(s.fuel, 'wood') : 0) <= 0) return reject('pas de bois à brûler')
-      if ((actor.braise?.charge ?? 0) <= 0) return reject('votre braise est morte')
       s.allumee = true
-      emitEvent(state, { type: 'balise_allumee', tick: state.tick, entityId: actorId, structureId: s.id })
+      // ⚠ ET LA FENÊTRE DE BRAISES SE REFERME : un foyer qu'on ranime n'est plus en train de
+      // refroidir, et une `emberUntil` restée dans le FUTUR lui ferait rendre `'ember'` le jour où
+      // il brûlerait sa dernière bûche — un feu « tiède » qui n'a jamais eu de flamme à perdre.
+      delete s.emberUntil
+      // ⚠ L'ÉVÉNEMENT RESTE CELUI DE LA BALISE, et c'est délibéré : `events.ts` l'appelle
+      // « l'événement le plus structurant de l'ascension » — un feu de camp allumé est un geste
+      // courant, une balise allumée est un palier gagné. Les deux dans le même événement auraient
+      // noyé le second dans le premier.
+      if (estBalise(s.type)) {
+        emitEvent(state, { type: 'balise_allumee', tick: state.tick, entityId: actorId, structureId: s.id })
+      } else {
+        // ⚠ SANS CETTE LIGNE, LE GESTE LE PLUS FRÉQUENT QUE B-R17 INTRODUIT EST MUET — rapporté
+        //   par l'audit de fusion du 2026-10-04. Avant la loi, raviver un camp au bois émettait
+        //   `fire_relit`, dont le SEUL consommateur est la voix du client (`inventaire.ts` :
+        //   « les flammes repartent d'un feu éteint », ancrée sur la structure). B-R17 tue ce
+        //   chemin-là (le bois ne rallume plus rien) et le remplace par celui-ci : le joueur
+        //   allumait désormais son feu dans le silence complet, sans événement de domaine et sans
+        //   un son. On réemploie `fire_relit` plutôt que d'inventer un type : le sens est
+        //   exactement le même (« les flammes repartent ») et le consommateur existe déjà.
+        // ⚠ ET ON NE FUSIONNE PAS avec `balise_allumee`, pour la raison inverse, déjà écrite
+        //   ci-dessus : un feu de camp allumé est un geste courant, une balise allumée est un
+        //   palier gagné. Les deux dans le même événement auraient noyé le second dans le premier.
+        emitEvent(state, { type: 'fire_relit', tick: state.tick, structureId: s.id })
+      }
       return
     }
 
@@ -1834,20 +1900,23 @@ export function addStructure(
   if (etage !== undefined && etage < 0) structure.etage = etage
   const containerSlots = CONTAINER_TYPES[type]
   if (containerSlots !== undefined) structure.inventory = makeInventory(containerSlots)
-  // LE FEU LIBRE naît avec 10 bois dans son slot combustible, la première allumée maintenant.
-  // Le Foyer (villageId ≠ 0) n'a pas de combustible de structure — il tourne sur `village.fuel`.
+  // LE FOYER LIBRE naît avec 10 bois dans son slot combustible — ET ÉTEINT (`braise.md` B-R17,
+  // 2026-10-04). Le Foyer (villageId ≠ 0) n'a pas de combustible de structure — il tourne sur
+  // `village.fuel` — et il n'a rien à allumer : `fireStateAt` le rend `'lit'` sans condition.
   if (estFoyer(type) && villageId === 0) {
     structure.fuel = makeInventory(FIRE.FUEL_SLOTS)
     addItems(structure.fuel, { wood: FIRE.FUEL_START_WOOD })
-    // ⚠ L'ANCRE DE COMBUSTION N'EST POSÉE QUE POUR CE QUI BRÛLE DÉJÀ. Une balise naît ÉTEINTE
-    // (B-R10) : lui poser `burnAt` ici lui ferait consommer sa première bûche à l'instant même
-    // où on l'allume, dix mille ticks plus tard — tout le temps passé éteinte serait facturé
-    // d'un coup. C'est la clause « Sécurité » d'`advanceFire` qui l'ancre au premier tick de
-    // flamme, et elle existait déjà pour le feu forgé à la main.
-    if (!estBalise(type)) {
-      structure.burnAt = state.tick
-      structure.burnSlot = 0 // le bois de départ atterrit dans la 1re case : c'est elle qui brûle
-    }
+    // ═══ LE FEU NE NAÎT QUE DU FEU ═══
+    //
+    // ⚠ `false` EXPLICITE, et c'est le cœur de la migration (B-R18) : l'absence du champ veut dire
+    // « né avant la loi », donc ALLUMÉ pour un feu — c'est ce qui laisse brûler les feux de toutes
+    // les sauvegardes existantes. Un foyer posé AUJOURD'HUI doit donc dire non, en clair.
+    structure.allumee = false
+    // ⚠ ET AUCUNE ANCRE DE COMBUSTION : rien ne brûle encore. Lui poser `burnAt` ici lui ferait
+    // consommer sa première bûche à l'instant où on l'allume, mille ticks plus tard — tout le
+    // temps passé éteint serait facturé d'un coup. C'est la clause « Sécurité » d'`advanceFire`
+    // qui l'ancre au premier tick de flamme, et elle existait déjà pour le feu forgé à la main.
+    // (C'était déjà vrai de la balise seule ; c'est vrai de tout foyer depuis le 2026-10-04.)
   }
   state.structures.push(structure)
   emitEvent(state, {

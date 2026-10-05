@@ -50,9 +50,24 @@ import {
   calendarScaleForSeasonCycles, dayTicksPourJour, gameTimeAt, jourDeSaison, NIGHT_RAMP_TICKS,
   phaseForDay, TICKS_PER_CYCLE, TICKS_PER_SEASON_DAY, tourForDay,
 } from './time'
-import { addStructure } from './village'
+import { addStructure, type Structure } from './village'
 import { MONDE, MONDE_JOUE } from './zonegraph'
 import { carteDeTest } from '../../../tools/carte-cache'
+/**
+ * ⚠ UN FOYER LIBRE NAÎT ÉTEINT DEPUIS `braise.md` B-R17 (2026-10-04) : un `addStructure` nu ne
+ * brûle plus rien. Les gardes de ce fichier éprouvent un feu QUI BRÛLE, donc le montage lui donne
+ * la flamme — c'est la prémisse perdue qu'on refabrique, pas un contournement de la loi : la loi
+ * elle-même est éprouvée par le vrai chemin joueur dans `braise.test.ts` (B-A17).
+ */
+const allume = <S extends Structure>(sim: SimState, s: S): S => {
+  s.allumee = true
+  // …ET L'ANCRE DE COMBUSTION AVEC. `addStructure` ne la pose plus (un foyer naît éteint, donc rien
+  // ne brûle à sa naissance) ; la production l'ancre au premier tick de flamme, clause « Sécurité »
+  // d'`advanceFire`. Ici on la pose AVEC la flamme, pour rendre exactement l'état de naissance
+  // d'avant la loi — c'est ce que ces montages supposent quand ils règlent `burnAt` à la main.
+  if (s.fuel && s.burnAt === undefined) { s.burnAt = sim.tick; s.burnSlot = 0 }
+  return s
+}
 
 /** 1 jour de saison = 1 cycle : le tick porte la saison ET l'heure. */
 const SCALE = calendarScaleForSeasonCycles(BALANCE.SEASON_DAYS)
@@ -596,7 +611,7 @@ describe('A7 — un Feu ne dégèle rien (G1)', () => {
     // Le feu se pose sur la RIVE, juste à côté de la rivière — dans son rayon de chaleur —
     // et il BRÛLE VRAIMENT : sans bûche, `fireWarmthFactor` rend 0 et la garde serait verte
     // pour la mauvaise raison (leçon « une garde prouve sa prémisse »).
-    const feu = addStructure(sim, 'fire', RIVIERE_X0 - 1, 6, 0, 0)
+    const feu = allume(sim, addStructure(sim, 'fire', RIVIERE_X0 - 1, 6, 0, 0))
     feu.fuel = [{ item: 'wood', count: 40 }]
     feu.burnAt = sim.tick
 

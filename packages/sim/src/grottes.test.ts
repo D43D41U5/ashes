@@ -994,6 +994,10 @@ describe('G-A9 — le bivouac : chaque pièce dit si elle se pose sous la roche,
     expect(feu!.etage).toBe(k.niveau)
     expect(feu!.villageId).toBe(0)
     const villages = sim.villages.length
+    // ⚠ B-R17 : un feu bâti naît ÉTEINT, et `found_village` exige la flamme. Le montage la donne à la
+    // main plutôt que par l'action — pas de tick de plus, pas d'entrée de log en plus, donc les gardes
+    // de rejeu et de comptage ne bougent pas. Le vrai chemin joueur est éprouvé par B-A17 ⑥.
+    feu!.allumee = true
     agir(sim, autre, { type: 'found_village', structureId: feu!.id })
     expect(sim.villages.length).toBe(villages)
     expect(feu!.villageId).toBe(0)

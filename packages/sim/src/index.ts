@@ -228,6 +228,8 @@ export type { RegimeDEau } from './eau-evenements'
 export { METEO } from './balance'
 // LE FEU-STATION (spec feu-station) : l'état dérivable du snapshot côté client, et la donnée des slots.
 export { fireState, fireStateAt, fireActive, fireWarmthFactor, advanceFire, fuelTicksRemaining, fuelBurnProgress } from './fire'
+// LE SEUL lecteur légitime de `Structure.allumee` (`braise.md` B-R18) — le client le partage.
+export { flammeDonnee, foyerAllumable } from './fire'
 export { fireZoneInventory, fireZoneAccepts, fireSlotLocked, recettesDuPoste } from './fire'
 export { estTerrainDeMarais, estTerrainDEau, deriverNatureDeLEau, NATURE_MARAIS, NATURE_RIEN } from './peche-nature'
 export { eauPechable, natureDeLEau, creneauAt, tableDePrises, poidsDuRien, especeRetenue, conditionsAt } from './peche-table'

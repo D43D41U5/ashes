@@ -11,6 +11,21 @@ import { bulleDuFeu, fireBubble } from './temperature'
 import { torcheVive } from './torche'
 import { cycleOffsetForStartHour, jourDeSaison } from './time'
 import { addStructure, type Structure } from './village'
+/**
+ * ⚠ UN FOYER LIBRE NAÎT ÉTEINT DEPUIS `braise.md` B-R17 (2026-10-04) : un `addStructure` nu ne
+ * brûle plus rien. Les gardes de ce fichier éprouvent un feu QUI BRÛLE, donc le montage lui donne
+ * la flamme — c'est la prémisse perdue qu'on refabrique, pas un contournement de la loi : la loi
+ * elle-même est éprouvée par le vrai chemin joueur dans `braise.test.ts` (B-A17).
+ */
+const allume = <S extends Structure>(sim: SimState, s: S): S => {
+  s.allumee = true
+  // …ET L'ANCRE DE COMBUSTION AVEC. `addStructure` ne la pose plus (un foyer naît éteint, donc rien
+  // ne brûle à sa naissance) ; la production l'ancre au premier tick de flamme, clause « Sécurité »
+  // d'`advanceFire`. Ici on la pose AVEC la flamme, pour rendre exactement l'état de naissance
+  // d'avant la loi — c'est ce que ces montages supposent quand ils règlent `burnAt` à la main.
+  if (s.fuel && s.burnAt === undefined) { s.burnAt = sim.tick; s.burnSlot = 0 }
+  return s
+}
 
 /**
  * LA SIM APPREND L'OMBRE (spec `lumiere-globale.md`, « La sim apprend l'ombre » : LG-R11, LG-R12,
@@ -37,7 +52,7 @@ const ent = (sim: SimState, id: number): Entity => sim.entities.find((e) => e.id
 
 /** Un feu LIBRE et allumé sur la tuile (tx, ty) — son centre est en (tx + ½, ty + ½). */
 function feu(sim: SimState, tx: number, ty: number): Structure {
-  const s = addStructure(sim, 'fire', tx, ty, 0, 0)
+  const s = allume(sim, addStructure(sim, 'fire', tx, ty, 0, 0))
   s.fuel = makeInventory(FIRE.FUEL_SLOTS)
   addItems(s.fuel, { wood: 3 })
   s.burnAt = sim.tick

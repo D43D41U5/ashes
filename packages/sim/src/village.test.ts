@@ -187,6 +187,10 @@ describe('le feu de camp — objet posé, foyer optionnel (décision utilisateur
     act(sim, id, { type: 'place_campfire', tx: 11, ty: 11 })
     const fire = structureAt(sim.structures, 11, 11)!
     drainEvents(sim)
+    // ⚠ B-R17 : un feu bâti naît ÉTEINT, et `found_village` exige la flamme. Le montage la donne à la
+    // main plutôt que par l'action — pas de tick de plus, pas d'entrée de log en plus, donc les gardes
+    // de rejeu et de comptage ne bougent pas. Le vrai chemin joueur est éprouvé par B-A17 ⑥.
+    fire.allumee = true
     act(sim, id, { type: 'found_village', structureId: fire.id })
     const village = getVillageOf(sim, id)
     expect(village?.chiefId).toBe(id)
@@ -200,11 +204,19 @@ describe('le feu de camp — objet posé, foyer optionnel (décision utilisateur
     const id = spawnEntity(sim, 10.5, 10.5)
     armCampfire(sim, id)
     act(sim, id, { type: 'place_campfire', tx: 11, ty: 11 })
+    // ⚠ B-R17 : un feu bâti naît ÉTEINT, et `found_village` exige la flamme. Le montage la donne à la
+    // main plutôt que par l'action — pas de tick de plus, pas d'entrée de log en plus, donc les gardes
+    // de rejeu et de comptage ne bougent pas. Le vrai chemin joueur est éprouvé par B-A17 ⑥.
+    structureAt(sim.structures, 11, 11)!.allumee = true
     act(sim, id, { type: 'found_village', structureId: structureAt(sim.structures, 11, 11)!.id })
     armCampfire(sim, id)
     act(sim, id, { type: 'place_campfire', tx: 9, ty: 9 })
     const second = structureAt(sim.structures, 9, 9)!
     drainEvents(sim)
+    // ⚠ B-R17 : un feu bâti naît ÉTEINT, et `found_village` exige la flamme. Le montage la donne à la
+    // main plutôt que par l'action — pas de tick de plus, pas d'entrée de log en plus, donc les gardes
+    // de rejeu et de comptage ne bougent pas. Le vrai chemin joueur est éprouvé par B-A17 ⑥.
+    second.allumee = true
     act(sim, id, { type: 'found_village', structureId: second.id })
     expect(rejections(sim)).toContain('déjà un foyer')
     expect(second.villageId).toBe(0) // resté libre
@@ -218,6 +230,10 @@ describe('le feu de camp — objet posé, foyer optionnel (décision utilisateur
     const fire = structureAt(sim.structures, 11, 11)!
     const b = spawnEntity(sim, 10.5, 11.5) // à côté du feu de A (le feu bloque sa tuile), donc à portée
     drainEvents(sim)
+    // ⚠ B-R17 : un feu bâti naît ÉTEINT, et `found_village` exige la flamme. Le montage la donne à la
+    // main plutôt que par l'action — pas de tick de plus, pas d'entrée de log en plus, donc les gardes
+    // de rejeu et de comptage ne bougent pas. Le vrai chemin joueur est éprouvé par B-A17 ⑥.
+    fire.allumee = true
     act(sim, b, { type: 'found_village', structureId: fire.id })
     expect(rejections(sim)).toContain('ce n’est pas votre feu')
     expect(sim.villages).toHaveLength(0)
@@ -239,6 +255,10 @@ describe('le feu de camp — objet posé, foyer optionnel (décision utilisateur
     const id = spawnEntity(sim, 10.5, 10.5)
     armCampfire(sim, id)
     act(sim, id, { type: 'place_campfire', tx: 11, ty: 11 })
+    // ⚠ B-R17 : un feu bâti naît ÉTEINT, et `found_village` exige la flamme. Le montage la donne à la
+    // main plutôt que par l'action — pas de tick de plus, pas d'entrée de log en plus, donc les gardes
+    // de rejeu et de comptage ne bougent pas. Le vrai chemin joueur est éprouvé par B-A17 ⑥.
+    structureAt(sim.structures, 11, 11)!.allumee = true
     act(sim, id, { type: 'found_village', structureId: structureAt(sim.structures, 11, 11)!.id })
     drainEvents(sim)
     act(sim, id, { type: 'demolish', structureId: structureAt(sim.structures, 11, 11)!.id })
@@ -290,6 +310,10 @@ describe('le feu de camp — objet posé, foyer optionnel (décision utilisateur
     const fire = structureAt(sim.structures, 12, 10)!
     // TROP LOIN : le feu est à (12,10), le joueur reste à (10.5,10.5) — hors INTERACT_RANGE.
     drainEvents(sim)
+    // ⚠ B-R17 : un feu bâti naît ÉTEINT, et `found_village` exige la flamme. Le montage la donne à la
+    // main plutôt que par l'action — pas de tick de plus, pas d'entrée de log en plus, donc les gardes
+    // de rejeu et de comptage ne bougent pas. Le vrai chemin joueur est éprouvé par B-A17 ⑥.
+    fire.allumee = true
     act(sim, a, { type: 'found_village', structureId: fire.id })
     expect(rejections(sim)).toContain('trop loin')
     // PAS UN FEU : un identifiant qui ne désigne aucune structure.
@@ -298,11 +322,19 @@ describe('le feu de camp — objet posé, foyer optionnel (décision utilisateur
     expect(rejections(sim)).toContain('pas un feu')
     // A s'approche et promeut pour de bon (village de A à (12,10)).
     sim.entities.find((e) => e.id === a)!.x = 11.5
+    // ⚠ B-R17 : un feu bâti naît ÉTEINT, et `found_village` exige la flamme. Le montage la donne à la
+    // main plutôt que par l'action — pas de tick de plus, pas d'entrée de log en plus, donc les gardes
+    // de rejeu et de comptage ne bougent pas. Le vrai chemin joueur est éprouvé par B-A17 ⑥.
+    fire.allumee = true
     act(sim, a, { type: 'found_village', structureId: fire.id })
     expect(getVillageOf(sim, a)?.chiefId).toBe(a)
     // FEU DÉJÀ PROMU : un autre, à portée, ne peut pas le re-fonder.
     const b = spawnEntity(sim, 12.5, 11.5)
     drainEvents(sim)
+    // ⚠ B-R17 : un feu bâti naît ÉTEINT, et `found_village` exige la flamme. Le montage la donne à la
+    // main plutôt que par l'action — pas de tick de plus, pas d'entrée de log en plus, donc les gardes
+    // de rejeu et de comptage ne bougent pas. Le vrai chemin joueur est éprouvé par B-A17 ⑥.
+    fire.allumee = true
     act(sim, b, { type: 'found_village', structureId: fire.id })
     expect(rejections(sim)).toContain('ce feu est déjà un foyer')
     // TROP PRÈS D'UN VILLAGE : B pose son propre feu à ~9 tuiles (< 48) et tente de le promouvoir.
@@ -311,6 +343,10 @@ describe('le feu de camp — objet posé, foyer optionnel (décision utilisateur
     armCampfire(sim, b)
     act(sim, b, { type: 'place_campfire', tx: 21, ty: 11 })
     drainEvents(sim)
+    // ⚠ B-R17 : un feu bâti naît ÉTEINT, et `found_village` exige la flamme. Le montage la donne à la
+    // main plutôt que par l'action — pas de tick de plus, pas d'entrée de log en plus, donc les gardes
+    // de rejeu et de comptage ne bougent pas. Le vrai chemin joueur est éprouvé par B-A17 ⑥.
+    structureAt(sim.structures, 21, 11)!.allumee = true
     act(sim, b, { type: 'found_village', structureId: structureAt(sim.structures, 21, 11)!.id })
     expect(rejections(sim)).toContain('trop proche d’un autre Feu')
     expect(getVillageOf(sim, b)).toBeUndefined()

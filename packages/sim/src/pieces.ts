@@ -224,7 +224,8 @@ export interface PieceDef {
    * jusqu'ici `s.type === 'fire'`. Ce drapeau est la clé lue par `estFoyer`, et c'est `estFoyer`
    * qui a remplacé ces tests-là : un foyer de plus n'aura donc rien à recâbler.
    *
-   * ⚠ CE QU'IL NE DIT PAS : ni l'allumage (la balise ne prend qu'à la braise, `s.allumee`), ni
+   * ⚠ CE QU'IL NE DIT PAS : ni l'allumage (depuis B-R17, AUCUN foyer libre ne prend qu'à la braise
+   * — `s.allumee`, lu par `flammeDonnee` seul), ni
    * le FOYER DU VILLAGE (`villageId !== 0`, qui reste un `type === 'fire'` — une balise ne fonde
    * pas de village, `found_village` la refuse). Les sites qui distinguent ces deux-là n'ont pas
    * bougé, et c'est volontaire : l'héritage porte sur le feu, pas sur le village.
@@ -234,8 +235,9 @@ export interface PieceDef {
    * ═══ C'EST UNE BALISE (spec `braise.md` B-R9/B-R10) — trois conséquences, un seul drapeau ═══
    *
    * Ce que `foyer` ne dit pas, et qui fait d'un grand feu une BASE :
-   *   ① elle naît ÉTEINTE et **ne s'allume qu'à la braise** (`s.allumee`, `light_balise`) — bois
-   *      ou pas, elle ne brûle rien en attendant, et chaque extinction lui reprend la flamme ;
+   *   ① ⚠ **PLUS RIEN : naître éteinte et ne s'allumer qu'à la braise est la loi de TOUT foyer
+   *      libre depuis le 2026-10-04** (B-R17) — ce point distinguait la balise du feu de camp,
+   *      il ne distingue plus rien. Gardé ici parce que c'est par elle que la loi est arrivée ;
    *   ② allumée, elle **recharge** la braise dans son rayon (B-R9, `BRAISE.RECHARGE_PAR_TICK`) ;
    *   ③ allumée, **il fait DOUX dans tout son rayon** (décision d'Alexis du 2026-10-03) — là où
    *      le feu de camp garde son cône, dont le cercle gratuit ne vaut que 57 % du rayon.

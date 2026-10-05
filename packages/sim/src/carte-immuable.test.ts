@@ -279,6 +279,10 @@ describe('la carte est immuable pendant la partie', () => {
     refus.push(...agir(sim, joueur, { type: 'place_campfire', tx: feuTx, ty: feuTy }))
     const feu = sim.structures.find((s) => s.tx === feuTx && s.ty === feuTy)
     expect(feu, `refus : ${refus.join(', ')}`).toBeDefined()
+    // ⚠ B-R17 : un feu bâti naît ÉTEINT, et `found_village` exige la flamme. Le montage la donne à la
+    // main plutôt que par l'action — pas de tick de plus, pas d'entrée de log en plus, donc les gardes
+    // de rejeu et de comptage ne bougent pas. Le vrai chemin joueur est éprouvé par B-A17 ⑥.
+    feu!.allumee = true
     refus.push(...agir(sim, joueur, { type: 'found_village', structureId: feu!.id }))
     expect(sim.villages.length, `refus : ${refus.join(', ')}`).toBeGreaterThan(0)
 

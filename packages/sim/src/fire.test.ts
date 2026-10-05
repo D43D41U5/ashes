@@ -10,7 +10,23 @@ import { advanceMonsters, spawnMonster } from './monsters'
 import { createSim, spawnEntity, step, type SimState } from './sim'
 import { cycleOffsetForStartHour, getGameTime } from './time'
 import { baselineTemperature, fireBubble } from './temperature'
+import { braiseNeuve } from './braise'
 import { addStructure, advanceUpkeep, applyStructureDamage, applyVillageAction, createVillage, grantItems, type Structure } from './village'
+/**
+ * ⚠ UN FOYER LIBRE NAÎT ÉTEINT DEPUIS `braise.md` B-R17 (2026-10-04) : un `addStructure` nu ne
+ * brûle plus rien. Les gardes de ce fichier éprouvent un feu QUI BRÛLE, donc le montage lui donne
+ * la flamme — c'est la prémisse perdue qu'on refabrique, pas un contournement de la loi : la loi
+ * elle-même est éprouvée par le vrai chemin joueur dans `braise.test.ts` (B-A17).
+ */
+const allume = <S extends Structure>(sim: SimState, s: S): S => {
+  s.allumee = true
+  // …ET L'ANCRE DE COMBUSTION AVEC. `addStructure` ne la pose plus (un foyer naît éteint, donc rien
+  // ne brûle à sa naissance) ; la production l'ancre au premier tick de flamme, clause « Sécurité »
+  // d'`advanceFire`. Ici on la pose AVEC la flamme, pour rendre exactement l'état de naissance
+  // d'avant la loi — c'est ce que ces montages supposent quand ils règlent `burnAt` à la main.
+  if (s.fuel && s.burnAt === undefined) { s.burnAt = sim.tick; s.burnSlot = 0 }
+  return s
+}
 
 /**
  * LE FEU COMME STATION (spec `docs/specs/feu-station.md`) — l'état du feu LIBRE
@@ -62,7 +78,7 @@ describe('Le Feu-station : combustible & état (spec feu-station, A1)', () => {
   it('A1 — le feu libre naît avec du bois, brûle une bûche, passe en braises, s’éteint ; nourrir rallume', () => {
     const sim = makeSim()
     const owner = spawnEntity(sim, 10, 10)
-    const fire = addStructure(sim, 'fire', 10, 10, 0, owner) // FEU LIBRE (villageId 0), à portée
+    const fire = allume(sim, addStructure(sim, 'fire', 10, 10, 0, owner)) // FEU LIBRE (villageId 0), à portée
     expect(countOf(fire.fuel!, 'wood')).toBe(FIRE.FUEL_START_WOOD)
     expect(fireState(sim, fire)).toBe('lit')
 
@@ -75,23 +91,38 @@ describe('Le Feu-station : combustible & état (spec feu-station, A1)', () => {
     expect(fireState(sim, fire)).toBe('ember') // les flammes meurent → braises
     expect(drainEvents(sim).filter((e) => e.type === 'fire_extinguished').length).toBe(1)
 
-    // La fenêtre de braises passée → éteint.
+    // La fenêtre de braises passée → éteint. ⚠ ET IL FAUT UN TICK DE PLUS : c'est `advanceFire` qui
+    //   écrit `allumee = false` quand la flamme est définitivement perdue (B-R18), et sans lui le
+    //   feu serait « out » par calcul tout en gardant sa flamme DONNÉE — la clause suivante se
+    //   rallumerait au bois et accuserait la loi au lieu du montage. En jeu le tick tourne toujours.
     sim.tick = fire.emberUntil!
     expect(fireState(sim, fire)).toBe('out')
+    advanceFire(sim)
+    expect(fire.allumee, 'la flamme est reprise, et ÉCRITE `false`').toBe(false)
 
-    // Nourrir (quick-feed, feu libre) rallume et referme la fenêtre.
+    // ⚠ NOURRIR NE RALLUME PLUS (`braise.md` B-R17, 2026-10-04) — et c'est le VERDICT de cette
+    //   clause qui s'est inversé, pas son montage. Avant la loi, un feu mort reprenait en y jetant
+    //   une bûche ; maintenant la flamme ne vient que de la braise. Le bois REMPLIT, point : pas
+    //   d'état 'lit', pas d'événement `fire_relit` (il aurait menti), et surtout **pas d'ancre de
+    //   combustion** — sinon tout le temps passé sans flamme serait facturé au premier allumage.
     grantItems(sim, owner, { wood: 3 })
     drainEvents(sim)
     applyVillageAction(sim, owner, { type: 'feed_fire' })
-    expect(countOf(fire.fuel!, 'wood')).toBe(3)
-    expect(fireState(sim, fire)).toBe('lit')
-    expect(fire.emberUntil).toBeUndefined()
-    expect(drainEvents(sim).some((e) => e.type === 'fire_relit')).toBe(true)
+    expect(countOf(fire.fuel!, 'wood'), 'le bois rentre bien').toBe(3)
+    expect(fireState(sim, fire), 'mais rien ne se rallume').toBe('out')
+    expect(drainEvents(sim).some((e) => e.type === 'fire_relit'), 'et aucun `fire_relit` ne ment').toBe(false)
+    expect(fire.burnAt, 'ni d’ancre de combustion posée sur un feu mort').toBeUndefined()
+    // CONTRÔLE POSITIF — la braise, elle, le reprend, et c'est LÀ que la fenêtre se referme.
+    const porteur = spawnEntity(sim, 10, 10)
+    sim.entities.find((e) => e.id === porteur)!.braise = braiseNeuve()
+    applyVillageAction(sim, porteur, { type: 'light_foyer', structureId: fire.id })
+    expect(fireState(sim, fire), 'la braise rallume').toBe('lit')
+    expect(fire.emberUntil, 'et la fenêtre de braises est refermée').toBeUndefined()
   })
 
   it('A1 — l’extinction n’émet fire_extinguished qu’UNE fois, jamais en boucle', () => {
     const sim = makeSim()
-    const fire = addStructure(sim, 'fire', 10, 10, 0, 0)
+    const fire = allume(sim, addStructure(sim, 'fire', 10, 10, 0, 0))
     wood(fire, 1)
     fire.burnAt = sim.tick - FIRE.BURN_TICKS // s'éteint dès le 1er tick de combustion
     drainEvents(sim)
@@ -108,7 +139,7 @@ describe('Le Feu-station : combustible & état (spec feu-station, A1)', () => {
 describe('Le Feu-station : les bénéfices suivent l’état (spec feu-station, A2/A3)', () => {
   it('A2 — chaleur pleine allumé, ATTÉNUÉE en braises, NULLE éteint', () => {
     const sim = makeSim()
-    const fire = addStructure(sim, 'fire', 10, 10, 0, 0)
+    const fire = allume(sim, addStructure(sim, 'fire', 10, 10, 0, 0))
     const lit = fireBubble(sim, 10, 10)
     expect(lit).toBeGreaterThan(0)
 
@@ -124,7 +155,7 @@ describe('Le Feu-station : les bénéfices suivent l’état (spec feu-station, 
   it('A3 — le rempart anti-levée garde en allumé ET en braises, tombe à l’extinction', () => {
     const sim = makeSim()
     const victim = spawnEntity(sim, 10, 11)
-    const fire = addStructure(sim, 'fire', 10, 10, 0, 0) // allumé, à portée de garde
+    const fire = allume(sim, addStructure(sim, 'fire', 10, 10, 0, 0)) // allumé, à portée de garde
     expect(willRiseAsCendreux(sim, ent(sim, victim))).toBe(false) // veillé par le feu
 
     douse(sim, fire)
@@ -141,7 +172,7 @@ describe('Le Feu-station : la cuisson 3 entrées → 3 sorties, passive (spec fe
   it('A5 — la cuisson est PASSIVE : elle avance joueur PARTI, le cuit part en SORTIE, il le reprend', () => {
     const sim = makeSim()
     const cook = spawnEntity(sim, 10, 10)
-    const fire = addStructure(sim, 'fire', 10, 10, 0, cook) // allumé (du bois), à portée
+    const fire = allume(sim, addStructure(sim, 'fire', 10, 10, 0, cook)) // allumé (du bois), à portée
     grantItems(sim, cook, { raw_meat: 1 })
     drop(sim, cook, fire, 'cookIn', 0, 'raw_meat', 1) // glissé dans la 1re ENTRÉE
     expect(fire.cookIn?.[0]?.item).toBe('raw_meat')
@@ -167,7 +198,7 @@ describe('Le Feu-station : la cuisson 3 entrées → 3 sorties, passive (spec fe
 
   it('A6 — pas de brûlé : la viande cuite reste au chaud INDÉFINIMENT en sortie', () => {
     const sim = makeSim()
-    const fire = addStructure(sim, 'fire', 10, 10, 0, 0)
+    const fire = allume(sim, addStructure(sim, 'fire', 10, 10, 0, 0))
     fire.cookOut = inventoryOf(FIRE.COOK_OUTPUTS, { cooked_meat: 1 }) // déjà cuite, en sortie
     for (let t = 0; t < 3000; t++) advanceFire(sim)
     expect(countOf(fire.cookOut!, 'cooked_meat')).toBe(1) // ne se dégrade jamais
@@ -175,7 +206,7 @@ describe('Le Feu-station : la cuisson 3 entrées → 3 sorties, passive (spec fe
 
   it('A7 — la cuisson exige la FLAMME : ni éteint ni braises ne cuisent ; rallumé, ça reprend', () => {
     const sim = makeSim()
-    const fire = addStructure(sim, 'fire', 10, 10, 0, 0)
+    const fire = allume(sim, addStructure(sim, 'fire', 10, 10, 0, 0))
     fire.cookIn = [{ item: 'raw_meat', count: 1 }, null, null] // une unité déjà engagée
     fire.cookRemaining = [10, null, null]
     const start = fire.cookRemaining[0]!
@@ -192,8 +223,10 @@ describe('Le Feu-station : la cuisson 3 entrées → 3 sorties, passive (spec fe
     advanceFire(sim)
     expect(fire.cookRemaining![0]).toBe(start)
 
-    // RALLUMÉ : ça reprend.
+    // RALLUMÉ : ça reprend. ⚠ Et « rallumé » veut dire À LA BRAISE depuis B-R17 — le bois seul ne
+    //   rend plus la flamme, donc le montage la redonne en même temps que la bûche.
     wood(fire, FIRE.FUEL_START_WOOD)
+    fire.allumee = true
     fire.burnAt = sim.tick
     fire.burnSlot = 0
     delete fire.emberUntil
@@ -204,7 +237,7 @@ describe('Le Feu-station : la cuisson 3 entrées → 3 sorties, passive (spec fe
   it('les 3 ENTRÉES cuisent EN PARALLÈLE, chacune UNE unité de sa pile à la fois', () => {
     const sim = makeSim()
     const cook = spawnEntity(sim, 10, 10)
-    const fire = addStructure(sim, 'fire', 10, 10, 0, cook)
+    const fire = allume(sim, addStructure(sim, 'fire', 10, 10, 0, cook))
     grantItems(sim, cook, { raw_meat: 5 })
     drop(sim, cook, fire, 'cookIn', 0, 'raw_meat', 2) // une PILE de 2 dans l'entrée 0
     drop(sim, cook, fire, 'cookIn', 1, 'raw_meat', 1)
@@ -226,7 +259,7 @@ describe('Le Feu-station : les cases sont de vrais CONTENEURS + verrou de consom
   it('A8 — le COMBUSTIBLE : on retire le surplus, jamais la bûche qui BRÛLE', () => {
     const sim = makeSim()
     const owner = spawnEntity(sim, 10, 10)
-    const fire = addStructure(sim, 'fire', 10, 10, 0, owner) // 10 bois en case 0, burnSlot 0, allumé
+    const fire = allume(sim, addStructure(sim, 'fire', 10, 10, 0, owner)) // 10 bois en case 0, burnSlot 0, allumé
     expect(fire.burnSlot).toBe(0)
     take(sim, owner, fire, 'fuel', 0, 999) // je tire tout ce que je peux
     expect(countOf(fire.fuel!, 'wood')).toBe(1) // la bûche EN COURS reste, verrouillée
@@ -237,7 +270,7 @@ describe('Le Feu-station : les cases sont de vrais CONTENEURS + verrou de consom
   it('A8 — la case qui brûle est ANCRÉE : déposer ailleurs ne détourne pas la flamme (dodge)', () => {
     const sim = makeSim()
     const owner = spawnEntity(sim, 10, 10)
-    const fire = addStructure(sim, 'fire', 10, 10, 0, owner)
+    const fire = allume(sim, addStructure(sim, 'fire', 10, 10, 0, owner))
     // La bûche en cours est en case 1 (case 0 vide), comme après un réagencement.
     fire.fuel = makeInventory(FIRE.FUEL_SLOTS)
     fire.fuel[1] = { item: 'wood', count: 5 }
@@ -256,7 +289,7 @@ describe('Le Feu-station : les cases sont de vrais CONTENEURS + verrou de consom
   it('A9 — les ENTRÉES : on récupère la pile SAUF l’unité qui cuit', () => {
     const sim = makeSim()
     const cook = spawnEntity(sim, 10, 10)
-    const fire = addStructure(sim, 'fire', 10, 10, 0, cook)
+    const fire = allume(sim, addStructure(sim, 'fire', 10, 10, 0, cook))
     grantItems(sim, cook, { raw_meat: 3 })
     drop(sim, cook, fire, 'cookIn', 0, 'raw_meat', 3)
     advanceFire(sim) // une unité s'engage → verrou posé
@@ -269,7 +302,7 @@ describe('Le Feu-station : les cases sont de vrais CONTENEURS + verrou de consom
   it('A9 — cases SPÉCIALISÉES : le combustible refuse la viande, l’ENTRÉE refuse le bois', () => {
     const sim = makeSim()
     const p = spawnEntity(sim, 10, 10)
-    const fire = addStructure(sim, 'fire', 10, 10, 0, p)
+    const fire = allume(sim, addStructure(sim, 'fire', 10, 10, 0, p))
     grantItems(sim, p, { raw_meat: 1, wood: 1 })
     drop(sim, p, fire, 'fuel', 1, 'raw_meat', 1) // viande dans le COMBUSTIBLE : refusé
     expect(countOf(ent(sim, p).inventory, 'raw_meat')).toBe(1) // rien n'a bougé
@@ -281,7 +314,7 @@ describe('Le Feu-station : les cases sont de vrais CONTENEURS + verrou de consom
   it('A9 — un FOYER n’a PAS de zone combustible : y glisser du bois est refusé (S16)', () => {
     const sim = makeSim()
     const owner = spawnEntity(sim, 10, 10)
-    const foyer = addStructure(sim, 'fire', 10, 10, 1, owner) // villageId 1 = Foyer (upkeep village.fuel)
+    const foyer = allume(sim, addStructure(sim, 'fire', 10, 10, 1, owner)) // villageId 1 = Foyer (upkeep village.fuel)
     grantItems(sim, owner, { wood: 1 })
     drop(sim, owner, foyer, 'fuel', 0, 'wood', 1)
     expect(countOf(ent(sim, owner).inventory, 'wood')).toBe(1) // refusé : le Foyer tient sur village.fuel
@@ -291,7 +324,7 @@ describe('Le Feu-station : les cases sont de vrais CONTENEURS + verrou de consom
   it('A17 — SORTIES pleines : l’unité reste PRÊTE, aucun cuit dupliqué ni perdu (conservation)', () => {
     const sim = makeSim()
     const cook = spawnEntity(sim, 10, 10)
-    const fire = addStructure(sim, 'fire', 10, 10, 0, cook)
+    const fire = allume(sim, addStructure(sim, 'fire', 10, 10, 0, cook))
     // Sorties saturées (3 cases × la pile max) : plus AUCUNE place.
     const full = FIRE.COOK_OUTPUTS * stackSize('cooked_meat')
     fire.cookOut = inventoryOf(FIRE.COOK_OUTPUTS, { cooked_meat: full })
@@ -327,7 +360,7 @@ describe('Le Feu-station : le feu ATTIRE les Cendreux quand il fait froid (spec 
     expect(baselineTemperature(sim, 5, 5)).toBeLessThan(CENDREUX.TORPEUR.CONVERGE_SOUS) // le froid mord
     const id = spawnMonster(sim, 'cendreux', 5, 5)
     const monster = sim.monsters.find((m) => m.entityId === id)!
-    addStructure(sim, 'fire', 15, 5, 0, 0) // feu libre avec bois (allumé), dans WARMTH_SEEK_RANGE (20)
+    allume(sim, addStructure(sim, 'fire', 15, 5, 0, 0)) // feu libre avec bois (allumé), dans WARMTH_SEEK_RANGE (20)
     advanceMonsters(sim)
     expect(monster.path?.length ?? 0).toBeGreaterThan(0) // il rampe vers le phare
   })
@@ -337,7 +370,7 @@ describe('Le Feu-station : le feu ATTIRE les Cendreux quand il fait froid (spec 
     expect(baselineTemperature(sim, 5, 5)).toBeLessThan(CENDREUX.TORPEUR.CONVERGE_SOUS) // même froid, seul le feu change
     const id = spawnMonster(sim, 'cendreux', 5, 5)
     const monster = sim.monsters.find((m) => m.entityId === id)!
-    const fire = addStructure(sim, 'fire', 15, 5, 0, 0)
+    const fire = allume(sim, addStructure(sim, 'fire', 15, 5, 0, 0))
     douse(sim, fire, 0) // pas de bois, emberUntil = tick → 'out'
     advanceMonsters(sim)
     expect(monster.path?.length ?? 0).toBe(0)
@@ -356,7 +389,7 @@ describe('Le Feu-station : le feu ATTIRE les Cendreux quand il fait froid (spec 
     expect(baselineTemperature(sim, 5, 5)).toBeGreaterThan(CENDREUX.TORPEUR.CONVERGE_SOUS) // il fait doux
     const id = spawnMonster(sim, 'cendreux', 5, 5)
     const monster = sim.monsters.find((m) => m.entityId === id)!
-    addStructure(sim, 'fire', 15, 5, 0, 0) // allumé, mais il fait chaud → pas de phare
+    allume(sim, addStructure(sim, 'fire', 15, 5, 0, 0)) // allumé, mais il fait chaud → pas de phare
     advanceMonsters(sim)
     expect(monster.path?.length ?? 0).toBe(0)
   })
@@ -366,7 +399,7 @@ describe('Le Feu-station : nourrir un feu CIBLÉ par le modal (spec feu-station,
   it('feed_fire { structureId } alimente CE feu libre et le rallume depuis les braises', () => {
     const sim = makeSim()
     const owner = spawnEntity(sim, 10, 10)
-    const fire = addStructure(sim, 'fire', 10, 10, 0, owner)
+    const fire = allume(sim, addStructure(sim, 'fire', 10, 10, 0, owner))
     douse(sim, fire) // en braises
     grantItems(sim, owner, { wood: 5 })
     drainEvents(sim)
@@ -379,8 +412,8 @@ describe('Le Feu-station : nourrir un feu CIBLÉ par le modal (spec feu-station,
   it('feed_fire { structureId } vise le BON feu même quand un autre est plus proche', () => {
     const sim = makeSim()
     const owner = spawnEntity(sim, 10.5, 10.5)
-    const proche = addStructure(sim, 'fire', 10, 10, 0, owner) // le plus proche (distSq 0)
-    const cible = addStructure(sim, 'fire', 11, 10, 0, owner) // celui qu'on a ouvert (à portée)
+    const proche = allume(sim, addStructure(sim, 'fire', 10, 10, 0, owner)) // le plus proche (distSq 0)
+    const cible = allume(sim, addStructure(sim, 'fire', 11, 10, 0, owner)) // celui qu'on a ouvert (à portée)
     wood(proche, 5)
     wood(cible, 5)
     grantItems(sim, owner, { wood: 5 })
@@ -393,7 +426,7 @@ describe('Le Feu-station : nourrir un feu CIBLÉ par le modal (spec feu-station,
 describe('Le Feu-station : destructibilité découplée du combustible (spec feu-station, A11)', () => {
   it('A11 — un feu LIBRE allumé reste destructible (pas d’invulnérabilité liée au combustible)', () => {
     const sim = makeSim()
-    const fire = addStructure(sim, 'fire', 10, 10, 0, 0)
+    const fire = allume(sim, addStructure(sim, 'fire', 10, 10, 0, 0))
     expect(countOf(fire.fuel!, 'wood')).toBeGreaterThan(0)
     applyStructureDamage(sim, fire.id, 99999)
     expect(sim.structures.some((s) => s.id === fire.id)).toBe(false) // il tombe malgré le combustible
@@ -425,7 +458,7 @@ describe('Le Feu-station : le charbon de bois (S30)', () => {
   it('S30 — QUATRE bûches consumées laissent UN charbon, en sortie', () => {
     const sim = makeSim()
     const owner = spawnEntity(sim, 10, 10)
-    const fire = addStructure(sim, 'fire', 10, 10, 0, owner)
+    const fire = allume(sim, addStructure(sim, 'fire', 10, 10, 0, owner))
     wood(fire, FIRE.CHARBON_PAR_BUCHES)
     fire.burnAt = sim.tick
     fire.burnSlot = 0
@@ -444,7 +477,7 @@ describe('Le Feu-station : le charbon de bois (S30)', () => {
   it('S30 — la SORTIE pleine ne PERD rien : la dette reste due et se solde à la place libérée', () => {
     const sim = makeSim()
     const owner = spawnEntity(sim, 10, 10)
-    const fire = addStructure(sim, 'fire', 10, 10, 0, owner)
+    const fire = allume(sim, addStructure(sim, 'fire', 10, 10, 0, owner))
     fire.cookOut = inventoryOf(FIRE.COOK_OUTPUTS, { cooked_meat: FIRE.COOK_OUTPUTS * stackSize('cooked_meat') })
     wood(fire, FIRE.CHARBON_PAR_BUCHES)
     fire.burnAt = sim.tick
@@ -465,7 +498,7 @@ describe('Le Feu-station : le charbon de bois (S30)', () => {
     const sim = makeSim()
     const owner = spawnEntity(sim, 10, 10)
     const v = createVillage(sim, { chiefId: owner, tx: 10, ty: 10 })
-    const foyer = addStructure(sim, 'fire', 10, 10, v.id, owner) // le FOYER, sur fireTx/fireTy
+    const foyer = allume(sim, addStructure(sim, 'fire', 10, 10, v.id, owner)) // le FOYER, sur fireTx/fireTy
     // Un village NOURRI : on remplit le stock à chaque tick, comme le feraient ses porteurs de
     // bois. On relève NOUS-MÊMES ce qui s'y consume — le drain réel n'est pas `DRAIN_PER_TICK`
     // (l'acte de la saison et la pluie le multiplient), et une garde écrite sur le nombre
@@ -494,7 +527,7 @@ describe('Le Feu-station : le charbon de bois (S30)', () => {
     const sim = makeSim()
     const owner = spawnEntity(sim, 10, 10)
     const v = createVillage(sim, { chiefId: owner, tx: 10, ty: 10 })
-    const foyer = addStructure(sim, 'fire', 10, 10, v.id, owner)
+    const foyer = allume(sim, addStructure(sim, 'fire', 10, 10, v.id, owner))
     for (let t = 0; t < 90_000 && charbon(foyer) === 0; t++) {
       v.fuel = FIRE_UPKEEP.CAPACITY
       step(sim, [])
@@ -528,7 +561,7 @@ describe('Le Feu-station : le charbon de bois (S30)', () => {
     const sim = makeSim()
     const owner = spawnEntity(sim, 10, 10)
     const v = createVillage(sim, { chiefId: owner, tx: 10, ty: 10 })
-    const foyer = addStructure(sim, 'fire', 10, 10, v.id, owner)
+    const foyer = allume(sim, addStructure(sim, 'fire', 10, 10, v.id, owner))
     v.fuel = 0 // à sec : `advanceUpkeep` soustrait quand même, et `Math.max(0, …)` rattrape
     for (let t = 0; t < 20_000; t++) advanceUpkeep(sim)
     expect(v.charbonDette ?? 0).toBe(0)
