@@ -20,6 +20,17 @@ import {
  * la flamme — c'est la prémisse perdue qu'on refabrique, pas un contournement de la loi : la loi
  * elle-même est éprouvée par le vrai chemin joueur dans `braise.test.ts` (B-A17).
  */
+/**
+ * ⚠ **LA PRÉMISSE DES GARDES DE NUIT AVEUGLE, depuis l'étape 7** (B-R13c, 2026-10-05) : un
+ * avatar neuf porte une braise PLEINE, donc il est sa propre source de lumière (clarté 1). Toute
+ * garde qui affirme « ici on ne voit rien » doit donc vider la braise — sinon elle est rouge, ou
+ * verte pour la mauvaise raison. `charge: 0` est l'état de jeu où la nuit noire existe encore
+ * sous l'issue ⓐ (`braise.md` § 5.21) ; `braise: undefined` serait une sauvegarde d'avant l'étape 4.
+ */
+const braiseVide = (e: Entity): Entity => {
+  if (e.braise !== undefined) e.braise.charge = 0
+  return e
+}
 const allume = <S extends Structure>(sim: SimState, s: S): S => {
   s.allumee = true
   // …ET L'ANCRE DE COMBUSTION AVEC. `addStructure` ne la pose plus (un foyer naît éteint, donc rien
@@ -194,7 +205,7 @@ describe('la clarté sur soi — trois sources, un seul max', () => {
   it('S1 — la torche en main éclaire à plein, même au fond de la nouvelle lune', () => {
     const sim = nuitNoire()
     const id = spawnEntity(sim, 48.5, 48.5)
-    const e = ent(sim, id)
+    const e = braiseVide(ent(sim, id))
     e.inventory = makeInventory(SLOTS.PLAYER)
     e.inventory[0] = { item: 'torche_vive', count: 1, wear: 0 }
     e.activeSlot = 0
@@ -207,7 +218,7 @@ describe('la clarté sur soi — trois sources, un seul max', () => {
   it('S2 — le coin du feu vaut la lumière, et elle DÉCROÎT jusqu’au bord de sa bulle', () => {
     const sim = nuitNoire()
     const id = spawnEntity(sim, 48.5, 48.5)
-    const e = ent(sim, id)
+    const e = braiseVide(ent(sim, id))
     e.inventory = makeInventory(SLOTS.PLAYER)
     feu(sim, 1)
     const auContact = clarteSurSoi(sim, e)
@@ -225,7 +236,7 @@ describe('la clarté sur soi — trois sources, un seul max', () => {
   it('S3 — un feu ÉTEINT n’éclaire pas (la bulle est celle qui chauffe)', () => {
     const sim = nuitNoire()
     const id = spawnEntity(sim, 48.5, 48.5)
-    const e = ent(sim, id)
+    const e = braiseVide(ent(sim, id))
     e.inventory = makeInventory(SLOTS.PLAYER)
     const f = feu(sim, 1)
     f.fuel = makeInventory(FIRE.FUEL_SLOTS)
@@ -248,7 +259,7 @@ describe('le prix du noir — on ne court pas, on ne pare pas', () => {
     const sim = createSim(1, { map: createEmptyMap(96, 96, TERRAIN_GRASS), jourDeDepart: jour })
     sim.cycleOffset = cycleOffsetForStartHour(0, jour) // minuit : le fond de la nuit
     const id = spawnEntity(sim, 48.5, 48.5)
-    ent(sim, id).inventory = makeInventory(SLOTS.PLAYER)
+    braiseVide(ent(sim, id)).inventory = makeInventory(SLOTS.PLAYER)
     return { sim, id }
   }
   const marcher = (id: number): MoveInput[] => [{ entityId: id, dx: 1, dy: 0, sprint: true }]

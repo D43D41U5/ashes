@@ -2,12 +2,14 @@ import { describe, expect, it } from 'vitest'
 import { FIRE, LUMIERE, NUIT, SLOTS, TEMPERATURE, TERRAIN_GRASS, TERRAIN_ROCK } from './balance'
 import { EDGE_E, EDGE_N, EDGE_O, EDGE_S } from './geometry'
 import { addItems, makeInventory } from './items'
-import { MOTIF_SOURCE, OCCLUDEUR, estUnePorte, lumiereDesTorches, occlusionAuGrain, partVisible, seTientAuSol, sorteAuTexel } from './lumiere'
+import { MOTIF_SOURCE, OCCLUDEUR, estUnePorte, lumiereDesBraises, lumiereDesTorches, occlusionAuGrain, partVisible, seTientAuSol, sorteAuTexel } from './lumiere'
 import { createEmptyMap } from './map'
 import type { Monster } from './monsters'
-import { clarteSurSoi, lumiereDuFeu, LUNAISON_JOURS, LUNE_PLEINE_JOUR } from './nuit'
+import { clarteDeCeQuOnPorte, clarteSurSoi, clarteSurSoiAt, lumiereDuFeu, LUNAISON_JOURS, LUNE_PLEINE_JOUR } from './nuit'
+import { BRAISE } from './balance'
+import { braiseNeuve, bulleDeBraise, chargePleine, rayonDeBraise } from './braise'
 import { createSim, spawnEntity, step, type Entity, type SimState } from './sim'
-import { bulleDuFeu, fireBubble } from './temperature'
+import { bulleDuFeu, cransExiges, fireBubble } from './temperature'
 import { torcheVive } from './torche'
 import { cycleOffsetForStartHour, jourDeSaison } from './time'
 import { addStructure, type Structure } from './village'
@@ -63,9 +65,23 @@ function feu(sim: SimState, tx: number, ty: number): Structure {
 function mur(sim: SimState, tx: number, ty: number, edges: number, etage?: number): Structure {
   return addStructure(sim, 'wall', tx, ty, 0, 0, undefined, undefined, edges, etage)
 }
+/**
+ * ⚠ **IL NAÎT BRAISE VIDE, ET C'EST LA PRÉMISSE DE TOUT CE FICHIER** (B-R13c, étape 7,
+ * 2026-10-05). Depuis que la braise portée éclaire, un avatar neuf est **sa propre source** :
+ * `braiseNeuve` le fait naître à charge pleine, donc à clarté 1, et toute garde qui dit « ici on
+ * ne voit rien » serait verte pour la mauvaise raison — ou rouge, comme ces treize-ci l'ont été.
+ *
+ * On vide donc la braise, parce que **c'est l'état de jeu où la nuit noire existe encore** sous
+ * l'issue ⓐ (`braise.md` § 5.21) : le noir est devenu un fait d'altitude et d'expédition, pas de
+ * camp. `charge: 0` et non `braise: undefined` — ce dernier est une sauvegarde d'avant l'étape 4,
+ * un état bien plus rare que celui qu'on veut éprouver.
+ *
+ * Ce que la braise fait quand elle est PLEINE a ses propres gardes, en bas de ce fichier (B-A18).
+ */
 function avatar(sim: SimState, x: number, y: number): Entity {
   const e = ent(sim, spawnEntity(sim, x, y))
   e.inventory = makeInventory(SLOTS.PLAYER)
+  if (e.braise !== undefined) e.braise.charge = 0
   return e
 }
 function torcheEnMain(e: Entity): void {
@@ -697,4 +713,300 @@ describe('les paliers — la marche se juge en hauteur (LG-R14, LG-A15)', () => 
     torcheEnMain(autrePlat)
     expect(clarteSurSoi(plat, moiPlat)).toBeCloseTo(1 - 3 / LUMIERE.TORCHE_PORTEE_TUILES, 6)
   })
+})
+
+
+// ═══════════════════════════════════════════════════════════════════════════════════════════
+// B-A18 — LA CLARTÉ DE LA BRAISE EST UN PROFIL, ET LA NUIT NOIRE CHANGE DE NATURE
+//
+// Écrit AVANT le code (2026-10-04), branché le 2026-10-05 sur l'issue ⓐ de `braise.md` § 5.21.
+//
+// ⚠ **LA CLAUSE ④ (N2bis : `clarté_sim ≥ lueur_écran`) N'EST PAS ICI** : elle compare la règle à
+// la PEINTURE, donc elle vit du côté client, avec le câblage du halo. L'écrire dans `/sim`
+// obligerait à y recopier la courbe de l'écran — la seconde formule que N2bis interdit.
+// ═══════════════════════════════════════════════════════════════════════════════════════════
+describe('B-A18 — la braise portée éclaire, au profil de sa source (B-R13c)', () => {
+  /** Un avatar à braise PLEINE — l'inverse de `avatar()`, qui la vide (voir sa note). */
+  const avatarBraisePleine = (sim: SimState, x: number, y: number): Entity => {
+    const e = avatar(sim, x, y)
+    e.braise = braiseNeuve(0)
+    return e
+  }
+
+  it('① AU `max`, ET LA DÉCROISSANCE EST VRAIE — le contact rend le profil, jamais une somme (N1)', () => {
+    // ⚠ **CE QUE CETTE GARDE NE PEUT PAS DIRE, ET SON TITRE LE PROMETTAIT À TORT** : avec
+    // `CLARTE_PLEINE` = 1, une braise PLEINE rend 1 sur le profil comme sur un privilège — ① est
+    // donc VERTE si l'on remplace `bulleDeBraise(braise, 0)` par `braise ? 1 : 0` (falsification
+    // jouée à l'audit de fusion du 2026-10-05 : ① verte, ② ③ ⑤ ⑥ rouges — ⚠ et **19 rouges en tout, pas 4** : un privilège à 1 éclaire même une braise VIDE, donc S1→S3, P3, P5, P6, P7, F1, F6 et T1→T4 rougissent aussi ; mon compte était incomplet, pas faux). C'est **②** qui
+    // sépare le profil du privilège, parce que lui seul descend la charge. Ce que ① garde
+    // vraiment : le `max` (jamais une somme — N1) et la décroissance du balayage avec la distance.
+    const sim = nuitNoire()
+    const e = avatarBraisePleine(sim, 48.5, 48.5)
+    // CONTRÔLE POSITIF du « au contact » : c'est bien `bulleDeBraise(·, 0)` qu'on lit.
+    expect(clarteSurSoi(sim, e)).toBeCloseTo(bulleDeBraise(e.braise!, 0), 12)
+    // ET STRICTEMENT < 1 DÈS QU'ON S'ÉCARTE DU PORTEUR.
+    // ⚠ MON PREMIER MONTAGE ÉTAIT FAUX ICI, et le défaut est instructif : il lisait le point
+    // voisin EN PASSANT `e.braise`, c'est-à-dire en affirmant qu'un corps porteur se tient LÀ —
+    // le terme sur soi vaut alors son sommet, et la garde rendait 1 sans rien prouver. Pour lire
+    // la décroissance, il faut interroger le point SANS braise au contact : ce qui y arrive
+    // passe alors par `lumiereDesBraises`, donc par la distance.
+    const unPeuPlusLoin = clarteSurSoiAt(sim, sim.tick, 48.5 + 1, 48.5, false)
+    expect(unPeuPlusLoin).toBeLessThan(clarteSurSoi(sim, e))
+    expect(unPeuPlusLoin).toBeCloseTo(bulleDeBraise(e.braise!, 1), 6)
+    expect(unPeuPlusLoin).toBeGreaterThan(0) // CONTRÔLE POSITIF : elle porte jusque-là
+    // JAMAIS UNE SOMME (N1) : deux braises pleines côte à côte ne font pas deux fois la lumière.
+    const deux = nuitNoire()
+    const a = avatarBraisePleine(deux, 48.5, 48.5)
+    avatarBraisePleine(deux, 48.5, 48.5)
+    expect(clarteSurSoi(deux, a)).toBeCloseTo(bulleDeBraise(a.braise!, 0), 12)
+  })
+
+  it('② LA CLAUSE PORTEUSE — la clarté DÉCROÎT avec la charge et FRANCHIT le seuil ; balayée, pas échantillonnée', () => {
+    const sim = nuitNoire()
+    const e = avatarBraisePleine(sim, 48.5, 48.5)
+    const plein = chargePleine(0)
+    // ⚠ Si cette garde ne peut pas rougir, l'issue ⓐ n'est pas implémentée : elle serait verte
+    // sur la branche écartée ⓐ-d'origine (toujours ≥ seuil) comme sur ⓑ (toujours <).
+    e.braise!.charge = plein
+    expect(clarteSurSoi(sim, e)).toBeGreaterThanOrEqual(NUIT.SEUIL_NOIR)
+    e.braise!.charge = 0
+    expect(clarteSurSoi(sim, e)).toBeLessThan(NUIT.SEUIL_NOIR)
+    // LE BALAYAGE : monotone sur toute la vidange, et UN SEUL franchissement du seuil.
+    let precedent = Infinity
+    let franchissements = 0
+    let dessus = true
+    for (let i = 200; i >= 0; i--) {
+      e.braise!.charge = Math.round((i / 200) * plein)
+      const c = clarteSurSoi(sim, e)
+      expect(c).toBeLessThanOrEqual(precedent + 1e-12)
+      precedent = c
+      const auDessus = c >= NUIT.SEUIL_NOIR
+      if (auDessus !== dessus) { franchissements++; dessus = auDessus }
+    }
+    expect(franchissements).toBe(1)
+    // ET LE POINT DE BASCULE EST CELUI QUE L'ARITHMÉTIQUE ANNONCE : `CLARTE_PLEINE × f = seuil`.
+    const fBascule = NUIT.SEUIL_NOIR / BRAISE.CLARTE_PLEINE
+    e.braise!.charge = Math.ceil(fBascule * plein)
+    expect(clarteSurSoi(sim, e)).toBeGreaterThanOrEqual(NUIT.SEUIL_NOIR)
+    e.braise!.charge = Math.floor(fBascule * plein) - 1
+    expect(clarteSurSoi(sim, e)).toBeLessThan(NUIT.SEUIL_NOIR)
+  })
+
+  it('③ LA PARADE SUIT, SUR `step()` ET PAS SEULEMENT SUR LA FONCTION (le patron de LG-A11)', () => {
+    const pleine = nuitNoire()
+    const a = avatarBraisePleine(pleine, 48.5, 48.5)
+    step(pleine, [{ entityId: a.id, dx: 0, dy: 0, block: true }])
+    expect(ent(pleine, a.id).blocking).toBe(true) // braise pleine : on pare
+    const vide = nuitNoire()
+    const b = avatar(vide, 48.5, 48.5) // `avatar()` la vide
+    expect(b.braise!.charge).toBe(0) // la PRÉMISSE, dite
+    step(vide, [{ entityId: b.id, dx: 0, dy: 0, block: true }])
+    expect(ent(vide, b.id).blocking).toBe(false) // braise vide : on ne pare pas ce qu'on ne voit pas
+  })
+
+  it('⑤ LA TORCHE GARDE UN EFFET PROPRE — son rayon porte plus loin que la braise pleine', () => {
+    // C'est ce qui empêche l'« objet mort en main » : à profil égal au CONTACT (les deux valent
+    // leur sommet), la torche se distingue par sa PORTÉE, et le chiffre que B-R13 ne donnait pas
+    // est tranché ici — c'est le rayon de la SIM (`TORCHE_PORTEE_TUILES` = 10) qui porte le
+    // profil, jamais celui de l'écran (4), parce que N2bis interdit une sim plus sombre que la
+    // peinture. Le rayon de l'écran reste un fait de rendu (`render/torche.ts`).
+    expect(rayonDeBraise(braiseNeuve(0))).toBeLessThan(LUMIERE.TORCHE_PORTEE_TUILES)
+    // JOUÉ, et pas seulement comparé sur les constantes : un camarade à 6 tuiles est éclairé par
+    // une torche tenue, et ne l'est PAS par la même braise pleine.
+    const D = 6
+    const sim = nuitNoire()
+    const porteur = avatarBraisePleine(sim, 48.5, 48.5)
+    const temoin = avatar(sim, 48.5 + D, 48.5) // braise vide : il ne s'éclaire pas lui-même
+    expect(clarteSurSoi(sim, temoin)).toBeLessThan(NUIT.SEUIL_NOIR) // la braise du porteur ne va pas jusqu'à lui
+    torcheEnMain(porteur)
+    expect(clarteSurSoi(sim, temoin)).toBeCloseTo(1 - D / LUMIERE.TORCHE_PORTEE_TUILES, 6)
+    expect(clarteSurSoi(sim, temoin)).toBeGreaterThanOrEqual(NUIT.SEUIL_NOIR)
+  })
+
+  it('⑥ LA BRAISE DES AUTRES compte, comme leur torche (le miroir de LG-R18) — et pas celle d’un figurant', () => {
+    const sim = nuitNoire()
+    const moi = avatar(sim, 48.5, 48.5) // braise vide
+    expect(clarteSurSoi(sim, moi)).toBeLessThan(NUIT.SEUIL_NOIR)
+    const camarade = avatarBraisePleine(sim, 48.5 + 1, 48.5)
+    expect(clarteSurSoi(sim, moi)).toBeCloseTo(bulleDeBraise(camarade.braise!, 1), 6)
+    expect(clarteSurSoi(sim, moi)).toBeGreaterThan(0) // CONTRÔLE POSITIF : elle porte vraiment
+    // AU-DELÀ DE SON RAYON, rien — et le rayon est celui que la charge commande.
+    camarade.x = 48.5 + rayonDeBraise(camarade.braise!) + 0.5
+    expect(clarteSurSoi(sim, moi)).toBeLessThan(NUIT.SEUIL_NOIR)
+    // ⚠ N6 : AUCUN MONSTRE NE PORTE DE BRAISE (gardé dans `braise.test.ts`), donc la clause
+    // « pas un figurant » de `lumiereDesBraises` ne peut pas s'éprouver par un vrai monstre
+    // porteur : on la prouve par le prédicat, en inscrivant le camarade comme figurant.
+    camarade.x = 48.5 + 1
+    expect(clarteSurSoi(sim, moi)).toBeGreaterThan(0) // avant
+    sim.monsters.push({ entityId: camarade.id } as unknown as Monster)
+    expect(clarteSurSoi(sim, moi)).toBeLessThan(NUIT.SEUIL_NOIR) // après : il ne compte plus
+  })
+
+  it('⑧ EN PLAINE NUE, le terme sur soi et le balayage coïncident AU BIT — et c’est tout ce que ça prouve', () => {
+    // ⚠ **FALSIFICATION JOUÉE, ET ELLE N'A PAS ROUGI** : retirer le terme sur soi du `max` — ou
+    // oublier l'argument `braise` de `clarteSurSoi` — laisse les 125 gardes de `lumiere`, `nuit`
+    // et `braise` VERTES. **Mais ce n'est PAS parce que le terme serait redondant : c'est un trou
+    // de couverture, et il est bouché par ⑨ ci-dessous** (corrigé le 2026-10-05 à l'audit de
+    // fusion ; mon énoncé d'origine en faisait un « fait structurel », ce qui était FAUX).
+    //
+    // Ce que cette garde-ci dit, et seulement ça : **en plaine nue**, le porteur étant dans
+    // `state.entities`, `lumiereDesBraises` le sert à distance nulle avec `partVisible` = 1, donc
+    // les deux chemins rendent exactement la même valeur. Dès que la vue du porteur sur SA PROPRE
+    // source est entamée — un corps contre un mur, un corps emmuré, un corps à terre, un corps
+    // inscrit comme figurant —, le balayage rend MOINS, et c'est le terme sur soi qui tranche.
+    const sim = nuitNoire()
+    const e = avatarBraisePleine(sim, 48.5, 48.5)
+    const parLeBalayage = lumiereDesBraises(sim, e.x, e.y, e.etage)
+    expect(partVisible(sim, 0, e.x, e.y, e.x, e.y, 0)).toBe(1) // LA PRÉMISSE de la coïncidence
+    expect(clarteSurSoi(sim, e)).toBe(parLeBalayage) // AU BIT, pas à l'epsilon
+    expect(parLeBalayage).toBeCloseTo(bulleDeBraise(e.braise!, 0), 12)
+    // ⚠ **ET LE TERME SERT AUSSI AU CLIENT, pour une autre raison** : il appelle `clarteSurSoiAt`
+    // avec sa position PRÉDITE, alors que les entités de sa façade sont restées à celle du
+    // SNAPSHOT. En marche l'écart est non nul, et comme le rayon de la braise rétrécit avec la
+    // charge, le client prédirait **plus sombre que l'autorité** juste au seuil — un refus de
+    // parade que l'autorité n'a pas prononcé (`etat-gel-lumiere.test.ts` L4).
+  })
+
+  it('⑨ LE TERME SUR SOI EST PORTANT DANS `/sim` AUSSI — contre un mur, le balayage voit MOINS que le porteur, et la PARADE bascule', () => {
+    // ⚠ **CE QUE CETTE GARDE FERME, ET POURQUOI ⑧ NE LE POUVAIT PAS.** ⑧ compare les deux
+    // chemins en PLAINE NUE, où `partVisible(soi → soi)` vaut 1 : ils y coïncident par
+    // construction, et c'est tout ce que le fichier éprouvait. Dès que le corps s'approche d'un
+    // occludeur, le balayage — qui paie un `partVisible` — rend MOINS que le terme sur soi, qui
+    // n'en paie pas (« il n'y a rien entre un corps et ce qu'il porte »).
+    //
+    // **MESURÉ** (audit de fusion du 2026-10-05) : un corps qui marche vers un mur d'arête NORD
+    // s'arrête à **y = 48,3125** et sa part visible sur sa PROPRE source tombe à **0,8125** ; sous
+    // une pièce PLEINE posée sur sa tuile, à **0,5**. À l'EST-OUEST, en revanche, le même corps ne
+    // quitte pas **x = 48,5** (la collision ne le laisse pas approcher) et la part visible reste
+    // **1** — d'où le choix d'un mur nord ici. À 32 % de charge, le seuil du noir passe ENTRE les
+    // deux lectures : retirer `halo` du `max`, ou oublier `entity.braise` dans `clarteSurSoi`,
+    // fait rougir cette garde (les deux falsifications ont été jouées). ⚠ **« ET ELLE SEULE »
+    // est PÉRIMÉ** depuis que ⑩ existe (relevé par `determinisme-sim`, D3, MESURÉ) : *oublier
+    // `entity.braise`* rougit bien ⑨ **seule**, mais *retirer le halo du `max`* rougit **⑨ ET ⑩**.
+    const F = 0.32 // halo 0,32 ≥ seuil ; 0,32 × 0,8125 = 0,26 < seuil — la fenêtre est choisie
+    const sim = nuitNoire()
+    const moi = avatarBraisePleine(sim, 48.5, 48.5)
+    moi.braise!.charge = Math.round(F * chargePleine(0))
+    mur(sim, 48, 48, EDGE_N)
+    // ON NE POSE PAS LE CORPS, ON LE FAIT MARCHER : la position doit être celle que la collision
+    // produit, pas une que j'aurais choisie. ⚠ Et on marche AVANT de parer — `block` met la
+    // démarche à l'arrêt, donc un pas demandé la garde haute ne bouge pas d'un pouce.
+    for (let t = 0; t < 120; t++) step(sim, [{ entityId: moi.id, dx: 0, dy: -1 }])
+    const e = ent(sim, moi.id)
+    // LES TROIS PRÉMISSES, AFFIRMÉES ET NON SUPPOSÉES :
+    expect(e.y).toBeLessThan(48.5) // il a vraiment avancé vers le mur
+    expect(partVisible(sim, 0, e.x, e.y, e.x, e.y, 0)).toBeLessThan(1) // sa source colle la bande
+    expect(lumiereDesBraises(sim, e.x, e.y, e.etage)).toBeLessThan(NUIT.SEUIL_NOIR) // balayage seul : NOIR
+    // LA LOI : le porteur voit son propre halo EN ENTIER, et il pare.
+    expect(clarteSurSoi(sim, e)).toBe(bulleDeBraise(e.braise!, 0))
+    expect(clarteSurSoi(sim, e)).toBeGreaterThanOrEqual(NUIT.SEUIL_NOIR)
+    step(sim, [{ entityId: e.id, dx: 0, dy: 0, block: true }])
+    expect(ent(sim, moi.id).blocking).toBe(true)
+  })
+
+  it('⑦ LE HALO NE CHAUFFE RIEN, ET NE COÛTE RIEN (B-A14 ③ : porter sa lumière est gratuit)', () => {
+    // ⚠ DEUX BRAS, ET SANS LE SECOND LA CLAUSE EST VERTE SUR UN CORPS QUI NE CONSOMME RIEN.
+    // ⚠ Et mon premier montage prenait `nuitNoire()` pour « un air doux » : le froid y mord, donc
+    // la charge descendait — la garde accusait le halo d'une vidange qui était celle de B-R8.
+    // La PRÉMISSE de chaque bras est donc affirmée sur `cransExiges`, pas supposée.
+    const doux = makeSim()
+    doux.cycleOffset = cycleOffsetForStartHour(12, jourDeSaison(doux))
+    const a = avatarBraisePleine(doux, 48.5, 48.5)
+    expect(cransExiges(doux, a.x, a.y, a.etage)).toBe(0) // PRÉMISSE : il ne fait pas froid ici
+    const avant = a.braise!.charge
+    for (let t = 0; t < 200; t++) step(doux, [{ entityId: a.id, dx: 0, dy: 0 }])
+    expect(ent(doux, a.id).braise!.charge).toBe(avant) // le halo brûle, la charge ne bouge pas
+    // LE CONTRÔLE POSITIF : le même run dans un air FROID descend bien — donc la boucle ci-dessus
+    // n'était pas inerte, elle était gratuite.
+    const froid = nuitNoire()
+    const b = avatarBraisePleine(froid, 48.5, 48.5)
+    expect(cransExiges(froid, b.x, b.y, b.etage)).toBeGreaterThan(0) // PRÉMISSE : il fait froid
+    for (let t = 0; t < 200; t++) step(froid, [{ entityId: b.id, dx: 0, dy: 0 }])
+    expect(ent(froid, b.id).braise!.charge).toBeLessThan(avant)
+    // ET LA CHALEUR N'A PAS BOUGÉ D'UN BIT : la braise couvre une DEMANDE, elle ne chauffe pas le
+    // monde — `fireBubble` ne connaît que les foyers posés.
+    // ⚠ Les deux lignes qui suivent sont VRAIES PAR CONSTRUCTION (aucun foyer dans ce montage) :
+    // elles écrivent la loi, elles ne la prouvent pas. Ce qui la prouve est le `fireBubble` des
+    // gardes de la balise (`braise.test.ts`, « le plateau ne sort PAS dans le monde de base »).
+    expect(fireBubble(doux, 48.5, 48.5)).toBe(0)
+    expect(fireBubble(froid, 48.5, 48.5)).toBe(0)
+  })
+
+  it('⑩ `clarteDeCeQuOnPorte` EST le terme sur soi — au bit, et le rendu s’en sert de plancher (B-R13d)', () => {
+    // ⚠ **POURQUOI CETTE GARDE EXISTE, ET CE QU'ELLE A DÉJÀ ATTRAPÉ.** La loi *« il doit être
+    // éclairé par sa torche ou une braise qu'il porte lui-même »* (Alexis, 2026-10-05) a
+    // désormais DEUX lecteurs : `clarteSurSoiAt` ici, et le CORPS à l'écran, qui en fait un
+    // PLANCHER sur ce qu'il lit dans le champ de la GI. Deux lecteurs, donc une seule fonction —
+    // et le `max` en gardait pourtant une **copie inline** jusqu'au 2026-10-05. Une copie dérive
+    // en silence, et c'est N2bis (« l'écran n'est jamais plus clair que la sim ») qui en paierait
+    // le prix : le plancher du rendu est un MINORANT pris sur l'autorité, il ne vaut que tant
+    // qu'il EST l'autorité.
+    //
+    // ⚠ **DEUX PRÉCISIONS QUE L'AUDIT A DÛ M'IMPOSER.** ⓐ La forme d'avant n'était pas le
+    // ternaire que j'avais écrit, c'étaient **deux `max` séquentiels** contre `lumiere`
+    // (`if (surSoi > lumiere) … ; if (halo > lumiere) …`) : le refacto n'a donc pas *extrait* le
+    // `max(surSoi, halo)`, il l'a **créé**. ⓑ Les deux formes **divergent sur NaN** — halo NaN +
+    // torche vive : le séquentiel rend 1, le ternaire rend 0. L'équivalence au bit tient donc
+    // **parce que `bulleDeBraise` ne rend jamais NaN** (MESURÉ : 0 NaN sur 1 040 appels d'un
+    // balayage incluant NaN, ±Inf et des charges négatives ; c'est le garde `!(d < r)` qui le
+    // fait). Le jour où elle en rendrait un, ce refacto cesserait d'être inerte **en silence**,
+    // et dans le sens « le porteur perd sa torche ».
+    //
+    // ⚠ **ON INTERROGE UN POINT, PAS UN CORPS, ET C'EST LA PRÉMISSE** : sans entité dans la sim,
+    // `lumiereDesBraises` rend 0, donc le terme sur soi est seul à porter la valeur. Avec un
+    // corps posé, les deux chemins coïncident en plaine nue (⑧) et la garde ne verrait plus
+    // lequel des deux a parlé.
+    // ⚠⚠ **MA PREMIÈRE VERSION DE CETTE GARDE NE POUVAIT PAS ROUGIR SUR CE QU'ELLE DISAIT
+    // GARDER** (relevé par `determinisme-sim`, D2, MESURÉ par mutation). Elle comparait
+    // `clarteSurSoiAt(…)` à `clarteDeCeQuOnPorte(…)` — or la première **APPELLE** la seconde :
+    // on comparait X à `max(0, X)`, vert sous **toute** réécriture du corps. Mutation jouée
+    // (`return t + b`) : un seul rouge, et c'était la ligne littérale `toBe(1)`. Mutation
+    // « remettre une copie inline identique » : **142/142 VERT**.
+    //
+    // La loi se compare donc à une **formule GELÉE ÉCRITE ICI**, qui ne partage pas une ligne
+    // avec la production. Si l'une des deux bouge, la garde rougit — c'est tout son but.
+    const attendu = (torche: boolean, br: typeof b): number => {
+      const halo = (BRAISE.CLARTE_PLEINE * br.charge) / chargePleine(br.niveau)
+      return torche ? (1 > halo ? 1 : halo) : halo
+    }
+    const sim = nuitNoire()
+    expect(sim.entities.length).toBe(0) // PRÉMISSE : personne, donc aucun balayage ne sert ce point
+    const b = braiseNeuve(0)
+    const plein = chargePleine(0)
+    let vus = 0
+    for (const f of [1, 0.75, 0.5, 0.25, 0.1]) {
+      for (const torche of [false, true]) {
+        b.charge = Math.round(f * plein)
+        const porte = clarteDeCeQuOnPorte(torche, b)
+        expect(porte).toBeGreaterThan(0) // CONTRÔLE : le balayage ci-dessous n'est pas vide
+        expect(porte).toBe(attendu(torche, b)) // LA LOI, contre une formule gelée hors production
+        expect(clarteSurSoiAt(sim, sim.tick, RX, RY, torche, undefined, b)).toBe(porte) // le `max` la prend
+        vus++
+      }
+    }
+    expect(vus).toBe(10) // le balayage a vraiment eu lieu
+    // LES DEUX MOITIÉS, ET LEUR `max` : une torche vive vaut 1 (tout profil linéaire vaut son
+    // sommet au contact), une braise vaut SA CHARGE — jamais 1 par privilège.
+    b.charge = plein
+    expect(clarteDeCeQuOnPorte(false, b)).toBe(bulleDeBraise(b, 0))
+    expect(clarteDeCeQuOnPorte(true, undefined)).toBe(1)
+    expect(clarteDeCeQuOnPorte(true, b)).toBe(1) // la torche domine, pas la somme
+    b.charge = 0
+    expect(clarteDeCeQuOnPorte(true, b)).toBe(1) // une braise vide ne retire rien à la torche
+    // ⚠ **ET À MAIN VIDE, BRAISE VIDE, LA LOI NE DONNE RIEN** — c'est ce qui fait que la nuit
+    // noire survit à l'étape 7 : elle ne meurt pas d'une exception, elle recule là où la braise
+    // tient. Un corps sans braise du tout (sauvegarde d'avant l'étape 4) est traité pareil.
+    expect(clarteDeCeQuOnPorte(false, b)).toBe(0)
+    expect(clarteDeCeQuOnPorte(false, undefined)).toBe(0)
+    // LA MONOTONIE EN CHARGE — c'est elle que le rendu dépense en « le halo se vide tout seul ».
+    let precedent = -1
+    for (let c = 0; c <= plein; c += Math.floor(plein / 16)) {
+      b.charge = c
+      const v = clarteDeCeQuOnPorte(false, b)
+      expect(v).toBeGreaterThan(precedent)
+      precedent = v
+    }
+    expect(precedent).toBe(clarteDeCeQuOnPorte(false, { ...b, charge: plein }))
+  })
+
 })

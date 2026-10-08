@@ -31,6 +31,8 @@ import { fireGlow, sunDirection, moonDirection, daylight, lueurDeLune, heureCano
 import type { HeureSolaire } from '../../render/lighting'
 import { axesFeu } from '../../render/feu-variante'
 import { TORCHE_LIGHT_TILES, forceDeTorche } from '../../render/torche'
+import { LIGHT_RATIO, forceDeBraise, rayonEcranDeBraise } from '../../render/braise-halo'
+import type { PorteurDeBraise } from './braise-ground-glow'
 import type { PorteurDeTorche } from './torche-ground-glow'
 import { TILE_PX } from '../../render/framing'
 
@@ -306,6 +308,30 @@ const TORCHE_Z = TILE_PX * 1.1
  *  TILES` 5 → 10) : elle touche deux fois plus de fûts, chacun deux fois moins fort — le halo
  *  s'étale au lieu de brûler ce qui est à un pas (voir l'en-tête de `render/torche.ts`). */
 const TORCHE_INTENSITE = 0.45
+
+/**
+ * Borne dure des BRAISES portées (B-R13c). Le budget du manager est de 40 (`main.ts`) et il est
+ * désormais ENTIÈREMENT réparti : Feux 24, soleil et lune 2, lucioles 3, torches 4, gueules 4
+ * (`GUEULE_MAX`) — il reste exactement **trois** créneaux, et les voici.
+ *
+ * ⚠ Trois suffisent sans serrer, parce que les deux populations sont DISJOINTES : un corps qui
+ * tient une torche vive n'apparaît pas dans cette liste (`porteursDeBraise` ①). Un joueur coûte
+ * donc UNE lumière portative, jamais deux, et la coop tient sept porteurs à l'écran avant qu'une
+ * source commence à manquer. Au-delà, même dégradation que la torche : la flaque au sol et le
+ * trou du voile restent (ils ne coûtent rien au `LightsManager`), donc le porteur se voit encore.
+ */
+const BRAISE_MAX = 3
+/** À hauteur de CEINTURE : une braise se porte à la main ou au flanc, plus bas qu'une torche
+ *  (`TORCHE_Z`, l'épaule) et plus haut qu'un foyer dans l'herbe. L'écart se lit sur les fûts. */
+const BRAISE_Z = TILE_PX * 0.85
+/**
+ * L'intensité — **celle de la torche**, et pour la même raison que l'alpha de sa flaque : au
+ * CONTACT les deux sources sont égales dans la sim, et ce qui les sépare est leur PORTÉE (le rayon
+ * d'une braise vient de `rayonDeBraise`, trois fois plus court). ⚠ J'y avais mis 0,3 « sous les
+ * 0,45 de la torche » — une hiérarchie d'amplitude que l'autorité démentit, et qui sous-éclairait
+ * le porteur. `forceDeBraise` porte déjà la charge : c'est elle qui fait la différence, en jeu.
+ */
+const BRAISE_INTENSITE = TORCHE_INTENSITE
 // LA FLAMME EST AU-DESSUS DES BÛCHES, PAS DESSUS. Le point-light du Feu était posé au CENTRE de
 // la tuile du foyer — donc pile sur le sprite des rondins. Résultat : lumière de face, la normal
 // map des bûches ne « réagissait » pas (dot(normale, lumière) ~uniforme → aplati). On décale la
@@ -379,6 +405,8 @@ export class DynamicLighting {
   private moon: Phaser.GameObjects.Light
   private feux = new Map<number, Phaser.GameObjects.Light>()
   private torches = new Map<number, Phaser.GameObjects.Light>()
+  /** Une lumière par porteur de BRAISE (B-R13c) — population disjointe de `torches`. */
+  private braises = new Map<number, Phaser.GameObjects.Light>()
   /** Les sources du jour aux gueules, par rang de gueule visible (voir `SousTerre`). */
   private gueules: Phaser.GameObjects.Light[] = []
   private wasActive = false
@@ -433,6 +461,10 @@ export class DynamicLighting {
     /** SOUS TERRE (le joueur à l'étage −1) : le ciel s'éteint, les gueules éclairent — voir
      *  `SousTerre`. `null` dehors, et c'est le défaut : l'Atelier des plans ne descend pas. */
     sousTerre: SousTerre | null = null,
+    /** LES BRAISES PORTÉES (B-R13c) — résolues par l'appelant, qui les partage avec la flaque au
+     *  sol et le trou du voile, comme les torches. Liste DISJOINTE de `torches` : voir
+     *  `porteursDeBraise` ① dans `WorldScene`. */
+    braises: PorteurDeBraise[] = [],
   ): void {
     if (!active) {
       if (this.wasActive) {
@@ -595,6 +627,44 @@ export class DynamicLighting {
       if (vus.has(id)) continue
       this.scene.lights.removeLight(light)
       this.torches.delete(id)
+    }
+
+    // LES BRAISES PORTÉES (B-R13c) — le même patron que les torches, à deux écarts près :
+    //   • SON RAYON VIENT DE LA SIM (`rayonEcranDeBraise` → `rayonDeBraise`), donc il FOND avec
+    //     la charge. C'est la seule lumière du jeu dont la portée bouge en jeu, et c'est voulu :
+    //     la charge a deux canaux (B-A18 ②), le sommet et l'emprise. ⚠ Le JOUR, lui, n'entre pas
+    //     dans ce rayon (comme la torche, dont la portée est fixe) : il n'agit que par la force.
+    //   • elle est plus BASSE (`BRAISE_Z`) et plus faible (`BRAISE_INTENSITE`) qu'une torche.
+    const vusB = new Set<number>()
+    let nB = 0
+    for (const p of braises) {
+      if (nB >= BRAISE_MAX) break
+      // SOUS TERRE IL FAIT NUIT À TOUTE HEURE — le même `0` que la torche, et pour le défaut
+      // exactement mesuré le 2026-09-02 : sans lui, à midi dans le noir d'une salle, la source
+      // du porteur était éteinte pour Light2D et son corps restait blanc-gris sous sa lumière.
+      const jour = sousTerre ? 0 : day
+      const force = forceDeBraise(p.braise, jour, now, p.id * 2.9)
+      const rayon = rayonEcranDeBraise(p.braise, LIGHT_RATIO)
+      if (force <= 0 || rayon <= 0) continue
+      nB++
+      vusB.add(p.id)
+      let light = this.braises.get(p.id)
+      if (!light) {
+        light = this.scene.lights.addLight(0, 0, 0, 0xffffff, 0, BRAISE_Z)
+        this.braises.set(p.id, light)
+      }
+      light.x = p.x
+      light.y = p.y
+      light.radius = rayon * TILE_PX
+      // Un rouge incandescent, sans bleu — la MÊME logique que la flaque : le bleu délave, et
+      // c'est le décalage vers le rouge qui distingue une braise d'une torche (1.0, 0.62, 0.3).
+      light.color.set(1.0, 0.48, 0.2)
+      light.intensity = BRAISE_INTENSITE * force
+    }
+    for (const [id, light] of this.braises) {
+      if (vusB.has(id)) continue
+      this.scene.lights.removeLight(light)
+      this.braises.delete(id)
     }
   }
 

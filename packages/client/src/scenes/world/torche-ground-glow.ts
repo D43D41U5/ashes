@@ -74,7 +74,9 @@ const EDGE_COLOR: readonly [number, number, number] = [0xe0, 0x6c, 0x1c]
  *  d'un poing, pas un foyer. Elle ne doit jamais laver la terre en beige.
  *  DIVISÉ PAR DEUX le 2026-08-26 (0,55 → 0,28) en échange du rayon doublé : à surface
  *  quadruplée, garder l'alpha aurait fait de la flaque une clairière beige de six tuiles. */
-const GLOW_ALPHA_SCALE = 0.28
+export const TORCHE_ALPHA_SCALE = 0.28
+/** @deprecated nom local — `TORCHE_ALPHA_SCALE` est le nom partagé (la flaque de la braise le reprend). */
+const GLOW_ALPHA_SCALE = TORCHE_ALPHA_SCALE
 
 const TEX_KEY = 'fx-torche-ground'
 function ensureTexture(scene: Phaser.Scene): void {

@@ -83,6 +83,18 @@ export interface LumiereDeCave {
   couleurDuJour: number
   /** La torche en main, en px MONDE, avec son battement ; `null` sans torche. */
   torche: { x: number; y: number; force: number } | null
+  /**
+   * LA BRAISE PORTÉE (B-R13c), en px MONDE, avec son battement et son ÉCHELLE ; `null` sans
+   * braise — et toujours `null` quand `torche` ne l'est pas : les deux populations sont
+   * disjointes (une torche vive domine la braise, voir `porteursDeBraise` ① dans `WorldScene`).
+   *
+   * ⚠ **ELLE PORTE UNE ÉCHELLE ET LA TORCHE N'EN A PAS**, parce que son rayon est un fait de la
+   * SIM qui FOND avec la charge (B-A18 ②). `echelle` est son rayon rapporté à celui de la brosse
+   * de la torche (`TORCHE_CAVE_TUILES`), dont elle réemploie le disque — exactement le patron
+   * d'`echelleFeu` plus bas. Le `percer` de ce module rééchelonne déjà chaque brosse par le zoom
+   * à chaque image : une échelle de plus n'y ajoute aucun grain.
+   */
+  braise: { x: number; y: number; force: number; echelle: number } | null
   /** Le corps du joueur, en px monde. */
   joueur: { x: number; y: number } | null
   /** LES FEUX DE LA SALLE (G-R7, le bivouac), en px MONDE dessinés, avec le battement de leur
@@ -326,9 +338,9 @@ export class CaveVeil {
       this.dt.erase(g, (t.a * TILE_PX - v.x) * zoom - 1, (t.r * TILE_PX - v.y) * zoom - 1)
     }
     let n = 0
-    const percer = (b: { key: string; side: number }, wx: number, wy: number, alpha: number): void => {
-      if (alpha <= 0.002) return
-      const dia = b.side * GRAIN_PX * zoom
+    const percer = (b: { key: string; side: number }, wx: number, wy: number, alpha: number, echelle = 1): void => {
+      if (alpha <= 0.002 || echelle <= 0) return
+      const dia = b.side * GRAIN_PX * zoom * echelle
       const tx = (wx - v.x) * zoom
       const ty = (wy - v.y) * zoom
       const marge = dia / 2
@@ -347,6 +359,10 @@ export class CaveVeil {
     // une lumière, elle porte plus loin que l'œil dans le noir.
     if (lum.joueur) percer(this.pres, lum.joueur.x, lum.joueur.y, 1 - NOIR_ALPHA)
     if (lum.torche) percer(this.torche, lum.torche.x, lum.torche.y, TORCHE_PIC * lum.torche.force)
+    // LA BRAISE PORTÉE (B-R13c) : le MÊME disque que la torche, à SON échelle — qui fond avec la
+    // charge. Elle bat par son alpha, jamais par sa taille : `force` porte le battement, `echelle`
+    // ne porte que la charge quantifiée (`render/braise-halo.ts`).
+    if (lum.braise) percer(this.torche, lum.braise.x, lum.braise.y, TORCHE_PIC * lum.braise.force, lum.braise.echelle)
     // Le bivouac (G-R7) : un feu de la salle perce comme la torche, en plus grand, et BAT par son
     // alpha (`force`, le battement de sa flamme) — jamais par sa taille.
     for (const f of lum.feux) percer(this.feu, f.x, f.y, TORCHE_PIC * f.force)
@@ -363,14 +379,36 @@ export class CaveVeil {
     champ: { readonly lift: number } | null,
   ): void {
     if (lum.torche) {
+      // ⚠ LA TAILLE SE REPOSE ICI, elle n'est plus acquise à la naissance : la braise portée
+      // partage ces deux images et les RÉTRÉCIT à son échelle (branche suivante). Sans cette
+      // ligne, un porteur qui rallume une torche gardait la lueur rabougrie de sa braise.
+      const plein = this.braiseSide * GRAIN_PX
       this.braise
         .setPosition(lum.torche.x, lum.torche.y)
+        .setDisplaySize(plein, plein)
         .setAlpha(Math.min(1, BRAISE_ALPHA * lum.torche.force))
         .setVisible(true)
       // La chaleur suit l'agonie de la flamme ; plafonnée à 1, elle ne bat qu'à peine.
       this.chaleur
         .setPosition(lum.torche.x, lum.torche.y)
+        .setDisplaySize(plein, plein)
         .setAlpha(Math.min(1, CHALEUR_ALPHA * Math.min(1, lum.torche.force)))
+        .setVisible(true)
+    } else if (lum.braise) {
+      // LA BRAISE PORTÉE réemploie les deux MÊMES images que la torche (elles sont exclusives :
+      // voir `LumiereDeCave.braise`), à son échelle. ⚠ `setDisplaySize` à chaque image, et non à
+      // la naissance comme pour les feux de la salle : c'est la seule lueur du jeu dont la taille
+      // bouge en jeu, et elle ne bouge que par paliers (`partQuantifiee`).
+      const cote = this.braiseSide * GRAIN_PX * lum.braise.echelle
+      this.braise
+        .setPosition(lum.braise.x, lum.braise.y)
+        .setDisplaySize(cote, cote)
+        .setAlpha(Math.min(1, BRAISE_ALPHA * lum.braise.force))
+        .setVisible(true)
+      this.chaleur
+        .setPosition(lum.braise.x, lum.braise.y)
+        .setDisplaySize(cote, cote)
+        .setAlpha(Math.min(1, CHALEUR_ALPHA * Math.min(1, lum.braise.force)))
         .setVisible(true)
     } else {
       this.braise.setVisible(false)

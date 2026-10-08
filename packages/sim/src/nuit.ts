@@ -21,7 +21,14 @@
  *     **la sim apprend l'ombre** (spec `lumiere-globale.md`, LG-R11, LG-R12 ; `lumiere.ts`).
  *     Derrière un mur, en nuit aveugle, on ne pare plus ;
  *   · **la torche en main** — à bout de bras, donc à plein sur son porteur ; et **les torches
- *     des autres avatars** (LG-R18), à la portée de l'écran, comme un feu qu'on porte.
+ *     des autres avatars** (LG-R18), à la portée de l'écran, comme un feu qu'on porte ;
+ *   · **la braise qu'on PORTE** (B-R13c, étape 7, 2026-10-05) — un cône dont la CHARGE est le
+ *     sommet et le rayon (`bulleDeBraise`), donc une source qui s'éteint en se vidant : la
+ *     barre de crans est aussi une barre de vision. Et la braise des autres, au même titre.
+ *     ⚠ C'est elle qui a fait tomber le `if (torche) return 1` qui ouvrait `clarteSurSoiAt` :
+ *     une EXCEPTION ne peut pas coexister avec un profil, sinon la torche gardait un privilège
+ *     que la braise n'a pas. Le remplacement est inerte au bit pour la torche — tout profil
+ *     linéaire vaut 1 au contact.
  *
  * ⚠ CE N'EST PAS UN WARD (bible `I3`, et les trois interdits de `torche.md`). La torche ne
  * repousse RIEN et ne chauffe RIEN : les monstres se comportent à l'identique qu'on la porte
@@ -53,7 +60,8 @@ import { bulleDuFeu, isSheltered } from './temperature'
 import { estFoyer } from './pieces'
 import { auMemeEtage, connecteurAt, marchableAEtage, niveauDeLaTuile, niveauDuCorps, palierDuSol } from './etages'
 import { heldSlot } from './inventory-actions'
-import { lumiereDesTorches, partVisible } from './lumiere'
+import { lumiereDesBraises, lumiereDesTorches, partVisible } from './lumiere'
+import { bulleDeBraise, type Braise } from './braise'
 import { estTorcheVive } from './torche'
 import { dayTicksAt, gameTimeAt, NIGHT_RAMP_TICKS, partDeNuit, TICKS_PER_CYCLE } from './time'
 import type { Entity, SimState } from './sim'
@@ -309,8 +317,11 @@ export function clarteSurSoiAt(
   /** LE PLANCHER DU CORPS (spec `etages.md`). Absent ≡ le sol de la tuile (T-R3), donc tout
    *  l'existant. Sous la roche, le jour n'entre que par la gueule ; au-dessus, le ciel entier. */
   etage?: number,
+  /** LA BRAISE QUE CE CORPS PORTE (B-R13c) — son halo au contact vaut sa charge. Absente ≡ un
+   *  corps qui n'en porte pas : une sauvegarde d'avant l'étape 4, ou un POINT de la carte qu'on
+   *  interroge sans corps (ce que font les gardes du couvert et de la cave). */
+  braise?: Braise,
 ): number {
-  if (torche) return 1 // à bout de bras : rien n'éclaire plus près
   // ═══ LE CIEL N'ENTRE PAS SOUS UN TOIT (E-R13, branche B1 — Alexis, 2026-09-02) ═══
   //
   // C'est le seul endroit où la loi s'applique, et c'est voulu : `clarteDuCiel` reste ce que le
@@ -329,8 +340,110 @@ export function clarteSurSoiAt(
   // LES TORCHES DES AUTRES (LG-R18, Alexis, 2026-09-16) : en multi, la torche d'un autre avatar
   // éclaire à l'écran tout autour de lui — la sim la voit donc aussi, au max, jamais en somme.
   const torches = lumiereDesTorches(state, x, y, etage)
-  const lumiere = feu > torches ? feu : torches
+  // ═══ LE TERME SUR SOI — CE QU'ON PORTE, AU CONTACT (d = 0) ═══
+  //
+  // ⚠ C'était un `if (torche) return 1` en tête de fonction jusqu'au 2026-10-05 : une
+  // EXCEPTION, et c'est elle que B-R13c remplace par un profil (la braise ne pouvait pas
+  // entrer au `max` tant qu'une source sortait de la fonction avant lui).
+  //
+  // La valeur ne change pas d'un bit pour la torche : tout profil linéaire vaut **1 au
+  // contact**, donc `1` n'était pas une valeur posée à la main mais le profil lu en d = 0.
+  // ⚠ **ET CE N'EST INERTE QU'À UNE CONDITION, qu'il faut écrire parce qu'elle est implicite** :
+  // que TOUS les autres termes du `max` restent ≤ 1 — `clarteDuCiel` × `partDuCiel`, les deux
+  // balayages (`partVisible` ≤ 1), `bulleDuFeu` (`fireWarmthFactor` ∈ {0, EMBER, 1}) et
+  // `BRAISE.CLARTE_PLEINE`. Porter ce dernier au-dessus de 1 ferait de l'ancien `return 1` et du
+  // `max` deux fonctions différentes. ⚠ **ET LES TROIS GARDES QUE JE CITAIS ICI NE LE COUVRENT
+  // PAS** (relevé par `determinisme-sim`, D4, MESURÉ par mutation `CLARTE_PLEINE: 1.5`) :
+  // `nuit.test.ts` S1, `cave.test.ts:156` et `lumiere.test.ts` T1 restent **VERTES**, parce que
+  // chacune vide la braise ou l'omet — aucune ne peut voir un sommet > 1. Le danger EST gardé,
+  // mais par **⑨, ⑩ et « UN CÔNE DE PENTE FIXE »** (`braise.test.ts`), qui sont les seules à
+  // faire porter la valeur par une braise chargée.
+  // *(Ce commentaire créditait « B-A18 ① contrôle positif » : FAUX — ① ne tient aucune torche.
+  // Corrigé à l'audit de fusion du 2026-10-05.)*
+  //
+  // ⚠ **ET CE TERME NE SE DÉLÈGUE PAS AUX DEUX BALAYAGES**, qui servent pourtant le porteur à
+  // d = 0, pour DEUX raisons distinctes et toutes deux mesurées :
+  //   · ils paient un `partVisible`, et le terme sur soi non (« il n'y a rien entre un corps et
+  //     ce qu'il porte ») — or la part visible d'un corps sur sa PROPRE source tombe à 0,8125
+  //     quand il colle un mur nord/sud, à 0,5 sous une pièce pleine, et les deux boucles
+  //     écartent un corps à terre ou un figurant. À 32 % de charge, le seuil du noir passe
+  //     ENTRE les deux : `lumiere.test.ts` ⑨ le garde, parade comprise ;
+  //   · le CLIENT appelle avec sa position PRÉDITE alors que les entités de sa façade sont
+  //     restées à celle du SNAPSHOT. En marche l'écart est non nul, et comme le rayon de la
+  //     braise rétrécit avec la charge, le client prédirait **plus sombre que l'autorité**
+  //     exactement au seuil — un refus de parade que l'autorité n'a pas prononcé (L4).
+  // LA BRAISE DES AUTRES (B-R13c, le miroir exact de LG-R18) : en coop, la braise d'un camarade
+  // éclaire autour de lui comme sa torche — la sim la voit donc aussi, au max, jamais en somme.
+  const braises = lumiereDesBraises(state, x, y, etage)
+  // ═══ LA BRAISE SUR SOI (B-R13c, étape 7 — tranché par Alexis le 2026-10-05, issue ⓐ) ═══
+  //
+  // Son profil en d = 0, c'est-à-dire `CLARTE_PLEINE × charge/plein` : c'est ici, et ici
+  // seulement, que la barre de crans devient aussi une barre de VISION — une ressource, deux
+  // lectures. Et c'est pour ça qu'elle n'est JAMAIS 1 par privilège, comme la torche l'était :
+  // un corps à braise vide est aveugle, et la décroissance est VRAIE.
+  //
+  // ⚠ **CE QUE CETTE LIGNE CHANGE AU JEU, ET C'EST ASSUMÉ, PAS DÉCOUVERT** (`braise.md` § 5.21) :
+  // au camp, une braise pleine rend TOUJOURS la parade — et c'est de l'arithmétique, pas une
+  // mesure (au contact le profil vaut son sommet, donc `CLARTE_PLEINE ≥ SEUIL_NOIR` suffit).
+  // Ce qui EST mesuré : la nuit noire pesait **24,7 %** des relevés du monde joué avant cette
+  // ligne (4 144 sur 16 800). **La nuit noire ne disparaît pas,
+  // elle CHANGE DE NATURE** : elle ne mord plus que là où la braise se vide, c'est-à-dire en
+  // altitude et loin d'une balise. C'est la pression que l'Ascension veut, posée là où elle
+  // veut — et c'est pourquoi les gardes de nuit aveugle disent désormais leur prémisse à voix
+  // haute (« un corps SANS braise », « braise vide ») au lieu de la supposer.
+  //
+  // ⚠ **ET CE TERME N'EST PAS REDONDANT AVEC `lumiereDesBraises` — mon énoncé d'origine le
+  // disait « prouvé redondant (B-A18 ⑧) », et la mesure le DÉMENT** (audit de fusion du
+  // 2026-10-05). ⑧ ne vaut qu'en PLAINE NUE, où `partVisible(soi → soi)` = 1. Quatre états
+  // MESURÉS où le balayage rend MOINS que le porteur, parce qu'il paie un `partVisible` que le
+  // terme sur soi ne paie pas : contre un mur d'arête nord/sud (×0,8125, atteint EN MARCHANT —
+  // le corps s'arrête à y = 48,3125), emmuré sous une pièce pleine (×0,5), un corps à terre
+  // (`hp ≤ 0`, écarté de la boucle) et un corps inscrit comme figurant (idem). À 32 % de charge
+  // le premier fait basculer la parade : gardé par `lumiere.test.ts` ⑨.
+  let lumiere = feu > torches ? feu : torches
+  if (braises > lumiere) lumiere = braises
+  // ═══ LES DEUX TERMES SUR SOI, EN UN SEUL APPEL (B-R13d) ═══
+  //
+  // La torche et la braise sont les deux moitiés d'une MÊME grandeur — « ce que ce corps porte » —,
+  // et depuis que le rendu s'en sert de plancher elle a deux lecteurs. Elle vit donc sous un nom,
+  // et on l'APPELLE : le `max` en gardait une copie inline jusqu'au 2026-10-05, ce qui faisait
+  // deux fonctions là où la loi est une. Un plancher d'écran tiré d'une copie dérive en silence,
+  // et c'est N2bis qui en paierait le prix — gardé au bit par `lumiere.test.ts` ⑩.
+  const porte = clarteDeCeQuOnPorte(torche, braise)
+  if (porte > lumiere) lumiere = porte
   return lumiere > ciel ? lumiere : ciel
+}
+
+/**
+ * ═══ CE QU'UN CORPS REÇOIT DE CE QU'IL PORTE (B-R13d) — UNE LOI, DEUX LECTEURS ═══
+ *
+ * *« Oui il doit être éclairé par sa torche ou une braise qu'il porte lui-même »* (Alexis,
+ * 2026-10-05). C'est le terme SUR SOI du `max` de `clarteSurSoiAt`, extrait sous un nom parce
+ * qu'il a désormais un second lecteur : **le rendu**, qui s'en sert de PLANCHER sur la lumière
+ * que le corps d'un porteur lit dans le champ de la GI.
+ *
+ * ⚠ **POURQUOI CE N'EST PAS `clarteSurSoiAt` TOUT ENTIER, alors que c'était la formulation de la
+ * décision.** La clarté entière prend aussi le CIEL et les feux ALENTOUR. En plancher de rendu,
+ * son plus grand terme serait parfois le ciel — et le plancher se pose dans le champ, c'est-à-dire
+ * **à la teinte d'une flamme** (`GI.TEINTE_FEU`) : un corps sous la lune prendrait un plancher
+ * ORANGE venu du clair de lune. Le terme sur soi, lui, EST une flamme par nature — sa teinte est
+ * légitime, et c'est exactement ce que la décision nomme (« sa torche », « une braise qu'il porte
+ * lui-même »). Les autres termes n'ont pas besoin de plancher : le champ les porte déjà, puisqu'ils
+ * sont dans `sourcesGi`.
+ *
+ * ⚠ **ET IL NE PAIE PAS DE `partVisible`, délibérément** : *« il n'y a rien entre un corps et ce
+ * qu'il porte »* — c'est la raison même pour laquelle ce terme existe à côté des deux balayages
+ * (voir le long commentaire ci-dessus, et `lumiere.test.ts` ⑨, qui MESURE les quatre états où le
+ * balayage rend moins que le porteur).
+ *
+ * Une torche vive vaut **1** (tout profil linéaire vaut son sommet au contact) ; une braise vaut
+ * **son profil en d = 0**, c'est-à-dire sa charge — jamais 1 par privilège, puisqu'un corps à
+ * braise vide est aveugle.
+ */
+export function clarteDeCeQuOnPorte(torche: boolean, braise?: Braise): number {
+  const t = torche ? 1 : 0
+  const b = braise !== undefined ? bulleDeBraise(braise, 0) : 0
+  return t > b ? t : b
 }
 
 /**
@@ -341,5 +454,5 @@ export function clarteSurSoiAt(
  * que la chasse nocturne, et pour la même raison (`nighthunt.preys`).
  */
 export function clarteSurSoi(state: SimState, entity: Entity): number {
-  return clarteSurSoiAt(state, state.tick, entity.x, entity.y, estTorcheVive(heldSlot(entity)), niveauDuCorps(state.map, entity))
+  return clarteSurSoiAt(state, state.tick, entity.x, entity.y, estTorcheVive(heldSlot(entity)), niveauDuCorps(state.map, entity), entity.braise)
 }

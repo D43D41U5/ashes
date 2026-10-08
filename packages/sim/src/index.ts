@@ -159,6 +159,10 @@ export { AMBIANT_HYPOTHERMIE, airNonBorneAt, ambientTemperature, baselineTempera
 // que plein). C'est la seule dette que l'étape 4 laisse, et elle est de rendu, pas de règle.
 export { airDeLaDemande, airRessenti, cransExiges } from './temperature'
 export { braiseNeuve, chargePleine, cransCouverts, cransMax, type Braise } from './braise'
+// LE TROISIÈME MÉTIER — LE HALO (B-R13c, étape 7). Le client en DÉRIVE ses rayons au lieu de
+// s'en écrire un second : N2bis interdit un écran plus clair que la sim, et le seul moyen que ce
+// soit vrai PAR CONSTRUCTION est que les deux lisent la même fonction.
+export { bulleDeBraise, fractionDeCharge, multDuRayon, rayonDeBraise } from './braise'
 // LA LUMIÈRE (spec `lumiere-globale.md`) : la sim apprend l'ombre. Le client lit ICI le motif de
 // la source étendue, le grain et la portée de la torche (LG-R12, LG-R18) — jamais une copie.
 export { MOTIF_SOURCE, OCCLUDEUR, occlusionAuGrain, partVisible, lumiereDesTorches, seTientAuSol, estUnePorte } from './lumiere'
@@ -250,6 +254,7 @@ export {
   lumiereDuFeu,
   clarteSurSoi,
   clarteSurSoiAt,
+  clarteDeCeQuOnPorte,
   partDuCiel,
 } from './nuit'
 export { FIRE, COOK_SLOT } from './balance'

@@ -659,6 +659,18 @@ export class SnapshotView {
    * manque, elle l'applique. (Le patron de `niveauAt` juste au-dessus.)
    */
   clarteAt: ((x: number, y: number, etage: number) => number | undefined) | null = null
+  /**
+   * ═══ CE QUE CHAQUE CORPS REÇOIT DE CE QU'IL PORTE (B-R13d) ═══
+   *
+   * `clarteDeCeQuOnPorte` de `/sim`, par id d'entité — le PLANCHER de la lumière que le corps d'un
+   * porteur lit dans le champ. Poussée par `WorldScene`, qui tient les entités et sait ce que
+   * chacune a en main ; absente ou sans entrée ≡ 0, c'est-à-dire tout corps qui ne porte rien.
+   *
+   * ⚠ **ELLE NE DÉPEND D'AUCUNE POSITION**, et c'est ce qui la rend simple : `clarteDeCeQuOnPorte`
+   * ne prend que la torche et la braise. Pas de question « position prédite ou du snapshot ? »,
+   * contrairement à `clarteSurSoiAt` (L4) — il n'y a rien à interpoler.
+   */
+  soiParCorps: ReadonlyMap<number, number> | null = null
   /** Les bascules gel/dégel des nœuds gélifs (voir `render/flore-gel.ts`). */
   private readonly transitionsFlore = new TransitionsFlore()
   /** Les reflets du monde (R13) — pool par frame, posé par WorldScene avec la couche d'eau. */
@@ -1369,7 +1381,7 @@ export class SnapshotView {
         avanceAllure(o.allure, p.x, p.y)
         hVol = this.syncCerf(o, id, now)
       }
-      this.syncActor(o.sprite, p.x, p.y, o.textureKey, o.crouch, this.reveilFx?.enfouissementDe(id, now) ?? 0, hVol, o.etage)
+      this.syncActor(o.sprite, p.x, p.y, o.textureKey, o.crouch, this.reveilFx?.enfouissementDe(id, now) ?? 0, hVol, o.etage, id)
       this.montrerLeCorps(o.sprite, corpsVu(o.etage, this.sousRoche, this.etageDuRegard))
     }
   }
@@ -1418,7 +1430,7 @@ export class SnapshotView {
       // AVEC SON ÉTAGE : sans lui, le corps repassait au palier de sa tuile jusqu'à l'image
       // suivante (strate et position de surface pour un corps de salle — 249 lectures sur 702
       // snapshots, MESURÉ le 2026-09-20), et la visée lit la silhouette entre deux images.
-      this.syncActor(record.sprite, l.x, l.y, aff.key, false, 0, 0, record.etage)
+      this.syncActor(record.sprite, l.x, l.y, aff.key, false, 0, 0, record.etage, entityId)
     }
     return aff.hauteurBond
   }
@@ -1449,7 +1461,27 @@ export class SnapshotView {
      *  même lecture que `niveauDuCorps` de /sim) — donc tout l'existant. Contrairement au bond,
      *  il déplace le sprite ET son tri : on se tient VRAIMENT plus haut. */
     etage?: number,
+    /**
+     * L'ID D'ENTITÉ de ce corps, quand il en a un — et c'est par lui que **la vue résout
+     * elle-même** ce que ce corps reçoit de sa torche ou de sa braise (B-R13d, `soiParCorps`).
+     *
+     * ⚠⚠ **IL REMPLACE UN PARAMÈTRE `soi` PASSÉ PAR L'APPELANT, ET C'EST LA CORRECTION D'UN
+     * DÉFAUT RÉEL** (relevé par `da-rendu` le 2026-10-05, MESURÉ des deux côtés du raccord).
+     * Un paramètre de queue a fait exactement ce qu'un paramètre de queue fait : **être
+     * oublié** — par les **trois** appels du JOUEUR (`WorldScene` 1791, 3518, 4738), c'est-à-dire
+     * par le seul corps qui existe en solo. `soiParCorps` contenait bien son entrée (**0,9611**
+     * à minuit, braise pleine, relevé en page), `syncActor` la jetait : *« la braise doit aussi
+     * éclairer le joueur »* était littéral dans le code, et tout mon chiffrage était passé par
+     * l'oracle CPU, qui court-circuite ce raccord.
+     *
+     * Résolu ICI, un appelant ne peut plus se tromper que d'une façon : ne pas dire QUEL corps
+     * il pose — ce qui est un énoncé, pas un oubli silencieux. Absent ≡ un corps sans entité
+     * (un leurre, un pion de sol), donc rien de porté.
+     */
+    corpsId?: number,
   ): void {
+    // LE PLANCHER DE CE QU'ON PORTE, RÉSOLU PAR LA VUE (B-R13d) — jamais par l'appelant.
+    const soi = corpsId !== undefined ? this.soiParCorps?.get(corpsId) ?? 0 : 0
     const footprint = ACTOR_FOOTPRINTS[textureKey] ?? DEFAULT_FOOTPRINT
     const p = actorPlacement(x, y, footprint, TILE_PX, BALANCE.AVATAR_HITBOX_DEPTH_TILES)
     const feetY = y + BALANCE.AVATAR_HITBOX_DEPTH_TILES / 2
@@ -1593,7 +1625,7 @@ export class SnapshotView {
     // du sud — au bord d'une terrasse, un palier plus bas. C'est le même « lu au CENTRE, pas aux
     // pieds » que le palier applique quinze lignes plus haut (T-R7).
     if (this.gi !== null) {
-      this.poserLeCorps(sprite, { x: p.px, y: piedDansSaTuile(y * TILE_PX, p.py), arete: 0, lift }, this.feuDeLImage())
+      this.poserLeCorps(sprite, { x: p.px, y: piedDansSaTuile(y * TILE_PX, p.py), arete: 0, lift, soi }, this.feuDeLImage())
     }
     // L'OMBRE DE CONTACT suit l'acteur (rattachée par `setData` à la création). `syncActor`
     // est le seul point où pieds/depth/emprise sont connus — la placer ici couvre joueur ET
@@ -1737,7 +1769,7 @@ export class SnapshotView {
         // le snapshot de son émergence qui crée son sprite — et le poser à pleine hauteur
         // pour se reposer sur `interpolate` à la frame suivante ferait dépendre la géométrie
         // d'un ordre d'appels. Elle doit être juste par construction.
-        this.syncActor(sprite, entity.x, entity.y, 'spr-npc', false, this.reveilFx?.enfouissementDe(entity.id, now) ?? 0, 0, entity.etage)
+        this.syncActor(sprite, entity.x, entity.y, 'spr-npc', false, this.reveilFx?.enfouissementDe(entity.id, now) ?? 0, 0, entity.etage, entity.id)
         record = {
           sprite, shadow, textureKey: 'spr-npc', crouch: false,
           buffer: [{ at: now, x: entity.x, y: entity.y }],
@@ -1808,7 +1840,7 @@ export class SnapshotView {
         const l = latest(record.buffer)
         // AVEC SON ÉTAGE (voir `syncCerf`) : le sanglier de salle qui passe en charge ne remonte
         // pas d'une image au palier de sa tuile.
-        this.syncActor(record.sprite, l.x, l.y, key, false, 0, 0, entity.etage)
+        this.syncActor(record.sprite, l.x, l.y, key, false, 0, 0, entity.etage, entity.id)
       }
       // LE REGARD (R9bis) : le sprite se met dans le sens où la bête regarde —
       // la sim oriente déjà `facing` (marche, gel qui fixe, sentinelle qui
@@ -1961,6 +1993,9 @@ export class SnapshotView {
     sac.ciel = corps.ciel === true ? 1 : 0
     // Un CORPS, jamais un sol (LG-R14) : les sols s'arment par `armerLeSol`, depuis les couches.
     sac.sol = 0
+    // LE PLANCHER DE CE QU'ON PORTE (B-R13d) — 0 pour tout corps qui ne porte rien, donc pour
+    // tout sauf un avatar. Il vient de `/sim` et n'est jamais recalculé ici.
+    sac.soi = corps.soi ?? 0
     if (import.meta.env.DEV) this.poses.set(sprite, corps)
   }
 

@@ -568,7 +568,7 @@ export class EtageLayer {
     // ① LA ROCHE — le masque d'abord (il se remplit avec la salle), les bandes ensuite.
     this.ouvrirLeMasque(v)
 
-    const lum: LumiereDeCave = this.lumiere ?? { ciel: 1, teinteDuJour: 0xffffff, couleurDuJour: 0xffffff, torche: null, joueur: null, feux: [] }
+    const lum: LumiereDeCave = this.lumiere ?? { ciel: 1, teinteDuJour: 0xffffff, couleurDuJour: 0xffffff, torche: null, braise: null, joueur: null, feux: [] }
     this.tLueur += Math.min(100, Math.max(0, dtMs)) / 1000
     this.tuilesVues.length = 0
     this.gueulesVues.length = 0

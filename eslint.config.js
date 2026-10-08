@@ -57,7 +57,14 @@ export default tseslint.config(
   // session faisaient donc rougir `pnpm lint` pour du code que personne ne relira jamais et
   // qui ne sera jamais commité. Ce qui n'est pas versionné n'a pas à tenir la barre du dépôt ;
   // les deux listes disent désormais la même chose.
-  { ignores: ['**/dist/**', '**/node_modules/**', 'scratchpad/**', 'tools/__*'] },
+  //
+  // `.claude/worktrees/**` : LES WORKTREES DES SOUS-AGENTS. Un worktree est une COPIE ENTIÈRE
+  // du dépôt : sans cette ligne, `pnpm lint` relit six arbres en plus du nôtre — et ⚠ le motif
+  // `tools/__*` ci-dessus **ne les protège pas**, parce qu'il est ancré à la racine de la config
+  // et ne descend pas dans `.claude/worktrees/<agent>/tools/`. C'est ce qui faisait rougir le
+  // lint le 2026-10-05 : sept erreurs, les sept dans les sondes jetables d'un sous-agent, aucune
+  // dans le dépôt. Un worktree tient la barre quand on fusionne SON diff, pas depuis chez nous.
+  { ignores: ['**/dist/**', '**/node_modules/**', 'scratchpad/**', 'tools/__*', '.claude/worktrees/**'] },
   ...tseslint.configs.recommended,
 
   // ── Garde-fou n°1 du projet : /sim est PUR (GDD §11) ──────────────────

@@ -27,7 +27,7 @@ Deux décisions actées la fondent (2026-08-18) :
 
 ### Le froid (R4-R5)
 
-- **R4 — La nappe abaisse la température de BASE.** Dans le disque, `baselineTemperature` subit `−BRUME.COLD_MALUS` (assez pour passer sous `HYPOTHERMIA` en plaine de jour dès l'acte II). Conséquences **par construction**, zéro code neuf côté vitals : le Feu et la source chaude planchent (`ambientTemperature` est un max) — la bulle d'un Feu actif est un refuge ; la `tenue_hiver` planche l'ambiant à `TENUE_FLOOR` — suivre la Brume bien vêtu est survivable, mal vêtu on fuit ; la dérive (`driftStep`) laisse le temps de sortir — pas de mort-couperet.
+- **R4 — La nappe abaisse la température de BASE.** Dans le disque, `baselineTemperature` subit `−BRUME.COLD_MALUS` (assez pour passer sous `HYPOTHERMIA` en plaine de jour dès l'acte II). Conséquences **par construction**, zéro code neuf côté vitals : le Feu et la source chaude planchent (`ambientTemperature` est un max) — la bulle d'un Feu actif est un refuge ; ⚠ ~~la `tenue_hiver` planche l'ambiant à `TENUE_FLOOR` — suivre la Brume bien vêtu est survivable, mal vêtu on fuit~~ **PÉRIMÉ LE 2026-10-03 (`braise.md` B-R15) : `TENUE_FLOOR` N'EXISTE PLUS.** La tenue ne planche plus rien ; c'est la **braise** qui couvre le froid, et le vêtu meurt comme le nu (B-A9). Dans la nappe, ce qui tient est donc le feu, la balise, ou des crans ; la dérive (`driftStep`) laisse le temps de sortir — pas de mort-couperet.
 - **R5 — Effet de bord à garder à l'œil (pas à empêcher).** Le gate d'attraction des Cendreux (spec feu-station S5) lit `baselineTemperature` : une nappe froide peut moduler leur comportement à proximité. Thématiquement juste (« la Brume est hantée ») — à couvrir d'un test de non-régression, pas d'une garde.
 
 ### Les signes et le retrait (R6-R8)
@@ -46,7 +46,7 @@ Deux décisions actées la fondent (2026-08-18) :
 - **A2** — Le flux RNG des autres systèmes est bit-identique avant/après le chantier (suites replay/events existantes vertes sans retouche).
 - **A3** — `brume_annonce` précède la levée d'au moins un crépuscule→aube ; `faunaQuiet` couvre le corridor dès l'annonce.
 - **A4** — Un avatar sans tenue au centre de la nappe : température sous `HYPOTHERMIA`, PV qui baissent ; il sort, il récupère — la dérive laisse fuir.
-- **A5** — Les planchers tiennent : dans la bulle d'un Feu actif, aucun dégât ; avec `tenue_hiver`, jamais sous `TENUE_FLOOR`, donc jamais de dégât de froid.
+- **A5** — Les planchers tiennent : dans la bulle d'un Feu actif (ou d'une balise allumée, qui planche son rayon entier à `AMBIANT_DOUX`), aucun dégât. ⚠ ~~avec `tenue_hiver`, jamais sous `TENUE_FLOOR`~~ **RETIRÉ LE 2026-10-03** : `TENUE_FLOOR` est sorti du code avec B-R15, la seconde moitié de ce critère est donc SANS OBJET — et son contraire est désormais gardé (B-A9 : le vêtu meurt comme le nu, au bit).
 - **A6** — Au retrait : filon posé (type, stock, expiration paramétrés), gardé ; traînards jamais dissipés dans le champ de vision d'un avatar ; filon retiré après `FILON_JOURS`.
 - **A7** — Banc 6 cycles × 3 seeds : **zéro mort PNJ** par froid de nappe (le corridor tient les Feux à distance par construction — R3).
 - **A8** — `worldEvents=false` → aucune annonce, aucune nappe, aucun filon (un banc qui n'a pas demandé de guerre n'a pas non plus demandé de brume).

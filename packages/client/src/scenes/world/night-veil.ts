@@ -120,8 +120,16 @@ export interface VeilFire {
    * profond, ce qui est exactement ce que fait une flamme qui reprend.
    */
   force?: number
+  /**
+   * SA COULEUR DANS LE CHAMP (LG-R20), quand ce n'est pas une flamme — un essaim de lucioles.
+   * Absente, le champ prend `GI.TEINTE_FEU`. ⚠ Elle ne concerne QUE le champ : le trou du voile
+   * est un effacement, il n'a pas de teinte.
+   */
+  rgb?: readonly [number, number, number]
 }
 
+// LA CONVERSION voile → champ vit dans `render/gi/source-du-champ.ts` : PURE, donc prouvable
+// headless (ce fichier-ci importe Phaser).
 /** L'air passe JUSTE au-dessus de la lumière : on regarde le monde éclairé À TRAVERS la brume.
  *  Un demi-rang — jamais assez pour franchir la couche suivante, toujours assez pour trancher. */
 const AIR_OVER_LIGHT = 0.5

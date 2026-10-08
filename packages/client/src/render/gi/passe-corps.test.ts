@@ -8,13 +8,17 @@
  * Le `lire` des épreuves ENREGISTRE ses appels : c'est la seule façon de dire OÙ la passe est allée
  * chercher, et c'est précisément ce qui se perd en silence quand on recâble.
  */
+import { readFileSync } from 'node:fs'
 import { describe, expect, it } from 'vitest'
 import { EDGE_E, EDGE_N, EDGE_S } from '@ashes/sim'
 import { MUR_HT } from '../bati-art'
 import { DEMI_BANDE_TUILES, TILE_PX } from '../framing'
 import { composerM } from './champ-ref'
 import type { Rgb } from './corps-ref'
-import { estNonTrivial, pixelDuCorps, type CielDeLHeure, type LectureDuChamp, type OracleDuChamp, type SourcesDuPixel } from './passe-corps'
+import { avecCeQuOnPorte, estNonTrivial, pixelDuCorps, type CielDeLHeure, type LectureDuChamp, type OracleDuChamp, type PixelDuCorps, type SourcesDuPixel } from './passe-corps'
+import { GI } from './reglages'
+import { ambianteDeLHeure, luminanceDuVoile, rgbDeCouleur } from './corps-ref'
+import { ambientTint, daylight, heureCanonique, lueurDeLune, multiplicateurParCanal, voileDeNuit } from '../lighting'
 import { hauteurDeCrete, ligneDuPied, type CorpsPose, type Normale } from './sol-du-corps'
 
 const M = DEMI_BANDE_TUILES * TILE_PX
@@ -447,4 +451,170 @@ describe('un corps ne lit pas par-dessus une marche (LG-R14)', () => {
     pixelDuCorps(acteur(410), 434.5, LIGNE, plate.lire, CIEL, SOURCES, TEXEL, PLAT)
     expect(plate.appels.map((a) => a.x)).toEqual([434.5])
   })
+})
+
+/**
+ * ═══ B-R13d — UN PORTEUR EST ÉCLAIRÉ PAR CE QU'IL PORTE ═══
+ *
+ * *« Non le personnage est sombre comme s'il n'était pas éclairé »* (Alexis, 2026-10-05), sur un
+ * porteur de braise PLEINE, de nuit, debout dans sa propre flaque. La chaîne était branchée et
+ * juste — le défaut était que le CORPS ne lit que le champ, qui plafonne au pic d'effacement du
+ * voile (`profilFeu(0)` = 0,62) et où une lumière portée ne pèse que sa force (0,5).
+ *
+ * ⚠ **CE QUE LA SUITE PROUVAIT AVANT CE BLOC : RIEN.** Les 1866 gardes du client sont restées
+ * vertes à la livraison du plancher, et c'était NORMAL — aucune ne pose `soi`, donc toutes
+ * éprouvaient `soi = 0`, c'est-à-dire l'inertie. Une loi dont toute la couverture est l'inertie
+ * n'est pas gardée : elle est seulement inoffensive.
+ */
+describe('B-R13d — le plancher de ce qu’on porte, sous le pixel du corps', () => {
+  it('⑯ C’EST UN `max` PAR CANAL, INERTE À VIDE, ET IL MONTE À `TEINTE_FEU × soi`', () => {
+    const noir: Rgb = [0, 0, 0]
+    // INERTE : pas de braise, braise vide, et un `soi` absent (une façade d'avant B-R13d).
+    expect(avecCeQuOnPorte(noir, 0)).toBe(noir) // LA MÊME RÉFÉRENCE : zéro travail, zéro allocation
+    expect(avecCeQuOnPorte(noir, undefined)).toBe(noir)
+    const champLu: Rgb = [0.4, 0.32, 0.22]
+    expect(avecCeQuOnPorte(champLu, 0)).toBe(champLu)
+    // IL MONTE À LA CLARTÉ DE L'AUTORITÉ, POSÉE À LA TEINTE DE LA FLAMME — et c'est bien un
+    // plancher SCALAIRE : canal par canal divisé par sa teinte, on retrouve `soi` exactement.
+    for (const soi of [1, 0.75, 0.5, 0.25, 0.05]) {
+      const r = avecCeQuOnPorte(noir, soi)
+      expect(r[0] / GI.TEINTE_FEU[0]).toBeCloseTo(soi, 12)
+      expect(r[1] / GI.TEINTE_FEU[1]).toBeCloseTo(soi, 12)
+      expect(r[2] / GI.TEINTE_FEU[2]).toBeCloseTo(soi, 12)
+    }
+    // ⚠ LA TEINTE EST CELLE D'UN FEU, PAS UN GRIS — c'est la raison pour laquelle le plancher est
+    // le terme SUR SOI et non `clarteSurSoiAt` tout entier (voir l'en-tête de `nuit.ts`) : un
+    // corps sous la lune prendrait sinon un plancher orange venu du clair de lune.
+    expect(GI.TEINTE_FEU[0]).toBeGreaterThan(GI.TEINTE_FEU[2])
+    // `max` ET NON SOMME (N1) : un canal déjà plus clair que le plancher ne bouge pas d'un bit.
+    const clair: Rgb = [9, 9, 9]
+    expect(avecCeQuOnPorte(clair, 1)).toEqual(clair)
+    // …et le `max` est PAR CANAL, pas sur la luminance : un champ bleu garde son bleu et gagne le
+    // rouge de la flamme. Une garde scalaire aurait laissé passer un plancher qui écrase la teinte.
+    const bleu: Rgb = [0, 0, 5]
+    const mele = avecCeQuOnPorte(bleu, 1)
+    expect(mele[2]).toBe(5)
+    expect(mele[0]).toBe(GI.TEINTE_FEU[0])
+  })
+
+  it('⑰ SOUS LE PIXEL D’UN ACTEUR, LE CORPS COMPOSE PLUS CLAIR — et la charge le vide toute seule', () => {
+    // UN ACTEUR, c'est-à-dire `arete: 0` : la branche E, « lire le champ sous chacun de ses
+    // pixels » — la seule que prenne un avatar, un PNJ ou une bête (`snapshot-view.ts`).
+    // ⚠ `exactOptionalPropertyTypes` : un `soi: undefined` POSÉ n'est pas la même chose qu'un
+    // champ absent — et c'est bien l'absence qu'on éprouve (une façade d'avant B-R13d).
+    const acteur = (soi?: number): CorpsPose => (soi === undefined ? { x: 400, y: LIGNE, arete: 0 } : { x: 400, y: LIGNE, arete: 0, soi })
+    const nuit: CielDeLHeure = { mn: [0.002, 0.006, 0.022], a: 0, ambiante: 1e9 }
+    const noir = champ({ light: [0, 0, 0], directFace: [0, 0, 0] })
+    const lum = (c: CorpsPose): number => {
+      const px = pixelDuCorps(c, 12, LIGNE - 9, noir.lire, nuit, SOURCES, TEXEL, PLAT)
+      expect(px.ou).toBe('sousLePixel') // LA PRÉMISSE : on est bien en branche E
+      return (px.rgb[0] + px.rgb[1] + px.rgb[2]) / 3
+    }
+    // LA PRÉMISSE DU DÉFAUT, AFFIRMÉE : sans plancher, un corps dans un champ noir est noir — et
+    // c'est exactement ce qu'Alexis a vu, à ceci près qu'au jeu le champ valait 0,62 × 0,5.
+    const sansRien = lum(acteur())
+    expect(sansRien).toBeLessThan(0.01)
+    expect(lum(acteur(0))).toBe(sansRien) // braise VIDE ≡ pas de braise : AU BIT
+    // LA LOI : la charge éclaire, et par marches décroissantes jusqu'au noir.
+    let precedent = 1e9
+    for (const soi of [1, 0.75, 0.5, 0.25]) {
+      const v = lum(acteur(soi))
+      expect(v).toBeGreaterThan(sansRien * 10) // il n'est PLUS sombre
+      expect(v).toBeLessThan(precedent) // et ça se vide tout seul avec la charge
+      precedent = v
+    }
+    expect(lum(acteur(1))).toBeGreaterThan(0.3) // L'ORDRE DE GRANDEUR MESURÉ : 158,122,67 sur 255
+  })
+
+  it('⑱ ÇA NE TOUCHE QUE CE QUI PORTE — un corps sans `soi` dans la MÊME scène ne bouge pas d’un bit', () => {
+    // ⚠ C'EST LA TROISIÈME PROMESSE DE L'OPTION CHOISIE PAR ALEXIS (« ne touche que le CORPS »),
+    // et la seule qui se prouve ici : les deux autres — le trou du voile et la flaque au sol —
+    // n'ont pas de `soi` à passer, et c'est leur garde de source qui le dit (`braise-halo.test.ts`).
+    const { lire } = champ()
+    const sansSoi: CorpsPose = { x: 400, y: LIGNE, arete: 0 }
+    const avant = pixelDuCorps(sansSoi, 12, LIGNE - 9, lire, CIEL, SOURCES, TEXEL, PLAT)
+    const porteur: CorpsPose = { ...sansSoi, soi: 1 }
+    const apres = pixelDuCorps(porteur, 12, LIGNE - 9, lire, CIEL, SOURCES, TEXEL, PLAT)
+    expect(apres.rgb).not.toEqual(avant.rgb) // CONTRÔLE POSITIF : la scène n'est pas inerte
+    // Le voisin, relu APRÈS le porteur, est identique au caractère — la loi est locale au pixel.
+    expect(pixelDuCorps(sansSoi, 12, LIGNE - 9, lire, CIEL, SOURCES, TEXEL, PLAT).rgb).toEqual(avant.rgb)
+    // ⚠ **ET CE QUI SUIT EST UN CONSTAT, PAS UNE PRESCRIPTION — c'est cette garde qui a démenti
+    // mon en-tête.** J'avais écrit que le plancher « ne s'applique qu'en branche E, la branche
+    // `auPied` d'une face dressée ne le voit pas » : **FAUX**. Il se pose en ②bis, sur la lecture
+    // du champ, donc AVANT que la branche du feu direct ne soit choisie — une face dressée à qui
+    // on poserait un `soi` monterait elle aussi, et un corps sous le ciel seul (`ciel: true`)
+    // également, bien que son champ soit nul.
+    //
+    // Ce qui restreint vraiment la loi aux ACTEURS n'est pas ici, c'est l'ALIMENTATION : seul
+    // `snapshot-view.ts` écrit un `soi`, et seulement sur la pose d'un acteur (garde de source
+    // dans `braise-halo.test.ts`). L'écrire juste importe : le croire local au pixel ferait
+    // chercher la restriction dans le mauvais fichier le jour où du bâti portera une lumière.
+    const face = pixelDuCorps({ ...mur(EDGE_S), soi: 1 }, 437, rang(40), lire, CIEL, SOURCES, TEXEL, VERS_LE_SUD)
+    expect(face.ou).toBe('auPied')
+    expect(face.rgb).not.toEqual(pixelDuCorps(mur(EDGE_S), 437, rang(40), lire, CIEL, SOURCES, TEXEL, VERS_LE_SUD).rgb)
+    const toit: CorpsPose = { x: 400, y: LIGNE, arete: EDGE_S, famille: 'wall-bois', ciel: true }
+    expect(pixelDuCorps({ ...toit, soi: 1 }, 12, rang(17), lire, CIEL, SOURCES, TEXEL, PLAT).rgb)
+      .not.toEqual(pixelDuCorps(toit, 12, rang(17), lire, CIEL, SOURCES, TEXEL, PLAT).rgb)
+  })
+
+  it('⑲ POURQUOI IL PASSE PAR UNE PORTE DE NUIT — à midi, sans elle, il APLATIT le modelé du soleil', () => {
+    // ⚠ **CETTE CLAUSE EXISTE PARCE QUE J'ALLAIS LIVRER SANS LA PORTE, ET QU'ELLE EST MESURÉE.**
+    // `soi` ne dépend d'aucune heure (`clarteDeCeQuOnPorte` ne lit que la torche et la braise), et
+    // tout avatar naît avec une braise PLEINE : sans porte, le plancher serait à son maximum en
+    // plein midi. Les quatre autres couches de lumière portée, elles, sont toutes gatées par la
+    // nuit (`forceDeBraise` = `1 − day` × …, `torcheHoleRadius` × nuit, `jour = sousTerre ? 0 : day`).
+    //
+    // **CE QUI SE PASSE SANS PORTE, ET CE N'EST PAS UN SUR-ÉCLAIRAGE** : `partsDuCorps` compose
+    // `m = 1 − (1 − x)(1 − l)`, qui **sature déjà à 1** sous un ciel plein — donc sur une normale
+    // PLATE le pixel est identique au bit, et c'est ce qui rendait le défaut invisible à ⑯⑰⑱.
+    // Mais `sigma = m / (x + l)` **rétrécit** quand `l` monte, et la part de l'ASTRE se contracte
+    // au profit du PLAT : le modelé du soleil s'efface. Dans les DEUX sens, ce qui est le plus
+    // mauvais signe — la face à l'ombre se remplit, la face au soleil **s'assombrit**.
+    const h = heureCanonique(12)
+    const amb = ambientTint(h)
+    const lueur = lueurDeLune(h, 7)
+    const mn = multiplicateurParCanal(voileDeNuit(amb, lueur))
+    // `a` = `SHADOW_ALPHA × forceOmbre` dans `WorldScene` ; 0,42 est `SHADOW_ALPHA` relu à la
+    // source (`world/contact-shadow.ts`), qu'on ne peut pas importer ici — il tire Phaser.
+    const midi: CielDeLHeure = { mn: [mn[0], mn[1], mn[2]], a: 0.42, ambiante: luminanceDuVoile(rgbDeCouleur(ambianteDeLHeure(daylight(h), lueur))) }
+    expect(daylight(h)).toBe(1) // LA PRÉMISSE : c'est bien le plein jour
+    expect(mn[0]).toBeCloseTo(1, 6) // …et le voile de nuit est levé, donc `x` sature
+    const noir = champ({ light: [0, 0, 0], directFace: [0, 0, 0] })
+    const soleil: SourcesDuPixel = { astre: { x: 900, y: 200, z: 620 }, feu: null }
+    const px = (soi: number | undefined, n: Normale): PixelDuCorps =>
+      pixelDuCorps(soi === undefined ? { x: 400, y: LIGNE, arete: 0 } : { x: 400, y: LIGNE, arete: 0, soi }, 12, LIGNE - 9, noir.lire, midi, soleil, TEXEL, n)
+    // ① NORMALE PLATE : identique à 10⁻¹⁵ — ⚠ **et PAS au bit, ce que j'avais écrit** : la
+    // saturation (`m = 1`, donc `sigma × (x + l) = x + l`) est exacte dans ℝ et **fausse en
+    // IEEE754** ; résidu MESURÉ **5,5 × 10⁻¹⁷** sur le bleu, soit 1,4 × 10⁻¹⁴ de niveau sur 255.
+    // C'est la même leçon que `f × (1 − d/(R₀×f)) = f − d/R₀` (audit du 2026-10-05) : une
+    // identité algébrique n'est pas une identité flottante. Rien à l'œil, mais l'ÉNONCÉ compte.
+    for (let c = 0; c < 3; c++) expect(px(1, PLAT).rgb[c]!).toBeCloseTo(px(undefined, PLAT).rgb[c]!, 15)
+    expect(px(1, PLAT).fAstre).toBe(1) // la prémisse de l'angle mort : le facteur ne module pas
+    // ② NORMALE À L'OMBRE DU SOLEIL : la moitié sombre SE REMPLIT (×1,334 MESURÉ).
+    const ombre: Normale = { x: -1, y: 0.3, z: 0.4 }
+    expect(px(undefined, ombre).fAstre).toBe(0) // PRÉMISSE : cette face ne voit pas l'astre
+    const lOmbre = (p: PixelDuCorps): number => (p.rgb[0] + p.rgb[1] + p.rgb[2]) / 3
+    expect(lOmbre(px(1, ombre)) / lOmbre(px(undefined, ombre))).toBeGreaterThan(1.2)
+    // ③ ET LE PIRE : NORMALE AU SOLEIL, LE PLANCHER ASSOMBRIT (×0,873 MESURÉ). Un plancher qui
+    // SOUSTRAIT de la lumière en plein jour est faux dans n'importe quelle lecture de N2bis.
+    const auSoleil: Normale = { x: 0.5, y: -0.5, z: 0.7 }
+    expect(px(undefined, auSoleil).fAstre).toBeGreaterThan(1) // PRÉMISSE : cette face prend le soleil
+    expect(lOmbre(px(1, auSoleil))).toBeLessThan(lOmbre(px(undefined, auSoleil)))
+    // ④ LA PORTE, ELLE, EST DANS `WorldScene` — garde de SOURCE, parce que la quantité se lit sur
+    // la façade d'état du client et qu'un facteur retiré compile sans un mot.
+    //
+    // ⚠ **ET CE N'EST PAS `1 − day`, QUE J'AVAIS ÉCRIT D'ABORD** (relevé par `determinisme-sim`,
+    // MESURÉ) : `partDuCiel` ne rend 1 qu'à **ciel ouvert**. Sous un toit ou dans une maison à
+    // midi il rend **0**, donc le terme sur soi PORTE dans `/sim` — clarté **0,9722** avec une
+    // braise pleine contre **0** sans rien, parade rendue — là où `1 − day` mettait l'écran à 0,
+    // c'est-à-dire **plus sombre que l'autorité sous tout abri**. La porte juste se DÉRIVE du
+    // `max` de la sim : *ce que la lumière portée ajoute au-delà du ciel*, `porte − ciel`.
+    const ws = readFileSync(new URL('../../scenes/WorldScene.ts', import.meta.url), 'utf8')
+    expect(ws).toContain('const soi = porte - ciel')
+    expect(ws).toContain('cielDeLHeure * partDuCiel(gel, Math.floor(e.x), Math.floor(e.y), niveauDuCorps(gel.map, e))')
+    // …et la clause souterraine à part est PARTIE, parce qu'elle est subsumée (`partDuCiel` = 0
+    // sous la roche). Qu'elle ne revienne pas : deux portes pour une loi, c'est la divergence.
+    expect(ws).not.toContain('nuitDuPorte')
+  })
+
 })

@@ -265,7 +265,20 @@ async function pixelAt(page, x, y) {
  * refuse tout le reste plutôt que de rendre des couleurs fausses.
  */
 async function regionAt(page, clip) {
-  const png = await page.screenshot({ timeout: 90000, clip }) // 90 s : cf. pixelAt
+  return decoderPng(await page.screenshot({ timeout: 90000, clip })) // 90 s : cf. pixelAt
+}
+
+/**
+ * LE DÉCODEUR, SÉPARÉ DE LA PRISE — même code, deux appelants (2026-10-05).
+ *
+ * ⚠ C'est `halo-braise` qui l'a exigé, et la raison est une MESURE : sous SwiftShader une prise
+ * de vue est l'opération chère du run, et vouloir à la fois GARDER la photo et LIRE ses pixels
+ * en coûtait DEUX par relevé (`page.screenshot({ path })` puis `regionAt`). Avec le décodeur
+ * détaché, un seul `page.screenshot()` rend un tampon qu'on écrit sur le disque ET qu'on lit au
+ * pixel — donc la photo qu'on garde est, au bit, celle qu'on a mesurée. (Boucle endormie les deux
+ * prises auraient rendu la même image ; ce n'est pas la justesse qui l'exige, c'est le temps.)
+ */
+function decoderPng(png) {
   const w = png.readUInt32BE(16)
   const h = png.readUInt32BE(20)
   if (png[24] !== 8 || (png[25] !== 6 && png[25] !== 2) || png[28] !== 0) return null
@@ -615,7 +628,1689 @@ const outilsDessus = ({ ev, ok }) => {
   return { lireLesZones, moyGrain, jugerLeDessus }
 }
 
+/**
+ * ═══ LE HALO DE LA BRAISE PORTÉE, MESURÉ À L'IMAGE — `halo-braise`, `gi-halo-braise`,
+ *     `halo-braise-cave` (2026-10-05, étape 7 de `braise.md`, B-R13c / B-A18) ═══
+ *
+ * L'étape 7 a été livrée avec ses 22 gardes et sans qu'aucune image n'ait été VUE. Ce scénario
+ * rend des NOMBRES — la leçon de la barre de crans est fraîche : dix-sept gardes DOM vertes pour
+ * un rendu illisible.
+ *
+ * ═══ LA MESURE N°1 : LE PORTEUR S'ÉCLAIRE-T-IL ? (demande d'Alexis, 2026-10-05) ═══
+ *
+ * *« La braise n'éclaire pas le joueur. »* Le SOL et le CORPS passent par des chaînes
+ * DIFFÉRENTES, et c'est tout le piège de cette mesure :
+ *   · le SOL par le trou du voile de nuit et par la flaque au sol — la flaque est dessinée à la
+ *     profondeur du sol, donc elle ne compose JAMAIS par-dessus le corps ;
+ *   · le CORPS par Light2D (`gi=0`, seule couche qui ait une carte de normales) ou, sous `gi`,
+ *     par le CHAMP LU SOUS SES PIEDS — plus, dans les deux cas, le trou du voile, qui est tendu
+ *     PAR-DESSUS les sprites et dont le percement éclaircit donc aussi ce qui est dessous.
+ *     ⚠ **ET NON PAR `view.feuxGi`, contrairement à ce que ce fichier a affirmé le 2026-10-05.**
+ *     VÉRIFIÉ À LA LIGNE : `snapshot-view.ts:1596` pose un acteur avec `arete: 0`, donc
+ *     `suitLaRegleDesFaces` rend FAUX (`sol-du-corps.ts:396` : `c.arete !== 0 && …`) et
+ *     `expositionAuFeu` rend `null` — la branche E. Le commentaire du site le dit en clair :
+ *     « un acteur lit le champ sous ses pieds, sans face ni dessus ». `feuxGi` ne gouverne que
+ *     les corps régis par la règle des faces (fûts, socles, bâti d'arête non nulle). La
+ *     « fourche de l'ordre de `feuxGi` » que j'avais escaladée N'EXISTE PAS : on lisait la
+ *     bonne ligne pour le mauvais corps.
+ * Un halo qui allume la terre et laisse le porteur noir est donc un état parfaitement possible.
+ * On mesure le corps SUR SON MASQUE DE SILHOUETTE (les texels OPAQUES de sa texture, reprojetés
+ * à l'écran) et non sur sa boîte : une boîte contient du sol vu autour de la silhouette, et ce
+ * sol-là reçoit la flaque — il rendrait un ΔL positif sur un corps resté noir. C'est exactement
+ * le faux positif qu'il faut écarter avant de répondre à la question posée.
+ *
+ * ═══ LA HIÉRARCHIE NE SE LIT PLUS SUR LA LUMINOSITÉ — ELLE SE LIT SUR LA PORTÉE ═══
+ *
+ * ⚠ **L'AMPLITUDE A ÉTÉ CORRIGÉE DEUX FOIS LE 2026-10-05, EN SENS CONTRAIRES, ET IL FAUT LES
+ * DEUX ERREURS POUR COMPRENDRE LA FORME LIVRÉE — parce que la troisième version est la seule
+ * qui ne confonde pas DEUX ÉCHELLES.**
+ *
+ *   · ① `TROU_FORCE = 0,34` : une **double peine** — portée courte ET sommet divisé par trois —
+ *     infligée précisément à la couche qui éclaire les corps. Elle contredisait l'autorité :
+ *     `bulleDeBraise(b, 0) = CLARTE_PLEINE × f`, donc **1 à charge pleine**, exactement comme
+ *     `1 − d/P` en d = 0 pour une torche et comme un Feu au contact.
+ *   · ② pousser ce **1** tel quel dans `veilFires` : l'erreur INVERSE, et elle n'est visible que
+ *     si l'on regarde ce que cette liste reçoit des autres. **Le rendu a sa propre échelle
+ *     d'amplitude** — un Feu y pousse 1, une torche y pousse `TORCHE_HOLE_FORCE` = **0,5**. Une
+ *     braise pleine à 1 creusait donc le voile comme un FEU, soit le DOUBLE d'une torche : la
+ *     hiérarchie qu'on prétendait défendre était retournée.
+ *   · ③ la forme livrée, qui est la composition des deux échelles au lieu du choix de l'une :
+ *     **`forceDuTrouDeBraise(braise) = TORCHE_HOLE_FORCE × bulleDeBraise(braise, 0)`**.
+ *
+ * **LES TROIS COUCHES SONT DONC DANS LA MÊME FORME — « l'échelle de la torche × le profil de
+ * l'autorité » —, et c'est ça qui compte pour cette mesure** : trou `TORCHE_HOLE_FORCE` (0,5)
+ * × `bulleDeBraise(·, 0)`, flaque `TORCHE_ALPHA_SCALE` (0,28) × `forceDeBraise`, point light
+ * `TORCHE_INTENSITE` (0,45) × `forceDeBraise`.
+ *
+ * ⚠ **CONSÉQUENCE POUR CE SCÉNARIO, ET ELLE CHANGE CE QU'UN ÉCART SIGNIFIE.** À charge pleine la
+ * **parité braise/torche au contact est vraie PAR CONSTRUCTION dans les trois couches** : ce
+ * n'est plus une prédiction de réglage, c'est une identité de code. Donc si l'image montre un
+ * écart au contact, **dans un sens ou dans l'autre**, ce n'est pas un désaccord de constantes —
+ * c'est un fait de RENDU que la loi ne prévoit pas (occlusion, ordre de composition, profondeur
+ * de tri, double peinture), et c'est à rapporter tel quel. C'est l'objet de la section ⑥.
+ *
+ * **PRÉDICTION ÉCRITE AVANT LE RUN** — ce qui doit sortir des chiffres :
+ *   · portées : braise `RAYON_BASE × TROU_RATIO` = **3 t** < torche `TORCHE_HOLE_TILES` = **4 t**
+ *     < Feu `HOLE_RADIUS_TILES` = **6 t** ;
+ *   · au CONTACT, à charge pleine : braise **= torche**, et par construction (ci-dessus), pas par
+ *     réglage. ⚠ **Tout écart, dans un sens OU DANS L'AUTRE, est un fait de rendu à rapporter** —
+ *     ni « la hiérarchie attendue » (elle ne vit plus là) ni une constante à retoucher.
+ *
+ * ═══ CE QU'IL MESURE D'AUTRE ═══
+ *
+ * ① **LE PROFIL EN ANNEAUX** — la luminance du SOL de 0 à 6 tuiles, 48 directions par anneau,
+ *    médiane et centiles. ⚠ **Un anneau et non une bande** (le patron de `feu-portee`) : la
+ *    source est un CORPS, dont le sprite occupe le centre et dont les voisins sont des fûts. Une
+ *    bande traverse ce qu'elle rencontre ; un anneau de 48 points le MÉDIANISE. Les points qui
+ *    tombent sur le sprite ou sous un élément DOM du HUD sont écartés NOMMÉMENT et comptés : un
+ *    anneau à 12 points sur 48 ne vaut pas un anneau plein.
+ * ② **LA PORTÉE LISIBLE**, mesurée sur l'image et non relue dans le code — la dernière tuile où
+ *    la médiane dépasse le fond de 10 % de l'écart total (la définition de `feu-portee`). C'est
+ *    le seul axe sur lequel la hiérarchie doit maintenant se lire.
+ * ③ **LA CHARGE 0 EST LE TÉMOIN EXACT, et c'est le cœur du montage.** Il n'existe aucun hook de
+ *    debug pour poser la charge (`grep debug_ packages/sim/src`), et en ajouter un exigerait un
+ *    audit `determinisme-sim`. Mais à charge nulle les QUATRE couches rendent zéro *par la loi*
+ *    (`forceDeBraise` → 0, `cellulesDeFlaque` → 0, le trou → 0, l'intensité → 0) : **une braise
+ *    vide est le même monde sans halo**, au même endroit, à la même nuit, caméra immobile. On
+ *    DESCEND donc l'échelle au lieu de la fabriquer — le Grand Froid vide la braise,
+ *    `debug_speed` paie le temps — et chaque relevé se soustrait au témoin AU PIXEL. C'est ce
+ *    qui rend la TEINTE de la lumière ajoutée mesurable, et pas seulement devinable.
+ *    ⚠ **LE TÉMOIN SE CHOISIT SUR `charge === 0`, JAMAIS SUR SON NOM** : si une vidange touche
+ *    son plafond, le relevé visé « 0 » garde une charge, et soustraire un halo PARTIEL à tous
+ *    les autres fausserait chaque ligne sans un seul `!!`. Les relevés sont nommés par la charge
+ *    MESURÉE, pas par la cible.
+ * ④ **L'ÉTAT DU RENDU, LU SUR LES OBJETS** (le patron de `nuit-plancher` : « une couche
+ *    invisible, à alpha nul ou au mauvais blend rendrait exactement le même noir »). Les pixels
+ *    disent ce qu'on voit, ces nombres disent QUI l'a peint. On relève `view.feuxGi` avec, mais
+ *    comme un FAIT et non comme la cause : elle ne gouverne pas un ACTEUR (voir ci-dessus).
+ *
+ * ═══ LES TROIS CHAÎNES DE RENDU, ET POURQUOI TROIS NOMS ═══
+ *
+ * `GI_URL` dérive `&gi=0` du NOM du scénario (`scenario.startsWith('gi')`), donc la chaîne se
+ * choisit par le nom et pas par un argument :
+ *   · `halo-braise`      → `gi=0` : voile de nuit + flaque + Light2D (la pile d'avant) ;
+ *   · `gi-halo-braise`   → le champ de la GI + la flaque, Light2D SUPPRIMÉ (`WorldScene` passe
+ *                          `composeGi ? [] : porteursBraise` au gestionnaire de lumières) ;
+ *   · `halo-braise-cave` → sous la roche : voile de cave (`LumiereDeCave.braise`) + flaque.
+ * Le régime effectif se RELÈVE au lieu de se supposer — c'est la première ligne du rapport.
+ *
+ * ═══ LES PIÈGES DU HARNAIS, TOUS PAYÉS AILLEURS ET RÉEMPLOYÉS ICI ═══
+ *
+ *   ⓐ **`loop.sleep()` À LA PREMIÈRE LIGNE** : il est lui-même un `evaluate`, et sous SwiftShader
+ *      un `evaluate` n'est plus ordonnancé dès que le fil du rendu bloque dans un appel GL.
+ *   ⓑ **`renderer.snapshot()` NE PEUT PAS SERVIR ICI** (et c'est pour ça qu'on n'imite pas
+ *      `etalonnage` à la lettre) : il ne se résout qu'à la fin de l'image SUIVANTE, donc boucle
+ *      endormie il ne revient JAMAIS — on aurait attendu dans la page, la faute capitale de ce
+ *      harnais. La seule recette qui présente est
+ *      `wake()` → laisser passer des images → `sleep()` → `page.screenshot`.
+ *   ⓒ **CHAQUE IMAGE PROUVE QU'ELLE EST FRAÎCHE** : `game.loop.frame` doit avoir avancé, sinon le
+ *      relevé lit le canevas PÉRIMÉ — et c'est ce qu'un `screenshot` rend sans se plaindre.
+ *   ⓓ **LE CADRE EST FIGÉ UNE FOIS, ET L'ANCRE DU MONDE EST VÉRIFIÉE À CHAQUE IMAGE.** Le centre
+ *      ne se relit pas (la flaque n'existe PAS à charge nulle, et le sprite ne tombe pas au même
+ *      pixel que la flaque : la jupe du billboard). Mais un clip identique ne prouve RIEN sur ce
+ *      qu'il y a dessous : il faut que la CAMÉRA et le CORPS n'aient pas bougé d'un demi-pixel.
+ *      On relève donc `worldView` et la place du corps, et la soustraction au pixel est REFUSÉE
+ *      si l'un des deux a dérivé — ce qui arrive en trois endroits connus : la marche d'entrée
+ *      dans la cave (qui ne s'arrête pas au même pas), le retour de téléportation après
+ *      l'allumage du feu, et tout rechargement silencieux du vite de dev.
+ *   ⓔ **LA VIDANGE DÉPLACE LE CALENDRIER** : 36 000 ticks font un jour de jeu, donc descendre la
+ *      charge d'un cran passe une minuit — et à ×16 un jour de jeu tient en deux minutes de
+ *      montre. On repose donc minuit À CHAQUE TOUR de la boucle de vidange, et non seulement
+ *      avant l'image : sans quoi le détecteur de blocage lirait « le froid ne mord pas » sur une
+ *      après-midi. Le JOUR se lit sur `lastTime.seasonDay`, jamais sur le « JOUR N » du HUD, que
+ *      la boucle endormie n'écrit pas.
+ *   ⓕ **DEUX IMAGES À CHARGE PLEINE, ET C'EST OBLIGATOIRE.** `partQuantifiee` prend un `floor` :
+ *      UN SEUL tick de froid fait tomber la flaque de 8/8 à 7/8 (14 cellules au lieu de 16). Le
+ *      8/8 ne s'observe donc QUE là où rien ne se vide — au jour 72, en Pluies. Mais ce jour-là
+ *      n'est PAS la même saison que l'échelle (jour 95+, Grand Froid) : le sol, le givre et la
+ *      canopée diffèrent, donc **soustraire le témoin d'hiver à l'image d'automne mesurerait la
+ *      SAISON, pas le halo**. On prend donc les deux : `plein-8-8` au jour 72 pour la géométrie
+ *      pleine et le contraste DANS SON PROPRE CADRE, et `plein-7-8` juste après le saut au jour
+ *      95 pour la soustraction au pixel. L'exclusion est tenue par une comparaison de
+ *      `seasonDay`, pas par un commentaire.
+ *   ⓖ **ON NE PRÉSUME PAS DU TAUX DE VIDANGE** : `debug_speed` plafonne à 16 dans le Worker, et
+ *      `trainer` a mesuré qu'à ×12 **boucle éveillée** le monde avançait à ×0,2 en tuant le
+ *      navigateur. Ici la boucle DORT ; on mesure le taux réel à ×4, ×8 et ×16 et on garde la
+ *      meilleure cadence OBSERVÉE.
+ *   ⓗ **ON RANGE LA TORCHE EN ATTENDANT L'ÉTAT DU RENDU, JAMAIS UNE HORLOGE** — la faute exacte
+ *      que `torche` a payée le 2026-10-05 : « 900 + 700 ms peuvent tenir DANS une seule image »,
+ *      si bien que le témoin lisait la torche encore en main. On attend que
+ *      `torcheGround.glows` soit vide ET `dynLight.torches` à zéro, et tout relevé de Feu qui
+ *      porte encore un état de torche est REFUSÉ.
+ */
+async function mesurerHaloDeBraise(page, { lieu }) {
+  if (!dev) { console.error('!! halo-braise exige --dev (debug_god, debug_set_season_day, debug_set_hour, debug_speed, debug_teleport)'); return }
+
+  // ⓐ ON ENDORT LA BOUCLE DÈS LA PREMIÈRE LIGNE (note « loop.sleep dès la première ligne »).
+  await page.evaluate(() => window.__BRAISES__.scene.game.loop.sleep())
+
+  // ── LES UNITÉS ──────────────────────────────────────────────────────────────────────────────
+  /** Luminance Rec. 709 sur du 8 bits — l'unité d'`etalonnage` et de `feu-portee`. */
+  const lum = ([r, v, b]) => 0.2126 * r + 0.7152 * v + 0.0722 * b
+  /** sRGB → linéaire, pour la luminance RELATIVE du contraste WCAG — la même unité que les
+   *  1,12 / 2,57 / 3,61 de la barre de crans, pour rester commensurable. */
+  const canalLin = (c) => { const s = c / 255; return s <= 0.04045 ? s / 12.92 : ((s + 0.055) / 1.055) ** 2.4 }
+  const lumRel = ([r, v, b]) => 0.2126 * canalLin(r) + 0.7152 * canalLin(v) + 0.0722 * canalLin(b)
+  const wcag = (a, b) => (Math.max(a, b) + 0.05) / (Math.min(a, b) + 0.05)
+  const moy = (xs) => (xs.length === 0 ? null : xs.reduce((a, b) => a + b, 0) / xs.length)
+  const ecart = (xs) => { const m = moy(xs); return m === null ? null : Math.sqrt(moy(xs.map((v) => (v - m) ** 2))) }
+  const pc = (xs, q) => { if (xs.length === 0) return null; const t = xs.slice().sort((a, b) => a - b); return t[Math.max(0, Math.min(t.length - 1, Math.floor(q * (t.length - 1))))] }
+  const f1 = (v, n = 6) => (v === null || v === undefined || Number.isNaN(v) ? '—'.padStart(n) : v.toFixed(1).padStart(n))
+  const f2 = (v, n = 6) => (v === null || v === undefined || Number.isNaN(v) ? '—'.padStart(n) : v.toFixed(2).padStart(n))
+  /** La teinte d'un vecteur RGB, en degrés (0 rouge, 30 orangé, 60 jaune), et sa chroma. */
+  const teinte = ([r, v, b]) => {
+    const max = Math.max(r, v, b), min = Math.min(r, v, b)
+    if (max <= 0 || max - min <= 0) return { h: null, chroma: 0 }
+    let h
+    if (max === r) h = (60 * ((v - b) / (max - min)) + 360) % 360
+    else if (max === v) h = 60 * ((b - r) / (max - min)) + 120
+    else h = 60 * ((r - v) / (max - min)) + 240
+    return { h, chroma: (max - min) / max }
+  }
+
+  let bon = true
+  const ok = (cond, texte) => { if (!cond) { bon = false; console.error(`!! ${texte}`) } else console.log(`   ✓ ${texte}`) }
+  const envoyer = (actions) => page.evaluate((as) => { for (const a of as) window.__BRAISES__.scene.sendAction(a) }, actions)
+  const hote = (m) => page.evaluate((x) => window.__BRAISES__.scene.send(x), m)
+  const TRACE = process.env.SMOKE_TRACE === '1'
+  const trace = (m) => { if (TRACE) console.log(`   · ${m}`) }
+  /** Le temps laissé à la boucle pour PRÉSENTER des images. Une image de champ GI coûte 3 à 6 s
+   *  en SwiftShader (en-tête du fichier) ; la pile d'avant en rend treize par seconde. */
+  const ATTENTE_IMAGE = Number(process.env.HALO_ATTENTE ?? (scenario.startsWith('gi') ? 20000 : 6000))
+  /** `balise` attend 90 s après un saut de jour : la recuisson de la carte (`recuireSuie`,
+   *  `rafraichirCimes`, le manteau) tient tout `evaluate` derrière l'image en cours. */
+  const ATTENTE_JOUR = Number(process.env.HALO_ATTENTE_JOUR ?? 90000)
+
+  // ═══ ① LE RÉGIME DE RENDU — relevé, jamais supposé ═══════════════════════════════════════════
+  const regime = await page.evaluate(() => {
+    const sc = window.__BRAISES__.scene
+    return {
+      gi: new URLSearchParams(location.search).get('gi'),
+      debugGi: sc.registry.get('debugGi') ?? null,
+      champ: sc.gi ? 'présent' : 'absent',
+      zoom: sc.cameras.main.zoom,
+      toile: { w: sc.scale.width, h: sc.scale.height },
+      flaqueMontee: Boolean(sc.braiseGround),
+      voileMonte: Boolean(sc.nightVeil),
+      BRAISE: window.__BRAISES__.sim?.BRAISE ?? null,
+    }
+  })
+  console.log(`\n── LE HALO DE LA BRAISE (${lieu}) — régime de rendu ──`)
+  console.log(`   gi=${regime.gi ?? '(absent)'} · debugGi ${regime.debugGi ?? '—'} · champ ${regime.champ} · flaque ${regime.flaqueMontee ? 'montée' : 'ABSENTE'} · voile ${regime.voileMonte ? 'monté' : 'ABSENT'}`)
+  console.log(`   toile ${regime.toile.w}×${regime.toile.h} · zoom ${regime.zoom} · BRAISE ${JSON.stringify(regime.BRAISE)}`)
+  console.log('   PRÉDICTION (écrite avant le run) : portées 3 t (braise) < 4 t (torche) < 6 t (Feu) ;')
+  console.log('   et au CONTACT, à charge pleine, braise = torche PAR CONSTRUCTION dans les trois couches —')
+  console.log('   trou 0,5 × profil, flaque 0,28 × force, light 0,45 × force. Tout écart au contact, dans un')
+  console.log('   sens ou dans l’autre, est un fait de RENDU (occlusion, composition, tri), pas une constante.')
+  ok(regime.flaqueMontee, 'la couche de flaque de braise est montée dans la scène')
+
+  // ═══ ② L'ÉTAT DU RENDU, SUR LES OBJETS ══════════════════════════════════════════════════════
+  const etat = () => page.evaluate(() => {
+    const sc = window.__BRAISES__.scene
+    const moi = (sc.lastEntities ?? []).find((e) => e.id === sc.playerId)
+    const r = sc.scale.canvas.getBoundingClientRect()
+    const cam = sc.cameras.main
+    const k = r.width / sc.scale.width
+    const g = sc.braiseGround?.glows?.get(sc.playerId) ?? null
+    const L = sc.dynLight?.braises?.get(sc.playerId) ?? null
+    const T = sc.torcheGround?.glows?.get(sc.playerId) ?? null
+    const sp = sc.playerSprite
+    const bb = sp.getBounds()
+    const B = window.__BRAISES__.sim?.BRAISE ?? null
+    const niveau = moi?.braise?.niveau ?? 0
+    // LE POINT DU MONDE QUE LE HALO SUIT — celui que la couche reçoit, pas `predicted` (qui
+    // devance le sprite en headless) ni le sprite (dont la jupe décale le y).
+    let porteur = null
+    try { porteur = (sc.porteursDeBraise?.() ?? [])[0] ?? null } catch { porteur = null }
+    const feuxGi = sc.view?.feuxGi ?? null
+    return {
+      charge: moi?.braise?.charge ?? null,
+      niveau,
+      plein: B ? (B.CRANS_DEPART + niveau) * B.DUREE_CRAN : null,
+      etage: moi?.etage ?? 0,
+      hp: moi?.hp ?? null,
+      frame: sc.game.loop.frame,
+      jour: sc.lastTime?.seasonDay ?? null,
+      heure: sc.lastTime?.hour ?? null,
+      tick: sc.lastTime?.tick ?? null,
+      demande: sc.registry.get('cransDemandes') ?? null,
+      souterrain: sc.etages?.souterrain ?? null,
+      // CE QUI PEINT : la flaque au sol, le point light, la lueur de cave.
+      flaque: g ? { alpha: Math.round(g.alpha * 1e4) / 1e4, largeur: g.displayWidth, cellules: (g.displayWidth / 4 - 1) / 2, blend: g.blendMode, visible: g.visible, cle: String(g.texture?.key ?? '?') } : null,
+      light: L ? { intensite: Math.round(L.intensity * 1e4) / 1e4, rayon: L.radius } : null,
+      lightsBraise: sc.dynLight?.braises?.size ?? null,
+      // ⓗ L'ÉTAT DE LA TORCHE : un relevé de Feu qui en porte encore est refusé.
+      torcheFlaque: T ? { alpha: Math.round(T.alpha * 1e4) / 1e4, largeur: T.displayWidth } : null,
+      torcheLights: sc.dynLight?.torches?.size ?? null,
+      caveBraise: sc.etages?.lumiere?.braise ? { force: Math.round(sc.etages.lumiere.braise.force * 1e4) / 1e4, echelle: Math.round(sc.etages.lumiere.braise.echelle * 1e4) / 1e4 } : null,
+      caveTorche: sc.etages?.lumiere?.torche ? { force: Math.round(sc.etages.lumiere.torche.force * 1e4) / 1e4 } : null,
+      // ⚠ LA FORME EST CELLE QUE `snapshot-view.ts` DÉCLARE (`FeuGi` : x, y, `rayon` en PX, lift)
+      // — ni `radiusTiles` ni `forceGi`, qui sont les clés de `veilFires`, l'AUTRE liste. Une
+      // sonde qui lit une clé absente imprime 0 sans un mot. On rend aussi les clés vues, pour
+      // que la forme se prouve au lieu de se croire.
+      feuxGi: feuxGi === null ? null : feuxGi.map((f) => ({
+        tuiles: Math.round(((f.rayon ?? 0) / 16) * 100) / 100,
+        dx: porteur ? Math.round((f.x ?? 0) - porteur.x) : null,
+        cles: Object.keys(f),
+      })),
+      champ: sc.gi ? 'présent' : 'absent', // ⚠ relu PAR IMAGE : il n'est pas monté à l'amorce
+      // ⓓ L'ANCRE DU MONDE : un clip identique ne prouve rien sur ce qu'il y a dessous.
+      ancre: { vx: cam.worldView.x, vy: cam.worldView.y, px: porteur ? porteur.x : sp.x, py: porteur ? porteur.y : sp.y },
+      ecran: {
+        tuilePx: 16 * cam.zoom * k,
+        rect: { x: r.x, y: r.y, w: r.width, h: r.height },
+        porteur: porteur ? { x: r.x + ((porteur.x - cam.worldView.x) * cam.zoom) * k, y: r.y + ((porteur.y - cam.worldView.y) * cam.zoom) * k } : null,
+        sprite: { x: r.x + ((bb.x - cam.worldView.x) * cam.zoom) * k, y: r.y + ((bb.y - cam.worldView.y) * cam.zoom) * k, w: bb.width * cam.zoom * k, h: bb.height * cam.zoom * k },
+      },
+    }
+  })
+
+  // LES RECTANGLES DU HUD EN DOM — `page.screenshot` prend le DOM avec : la barre de crans et la
+  // pile d'artisanat sont au bord droit, le bandeau du bas fait ~140 px.
+  //
+  // ⚠ **UN CONTENEUR N'OCCULTE RIEN, ET MA PREMIÈRE VERSION ÉCARTAIT TOUT L'ÉCRAN.** Relevé le
+  // 2026-10-05, au premier run : `.hud-overlay`, `.bnd` et la vignette sont `position:fixed;
+  // inset:0` — trois rectangles de 1280×720, TRANSPARENTS, que `getBoundingClientRect` rend
+  // pleins. Le prédicat « positionné et visible » les gardait, donc `dansLeHud` était VRAI
+  // PARTOUT : 0 px de silhouette, 0 px de boîte et 0 point d'anneau — trois zéros pour UNE seule
+  // cause, en amont des deux méthodes. On trie donc en TROIS cas, et on les imprime :
+  //   ① transparent et large     → un CONTENEUR : il ne cache rien, on mesure au travers ;
+  //   ② dégradé plein écran      → la VIGNETTE : elle fait PARTIE de l'image (un cadrage, pas un
+  //                                widget) — on mesure au travers, et c'est voulu ;
+  //   ③ aplat opaque plein écran → un ÉCRAN (sac, mort, pause) : le cadre est invalide, on ARRÊTE.
+  // Et un `backgroundColor` ILLISIBLE (`oklch`, `color-mix`) compte comme PEINT : avec le plafond
+  // d'aire au-dessus, c'est le sens prudent — on préfère exclure un widget de trop qu'avaler
+  // l'écran entier.
+  const lireHud = () => page.evaluate(() => {
+    const vw = window.innerWidth, vh = window.innerHeight
+    const gardes = [], rejets = []
+    let ecranPlein = null
+    const alphaDe = (c) => {
+      const t = String(c || '')
+      const m = /^rgba?\(([^)]+)\)/.exec(t)
+      if (!m) return t === 'transparent' || t === '' ? 0 : 1 // illisible = PEINT (sens prudent)
+      const q = m[1].split(',').map((v) => Number.parseFloat(v))
+      return q.length < 4 ? 1 : q[3]
+    }
+    for (const el of document.body.querySelectorAll('*')) {
+      if (el.tagName === 'CANVAS') continue
+      const cs = getComputedStyle(el)
+      if (cs.position !== 'fixed' && cs.position !== 'absolute') continue
+      if (cs.visibility === 'hidden' || cs.display === 'none' || Number(cs.opacity) === 0) continue
+      const r = el.getBoundingClientRect()
+      if (r.width < 2 || r.height < 2) continue
+      const nom = `${el.tagName.toLowerCase()}.${String(el.className || '').trim().split(/\s+/)[0] || '?'}`
+      const aFond = alphaDe(cs.backgroundColor) > 0.05
+      const aImage = cs.backgroundImage !== 'none'
+      const aBord = Number.parseFloat(cs.borderTopWidth) > 0 && alphaDe(cs.borderTopColor) > 0.05
+      const aTexte = Array.from(el.childNodes).some((n) => n.nodeType === 3 && String(n.textContent).trim().length > 0)
+      const dim = { w: Math.round(r.width), h: Math.round(r.height) }
+      if (r.width * r.height > 0.45 * vw * vh) {
+        if (aFond && Number(cs.opacity) > 0.9) {
+          ecranPlein = { nom, bg: cs.backgroundColor, opacity: cs.opacity }
+          rejets.push({ nom, pourquoi: 'ÉCRAN OPAQUE', ...dim })
+        } else rejets.push({ nom, pourquoi: aImage ? 'dégradé plein écran (il FAIT PARTIE de l’image)' : 'conteneur transparent', ...dim })
+        continue
+      }
+      if (!(aFond || aImage || aBord || aTexte)) { rejets.push({ nom, pourquoi: 'ne peint rien', ...dim }); continue }
+      gardes.push({ x: r.x, y: r.y, w: r.width, h: r.height, nom })
+    }
+    return { gardes, rejets, ecranPlein, vw, vh }
+  })
+  // ⚠ **ON LE RELIT À CHAQUE IMAGE, et ce n'est pas un luxe.** Au premier essai, le relevé
+  // unique tombait AVANT que l'écran de chargement (`.bl-overlay`, `#0f0b08`, `inset:0`) ne
+  // s'efface : le tri a correctement vu un ÉCRAN OPAQUE et refusé de mesurer — mais un écran de
+  // chargement est un ÉTAT TRANSITOIRE, pas une occultation. Le HUD bouge d'ailleurs en cours de
+  // partie (alertes, `fiche-lieu`), donc l'exclusion doit décrire L'IMAGE QU'ON PHOTOGRAPHIE.
+  let rectsHud = []
+  const dansLeHud = (x, y) => rectsHud.some((r) => x >= r.x && x < r.x + r.w && y >= r.y && y < r.y + r.h)
+  const majHud = async (silencieux = false) => {
+    const h = await lireHud()
+    rectsHud = h.gardes
+    if (!silencieux) {
+      console.log(`   HUD en DOM : ${rectsHud.length} rectangle(s) GARDÉS (ils peignent, donc ils occultent), ${h.rejets.length} écartés — toile ${h.vw}×${h.vh}`)
+      for (const r of h.rejets.filter((z) => z.w * z.h > 0.2 * h.vw * h.vh)) console.log(`     écarté : ${r.nom} ${r.w}×${r.h} — ${r.pourquoi}`)
+      console.log(`     gardés : ${rectsHud.map((r) => `${r.nom} ${Math.round(r.w)}×${Math.round(r.h)}`).join(' · ') || '(aucun)'}`)
+    }
+    return h
+  }
+  // ⚠ **ET LE VERDICT « ÉCRAN OPAQUE » EST CONSULTATIF, PAS FATAL — c'est l'IMAGE qui juge.**
+  // J'ai d'abord fait avorter le run sur ce verdict DOM : il a refusé de mesurer pendant 180 s
+  // sur une scène où le monde était PARFAITEMENT VISIBLE — et ce n'est pas une opinion, c'est la
+  // photo `halo-surface-controle-jour.png`, un sous-bois net de bout en bout, prise pendant que
+  // le DOM annonçait `.bl` « ÉCRAN OPAQUE ». Je ne sais PAS pourquoi le DOM ment (hypothèse :
+  // le parent `.bl-overlay` se fond par une opacité EN LIGNE pendant que l'enfant `.bl` garde une
+  // opacité calculée de 1, et `getComputedStyle` d'un enfant n'hérite pas de celle du parent) —
+  // ce que je sais, c'est que le verdict DOM est faux et que l'image est juste. Inférer
+  // une occultation du DOM, c'est la faute de la barre de crans à l'envers : des classes et une
+  // géométrie ne disent pas ce qu'on VOIT. L'autorité est donc LE CONTRÔLE POSITIF EN PLEIN
+  // JOUR — si quoi que ce soit recouvrait la toile, la corrélation texel↔écran s'effondrerait et
+  // le run s'arrêterait là, avec ses nombres. Un écran plein n'est pas non plus EXCLU des points :
+  // l'exclure rendrait tout l'écran invisible, et c'est précisément le défaut du jour.
+  const h0 = await majHud()
+  if (h0.ecranPlein) console.log(`   (⚠ un élément opaque plein écran est dans le DOM : ${h0.ecranPlein.nom}, fond ${h0.ecranPlein.bg} — CONSULTATIF ; le contrôle de jour tranchera)`)
+
+  // ═══ ③ LE MASQUE DE SILHOUETTE DU PORTEUR — la mesure n°1 en dépend ═════════════════════════
+  //
+  // ⚠ **PAS LA BOÎTE DU SPRITE, LES TEXELS OPAQUES.** Une boîte contient du sol vu autour de la
+  // silhouette, et ce sol reçoit la flaque : elle rendrait un ΔL positif sur un corps resté noir
+  // — le faux positif exact qu'il faut écarter pour répondre à Alexis.
+  //
+  // ⚠ **ET ON NE TOUCHE PAS AU RENDU POUR L'OBTENIR.** La première idée — cacher le sprite et
+  // différencier deux images — ne pouvait pas marcher : `WorldScene.update` repose
+  // `playerSprite.setVisible(!this.dying)` à CHAQUE image, donc le réveil nécessaire à la prise
+  // de vue aurait rétabli la visibilité. On lit donc l'ALPHA DE LA TEXTURE (le canevas source,
+  // via `getSourceImage`) et on reprojette chaque texel opaque à l'écran par la transformation
+  // réelle du sprite (origine 0,5/1, taille affichée, miroir) — aucune mutation, et le masque
+  // suit la texture VRAIE, `spr-player` ou `spr-player_lit`.
+  const masqueDuCorps = () => page.evaluate(() => {
+    const sc = window.__BRAISES__.scene
+    const sp = sc.playerSprite
+    const r = sc.scale.canvas.getBoundingClientRect()
+    const cam = sc.cameras.main
+    const k = r.width / sc.scale.width
+    const cle = String(sp.texture?.key ?? '?')
+    let src = null
+    try { src = sc.textures.get(cle).getSourceImage() } catch { src = null }
+    if (!src || !src.width) return { cle, echec: 'texture source illisible', pts: [] }
+    const c = document.createElement('canvas')
+    c.width = src.width
+    c.height = src.height
+    const cx = c.getContext('2d', { willReadFrequently: true })
+    cx.drawImage(src, 0, 0)
+    let d = null
+    try { d = cx.getImageData(0, 0, c.width, c.height).data } catch { return { cle, echec: 'canevas souillé', pts: [] } }
+    const fr = sp.frame
+    const fx = fr?.cutX ?? 0, fy = fr?.cutY ?? 0
+    const fw = fr?.cutWidth ?? fr?.width ?? c.width
+    const fh = fr?.cutHeight ?? fr?.height ?? c.height
+    const dw = sp.displayWidth, dh = sp.displayHeight
+    const x0 = sp.x - dw * sp.originX, y0 = sp.y - dh * sp.originY // px MONDE
+    const vus = new Set()
+    const pts = []
+    let opaques = 0
+    // On balaie les TEXELS et on rend le point d'écran du centre de chacun : chaque point est
+    // ainsi garanti DANS un texel opaque, sans frange qui composerait avec le sol.
+    for (let j = 0; j < fh; j++) {
+      for (let i = 0; i < fw; i++) {
+        const o = ((fy + j) * c.width + (fx + i)) * 4
+        if (d[o + 3] < 200) continue
+        opaques += 1
+        const u = sp.flipX ? fw - 1 - i : i
+        const wx = x0 + ((u + 0.5) / fw) * dw
+        const wy = y0 + ((j + 0.5) / fh) * dh
+        const x = Math.round(r.x + ((wx - cam.worldView.x) * cam.zoom) * k)
+        const y = Math.round(r.y + ((wy - cam.worldView.y) * cam.zoom) * k)
+        const q = `${x},${y}`
+        if (vus.has(q)) continue
+        vus.add(q)
+        // ⚠ ON EMPORTE LA LUMINANCE DU TEXEL : c'est elle qui prouve le RECALAGE du masque.
+        // `n > 0` ne peut pas échouer — un masque tombé quinze pixels à côté du corps compte
+        // autant de points, sur du sol. La corrélation texel↔écran, elle, s'effondre dès qu'on
+        // décale, et c'est ce qui fait du contrôle de jour un contrôle POSITIF.
+        pts.push([x, y, 0.2126 * d[o] + 0.7152 * d[o + 1] + 0.0722 * d[o + 2]])
+      }
+    }
+    return { cle, frame: { fx, fy, fw, fh }, source: { w: c.width, h: c.height }, display: { dw, dh }, flipX: Boolean(sp.flipX), texelsOpaques: opaques, pts }
+  })
+
+  // ═══ ④ ALLER SUR DE LA TERRE FERME — et sur un SOUS-BOIS ════════════════════════════════════
+  // ⚠ ON NAÎT LES PIEDS DANS L'EAU (graine 2026 : les huit voisines du point de naissance sont en
+  // haut-fond). Un anneau posé sur l'eau mesure le shader de l'eau, pas le sol. On exige donc que
+  // tout le DISQUE de six tuiles soit sec, au palier 0, et on préfère la tuile la plus boisée.
+  const choisirLeSol = () => page.evaluate(() => {
+    const sc = window.__BRAISES__.scene
+    const m = sc.map
+    const moi = (sc.lastEntities ?? []).find((e) => e.id === sc.playerId)
+    const tx0 = Math.floor(moi?.x ?? 0), ty0 = Math.floor(moi?.y ?? 0)
+    const REFUSES = new Set([0, 4, 5, 6, 7]) // vide, haut-fond, roche, eau profonde, mur
+    const R = 6
+    const arbres = new Set()
+    for (const n of sc.view?.nodes ?? []) arbres.add(`${n.tx},${n.ty}`)
+    let best = null
+    for (let dy = -40; dy <= 40; dy++) {
+      for (let dx = -40; dx <= 40; dx++) {
+        const tx = tx0 + dx, ty = ty0 + dy
+        let sec = true
+        const terrains = {}
+        for (let j = -R; j <= R && sec; j++) {
+          for (let i = -R; i <= R; i++) {
+            if (i * i + j * j > R * R) continue
+            const t = m.terrain[(ty + j) * m.width + (tx + i)]
+            if (t === undefined || REFUSES.has(t)) { sec = false; break }
+            terrains[t] = (terrains[t] ?? 0) + 1
+          }
+        }
+        if (!sec) continue
+        if (sc.relief?.palier && sc.relief.palier(tx, ty) !== 0) continue
+        let bois = 0
+        for (let j = -8; j <= 8; j++) for (let i = -8; i <= 8; i++) if (arbres.has(`${tx + i},${ty + j}`)) bois += 1
+        const score = bois * 1000 - (dx * dx + dy * dy)
+        if (best === null || score > best.score) best = { tx, ty, bois, terrains, score, d: Math.round(Math.sqrt(dx * dx + dy * dy)) }
+      }
+    }
+    return { depart: { tx: tx0, ty: ty0, terrain: m.terrain[ty0 * m.width + tx0] ?? null }, best }
+  })
+
+  await envoyer([{ type: 'debug_god', on: true }, { type: 'debug_meteo', meteo: null }])
+  await page.waitForTimeout(3000)
+  const sol = await choisirLeSol()
+  console.log(`   naissance (${sol.depart.tx}, ${sol.depart.ty}) terrain ${sol.depart.terrain}`)
+  ok(sol.best !== null, sol.best
+    ? `un disque de 6 tuiles ENTIÈREMENT SEC trouvé en (${sol.best.tx}, ${sol.best.ty}) à ${sol.best.d} tuiles — ${sol.best.bois} nœuds de flore dans ses 8 tuiles, terrains ${JSON.stringify(sol.best.terrains)}`
+    : 'aucun disque de 6 tuiles sec à 40 tuiles de la naissance — un anneau sur l’eau mesurerait le shader de l’eau')
+  if (sol.best === null) return
+  if (lieu === 'surface') {
+    await envoyer([{ type: 'debug_teleport', x: sol.best.tx + 0.5, y: sol.best.ty + 0.5 }])
+    await page.waitForTimeout(3000)
+  }
+
+  // ═══ ⑤ LE CADRE, FIGÉ UNE FOIS (piège ⓓ) ════════════════════════════════════════════════════
+  const RAYONS = [0, 0.5, 1, 1.5, 2, 2.5, 3, 3.5, 4, 5, 6]
+  const NDIRS = 48
+  const cadreAutour = (e, cx, cy) => {
+    const t = e.ecran.tuilePx
+    const demi = Math.round(6.6 * t)
+    const vp = page.viewportSize() ?? { width: 1280, height: 800 }
+    const x = Math.max(0, Math.min(vp.width - 1, Math.round(cx - demi)))
+    const y = Math.max(0, Math.min(vp.height - 1, Math.round(cy - demi)))
+    const w = Math.max(8, Math.min(vp.width - x, Math.round(demi * 2)))
+    const h = Math.max(8, Math.min(vp.height - y, Math.round(demi * 2)))
+    return { clip: { x, y, width: w, height: h }, cx: cx - x, cy: cy - y, cxEcran: cx, cyEcran: cy, tuilePx: t, sprite: e.ecran.sprite }
+  }
+
+  /** Les points d'un anneau, en coordonnées du CADRE, avec le motif des exclusions. */
+  const pointsAnneau = (cadre, d) => {
+    const pts = []
+    const sp = cadre.sprite
+    const n = d === 0 ? 1 : NDIRS
+    for (let i = 0; i < n; i++) {
+      const a = (2 * Math.PI * i) / n
+      const xe = cadre.cxEcran + Math.cos(a) * d * cadre.tuilePx
+      const ye = cadre.cyEcran + Math.sin(a) * d * cadre.tuilePx
+      const x = Math.round(xe - cadre.clip.x), y = Math.round(ye - cadre.clip.y)
+      if (x < 0 || y < 0 || x >= cadre.clip.width || y >= cadre.clip.height) { pts.push({ x, y, hors: 'cadre' }); continue }
+      if (dansLeHud(xe, ye)) { pts.push({ x, y, hors: 'hud' }); continue }
+      // Le sprite du porteur : ce n'est pas du SOL. Écarté nommément, compté, mesuré À PART.
+      if (d > 0 && xe >= sp.x && xe < sp.x + sp.w && ye >= sp.y && ye < sp.y + sp.h) { pts.push({ x, y, hors: 'sprite' }); continue }
+      pts.push({ x, y })
+    }
+    return pts
+  }
+
+  const statsDe = (img, pts) => {
+    const px = pts.filter((p) => !p.hors).map((p) => img.px(p.x, p.y))
+    const ls = px.map(lum)
+    return {
+      n: px.length, moy: moy(ls), ec: ecart(ls), p10: pc(ls, 0.1), p50: pc(ls, 0.5), p90: pc(ls, 0.9),
+      rgb: px.length === 0 ? null : [0, 1, 2].map((c) => moy(px.map((p) => p[c]))),
+      lrel: px.length === 0 ? null : moy(px.map(lumRel)),
+    }
+  }
+
+  /** LA PORTÉE LISIBLE, en tuiles — la définition de `feu-portee` : la première chute DURABLE
+   *  sous `fond + 10 % de l'écart total`. C'est le seul axe de la hiérarchie depuis le
+   *  2026-10-05 (les trois sources sont égales au contact). */
+  const porteeLisible = (profil) => {
+    const pts = profil.filter((p) => p.p50 !== null && p.n > 0)
+    if (pts.length < 3) return null
+    const fond = pts[pts.length - 1].p50
+    const contact = pts[0].p50
+    if (!(contact > fond)) return 0
+    const seuil = fond + (contact - fond) * 0.1
+    for (let i = 0; i < pts.length; i++) {
+      if (pts[i].p50 > seuil) continue
+      let tient = true
+      for (let j = i; j < pts.length; j++) if (pts[j].p50 > seuil) { tient = false; break }
+      if (tient) return pts[i].d
+    }
+    return pts[pts.length - 1].d
+  }
+
+  /** PREND UNE IMAGE ET LA MESURE — une seule prise de vue, décodée ET gardée (piège ⓒ). */
+  const relever = async (nom, cadreFn) => {
+    const avant = await page.evaluate(() => window.__BRAISES__.scene.game.loop.frame)
+    await page.evaluate(() => window.__BRAISES__.scene.game.loop.wake())
+    await page.waitForTimeout(ATTENTE_IMAGE)
+    await page.evaluate(() => window.__BRAISES__.scene.game.loop.sleep())
+    const e = await etat()
+    if (!(e.frame > avant)) {
+      console.error(`!! ${nom} : la boucle n'a peint AUCUNE image (frame ${avant} → ${e.frame}) — toute mesure lirait le canevas PÉRIMÉ`)
+      return null
+    }
+    await majHud(true) // l'exclusion décrit L'IMAGE qu'on photographie, pas celle d'il y a dix minutes
+    const cadre = cadreFn(e)
+    const masque = await masqueDuCorps()
+    const png = await page.screenshot({ timeout: 300000, clip: cadre.clip })
+    writeFileSync(`${OUT}/halo-${lieu}-${nom}.png`, png)
+    const img = decoderPng(png)
+    if (!img) { console.error(`!! ${nom} : PNG indécodable`); return null }
+    // ⚠ LA PHOTO DOIT FAIRE LA TAILLE DU CADRE. Si le ratio de pixels du périphérique n'est
+    // pas 1, `page.screenshot` rend une image plus grande que le clip et `img.px(x, y)` lit à
+    // CÔTÉ, sans erreur ni avertissement — toutes les mesures seraient fausses et vraisemblables.
+    if (img.w !== cadre.clip.width || img.h !== cadre.clip.height) {
+      console.error(`!! ${nom} : la PHOTO ne fait pas la taille du CADRE (${img.w}×${img.h} contre ${cadre.clip.width}×${cadre.clip.height}) — ratio de pixels ≠ 1, toute lecture au pixel serait décalée`)
+      return null
+    }
+    const profil = []
+    for (const d of RAYONS) {
+      const pts = pointsAnneau(cadre, d)
+      profil.push({
+        d, pts, ...statsDe(img, pts),
+        exclus: { hud: pts.filter((p) => p.hors === 'hud').length, sprite: pts.filter((p) => p.hors === 'sprite').length, cadre: pts.filter((p) => p.hors === 'cadre').length },
+      })
+    }
+    // LE CORPS : les texels opaques, ramenés dans le cadre. La boîte reste mesurée À CÔTÉ, comme
+    // contrôle NÉGATIF — c'est elle qui contient le sol, donc c'est elle qui fabriquerait le faux
+    // positif ; les voir côte à côte est ce qui rend la réponse d'Alexis solide.
+    const dansCadre = (xy) => {
+      const x = xy[0] - cadre.clip.x, y = xy[1] - cadre.clip.y
+      if (x < 0 || y < 0 || x >= cadre.clip.width || y >= cadre.clip.height) return null
+      if (dansLeHud(xy[0], xy[1])) return null
+      return { x, y, lt: xy[2] ?? null }
+    }
+    const ptsCorps = (masque.pts ?? []).map(dansCadre).filter((p) => p !== null)
+    /** LE RECALAGE, CHIFFRÉ : corrélation de Pearson entre la luminance du TEXEL et celle de
+     *  l'ÉCRAN. Au vrai point elle doit dominer ; sur un masque décalé d'une demi-silhouette
+     *  puis d'une silhouette entière, elle doit s'effondrer. C'est la seule forme de contrôle
+     *  positif qui distingue « le masque est sur le corps » de « le masque compte des pixels ». */
+    const correle = (pts) => {
+      const q = pts.filter((z) => z.lt !== null)
+      if (q.length < 20) return null
+      const a = q.map((z) => z.lt), b = q.map((z) => lum(img.px(z.x, z.y)))
+      const ma = moy(a), mb = moy(b)
+      let sab = 0, saa = 0, sbb = 0
+      for (let i = 0; i < q.length; i++) { const da = a[i] - ma, db = b[i] - mb; sab += da * db; saa += da * da; sbb += db * db }
+      return saa <= 0 || sbb <= 0 ? null : sab / Math.sqrt(saa * sbb)
+    }
+    const decaleDe = (dx) => (masque.pts ?? []).map((z) => dansCadre([z[0] + dx, z[1], z[2]])).filter((z) => z !== null)
+    const lw = Math.max(4, Math.round(cadre.sprite.w))
+    const recalage = {
+      r0: correle(ptsCorps),
+      demi: [correle(decaleDe(-Math.round(lw / 2))), correle(decaleDe(Math.round(lw / 2)))],
+      plein: [correle(decaleDe(-lw)), correle(decaleDe(lw))],
+    }
+    const sp = cadre.sprite
+    const ptsBoite = []
+    for (let ye = Math.round(sp.y); ye <= Math.round(sp.y + sp.h); ye++) {
+      for (let xe = Math.round(sp.x); xe <= Math.round(sp.x + sp.w); xe++) {
+        const p = dansCadre([xe, ye])
+        if (p) ptsBoite.push(p)
+      }
+    }
+    const corps = {
+      masque: { pts: ptsCorps, ...statsDe(img, ptsCorps) },
+      boite: { pts: ptsBoite, ...statsDe(img, ptsBoite) },
+      info: { cle: masque.cle, texels: masque.texelsOpaques ?? 0, echec: masque.echec ?? null },
+      recalage,
+    }
+    // L'EXCLUSION EST UNE MESURE, PAS UN DÉTAIL : si elle mange plus du quart d'un anneau, la
+    // médiane ne porte plus sur un anneau mais sur un arc. C'est la ligne qui aurait attrapé le
+    // défaut du HUD à la première image au lieu de la dernière.
+    const trop = profil.filter((q) => q.pts.length > 1 && (q.exclus.hud + q.exclus.cadre) / q.pts.length > 0.25)
+    if (trop.length > 0) console.error(`!! ${nom} : l'EXCLUSION mange plus du QUART des points — ${trop.map((q) => `${q.d}t ${q.exclus.hud}hud/${q.exclus.cadre}cadre sur ${q.pts.length}`).join(' · ')}`)
+    const fs = e.plein ? e.charge / e.plein : null
+    const portee = porteeLisible(profil)
+    console.log(`   ${nom.padEnd(14)} charge ${String(e.charge).padStart(6)}/${e.plein} (f ${fs === null ? '—' : fs.toFixed(3)}) · jour ${e.jour} ${String(e.heure ?? '?').slice(0, 5)} h · tick ${e.tick} · demande ${e.demande} · frame ${avant}→${e.frame}`)
+    console.log(`                  flaque ${e.flaque ? `α ${e.flaque.alpha} · ${e.flaque.cellules} cell (${e.flaque.largeur} px) · blend ${e.flaque.blend}` : 'AUCUNE'} · light ${e.light ? `i ${e.light.intensite} · r ${e.light.rayon}` : 'AUCUN'} (${e.lightsBraise} en vie) · torche ${e.torcheFlaque ? `FLAQUE α ${e.torcheFlaque.alpha}` : '—'}/${e.torcheLights} light(s)${e.caveBraise ? ` · cave force ${e.caveBraise.force} échelle ${e.caveBraise.echelle}` : ''}`)
+    console.log(`                  champ GI ${e.champ} · feuxGi ${e.feuxGi === null ? '(ABSENT de la vue)' : `${e.feuxGi.length} source(s) — la règle des faces, PAS un acteur : ${JSON.stringify(e.feuxGi)}`}`)
+    console.log(`                  corps : ${corps.masque.n} px de silhouette (${corps.info.texels} texels opaques, ${corps.info.cle}${corps.info.echec ? ` — ÉCHEC : ${corps.info.echec}` : ''}) · boîte ${corps.boite.n} px · portée lisible ${portee === null ? '—' : `${portee} t`}`)
+    const fc = (v) => (v === null || v === undefined || Number.isNaN(v) ? '—' : v.toFixed(2))
+    console.log(`                  recalage du masque : r0 ${fc(recalage.r0)} · décalé d'une demi-silhouette ${recalage.demi.map(fc).join(' / ')} · d'une silhouette ${recalage.plein.map(fc).join(' / ')}`)
+    if (corps.masque.n === 0) console.error(`!! ${nom} : masque de silhouette VIDE — la luminance du corps n'est pas mesurable, seule la boîte reste (et elle contient du sol)`)
+    return { nom, e, cadre, img, profil, corps, f: fs, portee }
+  }
+
+  // ═══ ⑥ LA VIDANGE — on MESURE la cadence, on ne la suppose pas (piège ⓖ) ═════════════════════
+  const lireBraise = () => page.evaluate(() => {
+    const sc = window.__BRAISES__.scene
+    const moi = (sc.lastEntities ?? []).find((e) => e.id === sc.playerId)
+    const B = window.__BRAISES__.sim?.BRAISE ?? null
+    const niveau = moi?.braise?.niveau ?? 0
+    return { charge: moi?.braise?.charge ?? null, plein: B ? (B.CRANS_DEPART + niveau) * B.DUREE_CRAN : null, tick: sc.lastTime?.tick ?? null, jour: sc.lastTime?.seasonDay ?? null, heure: sc.lastTime?.hour ?? null }
+  })
+  /** On repose minuit (piège ⓔ) — `debug_set_hour` ne touche qu'au décalage de cycle, jamais au
+   *  tick, donc il est rejouable à volonté. */
+  const minuit = async (ms = 2500) => { await envoyer([{ type: 'debug_set_hour', hour: 0 }]); await page.waitForTimeout(ms) }
+  const cadence = async (facteur, ms) => {
+    await hote({ type: 'debug_speed', factor: facteur })
+    const a = await lireBraise()
+    await page.waitForTimeout(ms)
+    const b = await lireBraise()
+    const dC = (a.charge ?? 0) - (b.charge ?? 0)
+    const dT = (b.tick ?? 0) - (a.tick ?? 0)
+    console.log(`   cadence ×${String(facteur).padStart(2)} : ${String(dC).padStart(5)} charge et ${String(dT).padStart(6)} ticks en ${ms / 1000} s → ${(dC / (ms / 1000)).toFixed(0)} charge/s, ${(dT / (ms / 1000) / 20).toFixed(1)}× le temps réel`)
+    return { facteur, parSec: dC / (ms / 1000), ticksParSec: dT / (ms / 1000) }
+  }
+  const vidangerJusqua = async (cible, facteur, plafondMs) => {
+    await hote({ type: 'debug_speed', factor: facteur })
+    const t0 = Date.now()
+    let dernier = null, bloque = 0
+    for (;;) {
+      // ⓔ MINUIT À CHAQUE TOUR, et c'est ce qui empêche le détecteur de blocage de mentir : à ×16
+      // un jour de jeu tient en ~2 min de montre, donc sans ça la boucle traverserait une
+      // après-midi et conclurait « le froid ne mord pas » sur une heure chaude.
+      await minuit(600)
+      const e = await lireBraise()
+      const f = e.plein ? e.charge / e.plein : 1
+      if (f <= cible) { await hote({ type: 'debug_speed', factor: 1 }); return { f, charge: e.charge, s: (Date.now() - t0) / 1000 } }
+      if (dernier !== null && e.charge >= dernier) bloque += 1
+      else bloque = 0
+      if (bloque >= 6) {
+        await hote({ type: 'debug_speed', factor: 1 })
+        console.error(`!! LA CHARGE NE DESCEND PLUS (${e.charge}, f ${f.toFixed(3)}, jour ${e.jour}, ${String(e.heure ?? '?').slice(0, 5)} h) — le froid ne mord pas ici, la cible ${cible} est inatteignable`)
+        return { f, charge: e.charge, s: (Date.now() - t0) / 1000, bloque: true }
+      }
+      dernier = e.charge
+      if (Date.now() - t0 > plafondMs) {
+        await hote({ type: 'debug_speed', factor: 1 })
+        console.log(`   (vidange arrêtée au PLAFOND : f ${f.toFixed(3)} après ${((Date.now() - t0) / 1000).toFixed(0)} s — le relevé portera sa charge MESURÉE, pas la cible)`)
+        return { f, charge: e.charge, s: (Date.now() - t0) / 1000, expire: true }
+      }
+      trace(`vidange f ${f.toFixed(3)} (cible ${cible}, jour ${e.jour})`)
+      await page.waitForTimeout(4500)
+    }
+  }
+
+  const releves = []
+  /** UN CADRE FIGÉ, par repère nommé. Il y en a plusieurs : le poste d'observation, et le corps
+   *  AU PIED DU FEU (un autre endroit, donc un autre cadre). Un cadre ne se fige qu'une fois —
+   *  c'est lui qui rend la soustraction au pixel légitime. */
+  const faireCadre = (label, dxT = 0, dyT = 0) => {
+    let c = null
+    return (e) => {
+      if (c) return c
+      const p = e.ecran
+      const o = p.porteur ?? { x: p.rect.x + p.rect.w / 2, y: p.rect.y + p.rect.h / 2 }
+      c = cadreAutour(e, Math.round(o.x + dxT * p.tuilePx), Math.round(o.y + dyT * p.tuilePx))
+      console.log(`   cadre « ${label} » figé : ${c.clip.width}×${c.clip.height} px en (${c.clip.x}, ${c.clip.y}), centre (${c.cx.toFixed(0)}, ${c.cy.toFixed(0)}), 1 tuile = ${c.tuilePx.toFixed(1)} px ; sprite ${c.sprite.w.toFixed(0)}×${c.sprite.h.toFixed(0)} px`)
+      return c
+    }
+  }
+  const cadreDuPorteur = faireCadre('poste d\u2019observation')
+  /** LA LUMIÈRE AJOUTÉE ENTRE DEUX RELEVÉS DE MÊME CADRE (a − b), aux MÊMES pixels. Indépendant
+   *  du témoin à charge nulle : c'est ce qui permet au contrôle du FEU de tourner sans vidange. */
+  const entreDeux = (a, b, pts) => {
+    const ca = a.cadre.clip, cb = b.cadre.clip
+    if (ca.x !== cb.x || ca.y !== cb.y || ca.width !== cb.width || ca.height !== cb.height) return { echec: 'cadres diff\u00e9rents' }
+    const dr = Math.max(Math.abs(a.e.ancre.vx - b.e.ancre.vx), Math.abs(a.e.ancre.vy - b.e.ancre.vy), Math.abs(a.e.ancre.px - b.e.ancre.px), Math.abs(a.e.ancre.py - b.e.ancre.py))
+    if (dr > 0.5) return { echec: `le monde a GLISS\u00c9 de ${dr.toFixed(2)} px sous le cadre` }
+    const q = pts.filter((z) => !z.hors)
+    if (q.length < 10) return { echec: `${q.length} point(s) seulement` }
+    const ma = (c) => moy(q.map((z) => a.img.px(z.x, z.y)[c]))
+    const mb = (c) => moy(q.map((z) => b.img.px(z.x, z.y)[c]))
+    const dRGB = [0, 1, 2].map((c) => ma(c) - mb(c))
+    const la = moy(q.map((z) => lum(a.img.px(z.x, z.y)))), lb = moy(q.map((z) => lum(b.img.px(z.x, z.y))))
+    const ra = moy(q.map((z) => lumRel(a.img.px(z.x, z.y)))), rb = moy(q.map((z) => lumRel(b.img.px(z.x, z.y))))
+    return { n: q.length, la, lb, dL: la - lb, dRGB, th: teinte(dRGB), wcag: wcag(ra, rb) }
+  }
+  /** Le nom d'un relevé porte sa charge MESURÉE, jamais la cible (piège ③). */
+  const nomDeCharge = (prefixe, f) => `${prefixe}-f${String(Math.round(f * 1000)).padStart(4, '0')}`
+
+  if (lieu === 'cave') {
+    // ═══ SOUS LA ROCHE — on ENTRE EN MARCHANT, le TP effacerait l'étage (recette de `cave`) ═══
+    const gueule = await page.evaluate(() => (window.__BRAISES__.scene.map.connecteurs ?? []).some((c) => c.x === 537 && c.y === 201 && c.type === 'gueule'))
+    ok(gueule, 'la gueule de (537, 201) existe (écrit pour la graine 2026)')
+    if (!gueule) return
+    const entrer = async () => {
+      await envoyer([{ type: 'debug_teleport', x: 537, y: 204.5 }])
+      await page.waitForTimeout(3000)
+      await page.evaluate(() => window.__BRAISES__.scene.game.loop.wake())
+      await page.keyboard.down('KeyW')
+      const t0 = Date.now()
+      let dedans = false
+      while (Date.now() - t0 < 150000) {
+        await page.waitForTimeout(1500)
+        const e = await page.evaluate(() => {
+          const sc = window.__BRAISES__.scene
+          const me = (sc.lastEntities ?? []).find((x) => x.id === sc.playerId)
+          return { etage: me?.etage ?? 0, y: me?.y ?? 0, souterrain: sc.etages?.souterrain ?? null }
+        })
+        trace(`marche : étage ${e.etage}, y ${e.y.toFixed(1)}, souterrain ${e.souterrain}`)
+        if (e.etage < 0) { dedans = true; break }
+      }
+      await page.keyboard.up('KeyW')
+      await page.waitForTimeout(1500)
+      await page.evaluate(() => window.__BRAISES__.scene.game.loop.sleep())
+      return dedans
+    }
+    await minuit()
+    const dedans = await entrer()
+    ok(dedans, dedans ? 'le corps est SOUS LA ROCHE (étage < 0)' : 'le corps n’est jamais entré dans la cave — rien à mesurer')
+    if (!dedans) return
+    const plein = await relever('cave-plein', cadreDuPorteur)
+    if (plein) releves.push(plein)
+    ok(plein !== null && plein.f !== null && plein.f > 0.99, plein
+      ? `la braise entre PLEINE dans la cave (f ${plein.f.toFixed(3)}) — un creux à 13 °C ne vide rien (B-R8)`
+      : 'image de cave manquée')
+    // LE TÉMOIN : on ressort (un TP suffit, il efface l'étage), on vide au Grand Froid, on rentre.
+    // ⚠ La marche d'entrée ne s'arrête PAS au même pas d'une fois sur l'autre (`cave` le dit :
+    // « le seuil atterrit souvent au fond ») — c'est le cas n°1 de l'ancre du monde ⓓ, et c'est
+    // le contrôle d'ancre, pas une bonne intention, qui refusera la soustraction s'il dérive.
+    await envoyer([{ type: 'debug_teleport', x: 537, y: 206 }])
+    await page.waitForTimeout(3000)
+    await envoyer([{ type: 'debug_set_season_day', day: 95 }])
+    await page.waitForTimeout(ATTENTE_JOUR)
+    await minuit()
+    await cadence(16, 8000)
+    const v = await vidangerJusqua(0, 16, 1200000)
+    console.log(`   vidange jusqu'à f ${v.f.toFixed(3)} en ${v.s.toFixed(0)} s`)
+    if (!v.bloque) {
+      const dedans2 = await entrer()
+      if (dedans2) { const t = await relever(nomDeCharge('cave', v.f), cadreDuPorteur); if (t) releves.push(t) }
+      else console.error('!! le témoin de cave n’a pas pu rentrer — pas de soustraction au pixel sous la roche')
+    }
+  } else {
+    // ═══ ⑦ LE CONTRÔLE POSITIF, EN PLEIN JOUR — et c'est LUI qui fige le cadre ════════════════
+    //
+    // ⚠ `n > 0` NE PEUT PAS ÉCHOUER : un masque tombé quinze pixels à côté du corps compte
+    // autant de points, sur du sol. Ce qui se prouve ici, c'est le RECALAGE — la corrélation
+    // entre la luminance du TEXEL et celle de l'ÉCRAN, au vrai point contre le même masque
+    // décalé d'une demi-silhouette puis d'une silhouette entière. En plein jour la silhouette
+    // est forcément éclairée : si la corrélation ne domine pas ICI, la sonde est aveugle et rien
+    // de ce qui suit ne veut dire quoi que ce soit — on s'arrête au lieu de rendre des nombres.
+    //
+    // Ce relevé sert DEUX fois : il est aussi la charge pleine AU BIT (f = 1), que la nuit ne
+    // montre jamais. MESURÉ au premier run du 2026-10-05 : au jour 72 à minuit la braise vide
+    // déjà (71950 → 71750 en 10 s, demande 1 cran) — le 8/8 n'est donc observable qu'en PLEIN
+    // JOUR, et le détour par le jour 72 est retiré.
+    await envoyer([{ type: 'debug_set_hour', hour: 12 }])
+    await page.waitForTimeout(3000)
+    const jourRef = await relever('controle-jour', cadreDuPorteur)
+    if (jourRef === null) { console.error('!! pas de contrôle de jour — on arrête : aucune mesure de nuit ne serait interprétable'); return }
+    releves.push(jourRef)
+    const rc = jourRef.corps.recalage
+    const pire = Math.max(...[...rc.demi, ...rc.plein].map((v) => (v === null ? -1 : v)))
+    const recale = rc.r0 !== null && rc.r0 > 0.5 && rc.r0 > pire + 0.15
+    ok(recale, recale
+      ? `le masque est RECALÉ sur le corps : r0 ${rc.r0.toFixed(2)} contre ${pire.toFixed(2)} au pire décalage — la sonde lit bien le PORTEUR et non le sol`
+      : `le masque n'est PAS recalé (r0 ${rc.r0 === null ? '—' : rc.r0.toFixed(2)}, pire décalage ${pire.toFixed(2)}) — la « luminance du corps » ne porterait pas sur le corps`)
+    if (!recale) { console.error('!! SONDE AVEUGLE — on arrête ici. Tout ΔL de silhouette qui suivrait serait indéfendable.'); return }
+    ok(jourRef.f !== null && jourRef.f > 0.999, `la braise est PLEINE au bit en plein jour (f ${jourRef.f === null ? '—' : jourRef.f.toFixed(4)}) — l'albédo de référence est pris à charge maximale`)
+
+    // ═══ ⑦ BIS — LE PLANCHER DE B-R13d, RÉPARÉ : LE RELEVÉ DE CONTRÔLE AU NAVIGATEUR ══════════
+    //
+    // ⚠ **CE BLOC MESURE LE JEU, PAS UNE SONDE PATCHÉE — c'est ce qui le distingue de sa version
+    // du 2026-10-05 à 23 h, qu'il remplace.** Le défaut qu'il avait trouvé est RÉPARÉ : le 9ᵉ
+    // paramètre `soi` de `syncActor` a disparu au profit de `corpsId`, et **la vue résout
+    // elle-même** le plancher en tête de méthode (`snapshot-view.ts:1484`). Les trois appels du
+    // joueur (`WorldScene` 1791, 3518, 4738) passent `this.playerId`. La paire se prend donc dans
+    // l'autre sens : **le réel est la référence, et c'est le FIL COUPÉ qu'on rejoue** pour
+    // soustraire au pixel ce que le plancher achète.
+    //
+    // ⚠ **ET LA PORTE A CHANGÉ AVEC LA RÉPARATION** : ce n'est plus `nuitDuPorte` ni `1 − day`
+    // (les deux étaient fausses, la seconde relevée par l'audit D1), c'est
+    // `clarteDeCeQuOnPorte(torche, braise) − clarteDuCiel(gel, tick) × partDuCiel(gel, tx, ty,
+    // niveauDuCorps(…))`, par entité. Conséquences à connaître AVANT de lire un chiffre :
+    //   · à midi à découvert, `partDuCiel` = 1 et `clarteDuCiel` = 1 → `soi ≤ 0` → **la carte est
+    //     `null`**. C'est un ÉTAT, et c'est ça la preuve de la porte — pas un ΔL, qui ne peut que
+    //     mesurer le bruit d'image (MESURÉ : **−0,60** au run d'avant, les deux côtés à soi = 0).
+    //   · à minuit à découvert, `soi = porte − clarteDuCiel(minuit)`. ⚠ **N'ATTENDS PAS 0,8846** :
+    //     au Grand Froid la braise n'est plus pleine à minuit (f ≈ 0,93 MESURÉ), et `porte` suit
+    //     la charge. On vérifie donc **une IDENTITÉ**, pas une valeur — que le sac du GPU porte au
+    //     bit ce que la carte contient — et on relève `clarteDuCiel` et `partDuCiel` à la tuile du
+    //     corps, pour que « à découvert » soit mesuré et non supposé.
+    //
+    // ═══ LE RACCORD SE LIT MAILLON PAR MAILLON, DANS LE MÊME RELEVÉ ═══
+    //
+    // La leçon du 2026-10-05 : *un oracle pur prouve qu'une loi est juste, jamais qu'elle arrive.*
+    // `champRef` et `pixelDuCorps` court-circuitent tous les deux le raccord, et c'est pour ça que
+    // 142 gardes vertes ont laissé passer un appelant sur deux. On lit donc la chaîne entière en
+    // page, à chaque instant mesuré :
+    //   ① `view.soiParCorps` — l'autorité, produite par `WorldScene` ;
+    //   ② `playerSprite.renderNodeData['GiCorpsBatch'].soi` — **le sac du GPU**, c'est-à-dire le
+    //      4ᵉ composant de l'attribut `inGiB` tel qu'il partira au shader (`noeud-corps.ts:365`
+    //      écrit `F[o++] = c.soi` depuis ce sac même). Si ce champ vaut 0 quand ① vaut 0,88, la
+    //      coupure est entre `syncActor` et `poserLeCorps` ; si le sac est ABSENT, le sprite du
+    //      joueur n'est pas dans la passe des corps et rien de ce qui suit n'a de sens.
+    //   ③ `expo` — il doit valoir **−1**, la branche E : un acteur lit le CHAMP sous ses pieds et
+    //      jamais le feu élu (`arete: 0` → `suitLaRegleDesFaces` faux). C'est la prémisse de toute
+    //      la mesure, et c'est elle qui a démenti la « fourche `feuxGi` ».
+    //
+    // ═══ LE POINT AVEUGLE, NOMMÉ AVANT LE RUN ═══
+    //
+    // ⚠ **MA LIGNE DE BASE CONTREDIT DÉJÀ L'ORACLE, ET LE `max` DU PLANCHER VA LE MASQUER.** Avant
+    // réparation, au navigateur, le corps était à **14,8/11,8/9,6** (L 12,3, quasi NEUTRE) ; le
+    // même corps sans plancher, à l'oracle, promet **57/38/22** (L ≈ 41, CHAUD). ×3,3 en
+    // luminance et la teinte manque : le terme chaud du champ semble ne pas atteindre le corps au
+    // navigateur, indépendamment de `soi`. Un chiffre bas après réparation pourrait donc être ce
+    // vieil écart et non une coupure du fil. **LE DISCRIMINANT EST LA TEINTE DE ΔRGB** (réel −
+    // coupé) : si c'est bien le plancher qui arrive, elle est CHAUDE, dans le rapport de
+    // `GI.TEINTE_FEU` × albédo. C'est pour ça que ce bloc imprime ΔRGB et sa teinte partout, et
+    // pas seulement un ΔL.
+    //
+    // ═══ LA PRÉDICTION, ÉCRITE AVANT LE RUN ET DÉRIVÉE DE L'ALBÉDO MESURÉ ═══
+    //
+    // Le modèle se LIT sur l'oracle du coordinateur : texel 0,62/0,52/0,42, albédo **158/133/107**,
+    // plancher à soi = 1 → **158/122/67**, soit `albédo_c × min(1 ; TEINTE_FEU_c)` canal par canal
+    // (1,15 → 1,00 ; 0,92 → 0,917 ; 0,62 → 0,626 : les trois rapports y sont au centième). On
+    // généralise donc à `albédo_c × min(1 ; TEINTE_FEU_c × soi)` — et **l'albédo n'est pas
+    // supposé** : il se relève sur les texels opaques de la texture que le sprite porte VRAIMENT
+    // (`spr-player_lit`, et non les 240/230/200 de `BootScene.makeSprite`, qui est une autre
+    // texture). ⚠ À soi ≈ 0,88 le rouge **ne sature plus** : la prédiction est imprimée canal par
+    // canal, calculée au moment du run, et le verdict se prononce contre elle — pas contre un
+    // nombre écrit à la main.
+    //
+    // ⚠ **CE QUI RESTE HORS DE CE BLOC, ET QUI EST DIT EN CLAIR À LA FIN** : roche, neige et eau
+    // ne sont PAS dans le cadre (le poste d'observation est un sous-bois sec de palier 0, choisi
+    // par `choisirLeSol`), et un TP vers la naissance tombe les pieds dans l'eau — où l'immersion
+    // ROGNE le masque de silhouette. On les déclare non mesurés au lieu de les modéliser.
+    if (process.env.HALO_SOI === '1') {
+      const NOM_NOEUD_CORPS = 'GiCorpsBatch'
+
+      /**
+       * TOUT LE RACCORD, MAILLON PAR MAILLON — lu en page, jamais supposé.
+       *
+       * ⚠⚠ **LA MANIVELLE EST OBLIGATOIRE, ET SON ABSENCE M'A COÛTÉ UN RUN** (2026-10-06,
+       * MESURÉ) : `view.soiParCorps` est écrite par `WorldScene.update` (l. 3029) et par elle
+       * seule, or tout ce scénario tourne **BOUCLE ENDORMIE** — donc une lecture nue rend l'état
+       * du dernier `update()` PEINT, c'est-à-dire celui de MIDI. Mon premier relevé a lu
+       * `soiParCorps` ABSENTE à minuit et `clarteDuCiel 1,0000` : les deux étaient l'image de
+       * midi, pas un fil coupé. *(C'est la classe de faute exacte que `balise` a payée le
+       * 2026-10-04 sur `cransDemandes`.)* On appelle donc la MÉTHODE d'update — le même code
+       * moins le rendu — avant chaque lecture, comme `balise` le fait.
+       *
+       * ⚠ Et `clarteDuCiel` **ne se lit pas** sur `etages.lumiere.ciel` : ce champ n'est (re)bâti
+       * que `si (souterrain || lumiere === null)`, donc à l'air libre il garde la valeur de la
+       * PREMIÈRE image pour toute la partie. On la **dérive** des deux nombres mesurés, ce qui
+       * est exact : `clarteDeCeQuOnPorte(false, braise)` vaut `bulleDeBraise(braise, 0)` =
+       * `CLARTE_PLEINE × f` avec `CLARTE_PLEINE = 1`, donc `porte = f` et `ciel = f − soi`.
+       */
+      const raccord = async () => {
+        // ⚠⚠ **TROIS TOURS, ET LA STABILITÉ SE PROUVE — un seul tour rend un chiffre FAUX, pas
+        // un `null`.** `soiParCorps` se calcule à la l. 3016 de `WorldScene.update` à partir de
+        // `this.etatGel`, que `majEtatGel` ne rafraîchit qu'à la l. 3209 — **la même méthode, plus
+        // bas** (vérifié : les deux lignes tombent dans `override update(time, deltaMs)` ouverte à
+        // la l. 1855). Un tour de manivelle calcule donc le plancher avec le `cycleOffset` du tour
+        // PRÉCÉDENT : après un `debug_set_hour` boucle endormie, le premier tour lit encore MIDI,
+        // et l'identité `sac == carte` passerait à vide — les deux lisant la même carte périmée.
+        // *(En jeu réel c'est une image de retard, invisible : `update` tourne à chaque image.)*
+        // On tourne trois fois et on IMPRIME les deux derniers : s'ils diffèrent, la lecture n'est
+        // pas installée et le bloc le dit au lieu de rendre un nombre.
+        const tour = () => page.evaluate((NOM) => {
+          const sc = window.__BRAISES__.scene
+          sc.update(performance.now(), 16)
+          const m = sc.view.soiParCorps
+          const sp = sc.playerSprite
+          const sac = sp && sp.renderNodeData ? sp.renderNodeData[NOM] : null
+          return { soi: m ? (m.get(sc.playerId) ?? null) : null, sac: sac && 'soi' in sac ? sac.soi : null }
+        }, NOM_NOEUD_CORPS)
+        await tour()
+        const t2 = await tour()
+        const t3 = await tour()
+        // ⚠ **« INSTALLÉE » N'EST PAS « FIGÉE », ET MON PREMIER PRÉDICAT CONFONDAIT LES DEUX**
+        // (MESURÉ le 2026-10-06) : l'égalité au bit entre deux tours a rougi pour 1,08 × 10⁻⁴
+        // d'écart — or `soi = f − ciel` suit la CHARGE, qui tombe d'un point par tick pendant que
+        // la sim tourne dans son worker ; 1,08 × 10⁻⁴ sur un plein de 72 000, c'est **huit ticks**,
+        // soit le temps de deux allers-retours de `page.evaluate`. Le bon test n'est donc pas
+        // l'égalité mais l'ORDRE DE GRANDEUR : une lecture périmée d'une demi-journée sauterait de
+        // `null` à 0,96, pas de 1 × 10⁻⁴. On tolère cent ticks de dérive (1,4 × 10⁻³) et on exige
+        // que les deux tours soient du même côté du vide (tous deux `null`, ou tous deux non nuls).
+        const toleranceDeDerive = 100 / 72000
+        // ⚠ « PAS D'ENTRÉE » ET « PLANCHER NUL » SONT LA MÊME INFORMATION. L'autorité encode la
+        // porte fermée par l'ABSENCE d'entrée (`null`), le sac du GPU par un `0` — un attribut de
+        // sommet n'a pas de `null`. Comparer les deux brut faisait rendre INSTABLE au cas le plus
+        // sain du bloc (midi à découvert, où la porte DOIT être fermée). On normalise avant.
+        const plancher = (v) => (v === null || v === undefined ? 0 : v)
+        const stable = (t2.soi === null) === (t3.soi === null)
+          && (t2.soi === null || Math.abs(t2.soi - t3.soi) <= toleranceDeDerive)
+          && plancher(t2.sac) === plancher(t2.soi) && plancher(t3.sac) === plancher(t3.soi)
+        return Object.assign({ tours: { t2, t3, stable } }, await page.evaluate((NOM) => {
+        const sc = window.__BRAISES__.scene
+        const m = sc.view.soiParCorps
+        const sp = sc.playerSprite
+        const rnd = sp ? sp.renderNodeData : null
+        const sac = rnd ? rnd[NOM] : null
+        const moi = (sc.lastEntities ?? []).find((e) => e.id === sc.playerId)
+        const tx = moi ? Math.floor(moi.x) : null
+        const ty = moi ? Math.floor(moi.y) : null
+        let part = null
+        try { part = sc.etages && sc.etages.partDuCielAt && tx !== null ? sc.etages.partDuCielAt(tx, ty) : null } catch (e) { part = `levée: ${String(e)}` }
+        return {
+          id: sc.playerId,
+          cle: String(sp && sp.texture ? sp.texture.key : '?'),
+          carte: m ? { taille: m.size, moi: m.get(sc.playerId) ?? null } : null,
+          roles: rnd ? Object.keys(rnd) : null,
+          sac: sac && 'soi' in sac ? { soi: sac.soi, expo: sac.expo, dresse: sac.dresse, ciel: sac.ciel, sol: sac.sol, lift: sac.lift } : null,
+          cielHeure: sc.etages && sc.etages.lumiere ? (sc.etages.lumiere.ciel ?? null) : null,
+          partDuCiel: part,
+          tuile: [tx, ty],
+          braise: moi && moi.braise ? { niveau: moi.braise.niveau, charge: moi.braise.charge } : null,
+          heure: sc.lastTime ? sc.lastTime.hour : null,
+          plein: (() => { const B = window.__BRAISES__.sim && window.__BRAISES__.sim.BRAISE; const n = moi && moi.braise ? moi.braise.niveau : 0; return B ? (B.CRANS_DEPART + n) * B.DUREE_CRAN : null })(),
+        }
+        }, NOM_NOEUD_CORPS))
+      }
+
+      const direLeRaccord = (nom, r) => {
+        const f4 = (v) => (typeof v === 'number' ? v.toFixed(4) : '—')
+        console.log(`   RACCORD · ${nom} — sprite « ${r.cle} », id ${r.id}`)
+        console.log(`     ① l'autorité (view.soiParCorps) : ${r.carte === null ? 'ABSENTE (null)' : `présente, ${r.carte.taille} corps`} · pour le JOUEUR : ${r.carte && r.carte.moi !== null ? f4(r.carte.moi) : 'AUCUNE ENTRÉE'}`)
+        console.log(`     ② le sac du GPU (inGiB.w)       : ${r.sac === null ? `NON ARMÉ — rôles ${JSON.stringify(r.roles)} : le sprite du joueur n'est PAS dans la passe des corps` : `soi ${f4(r.sac.soi)} · expo ${r.sac.expo} (−1 = branche E) · dresse ${r.sac.dresse} · ciel ${r.sac.ciel} · sol ${r.sac.sol} · lift ${r.sac.lift}`}`)
+        const f = r.plein && r.braise ? r.braise.charge / r.plein : null
+        const soi = r.carte ? r.carte.moi : null
+        const cielDerive = f !== null && soi !== null ? f - soi : null
+        console.log(`     ③ le ciel à sa tuile (${r.tuile.join(', ')})    : partDuCiel ${typeof r.partDuCiel === 'number' ? r.partDuCiel.toFixed(4) : String(r.partDuCiel)} · clarteDuCiel DÉRIVÉE (f − soi) ${f4(cielDerive)} · heure affichée ${r.heure === null ? '—' : String(r.heure).slice(0, 5)}`)
+        console.log(`        (et le champ « etages.lumiere.ciel » vaut ${f4(r.cielHeure)} — NE PAS s'en servir : il n'est bâti qu'UNE fois à l'air libre)`)
+        console.log(`     ④ la braise                     : ${r.braise ? `niveau ${r.braise.niveau} · charge ${r.braise.charge}` : '—'}`)
+        const tt = r.tours
+        console.log(`     ⑤ la lecture est-elle INSTALLÉE ? tours 2 et 3 de manivelle : soi ${tt.t2.soi === null ? '—' : tt.t2.soi.toFixed(6)} puis ${tt.t3.soi === null ? '—' : tt.t3.soi.toFixed(6)} — ${tt.stable ? 'STABLE' : '⚠ INSTABLE, le chiffre ci-dessus ne vaut rien'}`)
+      }
+
+      /** L'ALBÉDO RÉEL DE LA TEXTURE QUE LE SPRITE PORTE — moyenne et médiane par canal sur les
+       *  texels opaques, et c'est de là que sort la prédiction. Jamais une couleur de `BootScene`. */
+      const albedo = () => page.evaluate(() => {
+        const sc = window.__BRAISES__.scene
+        const sp = sc.playerSprite
+        const cle = String(sp && sp.texture ? sp.texture.key : '?')
+        let src = null
+        try { src = sc.textures.get(cle).getSourceImage() } catch { src = null }
+        if (!src || !src.width) return { cle, echec: 'texture source illisible' }
+        const c = document.createElement('canvas')
+        c.width = src.width; c.height = src.height
+        const cx = c.getContext('2d', { willReadFrequently: true })
+        cx.drawImage(src, 0, 0)
+        let d = null
+        try { d = cx.getImageData(0, 0, c.width, c.height).data } catch { return { cle, echec: 'canevas souillé' } }
+        const fr = sp.frame
+        const fx = fr?.cutX ?? 0, fy = fr?.cutY ?? 0
+        const fw = fr?.cutWidth ?? fr?.width ?? c.width
+        const fh = fr?.cutHeight ?? fr?.height ?? c.height
+        const R = [], V = [], B = []
+        for (let j = 0; j < fh; j++) for (let i = 0; i < fw; i++) {
+          const o = ((fy + j) * c.width + (fx + i)) * 4
+          if (d[o + 3] < 200) continue
+          R.push(d[o]); V.push(d[o + 1]); B.push(d[o + 2])
+        }
+        if (R.length === 0) return { cle, echec: 'aucun texel opaque' }
+        const mo = (a) => a.reduce((s, x) => s + x, 0) / a.length
+        const md = (a) => { const q = a.slice().sort((x, y) => x - y); return q[Math.floor(q.length / 2)] }
+        return { cle, n: R.length, moy: [mo(R), mo(V), mo(B)], med: [md(R), md(V), md(B)] }
+      })
+
+      /**
+       * LE FIL, DANS L'AUTRE SENS — on part du JEU et on le DÉGRADE.
+       *   · `'coupe'` : `corpsId` repasse à `undefined`, donc `soi = 0`. **C'est exactement le
+       *     rendu d'AVANT la réparation**, aux mêmes pixels et au même instant — le contrôle
+       *     négatif que la vidange payait en vingt-cinq minutes.
+       *   · `'demi'` : la CARTE est remplacée par sa moitié **le temps de l'appel seulement**
+       *     (jamais la valeur du jeu), ce qui chiffre C2 — « faut-il la moitié de l'amplitude ? » —
+       *     aux mêmes pixels. Étiqueté SONDE PATCHÉE.
+       *   · `null` : on rend la main au jeu.
+       * ⚠ Posé sur l'INSTANCE de la vue, jamais sur le prototype : Vite sert deux instances de
+       * module, et un prototype patché depuis une sonde n'est pas celui que le jeu utilise.
+       */
+      const fil = (mode) => page.evaluate((o) => {
+        const sc = window.__BRAISES__.scene
+        const v = sc.view
+        if (o === null) {
+          if (!v.__origSync) return 'réel (rien à défaire)'
+          v.syncActor = v.__origSync
+          delete v.__origSync
+          return 'réel'
+        }
+        if (!v.__origSync) v.__origSync = v.syncActor.bind(v)
+        const orig = v.__origSync
+        v.syncActor = (sprite, ...a) => {
+          if (sprite !== sc.playerSprite) return orig(sprite, ...a)
+          if (o === 'coupe') {
+            while (a.length < 8) a.push(undefined)
+            a[7] = undefined
+            return orig(sprite, ...a)
+          }
+          const vraie = v.soiParCorps
+          if (vraie) { const m = new Map(); for (const [k, x] of vraie) m.set(k, x / 2); v.soiParCorps = m }
+          try { return orig(sprite, ...a) } finally { v.soiParCorps = vraie }
+        }
+        return o === 'coupe' ? 'FIL COUPÉ (le rendu d’avant la réparation)' : 'soi × ½ (SONDE PATCHÉE)'
+      }, mode)
+
+      /** µ, σ, σ/µ, centiles, et le WCAG contre le CORPS — la règle de ce rôle, sur chaque surface. */
+      const ligneDeSurface = (nom, s, cRel) => {
+        if (!s || s.n === 0 || s.lrel === null) return `     ${nom.padEnd(20)} —`
+        const sm = s.moy > 0 ? s.ec / s.moy : 0
+        const w = cRel === null ? null : wcag(cRel, s.lrel)
+        return `     ${nom.padEnd(20)} µ ${s.moy.toFixed(1)} · σ ${s.ec.toFixed(1)} · σ/µ ${sm.toFixed(3)} · p10/p50/p90 ${s.p10.toFixed(0)}/${s.p50.toFixed(0)}/${s.p90.toFixed(0)} · RGB ${(s.rgb ?? []).map((v) => v.toFixed(0)).join('/')} · n ${s.n}${w === null ? '' : ` → WCAG ${w.toFixed(2)}:1 ${w >= 3 ? '✓ ≥ 3' : w >= 1.5 ? '✗ < 3' : '✗✗ < 1,5 — INVISIBLE'}`}`
+      }
+      const direLeContraste = (r, etiquette) => {
+        if (!r) return
+        const c = r.corps.masque
+        console.log(`   CONTRASTE · ${etiquette} (charge f ${r.f === null ? '—' : r.f.toFixed(3)})`)
+        console.log(ligneDeSurface('LE CORPS', c, null))
+        if (c.n === 0 || c.lrel === null) { console.error(`!! ${r.nom} : masque VIDE — aucun contraste calculable`); return }
+        for (const d of [0.5, 1, 2, 4, 6]) {
+          const a = r.profil.find((q) => q.d === d)
+          if (a) console.log(ligneDeSurface(`son fond à ${d} t`, a, c.lrel))
+        }
+        console.log(ligneDeSurface('sa BOÎTE (témoin −)', r.corps.boite, c.lrel))
+      }
+
+      /** TOUT EN JSON DANS LE SCRATCHPAD — pour recalculer B et monter la planche sans relancer. */
+      const journal = { quand: new Date().toISOString(), lieu, releves: [] }
+      const garder = (r, etiquette, extra) => {
+        if (!r) return
+        journal.releves.push({
+          nom: r.nom, etiquette, f: r.f, portee: r.portee,
+          jour: r.e.jour, heure: r.e.heure, tick: r.e.tick, charge: r.e.charge, plein: r.e.plein, demande: r.e.demande,
+          corps: { masque: { n: r.corps.masque.n, moy: r.corps.masque.moy, ec: r.corps.masque.ec, p10: r.corps.masque.p10, p50: r.corps.masque.p50, p90: r.corps.masque.p90, rgb: r.corps.masque.rgb, lrel: r.corps.masque.lrel }, boite: { n: r.corps.boite.n, moy: r.corps.boite.moy, rgb: r.corps.boite.rgb, lrel: r.corps.boite.lrel } },
+          profil: r.profil.map((q) => ({ d: q.d, n: q.n, moy: q.moy, ec: q.ec, p10: q.p10, p50: q.p50, p90: q.p90, rgb: q.rgb, lrel: q.lrel })),
+          png: `${OUT}/halo-${lieu}-${r.nom}.png`,
+          ...(extra ?? {}),
+        })
+        try { writeFileSync(`${OUT}/halo-${lieu}-releves.json`, JSON.stringify(journal, null, 1)) } catch (e) { console.error(`!! journal JSON non écrit : ${e}`) }
+      }
+
+      const alb = await albedo()
+      if (alb.echec) console.error(`!! ALBÉDO illisible (${alb.echec}) — la prédiction ne pourra pas se dériver de la texture`)
+      else console.log(`   ALBÉDO MESURÉ de « ${alb.cle} » sur ${alb.n} texels opaques : moyenne ${alb.moy.map((v) => v.toFixed(1)).join('/')} · médiane ${alb.med.join('/')} · L₇₀₉ ${lum(alb.moy).toFixed(1)}`)
+
+      // ⚠ LE RAPPORT DE MIDI — LE SEUL DISCRIMINANT DU « ×0,50 » DE LA NUIT, et il ne coûte RIEN :
+      // `jourRef.corps.masque` est déjà mesuré ci-dessus, je ne l'imprimais pas. À midi en plein
+      // soleil la lumière du champ sature, donc le pixel du corps DEVRAIT valoir sa texture. Si le
+      // corps de midi vaut ~1,0 × sa texture, alors rien en aval du shader ne divise, et le manque
+      // de la nuit est dans le CHEMIN DE NUIT (normales, composition) ; s'il vaut ~0,5 × sa texture,
+      // le facteur est CONSTANT et n'a rien à voir avec le plancher de B-R13d.
+      // C'est ce rapport-là qui porte le verdict, et non l'écart à ma prédiction de nuit.
+      if (!alb.echec && jourRef.corps && jourRef.corps.masque && jourRef.corps.masque.n > 0) {
+        const cm = jourRef.corps.masque
+        const rap = cm.rgb.map((v, i) => (alb.moy[i] > 0 ? v / alb.moy[i] : null))
+        console.log(`   RAPPORT DE MIDI (le discriminant) : corps à l'écran RGB ${cm.rgb.map((v) => v.toFixed(1)).join('/')} · L ${cm.moy.toFixed(1)}`)
+        console.log(`     contre la TEXTURE RGB ${alb.moy.map((v) => v.toFixed(1)).join('/')} → rapport ${rap.map((v) => (v === null ? '—' : v.toFixed(3))).join(' / ')} par canal`)
+        journal.rapportDeMidi = { corps: cm.rgb, texture: alb.moy, rapport: rap, n: cm.n }
+        const moyRap = rap.filter((v) => v !== null).reduce((a, b) => a + b, 0) / rap.filter((v) => v !== null).length
+        console.log(`     → en moyenne ×${moyRap.toFixed(3)} ; ${moyRap > 0.8
+          ? 'le corps rend sa texture à midi — donc si la nuit manque, le manque est dans le chemin de NUIT'
+          : `le corps rend DÉJÀ ×${moyRap.toFixed(2)} de sa texture à midi, SANS aucun plancher en jeu`}`)
+        // ⚠ C'EST UNE BORNE, PAS UNE DÉCOMPOSITION, et l'instrument ne doit pas laisser croire
+        // l'inverse. Midi éclaire le corps par le SOLEIL à travers ses normales, sous un ciel
+        // TEINTÉ (à l'écran V > R, quand la texture a R > V) ; la nuit l'éclaire par le plancher
+        // à travers le champ, sans aucun astre. Deux régimes. Et la FORME des deux rapports
+        // diffère — midi culmine en V, la nuit en B —, ce qu'un simple facteur scalaire de
+        // normales ne produirait pas. Donc ce rapport BORNE le « manque » de nuit, il ne
+        // l'explique pas, et le mot « constant » n'a pas sa place ici.
+        console.log('     ⚠ BORNE et non décomposition : midi éclaire par le SOLEIL à travers les normales, sous')
+        console.log('       un ciel teinté ; la nuit éclaire par le PLANCHER à travers le champ. Deux régimes, et les')
+        console.log('       deux rapports n’ont pas la même forme par canal — à ne pas reporter l’un sur l’autre.')
+      }
+      journal.albedo = alb
+
+      // ═══ ① MIDI, À DÉCOUVERT — LA PORTE EST UN ÉTAT LU, PAS UN ΔL ═══════════════════════════
+      const rMidi = await raccord()
+      direLeRaccord('MIDI, à découvert, jour 61', rMidi)
+      journal.raccordMidi = rMidi
+      ok(rMidi.sac !== null, rMidi.sac !== null
+        ? `le sprite du joueur EST armé dans la passe des corps (sac « ${NOM_NOEUD_CORPS} » présent) — la PRÉMISSE de tout ce bloc`
+        : `le sprite du joueur n'est PAS armé dans la passe des corps — aucune mesure de plancher n'est interprétable`)
+      if (rMidi.sac === null) { console.error('!! ON S’ARRÊTE : sans sac GPU, le shader des corps ne tourne pas sur ce sprite.'); return }
+      ok(rMidi.sac.expo === -1, rMidi.sac.expo === -1
+        ? 'un acteur est en BRANCHE E (expo −1) : il lit le CHAMP sous ses pieds, jamais le feu élu'
+        : `expo ${rMidi.sac.expo} ≠ −1 : ce corps suivrait la règle des FACES, et toute la lecture du champ serait fausse`)
+      const porteMidi = rMidi.carte === null || rMidi.carte.moi === null
+      ok(porteMidi, porteMidi
+        ? 'LA PORTE TIENT À MIDI, et c’est un ÉTAT : la carte n’a pas d’entrée pour le joueur à découvert (`porte − clarteDuCiel × partDuCiel ≤ 0`) — pas un ΔL, qui n’aurait mesuré que le bruit d’image'
+        : `la carte porte ${rMidi.carte.moi.toFixed(4)} pour le joueur à MIDI à découvert — la porte ne tient pas, et le modelé de l’astre est aplati`)
+      ok(rMidi.sac.soi === 0, rMidi.sac.soi === 0
+        ? 'et le sac du GPU porte 0 au bit à midi — la porte traverse bien tout le raccord'
+        : `le sac du GPU porte ${rMidi.sac.soi} à midi alors que la carte est vide — une valeur RÉMANENTE est écrite dans l’attribut`)
+
+      // ═══ ② MINUIT, JOUR 95 — LE RELEVÉ PRINCIPAL, ALTERNÉ réel / coupé / demi / réel ═════════
+      await envoyer([{ type: 'debug_set_season_day', day: 95 }])
+      await page.waitForTimeout(ATTENTE_JOUR)
+      await minuit()
+      const rNuit = await raccord()
+      direLeRaccord('MINUIT, jour 95, à découvert', rNuit)
+      journal.raccordNuit = rNuit
+      ok(rNuit.tours.stable, rNuit.tours.stable
+        ? 'la lecture est INSTALLÉE : deux tours de manivelle de suite rendent le même plancher — ce n’est pas l’image de midi qu’on relit'
+        : '⚠ LECTURE NON INSTALLÉE : deux tours de manivelle donnent deux planchers différents, aucun chiffre de raccord n’est défendable ici')
+      const soiJeu = rNuit.carte ? rNuit.carte.moi : null
+      ok(soiJeu !== null && soiJeu > 0, soiJeu !== null && soiJeu > 0
+        ? `l’autorité donne ${soiJeu.toFixed(4)} de clarté sur soi au JOUEUR à minuit`
+        : 'aucune clarté sur soi pour le joueur à minuit — la coupure serait EN AMONT du raccord')
+      const passe = rNuit.sac !== null && soiJeu !== null && Math.abs(rNuit.sac.soi - soiJeu) < 1e-12
+      ok(passe, passe
+        ? `LE RACCORD PASSE, ET AU BIT : le sac du GPU porte ${rNuit.sac.soi} pour une autorité de ${soiJeu} — c’est la réparation, lue dans l’attribut qui part au shader`
+        : `LE RACCORD NE PASSE PAS : autorité ${soiJeu === null ? '—' : soiJeu} contre sac ${rNuit.sac === null ? 'ABSENT' : rNuit.sac.soi} — la coupure est entre \`syncActor\` et \`poserLeCorps\``)
+
+      console.log(`   fil : ${await fil(null)}`)
+      const reel1 = await relever('nuit-reel-1', cadreDuPorteur)
+      if (reel1) { releves.push(reel1); garder(reel1, 'LE JEU, braise vive, minuit jour 95', { soi: soiJeu }) }
+      console.log(`   fil : ${await fil('coupe')}`)
+      const coupe = await relever('nuit-fil-coupe', cadreDuPorteur)
+      if (coupe) { releves.push(coupe); garder(coupe, 'LE RENDU D’AVANT LA RÉPARATION (soi = 0)', { soi: 0 }) }
+      console.log(`   fil : ${await fil('demi')}`)
+      const demi = await relever('nuit-soi-demi', cadreDuPorteur)
+      if (demi) { releves.push(demi); garder(demi, 'SONDE PATCHÉE — soi × ½ (la question C2)', { soi: soiJeu === null ? null : soiJeu / 2 }) }
+      console.log(`   fil : ${await fil(null)}`)
+      const reel2 = await relever('nuit-reel-2', cadreDuPorteur)
+      if (reel2) { releves.push(reel2); garder(reel2, 'LE JEU, second encadrement (dérive de charge)', { soi: null }) }
+
+      // ═══ ③ LE CHIFFRE PRINCIPAL, ET LA PRÉDICTION DÉRIVÉE DE L'ALBÉDO MESURÉ ════════════════
+      console.log(`\n   ═══ A — LE CORPS DU JOUEUR, MESURÉ AU NAVIGATEUR ═══`)
+      const mq = (r) => (r && r.corps.masque.moy !== null ? r.corps.masque.moy : null)
+      const rgbq = (r) => (r && r.corps.masque.rgb ? r.corps.masque.rgb : null)
+      const dire = (nom, r) => console.log(`   ${nom.padEnd(34)} L ${mq(r) === null ? '—' : mq(r).toFixed(1).padStart(6)} · RGB ${(rgbq(r) ?? []).map((v) => v.toFixed(1)).join('/')} · f ${r && r.f !== null ? r.f.toFixed(3) : '—'} · n ${r ? r.corps.masque.n : '—'} · r0 ${r && r.corps.recalage.r0 !== null ? r.corps.recalage.r0.toFixed(2) : '—'}`)
+      dire('LE JEU (réel ①)', reel1)
+      dire('LE JEU (réel ②, encadrement)', reel2)
+      dire('FIL COUPÉ (= avant réparation)', coupe)
+      dire('soi × ½ (SONDE PATCHÉE)', demi)
+      if (reel1 && reel2 && mq(reel1) !== null && mq(reel2) !== null) {
+        const drift = Math.abs(mq(reel1) - mq(reel2))
+        console.log(`   la DÉRIVE entre les deux réels : ${drift.toFixed(2)} L — c’est le bruit + la charge qui fond ; tout écart plus petit que ça n’est pas un effet`)
+        journal.derive = drift
+      }
+      if (!alb.echec && soiJeu !== null) {
+        const TF = [1.15, 0.92, 0.62]
+        const pred = alb.moy.map((a, i) => a * Math.min(1, TF[i] * soiJeu))
+        console.log(`   PRÉDICTION dérivée de l’albédo MESURÉ, à soi ${soiJeu.toFixed(4)} : albédo_c × min(1 ; TEINTE_FEU_c × soi)`)
+        console.log(`     → RGB ${pred.map((v) => v.toFixed(1)).join('/')} soit L ${lum(pred).toFixed(1)}  (le rouge ${TF[0] * soiJeu >= 1 ? 'SATURE' : `ne sature pas : ×${(TF[0] * soiJeu).toFixed(3)}`})`)
+        journal.prediction = { soi: soiJeu, rgb: pred, L: lum(pred) }
+        const m = mq(reel1)
+        if (m !== null) {
+          const part = m / lum(pred)
+          console.log(`     le MESURÉ vaut ${(part * 100).toFixed(0)} % de la prédiction (${m.toFixed(1)} contre ${lum(pred).toFixed(1)})`)
+          journal.prediction.part = part
+          // ⚠ AUCUN VERDICT SUR CE RAPPORT, ET C'EST DÉLIBÉRÉ. Il a mis un ✗ rouge sur un rendu
+          // JUSTE, parce que c'est MA FORME DE MODÈLE qui est fausse : `albédo × min(1 ;
+          // TEINTE_FEU × soi)` suppose que le plancher EST le pixel, alors que `passe-corps.ts:276`
+          // le fait entrer comme ENTRÉE DE LUMIÈRE de `partsDuCorps`, qui compose ensuite avec la
+          // normale. Un instrument qui rougit sur un comportement juste est un instrument cassé.
+          // Ce qui DISCRIMINE, c'est le rapport de MIDI ci-dessous, pas ce pourcentage.
+          console.log('     (pas de verdict ici : le modèle suppose « plancher = pixel ». Ce qui tranche est le RAPPORT DE MIDI.)')
+        }
+      }
+      // LA SOUSTRACTION AU PIXEL — et sa TEINTE, qui est le seul discriminant du point aveugle.
+      if (reel1 && coupe) {
+        const d = entreDeux(reel1, coupe, reel1.corps.masque.pts)
+        if (d.echec) console.error(`!! soustraction réel − coupé REFUSÉE : ${d.echec}`)
+        else {
+          console.log(`   CE QUE LE PLANCHER ACHÈTE, AU PIXEL (réel − fil coupé, ${d.n} px de silhouette) :`)
+          console.log(`     ΔL ${d.dL >= 0 ? '+' : ''}${d.dL.toFixed(2)} · ΔRGB ${d.dRGB.map((v) => `${v >= 0 ? '+' : ''}${v.toFixed(1)}`).join('/')} · teinte ${d.th.h === null ? '—' : d.th.h.toFixed(0) + '°'} (chroma ${d.th.chroma.toFixed(3)}) · WCAG entre les deux états ${d.wcag.toFixed(2)}:1`)
+          const chaud = d.dRGB[0] > d.dRGB[1] && d.dRGB[1] > d.dRGB[2] && d.dRGB[0] > 2
+          ok(chaud, chaud
+            ? `et la teinte de ce qui arrive est CHAUDE (ΔR > ΔV > ΔB), dans l’ordre de \`GI.TEINTE_FEU\` — c’est bien le plancher de B-R13d qui atteint le corps, et non un écart de champ`
+            : `la teinte de ΔRGB n’est pas celle d’une flamme (${d.dRGB.map((v) => v.toFixed(1)).join('/')}) — ce qui a changé sur le corps n’est pas le plancher`)
+          journal.gain = { dL: d.dL, dRGB: d.dRGB, teinte: d.th, wcag: d.wcag, n: d.n }
+        }
+      }
+      if (demi && reel1) {
+        const d = entreDeux(reel1, demi, reel1.corps.masque.pts)
+        if (!d.echec) {
+          console.log(`   ET LA MOITIÉ D’AMPLITUDE (réel − soi×½) : ΔL ${d.dL >= 0 ? '+' : ''}${d.dL.toFixed(2)} · ΔRGB ${d.dRGB.map((v) => `${v >= 0 ? '+' : ''}${v.toFixed(1)}`).join('/')}`)
+          journal.demiEcart = { dL: d.dL, dRGB: d.dRGB }
+        }
+      }
+
+      // ═══ ④ B — LA LISIBILITÉ, QUI EST LA VRAIE QUESTION ════════════════════════════════════
+      console.log(`\n   ═══ B — LE CORPS CONTRE SES FONDS RÉELS (WCAG sur la luminance RELATIVE, seuil 3:1) ═══`)
+      direLeContraste(reel1, 'LE JEU, braise vive')
+      direLeContraste(demi, 'SONDE PATCHÉE, soi × ½')
+      direLeContraste(coupe, 'LE RENDU D’AVANT LA RÉPARATION')
+      console.log(`   ⚠ LE FOND EST UN SOUS-BOIS SEC DE PALIER 0 (le poste d’observation). ROCHE, NEIGE et EAU`)
+      console.log(`     ne sont PAS dans ce cadre et ne sont donc PAS mesurées ici — un TP vers la naissance`)
+      console.log(`     tombe les pieds dans l’eau, où l’immersion ROGNE le masque de silhouette.`)
+      console.log(`\n   la planche : ${OUT}/halo-${lieu}-*.png · les nombres : ${OUT}/halo-${lieu}-releves.json`)
+
+      // ═══ ⑤ LE TÉMOIN RÉEL — la braise qui se VIDE, par la loi et non par un patch ═══════════
+      // Tout ce qui précède est déjà imprimé : si la vidange meurt, le rapport est complet.
+      if (process.env.HALO_VIDANGE === '0') { console.log(`\n   (vidange coupée — HALO_VIDANGE=0 : pas de demi-charge RÉELLE ni de témoin à charge nulle)`); return }
+      console.log(`\n   ═══ LA VIDANGE — la demi-charge et le témoin, par la loi (B-R8) ═══`)
+      const v0 = await lireBraise()
+      await page.waitForTimeout(8000)
+      const v1 = await lireBraise()
+      const mord = v1.charge !== null && v0.charge !== null && v1.charge < v0.charge
+      ok(mord, `la prémisse : au jour ${v1.jour} à minuit le froid MORD (${v0.charge} → ${v1.charge} en 8 s)`)
+      if (!mord) { console.error('!! la charge ne descend pas — ni demi-charge réelle ni témoin'); return }
+      const cads = []
+      for (const f of [4, 8, 16]) cads.push(await cadence(f, 8000))
+      const best = cads.slice().sort((a, b) => b.parSec - a.parSec)[0]
+      const plein0 = (await lireBraise()).plein ?? 72000
+      const minutes = plein0 / Math.max(1, best.parSec) / 60
+      console.log(`   → meilleure cadence OBSERVÉE ×${best.facteur} (${best.parSec.toFixed(0)} charge/s) ; vider le plein coûte ${minutes.toFixed(1)} min de montre`)
+      const demiReel = await vidangerJusqua(0.5, best.facteur, 1200000)
+      console.log(`   vidange → f ${demiReel.f.toFixed(3)} en ${demiReel.s.toFixed(0)} s`)
+      const rDemi = await raccord()
+      direLeRaccord(`MINUIT, demi-charge RÉELLE (f ${demiReel.f.toFixed(3)})`, rDemi)
+      const relDemi = await relever(nomDeCharge('nuit-demi-reelle', demiReel.f), cadreDuPorteur)
+      if (relDemi) { releves.push(relDemi); garder(relDemi, 'LE JEU, demi-charge RÉELLE', { soi: rDemi.carte ? rDemi.carte.moi : null }) }
+      direLeContraste(relDemi, `LE JEU, demi-charge RÉELLE (f ${demiReel.f.toFixed(3)})`)
+      if (!demiReel.bloque) {
+        const vide = await vidangerJusqua(0, best.facteur, 1500000)
+        console.log(`   vidange → f ${vide.f.toFixed(3)} en ${vide.s.toFixed(0)} s`)
+        const rVide = await raccord()
+        direLeRaccord(`MINUIT, charge ${vide.charge}`, rVide)
+        ok(vide.charge === 0 ? rVide.carte === null || rVide.carte.moi === null : true, vide.charge === 0
+          ? 'à charge NULLE la carte n’a plus d’entrée pour le joueur — le plancher se vide tout seul, par la loi (`clarteDeCeQuOnPorte` → 0)'
+          : `la vidange s’est arrêtée à ${vide.charge} : le témoin n’est pas à charge nulle, et son nom le dit`)
+        const relVide = await relever(nomDeCharge('nuit-temoin', vide.f), cadreDuPorteur)
+        if (relVide) { releves.push(relVide); garder(relVide, 'LE TÉMOIN — braise VIDE, par la loi', { soi: rVide.carte ? rVide.carte.moi : null }) }
+        direLeContraste(relVide, `LE TÉMOIN, braise vide (f ${vide.f.toFixed(3)})`)
+        // ⚠ LE MASQUE DU TÉMOIN DOIT ÊTRE LE MÊME JEU DE PIXELS, sinon on ne compare rien.
+        // Payé le 2026-10-06 : le témoin a rendu « 24,5 contre 12,0 » — un écart POSITIF, donc
+        // contraire à l'inégalité attendue — alors que sa silhouette était tombée de 288 à 168 px,
+        // sa boîte de 1540 à 952, son anneau de 0,5 t était VIDE et l'exclusion du HUD mangeait
+        // 37 points sur 48. La vidange avait aussi fait passer DEUX jours de jeu, donc une autre
+        // lune. Un instrument qui publie ce nombre-là ment ; celui-ci refuse et dit pourquoi.
+        const nRef = jourRef.corps && jourRef.corps.masque ? jourRef.corps.masque.n : null
+        const nVide = relVide && relVide.corps && relVide.corps.masque ? relVide.corps.masque.n : null
+        const memeMasque = nRef !== null && nVide !== null && nVide >= nRef * 0.95
+        if (!memeMasque) {
+          console.error(`!! TÉMOIN NON COMPARABLE — sa silhouette ne fait plus que ${nVide === null ? '—' : nVide} px contre ${nRef === null ? '—' : nRef} au contrôle : ce n'est pas le même jeu de pixels, aucun écart au fil coupé n'est défendable`)
+          console.log(`   (cause probable : le corps a dérivé sous le HUD, ou la vidange a fait passer des JOURS de jeu — donc une autre lune. Le contrôle négatif qui tient est le FIL COUPÉ, au même instant et aux mêmes pixels.)`)
+          journal.temoinContreCoupe = { refuse: 'masque maigri', nVide, nRef }
+        } else if (relVide && coupe && mq(relVide) !== null && mq(coupe) !== null) {
+          const ecart = mq(relVide) - mq(coupe)
+          console.log(`\n   LE TÉMOIN RÉEL contre LE FIL COUPÉ : ${mq(relVide).toFixed(1)} contre ${mq(coupe).toFixed(1)} (écart ${ecart >= 0 ? '+' : ''}${ecart.toFixed(2)} L)`)
+          console.log(`   (les deux valent soi = 0 ; le témoin a de plus perdu le TROU du voile, la FLAQUE et le point light,`)
+          console.log(`    donc il doit être ≤ au fil coupé. S’ils sont égaux, la braise n’apporte RIEN au corps par le champ`)
+          console.log(`    — et le point aveugle du haut de ce bloc devient MESURÉ.)`)
+          journal.temoinContreCoupe = { temoin: mq(relVide), coupe: mq(coupe), ecart }
+        }
+      }
+      try { writeFileSync(`${OUT}/halo-${lieu}-releves.json`, JSON.stringify(journal, null, 1)) } catch { /* déjà dit */ }
+      console.log(`\n   la planche : ${OUT}/halo-${lieu}-*.png · les nombres : ${OUT}/halo-${lieu}-releves.json`)
+      return
+    }
+
+    // ═══ ⑧ LA NUIT, BRAISE VIVE — au Grand Froid, le seul hiver que le jeu joue ═══════════════
+    await envoyer([{ type: 'debug_set_season_day', day: 95 }])
+    await page.waitForTimeout(ATTENTE_JOUR)
+    await minuit()
+    const nuitBraise = await relever('nuit-braise', cadreDuPorteur)
+    if (nuitBraise) releves.push(nuitBraise)
+
+    // ═══ ⑨ LA TORCHE — MÊME cadre, MÊME nuit : une source dont on sait qu'elle éclaire ════════
+    let nuitTorche = null
+    if (process.env.HALO_HIERARCHIE === '0') console.log('   (torche et Feu coupés — HALO_HIERARCHIE=0)')
+    else {
+      await envoyer([{ type: 'debug_grant', item: 'torche_vive' }])
+      await page.waitForTimeout(4000)
+      const tenue = await page.evaluate(() => {
+        const sc = window.__BRAISES__.scene
+        const e = (sc.lastEntities ?? []).find((x) => x.id === sc.playerId)
+        const s = e && e.activeSlot >= 0 ? (e.inventory ?? [])[e.activeSlot] : null
+        return s?.item ?? null
+      })
+      ok(tenue === 'torche_vive', `la torche est EN MAIN (${tenue})`)
+      await minuit()
+      nuitTorche = await relever('nuit-torche', cadreDuPorteur)
+      if (nuitTorche) releves.push(nuitTorche)
+      // ⓗ ON RANGE LA TORCHE EN ATTENDANT L'ÉTAT DU RENDU — la faute que `torche` a payée.
+      await envoyer([{ type: 'set_active_slot', slot: -1 }])
+      const rangee = await page.waitForFunction(() => {
+        const sc = window.__BRAISES__.scene
+        const fl = sc.torcheGround?.glows
+        const li = sc.dynLight?.torches
+        return (!fl || fl.size === 0) && (!li || li.size === 0)
+      }, null, { timeout: 240000 }).then(() => true).catch(() => false)
+      ok(rangee, rangee
+        ? 'la torche a quitté le RENDU (flaque détruite, point light retiré) — pas une attente d’horloge'
+        : 'la torche est encore dans le rendu après 240 s : tout relevé qui suit la compterait avec')
+    }
+
+    // ═══ ⑩ LA CADENCE DE LA VIDANGE — MESURÉE, 24 s, et elle DÉMENT une prémisse ══════════════
+    // ⚠ Le premier run a fait croire que `debug_speed` n'accélère rien : son `71950 → 71750 en
+    // 10 s` (20 charge/s = TICK_RATE_HZ × VIDANGE_PAR_TICK) était pris AVANT tout `debug_speed`.
+    // La première cadence vraie, elle, a donné 49 charge/s à ×4 — 2,4× le temps réel. On mesure
+    // donc les trois facteurs et on imprime le coût d'une vidange complète, au lieu de le dire.
+    const d0 = await lireBraise()
+    await page.waitForTimeout(8000)
+    const d1 = await lireBraise()
+    const mord = d1.charge !== null && d0.charge !== null && d1.charge < d0.charge
+    ok(mord, `la prémisse : au jour ${d1.jour} à minuit le froid MORD (${d0.charge} → ${d1.charge} en 8 s, soit ${((d0.charge - d1.charge) / 8).toFixed(0)} charge/s à ×1)`)
+    let meilleure = null
+    if (mord) {
+      const cads = []
+      for (const f of [4, 8, 16]) cads.push(await cadence(f, 8000))
+      meilleure = cads.slice().sort((a, b) => b.parSec - a.parSec)[0]
+      const plein0 = (await lireBraise()).plein ?? 72000
+      console.log(`   → meilleure cadence OBSERVÉE : ×${meilleure.facteur} (${meilleure.parSec.toFixed(0)} charge/s) ; le plein vaut ${plein0} charges, soit ${(plein0 / Math.max(1, meilleure.parSec) / 60).toFixed(1)} min de montre pour tout vider`)
+    }
+
+    // ═══ ⑪ LA VIDANGE — opt-in : c'est la seule section qui coûte une demi-heure ══════════════
+    // Elle n'achète QUE la section géométrie/quanta et le témoin à charge nulle. La question
+    // d'Alexis (« la braise éclaire-t-elle le porteur ? ») est tranchée sans elle, par ⑫.
+    // ⚠ LA DÉCISION SE PREND SUR LE CHIFFRE QU'ON VIENT DE MESURER, pas sur une prémisse : la
+    // vidange n'ouvre que la section des 8 paliers de `partQuantifiee` et le témoin à charge
+    // nulle (qui rend la soustraction au pixel possible). Elle se joue si elle tient dans le
+    // BUDGET, et `HALO_VIDANGE=0` la coupe quoi qu'il arrive.
+    const plein1 = (await lireBraise()).plein ?? 72000
+    const coutMin = meilleure ? plein1 / Math.max(1, meilleure.parSec) / 60 : Infinity
+    const budget = Number(process.env.HALO_BUDGET_MIN ?? 16)
+    const vidanger = mord && meilleure && process.env.HALO_VIDANGE !== '0' && (coutMin <= budget || process.env.HALO_VIDANGE === '1')
+    console.log(`   vidange : coût MESURÉ ${coutMin === Infinity ? '—' : coutMin.toFixed(1) + ' min'} contre un budget de ${budget} min → ${vidanger ? 'ON LA JOUE' : 'COUPÉE'}`)
+    if (vidanger) {
+      for (const cible of [0.5, 0.25, 0]) {
+        const v = await vidangerJusqua(cible, meilleure.facteur, 1800000)
+        console.log(`   vidange → f ${v.f.toFixed(3)} (cible ${cible}) en ${v.s.toFixed(0)} s`)
+        await minuit()
+        const r = await relever(nomDeCharge('bas', v.f), cadreDuPorteur)
+        if (r) releves.push(r)
+        if (v.bloque) break
+      }
+    }
+
+    // ═══ ⑫ LE FEU — LE CONTRÔLE POSITIF DE LA PASSE DES CORPS, et il vient EN DERNIER ═════════
+    //
+    // ⚠ C'EST LA PIÈCE QUI REND INTERPRÉTABLE UN ΔL NUL. Un ΔL de silhouette nul sous braise
+    // peut dire deux choses : « la lumière n'atteint pas le corps » ou « ma sonde ne voit pas la
+    // lumière sur un corps ». Le Feu les sépare, et il les sépare SANS dépendre d'aucune
+    // hypothèse sur la chaîne : c'est une source POSÉE, dont personne ne doute qu'elle éclaire
+    // ce qui se tient à un pas d'elle. Même cadre, même nuit, même position — le seul
+    // changement entre les deux images est la FLAMME. S'il éclaire la silhouette, la sonde VOIT
+    // la lumière sur un corps, et tout ΔL nul relevé ailleurs est un fait de rendu ; s'il ne
+    // l'éclaire pas, c'est la sonde qu'il faut mettre en cause, et le rapport le dira ainsi.
+    // Il passe en DERNIER parce qu'un feu allumé couvre la demande de froid (B-R8) : plus tôt,
+    // il aurait arrêté la vidange et contaminé tous les relevés de braise.
+    if (process.env.HALO_HIERARCHIE !== '0') {
+      const site = await page.evaluate(() => {
+        const sc = window.__BRAISES__.scene
+        const m = sc.map
+        const moi = (sc.lastEntities ?? []).find((e) => e.id === sc.playerId)
+        const tx0 = Math.floor(moi?.x ?? 0), ty0 = Math.floor(moi?.y ?? 0)
+        const REFUSES = new Set([0, 4, 5, 6, 7])
+        const pris = new Set()
+        for (const z of sc.view?.structures ?? []) pris.add(`${z.tx},${z.ty}`)
+        for (const n of sc.view?.nodes ?? []) pris.add(`${n.tx},${n.ty}`)
+        const libre = (tx, ty) => {
+          const tr = m.terrain[ty * m.width + tx]
+          return tr !== undefined && !REFUSES.has(tr) && !pris.has(`${tx},${ty}`)
+        }
+        const out = []
+        // ⚠ ON EXIGE AUSSI LA TUILE DU DESSOUS : c'est de LÀ qu'on allume (INTERACT_RANGE 1,5).
+        for (const [dx, dy] of [[3, 0], [0, 3], [-3, 0], [0, -3], [3, 3], [-3, 3], [3, -3], [-3, -3], [4, 0], [0, 4]]) {
+          const tx = tx0 + dx, ty = ty0 + dy
+          if (libre(tx, ty) && libre(tx, ty + 1)) out.push({ tx, ty, dx, dy })
+        }
+        return { tx0, ty0, liste: out }
+      })
+      let feu = null
+      for (const c of site.liste) {
+        await envoyer([{ type: 'debug_grant', item: 'campfire' }])
+        await page.waitForTimeout(2000)
+        await envoyer([{ type: 'place_campfire', tx: c.tx, ty: c.ty }])
+        await page.waitForTimeout(3000)
+        feu = await page.evaluate((q) => {
+          const sc = window.__BRAISES__.scene
+          const f = (sc.view?.structures ?? []).find((z) => z.type === 'fire' && z.tx === q.tx && z.ty === q.ty)
+          return f ? { id: f.id, tx: f.tx, ty: f.ty, allumee: f.allumee ?? null } : null
+        }, c)
+        if (feu) { feu.dx = c.dx; feu.dy = c.dy; break }
+      }
+      ok(feu !== null, feu
+        ? `feu de camp posé en (${feu.tx}, ${feu.ty}), allumee ${feu.allumee} (B-R17 : il naît ÉTEINT)`
+        : 'aucun feu posable — ni le contrôle de la passe des corps ni la portée du Feu ne sont mesurés')
+      if (feu) {
+        // ① ON SE MET AU BRAS DU FEU, et le cadre se fige LÀ — un autre endroit, un autre cadre.
+        await envoyer([{ type: 'debug_teleport', x: feu.tx + 0.5, y: feu.ty + 1.3 }])
+        await page.waitForTimeout(3000)
+        await minuit()
+        const cadreAuFeu = faireCadre('corps au pied du feu')
+        const avantFlamme = await relever('feu-corps-eteint', cadreAuFeu)
+        if (avantFlamme) releves.push(avantFlamme)
+        await envoyer([{ type: 'light_foyer', structureId: feu.id }])
+        await page.waitForTimeout(3000)
+        const vif = await page.evaluate((id) => {
+          const sc = window.__BRAISES__.scene
+          const f = (sc.view?.structures ?? []).find((z) => z.id === id)
+          return { allumee: f?.allumee ?? null, refus: sc.registry.get('alertes') ?? null }
+        }, feu.id)
+        if (vif.allumee !== true) console.log(`   !! refus d'allumage : ${JSON.stringify(vif.refus)}`)
+        ok(vif.allumee === true, 'le feu a pris la flamme (allumé à la braise — B-R17 ② : toute charge, zéro comprise)')
+        await minuit()
+        const apresFlamme = await relever('feu-corps-vif', cadreAuFeu)
+        if (apresFlamme) releves.push(apresFlamme)
+        if (avantFlamme && apresFlamme) {
+          console.log(`\n── ⑬ LE CONTRÔLE DE LA PASSE DES CORPS : « feu-corps-vif » − « feu-corps-eteint » ──`)
+          for (const [etq, pts] of [['SILHOUETTE', apresFlamme.corps.masque.pts], ['sol à 2 t', apresFlamme.profil.find((q) => q.d === 2)?.pts ?? []], ['sol à 5 t', apresFlamme.profil.find((q) => q.d === 5)?.pts ?? []]]) {
+            const z = entreDeux(apresFlamme, avantFlamme, pts)
+            if (z.echec) console.log(`   ${etq.padEnd(12)} REFUSÉ : ${z.echec}`)
+            else console.log(`   ${etq.padEnd(12)} n ${String(z.n).padStart(5)}  L ${z.lb.toFixed(1)} → ${z.la.toFixed(1)}  ΔL ${(z.dL >= 0 ? '+' : '') + z.dL.toFixed(2)}  ΔRGB ${z.dRGB.map((v) => (v >= 0 ? '+' : '') + v.toFixed(1)).join('/')}  teinte ${z.th.h === null ? '—' : z.th.h.toFixed(1) + '°'} chroma ${z.th.chroma.toFixed(3)}  WCAG ${z.wcag === null ? '—' : z.wcag.toFixed(2)}`)
+          }
+          const zs = entreDeux(apresFlamme, avantFlamme, apresFlamme.corps.masque.pts)
+          if (!zs.echec) {
+            if (Math.abs(zs.dL) > 2) console.log(`   ✓ LA SONDE VOIT LA LUMIÈRE SUR UN CORPS (ΔL ${zs.dL.toFixed(2)} sur la silhouette) — donc un ΔL nul sous braise est un fait du RENDU, pas une cécité de la sonde`)
+            else console.error(`   !! LE FEU LUI-MÊME N'ÉCLAIRE PAS LA SILHOUETTE (ΔL ${zs.dL.toFixed(2)}) — aucune conclusion sur la braise n'est défendable : c'est la SONDE ou la couche qui est en cause`)
+          }
+        }
+        // ② LA PORTÉE DU FEU : on s'éloigne de 11 tuiles et on cadre le FEU. À 11 tuiles, la
+        // braise (3,96 t = 143 px) n'atteint plus le bord du cadre du feu (798 px) — vérifié
+        // par le calcul, et les exclusions « cadre » diront si le clip a été rogné.
+        await envoyer([{ type: 'debug_teleport', x: feu.tx - 11 + 0.5, y: feu.ty + 0.5 }])
+        await page.waitForTimeout(3000)
+        await minuit()
+        const porteeFeu = await relever('feu-portee', faireCadre('le feu seul', 11, 0))
+        if (porteeFeu) {
+          if (porteeFeu.e.torcheFlaque || (porteeFeu.e.torcheLights ?? 0) > 0) console.error('!! feu-portee porte encore un état de TORCHE — relevé refusé, il compterait les deux sources')
+          else releves.push(porteeFeu)
+        }
+      }
+    }
+  }
+
+  // ═══ ⑩ LE RAPPORT ═══════════════════════════════════════════════════════════════════════════
+  if (releves.length === 0) { console.error('!! aucun relevé'); return }
+  // ③ LE TÉMOIN SE CHOISIT SUR LA CHARGE, JAMAIS SUR SON NOM.
+  const temoin = releves.find((r) => r.e.charge === 0) ?? null
+  if (temoin) console.log(`\n   témoin retenu : « ${temoin.nom} » — charge ${temoin.e.charge} (le seul relevé à charge RÉELLEMENT nulle)`)
+  else console.log('\n   AUCUN relevé à charge nulle : pas de témoin, donc aucune soustraction au pixel')
+
+  /** La soustraction au pixel n'est permise que si le clip ET L'ANCRE DU MONDE coïncident (ⓓ). */
+  const appariable = (r) => {
+    if (!temoin || r.nom === temoin.nom) return null
+    const c = r.cadre.clip, ct = temoin.cadre.clip
+    if (c.x !== ct.x || c.y !== ct.y || c.width !== ct.width || c.height !== ct.height) return 'cadre différent'
+    const a = r.e.ancre, at = temoin.e.ancre
+    const drift = Math.max(Math.abs(a.vx - at.vx), Math.abs(a.vy - at.vy), Math.abs(a.px - at.px), Math.abs(a.py - at.py))
+    if (drift > 0.5) return `le monde a GLISSÉ de ${drift.toFixed(2)} px sous le cadre (caméra ou corps)`
+    if (r.e.jour !== null && temoin.e.jour !== null && Math.abs(r.e.jour - temoin.e.jour) > 10) return `saisons différentes (jour ${r.e.jour} contre ${temoin.e.jour}) — la soustraction mesurerait la SAISON`
+    return null
+  }
+
+  console.log(`\n── ① LE PROFIL DU SOL, PAR ANNEAU (luminance Rec. 709, médiane de ${NDIRS} directions) ──`)
+  console.log(`   ${'image'.padEnd(16)}${'f'.padStart(6)}${'portée'.padStart(8)}${RAYONS.map((d) => `${d}t`.padStart(7)).join('')}`)
+  for (const r of releves) {
+    console.log(`   ${r.nom.padEnd(16)}${r.f === null ? '—'.padStart(6) : r.f.toFixed(3).padStart(6)}${r.portee === null ? '—'.padStart(8) : `${r.portee} t`.padStart(8)}${r.profil.map((p) => f1(p.p50, 7)).join('')}`)
+  }
+  console.log(`   ${'(n points)'.padEnd(30)}${releves[0].profil.map((p) => String(p.n).padStart(7)).join('')}`)
+  console.log(`   exclusions du premier relevé (sprite/hud/cadre) : ${releves[0].profil.map((p) => `${p.d}t:${p.exclus.sprite}/${p.exclus.hud}/${p.exclus.cadre}`).join(' ')}`)
+  console.log(`   ⚠ LA HIÉRARCHIE SE LIT SUR LA COLONNE « portée », pas sur le centre : les trois sources sont ÉGALES au contact.`)
+
+  console.log(`\n── ② µ, σ, σ/µ ET CENTILES, anneau par anneau ──`)
+  for (const r of releves) {
+    console.log(`   ${r.nom} (f ${r.f === null ? '—' : r.f.toFixed(3)}, jour ${r.e.jour}) :`)
+    console.log(`     ${'d'.padStart(5)}${'n'.padStart(5)}${'µ'.padStart(8)}${'σ'.padStart(8)}${'σ/µ'.padStart(8)}${'p10'.padStart(8)}${'p50'.padStart(8)}${'p90'.padStart(8)}   RGB moyen`)
+    for (const p of r.profil) {
+      console.log(`     ${String(p.d).padStart(5)}${String(p.n).padStart(5)}${f1(p.moy, 8)}${f1(p.ec, 8)}${p.moy ? (p.ec / p.moy).toFixed(3).padStart(8) : '—'.padStart(8)}${f1(p.p10, 8)}${f1(p.p50, 8)}${f1(p.p90, 8)}   ${p.rgb ? p.rgb.map((v) => v.toFixed(1).padStart(6)).join(' ') : '—'}`)
+    }
+    console.log(`     CORPS silhouette n ${String(r.corps.masque.n).padStart(5)} µ ${f1(r.corps.masque.moy, 0)} σ ${f1(r.corps.masque.ec, 0)} p50 ${f1(r.corps.masque.p50, 0)} p90 ${f1(r.corps.masque.p90, 0)} RGB ${r.corps.masque.rgb ? r.corps.masque.rgb.map((v) => v.toFixed(1)).join('/') : '—'}`)
+    console.log(`     CORPS boîte      n ${String(r.corps.boite.n).padStart(5)} µ ${f1(r.corps.boite.moy, 0)} (contrôle NÉGATIF : elle contient du sol, donc de la flaque)`)
+  }
+
+  // ═══ ② BIS — LA LISIBILITÉ ET LE DÉLAVAGE, SANS TÉMOIN, sur le pixel COMPOSÉ ═══════════
+  //
+  // ⚠ CES DEUX NOMBRES NE DEMANDENT AUCUNE SOUSTRACTION : ils se lisent dans une seule image,
+  // donc ils ne dépendent pas de la vidange. Ce sont les deux questions qui restent ouvertes
+  // depuis que l'amplitude est à parité et que la fourche `feuxGi` est tombée (2026-10-05).
+  //   · LA LISIBILITÉ : le rapport WCAG du CORPS COMPOSÉ contre son fond de nuit (l'anneau à
+  //     6 t, hors de toute portée). C'est « est-ce qu'on le VOIT », et la leçon de la barre de
+  //     crans dit qu'une forme pleine demande 3 — des gardes DOM vertes n'ont pas empêché un
+  //     rendu illisible à 1,12.
+  //   · LE DÉLAVAGE : la CHROMA du pixel composé. L'étalon est MESURÉ, pas inventé — le
+  //     2026-09-02, `cave-veil.ts` a relevé qu'un ADD ambré SEUL sur un sol bleu-gris rendait
+  //     [87, 80, 84], soit une chroma de 0,080 : un GRIS. D'où le MULTIPLY ambré préalable
+  //     qu'il s'est donné et que la flaque de SURFACE n'a pas. Une chroma composée voisine de
+  //     0,08 au cœur du halo dit que la flaque délave au lieu de réchauffer — et ça toucherait
+  //     la flaque de la TORCHE autant que celle de la braise.
+  console.log(`\n── ② BIS — LA LISIBILITÉ DU CORPS ET LA CHROMA DU PIXEL COMPOSÉ (une seule image, aucun témoin) ──`)
+  console.log(`   ${'image'.padEnd(18)}${'f'.padStart(6)}${'L corps'.padStart(9)}${'L fond 6t'.padStart(10)}${'WCAG'.padStart(7)}${'teinte'.padStart(9)}${'chroma'.padStart(8)}  chroma COMPOSÉE du sol, par anneau`)
+  for (const r of releves) {
+    const fond = r.profil.find((q) => q.d === 6) ?? r.profil[r.profil.length - 1]
+    const w = r.corps.masque.lrel !== null && fond.lrel !== null ? wcag(r.corps.masque.lrel, fond.lrel) : null
+    const tc = r.corps.masque.rgb ? teinte(r.corps.masque.rgb) : { h: null, chroma: null }
+    const chrs = r.profil.filter((q) => [0, 1, 2, 3, 6].includes(q.d)).map((q) => `${q.d}t ${q.rgb ? teinte(q.rgb).chroma.toFixed(3) : '—'}`)
+    console.log(`   ${r.nom.padEnd(18)}${r.f === null ? '—'.padStart(6) : r.f.toFixed(3).padStart(6)}${f1(r.corps.masque.moy, 9)}${f1(fond.moy, 10)}${f2(w, 7)}${(tc.h === null ? '—' : tc.h.toFixed(1) + '°').padStart(9)}${f2(tc.chroma, 8)}  ${chrs.join(' · ')}`)
+  }
+  console.log(`   étalon du DÉLAVAGE : 0,080 de chroma = un GRIS (MESURÉ le 2026-09-02 sur la cave, [87,80,84] en ADD seul) ·`)
+  console.log(`   étalon de LISIBILITÉ : une forme pleine demande 3 de WCAG (barre de crans, 2026-10-04) ·`)
+  console.log(`   la teinte des SOURCES, pour comparaison : braise 27,8°/0,710 · torche 36,3°/0,545 · Feu 31,5°/0,718 (cœurs de texture).`)
+
+  /** La lumière AJOUTÉE sur un jeu de points : relevé − témoin, aux MÊMES pixels. Hissée hors de
+   *  la section ③ parce que la section ⑥ (la parité au contact) en a besoin aussi. */
+  const deltaDe = (r, pts, ptsT, lrelFond) => {
+    if (!temoin) return null
+    const paires = pts.map((a, i) => [a, ptsT[i]]).filter(([a, b]) => !a.hors && b && !b.hors)
+    if (paires.length === 0) return null
+    const mr = (c) => moy(paires.map(([a]) => r.img.px(a.x, a.y)[c]))
+    const mt = (c) => moy(paires.map(([, b]) => temoin.img.px(b.x, b.y)[c]))
+    const dRGB = [0, 1, 2].map((c) => mr(c) - mt(c))
+    const compose = [0, 1, 2].map((c) => mr(c))
+    const lr = moy(paires.map(([a]) => lumRel(r.img.px(a.x, a.y))))
+    const lt = moy(paires.map(([, b]) => lumRel(temoin.img.px(b.x, b.y))))
+    const dL = moy(paires.map(([a]) => lum(r.img.px(a.x, a.y)))) - moy(paires.map(([, b]) => lum(temoin.img.px(b.x, b.y))))
+    return { n: paires.length, dL, dRGB, th: teinte(dRGB), compose, wTem: wcag(lr, lt), wFond: lrelFond === null ? null : wcag(lr, lrelFond) }
+  }
+
+  if (temoin) {
+    console.log(`\n── ③ LA LUMIÈRE AJOUTÉE, AU PIXEL (relevé − témoin « ${temoin.nom} », mêmes points) ──`)
+    console.log(`   ${'image'.padEnd(16)}${'zone'.padStart(11)}${'n'.padStart(6)}${'ΔL'.padStart(8)}${'ΔR'.padStart(7)}${'ΔV'.padStart(7)}${'ΔB'.padStart(7)}${'teinte'.padStart(8)}${'chr+'.padStart(7)}${'WCAG/tém'.padStart(10)}${'WCAG/6t'.padStart(9)}${'chr compo'.padStart(11)}`)
+    const ligne = (r, nom, d) => console.log(`   ${r.nom.padEnd(16)}${nom.padStart(11)}${String(d.n).padStart(6)}${f1(d.dL, 8)}${f1(d.dRGB[0], 7)}${f1(d.dRGB[1], 7)}${f1(d.dRGB[2], 7)}${d.th.h === null ? '—'.padStart(8) : `${d.th.h.toFixed(0)}°`.padStart(8)}${f2(d.th.chroma, 7)}${f2(d.wTem, 10)}${f2(d.wFond, 9)}${f2(teinte(d.compose).chroma, 11)}`)
+    for (const r of releves) {
+      if (r.nom === temoin.nom) continue
+      const refus = appariable(r)
+      if (refus) { console.log(`   ${r.nom.padEnd(16)} soustraction REFUSÉE : ${refus}`); continue }
+      const fond6 = r.profil.find((p) => p.d === 6)
+      const lf = fond6 ? fond6.lrel : null
+      for (const p of r.profil) {
+        const t = temoin.profil.find((q) => q.d === p.d)
+        const d = t ? deltaDe(r, p.pts, t.pts, lf) : null
+        if (d) ligne(r, `${p.d}t`, d)
+      }
+      for (const [nom, z, zt] of [['SILHOUETTE', r.corps.masque, temoin.corps.masque], ['boîte', r.corps.boite, temoin.corps.boite]]) {
+        const d = deltaDe(r, z.pts, zt.pts, lf)
+        if (d) ligne(r, nom, d)
+      }
+    }
+    console.log(`\n   (ΔL en niveaux de luminance 8 bits · teinte en degrés : 0 rouge, 30 orangé, 60 jaune ·`)
+    console.log(`    chr+ = chroma du vecteur AJOUTÉ, « chr compo » celle du pixel RENDU : c'est elle qui dit si la flaque DÉLAVE ·`)
+    console.log(`    WCAG sur la luminance relative linéarisée — l'unité des 1,12 / 2,57 / 3,61 de la barre de crans ·`)
+    console.log(`    seuil de lisibilité d'une forme pleine : 3:1.)`)
+
+    console.log(`\n── ④ LA MESURE N°1 : LE PORTEUR S'ÉCLAIRE-T-IL ? ──`)
+    console.log(`   PRÉDICTION écrite avant le run : ΔL sur la SILHOUETTE NETTEMENT POSITIF, et du même`)
+    console.log(`   ordre que celui de la torche — le terme direct du champ n'a aucune exclusion de soi, donc`)
+    console.log(`   le porteur reçoit le SOMMET de sa propre source (0,278 mesuré au texel sur l'oracle, à parité`)
+    console.log(`   avec la torche). Un ΔL nul ici contredirait l'oracle et serait un fait de COMPOSITION.`)
+    const bruit = (() => {
+      const xs = temoin.profil.filter((p) => p.p50 !== null && p.d >= 3).map((p) => p.p50)
+      return xs.length >= 2 ? ecart(xs) : null
+    })()
+    console.log(`   bruit du témoin (σ des médianes d'anneau au-delà de 3 t) : ${f1(bruit, 0)} niveau(x)`)
+    console.log(`   ${'image'.padEnd(16)}${'corps ΔL'.padStart(10)}${'boîte ΔL'.padStart(10)}${'sol 1t ΔL'.padStart(11)}${'light i'.padStart(9)}${'feuxGi'.padStart(8)}   verdict`)
+    for (const r of releves) {
+      if (r.nom === temoin.nom) continue
+      if (appariable(r)) continue
+      const dc = deltaDe(r, r.corps.masque.pts, temoin.corps.masque.pts, null)
+      const db = deltaDe(r, r.corps.boite.pts, temoin.corps.boite.pts, null)
+      const p1 = r.profil.find((q) => q.d === 1), t1 = temoin.profil.find((q) => q.d === 1)
+      const d1 = p1 && t1 ? deltaDe(r, p1.pts, t1.pts, null) : null
+      if (!dc) continue
+      const lu = bruit !== null && dc.dL > Math.max(2, 2 * bruit)
+      console.log(`   ${r.nom.padEnd(16)}${f1(dc.dL, 10)}${f1(db ? db.dL : null, 10)}${f1(d1 ? d1.dL : null, 11)}${r.e.light ? f2(r.e.light.intensite, 9) : '—'.padStart(9)}${String(r.e.feuxGi === null ? '—' : r.e.feuxGi.length).padStart(8)}   ${lu ? 'LE CORPS S’ÉCLAIRE' : 'corps NON éclairé (au bruit près)'}`)
+    }
+    console.log(`   (la colonne « boîte » est le contrôle NÉGATIF : si elle monte et que « corps » ne monte pas,`)
+    console.log(`    c'est le SOL autour de la silhouette qui s'éclaire — la flaque — et pas le porteur.)`)
+  }
+
+  console.log(`\n── ⑤ LE SUPPORT : l'écran s'éteint-il à \`rayonDeBraise\` (= 4 × f tuiles au niveau 0) ? ──`)
+  for (const r of releves) {
+    if (r.f === null) continue
+    const R = 4 * r.f
+    const dedans = r.profil.filter((p) => p.d > 0 && p.d < R && p.p50 !== null)
+    const dehors = r.profil.filter((p) => p.d >= R && p.p50 !== null)
+    const t = temoin && temoin.nom !== r.nom && !appariable(r) ? temoin : null
+    const ecartDehors = t ? dehors.map((p) => { const q = t.profil.find((x) => x.d === p.d); return q && q.p50 !== null ? p.p50 - q.p50 : null }).filter((v) => v !== null) : []
+    console.log(`   ${r.nom.padEnd(16)} rayon de sim ${R.toFixed(2)} t · p50 dedans ${dedans.map((p) => p.p50.toFixed(1)).join('/')} · dehors ${dehors.map((p) => p.p50.toFixed(1)).join('/')}${t ? ` · écart au témoin DEHORS ${ecartDehors.map((v) => v.toFixed(1)).join('/')}` : ''}`)
+  }
+
+  // ═══ ⑥ LA PARITÉ AU CONTACT — braise pleine contre torche (clause ⑭ ter) ════════════════════
+  //
+  // ⚠ **DEUX MESURES, ET LA PREMIÈRE EST LA SEULE QUI NE PUISSE PAS DÉRIVER.** Les deux images
+  // à comparer ne sont PAS prises au même instant de jeu : la braise pleine se photographie au
+  // saut du jour 95, la torche après toute la vidange — deux jours de jeu plus tard, donc sous
+  // une autre lune et après une recuisson. Un ΔL au témoin les compare quand même (ils partagent
+  // le témoin et le contrôle d'ancre), mais il porte cette dérive.
+  //   · **INTERNE** : `p50(contact) − p50(6 t)` DANS LA MÊME IMAGE. Immunisée à la dérive par
+  //     construction — c'est elle qui tranche.
+  //   · **AU TÉMOIN** : le ΔL de la section ③, donné en regard pour que l'écart entre les deux
+  //     mesures CHIFFRE la dérive au lieu de la cacher.
+  //
+  // ⚠ **LE CONTACT SE LIT À 1 TUILE, PAS À 0.** À 0 l'anneau est un point unique, et c'est le
+  // SPRITE du porteur ; à 0,5 t (20 px au zoom du jeu) il rase encore la silhouette, dont
+  // `pointsAnneau` écarte les points — l'anneau y perd la moitié de ses directions. À 1 t
+  // (40 px) il est franchement sur le sol dans toutes les directions horizontales. C'est la
+  // leçon « l'étalon d'un rayon est le cadre » : un contact se définit par ce que le cadre
+  // montre, pas par d = 0.
+  const CONTACT = 1
+  const interne = (r) => {
+    const c = r.profil.find((p) => p.d === CONTACT)
+    const f = r.profil.find((p) => p.d === 6)
+    return c && f && c.p50 !== null && f.p50 !== null && c.n > 0 && f.n > 0 ? c.p50 - f.p50 : null
+  }
+  const auTemoin = (r) => {
+    if (!temoin || r.nom === temoin.nom || appariable(r)) return null
+    const p = r.profil.find((q) => q.d === CONTACT)
+    const t = temoin.profil.find((q) => q.d === CONTACT)
+    const d = p && t ? deltaDe(r, p.pts, t.pts, null) : null
+    return d ? d.dL : null
+  }
+  console.log(`\n── ⑥ LA PARITÉ AU CONTACT (à ${CONTACT} t du porteur) — braise pleine contre torche ──`)
+  console.log('   La loi : trou 0,5 × profil, flaque 0,28 × force, light 0,45 × force — donc à charge PLEINE')
+  console.log('   la braise égale la torche dans les TROIS couches, par construction et non par réglage.')
+  console.log(`   ${'image'.padEnd(16)}${'f'.padStart(6)}${'interne'.padStart(9)}${'au témoin'.padStart(11)}${'portée'.padStart(8)}`)
+  for (const r of releves) {
+    console.log(`   ${r.nom.padEnd(16)}${r.f === null ? '—'.padStart(6) : r.f.toFixed(3).padStart(6)}${f1(interne(r), 9)}${f1(auTemoin(r), 11)}${r.portee === null ? '—'.padStart(8) : `${r.portee} t`.padStart(8)}`)
+  }
+  // Le relevé de braise le plus chargé qui ait un contact lisible, contre celui de la torche.
+  const braisePleine = releves.filter((r) => r.f !== null && r.f > 0.5 && interne(r) !== null).sort((a, b) => b.f - a.f)[0] ?? null
+  const laTorche = releves.find((r) => r.nom === 'torche' && interne(r) !== null) ?? null
+  if (braisePleine && laTorche) {
+    const ib = interne(braisePleine), it = interne(laTorche)
+    const tb = auTemoin(braisePleine), tt = auTemoin(laTorche)
+    console.log(`\n   braise « ${braisePleine.nom} » (f ${braisePleine.f.toFixed(3)}) contre « ${laTorche.nom} » :`)
+    console.log(`     interne   ${f1(ib, 7)} contre ${f1(it, 7)} → écart ${f1(ib - it, 7)} niveau(x)${it !== 0 ? `, rapport ${(ib / it).toFixed(2)}` : ''}`)
+    console.log(`     au témoin ${f1(tb, 7)} contre ${f1(tt, 7)}${tb !== null && tt !== null ? ` → écart ${f1(tb - tt, 7)} (la différence avec la ligne du dessus CHIFFRE la dérive de deux jours de jeu)` : ''}`)
+    // Le seuil est le BRUIT, pas un chiffre choisi : σ des médianes d'anneau du témoin au-delà
+    // de 3 t, où plus aucune source ne porte. En dessous, l'écart n'est pas distinguable d'un
+    // arrondi 8 bits — la leçon du témoin de `torche` (« +1 LSB n'est pas une fuite de lumière »).
+    const bruit = temoin ? (() => { const xs = temoin.profil.filter((p) => p.p50 !== null && p.d >= 3).map((p) => p.p50); return xs.length >= 2 ? ecart(xs) : null })() : null
+    const seuil = Math.max(2, 2 * (bruit ?? 1))
+    if (braisePleine.f < 0.995) {
+      console.log(`     ⚠ la braise n'est qu'à f ${braisePleine.f.toFixed(3)} : la parité n'est due qu'à f = 1, l'écart attendu n'est donc PAS nul`)
+    } else if (Math.abs(ib - it) <= seuil) {
+      console.log(`     ✓ PARITÉ TENUE À L'IMAGE (|écart| ${Math.abs(ib - it).toFixed(1)} ≤ ${seuil.toFixed(1)}, le double du bruit du témoin)`)
+    } else {
+      console.error(`!! LA PARITÉ AU CONTACT N'EST PAS TENUE À L'IMAGE : ${ib.toFixed(1)} contre ${it.toFixed(1)} (écart ${(ib - it).toFixed(1)} > ${seuil.toFixed(1)}). La loi la rend vraie par construction dans les trois couches, donc la cause est un fait de RENDU — occlusion, ordre de composition, profondeur de tri, double peinture — et non une constante à retoucher.`)
+    }
+    console.log(`     portées : braise ${braisePleine.portee ?? '—'} t, torche ${laTorche.portee ?? '—'} t${(releves.find((r) => r.nom === 'feu-vif')?.portee ?? null) !== null ? `, Feu ${releves.find((r) => r.nom === 'feu-vif').portee} t` : ''} (attendu 3 < 4 < 6)`)
+  } else console.log('\n   (parité au contact non mesurable : il manque une braise chargée ou la torche)')
+
+  console.log(`\n   ${bon ? '✓' : '✗'} halo-braise (${lieu}) — photos : ${OUT}/halo-${lieu}-*.png`)
+  await page.evaluate(() => window.__BRAISES__.scene.game.loop.wake())
+}
+
 const SCENARIOS = {
+  /** LE HALO DE LA BRAISE sur la PILE D'AVANT (`gi=0`) : voile de nuit + flaque + Light2D.
+   *  Voir l'en-tête de `mesurerHaloDeBraise` ci-dessus. */
+  async ['halo-braise'](page) { return mesurerHaloDeBraise(page, { lieu: 'surface' }) },
+  /** LE MÊME, SOUS LE CHAMP DE LA GI — Light2D y est supprimé (`composeGi ? [] : porteursBraise`),
+   *  donc le sol ET le corps passent par le champ : un acteur y lit la clarté SOUS SES PIEDS
+   *  (`snapshot-view.ts:1596`, `arete: 0` → branche E), pas la liste `view.feuxGi`.
+   *  ⚠ Le nom DOIT commencer par `gi` : c'est lui, et rien d'autre, qui retire `&gi=0` de l'URL. */
+  async ['gi-halo-braise'](page) { return mesurerHaloDeBraise(page, { lieu: 'surface' }) },
+  /** LE MÊME, SOUS LA ROCHE — voile de cave (`LumiereDeCave.braise`) + flaque. On y ENTRE en
+   *  marchant : un TP efface l'étage et viserait le sol. */
+  async ['halo-braise-cave'](page) { return mesurerHaloDeBraise(page, { lieu: 'cave' }) },
   /**
    * ═══ LA GI DU CLIENT — LES DEUX GARDES DURABLES (spec `lumiere-globale.md`, LG-A2 et LG-A8) ═══
    *
@@ -29499,6 +31194,41 @@ const browser = await chromium.launch({
 })
 const page = await browser.newPage({ viewport: { width: 1280, height: 800 } })
 
+/**
+ * GELER LE HMR (`SMOKE_GEL_HMR=1`) — pour qu'une MESURE ait un sujet immobile.
+ *
+ * ⚠ MESURÉ le 2026-10-05, et ça a coûté quatre runs : une autre session éditait
+ * `packages/client` pendant les miens. Le journal de vite dit `page reload src/render/gi/
+ * passe-corps.ts`, et côté harnais ça se lit « Execution context was destroyed »,
+ * « window.__BRAISES__ undefined » ou « 0 rectangle de HUD » — trois symptômes pour une cause,
+ * et AUCUN ne nomme le HMR. Le CLAUDE.md prévenait (« éditer `packages/client` pendant le run
+ * déclenche le HMR, recharge la page et tue le scénario ») ; ce qu'il ne disait pas, c'est que
+ * l'éditeur peut être QUELQU'UN D'AUTRE, et qu'on ne peut donc pas s'en protéger en s'abstenant.
+ *
+ * Le client HMR de vite ne fait qu'appeler `location.reload()` sur un message `full-reload` : on
+ * tente de le neutraliser dans la page. ⚠ **EFFICACITÉ NON PROUVÉE** : `Location.reload` est
+ * `[LegacyUnforgeable]` dans la norme, donc `defineProperty` peut échouer en silence sous
+ * Chromium — si le journal de la page ne montre jamais « rechargement HMR IGNORÉ » alors que
+ * `vite*.log` montre un `page reload`, c'est que ce drapeau NE SERT À RIEN. Le gel qui marche à
+ * coup sûr est côté SERVEUR : un second vite, sur un autre port, avec `server.watch` et
+ * `server.hmr` éteints — le code servi est alors figé à l'instant du démarrage. Un relevé
+ * d'image veut un sujet FIGÉ ; un rechargement au milieu d'une série ne la ralentit pas, il la
+ * rend FAUSSE (cadre figé périmé, monde re-tiré, soustraction au pixel sur deux mondes).
+ * Hors de ce drapeau, rien ne change pour aucun autre scénario.
+ */
+if (process.env.SMOKE_GEL_HMR === '1') {
+  await page.addInitScript(() => {
+    try {
+      const vrai = window.location.reload.bind(window.location)
+      Object.defineProperty(window.location, 'reload', {
+        configurable: true,
+        value: () => { console.warn('[smoke] rechargement HMR IGNORÉ — le sujet de la mesure reste figé') },
+      })
+      Object.defineProperty(window, '__smokeVraiReload', { value: vrai })
+    } catch { /* un navigateur qui refuse la redéfinition : on le saura par un reload */ }
+  })
+}
+
 let failed = false
 
 /**
@@ -29532,7 +31262,9 @@ console.error = (...args) => {
 }
 
 page.on('pageerror', (e) => {
-  erreurBrute(`!! ERREUR DE PAGE : ${e.message}`)
+  // ⚠ AVEC SA PILE : un `X is not defined` sans pile ne dit pas QUEL module, et sous Vite en dev
+  // la cause est presque toujours un cycle d'imports ou un contexte séparé (worker, GLSL).
+  erreurBrute(`!! ERREUR DE PAGE : ${e.message}${e.stack ? `\n   pile : ${String(e.stack).split('\n').slice(0, 6).join('\n          ')}` : ''}`)
   failed = true
 })
 page.on('console', (m) => {
@@ -29551,7 +31283,13 @@ try {
     }
   }
   // Le jeu est prêt quand WorldScene a publié la carte (donc après le `ready` de l'hôte).
-  await page.waitForFunction(() => window.__BRAISES__?.scene?.registry?.get('mapData'), null, { timeout: 60000 })
+  // ⚠ 60 s NE SUFFISENT PAS TOUJOURS SUR UNE MACHINE SANS GPU. Le 2026-10-05, `gi-halo-braise`
+  // n'a pas publié `mapData` en 60 s sous SwiftShader. ⚠ **ET JE L'AVAIS D'ABORD ÉCRIT « c'est
+  // la chaîne de la GI qui retarde » : MES PROPRES LOGS LE DÉMENTENT** — un run en `&gi=0` a
+  // expiré au même endroit, dans la même minute, pendant qu'une autre session recompilait le
+  // client (voir `SMOKE_GEL_HMR`). La cause est donc la CONTENTION, et la part de la GI est
+  // SUSPECTÉE, pas mesurée. Le défaut par défaut ne bouge pas ; `SMOKE_BOOT_MS` l'ouvre.
+  await page.waitForFunction(() => window.__BRAISES__?.scene?.registry?.get('mapData'), null, { timeout: Number(process.env.SMOKE_BOOT_MS ?? 60000) })
   await page.waitForTimeout(1500) // quelques ticks de sim, le temps que le HUD se remplisse
 
   await run(page)

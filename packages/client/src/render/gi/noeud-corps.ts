@@ -131,10 +131,14 @@ export interface CorpsPourLeShader {
   ciel: number
   /** `CorpsPose.sol` (LG-R14) : 0 un corps, 1 `tuile`, 2 `pied`, 3 `piedSousLeVoile`, 4 `lueur` — voir `UNIFORMES_CORPS.sol`. */
   sol: number
+  /** `clarteDeCeQuOnPorte` (B-R13d) — le PLANCHER de la lumière du champ pour un porteur, à la
+   *  teinte de la flamme. 0 pour tout corps qui ne porte rien. Il occupe le quatrième composant
+   *  d'`inGiB`, qui était un `0` de bourrage : aucun attribut neuf, aucun format de sommet touché. */
+  soi: number
 }
 
 /** Un corps qu'on n'a pas encore renseigné : plat, sans feu direct, au sol. Jamais un `null` dans le shader. */
-const CORPS_NEUTRE: CorpsPourLeShader = { pied: 0, ancreX: 0, crete: 0, seuil: SANS_DESSUS, dresse: 0, ruban: 0, expo: -1, lift: 0, ciel: 0, sol: 0 }
+const CORPS_NEUTRE: CorpsPourLeShader = { pied: 0, ancreX: 0, crete: 0, seuil: SANS_DESSUS, dresse: 0, ruban: 0, expo: -1, lift: 0, ciel: 0, sol: 0, soi: 0 }
 
 /**
  * LES UNITÉS DE TEXTURE — 0 et 1 sont à Phaser, 2 à 6 sont à nous.
@@ -356,7 +360,9 @@ export class NoeudCorpsGi extends BatchHandlerQuad {
     F[o++] = c.expo
     F[o++] = c.lift
     F[o++] = drapeaux
-    F[o++] = 0
+    // LE QUATRIÈME COMPOSANT D'`inGiB` — un `0` de bourrage jusqu'au 2026-10-05, désormais le
+    // plancher de la clarté sur soi (B-R13d). C'est pour ça que `soi` n'a coûté aucun attribut.
+    F[o++] = c.soi
     return o
   }
 

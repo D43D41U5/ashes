@@ -43,6 +43,7 @@ import { HOLE_ERASE_PEAK } from '../lighting'
 import { champRef, composerM, hauteurDesMarches, masqueDAstre, ombreDesCartes, ombreDesMarches, ombrePleineDAstre, type Astre, type CarteDOmbre, type CartesDOmbre, type Emetteur, type GrilleGi } from './champ-ref'
 import { grilleDuMonde, type Fenetre } from './grille'
 import { ALBEDO, GI, longueurDOmbre, profilFeu, type Albedo } from './reglages'
+import { teinteDeLaSource } from './source-du-champ'
 import { Silhouettes } from './silhouettes'
 
 /**
@@ -1085,7 +1086,7 @@ export class ChampGpu {
       // creux la grille n'a pas de marches et cette hauteur ne rencontre rien.
       const z = (auSol ? (s.palier ?? 0) : 0) * H_PALIER + LUMIERE.FLAMME_TEXELS
       // SA COULEUR (LG-R20) : la teinte du feu à défaut — le jour d'une gueule apporte la sienne.
-      const teinte = s.rgb ?? GI.TEINTE_FEU
+      const teinte = teinteDeLaSource(s)
       // …ET SA LOI (LG-R20) : le jour d'une gueule, converti en texels ; une flamme n'a rien à dire.
       const jour = s.jour
         ? { demi: s.jour.demiPx / PX_PAR_TEXEL, cible: [x + s.jour.cibleDx / PX_PAR_TEXEL, y + s.jour.cibleDy / PX_PAR_TEXEL] as const }

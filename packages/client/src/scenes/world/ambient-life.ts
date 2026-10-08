@@ -26,6 +26,7 @@
  */
 import Phaser from 'phaser'
 import { souffleDEssaim } from '../../render/souffle-essaim'
+import { FIREFLY_GI_FORCE, FIREFLY_GI_TINT, FIREFLY_TINT, type SourceEssaim } from '../../render/lucioles-gi'
 import { FIREFLY_TERRAINS } from './firefly-biomes'
 import { adoucir, fonduLuciole, FONDU_ENTREE_S, FONDU_SORTIE_S } from '../../render/fondu-essaim'
 import { BIRD_SHADOW_DEPTH, fireflyDepth, FIREFLY_GROUND_DEPTH, FLYER_DEPTH, TILE_PX } from '../../render/framing'
@@ -161,9 +162,9 @@ const FIREFLY_LIGHT_RADIUS = SWARM_RADIUS * 2.4
  *  cœur incandescent, puisque la flaque au sol est diffuse. */
 const FIREFLY_LIGHT_INTENSITY = 1.8
 
-/** Vert-jaune de luciole — la MÊME teinte pour le sprite additif, pour la source, et pour la
- *  flaque au sol, sans quoi la lueur portée ne serait pas celle qu'on voit clignoter. */
-const FIREFLY_TINT = 0xc8e87a
+// La TEINTE (`FIREFLY_TINT`) et ce que l'essaim pèse dans le champ vivent dans
+// `render/lucioles-gi.ts` — pur, donc prouvable headless ; ce fichier-ci tient Phaser.
+
 /** Le souffle de l'essaim vit dans `render/souffle-essaim.ts` — trois sinus incommensurables
  *  plutôt qu'un métronome (« organique en intensité », Alexis 2026-08-26). Pur, donc prouvé.
  *  Et le JEU DE BIOMES vit dans `firefly-biomes.ts`, pour la même raison : pur, donc gardé. */
@@ -250,6 +251,17 @@ interface Swarm {
    *  au-dessus de la chute) plutôt que de sauter de deux tuiles en franchissant une ligne. */
   lift: number
   strate: number
+  /**
+   * ═══ SON ÉCLAT DE CETTE IMAGE : `nuit × souffle × fondu` ═══
+   *
+   * Calculé UNE fois par image et relu par les trois choses qu'il commande — le point light, la
+   * flaque au sol, et la source du champ de la GI. Il est posé ici plutôt que recalculé par
+   * chacun pour la même raison que la liste des torches est résolue une fois dans `WorldScene` :
+   * trois calculs séparés de la même enveloppe se désynchronisent en silence, et c'est le SOUFFLE
+   * qui s'y verrait en premier (le sol et les fûts battraient en désaccord). 0 avant la première
+   * image, donc un essaim tout juste né n'éclaire rien tant qu'il n'a pas respiré.
+   */
+  eclat: number
 }
 
 export class AmbientLife {
@@ -313,10 +325,45 @@ export class AmbientLife {
     nuitLucioles: number,
     lit = true,
     hourOfCycle = 12,
+    composeGi = false,
   ): void {
     this.nowS = nowS
     this.updateBirds(camera, nowS, dtS, hourOfCycle)
-    this.updateFireflies(camera, nowS, dtS, darkness, nuitLucioles, lit)
+    this.updateFireflies(camera, nowS, dtS, darkness, nuitLucioles, lit, composeGi)
+  }
+
+  /**
+   * ═══ LES ESSAIMS COMME SOURCES DU CHAMP (LG-R20) — ce que `WorldScene` pousse dans `veilFires` ═══
+   *
+   * ⚠ **Et c'est une correction, pas une source de plus** : jusqu'au 2026-10-06 un essaim
+   * n'éclairait les corps que par son point light, c'est-à-dire par la pipeline que la GI a
+   * remplacée pour toutes les autres sources (`composeGi ? [] : feux`). Sous la GI, les lucioles
+   * étaient donc la seule lumière du jeu à ne pas atteindre un corps — relevé par Alexis.
+   *
+   * ⚠ **L'ESSAIM NE CREUSE PAS LE VOILE, et ça ne change pas ici** : la décision du 2026-08-26 est
+   * explicite (`framing.FIREFLY_GROUND_DEPTH` : la flaque passe AU-DESSUS du voile, « le Feu creuse
+   * le voile, un essaim non »). L'appelant pousse donc `force: 0` — le voile lit `force`, le champ
+   * lit `forceGi`, et les deux sont séparés depuis LG-R6.
+   *
+   * ⚠ **La place est LOGIQUE** (LG-R14) : `lift` est du dessin, le champ ne le voit pas.
+   *
+   * Un essaim sans éclat (fondu à zéro, jour, couvre-feu) n'est pas rendu : le champ refuse déjà
+   * `force <= 0`, mais une liste qui le porte quand même ferait croire à une source qui n'éclaire
+   * pas, et c'est le genre de ligne qu'on relit trois fois.
+   */
+  sourcesGi(): SourceEssaim[] {
+    const out: SourceEssaim[] = []
+    for (const s of this.swarms) {
+      if (s.eclat <= 0) continue
+      out.push({
+        worldX: s.x * TILE_PX,
+        worldY: s.y * TILE_PX,
+        radiusTiles: FIREFLY_LIGHT_RADIUS,
+        force: FIREFLY_GI_FORCE * s.eclat,
+        rgb: FIREFLY_GI_TINT,
+      })
+    }
+    return out
   }
 
   /* ── Les oiseaux ──────────────────────────────────────────────────────── */
@@ -552,6 +599,7 @@ export class AmbientLife {
     darkness: number,
     nuitLucioles: number,
     lit: boolean,
+    composeGi: boolean,
   ): void {
     // ── CE QUE LA NUIT ACCORDE AUX LUCIOLES — UN SEUL NOMBRE, ET IL COMMANDE TOUT ──
     //
@@ -629,14 +677,21 @@ export class AmbientLife {
       // Plantées sur l'ANCRE (stable), les deux sources RESPIRENT ENSEMBLE, sur le même souffle
       // (voir l'en-tête FIREFLY_LIGHT_*) — sinon le sol et les fûts battraient en désaccord.
       const souffle = souffleDEssaim(nowS, s.phase)
+      s.eclat = nuit * souffle * fondu
       if (s.light) {
         s.light.x = s.x * TILE_PX
         s.light.y = s.y * TILE_PX - s.lift
         // Le point light, lui, s'éteint AVEC les autres sources en mode à plat ; la flaque non,
         // elle est cosmétique et additive, comme celle du Feu qui survit au même toggle.
-        s.light.intensity = lit ? FIREFLY_LIGHT_INTENSITY * nuit * souffle * fondu : 0
+        //
+        // ⚠ ET IL S'ÉTEINT AUSSI QUAND LE CHAMP COMPOSE (LG-R3) — c'est le patron exact des Feux,
+        // des torches et des braises, que `WorldScene` retire de `dynLight` par `composeGi ? []`.
+        // Sans ça, un fût près d'un essaim serait éclairé DEUX fois : par le point light, qui
+        // n'atteint que ce qui a une carte de normales, et par le champ, qui atteint tout. Le sol
+        // et la flaque, eux, ne changent pas : la flaque est additive et cosmétique.
+        s.light.intensity = lit && !composeGi ? FIREFLY_LIGHT_INTENSITY * s.eclat : 0
       }
-      s.flaque.setAlpha(FIREFLY_POOL_ALPHA * nuit * souffle * fondu)
+      s.flaque.setAlpha(FIREFLY_POOL_ALPHA * s.eclat)
       for (const f of s.flies) {
         // Elle flotte autour de l'ancre, et y est doucement rappelée : sans ce
         // rappel, l'essaim se dilue en quelques secondes et redevient un semis.
@@ -737,7 +792,8 @@ export class AmbientLife {
       .setBlendMode('ADD')
       .setAlpha(0)
       .setDisplaySize(FIREFLY_POOL_SIZE_PX, FIREFLY_POOL_SIZE_PX)
-    return { x, y, flies, phase: Math.random() * Math.PI * 2, fade: 0, dying: false, light, flaque, lift, strate }
+    // `eclat: 0` — il naît sans lumière, comme sa source et sa flaque : la première image le lui donne.
+    return { x, y, flies, phase: Math.random() * Math.PI * 2, fade: 0, dying: false, light, flaque, lift, strate, eclat: 0 }
   }
 
   /** LE SEUL endroit où un essaim disparaît — les TROIS sites passent par ici, et ils sont

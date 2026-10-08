@@ -16,7 +16,8 @@
  */
 import { describe, expect, it } from 'vitest'
 import { BALANCE, BRAISE, COMBAT, FIRE, MONSTER_DEFS, TEMPERATURE } from './balance'
-import { braiseNeuve, chargePleine, cransCouverts, cransMax, type Braise } from './braise'
+import { braiseNeuve, bulleDeBraise, chargePleine, cransCouverts, cransMax, fractionDeCharge, multDuRayon, rayonDeBraise, type Braise } from './braise'
+import { LUMIERE, NUIT } from './balance'
 import { palierDuSol } from './etages'
 import { fenetreDe, meteoMouille, type MeteoFront } from './meteo'
 import { deserializeSim, serializeSim } from './persistence'
@@ -1475,4 +1476,155 @@ describe('B-A17 ⑩① — `foyerAllumable` ÉQUIVAUT à ce que `light_foyer` ac
     expect(ecarts, 'aucun écart entre le prédicat du miroir et la porte de la sim').toEqual([])
   })
 
+})
+
+
+// ═══════════════════════════════════════════════════════════════════════════════════════════
+// B-A14 / B-A15 — LE RAYON DU HALO (étape 7, B-R13c)
+//
+// CE QUE CES GARDES ÉPROUVENT : l'ARITHMÉTIQUE du halo, et elle seule. Son BRANCHEMENT dans
+// `clarteSurSoiAt` (fait le 2026-10-05, issue ⓐ du § 5.21) a ses gardes dans `lumiere.test.ts`
+// (B-A18), parce que c'est là que vit le montage de nuit noire — et B-A14 ③ (« porter le halo ne
+// coûte ni `charge` ni `cransExiges` ») y est aussi, pour la même raison.
+// *(Ce bandeau disait « le halo n'est PAS encore branché » jusqu'au 2026-10-05 : il datait de la
+// veille, quand la décision du § 5.21 n'était pas prise. Corrigé à l'audit de fusion.)*
+// ═══════════════════════════════════════════════════════════════════════════════════════════
+describe('B-A14 — le rayon est un PRODUIT, et il balaie la charge', () => {
+  const PAS = 200 // le balayage : 200 points de charge, pas deux échantillons
+
+  it('① la forme exacte, sur TOUTE la charge et à TOUS les niveaux — pas seulement au plein', () => {
+    for (let niveau = 0; niveau <= 4; niveau++) {
+      const plein = chargePleine(niveau)
+      const attenduAuPlein = BRAISE.RAYON_BASE * multDuRayon(niveau)
+      expect(rayonDeBraise({ niveau, charge: plein })).toBeCloseTo(attenduAuPlein, 12)
+      // ⚠ LA CLAUSE QUI SÉPARE UN PRODUIT D'UN PLAFOND : la MOITIÉ du rayon à DEMI-charge.
+      // Un `min(base, …)` passerait la ligne du dessus et raterait celle-ci.
+      expect(rayonDeBraise({ niveau, charge: Math.floor(plein / 2) })).toBeCloseTo(attenduAuPlein * (Math.floor(plein / 2) / plein), 12)
+      for (let i = 0; i <= PAS; i++) {
+        const charge = Math.round((i / PAS) * plein)
+        expect(rayonDeBraise({ niveau, charge })).toBeCloseTo(attenduAuPlein * (charge / plein), 12)
+      }
+    }
+  })
+
+  it('② MONOTONIE EN CHARGE : sur une vidange continue, le rayon ne remonte jamais et n’a pas de marche', () => {
+    for (let niveau = 0; niveau <= 4; niveau++) {
+      const plein = chargePleine(niveau)
+      let precedent = rayonDeBraise({ niveau, charge: plein })
+      let pasMax = 0
+      for (let charge = plein - 1; charge >= 0; charge -= Math.max(1, Math.floor(plein / 5000))) {
+        const r = rayonDeBraise({ niveau, charge })
+        expect(r).toBeLessThanOrEqual(precedent)
+        pasMax = Math.max(pasMax, precedent - r)
+        precedent = r
+      }
+      // ⚠ Le balayage ne retombe pas forcément PILE sur 0 (son pas est un entier de charge) :
+      // on affirme donc le bout sur la valeur, et la monotonie jusqu'à lui.
+      expect(rayonDeBraise({ niveau, charge: 0 })).toBe(0)
+      expect(precedent).toBeLessThanOrEqual(rayonDeBraise({ niveau, charge: Math.floor(plein / 5000) + 1 }))
+      // AUCUNE MARCHE : le plus gros saut d'un cran de charge reste infinitésimal devant le rayon.
+      expect(pasMax).toBeLessThan(BRAISE.RAYON_BASE / 100)
+    }
+  })
+
+  // ⚠ PAS DE NUMÉRO DE CLAUSE SUR CELLE-CI : B-A14 ③ est « porter le halo est gratuit », gardé
+  // par `lumiere.test.ts` ⑦. Celle-ci n'est dans aucune clause — c'est une couture interne.
+  it('LE ZÉRO DE LA BULLE EST, AU BIT, LE RAYON ANNONCÉ — et pas une seconde formule', () => {
+    // ⚠ POURQUOI CETTE GARDE : `bulleDeBraise` RECALCULE le rayon (`RAYON_BASE × mult × f`) au
+    // lieu d'appeler `rayonDeBraise`. Les deux expressions sont identiques au bit AUJOURD'HUI, et
+    // RIEN ne les lie — un jour où l'arbre (B-R14) touchera l'une, l'autre suivra en silence.
+    // Cette garde EST ce lien. (Ajoutée à l'audit de fusion du 2026-10-05.)
+    for (let niveau = 0; niveau <= 4; niveau++) {
+      const plein = chargePleine(niveau)
+      for (const f of [1, 0.75, 0.5, 0.25, 0.01]) {
+        const braise = { niveau, charge: Math.max(1, Math.round(f * plein)) }
+        const r = rayonDeBraise(braise)
+        expect(r).toBeGreaterThan(0) // PRÉMISSE : il y a bien un rayon à éprouver
+        expect(bulleDeBraise(braise, r)).toBe(0) // AU rayon : éteint
+        expect(bulleDeBraise(braise, r * (1 + 1e-9))).toBe(0) // au-delà : éteint
+        expect(bulleDeBraise(braise, r * (1 - 1e-9))).toBeGreaterThan(0) // juste avant : allumé
+      }
+    }
+  })
+
+  it('② bis la barre est un canal CONTINU : un cran de charge franchi ne fait pas sauter le rayon', () => {
+    // Le point le plus suspect est le franchissement d'un cran, là où `cransCouverts` fait, LUI,
+    // une marche (B-R7b, `floor`) : le rayon ne doit PAS en hériter.
+    const niveau = 0
+    const avant = rayonDeBraise({ niveau, charge: BRAISE.DUREE_CRAN })
+    const apres = rayonDeBraise({ niveau, charge: BRAISE.DUREE_CRAN - 1 })
+    expect(cransCouverts({ niveau, charge: BRAISE.DUREE_CRAN })).toBe(1)
+    expect(cransCouverts({ niveau, charge: BRAISE.DUREE_CRAN - 1 })).toBe(0) // la marche EXISTE à côté
+    expect(avant - apres).toBeLessThan(BRAISE.RAYON_BASE / 1000) // et le rayon ne l'a pas prise
+  })
+})
+
+describe('B-A15 — à charge 0, zéro halo : exactement zéro, pas un plancher', () => {
+  it('le rayon ET la bulle valent 0 à charge nulle, à tous les niveaux', () => {
+    for (let niveau = 0; niveau <= 4; niveau++) {
+      expect(rayonDeBraise({ niveau, charge: 0 })).toBe(0)
+      expect(bulleDeBraise({ niveau, charge: 0 }, 0)).toBe(0) // AU CONTACT, et c'est le point dur
+      expect(bulleDeBraise({ niveau, charge: 0 }, 1)).toBe(0)
+      expect(fractionDeCharge({ niveau, charge: 0 })).toBe(0)
+    }
+  })
+
+  it('LE CONTRÔLE POSITIF : un seul tick de charge rend un rayon et une bulle NON NULS', () => {
+    // Sans lui, la garde du dessus serait verte sur une fonction qui rend 0 partout.
+    for (let niveau = 0; niveau <= 4; niveau++) {
+      expect(rayonDeBraise({ niveau, charge: 1 })).toBeGreaterThan(0)
+      expect(bulleDeBraise({ niveau, charge: 1 }, 0)).toBeGreaterThan(0)
+    }
+  })
+
+  it('une charge NÉGATIVE ou au-delà du plein se borne, elle ne fabrique pas de lumière', () => {
+    expect(rayonDeBraise({ niveau: 0, charge: -5 })).toBe(0)
+    expect(bulleDeBraise({ niveau: 0, charge: -5 }, 0)).toBe(0)
+    expect(fractionDeCharge({ niveau: 0, charge: chargePleine(0) * 3 })).toBe(1)
+    expect(rayonDeBraise({ niveau: 0, charge: chargePleine(0) * 3 })).toBeCloseTo(BRAISE.RAYON_BASE, 12)
+  })
+})
+
+describe('B-R13c — le profil de la bulle, et ce qu’il concède à la torche et au feu', () => {
+  it('UN CÔNE DE PENTE FIXE : la bulle vaut `f − d/RAYON_BASE`, donc la braise s’enfonce sans changer de forme', () => {
+    // C'est l'identité qui JUSTIFIE que la charge pèse deux fois (sommet ET rayon) :
+    //   f × (1 − d / (R₀ × f))  =  f − d / R₀
+    const niveau = 0
+    const plein = chargePleine(niveau)
+    for (let i = 1; i <= 20; i++) {
+      const f = i / 20
+      const braise = { niveau, charge: Math.round(f * plein) }
+      const fReel = fractionDeCharge(braise)
+      for (let d = 0; d < BRAISE.RAYON_BASE; d += 0.25) {
+        const attendu = fReel - d / BRAISE.RAYON_BASE
+        expect(bulleDeBraise(braise, d)).toBeCloseTo(attendu > 0 ? attendu : 0, 12)
+      }
+    }
+  })
+
+  it('AU CONTACT, la bulle vaut exactement `CLARTE_PLEINE × f` — c’est ce qui rend B-A18 ② FALSIFIABLE', () => {
+    const plein = chargePleine(0)
+    expect(bulleDeBraise({ niveau: 0, charge: plein }, 0)).toBeCloseTo(BRAISE.CLARTE_PLEINE, 12)
+    expect(bulleDeBraise({ niveau: 0, charge: Math.round(plein / 4) }, 0)).toBeCloseTo(BRAISE.CLARTE_PLEINE * 0.25, 12)
+    // ⚠ ET LE FAIT QUI A ARRÊTÉ L'ÉTAPE 7, écrit ici pour qu'il ne se reperde pas : le verdict
+    // de la nuit noire est BINAIRE à charge pleine. Tant que `CLARTE_PLEINE ≥ SEUIL_NOIR`, une
+    // braise pleine rend TOUJOURS la parade ; en dessous, elle ne la rend JAMAIS. Il n'y a pas
+    // de valeur intermédiaire, donc pas de calibrage possible — `braise.md` § 5.21.
+    // ⚠ **ET LA LIGNE QUI SUIT EST UNE TAUTOLOGIE, dite comme telle** (audit de fusion du
+    // 2026-10-05) : la ligne du dessus vient d'affirmer que la bulle au contact VAUT
+    // `CLARTE_PLEINE`, donc comparer les deux au même seuil ne peut pas rougir. Elle reste parce
+    // qu'elle ÉCRIT la loi au bon endroit — mais ce qui la PROUVE est ailleurs : `lumiere.test.ts`
+    // B-A18 ②, qui balaie la charge et exige UN SEUL franchissement du seuil.
+    const pleineRendLaParade = BRAISE.CLARTE_PLEINE >= NUIT.SEUIL_NOIR
+    expect(bulleDeBraise({ niveau: 0, charge: plein }, 0) >= NUIT.SEUIL_NOIR).toBe(pleineRendLaParade)
+  })
+
+  it('LA BRAISE NE RÉDUIT NI LA TORCHE NI LE FEU AU SILENCE (B-A18 ⑤) : son rayon est le plus court des trois', () => {
+    // C'est la contrainte qui tient `RAYON_BASE`, et elle est affirmée sur les CONSTANTES, pas
+    // sur une planche : une braise plus large que la torche ferait de celle-ci un objet mort en
+    // main — le défaut exact que la branche ⓐ créait, livré par un autre chemin.
+    const rayonPlein = rayonDeBraise(braiseNeuve(0))
+    expect(rayonPlein).toBeLessThan(LUMIERE.TORCHE_PORTEE_TUILES)
+    expect(rayonPlein).toBeLessThan(TEMPERATURE.FIRE_RANGE)
+  })
 })

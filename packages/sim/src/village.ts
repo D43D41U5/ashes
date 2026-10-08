@@ -310,8 +310,11 @@ export type VillageAction =
   /**
    * J'ALLUME UNE BALISE À MA BRAISE (spec `braise.md` B-R10) — le geste qui ouvre une base.
    *
-   * Aucun objet en main : la braise est PORTÉE, pas tenue (B-R1). Il faut seulement qu'elle ait
-   * de la charge (B-A7 : une braise à 0 refuse), et que la balise ait du bois à brûler.
+   * Aucun objet en main : la braise est PORTÉE, pas tenue (B-R1). ⚠ **Elle n'a PAS besoin de
+   * charge** — une braise à zéro allume (B-R17 ②, 2026-10-04 : exiger une charge ferait d'une
+   * braise vide un verrou de SURVIE et non d'ascension). Il faut seulement que le foyer ait du
+   * bois à brûler (`foyerAllumable`). *(Ce commentaire disait l'inverse, en citant une clause
+   * B-A7 que B-R17 ② a retirée ; corrigé le 2026-10-05.)*
    */
   | { type: 'light_foyer'; structureId: number }
   | { type: 'repair'; structureId: number }

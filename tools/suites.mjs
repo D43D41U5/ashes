@@ -477,6 +477,14 @@ const SUITES = [
   //   Falsifiée DEUX FOIS, une lecture ajoutée dans chaque paquet : rouge les deux fois.
   //   Suite CLIENT à 1835 ✓ au total pour le lot B-R17 (1825 → 1828 avec `fondation`, → 1834 avec
   //   les six du miroir, → 1835 avec celle-ci) ; plancher INCHANGÉ à 1805.
+  // · 2026-10-05 — LE HALO DE LA BRAISE À L'ÉCRAN (étape 7 de `braise.md`, B-A18) : +23 gardes
+  //   dans `render/braise-halo.test.ts` — la clause ④ (N2bis, que `/sim` ne peut pas porter sans
+  //   y recopier la courbe de l'écran), la quantification du rayon de la flaque, la domination
+  //   de la torche, et QUATRE gardes de SOURCE pour les quatre points de câblage (retirer
+  //   `this.braiseGround?.update(...)` compile sans un mot). Suite à 1876 (relevé le 2026-10-06, 143 fichiers — +4 pour les lucioles dans le champ de la GI ; mon « 1861 » puis « 1871 » étaient périmés — la dernière est la garde d'EXHAUSTIVITÉ ⑥ des appels de `syncActor`, celle qui aurait attrapé le plancher jeté pour le joueur). ⚠ **Plancher INCHANGÉ
+  //   à 1805**, et c'est la doctrine écrite deux entrées plus haut qui le commande : la marge est
+  //   ce qui attrape un FICHIER évaporé, et un plancher recalé à chaque tranche n'est qu'un
+  //   miroir de la suite du jour.
   { nom: 'client', dir: 'packages/client', args: ['run'], plancher: 1805 },
   { nom: 'serveur', dir: 'packages/server', args: ['run'], plancher: 36 },
   // Le banc pilote le vrai worldgen sur la carte de production : lent, et seul à porter le

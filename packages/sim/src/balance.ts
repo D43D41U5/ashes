@@ -604,7 +604,12 @@ export const BRAISE = {
    * premier tick de froid là-haut). Un 5ᵉ cran achèterait le droit d'y camper ; Alexis a tranché
    * pour 4, c'est-à-dire pour que le sommet reste un lieu de PASSAGE (B-R16).
    *
-   * Il commande aussi combien de recettes l'arbre doit avoir : `CRANS_MAX − CRANS_DEPART` = **3**.
+   * Il commande aussi combien de recettes l'arbre doit avoir : `CRANS_MAX − CRANS_DEPART` = **2**.
+   * (⚠ Ce commentaire disait **3** jusqu'au 2026-10-05 : une faute d'arithmétique relevée par
+   *  `determinisme-sim` le 2026-10-04, corrigée dans `braise.md` le jour-là et ici seulement
+   *  maintenant. Le niveau qui atteint quatre crans est le **2**. ⚠ Et le nombre lui-même est
+   *  SUSPENDU à `braise.md` § 5.20 : le monde joué exige **cinq** crans sous l'orage au palier 3,
+   *  ce qui porterait l'arbre à trois recettes. Décision non prise.)
    */
   CRANS_MAX: 4,
   /**
@@ -626,6 +631,63 @@ export const BRAISE = {
    * déterminisme (entier, ajouté à un entier, borné par `chargePleine`).
    */
   RECHARGE_PAR_TICK: 20,
+  /**
+   * ═══ LE RAYON DU HALO, À CHARGE PLEINE ET AU NIVEAU 0 (B-R13, B-A14 ①) — en tuiles ═══
+   *
+   * **Quatre**, et ce chiffre est contraint par les deux bouts, pas choisi au milieu :
+   *   · il doit rester **sous `LUMIERE.TORCHE_PORTEE_TUILES` (10)**, sinon B-A18 ⑤ ne peut pas
+   *     tenir — une braise pleine rendrait la torche tenue inutile, c'est-à-dire l'« objet mort
+   *     en main » que la branche ⓐ créait, livré par un autre chemin ;
+   *   · il doit rester **sous `TEMPERATURE.FIRE_RANGE` (6)**, parce qu'un feu qu'on POSE doit
+   *     éclairer plus large que la braise qu'on porte — sans quoi poser un feu pour y voir
+   *     n'achète rien.
+   *
+   * ⚠ **PROVISOIRE, jamais joué** : aucune partie ne l'a éprouvé. C'est le levier à bouger si le
+   * halo se révèle trop avare (on ne voit pas ses pieds) ou trop large (la nuit s'efface).
+   */
+  RAYON_BASE: 4,
+  /**
+   * ═══ CE QUE L'ARBRE MULTIPLIE (B-R14 : le rayon est l'un de ses trois axes) ═══
+   *
+   * `mult(niveau) = 1 + niveau × ce nombre` — un niveau de plus, la moitié de rayon en plus.
+   *
+   * ⚠ **INERTE AUJOURD'HUI, ET DÉLIBÉRÉMENT** : `braise.niveau` ne quitte jamais 0 — aucune
+   * recette ne le monte (c'est l'étape 8 de `braise.md` § 3, non écrite), et `§ 5.20` n'a même
+   * pas tranché COMBIEN de niveaux l'arbre aura. Le nombre est ici pour que la forme de B-A14 ①
+   * soit codée en entier plutôt que devinée plus tard ; il se calibrera avec l'arbre.
+   */
+  RAYON_GAIN_PAR_NIVEAU: 0.5,
+  /**
+   * ═══ LE SOMMET DU PROFIL À CHARGE PLEINE, dans [0, 1] (B-A18 ②) ═══
+   *
+   * **Un** : une braise pleine éclaire comme un feu vif, au contact. Et c'est LE levier de la
+   * nuit noire, parce que le sommet vaut `CLARTE_PLEINE × (charge / chargePleine)` : à 1, la
+   * clarté sur soi ne repasse sous `NUIT.SEUIL_NOIR` (0,3) qu'en dessous de **30 % de charge**.
+   *
+   * ⚠ **CE NOMBRE EST UN SEUIL, PAS UN RÉGLAGE — et c'est de l'ARITHMÉTIQUE, pas une mesure.**
+   * À charge PLEINE, la clarté sur soi vaut exactement ce nombre (tout profil linéaire vaut son
+   * sommet au contact, et un corps est toujours au contact de ce qu'il porte) : le verdict de la
+   * nuit noire est donc BINAIRE — **tout sommet ≥ `SEUIL_NOIR` (0,3) rend la parade à toute
+   * braise pleine, tout sommet en dessous ne la rend jamais**, et aucune valeur intermédiaire
+   * n'existe. C'est ce qui l'a mis entre les mains d'Alexis plutôt que dans un calibrage.
+   *
+   * ⚠ **CE QUI EST VRAIMENT MESURÉ** (`tools/__clarte-braise.mts`, monde joué, graine 2026, 14
+   * jours) : la nuit noire pesait **24,7 %** des relevés (4 144 sur 16 800) avant l'étape 7, et
+   * **sans balise** la braise est vide au jour 70. ⚠ Le « 0 noir sur 4 144 » que cette note
+   * annonçait est une **TAUTOLOGIE** (relevée à l'audit de fusion) : le bras qui le rend épingle
+   * la charge au plein, donc il relit l'inégalité ci-dessus au lieu de l'éprouver. Même chose
+   * pour mon « 0,4 : la mesure le dément » — c'est l'arithmétique qui le dément : 0,4 ≥ 0,3
+   * éteint la nuit tout autant, il ne déplace que l'instant où une braise qui SE VIDE la rend.
+   *
+   * **TRANCHÉ LE 2026-10-05 — issue ⓐ** (décision d'Alexis, `braise.md` § 5.21) : on garde un
+   * sommet ≥ `SEUIL_NOIR`, et **1** est la lecture littérale de B-R13c (*« la clarté vaut le
+   * profil de sa source »*). Ce que ça assume, dit à voix haute : **au camp, une braise pleine
+   * rend toujours la parade** ; la nuit noire ne disparaît pas, elle devient un fait
+   * d'ALTITUDE et d'EXPÉDITION — elle mord là où la braise se vide. ⚠ Baisser ce nombre sous
+   * 0,3 ne « rendrait » pas la nuit : ça retirerait à la braise tout effet sur la parade, donc
+   * son troisième métier ne vivrait plus que dans le rendu (l'issue ⓑ, écartée).
+   */
+  CLARTE_PLEINE: 1,
 }
 
 /**

@@ -82,6 +82,7 @@ import type { WorldMap } from './map'
 import type { StructureType } from './pieces'
 import type { Entity } from './sim'
 import { torcheVive } from './torche'
+import { bulleDeBraise } from './braise'
 import type { Structure } from './village'
 
 /**
@@ -555,8 +556,13 @@ function estFigurant(monde: MondeEclaire, entityId: number): boolean {
  * LA LUMIÈRE DES TORCHES PORTÉES en un point, dans [0, 1] (LG-R18) : le MAX, sur les avatars vivants
  * qui tiennent une torche VIVE au même étage — ou au sol comme lui, à un autre palier (LG-R14 : la
  * marche se juge en hauteur) —, d'une bulle linéaire depuis le porteur jusqu'à
- * `LUMIERE.TORCHE_PORTEE_TUILES` × la part visible de la source étendue centrée sur lui. Le porteur
- * lui-même est à plein : `clarteSurSoiAt` le rend avant d'arriver ici.
+ * `LUMIERE.TORCHE_PORTEE_TUILES` × la part visible de la source étendue centrée sur lui. ⚠ **Le
+ * porteur est servi ICI COMME LES AUTRES, à distance nulle** — cette boucle n'exclut personne.
+ * `clarteSurSoiAt` pose EN PLUS un terme sur soi (`torche ? 1 : 0`), qui n'est pas redondant : il
+ * est SANS `partVisible`, et la part visible d'un corps sur sa propre source tombe sous 1 dès
+ * qu'il colle un mur ou qu'il est emmuré (MESURÉ 0,8125 contre un mur nord, `lumiere.test.ts` ⑨).
+ * *(Cette ligne disait « le porteur lui-même est à plein : `clarteSurSoiAt` le rend avant
+ * d'arriver ici » — vrai jusqu'au 2026-10-05, où le `if (torche) return 1` est tombé.)*
  *
  * Une torche reste ce qu'elle est (`torche.md`, I3) : elle éclaire, elle ne chauffe pas, elle ne
  * repousse rien. Sans `entities` (la façade du client), rien : l'autorité décide.
@@ -579,6 +585,54 @@ export function lumiereDesTorches(monde: MondeEclaire, x: number, y: number, eta
     if (d >= P) continue
     const bulle = 1 - d / P
     if (bulle <= best) continue
+    const v = bulle * partVisible(monde, niveau, x, y, e.x, e.y, niveauPorteur)
+    if (v > best) best = v
+  }
+  return best
+}
+
+/**
+ * LA LUMIÈRE DES BRAISES PORTÉES en un point, dans [0, 1] (B-R13c) — le MIROIR EXACT de
+ * `lumiereDesTorches` ci-dessus, au profil près : même population (les avatars vivants, jamais
+ * un figurant — N6), même règle d'étage (LG-R14 : la marche se juge en hauteur), même
+ * `partVisible`, même `max` et jamais de somme (N1). Seul le profil change : celui de la braise
+ * (`bulleDeBraise`), dont le sommet ET le rayon sont commandés par la charge.
+ *
+ * ⚠ **POURQUOI UN SECOND BALAYAGE ET NON UN TERME DANS LE PREMIER** : la braise d'un camarade
+ * éclaire autour de LUI (B-R13c la met « au max, comme une source parmi les autres »), donc en
+ * coop elle se voit de loin exactement comme sa torche (LG-R18). Les deux sources n'ont ni la
+ * même portée ni le même sommet ; les fondre forcerait à choisir l'un des deux profils.
+ *
+ * ⚠ **LE PORTEUR EST SERVI ICI, À DISTANCE NULLE — cette boucle n'exclut personne** (mon premier
+ * énoncé disait l'inverse ; corrigé à l'audit de fusion du 2026-10-05). `clarteSurSoiAt` pose EN
+ * PLUS son propre terme au contact, et il est PORTANT pour deux raisons distinctes :
+ *   · le terme sur soi est **sans `partVisible`** (« il n'y a rien entre un corps et ce qu'il
+ *     porte »), alors que cette boucle en paie un — or la part visible d'un corps sur sa PROPRE
+ *     source tombe sous 1 dès qu'il colle un mur nord/sud (MESURÉ 0,8125) ou qu'il est emmuré
+ *     sous une pièce pleine (0,5). ⚠ **Et pour un corps à terre ou un figurant, ce n'est PAS la
+ *     part visible qui tombe** — j'avais écrit « elle vaut 0 » : MESURÉ, `partVisible(soi→soi)`
+ *     vaut **1** dans les deux cas, et ce sont les deux `continue` ci-dessous qui annulent la
+ *     CONTRIBUTION (relevé par `determinisme-sim`, D7). Le résultat est le même, la cause non. `lumiere.test.ts` ⑨ le garde, parade comprise ;
+ *   · le client appelle avec sa position PRÉDITE alors que les entités de sa façade sont à celle
+ *     du SNAPSHOT : servi par cette seule boucle, il prédirait **plus sombre que l'autorité**
+ *     juste au seuil (`etat-gel-lumiere.test.ts` L4).
+ */
+export function lumiereDesBraises(monde: MondeEclaire, x: number, y: number, etage?: number): number {
+  const entities = monde.entities
+  if (entities === undefined) return 0
+  const niveau = etage ?? palierDuSol(monde.map, Math.floor(x), Math.floor(y))
+  const auSol = seTientAuSol(monde.map, niveau, x, y)
+  let best = 0
+  for (const e of entities) {
+    const braise = e.braise
+    if (e.hp <= 0 || braise === undefined) continue
+    if (estFigurant(monde, e.id)) continue
+    const niveauPorteur = niveauDuCorps(monde.map, e)
+    if (niveauPorteur !== niveau && !(auSol && seTientAuSol(monde.map, niveauPorteur, e.x, e.y))) continue
+    const dx = e.x - x
+    const dy = e.y - y
+    const bulle = bulleDeBraise(braise, Math.sqrt(dx * dx + dy * dy))
+    if (bulle <= best) continue // ne peut plus faire mieux, même vue en entier
     const v = bulle * partVisible(monde, niveau, x, y, e.x, e.y, niveauPorteur)
     if (v > best) best = v
   }

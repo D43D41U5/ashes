@@ -32,6 +32,7 @@
  * SwiftShader (LG-A1, LG-A2), comme l'en-tête de `corps-ref.test.ts` le dit déjà.
  */
 import { composerM } from './champ-ref'
+import { GI } from './reglages'
 import { avecFeuDeLaFace, composerLeCorps, partsDuCorps, sansFeuDirect, type PartsCorps, type Rgb } from './corps-ref'
 import {
   colonneAuPalierDuCorps,
@@ -122,6 +123,44 @@ const NUL: Rgb = [0, 0, 0]
 
 /** Le champ tel que le voit un corps sous le ciel seul (`CorpsPose.ciel`) : rien, et pas d'ombre. */
 const SANS_CHAMP: LectureDuChamp = { light: NUL, directFace: NUL, ombre: 0 }
+
+/**
+ * ═══ LE PLANCHER DE CE QU'UN CORPS PORTE (B-R13d) ═══
+ *
+ * *« Oui il doit être éclairé par sa torche ou une braise qu'il porte lui-même »* (Alexis,
+ * 2026-10-05). Le corps d'un porteur lisait le champ sous ses pieds **et rien d'autre** — or le
+ * champ plafonne au pic d'effacement du voile (`profilFeu(0)` = `HOLE_ERASE_PEAK` = 0,62), et une
+ * lumière PORTÉE n'y pèse que sa force (0,5) : MESURÉ sur l'oracle, à minuit, un porteur de braise
+ * pleine comme de torche vive composait **57,38,22** sur un texel de corps `0,62/0,52/0,42` —
+ * 36 % de son albédo, pendant que le sol sous ses pieds était lavé par le trou du voile ET par la
+ * flaque additive. *Un bonhomme sombre debout dans une tache claire*, et c'est ce qu'Alexis a vu.
+ *
+ * Le plancher est la clarté que **l'autorité** donne (`clarteDeCeQuOnPorte`, `/sim`), posée à la
+ * teinte de la flamme — donc :
+ *   · **une seule loi** : le nombre vient de `/sim`, le rendu ne le recalcule pas ;
+ *   · **N2bis par construction** : un minorant pris sur l'autorité ne peut pas la dépasser ;
+ *   · **ça ne touche QUE le corps** : ni le trou du voile, ni la flaque au sol, ni le champ — les
+ *     trois gardent exactement la géométrie et l'amplitude calibrées cet après-midi ;
+ *   · **ça se vide avec la charge, tout seul** : `clarteDeCeQuOnPorte` rend le profil en d = 0,
+ *     c'est-à-dire la charge, et 0 pour une braise vide.
+ *
+ * ⚠ **`max` PAR CANAL, PAS UNE SOMME** — N1 vaut ici comme dans `/sim` : un corps au pied d'un Feu
+ * ET porteur d'une torche ne cumule pas, il prend le plus fort.
+ *
+ * ⚠ **ET IL N'EST PAS LOCAL À LA BRANCHE E — j'avais écrit l'inverse, la garde ⑱ l'a démenti.**
+ * Il se pose en ②bis, sur la lecture du champ, donc AVANT le choix de la branche du feu direct :
+ * une face dressée à qui on poserait un `soi` monterait elle aussi, et un corps sous le ciel seul
+ * (`ciel: true`) également, son champ fût-il nul. Ce qui restreint la loi aux ACTEURS est
+ * l'ALIMENTATION, pas la passe : seul `snapshot-view.ts` écrit un `soi`, et seulement sur la pose
+ * d'un acteur — qui est en branche E par ailleurs, mais ce n'est pas ça qui l'y confine.
+ */
+export function avecCeQuOnPorte(light: Rgb, soi: number | undefined): Rgb {
+  if (soi === undefined || !(soi > 0)) return light
+  const r = GI.TEINTE_FEU[0] * soi
+  const g = GI.TEINTE_FEU[1] * soi
+  const b = GI.TEINTE_FEU[2] * soi
+  return [Math.max(light[0], r), Math.max(light[1], g), Math.max(light[2], b)]
+}
 
 /**
  * LE MULTIPLICATEUR DU CHAMP en un point lu — `M` tel quel s'il a été lu (`LectureDuChamp.m`), sinon
@@ -233,7 +272,8 @@ export function pixelDuCorps(
   const brut = pointAuSol(c, xw, yl)
   const p = c.ciel === true ? brut : colonneAuPalierDuCorps(c, brut, lire.grain, lire.palier)
   const sous = c.ciel === true ? SANS_CHAMP : lire(p.x, p.y)
-  let parts: PartsCorps = partsDuCorps(ciel.mn, sous.ombre, ciel.a, sous.light, sous.directFace, ciel.ambiante)
+  // ②bis LE PLANCHER DE CE QU'ON PORTE (B-R13d) — `max`, jamais une somme, comme `/sim`.
+  let parts: PartsCorps = partsDuCorps(ciel.mn, sous.ombre, ciel.a, avecCeQuOnPorte(sous.light, c.soi), sous.directFace, ciel.ambiante)
 
   // ③ — la part directe du feu. Sans feu dans la scène, la branche ne change rien : il n'y a rien
   // à orienter ni à retirer, et `lectureDuFeu` lirait un angle depuis une source qui n'existe pas.

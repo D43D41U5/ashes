@@ -79,6 +79,21 @@ const HAUTEUR_FLAMME_PX = GI.CORPS.HAUTEUR_FLAMME_PX
 
 /** Un corps tel que la GI le voit : où il se tient, et ce qu'il est. */
 export interface CorpsPose {
+  /**
+   * ═══ CE QUE CE CORPS REÇOIT DE CE QU'IL PORTE (B-R13d) — `clarteDeCeQuOnPorte` de `/sim` ═══
+   *
+   * *« Oui il doit être éclairé par sa torche ou une braise qu'il porte lui-même »* (Alexis,
+   * 2026-10-05). Un PLANCHER sur la lumière que ce corps lit dans le champ, à la teinte de la
+   * flamme — jamais un terme de plus : `max`, comme `/sim`.
+   *
+   * ⚠ **IL N'EST PAS CALCULÉ ICI, ET SURTOUT PAS RECALCULÉ** : il vient de `/sim`, par la fonction
+   * exportée exprès pour que le rendu et l'autorité n'en tiennent pas deux copies. Absent ≡ 0 —
+   * tout corps qui ne porte rien, c'est-à-dire tout sauf un avatar.
+   *
+   * ⚠ Et c'est **N2bis par construction** : le plancher est la clarté que l'AUTORITÉ donne, donc
+   * l'écran ne peut pas dépasser la sim en la prenant pour minorant.
+   */
+  readonly soi?: number
   /** Le `x` du sprite — l'exposition d'une face se mesure depuis sa ligne, pas depuis le pixel. */
   readonly x: number
   /** Le `y` du sprite — le bas de sa tuile pour une barrière, sa ligne pour tout autre corps. */

@@ -176,7 +176,9 @@ import { MorningMist } from './world/morning-mist'
 import { FireFx } from './world/fire-fx'
 import { FireGroundGlow } from './world/fire-ground-glow'
 import { TorcheGroundGlow, type PorteurDeTorche } from './world/torche-ground-glow'
+import { BraiseGroundGlow, type PorteurDeBraise } from './world/braise-ground-glow'
 import { TORCHE_HOLE_FORCE, torcheHoleRadius } from '../render/torche'
+import { CAVE_RATIO, braiseHoleRadius, forceDeBraise, forceDuTrouDeBraise, rayonEcranDeBraise } from '../render/braise-halo'
 import { createContactShadow, SHADOW_ALPHA } from './world/contact-shadow'
 import { champLisiere, poidsLisiere, LISIERE_MAX, LISIERE_PORTEE } from '../render/ecotone'
 import {
@@ -194,7 +196,7 @@ import {
 import { peindreCarteArt, type CarteArt } from '../render/carte-art'
 import { cellulesDuDisque, peindreSavoirRegion } from '../render/carte-savoir'
 import { cleDuRegime, deriverEauDuJour, regimeDeCarte } from '../render/carte-eau'
-import { atteignableEntreEtages, etagesDuPas, niveauDeLaTuile, niveauDuCorps, palierDuSol, terrainAEtage, TRACTION, eauPechable, estUnCoinDePeche, porteDeLEau, FISH_SPECIES, niveauDEau, torcheVive, partDeFlamme, clarteSurSoiAt, clarteDuCiel, partDuCiel, NUIT, MONSTER_DEFS, POI_CHARGES, TERRAIN_DEEP_WATER, TERRAIN_SHALLOW_WATER, CREUX, TERRAINS_BOISES_MASSIF, ventForceAt, VENT, LUMIERE, type EtatVent, type Souillure } from '@ashes/sim'
+import { atteignableEntreEtages, etagesDuPas, niveauDeLaTuile, niveauDuCorps, palierDuSol, terrainAEtage, TRACTION, eauPechable, estUnCoinDePeche, porteDeLEau, FISH_SPECIES, niveauDEau, torcheVive, partDeFlamme, clarteSurSoiAt, clarteDeCeQuOnPorte, clarteDuCiel, partDuCiel, NUIT, MONSTER_DEFS, POI_CHARGES, TERRAIN_DEEP_WATER, TERRAIN_SHALLOW_WATER, CREUX, TERRAINS_BOISES_MASSIF, ventForceAt, VENT, LUMIERE, type EtatVent, type Souillure } from '@ashes/sim'
 
 /** L'assombrissement du sol au plafond de profondeur (§2quater R42) : au cœur d'un massif,
  *  le sol perd jusqu'à 14 % de luminance — en PENTE CONTINUE, jamais par bande. */
@@ -214,6 +216,7 @@ function revealRadiusOf(kind: string): number {
   return charge && charge.devise === 'savoir' && charge.reveal === 'radius' ? charge.radiusTiles : 0
 }
 import { NightVeil } from './world/night-veil'
+import { sourceDuChamp } from '../render/gi/source-du-champ'
 import { ChampGpu, PASSES_GI, type CreuxGi, type SourceGi } from '../render/gi/champ-gpu'
 import { ambianteDeLHeure, luminanceDuVoile, rgbDeCouleur } from '../render/gi/corps-ref'
 import { cellulesDeBrosse, cellulesDuPres, FEU_CAVE_TUILES, FORCE_AU_CHAMP, JOUR_PIC, JOUR_TUILES, luminance, NOIR, NOIR_ALPHA, SOI_PIC, SOI_TUILES, TORCHE_CAVE_TUILES, TORCHE_PIC } from '../render/cave-brosses'
@@ -427,6 +430,7 @@ export class WorldScene extends Phaser.Scene {
   private fireGround: FireGroundGlow | null = null
   /** La lumière de la torche tombée au sol — le MÊME rôle, mais elle marche (spec `torche.md`). */
   private torcheGround: TorcheGroundGlow | null = null
+  private braiseGround: BraiseGroundGlow | null = null
   /** ESSAI éclairage dynamique (decisions.md 2026-07-20) : soleil + Feux normal-mappés,
    *  armés par le toggle debug F5. Inerte tant que le flag est éteint. */
   private dynLight: DynamicLighting | null = null
@@ -743,6 +747,14 @@ export class WorldScene extends Phaser.Scene {
     if (lum.torche && lum.torche.force > 0) {
       out.push({ worldX: this.predicted.x * TILE_PX, worldY: this.predicted.y * TILE_PX, radiusTiles: TORCHE_CAVE_TUILES, force: TORCHE_PIC * lum.torche.force * FORCE_AU_CHAMP })
     }
+    // LA BRAISE PORTÉE (B-R13c) : la même source, à SA portée — celle de la sim, qui fond avec la
+    // charge. `echelle` est déjà son rayon rapporté à la brosse de la torche, donc la portée du
+    // champ s'en déduit sans relire une seconde fois `rayonDeBraise` (LG-A7 : le champ et le trou
+    // du voile partagent la portée).
+    if (lum.braise && lum.braise.force > 0) {
+      const rayon = TORCHE_CAVE_TUILES * lum.braise.echelle
+      if (rayon > 0) out.push({ worldX: this.predicted.x * TILE_PX, worldY: this.predicted.y * TILE_PX, radiusTiles: rayon, force: TORCHE_PIC * lum.braise.force * FORCE_AU_CHAMP })
+    }
     for (const { s, factor } of feux) {
       if (!sousLaRoche(s) || niveauDeLaTuile(this.map, s) !== niveau) continue
       const force = TORCHE_PIC * factor * flicker(time, s.id * 1.7) * FORCE_AU_CHAMP
@@ -769,6 +781,56 @@ export class WorldScene extends Phaser.Scene {
       // récepteur et la flamme du porteur, à SON palier (`niveauDuCorps`, ce que `lumiereDesTorches` lit).
       out.push({
         id: e.id, x: pos.x * TILE_PX, y: this.yDessineDuCorps(pos.x, pos.y, e.etage) * TILE_PX, strate, part: partDeFlamme(slot),
+        yLogique: pos.y * TILE_PX,
+        niveau: e.etage ?? palierDuSol(this.map, Math.floor(pos.x), Math.floor(pos.y)),
+      })
+    }
+    return out
+  }
+  /**
+   * LES PORTEURS DE BRAISE à l'image (B-R13c) — le miroir de `porteursDeTorche` ci-dessus : même
+   * population (les corps du snapshot), même position INTERPOLÉE, même strate de corps (E-R22),
+   * même place logique pour le champ de la GI (LG-R14). Deux écarts, et ils comptent tous les deux.
+   *
+   * ① **UN CORPS QUI TIENT UNE TORCHE VIVE N'EST PAS ICI**, et ce n'est pas un réglage : dans la
+   * SIM, une torche vive DOMINE la braise en tout point, donc la braise de ce corps ne pèse rien
+   * dans le `max` de `clarteSurSoiAt` (N1) et l'écran ne doit pas la montrer. La preuve tient en
+   * une ligne d'algèbre sur deux profils linéaires de même centre :
+   *
+   *     torche(d) − braise(d) = (1 − d/P) − (f − d/R) = (1 − f) + d × (1/R − 1/P)
+   *
+   * avec `f ≤ 1` et `R ≤ P` (`BRAISE.RAYON_BASE × multDuRayon(niveau) ≤ LUMIERE.TORCHE_PORTEE_
+   * TUILES`, soit 8 ≤ 10 au niveau maximal de l'arbre), les deux termes sont ≥ 0. Les deux
+   * sources partagent en outre le MÊME `partVisible` (même centre, même récepteur), donc le
+   * facteur d'occlusion ne peut pas renverser l'ordre. ⚠ La garde B-A18 ⑪ affirme l'inégalité des
+   * CONSTANTES, parce que c'est elle qui porte la preuve : `RAYON_GAIN_PAR_NIVEAU` monté sans y
+   * penser la ferait tomber, et la domination avec elle.
+   *
+   * ⚠ Conséquence assumée, dans le sens AUTORISÉ : le rendu fait AGONISER la torche
+   * (`forceDeTorche`) alors que la sim l'ignore (une torche vive y éclaire pareil jusqu'au bout).
+   * Un corps à la torche mourante ne montre donc presque plus rien, braise comprise — l'écran est
+   * plus SOMBRE que l'autorité, ce que N2bis permet ; l'inverse, non.
+   *
+   * ⚠ **AUCUNE CLAUSE `estFigurant` ICI, et ce n'est pas un oubli** : `lumiereDesBraises` l'écarte
+   * dans `/sim` (N6), mais ce prédicat ne désigne que les MONSTRES — et `braise.test.ts` prouve
+   * qu'aucun monstre n'en porte. `e.braise === undefined` fait donc le tri à lui seul, et le
+   * client n'a pas à relire `state.monsters` pour une exclusion déjà vide.
+   *
+   * ② **LA BRAISE VOYAGE ENTIÈRE**, pas une fraction déjà calculée : `rayonEcranDeBraise` la
+   * redonne à `rayonDeBraise` dans `/sim`. Le client ne relit ni `RAYON_BASE` ni le gain par
+   * niveau — une seule courbe, celle de l'autorité (voir l'en-tête de `render/braise-halo.ts`).
+   */
+  private porteursDeBraise(): PorteurDeBraise[] {
+    const out: PorteurDeBraise[] = []
+    for (const e of this.lastEntities) {
+      if (e.braise === undefined || e.hp <= 0) continue
+      if (torcheVive(e) !== null) continue // ① ci-dessus : la torche domine, la braise se tait
+      const pos = e.id === this.playerId && this.predicted ? this.predicted : e
+      const palier = this.relief.palier(Math.floor(pos.x), Math.floor(pos.y))
+      const strate = strateDEtage(strateDuCorps(this.etages.niveauDuCorps(pos.x, pos.y, e.etage ?? palier)), palier)
+      out.push({
+        id: e.id, x: pos.x * TILE_PX, y: this.yDessineDuCorps(pos.x, pos.y, e.etage) * TILE_PX, strate,
+        braise: e.braise,
         yLogique: pos.y * TILE_PX,
         niveau: e.etage ?? palierDuSol(this.map, Math.floor(pos.x), Math.floor(pos.y)),
       })
@@ -1647,6 +1709,7 @@ export class WorldScene extends Phaser.Scene {
         this.cascadeFx = new CascadeFx(this, this.map.width)
         this.fireGround = new FireGroundGlow(this)
         this.torcheGround = new TorcheGroundGlow(this)
+        this.braiseGround = new BraiseGroundGlow(this)
         this.dynLight = new DynamicLighting(this)
         // UN FEU EST UNE STRUCTURE : il se dessine à la hauteur de sa tuile (`liftSol`, comme
         // son sprite dans `snapshot-view`), et ses flammes, sa flaque et son point light avec
@@ -1726,7 +1789,7 @@ export class WorldScene extends Phaser.Scene {
         if (this.clutter) this.clutter.hauteurNeigeAt = hauteurNeige
         this.cameras.main.setBounds(0, 0, worldW, worldH)
         this.prediction = createPrediction(msg.playerSpawn.x, msg.playerSpawn.y)
-        this.view.syncActor(this.playerSprite, this.predicted.x, this.predicted.y, 'spr-player', false, 0, 0, this.etageJoueur)
+        this.view.syncActor(this.playerSprite, this.predicted.x, this.predicted.y, 'spr-player', false, 0, 0, this.etageJoueur, this.playerId)
         // Bornes posées et avatar au spawn : le suivi peut s'ancrer sans panoramique.
         this.cameras.main.startFollow(this.playerSprite, true, 0.16, 0.16)
         // La carte plein écran (M, rendue par UIScene) a besoin de la carte : pour
@@ -2459,6 +2522,17 @@ export class WorldScene extends Phaser.Scene {
           torche: slot !== null
             ? { x: this.predicted.x * TILE_PX, y: decouvert.y * TILE_PX, force: partDeFlamme(slot) * flicker(time, 0.37) }
             : null,
+          // LA BRAISE PORTÉE (B-R13c) — exclusive de la torche, dans le même `slot !== null` qui
+          // tranche au-dessus : une torche vive domine la braise dans la sim, donc l'écran ne
+          // montre que l'une des deux (`porteursDeBraise` ①). Sous terre `day` vaut 0 : il y fait
+          // nuit à toute heure, sinon le halo d'un porteur s'éteignait à midi dans une salle.
+          braise: slot === null && moi?.braise !== undefined
+            ? {
+              x: this.predicted.x * TILE_PX, y: decouvert.y * TILE_PX,
+              force: forceDeBraise(moi.braise, 0, time, moi.id * 2.9),
+              echelle: rayonEcranDeBraise(moi.braise, CAVE_RATIO) / TORCHE_CAVE_TUILES,
+            }
+            : null,
           joueur: { x: this.predicted.x * TILE_PX, y: decouvert.y * TILE_PX },
           // LE BIVOUAC (G-R7) : chaque feu de la salle, à la hauteur où son sprite se dessine
           // (`reliefSous`, l'étage compris), et sa flamme selon l'ÉTAT du foyer — le même
@@ -2840,7 +2914,20 @@ export class WorldScene extends Phaser.Scene {
       const axFeu = axesFeu()
       // …ET À LA HAUTEUR DE SA TUILE (`liftSol`, comme le sprite du feu) : au palier 2, le trou
       // se creusait quatre tuiles au sud des rondins (MESURÉ le 2026-09-04, feu 474, graine 2026).
-      const veilFires = litFires.map(({ s, factor, g }) => ({
+      // ⚠ LE TYPE EST ÉCRIT, PAS INFÉRÉ : `rgb` n'existe que pour les sources qui ne sont pas des
+      // flammes (les essaims, plus bas), et un type inféré du premier littéral le refuserait —
+      // ou pire, le laisserait tomber en chemin, ce qui est exactement la classe de défaut de
+      // `syncActor` du 2026-10-05 (une plomberie qui compile en jetant la valeur).
+      const veilFires: {
+        worldX: number
+        worldY: number
+        radiusTiles: number
+        force: number
+        forceGi: number
+        yLogique: number
+        niveau: number
+        rgb?: readonly [number, number, number]
+      }[] = litFires.map(({ s, factor, g }) => ({
         worldX: (s.tx + 0.5) * TILE_PX,
         worldY: (s.ty + 0.5) * TILE_PX - (this.reliefSous?.(s.tx + 0.5, s.ty + 0.5, s.etage).lift ?? 0),
         radiusTiles: fireHoleRadius(time, s.id * 1.7) * factor,
@@ -2857,6 +2944,41 @@ export class WorldScene extends Phaser.Scene {
       // LES FEUX POUR LA PASSE DES CORPS (LG-R7, LG-R3) : la même liste, en logique, avant les torches —
       // un feu mort (portée nulle) n'y est pas, comme `dynamic-lighting` retirait sa lumière.
       this.view.feuxGi = veilFires.filter((f) => f.radiusTiles > 0).map((f) => ({ x: f.worldX, y: f.yLogique, rayon: f.radiusTiles * TILE_PX, lift: f.yLogique - f.worldY }))
+      // ═══ LES ESSAIMS DE LUCIOLES (LG-R20) — LA CORRECTION DU 2026-10-06 ═══
+      //
+      // *« Btw les lucioles ne sont pas en gi, corrige ça »* (Alexis). Et c'était vrai à la
+      // lettre : un essaim n'éclairait les corps que par son POINT LIGHT, c'est-à-dire par la
+      // pipeline que la GI a remplacée pour toutes les autres sources (`composeGi ? [] : feux`).
+      // Light2D n'atteint que ce qui porte une carte de normales, et un ACTEUR lit le CHAMP sous
+      // ses pieds (branche E) : sous la GI, les lucioles étaient la seule lumière du jeu à ne pas
+      // atteindre un corps. Elles entrent donc dans la même liste que tout le reste.
+      //
+      // ⚠ **`force: 0` — UN ESSAIM NE CREUSE PAS LE VOILE, ET ÇA NE CHANGE PAS ICI.** C'est une
+      // décision du 2026-08-26, inscrite dans la profondeur de sa flaque (`FIREFLY_GROUND_DEPTH` :
+      // elle passe AU-DESSUS du voile, là où celle du Feu passe dessous, « le Feu creuse le voile,
+      // un essaim non »). Le voile lit `force`, le champ lit `forceGi` : les deux sont séparés
+      // depuis LG-R6, et c'est ce qui permet de corriger la GI sans rouvrir la nuit.
+      //
+      // ⚠ **La liste est celle de l'image PRÉCÉDENTE** (`ambientLife.update` tourne plus bas, avec
+      // les oiseaux). C'est sans conséquence et c'est démontrable : l'ancre d'un essaim NE BOUGE
+      // JAMAIS de sa naissance à sa mort (`makeSwarm`, et son `lift` est lu une fois pour cette
+      // raison même) ; seul l'éclat retarde d'une image, soit un pas de fondu de 1/60ᵉ sur une
+      // rampe de plusieurs secondes. Déplacer `ambientLife.update` au-dessus aurait, lui, décalé
+      // les OISEAUX d'une image par rapport à tout le reste.
+      for (const e of this.ambientLife?.sourcesGi() ?? []) {
+        veilFires.push({
+          worldX: e.worldX,
+          worldY: e.worldY,
+          radiusTiles: e.radiusTiles,
+          force: 0,
+          forceGi: e.force,
+          yLogique: e.worldY,
+          // SON PALIER, lu comme celui d'un Feu (`niveauDeLaTuile`) et non sa STRATE de dessin :
+          // le champ filtre sur le palier logique, la strate ne dit que dans quelle couche on peint.
+          niveau: palierDuSol(this.map, Math.floor(e.worldX / TILE_PX), Math.floor(e.worldY / TILE_PX)),
+          rgb: e.rgb,
+        })
+      }
       // ═══ LES TORCHES (spec `torche.md`) — TROIS branchements, UNE liste ═══
       //
       // Résolue ICI, une fois, et partagée par le trou du voile, la flaque au sol et le point
@@ -2877,6 +2999,83 @@ export class WorldScene extends Phaser.Scene {
         if (r > 0) veilFires.push({ worldX: p.x, worldY: p.y, radiusTiles: r, force: TORCHE_HOLE_FORCE, forceGi: TORCHE_HOLE_FORCE, yLogique: p.yLogique, niveau: p.niveau })
       }
       this.torcheGround?.update(porteurs, day, time)
+      // ═══ LES BRAISES PORTÉES (B-R13c) — les MÊMES trois branchements, la même liste ═══
+      //
+      // Résolue ici une fois, comme celle des torches, et pour la raison encore plus impérative :
+      // une source qui MARCHE et dont le RAYON bouge (la charge) aurait traîné d'une image par
+      // couche si chacune avait refait sa liste. Et c'est une liste DISJOINTE de celle des
+      // torches par construction (`porteursDeBraise` ① : une torche vive domine), donc aucune
+      // addition de deux halos sur un même corps — l'écran mime le `max` de la sim (N1).
+      const porteursBraise = this.porteursDeBraise()
+      for (const p of porteursBraise) {
+        const r = braiseHoleRadius(p.braise, day)
+        // ⚠ L'AMPLITUDE EST CELLE DE LA SIM, AU BIT (`forceDuTrouDeBraise` = `bulleDeBraise` au
+        // contact), et c'est elle qui éclaire les CORPS : le champ de la GI lit cette force, et un
+        // corps lit le champ sous chacun de ses pixels. ⚠ J'ai écrit TROIS amplitudes fausses ici
+        // le 2026-10-05 (0,34 constant, puis 0,34 × f, puis le sommet de la sim TEL QUEL) : la
+        // dernière INVERSAIT la hiérarchie, le rendu ayant sa propre échelle où un Feu pousse 1 et
+        // une torche `TORCHE_HOLE_FORCE` = 0,5. `forceDuTrouDeBraise` est donc la parité torche, et
+        // le détail est dans son en-tête. Ce qui éclaire le PORTEUR, lui, est le plancher de
+        // B-R13d (`soiParCorps`, quelques lignes plus bas) et non cette force.
+        const prof = forceDuTrouDeBraise(p.braise)
+        if (r > 0 && prof > 0) veilFires.push({ worldX: p.x, worldY: p.y, radiusTiles: r, force: prof, forceGi: prof, yLogique: p.yLogique, niveau: p.niveau })
+      }
+      this.braiseGround?.update(porteursBraise, day, time)
+      // ═══ CE QUE CHAQUE CORPS REÇOIT DE CE QU'IL PORTE (B-R13d, décision d'Alexis du 2026-10-05) ═══
+      //
+      // *« Oui il doit être éclairé par sa torche ou une braise qu'il porte lui-même. »* Le nombre
+      // vient de `/sim` (`clarteDeCeQuOnPorte`) et le rendu ne le recalcule pas : la passe des corps
+      // en fait le PLANCHER de la lumière qu'un porteur lit dans le champ. Ni le trou du voile, ni la
+      // flaque au sol, ni le champ ne bougent — c'est pour ça que la décision ne retouche pas la
+      // nuit noire calibrée (N2bis), seulement le corps.
+      //
+      // ⚠ **ON NE REMPLIT QUE LES PORTEURS**, et la carte est vide dans le cas courant : un monstre
+      // n'a pas de braise, un PNJ n'en a plus, et `clarteDeCeQuOnPorte` rend 0 sans torche ni braise.
+      // ⚠ Et elle ne dépend d'AUCUNE position (la fonction ne prend que la torche et la braise),
+      // donc rien à interpoler et pas de question « prédite ou snapshot ? ».
+      //
+      // ⚠⚠ **ET ELLE SE TAIT LÀ OÙ LE CIEL ÉCLAIRE DÉJÀ CE CORPS — `porte − ciel`, le terme
+      // EXACT de `clarteSurSoiAt`, et surtout pas une heure globale.**
+      //
+      // **Pourquoi une porte est nécessaire — MESURÉ.** `soi` ne dépend d'aucune heure
+      // (`clarteDeCeQuOnPorte` ne lit que la torche et la braise) et tout avatar naît avec une
+      // braise PLEINE : sans porte, le plancher est à son maximum en plein midi, et il **aplatit
+      // le modelé de l'astre** sur le corps d'un porteur. La cause est dans `partsDuCorps` :
+      // `m = 1 − (1 − x)(1 − l)` **sature déjà à 1** sous un ciel plein — donc sur une normale
+      // PLATE le pixel ne bouge pas, et c'est ce qui rendait le défaut invisible aux gardes —,
+      // mais `sigma = m / (x + l)` **rétrécit** quand `l` monte, et la part de l'ASTRE se
+      // contracte au profit du PLAT. Relevé à midi, texel 0,62/0,52/0,42, braise pleine :
+      // normale plate **×1,000** ; face à l'ombre (`fAstre` 0) **×1,334** ; face au soleil
+      // (`fAstre` 1,9) **×0,873** — *l'écran devient plus SOMBRE que sans lumière portée.*
+      //
+      // ⚠⚠ **ET POURQUOI CE N'EST PAS `1 − day`, QUE J'AVAIS ÉCRIT D'ABORD** (relevé par
+      // `determinisme-sim`, D1, MESURÉ) : **`partDuCiel` ne rend 1 qu'à ciel ouvert.** Sous un
+      // TOIT ou dans une MAISON à midi il rend **0**, donc le terme sur soi **PORTE** dans
+      // `/sim` (clarté 0,9722 avec une braise pleine contre 0 sans rien, et la parade est
+      // rendue) — là où `1 − day` mettait l'écran à **0**. Mon « à midi le ciel l'emporte, donc
+      // le terme sur soi est inerte dans `/sim` aussi » était **faux**, et la porte qui en
+      // découlait rendait l'écran plus sombre que l'autorité sous tout abri. La forme juste se
+      // DÉRIVE du `max` de la sim : ce que la lumière portée ajoute **au-delà du ciel**.
+      //
+      // Trois conséquences, et aucune n'est un réglage : à ciel ouvert à midi le plancher est
+      // **inerte** (`porte − 1 ≤ 0`) ; sous un abri, de nuit, et **dans une cave**, il porte en
+      // entier (`partDuCiel` = 0) — donc le cas souterrain est **subsumé** et n'a plus besoin de
+      // sa clause à part, ce qui est le signe que la dérivation est la bonne ; et au crépuscule
+      // il fond en continu, sans la marche qu'un seuil aurait posée.
+      const gel = this.etatGel
+      const cielDeLHeure = gel !== null ? clarteDuCiel(gel, this.lastSnapshotTick) : 1
+      const soiParCorps = new Map<number, number>()
+      for (const e of this.lastEntities) {
+        if (e.hp <= 0) continue
+        const porte = clarteDeCeQuOnPorte(torcheVive(e) !== null, e.braise)
+        if (!(porte > 0)) continue
+        // LE CIEL QUI ATTEINT CE CORPS-LÀ : le produit exact de `clarteSurSoiAt`, au niveau du
+        // corps (`niveauDuCorps`, comme `clarteSurSoi` dans `/sim`) et non à l'étage du joueur.
+        const ciel = gel !== null ? cielDeLHeure * partDuCiel(gel, Math.floor(e.x), Math.floor(e.y), niveauDuCorps(gel.map, e)) : 1
+        const soi = porte - ciel
+        if (soi > 0) soiParCorps.set(e.id, soi)
+      }
+      this.view.soiParCorps = soiParCorps.size > 0 ? soiParCorps : null
       // LE CHAMP DE LA GI (spec `lumiere-globale.md`, tranche B) — derrière l'interrupteur du panneau
       // (LG-R3 : à côté de la pile actuelle), et il lit LA MÊME liste de sources que le voile : feux
       // et torches résolus une fois, ils battent en phase.
@@ -2905,7 +3104,9 @@ export class WorldScene extends Phaser.Scene {
           : veilFires
               .filter((f) => (auSol ? f.niveau >= 0 : f.niveau === niveauGi))
               // À LA PLACE LOGIQUE, jamais dessinée : le champ est la grille de la sim (LG-R14).
-              .map((f) => ({ worldX: f.worldX, worldY: f.yLogique, radiusTiles: f.radiusTiles, force: f.forceGi, palier: f.niveau }))
+              // La conversion est PURE et vit dans `night-veil` (`sourceDuChamp`) : elle porte la
+              // place logique, la force du champ et la teinte, et une garde l'éprouve elle-même.
+              .map(sourceDuChamp)
         this.gi?.update(
           passesGi,
           this.cameras.main,
@@ -2993,7 +3194,7 @@ export class WorldScene extends Phaser.Scene {
       const sousTerre = this.etages.souterrain
         ? { gueules: composeGi ? [] : this.etages.gueulesPx, ciel: this.etages.lumiere?.ciel ?? 1 }
         : null
-      this.dynLight?.update(lit, this.cameras.main, composeGi ? [] : feux, this.view.villages, hour, day, time, jourLune, lueurLune, composeGi ? [] : porteurs, this.lastSnapshotTick, sousTerre)
+      this.dynLight?.update(lit, this.cameras.main, composeGi ? [] : feux, this.view.villages, hour, day, time, jourLune, lueurLune, composeGi ? [] : porteurs, this.lastSnapshotTick, sousTerre, composeGi ? [] : porteursBraise)
       // La vie ambiante : les oiseaux traversent, les lucioles ne sortent qu'à la nuit — et
       // depuis le 2026-08-26 elles ÉCLAIRENT, d'où le `lit` (le mode à plat les éteint avec
       // toutes les autres sources).
@@ -3014,6 +3215,11 @@ export class WorldScene extends Phaser.Scene {
         // porte et de quelle teinte le moment les habille. C'est la MÊME horloge que
         // `audio/aube.ts`, et c'est tout l'intérêt — le chœur qu'on entend, on le voit.
         this.lastTime.hourOfCycle,
+        // ET LE POINT LIGHT DE L'ESSAIM S'ÉTEINT QUAND LE CHAMP COMPOSE (LG-R3) : c'est le patron
+        // des Feux, des torches et des braises, que les `composeGi ? []` ci-dessus retirent de
+        // `dynLight`. Le champ les porte désormais tous ; garder les deux éclairerait DEUX fois
+        // tout ce qui a une carte de normales près d'un essaim.
+        composeGi,
       )
       // ── LA MÉTÉO (spec meteo.md) — EN DERNIER : le ciel se pose devant tout le reste. ──
       // La foudre parle d'abord (elle rend l'embrasement que le ciel consomme le même frame ;
@@ -3293,6 +3499,20 @@ export class WorldScene extends Phaser.Scene {
           this.itemTenu() === 'torche_vive',
           // LE PLANCHER : sous la roche le jour n'entre que par la gueule (E-R13, branche B1).
           this.etageJoueur,
+          // ═══ LA BRAISE PORTÉE (`braise.md` B-R13c, étape 7) — ET CE N'EST PAS DÉCORATIF ═══
+          //
+          // Elle doit être passée ICI, au contact, et pas laissée au balayage des porteurs que
+          // `clarteSurSoiAt` fait par ailleurs : ce balayage lit les entités de la FAÇADE, qui
+          // sont restées à la position du SNAPSHOT, alors qu'on l'interroge sur la position
+          // PRÉDITE. En marche l'écart est non nul, et comme le rayon de la braise rétrécit avec
+          // la charge, le client prédirait **plus sombre que l'autorité** exactement au seuil —
+          // donc `direLeNoir` annoncerait un refus de parade que l'autorité n'a pas prononcé.
+          // ⚠ Ce n'est PAS la seule raison d'être du terme sur soi de `clarteSurSoiAt` — j'avais
+          // écrit ici qu'il est « prouvé REDONDANT » dans `/sim`, et c'est FAUX (audit de fusion
+          // du 2026-10-05) : le balayage paie un `partVisible`, et la part visible d'un corps sur
+          // sa propre source tombe à 0,8125 contre un mur, à 0,5 sous une pièce pleine. ⑧ ne vaut
+          // qu'en plaine nue ; ⑨ garde le reste. Ici, c'est la position qui diffère.
+          getHud(this.registry, 'braise'),
         )
       : 1
     // Le sprint est sorti de la règle du noir (Alexis, 2026-09-02) : seule la GARDE la
@@ -3351,7 +3571,7 @@ export class WorldScene extends Phaser.Scene {
     const render = renderPosition(this.prediction, world, input, speedScale)
     // La silhouette du rampeur se TASSE (spec chasse C19) — la sienne aussi :
     // le joueur doit SENTIR sa posture sans regarder une jauge.
-    this.view.syncActor(this.playerSprite, render.x, render.y, 'spr-player', sneak || this.myButchering, 0, 0, this.etageJoueur)
+    this.view.syncActor(this.playerSprite, render.x, render.y, 'spr-player', sneak || this.myButchering, 0, 0, this.etageJoueur, this.playerId)
     // ON NE SE VOIT PAS DEBOUT SUR SA PROPRE DÉPOUILLE (2026-08-31). Depuis que le corps reste
     // au sol, la caméra tient la tuile de chute pendant tout le voile — lequel est SEMI-opaque,
     // le monde y transparaît à dessein. L'avatar y restait planté, intact, à côté du cadavre
@@ -4571,7 +4791,7 @@ export class WorldScene extends Phaser.Scene {
    * secondes. Au-delà du seuil de snap, on la repose sèchement sur l'avatar.
    */
   private recenterCamera(): void {
-    this.view.syncActor(this.playerSprite, this.predicted.x, this.predicted.y, 'spr-player')
+    this.view.syncActor(this.playerSprite, this.predicted.x, this.predicted.y, 'spr-player', false, 0, 0, undefined, this.playerId)
     this.cameras.main.centerOn(this.playerSprite.x, this.playerSprite.y)
   }
 

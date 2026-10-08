@@ -45,6 +45,7 @@
  */
 
 import { PAS_GARDE_PALIER } from './sol-du-corps'
+import { GI } from './reglages'
 
 /** `n_loi.y = −n_phaser.y` — voir l'en-tête. Un seul endroit, et il porte sa raison. */
 export const SIGNE_Y_NORMALE = -1
@@ -72,6 +73,10 @@ export const SIGNE_Y_NORMALE = -1
  * revient à un ulp près de sa valeur, jamais exactement. `depaqueterDrapeaux` est le miroir JS du GLSL,
  * et `corps-gpu.test.ts` tient les deux face à face sur toutes les combinaisons.
  */
+/** `GI.TEINTE_FEU` en littéral GLSL — `toFixed` garantit le point décimal, qu'un entier perdrait
+ *  (GLSL ES 1.0 refuse `1` pour un `float`) : la même précaution que les `${X}.0` du fragment. */
+const TEINTE_FEU_GLSL = GI.TEINTE_FEU.map((v) => v.toFixed(6)).join(', ')
+
 export const UNIFORMES_CORPS = {
   /** Le champ : `L`, `directFace`, et l'ombre `S` (dans `.g`, comme `FRAG_SOMME` la lit). */
   lumiere: 'uGiL',
@@ -122,7 +127,8 @@ export const UNIFORMES_CORPS = {
  *   · `seuilDuDessus(c)`, en px monde : un pixel de bande nord/sud ou de socle dont le `y` est plus
  *     petit est un DESSUS ; `SANS_DESSUS` pour un fût. La géométrie est calculée là-bas, jamais
  *     recomposée ici depuis `pied`, `crete` et une demi-bande.
- * `b` = (`expo`, `lift`, `drapeaux`, 0) :
+ * `b` = (`expo`, `lift`, `drapeaux`, `soi`) — le quatrième composant était un `0` de bourrage
+ * jusqu'au 2026-10-05, où B-R13d y a logé le plancher de ce qu'on porte (aucun attribut neuf) :
  *   · `expositionAuFeu(c, feu)`, ou **−1** pour son `null` (« sous le pixel ») ;
  *   · `c.lift`, en px (LG-R14) : le sprite est DESSINÉ ce lift plus haut que sa place logique. Le
  *     fragment est dessiné ; le pied, le seuil et les sources sont logiques — le fragment se remonte
@@ -404,6 +410,9 @@ vec4 appliquerGi(vec4 fragColor, vec3 normalPhaser) {
   float expo = outGiB.x;
   float lift = outGiB.y;
   float drapeaux = floor(outGiB.z + 0.5);
+  // LE PLANCHER DE CE QU'ON PORTE (B-R13d) — \`clarteDeCeQuOnPorte\` de /sim, 0 pour tout corps
+  // qui ne porte rien. Le quatrième composant d'\`inGiB\` était un \`0\` de bourrage.
+  float soi = outGiB.w;
   float sol = floor(drapeaux / 8.0);
   drapeaux -= 8.0 * sol;
   float ciel = floor(drapeaux / 4.0);
@@ -449,7 +458,14 @@ vec4 appliquerGi(vec4 fragColor, vec3 normalPhaser) {
   // Le décalque est \`passe-corps.ts\` (\`SANS_CHAMP\`) ; la garde LG-A8 tient les deux face à face.
   vec2 uvP = uvDuChamp(p);
   vec3 pAstre, pFeu, pPlat;
-  partsDuCorps(sousLeCiel ? vec3(0.0) : texture2D(uGiL, uvP).rgb,
+  // ②bis LE PLANCHER DE CE QU'ON PORTE (B-R13d) — le décalque de \`avecCeQuOnPorte\`
+  // (\`passe-corps.ts\`) : un \`max\` par canal à la teinte de la flamme, JAMAIS une somme (N1).
+  // Il ne s'applique qu'ICI, sous le pixel : la branche \`auPied\` d'une face dressée ne le voit
+  // pas, et c'est sans effet — seuls les acteurs portent quelque chose, et un acteur est en
+  // branche E (\`arete: 0\` ⇒ \`expo = −1\`).
+  vec3 L = sousLeCiel ? vec3(0.0) : texture2D(uGiL, uvP).rgb;
+  L = max(L, vec3(${TEINTE_FEU_GLSL}) * soi);
+  partsDuCorps(L,
                sousLeCiel ? vec3(0.0) : texture2D(uGiF, uvP).rgb,
                sousLeCiel ? 0.0 : texture2D(uGiS, uvP).g,
                pAstre, pFeu, pPlat);

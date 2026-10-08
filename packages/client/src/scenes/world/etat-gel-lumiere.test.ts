@@ -9,6 +9,8 @@
  * Le montage est celui de `lumiere.test.ts` (sim) : minuit de nouvelle lune, un feu libre.
  */
 import { describe, expect, it } from 'vitest'
+import { readFileSync } from 'node:fs'
+import { join } from 'node:path'
 import {
   FIRE,
   LUNAISON_JOURS,
@@ -16,6 +18,10 @@ import {
   SLOTS,
   TERRAIN_GRASS,
   addItems,
+  NUIT,
+  braiseNeuve,
+  bulleDeBraise,
+  chargePleine,
   clarteSurSoiAt,
   createEmptyMap,
   createSim,
@@ -172,5 +178,122 @@ describe('la façade rend la même clarté que le vrai SimState (LG-R11, LG-R18)
     expect(clarte(facade, ...ombre)).toBeLessThan(nu)
     majEtatGel(facade, sourceDepuis(sim, {}))
     expect(clarte(facade, ...ombre)).toBe(nu)
+  })
+})
+
+
+// ═══════════════════════════════════════════════════════════════════════════════════════════
+// B-A18 — LE TERME SUR SOI EXISTE POUR CE FICHIER, ET POUR LUI SEUL
+//
+// En `/sim`, le terme sur soi de `clarteSurSoiAt` coïncide avec le balayage **en plaine nue**
+// (B-A18 ⑧) — mais il n'est PAS redondant pour autant : le balayage paie un `partVisible`, et la
+// part visible d'un corps sur sa propre source tombe sous 1 contre un mur ou sous une pièce
+// pleine (`lumiere.test.ts` ⑨). *(Ce bandeau disait « prouvé REDONDANT » : corrigé à l'audit de
+// fusion du 2026-10-05.)* Ce qui est propre à CE fichier est l'autre raison : ici les deux
+// POSITIONS diffèrent — le client prédit la sienne, la façade garde celle du snapshot.
+// ═══════════════════════════════════════════════════════════════════════════════════════════
+describe('B-A18 — la prédiction ne doit JAMAIS être plus sombre que l’autorité (N2bis)', () => {
+  /** La charge choisie exprès : la clarté sur soi passe JUSTE au-dessus du seuil, et le rayon
+   *  (`RAYON_BASE × f`) tombe JUSTE en dessous de l'écart de prédiction. C'est la seule fenêtre
+   *  où l'erreur change un VERDICT et pas seulement un nombre. */
+  const F = 0.35
+  const ECART = 2.0 // tuiles entre la position du snapshot et la position prédite
+
+  it('L4 — braise à 35 %, deux tuiles de retard de snapshot : la prédiction tient le verdict de la parade', () => {
+    const sim = nuitNoire()
+    const moi = porteur(sim, 48.5, 48.5)
+    moi.inventory = makeInventory(SLOTS.PLAYER) // pas de torche : la braise seule
+    moi.activeSlot = -1
+    const braise = braiseNeuve(0)
+    braise.charge = Math.round(F * chargePleine(0))
+    moi.braise = braise
+    const facade = creerEtatGel(sourceDepuis(sim, { nodes: true, entities: true }))
+    const px = moi.x + ECART
+    const py = moi.y
+
+    // LA PRÉMISSE, affirmée et non supposée : à cette charge le halo NE PORTE PAS jusqu'au
+    // point prédit, et il rend quand même la parade AU CONTACT. Sans ces deux faits, la garde
+    // ne peut pas rougir.
+    expect(bulleDeBraise(braise, ECART)).toBe(0)
+    expect(bulleDeBraise(braise, 0)).toBeGreaterThanOrEqual(NUIT.SEUIL_NOIR)
+
+    // CE QUE LE CLIENT FAIT : il passe sa braise, au contact de sa position PRÉDITE.
+    const predit = clarteSurSoiAt(facade, facade.tick, px, py, false, undefined, braise)
+    expect(predit).toBeGreaterThanOrEqual(NUIT.SEUIL_NOIR) // il prédit « je pare »
+
+    // L'AUTORITÉ, pour le même corps à la même place : un `SimState` où le corps EST en px, py.
+    const autorite = nuitNoire()
+    const lui = porteur(autorite, px, py)
+    lui.inventory = makeInventory(SLOTS.PLAYER)
+    lui.activeSlot = -1
+    lui.braise = { niveau: braise.niveau, charge: braise.charge }
+    expect(clarteSurSoiAt(autorite, autorite.tick, px, py, false, undefined, lui.braise)).toBeCloseTo(predit, 12)
+
+    // ⚠ LA FALSIFICATION, JOUÉE DANS LA GARDE : sans la braise au contact — c'est-à-dire si le
+    // client la laissait au balayage de la façade, dont les entités sont restées DEUX TUILES en
+    // arrière — il prédirait le noir, donc un refus de parade que l'autorité n'a pas prononcé.
+    const sansLeTerme = clarteSurSoiAt(facade, facade.tick, px, py, false)
+    expect(sansLeTerme).toBeLessThan(NUIT.SEUIL_NOIR)
+    expect(sansLeTerme).toBeLessThan(predit)
+  })
+
+  it('L5 — N2bis sur tout le balayage : la façade rend la clarté de l’autorité au bit, braises comprises', () => {
+    // Le patron de L1, mais avec des braises CHARGÉES sur les porteurs : L1 les a toutes vides
+    // (ses avatars naissent pleins, mais `porteur` n'y touche pas — donc L1 passait déjà par le
+    // halo sans le dire). Ici on le dit, et on le fait varier.
+    const sim = monde()
+    let charges = 0
+    let i = 0
+    for (const e of sim.entities) {
+      e.braise = braiseNeuve(0)
+      e.braise.charge = Math.round(((i++ % 5) / 4) * chargePleine(0))
+      if (e.braise.charge > 0) charges++
+    }
+    expect(charges).toBeGreaterThan(0) // nécessaire, et PAS suffisant — voir juste en dessous
+    // ⚠ **UN CORPS DE PLUS, SANS TORCHE — ET SANS LUI CETTE GARDE EST VACUEUSE SUR LES BRAISES.**
+    // MESURÉ à l'audit de fusion du 2026-10-05 : sur les 1 026 points du balayage, le maximum de
+    // la lumière des braises valait **exactement 0**, pour DEUX raisons qui se cumulent — ⓐ le
+    // seul corps chargé par la boucle ci-dessus était le FIGURANT (i = 1), que `lumiereDesBraises`
+    // écarte (N6) ; ⓑ et même chargé, un porteur de TORCHE la domine partout (portée 10 contre 4,
+    // même sommet), donc le `max` ne laissait jamais parler une braise. Le compte de braises
+    // chargées était donc une prémisse NÉCESSAIRE prise pour suffisante.
+    const nu = ent(sim, spawnEntity(sim, 44.5, 52.5))
+    nu.inventory = makeInventory(SLOTS.PLAYER)
+    nu.activeSlot = -1
+    nu.braise = braiseNeuve(0)
+    nu.braise.charge = Math.round(0.8 * chargePleine(0))
+    // LA PRÉMISSE EFFECTIVE : ce point-ci du balayage est éclairé par CETTE braise et par rien
+    // d'autre — hors de portée du feu (6) comme des deux torches (10), ciel de nouvelle lune.
+    const sonde = clarte(sim, 44.75, 52.75)
+    expect(sonde).toBeCloseTo(bulleDeBraise(nu.braise, Math.sqrt(2) * 0.25), 12)
+    expect(sonde).toBeGreaterThan(NUIT.SEUIL_NOIR)
+    const facade = creerEtatGel(sourceDepuis(sim, { nodes: true, entities: true, figurants: true }))
+    let n = 0
+    for (const [x, y] of points()) {
+      expect(clarte(facade, x, y), `(${x}, ${y})`).toBe(clarte(sim, x, y))
+      n++
+    }
+    expect(n).toBeGreaterThan(500)
+  })
+})
+
+describe('B-A18 — GARDE DE SOURCE : `WorldScene` passe bien sa braise à la prédiction', () => {
+  it('L6 — l’appel de `clarteSurSoiAt` dans `WorldScene` porte un 7ᵉ argument', () => {
+    // ⚠ POURQUOI UNE GARDE DE SOURCE : `braise` est un paramètre OPTIONNEL, donc l'oublier
+    // compile, tourne, et ne se voit qu'à la nuit, au seuil, en marche — c'est-à-dire jamais
+    // dans une suite. L4 prouve que l'argument CHANGE le verdict ; celle-ci prouve qu'il est là.
+    const src = readFileSync(join(__dirname, '../WorldScene.ts'), 'utf8')
+    const i = src.indexOf('clarteSurSoiAt(')
+    expect(i).toBeGreaterThan(0) // PRÉMISSE : l'appel existe encore
+    // LA FENÊTRE DE L'APPEL, et son bord est choisi : la branche `: 1` du ternaire qui le porte
+    // (« avant la première façade d'état, on suppose le jour »). ⚠ Ma première version coupait à
+    // la première `)` après `this.etageJoueur` — elle tombait DANS un commentaire, et la garde
+    // rougissait sur un code juste. Le même piège que la garde de la barre de crans, qui lisait
+    // le liseré du voisin : une fenêtre de source se borne sur un jalon, pas sur un caractère.
+    const fin = src.indexOf('\n      : 1', i)
+    expect(fin).toBeGreaterThan(i) // PRÉMISSE : le jalon de fin existe
+    const appel = src.slice(i, fin)
+    expect(appel).toContain('this.etageJoueur') // la fenêtre couvre bien les arguments
+    expect(appel).toContain("getHud(this.registry, 'braise')")
   })
 })
