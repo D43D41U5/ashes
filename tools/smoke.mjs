@@ -52,6 +52,21 @@ const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 const OUT = process.env.SMOKE_OUT ? resolve(process.env.SMOKE_OUT) : resolve(ROOT, 'scratchpad/smoke')
 const PORT = 4173
 
+/**
+ * ⚠ **L'INTAKE D'ACTIONS DU WORKER EST UNE FENTE UNIQUE — DEUX ACTIONS DANS LE MÊME ALLER-RETOUR
+ *  ET LA SECONDE ÉCRASE LA PREMIÈRE.** `sim-worker.ts` fait `pendingAction = msg.action` et la
+ *  vide une fois par tick ; `step(sim, [{entityId, …, action}])` ne prend qu'UNE action par corps.
+ *  Donc tout `page.evaluate` qui boucle `sendAction` sur un tableau perd tout sauf le dernier.
+ *  MESURÉ le 2026-10-06 (`da-rendu`, relevé des lucioles) : `envoyer([debug_god, debug_meteo])`
+ *  envoyait la météo et **jetait l'invulnérabilité**, dans trois scénarios dont l'en-tête l'exige ;
+ *  contrôle positif, deux téléportations co-envoyées avec `debug_set_hour` arrivaient à 0,00 t
+ *  une fois séparées. La leçon était déjà écrite dans ce fichier (scénario `balise`, ⓑ « une seule
+ *  action par corps et par tick arrive ») — respectée entre deux APPELS, violée dans un TABLEAU.
+ *  Les quatre envoyeurs du fichier espacent donc leurs actions de `PAS_ACTION_MS` (trois ticks à
+ *  20 Hz). Un tableau d'une seule action est inchangé : aucune attente n'est ajoutée.
+ */
+const PAS_ACTION_MS = Number(process.env.SMOKE_PAS_ACTION ?? 150)
+
 /*
  * ⚠ `drapeau(nom)` A VÉCU ICI — il lisait un drapeau de `features.ts` DANS LA SOURCE (node nu ne
  *   sait pas importer du TypeScript, et `window.__BRAISES__` LIT l'état du jeu, pas les réglages
@@ -810,7 +825,13 @@ async function mesurerHaloDeBraise(page, { lieu }) {
 
   let bon = true
   const ok = (cond, texte) => { if (!cond) { bon = false; console.error(`!! ${texte}`) } else console.log(`   ✓ ${texte}`) }
-  const envoyer = (actions) => page.evaluate((as) => { for (const a of as) window.__BRAISES__.scene.sendAction(a) }, actions)
+  /** UNE action par aller-retour, espacées : la fente unique du worker (voir en tête). */
+  const envoyer = async (actions) => {
+    for (let i = 0; i < actions.length; i++) {
+      await page.evaluate((a) => window.__BRAISES__.scene.sendAction(a), actions[i])
+      if (i < actions.length - 1) await page.waitForTimeout(PAS_ACTION_MS)
+    }
+  }
   const hote = (m) => page.evaluate((x) => window.__BRAISES__.scene.send(x), m)
   const TRACE = process.env.SMOKE_TRACE === '1'
   const trace = (m) => { if (TRACE) console.log(`   · ${m}`) }
@@ -4305,7 +4326,10 @@ const SCENARIOS = {
     //   la balise dessus, et c'est précisément la question ouverte (§ 5.17 ⓔ).
     const HEURE = 12
     const envoyer = async (actions, mur) => {
-      await page.evaluate((as) => { for (const a of as) window.__BRAISES__.scene.sendAction(a) }, actions)
+      for (let i = 0; i < actions.length; i++) {
+        await page.evaluate((a) => window.__BRAISES__.scene.sendAction(a), actions[i])
+        if (i < actions.length - 1) await page.waitForTimeout(PAS_ACTION_MS)
+      }
       await page.waitForTimeout(mur)
     }
     // ⚠ UN SEUL ENVOI PAR TICK QUI DÉPLACE LE TEMPS, ET ENTRE DEUX ON ATTEND AU MUR — les deux
@@ -4359,9 +4383,12 @@ const SCENARIOS = {
     // ⚠ RAPPEL : LA BOUCLE DORT DEPUIS LE DÉBUT DU SCÉNARIO (voir en tête). Donc rien n'est
     //   peint ici, tous les `evaluate` rendent la main tout de suite, et la seule image de tout
     //   le run est celle que `photo()` demande explicitement.
-    const envoyerSync = (actions) => page.evaluate((as) => {
-      for (const a of as) window.__BRAISES__.scene.sendAction(a)
-    }, actions)
+    const envoyerSync = async (actions) => {
+      for (let i = 0; i < actions.length; i++) {
+        await page.evaluate((a) => window.__BRAISES__.scene.sendAction(a), actions[i])
+        if (i < actions.length - 1) await page.waitForTimeout(PAS_ACTION_MS)
+      }
+    }
 
     // ② LA POSE — ET LE MONTAGE A DÛ APPRENDRE DEUX CHOSES, CHACUNE PAYÉE PAR UN RUN.
     //
@@ -22548,13 +22575,29 @@ Depuis le spawn (${depart.x.toFixed(0)}, ${depart.y.toFixed(0)}) :`)
     await page.waitForFunction(() => window.__BRAISES__?.scene?.playerId !== undefined, null, { timeout: 60_000 })
     await page.waitForTimeout(1500)
 
-    const pousser = (actions) =>
-      page.evaluate((as) => {
-        const s = window.__BRAISES__.scene
-        const q = s.registry.get('pendingActions') ?? []
-        for (const a of as) q.push(a)
-        s.registry.set('pendingActions', q)
-      }, actions)
+    /** ⚠ La file du registre n'y change RIEN, et elle est même PIRE : `drainQueuedActions` rend
+     *  tout le tableau d'un coup et `WorldScene.update` les `sendAction` dans la MÊME image, donc
+     *  la fente unique du worker (voir en tête) n'en garde qu'une. ⚠ Et une attente de MUR ne
+     *  suffit pas ici : la file se vide une fois par IMAGE, pas par tick — sous SwiftShader une
+     *  image prend des secondes, et boucle endormie il n'en passe aucune. On attend donc que la
+     *  file soit VIDE, ce qui prouve que `update` est passé, avant de pousser la suivante.
+     *  ⚠ Ce que la perte a coûté aux scénarios qui passent par ici (un seul Cendreux au lieu de
+     *  trois ?) n'est PAS mesuré — seul le chemin `envoyer` l'est. */
+    const pousser = async (actions) => {
+      for (let i = 0; i < actions.length; i++) {
+        await page.evaluate((a) => {
+          const s = window.__BRAISES__.scene
+          const q = s.registry.get('pendingActions') ?? []
+          q.push(a)
+          s.registry.set('pendingActions', q)
+        }, actions[i])
+        await page.waitForFunction(
+          () => ((window.__BRAISES__.scene.registry.get('pendingActions') ?? []).length === 0),
+          null, { timeout: 60_000 },
+        )
+        if (i < actions.length - 1) await page.waitForTimeout(PAS_ACTION_MS)
+      }
+    }
 
     // Invulnérable et armé — on mesure un coup PORTÉ, pas une survie. (`debug_grant` met
     // l'objet EN MAIN : il pose `activeSlot` lui-même.)
