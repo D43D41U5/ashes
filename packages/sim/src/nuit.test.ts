@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { BALANCE, COMBAT, FIRE, MONSTER_DEFS, NUIT, SLOTS, TEMPERATURE, TERRAIN_GRASS } from './balance'
+import { braiseNeuve } from './braise'
 import { addItems, makeInventory } from './items'
 import { createEmptyMap } from './map'
 import { createSim, spawnEntity, step, type Entity, type MoveInput, type SimState } from './sim'
@@ -7,7 +8,9 @@ import { cycleOffsetForStartHour, gameTimeAt, jourDeSaison, TICKS_PER_CYCLE } fr
 import { addStructure, type Structure } from './village'
 import {
   clarteDeLune,
+  clarteDeCeQuOnPorte,
   clarteDuCiel,
+  clarteDuSoleil,
   clarteSurSoi,
   LUNAISON_JOURS,
   LUNE_PLEINE_JOUR,
@@ -83,6 +86,8 @@ const ent = (sim: SimState, id: number): Entity => sim.entities.find((e) => e.id
 
 /** LA NOUVELLE LUNE tombe à une DEMI-lunaison de la pleine — 11,5 jours, pas 11. */
 const NOUVELLE_LUNE_JOUR = LUNE_PLEINE_JOUR + LUNAISON_JOURS / 2
+/** Une braise PLEINE, le `soi` du plancher de B-R13d — par `braiseNeuve`, jamais un littéral. */
+const braisePleine = (): NonNullable<Entity['braise']> => braiseNeuve(0)
 
 /** Un feu LIBRE et allumé à `d` tuiles de (48,5 · 48,5) — le montage de `torche.test.ts`. */
 function feu(sim: SimState, d = 1) {
@@ -170,6 +175,63 @@ describe('la clarté du ciel — le noir TOMBE, il ne claque pas', () => {
     pleine.cycleOffset = cycleOffsetForStartHour(0, jourDeSaison(pleine))
     expect(clarteDuCiel(noire)).toBeLessThan(0.15)
     expect(clarteDuCiel(pleine)).toBe(1)
+  })
+
+  // ═══ LA PORTE DU PLANCHER PORTÉ NE COMPTE QUE LE SOLEIL (`braise.md` § 5.28 ⓒ, 2026-10-08) ═══
+  //
+  // ⚠ CES TROIS GARDES NE SONT PAS DES REDITES DE C1-C3 : elles éprouvent la grandeur sur
+  //   laquelle se GATE le plancher de B-R13d, et le défaut qu'elles ferment était invisible
+  //   pour C1-C3, qui ne parlent que de la vision. La forme assertée est celle de la PORTE
+  //   (`soi − ciel`), pas celle de la clarté, parce que c'est la porte qui décide.
+  it('C3 bis — à midi, soleil et ciel SE CONFONDENT : la porte reste fermée, l’inertie de midi est intacte', () => {
+    // La propriété qu'il ne faut SURTOUT pas perdre : à découvert à midi, `partsDuCorps` sature
+    // et un plancher y effacerait le modelé du soleil (MESURÉ le 2026-10-05 : face au soleil
+    // ×0,873, l'écran plus SOMBRE que sans lumière portée). Les deux lectures doivent donc
+    // coïncider à midi, pleine lune comme neuve.
+    for (const jour of [LUNE_PLEINE_JOUR, NOUVELLE_LUNE_JOUR]) {
+      const sim = makeSim(Math.floor(jour))
+      sim.cycleOffset = cycleOffsetForStartHour(12, jourDeSaison(sim))
+      expect(clarteDuSoleil(sim)).toBe(1)
+      expect(clarteDuSoleil(sim)).toBe(clarteDuCiel(sim))
+      // …et la porte d'un porteur à braise PLEINE est fermée (≤ 0) à découvert.
+      expect(clarteDeCeQuOnPorte(false, braisePleine()) - clarteDuSoleil(sim)).toBeLessThanOrEqual(0)
+    }
+  })
+
+  it('C3 ter — la PLEINE LUNE n’achète plus le plancher : porte ouverte au soleil, fermée au ciel', () => {
+    const sim = makeSim(LUNE_PLEINE_JOUR)
+    sim.cycleOffset = cycleOffsetForStartHour(0, jourDeSaison(sim))
+    const soi = clarteDeCeQuOnPorte(false, braisePleine())
+    // LA PRÉMISSE, affirmée et non supposée : cette nuit-là est VRAIMENT une pleine lune, donc
+    // l'ancienne porte était bien fermée. Sans cette clause, la garde serait verte sur une
+    // nouvelle lune, où les deux lectures coïncident — le cas qui ne prouve rien.
+    expect(clarteDuCiel(sim)).toBeGreaterThan(0.99)
+    expect(soi - clarteDuCiel(sim)).toBeLessThan(0.01)
+    // LE GAIN : au soleil seul, la nuit est une nuit, et le plancher rend tout.
+    expect(clarteDuSoleil(sim)).toBe(0)
+    expect(soi - clarteDuSoleil(sim)).toBe(soi)
+  })
+
+  it('C3 quater — sur la lunaison ENTIÈRE : le soleil ne dépasse jamais le ciel, et la porte ne se referme plus jamais', () => {
+    // Le balayage, parce que le défaut de 2026-10-06 ne se voyait pas sur deux instants choisis :
+    // il se comptait en NUITS (13 sur 30 donnaient au plancher la moitié de son amplitude).
+    const soi = clarteDeCeQuOnPorte(false, braisePleine())
+    let fermeesAuCiel = 0
+    for (let d = 0; d < Math.ceil(LUNAISON_JOURS); d++) {
+      const sim = makeSim(Math.floor(LUNE_PLEINE_JOUR + d))
+      sim.cycleOffset = cycleOffsetForStartHour(0, jourDeSaison(sim))
+      const ciel = clarteDuCiel(sim)
+      const soleil = clarteDuSoleil(sim)
+      // ① La lune ne peut qu'AJOUTER : le soleil seul est toujours ≤ le ciel entier.
+      expect(soleil).toBeLessThanOrEqual(ciel)
+      // ② Et au cœur de la nuit la porte est désormais GRANDE ouverte, toutes les nuits.
+      expect(soi - soleil).toBeCloseTo(soi, 12)
+      if (soi - ciel < soi / 2) fermeesAuCiel++
+    }
+    // LE CONTRÔLE POSITIF, qui dit ce que la loi ACHÈTE : avec l'ancienne lecture, une bonne
+    // partie des nuits de la lunaison rendait moins de la moitié de l'amplitude. Si ce compte
+    // tombait à zéro, c'est que la lune aurait cessé d'éclairer et la garde ne prouverait rien.
+    expect(fermeesAuCiel).toBeGreaterThan(5)
   })
 
   it('C4 — AUCUN MUR sur le cycle entier : la pente du crépuscule est continue', () => {

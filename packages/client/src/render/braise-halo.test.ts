@@ -558,6 +558,33 @@ describe('B-A18 — LES CINQ POINTS DE CÂBLAGE sont branchés (garde de SOURCE)
   })
 
 
+  it('⑦ LA PORTE DU PLANCHER NE COMPTE QUE LE SOLEIL (§ 5.28 ⓒ) — et c’est une garde de SOURCE parce que la porte vit dans une boucle Phaser', () => {
+    // ⚠ POURQUOI UNE GARDE DE SOURCE, et pourquoi elle est nécessaire ici : la porte se calcule
+    // dans `WorldScene.update`, qu'aucun test headless ne fait tourner. La LOI, elle, est dans
+    // `/sim` et y est éprouvée pour de vrai (`nuit.test.ts` C3 bis/ter/quater, dont la
+    // falsification « la lune revient » rougit) ; ce qui ne peut se garder qu'ICI, c'est le
+    // CÂBLE — et c'est exactement la classe de défaut du 2026-10-05, où la loi était juste et ne
+    // parvenait pas au seul corps qui existe en solo.
+    const ws = lire('../scenes/WorldScene.ts')
+    // ① La porte lit le SOLEIL SEUL. Si quelqu'un remet `clarteDuCiel` ici, la pleine lune
+    //   rachète le plancher et le porteur redevient sombre 13 nuits sur 30 — sans qu'un `tsc`
+    //   ni aucune garde de valeur ne s'en aperçoive (les deux lectures coïncident à midi, la
+    //   seule heure qu'un test de rendu regarde d'habitude).
+    expect(ws).toContain('clarteDuSoleil(gel, this.lastSnapshotTick)')
+    // ② …et c'est bien CETTE ligne-là, celle qui nourrit `soiParCorps`, et pas une autre lecture
+    //   du ciel : le bloc est découpé entre l'affectation et sa publication.
+    const bloc = ws.slice(ws.indexOf('const cielDeLHeure ='), ws.indexOf('this.view.soiParCorps ='))
+    expect(bloc).toContain('cielDeLHeure * partDuCiel(')
+    expect(bloc).not.toContain('clarteDuCiel(')
+    // ③ ⚠ ET L'AUTORITÉ DE LA VISION NE BOUGE PAS : `clarteDuCiel` reste ce que lisent le voile
+    //   et la gueule des caves — une pleine lune éclaire, et la parade le sait. Le fichier doit
+    //   donc continuer à l'employer AILLEURS ; s'il ne le faisait plus, c'est que la correction
+    //   aurait débordé de la porte sur toute la nuit du jeu.
+    //   Le lecteur qui doit SURVIVRE est nommé : la lumière du dehors vue par la gueule d'une
+    //   cave, où la pleine lune compte à juste titre.
+    expect(ws).toContain('ciel: this.etatGel ? clarteDuCiel(this.etatGel, this.lastSnapshotTick) : 1')
+  })
+
   it('⑥ TOUS LES CORPS POSÉS DISENT QUI ILS SONT — l’exhaustivité, parce qu’un appelant sur trois avait oublié', () => {
     // ⚠⚠ **C'EST LA GARDE QUI MANQUAIT, ET SON ABSENCE A COÛTÉ LA LIVRAISON.** ⑤ ci-dessus suit
     // le chemin `others` maillon par maillon — production, consommation, attribut, GLSL — et il

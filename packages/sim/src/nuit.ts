@@ -116,25 +116,78 @@ export function clarteDeLune(jour: number): number {
 }
 
 /**
- * LA NUIT POUR L'ŒIL — la rampe de `partDeNuit`, RECENTRÉE sur l'horizon.
+ * LA NUIT POUR L'ŒIL — la rampe de `partDeNuit`, dont CHAQUE LISIÈRE est décalée séparément.
  *
  * `partDeNuit` est la rampe du FROID : elle vaut 1 à l'aube pile et ne relâche qu'ensuite,
  * parce que le fond du froid est à l'aube (c'est écrit dans `time.ts`, et c'est juste). La
- * LUMIÈRE, elle, ne traîne pas : le ciel pâlit AVANT que le soleil ne perce. La même rampe
- * suffit donc, décalée d'une demi-largeur — un seul réglage (`NIGHT_RAMP_HOURS`), deux
- * lectures, et pas une seconde courbe à calibrer.
+ * LUMIÈRE, elle, est SYMÉTRIQUE autour de l'horizon : le ciel pâlit AVANT que le soleil ne
+ * perce, et il reste clair APRÈS qu'il s'est couché. Un seul réglage (`NIGHT_RAMP_HOURS`), deux
+ * lectures, et pas une seconde courbe à calibrer — l'intention d'origine, tenue.
  *
  * ⚠ CE DÉCALAGE N'EST PAS COSMÉTIQUE, il a été MESURÉ contre l'écran (le voile du client,
  * `render/lighting.ts`, nuit du jour 72) : sans lui, à 6 h — l'heure de l'aube —, la règle
  * lisait **0,009** (nuit noire) quand l'écran, lui, était déjà à **0,556** (une aube claire).
  * Une heure entière où le jeu aurait refusé de courir à un joueur qui VOIT le jour se lever.
- * Avec, la sim rend 0,505 contre 0,556 à l'écran, et les vingt-trois autres heures ne bougent
- * pas d'un cheveu (mesuré heure par heure, pleine lune ET nouvelle).
+ * Avec, la sim rend 0,505 contre 0,556 à l'écran. **Ce gain-là est intact.**
+ *
+ * ⚠ **MAIS LA PHRASE QUI SUIVAIT ÉTAIT FAUSSE, ET ELLE A COÛTÉ UN CRÉPUSCULE** (corrigé le
+ * 2026-10-09). Elle disait « les vingt-trois autres heures ne bougent pas d'un cheveu ». La
+ * forme d'alors translatait le `cycleTick`, donc avançait les DEUX lisières : au jour 75 la nuit
+ * PLEINE tombait à **18,18 h pour un coucher à 18,93 h — 45 min trop tôt** —, et la fenêtre
+ * 17,0 → 18,93 h portait l'écart. ⚠ **ET SON AMPLITUDE, J'AVAIS ÉCRIT « +0,5000, le maximum que
+ * cette rampe puisse porter » — DEUX FOIS FAUX** : 0,5000 est l'écart AU COUCHER PILE, pas le pire,
+ * et le maximum d'une rampe bornée à [0, 1] est 1. MESURÉ par l'audit : le pire écart de `nuit`
+ * vaut **1,0000 à 18,177 h** (la nuit pleine d'un côté, le plein jour de l'autre), celui de
+ * `clarteDuCiel` **0,8838** dans la fenêtre du jour 75 et jusqu'à **0,9913** sur l'année — c'est la
+ * lune qui borne le second, pas la rampe. *Un extremum annoncé se mesure sur le balayage, pas sur
+ * le point qu'on avait sous la main.*
+ *
+ * ⚠⚠ **ET L'IMAGE QUE JE DONNAIS EN PREUVE N'EST PAS DE CETTE CHAÎNE : J'AVAIS ATTRIBUÉ À R5 UN
+ * LOOK QU'IL NE TOUCHE PAS** (relevé par `determinisme-sim`, audit de fusion du 2026-10-09). Les
+ * **4,2/255** de `futaie-couchant` à 18,3 h (contre 59,8 à midi) sortent de
+ * `voileDeNuit(ambientTint(heureSolaire(…)), lueurDeLune(…))` — des fonctions **purement CLIENT**,
+ * de l'heure solaire et de la lune, dont **aucune ne lit `clarteDuCiel` ni `nuitPourLOeil`**. Tous
+ * les consommateurs du champ `ciel` du client sont la chaîne **SOUTERRAINE** (nappe de cave,
+ * lumière de gueule, étages), derrière la porte `if (souterrain || etages.lumiere === null)`.
+ * **Donc corriger la lisière ne rendra pas un lumen à `futaie-couchant`** : cette image reste à
+ * réparer ailleurs, et elle n'est pas une justification de R5. *Une image n'est une preuve que
+ * pour la chaîne qui l'a produite.*
+ *
+ * **CE QUE R5 CHANGE VRAIMENT, MESURÉ.** `clarteDuCiel` nourrit `clarteSurSoiAt`, qui commande
+ * **la PARADE** (`sim.ts:1052`, et `sim.ts:914` pour la vitesse du corps qui pare) sous
+ * `NUIT.SEUIL_NOIR` ; à l'écran, la chaîne souterraine et le plancher porté de B-R13d. MESURÉ à
+ * découvert, braise vide, jour 75 : le refus de parer tombait 64 min AVANT le coucher (17,865 h),
+ * il tombe 26 min APRÈS (19,366 h) — **90 min de parade par soirée**, exactement la rampe
+ * (2 250 ticks au tick près). ⚠ Et au jour 105 il n'arrive JAMAIS : la lune y laisse 0,074 de
+ * diviseur, donc le ciel ne descend pas sous 0,926 — la porte ne se ferme pas, et R5 n'y déplace
+ * rien.
+ *
+ * ⚠ **DEUX AUTRES CONSOMMATEURS QUE J'AVAIS ÉCRITS FAUX ICI MÊME.**
+ *   · « l'éveil des Cendreux » — faux, hérité d'une vieille fiche : `eveilCendreuxAt` vient de
+ *     `temperature.ts`, l'éveil est **thermique** et ne lit aucune clarté.
+ *   · « **et le SPRINT** (`sim.ts:910`) », **et la conséquence était INVERSÉE**. `sim.ts:910` pose
+ *     bien `voitClair`, mais son seul lecteur est `blocking` : `canSprint = tier === 'light' ||
+ *     tier === 'medium'` ne porte aucun terme de clarté depuis que les jambes sont sorties de la
+ *     règle du noir (2026-09-02, trois lignes au-dessus dans `sim.ts`). Et pire — `if (blocking)
+ *     scale *= BLOCK_MOVE_FACTOR; else if (sprinting) …` : la parade **EXCLUT** le sprint. Donc
+ *     pour un corps qui tient sa garde, les 90 min rendues sont 90 min où il marche à ×0,3 au lieu
+ *     de courir à ×1,5 — **le mouvement y PERD, par ricochet** (MESURÉ : `gait` passe de `sprint` à
+ *     `walk` sur 1 887 ticks, `scale` 1,46670 → 0,29334). Les deux énoncés sont corrigés, non rayés.
  */
 function nuitPourLOeil(state: SimState, tick: number): number {
   const cycleTick = (tick + state.cycleOffset) % TICKS_PER_CYCLE
   const decale = (cycleTick + NIGHT_RAMP_TICKS / 2) % TICKS_PER_CYCLE
-  return partDeNuit(decale, dayTicksAt(state, tick))
+  // ⚠ **ET LE JOUR EST ALLONGÉ D'UNE RAMPE ENTIÈRE POUR L'ŒIL** (2026-10-09). La translation
+  // seule avançait les DEUX lisières : avec elle, la nuit PLEINE tombait 45 min AVANT le coucher
+  // du soleil. Allonger `dayTicks` de `NIGHT_RAMP_TICKS` rend au crépuscule les 45 min que la
+  // translation lui avait prises, SANS toucher l'aube — la translation garde son gain, et le
+  // terme du crépuscule comme la borne de nuit pleine reculent tous deux d'une demi-rampe.
+  //
+  // ⚠ Et ce n'est PAS « +R/2 » : la translation a déjà mangé R/2 du côté du crépuscule, il faut
+  // donc R pour le ramener d'une demi-rampe APRÈS le coucher. Au jour 75 : 0,5 pile au coucher,
+  // nuit pleine 45 min plus tard. Les deux lisières deviennent symétriques autour de l'horizon,
+  // ce qu'elles n'avaient jamais été.
+  return partDeNuit(decale, dayTicksAt(state, tick) + NIGHT_RAMP_TICKS)
 }
 
 /**
@@ -149,6 +202,48 @@ export function clarteDuCiel(state: SimState, tick: number = state.tick): number
   const t = gameTimeAt(state, tick)
   const lune = clarteDeLune(t.seasonDay + t.jourFrac)
   return 1 - nuitPourLOeil(state, tick) * (1 - lune)
+}
+
+/**
+ * LA CLARTÉ DU **SOLEIL** SEUL — `clarteDuCiel` dont on a retiré la lune (décision d'Alexis du
+ * 2026-10-08, `braise.md` § 5.28 issue ⓒ).
+ *
+ * ⚠ ELLE N'EST PAS UNE SECONDE NOTION DE CIEL, et ce n'est pas elle qui dit ce qu'on VOIT :
+ * `clarteDuCiel` reste l'autorité de la vision (la parade, le voile, la gueule des caves), et la
+ * pleine lune y compte à juste titre — on voit, la nuit, sous une pleine lune. Celle-ci sert à
+ * UNE seule question : *une lumière qu'on PORTE a-t-elle encore quelque chose à ajouter ?*
+ *
+ * **Pourquoi la lune n'a pas sa place dans cette réponse, et c'est MESURÉ.** Le plancher de
+ * B-R13d (« un porteur est éclairé par sa braise ») est gaté par `soi − clarteDuCiel ×
+ * partDuCiel`, dérivé du `max` de `clarteSurSoi` — une dérivation juste, qui a rendu le plancher
+ * correct sous un toit à midi. Mais ce `max` additionne le soleil ET la lune, si bien que la
+ * porte se lisait, à découvert, sur la LUNE seule : `clarteDuCiel` à minuit vaut **0,9997** au
+ * jour 61 (pleine lune) contre **0,0086** au jour 72 (nouvelle). Le plancher ne rendait donc
+ * rien **13 nuits sur 30**, et la plainte qui l'a fait naître — *« le personnage est sombre comme
+ * s'il n'était pas éclairé »* — revenait la moitié du mois, PAR LA LOI. La raison du fossé est
+ * le résidu des deux notions de ciel déjà noté en B-R13d : la sim déclare le ciel plein sous la
+ * pleine lune, alors que l'ÉCRAN d'une nuit de pleine lune est très loin d'un midi — le pixel du
+ * corps y reste sombre là où la porte le croyait déjà éclairé. MESURÉ EN PAGE le 2026-10-08
+ * (`da-rendu`, chaîne PAR DÉFAUT relue sur les objets, jamais `gi=0` ; graine 2026, jour 61,
+ * minuit reposé avant chaque image, ABBA, 288 px de silhouette) : le corps passe de **44,06 à
+ * 113,61** de luminance, ΔL **+70,00** pour un bruit de 1,0 à 1,9 — **36 fois le bruit** —, teinte
+ * 54°, l'ordre de canaux de `TEINTE_FEU`, et le SOL ne bouge pas (tous les anneaux sous le bruit,
+ * `soiParCorps` n'ayant qu'un lecteur de production). ⚠ Et l'ancienne porte ne rendait pas
+ * EXACTEMENT rien : `soi` y valait **0,0016 à 0,0035**, soit 0,2 à 0,4 % du plancher livré — donc
+ * remettre `clarteDuCiel` ici n'est **pas** le « fil coupé », et qui veut rejouer le régime d'avant
+ * par ce levier mesure autre chose. L'inertie de midi, elle, est prouvée sur l'ÉTAT et non sur le
+ * pixel : les deux portes se ferment, le sac GPU vaut 0,000000 au bit, donc il n'y a pas deux
+ * rendus à comparer à midi — il y en a un seul (contrôle de sensibilité : forcer le plancher là
+ * met le corps à +42,39 ΔL, 25 fois le bruit, donc la sonde verrait une vraie régression).
+ *
+ * **Ce que la forme conserve, et c'est tout l'intérêt** : à midi, à découvert, elle vaut 1 comme
+ * `clarteDuCiel`, donc le plancher reste **inerte** là où `partsDuCorps` sature (le modelé du
+ * soleil ne s'efface pas) ; sous un toit ou dans une cave, `partDuCiel` vaut 0 et le plancher
+ * porte en entier. Seules les nuits CLAIRES changent, et le plancher y reste borné par `soi` —
+ * l'écran ne passe donc jamais devant l'autorité (N2bis, LG-R13).
+ */
+export function clarteDuSoleil(state: SimState, tick: number = state.tick): number {
+  return 1 - nuitPourLOeil(state, tick)
 }
 
 /**

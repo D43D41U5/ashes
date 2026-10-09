@@ -130,14 +130,42 @@ export const GI = {
 } as const
 
 /**
- * LG-R9 — LA LONGUEUR SUIT LA HAUTEUR : ℓ = 0,4 × H px d'ombre pleine, rendue en TEXELS du grain.
+ * ℓ/H NE PEUT PAS MONTER PLUS HAUT QUE ÇA, ET LE PLAFOND SE DÉRIVE — il ne se choisit pas.
+ *
+ * Un soleil réel (`lighting.sunDirection`) a une élévation `e` qui tend vers zéro à l'horizon,
+ * donc `ℓ/H = cot(e)` DIVERGE : à l'aube canonique de 6 h 15 il vaut déjà **28,6 aux équinoxes
+ * et 52,4 au Grand Froid** (MESURÉ), soit 2 700 à 5 000 px d'ombre pour un arbre. Toute mise en
+ * œuvre est donc un PLAFOND ; ce qui se discute est où le mettre, et la réponse est dans les lois
+ * déjà posées plutôt que dans un nombre neuf :
+ *
+ *   · la force d'une ombre vaut `daylight` (`forceDeLOmbre`), et son alpha est QUANTIFIÉ en
+ *     `OMBRE_SOCLE.ALPHA_CRANS` = 3 paliers — le plus petit cran non nul disparaît sous 1/6 ;
+ *   · l'éclairement direct d'une surface plane suit `sin(e)`.
+ *
+ * Le produit `force × sin(e)` franchit 1/6 à l'heure où `ℓ/H` vaut **3,82 aux équinoxes et 4,98 au
+ * Grand Froid** (MESURÉ, balayage 0,001 h). **Au-delà de 5, une ombre est longue et invisible** :
+ * le plafond est donc le point où la quantification l'efface déjà, et non un goût.
+ *
+ * ⚠ **IL TAILLE DEUX BORNES DE COMPILATION, ET LES OUBLIER TRONQUE EN SILENCE** : `PAS_OMBRE_MAX`
+ * et la `MARGE` des cartes de `champ-gpu.ts`. Une borne calée sur ℓ/H = 0,4 rendrait des ombres
+ * courtes et VERTES — le piège exact que `HAUTEUR_MAX_LANCEUR_PX` décrit un peu plus haut.
+ */
+export const LONGUEUR_PAR_HAUTEUR_MAX = 5
+
+/**
+ * LG-R9 — LA LONGUEUR SUIT LA HAUTEUR : ℓ = `ratio` × H px d'ombre pleine, rendue en TEXELS du grain.
  *
  * `pxParTexel` se PASSE au lieu de s'importer : `TILE_PX` vit dans `../framing`, du côté du rendu,
  * et `champ-ref` promet de n'avoir aucune dépendance navigateur. L'unité devient explicite à chaque
  * appel, ce qui vaut mieux qu'un 4 en dur dans deux fichiers.
+ *
+ * `ratio` RETOMBE sur `GI.ASTRE.LONGUEUR_PAR_HAUTEUR` — la constante de la planche 4 — et c'est
+ * délibérément une valeur par défaut TANT QUE LE SOLEIL N'A PAS D'ÉLÉVATION : le jour où la loi de
+ * longueur suivra l'heure, elle disparaît, parce qu'une valeur par défaut est exactement ce qui
+ * permet à un fil non branché de passer `tsc` (le pavement, 2026-10-09).
  */
-export function longueurDOmbre(hauteurPx: number, pxParTexel: number): number {
-  return (hauteurPx * GI.ASTRE.LONGUEUR_PAR_HAUTEUR) / pxParTexel
+export function longueurDOmbre(hauteurPx: number, pxParTexel: number, ratio: number = GI.ASTRE.LONGUEUR_PAR_HAUTEUR): number {
+  return (hauteurPx * ratio) / pxParTexel
 }
 
 /**

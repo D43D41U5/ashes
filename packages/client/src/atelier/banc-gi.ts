@@ -38,7 +38,7 @@ import Phaser from 'phaser'
 import { ChampGpu, PASSES_GI, type VerdictGi } from '../render/gi/champ-gpu'
 import { composerM, facesDuChamp } from '../render/gi/champ-ref'
 import {
-  ASTRE_DU_BANC, MN_DU_BANC, SCENE, cartesDuBanc, classeDuGpu, direLEcart, ecartDe, gateDe, mediane, mondeDuBanc,
+  ASTRE_DU_BANC, MN_DU_BANC, RECONSTRUCTIONS_PAR_SECONDE, SCENE, budgetDuBanc, cartesDuBanc, classeDuGpu, direLEcart, ecartDe, gateDe, mediane, mondeDuBanc,
   nomDeClasse, sourcesDuBanc, tient, type ClasseGpu, type Ecart,
 } from './banc-gi-loi'
 
@@ -69,7 +69,51 @@ export interface CoutDuBanc {
    */
   readonly grilleMs: number
   readonly occludeursMs: number
+  /**
+   * ═══ LE BUDGET PAR SECONDE — LE SEUL NOMBRE QUI TRANCHE (2026-10-09) ═══
+   *
+   * ⚠ **IL EXISTE PARCE QUE J'AI MAL CLASSÉ UN CHANTIER EN LISANT CE TABLEAU.** Le relevé d'une
+   * RTX 4070 donne `msParImage` = 2,325 et `occludeursMs` = 2,70, et j'en avais conclu que « les
+   * occludeurs sont le plus gros poste, plus que l'image entière ». **Les deux unités ne sont pas
+   * les mêmes** : `msParImage` se paie SOIXANTE FOIS PAR SECONDE, `occludeursMs` est le coût d'UNE
+   * reconstruction — `chrono` le mesure sous `invaliderLaGrille()` forcé — et une reconstruction
+   * ne tombe qu'au changement de fenêtre. La note du tableau le disait déjà ; la colonne, non.
+   *
+   * Le budget les ramène à la même unité (`budgetDuBanc`, `banc-gi-loi.ts` — il vit là-bas parce
+   * qu'une loi se garde headless, et `chrono` est une méthode privée de scène).
+   */
+  readonly budgetParSeconde: number
+  /** La part des reconstructions dans ce budget, en pourcents — ce qui dit si ça vaut un diff. */
+  readonly partDesReconstructions: number
+  /**
+   * LE COÛT D'UNE IMAGE SELON L'HEURE (P8) — la chaîne du champ seule, aux quatre moments que
+   * `mn` et l'astre distinguent. ⚠ **Ça ne mesure PAS ce que P8 accuse** : P8 a relevé un rapport
+   * de ×2,4 entre midi et le couchant sur la CAPTURE d'une image entière, et sa cause supposée est
+   * le **voile de nuit**, qui est une couche du client et ne passe pas par `ChampGpu`. Ce balayage
+   * répond à la question d'à côté, qui n'avait pas de réponse : *la chaîne du champ, elle, a-t-elle
+   * un terme d'heure ?* Un plat ici INNOCENTE la GI et renvoie P8 au voile.
+   */
+  readonly parHeure: readonly { readonly nom: string; readonly msParImage: number }[]
+  /**
+   * ═══ LE COÛT MARGINAL DE CHAQUE PASSE (P3) ═══
+   *
+   * `cumul[k]` est le coût d'une image à `k + 1` passes soumises ; `marginal[k]` en est la
+   * différence avec la précédente, c'est-à-dire le prix de la passe `k + 1` seule.
+   *
+   * **Pourquoi la soustraction est licite, et ce n'est pas une supposition** : `update(n, …)` borne
+   * les passes à `n` (`Math.min(PASSES_GI, …)`) et les passes sont SÉQUENTIELLES — « chacune lit les
+   * cibles des précédentes » —, donc une passe retirée ne change pas le travail des autres.
+   * `synchroniser()` relit un texel par `gl.readPixels`, qui est une **barrière** : tout ce qui a
+   * été soumis a été exécuté avant qu'il ne rende.
+   *
+   * ⚠ **CE QUI N'EST PAS MESURABLE AINSI, NOMMÉ** : à `n < PASSES_GI` les cibles tardives ne sont
+   * pas écrites, donc ce balayage ne dit rien de la JUSTESSE d'une chaîne tronquée — il ne mesure
+   * que le TEMPS. Les verdicts, eux, tournent tous à `PASSES_GI`.
+   */
+  readonly cumulParPasse: readonly number[]
+  readonly marginalParPasse: readonly number[]
 }
+
 
 export interface ResultatDuBanc {
   readonly quand: string
@@ -180,8 +224,8 @@ class BancGiScene extends Phaser.Scene {
     if (this.armee) this.rendre()
   }
 
-  private rendre(): void {
-    this.gi?.update(PASSES_GI, this.cameras.main, this.monde, 0, this.sources, SCENE.DEPTH, this.mn, ASTRE_DU_BANC)
+  private rendre(astre: { derive: number; a: number } = ASTRE_DU_BANC): void {
+    this.gi?.update(PASSES_GI, this.cameras.main, this.monde, 0, this.sources, SCENE.DEPTH, this.mn, astre)
   }
 
   /** `n` images rendues par la boucle du jeu. */
@@ -431,6 +475,7 @@ class BancGiScene extends Phaser.Scene {
     const soumissionMs = gi.temps.rendu
     const cartesMs = gi.temps.cartes
     // Le changement de fenêtre : l'empreinte oubliée, `update` rebâtit la grille et les occludeurs.
+    // ⚠ C'est un coût PAR RECONSTRUCTION, et `invaliderLaGrille()` le force — voir `budgetParSeconde`.
     const grilles: number[] = []
     const occludeurs: number[] = []
     for (let k = 0; k < 5; k++) {
@@ -439,7 +484,54 @@ class BancGiScene extends Phaser.Scene {
       grilles.push(gi.temps.grille)
       occludeurs.push(gi.temps.occludeurs)
     }
-    return { msParImage: mediane(lots), imagesParLot: parLot, lots, videMs: vide, soumissionMs, cartesMs, grilleMs: mediane(grilles), occludeursMs: mediane(occludeurs) }
+    const msParImage = mediane(lots)
+    const grilleMs = mediane(grilles)
+    const occludeursMs = mediane(occludeurs)
+    const budget = budgetDuBanc(msParImage, grilleMs, occludeursMs)
+
+    // ── LE BALAYAGE D'HEURES (P8) ──
+    // Les quatre moments que la chaîne du champ sait distinguer : `mn` (le plancher de nuit, nul
+    // de jour) et l'amplitude de l'astre. ⚠ On RESTAURE `this.mn` ensuite — il porte l'état de la
+    // dernière garde et le banc s'en sert pour peindre.
+    const mnAvant = this.mn
+    const parHeure: { nom: string; msParImage: number }[] = []
+    const chronoCourt = (astre: { derive: number; a: number }): number => {
+      this.rendre(astre)
+      gi.synchroniser()
+      const t = performance.now()
+      for (let i = 0; i < parLot; i++) { this.rendre(astre); gi.synchroniser() }
+      return Math.max(0, (performance.now() - t - vide * parLot) / parLot)
+    }
+    for (const h of [
+      { nom: 'midi', mn: null, astre: ASTRE_DU_BANC },
+      { nom: 'après-midi', mn: null, astre: { derive: 1.4, a: ASTRE_DU_BANC.a * 0.6 } },
+      { nom: 'couchant', mn: [0.11, 0.12, 0.15] as const, astre: { derive: 2.6, a: ASTRE_DU_BANC.a * 0.15 } },
+      { nom: 'nuit', mn: MN_DU_BANC, astre: { derive: 0, a: 0 } },
+    ]) {
+      this.mn = h.mn
+      parHeure.push({ nom: h.nom, msParImage: chronoCourt(h.astre) })
+    }
+    this.mn = mnAvant
+
+    // ── LE COÛT MARGINAL DE CHAQUE PASSE (P3) ──
+    const cumulParPasse: number[] = []
+    for (let n = 1; n <= PASSES_GI; n++) {
+      const une = (): void => {
+        gi.update(PASSES_GI_BORNE(n), this.cameras.main, this.monde, 0, this.sources, SCENE.DEPTH, this.mn, ASTRE_DU_BANC)
+        gi.synchroniser()
+      }
+      une()
+      const t = performance.now()
+      for (let i = 0; i < parLot; i++) une()
+      cumulParPasse.push(Math.max(0, (performance.now() - t - vide * parLot) / parLot))
+    }
+    const marginalParPasse = cumulParPasse.map((c, k) => (k === 0 ? c : c - cumulParPasse[k - 1]!))
+
+    return {
+      msParImage, imagesParLot: parLot, lots, videMs: vide, soumissionMs, cartesMs, grilleMs, occludeursMs,
+      ...budget,
+      parHeure, cumulParPasse, marginalParPasse,
+    }
   }
 }
 
@@ -523,9 +615,11 @@ racine.innerHTML = `
 </section>
 <section aria-labelledby="bg-t-cout">
   <div class="entete"><h2 id="bg-t-cout">Le coût d’une image</h2></div>
-  <p class="note">Sept passes soumises puis un texel relu — le GPU a tout exécuté. La médiane de trois lots. Sous un rendu logiciel le nombre est indicatif : la gate ne se juge que sur une machine de sa classe. Les deux dernières colonnes sont le changement de fenêtre — la grille relue dans la sim et les occludeurs réécrits — qui ne tombe qu'une image sur huit tuiles de route.</p>
-  <table id="bg-cout"><thead><tr><th>Par image</th><th>Soumission (CPU)</th><th>Cartes (CPU)</th><th>Images par lot</th><th>Fenêtre</th><th>Grille (CPU)</th><th>Occludeurs (CPU)</th></tr></thead><tbody><tr><td class="n mesure">—</td><td class="n">—</td><td class="n">—</td><td class="n">—</td><td class="sous">—</td><td class="n">—</td><td class="n">—</td></tr></tbody></table>
+  <p class="note">Sept passes soumises puis un texel relu — le GPU a tout exécuté. La médiane de trois lots. Sous un rendu logiciel le nombre est indicatif : la gate ne se juge que sur une machine de sa classe. <strong>⚠ Les deux colonnes « par reconstruction » ne sont PAS dans la même unité que « par image »</strong> : une image se paie soixante fois par seconde, une reconstruction seulement au changement de fenêtre (${RECONSTRUCTIONS_PAR_SECONDE} fois par seconde en marche diagonale, mesuré après P1). La dernière colonne les ramène à la même unité — c'est elle qui dit si un poste vaut un diff.</p>
+  <table id="bg-cout"><thead><tr><th>Par image</th><th>Soumission (CPU)</th><th>Cartes (CPU)</th><th>Images par lot</th><th>Fenêtre</th><th>Grille / reconstruction</th><th>Occludeurs / reconstruction</th><th>Budget par seconde</th></tr></thead><tbody><tr><td class="n mesure">—</td><td class="n">—</td><td class="n">—</td><td class="n">—</td><td class="sous">—</td><td class="n">—</td><td class="n">—</td><td class="n mesure">—</td></tr></tbody></table>
   <p id="bg-gate" class="gate" data-ton="nm">Gate : non mesurée.</p>
+  <p id="bg-heures" class="note">Le coût selon l’heure : non mesuré.</p>
+  <p id="bg-passes" class="note">Le coût par passe : non mesuré.</p>
 </section>
 <section aria-labelledby="bg-t-banc">
   <div class="entete"><h2 id="bg-t-banc">Ce que le GPU dessine</h2></div>
@@ -535,6 +629,13 @@ racine.innerHTML = `
 <details id="bg-brut" hidden><summary>Résultat brut (JSON) — à coller dans la spec ou à Claude</summary><textarea id="bg-brut-texte" readonly aria-label="Résultat brut en JSON"></textarea></details>
 `
 ;(document.getElementById('outil-gi') ?? document.body).appendChild(racine)
+
+/**
+ * LE NOMBRE DE PASSES DEMANDÉ AU BALAYAGE DE P3 — une fonction et non un littéral, pour que la
+ * borne de `ChampGpu.update` (`Math.min(PASSES_GI, …)`) soit nommée à l'appel : demander 3 passes
+ * n'est licite que parce que la chaîne est séquentielle (voir `cumulParPasse`).
+ */
+const PASSES_GI_BORNE = (n: number): number => Math.max(1, Math.min(PASSES_GI, n))
 
 const q = <T extends HTMLElement>(sel: string): T => {
   const el = racine.querySelector<T>(sel)
@@ -576,7 +677,30 @@ function rendreCout(c: CoutDuBanc | null, fenetre: { gw: number; gh: number } | 
     <td class="sous">${fenetre ? `${fenetre.gw} × ${fenetre.gh} texels` : '—'}</td>
     <td class="n">${ms(c?.grilleMs)}</td>
     <td class="n">${ms(c?.occludeursMs)}</td>
+    <td class="n mesure">${c ? `${c.budgetParSeconde.toFixed(2)} ms/s` : '—'}</td>
   </tr>`
+  // LA LIGNE DES HEURES (P8) : un plat ici innocente la chaîne du champ et renvoie le ×2,4 de la
+  // capture au voile de nuit, qui ne passe pas par `ChampGpu`.
+  const h = q('#bg-heures')
+  if (!c || c.parHeure.length === 0) { h.textContent = 'Le coût selon l’heure : non mesuré.'; return }
+  const pire = Math.max(...c.parHeure.map((x) => x.msParImage))
+  const moindre = Math.min(...c.parHeure.map((x) => x.msParImage))
+  const rapport = moindre > 0 ? pire / moindre : 0
+  h.textContent = `Le coût d’une image selon l’heure — ${c.parHeure.map((x) => `${x.nom} ${ms(x.msParImage)}`).join(' · ')}` +
+    ` — rapport ${rapport.toFixed(2)}×.` +
+    ` ${rapport < 1.15 ? 'Plat : la chaîne du champ n’a pas de terme d’heure, et le ×2,4 relevé sur une capture entière appartient au voile de nuit, qui ne passe pas ici.' : '⚠ Pas plat : la chaîne du champ a bien un terme d’heure — à instrumenter passe par passe.'}` +
+    ` Les reconstructions pèsent ${c.partDesReconstructions.toFixed(1)} % du budget par seconde.`
+
+  // LA LIGNE DES PASSES (P3) : le prix de chacune, pour savoir laquelle vaut d'être mise en sommeil.
+  const pp = q('#bg-passes')
+  if (c.marginalParPasse.length === 0) { pp.textContent = 'Le coût par passe : non mesuré.'; return }
+  const pires = c.marginalParPasse
+    .map((v, k) => ({ k: k + 1, v }))
+    .slice()
+    .sort((a, b) => b.v - a.v)
+  pp.textContent = `Le coût marginal de chaque passe — ${c.marginalParPasse.map((v, k) => `p${k + 1} ${ms(v)}`).join(' · ')}` +
+    ` — la plus chère est p${pires[0]?.k} (${ms(pires[0]?.v)}, ${c.cumulParPasse[PASSES_GI - 1]! > 0 ? ((pires[0]!.v / c.cumulParPasse[PASSES_GI - 1]!) * 100).toFixed(0) : '—'} % de l’image).` +
+    ` ⚠ Différences de chaînes TRONQUÉES : elles disent le temps, jamais la justesse — les verdicts tournent tous à ${PASSES_GI} passes.`
 }
 
 /** La gate, d'après la classe retenue et le coût mesuré — et la ligne qui la dit. */

@@ -329,7 +329,15 @@ const SUITES = [
   //     brûler (le « hors modèle » que `fireStateAt` déclare allumé) : c'est pourquoi un seul a
   //     rougi, et c'est la preuve que cette alternative-là porte vraiment.
   //   ⚠ Plancher INCHANGÉ à 2456 : la marge n'a de valeur que pour attraper un FICHIER évaporé.
-  { nom: 'sim', dir: 'packages/sim', args: ['run', '--exclude', 'src/scenario.test.ts'], plancher: 2456 },
+  // 2026-10-09 : +11 gardes avec R5 — LA LISIÈRE DU SOIR EST LE MIROIR DE CELLE DE L'AUBE
+  //   (`nuit-lisiere.test.ts`, un fichier NEUF : R5 n'avait aucune garde, et les 2 500 gardes de
+  //   /sim restaient vertes avec le correctif comme sans lui). Suite à 2507 ✓ (le `onTaskUpdate`
+  //   flaky en sortie 1, aucun test ni fichier en échec), plancher relevé à 2496.
+  //   ⚠ RELEVÉ ICI PARCE QUE LA MARGE NE GARDAIT PLUS RIEN, et c'est le critère de la maison
+  //   (cf. 2026-09-12 plus haut) : 51 de marge pour un fichier neuf qui pèse 11 gardes — il
+  //   pouvait s'évaporer en entier sans faire rougir le plancher. Un plancher ne vaut que s'il
+  //   est plus serré que le plus PETIT fichier qu'on veut attraper.
+  { nom: 'sim', dir: 'packages/sim', args: ['run', '--exclude', 'src/scenario.test.ts'], plancher: 2496 },
   // 2026-09-01 : +10 gardes avec le RENDU des étages (`plateau-art.test.ts`).
   // 2026-09-01 : +9 gardes avec le TRI DES ÉTAGES (strate, découvert — `framing.test.ts`),
   //   suite relevée à 1429 ✓, plancher recalé quelques pourcents dessous.
@@ -485,7 +493,15 @@ const SUITES = [
   //   à 1805**, et c'est la doctrine écrite deux entrées plus haut qui le commande : la marge est
   //   ce qui attrape un FICHIER évaporé, et un plancher recalé à chaque tranche n'est qu'un
   //   miroir de la suite du jour.
-  { nom: 'client', dir: 'packages/client', args: ['run'], plancher: 1805 },
+  // 2026-10-09 : +25 gardes avec ⓑ — LE CRÉPUSCULE PEINT EST ANCRÉ SUR LE COUCHER
+  //   (`crepuscule-ancre.test.ts`, un fichier NEUF ; décision d'Alexis du jour). Suite à 1901 ✓
+  //   sur 144 fichiers, plancher relevé à 1888.
+  //   ⚠ MÊME RAISON QUE POUR SIM, et elle DÉMENT ma ligne du 2026-10-06 (« plancher INCHANGÉ :
+  //   sa marge sert à attraper un FICHIER évaporé, pas deux gardes ») : l'argument était juste
+  //   et sa conclusion fausse. 96 de marge contre un fichier neuf de 25 gardes, c'est exactement
+  //   le cas qu'elle prétendait garder, et elle ne le gardait pas. La marge se recale quand un
+  //   FICHIER naît — pas à chaque tranche, pas jamais.
+  { nom: 'client', dir: 'packages/client', args: ['run'], plancher: 1888 },
   { nom: 'serveur', dir: 'packages/server', args: ['run'], plancher: 36 },
   // Le banc pilote le vrai worldgen sur la carte de production : lent, et seul à porter le
   // drapeau qui ignore les erreurs non gérées (voir l'en-tête de `scenario.test.ts`).

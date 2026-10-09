@@ -110,7 +110,20 @@ const BASE_URL = process.env.SMOKE_URL ?? (dev ? 'http://ashes.test/' : `http://
  * nuit coûte des minutes » que `sprint` documente déjà, pas la bascule. À rejouer au calme.
  */
 const GI_URL = scenario.startsWith('gi') ? '' : '&gi=0'
-const URL = (BASE_URL.includes('?') ? BASE_URL : `${BASE_URL}?solo`) + GI_URL
+/**
+ * `SMOKE_LONH` — POSER ℓ/H, LE RAPPORT LONGUEUR D'OMBRE SUR HAUTEUR DU LANCEUR.
+ *
+ * Un levier de PLANCHE, pour l'A/B d'amplitude du 2026-10-09 (« montre moi avant de choisir ») :
+ * la loi de longueur ne suit pas encore l'élévation du soleil, et la trancher demande de voir les
+ * candidates sur la MÊME image. Lu par `champ-gpu.ts` (`?lonh=`), donc il ne porte QUE sur le
+ * masque d'astre de la GI — les cartes des arbres, les bandes du bâti, les marches des paliers.
+ * ⚠ Il ne touche NI la coulée des socles (cuite par cran, `ombre-socle.ts`) ni le point Light2D.
+ * Absent, le jeu est inchangé au bit — en VALEUR comme en COÛT : les deux bornes de compilation du
+ * masque (`PAS_OMBRE_MAX`, la `MARGE` des cartes) se taillent sur le ratio de la page, donc elles
+ * rendent 44 pas et 269,714 px au défaut. Il exige un scénario `gi*` : sans le champ, aucun masque.
+ */
+const LONH_URL = process.env.SMOKE_LONH ? `&lonh=${encodeURIComponent(process.env.SMOKE_LONH)}` : ''
+const URL = (BASE_URL.includes('?') ? BASE_URL : `${BASE_URL}?solo`) + GI_URL + LONH_URL
 
 mkdirSync(OUT, { recursive: true })
 
@@ -2332,6 +2345,34 @@ const SCENARIOS = {
   /** LE MÊME, SOUS LA ROCHE — voile de cave (`LumiereDeCave.braise`) + flaque. On y ENTRE en
    *  marchant : un TP efface l'étage et viserait le sol. */
   async ['halo-braise-cave'](page) { return mesurerHaloDeBraise(page, { lieu: 'cave' }) },
+  /**
+   * ═══ LA PLANCHE DE DIAGNOSTIC DU RENDU — LES MÊMES SCÉNARIOS, SOUS LA GI (2026-10-08) ═══
+   *
+   * ⚠ **CE QUI SUIT N'EST PAS UN SCÉNARIO NEUF, C'EST UNE ADRESSE.** `GI_URL` dérive `&gi=0` du
+   * NOM du scénario (`scenario.startsWith('gi')`, ligne 112) — donc `pnpm smoke --scenario
+   * vitrine` photographie **la pile d'AVANT la GI** (Light2D + voiles), pas ce qu'Alexis joue
+   * depuis la bascule du 2026-09-19 (LG-R3). Les douze JPG de
+   * `packages/client/src/assets/vitrine/` datent du 2026-08-30 : ce sont des images d'avant la
+   * GI, et c'est la seule référence DATÉE qu'on ait pour un A/B.
+   *
+   * Ces quatre lignes rejouent les scénarios de capture EXISTANTS sous le champ, sans toucher
+   * à une ligne de leur montage — toute la staging chèrement acquise (museler, dégeler la
+   * météo avec preuve, le calendrier monotone, le sommeil avant tout `evaluate`) est reprise
+   * telle quelle. L'A/B est alors : même graine, même jour, même heure, même cadrage, deux
+   * piles de rendu.
+   *
+   * ⚠ **ET LE COÛT N'EST PAS LE MÊME** : sous SwiftShader une image du champ coûte 3 à 6 s
+   * (en-tête de `GI_URL`) là où la pile d'avant en rend treize par seconde. Un lot complet se
+   * lance DÉTACHÉ (`setsid`), une prise à la fois (`--prise <nom>`), sur machine calme, et
+   * `SMOKE_OUT` sépare le lot du lot d'à côté.
+   */
+  async ['gi-vitrine'](page) { return SCENARIOS.vitrine(page) },
+  /** Les six vues d'une cave, sous la GI (dehors → seuil → fond → torche → nuit → retour). */
+  async ['gi-cave'](page) { return SCENARIOS.cave(page) },
+  /** Les cinq vues d'une grotte de palier, sous la GI. */
+  async ['gi-grotte'](page) { return SCENARIOS.grotte(page) },
+  /** Les mesas et les paliers hauts, sous la GI — midi, nuit, Grand Froid. */
+  async ['gi-relief'](page) { return SCENARIOS.relief(page) },
   /**
    * ═══ LA GI DU CLIENT — LES DEUX GARDES DURABLES (spec `lumiere-globale.md`, LG-A2 et LG-A8) ═══
    *
@@ -26683,17 +26724,61 @@ Depuis le spawn (${depart.x.toFixed(0)}, ${depart.y.toFixed(0)}) :`)
       // cardinal des Pluies tombe au jour 75 de l'année, et c'est la teinte la plus FORTE des
       // quatre (roux, force 0,55 — « la saison qui se voit »). Les deux prises de sous-bois s'y
       // posent : une futaie rousse au soleil levant n'est pas la même image qu'une futaie verte.
+      // ═══ L'AXE DE LA LUMIÈRE — LA MÊME FUTAIE À QUATRE HEURES (2026-10-08) ═══
+      //
+      // `p.futaie` élit la fenêtre la plus fermée de la Racine par un balayage DÉTERMINISTE
+      // (densité plafonnée + essences − le nu) : les quatre prises ci-dessous tombent donc, au
+      // bit, sur LE MÊME CADRE, et seule l'heure change. C'est la seule façon d'isoler la
+      // lumière de la composition — « un chiffre de rendu se nomme avec sa chaîne », et ici le
+      // décor est la constante.
+      //
+      // ⚠ LA NUIT VA EN PREMIER PARCE QUE LE CALENDRIER NE RECULE PAS (`debug_set_season_day`
+      // rembobinerait le tick et figerait le client, sans un mot). Jour 70 = lune à 1/10, la
+      // nuit la plus profonde utile : le voile SATURE à la lune neuve, donc rien à gagner plus
+      // loin (relevé du 2026-08-26, `SMOKE_LUNE`).
+      { nom: 'futaie-nuit', jour: 70, heure: 23, futaie: true, torche: true, tuiles: 24, quoi: 'la futaie de nuit, lune au dixieme, torche en main' },
       { nom: 'brume-futaie', jour: 72, heure: 7.2, futaie: true, meteo: 'brouillard', tuiles: 24, quoi: 'le brouillard du matin dans la futaie' },
       // ⚠ LES HEURES SUIVENT LE SOLEIL SAISONNIER (2026-08-29). Depuis le soleil français,
       // lever/coucher DÉRIVENT avec le jour (`leverPourJour`/`dayTicksPourJour`) : au jour 75
       // le soleil se lève à 6,76 h et se couche à 18,93 h — les visées écrites pour l'ancien
       // cadran (lever 6 h, coucher 21 h) tombaient dans la nuit noire. Recalées sur la courbe.
       // ET UNE VISÉE D'AMBIANCE SE CONVERTIT EN HEURE SOLAIRE, PAS À L'ŒIL (2026-08-30) : l'or
-      // du couchant vit à 18-20 h du cadran CANONIQUE (`AMBIENT_KEYS`), et `heureSolaire` le
-      // comprime en mural — au jour 75 le plateau doré finit à 18,1 h murale. Une visée « juste
-      // avant le coucher » (18,7 h) tombe déjà dans le fondu bleu. La conversion :
-      // mur = lever + (solaire − 6) × jourReel / 15, avec jourReel = coucher − lever.
+      // du couchant vit dans le cadran CANONIQUE d'`AMBIENT_KEYS`, et `heureSolaire` le comprime
+      // en mural. La conversion : mur = lever + (solaire − 6) × jourReel / 15, avec
+      // jourReel = coucher − lever.
+      //
+      // ⚠⚠ **ET LA BANDE DORÉE A DÉMÉNAGÉ LE 2026-10-09 (ⓑ, décision d'Alexis) : ELLE EST
+      // DÉSORMAIS 19→21 CANONIQUE, PLUS 18→20.** Le crépuscule peint est ancré sur le coucher —
+      // chaque clé du soir est le MIROIR de sa jumelle du matin autour du soleil —, si bien que
+      // l'or est à son PLEIN au canonique 21, c'est-à-dire **au coucher lui-même**. Conséquence
+      // directe pour toute visée « plateau doré » : **elle se fait AU coucher**, et non une heure
+      // avant. Au jour 75 : canonique 21 = 6,759 + 15 × 12,169/15 = **18,93 h murale**. Les visées
+      // écrites pour l'ancienne bande (18,1 h = canonique 20,23) tombent maintenant dans le DÉBUT
+      // de l'or (alpha 0,17 sur 0,32), pas dans son plein.
       { nom: 'sylve-aube', jour: 75, heure: 7.0, futaie: true, quoi: 'la futaie rousse au soleil levant' },
+      // ⚠ MIDI N'ÉTAIT PAS DANS CETTE PLANCHE, ET C'EST EXACTEMENT LE CAS QU'ALEXIS SIGNALE
+      //   (« les arbres le jour paraissent non naturels », 2026-10-08). L'ancienne planche
+      //   l'excluait par choix de VITRINE — « entre 10 et 15 h l'alpha d'`ambientTint` est NUL,
+      //   on laisse le plein jour aux CIELS » —, ce qui est juste pour vendre le jeu et faux
+      //   pour le diagnostiquer : une prise sans ambiance est précisément celle où le relief
+      //   des corps porte seul, donc celle où un défaut de modelé n'a rien pour se cacher.
+      { nom: 'futaie-aube', jour: 75, heure: 7.0, futaie: true, tuiles: 24, quoi: 'la meme futaie au soleil levant, cadrage de l axe (24 t)' },
+      { nom: 'futaie-midi', jour: 75, heure: 12, futaie: true, tuiles: 24, quoi: 'la futaie a midi plein, sans ambiance — le cas signale' },
+      // ET LE COUCHANT, au plateau doré — RECALÉ À 18,7 h LE 2026-10-09 (de 18,1). Depuis ⓑ l'or
+      // est à son plein au canonique 21, qui EST le coucher : mur = lever + (21 − 6) × jourReel/15
+      // = 6,759 + 12,169 = 18,93 h au jour 75. ⚠ Et l'ancienne visée était fausse DEUX FOIS — elle
+      // visait l'ancienne bande (18→20 canonique) ET la prise était partie à 18,3 h, soit 38 min
+      // avant le coucher, d'où une image NUIT PLEINE libellée « plateau doré ». La prise d'avant
+      // rendait 4,2/255 contre 59,8 à midi ; ⓑ lui rend ×2,18 de lumière.
+      //
+      // ⚠⚠ **ON VISE 18,7 ET NON 18,93, ET C'EST LA DÉRIVE DU HARNAIS QUI LE COMMANDE.** Le relevé
+      // d'avant dit « visée 18,1, PRISE à 18,3 » : le harnais atterrit **+0,2 h après sa visée**
+      // (observé UNE fois — ce n'est pas une loi, c'est une mesure à refaire si elle dérive).
+      // Viser 18,93 ferait donc atterrir la prise au canonique **21,2**, déjà dans le fondu
+      // GOLDEN→NIGHT ; viser **18,7** (canonique 20,72) met la PRISE sur le pic à 21,0.
+      // *On vise là où la prise tombe, pas là où le chiffre est beau.*
+      // ⚠ **PAS ENCORE REVUE À L'IMAGE** — pas de GPU ici.
+      { nom: 'futaie-couchant', jour: 75, heure: 18.7, futaie: true, tuiles: 24, quoi: 'la meme futaie au plateau dore' },
 
       // ═══ LES PLUIES (jour 75) — la bande fait 4500 tuiles : elle couvre la carte entière ═══
       //
@@ -26712,6 +26797,11 @@ Depuis le spawn (${depart.x.toFixed(0)}, ${depart.y.toFixed(0)}) :`)
       // saison des pluies) elle n'a rendu l'eau dorée de la série précédente.
       // ET LE BROUILLARD SUR LES MENHIRS AUSSI : il DÉSATURE. Les pierres levées valent par
       // l'ambre du couchant et leurs ombres longues ; un voile gris les rend au gris.
+      // ⚠ `cercle` et `orage-cercle` GARDENT leur heure après ⓑ (2026-10-09), et c'est délibéré :
+      // elles ne visent pas le PLEIN de l'or mais sa montée, et `orage-cercle` a sa propre raison
+      // (un cran AVANT le crépuscule, pour que le front d'orage reste lisible — voir sa note).
+      // Ce qui change, c'est leur RÉFÉRENCE : elles ne sont plus « comme `futaie-couchant` », qui
+      // est passée au coucher pile.
       { nom: 'cercle', jour: 75, heure: 18.2, ou: ['cercle_pierres', 'pierre_levee', 'erratique'], quoi: 'les menhirs au couchant' },
       // ═══ LA PÊCHE — ET ON PHOTOGRAPHIE LE FERRAGE, PAS L'ATTENTE (demande d'Alexis, 2026-08-26) ═══
       //
@@ -26784,7 +26874,12 @@ Depuis le spawn (${depart.x.toFixed(0)}, ${depart.y.toFixed(0)}) :`)
       // et leurs ombres longues »). L'averse ne désature pas : c'est un trait fin qui passe
       // DEVANT, et le couchant reste dessous. On la tire donc un cran avant le crépuscule,
       // quand les pierres portent encore leur ombre.
-      { nom: 'orage-cercle', jour: 75, heure: 19.4, ou: ['cercle_pierres', 'pierre_levee'], meteo: 'orage', tuiles: 20, quoi: "l'orage sur les menhirs, au couchant" },
+      // ⚠ **L'HEURE S'EST RECALÉE SUR LE VRAI SOLEIL (2026-10-09).** Elle disait 19,4 h « au
+      // couchant », or le jour 75 se couche à **18,93 h** (`BALANCE.LEVER_DU_JOUR` + 24 ×
+      // `PART_DE_JOUR`) : la prise tombait **28 min APRÈS le coucher** et montrait une nuit
+      // d'orage, pas un couchant. 18,4 h met le front à 32 min du coucher. ⚠ Le « comme
+      // `futaie-couchant` » qui finissait cette phrase est périmé : elle est au coucher pile depuis ⓑ.
+      { nom: 'orage-cercle', jour: 75, heure: 18.4, ou: ['cercle_pierres', 'pierre_levee'], meteo: 'orage', tuiles: 20, quoi: "l'orage sur les menhirs, au couchant" },
       // LE BOURG A SON PROPRE SOLEIL — son feu. Il peut donc se permettre une nuit basse : au
       // jour 76 la lune est à ⅕, l'averse prend l'orange du foyer et les logis se découpent.
       // (Au jour 75, où la planche l'avait laissé, elle est à ⅒ — mais c'est la MÊME nuit à un
@@ -26856,7 +26951,11 @@ Depuis le spawn (${depart.x.toFixed(0)}, ${depart.y.toFixed(0)}) :`)
       // maintenu peint le télégraphe du VRAI tir (`pendingStrike`) — la ligne de visée part de
       // la main et va à la bête, et l'image dit enfin ce qu'elle montre. (C'est le levier que
       // la planche possédait depuis le 2026-08-20 et que cette prise n'avait jamais armé.)
-      { nom: 'chasse-neige', jour: 105, heure: 8.5, chasse: true, arme: 'bow', charger: true, figer: true, meteo: 'pluie', tuiles: 20, quoi: 'la chasse sous la neige, arc bandé' },
+      // ⚠ **IDEM, ET PIRE : 8,5 h est AVANT LE LEVER au jour 105.** L'hiver lève tard — 8,72 h —,
+      // donc la prise était 13 min trop tôt et la chasse se jouait dans le noir. 10,0 h la met
+      // 77 min après le lever, bien dans le jour. L'heure d'une prise se juge contre SON jour,
+      // jamais contre une habitude de 8 h du matin.
+      { nom: 'chasse-neige', jour: 105, heure: 10.0, chasse: true, arme: 'bow', charger: true, figer: true, meteo: 'pluie', tuiles: 20, quoi: 'la chasse sous la neige, arc bandé' },
       { nom: 'lac-gele', jour: 112, heure: 8.4, berge: true, tuiles: 24, quoi: 'le lac pris par la glace, au lever du jour' },
 
       // ═══ L'ÉCLOSION — LA QUATRIÈME SAISON, ET C'EST LA VARIÉTÉ QU'ON CROYAIT PERDUE ═══
@@ -28165,7 +28264,13 @@ Depuis le spawn (${depart.x.toFixed(0)}, ${depart.y.toFixed(0)}) :`)
       // dix minutes — ça ne coûte RIEN quand tout va bien (les prises passent en 20 s), et ça
       // sauve la série quand la machine est prise.
       try {
-        await page.screenshot({ path: `${OUT}/vitrine-${p.nom}.jpg`, type: 'jpeg', quality: 82, timeout: 600000 })
+      // ⚠ **ET DIX MINUTES NE SUFFISENT PAS NON PLUS À TOUTE HEURE** (2026-10-09). `futaie-midi`
+      // passe en 22 min ; `futaie-couchant` (18,1 h) a expiré ICI, au plafond ; `futaie-nuit` n'est
+      // jamais arrivée en 47 min. Les trois ne diffèrent que par le VOILE DE NUIT engagé — ce n'est
+      // pas la longueur de l'ombre, qui ne dépend pas de l'heure (`longueurDOmbre` n'a aucun terme
+      // d'heure : seule la DIRECTION suit le soleil). D'où le plafond réglable : sur une machine
+      // accélérée il ne sert à rien, et ici il décide si la prise de nuit existe.
+        await page.screenshot({ path: `${OUT}/vitrine-${p.nom}.jpg`, type: 'jpeg', quality: 82, timeout: Number(process.env.SMOKE_SHOT_MS ?? 600000) })
       } catch (e) {
         console.error(`   ✗ ${p.nom.padEnd(18)} le déclenchement a expiré (${e.name}) — prise PERDUE, la planche continue`)
         if (p.charger) { await degeler().catch(() => {}); await page.mouse.up().catch(() => {}) }
@@ -31334,6 +31439,43 @@ try {
   // SUSPECTÉE, pas mesurée. Le défaut par défaut ne bouge pas ; `SMOKE_BOOT_MS` l'ouvre.
   await page.waitForFunction(() => window.__BRAISES__?.scene?.registry?.get('mapData'), null, { timeout: Number(process.env.SMOKE_BOOT_MS ?? 60000) })
   await page.waitForTimeout(1500) // quelques ticks de sim, le temps que le HUD se remplisse
+
+// ─── LA CHAÎNE S'ANNONCE ────────────────────────────────────────────────────
+// ⚠ **UNE MACHINE QUI A UN GPU PEUT QUAND MÊME RASTERISER EN LOGICIEL.** Chromium retombe sur
+// SwiftShader sans un mot — en headless, sous un pilote qu'il n'aime pas, derrière un ANGLE mal
+// résolu. On ne le DEVINE donc pas depuis le nom de la machine : on lit la chaîne, par la même
+// extension que le banc de la GI (`banc-gi.ts:229`), et on l'imprime. Un relevé de rendu ne vaut
+// rien sans le nom de la chaîne qui l'a produit — et le coût d'une image en vaut encore moins.
+try {
+  const chaine = await page.evaluate(() => {
+    // Le MÊME chemin que `banc-gi.ts` (`this.sys.renderer as WebGLRenderer`, puis `.gl`) — on ne
+    // suppose pas que Phaser 4 expose `renderer.gl`, on copie l'endroit où ça marche déjà.
+    const gl = window.__BRAISES__?.scene?.game?.renderer?.gl
+    if (!gl) return { lu: false, gpu: 'PAS DE CONTEXTE WEBGL (canvas ?)', webgl: '', glsl: '' }
+    const dbg = gl.getExtension('WEBGL_debug_renderer_info')
+    return {
+      lu: true,
+      gpu: String(dbg ? gl.getParameter(dbg.UNMASKED_RENDERER_WEBGL) : gl.getParameter(gl.RENDERER)),
+      webgl: String(gl.getParameter(gl.VERSION)),
+      glsl: String(gl.getParameter(gl.SHADING_LANGUAGE_VERSION)),
+    }
+  })
+  // ⚠ **LE ✓ NE SE DONNE QUE SUR UNE CHAÎNE VRAIMENT LUE.** Une sonde qui ne peut pas échouer
+  // donne le bon résultat par accident : si le contexte manque, le nom de repli ne matche aucun
+  // motif logiciel et on imprimerait « rendu matériel » sur une chaîne qu'on n'a pas vue.
+  // ⚠ Et le repli logiciel de Windows s'appelle **WARP** / « Microsoft Basic Render Driver »,
+  // pas SwiftShader : sur une machine ANGLE/D3D11 (la sienne), c'est CE nom-là qui trahit.
+  const mou = /swiftshader|softwarerasterizer|llvmpipe|mesa offscreen|basic render|\bwarp\b/i.test(chaine.gpu)
+  console.log(`\n── la chaîne : ${chaine.gpu}`)
+  if (chaine.webgl) console.log(`   ${chaine.webgl} · ${chaine.glsl}`)
+  console.log(!chaine.lu
+    ? `   ⚠ CHAÎNE INCONNUE — elle n'a pas pu être lue. Ne rien conclure d'un coût mesuré dans ce run.`
+    : mou
+      ? `   ⚠ RENDU LOGICIEL — une image sous le champ coûte des dizaines de minutes, et AUCUN coût relevé ici ne vaut pour un vrai GPU.`
+      : `   ✓ rendu matériel`)
+} catch (e) {
+  console.log(`\n── la chaîne : ILLISIBLE (${e.message.split('\n')[0]}) — ne rien conclure d'un coût mesuré ici`)
+}
 
   await run(page)
 } finally {

@@ -149,7 +149,7 @@ export type { WorldMap, Zone, FaitDeGeneration } from './map'
 // (doctrine de l'écrivain unique — `fiche-lieu.test.ts` le garde par balayage).
 export { phraseDuFait, nomDEre } from './annales'
 export type { PhraseDeFait } from './annales'
-export { getGameTime, seasonDayAtTick, actForDay, coeurDeLaSaisonSuivante, tourForDay, phaseForDay, YEAR_DAYS, cycleOffsetForStartHour, calendarScaleForSeasonCycles, TICKS_PER_CYCLE, dayTicksAt, dayTicksPourJour, leverPourJour, leverAt, estCrepuscule, jourDeSaison, jourDeLAnnee, TICKS_PER_SEASON_DAY } from './time'
+export { getGameTime, gameTimeAt, seasonDayAtTick, actForDay, coeurDeLaSaisonSuivante, tourForDay, phaseForDay, YEAR_DAYS, cycleOffsetForStartHour, calendarScaleForSeasonCycles, TICKS_PER_CYCLE, dayTicksAt, dayTicksPourJour, leverPourJour, leverAt, estCrepuscule, jourDeSaison, jourDeLAnnee, TICKS_PER_SEASON_DAY } from './time'
 export type { GameTime, Act } from './time'
 export { AMBIANT_HYPOTHERMIE, airNonBorneAt, ambientTemperature, baselineTemperature, baselineTemperatureAt, bulleDuFeu, cibleCorporelle, climatFlore, climatMaximal, dehorsSansMeteo, advanceTemperature } from './temperature'
 // ═══ LA BRAISE (spec `braise.md`, étapes 3 et 4) ═══
@@ -251,6 +251,7 @@ export {
   phaseDeLune,
   clarteDeLune,
   clarteDuCiel,
+  clarteDuSoleil,
   lumiereDuFeu,
   clarteSurSoi,
   clarteSurSoiAt,

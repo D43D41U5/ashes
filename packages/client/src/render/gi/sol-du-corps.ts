@@ -118,6 +118,18 @@ export interface CorpsPose {
    */
   readonly fut?: boolean
   /**
+   * ═══ UNE CIME (R2, 2026-10-09) — ELLE NE PREND AUCUNE OMBRE D'ASTRE ═══
+   *
+   * Un houppier est posé en branche E (`arete: 0`) : chaque pixel lit le champ à LA LIGNE DU PIED
+   * DE SON TRONC, quatre-vingt-seize pixels plus bas — et `ombreDesCartes` (LG-R8) projette la
+   * silhouette de ce même arbre AUTOUR DE CE MÊME PIED. À midi la carte couvre son propre pied, et
+   * la cime se lisait DANS SA PROPRE OMBRE : masse plate, bord vertical en travers des facettes.
+   *
+   * La mesure, les deux candidats écartés et le coût accepté sont au `②ter` de `corps-gpu.ts` —
+   * écrits UNE fois, là où la loi s'applique. Absent ≡ pas une cime.
+   */
+  readonly cime?: true
+  /**
    * Un SOCLE MINÉRAL (`socle-mineral.ts` : rock, bloc, filon, veine, carrière, éboulis) — sa TAILLE
    * (0, 1, 2), qui dit son émergence (16 / 20 / 24 px). Son art distingue un DESSUS — les `CROWN`
    * rangées planes de sa couronne — et LG-R16 le fait regarder le ciel : rien de direct n'y monte.

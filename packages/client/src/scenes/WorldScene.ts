@@ -121,7 +121,7 @@ import { deplierLeLift } from '../render/deplier-etage'
 import { MUR_HT } from '../render/bati-art'
 import { rafraichirCimes } from '../render/lit-trees'
 import { cranDeSaison } from '../render/teinte-saison'
-import { airSansLune, ambientTint, daylight, fireGlow, fireHoleRadius, flicker, heureCanonique, heureSolaire, lerpColor, lueurDeLune, multiplicateurDuVoile, multiplicateurParCanal, partSansLune, plancherDeNuit, produitCouleurs, voileDeNuit, LUNE_PLEINE_JOUR } from '../render/lighting'
+import { airSansLune, ambientTint, daylight, fireGlow, fireHoleRadius, flicker, heureCanonique, heureSolaire, lerpColor, lueurDeLune, multiplicateurDuVoile, multiplicateurParCanal, partDeJour, partSansLune, plancherDeNuit, produitCouleurs, voileDeNuit, LUNE_PLEINE_JOUR, PART_CANONIQUE } from '../render/lighting'
 import { partDeNuitDesLucioles } from '../render/couvre-feu-lucioles'
 import { createWarp, type Warp } from '../render/warp'
 import { creerRelief, type Relief } from '../render/relief'
@@ -196,7 +196,7 @@ import {
 import { peindreCarteArt, type CarteArt } from '../render/carte-art'
 import { cellulesDuDisque, peindreSavoirRegion } from '../render/carte-savoir'
 import { cleDuRegime, deriverEauDuJour, regimeDeCarte } from '../render/carte-eau'
-import { atteignableEntreEtages, etagesDuPas, niveauDeLaTuile, niveauDuCorps, palierDuSol, terrainAEtage, TRACTION, eauPechable, estUnCoinDePeche, porteDeLEau, FISH_SPECIES, niveauDEau, torcheVive, partDeFlamme, clarteSurSoiAt, clarteDeCeQuOnPorte, clarteDuCiel, partDuCiel, NUIT, MONSTER_DEFS, POI_CHARGES, TERRAIN_DEEP_WATER, TERRAIN_SHALLOW_WATER, CREUX, TERRAINS_BOISES_MASSIF, ventForceAt, VENT, LUMIERE, type EtatVent, type Souillure } from '@ashes/sim'
+import { atteignableEntreEtages, etagesDuPas, niveauDeLaTuile, niveauDuCorps, palierDuSol, terrainAEtage, TRACTION, eauPechable, estUnCoinDePeche, porteDeLEau, FISH_SPECIES, niveauDEau, torcheVive, partDeFlamme, clarteSurSoiAt, clarteDeCeQuOnPorte, clarteDuCiel, clarteDuSoleil, partDuCiel, NUIT, MONSTER_DEFS, POI_CHARGES, TERRAIN_DEEP_WATER, TERRAIN_SHALLOW_WATER, CREUX, TERRAINS_BOISES_MASSIF, ventForceAt, VENT, LUMIERE, type EtatVent, type Souillure } from '@ashes/sim'
 
 /** L'assombrissement du sol au plafond de profondeur (§2quater R42) : au cœur d'un massif,
  *  le sol perd jusqu'à 14 % de luminance — en PENTE CONTINUE, jamais par bande. */
@@ -2350,12 +2350,17 @@ export class WorldScene extends Phaser.Scene {
     const hour = this.lastTime
       ? heureSolaire(this.lastTime.hourOfCycle, this.lastTime.dayTicks, this.lastTime.lever)
       : heureCanonique(12)
+    // LA PART DE JOUR SORT DU MÊME SNAPSHOT QUE L'HEURE, et pour la même raison : depuis le
+    // 2026-10-09 le soleil est celui de Paris, donc sa course dépend de la SAISON autant que de
+    // l'heure. La calculer ailleurs rejouerait le défaut du 2026-08-25 sur l'autre terme.
+    // Sans snapshot : le jour du CADRAN, celui sur lequel toutes les keyframes sont calibrées.
+    const part = this.lastTime ? partDeJour(this.lastTime.dayTicks) : PART_CANONIQUE
     const jourLune = (this.lastTime?.seasonDay ?? LUNE_PLEINE_JOUR) + (this.lastTime?.jourFrac ?? 0)
     // L'OMBRE DES SOCLES DÉRIVE À L'OPPOSÉ DE L'ASTRE (demande d'Alexis, 2026-08-27) — le côté
     // et la force sortent de `dynamic-lighting`, qui ARBITRE les deux astres avec la fonction
     // même qui pose leurs intensités ; l'amplitude vit dans `socle-mineral`. Sans snapshot :
     // centrée.
-    this.view.deriveOmbre = this.lastTime ? deriveDOmbre(hour, jourLune) : 0
+    this.view.deriveOmbre = this.lastTime ? deriveDOmbre(hour, part, jourLune) : 0
     // ET ELLE S'ÉTEINT AVEC L'ASTRE QUI LA JETTE (Alexis : « elle devrait disparaître en fade au
     // crépuscule »). Sans snapshot : pleine, comme avant.
     this.view.forceOmbre = this.lastTime ? forceDeLOmbre(hour, jourLune) : 1
@@ -2453,6 +2458,12 @@ export class WorldScene extends Phaser.Scene {
       // soleil n'a pas bougé, et ne périme alors que les chunks qui portent du relief.
       if (this.paves) {
         this.paves.heureSolaire = hour
+        // ⚠ **LA SAISON VOYAGE AVEC L'HEURE, OU LE PAVEMENT RESTE EN MAI.** `partDeJour` a une
+        // valeur par défaut (`PART_CANONIQUE`) pour que le champ soit typé sans scène ; `tsc` ne
+        // peut donc PAS réclamer cette ligne. Sans elle le soleil du pavé serait cloué au jour du
+        // cadran toute l'année — exactement le défaut que l'en-tête de `sunDirection` attribue aux
+        // valeurs par défaut. Une garde de SOURCE apparie les deux poussées (`pave-layer.test.ts`).
+        this.paves.partDeJour = part
         this.paves.soleilABouge()
       }
       this.cliffs.render(this.cameras.main, time) // les parois, auto-raccordées à la vue — et les cascades au pas de `time`
@@ -2766,6 +2777,7 @@ export class WorldScene extends Phaser.Scene {
       this.water?.update(
         time,
         hour,
+        part,
         day,
         // Portée du reflet un peu plus large que la lueur (comme le trou du voile déborde la flaque) ;
         // force = alpha de la lueur, déjà ∝ nuit → le reflet s'éteint tout seul de jour.
@@ -3062,8 +3074,17 @@ export class WorldScene extends Phaser.Scene {
       // entier (`partDuCiel` = 0) — donc le cas souterrain est **subsumé** et n'a plus besoin de
       // sa clause à part, ce qui est le signe que la dérivation est la bonne ; et au crépuscule
       // il fond en continu, sans la marche qu'un seuil aurait posée.
+      //
+      // ⚠ ET LA PORTE NE COMPTE QUE LE **SOLEIL** DEPUIS LE 2026-10-08 (décision d'Alexis,
+      // `braise.md` § 5.28 ⓒ) : `clarteDuCiel` additionne le soleil ET la lune, si bien que la
+      // porte se lisait à découvert sur la LUNE seule — 0,9997 à minuit au jour 61 (pleine lune)
+      // contre 0,0086 au jour 72. Le plancher ne rendait donc RIEN 13 nuits sur 30, et la plainte
+      // qui l'a fait naître revenait la moitié du mois, par la loi. `clarteDuSoleil` garde les
+      // deux propriétés qui comptent (midi à découvert reste inerte, un toit ou une cave porte en
+      // entier) et ne change que les nuits CLAIRES. L'autorité de la VISION, elle, ne bouge pas :
+      // `clarteDuCiel` reste ce que lisent la parade, le voile et la gueule des caves.
       const gel = this.etatGel
-      const cielDeLHeure = gel !== null ? clarteDuCiel(gel, this.lastSnapshotTick) : 1
+      const cielDeLHeure = gel !== null ? clarteDuSoleil(gel, this.lastSnapshotTick) : 1
       const soiParCorps = new Map<number, number>()
       for (const e of this.lastEntities) {
         if (e.hp <= 0) continue
@@ -3194,7 +3215,7 @@ export class WorldScene extends Phaser.Scene {
       const sousTerre = this.etages.souterrain
         ? { gueules: composeGi ? [] : this.etages.gueulesPx, ciel: this.etages.lumiere?.ciel ?? 1 }
         : null
-      this.dynLight?.update(lit, this.cameras.main, composeGi ? [] : feux, this.view.villages, hour, day, time, jourLune, lueurLune, composeGi ? [] : porteurs, this.lastSnapshotTick, sousTerre, composeGi ? [] : porteursBraise)
+      this.dynLight?.update(lit, this.cameras.main, composeGi ? [] : feux, this.view.villages, hour, part, day, time, jourLune, lueurLune, composeGi ? [] : porteurs, this.lastSnapshotTick, sousTerre, composeGi ? [] : porteursBraise)
       // La vie ambiante : les oiseaux traversent, les lucioles ne sortent qu'à la nuit — et
       // depuis le 2026-08-26 elles ÉCLAIRENT, d'où le `lit` (le mode à plat les éteint avec
       // toutes les autres sources).

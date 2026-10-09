@@ -24,7 +24,7 @@ import { ancienneteDeCendre, auCoeurDeLaCendre, avanceesDepuisAges, terrainCendr
 import { GROUND_MAP_DEPTH, LIFT_TUILES, TILE_PX, strateDEtage } from '../../render/framing'
 import { GRAIN_CELLS, familleDe, grainFacteur, type Famille } from '../../render/grain-sol'
 import { HORS_PALIER, PAVE, PAVE_COTE, PAVE_PX, cuireChunk, soleilDuPavement } from '../../render/paves'
-import { sunDirection, type HeureSolaire } from '../../render/lighting'
+import { sunDirection, PART_CANONIQUE, type HeureSolaire, type PartDeJour } from '../../render/lighting'
 import { cendreARemue, signatureCendre, type SignatureCendre } from '../../render/cendre-chunk'
 import { cranDeSaison, teinteDuTerrain, teinter } from '../../render/teinte-saison'
 import { TERRAIN_COLORS } from '../../render/terrain-colors'
@@ -451,11 +451,14 @@ export class PaveLayer {
   soleilTournant = true
   /** L'heure murale poussée par la scène (comme `jourDeLAnnee`). */
   heureSolaire = 12 as unknown as HeureSolaire
+  /** La part de jour du même cycle — poussée par la scène avec l'heure, jamais recalculée ici.
+   *  Au repos : le jour du CADRAN, celui sur lequel le pavé a été calibré. */
+  partDeJour: PartDeJour = PART_CANONIQUE
   private cranSoleil = Number.NaN
   private soleil = soleilDuPavement(0)
 
   soleilABouge(): number {
-    const dirX = this.soleilTournant ? sunDirection(this.heureSolaire).x : 0
+    const dirX = this.soleilTournant ? sunDirection(this.heureSolaire, this.partDeJour).x : 0
     const cran = Math.round(dirX * CRANS_SOLEIL)
     if (cran === this.cranSoleil) return 0
     this.cranSoleil = cran

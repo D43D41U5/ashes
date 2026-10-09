@@ -42,7 +42,7 @@ import { TILE_PX } from '../framing'
 import { HOLE_ERASE_PEAK } from '../lighting'
 import { champRef, composerM, hauteurDesMarches, masqueDAstre, ombreDesCartes, ombreDesMarches, ombrePleineDAstre, type Astre, type CarteDOmbre, type CartesDOmbre, type Emetteur, type GrilleGi } from './champ-ref'
 import { grilleDuMonde, type Fenetre } from './grille'
-import { ALBEDO, GI, longueurDOmbre, profilFeu, type Albedo } from './reglages'
+import { ALBEDO, GI, longueurDOmbre, LONGUEUR_PAR_HAUTEUR_MAX, profilFeu, type Albedo } from './reglages'
 import { teinteDeLaSource } from './source-du-champ'
 import { Silhouettes } from './silhouettes'
 
@@ -195,6 +195,33 @@ const PX_PAR_TEXEL = TILE_PX / LUMIERE.TEXELS_PAR_TUILE
 const H_PALIER = LUMIERE.PALIER_TEXELS
 
 /**
+ * ℓ/H DE CETTE PAGE — `?lonh=<ratio>`, un LEVIER DE PLANCHE, pas un réglage de jeu.
+ *
+ * La loi de longueur ne suit pas encore l'heure (le soleil du jeu n'a pas d'élévation : son point
+ * Light2D siège à 21,2° toute l'année). Avant de trancher l'amplitude il faut la VOIR — « montre
+ * moi avant de choisir », Alexis, 2026-10-09 — et une planche A/B exige de pouvoir poser le ratio
+ * sans rebâtir. Il retombe sur `GI.ASTRE.LONGUEUR_PAR_HAUTEUR` : **sans le paramètre, le jeu est
+ * inchangé au bit** — et il l'est en VALEUR *comme en COÛT, ce qui n'allait pas de soi.*
+ * Borné au plafond, sans quoi `?lonh=50` ferait tronquer la marche du shader au lieu de refuser.
+ *
+ * ⚠ **« INERTE » SE MESURE SUR LES DEUX BORNES DE COMPILATION, PAS SUR CETTE CONSTANTE**, et je l'ai
+ * écrit faux avant de l'écrire juste : en les taillant sur `LONGUEUR_PAR_HAUTEUR_MAX`, `PAS_OMBRE_MAX`
+ * passait à **517 pas** et la `MARGE` des cartes à **1 092,6 px** POUR TOUT LE MONDE, levier ou pas —
+ * une boucle GLSL 12× trop grande et quatre fois l'emprise à rastériser par passe, **pour zéro pixel**.
+ * Les deux se taillent donc sur le ratio DE LA PAGE. Et **aucune des 150 gardes de longueur d'ombre
+ * ne pouvait le voir** : elles éprouvent la VALEUR du masque, qui est identique — une borne trop
+ * GRANDE ne tronque rien, elle coûte. C'est la garde ⓪ de `banc-gi-loi.test.ts` qui gèle les deux
+ * chiffres, par identité avec la formule d'avant.
+ *
+ * ⚠ Lu UNE FOIS au module : relu par image il coûterait un parse d'URL à chaque champ. `typeof
+ * window` parce que ce fichier est importé par les suites headless.
+ */
+const RATIO_OMBRE = ((): number => {
+  if (typeof window === 'undefined' || !import.meta.env.DEV) return GI.ASTRE.LONGUEUR_PAR_HAUTEUR
+  const v = Number(new URLSearchParams(window.location.search).get('lonh'))
+  return Number.isFinite(v) && v > 0 ? Math.min(v, LONGUEUR_PAR_HAUTEUR_MAX) : GI.ASTRE.LONGUEUR_PAR_HAUTEUR
+})()
+/**
  * LE PLAFOND DU COMPILATEUR pour la marche d'ombre d'astre — GLSL ES 1.0 exige une borne de boucle
  * CONSTANTE, alors que le vrai nombre de pas arrive en uniforme (`uPasOmbre`, taillé sur l'astre du
  * moment). Celui-ci doit donc couvrir le PLUS GRAND lanceur de la spec, pas celui qu'on éprouve.
@@ -208,7 +235,20 @@ const H_PALIER = LUMIERE.PALIER_TEXELS
  * court sur le réseau 2× — d'où 2 × (1 + cisaillement) × ℓ, plus les 2 pas de garde.
  */
 const PAS_OMBRE_MAX =
-  Math.ceil(2 * (1 + GI.ASTRE.CISAILLEMENT) * longueurDOmbre(GI.ASTRE.HAUTEUR_MAX_LANCEUR_PX, PX_PAR_TEXEL)) + 2
+  Math.ceil(
+    2 *
+      (1 + GI.ASTRE.CISAILLEMENT) *
+      // ⚠ **LE RATIO DE CETTE PAGE, ET SURTOUT PAS LE PLAFOND.** Écrite `longueurDOmbre(…)` tout
+      // court, cette borne lisait le 0,4 de LG-R9 en dur et TRONQUERAIT toute ombre plus longue —
+      // en silence, la garde restant verte (le sinistre que l'en-tête décrit, appliqué au ratio au
+      // lieu de la hauteur). ⚠ Mais la tailler sur `LONGUEUR_PAR_HAUTEUR_MAX` était **aussi faux, et
+      // dans l'autre sens** : ça la portait à 517 pas **pour tout le monde**, levier ou pas, alors
+      // que le plafond est un majorant de `cot(e)` que la loi retenue n'atteindra pas (sous ma reco,
+      // ℓ/H ne passe jamais 1,817). Une borne de compilation 12× trop grande est un coût payé par le
+      // chemin PAR DÉFAUT pour zéro pixel — et c'est exactement ce que ce lot cherche à réduire.
+      // Sur le ratio de la page, elle rend **44 au défaut**, au bit, et grandit avec le levier.
+      longueurDOmbre(GI.ASTRE.HAUTEUR_MAX_LANCEUR_PX, PX_PAR_TEXEL, Math.max(GI.ASTRE.LONGUEUR_PAR_HAUTEUR, RATIO_OMBRE)),
+  ) + 2
 /**
  * LE RANG DE LA SOMME EST NOMMÉ — il ne se déduit PAS de la longueur de la chaîne.
  *
@@ -950,7 +990,16 @@ export class ChampGpu {
     const oy = this.oy * PX_PAR_TEXEL
     // L'emprise d'une carte, en px : la plus haute cime (96 px, LG-R9) couchée à 0,4 puis cisaillée,
     // plus sa largeur. Une carte dont le pied est plus loin que ça du cadre ne peut rien y jeter.
-    const MARGE = GI.ASTRE.HAUTEUR_MAX_LANCEUR_PX * (1 + GI.ASTRE.CISAILLEMENT) + 64
+    // ⚠ ELLE PORTE LE RATIO, ET ELLE NE LE PORTAIT PAS : l'ancienne écriture omettait le facteur et
+    // valait 269,714 px, ce qui suffisait tant que ℓ/H restait ≤ 1 (146 px requis à 0,4) et laissait donc
+    // une carte à 300 px du cadre cesser d'y jeter son ombre, en silence, dès qu'on allonge.
+    // ⚠ **PLANCHÉE À 1, et ce plancher EST l'ancienne valeur** : l'omission revenait à écrire le cas
+    // ratio = 1, donc `max(1, …)` rend **269,714… au bit** au défaut et ne grandit que si l'astre
+    // s'allonge vraiment. La tailler sur `LONGUEUR_PAR_HAUTEUR_MAX` la figeait à 1 092,6 px **pour
+    // tout le monde** : quatre fois l'emprise à balayer et à rastériser, par passe de champ, pour
+    // zéro pixel de plus. Elle se lit sur `astre`, donc elle suivra une loi par IMAGE sans retouche.
+    const MARGE =
+      GI.ASTRE.HAUTEUR_MAX_LANCEUR_PX * Math.max(1, astre.longueurParHauteur) * (1 + GI.ASTRE.CISAILLEMENT) + 64
     const x0 = ox - MARGE
     const x1 = ox + this.gw * PX_PAR_TEXEL + MARGE
     const y0 = oy - MARGE
@@ -1033,8 +1082,32 @@ export class ChampGpu {
     // est dessinée `lift` px plus haut que sa tuile — ce que la vue montre en `v.y` est la rangée
     // logique `(v.y + lift) / TILE_PX`. Le quad, lui, se pose `lift` px plus haut (ci-dessous).
     const lift = creux?.lift ?? 0
-    const x0 = Math.floor(v.x / TILE_PX) - GI.MARGE_TUILES
-    const y0 = Math.floor((v.y + lift) / TILE_PX) - GI.MARGE_TUILES
+    // ═══ L'ORIGINE S'ANCRE PAR PAS GROSSIERS — L'HYSTÉRÉSIS QUI MANQUAIT (2026-10-09) ═══
+    //
+    // ⚠ `GI.MARGE_TUILES` est une MARGE, pas une hystérésis : elle décale `x0` d'une constante et
+    // ne l'empêche pas de changer. Sans l'ancrage ci-dessous, `x0` bougeait donc à CHAQUE TUILE
+    // franchie par la caméra (16 px) ; l'empreinte de `update` contenant `f.x0,f.y0,f.x1,f.y1`,
+    // la grille ET les occludeurs se refaisaient d'autant. MESURÉ : `WALK_SPEED_TILES_PER_S` = 4
+    // et `gi.update` est appelé à chaque image sans condition — soit **4 reconstructions par
+    // seconde en ligne droite, ~8 en diagonale**, à 3,60 ms pièce sur une RTX 4070 (0,90 de
+    // grille + 2,70 d'occludeurs, banc `#gi` du 2026-10-08). L'image de reconstruction montait
+    // à 5,9 ms sur 16,7, plusieurs fois par seconde dès qu'on avance : pas un fps moyen qui
+    // tombe, un pic à la cadence du pas.
+    //
+    // LE PAS EST DÉRIVÉ, PAS CHOISI : `PALIER_TEXELS / GRAIN` est la granularité à laquelle la
+    // fenêtre s'alloue déjà (32 texels = 8 tuiles) — ancrer plus fin ne servirait à rien, ancrer
+    // plus gros gaspillerait du raster. Il se trouve valoir `MARGE_TUILES`, et ce n'est pas un
+    // hasard : c'est précisément la marge qui a de quoi absorber le décalage.
+    //
+    // ⚠ POURQUOI LA COUVERTURE TIENT : l'ancrage ne peut que DESCENDRE `x0` (de 0 à 7 tuiles),
+    // donc le bord gauche s'éloigne ; et `besoinW`/`besoinH` ci-dessous se calculent À PARTIR de
+    // `x0`, si bien que la largeur demandée grandit d'autant et que `ceil(besoin / P) * P`
+    // l'absorbe. La fenêtre couvre donc toujours la vue plus sa marge — c'est la même
+    // inégalité qu'avant, nourrie d'un `x0` plus bas.
+    const ANCRAGE = GI.PALIER_TEXELS / GI.GRAIN
+    const ancrer = (t: number) => Math.floor(t / ANCRAGE) * ANCRAGE
+    const x0 = ancrer(Math.floor(v.x / TILE_PX)) - GI.MARGE_TUILES
+    const y0 = ancrer(Math.floor((v.y + lift) / TILE_PX)) - GI.MARGE_TUILES
     // La fenêtre s'alloue par PALIERS et ne rétrécit JAMAIS. `floor` et `ceil` franchissent leurs
     // seuils séparément : une caméra qui glisse ferait osciller la taille d'une tuile, et chaque
     // oscillation détruirait neuf textures et sept shaders — puis, `destroy` effaçant l'empreinte,
@@ -1141,10 +1214,10 @@ export class ChampGpu {
       this.uA > 0
         ? {
             derive: astre!.derive,
-            longueur: longueurDOmbre(GI.ASTRE.HAUTEUR_MUR_PX, PX_PAR_TEXEL),
+            longueur: longueurDOmbre(GI.ASTRE.HAUTEUR_MUR_PX, PX_PAR_TEXEL, RATIO_OMBRE),
             cisaillement: GI.ASTRE.CISAILLEMENT,
             penombre: GI.ASTRE.PENOMBRE,
-            longueurParHauteur: GI.ASTRE.LONGUEUR_PAR_HAUTEUR,
+            longueurParHauteur: RATIO_OMBRE,
           }
         : null
     // Le vecteur du shader est l'ombre de la PLUS HAUTE bande du champ (`hauteurMarche`, LG-R9) : le

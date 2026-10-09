@@ -23,7 +23,7 @@ import { COULEE, cranDeSang, eauSouillee, empreinteDuSang, tableDAttache, TERRAI
 import { buildFlowField, COURANT_VITESSE, TAPER_RIVE_MAX, TAPER_RIVE_MIN, type FlowField } from '../../render/flow-field'
 import { GROUND_MAP_DEPTH, LIFT_TUILES, strateDEtage, TILE_PX } from '../../render/framing'
 import type { Relief } from '../../render/relief'
-import { sunDirection, moonDirection, clarteDeLune, lueurDeLune, LUNE_PLEINE_JOUR } from '../../render/lighting'
+import { sunDirection, moonDirection, clarteDeLune, lueurDeLune, forceDuCouloirSolaire, LUNE_PLEINE_JOUR, type PartDeJour } from '../../render/lighting'
 import type { HeureSolaire } from '../../render/lighting'
 import { buildFondField, buildRiveField, buildWaterField, canalB, MILIEU_VASE, PALIER_UNITES, REGIME_LAC_MORT, REGIME_SUIE, SANG_UNITE, type RiveField } from '../../render/water-field'
 
@@ -934,15 +934,27 @@ void main() {
  * la lune en tient un d'OS, plus discret. Pentes continues partout (règle maison).
  * L'azimut du couloir vient de `sunDirection` (source unique) ; la lune, que la sim ne
  * connaît pas, prend un couchant figé — une direction inventée mais CONSTANTE.
+ *
+ * ⚠⚠ **LE COUCHANT ÉTAIT DÉSANCRÉ DE DEUX HEURES, ET ⓑ L'AVAIT MANQUÉ** (2026-10-09). ⓑ a réécrit
+ * le soir de `DAYLIGHT_KEYS` et d'`AMBIENT_KEYS` en MIROIR de leur propre aube autour du coucher
+ * canonique — et son audit de portée affirmait que « seules les deux tables du JOUR et du VOILE ont
+ * un soir à déplacer ». **C'est faux : cette troisième table existe, avec ses fenêtres en dur.**
+ * Son aube était juste (5,6–8,3, ancrée au lever 6 : −0,40 → +2,30) ; son couchant courait 16,6–19,6,
+ * c'est-à-dire **−4,40 → −1,40 du coucher** — le couloir doré de l'eau s'éteignait **1,4 h avant le
+ * coucher**, et donc près de deux heures avant le crépuscule que les deux autres tables peignent.
+ * Miroiré comme elles, il court de **18,70 à 21,40** (les écarts de l'aube, retournés autour de 21),
+ * et son plateau enjambe le coucher au lieu de mourir avant.
+ * **Les ancres sont ÉCRITES** (`AUBE_CANONIQUE ± d`, `SUN_SET ± d`) : aucun décalage à régler, et
+ * ça vaut aux quatre saisons sans terme de saison, le coucher valant toujours 21 dans ce repère.
  */
-export function cheminDeLAstre(hour: HeureSolaire, day: number, jourLune = LUNE_PLEINE_JOUR): { force: number; col: [number, number, number]; dirX: number } {
-  const rampe = (h: number, a: number, b: number, c: number, d: number): number =>
-    h <= a || h >= d ? 0 : h < b ? (h - a) / (b - a) : h <= c ? 1 : 1 - (h - c) / (d - c)
-  const aube = rampe(hour, 5.6, 6.3, 7.2, 8.3)
-  const couchant = rampe(hour, 16.6, 17.4, 18.6, 19.6)
-  const soleil = Math.max(aube, couchant)
+export function cheminDeLAstre(hour: HeureSolaire, part: PartDeJour, day: number, jourLune = LUNE_PLEINE_JOUR): { force: number; col: [number, number, number]; dirX: number } {
+  // LA FENÊTRE VIT DANS `lighting.ts` DEPUIS LE 2026-10-09, avec les trois autres tables du cadran :
+  // en dur ici, elle était hors d'atteinte des gardes (ce module importe Phaser) et son couchant a
+  // dérivé de deux heures sans que rien ne le dise. L'aube sert encore à choisir le BORD du couloir.
+  const soleil = forceDuCouloirSolaire(hour)
+  const aube = hour < 12 ? soleil : 0
   if (soleil > 0) {
-    return { force: soleil, col: [1.0, 0.62, 0.3], dirX: sunDirection(hour).x || (aube > 0 ? 1 : -1) }
+    return { force: soleil, col: [1.0, 0.62, 0.3], dirX: sunDirection(hour, part).x || (aube > 0 ? 1 : -1) }
   }
   // La lune : la nuit franche seulement (le jour l'éteint). Son couloir suivait un couchant
   // FIGÉ (`dirX: -0.4`, « une direction inventée mais CONSTANTE ») faute que la sim connaisse
@@ -955,9 +967,15 @@ export function cheminDeLAstre(hour: HeureSolaire, day: number, jourLune = LUNE_
 
 /** La direction PLANE d'un astre (`sunDirection`/`moonDirection`) relevée en VRAIE direction
  *  3D pour le spéculaire — une seule recette pour les deux astres, sinon leurs éclats
- *  divergeraient d'une constante qu'on ne saurait plus calibrer. */
-function astreVector(gx: number): { x: number; y: number; z: number } {
-  const alt = Math.sqrt(Math.max(0, 1 - gx * gx)) // sin(azimut) : 0 à l'horizon, 1 au zénith
+ *  divergeraient d'une constante qu'on ne saurait plus calibrer.
+ *
+ *  ⚠ **`alt` EST REÇU, PLUS DEVINÉ (2026-10-09).** Il était reconstruit par `√(1 − gx²)`, une
+ *  identité qui ne tient QUE si `gx` est le cosinus d'un paramètre balayant 0→π. Depuis que le
+ *  soleil est celui de Paris, son amplitude dépend de la saison (±0,777 en Ardeur contre ±1,000
+ *  aux équinoxes) : au lever d'Ardeur la reconstruction rendait **0,63**, c'est-à-dire un soleil
+ *  aux deux tiers de sa hauteur à l'instant où il touche l'horizon. La lune, elle, garde un arc
+ *  paramétrique où l'identité est EXACTE — lui passer son `alt` est donc inerte au bit, et gardé. */
+function astreVector(gx: number, alt: number): { x: number; y: number; z: number } {
   const grazing = 1 - 0.7 * alt
   return {
     x: gx * grazing,
@@ -966,9 +984,10 @@ function astreVector(gx: number): { x: number; y: number; z: number } {
   }
 }
 
-function sunVector(hour: HeureSolaire): { x: number; y: number; z: number } {
-  // la source UNIQUE : est(+) → ouest(−), |x| = force au ras
-  return astreVector(sunDirection(hour).x)
+function sunVector(hour: HeureSolaire, part: PartDeJour): { x: number; y: number; z: number } {
+  // la source UNIQUE : est(+) → ouest(−), et l'élévation vient du même calcul, pas d'une racine
+  const dir = sunDirection(hour, part)
+  return astreVector(dir.x, dir.alt)
 }
 
 export class WaterLayer {
@@ -1371,6 +1390,9 @@ export class WaterLayer {
   update(
     nowMs: number,
     hour: HeureSolaire,
+    /** La part de jour du cycle — la saison du soleil (2026-10-09) : son azimut ET son élévation
+     *  en dépendent, et le spéculaire de l'eau lit les deux. */
+    part: PartDeJour,
     daylight: number,
     fires: WaterFire[] = [],
     waders: WaterWader[] = [],
@@ -1383,11 +1405,12 @@ export class WaterLayer {
     this.ph0 = (this.timeS / DUAL_T) % 1
     this.adv0 = (this.ph0 - 0.5) * DUAL_T * COURANT_VITESSE
     this.adv1 = (((this.ph0 + 0.5) % 1) - 0.5) * DUAL_T * COURANT_VITESSE
-    this.sun = sunVector(hour)
-    this.moon = astreVector(moonDirection(hour, jourLune).x)
+    this.sun = sunVector(hour, part)
+    const dirL = moonDirection(hour, jourLune)
+    this.moon = astreVector(dirL.x, dirL.alt)
     this.day = daylight
     this.lune = lueurDeLune(hour, jourLune)
-    this.astre = cheminDeLAstre(hour, daylight, jourLune)
+    this.astre = cheminDeLAstre(hour, part, daylight, jourLune)
     if (camTile) this.cam = camTile
     const n = Math.min(MAX_FIRES, fires.length)
     this.fireCount = n

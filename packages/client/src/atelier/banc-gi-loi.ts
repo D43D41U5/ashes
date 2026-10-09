@@ -83,6 +83,37 @@ export const ASTRE_DU_BANC = { derive: 0.5, a: 0.42 * 0.8 } as const
 /** Le plancher de nuit du banc, par canal : un voile bleuté de nuit claire (Mn, LG-R5). */
 export const MN_DU_BANC: readonly [number, number, number] = [0.22, 0.24, 0.3]
 
+/**
+ * LES RECONSTRUCTIONS PAR SECONDE, EN MARCHE — **mesurée, pas choisie**, et c'est le chiffre
+ * d'APRÈS P1 (l'origine de la fenêtre ancrée par pas grossiers, livrée le 2026-10-09) : 4 000
+ * positions balayées, 0,70/s en marche droite et **0,90/s en diagonale**. On prend la diagonale,
+ * le pire des deux. ⚠ Avant P1 c'était 4,10 et 5,70 — si quelqu'un remet l'ancrage fin, ce
+ * nombre devient faux et le budget avec : il est ici, nommé, pour être relu.
+ */
+export const RECONSTRUCTIONS_PAR_SECONDE = 0.9
+
+/**
+ * ═══ LE BUDGET PAR SECONDE — LE SEUL NOMBRE QUI TRANCHE (2026-10-09) ═══
+ *
+ * ⚠ **IL EXISTE PARCE QUE J'AI MAL CLASSÉ UN CHANTIER EN LISANT LE TABLEAU DU BANC.** Le relevé
+ * d'une RTX 4070 donne `msParImage` = 2,325 et `occludeursMs` = 2,70, et j'en avais conclu que
+ * « les occludeurs sont le plus gros poste, plus lourd que l'image entière ». **Les deux unités
+ * ne sont pas les mêmes** : `msParImage` se paie SOIXANTE FOIS PAR SECONDE, tandis que la grille
+ * et les occludeurs sont le coût d'UNE reconstruction — le chronomètre du banc le force par
+ * `invaliderLaGrille()` —, et une reconstruction ne tombe qu'au changement de fenêtre. La note du
+ * tableau le disait déjà en prose ; la colonne, non, et c'est la colonne que j'avais lue.
+ *
+ * On les ramène donc à la même unité : des millisecondes par seconde de jeu.
+ */
+export function budgetDuBanc(msParImage: number, grilleMs: number, occludeursMs: number): {
+  readonly budgetParSeconde: number
+  readonly partDesReconstructions: number
+} {
+  const reconstructions = (grilleMs + occludeursMs) * RECONSTRUCTIONS_PAR_SECONDE
+  const budgetParSeconde = msParImage * 60 + reconstructions
+  return { budgetParSeconde, partDesReconstructions: budgetParSeconde > 0 ? (reconstructions / budgetParSeconde) * 100 : 0 }
+}
+
 /** Le monde fixe. Un seul objet par banc : `nodeAt` indexe les nœuds par l'identité du tableau. */
 export function mondeDuBanc(): MondeEclaire {
   const map = createEmptyMap(SCENE.MAP_W, SCENE.MAP_H, TERRAIN_GRASS)

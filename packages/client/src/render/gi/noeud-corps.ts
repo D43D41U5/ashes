@@ -135,10 +135,14 @@ export interface CorpsPourLeShader {
    *  teinte de la flamme. 0 pour tout corps qui ne porte rien. Il occupe le quatrième composant
    *  d'`inGiB`, qui était un `0` de bourrage : aucun attribut neuf, aucun format de sommet touché. */
   soi: number
+  /** 1 pour une CIME (R2) — un houppier, qui ne prend AUCUNE ombre d'astre : il lit le champ à la
+   *  ligne du pied de son tronc, c'est-à-dire sous sa propre carte (LG-R8). Voir le `②ter` du
+   *  fragment, qui porte la mesure et le coût de cette loi. */
+  cime: number
 }
 
 /** Un corps qu'on n'a pas encore renseigné : plat, sans feu direct, au sol. Jamais un `null` dans le shader. */
-const CORPS_NEUTRE: CorpsPourLeShader = { pied: 0, ancreX: 0, crete: 0, seuil: SANS_DESSUS, dresse: 0, ruban: 0, expo: -1, lift: 0, ciel: 0, sol: 0, soi: 0 }
+const CORPS_NEUTRE: CorpsPourLeShader = { pied: 0, ancreX: 0, crete: 0, seuil: SANS_DESSUS, dresse: 0, ruban: 0, expo: -1, lift: 0, ciel: 0, sol: 0, soi: 0, cime: 0 }
 
 /**
  * LES UNITÉS DE TEXTURE — 0 et 1 sont à Phaser, 2 à 6 sont à nous.
@@ -318,7 +322,7 @@ export class NoeudCorpsGi extends BatchHandlerQuad {
     const U = buffer.viewU32
     if (F === null || U === null) return
     const c = this.corps
-    const drapeaux = empaqueterDrapeaux(c.dresse, c.ruban, c.ciel, c.sol)
+    const drapeaux = empaqueterDrapeaux(c.dresse, c.ruban, c.ciel, c.sol, c.cime)
     let o = this.instanceCount * this.floatsPerInstance
     // Bas-gauche, haut-gauche, bas-droite, haut-droite.
     o = this.ecrireSommet(F, U, o, x1, y1, texX, texY + texHeight, textureDatum, t2BL, tintBL, c, drapeaux)

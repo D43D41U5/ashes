@@ -1996,6 +1996,9 @@ export class SnapshotView {
     // LE PLANCHER DE CE QU'ON PORTE (B-R13d) — 0 pour tout corps qui ne porte rien, donc pour
     // tout sauf un avatar. Il vient de `/sim` et n'est jamais recalculé ici.
     sac.soi = corps.soi ?? 0
+    // UNE CIME (R2) — inconditionnel, comme tout le reste de ce bloc : `armerLeCorps` rend le sac
+    // EXISTANT d'un sprite poolé, donc un `if` laisserait le 1 d'un houppier sur la pierre suivante.
+    sac.cime = corps.cime === true ? 1 : 0
     if (import.meta.env.DEV) this.poses.set(sprite, corps)
   }
 
@@ -3366,7 +3369,7 @@ export class SnapshotView {
           img.setLighting(this.lighting) // pooled : réarmé chaque frame (cf. le tronc)
           // LA CIME ARME AUSSI (LG-R7 : « pour un houppier, sa profondeur ») — elle lit le champ à la
           // ligne du pied de SON tronc, sans face ni dessus : le feuillage n'a pas de sens.
-          if (this.gi !== null) this.poserLeCorps(img, { x: px, y: py, arete: 0, lift: py - pyPied }, this.feuDeLImage())
+          if (this.gi !== null) this.poserLeCorps(img, { x: px, y: py, arete: 0, lift: py - pyPied, cime: true }, this.feuDeLImage())
           // L'ANCRAGE SE DÉRIVE, il ne s'écrit plus (cf. `arbre-art`). `px` porte déjà le
           // tressaillement et le décalage d'arbre ; `pyCime` le lift et l'étage.
           img.setPosition(pxCime, pyCime - ancrageHouppierPx(mesures))

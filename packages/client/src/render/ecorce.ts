@@ -19,7 +19,34 @@
  * lieu d'un dégradé. MESURÉ avant d'être écrit, en passant chaque normale par la formule exacte
  * du shader (`DefineLights.glsl`, Phaser 4.2) et la géométrie réelle du soleil du jeu
  * (`SUN_FAR` 2200, `SUN_NORTH` 1600, `SUN_Z` 620 — un soleil RASANT, 13° à 21°, qui vient du
- * NORD, et dont `sunDirection` annule la composante x À MIDI) :
+ * NORD, et dont `sunDirection` annule la composante x AU ZÉNITH) :
+ *
+ * ⚠ **CES TROIS COLONNES SONT RELEVÉES SOUS L'ARC D'AVANT LE SOLEIL RÉEL (R6, 2026-10-09), et
+ * les heures ont glissé.** Le soleil est désormais celui de PARIS — `sunDirection(hour, part)`,
+ * de la géométrie solaire — et il a deux conséquences ici : le ZÉNITH (x = 0) passe du canonique
+ * **13 h à 13,5 h**, et l'azimut a maintenant une **amplitude SAISONNIÈRE**, là où l'ancien arc
+ * paramétrique rendait la même course toute l'année. `|x|` RE-MESURÉ (heures canoniques) :
+ *
+ *   saison                 8 h     10 h     13 h   13,5 h     15 h     17 h
+ *   Éclosion / Pluies   0,9198   0,6766   0,1060   0,0000   0,3132   0,6766
+ *   Ardeur              0,9102   0,7603   0,1281   0,0000   0,3742   0,7603
+ *   Grand Froid         0,6575   0,4461   0,0664   0,0000   0,1980   0,4461
+ *   — l'arc d'avant     0,832       —    0,0000      —     0,383    0,707
+ *
+ * La colonne « midi » du tableau ci-dessous décrit le ZÉNITH et reste donc JUSTE — c'est son
+ * étiquette d'heure qui a bougé, et x y vaut **0 au bit à toute saison**. **La conclusion ne bouge
+ * d'aucun côté, et elle se renforce** : à 15 h l'azimut FAIBLIT (0,313 à l'équinoxe contre 0,383),
+ * donc une facette en X y est encore plus inerte qu'avant ; au Grand Froid il tombe à **0,198**,
+ * soit la moitié — un soleil bas balaie moins. ⚠ Et l'azimut est désormais **exactement symétrique
+ * autour de 13,5 h** (10 h et 17 h au bit), ce que l'ancien arc ne faisait pas. Rien n'a été
+ * re-passé par le shader : ce relevé demande sa formule, et aucun verdict de ce bloc n'en dépend.
+ *
+ * ⚠ **CE QUE LE BLOC DÉCRIT ENCORE AU PRÉSENT, ET QUI EST EN COURS DE DÉCISION** : l'élévation
+ * « 13° à 21° » vient de `atan(SUN_Z / SUN_NORTH)`, un point FIXE. Alexis a tranché le 2026-10-09
+ * que l'élévation devient RÉELLE (18,7° au midi de Grand Froid à 65,6° au midi d'Ardeur) ; seule
+ * l'amplitude de l'ombre attend encore une image. **Le jour où elle arrive, ces trois colonnes
+ * sont à refaire pour de bon** — un soleil à 65,6° n'est plus RASANT, et c'est la prémisse du
+ * verdict « facetter en X est inerte ».
  *
  *   facette                              8h      midi     17h
  *   plate            (0, 0, 1)          0,247   0,365    0,226

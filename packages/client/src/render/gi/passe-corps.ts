@@ -273,7 +273,10 @@ export function pixelDuCorps(
   const p = c.ciel === true ? brut : colonneAuPalierDuCorps(c, brut, lire.grain, lire.palier)
   const sous = c.ciel === true ? SANS_CHAMP : lire(p.x, p.y)
   // ②bis LE PLANCHER DE CE QU'ON PORTE (B-R13d) — `max`, jamais une somme, comme `/sim`.
-  let parts: PartsCorps = partsDuCorps(ciel.mn, sous.ombre, ciel.a, avecCeQuOnPorte(sous.light, c.soi), sous.directFace, ciel.ambiante)
+  // UNE CIME NE LIT PAS L'OMBRE D'ASTRE DU SOL (R2) — le décalque du `②ter` du fragment, qui porte
+  // la mesure. Seul `S` tombe : `light` et `directFace` restent ceux du champ.
+  const ombreDuCorps = c.cime === true ? 0 : sous.ombre
+  let parts: PartsCorps = partsDuCorps(ciel.mn, ombreDuCorps, ciel.a, avecCeQuOnPorte(sous.light, c.soi), sous.directFace, ciel.ambiante)
 
   // ③ — la part directe du feu. Sans feu dans la scène, la branche ne change rien : il n'y a rien
   // à orienter ni à retirer, et `lectureDuFeu` lirait un angle depuis une source qui n'existe pas.

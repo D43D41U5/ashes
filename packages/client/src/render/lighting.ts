@@ -57,7 +57,18 @@ export const COULEUR_DU_FEU = 0xffffff
 
 /** Le soleil se lève et se couche AUX BORNES DE `DAYLIGHT_KEYS`, pas trois heures avant. */
 const SUN_RISE = 5
-const SUN_SET = 21
+/** Le coucher du cadran canonique. EXPORTÉ : les fenêtres de `cheminDeLAstre` (le couloir doré de l'eau) s'y ancrent, et
+ *  une borne écrite en dur y était désancrée de deux heures (2026-10-09). */
+export const SUN_SET = 21
+
+/**
+ * LA LATITUDE DU MONDE — Paris, 48,8566 N. **Ce n'est pas un réglage de rendu** : c'est la même
+ * latitude que `BALANCE.PART_DE_JOUR` et `BALANCE.LEVER_DU_JOUR` ont déjà payée le 2026-08-27 (au
+ * prix acté de 17 % de lumière annuelle). La changer sans retabuler ces deux courbes mettrait le
+ * soleil du rendu en désaccord avec l'heure de lever que le joueur lit — et c'est la déclinaison,
+ * dérivée de la part de jour, qui les tient ensemble (voir `sunDirection`).
+ */
+const LATITUDE = (48.8566 * Math.PI) / 180
 
 /**
  * ═══ L'HEURE SOLAIRE — l'horloge que lit TOUTE la chaîne d'éclairage (2026-08-26) ═══
@@ -106,7 +117,7 @@ export type HeureSolaire = number & { readonly __heureSolaire: unique symbol }
  * suit la saison depuis le 2026-08-26, de 04h45 à 08h43) : c'est le REPÈRE vers lequel
  * `heureSolaire` ramène toutes les heures, pour que les courbes n'aient pas à bouger.
  */
-const AUBE_CANONIQUE = 6
+export const AUBE_CANONIQUE = 6
 const JOUR_CANONIQUE = SUN_SET - AUBE_CANONIQUE // 21 − 6 = 15 h
 const NUIT_CANONIQUE = 24 - JOUR_CANONIQUE // 9 h
 
@@ -154,6 +165,21 @@ export function heureSolaire(hourOfCycle: number, dayTicks: number, lever: numbe
  * lever et au coucher — la lueur de la lune, sa part de voile — se dérive de `alt` et jamais
  * de `x`. Le défaut de 18 h corrigé plus haut est exactement ce qu'on évite ici par forme.
  */
+/**
+ * ═══ L'ARC DE LA LUNE — le cosinus paramétrique, et il n'habille plus que la lune ═══
+ *
+ * Une demi-course paramétrique de `SUN_RISE` à `SUN_SET` : `x` = cos(azimut) (+1 au ras de l'est,
+ * −1 au ras de l'ouest, 0 au milieu), `alt` = sin(azimut) (0 à l'horizon, 1 au sommet). Ce n'est
+ * pas une astronomie : c'est une forme, et elle suffit à la lune, dont le jeu ne promet aucun
+ * almanach. Le SOLEIL, lui, ne passe plus par ici depuis le 2026-10-09 — voir `sunDirection`.
+ *
+ * ⚠ **`ARC_FIN_SOLEIL` A ÉTÉ RETIRÉ LE MÊME JOUR, et il ne manque à personne.** Il existait pour
+ * caler la coupure de l'arc sur l'extinction de `daylight` (loi du 2026-08-25) : un arc coupé trop
+ * tôt téléporte le soleil à pleine puissance, écart MESURÉ 0,8385 ce jour-là, puis 0,1803 après ⓑ.
+ * Le soleil réel n'a plus de coupure à caler : sa composante reste GÉOMÉTRIQUE et continue au
+ * travers du crépuscule, et c'est `daylight` — nul aux deux bornes — qui l'éteint. *Le problème
+ * de l'appariement de deux bornes a disparu au lieu d'être résolu une troisième fois.*
+ */
 function courseDuCiel(h: number): { x: number; alt: number } {
   const hh = ((h % 24) + 24) % 24
   if (hh <= SUN_RISE || hh >= SUN_SET) return { x: 0, alt: 0 } // sous l'horizon
@@ -162,48 +188,174 @@ function courseDuCiel(h: number): { x: number; alt: number } {
 }
 
 /**
- * ═══ L'ARC DU SOLEIL EST CALÉ SUR LA COURBE DE JOUR (2026-08-25) ═══
+ * ═══ LA PART DE JOUR — le second terme de l'horloge, BRANDÉ pour la même raison que l'heure ═══
  *
- * Direction VERS le soleil en espace-tuile (x est+, y sud+), de norme = FORCE directionnelle
- * de l'ombre portée : 0 = soleil au zénith (pas d'ombre), 1 = soleil rasant. Balaie est→ouest
- * sur la journée — ombres vers l'ouest le matin, vers l'est le soir, quasi nulles à midi.
- * Client (pas /sim) → sin/cos autorisés.
- *
- * LE DÉFAUT CORRIGÉ — deux chaînes d'éclairage qui n'étaient pas à la même heure, exactement
- * le travers que `MOON_DAWN` documente un étage plus bas, mais sur le soleil. L'arc courait de
- * 6 h à 18 h et se coupait par une garde `h >= 18` ; or `DAYLIGHT_KEYS` dit encore **0,70** à
- * 18 h et ne s'éteint qu'à 21 h. Et comme le balayage est un cosinus, la magnitude est à son
- * MAXIMUM (|cos π| = 1) pile là où la garde l'annulait : le soleil se téléportait de 2 200 px
- * à l'aplomb de la caméra en une image, À PLEINE PUISSANCE. MESURÉ, saut de `dirX` pondéré par
- * l'intensité (`day × 1.2`) : **0,8385 à 18 h 00**. L'eau prenait le même choc — son vecteur
- * spéculaire passait de (−1,00, −0,30, 0,30) à (0,00, −0,09, 1,15) d'un coup (`sunVector`).
- *
- * On cale donc les bornes de l'arc là où la courbe de jour s'éteint VRAIMENT — et rien d'autre
- * ne change : le balayage est→ouest, le rasant d'aube et de couchant sont conservés (choix
- * d'Alexis, 2026-08-25 : « uniforme » = sans rupture, pas figé). Le saut résiduel de fin d'arc
- * subsiste par construction (un cosinus vaut ±1 à ses bornes) mais il tombe désormais où
- * `daylight` vaut 0,05 : **0,0599**, quatorze fois plus faible, et l'autre borne (5 h) tombe où
- * `daylight` vaut 0 tout rond — invisible. C'est la garde `sunDirection continue` qui le tient.
- *
- * CE QUE ÇA DÉPLACE, mesuré avant d'écrire (même méthode que la table de `ecorce.ts`, la
- * formule du shader sur la géométrie réelle `SUN_FAR`/`SUN_NORTH`/`SUN_Z`) :
- *
- *   facette                        8 h            midi           17 h
- *   plate           (0,0,1)     0,242 → 0,247   0,361 → 0,351   0,227 → **0,268**
- *   inclinée en X   (.7,0,.71)  0,692 → 0,686   0,257 → **0,419**  0,000 → 0,000
- *   inclinée en HAUT (0,−.5,.87) 0,522 → 0,534  0,781 → 0,757   0,490 → **0,578**
- *
- * Aucune inversion : le grain en Y (règle `ecorce.ts`) paie MIEUX à 17 h qu'avant (0,578 contre
- * 0,490), et le zénith se déplaçant de 12 h à 13 h, les facettes verticales cessent d'être
- * inertes à midi (0,419 contre 0,257) — dans le bon sens, l'écorce se lit davantage.
- *
- * PIÈGE VÉRIFIÉ — `water-layer.cheminDeLAstre` écrit `sunDirection(hour).x || (aube ? 1 : −1)` :
- * ce repli avait été posé PARCE QUE la garde rendait 0 en pleine fenêtre d'aube (5,6 h ≤ 6 h).
- * Il se tait maintenant. Balayage des deux fenêtres au pas de 0,1 h : le signe est STABLE
- * (aube +0,993→+0,797, couchant −0,649→−0,962) — le couloir de l'astre ne change pas de bord.
+ * `HeureSolaire` existe parce qu'un `hourOfCycle` nu donné à une courbe de ce fichier est le défaut
+ * du 2026-08-25 (deux chaînes qui ne sont pas à la même heure). Depuis que le soleil est celui de
+ * Paris, il lui faut un SECOND terme — la saison — et un `number` nu y rejouerait exactement le
+ * même travers : rien n'empêcherait de passer une part d'un cycle et une heure d'un autre. D'où le
+ * brandage, qui force `tsc` à réclamer le fil partout où le soleil est lu.
  */
-export function sunDirection(hour: HeureSolaire): { x: number; y: number } {
-  return { x: courseDuCiel(hour).x, y: 0 } // |cos| = force : 1 au ras, 0 au zénith (13 h)
+export type PartDeJour = number & { readonly __partDeJour: unique symbol }
+
+/** La part de jour du cycle COURANT, depuis `GameTime.dayTicks` — la même borne qu'`heureSolaire`,
+ *  parce que les deux décrivent le même jour et qu'un écart d'un cheveu entre elles décalerait le
+ *  midi solaire. */
+export function partDeJour(dayTicks: number): PartDeJour {
+  return Math.max(0.01, Math.min(0.99, dayTicks / TICKS_PER_CYCLE)) as PartDeJour
+}
+
+/**
+ * LA PART DU CADRAN CANONIQUE — **dérivée, pas posée**. `heureSolaire` est l'identité pour (lever
+ * 6 h, part `JOUR_CANONIQUE / 24`), donc c'est la seule part pour laquelle le cadran de convention
+ * décrit vraiment son propre jour. ⚠ Elle vaut 0,625 et ce n'est PAS un équinoxe : une journée de
+ * quinze heures à Paris, c'est la fin mai (déclinaison dérivée +18,5°). Un montage qui dit
+ * `PART_CANONIQUE` dit donc « le jour sur lequel la DA est calibrée », et non « une saison moyenne ».
+ */
+export const PART_CANONIQUE = (JOUR_CANONIQUE / 24) as PartDeJour
+
+/**
+ * ═══ LA FENÊTRE DU COULOIR SOLAIRE SUR L'EAU — la QUATRIÈME table de ce cadran ═══
+ *
+ * Combien le couloir chaud de l'eau est allumé (`eau-vivante` R12) : 1 quand le soleil rase, 0 quand
+ * il est haut ou couché. Deux fenêtres trapézoïdales, l'aube et le couchant, à pentes continues.
+ *
+ * ⚠⚠ **ELLE VIVAIT DANS `water-layer.ts`, EN DUR, ET ⓑ L'A MANQUÉE** (2026-10-09). ⓑ a réécrit le
+ * soir de `DAYLIGHT_KEYS` et d'`AMBIENT_KEYS` en miroir de leur propre aube autour du coucher, et son
+ * audit de portée affirmait que « seules les deux tables du JOUR et du VOILE ont un soir à déplacer ».
+ * **Faux — il y en avait une troisième, et elle n'avait AUCUNE garde** (`cheminDeLAstre` n'était
+ * appelé par aucun test), ce qui est exactement pourquoi elle est passée à travers. Son aube était
+ * juste (ancrée au lever) ; son couchant courait 16,6→19,6, soit −4,40 → −1,40 du coucher : **le
+ * couloir doré s'éteignait 1,4 h AVANT le coucher**, près de deux heures avant le crépuscule que les
+ * deux autres tables peignent.
+ *
+ * **ELLE REMONTE ICI PARCE QUE C'EST OÙ VIVENT LES AUTRES** : une table de keyframes en heure
+ * canonique appartient à ce fichier, qui est pur et donc GARDABLE — `water-layer` importe Phaser,
+ * si bien qu'aucune garde du cadran ne pouvait l'atteindre. *Une table qu'on ne peut pas tester est
+ * une table qui dérive.*
+ *
+ * Les écarts de l'aube à son ancre, et le soir qui les RETOURNE autour du coucher — écrits, donc
+ * exacts aux quatre saisons sans terme de saison (dans ce repère le coucher vaut toujours 21).
+ */
+const COULOIR_ECARTS = [-0.4, 0.3, 1.2, 2.3] as const
+
+export function forceDuCouloirSolaire(hour: HeureSolaire): number {
+  const trapeze = (h: number, a: number, b: number, c: number, d: number): number =>
+    h <= a || h >= d ? 0 : h < b ? (h - a) / (b - a) : h <= c ? 1 : 1 - (h - c) / (d - c)
+  const [e0, e1, e2, e3] = COULOIR_ECARTS
+  const aube = trapeze(hour, AUBE_CANONIQUE + e0, AUBE_CANONIQUE + e1, AUBE_CANONIQUE + e2, AUBE_CANONIQUE + e3)
+  const couchant = trapeze(hour, SUN_SET - e3, SUN_SET - e2, SUN_SET - e1, SUN_SET - e0)
+  return Math.max(aube, couchant)
+}
+
+/** Les écarts de l'aube du couloir à son ancre — exportés pour que la garde du miroir affirme la
+ *  LOI (le soir est le retournement de ces écarts) et non quatre nombres recopiés à la main. */
+export const COULOIR_ECARTS_AUBE: readonly number[] = COULOIR_ECARTS
+
+/**
+ * ═══ LE SOLEIL EST CELUI DE PARIS, EN HEURE ET EN SAISON (2026-10-09, décision d'Alexis) ═══
+ *
+ * « Une solution réaliste entre heure/saison » — en réponse à trois variantes de cosinus
+ * paramétrique, dont celle livrée le matin même. Ce qui suit est donc la géométrie solaire, et non
+ * une forme choisie à l'œil.
+ *
+ * **LA LATITUDE N'EST PAS UN RÉGLAGE DE PLUS : elle est celle que `/sim` a déjà payée.**
+ * `BALANCE.PART_DE_JOUR` et `BALANCE.LEVER_DU_JOUR` sont l'almanach de Paris (48,8566 N, CET toute
+ * l'année), tabulés aux quatre cœurs de saison depuis le 2026-08-27 — au prix acté de 17 % de
+ * lumière annuelle. Le rendu lisait cet almanach pour la DURÉE du jour et lui superposait un
+ * soleil de nulle part : même course à toutes les saisons, zénith cloué à une heure de convention.
+ *
+ * ① **LA DÉCLINAISON SE DÉRIVE DE LA PART DE JOUR, elle ne se tabule pas une seconde fois.**
+ * L'almanach et la déclinaison sont liés par `cos(H₀) = −tanφ · tanδ` avec `H₀ = πp` (le demi-angle
+ * horaire du jour). On inverse : `δ = atan(−cos(πp) / tanφ)`. **Conséquence voulue** : l'horizon du
+ * soleil tombe EXACTEMENT sur `LEVER_DU_JOUR`, par construction, et non à une minute près.
+ * ⚠ **Le δ ainsi obtenu dépasse le vrai de ~1°** (+24,45° / −22,42° aux solstices, contre ±23,44°)
+ * parce que l'almanach compte la RÉFRACTION et le DISQUE solaire, qui allongent le jour d'environ
+ * 0,83° d'angle. **C'est délibéré et il ne faut pas le « corriger »** : la cohérence avec l'heure
+ * de lever que le joueur voit vaut mieux qu'un δ juste sur un lever faux.
+ *
+ * ② **L'ANGLE HORAIRE SE LIT DANS LE CADRAN CANONIQUE, et le midi solaire y est une CONSTANTE.**
+ * `heureSolaire` envoie le lever sur 6 et le coucher sur 21 : le milieu du jour tombe donc toujours
+ * sur **13,5**, à toute saison (vérifié aux quatre cœurs — 13,500000). On inverse les deux pentes du
+ * remappage pour revenir aux heures depuis le lever, puis `H = (u − 12p) · π/12`.
+ * MESURÉ : l'aller-retour reproduit la composante calculée sur l'heure MURALE à **2,5 × 10⁻¹⁵**.
+ * *C'est ce qui permet de garder une API en heure canonique sans y mêler une heure murale.*
+ *
+ * ③ **LE SOLEIL RESTE « EN HAUT » : c'est le soleil de Paris MIROIRÉ sur l'axe est-ouest.** Le vrai
+ * soleil de 48,8566 N est au SUD à midi (azimut 180°) ; Alexis a tranché l'inverse le 2026-08-27
+ * (« le soleil est en haut », `SUN_NORTH`), et ⓑ ne rouvre pas cette décision. On garde donc la
+ * composante est-ouest et l'élévation du vrai soleil, et on les lit depuis le NORD.
+ * **« Réaliste » ne veut donc pas dire « venu du sud »**, et c'est écrit ici pour que personne ne
+ * « finisse » le travail en retournant la source.
+ *
+ * ④ **SA SIGNATURE SAISONNIÈRE, MESURÉE** — ce qu'un cosinus paramétrique ne pouvait pas dire :
+ *
+ *     saison                 part   δ dérivé  |x| au lever  élév. à midi   ℓ/H à midi
+ *     Éclosion / Pluies     0,507    +1,1°        0,9996        42,2°         1,10
+ *     Ardeur                0,674   +24,5°        0,7774        65,6°         0,45
+ *     Grand Froid           0,343   −22,4°        0,8149        18,7°         2,95
+ *
+ * L'étendue est la plus LARGE aux équinoxes (le soleil se lève plein est) et se resserre aux DEUX
+ * solstices ; en Ardeur le pic d'est tombe **après** le lever (0,9034 à un dixième du jour, contre
+ * 0,7774 au lever) parce que le soleil s'y lève au nord-est. Le `dirX` d'avant était, à peu de
+ * chose près, le profil d'équinoxe — ce qui est cohérent, le cadran étant calé sur un jour fixe.
+ *
+ * ⑤ ⚠ **`alt` EST UNE SORTIE NEUVE, ET ELLE N'EST PAS DÉCORATIVE.** `water-layer.astreVector`
+ * RECONSTRUISAIT l'élévation depuis l'azimut par `√(1 − x²)` — une identité qui ne tient que si `x`
+ * est le cosinus d'un paramètre balayant 0→π. Avec une amplitude saisonnière elle MENT : au lever
+ * d'Ardeur (`x` = 0,777) elle rendrait 0,63, soit un soleil à deux tiers de hauteur à l'instant où
+ * il touche l'horizon. L'élévation est donc rendue, et l'eau la lit au lieu de la deviner.
+ * ⚠ Pour la LUNE l'identité reste exacte (`courseDuCiel` pose `x = cos az`, `alt = sin az`, `az ∈
+ * [0,π]`) : lui passer son `alt` explicitement est **inerte au bit**, et c'est gardé.
+ *
+ * ⑥ **CE QUE ÇA NE TOUCHE PAS, et qui attend un arbitrage** : `SUN_Z`/`SUN_NORTH` posent encore le
+ * point Light2D à une hauteur FIXE, et les ombres DESSINÉES gardent LG-R9 (ℓ = 0,4 H) — donc le jeu
+ * garde des ombres de longueur constante là où le vrai soleil les fait respirer de 0,45 à 2,95 H.
+ */
+function declinaison(p: PartDeJour): number {
+  return Math.atan(-Math.cos(Math.PI * p) / Math.tan(LATITUDE))
+}
+
+/** Heures écoulées depuis le lever, pour une heure CANONIQUE — l'inverse exact des deux pentes
+ *  d'`heureSolaire`. Les deux pentes sont obligatoires : le soleil ne se coupe plus à l'horizon,
+ *  donc l'angle horaire court aussi pendant la nuit. */
+function heuresDepuisLever(hour: HeureSolaire, p: PartDeJour): number {
+  const v = (((hour - AUBE_CANONIQUE) % 24) + 24) % 24
+  const jourReel = 24 * p
+  return v < JOUR_CANONIQUE
+    ? (v * jourReel) / JOUR_CANONIQUE
+    : jourReel + ((v - JOUR_CANONIQUE) * (24 - jourReel)) / NUIT_CANONIQUE
+}
+
+/** L'angle horaire : 0 au midi solaire (canonique 13,5 à toute saison), négatif le matin. */
+function angleHoraire(hour: HeureSolaire, p: PartDeJour): number {
+  return ((heuresDepuisLever(hour, p) - 12 * p) * Math.PI) / 12
+}
+
+/**
+ * Direction VERS le soleil. `x` est la composante EST (+1 = plein est, −1 = plein ouest), `alt`
+ * le SINUS de son élévation (0 à l'horizon, 1 au zénith, **plafonné à 0 sous l'horizon** — un
+ * soleil couché n'éclaire pas par le dessous). `y` reste 0 : le biais nord vit chez l'appelant
+ * (`SUN_NORTH`), c'est la décision ③ de l'en-tête ci-dessus. Client (pas /sim) → sin/cos permis.
+ *
+ * ⚠ **CE N'EST PLUS UN COSINUS PARAMÉTRIQUE** (2026-10-09) : la loi, sa dérivation et ses six
+ * conséquences mesurées sont dans le bloc « LE SOLEIL EST CELUI DE PARIS », plus haut. Ce qui
+ * disparaît avec elle : la coupure d'arc à recaler sur `daylight` (donc `ARC_FIN_SOLEIL`), et le
+ * zénith cloué à une heure de convention — il tombe désormais au MIDI SOLAIRE, canonique 13,5.
+ *
+ * ⚠ **`part` EST OBLIGATOIRE, et c'est le point** : sans elle le soleil serait le même aux quatre
+ * saisons, ce que ⓑ vient précisément de retirer. Un montage qui veut le jour sur lequel la DA est
+ * calibrée passe `PART_CANONIQUE` — **explicitement**, jamais par défaut : une valeur par défaut
+ * rendrait au compilateur le droit de taire un fil manquant, qui est exactement le défaut du
+ * 2026-08-25 que le brandage d'`HeureSolaire` existe pour empêcher.
+ */
+export function sunDirection(hour: HeureSolaire, part: PartDeJour): { x: number; y: number; alt: number } {
+  const d = declinaison(part)
+  const H = angleHoraire(hour, part)
+  // La composante EST se lit sans passer par l'azimut : −cosδ·sinH (H < 0 le matin → est positif).
+  const x = -Math.cos(d) * Math.sin(H)
+  const sinAlt = Math.sin(LATITUDE) * Math.sin(d) + Math.cos(LATITUDE) * Math.cos(d) * Math.cos(H)
+  return { x, y: 0, alt: Math.max(0, sinAlt) }
 }
 
 /**
@@ -271,8 +423,11 @@ export function clarteDeLune(jour: number): number {
 /** Direction VERS la lune, MÊME convention que `sunDirection` — la course du ciel, lue à
  *  l'heure décalée de la phase. À la nouvelle lune le décalage est nul : la lune est
  *  exactement où est le soleil, donc absente de la nuit. */
-export function moonDirection(hour: HeureSolaire, jour: number): { x: number; y: number } {
-  return { x: courseDuCiel(hour - 24 * phaseDeLune(jour)).x, y: 0 }
+export function moonDirection(hour: HeureSolaire, jour: number): { x: number; y: number; alt: number } {
+  // `alt` rendu pour que l'eau cesse de le reconstruire par √(1 − x²) — ici l'identité est EXACTE
+  // (`x = cos az`, `alt = sin az`, `az ∈ [0,π]`), donc l'exposer est inerte au bit, et c'est gardé.
+  const c = courseDuCiel(hour - 24 * phaseDeLune(jour))
+  return { x: c.x, y: 0, alt: c.alt }
 }
 
 /**
@@ -501,17 +656,69 @@ interface DayKey {
   hour: number
   value: number
 }
+/**
+ * ═══ LE CRÉPUSCULE PEINT EST ANCRÉ SUR LE COUCHER (2026-10-09, décision d'Alexis : « ⓑ ») ═══
+ *
+ * **LA LOI, EN UNE PHRASE : le crépuscule peint est le MIROIR de sa propre aube autour du
+ * soleil.** Chaque clé du soir se pose à `SUN_SET − d` là où sa jumelle du matin est à
+ * `AUBE_CANONIQUE + d` : les anchors sont ÉCRITS dans la table, il n'y a donc aucun décalage à
+ * régler et la symétrie est vraie par construction, pas par calibrage.
+ *
+ * ⚠ **POURQUOI ÇA MARCHE SANS TERME DE SAISON** : `heureSolaire` remappe l'heure murale sur une
+ * heure CANONIQUE où le lever vaut toujours `AUBE_CANONIQUE` (6) et le coucher toujours
+ * `AUBE_CANONIQUE + JOUR_CANONIQUE` = `SUN_SET` (21), quelle que soit la longueur du jour. Le
+ * soleil est donc une CONSTANTE dans ce repère — c'est ce qui rend l'ancrage exact aux quatre
+ * saisons alors qu'un décalage en heures murales ne le serait à aucune.
+ *
+ * **CE QUE ÇA CORRIGE, MESURÉ.** Les deux tables avaient leur aube juste et leur soir en avance,
+ * exactement l'asymétrie que R5 venait de corriger dans `/sim` (`nuit.ts`), et dans le même sens :
+ *
+ * | table | demi-course à l'aube | demi-course au soir | AVANT, au soir |
+ * |---|---|---|---|
+ * | `DAYLIGHT_KEYS` | lever **+1,273** | coucher **−1,272** | coucher −2,200 |
+ * | `AMBIENT_KEYS`  | lever **−0,133** | coucher **+0,134** | coucher −0,923 |
+ *
+ * (en heures canoniques ; le résidu de 0,001 est le pas du balayage qui les relève). En minutes
+ * MURALES l'erreur dépendait de la saison, parce qu'une heure canonique du soir ne vaut pas une
+ * heure murale : pour `AMBIENT_KEYS`, 30 min d'avance au jour le plus court contre **60 au plus
+ * long** — le défaut était pire en été.
+ *
+ * ⚠ **ET LE TERME DOMINANT N'EST PAS LE VOILE, C'EST `DAYLIGHT_KEYS`** — je l'avais d'abord
+ * attribué au voile. MESURÉ au jour 75 à 18,30 h murale (la prise `futaie-couchant`), rapporté à
+ * midi : `daylight` compte pour **×6,02** de l'assombrissement et le voile pour **×1,77** ; leur
+ * produit rend **×10,67** contre le ×14,2 relevé à l'image, donc les deux expliquent l'essentiel
+ * et il n'y a pas de troisième terme à chercher. C'est `daylight` qui nourrit la GI, l'éclairage
+ * dynamique et les ombres : le corriger seul aurait désynchronisé deux chaînes dans la même image,
+ * d'où les DEUX tables dans le même geste.
+ *
+ * ⚠ **CE QUI N'A PAS BESOIN DE BOUGER, et c'est prouvé par sa forme** : `lueurDeLune` est
+ * `courseDuCiel(h − 24·phase).alt × clarteDeLune(jour)` — une COURSE D'ASTRE, donc géométrique et
+ * déjà symétrique autour de son horizon. `BRUME_KEYS` et `FRONT_KEYS` ne vivent qu'entre 4,5 et
+ * 8,5 (l'aube), hors de la fenêtre du soir. Une seule table restait : celle du voile, et celle du
+ * jour.
+ *
+ * ⚠ **CE QUE ÇA NE RÉPARE PAS, et il faut le dire** : `futaie-couchant` gagne **×2,18** de lumière
+ * à son heure de prise, ce qui ne la rend pas « dorée » — sa visée était fausse de 45 min (18,30 h
+ * murale est le canonique 20,227, soit 0,77 h canonique AVANT le coucher, c'est-à-dire la fin du
+ * crépuscule et non un plateau). La prise est à REFAIRE en plus d'être recalculée.
+ *
+ * ⚠ **CE QUI EST PINNÉ ET POURQUOI** : les clés 0/24 (le canonique minuit, le plafond de nuit) et
+ * la clé 15 (l'ouverture du soir). Mirroir complet, la clé 15 passerait à 17 — l'exact pendant du
+ * `AUBE_CANONIQUE + 4` du matin — et le plateau de plein jour s'élargirait de deux heures
+ * canoniques. C'est une DÉCISION DE DA que je ne prends pas : « déplacer » n'est pas « élargir »,
+ * et l'ancrage de la demi-course est juste dans les deux formes.
+ */
 /** Facteur de lumière du jour : 0 = nuit noire … 1 = plein midi. */
-const DAYLIGHT_KEYS: DayKey[] = [
+export const DAYLIGHT_KEYS: DayKey[] = [
   { hour: 0, value: 0 },
-  { hour: 5, value: 0 },
-  { hour: 6, value: 0.15 },
-  { hour: 8, value: 0.7 },
-  { hour: 10, value: 1 },
-  { hour: 15, value: 1 },
-  { hour: 18, value: 0.7 },
-  { hour: 20, value: 0.2 },
-  { hour: 21, value: 0.05 },
+  { hour: AUBE_CANONIQUE - 1, value: 0 }, //           5 — la nuit finissante
+  { hour: AUBE_CANONIQUE, value: 0.15 }, //            6 — LE LEVER
+  { hour: AUBE_CANONIQUE + 2, value: 0.7 }, //         8
+  { hour: AUBE_CANONIQUE + 4, value: 1 }, //          10 — plein jour
+  { hour: 15, value: 1 }, //                              l'ouverture du soir, PINNÉE
+  { hour: SUN_SET - 2, value: 0.7 }, //                19 — le miroir du matin
+  { hour: SUN_SET, value: 0.15 }, //                   21 — LE COUCHER
+  { hour: SUN_SET + 1, value: 0 }, //                  22
   { hour: 24, value: 0 },
 ]
 
@@ -664,16 +871,18 @@ const NEUTRAL_COLOR = 0x101018
  * clefs sur un sol étalon pour montrer, heure par heure, la teinte que le monde PORTERA. Les
  * recopier là-bas aurait fait deux aubes — celle qu'on voit et celle qu'on lit.
  */
+/** Le voile. Son crépuscule est le MIROIR de son aube autour du soleil — voir la loi au-dessus
+ *  de `DAYLIGHT_KEYS` : les deux tables partagent l'ancrage, et c'est ce qui les garde en phase. */
 export const AMBIENT_KEYS: TintKey[] = [
   { hour: 0, color: NIGHT_COLOR, alpha: NIGHT_ALPHA_MAX },
-  { hour: 5, color: NIGHT_COLOR, alpha: 0.62 },
-  { hour: 6, color: GOLDEN_COLOR, alpha: 0.32 },
-  { hour: 8, color: GOLDEN_COLOR, alpha: 0.1 },
-  { hour: 10, color: NEUTRAL_COLOR, alpha: 0 },
-  { hour: 15, color: NEUTRAL_COLOR, alpha: 0 },
-  { hour: 18, color: GOLDEN_COLOR, alpha: 0.12 },
-  { hour: 20, color: GOLDEN_COLOR, alpha: 0.34 },
-  { hour: 21, color: NIGHT_COLOR, alpha: 0.6 },
+  { hour: AUBE_CANONIQUE - 1, color: NIGHT_COLOR, alpha: 0.62 }, //    5
+  { hour: AUBE_CANONIQUE, color: GOLDEN_COLOR, alpha: 0.32 }, //       6 — LE LEVER, l'or à l'horizon
+  { hour: AUBE_CANONIQUE + 2, color: GOLDEN_COLOR, alpha: 0.1 }, //    8
+  { hour: AUBE_CANONIQUE + 4, color: NEUTRAL_COLOR, alpha: 0 }, //    10
+  { hour: 15, color: NEUTRAL_COLOR, alpha: 0 }, //                        PINNÉE
+  { hour: SUN_SET - 2, color: GOLDEN_COLOR, alpha: 0.1 }, //          19 — le miroir du matin
+  { hour: SUN_SET, color: GOLDEN_COLOR, alpha: 0.32 }, //             21 — LE COUCHER, l'or à l'horizon
+  { hour: SUN_SET + 1, color: NIGHT_COLOR, alpha: 0.62 }, //          22
   { hour: 24, color: NIGHT_COLOR, alpha: NIGHT_ALPHA_MAX },
 ]
 

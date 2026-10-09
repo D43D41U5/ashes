@@ -31,7 +31,10 @@ import {
   plancherDeNuit,
   heureSolaire,
   heureCanonique,
+  PART_CANONIQUE,
+  partDeJour,
 } from './lighting'
+import type { HeureSolaire } from './lighting'
 
 /**
  * LES COURBES DE CE FICHIER S'ÉPROUVENT SUR LE CADRAN CANONIQUE — le jour d'équinoxe, celui
@@ -44,7 +47,7 @@ const ambientTint = (h: number): { color: number; alpha: number } => ambientTint
 const brumeDuMatin = (h: number): number => brumeDuMatin_(heureCanonique(h))
 const daylight = (h: number): number => daylight_(heureCanonique(h))
 const frontDeBrume = (h: number): number => frontDeBrume_(heureCanonique(h))
-const sunDirection = (h: number): { x: number; y: number } => sunDirection_(heureCanonique(h))
+const sunDirection = (h: number): { x: number; y: number; alt: number } => sunDirection_(heureCanonique(h), PART_CANONIQUE)
 
 
 /** Les sources du rendu, pour le garde-fou de CÂBLAGE du blend (voir le dernier banc). */
@@ -292,7 +295,14 @@ describe("l'étalonnage : la lumière MULTIPLIE, elle ne se mélange pas", () =>
   })
 
   it('l’HEURE DORÉE ne teinte plus que ce qu’elle ÉCLAIRE : les ombres restent neutres', () => {
-    const doree = ambientTint(20)
+    // ⚠ **L'OR SE LIT À SON PLEIN, ET CE PLEIN A DÉMÉNAGÉ LE 2026-10-09 (ⓑ)** : le crépuscule peint
+    // est ancré sur le coucher, donc l'alpha doré culmine au canonique `SUN_SET` (21) et non plus à
+    // 20, où il ne vaut plus que 0,21. Lue à 20, cette garde rougissait à 33,18 pour un seuil de 40
+    // — **non parce que le multiply avait changé, mais parce qu'elle visait l'ancienne heure**.
+    // Le seuil n'est pas touché : c'est l'HEURE qui se dérive de la table.
+    const PLEIN_DE_L_OR = 21
+    expect(ambientTint(PLEIN_DE_L_OR).alpha).toBeGreaterThan(ambientTint(20).alpha) // la prémisse
+    const doree = ambientTint(PLEIN_DE_L_OR)
     const ombre = 0x0a0a0a // un creux d'ombre, presque noir
     const chaleur = (f: typeof melange): number => f(ombre, doree, ROUGE) - f(ombre, doree, BLEU)
     // Sous le mélange, l'ombre virait à l'orange comme le reste — le filtre posé sur l'objectif.
@@ -450,15 +460,72 @@ describe('sunDirection — l’arc est continu là où il éclaire', () => {
     expect(pire, `saut le plus visible à ${quand.toFixed(2)}h`).toBeLessThan(0.1)
   })
 
-  it('l’arc couvre la journée que `daylight` décrit — et rien de plus', () => {
-    // La prémisse du correctif, affirmée à part : les deux courbes sont à la MÊME heure. Un
-    // soleil qui se coucherait avant que le jour ne s'éteigne rouvrirait le défaut à l'identique.
-    expect(sunDirection(4.9).x).toBe(0) // avant le lever : pas de soleil…
-    expect(daylight(4.9)).toBe(0) //                       …et pas de jour non plus
-    expect(sunDirection(21.1).x).toBe(0) // après le coucher : pas de soleil…
-    expect(daylight(21.1)).toBeLessThan(0.05) //             …et le jour n'est plus qu'un reste
-    expect(sunDirection(18).x).toBeLessThan(0) // 18 h : le soleil est encore là, à l'OUEST
-    expect(daylight(18)).toBeCloseTo(0.7, 5) //   et le jour vaut 0,70 — c'était tout le défaut
+  it('le soleil ne brille jamais sur un ciel noir, et le crépuscule peint vaut UNE heure canonique', () => {
+    // La prémisse du correctif du 2026-08-25 : les deux courbes sont à la MÊME heure. Un soleil
+    // qui se coucherait avant que le jour ne s'éteigne rouvrirait le défaut à l'identique.
+    //
+    // ⚠ **CETTE GARDE A CHANGÉ DE FORME DEUX FOIS LE MÊME JOUR (2026-10-09), ET LA SECONDE EST
+    // UNE LOI PLUS FORTE, PAS PLUS FAIBLE.** Écrite d'abord en quatre heures en dur, ⓑ l'a fait
+    // rougir à tort (elle exigeait l'ANCIENNE borne). Je l'ai réécrite en « arc non nul ⇔ jour non
+    // nul », balayée — et le soleil réaliste l'a rendue FAUSSE PAR CONSTRUCTION : sa composante
+    // est-ouest est géométrique et continue, donc non nulle la nuit aussi. **Un support de `x` ne
+    // dit plus rien de l'heure** ; ce qui le dit, c'est `alt`, la sortie neuve.
+    //
+    // La loi, désormais, se lit en deux temps et les deux sont EXACTS :
+    //   ① `alt > 0 ⇒ daylight > 0` — le soleil n'éclaire jamais un ciel que la DA peint noir.
+    //   ② le support de `alt > 0` est **exactement le canonique [6 ; 21]**, à TOUTE saison, parce
+    //      que `heureSolaire` y épingle le lever et le coucher ; `daylight` courant de 5 à 22, le
+    //      crépuscule PEINT vaut exactement **une heure canonique à chaque bout**. C'est la
+    //      synchronisation que l'ancienne garde approchait, et elle devient une égalité.
+    const PAS = 0.001
+    const borne = (pred: (h: number) => boolean): [number, number] => {
+      let a = NaN
+      let b = NaN
+      for (let h = 0; h < 24; h += PAS) {
+        if (!pred(h)) continue
+        if (Number.isNaN(a)) a = h
+        b = h
+      }
+      return [a, b]
+    }
+
+    // ① L'IMPLICATION, balayée sur les quatre saisons ET sur le cadran — une seule part de jour
+    //    ne prouverait rien d'un soleil qui a désormais un terme de saison.
+    const PARTS = [PART_CANONIQUE, ...[15, 45, 75, 105].map((j) => partDeJour(dayTicksPourJour(j)))]
+    for (const part of PARTS) {
+      const fautes: string[] = []
+      let dedans = 0
+      let dehors = 0
+      for (let h = 0; h < 24; h += 0.01) {
+        const leve = sunDirection_(h as HeureSolaire, part).alt > 0
+        const jour = daylight(h) > 0
+        if (leve && !jour) fautes.push(`${h.toFixed(2)}h : alt ${sunDirection_(h as HeureSolaire, part).alt.toFixed(3)}, jour 0`)
+        if (leve) dedans++
+        else dehors++
+      }
+      expect(fautes.slice(0, 5), `part ${(part as number).toFixed(4)}`).toEqual([])
+      // Non-vacuité des DEUX côtés : sans ça, un soleil jamais levé passerait.
+      expect(dedans).toBeGreaterThan(1000)
+      expect(dehors).toBeGreaterThan(500)
+    }
+
+    // ② LE SUPPORT, À LA MILLI-HEURE, ET LA MARGE DE CRÉPUSCULE QUI EN DÉCOULE.
+    const [jourA, jourB] = borne((h) => daylight(h) > 0)
+    expect(jourA).toBeCloseTo(5, 3)
+    expect(jourB).toBeCloseTo(22 - PAS, 3)
+    for (const part of PARTS) {
+      const [a, b] = borne((h) => sunDirection_(h as HeureSolaire, part).alt > 0)
+      expect(a, `lever, part ${(part as number).toFixed(4)}`).toBeCloseTo(6, 3)
+      expect(b, `coucher, part ${(part as number).toFixed(4)}`).toBeCloseTo(21 - PAS, 3)
+      // Le crépuscule peint : une heure canonique pleine de chaque côté, aux quatre saisons.
+      expect(a - jourA).toBeCloseTo(1, 2)
+      expect(jourB - b).toBeCloseTo(1, 2)
+    }
+
+    // Et le SENS, qui est ce que le défaut de 2026-08-25 avait inversé : au milieu de
+    // l'après-midi le soleil est encore là, à l'OUEST, et le jour est encore franc.
+    for (const part of PARTS) expect(sunDirection_(18 as HeureSolaire, part).x).toBeLessThan(0)
+    expect(daylight(18)).toBeGreaterThan(0.5)
   })
 })
 
@@ -804,7 +871,7 @@ describe('l’heure solaire — le lever et le coucher du rendu sont ceux de la 
       const l = lever(jour)
       const porte = (h: number): number => {
         const solaire = heureSolaire(h, dt, l)
-        return sunDirection_(solaire).x * daylight_(solaire)
+        return sunDirection_(solaire, partDeJour(dt)).x * daylight_(solaire)
       }
       let prec = porte(0)
       for (let h = 0.01; h < 24; h += 0.01) {

@@ -19,7 +19,7 @@ import { avecCeQuOnPorte, estNonTrivial, pixelDuCorps, type CielDeLHeure, type L
 import { GI } from './reglages'
 import { ambianteDeLHeure, luminanceDuVoile, rgbDeCouleur } from './corps-ref'
 import { ambientTint, daylight, heureCanonique, lueurDeLune, multiplicateurParCanal, voileDeNuit } from '../lighting'
-import { hauteurDeCrete, ligneDuPied, type CorpsPose, type Normale } from './sol-du-corps'
+import { expositionAuFeu, hauteurDeCrete, ligneDuPied, suitLaRegleDesFaces, type CorpsPose, type Normale } from './sol-du-corps'
 
 const M = DEMI_BANDE_TUILES * TILE_PX
 const HAUT_DU_CADRE = MUR_HT + TILE_PX + M
@@ -617,4 +617,180 @@ describe('B-R13d — le plancher de ce qu’on porte, sous le pixel du corps', (
     expect(ws).not.toContain('nuitDuPorte')
   })
 
+})
+
+/**
+ * ═══ R2 — UNE CIME NE PREND AUCUNE OMBRE D'ASTRE (2026-10-09) ═══
+ *
+ * LE DÉFAUT. Un houppier est posé en branche E (`arete: 0`, `snapshot-view.ts`) : chaque pixel lit
+ * le champ à LA LIGNE DU PIED DE SON TRONC, quatre-vingt-seize pixels plus bas — et `ombreDesCartes`
+ * (LG-R8) projette la silhouette de ce même arbre AUTOUR DE CE MÊME PIED. À midi la carte couvre
+ * son propre pied : la cime se lisait DANS SA PROPRE OMBRE.
+ *
+ * ⚠ **CE QUI FERAIT ROUGIR CES GARDES, ÉNONCÉ AVANT DE LES ÉCRIRE.** La ① est le CONTRÔLE POSITIF
+ * et c'est elle qui porte tout : sans le drapeau, deux normales dont les facteurs d'astre diffèrent
+ * (1,000 et 1,594) doivent rendre EXACTEMENT le même pixel — si cet écart n'était pas nul, il n'y
+ * aurait pas de défaut et le correctif serait inutile. La ③ est le contrôle d'inertie : hors carte,
+ * le drapeau ne doit rien changer AU BIT, sinon il touche autre chose que `S`.
+ *
+ * ⚠ **ET LE FEU EST RETIRÉ DU MONTAGE, PARCE QUE MA PREMIÈRE VERSION NE POUVAIT PAS ÉCHOUER** : avec
+ * la source de feu de ce fichier, l'écart entre les deux normales valait 0,382663 sous la carte
+ * contre 0,308129 hors carte — plus GRAND, et jamais nul. La part du feu n'est pas gatée par `S`
+ * (`pFeu = sigma × df`) : elle masquait entièrement la perte de modelé qu'on prétend mesurer.
+ */
+describe('R2 — une cime ne lit pas l’ombre d’astre du sol', () => {
+  /** Le houppier d'un arbre, tel que `snapshot-view.ts` le pose : branche E, sans face ni dessus. */
+  const houppier = (cime: boolean): CorpsPose => ({ x: 400, y: LIGNE, arete: 0, lift: 0, ...(cime ? { cime: true as const } : {}) })
+  /** Sans feu : `S` ne gate QUE l'astre, donc c'est le seul montage où la perte de modelé se voit. */
+  const SANS_FEU: SourcesDuPixel = { astre: SOURCES.astre, feu: null }
+  const VERS_ASTRE: Normale = { x: 0.6, y: -0.6, z: 0.53 }
+  const lu = (cime: boolean, ombre: number, n: Normale): PixelDuCorps =>
+    pixelDuCorps(houppier(cime), 400, LIGNE - 96, champ({ ombre }).lire, CIEL, SANS_FEU, TEXEL, n)
+
+  it('① LE CONTRÔLE POSITIF — sous sa propre carte et SANS le drapeau, la cime est plate AU BIT', () => {
+    const plat = lu(false, 1, PLAT)
+    const astre = lu(false, 1, VERS_ASTRE)
+    // PRÉMISSE : les deux normales ne reçoivent PAS la même part d'astre. Sans ça, l'égalité qui
+    // suit serait vraie pour une raison qui n'a rien à voir avec l'ombre.
+    expect(plat.fAstre).toBeCloseTo(1, 6)
+    expect(astre.fAstre).toBeGreaterThan(1.5)
+    // LE DÉFAUT, GELÉ : deux faces d'orientation différente, le même pixel, à la virgule.
+    expect(astre.rgb).toEqual(plat.rgb)
+    expect(plat.rgb[0]).toBeCloseTo(0.131099, 6)
+  })
+
+  it('② LA LOI — avec le drapeau, le modelé revient et le pixel est celui d’une cime au soleil', () => {
+    const plat = lu(true, 1, PLAT)
+    const astre = lu(true, 1, VERS_ASTRE)
+    expect(astre.rgb).not.toEqual(plat.rgb)
+    // Les nombres sont GELÉS ici, et non recalculés depuis `partsDuCorps` : une garde qui refait le
+    // calcul de la chose qu'elle juge est verte quel que soit ce calcul.
+    expect(plat.rgb[0]).toBeCloseTo(0.183, 6)
+    expect(astre.rgb[0]).toBeCloseTo(0.21854, 5)
+    // ET C'EST BIEN « AUCUNE OMBRE », pas « moins d'ombre » : identique AU BIT au champ sans carte.
+    expect(plat.rgb).toEqual(lu(true, 0, PLAT).rgb)
+    expect(astre.rgb).toEqual(lu(true, 0, VERS_ASTRE).rgb)
+  })
+
+  it('③ LE CONTRÔLE D’INERTIE — hors carte, le drapeau ne change RIEN au bit', () => {
+    for (const n of [PLAT, VERS_ASTRE, VERS_LE_SUD]) {
+      expect(lu(true, 0, n).rgb).toEqual(lu(false, 0, n).rgb)
+      expect(lu(true, 0, n).fAstre).toBe(lu(false, 0, n).fAstre)
+      expect(lu(true, 0, n).fFeu).toBe(lu(false, 0, n).fFeu)
+    }
+  })
+
+  /**
+   * ⚠ **GARDE DE SOURCE — PARCE QUE LA LOI A DEUX LECTEURS ET QUE L'UN EST DU GLSL.** `tsc` ne lit
+   * pas une chaîne de shader, et une divergence entre le fragment et son miroir CPU est exactement
+   * ce que LG-A8 existe pour interdire. On tient donc les deux textes face à face, plus les deux
+   * sites qui ALIMENTENT le drapeau — la leçon de `syncActor` : un oracle pur prouve qu'une loi est
+   * juste, jamais qu'elle arrive.
+   */
+  it('④ LE FRAGMENT, LE MIROIR ET LES DEUX SITES D’ALIMENTATION DISENT LA MÊME LOI', () => {
+    const gpu = readFileSync(new URL('./corps-gpu.ts', import.meta.url), 'utf8')
+    const vue = readFileSync(new URL('../../scenes/world/snapshot-view.ts', import.meta.url), 'utf8')
+    // Le fragment : `cime` décodé AVANT `sol` (son poids est le plus fort), et la porte sur `S`.
+    expect(gpu.indexOf('float cime = floor(drapeaux / 64.0)')).toBeGreaterThan(0)
+    expect(gpu.indexOf('float cime = floor(drapeaux / 64.0)')).toBeLessThan(gpu.indexOf('float sol = floor(drapeaux / 8.0)'))
+    expect(gpu).toContain('sousLeCiel || cime > 0.5 ? 0.0 : texture2D(uGiS, uvP).g')
+    // La porte ne doit toucher QUE `S` : les deux autres lectures du champ restent nues.
+    expect(gpu).toContain('sousLeCiel ? vec3(0.0) : texture2D(uGiF, uvP).rgb')
+    // ⚠ LE SAC EST POOLÉ (`armerLeCorps` rend celui qui existe) : l'écriture est INCONDITIONNELLE,
+    // sinon le 1 d'un houppier reste sur la pierre que le pool servira ensuite.
+    expect(vue).toContain('sac.cime = corps.cime === true ? 1 : 0')
+    // UN SEUL corps est une cime, et ce n'est PAS le fût : le pied d'un tronc est vraiment sur le
+    // sol, son ombre propre est juste. Ce compte est la clause d'EXHAUSTIVITÉ.
+    expect(vue.match(/cime: true/g)).toHaveLength(1)
+    expect(vue).toContain('arete: 0, lift: py - pyPied, cime: true')
+    const fut = vue.slice(vue.indexOf('isTree && !growing ? { fut: true }'))
+    expect(fut.slice(0, 400)).not.toContain('cime: true')
+  })
+
+  it('⑤ LA PRÉMISSE — une cime est en branche E, donc la SECONDE lecture de `uGiS` lui est INATTEIGNABLE', () => {
+    /**
+     * ⚠ **POURQUOI CETTE CLAUSE EXISTE** : le fragment lit `uGiS` à **deux** endroits, et ②ter n'en
+     * garde qu'un. Si la seconde lecture était atteignable pour un houppier, le correctif serait
+     * incomplet — la cime reprendrait l'ombre d'astre par la porte d'à côté, et les gardes ①-③,
+     * qui passent par l'oracle CPU, n'en verraient rien.
+     *
+     * Elle n'est PAS atteignable, et ce n'est pas une opinion : la seconde lecture vit dans
+     * `else if (expo >= -0.5)`, et la pose d'une cime force `expo = −1`. On le PROUVE par la
+     * chaîne entière plutôt que par un `grep` : la pose telle que la vue l'écrit → les deux
+     * prédicats de `sol-du-corps` → la place de la lecture dans la source du fragment.
+     */
+    const vue = readFileSync(new URL('../../scenes/world/snapshot-view.ts', import.meta.url), 'utf8')
+    const gpu = readFileSync(new URL('./corps-gpu.ts', import.meta.url), 'utf8')
+
+    // ⓐ LA POSE, RELUE DANS LA VUE — pour que la clause suive une dérive du site d'alimentation
+    // au lieu de rester verte sur une pose inventée ici. Ni `fut` ni `socle` : les deux premières
+    // portes de `suitLaRegleDesFaces` les prennent avant même de regarder l'arête.
+    const site = vue.slice(vue.indexOf('cime: true') - 200, vue.indexOf('cime: true') + 12)
+    expect(site).toContain('arete: 0')
+    expect(site).not.toContain('fut:')
+    expect(site).not.toContain('socle:')
+
+    // ⓑ LES DEUX PRÉDICATS, JOUÉS : pas de face, donc aucune exposition — c'est `expo = −1`.
+    const cime = houppier(true)
+    expect(suitLaRegleDesFaces(cime)).toBe(false)
+    expect(expositionAuFeu(cime, { x: 400, y: LIGNE + 32 })).toBeNull()
+    // LE CONTRÔLE POSITIF, SUR LA MÊME POSE : un fût, lui, est régi et S'EXPOSE. Sans lui, ⓑ
+    // serait verte même si ces deux fonctions rendaient toujours `false`/`null`.
+    const tronc: CorpsPose = { ...cime, fut: true }
+    expect(suitLaRegleDesFaces(tronc)).toBe(true)
+    expect(expositionAuFeu(tronc, { x: 400, y: LIGNE + 32 })).not.toBeNull()
+
+    // ⓒ LA PLACE DE LA LECTURE DANS LE FRAGMENT : la seconde est bien DANS la branche gardée par
+    // `expo >= -0.5`, que ⓑ rend inatteignable. Le compte est la clause d'exhaustivité : s'il
+    // apparaissait une troisième lecture, cette garde rougirait au lieu de l'ignorer.
+    const lectures = gpu.match(/texture2D\(uGiS,/g) ?? []
+    expect(lectures).toHaveLength(2)
+    const garde = gpu.indexOf('} else if (expo >= -0.5) {')
+    expect(garde).toBeGreaterThan(gpu.indexOf('cime > 0.5 ? 0.0 : texture2D(uGiS, uvP).g'))
+    expect(gpu.indexOf('texture2D(uGiS, uvPied).g')).toBeGreaterThan(garde)
+  })
+})
+
+/**
+ * ═══ LE SAC EST ÉCRIT EN ENTIER — LA GARDE QUI MANQUAIT (2026-10-09) ═══
+ *
+ * ⚠ **ELLE NAÎT D'UNE RÉGRESSION QUE J'AI ÉCRITE ET QUE RIEN N'A VUE.** En posant `sac.cime` dans
+ * `poserLeCorps`, j'ai remplacé la ligne `sac.soi = corps.soi ?? 0` au lieu de m'ajouter après
+ * elle : le plancher de ce qu'on porte (B-R13d) ne montait plus AU SHADER. `tsc` ne pouvait rien
+ * dire — tous les champs de `CorpsPourLeShader` sont des `number` mutables avec un défaut à 0 —, et
+ * la suite du client est restée verte — et structurellement, pas par chance : les gardes qui
+ * éprouvent ce plancher appellent l'oracle CPU (`pixelDuCorps`) en lui donnant `soi` à la main,
+ * et AUCUNE ne traverse `poserLeCorps`, c'est-à-dire le raccord où le champ se perdait.
+ * ⚠ Le compte « 1 872 » que je citais ici n'avait jamais été relevé : la suite en porte **1 884**
+ * au run du 2026-10-09. Un compte qu'on n'a pas mesuré n'ajoute rien à l'argument.
+ *
+ * LA CAUSE N'EST PAS L'INATTENTION, C'EST LA FORME : `armerLeCorps` rend le sac **existant** d'un
+ * sprite poolé, donc `poserLeCorps` doit réécrire **tous** ses champs à chaque image, et un champ
+ * oublié n'est pas « à zéro » — il garde la valeur du corps précédent. Une recopie champ par champ
+ * sans clause d'exhaustivité est la même classe de défaut que le neuvième paramètre de `syncActor`.
+ *
+ * ⚠ CE QUI LA FERAIT ROUGIR : retirer n'importe quelle ligne `sac.X =` de `poserLeCorps`, ou
+ * ajouter un champ à `CORPS_NEUTRE` sans l'alimenter. Les deux contrôles de non-vacuité disent
+ * d'abord qu'on a bien trouvé les deux textes et un nombre plausible de champs.
+ */
+describe('la recopie pose → sac est EXHAUSTIVE', () => {
+  it('`poserLeCorps` écrit chaque champ de `CorpsPourLeShader`, sans condition', () => {
+    const noeud = readFileSync(new URL('./noeud-corps.ts', import.meta.url), 'utf8')
+    const vue = readFileSync(new URL('../../scenes/world/snapshot-view.ts', import.meta.url), 'utf8')
+    // Les champs se lisent sur `CORPS_NEUTRE`, qui est LA liste par construction : le sac neuf en
+    // est une copie (`{ ...CORPS_NEUTRE }`), donc un champ absent d'ici n'existe pas.
+    const neutre = noeud.slice(noeud.indexOf('const CORPS_NEUTRE'))
+    const corps = neutre.slice(neutre.indexOf('{'), neutre.indexOf('}') + 1)
+    const champs = [...corps.matchAll(/(\w+):/g)].map((m) => m[1])
+    expect(champs.length).toBeGreaterThanOrEqual(11) // non-vacuité : on a bien lu un objet
+    expect(champs).toContain('soi') // …et le champ même dont l'oubli a motivé cette garde
+    expect(champs).toContain('cime')
+
+    const i = vue.indexOf('private poserLeCorps(')
+    expect(i).toBeGreaterThan(0) // non-vacuité : la méthode existe toujours sous ce nom
+    const fin = vue.indexOf('\n  }\n', i)
+    const bloc = vue.slice(i, fin)
+    const manquants = champs.filter((c) => !bloc.includes(`sac.${c} =`))
+    expect(manquants).toEqual([])
+  })
 })

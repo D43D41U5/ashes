@@ -27,7 +27,7 @@
 import type Phaser from 'phaser'
 import { estFoyer, fireStateAt } from '@ashes/sim'
 import type { SnapshotMessage, Structure } from '@ashes/sim'
-import { fireGlow, sunDirection, moonDirection, daylight, lueurDeLune, heureCanonique, lerpColor, ambientTint, multiplicateurDuVoile, voileDeNuit, LUNE_PLEINE_JOUR } from '../../render/lighting'
+import { fireGlow, sunDirection, moonDirection, daylight, lueurDeLune, heureCanonique, lerpColor, ambientTint, multiplicateurDuVoile, voileDeNuit, LUNE_PLEINE_JOUR, type PartDeJour } from '../../render/lighting'
 import type { HeureSolaire } from '../../render/lighting'
 import { axesFeu } from '../../render/feu-variante'
 import { TORCHE_LIGHT_TILES, forceDeTorche } from '../../render/torche'
@@ -138,15 +138,25 @@ export function intensitesDuCiel(day: number, lueur = 1): { soleil: number; lune
  *     voile du sol, et la lune s'éteint PAR CONSTRUCTION à son lever et à son coucher (`alt` y
  *     vaut 0). L'ombre balaie d'un bord à l'autre en une heure de jeu au lieu de sauter.
  *
- * MESURÉ (balayage 0,005 h × toute la lunaison) : `PIC_SOLEIL` 0,72258 et `PIC_LUNE` 0,16000 —
+ * MESURÉ (balayage 0,005 h × toute la lunaison) : `PIC_LUNE` 0,16000, et `PIC_SOLEIL` **0,91676
+ * depuis le 2026-10-09** (0,72258 était le pic de la loi d'avant — voir sa définition) —
  * d'où la renormalisation, pour qu'une amplitude d'appelant se lise « pixels au maximum ATTEINT »
- * et non « pixels jamais atteints ». Saut résiduel maximal **0,0958** sur l'axe des heures (à
- * 21 h, la borne d'arc que `sunDirection` documente déjà à `daylight` = 0,05) et **0,00041** sur
- * l'axe du JOUR : à l'amplitude livrée, moins d'un pixel, arrondi à zéro.
+ * et non « pixels jamais atteints ».
  *
- * PAS DE COMPOSANTE EN Y, et ce n'est pas un oubli : le soleil du jeu est un POINT au nord de la
- * caméra (`SUN_NORTH`/`SUN_Z`), d'élévation FIXE — seul son azimut balaie. La descente de la
- * flaque (`SOCLE_OMBRE_DESCENTE`) est donc constante par construction.
+ * ⚠ **LE « SAUT RÉSIDUEL DE 0,0958 À 21 H » A DISPARU AVEC SA CAUSE** (2026-10-09) : c'était la BORNE
+ * D'ARC du cosinus paramétrique, et le soleil réel n'en a plus — il est continu au travers du
+ * crépuscule. Pire saut de la journée désormais **0,00026 à 0,00033** selon la saison, aux coins de
+ * keyframe de `daylight`. Reste **0,00041** sur l'axe du JOUR : moins d'un pixel, arrondi à zéro.
+ *
+ * PAS DE COMPOSANTE EN Y DANS LA DÉRIVE, et ce n'est pas un oubli : le soleil du jeu est posé comme
+ * un POINT au nord de la caméra à une hauteur FIXE (`SUN_NORTH`/`SUN_Z`), donc la descente de la
+ * flaque (`SOCLE_OMBRE_DESCENTE`) est constante par construction.
+ * ⚠ **`sunDirection` rend désormais une élévation (`alt`), et CETTE COUCHE NE LA LIT PAS** — c'est
+ * délibéré et c'est la limite nommée : le vrai soleil monte de 18,7° au midi de Grand Froid à 65,6°
+ * au midi d'Ardeur (ℓ/H de 2,95 à 0,45), là où `SUN_Z`/`SUN_NORTH` le tiennent à 21,2° — **une
+ * longueur d'ombre d'hiver toute l'année**. La lui donner rouvrirait LG-R15, les deux pentes de
+ * `socle-mineral` (gardées sur `atan(SUN_Z / SUN_NORTH)`), `SOCLE_OMBRE_DESCENTE`, le vecteur
+ * d'ombre des corps et le biais rasant de l'eau : **c'est une décision d'Alexis, pas encore prise.**
  */
 /**
  * ═══ LA FORCE DE L'OMBRE — ce qui la fait DISPARAÎTRE au crépuscule ═══
@@ -176,11 +186,28 @@ export function forceDeLOmbre(hour: HeureSolaire, jourLune: number): number {
   return Math.max(0, Math.min(1, Math.max(soleil / SUN_INTENSITY, lune / MOON_INTENSITY)))
 }
 
-const PIC_SOLEIL = 0.72258
+/**
+ * ⚠ **RELEVÉ DE NOUVEAU LE 2026-10-09, et le précédent (0,72258) était le pic de la loi d'AVANT.**
+ * Depuis que le soleil est celui de Paris (`lighting.sunDirection`), sa composante est-ouest a une
+ * amplitude SAISONNIÈRE : le produit `|x · soleil|` culmine à **0,91676** au solstice d'Ardeur,
+ * ×1,2687 de l'ancien. **Laissé à 0,72258, la dérive écrêteràit à plat à ±1** pendant 18,8 % de la
+ * journée aux équinoxes et 24,0 % en Ardeur — un quart du jour avec l'ombre des socles et des
+ * falaises collée d'un côté au lieu de glisser (MESURÉ, balayage 0,005 h).
+ *
+ * **C'EST LE PIC ANNUEL, PAS UN PIC PAR SAISON, et c'est un choix** : un pic par saison ferait
+ * atteindre ±1 à chaque saison et **effacerait la signature saisonnière** que le soleil réel vient
+ * d'apporter. Au Grand Froid le pic ne vaut que 0,56933, donc la dérive d'hiver ne va délibérément
+ * **pas** au bout : un soleil bas balaie moins. L'amplitude d'un appelant se lit donc « pixels au
+ * maximum ATTEINT DANS L'ANNÉE ».
+ *
+ * ⚠ Il ne se périmera plus en silence : une garde le RE-MESURE sur la vraie chaîne et exige
+ * l'égalité (`dynamic-lighting.test.ts`). `PIC_LUNE` ne bouge pas — la lune garde son arc au bit.
+ */
+export const PIC_SOLEIL = 0.91676
 const PIC_LUNE = 0.16
-export function deriveDOmbre(hour: HeureSolaire, jourLune: number): number {
+export function deriveDOmbre(hour: HeureSolaire, part: PartDeJour, jourLune: number): number {
   const { soleil, lune } = intensitesDuCiel(daylight(hour), lueurDeLune(hour, jourLune))
-  const astre = (sunDirection(hour).x * soleil) / PIC_SOLEIL + (moonDirection(hour, jourLune).x * lune) / PIC_LUNE
+  const astre = (sunDirection(hour, part).x * soleil) / PIC_SOLEIL + (moonDirection(hour, jourLune).x * lune) / PIC_LUNE
   return Math.max(-1, Math.min(1, -astre))
 }
 const AMBIENT_DAY = 0xb6ad9c // ambiante multiplicative de jour (gris chaud)
@@ -439,6 +466,9 @@ export class DynamicLighting {
     structures: Structure[],
     villages: SnapshotMessage['villages'],
     hour: HeureSolaire,
+    /** La part de jour du cycle — le SECOND terme de l'horloge depuis que le soleil est celui de
+     *  Paris (2026-10-09) : sans elle sa course serait la même aux quatre saisons. */
+    part: PartDeJour,
     day: number,
     now: number,
     /** Le jour de saison AVEC ses décimales (`seasonDay + jourFrac`) — la phase de la lune.
@@ -487,7 +517,7 @@ export class DynamicLighting {
     // LE SOLEIL — point lointain dans la direction du soleil, centré sur la vue.
     const v = cam.worldView
     const cx = v.x + v.width / 2, cy = v.y + v.height / 2
-    const dir = sunDirection(hour) // x est+ (aube) → ouest (couchant) : le balayage droite→gauche
+    const dir = sunDirection(hour, part) // x est+ (matin) → ouest (soir), au midi SOLAIRE près
     this.sun.x = cx + dir.x * SUN_FAR
     this.sun.y = cy - SUN_NORTH // EN HAUT : la source reste au nord de la vue (haut de l'écran)
     this.sun.intensity = sousTerre ? 0 : intensitesDuCiel(day).soleil

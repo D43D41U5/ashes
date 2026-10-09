@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { ambientTint as ambientTint_, clarteDeLune, daylight as daylight_, lueurDeLune as lueurDeLune_, moonDirection, multiplicateurDuVoile, sunDirection as sunDirection_, voileDeNuit, LUNAISON_JOURS, LUNE_PLEINE_JOUR, heureCanonique } from '../../render/lighting'
+import { ambientTint as ambientTint_, clarteDeLune, daylight as daylight_, lueurDeLune as lueurDeLune_, moonDirection, multiplicateurDuVoile, sunDirection as sunDirection_, voileDeNuit, LUNAISON_JOURS, LUNE_PLEINE_JOUR, heureCanonique, PART_CANONIQUE } from '../../render/lighting'
 
 /**
  * LES COURBES DE CE FICHIER S'ÉPROUVENT SUR LE CADRAN CANONIQUE — le jour d'équinoxe, celui
@@ -10,8 +10,8 @@ import { ambientTint as ambientTint_, clarteDeLune, daylight as daylight_, lueur
 const lueurDeLune = (h: number, jour: number): number => lueurDeLune_(heureCanonique(h), jour)
 const ambientTint = (h: number): { color: number; alpha: number } => ambientTint_(heureCanonique(h))
 const daylight = (h: number): number => daylight_(heureCanonique(h))
-const deriveDOmbre = (h: number, jour: number): number => deriveDOmbre_(heureCanonique(h), jour)
-const sunDirection = (h: number): { x: number; y: number } => sunDirection_(heureCanonique(h))
+const deriveDOmbre = (h: number, jour: number): number => deriveDOmbre_(heureCanonique(h), PART_CANONIQUE, jour)
+const sunDirection = (h: number): { x: number; y: number; alt: number } => sunDirection_(heureCanonique(h), PART_CANONIQUE)
 
 import { ambianteDuCiel, deriveDOmbre as deriveDOmbre_, intensitesDuCiel, intensiteDuFeu, facteurDuFeu, BRAISES_FACTEUR } from './dynamic-lighting'
 import { addItems, makeInventory, FIRE, type Inventory, type Structure } from '@ashes/sim'
@@ -48,11 +48,25 @@ describe('les deux sources du ciel', () => {
     expect(fautes).toEqual([])
   })
 
-  it('20 h — l’heure exacte du défaut : le soleil repasse devant', () => {
-    const { soleil, lune } = intensitesDuCiel(daylight(20))
-    expect(daylight(20)).toBeCloseTo(0.2, 5) // la clé de courbe qui rendait le défaut net
+  it('l’heure exacte du défaut — là où le jour ne vaut plus que 0,20 : le soleil repasse devant', () => {
+    // ⚠ **CETTE GARDE ÉTAIT ANCRÉE SUR L'HORLOGE (20 h) ET ⓑ L'A FAIT ROUGIR** (2026-10-09 ;
+    // relevé 0,425 pour 0,20 attendu) : le crépuscule peint est ancré sur le coucher, donc la clé
+    // qui valait 0,20 a déménagé. **Ce qui portait le défaut n'était pas l'heure, c'était la
+    // VALEUR** — un jour faible mais non nul, là où la lune pouvait passer devant le soleil. On
+    // ancre donc sur la valeur et on retrouve son heure par balayage : la garde ne se périmera
+    // plus au prochain déplacement de la table, et elle dit enfin ce qu'elle voulait dire.
+    let h = NaN
+    for (let x = 15; x < 24; x += 0.001) {
+      if (daylight(x) <= 0.2) {
+        h = x
+        break
+      }
+    }
+    expect(Number.isFinite(h)).toBe(true)
+    expect(daylight(h)).toBeCloseTo(0.2, 3)
+    const { soleil, lune } = intensitesDuCiel(daylight(h))
     expect(soleil).toBeGreaterThan(lune)
-    expect(lune).toBe(0) // à 20 h il fait encore jour : la lune n'est pas levée
+    expect(lune).toBe(0) // à cette heure il fait encore jour : la lune n'est pas levée
   })
 
   it('la LUNE existe quand même — sinon la nuit tombe à l’aplat noir', () => {
@@ -338,9 +352,16 @@ describe('deriveDOmbre — la flaque glisse, elle ne saute pas', () => {
     const fautes = []
     for (const jour of JOURS) {
       for (let h = 0; h < 24; h += 0.02) {
-        const { lune } = intensitesDuCiel(daylight(h), lueurDeLune(h, jour))
+        const { soleil, lune } = intensitesDuCiel(daylight(h), lueurDeLune(h, jour))
         const sx = sunDirection(h).x
-        if (lune > 0 || sx === 0) continue // relais lunaire, ou soleil sous l'horizon : hors sujet
+        // ⚠ **« SOLEIL SOUS L'HORIZON » SE LIT SUR SON INTENSITÉ, PLUS SUR `x === 0` (2026-10-09).**
+        // Le soleil est celui de Paris depuis ce jour-là : sa composante est-ouest est GÉOMÉTRIQUE
+        // et ne s'annule plus qu'au MIDI SOLAIRE — elle court aussi la nuit, où elle ne décrit
+        // qu'une position, pas une lumière. Tester `x === 0` ne disait donc plus « il ne fait pas
+        // jour » : à minuit la dérive vaut 0 pendant que `x` vaut encore quelque chose, et la garde
+        // rougissait sur une nuit noire. C'est `soleil` qui porte le sens — la même grandeur que
+        // `deriveDOmbre` pondère.
+        if (lune > 0 || soleil === 0 || sx === 0) continue // relais lunaire, nuit, ou midi : hors sujet
         const d = deriveDOmbre(h, jour)
         if (Math.sign(d) !== -Math.sign(sx)) fautes.push(`${h.toFixed(2)}h lune ${jour} : soleil ${sx.toFixed(2)}, dérive ${d.toFixed(3)}`)
       }

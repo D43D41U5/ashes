@@ -159,11 +159,16 @@ export const VARYINGS_CORPS = {
 export const SOL_MAX = 4
 
 /**
- * Les quatre drapeaux d'un corps dans UN flottant : `dresse + 2·ruban + 4·ciel + 8·sol`. Exact en
- * float32 (entiers sous 64), et défait par `depaqueterDrapeaux` — le miroir de ce que le fragment fait.
+ * Les drapeaux d'un corps dans UN flottant : `dresse + 2·ruban + 4·ciel + 8·sol + 64·cime`. Exact en
+ * float32, et défait par `depaqueterDrapeaux` — le miroir de ce que le fragment fait.
+ *
+ * ⚠ **LE POIDS DE `cime` EST 64 ET NON 16.** `sol` n'est PAS un bit : il court dans `0…SOL_MAX`
+ * (= 4), donc `8·sol` monte jusqu'à **32** et occupe à lui seul les poids 8, 16 et 32. Le premier
+ * poids libre au-dessus est 64 ; le maximum empaqueté vaut 103, très loin de ce qu'un float32
+ * représente exactement. J'avais d'abord écrit 16 en lisant `sol` comme un drapeau.
  */
-export function empaqueterDrapeaux(dresse: number, ruban: number, ciel: number, sol: number): number {
-  return dresse + 2 * ruban + 4 * ciel + 8 * sol
+export function empaqueterDrapeaux(dresse: number, ruban: number, ciel: number, sol: number, cime: number): number {
+  return dresse + 2 * ruban + 4 * ciel + 8 * sol + 64 * cime
 }
 
 /**
@@ -183,15 +188,17 @@ export function empaqueterTeinte(rgb: number, a: number): number {
  * d'abord — un varying constant sur les quatre sommets revient à un ulp près —, puis les bits par
  * `floor` du plus fort au plus faible, exactement dans l'ordre du shader.
  */
-export function depaqueterDrapeaux(d: number): { dresse: number; ruban: number; ciel: number; sol: number } {
+export function depaqueterDrapeaux(d: number): { dresse: number; ruban: number; ciel: number; sol: number; cime: number } {
   let r = Math.floor(d + 0.5)
+  const cime = Math.floor(r / 64)
+  r -= 64 * cime
   const sol = Math.floor(r / 8)
   r -= 8 * sol
   const ciel = Math.floor(r / 4)
   r -= 4 * ciel
   const ruban = Math.floor(r / 2)
   const dresse = r - 2 * ruban
-  return { dresse, ruban, ciel, sol }
+  return { dresse, ruban, ciel, sol, cime }
 }
 
 /**
@@ -413,6 +420,10 @@ vec4 appliquerGi(vec4 fragColor, vec3 normalPhaser) {
   // LE PLANCHER DE CE QU'ON PORTE (B-R13d) — \`clarteDeCeQuOnPorte\` de /sim, 0 pour tout corps
   // qui ne porte rien. Le quatrième composant d'\`inGiB\` était un \`0\` de bourrage.
   float soi = outGiB.w;
+  // UNE CIME NE PREND AUCUNE OMBRE D'ASTRE (R2, 2026-10-09) — décodée en PREMIER, son poids
+  // étant le plus fort (64 : \`sol\` occupe 8, 16 et 32 à lui seul, cf. \`empaqueterDrapeaux\`).
+  float cime = floor(drapeaux / 64.0);
+  drapeaux -= 64.0 * cime;
   float sol = floor(drapeaux / 8.0);
   drapeaux -= 8.0 * sol;
   float ciel = floor(drapeaux / 4.0);
@@ -465,9 +476,30 @@ vec4 appliquerGi(vec4 fragColor, vec3 normalPhaser) {
   // branche E (\`arete: 0\` ⇒ \`expo = −1\`).
   vec3 L = sousLeCiel ? vec3(0.0) : texture2D(uGiL, uvP).rgb;
   L = max(L, vec3(${TEINTE_FEU_GLSL}) * soi);
+  // ②ter UNE CIME NE LIT PAS L'OMBRE D'ASTRE DU SOL (R2, 2026-10-09). Un houppier est posé en
+  // branche E (\`arete: 0\`, \`snapshot-view.ts\`) : chaque pixel lit le champ à LA LIGNE DU PIED DE
+  // SON TRONC, quatre-vingt-seize pixels plus bas — et \`ombreDesCartes\` (LG-R8) projette la
+  // silhouette de ce même arbre AUTOUR DE CE MÊME PIED. À midi la carte couvre son propre pied :
+  // la cime se lisait DANS SA PROPRE OMBRE. MESURÉ (\`tools/__arbre-ombre-de-soi.mts\`, oracle CPU) :
+  // S = 1 sur 7 colonnes de 13 à la ligne du pied, 0 sur 13 sans sa propre carte — toute la bande
+  // est du self-shadow. À l'écran (\`futaie-midi\`) : un bord VERTICAL qui coupe les facettes du
+  // sprite, et au-delà une masse plate — l'écart entre normales tombe à EXACTEMENT 0,000000 et le
+  // pixel perd 42 % de sa luminance, parce que \`pAstre\` est tout entier gaté par (1 − S).
+  //
+  // ⚠ \`l\` EST SOMBRE AUSSI sous la carte, et ça ne suffisait pas à condamner ce correctif : l'astre
+  // vient des uniformes globaux (\`uGiMn\`, \`uGiA\`), jamais du champ. MESURÉ sur l'oracle, \`l\`
+  // maintenu sombre : l'écart entre normales passe de 0,000000 à 0,557, le pixel de 42,30,20 à
+  // 158,113,75. Le correctif est donc COMPLET, et c'est ce qui l'a départagé.
+  //
+  // ⚠ CE QU'IL COÛTE, NOMMÉ : une cime ignore désormais aussi l'ombre d'astre d'un MUR, d'une
+  // FALAISE et d'un voisin. Écarté pour ça : lire le champ plus haut (le houppier se bariole en
+  // hauteur — 4 profils distincts sur 5 rangs MESURÉS avec un voisin à cinq tuiles), et retirer
+  // la seule carte du corps (exact, mais la pénombre est DILATÉE depuis une alpha déjà cuite : il
+  // faudrait une seconde dilatation dans la passe chaude). Le défaut corrigé frappe la moitié des
+  // arbres CHAQUE jour à midi ; celui qu'on accepte demande un arbre au pied d'une falaise.
   partsDuCorps(L,
                sousLeCiel ? vec3(0.0) : texture2D(uGiF, uvP).rgb,
-               sousLeCiel ? 0.0 : texture2D(uGiS, uvP).g,
+               sousLeCiel || cime > 0.5 ? 0.0 : texture2D(uGiS, uvP).g,
                pAstre, pFeu, pPlat);
 
   // ③ LA PART DIRECTE DU FEU — les trois branches de \`lectureDuFeu\`, dans leur ordre.

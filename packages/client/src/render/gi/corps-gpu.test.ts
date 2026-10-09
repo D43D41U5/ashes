@@ -1,7 +1,7 @@
 /**
  * ═══ LES DRAPEAUX D'UN CORPS — UNE LOI, DEUX LECTEURS (`corps-gpu.ts`) ═══
  *
- * Le nœud empaquette quatre entiers dans un flottant d'attribut (`empaqueterDrapeaux`), le fragment
+ * Le nœud empaquette cinq entiers dans un flottant d'attribut (`empaqueterDrapeaux`), le fragment
  * les défait par `floor` après un arrondi. Le miroir JS de ce décodage (`depaqueterDrapeaux`) est
  * tenu ici face à l'empaquetage sur TOUTES les combinaisons — et au bruit d'interpolation : un
  * varying constant sur les quatre sommets revient à un ulp près, pas exactement.
@@ -17,30 +17,50 @@ describe('les drapeaux d’un corps, empaquetés dans un flottant', () => {
   it('se défont exactement sur toutes les combinaisons, même à un ulp près', () => {
     let n = 0
     for (let sol = 0; sol <= SOL_MAX; sol++) {
-      for (const ciel of [0, 1]) {
-        for (const ruban of [0, 1]) {
-          for (const dresse of [0, 1]) {
-            const d = empaqueterDrapeaux(dresse, ruban, ciel, sol)
-            // Exact en float32 : l'attribut est un Float32Array.
-            expect(Math.fround(d)).toBe(d)
-            for (const bruit of [0, 1e-6, -1e-6, 0.25, -0.25]) {
-              expect(depaqueterDrapeaux(d + bruit)).toEqual({ dresse, ruban, ciel, sol })
+      for (const cime of [0, 1]) {
+        for (const ciel of [0, 1]) {
+          for (const ruban of [0, 1]) {
+            for (const dresse of [0, 1]) {
+              const d = empaqueterDrapeaux(dresse, ruban, ciel, sol, cime)
+              // Exact en float32 : l'attribut est un Float32Array.
+              expect(Math.fround(d)).toBe(d)
+              for (const bruit of [0, 1e-6, -1e-6, 0.25, -0.25]) {
+                expect(depaqueterDrapeaux(d + bruit)).toEqual({ dresse, ruban, ciel, sol, cime })
+              }
+              n++
             }
-            n++
           }
         }
       }
     }
-    expect(n).toBe(2 * 2 * 2 * (SOL_MAX + 1))
+    expect(n).toBe(2 * 2 * 2 * 2 * (SOL_MAX + 1))
   })
 
   it('sont distincts deux à deux : aucune combinaison n’en recouvre une autre', () => {
     const vus = new Set<number>()
     for (let sol = 0; sol <= SOL_MAX; sol++)
-      for (const ciel of [0, 1])
-        for (const ruban of [0, 1])
-          for (const dresse of [0, 1]) vus.add(empaqueterDrapeaux(dresse, ruban, ciel, sol))
-    expect(vus.size).toBe(2 * 2 * 2 * (SOL_MAX + 1))
+      for (const cime of [0, 1])
+        for (const ciel of [0, 1])
+          for (const ruban of [0, 1])
+            for (const dresse of [0, 1]) vus.add(empaqueterDrapeaux(dresse, ruban, ciel, sol, cime))
+    expect(vus.size).toBe(2 * 2 * 2 * 2 * (SOL_MAX + 1))
+  })
+
+  /**
+   * ⚠ **LE POIDS DE `cime` N'EST PAS 16, ET C'EST LA FAUTE QUE J'AI FAITE** — `sol` n'est pas un
+   * drapeau : il court dans `0…SOL_MAX`, donc `8·sol` occupe 8, 16 ET 32. Cette garde FIGE le
+   * raisonnement au lieu de le refaire : le poids de `cime` doit dépasser tout ce que les quatre
+   * autres peuvent atteindre ensemble. Elle rougit si quelqu'un relève `SOL_MAX` sans le voir.
+   */
+  it('le poids de `cime` dépasse tout ce que les quatre autres atteignent ensemble', () => {
+    const sansCime = 1 + 2 * 1 + 4 * 1 + 8 * SOL_MAX
+    expect(sansCime).toBe(39)
+    expect(empaqueterDrapeaux(0, 0, 0, 0, 1)).toBeGreaterThan(sansCime)
+    // La preuve qui compte : le maximum SANS cime ne se décode jamais comme une cime.
+    expect(depaqueterDrapeaux(sansCime).cime).toBe(0)
+    expect(depaqueterDrapeaux(empaqueterDrapeaux(1, 1, 1, SOL_MAX, 1))).toEqual({
+      dresse: 1, ruban: 1, ciel: 1, sol: SOL_MAX, cime: 1,
+    })
   })
 })
 
@@ -74,17 +94,25 @@ describe('le GLSL des corps lit le par-sprite dans les sommets, jamais dans des 
     expect(add.vertexProcess).toContain(`${VARYINGS_CORPS.b} = ${ATTRIBUTS_CORPS.b};`)
   })
 
-  it('défait les drapeaux dans l’ordre du miroir : l’arrondi, puis sol, ciel, ruban, dresse', () => {
+  it('défait les drapeaux dans l’ordre du miroir : l’arrondi, puis cime, sol, ciel, ruban, dresse', () => {
     const i = (s: string) => GLSL_CORPS.indexOf(s)
     const arrondi = i(`floor(${VARYINGS_CORPS.b}.z + 0.5)`)
+    const cime = i('float cime = floor(drapeaux / 64.0);')
     const sol = i('float sol = floor(drapeaux / 8.0);')
     const ciel = i('float ciel = floor(drapeaux / 4.0);')
     const ruban = i('float ruban = floor(drapeaux / 2.0);')
     const dresse = i('float dresse = drapeaux - 2.0 * ruban;')
     expect(arrondi).toBeGreaterThan(-1)
-    expect(sol).toBeGreaterThan(arrondi)
+    // `cime` AVANT `sol` : son poids est le plus fort (R2). L'ordre n'est pas un goût — décoder un
+    // poids faible d'abord laisserait les bits forts dans le reste et fausserait tout ce qui suit.
+    expect(cime).toBeGreaterThan(arrondi)
+    expect(sol).toBeGreaterThan(cime)
     expect(ciel).toBeGreaterThan(sol)
     expect(ruban).toBeGreaterThan(ciel)
     expect(dresse).toBeGreaterThan(ruban)
+    // Chaque poids est RETRANCHÉ après avoir été lu, sinon le suivant le relit.
+    for (const [v, poids] of [['cime', '64.0'], ['sol', '8.0'], ['ciel', '4.0']] as const) {
+      expect(GLSL_CORPS).toContain(`drapeaux -= ${poids} * ${v};`)
+    }
   })
 })
